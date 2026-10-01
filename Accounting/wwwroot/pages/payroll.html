@@ -1764,7 +1764,7 @@ const Page = {
                 ? `<span class="text-xs">${Layout.esc(cur)}</span>`
                 : `<span class="text-xs text-gray-400">ค่าเริ่มต้น</span>`);
           return `<tr${rowBroken ? ' style="background:#fef2f2"' : ''}>
-          <td>${d.employeeName || (d.firstName+' '+d.lastName) || '-'}</td>
+          <td>${Layout.esc(d.employeeName || (d.firstName+' '+d.lastName) || '-')}${d.ssoFlagWarning ? `<div style="font-size:11px;color:#b45309" title="${Layout.esc(d.ssoFlagWarning)}">⚠️ ธง ปกส. ไม่ตรงกับฐาน</div>` : ''}</td>
           <td class="text-right">${Layout.money(d.baseSalary||d.salary||0)}</td>
           <td class="text-right">${Layout.money((d.grossIncome||0) - (d.baseSalary||0))}</td>
           <td class="text-right">${Layout.money(d.withholdingTax||d.tax||d.incomeTax||0)}</td>
@@ -2025,6 +2025,15 @@ const Page = {
   _edAddPick() {
     const sel = document.getElementById('ed_employee'); if (!sel) return;
     const e = (this._edAddable || []).find(x => x.id === sel.value) || null;
+    // ฝ่ายค้าน PR2 (UI-1): ภาษีที่ 🧮 เติมไว้เป็นของพนักงานคนก่อน — เปลี่ยนคนแล้วล้างค่า+กล่องที่มา (ค่าที่ผู้ใช้พิมพ์เองไม่แตะ)
+    if ((e ? e.id : null) !== this._editEmp) {
+      const wht = document.getElementById('ed_withholdingTax');
+      if (wht && wht.dataset.autoSrc === 'taxPreview' && !wht.dataset.userTouched) {
+        wht.value = ''; delete wht.dataset.autoSrc;
+      }
+      const tb = document.getElementById('ed_taxBasis'); if (tb) tb.innerHTML = '';
+      this._edTaxSuggest = null;
+    }
     this._editEmp = e ? e.id : null;
     const setDefault = (k, v) => {
       const el = document.getElementById('ed_' + k);
@@ -2159,9 +2168,11 @@ const Page = {
     });
     const btn = document.getElementById('ed_taxBtn');
     if (btn) btn.disabled = true;
+    const empAtStart = this._editEmp;          // UI-1: ผลที่มาช้าหลังเปลี่ยนพนักงาน/ปิดโมดัล = ทิ้ง
     try {
       const res = await api.previewPayrollTax(r.id, body);
       const p = res && res.data; if (!p) return;
+      if (this._editEmp !== empAtStart || this._curRun !== r) return;
       const el = document.getElementById('ed_withholdingTax');
       const typed = !!(el && el.dataset.userTouched);
       this._edTaxSuggest = Number(p.suggestedWithholdingTax || 0);

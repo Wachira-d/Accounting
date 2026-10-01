@@ -1454,6 +1454,10 @@ public class ImportExportService : IImportExportService
         var code = row.GetValueOrDefault("EmployeeCode") ?? throw new InvalidOperationException("EmployeeCode is required");
         if (await _db.Employees.AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == code))
             throw new InvalidOperationException($"รหัสพนักงาน {code} ซ้ำ");
+        // รอบ 201 ทีม PR2 (ฝ่ายค้าน Q4 · แตะไฟล์ทีมอื่นให้เล็กที่สุด): เลขประกันสังคมผ่านตัวตัดสินเดียวกับหน้าพนักงาน
+        // (13 หลัก · เก็บตัวเลขล้วน) — รูปไม่ถูก ⇒ แถวนี้ล้มพร้อมเหตุผล แบบเดียวกับ StartDate/BaseSalary
+        var ssoNoEdit = Accounting.Helpers.EmployeeRecordEdit.SsoInsuredNumber(row.GetValueOrDefault("SocialSecurityNumber"), null);
+        if (ssoNoEdit.Error != null) throw new InvalidOperationException(ssoNoEdit.Error);
 
         _db.Employees.Add(new Employee
         {
@@ -1477,7 +1481,7 @@ public class ImportExportService : IImportExportService
             SalaryType = row.GetValueOrDefault("SalaryType") ?? "Monthly",
             BankName = row.GetValueOrDefault("BankName"),
             BankAccountNumber = row.GetValueOrDefault("BankAccountNumber"),
-            SocialSecurityNumber = row.GetValueOrDefault("SocialSecurityNumber"),
+            SocialSecurityNumber = ssoNoEdit.Value,
             CreatedBy = performedBy
         });
     }

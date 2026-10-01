@@ -77,3 +77,21 @@ record positional เพิ่มพารามิเตอร์ท้าย�
 คำถามค้างชุดสอง: (4) HRIS sync (`SyncEmployeesAsync`) + นำเข้า CSV ยังเขียนเลขประกันสังคมดิบ ไม่ผ่าน `SsoInsuredNumber` edit — ควรใช้ตัวตัดสินเดียวกันไหม
 (ปฏิเสธทั้งแถว vs ข้ามช่อง) · (5) คอมมิชชันเป็น "ค่าจ้าง" ม.5 ไหม (ไม่เสนอค่าไว้ — ต้องการคำตัดสิน)
 
+## แก้ผลฝ่ายค้าน (หลัง merge e3c58085)
+
+| ID | สถานะ | สิ่งที่ทำ |
+| --- | --- | --- |
+| **V-1 (P1)** | ✅ | `CanVoid(status, ssoSettledAt, PayrollRunLockEvidence)` หลักฐานบังคับ · `FiledOrSettledBlock(status, evidence, "ยกเลิกรอบ")` ตัวเดียวกับแก้ยอด/คำนวณใหม่ (รอบ Approved/Paid ในงวดที่ยื่นแล้ว ⇒ ปฏิเสธ · Draft/Calculated ไม่ถูกล็อก) · ผู้เรียกทุกตัว: `VoidPayrollAsync` (ด่านเร็ว + ใต้ล็อก) · `MapToPayrollRunResponse` (ปุ่มบนจอ) · เทสต์ · void ยกเลิก 50 ทวิ ของรอบ (`SourcePayrollRunId`) ผ่าน `WhtCertVoidGuard.CheckAsync` **ก่อน**กลับ JE/คืนเงินทดรอง — ใบที่ยื่นแล้ว ⇒ 409 `RD-50TWI-FILED` ปฏิเสธทั้งการยกเลิก |
+| **V-2 (P2)** | ✅ | ใต้ล็อก: หลักฐานใหม่ของ `lockedRun` + `CanVoid` ซ้ำ ⇒ `PAYROLL-VOID-LOCKED` |
+| **V-3 (P2)** | ✅ ทางปฏิเสธ | `evidence.ProjectCostAllocatedRows > 0` ⇒ ปฏิเสธพร้อมทางไปต่อแบบ `CanRecalculate` (ไม่มีกลไกถอยการปันที่ปลอดภัย — `HrAllocationService` ไม่มีเส้นกลับ) |
+| **SSO-1 (P2)** | ✅ | เทียบ "เท่าของเดิมหลัง normalize" ก่อนด่าน 13 หลัก + เทสต์ทิศตรงข้าม (เลขเดิม 10 หลัก echo ⇒ Keep · เลขใหม่ 10 หลัก ⇒ ปฏิเสธ) |
+| **UI-1 (P2)** | ✅ | `_edAddPick` ล้างค่าภาษีที่มาจาก taxPreview (ไม่แตะค่าที่ผู้ใช้พิมพ์) + กล่อง basis เมื่อเปลี่ยนพนักงาน · `_edTaxPreview` จำ employeeId/รอบ แล้วทิ้งผลที่มาช้า |
+| **WC-1 (P3)** | ✅ Notice | ✏️ ฐานเปลี่ยนแล้วเงินทดแทนเปลี่ยน ⇒ Notice "เดิม → ใหม่" + ทางไปต่อ (คำนวณรอบใหม่ถ้าค่าจ้าง ม.5 ต่างจากฐาน) |
+| **TP-1** | 📋 | = คำถามค้างข้อ 1 (รอบถัดไป) |
+| **Q3** | ✅ | `PayrollRunLineDto.SsoFlagWarning` (ตัวตัดสิน `PayrollSsoFlagGuard`) + ป้าย "⚠️ ธง ปกส. ไม่ตรงกับฐาน" บนแถว · ไม่บล็อก · ชื่อพนักงานในตารางผ่าน `Layout.esc` (เดิมไม่หนี) |
+| **Q4** | ✅ | HRIS sync (`SyncEmployeesAsync` เส้นสร้าง): ผิดรูป ⇒ สร้างคนได้ ไม่เก็บเลข + ข้อความใน `errors` · CSV (`ImportExportService.ImportEmployeeAsync` — **ไฟล์ทีมอื่น** แตะ 4 บรรทัด): ผิดรูป ⇒ แถวล้มพร้อมเหตุผล (แบบเดียวกับ StartDate/BaseSalary) · เส้นอัปเดตของ HRIS ไม่เขียนเลข ปกส. อยู่แล้ว |
+| Q2 · Q5 | — | คงตามคำตอบ (ไม่มีงาน) |
+
+ความเสี่ยงคอมไพล์: `PayrollRunLineDto(... positional ..., SsoFlagWarning: …)` (named ท้าย) · `WithholdingTaxCertStatus` ใน `PayrollService` (มีใช้อยู่แล้ว) ·
+`runCerts` ใช้ใน audit หลังประกาศในบล็อกเดียวกัน
+

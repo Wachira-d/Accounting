@@ -4231,3 +4231,12 @@ _2026-10-01 รอบ 201 ทีม IN — แก้ผลฝ่ายค้า�
 - **X2** `FindLiveReplacementSaleAsync` + `LodgingCheckoutReissue.Problem(liveReplacementNumber, confirmedNoManualReissue)` + ช่องยืนยันบนหน้าที่พัก
 - เทสต์ golden สองทิศเพิ่มใน InventoryCostingMethodTests / LodgingCheckoutReissueTests · required_call_site +8 แถว (+ แก้ชื่อเมธอด CheckOutCoreAsync) — commit ecaddf15)_
 
+_2026-10-01 รอบ 201 ทีม PR2 แก้ผลฝ่ายค้าน (V-1 · V-2 · V-3 · SSO-1 · UI-1 · WC-1 · คำตอบ Q3/Q4)
+- **V-1/V-3** `PayrollRunEditPolicy.CanVoid(status, ssoSettledAt, evidence)` — งวดที่ยื่นแล้ว (ผ่าน `FiledOrSettledBlock`) และปันต้นทุนแล้ว ⇒ ยกเลิกรอบไม่ได้ ·
+  ผู้เรียก: `VoidPayrollAsync` + `MapToPayrollRunResponse` (ปุ่ม) · void รอบ Paid ยกเลิก 50 ทวิ ของรอบผ่าน `WhtCertVoidGuard.CheckAsync` (ใบยื่นแล้ว ⇒ ปฏิเสธทั้งหมด)
+- **V-2** `VoidPayrollAsync` ตัดสินซ้ำใต้ล็อก (`lockedRun` + หลักฐานใหม่)
+- **SSO-1** `EmployeeRecordEdit.SsoInsuredNumber` เทียบเลขเดิมก่อนด่าน 13 หลัก · **UI-1** 🧮 ทิ้งผลช้า/ล้างค่าเมื่อเปลี่ยนคน · **WC-1** Notice เมื่อเงินทดแทนเปลี่ยน
+- **Q3** `PayrollRunLineDto.SsoFlagWarning` + ป้ายบนแถว (ไม่บล็อก) · **Q4** HRIS sync (ไม่เก็บเลขผิดรูป + แจ้ง) และนำเข้า CSV (`ImportExportService.ImportEmployeeAsync` — แตะไฟล์ทีมอื่น 4 บรรทัด · แถวล้มพร้อมเหตุผล)
+  ผ่านตัวตัดสินเลข ปกส. เดียว · ชื่อพนักงานในตารางรอบผ่าน `Layout.esc`
+- เทสต์ `PayrollRunVoidPolicyTests` +4 · `EmployeeRecordEditTests` +1 · required_call_site +5 แถว — commit <pending>)_
+

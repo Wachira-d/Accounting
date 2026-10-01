@@ -209,4 +209,15 @@ public class EmployeeRecordEditTests
         // เลขเดิมต่างแค่ขีด = ไม่ได้แก้
         Assert.False(EmployeeRecordEdit.SsoInsuredNumber("1 2345 67890 12 3", "1234567890123").Changes);
     }
+
+    [Fact]
+    public void เลขประกันสังคม_ของเดิมไม่ครบ13หลัก_ส่งกลับมาเท่าเดิม_ไม่แตะ_ไม่ปฏิเสธ()
+    {
+        // ฝ่ายค้าน PR2 SSO-1: เลข 10 หลักที่เข้ามาทาง CSV ก่อนมีด่าน — ฟอร์มส่งกลับทุกครั้งที่บันทึกช่องอื่น ต้องไม่ล้มทั้งคำขอ
+        var echo = EmployeeRecordEdit.SsoInsuredNumber("12-3456-7890", "1234567890");
+        Assert.Null(echo.Error);
+        Assert.False(echo.Changes);
+        // ทิศตรงข้าม: แก้เป็นเลขใหม่ที่ไม่ครบ 13 หลัก ยังถูกปฏิเสธ
+        Assert.NotNull(EmployeeRecordEdit.SsoInsuredNumber("1234567899", "1234567890").Error);
+    }
 }

@@ -3296,6 +3296,39 @@ RULES += [
          why="PR2 A-PR2: ค่าเสนอธง ม.5 มาจากกติกาตัวเดียวที่เซิร์ฟเวอร์ (หน้าเว็บห้ามมีตารางเอง)"),
 ]
 
+# ── รอบ 201 ทีม PR2 แก้ผลฝ่ายค้าน (V-1 · V-2 · V-3 · SSO-1 · Q3 · Q4) ──
+_PR2_WHY_VOID = ("PR2 ฝ่ายค้าน V-1/V-2/V-3: ยกเลิกรอบตัดสินด้วย CanVoid + หลักฐานยื่น/นำส่ง/ปันต้นทุนชุดเดียวกับแก้ยอด — ทั้งด่านเร็วและ"
+                 "ใต้ล็อก (แถวที่ล็อกแล้ว) · 50 ทวิ ของรอบผ่าน WhtCertVoidGuard ก่อนกลับ JE (ใบที่ยื่นแล้ว ⇒ ปฏิเสธทั้งการยกเลิก)")
+RULES += [
+    dict(file=PAYROLL, method="VoidPayrollAsync#0",
+         must=["PayrollRunEditPolicy.CanVoid(run.Status, run.SsoSettledAt, preEvidence)",
+               "PayrollRunEditPolicy.CanVoid(lockedRun.Status, lockedRun.SsoSettledAt, lockedEvidence)",
+               "LoadRecalculateLockEvidenceAsync(companyId, new[] { lockedRun })",
+               "WhtCertVoidGuard.CheckAsync(", "c.SourcePayrollRunId == lockedRun.Id", "c.CompanyId == companyId"],
+         must_re=[r"if\s*\(\s*!\s*canVoidLocked\s*\)\s*throw\b", r"is\s+string\s+filedCert\s*\)\s*throw\b"],
+         before=[("FromSqlRaw(", "PayrollRunEditPolicy.CanVoid(lockedRun"),
+                 ("PayrollRunEditPolicy.CanVoid(lockedRun", "ReverseJournalEntryAsync("),
+                 ("WhtCertVoidGuard.CheckAsync(", "ReverseJournalEntryAsync("),
+                 ("WhtCertVoidGuard.CheckAsync(", "RestoreSalaryAdvancesAsync(")],
+         forbid=["PayrollRunLockEvidence.None"],
+         why=_PR2_WHY_VOID),
+    dict(file=PAYROLL, method="MapToPayrollRunResponse#0",
+         call_args=[("PayrollRunEditPolicy.CanVoid(", "lockEvidence")],
+         why=_PR2_WHY_VOID + " · ปุ่มบนจอใช้หลักฐานชุดเดียวกับด่าน"),
+    dict(file=PAYROLL, method="SyncEmployeesAsync",
+         must=["EmployeeRecordEdit.SsoInsuredNumber(r.SocialSecurityNumber, null)"],
+         forbid=["SocialSecurityNumber = r.SocialSecurityNumber"],
+         why="PR2 ฝ่ายค้าน Q4: เลขประกันสังคมจาก HRIS ผ่านตัวตัดสินเดียวกับหน้าพนักงาน"),
+    dict(file="Services/Implementations/ImportExportService.cs", method="ImportEmployeeAsync",
+         must=["EmployeeRecordEdit.SsoInsuredNumber("],
+         must_re=[r"if\s*\(\s*ssoNoEdit\s*\.\s*Error\s*!=\s*null\s*\)\s*throw\b"],
+         forbid=['SocialSecurityNumber = row.GetValueOrDefault'],
+         why="PR2 ฝ่ายค้าน Q4: เลขประกันสังคมจากไฟล์ CSV ผ่านตัวตัดสินเดียวกับหน้าพนักงาน"),
+    dict(file=PAYROLL, method="GetPayrollRunAsync",
+         must=["PayrollSsoFlagGuard.Check("],
+         why="PR2 ฝ่ายค้าน Q3: แถวที่ธง ปกส. ขัดกับฐานต้องเห็นคำเตือนบนหน้ารอบ (ตัวตัดสินเดียวกับ ➕/✏️ · ไม่บล็อก)"),
+]
+
 # ── รอบ 201 ทีม PL (Platform/Audit/Security/Tools) — A-PL3 watermark งานตรวจ chain · (บล็อกนี้ทีม PL ต่อท้ายเอง) ──
 RULES += [
     dict(file=AUDIT_JOB, method="RunCycleAsync",

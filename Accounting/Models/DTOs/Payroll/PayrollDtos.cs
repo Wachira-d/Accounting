@@ -390,7 +390,10 @@ public record PayrollRunLineDto(
     decimal TotalDeductions,
     decimal NetPay,
     // แหล่งจ่ายเงินสุทธิรายคน (AccountCode; null = ใช้ค่าระดับ run/default)
-    string? NetPaymentAccountCode = null);
+    string? NetPaymentAccountCode = null,
+    // รอบ 201 PR2 (คำตอบฝ่ายค้าน Q3): ธงประกันสังคมของพนักงานขัดกับฐาน ปกส. ของแถวนี้ — <b>คำเตือน</b> (ไม่บล็อก) จากตัวตัดสินเดียวกับ ➕/✏️
+    // (PayrollSsoFlagGuard) · null = สอดคล้อง/ไม่มีข้อมูลพนักงาน
+    string? SsoFlagWarning = null);
 
 /// <summary>นำส่งประกันสังคมให้ สปส. — เลือกวันที่จ่าย + บัญชีธนาคาร +
 /// เลขรับใบ สปส.1-10 (optional). ระบบ post JE Dr 21815 / Cr Bank

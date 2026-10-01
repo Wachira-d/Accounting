@@ -116,11 +116,14 @@ public static class EmployeeRecordEdit
         if (t.IndexOf('X') >= 0 || t.IndexOf('x') >= 0)
             return FieldEdit.Reject("เลขประกันสังคม: ค่านี้เป็นเลขที่ถูกปิดบัง (PDPA) — พิมพ์เลขจริง 13 หลัก หรือคงค่าเดิมไว้โดยไม่แก้ช่องนี้");
         var stripped = t.Replace("-", "").Replace(" ", "");
+        // ★ ฝ่ายค้าน PR2 (SSO-1): เลขเดิม (แค่ต่างขีด/ช่องว่าง) = ไม่ได้แก้ — ตรวจ**ก่อน**ด่าน 13 หลัก (แบบ ThaiIdNumber) ·
+        //   เลขเก่าที่เข้ามาทาง HRIS sync/นำเข้า CSV ก่อนมีด่าน (เช่น 10 หลัก) ต้องไม่ทำให้ HR แก้ช่องอื่นของคนนั้นไม่ได้เลย
+        //   (ฟอร์มส่งเลขเดิมกลับมาทุกครั้งที่บันทึก — เข้มขึ้นต้องมีทางไปต่อ F2 ข้อ 8)
+        if (!string.IsNullOrWhiteSpace(current) && stripped == current.Replace("-", "").Replace(" ", "").Trim())
+            return FieldEdit.Keep;
         if (stripped.Length != 13 || !stripped.All(char.IsDigit))
             return FieldEdit.Reject("เลขประกันสังคม: ต้องเป็นตัวเลข 13 หลัก (ขีด/ช่องว่างได้) — "
                 + "เว้นว่างถ้าใช้เลขบัตรประชาชนเป็นเลขผู้ประกันตน");
-        if (!string.IsNullOrWhiteSpace(current) && stripped == current.Replace("-", "").Replace(" ", "").Trim())
-            return FieldEdit.Keep;
         return FieldEdit.Set(stripped);
     }
 

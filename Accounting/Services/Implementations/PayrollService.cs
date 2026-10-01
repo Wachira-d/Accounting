@@ -563,6 +563,11 @@ public class PayrollService : IPayrollService
                         skipped++;
                         continue;
                     }
+                    // ฝ่ายค้าน PR2 (คำตอบ Q4): เลขประกันสังคมจาก HRIS ผ่านตัวตัดสินเดียวกับหน้าพนักงาน — รูปไม่ถูก ⇒ สร้างพนักงานได้ตามปกติ
+                    // แต่**ไม่เก็บเลขนั้น** (ไฟล์ สปส. ใช้เลขบัตรแทน) และบอกในผลลัพธ์ — ไม่ล้มทั้งแถวเพราะช่องรอง
+                    var syncSsoNo = EmployeeRecordEdit.SsoInsuredNumber(r.SocialSecurityNumber, null);
+                    if (syncSsoNo.Error != null)
+                        errors.Add($"{r.EmployeeCode}: สร้างพนักงานแล้วแต่ไม่บันทึกเลขประกันสังคม — {syncSsoNo.Error}");
                     var newEmp = new Employee
                     {
                         CompanyId = companyId,
@@ -584,7 +589,7 @@ public class PayrollService : IPayrollService
                         BankName = r.BankName,
                         BankAccountNumber = r.BankAccountNumber,
                         BankAccountName = r.BankAccountName,
-                        SocialSecurityNumber = r.SocialSecurityNumber,
+                        SocialSecurityNumber = syncSsoNo.Error == null ? syncSsoNo.Value : null,
                         IsSubjectToSocialSecurity = r.IsSubjectToSocialSecurity,
                         CostBehavior = r.CostBehavior
                             ?? ((r.SalaryType ?? "Monthly") == "Monthly" ? "Fixed" : "Variable"),
@@ -1405,7 +1410,10 @@ public class PayrollService : IPayrollService
                     d.SocialSecurityEmployee, d.SocialSecurityEmployer, d.WithholdingTax,
                     d.ProvidentFundEmployee, d.LoanDeduction, d.OtherDeductions,
                     d.TotalDeductions, d.NetPay,
-                    d.NetPaymentAccountCode);
+                    d.NetPaymentAccountCode,
+                    // คำเตือน (ไม่บล็อก) — แถวนำเข้า/แถวเดิมที่ฐาน ปกส. ขัดกับธงของพนักงาน ด่านเดียวกับ ➕/✏️ แต่ที่นี่แค่แสดง
+                    SsoFlagWarning: e == null ? null : Accounting.Helpers.PayrollSsoFlagGuard.Check(
+                        e.IsSubjectToSocialSecurity, d.SocialSecurityBase, d.GrossIncome, "พนักงานคนนี้"));
             }).ToList();
         }
 
@@ -1501,10 +1509,16 @@ public class PayrollService : IPayrollService
                     throw new Accounting.Helpers.BusinessRuleException(flagProblem, "PAYROLL-SSO-FLAG-MISMATCH");
                 var wcSettings = await _db.Set<CompanySettings>().AsNoTracking()
                     .FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted);
+                var wcBefore = d.WorkersCompensation;
                 if (!Accounting.Helpers.PayrollDetailAmounts.ApplyWorkersCompensation(d, run.IsExternalImport,
                         wcSettings?.WorkersCompensationEnabled == true, wcSettings?.WorkersCompensationRatePercent ?? 0m,
                         emp.IsSubjectToSocialSecurity))
                     notice = "รอบนี้นำเข้าจากระบบนอก — ระบบไม่คิดกองทุนเงินทดแทนใหม่ตามฐานที่แก้ (แถวนำเข้าไม่มียอดเงินทดแทน)";
+                else if (d.WorkersCompensation != wcBefore)
+                    // ฝ่ายค้าน PR2 (WC-1): เงินทดแทนเปลี่ยนตามฐาน ปกส. ที่แก้ — ต้องบอก (เส้นคำนวณรอบคิดจากค่าจ้างตามกฎหมายของงวด
+                    // ซึ่งอาจต่างจากฐาน ปกส. ที่ติดเพดาน) ห้ามเปลี่ยนตัวเลข กท.20ก เงียบ ๆ
+                    notice = $"คิดกองทุนเงินทดแทนของพนักงานคนนี้ใหม่จากฐาน ปกส. ที่แก้ ({d.SocialSecurityBase:N2} บาท): "
+                        + $"{wcBefore:N2} → {d.WorkersCompensation:N2} บาท — ถ้าค่าจ้างตาม ม.5 ต่างจากฐาน ปกส. ให้คำนวณรอบใหม่แทน";
             }
 
             // ★ X5: รายได้/ภาษีสะสม (YTD บนสลิป) ตามยอดที่แก้ — query เดียวกับเส้นคำนวณ
@@ -3320,9 +3334,11 @@ public class PayrollService : IPayrollService
             .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
 
-        var (canVoid, voidBlockReason) = PayrollRunEditPolicy.CanVoid(run.Status, run.SsoSettledAt);
+        // รอบ 201 ฝ่ายค้าน PR2 (V-1/V-3): หลักฐานยื่น/นำส่ง/ปันต้นทุนชุดเดียวกับแก้ยอด/คำนวณใหม่ (ตัวหาเดียว) — ด่านเร็วก่อนเปิดธุรกรรม
+        var preEvidence = (await LoadRecalculateLockEvidenceAsync(companyId, new[] { run }))[run.Id];
+        var (canVoid, voidBlockReason) = PayrollRunEditPolicy.CanVoid(run.Status, run.SsoSettledAt, preEvidence);
         if (!canVoid)
-            throw new InvalidOperationException(voidBlockReason!);
+            throw new Accounting.Helpers.BusinessRuleException(voidBlockReason!, "PAYROLL-VOID-LOCKED");
 
         // Paid runs CAN be voided — but the posted journal entry MUST be
         // reversed in the same transaction so AP/cash/WHT/SSO payables don't
@@ -3351,6 +3367,24 @@ public class PayrollService : IPayrollService
                 return;
             }
             run = lockedRun;
+
+            // ★ V-2: ตัดสินซ้ำใต้ล็อกด้วยสถานะ/หลักฐานของแถวที่ล็อกแล้ว — ระหว่างด่านเร็วกับล็อก รอบอาจถูกนำส่ง สปส./ปันต้นทุน/
+            //   บันทึกว่ายื่น (ด่านเร็วเห็นค่าก่อนหน้า) · ตัวตัดสินตัวเดียวกับปุ่มบนจอ
+            var lockedEvidence = (await LoadRecalculateLockEvidenceAsync(companyId, new[] { lockedRun }))[lockedRun.Id];
+            var (canVoidLocked, voidLockedReason) = PayrollRunEditPolicy.CanVoid(lockedRun.Status, lockedRun.SsoSettledAt, lockedEvidence);
+            if (!canVoidLocked)
+                throw new Accounting.Helpers.BusinessRuleException(voidLockedReason!, "PAYROLL-VOID-LOCKED");
+
+            // ★ V-1: 50 ทวิ ภ.ง.ด.1 ที่ออกจากรอบนี้ (Paid ⇒ ออกอัตโนมัติตอนจ่าย) ต้องถูกยกเลิกพร้อมรอบ — ใบที่อยู่ในแบบที่ประกาศ/ยื่นแล้ว
+            //   ยกเลิกไม่ได้ ⇒ ปฏิเสธทั้งการยกเลิกรอบ (ตัวตัดสินเดียวกับหน้ายกเลิก 50 ทวิ/เอกสาร/ออกใหม่ตอน re-post) · เช็ก**ก่อน**กลับ JE
+            var runCerts = await _db.Set<WithholdingTaxCert>()
+                .Where(c => c.CompanyId == companyId && c.SourcePayrollRunId == lockedRun.Id
+                    && c.Status != WithholdingTaxCertStatus.Voided)
+                .ToListAsync();
+            if (await WhtCertVoidGuard.CheckAsync(_db, companyId, runCerts.Select(c => c.Id).ToList()) is string filedCert)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    filedCert + " — จึงยกเลิกรอบเงินเดือนนี้ไม่ได้ (หนังสือรับรองของรอบนี้ต้องยกเลิกพร้อมรอบ)", "RD-50TWI-FILED", 409);
+            foreach (var c in runCerts) c.Status = WithholdingTaxCertStatus.Voided;
 
             if (run.Status == "Paid" && run.JournalEntryId.HasValue && _accountingService != null)
             {
@@ -3389,6 +3423,7 @@ public class PayrollService : IPayrollService
                     run.EmployeeCount,
                     run.TotalNetPay,
                     JournalReversed = statusBefore == "Paid" && run.JournalEntryId.HasValue,
+                    WhtCertsVoided = runCerts.Select(c => c.CertificateNumber).ToList(),
                 }),
                 Timestamp = DateTime.UtcNow,
             });
@@ -4837,7 +4872,7 @@ public class PayrollService : IPayrollService
         var (canRecalc, recalcReason) = PayrollRunEditPolicy.CanRecalculate(
             r.Status, r.ExternalSystem, r.ReopenedAt, lockEvidence);
         // รอบ 201 (PR2 · ข้อ 70): ปุ่ม "ยกเลิกรอบ" ตัดสินด้วยด่านตัวเดียวกับ VoidPayrollAsync
-        var (canVoid, voidBlockReason) = PayrollRunEditPolicy.CanVoid(r.Status, r.SsoSettledAt);
+        var (canVoid, voidBlockReason) = PayrollRunEditPolicy.CanVoid(r.Status, r.SsoSettledAt, lockEvidence);
         return new(r.Id, r.PayrollNumber, r.Name, r.Year, r.Month, r.PayDate,
             r.Status, r.TotalGrossSalary, r.TotalDeductions, r.TotalNetPay,
             r.TotalWithholdingTax, r.TotalSocialSecurityEmployee,

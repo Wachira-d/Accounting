@@ -159,9 +159,15 @@ public static class PayrollRunEditPolicy
     /// นำส่งแล้ว = มี JE ก้อนที่สอง (Dr 21815 / Cr Bank) ที่ Void ไม่แตะ ⇒ ถ้ายอมให้ยกเลิก
     /// จะกลับแค่ JE จ่าย เหลือ 21815 **ติดลบ** ถาวร + แถวนำส่งยังบอกว่านำส่งแล้ว ⇒ รอบใหม่
     /// นำส่งซ้ำงวด. เดิม VoidPayrollAsync ตรวจแค่ "Voided ซ้ำ" — ด่านครอบทางเดียว
-    /// (ERP_REVIEW_2026-09-05 H-01)</summary>
-    public static (bool Can, string? Reason) CanVoid(string? status, DateTime? ssoSettledAt)
+    /// (ERP_REVIEW_2026-09-05 H-01)
+    ///
+    /// <para>รอบ 201 ฝ่ายค้าน PR2 (V-1/V-3): หลักฐาน<b>บังคับ</b> (ไม่รู้ ≠ ผ่าน) — (ก) งวดที่ถูกบันทึกว่ายื่น ภ.ง.ด.1/สปส.1-10 แล้ว
+    /// ห้ามยกเลิก (คำตัดสิน #35 "รอบที่จ่าย/ยื่นแล้วห้ามแก้" — ยกเลิกคือการแก้ที่แรงที่สุด) ผ่าน <see cref="FiledOrSettledBlock"/> ตัวเดียวกับ
+    /// แก้ยอด/คำนวณใหม่ · (ข) ต้นทุนแรงงานถูกปันเข้าโครงการด้วยรอบนี้แล้ว ⇒ ห้ามยกเลิก (ไม่มีปุ่มยกเลิกการปัน — ยกเลิกแล้วต้นทุนโครงการค้าง
+    /// ยอดที่ไม่มีที่มา) · ข้อความ สปส. นำส่งแล้วคงเดิม (ตรงกับ <see cref="CanReopen"/>)</para></summary>
+    public static (bool Can, string? Reason) CanVoid(string? status, DateTime? ssoSettledAt, PayrollRunLockEvidence evidence)
     {
+        ArgumentNullException.ThrowIfNull(evidence);
         if (status == Voided)
             return (false, "รอบจ่ายเงินเดือนนี้ถูกยกเลิกแล้ว");
         if (ssoSettledAt.HasValue)
@@ -169,6 +175,13 @@ public static class PayrollRunEditPolicy
                 $"รอบนี้นำส่งประกันสังคมไปแล้วเมื่อ {ssoSettledAt.Value.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)} — "
                 + "ต้องกลับรายการนำส่ง สปส. ก่อน (และถ้ายื่น สปส.1-10 ไปแล้วต้องยื่นแก้ไขด้วย) "
                 + "จึงจะยกเลิกรอบได้");
+        var blocked = FiledOrSettledBlock(status, evidence, "ยกเลิกรอบ");
+        if (blocked != null)
+            return (false, blocked);
+        if (evidence.ProjectCostAllocatedRows > 0)
+            return (false, $"ต้นทุนแรงงานของรอบนี้ถูกปันเข้าโครงการแล้ว ({evidence.ProjectCostAllocatedRows} แถวเวลาทำงาน) — "
+                + "ยกเลิกรอบแล้วต้นทุนโครงการจะค้างยอดที่ไม่มีเงินเดือนรองรับ · ระบบยังไม่มีปุ่มยกเลิกการปันต้นทุน "
+                + "⇒ ถ้ายอดผิด ให้แก้รายคนด้วย \"✏️ แก้ยอด\" แล้วปรับต้นทุนโครงการด้วยใบสำคัญปรับปรุง");
         return (true, null);
     }
 
