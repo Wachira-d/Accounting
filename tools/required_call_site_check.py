@@ -1769,7 +1769,7 @@ RULES += [
          why="P2/R-B17: ยอดคืนที่อยู่ในบรรทัดแล้วนับทุกช่องทางของบริษัท · tenant"),
     dict(file=SETTLE_IMPORT, method="PersistAsync",
          must=["EnsureIntentRefundCapacityAsync("],
-         before=[("AdvisoryLockKey.For(", "EnsureIntentRefundCapacityAsync("), ("LockChannelAsync(", "EnsureIntentRefundCapacityAsync("),
+         before=[("LockGatewayAsync(", "EnsureIntentRefundCapacityAsync("), ("LockChannelAsync(", "EnsureIntentRefundCapacityAsync("),
                  ("EnsureIntentRefundCapacityAsync(", "_db.SettlementLines.Add(")],
          why="P2: ตาข่ายยอดคืนต้องอยู่ใต้ล็อกช่องทาง + ล็อก gateway และก่อนเพิ่มบรรทัด"),
     dict(file="Services/Settlement/Adapters/PaymentIntentAdapter.cs", method="BuildRows",
@@ -1837,9 +1837,9 @@ RULES += [
          must_re=[r"is\s+string\s+why\s*\)\s*throw\s+new\s+BusinessRuleException\s*\(\s*why\b"],
          why="S3-1: ผลของตัวตัดสินต้องถูกใช้ (ปฏิเสธทั้งธุรกรรม) — เรียกแล้วทิ้งผล = แก้ชิ้นที่ออกแล้วได้เงียบ ๆ"),
     dict(file=SETTLE_LINES, method="FrozenPartsAsync",
-         must=["SettlementPostingKeys.CreatorPrefix(", "SettlementPostingKeys.PaymentMarker(", "DocumentStatus.Voided"],
+         must=["SettlementPostingKeys.CreatorPrefix(", "p.SettlementBatchId == batchId", "DocumentStatus.Voided"],
          must_re=[r"d\s*\.\s*CompanyId\s*==\s*companyId", r"p\s*\.\s*CompanyId\s*==\s*companyId"],
-         why="S3-1: ชิ้นที่ออกแล้ว = ป้ายชุดเดียวกับผู้ลงบัญชี (ไม่นับที่ยกเลิกแล้ว) · tenant"),
+         why="S3-1: ชิ้นที่ออกแล้ว = กุญแจชุดเดียวกับผู้ลงบัญชี (ไม่นับที่ยกเลิกแล้ว) · tenant · รอบ 201 A-ST1: การรับชำระ = คอลัมน์ SettlementBatchId"),
     dict(file=SETTLE_LINES, method="RematchBatchAsync",
          must=["LockChannelAsync(", "LoadEditableBatchAsync(", "!l.MatchDecidedByUser"],
          before=[("LockChannelAsync(", "LoadEditableBatchAsync(")],
@@ -1911,7 +1911,7 @@ RULES += [
     dict(file=SETTLE_IMPORT, method="PersistAsync",
          must=["SettlementTxnKey.ImportScopeOf(", "ImportScope = lineScope", "pool.RevisedScope", "SettlementTxnKey.SplitRevisedFilePool(", "pool.SameFile",
                "pool.OtherFiles", "LiteralDateSets(rows)", "SettlementTxnKey.SharesRawIdWith(", "PostedBatchNewRowsMessage(", "input.LearnNotes"],
-         call_args=[("SettlementTxnKey.LegacyKeys(", "LiteralDateSets")],
+         call_args=[("SettlementTxnKey.LegacyKeySets(", "LiteralDateSets")],
          before=[("await tx.RollbackAsync(", "input.LearnNotes")],
          why="S4-3/I-8: เทียบเนื้อหาเฉพาะไฟล์รุ่นก่อนของไฟล์นี้ + บรรทัดที่เติมจากไฟล์ฉบับแก้สืบลายนิ้วมือของไฟล์รุ่นก่อน · I-1 คีย์รุ่นก่อนคิดจากวันที่ตามตัวอักษรด้วย "
              "(ไฟล์ก่อน deploy ต้องถูกจับว่าซ้ำ) + เส้นรอบลงบัญชีแล้วบอกเหตุจริง · I-3 ข้อความจำเฉพาะหลังเส้น rollback"),
@@ -2033,7 +2033,7 @@ RULES += [
          why="S3-7: การรับชำระที่จะถูกยกเลิกต้องเข้าด่านด้วย (ไม่ส่ง = ด่านไม่เห็น §78/1 ของเดือนที่ยื่นแล้ว)"),
     dict(file=SETTLE_POST, method="OrphanArtifactsAsync",
          must=["LoadUnpostFactsAsync(", "SettlementUnpostGate.Evaluate(", "SettlementOrphanTriage.Split(", "OrphanChildrenAsync(",
-               "SettlementPostingKeys.PaymentMarkerHead", "SettlementArtifactGuard.BatchIdFromPaymentNotes(", "d.SettlementOrphanAckAt",
+               "p.SettlementBatchId != null && deadIds.Contains(p.SettlementBatchId.Value)", "d.SettlementOrphanAckAt",
                "p.Payment.SettlementOrphanAckAt"],
          call_args=[("SettlementUnpostGate.Evaluate(", "unpostPays"), ("SettlementOrphanTriage.Split(", "refusals"),
                     ("SettlementOrphanTriage.Split(", "children")],
@@ -2052,7 +2052,7 @@ RULES += [
     dict(file=SETTLE_POST, method="AcknowledgeOrphanAsync",
          must=["SettlementOrphanTriage.AckReasonProblem(", "PermissionKeys.SettlementPost", "JobLock.RunExclusiveAsync(",
                "SettlementChannelLock.Scope", "AcknowledgeOrphanCoreAsync(", "SettlementArtifactGuard.BatchIdFromCreator(",
-               "SettlementArtifactGuard.BatchIdFromPaymentNotes("],
+               "Select(p => p.SettlementBatchId)"],
          must_re=[r"if\s*\(\s*!\s*await\s+_perms\s*\.\s*HasPermissionAsync\s*\([^;]*PermissionKeys\s*\.\s*SettlementPost\s*\)\s*\)\s*return\b"],
          before=[("SettlementOrphanTriage.AckReasonProblem(", "JobLock.RunExclusiveAsync("),
                  ("PermissionKeys.SettlementPost", "JobLock.RunExclusiveAsync(")],
@@ -2064,7 +2064,7 @@ RULES += [
          before=[("SettlementOrphanTriage.AckRefusal(", "BeginTransactionAsync("), ("OrphanArtifactsAsync(", "SettlementOrphanTriage.AckRefusal(")],
          forbid=["AuditLogs.Add(", "ExecuteUpdateAsync("],
          why="ข้อ 10: รับรู้ได้เฉพาะกองยกเลิกไม่ได้จริง — ตัดสินด้วยตัวแยกตัวเดียวกับด่านลงบัญชี (ข้อเท็จจริงสดใต้ล็อก) ก่อนประทับ · ผู้/เวลา/เหตุผล + audit ใน hash chain"),
-    dict(file=SETTLE_POST, method="BuildGateAsync", must=["orphans.Acknowledged", "orphans.Items", "lines.Select(l => l.CreatedBy)"],
+    dict(file=SETTLE_POST, method="BuildGateAsync", must=["orphans.Acknowledged", "orphans.Items", "(l.CreatedBy, l.DecidedBy)"],
          why="ข้อ 10: ของกำพร้าที่รับรู้แล้วต้องถึงด่าน (แสดง ไม่บล็อก) และถึงหน้าจอ · S3-11: ผู้เติมไฟล์เข้ารอบเดิมนับเป็นผู้ทำใน SoD"),
     dict(file=SETTLE_POST, method="PreviewAsync", must=["gate.OrphanItems"],
          why="ข้อ 10: หน้าจอเห็นของกำพร้ารายชิ้น (กอง · ผู้รับรู้ · ปุ่มรับรู้) จากตัวแยกเดียวกับด่าน"),
@@ -2091,7 +2091,7 @@ RULES += [
     dict(file=SETTLE_LINES, method="AssignLineMatchAsync",
          must=["SettlementSaleMatch.AssignRefusal(", "MatchLinesAsync(", "request.PaymentIntentId"],
          before=[("LockChannelAsync(", "MatchLinesAsync("),
-                 ("SettlementSaleMatch.AssignRefusal(", "SetMatch(l, SettlementMatchStatus.Matched, null, intentId)")],
+                 ("SettlementSaleMatch.AssignRefusal(", "SetMatch(l, SettlementMatchStatus.Matched, null, userId, intentId)")],
          why="D-01: เลือกรายการรับชำระได้ด้วยด่านเดียวกับการจับคู่อัตโนมัติ (ผู้สมัครคำนวณสดใต้ล็อก · AssignRefusal ตัวเดียวกับที่หน้าจอติดธง)"),
     dict(file=SETTLE_LINES, method="ToLineView", must=["SettlementSaleMatch.AssignRefusal(", "IsIntentSourced(l)"],
          why="D-01: หน้าจอติดธง 'เลือกได้/เหตุผล' ด้วยตัวตัดสินเดียวกับด่านของ AssignLineMatchAsync · บรรทัดจาก intent ไม่มีปุ่มตัดสิน"),
@@ -2102,7 +2102,7 @@ RULES += [
          forbid=["AuditLogs.Add("],
          why="D-03: เปลี่ยนบัญชีธนาคารของรอบ = ด่านเดียวกับแก้บรรทัด (ล็อกก่อนโหลด · ลงแล้ว/ค้างครึ่งทางแก้ไม่ได้) · tenant · audit"),
     dict(file=SETTLE_IMPORT, method="PersistAsync",
-         must=["SettlementTxnKey.LegacyKeys(", "SettlementTxnKey.MatchByContent(", "StoredRowContentAsync(", "ContentOverlapElsewhereAsync(",
+         must=["SettlementTxnKey.LegacyKeySets(", "SettlementTxnKey.MatchByContent(", "StoredRowContentAsync(", "ContentOverlapElsewhereAsync(",
                "r.TxnDate, r.PayoutRef)"],
          forbid=["r.TxnDate, payoutRef)"],
          before=[("SettlementTxnKey.MatchByContent(", "_db.SettlementLines.Add(")],
@@ -2186,13 +2186,14 @@ RULES += [
     dict(file="Helpers/SettlementPostingGuards.cs", method="LockBatchRowAsync", must=["ExecuteSqlRawAsync("], must_lit=["FOR SHARE"],
          why="S3-8: ล็อกแถวรอบโอน FOR SHARE (ตัวเดียวของ CheckLockedAsync และ CheckDocumentPaymentsAsync)"),
     dict(file="Helpers/SettlementPostingGuards.cs", method="CheckDocumentPaymentsAsync",
-         must=["BatchIdFromPaymentNotes(", "BatchStateAsync(", "PaidDocumentVoidReason(", "SettlementUnpostScope.IsUnposting("],
+         must=["p.SettlementBatchId != null", "BatchStateAsync(", "PaidDocumentVoidReason(", "SettlementUnpostScope.IsUnposting("],
          before=[("LockBatchRowAsync(", "BatchStateAsync("), ("BatchStateAsync(", "PaidDocumentVoidReason(")],
          call_args=[("LockBatchRowAsync(", "companyId")],
          why="รอบ 200 ทีม V1 (คำตัดสินข้อ 9 · S3-5): ใบขายที่รอบโอน Posted รับชำระ — ข้อความ 409 ต้องพาไปทางที่ถูก (ยกเลิกและออกใบแทน · "
              "ใบลดหนี้ · ยกเลิกการลงบัญชี) ทุกทางเข้า · ล็อกแถวรอบโอนก่อนอ่านเมื่อเรียกใต้ธุรกรรม (S3-8)"),
     dict(file=DOCSVC, method="VoidPaymentAsync",
-         must=["SettlementArtifactGuard.CheckAsync(", "SettlementArtifactGuard.BatchIdFromPaymentNotes("],
+         must=["SettlementArtifactGuard.CheckAsync(_db, companyId, payment.SettlementBatchId)",
+               "SettlementArtifactGuard.CheckLockedAsync(_db, companyId, locked.SettlementBatchId)"],
          before=[("SettlementArtifactGuard.CheckAsync(", "BeginTransactionAsync(")],
          why="C-5: การรับชำระของรอบโอนที่ลงบัญชีแล้วยกเลิกทีละรายการไม่ได้ (ต้องผ่าน Unpost)"),
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="VoidAsync",
@@ -2220,7 +2221,7 @@ RULES += [
          must_re=[r"b\s*\.\s*CompanyId\s*==\s*companyId"],
          why="R-A12: รอบก่อนหน้า = ช่องทางเดียวกัน · ไม่นับรอบที่ยกเลิก/ลบ · tenant"),
     dict(file=SETTLE_POST, method="PendingReceiptsElsewhereAsync",
-         must=["SettlementCrossBatchReceipts.PendingElsewhere(", "SettlementPostingKeys.PaymentMarker(", "l.BatchId != batchId",
+         must=["SettlementCrossBatchReceipts.PendingElsewhere(", "otherBatches.Contains(p.SettlementBatchId.Value)", "l.BatchId != batchId",
                "SettlementBatchStatus.Matched"],
          must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId", r"p\s*\.\s*CompanyId\s*==\s*companyId"],
          forbid=["SettlementBatchStatus.Posted"],
@@ -2491,9 +2492,9 @@ RULES += [
          why="T-7: JE เก่าที่มี JE ปรับปรุงอ้างเลขในช่องอ้างอิงแล้ว ไม่ฟ้องซ้ำ (หลักฐาน ไม่ใช่ fuzzy)"),
     # V2
     dict(file=SETTLE_POST, method="OrphanArtifactsAsync",
-         must=["parts.Contains(p.Notes.Substring("],
+         must=["deadIds.Contains(p.SettlementBatchId.Value)"],
          call_args=[("SettlementOrphanTriage.Split(", "current")],
-         why="V2-C4: กรองการรับชำระของรอบตายใน SQL · V2-P1: ตัวแยกรู้รอบที่กำลังลง/ตรวจเทียบ"),
+         why="V2-C4: กรองการรับชำระของรอบตายใน SQL (รอบ 201 A-ST1: ด้วยคอลัมน์เจ้าของ) · V2-P1: ตัวแยกรู้รอบที่กำลังลง/ตรวจเทียบ"),
     dict(file=SETTLE_POST, method="AcknowledgeOrphanCoreAsync",
          must=["_db.ChangeTracker.Clear()", "checkedBatchId = checkedBatch?.BatchId"],
          call_args=[("OrphanArtifactsAsync(", "checkedBatch")],
@@ -3434,6 +3435,92 @@ RULES += [
          why="A-GW10: ตารางเมนู→สิทธิ์ตัวเดียว · ตรวจด้วยด่านเดียวกับ endpoint"),
 ]
 
+# ── รอบ 201 ทีม ST (Settlement · BACKLOG §1.2 A-ST1..9 · คำตัดสินข้อ 82 C-9 · คำถามค้าง DV Q1): เทสต์ SettlementRound201StTests ล็อกตัวตัดสิน pure —
+#    ที่นี่ล็อกว่า service เรียกจริง/ใช้ผล/ลำดับถูก (ป้ายใน Payment.Notes ห้ามมีผล = NOTES_MARKER_FORBID ทั้งเรพ) ──
+_ST_WHY_OWNER = ("รอบ 201 ทีม ST (A-ST1): เจ้าของการรับชำระของรอบโอน = คอลัมน์ Payment.SettlementBatchId ประทับใน SaveChanges เดียวกับ INSERT "
+                 "(SettlementPaymentOwner) แล้วตรวจว่าประทับจริง — ป้ายใน Notes (ผู้ใช้พิมพ์ได้) ไม่มีผลกับด่านใด")
+RULES += [
+    dict(file=SETTLE_POST, method="EnsureReceiptAsync",
+         must=["SettlementPaymentOwner.StampOnSave(_db, batch.Id, r.DocumentId)", "p.SettlementBatchId == batch.Id",
+               "p.CompanyId == companyId"],
+         must_re=[r"AnyAsync\s*\([^;]*SettlementBatchId\s*==\s*batch\s*\.\s*Id[^;]*\)\s*\)\s*throw\s+new\s+BusinessRuleException\b"],
+         before=[("SettlementPaymentOwner.StampOnSave(", "_documents.CreatePaymentAsync(")],
+         why=_ST_WHY_OWNER),
+    dict(file=SETTLE_POST, method="OrphanArtifactsAsync", forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    dict(file=SETTLE_POST, method="PendingReceiptsElsewhereAsync", forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    dict(file=SETTLE_POST, method="AcknowledgeOrphanAsync", forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    dict(file=SETTLE_LINES, method="FrozenPartsAsync", forbid=["p.Notes"],
+         must=["SettlementPieceFingerprint", "new SettlementFrozenParts(components, received, issued)"],
+         why=_ST_WHY_OWNER + " · A-ST8: ชิ้นที่ออกแล้วพกลายนิ้วมือตอนออกไปถึงตัวเทียบ (ไม่ส่ง = ตัวเทียบไม่เคยรู้ว่าเนื้อหาที่ออกคืออะไร)"),
+    dict(file=SETTLE_LINES, method="PostingArtifactsAsync", must=["p.SettlementBatchId == batchId"], forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    dict(file="Helpers/SettlementPostingGuards.cs", method="CheckDocumentPaymentsAsync", forbid=["p.Notes"], why=_ST_WHY_OWNER),
+    # A-ST2: ล็อก gateway ตัวเดียวทุกเส้นที่ประทับ intent (ไฟล์ · จับคู่มือ · จัดประเภท · จับคู่ใหม่ · ยกเลิกรอบ) + ตรวจซ้ำใต้ล็อก
+    dict(file=SETTLE_LINES, method="SyncIntentStampsAsync",
+         must=["LockGatewaysAsync(companyId, batchId, referenced, ct)", "i.SettlementJournalEntryId != null", "takenByLegacy++"],
+         must_re=[r"if\s*\(\s*takenByLegacy\s*>\s*0\s*\)\s*throw\s+new\s+BusinessRuleException\b"],
+         before=[("LockGatewaysAsync(", "_db.PaymentIntents")],
+         why="รอบ 201 ทีม ST (A-ST2 · X-6/X-7): ล็อก gateway ก่อนอ่าน intent แบบติดตาม · intent ที่เส้นเดิมบันทึกรอบโอนไประหว่างนี้ = ล้มดัง (ไม่ประทับซ้ำสองเจ้าของ)"),
+    dict(file=SETTLE_LINES, method="LockGatewaysAsync",
+         must=["LockGatewayAsync(companyId, pc, ct)", "OrderBy(p => p, StringComparer.Ordinal)"],
+         must_re=[r"i\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-ST2: ล็อกทุกผู้ให้บริการของ intent ที่รอบถือ/จะถือ เรียงชื่อก่อน (ลำดับคงที่ กัน deadlock) · tenant"),
+    dict(file=SETTLE_LINES, method="LockGatewayAsync",
+         must=["AdvisoryLockKey.For(companyId, AdvisoryLockKey.GatewaySettlement, providerCode)"], must_lit=["pg_advisory_xact_lock"],
+         why="A-ST2: คีย์ล็อกเดียวกับ GatewaySettlementService/เส้นประกอบ (คงที่ข้ามเครื่อง)"),
+    dict(file=SETTLE_LINES, method="VoidBatchAsync", before=[("LockGatewaysAsync(", "ownedIntents")],
+         why="A-ST2: ล็อก gateway ก่อนตรวจ 'รอบถัดไปมีบรรทัดคืนเงินของ intent ในรอบนี้' (อีกช่องทางที่ผูก config เดียวกันเพิ่มบรรทัดพร้อมกันได้)"),
+    dict(file=SETTLE_IMPORT, method="PersistAsync",
+         must=["LockGatewayAsync(companyId, pc, ct)", "SettlementTxnKey.LegacyKeySets(", "KeyVersion = SettlementTxnKey.StoredKeyVersion", "literalOnly"],
+         forbid=["AdvisoryLockKey.GatewaySettlement"],
+         why="A-ST2: ตัวล็อก gateway ตัวเดียว · A-ST9: บรรทัดใหม่ประทับรุ่นตัวอ่าน + คีย์วันที่ตามตัวอักษรเทียบเฉพาะบรรทัดรุ่นก่อน"),
+    dict(file=SETTLE_IMPORT, method="ExistingKeysAsync", must=["SettlementTxnKey.CountsAsExisting(", "l.KeyVersion"],
+         must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="A-ST9 (R2M-9): คีย์วันที่ตามตัวอักษรนับเป็น 'มีแล้ว' เฉพาะบรรทัดที่นำเข้าด้วยตัวอ่านรุ่นก่อน (ตัวตัดสินเดียว CountsAsExisting)"),
+    # A-ST5 / A-ST6: การรับรู้ผูกกับเหตุ · ไล่ใบที่อ้างทุกชั้น
+    dict(file=SETTLE_POST, method="AcknowledgeOrphanCoreAsync",
+         must=["p.SettlementOrphanAckReasonHash = item.ReasonHash", "d.SettlementOrphanAckReasonHash = item.ReasonHash", "reasonHash = item.ReasonHash"],
+         why="รอบ 201 ทีม ST (A-ST5): การรับรู้ประทับลายนิ้วมือเหตุที่ผู้รับรู้เห็น (ไม่ประทับ = การรับรู้ใหม่ไม่มีผลเลย) + audit"),
+    dict(file=SETTLE_POST, method="OrphanChildrenAsync", must=["SettlementOrphanTriage.MaxChildDepth", "seen.Add("],
+         why="รอบ 201 ทีม ST (A-ST6): ใบที่อ้างทุกชั้น (ลูก → หลาน) ด้วยตัวโหลดเดียวกับ VoidDocumentAsync · กันวน"),
+    # A-ST4: รายงานของกำพร้าระดับช่องทาง
+    dict(file=SETTLE_POST, method="ChannelOrphanReportAsync",
+         must=["OrphanArtifactsAsync(", "SettlementOrphanReport.Build("],
+         must_re=[r"c\s*\.\s*CompanyId\s*==\s*companyId", r"d\s*\.\s*CompanyId\s*==\s*companyId", r"p\s*\.\s*CompanyId\s*==\s*companyId"],
+         why="รอบ 201 ทีม ST (A-ST4): ตัวแยกเดียวกับด่านลงบัญชี · ทิศต่อผังพักจากตัวตัดสินเดียว · tenant ทุก query"),
+    dict(file="Controllers/SettlementController.cs", method="ChannelOrphans",
+         before=[("SettlementPermissionScope.CandidatesHiddenReason(", "_posting.ChannelOrphanReportAsync(")],
+         call_args=[("_posting.ChannelOrphanReportAsync(", "hidden")],
+         why="A-ST4 (D-P5): ผู้มีแค่สิทธิ์ดูเห็นรายการแต่ไม่เห็นยอด — ตัวตัดสินสิทธิ์ตัวเดียวกับหน้ารอบโอน"),
+    # A-ST7: ผู้ตัดสินการจับคู่/จัดประเภทนับเป็นผู้ทำใน SoD
+    dict(file=SETTLE_POST, method="BuildGateAsync",
+         must=["SettlementLineMakers.Of(", "l.DecidedBy", "SettlementPlanFingerprint.IssuedDrift(", "SettlementContentOverlap.AgainstBatchesAsync(",
+               "orphanFirstBatches"],
+         call_args=[("SettlementSummarySupplement.SplitDuplicates(", "supContentHits"), ("DuplicateSalesAsync(", "orphans.Items")],
+         before=[("OrphanArtifactsAsync(", "DuplicateSalesAsync("), ("SettlementLineMakers.Of(", "SettlementPostingGate.Evaluate(")],
+         why="รอบ 201 ทีม ST: A-ST7 ผู้ตัดสินบรรทัดเข้าชุดผู้ทำของ SoD (พารามิเตอร์เดิมของ SodSelfApproval) · A-ST8 เตือนเอกสารที่ออกแล้วซึ่งเนื้อหาไม่ตรงแผน · "
+             "C-9 (ข้อ 82) ตัวแยกของกำพร้ามาก่อน ⇒ ใบกำพร้าที่รับรู้แล้วเป็นใบแรกของวัน + ด่านเนื้อหาซ้ำเทียบบรรทัดของรอบเจ้าของ (รวมที่ถูกลบ)"),
+    dict(file=SETTLE_LINES, method="AssignLineMatchAsync", call_args=[("SetMatch(", "userId")],
+         why="A-ST7: ทุกการจับคู่โดยคนประทับผู้ตัดสิน"),
+    dict(file=SETTLE_LINES, method="ReclassifyLineAsync", must=["MarkDecided(line, userId)", "MarkDecided(other, userId)"],
+         why="A-ST7: การจัดประเภทโดยคน (รวม 'ใช้กับป้ายเดียวกัน') ประทับผู้ตัดสิน"),
+    # A-ST8: ลายนิ้วมือตอนออกเอกสาร
+    dict(file=SETTLE_POST, method="CreateOrAdoptAsync",
+         must=["SettlementPlanFingerprint.PieceHash(gate.Plan, component)", "d.CompanyId == companyId"],
+         before=[("_documents.CreateDocumentAsync(", "SettlementPieceFingerprint =")],
+         why="รอบ 201 ทีม ST (A-ST8): ประทับลายนิ้วมือชิ้นแผนบนเอกสารที่เพิ่งสร้าง (ตัว canonical เดียว PieceHash)"),
+    # C-9 (คำตัดสินข้อ 82)
+    dict(file=SETTLE_POST, method="DuplicateSalesAsync",
+         must=["SettlementSummarySupplement.AckedOrphanCountsAsFirst(d.Id, orphanItems)", "SettlementSummarySupplement.OrphanFirstDuplicates(",
+               "IgnoreQueryFilters()"],
+         must_re=[r"l\s*\.\s*CompanyId\s*==\s*companyId\s*&&\s*l\s*\.\s*ChannelId\s*==\s*channel\s*\.\s*Id"],
+         why="C-9 (ข้อ 82): ใบสรุปกำพร้าที่รับรู้แล้วมีผล = ใบแรกของวัน · รายการเดียวกับรอบเจ้าของ (เลขรายการ/ออเดอร์) = รายได้ซ้ำ · tenant+ช่องทาง"),
+    # คำถามค้าง DV Q1: ผลของการยกเลิกเอกสาร/การรับชำระในเส้นถอยรอบโอนต้องถึงผู้กด
+    dict(file=SETTLE_POST, method="UnpostCoreAsync",
+         must=["docVoid.EtaxCancellationFlag", "docVoid.OutputVatNotice", "voidResult.OutputVatNotice", "notices = etaxFlags"],
+         must_re=[r"var\s+docVoid\s*=\s*await\s+_documents\s*\.\s*VoidDocumentAsync\s*\("],
+         why="รอบ 201 ทีม ST (DV Q1): VoidDocumentAsync คืน PaymentVoidResult แล้ว — ทิ้งผล = ธง e-Tax/ภาษีขายที่ถอยไม่ได้หายเงียบจากผู้กดยกเลิกการลงบัญชี"),
+]
+
 # ── รอบ 198 ทีม C: ทั้งโฟลเดอร์ Services/Settlement/** ห้ามประกอบ JE เอง (ทีม B เขียนไฟล์ในโฟลเดอร์เดียวกัน) ──
 # ── รอบ 201 ทีม AI (A-AI1..A-AI8 · AI/ธนาคาร): เทสต์ล็อกตัวตัดสิน pure (BankAiCandidateGuardTests · BankPatternEvidenceTests ·
 #    BankMatchSingleStandardTests · AiKillSwitchOrchestratorTests · BulkPvStudentTests · AiFeedbackRecorderDiscardTests) ⇒ ล็อกจุดเรียกที่นี่ ──
@@ -3581,6 +3668,76 @@ def settlement_folder_self_test(files) -> list:
         if settlement_folder_errors([(rel, "class __Y { void F() { " + ok + " } }\n")]):
             fails.append(f"self-test SETTLEMENT_FOLDER_FORBID: `{ok}` ถูกฟ้องผิด")
     return fails
+
+# ── รอบ 201 ทีม ST (A-ST1): ป้าย [SETTLEMENT:] ใน Payment.Notes (ผู้ใช้พิมพ์ได้) ห้ามมีผลกับด่านใดอีก — เจ้าของการรับชำระ = คอลัมน์
+#    Payment.SettlementBatchId ตัวเดียว · ทั้งเรพห้ามอ้างตัวอ่านป้าย/ป้ายเอง ยกเว้นไฟล์ที่ "เขียน" ป้ายเป็นข้อความให้คนอ่าน (SettlementPosting.cs:
+#    ตัวสร้างข้อความ + SQL backfill ครั้งเดียวตอนสร้างคอลัมน์) ──
+NOTES_MARKER_FORBID = dict(
+    allow={"Helpers/SettlementPosting.cs"},
+    code_patterns=[r"\bBatchIdFromPaymentNotes\b", r"\bPaymentMarker(?:Head)?\b", r"\bPaymentOwnerBackfillSql\b"],
+    literal_patterns=[r"\[SETTLEMENT:"],
+    why="รอบ 201 ทีม ST (A-ST1): ป้ายใน Payment.Notes เป็นข้อความที่ผู้ใช้พิมพ์ได้ — อ่านเจ้าของจากคอลัมน์ Payment.SettlementBatchId "
+        "(ผู้ลงบัญชีประทับผ่าน SettlementPaymentOwner) · backfill จากป้ายมีที่เดียวใน SettlementPostingKeys.PaymentOwnerBackfillSql "
+        "ซึ่ง DatabaseMigrationHelper.PaymentSettlementOwnerMigrationSql เรียกครั้งเดียวตอนสร้างคอลัมน์",
+)
+NOTES_MARKER_MIGRATION_CALLER = "Data/DatabaseMigrationHelper.cs"
+
+
+def notes_marker_files():
+    out = []
+    for path in sorted(SRC.rglob("*.cs")):
+        rel = str(path.relative_to(SRC))
+        if "/bin/" in "/" + rel or "/obj/" in "/" + rel:
+            continue
+        out.append((rel, path.read_text(encoding="utf-8")))
+    return out
+
+
+def notes_marker_errors(files) -> list:
+    errs = []
+    for rel, text in files:
+        if rel in NOTES_MARKER_FORBID["allow"]:
+            continue
+        checks = [(mask(text), NOTES_MARKER_FORBID["code_patterns"]), (mask(text, keep_strings=True), NOTES_MARKER_FORBID["literal_patterns"])]
+        for code, pats in checks:
+            for rx in pats:
+                for m in re.finditer(rx, code):
+                    # ผู้เรียก backfill ที่อนุญาตตัวเดียว (เรียกใน DO block ตอนสร้างคอลัมน์)
+                    if rel == NOTES_MARKER_MIGRATION_CALLER and m.group(0) == "PaymentOwnerBackfillSql":
+                        continue
+                    line = code.count("\n", 0, m.start()) + 1
+                    errs.append(f"{rel}:{line} อ้างป้ายใน Payment.Notes `{m.group(0)}` — {NOTES_MARKER_FORBID['why']}")
+    return errs
+
+
+def notes_marker_self_test(files) -> list:
+    fails = []
+    if not files:
+        return ["self-test NOTES_MARKER_FORBID: ไม่พบไฟล์ .cs (glob ผิด?)"]
+    target = "Services/Settlement/SettlementPostingService.cs"
+    base = dict(files).get(target)
+    if base is None:
+        return [f"self-test NOTES_MARKER_FORBID: ไม่พบ {target}"]
+    if notes_marker_errors([(target, base)]):
+        fails.append(f"self-test NOTES_MARKER_FORBID: {target} ปัจจุบันถูกฟ้อง (ต้องแก้โค้ดก่อน)")
+    for sample in ["var b = SettlementArtifactGuard.BatchIdFromPaymentNotes(p.Notes);",
+                   "var ok = p.Notes.Contains(SettlementPostingKeys.PaymentMarker(batchId));",
+                   "var h = SettlementPostingKeys.PaymentMarkerHead;",
+                   "var ok = p.Notes != null && p.Notes.StartsWith(\"[SETTLEMENT:\");",
+                   "var sql = SettlementPostingKeys.PaymentOwnerBackfillSql();"]:
+        if not notes_marker_errors([(target, base + "\nclass __X { void F() { " + sample + " } }\n")]):
+            fails.append(f"self-test NOTES_MARKER_FORBID: ใส่ `{sample}` แล้วไม่ฟ้อง")
+    for ok in ["// เดิมอ่าน BatchIdFromPaymentNotes(p.Notes) และ [SETTLEMENT:]",
+               "var owner = p.SettlementBatchId;"]:
+        if notes_marker_errors([(target, "class __Y { void F() { " + ok + " } }\n")]):
+            fails.append(f"self-test NOTES_MARKER_FORBID: `{ok}` ถูกฟ้องผิด")
+    # ผู้เรียก backfill ที่อนุญาตต้องผ่าน · แต่ป้ายดิบในไฟล์ migration ต้องถูกฟ้อง
+    if notes_marker_errors([(NOTES_MARKER_MIGRATION_CALLER, "class __Z { string F() => Accounting.Helpers.SettlementPostingKeys.PaymentOwnerBackfillSql(); }\n")]):
+        fails.append("self-test NOTES_MARKER_FORBID: ผู้เรียก backfill ใน DatabaseMigrationHelper ถูกฟ้องผิด")
+    if not notes_marker_errors([(NOTES_MARKER_MIGRATION_CALLER, "class __Z { string F() => \"UPDATE x WHERE n LIKE '[SETTLEMENT:%'\"; }\n")]):
+        fails.append("self-test NOTES_MARKER_FORBID: ป้ายดิบใน DatabaseMigrationHelper ไม่ถูกฟ้อง")
+    return fails
+
 
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
@@ -3906,7 +4063,10 @@ def main() -> int:
     errs += folder_forbid_errors(ocr_files)
     settle_files = settlement_folder_files()
     errs += settlement_folder_errors(settle_files)
-    st = self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
+    marker_files = notes_marker_files()
+    errs += notes_marker_errors(marker_files)
+    st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
+          + notes_marker_self_test(marker_files))
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

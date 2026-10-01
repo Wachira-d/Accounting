@@ -117,6 +117,9 @@ public class SettlementLine : TenantEntity
     /// ผู้นำเข้าใช้แยก "ไฟล์รุ่นก่อนของไฟล์เดียวกัน" ออกจาก "อีกไฟล์ของรอบเดียวกัน" ตอนเทียบเนื้อหา (review198-S4 S4-3 · ทีม I รอบ 200) ·
     /// null = บรรทัดจาก PaymentIntent หรือนำเข้าก่อนรอบ 200 (ใช้พฤติกรรมเดิม — คำนวณย้อนไม่ได้เพราะไม่ได้เก็บแถวดิบ)</summary>
     public string? ImportScope { get; set; }
+    /// <summary>รุ่นของตัวอ่าน/กติกาคีย์ตอนนำเข้า (<c>SettlementTxnKey.StoredKeyVersion</c> · รอบ 201 ทีม ST · A-ST9) — คีย์รุ่นก่อนแบบ "วันที่ตามตัวอักษร"
+    /// เทียบได้เฉพาะบรรทัดที่ค่านี้เป็น null (นำเข้าก่อนมีคอลัมน์) · ห้ามแก้ภายหลัง</summary>
+    public string? KeyVersion { get; set; }
     /// <summary>ยอดมีเครื่องหมาย (รวม VAT ถ้ามี)</summary>
     public decimal Amount { get; set; }
     /// <summary>VAT ที่รวมอยู่ใน <c>Amount</c> ตามที่ไฟล์ระบุ — null = ไฟล์ไม่ระบุ (ระบบแยกเอง ×7/107 ตามโหมดช่องทาง)</summary>
@@ -132,6 +135,12 @@ public class SettlementLine : TenantEntity
     /// <summary>คนตัดสินการจับคู่ของบรรทัดนี้เอง (เลือกเอกสาร / ยืนยันเข้าใบขายสรุป) — การจับคู่อัตโนมัติ (จัดประเภทใหม่ · จับคู่ใหม่ทั้งรอบ)
     /// <b>ห้ามทับ</b> (review198-B R-B1) · ล้างเมื่อประเภทเปลี่ยนข้ามกลุ่มการจับคู่ (<c>SettlementSaleMatch.KeepUserMatch</c>)</summary>
     public bool MatchDecidedByUser { get; set; }
+    /// <summary>ผู้ตัดสินการจับคู่/จัดประเภทของบรรทัดนี้ครั้งล่าสุด (user id แบบเดียวกับ <c>CreatedBy</c>) — รอบ 201 ทีม ST (A-ST7 · review198-S3 S3-11(3)):
+    /// ผู้ตัดสินเป็น "ผู้ทำ" ของเอกสารที่ระบบออกให้ ⇒ ด่าน SoD ของการลงบัญชีนับรวมกับผู้สร้างรอบ/ผู้เติมไฟล์ · null = ระบบตัดสิน หรือบรรทัดก่อนรอบ 201 (ไม่รู้ ⇒ ไม่นับ —
+    /// ผู้สร้างรอบยังถูกนับตามเดิม)</summary>
+    public string? DecidedBy { get; set; }
+    /// <summary>เวลาที่ <see cref="DecidedBy"/> ตัดสิน (UTC)</summary>
+    public DateTime? DecidedAt { get; set; }
 
     public SettlementClassifiedBy ClassifiedBy { get; set; } = SettlementClassifiedBy.None;
     /// <summary>แถว AiFeedback ของการจัดประเภท (กฎเหล็ก #1) — ปิดลูปด้วย RecordUserChoiceAsync ตอนผู้ใช้ยืนยัน/แก้</summary>

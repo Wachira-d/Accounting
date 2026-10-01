@@ -1707,6 +1707,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 | --- | --- | --- | --- |
 | `GET reference` | `Settlement.View` | ได้ | `Helpers/SettlementReferenceCatalog.Build` (ป้ายไทยของ enum ทุกตัว · ประเภทบรรทัดจาก `SettlementLineTypeRules` · บทบาทผังค่าธรรมเนียม · ช่องจับคู่คอลัมน์ · **สถานะที่ตัวกรองรายการใช้ได้ `BatchFilterStatuses` (ไม่มี "ยกเลิกแล้ว" — D-05)**) · `defaultBankAccountId` (มีบัญชีเดียวเท่านั้น · D-03) · `maxUploadBytes`/`maxUploadMessage` (D-P4) · `columnMapMemory {allowed, reason}` (D-P2) + บัญชีธนาคาร/gateway ของบริษัท (tenant) |
 | `GET channels` · `GET channels/{id}` | View | ได้ | `ISettlementChannelService.List/Get` |
+| `GET channels/{id}/orphans` (รอบ 201 ทีม ST · A-ST4) | View (ยอดแสดงเฉพาะ Import/Post — D-P5) | ได้ | `ChannelOrphanReportAsync` — ของกำพร้าของช่องทาง (กอง · เหตุ · ผู้/เวลา/เหตุผลที่รับรู้) + ยอด + ผลต่อผังพัก (`Helpers/SettlementOrphanReport` · ใบสรุป/การรับชำระ = Dr · ใบค่าธรรมเนียม = Cr · ไม่รู้ชิ้น = ไม่เดา) + Σ ค้างผังพักของรายการที่รับรู้แล้ว · ปุ่ม "ของกำพร้า" ที่ `settlement-channels.html` |
 | `POST channels` · `PUT channels/{id}` | **`Settlement.Channels`** | **ห้าม** | `Create/UpdateAsync` (ผังพัก 1134x · โหมด VAT/WHT ค่าธรรมเนียม) |
 | `POST files/inspect` (multipart `file`+`channelId`) | **`Settlement.Import`** | ได้ | `InspectFileAsync` (ไม่บันทึก) |
 | `POST files/import` (multipart `file`+`payload` JSON) | Import | ได้ | `ImportFileAsync` · หัวรอบโอนไม่มี/`"header": null` ⇒ 400 ไทย (D-07 — เดิม 500) · **จำการจับคู่คอลัมน์ไว้กับช่องทางเฉพาะผู้มีสิทธิ์ `Settlement.Channels` และไม่ใช่คีย์ API** (`SettlementPermissionScope.ColumnMapMemory` · ด่านเดียวกับ `PUT channels` เพราะแผนที่คอลัมน์กำหนดเครื่องหมาย/VAT ของทุกรอบถัดไป · ไม่ผ่าน = นำเข้าได้ แต่ไม่จำ + คำเตือนในผล · D-P2) |
@@ -1737,6 +1738,32 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   รายขา + ผังค่าใช้จ่ายรายบรรทัดของใบค่าธรรมเนียม + บัญชีธนาคาร/ผังพัก · สีผลต่างจาก `plan.balanced` · หัวรอบโอนแสดง/เปลี่ยนบัญชีธนาคาร · ฟอร์มนำเข้าไม่เลือกบัญชีธนาคารให้
   (เว้นมีบัญชีเดียว) · ช่อง "จำการจับคู่คอลัมน์" ถูกแทนด้วยเหตุผลเมื่อผู้ใช้ไม่มีสิทธิ์ · ตัวกรองสถานะไม่มี "ยกเลิกแล้ว" · รายการรอบ "โหลดรอบที่เก่ากว่า" ·
   **ยังไม่ผูกแพ็กเกจ** (`SubscriptionMiddleware.RouteFeatureMap` ไม่มี `/settlement` — คำตัดสินเจ้าของข้อ 5 · ทีม G รับไป)
+
+**รอบ 201 ทีม ST** (รายงาน `erp-review/2026-10-01/team-ST.md` · BACKLOG §1.2 · คำตัดสินข้อ 82 C-9):
+- **A-ST1 เจ้าของการรับชำระ = คอลัมน์ `Payment.SettlementBatchId`** (เดิมป้าย `[SETTLEMENT:{id}]` ใน `Payment.Notes` ที่ผู้ใช้พิมพ์ได้) — ผู้เขียนตัวเดียว:
+  `EnsureReceiptAsync` เปิด `Helpers/SettlementPaymentOwner.StampOnSave` ครอบ `CreatePaymentAsync` ⇒ ตัวฟัง `SavingChanges` ประทับแถว Payment ที่กำลังเพิ่มของใบนั้น
+  **ใน SaveChanges เดียวกับ INSERT** แล้วตรวจว่าประทับจริง (ไม่ประทับ = 409 `SETTLEMENT-RECEIPT-OWNER`) · `CreatePaymentRequest` **ไม่มีช่องนี้** (เส้นรับชำระทั่วไป/API ตั้งไม่ได้) ·
+  ผู้อ่านทั้งหมดย้ายมาอ่านคอลัมน์: `SettlementPaymentsAsync` · ตัวหาของกำพร้า · ปุ่มรับรู้ · รับชำระข้ามรอบ (`PendingReceiptsElsewhereAsync`) · `FrozenPartsAsync` ·
+  `PostingArtifactsAsync` · `SettlementArtifactGuard.CheckDocumentPaymentsAsync` · `DocumentService.VoidPaymentAsync` (2 นิพจน์ — ช่วงเมธอดทีม DV) · ตัวอ่านป้าย
+  `BatchIdFromPaymentNotes` ถูกถอด · migration `PaymentSettlementOwnerMigrationSql` สร้างคอลัมน์ + **backfill ครั้งเดียวตอนสร้างคอลัมน์** (advisory lock คีย์คงที่ ·
+  เฉพาะป้ายที่พิสูจน์ได้: ป้ายอยู่ต้น Notes + ข้อความระบบ + รอบโอนของบริษัทเดียวกัน + `Reference` = เลขรอบโอน + e-Wallet + มีผังพัก — `SettlementPostingKeys.PaymentOwnerBackfillSql`) +
+  index `IX_Payments_Company_SettlementBatch` · ป้ายใน Notes ยังเขียนให้คนอ่าน แต่**ไม่มีผลกับด่านใด** (`tools/required_call_site_check.py` NOTES_MARKER_FORBID ทั้งเรพ)
+- **A-ST2** เส้นนำเข้าไฟล์/จับคู่มือ/จัดประเภท/จับคู่ใหม่/ยกเลิกรอบ ถือล็อก gateway ตัวเดียวกับเส้นประกอบและ `GatewaySettlementService` (`LockGatewaysAsync` ใน
+  `SyncIntentStampsAsync` + `VoidBatchAsync` · `LockGatewayAsync` ตัวเดียวรวม `PersistAsync`) · ตรวจซ้ำใต้ล็อก: intent ที่เส้นเดิมบันทึกรอบโอนไประหว่างนี้ ⇒ 409 `SETTLEMENT-INTENT-TAKEN`
+- **A-ST3** ยอดไม่ลงตัวของรอบที่ประกอบจาก intent โดยไม่กรอก "ถึงวันที่" ⇒ ทางไปต่อชี้ให้ประกอบใหม่โดยกรอกถึงวันที่ (ผู้ให้บริการ T+0) ก่อนเติมบรรทัดปรับปรุง (`SettlementBatchMath.UnbalancedNextStep`)
+- **A-ST5** การรับรู้ของกำพร้าประทับลายนิ้วมือเหตุ (`SettlementOrphanAckReasonHash` บน Document/Payment · `SettlementOrphanTriage.ReasonHash` จากรหัสโครงสร้างของเหตุ) ⇒
+  เหตุเปลี่ยน = การรับรู้เดิมไม่มีผล (รับรู้ใหม่ได้) · **การรับรู้ก่อนรอบ 201 (ไม่มีลายนิ้วมือ) = ไม่ครอบ** (DOCTRINE §1) ⇒ ต้องรับรู้ใหม่หนึ่งครั้ง
+- **A-ST6** ใบที่อ้างของกำพร้าไล่ทุกชั้น (`OrphanChildrenAsync` ≤ `MaxChildDepth` · กันวน) · หลานที่ยกเลิกไม่ได้ ⇒ ใบกำพร้าอยู่กองยกเลิกไม่ได้จริง (ข้อความบอกสายเอกสาร)
+- **A-ST7** ผู้ตัดสินการจับคู่/จัดประเภทรายบรรทัด (`SettlementLine.DecidedBy/DecidedAt`) เข้าชุดผู้ทำของ SoD การลงบัญชี (`Helpers/SettlementLineMakers` → พารามิเตอร์เดิมของ `SodSelfApproval`)
+- **A-ST8** เอกสารที่ผู้ลงบัญชีสร้างประทับลายนิ้วมือชิ้นแผน (`Document.SettlementPieceFingerprint` · `SettlementPlanFingerprint.PieceHash`) — ตัวเทียบรอบค้างครึ่งทางยอมให้แก้
+  ที่ทำให้ชิ้นกลับมาตรงที่ออกไปจริง · พรีวิวเตือน (ไม่บล็อก) `IssuedPieceDrift` เมื่อเอกสารที่ลงไว้มีเนื้อหาไม่ตรงแผนปัจจุบัน · ไม่มีลายนิ้วมือ = พฤติกรรมเดิม
+- **A-ST9** `SettlementLine.KeyVersion` (`SettlementTxnKey.StoredKeyVersion`) · คีย์รุ่นก่อนที่คิดด้วยวันที่ตามตัวอักษรนับว่า "นำเข้าแล้ว" เฉพาะบรรทัดที่ไม่มีรุ่น (นำเข้าก่อนรอบ 201) —
+  แถวคืนเงินยอดเท่ากันข้ามเที่ยงคืนไม่ถูกข้ามว่าซ้ำกับอีกรายการ (`LegacyKeySets` · `CountsAsExisting`)
+- **C-9 (ข้อ 82)** ใบสรุปของรอบที่ยกเลิกแล้วซึ่ง**รับรู้แล้วและการรับรู้มีผล** = ใบแรกของวันของใบสรุปเพิ่มเติม (เดิมบล็อกเป็นรายได้ซ้ำถาวร) · ด่านเนื้อหาซ้ำทำงานต่อ:
+  `SplitDuplicates` เทียบบรรทัดของรอบเจ้าของ (รวมที่ถูกลบพร้อมรอบ — `SettlementContentOverlap.AgainstBatchesAsync`) + เลขรายการ/เลขออเดอร์ตรงรอบเจ้าของ = รายได้ซ้ำ
+  (`SettlementSummarySupplement.OrphanFirstDuplicates`) · ตัวแยกของกำพร้าย้ายมาก่อน `DuplicateSalesAsync` ใน `BuildGateAsync`
+- **คำถามค้าง DV Q1** `UnpostCoreAsync` รวมผลของ `VoidDocumentAsync` (ธง e-Tax · ภาษีขายที่ถอยไม่ได้) เข้าข้อความผลการยกเลิกการลงบัญชี + audit (`notices`) — เดิมทิ้งผล
+- **A-ST10 NOT-A-BUG**: `DocumentLineDeliveryService.SendDocumentLineAsync` ไม่มีผู้เรียก (มีแค่ DI) ⇒ ไม่มีการส่งเอกสารผ่าน LINE ให้นับเป็นหลักฐาน (`DocumentDeliveryEvidence` บันทึกเงื่อนไขถ้าจะต่อสาย)
 
 **ผังบัญชีใหม่** (`ChartOfAccountTemplates` + migration ใส่ให้บริษัทเดิมที่มีกลุ่มแม่ · `ON CONFLICT DO NOTHING` · ไม่ย้ายยอด): 11350 เงินที่ผู้ให้บริการกัน/ระงับไว้ ·
 53170 ค่าธรรมเนียมรับชำระเงิน · 57140 ขาดทุนจากการถูกปฏิเสธรายการ (chargeback) · **11341–11349 ไม่ seed** (สร้างตอนผูกช่องทาง)
@@ -4202,3 +4229,5 @@ _ก่อนหน้า: 2026-09-25 (รอบ 195 ทีม I: ใบ Scommer
 _ก่อนหน้า: 2026-09-25 (รอบ 194 ฝ่ายค้านถดถอย/ความปลอดภัย: C1 ลักษณะเงินของช่องมัดจำราคา/ค่าเริ่มต้น · C3 ใบเงินประกันถูกยกเลิก · C4 ข้อความ · P4 · P6 — commit <pending>)_
 
 _ก่อนหน้า: 2026-09-24 (รอบ 193 — **คำตัดสินเจ้าของ 37 ข้อ + ผลตรวจการตั้งค่า/มัดจำ** · 13 ทีม + ฝ่ายค้าน 3 รอบ: มัดจำ 3 โหมด + หักฐานมัดจำก่อน VAT ทุกเส้น (§2.3/§3.7/§6.5) · ยอดชำระจริง/บรรทัดปรับ (§3.4) · ผลต่างปัดเศษ 54960 (§6.2j) · การรับทราบคำเตือน 4 แหล่ง + e-Tax hook ทุกทางเข้า (§3.2) · ธง VAT stopgap + §82/5 (§7) · คีย์ผู้ติดต่อเลขภาษี+สาขา (§6.2i) · ด่านไฟล์แนบ/สแกน/ใบเบิก (§6.2h) · retention สแกน (§6.3) · POS COGS/void (§2.6) · เงินเดือน (§3.8) · hash chain v2 (§6.1) · **หลังฝ่ายค้านรอบสาม**: ฐานมัดจำช่องแยก `DepositBaseDeducted` (R3-1) · ด่านทางเดียว (R3-5) · idempotency Integration ข้าม Voided 6 เมธอด (R3-6) · ตาข่าย void ล้มดัง (B1) · ล็อกมัดจำ (B2) · ที่พัก `AdoptTaxId` รูปใหม่ — 04ce362 · **หลังฝ่ายค้านรอบสี่**: ลายเซ็นลูกค้า `IsSignatureCurrent` + hash v2 (§2.8/§3.2 · de5dc4cd) · migration ฐานมัดจำครั้งเดียว + `[DEPOSIT-BASE-SPLIT]` + ฝั่งขายเท่านั้น (c3820dce) · ชื่อตรงตัว = ชื่อแกน + รูปนิติบุคคล · `[TAXID-CHECKSUM]` (§6.2i · cb552889) · ข้อความขาดตอน (§6.1 · 960e98cd) · รายละเอียดรอบ `CHANGELOG.md` — commit 7a16f097)_
+
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม ST — Settlement (§2.10): เจ้าของการรับชำระ = คอลัมน์ `Payment.SettlementBatchId` + backfill ครั้งเดียว (A-ST1) · ล็อก gateway ทุกเส้นที่ประทับ intent (A-ST2) · ข้อความยอดไม่ลงตัวของ intent (A-ST3) · รายงานของกำพร้าระดับช่องทาง (A-ST4) · ลายนิ้วมือเหตุของการรับรู้ (A-ST5) · ใบที่อ้างทุกชั้น (A-ST6) · ผู้ตัดสินบรรทัดใน SoD (A-ST7) · ลายนิ้วมือชิ้นตอนออกเอกสาร (A-ST8) · รุ่นคีย์ต่อบรรทัด (A-ST9) · C-9 ใบกำพร้าที่รับรู้ = ใบแรกของวัน · unpost รวมผล VoidDocumentAsync (DV Q1) — commit 07baa11b)_

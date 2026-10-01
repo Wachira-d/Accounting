@@ -229,6 +229,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DistinctConfirmedBy" uuid NULL;""",
             """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DistinctConfirmedReason" text NULL;""",
         };
+        // รอบ 201 ทีม ST — บล็อกของทีมอยู่ท้ายไฟล์ (Round201SettlementStatements) · ผังต้องเป็นคำสั่งสุดท้ายของชุดนี้ (เทสต์ล็อก)
+        list.AddRange(Round201SettlementStatements());
         list.Add(Accounting.Helpers.SettlementChartSeed.MigrationSeedSql());
         return list;
     }
@@ -7187,4 +7189,46 @@ public static class DatabaseMigrationHelper
             $mig$;
             """;
     }
+
+    // ═══ รอบ 201 ทีม ST (Settlement) ═══
+    /// <summary>รอบ 201 ทีม ST — คอลัมน์ใหม่ของ settlement (ADD COLUMN IF NOT EXISTS · ค่าเดิม NULL = พฤติกรรมเดิม/ไม่รู้) ·
+    /// A-ST1: <c>Payments.SettlementBatchId</c> สร้าง<b>พร้อม backfill ครั้งเดียว</b> (<see cref="PaymentSettlementOwnerMigrationSql"/>) + index ·
+    /// A-ST5: ลายนิ้วมือเหตุของการรับรู้ของกำพร้า · A-ST7: ผู้ตัดสินการจับคู่/จัดประเภทรายบรรทัด · A-ST8: ลายนิ้วมือชิ้นของแผนตอนออกเอกสาร</summary>
+    internal static IReadOnlyList<string> Round201SettlementStatements() => new List<string>
+    {
+        PaymentSettlementOwnerMigrationSql(),
+        """CREATE INDEX IF NOT EXISTS "IX_Payments_Company_SettlementBatch" ON "Payments" ("CompanyId", "SettlementBatchId") WHERE "SettlementBatchId" IS NOT NULL;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckReasonHash" text NULL;""",
+        """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "SettlementOrphanAckReasonHash" text NULL;""",
+        // A-ST7: ผู้ตัดสินการจับคู่/จัดประเภทรายบรรทัด — NULL = ระบบตัดสิน/บรรทัดก่อนรอบ 201 (ไม่นับใน SoD · ผู้สร้างรอบยังนับ)
+        """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DecidedBy" text NULL;""",
+        """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DecidedAt" timestamptz NULL;""",
+        // A-ST8: ลายนิ้วมือชิ้นแผนตอนออกเอกสาร — NULL = เอกสารเดิมทุกใบ (ไม่รู้ ⇒ ตัวเทียบใช้แผนก่อน/หลังแก้แบบเดิม)
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SettlementPieceFingerprint" text NULL;""",
+        // A-ST9: รุ่นของตัวอ่าน/กติกาคีย์ตอนนำเข้า — NULL = บรรทัดเดิมทุกแถว (ถือว่าตัวอ่านรุ่นก่อน ⇒ คีย์วันที่ตามตัวอักษรยังเทียบได้ = พฤติกรรมเดิม)
+        """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "KeyVersion" text NULL;""",
+    };
+
+    /// <summary>รอบ 201 ทีม ST (A-ST1) — สร้าง <c>Payments.SettlementBatchId</c> และเติมเจ้าของจากป้ายเดิม<b>ในขั้นเดียวกับที่คอลัมน์ถูกสร้างเท่านั้น</b>
+    /// (ตรวจ information_schema ก่อน · มีคอลัมน์แล้ว = ไม่ทำอะไร — ฐานใหม่จาก EnsureCreated ไม่มีข้อมูลให้เติม) · ครอบ <c>pg_advisory_xact_lock</c> คีย์คงที่ ⇒
+    /// สองเครื่องบูตพร้อมกันทำครั้งเดียว · <b>ห้าม backfill ซ้ำทุกบูต</b>: ป้ายที่ผู้ใช้พิมพ์หลัง deploy (รูปแบบตรง) จะถูกนับเป็นเจ้าของ = ช่องโหว่เดิม ·
+    /// เงื่อนไข "ป้ายที่พิสูจน์ได้" อยู่ที่ <see cref="Accounting.Helpers.SettlementPostingKeys.PaymentOwnerBackfillSql"/> ตัวเดียว</summary>
+    internal static string PaymentSettlementOwnerMigrationSql() => """
+        DO $mig$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(__LOCK_KEY__);
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = current_schema() AND table_name = 'Payments' AND column_name = 'SettlementBatchId') THEN
+            RETURN;
+          END IF;
+          ALTER TABLE "Payments" ADD COLUMN "SettlementBatchId" uuid NULL;
+          __BACKFILL__
+        END
+        $mig$;
+        """.Replace("__LOCK_KEY__", PaymentSettlementOwnerLockKey, StringComparison.Ordinal)
+           .Replace("__BACKFILL__", Accounting.Helpers.SettlementPostingKeys.PaymentOwnerBackfillSql(), StringComparison.Ordinal);
+
+    /// <summary>คีย์ล็อกของการสร้างคอลัมน์/เติมเจ้าของข้างบน — deterministic ข้ามเครื่อง (FNV ผ่าน AdvisoryLockKey · ห้าม GetHashCode)</summary>
+    internal static string PaymentSettlementOwnerLockKey =>
+        Accounting.Helpers.AdvisoryLockKey.For("db-migration", "Payments.SettlementBatchId").ToString(System.Globalization.CultureInfo.InvariantCulture);
 }

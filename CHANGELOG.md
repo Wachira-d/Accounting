@@ -4114,3 +4114,12 @@ _2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้า�
 - **DV-O7** แถบรายงานข้อ 44 บอก "… อีก N รายการ" ต่อกลุ่ม
 - เทสต์ `VoidReissueR201DvTests` +3 (DVO1/DVO2/DVO6) + Theory +2 เคส · required_call_site ปรับ 7 แถว +4 — commit 8c5e36d2)_
 
+_2026-10-01 รอบ 201 ทีม ST — Settlement (BACKLOG §1.2 A-ST1..10 + C-9 · รายงาน `erp-review/2026-10-01/team-ST.md`):
+- **A-ST1** เจ้าของการรับชำระ = `Payment.SettlementBatchId` (ประทับใน SaveChanges เดียวกับ INSERT ผ่าน `Helpers/SettlementPaymentOwner` · ผู้อ่าน 8 จุดย้ายมาอ่านคอลัมน์ · `BatchIdFromPaymentNotes` ถูกถอด ·
+  backfill ครั้งเดียวตอนสร้างคอลัมน์เฉพาะป้ายที่พิสูจน์ได้ · checker NOTES_MARKER_FORBID ทั้งเรพ) · แตะ `DocumentService.VoidPaymentAsync` 2 นิพจน์ (ช่วงทีม DV)
+- **A-ST2** ล็อก gateway ทุกเส้นที่ประทับ intent + ตรวจซ้ำใต้ล็อก · **A-ST3** ทางไปต่อของยอดไม่ลงตัวเมื่อไม่กรอกถึงวันที่ · **A-ST4** `GET settlement/channels/{id}/orphans` + ปุ่มบนหน้าช่องทาง
+- **A-ST5** ลายนิ้วมือเหตุของการรับรู้ของกำพร้า (การรับรู้ก่อนรอบ 201 ต้องรับรู้ใหม่) · **A-ST6** ใบที่อ้างทุกชั้น · **A-ST7** ผู้ตัดสินบรรทัดเข้าชุดผู้ทำของ SoD ·
+  **A-ST8** ลายนิ้วมือชิ้นตอนออกเอกสาร + คำเตือน `IssuedPieceDrift` · **A-ST9** `SettlementLine.KeyVersion` + คีย์วันที่ตามตัวอักษรเทียบเฉพาะบรรทัดรุ่นก่อน
+- **C-9 (ข้อ 82)** ใบสรุปกำพร้าที่รับรู้แล้ว = ใบแรกของวัน + ด่านเนื้อหาซ้ำเทียบรอบเจ้าของ (รวมบรรทัดที่ถูกลบ) · **DV Q1** unpost รวมผล `VoidDocumentAsync` เข้าข้อความ + audit
+- **A-ST10 NOT-A-BUG** (ส่ง LINE ไม่มีผู้เรียก) · เทสต์ `SettlementRound201StTests` (สองทิศทุกข้อ) · ปรับเทสต์เดิม 4 ไฟล์ (การรับรู้ต้องมีลายนิ้วมือ · ตัวอ่านป้ายถูกถอด) ·
+  required_call_site +23 แถว + NOTES_MARKER_FORBID (ปรับแถวเดิม 13) — commit 07baa11b)_

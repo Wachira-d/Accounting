@@ -334,8 +334,9 @@ public class SettlementReview200SfTests
 
     // ═════════════════ V2-C2 / V2-P1: ป้ายการรับรู้ · การรับรู้ครอบรอบไหน ═════════════════
 
+    // รอบ 201 ทีม ST (A-ST5): การรับรู้ประทับลายนิ้วมือเหตุที่รายการแสดงตอนกด (ตัวเดียวกับ service) — ไม่มีลายนิ้วมือ = ไม่ครอบ
     private static readonly SettlementOrphanAck Ack = new(Guid.Parse("88888888-8888-8888-8888-888888888888"), "สมหญิง", Day,
-        "ตรวจแล้วรอบใหม่ไม่ซ้ำ");
+        "ตรวจแล้วรอบใหม่ไม่ซ้ำ", Assert.Single(TriageAccepted(null, null).Items!).ReasonHash);
 
     private static SettlementOrphanTriageResult TriageAccepted(SettlementOrphanAck? ack, SettlementOrphanCurrentBatch? current)
     {
