@@ -4009,3 +4009,5 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม SG — แ�
 - **R2M-13** (ข้อ 27) `SettlementReceiptWht.Remaining` + `SettlementPostingService.RemainingWhtAsync` (ด่าน + `EnsureReceiptAsync`) — WHT ที่ยังไม่ถูกบันทึกของใบ
 - เทสต์ `SettlementReview200SgTests` (สองทิศทุกข้อ · ตัวเลขตัวอย่างในรายงาน) + ปรับ `SettlementReview200SfTests` / `SettlementGatewayPhase2Tests` / `SettlementForeignWhtFollowupTests` ·
   required_call_site +19 แถว/ปรับ 1 (W_FEETAX Compute → `Pp36Legs`) — commit <pending>)_
+
+_Last verified against codebase: 2026-10-01 (รอบ 200 ฝ่ายค้านรอบสาม Z/SG — Z-1 ลูกค้าซ้ำเดิมที่สะกดรูปนิติบุคคลต่างไม่ทำให้สร้างแถวใหม่ทุกสแกน (`OcrCounterpartyMatch.LiteralTieBreak`) · Z-2 ฟอร์มแก้ธีม CMS หนีค่าที่เก็บไว้ (แถวก่อนด่าน RF-2) · SG-1 พรีวิว/บันทึกรอบโอน gateway เส้นเดิมบล็อกเมื่อมีช่องทาง ภ.พ.36 ผูก config (`SettlementBlockReason.ForeignPp36Bound`) · P3 Z-3/Z-4/SG-2 เป็น backlog ใน team-Z/team-SG)_

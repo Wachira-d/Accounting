@@ -139,13 +139,9 @@ public class GatewaySettlementService : IGatewaySettlementService
         var vatRegistered = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct);
         // ฝ่ายค้านรอบสอง R2M-8: ช่องทางรับเงินที่ผูก config นี้ตั้งผู้ให้บริการเป็นต่างประเทศ (ภ.พ.36) ⇒ เส้นนี้ไม่ตั้งหนี้ ภ.พ.36 — บอกบนหน้าที่ใช้บันทึก
         // (ข้อความทางไปต่อตัวเดียวกับด่านโหมดของรอบโอน settlement · GatewayBatchIntentRules.ForeignPp36BoundNextStep)
-        var configIds = configs.Select(c => c.Id).ToList();
-        var foreignBound = providerCode == null || configIds.Count == 0
+        var foreignBound = providerCode == null
             ? new List<string>()
-            : await _db.SettlementChannels.AsNoTracking()
-                .Where(s => s.CompanyId == companyId && s.PaymentProviderConfigId != null
-                    && configIds.Contains(s.PaymentProviderConfigId.Value) && s.FeeVatMode == SettlementFeeVatMode.ForeignPp36)
-                .Select(s => s.DisplayName).ToListAsync(ct);
+            : await ForeignBoundChannelNamesAsync(companyId, configs.Select(c => c.Id).ToList(), ct);
         var foreignWarning = GatewayBatchIntentRules.LegacyForeignChannelWarning(foreignBound);
 
         // ไม่มีจุดตัดวันเงินเข้า (ยังไม่รู้ว่าจะบันทึกรอบไหน) ⇒ ยอดคืนสะสมทั้งหมด
@@ -449,6 +445,16 @@ public class GatewaySettlementService : IGatewaySettlementService
     }
 
     /// <summary>เลือกรายการที่เข้าเงื่อนไข แล้วให้ <see cref="GatewaySettlementMath"/> ตัดสิน + ด่านงวดปิด (G-5)</summary>
+    /// <summary>ชื่อช่องทางรับเงิน (บริษัทนี้) ที่ผูก config ชุดนี้และตั้งผู้ให้บริการเป็นต่างประเทศ (ภ.พ.36) — ใช้ทั้งคำเตือนหน้ารายการค้างโอนและด่านพรีวิว/บันทึก (R2M-8 · SG-1)</summary>
+    private async Task<List<string>> ForeignBoundChannelNamesAsync(Guid companyId, IReadOnlyCollection<Guid> configIds, CancellationToken ct)
+    {
+        if (configIds.Count == 0) return new List<string>();
+        return await _db.SettlementChannels.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.PaymentProviderConfigId != null
+                && configIds.Contains(s.PaymentProviderConfigId.Value) && s.FeeVatMode == SettlementFeeVatMode.ForeignPp36)
+            .Select(s => s.DisplayName).ToListAsync(ct);
+    }
+
     private async Task<(SettlementPlan Plan, List<SettlementCandidate> Candidates)> BuildPlanAsync(
         Guid companyId, RecordSettlementRequest req, CancellationToken ct)
     {
@@ -475,6 +481,16 @@ public class GatewaySettlementService : IGatewaySettlementService
             config?.FeeVatMode ?? GatewayFeeVatMode.None,
             vatRegistered,
             settledOutcomeUnknown);
+
+        if (plan.Ok && config != null)
+        {
+            // ฝ่ายค้านรอบสาม SG-1: ช่องทางที่ผูก config นี้ตั้งผู้ให้บริการเป็นต่างประเทศ (ภ.พ.36) ⇒ เส้นนี้ไม่ตั้งหนี้ ภ.พ.36 (§83/6 นำส่งขาด) —
+            // เดิมเตือนแค่หน้ารายการค้างโอน พรีวิว/บันทึกผ่านเงียบ ⇒ บล็อกทั้งสองจังหวะด้วยข้อความ+ทางไปต่อตัวเดียวกับคำเตือน
+            var foreignWarning = GatewayBatchIntentRules.LegacyForeignChannelWarning(
+                await ForeignBoundChannelNamesAsync(companyId, new[] { config.Id }, ct));
+            if (foreignWarning != null)
+                plan = GatewaySettlementMath.Block(plan, SettlementBlockReason.ForeignPp36Bound, foreignWarning);
+        }
 
         if (plan.Ok)
         {

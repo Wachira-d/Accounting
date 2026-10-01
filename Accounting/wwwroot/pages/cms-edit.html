@@ -1460,8 +1460,8 @@
           <div class="form-group">
             <label class="form-label">${label}</label>
             <div class="color-input">
-              <input type="color" id="${id}" value="${val||'#000000'}" oninput="document.getElementById('${id}_text').value=this.value;Page.previewTheme()">
-              <input type="text" class="form-input" id="${id}_text" value="${val||''}" oninput="document.getElementById('${id}').value=this.value;Page.previewTheme()" style="flex:1;font-family:monospace">
+              <input type="color" id="${id}" value="${Layout.esc(/^#[0-9a-fA-F]{6}$/.test(val||'') ? val : '#000000')}" oninput="document.getElementById('${id}_text').value=this.value;Page.previewTheme()">
+              <input type="text" class="form-input" id="${id}_text" value="${Layout.esc(val||'')}" oninput="document.getElementById('${id}').value=this.value;Page.previewTheme()" style="flex:1;font-family:monospace">
             </div>
           </div>`;
         document.getElementById('themeForm').innerHTML = `
@@ -1499,11 +1499,11 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">มุมโค้ง (Border Radius, px)</label>
-              <input type="number" class="form-input" id="th_radius" value="${t.borderRadius||8}" min="0" max="32">
+              <input type="number" class="form-input" id="th_radius" value="${Number(t.borderRadius)||8}" min="0" max="32">
             </div>
             <div class="form-group">
               <label class="form-label">ความกว้างเนื้อหาสูงสุด</label>
-              <input type="text" class="form-input" id="th_maxWidth" value="${t.maxContentWidth||'1280px'}" placeholder="1280px">
+              <input type="text" class="form-input" id="th_maxWidth" value="${Layout.esc(t.maxContentWidth||'1280px')}" placeholder="1280px">
             </div>
           </div>
           <div class="form-group">

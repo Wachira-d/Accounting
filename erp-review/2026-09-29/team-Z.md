@@ -82,3 +82,12 @@
 - **Q3 (S2-6)** คำขออ่าน `/api/v1` ของบริษัทที่ subscription ถูก**ยกเลิก**ก็อ่านได้ (ถ้อยคำข้อ 23 พูดถึงการเขียน) — ถ้าต้องการให้ยกเลิก = ปิดทั้งหมดเหมือนหน้าเว็บ ต้องตัดสิน
 - **Q4 (RF-3)** `GET document-templates/default/{type}` **สร้าง**เทมเพลตให้เมื่อยังไม่มี (เขียนผ่าน GET · ไม่ผ่านด่าน `CompanySettings.Edit`) — พฤติกรรมเดิม ไม่อยู่ในรายงาน · ไม่แตะ
 - **Q5 (K2-4)** `RecordLineAccountFeedbackAsync` → `AiFeedbackRecorder` ใช้ context เดียวกัน · ถ้า SaveChanges ของตัวบันทึกล้ม แถว feedback ค้าง Modified แบบเดียวกัน — ไม่แตะ (นอกรายงาน · ตัวบันทึกใช้ร่วมหลายเส้น)
+
+## ฝ่ายค้านรอบสาม (main agent ส่ง · 2026-10-01) — ผลและการแก้
+
+| ID | P | สถานะ | ที่แก้ / เหตุผล |
+|---|---|---|---|
+| Z-1 | P2 | ✅ | `OcrCounterpartyMatch.LiteralTieBreak` — ชื่อตรงหลัง normalize หลายแถว (ซ้ำจากบั๊กเดิม สะกดรูปนิติบุคคลต่าง) ไม่มีเลขภาษีขัดกัน ⇒ แถวเดียวที่สะกดตรงตัวกับกระดาษ (พฤติกรรมเดิมก่อนคำค้นเสริม) · เทสต์ `K2_1_LegacyDuplicatesSpelledDifferently_…` (สองทิศ: เลขภาษีคนละเลข/สะกดแบบที่สาม ⇒ ยังกำกวม) |
+| Z-2 | P2 | ✅ | `cms-edit.html` ฟอร์มธีม — สี/ความกว้าง/มุมโค้งผ่าน `Layout.esc`/`Number` (แถวเก่าก่อนด่าน RF-2 ยิงสคริปต์ใส่เจ้าของได้) · ข้อความในคอมมิตทีมว่า "ธีมเก่าถูกกรองตอน render" **ไม่ครอบหน้าแก้ธีม** — แก้แล้วที่ฝั่งหน้า |
+| Z-3 | P3 | 📋 | `CmsRenderingService` `CustomCss` แถวเก่าที่มี `</style` ต่อดิบเข้า `ThemeCss` — วันนี้ไม่มีผู้วางลง `<style>` (storefront ใช้ textContent · theme.css เป็น text/css) ⇒ ยังไม่ใช่ช่องโหว่ |
+| Z-4 | P3 | 📋 | `SyncScanToPostedDocumentAsync` ถอยแค่แถวสแกน ทั้งที่ `SaveChangesAsync` บันทึกทั้ง context — ต้องแยกการบันทึกแถวสแกน (`ExecuteUpdate`) |

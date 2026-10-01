@@ -47,6 +47,8 @@ public enum SettlementBlockReason
     RefundTimingUnknown = 6,
     /// <summary>มีรายการที่การคืนเงินผลไม่แน่ชัด (ฝ่ายค้าน E-2) — ยอดคืนจริงยังไม่รู้ ⇒ ต้องตรวจผลกับผู้ให้บริการก่อน</summary>
     RefundOutcomeUnknown = 7,
+    /// <summary>มีช่องทางรับเงินที่ผูก config นี้ตั้งผู้ให้บริการเป็นต่างประเทศ (ภ.พ.36) — เส้นนี้ไม่ตั้งหนี้ ภ.พ.36 ⇒ ต้องบันทึกผ่านรอบโอน settlement (ฝ่ายค้านรอบสาม SG-1)</summary>
+    ForeignPp36Bound = 8,
 }
 
 /// <summary>บรรทัด JE 1 บรรทัดของการโอนเข้า (ยังไม่ผูก AccountId — ตัวเรียกแปลงเอง)</summary>

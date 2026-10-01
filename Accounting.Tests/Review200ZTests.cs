@@ -133,6 +133,31 @@ public class Review200ZTests
     }
 
     [Fact]
+    public void K2_1_LegacyDuplicatesSpelledDifferently_NoTaxIds_PickTheLiterallyEqualRow_NotANewDuplicate()
+    {
+        // ฝ่ายค้านรอบสาม Z-1: ลูกค้าซ้ำจากบั๊กเดิม (สะกดรูปนิติบุคคลต่างกัน · ไม่มีเลขภาษี) — คำค้นเสริมดึงมาทั้งคู่ ⇒ เดิม "กำกวม" ⇒ สร้างแถวที่สาม ทุกครั้งที่สแกน
+        var legacy = new[]
+        {
+            new OcrCounterpartyCandidate(AmHq, "ห้างหุ้นส่วนจำกัด แอม แฮปปี้เนส", IsCustomer: true),
+            new OcrCounterpartyCandidate(AmBr3, "หจก. แอม แฮปปี้เนส", IsCustomer: true),
+        };
+        var pick = OcrCounterpartyMatch.PickBuyerByName("หจก. แอม แฮปปี้เนส", legacy);
+        Assert.Equal(AmBr3, pick.ContactId);
+        Assert.Equal(OcrCounterpartyNameBasis.ExactName, pick.Basis);
+        Assert.Equal(AmHq, OcrCounterpartyMatch.PickBuyerByName("ห้างหุ้นส่วนจำกัด แอม แฮปปี้เนส", legacy).ContactId);
+
+        // ทิศตรงข้าม: สองแถวถือเลขผู้เสียภาษีคนละเลข = คนละรายแน่ ⇒ ยังกำกวม แม้มีแถวเดียวที่สะกดตรงตัว
+        var twoTaxpayers = new[]
+        {
+            new OcrCounterpartyCandidate(AmHq, "ห้างหุ้นส่วนจำกัด แอม แฮปปี้เนส", true, AmTin, "00000"),
+            new OcrCounterpartyCandidate(AmBr3, "หจก. แอม แฮปปี้เนส", true, "0105555000017", "00000"),
+        };
+        Assert.Null(OcrCounterpartyMatch.PickBuyerByName("หจก. แอม แฮปปี้เนส", twoTaxpayers).ContactId);
+        // กระดาษสะกดแบบที่สามที่ไม่ตรงตัวอักษรกับแถวใด ⇒ ยังกำกวม (ไม่เดา)
+        Assert.Null(OcrCounterpartyMatch.PickBuyerByName("ห้างหุ้นส่วน แอม แฮปปี้เนส", legacy).ContactId);
+    }
+
+    [Fact]
     public void K2_1c_TruncatedName_OnlyANonCustomerContainsIt_CreatesNew_WithANoteNamingTheExistingRow()
     {
         // เดิม: Basis.None ไม่มีโน้ต ⇒ ลูกค้าซ้ำเกิดเงียบ · ตอนนี้ยังไม่ผูกผู้ขายล้วนอัตโนมัติ (อาจคนละราย) แต่บอกชื่อให้เลือกได้

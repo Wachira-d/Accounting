@@ -70,6 +70,8 @@ public static class OcrCounterpartyMatch
             if (SameEntityRow(exact, paperBranchCode) is Guid sameEntity) return new(sameEntity, OcrCounterpartyNameBasis.SameEntityBranch, null);
             var exactCustomers = exact.Where(c => c.IsCustomer).ToList();
             if (exactCustomers.Count == 1) return new(exactCustomers[0].Id, OcrCounterpartyNameBasis.ExactName, null);
+            if (LiteralTieBreak(scannedName, exactCustomers.Count > 0 ? exactCustomers : exact) is Guid literal)
+                return new(literal, OcrCounterpartyNameBasis.ExactName, null);
             return new(null, OcrCounterpartyNameBasis.Ambiguous, AmbiguousNote(scannedName, exact.Count));
         }
 
@@ -125,6 +127,21 @@ public static class OcrCounterpartyMatch
         if (taxes[0].Length != 13 || taxes.Any(t => t != taxes[0])) return null;
         var m = ContactTaxBranchKey.Pick(rows.Select(r => new ContactKeyCandidate(r.Id, r.TaxId, r.BranchCode)), taxes[0], paperBranchCode);
         return m.ContactId;
+    }
+
+    /// <summary>
+    /// ชื่อตรงหลัง normalize หลายแถว (สะกดรูปนิติบุคคลต่างกัน) ที่<b>ไม่มีหลักฐานว่าเป็นคนละราย</b> (เลข 13 หลักที่รู้ไม่เกิน 1 ค่า) ⇒
+    /// แถวเดียวที่ชื่อตรง<b>ตัวอักษร</b>กับกระดาษ (trim · ordinal) — ฝ่ายค้านรอบสาม Z-1: คำค้นเสริม <see cref="PrefilterToken"/> ดึงแถวซ้ำเก่าที่สะกดต่างเข้ามา
+    /// ทำให้บริษัทที่มีลูกค้าซ้ำจากบั๊กเดิมได้ "กำกวม" แล้วสร้างแถวใหม่ทุกครั้งที่สแกน · เดิม (กรอง <c>Contains(ชื่อดิบ)</c>) ผูกแถวที่สะกดตรงตัว ⇒ คงพฤติกรรมนั้น ·
+    /// ตรงตัวอักษร 0 หรือ ≥ 2 แถว หรือเลขผู้เสียภาษีขัดกัน ⇒ null (ยังกำกวม)
+    /// </summary>
+    private static Guid? LiteralTieBreak(string? scannedName, IReadOnlyList<OcrCounterpartyCandidate> rows)
+    {
+        var raw = (scannedName ?? "").Trim();
+        if (raw.Length == 0) return null;
+        if (rows.Select(r => Digits(r.TaxId)).Where(t => t.Length == 13).Distinct(StringComparer.Ordinal).Count() > 1) return null;
+        var literal = rows.Where(r => string.Equals((r.Name ?? "").Trim(), raw, StringComparison.Ordinal)).ToList();
+        return literal.Count == 1 ? literal[0].Id : null;
     }
 
     private static string Digits(string? s) => new((s ?? "").Where(ch => ch >= '0' && ch <= '9').ToArray());
