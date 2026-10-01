@@ -21,14 +21,14 @@ public sealed class AuditChainCommitInterceptor : DbTransactionInterceptor
 
     public override InterceptionResult TransactionCommitting(DbTransaction transaction, TransactionEventData eventData, InterceptionResult result)
     {
-        if (eventData.Context is AccountingDbContext db) db.SealDeferredAuditAtCommit(eventData.TransactionId);
+        if (eventData.Context is AccountingDbContext db) db.SealDeferredAuditAtCommit(eventData.TransactionId, transaction.IsolationLevel);
         return result;
     }
 
     public override async ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction, TransactionEventData eventData,
         InterceptionResult result, CancellationToken cancellationToken = default)
     {
-        if (eventData.Context is AccountingDbContext db) await db.SealDeferredAuditAtCommitAsync(eventData.TransactionId, cancellationToken);
+        if (eventData.Context is AccountingDbContext db) await db.SealDeferredAuditAtCommitAsync(eventData.TransactionId, transaction.IsolationLevel, cancellationToken);
         return result;
     }
 

@@ -4324,3 +4324,13 @@ _2026-10-01 รอบ 201 ทีม TX — แก้ผลฝ่ายค้า�
 - **P2-4** audit "อนุมัติทั้งที่มีคำเตือน" อ้างมาตราของชุดที่ผ่านจริง (`ApprovalAcknowledgement.LegalReference`)
 - **P2-6** ที่พัก ×4 · PlatformBilling ×3 · CMS ×2 จาก `acknowledgeWarnings: true` → `SystemWorkflow` (ผลการอนุมัติเท่าเดิม · ร่องรอยไม่ใช่คนรับทราบ)
 - เทสต์ `Round201TxTests.P12_*/P22_*/P23_*/P24_*` · required_call_site +16 แถว + แก้ RTX-5 (negative test ในสคริปต์ทีม) — commit 4f7daac6)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 6 — ฝ่ายค้านรอบสาม (P1-1 · P1-2 · P2-1 · P2-2):
+- **P1-1** ตัวประทับ audit ตอน commit ล้มดังเมื่อธุรกรรมเป็น Serializable/RepeatableRead/Snapshot และมีแถวรอประทับ (`AuditChainScope.IsolationBlockReason` ·
+  interceptor ส่ง `transaction.IsolationLevel`) · `CreateInvoiceFromObligationAsync` + `AdminAttach` เป็น ReadCommitted + `SELECT … FOR UPDATE` (CompanyId ใน SQL) ·
+  `tools/audit_direct_add_check.py` ratchet ห้าม isolation ระดับ snapshot ใหม่ทั้งเรพ (+ self-test)
+- **P1-2** `OwnershipTransferPolicy.AdminRoleChangeBlock` — หน้าแอดมินตั้ง/ลด Owner ไม่ได้ (ชี้เส้นโอนเจ้าของ) · `AddChainedAuditLog` บทบาทเดิม/ใหม่
+- **P2-1** `AuditInsertBatches` + `AuditChainScope.InsertSql/InsertBatchRows` (500 แถว/คำสั่ง) ทั้ง sync/async
+- **P2-2** `OwnershipTransferPolicy.InvitationRoleBlock` ที่ `InvitationController.Accept` และ `AuthService.ConsumeInvitationAsync`
+- เทสต์ `PlatformRound201Rv3Tests` · `Db/AuditChainCommitDbTests` +2 · required_call_site ปรับ 4 + เพิ่ม 5 แถว — commit adf19a87)_
+

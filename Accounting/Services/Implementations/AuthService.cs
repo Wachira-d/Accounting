@@ -1198,6 +1198,17 @@ public class AuthService : IAuthService
         if (inv != null
             && RegistrationPolicy.IsInvitationUsable(inv.Status, inv.ExpiresAt, inv.Email, user.Email, DateTime.UtcNow))
         {
+            // ฝ่ายค้านรอบสาม P2-2 (รอบ 201 ทีม PL): บทบาทในคำเชิญต้องผ่าน MayAssign ตอนรับด้วย (คำเชิญเก่าที่ค้าง) — ไม่ผ่าน ⇒ ไม่เข้าร่วม
+            // (บัญชียังถูกสร้าง · ผู้ใช้เปิดลิงก์คำเชิญแล้วเห็นเหตุผลจาก InvitationController.Accept) — คำเตือนใน log ไม่ใช่การเงียบ
+            var inviterIsPlatformAdmin = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == inv.InvitedByUserId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();
+            var roleBlocked = Accounting.Helpers.OwnershipTransferPolicy.InvitationRoleBlock(inv.Role, inviterIsPlatformAdmin);
+            if (roleBlocked != null)
+            {
+                _logger.LogWarning("Invitation {InvitationId} role {Role} rejected at acceptance: {Reason}", inv.Id, inv.Role, roleBlocked);
+                return false;
+            }
+
             // เส้น SSO ของ "บัญชีเดิม" เรียกเมธอดนี้ได้ด้วย ⇒ ผู้ใช้อาจเป็นสมาชิก
             // บริษัทนั้นอยู่แล้ว การ Add ซ้ำจะได้สองสิทธิ์ในบริษัทเดียว (บทบาทไหน
             // ชนะขึ้นกับลำดับแถว) — ถือว่าคำเชิญถูกใช้แล้ว แต่ไม่เพิ่มแถวใหม่

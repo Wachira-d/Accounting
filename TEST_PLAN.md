@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **434 ไฟล์ · 4,193 `[Fact]` + 663 `[Theory]` (2,963 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **435 ไฟล์ · 4,199 `[Fact]` + 665 `[Theory]` (2,969 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5226,6 +5226,8 @@ Unit (สองทิศทุกไฟล์ — ใบที่พังกล
 | `AuditChainCheckpointTests` (+2) | PL-X1 · PL-X6 | batch บริษัทเดียว ⇒ แถวลูกได้บริษัทนั้น · หลายบริษัท/ไม่มีบริษัท ⇒ `Guid.Empty` (ไม่เดา) · ไม่เหลือ NULL · แถวที่มีบริษัทไม่ถูกแตะ |
 | `PlatformOwnerRound201Tests` (แก้ C4 ×5) | PL-S1 · PL-S2 · Q3 | support ที่ยังเป็นแอดมิน/Owner/SystemAdmin โอนได้ · แอดมินที่ไม่ใช่ support ของบริษัท/support ที่ถูกถอดสิทธิ์ = DenyNotAllowed · support โอนให้ตัวเอง = DenySelf 403 (Owner ให้ตัวเอง = 409 เดิม) · `MayAssign` SystemAdmin เฉพาะแอดมิน · PlatformSupport ไม่มีใครตั้งได้ |
 | `PlatformHolidayReadersRound201Tests` (3) | PL-B1 | `WarnByFor` เลื่อนพ้นวันหยุด · ว่าง/null เท่าเดิม · มัดจำที่ริบ: วันครบกำหนดเป็นวันหยุด ⇒ ยังทันวันทำการถัดไป (ย้อนเข้างวดรับเงินได้) · ปิดงวดแล้ววันหยุดไม่ช่วย · ด่านกรอกวันหยุดปิดเมื่อมีผู้อ่านค้าง (ระบุชื่อ) / เปิดเมื่อว่าง |
+| `PlatformRound201Rv3Tests` (6 · Theory 6 เคส) | ฝ่ายค้านรอบสาม P1-1/P1-2/P2-1/P2-2 | ReadCommitted/ReadUncommitted/Unspecified ประทับได้ · Serializable/RepeatableRead/Snapshot ⇒ เหตุผลที่บอกทางไปต่อ (FOR UPDATE) · SQL INSERT หลายแถวเรียง placeholder ตามแถว + 500×13 ≤ 65,535 · หน้าแอดมินตั้ง/ลด Owner ไม่ได้ (ชี้เส้นโอน) แต่บทบาทอื่น/ไม่เปลี่ยน/SystemAdmin ได้ · คำเชิญ SystemAdmin จากผู้ไม่ใช่แอดมิน/PlatformSupport ทุกกรณี ⇒ ปฏิเสธตอนรับ · บทบาทบริษัท/SystemAdmin จากแอดมิน ⇒ รับได้ |
+| `Db/AuditChainCommitDbTests` (+2 · trait `Category=Db`) | P1-1 · P2-1 | ธุรกรรม Serializable มีแถว audit ⇒ commit ล้ม ไม่มีแถวถูกบันทึก · Serializable ไม่มีแถว ⇒ commit ได้ · ReadCommitted ⇒ ประทับ · 1,007 แถวในการ commit เดียว (3 ชุด INSERT) ⇒ ลำดับ Id = ลำดับ chain · fork 0 |
 | `AuditRedactionRound201Tests` (5 · Theory 25 เคส) | RV2-1 | ช่องลับ 12 ชื่อ ⇒ ปิด · ธง/ตัวนับ/hash ของ chain/ชื่อธรรมดา 13 ชื่อ ⇒ ไม่ปิด · บันทึก/rotate `PaymentProviderConfig` ⇒ NewValues/OldValues ไม่มีโทเคน/คีย์ แต่มีช่องธรรมดา · แถวเก่าปิดตอนแสดงทุกชั้น · ไม่มีช่องลับ/ไม่ใช่ JSON ⇒ ข้อความเดิมทุกตัวอักษร |
 
 | ID | ขั้นตอน | ผลที่คาด |
@@ -5249,6 +5251,9 @@ Unit (สองทิศทุกไฟล์ — ใบที่พังกล
 | PL-17 | (PL-X2) ออกใบที่ขอเลข JE หลังบันทึกเอกสาร พร้อมกันสองแท็บในบริษัทเดียวกัน (โหลดสูง) | ไม่มี 40P01 ใน log · chain ผ่าน · ระหว่างเรียก HTTP ภายนอก (e-Tax) บริษัทอื่นบันทึกได้ไม่ต่อคิว |
 | PL-18 | (PL-C1/C2) เจ้าของปิดฟีเจอร์ แล้วเปิดหน้าเว็บที่ถาม `features/{x}` หลายครั้ง | ตารางเงาไม่เพิ่ม (GET ไม่บันทึก) · การ์ด "บังคับแพ็กเกจ" ไม่นับแถวเจ้าของปิดฟีเจอร์ (นับแยกที่การ์ด 🔒) |
 | PL-19 | (PL-B1) แอดมินเปิด `admin/platform-holidays.html` | ฟอร์มเพิ่มถูกล็อก + เหตุผลระบุผู้อ่านที่ค้าง (สปส. · §87) · ลบแถวเดิมได้ · POST ตรง ⇒ 409 ข้อความเดียวกัน |
+| PL-21 | (P1-1) ออกใบแจ้งหนี้จากภาระงานเดียวกันสองแท็บพร้อมกัน · ผูกบริษัทสองแห่งเข้า License ที่เหลือช่องเดียวพร้อมกัน | ได้ใบเดียว อีกแท็บได้ "รับรู้รายได้ครบแล้ว" · ผูกได้แห่งเดียว อีกแห่งได้ "License ใช้ครบ" · ตรวจ hash chain ผ่าน (ไม่มี fork) |
+| PL-22 | (P1-2) หน้าแอดมิน "จัดการลูกค้า" เปลี่ยนสมาชิกเป็นเจ้าของ / เปลี่ยนเจ้าของเป็นนักบัญชี | 400 ข้อความไทยชี้ "โอนความเป็นเจ้าของ" · เปลี่ยนนักบัญชี→ผู้ดูได้ และประวัติ audit มีบทบาทเดิม/ใหม่ |
+| PL-23 | (P2-2) เปิดลิงก์คำเชิญบทบาท SystemAdmin ที่เจ้าของบริษัทส่งก่อนรอบ 201 | 403 "คำเชิญนี้ใช้ไม่ได้ ขอคำเชิญใหม่" · ไม่ได้เป็นสมาชิก · สมัครผ่านลิงก์นั้น ⇒ บัญชีถูกสร้างแต่ไม่เข้าร่วมบริษัท (log คำเตือน) |
 | PL-20 | (RV2-1/2) rotate โทเคน webhook แล้วเปิดประวัติการแก้ไข · Omise ยิง webhook URL ใหม่ | audit แสดง `WebhookToken: [redacted]` · แถว audit ของ webhook มี EntityType = รหัสผู้ให้บริการ ไม่ใช่โทเคน · แถวเก่าที่มีโทเคนแสดง `[redacted]` |
 | PL-14 | (B-9) แอดมินเพิ่มวันหยุดสมมติตรงวันที่ 15 ของเดือนหน้า ที่ `admin/platform-holidays.html` | กล่อง "กำหนดยื่นที่เลื่อน" แสดง ภ.พ.30/สปส. ของงวดนั้นเลื่อนไปวันทำการถัดไป · หน้านำส่งภาษีของบริษัทใดก็ได้แสดงวันครบกำหนดใหม่ · ลบวันหยุดแล้วกลับเป็นวันเดิม |
 | PL-15 | (B-9) ไม่มีวันหยุดในตาราง | ทุกหน้าที่แสดงกำหนดยื่นเหมือนก่อนรอบ 201 ทุกวัน |
