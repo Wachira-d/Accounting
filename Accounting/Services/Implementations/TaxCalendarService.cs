@@ -85,6 +85,8 @@ public class TaxCalendarService : ITaxCalendarService
         };
 
         var events = new List<TaxCalendarEvent>();
+        // รอบ 201 ทีม PL (B-9): วันหยุดราชการของแพลตฟอร์ม (ตาราง PlatformHolidays · ว่าง = เลื่อนเฉพาะเสาร์/อาทิตย์ตามเดิม)
+        var holidays = await PlatformHolidayStore.LoadSetAsync(_db, year, year + 2);   // ภ.ง.ด.50 รอบบัญชีไม่ตรงปีปฏิทินตกปี +2 ได้
 
         // Create monthly events for all 12 months
         foreach (var (code, name, remitKey) in monthlyForms)
@@ -95,7 +97,7 @@ public class TaxCalendarService : ITaxCalendarService
                 // เลื่อนกระดาษก่อนแล้วค่อย +8 ⇒ งวดที่วันที่ 7 ตรงเสาร์ ได้ e-Filing
                 // วันที่ 17 ซึ่ง **ช้ากว่าที่กฎหมายให้ 2 วัน** (ของจริงคือ 15 แล้วเลื่อน)
                 var (dueDate, eFiling) =
-                    Accounting.Helpers.TaxFilingDeadline.For(remitKey, year, month);
+                    Accounting.Helpers.TaxFilingDeadline.For(remitKey, year, month, holidays);
                 DateTime? eFilingDueDate = eFiling == dueDate ? null : eFiling;
 
                 events.Add(new TaxCalendarEvent
@@ -137,12 +139,12 @@ public class TaxCalendarService : ITaxCalendarService
             // และ **ไม่เลื่อน e-Filing เลย** ⇒ ภ.ง.ด.50/1ก/2ก/3ก/53ก ตกวันเสาร์ได้
             // ⇒ ปฏิทินขึ้น "เลยกำหนด" ก่อนเวลาจริง. ตัวเลข 8 อยู่ที่
             // Helpers/TaxFilingDeadline ที่เดียว — ห้ามพิมพ์ซ้ำ (บล็อกนี้เคยพิมพ์ 6 จุด)
-            var adjustedDueDate = Accounting.Helpers.TaxFilingDeadline.RollToBusinessDay(dueDate);
+            var adjustedDueDate = Accounting.Helpers.TaxFilingDeadline.RollToBusinessDay(dueDate, holidays);
 
             DateTime? eFilingDueDate = null;
             if (eFilingExtra > 0)
                 eFilingDueDate = Accounting.Helpers.TaxFilingDeadline.RollToBusinessDay(
-                    dueDate.AddDays(Accounting.Helpers.TaxFilingDeadline.EFilingExtraDays));
+                    dueDate.AddDays(Accounting.Helpers.TaxFilingDeadline.EFilingExtraDays), holidays);
 
             events.Add(new TaxCalendarEvent
             {

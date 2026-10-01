@@ -75,6 +75,8 @@ const AdminLayout = {
     { section: 'แพ็กเกจ' },
     { id: 'plans', label: 'จัดการแพ็กเกจ', icon: '💎', href: '/admin/plans.html' },
     { id: 'subscription-enforcement', label: 'บังคับแพ็กเกจบนหน้าเว็บ', icon: '🚦', href: '/admin/subscription-enforcement.html' },
+    // รอบ 201 ทีม PL (B-9): วันหยุดราชการระดับแพลตฟอร์ม — เลื่อนกำหนดยื่นภาษี (ว่าง = เสาร์/อาทิตย์อย่างเดียว)
+    { id: 'platform-holidays', label: 'วันหยุดราชการ (กำหนดยื่นภาษี)', icon: '📅', href: '/admin/platform-holidays.html' },
     { section: 'การเงิน' },
     { id: 'revenue', label: 'รายรับ/ธุรกิจ', icon: '📈', href: '/admin/revenue.html' },
     { id: 'payments', label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },

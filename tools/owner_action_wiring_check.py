@@ -180,7 +180,9 @@ RULES = [
     (S + 'DocumentEmailService.cs', 'SendEtaxByEmailAsync', 'body', HEADING),
     (S + 'DocumentEmailService.cs', 'GetDefaultTemplateAsync', 'body', HEADING),
     (S + 'DocumentLineDeliveryService.cs', 'SendDocumentLineAsync', 'body', HEADING),
-    (S + 'EmailScheduleService.cs', 'EnqueueDocumentAsync', 'body', HEADING),
+    # รอบ 201 ทีม PL (A-PL9 · N+1): เนื้ออีเมลตั้งเวลาเรียกหัวผ่านแคชต่อรอบ HeadingForAsync ซึ่งเรียกตัวตัดสินหัวตัวเดียว (ใช้ผลทั้งสองชั้น)
+    (S + 'EmailScheduleService.cs', 'EnqueueDocumentAsync', 'body', value_used(r'HeadingForAsync')),
+    (S + 'EmailScheduleService.cs', 'HeadingForAsync', 'body', HEADING),
     # ---- P3: หมุนคีย์รุ่นเก่า = ย้ายเป็นนโยบายใหม่ ----
     (S + 'IntegrationService.cs', 'RegenerateApiKeyAsync', 'body', r'\bintegration\s*\.\s*IsLegacyKey\s*=\s*false\s*;'),
 ]

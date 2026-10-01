@@ -62,6 +62,15 @@
       <div class="muted" id="writeGateNote" style="margin-top:10px"></div>
     </div>
 
+    <!-- รอบ 201 ทีม PL (C-3 · ข้อ 76): ด่าน service "เจ้าของบริษัทปิดฟีเจอร์เอง" — สวิตช์แยก ค่าตั้งต้น = โหมดเงา -->
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">🔒 เจ้าของบริษัทปิดฟีเจอร์เอง (ด่าน service: API / LINE / งานเบื้องหลัง)</span></div>
+      <div id="ownerMaskBox" class="muted">กำลังโหลด...</div>
+      <div style="margin-top:10px">
+        <button class="admin-btn admin-btn-outline" id="ownerMaskBtn" disabled>…</button>
+      </div>
+    </div>
+
     <div class="admin-card">
       <div class="admin-card-header"><span class="admin-card-title">🧪 ลูกค้าทดลองใช้ / แพ็กเกจฟรี — (จะ) ถูกบล็อกกี่ครั้ง เพราะอะไร</span></div>
       <div id="trialBlocks" class="muted">กำลังโหลด...</div>
@@ -100,6 +109,7 @@
           r.addEventListener('change', () => this.highlight(r.value)));
         document.getElementById('saveModeBtn').addEventListener('click', () => this.saveMode());
         document.getElementById('clearHitsBtn').addEventListener('click', () => this.clearHits());
+        document.getElementById('ownerMaskBtn').addEventListener('click', () => this.saveOwnerMask());
         document.getElementById('precheckBtn').addEventListener('click', () => { this.pre.skip = 0; this.loadPrecheck(); });
         this.load();
       },
@@ -168,6 +178,18 @@
           <div>partner/API ที่จะถูกบล็อก<b>${Number(d.partnerCompaniesWouldBlock) || 0} บริษัท</b><span class="muted">${(Number(d.partnerHitsWouldBlock) || 0).toLocaleString('th-TH')} คำขอ · บล็อกจริง ${(Number(d.partnerHitsBlocked) || 0).toLocaleString('th-TH')}</span></div>
           <div>เก็บผล<b>${Number(d.retentionDays) || 0} วัน</b><span class="muted">ตัดแถวเก่าครั้งนี้ ${Number(d.prunedRows) || 0} แถว</span></div>`;
 
+        // C-3: สถานะ/ตัวเลขมาจากเซิร์ฟเวอร์ (OwnerFeatureMask) หน้านี้แสดงอย่างเดียว
+        const om = document.getElementById('ownerMaskBox');
+        const omBtn = document.getElementById('ownerMaskBtn');
+        om.innerHTML = (d.ownerMaskEnforced
+            ? '<span class="pill pill-red">บังคับแล้ว</span> ฟีเจอร์ที่เจ้าของบริษัทปิดเองถูกปฏิเสธที่ด่าน service ทุกทางเข้า'
+            : '<span class="pill pill-gray">โหมดเงา</span> ยังให้ผ่าน แต่บันทึกว่า "จะถูกปิด" ในตารางด้านล่าง (เหตุ OwnerDisabledFeature)') +
+          `<div style="margin-top:4px">บริษัทที่จะถูกปิด <b>${Number(d.ownerMaskCompaniesWouldBlock) || 0}</b> ราย · ` +
+          `${(Number(d.ownerMaskHitsWouldBlock) || 0).toLocaleString('th-TH')} คำขอ</div>`;
+        omBtn.disabled = false;
+        omBtn.textContent = d.ownerMaskEnforced ? 'กลับเป็นโหมดเงา' : 'เปิดบังคับ';
+        omBtn.dataset.next = d.ownerMaskEnforced ? 'false' : 'true';
+
         const tb = d.trialBlocks || [];
         document.getElementById('trialBlocks').innerHTML = tb.length === 0
           ? '<div class="muted" style="padding:8px 0">ยังไม่มีลูกค้าทดลองใช้/แพ็กเกจฟรีที่ (จะ) ถูกบล็อก — ตรวจ "ความพร้อมของแพ็กเกจทดลอง" ในส่วนตรวจล่วงหน้าด้านล่างด้วย</div>'
@@ -214,6 +236,24 @@
               </tr>`).join('')}</tbody>
           </table></div>
           ${d.hitsTruncated ? '<div class="muted" style="margin-top:6px">แสดง 2,000 แถวล่าสุดเท่านั้น</div>' : ''}`;
+      },
+
+      async saveOwnerMask() {
+        const btn = document.getElementById('ownerMaskBtn');
+        const enforced = btn.dataset.next === 'true';
+        if (enforced) {
+          const n = this.status ? Number(this.status.ownerMaskCompaniesWouldBlock) || 0 : 0;
+          if (!confirm(`เปิดบังคับแล้ว ${n} บริษัทในผลโหมดเงาจะใช้ฟีเจอร์ที่เจ้าของปิดไว้ผ่าน API/LINE/งานเบื้องหลังไม่ได้ทันที — ยืนยัน?`)) return;
+        }
+        btn.disabled = true;
+        try {
+          const res = await AdminAPI.put(this.base + '/owner-mask', { enforced });
+          this.render(res.data);
+          AdminLayout.toast(enforced ? 'เปิดบังคับด่านเจ้าของปิดฟีเจอร์แล้ว' : 'กลับเป็นโหมดเงาแล้ว');
+        } catch (e) {
+          AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error');
+          btn.disabled = false;
+        }
       },
 
       async saveMode() {

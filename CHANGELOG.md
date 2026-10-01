@@ -4049,6 +4049,36 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
 - เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
 
+_2026-10-01 รอบ 201 ทีม PL ชุด 1 — audit hash chain เป็น control จริง (BACKLOG §1.3 A-PL1..A-PL4 · คำตัดสินข้อ 32/33 · รายงาน `erp-review/2026-10-01/team-PL.md`):
+- **A-PL1** `AccountingDbContext.SaveChanges/SaveChangesAsync` ประทับแถว audit (จาก ChangeTracker + ที่ Add ตรง/`AddChainedAuditLog`) หลัง `pg_advisory_xact_lock`
+  ต่อบริษัท (`AdvisoryLockKey.AuditChain` · เรียงคีย์) · ไม่มีธุรกรรม ⇒ เปิดเอง · `AddChainedAuditLog` ไม่ประทับตอน Add อีก · บันทึกล้มคืนแถว audit แล้วโยนต่อ
+- **A-PL2** job CI `db-test` (service `postgres:16` · `--filter Category=Db`) + `Accounting.Tests/Db/DbTestDatabase` (ทีมอื่นใช้ร่วม) · job `test` เดิมกรอง `Category!=Db`
+- **A-PL3** `AuditChainVerifyJob` ตรวจต่อจาก watermark (`AuditChainCheckpoints` · `Helpers/AuditChainCheckpointPolicy`) · `VerifyHashChainAsync(companyId, afterId)` ·
+  `AuditHashChain.Analyze(rows, anchors)` + `ExternalParents`
+- **A-PL4** `AuditLogs.Add` ตรง → `AddChainedAuditLog` ใน MeteringAdmin · Admin ×2 · AuditMiddleware · AddOnPurchase · WithholdingTaxCert · Quota ·
+  checker ใหม่ `tools/audit_direct_add_check.py` (ratchet baseline 38 จุด/9 ไฟล์ของทีมอื่น + negative test ในตัว)
+- required_call_site: ปรับ 3 แถวรอบ 193 (AddChainedAuditLog/SaveChanges/SaveChangesAsync) + เพิ่ม 5 แถว — commit 9d4f4033)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 2 — เครื่องมือ/ความปลอดภัย/renderer (A-PL5..A-PL11):
+- **A-PL5** `write_permission_gate_check` เพิ่ม deny-list ratchet ทั้งโฟลเดอร์ Controllers (baseline `tools/write_permission_gate_baseline.txt` 547 endpoint นอก WATCHED ·
+  นับด่านระดับคลาสในโหมดนี้ · negative test ฉีดลง BankController จริง + สองคลาสในไฟล์เดียว) · attachment_gate (S2-C4/R2-C11) และ contact_taxid (R2-C10) ปิดไปแล้วรอบ 193 — ยืนยันด้วย self-test
+- **A-PL9** อีเมลตั้งเวลา: ค่าระดับบริษัทของหัวเอกสารโหลดครั้งเดียวต่อบริษัท (`PdfGenerationService.LoadHeadingCompanyContextAsync`) + หัวต่อใบครั้งเดียวต่อรอบ (`HeadingForAsync`) — ตัวตัดสินหัวตัวเดิม
+- **A-PL10** `CmsCommerceService.UpdateOrderStatusAsync` ยกเลิกเอกสาร ERP ล้ม ⇒ `ChangeTracker.Clear()` + โหลดออเดอร์ใหม่ + ประทับสถานะ/หมายเหตุ (ไม่บันทึกการยกเลิกครึ่งเดียว)
+- **A-PL6** `Helpers/DocumentBrandColor` — สีแบรนด์ตัวเดียวของ HTML `BuildCss/BuildLayoutCss` และ QuestPDF `BuildBranding`
+- **A-PL7** `CssThemeValue.SafeCustomCss` — CSS กำหนดเองของธีมแถวเก่า `<` ⇒ `\3c ` ตอน render (theme.css + storefront)
+- **A-PL8** `GET document-templates/default/{type}` อ่านอย่างเดียว (ไม่มี ⇒ ค่าเริ่มต้น id ว่าง) · `POST` เดียวกัน = สร้าง (`CompanySettings.Edit`) · documents.html/document-templates.html ใช้ POST ตอนจะแก้
+- **A-PL11** เติม sha `dd5ceb1e` ใน `review200-round2-sec.md` แถว K2-5b..K2-4 + หัว `team-Z.md`
+- เทสต์ `PlatformRound201Tests` · required_call_site +11 แถว — commit 23d7a6de)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 3 — หมวด C ที่มอบให้ทีม (คำตัดสินข้อ 76/77):
+- **C-3** `Helpers/OwnerFeatureMask` — `SubscriptionService.CheckFeatureAccessAsync` เห็น `CompanySettings.OwnerDisabledFeatures` แล้ว: โหมดเงา (ผ่าน + บันทึก
+  `SubscriptionGateShadowHits` เหตุ `OwnerDisabledFeature`) จนกว่าแอดมินกดสวิตช์แยก `SiteSettings.OwnerFeatureMaskEnforced` (`PUT api/admin/subscription-enforcement/owner-mask` ·
+  การ์ด 🔒 หน้า admin/subscription-enforcement) · migration ADD COLUMN DEFAULT false · คอมเมนต์ EntitlementService แก้ให้ตรงความจริง
+- **C-4** `UserRole.PlatformSupport = 7` + `Helpers/OwnershipTransferPolicy` — แอดมินแพลตฟอร์มสร้างบริษัท ⇒ support ไม่ใช่ Owner · คีย์สิทธิ์เฉพาะงานตั้งค่า ·
+  `POST api/company/{id}/transfer-ownership` (+ `CheckOwnershipTransferAsync` ด่านก่อนเขียน · audit hash chain) · ตั้ง/เชิญบทบาท support ผ่านหน้าทีมไม่ได้ ·
+  team.html กล่องส่งมอบ + ป้ายบทบาท · usage.html ป้ายบทบาท
+- เทสต์ `PlatformOwnerRound201Tests` · required_call_site +9 แถว · write_permission marker `OwnershipTransferPolicy.Outcome.Allow` — commit 545cc3ea)_
+
 _2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (BACKLOG §1.4 + C-1 · รายงาน `erp-review/2026-10-01/team-DV.md`):
 - **A-DV4 (ข้อ 68)** cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระด้วย `LockDocumentsForPaymentVoidAsync` (ลำดับ ใบตัวเอง → ใบต้นทาง → ใบอื่น → เลข JE) · ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก
   (`PaymentsVoidingInThisContext` + pure `DocumentVoidPreconditions.LivePaymentCoverage`) · `VoidDocumentAsync` คืน `PaymentVoidResult` และ `POST document/{id}/void` ตอบข้อความถึงผู้กด
@@ -4058,6 +4088,19 @@ _2026-10-01 รอบ 201 ทีม DV — เอกสาร ยกเลิก
 - **C-1 (ข้อ 74)** ยกเลิกและออกใบแทนในเดือนที่ประกาศว่ายื่น/ยื่นแล้ว = 409 `REISSUE-VAT-MONTH-DECLARED` (`ReissueDeclaredVatMonthBlock` · `DeclaredVatReportStatusAsync`)
 - **A-DV5** echo `SettlementOrphanAckAt/By/ByName/Reason` + `EtaxKeptOriginalAt` ใน `DocumentResponse` + แถบบนหน้าเอกสาร · **A-DV6** `AuditLogs.Add` 9 จุดใน `DocumentService.cs` → `AddChainedAuditLog`
 - เทสต์ `VoidReissueR201DvTests` · required_call_site +10 แถว (ปรับ V1H/V1I 2) — commit 49458e34)_
+
+_2026-10-01 รอบ 201 ทีม PL — รวมงานทีม DV (merge e97ba288) + คำตัดสิน main agent (DV Q3):
+- `audit_direct_add_check` baseline ลดเป็น 29 จุด/8 ไฟล์ (DocumentService ย้ายเข้า chain โดยทีม DV)
+- แถว audit นอก chain รุ่นเก่า **ไม่เติม hash ย้อนหลัง** — `AuditHashChain.UnchainedNote` + `AuditChainVerifyResult.UnchainedCount/UnchainedLatestAt/UnchainedNote` ·
+  endpoint `verify-hash-chain` ส่ง `unchainedLatestAt`/`unchainedNote` · job log จำนวน · เทสต์ `Unchained_legacy_rows_are_reported_separately_not_as_tampered` — commit d2aab79e)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 4 — B-9 วันหยุดราชการระดับแพลตฟอร์ม (ส่วนที่ทำได้ก่อน · ข้อมูลภายนอกห้ามแต่ง):
+- ตาราง `PlatformHolidays` (entity + migration · unique วันที่ในแถวที่ยังไม่ลบ) · หน้าแอดมิน `admin/platform-holidays.html` + `api/admin/platform-holidays` (SystemAdmin · ปฏิเสธคีย์ ·
+  แสดงงวดที่กำหนดยื่นเลื่อนเพราะวันหยุดทันที) · เมนูแอดมิน "วันหยุดราชการ (กำหนดยื่นภาษี)"
+- `Helpers/BusinessDayCalendar` ตัวตัดสินวันทำการเดียว · `TaxFilingDeadline` overload รับชุดวันหยุด (overload เดิมคงพฤติกรรมเสาร์/อาทิตย์) ·
+  `PlatformHolidayStore.LoadSetAsync` (อ่านไม่ได้ = ชุดว่าง + log) · ผู้อ่าน: `TaxCalendarService.InitializeYearAsync` · `StatutoryRemittanceService` (ธงเลยกำหนด/ปฏิทินยื่น)
+- 📋 ผู้อ่านในไฟล์ทีมอื่นยังเสาร์/อาทิตย์ (ComplianceService · TaxComplianceChecker · SsoLateFee · DepositPolicyResolver · PayrollService · SettlementPosting §87)
+- เทสต์ `BusinessDayCalendarTests` · required_call_site +6 แถว — commit 233ba81f)_
 
 _2026-10-01 รอบ 201 ทีม IN — สต็อก/สินทรัพย์/ค่าตั้ง/ที่พัก (`erp-review/2026-10-01/team-IN.md` · BACKLOG §1.8 + C-5/C-6):
 - **A-IN1** วิธีคิดต้นทุนตั้งได้ต่อสินค้า (DTO สร้าง/แก้/คำตอบ + หน้าสินค้า) — `Helpers/CostingMethodPolicy` (ถัวเฉลี่ย/FIFO · ห้าม LIFO/มาตรฐาน ·
@@ -4114,6 +4157,11 @@ _2026-10-01 รอบ 201 ทีม DV — แก้ผลฝ่ายค้า�
 - **DV-O7** แถบรายงานข้อ 44 บอก "… อีก N รายการ" ต่อกลุ่ม
 - เทสต์ `VoidReissueR201DvTests` +3 (DVO1/DVO2/DVO6) + Theory +2 เคส · required_call_site ปรับ 7 แถว +4 — commit 8c5e36d2)_
 
+_2026-10-01 รอบ 201 ทีม PL ชุด 5 — คำสั่ง main agent หลังทีม DV เปลี่ยน `VoidDocumentAsync` ให้คืน `PaymentVoidResult`:
+- `Helpers/VoidResultNotice.Lines` ตัวประกอบข้อความเดียว · `CmsCommerceService.UpdateOrderStatusAsync` ประทับ `[ERP-VOID-NOTICE …]` บนออเดอร์ (หมายเหตุภายในที่เจ้าของร้านเห็น) ·
+  `CmsBookingService.SettleErpDocumentOnCancelAsync` ส่งเข้า `notices` (ผลตอบผู้กด) + ประทับบนการจอง — เดิมทั้งสองทางทิ้งผลเงียบ
+- เทสต์ `VoidResultNoticeTests` (สองทิศ) · required_call_site +1 แถว/ปรับ 1 · write_permission marker `RequireInventoryAsync` (หลังรวมทีม IN) — commit 7ab6cf72)_
+
 _2026-10-01 รอบ 201 ทีม ST — Settlement (BACKLOG §1.2 A-ST1..10 + C-9 · รายงาน `erp-review/2026-10-01/team-ST.md`):
 - **A-ST1** เจ้าของการรับชำระ = `Payment.SettlementBatchId` (ประทับใน SaveChanges เดียวกับ INSERT ผ่าน `Helpers/SettlementPaymentOwner` · ผู้อ่าน 8 จุดย้ายมาอ่านคอลัมน์ · `BatchIdFromPaymentNotes` ถูกถอด ·
   backfill ครั้งเดียวตอนสร้างคอลัมน์เฉพาะป้ายที่พิสูจน์ได้ · checker NOTES_MARKER_FORBID ทั้งเรพ) · แตะ `DocumentService.VoidPaymentAsync` 2 นิพจน์ (ช่วงทีม DV)
@@ -4137,3 +4185,8 @@ _2026-10-01 รอบ 201 ทีม OC — งานคงค้าง OCR (BACK
 - (C-23) ผู้ติดต่อที่ผูกถือเลขคนละนิติบุคคลกับเลขผู้ขายบนสแกน ⇒ ถอดการผูก + โน้ต (`StaleVendorContactNoteAsync` · สามเส้น)
 - (C-24) ปุ่ม "ใช้ลูกค้าเงินสด (walk-in)" `POST ocr/{scanId}/match-walk-in` เฉพาะเป้าหมายที่ไม่ใช่ใบกำกับเต็มรูป (`Helpers/OcrWalkInBuyer`) + ตรวจซ้ำตอนสร้างเอกสาร
 - เทสต์ `OcrReview201OcTests` (สองทิศทุกหัวข้อ) · แก้เทสต์ที่ล็อกพฤติกรรมเดิมตามคำตัดสิน 2 ตัว (`ReceiptWithoutBuyerBlock_*` · `Contactสาขา_*`) · required_call_site +14 แถว — commit f27f289e)_
+
+_2026-10-01 รอบ 201 ทีม PL ชุด 6 — คำสั่ง main agent หลังทีม OC (merge origin):
+- `write_permission_gate_check` WATCHED + `ContactHygieneController` (endpoint เขียน `POST …/ocr-branch-orphans/{id}/retire` · ด่าน `HasPermissionAsync(Contact.Edit)`) ·
+  negative test ฉีด POST ไม่มีด่านลงไฟล์จริงในโหมด WATCHED · marker `ScanGateAsync(`/`DocGateAsync(`/`DenyScanSourceAsync(` (รูปการใช้ผลล็อกโดย attachment_gate_check) ⇒
+  baseline deny-list 547 → 529 (ลดอย่างเดียว) · audit_direct_add baseline 28 → 27 (OcrService เข้า chain โดยทีม OC) — commit 97aab100)_

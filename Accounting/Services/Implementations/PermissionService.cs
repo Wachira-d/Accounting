@@ -61,6 +61,10 @@ public class PermissionService : IPermissionService
         if (userRole == UserRole.Accountant && AccountantDefaultKeys.Contains(permissionKey))
             return true;
 
+        // รอบ 201 ทีม PL (C-4): ผู้ดูแลแพลตฟอร์ม (support) ได้เฉพาะคีย์งานตั้งค่าเริ่มระบบ — ไม่ใช่เจ้าของ (ไม่มี bypass ทั้งหมดแบบ Owner)
+        if (userRole == UserRole.PlatformSupport && Accounting.Helpers.OwnershipTransferPolicy.SupportDefaultKeys.Contains(permissionKey))
+            return true;
+
         // Otherwise check whether any of the user's CompanyRoles grants
         // this permission key with CanAccess = true.
         return await _db.Set<CompanyRolePermission>()

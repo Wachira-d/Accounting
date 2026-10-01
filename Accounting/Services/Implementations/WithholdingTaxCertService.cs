@@ -378,7 +378,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         if (userId.HasValue)
         {
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
                 UserId = userId,

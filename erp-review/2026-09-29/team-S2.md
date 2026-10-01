@@ -69,7 +69,7 @@
 
 ## สิ่งที่พบระหว่างทาง (ไม่ได้แก้ — เหตุผลท้ายข้อ)
 
-- **F-S2-1 `EntitlementService` doc บอกว่า `CheckFeatureAccessAsync` "ครอบ OwnerDisabledFeatures" — ไม่จริง** (`SubscriptionService.CheckFeatureAccessAsync` อ่าน
+- ✅ 545cc3ea (รอบ 201 PL · C-3 โหมดเงาก่อน) **F-S2-1 `EntitlementService` doc บอกว่า `CheckFeatureAccessAsync` "ครอบ OwnerDisabledFeatures" — ไม่จริง** (`SubscriptionService.CheckFeatureAccessAsync` อ่าน
   `eff.EnabledFeatures` ตรง ๆ · mask ของเจ้าของอยู่แค่ overlay หน้าเว็บ/gate) ⇒ เจ้าของปิดฟีเจอร์แล้วด่าน service ยังให้ผ่าน · ไม่แก้เพราะแก้ = เข้มขึ้นทันที (ขัดหลักใหญ่) ·
   บันทึกใน ACCOUNT_STRUCTURE §5.2 · ควรตัดสินรอบถัดไป
 - **F-S2-2 `/ai` = ตัวแนะนำเบื้องหลังหลายสิบตัว** (หน้าเอกสาร/สมุดรายวัน/เงินสดย่อย/ผู้ติดต่อ/สินค้า) — กดบังคับแล้วลูกค้าที่ไม่มี AI_Features เสียตัวแนะนำ (ไม่ถูกดีด) ·

@@ -407,7 +407,15 @@ public class CmsBookingService : ICmsBookingService
                 bookingNotes.Add(note);
                 break;
             case CmsBookingCancelAction.VoidDocument:
-                try { await _docService!.VoidDocumentAsync(companyId, erpDoc.Id); }
+                try
+                {
+                    // รอบ 201 ทีม PL: ผลยกเลิก (ธง e-Tax · ภาษีขายที่ถอย) ถึงผู้กดและประทับบนการจอง — เดิมทิ้งเงียบ
+                    var voided = await _docService!.VoidDocumentAsync(companyId, erpDoc.Id);
+                    foreach (var w in VoidResultNotice.Lines(voided, erpDoc.DocumentNumber))
+                    {
+                        notices.Add(w); bookingNotes.Add(w);
+                    }
+                }
                 catch (Exception ex)
                 {
                     _db.ChangeTracker.Clear();

@@ -53,6 +53,16 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     internal static (DateTime Paper, DateTime EFiling) DueDates(string type, int year, int month)
         => Accounting.Helpers.TaxFilingDeadline.For(type, year, month);
 
+    /// <summary>รอบ 201 ทีม PL (B-9): เลื่อนพ้นวันหยุดราชการของแพลตฟอร์มด้วย (ตาราง <c>PlatformHolidays</c> · ว่าง = เสาร์/อาทิตย์ตามเดิม)</summary>
+    internal static (DateTime Paper, DateTime EFiling) DueDates(string type, int year, int month, IReadOnlySet<DateTime>? holidays)
+        => Accounting.Helpers.TaxFilingDeadline.For(type, year, month, holidays);
+
+    /// <summary>วันหยุดราชการที่โหลดต้นคำขอ (service เป็น scoped) — null = ยังไม่โหลด ⇒ เสาร์/อาทิตย์อย่างเดียว</summary>
+    private HashSet<DateTime>? _holidays;
+
+    private async Task EnsureHolidaysAsync(DateTime today)
+        => _holidays ??= await PlatformHolidayStore.LoadSetAsync(_db, today.Year - 3, today.Year + 1, _logger);
+
     public async Task<RemittanceDashboardResponse> GetDashboardAsync(Guid companyId, int monthsBack = 12)
     {
         // ⚠️ ต้องเป็นวันตามเวลาไทย (UTC+7) ไม่ใช่ UTC — ช่วง 00:00–07:00 ของไทย
@@ -60,6 +70,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // **ไม่ตรงกับปฏิทินยื่นในไฟล์เดียวกัน** ซึ่งใช้ +7 อยู่แล้ว
         // (สองจอของ service เดียวกันบอกคนละวัน)
         var today = DateTime.UtcNow.AddHours(7).Date;
+        await EnsureHolidaysAsync(today);   // B-9 วันหยุดราชการ (ว่าง = พฤติกรรมเดิม)
         var start = new DateTime(today.Year, today.Month, 1).AddMonths(-Math.Max(1, monthsBack));
         bool InRange(int y, int m) { var d = new DateTime(y, m, 1); return d >= start && d <= new DateTime(today.Year, today.Month, 1); }
 
@@ -399,7 +410,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         DateTime? reportFiledAt = null, int? unissuedCount = null, decimal? unissuedAmount = null)
     {
         var (label, form, code) = Meta(type);
-        var (paper, efiling) = DueDates(type, year, month);
+        var (paper, efiling) = DueDates(type, year, month, _holidays);
         // "ยื่นแบบแล้ว" ตัดธงเลยกำหนดออก — ยอดยังค้างได้ (ยังไม่จ่ายเงิน) แต่ผู้ใช้
         // ไม่ได้ทำผิดกำหนดยื่น จึงห้ามขึ้นสีแดง/นับใน OverdueCount
         var overdue = today > efiling.Date && reportFiledAt == null;
@@ -472,6 +483,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // กำหนดยื่นเป็นเวลาไทย — ใช้ UTC ตรง ๆ จะเพี้ยน 1 วันช่วงเย็น (UTC+7)
         // และวันที่ 15 คือเส้นตายจริง คลาดเคลื่อนวันเดียว = แจ้งเตือนผิด
         var today = DateTime.UtcNow.AddHours(7).Date;
+        await EnsureHolidaysAsync(today);   // B-9 วันหยุดราชการ (ว่าง = พฤติกรรมเดิม)
         var thisMonth = new DateTime(today.Year, today.Month, 1);
         var startMonth = thisMonth.AddMonths(-(months - 1));
         var periods = Enumerable.Range(0, months).Select(i => startMonth.AddMonths(i)).ToList();
@@ -679,7 +691,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     ? BuildCell(type, form, always, p, today, systemStart, remits, reports, reportType,
                         runs, whtDocs, whtGaps, fsDocs, activeEmployees, approvedNotPaid)
                     : new FilingCalendarCell(p.Year, p.Month, "NotRequired", 0, 0,
-                        DueDates(type, p.Year, p.Month).Paper, DueDates(type, p.Year, p.Month).EFiling,
+                        DueDates(type, p.Year, p.Month, _holidays).Paper, DueDates(type, p.Year, p.Month, _holidays).EFiling,
                         false, 0, false, null, false, null, null, false, false,
                         naReason ?? "ไม่อยู่ในข่ายต้องยื่น", null));
             }
@@ -753,7 +765,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         HashSet<(int Year, int Month)> approvedNotPaid)
     {
         int y = period.Year, m = period.Month;
-        var (paper, efiling) = DueDates(type, y, m);
+        var (paper, efiling) = DueDates(type, y, m, _holidays);
         var daysToDue = (int)(efiling.Date - today).TotalDays;
         var isCurrentPeriod = period.Year == today.Year && period.Month == today.Month;
 

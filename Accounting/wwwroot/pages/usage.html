@@ -282,8 +282,8 @@
           el.innerHTML = '<p class="text-center text-gray-400" style="padding:20px">ไม่มีผู้ใช้</p>';
           return;
         }
-        const roleMap = { Owner:'เจ้าของ', Accountant:'นักบัญชี', Staff:'พนักงาน', Auditor:'ผู้ตรวจสอบ', Viewer:'ผู้ดู', ExternalAccountant:'นักบัญชีภายนอก', SystemAdmin:'แอดมิน' };
-        const roleBadge = { Owner:'badge-primary', Accountant:'badge-info', Staff:'badge-gray', Auditor:'badge-warning', Viewer:'badge-gray', ExternalAccountant:'badge-info', SystemAdmin:'badge-danger' };
+        const roleMap = { Owner:'เจ้าของ', Accountant:'นักบัญชี', Staff:'พนักงาน', Auditor:'ผู้ตรวจสอบ', Viewer:'ผู้ดู', ExternalAccountant:'นักบัญชีภายนอก', PlatformSupport:'ผู้ดูแลแพลตฟอร์ม', SystemAdmin:'แอดมิน' };
+        const roleBadge = { Owner:'badge-primary', Accountant:'badge-info', Staff:'badge-gray', Auditor:'badge-warning', Viewer:'badge-gray', ExternalAccountant:'badge-info', PlatformSupport:'badge-gray', SystemAdmin:'badge-danger' };
         el.innerHTML = users.map(u => `
           <div class="user-row">
             <div class="user-avatar">${(u.fullName || u.email || '?')[0].toUpperCase()}</div>

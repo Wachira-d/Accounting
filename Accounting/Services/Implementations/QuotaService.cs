@@ -138,7 +138,7 @@ public class QuotaService : IQuotaService
         if (sub.DocumentBonusExpiresAt == null || sub.DocumentBonusExpiresAt < expires)
             sub.DocumentBonusExpiresAt = expires;
 
-        _db.AuditLogs.Add(new AuditLog
+        _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
             Action = AuditAction.Create,

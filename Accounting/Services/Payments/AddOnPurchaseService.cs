@@ -175,7 +175,7 @@ public class AddOnPurchaseService : IAddOnPurchaseService
         if (f.IsEnabled)
             await _metering.SetFeatureEnabledAsync(companyId, featureCode, false, actor, ct);
 
-        _db.AuditLogs.Add(new AuditLog
+        _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
             Action = AuditAction.Update,

@@ -22,13 +22,18 @@ public class SubscriptionService : ISubscriptionService
     private const int RenewalInvoiceLeadDays = 15;
 
     public SubscriptionService(AccountingDbContext db, INotificationService notificationService,
-        INotificationEngine? notify = null, ISaasBillingDocumentService? billing = null)
+        INotificationEngine? notify = null, ISaasBillingDocumentService? billing = null,
+        ISubscriptionGateShadowLog? shadowLog = null)
     {
         _db = db;
         _notificationService = notificationService;
         _notify = notify;
         _billing = billing;
+        _shadowLog = shadowLog;
     }
+
+    /// <summary>รอบ 201 ทีม PL (C-3): ที่บันทึก "จะถูกปิด" ของด่านเจ้าของปิดฟีเจอร์ระดับ service (โหมดเงา) · null ในเทสต์ที่สร้างเอง</summary>
+    private readonly ISubscriptionGateShadowLog? _shadowLog;
 
     /// <summary>duplicate audit #7 phase 2: route subscription notification ผ่าน
     /// NotificationEngine (production) → กลับไป NotificationService legacy
@@ -746,7 +751,26 @@ public class SubscriptionService : ISubscriptionService
     {
         var eff = await GetEffectivePlanAsync(companyId);
         if (eff == null || !eff.IsActive) return false;
-        return eff.EnabledFeatures.HasFlag(feature);
+        if (!eff.EnabledFeatures.HasFlag(feature)) return false;
+        // รอบ 201 ทีม PL (C-3 · ข้อ 76): เจ้าของบริษัทปิดฟีเจอร์ (CompanySettings.OwnerDisabledFeatures) — เดิมมีผลแค่ overlay หน้าเว็บ ⇒
+        // ด่าน service เป็น silent no-op · ตอนนี้ผ่านโหมดเงาก่อน (บันทึก "จะถูกปิด") แล้วบังคับเมื่อแอดมินกด (SiteSettings.OwnerFeatureMaskEnforced)
+        // ตัวตัดสินเดียว Helpers/OwnerFeatureMask · โหลดสวิตช์เฉพาะเมื่อเจ้าของปิดบิตของฟีเจอร์นี้ (กรณีหายาก — ไม่เพิ่ม query ทุกคำขอ)
+        var ownerDisabled = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (FeatureFlags?)s.OwnerDisabledFeatures)
+            .FirstOrDefaultAsync() ?? FeatureFlags.None;
+        if (!Accounting.Helpers.OwnerFeatureMask.IsOwnerDisabled(ownerDisabled, feature)) return true;
+        var enforced = await _db.SiteSettings.AsNoTracking()
+            .OrderBy(s => s.CreatedAt)
+            .Select(s => (bool?)s.OwnerFeatureMaskEnforced)
+            .FirstOrDefaultAsync() ?? false;
+        var verdict = Accounting.Helpers.OwnerFeatureMask.Decide(eff.EnabledFeatures, ownerDisabled, feature, enforced);
+        if (verdict.ShadowHit && _shadowLog != null)
+            await _shadowLog.RecordAsync(new SubscriptionGateShadowHit(
+                companyId, Accounting.Helpers.SubscriptionGateReason.OwnerDisabledFeature, feature.ToString(), eff.Plan.ToString(),
+                RouteKey: null, Method: "SERVICE", WouldBlock: true,
+                Endpoint: "service:CheckFeatureAccess", SubscriptionStatus: eff.Status.ToString(), Enforced: false));
+        return verdict.Allowed;
     }
 
     /// <summary>The resolved plan for a Company at quota-check time. Encapsulates

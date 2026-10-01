@@ -54,7 +54,11 @@ public record SubscriptionEnforcementStatusDto(
     int CompaniesWouldBlock, long HitsWouldBlock, int CompaniesBlocked, long HitsBlocked,
     List<TrialBlockSummary> TrialBlocks, List<SubscriptionShadowHitDto> Hits, bool HitsTruncated,
     int RetentionDays, int PrunedRows,
-    int PartnerCompaniesWouldBlock = 0, long PartnerHitsWouldBlock = 0, long PartnerHitsBlocked = 0);
+    int PartnerCompaniesWouldBlock = 0, long PartnerHitsWouldBlock = 0, long PartnerHitsBlocked = 0,
+    bool OwnerMaskEnforced = false, int OwnerMaskCompaniesWouldBlock = 0, long OwnerMaskHitsWouldBlock = 0);
+
+/// <summary>รอบ 201 ทีม PL (C-3): สวิตช์ด่าน "เจ้าของปิดฟีเจอร์" ระดับ service · null = ไม่ได้ส่ง ⇒ 400 (ห้ามแปลงเป็น false เงียบ ๆ)</summary>
+public record SetOwnerMaskEnforcementRequest(bool? Enforced);
 
 /// <summary>คำขอเปลี่ยนสวิตช์ — รับเป็น<b>ชื่อ</b> (Off/Shadow/Enforce) · ตัวเลข/ค่าว่าง/ชื่อที่ไม่รู้จัก = 400
 /// (ห้ามให้ "ไม่ส่งค่า" กลายเป็น Off เงียบ ๆ)</summary>
@@ -186,6 +190,10 @@ public class AdminSubscriptionEnforcementController : ControllerBase
         var wouldBlock = hits.Where(h => h.HitCount > 0).ToList();
         var blocked = hits.Where(h => h.BlockedCount > 0).ToList();
         var partnerWouldBlock = hits.Where(h => h.PartnerHitCount > 0).ToList();
+        // C-3: แถวของด่าน "เจ้าของปิดฟีเจอร์" (service) นับแยก — หน้าเว็บแสดงคู่กับสวิตช์ของมันเอง
+        var ownerMask = hits.Where(h => h.Reason == nameof(SubscriptionGateReason.OwnerDisabledFeature) && h.HitCount > 0).ToList();
+        var ownerMaskEnforced = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt)
+            .Select(s => (bool?)s.OwnerFeatureMaskEnforced).FirstOrDefaultAsync(ct) ?? false;
         var trial = SubscriptionTrialReadiness.SummarizeTrialBlocks(page.Select(r => new SubscriptionShadowTally(
             r.CompanyId, r.Reason, r.Feature, r.Plan, r.SubscriptionStatus, r.HitCount, r.BlockedCount))).ToList();
         return Ok(new ApiResponse<SubscriptionEnforcementStatusDto>(true, new SubscriptionEnforcementStatusDto(
@@ -194,7 +202,32 @@ public class AdminSubscriptionEnforcementController : ControllerBase
             blocked.Select(h => h.CompanyId).Distinct().Count(), blocked.Sum(h => h.BlockedCount),
             trial, hits, truncated, SubscriptionGatePolicy.ShadowRetentionDays, pruned,
             partnerWouldBlock.Select(h => h.CompanyId).Distinct().Count(), partnerWouldBlock.Sum(h => h.PartnerHitCount),
-            hits.Sum(h => h.PartnerBlockedCount))));
+            hits.Sum(h => h.PartnerBlockedCount),
+            ownerMaskEnforced, ownerMask.Select(h => h.CompanyId).Distinct().Count(), ownerMask.Sum(h => h.HitCount))));
+    }
+
+    /// <summary>รอบ 201 ทีม PL (C-3 · ข้อ 76): เปิด/ปิด "บังคับ" ด่านเจ้าของปิดฟีเจอร์ระดับ service (ค่าตั้งต้น = โหมดเงา) — แอดมินแพลตฟอร์มที่ล็อกอินเท่านั้น</summary>
+    [HttpPut("owner-mask")]
+    [Authorize(Roles = "SystemAdmin")]
+    [Accounting.Filters.RejectApiKey("เปลี่ยนสวิตช์บังคับด่านเจ้าของปิดฟีเจอร์")]
+    public async Task<ActionResult<ApiResponse<SubscriptionEnforcementStatusDto>>> SetOwnerMask(
+        [FromBody] SetOwnerMaskEnforcementRequest request, CancellationToken ct = default)
+    {
+        if (request?.Enforced is not bool enforced)
+            return BadRequest(new ApiResponse<SubscriptionEnforcementStatusDto>(false, null, "ต้องระบุ enforced เป็น true หรือ false"));
+        var settings = await _db.SiteSettings.OrderBy(s => s.CreatedAt).FirstOrDefaultAsync(ct);
+        if (settings == null)
+        {
+            settings = new SiteSettings();
+            _db.SiteSettings.Add(settings);
+        }
+        var before = settings.OwnerFeatureMaskEnforced;
+        settings.OwnerFeatureMaskEnforced = enforced;
+        settings.UpdatedAt = DateTime.UtcNow;
+        settings.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await _db.SaveChangesAsync(ct);   // AuditTrail จับ old/new ของ SiteSettings (hash chain)
+        _logger.LogWarning("สวิตช์บังคับด่านเจ้าของปิดฟีเจอร์: {Before} → {After} โดยผู้ใช้ {UserId}", before, enforced, settings.UpdatedBy);
+        return await Get(ct);
     }
 
     /// <summary>ตรวจล่วงหน้าจากข้อมูลปัจจุบัน — ทีละหน้า (<paramref name="take"/> ≤ 500) เพราะเรียก resolver ต่อบริษัท</summary>

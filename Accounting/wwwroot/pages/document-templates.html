@@ -553,7 +553,8 @@
         let tpl = null;
         try {
           const cid = Layout.getCompanyId();
-          const r = await API.get(`/api/companies/${cid}/document-templates/default/${docType}`);
+          // รอบ 201 A-PL8: GET อ่านอย่างเดียวแล้ว — เปิดตัวแก้ต้อง "สร้างถ้ายังไม่มี" ผ่าน POST (ด่านสิทธิ์ตั้งค่าบริษัทเดียวกับปุ่มบันทึก)
+          const r = await API.post(`/api/companies/${cid}/document-templates/default/${docType}`, {});
           tpl = r?.data || null;
           if (tpl) {
             // endpoint นี้สร้างใบใหม่ให้ได้ → sync ลิสต์ในหน้าให้ตรงความจริง

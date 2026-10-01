@@ -79,7 +79,7 @@ jobs:
     name: dotnet test
     needs: build
     # เทสต์เต็มเฉพาะ PR เข้า main · push main/master · สั่งเอง — push บน claude/** ได้แค่ build (เร็ว)
-    # เทสต์ทั้งหมดเป็น pure-function (0 ไฟล์แตะ DbContext) ถ้าอยากรันทุก push ให้ลบ if นี้ได้โดยไม่ต้องมี PostgreSQL
+    # เทสต์ใน job นี้เป็น pure-function (เทสต์ที่ต้องมี PostgreSQL ติด trait Category=Db แล้วไปรันใน job db-test) — ลบ if ได้โดยไม่ต้องมีฐาน
     if: github.event_name != 'push' || startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
     runs-on: ubuntu-latest
     steps:
@@ -94,10 +94,51 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-
       - run: dotnet restore Accounting.sln
       - run: dotnet build Accounting.sln --configuration Release --no-restore
-      - run: dotnet test Accounting.sln --configuration Release --no-build --logger "trx;LogFileName=results.trx" --results-directory TestResults
+      # เทสต์ DB (trait Category=Db) รันใน job db-test ที่มี PostgreSQL — job นี้กรองออก (ไม่ช้าลง · ไม่แดงเพราะไม่มีฐาน)
+      - run: dotnet test Accounting.sln --configuration Release --no-build --filter "Category!=Db" --logger "trx;LogFileName=results.trx" --results-directory TestResults
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results
+          path: TestResults
+          retention-days: 7
+
+  # รอบ 201 ทีม PL (A-PL2 · คำตัดสินข้อ 33): เทสต์บน PostgreSQL จริง — round-trip write→verify ของ audit hash chain และเทสต์ DB
+  # ของทีมอื่น (ติด [Trait("Category", "Db")] + ใช้ Accounting.Tests/Db/DbTestDatabase) · job แยก ไม่ needs ใคร (ขนานกับ build)
+  # ⇒ job เดิมไม่ช้าลง · รันทุก push บน claude/** (เทสต์ DB มีไม่กี่ตัว · หลักฐานของ control ต้องเห็นทุกรอบ ไม่ใช่เฉพาะ PR)
+  db-test:
+    name: dotnet test (PostgreSQL · Category=Db)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: accounting
+          POSTGRES_PASSWORD: accounting-ci
+          POSTGRES_DB: accounting_test
+        ports: [ '5432:5432' ]
+        options: >-
+          --health-cmd "pg_isready -U accounting -d accounting_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      ACCOUNTING_TEST_PG: Host=localhost;Port=5432;Database=accounting_test;Username=accounting;Password=accounting-ci;Include Error Detail=true
+      ACCOUNTING_DB_TEST_REQUIRED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - run: dotnet restore Accounting.sln
+      - run: dotnet build Accounting.sln --configuration Release --no-restore
+      - run: dotnet test Accounting.sln --configuration Release --no-build --filter "Category=Db" --logger "trx;LogFileName=db-results.trx" --logger "console;verbosity=normal" --results-directory TestResults
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: db-test-results
           path: TestResults
           retention-days: 7

@@ -114,6 +114,9 @@ WATCHED = [
     # แก้เทมเพลต default ของบริษัทได้ (หัวเอกสาร/CSS ที่ไปโผล่ในพรีวิวของเจ้าของ) ("allow-list ครบไหม ≠ ผ่านไหม" รอบที่ 10) ·
     # ด่าน = CompanySettings.Edit ชุดเดียวกับ SettingsController · POST สร้าง PDF/HTML/พรีวิว = อ่านอย่างเดียว (READ_ONLY_POSTS_IN_FILE)
     "Accounting/Controllers/DocumentTemplateController.cs",
+    # เพิ่มรอบ 201 ทีม PL (คำสั่ง main agent หลังทีม OC · A-OC2) — ลบ (soft) แถวสาขาที่ OCR สร้างแล้วไม่มีอะไรอ้าง เป็น endpoint เขียนตัวแรกของไฟล์นี้ ·
+    # ใส่ตอนเขียว (ratchet) · ด่าน = HasPermissionAsync(Contact.Edit) ชุดเดียวกับลบผู้ติดต่อ · negative test ฉีด POST ไม่มีด่านลงไฟล์จริงใน ratchet_self_test
+    "Accounting/Controllers/ContactHygieneController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -159,6 +162,16 @@ GATE_MARKERS = (
     # รอบ 198 — webhook ของผู้ให้บริการรับชำระเงิน (PaymentWebhookController อยู่ไฟล์เดียวกับ PaymentGatewayController):
     # ไม่มีผู้ใช้ให้ตรวจสิทธิ์ ด่านคือ "adapter ยืนยันเหตุการณ์กับผู้ให้บริการ" (HMAC/re-fetch) — ไม่ผ่าน = ไม่แตะข้อมูล
     "VerifyWebhookAsync(",
+    # รอบ 201 ทีม PL (C-4) — โอนความเป็นเจ้าของ: ตัวตัดสินเดียว Helpers/OwnershipTransferPolicy (ปฏิเสธคีย์ API · ผู้เรียกต้องเป็นแอดมินแพลตฟอร์ม/
+    # เจ้าของ/ผู้ดูแลแพลตฟอร์มของบริษัท) — controller เรียกผ่าน CheckOwnershipTransferAsync แล้วใช้ผลตัดสิน (service ตรวจซ้ำก่อนเขียน)
+    "OwnershipTransferPolicy.Outcome.Allow",
+    # รอบ 201 (หลังรวมทีม IN) — ด่านสต็อกของ ProductController (HasPermissionAsync + 403 ไทย) · ใช้ผลรูป `is { } deny) return deny`
+    "RequireInventoryAsync",
+    # รอบ 201 (หลังรวมทีม OC) — ด่านไฟล์แนบ/สแกนของ OcrController (IAttachmentAccessGate · ทิศอ่าน/เขียน) — รูปการใช้ผล ทิศ และอาร์กิวเมนต์
+    # ถูกล็อกแยกโดย tools/attachment_gate_check.py (กติกาพารามิเตอร์ scanId/fileAttachmentId/documentId) ⇒ นับเป็นด่านที่นี่ได้
+    "ScanGateAsync(",
+    "DocGateAsync(",
+    "DenyScanSourceAsync(",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก
@@ -214,11 +227,32 @@ ACTION_RE = re.compile(r'^\s*\[Http(Get|Post|Put|Delete|Patch)(\("([^"]*)"\))?\]
 NAME_RE = re.compile(r'>+\s+(\w+)\s*\(')
 
 
-def scan(path):
-    """คืนลิสต์ (line, verb, route, name) ของ action ที่เขียนข้อมูลแต่ไม่มีด่าน"""
+CLASS_RE = re.compile(r'^\s*(?:public|internal)\s+(?:sealed\s+|abstract\s+|partial\s+)*class\s+\w+')
+CLASS_GATE_RE = re.compile(r'\[(?:Authorize\s*\(\s*(?:Roles|Policy)\s*=|RequirePermission\(|RequireOwner\()')
+
+
+def class_gated_lines(lines):
+    """รอบ 201 (A-PL5): ช่วงบรรทัดของคลาสที่มีด่านระดับคลาส (`[Authorize(Roles=…)]` · `[RequirePermission(…)]` · `[RequireOwner]`
+    เหนือการประกาศคลาส) — ใช้เฉพาะโหมด deny-list (ไฟล์ใน WATCHED คงกติกาเดิม: นับเฉพาะด่านของ action)"""
+    gated, cur = [], False
+    for i, line in enumerate(lines):
+        if CLASS_RE.match(line):
+            j, attrs = i - 1, []
+            while j >= 0 and lines[j].lstrip().startswith("["):
+                attrs.append(lines[j])
+                j -= 1
+            cur = any(CLASS_GATE_RE.search(a) for a in attrs)
+        gated.append(cur)
+    return gated
+
+
+def scan(path, class_gate=False):
+    """คืนลิสต์ (line, verb, route, name) ของ action ที่เขียนข้อมูลแต่ไม่มีด่าน ·
+    class_gate=True (deny-list รอบ 201) = นับด่านระดับคลาสด้วย"""
     with open(path, encoding="utf-8") as f:
         text = f.read()
     lines = text.split("\n")
+    gated_by_class = class_gated_lines(lines) if class_gate else [False] * len(lines)
 
     acts = []
     for i, line in enumerate(lines):
@@ -241,7 +275,7 @@ def scan(path):
 
     bad = []
     for idx, (i, verb, route) in enumerate(acts):
-        if verb == "Get":
+        if verb == "Get" or gated_by_class[i]:
             continue
         end = starts[idx + 1] if idx + 1 < len(acts) else len(lines)
         body = "\n".join(lines[starts[idx]:end])
@@ -367,9 +401,142 @@ def self_test():
     return 0 if ok else 1
 
 
+# ═══ รอบ 201 ทีม PL (A-PL5 · G2-10): deny-list ratchet ทั้งโฟลเดอร์ Controllers ═══
+# allow-list (WATCHED) พิสูจน์แล้ว 10 รอบว่า "ตามไม่ทัน" — ทุกรอบที่เพิ่มไฟล์เข้าลิสต์คือรอบที่เพิ่งมีคนพบว่าไฟล์นั้นไม่มีด่าน
+# ⇒ มองทุก controller นอก WATCHED ด้วย · จุดที่ยังไม่มีด่านวันนี้อยู่ใน baseline (ไฟล์<TAB>เมธอด<TAB>จำนวน) — **ห้ามเพิ่มแถว/จำนวน**
+# เพื่อให้เขียว (กติกา ratchet) · endpoint ใหม่ที่ไม่มีด่าน = ฟ้องทันที · ปิดด่านแล้วลด baseline ตาม · controller สาธารณะ (webhook/portal/
+# แขก) ที่ตั้งใจไม่มีด่านผู้ใช้อยู่ใน baseline พร้อมกัน — การ "เพิ่มทางเข้าสาธารณะใหม่" จึงต้องแก้ baseline อย่างตั้งใจ (เห็นใน diff)
+BASELINE = os.path.join(ROOT, "tools", "write_permission_gate_baseline.txt")
+CONTROLLER_DIR = os.path.join(ROOT, "Accounting", "Controllers")
+
+
+def scan_unwatched():
+    """{(rel, method): count} ของ endpoint ที่เขียนข้อมูลแต่ไม่มีด่าน ใน controller นอก WATCHED"""
+    watched = set(WATCHED)
+    out = {}
+    for dirpath, dirs, files in os.walk(CONTROLLER_DIR):
+        dirs[:] = [d for d in dirs if d not in {"bin", "obj"}]
+        for fn in sorted(files):
+            if not fn.endswith(".cs"):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, fn), ROOT).replace(os.sep, "/")
+            if rel in watched:
+                continue
+            for _, _, _, name in scan(os.path.join(dirpath, fn), class_gate=True):
+                out[(rel, name)] = out.get((rel, name), 0) + 1
+    return out
+
+
+def load_baseline():
+    base = {}
+    if not os.path.exists(BASELINE):
+        return base
+    with open(BASELINE, encoding="utf-8") as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            if not line.strip() or line.startswith("#"):
+                continue
+            rel, name, cnt = line.split("\t")
+            base[(rel, name)] = int(cnt)
+    return base
+
+
+def judge_ratchet(found, base):
+    errs, shrink = [], []
+    for key, cnt in sorted(found.items()):
+        if cnt > base.get(key, 0):
+            errs.append(f"{key[0]}: [{key[1]}] endpoint ที่เขียนข้อมูลแต่ไม่มีด่านสิทธิ์ (ใหม่ — ไม่อยู่ใน baseline)")
+    for key, cnt in sorted(base.items()):
+        if found.get(key, 0) < cnt:
+            shrink.append(f"{key[0]}\t{key[1]}: มีด่านแล้ว/หายไป — ลด baseline (ratchet เดินทางเดียว)")
+    return errs, shrink
+
+
+def ratchet_self_test(found, base):
+    """ฉีด POST ไม่มีด่านลง controller จริงนอก WATCHED แล้วต้องฟ้อง · ฉีดแบบมีด่านต้องไม่ฟ้อง"""
+    import tempfile
+    fails = []
+    target = os.path.join(CONTROLLER_DIR, "BankController.cs")
+    rel = "Accounting/Controllers/BankController.cs"
+    if not os.path.exists(target) or rel in WATCHED:
+        return [f"ratchet self-test: เป้า {rel} หายหรือถูกเฝ้าแล้ว — เปลี่ยนเป้า"]
+    text = open(target, encoding="utf-8").read()
+    cut = text.rstrip().rfind("}")
+    for code, expect in [
+        ('\n    [HttpPost("__inj")]\n    public async Task<IActionResult> InjectedNoGate() => Ok();\n', True),
+        ('\n    [HttpPost("__inj")]\n    [RequirePermission(PermissionKeys.BankManage)]\n'
+         '    public async Task<IActionResult> InjectedNoGate() => Ok();\n', False),
+    ]:
+        with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False, encoding="utf-8") as f:
+            f.write(text[:cut] + code + text[cut:])
+            tmp = f.name
+        try:
+            names = [n for _, _, _, n in scan(tmp, class_gate=True)]
+        finally:
+            os.unlink(tmp)
+        inj = dict(found)
+        inj[(rel, "InjectedNoGate")] = names.count("InjectedNoGate")
+        errs, _ = judge_ratchet(inj, base)
+        fired = any("InjectedNoGate" in e for e in errs)
+        if fired != expect:
+            fails.append("ratchet self-test: " + ("POST ไม่มีด่านใน BankController ไม่ถูกฟ้อง" if expect
+                                                   else "POST ที่มี [RequirePermission] ถูกฟ้องผิด"))
+    # ไฟล์ใน WATCHED ที่เพิ่มรอบ 201 (ContactHygieneController): ฉีด POST ไม่มีด่านแล้วต้องถูกฟ้องในโหมด WATCHED
+    hyg = os.path.join(CONTROLLER_DIR, "ContactHygieneController.cs")
+    if os.path.exists(hyg):
+        htext = open(hyg, encoding="utf-8").read()
+        hcut = htext.rstrip().rfind("}")
+        with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False, encoding="utf-8") as f:
+            f.write(htext[:hcut] + '\n    [HttpPost("__inj2")]\n    public async Task<IActionResult> InjectedHygiene() => Ok();\n' + htext[hcut:])
+            tmp = f.name
+        try:
+            hnames = [n for _, _, _, n in scan(tmp)]
+            real = [n for _, _, _, n in scan(hyg)]
+        finally:
+            os.unlink(tmp)
+        if "InjectedHygiene" not in hnames:
+            fails.append("ratchet self-test: POST ไม่มีด่านใน ContactHygieneController (WATCHED) ไม่ถูกฟ้อง")
+        if real:
+            fails.append(f"ratchet self-test: ContactHygieneController จริงถูกฟ้อง {real} (ด่าน HasPermissionAsync ต้องนับ)")
+    else:
+        fails.append("ratchet self-test: ไม่พบ ContactHygieneController.cs — เปลี่ยนเป้าของ negative test")
+
+    # ด่านระดับคลาส: นับเฉพาะคลาสที่ attribute อยู่เหนือการประกาศ — คลาสที่สองในไฟล์เดียวกัน (ไม่มีด่าน) ต้องยังถูกฟ้อง
+    two = ('[Authorize(Roles = "SystemAdmin")]\npublic class GatedController : ControllerBase\n{\n'
+           '    [HttpPost("a")]\n    public async Task<IActionResult> InGated() => Ok();\n}\n'
+           '[Authorize]\npublic class OpenController : ControllerBase\n{\n'
+           '    [HttpPost("b")]\n    public async Task<IActionResult> InOpen() => Ok();\n}\n')
+    with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False, encoding="utf-8") as f:
+        f.write(two)
+        tmp = f.name
+    try:
+        names = {n for _, _, _, n in scan(tmp, class_gate=True)}
+        legacy = {n for _, _, _, n in scan(tmp)}
+    finally:
+        os.unlink(tmp)
+    if names != {"InOpen"}:
+        fails.append(f"ratchet self-test: ด่านระดับคลาสตัดสินผิด — ได้ {sorted(names)} (คาด ['InOpen'])")
+    if legacy != {"InGated", "InOpen"}:
+        fails.append("ratchet self-test: โหมด WATCHED ต้องไม่นับด่านระดับคลาส (กติกาเดิม)")
+    return fails
+
+
 def main():
     if "--self-test" in sys.argv:
-        return self_test()
+        rc = self_test()
+        st = ratchet_self_test(scan_unwatched(), load_baseline())
+        for e in st:
+            print("❌ " + e)
+        return 1 if (rc or st) else 0
+    if "--write-baseline" in sys.argv:
+        found = scan_unwatched()
+        with open(BASELINE, "w", encoding="utf-8") as f:
+            f.write("# write_permission_gate_check baseline (รอบ 201 A-PL5) — controller นอก WATCHED: ไฟล์<TAB>เมธอด<TAB>จำนวน endpoint ที่ไม่มีด่าน\n")
+            f.write("# ห้ามเพิ่มแถว/จำนวนเพื่อให้เขียว · ลดได้อย่างเดียวเมื่อปิดด่าน (หรือเมื่อย้ายไฟล์เข้า WATCHED ตอนเขียวแล้ว)\n")
+            for (rel, name), cnt in sorted(found.items()):
+                f.write(f"{rel}\t{name}\t{cnt}\n")
+        print(f"เขียน baseline {len(found)} แถว · {sum(found.values())} endpoint")
+        return 0
     targets = [a for a in sys.argv[1:] if not a.startswith("--")] or WATCHED
     total = 0
     for rel in targets:
@@ -382,14 +549,24 @@ def main():
             print(f"{rel}:{line}: [{verb}] {name} ({route or '/'}) "
                   f"— endpoint ที่เขียนข้อมูลแต่ไม่มีด่านสิทธิ์")
 
+    found = scan_unwatched()
+    base = load_baseline()
+    rerrs, shrink = judge_ratchet(found, base)
+    st = ratchet_self_test(found, base)
+    for e in rerrs + st:
+        print("❌ " + e)
+    for s2 in shrink:
+        print("⚠️  " + s2)
     if total:
         print()
         print(f"❌ พบ {total} จุด — action ที่เขียนข้อมูลต้องผ่านด่านสิทธิ์")
         print("   เอกสาร: DenyDocAsync(...) / DenyKeyAsync(...)")
         print("   เงินเดือน: RequirePayrollWriteAsync(...) / RequireAnyAsync(...)")
         print("   ถ้า POST นี้อ่านอย่างเดียวจริง ให้เพิ่มชื่อเมธอดใน READ_ONLY_POSTS")
+    if total or rerrs or st:
         return 1
-    print("✅ ทุก endpoint ที่เขียนข้อมูลในคอนโทรลเลอร์ที่เฝ้าอยู่ ผ่านด่านสิทธิ์แล้ว")
+    print(f"✅ ทุก endpoint ที่เขียนข้อมูลในคอนโทรลเลอร์ที่เฝ้าอยู่ ผ่านด่านสิทธิ์แล้ว · นอก WATCHED: {sum(found.values())} จุดใน baseline "
+          f"(ห้ามเพิ่ม · deny-list ratchet รอบ 201)")
     return 0
 
 

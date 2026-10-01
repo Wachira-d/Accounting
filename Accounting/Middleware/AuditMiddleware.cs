@@ -101,7 +101,7 @@ public class AuditMiddleware
 
             try
             {
-                db.AuditLogs.Add(auditLog);
+                db.AddChainedAuditLog(auditLog);   // รอบ 201 A-PL4: เข้า hash chain (ประทับใน SaveChanges ใต้ล็อก)
                 await db.SaveChangesAsync();
             }
             catch (Exception ex)

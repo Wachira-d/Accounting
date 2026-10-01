@@ -74,6 +74,9 @@ public class AuditTrailController : ControllerBase
             .ToListAsync();
         var unchained = await db.AuditLogs.AsNoTracking()
             .CountAsync(a => a.CompanyId == companyId && a.RowHash == null);
+        DateTime? unchainedLatest = unchained == 0 ? null : await db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.RowHash == null)
+            .MaxAsync(a => (DateTime?)a.Timestamp);
         // ตัวตรวจกลางตัวเดียวกับ service/job (รอบสอง: เดิม controller เดิน chain ด้วยลูปของตัวเอง = ตรรกะเช็กลิงก์ชุดที่สอง)
         var a = Accounting.Helpers.AuditHashChain.Analyze(rows);
         return Ok(new ApiResponse<object>(true, new
@@ -86,6 +89,9 @@ public class AuditTrailController : ControllerBase
             forkCount = a.ForkCount,
             // แถวที่ไม่เคยเข้า chain (ไม่ใช่หลักฐานว่าถูกแก้ แต่ก็ไม่ได้รับการป้องกัน) — แสดงแยก ไม่ซ่อน
             unchainedCount = unchained,
+            // คำตัดสินรอบ 201 (DV Q3): กลุ่ม "นอก chain รุ่นเก่า (ก่อนวันที่ X)" — ไม่เติม hash ย้อนหลัง
+            unchainedLatestAt = unchainedLatest,
+            unchainedNote = Accounting.Helpers.AuditHashChain.UnchainedNote(unchained, unchainedLatest),
             // ถูกตัดที่ maxRows ⇒ แถวที่ชี้ไปยังแถวนอกช่วงอาจถูกนับเป็นขาดตอน — บอกผู้เรียกตรง ๆ
             truncated = rows.Count >= maxRows,
             tampered = a.Tampered.Take(100).Select(e => new { e.Id, e.Timestamp, e.EntityType, e.EntityId }),

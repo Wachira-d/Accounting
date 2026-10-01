@@ -55,11 +55,15 @@ public static class TaxFilingDeadline
     /// (กระดาษ, e-Filing) ของงวด <paramref name="year"/>/<paramref name="month"/>
     /// — เลื่อนพ้นวันหยุดแล้วทั้งคู่
     ///
-    /// <para>⚠️ เลื่อนเฉพาะ <b>เสาร์/อาทิตย์</b> เพราะเรพนี้ยังไม่มีตารางวันหยุดราชการ
-    /// (เป็น backlog ใน SYSTEM_REVIEW) ⇒ งวดที่วันครบกำหนดตรงวันหยุดนักขัตฤกษ์จะยัง
-    /// ขึ้น "เลยกำหนด" เร็วไป 1 วัน — ทิศนี้ปลอดภัยกว่าการเลื่อนเกินจริง แต่ยังไม่จบ</para>
+    /// <para>⚠️ overload นี้เลื่อนเฉพาะ <b>เสาร์/อาทิตย์</b> (พฤติกรรมเดิม) — รอบ 201 ทีม PL (B-9): ผู้เรียกที่โหลดตารางวันหยุดราชการของแพลตฟอร์ม
+    /// (<c>PlatformHolidayStore.LoadSetAsync</c>) ใช้ overload ที่รับ <c>holidays</c> · ตารางว่าง = เท่าเดิมทุกวัน</para>
     /// </summary>
     public static (DateTime Paper, DateTime EFiling) For(string remittanceType, int year, int month)
+        => For(remittanceType, year, month, null);
+
+    /// <summary>เหมือน <see cref="For(string, int, int)"/> แต่เลื่อนพ้น<b>วันหยุดราชการ</b>ใน <paramref name="holidays"/> ด้วย
+    /// (ป.พ.พ. §193/8 · ตัวตัดสินวันทำการ <see cref="BusinessDayCalendar"/>) · null/ว่าง = เสาร์/อาทิตย์เท่านั้น (เดิม)</summary>
+    public static (DateTime Paper, DateTime EFiling) For(string remittanceType, int year, int month, IReadOnlySet<DateTime>? holidays)
     {
         var next = new DateTime(year, month, 1).AddMonths(1);
         var day = Math.Min(PaperDay(remittanceType), DateTime.DaysInMonth(next.Year, next.Month));
@@ -72,16 +76,17 @@ public static class TaxFilingDeadline
             ? paperRaw.AddDays(EFilingExtraDays)
             : paperRaw;
 
-        return (RollToBusinessDay(paperRaw), RollToBusinessDay(eFilingRaw));
+        return (RollToBusinessDay(paperRaw, holidays), RollToBusinessDay(eFilingRaw, holidays));
     }
 
-    /// <summary>ป.พ.พ. §193/8 — เลื่อน<b>ไปข้างหน้า</b>เท่านั้น ห้ามถอยหลัง</summary>
-    public static DateTime RollToBusinessDay(DateTime d) => d.DayOfWeek switch
+    /// <summary>ป.พ.พ. §193/8 — เลื่อน<b>ไปข้างหน้า</b>เท่านั้น ห้ามถอยหลัง (เสาร์/อาทิตย์ · พฤติกรรมเดิม)</summary>
+    public static DateTime RollToBusinessDay(DateTime d) => RollToBusinessDay(d, null);
+
+    /// <summary>ป.พ.พ. §193/8 รวมวันหยุดราชการ (รอบ 201 B-9) — ตัวตัดสินเดียว <see cref="BusinessDayCalendar.RollForward"/></summary>
+    public static DateTime RollToBusinessDay(DateTime d, IReadOnlySet<DateTime>? holidays)
     {
-        DayOfWeek.Saturday => d.AddDays(2),
-        DayOfWeek.Sunday => d.AddDays(1),
-        _ => d,
-    };
+        return BusinessDayCalendar.RollForward(d, holidays);
+    }
 
     /// <summary>map จาก <see cref="TaxType"/> → คีย์ของตารางนี้ · null = ไม่ใช่แบบรายเดือน</summary>
     public static string? KeyOf(TaxType type) => type switch
@@ -97,10 +102,13 @@ public static class TaxFilingDeadline
     };
 
     /// <summary>กำหนดยื่น e-Filing ของ <see cref="TaxType"/> — null เมื่อไม่ใช่แบบรายเดือน</summary>
-    public static DateTime? EFilingFor(TaxType type, int year, int month)
+    public static DateTime? EFilingFor(TaxType type, int year, int month) => EFilingFor(type, year, month, null);
+
+    /// <summary>เหมือนข้างบน + วันหยุดราชการ (รอบ 201 B-9)</summary>
+    public static DateTime? EFilingFor(TaxType type, int year, int month, IReadOnlySet<DateTime>? holidays)
     {
         if (year < 2018 || month is < 1 or > 12) return null;
         var key = KeyOf(type);
-        return key == null ? null : For(key, year, month).EFiling;
+        return key == null ? null : For(key, year, month, holidays).EFiling;
     }
 }

@@ -98,6 +98,22 @@ public class CompanyController : ControllerBase
             new { result.WasInvited, result.Email, result.InvitationId, result.EmailSent, result.InviteLink }, message));
     }
 
+    /// <summary>รอบ 201 ทีม PL (C-4 · ข้อ 77): โอนความเป็นเจ้าของ (ผู้ดูแลแพลตฟอร์มส่งมอบบริษัทให้ลูกค้า) — ด่านตัวเดียว
+    /// <c>OwnershipTransferPolicy.Decide</c> ตรวจที่นี่ก่อน (ปฏิเสธพร้อมข้อความไทย) และ service ตรวจซ้ำในธุรกรรมเดียวกับการเขียน</summary>
+    public sealed record TransferOwnershipRequest(string? Email, bool RemoveSupport = true);
+
+    [HttpPost("{companyId:guid}/transfer-ownership")]
+    public async Task<ActionResult<ApiResponse<bool>>> TransferOwnership(Guid companyId, [FromBody] TransferOwnershipRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var outcome = await _companyService.CheckOwnershipTransferAsync(companyId, userId, request?.Email);
+        if (outcome != OwnershipTransferPolicy.Outcome.Allow)
+            return StatusCode(OwnershipTransferPolicy.StatusCode(outcome),
+                new ApiResponse<bool>(false, false, OwnershipTransferPolicy.Message(outcome)));
+        await _companyService.TransferOwnershipAsync(companyId, userId, request!.Email, request.RemoveSupport);
+        return Ok(new ApiResponse<bool>(true, true, OwnershipTransferPolicy.Message(OwnershipTransferPolicy.Outcome.Allow)));
+    }
+
     [HttpPut("{companyId:guid}/users/{targetUserId:guid}/role")]
     public async Task<ActionResult<ApiResponse<string>>> UpdateUserRole(Guid companyId, Guid targetUserId, [FromBody] UpdateUserRoleRequest request)
     {
