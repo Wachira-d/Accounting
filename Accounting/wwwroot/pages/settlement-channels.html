@@ -126,9 +126,49 @@
             <td style="white-space:nowrap">
               <button class="btn btn-sm btn-secondary" onclick="Page.edit(${i})">แก้ไข</button>
               <a class="btn btn-sm btn-secondary" href="/pages/settlements.html?channel=${Layout.esc(encodeURIComponent(ch.id))}">รอบโอน</a>
+              <button class="btn btn-sm btn-secondary" onclick="Page.orphans(${i})">ของกำพร้า</button>
             </td>
           </tr>`).join('')}
           </tbody></table></div></div>`;
+      },
+
+      /** รอบ 201 ทีม ST (A-ST4): ของกำพร้าของช่องทาง — กอง/เหตุ/ผู้รับรู้/ยอด/ผลต่อผังพัก มาจากเซิร์ฟเวอร์ทั้งหมด (หน้าเว็บแสดงอย่างเดียว ·
+       *  ยอดซ่อนตามสิทธิ์ที่ server · ปุ่มรับรู้อยู่ที่พรีวิวการลงบัญชีของรอบโอน — ต้องตรวจเทียบกับรอบที่จะลง) */
+      async orphans(i) {
+        const ch = this.channels[i]; if (!ch) return;
+        const api = Layout.api(); if (!api) return;
+        const box = document.getElementById('formBox');
+        box.innerHTML = '<div class="card">กำลังโหลด…</div>';
+        try {
+          const r = (await api.getSettlementChannelOrphans(ch.id))?.data;
+          const rows = r?.rows || [];
+          const money = (v) => v == null ? '<span class="hint">ซ่อน/ไม่รู้</span>' : Layout.money(v);
+          box.innerHTML = `<div class="card">
+            <h3>ของกำพร้าของช่องทาง ${Layout.esc(r?.channelName || ch.displayName)}</h3>
+            <p class="sub">เอกสาร/การรับชำระที่การลงบัญชีสร้างให้รอบโอนที่ถูกยกเลิกแล้ว และยังไม่ถูกยกเลิก — รายการที่รับรู้แล้วไม่บล็อกการลงบัญชี
+              แต่ยอดยังค้างในผังพักโดยไม่มีรายการโอนเข้าธนาคารล้าง · รับรู้ได้ที่ “ดูตัวอย่างการลงบัญชี” ของรอบโอนในช่องทางนี้</p>
+            ${r?.amountsHiddenReason ? `<div class="banner info">${Layout.esc(r.amountsHiddenReason)}</div>` : ''}
+            ${rows.length ? `<div class="scroll-x"><table class="tbl"><thead><tr><th>รายการ</th><th>รอบโอนเดิม</th><th>สถานะ</th>
+                <th>รายละเอียด</th><th>ยอด</th><th>ผลต่อผังพัก</th></tr></thead><tbody>
+              ${rows.map(x => { const o = x.item || {}; return `<tr>
+                <td>${o.isPayment ? 'การรับชำระ' : 'เอกสาร'} ${Layout.esc(o.number || '-')}</td>
+                <td>${Layout.esc(o.payoutRef || '')}</td>
+                <td>${Layout.esc(o.pileLabel || '-')}${o.ackStatusLabel ? `<div class="hint">${Layout.esc(o.ackStatusLabel)}</div>` : ''}</td>
+                <td>${Layout.esc(o.why || '')}${o.ack ? `<div class="hint">รับรู้โดย <b>${Layout.esc(o.ack.byName || o.ack.byUserId || '-')}</b>
+                    เมื่อ ${Layout.date(o.ack.at)} · เหตุผล: ${Layout.esc(o.ack.reason || '')}</div>` : ''}
+                  ${o.nextStep ? `<div class="hint"><b>ทางไปต่อ:</b> ${Layout.esc(o.nextStep)}</div>` : ''}</td>
+                <td>${money(x.amount)}</td>
+                <td>${money(x.clearingEffect)}<div class="hint">${Layout.esc(x.clearingEffectLabel || '')}</div></td>
+              </tr>`; }).join('')}
+              </tbody></table></div>
+              <div class="hint" style="margin-top:8px">ยอดค้างผังพักของรายการที่รับรู้แล้ว: <b>${money(r?.acknowledgedClearingTotal)}</b> ·
+                ยังบล็อกการลงบัญชี ${Layout.esc(String(r?.blockingCount ?? 0))} รายการ</div>`
+              : '<div class="banner info">ไม่มีของกำพร้าในช่องทางนี้</div>'}
+            <div style="margin-top:10px"><button class="btn btn-secondary" onclick="Page.cancel()">ปิด</button></div>
+          </div>`;
+        } catch (e) {
+          box.innerHTML = `<div class="card banner bad">โหลดรายงานของกำพร้าไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+        }
       },
 
       options(list, selected) {

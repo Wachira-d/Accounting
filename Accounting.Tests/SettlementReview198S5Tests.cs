@@ -116,7 +116,8 @@ public class SettlementReview198S5Tests
         Assert.True(issue.Blocking);
         Assert.Contains("รับรู้ของกำพร้า", issue.NextStep);
 
-        var ack = new SettlementOrphanAck(Guid.NewGuid(), "ผู้ทำบัญชี ก", Day, "ตรวจแล้วรอบใหม่ไม่ซ้ำ");
+        // รอบ 201 ทีม ST (A-ST5): การรับรู้ประทับลายนิ้วมือเหตุที่รายการแสดงตอนกด (ตัวเดียวกับ service) — ไม่มีลายนิ้วมือ = ไม่ครอบ
+        var ack = new SettlementOrphanAck(Guid.NewGuid(), "ผู้ทำบัญชี ก", Day, "ตรวจแล้วรอบใหม่ไม่ซ้ำ", Assert.Single(t.Items!).ReasonHash);
         var acked = SettlementOrphanTriage.Split(new[] { Orphan(DocB, false, "PV-0009") with { Ack = ack } },
             SettlementUnpostGate.Evaluate(new[] { FeeDoc(etaxAccepted: true) }, Array.Empty<SettlementUnpostCertificate>(), NothingFiled),
             new[] { FeeDoc(etaxAccepted: true) });

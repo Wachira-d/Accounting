@@ -114,6 +114,18 @@ public class Payment : TenantEntity
     public Guid? SettlementOrphanAckBy { get; set; }
     /// <summary>เหตุผลที่รับรู้ของกำพร้า (บังคับ) — คู่กับ <see cref="SettlementOrphanAckAt"/></summary>
     public string? SettlementOrphanAckReason { get; set; }
+    /// <summary>รอบ 201 ทีม ST (A-ST5): ลายนิ้วมือของ "เหตุที่ยกเลิกไม่ได้" ณ เวลารับรู้ (<c>SettlementOrphanTriage.ReasonHash</c>) — เหตุเปลี่ยน ⇒ การรับรู้เดิมไม่มีผล ·
+    /// null = รับรู้ก่อนระบบเก็บเหตุ (ไม่รู้ ⇒ ไม่ครอบ · DOCTRINE §1)</summary>
+    public string? SettlementOrphanAckReasonHash { get; set; }
+
+    /// <summary>
+    /// **รอบโอน settlement ที่บันทึกการรับชำระนี้** (รอบ 201 ทีม ST · A-ST1) — กุญแจตัวเดียวของตัวหาของกำพร้า · ด่านยกเลิกทีละรายการ · ชิ้นที่ออกแล้วของรอบ ·
+    /// เดิมใช้ป้าย <c>[SETTLEMENT:{id}]</c> ใน <see cref="Notes"/> ซึ่งเป็นข้อความที่เส้นรับชำระทั่วไปรับจากผู้ใช้ ⇒ ปลอม/ลบป้ายได้ ·
+    /// <para>ผู้เขียน<b>ตัวเดียว</b>: ผู้ลงบัญชีรอบโอน ประทับใน <c>SaveChanges</c> เดียวกับที่สร้างแถว (<c>Helpers/SettlementPaymentOwner</c>) · เส้นรับชำระทั่วไป/API
+    /// <b>ไม่มีช่องให้ตั้ง</b> (ไม่อยู่ใน <c>CreatePaymentRequest</c>) · ข้อมูลก่อน deploy ได้ค่าจาก backfill ครั้งเดียวตอนสร้างคอลัมน์ (เฉพาะป้ายที่พิสูจน์ได้) ·
+    /// null = ไม่ใช่ของรอบโอน · ป้ายใน Notes ยังเขียนไว้ให้คนอ่าน <b>แต่ไม่มีผลกับด่านใดอีก</b> (<c>tools/required_call_site_check.py</c> ห้ามอ่าน)</para>
+    /// </summary>
+    public Guid? SettlementBatchId { get; set; }
 
     /// <summary>Per-document allocation lines — populated when ONE
     /// payment settles MULTIPLE documents (e.g. a single ฿15,000

@@ -106,6 +106,9 @@ public enum SettlementPlanIssueCode
     /// <summary>ใบสรุปเพิ่มเติมที่ทุกบรรทัด (ที่ยังไม่ยืนยัน) เนื้อหาตรงรอบที่ออกใบแรกของวัน — น่าจะเป็นไฟล์ซ้ำ (บล็อก) · ทางไปต่อ: ยกเลิกรอบ หรือผู้มีสิทธิ์ลงบัญชี
     /// "ยืนยันว่าเป็นรายการจริง" รายบรรทัดพร้อมเหตุผล (ฝ่ายค้านรอบสอง R2M-12 · แยกจาก <see cref="SummarySaleDuplicate"/> ที่ยืนยันไม่ได้ — ออเดอร์เดียวกันมีเอกสารแล้ว)</summary>
     SummarySupplementDuplicate = 61,
+    /// <summary>รอบ 201 ทีม ST (A-ST8): เอกสารที่ลงไว้ครั้งก่อนของรอบนี้มีเนื้อหาไม่ตรงแผนปัจจุบัน (ลายนิ้วมือตอนออกไม่เท่า) — ไม่บล็อก (ยอดถูกตรวจแยก) ·
+    /// เลข 70 เว้นช่วง 62–69 ให้ทีมอื่นของรอบ 201</summary>
+    IssuedPieceDrift = 70,
 }
 
 /// <summary>ปัญหา 1 ข้อของแผน</summary>
@@ -236,6 +239,21 @@ public static class SettlementBatchMath
     /// <summary>สมการรอบโอนลงตัวไหม — ตัวตัดสินเดียวของปัญหา <c>Unbalanced</c> และธง <c>SettlementPostingPlan.Balanced</c> ที่หน้าเว็บแสดง</summary>
     public static bool IsBalanced(decimal difference) => Math.Abs(difference) <= ToleranceBaht;
 
+    /// <summary>
+    /// ทางไปต่อของปัญหา <c>Unbalanced</c> (รอบ 201 ทีม ST · A-ST3 · team-SG SG-2) — รอบโอนที่<b>ประกอบจากรายการรับชำระของ gateway</b> และ<b>ไม่ได้กรอก "ถึงวันที่"</b>
+    /// ⇒ ขอบบนของรายการ = เที่ยงคืนต้นวันเงินเข้า (R2M-6) · ผู้ให้บริการที่โอนแบบ T+0 รวมรายการช่วงเช้าของวันเงินเข้าด้วย ⇒ รายการนั้นหลุด ยอดไม่ลงตัว ·
+    /// เดิมข้อความบอกแค่ "ตรวจยอด/เพิ่มบรรทัดปรับปรุง" (ผู้ใช้อาจเติมบรรทัดปรับปรุงแทนรายการจริงที่หลุด) ⇒ บอกเหตุที่น่าจะเป็นก่อน · กรอกแล้ว/รอบจากไฟล์ = ข้อความเดิม · pure
+    /// </summary>
+    internal static string UnbalancedNextStep(SettlementSourceKind sourceKind, DateTime? periodTo)
+    {
+        const string General = "ตรวจยอดโอนเข้าและยอดยกมา/ยกไปให้ตรงสเตทเมนต์ของผู้ให้บริการ · ถ้าไฟล์ขาดรายการ เพิ่มบรรทัด \"ปรับปรุงอื่น\" "
+            + "พร้อมเหตุผลและผังบัญชี (ระบบไม่เดาส่วนต่างให้ — JE ที่ไม่ตรงเงินจริงกระทบยอดไม่ได้ตลอดไป)";
+        if (sourceKind != SettlementSourceKind.PaymentIntents || periodTo != null) return General;
+        return "รอบโอนนี้ประกอบจากรายการรับชำระออนไลน์โดยไม่ได้กรอก \u201Cถึงวันที่\u201D — ระบบนับรายการถึงก่อนเที่ยงคืนต้นวันเงินเข้าเท่านั้น "
+            + "ถ้าผู้ให้บริการรวมรายการของวันเงินเข้า (โอนแบบ T+0) ให้ยกเลิกรอบนี้แล้วประกอบใหม่โดยกรอก \u201Cถึงวันที่\u201D ตามสเตทเมนต์ของผู้ให้บริการ "
+            + "(อย่าเติมบรรทัดปรับปรุงแทนรายการที่หลุด — รายการนั้นจะไม่มีรอบโอนเจ้าของ) · ถ้าไม่ใช่เหตุนี้: " + General;
+    }
+
     public static SettlementPostingPlan Plan(
         SettlementBatch batch,
         IReadOnlyList<SettlementLine> lines,
@@ -254,8 +272,7 @@ public static class SettlementBatchMath
             issues.Add(new SettlementPlanIssue(SettlementPlanIssueCode.Unbalanced, true,
                 $"ยอดรวมบรรทัด ({linesTotal:N2}) ไม่เท่ากับยอดโอนเข้า ({batch.NetPayout:N2}) + ยอด wallet ที่เปลี่ยน "
                 + $"({batch.ClosingWalletBalance - batch.OpeningWalletBalance:N2}) — ต่างกัน {diff:N2} บาท",
-                "ตรวจยอดโอนเข้าและยอดยกมา/ยกไปให้ตรงสเตทเมนต์ของผู้ให้บริการ · ถ้าไฟล์ขาดรายการ เพิ่มบรรทัด \"ปรับปรุงอื่น\" "
-                + "พร้อมเหตุผลและผังบัญชี (ระบบไม่เดาส่วนต่างให้ — JE ที่ไม่ตรงเงินจริงกระทบยอดไม่ได้ตลอดไป)",
+                UnbalancedNextStep(batch.SourceKind, batch.PeriodTo),
                 Array.Empty<Guid>(), diff));
 
         // ── 2. ด่านระดับช่องทาง/รอบโอน ──

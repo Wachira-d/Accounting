@@ -1160,6 +1160,8 @@ const API = {
       listSettlementChannels: (includeInactive = false) =>
         API.get(`${base}/settlement/channels?includeInactive=${includeInactive ? 'true' : 'false'}`),
       getSettlementChannel: (id) => API.get(`${base}/settlement/channels/${id}`),
+      // รอบ 201 ทีม ST (A-ST4): รายงานของกำพร้าระดับช่องทาง (อ่านอย่างเดียว · ยอดซ่อนตามสิทธิ์ที่ server)
+      getSettlementChannelOrphans: (id) => API.get(`${base}/settlement/channels/${id}/orphans`),
       createSettlementChannel: (d) => API.post(`${base}/settlement/channels`, d),
       updateSettlementChannel: (id, d) => API.put(`${base}/settlement/channels/${id}`, d),
       inspectSettlementFile: (formData) => API.upload(`${base}/settlement/files/inspect`, formData),

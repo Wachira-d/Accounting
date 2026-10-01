@@ -9500,7 +9500,7 @@ public partial class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
 
         // รอบ 198 ฝ่ายค้าน C-5: การรับชำระที่การลงบัญชีรอบโอน settlement บันทึก — ยกเลิกทีละรายการไม่ได้ขณะรอบโอนยังลงบัญชีแล้ว
-        if (await SettlementArtifactGuard.CheckAsync(_db, companyId, SettlementArtifactGuard.BatchIdFromPaymentNotes(payment.Notes))
+        if (await SettlementArtifactGuard.CheckAsync(_db, companyId, payment.SettlementBatchId)
                 is string settlementBlock)
             throw new BusinessRuleException(settlementBlock, "SETTLEMENT-ARTIFACT-VOID", 409);
 
@@ -9546,7 +9546,7 @@ public partial class DocumentService : IDocumentService
                     return;
                 }
                 // รอบ 198 ทีม S4 (review198-S3 S3-8): ด่าน C-5 ซ้ำใต้ธุรกรรม (แถวรอบโอน FOR SHARE — รอการประทับ Posted ที่กำลังทำแล้วเห็นสถานะใหม่)
-                if (await SettlementArtifactGuard.CheckLockedAsync(_db, companyId, SettlementArtifactGuard.BatchIdFromPaymentNotes(locked.Notes))
+                if (await SettlementArtifactGuard.CheckLockedAsync(_db, companyId, locked.SettlementBatchId)
                         is string settlementLocked)
                     throw new BusinessRuleException(settlementLocked, "SETTLEMENT-ARTIFACT-VOID", 409);
 
