@@ -64,7 +64,8 @@ public enum AbbreviatedInvoiceChannel
 /// — ค่าตั้งต้น <c>true</c> = บังคับ ตามกฎหมายวันนี้)</para>
 /// <para>⚠️ <b>สวิตช์นี้ปิดได้เฉพาะด่าน ภ.พ.06</b> — ด่าน "ยังไม่จด VAT" ปิดไม่ได้
 /// เพราะการออกใบกำกับโดยไม่ได้จด VAT ไม่ใช่เรื่องนโยบาย แต่เป็นสิ่งที่ §77/1 ห้ามขาด
-/// (และระบบไม่มีเลขผู้เสียภาษี VAT จะพิมพ์ลงใบด้วยซ้ำ)</para>
+/// (และระบบไม่มีเลขผู้เสียภาษี VAT จะพิมพ์ลงใบด้วยซ้ำ) · ด่าน "กิจการขายปลีก" (§86/6) ก็ปิดไม่ได้เช่นกัน
+/// (รอบ 201 C-21 · คำตัดสินข้อ 94 — เดิมสวิตช์ปิดด่านนี้ไปด้วย)</para>
 ///
 /// ═══ ทำไมเป็นฟังก์ชันบริสุทธิ์ที่รับ "ข้อเท็จจริง" ไม่ใช่ entity ═══
 /// <para>ตาม <c>DECISION_DOCTRINE.md</c> §1 — ตัวตัดสินต้องทดสอบได้โดยไม่ต้องมีฐานข้อมูล
@@ -79,8 +80,8 @@ public static class AbbreviatedTaxInvoiceRule
     /// — ชื่อฟิลด์เดิม (<c>Company.IsRetailApproved</c>) คงไว้เพื่อไม่ต้อง migrate</param>
     /// <param name="phoR06ApprovedDate">วันที่อนุมัติ ภ.พ.06 — ใช้<b>เฉพาะช่องทางสลิป</b></param>
     /// <param name="issueDateUtc">วันที่บนเอกสาร — สลิปห้ามลงวันที่ก่อนวันอนุมัติ ภ.พ.06</param>
-    /// <param name="requirePhoR06">สวิตช์แพลตฟอร์ม (<c>false</c> = ปิดด่านชั่วคราว → จด VAT อย่างเดียวก็ออกได้
-    /// ทุกช่องทาง — พฤติกรรมเดิมของสวิตช์ ไม่เปลี่ยน)</param>
+    /// <param name="requirePhoR06">สวิตช์แพลตฟอร์ม (<c>false</c> = ปิดด่าน ภ.พ.06 ชั่วคราว → กิจการขายปลีกที่จด VAT ออกได้
+    /// ทุกช่องทางโดยไม่ดู ภ.พ.06 · รอบ 201 C-21: ไม่ปิดด่านขายปลีก §86/6)</param>
     /// <param name="channel">ช่องทางที่ออก — <b>ไม่มีค่าตั้งต้นโดยตั้งใจ</b>: ผู้เรียกต้องรู้ว่ากำลังออกสลิปหรือเอกสาร</param>
     public static AbbreviatedInvoiceBlockReason Judge(
         bool isVatRegistered,
@@ -94,13 +95,15 @@ public static class AbbreviatedTaxInvoiceRule
         if (!isVatRegistered)
             return AbbreviatedInvoiceBlockReason.NotVatRegistered;
 
-        // แอดมินปิดด่าน (เผื่อกฎหมายเปลี่ยน) → จด VAT แล้วออกได้เลย
-        if (!requirePhoR06)
-            return AbbreviatedInvoiceBlockReason.None;
-
         // §86/6 — ทุกช่องทาง: ต้องเป็นกิจการขายปลีก/บริการลักษณะขายปลีก
+        // รอบ 201 ทีม TX (C-21 · คำตัดสินข้อ 94): ย้ายขึ้นมาก่อนสวิตช์ ภ.พ.06 — เดิมสวิตช์แพลตฟอร์มปิดด่านขายปลีกไปด้วย ⇒ ปิดสวิตช์แล้วกิจการที่ไม่ใช่
+        // ขายปลีกออกใบกำกับอย่างย่อได้ทุกช่องทาง (ขายปลีกเป็นข้อกฎหมาย §86/6 ไม่ใช่นโยบาย ภ.พ.06 — คำตัดสินเจ้าของ 2026-09-28)
         if (!isRetailApproved)
             return AbbreviatedInvoiceBlockReason.NotRetailBusiness;
+
+        // แอดมินปิดด่าน ภ.พ.06 (เผื่อกฎหมายเปลี่ยน) → ขายปลีกที่จด VAT แล้วออกได้เลย (สวิตช์คุมเฉพาะ ภ.พ.06)
+        if (!requirePhoR06)
+            return AbbreviatedInvoiceBlockReason.None;
 
         // เอกสารจากหน้าเอกสาร (พิมพ์/PDF) ไม่ใช้เครื่องบันทึกการเก็บเงิน ⇒ ไม่ต้องมี ภ.พ.06
         if (channel == AbbreviatedInvoiceChannel.Document)

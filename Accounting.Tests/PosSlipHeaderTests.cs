@@ -161,7 +161,24 @@ public class AbbreviatedTaxInvoiceRuleTests
     [Fact]
     public void ปิดสวิตช์_ไม่มี_ภพ06_ก็ออกได้()
         => Assert.Equal(AbbreviatedInvoiceBlockReason.None,
+            AbbreviatedTaxInvoiceRule.Judge(true, true, null, Today, requirePhoR06: false, S));
+
+    [Fact]
+    public void C21_ปิดสวิตช์_ภพ06_ไม่ปิดด่านขายปลีก_ทุกช่องทาง()
+    {
+        // รอบ 201 C-21 (คำตัดสินข้อ 94): สวิตช์คุมเฉพาะ ภ.พ.06 — กิจการที่ไม่ใช่ขายปลีกออกอย่างย่อไม่ได้ (§86/6) ไม่ว่าสวิตช์จะเป็นอะไร
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NotRetailBusiness,
             AbbreviatedTaxInvoiceRule.Judge(true, false, null, Today, requirePhoR06: false, S));
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NotRetailBusiness,
+            AbbreviatedTaxInvoiceRule.Judge(true, false, Approved, Today, requirePhoR06: false, D));
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NotRetailBusiness,
+            AbbreviatedTaxInvoiceRule.Judge(true, false, Approved, Today, requirePhoR06: true, D));
+        // ทิศตรงข้าม: ขายปลีก + ปิดสวิตช์ = เอกสารและสลิปออกได้ (พฤติกรรมเดิมของสวิตช์สำหรับกิจการขายปลีก)
+        Assert.Equal(AbbreviatedInvoiceBlockReason.None,
+            AbbreviatedTaxInvoiceRule.Judge(true, true, null, Today, requirePhoR06: false, D));
+        Assert.Equal(AbbreviatedInvoiceBlockReason.None,
+            AbbreviatedTaxInvoiceRule.Judge(true, true, null, Today, requirePhoR06: false, S));
+    }
 
     [Fact]
     public void ปิดสวิตช์_แต่ยังไม่จด_VAT_ก็ยังออกไม่ได้()
@@ -217,10 +234,15 @@ public class AbbreviatedTaxInvoiceRuleTests
     [Fact]
     public void สลิป_POS_ปิดสวิตช์แล้วพิมพ์อย่างย่อได้()
     {
-        var r = PosSlipHeader.Resolve(true, false, null, 7m, Today, requirePhoR06: false,
+        var r = PosSlipHeader.Resolve(true, true, null, 7m, Today, requirePhoR06: false,
             billBelongsToBranch: false, issuerTaxBranchCode: null);
         Assert.True(r.CanIssueAbbreviated);
         Assert.Equal(PosSlipHeader.AbbreviatedTaxInvoice, r.Title);
+        // รอบ 201 C-21 ทิศตรงข้าม: ไม่ใช่ขายปลีก ⇒ ปิดสวิตช์ ภ.พ.06 ก็ยังเป็นใบเสร็จ
+        var notRetail = PosSlipHeader.Resolve(true, false, null, 7m, Today, requirePhoR06: false,
+            billBelongsToBranch: false, issuerTaxBranchCode: null);
+        Assert.False(notRetail.CanIssueAbbreviated);
+        Assert.Equal(AbbreviatedInvoiceBlockReason.NotRetailBusiness, notRetail.Reason);
     }
 
     [Fact]

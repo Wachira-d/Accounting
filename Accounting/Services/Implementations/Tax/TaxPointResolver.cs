@@ -32,7 +32,22 @@ public static class TaxPointResolver
         Service = 2,
         /// <summary>นำเข้า §78/2</summary>
         Import = 3,
+        /// <summary>รอบ 201 ทีม TX (A-TX2 · team-R B-08): ซื้อบริการจากผู้ประกอบการต่างประเทศ — ผู้จ่ายนำส่ง VAT แทน (§83/6 · ภ.พ.36) ·
+        /// หน้าที่นำส่งผูกกับ<b>การจ่ายเงิน</b> ⇒ tax point = วันจ่าย (<c>PaymentDate</c>) · ยังไม่รู้วันจ่าย = วันที่เอกสารของเรา
+        /// (ใบสำคัญจ่าย/ค่าใช้จ่ายเงินสดจ่ายวันที่เอกสาร) · <b>ไม่ใช้</b>วันที่บนใบแจ้งหนี้ของผู้ขายต่างประเทศ (เดิม MIN(วันใบผู้ขาย, …)
+        /// ⇒ ใบ AWS ลง 31/01 จ่าย 02/02 ถูกนับเข้า ภ.พ.36 เดือน ม.ค. ทั้งที่หน้านำส่งนับเดือน ก.พ. = สองความจริง)</summary>
+        ReverseCharge = 4,
     }
+
+    /// <summary>ใบนี้เป็นการนำส่ง VAT แทนผู้ขายต่างประเทศ (§83/6) ไหม — ชุดชนิดเดียวกับรายงาน ภ.พ.36 (ฝั่งซื้อ + ธงบริการต่างประเทศ)</summary>
+    public static bool IsReverseCharge(Document doc)
+        => doc.IsForeignService
+           && doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+               or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu;
+
+    /// <summary>ชนิดกฎ tax point ที่ต้องใช้ตอนอนุมัติ — ReverseCharge สำหรับ §83/6 · นอกนั้นให้ระบบเดาตามเดิม (Auto)</summary>
+    public static SupplyKind KindForApproval(Document doc)
+        => IsReverseCharge(doc) ? SupplyKind.ReverseCharge : SupplyKind.Auto;
 
     /// <summary>คืน tax point ตามชนิดธุรกรรม
     ///
@@ -46,6 +61,10 @@ public static class TaxPointResolver
     /// <para>ถ้าไม่มี signal ใด ๆ เลย → fallback = issueDate</para></summary>
     public static DateTime Resolve(Document doc, SupplyKind kind = SupplyKind.Auto)
     {
+        // §83/6 (A-TX2) — วันจ่าย · ไม่รู้ = วันที่เอกสารของเรา (ไม่ใช่วันบนใบของผู้ขายต่างประเทศ)
+        if (kind == SupplyKind.ReverseCharge)
+            return doc.PaymentDate ?? doc.DocumentDate;
+
         // issue date — ใบกำกับของผู้ขาย (ซื้อ) หรือวันที่เอกสารเรา (ขาย)
         var issueDate = doc.SupplierTaxInvoiceDate ?? doc.DocumentDate;
 

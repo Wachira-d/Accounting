@@ -3788,7 +3788,8 @@ public partial class DocumentService : IDocumentService
                 $"รับรู้เกินยอดมัดจำคงค้าง (คงค้าง {Math.Max(0, outstanding):N2}, ขอรับรู้ {request.Amount:N2}) — "
                 + $"รับรู้แล้ว {doc.DepositRealizedAmount:N2}, คืนแล้ว {realizeRefundedBase:N2}");
 
-        var when = request.RealizeDate ?? DateTime.UtcNow;
+        // รอบ 201 A-TX7: วันนี้ตามปฏิทินไทย (เดิม UtcNow ⇒ 00:00–07:00 น. ได้เดือนก่อน) — ตัวเดียวของสองเส้น
+        var when = Accounting.Helpers.DepositKindDocumentRules.RealizeDateOrToday(request.RealizeDate, DateTime.UtcNow);
         // ── รอบ 194 (spec S3 · ทีม M) — VAT ของ "รับรู้/ริบโดยไม่มีใบสุดท้าย" ตามลักษณะเงิน ไม่ใช่ตามโหมด ──
         // มีใบสุดท้าย (FinalInvoiceId — รับรู้เพื่อใบกำกับที่หักฐานมัดจำ/เช็คเอาต์ที่พัก) = VAT อยู่ที่ใบสุดท้ายแล้ว ⇒ ไม่ถาม ·
         // M5: "ริบ" = ForfeitAs ระบุ ⇒ ตัวตัดสินตัวเดียว ForfeitVatDecision (KeepExistingVat/Reclassify = เส้นเดิมด้านล่าง · IssueTaxInvoiceForForfeit =
@@ -4162,7 +4163,8 @@ public partial class DocumentService : IDocumentService
             throw new Accounting.Helpers.BusinessRuleException(
                 $"ริบมัดจำ {deposit.DocumentNumber} ต้องออกใบกำกับภาษีของยอดที่ริบ — ทำภายในรายการอื่นไม่ได้ · ทำที่หน้า “เงินมัดจำ” → รับรู้ → ริบมัดจำ", rule);
         var gross = request.Amount;   // มัดจำเต็มยอดไม่มี VAT ⇒ ฐานที่ริบ = ยอดรวมที่ริบ
-        var when = request.RealizeDate ?? DateTime.UtcNow;
+        // รอบ 201 A-TX7: วันนี้ตามปฏิทินไทย (เดิม UtcNow ⇒ 00:00–07:00 น. ได้เดือนก่อน) — ตัวเดียวของสองเส้น
+        var when = Accounting.Helpers.DepositKindDocumentRules.RealizeDateOrToday(request.RealizeDate, DateTime.UtcNow);
         var retryHint = Accounting.Helpers.DepositKindDocumentRules.ForfeitRetryHint(deposit.DocumentNumber, gross);
         var marker = Accounting.Helpers.DepositKindDocumentRules.ForfeitInvoiceMarker(deposit.Id);
         var forfeitNotes = Accounting.Helpers.DepositKindDocumentRules.ForfeitInvoiceNotes(deposit.DocumentNumber);
@@ -6005,6 +6007,12 @@ public partial class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "SoD: ผู้สร้างเอกสารห้ามอนุมัติเอกสารของตัวเอง (การแบ่งแยกหน้าที่เปิดอยู่) — " +
                 "ให้ผู้มีสิทธิ์อนุมัติคนอื่นเป็นผู้อนุมัติ");
+        // รอบ 201 ทีม TX (A-TX3 · คำตัดสินข้อ 45): SoD ตัวตัดสินเดียวกับรอบโอน (ApprovalControlPolicy.SelfApproval) — "ไม่รู้ผู้ทำ" (ใบที่ระบบ/นำเข้าสร้าง)
+        // รอบโอนบล็อก แต่เส้นนี้ยังเป็น**โหมดเงา**: ไม่บล็อก แต่บันทึก audit "ถ้าบังคับจะบล็อก" (ShadowRuleCode) ในธุรกรรมอนุมัติด้านล่าง
+        // ให้วัดผลกระทบก่อนเจ้าของสั่งบังคับ (เข้มขึ้นกับเส้นเดิม ⇒ เงาก่อน)
+        var sodShadow = settings != null && Accounting.Helpers.ApprovalControlPolicy.RecordsShadow(
+            Accounting.Helpers.ApprovalControlPolicy.SelfApproval(settings.SodBlockSelfApproval, doc.CreatedBy, null, approvedBy),
+            Accounting.Helpers.ApprovalControlPolicy.DocumentUnknownMakerMode);
 
         // ===== Commitment control: PO กันวงเงินงบประมาณ =====
         // actual (GL ปีนี้) + committed (PO เปิดค้าง) + ใบนี้ ต้องไม่เกิน
@@ -6280,6 +6288,26 @@ public partial class DocumentService : IDocumentService
                 doc.UpdatedBy = approvedBy;
                 doc.UpdatedAt = DateTime.UtcNow;
 
+                // รอบ 201 A-TX3 — ร่องรอยโหมดเงา SoD (ในธุรกรรมเดียวกับการอนุมัติ: อนุมัติไม่สำเร็จ = ไม่มีร่องรอย) · audit ผ่าน chain
+                if (sodShadow)
+                    _db.AddChainedAuditLog(new AuditLog
+                    {
+                        CompanyId = companyId,
+                        Action = AuditAction.Update,
+                        EntityType = "Document",
+                        EntityId = doc.Id.ToString(),
+                        NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            action = "SodShadowWouldBlock",
+                            documentNumber = doc.DocumentNumber,
+                            documentType = doc.DocumentType.ToString(),
+                            approvedBy,
+                            makerKnown = false,
+                            ruleCode = Accounting.Helpers.ApprovalControlPolicy.ShadowRuleCode,
+                            note = "บริษัทเปิดแบ่งแยกหน้าที่ — ใบนี้ไม่รู้ผู้ทำ (ระบบ/นำเข้า) · โหมดเงา: อนุมัติได้ แต่ถ้าบังคับตามคำตัดสินข้อ 45 จะต้องให้ผู้อนุมัติอีกคนตรวจ",
+                        }),
+                    });
+
                 // ── ปิดวงจรเรียนรู้เรื่องหัก ณ ที่จ่าย (กฎเหล็ก #1 ขั้น CAPTURE) ──
                 // การกดอนุมัติ = การตัดสินใจจริงของคน ⇒ เป็นคำตอบที่เอาไปสอนได้
                 await RecordWhtDecisionFeedbackAsync(doc);
@@ -6287,8 +6315,9 @@ public partial class DocumentService : IDocumentService
                 // ===== Tax Point §78/§78/1 — snapshot จุดความรับผิด VAT =====
                 // VAT period ของ ภ.พ.30 ใช้เดือนของ TaxPointDate. คำนวณเฉพาะ
                 // เอกสารที่มี VAT (มิฉะนั้นไม่เกี่ยว).
+                // รอบ 201 A-TX2: บริการต่างประเทศ (§83/6 · ภ.พ.36) = วันจ่าย ไม่ใช่ MIN(วันใบผู้ขาย, …) — กติกาเดียวกับหน้านำส่ง (PaymentDate ?? DocumentDate)
                 if (doc.VatAmount != 0)
-                    doc.TaxPointDate = TaxPointResolver.Resolve(doc);
+                    doc.TaxPointDate = TaxPointResolver.Resolve(doc, TaxPointResolver.KindForApproval(doc));
 
                 // ===== Retention §87/3 + พ.ร.บ.บัญชี ม.10 — เก็บ 5 ปี =====
                 //
@@ -6316,10 +6345,8 @@ public partial class DocumentService : IDocumentService
                 // — ตัว validator รองรับ CIL อยู่แล้ว ขาดแค่ call site นี้ (P-7).
                 // ยกเว้น CIL ที่แปลงมาจากใบตั้งหนี้: ใบต้นทางบวกกลับไปแล้ว ถ้าเรียกซ้ำ
                 // จะบวกกลับสองรอบใน ภ.ง.ด.50
-                if (doc.DocumentType is DocumentType.PurchaseInvoice
-                        or DocumentType.Expense or DocumentType.PaymentVoucher
-                    || (doc.DocumentType == DocumentType.CertificateInLieu
-                        && doc.RelatedDocumentId == null))
+                // รอบ 201 A-TX1: ชุดชนิดอยู่ที่ Section65TerApprovalWarnings.AppliesTo ตัวเดียว (ตัวรวบรวมคำเตือนก่อนอนุมัติถามตัวเดียวกัน)
+                if (Accounting.Helpers.Section65TerApprovalWarnings.AppliesTo(doc.DocumentType, doc.RelatedDocumentId))
                 {
                     await ApplySection65TerAsync(companyId, doc);
                 }
@@ -8918,15 +8945,17 @@ public partial class DocumentService : IDocumentService
                 .Select(a => new { a.Id, a.AccountCode })
                 .ToListAsync();
             string CodeOf(Guid id) => acctCodes.FirstOrDefault(a => a.Id == id)?.AccountCode ?? "";
+            // รอบ 201 A-TX6: จำนวนเลขบนใบ (ตัวเดียวกับที่เส้นหักใช้เลือกใบเดียว/หลายใบ) ไม่ใช่จำนวนที่ resolve ได้
+            var referencedCount = DepositReversalMath.ParseDepositRefs(doc.DepositAppliedRef).Length;
             var split = DepositReversalMath.SplitDrivesUnrealize(numbers,
-                coLines.Select(l => (CodeOf(l.AccountId), l.DebitAmount, l.Description)).ToList());
+                coLines.Select(l => (CodeOf(l.AccountId), l.DebitAmount, l.Description)).ToList(), referencedCount);
 
             foreach (var deposit in deposits)
             {
                 var share = split.Shares.First(s => s.DepositNumber == deposit.DocumentNumber);
                 var depBase = share.Base;
                 var stamped21913 = share.Stamped21913;
-                if (coLines.Count == 0 && numbers.Count == 1)
+                if (coLines.Count == 0 && numbers.Count == 1 && referencedCount <= 1)
                 {
                     // ไม่พบ JE (เคสประวัติศาสตร์/ถูกลบไปก่อน) → fallback field ratio เดิม (ใบเดียวเท่านั้น — หลายใบแยกยอดไม่ได้ ⇒ บอกให้เห็นด้านล่าง)
                     var depVatRatio = deposit.TotalAmount > 0 ? deposit.VatAmount / deposit.TotalAmount : 0m;
@@ -8949,12 +8978,16 @@ public partial class DocumentService : IDocumentService
                     deposit.DepositAppliedToDocumentId = null;
                 }
                 // ล้มดังบนใบมัดจำ (ผู้ใช้เปิดดูเห็น) — ฐานที่ผูกกับใบมัดจำใดไม่ได้ / หลายใบแต่ไม่มี JE ⇒ ยอดรับรู้ของมัดจำไม่ถูกคืนส่วนนั้น (ห้ามเดาใบ)
-                if (split.Unattributed > 0.005m || (coLines.Count == 0 && numbers.Count > 1))
+                if (split.Unattributed > 0.005m || split.UnattributedUndue > 0.005m
+                    || (coLines.Count == 0 && (numbers.Count > 1 || referencedCount > 1)))
                 {
                     var unknown = coLines.Count == 0 ? doc.DepositAppliedAmount : split.Unattributed;
                     deposit.DepositPolicyNote = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(deposit.DepositPolicyNote,
                         $"⚠️ ยกเลิก/ลบใบ {doc.DocumentNumber} ที่หักมัดจำหลายใบ ({doc.DepositAppliedRef}) — ยอด {unknown:N2} ระบุไม่ได้ว่าเป็นของมัดจำใบใด "
-                        + "จึงไม่ถูกคืนเข้ายอดคงค้าง · ตรวจยอดมัดจำกับบัญชี 217xx/215xx ที่หน้า “เงินมัดจำ” แล้วปรับด้วยมือ");
+                        + "จึงไม่ถูกคืนเข้ายอดคงค้าง · ตรวจยอดมัดจำกับบัญชี 217xx/215xx ที่หน้า “เงินมัดจำ” แล้วปรับด้วยมือ"
+                        + (split.UnattributedUndue > 0.005m
+                            ? $" · ภาษีขายรอเรียกเก็บ (21913) {split.UnattributedUndue:N2} ระบุใบมัดจำไม่ได้ — ธงรับรู้ VAT ของมัดจำใบนั้นไม่ถูกล้าง ตรวจบัญชี 21913/21911 ด้วย"
+                            : ""));
                     _logger.LogWarning("UnrealizeDrives {Doc}: ฐาน {Amount:N2} ผูกใบมัดจำไม่ได้ (refs {Refs})",
                         doc.DocumentNumber, unknown, doc.DepositAppliedRef);
                 }
@@ -13947,8 +13980,24 @@ public partial class DocumentService : IDocumentService
 
     /// <summary>คำนวณ §65 ตรี รายจ่ายต้องห้าม → เก็บ NonDeductibleAmount +
     /// RuleJson บนเอกสาร (ไหลเข้า ภ.ง.ด.50 worksheet). hard-block กรณีไม่ระบุ
-    /// ผู้รับเงิน. NeedsConfirmation (เช่น capex) เป็นแค่ warning ไม่ block.</summary>
+    /// ผู้รับเงิน. NeedsConfirmation (เช่น capex) เป็นแค่ warning ไม่ block.
+    /// <para>รอบ 201 ทีม TX (A-TX1): แยก "ประเมิน" (<see cref="EvaluateSection65TerAsync"/> · อ่านอย่างเดียว) ออกจาก "บันทึก" — ตัวรวบรวมคำเตือน
+    /// ก่อนอนุมัติเรียกตัวประเมินเดียวกันให้ผู้อนุมัติเห็นยอดบวกกลับก่อนกด (เดิมประเมินในธุรกรรมหลังด่านคำเตือนเท่านั้น)</para></summary>
     private async Task ApplySection65TerAsync(Guid companyId, Document doc)
+    {
+        var result = await EvaluateSection65TerAsync(companyId, doc);
+
+        if (result.HasHardBlock)
+            throw new InvalidOperationException(result.FirstBlockMessage
+                ?? "รายจ่ายต้องห้าม §65 ตรี — ข้อมูลไม่ครบ");
+
+        doc.NonDeductibleAmount = result.TotalAddBack;
+        doc.NonDeductibleRuleJson = result.Findings.Count > 0 ? result.ToJson() : null;
+    }
+
+    /// <summary>ประเมิน §65 ตรี ของเอกสาร — <b>อ่านอย่างเดียว ไม่แตะเอกสาร ไม่ throw</b> · ตัวเดียวของด่านในธุรกรรมอนุมัติ
+    /// (<see cref="ApplySection65TerAsync"/>) และคำเตือนก่อนอนุมัติ (<see cref="CollectApprovalWarningsAsync"/> · รอบ 201 A-TX1)</summary>
+    private async Task<Section65TerValidator.Result> EvaluateSection65TerAsync(Guid companyId, Document doc)
     {
         // เตรียม account map (Id → code/name) สำหรับตรวจชนิดบัญชี
         var accIds = doc.Lines.Where(l => l.AccountId.HasValue)
@@ -13956,7 +14005,7 @@ public partial class DocumentService : IDocumentService
         var accInfo = accIds.Count == 0
             ? new Dictionary<Guid, (string, string)>()
             : (await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => accIds.Contains(a.Id))
+                .Where(a => a.CompanyId == companyId && accIds.Contains(a.Id))   // tenant (กฎ M) — รอบ 201 เพิ่มตอนแยกตัวประเมิน
                 .Select(a => new { a.Id, a.AccountCode, a.AccountName })
                 .ToListAsync())
                 .ToDictionary(a => a.Id, a => (a.AccountCode, a.AccountName));
@@ -14025,14 +14074,7 @@ public partial class DocumentService : IDocumentService
         var payeeName = doc.Contact?.Name;
         var payeeTaxId = doc.Contact?.TaxId;
 
-        var result = Section65TerValidator.Evaluate(doc, accInfo, payeeName, payeeTaxId, ctx);
-
-        if (result.HasHardBlock)
-            throw new InvalidOperationException(result.FirstBlockMessage
-                ?? "รายจ่ายต้องห้าม §65 ตรี — ข้อมูลไม่ครบ");
-
-        doc.NonDeductibleAmount = result.TotalAddBack;
-        doc.NonDeductibleRuleJson = result.Findings.Count > 0 ? result.ToJson() : null;
+        return Section65TerValidator.Evaluate(doc, accInfo, payeeName, payeeTaxId, ctx);
     }
 
     /// <summary>บังคับลงทะเบียนสินทรัพย์ถาวร — บรรทัดเอกสารฝั่งซื้อที่ลงผัง PPE
@@ -16959,6 +17001,14 @@ public partial class DocumentService : IDocumentService
     /// <para>ลำดับเดียวกับคืนมัดจำ/ตัดชำระ (คีย์ก่อนแถว) · ถูกถือโดยผู้อื่น ⇒ ข้อความ "รอสักครู่" ตัวเดียวของทุกทางเข้า (ไม่รอ — กัน deadlock กับล็อกเลขเอกสาร) ·
     /// ต้องอยู่ในธุรกรรม (<c>TryXactLockAsync</c> โยนเมื่อไม่มี — ล้มดัง ไม่ข้ามเงียบ)</para>
     /// </summary>
+    /// <summary>รอบ 201 A-TX5 — ธุรกรรมที่ <see cref="_depositLockedIds"/> เป็นของ (เปลี่ยนธุรกรรม = ล้างชุด)</summary>
+    private object? _depositLockTx;
+    /// <summary>รอบ 201 A-TX5 — ตัวระบุธุรกรรมปัจจุบัน <b>ใช้จำชุดใบที่ล็อกแล้วเท่านั้น</b> (ไม่ใช่ทางข้ามล็อกเมื่อไม่มีธุรกรรม —
+    /// <c>TryXactLockAsync</c> ยังโยนเมื่อไม่มีธุรกรรมเหมือนเดิม)</summary>
+    private object? DepositLockTransactionScope() => _db.Database.CurrentTransaction;
+    /// <summary>รอบ 201 A-TX5 — ใบมัดจำที่ <see cref="LockDepositBalancesAsync"/> ล็อกไปแล้วในธุรกรรมปัจจุบัน (ล็อกซ้ำไม่ถือว่า "แก้ก่อนล็อก")</summary>
+    private readonly HashSet<Guid> _depositLockedIds = new();
+
     private async Task LockDepositBalancesAsync(Guid companyId, IEnumerable<Guid> depositIds)
     {
         var ids = depositIds.Distinct().OrderBy(x => x).ToArray();
@@ -16970,9 +17020,20 @@ public partial class DocumentService : IDocumentService
         await _db.Database.ExecuteSqlRawAsync(
             @"SELECT ""Id"" FROM ""Documents"" WHERE ""Id"" = ANY({0}) AND ""CompanyId"" = {1} ORDER BY ""Id"" FOR UPDATE",
             ids, companyId);
-        // ค่าล่าสุดใต้ล็อก — context อาจถือแถวนี้ไว้ก่อนล็อก (identity resolution ไม่อ่านค่าใหม่ให้เอง) · แถวที่เส้นนี้กำลังแก้ (Modified) ไม่แตะ
-        foreach (var e in _db.ChangeTracker.Entries<Document>()
-                     .Where(e => e.State == EntityState.Unchanged && ids.Contains(e.Entity.Id)).ToList())
+        // ค่าล่าสุดใต้ล็อก — context อาจถือแถวนี้ไว้ก่อนล็อก (identity resolution ไม่อ่านค่าใหม่ให้เอง)
+        // รอบ 201 A-TX5: แถวที่ถูกแก้ก่อนล็อก (Modified) เดิมข้ามเงียบ = คงค่าเก่าแล้วบันทึกทับยอดของคำขออื่น ⇒ ล้มดัง (ตัวตัดสิน LockReloadPlan) ·
+        // แถวที่ล็อกไปแล้วในธุรกรรมเดียวกัน (ล็อกซ้ำ re-entrant) ไม่นับ — จำชุดที่ล็อกต่อธุรกรรม (ฟิลด์ของ service ที่มีอายุต่อคำขอ ไม่ใช่ static)
+        var lockScope = DepositLockTransactionScope();
+        if (!ReferenceEquals(lockScope, _depositLockTx)) { _depositLockTx = lockScope; _depositLockedIds.Clear(); }
+        var tracked = _db.ChangeTracker.Entries<Document>().ToList();
+        var plan = Accounting.Helpers.DepositKindDocumentRules.LockReloadPlan(
+            tracked.Select(e => (e.Entity.Id, e.State)), ids, _depositLockedIds.ToList());
+        _depositLockedIds.UnionWith(ids);
+        if (plan.ModifiedBeforeLock.Count > 0)
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.DepositKindDocumentRules.DepositLockOrderMessage(plan.ModifiedBeforeLock.Count),
+                Accounting.Helpers.DepositKindDocumentRules.DepositLockOrderRuleCode, 500);
+        foreach (var e in tracked.Where(e => plan.Reload.Contains(e.Entity.Id) && e.State == EntityState.Unchanged))
             await e.ReloadAsync();
     }
 
@@ -19316,6 +19377,13 @@ public partial class DocumentService : IDocumentService
                 linesVat: linesVatNow, paperVat: gapScan.ExtractedVatAmount,
                 headerVatSource: postedVatSource));
         }
+
+        // ── รอบ 201 ทีม TX (A-TX1 · team-R B-05(b)): §65 ตรี ต้องเห็นก่อนกดอนุมัติ ──
+        // เดิมประเมินในธุรกรรมอนุมัติเท่านั้น (หลังด่านนี้) ⇒ ผู้อนุมัติไม่เคยเห็นว่าระบบจะบวกกลับ ภ.ง.ด.50 กี่บาท · ตัวประเมินตัวเดียวกับธุรกรรม
+        // (EvaluateSection65TerAsync — อ่านอย่างเดียว) · ข้อไหนยกขึ้น = Section65TerApprovalWarnings ตัวเดียว (วัดแล้ว: ใบปกติ 0 คำเตือน —
+        // Section65TerApprovalWarningGoldenTests) · ข้อที่บล็อกยังโยนในธุรกรรมตามเดิม
+        if (Accounting.Helpers.Section65TerApprovalWarnings.AppliesTo(doc.DocumentType, doc.RelatedDocumentId))
+            warnings.AddRange(Accounting.Helpers.Section65TerApprovalWarnings.For(await EvaluateSection65TerAsync(companyId, doc)));
 
         return warnings;
     }

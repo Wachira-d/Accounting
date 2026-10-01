@@ -1431,8 +1431,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   1. ยังไม่จด VAT (§77/1) → ไม่ออกเลข หัวสลิป "ใบเสร็จรับเงิน"
   2. ยังไม่ระบุว่าเป็นกิจการขายปลีก (`IsRetailApproved`) → ไม่ออก (`NotRetailBusiness`) ·
      ขายปลีกแต่ยังไม่อนุมัติ **ภ.พ.06 (ขอใช้เครื่องบันทึกการเก็บเงิน)** / สลิปลงวันที่ก่อนวันอนุมัติ → ไม่ออก
-     (`NoPhoR06Approval` — **ช่องทาง `CashRegisterSlip` เท่านั้น** · รอบ 199) · ทั้งสองข้อ **เว้นแต่แอดมินแพลตฟอร์มปิดสวิตช์**
-     (`SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice` — ตั้งต้น `true`)
+     (`NoPhoR06Approval` — **ช่องทาง `CashRegisterSlip` เท่านั้น** · รอบ 199) · ~~ทั้งสองข้อ~~ **ข้อ ภ.พ.06 เท่านั้น** เว้นแต่แอดมินแพลตฟอร์มปิดสวิตช์
+     (`SiteSettings.RequirePhoR06ForAbbreviatedTaxInvoice` — ตั้งต้น `true`) · **รอบ 201 C-21 (คำตัดสินข้อ 94)**: ด่านขายปลีก §86/6 อยู่**ก่อน**สวิตช์ —
+     ปิดสวิตช์ไม่ทำให้กิจการที่ไม่ใช่ขายปลีกออกอย่างย่อได้ (ทุกช่องทาง · ข้อความหน้าแอดมินแก้ตาม) · ใบที่ออกไปแล้วตอนสวิตช์ปิดคงเดิม (§86/4 ห้ามแก้ย้อนหลัง)
   3. บิลไม่มี VAT → ไม่ออก
   4. **บิลผูกสาขาแต่สาขายังไม่มีรหัส 5 หลัก → ไม่ออก** (รอบ 183):
      `PosSlipHeader.BranchSeriesCode` คืน `null` แทนการเดา `"00000"` ซึ่งแปลว่า
@@ -1891,7 +1892,11 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
      (แปลงมาจากเอกสารตั้งหนี้) เมื่ออนุมัติ → ตัวมันเอง PaidAmount=Total,
      Status=Paid (เป็นเอกสารการจ่าย/รับเงินจริง ไม่ใช่ลูกหนี้/เจ้าหนี้ใหม่)
 2. **AI warning collection** (`:1528`) — AI rule-based ตรวจหา anomaly
-   (ราคาผิดปกติ, vendor ไม่ตรงประเภท ฯลฯ)
+   (ราคาผิดปกติ, vendor ไม่ตรงประเภท ฯลฯ) · **รอบ 201 A-TX1**: + §65 ตรี (ดูข้อ 6)
+   · **SoD (รอบ 201 A-TX3 · คำตัดสินข้อ 45)**: ตัวตัดสินเดียว `ApprovalControlPolicy.SelfApproval` (สามสถานะ `SodVerdict` — รอบโอน settlement
+   `SettlementPostingGate.SodSelfApproval` เรียกตัวเดียวกัน) · คนเดียวกัน = บล็อก (เดิม) · **ไม่รู้ผู้ทำ** (ใบที่ระบบ/นำเข้าสร้าง) = รอบโอนบล็อก ·
+   เส้นนี้ **โหมดเงา** (`DocumentUnknownMakerMode = Shadow`): อนุมัติได้ + audit `SodShadowWouldBlock` (`SOD-SHADOW-MAKER-UNKNOWN` · ผ่าน chain ·
+   ในธุรกรรมอนุมัติ) ⇒ วัดผลกระทบก่อนเจ้าของสั่ง `Enforce`
 3. **ออกเลขจริง** — `DocumentNumberGenerator.NextAsync` — รูปแบบจริงในโค้ด =
    `{PREFIX}-{yyyyMMdd}-{NNNN}` (เลข running รีเซ็ต **รายวัน**, key ต่อ
    `(CompanyId, prefix)` ผ่าน `pg_advisory_xact_lock` กันเลขซ้ำใน transaction).
@@ -1902,9 +1907,13 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
    · ตัวออกเลขใช้แค่ **prefix** ของ `NumberSeries` ⇒ API ลำดับเลข (`SettingsService.Create/UpdateNumberSeriesAsync`) ปฏิเสธ
    Suffix/Format/CurrentNumber/ResetPeriod/StartNumber ที่ต่างจากเดิม/ค่าเริ่มต้น — 400 `SET-NUMBER-SERIES-UNUSED-FIELD` ไทย "ไม่ได้บันทึกอะไร"
    (`Helpers/NumberSeriesFieldPolicy` · รอบ 193 S-20 — เดิมรับ-เก็บ-ตอบกลับเงียบ) · หน้าเว็บส่งแค่ `{documentType, prefix}`
-4. **Snapshot Tax Point** (`:1760`) — `TaxPointResolver.Resolve(doc)` →
+4. **Snapshot Tax Point** (`:1760`) — `TaxPointResolver.Resolve(doc, TaxPointResolver.KindForApproval(doc))` →
    `doc.TaxPointDate` = MIN(delivery / ownership transfer / payment received /
    invoice issue) ตาม §78 / §78/1 → ตัดสินงวด ภ.พ.30
+   · **รอบ 201 A-TX2 — บริการต่างประเทศ §83/6 (`IsForeignService` + ฝั่งซื้อ = `TaxPointResolver.IsReverseCharge`)**: `SupplyKind.ReverseCharge` =
+   `PaymentDate ?? DocumentDate` (ไม่ใช่ MIN กับวันบนใบผู้ขายต่างประเทศ) ⇒ รายงาน ภ.พ.36 (`TaxPointDate ?? DocumentDate`) กับหน้านำส่ง
+   (`PaymentDate ?? DocumentDate`) เดือนเดียวกัน · 📋 ใบตั้งหนี้ที่จ่ายทีหลัง: เส้นรับ/จ่ายชำระยังไม่ปรับ `TaxPointDate` เป็นวันจ่าย (ระยะ 2 หลัง DV merge)
+   · ใบที่อนุมัติก่อนรอบ 201 คงค่าเดิม (งวดที่อาจยื่นแล้วห้ามแก้เงียบ — แนวคำตัดสินข้อ 44)
 5. **Retention** (`DocumentService.cs:5126`) — `doc.RetentionUntil ??=`
    **วันสิ้นรอบบัญชีที่เอกสารอยู่** `+ 5 ปี` (ไม่ใช่ `DocumentDate + 5y`)
    ตาม พ.ร.บ.บัญชี ม.10 + §87/3 · คำนวณผ่าน
@@ -1929,7 +1938,15 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
    **รอบ 200 (B-10)**: ช่วง "รอบบัญชี" ของฐานรายได้ · YTD ค่ารับรอง · (10) รายจ่ายรอบก่อน = `Helpers/FiscalYear.RangeFor`
    ตาม `Company.FiscalYearStartMonth` (เดิมตายตัวปีปฏิทิน ⇒ บริษัทรอบ เม.ย.–มี.ค. ได้ฐาน/YTD ของช่วงผิด) ·
    **(B-05 บางส่วน)** ผลตรวจที่บวกกลับ 0 บาท ((5) capex · (8) · (9) · (10) ฯลฯ) หน้าเอกสารแสดงกล่องเหลือง "ข้อสังเกต §65 ตรี" จาก
-   `NonDeductibleRuleJson` (เดิมกล่องเปิดเฉพาะยอด > 0 ⇒ ไม่มีใครเห็น) — การย้ายการประเมินขึ้นไปเป็นคำเตือนก่อนอนุมัติยังเป็น backlog
+   `NonDeductibleRuleJson` (เดิมกล่องเปิดเฉพาะยอด > 0 ⇒ ไม่มีใครเห็น) — ~~การย้ายการประเมินขึ้นไปเป็นคำเตือนก่อนอนุมัติยังเป็น backlog~~
+   **รอบ 201 ทีม TX (A-TX1)**: แยกตัวประเมิน `EvaluateSection65TerAsync` (อ่านอย่างเดียว · tenant บนผังบัญชี) ออกจากการบันทึก
+   (`ApplySection65TerAsync` = ประเมิน → hard block โยน → เก็บ `NonDeductibleAmount/RuleJson`) · `CollectApprovalWarningsAsync` เรียกตัวเดียวกัน ⇒
+   ผู้อนุมัติเห็นยอดบวกกลับ ภ.ง.ด.50 **ก่อนกด** (ข้อความขึ้นต้น `Section65TerApprovalWarnings.Prefix`) · ชุดชนิด = `Section65TerApprovalWarnings.AppliesTo`
+   ตัวเดียว (ธุรกรรม + คำเตือน) · ยกขึ้นเฉพาะ: บวกกลับจริง (> 0) + ข้อที่ต้องยืนยันแต่เกิดเฉพาะใบผิดปกติ ((5) capex · (7) บริจาค · (15) · (10) · (4) ไม่มีฐาน) ·
+   **บันทึกอย่างเดียว** (ไม่ขัดจังหวะ): (11)(18) ไม่มีเลขภาษีผู้รับ · (9) ไม่มีเลขใบกำกับ/ไฟล์แนบ · (8) — วัดด้วย `Section65TerApprovalWarningGoldenTests`
+   (ใบปกติ 11 แบบ = 0 คำเตือน) · ข้อที่บล็อกไม่อยู่ในคำเตือน (ยังโยนในธุรกรรม) · คำเตือนชุดนี้เป็นคำเตือนทั่วไป ⇒ workflow ระบบส่งผ่านได้ ·
+   **API v1 หยุดรอคนรับทราบ** (เหมือนคำเตือนชนิดอื่น — คำถามค้างในรายงานทีม) · ตัวตรวจคำ: คำอังกฤษจับทั้งคำ ("refined"/"reservation"/"fine-tuning"
+   ไม่ใช่ค่าปรับ/เงินสำรอง) · "ค่าปรับปรุง/ปรับแต่ง/ปรับเปลี่ยน/ปรับอากาศ" ไม่ใช่ค่าปรับ · "เงินเพิ่มเติม/ทุน/พิเศษ/ค่าครองชีพ" ไม่ใช่เงินเพิ่มภาษี
 7. **Auto-post JE** (`:1789`) — `AutoPostToJournalAsync` แตกตาม `DocumentType`:
    - **Header JE สืบทอด `ProjectId` + `DimensionId` จากเอกสาร** — โครงการ
      (งานชั่วคราว วัดกำไรต่องาน) และ cost center/มิติ (สาขา/แผนกถาวร วัด
@@ -2484,7 +2501,9 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     ล็อกจุดเรียกบล็อก "รอบ 194 ทีม M" ที่แก้แล้ว)** — แทนที่ข้อ M2/M4/P1 ในย่อหน้าก่อนหน้าตามนี้:
     - **R2-1 tax point ของการริบ** — `ForfeitTaxPointDecision(lateVat, วันรับเงิน, วันที่ริบ, งวดเดือนรับเงินปิดในระบบแล้ว, วันนี้)`: ระบบไม่รู้ว่าผู้ใช้ยื่น ภ.พ.30
       นอกระบบไหม ⇒ **"ไม่มีแถวยื่น" ≠ "ยังไม่ยื่น"** · ใช้วันรับเงินเฉพาะเมื่อ (เดือนเดียวกับวันที่ริบ **หรือ** วันนี้ยังไม่เลยกำหนดยื่นงวดนั้น — `TaxFilingDeadline.For("VatPp30")`
-      แบบ**กระดาษ** (เร็วกว่า = ทิศปลอดภัย)) **และ** ไม่มีแถวยื่น/ล็อก **และ**งวดบัญชีของวันรับเงินยังเปิด (`DepositReceiptPeriodLockedAsync`) **และ**ไม่ข้ามปีภาษี ·
+      แบบ**กระดาษ** (เร็วกว่า = ทิศปลอดภัย)) **และ** ไม่มีแถวยื่น/ล็อก **และ**งวดบัญชีของวันรับเงินยังเปิด (`DepositReceiptPeriodLockedAsync`) ~~**และ**ไม่ข้ามปีภาษี~~
+      (**รอบ 201 A-TX8**: ตัดเงื่อนไขข้ามปี — รับ ธ.ค. ริบ ม.ค. ก่อนวันที่ 15 คงงวด ธ.ค. ไม่ติดธง §89/1 · ทุกหมายเหตุ tax point ที่ต่างเดือนต่อท้ายข้อความ §86
+      "ความรับผิดเกิดวันรับเงิน — ใบกำกับที่ออกหลังวันนั้นถือว่าออกช้า") ·
       นอกนั้น ⇒ งวดปัจจุบัน (วันที่ริบ) + ธง `[DEPOSIT-LATE-VAT]` "ภาษีถึงกำหนดงวด {เดือนรับเงิน} (รับเงิน dd/MM/yyyy) · นำส่งในงวด {เดือนนี้} ({เหตุ}) · อาจมีเงินเพิ่ม
       §89/1 · ห้ามนำส่งซ้ำ — ปรึกษานักบัญชี" · "วันนี้" = `ThaiDate.CalendarDateUtc(UtcNow)` · **เส้นย้าย VAT พัก 21913→21911 ใช้การตัดสินเดียวกัน และประทับ
       `DepositOutputVatRecognizedAt` = วันของ JE ที่ Cr 21911 จริง**: tax point ต่างเดือนกับวันที่ริบ ⇒ ขาย้าย VAT แยกเป็น JE ของวัน tax point (`SameVatPeriod` ·
@@ -2641,6 +2660,15 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   3. **Doc-less (JE ล้วน ไม่มี `SourceDocumentId`)** — รวมยอด Cr สุทธิเป็น 1
      แถวสรุป (`Id = Guid.Empty`, ไม่มีปุ่มรับรู้/คืน) เพื่อ KPI ไม่ขึ้น 0
      ทั้งที่งบดุลมีหนี้สินมัดจำ (รับรู้/คืนต้องผ่านสมุดรายวันตรง)
+
+- **รอบ 201 ทีม TX (มัดจำ · `erp-review/2026-10-01/team-TX.md`)**:
+  - **A-TX5** `LockDepositBalancesAsync` — แถวมัดจำที่ context แก้ไว้ก่อนล็อก (Modified/Deleted) ⇒ ล้มดัง `DEPOSIT-LOCK-ORDER` (500 · ทั้งธุรกรรม rollback) ·
+    เดิมข้ามเงียบแล้วบันทึกค่าก่อนล็อกทับยอดของคำขออื่น · ตัวคัด `DepositKindDocumentRules.LockReloadPlan` (Unchanged = อ่านใหม่) ·
+    แถวที่ล็อกไปแล้วในธุรกรรมเดียวกัน (ล็อกซ้ำ เช่นหักฐานมัดจำ + หักแบบขับ JE ในการอนุมัติครั้งเดียว) ไม่นับและไม่อ่านทับ (`_depositLockedIds` ต่อธุรกรรม)
+  - **A-TX6** `UnrealizeDrivesDepositAsync` — ทางลัด "ทุกขาเป็นของใบเดียว" ใช้เมื่อ**เลขบนใบที่หัก** ≤ 1 (`ParseDepositRefs(...).Length` — ตัวเดียวกับที่เส้นหักเลือกใบเดียว/หลายใบ)
+    ไม่ใช่จำนวนที่ resolve ได้ · ขา 21913 ที่ผูกไม่ได้นับ `DrivesUnrealizeSplit.UnattributedUndue` แล้วต่อท้ายหมายเหตุบนใบมัดจำ (เดิมข้ามเงียบ)
+  - **A-TX7** วันที่รับรู้/ริบ/ใบกำกับของยอดที่ริบเมื่อไม่ระบุ = วันนี้ตามปฏิทินไทย (`DepositKindDocumentRules.RealizeDateOrToday`) — เดิม `UtcNow` ⇒ 00:00–07:00 น. ได้เดือนก่อน
+  - **A-TX8** `ForfeitTaxPointDecision` ไม่ใช้ "ข้ามปีภาษี" เป็นเหตุ (ดู R2-1 ข้างบน) + หมายเหตุ §86 ออกช้าในทุกหมายเหตุที่ต่างเดือน
 
 ### 3.8 รอบเงินเดือน (PayrollRun) — คำนวณใหม่ · แก้ยอด · ฐาน ปกส. · 50 ทวิ (รอบ 193 · คำตัดสิน #35 · ทีม P2 → M2)
 - **ฐาน ปกส./กองทุนเงินทดแทน** — ตัวประกอบสูตรตัวเดียว `Helpers/SsoWageBase.ForPeriod(...)` → `SsoPeriodAmounts` (`PayrollService.CalculatePayrollAsync`
@@ -3061,6 +3089,12 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 - งวดก่อน `Company.CreatedAt` และไม่มีร่องรอยในระบบ → `NotRequired` ไม่ขึ้นแดง
   (ระบบไม่มีข้อมูลจริง การเดาแล้วเตือนผิดทำให้ผู้ใช้เลิกเชื่อทั้งวิดเจ็ต)
 - Unit test: `Accounting.Tests/FilingCalendarRulesTests.cs`
+
+- **กำหนดยื่น ภ.พ.36 / ภ.ง.ด.54 (รอบ 201 ทีม TX · B-7 · team-W Q-W3 — รอตัวบทยืนยันว่ามาตรการ e-Filing +8 วันครอบไหม)**: ตาราง `TaxFilingDeadline` ยังให้ทั้งวันกระดาษและวัน
+  e-Filing · **วันที่ใช้เตือน/ตัดสินเลยกำหนด** = `TaxFilingDeadline.WarnBy` ตัวเดียว (สองแบบนี้ = วันกระดาษ · แบบอื่น = วัน e-Filing เท่าเดิม) — ผู้อ่าน:
+  หน้านำส่ง (`StatutoryRemittanceService.BuildItem` → `PendingRemittanceItem.WarnDueDate/WarnNote` · `tax-remittance.html` ป้าย "เตือนตามวันกระดาษ") ·
+  ปฏิทินนำส่ง (`BuildCell` → `FilingCalendarCell.WarnDueDate` · `DaysToDue/Overdue/NextDue`) · ตัวตรวจรายงาน (`TaxComplianceChecker.DeadlineFor` → `WarnByFor` + บอกวัน e-Filing ในข้อความ) ·
+  ปฏิทินภาษี (`TaxCalendarService`) เตือนตาม `DueDate` = วันกระดาษอยู่แล้วและแสดง `EFilingDueDate` คู่กัน · ยืนยันตัวบทแล้วเอาแบบออกจากชุด `EFilingExtensionUnconfirmed` ที่เดียว
 
 ### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
 - **Service**: `WithholdingTaxCertService`
@@ -4130,7 +4164,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PR2 ชุดสอง — BACKLOG §1.9: เลขประกันสังคมบนหน้าพนักงาน (`EmployeeRecordEdit.SsoInsuredNumber` · echo ปิดบัง) · ค่าเสนอธง ม.5 ตอนสร้างรายการเงินเดือน (`GET payroll/items/sso-base-suggestion`) · audit เงินเดือนเข้า hash chain ครบ (§3.8) — commit f2cd1982)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม TX — §65 ตรี เป็นคำเตือนก่อนอนุมัติ (§3.2 ข้อ 6) · SoD ตัวตัดสินเดียว + โหมดเงา (§3.2 ข้อ 2) · tax point §83/6 = วันจ่าย (§3.2 ข้อ 4) · มัดจำ: ล็อกก่อนแก้/นับเลขบนใบ/วันไทย/ข้ามปีไม่ใช่เหตุ (§3.7) · ภ.พ.36/ภ.ง.ด.54 เตือนตามวันกระดาษ (§5.3) · ใบกำกับอย่างย่อ: ขายปลีกก่อนสวิตช์ ภ.พ.06 — commit 2d7020af)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PR2 ชุดสอง — BACKLOG §1.9: เลขประกันสังคมบนหน้าพนักงาน (`EmployeeRecordEdit.SsoInsuredNumber` · echo ปิดบัง) · ค่าเสนอธง ม.5 ตอนสร้างรายการเงินเดือน (`GET payroll/items/sso-base-suggestion`) · audit เงินเดือนเข้า hash chain ครบ (§3.8) — commit f2cd1982)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PR2 — เงินเดือน (§3.8): 🧮 คำนวณภาษีให้รายคน `POST runs/{id}/tax-preview` ด้วย `Helpers/PayrollWithholdingTax` ตัวเดียวกับคำนวณรอบ (ย้ายจาก inline · golden เทียบ 9c9580e6) · ➕/🗑 รอบ Approved กลับเป็น Calculated (`PayrollRosterChange`) · 🚫 ยกเลิกรอบบนหน้าเว็บ + เหตุผลบังคับ + audit · เงินทดแทนคิดใหม่เมื่อฐานเปลี่ยน (รอบนำเข้าไม่คิด) · ด่านธง ปกส. (`PayrollSsoFlagGuard`) · ✏️/จ่าย อ่านใต้ล็อก · YTD แถวมือ · `ManualRosterChangedAt` — commit 127844b9)_
 
