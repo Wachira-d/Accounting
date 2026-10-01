@@ -161,6 +161,17 @@ public class OcrIssuerBranchTests
     }
 
     [Fact]
+    public void Contactสำนักงานใหญ่_ทะเบียนเป็นที่อยู่ของสาขาที่ออกใบ_ไม่เขียนลงแถวสนญ()
+    {
+        // ฝ่ายค้าน OCX-7: ใบของสาขา 8 · ทะเบียน VAT คืนที่อยู่ของสาขา 8 (DbdAddressIsBranch) ⇒ ตัวเติมแถว สนญ. ต้องไม่รับที่อยู่นั้น
+        var (addr, fromRegistry) = OcrIssuerBranch.ContactAddress("00000", "00008", true, BranchAddr, null, false, registryAddressIsBranch: true);
+        Assert.Null(addr);
+        Assert.False(fromRegistry);
+        // ทิศตรงข้าม: ทะเบียนเป็นที่ตั้ง สนญ. (ไม่ได้ยืนยันสาขา) ⇒ แถว สนญ. ใช้ได้ตามเดิม
+        Assert.Equal(Dbd, OcrIssuerBranch.ContactAddress("00000", "00008", true, Dbd, null, false, registryAddressIsBranch: false).Address);
+    }
+
+    [Fact]
     public void Contactสาขาอื่น_ไม่มีทะเบียน_ไม่เขียนที่อยู่ของสาขาอื่นลงไป()
         => Assert.Null(OcrIssuerBranch.ContactAddress("00003", "00008", false, null, BranchAddr, true).Address);
 }

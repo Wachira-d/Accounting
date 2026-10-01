@@ -107,6 +107,19 @@ public static class OcrCorrectedFieldList
     public static bool ShouldRememberKnownGood(string? submitted, string? scannedBefore)
         => !string.IsNullOrWhiteSpace(submitted) && TextChanged(submitted, scannedBefore);
 
+    /// <summary>
+    /// **ผู้ใช้เปลี่ยนเลขผู้เสียภาษีผู้ขายจริงไหม** (รอบ 201 ทีม OC · ฝ่ายค้าน OCX-1 · คำตัดสินข้อ 96) — ผู้เขียน <c>OcrScanResult.VendorTaxIdUserChanged</c>
+    /// <para>หน้ารีวิวส่ง <c>vendorTaxId</c> กลับมา<b>ทุกครั้ง</b> (<c>_buildReviewCorrection</c>) และปุ่มสร้างเอกสารบันทึกคำแก้ก่อนสร้างเสมอ
+    /// (<c>_persistReviewEdits</c>) ⇒ "VendorTaxId" ใน <see cref="From"/> (กติกา "ส่งมา = แก้") ติดทุกใบบนเว็บ ⇒ ด่าน C-23 "ผู้ใช้แตะเลข" ไม่กันอะไร ·
+    /// นับเฉพาะเมื่อ<b>ตัวเลข</b>ต่างจากค่าบนแถวสแกนก่อนรับคำแก้ (เลขเดิมพิมพ์มีขีด/เว้นวรรค = ไม่เปลี่ยน) และเลขใหม่ไม่ว่าง (ล้างช่อง = ไม่ใช่นิติบุคคลอื่น)</para>
+    /// </summary>
+    public static bool VendorTaxIdTyped(string? submitted, string? storedBeforeCorrection)
+    {
+        if (submitted == null) return false;
+        var now = ThaiTaxId.Normalize(submitted);
+        return now.Length > 0 && now != ThaiTaxId.Normalize(storedBeforeCorrection);
+    }
+
     /// <summary>รหัสสาขาที่ส่งมา ≠ ค่าที่เก็บไว้ไหม — เทียบหลัง normalize 5 หลัก ("5" ≡ "00005") · ว่างทั้งคู่ = เท่ากัน ·
     /// ว่าง ↔ "00000" = <b>ต่างกัน</b> (ว่าง = "ไม่รู้" ≠ สำนักงานใหญ่ — ผู้ใช้เติม 00000 ลงช่องว่างคือการตอบ) ·
     /// ผิดรูป ("8A") เทียบข้อความตรงตัว</summary>

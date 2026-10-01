@@ -206,6 +206,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (C-24 · ข้อ 97) ใบขายที่อ่านผู้ซื้อไม่ได้: คงบล็อก `OCR-NO-COUNTERPARTY` · ปุ่ม “ใช้ลูกค้าเงินสด (walk-in)” (`POST ocr/{scanId}/match-walk-in` → `MatchWalkInBuyerAsync`)
     ได้เฉพาะเป้าหมายที่ไม่ใช่ใบกำกับเต็มรูป (`Helpers/OcrWalkInBuyer`: ใบกำกับ · ใบเพิ่ม/ลดหนี้ · ใบเสร็จ/ใบสำคัญรับที่มี VAT = บล็อก `OCR-WALKIN-FULL-TAX-INVOICE`) ·
     เส้นสร้างเอกสารตรวจซ้ำเมื่อผู้ติดต่อที่ผู้ใช้เลือกเป็นแถว walk-in
+    · **รอบ 201 ฝ่ายค้านทีม OC (OCX-1..10)**: (OCX-1) ด่าน C-23 อ่านธง `OcrScanResults.VendorTaxIdUserChanged` (ผู้เขียน `OcrCorrectedFieldList.VendorTaxIdTyped` —
+    ตัวเลขเปลี่ยนจากที่สแกน · แถวเดิม = false = ไม่ถอด) แทน "VendorTaxId" ในรายการแก้ (หน้าเว็บส่งทุกครั้ง) · (OCX-2/5) ด่าน walk-in ของเส้นสร้างเอกสาร
+    (`WalkInSalesBlockAsync`) ตรวจคู่ค้าฝั่งขายจาก**ทุกแหล่ง** (ใบต้นทาง · คีย์ · ชื่อ · ผู้ใช้เลือก) ก่อนเปิดธุรกรรม และซ้ำหลังสร้างบรรทัดด้วย VAT จริงของเอกสาร ·
+    (OCX-3) `SubmitCorrectionAsync` → `TrainFromAdminAsync` ส่งธง C-18 · (OCX-4) `MatchContactCoreAsync` บันทึก VendorCanon เฉพาะสแกนฝั่งซื้อ และไม่บันทึกในเส้น walk-in ·
+    (OCX-6) ลบแถวกำพร้าตรวจการอ้างถึงทุกตารางที่มีช่องผู้ติดต่อ (35 ช่อง) · `UpdatedBy` = ผู้กด · (OCX-7) แถว สนญ. ไม่รับที่อยู่ทะเบียนที่ยืนยันสาขาอื่น ·
+    (OCX-10) ผูกใบต้นทางด้วยมือเมื่อยังไม่รู้คู่ค้า: เลขผู้เสียภาษีคนละนิติบุคคล = บล็อก · ชื่อไม่ตรง/ไม่มีชื่อ = โน้ต `[LINK] ⚠` (`Helpers/OcrPredecessorPartyCheck`) ·
+    (ข้อ 103 Q3) เหตุผลใบลดหนี้: แถวฟอร์ม "ส่วนลด 0.00"/"Discount -" ไม่ใช่หลักฐานส่วนลด
   - **ชื่อผู้ขายเป็นโลโก้** (รอบ 197 · ใบ Makro "ma ro") — (ก) เลขผู้เสียภาษีที่พิมพ์แบ่งกลุ่มแบบอื่น ("0 10 7 567 00041 4") ที่มีป้ายกำกับ ⇒
     `ThaiTaxId.LooseGroupingPattern` ใน `SmartFieldExtractor.ExtractTaxIdCandidates` (รับเฉพาะตัวมีป้าย) ⇒ `OcrVendorKeyEvidence` พิสูจน์กุญแจได้ ⇒ ทะเบียนชนะ ·
     ป้ายฉบับ "ต้นฉบับลูกค้า / For Customer" ถูกกลบใน `OcrPartyLabels` (เดิมนับเป็นป้ายผู้ซื้อเหนือเลขผู้ขาย) (ข) ชื่อไม่มีรูปนิติบุคคล + เลขนิติบุคคล ⇒

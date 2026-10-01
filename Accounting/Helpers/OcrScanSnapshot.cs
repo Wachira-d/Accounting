@@ -131,6 +131,8 @@ public static class OcrScanSnapshot
             nameof(OcrScanResult.VendorAddressUserTyped),
             // รอบ 201 ทีม OC (C-18 · คำตัดสินข้อ 91): ธง "คำแก้ของแถวนี้เริ่มก่อนกติกา baseline WHT" — ร่องรอยคนแก้ของแถวนี้ ชุดเดียวกัน
             nameof(OcrScanResult.WhtCorrectionsPredateBaseline),
+            // ฝ่ายค้าน OCX-1: ธง "ผู้ใช้เปลี่ยนเลขผู้เสียภาษีผู้ขาย" — ร่องรอยคนแก้ของแถวนี้
+            nameof(OcrScanResult.VendorTaxIdUserChanged),
         };
 
     // อ่าน metadata ครั้งเดียวตอนโหลดคลาส — reflection ต่อการเรียกจะช้าเกินไป

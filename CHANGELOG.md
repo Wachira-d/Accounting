@@ -4247,3 +4247,11 @@ _2026-10-01 รอบ 201 ทีม IN — แก้ผลฝ่ายค้า�
 - X-2 ชนิดผู้สมัคร = ชนิดจริง (`BankAiCandidateGuard.RealType`) ในแผน AI · ฝั่งเขียนตรวจ MatchType ตรงชนิดจริง · X-3 ปุ่ม "AI วิเคราะห์" ติดธง → ยืนยันโดยไม่แตะ = Implicit
 - X-4 ยังไม่ปิด (นักเรียนฟีดธนาคารไม่ตอบ id เอกสาร — ระบุใน DOCUMENT_FLOW §6.4) · X-5 ไม่ backfill `ExplicitConfirmCount` (คำตัดสินข้อ 99)
 - X-6 `RankCandidates`/`PickSubset` internal static + เทสต์คำแนะนำ SuggestMatchAsync · X-7 ลบ endpoint `suggest-all-accounts` ที่ไม่มีผู้เรียก · X-8 ratchet จำนวนรายการค้าง ≤ 38 · X-9 เลขบรรทัดจาก tempId — commit 10709643
+
+_2026-10-01 รอบ 201 ฝ่ายค้านทีม OC (OCX-1..OCX-10 · คำตัดสินข้อ 103 · รายงาน `erp-review/2026-10-01/team-OC.md` §ฝ่ายค้าน):
+- (OCX-1 · P1) ด่าน C-23 "ผู้ใช้แตะเลข" อ่านธงถาวร `OcrScanResults.VendorTaxIdUserChanged` (`OcrCorrectedFieldList.VendorTaxIdTyped` — ตัวเลขเปลี่ยนจาก baseline) · เดิมนับ "VendorTaxId" ในรายการแก้ซึ่งติดทุกใบบนเว็บ ⇒ เลขเพี้ยนที่ผ่าน mod-11 ถอดผู้ขายที่ผูกถูกแล้วสร้างผู้ติดต่อเลขนิติบุคคลอื่น
+- (OCX-2/5) ด่าน walk-in ย้ายเป็น `WalkInSalesBlockAsync` หลังหาคู่ค้าฝั่งขายจากทุกแหล่ง + ซ้ำหลังสร้างบรรทัดด้วย VAT จริง · (OCX-3) ผู้เรียกตัวที่สามของ `OcrWhtLearningScope` ส่งธง C-18
+- (OCX-4) `MatchContactCoreAsync(recordVendorCanonFeedback)` — VendorCanon เฉพาะฝั่งซื้อ · เส้น walk-in ไม่บันทึก · (OCX-6) ตัวนับการอ้างถึงผู้ติดต่อ 35 ช่อง (`AddContactRefsAsync`) · `UpdatedBy` = ผู้กด
+- (OCX-7) แถว สนญ. ไม่รับที่อยู่ทะเบียนที่ยืนยันสาขาอื่น · (OCX-8) ค่าคงที่ `BranchAddressUnknownNote` ขึ้นเหนือ doc-comment ของ `ContactAddress` · (OCX-9) เทสต์ล็อกคำสั่ง migration อยู่ในชุดที่บูตรัน
+- (OCX-10) `Helpers/OcrPredecessorPartyCheck` ใน `LinkPredecessorAsync` เมื่อยังไม่รู้คู่ค้า · (ข้อ 103 Q3) ตัวอ่านเหตุผลใบลดหนี้ข้ามแถวฟอร์ม "ส่วนลด 0.00"
+- เทสต์ `OcrReview201OcTests.OCX*` · `Q3_*` · `OcrIssuerBranchTests.Contactสำนักงานใหญ่_*` · required_call_site แก้/เพิ่ม (รวม 24 แถวของทีม · negative test มือ 21 เคส) — commit f01811b2)_

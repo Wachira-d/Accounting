@@ -237,6 +237,12 @@ public class OcrScanResult : TenantEntity
     /// ไม่ลบข้อมูล · เป็นร่องรอยของการอัปโหลดครั้งนั้น ไม่คัดลอกไปสแกนสำเนา</para></summary>
     public bool WhtCorrectionsPredateBaseline { get; set; }
 
+    /// <summary>ผู้ใช้<b>เปลี่ยนตัวเลข</b>เลขผู้เสียภาษีผู้ขายในหน้ารีวิว (รอบ 201 ทีม OC · ฝ่ายค้าน OCX-1 · คำตัดสินข้อ 96) — หลักฐานเดียวของ "ผู้ใช้แก้เลข"
+    /// ที่ด่าน C-23 (ถอดผู้ติดต่อที่ผูกไว้เมื่อเป็นคนละนิติบุคคล) อ่าน · "VendorTaxId" ใน <see cref="UserCorrectedFields"/> ใช้ไม่ได้เพราะหน้าเว็บส่งช่องนี้ทุกครั้ง
+    /// <para>ผู้เขียนตัวเดียว: <c>OcrService.SubmitCorrectionAsync</c> ผ่าน <c>Helpers/OcrCorrectedFieldList.VendorTaxIdTyped</c> (OR กับค่าเดิม) · แถวเดิม = false
+    /// = ไม่รู้ ⇒ ไม่ถอด (ไม่ backfill) · ร่องรอยของการอัปโหลดครั้งนั้น ไม่คัดลอกไปสแกนสำเนา</para></summary>
+    public bool VendorTaxIdUserChanged { get; set; }
+
     /// <summary>**สมุดที่มาของค่ารายช่อง** — JSON ของ
     /// <c>Helpers/OcrFieldArbiter.ToJson()</c> (สถาปัตยกรรมเป้าหมาย D1)
     ///
