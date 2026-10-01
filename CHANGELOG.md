@@ -4271,5 +4271,5 @@ _2026-10-01 รอบ 201 ทีม PR2 ฝ่ายค้านรอบสอ�
 - **P1-c** `Helpers/PayrollPnd1Certs.NextNumber` (ใบแรกรูปเดิม · ชนแล้ว -2/-3) · ออกใบในธุรกรรม + ล็อกแถวรอบ · ค้นเลขที่ใช้แล้วรวมใบ Voided/ลบ
 - **P2-d** `HrAllocationService.AllocatePayrollRunAsync` ธุรกรรม + `FOR UPDATE` แถวรอบก่อนอ่าน · **P2-e** ข้อความปันต้นทุนของรอบ Paid ชี้ "กลับรายการจ่าย"
 - **P2-f** ตัวอย่างเลข ปกส. ในเทมเพลต CSV = 13 หลักผ่าน checksum · **P2-g** เทสต์ล็อกคำตัดสิน 112
-- เทสต์ `PayrollPnd1CertsTests` · required_call_site +5 แถว — commit <pending>)_
+- เทสต์ `PayrollPnd1CertsTests` · required_call_site +5 แถว — commit c5fefbc6)_
 
