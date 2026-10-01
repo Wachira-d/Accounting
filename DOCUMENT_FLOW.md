@@ -2274,8 +2274,10 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   `tools/attachment_gate_check.py` รับด่านใต้เงื่อนไข "มีไฟล์" ตรงตัวของ target ที่ระบุเท่านั้น (negative test ในตัว)
   (4) **V1H-O7** ธงของใบเสร็จที่ส่ง e-Tax แล้วแต่ยังไม่รู้ผล (Submitted) ไม่แนะนำทาง (ค) อีก (ทาง ค ปฏิเสธ Submitted) · ใบที่ตอบรับแล้วยังแนะนำ
   · **รอบ 201 ทีม DV (รายงาน `erp-review/2026-10-01/team-DV.md` · คำตัดสินข้อ 62/65/66/67/68/74)**:
-  (1) **A-DV4 (ข้อ 68)** cascade ของ `VoidDocumentAsync` (ขั้น 1 ยกเลิกการชำระของใบ) **ล็อกเอกสารอื่นทุกใบที่การชำระแตะ** (ใบหลักของการชำระ · ใบในการจัดสรร) ด้วย
-  `LockDocumentsForPaymentVoidAsync` ตัวเดียวกับ `VoidPaymentAsync` ตามลำดับกลาง ใบตัวเอง → ใบต้นทาง → ใบอื่นของการชำระ → เลข JE · ยอดครอบของทาง (ค) ไม่นับ**ทุก**รายการที่
+  (1) **A-DV4 (ข้อ 68) · แก้ตามฝ่ายค้าน DV-O1** cascade ของ `VoidDocumentAsync` (ขั้น 1 ยกเลิกการชำระของใบ): การชำระที่**ชำระร่วมกับเอกสารอื่น**ถูกปฏิเสธ
+  **ทันทีหลังล็อกใบนี้ ก่อนล็อก/กลับรายการใด** (`DocumentVoidPreconditions.SharedPaymentVoidBlock` · ข้อความเดิม · เดิมตรวจในลูปหลังกลับรายการการชำระก่อนหน้าไปแล้ว)
+  ⇒ cascade แตะแค่ใบนี้ · **ไม่ล็อก "ใบอื่นของการชำระ"** (รอบแรกของ A-DV4 ล็อกไว้ — ว่างเสมอในเส้นที่สำเร็จ แต่สร้างวงรอกับ `VoidPaymentAsync`/
+  `CreateMultiDocPaymentAsync` ที่ล็อก ORDER BY Id) · ตรวจใต้ล็อกใบนี้คงที่ (การรับชำระใหม่ที่แตะใบนี้ต้องล็อกใบนี้ก่อน) · ยอดครอบของทาง (ค) ไม่นับ**ทุก**รายการที่
   ธุรกรรมนี้กำลังยกเลิก (`PaymentsVoidingInThisContext` → `LivePaymentCoverageAsync(..., excludePaymentIds)` → pure `DocumentVoidPreconditions.LivePaymentCoverage`) ·
   **`VoidDocumentAsync` คืน `PaymentVoidResult`** (ข้อความธง/ภาษีของทุกรายการในลูป) และ `POST document/{id}/void` ตอบข้อความถึงผู้กด (หน้าเอกสารแสดงคำเตือน 15 วินาที) — ผู้เรียกอื่น
   (integration · CMS · settlement unpost) ทิ้งผลตามเดิม (ไม่มีผู้กด) · หมายเหตุ: ใบที่มีใบเสร็จ/ใบกำกับลูกที่ยังมีผลถูกด่านลูก `ChildBlocksAsync` บล็อกก่อนถึง cascade อยู่แล้ว ⇒
@@ -2284,14 +2286,16 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   แต่ไม่เหลือเงินรับ/ใบเสร็จถือ VAT และเคยมีการจัดสรรหลายใบที่ถูกยกเลิก) · `SubmittedEtaxVoidedWithoutEvidence` (แถว e-Tax Voided ที่มีเวลาส่งแต่ไม่มี audit `etax-voided-in-system`) ·
   `KeptOriginalCoverageLost` (ใบทาง ค ที่ยอดครอบหายแต่ไม่มีธง — ตัวตัดสินเดียวกับเส้นยกเลิกการชำระ) · `EmailedEtaxVoidedInSystem` (แถว e-Tax Voided ของใบที่ส่ง e-Tax by Email
   ประทับเวลาแล้ว) · เอกสารที่บันทึกยกเลิกทาง e-Tax พร้อมหลักฐาน (`RD-ETAX-CANCEL-EVIDENCE`) ไม่นับ · ตัวนับรวม `EtaxReissueReviewReport.Total` · ไม่แก้อัตโนมัติ
+  · ฝ่ายค้าน DV-O2: กลุ่มอีเมลไม่นับแถวที่ audit ยกเลิกบันทึกหลักฐาน (`EtaxReissueReview.VoidAuditHasEvidence`) · DV-O7: แถบบนหน้าเอกสารบอก "… อีก N รายการ" ต่อกลุ่ม
   (3) **A-DV2 (ข้อ 65)** คอลัมน์ `Documents.EtaxKeptOriginalAt` — ผู้เขียนตัวเดียว `ResolveEtaxCancellationAsync` (ทาง ค = ตั้ง · ทาง ก/ข = ล้าง) · ผู้อ่าน `EtaxReissueReview.KeptOriginal`
-  (คอลัมน์เป็นหลัก · ป้าย `KeptOriginalMarker` ตัวสุดท้ายเป็นทางสำรองของใบเก่า) ใน `ReflagKeptOriginalReceiptsAsync` + รายงานข้อ 44 · migration `Round201DvStatements`
-  (ADD COLUMN + เติมจากป้ายตัวสุดท้าย/audit `RD-ETAX-ORIGINAL-STILL-VALID`) · ไม่ตามไปใบแทน (`DocumentNotCarriedFields`) · echo ใน `DocumentResponse` + แถบเขียวบนหน้าเอกสาร
-  (4) **A-DV3 (ข้อ 67)** ทาง (ก) "ยกเลิกทาง e-Tax สำเร็จ": ไฟล์หลักฐานต้องแนบ**หลัง**เวลาที่ใบถึงกรมสรรพากร — `DocumentVoidPreconditions.CancellationEvidenceNotBefore` = ล่าสุดของ
+  (คอลัมน์เป็นหลัก · ป้าย `KeptOriginalMarker` ตัวสุดท้าย**ที่ต้นข้อความ/ต้นบรรทัด**เป็นทางสำรองของใบเก่า — DV-O6: ป้ายที่ผู้ใช้พิมพ์กลางบรรทัดไม่นับ · เหตุผล/เลขอ้างอิงที่ผู้ใช้พิมพ์ถูกยุบเป็นบรรทัดเดียว `EtaxReissueReview.OneLine`) ใน `ReflagKeptOriginalReceiptsAsync` + รายงานข้อ 44 · migration `Round201DvStatements`
+  (DV-O6: **ครั้งเดียว**ในขั้นที่สร้างคอลัมน์ — DO block + information_schema + advisory lock คีย์คงที่ · เติมเฉพาะใบเสร็จ/ใบสำคัญรับที่มีภาษีและมีป้าย · regex `LastResolutionLinePattern` กติกาเดียวกับตัวอ่าน · เวลา = audit `RD-ETAX-ORIGINAL-STILL-VALID`) · ไม่ตามไปใบแทน (`DocumentNotCarriedFields`) · echo ใน `DocumentResponse` + แถบเขียวบนหน้าเอกสาร
+  (4) **A-DV3 (ข้อ 67) · DV-O3** ทาง (ก) "ยกเลิกทาง e-Tax สำเร็จ" **และ** การยกเลิกแถว e-Tax (`EtaxInvoiceService.VoidAsync`) ใช้ตัวโหลดเดียว
+  `DocumentVoidPreconditions.CancellationEvidenceNotBeforeAsync` (กติกา "แนบหลังส่ง" ชุดเดียว): ไฟล์หลักฐานต้องแนบ**หลัง**เวลาที่ใบถึงกรมสรรพากร — `DocumentVoidPreconditions.CancellationEvidenceNotBefore` = ล่าสุดของ
   (แถว e-Tax Submitted/Accepted: `EtaxVoidPolicy.EvidenceNotBefore`) และ (บันทึก e-Tax by Email ประทับเวลา: เวลาส่ง ไม่มี = เวลาสร้าง · ตัวโหลด `EtaxRdTimestampEmailTimesAsync`
   ใช้เงื่อนไขอีเมลตัวเดียวกับ `EtaxEmailedWithRdTimestampAsync`) · ไม่ถึงกรมสรรพากร = ไม่จำกัด · audit เก็บ `evidenceNotBefore`
   (5) **C-1 (ข้อ 74)** "ยกเลิกและออกใบแทน" บล็อกเมื่อรายงาน ภ.พ.30 ของเดือนภาษี (`TaxPointDate ?? DocumentDate`) ของใบเดิมหรือใบเสร็จถือ VAT ที่ระบบจะออกใหม่ อยู่ใน
-  `TaxFilingLockPolicy.DeclaredOrFiledStatuses` (ประกาศว่ายื่น/ยื่นแล้ว — เดิมดูแค่รายงานที่ล็อก) · 409 `REISSUE-VAT-MONTH-DECLARED` พร้อมทางไปต่อ (ปลดล็อก/กลับเป็นร่างพร้อมเหตุผล ·
+  `TaxFilingLockPolicy.DeclaredOrFiledStatuses` (ประกาศว่ายื่น/ยื่นแล้ว — เดิมดูแค่รายงานที่ล็อก) · DV-O5: ใบเสร็จนับเฉพาะที่ถือ VAT (`IsTaxInvoiceByLaw == true` และมีภาษี) · คิวรีงวดตัวเดียว `VatPeriodFilingStatusAsync` (`VatPeriodDeclaredOrFiledAsync` เรียกตัวนี้) · 409 `REISSUE-VAT-MONTH-DECLARED` พร้อมทางไปต่อ (ปลดล็อก/กลับเป็นร่างพร้อมเหตุผล ·
   หรือใบลดหนี้/ใบเพิ่มหนี้เดือนปัจจุบัน) · ตัวตัดสิน `DocumentVoidPreconditions.ReissueDeclaredVatMonthBlock` ทำงานหลัง `SettlementPaidReissue.Decide` ใน `EvaluateSettlementPaidReissueAsync`
   (ปุ่มและการกดจริงใช้ตัวเดียว)
   (6) **A-DV5** ธง "รับรู้ของกำพร้า" (`SettlementOrphanAckAt/By/Reason` + ชื่อผู้รับรู้ที่เป็นสมาชิกบริษัท) echo ใน `DocumentResponse` + แถบบนหน้าเอกสาร (อ่านอย่างเดียว)
@@ -2306,8 +2310,9 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   - **ลำดับล็อกกลาง "ใบตัวเอง → ใบต้นทาง → เลข JE (advisory)"** (ฝ่ายค้านรอบสาม V1I-X1): `ApproveDocumentAsync` และ `VoidDocumentAsync` เรียก
     `LockRelatedSourceDocumentAsync` ทันทีหลังล็อกใบตัวเอง — ก่อน `AutoPostToJournalAsync`/`ReverseJournalEntryAsync` ที่ถือล็อกเลข JE ·
     เดิมอนุมัติ/ยกเลิกใบเสร็จ·ใบลดหนี้ล็อกเลข RV ก่อนใบต้นทาง สวนกับ `VoidPaymentAsync` (ใบต้นทางก่อนเลข JE) ⇒ deadlock 40P01 แบบสุ่ม ·
-    รอบ 201 ทีม DV (A-DV4 · ข้อ 68): `VoidDocumentAsync` ล็อก**เอกสารอื่นของการชำระใน cascade** (`LockDocumentsForPaymentVoidAsync` · ORDER BY Id) ต่อจากใบต้นทาง
-    ก่อนล็อกยอดมัดจำ/กลับรายการ (เดิม cascade ไม่ล็อกใบอื่น)
+    รอบ 201 ทีม DV (A-DV4 · ฝ่ายค้าน DV-O1): `VoidDocumentAsync` ปฏิเสธการชำระที่ชำระร่วมกับเอกสารอื่น**ทันทีหลังล็อกใบตัวเอง** (ก่อนล็อกใบต้นทาง) แล้วจึงไม่มีใบอื่น
+    ให้ล็อก — **ไม่ล็อกเอกสารอื่นของการชำระ** (กันวงรอกับเส้นที่ล็อก ORDER BY Id) · ล็อกยอดมัดจำ (`LockDepositBalancesAsync`) ใช้ `pg_try_advisory_xact_lock`
+    (ไม่รอ — ชน = "รอสักครู่" แล้ว rollback) ⇒ ลำดับ "ล็อกมัดจำก่อนแถวใบ" ของปุ่มรับรู้ VAT มัดจำ (`RecognizeDepositOutputVatAsync`) ไม่เกิดวงรอกับเส้นยกเลิก
   - `VoidPayrollAsync` (`PayrollService.cs`) — lock `PayrollRuns` row `FOR UPDATE`
     + re-check `Status="Voided"`; กัน restore เงินทดรอง (SalaryAdvance
     OutstandingAmount) + reverse JE ซ้ำเมื่อกด void พร้อมกัน
@@ -4037,7 +4042,9 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ไฟล์นี้เหลือ **พฤติกรรมปัจจุบัน** (§1–§9) + บล็อกล่าสุดบล็อกเดียวด้านล่าง · กติกาการดูแลเดิมทุกข้อยังบังคับ:
 คอมมิตที่เปลี่ยน flow ต้องแก้ §ที่เกี่ยวข้อง **และ** เติมบล็อกใหม่ใน `CHANGELOG.md` ในคอมมิตเดียวกัน แล้วแทนบล็อกล่าสุดข้างล่างนี้
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม GW — gateway/integration: webhook รหัสลับต่อ config + URL เดิมคงไว้ · กระทบยอดรู้จักรอบโอน batch · VAT ค่าธรรมเนียม batch แสดงแยก · ปรับปรุงเศษ 11630 · บันทึกยอดคืนย้อนหลัง · ป้าย/ปุ่มจากเซิร์ฟเวอร์ · URL กลับหลังจ่าย · resync สร้างใหม่ก่อนกลับ JE · คำเตือนบัญชีธนาคาร integration · C-10/C-11/B-1 (§2.3 · §2.6b) — commit bba8cfc7 · DV-O4 97f1f255)_
+_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม DV — เอกสาร ยกเลิก/ออกใบแทน/e-Tax (§2.4c · §3.5): cascade `VoidDocumentAsync` ล็อกเอกสารอื่นของการชำระ + ยอดครอบไม่นับทุกรายการที่กำลังยกเลิก + ข้อความธงถึงผู้กด (A-DV4) · รายงานข้อ 44 เพิ่ม 4 กลุ่ม (A-DV1) · `EtaxKeptOriginalAt` + migration (A-DV2) · หลักฐานทาง ก แนบหลังถึงกรมสรรพากร (A-DV3) · ใบแทนในเดือนที่ประกาศว่ายื่น = บล็อก (C-1) · echo รับรู้ของกำพร้า (A-DV5) · audit 9 จุดเข้า chain (A-DV6) — commit 49458e34 · แก้ตามฝ่ายค้าน DV-O1/O2/O3/O5/O6/O7 — commit 8c5e36d2)_
+
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม GW — gateway/integration: webhook รหัสลับต่อ config + URL เดิมคงไว้ · กระทบยอดรู้จักรอบโอน batch · VAT ค่าธรรมเนียม batch แสดงแยก · ปรับปรุงเศษ 11630 · บันทึกยอดคืนย้อนหลัง · ป้าย/ปุ่มจากเซิร์ฟเวอร์ · URL กลับหลังจ่าย · resync สร้างใหม่ก่อนกลับ JE · คำเตือนบัญชีธนาคาร integration · C-10/C-11/B-1 (§2.3 · §2.6b) — commit bba8cfc7 · DV-O4 97f1f255)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม AI — AI/ธนาคาร: คู่ที่ AI แต่งในแผนจับคู่ทั้งก้อน `BankAiCandidateGuard` (§6.0c-bis) · คลังจับคู่ธนาคารนับเฉพาะคำยืนยันแบบตั้งใจ `ExplicitConfirmCount`/`BankPatternEvidence` · มาตรฐานคะแนนเดียว (โบนัสเฉพาะจอ → ลำดับรอง · ข้อเสนอจากประวัติผ่าน scorer+arbiter) · ทะเบียนนักเรียน `DistillationModelRegistry` + kill-switch ผ่าน orchestrator จริง (§6.4) · นักเรียน bulk PV `PaymentVoucherAccountingDistillationModel` + write-gate `GlSuggestionApplyPolicy` + ป้าย `AiAnswerSource` · ตัวบันทึก feedback ถอยของค้างเมื่อล้ม — commit ce1328ec)_
 

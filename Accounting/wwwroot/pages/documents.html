@@ -12095,14 +12095,15 @@
           const keptLost = d?.keptOriginalCoverageLost || [];
           if (!rows.length && !reps.length && !revs.length && !stuck.length && !etaxRows.length && !keptLost.length) { el.style.display = 'none'; return; }
           const link = (id, no) => `<a href="#" onclick="Page.detail('${id}');return false" style="color:#92400e;text-decoration:underline">${Layout.esc(no || '')}</a>`;
+          // DV-O7: บอก "…อีก N รายการ" ต่อกลุ่มเมื่อกลุ่มยาวเกิน 20 (เดิมบอกรวมครั้งเดียวเมื่อเกิน 120 ⇒ กลุ่มที่ถูกตัดไม่มีสัญญาณ)
+          const more = (list) => list.length > 20 ? `<div>… อีก ${list.length - 20} รายการในกลุ่มนี้</div>` : '';
           el.innerHTML = `📋 <b>${Layout.esc(r?.message || 'มีรายการที่ต้องให้นักบัญชีตรวจ')}</b>`
-            + rows.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('')
-            + reps.slice(0, 20).map(x => `<div>• ใบแทน ${link(x.replacementId, x.replacementNumber)} ของ ${Layout.esc(x.originalNumber || '')} พาช่องของใบเดิมมา: ${Layout.esc((x.carriedFields || []).join(', '))}</div>`).join('')
-            + revs.slice(0, 20).map(x => `<div>• ${link(x.sourceId, x.sourceNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('')
-            + stuck.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('')
-            + keptLost.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('')
-            + etaxRows.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('')
-            + (rows.length + reps.length + revs.length + stuck.length + keptLost.length + etaxRows.length > 120 ? '<div>…</div>' : '');
+            + rows.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(rows)
+            + reps.slice(0, 20).map(x => `<div>• ใบแทน ${link(x.replacementId, x.replacementNumber)} ของ ${Layout.esc(x.originalNumber || '')} พาช่องของใบเดิมมา: ${Layout.esc((x.carriedFields || []).join(', '))}</div>`).join('') + more(reps)
+            + revs.slice(0, 20).map(x => `<div>• ${link(x.sourceId, x.sourceNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(revs)
+            + stuck.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(stuck)
+            + keptLost.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(keptLost)
+            + etaxRows.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(etaxRows);
           el.style.display = '';
         } catch (e) { el.style.display = 'none'; }
       },

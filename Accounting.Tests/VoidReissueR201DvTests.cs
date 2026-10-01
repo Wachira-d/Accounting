@@ -80,16 +80,14 @@ public class VoidReissueR201DvTests
         Assert.False(EtaxReissueReview.KeptOriginal(null, $"{EtaxReissueReview.ResolvedMarker} ยกเลิกทาง e-Tax แล้ว — อ้างอิง X"));
     }
 
-    /// <summary>สูตรตำแหน่ง "ป้ายตัวสุดท้าย" ของ SQL เติมคอลัมน์ (reverse + strpos) ต้องให้คำตอบเดียวกับ <see cref="EtaxReissueReview.LastResolutionKeptOriginal"/> —
-    /// จำลองเลขคณิตของ SQL ด้วย C# (ตำแหน่งนับจาก 1 · อักษรไทยอยู่ใน BMP ⇒ ความยาวเท่ากับของ PostgreSQL)</summary>
+    /// <summary>regex ของ migration (<see cref="EtaxReissueReview.LastResolutionLinePattern"/> — PostgreSQL ARE ไม่ไวต่อบรรทัด: <c>.</c> ข้ามบรรทัด · <c>^</c> = ต้นข้อความ)
+    /// ต้องให้คำตอบเดียวกับตัวอ่านเดียว <see cref="EtaxReissueReview.LastResolutionKeptOriginal"/> — จำลองด้วย .NET Regex (Singleline = ความหมายเดียวกัน) + <c>LIKE kept%</c></summary>
     private static bool SqlLastIsKept(string notes)
     {
-        var resolved = EtaxReissueReview.ResolvedMarker;
         if (!notes.Contains(EtaxReissueReview.KeptOriginalMarker, StringComparison.Ordinal)) return false;
-        var rev = new string(notes.Reverse().ToArray());
-        var p = rev.IndexOf(new string(resolved.Reverse().ToArray()), StringComparison.Ordinal) + 1;   // strpos (1-based)
-        var start = notes.Length - p - resolved.Length + 2;                                               // substr start (1-based)
-        return notes[(start - 1)..].StartsWith(EtaxReissueReview.KeptOriginalMarker, StringComparison.Ordinal);
+        var m = System.Text.RegularExpressions.Regex.Match(notes, EtaxReissueReview.LastResolutionLinePattern,
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        return m.Success && m.Groups[1].Value.StartsWith(EtaxReissueReview.KeptOriginalMarker, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -98,6 +96,8 @@ public class VoidReissueR201DvTests
     [InlineData("cn-then-kept")]
     [InlineData("cancelled")]
     [InlineData("prefix")]
+    [InlineData("spoof-midline")]
+    [InlineData("cn-then-spoof")]
     public void R201_DV2_SQLเติมคอลัมน์_ตำแหน่งป้ายตัวสุดท้ายตรงกับตัวอ่านเดียว(string kind)
     {
         var cn = $"{EtaxReissueReview.ResolvedMarker} ปิดธงด้วยใบลดหนี้ CN-1 — ใบลดหนี้ในระบบนี้ — ลดหนี้";
@@ -107,26 +107,96 @@ public class VoidReissueR201DvTests
             "kept-then-cn" => KeptNotes + "\n\n" + cn,
             "cn-then-kept" => cn + "\n\n" + KeptNotes,
             "cancelled" => $"[VAT-UNDO-BLOCKED] เช็คเด้ง\n{EtaxReissueReview.ResolvedMarker} ยกเลิกทาง e-Tax แล้ว — อ้างอิง X",
-            _ => "บันทึกก่อนหน้า\n" + KeptNotes + " · ต่อท้าย",
+            "prefix" => "บันทึกก่อนหน้า\n" + KeptNotes + " · ต่อท้าย",
+            // DV-O6: ผู้ใช้พิมพ์ป้ายทาง ค ต่อท้ายเหตุผลของทาง ข (กลางบรรทัด) ⇒ ไม่ใช่การปิดธง
+            "spoof-midline" => cn + " " + EtaxReissueReview.KeptOriginalMarker,
+            _ => cn + "\n\n[VAT-UNDO-BLOCKED] หมายเหตุ " + EtaxReissueReview.KeptOriginalMarker,
         };
         Assert.Equal(EtaxReissueReview.LastResolutionKeptOriginal(notes), SqlLastIsKept(notes));
     }
 
     [Fact]
-    public void R201_DV2_migration_เพิ่มคอลัมน์ก่อนเติม_ใช้ค่าคงที่ตัวเดียว_เติมเฉพาะแถวว่าง()
+    public void R201_DVO6_ป้ายกลางบรรทัดไม่นับ_ข้อความผู้ใช้ถูกยุบเป็นบรรทัดเดียว()
+    {
+        var cn = $"{EtaxReissueReview.ResolvedMarker} ปิดธงด้วยใบลดหนี้ CN-1 — ใบลดหนี้ในระบบนี้ — ลดหนี้";
+        Assert.False(EtaxReissueReview.LastResolutionKeptOriginal(cn + " " + EtaxReissueReview.KeptOriginalMarker));
+        Assert.False(EtaxReissueReview.KeptOriginal(null, "เหตุผล " + EtaxReissueReview.KeptOriginalMarker));
+        // ผู้ใช้พยายามขึ้นบรรทัดใหม่ในเหตุผล ⇒ ตัวเขียนยุบเป็นบรรทัดเดียว ⇒ ไม่เกิดต้นบรรทัดใหม่
+        var typed = "ลดหนี้\n" + EtaxReissueReview.KeptOriginalMarker;
+        var written = cn.Replace("ลดหนี้", EtaxReissueReview.OneLine(typed), StringComparison.Ordinal);
+        Assert.DoesNotContain("\n", EtaxReissueReview.OneLine(typed));
+        Assert.False(EtaxReissueReview.LastResolutionKeptOriginal(written));
+        Assert.Equal("a b c", EtaxReissueReview.OneLine("a\r\nb\rc"));
+        Assert.Equal("", EtaxReissueReview.OneLine(null));
+        // ทิศตรงข้าม: ป้ายที่ AppendInternalNote ต่อ (ขึ้นบรรทัดใหม่) ยังนับ
+        Assert.True(EtaxReissueReview.LastResolutionKeptOriginal(cn + "\n\n" + KeptNotes));
+    }
+
+    [Fact]
+    public void R201_DV2_migration_สร้างคอลัมน์และเติมครั้งเดียว_ใช้ค่าคงที่ตัวเดียว_เติมเฉพาะแถวแคบ()
     {
         var all = DatabaseMigrationHelper.GetAlterStatements();
-        var add = all.FindIndex(x => x.Contains("ADD COLUMN IF NOT EXISTS \"EtaxKeptOriginalAt\"", StringComparison.Ordinal));
-        var fill = all.FindIndex(x => x.Contains("UPDATE \"Documents\" d SET \"EtaxKeptOriginalAt\"", StringComparison.Ordinal));
-        Assert.True(add >= 0 && fill > add);
         var sql = DatabaseMigrationHelper.EtaxKeptOriginalBackfillSql();
+        Assert.Contains(sql, all);
+        // DV-O6: ครั้งเดียว — มีคอลัมน์แล้ว = ไม่ทำอะไร (ไม่สแกนทั้งตารางทุกบูต) · ล็อกคีย์คงที่
+        Assert.Contains("information_schema.columns", sql);
+        Assert.Contains("pg_advisory_xact_lock(" + DatabaseMigrationHelper.EtaxKeptOriginalLockKey + ")", sql);
+        Assert.DoesNotContain("ADD COLUMN IF NOT EXISTS", sql);
+        var addAt = sql.IndexOf("ADD COLUMN \"EtaxKeptOriginalAt\"", StringComparison.Ordinal);
+        var fillAt = sql.IndexOf("UPDATE \"Documents\" d SET \"EtaxKeptOriginalAt\"", StringComparison.Ordinal);
+        Assert.True(addAt >= 0 && fillAt > addAt);
         Assert.Contains(EtaxReissueReview.KeptOriginalMarker, sql);
-        Assert.Contains($"reverse('{EtaxReissueReview.ResolvedMarker}')", sql);
-        Assert.Contains("\"EtaxKeptOriginalAt\" IS NULL", sql);                 // ไม่ทับค่าที่เส้นใหม่เขียน
+        Assert.Contains(EtaxReissueReview.LastResolutionLinePattern, sql);       // กติกาเดียวกับตัวอ่าน
+        Assert.Contains("\"EtaxKeptOriginalAt\" IS NULL", sql);
+        Assert.Contains($"\"DocumentType\" IN ({(int)DocumentType.Receipt}, {(int)DocumentType.ReceiptVoucher})", sql);
         Assert.Contains("RD-ETAX-ORIGINAL-STILL-VALID", sql);
-        Assert.Contains("a.\"CompanyId\" = d.\"CompanyId\"", sql);                 // audit ของบริษัทเดียวกัน
+        Assert.Contains("a.\"CompanyId\" = d.\"CompanyId\"", sql);
         Assert.False(sql.Contains((char)0x7B));                                   // ไม่มีวงเล็บปีกกาเปิด (ExecuteSqlRaw ไม่ตีเป็น placeholder)
-        Assert.DoesNotContain("'", EtaxReissueReview.KeptOriginalMarker);         // ต่อเข้า SQL literal ได้ตรง ๆ
+        Assert.DoesNotContain("'", EtaxReissueReview.KeptOriginalMarker);
+        Assert.DoesNotContain("'", EtaxReissueReview.LastResolutionLinePattern);
+    }
+
+    // ═════════════ ฝ่ายค้าน DV-O1: ชำระร่วมกับเอกสารอื่น = ปฏิเสธก่อนล็อกอื่น ═════════════
+
+    [Fact]
+    public void R201_DVO1_ชำระร่วมกับเอกสารอื่น_ปฏิเสธข้อความเดิม_สองทิศ()
+    {
+        var d = Guid.Parse("00000000-0000-0000-0000-0000000000d1");
+        var e = Guid.Parse("00000000-0000-0000-0000-0000000000e1");
+        var block = DocumentVoidPreconditions.SharedPaymentVoidBlock(new (string?, Guid)[] { ("PAY-1", d), ("PAY-1", e) }, d);
+        Assert.NotNull(block);
+        Assert.Contains("ชำระร่วมกับเอกสารอื่น", block);
+        Assert.Contains("PAY-1", block);
+        Assert.Contains("ยกเลิกการชำระเงินใบนั้นทั้งใบก่อน", block);
+        // ทิศตรงข้าม: การจัดสรรทุกแถวเป็นของใบนี้ · ไม่มีการจัดสรร ⇒ ไม่บล็อก
+        Assert.Null(DocumentVoidPreconditions.SharedPaymentVoidBlock(new (string?, Guid)[] { ("PAY-1", d), ("PAY-2", d) }, d));
+        Assert.Null(DocumentVoidPreconditions.SharedPaymentVoidBlock(Array.Empty<(string?, Guid)>(), d));
+    }
+
+    // ═════════════ ฝ่ายค้าน DV-O2: กลุ่ม (4) ไม่นับแถวที่ยกเลิกพร้อมหลักฐาน ═════════════
+
+    [Fact]
+    public void R201_DVO2_auditยกเลิกพร้อมหลักฐาน_ไม่เข้ากลุ่มอีเมล_สองทิศ()
+    {
+        var withEvidence = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            action = "etax-voided-in-system", ruleCode = "RD-ETAX-VOID-SUBMITTED-EVIDENCE", evidenceAttachmentId = (Guid?)Guid.NewGuid(),
+        });
+        var withFileOnly = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            action = "etax-voided-in-system", ruleCode = "RD-ETAX-VOID-NOT-REACHED", evidenceAttachmentId = (Guid?)Guid.NewGuid(),
+        });
+        var noEvidence = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            action = "etax-voided-in-system", ruleCode = "RD-ETAX-VOID-NOT-REACHED", evidenceAttachmentId = (Guid?)null,
+        });
+        Assert.True(EtaxReissueReview.VoidAuditHasEvidence(withEvidence));
+        Assert.True(EtaxReissueReview.VoidAuditHasEvidence(withFileOnly));
+        Assert.False(EtaxReissueReview.VoidAuditHasEvidence(noEvidence));      // V1H รุ่น "ยังไม่ถึง" ไม่มีไฟล์ = ไม่ใช่หลักฐาน
+        Assert.False(EtaxReissueReview.VoidAuditHasEvidence(null));
+        Assert.False(EtaxReissueReview.VoidAuditHasEvidence("{\"action\":\"etax-cancellation-recorded\"}"));
+        Assert.False(EtaxReissueReview.EmailedEtaxVoidedInSystem(EtaxStatus.Voided, true, false, hasEvidenceVoidAudit: true));
+        Assert.True(EtaxReissueReview.EmailedEtaxVoidedInSystem(EtaxStatus.Voided, true, false, hasEvidenceVoidAudit: false));
     }
 
     [Fact]

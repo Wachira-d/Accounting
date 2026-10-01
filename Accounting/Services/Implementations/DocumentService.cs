@@ -4065,10 +4065,25 @@ public partial class DocumentService : IDocumentService
 
     /// <summary>รอบ 194 M4 — งวด ภ.พ.30 ของเดือนนี้ถูกประกาศว่ายื่น/ยื่นแล้ว หรือล็อกงวดแล้วหรือยัง
     /// (ชุดสถานะจาก <c>TaxFilingLockPolicy.DeclaredOrFiledStatuses</c> ตัวเดียว + <c>FilingLockedAt</c>) · tenant-safe</summary>
-    private Task<bool> VatPeriodDeclaredOrFiledAsync(Guid companyId, DateTime date)
-        => _db.TaxReports.AsNoTracking().AnyAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.TaxType == TaxType.VAT
-            && t.Year == date.Year && t.Month == date.Month
-            && (Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status) || t.FilingLockedAt != null));
+    private async Task<bool> VatPeriodDeclaredOrFiledAsync(Guid companyId, DateTime date)
+    {
+        return await VatPeriodFilingStatusAsync(companyId, date) != null;
+    }
+
+    /// <summary>รอบ 201 ทีม DV (ฝ่ายค้าน DV-O5) — <b>คิวรีเดียว</b>ของ "งวด ภ.พ.30 เดือนนี้ประกาศว่ายื่น/ยื่นแล้ว/ล็อก" (<see cref="VatPeriodDeclaredOrFiledAsync"/> และด่านออกใบแทน C-1)
+    /// แต่คืน<b>สถานะ</b>ให้ข้อความบอกได้ว่า "ประกาศว่ายื่น" หรือ "ยื่นแล้ว" — ยื่น (Filed) หรือมีตราล็อก (<c>FilingLockedAt</c>) = Filed · ประกาศอย่างเดียว = Submitted ·
+    /// ไม่มี/ร่าง = null · ชุดสถานะ <c>TaxFilingLockPolicy.DeclaredOrFiledStatuses</c> ตัวเดียว · tenant-safe</summary>
+    private async Task<TaxReportStatus?> VatPeriodFilingStatusAsync(Guid companyId, DateTime date)
+    {
+        var rows = await _db.TaxReports.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.TaxType == TaxType.VAT
+                && t.Year == date.Year && t.Month == date.Month
+                && (Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status) || t.FilingLockedAt != null))
+            .Select(t => new { t.Status, Locked = t.FilingLockedAt != null })
+            .ToListAsync();
+        if (rows.Count == 0) return null;
+        return rows.Any(t => t.Status == TaxReportStatus.Filed || t.Locked) ? TaxReportStatus.Filed : TaxReportStatus.Submitted;
+    }
 
     /// <summary>รอบ 194 R2-1 — งวดของวันรับเงินมัดจำ "ปิดในระบบแล้ว" ไหม: ภ.พ.30 ยื่น/ประกาศว่ายื่น/ล็อก (<see cref="VatPeriodDeclaredOrFiledAsync"/>)
     /// <b>หรือ</b>งวดบัญชีของวันนั้นปิดแล้ว (ลงขาภาษีย้อนเข้างวดที่ปิดไม่ได้ — ต้องไปงวดปัจจุบัน + ธง LATE-VAT) · tenant-safe</summary>
@@ -8126,11 +8141,10 @@ public partial class DocumentService : IDocumentService
                 await _db.Database.ExecuteSqlRawAsync(
                     "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
                     documentId, companyId);
-                // V1I-X1: ใบต้นทางก่อนขั้นกลับ JE (ล็อกเลข JE) — ลำดับเดียวกับ VoidPaymentAsync/อนุมัติ
-                await LockRelatedSourceDocumentAsync(companyId, documentId);
-                // รอบ 201 ทีม DV (A-DV4 · คำตัดสินข้อ 68): cascade ขั้น 1 ยกเลิกการชำระของใบนี้ — ล็อกเอกสารอื่นทุกใบที่การชำระเหล่านั้นแตะ (ใบหลักของการชำระ ·
-                // ใบในการจัดสรร) ด้วยตัวล็อกเดียวกับ VoidPaymentAsync (ORDER BY Id คำสั่งเดียว + อ่านใหม่แถวที่ context ถือ) · เดิม cascade ไม่ล็อกใบอื่นเลย ⇒
-                // การรับชำระใหม่/ยกเลิกซ้อนที่ commit พร้อมกันทำให้ยอด PaidAmount ของใบนั้นเป็น lost update · ลำดับล็อกกลาง: ใบตัวเอง → ใบต้นทาง → ใบอื่นของการชำระ → เลข JE
+                // รอบ 201 ทีม DV (ฝ่ายค้าน DV-O1 · แทน A-DV4 ส่วนล็อก): การชำระที่ "ชำระร่วมกับเอกสารอื่น" ต้องถูกปฏิเสธ<b>ทันทีหลังล็อกใบนี้ ก่อนล็อกอื่นใด</b> —
+                // เดิมตรวจในลูปขั้น 1 (หลังกลับรายการการชำระก่อนหน้าไปแล้ว) และรอบแรกของ A-DV4 ล็อก "ใบอื่นของการชำระ" ก่อนหน้านั้น ซึ่งในเส้นที่สำเร็จว่างเสมอ
+                // (มีใบอื่น ⇒ ปฏิเสธอยู่แล้ว) แต่สร้างวงรอใหม่กับ VoidPaymentAsync/CreateMultiDocPaymentAsync (ล็อก ORDER BY Id) ⇒ ถอดการล็อกใบอื่นออก · ตรวจใต้ล็อกใบนี้
+                // คงที่: การรับชำระใหม่ที่จะแตะใบนี้ต้องล็อกใบนี้ก่อนเขียน (รอเส้นนี้) · ตัวตัดสิน pure ตัวเดียว DocumentVoidPreconditions.SharedPaymentVoidBlock
                 var cascadePaymentIds = await _db.PaymentAllocations.AsNoTracking()
                     .Where(a => a.DocumentId == documentId && a.CompanyId == companyId && !a.IsDeleted)
                     .Select(a => a.PaymentId)
@@ -8139,16 +8153,18 @@ public partial class DocumentService : IDocumentService
                     .Where(p => p.DocumentId == documentId && p.CompanyId == companyId && !p.IsDeleted)
                     .Select(p => p.Id)
                     .ToListAsync());
-                var cascadeLockDocIds = await _db.PaymentAllocations.AsNoTracking()
-                    .Where(a => a.CompanyId == companyId && !a.IsDeleted && cascadePaymentIds.Contains(a.PaymentId))
-                    .Select(a => a.DocumentId)
+                var cascadeAllocations = await (
+                    from a in _db.PaymentAllocations.AsNoTracking()
+                    join p in _db.Payments.AsNoTracking() on a.PaymentId equals p.Id
+                    where a.CompanyId == companyId && p.CompanyId == companyId && !a.IsDeleted && !p.IsDeleted
+                          && cascadePaymentIds.Contains(a.PaymentId)
+                    select new { p.PaymentNumber, a.DocumentId })
                     .ToListAsync();
-                cascadeLockDocIds.AddRange(await _db.Payments.AsNoTracking()
-                    .Where(p => p.CompanyId == companyId && cascadePaymentIds.Contains(p.Id))
-                    .Select(p => p.DocumentId)
-                    .ToListAsync());
-                cascadeLockDocIds.RemoveAll(lockId => lockId == documentId);
-                await LockDocumentsForPaymentVoidAsync(companyId, cascadeLockDocIds);
+                if (DocumentVoidPreconditions.SharedPaymentVoidBlock(
+                        cascadeAllocations.Select(x => ((string?)x.PaymentNumber, x.DocumentId)), documentId) is string sharedPaymentBlock)
+                    throw new InvalidOperationException(sharedPaymentBlock);
+                // V1I-X1: ใบต้นทางก่อนขั้นกลับ JE (ล็อกเลข JE) — ลำดับเดียวกับ VoidPaymentAsync/อนุมัติ
+                await LockRelatedSourceDocumentAsync(companyId, documentId);
                 var lockedStatus = await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == documentId && d.CompanyId == companyId)
                     .Select(d => d.Status).FirstAsync();
@@ -8192,18 +8208,7 @@ public partial class DocumentService : IDocumentService
 
                 foreach (var payment in payments)
                 {
-                    // เงินก้อนเดียวจัดสรรหลายใบ: ยกเลิกใบเดียวแล้วแกะเงินออกบางส่วน
-                    // ทำให้ยอดเช็ค/allocation ที่เหลือไม่ตรงกับเงินที่รับ-จ่ายจริง
-                    // → บังคับให้ยกเลิก "การชำระเงินทั้งใบ" ก่อน แล้วค่อยจัดสรรใหม่
-                    // (ทางบัญชี: เงินยังอยู่ ต้องคืนเข้ากองเงินรอจัดสรร ไม่ใช่หายไป)
-                    var otherDocs = await _db.PaymentAllocations
-                        .CountAsync(a => a.PaymentId == payment.Id && a.CompanyId == companyId
-                            && !a.IsDeleted && a.DocumentId != documentId);
-                    if (otherDocs > 0)
-                        throw new InvalidOperationException(
-                            $"เอกสารนี้ถูกชำระร่วมกับเอกสารอื่นในใบรับ/จ่ายเงินเดียวกัน ({payment.PaymentNumber}) — "
-                            + "กรุณายกเลิกการชำระเงินใบนั้นทั้งใบก่อน แล้วจึงยกเลิกเอกสารและจัดสรรเงินใหม่");
-
+                    // เงินก้อนเดียวจัดสรรหลายใบ (ชำระร่วมกับเอกสารอื่น) ถูกปฏิเสธไปแล้วทันทีหลังล็อกใบนี้ (DV-O1 · SharedPaymentVoidBlock) ⇒ ที่นี่เหลือเฉพาะการชำระของใบนี้ใบเดียว
                     var hasOwnAllocations = await _db.PaymentAllocations
                         .AnyAsync(a => a.PaymentId == payment.Id && a.CompanyId == companyId && !a.IsDeleted);
                     // รอบ 201 ทีม DV (A-DV4 · ข้อ 68): เก็บข้อความธง/ภาษีของทุกรายการในลูป แล้วคืนถึงผู้กด (เดิมทิ้งผล — ธงติดที่ใบแต่ผู้กดไม่รู้)

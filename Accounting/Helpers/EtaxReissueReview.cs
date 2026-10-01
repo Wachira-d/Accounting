@@ -37,12 +37,30 @@ public static class EtaxReissueReview
     /// <summary>การปิดธงครั้ง<b>ล่าสุด</b>ของใบเสร็จนี้เป็นทาง (ค) ไหม — ป้าย <see cref="ResolvedMarker"/> ตัวสุดท้ายในหมายเหตุภายในต้องเป็น
     /// <see cref="KeptOriginalMarker"/> (ปิดด้วยทาง ค แล้วภายหลังปิดซ้ำด้วยใบลดหนี้ = ไม่ใช่) · หมายเหตุว่าง/ไม่มีป้าย = false · pure (V1H-O1)</summary>
     /// <remarks>รอบ 201 ทีม DV (A-DV2): ผู้อ่านเชิงธุรกิจเรียกผ่าน <see cref="KeptOriginal"/> ตัวเดียว ⇒ internal (เทสต์เข้าถึงได้)</remarks>
+    /// <remarks>รอบ 201 ฝ่ายค้าน DV-O6: นับเฉพาะป้ายที่อยู่<b>ต้นข้อความหรือต้นบรรทัด</b> (ผู้เขียนต่อหมายเหตุด้วย <c>AppendInternalNote</c> = ขึ้นบรรทัดใหม่เสมอ ·
+    /// ข้อความที่ผู้ใช้พิมพ์ถูกยุบเป็นบรรทัดเดียวด้วย <see cref="OneLine"/>) — ป้ายกลางบรรทัด (ผู้ใช้พิมพ์ตามหลังเหตุผล) ไม่ใช่การปิดธง · กติกาเดียวกับ
+    /// <see cref="LastResolutionLinePattern"/> ของ migration</remarks>
     internal static bool LastResolutionKeptOriginal(string? internalNotes)
     {
         if (string.IsNullOrEmpty(internalNotes)) return false;
-        var i = internalNotes.LastIndexOf(ResolvedMarker, StringComparison.Ordinal);
-        return i >= 0 && string.CompareOrdinal(internalNotes, i, KeptOriginalMarker, 0, KeptOriginalMarker.Length) == 0;
+        var i = internalNotes.Length;
+        while (i > 0 && (i = internalNotes.LastIndexOf(ResolvedMarker, i - 1, StringComparison.Ordinal)) >= 0)
+        {
+            if (i == 0 || internalNotes[i - 1] == '\n')
+                return string.CompareOrdinal(internalNotes, i, KeptOriginalMarker, 0, KeptOriginalMarker.Length) == 0;
+        }
+        return false;
     }
+
+    /// <summary>regex (PostgreSQL ARE · ไม่เปิดโหมดไวต่อบรรทัด ⇒ <c>.</c> ข้ามบรรทัดได้) ที่จับ "บรรทัดป้ายปิดธงตัวสุดท้ายที่อยู่ต้นข้อความ/ต้นบรรทัด" — ตัวเดียวของ
+    /// migration เติม <c>EtaxKeptOriginalAt</c> (กติกาเดียวกับ <see cref="LastResolutionKeptOriginal"/> · รอบ 201 ฝ่ายค้าน DV-O6) · กลุ่มที่ 1 = บรรทัดป้าย</summary>
+    public static string LastResolutionLinePattern =>
+        "^.*(?:^|\n)(" + ResolvedMarker.Replace("[", "\\[", StringComparison.Ordinal).Replace("]", "\\]", StringComparison.Ordinal) + "[^\n]*)";
+
+    /// <summary>ยุบข้อความที่ผู้ใช้พิมพ์ (เหตุผล · เลขอ้างอิง) เป็นบรรทัดเดียวก่อนต่อเข้าหมายเหตุภายใน — กันข้อความผู้ใช้สร้าง "ต้นบรรทัด" ที่ขึ้นด้วยป้ายปิดธง
+    /// (รอบ 201 ฝ่ายค้าน DV-O6) · null/ว่าง = "" · pure</summary>
+    public static string OneLine(string? text)
+        => string.IsNullOrEmpty(text) ? "" : text.Replace("\r\n", " ", StringComparison.Ordinal).Replace('\r', ' ').Replace('\n', ' ');
 
     /// <summary>
     /// **การปิดธงครั้งล่าสุดของใบเสร็จนี้เป็นทาง (ค) "ใบกำกับเดิมยังใช้ได้" ไหม — ตัวอ่านตัวเดียว** (รอบ 201 ทีม DV · A-DV2 · คำตัดสินข้อ 65): คอลัมน์
@@ -80,8 +98,20 @@ public static class EtaxReissueReview
     /// และ audit เขียนว่า "ก่อนส่งถึงกรมสรรพากร" (audit ของรุ่นนั้นจึง<b>ไม่ใช่</b>หลักฐาน — ไม่ใช้ตัดออก) · เอกสารที่บันทึก "ยกเลิกทาง e-Tax แล้ว" พร้อมเลขอ้างอิง +
     /// ไฟล์หลักฐาน (<c>RD-ETAX-CANCEL-EVIDENCE</c>) = ยกเลิกถึงกรมสรรพากรแล้ว ไม่จำแนก · pure
     /// </summary>
-    public static bool EmailedEtaxVoidedInSystem(EtaxStatus rowStatus, bool documentEmailedWithRdTimestamp, bool documentCancellationRecorded)
-        => rowStatus == EtaxStatus.Voided && documentEmailedWithRdTimestamp && !documentCancellationRecorded;
+    /// <param name="hasEvidenceVoidAudit">รอบ 201 ฝ่ายค้าน DV-O2: แถวนี้ถูกยกเลิกผ่านเส้นข้อ 51 <b>พร้อมไฟล์หลักฐาน</b> (<see cref="VoidAuditHasEvidence"/>) = ยกเลิกถึงกรมสรรพากรจริง ไม่จำแนก</param>
+    public static bool EmailedEtaxVoidedInSystem(EtaxStatus rowStatus, bool documentEmailedWithRdTimestamp, bool documentCancellationRecorded,
+        bool hasEvidenceVoidAudit = false)
+        => rowStatus == EtaxStatus.Voided && documentEmailedWithRdTimestamp && !documentCancellationRecorded && !hasEvidenceVoidAudit;
+
+    /// <summary>audit ของการยกเลิกแถว e-Tax (<c>etax-voided-in-system</c>) บันทึกว่ามีหลักฐานไหม — ruleCode <c>RD-ETAX-VOID-SUBMITTED-EVIDENCE</c> หรือมี
+    /// <c>evidenceAttachmentId</c> ที่ไม่ว่าง (รูป JSON ที่ <c>EtaxInvoiceService.VoidAsync</c> เขียน) · audit รุ่น V1H ที่บันทึกว่า "ยังไม่ถึง" โดยไม่มีไฟล์ = ไม่ใช่หลักฐาน ·
+    /// pure (รอบ 201 ฝ่ายค้าน DV-O2)</summary>
+    public static bool VoidAuditHasEvidence(string? newValuesJson)
+    {
+        if (string.IsNullOrEmpty(newValuesJson) || !newValuesJson.Contains("etax-voided-in-system", StringComparison.Ordinal)) return false;
+        if (newValuesJson.Contains("RD-ETAX-VOID-SUBMITTED-EVIDENCE", StringComparison.Ordinal)) return true;
+        return newValuesJson.Contains("\"evidenceAttachmentId\":\"", StringComparison.Ordinal);
+    }
 
     /// <summary>ใบเสร็จถือ VAT ที่ยังมีผลและติดธง แต่ใบต้นทาง (ใบแจ้งหนี้) ไม่มีวันที่ภาษีขายถึงกำหนดแล้ว = ถูกถอยไปแล้วทั้งที่ใบกำกับยังมีผล</summary>
     public static bool FlaggedReceiptVatUndone(bool receiptLive, decimal receiptVat, bool flagged, DocumentType sourceType, DateTime? sourceOutputVatDueAt)
