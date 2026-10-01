@@ -749,6 +749,23 @@ public static class SettlementOrphanTriage
 }
 
 /// <summary>
+/// **ข้อความผลของการยกเลิกการลงบัญชีรอบโอน — ตัวเดียวของเส้นสำเร็จและเส้นล้มกลางทาง** (รอบ 201 ทีม ST · ฝ่ายค้าน ST-X1) — ธง e-Tax/ภาษีขายที่ถอยไม่ได้ของชิ้นที่ยกเลิกไปแล้ว
+/// ต้องถึงผู้กดทั้งสองเส้น · เดิมเส้นล้มกลางทางไม่บอก ⇒ กดใหม่ชิ้นนั้นถูกยกเลิกแล้ว (ไม่เกิดธงซ้ำ) ⇒ ธงหายถาวร · pure
+/// </summary>
+public static class SettlementUnpostNotice
+{
+    /// <summary>ท้ายข้อความ "รายการที่ต้องตามต่อ" — ไม่มีธง = ว่าง</summary>
+    public static string FlagsTail(IReadOnlyCollection<string> flags)
+        => flags.Count == 0 ? ""
+            : $" · ⚠️ มี {flags.Count} รายการที่ต้องตามต่อ (ใบเสร็จที่ส่ง e-Tax ระหว่างทาง/ภาษีขายที่ถอยไม่ได้): " + string.Join(" · ", flags);
+
+    /// <summary>ข้อความของเส้นล้มกลางทาง — จำนวนที่ยกเลิกไปแล้ว + ธงของชิ้นเหล่านั้น + ทางไปต่อ</summary>
+    public static string Partial(string payoutRef, string error, int voidedDocuments, int voidedPayments, IReadOnlyCollection<string> flags)
+        => $"ยกเลิกการลงบัญชีรอบโอน {payoutRef} ไม่สำเร็จ: {error} — ยกเลิกไปแล้ว {voidedDocuments} เอกสาร · "
+           + $"{voidedPayments} การรับชำระ (สถานะรอบโอนยังเป็นลงบัญชีแล้ว) · แก้สาเหตุแล้วกดยกเลิกอีกครั้ง ระบบทำต่อจากที่ค้าง" + FlagsTail(flags);
+}
+
+/// <summary>
 /// **กำหนดขอบเขต "กำลังยกเลิกการลงบัญชีรอบโอนนี้"** ให้ด่านใน <c>DocumentService.VoidDocumentAsync/VoidPaymentAsync</c> รู้ว่าเส้นที่เรียกคือ
 /// Unpost (ฝ่ายค้าน C-5) — ค่าอยู่ใน <see cref="AsyncLocal{T}"/> = ต่อสายการเรียก (async flow) ของคำขอเดียว <b>ไม่ใช่สถานะข้ามคำขอ</b>
 /// (CLAUDE.md #4 D) · ออกจากขอบเขตด้วย <c>Dispose</c>

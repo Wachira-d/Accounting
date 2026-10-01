@@ -166,15 +166,28 @@ public sealed partial class SettlementImportService
         var referenced = lines.Where(l => !l.IsDeleted && l.PaymentIntentId != null).Select(l => l.PaymentIntentId!.Value)
             .Distinct().ToList();
         await LockGatewaysAsync(companyId, batchId, referenced, ct);
+        // ฝ่ายค้าน ST-X6: intent ที่บรรทัดฝั่งขาย "เพิ่งอ้าง" ในคำสั่งนี้ (คืนเงินยกเว้น) — ใช้ตรวจซ้ำใต้ล็อกว่ารอบอื่นไม่ได้เป็นเจ้าของไปแล้ว
+        var newlyBySale = lines
+            .Where(l => !l.IsDeleted && l.PaymentIntentId != null && NewlyReferencesIntent(l))
+            .GroupBy(l => l.PaymentIntentId!.Value)
+            .Where(g => g.Any(l => SettlementLineTypeRules.For(l.LineType).Posting != SettlementPostingKind.Refund))
+            .Select(g => g.Key).ToHashSet();
         var stamped = await _db.PaymentIntents
             .Where(i => i.CompanyId == companyId && (i.SettlementBatchId == batchId || referenced.Contains(i.Id)))
             .ToListAsync(ct);
         var takenByLegacy = 0;
+        var takenByOtherBatch = 0;
         foreach (var i in stamped)
         {
             var want = referenced.Contains(i.Id) ? batchId : (Guid?)null;
             if (i.SettlementBatchId == want) continue;
-            if (want != null && i.SettlementBatchId != null) continue;          // เจ้าของคือรอบแรก (คืนเงินภายหลัง)
+            if (want != null && i.SettlementBatchId != null)
+            {
+                // เจ้าของคือรอบแรก — คืนเงินภายหลังคงรอบเดิม · บรรทัดขายที่เพิ่งอ้าง = รอบอื่นหยิบไประหว่างตัดสิน ⇒ ล้มดัง (ST-X6)
+                if (SettlementSaleMatch.SaleReferenceTakenByOtherBatch(false, newlyBySale.Contains(i.Id), i.SettlementBatchId, batchId))
+                    takenByOtherBatch++;
+                continue;
+            }
             if (want != null && i.SettlementJournalEntryId != null) { takenByLegacy++; continue; }
             i.SettlementBatchId = want;
             i.UpdatedAt = DateTime.UtcNow;
@@ -183,6 +196,20 @@ public sealed partial class SettlementImportService
             throw new BusinessRuleException(
                 $"รายการรับชำระออนไลน์ {takenByLegacy} รายการถูกบันทึกรอบโอนด้วยหน้า \u201Cรอบโอน gateway\u201D ไปแล้วระหว่างที่ระบบตัดสินบรรทัดนี้ — "
                 + "ระบบยังไม่ได้บันทึกอะไร · กดอีกครั้ง (บรรทัดนั้นจะถูกจับคู่ใหม่ตามข้อมูลล่าสุด)", "SETTLEMENT-INTENT-TAKEN", 409);
+        if (takenByOtherBatch > 0)
+            throw new BusinessRuleException(
+                $"รายการรับชำระออนไลน์ {takenByOtherBatch} รายการถูกรอบโอนอื่น (ช่องทางที่ใช้ gateway เดียวกัน) รับเป็นยอดขายไปแล้วระหว่างที่ระบบตัดสินบรรทัดนี้ — "
+                + "ระบบยังไม่ได้บันทึกอะไร · กดอีกครั้ง (บรรทัดนั้นจะถูกจับคู่ใหม่ตามข้อมูลล่าสุด · ถ้าเลือกเองให้เลือกรายการอื่นหรือใบขายเดิม)",
+                "SETTLEMENT-INTENT-TAKEN", 409);
+    }
+
+    /// <summary>บรรทัดนี้เพิ่งอ้าง intent ในคำสั่งนี้ไหม (ST-X6) — บรรทัดใหม่/ไม่ได้ติดตาม หรือช่อง <c>PaymentIntentId</c> เปลี่ยนจากค่าที่โหลดมา ·
+    /// <c>Entry()</c> ตรวจการเปลี่ยนของ entity ตัวนั้นก่อนตอบ (snapshot tracking)</summary>
+    private bool NewlyReferencesIntent(SettlementLine l)
+    {
+        var entry = _db.Entry(l);
+        return entry.State is EntityState.Added or EntityState.Detached
+            || entry.Property(x => x.PaymentIntentId).IsModified;
     }
 
     /// <summary>

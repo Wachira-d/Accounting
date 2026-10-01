@@ -4197,6 +4197,12 @@ _2026-10-01 รอบ 201 ทีม ST — Settlement (BACKLOG §1.2 A-ST1..10 +
 - **A-ST10 NOT-A-BUG** (ส่ง LINE ไม่มีผู้เรียก) · เทสต์ `SettlementRound201StTests` (สองทิศทุกข้อ) · ปรับเทสต์เดิม 4 ไฟล์ (การรับรู้ต้องมีลายนิ้วมือ · ตัวอ่านป้ายถูกถอด) ·
   required_call_site +23 แถว + NOTES_MARKER_FORBID (ปรับแถวเดิม 13) — commit 07baa11b)_
 
+_2026-10-01 รอบ 201 ทีม ST ฝ่ายค้าน (ST-X1..X7 · ไม่มี P0/P1 · รายงาน `erp-review/2026-10-01/team-ST.md` §7):
+- **X1** ยกเลิกการลงบัญชีล้มกลางทางบอกธงของชิ้นที่ยกเลิกไปแล้ว + audit `settlement-unpost-partial` · **X2** ประทับเจ้าของการรับชำระตอนแถวเริ่มถูกติดตาม (audit มีค่า) ·
+  **X3** ข้อความ SoD บอกบทบาทที่ชน · **X4** `GET settlement/orphans/documents/{id}/ack-status` + แถบหน้าเอกสาร (ไม่ใส่ DocumentResponse — วงกลม DI) ·
+  **X5** log แถวที่มีป้ายแต่ไม่ถูก backfill (บูตที่สร้างคอลัมน์) · **X6** บรรทัดขายที่เพิ่งอ้าง intent ของรอบอื่น ⇒ 409 ใต้ล็อก · **X7** ข้อความซ่อนยอดเฉพาะรายงานกำพร้า ·
+  เทสต์ +13 เมธอด (12 Fact + Theory 3 แถว) ใน `SettlementRound201StTests` · required_call_site +7 แถว — commit d0b19cf7)_
+
 _2026-10-01 รอบ 201 ทีม OC — งานคงค้าง OCR (BACKLOG §1.7 A-OC1..A-OC5 + หมวด C-18..C-24 · คำตัดสินข้อ 91–97 · รายงาน `erp-review/2026-10-01/team-OC.md`):
 - (A-OC1) known-good ชื่อ/ที่อยู่ผู้ขายจากเส้นแก้ผลสแกนจำเฉพาะเมื่อค่าเปลี่ยนจากที่สแกน (`OcrCorrectedFieldList.ShouldRememberKnownGood`) — หน้าเว็บส่งค่าเดิมทุกครั้ง ⇒ เดิมค่าที่ OCR อ่านผิดกลายเป็น UserCorrection ชนะ Azure ถาวร
 - (A-OC4) `InferCreditNoteReason`/`MapAzureDocType` ย้ายตรงตัวเป็น `Helpers/OcrCreditNoteReasonReader`/`Helpers/OcrPaperDocumentType` (+เทสต์สองครึ่ง) · `ocr_helper_test_check` ratchet static method ใน `OcrService.cs` (`tools/ocr_service_static_baseline.txt` 30 แถว · negative test ในตัว)

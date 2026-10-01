@@ -79,10 +79,25 @@ public static class SettlementPermissionScope
     /// </summary>
     /// <returns><c>null</c> = เห็นได้ · ข้อความ = เหตุผลที่ซ่อน (หน้าเว็บ/ผู้เรียก API แสดงแทนผู้สมัคร)</returns>
     public static string? CandidatesHiddenReason(bool canImport, bool canPost) =>
-        canImport || canPost
+        SeesReceivableAmounts(canImport, canPost)
             ? null
             : $"ผู้สมัครเอกสารขายและยอดค้างของแต่ละบรรทัดแสดงเฉพาะผู้มีสิทธิ์ \u201C{PermissionKeys.LabelOf(Import)}\u201D "
               + $"หรือ \u201C{PermissionKeys.LabelOf(Post)}\u201D (ข้อมูลลูกหนี้) — สถานะการจับคู่ยังดูได้ตามปกติ";
+
+    /// <summary>
+    /// **ยอดเงินของรายงานของกำพร้าเห็นได้ไหม** (รอบ 201 ฝ่ายค้าน ST-X7) — <b>เกณฑ์เดียวกับ</b> <see cref="CandidatesHiddenReason"/> (สิทธิ์นำเข้า หรือ ลงบัญชี)
+    /// แต่ข้อความบอกสิ่งที่ถูกซ่อน<b>ในรายงานนี้</b> (ยอดของเอกสาร/การรับชำระกำพร้า + ยอดค้างผังพัก) — เดิมยืมข้อความ "ผู้สมัครเอกสารขาย/สถานะการจับคู่"
+    /// ซึ่งไม่มีในรายงานนี้ ⇒ ผู้ดูอ่านแล้วไม่รู้ว่าอะไรหายไป
+    /// </summary>
+    /// <returns><c>null</c> = เห็นยอด · ข้อความ = เหตุผลที่ซ่อน</returns>
+    public static string? OrphanAmountsHiddenReason(bool canImport, bool canPost) =>
+        SeesReceivableAmounts(canImport, canPost)
+            ? null
+            : $"ยอดเงินของเอกสาร/การรับชำระกำพร้าและยอดค้างในผังพักแสดงเฉพาะผู้มีสิทธิ์ \u201C{PermissionKeys.LabelOf(Import)}\u201D "
+              + $"หรือ \u201C{PermissionKeys.LabelOf(Post)}\u201D — รายการ กอง เหตุ และสถานะการรับรู้ยังดูได้ตามปกติ";
+
+    /// <summary>เกณฑ์ตัวเดียวของ "เห็นยอดลูกหนี้/ผังพักของรอบโอน" (D-P5) — ผู้ใช้ทั้งสองข้อความข้างบน</summary>
+    private static bool SeesReceivableAmounts(bool canImport, bool canPost) => canImport || canPost;
 
     /// <summary>ซ่อนผู้สมัคร/ข้อความที่อ้างผู้สมัครของทุกบรรทัด (<see cref="CandidatesHiddenReason"/> ไม่เป็น <c>null</c>) — สถานะ/เอกสารที่จับคู่แล้ว
     /// (<c>MatchedDocumentId</c>) คงไว้ เพราะเป็นผลที่ลงแล้ว ไม่ใช่รายชื่อยอดค้าง ·

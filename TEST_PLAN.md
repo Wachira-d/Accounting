@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **429 ไฟล์ · 4,145 `[Fact]` + 657 `[Theory]` (2,922 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **429 ไฟล์ · 4,157 `[Fact]` + 658 `[Theory]` (2,925 `InlineData`)** ณ 2026-10-01 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5448,6 +5448,10 @@ A-ST6 หลานยกเลิกไม่ได้ ⇒ กองยกเล
 A-ST9 คีย์วันที่ตามตัวอักษรเทียบเฉพาะบรรทัดรุ่นก่อน + `LegacyKeys` เดิมครบ · C-9 ใบกำพร้าที่รับรู้ = ใบแรก + เลขรายการ/ออเดอร์ตรงรอบเจ้าของ = รายได้ซ้ำ + ทิศตรงข้าม ·
 ปรับเทสต์เดิม (`SettlementReview198FixTests` · `SettlementReview198S5Tests` · `SettlementReview200SfTests` · `SettlementRound200V2Tests`): การรับรู้ในเทสต์ประทับลายนิ้วมือเหตุแบบเดียวกับ service ·
 required_call_site บล็อก "รอบ 201 ทีม ST" + NOTES_MARKER_FORBID (self-test ในตัว) · **ยังไม่ได้คอมไพล์/รันในเครื่องนี้** — CI เป็นตัวแรก
+ฝ่ายค้าน ST-X1..X7 (เพิ่มในไฟล์เดียวกัน · สองทิศทุกข้อ): `X1_` ข้อความล้มกลางทางมีธง/ไม่มีธงไม่มีท้าย · `X2_` ประทับตอน `Add` ก่อน SaveChanges / นอกขอบเขตไม่ประทับ ·
+`X3_` บทบาทที่ชน + ข้อความด่าน / ไม่ชน = ข้อความเดิม · บทบาทไม่บล็อกเอง · `X4_` สถานะการรับรู้มีผล / ไม่ครอบ-ไม่อยู่ในรายการ-การรับชำระ = ไม่มีผล ·
+`X5_` SQL นับอย่างเดียว · `X6_` บรรทัดขายที่เพิ่งอ้าง intent ของรอบอื่น / คืนเงิน-อ้างค้าง-เจ้าของรอบนี้ ไม่ล้ม · `X7_` ข้อความซ่อนยอดเฉพาะรายงาน / มีสิทธิ์เห็นยอด ·
+required_call_site บล็อก "รอบ 201 ทีม ST ฝ่ายค้าน" (+7 แถว · แถว `ChannelOrphans` เปลี่ยนเป็นตัวตัดสินใหม่ + forbid ตัวเดิม)
 
 | ID | ขั้นตอน | ผลที่ต้องได้ |
 | --- | --- | --- |

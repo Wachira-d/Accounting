@@ -1169,6 +1169,8 @@ const API = {
       getSettlementChannel: (id) => API.get(`${base}/settlement/channels/${id}`),
       // รอบ 201 ทีม ST (A-ST4): รายงานของกำพร้าระดับช่องทาง (อ่านอย่างเดียว · ยอดซ่อนตามสิทธิ์ที่ server)
       getSettlementChannelOrphans: (id) => API.get(`${base}/settlement/channels/${id}/orphans`),
+      // ฝ่ายค้าน ST-X4: การรับรู้ของกำพร้าของเอกสารยังมีผลไหม (ตัวแยกเดียวกับพรีวิว · server ตัดสิน)
+      getSettlementDocumentOrphanAckStatus: (documentId) => API.get(`${base}/settlement/orphans/documents/${documentId}/ack-status`),
       createSettlementChannel: (d) => API.post(`${base}/settlement/channels`, d),
       updateSettlementChannel: (id, d) => API.put(`${base}/settlement/channels/${id}`, d),
       inspectSettlementFile: (formData) => API.upload(`${base}/settlement/files/inspect`, formData),

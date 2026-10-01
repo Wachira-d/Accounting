@@ -1,6 +1,7 @@
 using Accounting.Data;
 using Accounting.Models.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace Accounting.Helpers;
 
@@ -38,14 +39,27 @@ public static class SettlementPaymentOwner
     /// <summary>
     /// เปิดขอบเขต "การรับชำระที่ถูกเพิ่มของใบนี้ระหว่างนี้เป็นของรอบโอนนี้" — <c>using</c> ครอบการเรียก <c>CreatePaymentAsync</c> ของผู้ลงบัญชีรอบโอน<b>เท่านั้น</b> ·
     /// <c>Dispose</c> ถอดตัวฟัง (ไม่ค้างข้ามการเรียก · DbContext เป็น scoped ต่อคำขอ ⇒ ไม่ใช่สถานะข้ามคำขอ — CLAUDE.md #4 D)
+    /// <para>ฝ่ายค้าน ST-X2: ประทับ<b>ตอนแถวเริ่มถูกติดตาม</b> (<c>ChangeTracker.Tracked</c> · <c>Payments.Add</c>) — ก่อน <c>AccountingDbContext.SaveChangesAsync</c>
+    /// จับค่าลง audit "Create Payment" (<c>CaptureAuditEntries</c> ทำก่อน <c>SavingChanges</c>) ⇒ audit มีเจ้าของจริง · ตัวฟัง <c>SavingChanges</c> คงไว้เป็นตาข่าย
+    /// (แถวที่ถูกแนบด้วยทางอื่น) · ทั้งสองตัวประทับเฉพาะแถวที่ยังไม่มีเจ้าของ ⇒ เรียกซ้ำได้ผลเดิม</para>
     /// </summary>
     public static IDisposable StampOnSave(AccountingDbContext db, Guid batchId, Guid documentId)
     {
-        EventHandler<SavingChangesEventArgs> handler = (_, _) =>
+        EventHandler<EntityTrackedEventArgs> tracked = (_, e) =>
+        {
+            if (e.Entry.State == EntityState.Added && e.Entry.Entity is Payment p)
+                StampAdded(new[] { p }, batchId, documentId);
+        };
+        EventHandler<SavingChangesEventArgs> saving = (_, _) =>
             StampAdded(db.ChangeTracker.Entries<Payment>().Where(e => e.State == EntityState.Added).Select(e => e.Entity).ToList(),
                 batchId, documentId);
-        db.SavingChanges += handler;
-        return new Detach(() => db.SavingChanges -= handler);
+        db.ChangeTracker.Tracked += tracked;
+        db.SavingChanges += saving;
+        return new Detach(() =>
+        {
+            db.ChangeTracker.Tracked -= tracked;
+            db.SavingChanges -= saving;
+        });
     }
 
     private sealed class Detach : IDisposable

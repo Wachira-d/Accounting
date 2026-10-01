@@ -14,6 +14,13 @@ public sealed record SettlementChannelOrphanRow(SettlementOrphanItem Item, decim
 public sealed record SettlementChannelOrphanReport(Guid ChannelId, string ChannelName, IReadOnlyList<SettlementChannelOrphanRow> Rows,
     decimal? AcknowledgedClearingTotal, int BlockingCount, string? AmountsHiddenReason);
 
+/// <summary>สถานะการรับรู้ของกำพร้าของเอกสาร 1 ใบ (รอบ 201 ฝ่ายค้าน ST-X4) — ตัวตัดสินเดียวกับพรีวิว (<see cref="SettlementOrphanItem.AckEffective"/> ·
+/// <see cref="SettlementOrphanItem.AckStatusLabel"/>) · หน้าเอกสารแสดงอย่างเดียว</summary>
+/// <param name="Effective">การรับรู้ยังมีผล (ไม่บล็อกการลงบัญชีของช่องทาง)</param>
+/// <param name="Label">ป้ายสถานะ (server computes · page displays)</param>
+/// <param name="NextStep">ทางไปต่อเมื่อการรับรู้ไม่มีผล · null = ไม่มี</param>
+public sealed record SettlementOrphanAckStatus(bool Effective, string Label, string? NextStep);
+
 /// <summary>
 /// **รายงานของกำพร้าระดับช่องทาง — เห็นยอดค้างผังพักของใบกำพร้าที่รับรู้แล้ว** (รอบ 201 ทีม ST · A-ST4) · เดิมเห็นได้เฉพาะในพรีวิวของรอบที่กำลังลงบัญชี ⇒
 /// หลังรับรู้แล้วไม่มีที่ไหนบอกว่ายอดใดค้างในผังพักโดยไม่มี JE รอบโอนล้าง (รอบเจ้าของถูกยกเลิก) · ตัวแยกกองคือ <see cref="SettlementOrphanTriage"/> ตัวเดียว ·
@@ -53,6 +60,24 @@ public static class SettlementOrphanReport
             : Math.Round(rows.Where(r => r.Item.AckEffective && r.ClearingEffect is not null).Sum(r => r.ClearingEffect!.Value), 2,
                 MidpointRounding.AwayFromZero);
         return new SettlementChannelOrphanReport(channelId, channelName, rows, total, rows.Count(r => !r.Item.AckEffective), amountsHiddenReason);
+    }
+
+    /// <summary>
+    /// สถานะการรับรู้ของเอกสารใบหนึ่งจากผลตัวแยก (ST-X4) — ไม่อยู่ในรายการของกำพร้าแล้ว (ถูกยกเลิก/รอบเจ้าของยังไม่ถูกยกเลิก) = การรับรู้ไม่มีผล ·
+    /// อยู่ในรายการ ⇒ ป้าย/ผลของรายการนั้นตรงตัว (ตัวเดียวกับพรีวิว) · pure
+    /// </summary>
+    public static SettlementOrphanAckStatus AckStatusOf(Guid documentId, IReadOnlyList<SettlementOrphanItem>? items)
+    {
+        var item = (items ?? Array.Empty<SettlementOrphanItem>()).FirstOrDefault(i => !i.IsPayment && i.Id == documentId);
+        if (item == null)
+            return new SettlementOrphanAckStatus(false, "การรับรู้เดิมไม่มีผล — เอกสารนี้ไม่ใช่ของกำพร้าแล้ว (ถูกยกเลิก หรือรอบโอนเจ้าของไม่ได้ถูกยกเลิก)", null);
+        if (item.AckEffective) return new SettlementOrphanAckStatus(true, item.AckStatusLabel ?? "✅ รับรู้แล้ว", null);
+        // กองยกเลิกไม่ได้จริงที่การรับรู้ไม่ครอบ ⇒ ตัวแยกคืนรายการแบบ "ยังไม่รับรู้" (Ack = null) + เหตุที่บอกว่าการรับรู้เดิมไม่ครอบ (เหตุเปลี่ยน · รับรู้ก่อนระบบเก็บเหตุ ·
+        // รอบใหม่เลขเดิม) — ผู้เรียกถามเฉพาะเอกสารที่มีการรับรู้บนแถว ⇒ Ack = null ที่นี่ = การรับรู้เดิมไม่มีผล
+        var label = item.AckStatusLabel ?? (item.Pile == SettlementOrphanPile.Unvoidable
+            ? "⚠️ การรับรู้เดิมไม่ครอบเหตุ/รอบปัจจุบัน — ต้องตรวจแล้วรับรู้ใหม่"
+            : "⚠️ การรับรู้เดิมไม่มีผล");
+        return new SettlementOrphanAckStatus(false, label, item.Why + " · ทางไปต่อ: " + item.NextStep);
     }
 
     /// <summary>ทิศต่อผังพักของเอกสารจากชิ้นของแผน (<see cref="SettlementPostingKeys.SummaryComponent"/> · <see cref="SettlementPostingKeys.FeeComponent"/>) — ไม่รู้ชิ้น = null</summary>
