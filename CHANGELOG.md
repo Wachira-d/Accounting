@@ -4392,3 +4392,11 @@ _รอบ 202 ทีม LW (เว็บที่พัก: ข้อมูล�
 เทสต์ `LodgingWebRound202Tests` · sim `lodging_storefront_info_sim.js` (+ เคส c ใน `lodging_guest_split_sim.js`) · กติกา `required_call_site_check` 10 ข้อ + เคสฝ่ายค้าน LW1–LW3_
 
 _Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — commit e26a6bb3)_
+
+_รอบ 202 ทีม LW แก้ผลฝ่ายค้าน (P1-1/P1-2/P1-3 · P2-1..P2-5): หน้าจองใช้แบบจำลอง `LodgingOccupancy` (ผู้ใหญ่ ≤ maxAdults · คนเสริมช่องแยก ·
+ผู้ใหญ่ที่เกินย้ายเป็นคนเสริม) · ถอด `_guestSummary` ⇒ แสดง `guestSummary` ของเซิร์ฟเวอร์ · `_quoteBody` ส่ง `infants` · `SearchAsync` ผู้ใหญ่/เด็กต่อห้อง
+(`Helpers/LodgingSearchGuests`) · ป้าย `fromRateLabel`/`capacityLabel` ผ่าน engine (`Helpers/LodgingPublicRoomLabels` · `LodgingService.PublicRooms.cs`) ·
+snapshot migration รุ่นก่อนรอบ 158 (`CmsSiteTemplateSeeder.Legacy*V1` จาก d2ad229b^) · `CmsModuleResolver.IsLodgingSite` · ล้าง auto-seed ไม่แตะบริการที่มี
+ช่วงเวลา/คำแปล · บล็อกจองเว็บที่พักแสดงบริการนัดหมายของเจ้าของก่อน · เทสต์ใน `LodgingWebRound202Tests` · sim สองตัวขยาย + negative · กติกา rcs เพิ่ม 5 + LW4_
+
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW แก้ผลฝ่ายค้าน — commit <pending>)_

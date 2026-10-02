@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **445 ไฟล์ · 4,287 `[Fact]` + 677 `[Theory]` (3,017 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **445 ไฟล์ · 4,294 `[Fact]` + 678 `[Theory]` (3,021 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5588,4 +5588,9 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | LW-06 | seed ที่พัก (ข้อ 118) | มีที่พักไม่ผูกเว็บ ⇒ ไม่สร้าง + เสนอผูก · ติดด่านที่พักหลายแห่ง ⇒ ไม่สร้าง + เหตุผล · ทิศตรงข้าม: บริษัทใหม่สร้างได้ · เว็บที่ผูกแล้วไม่แตะ | ✅ |
 | LW-07 | storefront `/lodging/info` | 404 ⇒ null จำไว้ · 500/เน็ตหลุด ⇒ Error ไม่จำ · การ์ดห้องหนีอักขระ + ราคาจากเซิร์ฟเวอร์ · ไม่ผูก ⇒ ไม่มี "฿" · ค่าค้นหาข้ามหน้าอ่านกลับได้ | ✅ `tools/lodging_storefront_info_sim.js` (negative: lodgingInfo รุ่นเดิม) |
 | LW-08 | ผู้เข้าพักรายห้อง (ข้อ 123) | ค่าที่แขกตั้งรายห้อง (รวมคนเสริม) ถูกส่งตรง · ห้องที่ไม่แตะได้ค่าแบ่ง · เพิ่มห้องไม่ล้างค่าที่ตั้ง | ✅ `tools/lodging_guest_split_sim.js` (c) |
-| LW-09 | จุดเรียกด่าน | GET บริการไม่เขียนฐาน · seed/สร้างมือเรียกด่านที่พักหลายแห่ง · migration ต่อเข้าเส้นบูต | ✅ `tools/required_call_site_check.py` (LW1–LW3) |
+| LW-09 | จุดเรียกด่าน | GET บริการไม่เขียนฐาน · seed/สร้างมือเรียกด่านที่พักหลายแห่ง · migration ต่อเข้าเส้นบูต | ✅ `tools/required_call_site_check.py` (LW1 · LW2 · LW4 + กลายพันธุ์อัตโนมัติของทุกกติกา) |
+| LW-10 | ค้นหาหลายห้อง (P1-3) | ผู้ใหญ่ 4 · 2 ห้อง · max 2 ⇒ ได้ · 5/2 ⇒ ไม่ได้ · 5/2 + คนเสริม 1 ⇒ ได้ · ปัดขึ้น/ค่าขอบ | ✅ `LodgingWebRound202Tests` · rcs LW4 |
+| LW-11 | ป้ายการ์ดห้อง (P2-1/P2-2) | ราคาเริ่มต้นผ่าน engine (แผนตั้งต้น ×0.9 · สุดสัปดาห์ · override · ข้ามวันปิดขาย · ปิดทุกวัน = null) · หน่วย/คน · ป้าย VAT · ความจุข้อ 124 ไม่มีป้ายเตือนเจ้าของ | ✅ |
+| LW-12 | snapshot ก่อนรอบ 158 (P2-3) | 5 บล็อกรุ่น d2ad229b^ อยู่ในชุดที่แทน · เว็บใหม่ไม่มี · แก้แม้ตัวเดียว = ไม่แทน | ✅ |
+| LW-13 | IsLodgingSite (P2-4) | Hotel หรือมีที่พักผูก = จริง · สปาไม่มีที่พัก = เท็จ | ✅ |
+| LW-14 | หน้าจอง: คนเสริมแยก + quote ส่งทารก + แผงตามเพดาน (P1-1/P1-2) | ตาม `LodgingOccupancy` · negative 3 แบบ | ✅ `tools/lodging_guest_split_sim.js` |

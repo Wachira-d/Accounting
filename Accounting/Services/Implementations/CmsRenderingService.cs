@@ -186,6 +186,10 @@ public class CmsRenderingService : ICmsRenderingService
             })
             .ToListAsync();
 
+        // P2-4 (รอบ 202 LW): ที่พัก (ไม่ลบ · ปิดอยู่ก็นับ) ผูกเว็บนี้ = เว็บที่พัก — CompanyId scope
+        var hasBoundLodging = await _db.LodgingProperties.AsNoTracking()
+            .AnyAsync(p => p.CompanyId == companyId && p.SiteId == siteId && !p.IsDeleted);
+
         return new StorefrontDataResponse
         {
             Site = new StorefrontSiteInfo
@@ -194,7 +198,7 @@ public class CmsRenderingService : ICmsRenderingService
                 Name = site.Name,
                 Slug = site.Slug,
                 SiteType = site.SiteType,
-                IsLodgingSite = site.IndustryType == IndustryType.Hotel,
+                IsLodgingSite = Accounting.Helpers.CmsModuleResolver.IsLodgingSite(site.IndustryType, hasBoundLodging),
                 RenderMode = site.RenderMode,
                 LogoUrl = site.LogoUrl,
                 FaviconUrl = site.FaviconUrl,

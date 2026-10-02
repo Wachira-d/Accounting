@@ -2579,6 +2579,61 @@ WhatsApp: +66 XX XXX XXXX</p>"
     /// <summary>snapshot: Hero หน้า rooms ก่อนรอบ 202 (มีจำนวนประเภท/ห้องจาก seed)</summary>
     internal static string LegacyHotelRoomsHeroConfig() => J(new { headline = "ห้องพักของเรา", subheadline = $"{LodgingSeedDefaults.RoomTypes.Length} ประเภท · {LodgingSeedDefaults.TotalUnits} ห้อง · เลือกวันเพื่อดูห้องว่างและราคาจริง" });
 
+    // ── snapshot รุ่นก่อนรอบ 158 (ก่อน d2ad229b — ก่อนมี LodgingSeedDefaults) · รอบ 202 ทีม LW (ฝ่ายค้าน P2-3) ──
+    // คัดนิพจน์ J(...) จาก `git show d2ad229b^:Accounting/Services/Implementations/Cms/CmsSiteTemplateSeeder.cs` (HotelPlan) ทุกตัวอักษร
+    // (บล็อกเหล่านี้ไม่ถูกแก้ตั้งแต่ไฟล์เกิดในประวัติ 0750e6a0 จนถึง d2ad229b^ — 71908092 แตะแค่บล็อกติดต่อ) · ห้ามจัดรูปแบบใหม่:
+    // verbatim string ที่ขึ้นบรรทัด = ข้อความใน JSON ⇒ แก้ช่องว่าง/ขึ้นบรรทัด = snapshot ไม่ตรงของที่ seed ไป = migration ไม่แตะเงียบ ๆ
+
+    /// <summary>snapshot ก่อนรอบ 158: RichText รายการห้อง 4 ประเภท (หน้า home)</summary>
+    internal static string LegacyHotelRoomsRichTextV1Config() => J(new {
+                content = @"<h2>🏨 ห้องพักของเรา</h2>
+<ul>
+  <li><strong>Standard Room</strong> — 25 ตรม. · 1 เตียง 6 ฟุต · ฿1,500/คืน</li>
+  <li><strong>Deluxe Room</strong> — 32 ตรม. · King size · วิวเมือง · ฿2,500/คืน</li>
+  <li><strong>Junior Suite</strong> — 48 ตรม. · ห้องนั่งเล่นแยก · ฿3,800/คืน</li>
+  <li><strong>Executive Suite</strong> — 65 ตรม. · อ่างอาบน้ำ · มินิบาร์ · ฿4,500/คืน</li>
+</ul>
+<p><a href=""/rooms"" class=""btn"">ดูห้องทั้งหมด →</a></p>"
+            });
+
+    /// <summary>snapshot ก่อนรอบ 158: PricingTable "รวมอาหารเช้า" (หน้า home)</summary>
+    internal static string LegacyHotelPricingTableV1Config() => J(new {
+                headline = "💰 ราคาห้องพัก (ต่อคืน · รวมอาหารเช้า)",
+                plans = new[] {
+                    new { name = "Standard", price = "฿1,500",
+                          features = new[] { "25 ตรม.", "เตียง 6 ฟุต", "อาหารเช้า 2 ท่าน", "WiFi · TV · มินิบาร์" } },
+                    new { name = "Deluxe", price = "฿2,500",
+                          features = new[] { "32 ตรม.", "King size · วิวเมือง", "อาหารเช้า 2 ท่าน", "เครื่องชงกาแฟ · อ่างอาบน้ำ" } },
+                    new { name = "Suite", price = "฿4,500",
+                          features = new[] { "65 ตรม.", "ห้องนั่งเล่นแยก", "Late checkout 16:00", "มินิบาร์ฟรี · สิทธิ์ Executive Lounge" } }
+                }
+            });
+
+    /// <summary>snapshot ก่อนรอบ 158: Hero หน้า rooms "4 ประเภท"</summary>
+    internal static string LegacyHotelRoomsHeroV1Config() => J(new { headline = "ห้องพักของเรา", subheadline = "4 ประเภท · ตอบทุกความต้องการ" });
+
+    /// <summary>snapshot ก่อนรอบ 158: RichText รายละเอียดห้อง 4 ประเภท (หน้า rooms)</summary>
+    internal static string LegacyHotelRoomsPageRichTextV1Config() => J(new {
+                content = @"<h2>🛏️ Standard Room (฿1,500)</h2>
+<p>25 ตรม. · เตียง 6 ฟุต · ห้องน้ำในตัว · WiFi · TV · มินิบาร์ · อาหารเช้า 2 ท่าน</p>
+<h2>🛏️ Deluxe Room (฿2,500)</h2>
+<p>32 ตรม. · King size · วิวเมือง · เครื่องชงกาแฟ · อ่างอาบน้ำ · bathrobe</p>
+<h2>🛏️ Junior Suite (฿3,800)</h2>
+<p>48 ตรม. · ห้องนั่งเล่นแยก · pantry · เครื่องซักผ้า · เหมาะ stay ยาว</p>
+<h2>🛏️ Executive Suite (฿4,500)</h2>
+<p>65 ตรม. · 2 ห้องนอน · อ่างน้ำวน · Executive Lounge · late checkout</p>"
+            });
+
+    /// <summary>snapshot ก่อนรอบ 158: Gallery รูป placehold.co ของห้องที่ไม่มีจริง (หน้า rooms)</summary>
+    internal static string LegacyHotelRoomsGalleryV1Config() => J(new {
+                images = new[] {
+                    new { url = "https://placehold.co/600x400?text=Standard", alt = "Standard Room" },
+                    new { url = "https://placehold.co/600x400?text=Deluxe", alt = "Deluxe Room" },
+                    new { url = "https://placehold.co/600x400?text=Junior+Suite", alt = "Junior Suite" },
+                    new { url = "https://placehold.co/600x400?text=Executive", alt = "Executive Suite" }
+                }
+            });
+
     private static string HotelRoomsHtml() =>
         "<h2>🏨 ห้องพักของเรา</h2><ul>"
         + string.Concat(LodgingSeedDefaults.RoomTypes.Select(r =>

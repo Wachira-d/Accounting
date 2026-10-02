@@ -28,6 +28,12 @@ public static class CmsModuleResolver
     public const string Lodging = "lodging";
     public const string Leads = "leads";
 
+    /// <summary>เว็บนี้เป็นเว็บที่พักไหม (storefront ใช้ตัดสินว่าบล็อกจองเมื่อ <c>/lodging/info</c> ตอบ 404 ควรบอก "ยังไม่เปิดจองออนไลน์"
+    /// แทนการ์ดนัดหมาย) — ประเภทธุรกิจที่พัก <b>หรือ</b> มีที่พัก (ไม่ลบ) ผูกเว็บนี้ แม้ประเภทธุรกิจยังเป็นค่าอื่น (เว็บเก่า/เปลี่ยนประเภททีหลัง ·
+    /// รอบ 202 LW ฝ่ายค้าน P2-4 — เดิมดู Hotel อย่างเดียว ⇒ ที่พักที่ปิดชั่วคราวบนเว็บประเภทอื่นตกไปการ์ดนัดหมาย)</summary>
+    public static bool IsLodgingSite(IndustryType industry, bool hasBoundLodgingProperty) =>
+        industry == IndustryType.Hotel || hasBoundLodgingProperty;
+
     public static bool IsCommerceSiteType(SiteType t) =>
         t is SiteType.Ecommerce or SiteType.ServiceCatalog or SiteType.Hybrid;
 

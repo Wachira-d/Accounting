@@ -4529,16 +4529,38 @@ RULES += [
          must=["LodgingSiteSeedMigration.RoomBlocksSql(", "LodgingSiteSeedMigration.AutoSeedServiceCleanupSql("], why=_LW_WHY_MIG),
     dict(file="Helpers/LodgingSiteSeedMigration.cs", method="RoomListRules",
          must=["CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextConfig(", "CmsSiteTemplateSeeder.LegacyHotelPricingTableConfig(",
-               "CmsSiteTemplateSeeder.HotelLiveRoomsConfig("], why=_LW_WHY_MIG),
+               "CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextV1Config(", "CmsSiteTemplateSeeder.LegacyHotelPricingTableV1Config(",
+               "CmsSiteTemplateSeeder.LegacyHotelRoomsPageRichTextV1Config(", "CmsSiteTemplateSeeder.LegacyHotelRoomsGalleryV1Config(",
+               "CmsSiteTemplateSeeder.HotelLiveRoomsConfig("], why=_LW_WHY_MIG + " · ครอบรุ่นก่อนรอบ 158 (ฝ่ายค้าน P2-3)"),
+    dict(file="Helpers/LodgingSiteSeedMigration.cs", method="RoomsHeroRules",
+         must=["CmsSiteTemplateSeeder.LegacyHotelRoomsHeroConfig(", "CmsSiteTemplateSeeder.LegacyHotelRoomsHeroV1Config("], why=_LW_WHY_MIG),
     dict(file="Helpers/LodgingSiteSeedMigration.cs", method="RoomBlocksSql",
-         must=["RoomListRules()", "RoomsHeroRule()", "Text(hero.OldConfigJson)", "LockKey"],
+         must=["RoomListRules()", "RoomsHeroRules()", "CmsSiteTemplateSeeder.HotelRoomsHeroConfig()", "LockKey"],
          must_lit=["pg_advisory_xact_lock(", 'b.\\"IsVisible\\" = true', '\\"PageBlockTranslations\\"'],
          forbid_lit=["LIKE", "trim(", "jsonb"],
          why=_LW_WHY_MIG),
     dict(file="Helpers/LodgingSiteSeedMigration.cs", method="AutoSeedServiceCleanupSql",
          must=["LockKey"],
-         must_lit=["pg_advisory_xact_lock(", 'v.\\"UpdatedBy\\" IS NULL', '\\"SiteBookings\\"'],
+         must_lit=["pg_advisory_xact_lock(", 'v.\\"UpdatedBy\\" IS NULL', '\\"SiteBookings\\"', '\\"SiteBookingSlots\\"', '\\"SiteBookingServiceTranslations\\"'],
          why="W-03: ล้างเฉพาะบริการ auto-seed บนเว็บที่พักที่ไม่มีการจอง/ไม่เคยแก้ · ล็อกคีย์คงที่"),
+]
+# ฝ่ายค้านรอบ 202 LW: ค้นหาหลายห้องเทียบเพดานต่อห้อง (P1-3) · ป้ายการ์ดห้องจาก engine (P2-1/2) · เว็บที่พักนับที่พักที่ผูก (P2-4)
+RULES += [
+    dict(file="Services/Implementations/Lodging/LodgingService.Reservations.cs", method="SearchAsync",
+         must=["LodgingSearchGuests.PerRoom(request.Adults, request.Rooms, 1)", "LodgingSearchGuests.PerRoom(request.Children, request.Rooms, 0)"],
+         call_args=[("LodgingPricingEngine.QuoteRoom(", "adultsPerRoom"), ("LodgingPricingEngine.QuoteRoom(", "childrenPerRoom")],
+         forbid=["Math.Max(1, request.Adults)"],
+         why="P1-3: ช่องค้นหาส่งยอดรวม ⇒ ด่านความจุ/ราคาต่อห้องใช้ผู้ใหญ่/เด็กต่อห้อง (ปัดขึ้น) — เดิม 4 คน 2 ห้องถูกบอกว่าเกิน"),
+    dict(file="Controllers/LodgingPublicController.cs", method="Info",
+         must=["ApplyPublicRoomLabelsAsync("],
+         why="P2-1/P2-2: การ์ดห้องหน้าเว็บแสดงราคาเริ่มต้น/ความจุที่เซิร์ฟเวอร์คำนวณ (ไม่ใช่ baseRate/maxOccupancy ดิบ)"),
+    dict(file="Services/Implementations/Lodging/LodgingService.PublicRooms.cs", method="ApplyPublicRoomLabelsAsync",
+         must=["PickRatePlan(", "ctx.InputFor(rt, plan)", "LodgingPublicRoomLabels.FromRate(", "LodgingPublicRoomLabels.FromRateLabel(",
+               "LodgingPublicRoomLabels.CapacityLabel("],
+         why="P2-1: ราคาเริ่มต้นผ่าน engine ตัวเดียวกับใบเสนอราคา (แผนตั้งต้น · ฤดูกาล · สุดสัปดาห์ · override)"),
+    dict(file="Services/Implementations/CmsRenderingService.cs", method="GetStorefrontDataAsync",
+         must=["CmsModuleResolver.IsLodgingSite(site.IndustryType, hasBoundLodging)", "p.CompanyId == companyId && p.SiteId == siteId && !p.IsDeleted"],
+         why="P2-4: เว็บที่พัก = ประเภทที่พัก หรือมีที่พัก (ไม่ลบ) ผูกเว็บนี้ · กรองบริษัท"),
 ]
 # ── จบบล็อกรอบ 202 ทีม LW ──
 
@@ -4888,7 +4910,8 @@ REVIEWER_CASES = [
     # รอบ 202 ทีม LW: ใส่ auto-seed บน GET สาธารณะกลับ ⇒ ต้องฟ้อง · ทิ้งผลตัวตัดสิน seed (สร้างแห่งที่สองต่อ) ⇒ ต้องฟ้อง
     ("LW1", "GetServicesAsync", "GetServicesAsync(Guid companyId, Guid siteId)\n    {\n", "GetServicesAsync(Guid companyId, Guid siteId)\n    {\n        await EnsureDefaultBookingServiceAsync(companyId, siteId);\n", True),
     ("LW2", "SeedForSiteAsync", "if (outcome != LodgingSeedOutcome.Created) return new Result(null, outcome, message);", "_ = message;", True),
-    ("LW3", "CreatePropertyAsync", "if (quotaBlock != null) throw new BusinessRuleException(quotaBlock, LodgingPropertyQuota.RuleCode);", "_ = quotaBlock;", True),
+    ("LW4", "SearchAsync", "var adultsPerRoom = LodgingSearchGuests.PerRoom(request.Adults, request.Rooms, 1);", "var adultsPerRoom = Math.Max(1, request.Adults);", True),
+    # (LW3 เดิม — ทิ้งผลด่าน quota ใน CreatePropertyAsync — ย้ายไปพึ่งกลายพันธุ์อัตโนมัติของ must_re ในกติกาของ LW เพราะ by_method ผูกชื่อเมธอดนี้กับกติกาของทีม LS ที่มาก่อน)
 ]
 
 

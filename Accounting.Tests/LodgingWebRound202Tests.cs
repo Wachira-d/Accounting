@@ -64,6 +64,11 @@ public class LodgingWebRound202Tests
         Assert.False(configs.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextConfig()));
         Assert.False(configs.Contains(CmsSiteTemplateSeeder.LegacyHotelPricingTableConfig()));
         Assert.False(configs.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsHeroConfig()));
+        Assert.False(configs.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextV1Config()));
+        Assert.False(configs.Contains(CmsSiteTemplateSeeder.LegacyHotelPricingTableV1Config()));
+        Assert.False(configs.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsHeroV1Config()));
+        Assert.False(configs.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsPageRichTextV1Config()));
+        Assert.False(configs.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsGalleryV1Config()));
         Assert.True(configs.Contains(CmsSiteTemplateSeeder.HotelLiveRoomsConfig()));
         Assert.True(configs.Contains(CmsSiteTemplateSeeder.HotelRoomsHeroConfig()));
     }
@@ -82,6 +87,12 @@ public class LodgingWebRound202Tests
         Assert.True(lits.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextConfig()));
         Assert.True(lits.Contains(CmsSiteTemplateSeeder.LegacyHotelPricingTableConfig()));
         Assert.True(lits.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsHeroConfig()));
+        // ฝ่ายค้าน P2-3: รุ่นก่อนรอบ 158 (ก่อน d2ad229b) ครอบด้วย
+        Assert.True(lits.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextV1Config()));
+        Assert.True(lits.Contains(CmsSiteTemplateSeeder.LegacyHotelPricingTableV1Config()));
+        Assert.True(lits.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsHeroV1Config()));
+        Assert.True(lits.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsPageRichTextV1Config()));
+        Assert.True(lits.Contains(CmsSiteTemplateSeeder.LegacyHotelRoomsGalleryV1Config()));
         // ปลายทาง = config ของเว็บใหม่ตัวเดียวกัน
         Assert.True(lits.Contains(CmsSiteTemplateSeeder.HotelLiveRoomsConfig()));
         Assert.True(lits.Contains(CmsSiteTemplateSeeder.HotelRoomsHeroConfig()));
@@ -93,7 +104,8 @@ public class LodgingWebRound202Tests
     public void บล็อกที่เจ้าของแก้แม้ตัวเดียว_ไม่อยู่ในชุดที่_migration_แทน(string edit)
     {
         var lits = Literals(LodgingSiteSeedMigration.RoomBlocksSql());
-        foreach (var snap in new[] { CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextConfig(), CmsSiteTemplateSeeder.LegacyHotelPricingTableConfig(), CmsSiteTemplateSeeder.LegacyHotelRoomsHeroConfig() })
+        foreach (var snap in new[] { CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextConfig(), CmsSiteTemplateSeeder.LegacyHotelPricingTableConfig(), CmsSiteTemplateSeeder.LegacyHotelRoomsHeroConfig(),
+                                     CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextV1Config(), CmsSiteTemplateSeeder.LegacyHotelPricingTableV1Config(), CmsSiteTemplateSeeder.LegacyHotelRoomsHeroV1Config(), CmsSiteTemplateSeeder.LegacyHotelRoomsPageRichTextV1Config(), CmsSiteTemplateSeeder.LegacyHotelRoomsGalleryV1Config() })
         {
             Assert.True(lits.Contains(snap));                                            // ต้นฉบับ seed = ถูกแทน
             Assert.False(lits.Contains(snap + edit));                               // แก้ท้าย = ไม่แตะ
@@ -159,6 +171,9 @@ public class LodgingWebRound202Tests
         Assert.Contains($"s.\"IndustryType\" = {(int)IndustryType.Hotel}", sql);
         Assert.Contains("s.\"CompanyId\" = v.\"CompanyId\"", sql);
         Assert.Contains("SET \"IsDeleted\" = true", sql);
+        // ฝ่ายค้าน P2-5(ก): เปิดช่วงเวลา/ใส่คำแปลแล้ว = ใช้งานจริง ⇒ ไม่แตะ
+        Assert.Contains("NOT EXISTS (SELECT 1 FROM \"SiteBookingSlots\" l WHERE l.\"BookingServiceId\" = v.\"Id\" AND l.\"CompanyId\" = v.\"CompanyId\")", sql);
+        Assert.Contains("NOT EXISTS (SELECT 1 FROM \"SiteBookingServiceTranslations\" t WHERE t.\"BookingServiceId\" = v.\"Id\" AND t.\"CompanyId\" = v.\"CompanyId\")", sql);
         Assert.DoesNotContain("DELETE", sql, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -208,5 +223,98 @@ public class LodgingWebRound202Tests
         Assert.Equal(27, (int)CmsBlockType.LodgingRooms);
         Assert.Equal(26, (int)CmsBlockType.CategoryList);
         Assert.Equal(99, (int)CmsBlockType.Custom);
+    }
+
+    [Fact]
+    public void snapshot_ก่อนรอบ_158_เป็นรายการห้อง_4_ประเภท_ราคา_seed_และรูปปลอม()
+    {
+        var v1 = Decode(CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextV1Config() + CmsSiteTemplateSeeder.LegacyHotelPricingTableV1Config()
+            + CmsSiteTemplateSeeder.LegacyHotelRoomsPageRichTextV1Config() + CmsSiteTemplateSeeder.LegacyHotelRoomsHeroV1Config());
+        Assert.Contains("Junior Suite", v1);
+        Assert.Contains("฿3,800", v1);
+        Assert.Contains("4 ประเภท", v1);
+        Assert.Contains("placehold.co", CmsSiteTemplateSeeder.LegacyHotelRoomsGalleryV1Config());
+        // verbatim string ขึ้นบรรทัด = \n ใน JSON (ห้ามจัดรูปแบบโค้ดใหม่ — snapshot จะไม่ตรงของที่ seed)
+        Assert.Contains("\\n", CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextV1Config());
+    }
+
+    // ───────────── ฝ่ายค้าน P1-3: ค้นหาห้องว่าง — ยอดรวม ⇒ ต่อห้อง ─────────────
+
+    [Theory]
+    [InlineData(4, 2, 2, false, 0, true)]   // ผู้ใหญ่ 4 · 2 ห้อง · ห้องละ ≤ 2 ⇒ จองได้ (เดิมถูกบอกว่าเกิน)
+    [InlineData(5, 2, 2, false, 0, false)]  // 5 · 2 ห้อง ⇒ ห้องที่แน่นที่สุด 3 > 2 ⇒ ไม่ได้
+    [InlineData(5, 2, 2, true, 1, true)]    // ทิศตรงข้าม: ห้องรับคนเสริม 1 ⇒ 3 ≤ 2+1 ได้
+    [InlineData(2, 1, 2, false, 0, true)]   // ห้องเดียว = ค่าเดิม
+    public void ค้นหาหลายห้อง_เทียบเพดานด้วยผู้ใหญ่ต่อห้อง(int adults, int rooms, int maxAdults, bool allowExtra, int maxExtra, bool fits)
+    {
+        var perRoom = LodgingSearchGuests.PerRoom(adults, rooms, 1);
+        Assert.Equal(fits, perRoom <= LodgingOccupancy.MaxAdultsWithExtras(maxAdults, allowExtra, maxExtra));
+    }
+
+    [Fact]
+    public void ต่อห้อง_ปัดขึ้น_และค่าขอบ()
+    {
+        Assert.Equal(2, LodgingSearchGuests.PerRoom(3, 2, 1));
+        Assert.Equal(2, LodgingSearchGuests.PerRoom(3, 2, 0));
+        Assert.Equal(0, LodgingSearchGuests.PerRoom(0, 3, 0));   // เด็ก 0
+        Assert.Equal(1, LodgingSearchGuests.PerRoom(0, 3, 1));   // ผู้ใหญ่อย่างน้อย 1
+        Assert.Equal(4, LodgingSearchGuests.PerRoom(4, 0, 1));   // ห้อง 0 = 1 ห้อง
+    }
+
+    // ───────────── ฝ่ายค้าน P2-1/P2-2: ป้ายการ์ดห้อง — เซิร์ฟเวอร์คำนวณผ่าน engine ─────────────
+
+    private static LodgingRoomPricingInput Input(LodgingPricingMode mode = LodgingPricingMode.PerUnit,
+        LodgingRatePlanInput? plan = null, LodgingOverrideInput[]? overrides = null) =>
+        new(1000m, mode, 2, 0m, 0m, 1.2m, 32 | 64, Array.Empty<LodgingSeasonInput>(), overrides ?? Array.Empty<LodgingOverrideInput>(), plan);
+
+    private static readonly DateTime Mon = new(2026, 10, 5, 0, 0, 0, DateTimeKind.Utc);   // จันทร์
+
+    [Fact]
+    public void ราคาเริ่มต้น_ผ่าน_engine_แผนตั้งต้นและสุดสัปดาห์()
+    {
+        Assert.Equal(1000m, LodgingPublicRoomLabels.FromRate(Input(), Mon, 7));                 // วันธรรมดาถูกสุด (ศ-ส ×1.2)
+        var plan = new LodgingRatePlanInput("ไม่คืนเงิน", LodgingRateAdjustMode.Multiplier, 0.9m, false);
+        Assert.Equal(900m, LodgingPublicRoomLabels.FromRate(Input(plan: plan), Mon, 7));       // แผนตั้งต้นลด 10% — ไม่ใช่ baseRate ดิบ
+        var tueOverride = new LodgingOverrideInput(Mon.AddDays(1), 700m, false, null, null);
+        Assert.Equal(700m, LodgingPublicRoomLabels.FromRate(Input(overrides: new[] { tueOverride }), Mon, 7));
+    }
+
+    [Fact]
+    public void ราคาเริ่มต้น_ข้ามวันปิดขาย_ปิดทุกวัน_ไม่แต่งตัวเลข()
+    {
+        var stopMon = new LodgingOverrideInput(Mon, 100m, true, null, null);
+        Assert.Equal(1000m, LodgingPublicRoomLabels.FromRate(Input(overrides: new[] { stopMon }), Mon, 2));   // 100 ของวันปิดขายไม่นับ
+        var all = Enumerable.Range(0, 3).Select(i => new LodgingOverrideInput(Mon.AddDays(i), null, true, null, null)).ToArray();
+        Assert.Null(LodgingPublicRoomLabels.FromRate(Input(overrides: all), Mon, 3));
+        Assert.Null(LodgingPublicRoomLabels.FromRateLabel(null, LodgingPricingMode.PerUnit, true, 7m));
+    }
+
+    [Fact]
+    public void ป้ายราคา_หน่วยตามวิธีคิดราคา_และป้าย_VAT()
+    {
+        Assert.Equal("เริ่มต้น ฿1,350.00/ห้อง/คืน · รวม VAT แล้ว", LodgingPublicRoomLabels.FromRateLabel(1350m, LodgingPricingMode.PerUnit, true, 7m));
+        Assert.Equal("เริ่มต้น ฿450.00/คน/คืน · ยังไม่รวม VAT 7%", LodgingPublicRoomLabels.FromRateLabel(450m, LodgingPricingMode.PerPerson, false, 7m));
+        Assert.Equal("เริ่มต้น ฿450.00/ห้อง/คืน", LodgingPublicRoomLabels.FromRateLabel(450m, LodgingPricingMode.PerUnit, false, 0m));   // ไม่มี VAT ⇒ ไม่มีป้าย
+    }
+
+    [Fact]
+    public void ป้ายความจุ_ข้อ_124_ผู้ใหญ่สูงสุด_คนเสริม_เด็กทารกไม่นับ()
+    {
+        var withExtra = LodgingPublicRoomLabels.CapacityLabel(2, true, 1, 500m);
+        Assert.StartsWith("ผู้ใหญ่สูงสุด 2 คน/ห้อง · เตียงเสริมสูงสุด 1 คน", withExtra);
+        Assert.EndsWith("เด็ก/ทารกไม่นับความจุ", withExtra);
+        // เปิดแต่ตั้งไม่ครบ ⇒ ป้ายเตือนเจ้าของไม่ออกหน้าสาธารณะ
+        Assert.Equal("ผู้ใหญ่สูงสุด 3 คน/ห้อง · เด็ก/ทารกไม่นับความจุ", LodgingPublicRoomLabels.CapacityLabel(3, true, 2, null));
+        Assert.DoesNotContain("⚠️", LodgingPublicRoomLabels.CapacityLabel(3, true, 0, 100m));
+    }
+
+    // ───────────── ฝ่ายค้าน P2-4: เว็บที่พัก = ประเภทที่พัก หรือมีที่พักผูกเว็บ ─────────────
+
+    [Fact]
+    public void เว็บที่พัก_ประเภทที่พักหรือมีที่พักผูก_สองทิศ()
+    {
+        Assert.True(CmsModuleResolver.IsLodgingSite(IndustryType.Hotel, false));
+        Assert.True(CmsModuleResolver.IsLodgingSite(IndustryType.General, true));    // เว็บเก่าที่ผูกที่พักแต่ประเภทยังทั่วไป
+        Assert.False(CmsModuleResolver.IsLodgingSite(IndustryType.Beauty, false));    // สปาไม่มีที่พัก ⇒ การ์ดนัดหมายตามเดิม
     }
 }
