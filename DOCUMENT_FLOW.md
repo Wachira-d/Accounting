@@ -634,7 +634,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (`CreatePaymentVoucherJournalAsync`) **ในธุรกรรมเดียว** — ลง JE ไม่ได้ (ไม่มีผังค่าใช้จ่าย/เงินสด · ไม่มีผังภาษีซื้อ · ไม่มีผัง WHT ค้างจ่าย ·
   ด่านโครงสร้าง `JournalPostingGuard` · ไม่สมดุล) ⇒ `BusinessRuleException` `INTEGRATION-PV-NO-JE` ⇒ rollback + `ChangeTracker.Clear()` (RV2-8) ⇒
   sync log Failed + คำตอบ partner `success:false` พร้อมเหตุผล — **ไม่มีใบ Approved ที่ไม่มี JE อีก** (เดิมคืน null + LogWarning แล้วตอบ success) ·
-  `autoApprove=false` เดินธุรกรรมเดียวกันแต่ไม่ลง JE · API v1/integration ยังไม่มีช่อง `IsForeignService` (ใบ §83/6 จาก partner = ติ๊กย้อนหลังที่หน้าเอกสาร §6.2g)
+  `autoApprove=false` เดินธุรกรรมเดียวกันแต่ไม่ลง JE · **expense / certificate_in_lieu** ใช้ `RunAtomicCreateAsync` + `PostMappingJournalOrThrowAsync`
+  ตัวเดียวกัน (`INTEGRATION-NO-JE` · ฝ่ายค้าน P2-4) · **invoice/CN/DN คงเส้นเดิม** (`PostMappingJournalAsync` เก็บใบ + `[ยังไม่ลงบัญชี]` ดัง 3 ที่ — ใบขาย
+  ออกถึงลูกค้าแล้ว rollback = ภาษีขายหายจาก ภ.พ.30 · รอเจ้าของตัดสิน) · API v1/integration ยังไม่มีช่อง `IsForeignService` (ใบ §83/6 จาก partner = ติ๊กย้อนหลังที่หน้าเอกสาร §6.2g)
 - **e-Tax อัตโนมัติ**: ทุกเมธอดที่ประทับ `Approved` เอง (TIV/CN/DN · Expense/PV/CIL) เรียก `IIssuedDocumentHooks.RunAsync` หลังบันทึก ·
   TIV/CN/DN ต่อข้อความเตือน (`EtaxHookSuffix`) ในคำตอบเมื่อออก e-Tax ไม่สำเร็จ · §3.2 ขั้น e-Tax
 - **อัตรา VAT รายบรรทัดจากคู่ค้า** (`DocumentLineVatConvention.SplitLine`): `7` = 7% · `0` = อัตราศูนย์ §80/1 (ใบกำกับอัตรา 0 —
@@ -1866,7 +1868,9 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 > (เลขเอกสาร · `Status=Paid` · `InputVatPostedAsUndue` · `TaxPointDate` กลับเป็นค่าจริง) · คืนงานค้างของผู้เรียก · ถอยล้ม ⇒ `ChangeTracker.Clear()` + log Error ·
 > **ที่มา**: PV-20260901-0001 — ด่าน JE §83/6 ตีตก แต่ผู้เรียกกลืน error แล้ว SaveChanges ถัดไป (`AuditMiddleware`) บันทึก "ใบอนุมัติแล้วที่ไม่มี JE" ·
 > **ผู้เรียกที่จับ error แล้วไปต่อต้องล้มดังผ่าน `IDocumentService.RecordAutoApproveFailureAsync`** (สถานะจริงจาก DB · หมายเหตุภายในบนเอกสารแบบไม่ซ้ำ ·
-> log Warning · ข้อความเดียว `Helpers/AutoApproveFailure`): สร้าง PV เงินสด (`DocumentResponse.AutoApproveFailedReason`) · workflow ขั้นสุดท้าย
+> log Warning · ข้อความเดียว `Helpers/AutoApproveFailure` · สถานะจริง 4 แบบ `AutoApproveFailureKind` ร่าง/มีผล/มีผลแต่ไม่มี JE/ยกเลิก-ปฏิเสธ
+> — ใบยกเลิก/ปฏิเสธไม่ถูกเขียนหมายเหตุ · ตัวบันทึกไม่โยนจากใน catch ของผู้เรียก · อนุมัติสำเร็จภายหลัง ⇒ `MarkResolved` ต่อท้าย "✅ แก้แล้ว" ไม่ลบ ·
+> ตัวถอยคืนเฉพาะช่องที่ผู้เรียกแก้ (ไม่ทับค่าที่คนอื่นเปลี่ยนในฐาน) · bulk ตรวจสถานะก่อนเรียก · CMS ยืนยันชำระ · ออกเอกสารแพลตฟอร์ม 3 ทาง): สร้าง PV เงินสด (`DocumentResponse.AutoApproveFailedReason`) · workflow ขั้นสุดท้าย
 > (`ApprovalRequestResponse.FinalizeError` + `approval.html` ไม่ขึ้น "อนุมัติสำเร็จ") · อนุมัติหลายใบ (ผลรายใบ · ขั้นหลัง commit ล้ม = นับอนุมัติ) · สแกน
 > `[APPROVE-FAIL]` · รายการประจำ · LINE ข้อความ/ปุ่ม · รอบโอน `ApproveIfDraftAsync` ตรวจ "มี JE จริง" (`GetMissingJournalStatusAsync`) ไม่ถือว่า Paid = มี JE
 
@@ -3670,9 +3674,11 @@ VAT จริง** และ renderer พิมพ์ให้เห็น (ค�
 **ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE (ซ่อมข้อมูลเดิม)** — `GET {documentId}/missing-journal` (ตัวตัดสิน `Helpers/MissingJournalRepair`) ·
 `POST {documentId}/missing-journal/repair` (สิทธิ์อนุมัติ) → `RepairMissingJournalAsync`: ล็อกใบ → ใบต้นทาง · ตัดสินซ้ำใต้ล็อก ·
 `AutoPostToJournalAsync` ตัวเดียวกับการอนุมัติ · `AddChainedAuditLog` `RepairMissingJournal` · ล้มแล้วถอยค่าค้าง · ปฏิเสธ (409 `DOC-NO-JE-REPAIR` พร้อมทางไปต่อ)
-เมื่อ: ไม่ควรมี JE · มี JE ที่มีผลแล้ว · งวดปิด · **ภ.พ.36 งวดนั้นนำส่งแล้ว/รับรู้ภาษีซื้อแล้ว** (ยอดหนี้ 21912/11640 ของงวดที่ยื่นจะขยับ — คนตัดสิน) ·
+เมื่อ: ไม่ควรมี JE · มี JE ที่มีผลแล้ว · **การอนุมัติของใบมีผลนอก JE** (ฝ่ายค้าน P1-A · `MissingJournalRepair.SideEffectsOf`: อ้างใบต้นทาง ·
+WHT/50 ทวิ · บรรทัดสินค้า (สต็อก) · ผัง 12xxx (ทะเบียนสินทรัพย์) · ใบแทน · โครงการ · มัดจำ — ลง JE อย่างเดียวจะไม่ครบ ⇒ ยกเลิกแล้วสร้าง/อนุมัติใหม่ หรือใบสำคัญทั่วไป) · งวดปิด · **ภ.พ.36 งวดนั้นนำส่งแล้ว/รับรู้ภาษีซื้อแล้ว** (ยอดหนี้ 21912/11640 ของงวดที่ยื่นจะขยับ — คนตัดสิน) ·
 ปุ่ม "🔧 ลงบัญชีให้ใบนี้" อยู่ที่แผง 📒 หน้าเอกสาร (เมื่อไม่มี JE) และการ์ด 🩺 หน้าเครื่องมือนักบัญชี (แถว `DOC-NO-JE` — คำแนะนำเดิม
-"ยกเลิกแล้วอนุมัติใหม่" ถูกแทนด้วย `MissingJournalRepair.ScannerFix`) · ลงเฉพาะ JE (สต็อก/ปรับใบต้นทางไม่ทำซ้ำ — ใบบริการ §83/6 ไม่มี)
+"ยกเลิกแล้วอนุมัติใหม่" ถูกแทนด้วย `MissingJournalRepair.ScannerFix` · ปุ่มขึ้นตาม `canRepair` ที่เซิร์ฟเวอร์ส่ง) · ตัวสแกน DOC-NO-JE ใช้เงื่อนไขเดียวกัน
+(`ExpectsLiveJournal` + JE หลักที่ยังมีผล · ชุดชนิด `DocumentJournalExpectation.PostingTypes`) · `ReclassifyForeignServiceAsync` ล็อกแถว (FOR UPDATE) + ตัดสินซ้ำใต้ล็อกก่อนกลับ/ลง JE
 
 ### 6.2h ไฟล์แนบหลักฐาน · ด่าน §86/4 ของใบกำกับซื้อ (รอบ 190)
 
@@ -4623,7 +4629,9 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 PP36_REVIEW ทีม F1 — ด่าน JE รู้จัก §83/6 (§6.2g) · อนุมัติล้มถอยค่าค้าง + ผู้เรียกล้มดัง (§3.2) · integration PV ธุรกรรมเดียว (§2.3) · ลงบัญชีให้ใบอนุมัติแล้วไม่มี JE (§6.2g) — commit 8da202b8)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 PP36_REVIEW ทีม F1 รอบสอง (ฝ่ายค้าน) — เครื่องมือซ่อมปฏิเสธใบที่มีผลนอก JE · ข้อความล้ม 4 สถานะ + ปิดเมื่อแก้แล้ว · ถอยเฉพาะช่องที่แก้ · integration expense/CIL ธุรกรรมเดียว · ตัวสแกน DOC-NO-JE เงื่อนไขเดียวกับเครื่องมือ · ล็อก reclassify ต่างประเทศ (§2.3 · §3.2 · §6.2g) — commit <pending>)_
+
+_ก่อนหน้า: 2026-10-02 (รอบ 202 PP36_REVIEW ทีม F1 — ด่าน JE รู้จัก §83/6 (§6.2g) · อนุมัติล้มถอยค่าค้าง + ผู้เรียกล้มดัง (§3.2) · integration PV ธุรกรรมเดียว (§2.3) · ลงบัญชีให้ใบอนุมัติแล้วไม่มี JE (§6.2g) — commit 8da202b8)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LC รอบสอง — ผลฝ่ายค้านข้อ 128 §6.5: เช็คอินใบยืนยันจากสลิป · ยกเลิกมีสลิปค้าง ⇒ ธง · ไม่ชวนจ่ายซ้ำ · ปฏิเสธสลิปล็อกที่พัก · หลักฐานการจอง — commit f9addc67)_
 

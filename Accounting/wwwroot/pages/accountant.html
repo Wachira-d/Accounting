@@ -169,15 +169,33 @@
                   <div style="font-size:11px;color:#92400e;margin-top:2px">🔧 ${Layout.esc(a.fix)}</div>
                 </div>
                 ${a.ruleCode === 'DOC-NO-JE' && a.documentId
-                  ? `<button class="btn btn-sm btn-warning" style="white-space:nowrap" onclick="Page.repairMissingJournal('${Layout.jsArg(a.documentId)}')">🔧 ลงบัญชีให้ใบนี้</button>`
+                  ? `<span data-repair-doc="${Layout.esc(a.documentId)}"></span>`
                   : ''}
                 ${a.documentId
                   ? `<a class="btn btn-sm btn-ghost" href="/pages/documents.html?openDoc=${a.documentId}">เปิดเอกสาร →</a>`
                   : (a.journalEntryId
                     ? `<a class="btn btn-sm btn-ghost" href="/pages/journals.html?entryId=${a.journalEntryId}">เปิด JE →</a>` : '')}
               </div>`).join('');
+          await this._fillRepairButtons(box, cid);
         } catch (e) {
           box.innerHTML = `<div style="color:#dc2626;padding:16px">${Layout.esc(e.message)}</div>`;
+        }
+      },
+
+      /** ฝ่ายค้าน P2-5 (PP36): ปุ่ม 🔧 ขึ้นตาม canRepair ที่เซิร์ฟเวอร์ตัดสิน (Helpers/MissingJournalRepair) ไม่ใช่ตาม ruleCode ·
+       *  ซ่อมไม่ได้ ⇒ แสดงเหตุผล/ทางไปต่อของเซิร์ฟเวอร์แทนปุ่ม */
+      async _fillRepairButtons(box, cid) {
+        for (const slot of box.querySelectorAll('[data-repair-doc]')) {
+          const docId = slot.getAttribute('data-repair-doc');
+          try {
+            const d = (await API.get(`/api/companies/${cid}/document/${docId}/missing-journal`))?.data;
+            if (d && d.canRepair)
+              slot.innerHTML = `<button class="btn btn-sm btn-warning" style="white-space:nowrap" onclick="Page.repairMissingJournal('${Layout.jsArg(docId)}')">🔧 ลงบัญชีให้ใบนี้</button>`;
+            else if (d && d.missing && d.message)
+              slot.innerHTML = `<span style="font-size:11px;color:#92400e" title="${Layout.esc(d.message)}">🔒 ซ่อมด้วยเครื่องมือไม่ได้</span>`;
+          } catch (e) {
+            slot.innerHTML = `<span style="font-size:11px;color:#dc2626">ตรวจไม่ได้: ${Layout.esc(e.message)}</span>`;
+          }
         }
       },
 

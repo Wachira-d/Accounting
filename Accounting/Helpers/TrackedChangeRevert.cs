@@ -55,7 +55,7 @@ public static class TrackedChangeRevert
     /// </summary>
     public sealed class Snapshot
     {
-        internal Snapshot(HashSet<object> entities, Dictionary<object, (EntityState State, PropertyValues Current)> pending)
+        internal Snapshot(HashSet<object> entities, Dictionary<object, (EntityState State, IReadOnlyList<(IProperty Property, object? Value)> Values)> pending)
         {
             Entities = entities;
             Pending = pending;
@@ -64,7 +64,9 @@ public static class TrackedChangeRevert
         /// <summary>entity ที่ติดตามอยู่ ณ จุดตั้งต้น (เทียบด้วยการอ้างอิง)</summary>
         public HashSet<object> Entities { get; }
 
-        internal Dictionary<object, (EntityState State, PropertyValues Current)> Pending { get; }
+        /// <summary>ต่อ entity ที่ผู้เรียกแก้ค้าง: สถานะ + <b>เฉพาะช่องที่ผู้เรียกแก้</b> (Modified = ช่องที่ IsModified · Added = ทุกช่องที่ไม่ใช่คีย์ ·
+        /// Deleted = ว่าง) — ฝ่ายค้าน P2-1: ช่องที่ผู้เรียกไม่ได้แตะต้องได้ค่าจากฐาน (คนอื่นอาจเปลี่ยนไปแล้ว) ห้ามทับด้วยค่าเก่าใน snapshot</summary>
+        internal Dictionary<object, (EntityState State, IReadOnlyList<(IProperty Property, object? Value)> Values)> Pending { get; }
 
         /// <summary>จำนวน entity ที่ผู้เรียกแก้ค้างไว้ ณ จุดตั้งต้น (ใช้ในเทสต์/ล็อก)</summary>
         public int PendingCount => Pending.Count;
@@ -75,12 +77,17 @@ public static class TrackedChangeRevert
     {
         db.ChangeTracker.DetectChanges();
         var entities = new HashSet<object>(ReferenceEqualityComparer.Instance);
-        var pending = new Dictionary<object, (EntityState, PropertyValues)>(ReferenceEqualityComparer.Instance);
+        var pending = new Dictionary<object, (EntityState, IReadOnlyList<(IProperty, object?)>)>(ReferenceEqualityComparer.Instance);
         foreach (var e in db.ChangeTracker.Entries())
         {
             entities.Add(e.Entity);
-            if (e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
-                pending[e.Entity] = (e.State, e.CurrentValues.Clone());
+            if (e.State is not (EntityState.Added or EntityState.Modified or EntityState.Deleted)) continue;
+            var values = new List<(IProperty, object?)>();
+            if (e.State != EntityState.Deleted)
+                foreach (var pe in e.Properties)
+                    if (!pe.Metadata.IsPrimaryKey() && (e.State == EntityState.Added || pe.IsModified))
+                        values.Add((pe.Metadata, pe.CurrentValue));
+            pending[e.Entity] = (e.State, values);
         }
         return new Snapshot(entities, pending);
     }
@@ -89,7 +96,7 @@ public static class TrackedChangeRevert
     internal static bool NeedsReload(Snapshot snapshot, EntityEntry entry)
         => !(snapshot.Pending.TryGetValue(entry.Entity, out var p) && p.State == EntityState.Added);
 
-    /// <summary>หลัง reload: คืนงานค้างของผู้เรียกกลับ (ค่าที่แก้ · สถานะ Added/Deleted) — ไม่แตะคีย์ (คีย์ที่ระบบสร้างระหว่าง SaveChanges ที่ rollback ห้ามย้อน)</summary>
+    /// <summary>หลัง reload: คืนงานค้างของผู้เรียกกลับ (<b>เฉพาะช่องที่ผู้เรียกแก้</b> · สถานะ Added/Deleted) — ไม่แตะคีย์ (คีย์ที่ระบบสร้างระหว่าง SaveChanges ที่ rollback ห้ามย้อน)</summary>
     internal static void ReapplyPending(DbContext db, Snapshot snapshot)
     {
         foreach (var (entity, p) in snapshot.Pending)
@@ -100,12 +107,9 @@ public static class TrackedChangeRevert
                 entry.State = EntityState.Deleted;
                 continue;
             }
-            foreach (var prop in p.Current.Properties)
-            {
-                if (prop.IsPrimaryKey()) continue;
-                if (!Equals(entry.CurrentValues[prop], p.Current[prop]))
-                    entry.CurrentValues[prop] = p.Current[prop];
-            }
+            foreach (var (prop, value) in p.Values)
+                if (!Equals(entry.CurrentValues[prop], value))
+                    entry.CurrentValues[prop] = value;
             if (p.State == EntityState.Added && entry.State != EntityState.Added)
                 entry.State = EntityState.Added;
         }

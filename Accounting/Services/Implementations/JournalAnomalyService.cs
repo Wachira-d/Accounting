@@ -39,15 +39,6 @@ public class JournalAnomalyService
         int JournalsScanned, int DocumentsScanned,
         List<Anomaly> Anomalies);
 
-    /// <summary>ชนิดเอกสารที่อนุมัติแล้ว "ต้องมี JE" — ใบเสนอราคา/PO/ใบวางบิล
-    /// ไม่ลงบัญชี จึงไม่อยู่ในลิสต์</summary>
-    private static readonly DocumentType[] JePostingTypes =
-    {
-        DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt,
-        DocumentType.Expense, DocumentType.PurchaseInvoice, DocumentType.PaymentVoucher,
-        DocumentType.CreditNote, DocumentType.DebitNote,
-    };
-
     public async Task<ScanResult> ScanAsync(Guid companyId, DateTime fromDate, DateTime toDate)
     {
         var from = fromDate.Date;
@@ -145,21 +136,26 @@ public class JournalAnomalyService
         }
 
         // ── 2) เอกสารอนุมัติแล้วแต่ "ไม่มี JE เลย" ────────────────────────
-        var docs = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && JePostingTypes.Contains(d.DocumentType)
-                && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent
-                    || d.Status == DocumentStatus.PartiallyPaid || d.Status == DocumentStatus.Paid)
-                && d.DocumentDate >= from && d.DocumentDate <= to
-                && d.TotalAmount > 1m
-                && !d.IsSettlementReceipt)   // ใบเสร็จหลักฐาน = evidence-only ไม่ลง JE
-            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.TotalAmount })
-            .ToListAsync();
+        // ฝ่ายค้าน P2-5 (PP36): เงื่อนไขเดียวกับเครื่องมือซ่อม (MissingJournalRepair) — "ควรมี JE" = DocumentJournalExpectation.ExpectsLiveJournal
+        // (ชุดชนิด · สถานะมีผล · ไม่ใช่ใบเสร็จหลักฐาน · ไม่ใช่ใบแทนกระดาษ) · "มี JE" = JE หลักที่ยังมีผล (Posted · ไม่ใช่ตัวกลับ · ยังไม่ถูกกลับ)
+        // เดิม: ชุดชนิดสำเนาของตัวเอง (ขาด ReceiptVoucher/CIL/GRN) + นับ JE ใดก็ได้ที่ Posted (JE ที่ถูกกลับแล้วก็นับว่า "มี")
+        var docs = (await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && Accounting.Helpers.DocumentJournalExpectation.PostingTypes.Contains(d.DocumentType)
+                    && d.DocumentDate >= from && d.DocumentDate <= to
+                    && d.TotalAmount > 1m)
+                .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.TotalAmount, d.Status,
+                    d.IsSettlementReceipt, d.ReplacesDocumentId, d.ReplacementCarriesPostings })
+                .ToListAsync())
+            .Where(d => Accounting.Helpers.DocumentJournalExpectation.ExpectsLiveJournal(d.DocumentType, d.Status,
+                d.IsSettlementReceipt, d.ReplacesDocumentId.HasValue && !d.ReplacementCarriesPostings))
+            .ToList();
 
         var docIdsWithJe = (await _db.JournalEntries.AsNoTracking()
                 .Where(j => j.CompanyId == companyId && !j.IsDeleted
                     && j.SourceDocumentId != null
-                    && j.Status == JournalEntryStatus.Posted)
+                    && j.Status == JournalEntryStatus.Posted
+                    && j.OriginalEntryId == null && j.ReversedByEntryId == null)
                 .Select(j => j.SourceDocumentId!.Value)
                 .Distinct()
                 .ToListAsync())

@@ -79,8 +79,17 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
     private Task<SiteSettings?> LoadSettingsAsync() => _db.SiteSettings.AsNoTracking()
         .OrderBy(x => x.CreatedAt).FirstOrDefaultAsync();
 
+    /// <summary>PP36_REVIEW P2-4 — ใบร่างใน tenant ผู้ให้บริการเกิดแล้วแต่อนุมัติล้ม ⇒ หมายเหตุบนใบ (สถานะจริง · ตัวเดียวของทุกทางเข้า) แทน log อย่างเดียว ·
+    /// ล้มก่อนสร้างใบ (draft = null) ⇒ ไม่มีใบให้บอก (log ข้างบนพอ) · ตัวบันทึกไม่โยน (RecordAutoApproveFailureAsync จับเอง)</summary>
+    private async Task NoteDraftFailureAsync((Guid TenantId, Guid DocumentId)? draft, string channel, Exception ex)
+    {
+        if (draft is { } d)
+            await Documents.RecordAutoApproveFailureAsync(d.TenantId, d.DocumentId, channel, ex);
+    }
+
     public async Task<PlatformDocResult?> IssuePaidReceiptAsync(SubscriptionPayment payment, Company buyer)
     {
+        (Guid TenantId, Guid DocumentId)? draft = null;
         try
         {
             var (settings, tenantId) = await ResolveTenantAsync();
@@ -133,6 +142,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 PaymentAccountId: await ResolveCashAccountIdAsync(tenantId.Value, settings));
 
             var created = await Documents.CreateDocumentAsync(tenantId.Value, req, Actor);
+            draft = (tenantId.Value, created.Id);   // P2-4: อนุมัติล้มต้องลงหมายเหตุบนใบร่างที่เกิดแล้ว
             // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
             var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor,
                 Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
@@ -146,6 +156,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             // เงินเข้าแล้วต้องบันทึกได้เสมอ — ล้มตรงนี้ให้ตกกลับไปโหมด PDF เดิม
             _logger.LogError(ex, "ออกเอกสารค่าบริการผ่าน tenant ไม่สำเร็จ (payment {PaymentId}) — ใช้โหมด PDF เดิมแทน",
                 payment.Id);
+            await NoteDraftFailureAsync(draft, "ออกใบเสร็จค่าบริการแพลตฟอร์ม", ex);
             return null;
         }
     }
@@ -153,6 +164,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
     public async Task<PlatformDocResult?> IssueRenewalInvoiceAsync(Guid buyerCompanyId, string description,
         decimal amountNet, DateTime issueDate, DateTime dueDate, string reference)
     {
+        (Guid TenantId, Guid DocumentId)? draft = null;
         try
         {
             var (settings, tenantId) = await ResolveTenantAsync();
@@ -188,6 +200,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 });
 
             var created = await Documents.CreateDocumentAsync(tenantId.Value, req, Actor);
+            draft = (tenantId.Value, created.Id);   // P2-4: อนุมัติล้มต้องลงหมายเหตุบนใบร่างที่เกิดแล้ว
             // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
             var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor,
                 Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
@@ -196,6 +209,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         catch (Exception ex)
         {
             _logger.LogError(ex, "ออกใบแจ้งหนี้ต่ออายุผ่าน tenant ไม่สำเร็จ (company {CompanyId})", buyerCompanyId);
+            await NoteDraftFailureAsync(draft, "ออกใบแจ้งหนี้ต่ออายุแพลตฟอร์ม", ex);
             return null;
         }
     }
@@ -204,6 +218,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         IReadOnlyList<PlatformInvoiceLine> lines, DateTime issueDate, DateTime dueDate,
         string reference, string? notes = null)
     {
+        (Guid TenantId, Guid DocumentId)? draft = null;
         try
         {
             var (settings, tenantId) = await ResolveTenantAsync();
@@ -253,6 +268,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 Lines: docLines);
 
             var created = await Documents.CreateDocumentAsync(tenantId.Value, req, Actor);
+            draft = (tenantId.Value, created.Id);   // P2-4: อนุมัติล้มต้องลงหมายเหตุบนใบร่างที่เกิดแล้ว
             // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
             var approved = await Documents.ApproveDocumentAsync(tenantId.Value, created.Id, Actor,
                 Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
@@ -264,6 +280,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         {
             _logger.LogError(ex, "ออกใบแจ้งหนี้ค่าใช้งานไม่สำเร็จ (company {CompanyId} · อ้างอิง {Ref})",
                 buyerCompanyId, reference);
+            await NoteDraftFailureAsync(draft, "ออกใบแจ้งหนี้ค่าใช้งานแพลตฟอร์ม", ex);
             return null;
         }
     }

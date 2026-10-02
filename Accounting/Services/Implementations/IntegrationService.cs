@@ -3810,18 +3810,22 @@ public class IntegrationService : IIntegrationService
                 Lines = lines
             };
 
-            _db.Documents.Add(document);
-            await _db.SaveChangesAsync();
-            await _vendorIntel.TryTrainAsync(companyId, document.Id);
-
             // Draft (autoApprove=false) → ยังไม่ลง GL และยังไม่ออก 50 ทวิ. ทั้งสองจะ
             // เกิดตอนอนุมัติ (ApproveDocumentAsync post JE + ออก 50 ทวิ ตอนจ่าย/approve).
+            // PP36_REVIEW P2-4: ใบ Approved + JE ในธุรกรรมเดียว — ลง JE ไม่ได้ ⇒ ไม่มีใบเกิด (เดิมเก็บใบ Approved ไม่มี JE + หมายเหตุ [ยังไม่ลงบัญชี])
             Guid? journalEntryId = null;
-            string? jeSkipReason = null;
+            await RunAtomicCreateAsync(async () =>
+            {
+                _db.Documents.Add(document);
+                await _db.SaveChangesAsync();
+                if (autoApprove)
+                    journalEntryId = await PostMappingJournalOrThrowAsync(companyId, integrationId, document, "expense");
+            });
+            await _vendorIntel.TryTrainAsync(companyId, document.Id);
+
             string whtNote = "";
             if (autoApprove)
             {
-                (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, document, "expense", log);
                 // Auto-issue the withholding-tax certificate so an int_ key sync is
                 // self-sufficient (no separate manual WHT step). Best-effort — a
                 // failure here must not fail the already-committed expense sync.
@@ -3840,7 +3844,7 @@ public class IntegrationService : IIntegrationService
 
             return new InboundSyncResponse(true,
                 (autoApprove ? "Expense created" : "Expense created as Draft (pending approval — GL + 50 ทวิ on approve)")
-                + whtNote + JeSkipSuffix(jeSkipReason),
+                + whtNote,
                 document.Id, supplier.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)
@@ -3961,27 +3965,7 @@ public class IntegrationService : IIntegrationService
                 if (autoApprove)
                     journalEntryId = await CreatePaymentVoucherJournalAsync(companyId, document);
             }
-            if (_db.Database.CurrentTransaction != null)
-                await CreateVoucherAsync();
-            else
-            {
-                var strategy = _db.Database.CreateExecutionStrategy();
-                await strategy.ExecuteAsync(async () =>
-                {
-                    await using var tx = await _db.Database.BeginTransactionAsync();
-                    try
-                    {
-                        await CreateVoucherAsync();
-                        await tx.CommitAsync();
-                    }
-                    catch (Exception)
-                    {
-                        // rollback ตอน dispose — ของที่ค้างใน change tracker (ใบ Approved · JE ที่ Added) ต้องทิ้งก่อน SaveSyncLog ของ HandleSyncError (โยนต่อเสมอ)
-                        _db.ChangeTracker.Clear();
-                        throw;
-                    }
-                });
-            }
+            await RunAtomicCreateAsync(CreateVoucherAsync);
             await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
             string whtNote = "";
@@ -4009,6 +3993,46 @@ public class IntegrationService : IIntegrationService
         {
             return await HandleSyncError(log, integrationId, ex, sw);
         }
+    }
+
+    /// <summary>PP36_REVIEW P0-3/P2-4 — "สร้างใบที่อนุมัติแล้ว + ลง JE" เป็นหน่วยเดียว: ธุรกรรมเดียว · ล้ม ⇒ rollback + ทิ้งของค้างใน change tracker
+    /// (RV2-8 — มิฉะนั้น <c>HandleSyncError → SaveSyncLog</c> บันทึกใบครึ่งทาง) แล้วโยนต่อ ⇒ sync log Failed + คำตอบ partner <c>success:false</c> ·
+    /// อยู่ในธุรกรรมของผู้เรียกแล้ว ⇒ ใช้ธุรกรรมนั้น</summary>
+    private async Task RunAtomicCreateAsync(Func<Task> body)
+    {
+        if (_db.Database.CurrentTransaction != null)
+        {
+            await body();
+            return;
+        }
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                await body();
+                await tx.CommitAsync();
+            }
+            catch (Exception)
+            {
+                _db.ChangeTracker.Clear();
+                throw;
+            }
+        });
+    }
+
+    /// <summary>PP36_REVIEW P2-4 — ลง JE จาก mapping สำหรับใบที่<b>กำลังถูกสร้างเป็น Approved</b> ในธุรกรรมเดียวกัน: ไม่ได้ ⇒ โยน (ข้อความไทย + ทางไปต่อ)
+    /// แทน <see cref="PostMappingJournalAsync"/> (ซึ่งเก็บใบไว้แล้วติดหมายเหตุ — ยังใช้กับใบขาย/ใบลด-เพิ่มหนี้ ที่ใบออกไปถึงลูกค้าแล้วและต้องอยู่ในรายงานภาษีขาย)</summary>
+    private async Task<Guid> PostMappingJournalOrThrowAsync(Guid companyId, Guid integrationId, Document document, string type)
+    {
+        string? reason = null;
+        var jeId = await CreateJournalFromMappingsAsync(companyId, integrationId, document, type, r => reason ??= r);
+        if (jeId != null) return jeId.Value;
+        throw new Accounting.Helpers.BusinessRuleException(
+            $"{document.DocumentNumber}: {reason ?? "สร้างรายการบัญชีอัตโนมัติไม่สำเร็จ (ไม่ทราบสาเหตุ)"} — ระบบไม่สร้างใบที่อนุมัติแล้วโดยไม่มีรายการบัญชี · "
+            + "แก้ผังบัญชี/การจับคู่บัญชีของ integration แล้วส่งรายการนี้ใหม่ (หรือส่งแบบ autoApprove=false แล้วอนุมัติในระบบ)",
+            "INTEGRATION-NO-JE", 422);
     }
 
     /// <summary>GL for a partner-synced Payment Voucher (already paid):
@@ -4238,11 +4262,16 @@ public class IntegrationService : IIntegrationService
                 PaymentDate = request.PaymentDate.HasValue ? NormalizeDate(request.PaymentDate.Value) : null
             };
 
-            _db.Documents.Add(document);
-            await _db.SaveChangesAsync();
+            // PP36_REVIEW P2-4: ใบ Approved + JE ในธุรกรรมเดียว — ลง JE ไม่ได้ ⇒ ไม่มีใบเกิด (เดิมเก็บใบ Approved ไม่มี JE)
+            Guid? journalEntryId = null;
+            await RunAtomicCreateAsync(async () =>
+            {
+                _db.Documents.Add(document);
+                await _db.SaveChangesAsync();
+                journalEntryId = await PostMappingJournalOrThrowAsync(companyId, integrationId, document, "expense");
+            });
             await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
-            var (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, document, "expense", log);
             // ผลข้างเคียงหลังออกเอกสารจุดเดียว (S-02) — ใบรับรองแทนใบเสร็จไม่มี e-Tax (ข้ามในตัว hook)
             await _issuedHooks.RunAsync(companyId, document);
 
@@ -4254,7 +4283,7 @@ public class IntegrationService : IIntegrationService
             await SaveSyncLog(log, integrationId);
 
             return new InboundSyncResponse(true,
-                "Certificate in lieu created" + JeSkipSuffix(jeSkipReason),
+                "Certificate in lieu created",
                 document.Id, supplier.Id, journalEntryId, null, docNumber);
         }
         catch (Exception ex)

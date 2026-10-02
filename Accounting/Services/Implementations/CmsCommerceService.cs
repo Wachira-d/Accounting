@@ -1112,10 +1112,12 @@ public class CmsCommerceService : ICmsCommerceService
                     actor, ApprovalAckSource.SystemWorkflow, withAiHints: false);
                 approvedNow = true;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "ConfirmPayment: approve doc failed for order {OrderId}", orderId);
-                syncFailures.Add($"อนุมัติเอกสาร ERP ไม่สำเร็จ: {ex.Message}");
+                // PP36_REVIEW P2-4: หมายเหตุบนเอกสาร ERP + สถานะจริง (ตัวเดียวของทุกทางเข้า) — ApproveDocumentAsync ถอยค่าค้างแล้ว
+                var outcome = await _docService.RecordAutoApproveFailureAsync(companyId, order.ErpDocumentId.Value, "ยืนยันชำระออเดอร์เว็บไซต์", ex);
+                syncFailures.Add(outcome.Message);
             }
 
             // idempotency: กัน confirm ซ้ำ (เช่น gateway webhook + ยืนยันมือ) สร้าง
