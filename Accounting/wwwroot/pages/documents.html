@@ -2500,13 +2500,40 @@
           const res = await api.getDocumentJournalEntries(docId);
           const entries = res?.data || [];
           this._docJournals = entries;
-          if (!entries.length) { host.innerHTML = ''; return; }
+          if (!entries.length) { await this._renderMissingJournalBanner(host, docId); return; }
           host.innerHTML = `
             <h4 style="font-size:14px;margin-bottom:8px">📒 รายการบัญชี (${entries.length})</h4>
             ${entries.map(j => this._renderJeCard(docId, j)).join('')}`;
         } catch (e) {
           host.innerHTML = `<div style="color:#dc2626;font-size:12px">โหลดรายการบัญชีไม่สำเร็จ: ${this.escapeHtml(e.message)}</div>`;
         }
+      },
+
+      /** PP36_REVIEW "ซ่อมข้อมูลเดิม": ใบอนุมัติแล้วแต่ไม่มี JE — เซิร์ฟเวอร์ตัดสินว่า "ขาดไหม · ลงย้อนหลังได้ไหม · ทำไม" (Helpers/MissingJournalRepair)
+       *  หน้านี้แค่แสดงแถบ + ปุ่ม (ห้ามตัดสินเองจากสถานะ) · ไม่ขาด ⇒ ไม่วาดอะไร */
+      async _renderMissingJournalBanner(host, docId) {
+        const api = Layout.api(); if (!api) { host.innerHTML = ''; return; }
+        let d = null;
+        try { d = (await api.getMissingJournal(docId))?.data; }
+        catch (e) {
+          host.innerHTML = `<div style="color:#dc2626;font-size:12px">ตรวจรายการบัญชีของใบนี้ไม่สำเร็จ: ${this.escapeHtml(e.message)}</div>`;
+          return;
+        }
+        if (!d || !d.missing) { host.innerHTML = ''; return; }
+        host.innerHTML = `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;font-size:12px;color:#991b1b;margin-bottom:8px">
+            <b>⚠ อนุมัติแล้วแต่ยังไม่มีรายการในสมุดรายวัน</b><div style="margin-top:4px">${this.escapeHtml(d.message || '')}</div>
+            ${d.canRepair ? `<button class="btn btn-sm btn-warning" style="margin-top:8px" onclick="Page.repairMissingJournal('${Layout.jsArg(docId)}')">🔧 ลงบัญชีให้ใบนี้</button>` : ''}
+          </div>`;
+      },
+
+      async repairMissingJournal(docId) {
+        if (!confirm('ลงบัญชีให้เอกสารใบนี้ด้วยกติกาเดียวกับตอนอนุมัติ (เลขเอกสารคงเดิม · บันทึกร่องรอยผู้ทำ)?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.repairMissingJournal(docId);
+          Layout.toast(res?.message || 'ลงบัญชีแล้ว', 'success', 8000);
+          await this.renderDocJournalSection(docId);
+        } catch (e) { Layout.toast(e.message || 'ลงบัญชีไม่สำเร็จ', 'error', 12000); }
       },
 
       _renderJeCard(docId, j) {

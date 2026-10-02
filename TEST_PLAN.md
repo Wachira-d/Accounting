@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **448 ไฟล์ · 4,360 `[Fact]` + 690 `[Theory]` (3,072 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **450 ไฟล์ · 4,379 `[Fact]` + 693 `[Theory]` (3,081 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -1500,10 +1500,15 @@
 | JPG-06 | VAT ใน GL น้อยกว่าเอกสาร (ไม่เคลม/พักรอใบกำกับ) | ผ่าน · VAT **เกิน**เอกสาร → block JE-VAT-OVER |
 | JPG-07 | ใบมัดจำ (Cr 21712/21913 ไม่มีเจ้าหนี้) | ผ่าน — ข้าม doc-rules |
 | JPG-08 | ตัวกลับ (ขาสลับด้าน) | ตรวจแบบไม่เทียบเอกสาร — ไม่ false positive |
-| JPG-09 | Integration ส่ง JE โครงสร้างผิด (ทุก 3 path: mapping/PV/resync) | ไม่ post + log Error · เอกสารยังซิงค์ได้ |
+| JPG-09 | Integration ส่ง JE โครงสร้างผิด (ทุก 3 path: mapping/PV/resync) | ไม่ post + log Error · mapping/resync: เอกสารยังซิงค์ได้ · **PV อนุมัติอัตโนมัติ: ไม่สร้างใบเลย** (ธุรกรรมเดียว — JPG-17) |
 | JPG-10 | Approve เอกสารที่ JE โครงสร้างผิด | Approve ล้มพร้อมข้อความบอกกฎที่ผิด (ไม่บันทึกเงียบ ๆ) |
 | JPG-11 | การ์ด 🩺 ใน accountant.html | โชว์ JE เสียในงวด + เอกสารอนุมัติแล้วไม่มี JE (DOC-NO-JE) พร้อมลิงก์เปิดเอกสาร/JE + ทางแก้ |
 | JPG-12 | JE ปรับปรุง/reclassify ใน scanner | ไม่เทียบกับเอกสาร (ยอดเป็น "ผลต่าง") — ไม่ false positive |
+| JPG-13 | PV/PI/Expense บริการต่างประเทศ §83/6 ฐาน 5,908 · VAT ประเมินเอง 413.56 · Total 6,321.56 (Dr ค่าใช้จ่าย · Dr 11640 / Cr 21912 · Cr ธนาคาร/เจ้าหนี้ 5,908) | ผ่าน (เดิม JE-NO-COUNTERPART ทุกใบ) · ยอดที่คาดจาก `ForeignServiceVat.SplitCredit` · เทสต์ `JournalPostingGuardTests.Foreign_service_*` (PP36 P0-1) |
+| JPG-14 | ใบซื้อ**ไม่ติ๊ก**บริการต่างประเทศ แต่ JE มี Cr 21912 | Error `JE-PP36-UNFLAGGED` · Cr 21912 เกิน VAT ประเมินเอง ⇒ `JE-VAT-OVER` · ใบปกติที่เงินไปกองบัญชีภาษียังถูกจับ |
+| JPG-15 | อนุมัติล้มกลางธุรกรรม (เช่น ด่าน JE) แล้วผู้เรียก SaveChanges ต่อ (PV เงินสดอัตโนมัติ · workflow · bulk · สแกน · LINE · recurring · รอบโอน) | ใบยังเป็นร่างจริง (ไม่มีเลข/Paid/JE ค้าง) · หมายเหตุภายใน "⚠️ อนุมัติอัตโนมัติ (…) ไม่สำเร็จ: เหตุผล" · คำตอบบอกเหตุผล · เทสต์ `Pp36ApprovalLoudFailureTests` + `Db/ApproveRevertDbTests` (P0-2) |
+| JPG-16 | 🔧 ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE (แผง 📒 / การ์ด 🩺) | งวดเปิด + ภ.พ.36 ยังไม่นำส่ง ⇒ JE ทรงเดียวกับตอนอนุมัติ + audit · งวดปิด/นำส่งแล้ว/รับรู้แล้ว/มี JE แล้ว ⇒ 409 พร้อมทางไปต่อ · ไม่มีสิทธิ์อนุมัติ ⇒ 403 |
+| JPG-17 | integration `payment_voucher.created` ที่ลง JE ไม่ได้ (ไม่มีผังเงินสด/ภาษีซื้อ/WHT · ด่านโครงสร้าง) | ไม่มีใบเกิด (rollback) · sync log Failed · คำตอบ `success:false` พร้อมเหตุผล `INTEGRATION-PV-NO-JE` (P0-3) |
 
 ### เลขที่/วันที่ "ใบลดหนี้จากผู้ขาย" (CN/DN ฝั่งซื้อ)
 | รหัส | เคส | คาดหวัง |

@@ -630,6 +630,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `contact.missingBuyerFields` (ตัวตรวจเดียวกับด่านอนุมัติ `TaxInvoiceCompletenessChecker.MissingBuyerFields`) + `branchCode` + `contact.taxIdWarning`
   (เลข checksum ผิด · แถวใหม่ติด `[TAXID-CHECKSUM]` — §6.2i) · approve = §3.2 ApiClient ·
   สัญญาเต็ม `ACCOUNT_STRUCTURE.md` §3.2
+- **ใบสำคัญจ่าย `payment_voucher.created` (`ProcessPaymentVoucherAsync` · PP36_REVIEW P0-3 · 2026-10-02)**: ออกเลข + สร้างใบ Approved + JE
+  (`CreatePaymentVoucherJournalAsync`) **ในธุรกรรมเดียว** — ลง JE ไม่ได้ (ไม่มีผังค่าใช้จ่าย/เงินสด · ไม่มีผังภาษีซื้อ · ไม่มีผัง WHT ค้างจ่าย ·
+  ด่านโครงสร้าง `JournalPostingGuard` · ไม่สมดุล) ⇒ `BusinessRuleException` `INTEGRATION-PV-NO-JE` ⇒ rollback + `ChangeTracker.Clear()` (RV2-8) ⇒
+  sync log Failed + คำตอบ partner `success:false` พร้อมเหตุผล — **ไม่มีใบ Approved ที่ไม่มี JE อีก** (เดิมคืน null + LogWarning แล้วตอบ success) ·
+  `autoApprove=false` เดินธุรกรรมเดียวกันแต่ไม่ลง JE · API v1/integration ยังไม่มีช่อง `IsForeignService` (ใบ §83/6 จาก partner = ติ๊กย้อนหลังที่หน้าเอกสาร §6.2g)
 - **e-Tax อัตโนมัติ**: ทุกเมธอดที่ประทับ `Approved` เอง (TIV/CN/DN · Expense/PV/CIL) เรียก `IIssuedDocumentHooks.RunAsync` หลังบันทึก ·
   TIV/CN/DN ต่อข้อความเตือน (`EtaxHookSuffix`) ในคำตอบเมื่อออก e-Tax ไม่สำเร็จ · §3.2 ขั้น e-Tax
 - **อัตรา VAT รายบรรทัดจากคู่ค้า** (`DocumentLineVatConvention.SplitLine`): `7` = 7% · `0` = อัตราศูนย์ §80/1 (ใบกำกับอัตรา 0 —
@@ -1854,6 +1859,16 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 > RequireApprovalForDocuments (เกินวงเงิน) ยกเว้นให้เอกสารที่เซ็นครบแล้ว
 > (กัน flow ที่ setting บังคับใช้โดน block ตัวเอง) — **"เซ็นครบ" ไม่นับลายเซ็นลูกค้าที่ไม่ตรงเนื้อหาปัจจุบัน** (`IsSignatureCurrent` · 422
 > `SIGN-CUSTOMER-STALE` · รอบ 193 R4-1) และลายเซ็นที่ไม่นับถูกแทนที่ในธุรกรรมอนุมัติ (§2.8)
+
+> **อนุมัติล้มกลางธุรกรรม — ถอยค่าค้างที่จุดเดียว (PP36_REVIEW P0-2 · 2026-10-02)**: `ApproveDocumentAsync` จำจุดตั้งต้น
+> (`TrackedChangeRevert.Capture` — ชุด entity + **งานค้างของผู้เรียกที่ยังไม่บันทึก**) ก่อนเปิดธุรกรรม · ธุรกรรมล้ม ⇒ rollback แล้ว
+> `RevertTrackedChangesSinceAsync(snapshot)` → `TrackedChangeRevert.RevertAsync`: ปลดของใหม่ (JE/สต็อกที่ Added) · reload ของเดิมจาก DB
+> (เลขเอกสาร · `Status=Paid` · `InputVatPostedAsUndue` · `TaxPointDate` กลับเป็นค่าจริง) · คืนงานค้างของผู้เรียก · ถอยล้ม ⇒ `ChangeTracker.Clear()` + log Error ·
+> **ที่มา**: PV-20260901-0001 — ด่าน JE §83/6 ตีตก แต่ผู้เรียกกลืน error แล้ว SaveChanges ถัดไป (`AuditMiddleware`) บันทึก "ใบอนุมัติแล้วที่ไม่มี JE" ·
+> **ผู้เรียกที่จับ error แล้วไปต่อต้องล้มดังผ่าน `IDocumentService.RecordAutoApproveFailureAsync`** (สถานะจริงจาก DB · หมายเหตุภายในบนเอกสารแบบไม่ซ้ำ ·
+> log Warning · ข้อความเดียว `Helpers/AutoApproveFailure`): สร้าง PV เงินสด (`DocumentResponse.AutoApproveFailedReason`) · workflow ขั้นสุดท้าย
+> (`ApprovalRequestResponse.FinalizeError` + `approval.html` ไม่ขึ้น "อนุมัติสำเร็จ") · อนุมัติหลายใบ (ผลรายใบ · ขั้นหลัง commit ล้ม = นับอนุมัติ) · สแกน
+> `[APPROVE-FAIL]` · รายการประจำ · LINE ข้อความ/ปุ่ม · รอบโอน `ApproveIfDraftAsync` ตรวจ "มี JE จริง" (`GetMissingJournalStatusAsync`) ไม่ถือว่า Paid = มี JE
 
 > **การรับทราบคำเตือน — แหล่ง 4 แบบ (รอบ 193 · คำตัดสิน #12 · `Helpers/ApprovalAcknowledgement` + enum
 > `ApprovalAckSource {None, User, SystemWorkflow, ApiClient, Unattended}` · overload ใหม่ของ `ApproveDocumentAsync`)**:
@@ -3646,6 +3661,19 @@ VAT จริง** และ renderer พิมพ์ให้เห็น (ค�
 **ยังไม่ได้ทำ** — ใบที่ **ยื่นภาษีงวดนั้นไปแล้ว** ต้องยื่นแบบเพิ่มเติม ระบบกันไว้
 ด้วย error ไม่ได้แก้ให้เงียบ ๆ
 
+**ด่านโครงสร้าง JE รู้จัก §83/6 (PP36_REVIEW P0-1 · 2026-10-02)** — `JournalPostingGuard.DocFacts.IsForeignService` (ส่งจาก AutoPost ·
+ตัวสแกน `JournalAnomalyService` · integration) · ฝั่งซื้อ: ยอดผู้รับเงินที่คาด = `ForeignServiceVat.SplitCredit(isForeign, Total, VAT).PayeeCredit`
+(ตัวเดียวกับที่ลง JE — ห้าม `total − vat` เอง) · ขาเครดิต 21911/21912/21913 บนใบซื้อมีได้เฉพาะ Cr 21912 ของใบที่ติ๊ก ไม่เกิน VAT ประเมินเอง
+(`JE-VAT-OVER`) · ใบไม่ติ๊กที่มีขาเครดิตบัญชีภาษีขาย/ภ.พ.36 ⇒ `JE-PP36-UNFLAGGED` (Error) · เดิมเทียบ Cr ธนาคาร 5,908 กับ `TotalAmount` 6,321.56 ⇒
+**JE §83/6 ถูกปฏิเสธทุกใบ** (PV ตรง · PI/Expense · ใบค่าธรรมเนียมรอบโอน OTA) — ทรง JE ใน AutoPost ถูกมาตลอด แต่ไม่เคยถูกบันทึก
+
+**ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE (ซ่อมข้อมูลเดิม)** — `GET {documentId}/missing-journal` (ตัวตัดสิน `Helpers/MissingJournalRepair`) ·
+`POST {documentId}/missing-journal/repair` (สิทธิ์อนุมัติ) → `RepairMissingJournalAsync`: ล็อกใบ → ใบต้นทาง · ตัดสินซ้ำใต้ล็อก ·
+`AutoPostToJournalAsync` ตัวเดียวกับการอนุมัติ · `AddChainedAuditLog` `RepairMissingJournal` · ล้มแล้วถอยค่าค้าง · ปฏิเสธ (409 `DOC-NO-JE-REPAIR` พร้อมทางไปต่อ)
+เมื่อ: ไม่ควรมี JE · มี JE ที่มีผลแล้ว · งวดปิด · **ภ.พ.36 งวดนั้นนำส่งแล้ว/รับรู้ภาษีซื้อแล้ว** (ยอดหนี้ 21912/11640 ของงวดที่ยื่นจะขยับ — คนตัดสิน) ·
+ปุ่ม "🔧 ลงบัญชีให้ใบนี้" อยู่ที่แผง 📒 หน้าเอกสาร (เมื่อไม่มี JE) และการ์ด 🩺 หน้าเครื่องมือนักบัญชี (แถว `DOC-NO-JE` — คำแนะนำเดิม
+"ยกเลิกแล้วอนุมัติใหม่" ถูกแทนด้วย `MissingJournalRepair.ScannerFix`) · ลงเฉพาะ JE (สต็อก/ปรับใบต้นทางไม่ทำซ้ำ — ใบบริการ §83/6 ไม่มี)
+
 ### 6.2h ไฟล์แนบหลักฐาน · ด่าน §86/4 ของใบกำกับซื้อ (รอบ 190)
 
 - **ไฟล์แนบของเอกสาร** แนบ/ลบได้ทุกสถานะ (รวมใบที่อนุมัติแล้ว — ไฟล์หลักฐานไม่ใช่เนื้อใบกำกับ จึงไม่ขัด "ห้ามแก้ย้อนหลัง")
@@ -4595,7 +4623,9 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LC รอบสอง — ผลฝ่ายค้านข้อ 128 §6.5: เช็คอินใบยืนยันจากสลิป · ยกเลิกมีสลิปค้าง ⇒ ธง · ไม่ชวนจ่ายซ้ำ · ปฏิเสธสลิปล็อกที่พัก · หลักฐานการจอง — commit f9addc67)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 PP36_REVIEW ทีม F1 — ด่าน JE รู้จัก §83/6 (§6.2g) · อนุมัติล้มถอยค่าค้าง + ผู้เรียกล้มดัง (§3.2) · integration PV ธุรกรรมเดียว (§2.3) · ลงบัญชีให้ใบอนุมัติแล้วไม่มี JE (§6.2g) — commit 8da202b8)_
+
+_ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LC รอบสอง — ผลฝ่ายค้านข้อ 128 §6.5: เช็คอินใบยืนยันจากสลิป · ยกเลิกมีสลิปค้าง ⇒ ธง · ไม่ชวนจ่ายซ้ำ · ปฏิเสธสลิปล็อกที่พัก · หลักฐานการจอง — commit f9addc67)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LC · คำตัดสินข้อ 128 — §6.5 โหมดยืนยันการจองจากเว็บ Instant/RequireSlip/RequireDeposit · ตัวตัดสินเดียว LodgingGuestConfirmPolicy · ส่งสลิป ≠ รับเงิน — commit 2b48c811)_
 

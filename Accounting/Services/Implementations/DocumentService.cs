@@ -1622,8 +1622,10 @@ public partial class DocumentService : IDocumentService
             // (UI/OCR/API). เงินจ่ายไปจริงแล้ว BalanceDue=0 ตั้งแต่ create
             // ไม่มีเหตุผลค้าง Draft ให้ผู้ใช้ต้องคลิก "อนุมัติ" อีกขั้น.
             // กรณี approve ล้มเหลว (§65 ตรี ไม่ระบุผู้รับ / period closed /
-            // RequireApprovalForDocuments threshold) → log + คงค้าง Draft
-            // ให้ผู้ใช้แก้แล้ว approve เอง.
+            // RequireApprovalForDocuments threshold / ด่านโครงสร้าง JE) → ใบค้าง Draft จริง
+            // (ApproveDocumentAsync ถอยค่าค้างแล้ว · PP36_REVIEW P0-2) + ล้มดัง: หมายเหตุบนเอกสาร ·
+            // AutoApproveFailedReason ในคำตอบ · log Warning — เดิม LogInformation "staying Draft" อย่างเดียวซึ่งไม่จริง
+            string? autoApproveFailedReason = null;
             if (doc.DocumentType == DocumentType.PaymentVoucher
                 && doc.PaymentType == Models.Enums.PaymentType.Cash
                 && !doc.RelatedDocumentId.HasValue
@@ -1640,19 +1642,23 @@ public partial class DocumentService : IDocumentService
                 {
                     // ฝ่ายค้านรอบสอง N6: ค้างเป็นร่างเพราะคำเตือนที่ต้องมีคนรับทราบ — ต้องบอกบนตัวเอกสาร (ไม่ใช่แค่ log)
                     // ด่านคำเตือนหยุดก่อนแตะเลขเอกสาร/JE ⇒ บันทึกหมายเหตุได้ปลอดภัย
-                    AppendInternalNote(doc, "— อนุมัติอัตโนมัติไม่สำเร็จ: มีคำเตือนที่ต้องมีคนรับทราบ —\n"
+                    var warnNote = "— อนุมัติอัตโนมัติไม่สำเร็จ: มีคำเตือนที่ต้องมีคนรับทราบ —\n"
                         + string.Join("\n", warn.Warnings.Select(w => "• " + w))
-                        + "\n(เปิดเอกสารนี้แล้วกด \"อนุมัติ\" — ระบบจะถามให้รับทราบคำเตือน)");
+                        + "\n(เปิดเอกสารนี้แล้วกด \"อนุมัติ\" — ระบบจะถามให้รับทราบคำเตือน)";
+                    AppendInternalNote(doc, warnNote);
                     await _db.SaveChangesAsync();
+                    autoApproveFailedReason = warnNote;   // P0-2: คำตอบของการสร้างบอกด้วย (ไม่ใช่แค่หมายเหตุ)
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.LogInformation(ex,
-                        "PV Cash auto-approve skipped for {DocId} — staying Draft for manual fix", doc.Id);
+                    var outcome = await RecordAutoApproveFailureAsync(companyId, doc.Id, "สร้างใบสำคัญจ่ายเงินสด", ex);
+                    autoApproveFailedReason = outcome.Message;
                 }
             }
 
             var created = await GetDocumentAsync(companyId, doc.Id);
+            if (autoApproveFailedReason != null)
+                created = created with { AutoApproveFailedReason = autoApproveFailedReason };
             await FireWebhookAsync(companyId, "document.created", created);
             return created;
         }
@@ -4146,6 +4152,161 @@ public partial class DocumentService : IDocumentService
     }
 
     /// <summary>
+    /// PP36_REVIEW P0-2 — ถอยทุกอย่างที่ขั้นที่ล้มทิ้งไว้ใน change tracker กลับเป็น <paramref name="snapshot"/> <b>รวมงานค้างที่ผู้เรียกยังไม่บันทึก</b>
+    /// (ไม่ต้องบังคับผู้เรียก SaveChanges ก่อน) · ของใหม่ ⇒ ปลด · ของเดิม ⇒ ค่าจริงจาก DB · งานค้างของผู้เรียก ⇒ คืนกลับ
+    /// <para>ล้มระหว่างถอย (เช่น reload ล้มเพราะการเชื่อมต่อขาด) ⇒ <c>ChangeTracker.Clear()</c> เป็นทางสุดท้าย — ทิ้งงานค้างของผู้เรียกดีกว่า
+    /// ปล่อยค่าครึ่งทาง (เลขเอกสาร · Status=Paid · JE ที่ Added) ให้ SaveChanges ถัดไปบันทึกเป็น "ใบอนุมัติแล้วไม่มี JE" · log Error (ล้มดัง)</para>
+    /// </summary>
+    private async Task RevertTrackedChangesSinceAsync(Accounting.Helpers.TrackedChangeRevert.Snapshot snapshot)
+    {
+        try
+        {
+            var strays = await Accounting.Helpers.TrackedChangeRevert.RevertAsync(_db, snapshot);
+            if (strays > 0)
+                _logger.LogWarning("RevertTrackedChangesSince: ปลด entity ที่ถูกดึงกลับหลัง reload อีก {Count} ตัว (navigation ค้าง)", strays);
+        }
+        catch (Exception revertEx)
+        {
+            _logger.LogError(revertEx,
+                "ถอยค่าที่ค้างหลังอนุมัติล้มไม่สำเร็จ — ล้าง change tracker ทั้งหมดแทน (งานค้างที่ยังไม่บันทึกของผู้เรียก {Pending} รายการถูกทิ้ง)",
+                snapshot.PendingCount);
+            _db.ChangeTracker.Clear();
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<AutoApproveFailureOutcome> RecordAutoApproveFailureAsync(
+        Guid companyId, Guid documentId, string channel, Exception error)
+    {
+        var reason = DocumentApprovalWarningsException.DescribeForUser(error);
+        // สถานะจริงจากฐานข้อมูล — ApproveDocumentAsync ถอยค่าค้างแล้ว แต่ขั้นหลัง commit (แจ้งเตือน/e-Tax/การเรียนรู้) ล้มได้ทั้งที่อนุมัติแล้ว
+        var actual = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => new { d.Status, d.DocumentNumber })
+            .FirstOrDefaultAsync();
+        if (actual == null)
+        {
+            _logger.LogError(error, "อนุมัติอัตโนมัติ ({Channel}) ล้ม และหาเอกสาร {DocId} ไม่พบ", channel, documentId);
+            return new AutoApproveFailureOutcome(true, "", AutoApproveFailure.Message(channel, "(ไม่พบเอกสาร)", true, reason));
+        }
+        var stillDraft = AutoApproveFailure.IsStillDraft(actual.Status);
+        var message = AutoApproveFailure.Message(channel, actual.DocumentNumber, stillDraft, reason);
+        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
+        if (doc != null)
+        {
+            doc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(doc.InternalNotes, message);
+            await _db.SaveChangesAsync();
+        }
+        _logger.LogWarning(error, "อนุมัติอัตโนมัติ ({Channel}) ไม่สำเร็จ {DocNo} (ยังเป็นร่าง={StillDraft}): {Reason}",
+            channel, actual.DocumentNumber, stillDraft, reason);
+        return new AutoApproveFailureOutcome(stillDraft, actual.DocumentNumber, message);
+    }
+
+    /// <inheritdoc/>
+    public async Task<MissingJournalDecision> GetMissingJournalStatusAsync(Guid companyId, Guid documentId)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        return MissingJournalRepair.Decide(await LoadMissingJournalFactsAsync(companyId, doc));
+    }
+
+    /// <summary>ข้อเท็จจริงของตัวตัดสิน <see cref="MissingJournalRepair"/> — query เดียวกับด่านกันลงซ้ำของการอนุมัติ (JE ที่ยังมีผล) · tenant ทุก query</summary>
+    private async Task<MissingJournalFacts> LoadMissingJournalFactsAsync(Guid companyId, Document doc)
+    {
+        var hasLive = await _db.JournalEntries.AnyAsync(j =>
+            j.SourceDocumentId == doc.Id
+            && j.CompanyId == companyId
+            && j.Status == JournalEntryStatus.Posted
+            && j.OriginalEntryId == null
+            && j.ReversedByEntryId == null);
+        var period = await _db.FiscalPeriods.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && f.StartDate <= doc.DocumentDate && f.EndDate >= doc.DocumentDate)
+            .Select(f => new { f.Name, f.Status })
+            .FirstOrDefaultAsync();
+        string? pp36Period = null;
+        bool pp36Remitted = false, pp36Recognized = false;
+        if (doc.IsForeignService && doc.VatAmount > 0)
+        {
+            // งวด ภ.พ.36 = เดือนที่จ่าย (กติกาเดียวกับยอดค้างนำส่ง/รับรู้ใน StatutoryRemittanceService)
+            var when = doc.PaymentDate ?? doc.DocumentDate;
+            pp36Period = $"{when.Month:D2}/{when.Year}";
+            pp36Remitted = await _db.Set<StatutoryRemittance>().AsNoTracking().AnyAsync(r =>
+                r.CompanyId == companyId && !r.IsDeleted && r.RemittanceType == "VatPp36"
+                && r.PeriodYear == when.Year && r.PeriodMonth == when.Month);
+            pp36Recognized = doc.InputVatBecameClaimableAt != null || !string.IsNullOrWhiteSpace(doc.Pp36RdReceiptNumber);
+        }
+        return new MissingJournalFacts(
+            doc.DocumentType, doc.Status, doc.IsSettlementReceipt,
+            ReplacesWithoutPostings: doc.ReplacesDocumentId.HasValue && !doc.ReplacementCarriesPostings,
+            HasLiveJournal: hasLive,
+            LockedPeriodName: period != null && period.Status != FiscalPeriodStatus.Open ? period.Name : null,
+            Pp36Period: pp36Period, Pp36Remitted: pp36Remitted, Pp36Recognized: pp36Recognized);
+    }
+
+    /// <inheritdoc/>
+    public async Task<DocumentResponse> RepairMissingJournalAsync(Guid companyId, Guid documentId, string actor)
+    {
+        if (_db.Database.CurrentTransaction != null)
+            throw new BusinessRuleException("ลงบัญชีย้อนหลังต้องทำเป็นรายการของตัวเอง — ทำภายในรายการอื่นไม่ได้", MissingJournalRepair.RuleCode, 409);
+        var baseline = TrackedChangeRevert.Capture(_db);
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            try
+            {
+                // ลำดับล็อกกลางเดียวกับการอนุมัติ: ใบตัวเอง → ใบต้นทาง → เลข JE (advisory ใน AutoPost)
+                await _db.Database.ExecuteSqlRawAsync(
+                    "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                    documentId, companyId);
+                await LockRelatedSourceDocumentAsync(companyId, documentId);
+                var doc = await _db.Documents
+                    .Include(d => d.Lines)
+                    .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+                    ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+                await _db.HydrateContactAsync(companyId, doc);
+                // ตัดสินซ้ำภายใต้ล็อก (ผู้ใช้สองคนกดพร้อมกัน ⇒ คนที่สองเห็น JE ของคนแรกแล้วถูกปฏิเสธ — ไม่ลงซ้ำ)
+                var decision = MissingJournalRepair.Decide(await LoadMissingJournalFactsAsync(companyId, doc));
+                if (!decision.CanRepair)
+                    throw new BusinessRuleException(
+                        decision.Message ?? $"เอกสาร {doc.DocumentNumber} มีรายการบัญชีที่มีผลอยู่แล้ว หรือเป็นชนิดที่ไม่ลงบัญชี — ไม่มีอะไรต้องซ่อม",
+                        MissingJournalRepair.RuleCode, 409);
+                // ตัวลงบัญชีตัวเดียวกับการอนุมัติ (ทรง JE §83/6 · ด่าน JournalPostingGuard · ด่านงวดปิด) — ห้ามประกอบ JE เองที่นี่
+                await AutoPostToJournalAsync(companyId, doc, actor);
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId,
+                    UserEmail = actor,
+                    Action = AuditAction.Update,
+                    EntityType = "Document",
+                    EntityId = doc.Id.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        action = "RepairMissingJournal",
+                        documentNumber = doc.DocumentNumber,
+                        documentType = doc.DocumentType.ToString(),
+                        status = doc.Status.ToString(),
+                        ruleCode = MissingJournalRepair.RuleCode,
+                        by = actor,
+                        note = "ลงบัญชีย้อนหลังให้ใบที่อนุมัติแล้วแต่ไม่มี JE (PP36_REVIEW · ใบที่ด่าน JE §83/6 เคยตีตก / อนุมัติล้มแต่ค่าค้างถูกบันทึก)",
+                    }),
+                });
+                await _db.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
+            catch (Exception)
+            {
+                try { await tx.RollbackAsync(); }
+                finally { await RevertTrackedChangesSinceAsync(baseline); }
+                throw;
+            }
+        });
+        _logger.LogWarning("ลงบัญชีย้อนหลังให้เอกสาร {DocId} (อนุมัติแล้วแต่ไม่มี JE) โดย {Actor}", documentId, actor);
+        return await GetDocumentAsync(companyId, documentId);
+    }
+
+    /// <summary>
     /// รอบ 194 (spec S3 · <c>IssueTaxInvoiceForForfeit</c>) — มัดจำเต็มยอดที่เป็นค่าตอบแทนยังไม่เคยเสีย VAT แล้วถูกริบ
     /// ⇒ <b>ออกใบกำกับภาษีของยอดที่ริบ</b> (ราคารวม VAT · แยก VAT ตามอัตราบริษัท) ผ่านเส้นสร้าง/อนุมัติเดิม แล้ว<b>ตัดชำระด้วยมัดจำ</b>
     /// ผ่าน <see cref="ApplyDepositToInvoiceAsync"/> (→ <c>ApplyDepositToInvoiceCoreAsync</c> · ล็อกแถว + ธุรกรรมของตัวเอง) — ห้ามลงรายได้ไม่มี VAT เงียบ ๆ
@@ -6048,6 +6209,11 @@ public partial class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"ไม่สามารถอนุมัติเอกสารที่มีวันที่ในงวด {period.Name} ได้ เนื่องจากงวดดังกล่าวมีสถานะ {period.Status}");
 
+        // PP36_REVIEW P0-2 — จุดตั้งต้นที่ถอยกลับได้: ธุรกรรมข้างล่าง rollback ฝั่ง DB แต่ค่าที่แก้ใน entity (เลขเอกสาร · Status=Paid ·
+        // InputVatPostedAsUndue · TaxPointDate · JE/สต็อกที่ Added) ค้างใน context ⇒ SaveChanges ถัดไปของผู้เรียก (หมายเหตุ · sync log ·
+        // AuditMiddleware) เคยบันทึก "ใบอนุมัติแล้วที่ไม่มี JE" (PV-20260901-0001) · ถอยที่นี่ที่เดียว = ปิดผู้เรียกทุกตัว (เว็บ · bulk · OCR · LINE ·
+        // recurring · settlement · ลายเซ็น · มือถือ · API · ที่พัก · CMS · ใบเบิก/เงินทดรอง)
+        var approveBaseline = Accounting.Helpers.TrackedChangeRevert.Capture(_db);
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
@@ -6501,9 +6667,11 @@ public partial class DocumentService : IDocumentService
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
-            catch
+            catch (Exception)
             {
-                await transaction.RollbackAsync();
+                // P0-2: ถอยค่าค้างใน context ก่อนโยนต่อ (แม้ rollback เองล้ม) — ผู้เรียกที่จับ error แล้ว SaveChanges ต่อต้องไม่บันทึกครึ่งทางของการอนุมัติ
+                try { await transaction.RollbackAsync(); }
+                finally { await RevertTrackedChangesSinceAsync(approveBaseline); }
                 throw;
             }
         });
@@ -16879,7 +17047,9 @@ public partial class DocumentService : IDocumentService
                 new JournalPostingGuard.DocFacts(
                     doc.DocumentType, doc.SubTotal, doc.VatAmount,
                     doc.WithholdingTaxAmount, doc.TotalAmount, doc.IsDeposit,
-                    ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate));
+                    ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate,
+                    // §83/6: ขาเครดิตผู้รับเงิน = ฐาน + Cr 21912 — ไม่ส่งธง ⇒ JE ภ.พ.36 ที่ถูกต้องถูกตีตกทุกใบ (PP36_REVIEW P0-1)
+                    IsForeignService: doc.IsForeignService));
             var guardError = JournalPostingGuard.ErrorSummary(guardFindings, doc.DocumentNumber);
             if (guardError != null)
                 throw new InvalidOperationException(guardError);

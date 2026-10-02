@@ -4444,3 +4444,21 @@ _รอบ 202 ทีม LC รอบสอง — แก้ผลฝ่าย�
 - **P2-2** ปฏิเสธสลิป: ล็อกการจอง → ที่พัก + `SeenSlipUploadedAt`/`SeenStatus` (LODGING-SLIP-STALE) · **P2-3** `AwaitingSlipReview` expression เดียวของคิวและตัวนับ + ป้ายบนแดชบอร์ด ·
   **P2-4** หลักฐานการจองใบรอชำระ/รอสลิป · **P2-5** `LodgingHoldRule.AutoExpireSlipReason` + `AutoExpireReasonFor` · **P3-1** DTO nullable คงค่าเดิม · **P3-2** hold ≥ 24 ชม.
 - เทสต์ pure +9 Fact/+2 Theory · voucher +2 · Db +1 (+ stale ในเคสเดิม) · required_call_site +9 กติกา/ปรับ 2 — commit f9addc67_
+
+_รอบ 202 PP36_REVIEW ทีม F1 (ความถูกต้องของการลงบัญชี · ผลตรวจ `erp-review/2026-10-02/PP36_REVIEW.md` P0-1/P0-2/P0-3 + ซ่อมข้อมูลเดิม):
+- **P0-1** `JournalPostingGuard.DocFacts.IsForeignService` · ยอดผู้รับเงินที่คาด = `ForeignServiceVat.SplitCredit(...).PayeeCredit` (ไม่เขียน total−vat เอง) ·
+  ขาเครดิต 21911/21912/21913 บนใบซื้อมีได้เฉพาะ Cr 21912 ของใบที่ติ๊กและไม่เกิน VAT ประเมินเอง (`JE-VAT-OVER`) · ใบไม่ติ๊กที่มี ⇒ `JE-PP36-UNFLAGGED` ·
+  ส่งธงจาก AutoPost · ตัวสแกน · integration · doc-comment `ForeignServiceVat` ที่อ้าง "อนุมัติแล้ว JE จริงถูกต้อง" แก้แล้ว (ไม่จริง — ด่านตีตกทุกใบ)
+- **P0-2** `ApproveDocumentAsync` จำจุดตั้งต้น (`TrackedChangeRevert.Capture` — รวมงานค้างที่ผู้เรียกยังไม่บันทึก) · ธุรกรรมล้ม ⇒ rollback + `RevertAsync`
+  (ปลดของใหม่ · reload · คืนงานค้างผู้เรียก · ถอยล้ม ⇒ Clear + log Error) ⇒ ปิดผู้เรียกทุกตัวในที่เดียว · ผู้เรียกที่กลืน error แก้ให้ล้มดัง 8 จุดผ่าน
+  `IDocumentService.RecordAutoApproveFailureAsync` (สถานะจริง · หมายเหตุบนเอกสาร · Warning · `Helpers/AutoApproveFailure`): CreateDocumentAsync PV เงินสด
+  (`DocumentResponse.AutoApproveFailedReason`) · ApprovalService (`ApprovalRequestResponse.FinalizeError` + approval.html) · BulkApprove · OcrController ·
+  Recurring · LINE ข้อความ + ปุ่ม · Settlement `ApproveIfDraftAsync` ตรวจ "มี JE จริง" · ผู้เรียกที่โยนต่อเองอยู่แล้ว (ลายเซ็น 2 · มือถือ · API v1 ·
+  integration แปลง TIV · ที่พัก 4 · CMS booking/commerce · platform billing 3 · ใบเบิก · เงินทดรอง · ใบแทน · ริบมัดจำ) ได้การถอยจากจุดเดียว ไม่ต้องแก้
+- **P0-3** integration `ProcessPaymentVoucherAsync`: ออกเลข + ใบ Approved + JE ในธุรกรรมเดียว · `CreatePaymentVoucherJournalAsync` โยน `INTEGRATION-PV-NO-JE` แทนคืน null
+  (5 จุด รวมผัง WHT ที่คอมเมนต์ว่า "fold into cash" แต่ไม่เคยทำ) · ล้ม ⇒ rollback + Clear ⇒ sync log Failed
+- **ซ่อมข้อมูลเดิม** `GET/POST {documentId}/missing-journal[/repair]` · `Helpers/MissingJournalRepair` (ปฏิเสธ: ไม่ควรมี JE · มีแล้ว · งวดปิด · ภ.พ.36 นำส่ง/รับรู้แล้ว) ·
+  AutoPost ตัวเดียวกับการอนุมัติ ใต้ล็อก+ธุรกรรม + audit chain · ปุ่มบนแผง 📒 หน้าเอกสาร + การ์ด 🩺 หน้าเครื่องมือนักบัญชี · คำแนะนำ DOC-NO-JE ชี้เครื่องมือนี้
+- เทสต์: guard §83/6 +7 เมธอด (Theory 3 กรณี + 6 Fact · PV/PI/Expense 5,908/413.56 ผ่าน · ไม่ติ๊กแต่มี 21912 ล้ม · ใบปกติเงินไปกองบัญชีภาษียังถูกจับ · USD) · ตัวถอย DbContext ออฟไลน์ 4 ·
+  AutoApproveFailure/MissingJournalRepair สองทิศ · Db 2 (ไม่ถอย = ครึ่งทางถูกบันทึก · ถอย = ไม่มี + งานค้างผู้เรียกไม่หาย) · required_call_site +19 กติกา —
+  commit 8da202b8_

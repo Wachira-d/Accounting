@@ -697,6 +697,9 @@ const API = {
       checkDuplicateDocument: (q) => API.get(`${base}/document/duplicate-check${q}`),
       // ตรวจสอบ/แก้ไขรายการบัญชี (JE) ของเอกสารที่อนุมัติแล้ว
       getDocumentJournalEntries: (id) => API.get(`${base}/document/${id}/journal-entries`),
+      // PP36_REVIEW: ใบอนุมัติแล้วแต่ไม่มี JE — ถาม (เซิร์ฟเวอร์ตัดสิน) · ลงบัญชีย้อนหลังด้วย AutoPost ตัวเดียวกับการอนุมัติ
+      getMissingJournal: (id) => API.get(`${base}/document/${id}/missing-journal`),
+      repairMissingJournal: (id) => API.post(`${base}/document/${id}/missing-journal/repair`, {}),
       adjustDocumentJournalEntry: (id, jeId, body) => API.post(
         `${base}/document/${id}/journal-entries/${jeId}/adjust`, body),
       listAdjustingLines: (id) => API.get(`${base}/document/${id}/adjusting-lines`),

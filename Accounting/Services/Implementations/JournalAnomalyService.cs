@@ -130,7 +130,9 @@ public class JournalAnomalyService
                     doc.DocumentType, doc.SubTotal, doc.VatAmount,
                     doc.WithholdingTaxAmount, doc.TotalAmount, doc.IsDeposit,
                     // JE หลักของ AutoPost ลงเป็นบาทผ่าน Conv() ⇒ แปลงยอดเอกสารก่อนเทียบ
-                    ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate)
+                    ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate,
+                    // §83/6 — กฎชุดเดียวกับด่านก่อนบันทึก (PP36_REVIEW P0-1)
+                    IsForeignService: doc.IsForeignService)
                 : null;
 
             foreach (var f in JournalPostingGuard.Validate(lines, facts, externalWhtBase.GetValueOrDefault(j.Id)))
@@ -168,8 +170,9 @@ public class JournalAnomalyService
                 "DOC-NO-JE", "Error",
                 $"เอกสาร {d.DocumentNumber} ({d.DocumentType}) ยอด {d.TotalAmount:N2} " +
                 "อนุมัติแล้วแต่ไม่มีรายการบัญชีเลย — ยอดนี้หายจากงบ/รายงานภาษี " +
-                "(มักเกิดจาก JE integration ที่โครงสร้างผิดถูกระบบปฏิเสธ)",
-                "ยกเลิกเอกสารแล้วอนุมัติใหม่ (ระบบจะลง JE ให้) หรือคีย์ JE เองในหน้าสมุดรายวันอ้างเลขเอกสาร",
+                "(มักเกิดจาก JE integration ที่โครงสร้างผิดถูกระบบปฏิเสธ หรือการอนุมัติที่ล้มแต่สถานะค้างถูกบันทึก — PP36_REVIEW P0-2)",
+                // เดิม "ยกเลิกเอกสารแล้วอนุมัติใหม่" — ทำไม่ได้กับใบที่ออกเลขแล้ว (ยกเลิกใบที่ไม่มี JE ไม่มีอะไรให้กลับ · เลขต้องคงเดิม §86/4)
+                Accounting.Helpers.MissingJournalRepair.ScannerFix,
                 d.Id, d.DocumentNumber, null, null, d.DocumentDate.Date));
 
         // ── 3) ใบปรับปรุงผังบัญชีที่ "หายไปตอนอนุมัติใหม่" (X-6) ──────────────

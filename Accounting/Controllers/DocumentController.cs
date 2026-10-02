@@ -892,6 +892,33 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<List<DocumentJournalEntryDto>>(true, list, null));
     }
 
+    /// <summary>PP36_REVIEW "ซ่อมข้อมูลเดิม" — ใบนี้อนุมัติแล้วแต่ไม่มี JE ไหม และลงย้อนหลังด้วยเครื่องมือได้ไหม (ตัวตัดสิน <c>Helpers/MissingJournalRepair</c>) ·
+    /// อ่านอย่างเดียว · หน้าเอกสารแสดงแถบ + ปุ่มจากผลนี้ (server computes · page displays)</summary>
+    [HttpGet("{documentId:guid}/missing-journal")]
+    public async Task<ActionResult<ApiResponse<Accounting.Helpers.MissingJournalDecision>>> GetMissingJournal(Guid companyId, Guid documentId)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<Accounting.Helpers.MissingJournalDecision>(false, null, "ไม่พบเอกสาร"));
+        var decision = await _documentService.GetMissingJournalStatusAsync(companyId, documentId);
+        return Ok(new ApiResponse<Accounting.Helpers.MissingJournalDecision>(true, decision, null));
+    }
+
+    /// <summary>ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE — AutoPost ตัวเดียวกับการอนุมัติ ภายใต้ล็อก/ธุรกรรมเดียว + audit · สิทธิ์เดียวกับอนุมัติ
+    /// (มีผลต่อ GL เท่ากัน) · ไม่ผ่านด่าน (งวดปิด · ภ.พ.36 นำส่ง/รับรู้แล้ว · มี JE แล้ว) ⇒ 409 พร้อมทางไปต่อ</summary>
+    [HttpPost("{documentId:guid}/missing-journal/repair")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> RepairMissingJournal(Guid companyId, Guid documentId)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์ลงบัญชีเอกสาร {docType} (ต้องการสิทธิ์อนุมัติ — มีผลต่อสมุดรายวันเท่ากับการอนุมัติ)");
+        var result = await _documentService.RepairMissingJournalAsync(companyId, documentId, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result,
+            $"ลงบัญชีให้เอกสาร {result.DocumentNumber} แล้ว — ตรวจรายการบัญชีในแผง 📒"));
+    }
+
     /// <summary>ปรับปรุงผังบัญชีของ JE ที่ลงไปแล้ว — ส่ง "สถานะปลายทาง" ของ
     /// ใบสำคัญมา ระบบลงใบปรับปรุงใหม่ตามผลต่าง. ยอดรวมต้องเท่าเดิม + บัญชีคุม
     /// ห้ามขยับ. ใช้สิทธิ์เดียวกับ Approve (มีผลต่อ GL เท่ากัน)</summary>
@@ -1518,10 +1545,13 @@ public class DocumentController : ControllerBase
                 // ไม่ใช่ "ล้มเหลว" — ใบยังเป็นร่าง รอคนเปิดดูคำเตือนแล้วกดรับทราบเอง (ทางไปต่อคนละทางกับ Errors)
                 needsAck.Add(new BulkApproveNeedsAckItem(docId, wex.Warnings));
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                errors.Add($"{docId}: {ex.Message}");
-                failed++;
+                // PP36_REVIEW P0-2: ApproveDocumentAsync ถอยค่าค้างแล้ว (ใบถัดไปในลูปไม่บันทึกครึ่งทางของใบนี้) · ผลรายใบบอกเลขเอกสาร + เหตุผล
+                // + สถานะจริง (ขั้นหลัง commit ล้มได้ทั้งที่อนุมัติแล้ว ⇒ นับเป็นอนุมัติ ไม่ใช่ล้ม) · หมายเหตุลงเอกสารด้วยตัวเดียวกับทุกทางเข้า
+                var outcome = await _documentService.RecordAutoApproveFailureAsync(companyId, docId, "อนุมัติหลายใบ", ex);
+                errors.Add(outcome.Message);
+                if (outcome.StillDraft) failed++; else approved++;
             }
         }
         return Ok(new ApiResponse<BulkApproveResult>(true,

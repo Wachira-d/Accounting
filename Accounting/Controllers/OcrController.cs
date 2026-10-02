@@ -448,10 +448,13 @@ public class OcrController : ControllerBase
                     if (s65Notice != null)
                         approveNote = "\n[APPROVE-S65-NOTE] " + s65Notice;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    approveNote = "\n[APPROVE-FAIL] "
-                        + Accounting.Services.Implementations.DocumentApprovalWarningsException.DescribeForUser(ex).Replace('\n', ' ');
+                    // PP36_REVIEW P0-2: ApproveDocumentAsync ถอยค่าค้างแล้ว ⇒ SaveChanges ของแถวสแกนข้างล่างไม่บันทึกเลขเอกสาร/Paid ที่ไม่มี JE ·
+                    // ข้อความ+สถานะจริงจากตัวเดียวของทุกทางเข้า (ลงหมายเหตุบนเอกสารด้วย — ไม่ใช่แค่แถวสแกน)
+                    var outcome = await _documentService.RecordAutoApproveFailureAsync(
+                        companyId, result.CreatedDocumentId.Value, "สแกน OCR สร้าง+อนุมัติ", ex);
+                    approveNote = "\n[APPROVE-FAIL] " + outcome.Message.Replace('\n', ' ');
                 }
             }
             if (approveNote != null)

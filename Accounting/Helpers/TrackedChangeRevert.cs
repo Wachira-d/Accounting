@@ -46,6 +46,83 @@ public static class TrackedChangeRevert
         }
     }
 
+    /// <summary>
+    /// จุดตั้งต้นที่ถอยกลับได้ <b>โดยไม่ต้องบันทึกงานค้างของผู้เรียกก่อน</b> (PP36_REVIEW P0-2 · <c>ApproveDocumentAsync</c>) — ชุด entity ที่ติดตามอยู่
+    /// + สถานะ/ค่าปัจจุบันของ entity ที่ "ผู้เรียกแก้ค้างไว้" (Added/Modified/Deleted) · ใช้คู่กับ <see cref="DetachSince"/> → reload เฉพาะที่ <see cref="NeedsReload"/>
+    /// → <see cref="ReapplyPending"/> → <see cref="DetachStrays"/>
+    /// <para>ทำไมต้องจำงานค้าง: ธุรกรรมของขั้นที่ล้มอาจ SaveChanges ไปแล้ว (EF ยอมรับค่า ⇒ สถานะ Unchanged ทั้งที่ DB rollback) แล้ว reload คืนค่าจาก DB
+    /// ⇒ งานค้างของผู้เรียกหายเงียบ · เส้นเดิม (ริบมัดจำ · CMS) เลี่ยงด้วยการ SaveChanges ก่อนจำ — ใช้ไม่ได้กับการอนุมัติที่ถูกเรียกจากหลายสิบทางเข้า</para>
+    /// </summary>
+    public sealed class Snapshot
+    {
+        internal Snapshot(HashSet<object> entities, Dictionary<object, (EntityState State, PropertyValues Current)> pending)
+        {
+            Entities = entities;
+            Pending = pending;
+        }
+
+        /// <summary>entity ที่ติดตามอยู่ ณ จุดตั้งต้น (เทียบด้วยการอ้างอิง)</summary>
+        public HashSet<object> Entities { get; }
+
+        internal Dictionary<object, (EntityState State, PropertyValues Current)> Pending { get; }
+
+        /// <summary>จำนวน entity ที่ผู้เรียกแก้ค้างไว้ ณ จุดตั้งต้น (ใช้ในเทสต์/ล็อก)</summary>
+        public int PendingCount => Pending.Count;
+    }
+
+    /// <summary>จำจุดตั้งต้น — DetectChanges ก่อน (ของที่ผูกผ่าน navigation แต่ยังไม่ถูกตรวจต้องนับเป็นของผู้เรียก ไม่ใช่ของขั้นที่ล้ม)</summary>
+    public static Snapshot Capture(DbContext db)
+    {
+        db.ChangeTracker.DetectChanges();
+        var entities = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var pending = new Dictionary<object, (EntityState, PropertyValues)>(ReferenceEqualityComparer.Instance);
+        foreach (var e in db.ChangeTracker.Entries())
+        {
+            entities.Add(e.Entity);
+            if (e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
+                pending[e.Entity] = (e.State, e.CurrentValues.Clone());
+        }
+        return new Snapshot(entities, pending);
+    }
+
+    /// <summary>entry ที่คงอยู่ควร reload จาก DB ไหม — ของที่ผู้เรียกเพิ่ง Add (ยังไม่มีแถวใน DB) ห้าม reload (EF ปลดทิ้งเมื่อหาแถวไม่เจอ)</summary>
+    internal static bool NeedsReload(Snapshot snapshot, EntityEntry entry)
+        => !(snapshot.Pending.TryGetValue(entry.Entity, out var p) && p.State == EntityState.Added);
+
+    /// <summary>หลัง reload: คืนงานค้างของผู้เรียกกลับ (ค่าที่แก้ · สถานะ Added/Deleted) — ไม่แตะคีย์ (คีย์ที่ระบบสร้างระหว่าง SaveChanges ที่ rollback ห้ามย้อน)</summary>
+    internal static void ReapplyPending(DbContext db, Snapshot snapshot)
+    {
+        foreach (var (entity, p) in snapshot.Pending)
+        {
+            var entry = db.Entry(entity);
+            if (p.State == EntityState.Deleted)
+            {
+                entry.State = EntityState.Deleted;
+                continue;
+            }
+            foreach (var prop in p.Current.Properties)
+            {
+                if (prop.IsPrimaryKey()) continue;
+                if (!Equals(entry.CurrentValues[prop], p.Current[prop]))
+                    entry.CurrentValues[prop] = p.Current[prop];
+            }
+            if (p.State == EntityState.Added && entry.State != EntityState.Added)
+                entry.State = EntityState.Added;
+        }
+    }
+
+    /// <summary>ถอยทั้งชุดกลับเป็น <paramref name="snapshot"/> (ตัวเดียวที่ <c>ApproveDocumentAsync</c>/เครื่องมือลงบัญชีย้อนหลังเรียก · เทสต์ Db เรียกตัวนี้ตรง):
+    /// ปลดของใหม่ → reload ของเดิมจาก DB (ยกเว้นที่ผู้เรียกเพิ่ง Add) → คืนงานค้างของผู้เรียก → ตรวจซ้ำ · คืนจำนวนของที่ต้องปลดซ้ำ (0 = สะอาด)
+    /// <para>ส่วนนี้แตะฐานข้อมูล (reload) — ผู้เรียกจัดการกรณีล้มเอง (DocumentService: Clear ทั้ง context + log Error)</para></summary>
+    public static async Task<int> RevertAsync(DbContext db, Snapshot snapshot, CancellationToken ct = default)
+    {
+        foreach (var e in DetachSince(db, snapshot.Entities))
+            if (NeedsReload(snapshot, e))
+                await e.ReloadAsync(ct);
+        ReapplyPending(db, snapshot);
+        return DetachStrays(db, snapshot.Entities);
+    }
+
     /// <summary>ตรวจซ้ำหลังผู้เรียก reload: entity นอก <paramref name="baseline"/> ที่ถูกดึงกลับมาติดตาม (ผ่าน navigation ที่ยังค้าง) ⇒ ปลดอีกครั้ง ·
     /// คืนจำนวนที่ต้องปลด (0 = สะอาด — ผู้เรียก log เมื่อไม่ใช่ 0)</summary>
     public static int DetachStrays(DbContext db, IReadOnlySet<object> baseline)

@@ -239,24 +239,27 @@
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('actionId').value;
         try {
-          if (!await this._submitWithAck(api, id, { status, comments: document.getElementById('actionComments').value || null })) return;
+          const res = await this._submitWithAck(api, id, { status, comments: document.getElementById('actionComments').value || null });
+          if (!res) return;
           Layout.closeModal('actionModal');
-          Layout.toast(status === 'Approved' ? 'อนุมัติสำเร็จ' : 'ปฏิเสธสำเร็จ');
+          // PP36_REVIEW P0-2: ลำดับอนุมัติครบแต่ระบบอนุมัติเอกสารจริงไม่สำเร็จ ⇒ เซิร์ฟเวอร์ส่งเหตุผล+ทางไปต่อมา (ห้ามขึ้น "อนุมัติสำเร็จ")
+          const finalizeError = res.data && res.data.finalizeError;
+          if (finalizeError) Layout.toast(finalizeError, 'error', 12000);
+          else Layout.toast(status === 'Approved' ? 'อนุมัติสำเร็จ' : 'ปฏิเสธสำเร็จ');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       /** ส่งผลอนุมัติ — ขั้นสุดท้ายของเอกสารที่มีคำเตือน เซิร์ฟเวอร์ตอบ 422 พร้อมรายการ ⇒ ให้คนอ่านแล้วกดรับทราบเอง
        *  (รูปแบบเดียวกับหน้าเอกสาร/มือถือ — รอบ 193 ฝ่ายค้าน C5: เดิม workflow ประทับ "รับทราบ" แทนคน) · คืน false เมื่อผู้ใช้ยกเลิก */
       async _submitWithAck(api, id, body) {
-        try { await api.submitAction(id, body); return true; }
+        try { return (await api.submitAction(id, body)) || {}; }
         catch (e) {
           const warnings = e && e.status === 422 ? (e.body?.data?.warnings || []) : null;
           if (!warnings || !warnings.length) throw e;
           const ok = confirm('เอกสารมีคำเตือนก่อนอนุมัติ:\n\n' + warnings.map(w => '• ' + w).join('\n')
             + '\n\nกด OK = รับทราบและอนุมัติ (ระบบบันทึกว่าคุณเป็นผู้รับทราบ) · Cancel = กลับไปตรวจเอกสาร');
           if (!ok) return false;
-          await api.submitAction(id, Object.assign({}, body, { acknowledgeWarnings: true }));
-          return true;
+          return (await api.submitAction(id, Object.assign({}, body, { acknowledgeWarnings: true }))) || {};
         }
       },
       async batchApprove() { await this.batchAction('Approved'); },
@@ -266,14 +269,20 @@
         if (!checked.length) { Layout.toast('เลือกรายการก่อน', 'error'); return; }
         if (status === 'Rejected' && !confirm(`ปฏิเสธ ${checked.length} รายการ?`)) return;
         const api = Layout.api(); if (!api) return;
-        let ok = 0, needAck = 0;
+        let ok = 0, needAck = 0, notFinal = 0;
         for (const cb of checked) {
           // อนุมัติหลายรายการพร้อมกันไม่ข้ามคำเตือน — ใบที่มีคำเตือนต้องเปิดดูและกดรับทราบทีละใบ (รอบ 193 ฝ่ายค้าน C5)
-          try { await api.submitAction(cb.value, { status, comments: null }); ok++; }
+          try {
+            const res = await api.submitAction(cb.value, { status, comments: null });
+            // P0-2: ลำดับอนุมัติครบแต่เอกสารอนุมัติไม่สำเร็จ — ไม่นับเป็นสำเร็จ (เหตุผลอยู่ในหมายเหตุของเอกสารนั้น)
+            if (res && res.data && res.data.finalizeError) notFinal++; else ok++;
+          }
           catch (e) { if (e && e.status === 422) needAck++; }
         }
         Layout.toast(`${status === 'Approved' ? 'อนุมัติ' : 'ปฏิเสธ'}สำเร็จ ${ok} รายการ`
-          + (needAck ? ` · ${needAck} รายการมีคำเตือนที่ต้องเปิดดูและกดรับทราบทีละใบ` : ''), needAck ? 'warning' : 'success');
+          + (needAck ? ` · ${needAck} รายการมีคำเตือนที่ต้องเปิดดูและกดรับทราบทีละใบ` : '')
+          + (notFinal ? ` · ${notFinal} รายการลำดับอนุมัติครบแต่ระบบอนุมัติเอกสารไม่สำเร็จ — เปิดเอกสารดูเหตุผลในหมายเหตุภายใน` : ''),
+          (needAck || notFinal) ? 'warning' : 'success');
         await this.load();
       },
       // === RULES ===
