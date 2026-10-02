@@ -4455,4 +4455,4 @@ _รอบ 203 ทีม F3 (2026-10-02) — วงจรนำส่ง/รั�
 - **E-8** ติ๊กธงบนใบขาย ⇒ ปฏิเสธ (`PP36-FLAG-WRONG-TYPE`) · **E-9** เงินเพิ่ม §89/1 เสนอ+แก้ได้ (`RemitRequest.LateSurcharge`) ลงผังค่าปรับ · **E-10** กระทบยอด 21912 ตัด JE นำส่ง + บรรทัด 11640 + สาเหตุใบไม่มี JE ·
   **E-13** ภ.พ.30 บรรทัดใบต่างประเทศก่อนรับรู้ = "[ภ.พ.36 — รอนำส่ง/รับรู้]" · **T-2** ชื่อผัง 21912 "ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36" (แม่แบบ + migration ชื่อเดิมทุกตัวอักษร) ·
   **T-3d/C-P2** `DocumentResponse.Pp36State/Pp36StatusLabel` · documents.html แสดงอย่างเดียว · "เคลม ภ.พ.30" ไม่ขึ้นกับใบรออนุมัติ
-- เทสต์ pure `Pp36LifecycleTests` · golden `Db/Pp36LifecycleGoldenDbTests` (5 เคส) · required_call_site +16 กติกา — commit <pending>_
+- เทสต์ pure `Pp36LifecycleTests` · golden `Db/Pp36LifecycleGoldenDbTests` (5 เคส) · required_call_site +16 กติกา — commit 873f9ad4_
