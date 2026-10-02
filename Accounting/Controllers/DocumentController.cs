@@ -1536,6 +1536,12 @@ public class DocumentController : ControllerBase
                 if (docType == null) { errors.Add($"{docId}: ไม่พบเอกสาร"); failed++; continue; }
                 if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
                 { errors.Add($"{docId}: ไม่มีสิทธิ์อนุมัติ {docType}"); failed++; continue; }
+                // ฝ่ายค้าน P1-B (PP36): ตรวจสถานะก่อนเรียกอนุมัติ (แบบเส้น LINE) — ใบที่ไม่ใช่ร่างไม่ถูกนับว่า "อนุมัติในรอบนี้" และไม่ได้ข้อความล้มที่ผิดความจริง
+                var before = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == docId && d.CompanyId == companyId)
+                    .Select(d => new { d.Status, d.DocumentNumber }).FirstAsync();
+                if (before.Status is not (DocumentStatus.Draft or DocumentStatus.WaitingApproval))
+                { errors.Add($"{before.DocumentNumber}: สถานะ {before.Status} — ไม่ใช่ร่าง/รออนุมัติ ข้าม (ไม่ได้อนุมัติในรอบนี้)"); failed++; continue; }
                 await _documentService.ApproveDocumentAsync(companyId, docId, userId,
                     ApprovalAckSource.None, withAiHints: false);
                 approved++;
@@ -1551,7 +1557,8 @@ public class DocumentController : ControllerBase
                 // + สถานะจริง (ขั้นหลัง commit ล้มได้ทั้งที่อนุมัติแล้ว ⇒ นับเป็นอนุมัติ ไม่ใช่ล้ม) · หมายเหตุลงเอกสารด้วยตัวเดียวกับทุกทางเข้า
                 var outcome = await _documentService.RecordAutoApproveFailureAsync(companyId, docId, "อนุมัติหลายใบ", ex);
                 errors.Add(outcome.Message);
-                if (outcome.StillDraft) failed++; else approved++;
+                // ตรวจแล้วว่าเป็นร่างก่อนเรียก ⇒ มีผลแล้ว = อนุมัติในรอบนี้ (ขั้นหลัง commit ล้ม) · ร่าง/ยกเลิก = ล้ม
+                if (outcome.Committed) approved++; else failed++;
             }
         }
         return Ok(new ApiResponse<BulkApproveResult>(true,

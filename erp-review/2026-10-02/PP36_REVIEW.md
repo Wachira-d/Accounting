@@ -41,6 +41,19 @@
 ตัวสแกน DOC-NO-JE (`JournalAnomalyService.cs:145-170`) คำแนะนำ "ยกเลิกแล้วอนุมัติใหม่" ต้องชี้เครื่องมือนี้แทน ·
 ใบต่างประเทศที่ BalanceDue รวม VAT ⇒ migration ตามคำตัดสิน 131 (ทีม F2) ✅ cc840773 (`Helpers/ForeignServicePayeeBalanceMigration` — แถวสูตรเดิมเท่านั้น · ใบที่จ่ายเกินยอดจ่ายผู้รับเงินแล้วไม่แตะ + log ให้คนซ่อม) · **ระหว่างนี้ผู้ใช้อย่ากดนำส่ง/รับรู้ ภ.พ.36 ของ PV-20260901-0001**
 
+## ฝ่ายค้านบนงานทีม F1 (main agent ยืนยัน P1-A/P1-B) — ทีม F1 รอบสอง
+| ID | ปัญหา | สถานะ |
+|---|---|---|
+| P1-A | เครื่องมือซ่อมลงแค่ AutoPost แต่ข้ามผลข้างเคียงหลังอนุมัติ (ปรับใบต้นทาง · undue VAT ขาย · 50 ทวิ · สต็อก · supersede · ทะเบียนสินทรัพย์) | ✅ 5e797b83 ทางปลอดภัย: `MissingJournalRepair.SideEffectsOf` ⇒ ปฏิเสธใบที่มีใบต้นทาง · WHT · บรรทัดสินค้า · ผัง 12xxx · ใบแทน · โครงการ · มัดจำ พร้อมทางไปต่อ · ใบเดี่ยว (PV-20260901-0001) ยังซ่อมได้ · ข้อเสนอ: แยก "ผลข้างเคียงหลัง AutoPost" เป็นเมธอดกลางที่อนุมัติ+ซ่อมเรียกร่วม (รอบหน้า — ต้องทำให้ทุกขั้น idempotent ก่อน) |
+| P1-B | ข้อความล้มมีแค่สองสถานะ — ใบยกเลิก/ปฏิเสธได้ "อนุมัติและลงบัญชีแล้ว" + ถูกเขียนหมายเหตุ · BulkApprove นับผิด | ✅ 5e797b83 `AutoApproveFailureKind` (ร่าง · มีผล · มีผลแต่ไม่มี JE · ปิด) · ไม่เขียนหมายเหตุใบปิด · BulkApprove ตรวจสถานะก่อนเรียก + นับเฉพาะที่อนุมัติจริงรอบนี้ · FinalizeError ตัวเดียวกัน |
+| P2-1 | `ReapplyPending` คืนทั้งแถวจาก snapshot ⇒ ทับค่าที่คนอื่นแก้ในฐาน | ✅ 5e797b83 เก็บ/คืนเฉพาะช่อง IsModified (Added = ทุกช่องไม่ใช่คีย์) · เทสต์ออฟไลน์ + Db |
+| P2-3 | `RecordAutoApproveFailureAsync` โยนได้จากใน catch ของผู้เรียก | ✅ 5e797b83 try/catch ภายใน · ข้อความสำรอง + LogError |
+| P2-4 | integration expense/CIL ทิ้งใบ Approved ไม่มี JE · CMS · แพลตฟอร์ม เงียบ | ✅ 5e797b83 expense + CIL: `RunAtomicCreateAsync` + `PostMappingJournalOrThrowAsync` (ธุรกรรมเดียว · `INTEGRATION-NO-JE`) · CMS `ConfirmPaymentAsync` + แพลตฟอร์ม 3 เมธอด ⇒ หมายเหตุบนเอกสาร · **ไม่ทำ**: invoice/CN/DN (ใบขายที่ออกถึงลูกค้าแล้ว — rollback ⇒ ภาษีขายหายจาก ภ.พ.30 · คงเส้น `PostMappingJournalAsync` เดิมที่ดัง 3 ที่ · ต้องเจ้าของตัดสิน) |
+| P2-5 | ตัวสแกน DOC-NO-JE คนละเงื่อนไขกับเครื่องมือซ่อม · ปุ่มตาม ruleCode | ✅ 5e797b83 `ExpectsLiveJournal` + JE หลักที่มีผล + ชุดชนิดจาก `DocumentJournalExpectation.PostingTypes` (ลบสำเนา `JePostingTypes`) · accountant.html ปุ่มจาก `canRepair` ของเซิร์ฟเวอร์ |
+| P2-6 | อนุมัติสำเร็จภายหลัง หมายเหตุล้มค้าง | ✅ 5e797b83 `AutoApproveFailure.MarkResolved` ต่อท้าย "✅ แก้แล้ว" ในธุรกรรมอนุมัติ |
+| P2-7 | PV ที่ชำระใบต้นทางเจ้าของ ภ.พ.36 ⇒ Cr 21912 ต้องเป็น 0 | ❌ ไม่ได้ทำ — ต้องใช้ `ForeignServiceVat.PayeeAmount(doc, sourceOwnsPp36)` ของทีม F2 แต่ merge branch ของ F2 เข้า worktree ถูกปฏิเสธโดยระบบสิทธิ์ ⇒ ทำหลัง F2 เข้า branch หลัก |
+| P2-8 | `ReclassifyForeignServiceAsync` ไม่ล็อกแถว ⇒ JE คู่ | ✅ 5e797b83 FOR UPDATE + ตัดสินซ้ำใต้ล็อก |
+
 ## ตรวจแล้วถูกต้อง (ห้ามรายงานซ้ำ)
 ทรง JE §83/6 ใน AutoPost + พรีวิวใช้ `ForeignServiceVat.SplitCredit` ตัวเดียว · 11640 บังคับ · tax point = วันจ่าย · ตารางกำหนดยื่นตัวเดียว (7 / 15 ต.ค.) ·
 JE นำส่ง Dr 21912/Cr ธนาคาร · ไม่ประทับ Filed เอง · 21912 ไม่ถูกนับเป็นภาษีขายใน ภ.พ.30/กระทบยอด · งาน §82/3 6 เดือนไม่แตะใบต่างประเทศ · ยกเลิกก่อนนำส่งกลับครบ ·

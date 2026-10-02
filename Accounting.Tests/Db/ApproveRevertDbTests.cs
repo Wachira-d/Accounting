@@ -73,4 +73,34 @@ public class ApproveRevertDbTests
         Assert.False(await check.Companies.AnyAsync(c => c.Id == s.StrayId));
         Assert.Equal("caller-pending", row.NameEn);           // หมายเหตุ/ค่าที่ผู้เรียกแก้ไว้ก่อนเรียกอนุมัติ ยังถูกบันทึก
     }
+    [Fact]
+    public async Task ถอยแล้ว_ช่องที่ผู้เรียกไม่ได้แตะได้ค่าจากฐาน_ไม่ถูกทับด้วยsnapshotเก่า()
+    {
+        // ฝ่ายค้าน P2-1: ระหว่างที่การอนุมัติทำงาน ผู้ใช้อีกคนแก้ช่องอื่นของแถวเดียวกัน — การถอยต้องไม่เขียนค่าเก่าทับ
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var co = new Company { Name = "ทดสอบถอยเฉพาะช่องที่แก้", TaxId = "0105556000001" };
+        db.Companies.Add(co);
+        await db.SaveChangesAsync();
+        co.NameEn = "caller-pending";
+        var snap = TrackedChangeRevert.Capture(db);
+        using (var other = DbTestDatabase.TryCreateContext()!)
+        {
+            var row = await other.Companies.SingleAsync(c => c.Id == co.Id);
+            row.TaxId = "0105556099999";                       // คนอื่นแก้ช่องที่ผู้เรียกไม่ได้แตะ
+            await other.SaveChangesAsync();
+        }
+        await using (var tx = await db.Database.BeginTransactionAsync())
+        {
+            co.SuspendReason = "approve-pending-at-throw";
+            await tx.RollbackAsync();
+        }
+        Assert.Equal(0, await TrackedChangeRevert.RevertAsync(db, snap));
+        await db.SaveChangesAsync();
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var saved = await check.Companies.AsNoTracking().SingleAsync(c => c.Id == co.Id);
+        Assert.Equal("0105556099999", saved.TaxId);
+        Assert.Equal("caller-pending", saved.NameEn);
+        Assert.Null(saved.SuspendReason);
+    }
 }

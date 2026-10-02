@@ -4224,27 +4224,48 @@ public partial class DocumentService : IDocumentService
         Guid companyId, Guid documentId, string channel, Exception error)
     {
         var reason = DocumentApprovalWarningsException.DescribeForUser(error);
-        // สถานะจริงจากฐานข้อมูล — ApproveDocumentAsync ถอยค่าค้างแล้ว แต่ขั้นหลัง commit (แจ้งเตือน/e-Tax/การเรียนรู้) ล้มได้ทั้งที่อนุมัติแล้ว
-        var actual = await _db.Documents.AsNoTracking()
-            .Where(d => d.Id == documentId && d.CompanyId == companyId)
-            .Select(d => new { d.Status, d.DocumentNumber })
-            .FirstOrDefaultAsync();
-        if (actual == null)
+        // ฝ่ายค้าน P2-3: ตัวนี้ถูกเรียกจากใน catch ของผู้เรียก — ห้ามโยน (บดบังเหตุเดิม · ทำ 500 หลังใบร่างบันทึกแล้ว) ⇒ ล้มเอง = ข้อความสำรอง + LogError
+        try
         {
-            _logger.LogError(error, "อนุมัติอัตโนมัติ ({Channel}) ล้ม และหาเอกสาร {DocId} ไม่พบ", channel, documentId);
-            return new AutoApproveFailureOutcome(true, "", AutoApproveFailure.Message(channel, "(ไม่พบเอกสาร)", true, reason));
+            // สถานะจริงจากฐานข้อมูล — ApproveDocumentAsync ถอยค่าค้างแล้ว แต่ขั้นหลัง commit (แจ้งเตือน/e-Tax/การเรียนรู้) ล้มได้ทั้งที่อนุมัติแล้ว
+            var actual = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .Select(d => new { d.Status, d.DocumentNumber, d.DocumentType, d.IsSettlementReceipt, d.ReplacesDocumentId, d.ReplacementCarriesPostings })
+                .FirstOrDefaultAsync();
+            if (actual == null)
+            {
+                _logger.LogError(error, "อนุมัติอัตโนมัติ ({Channel}) ล้ม และหาเอกสาร {DocId} ไม่พบ", channel, documentId);
+                return new AutoApproveFailureOutcome(AutoApproveFailureKind.StillDraft, "",
+                    AutoApproveFailure.Message(channel, "(ไม่พบเอกสาร)", AutoApproveFailureKind.StillDraft, reason, DocumentStatus.Draft));
+            }
+            var hasLive = await _db.JournalEntries.AsNoTracking().AnyAsync(j =>
+                j.SourceDocumentId == documentId && j.CompanyId == companyId
+                && j.Status == JournalEntryStatus.Posted && j.OriginalEntryId == null && j.ReversedByEntryId == null);
+            // P1-B: สามสถานะ (+ มีผลแต่ไม่มี JE) — ตัวตัดสิน "ควรมี JE" ตัวเดียวกับเครื่องมือซ่อม/พรีวิว GL
+            var expects = DocumentJournalExpectation.ExpectsLiveJournal(actual.DocumentType, actual.Status,
+                actual.IsSettlementReceipt, actual.ReplacesDocumentId.HasValue && !actual.ReplacementCarriesPostings);
+            var kind = AutoApproveFailure.Classify(actual.Status, hasLive, expects);
+            var message = AutoApproveFailure.Message(channel, actual.DocumentNumber, kind, reason, actual.Status);
+            if (kind != AutoApproveFailureKind.Closed)   // ใบยกเลิก/ปฏิเสธ — ไม่เขียนหมายเหตุ
+            {
+                var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
+                if (doc != null)
+                {
+                    doc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(doc.InternalNotes, message);
+                    await _db.SaveChangesAsync();
+                }
+            }
+            _logger.LogWarning(error, "อนุมัติอัตโนมัติ ({Channel}) ไม่สำเร็จ {DocNo} ({Kind}): {Reason}",
+                channel, actual.DocumentNumber, kind, reason);
+            return new AutoApproveFailureOutcome(kind, actual.DocumentNumber, message);
         }
-        var stillDraft = AutoApproveFailure.IsStillDraft(actual.Status);
-        var message = AutoApproveFailure.Message(channel, actual.DocumentNumber, stillDraft, reason);
-        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
-        if (doc != null)
+        catch (Exception recordEx) when (recordEx is not OperationCanceledException)
         {
-            doc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(doc.InternalNotes, message);
-            await _db.SaveChangesAsync();
+            _logger.LogError(recordEx, "บันทึกหมายเหตุ 'อนุมัติอัตโนมัติไม่สำเร็จ' ของเอกสาร {DocId} ไม่ได้ ({Channel}) — เหตุเดิม: {Reason}",
+                documentId, channel, reason);
+            return new AutoApproveFailureOutcome(AutoApproveFailureKind.StillDraft, "",
+                $"⚠️ {AutoApproveFailure.NoteMarker} ({channel}) ไม่สำเร็จ: {reason} — ตรวจสถานะเอกสารที่หน้าเอกสาร (บันทึกหมายเหตุบนเอกสารไม่ได้)");
         }
-        _logger.LogWarning(error, "อนุมัติอัตโนมัติ ({Channel}) ไม่สำเร็จ {DocNo} (ยังเป็นร่าง={StillDraft}): {Reason}",
-            channel, actual.DocumentNumber, stillDraft, reason);
-        return new AutoApproveFailureOutcome(stillDraft, actual.DocumentNumber, message);
     }
 
     /// <inheritdoc/>
@@ -4281,12 +4302,29 @@ public partial class DocumentService : IDocumentService
                 && r.PeriodYear == when.Year && r.PeriodMonth == when.Month);
             pp36Recognized = doc.InputVatBecameClaimableAt != null || !string.IsNullOrWhiteSpace(doc.Pp36RdReceiptNumber);
         }
+        // ฝ่ายค้าน P1-A: ผลของการอนุมัติที่อยู่นอก AutoPost — มีข้อใดข้อหนึ่ง ⇒ เครื่องมือปฏิเสธ (ลง JE อย่างเดียวจะไม่ครบ)
+        var lineFacts = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.DocumentId == doc.Id && !l.IsDeleted && l.Document.CompanyId == companyId)
+            .Select(l => new { l.ProductCode, l.AccountId })
+            .ToListAsync();
+        var lineAccountIds = lineFacts.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
+        var hasFixedAssetLines = lineAccountIds.Count > 0 && await _db.ChartOfAccounts.AsNoTracking()
+            .AnyAsync(a => a.CompanyId == companyId && lineAccountIds.Contains(a.Id) && a.AccountCode.StartsWith("12"));
+        var sideEffects = MissingJournalRepair.SideEffectsOf(
+            hasSourceDocument: doc.RelatedDocumentId.HasValue,
+            hasWithholdingTax: doc.WithholdingTaxAmount > 0m,
+            hasStockLines: lineFacts.Any(l => !string.IsNullOrWhiteSpace(l.ProductCode)),
+            hasFixedAssetLines: hasFixedAssetLines,
+            replacesAnotherDocument: doc.ReplacesDocumentId.HasValue,
+            billsProject: doc.ProjectId.HasValue,
+            depositInvolved: doc.IsDeposit || !string.IsNullOrWhiteSpace(doc.DepositAppliedRef));
         return new MissingJournalFacts(
             doc.DocumentType, doc.Status, doc.IsSettlementReceipt,
             ReplacesWithoutPostings: doc.ReplacesDocumentId.HasValue && !doc.ReplacementCarriesPostings,
             HasLiveJournal: hasLive,
             LockedPeriodName: period != null && period.Status != FiscalPeriodStatus.Open ? period.Name : null,
-            Pp36Period: pp36Period, Pp36Remitted: pp36Remitted, Pp36Recognized: pp36Recognized);
+            Pp36Period: pp36Period, Pp36Remitted: pp36Remitted, Pp36Recognized: pp36Recognized,
+            SideEffects: sideEffects);
     }
 
     /// <inheritdoc/>
@@ -6710,6 +6748,9 @@ public partial class DocumentService : IDocumentService
                 // auto-create ด้วยค่า default (อายุ/วิธีตามประเภท) NeedsReview=true
                 await AutoRegisterFixedAssetsAsync(companyId, doc, approvedBy);
 
+                // ฝ่ายค้าน P2-6 (PP36): เคยอนุมัติอัตโนมัติไม่สำเร็จ แล้วอนุมัติสำเร็จรอบนี้ ⇒ ปิดหมายเหตุเดิมด้วย "แก้แล้ว" (ไม่ลบ — คงร่องรอย)
+                doc.InternalNotes = AutoApproveFailure.MarkResolved(doc.InternalNotes, DateTime.UtcNow, approvedBy);
+
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
@@ -7641,6 +7682,18 @@ public partial class DocumentService : IDocumentService
         using var txn = await _db.Database.BeginTransactionAsync();
         try
         {
+            // ฝ่ายค้าน P2-8 (PP36): ล็อกแถวเอกสาร (ตัวเดียวกับการอนุมัติ/เครื่องมือลงบัญชีย้อนหลัง) แล้วตัดสินซ้ำใต้ล็อก — กดซ้ำ/สองแท็บพร้อมกัน
+            // เดิมทั้งคู่ผ่านด่านข้างบนแล้วต่างกลับ JE + ลง AutoPost ⇒ JE คู่
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                documentId, companyId);
+            var lockedFlag = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .Select(d => d.IsForeignService).FirstAsync();
+            if (lockedFlag == toForeignService)
+                throw new InvalidOperationException(
+                    "เอกสารนี้ถูกเปลี่ยนการลงบัญชีไปแล้วโดยคำขออื่นระหว่างนี้ — รีเฟรชหน้าเอกสารแล้วตรวจรายการบัญชี");
+
             var postedJeIds = await _db.JournalEntries
                 .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId
                     && !j.IsDeleted && j.Status == JournalEntryStatus.Posted

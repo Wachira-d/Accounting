@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **453 ไฟล์ · 4,429 `[Fact]` + 700 `[Theory]` (3,115 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **453 ไฟล์ · 4,434 `[Fact]` + 701 `[Theory]` (3,125 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -1508,6 +1508,9 @@
 | JPG-14 | ใบซื้อ**ไม่ติ๊ก**บริการต่างประเทศ แต่ JE มี Cr 21912 | Error `JE-PP36-UNFLAGGED` · Cr 21912 เกิน VAT ประเมินเอง ⇒ `JE-VAT-OVER` · ใบปกติที่เงินไปกองบัญชีภาษียังถูกจับ |
 | JPG-15 | อนุมัติล้มกลางธุรกรรม (เช่น ด่าน JE) แล้วผู้เรียก SaveChanges ต่อ (PV เงินสดอัตโนมัติ · workflow · bulk · สแกน · LINE · recurring · รอบโอน) | ใบยังเป็นร่างจริง (ไม่มีเลข/Paid/JE ค้าง) · หมายเหตุภายใน "⚠️ อนุมัติอัตโนมัติ (…) ไม่สำเร็จ: เหตุผล" · คำตอบบอกเหตุผล · เทสต์ `Pp36ApprovalLoudFailureTests` + `Db/ApproveRevertDbTests` (P0-2) |
 | JPG-16 | 🔧 ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE (แผง 📒 / การ์ด 🩺) | งวดเปิด + ภ.พ.36 ยังไม่นำส่ง ⇒ JE ทรงเดียวกับตอนอนุมัติ + audit · งวดปิด/นำส่งแล้ว/รับรู้แล้ว/มี JE แล้ว ⇒ 409 พร้อมทางไปต่อ · ไม่มีสิทธิ์อนุมัติ ⇒ 403 |
+| JPG-18 | 🔧 ลงบัญชีย้อนหลังกับใบที่มีใบต้นทาง / WHT / บรรทัดสินค้า / ผัง 12xxx / ใบแทน / โครงการ / มัดจำ | 409 พร้อมรายการผลข้างเคียง + ทางไปต่อ (ยกเลิกแล้วสร้าง/อนุมัติใหม่ หรือใบสำคัญทั่วไป) · ไม่มีปุ่มในการ์ด 🩺 (ป้าย 🔒) · ใบเดี่ยวแบบ PV เงินสดตรงยังซ่อมได้ (ฝ่ายค้าน P1-A) |
+| JPG-19 | อนุมัติหลายใบที่มีใบยกเลิก/อนุมัติแล้วปน · อนุมัติล้มแล้วมาอนุมัติสำเร็จทีหลัง | ใบที่ไม่ใช่ร่างถูกข้ามและไม่นับว่าอนุมัติ · ใบยกเลิกไม่ถูกเขียนหมายเหตุ · หมายเหตุล้มเดิมถูกต่อท้าย "✅ แก้แล้ว: อนุมัติสำเร็จเมื่อ …" (ไม่ลบ) (P1-B/P2-6) |
+| JPG-20 | integration `expense.created` / `certificate_in_lieu.created` ที่ mapping ลง JE ไม่ได้ | ไม่มีใบเกิด · sync log Failed · `INTEGRATION-NO-JE` (P2-4) · invoice/CN/DN ยังเก็บใบ + `[ยังไม่ลงบัญชี]` ตามเดิม |
 | JPG-17 | integration `payment_voucher.created` ที่ลง JE ไม่ได้ (ไม่มีผังเงินสด/ภาษีซื้อ/WHT · ด่านโครงสร้าง) | ไม่มีใบเกิด (rollback) · sync log Failed · คำตอบ `success:false` พร้อมเหตุผล `INTEGRATION-PV-NO-JE` (P0-3) |
 
 ### เลขที่/วันที่ "ใบลดหนี้จากผู้ขาย" (CN/DN ฝั่งซื้อ)

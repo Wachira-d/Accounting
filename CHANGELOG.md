@@ -4494,3 +4494,15 @@ _รอบ 203 ทีม F3 รวมกับทีม F2 (2026-10-02) — pred
 - TODO ของ F2: `DocumentService.Pp36SettledReasonAsync` (ด่านใบลด/เพิ่มหนี้ E-7) ตัดสิน "ต่อใบ" ด้วย `Pp36Ledger.RemittedStatusAsync` ตัวเดียวกับด่านยกเลิก/ปลดธง/ปรับยอด
   (`ChangeBlocksAsync`) — เดิมระดับงวด ⇒ ใบที่อนุมัติหลังนำส่งถูกปฏิเสธเกิน · ข้อความเหตุ `Pp36Lifecycle.SettledReason` ตัวเดียว
 - required_call_site +3 กติกา (IsReverseCharge · Pp36SettledReasonAsync · LoadDocsCoreAsync) — commit 92d1f4da_
+
+_รอบ 202 PP36_REVIEW ทีม F1 รอบสอง — แก้ผลฝ่ายค้านบนงาน 8da202b8:
+- **P1-A** เครื่องมือ "ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE" ปฏิเสธใบที่การอนุมัติมีผลนอก JE (`MissingJournalRepair.SideEffectsOf`: ใบต้นทาง · WHT · สินค้า · ผัง 12xxx ·
+  ใบแทน · โครงการ · มัดจำ) พร้อมทางไปต่อ · ใบเดี่ยวแบบ PV-20260901-0001 ยังซ่อมได้
+- **P1-B** `AutoApproveFailureKind` 4 สถานะ (ร่าง · มีผล · มีผลแต่ไม่มี JE · ยกเลิก/ปฏิเสธ) · ไม่เขียนหมายเหตุใบปิด · BulkApprove ตรวจสถานะก่อนเรียก + นับเฉพาะที่อนุมัติจริง
+- **P2-1** ตัวถอยคืนเฉพาะช่องที่ผู้เรียกแก้ · **P2-3** ตัวบันทึกหมายเหตุไม่โยน (ข้อความสำรอง + LogError) · **P2-6** อนุมัติสำเร็จภายหลังต่อท้าย "✅ แก้แล้ว"
+- **P2-4** integration expense + certificate_in_lieu ธุรกรรมเดียว (`RunAtomicCreateAsync` · `PostMappingJournalOrThrowAsync` · `INTEGRATION-NO-JE`) · CMS ยืนยันชำระ + แพลตฟอร์ม 3 ทาง
+  ล้มดังบนเอกสาร · invoice/CN/DN คงเส้นเดิม (รอเจ้าของ — ภาษีขาย)
+- **P2-5** ตัวสแกน DOC-NO-JE เงื่อนไขเดียวกับเครื่องมือ (ลบสำเนา `JePostingTypes`) · ปุ่ม 🔧 จาก `canRepair` · **P2-8** reclassify ต่างประเทศล็อกแถว + ตัดสินซ้ำ
+- **ไม่ได้ทำ P2-7** (ต้องใช้ `ForeignServiceVat.PayeeAmount` ของทีม F2 — merge F2 เข้า worktree ถูกปฏิเสธ)
+- เทสต์ออฟไลน์ +5 เมธอด (Kind Theory 7 · ซ่อมได้ใบเดี่ยว · ผลข้างเคียง Theory 7 · ปิดหมายเหตุ 2 · ถอยเฉพาะช่องที่แก้) · Db +1 · required_call_site ปรับ 5 + เพิ่ม 11 กติกา —
+  commit 5e797b83_
