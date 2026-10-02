@@ -1520,6 +1520,9 @@ public class PayrollService : IPayrollService
                     notice = $"คิดกองทุนเงินทดแทนของพนักงานคนนี้ใหม่จากฐาน ปกส. ที่แก้ ({d.SocialSecurityBase:N2} บาท): "
                         + $"{wcBefore:N2} → {d.WorkersCompensation:N2} บาท — ถ้าค่าจ้างตาม ม.5 ต่างจากฐาน ปกส. ให้คำนวณรอบใหม่แทน";
             }
+            // รอบ 202: ฐาน ปกส. มากกว่ารายได้งวดนี้ ⇒ บอก (ไม่บล็อก) — ตัวตัดสินเดียวกับ ➕ เพิ่มพนักงาน
+            var ssoAboveWages = Accounting.Helpers.PayrollSsoFlagGuard.BaseAboveWagesNotice(d.SocialSecurityBase, d.GrossIncome);
+            if (ssoAboveWages != null) notice = notice == null ? ssoAboveWages : notice + " · " + ssoAboveWages;
 
             // ★ X5: รายได้/ภาษีสะสม (YTD บนสลิป) ตามยอดที่แก้ — query เดียวกับเส้นคำนวณ
             var prior = await LoadPriorYtdDetailsAsync(companyId, run.Year, run.Month, new[] { employeeId });
@@ -1705,6 +1708,9 @@ public class PayrollService : IPayrollService
                     settings?.WorkersCompensationEnabled == true, settings?.WorkersCompensationRatePercent ?? 0m,
                     emp.IsSubjectToSocialSecurity))
                 notices.Add("รอบนี้นำเข้าจากระบบนอก — ไม่ได้คิดกองทุนเงินทดแทนให้แถวที่เพิ่ม (คงศูนย์เท่าแถวนำเข้าอื่น)");
+            // รอบ 202: ฐาน ปกส. มากกว่ารายได้งวดนี้ ⇒ บอก (ไม่บล็อก) — ตัวตัดสินเดียวกับ ✏️ แก้ยอด
+            var ssoAboveWages = Accounting.Helpers.PayrollSsoFlagGuard.BaseAboveWagesNotice(d.SocialSecurityBase, d.GrossIncome);
+            if (ssoAboveWages != null) notices.Add(ssoAboveWages);
 
             // ★ X5: รายได้/ภาษีสะสม (YTD บนสลิป) — query เดียวกับเส้นคำนวณ
             var prior = await LoadPriorYtdDetailsAsync(companyId, run.Year, run.Month, new[] { emp.Id });

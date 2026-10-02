@@ -1917,6 +1917,9 @@ const Page = {
     { k: 'providentFundEmployer', l: 'กองทุนสำรองเลี้ยงชีพ (นายจ้าง)', grp: 'er' },
   ],
   _edDerived: ['socialSecurityEmployee', 'socialSecurityEmployer'],
+  // ช่องที่พิมพ์ไม่ได้ในโหมดเพิ่ม — เหลือแค่ฝั่งนายจ้าง (คิดจากฝั่งลูกจ้างตามสัดส่วนอัตราเสมอ) · ฝั่งลูกจ้างพิมพ์ได้แล้วระบบย้อนหาฐานให้
+  // (เหมือนโหมดแก้ยอด — ผู้ใช้รายงาน "แก้ไขยอดประกันสังคมไม่ได้") แต่ยังไม่ส่งยอดสมทบ: ส่งฐานที่ย้อนได้ เซิร์ฟเวอร์คิดสองฝั่งจากฐานเอง
+  _edAddReadonly: ['socialSecurityEmployer'],
   _edAddRequired: ['withholdingTax', 'socialSecurityBase'],
 
   /** ช่องรายได้/หัก/ส่วนนายจ้าง/ฐาน ปกส. ของโมดัลรายคน — **ตัวเดียว** ของ ✏️ แก้ยอด และ ➕ เพิ่มพนักงาน
@@ -1925,10 +1928,11 @@ const Page = {
    *  @param addMode true = โหมดเพิ่ม: ช่องที่คิดจากฐานเป็น readonly · ช่องบังคับติดดาว · จำว่าผู้ใช้แตะช่องไหน */
   _edInputsHtml(fields, valOf, addMode) {
     const inputRow = f => {
-      const ro = addMode && this._edDerived.includes(f.k);
+      const ro = addMode && this._edAddReadonly.includes(f.k);
+      const backSolve = addMode && f.k === 'socialSecurityEmployee';
       const req = addMode && this._edAddRequired.includes(f.k);
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <label style="flex:1;font-size:13px">${f.l}${req ? ' <span style="color:#dc2626">*</span>' : ''}${ro ? ' <span style="font-size:11px;color:#64748b">(คิดจากฐานให้)</span>' : ''}</label>
+        <label style="flex:1;font-size:13px">${f.l}${req ? ' <span style="color:#dc2626">*</span>' : ''}${ro ? ' <span style="font-size:11px;color:#64748b">(คิดจากฐานให้)</span>' : ''}${backSolve ? ' <span style="font-size:11px;color:#64748b">(แก้ได้ — ระบบปรับฐานให้)</span>' : ''}</label>
         <input type="number" step="0.01" min="0" id="ed_${f.k}" value="${Layout.esc(valOf(f.k))}"${ro ? ' readonly tabindex="-1"' : ''}
           oninput="this.dataset.userTouched=1;Page._edRecalc('${f.k}')" style="width:140px;text-align:right" class="form-input"></div>`
         // 🧮 คำนวณภาษีให้ (รอบ 201 PR2 · ข้อ 73): เซิร์ฟเวอร์คิดด้วยเครื่องคิดภาษีตัวเดียวกับคำนวณรอบ แล้วเติมเป็นค่าแนะนำ
@@ -1949,8 +1953,9 @@ const Page = {
         ตัวเลขนี้คือช่อง <b>"ค่าจ้าง"</b> ที่จะไปอยู่ในไฟล์ สปส.1-10 — แก้แล้วระบบคิดเงินสมทบ
         <b>ทั้งฝั่งลูกจ้างและนายจ้าง</b> ใหม่จากฐานนี้ให้เอง (สองฝั่งต้องมาจากฐานเดียวกันเสมอ)<br>
         ค่าจ้างตาม ม.5 ไม่รวมเบี้ยเลี้ยง/ค่าน้ำมันเหมาจ่ายที่ไม่ใช่ค่าตอบแทนการทำงาน จึงอาจน้อยกว่ารายได้รวม
-        ${addMode ? '<br><b>ใส่ 0 ถ้าพนักงานไม่อยู่ในระบบประกันสังคม</b> — ช่องนี้ต้องกรอก ระบบไม่เดาให้' : ''}
-      </div>`;
+        ${addMode ? '<br><b>ใส่ 0 ถ้าพนักงานไม่อยู่ในระบบประกันสังคม</b> — ช่องนี้ต้องกรอก · ค่าเริ่มต้นตามช่องเงินเดือนของงวดนี้จนกว่าจะแก้ฐานเอง' : ''}
+      </div>
+      <div id="ed_ssoWarn" style="display:none;margin-top:6px;padding:6px 10px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:12px;color:#92400e;line-height:1.6"></div>`;
   },
 
   // ===== ➕ เพิ่มพนักงานเข้ารอบ (ใช้โมดัลเดียวกับแก้ยอด) =====
@@ -2031,7 +2036,7 @@ const Page = {
       if (wht && wht.dataset.autoSrc === 'taxPreview' && !wht.dataset.userTouched) {
         wht.value = ''; delete wht.dataset.autoSrc;
       }
-      const tb = document.getElementById('ed_taxBasis'); if (tb) tb.innerHTML = '';
+      const tb = document.getElementById('ed_taxBasis'); if (tb) { tb.innerHTML = ''; delete tb.dataset.stale; }
       this._edTaxSuggest = null;
     }
     this._editEmp = e ? e.id : null;
@@ -2052,12 +2057,18 @@ const Page = {
     const salary = monthly ? e.baseSalary : '';
     setDefault('baseSalary', salary);
     setDefault('socialSecurityBase', e.isSubjectToSocialSecurity ? salary : 0);
+    // ฐาน ปกส. ที่ระบบเติม "ตามเงินเดือน" — แก้ช่องเงินเดือน (เช่น เข้างานกลางเดือน 30,000 → 7,000) แล้วฐานตามให้จนกว่าผู้ใช้จะแก้ฐานเอง
+    // (เดิมฐานค้างเงินเดือนเต็ม ⇒ ปกส. 875 ทั้งที่ค่าจ้างงวดนี้ 7,000 และช่องยอดสมทบแก้ไม่ได้)
+    const baseEl = document.getElementById('ed_socialSecurityBase');
+    if (baseEl && !baseEl.dataset.userTouched) {
+      if (e.isSubjectToSocialSecurity) baseEl.dataset.autoSrc = 'salary'; else delete baseEl.dataset.autoSrc;
+    }
     if (dn) {
       const parts = [];
       if (!monthly) parts.push('พนักงานคนนี้รับค่าจ้างไม่ใช่รายเดือน — กรอกค่าจ้างของงวดนี้เอง (ระบบไม่เติมให้)');
       else parts.push('เติมเงินเดือนจากข้อมูลพนักงานเป็น<b>ค่าเริ่มต้น</b> — ถ้าเข้างาน/ออกกลางงวด ให้แก้เป็นยอดที่จ่ายจริง');
       parts.push(e.isSubjectToSocialSecurity
-        ? 'ฐาน ปกส. ค่าเริ่มต้น = เงินเดือน (อยู่ในระบบประกันสังคม ม.33) — ตรวจก่อนบันทึก'
+        ? 'ฐาน ปกส. ค่าเริ่มต้น = ช่องเงินเดือนของงวดนี้ (อยู่ในระบบประกันสังคม ม.33) — แก้เงินเดือนแล้วฐานตามให้ · ตรวจก่อนบันทึก'
         : 'ฐาน ปกส. ค่าเริ่มต้น = 0 (ข้อมูลพนักงานระบุว่าไม่อยู่ในระบบประกันสังคม)');
       if (e.hasProvidentFund) parts.push('พนักงานคนนี้อยู่ในกองทุนสำรองเลี้ยงชีพ — กรอกยอดเงินสะสม/สมทบเอง');
       dn.innerHTML = '💡 ' + parts.join(' · ');
@@ -2178,6 +2189,7 @@ const Page = {
       this._edTaxSuggest = Number(p.suggestedWithholdingTax || 0);
       if (el && !typed) { el.value = this._edTaxSuggest.toFixed(2); el.dataset.autoSrc = 'taxPreview'; this._edRecalc(); }
       if (box) {
+        delete box.dataset.stale;
         box.innerHTML = `<div style="padding:8px 10px;background:#f0fdfa;border:1px solid #99f6e4;border-radius:8px">`
           + `<b>ระบบเสนอภาษีงวดนี้ ${Layout.money(this._edTaxSuggest)}</b>`
           + (typed ? ` — ช่องภาษีมีค่าที่คุณพิมพ์เองอยู่แล้ว จึงไม่ทับ <button type="button" class="btn btn-sm btn-secondary" onclick="Page._edUseTaxSuggest()">ใช้ค่าที่ระบบเสนอ</button>`
@@ -2253,11 +2265,42 @@ const Page = {
   },
 
   _edRecalc(changed) {
+    // ➕ ฐาน ปกส. ที่ระบบเติมตามเงินเดือน ⇒ ตามช่องเงินเดือนของงวดนี้ (ผู้ใช้แก้ฐาน/ยอดสมทบเองแล้ว = ไม่ตาม · ค่าผู้ใช้ชนะ)
+    if (changed === 'baseSalary' && this._edMode === 'add') {
+      const baseEl = document.getElementById('ed_socialSecurityBase');
+      if (baseEl && baseEl.dataset.autoSrc === 'salary' && !baseEl.dataset.userTouched) {
+        this._edSet('socialSecurityBase', this._edVal('baseSalary'));
+        changed = 'socialSecurityBase';
+      }
+    }
+    if (changed === 'socialSecurityEmployee') {
+      // พิมพ์ยอดสมทบเอง = ผู้ใช้กำหนดฐานผ่านยอดนั้น ⇒ ฐานเลิกตามเงินเดือน
+      const baseEl = document.getElementById('ed_socialSecurityBase');
+      if (baseEl) delete baseEl.dataset.autoSrc;
+    }
     if (changed === 'socialSecurityBase' || changed === 'socialSecurityEmployee')
       this._edSyncSso(changed);
     const inc = ['baseSalary','overtimePay','allowances','commission','bonus','otherIncome'].reduce((s,k)=>s+this._edVal(k),0);
     const ded = ['socialSecurityEmployee','withholdingTax','providentFundEmployee','loanDeduction','otherDeductions'].reduce((s,k)=>s+this._edVal(k),0);
     const net = Math.round((inc - ded) * 100) / 100;
+    // ฐาน ปกส. มากกว่าค่าจ้างงวดนี้ — ค่าจ้างตาม ม.33 คือที่จ่ายจริงในงวด ⇒ เตือน (ไม่บล็อก: เซิร์ฟเวอร์เป็นผู้ตัดสิน)
+    const ssoWarn = document.getElementById('ed_ssoWarn');
+    if (ssoWarn) {
+      const base = this._edVal('socialSecurityBase');
+      const over = base > 0 && inc > 0 && base > inc + 0.005;
+      ssoWarn.style.display = over ? 'block' : 'none';
+      if (over) ssoWarn.innerHTML = `⚠️ ฐาน ปกส. ${Layout.money(base)} มากกว่ารายได้งวดนี้ ${Layout.money(inc)} — `
+        + 'ค่าจ้างที่ใช้คิดเงินสมทบคือค่าจ้างที่จ่ายจริงในงวด ตรวจช่อง "ฐานค่าจ้างประกันสังคม" อีกครั้ง';
+    }
+    // ภาษีที่ 🧮 เติมไว้คิดจากยอดก่อนแก้ — ยอดเปลี่ยนแล้วบอกให้กดใหม่ (ไม่ล้างค่า: ผู้ใช้ตัดสินเอง)
+    if (changed && changed !== 'withholdingTax' && !['loanDeduction', 'otherDeductions'].includes(changed)) {
+      const wht = document.getElementById('ed_withholdingTax');
+      const tb = document.getElementById('ed_taxBasis');
+      if (wht && wht.dataset.autoSrc === 'taxPreview' && tb && tb.innerHTML && !tb.dataset.stale) {
+        tb.dataset.stale = '1';
+        tb.insertAdjacentHTML('afterbegin', '<div style="color:#b45309;margin-bottom:4px">⚠️ ยอดบนจอเปลี่ยนหลังคำนวณภาษี — กด “🧮 คำนวณภาษีให้” อีกครั้ง</div>');
+      }
+    }
     document.getElementById('edGross').textContent = Layout.money(inc);
     document.getElementById('edDed').textContent = Layout.money(ded);
     const netEl = document.getElementById('edNet');

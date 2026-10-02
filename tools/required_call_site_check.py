@@ -3478,6 +3478,13 @@ RULES += [
     dict(file="Services/Implementations/DocumentTemplateService.cs", method="ApplyUpdateToTemplate",
          must=["CopyLabelPositionOrThrow("],
          why="รอบ 202 เส้นแก้ไขเทมเพลตเดินด่านเดียวกับเส้นสร้าง"),
+    # รอบ 202: ฐาน ปกส. มากกว่ารายได้งวด ⇒ บอกในข้อความผลลัพธ์ทั้ง ➕ เพิ่ม และ ✏️ แก้ยอด (ตัวตัดสินเดียว)
+    dict(file="Services/Implementations/PayrollService.cs", method="AddPayrollDetailAsync",
+         must=["PayrollSsoFlagGuard.BaseAboveWagesNotice(d.SocialSecurityBase, d.GrossIncome)"],
+         why="รอบ 202 เพิ่มพนักงานกลางเดือนแล้วฐาน ปกส. ค้างเงินเดือนเต็ม ⇒ หักเกิน — ต้องบอกผู้ใช้"),
+    dict(file="Services/Implementations/PayrollService.cs", method="UpdatePayrollDetailAsync",
+         must=["PayrollSsoFlagGuard.BaseAboveWagesNotice(d.SocialSecurityBase, d.GrossIncome)"],
+         why="รอบ 202 ทางแก้ยอดเดินด่านเดียวกับทางเพิ่ม"),
     # A-PL7 (team-Z Z-3): CSS กำหนดเองของธีมผ่านตัวกรองฝั่ง render ทุกทางออก
     dict(file="Services/Implementations/CmsRenderingService.cs", method="GenerateThemeCssFromEntity",
          must=["CssThemeValue.SafeCustomCss("], forbid=["sb.AppendLine(theme.CustomCss)"],
