@@ -161,4 +161,28 @@ public class LodgingVoucherBuilderTests
         Assert.DoesNotContain("รายการที่ยกเลิกแล้ว", html);
         Assert.DoesNotContain("999.00", html);
     }
+    // ── รอบ 202 ทีม LS (คำตัดสินข้อ 121): เงื่อนไขเช็คอินก่อน/เช็คเอาต์หลังเวลา = ผู้อ่านจริงของ EarlyCheckInHours/LateCheckOutHours ──
+    [Fact]
+    public void เงื่อนไขเข้าออกนอกเวลาถูกพิมพ์บนหลักฐานการจอง_และหนีอักขระ_HTML()
+    {
+        var r = Sample();
+        r.StayConditions = LodgingStayConditions.Lines("14:00", "12:00", 2, 300m, 3, 0m);
+        r.StayConditions.Add("<script>x</script>");
+        var html = LodgingVoucherBuilder.BuildHtml(r);
+        Assert.Contains("เช็คอินก่อนเวลา (14:00 น.) ได้สูงสุด 2 ชม.", html);
+        Assert.Contains("ค่าธรรมเนียม 300.00 บาท", html);
+        Assert.Contains("เช็คเอาต์หลังเวลา (12:00 น.) ได้สูงสุด 3 ชม. — ไม่มีค่าธรรมเนียม", html);
+        Assert.DoesNotContain("<script>x</script>", html);
+    }
+
+    [Fact]
+    public void ที่พักไม่มีบริการเข้าออกนอกเวลา_ไม่พิมพ์เงื่อนไข()
+    {
+        var r = Sample();
+        r.StayConditions = LodgingStayConditions.Lines("14:00", "12:00", 0, 300m, 0, 500m);
+        var html = LodgingVoucherBuilder.BuildHtml(r);
+        Assert.Empty(r.StayConditions);
+        Assert.DoesNotContain("เช็คอินก่อนเวลา", html);
+        Assert.DoesNotContain("เช็คเอาต์หลังเวลา", html);
+    }
 }

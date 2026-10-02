@@ -127,6 +127,9 @@ td.r,th.r{text-align:right}
         sb.Append($"<div class=\"kv\"><span>ผู้เข้าพัก</span><b>{E(LodgingOccupancy.Summary(LodgingOccupancy.Totals(r.Adults, r.Children, r.Infants, r.Rooms.Sum(x => x.ExtraBeds))))}</b></div>");
         if (!string.IsNullOrWhiteSpace(r.ArrivalTime))
             sb.Append($"<div class=\"kv\"><span>เวลาที่คาดว่าจะถึง</span><b>{E(r.ArrivalTime)}</b></div>");
+        // เงื่อนไขเช็คอินก่อน/เช็คเอาต์หลังเวลา (คำตัดสินข้อ 121 · ข้อความจาก LodgingStayConditions) — ว่าง = ไม่มีบริการ ไม่พิมพ์
+        foreach (var line in r.StayConditions)
+            sb.Append($"<div style=\"font-size:10.5px;color:#6B7280;margin-top:3px\">{E(line)}</div>");
         sb.Append("</div></div>");
 
         // ── รายการห้อง/บริการเสริม ──

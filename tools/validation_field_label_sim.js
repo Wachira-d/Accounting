@@ -79,14 +79,17 @@ function buildPage() {
 }
 
 // ───────── โหลด API จากไฟล์จริง ─────────
-function loadApi(root) {
+function loadApi(root, listeners) {
   const src = fs.readFileSync(path.join(__dirname, '..', 'Accounting', 'wwwroot', 'js', 'api.js'), 'utf8');
+  const doc = {
+    querySelector: (s) => root.querySelector(s),
+    querySelectorAll: (s) => root.querySelectorAll(s),
+  };
+  // รอบ 202 ทีม LS: ส่ง listeners มา = จำลองเบราว์เซอร์ที่มี addEventListener (เก็บ handler ไว้ยิงเองในเทสต์)
+  if (listeners) doc.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
   const sandbox = {
     localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
-    document: {
-      querySelector: (s) => root.querySelector(s),
-      querySelectorAll: (s) => root.querySelectorAll(s),
-    },
+    document: doc,
     CSS: { escape: (s) => String(s).replace(/([^\w-])/g, '\\$1') },
     fetch: () => { throw new Error('sim ไม่ควรยิง network'); },
     window: {}, console,
@@ -166,6 +169,27 @@ function check(name, cond, extra = '') {
   const api = loadApi(page.root);
   check('fields ว่าง → คืน ""', api.describeFieldErrors([], []) === '');
   check('fields ไม่ใช่อาร์เรย์ → คืน ""', api.describeFieldErrors(undefined, undefined) === '');
+}
+
+{
+  // S-P2-6 (รอบ 202 ทีม LS): ขอบแดงต้องหายเมื่อผู้ใช้แก้ช่องนั้น + หลังบันทึกสำเร็จ — และต้อง**ไม่**ล้างช่องอื่นที่ยังผิด
+  console.log('ทิศที่ 5 — ขอบแดงหายเมื่อแก้ช่องนั้น · ช่องอื่นที่ยังไม่แก้ยังแดง · ล้างทั้งฟอร์มหลังบันทึกสำเร็จ');
+  const page = buildPage();
+  const listeners = {};
+  const api = loadApi(page.root, listeners);
+  check('ฟัง input/change ระดับ document', (listeners.input || []).length === 1 && (listeners.change || []).length === 1);
+  api.describeFieldErrors(['code', 'name'], ['x', 'y']);
+  check('สองช่องแดงก่อนแก้', page.codeInput.classList.contains('has-error') && page.nameInput.classList.contains('has-error'));
+  listeners.input[0]({ target: page.codeInput });
+  check('พิมพ์ในช่องรหัส → ช่องรหัสหายแดง', !page.codeInput.classList.contains('has-error'));
+  check('aria-invalid ถูกถอด', page.codeInput.attrs['aria-invalid'] === undefined);
+  check('ช่องชื่อที่ยังไม่แตะยังแดง (ทิศตรงข้าม)', page.nameInput.classList.contains('has-error'));
+  listeners.change[0]({ target: null });
+  check('event ไม่มี target ไม่พัง', page.nameInput.classList.contains('has-error'));
+  api.clearFieldErrors(page.panel);
+  check('clearFieldErrors(root) หลังบันทึกสำเร็จ → ไม่เหลือแดง', !page.nameInput.classList.contains('has-error'));
+  const quiet = loadApi(buildPage().root);
+  check('สภาพแวดล้อมไม่มี addEventListener → ไม่พัง', typeof quiet.clearFieldErrors === 'function');
 }
 
 console.log(fail === 0 ? '\n✅ validation_field_label_sim ผ่านทุกทิศ'

@@ -135,6 +135,9 @@ public partial class LodgingService
             ConfirmationMessage = prop.ConfirmationMessage, HouseRules = prop.HouseRules,
             CheckInTime = Time(prop.CheckInTime), CheckOutTime = Time(prop.CheckOutTime), PropertyPhone = prop.Phone, PropertyLineId = prop.LineId,
             PropertyAddress = prop.Address, PropertyMapUrl = prop.MapUrl,
+            // คำตัดสินข้อ 121 (รอบ 202 ทีม LS): early/late hours = เงื่อนไขที่แขกเห็นบนหลักฐานการจอง (ไม่บังคับเวลา)
+            StayConditions = LodgingStayConditions.Lines(Time(prop.CheckInTime), Time(prop.CheckOutTime),
+                prop.EarlyCheckInHours, prop.EarlyCheckInFee, prop.LateCheckOutHours, prop.LateCheckOutFee),
             Rooms = r.Rooms.Select(x => new LodgingReservationRoomDto
             {
                 Id = x.Id, RoomTypeId = x.RoomTypeId, RoomTypeName = x.RoomTypeName, UnitId = x.UnitId, UnitNumber = x.Unit?.Number,

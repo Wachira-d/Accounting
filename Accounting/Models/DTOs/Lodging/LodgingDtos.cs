@@ -39,8 +39,13 @@ public class LodgingPropertyDto
     public List<string> Images { get; set; } = new();
     public List<string> Amenities { get; set; } = new();
 
-    public string CheckInTime { get; set; } = "14:00";
-    public string CheckOutTime { get; set; } = "12:00";
+    /// <summary>เวลาเช็คอิน "HH:mm" — <b>ไม่บังคับ</b> (คำตัดสินข้อ 116 · รอบ 202 ทีม LS): ว่าง = 14:00 · ไม่ว่างแต่อ่านไม่ได้ ⇒ ปฏิเสธพร้อมข้อความ
+    /// (<c>Helpers/LodgingTimeOfDay.Parse</c>) · ต้องเป็น <c>string?</c> มิฉะนั้น ASP.NET ใส่ [Required] โดยปริยาย ⇒ ตีกลับเป็นอังกฤษ
+    /// ทั้งที่ฟอร์มไม่มีดอกจันและ service มีค่าเริ่มต้นอยู่แล้ว (S-P1-1 — สองชั้นขัดกัน)</summary>
+    public string? CheckInTime { get; set; } = LodgingSeedDefaults.CheckIn;
+    /// <summary>เวลาเช็คเอาต์ "HH:mm" — ไม่บังคับ · ว่าง = 12:00 (กติกาเดียวกับ <see cref="CheckInTime"/>)</summary>
+    public string? CheckOutTime { get; set; } = LodgingSeedDefaults.CheckOut;
+    /// <summary>เช็คอินก่อนเวลาได้กี่ชม. (0 = ไม่มีบริการ) — <b>เงื่อนไขที่แสดงให้แขก</b> (หลักฐานการจอง · <c>LodgingStayConditions</c>) ไม่บังคับเวลาในระบบ (คำตัดสินข้อ 121)</summary>
     public int EarlyCheckInHours { get; set; }
     public decimal EarlyCheckInFee { get; set; }
     public int LateCheckOutHours { get; set; }
@@ -120,6 +125,13 @@ public class LodgingPropertyDto
     public List<LodgingDepositKindOption>? DepositKindOptions { get; set; }
     /// <summary>คำอธิบายหลัก tax point ของมัดจำ (ย่อหน้าเดียวกับหน้าตั้งค่าบริษัท)</summary>
     public string? DepositVatExplanation { get; set; }
+    /// <summary>รอบ 202 ทีม LS (W-01) — แขกจองผ่านเว็บได้จริงไหม · ตัวตัดสิน <c>Helpers/LodgingPublicReadiness.Evaluate</c> ·
+    /// ออกเป็น "ชื่อ" (Live · NotLinked · SiteMissing · Inactive · OnlineOff · NoRooms) — response-only (หน้าเว็บไม่ส่งกลับ)</summary>
+    public LodgingPublicBookingStatus? PublicBookingStatus { get; set; }
+    /// <summary>ข้อความไทยของสถานะข้างบน (เหตุผล)</summary>
+    public string? PublicBookingMessage { get; set; }
+    /// <summary>ทางแก้ (null เมื่อพร้อมแล้ว)</summary>
+    public string? PublicBookingFix { get; set; }
 }
 
 /// <summary>ตัวเลือกประเภทเงินมัดจำ 1 แถวสำหรับหน้าตั้งค่าที่พัก (รอบ 194) — enum ออกเป็นชื่อ · ป้ายไทยจากเซิร์ฟเวอร์</summary>
@@ -159,12 +171,18 @@ public class LodgingRoomTypeDto
     public int MaxAdults { get; set; } = 2;
     public int MaxChildren { get; set; } = 1;
     public int MaxOccupancy { get; set; } = 3;
+    /// <summary>เพิ่มเตียงเสริม/คนเสริมได้ไหม (คำตัดสินเจ้าของข้อ 123) — ติ๊กแล้วต้องมี <see cref="MaxExtraBeds"/> ≥ 1 และ <see cref="ExtraBedPrice"/>
+    /// (ตัวตัดสิน <c>LodgingSettingsRules.NormalizeExtraBed</c>)</summary>
     public bool AllowExtraBed { get; set; }
+    /// <summary>คนเสริมสูงสุดต่อห้อง</summary>
     public int MaxExtraBeds { get; set; }
     public LodgingPricingMode PricingMode { get; set; } = LodgingPricingMode.PerUnit;
     public decimal BaseRate { get; set; }
     public decimal? ExtraGuestPrice { get; set; }
+    /// <summary>ราคาต่อคนเสริม/คืน (บาท) · 0 = ไม่คิดเงิน · ว่าง = ใช้ได้เฉพาะเมื่อไม่รับเตียงเสริม</summary>
     public decimal? ExtraBedPrice { get; set; }
+    /// <summary>response-only — ป้ายสรุปเตียงเสริมบนการ์ดห้อง (<c>LodgingSettingsRules.ExtraBedSummary</c>) · หน้าเว็บแสดงอย่างเดียว</summary>
+    public string? ExtraBedSummary { get; set; }
     public int? MinNights { get; set; }
     public bool IncludesBreakfast { get; set; }
     public Guid? ProductId { get; set; }
@@ -623,6 +641,9 @@ public class LodgingReservationResponse
     public string? HouseRules { get; set; }
     public string CheckInTime { get; set; } = "14:00";
     public string CheckOutTime { get; set; } = "12:00";
+    /// <summary>รอบ 202 ทีม LS (คำตัดสินข้อ 121) — เงื่อนไขเช็คอินก่อน/เช็คเอาต์หลังเวลา (ข้อความจาก <c>Helpers/LodgingStayConditions</c>) ·
+    /// ว่าง = ที่พักไม่มีบริการนั้น · หลักฐานการจองพิมพ์ตามนี้</summary>
+    public List<string> StayConditions { get; set; } = new();
     public string? PropertyPhone { get; set; }
     public string? PropertyLineId { get; set; }
     // ที่อยู่/แผนที่ — แขกต้องรู้ว่าไปที่ไหน · จำเป็นบนหลักฐานการจองที่พิมพ์เก็บ

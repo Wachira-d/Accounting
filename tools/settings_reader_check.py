@@ -80,6 +80,12 @@ EXCLUDED_CS = re.compile(r'(^Accounting/Models/Entities/|^Accounting/Models/DTOs
 
 # ตัวแปรที่ถือ "คำขอ" (DTO) — ชื่อ property ซ้ำกับ entity แต่ไม่ใช่การอ่านค่าตั้ง
 REQUEST_RECEIVERS = {'request', 'req', 'dto', 'body', 'payload', 'input', 'model', 'cmd', 'command', 'update', 'upd'}
+# ชื่อสั้นที่ "เป็นคำขอเฉพาะบางที่" (รอบ 202 ทีม LS): `d` เป็นพารามิเตอร์ DTO ของ `LodgingService.Apply(LodgingProperty p,
+# LodgingPropertyDto d)` ⇒ `Math.Max(0, d.EarlyCheckInHours)` ถูกนับเป็น "ผู้อ่าน" ทั้งที่เป็นแค่การรับค่าจากคำขอ (ค่าตั้งที่ไม่มีผู้อ่าน
+# หลุด baseline) · แต่ `d` ก็เป็นตัวแปร lambda ของ entity ทั่วเรพ (`.Where(d => d.IsActive)`) ⇒ ใส่ใน REQUEST_RECEIVERS ตรง ๆ = ฟ้องผิด ·
+# นับเป็นคำขอ**เฉพาะเมื่อการประกาศ `d` ที่ใกล้ที่สุดก่อนจุดอ่าน** มีชนิดลงท้าย Dto/Request/… (lambda/var ที่ใกล้กว่า = ไม่ใช่คำขอ)
+CONDITIONAL_REQUEST_RECEIVERS = {'d'}
+_REQUEST_TYPE_RE = re.compile(r'(Dto|DTO|Request|Req|Command|Payload|Body)\??$')
 
 # ชนิดที่สร้างเพื่อ "ส่งออก" (echo) — ค่าที่อยู่ในนั้นไม่ใช่การใช้ค่า
 # `new XResponse(` · `new XResponse {` · `new XResponse() {`
@@ -256,6 +262,19 @@ def _receiver_is_entity(text, recv):
     return False
 
 
+def _receiver_is_request_typed(text, recv, pos):
+    """การประกาศ `recv` ที่ใกล้ที่สุดก่อน pos: ชนิดคำขอ (`XxxDto d`) = True · lambda (`d =>`)/`var d`/ชนิดอื่น = False"""
+    head = text[:pos]
+    best, is_req = -1, False
+    for m in re.finditer(r'\b([A-Z][\w.]*(?:<[^<>]*>)?\??)\s+' + recv + r'\b\s*(?=[,)=;]|\bin\b)', head):
+        if m.start() > best:
+            best, is_req = m.start(), bool(_REQUEST_TYPE_RE.search(m.group(1)))
+    for m in re.finditer(r'(?:\(\s*' + recv + r'\s*\)|\b' + recv + r')\s*=>|\bvar\s+' + recv + r'\b', head):
+        if m.start() > best:
+            best, is_req = m.start(), False
+    return is_req
+
+
 def _initializer_target(text, pos):
     """ถ้า pos อยู่ใน object initializer `new T { … }` คืนชื่อ T (ไม่ใช่ = None)"""
     opener, before, _at = enclosing_opener(text, pos)
@@ -270,6 +289,8 @@ def cs_reads(text, name):
     for m in re.finditer(r'\.\s*' + name + r'\b(?!\s*(?:=(?![=>])|\+=|-=|\?\?=))(?!\s*\()', text):
         rm = _RECV_RE.search(text[max(0, m.start() - 40):m.start()])
         if rm and rm.group(1) in REQUEST_RECEIVERS and not _receiver_is_entity(text, rm.group(1)):
+            continue
+        if rm and rm.group(1) in CONDITIONAL_REQUEST_RECEIVERS and _receiver_is_request_typed(text, rm.group(1), m.start()):
             continue
         before = text[max(0, m.start() - 160):m.start()]
         # คัดลอกผ่านแบบคำสั่ง (`x.P = y.P`) — ค่าไหลจากคำขอ/entity หนึ่งไปอีก entity ไม่ได้ถูกใช้ตัดสินอะไร
@@ -355,6 +376,8 @@ public class CompanySettings : TenantEntity
     public bool SqlRead { get; set; }
     public bool SqlWriteOnly { get; set; }
     public bool ModelEntityRead { get; set; }
+    public int ApplyDtoOnly { get; set; }
+    public bool LambdaRead { get; set; }
     public Thing? Nav { get; set; }
     public ICollection<Thing> Things { get; set; } = new List<Thing>();
 }
@@ -383,6 +406,8 @@ SELF_TEST_SVC = '''class S {
     string Sql = "SELECT \\"SqlRead\\" FROM \\"CompanySettings\\" WHERE 1=1";
     string Sql2 = "UPDATE \\"CompanySettings\\" SET \\"SqlWriteOnly\\" = true";
     bool M(CompanySettings model) => model.ModelEntityRead;
+    static void Apply(CompanySettings s, SettingsDto d) { s.ApplyDtoOnly = Math.Max(0, d.ApplyDtoOnly); }
+    bool L(List<CompanySettings> xs) => xs.Any(d => d.LambdaRead);
     // s.EchoOnly ในคอมเมนต์ไม่นับ
 }
 '''
@@ -410,7 +435,9 @@ def self_test():
             # LodgingProperty.WeekendDaysMask ถูกฟ้องผิด) · Nav = navigation ไม่ใช่ค่าตั้ง
             # ฝ่ายค้านรอบ 193 §3.1: InitIntoCalc (initializer ของ input) · SqlRead (raw SQL) · ModelEntityRead
             # (ตัวแปรชื่อ model ชนิด entity) = ผู้อ่านจริง · CloneOnly (initializer ของ entity) · SqlWriteOnly (UPDATE) = ไม่ใช่
-            want = ['CompanySettings.CloneOnly', 'CompanySettings.CopyOnly', 'CompanySettings.EchoOnly',
+            # รอบ 202 ทีม LS: ApplyDtoOnly (อ่านจาก `SettingsDto d` ในตัวรับค่า) = ไม่ใช่ผู้อ่าน · LambdaRead (`d => d.X` ของ entity
+            # ที่ประกาศหลัง Apply ในไฟล์เดียวกัน) = ผู้อ่านจริง — ทิศตรงข้ามของการแก้ (ห้ามฟ้องผิด)
+            want = ['CompanySettings.ApplyDtoOnly', 'CompanySettings.CloneOnly', 'CompanySettings.CopyOnly', 'CompanySettings.EchoOnly',
                     'CompanySettings.RequestOnly', 'CompanySettings.SqlWriteOnly', 'CompanySettings.TargetTypedEcho']
             if got != want:
                 print(f'❌ self-test: คาด {want} ได้ {got}')
@@ -442,6 +469,13 @@ def real_negative_test(root):
     web2 = {k: v.replace('.autoAttachWhtCertPdf', '.removed') for k, v in web.items()}
     if 'CompanySettings.AutoAttachWhtCertPdf' not in analyse(root, cs2, web2):
         print('❌ negative test: ถอดผู้อ่านของ AutoAttachWhtCertPdf แล้ว checker ไม่ฟ้อง')
+        return False
+    # รอบ 202 ทีม LS: ผู้อ่านจริงของ EarlyCheckInHours คือเงื่อนไขบนหลักฐานการจอง (LodgingStayConditions) · ถอดออกแล้วต้องฟ้อง —
+    # ก่อนแก้ `d` ใน Apply(LodgingProperty p, LodgingPropertyDto d) ถูกนับเป็นผู้อ่าน ⇒ ถอดแล้วยังเขียว (ด่านที่ล้มไม่ได้)
+    cs3 = {k: re.sub(r'\.\s*EarlyCheckInHours\b', '.Removed_Early', v) if k.endswith('LodgingService.Operations.cs') else v
+           for k, v in cs.items()}
+    if 'LodgingProperty.EarlyCheckInHours' not in analyse(root, cs3, web):
+        print('❌ negative test: ถอดผู้อ่านของ LodgingProperty.EarlyCheckInHours แล้วไม่ฟ้อง (ตัวรับค่า `d.` ใน Apply ถูกนับเป็นผู้อ่าน?)')
         return False
     return True
 
