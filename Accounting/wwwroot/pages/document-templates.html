@@ -128,9 +128,11 @@
           <div>
             <label style="display:block;font-size:11px;color:#64748b;margin-bottom:4px">รูปแบบป้าย</label>
             <select id="gCopyLabelPos" onchange="Page._copyLabelPending()" style="min-width:220px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
-              <option value="Watermark">ต่อท้ายชื่อเอกสาร (ค่าเดิม) · สำเนา = ลายน้ำ</option>
-              <option value="TopRight">ป้ายมุมขวาบน</option>
-              <option value="TopLeft">ป้ายมุมซ้ายบน</option>
+              <option value="TitleSuffix">ต่อท้ายชื่อเอกสาร — ทั้งต้นฉบับและสำเนา</option>
+              <option value="WatermarkBoth">ลายน้ำกลางหน้า — ทั้งต้นฉบับและสำเนา</option>
+              <option value="Watermark" selected>ผสม (ค่าเดิม): ต้นฉบับต่อท้ายชื่อ · สำเนาเป็นลายน้ำ</option>
+              <option value="TopRight">ป้ายมุมขวาบน — ทั้งต้นฉบับและสำเนา</option>
+              <option value="TopLeft">ป้ายมุมซ้ายบน — ทั้งต้นฉบับและสำเนา</option>
             </select>
           </div>
           <button class="btn btn-primary" data-tpl-write onclick="Page.applyGlobalCopyLabel()">ใช้กับทุกเอกสาร</button>
@@ -139,8 +141,8 @@
           ⚠️ ยังไม่ได้ใช้ — ตัวอย่างด้านล่างยังเป็นค่าที่บันทึกไว้ กด "ใช้กับทุกเอกสาร" เพื่อบันทึก
         </div>
         <div style="font-size:11px;color:#94a3b8;margin-top:8px">
-          "ต่อท้ายชื่อเอกสาร" (ค่าเดิม): ต้นฉบับพิมพ์เป็น "ใบเสนอราคา (ต้นฉบับ)" · สำเนาพิมพ์ลายน้ำ "สำเนา" กลางหน้า ·
-          โหมดป้ายมุม: ทั้ง "ต้นฉบับ" และ "สำเนา" เป็นกรอบเล็กมุมเอกสาร (ไม่ต่อท้ายชื่อ ไม่มีลายน้ำ) ·
+          ต่อท้ายชื่อ: "ใบเสนอราคา (ต้นฉบับ)" / "ใบเสนอราคา (สำเนา)" · ลายน้ำ: คำว่า ต้นฉบับ / สำเนา จาง ๆ กลางหน้า ·
+          ผสม (ค่าเดิม): ต้นฉบับต่อท้ายชื่อ แต่สำเนาเป็นลายน้ำ · ป้ายมุม: กรอบเล็กมุมบนทั้งคู่ ·
           ดูหน้าตาสำเนาได้จากตัวเลือก "ตัวอย่างแบบ" ด้านล่าง
         </div>
       </div>
@@ -376,12 +378,14 @@
             <div class="editor-row single">
               <label>ตำแหน่งป้าย "ต้นฉบับ / สำเนา"</label>
               <select id="copyLabelPosition" onchange="Page.markDirty()">
-                <option value="Watermark">ต่อท้ายชื่อเอกสาร (ค่าเดิม) · สำเนา = ลายน้ำ</option>
-                <option value="TopRight">ป้ายมุมขวาบน</option>
-                <option value="TopLeft">ป้ายมุมซ้ายบน</option>
+                <option value="TitleSuffix">ต่อท้ายชื่อเอกสาร — ทั้งต้นฉบับและสำเนา</option>
+                <option value="WatermarkBoth">ลายน้ำกลางหน้า — ทั้งต้นฉบับและสำเนา</option>
+                <option value="Watermark" selected>ผสม (ค่าเดิม): ต้นฉบับต่อท้ายชื่อ · สำเนาเป็นลายน้ำ</option>
+                <option value="TopRight">ป้ายมุมขวาบน — ทั้งต้นฉบับและสำเนา</option>
+                <option value="TopLeft">ป้ายมุมซ้ายบน — ทั้งต้นฉบับและสำเนา</option>
               </select>
               <div style="font-size:11px;color:#94a3b8;margin-top:2px">
-                ค่าเดิม: ต้นฉบับต่อท้ายชื่อเอกสาร เช่น "ใบเสนอราคา (ต้นฉบับ)" · สำเนาเป็นลายน้ำ "สำเนา" — โหมดป้ายมุม: ทั้งสองเป็นกรอบเล็กมุมเอกสาร · พรีวิวขวามือแสดงแบบต้นฉบับ (ดูสำเนาได้ที่หน้าภาพรวม "ตัวอย่างแบบ: สำเนา")
+                ต่อท้ายชื่อ: "ใบเสนอราคา (ต้นฉบับ)" / "(สำเนา)" · ลายน้ำ: ต้นฉบับ/สำเนา จางกลางหน้า · ผสม (ค่าเดิม): ต้นฉบับต่อท้ายชื่อ สำเนาเป็นลายน้ำ · ป้ายมุม: กรอบเล็กมุมบน — พรีวิวขวามือแสดงแบบต้นฉบับ (ดูสำเนาได้ที่หน้าภาพรวม "ตัวอย่างแบบ: สำเนา")
               </div>
             </div>
           </div>
@@ -807,7 +811,7 @@
 
       async applyGlobalCopyLabel() {
         const pos = document.getElementById('gCopyLabelPos').value || 'Watermark';
-        const label = { Watermark: 'ต่อท้ายชื่อเอกสาร (สำเนา = ลายน้ำ)', TopRight: 'ป้ายมุมขวาบน', TopLeft: 'ป้ายมุมซ้ายบน' }[pos] || pos;
+        const label = document.getElementById('gCopyLabelPos').selectedOptions[0]?.textContent?.trim() || pos;
         if (!confirm(`ตั้งตำแหน่งป้าย ต้นฉบับ/สำเนา เป็น "${label}" กับเอกสารทุกประเภท?\n(ปรับรายเอกสารทีหลังได้)`)) return;
         await this._applyToAll({ copyLabelPosition: pos }, `ป้าย "${label}"`);
       },

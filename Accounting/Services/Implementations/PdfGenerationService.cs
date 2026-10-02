@@ -1890,16 +1890,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         // plain class selectors, but the STRUCTURE didn't).
         sb.AppendLine($"<div class='doc-root layout-{layout}'>");
 
-        // สถานะ copy print + ตำแหน่งป้าย ต้นฉบับ/สำเนา (Watermark = ลายน้ำกลาง
-        // หน้าแบบเดิม, TopRight/TopLeft = ป้ายกรอบเล็กมุมบน) — คำนวณก่อน เพราะใช้
-        // ทั้งตอน render ลายน้ำและตอนต่อท้ายหัวเอกสาร
-        var isCopyPrintWm = !string.IsNullOrWhiteSpace(watermark)
-            && (watermark!.Contains("สำเนา") || watermark.Contains("COPY", StringComparison.OrdinalIgnoreCase));
-        var copyLabelPos = (template.CopyLabelPosition ?? "Watermark").Trim();
-        var copyCornerMode = copyLabelPos is "TopRight" or "TopLeft";
+        // ป้าย ต้นฉบับ/สำเนา — ตัวตัดสินเดียวกับ QuestPDF (Helpers/CopyLabelPlacement · รอบ 202): ต่อท้ายชื่อ / ลายน้ำ / ป้ายมุม
+        // ตาม template.CopyLabelPosition · ลายน้ำที่มีผล = ข้อความสำเนาที่สั่งพิมพ์ ?? ลายน้ำที่ตั้งเองในเทมเพลต
+        var copyLabel = Accounting.Helpers.CopyLabelPlacement.Decide(template.CopyLabelPosition,
+            watermark ?? (template.ShowWatermark ? template.WatermarkText : null), L.CopyOriginal, L.CopyDuplicate);
         var badgeAccent = SanitizeHex(template.AccentColor) ?? "#444444";
         string CornerBadge(string text) =>
-            $"<div style='position:absolute;top:8mm;{(copyLabelPos == "TopLeft" ? "left" : "right")}:10mm;" +
+            $"<div style='position:absolute;top:8mm;{(copyLabel.CornerLeft ? "left" : "right")}:10mm;" +
             $"border:1.5px solid {badgeAccent};border-radius:3px;padding:1px 12px;" +
             $"font-weight:bold;font-size:14px;color:{badgeAccent};z-index:5'>{text}</div>";
 
@@ -1908,16 +1905,15 @@ public partial class PdfGenerationService : IPdfGenerationService
         {
             sb.AppendLine($"<div class='watermark watermark-void'>{L.StatusVoided}</div>");
         }
-        else if (copyCornerMode && isCopyPrintWm)
+        else
         {
-            // ป้าย "สำเนา" มุมบนแทนลายน้ำ (ตามตั้งค่าเทมเพลต)
-            sb.AppendLine(CornerBadge(L.CopyDuplicate));
-        }
-        else if (template.ShowWatermark || watermark != null)
-        {
-            // รอบ 200 (G2-11): ข้อความลายน้ำที่ผู้แก้เทมเพลตตั้งเอง — หนีก่อนต่อเข้า HTML (เดิมดิบ ⇒ ใส่แท็กได้)
-            var wmText = WebUtility.HtmlEncode(watermark ?? template.WatermarkText ?? "");
-            sb.AppendLine($"<div class='watermark'>{wmText}</div>");
+            // ป้าย "สำเนา" มุมบน (โหมดป้ายมุม) — ป้าย "ต้นฉบับ" มุมบนวาดที่หัวเอกสารด้านล่าง (ตำแหน่งเดิม)
+            if (copyLabel.IsCopy && copyLabel.Corner != null) sb.AppendLine(CornerBadge(copyLabel.Corner));
+            if (!string.IsNullOrWhiteSpace(copyLabel.Watermark))
+            {
+                // รอบ 200 (G2-11): ข้อความลายน้ำที่ผู้แก้เทมเพลตตั้งเอง — หนีก่อนต่อเข้า HTML (เดิมดิบ ⇒ ใส่แท็กได้)
+                sb.AppendLine($"<div class='watermark'>{WebUtility.HtmlEncode(copyLabel.Watermark)}</div>");
+            }
         }
 
         // ===== หัวกระดาษซ้ำทุกหน้า (RepeatHeaderEveryPage) =====
@@ -1996,21 +1992,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ที่ผู้แก้เทมเพลต/ค่าตั้งพิมพ์เอง ⇒ หนีก่อนต่อเข้า HTML (เดิมดิบ ⇒ ใส่แท็กยิงสคริปต์ในพรีวิวได้) · ป้าย "ต้นฉบับ" ต่อหลังหนี
         // (มาจาก DocumentLabels — ห้ามหนีซ้ำ) · QuestPDF พิมพ์เป็นข้อความอยู่แล้ว ⇒ หน้าตาเท่ากันสองฝั่ง
         var title = WebUtility.HtmlEncode(ComputeDocumentTitle(doc, template, settings, lang, companyMayIssueAbbreviated));
-        // §86/4 เอกสารออกเป็นชุด — ระบุ "ต้นฉบับ" บนใบภาษี (สำเนา = watermark)
-        var isRd864Doc = doc.DocumentType is DocumentType.TaxInvoice
-                or DocumentType.DebitNote or DocumentType.CreditNote
-            || ((doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
-        var isCopyPrint = isCopyPrintWm;
-        // ป้าย "ต้นฉบับ" ทุกประเภทเอกสาร (สอดคล้อง renderer หลัก) — สำเนา
-        // จัดการโดย watermark/corner badge ด้านบนแล้ว
-        if (!isCopyPrint)
-        {
-            if (copyCornerMode)
-                sb.AppendLine(CornerBadge(L.CopyOriginal));
-            else
-                title += $" ({L.CopyOriginal})";
-        }
-        _ = isRd864Doc;
+        // ป้าย ต้นฉบับ/สำเนา ที่หัวเอกสาร (ตัวตัดสินเดียวกับ QuestPDF) — ต่อท้ายชื่อ (TitleSuffix ทั้งคู่ · ค่าเดิมเฉพาะต้นฉบับ)
+        // หรือป้ายมุม "ต้นฉบับ" (ป้ายมุม "สำเนา" วาดไว้ด้านบนแล้ว)
+        if (copyLabel.TitleSuffix != null)
+            title += $" ({copyLabel.TitleSuffix})";
+        else if (!copyLabel.IsCopy && copyLabel.Corner != null)
+            sb.AppendLine(CornerBadge(copyLabel.Corner));
         sb.AppendLine($"<div class='doc-title'>{title}</div>");
         // §86/6(6) — ใบกำกับภาษีอย่างย่อต้องมีข้อความระบุชัดว่าราคารวม VAT แล้ว
         // (ยอดรวมทั้งสิ้นบนใบรวม VAT เสมออยู่แล้ว — บรรทัดนี้คือถ้อยคำที่กฎหมาย

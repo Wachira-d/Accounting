@@ -377,7 +377,7 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.ShowWatermark.HasValue) t.ShowWatermark = r.ShowWatermark.Value;
         if (r.WatermarkText != null) t.WatermarkText = r.WatermarkText;
         if (r.WatermarkOpacity.HasValue) t.WatermarkOpacity = r.WatermarkOpacity.Value;
-        if (r.CopyLabelPosition != null) t.CopyLabelPosition = r.CopyLabelPosition;
+        if (r.CopyLabelPosition != null) t.CopyLabelPosition = CopyLabelPositionOrThrow(r.CopyLabelPosition);
         if (r.LayoutStyle != null) t.LayoutStyle = r.LayoutStyle;
         if (r.FontFamily != null) t.FontFamily = r.FontFamily;
         if (r.BodyFontSize != null) t.BodyFontSize = r.BodyFontSize;
@@ -472,7 +472,7 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.ShowWatermark.HasValue) t.ShowWatermark = r.ShowWatermark.Value;
         if (r.WatermarkText != null) t.WatermarkText = r.WatermarkText;
         if (r.WatermarkOpacity.HasValue) t.WatermarkOpacity = r.WatermarkOpacity.Value;
-        if (r.CopyLabelPosition != null) t.CopyLabelPosition = r.CopyLabelPosition;
+        if (r.CopyLabelPosition != null) t.CopyLabelPosition = CopyLabelPositionOrThrow(r.CopyLabelPosition);
         if (r.LayoutStyle != null) t.LayoutStyle = r.LayoutStyle;
         if (r.FontFamily != null) t.FontFamily = r.FontFamily;
         if (r.BodyFontSize != null) t.BodyFontSize = r.BodyFontSize;
@@ -522,4 +522,15 @@ public class DocumentTemplateService : IDocumentTemplateService
         t.MarginTop, t.MarginBottom, t.MarginLeft, t.MarginRight,
         t.HeaderTextColor,
         t.ShowDocumentNumber, t.ShowDocumentDate, t.ShowDueDate, t.ShowReference);
+
+    /// <summary>รอบ 202: ค่าตำแหน่งป้าย ต้นฉบับ/สำเนา ต้องเป็นค่าที่ renderer รู้จัก (Helpers/CopyLabelPlacement) — เดิมรับสตริงอะไรก็ได้
+    /// แล้ว renderer ตกเป็นค่าเดิมเงียบ ๆ (เลือกแล้วไม่มีผล) · ว่าง = ค่าเดิม</summary>
+    private static string CopyLabelPositionOrThrow(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return Accounting.Helpers.CopyLabelPlacement.Mixed;
+        return Accounting.Helpers.CopyLabelPlacement.Normalize(value)
+            ?? throw new Accounting.Helpers.BusinessRuleException(
+                $"ตำแหน่งป้าย ต้นฉบับ/สำเนา \"{value}\" ไม่รู้จัก — เลือกได้: {string.Join(" · ", Accounting.Helpers.CopyLabelPlacement.All)}",
+                "TEMPLATE-COPY-LABEL-POSITION", 400);
+    }
 }

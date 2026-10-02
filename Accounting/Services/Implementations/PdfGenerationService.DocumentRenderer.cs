@@ -98,30 +98,12 @@ public partial class PdfGenerationService
         // ส่วน ComposeHeaderAndTitle ใช้ชื่อ/โลโก้ — ถ้าต่างคนต่างคำนวณจะกลาย
         // เป็นสองแหล่งความจริงบนกระดาษใบเดียวกัน (กฎ "resolver กลาง ห้ามคำนวณเอง")
         var issuer = BuildIssuer(doc, company, settings, L.IsEnglish ? "en" : "th", titleText);
-        // §86/4 เอกสารออกเป็นชุด — ระบุ ต้นฉบับ บนใบกำกับ/ใบเสร็จภาษี. สำเนา
-        // ใช้ WatermarkOverride (สำเนา) ตอนสั่งพิมพ์สำเนา → ไม่ต้องมีป้ายซ้อน.
-        var isRd864Doc = doc.DocumentType is Accounting.Models.Enums.DocumentType.TaxInvoice
-                or Accounting.Models.Enums.DocumentType.DebitNote
-                or Accounting.Models.Enums.DocumentType.CreditNote
-            || ((doc.DocumentType is Accounting.Models.Enums.DocumentType.Receipt
-                    or Accounting.Models.Enums.DocumentType.ReceiptVoucher) && doc.VatAmount > 0);
-        var isCopyPrint = !string.IsNullOrWhiteSpace(b.WatermarkText)
-            && (b.WatermarkText!.Contains("สำเนา") || b.WatermarkText.Contains("COPY", StringComparison.OrdinalIgnoreCase));
-        // ตำแหน่งป้าย ต้นฉบับ/สำเนา ตั้งได้ต่อเทมเพลต: "Watermark" = ลายน้ำกลาง
-        // หน้า (พฤติกรรมเดิม), "TopRight"/"TopLeft" = ป้ายกรอบเล็กมุมบนเอกสาร
-        var labelPos = (template.CopyLabelPosition ?? "Watermark").Trim();
-        var cornerMode = labelPos is "TopRight" or "TopLeft";
-        string? cornerLabel = null;
-        if (cornerMode)
-        {
-            cornerLabel = isCopyPrint ? L.CopyDuplicate : L.CopyOriginal;
-        }
-        // ป้าย ต้นฉบับ แสดงทุกประเภทเอกสาร (กฎหมายบังคับเฉพาะเอกสารชุด
-        // §86/4 แต่แนวปฏิบัติ PEAK/Flow พิมพ์ทุกใบ — ผู้ใช้แยกต้นฉบับ/สำเนา
-        // ได้ทันทีโดยไม่ต้องเดา); custom title ยังต่อท้ายให้เว้นแต่โหมดมุม
-        if (!isCopyPrint && cornerLabel == null)
-            titleText += $"  ({L.CopyOriginal})";
-        _ = isRd864Doc; // คงตัวแปรไว้ให้อ่าน context ด้านบนง่าย
+        // ป้าย ต้นฉบับ/สำเนา — ตัวตัดสินเดียวกับ HTML renderer (Helpers/CopyLabelPlacement · รอบ 202): ต่อท้ายชื่อ / ลายน้ำ / ป้ายมุม
+        // ตาม template.CopyLabelPosition · b.WatermarkText = ข้อความสำเนาที่สั่งพิมพ์ ?? ลายน้ำที่ตั้งเองในเทมเพลต (BuildBranding)
+        var copyLabel = Accounting.Helpers.CopyLabelPlacement.Decide(template.CopyLabelPosition, b.WatermarkText, L.CopyOriginal, L.CopyDuplicate);
+        var cornerLabel = copyLabel.Corner;
+        if (copyLabel.TitleSuffix != null)
+            titleText += $"  ({copyLabel.TitleSuffix})";
 
         try
         {
@@ -162,14 +144,14 @@ public partial class PdfGenerationService
                     // BuildCss line 1160 ก็เคารพค่านี้.
                     // corner mode + copy print → ป้ายมุมแทนลายน้ำ (ลายน้ำ
                     // custom อื่นของเทมเพลต เช่น DRAFT ยังเป็นลายน้ำตามเดิม)
-                    else if (!string.IsNullOrWhiteSpace(b.WatermarkText) && !(cornerMode && isCopyPrint))
+                    else if (!string.IsNullOrWhiteSpace(copyLabel.Watermark))
                     {
                         try
                         {
                             var op = (double)Math.Clamp(template.WatermarkOpacity, 0.05m, 0.6m);
                             var aa = ((int)Math.Round(op * 255)).ToString("X2");
                             page.Background().AlignCenter().AlignMiddle()
-                                .Text(b.WatermarkText).FontSize(72).FontColor($"#{aa}000000").Bold();
+                                .Text(copyLabel.Watermark).FontSize(72).FontColor($"#{aa}000000").Bold();
                         }
                         catch { }
                     }
@@ -187,7 +169,7 @@ public partial class PdfGenerationService
                     {
                         // ป้าย ต้นฉบับ/สำเนา มุมบน — กรอบเล็กสีตาม accent
                         var badge = c.Item().PaddingBottom(4);
-                        var aligned = labelPos == "TopLeft" ? badge.AlignLeft() : badge.AlignRight();
+                        var aligned = copyLabel.CornerLeft ? badge.AlignLeft() : badge.AlignRight();
                         aligned.Border(1).BorderColor(accent)
                             .PaddingVertical(1).PaddingHorizontal(12)
                             .Text(cornerLabel!).FontSize(11).Bold().FontColor(accent);
