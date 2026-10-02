@@ -2324,6 +2324,18 @@ public enum LodgingReservationStatus
     NoShow = 5
 }
 
+/// <summary>รอบ 202 (คำตัดสินข้อ 128): การจองจาก<b>เว็บ</b> "สำเร็จ" เมื่อไร — ค่าตั้งต่อที่พัก (<c>LodgingProperty.GuestConfirmMode</c>) ·
+/// ตัวตัดสินเดียว <c>Helpers/LodgingGuestConfirmPolicy</c> · เส้นพนักงานไม่ถูกบังคับส่งสลิป (RequireSlip ⇒ เดินแบบ RequireDeposit)</summary>
+public enum LodgingGuestConfirmMode
+{
+    /// <summary>จองสำเร็จทันที ไม่ต้องชำระก่อน (= ธงเดิม ConfirmWithoutDeposit · มัดจำ 0)</summary>
+    Instant = 1,
+    /// <summary>ยังไม่สำเร็จจนกว่าแขกส่งสลิปภายใน SlipDeadlineMinutes — ไม่ส่งในเวลา ระบบยกเลิกตามกติกากันห้องเดิม</summary>
+    RequireSlip = 2,
+    /// <summary>รอชำระมัดจำ แล้วพนักงาน/ระบบยืนยัน (แบบเดิมเมื่อไม่ได้ติ๊ก ConfirmWithoutDeposit)</summary>
+    RequireDeposit = 3,
+}
+
 public enum LodgingReservationSource
 {
     Web = 1,        // จองผ่านเว็บไซต์/portal

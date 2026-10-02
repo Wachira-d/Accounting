@@ -1901,7 +1901,8 @@
               <div style="display:grid;gap:8px;margin-top:8px"><input name="guestCompanyName" class="lg-input" placeholder="ชื่อบริษัท"><input name="guestTaxId" class="lg-input" placeholder="เลขประจำตัวผู้เสียภาษี 13 หลัก" maxlength="13"><input name="guestAddress" class="lg-input" placeholder="ที่อยู่"></div></details>
             ${extras ? `<h3 style="margin:8px 0 0">บริการเสริม</h3>${extras}` : ''}
             ${info.houseRules ? `<label style="font-size:13px;display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="acceptHouseRules" required style="margin-top:3px"><span>ยอมรับกติกาที่พัก:<br><span style="white-space:pre-wrap;color:var(--text-secondary)">${this.esc(info.houseRules)}</span></span></label>` : ''}
-            <button type="submit" class="btn btn-primary" style="padding:14px" ${errs ? 'disabled' : ''}>ยืนยันการจอง${q.depositRequired > 0 ? ` · มัดจำ ฿${this._money(q.depositRequired)}` : ''}</button>
+            ${q.confirmModeNote ? `<div class="lg-badge" style="display:block;padding:10px;font-size:13px;font-weight:500">${this.esc(q.confirmModeNote)}</div>` : ''}
+            <button type="submit" class="btn btn-primary" style="padding:14px" ${errs ? 'disabled' : ''}>ยืนยันการจอง${q.depositRequired > 0 ? ` · ${this.esc(q.amountDueLabel || 'มัดจำ')} ฿${this._money(q.depositRequired)}` : ''}</button>
           </form>
           <div class="lg-sum">
             <h3 style="margin:0 0 8px">สรุปการจอง</h3>
@@ -1912,7 +1913,7 @@
             ${q.serviceChargeAmount > 0 ? `<div class="row"><span>Service charge</span><span>฿${this._money(q.serviceChargeAmount)}</span></div>` : ''}
             ${q.vatAmount > 0 ? `<div class="row" style="color:var(--text-secondary)"><span>${q.pricesIncludeVat ? 'รวม VAT' : 'VAT'} ${q.vatRate}%</span><span>฿${this._money(q.vatAmount)}</span></div>` : ''}
             <div class="row total"><span>ยอดรวม</span><span>฿${this._money(q.totalAmount)}</span></div>
-            ${q.depositRequired > 0 ? `<div class="row"><span>มัดจำที่ต้องชำระ</span><b>฿${this._money(q.depositRequired)}</b></div>` : '<div class="row"><span>ไม่ต้องชำระมัดจำ</span><span>ยืนยันทันที</span></div>'}
+            ${q.depositRequired > 0 ? `<div class="row"><span>${this.esc(q.amountDueLabel || 'มัดจำที่ต้องชำระ')}</span><b>฿${this._money(q.depositRequired)}</b></div>` : '<div class="row"><span>ไม่ต้องชำระมัดจำ</span><span>ยืนยันทันที</span></div>'}
             ${q.cancellationPolicyName ? `<div style="font-size:12px;margin-top:8px;color:var(--text-secondary)">นโยบายยกเลิก: <b>${this.esc(q.cancellationPolicyName)}</b>${q.nonRefundable ? ' — ไม่คืนเงินทุกกรณี' : ''}<br>${(q.cancellationRules||[]).map(r => `ก่อน ${r.daysBefore} วัน คิด ${r.penaltyPercent}%`).join(' · ')}</div>` : ''}
             ${errs}
           </div></div>`;
@@ -1953,21 +1954,25 @@
         } catch (e) { main.innerHTML = `<div class="sf-loader" style="color:#DC2626">${this.esc(e.message)}</div>`; return; }
         document.title = `การจอง ${r.reservationNumber}`;
         const STATUS = { Pending: ['รอชำระมัดจำ', ''], Confirmed: ['ยืนยันแล้ว', 'ok'], CheckedIn: ['เช็คอินแล้ว', 'info'], CheckedOut: ['เช็คเอาต์แล้ว', 'info'], Cancelled: ['ยกเลิก', 'bad'], NoShow: ['ไม่มาเข้าพัก', 'bad'] };
-        // ป้ายจากเซิร์ฟเวอร์ (LodgingAmounts.StatusLabel) — Pending ที่จ่ายมัดจำครบแล้วต้องไม่บอกว่า "รอชำระมัดจำ" (C9)
-        const st = [r.statusLabel || (STATUS[r.status] || [r.status])[0], (STATUS[r.status] || ['', ''])[1]];
+        // ป้ายจากเซิร์ฟเวอร์ — ฝั่งแขก (LodgingGuestConfirmPolicy.GuestView: "ยังไม่สำเร็จ — รอสลิปโอนเงิน" ฯลฯ · คำตัดสินข้อ 128)
+        // ชนะป้ายสถานะทั่วไป (LodgingAmounts.StatusLabel · C9) · ตารางในหน้าเป็นแค่ทางสำรองเมื่อเซิร์ฟเวอร์ไม่ส่งป้าย
+        const st = [r.guestStatusLabel || r.statusLabel || (STATUS[r.status] || [r.status])[0], (STATUS[r.status] || ['', ''])[1]];
         // ข้อมูลที่พักใช้แค่เบอร์สำรอง (การจองมาจากเซิร์ฟเวอร์แล้ว) — ระบบที่พักขัดข้องต้องไม่ทำให้หน้าการจองของแขกเปิดไม่ได้
         const info = await this.lodgingInfo().catch(() => null);
         const canCancel = r.status === 'Pending' || r.status === 'Confirmed';
         // ปิดรับสลิปแล้ว = ยังจ่ายออนไลน์/ติดต่อที่พักได้ แต่ฟอร์มแนบสลิปต้องหายไป
         // (ห้ามให้กดส่งแล้วไปเจอ error ที่เซิร์ฟเวอร์ — ญาติของ silent no-op)
-        const canSlip = (r.status === 'Pending' || (r.status === 'Confirmed' && r.balanceDue > 0))
-          && !r.slipUploadBlocked;
+        // คำตัดสินข้อ 128: เปิดช่องส่งสลิปไหม เซิร์ฟเวอร์ตัดสิน (canUploadSlip — รวมใบที่ระบบยกเลิกเพราะหมดเวลาแต่แขกโอนแล้ว · ข้อ 127)
+        const canSlip = r.canUploadSlip === true;
+        // บัญชีรับโอน/พร้อมเพย์ = ค่าตั้งช่องทางชำระของเว็บ (ตัวเดียวกับหน้าคำสั่งซื้อ) — โหลดเมื่อมีช่องส่งสลิปเท่านั้น · ล้ม = ไม่แสดงบัญชี (บอกให้ติดต่อที่พัก)
+        const pay = canSlip ? await this._lgPayOptions() : null;
         // ยอด/สิทธิ์จ่ายออนไลน์มาจากเซิร์ฟเวอร์ตัวเดียวกับที่ gateway เก็บจริง (C9 — เดิม JS คิดยอดเอง แขกเห็น 2,000 แต่ถูกเก็บ 5,450)
         const canPayOnline = r.onlinePayableAmount != null && r.onlinePayableAmount > 0;
         main.innerHTML = `<div class="sf-container" style="padding:32px 20px;max-width:860px">
-          ${banner ? `<div class="lg-badge ok" style="display:block;padding:12px;margin-bottom:14px;font-size:14px">${this.esc(banner)}</div>` : ''}
-          <h1 style="margin-bottom:4px">การจอง ${this.esc(r.reservationNumber)} <span class="lg-badge ${st[1]}">${st[0]}</span></h1>
+          ${this._lgGuestBanner(r, banner)}
+          <h1 style="margin-bottom:4px">การจอง ${this.esc(r.reservationNumber)} <span class="lg-badge ${st[1]}">${this.esc(st[0])}</span></h1>
           <div style="color:var(--text-secondary);margin-bottom:18px">${this.esc(r.propertyName)} · เช็คอิน ${this._dateTh(r.checkInDate)} หลัง ${this.esc(r.checkInTime)} · เช็คเอาต์ ${this._dateTh(r.checkOutDate)} ก่อน ${this.esc(r.checkOutTime)} · ${r.nights} คืน</div>
+          ${r.slipRequired ? this._lgSlipBox(r, token, pay) : ''}
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="lg-book">
             <div class="lg-sum">
               <h3 style="margin:0 0 8px">ห้องพัก</h3>
@@ -1979,7 +1984,7 @@
               <div class="row total"><span>ยอดรวม</span><span>฿${this._money(r.grandTotal)}</span></div>
               <div class="row"><span>ชำระแล้ว</span><span>฿${this._money(r.paidAmount)}</span></div>
               <div class="row"><span>คงเหลือ</span><b>฿${this._money(r.balanceDue)}</b></div>
-              ${r.status === 'Pending' && r.depositRequired > r.depositPaid ? `<div class="row" style="color:#92400E"><span>มัดจำที่ต้องชำระ</span><b>฿${this._money(r.depositRequired)}</b></div>${r.holdExpiresAt ? `<div style="font-size:12px;color:#92400E">กรุณาชำระและอัปโหลดสลิปภายใน ${new Date(r.holdExpiresAt).toLocaleString('th-TH')} มิฉะนั้นระบบจะปล่อยห้อง</div>` : ''}` : ''}
+              ${!r.slipRequired && r.status === 'Pending' && r.depositRequired > r.depositPaid ? `<div class="row" style="color:#92400E"><span>มัดจำที่ต้องชำระ</span><b>฿${this._money(r.depositRequired)}</b></div>${r.holdExpiresAt ? `<div style="font-size:12px;color:#92400E">กรุณาชำระและอัปโหลดสลิปภายใน ${new Date(r.holdExpiresAt).toLocaleString('th-TH')} มิฉะนั้นระบบจะปล่อยห้อง</div>` : ''}` : ''}
               ${r.cancellationFee > 0 ? `<div class="row"><span>ค่าปรับยกเลิก</span><span>฿${this._money(r.cancellationFee)}</span></div>` : ''}
               ${r.refundAmount > 0 ? `<div class="row"><span>ยอดคืนเงิน</span><span>฿${this._money(r.refundAmount)}</span></div>` : ''}
               ${r.refundPending > 0 ? `<div class="row" style="color:#92400E"><span>สถานะ</span><span>รอที่พักโอนคืน ฿${this._money(r.refundPending)}</span></div>` : (r.refundAmount > 0 && r.refundState === 'Paid' ? `<div class="row" style="color:#047857"><span>สถานะ</span><span>ที่พักโอนคืนแล้ว</span></div>` : (r.refundState === 'Unknown' ? `<div class="row"><span>สถานะ</span><span>ไม่มีข้อมูลการโอนคืน — สอบถามที่พัก</span></div>` : ''))}
@@ -2000,15 +2005,7 @@
             <span style="font-weight:400">${r.slipUploadBlocked
               ? 'ที่พักปิดรับสลิปของการจองนี้แล้ว กรุณาชำระออนไลน์ด้านล่าง หรือติดต่อที่พักโดยตรง'
               : 'กรุณาตรวจสอบแล้วส่งสลิปใหม่อีกครั้ง'}</span></div>` : ''}
-          ${canSlip ? `<div class="lg-sum" style="margin-top:16px"><h3 style="margin:0 0 8px">📎 ${r.status === 'Pending' ? 'อัปโหลดสลิปมัดจำ' : 'อัปโหลดสลิปชำระเงิน'}</h3>
-            ${r.paymentSlipUrl ? `<div class="lg-badge info" style="margin-bottom:8px">ส่งสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} — รอที่พักตรวจสอบ ·
-              <a href="${this.esc(r.paymentSlipUrl)}" target="_blank" rel="noopener">ดูสลิปที่ส่งไป</a></div>` : ''}
-            <form onsubmit="Store.lodgingUploadSlip(event, '${this.esc(token)}')" style="display:grid;gap:8px;grid-template-columns:1fr 1fr auto">
-              <input type="file" name="file" accept="image/*,application/pdf" required class="lg-input">
-              <input name="reference" class="lg-input" placeholder="อ้างอิง/เวลาโอน (ถ้ามี)" maxlength="100">
-              <button class="btn btn-primary" type="submit">ส่งสลิป</button>
-              <div class="sf-slip-status" style="grid-column:1/-1;font-size:13px"></div>
-            </form></div>` : ''}
+          ${canSlip && !r.slipRequired ? this._lgSlipBox(r, token, pay) : ''}
           ${r.status === 'CheckedIn' ? `<div class="lg-sum" style="margin-top:16px"><h3 style="margin:0 0 8px">🛎️ แจ้งความต้องการถึงที่พัก</h3>
             <form onsubmit="Store.lodgingGuestRequest(event, '${this.esc(token)}')" style="display:grid;gap:8px;grid-template-columns:160px 1fr auto">
               <select name="requestType" class="lg-input"><option value="Housekeeping">ทำความสะอาด/ผ้าเช็ดตัว</option><option value="Maintenance">แจ้งซ่อม</option><option value="RoomService">รูมเซอร์วิส</option><option value="Concierge">คอนเซียร์จ/รถรับส่ง</option><option value="Complaint">ร้องเรียน</option><option value="Other">อื่น ๆ</option></select>
@@ -2022,6 +2019,59 @@
           </div>
         </div>`;
         if (canPayOnline) await this._renderPayOnline(token, r);
+      },
+
+      // ── แบนเนอร์ผลการกระทำ + ข้อความถึงแขก (คำตัดสินข้อ 128) ─────────────────
+      // ข้อความทั้งหมดมาจากเซิร์ฟเวอร์ (message ของ API · guestNote) — หน้านี้เลือกแค่สี: ต้องส่งสลิป = เหลือง (ยังไม่สำเร็จ) · อื่น ๆ = เขียว
+      _lgGuestBanner(r, banner) {
+        const warn = r.slipRequired === true;
+        const box = (text, cls) => `<div class="lg-badge ${cls}" style="display:block;padding:12px;margin-bottom:14px;font-size:14px">${this.esc(text)}</div>`;
+        let html = banner ? box(banner, warn ? '' : 'ok') : '';
+        if (r.guestNote && !(banner && String(banner).includes(r.guestNote))) html += box(r.guestNote, warn ? '' : 'info');
+        return html;
+      },
+      // บัญชีรับโอน/พร้อมเพย์ของเว็บ — endpoint สาธารณะเดียวกับหน้าคำสั่งซื้อ (ค่าตั้ง "ช่องทางชำระเงิน" ของเว็บ) · จำผลไว้ทั้งหน้า
+      async _lgPayOptions() {
+        if (this._lgPay !== undefined) return this._lgPay;
+        try {
+          const r = await fetch(this._url('/commerce/payment-options'));
+          this._lgPay = r.ok ? ((await r.json()).data || null) : null;
+        } catch (_) { this._lgPay = null; }
+        return this._lgPay;
+      },
+      // กล่องส่งสลิป — เปิดไหม · ต้องส่งก่อนการจองสำเร็จไหม · ยอดที่ต้องโอน · กำหนดเวลา มาจากเซิร์ฟเวอร์ทั้งหมด
+      // (canUploadSlip · slipRequired · amountToTransfer · slipDueAt — LodgingGuestConfirmPolicy) · หน้านี้ไม่คิดยอด/สถานะเอง
+      _lgSlipBox(r, token, pay) {
+        if (r.canUploadSlip !== true) return '';
+        const amt = r.slipRequired ? r.amountToTransfer : null;
+        const ppId = pay && pay.promptPayId;
+        const qr = ppId && amt > 0
+          ? 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=' + encodeURIComponent(this.makePromptPayPayload(ppId, amt))
+          : ((pay && pay.promptPayQrUrl) || null);
+        const hasAccount = !!(ppId || (pay && pay.bankAccountNumber) || qr);
+        const accounts = hasAccount ? `<div style="display:grid;gap:10px;margin:8px 0 12px">
+            ${qr ? `<div style="text-align:center;background:#F9FAFB;padding:14px;border-radius:8px"><img src="${this.esc(qr)}" alt="PromptPay QR" style="width:200px;height:200px">
+              ${ppId ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:6px">พร้อมเพย์: <b>${this.esc(ppId)}</b>${amt > 0 ? ` · ยอด ฿${this._money(amt)}` : ''}</div>` : ''}</div>` : ''}
+            ${pay && pay.bankAccountNumber ? `<div style="background:#F9FAFB;padding:12px 16px;border-radius:8px;font-size:13px">
+              <div>ธนาคาร: <b>${this.esc(pay.bankName || '-')}</b></div>
+              <div>เลขบัญชี: <b style="font-family:monospace">${this.esc(pay.bankAccountNumber)}</b></div>
+              <div>ชื่อบัญชี: <b>${this.esc(pay.bankAccountName || '-')}</b></div></div>` : ''}</div>`
+          : (r.slipRequired ? `<div class="lg-badge" style="display:block;padding:10px;margin:8px 0">ติดต่อที่พักเพื่อขอเลขบัญชีโอนเงิน${r.propertyPhone ? ' โทร ' + this.esc(r.propertyPhone) : ''}${r.propertyLineId ? ' · LINE ' + this.esc(r.propertyLineId) : ''}</div>` : '');
+        const head = r.slipRequired
+          ? '📎 โอนเงินและส่งสลิปเพื่อยืนยันการจอง'
+          : (r.status === 'Pending' ? '📎 อัปโหลดสลิปมัดจำ' : '📎 อัปโหลดสลิปชำระเงิน');
+        return `<div class="lg-sum" style="margin-top:16px${r.slipRequired ? ';border:2px solid #F59E0B' : ''}"><h3 style="margin:0 0 8px">${head}</h3>
+            ${amt > 0 ? `<div class="row" style="font-size:16px"><span>ยอดที่ต้องโอน</span><b>฿${this._money(amt)}</b></div>` : ''}
+            ${r.slipRequired && r.slipDueAt ? `<div style="font-size:13px;color:#92400E;margin-bottom:6px">ส่งสลิปภายใน ${this.esc(new Date(r.slipDueAt).toLocaleString('th-TH'))}</div>` : ''}
+            ${accounts}
+            ${r.paymentSlipUrl ? `<div class="lg-badge info" style="margin-bottom:8px">ส่งสลิปแล้วเมื่อ ${this.esc(new Date(r.slipUploadedAt).toLocaleString('th-TH'))} — รอที่พักตรวจสอบ ·
+              <a href="${this.esc(r.paymentSlipUrl)}" target="_blank" rel="noopener">ดูสลิปที่ส่งไป</a></div>` : ''}
+            <form onsubmit="Store.lodgingUploadSlip(event, '${this.jsArg(token)}')" style="display:grid;gap:8px;grid-template-columns:1fr 1fr auto">
+              <input type="file" name="file" accept="image/*,application/pdf" required class="lg-input">
+              <input name="reference" class="lg-input" placeholder="อ้างอิง/เวลาโอน (ถ้ามี)" maxlength="100">
+              <button class="btn btn-primary" type="submit">ส่งสลิป</button>
+              <div class="sf-slip-status" style="grid-column:1/-1;font-size:13px"></div>
+            </form></div>`;
       },
 
       // ── ชำระออนไลน์ ────────────────────────────────────────────────

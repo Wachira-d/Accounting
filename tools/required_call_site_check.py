@@ -5166,6 +5166,61 @@ RULES += [
 ]
 
 
+# ── รอบ 202 คำตัดสินข้อ 128 (ทีม LC): "การจองจากเว็บสำเร็จเมื่อไร" — ตัวตัดสินเดียว Helpers/LodgingGuestConfirmPolicy ──
+# เดิมสูตร `prop.ConfirmWithoutDeposit || มัดจำ 0 || staff ConfirmImmediately` อยู่ในเส้นสร้างจอง + ตัวคิดมัดจำแยกกัน ⇒ ทุกจุดที่ตัดสินสถานะเริ่มต้น /
+# มัดจำที่ต้องชำระ / ผลของสลิป / ป้ายฝั่งแขก ต้องเรียก helper และห้ามประกอบสูตรเดิมเอง · ส่งสลิป ≠ รับเงิน (ห้ามแตะ DepositPaid/PaidAmount ในเส้นสลิป)
+_LC_WHY = "รอบ 202 ข้อ 128 (ทีม LC): "
+RULES += [
+    dict(file=LODGING_RES, method="CreateReservationAsync",
+         must=["LodgingGuestConfirmPolicy.Resolve(", "LodgingGuestConfirmPolicy.ForChannel(", "LodgingGuestConfirmPolicy.Initial(",
+               "GuestConfirmMode = channelMode", "LodgingGuestConfirmPolicy.CreatedEvent("],
+         before=[("LodgingGuestConfirmPolicy.Initial(", "SequenceNumber.NextSequence(")],
+         call_args=[("TryNotifyAsync(", "LodgingGuestConfirmPolicy.CreatedEvent")],
+         forbid=["prop.ConfirmWithoutDeposit ||", "ConfirmWithoutDeposit", "AddMinutes(prop.PaymentHoldMinutes)"],
+         why=_LC_WHY + "สถานะเริ่มต้น + เวลาถือห้อง + โหมดที่ตรึงบนใบ + เหตุการณ์แจ้งเตือน จากตัวตัดสินเดียว (เส้นพนักงานไม่ถูกบังคับสลิป)"),
+    dict(file=LODGING_RES, method="BuildQuote",
+         must=["LodgingGuestConfirmPolicy.QuotedDeposit(", "LodgingGuestConfirmPolicy.ForChannel(", "LodgingGuestConfirmPolicy.QuoteTerms(", "reservationMode ??"],
+         forbid=["ConfirmWithoutDeposit", "DepositRequired = 0m"],
+         why=_LC_WHY + "มัดจำที่ต้องชำระตามโหมด (Instant 0 · RequireSlip มัดจำ 0 = ยอดเต็ม) · เลื่อนวันใช้โหมดที่ตรึงบนใบ"),
+    dict(file=LODGING_LIFE, method="RescheduleAsync",
+         call_args=[("BuildQuote(", "r.GuestConfirmMode")],
+         why=_LC_WHY + "เลื่อนวันคิดมัดจำตามโหมดที่ตรึงบนใบ (ไม่ใช่โหมดของเส้นพนักงาน — ใบส่งสลิปมัดจำ 0 ต้องไม่ตกเป็น ฿0)"),
+    dict(file=LODGING_LIFE, method="UploadSlipByTokenAsync",
+         must=["LodgingGuestConfirmPolicy.OnSlipUploaded(", "problemFound: problem != null", "LodgingSlipOutcome.ConfirmNow",
+               "LodgingGuestConfirmPolicy.SlipConfirmActor", "LodgingGuestConfirmPolicy.SlipUploadedMessage("],
+         before=[("WithPropertyLockAsync(", "LodgingGuestConfirmPolicy.OnSlipUploaded("),
+                 ("LodgingHoldRule.HoldLapsed(", "LodgingGuestConfirmPolicy.OnSlipUploaded("),
+                 ("LodgingGuestConfirmPolicy.OnSlipUploaded(", "_db.SaveChangesAsync(")],
+         forbid=["DepositPaid +=", "PaidAmount +=", "DepositPaid =", "PaidAmount ="],
+         why=_LC_WHY + "ยืนยันจากสลิปตัดสินใต้ล็อกหลังตรวจห้องว่าง (hold หมดแล้วห้องเต็ม ⇒ ธงข้อ 127) · ส่งสลิป ≠ รับเงิน"),
+    dict(file=LODGING_LIFE, method="RejectSlipAsync",
+         must=["WithReservationLockAsync<", "AdvisoryLockKey.LodgingConfirm", "ReloadAsync(", "LodgingGuestConfirmPolicy.IsSlipConfirmed(",
+               "LodgingGuestConfirmPolicy.HoldAfterSlipRejected("],
+         before=[("ReloadAsync(", "LodgingGuestConfirmPolicy.IsSlipConfirmed(")],
+         forbid=["AddHours(24)"],
+         why=_LC_WHY + "ปฏิเสธสลิปของใบที่ยืนยันเพราะสลิป ⇒ กลับรอชำระ + hold (ตัวตัดสินเดียว) ใต้ล็อกต่อการจองเดียวกับการรับเงิน"),
+    dict(file=LODGING_LIFE, method="GetReservationByTokenAsync",
+         must=["ExpireHoldsAsync(", "ReloadAsync("],
+         before=[("ExpireHoldsAsync(", "MapAsync(")],
+         why=_LC_WHY + "หน้าแขกหลังหมดเวลาส่งสลิปต้องเห็น \"ถูกยกเลิก\" (ตัวยกเลิกกติกาเดียว) ไม่ใช่ \"รอสลิป\" ที่ห้องถูกปล่อยแล้ว"),
+    dict(file=LODGING_LIFE, method="ListReservationsAsync",
+         must=["LodgingGuestConfirmPolicy.SlipConfirmActor", "LodgingGuestConfirmPolicy.StaffSlipLabel("],
+         why=_LC_WHY + "คิว \"มีสลิปรอตรวจ\" รวมใบที่ยืนยันอัตโนมัติจากสลิปที่ยังไม่บันทึกรับเงิน · ป้ายรอสลิป/สลิปรอตรวจจากตัวตัดสินเดียว"),
+    dict(file=LODGING_OPS, method="MapAsync",
+         must=["LodgingGuestConfirmPolicy.GuestView(", "LodgingGuestConfirmPolicy.StaffSlipLabel(", "LodgingGuestConfirmPolicy.AwaitingSlipMoneyCheck("],
+         why=_LC_WHY + "ป้าย/ข้อความ/ยอดที่ต้องโอน/ช่องส่งสลิปของแขก มาจากเซิร์ฟเวอร์ (หน้าเว็บห้ามตัดสินเอง)"),
+    dict(file=LODGING, method="Apply",
+         must=["LodgingGuestConfirmPolicy.ModeOnSave(", "LodgingGuestConfirmPolicy.SlipDeadlineProblem(", "LodgingGuestConfirmPolicy.LegacyConfirmWithoutDeposit("],
+         before=[("LodgingGuestConfirmPolicy.SlipDeadlineProblem(", "p.SlipDeadlineMinutes = d.SlipDeadlineMinutes")],
+         forbid=["p.ConfirmWithoutDeposit = d.ConfirmWithoutDeposit"],
+         why=_LC_WHY + "ธงเดิมเป็นสำเนาที่ระบบเขียนตามโหมด (ทางเดียว) · ส่งสลิปภายในนอกช่วง ⇒ ปฏิเสธก่อนแตะ entity"),
+    dict(file="Controllers/LodgingPublicController.cs", method="Create",
+         must=["LodgingGuestConfirmPolicy.CreatedMessage("],
+         forbid_lit=["จองสำเร็จ เลขที่"],
+         why=_LC_WHY + "โหมดส่งสลิปก่อน ⇒ ห้ามตอบ \"จองสำเร็จ\" — ข้อความจากตัวตัดสินเดียวกับหน้าแขก"),
+]
+
+
 def main() -> int:
     errs = []
     for rule in RULES:
