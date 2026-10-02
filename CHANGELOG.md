@@ -4435,4 +4435,4 @@ _รอบ 202 ทีม LC (2026-10-02 · คำตัดสินข้อ 128
 - ส่งสลิป ≠ รับเงิน: ยืนยันจากสลิปไม่แตะ DepositPaid/PaidAmount · ปฏิเสธสลิปของใบที่ยืนยันเพราะสลิป ⇒ กลับรอชำระ + hold 24 ชม. (ล็อก LodgingConfirm) ·
   คิว "มีสลิปรอตรวจ" + ปุ่ม "บันทึกรับเงินตามสลิป" · แขกเปิดหน้าการจองหลังหมดเวลา ⇒ ExpireHolds ก่อน · ไม่แจ้งเจ้าของ "จองใหม่" ของใบที่ยังรอสลิป
 - ข้อมูลเดิม: โหมด NULL ⇒ อ่านธงเดิม (ไม่ backfill) · เทสต์ pure 40+ เคส (รวมเทียบสูตรเดิมทุก combination) + Db 3 เคส · sim `lodging_slip_confirm_sim.js` ·
-  required_call_site +10 กติกา (ห้าม `prop.ConfirmWithoutDeposit ||` · ห้ามแตะยอดเงินในเส้นสลิป) — commit <pending>_
+  required_call_site +10 กติกา (ห้าม `prop.ConfirmWithoutDeposit ||` · ห้ามแตะยอดเงินในเส้นสลิป) — commit 2b48c811_

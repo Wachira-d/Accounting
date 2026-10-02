@@ -4586,7 +4586,7 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LC · คำตัดสินข้อ 128 — §6.5 โหมดยืนยันการจองจากเว็บ Instant/RequireSlip/RequireDeposit · ตัวตัดสินเดียว LodgingGuestConfirmPolicy · ส่งสลิป ≠ รับเงิน — commit <pending>)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LC · คำตัดสินข้อ 128 — §6.5 โหมดยืนยันการจองจากเว็บ Instant/RequireSlip/RequireDeposit · ตัวตัดสินเดียว LodgingGuestConfirmPolicy · ส่งสลิป ≠ รับเงิน — commit 2b48c811)_
 
 _ก่อนหน้า: 2026-10-02 (สลิปแขก 500 — FileAttachment.UploadedByUserId ว่างได้ · ไฟล์จากคนนอกระบบ 3 ทางเข้า = null · commit ca42449e)_
 
