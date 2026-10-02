@@ -4369,4 +4369,4 @@ _รอบ 202 ทีม LW (เว็บที่พัก: ข้อมูล�
 มีที่พักไม่ผูกเว็บ ⇒ ไม่สร้างแห่งที่สอง) · `SiteResponse.Warnings` / `ApplySiteTemplateResponse.LodgingMessage` · `cms-edit` แปลงชื่อ enum บล็อก → เลข ·
 เทสต์ `LodgingWebRound202Tests` · sim `lodging_storefront_info_sim.js` (+ เคส c ใน `lodging_guest_split_sim.js`) · กติกา `required_call_site_check` 10 ข้อ + เคสฝ่ายค้าน LW1–LW3_
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — commit <pending>)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — commit e26a6bb3)_
