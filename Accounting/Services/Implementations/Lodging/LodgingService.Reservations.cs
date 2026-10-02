@@ -679,7 +679,7 @@ public partial class LodgingService
             foreach (var r in expired)
             {
                 r.Status = LodgingReservationStatus.Cancelled; r.CancelledAt = now;
-                r.CancellationReason = LodgingHoldRule.AutoExpireReason;   // ตัวอ่าน: LodgingHoldRule.IsAutoExpiredHold (สลิปหลังหมด hold · P1-3ก)
+                r.CancellationReason = LodgingGuestConfirmPolicy.AutoExpireReasonFor(r.GuestConfirmMode);   // ตัวอ่าน: LodgingHoldRule.IsAutoExpiredHold (สลิปหลังหมด hold · P1-3ก)
                 _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "AutoExpireHold" }));
             }
             await _db.SaveChangesAsync();

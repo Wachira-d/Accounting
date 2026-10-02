@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq.Expressions;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 
@@ -177,15 +178,16 @@ public static class LodgingGuestConfirmPolicy
            && string.Equals(confirmedBy, SlipConfirmActor, StringComparison.Ordinal);
 
     /// <summary>เวลาถือห้องหลังปฏิเสธสลิป — กติกาเดิม: รอชำระ ⇒ ต่อ 24 ชม. ให้ส่งใหม่ · ปิดรับสลิป ⇒ ไม่ต่อ · ใบยืนยันปกติ ⇒ ไม่แตะ ·
-    /// <b>ใบที่ยืนยันเพราะสลิปแล้วถูกปฏิเสธ</b> (กลับเป็นรอชำระ ต้องมี hold ไม่งั้นกันห้องตลอดกาล): ส่งใหม่ได้ ⇒ 24 ชม. ·
-    /// ปิดรับสลิป ⇒ เท่ากำหนดส่งสลิปของที่พัก (ให้แขกจ่ายออนไลน์/ติดต่อที่พัก แล้วปล่อยห้องตามกติกา)</summary>
+    /// <b>ใบที่ยืนยันเพราะสลิปแล้วถูกปฏิเสธ</b> (กลับเป็นรอชำระ ต้องมี hold ไม่งั้นกันห้องตลอดกาล): อย่างน้อย 24 ชม. เสมอ
+    /// รวมกรณีปิดรับสลิป (ฝ่ายค้าน P3-2: แขกที่เคยเห็น "จองสำเร็จ" ต้องมีเวลาจ่ายออนไลน์/ติดต่อที่พัก — เดิมให้เท่ากำหนดส่งสลิป 5 นาทีก็ได้)</summary>
     public static DateTime? HoldAfterSlipRejected(LodgingReservationStatus statusBefore, bool revertedFromSlipConfirm, DateTime? currentHold,
         bool blockFurtherUploads, DateTime now, int slipDeadlineMinutes)
     {
         if (revertedFromSlipConfirm)
-            return blockFurtherUploads
-                ? now.AddMinutes(Math.Clamp(slipDeadlineMinutes, MinSlipDeadlineMinutes, MaxSlipDeadlineMinutes))
-                : now + ResubmitWindow;
+        {
+            var deadline = TimeSpan.FromMinutes(Math.Clamp(slipDeadlineMinutes, MinSlipDeadlineMinutes, MaxSlipDeadlineMinutes));
+            return now + (deadline > ResubmitWindow ? deadline : ResubmitWindow);
+        }
         if (statusBefore != LodgingReservationStatus.Pending || blockFurtherUploads) return currentHold;
         return now + ResubmitWindow;
     }
@@ -216,6 +218,73 @@ public static class LodgingGuestConfirmPolicy
         if (slipRequired && guestNote != null) return $"การจอง {reservationNumber} — {guestNote}";
         return $"รับคำขอจอง {reservationNumber} แล้ว — กรุณาชำระมัดจำ {depositRequired.ToString("N2", CultureInfo.InvariantCulture)} บาท และอัปโหลดสลิป";
     }
+
+    // ═══════════════════════════ ผลฝ่ายค้านรอบ 202 (ข้อ 128) ═══════════════════════════
+
+    /// <summary>ด่านเช็คอิน (ฝ่ายค้าน P1-1): ใบที่ยืนยันเพราะสลิปแต่ยังไม่บันทึกรับเงิน ⇒ เช็คอินไม่ได้ (เดิมเช็คอินได้แล้วหลุดจากทุกคิว — ไม่มีใครตรวจยอดโอนอีก) ·
+    /// null = เช็คอินได้ (ใบที่พนักงานยืนยันเอง/มีมัดจำแล้ว ไม่ถูกแตะ)</summary>
+    public static string? CheckInProblem(LodgingReservationStatus status, string? confirmedBy, decimal depositPaid)
+        => IsSlipConfirmed(status, confirmedBy, depositPaid)
+            ? "การจองนี้ยืนยันอัตโนมัติจากสลิปของแขก แต่ยังไม่ได้บันทึกรับเงิน — เปิดดูสลิปแล้วกด “บันทึกรับเงินตามสลิป” หรือ “ปฏิเสธสลิป” ก่อนเช็คอิน"
+            : null;
+
+    public const string CheckInRuleCode = "LODGING-SLIP-UNVERIFIED";
+
+    /// <summary>ยกเลิก/no-show ใบที่มีสลิปค้างตรวจและยังไม่บันทึกรับเงิน (ฝ่ายค้าน P1-1) ⇒ เงินตามสลิปอาจเข้าบัญชีแล้วและต้องคืน —
+    /// ติดธง "เงินเข้าแต่ยืนยันไม่ได้" (กติกาข้อ 127) ให้พนักงานปิดเรื่อง (คืนเงินแล้ว/ปิดพร้อมเหตุผล) · ไม่ประทับยอดคืนเอง (R1)</summary>
+    public static bool CancelLeavesUnverifiedSlip(bool slipAwaitingReview, decimal depositPaid) => slipAwaitingReview && depositPaid <= 0m;
+
+    public static string UnverifiedSlipOnCancelNote(bool noShow)
+        => (noShow ? "บันทึกไม่มาเข้าพัก" : "ยกเลิกการจอง")
+           + "ทั้งที่มีสลิปของแขกที่ยังไม่ได้ตรวจ/บันทึกรับเงิน — ถ้าเงินเข้าบัญชีจริงต้องคืนแขก (กด “ปิดเรื่องเงินเข้า”: คืนเงินแล้ว หรือปิดพร้อมเหตุผล)";
+
+    /// <summary>ข้อความถึงแขกเมื่อเงินออนไลน์เข้าแล้วแต่ยืนยันการจองอัตโนมัติไม่ได้ (O-P1-4 · ข้อ 127)</summary>
+    public const string PaymentProblemGuestNote =
+        "ได้รับการชำระเงินของท่านแล้ว แต่ระบบยืนยันห้องอัตโนมัติไม่ได้ (ห้องในช่วงนี้อาจเต็ม) — ที่พักจะติดต่อกลับเพื่อจัดห้อง/เลื่อนวัน หรือคืนเงิน "
+        + "กรุณาอย่าชำระซ้ำ";
+
+    /// <summary>ข้อความถึงแขกเมื่อมีสลิปรอตรวจ — ห้ามชวนจ่ายออนไลน์ซ้ำ (ฝ่ายค้าน P2-1)</summary>
+    public const string SlipPendingGuestNote = "ได้รับสลิปของท่านแล้ว — ยอดตามสลิปรอที่พักตรวจสอบ กรุณาอย่าชำระซ้ำ";
+
+    /// <summary>ปิดการจ่ายออนไลน์ของแขกไหม (ตัวเดียวของหน้าแขก <c>MapAsync</c> และตัวคิดยอด gateway <c>PublicPaymentResolver</c>) —
+    /// เงินเข้าแต่ยืนยันไม่ได้ ⇒ ข้อความข้อ 127 · มีสลิปรอตรวจและยังไม่บันทึกรับเงิน ⇒ "อย่าชำระซ้ำ" · null = จ่ายได้ตามยอดของ LodgingAmounts</summary>
+    public static string? OnlinePaymentBlockedNote(bool slipAwaitingReview, decimal depositPaid, bool paymentProblem)
+        => paymentProblem ? PaymentProblemGuestNote
+         : slipAwaitingReview && depositPaid <= 0m ? SlipPendingGuestNote
+         : null;
+
+    /// <summary>คิว "มีสลิปรอตรวจ" — ตัวกรองเดียวของรายการจอง (view=slips) และตัวนับบนแดชบอร์ด (ฝ่ายค้าน P2-3) ·
+    /// สลิปยังอยู่ + ยังไม่บันทึกรับเงิน + (รอชำระ หรือ ยืนยันเพราะสลิป)</summary>
+    public static Expression<Func<LodgingReservation, bool>> AwaitingSlipReview { get; } = r =>
+        r.SlipUploadedAt != null && r.DepositPaid == 0
+        && (r.Status == LodgingReservationStatus.Pending
+            || (r.Status == LodgingReservationStatus.Confirmed && r.ConfirmedBy == SlipConfirmActor));
+
+    /// <summary>เหตุผลที่ตัวยกเลิกอัตโนมัติประทับ ตามโหมดที่ตรึงบนใบ (ฝ่ายค้าน P2-5) — ทั้งสองข้อความเป็น "ระบบยกเลิกเพราะหมดเวลา"
+    /// ของ <see cref="LodgingHoldRule.IsAutoExpiredHold"/></summary>
+    public static string AutoExpireReasonFor(LodgingGuestConfirmMode? reservationMode)
+        => reservationMode == LodgingGuestConfirmMode.RequireSlip ? LodgingHoldRule.AutoExpireSlipReason : LodgingHoldRule.AutoExpireReason;
+
+    /// <summary>ปฏิเสธสลิปจากข้อมูลที่พนักงานเห็นเก่าไปแล้ว (ฝ่ายค้าน P2-2) — แขกส่งสลิปใหม่หลังพนักงานเปิดดู หรือสถานะเปลี่ยน (เช็คอินแล้ว/รับเงินแล้ว) ⇒
+    /// ปฏิเสธพร้อมทางไปต่อ · ค่าที่ client ไม่ส่ง (null) = ไม่ตรวจ (client รุ่นเก่า)</summary>
+    public static string? RejectSlipStaleProblem(DateTime? seenSlipUploadedAt, DateTime? currentSlipUploadedAt,
+        LodgingReservationStatus? seenStatus, LodgingReservationStatus currentStatus)
+    {
+        if (seenStatus is LodgingReservationStatus s && s != currentStatus)
+            return "สถานะการจองเปลี่ยนไปแล้วระหว่างที่คุณตรวจสลิป — เปิดการจองใหม่แล้วตรวจอีกครั้ง";
+        if (seenSlipUploadedAt is DateTime seen && currentSlipUploadedAt is DateTime cur
+            && Math.Abs((cur - seen).TotalMilliseconds) > 1)
+            return "แขกส่งสลิปใหม่หลังจากที่คุณเปิดดู — เปิดการจองใหม่แล้วตรวจสลิปล่าสุดก่อนปฏิเสธ";
+        return null;
+    }
+
+    public const string RejectSlipStaleRuleCode = "LODGING-SLIP-STALE";
+
+    /// <summary>หัวเอกสารหลักฐานการจอง (ฝ่ายค้าน P2-4) — ยังรอชำระ ⇒ "คำขอจองที่พัก (ยังไม่ยืนยัน)" ไม่ใช่ "ยืนยันการจอง"</summary>
+    public static (string Th, string En) VoucherTitle(LodgingReservationStatus status, string confirmedTh, string confirmedEn)
+        => status == LodgingReservationStatus.Pending
+            ? ("คำขอจองที่พัก (ยังไม่ยืนยัน)", "Booking Request — Not Yet Confirmed")
+            : (confirmedTh, confirmedEn);
 
     // ═══════════════════════════ ป้าย / ข้อความ ═══════════════════════════
 

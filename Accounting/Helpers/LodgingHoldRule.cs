@@ -77,9 +77,14 @@ public static class LodgingHoldRule
     /// <summary>เหตุผลที่ตัวยกเลิกอัตโนมัติประทับเมื่อหมดเวลาถือห้อง — ตัวเดียวของผู้เขียน (ExpireHoldsAsync) และผู้อ่าน</summary>
     public const string AutoExpireReason = "หมดเวลาชำระมัดจำ (ระบบยกเลิกอัตโนมัติ)";
 
+    /// <summary>เหตุผลที่ตัวยกเลิกอัตโนมัติประทับเมื่อใบโหมด "ต้องส่งสลิปก่อน" หมดเวลาส่งสลิป (คำตัดสินข้อ 128 · ฝ่ายค้าน P2-5) —
+    /// ผู้เลือกข้อความ: <c>LodgingGuestConfirmPolicy.AutoExpireReasonFor</c> · ตัวอ่าน <see cref="IsAutoExpiredHold"/> รู้จักทั้งสองข้อความ</summary>
+    public const string AutoExpireSlipReason = "หมดเวลาส่งสลิป (ระบบยกเลิกอัตโนมัติ)";
+
     /// <summary>ใบนี้ถูก "ระบบ" ยกเลิกเพราะหมดเวลาถือห้อง (ไม่ใช่พนักงาน/แขกยกเลิกเอง) และยังไม่มีเงินเกี่ยวข้องบนใบ —
     /// แขกที่ส่งสลิปมาภายหลังต้องถูกรับไว้ + ติดธงให้พนักงานตัดสิน (ฝ่ายค้านรอบ 202 P1-3ก · คำตัดสินข้อ 127)</summary>
     public static bool IsAutoExpiredHold(LodgingReservationStatus status, string? cancellationReason, decimal depositPaid)
         => status == LodgingReservationStatus.Cancelled && depositPaid <= 0m
-           && string.Equals(cancellationReason, AutoExpireReason, StringComparison.Ordinal);
+           && (string.Equals(cancellationReason, AutoExpireReason, StringComparison.Ordinal)
+               || string.Equals(cancellationReason, AutoExpireSlipReason, StringComparison.Ordinal));
 }

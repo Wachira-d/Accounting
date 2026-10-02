@@ -326,7 +326,8 @@
           const f = document.getElementById('rjf');
           if (!f.reason.value.trim()) { Layout.toast('กรุณาระบุเหตุผล', 'error'); return false; }
           await this.call(() => Layout.api().lodgingRejectSlip(r.id,
-            { reason: f.reason.value.trim(), blockFurtherUploads: f.block.checked }));
+            // ฝ่ายค้าน P2-2: ส่งสิ่งที่พนักงานเห็นไปด้วย — แขกส่งสลิปใหม่/สถานะเปลี่ยนระหว่างนี้ เซิร์ฟเวอร์ปฏิเสธพร้อมให้เปิดใหม่
+            { reason: f.reason.value.trim(), blockFurtherUploads: f.block.checked, seenSlipUploadedAt: r.slipUploadedAt || null, seenStatus: r.status || null }));
         }, 'ปฏิเสธสลิป');
       },
 

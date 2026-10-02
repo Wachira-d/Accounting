@@ -220,13 +220,21 @@ public partial class LodgingService
 
         // คำตัดสินข้อ 128: ใบที่ยืนยันเพราะสลิปถูกปฏิเสธ ⇒ เปลี่ยนสถานะกลับ — ล็อกต่อการจองเดียวกับ ConfirmAsync (พนักงานกดรับเงินพร้อมกัน
         // ต้องไม่ได้ "รอชำระที่มีเงินรับแล้ว") · อ่านแถวใหม่หลังได้ล็อก
-        var r = await WithReservationLockAsync<LodgingReservation?>(companyId, reservationId, AdvisoryLockKey.LodgingConfirm, async () =>
+        // ฝ่ายค้าน P2-2: ล็อกต่อการจองอย่างเดียวไม่กันเช็คอิน/สลิปใบที่สอง (สองเส้นนั้นถือล็อกที่พัก) ⇒ ถือล็อกที่พักต่อจากล็อกการจอง
+        // (ลำดับเดียวกับยืนยัน: การจอง → ที่พัก) แล้วอ่านแถวใหม่ + ตรวจว่าสิ่งที่พนักงานเห็นยังเป็นปัจจุบัน
+        var propertyId = await _db.LodgingReservations.AsNoTracking()
+            .Where(x => x.Id == reservationId && x.CompanyId == companyId).Select(x => (Guid?)x.PropertyId).FirstOrDefaultAsync();
+        if (propertyId == null) return null;
+        var r = await WithReservationLockAsync<LodgingReservation?>(companyId, reservationId, AdvisoryLockKey.LodgingConfirm, () =>
+            WithPropertyLockAsync<LodgingReservation?>(companyId, propertyId.Value, async () =>
         {
             var row = await ResQuery(companyId).FirstOrDefaultAsync(x => x.Id == reservationId);
             if (row == null) return null;
             await _db.Entry(row).ReloadAsync();
             if (row.SlipUploadedAt == null)
                 throw new BusinessRuleException("การจองนี้ยังไม่มีสลิปให้ตรวจ");
+            if (LodgingGuestConfirmPolicy.RejectSlipStaleProblem(request.SeenSlipUploadedAt, row.SlipUploadedAt, request.SeenStatus, row.Status) is string stale)
+                throw new BusinessRuleException(stale, LodgingGuestConfirmPolicy.RejectSlipStaleRuleCode);
 
             var now = DateTime.UtcNow;
             var statusBefore = row.Status;
@@ -258,7 +266,7 @@ public partial class LodgingService
             }));
             await _db.SaveChangesAsync();
             return row;
-        });
+        }));
         if (r == null) return null;
         await TryNotifyAsync(companyId, r.Id, "slip-rejected");
         return await MapAsync(companyId, r, includeToken: true, includeInternal: true);
@@ -319,9 +327,8 @@ public partial class LodgingService
             case "inhouse": q = q.Where(r => r.Status == LodgingReservationStatus.CheckedIn); break;
             case "pending": q = q.Where(r => r.Status == LodgingReservationStatus.Pending); break;
             // คำตัดสินข้อ 128: รวมใบที่ "ยืนยันอัตโนมัติจากสลิป" ที่ยังไม่บันทึกรับเงิน (ไม่งั้นพนักงานไม่เห็นใบที่ต้องตรวจยอดโอน)
-            case "slips": q = q.Where(r => r.SlipUploadedAt != null && r.DepositPaid == 0
-                && (r.Status == LodgingReservationStatus.Pending
-                    || (r.Status == LodgingReservationStatus.Confirmed && r.ConfirmedBy == LodgingGuestConfirmPolicy.SlipConfirmActor))); break;
+            // ฝ่ายค้าน P2-3: ตัวกรองเดียวกับตัวนับบนแดชบอร์ด (LodgingGuestConfirmPolicy.AwaitingSlipReview)
+            case "slips": q = q.Where(LodgingGuestConfirmPolicy.AwaitingSlipReview); break;
             // F-03 — คิว "ต้องคืนเงินแขก": ยกเลิก/no-show ที่ยอดต้องคืนยังมากกว่ายอดที่ยืนยันว่าคืนแล้ว
             // + เช็คเอาต์ที่มัดจำเกินยอดใบสุดท้าย (C2) · ไม่รวมแถวก่อนรอบ 193 (ระบบเดิมลงคืนไปแล้ว — ไม่มีข้อมูลการโอน)
             case "refunds": q = q.Where(r => (r.Status == LodgingReservationStatus.Cancelled || r.Status == LodgingReservationStatus.NoShow
@@ -883,11 +890,22 @@ public partial class LodgingService
             throw new BusinessRuleException($"การจองอยู่ในสถานะ {StatusTh(r.Status)} — เช็คอินไม่ได้");
         if (r.Status == LodgingReservationStatus.Pending && r.DepositRequired > 0 && r.DepositPaid <= 0)
             throw new BusinessRuleException("ยังไม่ได้ยืนยันการจอง/รับมัดจำ — กด \"ยืนยัน\" ก่อน (หรือรับชำระตอนเช็คอิน)");
+        // ฝ่ายค้านรอบ 202 P1-1 (ข้อ 128): ยืนยันเพราะสลิปแต่ยังไม่บันทึกรับเงิน ⇒ เช็คอินไม่ได้ (เดิมเช็คอินได้แล้วหลุดจากทุกคิว)
+        if (LodgingGuestConfirmPolicy.CheckInProblem(r.Status, r.ConfirmedBy, r.DepositPaid) is string slipProblem)
+            throw new BusinessRuleException(slipProblem, LodgingGuestConfirmPolicy.CheckInRuleCode);
         var today = DateTime.UtcNow.AddHours(7).Date;
         if (r.CheckInDate.Date > today.AddDays(1)) throw new BusinessRuleException($"วันเช็คอินคือ {r.CheckInDate:dd/MM/yyyy} — เช็คอินก่อนกำหนดไม่ได้ (เลื่อนวันก่อน)");
         // O-P0-1 รอบ 202: จัดห้อง + เช็คอิน ใต้ล็อกที่พัก (ห้องเดียวกันต้องไม่ถูกเช็คอินให้สองใบพร้อมกัน)
         await WithPropertyLockAsync(companyId, r.PropertyId, async () =>
         {
+            // ฝ่ายค้าน P2-2: อ่านแถวใหม่ใต้ล็อก — ปฏิเสธสลิป/ยืนยันจากสลิปที่เกิดระหว่างนี้ต้องถูกเห็น (ด่านสถานะ/สลิปตรวจซ้ำ)
+            await _db.Entry(r).ReloadAsync();
+            if (r.Status != LodgingReservationStatus.Confirmed && r.Status != LodgingReservationStatus.Pending)
+                throw new BusinessRuleException($"การจองอยู่ในสถานะ {StatusTh(r.Status)} — เช็คอินไม่ได้", "LODGING-STATE-CHANGED");
+            if (r.Status == LodgingReservationStatus.Pending && r.DepositRequired > 0 && r.DepositPaid <= 0)
+                throw new BusinessRuleException("ยังไม่ได้ยืนยันการจอง/รับมัดจำ — กด \"ยืนยัน\" ก่อน (หรือรับชำระตอนเช็คอิน)");
+            if (LodgingGuestConfirmPolicy.CheckInProblem(r.Status, r.ConfirmedBy, r.DepositPaid) is string slipProblemLocked)
+                throw new BusinessRuleException(slipProblemLocked, LodgingGuestConfirmPolicy.CheckInRuleCode);
             // คำตัดสินเจ้าของข้อ 125: เช็คอินก่อนวันจอง 1 วัน = เพิ่ม 1 คืน (คืนวันนี้) — ต้องมีห้องว่าง · ราคาคืนนั้นจาก engine · บันทึกประวัติ
             // (เดิมยอมให้เช็คอินล่วงหน้าโดยไม่คิดคืนนั้นและไม่ตรวจห้องว่าง ⇒ ห้องคืนนั้นอาจถูกขายซ้อน + พักฟรี 1 คืน)
             var extendedEarly = r.CheckInDate.Date == today.AddDays(1);
@@ -1675,6 +1693,10 @@ public partial class LodgingService
         if (noShow || deposit > 0 || fee > 0) await MeterStayAsync(companyId, r, noShow ? "no-show" : "cancel");
         _db.AddChainedAuditLog(Audit(companyId, noShow ? AuditAction.Update : AuditAction.Delete, r, new { action = noShow ? "NoShow" : "Cancel", reason, fee, policyFee, refundDue = plan.Refund, forfeit = plan.Forfeit, refundPaid = 0m, by = actor }));
         await _db.SaveChangesAsync();
+        // ฝ่ายค้านรอบ 202 P1-1 (ข้อ 128 · กติกาข้อ 127): มีสลิปค้างตรวจที่ยังไม่บันทึกรับเงิน ⇒ เงินตามสลิปอาจอยู่ในบัญชีแล้วและต้องคืน —
+        // ติดธงให้พนักงานตัดสิน (ทั้งเส้นแขก token / พนักงาน / no-show เพราะทุกเส้นเดินตัวกลางนี้) · ไม่ประทับยอดคืนเอง (R1)
+        if (LodgingGuestConfirmPolicy.CancelLeavesUnverifiedSlip(r.SlipUploadedAt != null, r.DepositPaid))
+            await FlagPaymentProblemAsync(companyId, r.Id, LodgingGuestConfirmPolicy.UnverifiedSlipOnCancelNote(noShow), noShow ? "no-show" : "cancel");
 
         // ส่วนที่ริบ = เหตุการณ์เกิดแล้วจริง → รับรู้รายได้ (ฐาน ไม่ใช่ gross — P0-2 · ฐานคำนวณให้ส่วนที่คืนภายหลังผ่านด่าน
         // "คืนเกินคงเหลือ" พอดี) · รอบ 194 (spec S3 · L1 C-2/C-3): VAT ของส่วนที่ริบตามลักษณะเงิน ไม่ใช่ตามโหมด — มัดจำค่าห้อง =

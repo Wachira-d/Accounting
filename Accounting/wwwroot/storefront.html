@@ -2000,6 +2000,7 @@
             </div>
           </div>
           ${canPayOnline ? `<div class="lg-sum" style="margin-top:16px" id="lgPayOnlineBox"></div>` : ''}
+          ${!canPayOnline && r.onlinePaymentNote ? `<div class="lg-badge info" style="display:block;padding:12px;margin-top:14px;font-size:14px">${this.esc(r.onlinePaymentNote)}</div>` : ''}
           ${r.slipRejectedReason ? `<div class="lg-badge bad" style="display:block;padding:12px;margin-top:14px;font-size:14px">
             ⚠️ สลิปที่ส่งมาไม่ผ่านการตรวจสอบ — ${this.esc(r.slipRejectedReason)}<br>
             <span style="font-weight:400">${r.slipUploadBlocked

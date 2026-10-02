@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **448 ไฟล์ · 4,351 `[Fact]` + 688 `[Theory]` (3,066 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **448 ไฟล์ · 4,360 `[Fact]` + 690 `[Theory]` (3,072 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -2925,6 +2925,7 @@
 | LDG-202-13 | **รอบ 202 ทีม LC · ข้อ 128** โหมดยืนยันการจองจากเว็บ: ข้อมูลเดิม (ไม่มีโหมด) ได้สถานะ/มัดจำ/hold เท่าสูตรเดิมทุก combination · RequireSlip ⇒ Pending + hold = กำหนดส่งสลิป · มัดจำ 0 ⇒ โอนยอดเต็ม · เส้นพนักงานไม่ถูกบังคับสลิป · ส่งสลิป auto ⇒ ยืนยัน (ปัญหา/ใบเดิม/โหมดอื่น ⇒ รอตรวจ) · ปฏิเสธใบยืนยันจากสลิป ⇒ กลับรอชำระ + hold · ป้ายแขก/หน้าบ้าน · หน้ารุ่นเก่าบันทึกซ้ำไม่ทำ RequireSlip ตก | ✅ `LodgingGuestConfirmPolicyTests` |
 | LDG-202-14 | **ข้อ 128 บนฐานจริง** RequireSlip + auto: จองเว็บ ⇒ Pending (โอนยอดเต็ม) ⇒ ส่งสลิป ⇒ Confirmed แต่ DepositPaid/PaidAmount = 0 ⇒ อยู่ในคิวสลิป ⇒ ปฏิเสธ ⇒ Pending + hold 24 ชม. · ไม่ส่งจนหมดเวลา ⇒ เปิดหน้าการจอง ⇒ ยกเลิกอัตโนมัติ + ป้าย "หมดเวลาส่งสลิป" · ทิศตรงข้าม: auto ปิด ⇒ ส่งสลิปแล้วยังรอตรวจ · พนักงานไม่ถูกบังคับสลิป | ✅ `Db/LodgingSlipConfirmDbTests` (job db-test) |
 | LDG-202-15 | หน้าแขก: ต้องส่งสลิป ⇒ แบนเนอร์ไม่ใช่ "จองสำเร็จ" สีเขียว · ยอด/เวลา/ช่องสลิปจากเซิร์ฟเวอร์ · บัญชีรับโอนหนีอักขระ · ใบปกติคงเดิม (sim รันโค้ดจริง + negative 2 แบบ) | ✅ `tools/lodging_slip_confirm_sim.js` |
+| LDG-202-16 | **ฝ่ายค้านข้อ 128** P1-1 ใบยืนยันเพราะสลิป (ยังไม่รับเงิน) เช็คอินไม่ได้ · ใบที่พนักงานยืนยันเอง/รับเงินแล้วเช็คอินได้ · ยกเลิกใบที่มีสลิปค้างตรวจ ⇒ ธงข้อ 127 ไม่ประทับยอดคืน · P2-1 สลิปรอตรวจไม่ชวนจ่ายซ้ำ (หน้าแขก + ตัวคิดยอด gateway) · P2-2 ปฏิเสธสลิปจากข้อมูลเก่า ⇒ LODGING-SLIP-STALE · P2-3 คิว/ตัวนับเงื่อนไขเดียว · P2-4 หลักฐานการจองใบรอสลิปไม่ใช่ "ยืนยันการจอง" · P2-5 เหตุผลยกเลิกตามโหมด + ข้อความเดิมในฐาน · P3-2 ปิดรับสลิปยัง hold ≥ 24 ชม. | ✅ `LodgingGuestConfirmPolicyTests` · `LodgingVoucherBuilderTests` · `Db/LodgingSlipConfirmDbTests` |
 
 ### License ส่วนเสริม + โควตาเอกสาร (LIC-*) — LODGING_LICENSING_PLAN §3-§6, §11-§12
 

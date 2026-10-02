@@ -61,8 +61,11 @@ public static class LodgingVoucherBuilder
         var accent = SafeHex(accentHex) ?? "#0F766E";
         var sb = new StringBuilder(8192);
 
+        // ฝ่ายค้านรอบ 202 P2-4 (ข้อ 128): ใบที่ยังรอชำระ/รอสลิป ห้ามพิมพ์หัว "ยืนยันการจอง" · ป้ายสถานะจากตัวตัดสินฝั่งแขก (GuestView) ก่อนตารางในไฟล์นี้
+        var (title, titleEn) = LodgingGuestConfirmPolicy.VoucherTitle(r.Status, Title, TitleEn);
+        var statusLabel = r.GuestStatusLabel ?? StatusLabel(r.Status);
         sb.Append("<!DOCTYPE html><html lang=\"th\"><head><meta charset=\"utf-8\">");
-        sb.Append($"<title>{E(Title)} {E(r.ReservationNumber)}</title><style>");
+        sb.Append($"<title>{E(title)} {E(r.ReservationNumber)}</title><style>");
         sb.Append(@"
 *{box-sizing:border-box}
 body{font-family:'Sarabun','Noto Sans Thai',sans-serif;font-size:12.5px;color:#111827;margin:0;padding:26px 30px}
@@ -94,10 +97,10 @@ td.r,th.r{text-align:right}
         sb.Append("<div class=\"hd\"><div>");
         if (!string.IsNullOrEmpty(logoDataUri))
             sb.Append($"<img class=\"logo\" src=\"{E(logoDataUri)}\" alt=\"\"><br>");
-        sb.Append($"<h1>{E(Title)}</h1><div class=\"sub\">{E(TitleEn)} · {E(r.PropertyName)}</div>");
+        sb.Append($"<h1>{E(title)}</h1><div class=\"sub\">{E(titleEn)} · {E(r.PropertyName)}</div>");
         sb.Append("</div><div class=\"no\">");
         sb.Append($"<div class=\"sub\">เลขที่การจอง</div><div class=\"n\">{E(r.ReservationNumber)}</div>");
-        sb.Append($"<div style=\"margin-top:5px\"><span class=\"badge\">{E(StatusLabel(r.Status))}</span></div>");
+        sb.Append($"<div style=\"margin-top:5px\"><span class=\"badge\">{E(statusLabel)}</span></div>");
         sb.Append("</div></div>");
 
         // ── ที่พัก / ผู้เข้าพัก ──
@@ -156,9 +159,19 @@ td.r,th.r{text-align:right}
         sb.Append($"<div class=\"kv grand\"><span>ยอดรวมทั้งสิ้น</span><span>{M(r.GrandTotal)} {E(r.Currency)}</span></div>");
         sb.Append($"<div class=\"kv\"><span>ชำระแล้ว</span><span>{M(r.PaidAmount)}</span></div>");
         sb.Append($"<div class=\"kv\"><span><b>คงเหลือ</b></span><span><b>{M(r.BalanceDue)}</b></span></div>");
-        if (r.Status == LodgingReservationStatus.Pending && r.DepositRequired > 0)
+        if (r.SlipRequired && r.AmountToTransfer is decimal toTransfer)
+        {
+            // โหมดส่งสลิปก่อน: ยอด/กำหนดเวลาจากเซิร์ฟเวอร์ (GuestView) — กระดาษต้องไม่ดูเหมือนการจองสำเร็จแล้ว
+            sb.Append($"<div class=\"kv\" style=\"color:#92400E\"><span>ยอดที่ต้องโอน</span><b>{M(toTransfer)}</b></div>");
+            if (r.SlipDueAt is DateTime due)
+                sb.Append($"<div class=\"kv\" style=\"color:#92400E\"><span>ส่งสลิปภายใน</span><b>{D(due.AddHours(7))} {due.AddHours(7).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture)} น.</b></div>");
+        }
+        else if (r.Status == LodgingReservationStatus.Pending && r.DepositRequired > 0)
             sb.Append($"<div class=\"kv\" style=\"color:#92400E\"><span>มัดจำที่ต้องชำระ</span><b>{M(r.DepositRequired)}</b></div>");
         sb.Append("</div>");
+        if (r.SlipRequired)
+            sb.Append("<div class=\"note\" style=\"border-color:#F59E0B;color:#92400E\"><b>การจองยังไม่สำเร็จจนกว่าจะส่งสลิปโอนเงิน</b>"
+                + (string.IsNullOrWhiteSpace(r.GuestNote) ? "" : $"<br>{E(r.GuestNote)}") + "</div>");
 
         // ── นโยบายยกเลิก (snapshot ณ วันจอง) ──
         if (!string.IsNullOrWhiteSpace(r.CancellationPolicyName) || r.CancellationRules.Count > 0)

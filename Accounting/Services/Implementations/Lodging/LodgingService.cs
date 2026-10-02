@@ -290,7 +290,8 @@ public partial class LodgingService : ILodgingService
         LodgingSettingsRules.EnsureNightsRange(minNights, d.MaxNights, MinNightsLabel, MaxNightsLabel);
         // คำตัดสินข้อ 128: โหมดยืนยันการจองจากเว็บ — ตัวตัดสินเดียว (client รุ่นเก่าที่ส่งแค่ธงเดิมเปลี่ยนโหมดเฉพาะเมื่อธงต่างจากสำเนา)
         var confirmMode = LodgingGuestConfirmPolicy.ModeOnSave(d.GuestConfirmMode, d.ConfirmWithoutDeposit, LodgingGuestConfirmPolicy.Resolve(p));
-        if (LodgingGuestConfirmPolicy.SlipDeadlineProblem(d.SlipDeadlineMinutes) is string slipDeadlineProblem)
+        // ฝ่ายค้าน P3-1: ช่องที่ client ไม่ส่ง (null — client รุ่นเก่า/ช่องว่าง) = คงค่าเดิม ไม่ทับเป็น 30/true เงียบ ๆ
+        if (d.SlipDeadlineMinutes is int slipDeadline && LodgingGuestConfirmPolicy.SlipDeadlineProblem(slipDeadline) is string slipDeadlineProblem)
             throw new BusinessRuleException(slipDeadlineProblem, "LODGING-SLIP-DEADLINE");
 
         p.SiteId = d.SiteId; p.BranchId = d.BranchId;
@@ -308,7 +309,8 @@ public partial class LodgingService : ILodgingService
         p.AutoConfirmOnDeposit = d.AutoConfirmOnDeposit;
         p.GuestConfirmMode = confirmMode;
         p.ConfirmWithoutDeposit = LodgingGuestConfirmPolicy.LegacyConfirmWithoutDeposit(confirmMode);   // สำเนาที่ระบบเขียนตาม (ทางเดียว)
-        p.SlipDeadlineMinutes = d.SlipDeadlineMinutes; p.AutoConfirmOnSlip = d.AutoConfirmOnSlip;
+        if (d.SlipDeadlineMinutes is int newSlipDeadline) p.SlipDeadlineMinutes = newSlipDeadline;
+        if (d.AutoConfirmOnSlip is bool newAutoConfirmOnSlip) p.AutoConfirmOnSlip = newAutoConfirmOnSlip;
         p.PaymentHoldMinutes = Math.Max(15, d.PaymentHoldMinutes); p.OverbookingAllowance = Math.Max(0, d.OverbookingAllowance);
         p.ChildMaxAge = Math.Max(0, d.ChildMaxAge); p.InfantMaxAge = Math.Max(0, d.InfantMaxAge);
         p.OnlineBookingEnabled = d.OnlineBookingEnabled; p.RequireGuestIdNumber = d.RequireGuestIdNumber;
