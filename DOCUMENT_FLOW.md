@@ -4661,7 +4661,7 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 
 
-_Last verified against codebase: 2026-10-02 (รอบ 203 ทีม F3 รวม F2 — §6.2g predicate เจ้าของหนี้ ภ.พ.36 ตัวเดียว `ForeignServiceVat.OwnsPp36`/`OwnsPp36Query` · CIL ไม่ใช่เจ้าของ/ติ๊กไม่ได้ · ด่านใบลดหนี้ตัดสินต่อใบด้วย `Pp36Ledger.RemittedStatusAsync` — commit <pending>)_
+_Last verified against codebase: 2026-10-02 (รอบ 203 ทีม F3 รวม F2 — §6.2g predicate เจ้าของหนี้ ภ.พ.36 ตัวเดียว `ForeignServiceVat.OwnsPp36`/`OwnsPp36Query` · CIL ไม่ใช่เจ้าของ/ติ๊กไม่ได้ · ด่านใบลดหนี้ตัดสินต่อใบด้วย `Pp36Ledger.RemittedStatusAsync` — commit 92d1f4da)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ 203 ทีม F3 — §6.2g วงจรนำส่ง/รับรู้ ภ.พ.36: ใบที่นับต้องมี Cr 21912 ใน GL · ผูกใบ↔รายการนำส่ง (นำส่งเพิ่มเติมงวดเดิม) · รับรู้ลงวันใบเสร็จ RD เฉพาะใบที่นำส่งแล้ว · บล็อกแก้ใบหลังนำส่ง · เงินเพิ่ม §89/1 · ชื่อผัง 21912 — commit 873f9ad4)_
 

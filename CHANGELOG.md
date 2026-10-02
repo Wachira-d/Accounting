@@ -4475,4 +4475,4 @@ _รอบ 203 ทีม F3 รวมกับทีม F2 (2026-10-02) — pred
 - `Pp36Ledger.LoadDocsCoreAsync` กรองด้วย `OwnsPp36Query` (PV ที่ปิดหนี้ใบต้นทางสืบทอดธงตาม F2 ไม่นับซ้ำ) · migration ผูกใบเดิมใช้เงื่อนไขเดียวกัน
 - TODO ของ F2: `DocumentService.Pp36SettledReasonAsync` (ด่านใบลด/เพิ่มหนี้ E-7) ตัดสิน "ต่อใบ" ด้วย `Pp36Ledger.RemittedStatusAsync` ตัวเดียวกับด่านยกเลิก/ปลดธง/ปรับยอด
   (`ChangeBlocksAsync`) — เดิมระดับงวด ⇒ ใบที่อนุมัติหลังนำส่งถูกปฏิเสธเกิน · ข้อความเหตุ `Pp36Lifecycle.SettledReason` ตัวเดียว
-- required_call_site +3 กติกา (IsReverseCharge · Pp36SettledReasonAsync · LoadDocsCoreAsync) — commit <pending>_
+- required_call_site +3 กติกา (IsReverseCharge · Pp36SettledReasonAsync · LoadDocsCoreAsync) — commit 92d1f4da_
