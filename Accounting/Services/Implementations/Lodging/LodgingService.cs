@@ -54,10 +54,7 @@ public partial class LodgingService : ILodgingService
         if (string.IsNullOrWhiteSpace(json)) return new();
         try { return JsonSerializer.Deserialize<List<Guid>>(json, JsonOpts) ?? new(); } catch { return new(); }
     }
-    private static string Time(TimeOnly t) => t.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
-    private static TimeOnly ParseTime(string? s, TimeOnly fallback)
-        => TimeOnly.TryParseExact(s ?? "", "HH:mm", System.Globalization.CultureInfo.InvariantCulture,
-               System.Globalization.DateTimeStyles.None, out var t) ? t : fallback;
+    private static string Time(TimeOnly t) => LodgingTimeOfDay.Format(t);
     private static string Slugify(string s)
     {
         var chars = s.Trim().ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray();
@@ -133,6 +130,18 @@ public partial class LodgingService : ILodgingService
         return p == null ? null : await ToDtoAsync(companyId, p);
     }
 
+    /// <summary>ค่าตั้งต้นของฟอร์ม "ที่พักใหม่" (รอบ 202 ทีม LS · S-P1-3) — มาจากค่าเริ่มต้นของ <b>entity</b> ผ่าน mapper ตัวเดียวกับที่พักจริง
+    /// (ToDtoAsync) ⇒ ไม่มีสำเนาค่าตั้งต้นใน JS อีก · เดิมหน้าเว็บเปิดฟอร์มว่างด้วย <c>fillProp({})</c> ⇒ checkbox ทุกตัวไม่ติ๊ก ⇒ ที่พักแรก
+    /// ถูกสร้างเป็น "ปิดใช้งาน + ปิดจองออนไลน์ + มัดจำ 0%" โดยผู้ใช้ไม่ได้ตั้งใจ · ไม่บันทึกอะไรลงฐานข้อมูล (อ่านอย่างเดียว)</summary>
+    public async Task<LodgingPropertyDto> GetPropertyDefaultsAsync(Guid companyId)
+    {
+        var draft = new LodgingProperty { CompanyId = companyId };
+        var dto = await ToDtoAsync(companyId, draft);
+        dto.Id = null;                  // ยังไม่มีตัวตน — ห้ามให้หน้าเว็บส่ง id ของร่างกลับมา
+        dto.Code = null;                // ว่าง = ระบบตั้งจากชื่อ (DeriveCode)
+        return dto;
+    }
+
     public async Task<LodgingPropertyDto> CreatePropertyAsync(Guid companyId, LodgingPropertyDto dto, string userId)
     {
         if (string.IsNullOrWhiteSpace(dto.Name)) throw new BusinessRuleException("กรุณาระบุชื่อที่พัก");
@@ -153,6 +162,7 @@ public partial class LodgingService : ILodgingService
 
         var p = new LodgingProperty { CompanyId = companyId, CreatedBy = userId };
         Apply(p, dto);
+        await EnsurePropertyRefsBelongAsync(companyId, p, previousSiteId: null, previousPolicyId: null);
         await ApplyDepositKindsAsync(companyId, p, dto, previousRoomKindId: null, previousSecurityKindId: null);
         await EnsureSiteNotBoundElsewhereAsync(companyId, p);
         await GuardAccountingModeAsync(companyId, p, LodgingAccountingMode.Full, dto, userId);
@@ -170,7 +180,10 @@ public partial class LodgingService : ILodgingService
         var prevTreatment = p.DepositVatTreatment;
         var prevRoomKind = p.RoomDepositKindId;
         var prevSecurityKind = p.SecurityDepositKindId;
+        var prevSiteId = p.SiteId;
+        var prevPolicyId = p.DefaultCancellationPolicyId;
         Apply(p, dto);
+        await EnsurePropertyRefsBelongAsync(companyId, p, prevSiteId, prevPolicyId);
         await ApplyDepositKindsAsync(companyId, p, dto, prevRoomKind, prevSecurityKind);
         if (prevTreatment != p.DepositVatTreatment || prevRoomKind != p.RoomDepositKindId)
             _logger.LogInformation("ที่พัก {Prop} เปลี่ยนประเภท/วิธีบันทึกมัดจำ {FromKind}/{From} → {ToKind}/{To} โดย {User} (มีผลกับมัดจำใบใหม่เท่านั้น)",
@@ -230,6 +243,22 @@ public partial class LodgingService : ILodgingService
         return string.IsNullOrEmpty(letters) || letters.Any(c => c > 127) ? "STAY" : letters;
     }
 
+    /// <summary>id ที่อ้างถึงจากหน้าตั้งค่าต้องเป็นของบริษัทนี้ (+ ที่พักนี้) — รอบ 202 ทีม LS (S-P2-8 · กฎ M tenant isolation)
+    /// <para>เดิมรับ <c>SiteId</c>/<c>DefaultCancellationPolicyId</c> จาก client ตรง ๆ ⇒ ส่ง id ของบริษัทอื่น/ที่พักอื่นมาได้ ·
+    /// ตรวจ<b>เฉพาะเมื่อค่าเปลี่ยน</b> (ค่าเดิมที่ echo กลับมาไม่ถูกปฏิเสธ — เว็บที่ถูกลบหลังผูกต้องยังบันทึกส่วนอื่นได้ แล้วป้าย
+    /// <c>LodgingPublicReadiness</c> บอกว่าเว็บหาย) · นโยบายยกเลิกต้องเป็นของที่พักนี้ (ที่พักใหม่ยังไม่มีนโยบาย ⇒ ต้องว่าง)</para></summary>
+    private async Task EnsurePropertyRefsBelongAsync(Guid companyId, LodgingProperty p, Guid? previousSiteId, Guid? previousPolicyId)
+    {
+        if (p.SiteId is Guid sid && sid != previousSiteId
+            && !await _db.Sites.AsNoTracking().AnyAsync(s => s.Id == sid && s.CompanyId == companyId))
+            throw new BusinessRuleException("ไม่พบเว็บไซต์ที่เลือกในบริษัทนี้ — รีเฟรชหน้าแล้วเลือก «เว็บไซต์ที่ผูก» ใหม่", "LODGING-REF");
+        if (p.DefaultCancellationPolicyId is Guid pid && pid != previousPolicyId
+            && !await _db.LodgingCancellationPolicies.AsNoTracking()
+                .AnyAsync(x => x.Id == pid && x.CompanyId == companyId && x.PropertyId == p.Id))
+            throw new BusinessRuleException("นโยบายยกเลิกที่เลือกไม่ใช่ของที่พักนี้ — รีเฟรชหน้าแล้วเลือก «นโยบายยกเลิก default» ใหม่ "
+                + "(ที่พักใหม่: บันทึกที่พักก่อน แล้วสร้างนโยบายที่แท็บ «นโยบายยกเลิก»)", "LODGING-REF");
+    }
+
     /// <summary>เว็บหนึ่งผูกที่พักได้แห่งเดียว — storefront อ่านที่พักจาก SiteId (`ResolvePropertyIdForSiteAsync`
     /// หยิบ FirstOrDefault) ถ้าผูกซ้ำได้ แขกจะจองที่พัก A ขณะเจ้าของคิดว่าเปิด B โดยไม่มี error ที่ไหน
     /// (ทีมตรวจรอบ 158 L-02) · index ฐานข้อมูลเป็น partial unique คู่กัน — ด่านนี้ให้ข้อความไทยแทน 500</summary>
@@ -251,19 +280,29 @@ public partial class LodgingService : ILodgingService
         p.Code = code;
     }
 
+    /// <summary>ป้ายช่องบนหน้าตั้งค่า — ข้อความปฏิเสธต้องชี้ "ป้ายที่ผู้ใช้เห็น" ไม่ใช่ชื่อ property C#</summary>
+    private const string MinNightsLabel = "พักขั้นต่ำ (คืน)";
+    private const string MaxNightsLabel = "พักสูงสุด (คืน)";
+
     private static void Apply(LodgingProperty p, LodgingPropertyDto d)
     {
+        // ── ด่านก่อนแตะ entity (รอบ 202 ทีม LS) — ค่าที่อ่านไม่ได้/ช่วงกลับหัว ⇒ ปฏิเสธพร้อมข้อความ ไม่แก้ให้เงียบ ๆ ──
+        var checkIn = LodgingTimeOfDay.Parse(d.CheckInTime, LodgingTimeOfDay.DefaultCheckIn, LodgingTimeOfDay.CheckInLabel);
+        var checkOut = LodgingTimeOfDay.Parse(d.CheckOutTime, LodgingTimeOfDay.DefaultCheckOut, LodgingTimeOfDay.CheckOutLabel);
+        var minNights = Math.Max(1, d.MinNights);
+        LodgingSettingsRules.EnsureNightsRange(minNights, d.MaxNights, MinNightsLabel, MaxNightsLabel);
+
         p.SiteId = d.SiteId; p.BranchId = d.BranchId;
         p.Name = d.Name.Trim(); p.NameEn = d.NameEn?.Trim(); p.Code = d.Code?.Trim() ?? "";
         p.PropertyType = d.PropertyType; p.Description = d.Description; p.Address = d.Address;
         p.Phone = d.Phone; p.Email = d.Email; p.LineId = d.LineId; p.MapUrl = d.MapUrl;
         p.StarRating = Math.Clamp(d.StarRating, 0, 5);
         p.ImagesJson = J(d.Images ?? new()); p.AmenitiesJson = J(d.Amenities ?? new());
-        p.CheckInTime = ParseTime(d.CheckInTime, new TimeOnly(14, 0));
-        p.CheckOutTime = ParseTime(d.CheckOutTime, new TimeOnly(12, 0));
+        p.CheckInTime = checkIn;
+        p.CheckOutTime = checkOut;
         p.EarlyCheckInHours = Math.Max(0, d.EarlyCheckInHours); p.EarlyCheckInFee = Math.Max(0, d.EarlyCheckInFee);
         p.LateCheckOutHours = Math.Max(0, d.LateCheckOutHours); p.LateCheckOutFee = Math.Max(0, d.LateCheckOutFee);
-        p.MinNights = Math.Max(1, d.MinNights); p.MaxNights = Math.Max(p.MinNights, d.MaxNights);
+        p.MinNights = minNights; p.MaxNights = d.MaxNights;
         p.MaxAdvanceDays = Math.Max(1, d.MaxAdvanceDays); p.MinAdvanceHours = Math.Max(0, d.MinAdvanceHours);
         p.AutoConfirmOnDeposit = d.AutoConfirmOnDeposit; p.ConfirmWithoutDeposit = d.ConfirmWithoutDeposit;
         p.PaymentHoldMinutes = Math.Max(15, d.PaymentHoldMinutes); p.OverbookingAllowance = Math.Max(0, d.OverbookingAllowance);
@@ -386,6 +425,9 @@ public partial class LodgingService : ILodgingService
         var unitCount = await _db.LodgingUnits.CountAsync(u => u.CompanyId == companyId && u.IsActive && u.RoomType.PropertyId == p.Id);
         string? siteName = p.SiteId == null ? null
             : await _db.Sites.AsNoTracking().Where(s => s.Id == p.SiteId && s.CompanyId == companyId).Select(s => s.Name).FirstOrDefaultAsync();
+        // W-01 (รอบ 202 ทีม LS): แขกจองผ่านเว็บได้จริงไหม — ตัวตัดสินตัวเดียว · "เว็บหาย" = ชื่อเว็บหาไม่เจอ (ถูกลบ/ไม่ใช่ของบริษัท)
+        var readiness = LodgingPublicReadiness.Evaluate(p.SiteId, siteExists: siteName != null, siteName,
+            p.IsActive, p.OnlineBookingEnabled, unitCount);
         return new LodgingPropertyDto
         {
             Id = p.Id, SiteId = p.SiteId, BranchId = p.BranchId, Name = p.Name, NameEn = p.NameEn, Code = p.Code,
@@ -425,6 +467,7 @@ public partial class LodgingService : ILodgingService
             IsActive = p.IsActive, SortOrder = p.SortOrder,
             RoomTypeCount = rtCount, UnitCount = unitCount, SiteName = siteName,
             EffectiveVatRate = await EffectiveVatRateAsync(companyId, p),
+            PublicBookingStatus = readiness.Status, PublicBookingMessage = readiness.Message, PublicBookingFix = readiness.FixHint,
         };
     }
 
@@ -446,6 +489,7 @@ public partial class LodgingService : ILodgingService
         StandardOccupancy = r.StandardOccupancy, MaxAdults = r.MaxAdults, MaxChildren = r.MaxChildren, MaxOccupancy = r.MaxOccupancy,
         AllowExtraBed = r.AllowExtraBed, MaxExtraBeds = r.MaxExtraBeds, PricingMode = r.PricingMode, BaseRate = r.BaseRate,
         ExtraGuestPrice = r.ExtraGuestPrice, ExtraBedPrice = r.ExtraBedPrice, MinNights = r.MinNights,
+        ExtraBedSummary = LodgingSettingsRules.ExtraBedSummary(r.AllowExtraBed, r.MaxExtraBeds, r.ExtraBedPrice),
         IncludesBreakfast = r.IncludesBreakfast, ProductId = r.ProductId, IsActive = r.IsActive, SortOrder = r.SortOrder,
         UnitCount = r.Units.Count(u => u.IsActive && !u.IsDeleted),
         Units = r.Units.Where(u => !u.IsDeleted).OrderBy(u => u.SortOrder).ThenBy(u => u.Number).Select(u => ToDto(u, r.Name)).ToList(),
@@ -484,9 +528,11 @@ public partial class LodgingService : ILodgingService
         r.BedType = dto.BedType; r.SizeSqm = dto.SizeSqm; r.ViewType = dto.ViewType;
         r.StandardOccupancy = Math.Max(1, dto.StandardOccupancy); r.MaxAdults = Math.Max(1, dto.MaxAdults);
         r.MaxChildren = Math.Max(0, dto.MaxChildren); r.MaxOccupancy = Math.Max(r.MaxAdults, dto.MaxOccupancy);
-        r.AllowExtraBed = dto.AllowExtraBed; r.MaxExtraBeds = dto.AllowExtraBed ? Math.Max(0, dto.MaxExtraBeds) : 0;
+        // คำตัดสินเจ้าของข้อ 123: ติ๊กเพิ่มได้แล้วต้องมีจำนวน ≥ 1 + ราคา/คน/คืน — ตัวตัดสินตัวเดียว (ปฏิเสธพร้อมป้ายบนจอ ไม่แก้ให้เงียบ)
+        var extraBed = LodgingSettingsRules.NormalizeExtraBed(dto.AllowExtraBed, dto.MaxExtraBeds, dto.ExtraBedPrice);
+        r.AllowExtraBed = extraBed.Allow; r.MaxExtraBeds = extraBed.MaxExtraBeds;
         r.PricingMode = dto.PricingMode; r.BaseRate = dto.BaseRate;
-        r.ExtraGuestPrice = dto.ExtraGuestPrice; r.ExtraBedPrice = dto.ExtraBedPrice; r.MinNights = dto.MinNights;
+        r.ExtraGuestPrice = dto.ExtraGuestPrice; r.ExtraBedPrice = extraBed.PricePerPersonNight; r.MinNights = dto.MinNights;
         r.IncludesBreakfast = dto.IncludesBreakfast; r.ProductId = dto.ProductId;
         r.IsActive = dto.IsActive; r.SortOrder = dto.SortOrder;
 
@@ -602,6 +648,9 @@ public partial class LodgingService : ILodgingService
         if (string.IsNullOrWhiteSpace(dto.Name)) throw new BusinessRuleException("กรุณาระบุชื่อแผนราคา");
         if (dto.AdjustMode == LodgingRateAdjustMode.Multiplier && dto.AdjustValue <= 0) throw new BusinessRuleException("ตัวคูณต้องมากกว่า 0");
         if (dto.AdjustMode == LodgingRateAdjustMode.Absolute && dto.AdjustValue < 0) throw new BusinessRuleException("ราคาต้องไม่ติดลบ");
+        // S-P2-7 (รอบ 202 ทีม LS): ช่วงกลับหัว = แผนที่ PlanApplies ไม่มีวันเลือก (แผนตายเงียบ) ⇒ ปฏิเสธพร้อมป้ายบนจอ
+        LodgingSettingsRules.EnsureNightsRange(dto.MinNights, dto.MaxNights, MinNightsLabel, MaxNightsLabel);
+        LodgingSettingsRules.EnsureDateRange(dto.ValidFrom, dto.ValidTo, "ใช้ได้ตั้งแต่", "ถึง");
         LodgingRatePlan x;
         if (dto.Id is Guid id)
         {
@@ -610,6 +659,13 @@ public partial class LodgingService : ILodgingService
             x.UpdatedBy = userId; x.UpdatedAt = DateTime.UtcNow;
         }
         else { x = new LodgingRatePlan { CompanyId = companyId, PropertyId = dto.PropertyId, CreatedBy = userId }; _db.LodgingRatePlans.Add(x); }
+        // S-P2-8 (รอบ 202 ทีม LS): ประเภทห้อง/นโยบายของแผนต้องเป็นของที่พักนี้ในบริษัทนี้ — ตรวจเมื่อค่าเปลี่ยน (ค่าเดิมที่ echo กลับไม่ถูกปฏิเสธ)
+        if (dto.RoomTypeId is Guid rtId && rtId != x.RoomTypeId
+            && !await _db.LodgingRoomTypes.AsNoTracking().AnyAsync(r => r.Id == rtId && r.CompanyId == companyId && r.PropertyId == dto.PropertyId))
+            throw new BusinessRuleException("ประเภทห้องที่เลือกไม่ใช่ของที่พักนี้ — รีเฟรชหน้าแล้วเลือก «ใช้กับห้อง» ใหม่", "LODGING-REF");
+        if (dto.CancellationPolicyId is Guid cpId && cpId != x.CancellationPolicyId
+            && !await _db.LodgingCancellationPolicies.AsNoTracking().AnyAsync(c => c.Id == cpId && c.CompanyId == companyId && c.PropertyId == dto.PropertyId))
+            throw new BusinessRuleException("นโยบายยกเลิกที่เลือกไม่ใช่ของที่พักนี้ — รีเฟรชหน้าแล้วเลือก «นโยบายยกเลิก» ใหม่", "LODGING-REF");
         x.RoomTypeId = dto.RoomTypeId; x.Name = dto.Name.Trim(); x.NameEn = dto.NameEn?.Trim();
         x.Code = string.IsNullOrWhiteSpace(dto.Code) ? DeriveCode(x.NameEn ?? x.Name) : dto.Code.Trim().ToUpperInvariant();
         x.Description = dto.Description; x.AdjustMode = dto.AdjustMode; x.AdjustValue = dto.AdjustValue;

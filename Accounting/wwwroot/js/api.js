@@ -247,6 +247,30 @@ const API = {
 
   init() {
     this.token = localStorage.getItem('token');
+    // S-P2-6 (รอบ 202 ทีม LS): ขอบแดงของช่องที่ถูกตีกลับต้องหายเมื่อผู้ใช้แก้ช่องนั้น — เดิมค้างจนกดบันทึกรอบถัดไป
+    // (บันทึกสำเร็จแล้วก็ยังแดง ⇒ ผู้ใช้คิดว่ายังผิด) · ฟังระดับ document ครั้งเดียว · สภาพแวดล้อมที่ไม่มี DOM จริงข้ามเงียบ
+    if (typeof document !== 'undefined' && document && typeof document.addEventListener === 'function' && !this._fieldErrWired) {
+      this._fieldErrWired = true;
+      const clear = (e) => this.clearFieldError(e && e.target);
+      document.addEventListener('input', clear, true);
+      document.addEventListener('change', clear, true);
+    }
+  },
+
+  /** ล้างไฮไลต์ "ช่องนี้ผิด" ของช่องเดียว (ผู้ใช้แตะช่องนั้นแล้ว) */
+  clearFieldError(el) {
+    if (!el || !el.classList || !el.classList.contains('has-error')) return;
+    el.classList.remove('has-error');
+    if (el.removeAttribute) el.removeAttribute('aria-invalid');
+  },
+
+  /** ล้างไฮไลต์ทุกช่องใน root (ไม่ส่ง = ทั้งหน้า) — เรียกหลังบันทึกสำเร็จ / ก่อนแสดงผลตรวจรอบใหม่ */
+  clearFieldErrors(root) {
+    const scope = (root && root.querySelectorAll) ? root : document;
+    scope.querySelectorAll('.has-error').forEach(el => {
+      el.classList.remove('has-error');
+      el.removeAttribute('aria-invalid');
+    });
   },
 
   _t(key, fallback) {
@@ -310,10 +334,7 @@ const API = {
   describeFieldErrors(fields, messages) {
     if (!Array.isArray(fields) || fields.length === 0) return '';
     // ล้างไฮไลต์รอบก่อน มิฉะนั้นช่องที่แก้แล้วยังแดงค้าง (ทำให้ผู้ใช้ไล่ผิดช่อง)
-    document.querySelectorAll('.has-error').forEach(el => {
-      el.classList.remove('has-error');
-      el.removeAttribute('aria-invalid');
-    });
+    this.clearFieldErrors();
 
     const parts = [];
     let firstEl = null, firstName = '';
@@ -887,6 +908,7 @@ const API = {
       // Lodging — ธุรกิจที่พัก (ตั้งค่า + front desk) — ทุก endpoint ใต้ /lodging
       lodgingProperties: () => API.get(`${base}/lodging/properties`),
       lodgingGetProperty: (pid) => API.get(`${base}/lodging/properties/${pid}`),
+      lodgingPropertyDefaults: () => API.get(`${base}/lodging/properties/defaults`),
       lodgingCreateProperty: (d) => API.post(`${base}/lodging/properties`, d),
       lodgingUpdateProperty: (pid, d) => API.put(`${base}/lodging/properties/${pid}`, d),
       lodgingRoomTypes: (pid) => API.get(`${base}/lodging/properties/${pid}/room-types`),

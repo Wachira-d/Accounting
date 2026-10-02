@@ -4110,6 +4110,25 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 **ทุกการบันทึกล้างค่าเดิม `DepositVatTreatment` + `DepositOutputVatDeferred`** (migration ผูก `lp:{id}` กลับทุกบูตเมื่อ id ว่างแต่ค่าเดิมไม่ว่าง) ·
 client รุ่นเก่าที่ส่งค่าเดิม**ต่างจากที่เก็บไว้** ⇒ ปฏิเสธ "รีเฟรชหน้า" (`DEPOSIT-VAT-TREATMENT` — รับไว้ = ถูกผูกกลับเป็นโหมดเก่าเงียบ ๆ) ·
 response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลตัดสิน + ป้าย + คำเตือน) + `DepositKindOptions` (ช่องที่ใช้ได้ `ForRoom`/`ForSecurity`) — หน้า `lodging-settings.html` แสดงอย่างเดียว
+**หน้าตั้งค่าที่พัก — ด่าน/ค่าตั้งต้น (รอบ 202 ทีม LS · `erp-review/2026-10-02/LODGING_REVIEW.md`)**:
+① **เวลาเข้า-ออกไม่บังคับ** (คำตัดสินข้อ 116): DTO `CheckInTime`/`CheckOutTime` เป็น `string?` (เดิม `string` ⇒ ASP.NET ใส่ [Required] เอง ตีกลับอังกฤษ) ·
+ว่าง = 14:00/12:00 · ไม่ว่างแต่อ่านไม่ได้ ⇒ ปฏิเสธ `LODGING-TIME` พร้อมชื่อช่อง (`Helpers/LodgingTimeOfDay.Parse` · รับ H:mm/HH:mm[:ss]) — เดิมแทน 14:00 เงียบ ·
+ช่องบนหน้าเป็น `type="time"` + "ว่าง = 14:00/12:00" ·
+② **ช่วงกลับหัวถูกปฏิเสธ ไม่ถูกแก้ให้** (`Helpers/LodgingSettingsRules`): ที่พัก "พักสูงสุด < ขั้นต่ำ" (เดิมยกสูงสุดขึ้นเงียบ) · แผนราคา ขั้นต่ำ > สูงสุด /
+"ใช้ได้ตั้งแต่" หลัง "ถึง" (เดิมบันทึกได้แล้ว `PlanApplies` ไม่เคยเลือก = แผนตายเงียบ) — `LODGING-NIGHTS-RANGE`/`LODGING-DATE-RANGE` ·
+③ **id อ้างอิงต้องเป็นของบริษัท/ที่พักนี้** (`EnsurePropertyRefsBelongAsync` · `SaveRatePlanAsync`): `SiteId` · `DefaultCancellationPolicyId` ·
+แผนราคา `RoomTypeId`/`CancellationPolicyId` — ตรวจเมื่อค่าเปลี่ยน (ค่าเดิมที่ส่งกลับไม่ถูกปฏิเสธ) · `LODGING-REF` ·
+④ **ค่าตั้งต้นที่พักใหม่มาจากเซิร์ฟเวอร์** `GET /lodging/properties/defaults` (`GetPropertyDefaultsAsync` = entity ใหม่ผ่าน `ToDtoAsync` · ไม่บันทึก) —
+เดิมทางไม่มีที่พักใช้ `fillProp({})` ⇒ ที่พักแรกเกิดมา "ปิดใช้ + ปิดจองออนไลน์ + มัดจำ 0%" · สำเนาค่าตั้งต้นใน JS ถูกถอด · โหลดไม่ได้ ⇒ บันทึกไม่ได้จนกว่าจะโหลดได้ ·
+⑤ **สถานะเปิดจองออนไลน์** (W-01): `LodgingPropertyDto.PublicBookingStatus/Message/Fix` จาก `Helpers/LodgingPublicReadiness.Evaluate`
+(ลำดับ NotLinked → SiteMissing → Inactive → OnlineOff → NoRooms → Live · เงื่อนไขเดียวกับ `ResolvePropertyIdForSiteAsync` + ห้องที่ขายได้) —
+หน้าแสดงป้ายแดง/เขียวพร้อมทางแก้ · ⑥ dropdown เว็บโหลดทุกหน้า (`?page=&pageSize=100` จนครบ) + ตัวเลือก "เว็บเดิม (ไม่อยู่ในรายการ/ถูกลบ)" ⇒ บันทึกส่วนอื่นไม่ปลดผูกเงียบ (W-06) ·
+⑦ **เตียงเสริมต่อประเภทห้อง** (คำตัดสินเจ้าของข้อ 123): ติ๊ก "เพิ่มเตียงเสริม/คนเสริมได้" แล้วต้องมี "เพิ่มได้สูงสุดกี่คน" ≥ 1 และ "ราคาต่อคน/คืน" (0 = ไม่คิดเงิน ·
+ว่าง ⇒ ปฏิเสธ `LODGING-EXTRA-BED` · `LodgingSettingsRules.NormalizeExtraBed`) · ไม่ติ๊ก ⇒ ช่องล็อก + จำนวน 0 · การ์ดห้องแสดง `ExtraBedSummary` จากเซิร์ฟเวอร์ ·
+ป้ายความจุ: เด็ก/ทารกไม่นับ (ข้อ 124 — ด่านฝั่ง engine เป็นของทีม LO) ·
+⑧ **early/late hours มีผู้อ่านแล้ว** (ข้อ 121): `LodgingReservationResponse.StayConditions` (`Helpers/LodgingStayConditions.Lines`) พิมพ์บนหลักฐานการจอง
+(`LodgingVoucherBuilder`) — เงื่อนไขอย่างเดียว ไม่บังคับเวลา · /lodging/info ยังไม่ส่ง (เมธอดอยู่ไฟล์ทีม O — ค้างให้ทีมนั้นเรียกตัวประกอบเดียวกัน) ·
+⑨ ป้าย overbooking "(ต่อประเภทห้อง)" (ข้อ 120 · พฤติกรรมเดิม) · แท็บห้อง/ราคา/นโยบายล็อกพร้อมเหตุผลจนกว่าจะบันทึกที่พัก · ขอบแดงของช่องที่ถูกตีกลับหายเมื่อแก้ช่องนั้น/บันทึกสำเร็จ (`API.clearFieldError(s)` ใน api.js)
 **อัตรา VAT ของที่พัก (S-10 · รอบ 193)**: `LodgingPricingEngine.PropertyVatRate(chargeVat, registered, companyRate)` ผ่าน
 `OutputVatRate.ForCompany` ตัวเดียวกับ POS/TimeBilling · สถานะจด VAT อ่านผ่าน `CompanyVatStatus.ProfileAsync` · **เปลี่ยนพฤติกรรม**: ตั้ง
 "คิด VAT เสมอ" บนบริษัทที่ไม่จด VAT = 0 (§90/2 — เดิม 7) · บริษัทที่ตั้งอัตราอื่นได้อัตรานั้น
@@ -4482,4 +4501,6 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม ST — Settlement
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL หลังฝ่ายค้าน — ประทับ audit ตอน commit + แถวลูกเข้าบริษัทของ batch + ช่องลับไม่เข้า audit (§6.1) · tax point มัดจำที่ริบใช้กำหนดยื่นเลื่อนวันหยุด (PL-B1) — commit 9f226f15)_
 
-_Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — ด่าน isolation ของตัวประทับ audit + ReadCommitted/FOR UPDATE ในใบแจ้งหนี้จากภาระงาน (§6.1) · INSERT audit เป็นชุด — commit adf19a87)_
+_ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — ด่าน isolation ของตัวประทับ audit + ReadCommitted/FOR UPDATE ในใบแจ้งหนี้จากภาระงาน (§6.1) · INSERT audit เป็นชุด — commit adf19a87)_
+
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LS — หน้าตั้งค่าที่พัก §6.5: เวลาไม่บังคับ/อ่านไม่ได้ปฏิเสธ · ช่วงกลับหัวปฏิเสธ · id อ้างอิงของบริษัท/ที่พัก · ค่าตั้งต้นจากเซิร์ฟเวอร์ · สถานะเปิดจองออนไลน์ · เตียงเสริม · เงื่อนไขนอกเวลาบน voucher — commit <pending>)_

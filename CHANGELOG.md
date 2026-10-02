@@ -4358,3 +4358,18 @@ _รอบ 202 ต่อ (ผู้ใช้: "แก้ไขยอดประ
 ราก = ฐาน ปกส. เติมจากเงินเดือนเต็มของพนักงานครั้งเดียวตอนเลือกคน แล้วไม่ตามช่องเงินเดือนที่แก้ + ช่องยอดสมทบ readonly ⇒ ผู้ใช้แก้ไม่ได้และไม่รู้ว่าต้องแก้ฐาน ·
 แก้: ฐานที่ระบบเติมตามเงินเดือนของงวด (ค่าผู้ใช้ชนะ) · ยอดสมทบลูกจ้างพิมพ์ได้ (ย้อนฐาน) · เตือนฐาน > รายได้ (จอ + เซิร์ฟเวอร์ทั้ง ➕/✏️) · ภาษี 🧮 ที่ค้างหลังยอดเปลี่ยน ⇒ เตือนกดใหม่ ·
 `tools/payroll_add_sso_sim.js` รันโค้ดจริงของหน้า — ซอร์สก่อนแก้ล้มตรงตัวเลขที่ผู้ใช้เห็น (ฐาน 30,000 · ปกส. 875) · `PayrollSsoBaseAboveWagesTests` สองทิศ_
+
+_รอบ 202 ทีม LS (2026-10-02 · หน้าตั้งค่าที่พัก — `erp-review/2026-10-02/LODGING_REVIEW.md` · คำตัดสิน 116/120/121/123/124)
+- **S-P1-1/116** `LodgingPropertyDto.CheckInTime/CheckOutTime` → `string?` (เดิม [Required] โดยปริยาย ตีกลับอังกฤษทั้งที่ไม่มี `*`) · ช่อง `type="time"` + "ว่าง = 14:00/12:00"
+- **S-P1-2** `Helpers/LodgingTimeOfDay.Parse` ตัวเดียว: ว่าง = ค่าเริ่มต้น · อ่านไม่ได้ = ปฏิเสธพร้อมชื่อช่อง (เดิมแทน 14:00 เงียบ) · รับ H:mm/HH:mm[:ss]
+- **S-P1-3** `GET /lodging/properties/defaults` (`GetPropertyDefaultsAsync` = entity ใหม่ผ่าน `ToDtoAsync`) — ถอดสำเนาค่าตั้งต้นใน JS + ทาง `fillProp({})` ที่ทำให้ที่พักแรก "ปิดใช้ + ปิดจองออนไลน์ + มัดจำ 0%"
+- **S-P1-4/W-06** dropdown เว็บโหลดครบทุกหน้า + ตัวเลือก "เว็บเดิม" ที่ไม่อยู่ในรายการ (เดิมบันทึกส่วนอื่นแล้วปลดผูกเงียบ)
+- **W-01 (ฝั่งตั้งค่า)** `Helpers/LodgingPublicReadiness` (Live · NotLinked · SiteMissing · Inactive · OnlineOff · NoRooms) → `PublicBookingStatus/Message/Fix` · ป้ายแดง/เขียวพร้อมวิธีแก้
+- **S-P2-6** ขอบแดงหายเมื่อแก้ช่องนั้น/บันทึกสำเร็จ (`API.clearFieldError(s)` · ฟัง input/change ระดับ document ครั้งเดียว)
+- **S-P2-7** `Helpers/LodgingSettingsRules`: พักสูงสุด < ขั้นต่ำ ปฏิเสธ (เดิมยกค่าเงียบ) · แผนราคา ขั้นต่ำ ≤ สูงสุด · ใช้ได้ตั้งแต่ ≤ ถึง
+- **S-P2-8** `SiteId`/`DefaultCancellationPolicyId`/แผนราคา `RoomTypeId`·`CancellationPolicyId` ต้องเป็นของบริษัท/ที่พักนี้ (ตรวจเมื่อเปลี่ยน · `LODGING-REF`)
+- **S-P2-10** แท็บห้อง/ราคา/นโยบายล็อกพร้อมเหตุผลจนกว่าจะบันทึกที่พัก · "+ ที่พักใหม่" ล้างข้อมูลที่พักก่อนหน้าออกจากแท็บอื่น
+- **120** ป้าย "Overbooking ได้กี่ห้อง (ต่อประเภทห้อง)" · **121** early/late hours → `Helpers/LodgingStayConditions` บนหลักฐานการจอง (`StayConditions`) — /lodging/info ค้างให้ทีม O (ไฟล์ของทีมนั้น)
+- **123** เตียงเสริมต่อประเภทห้อง: ติ๊ก "เพิ่มเตียงเสริม/คนเสริมได้" ⇒ ต้องมีจำนวน ≥ 1 + ราคาต่อคน/คืน (`LodgingSettingsRules.NormalizeExtraBed` · `LODGING-EXTRA-BED`) · ช่องล็อกเมื่อไม่ติ๊ก · การ์ด `ExtraBedSummary` · **124** ป้ายความจุ "เด็ก/ทารกไม่นับ"
+- `tools/settings_reader_check.py`: `d` ที่ประกาศเป็นชนิดคำขอ (DTO) ไม่นับเป็นผู้อ่าน (เดิม `Math.Max(0, d.EarlyCheckInHours)` ใน Apply ทำให้ค่าตั้งที่ไม่มีผู้อ่านหลุด) · `d =>` ของ entity ยังนับ · self-test + negative จริง · baseline ไม่เพิ่มแถว
+- เทสต์ `LodgingSettingsRound202Tests` · `LodgingVoucherBuilderTests` +2 · sim ทิศที่ 5 · required_call_site +9 แถว — commit <pending>_

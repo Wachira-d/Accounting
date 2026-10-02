@@ -12,6 +12,8 @@ public interface ILodgingService
     // ── ตั้งค่า: ที่พัก ──
     Task<List<LodgingPropertyDto>> GetPropertiesAsync(Guid companyId);
     Task<LodgingPropertyDto?> GetPropertyAsync(Guid companyId, Guid propertyId);
+    /// <summary>ค่าตั้งต้นของฟอร์มที่พักใหม่ (จาก entity · ไม่บันทึก) — รอบ 202 ทีม LS S-P1-3</summary>
+    Task<LodgingPropertyDto> GetPropertyDefaultsAsync(Guid companyId);
     Task<LodgingPropertyDto> CreatePropertyAsync(Guid companyId, LodgingPropertyDto dto, string userId);
     Task<LodgingPropertyDto> UpdatePropertyAsync(Guid companyId, Guid propertyId, LodgingPropertyDto dto, string userId);
 

@@ -4450,6 +4450,51 @@ RULES += [
 ]
 # ── จบบล็อกรอบ 201 ทีม AI ──
 
+# ── รอบ 202 ทีม LS: หน้าตั้งค่าที่พัก — ด่านที่เดิม "แก้ค่าให้เงียบ" ต้องปฏิเสธ · id อ้างอิงต้องเป็นของบริษัท/ที่พักนี้ · สถานะเปิดจองออนไลน์
+#    จากตัวตัดสินเดียว · ค่าตั้งต้นที่พักใหม่จาก entity (เทสต์ pure: LodgingSettingsRound202Tests) ──
+_LS_WHY = "รอบ 202 ทีม LS: "
+RULES += [
+    dict(file=LODGING, method="Apply",
+         must=["LodgingTimeOfDay.Parse(", "LodgingSettingsRules.EnsureNightsRange("],
+         before=[("LodgingTimeOfDay.Parse(", "p.CheckInTime = checkIn"),
+                 ("LodgingSettingsRules.EnsureNightsRange(", "p.MaxNights = d.MaxNights")],
+         forbid=["Math.Max(p.MinNights", "TryParseExact("],
+         why=_LS_WHY + "S-P1-2/S-P2-7 เวลาอ่านไม่ได้/พักสูงสุด < ขั้นต่ำ ⇒ ปฏิเสธพร้อมป้ายบนจอ ก่อนแตะ entity (ห้ามแทน 14:00 / ยกค่าเงียบ ๆ)"),
+    dict(file=LODGING, method="CreatePropertyAsync",
+         must=["EnsurePropertyRefsBelongAsync("],
+         before=[("EnsurePropertyRefsBelongAsync(", "_db.SaveChangesAsync(")],
+         why=_LS_WHY + "S-P2-8 เว็บ/นโยบายยกเลิกที่อ้างต้องเป็นของบริษัท/ที่พักนี้ก่อนบันทึก"),
+    dict(file=LODGING, method="UpdatePropertyAsync",
+         must=["EnsurePropertyRefsBelongAsync("],
+         call_args=[("EnsurePropertyRefsBelongAsync(", "prevSiteId")],
+         before=[("EnsurePropertyRefsBelongAsync(", "_db.SaveChangesAsync(")],
+         why=_LS_WHY + "S-P2-8 เว็บ/นโยบายยกเลิกที่อ้างต้องเป็นของบริษัท/ที่พักนี้ (ตรวจเมื่อค่าเปลี่ยน — ค่าเดิมส่งจากของเดิม)"),
+    dict(file=LODGING, method="EnsurePropertyRefsBelongAsync",
+         must=["s.CompanyId == companyId", "x.CompanyId == companyId", "x.PropertyId == p.Id"],
+         why=_LS_WHY + "S-P2-8 tenant + ที่พักเดียวกัน (กฎ M)"),
+    dict(file=LODGING, method="SaveRatePlanAsync",
+         must=["LodgingSettingsRules.EnsureNightsRange(", "LodgingSettingsRules.EnsureDateRange(",
+               "r.CompanyId == companyId && r.PropertyId == dto.PropertyId", "c.CompanyId == companyId && c.PropertyId == dto.PropertyId"],
+         before=[("LodgingSettingsRules.EnsureDateRange(", "_db.SaveChangesAsync(")],
+         why=_LS_WHY + "S-P2-7/S-P2-8 แผนราคาช่วงกลับหัว = แผนตายเงียบ · ประเภทห้อง/นโยบายต้องเป็นของที่พักนี้"),
+    dict(file=LODGING, method="SaveRoomTypeAsync",
+         must=["LodgingSettingsRules.NormalizeExtraBed(", "r.ExtraBedPrice = extraBed.PricePerPersonNight",
+               "r.MaxExtraBeds = extraBed.MaxExtraBeds"],
+         forbid=["r.ExtraBedPrice = dto.ExtraBedPrice"],
+         why=_LS_WHY + "คำตัดสินข้อ 123 ติ๊กเตียงเสริมแล้วจำนวน 0/ราคาว่าง ⇒ ปฏิเสธ (ห้ามบันทึกตรงจาก dto)"),
+    dict(file=LODGING, method="ToDtoAsync",
+         must=["LodgingPublicReadiness.Evaluate(", "PublicBookingStatus = readiness.Status", "PublicBookingFix = readiness.FixHint"],
+         why=_LS_WHY + "W-01 สถานะเปิดจองออนไลน์ + เหตุผล + ทางแก้ จากตัวตัดสินเดียว (หน้าเว็บแสดงอย่างเดียว)"),
+    dict(file=LODGING, method="GetPropertyDefaultsAsync",
+         must=["new LodgingProperty", "ToDtoAsync(", "dto.Id = null"],
+         forbid=["_db.SaveChangesAsync(", "_db.LodgingProperties.Add("],
+         why=_LS_WHY + "S-P1-3 ค่าตั้งต้นที่พักใหม่มาจาก entity ผ่าน mapper ตัวเดียว · อ่านอย่างเดียว ไม่สร้างแถว"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Operations.cs", method="MapAsync",
+         must=["LodgingStayConditions.Lines("],
+         why=_LS_WHY + "คำตัดสินข้อ 121 early/late hours = เงื่อนไขบนหลักฐานการจอง (ผู้อ่านจริงของค่าตั้ง)"),
+]
+# ── จบบล็อกรอบ 202 ทีม LS ──
+
 
 SETTLEMENT_FOLDER_FORBID = dict(
     globs=["Services/Settlement/**/*.cs"],

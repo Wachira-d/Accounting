@@ -130,8 +130,9 @@ _ขอบเขต: ลูกค้าที่เลือกเว็บป�
   **ต้องเพิ่มใน `publicUploadPrefixes`** (`tools/upload_route_check.py` บังคับอยู่แล้ว)
 
 ### LDG-P2-06 · เก็บงานค้างที่รู้ตัวอยู่แล้ว
-- `EarlyCheckInFee` / `LateCheckOutFee` มีคอลัมน์ + หน้าตั้งค่า แต่ **ไม่มีใครอ่าน**
-  (จดไว้ใน `LODGING_TAKETIME_ANALYSIS.md` §2 แล้ว) → ต่อสายเข้า `AddCharge` ตอนเช็คอิน/เอาต์
+- ~~`EarlyCheckInFee` / `LateCheckOutFee` มีคอลัมน์ + หน้าตั้งค่า แต่ **ไม่มีใครอ่าน**~~ ✅ **ต่อสายแล้ว** (รอบ 126: `CheckInAsync`/`CheckOutAsync`
+  → `AddChargeCoreAsync` เมื่อพนักงานติ๊ก) · `EarlyCheckInHours`/`LateCheckOutHours` มีผู้อ่านแล้วรอบ 202 ทีม LS (เงื่อนไขบนหลักฐานการจอง
+  `Helpers/LodgingStayConditions` · คำตัดสินข้อ 121 — ไม่บังคับเวลา)
 - สลิปที่พักอยู่ใน `publicUploadPrefixes` — ไฟล์มีชื่อผู้โอน/เลขบัญชี = PII
   พิจารณาย้ายไปเส้นเดียวกับ `/uploads/attachments` (มี endpoint ตรวจสิทธิ์ของตัวเอง)
   แล้วให้แขกดูของตัวเองผ่าน token — **ตัดสินใจอย่างตั้งใจ ไม่ใช่ปล่อยตามเดิม**

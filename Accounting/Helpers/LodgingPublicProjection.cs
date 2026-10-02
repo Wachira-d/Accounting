@@ -20,7 +20,7 @@ public static class LodgingPublicProjection
             SizeSqm = r.SizeSqm, ViewType = r.ViewType, StandardOccupancy = r.StandardOccupancy,
             MaxAdults = r.MaxAdults, MaxChildren = r.MaxChildren, MaxOccupancy = r.MaxOccupancy,
             AllowExtraBed = r.AllowExtraBed, MaxExtraBeds = r.MaxExtraBeds, PricingMode = r.PricingMode,
-            BaseRate = r.BaseRate, ExtraGuestPrice = r.ExtraGuestPrice, ExtraBedPrice = r.ExtraBedPrice,
+            BaseRate = r.BaseRate, ExtraGuestPrice = r.ExtraGuestPrice, ExtraBedPrice = r.ExtraBedPrice, ExtraBedSummary = r.ExtraBedSummary,
             MinNights = r.MinNights, IncludesBreakfast = r.IncludesBreakfast, IsActive = r.IsActive,
             SortOrder = r.SortOrder, UnitCount = r.UnitCount,
             ProductId = null,

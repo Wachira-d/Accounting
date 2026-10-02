@@ -63,6 +63,12 @@ public class LodgingController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<LodgingPropertyDto>>>> GetProperties(Guid companyId)
         => Wrap(await _svc.GetPropertiesAsync(companyId));
 
+    /// <summary>ค่าตั้งต้นของฟอร์ม "ที่พักใหม่" — เซิร์ฟเวอร์เป็นเจ้าของค่าตั้งต้น (entity) หน้าเว็บไม่มีสำเนา (รอบ 202 ทีม LS · S-P1-3) ·
+    /// อ่านอย่างเดียว ไม่สร้างอะไรในฐานข้อมูล</summary>
+    [HttpGet("properties/defaults")]
+    public async Task<ActionResult<ApiResponse<LodgingPropertyDto>>> GetPropertyDefaults(Guid companyId)
+        => Wrap(await _svc.GetPropertyDefaultsAsync(companyId));
+
     [HttpGet("properties/{propertyId:guid}")]
     public async Task<ActionResult<ApiResponse<LodgingPropertyDto>>> GetProperty(Guid companyId, Guid propertyId)
     {
