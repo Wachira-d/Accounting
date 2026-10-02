@@ -4944,12 +4944,16 @@ def self_test() -> list:
             if not any("ห้ามใช้" in e for e in run(body.replace("{", '{ var __x = $@"' + p + '";\n', 1))):
                 fails.append(f"self-test: ใส่ `{p}` ในสตริงของ {meth} แล้วไม่ฟ้อง")
     for tag, meth, old, new, expect in REVIEWER_CASES:
+        # รอบ 202: เมธอดเดียวมีได้หลายกติกา (เช่น CreatePropertyAsync — ด่านโควตาของ LW + ตรวจ ref ของ LS) ⇒ ใช้ทุกกติกาของเมธอดนั้น
+        # ในไฟล์ที่มี `old` (เดิมใช้กติกาแรกตัวเดียว ⇒ ลำดับบล็อกหลัง merge ทำให้เคสฝ่ายค้านไปตรวจกับกติกาที่ไม่เกี่ยว)
         rule = by_method[meth]
         text = cache.setdefault(rule["file"], (SRC / rule["file"]).read_text(encoding="utf-8"))
         if old not in text:
             fails.append(f"self-test {tag}: หา `{old[:50]}` ใน {rule['file']} ไม่เจอ (โค้ดขยับ — ปรับเคสให้ตรง)")
             continue
-        fired = bool(check_rule(text.replace(old, new, 1), rule))
+        same = [r for r in RULES if r["method"] == meth and r["file"] == rule["file"]]
+        mutated = text.replace(old, new, 1)
+        fired = any(check_rule(mutated, r) for r in same)
         if fired != expect:
             fails.append(f"self-test {tag}: {'ต้องฟ้องแต่ไม่ฟ้อง' if expect else 'ฟ้องผิด (โค้ดถูกต้อง)'} ใน {meth}")
     sample = (
