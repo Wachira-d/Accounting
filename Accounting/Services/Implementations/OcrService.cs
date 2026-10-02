@@ -193,7 +193,7 @@ public class OcrService : IOcrService
             // operator via X-Acting-User, or the web user, or the owner) so the
             // auto-created document's creator signature reflects who actually
             // ran this scan instead of a generic literal.
-            CreatedBy = file.UploadedByUserId != Guid.Empty ? file.UploadedByUserId.ToString() : null,
+            CreatedBy = file.UploadedByUserId is Guid uploader && uploader != Guid.Empty ? uploader.ToString() : null,
             // Structured order/project metadata the partner uploaded with the
             // file — drives auto project allocation per line below. Stored even
             // when extraction yields no items so it survives reload.

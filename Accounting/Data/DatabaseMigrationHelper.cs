@@ -6986,6 +6986,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemNote" text NULL;""",
             // ฝ่ายค้านรอบ 202 P1-3ค — รายการชำระที่เงินเข้าแต่ยืนยันไม่ได้ (บัญชีขาเงินเข้าของใบมัดจำที่ออกภายหลังมาจากรายการนี้)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemIntentId" uuid NULL;""",
+            // 2026-10-02 (ผู้ใช้รายงาน: แขกส่งสลิปแล้ว 500 DbUpdateException) — ไฟล์จากคนนอกระบบ (สลิปแขกที่พัก · สลิปหน้าร้าน · พอร์ทัลลูกค้า)
+            // ไม่มีผู้ใช้ ⇒ UploadedByUserId ต้องว่างได้ (เดิม NOT NULL + FK → Users แล้วทางเข้าใส่ Guid.Empty ⇒ ชน FK ทุกครั้ง) · DROP NOT NULL รันซ้ำได้ ·
+            // แถว Guid.Empty ที่อาจหลุดเข้าไปในฐานที่ไม่มี FK ⇒ เปลี่ยนเป็น NULL (ความหมายเดิม "ไม่มีผู้ใช้" ทุกผู้อ่าน)
+            """ALTER TABLE "FileAttachments" ALTER COLUMN "UploadedByUserId" DROP NOT NULL;""",
+            """UPDATE "FileAttachments" SET "UploadedByUserId" = NULL WHERE "UploadedByUserId" = '00000000-0000-0000-0000-000000000000';""",
             // ข้อมูลเดิม: โค้ดก่อนรอบ 193 ลง JE คืนเงิน + ใบลดหนี้ + หัก PaidAmount **ตอนยกเลิก** โดยไม่มีหลักฐานว่าโอนคืนจริง ⇒
             // ติดป้าย legacy ใน RefundPaidBy **อย่างเดียว** — ห้ามประทับ RefundPaidAmount (= "คืนแล้ว" สถานะปลายทางที่ระบบแต่งเอง ·
             // ฝ่ายค้าน C10 · DECISION_DOCTRINE R1) ⇒ หน้าจอแสดง "ไม่มีข้อมูลการโอนคืน" (LodgingRefundState.Unknown) และห้ามกดคืนซ้ำ

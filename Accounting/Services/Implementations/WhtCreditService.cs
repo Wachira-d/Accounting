@@ -332,7 +332,7 @@ public class WhtCreditService
             // ฝ่ายค้านรอบ 193 (S2-P7): ไฟล์ในถังของคนอื่นผูกเข้ารายการของตัวเองไม่ได้ (เดิมรู้ id ก็ผูกได้ แล้วไฟล์กลายเป็นระดับสมาชิก)
             // · ผู้อัปโหลดเอง หรือผู้ถือ Tax.File (เก็บกวาดไฟล์ค้าง) · ไม่รู้ผู้บันทึก (actor null) = ปฏิเสธ
             if (actor == null
-                || !Accounting.Helpers.AttachmentPermissionScope.UnsavedFileVisible(file.UploadedByUserId, actor.UserId, actor.HoldsTaxFile))
+                || !Accounting.Helpers.AttachmentPermissionScope.UnsavedFileVisible(file.UploadedByUserId ?? Guid.Empty, actor.UserId, actor.HoldsTaxFile))
                 throw new Accounting.Helpers.BusinessRuleException(
                     "ไฟล์หนังสือรับรองนี้ถูกแนบโดยผู้ใช้คนอื่นและยังไม่ได้ผูกกับรายการใด — ผูกเข้ารายการของคุณไม่ได้ · "
                     + "เลือกไฟล์ของคุณเองแล้วกดบันทึกอีกครั้ง หรือให้ผู้มีสิทธิ์ยื่นภาษี (Tax.File) ทำให้", statusCode: 403);

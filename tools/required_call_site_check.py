@@ -5153,6 +5153,19 @@ RULES += [
 # ── จบบล็อกรอบ 202 ทีม LO ──
 
 
+# ── 2026-10-02 ผู้ใช้รายงาน "ส่งสลิปแล้ว 500" (DbUpdateException) — ไฟล์จากคนนอกระบบต้องบันทึกผู้อัปโหลดเป็น null ──
+# เดิมใส่ Guid.Empty ⇒ ชน FK FileAttachments → Users ทุกครั้ง (เทสต์ Db: GuestUploadFileAttachmentDbTests) · ห้ามกลับไปใส่ค่าแต่ง
+_GUEST_FILE_WHY = "ไฟล์จากคนนอกระบบ (ไม่มีผู้ใช้) ⇒ UploadedByUserId = null — Guid.Empty ชน FK → Users = แขก/ลูกค้าส่งสลิปไม่ได้ (500)"
+RULES += [
+    dict(file="Services/Implementations/Lodging/LodgingService.Operations.cs", method="SaveSlipFileAsync",
+         must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปแขกที่พัก"),
+    dict(file="Services/Implementations/CmsCommerceService.cs", method="RecordPaymentSlipAsync",
+         must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปหน้าร้านออนไลน์"),
+    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
+         must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปพอร์ทัลลูกค้า"),
+]
+
+
 def main() -> int:
     errs = []
     for rule in RULES:

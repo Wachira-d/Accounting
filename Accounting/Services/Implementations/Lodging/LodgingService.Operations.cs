@@ -441,7 +441,7 @@ public partial class LodgingService
         {
             CompanyId = companyId, FileName = storedName, OriginalFileName = file.FileName ?? storedName, ContentType = ct,
             FileSize = file.Length, StoragePath = absPath, EntityType = "LodgingReservation", EntityId = reservationId,
-            UploadedByUserId = Guid.Empty, CreatedBy = "lodging-guest",
+            UploadedByUserId = null, CreatedBy = "lodging-guest",
         });
         return relUrl;
     }

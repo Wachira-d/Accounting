@@ -376,7 +376,7 @@ public class AttachmentAccessGate : IAttachmentAccessGate
     private Task<Guid?> UploaderOfAsync(Guid companyId, Guid fileId)
         => _db.FileAttachments.AsNoTracking()
             .Where(f => f.Id == fileId && f.CompanyId == companyId)
-            .Select(f => (Guid?)f.UploadedByUserId)
+            .Select(f => (Guid?)(f.UploadedByUserId ?? Guid.Empty))   // ไม่มีผู้ใช้ (ไฟล์จากคนนอก) = Empty ⇒ ตัดสินด้วยคีย์ · null = ไม่พบไฟล์
             .FirstOrDefaultAsync();
 
     /// <summary>ผ่านเมื่อมีคีย์อย่างน้อยหนึ่งตัว · รายการว่าง = ไม่มีเงื่อนไขคีย์ (ผ่าน)</summary>

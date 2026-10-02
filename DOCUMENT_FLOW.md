@@ -4124,7 +4124,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
   `cms-sites.html` แสดงก่อนพาไปหน้าถัดไป (เดิม `LogWarning` อย่างเดียว)
 
 **ทางเข้า** — (1) storefront `/booking` `/book` `/rooms` (เฉพาะเว็บที่มีที่พักผูก — `tryRouteSpecialSlug` probe `/lodging/info` ก่อน ไม่มีก็ปล่อยหน้า CMS ที่ seed ไว้;
-เมื่อ hijack **จะวาด Hero ของหน้า CMS นั้นไว้บนสุด** (`lodgingCmsHero`) เพื่อให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้จริง — เดิมหน้าถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op) และบล็อก `BookingCalendar` ที่กลายเป็นช่องค้นหาห้องว่างอัตโนมัติ · (2) front desk `pages/lodging.html` (walk-in/โทร/OTA · `ConfirmImmediately`) · (3) `/reservation/{token}` ให้แขกดู/อัปโหลดสลิป/ยกเลิก/ส่งคำขอ
+เมื่อ hijack **จะวาด Hero ของหน้า CMS นั้นไว้บนสุด** (`lodgingCmsHero`) เพื่อให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้จริง — เดิมหน้าถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op) และบล็อก `BookingCalendar` ที่กลายเป็นช่องค้นหาห้องว่างอัตโนมัติ · (2) front desk `pages/lodging.html` (walk-in/โทร/OTA · `ConfirmImmediately`) · (3) `/reservation/{token}` ให้แขกดู/อัปโหลดสลิป/ยกเลิก/ส่งคำขอ (**2026-10-02**: ไฟล์สลิปของแขก/ลูกค้าหน้าร้าน/พอร์ทัลบันทึก `FileAttachment.UploadedByUserId = null` — เดิม `Guid.Empty` ชน FK → `Users` ⇒ ส่งสลิปได้ 500 ทุกครั้ง · คอลัมน์ว่างได้แล้ว (migration `DROP NOT NULL`) · เทสต์ Db `GuestUploadFileAttachmentDbTests`)
 
 **Lifecycle**: `Pending` (กันห้องตามกติกาเดียว `Helpers/LodgingHoldRule` — **รอบ 202 O-P1-4/5**: กันห้องจนกว่า "hold หมด **และ** ไม่มีอะไรรอคนตัดสิน" (ไม่มีมัดจำ · ไม่มีสลิปรอตรวจ · ไม่มีเงินออนไลน์ค้างยืนยัน) · `ExpireHoldsAsync` ยกเลิกด้วยเงื่อนไขเดียวกันใต้ล็อกที่พัก ⇒ "ไม่ถูกยกเลิก" ⇔ "ยังกันห้อง" เสมอ (เดิมใบส่งสลิปเลิกกันห้องเงียบ ๆ หลัง 24 ชม.) · แขกเริ่มจ่ายออนไลน์ ⇒ `HoldForOnlinePaymentAsync` ถือห้องถึงวันหมดอายุของรายการชำระ + 15 นาที (hold หมดแล้วห้องถูกขาย ⇒ ปฏิเสธ**ก่อน**แขกจ่าย)) → `Confirmed` (พนักงานกดยืนยัน/รับมัดจำ · หรือทันทีเมื่อ `ConfirmWithoutDeposit`/มัดจำ = 0/staff ConfirmImmediately) → `CheckedIn` (ต้อง assign `LodgingUnit` ครบทุกห้อง · unit → Occupied · เช็คอินก่อนวันจอง 1 วัน = เพิ่มคืน (ข้อ 125)) → `CheckedOut` · ทางออก `Cancelled`/`NoShow` (เฉพาะก่อนเช็คอิน — เช็คอินแล้วต้องเช็คเอาต์/ออกบิล)
 
@@ -4563,7 +4563,9 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LS ต่อ — ผูกที่พักกับเว็บจากป้ายสถานะ §6.5 ⑩ — commit a5278d89)_
+_Last verified against codebase: 2026-10-02 (สลิปแขก 500 — FileAttachment.UploadedByUserId ว่างได้ · ไฟล์จากคนนอกระบบ 3 ทางเข้า = null · commit <pending>)_
+
+_ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LS ต่อ — ผูกที่พักกับเว็บจากป้ายสถานะ §6.5 ⑩ — commit a5278d89)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LW — เว็บที่พัก (§6.5): บล็อก `LodgingRooms` ข้อมูลสด · migration บล็อกราคา seed ตรงทุกไบต์ + ล้างบริการ auto-seed · GET บริการจองอ่านอย่างเดียว · `/lodging/info` 404≠ขัดข้อง · ค่าค้นหาหน้าแรก→/booking · ผู้เข้าพักรายห้อง · seed ที่พักไม่สร้างแห่งที่สอง + ด่านที่พักหลายแห่งตัวเดียว · `SiteResponse.Warnings` — commit e26a6bb3)_
 

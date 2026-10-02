@@ -1464,7 +1464,7 @@ public class CmsCommerceService : ICmsCommerceService
             StoragePath = absPath,
             EntityType = "SiteOrder",
             EntityId = order.Id,
-            UploadedByUserId = Guid.Empty,
+            UploadedByUserId = null,
             CreatedBy = "storefront-customer"
         };
         _db.Set<FileAttachment>().Add(fa);

@@ -17,6 +17,10 @@ public class FileAttachment : TenantEntity
     public string EntityType { get; set; } = null!;    // "Document", "JournalEntry", "Contact", etc.
     public Guid EntityId { get; set; }
 
-    public Guid UploadedByUserId { get; set; }
-    public User UploadedByUser { get; set; } = null!;
+    /// <summary>ผู้ใช้ในระบบที่อัปโหลด · <c>null</c> = คนนอกระบบ (แขกที่พักส่งสลิป · ลูกค้าหน้าร้านออนไลน์ · ลูกค้าพอร์ทัล)
+    /// <para>2026-10-02: เดิมเป็น <c>Guid</c> ไม่ว่าง และทางเข้าของคนนอกใส่ <c>Guid.Empty</c> แทน "ไม่มีผู้ใช้" ⇒ ชน FK
+    /// <c>FileAttachments → Users</c> ทุกครั้ง (DbUpdateException 500) ⇒ แขกส่งสลิปไม่ได้เลยตั้งแต่ทางเข้าเหล่านี้เกิด ·
+    /// "ไม่รู้/ไม่มี" ต้องเป็น null ไม่ใช่ค่าที่แต่งขึ้น (หลักการ F2 ข้อ 3)</para></summary>
+    public Guid? UploadedByUserId { get; set; }
+    public User? UploadedByUser { get; set; }
 }

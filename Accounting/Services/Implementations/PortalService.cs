@@ -553,7 +553,7 @@ public class PortalService : IPortalService
             StoragePath = absPath,
             EntityType = "Document",
             EntityId = doc.Id,
-            UploadedByUserId = Guid.Empty,
+            UploadedByUserId = null,
             CreatedBy = "portal-customer"
         });
 

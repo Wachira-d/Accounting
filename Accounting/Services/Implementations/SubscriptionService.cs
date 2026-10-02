@@ -1538,7 +1538,7 @@ public class SubscriptionService : ISubscriptionService
             .ToList();
 
         // Top 10 largest files
-        var uploaderIds = files.Select(f => f.UploadedByUserId).Where(id => id != Guid.Empty).Distinct().ToList();
+        var uploaderIds = files.Where(f => f.UploadedByUserId is Guid g && g != Guid.Empty).Select(f => f.UploadedByUserId!.Value).Distinct().ToList();
         var userMap = await _db.Users
             .Where(u => uploaderIds.Contains(u.Id))
             .ToDictionaryAsync(u => u.Id, u => u.FullName);
@@ -1549,7 +1549,7 @@ public class SubscriptionService : ISubscriptionService
             .Select(f => new StorageFileInfo(
                 f.Id, f.OriginalFileName ?? "unknown", f.EntityType ?? "Other",
                 f.FileSize, f.CreatedAt,
-                f.UploadedByUserId != Guid.Empty && userMap.ContainsKey(f.UploadedByUserId) ? userMap[f.UploadedByUserId] : "-"))
+                f.UploadedByUserId is Guid up && userMap.TryGetValue(up, out var upName) ? upName : "-"))
             .ToList();
 
         // License overlay: when this company rides under a User License the

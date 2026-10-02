@@ -4415,3 +4415,13 @@ _รอบ 202 ทีม LS ต่อ (2026-10-02 · ต่อจากราย
   `EnsurePropertyRefsBelongAsync`/`EnsureSiteNotBoundElsewhereAsync` (ไม่เขียนซ้ำ) · audit chain · ตอบ DTO ใหม่ ⇒ ป้ายเปลี่ยนทันที
 - `required_call_site_check` self-test: เคสฝ่ายค้านตรวจกับ**ทุก**กติกาของเมธอดเดียวกันในไฟล์เดียวกัน (หลังรวม LS+LW `CreatePropertyAsync` มี 2 กติกา ⇒ เคส LW3 เดิมดูแค่กติกาแรกแล้วล้มผิด)
 - เทสต์ `LodgingSettingsRound202Tests` +4 (สองทิศ) · required_call_site +2 แถว — commit a5278d89_
+
+_2026-10-02 (หลังรอบ 202) — ผู้ใช้รายงาน: แขกกด "ส่งสลิป" ในหน้าการจองแล้วได้ "เกิดข้อผิดพลาดภายในระบบ" (500 · DbUpdateException REF:35F0C2D7).
+ราก: `LodgingService.SaveSlipFileAsync` บันทึก `FileAttachment` ด้วย `UploadedByUserId = Guid.Empty` (แขกไม่มีผู้ใช้) แต่คอลัมน์เป็น NOT NULL + FK → `Users`
+(ฐานสร้างด้วย EnsureCreated) ⇒ ชน FK **ทุกครั้ง** ตั้งแต่ `0750e6a0` · ญาติสองตัวรูปเดียวกัน: `CmsCommerceService.RecordPaymentSlipAsync` (สลิปหน้าร้านออนไลน์)
+และ `PortalService.UploadDocumentSlipAsync` (สลิปพอร์ทัลลูกค้า) — grep "UploadedByUserId = Guid.Empty" เหลือ 0 จุด.
+แก้: `FileAttachment.UploadedByUserId` เป็น `Guid?` ("ไม่มีผู้ใช้" = null ไม่ใช่ค่าแต่ง) · migration `ALTER COLUMN ... DROP NOT NULL` + แถว Guid.Empty → NULL ·
+ผู้อ่าน 4 จุดปรับ (OcrService CreatedBy · SubscriptionService รายชื่อผู้อัปโหลด · WhtCreditService/AttachmentAccessGate ตีความไม่มีผู้ใช้ = Empty ตามเดิม) ·
+FK ยังอยู่ (ทิศตรงข้าม: id ที่ไม่มีจริงต้องล้ม) · เทสต์ Db `GuestUploadFileAttachmentDbTests` รันเส้นจริง UploadSlipByTokenAsync บน PostgreSQL ·
+required_call_site +3 กติกา (must `= null` · forbid `= Guid.Empty`)._
+
