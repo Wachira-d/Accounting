@@ -4563,7 +4563,7 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 
 
-_Last verified against codebase: 2026-10-02 (สลิปแขก 500 — FileAttachment.UploadedByUserId ว่างได้ · ไฟล์จากคนนอกระบบ 3 ทางเข้า = null · commit <pending>)_
+_Last verified against codebase: 2026-10-02 (สลิปแขก 500 — FileAttachment.UploadedByUserId ว่างได้ · ไฟล์จากคนนอกระบบ 3 ทางเข้า = null · commit ca42449e)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LS ต่อ — ผูกที่พักกับเว็บจากป้ายสถานะ §6.5 ⑩ — commit a5278d89)_
 
