@@ -4364,5 +4364,5 @@ _รอบ 202 ทีม LO — เครื่องจองที่พัก
 - **O-P0-2 / ข้อ 119 (R1)** night audit ติดธง "ค้างปิด" ครั้งเดียว ไม่ประทับ CheckedOut/NoShow · CheckedIn ค้างกันห้องคืนนี้ · แถวรุ่นเก่า: ตัวกรอง + ออกใบเช็คเอาต์ย้อนหลัง (เปิดกลับเข้าเส้นปกติ ไม่แตะห้องปัจจุบัน) + คิดค่าปรับ no-show ย้อนหลังครั้งเดียว · checker เฝ้าสถานะใหม่
 - **O-P1-3..6** แผนราคาของแขกผ่านเงื่อนไข · ถือห้องถึงวันหมดอายุรายการชำระ + ธงเงินเข้าแต่ยืนยันไม่ได้ (ข้อ 127 ไม่คืนอัตโนมัติ · อีเมลที่พัก + เครื่องแจ้งเตือนกลาง `lodging.payment_unconfirmed`) · กติกากันห้องตัวเดียว (`LodgingHoldRule`) · รอชำระ ≤ 3/เบอร์-อีเมล + เพดาน IP (ตัวนับ DB)
 - **P2** quote/ค้นหาพนักงาน isStaff · เลื่อนวันจับคู่ด้วยกุญแจ · โค้ดส่วนลด = ปฏิเสธ · **ข้อ 123–126** คนเสริม/ความจุผู้ใหญ่ (`LodgingOccupancy`) · เช็คอินก่อน 1 วัน = เพิ่มคืน · ค่าปรับไม่เกินมัดจำ
-- audit ของโมดูลที่พักทั้งหมดผ่าน `AddChainedAuditLog` (baseline ไฟล์ที่พัก → 0) · required_call_site +23 แถว · เทสต์ 4 ไฟล์ pure + 1 ไฟล์ DB · คอลัมน์ใหม่ `OverdueFlaggedAt`/`PaymentProblemAt`/`PaymentProblemNote` — commit <pending>_
+- audit ของโมดูลที่พักทั้งหมดผ่าน `AddChainedAuditLog` (baseline ไฟล์ที่พัก → 0) · required_call_site +23 แถว · เทสต์ 4 ไฟล์ pure + 1 ไฟล์ DB · คอลัมน์ใหม่ `OverdueFlaggedAt`/`PaymentProblemAt`/`PaymentProblemNote` — commit fe15692d_
 
