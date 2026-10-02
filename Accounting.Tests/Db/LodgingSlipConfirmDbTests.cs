@@ -151,7 +151,9 @@ public class LodgingSlipConfirmDbTests
         Assert.True(seen.CanUploadSlip);                                  // ข้อ 127: โอนแล้วส่งสลิปได้ (รับไว้ + ธง)
         using var check = DbTestDatabase.TryCreateContext()!;
         var saved = await check.LodgingReservations.AsNoTracking().SingleAsync(r => r.Id == created.Id && r.CompanyId == cid);
-        Assert.Equal(LodgingHoldRule.AutoExpireReason, saved.CancellationReason);
+        // ฝ่ายค้าน P2-5: เหตุผลยกเลิกอัตโนมัติตามโหมด — ใบโหมดส่งสลิปได้ "หมดเวลาส่งสลิป" (ไม่ใช่ข้อความโหมดมัดจำ) · ตัวอ่านยังรู้จักว่าเป็นการยกเลิกอัตโนมัติ
+        Assert.Equal(LodgingHoldRule.AutoExpireSlipReason, saved.CancellationReason);
+        Assert.True(LodgingHoldRule.IsAutoExpiredHold(saved.Status, saved.CancellationReason, saved.DepositPaid));
     }
 
     [Fact]
