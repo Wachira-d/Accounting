@@ -4450,6 +4450,53 @@ RULES += [
 ]
 # ── จบบล็อกรอบ 201 ทีม AI ──
 
+# ── รอบ 202 ทีม LW (เว็บที่พัก: ข้อมูลห้องสด · ห้าม GET สาธารณะเขียนฐาน · ด่านที่พักหลายแห่งทุกทางเข้า · migration ตรงทุกไบต์) ──
+_LW_WHY_GET = "W-03: GET สาธารณะ (storefront/booking-services) ต้องอ่านอย่างเดียว — เดิมสร้างบริการ ฿0 ลงฐาน + catch {} กลืน error"
+_LW_WHY_QUOTA = "W-05/ข้อ 118: ที่พักแห่งที่ 2 ผ่านด่าน add-on ตัวเดียว (LodgingPropertyQuota) ทั้งสร้างมือและ seed จากเว็บ"
+_LW_WHY_MIG = "ข้อ 117: แทนเฉพาะบล็อกที่ตรง snapshot ของ seed ทุกไบต์ (ฟังก์ชัน Legacy* ตัวเดียวกับที่เคย seed) · ล็อกคีย์คงที่ · ไม่เทียบหลวม"
+RULES += [
+    dict(file="Services/Implementations/CmsBookingService.cs", method="GetServicesAsync",
+         must=["AsNoTracking("],
+         forbid=["SaveChangesAsync(", "SiteBookingServices.Add(", "EnsureDefaultBookingServiceAsync(", "catch"],
+         why=_LW_WHY_GET),
+    dict(file="Services/Implementations/Cms/LodgingSeeder.cs", method="SeedForSiteAsync",
+         must=["LodgingPropertyQuota.BlockReasonAsync(", "LodgingSeedDecision.Decide("],
+         must_re=[r"if\s*\(\s*outcome\s*!=\s*LodgingSeedOutcome\s*\.\s*Created\s*\)\s*return\b"],
+         before=[("LodgingSeedDecision.Decide(", "db.LodgingProperties.Add(")],
+         why=_LW_WHY_QUOTA + " · มีที่พักไม่ผูกเว็บ ⇒ ไม่สร้างแห่งที่สอง"),
+    dict(file="Services/Implementations/Lodging/LodgingService.cs", method="CreatePropertyAsync",
+         must=["LodgingPropertyQuota.BlockReasonAsync("],
+         must_re=[r"if\s*\(\s*quotaBlock\s*!=\s*null\s*\)\s*throw\b"],
+         before=[("LodgingPropertyQuota.BlockReasonAsync(", "_db.LodgingProperties.Add(")],
+         forbid=["AddOnCodes.LodgingMultiProperty"],
+         why=_LW_WHY_QUOTA + " (ห้ามเขียนด่านซ้ำ inline)"),
+    dict(file="Services/Implementations/CmsSiteService.cs", method="CreateSiteAsync",
+         must=["warnings.Add(seed.Message)", "created.Warnings = warnings"],
+         call_args=[("Cms.LodgingSeeder.SeedForSiteAsync(", "_entitlement")],
+         why="W-08: ขั้น seed ที่ล้ม/ถูกข้ามต้องถึงเจ้าของในผลตอบ (ไม่ใช่ LogWarning อย่างเดียว) · " + _LW_WHY_QUOTA),
+    dict(file="Services/Implementations/CmsSiteService.cs", method="ApplyTemplateCoreAsync",
+         must=["result.LodgingMessage = seed.Message"],
+         call_args=[("Cms.LodgingSeeder.SeedForSiteAsync(", "_entitlement")],
+         why="ข้อ 118: เติมเทมเพลตที่พักต้องบอกเหตุที่ไม่สร้างที่พัก · " + _LW_WHY_QUOTA),
+    dict(file="Data/DatabaseMigrationHelper.cs", method="GetAlterStatements",
+         must=["Round202LodgingWebStatements("], why=_LW_WHY_MIG + " (ต้องอยู่เส้นหลักที่รันตอนบูต)"),
+    dict(file="Data/DatabaseMigrationHelper.cs", method="Round202LodgingWebStatements",
+         must=["LodgingSiteSeedMigration.RoomBlocksSql(", "LodgingSiteSeedMigration.AutoSeedServiceCleanupSql("], why=_LW_WHY_MIG),
+    dict(file="Helpers/LodgingSiteSeedMigration.cs", method="RoomListRules",
+         must=["CmsSiteTemplateSeeder.LegacyHotelRoomsRichTextConfig(", "CmsSiteTemplateSeeder.LegacyHotelPricingTableConfig(",
+               "CmsSiteTemplateSeeder.HotelLiveRoomsConfig("], why=_LW_WHY_MIG),
+    dict(file="Helpers/LodgingSiteSeedMigration.cs", method="RoomBlocksSql",
+         must=["RoomListRules()", "RoomsHeroRule()", "Text(hero.OldConfigJson)", "LockKey"],
+         must_lit=["pg_advisory_xact_lock(", 'b.\\"IsVisible\\" = true', '\\"PageBlockTranslations\\"'],
+         forbid_lit=["LIKE", "trim(", "jsonb"],
+         why=_LW_WHY_MIG),
+    dict(file="Helpers/LodgingSiteSeedMigration.cs", method="AutoSeedServiceCleanupSql",
+         must=["LockKey"],
+         must_lit=["pg_advisory_xact_lock(", 'v.\\"UpdatedBy\\" IS NULL', '\\"SiteBookings\\"'],
+         why="W-03: ล้างเฉพาะบริการ auto-seed บนเว็บที่พักที่ไม่มีการจอง/ไม่เคยแก้ · ล็อกคีย์คงที่"),
+]
+# ── จบบล็อกรอบ 202 ทีม LW ──
+
 
 SETTLEMENT_FOLDER_FORBID = dict(
     globs=["Services/Settlement/**/*.cs"],
@@ -4793,6 +4840,10 @@ REVIEWER_CASES = [
     ("B1a", "Approve", "if (refusal is not null)\n                return await RefuseApprovalAsync(", "if (refusal is not null)\n                _ = await RefuseApprovalAsync(", True),
     # รอบ 199 B-1: กลับไปแยกชุด "ผ่าน" ด้วย IsGapWarning (รวมชุด VAT) = ขยายคำตัดสินข้อ 12 เองอีกครั้ง ⇒ ต้องฟ้อง
     ("B1b", "Approve", "preview.Where(Helpers.OcrApprovalGapWarning.IsAmountGapWarning)", "preview.Where(Helpers.OcrApprovalGapWarning.IsGapWarning)", True),
+    # รอบ 202 ทีม LW: ใส่ auto-seed บน GET สาธารณะกลับ ⇒ ต้องฟ้อง · ทิ้งผลตัวตัดสิน seed (สร้างแห่งที่สองต่อ) ⇒ ต้องฟ้อง
+    ("LW1", "GetServicesAsync", "GetServicesAsync(Guid companyId, Guid siteId)\n    {\n", "GetServicesAsync(Guid companyId, Guid siteId)\n    {\n        await EnsureDefaultBookingServiceAsync(companyId, siteId);\n", True),
+    ("LW2", "SeedForSiteAsync", "if (outcome != LodgingSeedOutcome.Created) return new Result(null, outcome, message);", "_ = message;", True),
+    ("LW3", "CreatePropertyAsync", "if (quotaBlock != null) throw new BusinessRuleException(quotaBlock, LodgingPropertyQuota.RuleCode);", "_ = quotaBlock;", True),
 ]
 
 

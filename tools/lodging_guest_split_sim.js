@@ -10,6 +10,8 @@
 // ใช้โค้ดจริงจากหน้า (ดึง _splitGuests + _quoteBody) · สองทิศ (F2 ข้อ 8):
 //   (a) ผลรวมผู้ใหญ่/เด็กที่ส่ง = ที่แขกกรอก · ต่างกันไม่เกิน 1 ต่อห้อง
 //   (b) 1 ห้อง = ส่งค่าเดิมตรง ๆ (ใบที่ถูกอยู่แล้วไม่ถูกแตะ) · ผู้ใหญ่น้อยกว่าห้อง = ห้องละ 1 (พฤติกรรมเดิม)
+//   (c) รอบ 202 ทีม LW (คำตัดสินข้อ 123): แขกตั้งผู้เข้าพัก/คนเสริมรายห้องเอง ⇒ ค่าที่แขกตั้งชนะค่าแบ่งอัตโนมัติ (ส่งตรงตามที่ตั้ง
+//       รวม extraBeds) · ห้องที่ไม่ได้แตะยังได้ค่าแบ่ง · เพิ่มห้องทีหลังไม่ล้างค่าที่แขกตั้งไว้
 // negative test: ใส่สูตรเดิม (ceil + เด็กห้องแรก) กลับ ⇒ ชุดเดียวกันต้องล้ม
 'use strict';
 const fs = require('fs');
@@ -17,7 +19,7 @@ const path = require('path');
 
 const PAGE = process.env.SF_PAGE || path.join(__dirname, '..', 'Accounting', 'wwwroot', 'storefront.html');
 const REAL_SRC = fs.readFileSync(PAGE, 'utf8');
-const METHODS = ['_splitGuests', '_quoteBody'];
+const METHODS = ['_splitGuests', '_roomKeys', '_syncRoomGuests', '_quoteBody'];
 
 function extract(src, name) {
   const re = new RegExp('\\n      ' + name + '\\(');
@@ -40,7 +42,7 @@ function makeStore(src) {
 }
 
 function body(store, sel, adults, children) {
-  store._lgState = { sel, adults, children, extras: {}, checkIn: '2026-10-01', checkOut: '2026-10-03', ratePlanId: null };
+  store._lgState = { sel, adults, children, infants: 0, roomGuests: {}, guestTouched: {}, extras: {}, checkIn: '2026-10-01', checkOut: '2026-10-03', ratePlanId: null };
   return store._quoteBody();
 }
 
@@ -69,6 +71,20 @@ function run(src) {
     fails.push('(b) 1 ห้องต้องส่งค่าเดิม: ' + JSON.stringify(one.rooms));
   const few = body(store, { A: 3 }, 1, 0);
   if (few.rooms.some(r => r.adults !== 1)) fails.push('(b) ผู้ใหญ่น้อยกว่าห้อง ต้องห้องละ 1: ' + JSON.stringify(few.rooms));
+  // (c) แขกตั้งเองรายห้อง
+  body(store, { A: 2 }, 4, 0);
+  const st = store._lgState;
+  st.roomGuests['A:1'] = { adults: 3, children: 1, extraBeds: 1 }; st.guestTouched['A:1'] = true;
+  const touched = store._quoteBody();
+  const r1 = touched.rooms[1];
+  if (!r1 || r1.adults !== 3 || r1.children !== 1 || r1.extraBeds !== 1)
+    fails.push('(c) ค่าที่แขกตั้งรายห้องต้องถูกส่งตรง (รวมคนเสริม): ' + JSON.stringify(touched.rooms));
+  if (touched.rooms[0].adults !== 2 || touched.rooms[0].extraBeds !== 0)
+    fails.push('(c) ห้องที่ไม่ได้แตะต้องได้ค่าแบ่งเดิม: ' + JSON.stringify(touched.rooms));
+  st.sel.B = 1; store._syncRoomGuests();
+  const more = store._quoteBody();
+  if (more.rooms.length !== 3 || more.rooms[1].adults !== 3 || more.rooms[1].extraBeds !== 1)
+    fails.push('(c) เพิ่มห้องแล้วค่าที่แขกตั้งไว้ต้องคงอยู่: ' + JSON.stringify(more.rooms));
   return fails;
 }
 

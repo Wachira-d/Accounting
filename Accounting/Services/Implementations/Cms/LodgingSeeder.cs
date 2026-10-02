@@ -2,6 +2,7 @@ using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations.Cms;
@@ -13,12 +14,26 @@ namespace Accounting.Services.Implementations.Cms;
 /// ซึ่ง CmsSiteTemplateSeeder.HotelPlan ใช้พิมพ์หน้าเว็บด้วย — ห้ามพิมพ์ตัวเลขซ้ำที่นี่
 /// (รอบ 158 พบว่าสองที่เคยถือคนละชุด: หน้าเว็บบอก 4 ประเภท/15:00/ยกเลิกฟรี 3 วัน แต่ที่จองได้จริงคือ 3/14:00/7 วัน)
 ///
-/// idempotent: ถ้าเว็บไซต์นี้มีที่พักผูกอยู่แล้วจะไม่สร้างซ้ำ</summary>
+/// idempotent: ถ้าเว็บไซต์นี้มีที่พักผูกอยู่แล้วจะไม่สร้างซ้ำ
+///
+/// รอบ 202 ทีม LW (W-05 · คำตัดสินข้อ 118): <b>ไม่สร้างแห่งที่สอง</b> เมื่อบริษัทมีที่พักที่ยังไม่ผูกเว็บอยู่แล้ว (เสนอ "ผูกที่พักเดิม"
+/// ผ่านข้อความในผลตอบ) และผ่านด่าน "ที่พักหลายแห่ง" ตัวเดียวกับการสร้างมือ (<see cref="LodgingPropertyQuota"/>) ·
+/// ตัวตัดสิน <see cref="LodgingSeedDecision.Decide"/> · ผู้เรียกต้องแสดง <c>Message</c> ให้เจ้าของเห็น (ห้ามแค่ log)</summary>
 public static class LodgingSeeder
 {
-    public static async Task<LodgingProperty?> SeedForSiteAsync(AccountingDbContext db, Guid companyId, Site site, string userId)
+    /// <summary>ผล seed — <c>Property</c> มีค่าเฉพาะ <see cref="LodgingSeedOutcome.Created"/> (ผู้เรียก SaveChanges เอง) ·
+    /// <c>Message</c> = ข้อความถึงเจ้าของเมื่อไม่ได้สร้างด้วยเหตุที่เจ้าของต้องรู้</summary>
+    public readonly record struct Result(LodgingProperty? Property, LodgingSeedOutcome Outcome, string? Message);
+
+    public static async Task<Result> SeedForSiteAsync(AccountingDbContext db, Guid companyId, Site site, string userId, IEntitlementService? entitlement)
     {
-        if (await db.LodgingProperties.AnyAsync(p => p.CompanyId == companyId && p.SiteId == site.Id)) return null;
+        var bound = await db.LodgingProperties.AnyAsync(p => p.CompanyId == companyId && p.SiteId == site.Id);
+        var unlinked = bound ? new List<string>() : await db.LodgingProperties.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.SiteId == null && !p.IsDeleted)
+            .OrderBy(p => p.SortOrder).ThenBy(p => p.Name).Select(p => p.Name).ToListAsync();
+        var quotaBlock = bound || unlinked.Count > 0 ? null : await LodgingPropertyQuota.BlockReasonAsync(db, entitlement, companyId);
+        var (outcome, message) = LodgingSeedDecision.Decide(bound, unlinked, quotaBlock);
+        if (outcome != LodgingSeedOutcome.Created) return new Result(null, outcome, message);
 
         var company = await db.Companies.AsNoTracking().Where(c => c.Id == companyId)
             .Select(c => new { c.Name, c.Address, c.Phone, c.Email }).FirstOrDefaultAsync();
@@ -141,7 +156,7 @@ public static class LodgingSeeder
             new LodgingExtra { CompanyId = companyId, Property = prop, Name = "รถรับส่งสนามบิน (เที่ยวเดียว)", NameEn = "Airport transfer", Category = LodgingExtraCategory.Transfer, PriceMode = LodgingExtraPriceMode.PerStay, Price = LodgingSeedDefaults.AirportTransferPerStay, MaxQuantity = 2, Product = products["TRF"], SortOrder = 3, CreatedBy = userId },
             new LodgingExtra { CompanyId = companyId, Property = prop, Name = $"Late check-out ถึง {LodgingSeedDefaults.LateCheckoutUntil}", NameEn = "Late check-out", Category = LodgingExtraCategory.Other, PriceMode = LodgingExtraPriceMode.PerStay, Price = LodgingSeedDefaults.LateCheckoutPerStay, MaxQuantity = 1, Product = products["LCO"], SortOrder = 4, CreatedBy = userId });
 
-        return prop;
+        return new Result(prop, LodgingSeedOutcome.Created, null);
     }
 
     private static string DeriveCode(string subdomain)

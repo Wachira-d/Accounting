@@ -512,7 +512,7 @@
         // via JsonStringEnumConverter, but legacy/preview paths may send the
         // numeric value. Accept both so this switch never silently misses.
         const t = typeof b.blockType === 'string'
-          ? ({Hero:1,RichText:2,Image:3,Gallery:4,Video:5,ProductGrid:6,BookingCalendar:8,ContactForm:9,Map:11,Testimonials:12,Faq:13,PricingTable:14,CallToAction:15,Newsletter:17,Divider:19,Html:20,CartSummary:23}[b.blockType] ?? b.blockType)
+          ? ({Hero:1,RichText:2,Image:3,Gallery:4,Video:5,ProductGrid:6,BookingCalendar:8,ContactForm:9,Map:11,Testimonials:12,Faq:13,PricingTable:14,CallToAction:15,Newsletter:17,Divider:19,Html:20,CartSummary:23,LodgingRooms:27}[b.blockType] ?? b.blockType)
           : b.blockType;
         switch (t) {
           case 1: { // Hero
@@ -648,6 +648,13 @@
           case 23: { // Cart
             return `<div class="blk-cart" data-block="cart"><h2>ตะกร้าสินค้า</h2><div class="cart-empty">ตะกร้าว่าง — เริ่มเลือกซื้อสินค้าได้เลย</div></div>`;
           }
+          case 27: { // ห้องพัก — ข้อมูลสดจากระบบที่พัก (เติมใน hydrateBlocks จาก /lodging/info) · รอบ 202 ทีม LW (W-02 · ข้อ 117)
+            // คอนฟิกมีแค่หัวข้อ — ชื่อ/รูป/ขนาด/ราคาเริ่มต้นมาจากเซิร์ฟเวอร์เสมอ ไม่มีตัวเลขในบล็อก (เดิมราคา seed ตายตัวบนหน้าแรก)
+            return `<div class="blk-booking" data-block="lodging-rooms">
+              ${cfg.headline ? `<h2 style="margin-bottom:18px">${esc(cfg.headline)}</h2>` : ''}
+              <div class="lg-rooms-body"><div class="placeholder">🏨 กำลังโหลดห้องพัก...</div></div>
+            </div>`;
+          }
           default:
             return b.renderedHtml || `<div class="sf-loader">บล็อกประเภท ${b.blockType}</div>`;
         }
@@ -680,13 +687,30 @@
           } catch (e) { console.error(e); }
         }
 
+        // ห้องพัก (ข้อมูลสด) — ไม่ผูกที่พัก ⇒ "ยังไม่เปิดจองออนไลน์" (ห้ามโชว์ราคา seed · ข้อ 117) · ขัดข้อง ⇒ บอกว่าขัดข้อง (W-04)
+        const roomEls = document.querySelectorAll('[data-block="lodging-rooms"]');
+        if (roomEls.length) {
+          let info = null, err = null;
+          try { info = await Store.lodgingInfo(); } catch (e) { err = e; }
+          for (const el of roomEls) {
+            const body = el.querySelector('.lg-rooms-body');
+            if (body) body.innerHTML = err ? Store._lodgingErrorHtml(err) : info ? Store._lodgingRoomsHtml(info) : Store._lodgingClosedHtml();
+          }
+        }
+
         // Booking block → fetch services
         const bookingEls = document.querySelectorAll('[data-block="booking"]');
         for (const el of bookingEls) {
           try {
             // เว็บที่พัก: บล็อก "ปฏิทินจอง" = ช่องค้นหาห้องว่าง (ไม่ใช่ slot นัดหมาย)
-            const lodging = await Store.lodgingInfo();
+            // W-04: 404 (ไม่มีที่พักเปิดจอง) ≠ ขัดข้อง — เว็บที่พักที่ระบบจองห้องล่มต้องเห็นว่าล่ม ไม่ใช่การ์ดนัดหมาย ฿0
+            const isLodgingSite = !!this.data?.site?.isLodgingSite;
+            let lodging = null;
+            try { lodging = await Store.lodgingInfo(); }
+            catch (e) { if (isLodgingSite) { el.innerHTML = Store._lodgingErrorHtml(e); continue; } }
             if (lodging) { el.innerHTML = Store.lodgingSearchForm(lodging); continue; }
+            // W-03: เว็บที่พักที่ยังไม่ผูก/ปิดที่พัก ⇒ บอกว่ายังไม่เปิดจอง + ช่องทางติดต่อ (ไม่ใช่การ์ดนัดหมาย)
+            if (isLodgingSite) { el.innerHTML = Store._lodgingClosedHtml(); continue; }
             const r = await fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/booking-services`);
             const j = await r.json();
             const services = j.data || [];
@@ -937,7 +961,10 @@
         // ที่พัก: /booking, /book, /rooms → หน้าค้นหา+จอง (เฉพาะเว็บที่มีที่พักผูกอยู่ —
         // ไม่มีก็ปล่อยให้หน้า CMS ที่ seed ไว้ทำงานตามเดิม) · /reservation/{token} → หน้าการจองของแขก
         if (slug === 'booking' || slug === 'book' || slug === 'rooms') {
-          const info = await this.lodgingInfo();
+          // W-04: ระบบจองห้องขัดข้อง (5xx/เน็ต) ≠ ไม่มีที่พัก — บอกว่าขัดข้อง ไม่ตกไปหน้า CMS/การ์ดนัดหมายเงียบ ๆ
+          let info;
+          try { info = await this.lodgingInfo(); }
+          catch (e) { document.getElementById('sfMain').innerHTML = this._lodgingErrorHtml(e); return true; }
           if (info) { await this.renderLodgingSearch(); return true; }
         }
         if (slug.startsWith('reservation/')) {
@@ -1502,15 +1529,71 @@
     // ราคาทุกตัวเลขมาจากเซิร์ฟเวอร์ (search/quote) — หน้าเว็บแสดงอย่างเดียว ห้ามคำนวณเอง (กติกา "resolver กลาง")
     Object.assign(Store, {
       _lodging: undefined,
-      _lgState: { checkIn: '', checkOut: '', adults: 2, children: 0, rooms: 1, sel: {}, extras: {}, ratePlanId: null, results: [], quote: null },
+      // roomGuests: ผู้เข้าพักรายห้องที่เลือก (คีย์ "{roomTypeId}:{ลำดับ}") · guestTouched: ห้องที่แขกตั้งเองแล้ว (ค่าผู้ใช้ชนะค่าแบ่งอัตโนมัติ)
+      // infants: ระดับการจอง (DTO LodgingCreateReservationRequest.Infants · ไม่อยู่ใน quote) — รอบ 202 ทีม LW (ข้อ 123/124)
+      _lgState: { checkIn: '', checkOut: '', adults: 2, children: 0, infants: 0, rooms: 1, sel: {}, roomGuests: {}, guestTouched: {}, extras: {}, ratePlanId: null, results: [], quote: null },
       _lurl(path) { return this._url('/lodging' + path); },
+      // ข้อมูลที่พักของเว็บนี้ — คืน null **เฉพาะ 404** (เว็บไม่ได้ผูกที่พัก/ที่พักปิดอยู่ = ผลจริง จำไว้) ·
+      // สถานะอื่น/เน็ตหลุด ⇒ โยน Error (ไม่จำ ให้ลองใหม่ได้) — รอบ 202 ทีม LW (W-04): เดิมทุกความล้มเหลวกลายเป็น null
+      // ⇒ ระบบจองห้องล่มแล้วหน้าเว็บตกไปการ์ดนัดหมาย ฿0 เงียบ ๆ แขกไม่รู้ว่าระบบขัดข้อง
       async lodgingInfo() {
         if (this._lodging !== undefined) return this._lodging;
-        try {
-          const r = await fetch(this._lurl('/info'));
-          this._lodging = r.ok ? ((await r.json()).data || null) : null;
-        } catch (_) { this._lodging = null; }
+        let r;
+        try { r = await fetch(this._lurl('/info')); }
+        catch (_) { throw new Error('เชื่อมต่อระบบจองห้องไม่ได้'); }
+        if (r.status === 404) { this._lodging = null; return null; }
+        const j = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(j?.message || `ระบบจองห้องขัดข้อง (HTTP ${r.status})`);
+        this._lodging = j?.data || null;
         return this._lodging;
+      },
+      _lodgingErrorHtml(e) {
+        return `<div class="sf-loader" style="color:#DC2626">โหลดข้อมูลห้องพักไม่สำเร็จ — ${this.esc(e?.message || '')} · กรุณาลองรีเฟรชหน้าอีกครั้ง</div>`;
+      },
+      // ไม่ผูกที่พัก/ปิดอยู่ — ช่องทางติดต่อจากเซิร์ฟเวอร์ (StorefrontSiteInfo resolve แล้ว: เว็บชนะบริษัท) · ไม่มีราคา seed (ข้อ 117)
+      _lodgingClosedHtml() {
+        const s = this.data?.site || {};
+        const contact = [s.contactPhone ? `โทร ${this.esc(s.contactPhone)}` : '',
+                         s.lineId ? `LINE ${this.esc(s.lineId)}` : '',
+                         s.contactEmail ? this.esc(s.contactEmail) : ''].filter(Boolean).join(' · ');
+        return `<div class="lg-sum" style="text-align:center"><b>ยังไม่เปิดจองออนไลน์</b>
+          <div style="margin-top:6px;font-size:14px">กรุณาติดต่อที่พักโดยตรงเพื่อสอบถามห้องว่างและราคา${contact ? ' — ' + contact : ''}</div></div>`;
+      },
+      // บล็อก LodgingRooms: ประเภทห้องที่เปิดขาย (projection สาธารณะ) · ราคา = baseRate ที่เซิร์ฟเวอร์ส่ง (แสดงอย่างเดียว ไม่คำนวณ)
+      _lodgingRoomsHtml(info) {
+        const rooms = info.roomTypes || [];
+        if (!rooms.length) return '<div class="placeholder">ยังไม่มีประเภทห้องเปิดขาย</div>';
+        const href = this.esc(this._pageUrl('booking'));
+        const cta = info.onlineBookingEnabled ? 'ดูห้องว่าง / จอง' : 'สอบถาม / ติดต่อจอง';
+        return `<div class="sf-container">${rooms.map(rt => {
+          const img = (rt.images || []).filter(Boolean)[0];
+          const meta = [rt.sizeSqm ? `${this.esc(rt.sizeSqm)} ตรม.` : '', rt.bedType ? this.esc(rt.bedType) : '',
+                        rt.maxOccupancy ? `พักได้ ${this.esc(rt.maxOccupancy)} คน` : ''].filter(Boolean).join(' · ');
+          return `<div class="lg-room">${img ? `<img src="${this.esc(img)}" alt="${this.esc(rt.name)}" loading="lazy">` : '<div class="lg-noimg"></div>'}
+            <div><h3>${this.esc(rt.name)}</h3><div class="lg-meta">${meta}</div>${rt.description ? `<div style="font-size:14px">${this.esc(rt.description)}</div>` : ''}</div>
+            <div class="lg-price"><small>เริ่มต้น</small><div class="amt">฿${this._money(rt.baseRate)}<span style="font-size:14px;font-weight:600">/คืน</span></div>
+              <small>ราคาจริงตามวันที่เลือก</small>
+              <a href="${href}" class="btn btn-primary" style="margin-top:10px;display:inline-block">${cta}</a></div></div>`;
+        }).join('')}</div>`;
+      },
+      // W-07: ค่าค้นหาจากหน้าแรก (?checkIn=&checkOut=&adults=&children=&rooms=) → state ของหน้าจอง · รับเฉพาะรูปที่อ่านได้
+      // (วันที่ yyyy-mm-dd · จำนวนอยู่ในช่วงของตัวเลือกบนฟอร์ม) — ความถูกต้องของช่วงวันตัดสินที่เซิร์ฟเวอร์ตอนค้นหา
+      _lgStateFromQuery() {
+        const p = new URLSearchParams(location.search);
+        const st = this._lgState;
+        const day = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : '';
+        const num = (v, lo, hi) => { const x = parseInt(v, 10); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : null; };
+        const ci = day(p.get('checkIn')), co = day(p.get('checkOut'));
+        if (ci && co) { st.checkIn = ci; st.checkOut = co; }
+        const a = num(p.get('adults'), 1, 6); if (a != null) st.adults = a;
+        const c = num(p.get('children'), 0, 4); if (c != null) st.children = c;
+        const inf = num(p.get('infants'), 0, 3); if (inf != null) st.infants = inf;
+        const r = num(p.get('rooms'), 1, 5); if (r != null) st.rooms = r;
+      },
+      _pageUrlQuery(slug, q) {
+        const base = this._pageUrl(slug);
+        const qs = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== '' && v != null).map(([k, v]) => [k, String(v)])).toString();
+        return qs ? base + (base.includes('?') ? '&' : '?') + qs : base;
       },
       _money(n) { return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
       _dateTh(d) { try { return new Date(d).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }); } catch (_) { return d; } },
@@ -1523,7 +1606,8 @@
           <div><label>เช็คอิน</label><input type="date" class="lg-input" id="lgIn" value="${ci}" min="${this._todayIso(0)}"></div>
           <div><label>เช็คเอาต์</label><input type="date" class="lg-input" id="lgOut" value="${co}" min="${this._todayIso(1)}"></div>
           <div><label>ผู้ใหญ่</label><select class="lg-input" id="lgAdults">${[1,2,3,4,5,6].map(n=>`<option ${n===st.adults?'selected':''}>${n}</option>`).join('')}</select></div>
-          <div><label>เด็ก (≤${info.childMaxAge} ปี)</label><select class="lg-input" id="lgChildren">${[0,1,2,3,4].map(n=>`<option ${n===st.children?'selected':''}>${n}</option>`).join('')}</select></div>
+          <div><label>เด็ก (≤${this.esc(info.childMaxAge)} ปี)</label><select class="lg-input" id="lgChildren">${[0,1,2,3,4].map(n=>`<option ${n===st.children?'selected':''}>${n}</option>`).join('')}</select></div>
+          <div><label>ทารก (≤${this.esc(info.infantMaxAge)} ปี)</label><select class="lg-input" id="lgInfants">${[0,1,2,3].map(n=>`<option ${n===st.infants?'selected':''}>${n}</option>`).join('')}</select></div>
           <div><label>จำนวนห้อง</label><select class="lg-input" id="lgRooms">${[1,2,3,4,5].map(n=>`<option ${n===st.rooms?'selected':''}>${n}</option>`).join('')}</select></div>
           <div><button class="btn btn-primary" style="width:100%" onclick="Store.lodgingSearch()">🔍 ค้นหาห้องว่าง</button></div>
           <div style="grid-column:1/-1;font-size:12px;color:var(--text-secondary)">เช็คอิน ${this.esc(info.checkInTime)} · เช็คเอาต์ ${this.esc(info.checkOutTime)} · ${info.pricesIncludeVat ? 'ราคารวมภาษีแล้ว' : 'ราคายังไม่รวม VAT'}${info.serviceChargePercent > 0 ? ` · service charge ${info.serviceChargePercent}%` : ''} · ${info.onlineBookingEnabled ? 'จองออนไลน์ได้ทันที' : 'รับจองผ่านเจ้าหน้าที่'}</div>
@@ -1535,8 +1619,11 @@
         // นาน = เวลาไป-กลับสองรอบ ซึ่งบนมือถือ/3G รู้สึกได้ชัด)
         // หน้า CMS ที่ slug เดียวกัน (rooms/booking ที่เทมเพลต seed ไว้) — วาด Hero ของมันไว้บนสุด
         // ให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้ (เดิมหน้านั้นถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op)
-        const [info, cmsHero] = await Promise.all([this.lodgingInfo(), this.lodgingCmsHero()]);
         const main = document.getElementById('sfMain');
+        let info, cmsHero;
+        try { [info, cmsHero] = await Promise.all([this.lodgingInfo(), this.lodgingCmsHero()]); }
+        catch (e) { main.innerHTML = this._lodgingErrorHtml(e); return; }
+        this._lgStateFromQuery();   // W-07: วันที่/จำนวนแขกที่เลือกจากหน้าแรก ⇒ ค้นหาให้ทันที (บรรทัดท้ายเมธอด)
         document.title = `จองห้องพัก — ${info?.name || ''}`;
         if (!info) { main.innerHTML = '<div class="sf-loader">เว็บไซต์นี้ยังไม่มีที่พักเปิดให้จอง</div>'; return; }
         // ⚠️ payload ของ /lodging/info มี 30 ฟิลด์ (แกลเลอรี · สิ่งอำนวยความสะดวก ·
@@ -1654,18 +1741,23 @@
         st.checkOut = document.getElementById('lgOut')?.value || st.checkOut;
         st.adults = +(document.getElementById('lgAdults')?.value || st.adults);
         st.children = +(document.getElementById('lgChildren')?.value || st.children);
+        st.infants = +(document.getElementById('lgInfants')?.value || st.infants);
         st.rooms = +(document.getElementById('lgRooms')?.value || st.rooms);
         if (!st.checkIn || !st.checkOut) { this._toast('กรุณาเลือกวันเข้าพัก'); return; }
-        if (!document.getElementById('lgResults')) { location.href = this._pageUrl('booking'); return; }
+        // ฟอร์มค้นหาบนหน้าอื่น (บล็อกปฏิทินจองบนหน้าแรก) ⇒ ไปหน้าจองพร้อมค่าที่เลือก (W-07 — เดิมค่าหายต้องเลือกใหม่)
+        if (!document.getElementById('lgResults')) {
+          location.href = this._pageUrlQuery('booking', { checkIn: st.checkIn, checkOut: st.checkOut, adults: st.adults, children: st.children, infants: st.infants, rooms: st.rooms });
+          return;
+        }
         const box = document.getElementById('lgResults');
         box.innerHTML = '<div class="sf-loader">กำลังค้นหาห้องว่าง...</div>';
         try {
           const r = await fetch(this._lurl('/search'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ checkIn: st.checkIn + 'T00:00:00', checkOut: st.checkOut + 'T00:00:00', adults: st.adults, children: st.children, rooms: st.rooms, ratePlanId: st.ratePlanId }) });
+            body: JSON.stringify({ checkIn: st.checkIn + 'T00:00:00', checkOut: st.checkOut + 'T00:00:00', adults: st.adults, children: st.children, infants: st.infants, rooms: st.rooms, ratePlanId: st.ratePlanId }) });
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error(j?.message || 'ค้นหาไม่สำเร็จ');
           st.results = j.data || [];
-          st.sel = {}; st.quote = null;
+          st.sel = {}; st.roomGuests = {}; st.guestTouched = {}; st.quote = null;
           const info = await this.lodgingInfo();
           const byId = Object.fromEntries((info.roomTypes||[]).map(rt => [rt.id, rt]));
           box.innerHTML = st.results.length ? st.results.map(res => this._roomCard(byId[res.roomTypeId] || res, res)).join('') : '<div class="sf-loader">ไม่มีห้องเปิดขาย</div>';
@@ -1675,7 +1767,67 @@
       lodgingPickPlan(id) { this._lgState.ratePlanId = this._lgState.ratePlanId === id ? null : id; this.lodgingSearch(); },
       async lodgingSelectRoom(roomTypeId, n) {
         this._lgState.sel[roomTypeId] = +n;
+        this._syncRoomGuests();
         await this.lodgingQuote();
+      },
+      // ห้องที่เลือกทั้งหมด → ผู้เข้าพักตั้งต้นต่อห้อง (แบ่งจากจำนวนที่ค้นหา) · ห้องที่แขกตั้งเองแล้วคงค่าแขก (ไม่ใช่ "ใครมาก่อนชนะ")
+      _roomKeys() {
+        const keys = [];
+        for (const [rtId, n] of Object.entries(this._lgState.sel)) for (let i = 0; i < n; i++) keys.push({ key: `${rtId}:${i}`, rtId, idx: i });
+        return keys;
+      },
+      _syncRoomGuests() {
+        const st = this._lgState; const keys = this._roomKeys();
+        const adults = this._splitGuests(st.adults, keys.length, 1), kids = this._splitGuests(st.children, keys.length, 0);
+        const next = {};
+        keys.forEach((k, i) => {
+          next[k.key] = st.guestTouched[k.key] && st.roomGuests[k.key] ? st.roomGuests[k.key] : { adults: adults[i], children: kids[i], extraBeds: 0 };
+        });
+        st.roomGuests = next;
+      },
+      async lodgingSetGuest(key, field, v) {
+        const st = this._lgState; const g = st.roomGuests[key];
+        if (!g || !['adults', 'children', 'extraBeds'].includes(field)) return;
+        g[field] = Math.max(0, parseInt(v, 10) || 0);
+        st.guestTouched[key] = true;
+        await this.lodgingQuote(false);
+      },
+      async lodgingSetInfants(v) { this._lgState.infants = Math.max(0, parseInt(v, 10) || 0); await this.lodgingQuote(false); },
+      // ตัวเลือกผู้เข้าพักรายห้อง (ข้อ 123/124): ผู้ใหญ่จำกัดที่ maxAdults + คนเสริมที่เลือก · เด็กไม่นับความจุ · คนเสริมเฉพาะห้องที่เปิดเตียงเสริม
+      // (ไม่เกิน maxExtraBeds · ราคา/คน/คืนจากค่าตั้งของห้อง) — ตัวเลือกเป็นแค่ช่วงบนฟอร์ม **เซิร์ฟเวอร์เป็นผู้ตัดสินความจุและราคา** (ผล quote)
+      _roomGuestPanel(info) {
+        const st = this._lgState; const keys = this._roomKeys();
+        if (!keys.length) return '';
+        const byId = Object.fromEntries((info.roomTypes || []).map(rt => [String(rt.id), rt]));
+        const opts = (lo, hi, cur) => Array.from({ length: Math.max(hi, cur) - lo + 1 }, (_, i) => lo + i)
+          .map(n => `<option value="${n}" ${n === cur ? 'selected' : ''}>${n}</option>`).join('');
+        const rows = keys.map((k, i) => {
+          const rt = byId[String(k.rtId)] || {}; const g = st.roomGuests[k.key] || { adults: 1, children: 0, extraBeds: 0 };
+          const maxXb = rt.allowExtraBed ? Math.max(0, rt.maxExtraBeds | 0) : 0;
+          const maxA = Math.max(1, (rt.maxAdults | 0) || 1) + Math.min(g.extraBeds, maxXb);
+          const sel = (field, inner) => `<select class="lg-input" style="width:auto" onchange="Store.lodgingSetGuest('${this.jsArg(k.key)}', '${field}', this.value)">${inner}</select>`;
+          return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 0;border-top:${i ? '1px solid #E5E7EB' : '0'}">
+            <b style="min-width:160px">ห้องที่ ${i + 1} · ${this.esc(rt.name || '')}</b>
+            <label>ผู้ใหญ่ ${sel('adults', opts(1, maxA, g.adults))}</label>
+            <label>เด็ก ${sel('children', opts(0, 4, g.children))}</label>
+            ${maxXb > 0 ? `<label>คนเสริม (เตียงเสริม ฿${this._money(rt.extraBedPrice)}/คน/คืน) ${sel('extraBeds', opts(0, maxXb, g.extraBeds))}</label>` : ''}
+          </div>`;
+        }).join('');
+        return `<div class="lg-sum" style="margin-top:24px;background:#fff;border:1px solid #E5E7EB">
+          <h3 style="margin:0 0 6px">ผู้เข้าพักแต่ละห้อง</h3>${rows}
+          <div style="padding-top:8px;border-top:1px solid #E5E7EB"><label>ทารก (≤${this.esc(info.infantMaxAge)} ปี · ทั้งการจอง) <select class="lg-input" style="width:auto" onchange="Store.lodgingSetInfants(this.value)">${opts(0, 3, st.infants)}</select></label></div>
+        </div>`;
+      },
+      // จำนวนผู้เข้าพักที่แสดง: ยอดรวมจากเซิร์ฟเวอร์ (totalGuests — ทีม LO) · ยังไม่มี ⇒ รวมจากค่ารายห้องที่เซิร์ฟเวอร์คืนมา (ชั่วคราว รอบ 202)
+      // คนเสริม = ผู้ใหญ่ที่ใช้เตียงเสริม (ข้อ 124: ความจุผู้ใหญ่ = maxAdults + คนเสริม) ⇒ แสดงแยกแต่ไม่บวกซ้ำในยอดรวม
+      _guestSummary(total, rooms, infants) {
+        const list = rooms || [];
+        const a = list.reduce((s, x) => s + (Number(x.adults) || 0), 0);
+        const c = list.reduce((s, x) => s + (Number(x.children) || 0), 0);
+        const xb = list.reduce((s, x) => s + (Number(x.extraBeds) || 0), 0);
+        const inf = Number(infants) || 0;
+        const t = total != null ? Number(total) : a + c + inf;
+        return `ผู้เข้าพักรวม ${this.esc(t)} คน — ผู้ใหญ่ ${this.esc(a)}${xb ? ` (คนเสริม ${this.esc(xb)})` : ''}${c ? ` · เด็ก ${this.esc(c)}` : ''}${inf ? ` · ทารก ${this.esc(inf)}` : ''}`;
       },
       // รอบ 200 (F-06): แบ่งแขกลงห้องให้ผลรวม = จำนวนจริง — เดิมปัดขึ้นต่อห้อง (ผู้ใหญ่ 3 · 2 ห้อง ⇒ คิด 4 คน = คิดค่าแขกเกิน)
       // และยัดเด็กทุกคนลงห้องแรก (ติดเพดานเด็ก/ห้อง ทั้งที่รวมกันรับได้) · ห้องละอย่างน้อยผู้ใหญ่ 1 (minAdults)
@@ -1687,25 +1839,35 @@
       },
       _quoteBody() {
         const st = this._lgState;
-        const rooms = [];
-        for (const [rtId, n] of Object.entries(st.sel)) for (let i = 0; i < n; i++) rooms.push({ roomTypeId: rtId, adults: 1, children: 0, extraBeds: 0 });
-        const adults = this._splitGuests(st.adults, rooms.length, 1), kids = this._splitGuests(st.children, rooms.length, 0);
-        rooms.forEach((r, i) => { r.adults = adults[i]; r.children = kids[i]; });
+        // ผู้เข้าพักรายห้องที่แขกเลือก (ข้อ 123) — เดิมแบ่งจากช่องค้นหาอย่างเดียว แขกปรับรายห้อง/เลือกเตียงเสริมไม่ได้
+        if (this._roomKeys().some(k => !st.roomGuests[k.key])) this._syncRoomGuests();
+        const rooms = this._roomKeys().map(k => {
+          const g = st.roomGuests[k.key];
+          return { roomTypeId: k.rtId, adults: g.adults, children: g.children, extraBeds: g.extraBeds };
+        });
         const extras = Object.entries(st.extras).filter(([,q]) => q > 0).map(([extraId, quantity]) => ({ extraId, quantity }));
         return { checkIn: st.checkIn + 'T00:00:00', checkOut: st.checkOut + 'T00:00:00', rooms, extras, ratePlanId: st.ratePlanId };
       },
-      async lodgingQuote() {
-        const st = this._lgState; const info = await this.lodgingInfo();
+      async lodgingQuote(scroll = true) {
+        const st = this._lgState;
         const box = document.getElementById('lgBookBox');
         const body = this._quoteBody();
         if (!body.rooms.length) { box.innerHTML = ''; return; }
         try {
+          const info = await this.lodgingInfo();
           const r = await fetch(this._lurl('/quote'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error(j?.message || 'คำนวณราคาไม่สำเร็จ');
           st.quote = j.data;
-          box.innerHTML = this._bookForm(info, st.quote);
-          box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          // วาดใหม่ทุกครั้งที่ราคาเปลี่ยน — คงค่าที่แขกพิมพ์ในฟอร์มไว้ (เดิมเปลี่ยนบริการเสริมแล้วชื่อ/เบอร์ที่พิมพ์หาย)
+          const prev = document.getElementById('lgBookForm');
+          const typed = prev ? Array.from(new FormData(prev).entries()) : [];
+          box.innerHTML = this._roomGuestPanel(info) + this._bookForm(info, st.quote);
+          for (const [k, v] of typed) {
+            const el = box.querySelector(`#lgBookForm [name="${k}"]`);
+            if (el) { if (el.type === 'checkbox') el.checked = v === 'on'; else el.value = v; }
+          }
+          if (scroll) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
         } catch (e) { box.innerHTML = `<div class="sf-loader" style="color:#DC2626">${this.esc(e.message)}</div>`; }
       },
       _bookForm(info, q) {
@@ -1737,7 +1899,8 @@
           <div class="lg-sum">
             <h3 style="margin:0 0 8px">สรุปการจอง</h3>
             <div style="font-size:13px;color:var(--text-secondary)">${this._dateTh(q.checkIn)} → ${this._dateTh(q.checkOut)} · ${q.nights} คืน${q.ratePlanName ? ' · ' + this.esc(q.ratePlanName) : ''}</div>
-            ${(q.rooms||[]).map(r => `<div class="row"><span>${this.esc(r.roomTypeName)} (${r.adults} ผู้ใหญ่${r.children ? ' ' + r.children + ' เด็ก' : ''})</span><span>฿${this._money(r.subtotal)}</span></div>`).join('')}
+            <div style="font-size:13px;margin:4px 0">${this._guestSummary(q.totalGuests, q.rooms, st.infants)}</div>
+            ${(q.rooms||[]).map(r => `<div class="row"><span>${this.esc(r.roomTypeName)} (${this.esc(r.adults)} ผู้ใหญ่${r.children ? ' ' + this.esc(r.children) + ' เด็ก' : ''}${r.extraBeds ? ' · คนเสริม ' + this.esc(r.extraBeds) : ''})</span><span>฿${this._money(r.subtotal)}</span></div>`).join('')}
             ${(q.extras||[]).map(e => `<div class="row"><span>${this.esc(e.name)} ×${e.quantity}</span><span>฿${this._money(e.total)}</span></div>`).join('')}
             ${q.serviceChargeAmount > 0 ? `<div class="row"><span>Service charge</span><span>฿${this._money(q.serviceChargeAmount)}</span></div>` : ''}
             ${q.vatAmount > 0 ? `<div class="row" style="color:var(--text-secondary)"><span>${q.pricesIncludeVat ? 'รวม VAT' : 'VAT'} ${q.vatRate}%</span><span>฿${this._money(q.vatAmount)}</span></div>` : ''}
@@ -1757,6 +1920,7 @@
           guestIdNumber: fd.get('guestIdNumber') || null, arrivalTime: fd.get('arrivalTime') || null, guestNationality: fd.get('guestNationality') || null,
           specialRequests: fd.get('specialRequests') || null, guestCompanyName: fd.get('guestCompanyName') || null,
           guestTaxId: fd.get('guestTaxId') || null, guestAddress: fd.get('guestAddress') || null, acceptHouseRules: fd.get('acceptHouseRules') === 'on',
+          infants: this._lgState.infants,   // LodgingCreateReservationRequest.Infants (ระดับการจอง) — quote ไม่มีช่องนี้ จึงส่งเฉพาะตอนจอง
         });
         btn.disabled = true; btn.textContent = 'กำลังจอง...';
         try {
@@ -1764,7 +1928,7 @@
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error(j?.message || 'จองไม่สำเร็จ');
           const res = j.data;
-          this._lgState.sel = {}; this._lgState.extras = {};
+          this._lgState.sel = {}; this._lgState.extras = {}; this._lgState.roomGuests = {}; this._lgState.guestTouched = {};
           const url = this._pageUrl('reservation/' + res.publicToken);
           history.pushState({}, '', url);
           await this.renderLodgingReservation(res.publicToken, j.message);
@@ -1785,7 +1949,8 @@
         const STATUS = { Pending: ['รอชำระมัดจำ', ''], Confirmed: ['ยืนยันแล้ว', 'ok'], CheckedIn: ['เช็คอินแล้ว', 'info'], CheckedOut: ['เช็คเอาต์แล้ว', 'info'], Cancelled: ['ยกเลิก', 'bad'], NoShow: ['ไม่มาเข้าพัก', 'bad'] };
         // ป้ายจากเซิร์ฟเวอร์ (LodgingAmounts.StatusLabel) — Pending ที่จ่ายมัดจำครบแล้วต้องไม่บอกว่า "รอชำระมัดจำ" (C9)
         const st = [r.statusLabel || (STATUS[r.status] || [r.status])[0], (STATUS[r.status] || ['', ''])[1]];
-        const info = await this.lodgingInfo();
+        // ข้อมูลที่พักใช้แค่เบอร์สำรอง (การจองมาจากเซิร์ฟเวอร์แล้ว) — ระบบที่พักขัดข้องต้องไม่ทำให้หน้าการจองของแขกเปิดไม่ได้
+        const info = await this.lodgingInfo().catch(() => null);
         const canCancel = r.status === 'Pending' || r.status === 'Confirmed';
         // ปิดรับสลิปแล้ว = ยังจ่ายออนไลน์/ติดต่อที่พักได้ แต่ฟอร์มแนบสลิปต้องหายไป
         // (ห้ามให้กดส่งแล้วไปเจอ error ที่เซิร์ฟเวอร์ — ญาติของ silent no-op)
@@ -1800,7 +1965,8 @@
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="lg-book">
             <div class="lg-sum">
               <h3 style="margin:0 0 8px">ห้องพัก</h3>
-              ${(r.rooms||[]).map(x => `<div class="row"><span>${this.esc(x.roomTypeName)}${x.unitNumber ? ' ห้อง ' + this.esc(x.unitNumber) : ''} · ${x.adults} ผู้ใหญ่${x.children ? ' ' + x.children + ' เด็ก' : ''}</span><span>฿${this._money(x.subtotal)}</span></div>`).join('')}
+              <div style="font-size:13px;margin:4px 0">${this._guestSummary(r.totalGuests ?? (r.adults != null ? (Number(r.adults) || 0) + (Number(r.children) || 0) + (Number(r.infants) || 0) : null), r.rooms, r.infants)}</div>
+              ${(r.rooms||[]).map(x => `<div class="row"><span>${this.esc(x.roomTypeName)}${x.unitNumber ? ' ห้อง ' + this.esc(x.unitNumber) : ''} · ${this.esc(x.adults)} ผู้ใหญ่${x.children ? ' ' + this.esc(x.children) + ' เด็ก' : ''}${x.extraBeds ? ' · คนเสริม ' + this.esc(x.extraBeds) : ''}</span><span>฿${this._money(x.subtotal)}</span></div>`).join('')}
               ${(r.extras||[]).map(e => `<div class="row"><span>${this.esc(e.name)} ×${e.quantity}</span><span>฿${this._money(e.total)}</span></div>`).join('')}
               ${r.serviceChargeAmount > 0 ? `<div class="row"><span>Service charge</span><span>฿${this._money(r.serviceChargeAmount)}</span></div>` : ''}
               ${(r.charges||[]).filter(c => c.status !== 'Cancelled').map(c => `<div class="row"><span>${this.esc(c.description)}</span><span>฿${this._money(c.total)}</span></div>`).join('')}

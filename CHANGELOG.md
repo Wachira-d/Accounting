@@ -4358,3 +4358,15 @@ _รอบ 202 ต่อ (ผู้ใช้: "แก้ไขยอดประ
 ราก = ฐาน ปกส. เติมจากเงินเดือนเต็มของพนักงานครั้งเดียวตอนเลือกคน แล้วไม่ตามช่องเงินเดือนที่แก้ + ช่องยอดสมทบ readonly ⇒ ผู้ใช้แก้ไม่ได้และไม่รู้ว่าต้องแก้ฐาน ·
 แก้: ฐานที่ระบบเติมตามเงินเดือนของงวด (ค่าผู้ใช้ชนะ) · ยอดสมทบลูกจ้างพิมพ์ได้ (ย้อนฐาน) · เตือนฐาน > รายได้ (จอ + เซิร์ฟเวอร์ทั้ง ➕/✏️) · ภาษี 🧮 ที่ค้างหลังยอดเปลี่ยน ⇒ เตือนกดใหม่ ·
 `tools/payroll_add_sso_sim.js` รันโค้ดจริงของหน้า — ซอร์สก่อนแก้ล้มตรงตัวเลขที่ผู้ใช้เห็น (ฐาน 30,000 · ปกส. 875) · `PayrollSsoBaseAboveWagesTests` สองทิศ_
+
+_รอบ 202 ทีม LW (เว็บที่พัก: ข้อมูลห้องสด + แขกจองเอง · LODGING_REVIEW W-02/W-03/W-04/W-05/W-07/W-08 · คำตัดสินข้อ 117/118/123/124):
+บล็อก `CmsBlockType.LodgingRooms` (27) วาดจาก `/lodging/info` ("เริ่มต้น ฿X/คืน · ราคาจริงตามวันที่เลือก" · ไม่ผูก ⇒ "ยังไม่เปิดจองออนไลน์" ไม่มีราคา seed) ·
+`HotelPlan` ใช้บล็อกนี้แทน RichText/PricingTable ราคา seed · migration `Helpers/LodgingSiteSeedMigration` แทนเฉพาะบล็อกที่ตรง snapshot ทุกไบต์
+(snapshot จาก `CmsSiteTemplateSeeder.Legacy*` · advisory lock คีย์คงที่) + soft-delete บริการ auto-seed ฿0 บนเว็บที่พัก (ไม่มีการจอง · ไม่เคยแก้) ·
+`CmsBookingService.GetServicesAsync` อ่านอย่างเดียว (ถอด lazy seed + `catch {}`) · `CmsModuleResolver` facts ไม่นับบริการที่ลบแล้ว ·
+`StorefrontSiteInfo.IsLodgingSite` · `lodgingInfo()` null เฉพาะ 404 (5xx ⇒ ข้อความขัดข้อง) · ค่าค้นหาหน้าแรก → `/booking?checkIn=…` ·
+แผงผู้เข้าพักรายห้อง (ผู้ใหญ่/เด็ก/คนเสริม + ทารกระดับการจอง) · `LodgingSeeder` ผ่าน `LodgingSeedDecision` + `LodgingPropertyQuota` (ด่านเดียวกับสร้างมือ ·
+มีที่พักไม่ผูกเว็บ ⇒ ไม่สร้างแห่งที่สอง) · `SiteResponse.Warnings` / `ApplySiteTemplateResponse.LodgingMessage` · `cms-edit` แปลงชื่อ enum บล็อก → เลข ·
+เทสต์ `LodgingWebRound202Tests` · sim `lodging_storefront_info_sim.js` (+ เคส c ใน `lodging_guest_split_sim.js`) · กติกา `required_call_site_check` 10 ข้อ + เคสฝ่ายค้าน LW1–LW3_
+
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — commit <pending>)_

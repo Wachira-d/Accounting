@@ -2552,7 +2552,33 @@ WhatsApp: +66 XX XXX XXXX</p>"
     // ห้ามพิมพ์ราคา/เวลา/นโยบายเป็น literal ที่นี่ — LodgingSeedDefaultsTests ล็อกไว้
     // หน้า rooms/booking: บนเว็บที่มีที่พักผูกอยู่ storefront จะแสดงระบบจองห้องแทนเนื้อหา CMS
     // (คง Hero ไว้ให้เจ้าของแก้หัวเรื่องได้ — storefront วาด Hero ของหน้าเหนือระบบจอง)
+    //
+    // รอบ 202 ทีม LW (W-02 · คำตัดสินข้อ 117): รายการห้อง/ราคาบนหน้าแรกและหน้า rooms เป็น **บล็อกข้อมูลสด**
+    // `LodgingRooms` (อ่านประเภทห้อง/ราคาเริ่มต้นจากระบบที่พัก) — เดิมเป็นข้อความ seed ตายตัว (RichText + PricingTable)
+    // ⇒ เจ้าของแก้ราคาในหน้าตั้งค่าที่พักแล้วหน้าเว็บยังโชว์ราคาเดิมตลอดไป และเว็บที่ไม่ผูกที่พักก็โชว์ราคาที่จองไม่ได้
+    // บล็อกรุ่นเดิมยังสร้างได้จากฟังก์ชัน `Legacy*` ข้างล่าง **เพื่อเป็น snapshot ให้ migration เท่านั้น**
+    // (`Helpers/LodgingSiteSeedMigration` แทนเฉพาะบล็อกที่ ConfigJson ตรง snapshot ทุกตัวอักษร) — ห้ามแก้เนื้อหา
+    // ฟังก์ชัน Legacy* (แก้ = snapshot ไม่ตรงของที่ seed ไปแล้ว ⇒ migration ไม่แตะเว็บเดิมเงียบ ๆ)
     // ============================================================
+
+    /// <summary>บล็อกรายการห้องสด (รอบ 202) — config มีแค่หัวข้อ · ข้อมูลห้อง/ราคามาจาก /lodging/info เสมอ</summary>
+    internal static string HotelLiveRoomsConfig() => J(new { headline = "🏨 ห้องพักของเรา" });
+
+    /// <summary>Hero หน้า rooms รุ่นใหม่ — ไม่มีจำนวนประเภท/ห้องจาก seed (ที่พักจริงอาจไม่ใช่ 3 ประเภท/11 ห้อง)</summary>
+    internal static string HotelRoomsHeroConfig() => J(new { headline = "ห้องพักของเรา", subheadline = "เลือกวันเพื่อดูห้องว่างและราคาจริง" });
+
+    /// <summary>snapshot: RichText รายการห้อง+ราคา seed ที่หน้า home/rooms ได้รับก่อนรอบ 202</summary>
+    internal static string LegacyHotelRoomsRichTextConfig() => J(new { content = HotelRoomsHtml() });
+
+    /// <summary>snapshot: PricingTable ราคา seed ที่หน้า home ได้รับก่อนรอบ 202</summary>
+    internal static string LegacyHotelPricingTableConfig() => J(new {
+        headline = "💰 ราคาห้องพัก (ต่อคืน · ราคามาตรฐาน)",
+        plans = HotelPricingPlans()
+    });
+
+    /// <summary>snapshot: Hero หน้า rooms ก่อนรอบ 202 (มีจำนวนประเภท/ห้องจาก seed)</summary>
+    internal static string LegacyHotelRoomsHeroConfig() => J(new { headline = "ห้องพักของเรา", subheadline = $"{LodgingSeedDefaults.RoomTypes.Length} ประเภท · {LodgingSeedDefaults.TotalUnits} ห้อง · เลือกวันเพื่อดูห้องว่างและราคาจริง" });
+
     private static string HotelRoomsHtml() =>
         "<h2>🏨 ห้องพักของเรา</h2><ul>"
         + string.Concat(LodgingSeedDefaults.RoomTypes.Select(r =>
@@ -2582,11 +2608,7 @@ WhatsApp: +66 XX XXX XXXX</p>"
   <li>💰 <strong>จองตรงกับที่พัก</strong> — ไม่มีค่าธรรมเนียม OTA · แผนไม่คืนเงินลด {LodgingSeedDefaults.NonRefundableDiscountPercent}% · พักยาว {LodgingSeedDefaults.LongStayMinNights} คืนขึ้นไปลด {LodgingSeedDefaults.LongStayDiscountPercent}%</li>
 </ul>"
             })),
-            new(CmsBlockType.RichText, J(new { content = HotelRoomsHtml() })),
-            new(CmsBlockType.PricingTable, J(new {
-                headline = "💰 ราคาห้องพัก (ต่อคืน · ราคามาตรฐาน)",
-                plans = HotelPricingPlans()
-            })),
+            new(CmsBlockType.LodgingRooms, HotelLiveRoomsConfig()),
             new(CmsBlockType.Testimonials, J(new {
                 headline = "รีวิวจากแขก",
                 testimonials = new[] {
@@ -2624,8 +2646,8 @@ WhatsApp: +66 XX XXX XXXX</p>"
         }),
 
         (new("ห้องพัก", "rooms", PageType.Standard, "ห้องพักและราคา"), new() {
-            new(CmsBlockType.Hero, J(new { headline = "ห้องพักของเรา", subheadline = $"{LodgingSeedDefaults.RoomTypes.Length} ประเภท · {LodgingSeedDefaults.TotalUnits} ห้อง · เลือกวันเพื่อดูห้องว่างและราคาจริง" })),
-            new(CmsBlockType.RichText, J(new { content = HotelRoomsHtml() }))
+            new(CmsBlockType.Hero, HotelRoomsHeroConfig()),
+            new(CmsBlockType.LodgingRooms, HotelLiveRoomsConfig())
         }),
 
         (new("จองห้องพัก", "booking", PageType.Standard, "จองห้อง"), new() {

@@ -1270,6 +1270,10 @@ public enum CmsBlockType
     SearchResults = 24,
     BlogList = 25,
     CategoryList = 26,
+    /// <summary>รายการประเภทห้องพักจากระบบที่พัก (ข้อมูลสด · <c>GET …/lodging/info</c>) — ชื่อ · รูป · ขนาด · พักได้ ·
+    /// "เริ่มต้น ฿{baseRate}/คืน" + "ราคาจริงตามวันที่เลือก" · ไม่ผูกเว็บ ⇒ "ยังไม่เปิดจองออนไลน์" (ห้ามโชว์ราคา seed) ·
+    /// รอบ 202 ทีม LW คำตัดสินข้อ 117 (W-02) · ต่อท้าย ห้าม renumber ค่าเดิม</summary>
+    LodgingRooms = 27,
     Custom = 99
 }
 

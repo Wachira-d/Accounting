@@ -846,7 +846,15 @@
       19:{n:'เส้นแบ่ง',i:'➖',f:'divider'},
       20:{n:'HTML กำหนดเอง',i:'</>',f:'html'},
       23:{n:'สรุปตะกร้า',i:'🛒',f:'cart'},
+      27:{n:'ห้องพัก (ข้อมูลจริงจากระบบที่พัก)',i:'🏨',f:'lodgingrooms'},
     };
+    // API ส่ง blockType เป็น "ชื่อ enum" (JsonStringEnumConverter) แต่ BLOCK_TYPES/ฟอร์ม/บันทึกใช้เลข — แปลงชื่อ→เลขก่อนใช้ทุกครั้ง
+    // (รอบ 202 ทีม LW: เดิม BLOCK_TYPES["Hero"] ไม่เจอ ⇒ ป้าย "ประเภท Hero" และเปิดแก้แล้ว select ตกไปตัวแรก = บันทึกแล้วชนิดบล็อกเปลี่ยนเงียบ)
+    const BLOCK_NUM = { Hero:1, RichText:2, Image:3, Gallery:4, Video:5, ProductGrid:6, ProductDetail:7, BookingCalendar:8, ContactForm:9,
+      RfqForm:10, Map:11, Testimonials:12, Faq:13, PricingTable:14, CallToAction:15, SocialFeed:16, Newsletter:17, Countdown:18,
+      Divider:19, Html:20, NavigationBlock:21, FooterBlock:22, CartSummary:23, SearchResults:24, BlogList:25, CategoryList:26,
+      LodgingRooms:27, Custom:99 };
+    const blockNum = (t) => typeof t === 'number' ? t : (BLOCK_NUM[t] ?? (parseInt(t, 10) || t));
     // Status values come back from the API as enum *names* (JsonStringEnumConverter
     // is enabled globally), so the dict keys must be string-typed. A few legacy
     // call sites still send numeric values, so we accept both.
@@ -1139,7 +1147,7 @@
           return;
         }
         list.innerHTML = this.currentBlocks.map((b, idx) => {
-          const meta = BLOCK_TYPES[b.blockType] || { n: `ประเภท ${b.blockType}`, i: '📦' };
+          const meta = BLOCK_TYPES[blockNum(b.blockType)] || { n: `ประเภท ${b.blockType}`, i: '📦' };
           let preview = '';
           try {
             const cfg = JSON.parse(b.configJson || '{}');
@@ -1195,7 +1203,7 @@
         document.getElementById('btnOpenTplPicker').style.display = 'none';
         const sel = document.getElementById('blkType');
         sel.innerHTML = Object.entries(BLOCK_TYPES).map(([k,v]) => `<option value="${k}">${v.i} ${v.n}</option>`).join('');
-        sel.value = String(b.blockType);
+        sel.value = String(blockNum(b.blockType));
         document.getElementById('blkVisible').checked = b.isVisible !== false;
         document.getElementById('blkHideMobile').checked = !!b.hideOnMobile;
         try { this._editingConfig = JSON.parse(b.configJson || '{}'); } catch(_) { this._editingConfig = {}; }
@@ -1215,7 +1223,7 @@
           const templates = (res.data || []).filter(t => t.isActive !== false);
           if (!templates.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">ไม่มี Template สำเร็จรูป</div>'; return; }
           list.innerHTML = templates.map(t => {
-            const meta = BLOCK_TYPES[t.blockType] || { n:`Type ${t.blockType}`, i:'📦' };
+            const meta = BLOCK_TYPES[blockNum(t.blockType)] || { n:`Type ${t.blockType}`, i:'📦' };
             return `<div class="tpl-pick-card" onclick="Page.applyBlockTemplate(${JSON.stringify(t).replace(/"/g,'&quot;')})">
               <div style="font-size:24px;margin-bottom:6px">${meta.i}</div>
               <div style="font-weight:600;font-size:13px">${Layout.esc(t.name)}</div>
@@ -1235,7 +1243,7 @@
       applyBlockTemplate(tpl) {
         this.closeTemplatePicker();
         const sel = document.getElementById('blkType');
-        sel.value = String(tpl.blockType);
+        sel.value = String(blockNum(tpl.blockType));
         try { this._editingConfig = JSON.parse(tpl.defaultConfigJson || '{}'); } catch(_) { this._editingConfig = {}; }
         this.renderBlockConfigForm();
       },
@@ -1335,6 +1343,10 @@
           case 23: // Cart
             html = '<div class="text-sm text-gray-500" style="padding:20px;text-align:center">บล็อกสรุปตะกร้า — แสดงตะกร้าสินค้าโดยอัตโนมัติ</div>';
             break;
+          case 27: // ห้องพัก (ข้อมูลสด) — รอบ 202 ทีม LW (ข้อ 117)
+            html = inp('cfg_headline','หัวข้อ',cfg.headline,'ห้องพักของเรา')
+                 + '<div class="text-sm text-gray-500" style="padding:8px 0">ชื่อห้อง · รูป · ขนาด · จำนวนผู้เข้าพัก · ราคาเริ่มต้น ดึงจากหน้า "ตั้งค่าที่พัก" อัตโนมัติ (แก้ที่นั่น) · เว็บที่ยังไม่ผูกที่พักจะแสดง "ยังไม่เปิดจองออนไลน์"</div>';
+            break;
           default:
             html = ta('cfg_raw','Config JSON',JSON.stringify(cfg,null,2),8);
         }
@@ -1374,6 +1386,7 @@
           case 19: cfg = {}; break;
           case 20: cfg = { html:get('cfg_html') }; break;
           case 23: cfg = {}; break;
+          case 27: cfg = { headline:get('cfg_headline') }; break;
           default: try { cfg = JSON.parse(get('cfg_raw')||'{}'); } catch(_) { cfg = {}; } break;
         }
         return cfg;

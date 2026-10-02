@@ -4081,6 +4081,37 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 ไม่มีรายการห้อง (เลขห้อง/หมายเหตุภายใน/สถานะแม่บ้าน) · ไม่มีสินค้าภายใน (เดิมใช้ DTO หน้าตั้งค่าทั้งก้อน) · หน้าจอง (`storefront.html` `_splitGuests`) แบ่งผู้ใหญ่/เด็กลงห้องให้
 ผลรวม = จำนวนจริง (เดิมปัดขึ้นต่อห้อง ⇒ 3 คน 2 ห้องคิด 4 คน · เด็กทั้งหมดห้องแรก) — `tools/lodging_guest_split_sim.js`
 
+**เว็บที่พัก: ข้อมูลห้องสด + จองเอง (รอบ 202 ทีม LW · LODGING_REVIEW W-02..W-08 · คำตัดสินข้อ 117/118/123)**
+- **บล็อก `CmsBlockType.LodgingRooms` (27)** — `storefront.html` วาดจาก `GET …/lodging/info` (`_lodgingRoomsHtml`: ชื่อ · รูปแรก · ขนาด · เตียง · พักได้ ·
+  "เริ่มต้น ฿{baseRate}/คืน" + "ราคาจริงตามวันที่เลือก" · ปุ่มไป `/booking`) · คอนฟิกมีแค่ `headline` · `/info` ตอบ **404** (ไม่ผูก/ปิดที่พัก) ⇒
+  "ยังไม่เปิดจองออนไลน์" + ช่องทางติดต่อของเว็บ (`StorefrontSiteInfo.ContactPhone/LineId/ContactEmail` — **ไม่มีราคา seed**) · ตัวแก้เว็บ (`cms-edit.html`)
+  มีในรายการบล็อก "ห้องพัก (ข้อมูลจริงจากระบบที่พัก)" + แปลงชื่อ enum → เลข (`blockNum` — เดิมเปิดแก้บล็อกแล้ว select ตกไปตัวแรก)
+- **เทมเพลตใหม่** (`CmsSiteTemplateSeeder.HotelPlan`): หน้า home และ rooms ใช้ `LodgingRooms` แทน RichText รายการห้อง + PricingTable ราคา seed ·
+  Hero หน้า rooms ไม่มี "3 ประเภท · 11 ห้อง" แล้ว · **เว็บเดิม**: `Helpers/LodgingSiteSeedMigration.RoomBlocksSql` (ใน `GetAlterStatements` →
+  `Round202LodgingWebStatements` · advisory lock คีย์คงที่ · รันทุกบูต รอบที่สองเป็นต้นไป 0 แถว) แทนเฉพาะบล็อกที่ `BlockType`+`ConfigJson`
+  ตรง snapshot **ทุกไบต์** (snapshot = `CmsSiteTemplateSeeder.Legacy*` ฟังก์ชันเดียวกับที่เคย seed · เทียบ `=` ด้วยข้อความ base64 — ไม่มี LIKE/trim) ·
+  ต่อหน้า: ตัวแรกที่ตรง → `LodgingRooms` · ตัวถัดไปที่ตรง → `IsVisible=false` (ไม่ลบ) · ไม่แตะ: บล็อกที่แก้แล้ว/ซ่อนอยู่/มีคำแปล/หน้าที่มี `LodgingRooms` แล้ว ·
+  เว็บที่ไม่ใช่ `IndustryType.Hotel`
+- **GET สาธารณะไม่เขียนฐาน (W-03)**: `CmsBookingService.GetServicesAsync` อ่านอย่างเดียว (ถอด lazy auto-seed "นัดหมาย / จอง" ฿0 + `catch {}`) —
+  บริการตัวอย่าง seed ตอนสร้างเว็บ/เติมเทมเพลตเท่านั้น (`CmsBookingServiceSeeder` · เฉพาะเว็บที่มีหน้าจองคิว) · ข้อมูลเดิม:
+  `LodgingSiteSeedMigration.AutoSeedServiceCleanupSql` soft-delete แถว `CreatedBy='auto-seed'` ที่ไม่มีการจอง · ไม่เคยแก้ (`UpdatedBy IS NULL`) · อยู่บนเว็บที่พัก ·
+  `CmsModuleResolver` facts ไม่นับบริการที่ลบแล้ว (`CmsSiteService.LoadSiteModulesAsync` · `SettingsService.ComputeCmsModulesAsync`) ⇒ เมนู "การจองคิว" ที่ระบบสร้างหลักฐานเองหายไป ·
+  บล็อกปฏิทินจองบนเว็บที่พัก (`StorefrontSiteInfo.IsLodgingSite` = `IndustryType.Hotel` เซิร์ฟเวอร์ตัดสิน) ที่ไม่ผูกที่พัก ⇒ "ยังไม่เปิดจองออนไลน์" ไม่ใช่การ์ดนัดหมาย
+- **404 ≠ ขัดข้อง (W-04)**: `Store.lodgingInfo()` คืน null เฉพาะ 404 (จำไว้) · 5xx/เน็ตหลุด ⇒ โยน Error (ไม่จำ) — `/booking` `/rooms` · บล็อกห้อง · บล็อกปฏิทินจองของเว็บที่พัก
+  แสดง "โหลดข้อมูลห้องพักไม่สำเร็จ" แทนการตกไปการ์ดนัดหมายเงียบ ๆ · หน้าการจองด้วย token ใช้ `/info` แค่เบอร์สำรอง (ล้ม = ข้าม) — `tools/lodging_storefront_info_sim.js`
+- **ค้นหาจากหน้าแรก → หน้าจอง (W-07)**: `_pageUrlQuery('booking', {checkIn, checkOut, adults, children, infants, rooms})` · หน้าจองอ่านกลับ `_lgStateFromQuery`
+  (วันที่รูป yyyy-mm-dd · จำนวนในช่วงตัวเลือก) แล้วค้นหาให้ทันที
+- **ผู้เข้าพักรายห้อง (ข้อ 123/124)**: แขกตั้งผู้ใหญ่ · เด็ก · คนเสริม (เตียงเสริม — เฉพาะประเภทที่ `allowExtraBed` · ไม่เกิน `maxExtraBeds` · แสดง `extraBedPrice`/คน/คืน)
+  ต่อห้อง + ทารกระดับการจอง (`LodgingCreateReservationRequest.Infants` — quote ไม่มีช่องนี้ จึงส่งเฉพาะตอนจอง) · ตัวเลือกผู้ใหญ่ถึง `maxAdults` + คนเสริมที่เลือก
+  (ด่านจริง/ราคา = เซิร์ฟเวอร์ผ่าน quote) · ค่าที่แขกตั้งชนะค่าแบ่งอัตโนมัติ (`guestTouched`) · สรุปการจอง/หน้าการจองแสดง "ผู้เข้าพักรวม" จาก `totalGuests`
+  ของเซิร์ฟเวอร์ (ยังไม่มี ⇒ รวมค่ารายห้องที่เซิร์ฟเวอร์คืน — ชั่วคราว) — `tools/lodging_guest_split_sim.js` (c)
+- **seed ที่พักไม่สร้างแห่งที่สอง (W-05 · ข้อ 118)**: `LodgingSeeder.SeedForSiteAsync` → `Helpers/LodgingSeedDecision.Decide`: เว็บผูกแล้ว ⇒ ไม่ทำ ·
+  บริษัทมีที่พักที่ยังไม่ผูกเว็บ ⇒ **ไม่สร้าง** + ข้อความเสนอผูกที่พักเดิม · ด่าน "ที่พักหลายแห่ง" `Helpers/LodgingPropertyQuota.BlockReasonAsync`
+  (ตัวเดียวกับ `LodgingService.CreatePropertyAsync`) กัน ⇒ ไม่สร้าง + เหตุผล · ผูกที่พักเดิมกับเว็บ = `PUT /lodging/properties/{id}` ด้วย `siteId`
+  (ผ่าน `EnsureSiteNotBoundElsewhereAsync` อยู่แล้ว — ไม่มี endpoint ใหม่)
+- **ล้มดัง (W-08)**: `CreateSiteAsync` คืน `SiteResponse.Warnings` (หน้าตัวอย่าง/บริการจอง/ที่พัก ล้มหรือถูกข้าม) · `ApplyTemplateAsync` คืน `LodgingMessage` ·
+  `cms-sites.html` แสดงก่อนพาไปหน้าถัดไป (เดิม `LogWarning` อย่างเดียว)
+
 **ทางเข้า** — (1) storefront `/booking` `/book` `/rooms` (เฉพาะเว็บที่มีที่พักผูก — `tryRouteSpecialSlug` probe `/lodging/info` ก่อน ไม่มีก็ปล่อยหน้า CMS ที่ seed ไว้;
 เมื่อ hijack **จะวาด Hero ของหน้า CMS นั้นไว้บนสุด** (`lodgingCmsHero`) เพื่อให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้จริง — เดิมหน้าถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op) และบล็อก `BookingCalendar` ที่กลายเป็นช่องค้นหาห้องว่างอัตโนมัติ · (2) front desk `pages/lodging.html` (walk-in/โทร/OTA · `ConfirmImmediately`) · (3) `/reservation/{token}` ให้แขกดู/อัปโหลดสลิป/ยกเลิก/ส่งคำขอ
 
@@ -4483,3 +4514,5 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม ST — Settlement
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL หลังฝ่ายค้าน — ประทับ audit ตอน commit + แถวลูกเข้าบริษัทของ batch + ช่องลับไม่เข้า audit (§6.1) · tax point มัดจำที่ริบใช้กำหนดยื่นเลื่อนวันหยุด (PL-B1) — commit 9f226f15)_
 
 _Last verified against codebase: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — ด่าน isolation ของตัวประทับ audit + ReadCommitted/FOR UPDATE ในใบแจ้งหนี้จากภาระงาน (§6.1) · INSERT audit เป็นชุด — commit adf19a87)_
+
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — เว็บที่พัก (§6.5): บล็อก `LodgingRooms` ข้อมูลสด · migration บล็อกราคา seed ตรงทุกไบต์ + ล้างบริการ auto-seed · GET บริการจองอ่านอย่างเดียว · `/lodging/info` 404≠ขัดข้อง · ค่าค้นหาหน้าแรก→/booking · ผู้เข้าพักรายห้อง · seed ที่พักไม่สร้างแห่งที่สอง + ด่านที่พักหลายแห่งตัวเดียว · `SiteResponse.Warnings` — commit <pending>)_

@@ -42,15 +42,14 @@ public class LodgingSeedDefaultsTests
         Assert.Equal(LodgingSeedDefaults.RoomTypes.Length, LodgingSeedDefaults.RoomTypes.Select(r => r.Code).Distinct().Count());
     }
 
+    /// <summary>รอบ 202 ทีม LW (ข้อ 117): รายการห้อง+ราคาย้ายไปบล็อกข้อมูลสด <c>LodgingRooms</c> — หน้าเว็บ seed ไม่พิมพ์ราคาห้องแล้ว
+    /// (ล็อกใน <c>LodgingWebRound202Tests</c> ทั้งสองทิศ) · กติกาที่ยังพิมพ์บนหน้าเว็บ (เวลา · มัดจำ · ยกเลิก) ต้องมาจากค่าตั้งต้นชุดเดียวกัน</summary>
     [Fact]
-    public void หน้าเว็บที่พัก_ต้องพิมพ์ทุกประเภทห้องพร้อมราคาจากค่าตั้งต้น()
+    public void หน้าเว็บที่พัก_กติกาที่พิมพ์ต้องมาจากค่าตั้งต้น_ราคาห้องมาจากบล็อกสด()
     {
         var text = HotelText();
         foreach (var r in LodgingSeedDefaults.RoomTypes)
-        {
-            Assert.Contains(r.Name, text);
-            Assert.Contains(LodgingSeedDefaults.Baht(r.Rate), text);
-        }
+            Assert.DoesNotContain(LodgingSeedDefaults.Baht(r.Rate), text);
         Assert.Contains(LodgingSeedDefaults.CheckIn, text);
         Assert.Contains(LodgingSeedDefaults.CheckOut, text);
         Assert.Contains($"{LodgingSeedDefaults.DepositPercent}%", text);

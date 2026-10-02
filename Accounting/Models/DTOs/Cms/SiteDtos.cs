@@ -124,6 +124,9 @@ public class SiteResponse
     public DateTime? PublishedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
+    /// <summary>ขั้นที่ไม่สำเร็จ/ถูกข้ามตอนสร้างเว็บ (หน้าเว็บตัวอย่าง · บริการจองคิว · ที่พัก) — มีค่าเฉพาะผลตอบของ "สร้างเว็บ" ·
+    /// หน้า cms-sites ต้องแสดงให้เจ้าของเห็น (รอบ 202 ทีม LW · W-08 — เดิม LogWarning อย่างเดียว)</summary>
+    public List<string> Warnings { get; set; } = new();
 }
 
 public class SiteListResponse
@@ -164,6 +167,9 @@ public class ApplySiteTemplateResponse
     public List<string> SkippedSlugs { get; set; } = new();
     /// <summary>ที่พักถูก seed ให้ในรอบนี้ (false = มีอยู่แล้ว หรือไม่ใช่ประเภทที่พัก)</summary>
     public bool LodgingSeeded { get; set; }
+    /// <summary>เหตุที่ไม่ได้สร้างที่พักให้ (มีที่พักไม่ผูกเว็บอยู่แล้ว ⇒ ให้ผูกที่พักเดิม · ติดด่านที่พักหลายแห่ง) — null = ไม่มีอะไรต้องบอก
+    /// (รอบ 202 ทีม LW · คำตัดสินข้อ 118)</summary>
+    public string? LodgingMessage { get; set; }
     /// <summary>บริการจองคิวตัวอย่างที่เพิ่มให้ (0 = มีอยู่แล้ว หรือประเภทนี้ไม่ใช้จองคิว)</summary>
     public int BookingServicesAdded { get; set; }
     /// <summary>slug ที่ถูกจองไว้โดยหน้าที่ลบไปแล้ว (ปลดให้อัตโนมัติ — ไม่ใช่การทับหน้าของผู้ใช้)</summary>

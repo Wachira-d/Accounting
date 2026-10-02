@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **438 ไฟล์ · 4,218 `[Fact]` + 667 `[Theory]` (2,976 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **439 ไฟล์ · 4,234 `[Fact]` + 668 `[Theory]` (2,978 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5545,3 +5545,19 @@ required_call_site บล็อก "รอบ 201 ทีม TX" (13 แถว) �
 | TX-19 | (รอบสาม P2-3) จ่ายเงินทดรองที่ PV มีคำเตือน แล้วกดจ่ายซ้ำ | 422 `ADVANCE-PAY-PV-WARNINGS` บอกเลขใบร่าง · กดซ้ำไม่มีใบร่างใหม่ · รายการขึ้น "📝 PV ร่าง รออนุมัติ" + ลิงก์ · อนุมัติ PV ที่หน้าเอกสารแล้วกดจ่าย = สถานะ Disbursed |
 | TX-20 | (รอบสาม P2-4) อนุมัติผ่าน API v1/ทางเข้าอัตโนมัติใบที่มีค่าปรับ · คนกดรับทราบคำเตือน §82/3 บนเว็บ | audit `legalReference` = `RD-65ter(6)` · ใบเว็บ = `RD-86 / RD-82/5(1)` · ผสม = ทั้งสอง |
 | TX-21 | (รอบสาม P2-6) เช็กเอาต์ที่พัก · ออกใบเสร็จค่าบริการแพลตฟอร์ม · ยืนยันชำระคำสั่งซื้อออนไลน์ ที่มีคำเตือนทั่วไป | ออกเอกสารได้เหมือนเดิม · audit `acknowledgedByPerson=false` · `APPROVE-SYSTEM-PASSED-WARNINGS` · หมายเหตุ "ระบบ workflow ส่งผ่าน" (ไม่ใช่ "ยืนยันโดย") |
+
+---
+
+## LDG-WEB-202 — เว็บที่พักอ้างข้อมูลห้องจริง + จองเอง (รอบ 202 ทีม LW · `LodgingWebRound202Tests` + sim)
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| LW-01 | เทมเพลตที่พักใหม่ | หน้า home/rooms มี `LodgingRooms` 1 บล็อก · ไม่มี PricingTable · ไม่มีราคาห้อง seed/"3 ประเภท · 11 ห้อง" | ✅ |
+| LW-02 | snapshot รุ่นเดิม | ยังเป็นรายการห้อง+ราคา seed ครบ (ถ้าไม่ใช่ migration จับอะไรไม่ได้) · เว็บใหม่ไม่มีบล็อกที่ตรง snapshot | ✅ |
+| LW-03 | migration ตรงทุกไบต์ | ถอด base64 ในคำสั่งได้ snapshot ตรงตัว · แก้ท้าย/แก้กลางแม้ตัวเดียว = ไม่อยู่ในชุดที่แทน · ไม่มี LIKE/trim/jsonb | ✅ |
+| LW-04 | migration ไม่แตะของเจ้าของ | ซ่อน/มีคำแปล/หน้าที่มีบล็อกสดแล้ว/ไม่ใช่เว็บที่พัก/คนละบริษัท = ไม่แตะ · ตัวที่สองซ่อนไม่ลบ | ✅ (รูปคำสั่ง) · ⏳ Testcontainers |
+| LW-05 | ล้างบริการ auto-seed | เฉพาะเว็บที่พัก · ไม่มีการจอง · ไม่เคยแก้ · soft-delete | ✅ (รูปคำสั่ง) · ⏳ Testcontainers |
+| LW-06 | seed ที่พัก (ข้อ 118) | มีที่พักไม่ผูกเว็บ ⇒ ไม่สร้าง + เสนอผูก · ติดด่านที่พักหลายแห่ง ⇒ ไม่สร้าง + เหตุผล · ทิศตรงข้าม: บริษัทใหม่สร้างได้ · เว็บที่ผูกแล้วไม่แตะ | ✅ |
+| LW-07 | storefront `/lodging/info` | 404 ⇒ null จำไว้ · 500/เน็ตหลุด ⇒ Error ไม่จำ · การ์ดห้องหนีอักขระ + ราคาจากเซิร์ฟเวอร์ · ไม่ผูก ⇒ ไม่มี "฿" · ค่าค้นหาข้ามหน้าอ่านกลับได้ | ✅ `tools/lodging_storefront_info_sim.js` (negative: lodgingInfo รุ่นเดิม) |
+| LW-08 | ผู้เข้าพักรายห้อง (ข้อ 123) | ค่าที่แขกตั้งรายห้อง (รวมคนเสริม) ถูกส่งตรง · ห้องที่ไม่แตะได้ค่าแบ่ง · เพิ่มห้องไม่ล้างค่าที่ตั้ง | ✅ `tools/lodging_guest_split_sim.js` (c) |
+| LW-09 | จุดเรียกด่าน | GET บริการไม่เขียนฐาน · seed/สร้างมือเรียกด่านที่พักหลายแห่ง · migration ต่อเข้าเส้นบูต | ✅ `tools/required_call_site_check.py` (LW1–LW3) |

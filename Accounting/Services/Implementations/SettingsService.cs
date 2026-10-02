@@ -58,7 +58,7 @@ public class SettingsService : ISettingsService
         var facts = new CmsModuleFacts(
             HasCommerceSite: sites.Any(s => CmsModuleResolver.IsCommerceSiteType(s.SiteType)),
             HasOrders: await _db.SiteOrders.AnyAsync(o => o.CompanyId == companyId),
-            HasBookingServices: await _db.SiteBookingServices.AnyAsync(b => b.CompanyId == companyId),
+            HasBookingServices: await _db.SiteBookingServices.AnyAsync(b => b.CompanyId == companyId && !b.IsDeleted),   // ไม่มี global filter (รอบ 202 LW)
             HasBookings: await _db.SiteBookings.AnyAsync(b => b.CompanyId == companyId),
             HasLodgingProperty: await _db.LodgingProperties.AnyAsync(p => p.CompanyId == companyId),
             HasHotelSite: sites.Any(s => s.IndustryType == IndustryType.Hotel),
