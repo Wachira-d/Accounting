@@ -956,7 +956,10 @@ public record DocumentResponse(
     Guid? SettlementOrphanAckBy = null,
     /// <summary>ชื่อผู้รับรู้ (สมาชิกของบริษัทนี้) — เติมที่ <c>GetDocumentAsync</c> เท่านั้น · null = รายการหลายใบ/ไม่พบสมาชิก</summary>
     string? SettlementOrphanAckByName = null,
-    string? SettlementOrphanAckReason = null);
+    string? SettlementOrphanAckReason = null,
+    /// <summary>รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดจ่ายผู้รับเงิน (<c>ForeignServiceVat.PayeeAmount</c>) — ใบบริการต่างประเทศ = TotalAmount − VAT ประเมินเอง ·
+    /// ใบอื่น = TotalAmount · หน้าเว็บใช้เป็นตัวหารสัดส่วน WHT/ตรวจงวดแรก (server computes · page displays) · null = ผู้สร้าง DTO ไม่ได้คำนวณ (หน้าเว็บตกไป TotalAmount)</summary>
+    decimal? PayeeAmount = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>

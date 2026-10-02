@@ -120,8 +120,10 @@ public class AgingReportService : IAgingReportService
                     default: over90 += amount; break;
                 }
 
+                // ยอดหนี้ของใบ = ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ใบบริการต่างประเทศ TotalAmount รวม VAT
+                // ประเมินเองที่ไม่ได้ค้างผู้ขาย (หนี้นั้นอยู่ที่ 21912) · ใบอื่น = TotalAmount เท่าเดิม
                 docs.Add(new AgingDocumentDetail(doc.Id, doc.DocumentNumber, doc.DocumentType,
-                    doc.DocumentDate, doc.DueDate, doc.TotalAmount, amount, agingDays, bucket));
+                    doc.DocumentDate, doc.DueDate, ForeignServiceVat.PayeeAmount(doc), amount, agingDays, bucket));
             }
 
             details.Add(new AgingContactDetail(group.Key.ContactId, group.Key.Name, group.Key.TaxId,

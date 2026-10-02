@@ -614,7 +614,8 @@ public partial class BankService
             case ReconciliationItemType.Document:
                 return await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == id && d.CompanyId == companyId)
-                    .Select(d => d.TotalAmount).FirstOrDefaultAsync();
+                    // เงินที่ออกจริง = ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ไม่ใช่ TotalAmount ที่รวม VAT ประเมินเอง
+                    .Select(Accounting.Helpers.ForeignServiceVat.PayeeAmountQuery).FirstOrDefaultAsync();
 
             case ReconciliationItemType.JournalEntry:
                 // "ขนาด" ของ JE ในบริบทกระทบยอด = ขาที่วิ่งผ่านบัญชีธนาคารนี้
@@ -874,7 +875,7 @@ public partial class BankService
             .Select(d => new
             {
                 d.Id, d.DocumentNumber, d.DocumentDate, d.DocumentType,
-                d.TotalAmount, d.ContactId
+                d.TotalAmount, d.ContactId, d.IsForeignService, d.VatAmount
             })
             .ToListAsync();
         var docContactNames = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
@@ -884,10 +885,13 @@ public partial class BankService
         var docs = docRows.Select(d =>
         {
             var name = docContactNames.GetValueOrDefault(d.ContactId);
+            // ยอดที่เสนอให้จับคู่กับรายการธนาคาร = เงินที่ออกจริง (ยอดจ่ายผู้รับเงิน · คำตัดสินข้อ 131) — ใบสำคัญจ่ายบริการต่างประเทศ
+            // TotalAmount 6,321.56 แต่ธนาคารตัด 5,908 ⇒ เดิมเสนอยอดที่ไม่มีวันตรง
             return new UnmatchedItem(
                 "Document", d.Id, d.DocumentNumber, d.DocumentDate,
                 d.DocumentType + " · " + (name ?? ""),
-                d.TotalAmount, name);
+                Accounting.Helpers.ForeignServiceVat.PayeeAmount(d.DocumentType, d.IsForeignService, d.TotalAmount, d.VatAmount),
+                name);
         }).ToList();
 
         return new UnmatchedItemsResponse(payments, jes, docs);

@@ -30,6 +30,41 @@ public enum ForeignPayeeWhtScope
 /// </summary>
 public static class ForeignWhtPayeeCheck
 {
+    /// <summary>รหัสกติกาของคำเตือน "ผู้รับต่างประเทศ · ไม่หัก · ไม่จำแนกเงินได้" (คำตัดสินข้อ 130)</summary>
+    public const string UnclassifiedRuleCode = "RD-70-UNCLASSIFIED";
+
+    /// <summary>
+    /// **คำเตือน (ไม่บล็อก) ของใบสำคัญจ่าย/ใบซื้อ/ค่าใช้จ่ายที่ผู้รับเป็นต่างประเทศ แต่ทั้งใบไม่หัก ณ ที่จ่ายและไม่จำแนกประเภทเงินได้เลย**
+    /// (รอบ PP36 ทีม F2 · คำตัดสินข้อ 130 · PP36_REVIEW T-4b) — null = ไม่ต้องเตือน
+    /// <para>═══ ที่มา ═══ ใบ Booking.com ค่าคอมมิชชั่น 5,908 คีย์มือ: ไม่มีบรรทัดไหนหักหรือมีรหัสเงินได้ ⇒ ตัวตรวจรายบรรทัด
+    /// (<see cref="Warning"/>) ข้ามทุกบรรทัด ⇒ <b>เงียบ</b> ขณะที่ทางเข้ารอบโอน OTA ตั้ง 40(2) 15% ให้ (คำตัดสินข้อ 41) ⇒ สองทางเข้าคนละด่าน (R5)</para>
+    /// <para>═══ ทำไมเตือนไม่บล็อก ═══ อนุสัญญาภาษีซ้อน (เช่น ไทย–เนเธอร์แลนด์ "กำไรธุรกิจ" เมื่อไม่มีสถานประกอบการถาวร) อาจทำให้ไม่ต้องหักจริง
+    /// แต่ตาราง DTA ยังว่างจนที่ปรึกษาภาษียืนยัน (คำตัดสินข้อ 13) ⇒ ให้คนตัดสินพร้อมเอกสาร · อัตรามาจาก <see cref="ForeignWhtRateResolver"/> ตัวเดียว (ไม่พิมพ์ 15% ซ้ำ)</para>
+    /// <para>บุคคลธรรมดาต่างประเทศ (ไม่อยู่ใต้ ม.70) ⇒ เงียบ (ทางเดียวกับ <see cref="Warning"/>) · มีบรรทัดหักหรือจำแนกแล้ว ⇒ เงียบ (ตัวตรวจรายบรรทัดรับช่วง) ·
+    /// มีหนังสือรับรอง 50 ทวิ ของใบนี้แล้ว ⇒ เงียบ (ภาษีจัดการนอกบรรทัด — เช่นรอบโอน OTA)</para>
+    /// </summary>
+    public static string? UnclassifiedNoWithholdingWarning(ForeignPayeeWhtScope scope, string? payeeCountryIso2, DateTime paymentDate,
+        bool anyLineWithheld, bool anyLineClassified, bool hasWhtCertificate)
+    {
+        if (anyLineWithheld || anyLineClassified || hasWhtCertificate) return null;
+        if (scope == ForeignPayeeWhtScope.Individual) return null;
+        var d = ForeignWhtRateResolver.Resolve(ForeignIncomeCategory.FeesCommission, payeeCountryIso2, ResidenceCertificate.None, paymentDate);
+        var rate = d.RatePercent ?? ForeignWhtRateResolver.Section70GeneralRate;
+        var scopeNote = scope switch
+        {
+            ForeignPayeeWhtScope.ThaiRegisteredUnknown =>
+                " (ผู้รับมีเลขผู้เสียภาษีนิติบุคคลไทย — ถ้ามีสาขา/สถานประกอบการถาวรในไทย ให้หักอัตราในประเทศ ภ.ง.ด.53 แทน)",
+            ForeignPayeeWhtScope.KindUnknown =>
+                " (ระบบไม่รู้ว่าผู้รับเป็นนิติบุคคลหรือบุคคลธรรมดา — ม.70 ใช้กับนิติบุคคลต่างประเทศ · ระบุประเภทผู้ติดต่อที่หน้าผู้ติดต่อ)",
+            _ => "",
+        };
+        return $"[{UnclassifiedRuleCode} · {d.LegalReference}] ผู้รับเงินต่างประเทศ — ใบนี้ไม่หัก ณ ที่จ่ายและยังไม่จำแนกประเภทเงินได้ · "
+            + $"ถ้าเป็นเงินได้ 40(2) (ค่าธรรมเนียม/ค่านายหน้า/ค่าคอมมิชชั่น) ต้องหัก {rate:0.##}% ตาม ม.70 ยื่น ภ.ง.ด.54 "
+            + "เว้นแต่มีอนุสัญญาภาษีซ้อน + หนังสือรับรองถิ่นที่อยู่ของผู้รับ (ส่วนที่ควรหักแต่ไม่หัก ผู้จ่ายรับผิดเอง §54)"
+            + scopeNote
+            + " · ทางไปต่อ: ระบุประเภทเงินได้/อัตราหัก ณ ที่จ่ายในบรรทัด (ระบบตรวจอัตราให้) หรือถ้าไม่ต้องหักจริง เก็บหลักฐานอนุสัญญาไว้แล้วกดรับทราบ";
+    }
+
     /// <summary>ขอบเขตของผู้รับจากข้อมูลบนผู้ติดต่อ (pure)</summary>
     public static ForeignPayeeWhtScope ScopeOf(string? taxId, ContactType contactType, string? name)
     {

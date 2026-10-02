@@ -4444,3 +4444,15 @@ _รอบ 202 ทีม LC รอบสอง — แก้ผลฝ่าย�
 - **P2-2** ปฏิเสธสลิป: ล็อกการจอง → ที่พัก + `SeenSlipUploadedAt`/`SeenStatus` (LODGING-SLIP-STALE) · **P2-3** `AwaitingSlipReview` expression เดียวของคิวและตัวนับ + ป้ายบนแดชบอร์ด ·
   **P2-4** หลักฐานการจองใบรอชำระ/รอสลิป · **P2-5** `LodgingHoldRule.AutoExpireSlipReason` + `AutoExpireReasonFor` · **P3-1** DTO nullable คงค่าเดิม · **P3-2** hold ≥ 24 ชม.
 - เทสต์ pure +9 Fact/+2 Theory · voucher +2 · Db +1 (+ stale ในเคสเดิม) · required_call_site +9 กติกา/ปรับ 2 — commit f9addc67_
+
+_รอบ PP36 ทีม F2 — ยอดจ่ายผู้รับเงินของใบซื้อบริการต่างประเทศ (คำตัดสินข้อ 130/131/134 · PP36_REVIEW E-1/E-1b/E-7/T-4b/E-12/C-P2):
+- **E-1** `ForeignServiceVat.PayeeAmount` (= `SplitCredit(...).PayeeCredit` · + รูป EF `PayeeAmountQuery`) ตัวตั้งเดียวของเงินออก/ยอดค้าง — `TotalAmount` คงรวม VAT ประเมินเอง ·
+  ย้ายผู้อ่าน/ผู้เขียน 31 จุด (สร้าง/แก้/ติ๊กธง/reclassify · ชำระ/กระจาย/ยกเลิกชำระ + ตัวหาร WHT · ปิดหนี้ใบต้นทาง/กลับ · integration/นำเข้าไฟล์ · อายุเจ้าหนี้ ·
+  จับคู่ธนาคาร 4 จุด · PDF สองตัว · DTO `PayeeAmount` → หน้าบันทึกชำระ) · PDF: แถว "VAT ที่ผู้จ่ายประเมินและนำส่งเอง (ภ.พ.36 §83/6) — ไม่จ่ายให้ผู้รับเงิน" +
+  "ยอดจ่ายผู้รับเงิน" + ตัวอักษร (`ResolvePrintTotals` ตัวเดียวของ HTML/QuestPDF · QuestPDF เลิกฝัง "ภาษีมูลค่าเพิ่ม 7%")
+- **E-1b** `ForeignServiceVat.OwnsPp36` (+ `OwnsPp36Query`) predicate ตัวเดียว "ใบนี้ตั้ง Cr 21912 ไหม" ให้ทีม F3 ใช้นับ ภ.พ.36 · PV ลูกสืบทอดธง (แปลง + ทุกทางเข้า) ·
+  AutoPost/พรีวิว PV ปิดหนี้ตัดเจ้าหนี้/จ่ายตามยอดจ่ายผู้รับเงิน · RD-83/6-UNFLAGGED บน PV ปิดหนี้ชี้ใบต้นทาง · reclassify ปฏิเสธ PV ปิดหนี้
+- **E-7** ใบลด/เพิ่มหนี้ฝั่งซื้อของใบเจ้าของ ภ.พ.36: เจ้าหนี้ = ยอดจ่ายผู้รับเงิน · Dr/Cr 21912 · 11640 · นำส่ง/รับรู้แล้ว ⇒ ปฏิเสธ `RD-83/6-CN-AFTER-REMIT` (ข้อ 134)
+- **T-4b** `ForeignWhtPayeeCheck.UnclassifiedNoWithholdingWarning` (`RD-70-UNCLASSIFIED` · เตือนไม่บล็อก) · **E-12** §65 ตรี (11)(18) ผู้รับต่างประเทศ + (19) บวกกลับต้นทุนจริง ·
+  **C-P2** ป้าย "มี JE แต่หักล้างเป็นศูนย์" แยกจาก "ไม่มี JE"
+- migration `ForeignServicePayeeBalanceMigration` (idempotent · แถวสูตรเดิมเท่านั้น · ใบจ่ายเกินไม่แตะ + log) · เทสต์ pure 2 คลาส · required_call_site +15 กติกา — commit <pending>_
