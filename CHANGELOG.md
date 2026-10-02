@@ -4467,3 +4467,12 @@ _รอบ PP36 ทีม F2 — ยอดจ่ายผู้รับเง�
 - **T-4b** `ForeignWhtPayeeCheck.UnclassifiedNoWithholdingWarning` (`RD-70-UNCLASSIFIED` · เตือนไม่บล็อก) · **E-12** §65 ตรี (11)(18) ผู้รับต่างประเทศ + (19) บวกกลับต้นทุนจริง ·
   **C-P2** ป้าย "มี JE แต่หักล้างเป็นศูนย์" แยกจาก "ไม่มี JE"
 - migration `ForeignServicePayeeBalanceMigration` (idempotent · แถวสูตรเดิมเท่านั้น · ใบจ่ายเกินไม่แตะ + log) · เทสต์ pure 2 คลาส · required_call_site +15 กติกา — commit cc840773_
+
+_รอบ 203 ทีม F3 รวมกับทีม F2 (2026-10-02) — predicate เจ้าของหนี้ ภ.พ.36 เหลือตัวเดียว:
+- ยุบ `ForeignServiceVat.Pp36DocumentTypes/CanCarryPp36/OwnsPp36(type, isForeign, settledSourceType)` ของ F3 ⇒ ใช้ของ F2 `OwnsPp36(Document)` ·
+  `OwnsPp36(type, isForeignService, vat, hasRelatedDocument)` · EF `OwnsPp36Query` + ชุดชนิด `IsSelfAssessingType` (PI/Expense/PV — ตรงกับ AutoPost ที่ Cr 21912)
+- CIL: AutoPost ไม่แยกขา §83/6 ⇒ ไม่ใช่เจ้าของ และติ๊กธงไม่ได้ (เดิม F3 รวม CIL) · tax point `TaxPointResolver.IsReverseCharge` ใช้ชุดเดียวกัน (block body · คืนกติกา required_call_site)
+- `Pp36Ledger.LoadDocsCoreAsync` กรองด้วย `OwnsPp36Query` (PV ที่ปิดหนี้ใบต้นทางสืบทอดธงตาม F2 ไม่นับซ้ำ) · migration ผูกใบเดิมใช้เงื่อนไขเดียวกัน
+- TODO ของ F2: `DocumentService.Pp36SettledReasonAsync` (ด่านใบลด/เพิ่มหนี้ E-7) ตัดสิน "ต่อใบ" ด้วย `Pp36Ledger.RemittedStatusAsync` ตัวเดียวกับด่านยกเลิก/ปลดธง/ปรับยอด
+  (`ChangeBlocksAsync`) — เดิมระดับงวด ⇒ ใบที่อนุมัติหลังนำส่งถูกปฏิเสธเกิน · ข้อความเหตุ `Pp36Lifecycle.SettledReason` ตัวเดียว
+- required_call_site +3 กติกา (IsReverseCharge · Pp36SettledReasonAsync · LoadDocsCoreAsync) — commit <pending>_

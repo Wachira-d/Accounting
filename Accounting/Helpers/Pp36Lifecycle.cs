@@ -12,6 +12,10 @@ public readonly record struct Pp36LedgerFacts(decimal Pp36Payable, decimal Undue
     public bool HasPp36Journal => Pp36Payable > 0.005m;
 }
 
+/// <summary>ใบนี้อยู่ในรายการนำส่ง ภ.พ.36 แล้ว/รับรู้แล้ว (ผลของ <c>Pp36Ledger.RemittedStatusAsync</c>)</summary>
+public sealed record Pp36RemitStatus(string DocumentNumber, int PeriodYear, int PeriodMonth, DateTime RemittedAt,
+    bool Recognized, string? RdReceiptNumber);
+
 /// <summary>สถานะ ภ.พ.36 ของใบ (ฝั่งเซิร์ฟเวอร์คำนวณ · หน้าเว็บแสดงอย่างเดียว)</summary>
 public enum Pp36DocState
 {
@@ -114,16 +118,22 @@ public static class Pp36Lifecycle
     /// <b>ข้อความบล็อก "แก้ใบหลังนำส่ง/รับรู้"</b> (คำตัดสินข้อ 134) — ยกเลิกใบ · ปลดธงบริการต่างประเทศ · แก้ยอด · ใบลดหนี้
     /// <para>ไม่ทำเส้นขอคืนอัตโนมัติ (ไม่มีหลักฐานภายนอก = R1) · ทางไปต่อคือยื่นแบบเพิ่มเติม/ขอคืนกับสรรพากร แล้วบันทึกปรับปรุงด้วยใบสำคัญทั่วไป</para>
     /// </summary>
-    public static string ChangeBlockMessage(string documentNumber, string action, int periodYear, int periodMonth,
-        DateTime remittedAt, bool recognized)
-        => $"{action}ใบ {documentNumber} ไม่ได้ — ใบนี้นำส่ง ภ.พ.36 แล้วในรายการนำส่งงวด {periodMonth:D2}/{periodYear + 543} "
-           + $"(จ่ายเมื่อ {remittedAt:dd/MM/yyyy})" + (recognized ? " และรับรู้ภาษีซื้อเข้า ภ.พ.30 แล้ว" : "")
+    public static string ChangeBlockMessage(string documentNumber, string action, Pp36RemitStatus status)
+        => $"{action}ใบ {documentNumber} ไม่ได้ — ใบนี้{SettledReason(status)}"
            + " · ยื่นแบบ ภ.พ.36 เพิ่มเติม/ขอคืนกับกรมสรรพากร แล้วบันทึกปรับปรุงด้วยใบสำคัญทั่วไป";
+
+    /// <summary>เหตุสั้น "นำส่ง/รับรู้แล้ว" (ไม่มีทางไปต่อ — ผู้เรียกต่อเอง เช่นด่านใบลดหนี้ของทีม F2)</summary>
+    public static string SettledReason(Pp36RemitStatus s)
+        => $"นำส่ง ภ.พ.36 แล้วในรายการนำส่งงวด {s.PeriodMonth:D2}/{s.PeriodYear + 543} (จ่ายเมื่อ {s.RemittedAt:dd/MM/yyyy})"
+           + (string.IsNullOrWhiteSpace(s.RdReceiptNumber) ? "" : $" ใบเสร็จกรมสรรพากร {s.RdReceiptNumber}")
+           + (s.Recognized ? " และรับรู้ภาษีซื้อเข้า ภ.พ.30 แล้ว" : "");
 
     /// <summary>ข้อความปฏิเสธการติ๊ก "บริการต่างประเทศ" บนชนิดที่ไม่ใช่เอกสารซื้อ (E-8) · null = ผ่าน</summary>
     public static string? FlagTypeError(DocumentType type, bool isForeignService)
-        => isForeignService && !ForeignServiceVat.CanCarryPp36(type)
-            ? "ติ๊ก \"ซื้อบริการจากต่างประเทศ (ภ.พ.36 §83/6)\" ได้เฉพาะใบแจ้งหนี้ซื้อ · ค่าใช้จ่าย · ใบสำคัญจ่าย · ใบรับรองแทนใบเสร็จ — "
-              + "ใบชนิดนี้ไม่ใช่การซื้อบริการ (เอาเครื่องหมายออกแล้วบันทึกใหม่)"
+        // ชุดชนิดเดียวกับ AutoPost ที่แยกขา §83/6 จริง (ForeignServiceVat.IsSelfAssessingType · PI/Expense/PV) — ใบรับรองแทนใบเสร็จ (CIL)
+        // ไม่มีขา Cr 21912 ใน AutoPost ⇒ ธงบน CIL ไม่มีผลทางบัญชี จึงปฏิเสธเหมือนใบขาย (PP36_REVIEW E-8)
+        => isForeignService && !ForeignServiceVat.IsSelfAssessingType(type)
+            ? "ติ๊ก \"ซื้อบริการจากต่างประเทศ (ภ.พ.36 §83/6)\" ได้เฉพาะใบแจ้งหนี้ซื้อ · ค่าใช้จ่าย · ใบสำคัญจ่าย — "
+              + "ใบชนิดนี้ไม่ตั้งหนี้ ภ.พ.36 (เอาเครื่องหมายออกแล้วบันทึกใหม่ · ใบรับรองแทนใบเสร็จให้ออกเป็นใบสำคัญจ่ายแทน)"
             : null;
 }

@@ -74,8 +74,8 @@ public static class Pp36Ledger
     }
 
     /// <summary>
-    /// ใบที่ "ติ๊กบริการต่างประเทศ" ทุกใบ (ชนิดในชุดเดียว · ออกแล้วไม่ยกเลิก · มี VAT) ในช่วงงวด ภ.พ.36 [from, toExclusive) พร้อมสถานะ ·
-    /// null = ไม่จำกัดฝั่งนั้น · รวมใบสำคัญจ่ายที่ปิดหนี้ใบต้นทางด้วย (Owns=false ⇒ State=NotApplicable) เพื่อให้ผู้เรียกตัดเองอย่างตั้งใจ
+    /// ใบที่ "เป็นเจ้าของหนี้ ภ.พ.36" ทุกใบ (<c>ForeignServiceVat.OwnsPp36Query</c> · ออกแล้วไม่ยกเลิก) ในช่วงงวด ภ.พ.36 [from, toExclusive) พร้อมสถานะ ·
+    /// null = ไม่จำกัดฝั่งนั้น · ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทาง (สืบทอดธงจากใบต้นทาง) ไม่อยู่ในผล
     /// </summary>
     public static Task<List<Pp36DocRow>> LoadDocsAsync(
         AccountingDbContext db, Guid companyId, DateTime? fromInclusive, DateTime? toExclusive, CancellationToken ct = default)
@@ -92,12 +92,12 @@ public static class Pp36Ledger
         AccountingDbContext db, Guid companyId, DateTime? fromInclusive, DateTime? toExclusive, List<Guid>? onlyIds,
         CancellationToken ct)
     {
-        var types = ForeignServiceVat.Pp36DocumentTypes;
+        // เจ้าของหนี้ ภ.พ.36 = predicate ตัวเดียวของทั้งระบบ (ForeignServiceVat.OwnsPp36Query — ทีม F2 · ตรงกับ JE ที่ Cr 21912 จริง:
+        // PI/Expense ที่ติ๊ก + PV ที่ไม่ปิดหนี้ใบต้นทาง + VAT > 0) · PV ที่ปิดหนี้ใบต้นทางสืบทอดธงมา (F2) แต่ไม่ใช่เจ้าของ ⇒ ไม่นับซ้ำ
         var notIssued = DocumentStatusRules.NotIssued;
         var q = db.Documents.AsNoTracking()
+            .Where(ForeignServiceVat.OwnsPp36Query)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && d.IsForeignService && d.VatAmount > 0
-                && types.Contains(d.DocumentType)
                 && !notIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided);
         if (onlyIds != null) q = q.Where(d => onlyIds.Contains(d.Id));
         if (fromInclusive is DateTime f) q = q.Where(d => (d.PaymentDate ?? d.DocumentDate) >= f);
@@ -105,7 +105,7 @@ public static class Pp36Ledger
         var docs = await q.Select(d => new
             {
                 d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.PaymentDate, d.DocumentDate, d.ContactId,
-                d.RelatedDocumentId, d.InputVatBecameClaimableAt,
+                d.IsForeignService, d.VatAmount, d.RelatedDocumentId, d.InputVatBecameClaimableAt,
             })
             .ToListAsync(ct);
         if (docs.Count == 0) return new();
@@ -113,18 +113,10 @@ public static class Pp36Ledger
         var ids = docs.Select(d => d.Id).ToList();
         var ledger = await LoadAsync(db, companyId, ids, ct);
         var links = await LinksAsync(db, companyId, ids, ct);
-        var relatedIds = docs.Where(d => d.DocumentType == DocumentType.PaymentVoucher && d.RelatedDocumentId != null)
-            .Select(d => d.RelatedDocumentId!.Value).Distinct().ToList();
-        var relatedTypes = relatedIds.Count == 0
-            ? new Dictionary<Guid, DocumentType>()
-            : await db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && relatedIds.Contains(d.Id))
-                .ToDictionaryAsync(d => d.Id, d => d.DocumentType, ct);
 
         return docs.Select(d =>
         {
-            DocumentType? srcType = d.RelatedDocumentId is Guid rid && relatedTypes.TryGetValue(rid, out var rt) ? rt : null;
-            var owns = ForeignServiceVat.OwnsPp36(d.DocumentType, true, srcType);
+            var owns = ForeignServiceVat.OwnsPp36(d.DocumentType, d.IsForeignService, d.VatAmount, d.RelatedDocumentId.HasValue);
             var facts = ledger.GetValueOrDefault(d.Id);
             var link = links.GetValueOrDefault(d.Id);
             var recognized = link?.RecognizedJournalEntryId != null || d.InputVatBecameClaimableAt != null;
@@ -143,13 +135,24 @@ public static class Pp36Ledger
     /// <param name="action">คำกริยาต้นข้อความ เช่น "ยกเลิก" · "ปลดธงบริการต่างประเทศของ" · "แก้ยอด"</param>
     public static async Task<Dictionary<Guid, string>> ChangeBlocksAsync(
         AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> docIds, string action, CancellationToken ct = default)
+        => (await RemittedStatusAsync(db, companyId, docIds, ct))
+            .ToDictionary(kv => kv.Key, kv => Pp36Lifecycle.ChangeBlockMessage(kv.Value.DocumentNumber, action, kv.Value));
+
+    /// <summary>
+    /// <b>"ใบนี้นำส่ง ภ.พ.36 แล้ว/รับรู้แล้วหรือยัง" — ตัวตรวจเดียว</b> ของด่านยกเลิก · ปลดธง · ปรับยอด · ยกเลิกรอบโอน (F3) และด่านใบลด/เพิ่มหนี้ (F2 E-7 ·
+    /// <c>DocumentService.Pp36SettledReasonAsync</c>) · ตัดสินต่อใบจากตาราง <c>Pp36RemittanceDocuments</c> (คำตัดสินข้อ 133) — ไม่ใช่ "งวดนี้มีการนำส่ง"
+    /// (ใบที่อนุมัติหลังนำส่งยังไม่ถูกนับ ⇒ ยังแก้ได้) · ข้อมูลก่อนตารางผูก: รับรู้แล้ว (<c>InputVatBecameClaimableAt</c>) หรือมีเลขใบเสร็จ RD บนใบ
+    /// </summary>
+    public static async Task<Dictionary<Guid, Pp36RemitStatus>> RemittedStatusAsync(
+        AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> docIds, CancellationToken ct = default)
     {
-        var result = new Dictionary<Guid, string>();
+        var result = new Dictionary<Guid, Pp36RemitStatus>();
         if (docIds.Count == 0) return result;
         var ids = docIds.Distinct().ToList();
         var docs = await db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && ids.Contains(d.Id) && d.IsForeignService)
-            .Select(d => new { d.Id, d.DocumentNumber, d.InputVatBecameClaimableAt, d.PaymentDate, d.DocumentDate, d.Pp36RdReceiptDate })
+            .Select(d => new { d.Id, d.DocumentNumber, d.InputVatBecameClaimableAt, d.PaymentDate, d.DocumentDate,
+                d.Pp36RdReceiptDate, d.Pp36RdReceiptNumber })
             .ToListAsync(ct);
         if (docs.Count == 0) return result;
         var links = await LinksAsync(db, companyId, docs.Select(d => d.Id).ToList(), ct);
@@ -163,12 +166,12 @@ public static class Pp36Ledger
         {
             var link = links.GetValueOrDefault(d.Id);
             var recognized = link?.RecognizedJournalEntryId != null || d.InputVatBecameClaimableAt != null;
-            if (link == null && !recognized) continue;
+            if (link == null && !recognized && string.IsNullOrWhiteSpace(d.Pp36RdReceiptNumber)) continue;
             var period = ForeignServiceVat.Pp36PeriodDate(d.PaymentDate, d.DocumentDate);
-            result[d.Id] = Pp36Lifecycle.ChangeBlockMessage(d.DocumentNumber, action,
+            result[d.Id] = new Pp36RemitStatus(d.DocumentNumber,
                 link?.PeriodYear ?? period.Year, link?.PeriodMonth ?? period.Month,
                 link != null && remits.TryGetValue(link.StatutoryRemittanceId, out var paid) ? paid : (d.Pp36RdReceiptDate ?? period),
-                recognized);
+                recognized, d.Pp36RdReceiptNumber);
         }
         return result;
     }

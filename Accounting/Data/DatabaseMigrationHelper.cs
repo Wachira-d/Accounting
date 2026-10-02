@@ -5410,7 +5410,7 @@ public static class DatabaseMigrationHelper
                 AND r."PeriodYear" = EXTRACT(YEAR FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int
                 AND r."PeriodMonth" = EXTRACT(MONTH FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int
             WHERE d."IsForeignService" = true AND d."VatAmount" > 0 AND d."IsDeleted" = false
-              AND d."DocumentType" IN (8, 9, 13, 15)
+              AND (d."DocumentType" IN (8, 9) OR (d."DocumentType" = 13 AND d."RelatedDocumentId" IS NULL))   -- = ForeignServiceVat.OwnsPp36Query
               AND d."Status" NOT IN (0, 1, 6, 8)
               AND d."CreatedAt" <= r."CreatedAt"
               AND NOT EXISTS (SELECT 1 FROM "Pp36RemittanceDocuments" x WHERE x."CompanyId" = d."CompanyId" AND x."DocumentId" = d."Id" AND x."IsDeleted" = false)

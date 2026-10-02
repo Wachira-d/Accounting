@@ -1494,7 +1494,7 @@ public partial class DocumentService : IDocumentService
             // สาขาผู้ออกใบ — null/Empty = ใช้ค่าบริษัทตามเดิม (กิจการสาขาเดียว)
             doc.BranchId = await ResolveOwnedBranchIdAsync(companyId, request.BranchId);
             doc.DocumentTemplateId = await ResolveOwnedTemplateIdAsync(companyId, request.DocumentTemplateId);
-            // รอบ 203 ทีม F3 (E-8): ธง "บริการต่างประเทศ" มีความหมายเฉพาะชุดชนิดเดียว (ForeignServiceVat.Pp36DocumentTypes) —
+            // รอบ 203 ทีม F3 (E-8): ธง "บริการต่างประเทศ" มีความหมายเฉพาะชุดชนิดเดียว (ForeignServiceVat.IsSelfAssessingType · PI/Expense/PV) —
             // ใบขายที่ติ๊กธงเคยถูกนับเป็นหนี้ ภ.พ.36 บนหน้านำส่ง ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่ล้างธงเงียบ)
             if (Accounting.Helpers.Pp36Lifecycle.FlagTypeError(doc.DocumentType, request.IsForeignService) is string fsTypeErr)
                 throw new BusinessRuleException(fsTypeErr, Accounting.Helpers.Pp36Lifecycle.RuleWrongDocumentType);
@@ -10395,20 +10395,13 @@ public partial class DocumentService : IDocumentService
     /// รอบ PP36 ทีม F2 (E-7 · คำตัดสินข้อ 134): VAT ประเมินเองของใบ <paramref name="pp36Owner"/> ถูก "นำส่ง/รับรู้" ไปแล้วหรือยัง —
     /// คืนข้อความเหตุ (ไทย) หรือ null · อ่านจากหลักฐานที่มีจริงเท่านั้น: รับรู้ภาษีซื้อแล้ว (<c>InputVatBecameClaimableAt</c>) ·
     /// มีเลขใบเสร็จ RD (<c>Pp36RdReceiptNumber</c>) · มีรายการนำส่ง ภ.พ.36 ของงวด (<c>PaymentDate ?? DocumentDate</c> — ตัวจัดงวดเดียวกับยอดค้างนำส่ง)
-    /// <para>TODO(F3): เมื่อทีม F3 ทำ "ใบนี้อยู่ในรายการนำส่งแล้ว" ต่อใบ (คำตัดสิน 133) ให้เปลี่ยนชั้นที่สามเป็นตัวนั้น — ชั้นงวดตอนนี้กว้างกว่า
-    /// (ใบที่อนุมัติหลังนำส่งงวดนั้นก็ถูกนับว่านำส่งแล้ว ⇒ ปฏิเสธเกิน ไม่ใช่ปล่อยเกิน — ทิศที่มองเห็นและแก้ทัน)</para>
+    /// <para>รอบ 203 ทีม F3 (คำตัดสินข้อ 133): ตัดสิน "ต่อใบ" ด้วยตัวตรวจเดียวกับด่านยกเลิก/ปลดธง/ปรับยอด (<c>Pp36Ledger.RemittedStatusAsync</c> —
+    /// ใบอยู่ในรายการนำส่งแล้ว หรือรับรู้แล้ว) — เดิมดู "งวดนี้มีการนำส่ง" ⇒ ใบที่อนุมัติหลังนำส่งงวดนั้น (ยังไม่ได้นำส่งจริง) ถูกปฏิเสธเกิน</para>
     /// </summary>
     private async Task<string?> Pp36SettledReasonAsync(Guid companyId, Document pp36Owner)
     {
-        if (pp36Owner.InputVatBecameClaimableAt.HasValue)
-            return $"รับรู้ภาษีซื้อ ภ.พ.36 แล้ว ({pp36Owner.InputVatBecameClaimableAt:dd/MM/yyyy})";
-        if (!string.IsNullOrWhiteSpace(pp36Owner.Pp36RdReceiptNumber))
-            return $"นำส่ง ภ.พ.36 แล้ว (ใบเสร็จกรมสรรพากร {pp36Owner.Pp36RdReceiptNumber})";
-        var period = pp36Owner.PaymentDate ?? pp36Owner.DocumentDate;
-        var remitted = await _db.Set<StatutoryRemittance>().AsNoTracking().AnyAsync(r =>
-            r.CompanyId == companyId && !r.IsDeleted && r.RemittanceType == "VatPp36"
-            && r.PeriodYear == period.Year && r.PeriodMonth == period.Month);
-        return remitted ? $"อยู่ในงวด ภ.พ.36 {period.Month:D2}/{period.Year} ที่บันทึกนำส่งแล้ว" : null;
+        var status = await Accounting.Helpers.Pp36Ledger.RemittedStatusAsync(_db, companyId, new[] { pp36Owner.Id });
+        return status.TryGetValue(pp36Owner.Id, out var st) ? Accounting.Helpers.Pp36Lifecycle.SettledReason(st) : null;
     }
 
     private async Task ApplySourceDocumentAdjustmentsAsync(Guid companyId, Document doc)

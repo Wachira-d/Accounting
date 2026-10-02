@@ -3649,19 +3649,19 @@ VAT จริง** และ renderer พิมพ์ให้เห็น (ค�
 #### วงจรนำส่ง → รับรู้ ภ.พ.36 (รอบ 203 ทีม F3 · PP36_REVIEW E-2..E-13 · T-2 · คำตัดสินข้อ 129, 132–136)
 
 **ตัวตัดสินเดียวทุกเส้น**: `Helpers/Pp36Lifecycle` (pure — สถานะ · ป้าย · วันเคลม · เงินเพิ่ม · ข้อความบล็อก) + `Helpers/Pp36Ledger` (ตัวโหลด GL/รายการนำส่ง ·
-CompanyId ทุกคิวรี) + `ForeignServiceVat.Pp36DocumentTypes/CanCarryPp36/OwnsPp36/Pp36PeriodDate` + `Helpers/DocumentFx.ToBaht` (ตัวแปลงเดียวกับ JE)
+CompanyId ทุกคิวรี) + `ForeignServiceVat.OwnsPp36`/`OwnsPp36Query` (เจ้าของหนี้ — ตัวเดียวร่วมกับทีม F2) + `IsSelfAssessingType` (ชุดชนิด PI/Expense/PV) + `Pp36PeriodDate` + `Helpers/DocumentFx.ToBaht` (ตัวแปลงเดียวกับ JE)
 · ตารางผูก **`Pp36RemittanceDocuments`** (ใบ ↔ รายการนำส่ง · ใบหนึ่งนับได้ครั้งเดียว — unique `(CompanyId, DocumentId)`)
 
 | ขั้น | กติกา | ที่โค้ด |
 | --- | --- | --- |
-| ใบที่นับ | ชนิดในชุดเดียว (PI/Expense/PV/CIL) · **เจ้าของหนี้** (`OwnsPp36` — PV ที่ปิดหนี้ใบต้นทาง PI/Expense ไม่ใช่) · ออกแล้วไม่ยกเลิก · **GL มี Cr 21912 ของใบจริง** (JE ของใบ Posted ไม่ใช่คู่กลับ) · งวด = วันจ่าย ?? วันที่เอกสาร | `Pp36Ledger.LoadDocsAsync` · `Pp36Lifecycle.Classify` |
+| ใบที่นับ | **เจ้าของหนี้** (`OwnsPp36Query` = PI/Expense ที่ติ๊ก + PV ที่ไม่ปิดหนี้ใบต้นทาง + VAT > 0 — ตรงกับ AutoPost ที่ Cr 21912 · PV ที่ปิดหนี้ใบต้นทางสืบทอดธงแต่ไม่นับซ้ำ · CIL ไม่มีขา 21912 จึงติ๊กไม่ได้) · ออกแล้วไม่ยกเลิก · **GL มี Cr 21912 ของใบจริง** (JE ของใบ Posted ไม่ใช่คู่กลับ) · งวด = วันจ่าย ?? วันที่เอกสาร | `Pp36Ledger.LoadDocsAsync` · `Pp36Lifecycle.Classify` |
 | ใบอนุมัติแล้วไม่มี JE | **ไม่นับเงียบ** — สถานะ `NoJournal` · หน้านำส่งแสดงเป็นรายการ "ต้องตรวจ" (`Pp36Issues`) ชี้เครื่องมือลงบัญชีให้ใบที่ไม่มี JE (ทีม F1) · กระทบยอดภาษี-GL มีสาเหตุ `PP36_DOC_NO_JE` | `BuildPp36Issues` · `TaxGlReconciliationService` |
 | ยอดค้าง · ปฏิทิน · รายงาน ภ.พ.36 | ยอด = **Cr 21912 ใน GL (บาท)** ของใบที่ยังไม่อยู่ในรายการนำส่ง · ใบที่นำส่งแล้วใช้ยอดที่นำส่ง (`CountedVat`) · รายงาน: ฐาน `DocumentFx.ToBaht` · ภาษี = ยอดบาท | `GetDashboardAsync` · `GetFilingCalendarAsync` · `TaxService.GeneratePp36Report` |
 | นำส่ง | Dr 21912 / Cr ธนาคาร (+ เงินเพิ่ม §89/1 Dr ผังค่าปรับ 54xxx — รายจ่ายต้องห้าม §65 ตรี(6)) · **ผูกใบเข้ารายการนำส่งใต้ล็อกแถวเอกสาร** · **นำส่งเพิ่มเติมงวดเดิมได้** (คำตัดสินข้อ 133 — ด่านกันซ้ำของ ภ.พ.36 = "ห้ามนับใบเดิมซ้ำ" · unique index งวดเดิมเปลี่ยนเป็น `_v2` ยกเว้น VatPp36) · เงินเพิ่ม = ค่าเสนอ `SuggestedSurcharge` (1.5%/เดือนหรือเศษ ไม่เกินภาษี · วันครบกำหนดจาก `TaxFilingDeadline.WarnBy`) **แก้ได้** (`RemitRequest.LateSurcharge`) · ไม่พบผังค่าปรับ ⇒ ปฏิเสธ (ไม่ทิ้งยอดเงียบ) | `RemitAsync` |
 | รับรู้ภาษีซื้อ | **เฉพาะใบที่อยู่ในรายการนำส่งแล้ว** · ยอด = **11640 ที่พักจริงใน GL ของใบ** (บริษัทไม่จด VAT/บรรทัดต้องห้าม ⇒ 0 = `RemittedNoInputVat` ไม่ต้องรับรู้) · **เลข + วันที่ใบเสร็จกรมสรรพากรบังคับ** (คำตัดสินข้อ 136 — ไม่ส่งวันที่ = วันที่จ่ายตอนนำส่ง) · **วันเคลมค่าเริ่มต้น = วันที่ใบเสร็จ** ผ่าน `TaxService.ClaimBasisDate` (อ่าน `Pp36RdReceiptDate`) · ผู้ใช้เลือกวันอื่นได้แต่ **ห้ามก่อนวันใบเสร็จ** · **JE Dr 11610 / Cr 11640 ลงวันเคลม** · ห้ามเคลมเข้างวด ภ.พ.30 ที่ยื่น/ล็อกแล้ว · งวดที่นำส่งหลายครั้ง ⇒ รับรู้ต่อรายการนำส่ง (`remittanceId`) · idempotent ใต้ล็อกแถวรายการนำส่ง (`RecognizedJournalEntryId`) · ล้มกลางทาง ⇒ rollback + `ChangeTracker.Clear()` | `RecognizePp36InputVatAsync` |
-| ยกเลิก · ปลดธง · ปรับยอด 21912/11640 หลังนำส่ง/รับรู้ | **บล็อก** พร้อมทางไปต่อ (ยื่นเพิ่มเติม/ขอคืนกับสรรพากร แล้วบันทึกปรับปรุงด้วยใบสำคัญทั่วไป) — คำตัดสินข้อ 134 · ก่อนนำส่งทำได้ตามเดิม · ทุกทางเข้า: ยกเลิกใบ · ยกเลิกการลงบัญชีรอบโอน (พรีวิว+จริง) · ปลดธง · ปรับปรุงรายการบัญชี | `Pp36Ledger.ChangeBlocksAsync` ← `VoidDocumentAsync` · `SettlementPostingService.Pp36UnpostRefusalsAsync` · `ReclassifyForeignServiceAsync` · `AdjustDocumentJournalEntryAsync` |
+| ยกเลิก · ปลดธง · ปรับยอด 21912/11640 · ใบลด/เพิ่มหนี้ (F2 E-7) หลังนำส่ง/รับรู้ | **บล็อก** พร้อมทางไปต่อ (ยื่นเพิ่มเติม/ขอคืนกับสรรพากร แล้วบันทึกปรับปรุงด้วยใบสำคัญทั่วไป) — คำตัดสินข้อ 134 · ก่อนนำส่งทำได้ตามเดิม · ทุกทางเข้า: ยกเลิกใบ · ยกเลิกการลงบัญชีรอบโอน (พรีวิว+จริง) · ปลดธง · ปรับปรุงรายการบัญชี | `Pp36Ledger.RemittedStatusAsync` (ต่อใบ — ไม่ใช่ระดับงวด) → `ChangeBlocksAsync` ← `VoidDocumentAsync` · `Pp36SettledReasonAsync` (ใบลดหนี้) · `SettlementPostingService.Pp36UnpostRefusalsAsync` · `ReclassifyForeignServiceAsync` · `AdjustDocumentJournalEntryAsync` |
 | นำส่งเกิน/ขาด | รายการนำส่งที่ยอด ≠ Σ 21912 ของใบที่ผูก ⇒ `Pp36Issues` (`OverRemitted`/`UnderRemitted`) แทน `continue` เงียบ | `BuildPp36Issues` |
-| ติ๊กธงบนใบขาย | ปฏิเสธตอนสร้าง/แก้ (`PP36-FLAG-WRONG-TYPE`) | `Pp36Lifecycle.FlagTypeError` |
+| ติ๊กธงบนใบขาย/CIL | ปฏิเสธตอนสร้าง/แก้ (`PP36-FLAG-WRONG-TYPE`) — ชุดเดียวกับ AutoPost (`IsSelfAssessingType`) | `Pp36Lifecycle.FlagTypeError` |
 | ป้ายบนรายการเอกสาร | สถานะคำนวณที่เซิร์ฟเวอร์ `DocumentResponse.Pp36State/Pp36StatusLabel` (รอนำส่ง · นำส่งแล้วรอรับรู้ · รับรู้แล้ว เคลม ภ.พ.30 เดือน X · ไม่มี JE ต้องซ่อม) · `documents.html` แสดงอย่างเดียว · ป้าย "เคลม ภ.พ.30" ไม่ขึ้นกับใบรออนุมัติ | `Pp36Ledger.StatesAsync` |
 | ภ.พ.30 ก่อนรับรู้ | บรรทัดตัดออกของใบต่างประเทศ = "[ภ.พ.36 — รอนำส่ง/รับรู้]" (เดิม "[รอใบกำกับ §82/3]" ผิด — E-13) | `TaxService.GenerateVatReport` |
 | กระทบยอดภาษี-GL | 21912: ตัด JE นำส่ง ภ.พ.36 ออกจากยอดตั้งหนี้ของงวด (เดิมเดือนที่นำส่งในเดือนเดียวกันฟ้อง −413.56 ปลอม) · บรรทัด 11640 (พัก − รับรู้ เทียบ ภ.พ.36 − ภาษีซื้อ ภ.พ.36 ใน ภ.พ.30) | `TaxGlReconciliationService.ReconcileAsync` |
@@ -4661,7 +4661,9 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 
 
-_Last verified against codebase: 2026-10-02 (รอบ 203 ทีม F3 — §6.2g วงจรนำส่ง/รับรู้ ภ.พ.36: ใบที่นับต้องมี Cr 21912 ใน GL · ผูกใบ↔รายการนำส่ง (นำส่งเพิ่มเติมงวดเดิม) · รับรู้ลงวันใบเสร็จ RD เฉพาะใบที่นำส่งแล้ว · บล็อกแก้ใบหลังนำส่ง · เงินเพิ่ม §89/1 · ชื่อผัง 21912 — commit 873f9ad4)_
+_Last verified against codebase: 2026-10-02 (รอบ 203 ทีม F3 รวม F2 — §6.2g predicate เจ้าของหนี้ ภ.พ.36 ตัวเดียว `ForeignServiceVat.OwnsPp36`/`OwnsPp36Query` · CIL ไม่ใช่เจ้าของ/ติ๊กไม่ได้ · ด่านใบลดหนี้ตัดสินต่อใบด้วย `Pp36Ledger.RemittedStatusAsync` — commit <pending>)_
+
+_ก่อนหน้า: 2026-10-02 (รอบ 203 ทีม F3 — §6.2g วงจรนำส่ง/รับรู้ ภ.พ.36: ใบที่นับต้องมี Cr 21912 ใน GL · ผูกใบ↔รายการนำส่ง (นำส่งเพิ่มเติมงวดเดิม) · รับรู้ลงวันใบเสร็จ RD เฉพาะใบที่นำส่งแล้ว · บล็อกแก้ใบหลังนำส่ง · เงินเพิ่ม §89/1 · ชื่อผัง 21912 — commit 873f9ad4)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ PP36 ทีม F2 — §6.2g ยอดจ่ายผู้รับเงิน `ForeignServiceVat.PayeeAmount` ทุกเส้นเงินออก/ยอดค้าง/PDF/จับคู่ธนาคาร · `OwnsPp36` · PV ลูกสืบทอดธง + ตัดเจ้าหนี้ตามยอดจ่าย · ใบลดหนี้กลับ 21912 · เตือน ม.70 · §65 ตรี ผู้รับต่างประเทศ · migration — commit cc840773)_
 

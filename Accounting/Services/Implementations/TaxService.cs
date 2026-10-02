@@ -1569,7 +1569,7 @@ public partial class TaxService : ITaxService
     private async Task GeneratePp36Report(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
     {
         // รอบ 203 ทีม F3 (E-3/E-4/E-8): ใบที่นับ = ตัวโหลด/ตัวตัดสินเดียวกับหน้านำส่ง (Helpers/Pp36Ledger) — ชุดชนิดเดียว
-        // (ForeignServiceVat.Pp36DocumentTypes) · เจ้าของหนี้ (ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทางไม่นับ) · **GL มี Cr 21912 จริง** (ใบอนุมัติแล้วไม่มี JE
+        // (ForeignServiceVat.OwnsPp36Query ของทีม F2 · PI/Expense + PV ที่ไม่ปิดหนี้ใบต้นทาง) · **GL มี Cr 21912 จริง** (ใบอนุมัติแล้วไม่มี JE
         // ไม่ถูกนับเงียบ — หน้านำส่งแสดงเป็นรายการต้องซ่อม) · งวด = วันจ่าย (Pp36PeriodDate — เดิม TaxPointDate ?? DocumentDate ไม่ตรงหน้านำส่ง) ·
         // ยอดภาษี = บาทตามที่ JE ลง (เดิมยอดสกุลเอกสาร)
         var pp36Rows = (await Accounting.Helpers.Pp36Ledger.LoadDocsAsync(_db, companyId, startDate.Date, endDate.Date.AddDays(1)))

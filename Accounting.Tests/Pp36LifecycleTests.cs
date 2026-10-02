@@ -69,25 +69,25 @@ public class Pp36LifecycleTests
     [InlineData(DocumentType.PaymentVoucher, true)]
     [InlineData(DocumentType.PurchaseInvoice, true)]
     [InlineData(DocumentType.Expense, true)]
-    [InlineData(DocumentType.CertificateInLieu, true)]
+    [InlineData(DocumentType.CertificateInLieu, false)]   // AutoPost ไม่แยกขา §83/6 ให้ CIL (ไม่มี Cr 21912) ⇒ ติ๊กไม่ได้ · ไม่ใช่เจ้าของ
     [InlineData(DocumentType.TaxInvoice, false)]
     [InlineData(DocumentType.Invoice, false)]
     [InlineData(DocumentType.Receipt, false)]
-    public void ชุดชนิดเดียว(DocumentType type, bool expected)
+    public void ชุดชนิดเดียว_ด่านติ๊กธงกับเจ้าของหนี้ตรงกัน(DocumentType type, bool expected)
     {
-        Assert.Equal(expected, ForeignServiceVat.CanCarryPp36(type));
-        Assert.Equal(expected, ForeignServiceVat.OwnsPp36(type, true, null));
-        Assert.False(ForeignServiceVat.OwnsPp36(type, false, null));
+        Assert.Equal(expected, ForeignServiceVat.IsSelfAssessingType(type));
+        Assert.Equal(expected, Pp36Lifecycle.FlagTypeError(type, true) == null);
+        Assert.Equal(expected, ForeignServiceVat.OwnsPp36(type, true, 413.56m, false));
+        Assert.False(ForeignServiceVat.OwnsPp36(type, false, 413.56m, false));
     }
 
     [Fact]
     public void ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทาง_ไม่ใช่เจ้าของ_ใบตั้งหนี้เป็นเจ้าของ()
     {
-        Assert.False(ForeignServiceVat.OwnsPp36(DocumentType.PaymentVoucher, true, DocumentType.PurchaseInvoice));
-        Assert.False(ForeignServiceVat.OwnsPp36(DocumentType.PaymentVoucher, true, DocumentType.Expense));
-        Assert.True(ForeignServiceVat.OwnsPp36(DocumentType.PurchaseInvoice, true, null));
-        // ใบสำคัญจ่ายที่อ้างใบชนิดอื่น (เช่น ใบสั่งซื้อ) ยังเป็นเจ้าของ — ไม่มีหนี้ตั้งที่ใบต้นทาง
-        Assert.True(ForeignServiceVat.OwnsPp36(DocumentType.PaymentVoucher, true, DocumentType.PurchaseOrder));
+        Assert.False(ForeignServiceVat.OwnsPp36(DocumentType.PaymentVoucher, true, 413.56m, hasRelatedDocument: true));
+        Assert.True(ForeignServiceVat.OwnsPp36(DocumentType.PaymentVoucher, true, 413.56m, hasRelatedDocument: false));
+        Assert.True(ForeignServiceVat.OwnsPp36(DocumentType.PurchaseInvoice, true, 413.56m, hasRelatedDocument: true));
+        Assert.False(ForeignServiceVat.OwnsPp36(DocumentType.PurchaseInvoice, true, 0m, hasRelatedDocument: false));   // ไม่มี VAT = ไม่มีหนี้
     }
 
     [Fact]
@@ -98,9 +98,10 @@ public class Pp36LifecycleTests
     }
 
     [Fact]
-    public void ติ๊กธงบนใบขาย_ถูกปฏิเสธ_ใบซื้อผ่าน_ไม่ติ๊กผ่านทุกชนิด()
+    public void ติ๊กธงบนใบขายหรือCIL_ถูกปฏิเสธ_ใบซื้อผ่าน_ไม่ติ๊กผ่านทุกชนิด()
     {
         Assert.NotNull(Pp36Lifecycle.FlagTypeError(DocumentType.TaxInvoice, true));
+        Assert.NotNull(Pp36Lifecycle.FlagTypeError(DocumentType.CertificateInLieu, true));
         Assert.Null(Pp36Lifecycle.FlagTypeError(DocumentType.PaymentVoucher, true));
         Assert.Null(Pp36Lifecycle.FlagTypeError(DocumentType.TaxInvoice, false));
     }
@@ -160,11 +161,17 @@ public class Pp36LifecycleTests
     [Fact]
     public void ข้อความบล็อกหลังนำส่ง_บอกงวดและทางไปต่อ()
     {
-        var m = Pp36Lifecycle.ChangeBlockMessage("PV-20260901-0001", "ยกเลิก", 2026, 9, new DateTime(2026, 10, 5), recognized: true);
+        var st = new Pp36RemitStatus("PV-20260901-0001", 2026, 9, new DateTime(2026, 10, 5), Recognized: true, RdReceiptNumber: "RD-1");
+        var m = Pp36Lifecycle.ChangeBlockMessage("PV-20260901-0001", "ยกเลิก", st);
         Assert.Contains("PV-20260901-0001", m);
         Assert.Contains("09/2569", m);
         Assert.Contains("รับรู้ภาษีซื้อ", m);
         Assert.Contains("ใบสำคัญทั่วไป", m);
+        // เหตุสั้นที่ด่านใบลดหนี้ (ทีม F2) ใช้ — ตัวเดียวกัน ไม่มีทางไปต่อซ้อน
+        var reason = Pp36Lifecycle.SettledReason(st with { Recognized = false, RdReceiptNumber = null });
+        Assert.Contains("นำส่ง ภ.พ.36 แล้ว", reason);
+        Assert.DoesNotContain("รับรู้", reason);
+        Assert.DoesNotContain("ใบสำคัญทั่วไป", reason);
     }
 
     // ── ตัวแปลงบาทเดียวกับ JE (E-4) ──
