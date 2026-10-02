@@ -4082,29 +4082,40 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 ผลรวม = จำนวนจริง (เดิมปัดขึ้นต่อห้อง ⇒ 3 คน 2 ห้องคิด 4 คน · เด็กทั้งหมดห้องแรก) — `tools/lodging_guest_split_sim.js`
 
 **เว็บที่พัก: ข้อมูลห้องสด + จองเอง (รอบ 202 ทีม LW · LODGING_REVIEW W-02..W-08 · คำตัดสินข้อ 117/118/123)**
-- **บล็อก `CmsBlockType.LodgingRooms` (27)** — `storefront.html` วาดจาก `GET …/lodging/info` (`_lodgingRoomsHtml`: ชื่อ · รูปแรก · ขนาด · เตียง · พักได้ ·
-  "เริ่มต้น ฿{baseRate}/คืน" + "ราคาจริงตามวันที่เลือก" · ปุ่มไป `/booking`) · คอนฟิกมีแค่ `headline` · `/info` ตอบ **404** (ไม่ผูก/ปิดที่พัก) ⇒
+- **บล็อก `CmsBlockType.LodgingRooms` (27)** — `storefront.html` วาดจาก `GET …/lodging/info` (`_lodgingRoomsHtml`: ชื่อ · รูปแรก · ขนาด · เตียง ·
+  `capacityLabel` · `fromRateLabel` + "ราคาจริงตามวันที่เลือก" · ปุ่มไป `/booking`) · **ป้ายสองตัวเซิร์ฟเวอร์คำนวณ** (ฝ่ายค้าน P2-1/P2-2):
+  `LodgingPublicController.Info` → `LodgingService.ApplyPublicRoomLabelsAsync` (`LodgingService.PublicRooms.cs`) → `Helpers/LodgingPublicRoomLabels`:
+  ราคาต่อคืนที่ถูกที่สุดใน 30 วันผ่าน `LodgingPricingEngine.NightlyRate` (แผนตั้งต้น `PickRatePlan` · ฤดูกาล · สุดสัปดาห์ · override · ข้ามวันปิดขาย ·
+  ปิดทุกวัน = ไม่มีป้าย) + หน่วย `/ห้อง/คืน` หรือ `/คน/คืน` + ป้าย VAT · ความจุ "ผู้ใหญ่สูงสุด N คน/ห้อง · เตียงเสริม… · เด็ก/ทารกไม่นับความจุ" (ข้อ 124) —
+  หน้าจองก็ใช้ป้ายเดียวกัน (เดิม `baseRate`/`maxOccupancy` ดิบ = สูตรที่สอง) · คอนฟิกมีแค่ `headline` · `/info` ตอบ **404** (ไม่ผูก/ปิดที่พัก) ⇒
   "ยังไม่เปิดจองออนไลน์" + ช่องทางติดต่อของเว็บ (`StorefrontSiteInfo.ContactPhone/LineId/ContactEmail` — **ไม่มีราคา seed**) · ตัวแก้เว็บ (`cms-edit.html`)
   มีในรายการบล็อก "ห้องพัก (ข้อมูลจริงจากระบบที่พัก)" + แปลงชื่อ enum → เลข (`blockNum` — เดิมเปิดแก้บล็อกแล้ว select ตกไปตัวแรก)
 - **เทมเพลตใหม่** (`CmsSiteTemplateSeeder.HotelPlan`): หน้า home และ rooms ใช้ `LodgingRooms` แทน RichText รายการห้อง + PricingTable ราคา seed ·
   Hero หน้า rooms ไม่มี "3 ประเภท · 11 ห้อง" แล้ว · **เว็บเดิม**: `Helpers/LodgingSiteSeedMigration.RoomBlocksSql` (ใน `GetAlterStatements` →
   `Round202LodgingWebStatements` · advisory lock คีย์คงที่ · รันทุกบูต รอบที่สองเป็นต้นไป 0 แถว) แทนเฉพาะบล็อกที่ `BlockType`+`ConfigJson`
   ตรง snapshot **ทุกไบต์** (snapshot = `CmsSiteTemplateSeeder.Legacy*` ฟังก์ชันเดียวกับที่เคย seed · เทียบ `=` ด้วยข้อความ base64 — ไม่มี LIKE/trim) ·
+  ครอบ **สองรุ่น**: รอบ 158–201 (`LodgingSeedDefaults`) และก่อนรอบ 158 (`Legacy*V1` — นิพจน์คัดจาก `d2ad229b^` ทุกตัวอักษร: รายการห้อง 4 ประเภท ·
+  PricingTable "รวมอาหารเช้า" · รายละเอียดห้อง · Gallery placehold.co · Hero "4 ประเภท") ·
   ต่อหน้า: ตัวแรกที่ตรง → `LodgingRooms` · ตัวถัดไปที่ตรง → `IsVisible=false` (ไม่ลบ) · ไม่แตะ: บล็อกที่แก้แล้ว/ซ่อนอยู่/มีคำแปล/หน้าที่มี `LodgingRooms` แล้ว ·
   เว็บที่ไม่ใช่ `IndustryType.Hotel`
 - **GET สาธารณะไม่เขียนฐาน (W-03)**: `CmsBookingService.GetServicesAsync` อ่านอย่างเดียว (ถอด lazy auto-seed "นัดหมาย / จอง" ฿0 + `catch {}`) —
   บริการตัวอย่าง seed ตอนสร้างเว็บ/เติมเทมเพลตเท่านั้น (`CmsBookingServiceSeeder` · เฉพาะเว็บที่มีหน้าจองคิว) · ข้อมูลเดิม:
-  `LodgingSiteSeedMigration.AutoSeedServiceCleanupSql` soft-delete แถว `CreatedBy='auto-seed'` ที่ไม่มีการจอง · ไม่เคยแก้ (`UpdatedBy IS NULL`) · อยู่บนเว็บที่พัก ·
+  `LodgingSiteSeedMigration.AutoSeedServiceCleanupSql` soft-delete แถว `CreatedBy='auto-seed'` ที่ไม่มีการจอง · ไม่มีช่วงเวลา (`SiteBookingSlots`) · ไม่มีคำแปล ·
+  ไม่เคยแก้ (`UpdatedBy IS NULL`) · อยู่บนเว็บที่พัก ·
   `CmsModuleResolver` facts ไม่นับบริการที่ลบแล้ว (`CmsSiteService.LoadSiteModulesAsync` · `SettingsService.ComputeCmsModulesAsync`) ⇒ เมนู "การจองคิว" ที่ระบบสร้างหลักฐานเองหายไป ·
-  บล็อกปฏิทินจองบนเว็บที่พัก (`StorefrontSiteInfo.IsLodgingSite` = `IndustryType.Hotel` เซิร์ฟเวอร์ตัดสิน) ที่ไม่ผูกที่พัก ⇒ "ยังไม่เปิดจองออนไลน์" ไม่ใช่การ์ดนัดหมาย
+  บล็อกปฏิทินจองบนเว็บที่พัก (`StorefrontSiteInfo.IsLodgingSite` = `CmsModuleResolver.IsLodgingSite`: Hotel **หรือ** มีที่พักไม่ลบผูกเว็บ) ที่ `/info` 404 ⇒
+  แสดงบริการนัดหมายที่เจ้าของสร้างเองก่อน (ถ้ามี) · ไม่มี ⇒ "ยังไม่เปิดจองออนไลน์" ไม่ใช่ "ยังไม่มีบริการ"
 - **404 ≠ ขัดข้อง (W-04)**: `Store.lodgingInfo()` คืน null เฉพาะ 404 (จำไว้) · 5xx/เน็ตหลุด ⇒ โยน Error (ไม่จำ) — `/booking` `/rooms` · บล็อกห้อง · บล็อกปฏิทินจองของเว็บที่พัก
   แสดง "โหลดข้อมูลห้องพักไม่สำเร็จ" แทนการตกไปการ์ดนัดหมายเงียบ ๆ · หน้าการจองด้วย token ใช้ `/info` แค่เบอร์สำรอง (ล้ม = ข้าม) — `tools/lodging_storefront_info_sim.js`
 - **ค้นหาจากหน้าแรก → หน้าจอง (W-07)**: `_pageUrlQuery('booking', {checkIn, checkOut, adults, children, infants, rooms})` · หน้าจองอ่านกลับ `_lgStateFromQuery`
   (วันที่รูป yyyy-mm-dd · จำนวนในช่วงตัวเลือก) แล้วค้นหาให้ทันที
-- **ผู้เข้าพักรายห้อง (ข้อ 123/124)**: แขกตั้งผู้ใหญ่ · เด็ก · คนเสริม (เตียงเสริม — เฉพาะประเภทที่ `allowExtraBed` · ไม่เกิน `maxExtraBeds` · แสดง `extraBedPrice`/คน/คืน)
-  ต่อห้อง + ทารกระดับการจอง (`LodgingCreateReservationRequest.Infants` — quote ไม่มีช่องนี้ จึงส่งเฉพาะตอนจอง) · ตัวเลือกผู้ใหญ่ถึง `maxAdults` + คนเสริมที่เลือก
-  (ด่านจริง/ราคา = เซิร์ฟเวอร์ผ่าน quote) · ค่าที่แขกตั้งชนะค่าแบ่งอัตโนมัติ (`guestTouched`) · สรุปการจอง/หน้าการจองแสดง "ผู้เข้าพักรวม" จาก `totalGuests`
-  ของเซิร์ฟเวอร์ (ยังไม่มี ⇒ รวมค่ารายห้องที่เซิร์ฟเวอร์คืน — ชั่วคราว) — `tools/lodging_guest_split_sim.js` (c)
+- **ผู้เข้าพักรายห้อง (ข้อ 123/124 · แบบจำลองเดียวกับ `Helpers/LodgingOccupancy`)**: ต่อห้อง ผู้ใหญ่ 1..`maxAdults` · **คนเสริมช่องแยก** 0..`maxExtraBeds`
+  (เฉพาะประเภทที่ `allowExtraBed` · ป้ายราคา `extraBedSummary` จากเซิร์ฟเวอร์ · คนเสริม**คนละคน**กับผู้ใหญ่) · เด็ก · ทารกระดับการจอง (`infants` ส่งทั้ง quote
+  และคำขอจอง) · ค่าแบ่งอัตโนมัติ (`_syncRoomGuests`) ย้ายผู้ใหญ่ที่เกิน `maxAdults` เป็นคนเสริม (ไม่เกิน max · ที่ยังเกินคงไว้ ⇒ quote ตอบข้อความ) ·
+  ค่าที่แขกตั้งชนะ (`guestTouched`) · สรุปผู้เข้าพักแสดง `guestSummary` ของเซิร์ฟเวอร์ (`LodgingOccupancy.Summary`) — หน้าไม่ประกอบข้อความ/ยอดเอง ·
+  `tools/lodging_guest_split_sim.js` (a)–(f) + negative 3 แบบ
+- **ค้นหาหลายห้อง (ฝ่ายค้าน P1-3)**: `SearchAsync` เทียบเพดานและคิดราคาต่อห้องด้วย `Helpers/LodgingSearchGuests.PerRoom` (ceil ยอดรวม ÷ ห้อง) —
+  เดิมเทียบยอดรวมกับเพดานต่อห้อง ⇒ ผู้ใหญ่ 4 คน 2 ห้อง (ห้องละ 2) ถูกบอกว่าเกิน และราคาต่อห้องคิดแขกเกินจากยอดรวม
 - **seed ที่พักไม่สร้างแห่งที่สอง (W-05 · ข้อ 118)**: `LodgingSeeder.SeedForSiteAsync` → `Helpers/LodgingSeedDecision.Decide`: เว็บผูกแล้ว ⇒ ไม่ทำ ·
   บริษัทมีที่พักที่ยังไม่ผูกเว็บ ⇒ **ไม่สร้าง** + ข้อความเสนอผูกที่พักเดิม · ด่าน "ที่พักหลายแห่ง" `Helpers/LodgingPropertyQuota.BlockReasonAsync`
   (ตัวเดียวกับ `LodgingService.CreatePropertyAsync`) กัน ⇒ ไม่สร้าง + เหตุผล · ผูกที่พักเดิมกับเว็บ = `PUT /lodging/properties/{id}` ด้วย `siteId`
@@ -4550,3 +4561,5 @@ _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LO — §6.5 ล�
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — ด่าน isolation ของตัวประทับ audit + ReadCommitted/FOR UPDATE ในใบแจ้งหนี้จากภาระงาน (§6.1) · INSERT audit เป็นชุด — commit adf19a87)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LS — หน้าตั้งค่าที่พัก §6.5: เวลาไม่บังคับ/อ่านไม่ได้ปฏิเสธ · ช่วงกลับหัวปฏิเสธ · id อ้างอิงของบริษัท/ที่พัก · ค่าตั้งต้นจากเซิร์ฟเวอร์ · สถานะเปิดจองออนไลน์ · เตียงเสริม · เงื่อนไขนอกเวลาบน voucher — commit 7b83b697)_
+
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW แก้ผลฝ่ายค้าน P1-1..P2-5 — §6.5: คนเสริมแยกจากผู้ใหญ่ตาม LodgingOccupancy · guestSummary จากเซิร์ฟเวอร์ · quote ส่งทารก · ค้นหาหลายห้องเทียบต่อห้อง · ป้ายราคาเริ่มต้น/ความจุผ่าน engine · snapshot ก่อนรอบ 158 · IsLodgingSite นับที่พักที่ผูก · ล้าง auto-seed ไม่แตะบริการที่มีช่วงเวลา/คำแปล · บริการนัดหมายของเจ้าของแสดงก่อน — commit b4d4c37c)_

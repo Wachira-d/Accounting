@@ -46,6 +46,8 @@ public interface ILodgingService
 
     // ── หน้าเว็บสาธารณะ (scope ด้วย siteId — ไม่ต้องล็อกอิน) ──
     Task<LodgingPublicInfo?> GetPublicInfoAsync(Guid companyId, Guid siteId);
+    /// <summary>ป้ายการ์ดห้องหน้าเว็บสาธารณะ (ราคาเริ่มต้นผ่าน engine · ความจุข้อ 124) — รอบ 202 LW P2-1/P2-2</summary>
+    Task ApplyPublicRoomLabelsAsync(Guid companyId, LodgingPublicInfo info);
     Task<Guid?> ResolvePropertyIdForSiteAsync(Guid companyId, Guid siteId);
     /// <param name="isStaff">true = หน้าพนักงาน (ด่านวันที่/แผนราคาเหมือนเส้นสร้างจองของพนักงาน · รอบ 202 P2) · หน้าแขก = false เสมอ</param>
     Task<List<LodgingSearchResult>> SearchAsync(Guid companyId, Guid propertyId, LodgingSearchRequest request, bool isStaff = false);

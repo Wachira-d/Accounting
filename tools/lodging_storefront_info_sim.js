@@ -80,11 +80,17 @@ async function run(src) {
 
   // (b) การ์ดห้อง
   const html = S._lodgingRoomsHtml({ onlineBookingEnabled: true, roomTypes: [
-    { id: '1', name: '<script>alert(1)</script>', images: ['x" onerror="y'], sizeSqm: 25, bedType: '"><b>', maxOccupancy: 3, baseRate: 1234.5, description: '<i>d</i>' }] });
+    { id: '1', name: '<script>alert(1)</script>', images: ['x" onerror="y'], sizeSqm: 25, bedType: '"><b>', maxOccupancy: 9, baseRate: 9999,
+      fromRateLabel: 'เริ่มต้น ฿1,234.50/ห้อง/คืน · รวม VAT แล้ว<u>', capacityLabel: 'ผู้ใหญ่สูงสุด 2 คน/ห้อง · เด็ก/ทารกไม่นับความจุ', description: '<i>d</i>' }] });
   if (html.includes('<script>') || html.includes('"><b>') || html.includes('<i>d</i>') || html.includes('x" onerror'))
     fails.push('(b) การ์ดห้องต้องหนีอักขระ HTML ทุกช่อง');
   if (!html.includes('ราคาจริงตามวันที่เลือก')) fails.push('(b) ต้องบอกว่าราคาจริงตามวันที่เลือก');
-  if (!html.includes('1,234.50')) fails.push('(b) ราคาเริ่มต้นต้องเป็น baseRate ที่เซิร์ฟเวอร์ส่ง');
+  // P2-1/P2-2: ราคา/ความจุ = ป้ายที่เซิร์ฟเวอร์คำนวณ (fromRateLabel · capacityLabel) — หน้าไม่ใช้ baseRate/maxOccupancy ดิบ
+  if (!html.includes('เริ่มต้น ฿1,234.50/ห้อง/คืน · รวม VAT แล้ว&lt;u&gt;')) fails.push('(b) ราคาเริ่มต้นต้องเป็น fromRateLabel ของเซิร์ฟเวอร์ (หนีอักขระ)');
+  if (html.includes('9,999') || html.includes('9999')) fails.push('(b) ห้ามแสดง baseRate ดิบ (สูตรที่สองนอก engine)');
+  if (!html.includes('ผู้ใหญ่สูงสุด 2 คน/ห้อง') || html.includes('พักได้ 9')) fails.push('(b) ความจุต้องเป็น capacityLabel (ข้อ 124) ไม่ใช่ maxOccupancy');
+  const noRate = S._lodgingRoomsHtml({ roomTypes: [{ id: '2', name: 'X', baseRate: 500 }] });
+  if (noRate.includes('฿')) fails.push('(b) ไม่มี fromRateLabel (ปิดขายทั้งช่วง) ต้องไม่แต่งราคา');
   if (!html.includes('href="/site/b4/booking"')) fails.push('(b) ปุ่มต้องไปหน้าจอง');
   const closed = S._lodgingClosedHtml();
   if (!closed.includes('ยังไม่เปิดจองออนไลน์') || closed.includes('฿')) fails.push('(b) ไม่ผูกที่พัก ⇒ "ยังไม่เปิดจองออนไลน์" ไม่มีราคา');

@@ -183,6 +183,12 @@ public class LodgingRoomTypeDto
     public decimal? ExtraBedPrice { get; set; }
     /// <summary>response-only — ป้ายสรุปเตียงเสริมบนการ์ดห้อง (<c>LodgingSettingsRules.ExtraBedSummary</c>) · หน้าเว็บแสดงอย่างเดียว</summary>
     public string? ExtraBedSummary { get; set; }
+    /// <summary>response-only (หน้าเว็บสาธารณะ · รอบ 202 LW P2-1) — ราคาต่อคืนที่ถูกที่สุดใน 30 วันผ่าน engine (แผนตั้งต้น) · null = ปิดขายทั้งช่วง/ไม่ได้คำนวณ</summary>
+    public decimal? FromRate { get; set; }
+    /// <summary>response-only — "เริ่มต้น ฿X/ห้อง/คืน · รวม VAT แล้ว" (<c>LodgingPublicRoomLabels.FromRateLabel</c>) · หน้าเว็บแสดงอย่างเดียว</summary>
+    public string? FromRateLabel { get; set; }
+    /// <summary>response-only — ความจุตามข้อ 124 (ผู้ใหญ่สูงสุด · คนเสริม · เด็ก/ทารกไม่นับ) (<c>LodgingPublicRoomLabels.CapacityLabel</c>)</summary>
+    public string? CapacityLabel { get; set; }
     public int? MinNights { get; set; }
     public bool IncludesBreakfast { get; set; }
     public Guid? ProductId { get; set; }

@@ -253,14 +253,16 @@ public partial class LodgingService
         var nights = (int)(checkOut - checkIn).TotalDays;
         var now = DateTime.UtcNow;
         var results = new List<LodgingSearchResult>();
-        var adultsPerRoom = Math.Max(1, request.Adults);
+        // ฝ่ายค้าน P1-3 (รอบ 202 LW): ช่องค้นหาส่งยอดรวมทุกห้อง ⇒ ด่านความจุ/ราคาต่อห้องใช้ "ต่อห้อง" (ปัดขึ้น) — เดิมเทียบยอดรวมกับเพดานต่อห้อง
+        var adultsPerRoom = LodgingSearchGuests.PerRoom(request.Adults, request.Rooms, 1);
+        var childrenPerRoom = LodgingSearchGuests.PerRoom(request.Children, request.Rooms, 0);
         foreach (var rt in ctx.RoomTypes)
         {
             var total = ctx.UnitsByRoomType.GetValueOrDefault(rt.Id);
             var available = LodgingAvailability.AvailableRooms(checkIn, checkOut, total, ctx.Property.OverbookingAllowance, ctx.BookedFor(rt.Id), ctx.OverridesFor(rt.Id), now);
             var minNights = LodgingPricingEngine.EffectiveMinNights(checkIn, checkOut, ctx.Property.MinNights, rt.MinNights, ctx.SeasonsFor(rt.Id), ctx.OverridesFor(rt.Id));
             var plan = PickRatePlan(ctx, request.RatePlanId, rt, checkIn, nights, isStaff);
-            var quote = LodgingPricingEngine.QuoteRoom(checkIn, checkOut, Math.Max(1, request.Adults), Math.Max(0, request.Children), 0, ctx.InputFor(rt, plan));
+            var quote = LodgingPricingEngine.QuoteRoom(checkIn, checkOut, adultsPerRoom, childrenPerRoom, 0, ctx.InputFor(rt, plan));
             var r = new LodgingSearchResult
             {
                 RoomTypeId = rt.Id, Name = rt.Name, NameEn = rt.NameEn, Description = rt.Description,
@@ -276,7 +278,7 @@ public partial class LodgingService
             };
             foreach (var p in ctx.RatePlans.Where(p => (p.RoomTypeId == null || p.RoomTypeId == rt.Id) && PlanApplies(p, checkIn, nights)))
             {
-                var pq = LodgingPricingEngine.QuoteRoom(checkIn, checkOut, Math.Max(1, request.Adults), Math.Max(0, request.Children), 0, ctx.InputFor(rt, p));
+                var pq = LodgingPricingEngine.QuoteRoom(checkIn, checkOut, adultsPerRoom, childrenPerRoom, 0, ctx.InputFor(rt, p));
                 var pol = PolicyFor(ctx, p);
                 r.RatePlans.Add(new LodgingRatePlanQuote(p.Id, p.Name, p.Code, pq.Subtotal, rt.IncludesBreakfast || p.IncludesBreakfast, p.IsRefundable, p.DepositPercent, pol?.Name));
             }

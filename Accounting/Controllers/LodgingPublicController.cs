@@ -38,6 +38,8 @@ public class LodgingPublicController : ControllerBase
     {
         var info = await _svc.GetPublicInfoAsync(companyId, siteId);
         if (info == null) return NotFound(new ApiResponse<LodgingPublicInfo>(false, null, "เว็บไซต์นี้ไม่มีที่พักเปิดให้จอง"));
+        // รอบ 202 LW (P2-1/P2-2): ราคาเริ่มต้น/ความจุบนการ์ดห้อง — เซิร์ฟเวอร์คำนวณผ่าน engine · หน้าเว็บแสดงอย่างเดียว
+        await _svc.ApplyPublicRoomLabelsAsync(companyId, info);
         return Ok(new ApiResponse<LodgingPublicInfo>(true, info));
     }
 
