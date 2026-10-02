@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **438 ไฟล์ · 4,218 `[Fact]` + 667 `[Theory]` (2,976 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **443 ไฟล์ · 4,256 `[Fact]` + 671 `[Theory]` (2,993 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -2910,6 +2910,13 @@
 | LDG-S-01 | สร้างเว็บ template โรงแรม → redirect `lodging-settings.html?siteId=…&welcome=1` → `/booking` บนเว็บ: ค้นหา → เลือกห้อง+แผนราคา+บริการเสริม → quote ตรงกับ engine → จอง → หน้า `/reservation/{token}` → อัปโหลดสลิป → front desk เห็นในแท็บ "มีสลิปรอตรวจ" → ยืนยัน → เช็คอิน → folio → เช็คเอาต์ → เอกสารเปิดจาก `documents.html?id=` | ⏳ Playwright |
 | LDG-S-02 | เว็บที่ **ไม่มี** ที่พัก: `/booking` ยังเป็นหน้า CMS + slot booking เดิม (probe `/lodging/info` 404 → fall through) | ⏳ |
 | LDG-S-03 | สิทธิ์: สมาชิกไม่มี `Lodging.Manage` → 403 ทุก endpoint front desk · ไม่มี `Lodging.Settings` → 403 ตั้งค่า แต่ GET อ่านได้ · TenantGuard: companyId อื่น → 403 | ⏳ |
+| LDG-202-01 | **รอบ 202 ทีม LO (O-P0-1)** ห้องสุดท้าย: 6 คำขอพร้อมกัน (คนละ DbContext) ⇒ ได้ใบเดียว · ทิศตรงข้าม 2 ห้อง 2 คำขอ ⇒ ได้ครบ | ✅ `Db/LodgingDoubleBookingDbTests` (Category=Db · job db-test) |
+| LDG-202-02 | กติกากันห้องตัวเดียว: Pending ส่งสลิป/มัดจำ/เงินออนไลน์ค้าง ⇒ ยังกันและไม่ถูกยกเลิก · hold หมดเปล่า ⇒ ปล่อย · "ไม่ถูกยกเลิก ⇔ ยังกันห้อง" ทุกชุดข้อเท็จจริง · แขกเช็คอินค้างหลังวันออกกันห้องคืนนี้ · ถือห้องระหว่างจ่ายถึงวันหมดอายุ+15 นาที | ✅ `LodgingHoldRuleTests` |
+| LDG-202-03 | night audit ไม่ประทับสถานะ (O-P0-2 · ข้อ 119): จัดชนิดค้าง · ติดธงครั้งเดียวหลังระยะผ่อน · แถวรุ่นเก่า (CheckedOut ไม่มีใบ + หมายเหตุ job เดิม / NoShow เหตุผลระบบ + ค่าปรับ 0) เปิดทางปิดได้ครั้งเดียว · ทิศตรงข้าม (ออกบิลแล้ว · โหมดไม่ออกเอกสาร · คิดแล้ว) ไม่เปิด | ✅ `LodgingOverdueRuleTests` · checker `terminal_status_writer_check` (เฝ้า CheckedOut/NoShow) · `required_call_site_check` (RunOnce ห้ามเขียนสถานะ) |
+| LDG-202-04 | แผนราคาของแขกนอกเงื่อนไข ⇒ ปฏิเสธ · พนักงานผ่าน · โค้ดส่วนลดไม่ว่าง ⇒ ปฏิเสธ · รอชำระ ≤ 3 ต่อเบอร์/อีเมล (เบอร์ต่างรูปแบบนับเป็นคนเดียว) · คีย์เพดาน IP ไม่เก็บ IP ดิบ · เลื่อนวันจับคู่บรรทัดด้วยกุญแจ · ค่าปรับไม่เกินมัดจำ (ข้อ 126) | ✅ `LodgingBookingGuardsTests` |
+| LDG-202-05 | ข้อ 123/124: คนเสริมเกิน/ห้องไม่รับ ⇒ ปฏิเสธ · เด็กไม่นับความจุ · รวมผู้เข้าพัก = ผู้ใหญ่+เด็ก+ทารก+คนเสริม · ราคาคนเสริมไม่ซ้อนกับแขกเกินมาตรฐาน | ✅ `LodgingOccupancyTests` |
+| LDG-202-06 | เช็คอินก่อนวันจอง 1 วัน (ข้อ 125): คืนนั้นว่าง ⇒ CheckInDate −1 · Nights +1 · ยอด + ราคาคืนนั้น (คืนเดิมไม่เปลี่ยน) · ไม่ว่าง ⇒ `LODGING-EARLY-CHECKIN-FULL` | ⏳ Testcontainers (ด่านจุดเรียกล็อกด้วย required_call_site) |
+| LDG-202-07 | เงินออนไลน์เข้าแต่ยืนยันไม่ได้ ⇒ ธงบนการจอง + event รายการชำระ + หน้าแขก "ได้รับเงินแล้ว" (ไม่โชว์ยอดจ่ายซ้ำ) + อีเมลที่พัก · ตัวกรอง payproblem | ⏳ Testcontainers (ด่านจุดเรียกล็อกด้วย required_call_site) |
 
 ### License ส่วนเสริม + โควตาเอกสาร (LIC-*) — LODGING_LICENSING_PLAN §3-§6, §11-§12
 

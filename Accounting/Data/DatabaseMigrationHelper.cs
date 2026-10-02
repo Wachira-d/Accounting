@@ -6978,6 +6978,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundPaidBy" text NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundReference" text NULL;""",
+            // รอบ 202 ทีม LO — night audit ไม่ประทับสถานะปลายทางแล้ว: ติดธง "ค้างปิด" ครั้งเดียว (O-P0-2) · เงินออนไลน์เข้าแต่ยืนยันไม่ได้ (O-P1-4)
+            // แถวที่ job รุ่นเดิมประทับ CheckedOut/NoShow ไปแล้ว **ไม่ย้ายสถานะกลับ** (ไม่เดาว่าแขกออกจริงเมื่อไร) — เปิดทางปิดผ่านเส้นปกติแทน (LodgingOverdueRule)
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "OverdueFlaggedAt" timestamptz NULL;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemAt" timestamptz NULL;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemNote" text NULL;""",
             // ข้อมูลเดิม: โค้ดก่อนรอบ 193 ลง JE คืนเงิน + ใบลดหนี้ + หัก PaidAmount **ตอนยกเลิก** โดยไม่มีหลักฐานว่าโอนคืนจริง ⇒
             // ติดป้าย legacy ใน RefundPaidBy **อย่างเดียว** — ห้ามประทับ RefundPaidAmount (= "คืนแล้ว" สถานะปลายทางที่ระบบแต่งเอง ·
             // ฝ่ายค้าน C10 · DECISION_DOCTRINE R1) ⇒ หน้าจอแสดง "ไม่มีข้อมูลการโอนคืน" (LodgingRefundState.Unknown) และห้ามกดคืนซ้ำ

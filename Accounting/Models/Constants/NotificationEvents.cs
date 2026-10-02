@@ -75,6 +75,11 @@ public static class NotificationEvents
     public const string SubscriptionExpired         = "subscription.expired";
     public const string SubscriptionLimitReached    = "subscription.limit_reached";
 
+    // ===== ที่พัก =====
+    /// <summary>รอบ 202 ทีม LO (คำตัดสินข้อ 127): เงินออนไลน์เข้า/แขกส่งสลิปแล้ว แต่ระบบยืนยันห้องไม่ได้ (ห้องเต็ม/hold หมด) —
+    /// ระบบไม่คืนเงินเอง ต้องมีคนตัดสิน (ติดธงบนการจองด้วย · ตัวกรอง "เงินเข้าแต่ยืนยันไม่ได้" ในหน้าที่พัก)</summary>
+    public const string LodgingPaymentUnconfirmed = "lodging.payment_unconfirmed";
+
     // ===== CMS =====
     public const string SitePublishSucceeded = "site.publish_succeeded";
     public const string SitePublishFailed    = "site.publish_failed";
@@ -113,6 +118,7 @@ public static class NotificationEvents
         ("Approval", ApprovalRequired, "มีรายการรอการอนุมัติ"),
         ("Approval", ApprovalGranted, "อนุมัติคำขอแล้ว"),
         ("Approval", ApprovalRejected, "ปฏิเสธคำขอ"),
+        ("Lodging",  LodgingPaymentUnconfirmed, "ที่พัก: เงินเข้า/ส่งสลิปแล้วแต่ยืนยันห้องไม่ได้ (ต้องตัดสิน)"),
         ("CMS",      SitePublishSucceeded, "เผยแพร่เว็บไซต์สำเร็จ"),
         ("CMS",      SitePublishFailed,    "เผยแพร่เว็บไซต์ล้มเหลว"),
     };

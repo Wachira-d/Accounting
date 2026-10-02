@@ -8,21 +8,20 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Services.Background;
 
 /// <summary>
-/// **Night audit ของที่พัก** — ปิดการเข้าพักที่เลยวันเช็คเอาต์แล้วยังค้าง
-/// (LODGING_LICENSING_PLAN.md §13.2)
+/// **Night audit ของที่พัก** — หาการจองที่เลยวันเช็คเอาต์แล้วยังค้าง แล้ว<b>ติดธง "ค้างปิด"</b> (LODGING_LICENSING_PLAN.md §13.2)
 ///
-/// ทำไมต้องมี: มิเตอร์ของโมดูลที่พักคือ "การเข้าพักที่ปิดสถานะ" ⇒ ถ้าไม่มีอะไร
-/// ปิดให้ ผู้ใช้ที่ไม่อยากถูกนับก็แค่**ไม่กดเช็คเอาต์** แล้วใช้ระบบฟรีตลอดไป
-/// (ห้องยังถูกกันในปฏิทินด้วย ซึ่งผิดกับความจริงหน้างานอยู่แล้ว) — งานนี้ทำให้
-/// มิเตอร์เดินตามความจริง โดย**ไม่บล็อกอะไรเลย**: แค่เปลี่ยนสถานะ + ติดหมายเหตุ
-/// ว่ายังไม่ได้ออกบิล แล้วให้ front desk ตามออกเอกสารย้อนหลัง (ซึ่งออกได้เสมอ
-/// ตามกฎ "ห้ามบล็อกเอกสารที่กฎหมายบังคับ")
-///
-/// เกณฑ์: `CheckOutDate + GraceDays` ผ่านไปแล้วและสถานะยังเป็น CheckedIn/Confirmed
-///   • CheckedIn → CheckedOut (แขกออกไปแล้วแน่ ๆ) + งานแม่บ้าน + ปลดห้อง
-///   • Confirmed ที่ไม่เคยเช็คอิน → NoShow (ตามนโยบาย no-show ของที่พัก)
-/// ทั้งสองกรณีนับมิเตอร์ 1 หน่วย และ**ไม่แตะเงิน/เอกสาร** — การคิดค่าปรับ/คืนเงิน
-/// ต้องมีคนตัดสิน ไม่ใช่ job (บทเรียน "ค่าที่แต่งขึ้นอันตรายกว่าการไม่ตอบ")
+/// <para><b>รอบ 202 ทีม LO (O-P0-2 · คำตัดสินข้อ 119 · R1)</b>: รุ่นเดิมประทับ <c>CheckedOut</c>/<c>NoShow</c> เอง ⇒ การจองหลุดจากเส้น
+/// เช็คเอาต์/ยกเลิกของโมดูล (ด่านสถานะปฏิเสธ) ⇒ ออกใบเช็คเอาต์ไม่ได้ · มัดจำค้างเป็นหนี้สินตลอดไป · ค่าปรับ no-show ไม่เคยถูกคิด —
+/// "สถานะปลายทางที่ระบบประทับเองโดยไม่มีของจริงยืนยัน" · รุ่นนี้ <b>ไม่เปลี่ยนสถานะ ไม่แตะห้อง/เงิน/เอกสาร</b>:</para>
+/// <list type="bullet">
+///   <item>ติดธง <c>OverdueFlaggedAt</c> + หมายเหตุบอกทางไปต่อ <b>ครั้งเดียว</b>ต่อใบ (ตัวตัดสิน <c>Helpers/LodgingOverdueRule</c>)</item>
+///   <item>CheckedIn ที่ค้าง = ห้องยังถูกกัน (ตัวนับห้องว่างอ่าน <c>LodgingHoldRule.EffectiveCheckOut</c>) และสถานะแม่บ้านคง "มีแขก" ⇒
+///     พนักงานเห็นป้าย "ค้างปิด" ในรายการ แล้วกด "เช็คเอาต์ + ออกบิล" ตามปกติ</item>
+///   <item>Confirmed/Pending ที่ไม่เคยเช็คอิน ⇒ พนักงานกด "No-show" (คิดค่าปรับ/ค้างคืนตามนโยบาย) หรือยกเลิก/เลื่อนวัน</item>
+///   <item>มิเตอร์ <c>lodging.stay</c> ยังนับเมื่อติดธง (เหตุผลเดิม: ไม่กดเช็คเอาต์ต้องไม่ทำให้ใช้ฟรี) — idempotent ผ่าน MeteredPeriod + IdempotencyKey</item>
+///   <item>ผลรอบ (ติดธงใหม่ · ค้างทั้งหมด) บันทึกลงสถานะงาน (<c>IJobRunRecorder</c>)</item>
+/// </list>
+/// <para>แถวที่รุ่นเดิมประทับไปแล้วไม่ถูกย้ายกลับ — ดูตัวกรอง "ปิดโดยระบบรุ่นเก่า" + ปุ่มออกใบย้อนหลัง/คิดค่าปรับในหน้าการจอง</para>
 /// </summary>
 public class LodgingNightAuditJob : BackgroundService
 {
@@ -72,106 +71,86 @@ public class LodgingNightAuditJob : BackgroundService
         var recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
 
         var startedAt = DateTime.UtcNow;
-        var cutoff = DateTime.UtcNow.AddHours(7).Date.AddDays(-GraceDays);   // ปฏิทินไทย
+        var todayThai = DateTime.UtcNow.AddHours(7).Date;   // ปฏิทินไทย
+        var flagCutoff = todayThai.AddDays(-LodgingOverdueRule.FlagGraceDays);
 
+        // ค้างทั้งหมด (ทุกบริษัท) — ตัวเลขบนสถานะงาน · สถานะยังเปิดอยู่ ⇒ แถวไม่หายจากชุดนี้จนพนักงานปิด
+        var outstanding = await db.LodgingReservations.AsNoTracking()
+            .CountAsync(r => !r.IsDeleted && r.CheckOutDate < flagCutoff
+                && (r.Status == LodgingReservationStatus.CheckedIn || r.Status == LodgingReservationStatus.Confirmed
+                    || r.Status == LodgingReservationStatus.Pending), ct);
+
+        // ติดธงเฉพาะใบที่ยังไม่เคยติด (OverdueFlaggedAt == null) — ไม่ต้องโหลด 500 ใบเดิมซ้ำทุกรอบ
         var stale = await db.LodgingReservations
-            .Include(r => r.Property)
-            .Include(r => r.Rooms).ThenInclude(x => x.Unit)
-            .Where(r => !r.IsDeleted
-                     && r.CheckOutDate < cutoff
+            .Where(r => !r.IsDeleted && r.OverdueFlaggedAt == null
+                     && r.CheckOutDate < flagCutoff
                      && (r.Status == LodgingReservationStatus.CheckedIn
-                         || r.Status == LodgingReservationStatus.Confirmed))
+                         || r.Status == LodgingReservationStatus.Confirmed
+                         || r.Status == LodgingReservationStatus.Pending))
+            .OrderBy(r => r.CheckOutDate)
             .Take(500)   // กันงานเดียวกินทั้งฐานเมื่อเปิดใช้ครั้งแรก
             .ToListAsync(ct);
-        if (stale.Count == 0)
-        {
-            if (recorder != null)
-                await recorder.RecordAsync("LodgingNightAudit", true, "ไม่มีการจองค้าง", 0, startedAt);
-            return;
-        }
 
         var now = DateTime.UtcNow;
-        var closed = 0; var noShow = 0;
+        var stays = 0; var arrivals = 0; var meterFailed = 0;
         foreach (var r in stale)
         {
             if (ct.IsCancellationRequested) break;
-            try
-            {
-                var wasCheckedIn = r.Status == LodgingReservationStatus.CheckedIn;
-                if (wasCheckedIn)
-                {
-                    r.Status = LodgingReservationStatus.CheckedOut;
-                    r.CheckedOutAt = now;
-                    closed++;
-                    Append(r, $"ระบบปิดการเข้าพักอัตโนมัติ (เลยวันเช็คเอาต์ {r.CheckOutDate:dd/MM/yyyy} เกิน {GraceDays} วัน)"
-                        + (r.FinalDocumentId == null ? " — **ยังไม่ได้ออกบิล** กรุณาออกเอกสารย้อนหลังที่หน้ารายละเอียดการจอง" : ""));
-                    foreach (var room in r.Rooms.Where(x => x.Unit != null))
-                    {
-                        room.Unit!.HousekeepingStatus = LodgingHousekeepingStatus.VacantDirty;
-                        if (r.Property.AutoCreateHousekeepingTaskOnCheckout)
-                            db.LodgingHousekeepingTasks.Add(new LodgingHousekeepingTask
-                            {
-                                CompanyId = r.CompanyId, PropertyId = r.PropertyId, UnitId = room.Unit.Id, ReservationId = r.Id,
-                                TaskType = LodgingHousekeepingTaskType.CheckoutClean, Priority = LodgingTaskPriority.Normal,
-                                Status = LodgingTaskStatus.Pending, DueAt = now,
-                                EstimatedMinutes = r.Property.HousekeepingMinutesPerRoom, CreatedBy = "system:night-audit",
-                            });
-                    }
-                }
-                else
-                {
-                    // ยืนยันแล้วแต่ไม่เคยเช็คอิน จนเลยวันออก = ไม่มา
-                    r.Status = LodgingReservationStatus.NoShow;
-                    r.CancelledAt = now;
-                    r.CancellationReason = "ระบบบันทึกอัตโนมัติ: ไม่มาเข้าพักและไม่มีการเช็คอิน";
-                    noShow++;
-                    Append(r, "ระบบบันทึกเป็นไม่มาเข้าพัก (no-show) อัตโนมัติ — "
-                        + "ค่าปรับ/การคืนเงินตามนโยบายต้องทำด้วยมือที่หน้ารายละเอียดการจอง");
-                    foreach (var room in r.Rooms) room.UnitId = null;
-                }
+            var kind = LodgingOverdueRule.Classify(r.Status, r.CheckOutDate, todayThai);
+            if (!LodgingOverdueRule.ShouldFlag(kind, r.CheckOutDate, todayThai, r.OverdueFlaggedAt)) continue;
 
-                // มิเตอร์: 1 การเข้าพัก = 1 หน่วย (กันซ้ำด้วย MeteredPeriod + IdempotencyKey)
-                if (r.MeteredPeriod == null)
+            // ไม่แตะ Status · ไม่แตะห้อง/งานแม่บ้าน · ไม่แตะเงิน/เอกสาร — แค่ติดธง + หมายเหตุครั้งเดียว
+            r.OverdueFlaggedAt = now;
+            Append(r, LodgingOverdueRule.FlagNote(kind, r.CheckOutDate));
+            if (kind == LodgingOverdueKind.StayNotCheckedOut) stays++; else arrivals++;
+
+            // มิเตอร์: 1 การเข้าพัก = 1 หน่วย (กันซ้ำด้วย MeteredPeriod + IdempotencyKey) · มิเตอร์ล้มไม่ทำให้ธงหาย (นับเป็นตัวเลขบนสถานะงาน)
+            if (r.MeteredPeriod == null && metering != null)
+            {
+                try
                 {
+                    await metering.RecordAsync(new UsageRecordRequest(
+                        CompanyId: r.CompanyId,
+                        FeatureCode: Models.Constants.AddOnCodes.LodgingStay,
+                        Quantity: 1,
+                        IdempotencyKey: $"stay:{r.Id:N}",
+                        RefEntityType: "LodgingReservation",
+                        RefEntityId: r.Id), ct);
                     r.MeteredPeriod = AddOnBilling.PeriodOf(now);
-                    if (metering != null)
-                        await metering.RecordAsync(new UsageRecordRequest(
-                            CompanyId: r.CompanyId,
-                            FeatureCode: Models.Constants.AddOnCodes.LodgingStay,
-                            Quantity: 1,
-                            IdempotencyKey: $"stay:{r.Id:N}",
-                            RefEntityType: "LodgingReservation",
-                            RefEntityId: r.Id), ct);
                 }
-
-                db.AuditLogs.Add(new AuditLog
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    CompanyId = r.CompanyId,
-                    Action = AuditAction.Update,
-                    EntityType = "LodgingReservation",
-                    EntityId = r.Id.ToString(),
-                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
-                    {
-                        action = "NightAudit",
-                        reservationNumber = r.ReservationNumber,
-                        from = wasCheckedIn ? "CheckedIn" : "Confirmed",
-                        to = r.Status.ToString(),
-                        billed = r.FinalDocumentId != null,
-                    }),
-                });
+                    meterFailed++;
+                    _logger.LogWarning(ex, "night audit: บันทึกมิเตอร์การเข้าพัก {No} ไม่สำเร็จ — ธงค้างปิดยังติด · นับให้ตอนพนักงานปิดการเข้าพัก (MeterStayAsync)", r.ReservationNumber);
+                }
             }
-            catch (Exception ex)
+
+            db.AddChainedAuditLog(new AuditLog
             {
-                _logger.LogWarning(ex, "night audit การจอง {No} ไม่สำเร็จ", r.ReservationNumber);
-            }
+                CompanyId = r.CompanyId,
+                Action = AuditAction.Update,
+                EntityType = "LodgingReservation",
+                EntityId = r.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "NightAuditFlagOverdue",
+                    reservationNumber = r.ReservationNumber,
+                    status = r.Status.ToString(),   // ไม่เปลี่ยน — บันทึกไว้ให้เห็นว่า job ไม่ได้ปิดเอง
+                    kind = kind.ToString(),
+                    billed = r.FinalDocumentId != null,
+                }),
+            });
         }
 
         await db.SaveChangesAsync(ct);
-        if (closed > 0 || noShow > 0)
-            _logger.LogInformation("Night audit: ปิดการเข้าพักค้าง {Closed} · บันทึก no-show {NoShow}", closed, noShow);
+        if (stays > 0 || arrivals > 0)
+            _logger.LogInformation("Night audit: ติดธงค้างปิดใหม่ — ค้างเช็คเอาต์ {Stays} · ไม่มีการเช็คอิน {Arrivals} · ค้างทั้งหมด {Outstanding}",
+                stays, arrivals, outstanding);
         if (recorder != null)
-            await recorder.RecordAsync("LodgingNightAudit", true,
-                $"ปิดการเข้าพักค้าง {closed} · no-show {noShow}", closed + noShow, startedAt);
+            await recorder.RecordAsync("LodgingNightAudit", meterFailed == 0,
+                $"ติดธงค้างปิดใหม่ {stays + arrivals} (ค้างเช็คเอาต์ {stays} · ไม่มีการเช็คอิน {arrivals}) · ค้างปิดทั้งหมด {outstanding}"
+                + (meterFailed > 0 ? $" · มิเตอร์ล้ม {meterFailed}" : "") + " — ระบบไม่ปิดสถานะเอง (พนักงานปิดที่หน้าที่พัก ตัวกรอง “ค้างปิด”)",
+                stays + arrivals, startedAt);
     }
 
     private static void Append(LodgingReservation r, string note)

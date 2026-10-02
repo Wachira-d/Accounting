@@ -196,12 +196,12 @@ public class LodgingController : ControllerBase
     [HttpPost("properties/{propertyId:guid}/search")]
     [RequirePermission(PermissionKeys.LodgingManage)]
     public async Task<ActionResult<ApiResponse<List<LodgingSearchResult>>>> Search(Guid companyId, Guid propertyId, [FromBody] LodgingSearchRequest req)
-        => Wrap(await _svc.SearchAsync(companyId, propertyId, req));
+        => Wrap(await _svc.SearchAsync(companyId, propertyId, req, isStaff: true));
 
     [HttpPost("properties/{propertyId:guid}/quote")]
     [RequirePermission(PermissionKeys.LodgingManage)]
     public async Task<ActionResult<ApiResponse<LodgingQuoteResponse>>> Quote(Guid companyId, Guid propertyId, [FromBody] LodgingQuoteRequest req)
-        => Wrap(await _svc.QuoteAsync(companyId, propertyId, req));
+        => Wrap(await _svc.QuoteAsync(companyId, propertyId, req, isStaff: true));   // รอบ 202 P2: ด่านเดียวกับเส้นสร้างจองของพนักงาน
 
     [HttpPost("properties/{propertyId:guid}/reservations")]
     [RequirePermission(PermissionKeys.LodgingManage)]

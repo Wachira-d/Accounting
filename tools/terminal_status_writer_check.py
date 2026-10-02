@@ -93,6 +93,14 @@ WATCH = [
         "why": "สถานะ 'ลงบัญชีแล้ว/เงินเข้าธนาคารแล้ว' ของรอบโอน ตั้งได้เฉพาะผู้ลงบัญชีที่ลงครบทุกชิ้น + พบรายการเดินบัญชีจริง",
     },
     {
+        # รอบ 202 ทีม LO (O-P0-2 · คำตัดสินข้อ 119): night audit เคยประทับ CheckedOut/NoShow เอง ⇒ ออกใบเช็คเอาต์/ริบมัดจำผ่านโมดูลไม่ได้อีก ·
+        # เจ้าของกติกาคือเส้นเช็คเอาต์/ยกเลิกของโมดูลที่พัก (ออกเอกสาร · ใช้/ริบมัดจำ · ค้างคืน) ไฟล์เดียว — job/ทางเข้าอื่นติดธงได้อย่างเดียว
+        "label": "LodgingReservationStatus.CheckedOut/NoShow",
+        "regex": r"\.\s*Status\s*=\s*[^;=]*?LodgingReservationStatus\s*\.\s*(?:CheckedOut|NoShow)\b",
+        "owners": ["Services/Implementations/Lodging/LodgingService.Lifecycle.cs"],
+        "why": "ปิดการเข้าพัก/no-show ต้องเดินเส้นเช็คเอาต์/ยกเลิกของโมดูล (ออกบิล · ใช้/ริบมัดจำ) — job ติดธง 'ค้างปิด' ได้อย่างเดียว",
+    },
+    {
         "label": "StockDeducted = true",
         "regex": r"\.\s*StockDeducted\s*=\s*true\b",
         "owners": [],  # ไม่มีใครควรตั้งธงนี้โดยไม่ผ่าน IStockLedger — ทุกจุดต้องอยู่ใน baseline หรือถูกแก้
@@ -214,12 +222,27 @@ def self_test():
         open(os.path.join(tmp, "Services", "Settlement", "SettlementPostingService.cs"), "w", encoding="utf-8").write(
             "class P { void M(Batch b) { b.Status = SettlementBatchStatus.Posted; } }\n")
 
+        # รอบ 202 ทีม LO: night audit ประทับ CheckedOut/NoShow (รวมรูป ternary) ต้องถูกจับ · เส้นเช็คเอาต์/ยกเลิกของโมดูลต้องไม่ถูกฟ้อง
+        os.makedirs(os.path.join(tmp, "Services", "Background"), exist_ok=True)
+        open(os.path.join(tmp, "Services", "Background", "LodgingNightAuditJob.cs"), "w", encoding="utf-8").write(
+            "class J { void M(Res r, bool b) { r.Status = LodgingReservationStatus.CheckedOut; "
+            "r.Status = b ? LodgingReservationStatus.Cancelled : LodgingReservationStatus.NoShow; } }\n")
+        os.makedirs(os.path.join(tmp, "Services", "Implementations", "Lodging"), exist_ok=True)
+        open(os.path.join(tmp, "Services", "Implementations", "Lodging", "LodgingService.Lifecycle.cs"), "w", encoding="utf-8").write(
+            "class L { void M(Res r, bool n) { r.Status = n ? LodgingReservationStatus.NoShow : LodgingReservationStatus.Cancelled; "
+            "r.Status = LodgingReservationStatus.CheckedOut; bool x = r.Status == LodgingReservationStatus.NoShow; } }\n")
+
         saved, SRC = SRC, tmp
         try:
             keys = {k for k, _, _ in scan()}
         finally:
             SRC = saved
 
+        night = [k for k in keys if "LodgingNightAuditJob.cs" in k]
+        if not night:
+            print("❌ self-test: ไม่จับ night audit ที่ประทับ CheckedOut/NoShow เอง (R1 รอบ 202)"); ok = False
+        if any("LodgingService.Lifecycle.cs" in k for k in keys):
+            print("❌ self-test: ฟ้องเส้นเช็คเอาต์/ยกเลิกของโมดูลที่พักเอง (false positive)"); ok = False
         if not any("SettlementImportService.cs" in k for k in keys):
             print("❌ self-test: ไม่จับการประทับสถานะรอบโอน settlement นอกผู้ลงบัญชี"); ok = False
         if any("SettlementPostingService.cs" in k for k in keys):

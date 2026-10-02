@@ -390,8 +390,12 @@ public record LodgingQuoteRequest(
     DateTime CheckIn, DateTime CheckOut,
     List<LodgingQuoteRoomRequest> Rooms,
     List<LodgingQuoteExtraRequest>? Extras = null,
-    Guid? RatePlanId = null, string? PromoCode = null);
+    Guid? RatePlanId = null, string? PromoCode = null,
+    // รอบ 202 (คำตัดสินข้อ 123): ทารกระดับการจอง (ชื่อเดียวกับคำขอจอง) — ไม่นับความจุ/ไม่คิดเงิน · ใช้แสดงจำนวนผู้เข้าพักรวม
+    int Infants = 0);
 
+/// <summary>ห้อง 1 ห้องในคำขอราคา/จอง — <c>Adults</c> = ผู้ใหญ่บนเตียงปกติ · <c>Children</c> = เด็ก · <c>ExtraBeds</c> = <b>คนเสริม</b>
+/// (คนละคนกับ Adults · ≤ MaxExtraBeds ของประเภทห้อง · คิด ExtraBedPrice/คน/คืน) — ตัวตัดสิน <c>Helpers/LodgingOccupancy</c> (คำตัดสินข้อ 123/124)</summary>
 public record LodgingQuoteRoomRequest(Guid RoomTypeId, int Adults = 2, int Children = 0, int ExtraBeds = 0);
 public record LodgingQuoteExtraRequest(Guid ExtraId, int Quantity = 1);
 
@@ -418,6 +422,16 @@ public class LodgingQuoteResponse
     public string? CancellationPolicyName { get; set; }
     public List<LodgingCancellationRuleDto> CancellationRules { get; set; } = new();
     public bool NonRefundable { get; set; }
+    // ── รอบ 202 (คำตัดสินข้อ 123): จำนวนผู้เข้าพักจากเซิร์ฟเวอร์ (LodgingOccupancy.Totals) — หน้าเว็บแสดงค่านี้ ห้ามบวกเอง ──
+    public int Adults { get; set; }
+    public int Children { get; set; }
+    public int Infants { get; set; }
+    /// <summary>คนเสริม (ผลรวม extraBeds ทุกห้อง)</summary>
+    public int ExtraGuests { get; set; }
+    /// <summary>ผู้ใหญ่ + เด็ก + ทารก + คนเสริม</summary>
+    public int TotalGuests { get; set; }
+    /// <summary>"รวม N คน (ผู้ใหญ่ a · เด็ก c · ทารก i · คนเสริม e)"</summary>
+    public string GuestSummary { get; set; } = "";
     /// <summary>ข้อผิดพลาด (ห้องไม่ว่าง/คืนไม่ถึงขั้นต่ำ) — null = จองได้</summary>
     public List<string> Errors { get; set; } = new();
 }
@@ -490,6 +504,11 @@ public class LodgingReservationResponse
     public int Adults { get; set; }
     public int Children { get; set; }
     public int Infants { get; set; }
+    /// <summary>รอบ 202 (คำตัดสินข้อ 123): คนเสริม (ผลรวม extraBeds ทุกห้อง · คนละคนกับผู้ใหญ่)</summary>
+    public int ExtraGuests { get; set; }
+    /// <summary>ผู้ใหญ่ + เด็ก + ทารก + คนเสริม (LodgingOccupancy.Totals) — หน้าเว็บ/voucher/อีเมลแสดงค่านี้</summary>
+    public int TotalGuests { get; set; }
+    public string GuestSummary { get; set; } = "";
     public string? ArrivalTime { get; set; }
     public string? SpecialRequests { get; set; }
     public Guid? ContactId { get; set; }
@@ -578,6 +597,17 @@ public class LodgingReservationResponse
     /// <summary>รอบ 201 ทีม IN (A-IN5): เปิดปุ่ม “ออกใบเช็คเอาต์ใหม่” ได้ไหม — เซิร์ฟเวอร์ตัดสิน (Helpers/LodgingCheckoutReissue.CanOffer) ·
     /// เฉพาะหน้าพนักงาน (หน้าแขกเป็น false เสมอ)</summary>
     public bool CanReissueFinalDocument { get; set; }
+    /// <summary>รอบ 202 (O-P0-2 · คำตัดสินข้อ 119): ป้าย "ค้างปิด" — เลยวันเช็คเอาต์แล้วยังไม่ถูกปิดผ่านเส้นปกติ (null = ไม่ค้าง) ·
+    /// ตัวตัดสิน <c>Helpers/LodgingOverdueRule.Classify</c> · หน้าพนักงานเท่านั้น</summary>
+    public string? OverdueLabel { get; set; }
+    /// <summary>แถวที่ night audit รุ่นก่อนประทับ "เช็คเอาต์แล้ว" เองโดยไม่ออกบิล ⇒ เปิดปุ่ม “ออกใบเช็คเอาต์ย้อนหลัง” (เซิร์ฟเวอร์ตัดสิน)</summary>
+    public bool CanLegacyCheckOut { get; set; }
+    /// <summary>แถวที่ night audit รุ่นก่อนประทับ no-show เองโดยไม่คิดค่าปรับ ⇒ เปิดปุ่ม “คิดค่าปรับ no-show” (เซิร์ฟเวอร์ตัดสิน)</summary>
+    public bool CanSettleLegacyNoShow { get; set; }
+    /// <summary>รอบ 202 (O-P1-4): เงินออนไลน์เข้าแล้วแต่ยืนยันการจองอัตโนมัติไม่ได้ — เวลาที่พบ (null = ไม่มีปัญหา) · หน้าพนักงานเท่านั้น</summary>
+    public DateTime? PaymentProblemAt { get; set; }
+    /// <summary>เหตุผล + เลขรายการชำระ (ข้อความภายใน)</summary>
+    public string? PaymentProblemNote { get; set; }
     /// <summary>ยอดที่ gateway จะเก็บจริงเมื่อแขกกดจ่ายออนไลน์ (null = ไม่มีอะไรให้จ่าย) — ตัวเดียวกับ PublicPaymentResolver</summary>
     public decimal? OnlinePayableAmount { get; set; }
     /// <summary>ข้อความกล่องจ่ายออนไลน์ตามค่าตั้ง AutoConfirmOnDeposit (C9)</summary>
@@ -665,6 +695,12 @@ public class LodgingReservationListItem
     public bool HasSlip { get; set; }
     /// <summary>ยอดที่ยังต้องคืนแขก (ยกเลิกแล้วยังไม่ยืนยันว่าโอนคืน) — 0 = ไม่มี</summary>
     public decimal RefundPending { get; set; }
+    /// <summary>รอบ 202: ป้าย "ค้างปิด" (null = ไม่ค้าง) — ตัวตัดสิน <c>LodgingOverdueRule</c></summary>
+    public string? OverdueLabel { get; set; }
+    /// <summary>รอบ 202: เงินออนไลน์เข้าแต่ยืนยันไม่ได้</summary>
+    public bool HasPaymentProblem { get; set; }
+    /// <summary>รอบ 202: แถวที่ night audit รุ่นก่อนปิดเอง ยังต้องออกบิลย้อนหลัง/คิดค่าปรับ</summary>
+    public bool NeedsLegacyClose { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 

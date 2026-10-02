@@ -12,8 +12,8 @@
 ## ข้อที่ยืนยันแล้ว (ทีม · ระดับ · หลักฐาน)
 | ID | ระดับ | เรื่อง | หลักฐาน |
 |---|---|---|---|
-| O-P0-1 | P0 | ตรวจห้องว่าง/ราคานอกล็อก ⇒ จองห้องสุดท้ายซ้อน (ล็อกคุมแค่เลขจอง) · Confirm/Reschedule/Assign ไม่ล็อก | `LodgingService.Reservations.cs:329-337` vs `:386-389` ✅ |
-| O-P0-2 | P0 | night audit ประทับ CheckedOut/NoShow เอง (R1) ⇒ ออกใบเช็คเอาต์/ริบมัดจำผ่านโมดูลไม่ได้อีก | `LodgingNightAuditJob.cs:105-128` ✅ |
+| ✅ fe15692d O-P0-1 | P0 | ตรวจห้องว่าง/ราคานอกล็อก ⇒ จองห้องสุดท้ายซ้อน (ล็อกคุมแค่เลขจอง) · Confirm/Reschedule/Assign ไม่ล็อก | `LodgingService.Reservations.cs:329-337` vs `:386-389` ✅ |
+| ✅ fe15692d O-P0-2 | P0 | night audit ประทับ CheckedOut/NoShow เอง (R1) ⇒ ออกใบเช็คเอาต์/ริบมัดจำผ่านโมดูลไม่ได้อีก | `LodgingNightAuditJob.cs:105-128` ✅ |
 | W-01 | P0 | ที่พักไม่ผูกเว็บไม่มีป้ายเตือน/ไม่มีทางผูกจากหน้าเว็บ | `lodging-settings.html:69` · `Reservations.cs:142` |
 | W-02 | P0 | ราคา/ห้องบนหน้าแรกเป็น seed ตายตัว ไม่มีบล็อกข้อมูลสด | `CmsSiteTemplateSeeder.cs:2556-2643` |
 | S-P1-1 | P1 | เวลาเข้า-ออก [Required] โดยปริยาย ไม่มี `*` ⇒ ขอบแดง | `LodgingDtos.cs:42-43` · `lodging-settings.html:89-90` ✅ |
@@ -23,10 +23,10 @@
 | W-03 | P1 | GET สาธารณะสร้างบริการนัดหมาย ฿0 ลง DB + `catch {}` | `CmsBookingService.cs:100-161` ✅ |
 | W-04 | P1 | `/lodging/info` 5xx ตกเป็นการ์ดนัดหมายเงียบ | `storefront.html:1511` ✅ |
 | W-05 | P1 | "เติมเทมเพลต" สร้างที่พักแห่งที่สองยึดเว็บ · ไม่มีทาง "ผูกที่พักที่มีอยู่" | `LodgingSeeder.cs:19` |
-| O-P1-3 | P1 | แผนราคาที่แขกส่ง id มาไม่ผ่าน `PlanApplies` | `Reservations.cs:110-111` |
-| O-P1-4 | P1 | hold หมดระหว่างจ่าย ⇒ เงินเข้าแต่ยืนยันไม่ได้ เห็นแค่ใน event | `PublicPaymentController.cs:144+` · `Reservations.cs:503-517` |
-| O-P1-5 | P1 | ส่งสลิปแล้ว hold +24 ชม. แล้วเลิกกันห้องเงียบ | `Lifecycle.cs:127` · `LodgingPricingEngine.cs:321` |
-| O-P1-6 | P1 | POST จองสาธารณะไม่มีเพดานต่อผู้จอง ⇒ กันห้องทั้งที่พักได้ | `LodgingPublicController.cs:58-69` |
+| ✅ fe15692d O-P1-3 | P1 | แผนราคาที่แขกส่ง id มาไม่ผ่าน `PlanApplies` | `Reservations.cs:110-111` |
+| ✅ fe15692d O-P1-4 | P1 | hold หมดระหว่างจ่าย ⇒ เงินเข้าแต่ยืนยันไม่ได้ เห็นแค่ใน event | `PublicPaymentController.cs:144+` · `Reservations.cs:503-517` |
+| ✅ fe15692d O-P1-5 | P1 | ส่งสลิปแล้ว hold +24 ชม. แล้วเลิกกันห้องเงียบ | `Lifecycle.cs:127` · `LodgingPricingEngine.cs:321` |
+| ✅ fe15692d O-P1-6 | P1 | POST จองสาธารณะไม่มีเพดานต่อผู้จอง ⇒ กันห้องทั้งที่พักได้ | `LodgingPublicController.cs:58-69` |
 | P2 | P2 | early/late hours + อายุทารกไม่มีผู้อ่าน · overbooking บวกทุกประเภท · quote พนักงาน isStaff ไม่ตรง · เช็คอินล่วงหน้า 1 วัน · ลด capacity ไม่ตรวจการจอง · เลื่อนวันจับคู่บริการเสริมด้วย index · PromoCode = 0 เสมอ · ขอบแดงค้าง · แท็บห้องก่อนมีที่พัก · ID นโยบาย/เว็บไม่ตรวจเจ้าของ · วันที่ไม่ส่งต่อไป /booking · seed ล้มเงียบ | รายงานทีม S/W/O |
 
 ## doc ล้าสมัยที่พบ

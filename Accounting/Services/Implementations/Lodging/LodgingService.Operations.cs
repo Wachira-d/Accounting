@@ -77,8 +77,10 @@ public partial class LodgingService
                       + "และรับรู้ให้เมื่ออนุมัติ) · มัดจำแบบภาษีรอเรียกเก็บ/เต็มยอด ใช้ปุ่ม “หักมัดจำ” หลังอนุมัติ";
         }
 
+        var guestTotals = LodgingOccupancy.Totals(r.Adults, r.Children, r.Infants, r.Rooms.Sum(x => x.ExtraBeds));
         var res = new LodgingReservationResponse
         {
+            ExtraGuests = guestTotals.ExtraGuests, TotalGuests = guestTotals.Total, GuestSummary = LodgingOccupancy.Summary(guestTotals),
             Id = r.Id, PropertyId = r.PropertyId, PropertyName = prop.Name, ReservationNumber = r.ReservationNumber,
             PublicToken = includeToken ? r.PublicToken : null, Status = r.Status, Source = r.Source, SourceReference = r.SourceReference,
             CheckInDate = r.CheckInDate, CheckOutDate = r.CheckOutDate, Nights = r.Nights, Adults = r.Adults, Children = r.Children, Infants = r.Infants,
@@ -118,8 +120,17 @@ public partial class LodgingService
             StatusLabel = LodgingAmounts.StatusLabel(r.Status, r.DepositRequired, r.DepositPaid),
             FinalDocumentNote = includeInternal ? finalNote : null,
             CanReissueFinalDocument = includeInternal && canReissueFinal,
-            OnlinePayableAmount = LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount),
-            OnlinePaymentNote = LodgingAmounts.OnlinePaymentNote(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount, prop.AutoConfirmOnDeposit),
+            // รอบ 202 (O-P0-2 · O-P1-4): ค้างปิด/แถวรุ่นเก่า/เงินเข้าแต่ยืนยันไม่ได้ — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแค่แสดง
+            OverdueLabel = includeInternal ? LodgingOverdueRule.Label(LodgingOverdueRule.Classify(r.Status, r.CheckOutDate, DateTime.UtcNow.AddHours(7).Date)) : null,
+            CanLegacyCheckOut = includeInternal && LodgingOverdueRule.IsLegacyAutoCheckout(r.Status, r.FinalDocumentId, r.InternalNotes, prop.AccountingMode == LodgingAccountingMode.Off),
+            CanSettleLegacyNoShow = includeInternal && LodgingOverdueRule.IsLegacyAutoNoShow(r.Status, r.CancellationReason, r.CancellationFee, r.RefundAmount),
+            PaymentProblemAt = includeInternal ? r.PaymentProblemAt : null,
+            PaymentProblemNote = includeInternal ? r.PaymentProblemNote : null,
+            // เงินเข้าแล้วแต่ยืนยันไม่ได้ ⇒ ห้ามโชว์ปุ่ม/ยอดให้แขกจ่ายซ้ำ — บอกตรง ๆ ว่าได้รับเงินแล้วและที่พักจะติดต่อกลับ (ล้มดังที่ "คำตอบผู้เรียก")
+            OnlinePayableAmount = r.PaymentProblemAt != null ? null
+                : LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount),
+            OnlinePaymentNote = r.PaymentProblemAt != null ? PaymentProblemGuestNote
+                : LodgingAmounts.OnlinePaymentNote(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount, prop.AutoConfirmOnDeposit),
             InternalNotes = includeInternal ? r.InternalNotes : null, CreatedAt = r.CreatedAt,
             ConfirmationMessage = prop.ConfirmationMessage, HouseRules = prop.HouseRules,
             CheckInTime = Time(prop.CheckInTime), CheckOutTime = Time(prop.CheckOutTime), PropertyPhone = prop.Phone, PropertyLineId = prop.LineId,
@@ -260,14 +271,19 @@ public partial class LodgingService
         var units = await _db.LodgingUnits.AsNoTracking().Include(u => u.RoomType)
             .Where(u => u.CompanyId == companyId && u.RoomType.PropertyId == propertyId && u.IsActive)
             .OrderBy(u => u.RoomType.SortOrder).ThenBy(u => u.SortOrder).ThenBy(u => u.Number).ToListAsync();
-        var active = await _db.LodgingReservations.AsNoTracking().Include(r => r.Rooms).ThenInclude(x => x.Unit)
+        // รอบ 202 (คำตัดสินข้อ 119): night audit ไม่ปิดการเข้าพักเองแล้ว ⇒ แขกที่เช็คอินค้างหลังวันออกยัง "อยู่ในห้อง" ตามระบบ —
+        // วันออกที่ใช้นับมาจาก LodgingHoldRule.EffectiveCheckOut ตัวเดียวกับตัวนับห้องว่าง · และขึ้นใน "ออกวันนี้" (ต้องกดเช็คเอาต์)
+        var todayThai = DateTime.UtcNow.AddHours(7).Date;
+        var active = (await _db.LodgingReservations.AsNoTracking().Include(r => r.Rooms).ThenInclude(x => x.Unit)
             .Where(r => r.CompanyId == companyId && r.PropertyId == propertyId
                 && (r.Status == LodgingReservationStatus.Pending || r.Status == LodgingReservationStatus.Confirmed || r.Status == LodgingReservationStatus.CheckedIn)
-                && r.CheckInDate <= day && r.CheckOutDate >= day)
-            .ToListAsync();
+                && r.CheckInDate <= day && (r.CheckOutDate >= day || r.Status == LodgingReservationStatus.CheckedIn))
+            .ToListAsync())
+            .Where(r => LodgingHoldRule.EffectiveCheckOut(r.Status, r.CheckOutDate, todayThai) >= day)
+            .ToList();
         var inHouse = active.Where(r => r.Status == LodgingReservationStatus.CheckedIn).ToList();
         var arrivals = active.Where(r => r.CheckInDate == day && r.Status != LodgingReservationStatus.CheckedIn).ToList();
-        var departures = inHouse.Where(r => r.CheckOutDate == day).ToList();
+        var departures = inHouse.Where(r => r.CheckOutDate <= day).ToList();
         var occupiedUnitIds = inHouse.SelectMany(r => r.Rooms).Where(x => x.UnitId != null).Select(x => x.UnitId!.Value).ToHashSet();
         var monthStart = new DateTime(day.Year, day.Month, 1);
         var revenue = await _db.LodgingReservations.AsNoTracking()
@@ -306,6 +322,11 @@ public partial class LodgingService
         };
     }
 
+    /// <summary>ข้อความถึงแขกเมื่อเงินออนไลน์เข้าแล้วแต่ยืนยันการจองอัตโนมัติไม่ได้ (O-P1-4 · คำตัดสินข้อ 127: ไม่คืนเงินอัตโนมัติ — ที่พักตัดสิน)</summary>
+    internal const string PaymentProblemGuestNote =
+        "ได้รับการชำระเงินของท่านแล้ว แต่ระบบยืนยันห้องอัตโนมัติไม่ได้ (ห้องในช่วงนี้อาจเต็ม) — ที่พักจะติดต่อกลับเพื่อจัดห้อง/เลื่อนวัน หรือคืนเงิน "
+        + "กรุณาอย่าชำระซ้ำ";
+
     private static LodgingReservationListItem ToListItem(LodgingReservation r) => new()
     {
         Id = r.Id, ReservationNumber = r.ReservationNumber, Status = r.Status, Source = r.Source, GuestName = r.GuestName, GuestPhone = r.GuestPhone,
@@ -313,6 +334,8 @@ public partial class LodgingService
         UnitNumbers = string.Join(", ", r.Rooms.Where(x => x.Unit != null).Select(x => x.Unit!.Number)),
         TotalAmount = r.TotalAmount, FolioTotal = r.FolioTotal, PaidAmount = r.PaidAmount, BalanceDue = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount),
         DepositRequired = r.DepositRequired, HoldExpiresAt = r.HoldExpiresAt, HasSlip = r.SlipUploadedAt != null, CreatedAt = r.CreatedAt,
+        OverdueLabel = LodgingOverdueRule.Label(LodgingOverdueRule.Classify(r.Status, r.CheckOutDate, DateTime.UtcNow.AddHours(7).Date)),
+        HasPaymentProblem = r.PaymentProblemAt != null,
     };
 
     public async Task<LodgingCalendar> GetCalendarAsync(Guid companyId, Guid propertyId, DateTime from, DateTime to)
@@ -436,7 +459,7 @@ public partial class LodgingService
             var enc = (string? s) => WebUtility.HtmlEncode(s ?? "");
             var summary = $@"<p><b>{enc(prop.Name)}</b><br>เลขที่จอง <b>{enc(r.ReservationNumber)}</b><br>
 เข้าพัก {r.CheckInDate:dd/MM/yyyy} (หลัง {Time(prop.CheckInTime)}) — ออก {r.CheckOutDate:dd/MM/yyyy} (ก่อน {Time(prop.CheckOutTime)}) · {r.Nights} คืน<br>
-ห้อง: {enc(RoomSummary(r))} · ผู้เข้าพัก {r.Adults} ผู้ใหญ่{(r.Children > 0 ? $" {r.Children} เด็ก" : "")}<br>
+ห้อง: {enc(RoomSummary(r))} · ผู้เข้าพัก {enc(LodgingOccupancy.Summary(LodgingOccupancy.Totals(r.Adults, r.Children, r.Infants, r.Rooms.Sum(x => x.ExtraBeds))))}<br>
 ยอดรวม {r.TotalAmount:N2} บาท · มัดจำ {r.DepositRequired:N2} บาท{(r.DepositPaid > 0 ? $" (รับแล้ว {r.DepositPaid:N2})" : "")}</p>"
                 + (link != null ? $@"<p><a href=""{enc(link)}"">ดูรายละเอียด / อัปโหลดสลิป / ยกเลิก</a></p>" : "");
 
@@ -461,6 +484,18 @@ public partial class LodgingService
                     $"สลิปไม่ผ่านการตรวจสอบ — การจอง {r.ReservationNumber}",
                     $"<p>เรียน คุณ{enc(r.GuestName)}<br>สลิปที่ท่านส่งมายังไม่ผ่านการตรวจสอบ</p>"
                     + $"<p><b>เหตุผล:</b> {why}</p>" + next + summary);
+            }
+            // รอบ 202 (O-P1-4 · คำตัดสินข้อ 127): เงินเข้า/ส่งสลิปแล้วแต่ยืนยันห้องไม่ได้ — เงินของแขกค้างอยู่กับที่พัก ⇒ แจ้งที่พักเสมอ
+            // (ไม่ขึ้นกับค่าตั้ง "แจ้งเมื่อมีการจอง" — ไม่ใช่ข่าวการจอง แต่เป็นงานที่ต้องตัดสิน) · หน้าแขกแสดงข้อความ "ได้รับเงินแล้ว" จาก MapAsync
+            if (evt == "payment-problem")
+            {
+                var to = (prop.NotifyEmails ?? prop.Email ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (to.Length == 0)
+                    _logger.LogWarning("การจอง {No}: เงินเข้าแต่ยืนยันไม่ได้ และที่พักไม่ได้ตั้งอีเมลแจ้งเตือน — เห็นได้ที่ตัวกรอง “เงินเข้าแต่ยืนยันไม่ได้” เท่านั้น", r.ReservationNumber);
+                var body = $"<p><b>เงินเข้าแล้ว (หรือแขกส่งสลิปแล้ว) แต่ระบบยืนยันห้องอัตโนมัติไม่ได้</b> — ระบบไม่คืนเงินเอง กรุณาติดต่อแขกเพื่อเลื่อนวัน/ย้ายห้อง แล้วกด “ยืนยัน” "
+                    + "หรือคืนเงินตามช่องทางที่รับมา</p>"
+                    + $"<p>{enc(r.PaymentProblemNote).Replace("\n", "<br>")}</p>{summary}<p>ติดต่อแขก: {enc(r.GuestPhone)} {enc(r.GuestEmail)}</p>";
+                foreach (var addr in to) await _email.SendAsync(addr, $"[ต้องตัดสิน] เงินเข้าแต่ยืนยันการจองไม่ได้ — {r.ReservationNumber}", body);
             }
             if (prop.NotifyOwnerOnBooking && evt is "created" or "slip")
             {

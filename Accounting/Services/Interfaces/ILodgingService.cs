@@ -45,8 +45,10 @@ public interface ILodgingService
     // ── หน้าเว็บสาธารณะ (scope ด้วย siteId — ไม่ต้องล็อกอิน) ──
     Task<LodgingPublicInfo?> GetPublicInfoAsync(Guid companyId, Guid siteId);
     Task<Guid?> ResolvePropertyIdForSiteAsync(Guid companyId, Guid siteId);
-    Task<List<LodgingSearchResult>> SearchAsync(Guid companyId, Guid propertyId, LodgingSearchRequest request);
-    Task<LodgingQuoteResponse> QuoteAsync(Guid companyId, Guid propertyId, LodgingQuoteRequest request);
+    /// <param name="isStaff">true = หน้าพนักงาน (ด่านวันที่/แผนราคาเหมือนเส้นสร้างจองของพนักงาน · รอบ 202 P2) · หน้าแขก = false เสมอ</param>
+    Task<List<LodgingSearchResult>> SearchAsync(Guid companyId, Guid propertyId, LodgingSearchRequest request, bool isStaff = false);
+    /// <param name="isStaff">ต้องตรงกับเส้นสร้างจองของผู้เรียก (รอบ 202 P2)</param>
+    Task<LodgingQuoteResponse> QuoteAsync(Guid companyId, Guid propertyId, LodgingQuoteRequest request, bool isStaff = false);
     Task<LodgingReservationResponse> CreateReservationAsync(Guid companyId, Guid propertyId, LodgingCreateReservationRequest request, LodgingReservationSource source, string actor, Guid? siteId = null);
     Task<LodgingReservationResponse?> GetReservationByTokenAsync(Guid companyId, Guid siteId, string token);
     Task<LodgingReservationResponse?> UploadSlipByTokenAsync(Guid companyId, Guid siteId, string token, IFormFile file, string? reference);
@@ -94,6 +96,12 @@ public interface ILodgingService
     /// <summary>ปิดเงินประกัน (รอบ 194 · spec S3): ตัดชำระใบเช็คเอาต์ที่คิด VAT → ริบเป็นค่าเสียหาย (ไม่มี VAT) → คืนส่วนที่เหลือ</summary>
     Task<LodgingReservationResponse> SettleSecurityDepositAsync(Guid companyId, Guid reservationId, LodgingSecurityDepositSettleRequest request, string userId);
     Task<LodgingReservationResponse> RescheduleAsync(Guid companyId, Guid reservationId, LodgingRescheduleRequest request, string userId);
+    /// <summary>รอบ 202 (O-P1-4): ถือห้องระหว่างแขกจ่ายออนไลน์ — ก่อนสร้างรายการชำระ (<paramref name="intentExpiresAt"/> null) และหลังสร้าง
+    /// (ถึงวันหมดอายุของรายการ) · hold หมดและห้องถูกจองไปแล้ว ⇒ โยน <c>LODGING-OVERSOLD</c> ก่อนแขกจ่าย</summary>
+    Task HoldForOnlinePaymentAsync(Guid companyId, Guid reservationId, DateTime? intentExpiresAt);
+    /// <summary>รอบ 202 (O-P1-4 · คำตัดสินข้อ 127): เงินเข้า/ส่งสลิปแล้วแต่ยืนยันการจองไม่ได้ ⇒ ธงบนการจอง + หมายเหตุ + audit + แจ้งที่พัก ·
+    /// ไม่คืนเงินอัตโนมัติ</summary>
+    Task FlagPaymentProblemAsync(Guid companyId, Guid reservationId, string reason, string source);
 
     // ── หลังบ้าน: แม่บ้าน / คำขอแขก ──
     Task<List<LodgingHousekeepingTaskDto>> GetTasksAsync(Guid companyId, Guid propertyId, string? status, DateTime? date);
