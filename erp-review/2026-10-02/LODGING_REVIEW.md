@@ -42,13 +42,13 @@ OTA merchant/agency + ฐาน VAT · ราคาเด็ก/ทารกน�
 ## ผลฝ่ายค้านบนงานทีม LO (fe15692d) — แก้แล้ว
 | ID | เรื่อง | สถานะ |
 |---|---|---|
-| P1-1 | เช็คอินก่อน 1 วันไม่ตรวจหมายเลขห้องที่จัดไว้ ⇒ ซ้อนแขกที่ยังพัก | ✅ <pending> `EnsureAssignedUnitsFreeAsync` |
-| P1-2 | night audit นับมิเตอร์ใบ Pending ไม่มีเงิน | ✅ <pending> `ShouldMeterOnFlag` |
-| P1-3 | ข้อ 127 ไม่ครบ: สลิปหลังยกเลิกอัตโนมัติ · ธงบนใบยกเลิกปิดไม่ได้ · ยืนยันภายหลังลงบัญชีผิด | ✅ <pending> `IsAutoExpiredHold` · `ResolvePaymentProblemAsync` · `ProblemIntentMoneyInAsync` |
-| P1-4 | ใบย้อนหลังในเดือนที่ยื่น ภ.พ.30 แล้วอนุมัติเงียบ | ✅ <pending> `BackfillVatAckProblem` + `AcknowledgeFiledVatPeriod` |
-| P2-1 | ยืนยันซ้อน ⇒ ใบมัดจำสองใบ/lost update | ✅ <pending> `WithReservationLockAsync(LodgingConfirm)` + เทสต์ DB |
-| P2-2 | สลิปไม่อ่านแถวใหม่ใต้ล็อก | ✅ <pending> |
-| P2-3 | แถวรุ่นเก่าเปิดกลับแล้วล้ม ค้างกันห้อง | ✅ <pending> `EffectiveCheckOut(checkedOutAt)` + `RestoreLegacyAutoCheckoutAsync` |
-| P2-4 | เลื่อนวันใบมีคนเสริมหลังปิดเตียงเสริม ถูกบล็อก | ✅ <pending> คำเตือน + ราคาเดิม (เส้นพนักงาน) |
-| P2-5 | เปิดเตียงเสริมแต่ราคาว่าง ⇒ ฟรี | ✅ <pending> `SellsExtraBeds` |
+| P1-1 | เช็คอินก่อน 1 วันไม่ตรวจหมายเลขห้องที่จัดไว้ ⇒ ซ้อนแขกที่ยังพัก | ✅ 8d7f0e74 `EnsureAssignedUnitsFreeAsync` |
+| P1-2 | night audit นับมิเตอร์ใบ Pending ไม่มีเงิน | ✅ 8d7f0e74 `ShouldMeterOnFlag` |
+| P1-3 | ข้อ 127 ไม่ครบ: สลิปหลังยกเลิกอัตโนมัติ · ธงบนใบยกเลิกปิดไม่ได้ · ยืนยันภายหลังลงบัญชีผิด | ✅ 8d7f0e74 `IsAutoExpiredHold` · `ResolvePaymentProblemAsync` · `ProblemIntentMoneyInAsync` |
+| P1-4 | ใบย้อนหลังในเดือนที่ยื่น ภ.พ.30 แล้วอนุมัติเงียบ | ✅ 8d7f0e74 `BackfillVatAckProblem` + `AcknowledgeFiledVatPeriod` |
+| P2-1 | ยืนยันซ้อน ⇒ ใบมัดจำสองใบ/lost update | ✅ 8d7f0e74 `WithReservationLockAsync(LodgingConfirm)` + เทสต์ DB |
+| P2-2 | สลิปไม่อ่านแถวใหม่ใต้ล็อก | ✅ 8d7f0e74 |
+| P2-3 | แถวรุ่นเก่าเปิดกลับแล้วล้ม ค้างกันห้อง | ✅ 8d7f0e74 `EffectiveCheckOut(checkedOutAt)` + `RestoreLegacyAutoCheckoutAsync` |
+| P2-4 | เลื่อนวันใบมีคนเสริมหลังปิดเตียงเสริม ถูกบล็อก | ✅ 8d7f0e74 คำเตือน + ราคาเดิม (เส้นพนักงาน) |
+| P2-5 | เปิดเตียงเสริมแต่ราคาว่าง ⇒ ฟรี | ✅ 8d7f0e74 `SellsExtraBeds` |
 
