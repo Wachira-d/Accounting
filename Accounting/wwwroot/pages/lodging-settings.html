@@ -425,9 +425,32 @@
         if (!this.propertyId || !p || !p.publicBookingStatus) { box.style.display = 'none'; box.innerHTML = ''; return; }
         const live = p.publicBookingStatus === 'Live';
         box.className = 'pubstatus ' + (live ? 'ok' : 'bad');
+        // ผูกด่วน: รายการเว็บที่ผูกได้มาจากเซิร์ฟเวอร์ (bindableSites — เว็บประเภทที่พักที่ไม่ผูกกับที่พักอื่น) หน้าไม่คัดเอง
+        const opts = Array.isArray(p.bindableSites) ? p.bindableSites : [];
+        let bind = '';
+        if (!live && opts.length) {
+          const one = opts.length === 1;
+          bind = `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">`
+            + (one ? `<input type="hidden" id="bindSiteSel" value="${esc(opts[0].siteId)}">`
+                   : `<select class="form-input" id="bindSiteSel" style="max-width:280px">${opts.map(o => `<option value="${esc(o.siteId)}">${esc(o.siteName)}</option>`).join('')}</select>`)
+            + `<button type="button" class="btn btn-primary btn-sm" onclick="Page.bindSite()">🔗 ผูกที่พักนี้กับเว็บ${one ? ` ${esc(opts[0].siteName)}` : 'ที่เลือก'}</button></div>`;
+        }
         box.innerHTML = `${live ? '🟢' : '🔴'} <b>${esc(p.publicBookingMessage || '')}</b>`
-          + (p.publicBookingFix ? `<div style="margin-top:4px">วิธีแก้: ${esc(p.publicBookingFix)}</div>` : '');
+          + (p.publicBookingFix ? `<div style="margin-top:4px">วิธีแก้: ${esc(p.publicBookingFix)}</div>` : '')
+          + bind;
         box.style.display = '';
+      },
+      // ผูกที่พักกับเว็บจากป้ายสถานะ — ด่านทั้งหมดอยู่ที่เซิร์ฟเวอร์ (BindSiteAsync) · ได้ DTO ใหม่กลับมาแสดงสถานะทันที
+      async bindSite() {
+        const siteId = document.getElementById('bindSiteSel')?.value;
+        if (!this.propertyId || !siteId) return;
+        try {
+          const res = await Layout.api().lodgingBindSite(this.propertyId, siteId);
+          Layout.toast(res.message || 'ผูกแล้ว');
+          this.prop = res.data;
+          const i = this.props.findIndex(x => x.id === this.propertyId); if (i >= 0) this.props[i] = res.data;
+          this.fillProp(this.prop);
+        } catch (e) { Layout.toast(e.message || 'ผูกไม่สำเร็จ', 'error'); }
       },
       // ═══ ประเภทเงินมัดจำของที่พัก (รอบ 194) — ตัวเลือก/ป้าย/ลักษณะ/คำเตือน มาจากเซิร์ฟเวอร์ทั้งหมด ═══
       // (DepositPolicyResolver.ResolveKind · F2 ข้อ 5) หน้านี้แค่เลือกว่าจะโชว์ข้อความไหน · ค่าว่าง = ตามค่าตั้งต้นบริษัท
@@ -506,7 +529,7 @@
         // ช่อง response-only + ค่าเดิมของที่พัก (รอบ 194: ตั้งผ่านประเภทเงินมัดจำแล้ว — ส่งกลับ = เซิร์ฟเวอร์ถือว่าเป็นหน้ารุ่นเก่า)
         delete d.roomDepositKindInfo; delete d.roomDepositKindInherited; delete d.depositKindOptions; delete d.depositVatExplanation;
         delete d.depositVatTreatment; delete d.depositOutputVatDeferred;
-        delete d.publicBookingStatus; delete d.publicBookingMessage; delete d.publicBookingFix;
+        delete d.publicBookingStatus; delete d.publicBookingMessage; delete d.publicBookingFix; delete d.bindableSites;
         if (!this.propertyId) d.id = null;
         return d;
       },

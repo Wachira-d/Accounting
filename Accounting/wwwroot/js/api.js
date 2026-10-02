@@ -909,6 +909,7 @@ const API = {
       lodgingProperties: () => API.get(`${base}/lodging/properties`),
       lodgingGetProperty: (pid) => API.get(`${base}/lodging/properties/${pid}`),
       lodgingPropertyDefaults: () => API.get(`${base}/lodging/properties/defaults`),
+      lodgingBindSite: (pid, siteId) => API.post(`${base}/lodging/properties/${pid}/bind-site`, { siteId }),
       lodgingCreateProperty: (d) => API.post(`${base}/lodging/properties`, d),
       lodgingUpdateProperty: (pid, d) => API.put(`${base}/lodging/properties/${pid}`, d),
       lodgingRoomTypes: (pid) => API.get(`${base}/lodging/properties/${pid}/room-types`),

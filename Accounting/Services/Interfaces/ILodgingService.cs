@@ -14,6 +14,8 @@ public interface ILodgingService
     Task<LodgingPropertyDto?> GetPropertyAsync(Guid companyId, Guid propertyId);
     /// <summary>ค่าตั้งต้นของฟอร์มที่พักใหม่ (จาก entity · ไม่บันทึก) — รอบ 202 ทีม LS S-P1-3</summary>
     Task<LodgingPropertyDto> GetPropertyDefaultsAsync(Guid companyId);
+    /// <summary>ผูกที่พักกับเว็บประเภทที่พักจากป้ายสถานะ (ธุรกรรมเดียว + audit) — รอบ 202 ทีม LS</summary>
+    Task<LodgingPropertyDto> BindSiteAsync(Guid companyId, Guid propertyId, Guid siteId, string userId);
     Task<LodgingPropertyDto> CreatePropertyAsync(Guid companyId, LodgingPropertyDto dto, string userId);
     Task<LodgingPropertyDto> UpdatePropertyAsync(Guid companyId, Guid propertyId, LodgingPropertyDto dto, string userId);
 

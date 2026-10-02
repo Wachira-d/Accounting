@@ -4492,6 +4492,19 @@ RULES += [
     dict(file="Services/Implementations/Lodging/LodgingService.Operations.cs", method="MapAsync",
          must=["LodgingStayConditions.Lines("],
          why=_LS_WHY + "คำตัดสินข้อ 121 early/late hours = เงื่อนไขบนหลักฐานการจอง (ผู้อ่านจริงของค่าตั้ง)"),
+    dict(file=LODGING, method="BindSiteAsync",
+         must=["BeginTransactionAsync(", "LodgingPublicReadiness.QuickBindRefusal(", "EnsurePropertyRefsBelongAsync(",
+               "EnsureSiteNotBoundElsewhereAsync(", "_db.AddChainedAuditLog(", "tx.CommitAsync(", "ToDtoAsync(",
+               "s.IndustryType == IndustryType.Hotel"],
+         must_re=[r"if\s*\(\s*refusal\s*!=\s*null\s*\)\s*throw\b"],
+         before=[("EnsureSiteNotBoundElsewhereAsync(", "_db.SaveChangesAsync("),
+                 ("LodgingPublicReadiness.QuickBindRefusal(", "_db.SaveChangesAsync("),
+                 ("_db.SaveChangesAsync(", "tx.CommitAsync(")],
+         forbid=["_db.AuditLogs.Add("],
+         why=_LS_WHY + "ผูกที่พักกับเว็บจากป้ายสถานะ: ด่านเดิม (tenant · ผูกซ้ำ) + เว็บที่พักเท่านั้น ใต้ธุรกรรมเดียว + audit chain"),
+    dict(file=LODGING, method="BindableSitesAsync",
+         must=["LodgingPublicReadiness.BindCandidates(", "s.CompanyId == companyId", "x.CompanyId == companyId"],
+         why=_LS_WHY + "ผู้สมัครผูกด่วนจากตัวคัดตัวเดียว (ไม่รวมเว็บที่ผูกกับที่พักอื่น · tenant)"),
 ]
 # ── จบบล็อกรอบ 202 ทีม LS ──
 
