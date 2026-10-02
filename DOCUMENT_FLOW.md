@@ -4548,7 +4548,7 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL หลัง�
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — ด่าน isolation ของตัวประทับ audit + ReadCommitted/FOR UPDATE ในใบแจ้งหนี้จากภาระงาน (§6.1) · INSERT audit เป็นชุด — commit adf19a87)_
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LS ต่อ — ผูกที่พักกับเว็บจากป้ายสถานะ §6.5 ⑩ — commit <pending>)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LS ต่อ — ผูกที่พักกับเว็บจากป้ายสถานะ §6.5 ⑩ — commit a5278d89)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LW — เว็บที่พัก (§6.5): บล็อก `LodgingRooms` ข้อมูลสด · migration บล็อกราคา seed ตรงทุกไบต์ + ล้างบริการ auto-seed · GET บริการจองอ่านอย่างเดียว · `/lodging/info` 404≠ขัดข้อง · ค่าค้นหาหน้าแรก→/booking · ผู้เข้าพักรายห้อง · seed ที่พักไม่สร้างแห่งที่สอง + ด่านที่พักหลายแห่งตัวเดียว · `SiteResponse.Warnings` — commit e26a6bb3)_
 

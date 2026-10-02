@@ -4399,4 +4399,4 @@ _รอบ 202 ทีม LS ต่อ (2026-10-02 · ต่อจากราย
 - `POST /lodging/properties/{id}/bind-site` (`Lodging.Settings` · `BindSiteAsync`): ธุรกรรมเดียว · `QuickBindRefusal` (ผูกอยู่แล้ว/เว็บไม่ใช่ที่พัก) + ด่านเดิม
   `EnsurePropertyRefsBelongAsync`/`EnsureSiteNotBoundElsewhereAsync` (ไม่เขียนซ้ำ) · audit chain · ตอบ DTO ใหม่ ⇒ ป้ายเปลี่ยนทันที
 - `required_call_site_check` self-test: เคสฝ่ายค้านตรวจกับ**ทุก**กติกาของเมธอดเดียวกันในไฟล์เดียวกัน (หลังรวม LS+LW `CreatePropertyAsync` มี 2 กติกา ⇒ เคส LW3 เดิมดูแค่กติกาแรกแล้วล้มผิด)
-- เทสต์ `LodgingSettingsRound202Tests` +4 (สองทิศ) · required_call_site +2 แถว — commit <pending>_
+- เทสต์ `LodgingSettingsRound202Tests` +4 (สองทิศ) · required_call_site +2 แถว — commit a5278d89_
