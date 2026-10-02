@@ -959,7 +959,16 @@ public record DocumentResponse(
     string? SettlementOrphanAckReason = null,
     /// <summary>PP36_REVIEW P0-2 — ผลของ "อนุมัติอัตโนมัติ" ตอนสร้าง (ใบสำคัญจ่ายเงินสด) ที่ไม่สำเร็จ: ข้อความไทยพร้อมเหตุผล + ทางไปต่อ
     /// (ตัวเดียวกับที่ต่อท้ายหมายเหตุภายในของเอกสาร · <c>Helpers/AutoApproveFailure</c>) · ไม่ persist — มีเฉพาะคำตอบของการสร้าง · null = ไม่ได้อนุมัติอัตโนมัติ/สำเร็จ</summary>
-    string? AutoApproveFailedReason = null);
+    string? AutoApproveFailedReason = null,
+    /// <summary>รอบ 203 ทีม F3 (T-3d/C-P2 · server computes) — สถานะ ภ.พ.36 ของใบ (ชื่อ enum <c>Pp36DocState</c>: NoJournal · AwaitingRemittance ·
+    /// RemittedAwaitingRecognition · RemittedNoInputVat · Recognized) จาก GL + รายการนำส่ง (<c>Helpers/Pp36Ledger</c>) · หน้าเว็บแสดงอย่างเดียว ·
+    /// null = ไม่ใช่ใบ ภ.พ.36 / เส้นทางที่ไม่คำนวณ</summary>
+    string? Pp36State = null,
+    /// <summary>ป้ายภาษาไทยของ <see cref="Pp36State"/> (<c>Pp36Lifecycle.Label</c> ตัวเดียว) เช่น "ภ.พ.36 · รับรู้แล้ว เคลม ภ.พ.30 เดือน 10/2568"</summary>
+    string? Pp36StatusLabel = null,
+    /// <summary>รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดจ่ายผู้รับเงิน (<c>ForeignServiceVat.PayeeAmount</c>) — ใบบริการต่างประเทศ = TotalAmount − VAT ประเมินเอง ·
+    /// ใบอื่น = TotalAmount · หน้าเว็บใช้เป็นตัวหารสัดส่วน WHT/ตรวจงวดแรก (server computes · page displays) · null = ผู้สร้าง DTO ไม่ได้คำนวณ (หน้าเว็บตกไป TotalAmount)</summary>
+    decimal? PayeeAmount = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>

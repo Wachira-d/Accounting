@@ -11,7 +11,7 @@ public record PendingRemittanceItem(
     DateTime PaperDueDate,        // กำหนดยื่นกระดาษ
     DateTime EFilingDueDate,      // กำหนดยื่น e-Filing (ขยายแล้ว)
     bool IsOverdue,               // วันนี้ > EFilingDueDate
-    decimal LateFeePreview,       // เงินเพิ่มประมาณการถ้าจ่ายวันนี้ (ปกส.; อื่น ๆ = 0)
+    decimal LateFeePreview,       // เงินเพิ่มประมาณการถ้าจ่ายวันนี้ (ปกส. §49 · ภ.พ.36 §89/1 ค่าแนะนำ; อื่น ๆ = 0)
     string PayableAccountCode,    // ผังหนี้ค้างจ่าย (21815/21914/21916/21917/21911)
     // breakdown (nullable — เฉพาะบางประเภท)
     decimal? EmployeeAmount,      // SSO: ส่วนลูกจ้าง
@@ -44,7 +44,20 @@ public record RemittanceDashboardResponse(
     List<PendingRemittanceItem> Pending,
     List<RemittanceHistoryItem> RecentHistory,
     // ภ.พ.36 นำส่งแล้ว รอรับรู้ภาษีซื้อ (ขั้นที่ 2) — ว่าง = ไม่มีค้าง
-    List<Pp36AwaitingRecognitionItem> Pp36AwaitingRecognition);
+    List<Pp36AwaitingRecognitionItem> Pp36AwaitingRecognition,
+    // รอบ 203 ทีม F3 (E-3/E-6): ภ.พ.36 ที่ "ต้องตรวจ" — ใบอนุมัติแล้วไม่มี JE (ไม่นับในยอด) · นำส่งเกิน · null = เส้นทางที่ไม่คำนวณ
+    List<Pp36IssueItem>? Pp36Issues = null);
+
+/// <summary>ภ.พ.36 ที่ต้องตรวจ (ไม่นับเงียบ) — Kind: "NoJournal" (ใบอนุมัติแล้วแต่ GL ไม่มี Cr 21912 · ซ่อม JE ก่อน) ·
+/// "OverRemitted" (ยอดนำส่งมากกว่าหนี้ 21912 ของใบที่ผูกอยู่)</summary>
+public record Pp36IssueItem(
+    string Kind,
+    int PeriodYear,
+    int PeriodMonth,
+    Guid? DocumentId,
+    string? DocumentNumber,
+    decimal Amount,
+    string Message);
 
 /// <summary>รายการที่นำส่งไปแล้ว.</summary>
 public record RemittanceHistoryItem(
@@ -90,9 +103,12 @@ public record Pp36RecognizedDocItem(
 public record Pp36AwaitingRecognitionItem(
     int PeriodYear,
     int PeriodMonth,
-    decimal VatAmount,        // ภาษีซื้อที่รอรับรู้ (Σ VatAmount ของใบที่ยังพัก 11640)
+    decimal VatAmount,        // ภาษีซื้อที่รอรับรู้ (บาท) = Σ ยอดที่พัก 11640 จริงใน GL ของใบที่อยู่ในรายการนำส่งนี้ (รอบ 203 — เดิม Σ VatAmount)
     int DocumentCount,
-    DateTime RemittedAt);
+    DateTime RemittedAt,
+    // รอบ 203 (คำตัดสินข้อ 133): งวดหนึ่งนำส่งได้หลายครั้ง ⇒ รับรู้ต่อ "รายการนำส่ง" · เลขใบเสร็จที่กรอกตอนนำส่ง (null = ยังไม่กรอก ต้องกรอกก่อนรับรู้)
+    Guid? RemittanceId = null,
+    string? RdReceiptNumber = null);
 
 /// <summary>คำขอนำส่ง 1 งวด — ระบบ post JE (Dr หนี้ค้างจ่าย / Cr ธนาคาร) +
 /// บันทึก StatutoryRemittance + (option) แนบใบเสร็จ.</summary>
@@ -105,8 +121,10 @@ public record RemitRequest(
     Guid? BankGlAccountId = null, // ChartOfAccount.Id (เงินสด/ธนาคาร/ช่องจ่ายอื่น) → ใช้เป็นผัง Cr ตรง ๆ
     string? FilingNumber = null,
     Guid? ReceiptAttachmentId = null,
-    bool IncludeLateFee = true,   // ปกส. — รวมเงินเพิ่ม §49
-    string? Note = null);
+    bool IncludeLateFee = true,   // ปกส. — รวมเงินเพิ่ม §49 · ภ.พ.36 — false = ไม่ลงเงินเพิ่ม §89/1
+    string? Note = null,
+    // รอบ 203 (คำตัดสินข้อ 135): เงินเพิ่ม §89/1 ของ ภ.พ.36 ที่ผู้ใช้แก้ — null = ใช้ค่าที่ระบบเสนอ (LateFeePreview ของงวด ตามวันที่จ่าย)
+    decimal? LateSurcharge = null);
 
 public record RemitResult(
     Guid Id,

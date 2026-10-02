@@ -921,7 +921,7 @@
                   ① ใบนี้ตั้ง VAT 7% แบบ self-assess (ผู้ขายต่างประเทศไม่คิด VAT มา — เราประเมินเองจากยอดจ่าย ระบบพัก Dr 11640 / Cr 21912)
                   → ② สิ้นเดือน <b>นำส่ง ภ.พ.36</b> ที่หน้า "นำส่งภาษี" (ภายในวันที่ 7/15 ของเดือนถัดไป)
                   → ③ ได้ใบเสร็จกรมสรรพากรแล้วกด <b>"รับรู้ภาษีซื้อ"</b> ที่หน้าเดียวกัน
-                  → ④ ภาษีซื้อเข้า <b>ภ.พ.30</b> ให้เคลมอัตโนมัติ (§77/2)
+                  → ④ ภาษีซื้อเข้า <b>ภ.พ.30</b> ให้เคลมอัตโนมัติ (§82/4)
                   <br><b>หัก ณ ที่จ่าย (ม.70):</b> กรอกในช่อง "หัก ณ ที่จ่าย %" ได้ตามปกติ — <b id="fForeignWhtRates">อัตรา ม.70 ตามตารางของระบบ</b> (มี DTA อาจลด/ยกเว้น — ต้องมีหนังสือรับรองถิ่นที่อยู่) · หนี้ WHT เข้า 21918 และนำส่งแบบ <b>ภ.ง.ด.54</b> แยกจาก ภงด.3/53 · ไม่หักก็ปล่อย 0 ได้ (เช่นค่าโฆษณา 40(8) ที่ไม่เข้า ม.70)
                   · จ่ายเงินตราต่างประเทศ: กรอกสกุลเงิน + อัตราแลกเปลี่ยนในหัวเอกสาร ฐานภาษีคิดจากยอดบาท
                 </div>
@@ -7554,16 +7554,20 @@
             // Undue input VAT (§82/3) — ภาษีซื้อ post เข้า 11640 รอใบกำกับครบ
             // ก่อนเคลม ภ.พ.30. โชว์เฉพาะตอนยังไม่ reclassify (becameClaimableAt ว่าง).
             let undueVatBadge = '';
-            if (d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt) {
-              undueVatBadge = d.isForeignService
-                ? `<span title="ภาษีซื้อ ภ.พ.36 (บริการต่างประเทศ §83/6) — พักไว้ที่ 11640 เคลมได้หลังนำส่ง ภ.พ.36 + ได้ใบเสร็จ RD (กด 'รับรู้ภาษีซื้อ' ที่หน้านำส่งภาษี)" style="margin-left:6px;padding:1px 6px;background:#2563eb;color:#fff;border-radius:6px;font-size:10px;font-weight:600">🌐 ภ.พ.36 รอรับรู้</span>`
-                : `<span title="ใบกำกับภาษีซื้อยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่ 11640 'ยังไม่ถึงกำหนด' ยังเคลม ภ.พ.30 ไม่ได้ กด 'ดู' เพื่อเติมข้อมูลใบกำกับ" style="margin-left:6px;padding:1px 6px;background:#7c3aed;color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ รอใบกำกับ</span>`;
+            if (d.pp36State) {
+              // ภ.พ.36 (รอบ 203 · T-3d/C-P2): สถานะคำนวณที่เซิร์ฟเวอร์จาก GL + รายการนำส่ง (Pp36Ledger) — หน้านี้แสดงอย่างเดียว ไม่ตัดสินจากธง
+              // (เดิมดูธงอย่างเดียว ⇒ ใบไม่มี JE ก็ขึ้น "รอรับรู้" · หลังรับรู้ไม่มีป้ายเลย)
+              const pp36Colors = { NoJournal: '#dc2626', AwaitingRemittance: '#d97706', RemittedAwaitingRecognition: '#2563eb',
+                RemittedNoInputVat: '#64748b', Recognized: '#15803d' };
+              undueVatBadge = `<span title="${Layout.esc(d.pp36StatusLabel || '')} — ดู/ทำต่อที่หน้านำส่งภาษี" style="margin-left:6px;padding:1px 6px;background:${pp36Colors[d.pp36State] || '#2563eb'};color:#fff;border-radius:6px;font-size:10px;font-weight:600">🌐 ${Layout.esc(d.pp36StatusLabel || 'ภ.พ.36')}</span>`;
+            } else if (d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.isForeignService) {
+              undueVatBadge = `<span title="ใบกำกับภาษีซื้อยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่ 11640 'ยังไม่ถึงกำหนด' ยังเคลม ภ.พ.30 ไม่ได้ กด 'ดู' เพื่อเติมข้อมูลใบกำกับ" style="margin-left:6px;padding:1px 6px;background:#7c3aed;color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ รอใบกำกับ</span>`;
             }
             // ป้ายเคลมภาษีซื้อ (ฝั่งซื้อ) — บอกใน list ทันทีว่าใบไหนเคลม ภ.พ.30 ได้
             // (รายละเอียด "เคลมแล้วงวดไหน" ดูใน modal ซึ่งอ่านจากรายงานจริง)
             let vatClaimBadge = '';
             if (['PaymentVoucher','Expense','PurchaseInvoice'].includes(d.documentType)
-                && !['Draft','Voided','Rejected'].includes(d.status) && !d.isForeignService) {
+                && !['Draft','WaitingApproval','Voided','Rejected'].includes(d.status) && !d.isForeignService) {
               const claimOff = d.inputVatAccountCodeOverride && !String(d.inputVatAccountCodeOverride).startsWith('116');
               if ((d.vatAmount||0) > 0 && d.inputVatExpiredAt) {
                 vatClaimBadge = `<span title="พ้นกรอบ 6 เดือน §82/3 — เคลม ภ.พ.30 ไม่ได้แล้ว (VAT ถูกล้างเป็นค่าใช้จ่าย)" style="margin-left:6px;padding:1px 6px;background:#fee2e2;color:#991b1b;border-radius:6px;font-size:10px;font-weight:600">✕ พ้น 6 เดือน</span>`;
@@ -10010,7 +10014,7 @@
             ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && d.isForeignService) ? `
               <div style="margin-bottom:12px;padding:12px 14px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px">
                 <div style="font-size:13px;font-weight:700;color:#1e40af;margin-bottom:4px">🌐 ภาษีซื้อ ภ.พ.36 (บริการต่างประเทศ §83/6) — พักไว้ที่ 11640</div>
-                <div style="font-size:12px;color:#1d4ed8;margin-bottom:10px">ผู้ขายต่างประเทศ<b>ไม่มีใบกำกับภาษีไทย</b> — เคลมภาษีซื้อผ่าน §86/4 <b>ไม่ได้</b>. ภาษีซื้อก้อนนี้เคลมได้เมื่อ (1) นำส่ง ภ.พ.36 (2) ได้รับใบเสร็จกรมสรรพากร → กด "🧾 รับรู้ภาษีซื้อ" ที่<b>หน้านำส่งภาษี</b> ระบบจะย้าย 11640 → 11610 + เข้า ภ.พ.30 ให้เอง (§77/2)</div>
+                <div style="font-size:12px;color:#1d4ed8;margin-bottom:10px">ผู้ขายต่างประเทศ<b>ไม่มีใบกำกับภาษีไทย</b> — เคลมภาษีซื้อผ่าน §86/4 <b>ไม่ได้</b>. ภาษีซื้อก้อนนี้เคลมได้เมื่อ (1) นำส่ง ภ.พ.36 (2) ได้รับใบเสร็จกรมสรรพากร → กด "🧾 รับรู้ภาษีซื้อ" ที่<b>หน้านำส่งภาษี</b> ระบบจะย้าย 11640 → 11610 + เข้า ภ.พ.30 ให้เอง (§82/4)</div>
                 <a class="btn btn-sm btn-primary" href="/pages/tax-remittance.html">ไปหน้านำส่งภาษี (ภ.พ.36) →</a>
               </div>` : ''}
             ${(d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && d.inputVatExpiredAt) ? `
@@ -10433,7 +10437,7 @@
               && Number(d.balanceDue || 0) > 0.01) {
             // Emoji prefix matches the next-step banner above so the user
             // can trace the guidance "→ ปุ่มไหน" without hunting.
-            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)}, '${d.documentType}', ${Number(d.vatAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
+            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.payeeAmount ?? d.totalAmount ?? 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)}, '${d.documentType}', ${Number(d.vatAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
           }
           // ── ออกใบกำกับภาษีเต็มรูป "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4) ──
           // ลูกค้ารับใบย่อไปแล้วกลับมาขอเต็มรูปเพื่อเคลมภาษีซื้อ (ใบย่อเคลมไม่ได้
@@ -12893,8 +12897,9 @@
           const d = this._currentDoc || {};
           Layout.closeModal('convertModal');
           Layout.toast('การรับเงิน + ออกใบเสร็จ ทำที่หน้านี้ — ผลลัพธ์เหมือนกันทุกทาง', 'info', 6000);
+          // ตัวหารสัดส่วน WHT = ยอดจ่ายผู้รับเงินที่เซิร์ฟเวอร์คำนวณ (ใบบริการต่างประเทศไม่รวม VAT ประเมินเอง · รอบ PP36 ทีม F2)
           this.recordPayment(d.id, Number(d.balanceDue ?? 0), Number(d.withholdingTaxAmount ?? 0),
-            Number(d.totalAmount ?? 0), d.currency || 'THB', Number(d.exchangeRate ?? 1),
+            Number(d.payeeAmount ?? d.totalAmount ?? 0), d.currency || 'THB', Number(d.exchangeRate ?? 1),
             d.documentType, Number(d.vatAmount ?? 0));
           return;
         }

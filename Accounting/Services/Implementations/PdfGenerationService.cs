@@ -478,6 +478,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             .OrderBy(j => j.EntryDate).ThenBy(j => j.EntryNumber)
             .Select(j => new { j.Id, j.EntryNumber, j.EntryDate })
             .ToListAsync();
+        // รอบ PP36 ทีม F2 (C-P2): JE ที่มีผลอยู่จริงแต่หักล้างกันเป็นศูนย์ทุกผัง (ลงแล้วกลับด้วยรายการปรับปรุง/ซ่อมผัง) —
+        // เดิมตกไปเส้น "ประมาณการ" แล้วขึ้น "อนุมัติแล้วแต่ยังไม่มีรายการในสมุดรายวัน" = เดาสาเหตุผิด (มี JE แต่ผลสุทธิเป็นศูนย์)
+        var liveJesNettedToZero = 0;
         if (jes.Count > 0)
         {
             var jeIds = jes.Select(j => j.Id).ToList();
@@ -497,6 +500,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 return new GlPostingSummary(label, head.EntryDate, netted,
                     netted.Sum(l => l.Debit), netted.Sum(l => l.Credit));
             }
+            liveJesNettedToZero = jes.Count;
         }
 
         // ยังไม่มี JE จริง (Draft/ยังไม่อนุมัติ) → "ประมาณการ" จากข้อมูลเอกสาร
@@ -514,7 +518,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 document.DocumentType, document.Status,
                 document.IsSettlementReceipt, document.ReplacesDocumentId.HasValue))
         {
-            var reason = await DescribeMissingJournalAsync(companyId, documentId);
+            var reason = await DescribeMissingJournalAsync(companyId, documentId, liveJesNettedToZero);
             projected = projected with { EntryNumber = reason };
         }
         return projected;
@@ -528,8 +532,17 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// ⚠️ ตัดกรองเองด้วย <c>CompanyId == companyId</c> เพราะ IgnoreQueryFilters
     /// ถอด tenant filter ออกไปพร้อมกัน (กฎ M)
     /// </summary>
-    private async Task<string> DescribeMissingJournalAsync(Guid companyId, Guid documentId)
+    /// <summary>รอบ PP36 ทีม F2 (C-P2): ป้ายของเอกสารที่ "มี JE มีผลอยู่ แต่หักล้างกันเป็นศูนย์ทุกผัง" — แยกจาก "ไม่มี JE" (pure · เทสต์ล็อกข้อความ)</summary>
+    internal static string NettedToZeroJournalReason(int liveJeCount)
+        => $"(⚠ มีรายการในสมุดรายวัน {liveJeCount} รายการที่มีผลอยู่ แต่หักล้างกันเป็นศูนย์ทุกผัง (เช่นลงแล้วกลับด้วยรายการปรับปรุง) "
+           + "— ไม่ใช่ \"ไม่มี JE\" · ตรวจที่หน้าสมุดรายวันว่าตั้งใจให้ผลสุทธิเป็นศูนย์หรือไม่ · ตัวเลขข้างล่างเป็นประมาณการ ไม่ใช่ยอดที่ลงบัญชีจริง)";
+
+    private async Task<string> DescribeMissingJournalAsync(Guid companyId, Guid documentId, int liveJesNettedToZero = 0)
     {
+        // C-P2: มี JE ที่มีผลอยู่ แต่ผลสุทธิทุกผังเป็นศูนย์ — ไม่ใช่ "ไม่มี JE" (ข้อความที่ระบุสาเหตุต้องตรวจสาเหตุนั้นจริง · F2 ข้อ 7)
+        if (liveJesNettedToZero > 0)
+            return NettedToZeroJournalReason(liveJesNettedToZero);
+
         var states = await _db.JournalEntries.AsNoTracking().IgnoreQueryFilters()
             .Where(j => j.CompanyId == companyId
                         && j.SourceDocumentId == documentId
@@ -742,10 +755,14 @@ public partial class PdfGenerationService : IPdfGenerationService
         // AutoPostToJournalAsync (defect class "สอง renderer ห้าม drift")
         if (doc.DocumentType == DocumentType.PaymentVoucher && doc.RelatedDocumentId.HasValue)
         {
-            var pvSrcType = await _db.Documents.AsNoTracking()
+            var pvSrcRow = await _db.Documents.AsNoTracking()
                 .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
-                .Select(d => (DocumentType?)d.DocumentType)
-                .FirstOrDefaultAsync() ?? DocumentType.PurchaseInvoice;
+                .Select(d => new { d.DocumentType, d.IsForeignService, d.VatAmount, d.RelatedDocumentId })
+                .FirstOrDefaultAsync();
+            var pvSrcType = pvSrcRow?.DocumentType ?? DocumentType.PurchaseInvoice;
+            // รอบ PP36 ทีม F2 (E-1b): mirror ของ AutoPost — ใบต้นทางเป็นเจ้าของ ภ.พ.36 ⇒ ตัดเจ้าหนี้/จ่ายเฉพาะยอดจ่ายผู้รับเงิน
+            var pvPayee = ForeignServiceVat.PayeeAmount(doc, pvSrcRow != null && ForeignServiceVat.OwnsPp36(
+                pvSrcRow.DocumentType, pvSrcRow.IsForeignService, pvSrcRow.VatAmount, pvSrcRow.RelatedDocumentId.HasValue));
             var whtBasisCash = (await _db.CompanySettings.AsNoTracking()
                 .Where(s => s.CompanyId == companyId)
                 .Select(s => (WhtRecognitionBasis?)s.WhtRecognitionBasis)
@@ -757,14 +774,14 @@ public partial class PdfGenerationService : IPdfGenerationService
             var payFrom = await MoneyAccountAsync();
             var pvLines = new List<GlPostingLine>
             {
-                new GlPostingLine(ap.Code, ap.Name, doc.TotalAmount + pvWht, 0m),
+                new GlPostingLine(ap.Code, ap.Name, pvPayee + pvWht, 0m),
             };
             if (pvWht > 0)
             {
                 var w = await WhtPayableAsync();
                 pvLines.Add(new GlPostingLine(w.Code, w.Name, 0m, pvWht));
             }
-            pvLines.Add(new GlPostingLine(payFrom.Code, payFrom.Name, 0m, doc.TotalAmount));
+            pvLines.Add(new GlPostingLine(payFrom.Code, payFrom.Name, 0m, pvPayee));
 
             var pvCons = ConsolidateGlLines(pvLines);
             return new GlPostingSummary("(ประมาณการ — ก่อนอนุมัติ)", doc.DocumentDate,
@@ -832,7 +849,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // และเครดิตเจ้าหนี้/ธนาคารด้วยยอดรวม VAT ⇒ ดูเหมือนจ่ายผู้ขายเกิน 7%
         if (pp36 > 0)
         {
-            var pp36Acc = await ByCode(ForeignServiceVat.Pp36PayableCode, "ภาษีขาย ภ.พ.36");
+            var pp36Acc = await ByCode(ForeignServiceVat.Pp36PayableCode, "ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36");
             lines.Add(new GlPostingLine(pp36Acc.Code, pp36Acc.Name, 0m, pp36));
         }
 
@@ -1174,6 +1191,26 @@ public partial class PdfGenerationService : IPdfGenerationService
             return Convert.FromBase64String(b64);
         }
         catch { return null; }
+    }
+
+    /// <summary>แถวยอดท้ายเอกสารที่ขึ้นกับ §83/6 — <c>Grand</c> = ยอดแถวสุดท้าย + จำนวนเงินตัวอักษร ·
+    /// <c>VatLabel</c>/<c>NetLabel</c> = ป้ายแถว VAT/แถวสุดท้าย (จาก <see cref="Pdf.DocumentLabels"/> เท่านั้น)</summary>
+    internal readonly record struct DocumentPrintTotals(decimal Grand, bool SelfAssessedVat, string VatLabel, string NetLabel);
+
+    /// <summary>
+    /// **ตัวตัดสินแถวยอดท้ายเอกสารตัวเดียวของสอง renderer** (HTML <c>BuildDocumentHtml</c> + QuestPDF <c>DocumentRenderer</c> — ห้าม drift ·
+    /// รอบ PP36 ทีม F2 · คำตัดสินข้อ 131)
+    /// <para>ใบซื้อบริการต่างประเทศ (§83/6): <c>TotalAmount</c> รวม VAT ที่<b>ผู้จ่ายประเมินเอง</b> ⇒ เดิมพิมพ์ "ยอดรวมสุทธิ 6,321.56" + ตัวอักษร
+    /// ทั้งที่จ่าย Booking.com จริง 5,908.00 · ตอนนี้: แถว VAT ติดป้าย "VAT ที่ผู้จ่ายประเมินและนำส่งเอง (ภ.พ.36 §83/6) — ไม่จ่ายให้ผู้รับเงิน" ·
+    /// แถวสุดท้าย "ยอดจ่ายผู้รับเงิน" = <see cref="ForeignServiceVat.PayeeAmount(Document, bool)"/> · ตัวอักษรตามยอดจ่ายจริง</para>
+    /// <para>ใบอื่นทุกใบ: ป้าย/ยอดเดิมทุกตัวอักษร (<c>"{L.TotalVat} 7%"</c> · <c>L.TotalNet</c> · <c>TotalAmount</c>) — เทสต์ทิศตรงข้ามล็อกไว้</para>
+    /// </summary>
+    internal static DocumentPrintTotals ResolvePrintTotals(Document doc, Pdf.DocumentLabels L)
+    {
+        var selfAssessed = ForeignServiceVat.VatNotPaidToPayee(doc.DocumentType, doc.IsForeignService) && doc.VatAmount > 0m;
+        return selfAssessed
+            ? new DocumentPrintTotals(ForeignServiceVat.PayeeAmount(doc), true, L.TotalVatSelfAssessedPp36, L.TotalPayeeAmount)
+            : new DocumentPrintTotals(doc.TotalAmount, false, $"{L.TotalVat} 7%", L.TotalNet);
     }
 
     /// <summary>ใบเสร็จ/ใบสำคัญรับ "เงินมัดจำ" ที่ VAT ยังพักรอ (21913 — tax point
@@ -2219,13 +2256,15 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (!hideVatBreakdown)
                 sb.AppendLine($"<div class='sum-row'><span>{L.TotalAfterDiscountBase}</span><span>{doc.SubTotal:N2}</span></div>");
         }
-        if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{L.TotalVat} 7%</span><span>{doc.VatAmount:N2}</span></div>");
+        // ป้าย/ยอดแถว VAT + แถวสุดท้าย — ตัวตัดสินเดียวกับ QuestPDF (ResolvePrintTotals · รอบ PP36 ทีม F2 · ใบปกติเหมือนเดิมทุกตัวอักษร)
+        var printTotals = ResolvePrintTotals(doc, L);
+        if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{printTotals.VatLabel}</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalWht}</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
         // หักเงินมัดจำ (display-only): ยอดรวมทั้งสิ้น → หักมัดจำ (แตกบรรทัดต่อใบถ้า
         // หลายใบ ยอดต่อใบจาก apply JE จริง) → ยอดชำระสุทธิ
         if (doc.DepositAppliedAmount > 0)
         {
-            sb.AppendLine($"<div class='sum-row'><span>{L.TotalGrand}</span><span>{doc.TotalAmount:N2}</span></div>");
+            sb.AppendLine($"<div class='sum-row'><span>{L.TotalGrand}</span><span>{printTotals.Grand:N2}</span></div>");
             if (depositApplies != null && depositApplies.Count > 1)
             {
                 // หลายใบ → บรรทัดต่อใบ (เลข + ยอดต่อใบจาก apply JE จริง)
@@ -2238,16 +2277,17 @@ public partial class PdfGenerationService : IPdfGenerationService
                 var depLabel = string.IsNullOrWhiteSpace(doc.DepositAppliedRef) ? "หักเงินมัดจำ" : $"หักเงินมัดจำ ({WebUtility.HtmlEncode(doc.DepositAppliedRef)})";
                 sb.AppendLine($"<div class='sum-row'><span>{depLabel}</span><span>({doc.DepositAppliedAmount:N2})</span></div>");
             }
-            sb.AppendLine($"<div class='sum-row total'><span>{L.TotalNetPayable}</span><span>{doc.TotalAmount - doc.DepositAppliedAmount:N2}</span></div>");
+            sb.AppendLine($"<div class='sum-row total'><span>{L.TotalNetPayable}</span><span>{printTotals.Grand - doc.DepositAppliedAmount:N2}</span></div>");
         }
         else
-            sb.AppendLine($"<div class='sum-row total'><span>{L.TotalNet}</span><span>{doc.TotalAmount:N2}</span></div>");
+            sb.AppendLine($"<div class='sum-row total'><span>{printTotals.NetLabel}</span><span>{printTotals.Grand:N2}</span></div>");
 
         if (template.ShowAmountInWords)
         {
+            // จำนวนเงินตัวอักษรตามยอดแถวสุดท้าย (ใบบริการต่างประเทศ = ยอดจ่ายผู้รับเงิน)
             var words = template.AmountInWordsLanguage == "en"
-                ? ConvertToEnglishWords(doc.TotalAmount)
-                : ConvertToThaiWords(doc.TotalAmount);
+                ? ConvertToEnglishWords(printTotals.Grand)
+                : ConvertToThaiWords(printTotals.Grand);
             sb.AppendLine($"<div class='amount-words'>({words})</div>");
         }
         if (hideVatBreakdown)

@@ -920,22 +920,25 @@ public partial class PdfGenerationService
                 if (!hideVatBreakdown)
                     Row(L.TotalAfterDiscountBase, doc.SubTotal.ToString("N2"));
             }
+            // ป้าย/ยอดแถว VAT + แถวสุดท้าย — ตัวตัดสินเดียวกับ HTML renderer (ResolvePrintTotals · รอบ PP36 ทีม F2)
+            // เดิมฝังข้อความไทย "ภาษีมูลค่าเพิ่ม 7%" ตรง ๆ ⇒ โหมดอังกฤษพิมพ์ไทย (drift กับ L.TotalVat ของ HTML) — ไทยยังเหมือนเดิมทุกตัวอักษร
+            var printTotals = ResolvePrintTotals(doc, L);
             if (t.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown)
-                Row("ภาษีมูลค่าเพิ่ม 7%", doc.VatAmount.ToString("N2"));
+                Row(printTotals.VatLabel, doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
                 Row(L.TotalWht, $"({doc.WithholdingTaxAmount:N2})");
             // หักเงินมัดจำ (display-only): แสดง ยอดรวม → หักมัดจำ → ยอดชำระสุทธิ
             // JE ไม่เกี่ยว (การรับรู้มัดจำทำแยกแล้ว) — บรรทัดขายยังเต็มจำนวน
             if (doc.DepositAppliedAmount > 0)
             {
-                Row(L.TotalGrand, doc.TotalAmount.ToString("N2"));
+                Row(L.TotalGrand, printTotals.Grand.ToString("N2"));
                 var depLabel = string.IsNullOrWhiteSpace(doc.DepositAppliedRef)
                     ? L.TotalDepositApplied : $"หักเงินมัดจำ ({doc.DepositAppliedRef})";
                 Row(depLabel, $"({doc.DepositAppliedAmount:N2})");
-                Row(L.TotalNetPayable, (doc.TotalAmount - doc.DepositAppliedAmount).ToString("N2"), total: true);
+                Row(L.TotalNetPayable, (printTotals.Grand - doc.DepositAppliedAmount).ToString("N2"), total: true);
             }
             else
-                Row(L.TotalNet, doc.TotalAmount.ToString("N2"), total: true);
+                Row(printTotals.NetLabel, printTotals.Grand.ToString("N2"), total: true);
         });
 
         // มัดจำ VAT พักรอ — แจ้งชัดว่าไม่ใช่ใบกำกับภาษี (ใบกำกับออกตอนใช้บริการ)
@@ -945,9 +948,11 @@ public partial class PdfGenerationService
 
         if (t.ShowAmountInWords)
         {
+            // จำนวนเงินตัวอักษรตามยอดแถวสุดท้าย (ใบบริการต่างประเทศ = ยอดจ่ายผู้รับเงิน — คู่กับ HTML renderer)
+            var wordsAmount = ResolvePrintTotals(doc, L).Grand;
             var words = t.AmountInWordsLanguage == "en"
-                ? ConvertToEnglishWords(doc.TotalAmount)
-                : ConvertToThaiWords(doc.TotalAmount);
+                ? ConvertToEnglishWords(wordsAmount)
+                : ConvertToThaiWords(wordsAmount);
             col.Item().PaddingTop(8).AlignCenter().Text($"({words})").FontSize(10).Italic().FontColor("#444");
         }
     }

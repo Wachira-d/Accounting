@@ -13,7 +13,8 @@ public interface IStatutoryRemittanceService
 
     /// <summary>นำส่ง 1 งวด — post JE (Dr หนี้ค้างจ่าย [+ เงินเพิ่ม] / Cr ธนาคาร),
     /// บันทึก StatutoryRemittance, อัปเดต PayrollRun.SsoSettledAt ถ้าเป็น SSO
-    /// ที่มีรอบผูก. idempotent ต่อ (Type, งวด) — นำส่งซ้ำงวดเดิม block.</summary>
+    /// ที่มีรอบผูก. idempotent ต่อ (Type, งวด) — นำส่งซ้ำงวดเดิม block · ยกเว้น ภ.พ.36 (คำตัดสินข้อ 133):
+    /// นำส่งเพิ่มเติมงวดเดิมได้ แต่ใบหนึ่งนับได้ครั้งเดียว (ผูกใบ↔รายการนำส่ง).</summary>
     Task<RemitResult> RemitAsync(Guid companyId, RemitRequest request, string performedBy);
 
     /// <summary>ปฏิทินนำส่ง "แบบ × เดือน" — ตอบคำถาม "เดือนไหนยื่นแล้ว/ยัง" สำหรับ
@@ -31,11 +32,12 @@ public interface IStatutoryRemittanceService
     /// <summary>ผูกไฟล์ใบเสร็จ/หลักฐาน (FileAttachment ที่อัปโหลดแล้ว) กับการนำส่ง.</summary>
     Task AttachReceiptAsync(Guid companyId, Guid remittanceId, Guid attachmentId);
 
-    /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD (Dr 11610 / Cr 11640 +
-    /// stamp เอกสาร → เข้า ภ.พ.30 เดือนที่รับรู้) — ต้องนำส่งงวดนั้นก่อน</summary>
+    /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD (Dr 11610 / Cr 11640 ลงวันเคลม +
+    /// stamp เอกสาร → เข้า ภ.พ.30 เดือนเคลม) — เฉพาะใบที่อยู่ในรายการนำส่งแล้ว · เลข/วันที่ใบเสร็จบังคับ ·
+    /// วันเคลมค่าเริ่มต้น = วันที่ใบเสร็จ (ห้ามก่อน) · ห้ามเคลมเข้างวด ภ.พ.30 ที่ยื่นแล้ว (คำตัดสินข้อ 129/133/136)</summary>
     Task<RemitResult> RecognizePp36InputVatAsync(Guid companyId, int periodYear,
         int periodMonth, DateTime? recognizeDate, string performedBy,
-        string? rdReceiptNumber = null);
+        string? rdReceiptNumber = null, DateTime? rdReceiptDate = null, Guid? remittanceId = null);
 
     /// <summary>รายละเอียดใบที่รับรู้แล้วของงวด ภ.พ.36 + สถานะใน ภ.พ.30 ต่อใบ</summary>
     Task<List<Pp36RecognizedDocItem>> GetPp36RecognizedDocsAsync(

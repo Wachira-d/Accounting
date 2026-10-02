@@ -857,7 +857,10 @@ public partial class TaxService : ITaxService
                         TaxPayerId = doc.Contact?.TaxId,
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
-                        Description = $"[รอใบกำกับ §82/3] {doc.DocumentNumber} — ใบกำกับซื้อยังไม่ครบ ยังเคลมไม่ได้ (VAT พักที่ 11640)",
+                        // E-13 (รอบ 203): ใบบริการต่างประเทศไม่ได้ "รอใบกำกับ" — ภาษีซื้อเคลมได้เมื่อนำส่ง ภ.พ.36 + รับรู้ด้วยใบเสร็จกรมสรรพากร (§82/4)
+                        Description = doc.IsForeignService
+                            ? $"[ภ.พ.36 — รอนำส่ง/รับรู้] {doc.DocumentNumber} — ภาษีซื้อบริการต่างประเทศเคลมได้เมื่อนำส่ง ภ.พ.36 แล้วกด \"รับรู้ภาษีซื้อ\" ด้วยใบเสร็จกรมสรรพากร (§82/4 · VAT พักที่ 11640)"
+                            : $"[รอใบกำกับ §82/3] {doc.DocumentNumber} — ใบกำกับซื้อยังไม่ครบ ยังเคลมไม่ได้ (VAT พักที่ 11640)",
                         IncomeAmount = VatableBase(doc),
                         TaxRate = 7,
                         TaxAmount = doc.VatAmount,
@@ -1266,7 +1269,9 @@ public partial class TaxService : ITaxService
                     && !a.AccountName.Contains("หัก ณ ที่จ่าย")
                     && !a.AccountName.Contains("รอเรียกเก็บ")
                     && !a.AccountName.Contains("ภ.พ. 36") && !a.AccountName.Contains("ภ.พ.36")
-                    && !a.AccountName.Contains("รอนำส่ง"));
+                    && !a.AccountName.Contains("รอนำส่ง"))
+                // คำตัดสินข้อ 132: 21912 เปลี่ยนชื่อเป็น "ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36" — ตัดด้วยเลขผังด้วย (ชื่อที่ลูกค้าแก้เองจะไม่หลุดเข้าภาษีขาย)
+                && a.AccountCode != Accounting.Helpers.ForeignServiceVat.Pp36PayableCode;
             bool IsInputVat(Models.Entities.ChartOfAccount a) =>
                 a.AccountCode == "11610"
                 || (a.AccountName.Contains("ภาษีซื้อ")
@@ -1563,18 +1568,20 @@ public partial class TaxService : ITaxService
     /// จึง**ไม่ dedup กับ ภ.พ.30** (คนละแบบ คนละหน้าที่).</summary>
     private async Task GeneratePp36Report(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
     {
-        var purchaseSide = new[] { DocumentType.PurchaseInvoice, DocumentType.Expense,
-            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
-        var docs = await _db.Documents
-            .Include(d => d.Lines)
-            .Where(d => d.CompanyId == companyId
-                && d.IsForeignService && d.VatAmount > 0
-                && purchaseSide.Contains(d.DocumentType)
-                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
-                && d.Status != DocumentStatus.Rejected
-                && (d.TaxPointDate ?? d.DocumentDate) >= startDate
-                && (d.TaxPointDate ?? d.DocumentDate) <= endDate)
-            .ToListAsync();
+        // รอบ 203 ทีม F3 (E-3/E-4/E-8): ใบที่นับ = ตัวโหลด/ตัวตัดสินเดียวกับหน้านำส่ง (Helpers/Pp36Ledger) — ชุดชนิดเดียว
+        // (ForeignServiceVat.OwnsPp36Query ของทีม F2 · PI/Expense + PV ที่ไม่ปิดหนี้ใบต้นทาง) · **GL มี Cr 21912 จริง** (ใบอนุมัติแล้วไม่มี JE
+        // ไม่ถูกนับเงียบ — หน้านำส่งแสดงเป็นรายการต้องซ่อม) · งวด = วันจ่าย (Pp36PeriodDate — เดิม TaxPointDate ?? DocumentDate ไม่ตรงหน้านำส่ง) ·
+        // ยอดภาษี = บาทตามที่ JE ลง (เดิมยอดสกุลเอกสาร)
+        var pp36Rows = (await Accounting.Helpers.Pp36Ledger.LoadDocsAsync(_db, companyId, startDate.Date, endDate.Date.AddDays(1)))
+            .Where(r => r.CountedVat > 0m)
+            .ToDictionary(r => r.Id);
+        var countedIds = pp36Rows.Keys.ToList();
+        var docs = countedIds.Count == 0
+            ? new List<Document>()
+            : await _db.Documents
+                .Include(d => d.Lines)
+                .Where(d => d.CompanyId == companyId && countedIds.Contains(d.Id))
+                .ToListAsync();
         await _db.HydrateContactsAsync(companyId, docs);
 
         // กันนำส่งซ้ำ: เอกสารที่อยู่ในรายงาน ภ.พ.36 งวดอื่นแล้ว (pattern เดียวกับ
@@ -1609,8 +1616,9 @@ public partial class TaxService : ITaxService
                 .ToDictionary(g => g.Key, g => (Income: g.Sum(x => x.TotalIncomeAmount), Tax: g.Sum(x => x.TotalTaxAmount)));
 
         var lineOrder = 1;
-        foreach (var doc in docs.OrderBy(d => d.TaxPointDate ?? d.DocumentDate))
+        foreach (var doc in docs.OrderBy(d => pp36Rows[d.Id].PeriodDate).ThenBy(d => d.DocumentNumber))
         {
+            var row = pp36Rows[doc.Id];
             // ฐานค่าบริการ: บรรทัด (หักบรรทัดยกเว้น VatRate=-1) — เอกสาร header-only
             // (Expense/PV/CIL ที่ไม่มี DocumentLine) ใช้ SubTotal. ⚠️ เดิมเขียน
             // `doc.Lines?.Sum(...) ?? fallback` — Lines เป็น collection ที่ init
@@ -1620,20 +1628,23 @@ public partial class TaxService : ITaxService
             var borneOutside = borneByDoc.TryGetValue(doc.Id, out var borne)
                 ? Accounting.Helpers.ForeignServiceVat.BorneTaxOutsideLines(serviceValue, doc.WithholdingTaxAmount, borne.Income, borne.Tax)
                 : 0m;
-            var baseAmount = Accounting.Helpers.ForeignServiceVat.Pp36Base(serviceValue, borneOutside);
+            // E-4: ฐานแปลงบาทด้วยตัวแปลงเดียวกับ JE (DocumentFx) · ภาษี = ยอดที่ GL/รายการนำส่งถือ (บาทอยู่แล้ว)
+            var baseAmount = Accounting.Helpers.DocumentFx.ToBaht(
+                Accounting.Helpers.ForeignServiceVat.Pp36Base(serviceValue, borneOutside), doc.ExchangeRate);
+            var vatBaht = row.CountedVat;
             report.Lines.Add(new TaxReportLine
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
                 TaxPayerId = doc.Contact?.TaxId,
                 TaxPayerName = doc.Contact?.Name ?? "(ผู้ขายต่างประเทศ)",
-                TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
+                TransactionDate = row.PeriodDate,
                 Description = $"{doc.DocumentNumber} — บริการจากต่างประเทศ (§83/6)",
                 IncomeAmount = baseAmount,
                 TaxRate = baseAmount > 0
-                    ? Math.Round(doc.VatAmount / baseAmount * 100m, 2, MidpointRounding.AwayFromZero)
+                    ? Math.Round(vatBaht / baseAmount * 100m, 2, MidpointRounding.AwayFromZero)
                     : 7m,
-                TaxAmount = doc.VatAmount,
+                TaxAmount = vatBaht,
                 DocumentId = doc.Id,
                 IncomeTypeCode = "PP36",
             });

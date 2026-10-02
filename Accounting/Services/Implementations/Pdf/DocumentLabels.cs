@@ -164,6 +164,10 @@ public sealed class DocumentLabels
     public string TotalSubtotal => this["total_subtotal"];
     public string TotalVat => this["total_vat"];
     public string TotalWht => this["total_wht"];
+    /// <summary>รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): แถว VAT ของใบซื้อบริการต่างประเทศ — VAT ที่ผู้จ่ายประเมินเองแล้วนำส่ง ภ.พ.36 (ไม่จ่ายผู้รับเงิน)</summary>
+    public string TotalVatSelfAssessedPp36 => this["total_vat_self_assessed_pp36"];
+    /// <summary>รอบ PP36 ทีม F2: แถวยอดสุดท้ายของใบซื้อบริการต่างประเทศ = ยอดที่จ่ายผู้รับเงินจริง (<c>ForeignServiceVat.PayeeAmount</c>)</summary>
+    public string TotalPayeeAmount => this["total_payee_amount"];
 
     private static readonly Dictionary<string, string> _th = new()
     {
@@ -211,6 +215,8 @@ public sealed class DocumentLabels
         ["total_after_discount_base"] = "ยอดหลังหักส่วนลด (ฐานภาษี)",
         ["total_vat"] = "ภาษีมูลค่าเพิ่ม",
         ["total_wht"] = "ภาษีหัก ณ ที่จ่าย",
+        ["total_vat_self_assessed_pp36"] = "VAT ที่ผู้จ่ายประเมินและนำส่งเอง (ภ.พ.36 §83/6) — ไม่จ่ายให้ผู้รับเงิน",
+        ["total_payee_amount"] = "ยอดจ่ายผู้รับเงิน",
         ["total_deposit_applied"] = "หักเงินมัดจำ",
         ["total_deposit_tax_invoiced"] = "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี",
         ["total_rounding"] = "ผลต่างจากการปัดเศษ",
@@ -305,6 +311,8 @@ public sealed class DocumentLabels
         ["total_after_discount_base"] = "Net after discount (taxable)",
         ["total_vat"] = "VAT",
         ["total_wht"] = "Withholding tax",
+        ["total_vat_self_assessed_pp36"] = "VAT self-assessed and remitted by the payer (Form P.P.36, Revenue Code s.83/6) — not paid to the payee",
+        ["total_payee_amount"] = "Amount paid to payee",
         ["total_deposit_applied"] = "Less deposit",
         ["total_deposit_tax_invoiced"] = "Less deposit already tax-invoiced (excl. VAT)",
         ["total_rounding"] = "Rounding adjustment",

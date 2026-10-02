@@ -1304,8 +1304,9 @@ public class IntegrationService : IIntegrationService
             // ยอดค้าง/สถานะ: ตัวตัดสินตัวเดียวกับเว็บ (D4-3) — เดิมที่นี่ clamp
             // ยอดติดลบเป็น 0 เงียบ ๆ ⇒ การรับเงินเกินหายไปโดยไม่มีใครเห็น
             document.PaidAmount += request.Amount;
+            // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ตัวตั้งเดียวกับเว็บ
             var settle = Accounting.Helpers.DocumentSettlementState.Apply(
-                document.TotalAmount, document.PaidAmount, document.Status);
+                Accounting.Helpers.ForeignServiceVat.PayeeAmount(document), document.PaidAmount, document.Status);
             document.BalanceDue = settle.BalanceDue;
             document.Status = settle.Status;
             if (settle.Overpaid)

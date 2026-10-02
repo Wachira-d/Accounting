@@ -1381,7 +1381,8 @@ public class SettlementPostingService : ISettlementPostingService
 
         // ── ฝ่ายค้าน C-2: ด่านภาษี/e-Tax/50 ทวิ ของ "ทุกชิ้น" ก่อนแตะชิ้นแรก — ถูกปฏิเสธกลางทาง = สมุดครึ่งกลับครึ่งค้าง ──
         var (unpostDocs, certs, filed, unpostPays) = await LoadUnpostFactsAsync(companyId, batch.PayoutDate, docs, payments, ct);
-        var refusals = SettlementUnpostGate.Evaluate(unpostDocs, certs, filed, unpostPays);
+        var refusals = SettlementUnpostGate.Evaluate(unpostDocs, certs, filed, unpostPays)
+            .Concat(await Pp36UnpostRefusalsAsync(companyId, docs, ct)).ToList();
         if (refusals.Count > 0)
             return Fail("ยกเลิกการลงบัญชีรอบโอนนี้ไม่ได้ (ยังไม่ได้แตะอะไร): "
                 + string.Join(" · ", refusals.Select(r => $"{r.Subject}: {r.Reason}")) + " — " + refusals[0].NextStep);
@@ -1631,7 +1632,21 @@ public class SettlementPostingService : ISettlementPostingService
         var docs = await ExistingDocsAsync(companyId, batchId, ct);
         var payments = await SettlementPaymentsAsync(companyId, batchId, ct);
         var (unpostDocs, certs, filed, unpostPays) = await LoadUnpostFactsAsync(companyId, head.PayoutDate, docs, payments, ct);
-        return SettlementUnpostGate.Evaluate(unpostDocs, certs, filed, unpostPays);
+        return SettlementUnpostGate.Evaluate(unpostDocs, certs, filed, unpostPays)
+            .Concat(await Pp36UnpostRefusalsAsync(companyId, docs, ct)).ToList();
+    }
+
+    /// <summary>รอบ 203 ทีม F3 (คำตัดสินข้อ 134): ใบค่าธรรมเนียมต่างประเทศของรอบโอนที่นำส่ง ภ.พ.36/รับรู้ภาษีซื้อแล้ว ยกเลิกไม่ได้ — ด่านเดียวกับ
+    /// <c>VoidDocumentAsync</c> (<c>Pp36Ledger.ChangeBlocksAsync</c>) ตรวจทุกชิ้นก่อนแตะชิ้นแรก (ทั้งพรีวิวและตอนยกเลิกจริง — เดิมไม่มี ⇒ VoidDocumentAsync
+    /// ปฏิเสธกลางทาง = สมุดครึ่งกลับครึ่งค้าง)</summary>
+    private async Task<List<SettlementUnpostRefusal>> Pp36UnpostRefusalsAsync(Guid companyId, List<ExistingDoc> docs, CancellationToken ct)
+    {
+        var blocks = await Accounting.Helpers.Pp36Ledger.ChangeBlocksAsync(_db, companyId, docs.Select(d => d.Id).ToList(), "ยกเลิก", ct);
+        return docs.Where(d => blocks.ContainsKey(d.Id))
+            .Select(d => new SettlementUnpostRefusal(d.Number, blocks[d.Id],
+                "ยื่นแบบ ภ.พ.36 เพิ่มเติม/ขอคืนกับกรมสรรพากร แล้วบันทึกปรับปรุงด้วยใบสำคัญทั่วไป — ยกเลิกการลงบัญชีรอบโอนนี้ไม่ได้",
+                d.Id, Code: Accounting.Helpers.Pp36Lifecycle.RuleChangeAfterRemit))
+            .ToList();
     }
 
     // ═════════════════════════════ จับคู่ธนาคาร ═════════════════════════════

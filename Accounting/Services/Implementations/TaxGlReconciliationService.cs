@@ -94,7 +94,7 @@ public class TaxGlReconciliationService
                 && j.OriginalEntryId == null && j.ReversedByEntryId == null
                 && !j.IsDeleted && !l.IsDeleted
                 && j.EntryDate >= start && j.EntryDate < endExclusive
-            select new { a.AccountCode, l.DebitAmount, l.CreditAmount, j.SourceDocumentId })
+            select new { a.AccountCode, l.DebitAmount, l.CreditAmount, j.SourceDocumentId, JeId = j.Id, j.Reference })
             .ToListAsync();
 
         decimal GlCredit(params string[] codes) => glRows
@@ -141,11 +141,22 @@ public class TaxGlReconciliationService
         }
 
         // ══════════════ ภ.พ.36 — VAT ประเมินเองแทนผู้ขายต่างประเทศ ══════════════
-        var glPp36 = GlCredit("21912");
+        // รอบ 203 ทีม F3 (E-10): (1) GL ฝั่ง "ตั้งหนี้" = Cr 21912 ของงวด **ไม่รวม JE นำส่ง** (Dr 21912/Cr ธนาคาร) — เดิมนับรวม ⇒ เดือนที่นำส่ง
+        // ภายในเดือนเดียวกันได้ GL 0 เทียบรายงาน 413.56 = ผลต่างปลอม −413.56 ทุกครั้ง · (2) สาเหตุ "ใบอนุมัติแล้วไม่มี JE" (ตัวโหลดเดียวกับหน้านำส่ง) ·
+        // (3) บรรทัด 11640 — ภาษีซื้อ ภ.พ.36 ที่พัก/รับรู้ในงวด
+        var pp36RemitJeIds = (await _db.StatutoryRemittances.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RemittanceType == "VatPp36" && r.JournalEntryId != null)
+                .Select(r => r.JournalEntryId!.Value).ToListAsync())
+            .ToHashSet();
+        var glPp36 = glRows
+            .Where(r => r.AccountCode == Accounting.Helpers.ForeignServiceVat.Pp36PayableCode && !pp36RemitJeIds.Contains(r.JeId))
+            .Sum(r => r.CreditAmount - r.DebitAmount);
         var pp36 = await _db.TaxReports.AsNoTracking()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.TaxType == TaxType.VatPp36
                 && r.Year == year && r.Month == month);
-        if (glPp36 != 0m || pp36 != null)
+        var pp36Rows = await Accounting.Helpers.Pp36Ledger.LoadDocsAsync(_db, companyId, start, endExclusive);
+        var pp36NoJe = pp36Rows.Where(r => r.State == Accounting.Helpers.Pp36DocState.NoJournal).ToList();
+        if (glPp36 != 0m || pp36 != null || pp36NoJe.Count > 0)
         {
             var variance = glPp36 - (pp36?.OutputVat ?? 0m);
             var causes = new List<ReconCause>();
@@ -154,10 +165,60 @@ public class TaxGlReconciliationService
                     $"GL มีเจ้าหนี้ ภ.พ.36 (21912) {glPp36:N2} บาท แต่ยังไม่ได้สร้างรายงาน ภ.พ.36 ของงวดนี้",
                     glPp36, new List<Guid>(),
                     "ไปที่ รายงานภาษี → แท็บ ภ.พ.36 → สร้างรายงาน"));
-            lines.Add(new ReconLine("ภ.พ.36 — VAT ประเมินเอง (21912)", "21912",
+            if (pp36NoJe.Count > 0)
+                causes.Add(new ReconCause("PP36_DOC_NO_JE",
+                    $"ใบบริการต่างประเทศ {pp36NoJe.Count} ใบ ({string.Join(", ", pp36NoJe.Take(5).Select(r => r.DocumentNumber))}) อนุมัติแล้วแต่บัญชีแยกประเภทไม่มี Cr 21912 — "
+                    + "ไม่ถูกนับทั้งใน GL และรายงาน ภ.พ.36 (ภาษีที่ต้องนำส่งหายทั้งสองฝั่ง กระทบยอดจึงจับไม่ได้ด้วยตัวเลข)",
+                    null, pp36NoJe.Select(r => r.Id).ToList(),
+                    "ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE ก่อน แล้วสร้างรายงาน ภ.พ.36 ใหม่"));
+            lines.Add(new ReconLine("ภ.พ.36 — VAT ประเมินเอง (21912)", Accounting.Helpers.ForeignServiceVat.Pp36PayableCode,
                 glPp36, pp36?.OutputVat ?? 0m, variance,
-                Math.Abs(variance) <= tolerance, pp36?.Status.ToString() ?? "(ยังไม่สร้างรายงาน)",
+                Math.Abs(variance) <= tolerance && pp36NoJe.Count == 0, pp36?.Status.ToString() ?? "(ยังไม่สร้างรายงาน)",
                 causes));
+        }
+
+        // 11640 ของ ภ.พ.36: GL = Dr 11640 จาก JE ของใบ ภ.พ.36 − Cr 11640 จาก JE รับรู้ (ภ.พ.36R-) ในงวด ·
+        // เทียบ = ภ.พ.36 ที่ตั้งในงวด (รายงาน) − ภาษีซื้อ ภ.พ.36 ที่รับรู้เข้า ภ.พ.30 งวดนี้ (บรรทัด INPUT ของใบบริการต่างประเทศ)
+        var pp36DocIdsInGl = glRows.Where(r => r.SourceDocumentId != null
+                && Accounting.Helpers.Pp36Ledger.IsUndueCode(r.AccountCode))
+            .Select(r => r.SourceDocumentId!.Value).Distinct().ToList();
+        var fsDocIds = pp36DocIdsInGl.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && pp36DocIdsInGl.Contains(d.Id) && d.IsForeignService)
+                .Select(d => d.Id).ToListAsync()).ToHashSet();
+        var glUndue = glRows
+            .Where(r => Accounting.Helpers.Pp36Ledger.IsUndueCode(r.AccountCode)
+                && ((r.SourceDocumentId != null && fsDocIds.Contains(r.SourceDocumentId.Value))
+                    || (r.Reference != null && r.Reference.StartsWith("ภ.พ.36R-"))))
+            .Sum(r => r.DebitAmount - r.CreditAmount);
+        var pp30InputLines = vatReport == null ? new List<TaxReportLine>() : vatReport.Lines
+            .Where(l => !l.IsExcluded && l.IncomeTypeCode == "INPUT" && l.DocumentId != null).ToList();
+        var pp30DocIds = pp30InputLines.Select(l => l.DocumentId!.Value).Distinct().ToList();
+        var fsInPp30 = pp30DocIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && pp30DocIds.Contains(d.Id) && d.IsForeignService)
+                .Select(d => d.Id).ToListAsync()).ToHashSet();
+        var recognizedIntoPp30 = pp30InputLines.Where(l => fsInPp30.Contains(l.DocumentId!.Value)).Sum(l => l.TaxAmount);
+        var expectedUndue = (pp36?.OutputVat ?? 0m) - recognizedIntoPp30;
+        if (glUndue != 0m || expectedUndue != 0m)
+        {
+            var varianceU = glUndue - expectedUndue;
+            var causesU = new List<ReconCause>();
+            var nonClaim = pp36Rows.Where(r => r.Ledger.HasPp36Journal && r.Ledger.Pp36Payable - r.Ledger.UndueInputVat > 0.005m).ToList();
+            if (Math.Abs(varianceU) > tolerance && nonClaim.Count > 0)
+                causesU.Add(new ReconCause("PP36_NON_CLAIMABLE",
+                    $"ใบ ภ.พ.36 {nonClaim.Count} ใบลง VAT ประเมินเองเป็นค่าใช้จ่าย (บริษัทไม่จด VAT / ภาษีซื้อต้องห้าม) ไม่ได้พักที่ 11640 — ส่วนต่างนี้ถูกต้อง",
+                    nonClaim.Sum(r => r.Ledger.Pp36Payable - r.Ledger.UndueInputVat), nonClaim.Select(r => r.Id).ToList(),
+                    "ไม่ต้องแก้ — ภาษีซื้อต้องห้ามไม่มีอะไรให้รับรู้"));
+            if (Math.Abs(varianceU) > tolerance && causesU.Count == 0)
+                causesU.Add(new ReconCause("UNKNOWN",
+                    "ภาษีซื้อ ภ.พ.36 ที่พัก/รับรู้ใน GL ไม่ตรงกับรายงาน — ตรวจว่ารายงาน ภ.พ.36/ภ.พ.30 สร้างหลังอนุมัติ/รับรู้ครบหรือยัง (รายงานเป็น snapshot)",
+                    varianceU, new List<Guid>(), "สร้างรายงาน ภ.พ.36 และ ภ.พ.30 ของงวดใหม่ แล้วกระทบยอดอีกครั้ง"));
+            lines.Add(new ReconLine("ภ.พ.36 — ภาษีซื้อรอรับรู้ (11640)", Accounting.Helpers.ForeignServiceVat.Pp36InputVatCode,
+                glUndue, expectedUndue, varianceU, Math.Abs(varianceU) <= tolerance,
+                pp36?.Status.ToString() ?? "(ยังไม่สร้างรายงาน)", causesU));
         }
 
         // ══ คำเตือนระดับงวด ══

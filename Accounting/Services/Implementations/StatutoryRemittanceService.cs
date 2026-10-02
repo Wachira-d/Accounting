@@ -314,38 +314,44 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         catch (Exception ex) { _logger.LogWarning(ex, "โหลด ภพ.30 ไม่สำเร็จ"); }
 
         // ── ภพ.36 — VAT ประเมินเองจากบริการต่างประเทศ (§83/6) ──
-        // แหล่งหนี้: เอกสาร IsForeignService ที่อนุมัติแล้ว (JE ตั้ง Cr 21912 ไว้)
-        try
+        // รอบ 203 ทีม F3 (E-3/E-4/E-5/E-8): แหล่งหนี้ = ใบที่ "เป็นเจ้าของ ภ.พ.36" (ForeignServiceVat.OwnsPp36 · ชุดชนิดเดียว) ที่ **GL มี Cr 21912 จริง**
+        // (Helpers/Pp36Ledger — ยอดเป็นบาทตามที่ JE ลง) และ **ยังไม่อยู่ในรายการนำส่งใด** (ตารางผูก Pp36RemittanceDocuments · คำตัดสินข้อ 133) ·
+        // เดิมคัดจากธง+สถานะ แล้วหักยอดที่นำส่งแล้วต่องวด ⇒ ใบอนุมัติแล้วไม่มี JE ถูกนับ · ใบอนุมัติหลังนำส่งนำส่งเพิ่มไม่ได้ · ยอดติดลบ continue เงียบ
+        // ใบที่ไม่มี JE / นำส่งเกิน ⇒ ขึ้นเป็นรายการ "ต้องตรวจ" (Pp36Issues) ไม่ใช่นับเงียบ · ไม่มี catch — ล้มดัง (กฎ F2 ข้อ 7)
+        var pp36Rows = await Accounting.Helpers.Pp36Ledger.LoadDocsAsync(_db, companyId, start, null);
+        foreach (var g in pp36Rows
+            .Where(r => r.State == Accounting.Helpers.Pp36DocState.AwaitingRemittance && InRange(r.PeriodDate.Year, r.PeriodDate.Month))
+            .GroupBy(r => (r.PeriodDate.Year, r.PeriodDate.Month)))
         {
-            var fsDocs = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                    && d.IsForeignService && d.VatAmount > 0
-                    && (d.PaymentDate ?? d.DocumentDate) >= start
-                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
-                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-                .Select(d => new { d.VatAmount, d.PaymentDate, d.DocumentDate })
-                .ToListAsync();
-            foreach (var g in fsDocs
-                .Select(d => new { Date = d.PaymentDate ?? d.DocumentDate, d.VatAmount })
-                .Where(d => InRange(d.Date.Year, d.Date.Month))
-                .GroupBy(d => (d.Date.Year, d.Date.Month)))
-            {
-                var outstanding = g.Sum(x => x.VatAmount) - Remitted("VatPp36", g.Key.Year, g.Key.Month);
-                if (outstanding <= 0.009m) continue;
-                pending.Add(BuildItem("VatPp36", g.Key.Year, g.Key.Month, outstanding, today,
-                    payeeCount: g.Count(), reportFiledAt: FiledAt("VatPp36", g.Key.Year, g.Key.Month)));
-            }
+            var outstanding = g.Sum(x => x.CountedVat);
+            if (outstanding <= 0.009m) continue;
+            pending.Add(BuildItem("VatPp36", g.Key.Year, g.Key.Month, outstanding, today,
+                payeeCount: g.Count(), reportFiledAt: FiledAt("VatPp36", g.Key.Year, g.Key.Month)));
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ ภพ.36 ไม่สำเร็จ"); }
+        var pp36Issues = BuildPp36Issues(pp36Rows, remits.Where(r => r.RemittanceType == "VatPp36"
+            && InRange(r.PeriodYear, r.PeriodMonth)).ToList());
 
         // ── ภ.พ.36: นำส่งแล้ว แต่ยังไม่ได้ "รับรู้ภาษีซื้อ" (ขั้นที่ 2) ──
-        // ผู้ใช้เจอจริง: นำส่งเสร็จแล้วไปหาใบใน ภ.พ.30 ไม่เจอ — เพราะภาษีซื้อ
-        // ยังพักที่ 11640 จนกว่าจะกดรับรู้ (ได้ใบเสร็จ RD §77/2) และปุ่มรับรู้
-        // ซ่อนอยู่ในแท็บประวัติโดยไม่มีสถานะบอก. ตรวจจาก JE รับรู้ (Reference
-        // ภ.พ.36R-YYYYMM — กติกา idempotent เดิมของ RecognizePp36InputVatAsync)
-        // + นับใบที่ยังพักจริง ๆ ในงวดนั้น
-        var pp36Awaiting = new List<Pp36AwaitingRecognitionItem>();
+        // ผู้ใช้เจอจริง: นำส่งเสร็จแล้วไปหาใบใน ภ.พ.30 ไม่เจอ — เพราะภาษีซื้อยังพักที่ 11640 จนกว่าจะกดรับรู้ (ได้ใบเสร็จกรมสรรพากร §82/4) ·
+        // รอบ 203: ต่อ "รายการนำส่ง" (งวดหนึ่งนำส่งได้หลายครั้ง แต่ละครั้งมีใบเสร็จของตัวเอง) · ยอด = ภาษีซื้อที่พัก 11640 จริงของใบ (ไม่ใช่ VatAmount)
         var pp36Remits = remits.Where(r => r.RemittanceType == "VatPp36").ToList();
+        var pp36Awaiting = pp36Rows
+            .Where(r => r.State == Accounting.Helpers.Pp36DocState.RemittedAwaitingRecognition && r.Link != null)
+            .GroupBy(r => r.Link!.StatutoryRemittanceId)
+            .Select(g =>
+            {
+                var rem = pp36Remits.FirstOrDefault(x => x.Id == g.Key);
+                var first = g.First().Link!;
+                return new Pp36AwaitingRecognitionItem(first.PeriodYear, first.PeriodMonth,
+                    g.Sum(x => x.Ledger.UndueInputVat), g.Count(), rem?.PayDate ?? first.CreatedAt,
+                    RemittanceId: g.Key, RdReceiptNumber: rem?.FilingNumber);
+            })
+            .OrderBy(a => a.PeriodYear).ThenBy(a => a.PeriodMonth).ToList();
+        var awaitingRemitIds = pp36Awaiting.Where(a => a.RemittanceId != null).Select(a => a.RemittanceId!.Value).ToHashSet();
+        var recognizedRemitIds = pp36Rows
+            .Where(r => r.State == Accounting.Helpers.Pp36DocState.Recognized && r.Link != null)
+            .Select(r => r.Link!.StatutoryRemittanceId).ToHashSet();
+        // งวดเก่ากว่าช่วงที่โหลด: กติกา idempotent เดิม (JE Reference ภ.พ.36R-YYYYMM)
         var pp36RecognizedRefs = pp36Remits.Count == 0
             ? new HashSet<string>()
             : (await _db.JournalEntries.AsNoTracking()
@@ -354,42 +360,17 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     && j.Reference != null && j.Reference.StartsWith("ภ.พ.36R-"))
                 .Select(j => j.Reference!)
                 .ToListAsync()).ToHashSet();
-        if (pp36Remits.Count > 0)
-        {
-            // ใบที่ยังพัก 11640 (เงื่อนไขชุดเดียวกับ RecognizePp36InputVatAsync)
-            var awaitingDocs = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                    && d.IsForeignService && d.VatAmount > 0
-                    && d.InputVatBecameClaimableAt == null
-                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
-                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-                .Select(d => new { d.VatAmount, d.PaymentDate, d.DocumentDate })
-                .ToListAsync();
-            foreach (var r in pp36Remits)
-            {
-                if (pp36RecognizedRefs.Contains($"ภ.พ.36R-{r.PeriodYear}{r.PeriodMonth:D2}")) continue;
-                var inPeriod = awaitingDocs.Where(d =>
-                {
-                    var dt = d.PaymentDate ?? d.DocumentDate;
-                    return dt.Year == r.PeriodYear && dt.Month == r.PeriodMonth;
-                }).ToList();
-                if (inPeriod.Count == 0) continue;
-                pp36Awaiting.Add(new Pp36AwaitingRecognitionItem(
-                    r.PeriodYear, r.PeriodMonth,
-                    inPeriod.Sum(d => d.VatAmount), inPeriod.Count, r.PayDate));
-            }
-            pp36Awaiting = pp36Awaiting
-                .OrderBy(a => a.PeriodYear).ThenBy(a => a.PeriodMonth).ToList();
-        }
+        bool Pp36RecognizedOf(StatutoryRemittance r)
+            => !awaitingRemitIds.Contains(r.Id)
+               && (recognizedRemitIds.Contains(r.Id)
+                   || pp36RecognizedRefs.Any(x => x.StartsWith($"ภ.พ.36R-{r.PeriodYear}{r.PeriodMonth:D2}")));
 
         // ── ประวัติที่นำส่งล่าสุด ──
         var history = remits.OrderByDescending(r => r.PayDate).Take(30)
             .Select(r => new RemittanceHistoryItem(r.Id, r.RemittanceType, Meta(r.RemittanceType).Form,
                 r.PeriodYear, r.PeriodMonth, r.Amount, r.LateFee, r.PayDate, r.FilingNumber,
                 r.JournalEntryId, r.ReceiptAttachmentId, r.CreatedBy, r.CreatedAt,
-                Pp36Recognized: r.RemittanceType == "VatPp36"
-                    ? pp36RecognizedRefs.Contains($"ภ.พ.36R-{r.PeriodYear}{r.PeriodMonth:D2}")
-                    : (bool?)null))
+                Pp36Recognized: r.RemittanceType == "VatPp36" ? Pp36RecognizedOf(r) : (bool?)null))
             .ToList();
 
         pending = pending.OrderByDescending(p => p.IsOverdue)
@@ -401,7 +382,38 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             OverdueCount: pending.Count(p => p.IsOverdue),
             Pending: pending,
             RecentHistory: history,
-            Pp36AwaitingRecognition: pp36Awaiting);
+            Pp36AwaitingRecognition: pp36Awaiting,
+            Pp36Issues: pp36Issues);
+    }
+
+    /// <summary>
+    /// รายการ ภ.พ.36 ที่ "ต้องตรวจ" — ไม่นับเงียบ (PP36_REVIEW E-3/E-6): (1) ใบอนุมัติแล้วแต่ GL ไม่มี Cr 21912 (ซ่อม JE ก่อน ·
+    /// เครื่องมือ "ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE" ของทีม F1) · (2) รายการนำส่งที่ยอดมากกว่า 21912 ของใบที่ผูกอยู่ (นำส่งเกิน)
+    /// </summary>
+    private static List<Pp36IssueItem> BuildPp36Issues(List<Accounting.Helpers.Pp36DocRow> rows, List<StatutoryRemittance> pp36Remits)
+    {
+        var issues = rows
+            .Where(r => r.State == Accounting.Helpers.Pp36DocState.NoJournal)
+            .OrderBy(r => r.PeriodDate)
+            .Select(r => new Pp36IssueItem("NoJournal", r.PeriodDate.Year, r.PeriodDate.Month, r.Id, r.DocumentNumber, 0m,
+                $"ใบ {r.DocumentNumber} อนุมัติแล้วแต่บัญชีแยกประเภทไม่มีหนี้ ภ.พ.36 (Cr 21912) — ยังไม่นับในยอดนำส่ง/รายงาน · "
+                + "ลงบัญชีให้ใบนี้ก่อน (เครื่องมือ \"ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE\") แล้วยอดจะขึ้นเอง"))
+            .ToList();
+        foreach (var rem in pp36Remits)
+        {
+            var linkedLedger = rows.Where(r => r.Link?.StatutoryRemittanceId == rem.Id).Sum(r => r.Ledger.Pp36Payable);
+            var over = rem.Amount - linkedLedger;
+            if (over > 0.01m)
+                issues.Add(new Pp36IssueItem("OverRemitted", rem.PeriodYear, rem.PeriodMonth, null, null, over,
+                    $"ภ.พ.36 งวด {rem.PeriodMonth:D2}/{rem.PeriodYear + 543} นำส่งไป {rem.Amount:N2} บาท แต่หนี้ 21912 ของใบที่ผูกกับการนำส่งนี้เหลือ "
+                    + $"{linkedLedger:N2} บาท — นำส่งเกิน {over:N2} บาท (ใบถูกยกเลิก/ไม่มี JE หลังนำส่ง) · ตรวจกับใบเสร็จกรมสรรพากร แล้วขอคืน/บันทึกปรับปรุงด้วยใบสำคัญทั่วไป"));
+            else if (over < -0.01m)
+                // ข้อมูลก่อนรอบ 203 (ผูกใบเข้ารายการนำส่งเดิมด้วย migration) — ใบที่ผูกมีหนี้มากกว่าที่จ่ายจริง
+                issues.Add(new Pp36IssueItem("UnderRemitted", rem.PeriodYear, rem.PeriodMonth, null, null, -over,
+                    $"ภ.พ.36 งวด {rem.PeriodMonth:D2}/{rem.PeriodYear + 543} นำส่งไป {rem.Amount:N2} บาท แต่หนี้ 21912 ของใบที่ผูกกับการนำส่งนี้ {linkedLedger:N2} บาท — "
+                    + $"ขาด {-over:N2} บาท · ตรวจกับใบเสร็จกรมสรรพากร ถ้าจ่ายขาดจริงให้ยื่นเพิ่มเติมและบันทึกด้วยใบสำคัญทั่วไป (Dr 21912 / Cr ธนาคาร)"));
+        }
+        return issues;
     }
 
     private PendingRemittanceItem BuildItem(string type, int year, int month, decimal amount,
@@ -416,10 +428,13 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // "ยื่นแบบแล้ว" ตัดธงเลยกำหนดออก — ยอดยังค้างได้ (ยังไม่จ่ายเงิน) แต่ผู้ใช้
         // ไม่ได้ทำผิดกำหนดยื่น จึงห้ามขึ้นสีแดง/นับใน OverdueCount
         var overdue = today > warnBy.Date && reportFiledAt == null;
-        // เงินเพิ่ม preview เฉพาะ ปกส. (§49 2%/เดือน)
-        var lateFee = type == "SsoSps110"
-            ? PayrollService.ComputeSsoLateFee(year, month, today, amount)
-            : 0m;
+        // เงินเพิ่ม preview: ปกส. (§49 2%/เดือน) · ภ.พ.36 (§89/1 1.5%/เดือนหรือเศษ — คำตัดสินข้อ 135 · ค่าแนะนำ แก้ได้ตอนนำส่ง)
+        var lateFee = type switch
+        {
+            "SsoSps110" => PayrollService.ComputeSsoLateFee(year, month, today, amount),
+            "VatPp36" => Accounting.Helpers.Pp36Lifecycle.SuggestedSurcharge(amount, warnBy, today),
+            _ => 0m,
+        };
         return new PendingRemittanceItem(type, label, form, year, month, amount,
             paper, efiling, overdue, lateFee, code,
             employee, employer, payeeCount, outputVat, inputVat, relatedRunId,
@@ -632,7 +647,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             var payerSide = Accounting.Helpers.WhtRemitScope.PayerSideTypes;
             var docs = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                    && (d.WithholdingTaxAmount > 0 || (d.IsForeignService && d.VatAmount > 0))
+                    && d.WithholdingTaxAmount > 0
                     && payerSide.Contains(d.DocumentType)
                     && (d.PaymentDate ?? d.DocumentDate) >= startMonth
                     && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
@@ -645,10 +660,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     CName = d.Contact != null ? d.Contact.Name : null,
                     CCountry = d.Contact != null ? d.Contact.CountryCode : null })
                 .ToListAsync();
-            // ⚠️ query ของเมธอดนี้ดึง PV ที่ **ไม่มี WHT** เข้ามาด้วย (เงื่อนไข
-            // `IsForeignService && VatAmount > 0` สำหรับ ภ.พ.36) ⇒ ถ้าไม่กรอง
-            // `wht != 0` ใบตั้งหนี้ที่ PV แบบนั้นอ้างถึงจะถูกตัดทิ้งแล้วยอด
-            // ภ.ง.ด.53 หายทั้งก้อน — ตัวกรองอยู่ใน helper ตัวเดียวกับหน้านำส่ง
+            // ⚠️ กรอง `wht != 0` ใน helper (PV ที่ไม่มี WHT ไม่ได้คลุมภาระของใบตั้งหนี้ — เดิม query นี้ดึง PV ภ.พ.36 เข้ามาด้วย ⇒ ยอด ภ.ง.ด.53 หาย · รอบ 203 ภ.พ.36 ย้ายไป Pp36Ledger แล้ว)
             var settledByPv = Accounting.Helpers.WhtRemitScope.SettledSourceIds(
                 docs, d => d.DocumentType, d => d.RelatedDocumentId, d => d.WithholdingTaxAmount);
             foreach (var d in docs)
@@ -662,11 +674,15 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                         Accounting.Helpers.WhtPayeeKind.ResolveForm(
                             d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName),
                         d.WithholdingTaxAmount));
-                if (d.IsForeignService && d.VatAmount > 0)
-                    fsDocs.Add(new FsSnap(dt.Year, dt.Month, d.VatAmount));
             }
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "โหลดเอกสารหัก ณ ที่จ่าย/บริการต่างประเทศ ไม่สำเร็จ"); }
+        catch (Exception ex) { _logger.LogWarning(ex, "โหลดเอกสารหัก ณ ที่จ่าย ไม่สำเร็จ"); }
+
+        // ── ภ.พ.36 — ตัวโหลด/ตัวตัดสินเดียวกับหน้านำส่ง (รอบ 203 ทีม F3 · E-8): ชุดชนิดเดียว · เจ้าของหนี้ · GL มี Cr 21912 จริง · บาท ·
+        // ใบไม่มี JE ไม่นับ (หน้านำส่งแสดงเป็นรายการ "ต้องซ่อม") · ไม่มี catch — ล้มดัง
+        foreach (var r in await Accounting.Helpers.Pp36Ledger.LoadDocsAsync(_db, companyId, startMonth, null))
+            if (r.CountedVat > 0m)
+                fsDocs.Add(new FsSnap(r.PeriodDate.Year, r.PeriodDate.Month, r.CountedVat));
 
         // ── ประกอบเป็นตาราง ──
         var rows = new List<FilingCalendarRow>();
@@ -972,12 +988,14 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         var item = dash.Pending.FirstOrDefault(p => p.RemittanceType == remittanceType
             && p.PeriodYear == periodYear && p.PeriodMonth == periodMonth);
         if (item == null) return null;
-        // คำนวณเงินเพิ่มใหม่ตาม payDate ที่เลือก (ปกส.)
+        // คำนวณเงินเพิ่มใหม่ตาม payDate ที่เลือก (ปกส. §49 · ภ.พ.36 §89/1)
         if (remittanceType == "SsoSps110")
         {
             var lf = PayrollService.ComputeSsoLateFee(periodYear, periodMonth, payDate, item.Amount);
             item = item with { LateFeePreview = lf };
         }
+        else if (remittanceType == "VatPp36")
+            item = item with { LateFeePreview = Pp36SurchargeFor(periodYear, periodMonth, item.Amount, payDate) };
         return item;
     }
 
@@ -988,20 +1006,46 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         if (string.IsNullOrEmpty(payableCode))
             throw new InvalidOperationException($"ประเภทนำส่งไม่ถูกต้อง: {type}");
 
-        // กันนำส่งซ้ำงวดเดิม
-        var dup = await _db.Set<StatutoryRemittance>().AnyAsync(r => r.CompanyId == companyId
-            && !r.IsDeleted && r.RemittanceType == type
-            && r.PeriodYear == req.PeriodYear && r.PeriodMonth == req.PeriodMonth);
-        if (dup)
-            throw new InvalidOperationException(
-                $"{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} นำส่งไปแล้ว — ดูในประวัติ");
+        // กันนำส่งซ้ำงวดเดิม — ภ.พ.36 ยกเว้น (คำตัดสินข้อ 133): ยื่นได้หลายครั้งต่อเดือน (ต่อการจ่ายเงิน) ⇒ ด่านเปลี่ยนเป็น
+        // "ห้ามนับใบเดิมซ้ำ" (ใบที่อยู่ในรายการนำส่งแล้วไม่ถูกนับในยอดค้าง · ตรวจซ้ำใต้ล็อกแถวเอกสารข้างล่าง)
+        var isPp36 = type == "VatPp36";
+        if (!isPp36)
+        {
+            var dup = await _db.Set<StatutoryRemittance>().AnyAsync(r => r.CompanyId == companyId
+                && !r.IsDeleted && r.RemittanceType == type
+                && r.PeriodYear == req.PeriodYear && r.PeriodMonth == req.PeriodMonth);
+            if (dup)
+                throw new InvalidOperationException(
+                    $"{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} นำส่งไปแล้ว — ดูในประวัติ");
+        }
 
         // หายอดค้าง + breakdown จาก dashboard (source of truth เดียวกับที่แสดง)
         var dash = await GetDashboardAsync(companyId, 24);
         var item = dash.Pending.FirstOrDefault(p => p.RemittanceType == type
-            && p.PeriodYear == req.PeriodYear && p.PeriodMonth == req.PeriodMonth)
-            ?? throw new InvalidOperationException(
-                $"ไม่มียอดค้างนำส่งของ {form} งวด {req.PeriodMonth:D2}/{req.PeriodYear}");
+            && p.PeriodYear == req.PeriodYear && p.PeriodMonth == req.PeriodMonth);
+        if (item == null)
+        {
+            // ภ.พ.36: งวดที่มีแต่ใบไม่มี JE ต้องบอกเหตุผลจริง (ไม่ใช่ "ไม่มียอดค้าง" เฉย ๆ)
+            var noJe = (dash.Pp36Issues ?? new List<Pp36IssueItem>()).Where(x => isPp36 && x.Kind == "NoJournal"
+                && x.PeriodYear == req.PeriodYear && x.PeriodMonth == req.PeriodMonth).ToList();
+            throw new InvalidOperationException(
+                $"ไม่มียอดค้างนำส่งของ {form} งวด {req.PeriodMonth:D2}/{req.PeriodYear}"
+                + (noJe.Count > 0
+                    ? $" — มีใบ {string.Join(", ", noJe.Select(x => x.DocumentNumber))} ที่อนุมัติแล้วแต่ไม่มี JE (Cr 21912) ต้องลงบัญชีให้ใบก่อน"
+                    : ""));
+        }
+
+        // ภ.พ.36 — ใบที่จะผูกกับการนำส่งครั้งนี้ (ตัวโหลด/ตัวตัดสินเดียวกับยอดค้าง) · ยอด = Cr 21912 ใน GL (บาท)
+        List<Accounting.Helpers.Pp36DocRow>? pp36Docs = null;
+        if (isPp36)
+        {
+            var from = new DateTime(req.PeriodYear, req.PeriodMonth, 1);
+            pp36Docs = (await Accounting.Helpers.Pp36Ledger.LoadDocsAsync(_db, companyId, from, from.AddMonths(1)))
+                .Where(r => r.State == Accounting.Helpers.Pp36DocState.AwaitingRemittance).ToList();
+            if (pp36Docs.Count == 0)
+                throw new InvalidOperationException($"ไม่มีใบ ภ.พ.36 ค้างนำส่งในงวด {req.PeriodMonth:D2}/{req.PeriodYear}");
+            item = item with { Amount = pp36Docs.Sum(r => r.CountedVat) };
+        }
 
         // ยอดนำส่ง WHT ต้องมาจาก 50 ทวิ ที่ออกแล้ว **ครบ** — ถ้ายังมีเอกสารหัก WHT ที่ไม่มีใบ ยอดที่จะจ่าย
         // กรมสรรพากรจะน้อยกว่าที่หักจริง และไฟล์ ภ.ง.ด. ก็ประกาศไม่ครบ ⇒ บล็อกพร้อมทางไปต่อ (ไม่เงียบ ไม่เดา)
@@ -1022,9 +1066,16 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 Accounting.Helpers.WhtUnissuedCertGate.RuleCode);
 
         var amount = item.Amount;
-        var lateFee = (type == "SsoSps110" && req.IncludeLateFee)
-            ? PayrollService.ComputeSsoLateFee(req.PeriodYear, req.PeriodMonth, req.PayDate, amount)
-            : 0m;
+        var lateFee = !req.IncludeLateFee ? 0m : type switch
+        {
+            "SsoSps110" => PayrollService.ComputeSsoLateFee(req.PeriodYear, req.PeriodMonth, req.PayDate, amount),
+            // §89/1 (คำตัดสินข้อ 135) — ค่าที่ระบบเสนอ แก้ได้ (ผู้ใช้เห็นยอดก่อนกด) · ไม่บังคับ
+            "VatPp36" => req.LateSurcharge ?? Pp36SurchargeFor(req.PeriodYear, req.PeriodMonth, amount, req.PayDate),
+            _ => 0m,
+        };
+        if (lateFee < 0m)
+            throw new Accounting.Helpers.BusinessRuleException("เงินเพิ่มต้องไม่ติดลบ", "REMIT-LATEFEE-NEGATIVE");
+        lateFee = Math.Round(lateFee, 2, MidpointRounding.AwayFromZero);
 
         // ผัง Cr (แหล่งเงิน)
         var bankGlId = await ResolveBankGlAsync(companyId, req.BankAccountId, req.BankGlAccountId);
@@ -1078,7 +1129,15 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             {
                 var feeAcc = await ResolveLateFeeAccountAsync(companyId);
                 if (feeAcc != null)
-                    lines.Add(new JournalLineRequest(feeAcc.Id, lateFee, 0, "เงินเพิ่มนำส่งช้า (§49 2%/เดือน)"));
+                    lines.Add(new JournalLineRequest(feeAcc.Id, lateFee, 0, isPp36
+                        // ผังค่าปรับ/เงินเพิ่ม (54820) = รายจ่ายต้องห้าม §65 ตรี(6) — บวกกลับ ภ.ง.ด.50
+                        ? "เงินเพิ่มนำส่ง ภ.พ.36 ช้า §89/1 (1.5%/เดือนหรือเศษ) — รายจ่ายต้องห้าม §65 ตรี(6)"
+                        : "เงินเพิ่มนำส่งช้า (§49 2%/เดือน)"));
+                else if (isPp36)
+                    // ห้ามทิ้งยอดเงียบ (เดิมเส้น ปกส. ตั้ง 0 เมื่อไม่พบผัง) — ผู้ใช้กรอก/เห็นยอดแล้ว ต้องบอกทางไปต่อ
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบผังค่าปรับ/เงินเพิ่ม (54xxx ชื่อมีคำว่า \"เงินเพิ่ม\" หรือ \"ค่าปรับ\" เช่น 54820) สำหรับเงินเพิ่ม §89/1 {lateFee:N2} บาท — "
+                        + "สร้างผังที่หน้า “ผังบัญชี” ก่อน หรือนำส่งโดยไม่ลงเงินเพิ่ม (ใส่ 0)", "PP36-LATEFEE-NO-ACCOUNT");
                 else lateFee = 0m;
             }
             lines.Add(new JournalLineRequest(bankGlId, 0, amount + lateFee, $"นำส่ง{form} {req.PeriodMonth:D2}/{req.PeriodYear}"));
@@ -1174,6 +1233,34 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             };
             _db.Set<StatutoryRemittance>().Add(rec);
 
+            // ภ.พ.36 — ผูกใบเข้ารายการนำส่งนี้ (คำตัดสินข้อ 133/134): ล็อกแถวเอกสารแล้วตรวจซ้ำว่ายังไม่มีรายการนำส่งอื่นนับไปแล้ว
+            // (กดพร้อมกันสองแท็บ = ตัวที่สองถูกปฏิเสธ ไม่ใช่นับซ้ำ) · unique index ในฐานเป็นด่านชั้นที่สอง
+            if (pp36Docs != null)
+            {
+                var docIds = pp36Docs.Select(d => d.Id).ToArray();
+                await _db.Database.ExecuteSqlRawAsync(
+                    "SELECT 1 FROM \"Documents\" WHERE \"CompanyId\" = {0} AND \"Id\" = ANY({1}) FOR UPDATE",
+                    companyId, docIds);
+                var taken = await _db.Pp36RemittanceDocuments.AsNoTracking()
+                    .Where(x => x.CompanyId == companyId && !x.IsDeleted && docIds.Contains(x.DocumentId))
+                    .Select(x => x.DocumentId).ToListAsync();
+                if (taken.Count > 0)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"มีใบ {taken.Count} ใบในงวดนี้ถูกนับในรายการนำส่ง ภ.พ.36 อื่นไปแล้วระหว่างนี้ — โหลดหน้าใหม่แล้วตรวจยอดค้างอีกครั้ง",
+                        "PP36-DOC-ALREADY-REMITTED", 409);
+                foreach (var d in pp36Docs)
+                    _db.Pp36RemittanceDocuments.Add(new Pp36RemittanceDocument
+                    {
+                        CompanyId = companyId,
+                        StatutoryRemittanceId = rec.Id,
+                        DocumentId = d.Id,
+                        PeriodYear = req.PeriodYear,
+                        PeriodMonth = req.PeriodMonth,
+                        VatAmount = d.Ledger.Pp36Payable,
+                        CreatedBy = performedBy,
+                    });
+            }
+
             // SSO — stamp รอบเงินเดือนที่ผูก (ให้หน้า payroll แสดง settled ด้วย)
             if (type == "SsoSps110")
             {
@@ -1204,7 +1291,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             // ไปแล้ว. งวดที่นำส่งแล้ว = ยืนยันตัวเลขแล้ว จึงต้องมีรายงานคู่เสมอ
             // ⚠️ อยู่ **นอก** transaction ของการนำส่งโดยตั้งใจ (commit ไปแล้ว) —
             // สร้างรายงานพลาดต้องไม่ทำให้การนำส่ง (JE เงินจริง) ล้มตาม
-            var reportNote = type == "VatPp36"
+            var reportNote = isPp36
                 ? await TryEnsurePp36ReportAsync(companyId, req.PeriodYear, req.PeriodMonth)
                 : "";
 
@@ -1214,6 +1301,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         catch
         {
             await tx.RollbackAsync();
+            // P0-2 คลาสเดียวกัน: ของที่แก้/เพิ่มค้างใน change tracker (รายการนำส่ง · แถวผูก · ธงบนเอกสาร) ต้องไม่ถูก SaveChanges ถัดไปของผู้เรียกบันทึกครึ่งเดียว
+            _db.ChangeTracker.Clear();
             throw;
         }
     }
@@ -1228,7 +1317,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         {
             var exists = await _db.TaxReports.AnyAsync(t => t.CompanyId == companyId
                 && t.TaxType == TaxType.VatPp36 && t.Year == year && t.Month == month);
-            if (exists) return "";
+            // นำส่งเพิ่มเติมงวดเดิม (คำตัดสินข้อ 133) — รายงานเป็น snapshot ที่สร้างก่อนใบชุดนี้ ⇒ บอกให้สร้างใหม่ (ไม่ regenerate เองเพราะล้างการแก้ของผู้ใช้)
+            if (exists)
+                return await _db.Set<StatutoryRemittance>().CountAsync(r => r.CompanyId == companyId && !r.IsDeleted
+                        && r.RemittanceType == "VatPp36" && r.PeriodYear == year && r.PeriodMonth == month) > 1
+                    ? " · งวดนี้มีรายงาน ภ.พ.36 อยู่แล้ว — กด “สร้างใหม่” ที่หน้ารายงานภาษีเพื่อรวมใบที่นำส่งเพิ่มเติมครั้งนี้"
+                    : "";
             await _tax.GenerateTaxReportAsync(companyId,
                 new Models.DTOs.Tax.CreateTaxReportRequest(TaxType.VatPp36, year, month));
             _logger.LogInformation("Auto-generated ภ.พ.36 tax report {Month}/{Year} after remit", month, year);
@@ -1242,82 +1336,128 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
     }
 
-    /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จกรมสรรพากร (§77/2: เคลมได้เดือน
-    /// ที่นำส่ง) — JE: Dr 11610 ภาษีซื้อ ภ.พ.30 / Cr 11640 ยังไม่ถึงกำหนด + stamp
-    /// InputVatBecameClaimableAt ลงเอกสาร → ภ.พ.30 เดือนที่รับรู้ include ให้เอง.
-    /// เรียกได้หลังนำส่ง (มี remittance VatPp36 งวดนั้น). idempotent ผ่าน JE
-    /// Reference ภ.พ.36R-YYYYMM + เอกสารที่ stamp แล้วไม่นับซ้ำ.</summary>
+    /// <summary>เงินเพิ่ม §89/1 ที่ระบบเสนอ — วันครบกำหนดจากตาราง <c>TaxFilingDeadline.WarnBy</c> ตัวเดียว (ภ.พ.36 = วันกระดาษ เลื่อนพ้นวันหยุด)</summary>
+    private decimal Pp36SurchargeFor(int year, int month, decimal amount, DateTime payDate)
+        => Accounting.Helpers.Pp36Lifecycle.SuggestedSurcharge(amount,
+            Accounting.Helpers.TaxFilingDeadline.WarnBy("VatPp36", year, month, _holidays), payDate);
+
+    /// <summary>
+    /// <b>รับรู้ภาษีซื้อ ภ.พ.36</b> หลังได้ใบเสร็จกรมสรรพากร — JE: Dr 11610 ภาษีซื้อ / Cr 11640 ยังไม่ถึงกำหนด + ประทับวันเคลมลงเอกสาร
+    /// (ภ.พ.30 เดือนนั้นดึงเข้าเอง) · หลักกฎหมาย §82/4 ประกอบใบเสร็จ RD (คำตัดสินข้อ 129 — เลิกอ้าง §77/2)
+    /// <para>═══ รอบ 203 ทีม F3 (E-2/E-3/E-5 · คำตัดสินข้อ 129/133/136) ═══
+    /// (1) <b>เฉพาะใบที่อยู่ในรายการนำส่งแล้ว</b> (ตารางผูก) — เดิมคัด "ใบของงวด" ทุกใบ ⇒ ใบที่อนุมัติหลังนำส่งถูกเคลมทั้งที่ VAT ยังไม่ได้นำส่ง ·
+    /// (2) <b>ยอด = ภาษีซื้อที่พัก 11640 จริงในบัญชีแยกประเภทของใบ</b> (บาท) — ไม่ใช่ <c>VatAmount</c> (บริษัทไม่จด VAT / บรรทัดต้องห้าม ⇒ 0 ·
+    /// ใบไม่มี JE ⇒ ไม่มีอะไรให้ย้าย) · (3) <b>เลข + วันที่ใบเสร็จ RD บังคับ</b> (ไม่ส่งวันที่ = วันที่จ่ายที่บันทึกตอนนำส่ง) ·
+    /// (4) <b>วันเคลมค่าเริ่มต้น = วันที่ใบเสร็จ</b> ผ่าน <c>TaxService.ClaimBasisDate</c> ตัวเดียว (เดิมใช้วันใบผู้ขาย = เคลมก่อนมีหลักฐาน) ·
+    /// ผู้ใช้เลือกวันอื่นได้แต่ห้ามก่อนใบเสร็จ · JE ลงวันเดียวกัน · (5) ห้ามเคลมเข้างวด ภ.พ.30 ที่ยื่น/ล็อกแล้ว ·
+    /// (6) idempotent ใต้ล็อกแถวรายการนำส่ง (ใบที่รับรู้แล้วมี <c>RecognizedJournalEntryId</c>)</para>
+    /// </summary>
     public async Task<RemitResult> RecognizePp36InputVatAsync(Guid companyId, int periodYear,
         int periodMonth, DateTime? recognizeDate, string performedBy,
-        string? rdReceiptNumber = null)
+        string? rdReceiptNumber = null, DateTime? rdReceiptDate = null, Guid? remittanceId = null)
     {
-        // ต้องนำส่งงวดนั้นก่อน (Excel flow: 15/6 นำส่ง → 16/6 ได้ใบเสร็จ → รับรู้)
-        var remittance = await _db.Set<StatutoryRemittance>().FirstOrDefaultAsync(r =>
-            r.CompanyId == companyId
-            && !r.IsDeleted && r.RemittanceType == "VatPp36"
-            && r.PeriodYear == periodYear && r.PeriodMonth == periodMonth);
-        if (remittance == null)
+        var periodRemits = await _db.Set<StatutoryRemittance>()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RemittanceType == "VatPp36"
+                && r.PeriodYear == periodYear && r.PeriodMonth == periodMonth)
+            .ToListAsync();
+        if (periodRemits.Count == 0)
             throw new InvalidOperationException(
                 $"ยังไม่ได้นำส่ง ภ.พ.36 งวด {periodMonth:D2}/{periodYear} — นำส่งก่อนแล้วค่อยรับรู้ภาษีซื้อ");
 
-        // §86/14 — ใบเสร็จ RD คือ "ใบกำกับภาษี" ของภาษีซื้อก้อนนี้: เลขที่ใบเสร็จ
-        // (เลขรับจากการยื่น) ต้องมี เพื่อขึ้นเป็นเลขใบกำกับในรายงานภาษีซื้อ ภ.พ.30.
-        // รับจาก request ก่อน (ผู้ใช้เพิ่งได้ใบเสร็จ อาจยังไม่เคยกรอก) → backfill
-        // ลง remittance; ไม่ส่งมาก็ใช้เลขรับที่กรอกตอนนำส่ง
-        if (!string.IsNullOrWhiteSpace(rdReceiptNumber))
-        {
-            rdReceiptNumber = rdReceiptNumber.Trim();
-            if (string.IsNullOrWhiteSpace(remittance.FilingNumber))
-            {
-                remittance.FilingNumber = rdReceiptNumber;
-                remittance.UpdatedAt = DateTime.UtcNow;
-            }
-        }
-        var rdReceiptNo = !string.IsNullOrWhiteSpace(rdReceiptNumber)
-            ? rdReceiptNumber : remittance.FilingNumber;
-
-        var refNo = $"ภ.พ.36R-{periodYear}{periodMonth:D2}";
-        var dupJe = await _db.JournalEntries.AnyAsync(j => j.CompanyId == companyId
-            && j.Reference == refNo && !j.IsDeleted && j.Status == JournalEntryStatus.Posted);
-        if (dupJe)
-            throw new InvalidOperationException($"งวด {periodMonth:D2}/{periodYear} รับรู้ภาษีซื้อไปแล้ว (JE {refNo})");
-
-        // เอกสารบริการ ตปท. ของงวด ที่ VAT ยังพักอยู่ 11640 (ยังไม่เคยรับรู้)
-        var docs = await _db.Documents
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && d.IsForeignService && d.VatAmount > 0
-                && d.InputVatBecameClaimableAt == null
-                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-            .ToListAsync();
-        docs = docs.Where(d =>
-        {
-            var dt = d.PaymentDate ?? d.DocumentDate;
-            return dt.Year == periodYear && dt.Month == periodMonth;
-        }).ToList();
-        var vatTotal = docs.Sum(d => d.VatAmount);
-        if (vatTotal <= 0.009m)
+        // ใบที่อยู่ในรายการนำส่งของงวด + ยังไม่รับรู้ + มีภาษีซื้อพัก 11640 จริง (ตัวโหลด/ตัวตัดสินเดียวกับหน้านำส่ง)
+        var from = new DateTime(periodYear, periodMonth, 1);
+        var periodRows = await Accounting.Helpers.Pp36Ledger.LoadDocsAsync(_db, companyId, from, from.AddMonths(1));
+        var candidates = periodRows
+            .Where(r => r.State == Accounting.Helpers.Pp36DocState.RemittedAwaitingRecognition && r.Link != null
+                && (remittanceId == null || r.Link.StatutoryRemittanceId == remittanceId))
+            .ToList();
+        if (candidates.Count == 0)
             throw new InvalidOperationException(
-                $"ไม่มีภาษีซื้อ ภ.พ.36 ค้างรับรู้ในงวด {periodMonth:D2}/{periodYear}");
+                $"ไม่มีภาษีซื้อ ภ.พ.36 ค้างรับรู้ในงวด {periodMonth:D2}/{periodYear} — "
+                + "รับรู้ได้เฉพาะใบที่อยู่ในรายการนำส่งแล้วและยังมีภาษีซื้อพัก 11640 (บริษัทไม่จด VAT / ภาษีซื้อต้องห้าม ⇒ VAT เป็นต้นทุนแล้ว ไม่มีอะไรให้รับรู้)");
+        var remitIds = candidates.Select(r => r.Link!.StatutoryRemittanceId).Distinct().ToList();
+        if (remitIds.Count > 1)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"งวด {periodMonth:D2}/{periodYear} นำส่ง ภ.พ.36 หลายครั้งและยังรอรับรู้ {remitIds.Count} รายการ — แต่ละครั้งมีใบเสร็จกรมสรรพากรของตัวเอง "
+                + "เลือกรายการนำส่งที่จะรับรู้ (ปุ่มรับรู้ในแถบฟ้าแยกตามรายการนำส่ง)", "PP36-RECOGNIZE-PICK-REMITTANCE");
+        var remittance = periodRemits.FirstOrDefault(r => r.Id == remitIds[0])
+            ?? throw new InvalidOperationException("ไม่พบรายการนำส่ง ภ.พ.36 ที่ผูกกับใบ");
+
+        // ── คำตัดสินข้อ 136: เลข + วันที่ใบเสร็จกรมสรรพากรบังคับ (ใบเสร็จคือ "ใบกำกับ" ของภาษีซื้อก้อนนี้ §86/14) ──
+        var receiptNo = !string.IsNullOrWhiteSpace(rdReceiptNumber) ? rdReceiptNumber.Trim() : remittance.FilingNumber?.Trim();
+        if (string.IsNullOrWhiteSpace(receiptNo))
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ต้องกรอกเลขที่ใบเสร็จกรมสรรพากรของการนำส่ง ภ.พ.36 ก่อนรับรู้ภาษีซื้อ — ไม่มีหลักฐาน = เคลมไม่ได้ (§82/4 ประกอบใบเสร็จ) · "
+                + "ดูเลขบนใบเสร็จที่ได้จากการชำระ แล้วกรอกในช่อง “เลขที่ใบเสร็จ”", Accounting.Helpers.Pp36Lifecycle.RuleNoReceipt);
+        var receiptDate = (rdReceiptDate ?? remittance.PayDate).Date;
+        if (receiptDate < remittance.PayDate.Date)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"วันที่ใบเสร็จ {receiptDate:dd/MM/yyyy} อยู่ก่อนวันที่ชำระ ภ.พ.36 ที่บันทึกไว้ ({remittance.PayDate:dd/MM/yyyy}) — ใบเสร็จออกเมื่อชำระแล้วเสมอ ตรวจวันที่อีกครั้ง",
+                Accounting.Helpers.Pp36Lifecycle.RuleNoReceipt);
 
         var claimAcc = await ResolveAccountAsync(companyId, "11610")
             ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11610 (ภาษีซื้อ ภ.พ.30)");
-        var undueAcc = await ResolveAccountAsync(companyId, "11640")
+        var undueAcc = await ResolveAccountAsync(companyId, Accounting.Helpers.ForeignServiceVat.Pp36InputVatCode)
             ?? await ResolveAccountAsync(companyId, "11630")
             ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11640 (ภาษีซื้อยังไม่ถึงกำหนด)");
-
-        // วันเคลม ภ.พ.30 ต่อใบ = "วันที่ใบกำกับผู้ขาย" ของใบนั้น (§82/3 เคลมตามวัน
-        // ใบกำกับ) — ผู้ใช้เลือก default นี้. ถ้าผู้ใช้ระบุ recognizeDate มา = ใช้วันนั้น
-        // ทั้งชุด (override). วันที่ JE = recognizeDate หรือ ใบกำกับล่าสุดในชุด
-        DateTime ClaimDateOf(Document d) => recognizeDate ?? d.SupplierTaxInvoiceDate ?? d.PaymentDate ?? d.DocumentDate;
-        var jeDate = recognizeDate ?? docs.Max(d => d.SupplierTaxInvoiceDate ?? d.PaymentDate ?? d.DocumentDate);
 
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
+            // ล็อกแถวรายการนำส่ง แล้วอ่านแถวผูกใหม่ใต้ล็อก — กดซ้ำ/สองแท็บพร้อมกัน ⇒ ตัวที่สองไม่เจออะไรค้าง (ไม่ลง JE ซ้ำ)
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"StatutoryRemittances\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                remittance.Id, companyId);
+            var candIds = candidates.Select(c => c.Id).ToList();
+            var links = await _db.Pp36RemittanceDocuments
+                .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.StatutoryRemittanceId == remittance.Id
+                    && candIds.Contains(x.DocumentId) && x.RecognizedJournalEntryId == null)
+                .ToListAsync();
+            var linkedIds = links.Select(l => l.DocumentId).ToHashSet();
+            var docs = (await _db.Documents
+                    .Where(d => d.CompanyId == companyId && candIds.Contains(d.Id) && d.InputVatBecameClaimableAt == null)
+                    .ToListAsync())
+                .Where(d => linkedIds.Contains(d.Id))
+                .OrderBy(d => d.DocumentNumber)
+                .ToList();
+            var undueByDoc = candidates.ToDictionary(c => c.Id, c => c.Ledger.UndueInputVat);
+            var vatTotal = docs.Sum(d => undueByDoc[d.Id]);
+            if (docs.Count == 0 || vatTotal <= 0.009m)
+                throw new InvalidOperationException(
+                    $"รายการนำส่ง ภ.พ.36 งวด {periodMonth:D2}/{periodYear} รับรู้ภาษีซื้อไปแล้ว (หรือมีคนกดพร้อมกัน) — โหลดหน้าใหม่");
+
+            // ── คำตัดสินข้อ 129: วันเคลม = วันใบเสร็จ (ตัวตัดสินเดียว TaxService.ClaimBasisDate อ่าน Pp36RdReceiptDate ที่ประทับ) ──
+            foreach (var d in docs)
+            {
+                d.Pp36RdReceiptNumber = receiptNo;
+                d.Pp36RdReceiptDate = receiptDate;
+            }
+            var (claimDate, claimError) = Accounting.Helpers.Pp36Lifecycle.ResolveClaimDate(
+                TaxService.ClaimBasisDate(docs[0]), recognizeDate);
+            if (claimError != null)
+                throw new Accounting.Helpers.BusinessRuleException(claimError, Accounting.Helpers.Pp36Lifecycle.RuleClaimBeforeReceipt);
+            var claimAt = claimDate!.Value;
+
+            // ห้ามเคลมเข้างวด ภ.พ.30 ที่ยื่น/ล็อกแล้ว (ปฏิเสธพร้อมทางไปต่อ)
+            var filedStatuses = Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses;
+            var claimPeriodClosed = await _db.TaxReports.AsNoTracking().AnyAsync(t => t.CompanyId == companyId && !t.IsDeleted
+                && t.TaxType == TaxType.VAT && t.Year == claimAt.Year && t.Month == claimAt.Month
+                && (filedStatuses.Contains(t.Status) || t.FilingLockedAt != null));
+            if (claimPeriodClosed)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.Pp36Lifecycle.ClaimPeriodFiledMessage(claimAt), Accounting.Helpers.Pp36Lifecycle.RuleClaimPeriodFiled);
+
+            if (string.IsNullOrWhiteSpace(remittance.FilingNumber))
+            {
+                remittance.FilingNumber = receiptNo;
+                remittance.UpdatedAt = DateTime.UtcNow;
+            }
+
+            var refNo = $"ภ.พ.36R-{periodYear}{periodMonth:D2}"
+                + (periodRemits.Count > 1 ? $"-{remittance.Id.ToString()[..8]}" : "");
             var jeReq = new CreateJournalEntryRequest(
-                EntryDate: jeDate,
-                Description: $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} (ได้ใบเสร็จกรมสรรพากร §77/2)",
+                EntryDate: claimAt,
+                Description: $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} — ใบเสร็จกรมสรรพากร {receiptNo} ลว. {receiptDate:dd/MM/yyyy} (§82/4)",
                 Reference: refNo,
                 Lines: new List<JournalLineRequest>
                 {
@@ -1328,40 +1468,29 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             var je = await _accounting.CreateJournalEntryAsync(companyId, jeReq, performedBy);
             await _accounting.PostJournalEntryAsync(companyId, je.Id);
 
-            // stamp เอกสาร → ภ.พ.30 เดือน "วันที่ใบกำกับ" (หรือ recognizeDate ถ้าระบุ)
-            // จะ include ภาษีซื้อก้อนนี้
             foreach (var d in docs)
             {
-                d.InputVatBecameClaimableAt = ClaimDateOf(d);
-                // §86/14: เลข/วันที่ใบเสร็จ RD = เลข/วันที่ใบกำกับของภาษีซื้อก้อนนี้
-                // ในรายงาน ภ.พ.30 (ไม่ใช่เลข invoice ผู้ขาย ตปท.) — วันที่ใบเสร็จ
-                // = วันจ่ายจริงของการนำส่ง (recognizeDate override ได้)
-                d.Pp36RdReceiptNumber = rdReceiptNo;
-                d.Pp36RdReceiptDate = recognizeDate ?? remittance.PayDate;
-                // ⚠️ ตัวบล็อกที่ทำให้ "รับรู้แล้วแต่ไม่โผล่ใน ภ.พ.30/รายการดึงเอกสาร":
-                // ทั้ง GenerateVatReport และ GetPullableDocuments รับ PV เข้าฝั่ง
-                // ภาษีซื้อ **เฉพาะที่ HasTaxInvoiceReference=true** (นิยามเดิม =
-                // "อ้างใบกำกับซื้อเพื่อขอเครดิต") — ใบ ภ.พ.36 ไม่มีใบกำกับไทยจึง
-                // ไม่เคยติ๊ก ⇒ GL มี Dr 11610 แต่รายงานไม่มีแถว ไม่ reconcile.
-                // หลังนำส่ง+ได้ใบเสร็จ RD ใบเสร็จนั้น**คือใบกำกับภาษี §86/14**
-                // สิทธิ์เครดิตจึงสมบูรณ์ → เปิดธงเหมือนเส้น §86/4
-                // (ReclassifyUndueInputVatAsync ทำแบบเดียวกันอยู่แล้ว)
+                d.InputVatBecameClaimableAt = claimAt;
+                // ⚠️ ตัวบล็อกที่ทำให้ "รับรู้แล้วแต่ไม่โผล่ใน ภ.พ.30/รายการดึงเอกสาร": GenerateVatReport และ GetPullableDocuments รับ PV
+                // เข้าฝั่งภาษีซื้อเฉพาะที่ HasTaxInvoiceReference=true — ใบเสร็จ RD คือใบกำกับ §86/14 ⇒ เปิดธงเหมือนเส้น §86/4
                 if (d.DocumentType == DocumentType.PaymentVoucher)
                     d.HasTaxInvoiceReference = true;
                 d.UpdatedAt = DateTime.UtcNow;
             }
+            foreach (var l in links.Where(l => docs.Any(d => d.Id == l.DocumentId)))
+            {
+                l.RecognizedJournalEntryId = je.Id;
+                l.RecognizedAmount = undueByDoc[l.DocumentId];
+                l.UpdatedAt = DateTime.UtcNow;
+                l.UpdatedBy = performedBy;
+            }
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
 
-            _logger.LogInformation("Recognized PP36 input VAT {Month}/{Year} {Amt} ({Docs} docs) → JE {Je}",
-                periodMonth, periodYear, vatTotal, docs.Count, je.Id);
+            _logger.LogInformation("Recognized PP36 input VAT {Month}/{Year} {Amt} ({Docs} docs, remittance {Rem}) → JE {Je}",
+                periodMonth, periodYear, vatTotal, docs.Count, remittance.Id, je.Id);
 
-            // ── sync รายงานที่มีอยู่แล้วทันที (single source of truth) ──
-            // ถ้างวดเคลมมีรายงานร่างอยู่ก่อน (สร้างก่อนกดรับรู้) บรรทัดใบพวกนี้
-            // จะไม่มีทางโผล่จนกว่าจะ regenerate — ซึ่งล้างการติ๊ก/แก้ยอดของ
-            // บรรทัดอื่นทั้งงวด (ผู้ใช้ปฏิเสธจะกดถูกแล้ว). ดึงทีละใบเข้ารายงาน
-            // เดิมแทน (กติกาเต็มของ PullDocumentIntoReport — best-effort:
-            // รับรู้สำเร็จไปแล้ว การ sync รายงานล้มต้องไม่ทำให้ transaction พัง)
+            // ── sync รายงานร่างที่มีอยู่แล้วทันที (single source of truth) — นอก transaction: รับรู้สำเร็จแล้ว การ sync รายงานล้มต้องไม่ทำให้ล้มย้อนหลัง ──
             var pullNotes = new List<string>();
             foreach (var d in docs)
             {
@@ -1371,14 +1500,19 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             }
             var pulled = pullNotes.Count(n => n.StartsWith("ดึงใบ"));
             var pullSummary = pulled > 0 ? $" · ดึงเข้ารายงานร่างที่มีอยู่แล้ว {pulled} ใบ" : "";
+            var skipped = periodRows.Count(r => r.State == Accounting.Helpers.Pp36DocState.RemittedNoInputVat
+                && r.Link?.StatutoryRemittanceId == remittance.Id);
+            var skippedNote = skipped > 0 ? $" · {skipped} ใบไม่มีภาษีซื้อพัก 11640 (VAT เป็นต้นทุนแล้ว) ไม่ต้องรับรู้" : "";
 
-            var claimMonths = string.Join(", ", docs.Select(ClaimDateOf).Select(dt => dt.ToString("MM/yyyy")).Distinct());
             return new RemitResult(Guid.Empty, je.Id, vatTotal, 0m,
-                $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} จำนวน {vatTotal:N2} บาท ({docs.Count} เอกสาร) — เข้า ภ.พ.30 เดือน {claimMonths} (ตามวันที่ใบกำกับ){pullSummary}");
+                $"รับรู้ภาษีซื้อ ภ.พ.36 งวด {periodMonth:D2}/{periodYear} จำนวน {vatTotal:N2} บาท ({docs.Count} เอกสาร) — "
+                + $"เข้า ภ.พ.30 เดือน {claimAt:MM}/{claimAt.Year + 543} (วันที่ใบเสร็จกรมสรรพากร {receiptDate:dd/MM/yyyy}){pullSummary}{skippedNote}");
         }
         catch
         {
             await tx.RollbackAsync();
+            // P0-2 คลาสเดียวกัน: ของที่แก้/เพิ่มค้างใน change tracker (รายการนำส่ง · แถวผูก · ธงบนเอกสาร) ต้องไม่ถูก SaveChanges ถัดไปของผู้เรียกบันทึกครึ่งเดียว
+            _db.ChangeTracker.Clear();
             throw;
         }
     }

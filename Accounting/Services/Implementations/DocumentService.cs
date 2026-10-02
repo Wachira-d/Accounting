@@ -1494,7 +1494,24 @@ public partial class DocumentService : IDocumentService
             // สาขาผู้ออกใบ — null/Empty = ใช้ค่าบริษัทตามเดิม (กิจการสาขาเดียว)
             doc.BranchId = await ResolveOwnedBranchIdAsync(companyId, request.BranchId);
             doc.DocumentTemplateId = await ResolveOwnedTemplateIdAsync(companyId, request.DocumentTemplateId);
+            // รอบ 203 ทีม F3 (E-8): ธง "บริการต่างประเทศ" มีความหมายเฉพาะชุดชนิดเดียว (ForeignServiceVat.IsSelfAssessingType · PI/Expense/PV) —
+            // ใบขายที่ติ๊กธงเคยถูกนับเป็นหนี้ ภ.พ.36 บนหน้านำส่ง ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่ล้างธงเงียบ)
+            if (Accounting.Helpers.Pp36Lifecycle.FlagTypeError(doc.DocumentType, request.IsForeignService) is string fsTypeErr)
+                throw new BusinessRuleException(fsTypeErr, Accounting.Helpers.Pp36Lifecycle.RuleWrongDocumentType);
             doc.IsForeignService = request.IsForeignService;
+            // รอบ PP36 ทีม F2 (E-1b · เอกสารลูกสืบทอด — กฎ #4 A): ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทางซึ่ง "เป็นเจ้าของ ภ.พ.36" สืบทอดธง
+            // ทุกทางเข้า (แปลง · สร้างมือ · API) — บรรทัดที่ยกมาพก VAT ประเมินเองซึ่งไม่ได้จ่ายผู้รับเงิน ⇒ ยอดจ่าย/PDF/คำเตือนต้องรู้ ·
+            // ใบนี้ไม่ตั้ง 21912 ซ้ำ (AutoPost เดินสาย settlement · ForeignServiceVat.OwnsPp36 = false เพราะอ้างใบต้นทาง)
+            if (doc.DocumentType == DocumentType.PaymentVoucher && doc.RelatedDocumentId.HasValue && !doc.IsForeignService)
+            {
+                var pp36Src = await _db.Documents.AsNoTracking()
+                    .Where(x => x.Id == doc.RelatedDocumentId.Value && x.CompanyId == companyId)
+                    .Select(x => new { x.DocumentType, x.IsForeignService, x.VatAmount, x.RelatedDocumentId })
+                    .FirstOrDefaultAsync();
+                if (pp36Src != null && ForeignServiceVat.OwnsPp36(pp36Src.DocumentType, pp36Src.IsForeignService,
+                        pp36Src.VatAmount, pp36Src.RelatedDocumentId.HasValue))
+                    doc.IsForeignService = true;
+            }
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
             var createLines = request.Lines ?? [];
@@ -1591,17 +1608,19 @@ public partial class DocumentService : IDocumentService
             doc.WithholdingTaxAmount = totalWht;
             doc.TotalAmount = doc.SubTotal + totalVat - totalWht;
             // Cash-settled documents carry no outstanding balance — the cash
-            // already moved, so PaidAmount = Total and BalanceDue = 0. This is
-            // what keeps a จ่ายทันที voucher out of the aging / ค้างชำระ report
-            // (the aging query keys on PaidAmount < TotalAmount).
+            // already moved, so PaidAmount = ยอดจ่ายผู้รับเงิน and BalanceDue = 0. This is
+            // what keeps a จ่ายทันที voucher out of the aging / ค้างชำระ report.
+            // รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): "เงินออก/ยอดค้าง" = ForeignServiceVat.PayeeAmount — ใบบริการต่างประเทศ
+            // TotalAmount รวม VAT ประเมินเอง (ภ.พ.36 ไม่ได้จ่ายผู้รับเงิน) · ใบอื่น = TotalAmount เท่าเดิมทุกสตางค์
+            var createPayee = ForeignServiceVat.PayeeAmount(doc);
             if (isCashSettled)
             {
-                doc.PaidAmount = doc.TotalAmount;
+                doc.PaidAmount = createPayee;
                 doc.BalanceDue = 0m;
             }
             else
             {
-                doc.BalanceDue = doc.TotalAmount;
+                doc.BalanceDue = createPayee;
             }
 
             await _db.SaveChangesAsync();
@@ -1783,9 +1802,14 @@ public partial class DocumentService : IDocumentService
         // ServedAsReceipt ต้องเซ็ตให้ก่อน (ตัวคำนวณหัวอ่านจาก entity) —
         // SettlesTaxInvoiceSource ตัว resolver เติมเอง
         doc.ServedAsReceipt = resp.ServedAsReceipt;
+        var pp36Detail = (await Accounting.Helpers.Pp36Ledger.StatesAsync(_db, companyId, new[] { documentId }))
+            .TryGetValue(documentId, out var pp36St) ? pp36St : ((Accounting.Helpers.Pp36DocState State, string? Label)?)null;
         resp = resp with
         {
             DocumentTitle = await PdfGenerationService.ResolveDocumentTitleAsync(_db, companyId, doc),
+            // สถานะ ภ.พ.36 (รอบ 203 · server computes) — ตัวโหลดเดียวกับหน้ารายการ/หน้านำส่ง
+            Pp36State = pp36Detail?.State.ToString(),
+            Pp36StatusLabel = pp36Detail?.Label,
         };
 
         // หัวถูกลดจากใบกำกับอย่างย่อเป็นใบเสร็จเพราะยังไม่มีสิทธิ์ §86/6 → บอกบนจอ (รอบ 191 — เดิมเงียบ)
@@ -2301,16 +2325,21 @@ public partial class DocumentService : IDocumentService
             .Where(d => DocumentConversionProgress.IsConversionBearing(d.DocumentType))
             .ToDictionary(d => d.Id, d => d.Lines.Sum(l => l.Quantity));
         var conversionByDoc = await LoadConversionSummariesAsync(companyId, conversionTotals);
+        // สถานะ ภ.พ.36 ของทั้งหน้า (batch · ตัวโหลดเดียวกับหน้านำส่ง) — หน้าเว็บแสดงป้ายอย่างเดียว ไม่ตัดสินจากธงเอง (รอบ 203 T-3d/C-P2)
+        var pp36States = await Accounting.Helpers.Pp36Ledger.StatesAsync(_db, companyId, ids);
 
         return new PagedResponse<DocumentResponse>(
             items.Select(d => {
                 var (pceCount, pceAmount) = pceSummary.GetValueOrDefault(d.Id);
+                var pp36 = pp36States.TryGetValue(d.Id, out var st) ? st : ((Accounting.Helpers.Pp36DocState State, string? Label)?)null;
                 return MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id),
                     conversion: conversionByDoc.GetValueOrDefault(d.Id),
                     hasPce: pceCount > 0, pceCount: pceCount, pceAmount: pceAmount,
                     servedAsReceipt: d.ServedAsReceipt) with
                 {
                     DocumentTitle = titles.GetValueOrDefault(d.Id),
+                    Pp36State = pp36?.State.ToString(),
+                    Pp36StatusLabel = pp36?.Label,
                 };
             }).ToList(),
             total, request.Page, request.PageSize,
@@ -2635,7 +2664,12 @@ public partial class DocumentService : IDocumentService
             && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
             && doc.Status == DocumentStatus.Draft)
             doc.CnDnPurchaseSideOverride = request.CnDnPurchaseSideOverride;
-        if (request.IsForeignService.HasValue) doc.IsForeignService = request.IsForeignService.Value;
+        if (request.IsForeignService.HasValue)
+        {
+            if (Accounting.Helpers.Pp36Lifecycle.FlagTypeError(doc.DocumentType, request.IsForeignService.Value) is string fsTypeErrUpd)
+                throw new BusinessRuleException(fsTypeErrUpd, Accounting.Helpers.Pp36Lifecycle.RuleWrongDocumentType);
+            doc.IsForeignService = request.IsForeignService.Value;
+        }
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
@@ -2772,8 +2806,17 @@ public partial class DocumentService : IDocumentService
             var roundingDelta = doc.RoundingAdjustment - roundingBefore;
             doc.SubTotal += roundingDelta;
             doc.TotalAmount += roundingDelta;
-            if (doc.PaymentType == Models.Enums.PaymentType.Cash) { doc.PaidAmount = doc.TotalAmount; doc.BalanceDue = 0m; }
-            else doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+            // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131) — ตัวตั้งเดียวกับเส้นสร้าง
+            if (doc.PaymentType == Models.Enums.PaymentType.Cash) { doc.PaidAmount = ForeignServiceVat.PayeeAmount(doc); doc.BalanceDue = 0m; }
+            else doc.BalanceDue = ForeignServiceVat.PayeeAmount(doc) - doc.PaidAmount;
+        }
+        // รอบ PP36 ทีม F2: ติ๊ก/ปลดติ๊กบริการต่างประเทศโดยไม่ส่งบรรทัดมา ⇒ ยอดจ่ายผู้รับเงินเปลี่ยน (VAT ประเมินเองเข้า/ออก) — ยอดค้างต้องตาม
+        // (ห้าม silent no-op: เดิมธงเปลี่ยนแต่ BalanceDue/PaidAmount ค้างค่าก่อนเปลี่ยน)
+        else if (request.Lines == null && request.IsForeignService.HasValue)
+        {
+            var flagPayee = ForeignServiceVat.PayeeAmount(doc);
+            if (doc.PaymentType == Models.Enums.PaymentType.Cash) { doc.PaidAmount = flagPayee; doc.BalanceDue = 0m; }
+            else doc.BalanceDue = flagPayee - doc.PaidAmount;
         }
 
         if (request.Lines != null)
@@ -2938,15 +2981,17 @@ public partial class DocumentService : IDocumentService
                         "กรุณาใช้ \"ใบบันทึกค่าใช้จ่าย\" (ตั้งหนี้) แทน");
                 doc.PaymentType = request.PaymentType;
             }
+            // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ตัวตั้งเดียวกับเส้นสร้าง
+            var updPayee = ForeignServiceVat.PayeeAmount(doc);
             if (doc.PaymentType == Models.Enums.PaymentType.Cash)
             {
-                doc.PaidAmount = doc.TotalAmount;
+                doc.PaidAmount = updPayee;
                 doc.BalanceDue = 0m;
                 doc.DueDate = null;
             }
             else
             {
-                doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+                doc.BalanceDue = updPayee - doc.PaidAmount;
             }
         }
 
@@ -3021,7 +3066,7 @@ public partial class DocumentService : IDocumentService
 
         // §83/6 บริการต่างประเทศ (ภ.พ.36): บล็อกชัด ๆ — เส้นนี้เป็น §86/4 (เติม
         // ใบกำกับผู้ขายไทย → ย้าย 11640→11610). ภ.พ.36 ผู้ขาย ตปท. ไม่มีใบกำกับไทย
-        // ต้องเคลมผ่าน "นำส่ง ภ.พ.36 → รับรู้ภาษีซื้อ" ที่หน้านำส่งภาษี (§77/2).
+        // ต้องเคลมผ่าน "นำส่ง ภ.พ.36 → รับรู้ภาษีซื้อ" ที่หน้านำส่งภาษี (§82/4).
         // ไม่ให้ save metadata ใบกำกับผิดเส้น + ไม่แตะ JE (ตอบคำถาม: ไม่ต้องลง JE
         // กลับ เพราะไม่ยอมให้เกิด action ผิด flow ตั้งแต่แรก)
         if (doc.IsForeignService)
@@ -5740,7 +5785,7 @@ public partial class DocumentService : IDocumentService
                 (int)(today - d.DocumentDate.Date).TotalDays,
                 monthsLeft, isExpired,
                 d.IsForeignService
-                    ? new[] { "นำส่ง ภ.พ.36 แล้วกด \"รับรู้ภาษีซื้อ\" ที่หน้านำส่งภาษี (§77/2)" }
+                    ? new[] { "นำส่ง ภ.พ.36 แล้วกด \"รับรู้ภาษีซื้อ\" ที่หน้านำส่งภาษี (§82/4)" }
                     : completeness.MissingFields,
                 d.IsForeignService);
         }).ToList();
@@ -6559,7 +6604,8 @@ public partial class DocumentService : IDocumentService
                     && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.Receipt
                         or DocumentType.ReceiptVoucher or DocumentType.CertificateInLieu)
                 {
-                    doc.PaidAmount = doc.TotalAmount;
+                    // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ใบสำคัญจ่ายที่สืบทอดธงบริการต่างประเทศจ่ายเฉพาะฐาน
+                    doc.PaidAmount = ForeignServiceVat.PayeeAmount(doc);
                     doc.BalanceDue = 0m;
                     doc.Status = DocumentStatus.Paid;
                 }
@@ -7162,6 +7208,21 @@ public partial class DocumentService : IDocumentService
                 controlMoved.Add(new { account = code, before, after });
         }
 
+        // รอบ 203 ทีม F3 (คำตัดสินข้อ 134): ขยับยอด 21912/11640 ของใบที่นำส่ง ภ.พ.36 หรือรับรู้ภาษีซื้อแล้ว = แก้ยอด ภ.พ.36 ย้อนหลัง ⇒ บล็อก
+        // (ย้ายผังค่าใช้จ่ายอย่างเดียวยังทำได้ — ไม่แตะยอดภาษี)
+        var pp36Moved = origNet.Keys.Union(wantNet.Keys).Any(id =>
+        {
+            var code = origCodes.TryGetValue(id, out var a) ? a.AccountCode
+                : accounts.TryGetValue(id, out var b) ? b.AccountCode : null;
+            return code != null
+                && (code == ForeignServiceVat.Pp36PayableCode || Accounting.Helpers.Pp36Ledger.IsUndueCode(code))
+                && Math.Round(origNet.GetValueOrDefault(id), 2, R) != Math.Round(wantNet.GetValueOrDefault(id), 2, R);
+        });
+        if (pp36Moved
+            && (await Accounting.Helpers.Pp36Ledger.ChangeBlocksAsync(_db, companyId, new[] { documentId }, "ปรับยอดภาษี ภ.พ.36 ของ"))
+                .TryGetValue(documentId, out var pp36AdjBlock))
+            throw new BusinessRuleException(pp36AdjBlock, Accounting.Helpers.Pp36Lifecycle.RuleChangeAfterRemit, 409);
+
         // ผลต่างที่ต้องลงจริง — บวก = ต้อง Dr เพิ่ม, ลบ = ต้อง Cr
         var deltas = origNet.Keys.Union(wantNet.Keys)
             .Select(id => (Id: id, Amount: Math.Round(
@@ -7488,6 +7549,25 @@ public partial class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"เอกสารนี้{(toForeignService ? "เป็นบริการต่างประเทศ" : "ไม่ได้เป็นบริการต่างประเทศ")}อยู่แล้ว");
 
+        // รอบ 203 ทีม F3 (คำตัดสินข้อ 134): ปลดธงใบที่นำส่ง ภ.พ.36/รับรู้ภาษีซื้อแล้ว = กลับ 21912 ที่จ่ายสรรพากรไปแล้ว ⇒ บล็อกพร้อมทางไปต่อ
+        if (!toForeignService
+            && (await Accounting.Helpers.Pp36Ledger.ChangeBlocksAsync(_db, companyId, new[] { documentId }, "ปลดธงบริการต่างประเทศของ"))
+                .TryGetValue(documentId, out var pp36UnflagBlock))
+            throw new BusinessRuleException(pp36UnflagBlock, Accounting.Helpers.Pp36Lifecycle.RuleChangeAfterRemit, 409);
+        // รอบ PP36 ทีม F2 (E-1b): ใบสำคัญจ่ายที่ "ปิดหนี้ใบต้นทาง" ไม่ใช่เจ้าของ ภ.พ.36 — AutoPost เดินสาย settlement (ตัดเจ้าหนี้)
+        // ไม่ตั้ง 21912 ⇒ ติ๊กที่นี่ไม่มีผลทางบัญชี และถ้ารายงานนับธงตรง ๆ ภ.พ.36 จะนับซ้ำ · ทางไปต่อ = แก้ที่ใบต้นทาง
+        if (doc.DocumentType == DocumentType.PaymentVoucher && doc.RelatedDocumentId.HasValue)
+        {
+            var srcNo = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => d.DocumentNumber).FirstOrDefaultAsync() ?? "ใบต้นทาง";
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ใบสำคัญจ่ายนี้ปิดหนี้ของ {srcNo} — หนี้ ภ.พ.36 (§83/6) ตั้งที่ใบต้นทาง ไม่ใช่ที่ใบสำคัญจ่าย · "
+                + $"ทางไปต่อ: ยกเลิกใบสำคัญจ่ายนี้ → เปิด {srcNo} กด \"แก้เป็นบริการต่างประเทศ (ภ.พ.36)\" → ออกใบสำคัญจ่ายใหม่จาก {srcNo} "
+                + "(ใบใหม่สืบทอดธงและจ่ายเฉพาะยอดจ่ายผู้รับเงินให้เอง)",
+                Accounting.Helpers.ForeignServiceEvidence.RuleCode);
+        }
+
         if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
                        or DocumentStatus.Rejected or DocumentStatus.WaitingApproval)
             throw new InvalidOperationException(
@@ -7576,6 +7656,10 @@ public partial class DocumentService : IDocumentService
                     systemTriggered: true);
 
             doc.IsForeignService = toForeignService;
+            // รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดจ่ายผู้รับเงินเปลี่ยนตามธง ⇒ ยอดจ่ายแล้ว/ค้างต้องตาม (gate ข้างบนรับประกันว่าไม่มีการชำระ/เอกสารปลายทาง)
+            var reclassPayee = ForeignServiceVat.PayeeAmount(doc);
+            if (doc.PaymentType == Models.Enums.PaymentType.Cash) { doc.PaidAmount = reclassPayee; doc.BalanceDue = 0m; }
+            else doc.BalanceDue = Math.Max(0m, reclassPayee - doc.PaidAmount);
             // ภาษีซื้อของ ภ.พ.36 บังคับพักที่ 11640 เสมอ — override ที่ผู้ใช้เคยปัก
             // ไว้เองต้องถูกล้าง ไม่งั้น AutoPost จะลงตามค่าที่ปักแทนกติกา §83/6
             // (ในภาพของผู้ใช้ ใบที่ผิดมี override = "11640" ซึ่งบังเอิญตรงผัง แต่
@@ -8292,6 +8376,11 @@ public partial class DocumentService : IDocumentService
         // รอบ 198 ฝ่ายค้าน C-2: 50 ทวิ ของใบนี้ที่อยู่ในแบบ ภ.ง.ด. ที่ยื่นแล้ว — ห้ามให้เอกสารหายแต่ใบรับรองค้าง (cascade ด้านล่างกลืน error)
         if (await WhtCertVoidGuard.CheckDocumentAsync(_db, companyId, documentId) is string whtFiled)
             throw new BusinessRuleException(whtFiled, "RD-50TWI-FILED", 409);
+        // รอบ 203 ทีม F3 (คำตัดสินข้อ 134 · E-6): ใบที่นำส่ง ภ.พ.36 แล้ว/รับรู้ภาษีซื้อแล้ว — ยกเลิกไม่ได้ (เดิมด่านดูแค่ FilingLockedAt แต่รายงาน ภ.พ.36
+        // ที่สร้างตอนนำส่งเป็นร่าง ⇒ ยกเลิกผ่าน · Cr 21912 ถูกกลับทั้งที่เงินนำส่งออกไปแล้ว ⇒ 21912 ติดเดบิต · JE รับรู้ไม่มี SourceDocumentId จึงไม่ถูกกลับ)
+        if ((await Accounting.Helpers.Pp36Ledger.ChangeBlocksAsync(_db, companyId, new[] { documentId }, "ยกเลิก"))
+                .TryGetValue(documentId, out var pp36VoidBlock))
+            throw new BusinessRuleException(pp36VoidBlock, Accounting.Helpers.Pp36Lifecycle.RuleChangeAfterRemit, 409);
 
         // Filing lock guard: an Approved document that's part of a TaxReport
         // already marked Filed (FilingLockedAt set) is sealed for audit —
@@ -10119,7 +10208,7 @@ public partial class DocumentService : IDocumentService
         // Restore document balance (รวมค่าธรรมเนียมที่เคยล้างเอกสารด้วย)
         // + หนี้ที่เคยปิดด้วยบรรทัดปรับ (รอบ 193 — ขา JE ถูกกลับพร้อม JE การชำระข้างบนแล้ว)
         doc.PaidAmount = Math.Max(0m, doc.PaidAmount - payment.Amount - payment.FeeAmount - payment.SettlementAdjustmentAmount);
-        doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+        doc.BalanceDue = ForeignServiceVat.PayeeAmount(doc) - doc.PaidAmount;   // ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2)
         if (doc.Status != DocumentStatus.Voided)
         {
             doc.Status = doc.PaidAmount <= 0 ? DocumentStatus.Approved
@@ -10377,7 +10466,7 @@ public partial class DocumentService : IDocumentService
         {
             if (!docMap.TryGetValue(alloc.DocumentId, out var ad)) continue;
             ad.PaidAmount = Math.Max(0m, ad.PaidAmount - alloc.AllocatedAmount);
-            ad.BalanceDue = ad.TotalAmount - ad.PaidAmount;
+            ad.BalanceDue = ForeignServiceVat.PayeeAmount(ad) - ad.PaidAmount;   // ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2)
             if (ad.Status != DocumentStatus.Voided)
             {
                 ad.Status = ad.PaidAmount <= 0 ? DocumentStatus.Approved
@@ -10470,6 +10559,19 @@ public partial class DocumentService : IDocumentService
             documentId, companyId);
     }
 
+    /// <summary>
+    /// รอบ PP36 ทีม F2 (E-7 · คำตัดสินข้อ 134): VAT ประเมินเองของใบ <paramref name="pp36Owner"/> ถูก "นำส่ง/รับรู้" ไปแล้วหรือยัง —
+    /// คืนข้อความเหตุ (ไทย) หรือ null · อ่านจากหลักฐานที่มีจริงเท่านั้น: รับรู้ภาษีซื้อแล้ว (<c>InputVatBecameClaimableAt</c>) ·
+    /// มีเลขใบเสร็จ RD (<c>Pp36RdReceiptNumber</c>) · มีรายการนำส่ง ภ.พ.36 ของงวด (<c>PaymentDate ?? DocumentDate</c> — ตัวจัดงวดเดียวกับยอดค้างนำส่ง)
+    /// <para>รอบ 203 ทีม F3 (คำตัดสินข้อ 133): ตัดสิน "ต่อใบ" ด้วยตัวตรวจเดียวกับด่านยกเลิก/ปลดธง/ปรับยอด (<c>Pp36Ledger.RemittedStatusAsync</c> —
+    /// ใบอยู่ในรายการนำส่งแล้ว หรือรับรู้แล้ว) — เดิมดู "งวดนี้มีการนำส่ง" ⇒ ใบที่อนุมัติหลังนำส่งงวดนั้น (ยังไม่ได้นำส่งจริง) ถูกปฏิเสธเกิน</para>
+    /// </summary>
+    private async Task<string?> Pp36SettledReasonAsync(Guid companyId, Document pp36Owner)
+    {
+        var status = await Accounting.Helpers.Pp36Ledger.RemittedStatusAsync(_db, companyId, new[] { pp36Owner.Id });
+        return status.TryGetValue(pp36Owner.Id, out var st) ? Accounting.Helpers.Pp36Lifecycle.SettledReason(st) : null;
+    }
+
     private async Task ApplySourceDocumentAdjustmentsAsync(Guid companyId, Document doc)
     {
         if (!doc.RelatedDocumentId.HasValue) return;
@@ -10492,13 +10594,19 @@ public partial class DocumentService : IDocumentService
             d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId);
         if (source == null) return;
 
+        // รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดที่ใบนี้ "ปิดหนี้" ใบต้นทาง = ยอดจ่ายผู้รับเงิน — ใบต้นทางเป็นเจ้าของ ภ.พ.36 ⇒
+        // VAT ประเมินเองในบรรทัดที่ยกมาไม่ได้จ่ายผู้ขาย (หนี้ ภ.พ.36 อยู่ที่ 21912 ของใบต้นทาง) · ใบอื่นทุกใบ = TotalAmount เท่าเดิม
+        var srcOwnsPp36 = ForeignServiceVat.OwnsPp36(source);
+        var settleAmount = ForeignServiceVat.PayeeAmount(doc, srcOwnsPp36);
+        var sourcePayee = ForeignServiceVat.PayeeAmount(source);
+
         if (isSettlement)
         {
             // Settlement (Receipt/ReceiptVoucher/PaymentVoucher): strict cap.
             // Cannot collect/pay more than the outstanding balance.
-            if (doc.TotalAmount > source.BalanceDue + 0.01m)
+            if (settleAmount > source.BalanceDue + 0.01m)
                 throw new InvalidOperationException(
-                    $"จำนวนเงินรับ/จ่าย ({doc.TotalAmount:N2}) มากกว่ายอดคงค้างของเอกสารต้นทาง " +
+                    $"จำนวนเงินรับ/จ่าย ({settleAmount:N2}) มากกว่ายอดคงค้างของเอกสารต้นทาง " +
                     $"{source.DocumentNumber} (คงค้าง {source.BalanceDue:N2})");
 
             // Cumulative WHT cap — without this, operators using the
@@ -10545,7 +10653,7 @@ public partial class DocumentService : IDocumentService
             // ใส่ยอด 3,492 + WHT 0% ⇒ Cr AR แค่ 3,492 เหลือค้าง 108 ถาวร
             if (source.WithholdingTaxAmount > 0m
                 && await IsWhtCashBasisAsync(companyId)
-                && source.PaidAmount + doc.TotalAmount >= source.TotalAmount - 0.01m)
+                && source.PaidAmount + settleAmount >= sourcePayee - 0.01m)
             {
                 var siblingTypes2 = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.PaymentVoucher, DocumentType.CertificateInLieu };
                 var whtDocs = await _db.Documents.AsNoTracking()
@@ -10570,7 +10678,7 @@ public partial class DocumentService : IDocumentService
                         + $"\n• ถ้าลูกค้าไม่ได้หักภาษีจริง ให้แก้ WHT ที่ใบต้นทาง {source.DocumentNumber} เป็น 0 ก่อน");
             }
 
-            source.PaidAmount += doc.TotalAmount;
+            source.PaidAmount += settleAmount;
         }
         else if (isCreditNote)
         {
@@ -10594,13 +10702,14 @@ public partial class DocumentService : IDocumentService
             //   handles the cash flow. Source state stays at Paid (PaidAmount unchanged).
             if (source.BalanceDue > 0.01m)
             {
-                if (doc.TotalAmount > source.BalanceDue + 0.01m)
+                // E-7: ใบลดหนี้ของใบซื้อบริการต่างประเทศลดหนี้ผู้ขายเฉพาะ "ยอดจ่ายผู้รับเงิน" (ส่วน VAT ประเมินเองกลับที่ 21912 ใน JE)
+                if (settleAmount > source.BalanceDue + 0.01m)
                     throw new InvalidOperationException(
-                        $"จำนวนใบลดหนี้ ({doc.TotalAmount:N2}) มากกว่ายอดคงค้างของเอกสารต้นทาง " +
+                        $"จำนวนใบลดหนี้ ({settleAmount:N2}) มากกว่ายอดคงค้างของเอกสารต้นทาง " +
                         $"{source.DocumentNumber} (คงค้าง {source.BalanceDue:N2}) " +
                         $"— หากต้องการคืนเงินเกินกว่ายอดคงค้าง กรุณาแยกเป็นใบลดหนี้หลายใบ");
 
-                source.PaidAmount += doc.TotalAmount;
+                source.PaidAmount += settleAmount;
             }
             // else: cash refund mode — source.PaidAmount stays at TotalAmount,
             // BalanceDue stays at 0, Status stays at Paid. JE Cr Cash handles it.
@@ -10621,7 +10730,7 @@ public partial class DocumentService : IDocumentService
             return;
         }
 
-        source.BalanceDue = source.TotalAmount - source.PaidAmount;
+        source.BalanceDue = sourcePayee - source.PaidAmount;
         if (source.Status != DocumentStatus.Voided)
         {
             source.Status = source.BalanceDue <= 0.01m
@@ -10678,8 +10787,10 @@ public partial class DocumentService : IDocumentService
             if (!cnAdjustedSource) return;   // cash-refund mode → ไม่แตะ source
         }
 
-        source.PaidAmount = Math.Max(0m, source.PaidAmount - doc.TotalAmount);
-        source.BalanceDue = source.TotalAmount - source.PaidAmount;
+        // รอบ PP36 ทีม F2: คืนเท่ายอดที่ตอน apply บวกไว้ (ยอดจ่ายผู้รับเงิน — ตัวตั้งเดียวกับ ApplySourceDocumentAdjustmentsAsync)
+        source.PaidAmount = Math.Max(0m, source.PaidAmount
+            - ForeignServiceVat.PayeeAmount(doc, ForeignServiceVat.OwnsPp36(source)));
+        source.BalanceDue = ForeignServiceVat.PayeeAmount(source) - source.PaidAmount;
         if (source.Status != DocumentStatus.Voided)
         {
             source.Status = source.PaidAmount <= 0.01m
@@ -11213,6 +11324,9 @@ public partial class DocumentService : IDocumentService
             // ลิงก์ต้นทางต้องเข้าไปตั้งแต่ create — PV ที่ settle ใบแจ้งหนี้ซื้อ
             // ต้องไม่โดน auto-approve แบบ standalone cash ก่อนมีลิงก์
             RelatedDocumentId: source.Id,
+            // รอบ PP36 ทีม F2 (E-1b · เอกสารลูกสืบทอด): ธงบริการต่างประเทศ §83/6 ตามไปกับใบฝั่งซื้อ (PI→PV ฯลฯ) — บรรทัดที่ยกไปพก
+            // VAT ประเมินเอง ⇒ ใบลูกต้องรู้ว่า VAT นั้นไม่ได้จ่ายผู้รับเงิน (ยอดจ่าย/PDF) · ใบลูกที่ปิดหนี้ไม่ตั้ง 21912 ซ้ำ (OwnsPp36)
+            IsForeignService: source.IsForeignService && ForeignServiceVat.IsSelfAssessingType(targetType),
             // รอบ 193 (ฝ่ายค้าน C2): ผลต่างปัดเศษตามไปเมื่อยกทุกบรรทัดครบจำนวน — ไม่งั้น 5,024.00 → 5,024.01
             RoundingAdjustment: Accounting.Helpers.DocumentRounding.Inherit(source.RoundingAdjustment,
                 spec.Count == source.Lines.Count(l => !l.IsDeleted) && spec.All(s => s.Qty >= s.Line.Quantity))), createdBy,
@@ -12738,8 +12852,10 @@ public partial class DocumentService : IDocumentService
                 // Proportional default: this installment's share of the
                 // total WHT. Capped at the remaining slice so rounding can't
                 // overshoot on the last payment.
-                var proportional = doc.TotalAmount > 0m
-                    ? Math.Round((request.Amount + settleNet) * doc.WithholdingTaxAmount / doc.TotalAmount, 2, MidpointRounding.AwayFromZero)
+                // ตัวหาร = ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2) — ใบบริการต่างประเทศ TotalAmount รวม VAT ประเมินเองที่ไม่ได้จ่าย ⇒ สัดส่วนเพี้ยน
+                var payeeTotalForWht = ForeignServiceVat.PayeeAmount(doc);
+                var proportional = payeeTotalForWht > 0m
+                    ? Math.Round((request.Amount + settleNet) * doc.WithholdingTaxAmount / payeeTotalForWht, 2, MidpointRounding.AwayFromZero)
                     : 0m;
                 paymentWht = Math.Min(proportional, remainingCap);
             }
@@ -12806,8 +12922,9 @@ public partial class DocumentService : IDocumentService
             _db.Payments.Add(payment);
 
             doc.PaidAmount += request.Amount + paymentFee + settleNet;
+            // รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดที่ต้องจ่าย = ยอดจ่ายผู้รับเงิน (ใบบริการต่างประเทศไม่รวม VAT ประเมินเอง)
             var paySettle = Accounting.Helpers.DocumentSettlementState.Apply(
-                doc.TotalAmount, doc.PaidAmount, doc.Status);
+                ForeignServiceVat.PayeeAmount(doc), doc.PaidAmount, doc.Status);
             doc.BalanceDue = paySettle.BalanceDue;
             doc.Status = paySettle.Status;
             // Clear stale aging immediately when the doc settles — otherwise
@@ -13173,11 +13290,12 @@ public partial class DocumentService : IDocumentService
                                 .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
                             var remainingCap = Math.Max(0m, d.WithholdingTaxAmount - alreadyWht);
                             var isFinal = alloc.AllocatedAmount + 0.01m >= d.BalanceDue;
+                            var allocPayee = ForeignServiceVat.PayeeAmount(d);   // ตัวหาร = ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2)
                             whtSlice = isFinal
                                 ? remainingCap
                                 : Math.Min(remainingCap,
-                                    d.TotalAmount > 0
-                                        ? Math.Round(alloc.AllocatedAmount * d.WithholdingTaxAmount / d.TotalAmount,
+                                    allocPayee > 0
+                                        ? Math.Round(alloc.AllocatedAmount * d.WithholdingTaxAmount / allocPayee,
                                             2, MidpointRounding.AwayFromZero)
                                         : 0);
                         }
@@ -13199,7 +13317,7 @@ public partial class DocumentService : IDocumentService
                     // Settle the document
                     d.PaidAmount += alloc.AllocatedAmount;
                     var allocSettle = Accounting.Helpers.DocumentSettlementState.Apply(
-                        d.TotalAmount, d.PaidAmount, d.Status);
+                        ForeignServiceVat.PayeeAmount(d), d.PaidAmount, d.Status);   // ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2)
                     d.BalanceDue = allocSettle.BalanceDue;
                     d.Status = allocSettle.Status;
                     if (d.Status == DocumentStatus.Paid)
@@ -13727,7 +13845,7 @@ public partial class DocumentService : IDocumentService
         if (!doc.InputVatPostedAsUndue) return false;
         // §83/6 บริการต่างประเทศ: ภาษีซื้อพักที่ 11640 ด้วยเหตุ "ยังไม่นำส่ง ภ.พ.36"
         // (ไม่ใช่ใบกำกับ §86/4 ไม่ครบ) — เคลมผ่าน RecognizePp36InputVatAsync เท่านั้น
-        // (หลังนำส่ง+ใบเสร็จ RD §77/2). ห้ามย้ายผ่านเส้น §86/4 นี้ (ผู้ขาย ตปท.
+        // (หลังนำส่ง+ใบเสร็จ RD §82/4). ห้ามย้ายผ่านเส้น §86/4 นี้ (ผู้ขาย ตปท.
         // ไม่มีเลขภาษีไทย → completeness ก็ fail อยู่แล้ว แต่กันชัด ๆ)
         if (doc.IsForeignService) return false;
         // เคย reclassify ไปแล้ว → ไม่ทำซ้ำ (idempotent)
@@ -14256,7 +14374,9 @@ public partial class DocumentService : IDocumentService
             annualRevenue, company?.PaidUpCapital, priorEntertainment,
             CurrentFiscalYearStart: yearStart,
             CompanyTaxId: company?.TaxId,
-            HasSourceDocument: hasSourceDoc);
+            HasSourceDocument: hasSourceDoc,
+            // รอบ PP36 ทีม F2 (E-12): ผู้รับต่างประเทศ — สองสัญญาณเดียวกับทะเบียน 50 ทวิ/ผัง 21918 (WhtPayeeKind.IsForeignPayee)
+            PayeeIsForeign: Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, doc.Contact?.CountryCode));
         var payeeName = doc.Contact?.Name;
         var payeeTaxId = doc.Contact?.TaxId;
 
@@ -14492,11 +14612,7 @@ public partial class DocumentService : IDocumentService
     }
 
     private static decimal ToGlAmount(Document doc, decimal docAmount)
-    {
-        var fx = doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate;
-        return fx == 1m ? docAmount
-            : Math.Round(docAmount * fx, 2, MidpointRounding.AwayFromZero);
-    }
+        => Accounting.Helpers.DocumentFx.ToBaht(docAmount, doc.ExchangeRate);   // ตัวแปลงเดียวกับเส้นภาษี ภ.พ.36 (E-4)
 
     /// <summary>ยอดที่ "บรรทัดนี้" ลงไว้จริงบนผังบัญชีของตัวเองในแยกประเภท (บาท) —
     /// ตัวย้ายผังบัญชีต้องย้ายเท่านี้เป๊ะ ๆ ไม่ใช่ฐานก่อน VAT เสมอ.
@@ -15684,6 +15800,18 @@ public partial class DocumentService : IDocumentService
             var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
             var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
 
+            // ── รอบ PP36 ทีม F2 (E-7 · คำตัดสินข้อ 131/134): ใบลด/เพิ่มหนี้ฝั่งซื้อของใบที่เป็นเจ้าของ ภ.พ.36 ──
+            // ใบเดิม: Dr ค่าใช้จ่าย ฐาน · Dr 11640 VAT / Cr เจ้าหนี้ ฐาน · Cr 21912 VAT ⇒ ใบลดหนี้ต้องกลับ "ทรงเดียวกัน":
+            // Dr เจ้าหนี้ = ยอดจ่ายผู้รับเงิน (ไม่ใช่ยอดรวม VAT) · Dr 21912 = VAT ประเมินเองส่วนลด · Cr 11640 / ค่าใช้จ่าย (ตัวแยกเดียว SplitCredit)
+            // เดิม Dr เจ้าหนี้ยอดรวม VAT + ไม่กลับ 21912 ⇒ เจ้าหนี้ติดเดบิต 7% + หนี้ ภ.พ.36 ค้างเกิน
+            var cnSrcOwnsPp36 = isPurchaseSide && source != null && ForeignServiceVat.OwnsPp36(source);
+            if (cnSrcOwnsPp36 && await Pp36SettledReasonAsync(companyId, source!) is string pp36Settled)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"{source!.DocumentNumber} {pp36Settled} — {(isCreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")}ที่เปลี่ยน VAT ประเมินเองหลังนำส่ง/รับรู้แล้ว "
+                    + "ออกจากระบบไม่ได้ (คำตัดสินข้อ 134) · ทางไปต่อ: ยื่นแบบ ภ.พ.36 เพิ่มเติม/ขอคืนกับสรรพากร แล้วบันทึกปรับปรุงด้วยใบสำคัญทั่วไป "
+                    + "(ยอดเจ้าหนี้ผู้ขายที่ลดลงบันทึกในใบสำคัญทั่วไปเดียวกัน)",
+                    "RD-83/6-CN-AFTER-REMIT");
+
             journalType = isPurchaseSide ? JournalType.Purchase : JournalType.Sales;
             var typeLabel = isCreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้";
 
@@ -15716,15 +15844,28 @@ public partial class DocumentService : IDocumentService
             // — เดิมลงแบบ accrual เสมอ → AR ค้าง +WHT ถาวร / 11910 ติดลบ
             var cnDnGrossWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
                 && !isCashSettlement && doc.WithholdingTaxAmount > 0;
-            var counterAmt = cnDnGrossWht
-                ? doc.TotalAmount + doc.WithholdingTaxAmount
-                : doc.TotalAmount;
+            // E-7: ใบต้นทางเป็นเจ้าของ ภ.พ.36 ⇒ เจ้าหนี้/เงินสด = ยอดจ่ายผู้รับเงิน · ส่วน VAT ประเมินเองเข้า 21912 (ตัวแยกเดียวกับ AutoPost ใบเดิม)
+            var cnDnSplit = ForeignServiceVat.SplitCredit(cnSrcOwnsPp36,
+                cnDnGrossWht ? doc.TotalAmount + doc.WithholdingTaxAmount : doc.TotalAmount,
+                doc.VatAmount);
+            var counterAmt = cnDnSplit.PayeeCredit;
             if (counterAcc != null)
             {
                 AddLine(counterAcc.Id,
                     counterIsDebit ? counterAmt : 0,
                     counterIsDebit ? 0 : counterAmt,
-                    counterDesc);
+                    counterDesc + (cnDnSplit.Pp36Credit > 0 ? " (ฐาน ไม่รวม VAT ประเมินเอง §83/6)" : ""));
+            }
+            if (cnDnSplit.Pp36Credit > 0)
+            {
+                var cnPp36Acc = await FindAccountAsync(companyId, ForeignServiceVat.Pp36PayableCode)
+                    ?? throw new InvalidOperationException(
+                        $"ไม่พบผังบัญชี {ForeignServiceVat.Pp36PayableCode} (VAT ค้างนำส่ง ภ.พ.36) — สร้างก่อนบันทึก{typeLabel}ของบริการต่างประเทศ");
+                // ทิศเดียวกับขาเจ้าหนี้: ใบลดหนี้ซื้อ = Dr (ลดหนี้ ภ.พ.36) · ใบเพิ่มหนี้ซื้อ = Cr (เพิ่มหนี้ ภ.พ.36)
+                AddLine(cnPp36Acc.Id,
+                    counterIsDebit ? cnDnSplit.Pp36Credit : 0,
+                    counterIsDebit ? 0 : cnDnSplit.Pp36Credit,
+                    $"{typeLabel} — VAT ประเมินเอง ภ.พ.36 (§83/6) อ้าง {source!.DocumentNumber}");
             }
 
             // === Revenue / Expense lines ===
@@ -15783,7 +15924,12 @@ public partial class DocumentService : IDocumentService
                 // รายการที่บัญชีเดียวกับที่ใบเดิมพักไว้ — ไม่งั้นบัญชีจริง (21911/
                 // 11610) ติดลบทั้งที่ไม่เคยถูกลง และบัญชีพัก (21913/11640) ค้างเกิน
                 var vatCode = isPurchaseSide ? "11610" : "21911";
-                if (isPurchaseSide && source != null
+                if (cnSrcOwnsPp36)
+                {
+                    // E-7: ภาษีซื้อ ภ.พ.36 ของใบเดิมพัก 11640 เสมอ (ด่านข้างบนรับประกันว่ายังไม่รับรู้ → 11610)
+                    vatCode = ForeignServiceVat.Pp36InputVatCode;
+                }
+                else if (isPurchaseSide && source != null
                     && source.InputVatPostedAsUndue && source.InputVatBecameClaimableAt == null)
                 {
                     vatCode = "11640";   // PI/Expense/PV ยังพักภาษีซื้อรอใบกำกับครบ
@@ -16027,7 +16173,7 @@ public partial class DocumentService : IDocumentService
             if (claimableVatPi > 0)
             {
                 // §83/6 บริการต่างประเทศ: VAT เคลมได้เฉพาะ "เดือนที่นำส่ง ภ.พ.36 +
-                // ได้ใบเสร็จ RD" (§77/2) — บังคับพักที่ 11640 เสมอ (ไม่ดู completeness
+                // ได้ใบเสร็จ RD" (§82/4) — บังคับพักที่ 11640 เสมอ (ไม่ดู completeness
                 // เพราะไม่มีใบกำกับไทย) → RecognizePp36 จะย้าย 11640→11610 ทีหลัง
                 var (vatInputAccount, postedAsUndue) = doc.IsForeignService
                     ? ((await FindAccountAsync(companyId, ForeignServiceVat.Pp36InputVatCode)
@@ -16080,7 +16226,7 @@ public partial class DocumentService : IDocumentService
             if (pp36Vat > 0)
             {
                 var pp36Acc = await FindAccountAsync(companyId, ForeignServiceVat.Pp36PayableCode)
-                    ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีขาย ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
+                    ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
                 AddLine(pp36Acc.Id, 0, pp36Vat, $"เจ้าหนี้ ภ.พ.36 (VAT ประเมินเอง §83/6) - {doc.DocumentNumber}");
             }
 
@@ -16694,14 +16840,20 @@ public partial class DocumentService : IDocumentService
                 // rate ของ PV (วันจ่ายจริง) — ผลต่าง → FX realized G/L
                 var pvSrc = await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
-                    .Select(d => new { d.DocumentType, d.ExchangeRate })
+                    .Select(d => new { d.DocumentType, d.ExchangeRate, d.IsForeignService, d.VatAmount, d.RelatedDocumentId })
                     .FirstOrDefaultAsync();
                 var sourceType = pvSrc?.DocumentType ?? DocumentType.PurchaseInvoice;
                 var pvSrcFx = pvSrc?.ExchangeRate ?? doc.ExchangeRate;
                 decimal PvSrcThb(decimal amt) => pvSrcFx == 1m ? amt
                     : Math.Round(amt * pvSrcFx, 2, MidpointRounding.AwayFromZero);
                 var apAccount = await ResolvePayableAccountAsync(companyId, sourceType, doc.Contact);
-                var pvCashThb = Conv(doc.TotalAmount);
+                // รอบ PP36 ทีม F2 (E-1b · คำตัดสินข้อ 131): ใบต้นทางเป็นเจ้าของ ภ.พ.36 (ตั้ง Cr 21912 ไว้แล้ว + เจ้าหนี้ = ฐาน) ⇒ ใบนี้
+                // ตัดเจ้าหนี้/จ่ายธนาคารเฉพาะ "ยอดจ่ายผู้รับเงิน" — ไม่ตั้ง 21912 ซ้ำ · เดิม Dr เจ้าหนี้ = TotalAmount รวม VAT ประเมินเอง
+                // ⇒ เจ้าหนี้ติดเดบิต + เงินออกเกิน 7% · ใบอื่นทุกใบ = TotalAmount เท่าเดิม
+                var pvSrcOwnsPp36 = pvSrc != null && ForeignServiceVat.OwnsPp36(pvSrc.DocumentType, pvSrc.IsForeignService,
+                    pvSrc.VatAmount, pvSrc.RelatedDocumentId.HasValue);
+                var pvPayee = ForeignServiceVat.PayeeAmount(doc, pvSrcOwnsPp36);
+                var pvCashThb = Conv(pvPayee);
                 decimal apThb, pvWhtThb = 0m;
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
@@ -16711,7 +16863,7 @@ public partial class DocumentService : IDocumentService
                     // THIS voucher's WHT (per-installment) so cumulative
                     // matches the source PI's total over multiple PVs.
                     var thisWht = doc.WithholdingTaxAmount;
-                    apThb = PvSrcThb(doc.TotalAmount + thisWht);
+                    apThb = PvSrcThb(pvPayee + thisWht);
                     if (apAccount != null)
                     {
                         pendingLines.Add((apAccount.Id, apThb, 0m, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
@@ -16738,7 +16890,7 @@ public partial class DocumentService : IDocumentService
                 {
                     // Accrual: AP at PI was already net of WHT, so PV just
                     // moves net cash from AP to Cash/Bank.
-                    apThb = PvSrcThb(doc.TotalAmount);
+                    apThb = PvSrcThb(pvPayee);
                     if (apAccount != null)
                     {
                         pendingLines.Add((apAccount.Id, apThb, 0m, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
@@ -16789,7 +16941,7 @@ public partial class DocumentService : IDocumentService
                 {
                     // เหมือน PI — เลือก 11610/11640/override ตาม completeness §86/4.
                     // §83/6 บริการต่างประเทศ → บังคับ 11640 เสมอ (เคลมได้หลังนำส่ง
-                    // ภ.พ.36 + ได้ใบเสร็จ RD §77/2 — RecognizePp36 ย้ายให้ทีหลัง)
+                    // ภ.พ.36 + ได้ใบเสร็จ RD §82/4 — RecognizePp36 ย้ายให้ทีหลัง)
                     var (vatInputAccount, postedAsUndue) = doc.IsForeignService
                         ? ((await FindAccountAsync(companyId, ForeignServiceVat.Pp36InputVatCode)
                                 ?? await FindAccountAsync(companyId, "11630")
@@ -16813,7 +16965,7 @@ public partial class DocumentService : IDocumentService
                 if (pp36VatPv > 0)
                 {
                     var pp36AccPv = await FindAccountAsync(companyId, ForeignServiceVat.Pp36PayableCode)
-                        ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีขาย ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
+                        ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
                     AddLine(pp36AccPv.Id, 0, pp36VatPv, $"เจ้าหนี้ ภ.พ.36 (VAT ประเมินเอง §83/6) - {doc.DocumentNumber}");
                 }
 
@@ -18111,7 +18263,8 @@ public partial class DocumentService : IDocumentService
         EtaxKeptOriginalAt: d.EtaxKeptOriginalAt,
         SettlementOrphanAckAt: d.SettlementOrphanAckAt,
         SettlementOrphanAckBy: d.SettlementOrphanAckBy,
-        SettlementOrphanAckReason: d.SettlementOrphanAckReason);
+        SettlementOrphanAckReason: d.SettlementOrphanAckReason,
+        PayeeAmount: ForeignServiceVat.PayeeAmount(d));
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
@@ -19139,13 +19292,32 @@ public partial class DocumentService : IDocumentService
         if (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
                 or DocumentType.PaymentVoucher)
         {
+            // รอบ PP36 ทีม F2 (E-1b): ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทาง — เจ้าของ ภ.พ.36 คือใบต้นทาง (ตัดสินด้วย ForeignServiceVat.OwnsPp36 ตัวเดียว)
+            // ⇒ ใบต้นทางติ๊กแล้ว = ไม่เตือน · ยังไม่ติ๊ก = ชี้ทางแก้ไปที่ใบต้นทาง (เดิมสั่งให้ติ๊กบนใบนี้ ⇒ ภ.พ.36 นับซ้ำ)
+            string? fsSourceNo = null;
+            var fsSourceOwns = false;
+            if (doc.DocumentType == DocumentType.PaymentVoucher && doc.RelatedDocumentId.HasValue)
+            {
+                var fsSrc = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => new { d.DocumentNumber, d.DocumentType, d.IsForeignService, d.VatAmount, d.RelatedDocumentId })
+                    .FirstOrDefaultAsync();
+                if (fsSrc != null)
+                {
+                    fsSourceNo = fsSrc.DocumentNumber;
+                    fsSourceOwns = ForeignServiceVat.OwnsPp36(fsSrc.DocumentType, fsSrc.IsForeignService, fsSrc.VatAmount,
+                        fsSrc.RelatedDocumentId.HasValue);
+                }
+            }
             var fs = Accounting.Helpers.ForeignServiceEvidence.Judge(
                 isForeignService: doc.IsForeignService,
                 vatAmount: doc.VatAmount,
                 contactCountryCode: doc.Contact?.CountryCode,
                 contactTaxId: doc.Contact?.TaxId,
                 inputVatParkedAsUndue: doc.InputVatPostedAsUndue
-                    || doc.InputVatAccountCodeOverride == "11640");
+                    || doc.InputVatAccountCodeOverride == "11640",
+                settledSourceNumber: fsSourceNo,
+                settledSourceOwnsPp36: fsSourceOwns);
             if (fs.Suspect) warnings.Add("⚠️ " + fs.Reason);
         }
 
@@ -19261,6 +19433,15 @@ public partial class DocumentService : IDocumentService
                 if (Accounting.Helpers.ForeignWhtPayeeCheck.Warning(foreignScope, foreignWht, line.WithholdingTaxRate) is string foreignWarn)
                     warnings.Add($"🌐 จ่ายต่างประเทศ '{line.Description}': {foreignWarn}");
             }
+            // รอบ PP36 ทีม F2 (คำตัดสินข้อ 130 · T-4b): ทั้งใบไม่หักและไม่จำแนกเงินได้เลย ⇒ ลูปรายบรรทัดข้างบนข้ามทุกบรรทัด (เงียบ) —
+            // เตือน (ไม่บล็อก) ด้วยตัวตัดสินขอบเขต/อัตราเดียวกัน · มี 50 ทวิ ผูกใบนี้แล้ว (ภาษีจัดการนอกบรรทัด) = ไม่เตือน
+            var foreignHasCert = await _db.WithholdingTaxCerts.AsNoTracking().AnyAsync(w =>
+                w.CompanyId == companyId && w.DocumentId == doc.Id && !w.IsDeleted && w.Status != WithholdingTaxCertStatus.Voided);
+            if (Accounting.Helpers.ForeignWhtPayeeCheck.UnclassifiedNoWithholdingWarning(foreignScope, doc.Contact?.CountryCode, foreignPayDate,
+                    anyLineWithheld: doc.Lines.Any(l => l.WithholdingTaxRate > 0m || l.WithholdingTaxAmount > 0m) || doc.WithholdingTaxAmount > 0m,
+                    anyLineClassified: doc.Lines.Any(l => !string.IsNullOrWhiteSpace(l.IncomeTypeCode)),
+                    hasWhtCertificate: foreignHasCert) is string unclassifiedWarn)
+                warnings.Add("🌐 " + unclassifiedWarn);
         }
 
         // Sticker-shock guard — flag invoices > 500k THB. Catches a typo

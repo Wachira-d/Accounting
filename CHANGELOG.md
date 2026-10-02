@@ -4462,3 +4462,35 @@ _รอบ 202 PP36_REVIEW ทีม F1 (ความถูกต้องขอ
 - เทสต์: guard §83/6 +7 เมธอด (Theory 3 กรณี + 6 Fact · PV/PI/Expense 5,908/413.56 ผ่าน · ไม่ติ๊กแต่มี 21912 ล้ม · ใบปกติเงินไปกองบัญชีภาษียังถูกจับ · USD) · ตัวถอย DbContext ออฟไลน์ 4 ·
   AutoApproveFailure/MissingJournalRepair สองทิศ · Db 2 (ไม่ถอย = ครึ่งทางถูกบันทึก · ถอย = ไม่มี + งานค้างผู้เรียกไม่หาย) · required_call_site +19 กติกา —
   commit 8da202b8_
+
+_รอบ 203 ทีม F3 (2026-10-02) — วงจรนำส่ง/รับรู้ ภ.พ.36 ตาม GL (PP36_REVIEW E-2..E-13 · T-2 · T-3d/C-P2 · คำตัดสินข้อ 129, 132–136):
+- **ตัวตัดสินเดียว** `Helpers/Pp36Lifecycle` (pure) + `Helpers/Pp36Ledger` (โหลด GL ที่มีผล/รายการนำส่ง) + `ForeignServiceVat.Pp36DocumentTypes/CanCarryPp36/OwnsPp36/Pp36PeriodDate` +
+  `Helpers/DocumentFx.ToBaht` (`DocumentService.ToGlAmount` เรียกตัวนี้) — ยอดค้าง · ปฏิทิน · นำส่ง · รับรู้ · รายงาน ภ.พ.36 · tax point · ป้ายบนรายการ ใช้ชุดเดียว
+- **E-3/E-4** นับเฉพาะใบที่ GL มี Cr 21912 จริง (บาท) · ใบอนุมัติแล้วไม่มี JE ⇒ รายการ ต้องตรวจ (`RemittanceDashboardResponse.Pp36Issues`) ไม่นับเงียบ · รับรู้ย้ายเฉพาะ 11640 ที่พักจริง
+- **E-5** ตาราง `Pp36RemittanceDocuments` (ใบ ↔ รายการนำส่ง · unique ต่อใบ) · นำส่งเพิ่มเติมงวดเดิมได้ (unique index งวด `_v2` ยกเว้น VatPp36) · รับรู้เฉพาะใบที่นำส่งแล้ว · migration ผูกใบของการนำส่งเดิม
+- **E-2** รับรู้: เลข+วันที่ใบเสร็จ RD บังคับ · วันเคลม = วันใบเสร็จผ่าน `TaxService.ClaimBasisDate` (ห้ามก่อน) · JE ลงวันเคลม · ห้ามงวด ภ.พ.30 ยื่น/ล็อกแล้ว · ต่อรายการนำส่ง · อ้าง §82/4 (เลิก §77/2 ทั้งเรพ)
+- **E-6** บล็อกยกเลิก/ปลดธง/ปรับยอด 21912-11640/ยกเลิกการลงบัญชีรอบโอน หลังนำส่ง/รับรู้ (`Pp36Ledger.ChangeBlocksAsync`) · นำส่งเกิน/ขาดขึ้นเป็นรายการต้องตรวจ
+- **E-8** ติ๊กธงบนใบขาย ⇒ ปฏิเสธ (`PP36-FLAG-WRONG-TYPE`) · **E-9** เงินเพิ่ม §89/1 เสนอ+แก้ได้ (`RemitRequest.LateSurcharge`) ลงผังค่าปรับ · **E-10** กระทบยอด 21912 ตัด JE นำส่ง + บรรทัด 11640 + สาเหตุใบไม่มี JE ·
+  **E-13** ภ.พ.30 บรรทัดใบต่างประเทศก่อนรับรู้ = "[ภ.พ.36 — รอนำส่ง/รับรู้]" · **T-2** ชื่อผัง 21912 "ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36" (แม่แบบ + migration ชื่อเดิมทุกตัวอักษร) ·
+  **T-3d/C-P2** `DocumentResponse.Pp36State/Pp36StatusLabel` · documents.html แสดงอย่างเดียว · "เคลม ภ.พ.30" ไม่ขึ้นกับใบรออนุมัติ
+- เทสต์ pure `Pp36LifecycleTests` · golden `Db/Pp36LifecycleGoldenDbTests` (5 เคส) · required_call_site +16 กติกา — commit 873f9ad4_
+_รอบ PP36 ทีม F2 — ยอดจ่ายผู้รับเงินของใบซื้อบริการต่างประเทศ (คำตัดสินข้อ 130/131/134 · PP36_REVIEW E-1/E-1b/E-7/T-4b/E-12/C-P2):
+- **E-1** `ForeignServiceVat.PayeeAmount` (= `SplitCredit(...).PayeeCredit` · + รูป EF `PayeeAmountQuery`) ตัวตั้งเดียวของเงินออก/ยอดค้าง — `TotalAmount` คงรวม VAT ประเมินเอง ·
+  ย้ายผู้อ่าน/ผู้เขียน 31 จุด (สร้าง/แก้/ติ๊กธง/reclassify · ชำระ/กระจาย/ยกเลิกชำระ + ตัวหาร WHT · ปิดหนี้ใบต้นทาง/กลับ · integration/นำเข้าไฟล์ · อายุเจ้าหนี้ ·
+  จับคู่ธนาคาร 4 จุด · PDF สองตัว · DTO `PayeeAmount` → หน้าบันทึกชำระ) · PDF: แถว "VAT ที่ผู้จ่ายประเมินและนำส่งเอง (ภ.พ.36 §83/6) — ไม่จ่ายให้ผู้รับเงิน" +
+  "ยอดจ่ายผู้รับเงิน" + ตัวอักษร (`ResolvePrintTotals` ตัวเดียวของ HTML/QuestPDF · QuestPDF เลิกฝัง "ภาษีมูลค่าเพิ่ม 7%")
+- **E-1b** `ForeignServiceVat.OwnsPp36` (+ `OwnsPp36Query`) predicate ตัวเดียว "ใบนี้ตั้ง Cr 21912 ไหม" ให้ทีม F3 ใช้นับ ภ.พ.36 · PV ลูกสืบทอดธง (แปลง + ทุกทางเข้า) ·
+  AutoPost/พรีวิว PV ปิดหนี้ตัดเจ้าหนี้/จ่ายตามยอดจ่ายผู้รับเงิน · RD-83/6-UNFLAGGED บน PV ปิดหนี้ชี้ใบต้นทาง · reclassify ปฏิเสธ PV ปิดหนี้
+- **E-7** ใบลด/เพิ่มหนี้ฝั่งซื้อของใบเจ้าของ ภ.พ.36: เจ้าหนี้ = ยอดจ่ายผู้รับเงิน · Dr/Cr 21912 · 11640 · นำส่ง/รับรู้แล้ว ⇒ ปฏิเสธ `RD-83/6-CN-AFTER-REMIT` (ข้อ 134)
+- **T-4b** `ForeignWhtPayeeCheck.UnclassifiedNoWithholdingWarning` (`RD-70-UNCLASSIFIED` · เตือนไม่บล็อก) · **E-12** §65 ตรี (11)(18) ผู้รับต่างประเทศ + (19) บวกกลับต้นทุนจริง ·
+  **C-P2** ป้าย "มี JE แต่หักล้างเป็นศูนย์" แยกจาก "ไม่มี JE"
+- migration `ForeignServicePayeeBalanceMigration` (idempotent · แถวสูตรเดิมเท่านั้น · ใบจ่ายเกินไม่แตะ + log) · เทสต์ pure 2 คลาส · required_call_site +15 กติกา — commit cc840773_
+
+_รอบ 203 ทีม F3 รวมกับทีม F2 (2026-10-02) — predicate เจ้าของหนี้ ภ.พ.36 เหลือตัวเดียว:
+- ยุบ `ForeignServiceVat.Pp36DocumentTypes/CanCarryPp36/OwnsPp36(type, isForeign, settledSourceType)` ของ F3 ⇒ ใช้ของ F2 `OwnsPp36(Document)` ·
+  `OwnsPp36(type, isForeignService, vat, hasRelatedDocument)` · EF `OwnsPp36Query` + ชุดชนิด `IsSelfAssessingType` (PI/Expense/PV — ตรงกับ AutoPost ที่ Cr 21912)
+- CIL: AutoPost ไม่แยกขา §83/6 ⇒ ไม่ใช่เจ้าของ และติ๊กธงไม่ได้ (เดิม F3 รวม CIL) · tax point `TaxPointResolver.IsReverseCharge` ใช้ชุดเดียวกัน (block body · คืนกติกา required_call_site)
+- `Pp36Ledger.LoadDocsCoreAsync` กรองด้วย `OwnsPp36Query` (PV ที่ปิดหนี้ใบต้นทางสืบทอดธงตาม F2 ไม่นับซ้ำ) · migration ผูกใบเดิมใช้เงื่อนไขเดียวกัน
+- TODO ของ F2: `DocumentService.Pp36SettledReasonAsync` (ด่านใบลด/เพิ่มหนี้ E-7) ตัดสิน "ต่อใบ" ด้วย `Pp36Ledger.RemittedStatusAsync` ตัวเดียวกับด่านยกเลิก/ปลดธง/ปรับยอด
+  (`ChangeBlocksAsync`) — เดิมระดับงวด ⇒ ใบที่อนุมัติหลังนำส่งถูกปฏิเสธเกิน · ข้อความเหตุ `Pp36Lifecycle.SettledReason` ตัวเดียว
+- required_call_site +3 กติกา (IsReverseCharge · Pp36SettledReasonAsync · LoadDocsCoreAsync) — commit 92d1f4da_

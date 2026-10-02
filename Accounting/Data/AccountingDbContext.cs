@@ -128,6 +128,8 @@ public class AccountingDbContext : DbContext
     public DbSet<PdpaPiiAccessLog> PdpaPiiAccessLogs => Set<PdpaPiiAccessLog>();
     public DbSet<PdpaBreachIncident> PdpaBreachIncidents => Set<PdpaBreachIncident>();
     public DbSet<StatutoryRemittance> StatutoryRemittances => Set<StatutoryRemittance>();
+    /// <summary>ใบ ↔ รายการนำส่ง ภ.พ.36 (รอบ 203 ทีม F3 · คำตัดสินข้อ 133/134) — ใบหนึ่งนับในการนำส่งได้ครั้งเดียว</summary>
+    public DbSet<Pp36RemittanceDocument> Pp36RemittanceDocuments => Set<Pp36RemittanceDocument>();
     public DbSet<BillOfMaterials> BillsOfMaterials => Set<BillOfMaterials>();
     public DbSet<BomLine> BomLines => Set<BomLine>();
     public DbSet<ConsignmentRecord> ConsignmentRecords => Set<ConsignmentRecord>();
