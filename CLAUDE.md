@@ -797,17 +797,18 @@ awk brace-balance                      # ทุก .cs ที่แก้
   ที่ยังค้าง: POS ยังไม่ผูก `Branch`/`Warehouse`
   · สลิปพิมพ์ "ใบกำกับภาษีอย่างย่อ" โดยไม่ตรวจ ภ.พ.06)
 - **Payment gateway (Omise ก่อน · เปลี่ยนเจ้าได้)** — ออกแบบใน `PAYMENT_GATEWAY_DESIGN.md`
-  (วันนี้**ไม่มี**การเชื่อม gateway ใดเลย มีแค่ enum + คีย์ที่เข้ารหัสไว้แล้วไม่มีใครอ่าน ·
-  ทุกทางเข้าต้องเดินผ่าน `PaymentIntent` + `IPaymentProvider` ตัวเดียว · webhook ยืนยันแบบของ
+  (แก้ doc 2026-10-02 — ข้อเดิม "ไม่มีการเชื่อม gateway ใดเลย" ล้าสมัย: มี `Services/Payments/Providers/OmisePaymentProvider` +
+  `ManualSlipPaymentProvider` แล้ว และแขก/ลูกค้าปลายทางจ่ายผ่าน `PublicPaymentController` (`[AllowAnonymous]`
+  `api/companies/{companyId}/public-pay`) ซึ่งเรียก `LodgingReservationPaymentHandler`/`SiteOrderPaymentHandler` ·
+  `PaymentGatewayController` (`[Authorize]`) เป็นฝั่งพนักงานเท่านั้น · ทุกทางเข้าต้องเดินผ่าน `PaymentIntent` + `IPaymentProvider` ตัวเดียว · webhook ยืนยันแบบของ
   เจ้านั้น (Omise = re-fetch event) ไม่ใช่ HMAC ของเรา · ห้ามสลับ live ก่อนทดสอบผ่าน)
 - **โมดูลที่พัก (Lodging)** — flow/เส้นเงินอยู่ใน `DOCUMENT_FLOW.md` §6.5 · โครงสร้างใน
   `ACCOUNT_STRUCTURE.md` §3.1b · สิ่งที่ลอก/ไม่ลอกจาก TakeTime + backlog ใน `LODGING_TAKETIME_ANALYSIS.md`
   · **ผลตรวจฟีเจอร์ฝั่งผู้ใช้ (แขก/เจ้าของ) + งานที่ต้องทำต่อ อยู่ใน
-  `LODGING_BOOKING_AUDIT.md`** — หลังบ้านครบ แต่ปลายทางขาด 6 ชิ้น และ 3 ชิ้นเป็น
-  defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้" (ตัวหนักสุด:
-  `PaymentGatewayController` เป็น `[Authorize]` ⇒ **ลูกค้าปลายทางจ่ายออนไลน์ไม่ได้
-  เลยทั้งระบบ** ทั้งร้านค้าและที่พัก ⇒ `LodgingReservationPaymentHandler` /
-  `SiteOrderPaymentHandler` ไม่มีวันถูกเรียก)
+  `LODGING_BOOKING_AUDIT.md`** · ผลตรวจรอบ 202 (ตั้งค่า · เว็บ/จองเอง · หลังบ้าน/เงิน) อยู่ใน
+  `erp-review/2026-10-02/LODGING_REVIEW.md` + คำตัดสิน 116–127 ใน `erp-review/2026-09-29/DECISIONS.md`
+  (ข้อความเดิม "`PaymentGatewayController` เป็น `[Authorize]` ⇒ ลูกค้าปลายทางจ่ายออนไลน์ไม่ได้เลย" ล้าสมัยแล้ว —
+  ทางจ่ายของแขกคือ `PublicPaymentController` ดูข้อ Payment gateway ข้างบน)
 
 ## วิธีทำงาน
 
