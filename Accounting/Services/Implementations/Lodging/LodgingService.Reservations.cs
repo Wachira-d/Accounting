@@ -322,7 +322,8 @@ public partial class LodgingService
     /// <summary>คิดราคาทั้งการจอง — ใช้ร่วมกันทั้ง quote (หน้าเว็บ) · สร้างจอง · เลื่อนวัน</summary>
     private LodgingQuoteResponse BuildQuote(PricingContext ctx, DateTime checkIn, DateTime checkOut,
         List<LodgingQuoteRoomRequest> rooms, List<LodgingQuoteExtraRequest>? extras, Guid? ratePlanId, bool isStaff, Guid? excludeReservationId,
-        string? promoCode = null, int infants = 0, IReadOnlyDictionary<Guid, decimal>? staffKeptExtraBedPrice = null)
+        string? promoCode = null, int infants = 0, IReadOnlyDictionary<Guid, decimal>? staffKeptExtraBedPrice = null,
+        LodgingGuestConfirmMode? reservationMode = null)
     {
         var res = new LodgingQuoteResponse
         {
@@ -413,7 +414,12 @@ public partial class LodgingService
         var totals = LodgingPricingEngine.Totals(roomSubtotal, extrasTotal, 0m, ctx.Property.ServiceChargePercent, ctx.VatRate,
             ctx.Property.PricesIncludeVat, depositPct, planUsed?.DepositPercent != null ? null : ctx.Property.DepositFixedAmount,
             ctx.Property.DepositMinAmount, ctx.Property.DepositMaxAmount);
-        if (ctx.Property.ConfirmWithoutDeposit) totals = totals with { DepositRequired = 0m };
+        // คำตัดสินข้อ 128: มัดจำที่ต้องชำระตามโหมดยืนยัน (Instant ⇒ 0 · RequireSlip มัดจำ 0 ⇒ ยอดเต็ม) — ตัวตัดสินเดียว ·
+        // เลื่อนวันส่งโหมดที่ตรึงบนใบ (reservationMode) · ใบเดิมที่ไม่มีโหมด ⇒ โหมดปัจจุบันของที่พักตามช่องทาง (พฤติกรรมเดิม)
+        var channelMode = reservationMode ?? LodgingGuestConfirmPolicy.ForChannel(LodgingGuestConfirmPolicy.Resolve(ctx.Property), isStaff);
+        totals = totals with { DepositRequired = LodgingGuestConfirmPolicy.QuotedDeposit(channelMode, totals.DepositRequired, totals.TotalAmount) };
+        var terms = LodgingGuestConfirmPolicy.QuoteTerms(channelMode, totals.DepositRequired, ctx.Property.AutoConfirmOnSlip, ctx.Property.SlipDeadlineMinutes);
+        res.SlipRequired = terms.SlipRequired; res.AmountDueLabel = terms.AmountLabel; res.ConfirmModeNote = terms.Note;
 
         res.RatePlanId = planUsed?.Id; res.RatePlanName = planUsed?.Name;
         // คำตัดสินข้อ 123: จำนวนผู้เข้าพักรวมจากเซิร์ฟเวอร์ (หน้าเว็บห้ามบวกเอง)
@@ -483,13 +489,18 @@ public partial class LodgingService
 
             var contactId = request.ContactId ?? await FindOrCreateContactAsync(companyId, request, actor);
             var prop = ctx.Property;
-            var immediateConfirm = prop.ConfirmWithoutDeposit || quote.DepositRequired <= 0 || (isStaff && request.ConfirmImmediately);
+            // คำตัดสินข้อ 128: สถานะเริ่มต้น + เวลาถือห้องจากตัวตัดสินเดียว (เดิม `prop.ConfirmWithoutDeposit || มัดจำ 0 || staff ConfirmImmediately`) ·
+            // โหมดที่ใช้กับใบนี้ตรึงบนใบ (เส้นพนักงานของที่พัก RequireSlip ⇒ RequireDeposit — ไม่บังคับสลิป)
+            var channelMode = LodgingGuestConfirmPolicy.ForChannel(LodgingGuestConfirmPolicy.Resolve(prop), isStaff);
+            var initial = LodgingGuestConfirmPolicy.Initial(channelMode, quote.DepositRequired, isStaff && request.ConfirmImmediately,
+                prop.PaymentHoldMinutes, prop.SlipDeadlineMinutes);
+            var immediateConfirm = initial.Status == LodgingReservationStatus.Confirmed;
             var policy = quote.CancellationPolicyId is Guid polId ? ctx.Policies.FirstOrDefault(p => p.Id == polId) : null;
 
             var created = new LodgingReservation
             {
                 CompanyId = companyId, PropertyId = propertyId, SiteId = siteId ?? prop.SiteId,
-                PublicToken = NewToken(), Status = immediateConfirm ? LodgingReservationStatus.Confirmed : LodgingReservationStatus.Pending,
+                PublicToken = NewToken(), Status = initial.Status, GuestConfirmMode = channelMode,
                 Source = source, SourceReference = request.SourceReference,
                 CheckInDate = checkIn, CheckOutDate = checkOut, Nights = quote.Nights,
                 Adults = quote.Rooms.Sum(r => r.Adults), Children = quote.Rooms.Sum(r => r.Children), Infants = Math.Max(0, request.Infants),
@@ -506,7 +517,7 @@ public partial class LodgingService
                 ServiceChargeAmount = quote.ServiceChargeAmount, VatAmount = quote.VatAmount, TotalAmount = quote.TotalAmount,
                 Currency = "THB", PriceBreakdownJson = J(quote),
                 DepositRequired = quote.DepositRequired,
-                HoldExpiresAt = immediateConfirm ? null : DateTime.UtcNow.AddMinutes(prop.PaymentHoldMinutes),
+                HoldExpiresAt = initial.HoldMinutes is int holdMinutes ? DateTime.UtcNow.AddMinutes(holdMinutes) : null,
                 ConfirmedAt = immediateConfirm ? DateTime.UtcNow : null, ConfirmedBy = immediateConfirm ? actor : null,
                 InternalNotes = request.InternalNotes, CreatedBy = actor,
             };
@@ -549,7 +560,8 @@ public partial class LodgingService
         await _db.SaveChangesAsync();
         _logger.LogInformation("Lodging reservation {No} created ({Status}, total {Total}, deposit {Dep})", res.ReservationNumber, res.Status, res.TotalAmount, res.DepositRequired);
 
-        await TryNotifyAsync(companyId, res.Id, "created");
+        // คำตัดสินข้อ 128: ใบที่ยังรอสลิปไม่ใช่ "จองใหม่สำเร็จ" ⇒ ไม่แจ้งเจ้าของตอนนี้ (แจ้งตอนแขกส่งสลิป) · แขกได้อีเมลพร้อมลิงก์ส่งสลิป
+        await TryNotifyAsync(companyId, res.Id, LodgingGuestConfirmPolicy.CreatedEvent(res.GuestConfirmMode, res.Status));
         return (await GetReservationAsync(companyId, res.Id))!;
     }
 

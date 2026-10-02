@@ -6986,6 +6986,14 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemNote" text NULL;""",
             // ฝ่ายค้านรอบ 202 P1-3ค — รายการชำระที่เงินเข้าแต่ยืนยันไม่ได้ (บัญชีขาเงินเข้าของใบมัดจำที่ออกภายหลังมาจากรายการนี้)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemIntentId" uuid NULL;""",
+            // รอบ 202 (คำตัดสินข้อ 128) — ตั้งได้ว่าการจองจากเว็บต้องส่งสลิปก่อนจึงสำเร็จ หรือแบบเดิม · โหมด NULL = แถวเดิม ⇒
+            // resolver (LodgingGuestConfirmPolicy.Resolve) อ่านธงเดิม ConfirmWithoutDeposit (true ⇒ Instant · อื่น ⇒ RequireDeposit) — ไม่ backfill
+            // (ไม่มีอะไรต้องรันซ้ำ · client รุ่นเก่าที่ส่งแค่ธงเดิมยังได้ผลเดิม) · บันทึกหน้าตั้งค่าครั้งถัดไปเขียนโหมดจริง + สำเนาธงเดิมตามโหมด
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "GuestConfirmMode" integer NULL;""",
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "SlipDeadlineMinutes" integer NOT NULL DEFAULT 30;""",
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AutoConfirmOnSlip" boolean NOT NULL DEFAULT true;""",
+            // โหมดที่ใช้กับใบนั้น (ตรึงตอนสร้าง) — NULL = ใบก่อนรอบนี้ (พฤติกรรมเดิมทุกทาง)
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "GuestConfirmMode" integer NULL;""",
             // 2026-10-02 (ผู้ใช้รายงาน: แขกส่งสลิปแล้ว 500 DbUpdateException) — ไฟล์จากคนนอกระบบ (สลิปแขกที่พัก · สลิปหน้าร้าน · พอร์ทัลลูกค้า)
             // ไม่มีผู้ใช้ ⇒ UploadedByUserId ต้องว่างได้ (เดิม NOT NULL + FK → Users แล้วทางเข้าใส่ Guid.Empty ⇒ ชน FK ทุกครั้ง) · DROP NOT NULL รันซ้ำได้ ·
             // แถว Guid.Empty ที่อาจหลุดเข้าไปในฐานที่ไม่มี FK ⇒ เปลี่ยนเป็น NULL (ความหมายเดิม "ไม่มีผู้ใช้" ทุกผู้อ่าน)

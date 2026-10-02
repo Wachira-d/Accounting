@@ -56,7 +56,16 @@ public class LodgingPropertyDto
     public int MaxAdvanceDays { get; set; } = 365;
     public int MinAdvanceHours { get; set; }
     public bool AutoConfirmOnDeposit { get; set; } = true;
+    /// <summary>⚠️ ธงเดิม — echo = สำเนาของ <see cref="GuestConfirmMode"/> (= Instant) · รับเข้าเฉพาะเมื่อคำขอไม่ส่งโหมดมา (client รุ่นเก่า)
+    /// และค่าต่างจากสำเนาของโหมดปัจจุบัน (<c>LodgingGuestConfirmPolicy.ModeOnSave</c>) — หน้าตั้งค่าไม่มีช่องนี้แล้ว</summary>
     public bool ConfirmWithoutDeposit { get; set; }
+    /// <summary>รอบ 202 (คำตัดสินข้อ 128): การจองจากเว็บสำเร็จเมื่อไร — Instant · RequireSlip · RequireDeposit (ชื่อ enum) ·
+    /// response = โหมดที่มีผลเสมอ (แถวเดิมที่ยังไม่มีโหมด ⇒ คิดจากธงเดิม) · request null = ตามธงเดิม (client รุ่นเก่า)</summary>
+    public LodgingGuestConfirmMode? GuestConfirmMode { get; set; }
+    /// <summary>โหมด RequireSlip: ส่งสลิปภายในกี่นาที (5–1440 · นอกช่วง = ปฏิเสธพร้อมชื่อช่อง)</summary>
+    public int SlipDeadlineMinutes { get; set; } = LodgingGuestConfirmPolicy.DefaultSlipDeadlineMinutes;
+    /// <summary>โหมด RequireSlip: ส่งสลิปแล้วยืนยันการจองทันที (false = รอที่พักตรวจสลิป)</summary>
+    public bool AutoConfirmOnSlip { get; set; } = true;
     public int PaymentHoldMinutes { get; set; } = 1440;
     public int OverbookingAllowance { get; set; }
     public int ChildMaxAge { get; set; } = 11;
@@ -123,6 +132,9 @@ public class LodgingPropertyDto
     public LodgingDepositKindView? RoomDepositKindInherited { get; set; }
     /// <summary>ประเภทเงินมัดจำทั้งหมดของบริษัท + ช่องที่ใช้ได้ (ห้อง/เงินประกัน) — หน้าเว็บสร้าง dropdown จากลิสต์นี้</summary>
     public List<LodgingDepositKindOption>? DepositKindOptions { get; set; }
+    /// <summary>รอบ 202 (คำตัดสินข้อ 128) — ตัวเลือกโหมดยืนยันการจอง (ป้าย + ผลต่อแขก) จาก <c>LodgingGuestConfirmPolicy.Options</c> ·
+    /// response-only · หน้าเว็บสร้าง dropdown จากลิสต์นี้</summary>
+    public List<LodgingGuestConfirmModeOption>? GuestConfirmModeOptions { get; set; }
     /// <summary>คำอธิบายหลัก tax point ของมัดจำ (ย่อหน้าเดียวกับหน้าตั้งค่าบริษัท)</summary>
     public string? DepositVatExplanation { get; set; }
     /// <summary>รอบ 202 ทีม LS (W-01) — แขกจองผ่านเว็บได้จริงไหม · ตัวตัดสิน <c>Helpers/LodgingPublicReadiness.Evaluate</c> ·
@@ -452,7 +464,13 @@ public class LodgingQuoteResponse
     public string? CancellationPolicyName { get; set; }
     public List<LodgingCancellationRuleDto> CancellationRules { get; set; } = new();
     public bool NonRefundable { get; set; }
-    // ── รอบ 202 (คำตัดสินข้อ 123): จำนวนผู้เข้าพักจากเซิร์ฟเวอร์ (LodgingOccupancy.Totals) — หน้าเว็บแสดงค่านี้ ห้ามบวกเอง ──
+    // ── รอบ 202 (คำตัดสินข้อ 128): เงื่อนไขการจองที่แขกเห็นก่อนกดจอง — LodgingGuestConfirmPolicy.QuoteTerms (หน้าเว็บแสดงอย่างเดียว) ──
+    /// <summary>กดจองแล้วต้องส่งสลิปก่อนการจองจึงสำเร็จ</summary>
+    public bool SlipRequired { get; set; }
+    /// <summary>ป้ายของยอด <see cref="DepositRequired"/> ("ยอดที่ต้องโอน" / "มัดจำที่ต้องชำระ")</summary>
+    public string? AmountDueLabel { get; set; }
+    /// <summary>ข้อความเงื่อนไข (null = ไม่มีเงื่อนไขพิเศษ)</summary>
+    public string? ConfirmModeNote { get; set; }
     public int Adults { get; set; }
     public int Children { get; set; }
     public int Infants { get; set; }
@@ -646,6 +664,27 @@ public class LodgingReservationResponse
     public decimal? OnlinePayableAmount { get; set; }
     /// <summary>ข้อความกล่องจ่ายออนไลน์ตามค่าตั้ง AutoConfirmOnDeposit (C9)</summary>
     public string? OnlinePaymentNote { get; set; }
+    // ── รอบ 202 (คำตัดสินข้อ 128): ฝั่งแขก — ตัวตัดสิน LodgingGuestConfirmPolicy.GuestView (หน้าเว็บแสดงอย่างเดียว ห้ามตัดสินเอง) ──
+    /// <summary>โหมดยืนยันที่ตรึงบนใบนี้ (null = ใบก่อนมีค่าตั้ง)</summary>
+    public LodgingGuestConfirmMode? GuestConfirmMode { get; set; }
+    /// <summary>ป้ายสถานะที่แขกเห็น (RequireSlip: "ยังไม่สำเร็จ — รอสลิปโอนเงิน" · "ส่งคำขอจองสำเร็จ — รอที่พักตรวจสลิป" · "หมดเวลาส่งสลิป — การจองถูกยกเลิก")</summary>
+    public string? GuestStatusLabel { get; set; }
+    /// <summary>ข้อความอธิบายถึงแขก (null = ไม่มี)</summary>
+    public string? GuestNote { get; set; }
+    /// <summary>ต้องส่งสลิปก่อนการจองจึงสำเร็จ (ยังไม่ได้ส่ง)</summary>
+    public bool SlipRequired { get; set; }
+    /// <summary>ส่งสลิปได้ถึงเมื่อไร (UTC)</summary>
+    public DateTime? SlipDueAt { get; set; }
+    /// <summary>ยอดที่ต้องโอน (null = ไม่ต้อง)</summary>
+    public decimal? AmountToTransfer { get; set; }
+    /// <summary>เปิดช่องส่งสลิปไหม (เซิร์ฟเวอร์ตัดสินตามสถานะ/การปิดรับสลิป)</summary>
+    public bool CanUploadSlip { get; set; }
+    /// <summary>หน้าพนักงาน: ป้าย "รอสลิป (หมดเวลา …)" · "สลิปรอตรวจ" · "ยืนยันจากสลิป · ยังไม่บันทึกรับเงิน" (null = ไม่มี)</summary>
+    public string? SlipStateLabel { get; set; }
+    /// <summary>หน้าพนักงาน: ใบยืนยันเพราะสลิปที่ยังไม่บันทึกรับเงิน ⇒ ปุ่ม “บันทึกรับเงินตามสลิป”</summary>
+    public bool AwaitingSlipMoneyCheck { get; set; }
+    /// <summary>ข้อความตอบกลับการกระทำของแขกครั้งนี้ (ตอนนี้: ส่งสลิป — LodgingGuestConfirmPolicy.SlipUploadedMessage) · null = ไม่มี</summary>
+    public string? GuestMessage { get; set; }
     public string? InternalNotes { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<LodgingReservationRoomDto> Rooms { get; set; } = new();
@@ -736,6 +775,8 @@ public class LodgingReservationListItem
     public string? OverdueLabel { get; set; }
     /// <summary>รอบ 202: เงินออนไลน์เข้าแต่ยืนยันไม่ได้</summary>
     public bool HasPaymentProblem { get; set; }
+    /// <summary>รอบ 202 (คำตัดสินข้อ 128): ป้าย "รอสลิป (หมดเวลา …)" · "สลิปรอตรวจ" · "ยืนยันจากสลิป · ยังไม่บันทึกรับเงิน" — LodgingGuestConfirmPolicy.StaffSlipLabel</summary>
+    public string? SlipStateLabel { get; set; }
     /// <summary>รอบ 202: แถวที่ night audit รุ่นก่อนปิดเอง ยังต้องออกบิลย้อนหลัง/คิดค่าปรับ</summary>
     public bool NeedsLegacyClose { get; set; }
     public DateTime CreatedAt { get; set; }

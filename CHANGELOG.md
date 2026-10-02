@@ -4425,3 +4425,14 @@ _2026-10-02 (หลังรอบ 202) — ผู้ใช้รายงาน
 FK ยังอยู่ (ทิศตรงข้าม: id ที่ไม่มีจริงต้องล้ม) · เทสต์ Db `GuestUploadFileAttachmentDbTests` รันเส้นจริง UploadSlipByTokenAsync บน PostgreSQL ·
 required_call_site +3 กติกา (must `= null` · forbid `= Guid.Empty`)._
 
+_รอบ 202 ทีม LC (2026-10-02 · คำตัดสินข้อ 128) — ผู้ใช้: "ปรับให้ตั้งค่าได้ว่าต้องส่งสลิปโอนเงินก่อนถึงจะจองสำเร็จได้ หรือ จะเป็นแบบเดิมนี้ก็ได้".
+เดิมที่พักที่ติ๊ก ConfirmWithoutDeposit (หรือมัดจำ 0) แขกได้ "จองสำเร็จ · ยืนยันแล้ว" ทันทีทั้งที่ชำระ ฿0 · สูตร `prop.ConfirmWithoutDeposit ||` อยู่ 2 ที่.
+- ค่าตั้ง `LodgingProperty.GuestConfirmMode` (Instant · RequireSlip · RequireDeposit) + `SlipDeadlineMinutes` (5–1440 · 30) + `AutoConfirmOnSlip` (true) ·
+  ใบตรึงโหมด `LodgingReservation.GuestConfirmMode` · ตัวตัดสินเดียว `Helpers/LodgingGuestConfirmPolicy` (Resolve · ModeOnSave · ForChannel · QuotedDeposit · Initial ·
+  OnSlipUploaded · IsSlipConfirmed · HoldAfterSlipRejected · GuestView · StaffSlipLabel · QuoteTerms · ข้อความตอบกลับ)
+- ผู้อ่านเดิมย้ายมาใช้ helper: `ConfirmWithoutDeposit` 2 จุด (BuildQuote มัดจำ · CreateReservationAsync สถานะเริ่มต้น) + `PaymentHoldMinutes` 1 จุด (hold ตอนสร้าง) ·
+  ตัวเขียน/echo (Apply · ToDto) เป็นสำเนาที่ระบบเขียนตามโหมด · `AutoConfirmOnDeposit` 2 จุดคงอยู่ที่ตัวตัดสินเดิม `LodgingDepositSettlement.StatusAfterDeposit`/`OnlinePaymentNote` (เส้นรับเงิน — ทุกโหมด)
+- ส่งสลิป ≠ รับเงิน: ยืนยันจากสลิปไม่แตะ DepositPaid/PaidAmount · ปฏิเสธสลิปของใบที่ยืนยันเพราะสลิป ⇒ กลับรอชำระ + hold 24 ชม. (ล็อก LodgingConfirm) ·
+  คิว "มีสลิปรอตรวจ" + ปุ่ม "บันทึกรับเงินตามสลิป" · แขกเปิดหน้าการจองหลังหมดเวลา ⇒ ExpireHolds ก่อน · ไม่แจ้งเจ้าของ "จองใหม่" ของใบที่ยังรอสลิป
+- ข้อมูลเดิม: โหมด NULL ⇒ อ่านธงเดิม (ไม่ backfill) · เทสต์ pure 40+ เคส (รวมเทียบสูตรเดิมทุก combination) + Db 3 เคส · sim `lodging_slip_confirm_sim.js` ·
+  required_call_site +10 กติกา (ห้าม `prop.ConfirmWithoutDeposit ||` · ห้ามแตะยอดเงินในเส้นสลิป) — commit 2b48c811_

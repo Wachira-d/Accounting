@@ -77,9 +77,8 @@ public class LodgingPublicController : ControllerBase
         // ช่องฝั่งพนักงานถูกตัดทิ้งเสมอ — แขกกำหนด source/contact/ยืนยันทันทีเองไม่ได้
         var clean = req with { Source = null, SourceReference = null, ContactId = null, InternalNotes = null, ConfirmImmediately = false };
         var r = await _svc.CreateReservationAsync(companyId, pid.Value, clean, LodgingReservationSource.Web, "storefront-guest", siteId);
-        var msg = r.Status == LodgingReservationStatus.Confirmed
-            ? $"จองสำเร็จ เลขที่ {r.ReservationNumber}"
-            : $"รับคำขอจอง {r.ReservationNumber} แล้ว — กรุณาชำระมัดจำ {r.DepositRequired:N2} บาท และอัปโหลดสลิป";
+        // คำตัดสินข้อ 128: โหมดส่งสลิปก่อน ⇒ ห้ามตอบ "จองสำเร็จ" — ข้อความจากตัวตัดสินเดียวกับหน้าแขก
+        var msg = Accounting.Helpers.LodgingGuestConfirmPolicy.CreatedMessage(r.SlipRequired, r.GuestNote, r.Status, r.ReservationNumber, r.DepositRequired);
         return StatusCode(201, new ApiResponse<LodgingReservationResponse>(true, r, msg));
     }
 
@@ -132,7 +131,8 @@ public class LodgingPublicController : ControllerBase
         if (file == null || file.Length == 0) return BadRequest(new ApiResponse<LodgingReservationResponse>(false, null, "กรุณาเลือกไฟล์สลิป"));
         var r = await _svc.UploadSlipByTokenAsync(companyId, siteId, token, file, reference);
         if (r == null) return NotFound(new ApiResponse<LodgingReservationResponse>(false, null, "ไม่พบการจอง"));
-        return Ok(new ApiResponse<LodgingReservationResponse>(true, r, "ส่งสลิปแล้ว — ที่พักจะตรวจสอบและยืนยันการจอง"));
+        // คำตัดสินข้อ 128: ส่งสลิปแล้วยืนยันทันที / รอที่พักตรวจ / ติดธง — ข้อความที่ service ตัดสินไว้ (LodgingGuestConfirmPolicy.SlipUploadedMessage)
+        return Ok(new ApiResponse<LodgingReservationResponse>(true, r, r.GuestMessage ?? "ส่งสลิปแล้ว — ที่พักจะตรวจสอบและยืนยันการจอง"));
     }
 
     [HttpPost("reservations/{token}/cancel")]

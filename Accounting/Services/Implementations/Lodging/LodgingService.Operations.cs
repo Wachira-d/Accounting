@@ -78,6 +78,10 @@ public partial class LodgingService
         }
 
         var guestTotals = LodgingOccupancy.Totals(r.Adults, r.Children, r.Infants, r.Rooms.Sum(x => x.ExtraBeds));
+        // คำตัดสินข้อ 128: ป้าย/ข้อความ/ยอดที่ต้องโอน/ช่องส่งสลิปของแขก + ป้ายสลิปฝั่งหน้าบ้าน — ตัวตัดสินเดียว (หน้าเว็บแสดงอย่างเดียว)
+        var guestFacts = new LodgingGuestFacts(r.GuestConfirmMode, r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount,
+            r.HoldExpiresAt, r.SlipUploadedAt != null, r.SlipUploadBlocked, r.ConfirmedBy, r.CancellationReason, r.PaymentProblemAt != null);
+        var guestView = LodgingGuestConfirmPolicy.GuestView(guestFacts, DateTime.UtcNow);
         var res = new LodgingReservationResponse
         {
             ExtraGuests = guestTotals.ExtraGuests, TotalGuests = guestTotals.Total, GuestSummary = LodgingOccupancy.Summary(guestTotals),
@@ -133,6 +137,11 @@ public partial class LodgingService
                 : LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount),
             OnlinePaymentNote = r.PaymentProblemAt != null ? PaymentProblemGuestNote
                 : LodgingAmounts.OnlinePaymentNote(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount, prop.AutoConfirmOnDeposit),
+            GuestConfirmMode = r.GuestConfirmMode, GuestStatusLabel = guestView.StatusLabel, GuestNote = guestView.Note,
+            SlipRequired = guestView.SlipRequired, SlipDueAt = guestView.SlipDueAt, AmountToTransfer = guestView.AmountToTransfer,
+            CanUploadSlip = guestView.CanUploadSlip,
+            SlipStateLabel = includeInternal ? LodgingGuestConfirmPolicy.StaffSlipLabel(guestFacts) : null,
+            AwaitingSlipMoneyCheck = includeInternal && LodgingGuestConfirmPolicy.AwaitingSlipMoneyCheck(guestFacts),
             InternalNotes = includeInternal ? r.InternalNotes : null, CreatedAt = r.CreatedAt,
             ConfirmationMessage = prop.ConfirmationMessage, HouseRules = prop.HouseRules,
             CheckInTime = Time(prop.CheckInTime), CheckOutTime = Time(prop.CheckOutTime), PropertyPhone = prop.Phone, PropertyLineId = prop.LineId,
@@ -468,6 +477,15 @@ public partial class LodgingService
 ยอดรวม {r.TotalAmount:N2} บาท · มัดจำ {r.DepositRequired:N2} บาท{(r.DepositPaid > 0 ? $" (รับแล้ว {r.DepositPaid:N2})" : "")}</p>"
                 + (link != null ? $@"<p><a href=""{enc(link)}"">ดูรายละเอียด / อัปโหลดสลิป / ยกเลิก</a></p>" : "");
 
+            if (!string.IsNullOrWhiteSpace(r.GuestEmail) && evt == LodgingGuestConfirmPolicy.EventAwaitingSlip)
+            {
+                // คำตัดสินข้อ 128: ใบที่ยังไม่สำเร็จจนกว่าจะส่งสลิป — ข้อความจากตัวตัดสินเดียวกับหน้าแขก (ยอด + เวลาส่ง)
+                var view = LodgingGuestConfirmPolicy.GuestView(new LodgingGuestFacts(r.GuestConfirmMode, r.Status, r.DepositRequired, r.DepositPaid,
+                    r.TotalAmount, r.FolioTotal, r.PaidAmount, r.HoldExpiresAt, r.SlipUploadedAt != null, r.SlipUploadBlocked,
+                    r.ConfirmedBy, r.CancellationReason, r.PaymentProblemAt != null), DateTime.UtcNow);
+                await _email.SendAsync(r.GuestEmail, $"การจอง {r.ReservationNumber} ยังไม่สำเร็จ — กรุณาส่งสลิปโอนเงิน · {prop.Name}",
+                    $"<p>เรียน คุณ{enc(r.GuestName)}<br><b>{enc(view.Note ?? view.StatusLabel)}</b></p>{summary}");
+            }
             if (!string.IsNullOrWhiteSpace(r.GuestEmail) && evt is "created" or "confirmed")
             {
                 var subject = evt == "confirmed" ? $"ยืนยันการจอง {r.ReservationNumber} — {prop.Name}" : $"รับคำขอจอง {r.ReservationNumber} — {prop.Name}";
@@ -485,6 +503,10 @@ public partial class LodgingService
                 var next = r.SlipUploadBlocked
                     ? "<p>ที่พัก<b>ปิดรับสลิปของการจองนี้แล้ว</b> — กรุณาชำระออนไลน์ผ่านลิงก์ด้านล่าง หรือติดต่อที่พักโดยตรง</p>"
                     : "<p>กรุณาตรวจสอบแล้ว<b>ส่งสลิปใหม่</b>ผ่านลิงก์ด้านล่าง — ที่พักต่อเวลาถือห้องให้แล้ว</p>";
+                // คำตัดสินข้อ 128: ใบโหมดส่งสลิปที่กลับเป็นรอชำระ — แขกต้องรู้ว่าการจองยังไม่สำเร็จ
+                if (r.Status == LodgingReservationStatus.Pending && r.GuestConfirmMode == LodgingGuestConfirmMode.RequireSlip)
+                    next = "<p><b>การจองของท่านยังไม่สำเร็จ</b> จนกว่าสลิปจะผ่านการตรวจสอบ"
+                        + (r.HoldExpiresAt is DateTime hold ? $" — ห้องถูกกันไว้ถึง {LodgingGuestConfirmPolicy.ThaiTime(hold)} น." : "") + "</p>" + next;
                 await _email.SendAsync(r.GuestEmail,
                     $"สลิปไม่ผ่านการตรวจสอบ — การจอง {r.ReservationNumber}",
                     $"<p>เรียน คุณ{enc(r.GuestName)}<br>สลิปที่ท่านส่งมายังไม่ผ่านการตรวจสอบ</p>"
@@ -506,7 +528,8 @@ public partial class LodgingService
             {
                 var to = (prop.NotifyEmails ?? prop.Email ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 var subject = evt == "slip" ? $"[สลิปใหม่] {r.ReservationNumber} — {r.GuestName}" : $"[จองใหม่] {r.ReservationNumber} — {r.GuestName} ({RoomSummary(r)})";
-                var body = $"<p>{(evt == "slip" ? "แขกอัปโหลดสลิปมัดจำแล้ว รอตรวจสอบ" : "มีการจองใหม่จากเว็บไซต์")}</p>{summary}<p>ติดต่อ: {enc(r.GuestPhone)} {enc(r.GuestEmail)}</p>";
+                var slipHeadline = LodgingGuestConfirmPolicy.OwnerSlipHeadline(LodgingGuestConfirmPolicy.IsSlipConfirmed(r.Status, r.ConfirmedBy, r.DepositPaid));
+                var body = $"<p>{(evt == "slip" ? enc(slipHeadline) : "มีการจองใหม่จากเว็บไซต์")}</p>{summary}<p>ติดต่อ: {enc(r.GuestPhone)} {enc(r.GuestEmail)}</p>";
                 foreach (var addr in to) await _email.SendAsync(addr, subject, body);
             }
         }

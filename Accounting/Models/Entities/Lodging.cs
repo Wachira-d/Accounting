@@ -63,8 +63,17 @@ public class LodgingProperty : TenantEntity
     public int MinAdvanceHours { get; set; } = 0;
     /// <summary>ยืนยันการจองอัตโนมัติเมื่อจ่ายมัดจำแล้ว (false = พนักงานกดยืนยันเอง)</summary>
     public bool AutoConfirmOnDeposit { get; set; } = true;
-    /// <summary>ยืนยันทันทีโดยไม่ต้องมัดจำ (สำหรับที่พักที่ไม่เก็บมัดจำ)</summary>
+    /// <summary>⚠️ ธงเดิม — รอบ 202 (คำตัดสินข้อ 128) เป็น<b>สำเนาที่ระบบเขียนตาม</b> <see cref="GuestConfirmMode"/> (= Instant) ทุกครั้งที่บันทึก ·
+    /// ผู้อ่านเดียวคือ <c>LodgingGuestConfirmPolicy.Resolve</c> (ตกมาอ่านเมื่อแถวเดิมยังไม่มีโหมด) — ห้ามอ่านตรงที่อื่น</summary>
     public bool ConfirmWithoutDeposit { get; set; } = false;
+    /// <summary>รอบ 202 (คำตัดสินข้อ 128): การจองจากเว็บสำเร็จเมื่อไร — null = แถวเดิมก่อนมีค่าตั้งนี้ ⇒ resolver อ่านจากธงเดิม
+    /// (ConfirmWithoutDeposit=true ⇒ Instant · อื่น ⇒ RequireDeposit) ไม่มีที่พักไหนเปลี่ยนพฤติกรรมเงียบ ๆ · ตัวตัดสิน <c>Helpers/LodgingGuestConfirmPolicy</c></summary>
+    public LodgingGuestConfirmMode? GuestConfirmMode { get; set; }
+    /// <summary>โหมด RequireSlip: แขกต้องส่งสลิปภายในกี่นาทีหลังกดจอง (5–1440 · ตั้งต้น 30) — ไม่ส่งในเวลา ⇒ ยกเลิกอัตโนมัติ (LodgingHoldRule)</summary>
+    public int SlipDeadlineMinutes { get; set; } = 30;
+    /// <summary>โหมด RequireSlip: ส่งสลิปแล้วยืนยันการจองทันที (ที่พักตรวจยอดภายหลัง · ปฏิเสธสลิปได้) · false = รอที่พักตรวจสลิปก่อน ·
+    /// ส่งสลิป ≠ รับเงิน — ยอดมัดจำบันทึกเมื่อพนักงานยืนยันรับเงินเท่านั้น</summary>
+    public bool AutoConfirmOnSlip { get; set; } = true;
     /// <summary>กันห้องไว้ให้จองที่ยังไม่จ่ายมัดจำนานกี่นาที (หมดเวลา = ปล่อยห้อง)</summary>
     public int PaymentHoldMinutes { get; set; } = 60 * 24;
     /// <summary>อนุญาต overbooking กี่ห้อง (0 = ห้าม)</summary>
@@ -415,6 +424,9 @@ public class LodgingReservation : TenantEntity
     /// <summary>ปิดรับสลิปของการจองใบนี้ — ใช้เมื่อพบสลิปปลอมซ้ำ ๆ · แขกยังจ่าย
     /// ออนไลน์หรือติดต่อที่พักได้ (ไม่ใช่การตัดทางไปต่อทั้งหมด)</summary>
     public bool SlipUploadBlocked { get; set; }
+    /// <summary>รอบ 202 (คำตัดสินข้อ 128): โหมดยืนยันที่<b>ใช้กับใบนี้</b> ตรึงตอนสร้าง (เส้นพนักงานของที่พัก RequireSlip ⇒ RequireDeposit) —
+    /// ตัวตัดสินหลังสร้าง (ส่งสลิป · ป้ายหน้าแขก · เลื่อนวัน) อ่านค่านี้ ไม่ใช่ค่าตั้งปัจจุบันของที่พัก · null = ใบก่อนมีค่าตั้งนี้ (พฤติกรรมเดิม)</summary>
+    public LodgingGuestConfirmMode? GuestConfirmMode { get; set; }
 
     // ── lifecycle ──
     public DateTime? ConfirmedAt { get; set; }

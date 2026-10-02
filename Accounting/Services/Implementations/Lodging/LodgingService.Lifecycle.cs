@@ -81,7 +81,15 @@ public partial class LodgingService
     public async Task<LodgingReservationResponse?> GetReservationByTokenAsync(Guid companyId, Guid siteId, string token)
     {
         var r = await ByTokenAsync(companyId, siteId, token);
-        return r == null ? null : await MapAsync(companyId, r, includeToken: true, includeInternal: false);
+        if (r == null) return null;
+        // คำตัดสินข้อ 128: แขกเปิดหน้าการจองหลังหมดเวลาส่งสลิป ⇒ ให้ตัวยกเลิกอัตโนมัติ (กติกาเดียว LodgingHoldRule) ทำงานก่อน
+        // แล้วอ่านแถวใหม่ — หน้าแขกเห็น "หมดเวลาส่งสลิป การจองถูกยกเลิก" ตรงกับความจริง ไม่ใช่ "รอสลิป" ที่ห้องถูกปล่อยไปแล้ว
+        if (r.Status == LodgingReservationStatus.Pending && r.HoldExpiresAt is DateTime hold && hold <= DateTime.UtcNow)
+        {
+            await ExpireHoldsAsync(companyId, r.PropertyId);
+            await _db.Entry(r).ReloadAsync();
+        }
+        return await MapAsync(companyId, r, includeToken: true, includeInternal: false);
     }
 
     public async Task<(string Path, string ContentType)?> GetSlipFileAsync(Guid companyId, Guid reservationId)
@@ -119,6 +127,7 @@ public partial class LodgingService
         // แขกส่งสลิปหลัง hold หมดและห้องถูกจองไปแล้ว ⇒ **รับสลิปไว้เสมอ** (เงินโอนแล้ว · ไม่คืนอัตโนมัติ) แต่ติดธง "เงินเข้าแต่ยืนยันไม่ได้" + แจ้งที่พัก ·
         // ฝ่ายค้าน P1-3ก: ใบที่ "ระบบ" ยกเลิกเพราะหมดเวลาถือห้อง (LodgingHoldRule.IsAutoExpiredHold) ก็รับสลิป + ติดธงเช่นกัน (แขกโอนแล้วจริง)
         string? problem = null;
+        var confirmedBySlip = false;
         await WithPropertyLockAsync(companyId, r.PropertyId, async () =>
         {
             await _db.Entry(r).ReloadAsync();
@@ -136,17 +145,34 @@ public partial class LodgingService
             // ส่งใหม่แล้ว = ล้างผลปฏิเสธครั้งก่อนออกจากหน้าจอ (แต่ **คงตัวนับไว้** เพราะ
             // มันคือหลักฐานว่าใบนี้เคยมีปัญหา — ตัวนับที่รีเซ็ตทุกครั้งจะไม่มีวันถึงเกณฑ์)
             r.SlipRejectedReason = null; r.SlipRejectedAt = null;
+            // คำตัดสินข้อ 128: โหมด RequireSlip + AutoConfirmOnSlip ⇒ ยืนยันการจองทันที — ตัดสินใต้ล็อกเดียวกับการตรวจห้องว่างข้างบน
+            // (hold หมดแล้วห้องเต็ม / ใบถูกระบบยกเลิก ⇒ problem ⇒ ธงข้อ 127 ไม่ใช่ยืนยัน) · **ส่งสลิป ≠ รับเงิน**: ไม่แตะ DepositPaid/PaidAmount —
+            // ยอดบันทึกเมื่อพนักงานกด “บันทึกรับเงินตามสลิป” (ConfirmAsync) · ผู้ยืนยัน = SlipConfirmActor (ตัวแยกตอนปฏิเสธสลิป)
+            if (LodgingGuestConfirmPolicy.OnSlipUploaded(r.GuestConfirmMode, r.Property.AutoConfirmOnSlip, r.Status, problemFound: problem != null)
+                == LodgingSlipOutcome.ConfirmNow)
+            {
+                r.Status = LodgingReservationStatus.Confirmed;
+                r.ConfirmedAt = DateTime.UtcNow; r.ConfirmedBy = LodgingGuestConfirmPolicy.SlipConfirmActor;
+                r.HoldExpiresAt = null;
+                confirmedBySlip = true;
+                AppendInternal(r, "ยืนยันอัตโนมัติจากสลิปของแขก (ค่าตั้ง “ส่งสลิปแล้วยืนยันทันที”) — ยังไม่ได้บันทึกรับเงิน: "
+                    + "ตรวจยอดโอนแล้วกด “บันทึกรับเงินตามสลิป” หรือปฏิเสธสลิป (การจองกลับเป็นรอชำระ)");
+            }
             // อัปโหลดสลิปแล้ว = ต่อเวลาถือห้องให้พนักงานตรวจ (ป้ายเวลาบนจอ · การกันห้องจริงอ่านจาก "มีสลิปรอตรวจ" ไม่ใช่เวลานี้)
-            if (r.Status == LodgingReservationStatus.Pending && r.HoldExpiresAt != null && r.HoldExpiresAt < DateTime.UtcNow.AddHours(24))
+            else if (r.Status == LodgingReservationStatus.Pending && r.HoldExpiresAt != null && r.HoldExpiresAt < DateTime.UtcNow.AddHours(24))
                 r.HoldExpiresAt = DateTime.UtcNow.AddHours(24);
-            _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "GuestUploadedSlip", reference, problem }));
+            _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "GuestUploadedSlip", reference, problem, confirmedBySlip }));
             await _db.SaveChangesAsync();
             return true;
         });
         if (problem != null)
             await FlagPaymentProblemAsync(companyId, r.Id, problem, "slip");
         await TryNotifyAsync(companyId, r.Id, "slip");
-        return await MapAsync(companyId, r, includeToken: true, includeInternal: false);
+        if (confirmedBySlip) await TryNotifyAsync(companyId, r.Id, "confirmed");   // อีเมลยืนยันถึงแขก (เส้นเดียวกับพนักงานยืนยัน)
+        var mapped = await MapAsync(companyId, r, includeToken: true, includeInternal: false);
+        mapped.GuestMessage = LodgingGuestConfirmPolicy.SlipUploadedMessage(r.Status, r.ConfirmedBy, r.DepositPaid,
+            paymentProblem: problem != null, r.GuestConfirmMode);
+        return mapped;
     }
 
     /// <summary>ด่านรับสลิปของแขก — ยกเลิก/no-show = ปฏิเสธ <b>ยกเว้น</b>ใบที่ระบบยกเลิกเพราะหมดเวลาถือห้อง (แขกโอนแล้วจริง ⇒ รับไว้ + ธงให้พนักงานตัดสิน ·
@@ -192,28 +218,48 @@ public partial class LodgingService
                 "ต้องระบุเหตุผลที่สลิปไม่ผ่าน — ข้อความนี้คือสิ่งเดียวที่แขกจะเห็นว่าต้องทำอะไรต่อ");
         if (reason.Length > 500) reason = reason[..500];
 
-        var r = await ResQuery(companyId).FirstOrDefaultAsync(x => x.Id == reservationId);
-        if (r == null) return null;
-        if (r.SlipUploadedAt == null)
-            throw new BusinessRuleException("การจองนี้ยังไม่มีสลิปให้ตรวจ");
-
-        var oldUrl = r.PaymentSlipUrl;
-        r.PaymentSlipUrl = null;
-        r.PaymentReference = null;
-        r.SlipUploadedAt = null;
-        r.SlipRejectedCount += 1;
-        r.SlipRejectedReason = reason;
-        r.SlipRejectedAt = DateTime.UtcNow;
-        if (request.BlockFurtherUploads) r.SlipUploadBlocked = true;
-        else if (r.Status == LodgingReservationStatus.Pending)
-            r.HoldExpiresAt = DateTime.UtcNow.AddHours(24);
-
-        _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new
+        // คำตัดสินข้อ 128: ใบที่ยืนยันเพราะสลิปถูกปฏิเสธ ⇒ เปลี่ยนสถานะกลับ — ล็อกต่อการจองเดียวกับ ConfirmAsync (พนักงานกดรับเงินพร้อมกัน
+        // ต้องไม่ได้ "รอชำระที่มีเงินรับแล้ว") · อ่านแถวใหม่หลังได้ล็อก
+        var r = await WithReservationLockAsync<LodgingReservation?>(companyId, reservationId, AdvisoryLockKey.LodgingConfirm, async () =>
         {
-            action = "SlipRejected", reason, blocked = r.SlipUploadBlocked,
-            rejectedCount = r.SlipRejectedCount, previousSlip = oldUrl, by = userId,
-        }));
-        await _db.SaveChangesAsync();
+            var row = await ResQuery(companyId).FirstOrDefaultAsync(x => x.Id == reservationId);
+            if (row == null) return null;
+            await _db.Entry(row).ReloadAsync();
+            if (row.SlipUploadedAt == null)
+                throw new BusinessRuleException("การจองนี้ยังไม่มีสลิปให้ตรวจ");
+
+            var now = DateTime.UtcNow;
+            var statusBefore = row.Status;
+            var revert = LodgingGuestConfirmPolicy.IsSlipConfirmed(row.Status, row.ConfirmedBy, row.DepositPaid);
+            var oldUrl = row.PaymentSlipUrl;
+            row.PaymentSlipUrl = null;
+            row.PaymentReference = null;
+            row.SlipUploadedAt = null;
+            row.SlipRejectedCount += 1;
+            row.SlipRejectedReason = reason;
+            row.SlipRejectedAt = now;
+            if (request.BlockFurtherUploads) row.SlipUploadBlocked = true;
+            row.HoldExpiresAt = LodgingGuestConfirmPolicy.HoldAfterSlipRejected(statusBefore, revert, row.HoldExpiresAt,
+                request.BlockFurtherUploads, now, row.Property.SlipDeadlineMinutes);
+            if (revert)
+            {
+                // ยืนยันเพราะสลิป (ยังไม่มีเงินบันทึก) ⇒ สลิปไม่ผ่าน = การจองยังไม่สำเร็จ · กลับเป็นรอชำระ + ถือห้องตามกติกาเดิม (หมดแล้วยกเลิกอัตโนมัติ)
+                row.Status = LodgingReservationStatus.Pending;
+                row.ConfirmedAt = null; row.ConfirmedBy = null;
+                var holdText = row.HoldExpiresAt is DateTime h ? LodgingGuestConfirmPolicy.ThaiTime(h) : "-";
+                AppendInternal(row, $"ปฏิเสธสลิปของการจองที่ยืนยันอัตโนมัติจากสลิป — กลับเป็นรอชำระ (ถือห้องถึง {holdText})");
+            }
+
+            _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, row, new
+            {
+                action = "SlipRejected", reason, blocked = row.SlipUploadBlocked,
+                rejectedCount = row.SlipRejectedCount, previousSlip = oldUrl, by = userId,
+                revertedFromSlipConfirm = revert,
+            }));
+            await _db.SaveChangesAsync();
+            return row;
+        });
+        if (r == null) return null;
         await TryNotifyAsync(companyId, r.Id, "slip-rejected");
         return await MapAsync(companyId, r, includeToken: true, includeInternal: true);
     }
@@ -272,7 +318,10 @@ public partial class LodgingService
             case "departures": q = q.Where(r => r.CheckOutDate == (from ?? today).Date && r.Status == LodgingReservationStatus.CheckedIn); break;
             case "inhouse": q = q.Where(r => r.Status == LodgingReservationStatus.CheckedIn); break;
             case "pending": q = q.Where(r => r.Status == LodgingReservationStatus.Pending); break;
-            case "slips": q = q.Where(r => r.SlipUploadedAt != null && r.DepositPaid == 0 && r.Status == LodgingReservationStatus.Pending); break;
+            // คำตัดสินข้อ 128: รวมใบที่ "ยืนยันอัตโนมัติจากสลิป" ที่ยังไม่บันทึกรับเงิน (ไม่งั้นพนักงานไม่เห็นใบที่ต้องตรวจยอดโอน)
+            case "slips": q = q.Where(r => r.SlipUploadedAt != null && r.DepositPaid == 0
+                && (r.Status == LodgingReservationStatus.Pending
+                    || (r.Status == LodgingReservationStatus.Confirmed && r.ConfirmedBy == LodgingGuestConfirmPolicy.SlipConfirmActor))); break;
             // F-03 — คิว "ต้องคืนเงินแขก": ยกเลิก/no-show ที่ยอดต้องคืนยังมากกว่ายอดที่ยืนยันว่าคืนแล้ว
             // + เช็คเอาต์ที่มัดจำเกินยอดใบสุดท้าย (C2) · ไม่รวมแถวก่อนรอบ 193 (ระบบเดิมลงคืนไปแล้ว — ไม่มีข้อมูลการโอน)
             case "refunds": q = q.Where(r => (r.Status == LodgingReservationStatus.Cancelled || r.Status == LodgingReservationStatus.NoShow
@@ -310,6 +359,7 @@ public partial class LodgingService
                 r.TotalAmount, r.FolioTotal, r.PaidAmount, r.DepositRequired, r.HoldExpiresAt, r.SlipUploadedAt, r.CreatedAt,
                 r.RefundAmount, r.RefundPaidAmount, r.RefundPaidBy,
                 r.PaymentProblemAt, r.FinalDocumentId, r.CancellationReason, r.CancellationFee,
+                r.GuestConfirmMode, r.ConfirmedBy, r.DepositPaid, r.SlipUploadBlocked,
                 NotesHaveLegacyMarker = r.InternalNotes != null && r.InternalNotes.Contains(LodgingOverdueRule.LegacyAutoCheckoutMarker),
                 AccountingOff = r.Property.AccountingMode == LodgingAccountingMode.Off,
                 Rooms = r.Rooms.Select(x => new { x.RoomTypeName, UnitNumber = x.Unit != null ? x.Unit.Number : null }).ToList(),
@@ -326,6 +376,9 @@ public partial class LodgingService
             RefundPending = LodgingDepositSettlement.RefundPendingOf(r.RefundAmount, r.RefundPaidAmount, r.RefundPaidBy),
             OverdueLabel = LodgingOverdueRule.Label(LodgingOverdueRule.Classify(r.Status, r.CheckOutDate, today)),
             HasPaymentProblem = r.PaymentProblemAt != null,
+            SlipStateLabel = LodgingGuestConfirmPolicy.StaffSlipLabel(new LodgingGuestFacts(r.GuestConfirmMode, r.Status, r.DepositRequired, r.DepositPaid,
+                r.TotalAmount, r.FolioTotal, r.PaidAmount, r.HoldExpiresAt, r.SlipUploadedAt != null, r.SlipUploadBlocked,
+                r.ConfirmedBy, r.CancellationReason, r.PaymentProblemAt != null)),
             NeedsLegacyClose = LodgingOverdueRule.IsLegacyAutoCheckout(r.Status, r.FinalDocumentId,
                     r.NotesHaveLegacyMarker ? LodgingOverdueRule.LegacyAutoCheckoutMarker : null, r.AccountingOff)
                 || LodgingOverdueRule.IsLegacyAutoNoShow(r.Status, r.CancellationReason, r.CancellationFee, r.RefundAmount),
@@ -2085,7 +2138,8 @@ public partial class LodgingService
             var extras = extrasWithId.Select(e => new LodgingQuoteExtraRequest(e.ExtraId!.Value, e.Quantity)).ToList();
             // ฝ่ายค้านรอบ 202 P2-4: ใบที่ซื้อคนเสริมไว้ก่อนที่พักปิดเตียงเสริม ⇒ คำเตือน + คงราคาคนเสริมเดิม (เส้นพนักงานเท่านั้น)
             var quote = BuildQuote(ctx, checkIn, checkOut, rooms, extras, r.RatePlanId, isStaff: true, excludeReservationId: r.Id,
-                staffKeptExtraBedPrice: KeptExtraBedPrices(r));
+                staffKeptExtraBedPrice: KeptExtraBedPrices(r),
+                reservationMode: r.GuestConfirmMode);   // คำตัดสินข้อ 128: มัดจำที่ต้องชำระตามโหมดที่ตรึงบนใบ (ไม่ใช่โหมดของเส้นพนักงาน)
             if (quote.Errors.Count > 0) throw new BusinessRuleException(string.Join(" · ", quote.Errors));
             foreach (var w in quote.Warnings) AppendInternal(r, $"เลื่อนวัน: {w}");
 

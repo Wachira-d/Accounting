@@ -288,6 +288,10 @@ public partial class LodgingService : ILodgingService
         var checkOut = LodgingTimeOfDay.Parse(d.CheckOutTime, LodgingTimeOfDay.DefaultCheckOut, LodgingTimeOfDay.CheckOutLabel);
         var minNights = Math.Max(1, d.MinNights);
         LodgingSettingsRules.EnsureNightsRange(minNights, d.MaxNights, MinNightsLabel, MaxNightsLabel);
+        // คำตัดสินข้อ 128: โหมดยืนยันการจองจากเว็บ — ตัวตัดสินเดียว (client รุ่นเก่าที่ส่งแค่ธงเดิมเปลี่ยนโหมดเฉพาะเมื่อธงต่างจากสำเนา)
+        var confirmMode = LodgingGuestConfirmPolicy.ModeOnSave(d.GuestConfirmMode, d.ConfirmWithoutDeposit, LodgingGuestConfirmPolicy.Resolve(p));
+        if (LodgingGuestConfirmPolicy.SlipDeadlineProblem(d.SlipDeadlineMinutes) is string slipDeadlineProblem)
+            throw new BusinessRuleException(slipDeadlineProblem, "LODGING-SLIP-DEADLINE");
 
         p.SiteId = d.SiteId; p.BranchId = d.BranchId;
         p.Name = d.Name.Trim(); p.NameEn = d.NameEn?.Trim(); p.Code = d.Code?.Trim() ?? "";
@@ -301,7 +305,10 @@ public partial class LodgingService : ILodgingService
         p.LateCheckOutHours = Math.Max(0, d.LateCheckOutHours); p.LateCheckOutFee = Math.Max(0, d.LateCheckOutFee);
         p.MinNights = minNights; p.MaxNights = d.MaxNights;
         p.MaxAdvanceDays = Math.Max(1, d.MaxAdvanceDays); p.MinAdvanceHours = Math.Max(0, d.MinAdvanceHours);
-        p.AutoConfirmOnDeposit = d.AutoConfirmOnDeposit; p.ConfirmWithoutDeposit = d.ConfirmWithoutDeposit;
+        p.AutoConfirmOnDeposit = d.AutoConfirmOnDeposit;
+        p.GuestConfirmMode = confirmMode;
+        p.ConfirmWithoutDeposit = LodgingGuestConfirmPolicy.LegacyConfirmWithoutDeposit(confirmMode);   // สำเนาที่ระบบเขียนตาม (ทางเดียว)
+        p.SlipDeadlineMinutes = d.SlipDeadlineMinutes; p.AutoConfirmOnSlip = d.AutoConfirmOnSlip;
         p.PaymentHoldMinutes = Math.Max(15, d.PaymentHoldMinutes); p.OverbookingAllowance = Math.Max(0, d.OverbookingAllowance);
         p.ChildMaxAge = Math.Max(0, d.ChildMaxAge); p.InfantMaxAge = Math.Max(0, d.InfantMaxAge);
         p.OnlineBookingEnabled = d.OnlineBookingEnabled; p.RequireGuestIdNumber = d.RequireGuestIdNumber;
@@ -443,7 +450,11 @@ public partial class LodgingService : ILodgingService
             EarlyCheckInHours = p.EarlyCheckInHours, EarlyCheckInFee = p.EarlyCheckInFee,
             LateCheckOutHours = p.LateCheckOutHours, LateCheckOutFee = p.LateCheckOutFee,
             MinNights = p.MinNights, MaxNights = p.MaxNights, MaxAdvanceDays = p.MaxAdvanceDays, MinAdvanceHours = p.MinAdvanceHours,
-            AutoConfirmOnDeposit = p.AutoConfirmOnDeposit, ConfirmWithoutDeposit = p.ConfirmWithoutDeposit,
+            AutoConfirmOnDeposit = p.AutoConfirmOnDeposit,
+            ConfirmWithoutDeposit = LodgingGuestConfirmPolicy.LegacyConfirmWithoutDeposit(LodgingGuestConfirmPolicy.Resolve(p)),
+            GuestConfirmMode = LodgingGuestConfirmPolicy.Resolve(p),
+            SlipDeadlineMinutes = p.SlipDeadlineMinutes, AutoConfirmOnSlip = p.AutoConfirmOnSlip,
+            GuestConfirmModeOptions = LodgingGuestConfirmPolicy.Options.ToList(),
             PaymentHoldMinutes = p.PaymentHoldMinutes, OverbookingAllowance = p.OverbookingAllowance,
             ChildMaxAge = p.ChildMaxAge, InfantMaxAge = p.InfantMaxAge, OnlineBookingEnabled = p.OnlineBookingEnabled,
             RequireGuestIdNumber = p.RequireGuestIdNumber,

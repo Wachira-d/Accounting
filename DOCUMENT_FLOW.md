@@ -4126,7 +4126,30 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 **ทางเข้า** — (1) storefront `/booking` `/book` `/rooms` (เฉพาะเว็บที่มีที่พักผูก — `tryRouteSpecialSlug` probe `/lodging/info` ก่อน ไม่มีก็ปล่อยหน้า CMS ที่ seed ไว้;
 เมื่อ hijack **จะวาด Hero ของหน้า CMS นั้นไว้บนสุด** (`lodgingCmsHero`) เพื่อให้เจ้าของแก้หัวเรื่องจาก cms-edit ได้จริง — เดิมหน้าถูกแทนทั้งหน้า แก้อะไรก็ไม่มีผล = silent no-op) และบล็อก `BookingCalendar` ที่กลายเป็นช่องค้นหาห้องว่างอัตโนมัติ · (2) front desk `pages/lodging.html` (walk-in/โทร/OTA · `ConfirmImmediately`) · (3) `/reservation/{token}` ให้แขกดู/อัปโหลดสลิป/ยกเลิก/ส่งคำขอ (**2026-10-02**: ไฟล์สลิปของแขก/ลูกค้าหน้าร้าน/พอร์ทัลบันทึก `FileAttachment.UploadedByUserId = null` — เดิม `Guid.Empty` ชน FK → `Users` ⇒ ส่งสลิปได้ 500 ทุกครั้ง · คอลัมน์ว่างได้แล้ว (migration `DROP NOT NULL`) · เทสต์ Db `GuestUploadFileAttachmentDbTests`)
 
-**Lifecycle**: `Pending` (กันห้องตามกติกาเดียว `Helpers/LodgingHoldRule` — **รอบ 202 O-P1-4/5**: กันห้องจนกว่า "hold หมด **และ** ไม่มีอะไรรอคนตัดสิน" (ไม่มีมัดจำ · ไม่มีสลิปรอตรวจ · ไม่มีเงินออนไลน์ค้างยืนยัน) · `ExpireHoldsAsync` ยกเลิกด้วยเงื่อนไขเดียวกันใต้ล็อกที่พัก ⇒ "ไม่ถูกยกเลิก" ⇔ "ยังกันห้อง" เสมอ (เดิมใบส่งสลิปเลิกกันห้องเงียบ ๆ หลัง 24 ชม.) · แขกเริ่มจ่ายออนไลน์ ⇒ `HoldForOnlinePaymentAsync` ถือห้องถึงวันหมดอายุของรายการชำระ + 15 นาที (hold หมดแล้วห้องถูกขาย ⇒ ปฏิเสธ**ก่อน**แขกจ่าย)) → `Confirmed` (พนักงานกดยืนยัน/รับมัดจำ · หรือทันทีเมื่อ `ConfirmWithoutDeposit`/มัดจำ = 0/staff ConfirmImmediately) → `CheckedIn` (ต้อง assign `LodgingUnit` ครบทุกห้อง · unit → Occupied · เช็คอินก่อนวันจอง 1 วัน = เพิ่มคืน (ข้อ 125)) → `CheckedOut` · ทางออก `Cancelled`/`NoShow` (เฉพาะก่อนเช็คอิน — เช็คอินแล้วต้องเช็คเอาต์/ออกบิล)
+**Lifecycle**: `Pending` (กันห้องตามกติกาเดียว `Helpers/LodgingHoldRule` — **รอบ 202 O-P1-4/5**: กันห้องจนกว่า "hold หมด **และ** ไม่มีอะไรรอคนตัดสิน" (ไม่มีมัดจำ · ไม่มีสลิปรอตรวจ · ไม่มีเงินออนไลน์ค้างยืนยัน) · `ExpireHoldsAsync` ยกเลิกด้วยเงื่อนไขเดียวกันใต้ล็อกที่พัก ⇒ "ไม่ถูกยกเลิก" ⇔ "ยังกันห้อง" เสมอ (เดิมใบส่งสลิปเลิกกันห้องเงียบ ๆ หลัง 24 ชม.) · แขกเริ่มจ่ายออนไลน์ ⇒ `HoldForOnlinePaymentAsync` ถือห้องถึงวันหมดอายุของรายการชำระ + 15 นาที (hold หมดแล้วห้องถูกขาย ⇒ ปฏิเสธ**ก่อน**แขกจ่าย)) → `Confirmed` (พนักงานกดยืนยัน/รับมัดจำ · หรือทันทีตามโหมดยืนยัน `Helpers/LodgingGuestConfirmPolicy.Initial` (Instant / มัดจำ = 0 / staff ConfirmImmediately) · หรือแขกส่งสลิปในโหมด RequireSlip + AutoConfirmOnSlip — ดูย่อหน้า "การจองจากเว็บสำเร็จเมื่อไร") → `CheckedIn` (ต้อง assign `LodgingUnit` ครบทุกห้อง · unit → Occupied · เช็คอินก่อนวันจอง 1 วัน = เพิ่มคืน (ข้อ 125)) → `CheckedOut` · ทางออก `Cancelled`/`NoShow` (เฉพาะก่อนเช็คอิน — เช็คอินแล้วต้องเช็คเอาต์/ออกบิล)
+
+**การจองจากเว็บสำเร็จเมื่อไร (รอบ 202 · คำตัดสินข้อ 128 · ทีม LC)** — ค่าตั้งต่อที่พัก `LodgingProperty.GuestConfirmMode` ตัวเดียว ·
+ตัวตัดสินเดียว `Helpers/LodgingGuestConfirmPolicy` (สูตรเดิม `prop.ConfirmWithoutDeposit || …` ถูกถอดจาก `CreateReservationAsync`/`BuildQuote` — checker ห้ามกลับมา):
+| โหมด | แขกกดจองแล้ว | มัดจำที่ต้องชำระ (`QuotedDeposit`) | ถือห้อง | ส่งสลิปแล้ว |
+| --- | --- | --- | --- | --- |
+| `Instant` (= ธงเดิม ConfirmWithoutDeposit) | `Confirmed` ทันที "จองสำเร็จ" | 0 | — | สลิปยอดค้างรอตรวจ (เดิม) |
+| `RequireSlip` (ใหม่) | `Pending` · ป้ายแขก "ยังไม่สำเร็จ — รอสลิปโอนเงิน" · **ไม่แจ้งเจ้าของ "จองใหม่"** (อีเมลแขก `awaiting-slip` อย่างเดียว) | มัดจำตามค่าตั้ง · **0 ⇒ ยอดรวมทั้งหมด** (ยอดที่ต้องโอน `AmountToTransfer`) | `SlipDeadlineMinutes` (5–1440 · ตั้งต้น 30) — หมดแล้ว `ExpireHoldsAsync` ยกเลิก (กติกา `LodgingHoldRule` เดิม · แขกเปิดหน้าการจองก็เรียก) | `AutoConfirmOnSlip`=true ⇒ `Confirmed` ทันที (ConfirmedBy = `guest-slip` · hold ล้าง) · false ⇒ คง `Pending` + "ส่งคำขอจองสำเร็จ — รอที่พักตรวจสลิป" (สลิปรอตรวจกันห้องตามกติกาเดิม) |
+| `RequireDeposit` (เดิม) | `Pending` "รอชำระมัดจำ" | ตามค่าตั้ง (0 ⇒ ยืนยันทันที) | `PaymentHoldMinutes` | สลิปรอตรวจ (เดิม) |
+
+กติกา: (1) **ส่งสลิป ≠ ชำระแล้ว** (R1) — เส้นสลิปไม่แตะ `DepositPaid`/`PaidAmount`/ใบมัดจำ · ยอดบันทึกเมื่อพนักงานกด "บันทึกรับเงินตามสลิป" (ปุ่มขึ้นเมื่อ
+`AwaitingSlipMoneyCheck` → `ConfirmAsync` เดิม) · ชำระออนไลน์ (`PublicPaymentController` → `LodgingReservationPaymentHandler`) ผ่านทุกโหมด (ตาม `AutoConfirmOnDeposit` เดิม) ·
+(2) ยืนยันจากสลิปตัดสินใต้ `WithPropertyLockAsync` เดิมของ `UploadSlipByTokenAsync` หลังตรวจห้องว่าง — hold หมดแล้วห้องเต็ม / ใบที่ระบบยกเลิก ⇒ ธงข้อ 127 **ไม่ยืนยัน** ·
+(3) **ปฏิเสธสลิปของใบที่ยืนยันเพราะสลิป** (`IsSlipConfirmed`: Confirmed + `guest-slip` + DepositPaid 0) ⇒ กลับ `Pending` + ล้างผู้ยืนยัน + hold 24 ชม. (ปิดรับสลิป ⇒ hold = กำหนดส่งสลิป)
+ใต้ล็อกต่อการจอง `LodgingConfirm` (ตัวเดียวกับการรับเงิน) — เลือกทิศนี้เพราะสลิปที่ไม่ผ่าน = ไม่มีหลักฐานว่าจ่าย การคงสถานะ "ยืนยันแล้ว" จะกันห้องฟรีโดยไม่มีเงิน และ hold ทำให้ตัวยกเลิกอัตโนมัติทำงานได้ ·
+(4) เส้นพนักงาน (walk-in/โทร/OTA) ไม่ถูกบังคับส่งสลิป: `ForChannel` แปลง RequireSlip ⇒ RequireDeposit (รวม ConfirmImmediately เดิม) · (5) โหมดที่ใช้กับใบ**ตรึงบนใบ**
+(`LodgingReservation.GuestConfirmMode`) — ส่งสลิป/ป้ายแขก/เลื่อนวัน (`BuildQuote(reservationMode:)`) อ่านค่าที่ตรึง · NULL = ใบก่อนรอบนี้ (พฤติกรรมเดิม) ·
+(6) **ข้อมูลเดิม**: `LodgingProperties.GuestConfirmMode` NULL ⇒ `Resolve` อ่านธงเดิม (true ⇒ Instant · อื่น ⇒ RequireDeposit) — ไม่ backfill (ไม่มีอะไรต้องรันซ้ำ) ·
+บันทึกหน้าตั้งค่าเขียนโหมดจริง + ธงเดิมเป็นสำเนา (`LegacyConfirmWithoutDeposit` — ทางเดียว · หน้าไม่มีช่องธงเดิมแล้ว) · client รุ่นเก่าที่ส่งแค่ธงเดิม ⇒ เปลี่ยนโหมดเฉพาะเมื่อธงต่างจากสำเนา (`ModeOnSave`) ·
+(7) หน้าแขก (`storefront.html`): ป้าย/ข้อความ/ยอดที่ต้องโอน/กำหนดเวลา/เปิดช่องส่งสลิป มาจาก `GuestView` (`GuestStatusLabel` · `GuestNote` · `SlipRequired` · `SlipDueAt` ·
+`AmountToTransfer` · `CanUploadSlip`) · ข้อความตอบกลับสร้างจอง/ส่งสลิปจาก `CreatedMessage`/`SlipUploadedMessage` · บัญชีรับโอน/พร้อมเพย์ = ค่าตั้งช่องทางชำระของเว็บ
+(`GET …/commerce/payment-options` ตัวเดียวกับหน้าคำสั่งซื้อ · ไม่มี ⇒ "ติดต่อที่พัก") · ก่อนกดจอง quote บอกเงื่อนไข (`QuoteTerms`) ·
+(8) หน้าบ้าน: ป้าย `SlipStateLabel` "รอสลิป (หมดเวลา …)" / "สลิปรอตรวจ" / "ยืนยันจากสลิป · ยังไม่บันทึกรับเงิน" · คิว "มีสลิปรอตรวจ" รวมใบยืนยันจากสลิปที่ยังไม่บันทึกรับเงิน ·
+อีเมล/LINE เจ้าของแจ้งตอนแขกส่งสลิป (`OwnerSlipHeadline` บอกว่ายืนยันอัตโนมัติแล้วหรือรอตรวจ) · เทสต์ `LodgingGuestConfirmPolicyTests` + Db `LodgingSlipConfirmDbTests` · sim `lodging_slip_confirm_sim.js`
 
 **ล็อกต่อที่พัก (รอบ 202 ทีม LO · O-P0-1)**: `LodgingService.WithPropertyLockAsync` = `pg_advisory_xact_lock(AdvisoryLockKey.For(บริษัท, "lodging-res", ที่พัก))` (คีย์เดิมของเลขจอง) — **ทุกเส้นที่ตัดสิน "ห้องว่างพอไหม" แล้วเขียนผล** อ่านห้องว่างหลังได้ล็อก: สร้างจอง (ห้องว่าง + ราคา + เพดานรอชำระ + ผู้ติดต่อ + เลขจอง ในธุรกรรมเดียว — เดิมล็อกแค่เลขจอง ⇒ ห้องสุดท้ายจองซ้อน · เทสต์ DB `LodgingDoubleBookingDbTests`) · ยืนยัน (`ClaimInventoryForConfirmAsync`: อ่านสถานะใหม่ + ตรวจห้องว่าง + ต่อ hold 15 นาที ใต้ล็อก แล้ว**ออกใบมัดจำหลังปลดล็อก** — เส้นเอกสารเปิดธุรกรรมของตัวเอง ซ้อนไม่ได้) · เลื่อนวัน · จัดห้อง · เช็คอิน · อัปโหลดสลิป · ถือห้องตอนจ่ายออนไลน์ · ยกเลิกอัตโนมัติ · **ลำดับล็อก**: ล็อกที่พัก → (ไม่มีล็อกเอกสาร/JE ใต้ล็อกนี้) → audit ปิดผนึกตอน commit (ล็อกบริษัท ท้ายสุด) · มีธุรกรรมของผู้เรียกแล้ว = ล็อกในธุรกรรมนั้น ไม่เปิดซ้อน · เช็คเอาต์/ออกใบใหม่/คืนเงินยังใช้ session lock ต่อการจอง (`LodgingCheckout`) ตามเดิม · audit ของโมดูลเขียนผ่าน `AddChainedAuditLog` ทั้งหมด (`audit_direct_add_baseline` ของไฟล์ที่พัก = 0)
 
@@ -4563,7 +4586,10 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 
 
-_Last verified against codebase: 2026-10-02 (สลิปแขก 500 — FileAttachment.UploadedByUserId ว่างได้ · ไฟล์จากคนนอกระบบ 3 ทางเข้า = null · commit ca42449e)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LC · คำตัดสินข้อ 128 — §6.5 โหมดยืนยันการจองจากเว็บ Instant/RequireSlip/RequireDeposit · ตัวตัดสินเดียว LodgingGuestConfirmPolicy · ส่งสลิป ≠ รับเงิน — commit 2b48c811)_
+
+_ก่อนหน้า: 2026-10-02 (สลิปแขก 500 — FileAttachment.UploadedByUserId ว่างได้ · ไฟล์จากคนนอกระบบ 3 ทางเข้า = null · commit ca42449e)_
+_ก่อนหน้า: 2026-10-02 (สลิปแขก 500 — FileAttachment.UploadedByUserId ว่างได้ · ไฟล์จากคนนอกระบบ 3 ทางเข้า = null · commit ca42449e)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LS ต่อ — ผูกที่พักกับเว็บจากป้ายสถานะ §6.5 ⑩ — commit a5278d89)_
 
