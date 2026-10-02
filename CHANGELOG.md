@@ -3324,7 +3324,7 @@ _Last verified against codebase: 2026-09-25 (รอบ 194 — ทีม R แ�
 - **C4** ข้อความ "พิมพ์เหตุผลเป็นหมายเหตุบนใบ" ไม่จริง ⇒ แก้ข้อความ (บันทึกภายใน + คำเตือนตอนอนุมัติ)
 - **P4** `documents.html` hydrate ประเภทรอรายการ (promise เดียว + ลำดับ) · **P6** schema รอบ 194 ย้ายเข้า `GetAlterStatements` + ชุดหลัง log แทน `catch {}`
 - เทสต์ `DepositKindNatureGuardTests` · checker `required_call_site_check` +6 กติกา · ค้าง: P5 (seed ตามประเภทธุรกิจตอนเปลี่ยนภายหลัง) · C2/C5/P1–P3 (ทีม M)
-— commit 5e797b83)_
+— commit <pending>)_
 
 _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I แก้ใบ Scommerce TXE05202609T004679 ตาม `erp-review/2026-09-25/ocr-scommerce/report-X.md` P1/P2/P4 + report-Y:
 - **P1** `Helpers/OcrLineVatPlanner.PlanWholeInvoice` — ชั้น "ตัวเลขหัวใบพิสูจน์อัตราทั้งใบ" ใน `BuildScanLinesAsync` **ก่อน** `ThaiVatTypeRule.Suggest` (เติมเฉพาะบรรทัดว่าง ·
@@ -3353,7 +3353,7 @@ _Last verified against codebase: 2026-09-25 (รอบ 194 — ทีม M2 แ�
 - **RevertTrackedChangesSinceAsync** → `Helpers/TrackedChangeRevert` (DetectChanges ก่อน · ตัด reference ฝั่ง principal · ตรวจซ้ำ) + เทสต์ด้วย DbContext ออฟไลน์
 - เทสต์ `DepositRound194R2Tests` · แก้ `DepositForfeitRound194MTests`/`DepositKindTests` ตามสัญญาใหม่ · checker `required_call_site_check` +14 กติกา (ถอดกฎที่ล็อก
   `ForfeitZeroVatDeferred(ธงบนใบ…)`/`VatPeriodDeclaredOrFiledAsync` ในเส้นริบ — ล็อกพฤติกรรมผิดของ R2-1/R2-2)
-— commit 5e797b83)_
+— commit <pending>)_
 
 _Last verified against codebase: 2026-09-25 (รอบ 196 — ทีม Q: "จากหน้ารวมใบเสนอราคา ใบไหนออกใบแจ้งหนี้แล้ว โดยไม่ต้องไล่เปิดทีละใบ":
 - **บั๊กที่ยืนยัน**: `GetDocumentsAsync` ไม่ส่ง % การแปลงเข้า `MapDocumentToResponse` ⇒ ใบต้นทาง Approved ทุกใบขึ้น "⏳ รอดำเนินการต่อ" · สูตร detail
@@ -3366,7 +3366,7 @@ _Last verified against codebase: 2026-09-25 (รอบ 196 — ทีม Q: "จ
   `#conversionFilter` · "—" ในคอลัมน์ค้างชำระ/ไม่ขึ้นชิปอายุหนี้สำหรับชนิดที่ไม่ใช่หนี้ · ชิปใบต่อเนื่องในหน้ารายละเอียดมีสถานะ (ใบที่ยกเลิกเห็นว่ายกเลิก) ·
   `purchases.html` (ทางเข้าที่สองของลิสต์เดียวกัน): คอลัมน์ค้างจ่าย "—" + การ์ด "ค้างจ่าย" เดิมรวมยอดเต็มของ PO/GRN + การ์ด "รอรับสินค้า" ตัด PO ที่ออกครบ
 - เทสต์ `DocumentConversionProgressTests` (สองครึ่ง) · `required_call_site_check` +5 กติกา · DOCUMENT_FLOW §2.4a · TEST_PLAN DOC-U-08
-— commit 5e797b83)_
+— commit <pending>)_
 
 _Last verified against codebase: 2026-09-25 (รอบ 195 — ทีม I2 แก้ผลฝ่ายค้าน `erp-review/2026-09-25/ocr-scommerce/review195.md`:
 - **C1 (P1 ภาษีซื้อ)** ด่านที่ตรวจด้วยสูตรเดียวกับที่ผลิตค่า: `OcrLineVatPlanner.PlanWholeInvoice/RateAdvice(..., vatPrintedOnPaper)` ← `Helpers/OcrHeaderVatEvidence.Classify`
@@ -3415,7 +3415,7 @@ _Last verified against codebase: 2026-09-25 (รอบ 197 — ทีม K: ใ�
 - **ข้อ 4 (ฐาน 24,110 / รหัส 1 = 7%) ไม่แก้รอบนี้** — ชนไฟล์ทีม I2 (`OcrLineVatPlanner`/`VatBackCalcGuard`/`SmartFieldExtractor` ส่วน VAT) · วิเคราะห์ + แผนในรายงานทีม
 - เทสต์ `OcrMakroBranchVendorTests` (ข้อความถอดจากภาพ) · `OcrVendorBranchContactTests` (+Makro · สองครึ่ง · เทียบ `ContactTaxBranchKey.Pick`) · `required_call_site_check` +5 กติกา ·
   DOCUMENT_FLOW §1 OCR + §6.2i · `docs/lessons/ocr-pipeline.md`
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 195 ทีม I3 — ฝ่ายค้านรอบสอง (`review195-r2.md`) R2-2..R2-5 + PLAUSIBLE ก–ง:
 - **R2-2** สูตรถอด VAT 7/107 ชุดที่สาม `CrossValidator.FillMissingAmounts` (ZoneFallback) ถูกถอด — ZoneFallback ถาม `OcrVatBackCalc.Plan`
@@ -3432,7 +3432,7 @@ _รอบ 195 ทีม I3 — ฝ่ายค้านรอบสอง (`rev
 - **ค** `IsVatLabelled`: "Value Added Tax" · "ภาษีมูลค่าเพิม" (+ `ThaiTextNormalizer`) · ตัวเลขแรกหลังป้ายบนแถวเดียวกัน · คอลัมน์ป้าย→คอลัมน์ตัวเลข (จำนวนเท่ากัน)
 - **ง** C2 "ยกเลิก…แทน" ข้ามบรรทัดถัดไปได้ 1 บรรทัดเมื่อประโยคยังไม่จบ (คำเชื่อม) · "ตัวแทน" ไม่นับ
 - ชุดกระดาษจริงก่อน/หลัง: 7 ใบใน OcrPaperSamples + Scommerce Azure = Labelled ไม่เปลี่ยน · เปลี่ยนเฉพาะเคสที่ตั้งใจ (ตารางในคอมมิต)
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 198 ทีม E — settlement เฟส 0 (erp-review/2026-09-25/settlement/report-S2.md §4 · report-S1.md §2)
 - **G-8 P0** `PaymentGatewayController` ด่านสิทธิ์ทุก endpoint เขียน (`Helpers/PaymentGatewayPermissionScope` · คืนเงิน `Bank.PaymentInit` · ยืนยันมือ `Bank.Reconcile` ·
@@ -3453,13 +3453,13 @@ _รอบ 198 ทีม E — settlement เฟส 0 (erp-review/2026-09-25/set
 - **S-1** กระทบบัญชีย่อยไม่นับ 11340/บัญชีพักที่ตั้งเป็นลูกหนี้การค้า
 - **G-9** doc: DOCUMENT_FLOW §2.3/§2.6/§2.6b/ค่าธรรมเนียม · PAYMENT_GATEWAY_DESIGN §0 (สถานะปัจจุบัน) · §5 · §7.1 แถวเฟส 0
 - เทสต์ `SettlementPhase0Tests` (สองครึ่งทุกกลุ่ม) · checker `required_call_site_check` +15 กติกา
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 198 main — ฝ่ายค้านทีม E (main agent ตรวจเอง · `erp-review/2026-09-25/settlement/review198-E.md`):
 - **E-1** `GatewayRefundService`: หลังผู้ให้บริการคืนเงินสำเร็จ จับ**ทุก** exception (เดิมเฉพาะ InvalidOperation/DbUpdate ⇒ เครือข่าย DB หลุด/ยกเลิกคำขอ
   หลุดออกไปโดยไม่มีประวัติ สถานะยัง Succeeded ⇒ กดคืนซ้ำได้) · งานเขียนกู้คืน + เปลี่ยนสถานะใช้ `CancellationToken.None`
 - backlog E-2 (ผู้ให้บริการ timeout = ผลไม่แน่ชัด) · E-3 (POS/Integration หลายบัญชีธนาคารต้องปักบัญชีก่อนรับโอน — พฤติกรรมเปลี่ยน) · E-4
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 199 — ภ.พ.06 คุมเฉพาะสลิปจากเครื่องบันทึกการเก็บเงิน (คำตัดสินเจ้าของ 2026-09-28):
 - เดิม `AbbreviatedTaxInvoiceRule` บังคับ `IsRetailApproved` + `PhoR06ApprovedDate` กับ**ทุกช่องทาง** ⇒ กิจการขายปลีกที่ไม่ได้ใช้
@@ -3469,7 +3469,7 @@ _รอบ 199 — ภ.พ.06 คุมเฉพาะสลิปจากเ�
   เอกสาร = จด VAT + ขายปลีก · สลิป = + ภ.พ.06 + วันที่ไม่ก่อนวันอนุมัติ · สวิตช์แพลตฟอร์มคงความหมายเดิม
 - ผู้เรียก 6 จุด (PDF ×3 · DocumentRenderer · DocumentService · PosSlipHeader) ส่งช่องทางครบ — รูปแบบเดิม (ไม่ส่งช่องทาง) เหลือ 0 จุด ·
   `required_call_site_check` ล็อกสลิป POS = CashRegisterSlip · หน้าตั้งค่าบริษัทแก้ป้าย · CLAUDE.md กฎเหล็ก #2 A §86/6
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 197 ทีม K2 (2026-09-28) — แก้ผลฝ่ายค้านของทีม K (`erp-review/2026-09-25/makro-branch/review197.md`):
 - **K-1**: หน้าเว็บส่ง `vendorBranchCode` ทุกครั้งที่บันทึก/สร้างเอกสาร + `OcrCorrectedFieldList.From` นับทุกช่องที่ไม่ null ⇒ `IsReliableBranch(userCorrected:true)`
@@ -3485,18 +3485,18 @@ _รอบ 197 ทีม K2 (2026-09-28) — แก้ผลฝ่ายค้�
 - **K-7**: `OcrSelfPartyGuard.IsOurContact` ตัวเดียวของเส้นสแกน+สร้างเอกสาร
 - เทสต์ `OcrVendorBranchReview197Tests` (ต่อ `BranchCodeExtractor` → `IsReliableBranch` → `Decide` · สองทิศทุกข้อ) · `OcrVendorBranchContactTests` (theory null/0.70/0.60) ·
   `required_call_site_check` +9 กติกา · DOCUMENT_FLOW §1 OCR · TEST_PLAN OCR-U-08..11
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 199 ฝ่ายค้าน (`erp-review/2026-09-25/review-r199-ocr.md`) C-1: `CompanyService.UpdateAsync` ยังบังคับวันที่ ภ.พ.06 เมื่อติ๊กขายปลีก
 ⇒ ร้านที่ไม่มีเครื่อง POS บันทึกธงไม่ได้ถ้าไม่กรอกวันที่ปลอม (ซึ่งไปเปิดสิทธิ์สลิป) — ถอดแล้ว + `required_call_site` ห้ามกลับมา ·
 ข้อความช่วยเหลือ/คำแนะนำหัวเอกสารที่ยังบอกว่าอย่างย่อต้องมี ภ.พ.06 แก้ตาม
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 198 ฝ่ายค้าน settlement (`erp-review/2026-09-25/settlement/review198-A.md`) R-E1 **P0**: webhook ยืนยันลายเซ็นกับ config ทุกบริษัท
 แล้ว `ApplyChargeAsync` ด้วยรหัสรายการจาก metadata โดยไม่ตรวจเจ้าของ ⇒ tenant หนึ่ง (คีย์ทดสอบ Omise ฟรี) ปิดหนี้/ยืนยันการจองของร้านอื่นได้
 ด้วย charge 0 บาท · แก้: `Helpers/PaymentWebhookOwnership.RejectReason` (บริษัท · ผู้ให้บริการ · ชุดตั้งค่า · ยอดสำเร็จ) + โหลดรายการ
 เฉพาะในบริษัทของ config · เทสต์ `PaymentWebhookOwnershipTests` (สองทิศ) · `required_call_site` ล็อกลำดับตรวจก่อน ApplyCharge
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 198 เฟส 1 ทีม A — **สัญญา settlement (wallet → ธนาคาร)** ตาม `erp-review/2026-09-25/settlement/`
 (DECISIONS 4 ข้อ · report-S1 JE · report-S2 §3/§4):
@@ -3510,7 +3510,7 @@ _รอบ 198 เฟส 1 ทีม A — **สัญญา settlement (wallet 
 - เทสต์ `SettlementBatchMathTests` · `SettlementRulesAndSchemaTests` (golden gateway 1,070/41.79/1,028.21 · marketplace 963/67.41+4.72 · reserve · ยอดติดลบ · คืนเงินหลังโอน ·
   chargeback · WHT 3 โหมด · ไม่จด VAT · ภ.พ.36 · migration ↔ model EF)
 - ค้าง: ผู้เรียก `Plan`/`PlanChargebackResolution`/`EnsureClearingAccountAsync`/`ParseClassifierAnswer`/`FromExclusive` = ทีม B/C/D (dead_helper ฟ้อง 4 ตัวจนกว่าจะรวม)
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 198 เฟส 1 ทีม B — **นำเข้า · จัดประเภท · จับคู่ · ตั้งค่าช่องทาง settlement** (ไม่ลงบัญชี — ทีม C · หน้าจอ/controller — ทีม D):
 - `Services/Settlement/Adapters/**` (ความรู้เฉพาะเจ้าอยู่ที่นี่ที่เดียว · `tools/settlement_adapter_boundary_check.py` + self-test): `ISettlementReportAdapter` ·
@@ -3525,7 +3525,7 @@ _รอบ 198 เฟส 1 ทีม B — **นำเข้า · จัดป�
 - เส้นเดิม `GatewaySettlementService.SelectCandidatesAsync` ข้าม intent ที่อยู่ใน `SettlementBatch` แล้ว
 - เทสต์ `SettlementImportTests` · `required_call_site_check` +14 กติกา · dead_helper: ต่อสาย `EnsureClearingAccountAsync`/`ParseClassifierAnswer`/`FromExclusive` + ตัด `ArApScope.IsReceivable` ออกจาก baseline
 - ส่งต่อทีม C: `Plan` ต้องออกใบขายสรุปเฉพาะ `AutoSummary` (บล็อก `Unmatched`/`AmountMismatch`) · ตรวจผังพักของบรรทัดที่พก `PaymentIntentId` ซ้ำ (R-A1)
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 198 เฟส 1 ทีม C — **ผู้ลงบัญชีรอบโอน settlement** (`Services/Settlement/SettlementPostingService` · ตัวตัดสินบริสุทธิ์ `Helpers/SettlementPosting.cs` · DOCUMENT_FLOW §2.10):
 - `ISettlementPostingService`: `PreviewAsync` · `PostAsync` (ล็อก session ต่อช่องทาง · ใบสำคัญจ่ายค่าธรรมเนียมจากผังพัก 1 ใบ/กลุ่มภาษี · ใบขายสรุปรายวัน (ทางเข้าใหม่ · ใบกำกับ/ใบเสร็จใบเดียว เงินเข้าผังพัก · ผู้ซื้อลูกค้าเงินสด ·
@@ -3541,7 +3541,7 @@ _รอบ 198 เฟส 1 ทีม C — **ผู้ลงบัญชีร�
 - checker: `required_call_site_check` +12 กติกา + ห้ามประกอบ JE ทั้งโฟลเดอร์ `Services/Settlement/**` (self-test) · `terminal_status_writer_check` สถานะ `Posted/BankMatched` เจ้าของเดียว (self-test · เข้า check_all)
 - เทสต์ `SettlementPostingTests` (23) · แก้ `SettlementRulesAndSchemaTests` ภ.พ.36 ไม่จด VAT
 - ค้าง: controller/หน้าจอ (ทีม D) · คืนเงินที่จับคู่แล้วต้องออกใบลดหนี้เอง (เหตุผล §86/10) · ใบสรุปไม่ตัดสต็อก/ต้นทุน · continuity ยอด wallet (R-A12) · shipping VAT (R-A10)
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 199 ทีม K3 — แก้ผลฝ่ายค้าน (`erp-review/2026-09-25/review-r199-ocr.md`) ฝั่ง OCR/สาขาผู้ขาย/หัวพิมพ์ซ้ำ:
 - **A-1 (P1)**: `OcrSelfPartyGuard.IsOurContact` — **เลขภาษีตัดสินก่อนชื่อ** (เลขเรา ⇒ เรา · เลขสองฝั่ง `ThaiTaxId.IsValid` และต่าง ⇒ ไม่ใช่เรา · ชื่อเฉพาะเมื่อฝั่งใด
@@ -3558,8 +3558,8 @@ _รอบ 199 ทีม K3 — แก้ผลฝ่ายค้าน (`erp-re
   เพราะหมายเหตุ Scommerce จริงตัดบรรทัดหลังคำเชื่อม)
 - เทสต์ `OcrReview199Tests` (สองทิศทุกข้อ) · `required_call_site_check` +7 กติกา (renderer ×2 · หัว ×2 · การ์ด · สลับฝั่ง · คำเตือน VAT) + ขยายกติกาเส้นสร้างเอกสาร ·
   DOCUMENT_FLOW §1 OCR + §ใบกำกับอย่างย่อ · TEST_PLAN ABB-14 · OCR-U-12..14 · ค้าง (backlog ในไฟล์ฝ่ายค้าน): A-4 · A-5 · A-6 · B-1 · C-3
-— commit 5e797b83)_
-— commit 5e797b83)_
+— commit <pending>)_
+— commit <pending>)_
 
 _รอบ 198 ฝ่ายค้าน settlement ทีม E2 (`erp-review/2026-09-25/settlement/review198-A.md` §E · `review198-E.md` E-2):
 - **R-E2**: ยอดคืนในรอบโอนนับ **ณ วันเงินเข้า** (`GatewaySettlementMath.RefundedAsOf` · `RefundCutoffUtc` = 00:00 เวลาไทยของ `SettledAt`) — คืนหลังวันเงินเข้า
@@ -3579,7 +3579,7 @@ _รอบ 198 ฝ่ายค้าน settlement ทีม E2 (`erp-review/202
 _รอบ 199 main — CI แดง `2599df78` (CS1519/CS1010): doc-comment ใน `OcrDocumentRoleInferrer` (ทีม K3) ยกข้อความหมายเหตุ Scommerce
 ที่มีขึ้นบรรทัดจริง ⇒ ครึ่งหลังหลุดเป็นโค้ด · แก้เป็น "⏎" · checker ใหม่ `tools/comment_line_break_check.py` (บรรทัดขึ้นต้นอักษรไทยต่อจาก
 บรรทัดคอมเมนต์ · `--self-test` + negative test กับไฟล์ที่พังจริงจับได้บรรทัด 766) — ไม่มี checker เดิมตัวไหนมองบรรทัดนี้
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 198 เฟส 1 ทีม D — settlement: ทางเข้า HTTP + หน้าจอ (§2.10 · ACCOUNT_STRUCTURE §3.1d 🔨→✅) · service ทีม B/C ไม่ตรวจสิทธิ์โดยสัญญา ⇒
 `Controllers/SettlementController.cs` (route `api/companies/{companyId}/settlement/…` · 20 endpoint) ถือด่านทั้งหมดจากตารางเดียว
@@ -3590,8 +3590,8 @@ path ไม่มี `/bank` (กัน RouteFeatureMap จับแพ็กเ
 `SettlementBatchActions` (ปุ่มตามสถานะ = ด่านเดียวกับ service) · `SettlementBankCandidates` (ผู้สมัครเงินเข้า ตัดสินด้วย `SettlementBankMatch.Check`) ·
 หน้า `settlements.html` + `settlement-channels.html` + api.js 20 เมธอด +
 เมนู · เทสต์ `SettlementControllerContractTests` + `tools/settlement_import_form_sim.js` (โค้ดจริงของหน้า + negative test) · WATCHED + owner_action_wiring 14 แถว ·
-ผู้สมัครเงินเข้า (รายการเดินบัญชีจริง) ต้อง `Settlement.Post` ไม่ใช่ View — commit 5e797b83)_
-— commit 5e797b83)_
+ผู้สมัครเงินเข้า (รายการเดินบัญชีจริง) ต้อง `Settlement.Post` ไม่ใช่ View — commit <pending>)_
+— commit <pending>)_
 
 _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม E3 — แก้ผลตรวจฝ่ายค้าน review198-E2 (gateway คืนเงิน/รอบโอน/VAT ค่าธรรมเนียม):
 - **E2-1**: `GatewayRefundMath.ClassifyRefundHttpStatus` — คำขอคืนเงินที่ได้ 5xx/408 = ผลไม่แน่ชัด (`ProviderRefund.OutcomeUnknown`) ล็อกทางเดียวกับหมดเวลา · 4xx อื่น = ปฏิเสธจริง ·
@@ -3626,20 +3626,20 @@ _รอบ 198 ทีม S3 — แก้ผลฝ่ายค้าน settleme
 - **E2-10** intent ที่คืนเงินผลไม่แน่ชัด: CSV ⇒ Unmatched · ประกอบ ⇒ เตือน · ลงบัญชี ⇒ บล็อก `RefundOutcomeUnknown`
 - เจ้าของตัดสิน: C-7 (ผู้อนุมัติ = ระบบ) · C-9 (1 ใบสรุป/วัน vs หลาย payout) · C-6 ถาวร — เขียนไว้ใน review198-C.md O-1..O-3
 - เทสต์ `SettlementReview198FixTests` · `required_call_site_check` +17 กติกา · DOCUMENT_FLOW §2.10 · ACCOUNT_STRUCTURE §3.1d · TEST_PLAN SPS-01..23
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 198 ทีม S3 (ต่อ · หลัง merge ทีม D): ปุ่มของหน้าจอใช้ตัวตัดสินเดียวกับด่านของ service — `SettlementBatchActions.For(status, lines,
 postingArtifacts, unpostRefusals)`: แก้บรรทัด/ยกเลิกรอบ = `SettlementSaleMatch.IsEditable(status, artifacts)` (ตัวเดียวกับ `LoadEditableBatchAsync` —
 ลงค้างครึ่งทางแก้/ยกเลิกไม่ได้พร้อมเหตุผล · ลงต่อได้) · ยกเลิกการลงบัญชี = ผล `SettlementUnpostGate` จาก `ISettlementPostingService.UnpostBlockersAsync`
 (เพิ่มใน interface · ตัวโหลดข้อเท็จจริงเดียวกับ `UnpostAsync`) ⇒ ซ่อนปุ่ม + `UnpostBlockedReason` บนหน้า · `SettlementBatchView.PostingArtifacts`
 (null = ไม่ได้ตรวจ) · เทสต์ `SettlementControllerContractTests` +2 สองทิศ · `required_call_site_check` +5 กติกา
-— commit 5e797b83)_
+— commit <pending>)_
 
 _รอบ 198 ทีม S3 (ต่อ · คำตัดสินเจ้าของข้อ 7 = review198-C C-7): ใบสำคัญจ่ายค่าธรรมเนียมที่อนุมัติทันทีตอนลงบัญชีรอบโอน บันทึก**คนกดลงบัญชี**เป็นผู้อนุมัติ
 (`IDocumentService.CreateDocumentAsync(…, autoApproveBy)` · เดิมเป็นป้าย `system:settlement:…` ⇒ SoD ไม่เคยทำงาน) · ป้ายใน `CreatedBy` คงเป็นกุญแจทำต่อจากที่ค้าง ·
 แยกหน้าที่: ผู้นำเข้ารอบโอน = ผู้ทำ · คนกดลงบัญชี = ผู้อนุมัติ ⇒ `SodBlockSelfApproval` + คนเดียวกัน (หรือไม่รู้ผู้นำเข้า) ⇒ บล็อก `SodSelfApproval` พร้อมทางไปต่อ ·
 เทสต์ `C7_…` สองทิศ · `required_call_site_check` +3 กติกา
-— commit 5e797b83)_
+— commit <pending>)_
 
 _Last verified against codebase: 2026-09-28 (รอบ 199 ทีม H — คำตัดสินเจ้าของรอบ 198 ข้อ 6 (`erp-review/2026-09-25/settlement/DECISIONS.md`) · ฝ่ายค้าน
 `erp-review/2026-09-25/review-r199-ocr.md` B-1 / `ocr-scommerce/review195-r2.md` R2-3:
@@ -3652,8 +3652,8 @@ _Last verified against codebase: 2026-09-28 (รอบ 199 ทีม H — ค�
 - ทางเข้าอื่นตรวจแล้ว (§3.2): SystemWorkflow หยุดชุด VAT อยู่แล้ว · แหล่ง None หยุดทุกข้อ · ที่พัก/PlatformBilling/CMS เอกสารสร้างเองไม่มีสแกน ·
   ค้าง: ปุ่ม "บันทึกและอนุมัติ" ของ `documents.html` ack โดยไม่แสดงคำเตือน + `bulk-approve`
 - เทสต์ `ApprovalAcknowledgementTests` +7 · `required_call_site_check` กติกา Approve (ด่านก่อนอนุมัติ · ใช้ผล · ห้าม `IsGapWarning`) + `RefuseApprovalAsync` + เคส B1a/B1b ·
-  ACCOUNT_STRUCTURE §3.1 · `pages/api-developer.html` · TEST_PLAN GAP-02/GAP-04..06 — commit 5e797b83)_
-— commit 5e797b83)_
+  ACCOUNT_STRUCTURE §3.1 · `pages/api-developer.html` · TEST_PLAN GAP-02/GAP-04..06 — commit <pending>)_
+— commit <pending>)_
 
 _รอบ 198 ข้อ 5 ทีม G — **gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ: รายงานก่อน แล้วค่อยเปิดบังคับ**
 (คำตัดสินเจ้าของ `erp-review/2026-09-25/settlement/DECISIONS.md` ข้อ 5):
@@ -3670,7 +3670,7 @@ _รอบ 198 ข้อ 5 ทีม G — **gate แพ็กเกจ/ระ�
   SystemAdmin + `[RejectApiKey]`)
 - เทสต์ `SubscriptionGatePolicyTests` · `required_call_site_check` +3 กติกา · `owner_action_wiring_check` +4 แถว · `write_permission_gate_check` +1 คอนโทรลเลอร์ ·
   ACCOUNT_STRUCTURE §5.2 · TEST_PLAN SUB-G01..12
-— commit 5e797b83)_
+— commit <pending>)_
 
 _Last verified against codebase: 2026-09-28 (รอบ 199 ทีม W — ปิด backlog ที่ทีม H จดไว้ใน DOCUMENT_FLOW §3.2 (คำตัดสิน #12 · รอบ 198 ข้อ 6):
 - **หน้าเอกสาร**: ปุ่ม "บันทึกและอนุมัติ" และ chain "ลูกค้าจ่ายเงินแล้ว" เคยส่ง `acknowledgeWarnings:true` ตั้งแต่ครั้งแรก ⇒ `[Σ-GAP]`/ชุด VAT ไม่ได้พิมพ์บนกระดาษ/คำเตือนอื่น
@@ -3681,7 +3681,7 @@ _Last verified against codebase: 2026-09-28 (รอบ 199 ทีม W — ป�
   `BULK-APPROVE-BLANKET-ACK-REFUSED` (`ApprovalAcknowledgement.BulkBlanketAckRefusal/BulkSummary`)
 - เทสต์ `ApprovalAcknowledgementTests` +3 · `tools/save_approve_warnings_sim.js` (โค้ดจริง · กลายพันธุ์ 7 แบบ) · `required_call_site_check` กติกา BulkApprove ·
   TEST_PLAN GAP-07..09 · ตรวจแล้วไม่แตะ: มือถือ (`QuickApproveAsync` พรีวิวคำเตือน) · LINE (แหล่ง None) · `approval.html`/ลายเซ็น (ถามก่อน ack) ·
-  ค้าง: `quick-sale.html` กลืน error อนุมัติ (ไม่ ack แทนคน แต่จอบอกสำเร็จ) — commit 5e797b83)_
+  ค้าง: `quick-sale.html` กลืน error อนุมัติ (ไม่ ack แทนคน แต่จอบอกสำเร็จ) — commit <pending>)_
 
 _รอบ 198 ทีม D2 (แก้ฝ่ายค้าน review198-D ของหน้าจอ+controller settlement): **D-01** โมดัลตัดสินการจับคู่เลือกรายการรับชำระออนไลน์ได้จริง —
 `SettlementAssignMatchRequest.PaymentIntentId` · ผู้สมัครคำนวณสดใต้ล็อก + `SettlementSaleMatch.AssignRefusal` ด่านเดียวกับการจับคู่อัตโนมัติ (ยอด ±0.01 ·
@@ -3692,10 +3692,10 @@ _รอบ 198 ทีม D2 (แก้ฝ่ายค้าน review198-D ข�
 **D-07/D-08/D-09** header null ⇒ 400 · `won` บังคับ · KeyNotFound ที่ไม่ใช่ข้อความไทย ⇒ 500 + รหัสอ้างอิง · **D-10** `plan.balanced` · **D-11** หน้าถัดไป ·
 **D-P1** `[RejectApiKey]` ที่ reclassify · **D-P2** จำการจับคู่คอลัมน์เฉพาะผู้มี `Settlement.Channels` และไม่ใช่คีย์ API (`ColumnMapMemory`) · **D-P4** เพดาน
 25 MB/100,000 แถว/500 คอลัมน์ · D-P3 (แพ็กเกจ) ส่งทีม G · D-P5 รอเจ้าของ · เทสต์ `SettlementReview198DTests` · sim `matchBody` · required +13 · owner_action +2
-— commit 5e797b83_
+— commit <pending>_
 
 _รอบ 198 main — CI แดง `1bc3f15e` CS0854: ทีม D2 เพิ่มพารามิเตอร์ optional `Name` ให้ `SettlementChartAccount` แล้วจุดสร้างใน
-`ResolveChargebackAsync` (อยู่ใน EF `Select` = expression tree) ไม่ส่งค่า ⇒ ใส่ `a.AccountName` ให้ครบ (จุดสร้างทั้งหมด 2 จุด ส่งครบแล้ว) — commit 5e797b83)_
+`ResolveChargebackAsync` (อยู่ใน EF `Select` = expression tree) ไม่ส่งค่า ⇒ ใส่ `a.AccountName` ให้ครบ (จุดสร้างทั้งหมด 2 จุด ส่งครบแล้ว) — commit <pending>)_
 
 _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S4 — แก้ฝ่ายค้าน review198-S3 ของ settlement:
 - **S3-1 (P1)** รอบโอนค้างครึ่งทางที่ชิ้นที่ออกแล้วยกเลิกไม่ได้ (ใบสรุป e-Tax Accepted · 50 ทวิ ใน ภ.ง.ด.53 ที่ยื่น · รายงานล็อก) แล้วขั้นรับชำระล้ม = ทางตัน ⇒
@@ -3708,7 +3708,7 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S4 — แ�
   **S3-9** ล็อกฝั่งนำเข้าลองล็อกไม่รอ + `SettlementChannelLock.BusyMessage` · **S3-10** ภ.ง.ด.1 re-post ผ่าน `WhtCertVoidGuard`
 - **ขายด่วน** (`quick-sale.html`, ค้างจากทีม W): ไม่กลืนผลอนุมัติ — มีคำเตือน = แบนเนอร์ "ร่าง" + ลิงก์ไปอนุมัติที่หน้าเอกสาร · error อื่น = ข้อความเซิร์ฟเวอร์ ·
   `tools/quick_sale_approve_sim.js`
-- S3-5 รอเจ้าของ · S3-11 backlog · เทสต์ `SettlementReview198S4Tests` · required_call_site +13/ปรับ 6 · TEST_PLAN SPS4-01..15 — commit 5e797b83)_
+- S3-5 รอเจ้าของ · S3-11 backlog · เทสต์ `SettlementReview198S4Tests` · required_call_site +13/ปรับ 6 · TEST_PLAN SPS4-01..15 — commit <pending>)_
 
 _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แก้ฝ่ายค้าน review198-S4:
 - **S4-1** "ด่านยกเลิกการลงบัญชีปฏิเสธ" ≠ "ระบบยกเลิกไม่ได้": ทุกเหตุของ `SettlementUnpostGate` มี `SettlementUnpostRefusalKind` (`Unvoidable` = e-Tax ตอบรับ ·
@@ -3718,7 +3718,7 @@ _Last verified against codebase: 2026-09-28 (รอบ 198 ทีม S5 — แ�
 - **S4-8** เดือนภาษีของด่าน = `TaxPointDate ?? DocumentDate` (สูตรตัวกรอง ภ.พ.30/ภ.พ.36) · e-Tax ของใบเสร็จอัตโนมัติคู่การรับชำระที่ `VoidPaymentAsync` ยกเลิกเงียบ
 - **S4-7** `SettlementChannelLock.BusyMessage` เป็นกลาง (ไม่รู้ว่าใครถือล็อก) · **S4-6** แจ้งเตือน ภ.ง.ด.1 ยื่นแล้วแยก catch เฉพาะ `RD-50TWI-FILED` บอกทางไปต่อที่ถูก
 - **S4-2** ขายด่วน: `{success:false}` ที่ api.js คืนโดยไม่ throw (429 · 403 ช่วงโหลดบริษัท) = ไม่อนุมัติ · sim +ชุด (e) +กลายพันธุ์ 1
-- S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit 5e797b83)_
+- S4-3/S4-4/S4-5 backlog (เหตุผลใน review198-S4.md) · เทสต์ `SettlementReview198S5Tests` · TEST_PLAN SPS5-01..06 — commit <pending>)_
 
 _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม S2 — แพ็กเกจ/สิทธิ์: คำตัดสินข้อ 21–24 + แก้ผลฝ่ายค้านทีม S (`review200-S.md` S200-1..9) ·
 หลักใหญ่ "ก่อนเจ้าของกดบังคับ ห้ามมีใครถูกบล็อก/ถูกล็อกเมนูเพิ่มจากวันนี้" · ค่าตั้งต้นยัง Shadow (ไม่ได้พลิก):
@@ -3991,7 +3991,7 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม Z — แ�
   (`RejectUnsafeTheme` · CSS กำหนดเองห้าม `</style`/`<script`) · สีแบรนด์เอกสารตรวจ/เก็บ/echo ผ่าน `DocumentTemplateStyle.Hex`
 - **S2-6** `/api/v1` อ่านไม่ผ่านด่าน (`SkipsPublicApiRead`) · ไม่สร้าง FreeTrial (`MayCreateSubscriptionRow`) · **S2-3** `pageFeatures` (`SubscriptionGatePolicy.PageMainFeatures`) ⇒
   `Layout.currentPageFeature()` · **S2-7** จดใน ACCOUNT_STRUCTURE · checklist ก่อนกด Enforce ใน `team-S.md` ข้อ 3a
-- เทสต์ `Review200ZTests` · sim ใหม่ `tools/page_feature_sim.js` · `api_feature_denial_sim.js` ข้อ 7–8 + negative test 2 · required_call_site +15 แถว/ปรับ 1 — commit 5e797b83)_
+- เทสต์ `Review200ZTests` · sim ใหม่ `tools/page_feature_sim.js` · `api_feature_denial_sim.js` ข้อ 7–8 + negative test 2 · required_call_site +15 แถว/ปรับ 1 — commit <pending>)_
 
 _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม SG — แก้ผลฝ่ายค้านรอบสอง เงิน/ภาษี settlement + ภ.พ.36 (`erp-review/2026-09-29/review200-round2-money.md` · รายงาน `team-SG.md`):
 - **R2M-2** (ข้อ 26) `GatewayBatchIntentRules.ModeMismatch`: บริษัทไม่จด VAT ผ่อนคู่ VAT ไทยเฉพาะเมื่อ gateway ไม่หัก ณ ที่จ่าย — หัก 3% ⇒ ฐานก่อน VAT ต้องเท่ากัน (107: 3.31 vs 3.09 = ไม่ตรง)
@@ -4008,7 +4008,7 @@ _Last verified against codebase: 2026-09-29 (รอบ 200 ทีม SG — แ�
   คอลัมน์ `SettlementLines.DistinctConfirmedAt/By/Reason` (migration ADD COLUMN IF NOT EXISTS)
 - **R2M-13** (ข้อ 27) `SettlementReceiptWht.Remaining` + `SettlementPostingService.RemainingWhtAsync` (ด่าน + `EnsureReceiptAsync`) — WHT ที่ยังไม่ถูกบันทึกของใบ
 - เทสต์ `SettlementReview200SgTests` (สองทิศทุกข้อ · ตัวเลขตัวอย่างในรายงาน) + ปรับ `SettlementReview200SfTests` / `SettlementGatewayPhase2Tests` / `SettlementForeignWhtFollowupTests` ·
-  required_call_site +19 แถว/ปรับ 1 (W_FEETAX Compute → `Pp36Legs`) — commit 5e797b83)_
+  required_call_site +19 แถว/ปรับ 1 (W_FEETAX Compute → `Pp36Legs`) — commit <pending>)_
 
 _Last verified against codebase: 2026-10-01 (รอบ 200 ฝ่ายค้านรอบสาม Z/SG — Z-1 ลูกค้าซ้ำเดิมที่สะกดรูปนิติบุคคลต่างไม่ทำให้สร้างแถวใหม่ทุกสแกน (`OcrCounterpartyMatch.LiteralTieBreak`) · Z-2 ฟอร์มแก้ธีม CMS หนีค่าที่เก็บไว้ (แถวก่อนด่าน RF-2) · SG-1 พรีวิว/บันทึกรอบโอน gateway เส้นเดิมบล็อกเมื่อมีช่องทาง ภ.พ.36 ผูก config (`SettlementBlockReason.ForeignPp36Bound`) · P3 Z-3/Z-4/SG-2 เป็น backlog ใน team-Z/team-SG)_
 
@@ -4047,7 +4047,7 @@ _2026-10-01 รอบ 200 ทีม PR1 — ➕/🗑 พนักงานใน
 - `Helpers/PayrollDetailAmounts.Apply` + `RecomputeRunTotals` — ตัวเติมยอดรายคน/ยอดรวมรอบตัวเดียวของ ✏️ แก้ยอดและ ➕ เพิ่ม (ย้ายจาก `UpdatePayrollDetailAsync` คำต่อคำ · ยอดรวมนับ `EmployeeCount` + `TotalWorkersCompensation` จากแถวที่ยังไม่ลบ)
 - `AddPayrollDetailAsync` / `RemovePayrollDetailAsync` / `GetAddableEmployeesAsync` + `POST|DELETE runs/{id}/employees[/{employeeId}]` · `GET runs/{id}/addable-employees` — ธุรกรรม + `FOR UPDATE` · ด่าน `CanEditAmounts` + หลักฐานยื่น/นำส่ง ชุดเดียวกับ ✏️ · ภาษี/ฐาน ปกส./เหตุผลบังคับ · 409 ซ้ำ · soft-delete · ห้ามเหลือ 0 คน · ห้ามเอาออกเมื่อปันต้นทุนโครงการแล้ว · audit hash chain · ผังแหล่งจ่ายตรวจด้วยด่านเดียวกับ "แก้แหล่งจ่าย" (`IsValidNetPaymentAccountAsync`)
 - `PayrollRunResponse` +`PeriodStart/PeriodEnd` (แสดงช่วงงวดในโมดัล) · `payroll.html` ปุ่ม ➕ (disabled + เหตุผลเมื่อล็อก) · 🗑 รายแถว · โมดัลรายคนตัวเดียว (`_edInputsHtml`) · `employees.html?new=1` เปิดฟอร์มสร้าง
-- เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit 5e797b83)_
+- เทสต์ `PayrollEmployeeEligibilityTests` · `PayrollDetailAmountsTests` (สองทิศ) · required_call_site +8 แถว — commit <pending>)_
 
 _2026-10-01 รอบ 201 ทีม PL ชุด 1 — audit hash chain เป็น control จริง (BACKLOG §1.3 A-PL1..A-PL4 · คำตัดสินข้อ 32/33 · รายงาน `erp-review/2026-10-01/team-PL.md`):
 - **A-PL1** `AccountingDbContext.SaveChanges/SaveChangesAsync` ประทับแถว audit (จาก ChangeTracker + ที่ Add ตรง/`AddChainedAuditLog`) หลัง `pg_advisory_xact_lock`
