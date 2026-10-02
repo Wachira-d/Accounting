@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **453 ไฟล์ · 4,439 `[Fact]` + 704 `[Theory]` (3,131 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **453 ไฟล์ · 4,447 `[Fact]` + 705 `[Theory]` (3,133 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -1957,6 +1957,11 @@
 | P36D-10 | ติ๊กบริการต่างประเทศบนใบกำกับภาษีขาย | ปฏิเสธ `PP36-FLAG-WRONG-TYPE` | `Pp36LifecycleTests` |
 | P36D-11 | กระทบยอดภาษี-GL เดือนที่นำส่งในเดือนเดียวกัน | บรรทัด 21912 ไม่ฟ้องผลต่าง −413.56 · มีบรรทัด 11640 | มือ |
 | P36D-12 | ผังบริษัทเดิมชื่อ "ภาษีขาย ภ.พ. 36" / ชื่อที่ลูกค้าแก้เอง | migration เปลี่ยนเฉพาะชื่อเดิมทุกตัวอักษร | มือ (SQL) |
+| P36D-13 | PI 5,908/413.56 + ใบลดหนี้ VAT 70 ก่อนนำส่ง / ใบเพิ่มหนี้ VAT 70 | นำส่ง+รับรู้ 343.56 / 483.56 · 21912 = 11640 = 0 | `Db/Pp36LifecycleGoldenDbTests.ฉ_*` |
+| P36D-14 | ใบ A นำส่งแล้ว · ใบ B งวดเดียวกันไม่มี JE | เครื่องมือซ่อมลงได้ · ซ่อมแล้วขึ้นยอดค้างนำส่งเพิ่มเติม | `ช_*` |
+| P36D-15 | ใบซื้อเครดิต 25 ส.ค. จ่าย 10 ก.ย. | งวด ก.ย. · เงินเพิ่มนับจาก 7 ต.ค. · ใบที่นำส่งแล้วไม่ย้ายงวด · จ่ายข้ามงวดเตือน | `ซ_*` · `Pp36LifecycleTests` |
+| P36D-16 | ภ.พ.30 ใบ USD@36 VAT 70 | เคลม 2,520 (= GL) · ใบบาทเท่าเดิม | `ฌ_*` |
+| P36D-17 | รับรู้ไม่กรอกวันที่ใบเสร็จ · วันเคลมเกิน 6 เดือน · รายการนำส่งจ่ายขาด | ปฏิเสธพร้อมทางไปต่อ | `Pp36LifecycleTests` · มือ |
 ### ภ.พ.36 — รายละเอียดหลังรับรู้ + ย้ายเดือนเคลม (P36D)
 | รหัส | เคส | คาดหวัง |
 | --- | --- | --- |

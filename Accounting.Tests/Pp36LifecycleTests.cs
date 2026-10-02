@@ -192,4 +192,57 @@ public class Pp36LifecycleTests
         Assert.True(Pp36Ledger.IsUndueCode("11630"));
         Assert.False(Pp36Ledger.IsUndueCode("11610"));
     }
+
+    // ── รอบ 203 ฝ่ายค้าน (merge F2+F3) ──
+
+    [Fact]
+    public void ผลต่างรายการนำส่ง_เกินบวก_ขาดลบ_เศษสตางค์ถือว่าตรง()
+    {
+        Assert.Equal(70m, Pp36Lifecycle.RemittanceGap(413.56m, 343.56m));
+        Assert.Equal(-70m, Pp36Lifecycle.RemittanceGap(413.56m, 483.56m));
+        Assert.Equal(0m, Pp36Lifecycle.RemittanceGap(413.56m, 413.55m));
+        Assert.Contains("ขาด 70.00", Pp36Lifecycle.UnderRemittedMessage(2026, 9, 413.56m, 483.56m));
+    }
+
+    [Fact]
+    public void ประทับวันจ่ายครั้งแรก_เฉพาะเจ้าของที่ยังไม่มีวันจ่ายและยังไม่นำส่ง()
+    {
+        Assert.True(Pp36Lifecycle.ShouldStampPaymentDate(true, null, inRemittance: false));
+        Assert.False(Pp36Lifecycle.ShouldStampPaymentDate(true, new DateTime(2026, 9, 10), inRemittance: false));   // จ่ายครั้งที่สองไม่ย้าย
+        Assert.False(Pp36Lifecycle.ShouldStampPaymentDate(true, null, inRemittance: true));                       // นำส่งแล้วไม่ย้ายงวด
+        Assert.False(Pp36Lifecycle.ShouldStampPaymentDate(false, null, inRemittance: false));                     // ไม่ใช่เจ้าของ
+    }
+
+    [Fact]
+    public void ใบซื้อ25สค_จ่าย10กย_งวดกันยา_เงินเพิ่มนับจาก7ตุลา()
+    {
+        var period = ForeignServiceVat.Pp36PeriodDate(new DateTime(2026, 9, 10), new DateTime(2026, 8, 25));
+        Assert.Equal((2026, 9), (period.Year, period.Month));
+        var due = TaxFilingDeadline.WarnBy("VatPp36", period.Year, period.Month);
+        Assert.Equal(new DateTime(2026, 10, 7), due.Date);
+        Assert.Equal(0m, Pp36Lifecycle.SuggestedSurcharge(413.56m, due, new DateTime(2026, 10, 7)));
+        Assert.Equal(6.20m, Pp36Lifecycle.SuggestedSurcharge(413.56m, due, new DateTime(2026, 10, 8)));
+    }
+
+    [Fact]
+    public void จ่ายหลายงวด_เตือน_จ่ายงวดเดียวไม่เตือน()
+    {
+        var warn = Pp36Lifecycle.SplitPaymentWarning("PI-1", new[] { new DateTime(2026, 10, 3), new DateTime(2026, 9, 10) });
+        Assert.NotNull(warn);
+        Assert.Contains("09/2569", warn);   // งวดที่จ่ายครั้งแรก
+        Assert.Null(Pp36Lifecycle.SplitPaymentWarning("PI-1", new[] { new DateTime(2026, 9, 10), new DateTime(2026, 9, 25) }));
+    }
+
+    [Fact]
+    public void backfillผูกใบเดิม_ใช้เวลาสร้างJEหลัก_ไม่ใช่วันสร้างใบ_และเฉพาะเจ้าของหนี้()
+    {
+        var sql = Pp36RemittanceBackfill.BuildSql();
+        Assert.Contains("j.\"CreatedAt\" <= r.\"CreatedAt\"", sql);
+        Assert.Contains("j.\"SourceDocumentId\" = d.\"Id\"", sql);
+        Assert.Contains("j.\"OriginalEntryId\" IS NULL AND j.\"ReversedByEntryId\" IS NULL", sql);
+        Assert.DoesNotContain("d.\"CreatedAt\" <= r.\"CreatedAt\"", sql);   // ทิศเดิมที่ผูกใบร่างที่อนุมัติทีหลัง
+        Assert.Contains("d.\"DocumentType\" = 13 AND d.\"RelatedDocumentId\" IS NULL", sql);   // = OwnsPp36Query
+        Assert.DoesNotContain("(8, 9, 13, 15)", sql);   // CIL ไม่ใช่เจ้าของ
+        Assert.Contains(Pp36RemittanceBackfill.Actor, sql);
+    }
 }

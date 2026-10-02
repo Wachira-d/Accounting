@@ -38,12 +38,19 @@ public static class Pp36Ledger
     /// <summary>ผังที่ภาษีซื้อ ภ.พ.36 พักอยู่ (11640 · 11630 สำรองเมื่อไม่มี 11640 — ตรงกับ AutoPost/รับรู้)</summary>
     public static bool IsUndueCode(string accountCode) => UndueCodes.Contains(accountCode);
 
-    /// <summary>ข้อเท็จจริง GL ต่อใบ (บาท) — ใบที่ไม่มี JE ไม่อยู่ใน dictionary (= <c>default</c> ศูนย์ทั้งคู่)</summary>
+    /// <summary>ข้อเท็จจริง GL ต่อใบ (บาท) — ใบที่ไม่มี JE ไม่อยู่ใน dictionary (= <c>default</c> ศูนย์ทั้งคู่)
+    /// <para>รอบ 203 ฝ่ายค้าน P1-2: <b>รวม JE ของใบลดหนี้/ใบเพิ่มหนี้ที่อ้างใบเจ้าของ</b> (<c>RelatedDocumentId</c>) เข้าเป็นยอดของใบเจ้าของ —
+    /// ใบลด/เพิ่มหนี้ของใบ ภ.พ.36 ขยับ 21912/11640 ด้วย JE ที่ผูกเลขของตัวเอง (ทีม F2 E-7) · เดิมอ่านเฉพาะ JE ของใบเจ้าของ ⇒ PI 413.56 + ใบลดหนี้ VAT 70
+    /// ก่อนนำส่ง: GL 21912 = 343.56 แต่ยอดค้าง/นำส่ง/รายงาน = 413.56 ⇒ นำส่งแล้ว 21912 ติดเดบิต 70 · รับรู้ 413.56 ⇒ 11640 = −70 ·
+    /// ภ.พ.30 เคลมเกิน 70 (ใบเพิ่มหนี้กลับทิศ = นำส่งขาด) · ใบลด/เพิ่มหนี้ที่ยกเลิกถูกกลับ JE ⇒ สุทธิ 0 เอง (ไม่ต้องกรองสถานะ)</para></summary>
     private static async Task<Dictionary<Guid, Pp36LedgerFacts>> LoadAsync(
         AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> docIds, CancellationToken ct = default)
     {
         if (docIds.Count == 0) return new();
-        var ids = docIds.Distinct().ToList();
+        var ownerIds = docIds.Distinct().ToList();
+        var ownerOf = (await AdjustmentNotesOfAsync(db, companyId, ownerIds, ct))
+            .ToDictionary(x => x.NoteId, x => x.OwnerId);
+        var ids = ownerIds.Concat(ownerOf.Keys).Distinct().ToList();
         var rows = await (
             from l in db.JournalEntryLines.AsNoTracking()
             join j in db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
@@ -56,9 +63,24 @@ public static class Pp36Ledger
                 && (a.AccountCode == ForeignServiceVat.Pp36PayableCode || UndueCodes.Contains(a.AccountCode))
             select new { DocId = j.SourceDocumentId!.Value, a.AccountCode, l.DebitAmount, l.CreditAmount })
             .ToListAsync(ct);
-        return rows.GroupBy(r => r.DocId).ToDictionary(g => g.Key, g => new Pp36LedgerFacts(
+        return rows.GroupBy(r => ownerOf.TryGetValue(r.DocId, out var owner) ? owner : r.DocId).ToDictionary(g => g.Key, g => new Pp36LedgerFacts(
             g.Where(r => r.AccountCode == ForeignServiceVat.Pp36PayableCode).Sum(r => r.CreditAmount - r.DebitAmount),
             g.Where(r => UndueCodes.Contains(r.AccountCode)).Sum(r => r.DebitAmount - r.CreditAmount)));
+    }
+
+    /// <summary>ใบลดหนี้/ใบเพิ่มหนี้ (ออกแล้ว · ไม่ลบ) ที่อ้างใบเจ้าของชุดนี้ — คู่ (ใบลด/เพิ่มหนี้, ใบเจ้าของ)</summary>
+    private static async Task<List<(Guid NoteId, Guid OwnerId)>> AdjustmentNotesOfAsync(
+        AccountingDbContext db, Guid companyId, List<Guid> ownerIds, CancellationToken ct)
+    {
+        var notIssued = DocumentStatusRules.NotIssued;
+        return (await db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote)
+                    && !notIssued.Contains(d.Status)
+                    && d.RelatedDocumentId != null && ownerIds.Contains(d.RelatedDocumentId.Value))
+                .Select(d => new { d.Id, Owner = d.RelatedDocumentId!.Value })
+                .ToListAsync(ct))
+            .Select(x => (x.Id, x.Owner)).ToList();
     }
 
     /// <summary>แถวผูกรายการนำส่งที่ยังไม่ลบของใบชุดนี้</summary>
@@ -149,6 +171,19 @@ public static class Pp36Ledger
         var result = new Dictionary<Guid, Pp36RemitStatus>();
         if (docIds.Count == 0) return result;
         var ids = docIds.Distinct().ToList();
+        // ใบลด/เพิ่มหนี้ของใบเจ้าของที่นำส่ง/รับรู้แล้ว (P1-2) — ยกเลิก/ปรับยอดใบลดหนี้ = ขยับ 21912/11640 ของงวดที่นำส่งแล้วเช่นกัน ⇒ สืบสถานะใบเจ้าของ
+        var notes = await db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && ids.Contains(d.Id) && d.RelatedDocumentId != null
+                && (d.DocumentType == DocumentType.CreditNote || d.DocumentType == DocumentType.DebitNote))
+            .Select(d => new { d.Id, d.DocumentNumber, Owner = d.RelatedDocumentId!.Value })
+            .ToListAsync(ct);
+        if (notes.Count > 0)
+        {
+            var ownerStatus = await RemittedStatusAsync(db, companyId, notes.Select(n => n.Owner).ToList(), ct);
+            foreach (var n in notes)
+                if (ownerStatus.TryGetValue(n.Owner, out var os))
+                    result[n.Id] = os with { DocumentNumber = n.DocumentNumber };
+        }
         var docs = await db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && ids.Contains(d.Id) && d.IsForeignService)
             .Select(d => new { d.Id, d.DocumentNumber, d.InputVatBecameClaimableAt, d.PaymentDate, d.DocumentDate,
@@ -174,6 +209,24 @@ public static class Pp36Ledger
                 recognized, d.Pp36RdReceiptNumber);
         }
         return result;
+    }
+
+    /// <summary>
+    /// <b>ประทับวันจ่ายครั้งแรกของใบเจ้าของ ภ.พ.36</b> (คำตัดสินข้อ 137) — เรียกจากทุกเส้นบันทึกจ่าย (บันทึกชำระ · ชำระหลายใบ · ใบสำคัญจ่ายปิดหนี้ตอนอนุมัติ ·
+    /// integration · นำเข้าไฟล์ · รอบโอน/gateway ผ่าน CreatePaymentAsync) ก่อน SaveChanges ของผู้เรียก · ตั้ง <c>PaymentDate</c> + <c>TaxPointDate</c>
+    /// (§83/6 tax point = วันจ่าย — สูตรเดียวกับ <c>TaxPointResolver</c> ReverseCharge) · ตัวตัดสิน <see cref="Pp36Lifecycle.ShouldStampPaymentDate"/>
+    /// </summary>
+    /// <returns>true = ประทับแล้ว</returns>
+    public static async Task<bool> StampFirstPaymentAsync(AccountingDbContext db, Guid companyId, Document doc, DateTime paidOn,
+        CancellationToken ct = default)
+    {
+        if (doc.CompanyId != companyId || !ForeignServiceVat.OwnsPp36(doc) || doc.PaymentDate != null) return false;
+        var inRemittance = await db.Pp36RemittanceDocuments.AsNoTracking()
+            .AnyAsync(x => x.CompanyId == companyId && x.DocumentId == doc.Id && !x.IsDeleted, ct);
+        if (!Pp36Lifecycle.ShouldStampPaymentDate(true, doc.PaymentDate, inRemittance)) return false;
+        doc.PaymentDate = paidOn.Date;
+        if (doc.VatAmount != 0) doc.TaxPointDate = paidOn.Date;
+        return true;
     }
 
     /// <summary>สถานะ + ป้ายของใบชุดหนึ่ง (หน้ารายการ/รายละเอียดเอกสาร) — ใบที่ไม่เกี่ยวกับ ภ.พ.36 ไม่อยู่ใน dictionary</summary>
