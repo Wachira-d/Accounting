@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 
 namespace Accounting.Services;
@@ -30,6 +31,9 @@ public static class JournalPostingGuard
     /// ต้องคูณก่อนเทียบ ไม่งั้นใบ USD@35 โดน JE-VAT-OVER/JE-WHT-DOC block ทุกใบ
     /// (เคสจริงจากทีมจำลอง P-1). เส้นที่ JE ลงหน่วยเดียวกับเอกสารอยู่แล้ว
     /// (integration) ใช้ 1</param>
+    /// <param name="IsForeignService">ใบซื้อบริการจากต่างประเทศ §83/6 (<c>Document.IsForeignService</c>) — ขาเครดิตแตกเป็น
+    /// "ผู้รับเงิน = ฐาน" + "Cr 21912 VAT ประเมินเอง" (<see cref="ForeignServiceVat.SplitCredit"/>) · ผู้เรียก<b>ต้องส่งธงจริง</b>
+    /// (AutoPost · ตัวสแกน · integration) มิฉะนั้น JE §83/6 ที่ถูกต้องถูกตีตกด้วย JE-NO-COUNTERPART ทุกใบ (PP36_REVIEW P0-1)</param>
     public sealed record DocFacts(
         DocumentType DocumentType,
         decimal SubTotal,
@@ -37,7 +41,8 @@ public static class JournalPostingGuard
         decimal WithholdingTaxAmount,
         decimal TotalAmount,
         bool IsDeposit = false,
-        decimal ExchangeRate = 1m);
+        decimal ExchangeRate = 1m,
+        bool IsForeignService = false);
 
     public sealed record Finding(string RuleCode, bool IsError, string Message);
 
@@ -122,24 +127,42 @@ public static class JournalPostingGuard
         if (inputVatDr > docVat + tol)
             findings.Add(new Finding("JE-VAT-OVER", true,
                 $"ภาษีซื้อใน JE ({inputVatDr:N2}) มากกว่า VAT บนเอกสาร ({docVat:N2})"));
-        if (outputVatCr > docVat + tol)
-            findings.Add(new Finding("JE-VAT-OVER", true,
-                $"ภาษีขายใน JE ({outputVatCr:N2}) มากกว่า VAT บนเอกสาร ({docVat:N2})"));
+
+        // §83/6 (PP36_REVIEW P0-1): ฝั่งซื้อแตกขาเครดิตด้วยตัวตัดสินเดียว ForeignServiceVat.SplitCredit — ห้ามเขียน total − vat เอง ·
+        // ใบไม่ติ๊กธง ⇒ Pp36Credit = 0 ⇒ ยอดผู้รับเงินที่คาด = TotalAmount เท่าเดิมทุกตัวอักษร
+        var isPurchase = IsPurchaseFamily(doc.DocumentType);
+        var pp36Split = ForeignServiceVat.SplitCredit(doc.IsForeignService && isPurchase, docTotal, docVat);
+
+        // ขาเครดิตบัญชีภาษีขาย/ภ.พ.36 (21911/21912/21913):
+        //   ใบขาย — ไม่เกิน VAT บนเอกสาร (เดิม)
+        //   ใบซื้อ — มีได้เฉพาะ Cr 21912 ของบริการต่างประเทศ และไม่เกิน VAT ประเมินเอง · ใบที่ไม่ติ๊กธง = 0 เสมอ
+        //   (JE ทรง §83/6 บนใบที่ไม่ติ๊ก = ภ.พ.36 ไม่ถูกนับ/นำส่ง + เจ้าหนี้ขาด — ต้องล้มดัง)
+        if (isPurchase && pp36Split.Pp36Credit == 0m && outputVatCr > 0.01m)
+            findings.Add(new Finding("JE-PP36-UNFLAGGED", true,
+                $"ใบฝั่งซื้อที่ไม่ได้ระบุว่าเป็นบริการจากต่างประเทศ (§83/6) มีขาเครดิตบัญชีภาษีขาย/ภ.พ.36 ({outputVatCr:N2}) — " +
+                "ติ๊ก \"บริการต่างประเทศ\" บนเอกสารถ้าเป็น ภ.พ.36 จริง หรือแก้ผังบัญชีขาเครดิต"));
+        else if (outputVatCr > (isPurchase ? pp36Split.Pp36Credit : docVat) + tol)
+            findings.Add(new Finding("JE-VAT-OVER", true, isPurchase
+                ? $"VAT ค้างนำส่ง ภ.พ.36 ใน JE ({outputVatCr:N2}) มากกว่า VAT ประเมินเองบนเอกสาร ({pp36Split.Pp36Credit:N2})"
+                : $"ภาษีขายใน JE ({outputVatCr:N2}) มากกว่า VAT บนเอกสาร ({docVat:N2})"));
 
         // 3) ฝั่งซื้อ: "เงินของใบนี้ต้องไปอยู่ที่ไหนสักแห่งที่ไม่ใช่บัญชีภาษี" —
-        //    ขา Cr ที่ไม่ใช่ VAT/WHT ต้องรองรับยอด TotalAmount (เจ้าหนี้/เงินสด/
+        //    ขา Cr ที่ไม่ใช่ VAT/WHT ต้องรองรับยอดผู้รับเงิน (เจ้าหนี้/เงินสด/
         //    ธนาคาร/เจ้าหนี้กรรมการ/แหล่งเงินใดก็ได้ที่ผู้ใช้เลือก — ไม่ fix รหัส
         //    เพื่อไม่ block แหล่งเงินที่ถูกกฎหมายอื่น ๆ) ถ้าเงินทั้งใบไปกองใน
         //    บัญชีภาษี = ผิดแน่ (เคสจริง: Cr ที่ไม่ใช่ภาษี = 0)
-        if (IsPurchaseFamily(doc.DocumentType) && docTotal > 1m)
+        //    §83/6: ยอดผู้รับเงิน = ฐาน (TotalAmount รวม VAT ประเมินเองที่ไม่ได้จ่ายผู้ขาย — คำตัดสิน 131)
+        if (isPurchase && docTotal > 1m)
         {
             var counterpartCr = Rnd(lines
                 .Where(l => !IsAnyVatOrWht(l.AccountCode))
                 .Sum(l => l.Credit));
-            if (counterpartCr < docTotal - tol)
+            var expectedPayee = Rnd(pp36Split.PayeeCredit);
+            if (counterpartCr < expectedPayee - tol)
                 findings.Add(new Finding("JE-NO-COUNTERPART", true,
                     $"ขาเครดิตเจ้าหนี้/เงินสด/ธนาคาร ({counterpartCr:N2}) ไม่ครบยอดเอกสาร " +
-                    $"({docTotal:N2}) — เงินของใบนี้ไปกองอยู่ในบัญชีภาษีแทน"));
+                    $"({expectedPayee:N2}" + (pp36Split.Pp36Credit > 0m ? $" = ยอดผู้รับเงินไม่รวม VAT ประเมินเอง §83/6 {pp36Split.Pp36Credit:N2}" : "") +
+                    ") — เงินของใบนี้ไปกองอยู่ในบัญชีภาษีแทน"));
         }
 
         return findings;

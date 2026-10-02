@@ -402,6 +402,14 @@ public class SettlementPostingService : ISettlementPostingService
             doc = await _documents.ApproveDocumentAsync(companyId, docId, userId.ToString(), ApprovalAckSource.SystemWorkflow, false);
         if (!DocumentStatusRules.IsIssued(doc.Status) || doc.Status == DocumentStatus.Voided)
             throw new BusinessRuleException($"เอกสาร {doc.DocumentNumber} อยู่สถานะ {doc.Status} — อนุมัติไม่สำเร็จ", "SETTLEMENT-POST-APPROVE", 409);
+        // PP36_REVIEW P0-2: "อนุมัติแล้ว/Paid" ≠ "มี JE" — ใบที่อนุมัติล้มก่อนรอบแก้เคยถูกบันทึกเป็น Paid โดยไม่มี JE (เช่น ใบค่าธรรมเนียม §83/6
+        // ที่ด่าน JE ตีตก) ⇒ รอบโอนห้ามผูกใบที่ไม่มีรายการบัญชีแล้วประกาศว่าลงบัญชีเสร็จ · ตัวตัดสินเดียวกับเครื่องมือซ่อม
+        var journal = await _documents.GetMissingJournalStatusAsync(companyId, docId);
+        if (journal.Missing)
+            throw new BusinessRuleException(
+                $"เอกสาร {doc.DocumentNumber} อนุมัติแล้วแต่ไม่มีรายการบัญชี — " + (journal.Message ?? "")
+                + " · ลงบัญชีให้ใบนั้นก่อน แล้วกดลงบัญชีรอบโอนอีกครั้ง",
+                "SETTLEMENT-POST-NO-JE", 409);
     }
 
     /// <summary>ขั้นสุดท้าย (ธุรกรรมเดียว · ล็อกแถวรอบโอน): JE รอบโอน + Posted + ผูก PaymentIntent + audit</summary>

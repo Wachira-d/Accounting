@@ -5256,6 +5256,88 @@ RULES += [
 ]
 
 
+# ── PP36_REVIEW 2026-10-02 (ทีม F1): P0-1 ด่าน JE รู้จัก §83/6 ผ่านตัวตัดสินเดียว · P0-2 อนุมัติล้มต้องถอยค่าค้าง + ผู้เรียกล้มดัง ·
+# P0-3 integration PV ห้ามใบ Approved ไม่มี JE · ซ่อมข้อมูลเดิม (ลงบัญชีให้ใบอนุมัติแล้วแต่ไม่มี JE) — เทสต์ล็อกแค่ helper (pure + DbContext) ⇒ ล็อกจุดเรียกที่นี่
+_PP36_WHY = "PP36_REVIEW (ทีม F1) — "
+JOURNAL_ANOMALY = "Services/Implementations/JournalAnomalyService.cs"
+DOC_CTRL = "Controllers/DocumentController.cs"
+OCR_CTRL = "Controllers/OcrController.cs"
+RECURRING = "Services/Implementations/RecurringTransactionService.cs"
+LINEBOT = "Services/Implementations/LineBotService.cs"
+SETTLE_POST = "Services/Settlement/SettlementPostingService.cs"
+RULES += [
+    dict(file=DOC, method="AutoPostToJournalAsync",
+         call_args=[("JournalPostingGuard.DocFacts(", "IsForeignService")],
+         why=_PP36_WHY + "P0-1 ด่านก่อนบันทึกต้องได้ธง §83/6 จริง — ไม่ส่ง ⇒ JE ภ.พ.36 ที่ถูกต้องถูกตีตกทุกใบ (JE-NO-COUNTERPART)"),
+    dict(file=JOURNAL_ANOMALY, method="ScanAsync",
+         call_args=[("JournalPostingGuard.DocFacts(", "IsForeignService")],
+         must=["MissingJournalRepair.ScannerFix"],
+         forbid_lit=["ยกเลิกเอกสารแล้วอนุมัติใหม่"],
+         why=_PP36_WHY + "P0-1 ตัวสแกนใช้กฎชุดเดียวกับด่าน (ธง §83/6) · DOC-NO-JE ชี้เครื่องมือลงบัญชีย้อนหลัง ไม่ใช่ 'ยกเลิกแล้วอนุมัติใหม่'"),
+    dict(file=INTEG, method="ValidateAndAutofixJournalAsync",
+         call_args=[("JournalPostingGuard.DocFacts(", "IsForeignService")],
+         why=_PP36_WHY + "P0-1 เส้น integration ใช้กฎ §83/6 ชุดเดียวกัน"),
+    dict(file=DOC, method="ApproveDocumentAsync#2",
+         must=["TrackedChangeRevert.Capture(", "RevertTrackedChangesSinceAsync(approveBaseline)"],
+         must_re=[r"finally\s*\{\s*await\s+RevertTrackedChangesSinceAsync\s*\(\s*approveBaseline\s*\)\s*;\s*\}\s*throw\s*;"],
+         before=[("TrackedChangeRevert.Capture(", "BeginTransactionAsync(")],
+         why=_PP36_WHY + "P0-2 ธุรกรรมอนุมัติล้ม ⇒ ถอยค่าค้างใน context ก่อนโยน (ปิดผู้เรียกทุกตัวที่จับ error แล้ว SaveChanges ต่อ)"),
+    dict(file=DOC, method="RevertTrackedChangesSinceAsync#1",
+         must=["TrackedChangeRevert.RevertAsync(", "ChangeTracker.Clear(", "LogError("],
+         why=_PP36_WHY + "P0-2 ตัวถอยแบบจำงานค้างของผู้เรียก · ถอยล้ม ⇒ Clear ทั้ง context (ห้ามปล่อยครึ่งทาง) + log Error"),
+    dict(file=DOC, method="CreateDocumentAsync",
+         must=["RecordAutoApproveFailureAsync(", "AutoApproveFailedReason"],
+         forbid=["LogInformation(ex"],
+         why=_PP36_WHY + "P0-2 อนุมัติอัตโนมัติ PV เงินสดล้ม ⇒ หมายเหตุบนเอกสาร + คำตอบ + log Warning (เดิม LogInformation 'staying Draft' อย่างเดียว)"),
+    dict(file=DOC, method="RecordAutoApproveFailureAsync",
+         must=["AutoApproveFailure.IsStillDraft(", "AutoApproveFailure.Message(", "DepositPolicyResolver.AppendNoteOnce(", "SaveChangesAsync(", "LogWarning("],
+         before=[("AsNoTracking(", "AutoApproveFailure.IsStillDraft(")],
+         why=_PP36_WHY + "P0-2 ล้มดัง 3 ที่ด้วยสถานะจริงจากฐานข้อมูล (ขั้นหลัง commit ล้มได้ทั้งที่อนุมัติแล้ว)"),
+    dict(file=APPROVAL, method="TryFinalizeApprovedEntityAsync",
+         must=["RecordAutoApproveFailureAsync("],
+         why=_PP36_WHY + "P0-2 ลำดับอนุมัติครบแต่อนุมัติเอกสารล้ม ⇒ หมายเหตุบนเอกสาร + คืนข้อความ (เดิม Console.Error อย่างเดียว)"),
+    dict(file=APPROVAL, method="SubmitActionAsync",
+         must=["FinalizeError"],
+         why=_PP36_WHY + "P0-2 คำตอบของ workflow ต้องบอกว่าอนุมัติเอกสารไม่สำเร็จ"),
+    dict(file=DOC_CTRL, method="BulkApprove",
+         must=["RecordAutoApproveFailureAsync("],
+         why=_PP36_WHY + "P0-2 ผลรายใบบอกเลข+เหตุผล+สถานะจริง"),
+    dict(file=OCR_CTRL, method="CreateDocument",
+         must=["RecordAutoApproveFailureAsync("],
+         why=_PP36_WHY + "P0-2 สแกนสร้าง+อนุมัติล้ม ⇒ หมายเหตุบนเอกสาร (ไม่ใช่แค่แถวสแกน)"),
+    dict(file=RECURRING, method="CreateDocumentFromTemplateAsync",
+         must=["RecordAutoApproveFailureAsync("],
+         why=_PP36_WHY + "P0-2 รายการประจำอนุมัติอัตโนมัติล้ม ⇒ หมายเหตุบนเอกสาร (เดิม log อย่างเดียว)"),
+    dict(file=LINEBOT, method="HandleMessageAsync",
+         must=["RecordAutoApproveFailureAsync("],
+         why=_PP36_WHY + "P0-2 LINE บันทึกค่าใช้จ่าย — สถานะจริง + หมายเหตุบนเอกสาร"),
+    dict(file=LINEBOT, method="HandlePostbackAsync",
+         must=["RecordAutoApproveFailureAsync("],
+         why=_PP36_WHY + "P0-2 LINE ปุ่มอนุมัติ — สถานะจริง + หมายเหตุบนเอกสาร"),
+    dict(file=SETTLE_POST, method="ApproveIfDraftAsync",
+         must=["GetMissingJournalStatusAsync("],
+         before=[("ApproveDocumentAsync(", "GetMissingJournalStatusAsync(")],
+         why=_PP36_WHY + "P0-2 รอบโอนห้ามถือว่า Paid = มี JE"),
+    dict(file=DOC, method="RepairMissingJournalAsync",
+         must=["TrackedChangeRevert.Capture(", "LockRelatedSourceDocumentAsync(", "MissingJournalRepair.Decide(",
+               "AutoPostToJournalAsync(", "AddChainedAuditLog(", "RevertTrackedChangesSinceAsync(baseline)"],
+         must_lit=["FOR UPDATE"],
+         before=[("LockRelatedSourceDocumentAsync(", "MissingJournalRepair.Decide("), ("MissingJournalRepair.Decide(", "AutoPostToJournalAsync(")],
+         why=_PP36_WHY + "ซ่อมข้อมูล: ตัดสินซ้ำภายใต้ล็อก · AutoPost ตัวเดียวกับการอนุมัติ · audit · ล้มแล้วถอย"),
+    dict(file=DOC_CTRL, method="RepairMissingJournal",
+         must=["DocumentPermissionHelper.CanApproveAsync("],
+         before=[("DocumentPermissionHelper.CanApproveAsync(", "RepairMissingJournalAsync(")],
+         why=_PP36_WHY + "ซ่อมข้อมูล: สิทธิ์เดียวกับอนุมัติ (มีผลต่อ GL เท่ากัน)"),
+    dict(file=INTEG, method="ProcessPaymentVoucherAsync",
+         must=["BeginTransactionAsync(", "ChangeTracker.Clear(", "CommitAsync("],
+         before=[("CreatePaymentVoucherJournalAsync(", "CommitAsync("), ("CommitAsync(", "TryAutoGenerateWhtAsync(")],
+         why=_PP36_WHY + "P0-3 ใบ Approved + JE ในธุรกรรมเดียว · ล้มแล้วทิ้งของค้างก่อน SaveSyncLog"),
+    dict(file=INTEG, method="CreatePaymentVoucherJournalAsync",
+         forbid=["return null"],
+         why=_PP36_WHY + "P0-3 ลง JE ไม่ได้ต้องโยน (ห้ามคืน null ขณะใบเป็น Approved)"),
+]
+
+
 def main() -> int:
     errs = []
     for rule in RULES:

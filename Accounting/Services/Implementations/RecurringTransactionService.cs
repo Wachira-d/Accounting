@@ -519,9 +519,11 @@ public class RecurringTransactionService : IRecurringTransactionService
                 {
                     await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.LogWarning(ex, "Auto-approve failed for recurring document {DocId}", result.Id);
+                    // PP36_REVIEW P0-2: ApproveDocumentAsync ถอยค่าค้างแล้ว (ใบค้างเป็นร่างจริง) · ล้มดังบนตัวเอกสาร (หมายเหตุภายในพร้อมเหตุผล) —
+                    // เดิม log อย่างเดียว ⇒ ผู้ใช้เห็นใบร่างโผล่โดยไม่รู้ว่าทำไมไม่อนุมัติตามที่ตั้งไว้
+                    await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)", ex);
                     await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
                 }
             }

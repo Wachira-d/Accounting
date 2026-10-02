@@ -367,10 +367,14 @@ public class LineBotService : ILineBotService
                     return $"✅ บันทึกและอนุมัติแล้ว {vendor} {amount.Value:N2} ฿\nเลขที่เอกสาร: {approved.DocumentNumber}"
                         + (s65Notice != null ? "\nℹ️ " + s65Notice : "");
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.LogWarning(ex, "LINE บันทึกค่าใช้จ่าย: สร้างร่างแล้วแต่อนุมัติไม่ผ่าน doc {DocId}", doc.Id);
-                    return $"📝 บันทึกเป็นฉบับร่างแล้ว {vendor} {amount.Value:N2} ฿ แต่อนุมัติไม่ผ่าน: {ex.Message}\nเปิดในระบบเพื่อแก้แล้วอนุมัติ";
+                    // PP36_REVIEW P0-2: ApproveDocumentAsync ถอยค่าค้างแล้ว · ข้อความ+สถานะจริงจากตัวเดียวของทุกทางเข้า (ลงหมายเหตุบนเอกสารด้วย) —
+                    // เดิมตอบ "บันทึกเป็นฉบับร่าง" เสมอ แม้ขั้นหลัง commit ล้มทั้งที่อนุมัติแล้ว
+                    var outcome = await _docService.RecordAutoApproveFailureAsync(companyId, doc.Id, "LINE บันทึกค่าใช้จ่าย", ex);
+                    return outcome.StillDraft
+                        ? $"📝 บันทึกเป็นฉบับร่างแล้ว {vendor} {amount.Value:N2} ฿ แต่อนุมัติไม่ผ่าน\n{outcome.Message}"
+                        : outcome.Message;
                 }
             }
             catch (Exception ex)
@@ -836,11 +840,11 @@ public class LineBotService : ILineBotService
                 + $"💰 {doc.TotalAmount:N2} ฿ ลงบัญชี + รายงานภาษีให้เรียบร้อย"
                 + (s65Notice != null ? "\nℹ️ " + s65Notice : "");
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "LINE postback approve failed for doc {DocId}", doc.Id);
-            return "❌ อนุมัติไม่สำเร็จ: " + DocumentApprovalWarningsException.DescribeForUser(ex)
-                + "\nเปิดดู/แก้ไขได้ที่หน้าเว็บ";
+            // PP36_REVIEW P0-2: สถานะจริง + หมายเหตุบนเอกสาร (ตัวเดียวของทุกทางเข้า) · ApproveDocumentAsync ถอยค่าค้างแล้ว
+            var outcome = await _docService.RecordAutoApproveFailureAsync(doc.CompanyId, doc.Id, "LINE ปุ่มอนุมัติ", ex);
+            return (outcome.StillDraft ? "❌ " : "ℹ️ ") + outcome.Message + "\nเปิดดู/แก้ไขได้ที่หน้าเว็บ";
         }
     }
 

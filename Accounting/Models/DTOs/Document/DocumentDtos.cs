@@ -956,7 +956,10 @@ public record DocumentResponse(
     Guid? SettlementOrphanAckBy = null,
     /// <summary>ชื่อผู้รับรู้ (สมาชิกของบริษัทนี้) — เติมที่ <c>GetDocumentAsync</c> เท่านั้น · null = รายการหลายใบ/ไม่พบสมาชิก</summary>
     string? SettlementOrphanAckByName = null,
-    string? SettlementOrphanAckReason = null);
+    string? SettlementOrphanAckReason = null,
+    /// <summary>PP36_REVIEW P0-2 — ผลของ "อนุมัติอัตโนมัติ" ตอนสร้าง (ใบสำคัญจ่ายเงินสด) ที่ไม่สำเร็จ: ข้อความไทยพร้อมเหตุผล + ทางไปต่อ
+    /// (ตัวเดียวกับที่ต่อท้ายหมายเหตุภายในของเอกสาร · <c>Helpers/AutoApproveFailure</c>) · ไม่ persist — มีเฉพาะคำตอบของการสร้าง · null = ไม่ได้อนุมัติอัตโนมัติ/สำเร็จ</summary>
+    string? AutoApproveFailedReason = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>

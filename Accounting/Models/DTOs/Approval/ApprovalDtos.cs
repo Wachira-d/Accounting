@@ -46,7 +46,9 @@ public record ApprovalRequestResponse(
     DateTime RequestedAt,
     ApprovalStatus OverallStatus,
     int CurrentStep,
-    List<ApprovalActionResponse> Actions);
+    List<ApprovalActionResponse> Actions,
+    /// <summary>PP36_REVIEW P0-2 — ขั้นสุดท้ายอนุมัติเอกสารจริงไม่สำเร็จ (ข้อความไทยพร้อมทางไปต่อ · ตัวเดียวกับหมายเหตุบนเอกสาร) · null = สำเร็จ/ยังไม่ถึงขั้นสุดท้าย</summary>
+    string? FinalizeError = null);
 
 public record ApprovalActionResponse(
     int StepOrder,

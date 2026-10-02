@@ -158,6 +158,18 @@ public interface IDocumentService
     /// ใช้ในแผง "ตรวจสอบ/แก้ไขรายการบัญชี" บนหน้าเอกสาร</summary>
     Task<List<DocumentJournalEntryDto>> GetDocumentJournalEntriesAsync(Guid companyId, Guid documentId);
 
+    /// <summary>PP36_REVIEW P0-2 — บันทึก "อนุมัติอัตโนมัติไม่สำเร็จ" ลงหมายเหตุภายในของเอกสาร (ไม่ซ้ำ) + log · ตรวจสถานะจริงจากฐานข้อมูล
+    /// (ขั้นหลัง commit ล้มได้ทั้งที่อนุมัติแล้ว) · คืนข้อความเดียวกันให้ทางเข้าตอบผู้ใช้ — ทุกทางเข้าที่จับ error ของการอนุมัติแล้วไปต่อต้องเรียกตัวนี้</summary>
+    Task<Accounting.Helpers.AutoApproveFailureOutcome> RecordAutoApproveFailureAsync(
+        Guid companyId, Guid documentId, string channel, Exception error);
+
+    /// <summary>ใบนี้ "อนุมัติแล้วแต่ไม่มี JE" ไหม และลงย้อนหลังด้วยเครื่องมือได้ไหม (อ่านอย่างเดียว · ตัวตัดสิน <c>Helpers/MissingJournalRepair</c>)</summary>
+    Task<Accounting.Helpers.MissingJournalDecision> GetMissingJournalStatusAsync(Guid companyId, Guid documentId);
+
+    /// <summary>ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE — ล็อกแถว + ธุรกรรมเดียว + ตัดสินซ้ำภายใต้ล็อก + AutoPost ตัวเดียวกับการอนุมัติ + audit ·
+    /// ไม่ผ่าน ⇒ <c>BusinessRuleException</c> พร้อมทางไปต่อ</summary>
+    Task<DocumentResponse> RepairMissingJournalAsync(Guid companyId, Guid documentId, string actor);
+
     /// <summary>ปรับปรุงผังบัญชีของ JE ที่ผ่านรายการแล้ว โดยส่ง "สถานะปลายทาง"
     /// ของใบสำคัญมา — ระบบลงใบปรับปรุงใหม่ตามผลต่าง (ไม่แก้ใบเดิม).
     /// ยอดรวมต้องเท่าเดิม และบัญชีคุม (ภาษี/ลูกหนี้-เจ้าหนี้/มัดจำ) ห้ามขยับ.

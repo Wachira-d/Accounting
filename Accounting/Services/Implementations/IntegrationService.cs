@@ -1976,7 +1976,8 @@ public class IntegrationService : IIntegrationService
             new JournalPostingGuard.DocFacts(
                 document.DocumentType, document.SubTotal, document.VatAmount,
                 document.WithholdingTaxAmount, document.TotalAmount, document.IsDeposit,
-                ExchangeRate: 1m));
+                ExchangeRate: 1m,
+                IsForeignService: document.IsForeignService));
         var guardError = JournalPostingGuard.ErrorSummary(guardFindings, document.DocumentNumber);
         if (guardError != null)
         {
@@ -3894,7 +3895,6 @@ public class IntegrationService : IIntegrationService
             var supplier = await ResolveSupplierAsync(companyId, integrationId,
                 request.SupplierContactId, request.SupplierExternalId, request.SupplierName, request.SupplierTaxId);
 
-            var docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher, request.DocumentDate);
             // ภาษี**ซื้อ**: VAT บนใบเป็นของผู้ขาย — สถานะจดทะเบียนของเราไม่ตัดอัตรานี้
             // (ตัดแล้วยอดที่ต้องจ่ายผู้ขายหายไปเงียบ ๆ) แต่ตัดสิน "เคลมได้ไหม":
             // ไม่จด VAT = เคลมไม่ได้ทุกบรรทัด รวมเป็นต้นทุน — กติกาเดียวกับเส้นคีย์มือ
@@ -3922,39 +3922,71 @@ public class IntegrationService : IIntegrationService
             // (คงยอด PaidAmount/BalanceDue เป็น "จ่ายแล้ว" — เป็น draft ของใบจ่ายจริง;
             // ApproveDocumentAsync จะ post JE + ออก 50 ทวิ ตอนอนุมัติ)
             var autoApprove = request.AutoApprove;
-            var document = new Document
+            // ── PP36_REVIEW P0-3: ใบ Approved + JE ในธุรกรรมเดียว ──
+            // เดิมบันทึกใบเป็น Approved ก่อน แล้ว CreatePaymentVoucherJournalAsync คืน null + LogWarning (ไม่มีผังเงินสด/ภาษีซื้อ · ด่านโครงสร้าง ·
+            // ไม่สมดุล) ⇒ "ใบสำคัญจ่ายอนุมัติแล้วที่ไม่มี JE" เงียบ ๆ และ API ตอบ success · ตอนนี้: JE ล้ม = โยน ⇒ rollback ทั้งใบ + ทิ้งของค้าง
+            // (RV2-8) ⇒ HandleSyncError ตอบ partner ว่าล้มพร้อมเหตุผล + sync log Failed · เลขเอกสารออกในธุรกรรมเดียวกัน (advisory lock มีผลจริง ไม่เกิดช่องว่าง)
+            string docNumber = "";
+            Document document = null!;
+            Guid? journalEntryId = null;
+            async Task CreateVoucherAsync()
             {
-                CompanyId = companyId,
-                DocumentNumber = docNumber,
-                DocumentType = DocumentType.PaymentVoucher,
-                Status = autoApprove ? DocumentStatus.Approved : DocumentStatus.Draft,
-                DocumentDate = NormalizeDate(request.DocumentDate),
-                PaymentDate = paymentDate,
-                ContactId = supplier.Id,
-                Reference = request.ExternalRef,
-                SubTotal = subTotal,
-                VatAmount = totalVat,
-                WithholdingTaxAmount = totalWht,
-                TotalAmount = totalAmount,
-                PaymentType = Models.Enums.PaymentType.Cash,
-                PaidAmount = totalAmount,
-                BalanceDue = 0,
-                Notes = request.Notes,
-                PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
-                PreparerSignatureBase64 = TrimPreparerSignature(request.PreparerSignatureBase64),
-                Lines = lines
-            };
+                docNumber = await _settingsService.GetNextNumberAsync(companyId, DocumentType.PaymentVoucher, request.DocumentDate);
+                document = new Document
+                {
+                    CompanyId = companyId,
+                    DocumentNumber = docNumber,
+                    DocumentType = DocumentType.PaymentVoucher,
+                    Status = autoApprove ? DocumentStatus.Approved : DocumentStatus.Draft,
+                    DocumentDate = NormalizeDate(request.DocumentDate),
+                    PaymentDate = paymentDate,
+                    ContactId = supplier.Id,
+                    Reference = request.ExternalRef,
+                    SubTotal = subTotal,
+                    VatAmount = totalVat,
+                    WithholdingTaxAmount = totalWht,
+                    TotalAmount = totalAmount,
+                    PaymentType = Models.Enums.PaymentType.Cash,
+                    PaidAmount = totalAmount,
+                    BalanceDue = 0,
+                    Notes = request.Notes,
+                    PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
+                    PreparerSignatureBase64 = TrimPreparerSignature(request.PreparerSignatureBase64),
+                    Lines = lines
+                };
 
-            _db.Documents.Add(document);
-            await _db.SaveChangesAsync();
+                _db.Documents.Add(document);
+                await _db.SaveChangesAsync();
+                // Draft (autoApprove=false) → ยังไม่ post JE และยังไม่ออก 50 ทวิ; เกิดตอนอนุมัติ
+                if (autoApprove)
+                    journalEntryId = await CreatePaymentVoucherJournalAsync(companyId, document);
+            }
+            if (_db.Database.CurrentTransaction != null)
+                await CreateVoucherAsync();
+            else
+            {
+                var strategy = _db.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
+                {
+                    await using var tx = await _db.Database.BeginTransactionAsync();
+                    try
+                    {
+                        await CreateVoucherAsync();
+                        await tx.CommitAsync();
+                    }
+                    catch (Exception)
+                    {
+                        // rollback ตอน dispose — ของที่ค้างใน change tracker (ใบ Approved · JE ที่ Added) ต้องทิ้งก่อน SaveSyncLog ของ HandleSyncError (โยนต่อเสมอ)
+                        _db.ChangeTracker.Clear();
+                        throw;
+                    }
+                });
+            }
             await _vendorIntel.TryTrainAsync(companyId, document.Id);
 
-            // Draft (autoApprove=false) → ยังไม่ post JE และยังไม่ออก 50 ทวิ; เกิดตอนอนุมัติ
-            Guid? journalEntryId = null;
             string whtNote = "";
             if (autoApprove)
             {
-                journalEntryId = await CreatePaymentVoucherJournalAsync(companyId, document);
                 // Auto-issue the WHT certificate — a paid voucher with withholding
                 // is exactly when the 50 ทวิ must be handed to the supplier.
                 whtNote = await TryAutoGenerateWhtAsync(companyId, document, paid: true);
@@ -3984,8 +4016,10 @@ public class IntegrationService : IIntegrationService
     ///   Dr ภาษีซื้อ (1140x)
     ///   Cr เงินสด (111 family — cash; partners pay from their own till)
     ///   Cr ภาษีหัก ณ ที่จ่ายค้างจ่าย (21917 นิติบุคคล / 21916 บุคคลธรรมดา)
-    /// Balanced by construction: Dr(sub+vat) = Cr(net cash) + Cr(wht).</summary>
-    private async Task<Guid?> CreatePaymentVoucherJournalAsync(Guid companyId, Document document)
+    /// Balanced by construction: Dr(sub+vat) = Cr(net cash) + Cr(wht).
+    /// <para>PP36_REVIEW P0-3: ลง JE ไม่ได้ ⇒ <b>โยน</b> <see cref="Accounting.Helpers.BusinessRuleException"/> (ข้อความไทย + ทางไปต่อ) ไม่ใช่คืน null —
+    /// ผู้เรียกห่อการสร้างใบ + JE ในธุรกรรมเดียว ⇒ ไม่มีใบ Approved ที่ไม่มี JE</para></summary>
+    private async Task<Guid> CreatePaymentVoucherJournalAsync(Guid companyId, Document document)
     {
         var expenseAccount = await _db.ChartOfAccounts
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive);
@@ -3996,10 +4030,9 @@ public class IntegrationService : IIntegrationService
             ?? await _db.ChartOfAccounts
                 .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.IsActive);
         if (expenseAccount == null || cashAccount == null)
-        {
-            _logger.LogWarning("ไม่พบผังบัญชีค่าใช้จ่าย/เงินสด สำหรับ company {CompanyId} — ไม่สร้าง journal", companyId);
-            return null;
-        }
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ใบสำคัญจ่าย {document.DocumentNumber}: ไม่พบผังบัญชีค่าใช้จ่าย/เงินสด (111xx) ที่ใช้งานอยู่ — ระบบไม่สร้างใบที่อนุมัติแล้วโดยไม่มีรายการบัญชี · "
+                + "เพิ่มผังบัญชีแล้วส่งรายการนี้ใหม่ (หรือส่งแบบ autoApprove=false แล้วอนุมัติในระบบ)", "INTEGRATION-PV-NO-JE", 422);
 
         var journalLines = new List<JournalEntryLine>();
         int lineOrder = 1;
@@ -4020,11 +4053,10 @@ public class IntegrationService : IIntegrationService
             // "1140" prefix that hit 11400 เงินให้กู้ยืม.
             var vatAccount = await ResolveVatAccountAsync(companyId, isInput: true);
             if (vatAccount == null)
-            {
-                _logger.LogWarning("ไม่พบบัญชีภาษีซื้อ (116/11610) ที่ถูกต้องสำหรับ company {CompanyId} — " +
-                    "ไม่โพสต์ JE เพื่อกันลงบัญชีผิด (เอกสาร {DocNo})", companyId, document.DocumentNumber);
-                return null;   // refuse to post rather than guess wrong account
-            }
+                // refuse to post rather than guess wrong account — และไม่สร้างใบที่อนุมัติแล้วโดยไม่มี JE (P0-3)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ใบสำคัญจ่าย {document.DocumentNumber}: ไม่พบบัญชีภาษีซื้อ (116/11610) ที่ถูกต้อง — ระบบไม่เดาผังภาษี · "
+                    + "เพิ่มผัง 11610 แล้วส่งรายการนี้ใหม่", "INTEGRATION-PV-NO-JE", 422);
             journalLines.Add(new JournalEntryLine
             {
                 AccountId = vatAccount.Id,
@@ -4069,9 +4101,10 @@ public class IntegrationService : IIntegrationService
                     LineOrder = lineOrder++
                 });
             else
-                // No WHT-payable account — fold into cash so the entry still
-                // balances (logged for the admin to fix the chart).
-                _logger.LogWarning("ไม่พบบัญชีภาษีหัก ณ ที่จ่ายค้างจ่าย (2191x) สำหรับ company {CompanyId}", companyId);
+                // ไม่มีผัง WHT ค้างจ่าย — คอมเมนต์เดิมบอกว่า "fold into cash" แต่โค้ดไม่เคยทำ ⇒ JE ไม่สมดุลแล้วคืน null เงียบ ๆ (P0-3)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ใบสำคัญจ่าย {document.DocumentNumber}: มีภาษีหัก ณ ที่จ่าย {document.WithholdingTaxAmount:N2} แต่ไม่พบผังภาษีหัก ณ ที่จ่ายค้างจ่าย (2191x) — "
+                    + "เพิ่มผัง 21916/21917/21918 แล้วส่งรายการนี้ใหม่", "INTEGRATION-PV-NO-JE", 422);
         }
 
         // ── Posting sanity guard: กันลงบัญชีผิดแน่ ๆ ก่อน post เข้าแยกบัญชี ──
@@ -4079,16 +4112,16 @@ public class IntegrationService : IIntegrationService
         // คืน false = พบ error ที่แก้ไม่ได้ → ไม่โพสต์ (เอกสารยังซิงค์ แต่รอ
         // ตรวจ). แก้อัตโนมัติได้ (เช่น VAT line บัญชีผิด) จะ reroute ให้.
         if (!await ValidateAndAutofixJournalAsync(companyId, journalLines, document))
-            return null;
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ใบสำคัญจ่าย {document.DocumentNumber}: รายการบัญชีไม่ผ่านการตรวจโครงสร้าง (เงินไปกองบัญชีภาษี/ภาษีหัก ณ ที่จ่ายเกินอัตรา) — "
+                + "ตรวจยอด VAT/WHT ที่ส่งมาแล้วส่งใหม่ (รายละเอียดอยู่ในบันทึกระบบ)", "INTEGRATION-PV-NO-JE", 422);
 
         var totalDebit = journalLines.Sum(l => l.DebitAmount);
         var totalCredit = journalLines.Sum(l => l.CreditAmount);
         if (totalDebit != totalCredit)
-        {
-            _logger.LogWarning("PV journal ไม่ balance (Dr {Dr} ≠ Cr {Cr}) สำหรับเอกสาร {Doc} — ไม่สร้าง journal",
-                totalDebit, totalCredit, document.DocumentNumber);
-            return null;
-        }
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ใบสำคัญจ่าย {document.DocumentNumber}: รายการบัญชีไม่สมดุล (เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2}) — ระบบไม่บันทึก · ตรวจยอดบรรทัด/VAT/WHT แล้วส่งใหม่",
+                "INTEGRATION-PV-NO-JE", 422);
 
         var journalNumber = await GetNextJournalNumberAsync(companyId, "PV");
         var fiscalPeriod = await _db.FiscalPeriods.FirstOrDefaultAsync(f =>

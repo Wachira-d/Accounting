@@ -434,32 +434,34 @@ public class ApprovalService : IApprovalService
         // doesn't roll back the approval audit trail; the failure logs
         // and the document just sits at WaitingApproval for manual
         // intervention.
+        string? finalizeError = null;
         if (request.OverallStatus == ApprovalStatus.Approved)
         {
-            await TryFinalizeApprovedEntityAsync(companyId, request.EntityType, request.EntityId, actionRequest, userId);
+            finalizeError = await TryFinalizeApprovedEntityAsync(companyId, request.EntityType, request.EntityId, actionRequest, userId);
         }
 
-        return MapRequestToResponse(request);
+        // PP36_REVIEW P0-2: ขั้นสุดท้ายอนุมัติเอกสารไม่สำเร็จ ⇒ คำตอบต้องบอก (เดิมตอบ "อนุมัติแล้ว" ขณะเอกสารยังรออนุมัติ — error อยู่แค่ Console)
+        return MapRequestToResponse(request) with { FinalizeError = finalizeError };
     }
 
     /// <summary>Dispatch to the entity-specific approval gateway when an
     /// ApprovalRequest reaches OverallStatus = Approved. Today only
     /// "Document" is wired — JournalEntry / Payment / ExpenseClaim /
     /// SalaryAdvance hooks are stubs and can be added later by
-    /// resolving the appropriate service. Errors are caught + logged
-    /// (via console for now) so a failed downstream finalize never
-    /// blocks the approval state save.</summary>
-    private async Task TryFinalizeApprovedEntityAsync(Guid companyId, string entityType, Guid entityId,
+    /// resolving the appropriate service. A failed downstream finalize never
+    /// blocks the approval state save — แต่ต้องล้มดัง (PP36_REVIEW P0-2): หมายเหตุบนเอกสาร + คืนข้อความให้คำตอบของ workflow
+    /// (เดิม Console.Error อย่างเดียว ⇒ ผู้อนุมัติขั้นสุดท้ายเห็น "อนุมัติแล้ว" ขณะเอกสารยังรออนุมัติ/ไม่มี JE) · คืน null = สำเร็จ/ไม่มีอะไรต้องทำ</summary>
+    private async Task<string?> TryFinalizeApprovedEntityAsync(Guid companyId, string entityType, Guid entityId,
         SubmitApprovalActionRequest actionRequest, Guid finalApproverUserId)
     {
+        var docSvc = entityType == "Document" ? _services.GetService(typeof(IDocumentService)) as IDocumentService : null;
         try
         {
             switch (entityType)
             {
                 case "Document":
                 {
-                    var docSvc = _services.GetService(typeof(IDocumentService)) as IDocumentService;
-                    if (docSvc == null) return;
+                    if (docSvc == null) return null;
                     // รอบ 193 (ฝ่ายค้าน C5): ผู้อนุมัติขั้นสุดท้ายตัวจริง (ไม่ใช่ป้าย "approval-rule") · รับทราบคำเตือนได้เฉพาะเมื่อ
                     // คนกด "รับทราบ" บนหน้าจอแล้ว (SubmitActionAsync หยุดให้เห็นรายการก่อน) — ห้ามประทับแทน
                     var who = finalApproverUserId.ToString();
@@ -474,10 +476,18 @@ public class ApprovalService : IApprovalService
                 //               case "SalaryAdvance": ...
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            if (docSvc != null)
+            {
+                // ApproveDocumentAsync ถอยค่าค้างใน context แล้ว ⇒ หมายเหตุลงเอกสารด้วยสถานะจริง (ตัวเดียวของทุกทางเข้า)
+                var outcome = await docSvc.RecordAutoApproveFailureAsync(companyId, entityId, "ลำดับอนุมัติครบทุกขั้น", ex);
+                return outcome.Message;
+            }
             Console.Error.WriteLine($"[ApprovalService] Auto-finalize failed for {entityType} {entityId}: {ex.Message}");
+            return $"อนุมัติ {entityType} ขั้นสุดท้ายไม่สำเร็จ: {ex.Message}";
         }
+        return null;
     }
 
     // ==================== Escalation (called by background job) ====================

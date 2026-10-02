@@ -187,4 +187,131 @@ public class JournalPostingGuardTests
         };
         Assert.Empty(JournalPostingGuard.Validate(reversal, null).Where(f => f.IsError));
     }
+    // ── PP36_REVIEW P0-1 (2026-10-02): §83/6 บริการต่างประเทศ ─────────────────
+    // เคสจริง PV-20260901-0001 Booking.com B.V. ค่าคอมมิชชั่น 5,908 · VAT ประเมินเอง 413.56 · TotalAmount 6,321.56
+    // JE ที่ AutoPost สร้าง (ทรงถูกตามกฎหมาย): Dr ค่าใช้จ่าย 5,908 · Dr 11640 413.56 / Cr 21912 413.56 · Cr ธนาคาร 5,908
+    // เดิมด่านเทียบ Cr ธนาคาร 5,908 กับ TotalAmount 6,321.56 ⇒ JE-NO-COUNTERPART ⇒ อนุมัติไม่ได้ทุกใบ
+
+    private static List<JournalPostingGuard.LineFacts> ForeignJe(string payeeCode, AccountType payeeType) => new()
+    {
+        L("52190", AccountType.Expense, dr: 5908.00m),
+        L("11640", AccountType.Asset, dr: 413.56m),
+        L("21912", AccountType.Liability, cr: 413.56m),
+        L(payeeCode, payeeType, cr: 5908.00m),
+    };
+
+    private static JournalPostingGuard.DocFacts ForeignDoc(DocumentType t, bool flagged) => new(
+        t, 5908.00m, 413.56m, 0m, 6321.56m, IsForeignService: flagged);
+
+    [Theory]
+    [InlineData(DocumentType.PaymentVoucher, "11120")]   // จ่ายทันที — Cr ธนาคาร
+    [InlineData(DocumentType.PurchaseInvoice, "21210")]  // ตั้งหนี้ — Cr เจ้าหนี้การค้า
+    [InlineData(DocumentType.Expense, "21220")]          // ตั้งหนี้ค่าใช้จ่าย — Cr เจ้าหนี้อื่น
+    public void Foreign_service_je_8306_passes_for_pv_pi_and_expense(DocumentType t, string payeeCode)
+    {
+        var payeeType = payeeCode.StartsWith("1") ? AccountType.Asset : AccountType.Liability;
+        var findings = JournalPostingGuard.Validate(ForeignJe(payeeCode, payeeType), ForeignDoc(t, flagged: true));
+        Assert.Empty(findings.Where(f => f.IsError));
+        Assert.Null(JournalPostingGuard.ErrorSummary(findings, "PV-20260901-0001"));
+    }
+
+    [Fact]
+    public void Foreign_service_expected_payee_comes_from_SplitCredit_not_inline_math()
+    {
+        // ยอดที่คาด = ForeignServiceVat.SplitCredit(...).PayeeCredit — เทสต์ล็อกว่าตัวเลขในข้อความเท่ากับตัวตัดสินกลาง
+        var split = Accounting.Helpers.ForeignServiceVat.SplitCredit(true, 6321.56m, 413.56m);
+        Assert.Equal(5908.00m, split.PayeeCredit);
+        var short1 = new List<JournalPostingGuard.LineFacts>
+        {
+            L("52190", AccountType.Expense, dr: 5908.00m),
+            L("11640", AccountType.Asset, dr: 413.56m),
+            L("21912", AccountType.Liability, cr: 413.56m),
+            L("11120", AccountType.Asset, cr: 4000.00m),
+            L("21917", AccountType.Liability, cr: 1908.00m),   // เงินผู้รับไปกองบัญชีภาษี
+        };
+        var f = JournalPostingGuard.Validate(short1, ForeignDoc(DocumentType.PaymentVoucher, flagged: true));
+        var e = Assert.Single(f, x => x.RuleCode == "JE-NO-COUNTERPART");
+        Assert.Contains("§83/6", e.Message);   // ข้อความบอกว่ายอดที่คาดหักภาษีประเมินเองแล้ว (ไม่ผูกรูปแบบตัวเลขตาม culture)
+    }
+
+    [Fact]
+    public void Unflagged_purchase_doc_with_cr_21912_is_blocked()
+    {
+        // ทิศตรงข้าม: ใบไม่ติ๊กบริการต่างประเทศแต่ JE มี Cr 21912 ⇒ ภ.พ.36 ไม่ถูกนับ/นำส่ง ⇒ ต้องล้มดัง
+        var findings = JournalPostingGuard.Validate(
+            ForeignJe("11120", AccountType.Asset), ForeignDoc(DocumentType.PaymentVoucher, flagged: false));
+        var errors = findings.Where(x => x.IsError).Select(x => x.RuleCode).ToList();
+        Assert.Contains("JE-PP36-UNFLAGGED", errors);
+        Assert.Contains("JE-NO-COUNTERPART", errors);   // ใบไม่ติ๊ก ⇒ ยอดผู้รับที่คาด = TotalAmount เต็มเหมือนเดิม
+    }
+
+    [Fact]
+    public void Unflagged_purchase_doc_with_full_counterpart_but_cr_21912_still_blocked()
+    {
+        // เจ้าหนี้ครบยอด แต่มีขา Cr 21912 แถม (ถ่วงด้วย Dr 11640) บนใบที่ไม่ติ๊ก ⇒ หนี้ ภ.พ.36 ที่ไม่มีใครนำส่ง
+        var je = new List<JournalPostingGuard.LineFacts>
+        {
+            L("52190", AccountType.Expense, dr: 1000m),
+            L("11610", AccountType.Asset, dr: 70m),
+            L("21210", AccountType.Liability, cr: 1070m),
+            L("21912", AccountType.Liability, cr: 70m),
+            L("52190", AccountType.Expense, dr: 70m),
+        };
+        var doc = new JournalPostingGuard.DocFacts(DocumentType.PurchaseInvoice, 1000m, 70m, 0m, 1070m);
+        Assert.Contains(JournalPostingGuard.Validate(je, doc), x => x.RuleCode == "JE-PP36-UNFLAGGED" && x.IsError);
+    }
+
+    [Fact]
+    public void Flagged_foreign_doc_with_21912_above_self_assessed_vat_is_blocked()
+    {
+        var je = new List<JournalPostingGuard.LineFacts>
+        {
+            L("52190", AccountType.Expense, dr: 6321.56m),
+            L("11640", AccountType.Asset, dr: 413.56m),
+            L("21912", AccountType.Liability, cr: 827.12m),   // สองเท่าของ VAT ประเมินเอง
+            L("11120", AccountType.Asset, cr: 5908.00m),
+        };
+        Assert.Contains(JournalPostingGuard.Validate(je, ForeignDoc(DocumentType.PaymentVoucher, flagged: true)),
+            x => x.RuleCode == "JE-VAT-OVER" && x.IsError);
+    }
+
+    [Fact]
+    public void Regular_purchase_doc_money_parked_in_tax_accounts_is_still_caught()
+    {
+        // ใบปกติ (ไม่ติ๊ก) ที่เงินไปกองบัญชีภาษี — ด่านเดิมยังทำงาน (เคส UV-202607-0037 ใช้ BadJe ข้างบนครอบอีกชั้น)
+        var je = new List<JournalPostingGuard.LineFacts>
+        {
+            L("52190", AccountType.Expense, dr: 1000m),
+            L("11610", AccountType.Asset, dr: 70m),
+            L("21210", AccountType.Liability, cr: 1000m),
+            L("21917", AccountType.Liability, cr: 70m),
+        };
+        var doc = new JournalPostingGuard.DocFacts(DocumentType.PurchaseInvoice, 1000m, 70m, 0m, 1070m);
+        Assert.Contains(JournalPostingGuard.Validate(je, doc), x => x.RuleCode == "JE-NO-COUNTERPART" && x.IsError);
+        // และธง §83/6 บนใบขายไม่ผ่อนกฎฝั่งซื้อ/ไม่ทำให้ภาษีขายถูกจำกัดเป็น 0
+        var sale = new List<JournalPostingGuard.LineFacts>
+        {
+            L("11310", AccountType.Asset, dr: 1070m),
+            L("41110", AccountType.Revenue, cr: 1000m),
+            L("21911", AccountType.Liability, cr: 70m),
+        };
+        var saleDoc = new JournalPostingGuard.DocFacts(DocumentType.TaxInvoice, 1000m, 70m, 0m, 1070m, IsForeignService: true);
+        Assert.Empty(JournalPostingGuard.Validate(sale, saleDoc).Where(x => x.IsError));
+    }
+
+    [Fact]
+    public void Foreign_service_in_usd_converts_before_split()
+    {
+        // ใบ USD@35: ฐาน 100 VAT 7 Total 107 ⇒ GL ฐาน 3,500 · 21912 245 · ธนาคาร 3,500
+        var je = new List<JournalPostingGuard.LineFacts>
+        {
+            L("52190", AccountType.Expense, dr: 3500m),
+            L("11640", AccountType.Asset, dr: 245m),
+            L("21912", AccountType.Liability, cr: 245m),
+            L("11120", AccountType.Asset, cr: 3500m),
+        };
+        var doc = new JournalPostingGuard.DocFacts(DocumentType.PaymentVoucher, 100m, 7m, 0m, 107m,
+            ExchangeRate: 35m, IsForeignService: true);
+        Assert.Empty(JournalPostingGuard.Validate(je, doc).Where(x => x.IsError));
+    }
 }

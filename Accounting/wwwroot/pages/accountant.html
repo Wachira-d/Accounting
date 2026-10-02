@@ -168,6 +168,9 @@
                   <div style="font-size:12px;color:var(--gray-600);margin-top:2px;line-height:1.6">${Layout.esc(a.message)}</div>
                   <div style="font-size:11px;color:#92400e;margin-top:2px">🔧 ${Layout.esc(a.fix)}</div>
                 </div>
+                ${a.ruleCode === 'DOC-NO-JE' && a.documentId
+                  ? `<button class="btn btn-sm btn-warning" style="white-space:nowrap" onclick="Page.repairMissingJournal('${Layout.jsArg(a.documentId)}')">🔧 ลงบัญชีให้ใบนี้</button>`
+                  : ''}
                 ${a.documentId
                   ? `<a class="btn btn-sm btn-ghost" href="/pages/documents.html?openDoc=${a.documentId}">เปิดเอกสาร →</a>`
                   : (a.journalEntryId
@@ -176,6 +179,18 @@
         } catch (e) {
           box.innerHTML = `<div style="color:#dc2626;padding:16px">${Layout.esc(e.message)}</div>`;
         }
+      },
+
+      /** PP36_REVIEW "ซ่อมข้อมูลเดิม" — ลงบัญชีให้ใบที่อนุมัติแล้วแต่ไม่มี JE (เซิร์ฟเวอร์ตัดสินซ้ำภายใต้ล็อก · ปฏิเสธพร้อมทางไปต่อเมื่อไม่ผ่าน) */
+      async repairMissingJournal(docId) {
+        if (!confirm('ลงบัญชีให้เอกสารใบนี้ด้วยกติกาเดียวกับตอนอนุมัติ (เลขเอกสารคงเดิม · บันทึกร่องรอยผู้ทำ)?')) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const res = await API.post(`/api/companies/${cid}/document/${docId}/missing-journal/repair`, {});
+          Layout.toast(res?.message || 'ลงบัญชีแล้ว', 'success', 8000);
+          const [year, month] = document.getElementById('periodInput').value.split('-').map(Number);
+          await this.loadJeAnomalies(year, month);
+        } catch (e) { Layout.toast(e.message || 'ลงบัญชีไม่สำเร็จ', 'error', 12000); }
       },
 
       async loadPreClose(year, month) {
