@@ -3784,16 +3784,20 @@ public class AccountingDbContext : DbContext
         var props = new[] { "CompanyId", "UserId", "UserEmail", "Action", "EntityType", "EntityId", "OldValues", "NewValues",
             "IpAddress", "UserAgent", "Timestamp", "PrevHash", "RowHash" };
         var cols = props.Select(p => et.FindProperty(p)!.GetColumnName()).ToList();
-        static object N(object? v) => v ?? DBNull.Value;
+        // CI รอบ 201 (job db-test): ส่ง DBNull.Value เป็นค่าดิบให้ ExecuteSqlRaw ⇒ EF หา type mapping ของ DBNull ไม่ได้ (InvalidOperationException ทุกแถวที่มีช่องว่าง)
+        // ⇒ ห่อทุกค่าเป็น NpgsqlParameter เอง (EF ใช้ DbParameter ตามที่ส่ง · ชื่อไม่ซ้ำต่อคำสั่ง) · null ⇒ DBNull ใน parameter ไม่ใช่ค่าดิบ
+        var n = 0;
+        object P(object? v) => new Npgsql.NpgsqlParameter("a" + (n++).ToString(System.Globalization.CultureInfo.InvariantCulture), v ?? DBNull.Value);
         for (var i = 0; i < rows.Count; i += Accounting.Helpers.AuditChainScope.InsertBatchRows)
         {
             var chunk = rows.Skip(i).Take(Accounting.Helpers.AuditChainScope.InsertBatchRows).ToList();
+            n = 0;
             var args = new List<object>(chunk.Count * cols.Count);
             foreach (var r in chunk)
                 args.AddRange(new object[]
                 {
-                    N(r.CompanyId), N(r.UserId), N(r.UserEmail), (int)r.Action, r.EntityType, N(r.EntityId), N(r.OldValues), N(r.NewValues),
-                    N(r.IpAddress), N(r.UserAgent), r.Timestamp, N(r.PrevHash), N(r.RowHash),
+                    P(r.CompanyId), P(r.UserId), P(r.UserEmail), P((int)r.Action), P(r.EntityType), P(r.EntityId), P(r.OldValues), P(r.NewValues),
+                    P(r.IpAddress), P(r.UserAgent), P(r.Timestamp), P(r.PrevHash), P(r.RowHash),
                 });
             yield return (Accounting.Helpers.AuditChainScope.InsertSql(et.GetTableName()!, cols, chunk.Count), args.ToArray());
         }
