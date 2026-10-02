@@ -123,9 +123,8 @@ td.r,th.r{text-align:right}
         sb.Append($"<div class=\"kv\"><span>เช็คอิน</span><b>{D(r.CheckInDate)} หลัง {E(r.CheckInTime)} น.</b></div>");
         sb.Append($"<div class=\"kv\"><span>เช็คเอาต์</span><b>{D(r.CheckOutDate)} ก่อน {E(r.CheckOutTime)} น.</b></div>");
         sb.Append($"<div class=\"kv\"><span>จำนวนคืน</span><b>{r.Nights} คืน</b></div>");
-        sb.Append($"<div class=\"kv\"><span>ผู้เข้าพัก</span><b>{r.Adults} ผู้ใหญ่"
-            + (r.Children > 0 ? $" · {r.Children} เด็ก" : "")
-            + (r.Infants > 0 ? $" · {r.Infants} ทารก" : "") + "</b></div>");
+        // รอบ 202 (คำตัดสินข้อ 123): จำนวนรวม + แยกผู้ใหญ่/เด็ก/ทารก/คนเสริม จากตัวนับตัวเดียว (LodgingOccupancy)
+        sb.Append($"<div class=\"kv\"><span>ผู้เข้าพัก</span><b>{E(LodgingOccupancy.Summary(LodgingOccupancy.Totals(r.Adults, r.Children, r.Infants, r.Rooms.Sum(x => x.ExtraBeds))))}</b></div>");
         if (!string.IsNullOrWhiteSpace(r.ArrivalTime))
             sb.Append($"<div class=\"kv\"><span>เวลาที่คาดว่าจะถึง</span><b>{E(r.ArrivalTime)}</b></div>");
         sb.Append("</div></div>");
@@ -137,6 +136,7 @@ td.r,th.r{text-align:right}
             var name = room.RoomTypeName + (string.IsNullOrWhiteSpace(room.UnitNumber) ? "" : $" (ห้อง {room.UnitNumber})");
             sb.Append($"<tr><td>{E(name)}<div style=\"color:#6B7280;font-size:10.5px\">{room.Adults} ผู้ใหญ่"
                 + (room.Children > 0 ? $" · {room.Children} เด็ก" : "")
+                + (room.ExtraBeds > 0 ? $" · คนเสริม {room.ExtraBeds}" : "")
                 + $" · {r.Nights} คืน</div></td><td class=\"r\">1</td><td class=\"r\">{M(room.Subtotal)}</td></tr>");
         }
         foreach (var x in r.Extras)

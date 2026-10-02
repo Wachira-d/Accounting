@@ -45,11 +45,13 @@ public class PublicPaymentController : ControllerBase
     private readonly IEnumerable<IPaymentProvider> _providers;
     private readonly AccountingDbContext _db;
     private readonly ILogger<PublicPaymentController> _logger;
+    private readonly Accounting.Services.Interfaces.ILodgingService _lodging;
 
     public PublicPaymentController(IPaymentIntentService intents, IPublicPaymentResolver resolver,
         IEnumerable<IPaymentProvider> providers,
-        AccountingDbContext db, ILogger<PublicPaymentController> logger)
-    { _intents = intents; _resolver = resolver; _providers = providers; _db = db; _logger = logger; }
+        AccountingDbContext db, ILogger<PublicPaymentController> logger,
+        Accounting.Services.Interfaces.ILodgingService lodging)
+    { _intents = intents; _resolver = resolver; _providers = providers; _db = db; _logger = logger; _lodging = lodging; }
 
     /// <summary>เพดานการสร้าง intent ต่อ source ต่อชั่วโมง — กันคนกดรัวจนตาราง
     /// intent บวมและกัน provider โดนยิงแทนเรา (StartAsync ใช้ intent เดิมซ้ำอยู่แล้ว
@@ -120,7 +122,9 @@ public class PublicPaymentController : ControllerBase
     [HttpPost("lodging/{siteId:guid}/{token}/intents")]
     public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StartLodging(
         Guid companyId, Guid siteId, string token, [FromBody] StartRequest req, CancellationToken ct)
-        => StartAsync(companyId, () => _resolver.ResolveLodgingAsync(companyId, siteId, token, ct), req, ct);
+        => StartAsync(companyId, () => _resolver.ResolveLodgingAsync(companyId, siteId, token, ct), req, ct,
+            // รอบ 202 (O-P1-4): ถือห้องระหว่างจ่าย — ก่อนสร้างรายการ (hold หมด + ห้องถูกจองไป ⇒ ปฏิเสธก่อนแขกจ่าย) และหลังสร้าง (ถึงวันหมดอายุของ QR/ลิงก์)
+            holdForPayment: (target, expiresAt) => _lodging.HoldForOnlinePaymentAsync(companyId, target.SourceId, expiresAt));
 
     [HttpGet("lodging/{siteId:guid}/{token}/intents/{intentId:guid}")]
     public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StatusLodging(
@@ -141,8 +145,11 @@ public class PublicPaymentController : ControllerBase
 
     // ═══════════════ แกนกลาง — ทางเข้าทุกเส้นเดินผ่านสองเมธอดนี้ ═══════════════
 
+    /// <param name="holdForPayment">ต้นทางที่ต้อง "กันของไว้ระหว่างจ่าย" (การจองที่พัก) — เรียกก่อนสร้างรายการ (วันหมดอายุ null) และหลังสร้าง
+    /// (วันหมดอายุของรายการ) · โยน <see cref="BusinessRuleException"/> = ปฏิเสธพร้อมข้อความ (ก่อนแขกจ่าย)</param>
     private async Task<ActionResult<ApiResponse<PublicIntentResponse>>> StartAsync(
-        Guid companyId, Func<Task<PublicPayTarget?>> resolve, StartRequest req, CancellationToken ct)
+        Guid companyId, Func<Task<PublicPayTarget?>> resolve, StartRequest req, CancellationToken ct,
+        Func<PublicPayTarget, DateTime?, Task>? holdForPayment = null)
     {
         if (req.Method == PaymentMethodKind.ManualSlip)
             return BadRequest(new ApiResponse<PublicIntentResponse>(false, null,
@@ -170,15 +177,22 @@ public class PublicPaymentController : ControllerBase
 
         try
         {
+            if (holdForPayment != null) await holdForPayment(target, null);
             var intent = await _intents.StartAsync(companyId, new StartPaymentRequest(
                 target.SourceKind, target.SourceId, target.AmountDue, req.Method,
                 Description: target.Description,
                 CustomerEmail: target.CustomerEmail, CustomerPhone: target.CustomerPhone,
                 ReturnUrl: req.ReturnUrl, CardToken: req.CardToken,
                 SiteId: target.SiteId, ContactId: null), ct: ct);
+            if (holdForPayment != null) await holdForPayment(target, intent.QrExpiresAt);
 
             return Ok(new ApiResponse<PublicIntentResponse>(true,
                 Map(intent, await IsTestModeAsync(intent, ct))));
+        }
+        catch (BusinessRuleException ex)
+        {
+            // ห้องถูกจองไประหว่างที่ hold หมด (LODGING-OVERSOLD) — บอกก่อนแขกจ่าย พร้อมทางไปต่อในข้อความ
+            return BadRequest(new ApiResponse<PublicIntentResponse>(false, null, ex.Message));
         }
         catch (InvalidOperationException ex)
         {

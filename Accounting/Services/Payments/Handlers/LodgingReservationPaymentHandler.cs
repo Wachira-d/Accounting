@@ -61,15 +61,34 @@ public class LodgingReservationPaymentHandler : IPaymentCompletionHandler
 
         var moneyIn = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
 
-        await _lodging.ConfirmAsync(intent.CompanyId, r.Id, new LodgingConfirmRequest(
-            DepositAmount: intent.Amount,
-            PaymentMethod: PaymentMethod.BankTransfer,
-            PaymentReference: intent.ProviderRef,
-            PaymentDate: intent.ConfirmedAt ?? DateTime.UtcNow,
-            BankAccountId: null,
-            Note: "ชำระมัดจำออนไลน์ผ่านระบบรับชำระเงิน"),
-            intent.ConfirmedBy ?? "payment-gateway",
-            moneyInAccountId: moneyIn,
-            fromOnlinePayment: true);
+        try
+        {
+            await _lodging.ConfirmAsync(intent.CompanyId, r.Id, new LodgingConfirmRequest(
+                DepositAmount: intent.Amount,
+                PaymentMethod: PaymentMethod.BankTransfer,
+                PaymentReference: intent.ProviderRef,
+                PaymentDate: intent.ConfirmedAt ?? DateTime.UtcNow,
+                BankAccountId: null,
+                Note: "ชำระมัดจำออนไลน์ผ่านระบบรับชำระเงิน"),
+                intent.ConfirmedBy ?? "payment-gateway",
+                moneyInAccountId: moneyIn,
+                fromOnlinePayment: true);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // รอบ 202 (O-P1-4 · คำตัดสินข้อ 127): เงินเข้าแล้วแต่ยืนยันไม่ได้ — เดิมเห็นแค่ใน event ของรายการชำระ ⇒ ติดธงบนตัวการจองด้วย
+            // (ตัวกรอง "เงินเข้าแต่ยืนยันไม่ได้" + หน้าแขก "ได้รับเงินแล้ว" + อีเมลแจ้งที่พัก) แล้ว**โยนต่อ** ให้ PaymentIntentService บันทึกลงประวัติ
+            // ของรายการชำระ (ล้มดัง 3 ที่) · ไม่คืนเงินอัตโนมัติ — ที่พักตัดสิน · ธงล้มเองก็ต้องไม่กลบ error เดิม
+            try
+            {
+                await _lodging.FlagPaymentProblemAsync(intent.CompanyId, r.Id,
+                    $"รายการชำระออนไลน์ {intent.Id:N} ยอด {intent.Amount:N2} เข้าแล้ว แต่ยืนยันการจองไม่ได้: {ex.Message}", "online-payment");
+            }
+            catch (Exception flagError) when (flagError is not OperationCanceledException)
+            {
+                _logger.LogError(flagError, "ติดธงเงินเข้าแต่ยืนยันไม่ได้ของการจอง {Res} ไม่สำเร็จ (intent {Intent})", r.ReservationNumber, intent.Id);
+            }
+            throw;
+        }
     }
 }

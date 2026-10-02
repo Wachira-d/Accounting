@@ -308,19 +308,19 @@ public static class LodgingPricingEngine
 /// (คืนวันเช็คเอาต์ไม่นับ — ห้องที่เช็คเอาต์ 12:00 ขายคืนนั้นได้)</summary>
 public static class LodgingAvailability
 {
-    public sealed record BookedRange(DateTime CheckIn, DateTime CheckOut, int Rooms, LodgingReservationStatus Status, DateTime? HoldExpiresAt);
+    /// <summary>การจองที่ทับช่วง · <paramref name="CheckOut"/> = วันออกที่ใช้นับการกันห้อง (<c>LodgingHoldRule.EffectiveCheckOut</c> —
+    /// แขกเช็คอินค้างหลังวันออกกันห้องคืนนี้ต่อ) · ธงท้าย = ข้อเท็จจริงที่ทำให้ Pending ยังกันห้องแม้ hold หมด (รอบ 202 O-P1-4/5)</summary>
+    public sealed record BookedRange(DateTime CheckIn, DateTime CheckOut, int Rooms, LodgingReservationStatus Status, DateTime? HoldExpiresAt,
+        decimal DepositPaid = 0m, bool SlipAwaitingReview = false, bool MoneyArrivedUnconfirmed = false);
 
     public static bool Overlaps(DateTime aIn, DateTime aOut, DateTime bIn, DateTime bOut)
         => aIn.Date < bOut.Date && aOut.Date > bIn.Date;
 
-    /// <summary>การจองนี้ยัง "กันห้อง" อยู่ไหม — Pending ที่หมดเวลาถือมัดจำแล้ว = ไม่กัน</summary>
+    /// <summary>การจองนี้ยัง "กันห้อง" อยู่ไหม — ตัดสินที่ <see cref="LodgingHoldRule.BlocksInventory"/> ตัวเดียว (ตัวยกเลิกอัตโนมัติอ่านกติกาเดียวกัน ·
+    /// รอบ 202 O-P1-5: เดิม Pending ที่ส่งสลิปแล้ว hold หมด = เลิกกันห้องแต่ไม่ถูกยกเลิก ⇒ ห้องถูกขายซ้อนเงียบ ๆ)</summary>
     public static bool Blocks(BookedRange r, DateTime now)
-        => r.Status switch
-        {
-            LodgingReservationStatus.Confirmed or LodgingReservationStatus.CheckedIn => true,
-            LodgingReservationStatus.Pending => r.HoldExpiresAt == null || r.HoldExpiresAt > now,
-            _ => false,
-        };
+        => LodgingHoldRule.BlocksInventory(
+            new LodgingHoldFacts(r.Status, r.HoldExpiresAt, r.DepositPaid, r.SlipAwaitingReview, r.MoneyArrivedUnconfirmed), now);
 
     /// <summary>จำนวนห้องว่างขั้นต่ำตลอดช่วง (ต้องว่างทุกคืน) — คำนวณต่อคืนแล้วเอาค่าต่ำสุด</summary>
     public static int AvailableRooms(

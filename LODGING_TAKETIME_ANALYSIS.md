@@ -40,7 +40,7 @@
 
 1. **Promo code engine** — ช่อง `PromoCode` มีบนการจอง แต่ `DiscountAmount` = 0 เสมอ (ยังไม่มีตาราง/กฎ) — ต่อกับ `CmsCoupon` ที่มีอยู่ได้
 2. **QR ต่อห้อง + พอร์ทัลแขกเต็ม** (แชท · loyalty · รีวิว · nearby) — ตอนนี้แขกเข้าถึงผ่านลิงก์ token ในอีเมล/หน้ายืนยันเท่านั้น
-3. **ค่า early check-in / late check-out อัตโนมัติ** จาก `EarlyCheckInFee/LateCheckOutFee` (ตอนนี้เป็นค่าตั้งค่าที่ยังไม่มีใครอ่าน — ห้ามปล่อยไว้นาน: defect class "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้")
+3. ~~**ค่า early check-in / late check-out อัตโนมัติ**~~ — ✅ ต่อสายแล้ว (LDG-P2-06): `CheckInAsync` (`ChargeEarlyCheckIn`) / `CheckOutCoreAsync` (`ChargeLateCheckOut`) อ่าน `EarlyCheckInFee`/`LateCheckOutFee` เป็นรายการ folio — **พนักงานติ๊กเอง** ไม่ใช่ระบบเก็บอัตโนมัติ (ตั้งใจ: ห้องอาจว่างอยู่แล้ว/หลายที่ยกเว้นให้) · `EarlyCheckInHours`/`LateCheckOutHours` ยังเป็นเงื่อนไขแสดงผลเท่านั้น (คำตัดสินข้อ 121) · เช็คอินก่อนวันจอง 1 วัน = เพิ่มคืน (คำตัดสินข้อ 125 · รอบ 202 ทีม LO) — แก้ doc 2026-10-02
 4. **POS → folio** (`LodgingChargeSource.Pos` มี enum แล้ว — ยังไม่มีปุ่ม "ชาร์จเข้าห้อง" ใน POS)
 5. **OTA sync / channel manager** — เก็บ `SourceReference` ไว้แล้ว รอ connector จริง
 6. **แจ้งเตือน LINE/SMS** ก่อนเช็คอิน + ขอรีวิวหลังเช็คเอาต์ (TakeTime `ReminderSent/FeedbackRequestSent`)

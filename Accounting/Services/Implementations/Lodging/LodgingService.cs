@@ -26,12 +26,15 @@ public partial class LodgingService : ILodgingService
     /// 1 รายการยอมรับได้ · ทำให้แขกออกจากที่พักไม่ได้ยอมรับไม่ได้)</summary>
     private readonly IUsageMeteringService? _metering;
     private readonly IEntitlementService? _entitlement;
+    /// <summary>รอบ 202 ทีม LO (คำตัดสินข้อ 127): แจ้งเตือนผ่านเครื่องแจ้งเตือนกลาง (กระดิ่ง/อีเมล/LINE ตามตาราง NotificationSettings ของบริษัท)</summary>
+    private readonly INotificationEngine? _notify;
 
     public LodgingService(AccountingDbContext db, ILogger<LodgingService> logger, IDocumentService docService,
         IEmailService? email = null, IImageProcessingService? images = null,
         IUsageMeteringService? metering = null, IEntitlementService? entitlement = null,
-        ILineNotifyService? line = null)
+        ILineNotifyService? line = null, INotificationEngine? notify = null)
     {
+        _notify = notify;
         _db = db;
         _logger = logger;
         _docService = docService;

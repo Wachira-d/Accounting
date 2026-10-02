@@ -444,6 +444,17 @@ public class LodgingReservation : TenantEntity
     /// กันนับซ้ำเมื่อสถานะถูกแตะหลายรอบ (เช่น night audit ตามมาทีหลัง)</summary>
     public string? MeteredPeriod { get; set; }
 
+    /// <summary>รอบ 202 ทีม LO (O-P0-2 · คำตัดสินข้อ 119) — night audit พบว่าเลยวันเช็คเอาต์เกินระยะผ่อนแล้วยังไม่ถูกปิด ⇒ ติดธง + หมายเหตุ
+    /// <b>ครั้งเดียว</b> (ไม่เปลี่ยนสถานะ — พนักงานปิดผ่านเส้นเช็คเอาต์/ยกเลิกปกติ) · ป้าย "ค้างปิด" บนจอคิดจากวันที่ (<c>LodgingOverdueRule</c>)
+    /// ไม่ใช่จากช่องนี้ — ช่องนี้กันหมายเหตุซ้ำทุกรอบ job และบอกว่า job เห็นแล้วเมื่อไร</summary>
+    public DateTime? OverdueFlaggedAt { get; set; }
+
+    /// <summary>รอบ 202 ทีม LO (O-P1-4) — เงินออนไลน์เข้าแล้วแต่ยืนยันการจองอัตโนมัติไม่ได้ (ห้องเต็ม/สถานะเปลี่ยน) · null = ไม่มีปัญหา ·
+    /// ล้างเมื่อยืนยัน+รับมัดจำสำเร็จ · ระหว่างนี้การจองยังกันห้อง (LodgingHoldRule) และไม่ถูกยกเลิกอัตโนมัติ</summary>
+    public DateTime? PaymentProblemAt { get; set; }
+    /// <summary>เหตุผลที่ยืนยันไม่ได้ + เลขรายการชำระ (ข้อความภายใน — หน้าแขกเห็นข้อความกลางแทน)</summary>
+    public string? PaymentProblemNote { get; set; }
+
     public ICollection<LodgingReservationRoom> Rooms { get; set; } = new List<LodgingReservationRoom>();
     public ICollection<LodgingReservationExtra> Extras { get; set; } = new List<LodgingReservationExtra>();
     public ICollection<LodgingFolioCharge> Charges { get; set; } = new List<LodgingFolioCharge>();

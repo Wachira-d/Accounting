@@ -18,10 +18,12 @@ public class LodgingPublicController : ControllerBase
 {
     private readonly ILodgingService _svc;
     private readonly IEntitlementService _entitlement;
-    public LodgingPublicController(ILodgingService svc, IEntitlementService entitlement)
+    private readonly IChatRateLimiter _rate;
+    public LodgingPublicController(ILodgingService svc, IEntitlementService entitlement, IChatRateLimiter rate)
     {
         _svc = svc;
         _entitlement = entitlement;
+        _rate = rate;
     }
 
     /// <summary>402 พร้อมทางไปต่อ — ห้ามคืน 403 เปล่า ๆ ให้ผู้ใช้เดาเองว่าต้องทำอะไร
@@ -60,6 +62,16 @@ public class LodgingPublicController : ControllerBase
     {
         var pid = await _svc.ResolvePropertyIdForSiteAsync(companyId, siteId);
         if (pid == null) return NotFound(new ApiResponse<LodgingReservationResponse>(false, null, "ไม่พบที่พัก"));
+        // รอบ 202 (O-P1-6 · คำตัดสินข้อ 122): เพดานต่อ IP ต่อเว็บ — นับในฐานข้อมูล (ตัวนับ upsert เดียวกับ chatbot · ข้ามเครื่องได้ ·
+        // ไม่มี static dict) · เพดานต่อผู้จอง (≤ 3 ใบรอชำระต่อเบอร์/อีเมล) อยู่ใน CreateReservationAsync ใต้ล็อกที่พัก
+        var rateKey = Accounting.Helpers.LodgingBookingGuards.PublicCreateRateKey(siteId, HttpContext.Connection.RemoteIpAddress?.ToString());
+        if (!await _rate.TryConsumeAsync(rateKey, Accounting.Helpers.LodgingBookingGuards.PublicCreatePerMinute,
+                Accounting.Helpers.LodgingBookingGuards.PublicCreatePerDay, HttpContext.RequestAborted))
+        {
+            Response.Headers.Append("Retry-After", "60");
+            return StatusCode(429, new ApiResponse<LodgingReservationResponse>(false, null,
+                "ส่งคำขอจองถี่เกินไป — กรุณารอสักครู่แล้วลองใหม่ หรือติดต่อที่พักโดยตรง"));
+        }
         // ช่องฝั่งพนักงานถูกตัดทิ้งเสมอ — แขกกำหนด source/contact/ยืนยันทันทีเองไม่ได้
         var clean = req with { Source = null, SourceReference = null, ContactId = null, InternalNotes = null, ConfirmImmediately = false };
         var r = await _svc.CreateReservationAsync(companyId, pid.Value, clean, LodgingReservationSource.Web, "storefront-guest", siteId);
