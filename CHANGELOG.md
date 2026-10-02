@@ -4513,4 +4513,4 @@ _PP36 ทีม F2 รอบสอง — แก้ผลฝ่ายค้า�
   migration PV ที่ยังไม่อนุมัติสองทิศ
 - **P1-2** ใบเพิ่ม/ลดหนี้ของใบเจ้าของ ภ.พ.36: `BalanceDue` = ยอดจ่ายผู้รับเงิน (สร้าง/แก้ + migration ใบยังไม่อนุมัติ) · `VatNotPaidToPayee` ครอบ DebitNote
 - **P2-4** หน้าเอกสารไม่ติ๊กธงกลับในช่องที่ซ่อน (`_hydrateForeignServiceFlag` + sim) · **P2-5** PaidAmount ตอนอนุมัติ PV ปิดหนี้ส่งค่าใบต้นทาง (PDF ตั้งใจไม่ทำ — เหตุผลใน PP36_REVIEW)
-- เทสต์ `ForeignServiceLinkedVoucherTests` (ก/ข/ค + ทิศตรงข้าม + DN/CN + migration) · required_call_site +4 กติกา/ปรับ 2 — commit <pending>_
+- เทสต์ `ForeignServiceLinkedVoucherTests` (ก/ข/ค + ทิศตรงข้าม + DN/CN + migration) · required_call_site +4 กติกา/ปรับ 2 — commit 5985acef_
