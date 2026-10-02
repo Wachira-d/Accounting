@@ -131,6 +131,9 @@ public partial class TaxService : ITaxService
     {
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
         var companyVatRate = company?.VatRate ?? 7m;
+        // รอบ 203 ฝ่ายค้าน P2-3: ทุกบรรทัดภาษีซื้อ/ขายของ ภ.พ.30 เป็น **บาท** ด้วยตัวแปลงเดียวกับ JE (DocumentFx.ToBaht) — เดิมใช้ยอดสกุลเอกสาร
+        // ⇒ ใบ USD@36 VAT 70: GL 11610 = 2,520 แต่ ภ.พ.30 เคลม 70 · ใบบาท (อัตรา 1) ไม่เปลี่ยนแม้แต่สตางค์
+        static decimal Thb(Document d, decimal amount) => Accounting.Helpers.DocumentFx.ToBaht(amount, d.ExchangeRate);
 
         // field วันที่รับรู้ (BecameClaimableAt/OutputVatDueAt/RecognizedAt) เป็น
         // timestamp UTC มีเวลา — endDate คือ "วันสุดท้าย 00:00" ⇒ รายการที่รับรู้
@@ -511,11 +514,11 @@ public partial class TaxService : ITaxService
                     // ไม่นับ — และไม่เงียบ: บรรทัดเตือนของใบนี้ถูกสร้างในส่วนรายงาน
                     // ภาษีซื้อ/ขายด้านล่างอยู่แล้ว (ป้าย "⚠️ แยกฝั่งไม่ได้")
                 }
-                else if (side.IsPurchase) exemptPurchases += adjSign * split.ExemptBase;
+                else if (side.IsPurchase) exemptPurchases += adjSign * Thb(doc, split.ExemptBase);
                 else
                 {
-                    zeroRatedSales += adjSign * split.ZeroRatedBase;
-                    exemptSales += adjSign * split.ExemptBase;
+                    zeroRatedSales += adjSign * Thb(doc, split.ZeroRatedBase);
+                    exemptSales += adjSign * Thb(doc, split.ExemptBase);
                 }
             }
 
@@ -554,7 +557,7 @@ public partial class TaxService : ITaxService
                         continue;
                     }
                 }
-                outputVat += doc.VatAmount;
+                outputVat += Thb(doc, doc.VatAmount);
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id,
@@ -563,9 +566,9 @@ public partial class TaxService : ITaxService
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = invTxDate,
                     Description = doc.DocumentNumber,
-                    IncomeAmount = VatableBase(doc),
+                    IncomeAmount = Thb(doc, VatableBase(doc)),
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                    TaxAmount = doc.VatAmount,
+                    TaxAmount = Thb(doc, doc.VatAmount),
                     DocumentId = doc.Id
                 });
             }
@@ -637,13 +640,14 @@ public partial class TaxService : ITaxService
                     ? doc.DepositOutputVatRecognizedAt!.Value
                     : (doc.TaxPointDate ?? doc.DocumentDate);
                 // M3 — มัดจำ VAT พักที่รับรู้แล้ว: รายงานเท่าที่ย้ายเข้า 21911 จริง (ไม่มีร่องรอยใน GL = VAT เต็มใบตามเดิม)
+                // P2-3: บาท (GL ที่ย้ายจริง movedVat เป็นบาทอยู่แล้ว — เดิมเทียบกับ VatAmount สกุลเอกสาร)
                 var rowVat = effectivelyDeferred
                     ? Accounting.Helpers.DepositPolicyResolver.ReportedRecognizedDepositVat(
-                        doc.VatAmount, glReclassifiedVatByDoc.TryGetValue(doc.Id, out var movedVat) ? (decimal?)movedVat : null)
-                    : doc.VatAmount;
+                        Thb(doc, doc.VatAmount), glReclassifiedVatByDoc.TryGetValue(doc.Id, out var movedVat) ? (decimal?)movedVat : null)
+                    : Thb(doc, doc.VatAmount);
                 var rowBase = effectivelyDeferred
-                    ? Accounting.Helpers.DepositPolicyResolver.ReportedRecognizedDepositBase(VatableBase(doc), doc.VatAmount, rowVat)
-                    : VatableBase(doc);
+                    ? Accounting.Helpers.DepositPolicyResolver.ReportedRecognizedDepositBase(Thb(doc, VatableBase(doc)), Thb(doc, doc.VatAmount), rowVat)
+                    : Thb(doc, VatableBase(doc));
                 outputVat += rowVat;
                 report.Lines.Add(new TaxReportLine
                 {
@@ -699,9 +703,9 @@ public partial class TaxService : ITaxService
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"⚠️ [ใบลดหนี้ — ใบเดิมยังไม่ถึง tax point (VAT พักอยู่)] {doc.DocumentNumber}",
-                        IncomeAmount = -VatableBase(doc),
+                        IncomeAmount = -Thb(doc, VatableBase(doc)),
                         TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                        TaxAmount = -doc.VatAmount,
+                        TaxAmount = -Thb(doc, doc.VatAmount),
                         DocumentId = doc.Id,
                         IncomeTypeCode = isPurchaseSide ? "INPUT" : null,
                         IsExcluded = true
@@ -710,12 +714,12 @@ public partial class TaxService : ITaxService
                 }
                 if (isPurchaseSide)
                 {
-                    inputVat -= doc.VatAmount;
+                    inputVat -= Thb(doc, doc.VatAmount);
                     label = "[ใบลดหนี้-ภาษีซื้อ]";
                 }
                 else
                 {
-                    outputVat -= doc.VatAmount;
+                    outputVat -= Thb(doc, doc.VatAmount);
                     label = "[ใบลดหนี้-ภาษีขาย]";
                 }
                 // แยกฝั่งไม่ได้เลย = ข้อมูลไม่ครบ ไม่ใช่เรื่องปกติ — ต้องให้ผู้ใช้
@@ -731,9 +735,9 @@ public partial class TaxService : ITaxService
                     TaxPayerName = doc.Contact?.Name ?? "",
                     TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                     Description = $"{label} {doc.DocumentNumber}",
-                    IncomeAmount = -VatableBase(doc),
+                    IncomeAmount = -Thb(doc, VatableBase(doc)),
                     TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                    TaxAmount = -doc.VatAmount,
+                    TaxAmount = -Thb(doc, doc.VatAmount),
                     DocumentId = doc.Id,
                     // tag side ให้ LineSide จัด CN ฝั่งซื้อเข้า "รายงานภาษีซื้อ"
                     // ถูกต้อง (เดิม IncomeTypeCode = null → ตกไปฝั่งขายเสมอ)
@@ -777,9 +781,9 @@ public partial class TaxService : ITaxService
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"⚠️ [ใบเพิ่มหนี้ — ใบเดิมยังไม่ถึง tax point (VAT พักอยู่)] {doc.DocumentNumber}",
-                        IncomeAmount = VatableBase(doc),
+                        IncomeAmount = Thb(doc, VatableBase(doc)),
                         TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                        TaxAmount = doc.VatAmount,
+                        TaxAmount = Thb(doc, doc.VatAmount),
                         DocumentId = doc.Id,
                         IncomeTypeCode = isPurchaseSide ? "INPUT" : null,
                         IsExcluded = true
@@ -788,7 +792,7 @@ public partial class TaxService : ITaxService
                 }
                 if (isPurchaseSide)
                 {
-                    inputVat += doc.VatAmount;
+                    inputVat += Thb(doc, doc.VatAmount);
                     report.Lines.Add(new TaxReportLine
                     {
                         TaxReportId = report.Id, LineOrder = lineOrder++,
@@ -796,13 +800,13 @@ public partial class TaxService : ITaxService
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"[ใบเพิ่มหนี้-ภาษีซื้อ] {doc.DocumentNumber}"
                             + (dnSideUnknown ? " ⚠️ แยกฝั่งไม่ได้ ตรวจสอบใบอ้างอิง" : ""),
-                        IncomeAmount = VatableBase(doc), TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                        TaxAmount = doc.VatAmount, DocumentId = doc.Id, IncomeTypeCode = "INPUT"
+                        IncomeAmount = Thb(doc, VatableBase(doc)), TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                        TaxAmount = Thb(doc, doc.VatAmount), DocumentId = doc.Id, IncomeTypeCode = "INPUT"
                     });
                 }
                 else
                 {
-                    outputVat += doc.VatAmount;
+                    outputVat += Thb(doc, doc.VatAmount);
                     report.Lines.Add(new TaxReportLine
                     {
                         TaxReportId = report.Id, LineOrder = lineOrder++,
@@ -810,8 +814,8 @@ public partial class TaxService : ITaxService
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"[ใบเพิ่มหนี้-ภาษีขาย] {doc.DocumentNumber}"
                             + (dnSideUnknown ? " ⚠️ แยกฝั่งไม่ได้ ตรวจสอบใบอ้างอิง" : ""),
-                        IncomeAmount = VatableBase(doc), TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
-                        TaxAmount = doc.VatAmount, DocumentId = doc.Id
+                        IncomeAmount = Thb(doc, VatableBase(doc)), TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
+                        TaxAmount = Thb(doc, doc.VatAmount), DocumentId = doc.Id
                     });
                 }
             }
@@ -861,9 +865,9 @@ public partial class TaxService : ITaxService
                         Description = doc.IsForeignService
                             ? $"[ภ.พ.36 — รอนำส่ง/รับรู้] {doc.DocumentNumber} — ภาษีซื้อบริการต่างประเทศเคลมได้เมื่อนำส่ง ภ.พ.36 แล้วกด \"รับรู้ภาษีซื้อ\" ด้วยใบเสร็จกรมสรรพากร (§82/4 · VAT พักที่ 11640)"
                             : $"[รอใบกำกับ §82/3] {doc.DocumentNumber} — ใบกำกับซื้อยังไม่ครบ ยังเคลมไม่ได้ (VAT พักที่ 11640)",
-                        IncomeAmount = VatableBase(doc),
+                        IncomeAmount = Thb(doc, VatableBase(doc)),
                         TaxRate = 7,
-                        TaxAmount = doc.VatAmount,
+                        TaxAmount = Thb(doc, doc.VatAmount),
                         DocumentId = doc.Id,
                         // ⚠️ ต้องมี side code — ไม่มี = RecalcVatTotals นับเข้า
                         // OutputVat ถ้าผู้ใช้ฝืนติ๊ก + export ตกฝั่งขาย
@@ -924,7 +928,8 @@ public partial class TaxService : ITaxService
                         // ต้องห้ามที่ตั้งเอง (b); ฝั่งเตือนมีตอนอนุมัติ/ตอนติ๊กแทน
                     }
                 }
-                var claimableVat = doc.VatAmount - prohibitedVat;
+                var claimableVat = Thb(doc, doc.VatAmount - prohibitedVat);
+                prohibitedVat = Thb(doc, prohibitedVat);   // P2-3: ยอดภาษีทุกบรรทัดของ ภ.พ.30 เป็นบาท (ตัวแปลงเดียวกับ JE)
 
                 // ----- Rule A: tax-invoice 6-month age check (§82/3) -----
                 // §82/3: ภาษีซื้อเคลมได้ภายใน 6 เดือนนับจากเดือนภาษีของใบกำกับ.
@@ -990,7 +995,7 @@ public partial class TaxService : ITaxService
                         TaxPayerName = doc.Contact?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = desc,
-                        IncomeAmount = VatableBase(doc),
+                        IncomeAmount = Thb(doc, VatableBase(doc)),
                         TaxRate = doc.Lines.Any(l => l.VatRate > 0) ? doc.Lines.Where(l => l.VatRate > 0).Max(l => l.VatRate) : 0,
                         TaxAmount = claimableVat,
                         DocumentId = doc.Id,
@@ -1177,9 +1182,9 @@ public partial class TaxService : ITaxService
                         Description = $"[ใบกำกับซื้อมาช้า — งวด {tpLabel}"
                             + (periodFiled ? " ยื่นแล้ว" : "") + "] "
                             + $"{d.DocumentNumber} · ติ๊ก \"ใช้\" เพื่อเคลมเดือนนี้ (§82/3 ภายใน 6 เดือน)",
-                        IncomeAmount = d.SubTotal,
+                        IncomeAmount = Thb(d, d.SubTotal),
                         TaxRate = taxRate,
-                        TaxAmount = claimable,
+                        TaxAmount = Thb(d, claimable),
                         DocumentId = d.Id,
                         IncomeTypeCode = "INPUT",
                         IsExcluded = true      // opt-in — ไม่กระทบยอดจนกว่านักบัญชีจะติ๊ก
@@ -1200,9 +1205,9 @@ public partial class TaxService : ITaxService
                               + "ภาษีขายเลื่อนมางวดนี้ไม่ได้ ต้องยื่น ภ.พ.30 \"เพิ่มเติม\" ของงวดนั้น"
                             : $"⚠️ [ขายงวด {tpLabel} ยังไม่อยู่ในรายงานงวดนั้น] {d.DocumentNumber} — "
                               + $"ให้สร้าง/สร้างรายงานงวด {tpLabel} ใหม่ก่อนยื่น",
-                        IncomeAmount = d.SubTotal,
+                        IncomeAmount = Thb(d, d.SubTotal),
                         TaxRate = taxRate,
-                        TaxAmount = d.VatAmount,
+                        TaxAmount = Thb(d, d.VatAmount),
                         DocumentId = d.Id,
                         IncomeTypeCode = "OUTPUT",
                         IsExcluded = true      // เตือนอย่างเดียว ไม่แตะยอดงวดนี้
@@ -1603,6 +1608,20 @@ public partial class TaxService : ITaxService
         // ฝ่ายค้านรอบสอง R2M-3/R2M-10: (1) นับเฉพาะ 50 ทวิ ที่ออกแล้ว (WhtCertFilingScope.Filed ตัวเดียว — ร่างยังไม่ใช่ภาษีที่ออกแทนจริง) ·
         // (2) บวกเฉพาะส่วนที่ "ยังไม่อยู่ในยอดบรรทัด" (ForeignServiceVat.BorneTaxOutsideLines — ใบที่คีย์ gross-up แล้วห้ามบวกซ้ำ)
         var pp36DocIds = docs.Select(d => d.Id).ToList();
+        // รอบ 203 ฝ่ายค้าน P1-2: ใบลด/เพิ่มหนี้ที่อ้างใบเจ้าของขยับภาษี (CountedVat รวมแล้วจาก GL) ⇒ ฐานต้องขยับตาม (บาท) ไม่งั้นอัตราในรายงานเพี้ยน
+        var noteNotIssued = Accounting.Helpers.DocumentStatusRules.NotIssued;
+        var noteBaseByOwner = pp36DocIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : (await _db.Documents.AsNoTracking()
+                    .Where(n => n.CompanyId == companyId && !n.IsDeleted
+                        && (n.DocumentType == DocumentType.CreditNote || n.DocumentType == DocumentType.DebitNote)
+                        && !noteNotIssued.Contains(n.Status) && n.Status != DocumentStatus.Voided
+                        && n.RelatedDocumentId != null && pp36DocIds.Contains(n.RelatedDocumentId.Value))
+                    .Select(n => new { Owner = n.RelatedDocumentId!.Value, n.DocumentType, n.SubTotal, n.ExchangeRate })
+                    .ToListAsync())
+                .GroupBy(n => n.Owner)
+                .ToDictionary(g => g.Key, g => g.Sum(n => (n.DocumentType == DocumentType.CreditNote ? -1m : 1m)
+                    * Accounting.Helpers.DocumentFx.ToBaht(n.SubTotal, n.ExchangeRate)));
         var filedCertStatuses = Accounting.Helpers.WhtCertFilingScope.Filed;
         var borneByDoc = pp36DocIds.Count == 0
             ? new Dictionary<Guid, (decimal Income, decimal Tax)>()
@@ -1630,7 +1649,8 @@ public partial class TaxService : ITaxService
                 : 0m;
             // E-4: ฐานแปลงบาทด้วยตัวแปลงเดียวกับ JE (DocumentFx) · ภาษี = ยอดที่ GL/รายการนำส่งถือ (บาทอยู่แล้ว)
             var baseAmount = Accounting.Helpers.DocumentFx.ToBaht(
-                Accounting.Helpers.ForeignServiceVat.Pp36Base(serviceValue, borneOutside), doc.ExchangeRate);
+                Accounting.Helpers.ForeignServiceVat.Pp36Base(serviceValue, borneOutside), doc.ExchangeRate)
+                + noteBaseByOwner.GetValueOrDefault(doc.Id);
             var vatBaht = row.CountedVat;
             report.Lines.Add(new TaxReportLine
             {
@@ -3512,14 +3532,15 @@ public partial class TaxService : ITaxService
             TaxPayerName = doc.Contact?.Name ?? "",
             TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
             Description = desc,
-            IncomeAmount = VatableBase(doc),
+            // รอบ 203 ฝ่ายค้าน P2-3: บาท (ตัวแปลงเดียวกับ JE และ main loop ของ GenerateVatReport)
+            IncomeAmount = Accounting.Helpers.DocumentFx.ToBaht(VatableBase(doc), doc.ExchangeRate),
             TaxRate = taxRate,
             // ฝั่งซื้อ: เคารพ §82/5 เหมือน main loop — เคลมเฉพาะ VAT ของบรรทัด
             // ที่เคลมได้ (เดิมดึงเข้ายอดเต็ม doc.VatAmount ⇒ ใบที่มีบรรทัดต้องห้าม
             // เข้ามาทางปุ่ม "ดึงเอกสาร" เคลมเกินสิทธิ์)
-            TaxAmount = isInput && doc.Lines != null && doc.Lines.Any(l => !l.IsVatClaimable)
+            TaxAmount = Accounting.Helpers.DocumentFx.ToBaht(isInput && doc.Lines != null && doc.Lines.Any(l => !l.IsVatClaimable)
                 ? doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount)
-                : doc.VatAmount,
+                : doc.VatAmount, doc.ExchangeRate),
             IncomeTypeCode = isInput ? "INPUT" : "OUTPUT",
             DocumentId = doc.Id
         };

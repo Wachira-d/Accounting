@@ -60,12 +60,14 @@ public class Pp36LifecycleGoldenDbTests
     /// <summary>ใบสำคัญจ่ายบริการต่างประเทศที่อนุมัติแล้ว (+ JE §83/6 ถ้า <paramref name="withJournal"/>) — JE seed ตรงผ่าน DbContext
     /// ทรงเดียวกับ AutoPost: Dr ค่าใช้จ่าย ฐาน · Dr 11640 VAT / Cr 21912 VAT · Cr ธนาคาร ฐาน (บาท)</summary>
     private static async Task<Document> SeedPvAsync(Accounting.Data.AccountingDbContext db, Seed s, string number, DateTime paidOn,
-        decimal baseAmt, decimal vat, bool withJournal, decimal fx = 1m, string currency = "THB")
+        decimal baseAmt, decimal vat, bool withJournal, decimal fx = 1m, string currency = "THB",
+        DocumentType type = DocumentType.PaymentVoucher, bool paid = true)
     {
         var doc = new Document
         {
-            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentNumber = number, DocumentType = DocumentType.PaymentVoucher,
-            Status = DocumentStatus.Paid, DocumentDate = paidOn, PaymentDate = paidOn, TaxPointDate = paidOn,
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentNumber = number, DocumentType = type,
+            Status = paid ? DocumentStatus.Paid : DocumentStatus.Approved, DocumentDate = paidOn,
+            PaymentDate = paid ? paidOn : null, TaxPointDate = paidOn,
             IsForeignService = true, SubTotal = baseAmt, VatAmount = vat, TotalAmount = baseAmt + vat,
             Currency = currency, ExchangeRate = fx, InputVatPostedAsUndue = true,
         };
@@ -305,5 +307,138 @@ public class Pp36LifecycleGoldenDbTests
         Assert.Empty(dash.Pp36AwaitingRecognition);          // ไม่มีอะไรให้รับรู้ (เดิมรับรู้ VatAmount ทั้งก้อน ⇒ 11640 ติดลบ)
         await Assert.ThrowsAsync<InvalidOperationException>(() => Svc(db).RecognizePp36InputVatAsync(
             s.CompanyId, Sep.Year, Sep.Month, null, "tester", null, Oct.AddDays(1)));
+    }
+
+    /// <summary>ใบลด/เพิ่มหนี้ของใบเจ้าของ ภ.พ.36 — JE ผูกเลขของใบลด/เพิ่มหนี้เอง (ทีม F2 E-7) ทรงเดียวกับ AutoPost</summary>
+    private static async Task SeedNoteAsync(Accounting.Data.AccountingDbContext db, Seed s, Document owner, string number, bool credit,
+        decimal baseAmt, decimal vat)
+    {
+        var note = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentNumber = number,
+            DocumentType = credit ? DocumentType.CreditNote : DocumentType.DebitNote, Status = DocumentStatus.Approved,
+            DocumentDate = owner.DocumentDate.AddDays(2), RelatedDocumentId = owner.Id, IsForeignService = true,
+            SubTotal = baseAmt, VatAmount = vat, TotalAmount = baseAmt + vat,
+        };
+        db.Documents.Add(note);
+        await db.SaveChangesAsync();
+        var je = new JournalEntry
+        {
+            CompanyId = s.CompanyId, EntryNumber = "JV-" + number, EntryDate = note.DocumentDate, Status = JournalEntryStatus.Posted,
+            JournalType = JournalType.Purchase, SourceDocumentId = note.Id, TotalDebit = baseAmt + vat, TotalCredit = baseAmt + vat,
+        };
+        // ใบลดหนี้ซื้อ: Dr ผู้รับเงิน ฐาน · Dr 21912 VAT / Cr ค่าใช้จ่าย ฐาน · Cr 11640 VAT — ใบเพิ่มหนี้กลับทิศ
+        je.Lines.Add(new JournalEntryLine { AccountId = s.Acc["11120"], DebitAmount = credit ? baseAmt : 0, CreditAmount = credit ? 0 : baseAmt, LineOrder = 1 });
+        je.Lines.Add(new JournalEntryLine { AccountId = s.Acc["21912"], DebitAmount = credit ? vat : 0, CreditAmount = credit ? 0 : vat, LineOrder = 2 });
+        je.Lines.Add(new JournalEntryLine { AccountId = s.Acc["52150"], DebitAmount = credit ? 0 : baseAmt, CreditAmount = credit ? baseAmt : 0, LineOrder = 3 });
+        je.Lines.Add(new JournalEntryLine { AccountId = s.Acc["11640"], DebitAmount = credit ? 0 : vat, CreditAmount = credit ? vat : 0, LineOrder = 4 });
+        db.JournalEntries.Add(je);
+        await db.SaveChangesAsync();
+    }
+
+    [Theory]
+    [InlineData(true, 343.56)]    // ใบลดหนี้ VAT 70 ก่อนนำส่ง ⇒ 413.56 − 70
+    [InlineData(false, 483.56)]   // ใบเพิ่มหนี้ VAT 70 ก่อนนำส่ง ⇒ 413.56 + 70
+    public async Task ฉ_ใบลดหรือเพิ่มหนี้ก่อนนำส่ง_ยอดนำส่งและรับรู้ตามGLสุทธิ_คงเหลือศูนย์(bool credit, double expected)
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var pi = await SeedPvAsync(db, s, "PI-G-CN", Sep.AddDays(3), 5908m, 413.56m, withJournal: true, type: DocumentType.PurchaseInvoice);
+        await SeedNoteAsync(db, s, pi, credit ? "CN-G-1" : "DN-G-1", credit, 1000m, 70m);
+        var want = (decimal)expected;
+
+        var dash = await Svc(db).GetDashboardAsync(s.CompanyId, 24);
+        Assert.Equal(want, Assert.Single(dash.Pending.Where(p => p.RemittanceType == "VatPp36")).Amount);
+        Assert.Equal(want, (await new TaxService(db).ComputePp36ReportAsync(s.CompanyId, Sep.Year, Sep.Month)).OutputVat);
+        var r = await Svc(db).RemitAsync(s.CompanyId, Remit(s, Sep, Sep.AddDays(20), "RD-N"), "tester");
+        Assert.Equal(want, r.Amount);
+        var rec = await Svc(db).RecognizePp36InputVatAsync(s.CompanyId, Sep.Year, Sep.Month, null, "tester", null, Oct.AddDays(2));
+        Assert.Equal(want, rec.Amount);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(0m, await BalanceAsync(check, s.CompanyId, "21912"));
+        Assert.Equal(0m, await BalanceAsync(check, s.CompanyId, "11640"));
+        Assert.Equal(want, await BalanceAsync(check, s.CompanyId, "11610"));
+    }
+
+    [Fact]
+    public async Task ช_ใบAนำส่งแล้ว_ใบBไม่มีJEงวดเดียวกัน_ซ่อมได้_แล้วขึ้นยอดค้างนำส่งเพิ่มเติม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var a = await SeedPvAsync(db, s, "PV-G-RA", Sep.AddDays(2), 1000m, 70m, withJournal: true);
+        await Svc(db).RemitAsync(s.CompanyId, Remit(s, Sep, Sep.AddDays(20), "RD-RA"), "tester");
+        var b = await SeedPvAsync(db, s, "PV-G-RB", Sep.AddDays(4), 2000m, 140m, withJournal: false);
+
+        // ด่านเครื่องมือซ่อมตัดสินต่อใบ (เดิมระดับงวด ⇒ ใบ B ถูกปฏิเสธว่า "งวดนำส่งแล้ว" ตลอดไป)
+        var docs = new DocumentService(db, new AccountingService(db), null!, null!, null!,
+            NullLogger<DocumentService>.Instance, null!, null!, null!);
+        var decision = await docs.GetMissingJournalStatusAsync(s.CompanyId, b.Id);
+        Assert.True(decision.Missing);
+        Assert.True(decision.CanRepair, decision.Message);
+        // ทิศตรงข้าม: ใบ A อยู่ในรายการนำส่งแล้ว (ตัวตรวจเดียวกับด่านยกเลิก/เครื่องมือซ่อม)
+        Assert.True((await Pp36Ledger.RemittedStatusAsync(db, s.CompanyId, new[] { a.Id })).ContainsKey(a.Id));
+        Assert.False((await Pp36Ledger.RemittedStatusAsync(db, s.CompanyId, new[] { b.Id })).ContainsKey(b.Id));
+
+        // ซ่อมแล้ว (JE ทรงเดียวกับ AutoPost) ⇒ ใบ B ขึ้นเป็นยอดค้างนำส่งเพิ่มเติมงวดเดิม
+        db.JournalEntries.Add(new JournalEntry
+        {
+            CompanyId = s.CompanyId, EntryNumber = "JV-RB", EntryDate = b.DocumentDate, Status = JournalEntryStatus.Posted,
+            SourceDocumentId = b.Id, TotalDebit = 2140m, TotalCredit = 2140m,
+            Lines = new List<JournalEntryLine>
+            {
+                new() { AccountId = s.Acc["52150"], DebitAmount = 2000m, LineOrder = 1 },
+                new() { AccountId = s.Acc["11640"], DebitAmount = 140m, LineOrder = 2 },
+                new() { AccountId = s.Acc["21912"], CreditAmount = 140m, LineOrder = 3 },
+                new() { AccountId = s.Acc["11120"], CreditAmount = 2000m, LineOrder = 4 },
+            },
+        });
+        await db.SaveChangesAsync();
+        var dash = await Svc(db).GetDashboardAsync(s.CompanyId, 24);
+        Assert.Equal(140m, Assert.Single(dash.Pending.Where(p => p.RemittanceType == "VatPp36")).Amount);
+    }
+
+    [Fact]
+    public async Task ซ_ใบซื้อเครดิตลงปลายเดือน_จ่ายเดือนถัดไป_งวดภพ36คือเดือนที่จ่าย_ใบที่นำส่งแล้วไม่ย้าย()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var aug25 = Sep.AddDays(-7);
+        var pi = await SeedPvAsync(db, s, "PI-G-CR", aug25, 5908m, 413.56m, withJournal: true, type: DocumentType.PurchaseInvoice, paid: false);
+        Assert.Null(pi.PaymentDate);
+
+        var tracked = await db.Documents.SingleAsync(d => d.Id == pi.Id && d.CompanyId == s.CompanyId);
+        Assert.True(await Pp36Ledger.StampFirstPaymentAsync(db, s.CompanyId, tracked, Sep.AddDays(9)));
+        await db.SaveChangesAsync();
+        Assert.False(await Pp36Ledger.StampFirstPaymentAsync(db, s.CompanyId, tracked, Sep.AddDays(20)));   // จ่ายครั้งที่สองไม่ย้ายงวด
+
+        var dash = await Svc(db).GetDashboardAsync(s.CompanyId, 24);
+        var item = Assert.Single(dash.Pending.Where(p => p.RemittanceType == "VatPp36"));
+        Assert.Equal((Sep.Year, Sep.Month), (item.PeriodYear, item.PeriodMonth));   // งวดที่จ่าย ไม่ใช่งวดวันที่ใบ
+
+        // ทิศตรงข้าม: ใบที่อยู่ในรายการนำส่งแล้วแต่ยังไม่มีวันจ่าย (ข้อมูลเดิม) ⇒ ไม่ย้ายงวด
+        var pi2 = await SeedPvAsync(db, s, "PI-G-CR2", Oct.AddDays(1), 1000m, 70m, withJournal: true, type: DocumentType.PurchaseInvoice, paid: false);
+        await Svc(db).RemitAsync(s.CompanyId, Remit(s, Oct, Oct.AddDays(5), "RD-CR2"), "tester");
+        var tracked2 = await db.Documents.SingleAsync(d => d.Id == pi2.Id && d.CompanyId == s.CompanyId);
+        Assert.False(await Pp36Ledger.StampFirstPaymentAsync(db, s.CompanyId, tracked2, Oct.AddMonths(1)));
+        Assert.Null(tracked2.PaymentDate);
+    }
+
+    [Fact]
+    public async Task ฌ_ภพ30_ใบUSDเคลมเป็นบาทเท่ากับGL_ใบบาทไม่เปลี่ยน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var usd = await SeedPvAsync(db, s, "PV-G-USD30", Sep.AddDays(5), 1000m, 70m, withJournal: true, fx: 36m, currency: "USD");
+        var thb = await SeedPvAsync(db, s, "PV-G-THB30", Sep.AddDays(6), 5908m, 413.56m, withJournal: true);
+        await Svc(db).RemitAsync(s.CompanyId, Remit(s, Sep, Sep.AddDays(20), "RD-FX"), "tester");
+        await Svc(db).RecognizePp36InputVatAsync(s.CompanyId, Sep.Year, Sep.Month, null, "tester", null, Oct.AddDays(1));
+        var pp30 = await new TaxService(db).ComputeVatReportAsync(s.CompanyId, Oct.Year, Oct.Month);
+        decimal Claimed(Guid id) => pp30.Lines.Where(l => l.DocumentId == id && l.IncomeTypeCode == "INPUT" && !l.IsExcluded).Sum(l => l.TaxAmount);
+        Assert.Equal(2520m, Claimed(usd.Id));      // = Dr 11610 ใน GL (เดิม 70)
+        Assert.Equal(413.56m, Claimed(thb.Id));    // ใบบาทไม่เปลี่ยนแม้แต่สตางค์
     }
 }

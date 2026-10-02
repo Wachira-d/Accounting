@@ -723,7 +723,9 @@
         const payDay = hist && hist.payDate ? Layout.toDateInput(new Date(hist.payDate)) : '';
         const rd = prompt('วันที่ในใบเสร็จกรมสรรพากร (YYYY-MM-DD) — วันที่ชำระ ภ.พ.36:', payDay);
         if (rd === null) return;
-        if (rd.trim() && isNaN(new Date(rd.trim()).getTime())) { Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ใช้ YYYY-MM-DD)', 'error'); return; }
+        // วันที่ใบเสร็จบังคับ (คำตัดสินข้อ 136 · ฝ่ายค้าน P2-2) — ค่าตั้งต้นคือวันที่จ่ายตอนนำส่ง แต่ต้องยืนยันตามใบเสร็จจริง
+        if (!rd.trim()) { Layout.toast('ต้องกรอกวันที่ในใบเสร็จกรมสรรพากร', 'error'); return; }
+        if (isNaN(new Date(rd.trim()).getTime())) { Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ใช้ YYYY-MM-DD)', 'error'); return; }
         const dateStr = prompt(
           'วันเคลมภาษีซื้อ (งวด ภ.พ.30 ที่จะเข้า)\n\n'
           + '• เว้นว่าง = วันที่ใบเสร็จกรมสรรพากร (ค่าเริ่มต้น — เดือนที่ชำระ ภ.พ.36)\n'
@@ -738,7 +740,7 @@
           const cid = Layout.getCompanyId();
           const res = await API.post(`/api/companies/${cid}/remittances/pp36/recognize`,
             { periodYear: year, periodMonth: month, recognizeDate, rdReceiptNumber: no.trim(),
-              rdReceiptDate: rd.trim() || null, remittanceId: remittanceId || null });
+              rdReceiptDate: rd.trim(), remittanceId: remittanceId || null });
           Layout.toast(res?.message || 'รับรู้ภาษีซื้อ ภ.พ.36 แล้ว', 'success', 9000);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'รับรู้ไม่สำเร็จ', 'error', 9000); }

@@ -1351,6 +1351,7 @@ public class ImportExportService : IImportExportService
                 + "ตรวจไฟล์นำเข้า (ยอดผิด หรือแถวนี้ถูกนำเข้าไปแล้ว) ก่อนนำเข้าใหม่");
 
         doc.PaidAmount += amount;
+        await Accounting.Helpers.Pp36Ledger.StampFirstPaymentAsync(_db, companyId, doc, date);   // คำตัดสินข้อ 137 — งวด ภ.พ.36 = เดือนที่จ่ายครั้งแรก
         // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ตัวตั้งเดียวกับเว็บ
         var settle = Accounting.Helpers.DocumentSettlementState.Apply(
             Accounting.Helpers.ForeignServiceVat.PayeeAmount(doc), doc.PaidAmount, doc.Status);

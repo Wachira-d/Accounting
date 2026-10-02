@@ -4292,15 +4292,20 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync();
         string? pp36Period = null;
         bool pp36Remitted = false, pp36Recognized = false;
-        if (doc.IsForeignService && doc.VatAmount > 0)
+        if (ForeignServiceVat.OwnsPp36(doc))
         {
-            // งวด ภ.พ.36 = เดือนที่จ่าย (กติกาเดียวกับยอดค้างนำส่ง/รับรู้ใน StatutoryRemittanceService)
-            var when = doc.PaymentDate ?? doc.DocumentDate;
+            // รอบ 203 ฝ่ายค้าน P1-3 (คำตัดสินข้อ 133): ตัดสิน "ต่อใบ" ด้วยตัวตรวจเดียวกับด่านยกเลิก/ปลดธง/ใบลดหนี้ (Pp36Ledger.RemittedStatusAsync —
+            // ใบนี้อยู่ในรายการนำส่งแล้ว/รับรู้แล้ว) · เดิมดู "งวดนี้มีการนำส่ง" ⇒ ใบ B ที่ไม่มี JE ในงวดที่ใบ A นำส่งแล้วซ่อมไม่ได้ตลอดไป (ทางตัน)
+            // ทั้งที่ใบ B ไม่เคยถูกนับ ⇒ ซ่อมได้แล้วขึ้นเป็นยอดค้าง "นำส่งเพิ่มเติม" งวดเดิม
+            var when = ForeignServiceVat.Pp36PeriodDate(doc.PaymentDate, doc.DocumentDate);
             pp36Period = $"{when.Month:D2}/{when.Year}";
-            pp36Remitted = await _db.Set<StatutoryRemittance>().AsNoTracking().AnyAsync(r =>
-                r.CompanyId == companyId && !r.IsDeleted && r.RemittanceType == "VatPp36"
-                && r.PeriodYear == when.Year && r.PeriodMonth == when.Month);
-            pp36Recognized = doc.InputVatBecameClaimableAt != null || !string.IsNullOrWhiteSpace(doc.Pp36RdReceiptNumber);
+            if ((await Accounting.Helpers.Pp36Ledger.RemittedStatusAsync(_db, companyId, new[] { doc.Id }))
+                    .TryGetValue(doc.Id, out var pp36St))
+            {
+                pp36Period = $"{pp36St.PeriodMonth:D2}/{pp36St.PeriodYear}";
+                pp36Recognized = pp36St.Recognized;
+                pp36Remitted = !pp36St.Recognized;
+            }
         }
         // ฝ่ายค้าน P1-A: ผลของการอนุมัติที่อยู่นอก AutoPost — มีข้อใดข้อหนึ่ง ⇒ เครื่องมือปฏิเสธ (ลง JE อย่างเดียวจะไม่ครบ)
         var lineFacts = await _db.DocumentLines.AsNoTracking()
@@ -10732,6 +10737,9 @@ public partial class DocumentService : IDocumentService
             }
 
             source.PaidAmount += settleAmount;
+            // คำตัดสินข้อ 137: ใบสำคัญจ่ายปิดหนี้ใบเจ้าของ ภ.พ.36 = การจ่ายครั้งแรก ⇒ งวด ภ.พ.36 ของใบต้นทาง = เดือนที่จ่าย
+            if (doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.CertificateInLieu)
+                await Accounting.Helpers.Pp36Ledger.StampFirstPaymentAsync(_db, companyId, source, doc.PaymentDate ?? doc.DocumentDate);
         }
         else if (isCreditNote)
         {
@@ -12975,6 +12983,8 @@ public partial class DocumentService : IDocumentService
             _db.Payments.Add(payment);
 
             doc.PaidAmount += request.Amount + paymentFee + settleNet;
+            // คำตัดสินข้อ 137: งวด ภ.พ.36 ของใบเจ้าของ = เดือนที่จ่ายครั้งแรก (ไม่ย้ายใบที่นำส่งแล้ว)
+            await Accounting.Helpers.Pp36Ledger.StampFirstPaymentAsync(_db, companyId, doc, request.PaymentDate);
             // รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดที่ต้องจ่าย = ยอดจ่ายผู้รับเงิน (ใบบริการต่างประเทศไม่รวม VAT ประเมินเอง)
             var paySettle = Accounting.Helpers.DocumentSettlementState.Apply(
                 ForeignServiceVat.PayeeAmount(doc), doc.PaidAmount, doc.Status);
@@ -13369,6 +13379,7 @@ public partial class DocumentService : IDocumentService
 
                     // Settle the document
                     d.PaidAmount += alloc.AllocatedAmount;
+                    await Accounting.Helpers.Pp36Ledger.StampFirstPaymentAsync(_db, companyId, d, request.PaymentDate);   // คำตัดสินข้อ 137
                     var allocSettle = Accounting.Helpers.DocumentSettlementState.Apply(
                         ForeignServiceVat.PayeeAmount(d), d.PaidAmount, d.Status);   // ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2)
                     d.BalanceDue = allocSettle.BalanceDue;

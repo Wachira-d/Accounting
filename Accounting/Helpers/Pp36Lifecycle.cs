@@ -101,6 +101,45 @@ public static class Pp36Lifecycle
         return (r.Date, null);
     }
 
+    /// <summary>วันเคลมพ้นกรอบ §82/3 (6 เดือนนับจากเดือนใบเสร็จ) — รอบ 203 ฝ่ายค้าน P2-2</summary>
+    public const string RuleClaimWindow = "PP36-CLAIM-82/3-WINDOW";
+    /// <summary>รายการนำส่งที่ยอดจ่ายน้อยกว่าหนี้ 21912 ของใบที่ผูก — รับรู้ไม่ได้จนกว่าจะแก้ (ฝ่ายค้าน P2-1)</summary>
+    public const string RuleUnderRemitted = "PP36-RECOGNIZE-UNDER-REMITTED";
+
+    /// <summary>
+    /// <b>ผลต่างของรายการนำส่ง</b> = ยอดที่จ่าย − หนี้ 21912 ปัจจุบันของใบที่ผูก (ตัวเดียวของคำเตือนนำส่งเกิน/ขาด และด่านรับรู้) ·
+    /// บวก = นำส่งเกิน · ลบ = นำส่งขาด · ±0.01 = ตรง (คืน 0)
+    /// </summary>
+    public static decimal RemittanceGap(decimal remittedAmount, decimal linkedLedgerPp36)
+    {
+        var gap = remittedAmount - linkedLedgerPp36;
+        return Math.Abs(gap) <= 0.01m ? 0m : gap;
+    }
+
+    /// <summary>ข้อความปฏิเสธการรับรู้ของรายการนำส่งที่จ่ายขาด (ข้อมูลเดิมที่ผูกด้วย migration · หรือใบเพิ่มหนี้หลังนำส่ง)</summary>
+    public static string UnderRemittedMessage(int periodYear, int periodMonth, decimal remitted, decimal linkedLedger)
+        => $"รายการนำส่ง ภ.พ.36 งวด {periodMonth:D2}/{periodYear + 543} จ่ายไป {remitted:N2} บาท แต่หนี้ 21912 ของใบที่ผูกอยู่ {linkedLedger:N2} บาท "
+           + $"(ขาด {linkedLedger - remitted:N2}) — รับรู้ภาษีซื้อไม่ได้จนกว่าจะแก้ (ห้ามเคลมภาษีซื้อของ VAT ที่ยังไม่ได้นำส่ง · คำตัดสินข้อ 133) · "
+           + "ตรวจกับใบเสร็จกรมสรรพากร ถ้าจ่ายขาดจริงให้ยื่นแบบเพิ่มเติมแล้วบันทึกการจ่ายส่วนขาดด้วยใบสำคัญทั่วไป (Dr 21912 / Cr ธนาคาร) "
+           + "แล้วแจ้งผู้ดูแลระบบให้ปรับยอดรายการนำส่ง";
+
+    /// <summary>
+    /// <b>ประทับ "วันจ่าย" ของใบเจ้าของ ภ.พ.36 ตอนบันทึกจ่ายครั้งแรกไหม</b> (คำตัดสินข้อ 137 · ฝ่ายค้าน P2-6) — งวด ภ.พ.36 = เดือนที่จ่ายเงินจริง (§83/6)
+    /// <para>ประทับเมื่อ: เป็นเจ้าของหนี้ ภ.พ.36 · ยังไม่มีวันจ่าย · <b>ยังไม่อยู่ในรายการนำส่ง</b> (ใบที่นำส่งแล้วห้ามย้ายงวด) · ใบซื้อเครดิต (PI/Expense)
+    /// ที่จ่ายเดือนถัดไปจึงเข้างวดที่จ่าย ไม่ใช่งวดวันที่เอกสาร (เดิม PaymentDate ไม่เคยถูกตั้ง ⇒ งวด = วันที่ใบ ⇒ เตือนกำหนดยื่น/เงินเพิ่มผิดเดือน)</para>
+    /// </summary>
+    public static bool ShouldStampPaymentDate(bool ownsPp36, DateTime? currentPaymentDate, bool inRemittance)
+        => ownsPp36 && currentPaymentDate == null && !inRemittance;
+
+    /// <summary>คำเตือน "จ่ายบางส่วนข้ามงวด" (คำตัดสินข้อ 137 — นับทั้งก้อนในงวดที่จ่ายครั้งแรก ไม่แบ่งสัดส่วนอัตโนมัติ) · null = จ่ายในงวดเดียว</summary>
+    public static string? SplitPaymentWarning(string documentNumber, IReadOnlyCollection<DateTime> paymentDates)
+    {
+        var months = paymentDates.Select(d => (d.Year, d.Month)).Distinct().OrderBy(m => m.Year).ThenBy(m => m.Month).ToList();
+        if (months.Count <= 1) return null;
+        return $"ใบ {documentNumber} จ่ายหลายงวด ({string.Join(", ", months.Select(m => $"{m.Month:D2}/{m.Year + 543}"))}) — ภ.พ.36 นับทั้งก้อนในงวดที่จ่ายครั้งแรก "
+               + $"({months[0].Month:D2}/{months[0].Year + 543}) · ผู้ทำบัญชีตรวจว่าต้องแบ่งยื่นตามสัดส่วนการจ่ายหรือไม่ (คำตัดสินข้อ 137)";
+    }
+
     /// <summary>ข้อความปฏิเสธ "งวด ภ.พ.30 ที่จะเคลมยื่น/ล็อกแล้ว" พร้อมทางไปต่อ</summary>
     public static string ClaimPeriodFiledMessage(DateTime claimDate)
         => $"รายงาน ภ.พ.30 งวด {claimDate:MM}/{claimDate.Year + 543} ยื่น/ล็อกแล้ว — เคลมภาษีซื้อ ภ.พ.36 เข้างวดนั้นไม่ได้ · "

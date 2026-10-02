@@ -330,6 +330,20 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
         var pp36Issues = BuildPp36Issues(pp36Rows, remits.Where(r => r.RemittanceType == "VatPp36"
             && InRange(r.PeriodYear, r.PeriodMonth)).ToList());
+        // คำตัดสินข้อ 137: จ่ายบางส่วนข้ามงวด ⇒ นับทั้งก้อนในงวดที่จ่ายครั้งแรก + เตือนให้ผู้ทำบัญชีตรวจ (คำนวณสดจากรายการจ่าย — ไม่เขียนธงลงใบ)
+        var pp36OwnerIds = pp36Rows.Select(r => r.Id).ToList();
+        if (pp36OwnerIds.Count > 0)
+        {
+            var payDates = (await _db.Payments.AsNoTracking()
+                    .Where(p => p.CompanyId == companyId && !p.IsDeleted && pp36OwnerIds.Contains(p.DocumentId))
+                    .Select(p => new { p.DocumentId, p.PaymentDate })
+                    .ToListAsync())
+                .GroupBy(p => p.DocumentId).ToDictionary(g => g.Key, g => g.Select(x => x.PaymentDate).ToList());
+            foreach (var r in pp36Rows)
+                if (payDates.TryGetValue(r.Id, out var dates)
+                    && Accounting.Helpers.Pp36Lifecycle.SplitPaymentWarning(r.DocumentNumber, dates) is string splitWarn)
+                    pp36Issues.Add(new Pp36IssueItem("SplitPaymentPeriods", r.PeriodDate.Year, r.PeriodDate.Month, r.Id, r.DocumentNumber, r.CountedVat, splitWarn));
+        }
 
         // ── ภ.พ.36: นำส่งแล้ว แต่ยังไม่ได้ "รับรู้ภาษีซื้อ" (ขั้นที่ 2) ──
         // ผู้ใช้เจอจริง: นำส่งเสร็จแล้วไปหาใบใน ภ.พ.30 ไม่เจอ — เพราะภาษีซื้อยังพักที่ 11640 จนกว่าจะกดรับรู้ (ได้ใบเสร็จกรมสรรพากร §82/4) ·
@@ -402,12 +416,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         foreach (var rem in pp36Remits)
         {
             var linkedLedger = rows.Where(r => r.Link?.StatutoryRemittanceId == rem.Id).Sum(r => r.Ledger.Pp36Payable);
-            var over = rem.Amount - linkedLedger;
-            if (over > 0.01m)
+            var over = Accounting.Helpers.Pp36Lifecycle.RemittanceGap(rem.Amount, linkedLedger);
+            if (over > 0m)
                 issues.Add(new Pp36IssueItem("OverRemitted", rem.PeriodYear, rem.PeriodMonth, null, null, over,
                     $"ภ.พ.36 งวด {rem.PeriodMonth:D2}/{rem.PeriodYear + 543} นำส่งไป {rem.Amount:N2} บาท แต่หนี้ 21912 ของใบที่ผูกกับการนำส่งนี้เหลือ "
                     + $"{linkedLedger:N2} บาท — นำส่งเกิน {over:N2} บาท (ใบถูกยกเลิก/ไม่มี JE หลังนำส่ง) · ตรวจกับใบเสร็จกรมสรรพากร แล้วขอคืน/บันทึกปรับปรุงด้วยใบสำคัญทั่วไป"));
-            else if (over < -0.01m)
+            else if (over < 0m)
                 // ข้อมูลก่อนรอบ 203 (ผูกใบเข้ารายการนำส่งเดิมด้วย migration) — ใบที่ผูกมีหนี้มากกว่าที่จ่ายจริง
                 issues.Add(new Pp36IssueItem("UnderRemitted", rem.PeriodYear, rem.PeriodMonth, null, null, -over,
                     $"ภ.พ.36 งวด {rem.PeriodMonth:D2}/{rem.PeriodYear + 543} นำส่งไป {rem.Amount:N2} บาท แต่หนี้ 21912 ของใบที่ผูกกับการนำส่งนี้ {linkedLedger:N2} บาท — "
@@ -1389,11 +1403,23 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             throw new Accounting.Helpers.BusinessRuleException(
                 "ต้องกรอกเลขที่ใบเสร็จกรมสรรพากรของการนำส่ง ภ.พ.36 ก่อนรับรู้ภาษีซื้อ — ไม่มีหลักฐาน = เคลมไม่ได้ (§82/4 ประกอบใบเสร็จ) · "
                 + "ดูเลขบนใบเสร็จที่ได้จากการชำระ แล้วกรอกในช่อง “เลขที่ใบเสร็จ”", Accounting.Helpers.Pp36Lifecycle.RuleNoReceipt);
-        var receiptDate = (rdReceiptDate ?? remittance.PayDate).Date;
+        // รอบ 203 ฝ่ายค้าน P2-2: วันที่ใบเสร็จ **บังคับ** (คำตัดสินข้อ 136 — เดิมตกไปวันที่จ่ายที่บันทึกตอนนำส่ง = ระบบแต่งหลักฐานเอง)
+        if (rdReceiptDate is not DateTime givenReceiptDate)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ต้องกรอกวันที่ในใบเสร็จกรมสรรพากรของการนำส่ง ภ.พ.36 — วันเคลมภาษีซื้อตั้งต้นจากวันนั้น (§82/4 ประกอบใบเสร็จ · คำตัดสินข้อ 129/136)",
+                Accounting.Helpers.Pp36Lifecycle.RuleNoReceipt);
+        var receiptDate = givenReceiptDate.Date;
         if (receiptDate < remittance.PayDate.Date)
             throw new Accounting.Helpers.BusinessRuleException(
                 $"วันที่ใบเสร็จ {receiptDate:dd/MM/yyyy} อยู่ก่อนวันที่ชำระ ภ.พ.36 ที่บันทึกไว้ ({remittance.PayDate:dd/MM/yyyy}) — ใบเสร็จออกเมื่อชำระแล้วเสมอ ตรวจวันที่อีกครั้ง",
                 Accounting.Helpers.Pp36Lifecycle.RuleNoReceipt);
+
+        // รอบ 203 ฝ่ายค้าน P2-1: รายการนำส่งที่จ่ายขาด (หนี้ 21912 ของใบที่ผูก > ยอดที่จ่าย) ⇒ รับรู้ไม่ได้ — ตัวคำนวณเดียวกับคำเตือนบนหน้านำส่ง
+        var remitLinkedLedger = periodRows.Where(r => r.Link?.StatutoryRemittanceId == remittance.Id).Sum(r => r.Ledger.Pp36Payable);
+        if (Accounting.Helpers.Pp36Lifecycle.RemittanceGap(remittance.Amount, remitLinkedLedger) < 0m)
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.Pp36Lifecycle.UnderRemittedMessage(periodYear, periodMonth, remittance.Amount, remitLinkedLedger),
+                Accounting.Helpers.Pp36Lifecycle.RuleUnderRemitted);
 
         var claimAcc = await ResolveAccountAsync(companyId, "11610")
             ?? throw new InvalidOperationException("ไม่พบผังบัญชี 11610 (ภาษีซื้อ ภ.พ.30)");
@@ -1437,6 +1463,14 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             if (claimError != null)
                 throw new Accounting.Helpers.BusinessRuleException(claimError, Accounting.Helpers.Pp36Lifecycle.RuleClaimBeforeReceipt);
             var claimAt = claimDate!.Value;
+            // รอบ 203 ฝ่ายค้าน P2-2: เพดาน §82/3 — ตัวตัดสินเดียวกับ ภ.พ.30 (TaxService.EvaluateClaimPeriod นับจากเดือนใบเสร็จ) · เกินแล้ว JE ย้าย 11610
+            // แต่ ภ.พ.30 ตัดทิ้ง (11610 ค้างโดยไม่มีวันเคลม) ⇒ ปฏิเสธก่อนลง JE
+            var (claimInWindow, claimWindowReason) = TaxService.EvaluateClaimPeriod(
+                TaxService.ClaimBasisDate(docs[0]), isInput: true, claimAt.Year, claimAt.Month);
+            if (!claimInWindow)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"{claimWindowReason} · เลือกวันเคลมภายใน 6 เดือนนับจากเดือนของใบเสร็จกรมสรรพากร",
+                    Accounting.Helpers.Pp36Lifecycle.RuleClaimWindow);
 
             // ห้ามเคลมเข้างวด ภ.พ.30 ที่ยื่น/ล็อกแล้ว (ปฏิเสธพร้อมทางไปต่อ)
             var filedStatuses = Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiledStatuses;
