@@ -4455,4 +4455,4 @@ _รอบ PP36 ทีม F2 — ยอดจ่ายผู้รับเง�
 - **E-7** ใบลด/เพิ่มหนี้ฝั่งซื้อของใบเจ้าของ ภ.พ.36: เจ้าหนี้ = ยอดจ่ายผู้รับเงิน · Dr/Cr 21912 · 11640 · นำส่ง/รับรู้แล้ว ⇒ ปฏิเสธ `RD-83/6-CN-AFTER-REMIT` (ข้อ 134)
 - **T-4b** `ForeignWhtPayeeCheck.UnclassifiedNoWithholdingWarning` (`RD-70-UNCLASSIFIED` · เตือนไม่บล็อก) · **E-12** §65 ตรี (11)(18) ผู้รับต่างประเทศ + (19) บวกกลับต้นทุนจริง ·
   **C-P2** ป้าย "มี JE แต่หักล้างเป็นศูนย์" แยกจาก "ไม่มี JE"
-- migration `ForeignServicePayeeBalanceMigration` (idempotent · แถวสูตรเดิมเท่านั้น · ใบจ่ายเกินไม่แตะ + log) · เทสต์ pure 2 คลาส · required_call_site +15 กติกา — commit <pending>_
+- migration `ForeignServicePayeeBalanceMigration` (idempotent · แถวสูตรเดิมเท่านั้น · ใบจ่ายเกินไม่แตะ + log) · เทสต์ pure 2 คลาส · required_call_site +15 กติกา — commit cc840773_
