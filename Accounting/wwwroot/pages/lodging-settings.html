@@ -117,7 +117,7 @@
             <div class="fld" style="grid-column:1/-1"><label>การจองจากเว็บสำเร็จเมื่อไร</label>
               <select class="form-input" name="guestConfirmMode" id="confirmModeSel" onchange="Page.renderConfirmModeInfo()"></select>
               <div class="hint" id="confirmModeInfo"></div></div>
-            <div class="fld slip-only"><label>ส่งสลิปภายใน (นาที)</label><input class="form-input" type="number" name="slipDeadlineMinutes" min="5" max="1440"><div class="hint">5–1440 นาที · ว่าง = 30 · ไม่ส่งในเวลา = ระบบยกเลิกการจองและปล่อยห้อง</div></div>
+            <div class="fld slip-only"><label>ส่งสลิปภายใน (นาที)</label><input class="form-input" type="number" name="slipDeadlineMinutes" min="5" max="1440"><div class="hint">5–1440 นาที · ว่าง = คงค่าเดิม (ที่พักใหม่ 30) · ไม่ส่งในเวลา = ระบบยกเลิกการจองและปล่อยห้อง</div></div>
             <div class="fld slip-only"><label><input type="checkbox" name="autoConfirmOnSlip"> ส่งสลิปแล้วยืนยันการจองทันที</label><div class="hint">ติ๊ก = แขกเห็น “จองสำเร็จ” ทันทีที่ส่งสลิป แล้วที่พักตรวจยอดภายหลัง (ปฏิเสธสลิป = การจองกลับเป็นรอชำระ) · ไม่ติ๊ก = แขกเห็น “ส่งคำขอจองสำเร็จ — รอที่พักตรวจสลิป” · ทั้งสองแบบยอดเงินบันทึกเมื่อพนักงานกดรับเงินตามสลิปเท่านั้น</div></div>
             <div class="fld"><label>มัดจำ % ของยอดรวม</label><input class="form-input" type="number" step="0.01" name="depositPercent" data-blank="0" min="0" max="100"></div>
             <div class="fld"><label>หรือมัดจำคงที่ต่อการจอง (บาท)</label><input class="form-input" type="number" step="0.01" name="depositFixedAmount" min="0"><div class="hint">มีค่า = ใช้แทน %</div></div>

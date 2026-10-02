@@ -98,8 +98,8 @@ public class LodgingGuestConfirmPolicyTests
     [InlineData(LodgingGuestConfirmMode.RequireSlip, 0, 5450, 5450)]   // มัดจำ 0 ⇒ ยอดที่ต้องโอน = ยอดรวม (ไม่ใช่ ฿0)
     [InlineData(LodgingGuestConfirmMode.RequireDeposit, 0, 5450, 0)]
     [InlineData(LodgingGuestConfirmMode.RequireDeposit, 2725, 5450, 2725)]
-    public void มัดจำที่ต้องชำระตามโหมด(LodgingGuestConfirmMode mode, decimal computed, decimal total, decimal expected)
-        => Assert.Equal(expected, LodgingGuestConfirmPolicy.QuotedDeposit(mode, computed, total));
+    public void มัดจำที่ต้องชำระตามโหมด(LodgingGuestConfirmMode mode, int computed, int total, int expected)
+        => Assert.Equal((decimal)expected, LodgingGuestConfirmPolicy.QuotedDeposit(mode, computed, total));
 
     [Fact]
     public void แขก_RequireSlip_รอชำระ_ถือห้องเท่ากำหนดส่งสลิป()
@@ -144,8 +144,9 @@ public class LodgingGuestConfirmPolicyTests
     [InlineData(false, true, true, 2725)]
     [InlineData(false, true, true, 0)]
     [InlineData(true, false, false, 0)]
-    public void ข้อมูลเดิม_ได้ผลเท่าสูตรเดิมทุกกรณี(bool legacyFlag, bool isStaff, bool confirmImmediately, decimal computedDeposit)
+    public void ข้อมูลเดิม_ได้ผลเท่าสูตรเดิมทุกกรณี(bool legacyFlag, bool isStaff, bool confirmImmediately, int computedDepositInt)
     {
+        decimal computedDeposit = computedDepositInt;
         // สูตรเดิม (LodgingService ก่อนรอบนี้)
         var oldDeposit = legacyFlag ? 0m : computedDeposit;
         var oldImmediate = legacyFlag || oldDeposit <= 0 || (isStaff && confirmImmediately);
@@ -242,7 +243,9 @@ public class LodgingGuestConfirmPolicyTests
     public void ปฏิเสธสลิป_ใบที่ยืนยันเพราะสลิป_กลับรอชำระ_ต้องมี_hold()
     {
         Assert.Equal(Now.AddHours(24), LodgingGuestConfirmPolicy.HoldAfterSlipRejected(LodgingReservationStatus.Confirmed, true, null, false, Now, 30));
-        Assert.Equal(Now.AddMinutes(30), LodgingGuestConfirmPolicy.HoldAfterSlipRejected(LodgingReservationStatus.Confirmed, true, null, true, Now, 30));
+        // ฝ่ายค้าน P3-2: ปิดรับสลิปด้วย ⇒ อย่างน้อย 24 ชม. (เดิมเท่ากำหนดส่งสลิป 30 นาที — แขกที่เคยเห็น "จองสำเร็จ" ไม่มีเวลาไปต่อ)
+        Assert.Equal(Now.AddHours(24), LodgingGuestConfirmPolicy.HoldAfterSlipRejected(LodgingReservationStatus.Confirmed, true, null, true, Now, 30));
+        Assert.Equal(Now.AddMinutes(1440), LodgingGuestConfirmPolicy.HoldAfterSlipRejected(LodgingReservationStatus.Confirmed, true, null, true, Now, 1440));
         // hold ที่ได้ต้องทำให้ตัวยกเลิกอัตโนมัติทำงานได้เมื่อหมด (ไม่กันห้องตลอดกาล)
         var hold = LodgingGuestConfirmPolicy.HoldAfterSlipRejected(LodgingReservationStatus.Confirmed, true, null, false, Now, 30);
         Assert.True(LodgingHoldRule.HoldLapsed(new LodgingHoldFacts(LodgingReservationStatus.Pending, hold, 0m, false, false), Now.AddHours(25)));
@@ -381,5 +384,83 @@ public class LodgingGuestConfirmPolicyTests
         var hold = Now.AddMinutes(30);
         Assert.True(LodgingHoldRule.HoldLapsed(new LodgingHoldFacts(LodgingReservationStatus.Pending, hold, 0m, false, false), Now.AddMinutes(31)));
         Assert.False(LodgingHoldRule.HoldLapsed(new LodgingHoldFacts(LodgingReservationStatus.Pending, hold, 0m, true, false), Now.AddMinutes(31)));
+    }
+
+    // ═══ ผลฝ่ายค้านรอบ 202 (ข้อ 128) ═══
+
+    [Fact]
+    public void P1_1_เช็คอิน_ใบยืนยันเพราะสลิปยังไม่รับเงิน_ปฏิเสธ()
+    {
+        var p = LodgingGuestConfirmPolicy.CheckInProblem(LodgingReservationStatus.Confirmed, LodgingGuestConfirmPolicy.SlipConfirmActor, 0m);
+        Assert.NotNull(p);
+        Assert.Contains("บันทึกรับเงินตามสลิป", p);
+        Assert.Contains("ปฏิเสธสลิป", p);
+    }
+
+    [Theory]
+    [InlineData("staff-1", 0)]          // พนักงานยืนยันเอง (เช่น Instant / ConfirmImmediately) — เช็คอินได้เหมือนเดิม
+    [InlineData("guest-slip", 2500)]    // ยืนยันจากสลิปแต่บันทึกรับเงินแล้ว
+    [InlineData(null, 0)]
+    public void P1_1_ทิศตรงข้าม_ใบยืนยันปกติหรือรับเงินแล้ว_เช็คอินได้(string? confirmedBy, int paid)
+        => Assert.Null(LodgingGuestConfirmPolicy.CheckInProblem(LodgingReservationStatus.Confirmed, confirmedBy, paid));
+
+    [Theory]
+    [InlineData(true, 0, true)]
+    [InlineData(true, 2500, false)]   // รับเงินแล้ว — เส้นคืนมัดจำปกติ (RefundAmount) ดูแล
+    [InlineData(false, 0, false)]     // ไม่มีสลิป — ไม่มีเงินค้าง
+    public void P1_1_ยกเลิกใบที่มีสลิปค้างตรวจ_ติดธงข้อ127(bool slip, int paid, bool expected)
+        => Assert.Equal(expected, LodgingGuestConfirmPolicy.CancelLeavesUnverifiedSlip(slip, paid));
+
+    [Fact]
+    public void P2_1_สลิปรอตรวจ_ไม่ชวนจ่ายออนไลน์ซ้ำ()
+    {
+        Assert.Equal(LodgingGuestConfirmPolicy.SlipPendingGuestNote, LodgingGuestConfirmPolicy.OnlinePaymentBlockedNote(true, 0m, false));
+        Assert.Equal(LodgingGuestConfirmPolicy.PaymentProblemGuestNote, LodgingGuestConfirmPolicy.OnlinePaymentBlockedNote(true, 0m, true));
+        // ทิศตรงข้าม: ไม่มีสลิป / รับเงินตามสลิปแล้ว ⇒ จ่ายออนไลน์ได้ตามเดิม
+        Assert.Null(LodgingGuestConfirmPolicy.OnlinePaymentBlockedNote(false, 0m, false));
+        Assert.Null(LodgingGuestConfirmPolicy.OnlinePaymentBlockedNote(true, 2500m, false));
+    }
+
+    [Fact]
+    public void P2_2_ปฏิเสธสลิปจากข้อมูลเก่า_ถูกปฏิเสธ()
+    {
+        Assert.NotNull(LodgingGuestConfirmPolicy.RejectSlipStaleProblem(Now, Now.AddMinutes(3), null, LodgingReservationStatus.Pending));
+        Assert.NotNull(LodgingGuestConfirmPolicy.RejectSlipStaleProblem(null, Now, LodgingReservationStatus.Confirmed, LodgingReservationStatus.CheckedIn));
+        // ทิศตรงข้าม: เห็นตรงกับปัจจุบัน / client รุ่นเก่าไม่ส่ง ⇒ ปฏิเสธสลิปได้
+        Assert.Null(LodgingGuestConfirmPolicy.RejectSlipStaleProblem(Now, Now, LodgingReservationStatus.Pending, LodgingReservationStatus.Pending));
+        Assert.Null(LodgingGuestConfirmPolicy.RejectSlipStaleProblem(null, Now, null, LodgingReservationStatus.CheckedIn));
+    }
+
+    [Fact]
+    public void P2_3_คิวสลิป_ตัวกรองเดียว_รวมใบยืนยันเพราะสลิป()
+    {
+        var f = LodgingGuestConfirmPolicy.AwaitingSlipReview.Compile();
+        Accounting.Models.Entities.LodgingReservation R(LodgingReservationStatus st, decimal paid, bool slip, string? by)
+            => new() { Status = st, DepositPaid = paid, SlipUploadedAt = slip ? Now : null, ConfirmedBy = by };
+        Assert.True(f(R(LodgingReservationStatus.Pending, 0m, true, null)));
+        Assert.True(f(R(LodgingReservationStatus.Confirmed, 0m, true, LodgingGuestConfirmPolicy.SlipConfirmActor)));
+        Assert.False(f(R(LodgingReservationStatus.Confirmed, 0m, true, "staff-1")));     // สลิปยอดค้างของใบยืนยันปกติ — ไม่ใช่คิวนี้ (เดิม)
+        Assert.False(f(R(LodgingReservationStatus.Pending, 2500m, true, null)));
+        Assert.False(f(R(LodgingReservationStatus.Pending, 0m, false, null)));
+    }
+
+    [Fact]
+    public void P2_5_เหตุผลยกเลิกอัตโนมัติตามโหมด_และตัวอ่านรู้จักทั้งสองข้อความ()
+    {
+        Assert.Equal(LodgingHoldRule.AutoExpireSlipReason, LodgingGuestConfirmPolicy.AutoExpireReasonFor(Slip));
+        Assert.Equal(LodgingHoldRule.AutoExpireReason, LodgingGuestConfirmPolicy.AutoExpireReasonFor(Deposit));
+        Assert.Equal(LodgingHoldRule.AutoExpireReason, LodgingGuestConfirmPolicy.AutoExpireReasonFor(null));
+        Assert.True(LodgingHoldRule.IsAutoExpiredHold(LodgingReservationStatus.Cancelled, LodgingHoldRule.AutoExpireSlipReason, 0m));
+        Assert.True(LodgingHoldRule.IsAutoExpiredHold(LodgingReservationStatus.Cancelled, "หมดเวลาชำระมัดจำ (ระบบยกเลิกอัตโนมัติ)", 0m));   // ข้อความที่ประทับไว้แล้วในฐาน
+        Assert.False(LodgingHoldRule.IsAutoExpiredHold(LodgingReservationStatus.Cancelled, "หมดเวลาส่งสลิป", 0m));
+        var v = LodgingGuestConfirmPolicy.GuestView(Facts(Slip, LodgingReservationStatus.Cancelled, cancelReason: LodgingHoldRule.AutoExpireSlipReason), Now);
+        Assert.Equal("หมดเวลาส่งสลิป — การจองถูกยกเลิก", v.StatusLabel);
+    }
+
+    [Fact]
+    public void P2_4_หัวหลักฐานการจอง_รอชำระไม่ใช่ยืนยันการจอง()
+    {
+        Assert.NotEqual(LodgingVoucherBuilder.Title, LodgingGuestConfirmPolicy.VoucherTitle(LodgingReservationStatus.Pending, LodgingVoucherBuilder.Title, LodgingVoucherBuilder.TitleEn).Th);
+        Assert.Equal(LodgingVoucherBuilder.Title, LodgingGuestConfirmPolicy.VoucherTitle(LodgingReservationStatus.Confirmed, LodgingVoucherBuilder.Title, LodgingVoucherBuilder.TitleEn).Th);
     }
 }

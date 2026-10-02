@@ -82,6 +82,7 @@ public partial class LodgingService
         var guestFacts = new LodgingGuestFacts(r.GuestConfirmMode, r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount,
             r.HoldExpiresAt, r.SlipUploadedAt != null, r.SlipUploadBlocked, r.ConfirmedBy, r.CancellationReason, r.PaymentProblemAt != null);
         var guestView = LodgingGuestConfirmPolicy.GuestView(guestFacts, DateTime.UtcNow);
+        var onlineBlockedNote = LodgingGuestConfirmPolicy.OnlinePaymentBlockedNote(r.SlipUploadedAt != null, r.DepositPaid, r.PaymentProblemAt != null);
         var res = new LodgingReservationResponse
         {
             ExtraGuests = guestTotals.ExtraGuests, TotalGuests = guestTotals.Total, GuestSummary = LodgingOccupancy.Summary(guestTotals),
@@ -133,10 +134,11 @@ public partial class LodgingService
             CanReopenForPayment = includeInternal && r.PaymentProblemAt != null
                 && LodgingHoldRule.IsAutoExpiredHold(r.Status, r.CancellationReason, r.DepositPaid),
             // เงินเข้าแล้วแต่ยืนยันไม่ได้ ⇒ ห้ามโชว์ปุ่ม/ยอดให้แขกจ่ายซ้ำ — บอกตรง ๆ ว่าได้รับเงินแล้วและที่พักจะติดต่อกลับ (ล้มดังที่ "คำตอบผู้เรียก")
-            OnlinePayableAmount = r.PaymentProblemAt != null ? null
+            // ฝ่ายค้าน P2-1 (ข้อ 128): มีสลิปรอตรวจ/เงินเข้าแต่ยืนยันไม่ได้ ⇒ ไม่ชวนจ่ายซ้ำ — ตัวตัดสินเดียวกับตัวคิดยอด gateway (PublicPaymentResolver)
+            OnlinePayableAmount = onlineBlockedNote != null ? null
                 : LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount),
-            OnlinePaymentNote = r.PaymentProblemAt != null ? PaymentProblemGuestNote
-                : LodgingAmounts.OnlinePaymentNote(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount, prop.AutoConfirmOnDeposit),
+            OnlinePaymentNote = onlineBlockedNote
+                ?? LodgingAmounts.OnlinePaymentNote(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount, prop.AutoConfirmOnDeposit),
             GuestConfirmMode = r.GuestConfirmMode, GuestStatusLabel = guestView.StatusLabel, GuestNote = guestView.Note,
             SlipRequired = guestView.SlipRequired, SlipDueAt = guestView.SlipDueAt, AmountToTransfer = guestView.AmountToTransfer,
             CanUploadSlip = guestView.CanUploadSlip,
@@ -324,7 +326,9 @@ public partial class LodgingService
             OccupancyPercent = sellable.Count == 0 ? 0 : Math.Round(100m * occupiedUnitIds.Count / sellable.Count, 1, MidpointRounding.AwayFromZero),
             ArrivalsToday = arrivals.Count, DeparturesToday = departures.Count, InHouse = inHouse.Count,
             PendingReservations = await _db.LodgingReservations.CountAsync(r => r.CompanyId == companyId && r.PropertyId == propertyId && r.Status == LodgingReservationStatus.Pending),
-            PendingSlips = await _db.LodgingReservations.CountAsync(r => r.CompanyId == companyId && r.PropertyId == propertyId && r.Status == LodgingReservationStatus.Pending && r.SlipUploadedAt != null && r.DepositPaid == 0),
+            // ฝ่ายค้าน P2-3: เงื่อนไขเดียวกับตัวกรอง "มีสลิปรอตรวจ" (รวมใบยืนยันเพราะสลิปที่ยังไม่บันทึกรับเงิน)
+            PendingSlips = await _db.LodgingReservations.Where(r => r.CompanyId == companyId && r.PropertyId == propertyId)
+                .Where(LodgingGuestConfirmPolicy.AwaitingSlipReview).CountAsync(),
             DirtyUnits = units.Count(u => u.HousekeepingStatus == LodgingHousekeepingStatus.VacantDirty),
             OutOfServiceUnits = units.Count(u => u.IsOutOfService),
             OpenHousekeepingTasks = await _db.LodgingHousekeepingTasks.CountAsync(t => t.CompanyId == companyId && t.PropertyId == propertyId && (t.Status == LodgingTaskStatus.Pending || t.Status == LodgingTaskStatus.Assigned || t.Status == LodgingTaskStatus.InProgress)),
@@ -336,21 +340,24 @@ public partial class LodgingService
         };
     }
 
-    /// <summary>ข้อความถึงแขกเมื่อเงินออนไลน์เข้าแล้วแต่ยืนยันการจองอัตโนมัติไม่ได้ (O-P1-4 · คำตัดสินข้อ 127: ไม่คืนเงินอัตโนมัติ — ที่พักตัดสิน)</summary>
-    internal const string PaymentProblemGuestNote =
-        "ได้รับการชำระเงินของท่านแล้ว แต่ระบบยืนยันห้องอัตโนมัติไม่ได้ (ห้องในช่วงนี้อาจเต็ม) — ที่พักจะติดต่อกลับเพื่อจัดห้อง/เลื่อนวัน หรือคืนเงิน "
-        + "กรุณาอย่าชำระซ้ำ";
 
-    private static LodgingReservationListItem ToListItem(LodgingReservation r) => new()
+    private static LodgingReservationListItem ToListItem(LodgingReservation r)
     {
-        Id = r.Id, ReservationNumber = r.ReservationNumber, Status = r.Status, Source = r.Source, GuestName = r.GuestName, GuestPhone = r.GuestPhone,
-        CheckInDate = r.CheckInDate, CheckOutDate = r.CheckOutDate, Nights = r.Nights, RoomCount = r.Rooms.Count, RoomSummary = RoomSummary(r),
-        UnitNumbers = string.Join(", ", r.Rooms.Where(x => x.Unit != null).Select(x => x.Unit!.Number)),
-        TotalAmount = r.TotalAmount, FolioTotal = r.FolioTotal, PaidAmount = r.PaidAmount, BalanceDue = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount),
-        DepositRequired = r.DepositRequired, HoldExpiresAt = r.HoldExpiresAt, HasSlip = r.SlipUploadedAt != null, CreatedAt = r.CreatedAt,
-        OverdueLabel = LodgingOverdueRule.Label(LodgingOverdueRule.Classify(r.Status, r.CheckOutDate, DateTime.UtcNow.AddHours(7).Date)),
-        HasPaymentProblem = r.PaymentProblemAt != null,
-    };
+        return new LodgingReservationListItem
+        {
+            Id = r.Id, ReservationNumber = r.ReservationNumber, Status = r.Status, Source = r.Source, GuestName = r.GuestName, GuestPhone = r.GuestPhone,
+            CheckInDate = r.CheckInDate, CheckOutDate = r.CheckOutDate, Nights = r.Nights, RoomCount = r.Rooms.Count, RoomSummary = RoomSummary(r),
+            UnitNumbers = string.Join(", ", r.Rooms.Where(x => x.Unit != null).Select(x => x.Unit!.Number)),
+            TotalAmount = r.TotalAmount, FolioTotal = r.FolioTotal, PaidAmount = r.PaidAmount, BalanceDue = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount),
+            DepositRequired = r.DepositRequired, HoldExpiresAt = r.HoldExpiresAt, HasSlip = r.SlipUploadedAt != null, CreatedAt = r.CreatedAt,
+            OverdueLabel = LodgingOverdueRule.Label(LodgingOverdueRule.Classify(r.Status, r.CheckOutDate, DateTime.UtcNow.AddHours(7).Date)),
+            HasPaymentProblem = r.PaymentProblemAt != null,
+            // ฝ่ายค้าน P2-3: ป้ายสลิปบนแดชบอร์ด (เข้าพักวันนี้/ออกวันนี้) จากตัวตัดสินเดียวกับรายการจอง
+            SlipStateLabel = LodgingGuestConfirmPolicy.StaffSlipLabel(new LodgingGuestFacts(r.GuestConfirmMode, r.Status, r.DepositRequired, r.DepositPaid,
+                r.TotalAmount, r.FolioTotal, r.PaidAmount, r.HoldExpiresAt, r.SlipUploadedAt != null, r.SlipUploadBlocked,
+                r.ConfirmedBy, r.CancellationReason, r.PaymentProblemAt != null)),
+        };
+    }
 
     public async Task<LodgingCalendar> GetCalendarAsync(Guid companyId, Guid propertyId, DateTime from, DateTime to)
     {

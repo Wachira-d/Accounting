@@ -62,10 +62,11 @@ public class LodgingPropertyDto
     /// <summary>รอบ 202 (คำตัดสินข้อ 128): การจองจากเว็บสำเร็จเมื่อไร — Instant · RequireSlip · RequireDeposit (ชื่อ enum) ·
     /// response = โหมดที่มีผลเสมอ (แถวเดิมที่ยังไม่มีโหมด ⇒ คิดจากธงเดิม) · request null = ตามธงเดิม (client รุ่นเก่า)</summary>
     public LodgingGuestConfirmMode? GuestConfirmMode { get; set; }
-    /// <summary>โหมด RequireSlip: ส่งสลิปภายในกี่นาที (5–1440 · นอกช่วง = ปฏิเสธพร้อมชื่อช่อง)</summary>
-    public int SlipDeadlineMinutes { get; set; } = LodgingGuestConfirmPolicy.DefaultSlipDeadlineMinutes;
-    /// <summary>โหมด RequireSlip: ส่งสลิปแล้วยืนยันการจองทันที (false = รอที่พักตรวจสลิป)</summary>
-    public bool AutoConfirmOnSlip { get; set; } = true;
+    /// <summary>โหมด RequireSlip: ส่งสลิปภายในกี่นาที (5–1440 · นอกช่วง = ปฏิเสธพร้อมชื่อช่อง) · request null = คงค่าเดิม (ฝ่ายค้าน P3-1) ·
+    /// response = ค่าที่บันทึกไว้เสมอ</summary>
+    public int? SlipDeadlineMinutes { get; set; }
+    /// <summary>โหมด RequireSlip: ส่งสลิปแล้วยืนยันการจองทันที (false = รอที่พักตรวจสลิป) · request null = คงค่าเดิม</summary>
+    public bool? AutoConfirmOnSlip { get; set; }
     public int PaymentHoldMinutes { get; set; } = 1440;
     public int OverbookingAllowance { get; set; }
     public int ChildMaxAge { get; set; } = 11;
@@ -1037,4 +1038,8 @@ public record LodgingCalendarDay(DateTime Date, int Available, decimal Rate, boo
 public sealed record LodgingRejectSlipRequest(
     string Reason,
     /// <summary>ปิดรับสลิปของใบนี้ไปเลย (พบสลิปปลอม) — แขกยังจ่ายออนไลน์/ติดต่อที่พักได้</summary>
-    bool BlockFurtherUploads = false);
+    bool BlockFurtherUploads = false,
+    /// <summary>ฝ่ายค้าน P2-2: เวลาส่งสลิปที่พนักงานเห็นตอนตัดสิน — แขกส่งใบใหม่หลังจากนั้น ⇒ ปฏิเสธ (null = ไม่ตรวจ · client รุ่นเก่า)</summary>
+    DateTime? SeenSlipUploadedAt = null,
+    /// <summary>สถานะการจองที่พนักงานเห็นตอนตัดสิน — เปลี่ยนไปแล้ว (เช็คอิน/รับเงิน) ⇒ ปฏิเสธ (null = ไม่ตรวจ)</summary>
+    LodgingReservationStatus? SeenStatus = null);

@@ -185,4 +185,47 @@ public class LodgingVoucherBuilderTests
         Assert.DoesNotContain("เช็คอินก่อนเวลา", html);
         Assert.DoesNotContain("เช็คเอาต์หลังเวลา", html);
     }
+
+    // ═══ ฝ่ายค้านรอบ 202 P2-4 (คำตัดสินข้อ 128): ใบที่ยังรอสลิป ห้ามดูเหมือนการจองสำเร็จ ═══
+
+    [Fact]
+    public void ใบรอสลิป_หัวไม่ใช่ยืนยันการจอง_มียอดที่ต้องโอนและกำหนดเวลา()
+    {
+        var r = Sample();
+        r.Status = LodgingReservationStatus.Pending;
+        r.PaidAmount = 0m; r.BalanceDue = 13550m;
+        r.GuestConfirmMode = LodgingGuestConfirmMode.RequireSlip;
+        r.SlipRequired = true; r.AmountToTransfer = 13550m;
+        r.SlipDueAt = new DateTime(2026, 12, 1, 5, 30, 0, DateTimeKind.Utc);
+        r.GuestStatusLabel = "ยังไม่สำเร็จ — รอสลิปโอนเงิน";
+        r.GuestNote = "การจองยังไม่สำเร็จ <x>";
+        var html = LodgingVoucherBuilder.BuildHtml(r);
+        Assert.DoesNotContain($"<h1>{LodgingVoucherBuilder.Title}</h1>", html);
+        Assert.Contains("ยังไม่ยืนยัน", html);
+        Assert.Contains("ยังไม่สำเร็จ — รอสลิปโอนเงิน", html);
+        Assert.Contains("ยอดที่ต้องโอน", html);
+        Assert.Contains("01/12/2569 12:30", html);   // เวลาไทย · พ.ศ. ตามเอกสารนี้
+        Assert.Contains("การจองยังไม่สำเร็จจนกว่าจะส่งสลิป", html);
+        Assert.Contains("&lt;x&gt;", html);
+        Assert.DoesNotContain("<x>", html);
+        Assert.DoesNotContain("มัดจำที่ต้องชำระ", html);
+        foreach (var word in LodgingVoucherBuilder.ForbiddenTitleWords)
+            Assert.DoesNotContain(word, html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ใบยืนยันแล้ว_หัวยืนยันการจองเหมือนเดิม_ไม่มีข้อความรอสลิป()
+    {
+        var r = Sample();
+        r.GuestStatusLabel = "ยืนยันแล้ว";
+        var html = LodgingVoucherBuilder.BuildHtml(r);
+        Assert.Contains($"<h1>{LodgingVoucherBuilder.Title}</h1>", html);
+        Assert.DoesNotContain("ยอดที่ต้องโอน", html);
+        Assert.DoesNotContain("จนกว่าจะส่งสลิป", html);
+        // ใบรอมัดจำแบบเดิม (ไม่ต้องส่งสลิป): ยังพิมพ์ "มัดจำที่ต้องชำระ" ตามเดิม แต่หัวเป็นคำขอจอง
+        r.Status = LodgingReservationStatus.Pending;
+        var pending = LodgingVoucherBuilder.BuildHtml(r);
+        Assert.Contains("มัดจำที่ต้องชำระ", pending);
+        Assert.DoesNotContain($"<h1>{LodgingVoucherBuilder.Title}</h1>", pending);
+    }
 }

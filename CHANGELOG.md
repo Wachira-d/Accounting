@@ -4436,3 +4436,11 @@ _รอบ 202 ทีม LC (2026-10-02 · คำตัดสินข้อ 128
   คิว "มีสลิปรอตรวจ" + ปุ่ม "บันทึกรับเงินตามสลิป" · แขกเปิดหน้าการจองหลังหมดเวลา ⇒ ExpireHolds ก่อน · ไม่แจ้งเจ้าของ "จองใหม่" ของใบที่ยังรอสลิป
 - ข้อมูลเดิม: โหมด NULL ⇒ อ่านธงเดิม (ไม่ backfill) · เทสต์ pure 40+ เคส (รวมเทียบสูตรเดิมทุก combination) + Db 3 เคส · sim `lodging_slip_confirm_sim.js` ·
   required_call_site +10 กติกา (ห้าม `prop.ConfirmWithoutDeposit ||` · ห้ามแตะยอดเงินในเส้นสลิป) — commit 2b48c811_
+
+_รอบ 202 ทีม LC รอบสอง — แก้ผลฝ่ายค้านบนงานข้อ 128 (2b48c811):
+- **P1-1** ใบยืนยันเพราะสลิป (ยังไม่รับเงิน) เช็คอินไม่ได้ (`LodgingGuestConfirmPolicy.CheckInProblem` · LODGING-SLIP-UNVERIFIED · ตรวจซ้ำใต้ล็อกหลัง reload) · ยกเลิก/no-show
+  ใบที่มีสลิปค้างตรวจ ⇒ `FlagPaymentProblemAsync` (ข้อ 127) ไม่ประทับยอดคืน
+- **P2-1** สลิปรอตรวจ ⇒ ปิดจ่ายออนไลน์ทั้งหน้าแขกและตัวคิดยอด gateway (`OnlinePaymentBlockedNote`) · หน้าแขกแสดงข้อความ "อย่าชำระซ้ำ" (เดิมข้อความเงินเข้าแต่ยืนยันไม่ได้ก็ไม่ถูกแสดง)
+- **P2-2** ปฏิเสธสลิป: ล็อกการจอง → ที่พัก + `SeenSlipUploadedAt`/`SeenStatus` (LODGING-SLIP-STALE) · **P2-3** `AwaitingSlipReview` expression เดียวของคิวและตัวนับ + ป้ายบนแดชบอร์ด ·
+  **P2-4** หลักฐานการจองใบรอชำระ/รอสลิป · **P2-5** `LodgingHoldRule.AutoExpireSlipReason` + `AutoExpireReasonFor` · **P3-1** DTO nullable คงค่าเดิม · **P3-2** hold ≥ 24 ชม.
+- เทสต์ pure +9 Fact/+2 Theory · voucher +2 · Db +1 (+ stale ในเคสเดิม) · required_call_site +9 กติกา/ปรับ 2 — commit <pending>_

@@ -108,7 +108,17 @@ public class LodgingSlipConfirmDbTests
         var item = Assert.Single(queue.Items.Where(x => x.Id == created.Id));
         Assert.Equal("ยืนยันจากสลิป · ยังไม่บันทึกรับเงิน", item.SlipStateLabel);
 
-        var rejected = await svc.RejectSlipAsync(cid, created.Id, new LodgingRejectSlipRequest("ยอดไม่ตรง"), "staff-1");
+        // ฝ่ายค้าน P2-2: พนักงานตัดสินจากข้อมูลเก่า (เห็นสลิปก่อนหน้า / สถานะเดิม) ⇒ ปฏิเสธพร้อมข้อความ ไม่แตะแถว
+        var slipAt = (await db.LodgingReservations.AsNoTracking().SingleAsync(r => r.Id == created.Id && r.CompanyId == cid)).SlipUploadedAt!.Value;
+        var stale = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.RejectSlipAsync(cid, created.Id,
+            new LodgingRejectSlipRequest("ยอดไม่ตรง", SeenSlipUploadedAt: slipAt.AddMinutes(-5)), "staff-1"));
+        Assert.Equal(LodgingGuestConfirmPolicy.RejectSlipStaleRuleCode, stale.RuleCode);
+        var staleStatus = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.RejectSlipAsync(cid, created.Id,
+            new LodgingRejectSlipRequest("ยอดไม่ตรง", SeenStatus: LodgingReservationStatus.Pending), "staff-1"));
+        Assert.Equal(LodgingGuestConfirmPolicy.RejectSlipStaleRuleCode, staleStatus.RuleCode);
+
+        var rejected = await svc.RejectSlipAsync(cid, created.Id,
+            new LodgingRejectSlipRequest("ยอดไม่ตรง", SeenSlipUploadedAt: slipAt, SeenStatus: LodgingReservationStatus.Confirmed), "staff-1");
         Assert.NotNull(rejected);
         using (var check = DbTestDatabase.TryCreateContext()!)
         {
@@ -174,5 +184,43 @@ public class LodgingSlipConfirmDbTests
         Assert.Equal(LodgingReservationStatus.Pending, staffPending.Status);
         Assert.False(staffPending.SlipRequired);
         Assert.InRange(staffPending.HoldExpiresAt!.Value, DateTime.UtcNow.AddHours(23), DateTime.UtcNow.AddHours(25));
+    }
+
+    /// <summary>ฝ่ายค้าน P1-1: ใบยืนยันเพราะสลิป (ยังไม่บันทึกรับเงิน) เช็คอินไม่ได้ · ยกเลิกแล้วติดธงข้อ 127 (เงินตามสลิปอาจต้องคืน) ไม่ประทับยอดคืน ·
+    /// ทิศตรงข้าม: ใบที่พนักงานยืนยันเองเช็คอินได้เหมือนเดิม</summary>
+    [Fact]
+    public async Task ใบยืนยันเพราะสลิป_เช็คอินไม่ได้_ยกเลิกแล้วติดธง_ใบพนักงานยืนยันเช็คอินได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, pid, rtId, siteId) = await SeedAsync(db, autoConfirmOnSlip: true);
+        var svc = new LodgingService(db, NullLogger<LodgingService>.Instance, null!);
+        var unitId = await db.LodgingUnits.Where(u => u.CompanyId == cid && u.RoomTypeId == rtId).Select(u => u.Id).SingleAsync();
+
+        var guest = await svc.CreateReservationAsync(cid, pid, GuestRequest(rtId), LodgingReservationSource.Web, "storefront-guest", siteId);
+        var token = (await db.LodgingReservations.AsNoTracking().SingleAsync(r => r.Id == guest.Id && r.CompanyId == cid)).PublicToken;
+        await svc.UploadSlipByTokenAsync(cid, siteId, token, PngSlip(), null);
+        var blocked = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.CheckInAsync(cid, guest.Id,
+            new LodgingCheckInRequest(new List<LodgingAssignUnitRequest> { new(guest.Rooms[0].Id, unitId) }), "staff-1"));
+        Assert.Equal(LodgingGuestConfirmPolicy.CheckInRuleCode, blocked.RuleCode);
+
+        var cancelled = await svc.CancelByTokenAsync(cid, siteId, token, new LodgingCancelRequest("เปลี่ยนแผน"));
+        Assert.Equal(LodgingReservationStatus.Cancelled, cancelled!.Status);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var row = await check.LodgingReservations.AsNoTracking().SingleAsync(r => r.Id == guest.Id && r.CompanyId == cid);
+            Assert.NotNull(row.PaymentProblemAt);                         // ธงข้อ 127 ให้พนักงานตัดสินเรื่องเงินตามสลิป
+            Assert.Equal(0m, row.RefundAmount);                            // ไม่ประทับยอดคืนเอง
+            Assert.Equal(0m, row.DepositPaid);
+        }
+
+        // ทิศตรงข้าม: พนักงานรับจองทางโทรศัพท์และยืนยันเอง (เข้าพักวันนี้) ⇒ เช็คอินได้ตามเดิม
+        var today = DateTime.UtcNow.AddHours(7).Date;
+        var staff = await svc.CreateReservationAsync(cid, pid, new LodgingCreateReservationRequest(today, today.AddDays(1),
+            new List<LodgingQuoteRoomRequest> { new(rtId, 2) }, "แขกหน้าเคาน์เตอร์", null, "0833333333", ConfirmImmediately: true),
+            LodgingReservationSource.WalkIn, "staff-1");
+        var checkedIn = await svc.CheckInAsync(cid, staff.Id,
+            new LodgingCheckInRequest(new List<LodgingAssignUnitRequest> { new(staff.Rooms[0].Id, unitId) }), "staff-1");
+        Assert.Equal(LodgingReservationStatus.CheckedIn, checkedIn.Status);
     }
 }

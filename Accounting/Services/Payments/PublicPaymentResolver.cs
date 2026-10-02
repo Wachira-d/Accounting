@@ -73,12 +73,14 @@ public class PublicPaymentResolver : IPublicPaymentResolver
             {
                 x.Id, x.ReservationNumber, x.Status, x.GuestEmail, x.GuestPhone,
                 x.DepositRequired, x.DepositPaid, x.TotalAmount, x.FolioTotal, x.PaidAmount,
+                HasSlip = x.SlipUploadedAt != null, HasPaymentProblem = x.PaymentProblemAt != null,
             })
             .FirstOrDefaultAsync(ct);
         if (r == null) return null;
 
-        var due = LodgingAmounts.OnlinePayableAmount(
-            r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount);
+        // ฝ่ายค้านรอบ 202 P2-1 (ข้อ 128): สลิปรอตรวจ/เงินเข้าแต่ยืนยันไม่ได้ ⇒ ไม่รับเงินออนไลน์ซ้ำ — ตัวตัดสินเดียวกับหน้าแขก (MapAsync)
+        var due = LodgingGuestConfirmPolicy.OnlinePaymentBlockedNote(r.HasSlip, r.DepositPaid, r.HasPaymentProblem) != null ? null
+            : LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount);
 
         var what = r.Status == LodgingReservationStatus.Pending && r.DepositRequired > 0.005m
             ? "มัดจำการจอง" : "ค่าที่พัก";
