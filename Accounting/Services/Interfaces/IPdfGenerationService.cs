@@ -13,7 +13,7 @@ public interface IPdfGenerationService
 
     /// <summary>Template-preview HTML (sample data) for a template or a
     /// document type — powers the templates gallery thumbnails.</summary>
-    Task<string> GeneratePreviewHtmlAsync(Guid companyId, Guid? templateId, string? documentType, string? language);
+    Task<string> GeneratePreviewHtmlAsync(Guid companyId, Guid? templateId, string? documentType, string? language, bool copyPrint = false);
 
     /// <summary>Preview HTML from an unsaved template (the live editor form)
     /// so ticks/colours/layout reflect instantly without saving.</summary>

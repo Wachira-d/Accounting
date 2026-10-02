@@ -191,11 +191,13 @@ public class DocumentTemplateController : ControllerBase
     /// type — used for the gallery thumbnails. Works without real documents.</summary>
     [HttpGet("preview-html")]
     public async Task<ActionResult> PreviewHtml(Guid companyId,
-        [FromQuery] Guid? templateId, [FromQuery] string? documentType, [FromQuery] string? language)
+        [FromQuery] Guid? templateId, [FromQuery] string? documentType, [FromQuery] string? language,
+        [FromQuery] bool copy = false)
     {
         try
         {
-            var html = await _pdfService.GeneratePreviewHtmlAsync(companyId, templateId, documentType, language);
+            // copy=true ⇒ ตัวอย่างแบบ "สำเนา" (ลายน้ำ/ป้ายมุมตามตั้งค่า) — เดิมพรีวิวเป็นต้นฉบับเสมอ ผู้ใช้จึงไม่เคยเห็นผลของตัวเลือกฝั่งสำเนา
+            var html = await _pdfService.GeneratePreviewHtmlAsync(companyId, templateId, documentType, language, copy);
             return Content(html, "text/html; charset=utf-8");
         }
         catch (Exception ex)

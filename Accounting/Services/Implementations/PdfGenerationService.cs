@@ -319,7 +319,7 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// the company has no real documents and no saved template yet (falls back
     /// to an in-memory default for the type).
     /// </summary>
-    public async Task<string> GeneratePreviewHtmlAsync(Guid companyId, Guid? templateId, string? documentType, string? language)
+    public async Task<string> GeneratePreviewHtmlAsync(Guid companyId, Guid? templateId, string? documentType, string? language, bool copyPrint = false)
     {
         DocumentTemplate template;
         if (templateId.HasValue)
@@ -339,7 +339,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
-        return BuildPreviewHtml(company, settings, template, language, await IsFreeTierAsync(companyId));
+        return BuildPreviewHtml(company, settings, template, language, await IsFreeTierAsync(companyId), copyPrint);
     }
 
     /// <summary>
@@ -2767,7 +2767,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     }
 
     private string BuildPreviewHtml(Company company, CompanySettings? settings, DocumentTemplate template, string? lang,
-        bool showFreeTierCredit = false)
+        bool showFreeTierCredit = false, bool copyPrint = false)
     {
         // Render the preview through the SAME path real documents use, so every
         // toggle (show company/contact fields, line columns, summary rows,
@@ -2841,7 +2841,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             PaymentTerms = sampleTerms,
             CreditDays = sampleCreditDays,
         };
-        return BuildDocumentHtml(doc, company, settings, template, null, lang,
+        // ตัวอย่างแบบสำเนา: ส่งข้อความ "สำเนา" ทางเดียวกับการพิมพ์สำเนาจริง (ป้ายจาก DocumentLabels ตามภาษาเอกสาร) ⇒ ลายน้ำ/ป้ายมุมตาม CopyLabelPosition
+        var copyWatermark = copyPrint
+            ? Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang ?? template.Language).CopyDuplicate
+            : null;
+        return BuildDocumentHtml(doc, company, settings, template, copyWatermark, lang,
             showFreeTierCredit: showFreeTierCredit);
     }
 
