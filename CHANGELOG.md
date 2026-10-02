@@ -4372,4 +4372,4 @@ _รอบ 202 ทีม LS (2026-10-02 · หน้าตั้งค่าท�
 - **120** ป้าย "Overbooking ได้กี่ห้อง (ต่อประเภทห้อง)" · **121** early/late hours → `Helpers/LodgingStayConditions` บนหลักฐานการจอง (`StayConditions`) — /lodging/info ค้างให้ทีม O (ไฟล์ของทีมนั้น)
 - **123** เตียงเสริมต่อประเภทห้อง: ติ๊ก "เพิ่มเตียงเสริม/คนเสริมได้" ⇒ ต้องมีจำนวน ≥ 1 + ราคาต่อคน/คืน (`LodgingSettingsRules.NormalizeExtraBed` · `LODGING-EXTRA-BED`) · ช่องล็อกเมื่อไม่ติ๊ก · การ์ด `ExtraBedSummary` · **124** ป้ายความจุ "เด็ก/ทารกไม่นับ"
 - `tools/settings_reader_check.py`: `d` ที่ประกาศเป็นชนิดคำขอ (DTO) ไม่นับเป็นผู้อ่าน (เดิม `Math.Max(0, d.EarlyCheckInHours)` ใน Apply ทำให้ค่าตั้งที่ไม่มีผู้อ่านหลุด) · `d =>` ของ entity ยังนับ · self-test + negative จริง · baseline ไม่เพิ่มแถว
-- เทสต์ `LodgingSettingsRound202Tests` · `LodgingVoucherBuilderTests` +2 · sim ทิศที่ 5 · required_call_site +9 แถว — commit <pending>_
+- เทสต์ `LodgingSettingsRound202Tests` · `LodgingVoucherBuilderTests` +2 · sim ทิศที่ 5 · required_call_site +9 แถว — commit 7b83b697_
