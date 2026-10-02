@@ -443,7 +443,7 @@ P2-3 คิว/ตัวนับเงื่อนไขเดียว · P2-4
 
 _Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LC · คำตัดสินข้อ 128 — commit 2b48c811)_
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LC รอบสอง ผลฝ่ายค้าน — commit <pending>)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LC รอบสอง ผลฝ่ายค้าน — commit f9addc67)_
 
 _Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — commit e26a6bb3)_
 

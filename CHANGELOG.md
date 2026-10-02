@@ -4443,4 +4443,4 @@ _รอบ 202 ทีม LC รอบสอง — แก้ผลฝ่าย�
 - **P2-1** สลิปรอตรวจ ⇒ ปิดจ่ายออนไลน์ทั้งหน้าแขกและตัวคิดยอด gateway (`OnlinePaymentBlockedNote`) · หน้าแขกแสดงข้อความ "อย่าชำระซ้ำ" (เดิมข้อความเงินเข้าแต่ยืนยันไม่ได้ก็ไม่ถูกแสดง)
 - **P2-2** ปฏิเสธสลิป: ล็อกการจอง → ที่พัก + `SeenSlipUploadedAt`/`SeenStatus` (LODGING-SLIP-STALE) · **P2-3** `AwaitingSlipReview` expression เดียวของคิวและตัวนับ + ป้ายบนแดชบอร์ด ·
   **P2-4** หลักฐานการจองใบรอชำระ/รอสลิป · **P2-5** `LodgingHoldRule.AutoExpireSlipReason` + `AutoExpireReasonFor` · **P3-1** DTO nullable คงค่าเดิม · **P3-2** hold ≥ 24 ชม.
-- เทสต์ pure +9 Fact/+2 Theory · voucher +2 · Db +1 (+ stale ในเคสเดิม) · required_call_site +9 กติกา/ปรับ 2 — commit <pending>_
+- เทสต์ pure +9 Fact/+2 Theory · voucher +2 · Db +1 (+ stale ในเคสเดิม) · required_call_site +9 กติกา/ปรับ 2 — commit f9addc67_
