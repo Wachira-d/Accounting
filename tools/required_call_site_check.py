@@ -5256,6 +5256,81 @@ RULES += [
 ]
 
 
+# ── รอบ 203 ทีม F3 (PP36_REVIEW E-2..E-10 · T-2 · คำตัดสินข้อ 129, 132–136): วงจรนำส่ง/รับรู้ ภ.พ.36 ──
+# ทุกเส้นคัดใบด้วยตัวโหลด/ตัวตัดสินเดียว (Pp36Ledger + Pp36Lifecycle + ForeignServiceVat.OwnsPp36) — ใบต้องมี Cr 21912 ใน GL จริง ·
+# รับรู้เฉพาะใบที่อยู่ในรายการนำส่ง · วันเคลม = วันใบเสร็จ RD ผ่าน TaxService.ClaimBasisDate · ด่านแก้ใบหลังนำส่งทุกทางเข้า (pure ทดสอบใน Pp36LifecycleTests ·
+# เส้นจริงใน Db/Pp36LifecycleGoldenDbTests)
+_PP36_WHY = "รอบ 203 ทีม F3 (ภ.พ.36): "
+STATREM = "Services/Implementations/StatutoryRemittanceService.cs"
+RULES += [
+    dict(file=STATREM, method="RecognizePp36InputVatAsync",
+         must=["Pp36Ledger.LoadDocsAsync(", "Pp36DocState.RemittedAwaitingRecognition", "Ledger.UndueInputVat",
+               "TaxService.ClaimBasisDate(", "Pp36Lifecycle.ResolveClaimDate(", "Pp36Lifecycle.RuleNoReceipt",
+               "TaxFilingLockPolicy.DeclaredOrFiledStatuses", "RecognizedJournalEntryId = je.Id", "ChangeTracker.Clear("],
+         must_re=[r"if\s*\(\s*claimError\s*!=\s*null\s*\)\s*throw\b", r"if\s*\(\s*claimPeriodClosed\s*\)\s*throw\b"],
+         call_args=[("CreateJournalEntryRequest(", "claimAt")],
+         before=[("Pp36Lifecycle.ResolveClaimDate(", "CreateJournalEntryAsync("),
+                 ("DeclaredOrFiledStatuses", "CreateJournalEntryAsync("),
+                 ("ExecuteSqlRawAsync(", "CreateJournalEntryAsync(")],
+         forbid=["SupplierTaxInvoiceDate", "d.VatAmount)", "Sum(d => d.VatAmount"],
+         why=_PP36_WHY + "E-2/E-3/E-5 คำตัดสินข้อ 129/133/136 — รับรู้เฉพาะใบในรายการนำส่ง · ยอด = 11640 ใน GL · เลข/วันที่ใบเสร็จบังคับ · วันเคลม = วันใบเสร็จ (ห้ามก่อน) · ห้ามงวด ภ.พ.30 ที่ยื่นแล้ว · JE ลงวันเคลม"),
+    dict(file=STATREM, method="RemitAsync",
+         must=["Pp36Ledger.LoadDocsAsync(", "Pp36DocState.AwaitingRemittance", "Pp36RemittanceDocuments.Add(", "Ledger.Pp36Payable",
+               "Pp36SurchargeFor(", "ChangeTracker.Clear("],
+         before=[("ExecuteSqlRawAsync(", "Pp36RemittanceDocuments.Add(")],
+         why=_PP36_WHY + "E-5 คำตัดสินข้อ 133/135 — นำส่งเพิ่มเติมงวดเดิมได้ (ห้ามนับใบเดิมซ้ำ: ล็อกแถวเอกสาร + ตรวจซ้ำ + ผูกใบ) · ยอด = Cr 21912 ใน GL · เงินเพิ่ม §89/1 ค่าแนะนำ"),
+    dict(file=STATREM, method="GetDashboardAsync",
+         must=["Pp36Ledger.LoadDocsAsync(", "BuildPp36Issues(", "Pp36DocState.AwaitingRemittance", "Ledger.UndueInputVat"],
+         forbid=["d.IsForeignService && d.VatAmount > 0", "g.Sum(x => x.VatAmount) - Remitted("],
+         why=_PP36_WHY + "E-3/E-6/E-8 ยอดค้าง/รอรับรู้จากตัวโหลดเดียว (ใบมี JE · ยังไม่นำส่ง · บาท) · ใบไม่มี JE/นำส่งเกินขึ้นเป็นรายการต้องตรวจ (ไม่ continue เงียบ)"),
+    dict(file=STATREM, method="GetFilingCalendarAsync",
+         must=["Pp36Ledger.LoadDocsAsync(", "CountedVat"],
+         forbid=["d.IsForeignService && d.VatAmount > 0"],
+         why=_PP36_WHY + "E-8 ปฏิทินนับ ภ.พ.36 ชุดเดียวกับหน้านำส่ง"),
+    dict(file=STATREM, method="BuildItem",
+         must=["Pp36Lifecycle.SuggestedSurcharge("],
+         why=_PP36_WHY + "E-9 คำตัดสินข้อ 135 เงินเพิ่ม §89/1 ที่เสนอบนแถวรอนำส่ง"),
+    dict(file="Services/Implementations/TaxService.cs", method="GeneratePp36Report",
+         must=["Pp36Ledger.LoadDocsAsync(", "CountedVat", "DocumentFx.ToBaht("],
+         forbid=["d.TaxPointDate ?? d.DocumentDate", "TaxAmount = doc.VatAmount"],
+         why=_PP36_WHY + "E-3/E-4/E-8 รายงาน ภ.พ.36 นับเฉพาะใบที่มี JE (เจ้าของหนี้ · ชุดชนิดเดียว · งวด = วันจ่าย) · ยอดเป็นบาท"),
+    dict(file="Services/Implementations/TaxGlReconciliationService.cs", method="ReconcileAsync",
+         must=["Pp36Ledger.LoadDocsAsync(", "!pp36RemitJeIds.Contains(", "Pp36DocState.NoJournal", "Pp36Ledger.IsUndueCode("],
+         why=_PP36_WHY + "E-10 เดือนนำส่งไม่ฟ้องผลต่างปลอม (ตัด JE นำส่ง) · สาเหตุ \"ใบอนุมัติแล้วไม่มี JE\" · บรรทัด 11640"),
+    dict(file=DOC, method="VoidDocumentAsync",
+         must=["Pp36Ledger.ChangeBlocksAsync(", "Pp36Lifecycle.RuleChangeAfterRemit"],
+         before=[("Pp36Ledger.ChangeBlocksAsync(", "ReverseJournalEntryAsync(")],
+         why=_PP36_WHY + "E-6 คำตัดสินข้อ 134 ยกเลิกใบหลังนำส่ง/รับรู้ ภ.พ.36 ถูกบล็อกก่อนกลับ JE"),
+    dict(file=DOC, method="ReclassifyForeignServiceAsync",
+         must=["Pp36Ledger.ChangeBlocksAsync("],
+         before=[("Pp36Ledger.ChangeBlocksAsync(", "ReverseJournalEntryAsync(")],
+         why=_PP36_WHY + "E-6 คำตัดสินข้อ 134 ปลดธงบริการต่างประเทศหลังนำส่ง/รับรู้ถูกบล็อก"),
+    dict(file=DOC, method="AdjustDocumentJournalEntryAsync",
+         must=["Pp36Ledger.ChangeBlocksAsync(", "Pp36Ledger.IsUndueCode("],
+         why=_PP36_WHY + "E-6 คำตัดสินข้อ 134 ปรับยอด 21912/11640 ของใบที่นำส่ง/รับรู้แล้วถูกบล็อก"),
+    dict(file=DOC, method="CreateDocumentAsync",
+         must=["Pp36Lifecycle.FlagTypeError("],
+         before=[("Pp36Lifecycle.FlagTypeError(", "doc.IsForeignService = request.IsForeignService")],
+         why=_PP36_WHY + "E-8 ธงบริการต่างประเทศบนใบขายถูกปฏิเสธตั้งแต่สร้าง"),
+    dict(file=DOC, method="UpdateDocumentAsync",
+         must=["Pp36Lifecycle.FlagTypeError("],
+         why=_PP36_WHY + "E-8 ธงบริการต่างประเทศบนใบขายถูกปฏิเสธตอนแก้"),
+    dict(file=DOC, method="GetDocumentsAsync",
+         must=["Pp36Ledger.StatesAsync("],
+         why=_PP36_WHY + "T-3d/C-P2 ป้าย ภ.พ.36 บนรายการคำนวณที่เซิร์ฟเวอร์"),
+    dict(file=DOC, method="GetDocumentAsync",
+         must=["Pp36Ledger.StatesAsync("],
+         why=_PP36_WHY + "T-3d/C-P2 ป้าย ภ.พ.36 บนรายละเอียดคำนวณที่เซิร์ฟเวอร์"),
+    dict(file="Services/Settlement/SettlementPostingService.cs", method="UnpostCoreAsync",
+         must=["Pp36UnpostRefusalsAsync("],
+         before=[("Pp36UnpostRefusalsAsync(", "refusals.Count > 0")],
+         why=_PP36_WHY + "E-6 ยกเลิกการลงบัญชีรอบโอนเดินด่าน ภ.พ.36 ก่อนแตะชิ้นแรก"),
+    dict(file="Services/Settlement/SettlementPostingService.cs", method="UnpostBlockersAsync",
+         must=["Pp36UnpostRefusalsAsync("],
+         why=_PP36_WHY + "E-6 พรีวิวด่านยกเลิกรอบโอนเห็นด่าน ภ.พ.36 ชุดเดียวกับตอนกดจริง"),
+]
+
+
 def main() -> int:
     errs = []
     for rule in RULES:

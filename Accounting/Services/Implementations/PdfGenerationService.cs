@@ -832,7 +832,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // และเครดิตเจ้าหนี้/ธนาคารด้วยยอดรวม VAT ⇒ ดูเหมือนจ่ายผู้ขายเกิน 7%
         if (pp36 > 0)
         {
-            var pp36Acc = await ByCode(ForeignServiceVat.Pp36PayableCode, "ภาษีขาย ภ.พ.36");
+            var pp36Acc = await ByCode(ForeignServiceVat.Pp36PayableCode, "ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36");
             lines.Add(new GlPostingLine(pp36Acc.Code, pp36Acc.Name, 0m, pp36));
         }
 

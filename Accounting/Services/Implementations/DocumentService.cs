@@ -1494,6 +1494,10 @@ public partial class DocumentService : IDocumentService
             // สาขาผู้ออกใบ — null/Empty = ใช้ค่าบริษัทตามเดิม (กิจการสาขาเดียว)
             doc.BranchId = await ResolveOwnedBranchIdAsync(companyId, request.BranchId);
             doc.DocumentTemplateId = await ResolveOwnedTemplateIdAsync(companyId, request.DocumentTemplateId);
+            // รอบ 203 ทีม F3 (E-8): ธง "บริการต่างประเทศ" มีความหมายเฉพาะชุดชนิดเดียว (ForeignServiceVat.Pp36DocumentTypes) —
+            // ใบขายที่ติ๊กธงเคยถูกนับเป็นหนี้ ภ.พ.36 บนหน้านำส่ง ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่ล้างธงเงียบ)
+            if (Accounting.Helpers.Pp36Lifecycle.FlagTypeError(doc.DocumentType, request.IsForeignService) is string fsTypeErr)
+                throw new BusinessRuleException(fsTypeErr, Accounting.Helpers.Pp36Lifecycle.RuleWrongDocumentType);
             doc.IsForeignService = request.IsForeignService;
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
@@ -1777,9 +1781,14 @@ public partial class DocumentService : IDocumentService
         // ServedAsReceipt ต้องเซ็ตให้ก่อน (ตัวคำนวณหัวอ่านจาก entity) —
         // SettlesTaxInvoiceSource ตัว resolver เติมเอง
         doc.ServedAsReceipt = resp.ServedAsReceipt;
+        var pp36Detail = (await Accounting.Helpers.Pp36Ledger.StatesAsync(_db, companyId, new[] { documentId }))
+            .TryGetValue(documentId, out var pp36St) ? pp36St : ((Accounting.Helpers.Pp36DocState State, string? Label)?)null;
         resp = resp with
         {
             DocumentTitle = await PdfGenerationService.ResolveDocumentTitleAsync(_db, companyId, doc),
+            // สถานะ ภ.พ.36 (รอบ 203 · server computes) — ตัวโหลดเดียวกับหน้ารายการ/หน้านำส่ง
+            Pp36State = pp36Detail?.State.ToString(),
+            Pp36StatusLabel = pp36Detail?.Label,
         };
 
         // หัวถูกลดจากใบกำกับอย่างย่อเป็นใบเสร็จเพราะยังไม่มีสิทธิ์ §86/6 → บอกบนจอ (รอบ 191 — เดิมเงียบ)
@@ -2295,16 +2304,21 @@ public partial class DocumentService : IDocumentService
             .Where(d => DocumentConversionProgress.IsConversionBearing(d.DocumentType))
             .ToDictionary(d => d.Id, d => d.Lines.Sum(l => l.Quantity));
         var conversionByDoc = await LoadConversionSummariesAsync(companyId, conversionTotals);
+        // สถานะ ภ.พ.36 ของทั้งหน้า (batch · ตัวโหลดเดียวกับหน้านำส่ง) — หน้าเว็บแสดงป้ายอย่างเดียว ไม่ตัดสินจากธงเอง (รอบ 203 T-3d/C-P2)
+        var pp36States = await Accounting.Helpers.Pp36Ledger.StatesAsync(_db, companyId, ids);
 
         return new PagedResponse<DocumentResponse>(
             items.Select(d => {
                 var (pceCount, pceAmount) = pceSummary.GetValueOrDefault(d.Id);
+                var pp36 = pp36States.TryGetValue(d.Id, out var st) ? st : ((Accounting.Helpers.Pp36DocState State, string? Label)?)null;
                 return MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id),
                     conversion: conversionByDoc.GetValueOrDefault(d.Id),
                     hasPce: pceCount > 0, pceCount: pceCount, pceAmount: pceAmount,
                     servedAsReceipt: d.ServedAsReceipt) with
                 {
                     DocumentTitle = titles.GetValueOrDefault(d.Id),
+                    Pp36State = pp36?.State.ToString(),
+                    Pp36StatusLabel = pp36?.Label,
                 };
             }).ToList(),
             total, request.Page, request.PageSize,
@@ -2629,7 +2643,12 @@ public partial class DocumentService : IDocumentService
             && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
             && doc.Status == DocumentStatus.Draft)
             doc.CnDnPurchaseSideOverride = request.CnDnPurchaseSideOverride;
-        if (request.IsForeignService.HasValue) doc.IsForeignService = request.IsForeignService.Value;
+        if (request.IsForeignService.HasValue)
+        {
+            if (Accounting.Helpers.Pp36Lifecycle.FlagTypeError(doc.DocumentType, request.IsForeignService.Value) is string fsTypeErrUpd)
+                throw new BusinessRuleException(fsTypeErrUpd, Accounting.Helpers.Pp36Lifecycle.RuleWrongDocumentType);
+            doc.IsForeignService = request.IsForeignService.Value;
+        }
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
@@ -3015,7 +3034,7 @@ public partial class DocumentService : IDocumentService
 
         // §83/6 บริการต่างประเทศ (ภ.พ.36): บล็อกชัด ๆ — เส้นนี้เป็น §86/4 (เติม
         // ใบกำกับผู้ขายไทย → ย้าย 11640→11610). ภ.พ.36 ผู้ขาย ตปท. ไม่มีใบกำกับไทย
-        // ต้องเคลมผ่าน "นำส่ง ภ.พ.36 → รับรู้ภาษีซื้อ" ที่หน้านำส่งภาษี (§77/2).
+        // ต้องเคลมผ่าน "นำส่ง ภ.พ.36 → รับรู้ภาษีซื้อ" ที่หน้านำส่งภาษี (§82/4).
         // ไม่ให้ save metadata ใบกำกับผิดเส้น + ไม่แตะ JE (ตอบคำถาม: ไม่ต้องลง JE
         // กลับ เพราะไม่ยอมให้เกิด action ผิด flow ตั้งแต่แรก)
         if (doc.IsForeignService)
@@ -5579,7 +5598,7 @@ public partial class DocumentService : IDocumentService
                 (int)(today - d.DocumentDate.Date).TotalDays,
                 monthsLeft, isExpired,
                 d.IsForeignService
-                    ? new[] { "นำส่ง ภ.พ.36 แล้วกด \"รับรู้ภาษีซื้อ\" ที่หน้านำส่งภาษี (§77/2)" }
+                    ? new[] { "นำส่ง ภ.พ.36 แล้วกด \"รับรู้ภาษีซื้อ\" ที่หน้านำส่งภาษี (§82/4)" }
                     : completeness.MissingFields,
                 d.IsForeignService);
         }).ToList();
@@ -6994,6 +7013,21 @@ public partial class DocumentService : IDocumentService
                 controlMoved.Add(new { account = code, before, after });
         }
 
+        // รอบ 203 ทีม F3 (คำตัดสินข้อ 134): ขยับยอด 21912/11640 ของใบที่นำส่ง ภ.พ.36 หรือรับรู้ภาษีซื้อแล้ว = แก้ยอด ภ.พ.36 ย้อนหลัง ⇒ บล็อก
+        // (ย้ายผังค่าใช้จ่ายอย่างเดียวยังทำได้ — ไม่แตะยอดภาษี)
+        var pp36Moved = origNet.Keys.Union(wantNet.Keys).Any(id =>
+        {
+            var code = origCodes.TryGetValue(id, out var a) ? a.AccountCode
+                : accounts.TryGetValue(id, out var b) ? b.AccountCode : null;
+            return code != null
+                && (code == ForeignServiceVat.Pp36PayableCode || Accounting.Helpers.Pp36Ledger.IsUndueCode(code))
+                && Math.Round(origNet.GetValueOrDefault(id), 2, R) != Math.Round(wantNet.GetValueOrDefault(id), 2, R);
+        });
+        if (pp36Moved
+            && (await Accounting.Helpers.Pp36Ledger.ChangeBlocksAsync(_db, companyId, new[] { documentId }, "ปรับยอดภาษี ภ.พ.36 ของ"))
+                .TryGetValue(documentId, out var pp36AdjBlock))
+            throw new BusinessRuleException(pp36AdjBlock, Accounting.Helpers.Pp36Lifecycle.RuleChangeAfterRemit, 409);
+
         // ผลต่างที่ต้องลงจริง — บวก = ต้อง Dr เพิ่ม, ลบ = ต้อง Cr
         var deltas = origNet.Keys.Union(wantNet.Keys)
             .Select(id => (Id: id, Amount: Math.Round(
@@ -7319,6 +7353,12 @@ public partial class DocumentService : IDocumentService
         if (doc.IsForeignService == toForeignService)
             throw new InvalidOperationException(
                 $"เอกสารนี้{(toForeignService ? "เป็นบริการต่างประเทศ" : "ไม่ได้เป็นบริการต่างประเทศ")}อยู่แล้ว");
+
+        // รอบ 203 ทีม F3 (คำตัดสินข้อ 134): ปลดธงใบที่นำส่ง ภ.พ.36/รับรู้ภาษีซื้อแล้ว = กลับ 21912 ที่จ่ายสรรพากรไปแล้ว ⇒ บล็อกพร้อมทางไปต่อ
+        if (!toForeignService
+            && (await Accounting.Helpers.Pp36Ledger.ChangeBlocksAsync(_db, companyId, new[] { documentId }, "ปลดธงบริการต่างประเทศของ"))
+                .TryGetValue(documentId, out var pp36UnflagBlock))
+            throw new BusinessRuleException(pp36UnflagBlock, Accounting.Helpers.Pp36Lifecycle.RuleChangeAfterRemit, 409);
 
         if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
                        or DocumentStatus.Rejected or DocumentStatus.WaitingApproval)
@@ -8124,6 +8164,11 @@ public partial class DocumentService : IDocumentService
         // รอบ 198 ฝ่ายค้าน C-2: 50 ทวิ ของใบนี้ที่อยู่ในแบบ ภ.ง.ด. ที่ยื่นแล้ว — ห้ามให้เอกสารหายแต่ใบรับรองค้าง (cascade ด้านล่างกลืน error)
         if (await WhtCertVoidGuard.CheckDocumentAsync(_db, companyId, documentId) is string whtFiled)
             throw new BusinessRuleException(whtFiled, "RD-50TWI-FILED", 409);
+        // รอบ 203 ทีม F3 (คำตัดสินข้อ 134 · E-6): ใบที่นำส่ง ภ.พ.36 แล้ว/รับรู้ภาษีซื้อแล้ว — ยกเลิกไม่ได้ (เดิมด่านดูแค่ FilingLockedAt แต่รายงาน ภ.พ.36
+        // ที่สร้างตอนนำส่งเป็นร่าง ⇒ ยกเลิกผ่าน · Cr 21912 ถูกกลับทั้งที่เงินนำส่งออกไปแล้ว ⇒ 21912 ติดเดบิต · JE รับรู้ไม่มี SourceDocumentId จึงไม่ถูกกลับ)
+        if ((await Accounting.Helpers.Pp36Ledger.ChangeBlocksAsync(_db, companyId, new[] { documentId }, "ยกเลิก"))
+                .TryGetValue(documentId, out var pp36VoidBlock))
+            throw new BusinessRuleException(pp36VoidBlock, Accounting.Helpers.Pp36Lifecycle.RuleChangeAfterRemit, 409);
 
         // Filing lock guard: an Approved document that's part of a TaxReport
         // already marked Filed (FilingLockedAt set) is sealed for audit —
@@ -13559,7 +13604,7 @@ public partial class DocumentService : IDocumentService
         if (!doc.InputVatPostedAsUndue) return false;
         // §83/6 บริการต่างประเทศ: ภาษีซื้อพักที่ 11640 ด้วยเหตุ "ยังไม่นำส่ง ภ.พ.36"
         // (ไม่ใช่ใบกำกับ §86/4 ไม่ครบ) — เคลมผ่าน RecognizePp36InputVatAsync เท่านั้น
-        // (หลังนำส่ง+ใบเสร็จ RD §77/2). ห้ามย้ายผ่านเส้น §86/4 นี้ (ผู้ขาย ตปท.
+        // (หลังนำส่ง+ใบเสร็จ RD §82/4). ห้ามย้ายผ่านเส้น §86/4 นี้ (ผู้ขาย ตปท.
         // ไม่มีเลขภาษีไทย → completeness ก็ fail อยู่แล้ว แต่กันชัด ๆ)
         if (doc.IsForeignService) return false;
         // เคย reclassify ไปแล้ว → ไม่ทำซ้ำ (idempotent)
@@ -14324,11 +14369,7 @@ public partial class DocumentService : IDocumentService
     }
 
     private static decimal ToGlAmount(Document doc, decimal docAmount)
-    {
-        var fx = doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate;
-        return fx == 1m ? docAmount
-            : Math.Round(docAmount * fx, 2, MidpointRounding.AwayFromZero);
-    }
+        => Accounting.Helpers.DocumentFx.ToBaht(docAmount, doc.ExchangeRate);   // ตัวแปลงเดียวกับเส้นภาษี ภ.พ.36 (E-4)
 
     /// <summary>ยอดที่ "บรรทัดนี้" ลงไว้จริงบนผังบัญชีของตัวเองในแยกประเภท (บาท) —
     /// ตัวย้ายผังบัญชีต้องย้ายเท่านี้เป๊ะ ๆ ไม่ใช่ฐานก่อน VAT เสมอ.
@@ -15859,7 +15900,7 @@ public partial class DocumentService : IDocumentService
             if (claimableVatPi > 0)
             {
                 // §83/6 บริการต่างประเทศ: VAT เคลมได้เฉพาะ "เดือนที่นำส่ง ภ.พ.36 +
-                // ได้ใบเสร็จ RD" (§77/2) — บังคับพักที่ 11640 เสมอ (ไม่ดู completeness
+                // ได้ใบเสร็จ RD" (§82/4) — บังคับพักที่ 11640 เสมอ (ไม่ดู completeness
                 // เพราะไม่มีใบกำกับไทย) → RecognizePp36 จะย้าย 11640→11610 ทีหลัง
                 var (vatInputAccount, postedAsUndue) = doc.IsForeignService
                     ? ((await FindAccountAsync(companyId, ForeignServiceVat.Pp36InputVatCode)
@@ -15912,7 +15953,7 @@ public partial class DocumentService : IDocumentService
             if (pp36Vat > 0)
             {
                 var pp36Acc = await FindAccountAsync(companyId, ForeignServiceVat.Pp36PayableCode)
-                    ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีขาย ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
+                    ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
                 AddLine(pp36Acc.Id, 0, pp36Vat, $"เจ้าหนี้ ภ.พ.36 (VAT ประเมินเอง §83/6) - {doc.DocumentNumber}");
             }
 
@@ -16621,7 +16662,7 @@ public partial class DocumentService : IDocumentService
                 {
                     // เหมือน PI — เลือก 11610/11640/override ตาม completeness §86/4.
                     // §83/6 บริการต่างประเทศ → บังคับ 11640 เสมอ (เคลมได้หลังนำส่ง
-                    // ภ.พ.36 + ได้ใบเสร็จ RD §77/2 — RecognizePp36 ย้ายให้ทีหลัง)
+                    // ภ.พ.36 + ได้ใบเสร็จ RD §82/4 — RecognizePp36 ย้ายให้ทีหลัง)
                     var (vatInputAccount, postedAsUndue) = doc.IsForeignService
                         ? ((await FindAccountAsync(companyId, ForeignServiceVat.Pp36InputVatCode)
                                 ?? await FindAccountAsync(companyId, "11630")
@@ -16645,7 +16686,7 @@ public partial class DocumentService : IDocumentService
                 if (pp36VatPv > 0)
                 {
                     var pp36AccPv = await FindAccountAsync(companyId, ForeignServiceVat.Pp36PayableCode)
-                        ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีขาย ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
+                        ?? throw new InvalidOperationException("ไม่พบผังบัญชี 21912 (ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36) — สร้างก่อนบันทึกบริการต่างประเทศ");
                     AddLine(pp36AccPv.Id, 0, pp36VatPv, $"เจ้าหนี้ ภ.พ.36 (VAT ประเมินเอง §83/6) - {doc.DocumentNumber}");
                 }
 

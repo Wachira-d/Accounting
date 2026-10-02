@@ -42,7 +42,7 @@ public readonly record struct ForeignServiceSuspicion(bool Suspect, string Reaso
 public static class ForeignServiceEvidence
 {
     public const string RuleCode = "RD-83/6-UNFLAGGED";
-    public const string LegalReference = "ป.รัษฎากร §83/6 (ภ.พ.36) + §77/2";
+    public const string LegalReference = "ป.รัษฎากร §83/6 (ภ.พ.36) + §82/4";
 
     /// <summary>ประเทศไทย — คู่ค้าที่ระบุประเทศเป็นค่านี้ (หรือไม่ระบุ) ไม่ถือเป็น
     /// หลักฐานว่าเป็นผู้ขายต่างประเทศ</summary>

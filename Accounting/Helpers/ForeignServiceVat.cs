@@ -1,3 +1,5 @@
+using Accounting.Models.Enums;
+
 namespace Accounting.Helpers;
 
 /// <summary>ผลการแยกขาเครดิตของเอกสารซื้อบริการจากต่างประเทศ (§83/6).</summary>
@@ -14,7 +16,7 @@ public readonly record struct ForeignServiceCreditSplit(decimal PayeeCredit, dec
 ///
 /// <code>
 ///   Dr ค่าใช้จ่าย            ฐาน
-///   Dr 11640 ภาษีซื้อยังไม่ถึงกำหนด   VAT      (เคลมได้หลังนำส่ง + ได้ใบเสร็จ RD §77/2)
+///   Dr 11640 ภาษีซื้อยังไม่ถึงกำหนด   VAT      (เคลมได้เดือนที่ชำระ ภ.พ.36 ตามใบเสร็จ RD — §82/4 · คำตัดสินข้อ 129)
 ///       Cr 21912 เจ้าหนี้ ภ.พ.36          VAT      ← หนี้ต่อสรรพากร
 ///       Cr เจ้าหนี้ / เงินฝากธนาคาร        ฐาน      ← จ่ายผู้ขายเท่าที่เขาเรียกเก็บจริง
 /// </code>
@@ -38,8 +40,42 @@ public static class ForeignServiceVat
     public const string Pp36PayableCode = "21912";
 
     /// <summary>ผังภาษีซื้อของ ภ.พ.36 — **บังคับ 11640 เสมอ** (ยังไม่ถึงกำหนดเคลม
-    /// จนกว่าจะนำส่งและได้ใบเสร็จกรมสรรพากร §77/2) ไม่ใช่ 11610 ตามใบกำกับปกติ</summary>
+    /// จนกว่าจะนำส่งและได้ใบเสร็จกรมสรรพากร — §82/4 ประกอบใบเสร็จ RD · คำตัดสินข้อ 129) ไม่ใช่ 11610 ตามใบกำกับปกติ</summary>
     public const string Pp36InputVatCode = "11640";
+
+    /// <summary>
+    /// <b>ชุดชนิดเอกสารที่ถือ ภ.พ.36 ได้ — ชุดเดียวของทั้งระบบ</b> (รอบ 203 ทีม F3 · PP36_REVIEW E-8)
+    /// <para>เดิมสามเส้นนับคนละชุด: ยอดค้างหน้านำส่ง (ไม่กรองชนิดเลย ⇒ ใบขายที่ถูกติ๊กธงก็นับ) · ปฏิทิน (<c>WhtRemitScope.PayerSideTypes</c>) ·
+    /// รายงาน (ลิสต์ local) · และ tax point (<c>TaxPointResolver.IsReverseCharge</c>) — ทุกเส้นต้องอ่านตัวนี้</para>
+    /// </summary>
+    public static readonly DocumentType[] Pp36DocumentTypes =
+    {
+        DocumentType.PurchaseInvoice, DocumentType.Expense,
+        DocumentType.PaymentVoucher, DocumentType.CertificateInLieu,
+    };
+
+    /// <summary>ชนิดนี้ติ๊ก "บริการต่างประเทศ" ได้ไหม (ฝั่งสร้าง/แก้ใช้ปฏิเสธธงบนใบขาย)</summary>
+    public static bool CanCarryPp36(DocumentType type) => Pp36DocumentTypes.Contains(type);
+
+    /// <summary>
+    /// <b>ใบนี้เป็น "เจ้าของ" หนี้ ภ.พ.36 ไหม</b> — ตัวตัดสินตัวเดียวของยอดค้าง · นำส่ง · รับรู้ · รายงาน · ป้าย (ทีม F3 สร้างคู่กับทีม F2)
+    /// <para>ใบสำคัญจ่ายที่<b>ปิดหนี้ใบต้นทาง</b> (ใบแจ้งหนี้ซื้อ/ค่าใช้จ่ายที่ตั้งหนี้ไว้แล้ว) ไม่ใช่เจ้าของ — VAT ประเมินเองถูกตั้งที่ใบต้นทาง
+    /// (Cr 21912 ตอนตั้งหนี้) · นับ PV ด้วย = ภ.พ.36 ซ้ำสองเท่า (PP36_REVIEW E-1b)</para>
+    /// </summary>
+    /// <param name="settledSourceType">ชนิดของใบต้นทางที่ใบนี้ปิดหนี้ (<c>RelatedDocumentId</c>) — null = ไม่มีใบต้นทาง</param>
+    public static bool OwnsPp36(DocumentType type, bool isForeignService, DocumentType? settledSourceType)
+        => isForeignService
+           && CanCarryPp36(type)
+           && !(type == DocumentType.PaymentVoucher
+                && settledSourceType is DocumentType.PurchaseInvoice or DocumentType.Expense);
+
+    /// <summary>
+    /// <b>วันที่ที่กำหนดงวด ภ.พ.36 ของใบ</b> — วันจ่าย (หน้าที่นำส่งเกิดเมื่อจ่ายค่าบริการ §83/6) · ยังไม่รู้วันจ่าย = วันที่เอกสาร ·
+    /// สูตรเดียวกับ <c>TaxPointResolver</c> ReverseCharge · เดิมรายงานใช้ <c>TaxPointDate ?? DocumentDate</c> ขณะหน้านำส่งใช้
+    /// <c>PaymentDate ?? DocumentDate</c> (ใบเก่าที่ประทับ tax point ก่อนรอบ 201 จึงตกคนละเดือน)
+    /// </summary>
+    public static DateTime Pp36PeriodDate(DateTime? paymentDate, DateTime documentDate)
+        => paymentDate ?? documentDate;
 
     /// <summary>
     /// VAT ที่ต้องตั้งเป็นหนี้ ภ.พ.36 — 0 เมื่อไม่ใช่บริการต่างประเทศ

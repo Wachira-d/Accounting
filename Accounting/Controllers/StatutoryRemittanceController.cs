@@ -77,9 +77,13 @@ public class StatutoryRemittanceController : ControllerBase
     public sealed record RecognizePp36Request(int PeriodYear, int PeriodMonth, DateTime? RecognizeDate,
         // เลขที่ใบเสร็จกรมสรรพากร (ถ้าไม่ได้กรอกตอนนำส่ง หรือต้องการแก้) —
         // จะถูก stamp ลงเอกสารเป็นเลขใบกำกับ §86/14 และ backfill ลง remittance
-        string? RdReceiptNumber = null);
+        string? RdReceiptNumber = null,
+        // รอบ 203 (คำตัดสินข้อ 129/136): วันที่ใบเสร็จกรมสรรพากร — null = วันที่จ่ายที่บันทึกตอนนำส่ง · วันเคลมค่าเริ่มต้น = วันนี้
+        DateTime? RdReceiptDate = null,
+        // งวดหนึ่งนำส่งได้หลายครั้ง (คำตัดสินข้อ 133) — ระบุรายการนำส่งที่จะรับรู้ · null = รายการเดียวที่ค้าง
+        Guid? RemittanceId = null);
 
-    /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จกรมสรรพากร (§77/2) —
+    /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จกรมสรรพากร (§82/4) —
     /// Dr 11610 / Cr 11640 + stamp เอกสาร → เข้า ภ.พ.30 เดือนที่รับรู้.
     /// ต้องนำส่ง ภ.พ.36 งวดนั้นก่อน.</summary>
     /// <summary>รายละเอียดใบที่รับรู้แล้วของงวด ภ.พ.36 — เดือนเคลมต่อใบ +
@@ -99,12 +103,12 @@ public class StatutoryRemittanceController : ControllerBase
     {
         try
         {
-            // RecognizeDate null = ใช้ "วันที่ใบกำกับผู้ขาย" ต่อใบเป็นวันเคลม ภ.พ.30
-            // (default ที่ผู้ใช้เลือก); มีค่า = override ทั้งชุด
+            // RecognizeDate null = วันเคลม = วันที่ใบเสร็จกรมสรรพากร (คำตัดสินข้อ 129 — เดิมใช้วันใบผู้ขาย = เคลมก่อนมีหลักฐาน);
+            // มีค่า = วันที่ผู้ใช้เลือก (ห้ามก่อนวันใบเสร็จ — service ปฏิเสธพร้อมเหตุผล)
             var res = await _service.RecognizePp36InputVatAsync(companyId,
                 request.PeriodYear, request.PeriodMonth,
                 request.RecognizeDate, User.Identity?.Name ?? "",
-                request.RdReceiptNumber);
+                request.RdReceiptNumber, request.RdReceiptDate, request.RemittanceId);
             return Ok(new ApiResponse<RemitResult>(true, res, res.Message));
         }
         catch (InvalidOperationException ex)

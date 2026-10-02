@@ -956,7 +956,13 @@ public record DocumentResponse(
     Guid? SettlementOrphanAckBy = null,
     /// <summary>ชื่อผู้รับรู้ (สมาชิกของบริษัทนี้) — เติมที่ <c>GetDocumentAsync</c> เท่านั้น · null = รายการหลายใบ/ไม่พบสมาชิก</summary>
     string? SettlementOrphanAckByName = null,
-    string? SettlementOrphanAckReason = null);
+    string? SettlementOrphanAckReason = null,
+    /// <summary>รอบ 203 ทีม F3 (T-3d/C-P2 · server computes) — สถานะ ภ.พ.36 ของใบ (ชื่อ enum <c>Pp36DocState</c>: NoJournal · AwaitingRemittance ·
+    /// RemittedAwaitingRecognition · RemittedNoInputVat · Recognized) จาก GL + รายการนำส่ง (<c>Helpers/Pp36Ledger</c>) · หน้าเว็บแสดงอย่างเดียว ·
+    /// null = ไม่ใช่ใบ ภ.พ.36 / เส้นทางที่ไม่คำนวณ</summary>
+    string? Pp36State = null,
+    /// <summary>ป้ายภาษาไทยของ <see cref="Pp36State"/> (<c>Pp36Lifecycle.Label</c> ตัวเดียว) เช่น "ภ.พ.36 · รับรู้แล้ว เคลม ภ.พ.30 เดือน 10/2568"</summary>
+    string? Pp36StatusLabel = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>

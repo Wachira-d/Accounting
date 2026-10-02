@@ -150,7 +150,7 @@ public static class ChartOfAccountTemplates
             new("21820", "ค่าตอบแทนกรรมการค้างจ่าย", "Accrued Director's Remuneration", AccountType.Liability, 4),
             new("219", "ภาษีค้างจ่าย", "Taxes Payable", AccountType.Liability, 3),
             new("21911", "ภาษีขาย ภ.พ. 30", "Output VAT (P.P. 30)", AccountType.Liability, 4),
-            new("21912", "ภาษีขาย ภ.พ. 36", "Output VAT (P.P. 36)", AccountType.Liability, 4),
+            new("21912", "ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36", "VAT Payable - Self-assessed (P.P.36)", AccountType.Liability, 4),   // คำตัดสินข้อ 132 — หนี้ VAT แทนผู้ขายต่างประเทศ ไม่ใช่ภาษีขาย
             new("21913", "ภาษีขายรอเรียกเก็บ", "Deferred Output VAT", AccountType.Liability, 4),
             new("21914", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 1", "Withholding Tax Payable (P.N.D. 1)", AccountType.Liability, 4),
             new("21915", "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 2", "Withholding Tax Payable (P.N.D. 2)", AccountType.Liability, 4),

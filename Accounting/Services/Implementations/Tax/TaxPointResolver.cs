@@ -41,9 +41,7 @@ public static class TaxPointResolver
 
     /// <summary>ใบนี้เป็นการนำส่ง VAT แทนผู้ขายต่างประเทศ (§83/6) ไหม — ชุดชนิดเดียวกับรายงาน ภ.พ.36 (ฝั่งซื้อ + ธงบริการต่างประเทศ)</summary>
     public static bool IsReverseCharge(Document doc)
-        => doc.IsForeignService
-           && doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
-               or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu;
+        => doc.IsForeignService && Accounting.Helpers.ForeignServiceVat.CanCarryPp36(doc.DocumentType);   // ชุดชนิดเดียว (รอบ 203 E-8)
 
     /// <summary>ชนิดกฎ tax point ที่ต้องใช้ตอนอนุมัติ — ReverseCharge สำหรับ §83/6 · นอกนั้นให้ระบบเดาตามเดิม (Auto)</summary>
     public static SupplyKind KindForApproval(Document doc)

@@ -378,23 +378,33 @@
       },
 
       renderPp36Banner() {
-        // ── ภ.พ.36 นำส่งแล้วแต่ยังไม่รับรู้ภาษีซื้อ — ต้องเด่นเหนือทุกอย่าง ──
-        // ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่ 2 ("รับรู้
-        // ภาษีซื้อ" เมื่อได้ใบเสร็จ RD) ซ่อนอยู่ในแท็บประวัติ. อยู่นอกการ์ด
-        // "รายการรอนำส่ง" เพื่อไม่ให้ตัวกรองประเภทซ่อนมันไปโดยไม่ตั้งใจ
+        // ── ภ.พ.36 นำส่งแล้วแต่ยังไม่รับรู้ภาษีซื้อ + รายการที่ต้องตรวจ — ต้องเด่นเหนือทุกอย่าง ──
+        // ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่ 2 ("รับรู้ภาษีซื้อ" เมื่อได้ใบเสร็จ RD) ซ่อนอยู่ในแท็บประวัติ.
+        // อยู่นอกการ์ด "รายการรอนำส่ง" เพื่อไม่ให้ตัวกรองประเภทซ่อนมันไปโดยไม่ตั้งใจ · รอบ 203: ปุ่มรับรู้ต่อ "รายการนำส่ง" (งวดเดียวนำส่งได้หลายครั้ง) ·
+        // รายการต้องตรวจ (ใบไม่มี JE · นำส่งเกิน/ขาด) มาจากเซิร์ฟเวอร์ — หน้านี้แสดงอย่างเดียว
         const awaiting = (this._data && this._data.pp36AwaitingRecognition) || [];
+        const issues = (this._data && this._data.pp36Issues) || [];
         const el = document.getElementById('pp36Banner');
-        if (!awaiting.length) { el.innerHTML = ''; return; }
-        el.innerHTML = `
-          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;padding:12px 14px;margin-bottom:20px">
-            <div style="font-weight:700;color:#1e40af;margin-bottom:6px">🌐 ภ.พ.36 นำส่งแล้ว — รอรับรู้ภาษีซื้อเข้า ภ.พ.30 (${awaiting.length} งวด)</div>
-            <div style="font-size:12px;color:#1e3a8a;margin-bottom:8px">ภาษีซื้อยังพักที่ 11640 และ<b>ยังไม่ขึ้นใน ภ.พ.30</b> จนกว่าจะกด "รับรู้ภาษีซื้อ" (เมื่อได้ใบเสร็จกรมสรรพากร §77/2)</div>
+        if (!awaiting.length && !issues.length) { el.innerHTML = ''; return; }
+        const awaitingHtml = !awaiting.length ? '' : `
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;padding:12px 14px;margin-bottom:12px">
+            <div style="font-weight:700;color:#1e40af;margin-bottom:6px">🌐 ภ.พ.36 นำส่งแล้ว — รอรับรู้ภาษีซื้อเข้า ภ.พ.30 (${awaiting.length} รายการนำส่ง)</div>
+            <div style="font-size:12px;color:#1e3a8a;margin-bottom:8px">ภาษีซื้อยังพักที่ 11640 และ<b>ยังไม่ขึ้นใน ภ.พ.30</b> จนกว่าจะกด "รับรู้ภาษีซื้อ" ด้วยเลขและวันที่ใบเสร็จกรมสรรพากร (§82/4) — เคลมได้เดือนที่ชำระ ภ.พ.36 ตามใบเสร็จ</div>
             ${awaiting.map(a => `
               <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px dashed #bfdbfe;flex-wrap:wrap">
-                <span style="font-size:13px">งวด <b>${this.period(a.periodYear, a.periodMonth)}</b> · ภาษีซื้อ <b>${Layout.money(a.vatAmount)}</b> · ${a.documentCount} ใบ · นำส่งเมื่อ ${Layout.date(a.remittedAt)}</span>
-                <button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${a.periodYear}, ${a.periodMonth})">🧾 รับรู้ภาษีซื้อ → เข้า ภ.พ.30</button>
+                <span style="font-size:13px">งวด <b>${this.period(a.periodYear, a.periodMonth)}</b> · ภาษีซื้อ <b>${Layout.money(a.vatAmount)}</b> · ${a.documentCount} ใบ · นำส่งเมื่อ ${Layout.date(a.remittedAt)}${a.rdReceiptNumber ? ` · ใบเสร็จ ${Layout.esc(a.rdReceiptNumber)}` : ' · <span style="color:#b45309">ยังไม่มีเลขใบเสร็จ</span>'}</span>
+                <button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${a.periodYear}, ${a.periodMonth}, '${a.remittanceId || ''}')">🧾 รับรู้ภาษีซื้อ → เข้า ภ.พ.30</button>
               </div>`).join('')}
           </div>`;
+        const issuesHtml = !issues.length ? '' : `
+          <div style="background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:10px;padding:12px 14px;margin-bottom:12px">
+            <div style="font-weight:700;color:#991b1b;margin-bottom:6px">⚠️ ภ.พ.36 ที่ต้องตรวจ (${issues.length}) — ไม่ถูกนับในยอดนำส่ง/รายงานจนกว่าจะแก้</div>
+            ${issues.map(i => `
+              <div style="font-size:12px;color:#7f1d1d;padding:4px 0;border-top:1px dashed #fecaca">
+                ${i.documentId ? `<a href="/pages/documents.html?id=${encodeURIComponent(i.documentId)}" style="font-weight:600">${Layout.esc(i.documentNumber || '')}</a> · ` : ''}${Layout.esc(i.message)}
+              </div>`).join('')}
+          </div>`;
+        el.innerHTML = issuesHtml + awaitingHtml + '<div style="margin-bottom:8px"></div>';
       },
 
       renderViewSwitch() {
@@ -620,7 +630,7 @@
                   <td class="text-right">${r.remittanceType === 'VatPp36'
                     ? (r.pp36Recognized
                       ? `<button class="btn btn-sm btn-outline" style="color:#15803d;border-color:#86efac" onclick="Page.openPp36Detail(${r.periodYear}, ${r.periodMonth})" title="รับรู้ภาษีซื้อแล้ว — กดดูว่าใบไหนเข้า ภ.พ.30 งวดไหน + ย้ายเดือนเคลมได้ที่นี่">✓ เข้า ภ.พ.30 แล้ว · ดู</button>`
-                      : `<button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${r.periodYear}, ${r.periodMonth})" title="ได้ใบเสร็จกรมสรรพากรแล้ว → รับรู้ภาษีซื้อ (Dr 11610 / Cr 11640) เข้า ภ.พ.30 (§77/2) — ระบบกันรับรู้ซ้ำให้">🧾 รับรู้ภาษีซื้อ</button>`)
+                      : `<button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${r.periodYear}, ${r.periodMonth}, '${r.id}')" title="ได้ใบเสร็จกรมสรรพากรแล้ว → รับรู้ภาษีซื้อ (Dr 11610 / Cr 11640 ลงวันที่ใบเสร็จ) เข้า ภ.พ.30 (§82/4) — ระบบกันรับรู้ซ้ำให้">🧾 รับรู้ภาษีซื้อ</button>`)
                     : ''}</td>
                 </tr>`; }).join('')}</tbody>
             </table>
@@ -700,41 +710,38 @@
         } catch (e) { Layout.toast(e.message || 'ย้ายไม่สำเร็จ', 'error', 9000); }
       },
 
-      /** รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD — Dr 11610 / Cr 11640 + เข้า
-       *  ภ.พ.30 เดือนที่รับรู้ (§77/2). backend กันรับรู้ซ้ำ/ยังไม่นำส่งให้. */
-      async recognizePp36(year, month) {
-        // default: เว้นว่าง = ใช้ "วันที่ใบกำกับผู้ขาย" ของแต่ละใบเป็นวันเคลม ภ.พ.30
-        // (§82/3). ผู้ใช้ระบุวันเดียว (YYYY-MM-DD) ได้ถ้าต้องการ override ทั้งชุด
+      /** รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD — Dr 11610 / Cr 11640 ลงวันเคลม + เข้า ภ.พ.30 เดือนนั้น (§82/4 ประกอบใบเสร็จ).
+       *  คำตัดสินข้อ 129/136: เลข + วันที่ใบเสร็จบังคับ · วันเคลมค่าเริ่มต้น = วันที่ใบเสร็จ (ห้ามก่อน) — กติกาทั้งหมดอยู่ที่เซิร์ฟเวอร์ หน้านี้แค่ถาม */
+      async recognizePp36(year, month, remittanceId) {
+        const hist = (this._data?.recentHistory || []).find(r =>
+          r.remittanceType === 'VatPp36' && (remittanceId ? r.id === remittanceId : (r.periodYear === year && r.periodMonth === month)));
+        // §86/14 — เลขใบเสร็จ RD จะกลายเป็น "เลขที่ใบกำกับ" ของภาษีซื้อก้อนนี้ในรายงาน ภ.พ.30
+        const no = prompt(`รับรู้ภาษีซื้อ ภ.พ.36 งวด ${String(month).padStart(2, '0')}/${year}\n\n`
+          + 'เลขที่ใบเสร็จกรมสรรพากร (บังคับ — ไม่มีหลักฐาน = เคลมไม่ได้):', (hist && hist.filingNumber) || '');
+        if (no === null) return;
+        if (!no.trim()) { Layout.toast('ต้องกรอกเลขที่ใบเสร็จกรมสรรพากร', 'error'); return; }
+        const payDay = hist && hist.payDate ? Layout.toDateInput(new Date(hist.payDate)) : '';
+        const rd = prompt('วันที่ในใบเสร็จกรมสรรพากร (YYYY-MM-DD) — วันที่ชำระ ภ.พ.36:', payDay);
+        if (rd === null) return;
+        if (rd.trim() && isNaN(new Date(rd.trim()).getTime())) { Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ใช้ YYYY-MM-DD)', 'error'); return; }
         const dateStr = prompt(
-          `รับรู้ภาษีซื้อ ภ.พ.36 งวด ${String(month).padStart(2, '0')}/${year}\n\n` +
-          `• เว้นว่าง = ใช้ "วันที่ใบกำกับผู้ขาย" ของแต่ละใบเป็นวันเคลม ภ.พ.30 (แนะนำ)\n` +
-          `• หรือระบุวันเดียว (YYYY-MM-DD) ถ้าต้องการกำหนดเองทั้งชุด:`,
-          '');
-        if (dateStr === null) return;   // กด Cancel
+          'วันเคลมภาษีซื้อ (งวด ภ.พ.30 ที่จะเข้า)\n\n'
+          + '• เว้นว่าง = วันที่ใบเสร็จกรมสรรพากร (ค่าเริ่มต้น — เดือนที่ชำระ ภ.พ.36)\n'
+          + '• หรือระบุวันที่ (YYYY-MM-DD) ที่ไม่ก่อนวันที่ใบเสร็จ:', '');
+        if (dateStr === null) return;
         let recognizeDate = null;
         if (dateStr.trim()) {
-          const d = new Date(dateStr.trim());
-          if (isNaN(d.getTime())) { Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ใช้ YYYY-MM-DD)', 'error'); return; }
+          if (isNaN(new Date(dateStr.trim()).getTime())) { Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ใช้ YYYY-MM-DD)', 'error'); return; }
           recognizeDate = dateStr.trim();
-        }
-        // §86/14 — เลขใบเสร็จ RD จะกลายเป็น "เลขที่ใบกำกับ" ของภาษีซื้อก้อนนี้ใน
-        // รายงาน ภ.พ.30: ถ้ายังไม่เคยกรอกเลขรับตอนนำส่ง ให้กรอกที่นี่ได้เลย
-        const hist = (this._data?.recentHistory || []).find(r =>
-          r.remittanceType === 'VatPp36' && r.periodYear === year && r.periodMonth === month);
-        let rdReceiptNumber = null;
-        if (!hist || !hist.filingNumber) {
-          const no = prompt('เลขที่ใบเสร็จกรมสรรพากร (เลขรับจากการยื่น) —\n'
-            + 'จะใช้เป็น "เลขที่ใบกำกับ" ของภาษีซื้อก้อนนี้ในรายงาน ภ.พ.30 (§86/14):', '');
-          if (no === null) return;
-          rdReceiptNumber = no.trim() || null;
         }
         try {
           const cid = Layout.getCompanyId();
           const res = await API.post(`/api/companies/${cid}/remittances/pp36/recognize`,
-            { periodYear: year, periodMonth: month, recognizeDate, rdReceiptNumber });
+            { periodYear: year, periodMonth: month, recognizeDate, rdReceiptNumber: no.trim(),
+              rdReceiptDate: rd.trim() || null, remittanceId: remittanceId || null });
           Layout.toast(res?.message || 'รับรู้ภาษีซื้อ ภ.พ.36 แล้ว', 'success', 9000);
           await this.load();
-        } catch (e) { Layout.toast(e.message || 'รับรู้ไม่สำเร็จ', 'error', 8000); }
+        } catch (e) { Layout.toast(e.message || 'รับรู้ไม่สำเร็จ', 'error', 9000); }
       },
 
       _byId(id) { return document.getElementById(id); },
@@ -760,6 +767,8 @@
             + '</optgroup>';
         }
         const isSso = r.remittanceType === 'SsoSps110';
+        // ภ.พ.36 (คำตัดสินข้อ 135): เงินเพิ่ม §89/1 ที่เซิร์ฟเวอร์เสนอ (lateFeePreview) — ผู้ใช้แก้ได้ · ลงผังค่าปรับ/เงินเพิ่ม (รายจ่ายต้องห้าม §65 ตรี(6))
+        const isPp36 = r.remittanceType === 'VatPp36';
         const u = this._urgency(r);
         const bodyEl = this._byId('remitBody');
         if (!bodyEl) { Layout.toast('เปิดหน้าต่างนำส่งไม่ได้ — โหลดหน้าใหม่', 'error'); return; }
@@ -772,7 +781,8 @@
           <div style="background:#f8fafc;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px">
             <div style="display:flex;justify-content:space-between"><span class="text-gray-500">ยอดเงินสมทบ/ภาษี</span><b style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</b></div>
             ${isSso ? `<div style="display:flex;justify-content:space-between;margin-top:4px"><span class="text-gray-500">เงินเพิ่มนำส่งช้า §49</span><b id="feeLbl" style="color:#dc2626;font-variant-numeric:tabular-nums">${Layout.money(r.lateFeePreview)}</b></div>` : ''}
-            <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:6px"><span>รวมจ่าย</span><b id="totLbl" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount + (isSso ? r.lateFeePreview : 0))}</b></div>
+            ${isPp36 ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:8px"><span class="text-gray-500" title="1.5% ต่อเดือนหรือเศษของเดือน ไม่เกินภาษี — ระบบเสนอตามวันที่จ่าย แก้ได้ · ลงผังค่าปรับ/เงินเพิ่ม (รายจ่ายต้องห้าม §65 ตรี(6))">เงินเพิ่ม §89/1 (แก้ได้)</span><input type="number" id="rmSurcharge" class="form-input" min="0" step="0.01" style="width:130px;text-align:right" value="${(r.lateFeePreview || 0).toFixed(2)}" oninput="Page._updateTotal()"></div>` : ''}
+            <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:6px"><span>รวมจ่าย</span><b id="totLbl" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount + ((isSso || isPp36) ? r.lateFeePreview : 0))}</b></div>
           </div>
           <div class="form-row"><label class="form-label">วันที่จ่าย</label>
             <input type="date" id="rmPayDate" class="form-input" value="${today}" onchange="Page._recalc()"></div>
@@ -792,14 +802,23 @@
       },
 
       async _recalc() {
-        const r = this._sel; if (!r || r.remittanceType !== 'SsoSps110') return;
+        const r = this._sel; if (!r || (r.remittanceType !== 'SsoSps110' && r.remittanceType !== 'VatPp36')) return;
         const dateEl = this._byId('rmPayDate'); if (!dateEl) return;
         try {
+          // ยอดเสนอคำนวณที่เซิร์ฟเวอร์ (ปกส. §49 · ภ.พ.36 §89/1) — หน้านี้ไม่มีสูตรเอง
           const res = await Layout.api().remitPreview(r.remittanceType, r.periodYear, r.periodMonth, dateEl.value);
           const fee = (res.data && res.data.lateFeePreview) || 0;
           const feeEl = this._byId('feeLbl'); if (feeEl) feeEl.textContent = Layout.money(fee);
-          const totEl = this._byId('totLbl'); if (totEl) totEl.textContent = Layout.money(r.amount + fee);
+          const sEl = this._byId('rmSurcharge'); if (sEl) sEl.value = fee.toFixed(2);
+          this._updateTotal(fee);
         } catch { /* preview ล้มเหลว — คงค่าเดิม */ }
+      },
+
+      _updateTotal(fee) {
+        const r = this._sel; if (!r) return;
+        const sEl = this._byId('rmSurcharge');
+        const f = sEl ? (parseFloat(sEl.value) || 0) : (fee || 0);
+        const totEl = this._byId('totLbl'); if (totEl) totEl.textContent = Layout.money(r.amount + f);
       },
 
       async _submit() {
@@ -824,6 +843,9 @@
             filingNumber: (this._byId('rmFiling') && this._byId('rmFiling').value) || null,
             includeLateFee: true,
           };
+          // ภ.พ.36: เงินเพิ่มที่ผู้ใช้เห็น/แก้ (เว้นว่าง = ตัดคีย์ทิ้ง ⇒ เซิร์ฟเวอร์ใช้ค่าที่เสนอ)
+          const sEl = this._byId('rmSurcharge');
+          if (sEl && sEl.value.trim() !== '') body.lateSurcharge = Math.max(0, parseFloat(sEl.value) || 0);
           const res = await Layout.api().remit(body);
           const rid = res.data && res.data.id;
           // ถ้าเลือกไฟล์เอกสารที่จ่ายไว้ในฟอร์ม → แนบอัตโนมัติทันที (1 flow)
@@ -891,8 +913,8 @@
         const pp36Next = isPp36 ? `
           <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#1e3a8a">
             <b>🌐 ขั้นถัดไปของ ภ.พ.36:</b> เมื่อได้<b>ใบเสร็จกรมสรรพากร</b> ให้กลับมากด
-            <b>"รับรู้ภาษีซื้อ"</b> (แถบฟ้าในหน้านี้) — ภาษีซื้อจะย้าย 11640→11610
-            และ<b>เข้า ภ.พ.30 ให้เลือกใช้</b> (§77/2) · ยังไม่กด = ยังไม่ขึ้นใน ภ.พ.30
+            <b>"รับรู้ภาษีซื้อ"</b> (แถบฟ้าในหน้านี้) พร้อมเลข/วันที่ใบเสร็จ — ภาษีซื้อจะย้าย 11640→11610
+            และ<b>เข้า ภ.พ.30 เดือนที่ชำระตามใบเสร็จ</b> (§82/4) · ยังไม่กด = ยังไม่ขึ้นใน ภ.พ.30
           </div>` : '';
         bodyEl.innerHTML = `
           <div style="text-align:center;padding:8px 0 16px">

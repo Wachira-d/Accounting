@@ -5347,8 +5347,60 @@ public static class DatabaseMigrationHelper
                 "IsDeleted" boolean NOT NULL DEFAULT false
             );
             """,
-            // นำส่ง 1 ครั้ง/ประเภท/งวด (กันจ่ายซ้ำ) — เฉพาะ row ที่ยังไม่ลบ
-            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_StatutoryRemittances_Period" ON "StatutoryRemittances" ("CompanyId", "RemittanceType", "PeriodYear", "PeriodMonth") WHERE "IsDeleted" = false;""",
+            // นำส่ง 1 ครั้ง/ประเภท/งวด (กันจ่ายซ้ำ) — เฉพาะ row ที่ยังไม่ลบ · **ยกเว้น ภ.พ.36** (รอบ 203 ทีม F3 · คำตัดสินข้อ 133: ยื่นได้หลายครั้งต่อเดือน
+            // ต่อการจ่ายเงิน — ด่านกันซ้ำของ ภ.พ.36 คือ "ใบหนึ่งนับได้ครั้งเดียว" ที่ตาราง Pp36RemittanceDocuments) · index เดิมถูกแทนด้วย _v2
+            """DROP INDEX IF EXISTS "UX_StatutoryRemittances_Period";""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_StatutoryRemittances_Period_v2" ON "StatutoryRemittances" ("CompanyId", "RemittanceType", "PeriodYear", "PeriodMonth") WHERE "IsDeleted" = false AND "RemittanceType" <> 'VatPp36';""",
+
+            // ===== Pp36RemittanceDocuments: ใบ ↔ รายการนำส่ง ภ.พ.36 (รอบ 203 ทีม F3 · คำตัดสินข้อ 133/134) =====
+            """
+            CREATE TABLE IF NOT EXISTS "Pp36RemittanceDocuments" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL,
+                "StatutoryRemittanceId" uuid NOT NULL,
+                "DocumentId" uuid NOT NULL,
+                "PeriodYear" integer NOT NULL,
+                "PeriodMonth" integer NOT NULL,
+                "VatAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "RecognizedJournalEntryId" uuid NULL,
+                "RecognizedAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "CreatedAt" timestamp NOT NULL DEFAULT now(),
+                "CreatedBy" varchar(200) NULL,
+                "UpdatedAt" timestamp NULL,
+                "UpdatedBy" varchar(200) NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            // ใบหนึ่งอยู่ในรายการนำส่งได้รายการเดียว (กันนับซ้ำ — ด่านชั้นที่สองหลังการล็อกแถวใน RemitAsync)
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_Pp36RemittanceDocuments_Document" ON "Pp36RemittanceDocuments" ("CompanyId", "DocumentId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_Pp36RemittanceDocuments_Remittance" ON "Pp36RemittanceDocuments" ("CompanyId", "StatutoryRemittanceId");""",
+            // ข้อมูลเดิม: การนำส่ง ภ.พ.36 ก่อนรอบ 203 ผูกกับ "งวด" ⇒ ผูกใบที่ถูกนับในตอนนั้น (ชนิดในชุดเดียว · ออกแล้วไม่ยกเลิก · มี VAT · งวด = วันจ่าย/วันที่เอกสาร ·
+            // สร้างก่อนวันนำส่ง) เข้ากับรายการนำส่งของงวด — มิฉะนั้นใบที่นำส่งไปแล้วจะกลับมาขึ้นเป็นยอดค้างทั้งหมด · ยอด = VatAmount × อัตรา (ตัวแปลงเดียวกับ JE)
+            // ใบที่สร้างหลังวันนำส่งไม่ถูกผูก ⇒ ขึ้นเป็นยอดค้าง "นำส่งเพิ่มเติม" (คำตัดสินข้อ 133) · ยอดไม่ตรง ⇒ หน้านำส่งแสดงเป็นรายการต้องตรวจ (นำส่งเกิน/ขาด)
+            // idempotent: NOT EXISTS ต่อใบ + ครั้งเดียวต่อรายการนำส่ง
+            """
+            INSERT INTO "Pp36RemittanceDocuments" ("Id","CompanyId","StatutoryRemittanceId","DocumentId","PeriodYear","PeriodMonth","VatAmount","RecognizedAmount","CreatedAt","CreatedBy","IsDeleted")
+            SELECT gen_random_uuid(), d."CompanyId", r."Id", d."Id", r."PeriodYear", r."PeriodMonth",
+                   ROUND(d."VatAmount" * CASE WHEN d."ExchangeRate" <= 0 THEN 1 ELSE d."ExchangeRate" END, 2),
+                   CASE WHEN d."InputVatBecameClaimableAt" IS NOT NULL THEN ROUND(d."VatAmount" * CASE WHEN d."ExchangeRate" <= 0 THEN 1 ELSE d."ExchangeRate" END, 2) ELSE 0 END,
+                   now(), 'migration-pp36-backfill', false
+            FROM "Documents" d
+            JOIN "StatutoryRemittances" r ON r."CompanyId" = d."CompanyId" AND r."RemittanceType" = 'VatPp36' AND r."IsDeleted" = false
+                AND r."PeriodYear" = EXTRACT(YEAR FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int
+                AND r."PeriodMonth" = EXTRACT(MONTH FROM COALESCE(d."PaymentDate", d."DocumentDate"))::int
+            WHERE d."IsForeignService" = true AND d."VatAmount" > 0 AND d."IsDeleted" = false
+              AND d."DocumentType" IN (8, 9, 13, 15)
+              AND d."Status" NOT IN (0, 1, 6, 8)
+              AND d."CreatedAt" <= r."CreatedAt"
+              AND NOT EXISTS (SELECT 1 FROM "Pp36RemittanceDocuments" x WHERE x."CompanyId" = d."CompanyId" AND x."DocumentId" = d."Id" AND x."IsDeleted" = false)
+              -- ครั้งเดียวต่อรายการนำส่ง: รายการที่มีแถวผูกแล้ว (จากเส้นใหม่ หรือ backfill รอบก่อน) ไม่ถูกเติมอีก ⇒ ใบที่ไม่ได้ถูกนำส่งไม่ถูกผูกย้อนหลังตอนบูตครั้งถัดไป
+              AND NOT EXISTS (SELECT 1 FROM "Pp36RemittanceDocuments" y WHERE y."CompanyId" = r."CompanyId" AND y."StatutoryRemittanceId" = r."Id")
+              AND r."Id" = (SELECT r2."Id" FROM "StatutoryRemittances" r2 WHERE r2."CompanyId" = r."CompanyId" AND r2."RemittanceType" = 'VatPp36' AND r2."IsDeleted" = false
+                            AND r2."PeriodYear" = r."PeriodYear" AND r2."PeriodMonth" = r."PeriodMonth" ORDER BY r2."CreatedAt" LIMIT 1);
+            """,
+            // คำตัดสินข้อ 132: ชื่อผัง 21912 — เปลี่ยนเฉพาะแถวที่ชื่อยังเป็นค่าเดิม "ทุกตัวอักษร" (ไม่แตะชื่อที่ลูกค้าแก้เอง) · ไทย/อังกฤษแยกกัน
+            """UPDATE "ChartOfAccounts" SET "AccountName" = 'ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36' WHERE "AccountCode" = '21912' AND "AccountName" = 'ภาษีขาย ภ.พ. 36';""",
+            """UPDATE "ChartOfAccounts" SET "AccountNameEn" = 'VAT Payable - Self-assessed (P.P.36)' WHERE "AccountCode" = '21912' AND "AccountNameEn" = 'Output VAT (P.P. 36)';""",
 
             """
             CREATE TABLE IF NOT EXISTS "EmailQueues" (

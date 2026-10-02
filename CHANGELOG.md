@@ -4444,3 +4444,15 @@ _รอบ 202 ทีม LC รอบสอง — แก้ผลฝ่าย�
 - **P2-2** ปฏิเสธสลิป: ล็อกการจอง → ที่พัก + `SeenSlipUploadedAt`/`SeenStatus` (LODGING-SLIP-STALE) · **P2-3** `AwaitingSlipReview` expression เดียวของคิวและตัวนับ + ป้ายบนแดชบอร์ด ·
   **P2-4** หลักฐานการจองใบรอชำระ/รอสลิป · **P2-5** `LodgingHoldRule.AutoExpireSlipReason` + `AutoExpireReasonFor` · **P3-1** DTO nullable คงค่าเดิม · **P3-2** hold ≥ 24 ชม.
 - เทสต์ pure +9 Fact/+2 Theory · voucher +2 · Db +1 (+ stale ในเคสเดิม) · required_call_site +9 กติกา/ปรับ 2 — commit f9addc67_
+
+_รอบ 203 ทีม F3 (2026-10-02) — วงจรนำส่ง/รับรู้ ภ.พ.36 ตาม GL (PP36_REVIEW E-2..E-13 · T-2 · T-3d/C-P2 · คำตัดสินข้อ 129, 132–136):
+- **ตัวตัดสินเดียว** `Helpers/Pp36Lifecycle` (pure) + `Helpers/Pp36Ledger` (โหลด GL ที่มีผล/รายการนำส่ง) + `ForeignServiceVat.Pp36DocumentTypes/CanCarryPp36/OwnsPp36/Pp36PeriodDate` +
+  `Helpers/DocumentFx.ToBaht` (`DocumentService.ToGlAmount` เรียกตัวนี้) — ยอดค้าง · ปฏิทิน · นำส่ง · รับรู้ · รายงาน ภ.พ.36 · tax point · ป้ายบนรายการ ใช้ชุดเดียว
+- **E-3/E-4** นับเฉพาะใบที่ GL มี Cr 21912 จริง (บาท) · ใบอนุมัติแล้วไม่มี JE ⇒ รายการ ต้องตรวจ (`RemittanceDashboardResponse.Pp36Issues`) ไม่นับเงียบ · รับรู้ย้ายเฉพาะ 11640 ที่พักจริง
+- **E-5** ตาราง `Pp36RemittanceDocuments` (ใบ ↔ รายการนำส่ง · unique ต่อใบ) · นำส่งเพิ่มเติมงวดเดิมได้ (unique index งวด `_v2` ยกเว้น VatPp36) · รับรู้เฉพาะใบที่นำส่งแล้ว · migration ผูกใบของการนำส่งเดิม
+- **E-2** รับรู้: เลข+วันที่ใบเสร็จ RD บังคับ · วันเคลม = วันใบเสร็จผ่าน `TaxService.ClaimBasisDate` (ห้ามก่อน) · JE ลงวันเคลม · ห้ามงวด ภ.พ.30 ยื่น/ล็อกแล้ว · ต่อรายการนำส่ง · อ้าง §82/4 (เลิก §77/2 ทั้งเรพ)
+- **E-6** บล็อกยกเลิก/ปลดธง/ปรับยอด 21912-11640/ยกเลิกการลงบัญชีรอบโอน หลังนำส่ง/รับรู้ (`Pp36Ledger.ChangeBlocksAsync`) · นำส่งเกิน/ขาดขึ้นเป็นรายการต้องตรวจ
+- **E-8** ติ๊กธงบนใบขาย ⇒ ปฏิเสธ (`PP36-FLAG-WRONG-TYPE`) · **E-9** เงินเพิ่ม §89/1 เสนอ+แก้ได้ (`RemitRequest.LateSurcharge`) ลงผังค่าปรับ · **E-10** กระทบยอด 21912 ตัด JE นำส่ง + บรรทัด 11640 + สาเหตุใบไม่มี JE ·
+  **E-13** ภ.พ.30 บรรทัดใบต่างประเทศก่อนรับรู้ = "[ภ.พ.36 — รอนำส่ง/รับรู้]" · **T-2** ชื่อผัง 21912 "ภาษีมูลค่าเพิ่มค้างนำส่ง ภ.พ.36" (แม่แบบ + migration ชื่อเดิมทุกตัวอักษร) ·
+  **T-3d/C-P2** `DocumentResponse.Pp36State/Pp36StatusLabel` · documents.html แสดงอย่างเดียว · "เคลม ภ.พ.30" ไม่ขึ้นกับใบรออนุมัติ
+- เทสต์ pure `Pp36LifecycleTests` · golden `Db/Pp36LifecycleGoldenDbTests` (5 เคส) · required_call_site +16 กติกา — commit <pending>_
