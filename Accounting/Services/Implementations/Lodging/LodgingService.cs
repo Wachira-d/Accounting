@@ -421,6 +421,14 @@ public partial class LodgingService : ILodgingService
         // W-01 (รอบ 202 ทีม LS): แขกจองผ่านเว็บได้จริงไหม — ตัวตัดสินตัวเดียว · "เว็บหาย" = ชื่อเว็บหาไม่เจอ (ถูกลบ/ไม่ใช่ของบริษัท)
         var readiness = LodgingPublicReadiness.Evaluate(p.SiteId, siteExists: siteName != null, siteName,
             p.IsActive, p.OnlineBookingEnabled, unitCount);
+        // ผูกด่วน (ต่อจาก LW ข้อ 118): ไม่ผูก/เว็บหาย ⇒ เสนอเว็บประเภทที่พักที่ยังว่าง · ทางแก้ชี้ปุ่ม (เซิร์ฟเวอร์ตัดสิน หน้าแสดงอย่างเดียว)
+        List<LodgingSiteBindOption>? bindable = null;
+        if (LodgingPublicReadiness.AllowsQuickBind(readiness.Status))
+        {
+            bindable = await BindableSitesAsync(companyId, p.Id);
+            readiness = LodgingPublicReadiness.Evaluate(p.SiteId, siteExists: siteName != null, siteName,
+                p.IsActive, p.OnlineBookingEnabled, unitCount, bindableSiteCount: bindable.Count);
+        }
         return new LodgingPropertyDto
         {
             Id = p.Id, SiteId = p.SiteId, BranchId = p.BranchId, Name = p.Name, NameEn = p.NameEn, Code = p.Code,
@@ -461,7 +469,56 @@ public partial class LodgingService : ILodgingService
             RoomTypeCount = rtCount, UnitCount = unitCount, SiteName = siteName,
             EffectiveVatRate = await EffectiveVatRateAsync(companyId, p),
             PublicBookingStatus = readiness.Status, PublicBookingMessage = readiness.Message, PublicBookingFix = readiness.FixHint,
+            BindableSites = bindable,
         };
+    }
+
+    /// <summary>ข้อเท็จจริงของเว็บทุกเว็บในบริษัท → ผู้สมัครผูกด่วน (ตัวคัด <see cref="LodgingPublicReadiness.BindCandidates"/> · tenant)</summary>
+    private async Task<List<LodgingSiteBindOption>> BindableSitesAsync(Guid companyId, Guid propertyId)
+    {
+        var sites = await _db.Sites.AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => new { s.Id, s.Name, s.IndustryType }).ToListAsync();
+        var bound = await _db.LodgingProperties.AsNoTracking().Where(x => x.CompanyId == companyId && x.SiteId != null)
+            .Select(x => new { x.Id, x.SiteId }).ToListAsync();
+        var boundBySite = bound.GroupBy(x => x.SiteId!.Value).ToDictionary(g => g.Key, g => (Guid?)g.First().Id);
+        return LodgingPublicReadiness.BindCandidates(propertyId, sites.Select(s => new LodgingSiteBindSource(
+            s.Id, s.Name, s.IndustryType == IndustryType.Hotel, boundBySite.GetValueOrDefault(s.Id))));
+    }
+
+    /// <summary>
+    /// "ผูกที่พักนี้กับเว็บ" จากป้ายสถานะ (รอบ 202 ทีม LS — รากของ "หน้าเว็บไม่อ้างข้อมูลห้องที่ตั้งค่า" คือ SiteId ว่าง)
+    /// <para>ด่าน: ที่พักต้องยังไม่มีเว็บที่ใช้งานได้ + เว็บเป้าหมายเป็นประเภทที่พัก (<see cref="LodgingPublicReadiness.QuickBindRefusal"/>) ·
+    /// tenant/เว็บมีจริง (<see cref="EnsurePropertyRefsBelongAsync"/>) · เว็บไม่ผูกกับที่พักอื่น (<see cref="EnsureSiteNotBoundElsewhereAsync"/>) —
+    /// ด่านเดิมทั้งคู่ ไม่เขียนซ้ำ · ธุรกรรมเดียว + audit chain · ตอบ DTO ใหม่พร้อมสถานะ ⇒ หน้าแสดงผลทันที</para>
+    /// </summary>
+    public async Task<LodgingPropertyDto> BindSiteAsync(Guid companyId, Guid propertyId, Guid siteId, string userId)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        var p = await RequirePropertyAsync(companyId, propertyId, tracking: true);
+        var prevSiteId = p.SiteId;
+        var prevSiteExists = prevSiteId != null
+            && await _db.Sites.AsNoTracking().AnyAsync(s => s.Id == prevSiteId && s.CompanyId == companyId);
+        var current = LodgingPublicReadiness.Evaluate(prevSiteId, prevSiteExists, null, p.IsActive, p.OnlineBookingEnabled, sellableUnitCount: 1);
+
+        p.SiteId = siteId;
+        await EnsurePropertyRefsBelongAsync(companyId, p, prevSiteId, p.DefaultCancellationPolicyId);
+        var targetIsLodging = await _db.Sites.AsNoTracking()
+            .AnyAsync(s => s.Id == siteId && s.CompanyId == companyId && s.IndustryType == IndustryType.Hotel);
+        var refusal = LodgingPublicReadiness.QuickBindRefusal(current.Status, targetIsLodging);
+        if (refusal != null) throw new BusinessRuleException(refusal, "LODGING-BIND");
+        await EnsureSiteNotBoundElsewhereAsync(companyId, p);
+
+        p.UpdatedBy = userId; p.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, Action = AuditAction.Update, EntityType = nameof(LodgingProperty), EntityId = p.Id.ToString(),
+            OldValues = J(new { siteId = prevSiteId }),
+            NewValues = J(new { siteId, action = "BindSite", by = userId }),
+        });
+        await _db.SaveChangesAsync();
+        await tx.CommitAsync();
+        _logger.LogInformation("ที่พัก {Prop} ผูกกับเว็บ {Site} (เดิม {Prev}) โดย {User}", p.Id, siteId, prevSiteId?.ToString() ?? "ไม่ผูก", userId);
+        return await ToDtoAsync(companyId, p);
     }
 
     // ═══════════════════════════ Room types / Units ═══════════════════════════

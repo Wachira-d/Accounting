@@ -86,6 +86,12 @@ public class LodgingController : ControllerBase
     public async Task<ActionResult<ApiResponse<LodgingPropertyDto>>> UpdateProperty(Guid companyId, Guid propertyId, [FromBody] LodgingPropertyDto dto)
         => Wrap(await _svc.UpdatePropertyAsync(companyId, propertyId, dto, Uid), "บันทึกการตั้งค่าแล้ว");
 
+    /// <summary>"ผูกที่พักนี้กับเว็บ" จากป้ายสถานะ (รอบ 202 ทีม LS) — ด่านอยู่ที่ service (สถานะ · ประเภทเว็บ · tenant · ผูกซ้ำ)</summary>
+    [HttpPost("properties/{propertyId:guid}/bind-site")]
+    [RequirePermission(PermissionKeys.LodgingSettings)]
+    public async Task<ActionResult<ApiResponse<LodgingPropertyDto>>> BindSite(Guid companyId, Guid propertyId, [FromBody] LodgingBindSiteRequest request)
+        => Wrap(await _svc.BindSiteAsync(companyId, propertyId, request.SiteId, Uid), "ผูกที่พักกับเว็บแล้ว — หน้าจองของเว็บใช้ห้อง/ราคาของที่พักนี้ทันที");
+
     // ═══════════ ตั้งค่า: ห้อง ═══════════
 
     [HttpGet("properties/{propertyId:guid}/room-types")]

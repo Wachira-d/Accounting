@@ -4392,3 +4392,11 @@ _รอบ 202 ทีม LW (เว็บที่พัก: ข้อมูล�
 เทสต์ `LodgingWebRound202Tests` · sim `lodging_storefront_info_sim.js` (+ เคส c ใน `lodging_guest_split_sim.js`) · กติกา `required_call_site_check` 10 ข้อ + เคสฝ่ายค้าน LW1–LW3_
 
 _Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — commit e26a6bb3)_
+
+_รอบ 202 ทีม LS ต่อ (2026-10-02 · ต่อจากรายงานทีม LW — ผู้ใช้: "หน้าเว็บไม่ได้อ้างอิงข้อมูลห้องพักที่ตั้งค่า" รากคือที่พักไม่ผูกเว็บ)
+- ป้ายสถานะ NotLinked/SiteMissing เสนอปุ่ม "🔗 ผูกที่พักนี้กับเว็บ {ชื่อ}" (หลายเว็บ = เลือกได้) — รายการจากเซิร์ฟเวอร์ `LodgingPropertyDto.BindableSites`
+  (`LodgingPublicReadiness.BindCandidates`: เว็บ `IndustryType.Hotel` ที่ไม่ผูกกับที่พักอื่น) · FixHint ชี้ปุ่มเมื่อมีผู้สมัคร
+- `POST /lodging/properties/{id}/bind-site` (`Lodging.Settings` · `BindSiteAsync`): ธุรกรรมเดียว · `QuickBindRefusal` (ผูกอยู่แล้ว/เว็บไม่ใช่ที่พัก) + ด่านเดิม
+  `EnsurePropertyRefsBelongAsync`/`EnsureSiteNotBoundElsewhereAsync` (ไม่เขียนซ้ำ) · audit chain · ตอบ DTO ใหม่ ⇒ ป้ายเปลี่ยนทันที
+- `required_call_site_check` self-test: เคสฝ่ายค้านตรวจกับ**ทุก**กติกาของเมธอดเดียวกันในไฟล์เดียวกัน (หลังรวม LS+LW `CreatePropertyAsync` มี 2 กติกา ⇒ เคส LW3 เดิมดูแค่กติกาแรกแล้วล้มผิด)
+- เทสต์ `LodgingSettingsRound202Tests` +4 (สองทิศ) · required_call_site +2 แถว — commit <pending>_

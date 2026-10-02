@@ -4169,6 +4169,11 @@ response ส่ง `RoomDepositKindInfo`/`RoomDepositKindInherited` (ผลต�
 ⑧ **early/late hours มีผู้อ่านแล้ว** (ข้อ 121): `LodgingReservationResponse.StayConditions` (`Helpers/LodgingStayConditions.Lines`) พิมพ์บนหลักฐานการจอง
 (`LodgingVoucherBuilder`) — เงื่อนไขอย่างเดียว ไม่บังคับเวลา · /lodging/info ยังไม่ส่ง (เมธอดอยู่ไฟล์ทีม O — ค้างให้ทีมนั้นเรียกตัวประกอบเดียวกัน) ·
 ⑨ ป้าย overbooking "(ต่อประเภทห้อง)" (ข้อ 120 · พฤติกรรมเดิม) · แท็บห้อง/ราคา/นโยบายล็อกพร้อมเหตุผลจนกว่าจะบันทึกที่พัก · ขอบแดงของช่องที่ถูกตีกลับหายเมื่อแก้ช่องนั้น/บันทึกสำเร็จ (`API.clearFieldError(s)` ใน api.js)
+⑩ **ผูกที่พักกับเว็บจากป้ายสถานะ** (รอบ 202 ทีม LS ต่อจาก LW ข้อ 118 — รากของ "หน้าเว็บไม่อ้างข้อมูลห้องที่ตั้งค่า" คือ `SiteId` ว่าง):
+สถานะ NotLinked/SiteMissing ⇒ `LodgingPropertyDto.BindableSites` = เว็บ `IndustryType.Hotel` ที่ไม่ผูกกับที่พักอื่น (`LodgingPublicReadiness.BindCandidates`) และ
+FixHint ชี้ปุ่ม · ปุ่ม "🔗 ผูกที่พักนี้กับเว็บ" → `POST /lodging/properties/{id}/bind-site {siteId}` (`Lodging.Settings` · `BindSiteAsync`): ธุรกรรมเดียว ·
+`QuickBindRefusal` (ผูกเว็บอยู่แล้ว/เว็บไม่ใช่ที่พัก ⇒ `LODGING-BIND`) + ด่านเดิม `EnsurePropertyRefsBelongAsync` + `EnsureSiteNotBoundElsewhereAsync` ·
+audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO ใหม่ ⇒ ป้ายเปลี่ยนทันที · เว็บประเภทอื่นยังผูกได้จากช่อง «เว็บไซต์ที่ผูก» ตามเดิม
 **อัตรา VAT ของที่พัก (S-10 · รอบ 193)**: `LodgingPricingEngine.PropertyVatRate(chargeVat, registered, companyRate)` ผ่าน
 `OutputVatRate.ForCompany` ตัวเดียวกับ POS/TimeBilling · สถานะจด VAT อ่านผ่าน `CompanyVatStatus.ProfileAsync` · **เปลี่ยนพฤติกรรม**: ตั้ง
 "คิด VAT เสมอ" บนบริษัทที่ไม่จด VAT = 0 (§90/2 — เดิม 7) · บริษัทที่ตั้งอัตราอื่นได้อัตรานั้น
@@ -4543,7 +4548,9 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL หลัง�
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — ด่าน isolation ของตัวประทับ audit + ReadCommitted/FOR UPDATE ในใบแจ้งหนี้จากภาระงาน (§6.1) · INSERT audit เป็นชุด — commit adf19a87)_
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — เว็บที่พัก (§6.5): บล็อก `LodgingRooms` ข้อมูลสด · migration บล็อกราคา seed ตรงทุกไบต์ + ล้างบริการ auto-seed · GET บริการจองอ่านอย่างเดียว · `/lodging/info` 404≠ขัดข้อง · ค่าค้นหาหน้าแรก→/booking · ผู้เข้าพักรายห้อง · seed ที่พักไม่สร้างแห่งที่สอง + ด่านที่พักหลายแห่งตัวเดียว · `SiteResponse.Warnings` — commit e26a6bb3)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LS ต่อ — ผูกที่พักกับเว็บจากป้ายสถานะ §6.5 ⑩ — commit <pending>)_
+
+_ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LW — เว็บที่พัก (§6.5): บล็อก `LodgingRooms` ข้อมูลสด · migration บล็อกราคา seed ตรงทุกไบต์ + ล้างบริการ auto-seed · GET บริการจองอ่านอย่างเดียว · `/lodging/info` 404≠ขัดข้อง · ค่าค้นหาหน้าแรก→/booking · ผู้เข้าพักรายห้อง · seed ที่พักไม่สร้างแห่งที่สอง + ด่านที่พักหลายแห่งตัวเดียว · `SiteResponse.Warnings` — commit e26a6bb3)_
 
 _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LO — §6.5 ล็อกต่อที่พักทุกเส้นที่ตัดสินห้องว่าง · night audit ติดธง "ค้างปิด" ไม่ประทับสถานะ + ทางปิดแถวรุ่นเก่า · กติกากันห้องตัวเดียว (สลิป/เงินค้าง) · เงินเข้าแต่ยืนยันไม่ได้ · เพดานจองสาธารณะ · คนเสริม/ความจุ/เช็คอินก่อน 1 วัน/ค่าปรับไม่เกินมัดจำ (ข้อ 123–127) — commit fe15692d)_
 

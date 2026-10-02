@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **445 ไฟล์ · 4,287 `[Fact]` + 677 `[Theory]` (3,017 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **445 ไฟล์ · 4,291 `[Fact]` + 677 `[Theory]` (3,017 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5557,7 +5557,7 @@ required_call_site บล็อก "รอบ 201 ทีม TX" (13 แถว) �
 
 Unit (สองทิศ): `LodgingSettingsRound202Tests` (เวลาว่าง = ค่าเริ่มต้น · อ่านได้ = ค่าที่กรอก · อ่านไม่ได้ = ปฏิเสธพร้อมชื่อช่อง · ช่วงคืน/วันที่กลับหัว
 ปฏิเสธ ช่วงถูก/ว่างผ่าน · เตียงเสริม ติ๊กแล้วจำนวน 0/ราคาว่างปฏิเสธ ไม่ติ๊กไม่ปฏิเสธ · สถานะเปิดจองออนไลน์ทุกเงื่อนไข ไม่ตกเป็น Live · เงื่อนไขนอกเวลา) ·
-`LodgingVoucherBuilderTests` +2 (เงื่อนไขนอกเวลาพิมพ์+หนี HTML · 0 ชม. ไม่พิมพ์) · `tools/validation_field_label_sim.js` ทิศที่ 5 (ขอบแดงหายเฉพาะช่องที่แก้ ·
+(+ ผูกด่วน: ผู้สมัครเฉพาะเว็บที่พักที่ว่าง · ทางแก้ชี้ปุ่มเมื่อมีผู้สมัคร · ปฏิเสธเมื่อผูกอยู่แล้ว/เว็บไม่ใช่ที่พัก) · `LodgingVoucherBuilderTests` +2 (เงื่อนไขนอกเวลาพิมพ์+หนี HTML · 0 ชม. ไม่พิมพ์) · `tools/validation_field_label_sim.js` ทิศที่ 5 (ขอบแดงหายเฉพาะช่องที่แก้ ·
 ล้างทั้งฟอร์มหลังบันทึก) · `tools/settings_reader_check.py --self-test` (`d` ที่เป็น DTO ใน Apply ไม่นับเป็นผู้อ่าน · `d =>` ของ entity นับ · ถอดผู้อ่าน
 EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required_call_site_check` +9 แถว (negative test อัตโนมัติ)
 
@@ -5573,6 +5573,8 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | LS-08 | ประเภทห้อง: ติ๊กเตียงเสริม จำนวน 0 หรือราคาว่าง · ไม่ติ๊ก | ติ๊ก = ปฏิเสธพร้อมป้ายช่อง · ไม่ติ๊ก = ช่องล็อก บันทึกได้ · การ์ดห้อง "เตียงเสริมสูงสุด N คน · ฿X/คน/คืน" |
 | LS-09 | ตั้ง early check-in 2 ชม. ฿300 · โหลดหลักฐานการจอง | มีบรรทัดเงื่อนไขเช็คอินก่อนเวลา · 0 ชม. = ไม่มีบรรทัด |
 | LS-10 | ช่องถูกตีกลับขอบแดง แล้วพิมพ์แก้ / บันทึกสำเร็จ | ขอบแดงหายเฉพาะช่องที่แก้ · บันทึกสำเร็จแล้วไม่เหลือขอบแดง |
+| LS-11 | ที่พักไม่ผูกเว็บ · บริษัทมีเว็บประเภทที่พักที่ยังไม่ผูก 1 เว็บ (และเว็บร้านค้า 1 เว็บ) | ป้ายแดงมีปุ่ม "🔗 ผูกที่พักนี้กับเว็บ {ชื่อ}" (ไม่เสนอเว็บร้านค้า) · กดแล้วป้ายเปลี่ยนเป็นสถานะใหม่ทันที · dropdown เว็บยังเลือกเว็บร้านค้าได้ตามเดิม |
+| LS-12 | (API) `POST properties/{id}/bind-site` ด้วยเว็บที่ผูกกับที่พักอื่น / เว็บที่ไม่ใช่ประเภทที่พัก / ที่พักที่ผูกเว็บอยู่แล้ว / เว็บของบริษัทอื่น | 400 ข้อความไทย (ผูกซ้ำ · `LODGING-BIND` · `LODGING-REF`) · ไม่มีอะไรเปลี่ยน · ผูกสำเร็จมีแถว audit chain |
 
 ---
 

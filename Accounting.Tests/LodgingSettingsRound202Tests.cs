@@ -186,4 +186,46 @@ public class LodgingSettingsRound202Tests
         Assert.Contains("ได้สูงสุด 3 ชม.", lines[0]);
         Assert.Contains("500.00 บาท", lines[0]);
     }
+
+    // ───────── ผูกด่วนจากป้ายสถานะ (ต่อจาก LW ข้อ 118) ─────────
+
+    [Fact]
+    public void ผู้สมัครผูกด่วน_เฉพาะเว็บที่พักที่ยังว่าง()
+    {
+        var me = Guid.NewGuid(); var other = Guid.NewGuid();
+        var free = new LodgingSiteBindSource(Guid.NewGuid(), "B4 Resort", true, null);
+        var takenByOther = new LodgingSiteBindSource(Guid.NewGuid(), "A Hotel", true, other);
+        var shop = new LodgingSiteBindSource(Guid.NewGuid(), "ร้านค้า", false, null);
+        var got = LodgingPublicReadiness.BindCandidates(me, new[] { takenByOther, shop, free });
+        Assert.Equal(new[] { new LodgingSiteBindOption(free.SiteId, "B4 Resort") }, got);
+    }
+
+    [Fact]
+    public void ไม่มีเว็บที่พักว่าง_ไม่มีผู้สมัคร_และทางแก้ไม่ชี้ปุ่ม()
+    {
+        var got = LodgingPublicReadiness.BindCandidates(Guid.NewGuid(),
+            new[] { new LodgingSiteBindSource(Guid.NewGuid(), "A", true, Guid.NewGuid()), new LodgingSiteBindSource(Guid.NewGuid(), "B", false, null) });
+        Assert.Empty(got);
+        var r = LodgingPublicReadiness.Evaluate(null, false, null, true, true, 5, bindableSiteCount: 0);
+        Assert.DoesNotContain("ผูกที่พักนี้กับเว็บ", r.FixHint);
+    }
+
+    [Fact]
+    public void มีเว็บที่พักว่าง_ทางแก้ของไม่ผูกชี้ปุ่มผูกด่วน()
+    {
+        var r = LodgingPublicReadiness.Evaluate(null, false, null, true, true, 5, bindableSiteCount: 1);
+        Assert.Equal(LodgingPublicBookingStatus.NotLinked, r.Status);
+        Assert.Contains("ผูกที่พักนี้กับเว็บ", r.FixHint);
+    }
+
+    [Fact]
+    public void ผูกด่วนได้เฉพาะไม่ผูกหรือเว็บหาย_และเว็บเป้าหมายต้องเป็นเว็บที่พัก()
+    {
+        Assert.Null(LodgingPublicReadiness.QuickBindRefusal(LodgingPublicBookingStatus.NotLinked, true));
+        Assert.Null(LodgingPublicReadiness.QuickBindRefusal(LodgingPublicBookingStatus.SiteMissing, true));
+        Assert.Contains("ไม่ใช่เว็บประเภทที่พัก", LodgingPublicReadiness.QuickBindRefusal(LodgingPublicBookingStatus.NotLinked, false));
+        foreach (var st in new[] { LodgingPublicBookingStatus.Live, LodgingPublicBookingStatus.Inactive,
+                                   LodgingPublicBookingStatus.OnlineOff, LodgingPublicBookingStatus.NoRooms })
+            Assert.Contains("ผูกกับเว็บอยู่แล้ว", LodgingPublicReadiness.QuickBindRefusal(st, true));
+    }
 }

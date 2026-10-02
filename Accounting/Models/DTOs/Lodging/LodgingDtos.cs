@@ -132,7 +132,13 @@ public class LodgingPropertyDto
     public string? PublicBookingMessage { get; set; }
     /// <summary>ทางแก้ (null เมื่อพร้อมแล้ว)</summary>
     public string? PublicBookingFix { get; set; }
+    /// <summary>เว็บประเภทที่พักที่ผูกด่วนได้ (เฉพาะสถานะไม่ผูก/เว็บหาย · ไม่รวมเว็บที่ผูกกับที่พักอื่น) — <c>LodgingPublicReadiness.BindCandidates</c> ·
+    /// response-only · ปุ่มเรียก <c>POST properties/{id}/bind-site</c></summary>
+    public List<LodgingSiteBindOption>? BindableSites { get; set; }
 }
+
+/// <summary>คำขอผูกที่พักกับเว็บจากป้ายสถานะ (รอบ 202 ทีม LS)</summary>
+public sealed record LodgingBindSiteRequest(Guid SiteId);
 
 /// <summary>ตัวเลือกประเภทเงินมัดจำ 1 แถวสำหรับหน้าตั้งค่าที่พัก (รอบ 194) — enum ออกเป็นชื่อ · ป้ายไทยจากเซิร์ฟเวอร์</summary>
 /// <param name="ForRoom">ใช้เป็นมัดจำค่าห้องได้ (ส่วนหนึ่งของราคา/นอกระบบ VAT)</param>
