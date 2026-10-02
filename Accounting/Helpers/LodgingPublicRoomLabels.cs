@@ -45,7 +45,7 @@ public static class LodgingPublicRoomLabels
     /// เฉพาะเมื่อตั้งครบ — ป้ายเตือนเจ้าของ "ตั้งค่าไม่ครบ" ไม่ออกหน้าสาธารณะ) · เด็ก/ทารกไม่นับความจุ</summary>
     public static string CapacityLabel(int maxAdults, bool allowExtraBed, int maxExtraBeds, decimal? extraBedPrice)
     {
-        var extra = allowExtraBed && maxExtraBeds > 0 && extraBedPrice is not null
+        var extra = LodgingOccupancy.SellsExtraBeds(allowExtraBed, maxExtraBeds, extraBedPrice)   // ตัวตัดสินเดียวกับเครื่องจอง (ราคาว่าง = ไม่ขาย)
             ? " · " + LodgingSettingsRules.ExtraBedSummary(true, maxExtraBeds, extraBedPrice)
             : "";
         return $"ผู้ใหญ่สูงสุด {Math.Max(1, maxAdults)} คน/ห้อง{extra} · เด็ก/ทารกไม่นับความจุ";

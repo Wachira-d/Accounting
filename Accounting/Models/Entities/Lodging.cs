@@ -454,6 +454,9 @@ public class LodgingReservation : TenantEntity
     public DateTime? PaymentProblemAt { get; set; }
     /// <summary>เหตุผลที่ยืนยันไม่ได้ + เลขรายการชำระ (ข้อความภายใน — หน้าแขกเห็นข้อความกลางแทน)</summary>
     public string? PaymentProblemNote { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 202 P1-3ค: รายการชำระออนไลน์ที่เงินเข้าแต่ยืนยันไม่ได้ — ตอนพนักงานยืนยัน+รับมัดจำภายหลัง ใบมัดจำต้องลงบัญชีพักของ
+    /// gateway จากรายการนี้ (ไม่ใช่บัญชีที่พนักงานเลือก) · ล้างพร้อมธงเมื่อรับเงินสำเร็จ</summary>
+    public Guid? PaymentProblemIntentId { get; set; }
 
     public ICollection<LodgingReservationRoom> Rooms { get; set; } = new List<LodgingReservationRoom>();
     public ICollection<LodgingReservationExtra> Extras { get; set; } = new List<LodgingReservationExtra>();

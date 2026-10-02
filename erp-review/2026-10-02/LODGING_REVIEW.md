@@ -38,3 +38,17 @@
 
 ## เรื่องที่ต้องให้เจ้าของตัดสิน (ไม่เดาแทน)
 OTA merchant/agency + ฐาน VAT · ราคาเด็ก/ทารกนับความจุ · เช็คอินก่อนวันจอง · ค่าปรับยกเลิกที่เกินมัดจำออกใบแจ้งหนี้ไหม · ระยะกันห้องของการจองที่ส่งสลิป · คืนเงินผ่าน gateway อัตโนมัติเมื่อห้องเต็ม
+
+## ผลฝ่ายค้านบนงานทีม LO (fe15692d) — แก้แล้ว
+| ID | เรื่อง | สถานะ |
+|---|---|---|
+| P1-1 | เช็คอินก่อน 1 วันไม่ตรวจหมายเลขห้องที่จัดไว้ ⇒ ซ้อนแขกที่ยังพัก | ✅ 8d7f0e74 `EnsureAssignedUnitsFreeAsync` |
+| P1-2 | night audit นับมิเตอร์ใบ Pending ไม่มีเงิน | ✅ 8d7f0e74 `ShouldMeterOnFlag` |
+| P1-3 | ข้อ 127 ไม่ครบ: สลิปหลังยกเลิกอัตโนมัติ · ธงบนใบยกเลิกปิดไม่ได้ · ยืนยันภายหลังลงบัญชีผิด | ✅ 8d7f0e74 `IsAutoExpiredHold` · `ResolvePaymentProblemAsync` · `ProblemIntentMoneyInAsync` |
+| P1-4 | ใบย้อนหลังในเดือนที่ยื่น ภ.พ.30 แล้วอนุมัติเงียบ | ✅ 8d7f0e74 `BackfillVatAckProblem` + `AcknowledgeFiledVatPeriod` |
+| P2-1 | ยืนยันซ้อน ⇒ ใบมัดจำสองใบ/lost update | ✅ 8d7f0e74 `WithReservationLockAsync(LodgingConfirm)` + เทสต์ DB |
+| P2-2 | สลิปไม่อ่านแถวใหม่ใต้ล็อก | ✅ 8d7f0e74 |
+| P2-3 | แถวรุ่นเก่าเปิดกลับแล้วล้ม ค้างกันห้อง | ✅ 8d7f0e74 `EffectiveCheckOut(checkedOutAt)` + `RestoreLegacyAutoCheckoutAsync` |
+| P2-4 | เลื่อนวันใบมีคนเสริมหลังปิดเตียงเสริม ถูกบล็อก | ✅ 8d7f0e74 คำเตือน + ราคาเดิม (เส้นพนักงาน) |
+| P2-5 | เปิดเตียงเสริมแต่ราคาว่าง ⇒ ฟรี | ✅ 8d7f0e74 `SellsExtraBeds` |
+

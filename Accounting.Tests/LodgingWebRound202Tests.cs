@@ -248,7 +248,7 @@ public class LodgingWebRound202Tests
     public void ค้นหาหลายห้อง_เทียบเพดานด้วยผู้ใหญ่ต่อห้อง(int adults, int rooms, int maxAdults, bool allowExtra, int maxExtra, bool fits)
     {
         var perRoom = LodgingSearchGuests.PerRoom(adults, rooms, 1);
-        Assert.Equal(fits, perRoom <= LodgingOccupancy.MaxAdultsWithExtras(maxAdults, allowExtra, maxExtra));
+        Assert.Equal(fits, perRoom <= LodgingOccupancy.MaxAdultsWithExtras(maxAdults, allowExtra, maxExtra, 600m));
     }
 
     [Fact]

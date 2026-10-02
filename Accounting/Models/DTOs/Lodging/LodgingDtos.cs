@@ -456,6 +456,8 @@ public class LodgingQuoteResponse
     public int TotalGuests { get; set; }
     /// <summary>"รวม N คน (ผู้ใหญ่ a · เด็ก c · ทารก i · คนเสริม e)"</summary>
     public string GuestSummary { get; set; } = "";
+    /// <summary>คำเตือนที่ไม่บล็อก (เส้นพนักงาน เช่น เลื่อนวันใบที่ซื้อคนเสริมไว้ก่อนที่พักปิดเตียงเสริม — คงราคาคนเสริมเดิม)</summary>
+    public List<string> Warnings { get; set; } = new();
     /// <summary>ข้อผิดพลาด (ห้องไม่ว่าง/คืนไม่ถึงขั้นต่ำ) — null = จองได้</summary>
     public List<string> Errors { get; set; } = new();
 }
@@ -632,6 +634,8 @@ public class LodgingReservationResponse
     public DateTime? PaymentProblemAt { get; set; }
     /// <summary>เหตุผล + เลขรายการชำระ (ข้อความภายใน)</summary>
     public string? PaymentProblemNote { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 202 P1-3ข: ทาง "เปิดการจองกลับ" ใช้ได้ไหม (ใบที่ระบบยกเลิกเพราะหมดเวลาถือห้อง) — เซิร์ฟเวอร์ตัดสิน</summary>
+    public bool CanReopenForPayment { get; set; }
     /// <summary>ยอดที่ gateway จะเก็บจริงเมื่อแขกกดจ่ายออนไลน์ (null = ไม่มีอะไรให้จ่าย) — ตัวเดียวกับ PublicPaymentResolver</summary>
     public decimal? OnlinePayableAmount { get; set; }
     /// <summary>ข้อความกล่องจ่ายออนไลน์ตามค่าตั้ง AutoConfirmOnDeposit (C9)</summary>
@@ -820,7 +824,26 @@ public record LodgingCheckOutRequest(
     bool ChargeLateCheckOut = false,
     /// <summary>ออกใบกำกับภาษีในนามบริษัทของแขก (ใช้ GuestTaxId/GuestCompanyName)</summary>
     bool IssueTaxInvoiceToCompany = false,
-    string? Note = null);
+    string? Note = null,
+    /// <summary>ฝ่ายค้านรอบ 202 P1-4: ออกใบเช็คเอาต์ย้อนหลัง (แถวที่ระบบรุ่นก่อนปิดเอง) ที่วันใช้บริการอยู่ในเดือนที่ยื่น ภ.พ.30 แล้ว ⇒
+    /// พนักงานต้องติ๊กรับทราบเองว่าต้องยื่นแบบเพิ่มเติม (ไม่ติ๊ก = ปฏิเสธพร้อมข้อความ · ห้ามอนุมัติเงียบ)</summary>
+    bool AcknowledgeFiledVatPeriod = false);
+
+/// <summary>ฝ่ายค้านรอบ 202 P1-3ข (คำตัดสินข้อ 127): ปิดเรื่อง "เงินเข้าแต่ยืนยันไม่ได้" — พนักงานเลือกทางเอง ทุกทางลง audit · ห้ามล้างธงเงียบ</summary>
+public enum LodgingPaymentProblemResolution
+{
+    /// <summary>เปิดการจองกลับ (ใบที่ระบบยกเลิกเพราะหมดเวลาถือห้อง) ถ้าห้องยังว่าง — แล้วกด "ยืนยัน + รับมัดจำ" ตามปกติ</summary>
+    Reopen = 1,
+    /// <summary>คืนเงินแขกแล้ว (เลขอ้างอิงการโอนคืน/คืนผ่านช่องทางชำระบังคับ)</summary>
+    Refunded = 2,
+    /// <summary>ปิดเรื่องโดยไม่ทำอะไรกับการจอง (เหตุผลบังคับ เช่น เงินไม่ได้เข้าจริง/บันทึกที่อื่นแล้ว)</summary>
+    Dismissed = 3,
+}
+
+public record LodgingResolvePaymentProblemRequest(
+    LodgingPaymentProblemResolution Resolution,
+    string? Reason = null,
+    string? Reference = null);
 
 public record LodgingRescheduleRequest(DateTime CheckIn, DateTime CheckOut, string? Reason = null);
 

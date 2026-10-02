@@ -59,9 +59,27 @@ public static class LodgingHoldRule
 
     /// <summary>วันเช็คเอาต์ที่ใช้ "นับการกันห้อง" — แขกที่ยังเช็คอินค้างอยู่หลังวันออก (ยังไม่มีใครกดเช็คเอาต์) กันห้องคืนนี้ต่อ
     /// (คำตัดสินข้อ 119: ห้องที่ CheckedIn ค้างยังกันห้อง — ทิศที่ความเสียหายมองเห็นได้: ห้องว่างลดลงพร้อมป้าย "ค้างปิด"
-    /// ดีกว่าขายห้องที่แขกยังอยู่ซ้อน) · วันออก = วันนี้ ยังเป็นปกติ (เช็คเอาต์ก่อนเที่ยง ขายคืนนี้ได้)</summary>
-    public static DateTime EffectiveCheckOut(LodgingReservationStatus status, DateTime checkOut, DateTime todayThai)
-        => status == LodgingReservationStatus.CheckedIn && checkOut.Date < todayThai.Date
+    /// ดีกว่าขายห้องที่แขกยังอยู่ซ้อน) · วันออก = วันนี้ ยังเป็นปกติ (เช็คเอาต์ก่อนเที่ยง ขายคืนนี้ได้)
+    /// <para>ฝ่ายค้านรอบ 202 P2-3: มี <paramref name="checkedOutAt"/> แล้ว = แถวรุ่นเก่าที่ night audit เคยปิดเอง แล้วพนักงานเปิดกลับมาออกใบย้อนหลัง
+    /// (แขกออกไปนานแล้ว) ⇒ ไม่ยืดวันออก — ห้ามกันห้องคืนนี้เพราะการออกใบย้อนหลังค้างกลางทาง</para></summary>
+    public static DateTime EffectiveCheckOut(LodgingReservationStatus status, DateTime checkOut, DateTime todayThai, DateTime? checkedOutAt = null)
+        => status == LodgingReservationStatus.CheckedIn && checkedOutAt == null && checkOut.Date < todayThai.Date
             ? todayThai.Date.AddDays(1)
             : checkOut;
+
+    /// <summary>การจองอื่นใช้หมายเลขห้องนี้ในช่วง [<paramref name="wantIn"/>, <paramref name="wantOut"/>) อยู่ไหม — กติกาเดียวของ "ห้องชน"
+    /// (จัดห้อง · เช็คอิน · เช็คอินก่อนวันจองที่ขยายคืน) = ยังกันห้อง (<see cref="BlocksInventory"/>) และทับช่วง (วันออกผ่าน <see cref="EffectiveCheckOut"/>)</summary>
+    public static bool OccupiesUnit(LodgingHoldFacts other, DateTime otherIn, DateTime otherOut, DateTime? otherCheckedOutAt,
+        DateTime wantIn, DateTime wantOut, DateTime now, DateTime todayThai)
+        => BlocksInventory(other, now)
+           && LodgingAvailability.Overlaps(otherIn, EffectiveCheckOut(other.Status, otherOut, todayThai, otherCheckedOutAt), wantIn, wantOut);
+
+    /// <summary>เหตุผลที่ตัวยกเลิกอัตโนมัติประทับเมื่อหมดเวลาถือห้อง — ตัวเดียวของผู้เขียน (ExpireHoldsAsync) และผู้อ่าน</summary>
+    public const string AutoExpireReason = "หมดเวลาชำระมัดจำ (ระบบยกเลิกอัตโนมัติ)";
+
+    /// <summary>ใบนี้ถูก "ระบบ" ยกเลิกเพราะหมดเวลาถือห้อง (ไม่ใช่พนักงาน/แขกยกเลิกเอง) และยังไม่มีเงินเกี่ยวข้องบนใบ —
+    /// แขกที่ส่งสลิปมาภายหลังต้องถูกรับไว้ + ติดธงให้พนักงานตัดสิน (ฝ่ายค้านรอบ 202 P1-3ก · คำตัดสินข้อ 127)</summary>
+    public static bool IsAutoExpiredHold(LodgingReservationStatus status, string? cancellationReason, decimal depositPaid)
+        => status == LodgingReservationStatus.Cancelled && depositPaid <= 0m
+           && string.Equals(cancellationReason, AutoExpireReason, StringComparison.Ordinal);
 }

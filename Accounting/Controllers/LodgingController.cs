@@ -324,6 +324,18 @@ public class LodgingController : ControllerBase
         return Wrap(r, $"ยกเลิกแล้ว · ค่าปรับ {r.CancellationFee:N2}" + (r.RefundPending > 0 ? $" · ค้างคืนเงินแขก {r.RefundPending:N2} (กด “ยืนยันคืนเงินแล้ว” เมื่อโอนจริง)" : ""));
     }
 
+    /// <summary>ฝ่ายค้านรอบ 202 P1-3ข (คำตัดสินข้อ 127): ปิดเรื่อง "เงินเข้าแต่ยืนยันไม่ได้" — เปิดกลับ (ห้องว่างจริง) · คืนเงินแล้ว · ปิดโดยเหตุผล (บังคับ)</summary>
+    [HttpPost("reservations/{id:guid}/payment-problem/resolve")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> ResolvePaymentProblem(Guid companyId, Guid id, [FromBody] LodgingResolvePaymentProblemRequest req)
+    {
+        var r = await _svc.ResolvePaymentProblemAsync(companyId, id, req, Uid);
+        var msg = req.Resolution == LodgingPaymentProblemResolution.Reopen
+            ? "เปิดการจองกลับแล้ว — กด “ยืนยัน + บันทึกรับมัดจำ” เพื่อออกใบมัดจำ (บัญชีรับเงินตามช่องทางที่เงินเข้า)"
+            : "ปิดเรื่องเงินเข้าแล้ว (บันทึกประวัติ + audit)";
+        return Wrap(r, msg);
+    }
+
     /// <summary>ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง (F-03 รอบ 193) — ลง JE คืนเงิน + ใบลดหนี้ตอนนี้เท่านั้น</summary>
     [HttpPost("reservations/{id:guid}/refund-paid")]
     [RequirePermission(PermissionKeys.LodgingManage)]

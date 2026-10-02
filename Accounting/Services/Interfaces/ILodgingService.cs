@@ -105,7 +105,9 @@ public interface ILodgingService
     Task HoldForOnlinePaymentAsync(Guid companyId, Guid reservationId, DateTime? intentExpiresAt);
     /// <summary>รอบ 202 (O-P1-4 · คำตัดสินข้อ 127): เงินเข้า/ส่งสลิปแล้วแต่ยืนยันการจองไม่ได้ ⇒ ธงบนการจอง + หมายเหตุ + audit + แจ้งที่พัก ·
     /// ไม่คืนเงินอัตโนมัติ</summary>
-    Task FlagPaymentProblemAsync(Guid companyId, Guid reservationId, string reason, string source);
+    Task FlagPaymentProblemAsync(Guid companyId, Guid reservationId, string reason, string source, Guid? paymentIntentId = null);
+    /// <summary>ฝ่ายค้านรอบ 202 P1-3ข: ปิดเรื่อง "เงินเข้าแต่ยืนยันไม่ได้" — เปิดการจองกลับ (ห้องว่างจริง) · คืนเงินแล้ว · ปิดโดยเหตุผล · ทุกทางลง audit</summary>
+    Task<LodgingReservationResponse> ResolvePaymentProblemAsync(Guid companyId, Guid reservationId, LodgingResolvePaymentProblemRequest request, string userId);
 
     // ── หลังบ้าน: แม่บ้าน / คำขอแขก ──
     Task<List<LodgingHousekeepingTaskDto>> GetTasksAsync(Guid companyId, Guid propertyId, string? status, DateTime? date);

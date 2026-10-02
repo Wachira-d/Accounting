@@ -130,6 +130,9 @@ public static class AdvisoryLockKey
     /// "ยังไม่มีใบ/ใบเดิมถูกยกเลิก" ทั้งคู่ ⇒ ใบกำกับสองใบ) · session lock (<c>JobLock.RunExclusiveAsync</c>) เพราะเส้นออกเอกสาร/ใช้มัดจำ
     /// เปิดธุรกรรมของตัวเองหลายขั้น (xact lock จะหลุดตั้งแต่ขั้นแรก)</summary>
     public const string LodgingCheckout = "lodging-checkout";
+    /// <summary>ยืนยัน/รับมัดจำของการจองที่พัก — part = id การจอง (ฝ่ายค้านรอบ 202 P2-1: ยืนยันซ้อนสองคำขอ (เว็บสองแท็บ · webhook + poll ·
+    /// พนักงาน + เงินออนไลน์) ⇒ ใบมัดจำสองใบ + DepositPaid lost update) · session lock เพราะเส้นออกใบมัดจำเปิดธุรกรรมของตัวเอง</summary>
+    public const string LodgingConfirm = "lodging-confirm";
     /// <summary>รับรู้/ริบใบมัดจำ — part = id ใบมัดจำ (รอบ 194 ฝ่ายค้าน P-a: สองคำขอพร้อมกันผ่านด่านยอดคงค้างทั้งคู่
     /// ⇒ ใบกำกับของยอดที่ริบสองใบ · ต้องเป็น session lock เพราะเส้นออกใบกำกับเปิดธุรกรรมของตัวเองหลายขั้น)</summary>
     public const string DepositRealize = "deposit-realize";

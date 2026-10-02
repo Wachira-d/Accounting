@@ -355,7 +355,7 @@ TUPLE_RULES = [
     (LODGING_LIFE, "BuildChargeAsync",
      ["LodgingPricingEngine.ChargeVatRate("], [], ["request.VatRate ??"],
      "C8 อัตรา VAT รายการ folio ต้องผ่านด่าน §90/2"),
-    (LODGING_LIFE, "ConfirmAsync",
+    (LODGING_LIFE, "ConfirmCoreAsync",   # รอบ 202 ฝ่ายค้าน P2-1: ตัวเส้นย้ายเข้า ConfirmCoreAsync (ConfirmAsync = ล็อกต่อการจอง)
      ["LodgingDepositSettlement.StatusAfterDeposit(", "request.ConfirmReservation"], [], [],
      "S-06/C9 ปุ่มรับชำระเพิ่มไม่ใช่การยืนยัน — ตามค่าตั้ง AutoConfirmOnDeposit"),
     (LODGING_RES, "FindOrCreateContactAsync",
@@ -4918,9 +4918,6 @@ REVIEWER_CASES = [
 def self_test() -> list:
     fails = []
     cache = {}
-    by_method = {}
-    for r in RULES:                      # กติกาของ M2 มาก่อน ⇒ ชื่อเมธอดซ้ำข้ามไฟล์ไม่ทับเคสของฝ่ายค้าน
-        by_method.setdefault(r["method"], r)
     for rule in RULES:
         rel, meth = rule["file"], rule["method"]
         text = cache.setdefault(rel, (SRC / rel).read_text(encoding="utf-8"))
@@ -4966,17 +4963,19 @@ def self_test() -> list:
         for p in rule.get("forbid_lit", []):
             if not any("ห้ามใช้" in e for e in run(body.replace("{", '{ var __x = $@"' + p + '";\n', 1))):
                 fails.append(f"self-test: ใส่ `{p}` ในสตริงของ {meth} แล้วไม่ฟ้อง")
+    # รอบ 202 (รวม LO/LS/LW): เมธอดชื่อเดียวกันมีหลายกติกาจากหลายทีม — เดิมเลือก "กติกาแรก" ตามลำดับการ += ⇒ ลำดับ merge เปลี่ยนแล้วเคสฝ่ายค้าน
+    # ไปเจอกติกาของทีมอื่นที่ไม่ได้ตรวจสิ่งที่เคสนั้นทดสอบ (LW3 ไปเจอกติกา LS ของ CreatePropertyAsync) ⇒ ตรวจทุกกติกาของเมธอดนั้นในไฟล์ที่มีโค้ดเดิม
+    # (ต้องฟ้อง = มีกติกาใดกติกาหนึ่งฟ้อง · ต้องไม่ฟ้อง = ไม่มีกติกาไหนฟ้องเลย — เข้มกว่าเดิมทั้งสองทิศ)
+    rules_by_method = {}
+    for r in RULES:
+        rules_by_method.setdefault(r["method"], []).append(r)
     for tag, meth, old, new, expect in REVIEWER_CASES:
-        # รอบ 202: เมธอดเดียวมีได้หลายกติกา (เช่น CreatePropertyAsync — ด่านโควตาของ LW + ตรวจ ref ของ LS) ⇒ ใช้ทุกกติกาของเมธอดนั้น
-        # ในไฟล์ที่มี `old` (เดิมใช้กติกาแรกตัวเดียว ⇒ ลำดับบล็อกหลัง merge ทำให้เคสฝ่ายค้านไปตรวจกับกติกาที่ไม่เกี่ยว)
-        rule = by_method[meth]
-        text = cache.setdefault(rule["file"], (SRC / rule["file"]).read_text(encoding="utf-8"))
-        if old not in text:
-            fails.append(f"self-test {tag}: หา `{old[:50]}` ใน {rule['file']} ไม่เจอ (โค้ดขยับ — ปรับเคสให้ตรง)")
+        group = [r for r in rules_by_method[meth]
+                 if old in cache.setdefault(r["file"], (SRC / r["file"]).read_text(encoding="utf-8"))]
+        if not group:
+            fails.append(f"self-test {tag}: หา `{old[:50]}` ในไฟล์ของกติกา {meth} ไม่เจอ (โค้ดขยับ — ปรับเคสให้ตรง)")
             continue
-        same = [r for r in RULES if r["method"] == meth and r["file"] == rule["file"]]
-        mutated = text.replace(old, new, 1)
-        fired = any(check_rule(mutated, r) for r in same)
+        fired = any(bool(check_rule(cache[r["file"]].replace(old, new, 1), r)) for r in group)
         if fired != expect:
             fails.append(f"self-test {tag}: {'ต้องฟ้องแต่ไม่ฟ้อง' if expect else 'ฟ้องผิด (โค้ดถูกต้อง)'} ใน {meth}")
     sample = (
@@ -5022,11 +5021,40 @@ RULES += [
          must=["WithPropertyLockAsync(", "ReloadAsync(", "LoadContextAsync(", "EnsureRoomsAvailable(", "LodgingHoldRule.ExtendHold("],
          before=[("ReloadAsync(", "LoadContextAsync("), ("LoadContextAsync(", "EnsureRoomsAvailable(")],
          why=_LO_WHY + "O-P0-1 ยืนยัน: ตรวจห้องว่าง + จองห้องไว้ใต้ล็อก (อ่านสถานะใหม่หลังได้ล็อก)"),
-    dict(file=LODGING_LIFE, method="ConfirmAsync",
-         must=["ClaimInventoryForConfirmAsync("],
-         before=[("ClaimInventoryForConfirmAsync(", "CreateDepositReceiptAsync(")],
+    dict(file=LODGING_LIFE, method="ConfirmCoreAsync",
+         must=["ClaimInventoryForConfirmAsync(", "ReloadAsync(", "ProblemIntentMoneyInAsync("],
+         before=[("ReloadAsync(", "ClaimInventoryForConfirmAsync("), ("ClaimInventoryForConfirmAsync(", "CreateDepositReceiptAsync(")],
          forbid=["LoadContextAsync("],
-         why=_LO_WHY + "O-P0-1 ห้ามตรวจห้องว่างนอกล็อก · จองห้องไว้ก่อนออกใบมัดจำ"),
+         why=_LO_WHY + "O-P0-1 ห้ามตรวจห้องว่างนอกล็อก · จองห้องไว้ก่อนออกใบมัดจำ · ฝ่ายค้าน P2-1 อ่านใหม่หลังได้ล็อก · P1-3ค บัญชีจากรายการชำระ"),
+    dict(file=LODGING_LIFE, method="ConfirmAsync",
+         must=["WithReservationLockAsync(", "AdvisoryLockKey.LodgingConfirm", "ConfirmCoreAsync("],
+         why=_LO_WHY + "ฝ่ายค้าน P2-1 ยืนยันซ้อน ⇒ ใบมัดจำสองใบ + DepositPaid lost update — ล็อกต่อการจองครอบทั้งเส้น"),
+    dict(file=LODGING_LIFE, method="WithReservationLockAsync",
+         must=["AdvisoryLockKey.For(", "ExecuteScalarAsync("],
+         must_lit=["SELECT pg_try_advisory_lock(", "SELECT pg_advisory_unlock("],
+         why=_LO_WHY + "ฝ่ายค้าน P2-1 ล็อกต่อการจองคีย์คงที่ (FNV-1a) · ปลดเสมอใน finally"),
+    dict(file=LODGING_LIFE, method="ProblemIntentMoneyInAsync",
+         must=["_gatewayAccounts.ResolveMoneyInAccountAsync(", "PaymentIntentStatus.Succeeded", "i.CompanyId == companyId", "i.SourceId == r.Id",
+               "BankAccountId = null"],
+         why=_LO_WHY + "ฝ่ายค้าน P1-3ค ใบมัดจำของเงินออนไลน์ที่ยืนยันภายหลังลงบัญชีพักของช่องทางชำระ (ไม่ใช่บัญชีจากหน้าจอ)"),
+    dict(file=LODGING_LIFE, method="ResolvePaymentProblemAsync",
+         must=["WithReservationLockAsync(", "ReloadAsync(", "LodgingHoldRule.IsAutoExpiredHold(", "WithPropertyLockAsync(", "EnsureRoomsAvailable(",
+               "ClosePaymentProblem(", "reason.Length == 0"],
+         before=[("WithPropertyLockAsync(", "EnsureRoomsAvailable(")],
+         forbid=["r.PaymentProblemAt = null"],
+         why=_LO_WHY + "ฝ่ายค้าน P1-3ข ปิดเรื่องเงินเข้า 3 ทาง (เปิดกลับเมื่อห้องว่างจริงใต้ล็อก · คืนเงินแล้ว · เหตุผล) — ห้ามล้างธงเงียบ"),
+    dict(file=LODGING_LIFE, method="ClosePaymentProblem",
+         must=["AddChainedAuditLog(", "AppendInternal("],
+         why=_LO_WHY + "ฝ่ายค้าน P1-3ข ปลดธงพร้อมประวัติ + audit"),
+    dict(file=LODGING_LIFE, method="EnsureSlipAcceptable",
+         must=["LodgingHoldRule.IsAutoExpiredHold("],
+         why=_LO_WHY + "ฝ่ายค้าน P1-3ก สลิปหลังระบบยกเลิกเพราะหมด hold ต้องถูกรับ (ใบที่คนยกเลิกเองยังปฏิเสธ)"),
+    dict(file=LODGING_LIFE, method="UnitTakenByOtherAsync",
+         must=["LodgingHoldRule.OccupiesUnit(", "x.CompanyId == companyId", "CheckedOutAt"],
+         why=_LO_WHY + "ห้องชนใช้กติกาเดียว (ยังกันห้อง + ทับช่วง · แถวรุ่นเก่าที่เปิดกลับไม่ยืดวันออก)"),
+    dict(file=LODGING_LIFE, method="EnsureAssignedUnitsFreeAsync",
+         must=["UnitTakenByOtherAsync(", "IsOutOfService"],
+         why=_LO_WHY + "ฝ่ายค้าน P1-1 ห้องที่จัดไว้ต้องว่างคืนที่ขยายเพิ่มด้วย"),
     dict(file=LODGING_LIFE, method="RescheduleAsync",
          must=["WithPropertyLockAsync(", "LodgingBookingGuards.PairByKey("],
          before=[("WithPropertyLockAsync(", "LoadContextAsync("), ("LoadContextAsync(", "BuildQuote(")],
@@ -5037,23 +5065,24 @@ RULES += [
          before=[("WithPropertyLockAsync(", "AssignCoreAsync(")],
          why=_LO_WHY + "O-P0-1 จัดห้องใต้ล็อก (สองแท็บจัดห้องเดียวกันให้สองใบ)"),
     dict(file=LODGING_LIFE, method="CheckInAsync",
-         must=["WithPropertyLockAsync(", "ExtendStayOneNightEarlierAsync("],
-         before=[("WithPropertyLockAsync(", "ExtendStayOneNightEarlierAsync("), ("WithPropertyLockAsync(", "AssignCoreAsync(")],
+         must=["WithPropertyLockAsync(", "ExtendStayOneNightEarlierAsync(", "EnsureAssignedUnitsFreeAsync("],
+         before=[("WithPropertyLockAsync(", "ExtendStayOneNightEarlierAsync("), ("WithPropertyLockAsync(", "AssignCoreAsync("),
+                 ("AssignCoreAsync(", "EnsureAssignedUnitsFreeAsync(")],
          why=_LO_WHY + "O-P0-1 เช็คอิน/จัดห้องใต้ล็อก · ข้อ 125 เช็คอินก่อน 1 วัน = เพิ่มคืน (ตรวจห้องว่างใต้ล็อก)"),
     dict(file=LODGING_LIFE, method="ExtendStayOneNightEarlierAsync",
          must=["LodgingAvailability.AvailableRooms(", "LodgingPricingEngine.QuoteRoom(", "LodgingPricingEngine.Totals(", "AddChainedAuditLog("],
          before=[("LodgingAvailability.AvailableRooms(", "LodgingPricingEngine.QuoteRoom(")],
          why=_LO_WHY + "ข้อ 125 ต้องมีห้องว่างคืนนั้น · ราคาคืนนั้นจาก engine · บันทึกประวัติ"),
     dict(file=LODGING_LIFE, method="AssignCoreAsync",
-         must=["LodgingHoldRule.BlocksInventory(", "LodgingHoldRule.EffectiveCheckOut("],
+         must=["UnitTakenByOtherAsync("],
          forbid=["x.Reservation.HoldExpiresAt > DateTime.UtcNow"],
          why=_LO_WHY + "O-P1-5/ข้อ 119 ตัวตรวจห้องชนใช้กติกากันห้องตัวเดียวกับตัวนับห้องว่าง"),
     dict(file=LODGING_RES, method="ExpireHoldsAsync",
-         must=["LodgingHoldRule.HoldLapsed(", "WithPropertyLockAsync(", "AddChainedAuditLog("],
+         must=["LodgingHoldRule.HoldLapsed(", "WithPropertyLockAsync(", "AddChainedAuditLog(", "LodgingHoldRule.AutoExpireReason"],
          forbid=["AuditLogs.Add("],
          why=_LO_WHY + "O-P1-5 ยกเลิกอัตโนมัติด้วยกติกาเดียวกับตัวนับห้องว่าง (ใบส่งสลิป/เงินค้างไม่ถูกยกเลิก) ใต้ล็อก"),
     dict(file=LODGING_RES, method="LoadContextAsync",
-         must=["LodgingHoldRule.EffectiveCheckOut(", "b.SlipUploadedAt != null", "b.PaymentProblemAt != null"],
+         must=["LodgingHoldRule.EffectiveCheckOut(", "b.SlipUploadedAt != null", "b.PaymentProblemAt != null", "b.CheckedOutAt"],
          why=_LO_WHY + "O-P1-4/5 + ข้อ 119 ข้อเท็จจริงที่ทำให้ยังกันห้องต้องถูกส่งเข้าตัวนับ"),
     dict(file=LODGING_RES, method="HoldForOnlinePaymentAsync",
          must=["WithPropertyLockAsync(", "LodgingHoldRule.HoldLapsed(", "EnsureRoomsAvailable(", "LodgingHoldRule.PaymentHoldUntil("],
@@ -5068,7 +5097,9 @@ RULES += [
          must_re=[r"\bthrow\s*;"],
          why=_LO_WHY + "O-P1-4/ข้อ 127 เงินเข้าแต่ยืนยันไม่ได้ ⇒ ธงบนการจอง แล้วโยนต่อให้ประวัติรายการชำระ (ดัง 3 ที่)"),
     dict(file=LODGING_LIFE, method="UploadSlipByTokenAsync",
-         must=["WithPropertyLockAsync(", "LodgingHoldRule.HoldLapsed(", "FlagPaymentProblemAsync("],
+         must=["WithPropertyLockAsync(", "LodgingHoldRule.HoldLapsed(", "FlagPaymentProblemAsync(", "ReloadAsync(", "EnsureSlipAcceptable(",
+               "LodgingHoldRule.IsAutoExpiredHold("],
+         before=[("WithPropertyLockAsync(", "ReloadAsync("), ("ReloadAsync(", "LodgingHoldRule.IsAutoExpiredHold(")],
          why=_LO_WHY + "ข้อ 127 ส่งสลิปหลัง hold หมดแล้วห้องเต็ม ⇒ รับสลิป + ธง (ไม่คืนเงินอัตโนมัติ)"),
     dict(file=LODGING_LIFE, method="FlagPaymentProblemAsync",
          must=["PaymentProblemAt", "AddChainedAuditLog(", "TryNotifyAsync(", "NotificationEvents.LodgingPaymentUnconfirmed"],
@@ -5077,9 +5108,9 @@ RULES += [
          must=["LodgingBookingGuards.ExplicitRatePlanProblem(", "PlanApplies(chosen"],
          why=_LO_WHY + "O-P1-3 แผนราคาที่แขกส่ง id มาเองต้องผ่านเงื่อนไขของแผน"),
     dict(file=LODGING_RES, method="BuildQuote",
-         must=["LodgingOccupancy.RoomProblems(", "LodgingBookingGuards.PromoCodeProblem(", "PickRatePlan(ctx, ratePlanId, rt, checkIn, nights, isStaff)",
+         must=["LodgingOccupancy.ExtraBedProblem(", "LodgingOccupancy.AdultProblem(", "LodgingBookingGuards.PromoCodeProblem(", "PickRatePlan(ctx, ratePlanId, rt, checkIn, nights, isStaff)",
                "LodgingOccupancy.ChargeableGuests(", "LodgingOccupancy.Totals("],
-         forbid=["rt.MaxOccupancy", "rt.MaxChildren", "Math.Clamp(room.ExtraBeds"],
+         forbid=["rt.MaxOccupancy", "rt.MaxChildren", "Math.Clamp(room.ExtraBeds", "rt.ExtraBedPrice ?? 0m"],
          why=_LO_WHY + "ข้อ 123/124 คนเสริมเกิน = ปฏิเสธ (ไม่ตัดเงียบ) · เด็ก/ทารกไม่นับความจุ · จำนวนผู้เข้าพักจากตัวนับเดียว"),
     dict(file=LODGING_RES, method="QuoteAsync",
          call_args=[("BuildQuote(", "isStaff")],
@@ -5091,13 +5122,17 @@ RULES += [
          forbid=["UncollectedFee"],
          why=_LO_WHY + "ข้อ 126 ค่าปรับไม่เกินมัดจำ · no-show รุ่นเก่าคิดได้ครั้งเดียว (ตรวจซ้ำที่ตัวกลาง)"),
     dict(file=LODGING_LIFE, method="CheckOutCoreAsync",
-         must=["LodgingOverdueRule.IsLegacyAutoCheckout("],
-         why=_LO_WHY + "O-P0-2 แถวที่ night audit รุ่นก่อนปิดเอง ออกใบเช็คเอาต์ย้อนหลังผ่านเส้นนี้"),
+         must=["LodgingOverdueRule.IsLegacyAutoCheckout(", "LodgingOverdueRule.BackfillVatAckProblem(", "VatPeriodFiledAsync(companyId, r.CheckOutDate)",
+               "RestoreLegacyAutoCheckoutAsync("],
+         before=[("LodgingOverdueRule.BackfillVatAckProblem(", "r.Status = LodgingReservationStatus.CheckedIn")],
+         why=_LO_WHY + "O-P0-2 แถวที่ night audit รุ่นก่อนปิดเอง ออกใบเช็คเอาต์ย้อนหลังผ่านเส้นนี้ · ฝ่ายค้าน P1-4 เดือนยื่น ภ.พ.30 แล้วต้องมีคนรับทราบ · "
+             "P2-3 ล้มก่อนออกใบคืนสถานะเดิม"),
     dict(file=LODGING_LIFE, method="SettleCheckOutAsync",
          must=["LodgingOverdueRule.IsReopenedLegacy("],
          why=_LO_WHY + "O-P0-2 ออกใบย้อนหลังห้ามแตะสถานะห้อง/งานแม่บ้านปัจจุบัน"),
     dict(file=LODGING_AUDIT_JOB, method="RunOnce",
-         must=["LodgingOverdueRule.ShouldFlag(", "LodgingOverdueRule.FlagNote(", "OverdueFlaggedAt", "AddChainedAuditLog("],
+         must=["LodgingOverdueRule.ShouldFlag(", "LodgingOverdueRule.FlagNote(", "OverdueFlaggedAt", "AddChainedAuditLog(",
+               "LodgingOverdueRule.ShouldMeterOnFlag("],
          forbid=["r.Status = LodgingReservationStatus", "LodgingReservationStatus.CheckedOut;", "LodgingReservationStatus.NoShow;",
                  "HousekeepingStatus =", "UnitId = null", "AuditLogs.Add(", "LodgingHousekeepingTasks.Add("],
          why=_LO_WHY + "O-P0-2/ข้อ 119 (R1) night audit ติดธงเท่านั้น — ห้ามประทับ CheckedOut/NoShow · ห้ามแตะห้อง/งานแม่บ้าน"),

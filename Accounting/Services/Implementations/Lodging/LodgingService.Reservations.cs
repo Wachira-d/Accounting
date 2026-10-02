@@ -152,11 +152,11 @@ public partial class LodgingService
             .Select(r => new
             {
                 r.RoomTypeId, r.Reservation.CheckInDate, r.Reservation.CheckOutDate, r.Reservation.Status, r.Reservation.HoldExpiresAt,
-                r.Reservation.DepositPaid, r.Reservation.SlipUploadedAt, r.Reservation.PaymentProblemAt,
+                r.Reservation.DepositPaid, r.Reservation.SlipUploadedAt, r.Reservation.PaymentProblemAt, r.Reservation.CheckedOutAt,
             })
             .ToListAsync();
         ctx.Booked = booked.Select(b => (b.RoomTypeId, new LodgingAvailability.BookedRange(
-            b.CheckInDate, LodgingHoldRule.EffectiveCheckOut(b.Status, b.CheckOutDate, todayThai), 1, b.Status, b.HoldExpiresAt,
+            b.CheckInDate, LodgingHoldRule.EffectiveCheckOut(b.Status, b.CheckOutDate, todayThai, b.CheckedOutAt), 1, b.Status, b.HoldExpiresAt,
             b.DepositPaid, b.SlipUploadedAt != null, b.PaymentProblemAt != null))).ToList();
         return ctx;
     }
@@ -203,6 +203,23 @@ public partial class LodgingService
         if (plan?.CancellationPolicyId is Guid pid) return ctx.Policies.FirstOrDefault(p => p.Id == pid);
         if (ctx.Property.DefaultCancellationPolicyId is Guid did) return ctx.Policies.FirstOrDefault(p => p.Id == did);
         return ctx.Policies.FirstOrDefault(p => p.IsDefault);
+    }
+
+    /// <summary>ราคาคนเสริมต่อคนต่อคืนที่การจองนี้จ่ายไว้ ต่อประเภทห้อง (ย้อนจาก snapshot ราคา <c>PriceBreakdownJson</c>) — ฝ่ายค้านรอบ 202 P2-4:
+    /// เลื่อนวัน/ขยายคืนของพนักงานคงราคาเดิมเมื่อที่พักปิด/เปลี่ยนเตียงเสริมภายหลัง · อ่านไม่ได้ = ไม่มีคีย์ (ผู้เรียกบล็อกพร้อมทางไปต่อ)</summary>
+    private static Dictionary<Guid, decimal> KeptExtraBedPrices(LodgingReservation r)
+    {
+        var kept = new Dictionary<Guid, decimal>();
+        if (string.IsNullOrWhiteSpace(r.PriceBreakdownJson)) return kept;
+        LodgingQuoteResponse? snap;
+        try { snap = System.Text.Json.JsonSerializer.Deserialize<LodgingQuoteResponse>(r.PriceBreakdownJson, JsonOpts); }
+        catch (System.Text.Json.JsonException) { return kept; }   // snapshot เสีย = ไม่มีราคาเดิม (ผู้เรียกบล็อกพร้อมข้อความ — ไม่เดาราคา)
+        if (snap == null) return kept;
+        foreach (var line in snap.Rooms.Where(x => x.ExtraBeds > 0))
+            if (!kept.ContainsKey(line.RoomTypeId)
+                && LodgingOccupancy.PerPersonNightPrice(line.ExtraBedCharge, line.ExtraBeds, snap.Nights) is decimal p)
+                kept[line.RoomTypeId] = p;
+        return kept;
     }
 
     private static List<LodgingNightlyRateDto> NightsDto(IEnumerable<LodgingNightlyRate> n)
@@ -285,8 +302,8 @@ public partial class LodgingService
             if (available < request.Rooms) r.UnavailableReason = available == 0 ? "ห้องเต็ม/ปิดขายในช่วงนี้" : $"เหลือเพียง {available} ห้อง";
             else if (nights < minNights) r.UnavailableReason = $"ช่วงนี้ต้องพักอย่างน้อย {minNights} คืน";
             // คำตัดสินข้อ 124: ความจุนับเฉพาะผู้ใหญ่ (รวมคนเสริมที่ซื้อได้) · เด็ก/ทารกไม่นับ — ตัวตัดสิน LodgingOccupancy
-            else if (adultsPerRoom > LodgingOccupancy.MaxAdultsWithExtras(rt.MaxAdults, rt.AllowExtraBed, rt.MaxExtraBeds))
-                r.UnavailableReason = $"ห้องนี้รับผู้ใหญ่ได้สูงสุด {LodgingOccupancy.MaxAdultsWithExtras(rt.MaxAdults, rt.AllowExtraBed, rt.MaxExtraBeds)} คน/ห้อง (รวมคนเสริม)";
+            else if (adultsPerRoom > LodgingOccupancy.MaxAdultsWithExtras(rt.MaxAdults, rt.AllowExtraBed, rt.MaxExtraBeds, rt.ExtraBedPrice))
+                r.UnavailableReason = $"ห้องนี้รับผู้ใหญ่ได้สูงสุด {LodgingOccupancy.MaxAdultsWithExtras(rt.MaxAdults, rt.AllowExtraBed, rt.MaxExtraBeds, rt.ExtraBedPrice)} คน/ห้อง (รวมคนเสริม)";
             results.Add(r);
         }
         return results;
@@ -305,7 +322,7 @@ public partial class LodgingService
     /// <summary>คิดราคาทั้งการจอง — ใช้ร่วมกันทั้ง quote (หน้าเว็บ) · สร้างจอง · เลื่อนวัน</summary>
     private LodgingQuoteResponse BuildQuote(PricingContext ctx, DateTime checkIn, DateTime checkOut,
         List<LodgingQuoteRoomRequest> rooms, List<LodgingQuoteExtraRequest>? extras, Guid? ratePlanId, bool isStaff, Guid? excludeReservationId,
-        string? promoCode = null, int infants = 0)
+        string? promoCode = null, int infants = 0, IReadOnlyDictionary<Guid, decimal>? staffKeptExtraBedPrice = null)
     {
         var res = new LodgingQuoteResponse
         {
@@ -346,9 +363,24 @@ public partial class LodgingService
                 // คำตัดสินข้อ 123/124 (รอบ 202): คนเสริม = extraBeds (คนละคนกับ adults) · เกิน/ห้องไม่รับ = ปฏิเสธพร้อมข้อความ (เดิมตัดทิ้งเงียบ) ·
                 // ความจุนับเฉพาะผู้ใหญ่ — เด็ก/ทารกไม่นับ (เดิมนับ MaxChildren/MaxOccupancy)
                 var beds = Math.Max(0, room.ExtraBeds);
-                res.Errors.AddRange(LodgingOccupancy.RoomProblems(rt.Name, adults, beds, rt.MaxAdults, rt.AllowExtraBed, rt.MaxExtraBeds,
-                    rt.ExtraBedPrice ?? 0m));
-                var q = LodgingPricingEngine.QuoteRoom(checkIn, checkOut, adults, children, beds, input);
+                var roomInput = input;
+                // ฝ่ายค้านรอบ 202 P2-5: ราคาคนเสริมว่าง = ไม่ขายคนเสริม (ไม่ใช่ฟรี) — ตัวตัดสิน LodgingOccupancy.SellsExtraBeds
+                if (LodgingOccupancy.ExtraBedProblem(rt.Name, beds, rt.AllowExtraBed, rt.MaxExtraBeds, rt.ExtraBedPrice) is string extraProblem)
+                {
+                    // P2-4: เส้นเลื่อนวันของพนักงาน — ใบเดิมซื้อคนเสริมไว้ก่อนที่พักปิด/เปลี่ยนเตียงเสริม ⇒ คำเตือน + คงราคาคนเสริมเดิม (ไม่บล็อก) ·
+                    // เส้นแขก/สร้างใหม่ยังบล็อก · หาราคาเดิมไม่ได้ = บล็อกพร้อมทางไปต่อ (ห้ามคิด 0 เงียบ)
+                    if (isStaff && staffKeptExtraBedPrice != null && staffKeptExtraBedPrice.TryGetValue(rt.Id, out var keptPrice))
+                    {
+                        res.Warnings.Add($"{extraProblem} — การจองนี้ซื้อคนเสริม {beds} คนไว้ก่อนแล้ว คงไว้ในราคาเดิม {keptPrice:N2} บาท/คน/คืน");
+                        roomInput = input with { ExtraBedPrice = keptPrice };
+                    }
+                    else if (isStaff && staffKeptExtraBedPrice != null)
+                        res.Errors.Add($"{extraProblem} — หาราคาคนเสริมเดิมของการจองนี้ไม่ได้ · แก้จำนวนคนเสริมของห้องก่อนเลื่อนวัน");
+                    else res.Errors.Add(extraProblem);
+                }
+                if (LodgingOccupancy.AdultProblem(rt.Name, adults, rt.MaxAdults, rt.AllowExtraBed, rt.MaxExtraBeds, rt.ExtraBedPrice) is string adultProblem)
+                    res.Errors.Add(adultProblem);
+                var q = LodgingPricingEngine.QuoteRoom(checkIn, checkOut, adults, children, beds, roomInput);
                 res.Rooms.Add(new LodgingQuoteRoomLine
                 {
                     RoomTypeId = rt.Id, RoomTypeName = rt.Name, Adults = adults, Children = children, ExtraBeds = beds,
@@ -635,7 +667,7 @@ public partial class LodgingService
             foreach (var r in expired)
             {
                 r.Status = LodgingReservationStatus.Cancelled; r.CancelledAt = now;
-                r.CancellationReason = "หมดเวลาชำระมัดจำ (ระบบยกเลิกอัตโนมัติ)";
+                r.CancellationReason = LodgingHoldRule.AutoExpireReason;   // ตัวอ่าน: LodgingHoldRule.IsAutoExpiredHold (สลิปหลังหมด hold · P1-3ก)
                 _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "AutoExpireHold" }));
             }
             await _db.SaveChangesAsync();

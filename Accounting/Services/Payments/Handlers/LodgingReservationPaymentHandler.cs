@@ -82,7 +82,8 @@ public class LodgingReservationPaymentHandler : IPaymentCompletionHandler
             try
             {
                 await _lodging.FlagPaymentProblemAsync(intent.CompanyId, r.Id,
-                    $"รายการชำระออนไลน์ {intent.Id:N} ยอด {intent.Amount:N2} เข้าแล้ว แต่ยืนยันการจองไม่ได้: {ex.Message}", "online-payment");
+                    $"รายการชำระออนไลน์ {intent.Id:N} ยอด {intent.Amount:N2} เข้าแล้ว แต่ยืนยันการจองไม่ได้: {ex.Message}", "online-payment",
+                    paymentIntentId: intent.Id);
             }
             catch (Exception flagError) when (flagError is not OperationCanceledException)
             {
