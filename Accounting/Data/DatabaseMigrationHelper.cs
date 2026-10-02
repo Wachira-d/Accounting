@@ -184,6 +184,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(DepositKindSchemaStatements());
         list.AddRange(SettlementSchemaStatements());
         list.AddRange(Round201DvStatements());   // รอบ 201 ทีม DV (บล็อกท้ายไฟล์)
+        list.AddRange(Round202LodgingWebStatements());   // รอบ 202 ทีม LW (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7344,4 +7345,19 @@ public static class DatabaseMigrationHelper
         END
         $mig$;
         """;
+
+    // ═══ รอบ 202 ทีม LW (เว็บที่พัก: ข้อมูลห้องสด + จองเอง) ═══
+
+    /// <summary>W-02/W-03 (คำตัดสินข้อ 117) — ซ่อมเว็บที่พักที่ seed ก่อนรอบ 202 · ตัวสร้างคำสั่งอยู่ที่ <see cref="Accounting.Helpers.LodgingSiteSeedMigration"/>
+    /// ตัวเดียว (snapshot จาก <c>CmsSiteTemplateSeeder.Legacy*</c> · ล็อก advisory คีย์คงที่ · รันทุกบูตได้ — รอบที่สองเป็นต้นไป 0 แถว)
+    /// ① บล็อกราคาห้อง seed ที่ไม่ถูกแก้ ⇒ บล็อกข้อมูลสด <c>LodgingRooms</c> · ② บริการนัดหมาย ฿0 ที่ GET สาธารณะเคยสร้างบนเว็บที่พัก
+    /// (ไม่มีการจอง · ไม่เคยแก้) ⇒ soft-delete</summary>
+    internal static IReadOnlyList<string> Round202LodgingWebStatements()
+    {
+        return new[]
+        {
+            Accounting.Helpers.LodgingSiteSeedMigration.RoomBlocksSql(),
+            Accounting.Helpers.LodgingSiteSeedMigration.AutoSeedServiceCleanupSql(),
+        };
+    }
 }

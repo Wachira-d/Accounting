@@ -82,6 +82,9 @@ public class StorefrontSiteInfo
     public string Name { get; set; } = "";
     public string Slug { get; set; } = "";
     public SiteType SiteType { get; set; }
+    /// <summary>เว็บประเภทที่พัก (IndustryType.Hotel) — เซิร์ฟเวอร์ตัดสิน · storefront ใช้ตอน <c>/lodging/info</c> ตอบ 404 (ยังไม่ผูกที่พัก/ปิดอยู่):
+    /// บล็อกจอง/ห้องพักแสดง "ยังไม่เปิดจองออนไลน์" + ช่องทางติดต่อ แทนการ์ดนัดหมาย (รอบ 202 ทีม LW · W-03)</summary>
+    public bool IsLodgingSite { get; set; }
     public SiteRenderMode RenderMode { get; set; }
     public string? LogoUrl { get; set; }
     public string? FaviconUrl { get; set; }

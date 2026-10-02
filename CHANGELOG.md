@@ -4380,3 +4380,15 @@ _รอบ 202 ทีม LS (2026-10-02 · หน้าตั้งค่าท�
 - **123** เตียงเสริมต่อประเภทห้อง: ติ๊ก "เพิ่มเตียงเสริม/คนเสริมได้" ⇒ ต้องมีจำนวน ≥ 1 + ราคาต่อคน/คืน (`LodgingSettingsRules.NormalizeExtraBed` · `LODGING-EXTRA-BED`) · ช่องล็อกเมื่อไม่ติ๊ก · การ์ด `ExtraBedSummary` · **124** ป้ายความจุ "เด็ก/ทารกไม่นับ"
 - `tools/settings_reader_check.py`: `d` ที่ประกาศเป็นชนิดคำขอ (DTO) ไม่นับเป็นผู้อ่าน (เดิม `Math.Max(0, d.EarlyCheckInHours)` ใน Apply ทำให้ค่าตั้งที่ไม่มีผู้อ่านหลุด) · `d =>` ของ entity ยังนับ · self-test + negative จริง · baseline ไม่เพิ่มแถว
 - เทสต์ `LodgingSettingsRound202Tests` · `LodgingVoucherBuilderTests` +2 · sim ทิศที่ 5 · required_call_site +9 แถว — commit 7b83b697_
+
+_รอบ 202 ทีม LW (เว็บที่พัก: ข้อมูลห้องสด + แขกจองเอง · LODGING_REVIEW W-02/W-03/W-04/W-05/W-07/W-08 · คำตัดสินข้อ 117/118/123/124):
+บล็อก `CmsBlockType.LodgingRooms` (27) วาดจาก `/lodging/info` ("เริ่มต้น ฿X/คืน · ราคาจริงตามวันที่เลือก" · ไม่ผูก ⇒ "ยังไม่เปิดจองออนไลน์" ไม่มีราคา seed) ·
+`HotelPlan` ใช้บล็อกนี้แทน RichText/PricingTable ราคา seed · migration `Helpers/LodgingSiteSeedMigration` แทนเฉพาะบล็อกที่ตรง snapshot ทุกไบต์
+(snapshot จาก `CmsSiteTemplateSeeder.Legacy*` · advisory lock คีย์คงที่) + soft-delete บริการ auto-seed ฿0 บนเว็บที่พัก (ไม่มีการจอง · ไม่เคยแก้) ·
+`CmsBookingService.GetServicesAsync` อ่านอย่างเดียว (ถอด lazy seed + `catch {}`) · `CmsModuleResolver` facts ไม่นับบริการที่ลบแล้ว ·
+`StorefrontSiteInfo.IsLodgingSite` · `lodgingInfo()` null เฉพาะ 404 (5xx ⇒ ข้อความขัดข้อง) · ค่าค้นหาหน้าแรก → `/booking?checkIn=…` ·
+แผงผู้เข้าพักรายห้อง (ผู้ใหญ่/เด็ก/คนเสริม + ทารกระดับการจอง) · `LodgingSeeder` ผ่าน `LodgingSeedDecision` + `LodgingPropertyQuota` (ด่านเดียวกับสร้างมือ ·
+มีที่พักไม่ผูกเว็บ ⇒ ไม่สร้างแห่งที่สอง) · `SiteResponse.Warnings` / `ApplySiteTemplateResponse.LodgingMessage` · `cms-edit` แปลงชื่อ enum บล็อก → เลข ·
+เทสต์ `LodgingWebRound202Tests` · sim `lodging_storefront_info_sim.js` (+ เคส c ใน `lodging_guest_split_sim.js`) · กติกา `required_call_site_check` 10 ข้อ + เคสฝ่ายค้าน LW1–LW3_
+
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — commit e26a6bb3)_

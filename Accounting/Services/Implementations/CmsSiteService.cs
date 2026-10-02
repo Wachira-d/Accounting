@@ -16,10 +16,14 @@ public class CmsSiteService : ICmsSiteService
     private readonly ILogger<CmsSiteService> _logger;
     /// <summary>ตัวนับโควตาหน้าเว็บ — เส้นเติมเทมเพลตเพิ่มหน้าทีละหลายหน้า จึงต้องผ่านด่านเดียวกัน</summary>
     private readonly ICmsQuotaService? _quota;
+    /// <summary>ด่าน "ที่พักหลายแห่ง" ของการ seed ที่พัก — ตัวเดียวกับ LodgingService.CreatePropertyAsync (รอบ 202 LW · ข้อ 118)</summary>
+    private readonly IEntitlementService? _entitlement;
 
-    public CmsSiteService(AccountingDbContext db, ILogger<CmsSiteService> logger, ICmsQuotaService? quota = null)
+    public CmsSiteService(AccountingDbContext db, ILogger<CmsSiteService> logger, ICmsQuotaService? quota = null,
+        IEntitlementService? entitlement = null)
     {
         _quota = quota;
+        _entitlement = entitlement;
         _db = db;
         _logger = logger;
     }
@@ -118,6 +122,9 @@ public class CmsSiteService : ICmsSiteService
         // The template is plain SitePage + PageBlock rows — fully editable
         // through the CMS editor afterwards.
         var seededBookingPage = false;
+        // รอบ 202 ทีม LW (W-08): ขั้น seed ที่ล้ม/ข้ามต้องถึงเจ้าของในผลตอบ — เดิม LogWarning อย่างเดียว ⇒ เว็บที่พักขึ้น "ยังไม่มีที่พัก"
+        // โดยไม่มีใครบอกว่าทำไม (ล้มดัง 3 ที่: ผู้เรียกต้องเห็น)
+        var warnings = new List<string>();
         if (request.SeedTemplate)
         {
             try
@@ -139,6 +146,7 @@ public class CmsSiteService : ICmsSiteService
                 _db.ChangeTracker.Clear();
                 seededBookingPage = false;
                 _logger.LogWarning(ex, "Site template seeding failed for site {SiteId}", site.Id);
+                warnings.Add("สร้างเว็บแล้ว แต่ใส่หน้าเว็บตัวอย่างไม่สำเร็จ — กด \"เติมเทมเพลต\" ที่การ์ดเว็บนี้เพื่อลองใหม่");
             }
         }
 
@@ -158,6 +166,7 @@ public class CmsSiteService : ICmsSiteService
             {
                 _db.ChangeTracker.Clear();
                 _logger.LogWarning(ex, "Booking-service seeding failed for site {SiteId}", site.Id);
+                warnings.Add("สร้างเว็บแล้ว แต่ใส่บริการจองคิวตัวอย่างไม่สำเร็จ — เพิ่มบริการเองได้ที่แท็บ \"การจอง\" ของเว็บนี้");
             }
         }
 
@@ -168,22 +177,27 @@ public class CmsSiteService : ICmsSiteService
         {
             try
             {
-                var prop = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId);
-                if (prop != null)
+                var seed = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId, _entitlement);
+                if (seed.Property != null)
                 {
                     await _db.SaveChangesAsync();
-                    _logger.LogInformation("Seeded lodging property {Code} for site {SiteId}", prop.Code, site.Id);
+                    _logger.LogInformation("Seeded lodging property {Code} for site {SiteId}", seed.Property.Code, site.Id);
                 }
+                if (seed.Message != null) warnings.Add(seed.Message);   // มีที่พักไม่ผูกอยู่แล้ว / ติดด่านที่พักหลายแห่ง (ข้อ 118)
             }
             catch (Exception ex)
             {
+                _db.ChangeTracker.Clear();
                 _logger.LogWarning(ex, "Lodging seeding failed for site {SiteId}", site.Id);
+                warnings.Add("สร้างเว็บแล้ว แต่สร้างที่พักตัวอย่างไม่สำเร็จ — หน้าจองห้องจะยังไม่เปิด · ไปที่หน้า \"ตั้งค่าที่พัก\" เพื่อสร้างหรือผูกที่พักกับเว็บนี้");
             }
         }
 
         _logger.LogInformation("Site '{Name}' created for company {CompanyId}", site.Name, companyId);
 
-        return await GetSiteAsync(companyId, site.Id) ?? throw new InvalidOperationException("Failed to retrieve created site.");
+        var created = await GetSiteAsync(companyId, site.Id) ?? throw new InvalidOperationException("Failed to retrieve created site.");
+        created.Warnings = warnings;
+        return created;
     }
 
     public async Task<SiteResponse> UpdateSiteAsync(Guid companyId, Guid siteId, UpdateSiteRequest request, string userId)
@@ -246,7 +260,8 @@ public class CmsSiteService : ICmsSiteService
         var ids = sites.Select(x => x.Id).ToList();
         if (ids.Count == 0) return new();
         var withOrders = (await _db.SiteOrders.Where(o => o.CompanyId == companyId && ids.Contains(o.SiteId)).Select(o => o.SiteId).Distinct().ToListAsync()).ToHashSet();
-        var withServices = (await _db.SiteBookingServices.Where(b => b.CompanyId == companyId && ids.Contains(b.SiteId)).Select(b => b.SiteId).Distinct().ToListAsync()).ToHashSet();
+        // !IsDeleted: ตารางนี้ไม่มี global filter — บริการที่ลบแล้ว (รวมแถว auto-seed ที่ migration รอบ 202 ล้าง) ไม่ใช่หลักฐานว่าใช้โมดูล
+        var withServices = (await _db.SiteBookingServices.Where(b => b.CompanyId == companyId && !b.IsDeleted && ids.Contains(b.SiteId)).Select(b => b.SiteId).Distinct().ToListAsync()).ToHashSet();
         var withBookings = (await _db.SiteBookings.Where(b => b.CompanyId == companyId && ids.Contains(b.SiteId)).Select(b => b.SiteId).Distinct().ToListAsync()).ToHashSet();
         var withLodging = (await _db.LodgingProperties.Where(p => p.CompanyId == companyId && p.SiteId != null && ids.Contains(p.SiteId.Value)).Select(p => p.SiteId!.Value).Distinct().ToListAsync()).ToHashSet();
         return sites.ToDictionary(x => x.Id, x => CmsModuleResolver.Resolve(new CmsModuleFacts(
@@ -465,8 +480,9 @@ public class CmsSiteService : ICmsSiteService
         // ต้องทำแม้ SeedPages=false ไม่งั้น /booking ของเว็บไม่มีอะไรให้จอง
         if (request.IndustryType == IndustryType.Hotel)
         {
-            var prop = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId);
-            result.LodgingSeeded = prop != null;
+            var seed = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId, _entitlement);
+            result.LodgingSeeded = seed.Property != null;
+            result.LodgingMessage = seed.Message;   // ข้อ 118: มีที่พักไม่ผูกอยู่แล้ว ⇒ เสนอผูก ไม่สร้างแห่งที่สอง
         }
 
         // ไม่ best-effort เหมือนตอนสร้างเว็บ — ผู้ใช้กดปุ่ม "เติมเทมเพลต" โดยตั้งใจ ถ้า seed พังต้องรู้

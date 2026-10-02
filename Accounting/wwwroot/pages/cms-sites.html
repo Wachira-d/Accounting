@@ -587,10 +587,14 @@
 
           Layout.closeModal('createModal');
           if (typeof Layout.loadVatRegistration === 'function') Layout.loadVatRegistration();   // เมนูโมดูลใหม่ (ที่พัก/ร้านค้า) โผล่ทันที
+          // รอบ 202 ทีม LW (W-08): ขั้น seed ที่ล้ม/ถูกข้าม (ที่พัก · หน้าตัวอย่าง · บริการจอง) — เซิร์ฟเวอร์เป็นคนเขียนข้อความ
+          // หน้านี้แสดงอย่างเดียว · หยุดให้อ่านก่อนพาไปหน้าถัดไป (toast หายไปพร้อมการเปลี่ยนหน้า)
+          const warns = Array.isArray(site.warnings) ? site.warnings.filter(Boolean) : [];
+          if (warns.length) alert('สร้างเว็บไซต์แล้ว แต่มีเรื่องที่ต้องทำต่อ:\n\n• ' + warns.join('\n• '));
           if (chosenIndustry === 'Hotel') {
             // ธุรกิจที่พัก: เซิร์ฟเวอร์ seed ห้อง/ราคา/นโยบายให้แล้ว → พาไปหน้าตั้งค่าที่พัก
             // (ผูกด้วย siteId — หน้านั้น resolve ที่พักของเว็บนี้เอง) ให้เห็นทันทีว่าจองได้แล้ว
-            Layout.toast('สร้างเว็บไซต์ + ระบบจองที่พักสำเร็จ — กำลังพาไปตั้งค่าที่พัก', 'success');
+            if (!warns.length) Layout.toast('สร้างเว็บไซต์ + ระบบจองที่พักสำเร็จ — กำลังพาไปตั้งค่าที่พัก', 'success');
             setTimeout(() => { window.location.href = `/pages/lodging-settings.html?siteId=${site.id}&welcome=1`; }, 700);
             return;
           }
@@ -655,6 +659,8 @@
           if (r.bookingServicesAdded) parts.push(`บริการจองตัวอย่าง ${r.bookingServicesAdded} รายการ`);
           if (r.lodgingSeeded) parts.push('สร้างที่พัก+ห้อง+ราคาให้แล้ว');
           Layout.toast('เติมเทมเพลตสำเร็จ' + (parts.length ? ' — ' + parts.join(' · ') : ' (ไม่มีอะไรต้องเพิ่ม)'), 'success');
+          // ข้อ 118: มีที่พักไม่ผูกเว็บอยู่แล้ว ⇒ ไม่สร้างแห่งที่สอง — บอกทางผูกที่พักเดิม (ข้อความจากเซิร์ฟเวอร์)
+          if (r.lodgingMessage) alert(r.lodgingMessage);
           Layout.closeModal('applyTplModal');
           await this.load();
           // รีเฟรชธงโมดูลของเมนูซ้าย (เพิ่งได้ที่พัก/ร้านค้าเป็นครั้งแรก) — ไม่ต้องรอโหลดหน้าใหม่
