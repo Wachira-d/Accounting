@@ -4399,4 +4399,4 @@ _รอบ 202 ทีม LW แก้ผลฝ่ายค้าน (P1-1/P1-2/P
 snapshot migration รุ่นก่อนรอบ 158 (`CmsSiteTemplateSeeder.Legacy*V1` จาก d2ad229b^) · `CmsModuleResolver.IsLodgingSite` · ล้าง auto-seed ไม่แตะบริการที่มี
 ช่วงเวลา/คำแปล · บล็อกจองเว็บที่พักแสดงบริการนัดหมายของเจ้าของก่อน · เทสต์ใน `LodgingWebRound202Tests` · sim สองตัวขยาย + negative · กติกา rcs เพิ่ม 5 + LW4_
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW แก้ผลฝ่ายค้าน — commit <pending>)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW แก้ผลฝ่ายค้าน — commit b4d4c37c)_

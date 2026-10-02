@@ -426,4 +426,4 @@ P2-5 ล้าง auto-seed ไม่แตะบริการที่มี�
 
 _Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW — commit e26a6bb3)_
 
-_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW แก้ผลฝ่ายค้าน — commit <pending>)_
+_Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LW แก้ผลฝ่ายค้าน — commit b4d4c37c)_
