@@ -366,3 +366,116 @@ public class ForeignServicePayeeBalanceMigrationTests
         Assert.DoesNotContain(";", ForeignServicePayeeBalanceMigration.OverpaidReportSql);   // SqlQueryRaw ห้ามมี ; ท้าย
     }
 }
+
+/// <summary>
+/// ฝ่ายค้าน F2+F3 (merge 6a1baa8a) P1-1 / P1-2 — ธงบนใบสำคัญจ่ายที่ปิดหนี้ใบต้นทาง ต้องเท่ากับ "ใบต้นทางเป็นเจ้าของ ภ.พ.36" ·
+/// ด่าน JE ใช้ตัวตัดสินเดียวกับ JE (<c>VatNotPaidToPayee</c>) · ใบเพิ่มหนี้ของใบเจ้าของ ภ.พ.36 ค้างเฉพาะยอดจ่ายผู้รับเงิน
+/// </summary>
+public class ForeignServiceLinkedVoucherTests
+{
+    private const decimal Base = 5_908.00m, Vat = 413.56m, Total = 6_321.56m;
+
+    private static List<Accounting.Services.JournalPostingGuard.LineFacts> SettlementJe(decimal amount) => new()
+    {
+        new("21210", AccountType.Liability, amount, 0m),   // Dr เจ้าหนี้การค้า
+        new("11120", AccountType.Asset, 0m, amount),       // Cr ธนาคาร
+    };
+
+    private static Accounting.Services.JournalPostingGuard.DocFacts Pv(bool flag, bool sourceOwns)
+        => new(DocumentType.PaymentVoucher, Base, Vat, 0m, Total, IsForeignService: flag, SourceOwnsPp36: sourceOwns);
+
+    // ── (ก) PV ร่างเก่าที่แปลงจากใบ Booking (ธงยังไม่ตาม) อนุมัติ ⇒ JE จ่าย 5,908 ตามใบต้นทาง ⇒ ด่านต้องคาด 5,908 ด้วย ──
+    [Fact]
+    public void ก_PV_เก่าไม่มีธงแต่ใบต้นทางเจ้าของ_ภพ36_ด่านไม่ตีตก_JE_ยอดจ่ายผู้รับเงิน()
+    {
+        var f = Accounting.Services.JournalPostingGuard.Validate(SettlementJe(Base), Pv(flag: false, sourceOwns: true));
+        Assert.DoesNotContain(f, x => x.RuleCode == "JE-NO-COUNTERPART");
+        // ก่อนแก้ (ด่านดูธงของใบลูกอย่างเดียว): ตีตกด้วยข้อความผิด — ล็อกว่านี่คือบั๊กที่ถูกแก้
+        Assert.Contains(Accounting.Services.JournalPostingGuard.Validate(SettlementJe(Base), Pv(false, false)),
+            x => x.RuleCode == "JE-NO-COUNTERPART");
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_PV_จ่ายใบไทยเต็มยอด_ด่านผ่านเหมือนเดิม_และจ่ายขาด_VAT_ยังถูกจับ()
+    {
+        Assert.DoesNotContain(Accounting.Services.JournalPostingGuard.Validate(SettlementJe(Total), Pv(false, false)),
+            x => x.IsError);
+        Assert.Contains(Accounting.Services.JournalPostingGuard.Validate(SettlementJe(Base), Pv(false, false)),
+            x => x.RuleCode == "JE-NO-COUNTERPART");
+    }
+
+    // ── (ข) ปลดธงบน PV ที่ใบต้นทางเป็นเจ้าของ ⇒ ปฏิเสธพร้อมทางไปต่อ ──
+    [Fact]
+    public void ข_ปลดธงบนใบลูกของใบเจ้าของ_ภพ36_ปฏิเสธ_ชี้ใบต้นทาง()
+    {
+        var d = ForeignServiceVat.LinkedVoucherFlag(sourceOwnsPp36: true, currentFlag: true, requested: false, "PI-20260901-0001");
+        Assert.NotNull(d.Refusal);
+        Assert.Contains("PI-20260901-0001", d.Refusal);
+        Assert.True(d.Flag);   // ไม่เปลี่ยน
+    }
+
+    // ── (ค) ติ๊กธงบน PV ที่จ่ายใบไทย 10,700 ⇒ ปฏิเสธ (เดิมจ่าย 10,000 ใบต้นทางค้าง 700 ถาวรเงียบ) ──
+    [Fact]
+    public void ค_ติ๊กธงบนใบลูกของใบไทย_ปฏิเสธ_ไม่ให้จ่ายขาด_VAT()
+    {
+        var d = ForeignServiceVat.LinkedVoucherFlag(sourceOwnsPp36: false, currentFlag: false, requested: true, "PI-TH-0001");
+        Assert.NotNull(d.Refusal);
+        Assert.False(d.Flag);
+        Assert.Equal(10_700m, ForeignServiceVat.PayeeAmount(DocumentType.PaymentVoucher, false, 10_700m, 700m, sourceOwnsPp36: false));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ไม่ได้ระบุค่า_ระบบตั้งตามใบต้นทาง_และบอกให้จดหมายเหตุ(bool sourceOwns, bool current)
+    {
+        var d = ForeignServiceVat.LinkedVoucherFlag(sourceOwns, current, requested: null, "SRC-1");
+        Assert.Null(d.Refusal);
+        Assert.Equal(sourceOwns, d.Flag);
+        Assert.True(d.ChangedBySystem);
+        Assert.Contains(ForeignServiceVat.LinkedFlagRuleCode, ForeignServiceVat.LinkedFlagNote(d.Flag, "SRC-1"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ทิศตรงข้าม_ค่าที่ส่งมาตรงใบต้นทาง_ผ่านโดยไม่จดหมายเหตุ(bool owns)
+    {
+        var d = ForeignServiceVat.LinkedVoucherFlag(owns, owns, requested: owns, "SRC-1");
+        Assert.Null(d.Refusal);
+        Assert.Equal(owns, d.Flag);
+        Assert.False(d.ChangedBySystem);
+    }
+
+    // ── P1-2: ใบเพิ่มหนี้/ใบลดหนี้ของใบเจ้าของ ภ.พ.36 — ยอดหนี้ผู้ขาย = ยอดจ่ายผู้รับเงิน (ตรงกับ JE ที่ตั้งเจ้าหนี้ 1,000) ──
+    [Theory]
+    [InlineData(DocumentType.DebitNote)]
+    [InlineData(DocumentType.CreditNote)]
+    public void ใบเพิ่มลดหนี้ของใบเจ้าของ_ภพ36_ยอดหนี้_1000_ไม่ใช่_1070(DocumentType type)
+    {
+        Assert.Equal(1_000m, ForeignServiceVat.PayeeAmount(type, false, 1_070m, 70m, sourceOwnsPp36: true));
+        Assert.Equal(1_070m, ForeignServiceVat.PayeeAmount(type, false, 1_070m, 70m, sourceOwnsPp36: false));   // ทิศตรงข้าม
+    }
+
+    // ── migration: เงื่อนไข "ใบต้นทางเจ้าของ" ใน SQL ตรงกับ OwnsPp36Query · แตะเฉพาะใบที่ยังไม่อนุมัติ ──
+    [Fact]
+    public void migration_ธงใบลูกและใบเพิ่มลดหนี้_แตะเฉพาะใบยังไม่อนุมัติ_สองทิศ()
+    {
+        var flag = ForeignServicePayeeBalanceMigration.LinkedVoucherFlagSql;
+        Assert.Contains("\"Status\" IN (0, 1, 8)", flag);
+        Assert.Contains("\"IsForeignService\" <> x.owns", flag);   // สองทิศ + รันซ้ำไม่แตะอีก
+        Assert.Contains("d2.\"CompanyId\"", flag);
+        var adj = ForeignServicePayeeBalanceMigration.LinkedAdjustmentNoteSql;
+        Assert.Contains("\"DocumentType\" IN (5, 6)", adj);
+        Assert.Contains("\"BalanceDue\" = d.\"TotalAmount\"", adj);   // สูตรเดิมเท่านั้น ⇒ idempotent
+        Assert.Contains("\"Status\" IN (0, 1, 8)", adj);
+        Assert.Equal(0, (int)DocumentStatus.Draft);
+        Assert.Equal(1, (int)DocumentStatus.WaitingApproval);
+        Assert.Equal(8, (int)DocumentStatus.Rejected);
+        Assert.Equal(5, (int)DocumentType.DebitNote);
+        Assert.Equal(6, (int)DocumentType.CreditNote);
+        Assert.Contains("s.\"DocumentType\" IN (8, 9) OR (s.\"DocumentType\" = 13 AND s.\"RelatedDocumentId\" IS NULL)",
+            ForeignServicePayeeBalanceMigration.SourceOwnsSql);
+        Assert.Equal(4, ForeignServicePayeeBalanceMigration.Statements().Count);
+    }
+}

@@ -88,6 +88,15 @@ public class JournalAnomalyService
         var docsById = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && srcDocIds.Contains(d.Id))
             .ToDictionaryAsync(d => d.Id);
+        // ฝ่ายค้าน F2+F3 P1-1: ใบสำคัญจ่ายที่ปิดหนี้ใบเจ้าของ ภ.พ.36 — ด่านต้องรู้ค่าเดียวกับที่ JE ใช้ (ใบต้นทางเป็นเจ้าของ)
+        var pvSourceIds = docsById.Values
+            .Where(d => d.DocumentType == DocumentType.PaymentVoucher && d.RelatedDocumentId.HasValue)
+            .Select(d => d.RelatedDocumentId!.Value).Distinct().ToList();
+        var pp36OwnerSourceIds = pvSourceIds.Count == 0 ? new HashSet<Guid>()
+            : (await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && pvSourceIds.Contains(d.Id))
+                .Where(Accounting.Helpers.ForeignServiceVat.OwnsPp36Query)
+                .Select(d => d.Id).ToListAsync()).ToHashSet();
 
         foreach (var j in journals)
         {
@@ -123,7 +132,8 @@ public class JournalAnomalyService
                     // JE หลักของ AutoPost ลงเป็นบาทผ่าน Conv() ⇒ แปลงยอดเอกสารก่อนเทียบ
                     ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate,
                     // §83/6 — กฎชุดเดียวกับด่านก่อนบันทึก (PP36_REVIEW P0-1)
-                    IsForeignService: doc.IsForeignService)
+                    IsForeignService: doc.IsForeignService,
+                    SourceOwnsPp36: doc.RelatedDocumentId is Guid srcId && pp36OwnerSourceIds.Contains(srcId))
                 : null;
 
             foreach (var f in JournalPostingGuard.Validate(lines, facts, externalWhtBase.GetValueOrDefault(j.Id)))

@@ -3139,6 +3139,22 @@
         } catch (e) { /* แบนเนอร์คงข้อความกลาง "อัตรา ม.70 ตามตารางของระบบ" — ไม่ใช่เส้นเงิน ไม่บล็อกฟอร์ม */ }
       },
 
+      // ฝ่ายค้าน F2+F3 P2-4 — ติ๊ก "ซื้อบริการจากต่างประเทศ" ตอนเปิดแก้ใบเดิม: ติ๊กได้เฉพาะเมื่อช่องแสดงอยู่ (ชนิดที่ติ๊กได้ —
+      // onDocTypeChange ตัดสินการแสดงไปแล้ว · ไม่มีสำเนารายชื่อชนิดที่นี่) · ชนิดที่ติ๊กไม่ได้แต่ใบเดิมมีธง ⇒ ถอดออก + บอกผู้ใช้ว่าทำไม
+      // คืนค่า = ธงที่ฟอร์มถืออยู่หลัง hydrate
+      _hydrateForeignServiceFlag(d) {
+        const cb = document.getElementById('fIsForeignService');
+        const wrap = document.getElementById('fIsForeignServiceWrap');
+        if (!cb) return false;
+        const allowed = !wrap || wrap.style.display !== 'none';
+        cb.checked = allowed && !!d.isForeignService;
+        if (!allowed && d.isForeignService) {
+          Layout.toast('ใบนี้เคยติ๊ก "ซื้อบริการจากต่างประเทศ (ภ.พ.36)" ซึ่งเอกสารชนิดนี้ติ๊กไม่ได้ (ไม่ตั้งหนี้ ภ.พ.36) — '
+            + 'ระบบถอดเครื่องหมายออกจากฟอร์มแล้ว กดบันทึกเพื่อล้างค่าเดิม', 'warning', 9000);
+        }
+        return cb.checked;
+      },
+
       onForeignServiceToggle() {
         const on = document.getElementById('fIsForeignService')?.checked;
         const b = document.getElementById('foreignServiceBanner');
@@ -8747,18 +8763,19 @@
           // ซื้อบริการต่างประเทศ + เงินมัดจำ + เหตุผลใบลดหนี้ — hydrate fields ที่
           // เพิ่งทำให้แก้ได้ตอน Draft (เดิมเปิดมาแก้แล้วค่าเหล่านี้เงียบหาย).
           // ทำหลัง onDocTypeChange เพราะมันคุมการแสดง/reset checkbox มัดจำ.
-          const fFs = document.getElementById('fIsForeignService');
-          if (fFs) fFs.checked = !!d.isForeignService;
+          // ฝ่ายค้าน F2+F3 P2-4: ติ๊กกลับเฉพาะชนิดที่ติ๊กได้ (ช่องที่ onDocTypeChange แสดงอยู่) — ใบร่างเก่าชนิดขาย/CIL ที่ธงหลุดมา
+          // เดิมถูกติ๊กกลับในช่องที่ซ่อน ⇒ payload ส่ง true ⇒ เซิร์ฟเวอร์ปฏิเสธ (ชนิดนี้ติ๊กไม่ได้) ⇒ บันทึกไม่ได้เลย
+          const fsOn = this._hydrateForeignServiceFlag(d);
           // sync banner วงจร ภ.พ.36 อย่างเดียว — ไม่เรียก onForeignServiceToggle
           // เพราะตัวนั้นตั้ง VAT 7% ให้บรรทัดที่เป็น 0 ด้วย (เหมาะกับตอนผู้ใช้
           // เพิ่งติ๊กเอง ไม่ใช่ตอน hydrate ใบเดิมที่ค่าถูกบันทึกไว้แล้ว)
           {
             const fb = document.getElementById('foreignServiceBanner');
-            if (fb) fb.style.display = d.isForeignService ? '' : 'none';
-            if (d.isForeignService) this.loadForeignWhtRates();
+            if (fb) fb.style.display = fsOn ? '' : 'none';
+            if (fsOn) this.loadForeignWhtRates();
             // ล็อกโหมดราคารวมภาษีของใบต่างประเทศ (ฐาน = ยอดจ่ายจริงเสมอ §83/6)
             const piv = document.getElementById('fPricesIncludeVat');
-            if (piv) piv.disabled = !!d.isForeignService;
+            if (piv) piv.disabled = fsOn;
           }
           // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — hydrate checkbox จาก doc.
           // (doc.documentType เป็น TaxInvoice อยู่แล้ว → combinedRow แสดงจาก

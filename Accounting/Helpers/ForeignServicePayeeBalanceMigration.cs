@@ -46,8 +46,37 @@ public static class ForeignServicePayeeBalanceMigration
         + "AND ABS(\"BalanceDue\" - (\"TotalAmount\" - \"PaidAmount\")) <= 0.005 "
         + "AND \"PaidAmount\" <= \"TotalAmount\" - \"VatAmount\" + 0.005;";
 
-    /// <summary>ทุกคำสั่ง (ลำดับไม่มีผลต่อกัน — สองชุดแถวไม่ทับกัน)</summary>
-    public static IReadOnlyList<string> Statements() => new[] { CashVoucherSql, PayableSql };
+    /// <summary>เงื่อนไข "ใบต้นทาง s เป็นเจ้าของ ภ.พ.36" ในรูป SQL — ตรงกับ <see cref="ForeignServiceVat.OwnsPp36Query"/> (เทสต์ล็อก) · บริษัทเดียวกับใบลูก</summary>
+    internal const string SourceOwnsSql =
+        "s.\"CompanyId\" = d.\"CompanyId\" AND s.\"IsForeignService\" = true AND s.\"VatAmount\" > 0 "
+        + "AND (s.\"DocumentType\" IN (8, 9) OR (s.\"DocumentType\" = 13 AND s.\"RelatedDocumentId\" IS NULL))";
+
+    /// <summary>
+    /// (3) ฝ่ายค้าน F2+F3 P1-1 — ใบสำคัญจ่าย<b>ที่ยังไม่อนุมัติ</b> (ร่าง/รออนุมัติ/ตีกลับ) ที่ปิดหนี้ใบต้นทาง: ธง = ใบต้นทางเป็นเจ้าของ ภ.พ.36
+    /// (สองทิศ: ใบ Booking เก่าที่ไม่มีธง ⇒ ติ๊ก · ใบไทยที่ถูกติ๊ก ⇒ ปลด) + ยอดจ่าย/ค้างตามธงใหม่ · ใบที่อนุมัติแล้วไม่แตะ (GL ลงไปแล้วตามค่าเดิม)
+    /// </summary>
+    public static string LinkedVoucherFlagSql =>
+        "UPDATE \"Documents\" d SET \"IsForeignService\" = x.owns, "
+        + "\"PaidAmount\" = CASE WHEN d.\"PaymentType\" = 1 THEN (CASE WHEN x.owns AND d.\"VatAmount\" > 0 THEN d.\"TotalAmount\" - d.\"VatAmount\" ELSE d.\"TotalAmount\" END) ELSE d.\"PaidAmount\" END, "
+        + "\"BalanceDue\" = CASE WHEN d.\"PaymentType\" = 1 THEN 0 ELSE GREATEST((CASE WHEN x.owns AND d.\"VatAmount\" > 0 THEN d.\"TotalAmount\" - d.\"VatAmount\" ELSE d.\"TotalAmount\" END) - d.\"PaidAmount\", 0) END "
+        + "FROM (SELECT d2.\"Id\", EXISTS (SELECT 1 FROM \"Documents\" s WHERE s.\"Id\" = d2.\"RelatedDocumentId\" AND "
+        + SourceOwnsSql.Replace("d.\"CompanyId\"", "d2.\"CompanyId\"", StringComparison.Ordinal)
+        + ") AS owns FROM \"Documents\" d2 WHERE d2.\"DocumentType\" = 13 AND d2.\"RelatedDocumentId\" IS NOT NULL "
+        + "AND d2.\"IsDeleted\" = false AND d2.\"Status\" IN (0, 1, 8)) x "
+        + "WHERE d.\"Id\" = x.\"Id\" AND d.\"IsForeignService\" <> x.owns;";
+
+    /// <summary>
+    /// (4) ฝ่ายค้าน F2+F3 P1-2 — ใบลด/เพิ่มหนี้<b>ที่ยังไม่อนุมัติ</b>ที่อ้างใบเจ้าของ ภ.พ.36 · ยอดค้างสูตรเดิม (= TotalAmount · ยังไม่มีการชำระ) ⇒ ยอดจ่ายผู้รับเงิน
+    /// (ใบที่อนุมัติไปก่อนรอบนี้ JE ตั้งเจ้าหนี้รวม VAT — ยอดเดิมตรง GL จึงไม่แตะ)
+    /// </summary>
+    public static string LinkedAdjustmentNoteSql =>
+        "UPDATE \"Documents\" d SET \"BalanceDue\" = d.\"TotalAmount\" - d.\"VatAmount\" "
+        + "WHERE d.\"DocumentType\" IN (5, 6) AND d.\"RelatedDocumentId\" IS NOT NULL AND d.\"IsDeleted\" = false AND d.\"Status\" IN (0, 1, 8) "
+        + "AND d.\"VatAmount\" > 0 AND d.\"PaidAmount\" = 0 AND d.\"BalanceDue\" = d.\"TotalAmount\" "
+        + "AND EXISTS (SELECT 1 FROM \"Documents\" s WHERE s.\"Id\" = d.\"RelatedDocumentId\" AND " + SourceOwnsSql + ");";
+
+    /// <summary>ทุกคำสั่ง (ชุดแถวไม่ทับกัน: (1)(2) ใบตั้งต้นที่ติ๊กเอง · (3) PV ที่อ้างใบต้นทางซึ่งยังไม่อนุมัติ · (4) ใบลด/เพิ่มหนี้ที่ยังไม่อนุมัติ)</summary>
+    public static IReadOnlyList<string> Statements() => new[] { CashVoucherSql, PayableSql, LinkedVoucherFlagSql, LinkedAdjustmentNoteSql };
 
     /// <summary>
     /// นับใบที่ต้องให้คนซ่อม: ใบที่<b>จ่ายแล้วเกินยอดจ่ายผู้รับเงิน</b> — ใบตั้งหนี้ที่จ่าย/ตัดเจ้าหนี้รวม VAT ประเมินเองไปแล้ว ·

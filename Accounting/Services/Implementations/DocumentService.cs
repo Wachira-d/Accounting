@@ -1502,15 +1502,18 @@ public partial class DocumentService : IDocumentService
             // รอบ PP36 ทีม F2 (E-1b · เอกสารลูกสืบทอด — กฎ #4 A): ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทางซึ่ง "เป็นเจ้าของ ภ.พ.36" สืบทอดธง
             // ทุกทางเข้า (แปลง · สร้างมือ · API) — บรรทัดที่ยกมาพก VAT ประเมินเองซึ่งไม่ได้จ่ายผู้รับเงิน ⇒ ยอดจ่าย/PDF/คำเตือนต้องรู้ ·
             // ใบนี้ไม่ตั้ง 21912 ซ้ำ (AutoPost เดินสาย settlement · ForeignServiceVat.OwnsPp36 = false เพราะอ้างใบต้นทาง)
-            if (doc.DocumentType == DocumentType.PaymentVoucher && doc.RelatedDocumentId.HasValue && !doc.IsForeignService)
+            // ฝ่ายค้าน F2+F3 P1-1: ธงของใบลูก **ต้องเท่ากับ** OwnsPp36(ใบต้นทาง) เสมอ (ตัวตัดสิน ForeignServiceVat.LinkedVoucherFlag) —
+            // ไม่ได้ติ๊ก ⇒ ระบบตั้งตามใบต้นทาง + หมายเหตุ · ติ๊กทั้งที่ใบต้นทางไม่ใช่ ⇒ ปฏิเสธ (เดิมจ่าย 10,000 ใบไทย 10,700 ค้าง 700 ถาวรเงียบ)
+            // (ตอนสร้างช่อง IsForeignService เป็น bool — false แยกไม่ออกจาก "ไม่ได้ส่ง" ⇒ นับ false เป็นไม่ระบุ)
+            var createLinkedSrc = await LinkedSourcePp36Async(companyId, doc);
+            if (createLinkedSrc is { } cls && doc.DocumentType == DocumentType.PaymentVoucher)
             {
-                var pp36Src = await _db.Documents.AsNoTracking()
-                    .Where(x => x.Id == doc.RelatedDocumentId.Value && x.CompanyId == companyId)
-                    .Select(x => new { x.DocumentType, x.IsForeignService, x.VatAmount, x.RelatedDocumentId })
-                    .FirstOrDefaultAsync();
-                if (pp36Src != null && ForeignServiceVat.OwnsPp36(pp36Src.DocumentType, pp36Src.IsForeignService,
-                        pp36Src.VatAmount, pp36Src.RelatedDocumentId.HasValue))
-                    doc.IsForeignService = true;
+                var linkedFlag = ForeignServiceVat.LinkedVoucherFlag(cls.Owns, doc.IsForeignService,
+                    request.IsForeignService ? true : (bool?)null, cls.Number);
+                if (linkedFlag.Refusal is string linkedErr)
+                    throw new BusinessRuleException(linkedErr, ForeignServiceVat.LinkedFlagRuleCode);
+                doc.IsForeignService = linkedFlag.Flag;
+                if (linkedFlag.ChangedBySystem) AppendInternalNote(doc, ForeignServiceVat.LinkedFlagNote(linkedFlag.Flag, cls.Number));
             }
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
@@ -1612,7 +1615,8 @@ public partial class DocumentService : IDocumentService
             // what keeps a จ่ายทันที voucher out of the aging / ค้างชำระ report.
             // รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): "เงินออก/ยอดค้าง" = ForeignServiceVat.PayeeAmount — ใบบริการต่างประเทศ
             // TotalAmount รวม VAT ประเมินเอง (ภ.พ.36 ไม่ได้จ่ายผู้รับเงิน) · ใบอื่น = TotalAmount เท่าเดิมทุกสตางค์
-            var createPayee = ForeignServiceVat.PayeeAmount(doc);
+            // ฝ่ายค้าน F2+F3 P1-2: ใบลด/เพิ่มหนี้ (และ PV) ที่อ้างใบเจ้าของ ภ.พ.36 — ยอดหนี้ผู้ขาย = ยอดจ่ายผู้รับเงิน (เดิม DN ค้าง 1,070 ทั้งที่ JE ตั้งเจ้าหนี้ 1,000)
+            var createPayee = ForeignServiceVat.PayeeAmount(doc, createLinkedSrc?.Owns == true);
             if (isCashSettled)
             {
                 doc.PaidAmount = createPayee;
@@ -2670,6 +2674,19 @@ public partial class DocumentService : IDocumentService
                 throw new BusinessRuleException(fsTypeErrUpd, Accounting.Helpers.Pp36Lifecycle.RuleWrongDocumentType);
             doc.IsForeignService = request.IsForeignService.Value;
         }
+        // ฝ่ายค้าน F2+F3 P1-1: ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทาง — ธงตามใบต้นทางเสมอ (ติ๊ก/ปลดเองไม่ได้ · ไม่ส่งค่า ⇒ ระบบตั้ง + หมายเหตุ)
+        var updLinkedSrc = await LinkedSourcePp36Async(companyId, doc);
+        var updFlagChangedBySystem = false;
+        if (updLinkedSrc is { } uls && doc.DocumentType == DocumentType.PaymentVoucher)
+        {
+            var updLinked = ForeignServiceVat.LinkedVoucherFlag(uls.Owns, doc.IsForeignService, request.IsForeignService, uls.Number);
+            if (updLinked.Refusal is string updLinkedErr)
+                throw new BusinessRuleException(updLinkedErr, ForeignServiceVat.LinkedFlagRuleCode);
+            updFlagChangedBySystem = updLinked.ChangedBySystem;
+            doc.IsForeignService = updLinked.Flag;
+            if (updLinked.ChangedBySystem) AppendInternalNote(doc, ForeignServiceVat.LinkedFlagNote(updLinked.Flag, uls.Number));
+        }
+        var updSrcOwns = updLinkedSrc?.Owns == true;
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
@@ -2807,14 +2824,14 @@ public partial class DocumentService : IDocumentService
             doc.SubTotal += roundingDelta;
             doc.TotalAmount += roundingDelta;
             // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131) — ตัวตั้งเดียวกับเส้นสร้าง
-            if (doc.PaymentType == Models.Enums.PaymentType.Cash) { doc.PaidAmount = ForeignServiceVat.PayeeAmount(doc); doc.BalanceDue = 0m; }
-            else doc.BalanceDue = ForeignServiceVat.PayeeAmount(doc) - doc.PaidAmount;
+            if (doc.PaymentType == Models.Enums.PaymentType.Cash) { doc.PaidAmount = ForeignServiceVat.PayeeAmount(doc, updSrcOwns); doc.BalanceDue = 0m; }
+            else doc.BalanceDue = ForeignServiceVat.PayeeAmount(doc, updSrcOwns) - doc.PaidAmount;
         }
         // รอบ PP36 ทีม F2: ติ๊ก/ปลดติ๊กบริการต่างประเทศโดยไม่ส่งบรรทัดมา ⇒ ยอดจ่ายผู้รับเงินเปลี่ยน (VAT ประเมินเองเข้า/ออก) — ยอดค้างต้องตาม
         // (ห้าม silent no-op: เดิมธงเปลี่ยนแต่ BalanceDue/PaidAmount ค้างค่าก่อนเปลี่ยน)
-        else if (request.Lines == null && request.IsForeignService.HasValue)
+        else if (request.Lines == null && (request.IsForeignService.HasValue || updFlagChangedBySystem))
         {
-            var flagPayee = ForeignServiceVat.PayeeAmount(doc);
+            var flagPayee = ForeignServiceVat.PayeeAmount(doc, updSrcOwns);
             if (doc.PaymentType == Models.Enums.PaymentType.Cash) { doc.PaidAmount = flagPayee; doc.BalanceDue = 0m; }
             else doc.BalanceDue = flagPayee - doc.PaidAmount;
         }
@@ -2982,7 +2999,7 @@ public partial class DocumentService : IDocumentService
                 doc.PaymentType = request.PaymentType;
             }
             // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ตัวตั้งเดียวกับเส้นสร้าง
-            var updPayee = ForeignServiceVat.PayeeAmount(doc);
+            var updPayee = ForeignServiceVat.PayeeAmount(doc, updSrcOwns);
             if (doc.PaymentType == Models.Enums.PaymentType.Cash)
             {
                 doc.PaidAmount = updPayee;
@@ -6642,8 +6659,9 @@ public partial class DocumentService : IDocumentService
                     && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.Receipt
                         or DocumentType.ReceiptVoucher or DocumentType.CertificateInLieu)
                 {
-                    // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ใบสำคัญจ่ายที่สืบทอดธงบริการต่างประเทศจ่ายเฉพาะฐาน
-                    doc.PaidAmount = ForeignServiceVat.PayeeAmount(doc);
+                    // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ใบสำคัญจ่ายที่ปิดหนี้ใบเจ้าของ ภ.พ.36 จ่ายเฉพาะฐาน ·
+                    // ฝ่ายค้าน P2-5: ส่งค่า "ใบต้นทางเป็นเจ้าของ" ด้วย (ครอบใบเก่าที่ธงยังไม่ตาม — resolver ตัวเดียวกับ JE)
+                    doc.PaidAmount = ForeignServiceVat.PayeeAmount(doc, (await LinkedSourcePp36Async(companyId, doc))?.Owns == true);
                     doc.BalanceDue = 0m;
                     doc.Status = DocumentStatus.Paid;
                 }
@@ -10619,6 +10637,24 @@ public partial class DocumentService : IDocumentService
     /// <para>รอบ 203 ทีม F3 (คำตัดสินข้อ 133): ตัดสิน "ต่อใบ" ด้วยตัวตรวจเดียวกับด่านยกเลิก/ปลดธง/ปรับยอด (<c>Pp36Ledger.RemittedStatusAsync</c> —
     /// ใบอยู่ในรายการนำส่งแล้ว หรือรับรู้แล้ว) — เดิมดู "งวดนี้มีการนำส่ง" ⇒ ใบที่อนุมัติหลังนำส่งงวดนั้น (ยังไม่ได้นำส่งจริง) ถูกปฏิเสธเกิน</para>
     /// </summary>
+    /// <summary>
+    /// ฝ่ายค้าน F2+F3 P1-1/P1-2: ใบต้นทางของ PV/ใบลดหนี้/ใบเพิ่มหนี้ เป็นเจ้าของ ภ.พ.36 ไหม (<see cref="ForeignServiceVat.OwnsPp36(Document)"/>) + เลขใบ —
+    /// null = ใบนี้ไม่ใช่ชนิดที่อ้างใบต้นทางแบบนี้ / ไม่มีใบต้นทาง / ไม่พบในบริษัทนี้ (tenant: CompanyId)
+    /// </summary>
+    private async Task<(bool Owns, string Number)?> LinkedSourcePp36Async(Guid companyId, Document doc)
+    {
+        if (!doc.RelatedDocumentId.HasValue
+            || doc.DocumentType is not (DocumentType.PaymentVoucher or DocumentType.CreditNote or DocumentType.DebitNote))
+            return null;
+        var src = await _db.Documents.AsNoTracking()
+            .Where(x => x.Id == doc.RelatedDocumentId.Value && x.CompanyId == companyId)
+            .Select(x => new { x.DocumentNumber, x.DocumentType, x.IsForeignService, x.VatAmount, x.RelatedDocumentId })
+            .FirstOrDefaultAsync();
+        if (src == null) return null;
+        return (ForeignServiceVat.OwnsPp36(src.DocumentType, src.IsForeignService, src.VatAmount, src.RelatedDocumentId.HasValue),
+            src.DocumentNumber);
+    }
+
     private async Task<string?> Pp36SettledReasonAsync(Guid companyId, Document pp36Owner)
     {
         var status = await Accounting.Helpers.Pp36Ledger.RemittedStatusAsync(_db, companyId, new[] { pp36Owner.Id });
@@ -11379,7 +11415,9 @@ public partial class DocumentService : IDocumentService
             RelatedDocumentId: source.Id,
             // รอบ PP36 ทีม F2 (E-1b · เอกสารลูกสืบทอด): ธงบริการต่างประเทศ §83/6 ตามไปกับใบฝั่งซื้อ (PI→PV ฯลฯ) — บรรทัดที่ยกไปพก
             // VAT ประเมินเอง ⇒ ใบลูกต้องรู้ว่า VAT นั้นไม่ได้จ่ายผู้รับเงิน (ยอดจ่าย/PDF) · ใบลูกที่ปิดหนี้ไม่ตั้ง 21912 ซ้ำ (OwnsPp36)
-            IsForeignService: source.IsForeignService && ForeignServiceVat.IsSelfAssessingType(targetType),
+            // ฝ่ายค้าน F2+F3 P1-1: ใบสำคัญจ่ายลูกถือธง = OwnsPp36(ใบต้นทาง) เท่านั้น (ใบต้นทางติ๊กแต่ไม่มี VAT ไม่ใช่เจ้าของ ⇒ ไม่ส่งธง ไม่งั้นถูกปฏิเสธ)
+            IsForeignService: source.IsForeignService && ForeignServiceVat.IsSelfAssessingType(targetType)
+                && (targetType != DocumentType.PaymentVoucher || ForeignServiceVat.OwnsPp36(source)),
             // รอบ 193 (ฝ่ายค้าน C2): ผลต่างปัดเศษตามไปเมื่อยกทุกบรรทัดครบจำนวน — ไม่งั้น 5,024.00 → 5,024.01
             RoundingAdjustment: Accounting.Helpers.DocumentRounding.Inherit(source.RoundingAdjustment,
                 spec.Count == source.Lines.Count(l => !l.IsDeleted) && spec.All(s => s.Qty >= s.Line.Quantity))), createdBy,
@@ -17254,7 +17292,9 @@ public partial class DocumentService : IDocumentService
                     doc.WithholdingTaxAmount, doc.TotalAmount, doc.IsDeposit,
                     ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate,
                     // §83/6: ขาเครดิตผู้รับเงิน = ฐาน + Cr 21912 — ไม่ส่งธง ⇒ JE ภ.พ.36 ที่ถูกต้องถูกตีตกทุกใบ (PP36_REVIEW P0-1)
-                    IsForeignService: doc.IsForeignService));
+                    IsForeignService: doc.IsForeignService,
+                    // ฝ่ายค้าน F2+F3 P1-1: ค่าเดียวกับที่ JE ใช้ (PayeeAmount(doc, pvSrcOwnsPp36)) — ไม่ใช่ธงของใบลูกอย่างเดียว
+                    SourceOwnsPp36: (await LinkedSourcePp36Async(companyId, doc))?.Owns == true));
             var guardError = JournalPostingGuard.ErrorSummary(guardFindings, doc.DocumentNumber);
             if (guardError != null)
                 throw new InvalidOperationException(guardError);

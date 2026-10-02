@@ -4506,3 +4506,11 @@ _รอบ 202 PP36_REVIEW ทีม F1 รอบสอง — แก้ผล�
 - **ไม่ได้ทำ P2-7** (ต้องใช้ `ForeignServiceVat.PayeeAmount` ของทีม F2 — merge F2 เข้า worktree ถูกปฏิเสธ)
 - เทสต์ออฟไลน์ +5 เมธอด (Kind Theory 7 · ซ่อมได้ใบเดี่ยว · ผลข้างเคียง Theory 7 · ปิดหมายเหตุ 2 · ถอยเฉพาะช่องที่แก้) · Db +1 · required_call_site ปรับ 5 + เพิ่ม 11 กติกา —
   commit 5e797b83_
+
+_PP36 ทีม F2 รอบสอง — แก้ผลฝ่ายค้านบน merge F2+F3 (6a1baa8a):
+- **P1-1** ธงของใบสำคัญจ่ายที่ปิดหนี้ = `OwnsPp36(ใบต้นทาง)` เสมอ — `ForeignServiceVat.LinkedVoucherFlag` (ไม่ระบุ ⇒ ระบบตั้ง + หมายเหตุ · ขัด ⇒ ปฏิเสธ
+  `RD-83/6-LINKED-FLAG`) ในเส้นสร้าง/แก้ · `JournalPostingGuard.DocFacts.SourceOwnsPp36` + `VatNotPaidToPayee` ตัวเดียวกับ JE (AutoPost + ตัวสแกน) ·
+  migration PV ที่ยังไม่อนุมัติสองทิศ
+- **P1-2** ใบเพิ่ม/ลดหนี้ของใบเจ้าของ ภ.พ.36: `BalanceDue` = ยอดจ่ายผู้รับเงิน (สร้าง/แก้ + migration ใบยังไม่อนุมัติ) · `VatNotPaidToPayee` ครอบ DebitNote
+- **P2-4** หน้าเอกสารไม่ติ๊กธงกลับในช่องที่ซ่อน (`_hydrateForeignServiceFlag` + sim) · **P2-5** PaidAmount ตอนอนุมัติ PV ปิดหนี้ส่งค่าใบต้นทาง (PDF ตั้งใจไม่ทำ — เหตุผลใน PP36_REVIEW)
+- เทสต์ `ForeignServiceLinkedVoucherTests` (ก/ข/ค + ทิศตรงข้าม + DN/CN + migration) · required_call_site +4 กติกา/ปรับ 2 — commit <pending>_
