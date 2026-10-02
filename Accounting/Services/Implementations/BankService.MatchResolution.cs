@@ -138,7 +138,7 @@ public partial class BankService
         var docs = await _db.Documents.AsNoTracking()
             // tenant isolation (กฎเหล็ก #2 M) — คิวรีเดิมไม่มี `CompanyId`
             .Where(d => docCandidateIds.Contains(d.Id) && d.CompanyId == companyId)
-            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.TotalAmount })
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.TotalAmount, d.DocumentType, d.IsForeignService, d.VatAmount })
             .ToListAsync();
         var docMap = docs.ToDictionary(d => d.Id);
 
@@ -155,7 +155,9 @@ public partial class BankService
                     j.EntryNumber + (j.Description != null ? $" — {j.Description}" : ""),
                     j.EntryDate, overrideAmount ?? JeAmount(id));
             if (docMap.TryGetValue(id, out var d))
-                return new("Document", id, d.DocumentNumber, d.DocumentDate, overrideAmount ?? d.TotalAmount);
+                // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — เงินที่ออกจากธนาคารจริงของใบบริการต่างประเทศ
+                return new("Document", id, d.DocumentNumber, d.DocumentDate, overrideAmount
+                    ?? Accounting.Helpers.ForeignServiceVat.PayeeAmount(d.DocumentType, d.IsForeignService, d.TotalAmount, d.VatAmount));
             return null;
         }
 

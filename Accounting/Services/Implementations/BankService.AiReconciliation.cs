@@ -690,7 +690,9 @@ public partial class BankService
                 && d.BankAccountId == account.Id
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
                 && (d.DocumentType == DocumentType.PaymentVoucher || d.DocumentType == DocumentType.Expense))
-            .SumAsync(d => (decimal?)d.TotalAmount) ?? 0;
+            // เงินออกจริง = ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ไม่รวม VAT ประเมินเอง ภ.พ.36
+            .Select(ForeignServiceVat.PayeeAmountQuery)
+            .SumAsync(a => (decimal?)a) ?? 0;
 
         // Also include payments linked to this bank account
         var paymentIn = await _db.Payments

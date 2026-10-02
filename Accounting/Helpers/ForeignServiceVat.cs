@@ -1,3 +1,5 @@
+using System.Linq.Expressions;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
@@ -42,32 +44,6 @@ public static class ForeignServiceVat
     /// <summary>ผังภาษีซื้อของ ภ.พ.36 — **บังคับ 11640 เสมอ** (ยังไม่ถึงกำหนดเคลม
     /// จนกว่าจะนำส่งและได้ใบเสร็จกรมสรรพากร — §82/4 ประกอบใบเสร็จ RD · คำตัดสินข้อ 129) ไม่ใช่ 11610 ตามใบกำกับปกติ</summary>
     public const string Pp36InputVatCode = "11640";
-
-    /// <summary>
-    /// <b>ชุดชนิดเอกสารที่ถือ ภ.พ.36 ได้ — ชุดเดียวของทั้งระบบ</b> (รอบ 203 ทีม F3 · PP36_REVIEW E-8)
-    /// <para>เดิมสามเส้นนับคนละชุด: ยอดค้างหน้านำส่ง (ไม่กรองชนิดเลย ⇒ ใบขายที่ถูกติ๊กธงก็นับ) · ปฏิทิน (<c>WhtRemitScope.PayerSideTypes</c>) ·
-    /// รายงาน (ลิสต์ local) · และ tax point (<c>TaxPointResolver.IsReverseCharge</c>) — ทุกเส้นต้องอ่านตัวนี้</para>
-    /// </summary>
-    public static readonly DocumentType[] Pp36DocumentTypes =
-    {
-        DocumentType.PurchaseInvoice, DocumentType.Expense,
-        DocumentType.PaymentVoucher, DocumentType.CertificateInLieu,
-    };
-
-    /// <summary>ชนิดนี้ติ๊ก "บริการต่างประเทศ" ได้ไหม (ฝั่งสร้าง/แก้ใช้ปฏิเสธธงบนใบขาย)</summary>
-    public static bool CanCarryPp36(DocumentType type) => Pp36DocumentTypes.Contains(type);
-
-    /// <summary>
-    /// <b>ใบนี้เป็น "เจ้าของ" หนี้ ภ.พ.36 ไหม</b> — ตัวตัดสินตัวเดียวของยอดค้าง · นำส่ง · รับรู้ · รายงาน · ป้าย (ทีม F3 สร้างคู่กับทีม F2)
-    /// <para>ใบสำคัญจ่ายที่<b>ปิดหนี้ใบต้นทาง</b> (ใบแจ้งหนี้ซื้อ/ค่าใช้จ่ายที่ตั้งหนี้ไว้แล้ว) ไม่ใช่เจ้าของ — VAT ประเมินเองถูกตั้งที่ใบต้นทาง
-    /// (Cr 21912 ตอนตั้งหนี้) · นับ PV ด้วย = ภ.พ.36 ซ้ำสองเท่า (PP36_REVIEW E-1b)</para>
-    /// </summary>
-    /// <param name="settledSourceType">ชนิดของใบต้นทางที่ใบนี้ปิดหนี้ (<c>RelatedDocumentId</c>) — null = ไม่มีใบต้นทาง</param>
-    public static bool OwnsPp36(DocumentType type, bool isForeignService, DocumentType? settledSourceType)
-        => isForeignService
-           && CanCarryPp36(type)
-           && !(type == DocumentType.PaymentVoucher
-                && settledSourceType is DocumentType.PurchaseInvoice or DocumentType.Expense);
 
     /// <summary>
     /// <b>วันที่ที่กำหนดงวด ภ.พ.36 ของใบ</b> — วันจ่าย (หน้าที่นำส่งเกิดเมื่อจ่ายค่าบริการ §83/6) · ยังไม่รู้วันจ่าย = วันที่เอกสาร ·
@@ -152,4 +128,76 @@ public static class ForeignServiceVat
         var pp36 = SelfAssessedVat(isForeignService, vatAmount);
         return new ForeignServiceCreditSplit(creditTotal - pp36, pp36);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // รอบ PP36 ทีม F2 · คำตัดสินข้อ 131 — "ยอดจ่ายผู้รับเงิน" + "ใบนี้เป็นเจ้าของ ภ.พ.36 ไหม"
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// ชนิดเอกสารที่ <c>AutoPostToJournalAsync</c> แยกขาเครดิต §83/6 จริง (สาย PI/Expense + สาย PV)
+    /// — ธง <c>IsForeignService</c> บนชนิดอื่น (ใบขาย/CIL ที่ตั้งธงหลุดมา — PP36_REVIEW E-8) <b>ไม่มีผลทางบัญชี</b> จึงไม่มีผลต่อยอดจ่ายด้วย
+    /// </summary>
+    public static bool IsSelfAssessingType(DocumentType type)
+        => type is DocumentType.PurchaseInvoice or DocumentType.Expense or DocumentType.PaymentVoucher;
+
+    /// <summary>
+    /// VAT บนเอกสารใบนี้เป็น "VAT ที่ผู้จ่ายประเมินเอง" (ไม่ได้จ่ายให้ผู้รับเงิน) ไหม
+    /// <list type="bullet">
+    /// <item>ใบฝั่งซื้อที่ติ๊กบริการต่างประเทศเอง (PI/Expense/PV)</item>
+    /// <item>ใบสำคัญจ่าย/ใบลดหนี้ที่<b>อ้างใบต้นทางที่เป็นเจ้าของ ภ.พ.36</b> (<paramref name="sourceOwnsPp36"/>) — บรรทัดที่ยกมาจากใบต้นทางพก VAT
+    /// ประเมินเองมาด้วย (ConvertCoreAsync ยก VatAmountOverride) แต่ผู้รับเงินไม่ได้เก็บ VAT นั้น · ครอบใบเก่าที่ยังไม่ได้สืบทอดธง</item>
+    /// </list>
+    /// </summary>
+    public static bool VatNotPaidToPayee(DocumentType type, bool isForeignService, bool sourceOwnsPp36 = false)
+        => (isForeignService && IsSelfAssessingType(type))
+           || (sourceOwnsPp36 && type is DocumentType.PaymentVoucher or DocumentType.CreditNote);
+
+    /// <summary>
+    /// **ยอดที่จ่ายผู้รับเงินจริง — ตัวตั้งเดียวของ "เงินออก/ยอดค้าง" ทุกเส้น** (คำตัดสินข้อ 131)
+    /// <para><c>TotalAmount</c> ของใบบริการต่างประเทศ = มูลค่ารวม VAT ที่ประเมินเอง (คงไว้ให้รายงานภาษี) ⇒ เส้นที่ถามว่า "ต้องจ่าย/จ่ายแล้ว/ค้างเท่าไร"
+    /// (<c>PaidAmount</c>/<c>BalanceDue</c> · ด่านจ่ายเกิน · ยอดเสนอบนจอ · อายุเจ้าหนี้ · จับคู่ธนาคาร · PDF "ยอดจ่ายผู้รับเงิน") ต้องอ่านตัวนี้
+    /// ห้ามอ่าน <c>TotalAmount</c> ตรง ๆ — ตัวอย่างใบจริง PV-20260901-0001: TotalAmount 6,321.56 · VAT 413.56 ⇒ จ่าย Booking.com 5,908.00</para>
+    /// <para>สูตร = <see cref="SplitCredit"/>(...).PayeeCredit ตัวเดียวกับ JE ⇒ ยอดเอกสารกับขาเจ้าหนี้/ธนาคารใน GL ไม่มีวันแยกทาง ·
+    /// WHT ถูกหักอยู่ใน <c>TotalAmount</c> แล้ว (Total = ฐาน + VAT − WHT) ⇒ ผลคือ ฐาน − WHT ตามสูตรเดิม · ใบอื่นทุกใบ = <c>TotalAmount</c> เท่าเดิมทุกสตางค์</para>
+    /// </summary>
+    public static decimal PayeeAmount(DocumentType type, bool isForeignService, decimal totalAmount, decimal vatAmount,
+        bool sourceOwnsPp36 = false)
+        => SplitCredit(VatNotPaidToPayee(type, isForeignService, sourceOwnsPp36), totalAmount, vatAmount).PayeeCredit;
+
+    /// <summary>ทางลัดบน entity — <see cref="PayeeAmount(DocumentType, bool, decimal, decimal, bool)"/></summary>
+    public static decimal PayeeAmount(Document d, bool sourceOwnsPp36 = false)
+        => PayeeAmount(d.DocumentType, d.IsForeignService, d.TotalAmount, d.VatAmount, sourceOwnsPp36);
+
+    /// <summary>
+    /// รูป EF ของ <see cref="PayeeAmount(Document, bool)"/> (ไม่รวมเคสใบต้นทาง — ใช้กับผลรวมในฐานข้อมูล) · แปลเป็น SQL ได้ ·
+    /// เทสต์ล็อกว่าให้ผลเท่ากับตัว C# ทุกชนิดเอกสาร (<c>ForeignServicePayeeAmountTests</c>) — ห้ามเขียนสูตรนี้ซ้ำใน LINQ ที่อื่น
+    /// </summary>
+    public static readonly Expression<Func<Document, decimal>> PayeeAmountQuery = d =>
+        d.IsForeignService && d.VatAmount > 0m
+            && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense
+                || d.DocumentType == DocumentType.PaymentVoucher)
+            ? d.TotalAmount - d.VatAmount
+            : d.TotalAmount;
+
+    /// <summary>
+    /// **"ใบนี้เป็นเจ้าของ ภ.พ.36 ไหม" — predicate ตัวเดียวที่ทุกเส้น (ยอดค้างนำส่ง · รายงาน ภ.พ.36 · รับรู้ภาษีซื้อ · ปฏิทิน · ใบลดหนี้)
+    /// ต้องใช้ ห้ามนับจาก <c>IsForeignService &amp;&amp; VatAmount &gt; 0</c> ตรง ๆ** (PP36_REVIEW E-1b/E-8 · ประสานทีม F3)
+    /// <para>ตรงกับ "JE ของใบนี้ Cr 21912 ไหม" ใน <c>AutoPostToJournalAsync</c> ทุกประการ: สาย PI/Expense + สาย PV <b>ที่ไม่ได้ปิดหนี้ใบต้นทาง</b>
+    /// (PV ที่อ้างใบต้นทางเดินสาย settlement — ตัดเจ้าหนี้ ไม่ตั้ง 21912 ซ้ำ) · ต้องมี VAT</para>
+    /// <para>ใบสำคัญจ่ายที่แปลงจากใบซื้อบริการต่างประเทศสืบทอดธงมาด้วย (เพื่อให้ยอดจ่าย/PDF ถูก) ⇒ ถ้านับจากธงตรง ๆ ภ.พ.36 จะนับซ้ำสองใบ</para>
+    /// </summary>
+    public static bool OwnsPp36(DocumentType type, bool isForeignService, decimal vatAmount, bool hasRelatedDocument)
+        => isForeignService && vatAmount > 0m
+           && (type is DocumentType.PurchaseInvoice or DocumentType.Expense
+               || (type == DocumentType.PaymentVoucher && !hasRelatedDocument));
+
+    /// <summary>ทางลัดบน entity — <see cref="OwnsPp36(DocumentType, bool, decimal, bool)"/></summary>
+    public static bool OwnsPp36(Document d)
+        => OwnsPp36(d.DocumentType, d.IsForeignService, d.VatAmount, d.RelatedDocumentId.HasValue);
+
+    /// <summary>รูป EF ของ <see cref="OwnsPp36(Document)"/> — ใช้ใน <c>.Where(...)</c> ของคิวรียอดค้าง/รายงาน (เทสต์ล็อกว่าตรงกับตัว C#)</summary>
+    public static readonly Expression<Func<Document, bool>> OwnsPp36Query = d =>
+        d.IsForeignService && d.VatAmount > 0m
+        && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense
+            || (d.DocumentType == DocumentType.PaymentVoucher && d.RelatedDocumentId == null));
 }

@@ -962,7 +962,10 @@ public record DocumentResponse(
     /// null = ไม่ใช่ใบ ภ.พ.36 / เส้นทางที่ไม่คำนวณ</summary>
     string? Pp36State = null,
     /// <summary>ป้ายภาษาไทยของ <see cref="Pp36State"/> (<c>Pp36Lifecycle.Label</c> ตัวเดียว) เช่น "ภ.พ.36 · รับรู้แล้ว เคลม ภ.พ.30 เดือน 10/2568"</summary>
-    string? Pp36StatusLabel = null);
+    string? Pp36StatusLabel = null,
+    /// <summary>รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดจ่ายผู้รับเงิน (<c>ForeignServiceVat.PayeeAmount</c>) — ใบบริการต่างประเทศ = TotalAmount − VAT ประเมินเอง ·
+    /// ใบอื่น = TotalAmount · หน้าเว็บใช้เป็นตัวหารสัดส่วน WHT/ตรวจงวดแรก (server computes · page displays) · null = ผู้สร้าง DTO ไม่ได้คำนวณ (หน้าเว็บตกไป TotalAmount)</summary>
+    decimal? PayeeAmount = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>

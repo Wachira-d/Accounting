@@ -1351,8 +1351,9 @@ public class ImportExportService : IImportExportService
                 + "ตรวจไฟล์นำเข้า (ยอดผิด หรือแถวนี้ถูกนำเข้าไปแล้ว) ก่อนนำเข้าใหม่");
 
         doc.PaidAmount += amount;
+        // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ตัวตั้งเดียวกับเว็บ
         var settle = Accounting.Helpers.DocumentSettlementState.Apply(
-            doc.TotalAmount, doc.PaidAmount, doc.Status);
+            Accounting.Helpers.ForeignServiceVat.PayeeAmount(doc), doc.PaidAmount, doc.Status);
         doc.BalanceDue = settle.BalanceDue;
         doc.Status = settle.Status;
         if (settle.Status == DocumentStatus.Paid)
@@ -1694,7 +1695,7 @@ public class ImportExportService : IImportExportService
         doc.VatAmount = doc.Lines.Sum(l => l.VatAmount);
         doc.WithholdingTaxAmount = doc.Lines.Sum(l => l.WithholdingTaxAmount);
         doc.TotalAmount = doc.SubTotal + doc.VatAmount - doc.WithholdingTaxAmount;
-        doc.BalanceDue = doc.TotalAmount - doc.PaidAmount;
+        doc.BalanceDue = Accounting.Helpers.ForeignServiceVat.PayeeAmount(doc) - doc.PaidAmount;   // ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2)
     }
 
     // ===== Validation =====

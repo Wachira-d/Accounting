@@ -62,14 +62,21 @@ public static class ForeignServiceEvidence
     /// หลักฐานตรงที่สุด (ผู้ใช้กรอกเอง มีความหมายเดียว) · <b>เลขผู้เสียภาษีที่ไม่ใช่
     /// รูปไทย</b> รองลงมา · ส่วน "ภาษีซื้อถูกปักไว้ที่ 11640" เป็นเพียง<b>ตัวขยาย</b>
     /// ไม่ใช่หลักฐานเดี่ยว ๆ เพราะใบไทยที่เอกสารไม่ครบ §86/4 ก็พักที่ 11640 เหมือนกัน</para></summary>
+    /// <param name="settledSourceNumber">รอบ PP36 ทีม F2 (E-1b): เลขใบต้นทางเมื่อใบนี้เป็น<b>ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทาง</b> (null = ใบตั้งต้น) —
+    /// ใบแบบนี้ไม่ใช่เจ้าของ ภ.พ.36 (AutoPost ตัดเจ้าหนี้ ไม่ตั้ง 21912) ⇒ ทางแก้ต้องชี้ไป "ใบต้นทาง" ไม่ใช่ให้ติ๊กบนใบนี้ (ติ๊กบนใบลูก = ภ.พ.36 นับซ้ำ)</param>
+    /// <param name="settledSourceOwnsPp36">ใบต้นทางที่ใบนี้ปิดหนี้เป็นเจ้าของ ภ.พ.36 แล้ว (<c>ForeignServiceVat.OwnsPp36</c>)
+    /// ⇒ ไม่ต้องเตือน (หนี้ ภ.พ.36 ตั้งที่ใบต้นทางครบแล้ว)</param>
     public static ForeignServiceSuspicion Judge(
         bool isForeignService,
         decimal vatAmount,
         string? contactCountryCode,
         string? contactTaxId,
-        bool inputVatParkedAsUndue)
+        bool inputVatParkedAsUndue,
+        string? settledSourceNumber = null,
+        bool settledSourceOwnsPp36 = false)
     {
         if (isForeignService) return new ForeignServiceSuspicion(false, "");
+        if (settledSourceOwnsPp36) return new ForeignServiceSuspicion(false, "");
         if (vatAmount <= 0m) return new ForeignServiceSuspicion(false, "");
 
         var country = contactCountryCode?.Trim();
@@ -86,6 +93,14 @@ public static class ForeignServiceEvidence
                 + "และภาษีซื้อของใบนี้ถูกพักไว้ที่ 11640";
         else
             return new ForeignServiceSuspicion(false, "");
+
+        if (settledSourceNumber is { Length: > 0 } srcNo)
+            return new ForeignServiceSuspicion(true,
+                $"({RuleCode}) {evidence} แต่ใบนี้เป็นใบสำคัญจ่ายที่ปิดหนี้ของ {srcNo} ซึ่ง**ยังไม่ได้ติ๊ก \"ซื้อบริการจากต่างประเทศ (ภ.พ.36 §83/6)\"** — "
+                + $"หนี้ ภ.พ.36 ต้องตั้งที่ใบต้นทาง (ใบสำคัญจ่ายที่ปิดหนี้ไม่ตั้ง 21912 · ห้ามติ๊กบนใบนี้ ไม่งั้นนับซ้ำ) · "
+                + $"**ทางแก้**: ยกเลิกใบสำคัญจ่ายนี้ → เปิด {srcNo} กด \"แก้เป็นบริการต่างประเทศ (ภ.พ.36)\" → ออกใบสำคัญจ่ายใหม่จาก {srcNo} "
+                + $"(จ่ายเฉพาะยอดก่อน VAT {vatAmount:N2} บาทไม่ต้องจ่ายผู้ขาย) · "
+                + $"ถ้าคู่ค้ารายนี้จด VAT ไทยและออกใบกำกับไทยได้จริง ให้กรอกประเทศ/เลขผู้เสียภาษีไทยให้ถูก แล้วคำเตือนนี้จะหายไปเอง");
 
         return new ForeignServiceSuspicion(true,
             $"({RuleCode}) {evidence} แต่ใบนี้**ยังไม่ได้ติ๊ก \"ซื้อบริการจากต่างประเทศ (ภ.พ.36 §83/6)\"** — "

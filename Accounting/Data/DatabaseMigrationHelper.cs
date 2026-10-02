@@ -38,6 +38,27 @@ public static class DatabaseMigrationHelper
             }
         }
         if (!paymentOwnerColumnExisted) ReportPaymentOwnerBackfill(db, logger);
+        ReportForeignServiceOverpaid(db, logger);
+    }
+
+    /// <summary>
+    /// รอบ PP36 ทีม F2 — ใบซื้อบริการต่างประเทศที่<b>จ่ายแล้วเกินยอดจ่ายผู้รับเงิน</b> (จ่าย/ตัดเจ้าหนี้รวม VAT ประเมินเองก่อนคำตัดสินข้อ 131) migration
+    /// ไม่แตะเพราะ GL มีเงินออกเกินจริง ⇒ ต้องให้คนซ่อมด้วยใบสำคัญทั่วไป · log warning เฉพาะเมื่อยังมี (เงียบเมื่อหมด) · SQL อยู่กับเจ้าของกติกา
+    /// (<see cref="Accounting.Helpers.ForeignServicePayeeBalanceMigration.OverpaidReportSql"/>)
+    /// </summary>
+    private static void ReportForeignServiceOverpaid(AccountingDbContext db, ILogger? logger)
+    {
+        try
+        {
+            var left = db.Database.SqlQueryRaw<int>(Accounting.Helpers.ForeignServicePayeeBalanceMigration.OverpaidReportSql).AsEnumerable().First();
+            if (left > 0)
+                logger?.LogWarning("[DbMigration] ภ.พ.36: {Count} ใบซื้อบริการต่างประเทศจ่ายแล้วเกินยอดจ่ายผู้รับเงิน (รวม VAT ประเมินเองที่ไม่ได้จ่ายผู้ขาย) "
+                    + "— ไม่ถูกปรับอัตโนมัติ · ตรวจเจ้าหนี้/ธนาคารของใบเหล่านี้แล้วปรับปรุงด้วยใบสำคัญทั่วไป (คำตัดสินข้อ 131)", left);
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "[DbMigration] นับใบบริการต่างประเทศที่จ่ายเกินยอดจ่ายผู้รับเงินไม่ได้");
+        }
     }
 
     /// <summary>ฝ่ายค้านรอบสี่ R4-3 — สร้างคอลัมน์ <c>Documents.DepositBaseDeducted</c> และย้ายค่าเดิมจาก <c>BillDiscountAmount</c>
@@ -7204,7 +7225,10 @@ public static class DatabaseMigrationHelper
             // ═══ จบบล็อกรอบ 201 ทีม AI ═══
         };
         // `new[] { .., x }` ไม่ใช่ collection expression ⇒ กระจาย IReadOnlyList ในอาร์เรย์ไม่ได้ (CS0826/CS0029 รอบ 194) — ต่อท้ายด้วย Concat
-        return statements.Concat(DepositKindMigrationStatements()).Concat(Round201GatewayStatements()).ToArray();
+        return statements.Concat(DepositKindMigrationStatements()).Concat(Round201GatewayStatements())
+            // รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดจ่ายแล้ว/ค้างของใบบริการต่างประเทศเดิมที่รวม VAT ประเมินเอง ⇒ ยอดจ่ายผู้รับเงิน (idempotent ·
+            // เฉพาะแถวที่อยู่ในสภาพสูตรเดิมแน่นอน · ใบที่จ่ายเกินไปแล้วไม่แตะ — ReportForeignServiceOverpaid log ให้คนซ่อม)
+            .Concat(Accounting.Helpers.ForeignServicePayeeBalanceMigration.Statements()).ToArray();
     }
 
     // ══════════════════════════════════════════════════════════════════

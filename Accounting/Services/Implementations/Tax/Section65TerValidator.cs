@@ -77,12 +77,21 @@ public static class Section65TerValidator
         /// (block เฉพาะตอนขาดทั้งคู่ ส่วนขาดเลขภาษีเป็นคำเตือน) เพราะการ
         /// เปิดเต็มรูปจะบล็อกค่าใช้จ่ายเงินสดรายย่อยจำนวนมากที่ไม่มีเลขภาษี
         /// — เจ้าของระบบเปิดได้เมื่อพร้อมบังคับนโยบาย</summary>
-        bool StrictPayeeIdentification = false);
+        bool StrictPayeeIdentification = false,
+        /// <summary>รอบ PP36 ทีม F2 (E-12): ผู้รับเงินเป็นผู้รับต่างประเทศ (ประเทศคู่ค้าไม่ใช่ไทย หรือเอกสารติ๊กบริการต่างประเทศ §83/6) —
+        /// ผู้รับต่างประเทศไม่มีเลขผู้เสียภาษีไทย · เลขประจำตัวผู้เสียภาษี/VAT number ของประเทศผู้รับ (ช่องเลขผู้เสียภาษีรูปแบบใดก็ได้) ใช้ระบุผู้รับได้
+        /// ⇒ (11)(18) ไม่ฟ้อง "ไม่มีเลขผู้เสียภาษี" กับเลขต่างประเทศ และข้อความกรณีไม่มีเลขเลยบอกให้เก็บเลขของประเทศผู้รับ (ไม่ใช่เลขไทย)</summary>
+        bool PayeeIsForeign = false);
 
     /// <summary>accountInfo: map AccountId → (code, name) สำหรับตรวจชนิดบัญชี.
     /// payeeName/payeeTaxId: ชื่อ+เลขผู้รับเงิน (จาก Contact ของเอกสารซื้อ).
     /// accountTypes (ฝ่ายค้านรอบ 201 รอบสาม P1-2): map AccountId → ชนิดผัง — ตัดสิน "เป็นรายจ่ายไหม" ด้วยชนิดผังก่อน
     /// (ผังที่ผู้ใช้สร้าง/นำเข้า เช่น 6100 ค่าปรับ ชนิด Expense ต้องถูกตรวจ) · ว่าง/ไม่มีในแผนที่ = ใช้เลขนำหน้า 5 เป็นทางสำรอง</summary>
+    /// <summary>ต้นทุนที่ลงค่าใช้จ่ายจริงของเอกสาร = Σ (ฐานบรรทัด + VAT เฉพาะบรรทัดที่เคลมไม่ได้) — VAT ที่เคลมได้ (รวม VAT ประเมินเอง ภ.พ.36 ที่พัก 11640)
+    /// เป็นภาษีซื้อ ไม่ใช่ค่าใช้จ่าย · ภาษีหัก ณ ที่จ่ายไม่ลดค่าใช้จ่าย (สูตรเดียวกับยอดบวกกลับรายบรรทัด)</summary>
+    internal static decimal ExpenseCostOf(Document doc)
+        => doc.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount + (l.IsVatClaimable ? 0m : l.VatAmount));
+
     public static Result Evaluate(
         Document doc,
         IReadOnlyDictionary<Guid, (string Code, string Name)> accountInfo,
@@ -108,7 +117,11 @@ public static class Section65TerValidator
         else if (doc.TotalAmount > 0 && string.IsNullOrWhiteSpace(payeeTaxId))
         {
             findings.Add(new("RD-65ter(11)(18)", "ป.รัษฎากร §65 ตรี (11)(18)",
-                0m, "ไม่มีเลขประจำตัวผู้เสียภาษีของผู้รับเงิน — เสี่ยงถูกถือเป็นรายจ่ายต้องห้าม โปรดเพิ่มก่อนปิดรอบ",
+                0m, ctx.PayeeIsForeign
+                    // E-12: ผู้รับต่างประเทศไม่มีเลขไทยให้กรอก — หลักฐานระบุตัวคือเลขของประเทศผู้รับ (เช่น VAT number "NL805734958B01")
+                    ? "ผู้รับเงินต่างประเทศยังไม่มีเลขประจำตัวผู้เสียภาษี/VAT number ของประเทศผู้รับ — ไม่ต้องใช้เลขไทย แต่ต้องระบุตัวผู้รับได้ "
+                      + "(กรอกเลขของประเทศผู้รับในช่องเลขผู้เสียภาษีของผู้ติดต่อ + ที่อยู่) มิฉะนั้นเสี่ยงถูกถือเป็นรายจ่ายต้องห้าม"
+                    : "ไม่มีเลขประจำตัวผู้เสียภาษีของผู้รับเงิน — เสี่ยงถูกถือเป็นรายจ่ายต้องห้าม โปรดเพิ่มก่อนปิดรอบ",
                 HardBlock: ctx.StrictPayeeIdentification, NeedsConfirmation: true));
         }
 
@@ -154,10 +167,13 @@ public static class Section65TerValidator
         }
 
         // (19) รายจ่ายต่างประเทศที่ไม่เชื่อมโยงกิจการในไทย
+        // รอบ PP36 ทีม F2 (E-12): ยอดบวกกลับ = ต้นทุนที่ลงค่าใช้จ่ายจริง (ฐานบรรทัด + VAT เฉพาะบรรทัดที่เคลมไม่ได้ — สูตรเดียวกับข้อรายบรรทัดข้างล่าง)
+        // เดิมบวกกลับ TotalAmount ซึ่งของใบบริการต่างประเทศรวม VAT ประเมินเอง (เป็นภาษีซื้อ 11640 ไม่ใช่ค่าใช้จ่าย) และหัก WHT ⇒ บวกกลับผิดทั้งสองทาง
         if (doc.IsForeignService && ctx.LinkedToThaiOperation == false && doc.TotalAmount > 0)
         {
+            var foreignExpense = ExpenseCostOf(doc);
             findings.Add(new("RD-65ter(19)", "ป.รัษฎากร §65 ตรี (19)",
-                doc.TotalAmount, $"รายจ่ายต่างประเทศที่ไม่เชื่อมโยงกิจการในไทย — บวกกลับเต็มจำนวน ({doc.TotalAmount:N2})",
+                foreignExpense, $"รายจ่ายต่างประเทศที่ไม่เชื่อมโยงกิจการในไทย — บวกกลับเต็มจำนวน ({foreignExpense:N2})",
                 HardBlock: false, NeedsConfirmation: false));
         }
 

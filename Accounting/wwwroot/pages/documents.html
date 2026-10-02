@@ -10410,7 +10410,7 @@
               && Number(d.balanceDue || 0) > 0.01) {
             // Emoji prefix matches the next-step banner above so the user
             // can trace the guidance "→ ปุ่มไหน" without hunting.
-            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.totalAmount || 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)}, '${d.documentType}', ${Number(d.vatAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
+            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.recordPayment('${d.id}', ${d.balanceDue}, ${Number(d.withholdingTaxAmount || 0)}, ${Number(d.payeeAmount ?? d.totalAmount ?? 0)}, '${d.currency || 'THB'}', ${Number(d.exchangeRate || 1)}, '${d.documentType}', ${Number(d.vatAmount || 0)})" title="ออกใบเสร็จ/ใบสำคัญรับ-จ่ายอัตโนมัติ และล้างยอดคงค้าง — รองรับผ่อนชำระหลายงวด ระบบคำนวณ WHT ต่องวดอัตโนมัติ">💰 บันทึกชำระเงิน</button>`;
           }
           // ── ออกใบกำกับภาษีเต็มรูป "แทน" ใบเสร็จ/ใบกำกับอย่างย่อ (§86/6 → §86/4) ──
           // ลูกค้ารับใบย่อไปแล้วกลับมาขอเต็มรูปเพื่อเคลมภาษีซื้อ (ใบย่อเคลมไม่ได้
@@ -12870,8 +12870,9 @@
           const d = this._currentDoc || {};
           Layout.closeModal('convertModal');
           Layout.toast('การรับเงิน + ออกใบเสร็จ ทำที่หน้านี้ — ผลลัพธ์เหมือนกันทุกทาง', 'info', 6000);
+          // ตัวหารสัดส่วน WHT = ยอดจ่ายผู้รับเงินที่เซิร์ฟเวอร์คำนวณ (ใบบริการต่างประเทศไม่รวม VAT ประเมินเอง · รอบ PP36 ทีม F2)
           this.recordPayment(d.id, Number(d.balanceDue ?? 0), Number(d.withholdingTaxAmount ?? 0),
-            Number(d.totalAmount ?? 0), d.currency || 'THB', Number(d.exchangeRate ?? 1),
+            Number(d.payeeAmount ?? d.totalAmount ?? 0), d.currency || 'THB', Number(d.exchangeRate ?? 1),
             d.documentType, Number(d.vatAmount ?? 0));
           return;
         }
