@@ -28,13 +28,17 @@ public partial class LodgingService : ILodgingService
     private readonly IEntitlementService? _entitlement;
     /// <summary>รอบ 202 ทีม LO (คำตัดสินข้อ 127): แจ้งเตือนผ่านเครื่องแจ้งเตือนกลาง (กระดิ่ง/อีเมล/LINE ตามตาราง NotificationSettings ของบริษัท)</summary>
     private readonly INotificationEngine? _notify;
+    /// <summary>ฝ่ายค้านรอบ 202 P1-3ค: บัญชีขาเงินเข้าของใบมัดจำที่ออกภายหลังให้เงินออนไลน์ที่เคยยืนยันไม่ได้ (ตัวเดียวกับ handler)</summary>
+    private readonly Accounting.Services.Payments.IGatewayAccountResolver? _gatewayAccounts;
 
     public LodgingService(AccountingDbContext db, ILogger<LodgingService> logger, IDocumentService docService,
         IEmailService? email = null, IImageProcessingService? images = null,
         IUsageMeteringService? metering = null, IEntitlementService? entitlement = null,
-        ILineNotifyService? line = null, INotificationEngine? notify = null)
+        ILineNotifyService? line = null, INotificationEngine? notify = null,
+        Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null)
     {
         _notify = notify;
+        _gatewayAccounts = gatewayAccounts;
         _db = db;
         _logger = logger;
         _docService = docService;

@@ -126,6 +126,8 @@ public partial class LodgingService
             CanSettleLegacyNoShow = includeInternal && LodgingOverdueRule.IsLegacyAutoNoShow(r.Status, r.CancellationReason, r.CancellationFee, r.RefundAmount),
             PaymentProblemAt = includeInternal ? r.PaymentProblemAt : null,
             PaymentProblemNote = includeInternal ? r.PaymentProblemNote : null,
+            CanReopenForPayment = includeInternal && r.PaymentProblemAt != null
+                && LodgingHoldRule.IsAutoExpiredHold(r.Status, r.CancellationReason, r.DepositPaid),
             // เงินเข้าแล้วแต่ยืนยันไม่ได้ ⇒ ห้ามโชว์ปุ่ม/ยอดให้แขกจ่ายซ้ำ — บอกตรง ๆ ว่าได้รับเงินแล้วและที่พักจะติดต่อกลับ (ล้มดังที่ "คำตอบผู้เรียก")
             OnlinePayableAmount = r.PaymentProblemAt != null ? null
                 : LodgingAmounts.OnlinePayableAmount(r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount),
@@ -282,7 +284,7 @@ public partial class LodgingService
                 && (r.Status == LodgingReservationStatus.Pending || r.Status == LodgingReservationStatus.Confirmed || r.Status == LodgingReservationStatus.CheckedIn)
                 && r.CheckInDate <= day && (r.CheckOutDate >= day || r.Status == LodgingReservationStatus.CheckedIn))
             .ToListAsync())
-            .Where(r => LodgingHoldRule.EffectiveCheckOut(r.Status, r.CheckOutDate, todayThai) >= day)
+            .Where(r => LodgingHoldRule.EffectiveCheckOut(r.Status, r.CheckOutDate, todayThai, r.CheckedOutAt) >= day)
             .ToList();
         var inHouse = active.Where(r => r.Status == LodgingReservationStatus.CheckedIn).ToList();
         var arrivals = active.Where(r => r.CheckInDate == day && r.Status != LodgingReservationStatus.CheckedIn).ToList();

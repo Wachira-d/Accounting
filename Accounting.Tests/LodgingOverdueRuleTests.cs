@@ -92,4 +92,25 @@ public class LodgingOverdueRuleTests
         Assert.Contains(LodgingOverdueRule.LegacyAutoCheckoutMarker, OldJobNote);
         Assert.Equal("ระบบบันทึกอัตโนมัติ: ไม่มาเข้าพักและไม่มีการเช็คอิน", LodgingOverdueRule.LegacyAutoNoShowReason);
     }
+
+    // ── ฝ่ายค้านรอบ 202 ──
+
+    [Theory]
+    [InlineData(LodgingReservationStatus.CheckedIn, 0, true)]
+    [InlineData(LodgingReservationStatus.Confirmed, 0, true)]
+    [InlineData(LodgingReservationStatus.Pending, 500, true)]
+    [InlineData(LodgingReservationStatus.Pending, 0, false)]   // P1-2: จองแล้วไม่จ่าย = ไม่ถูกคิด (เหมือนยกเลิกฟรี)
+    public void P1_2_มิเตอร์ตอนติดธง_นับเฉพาะพักจริง_ยืนยัน_หรือมีมัดจำ(LodgingReservationStatus st, int paid, bool expected)
+        => Assert.Equal(expected, LodgingOverdueRule.ShouldMeterOnFlag(st, paid));
+
+    [Fact]
+    public void P1_4_เดือนยื่นแล้ว_ไม่มีคนรับทราบ_ปฏิเสธ()
+        => Assert.NotNull(LodgingOverdueRule.BackfillVatAckProblem(periodFiled: true, acknowledged: false, Today.AddDays(-40)));
+
+    [Fact]
+    public void P1_4_ทิศตรงข้าม_รับทราบแล้ว_หรือเดือนยังไม่ยื่น_ไปต่อได้()
+    {
+        Assert.Null(LodgingOverdueRule.BackfillVatAckProblem(periodFiled: true, acknowledged: true, Today.AddDays(-40)));
+        Assert.Null(LodgingOverdueRule.BackfillVatAckProblem(periodFiled: false, acknowledged: false, Today.AddDays(-5)));
+    }
 }

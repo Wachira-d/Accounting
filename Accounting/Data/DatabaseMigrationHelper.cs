@@ -6984,6 +6984,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "OverdueFlaggedAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemNote" text NULL;""",
+            // ฝ่ายค้านรอบ 202 P1-3ค — รายการชำระที่เงินเข้าแต่ยืนยันไม่ได้ (บัญชีขาเงินเข้าของใบมัดจำที่ออกภายหลังมาจากรายการนี้)
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemIntentId" uuid NULL;""",
             // ข้อมูลเดิม: โค้ดก่อนรอบ 193 ลง JE คืนเงิน + ใบลดหนี้ + หัก PaidAmount **ตอนยกเลิก** โดยไม่มีหลักฐานว่าโอนคืนจริง ⇒
             // ติดป้าย legacy ใน RefundPaidBy **อย่างเดียว** — ห้ามประทับ RefundPaidAmount (= "คืนแล้ว" สถานะปลายทางที่ระบบแต่งเอง ·
             // ฝ่ายค้าน C10 · DECISION_DOCTRINE R1) ⇒ หน้าจอแสดง "ไม่มีข้อมูลการโอนคืน" (LodgingRefundState.Unknown) และห้ามกดคืนซ้ำ

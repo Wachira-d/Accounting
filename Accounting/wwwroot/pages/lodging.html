@@ -241,6 +241,8 @@
         // รอบ 202 (O-P0-2): แถวที่ night audit รุ่นก่อนปิดเอง — เซิร์ฟเวอร์ตัดสิน (canLegacyCheckOut / canSettleLegacyNoShow) แล้วเดินเส้นเช็คเอาต์/no-show ปกติ
         if (r.canLegacyCheckOut === true) actions += A('🧾 ออกใบเช็คเอาต์ย้อนหลัง', 'checkOutForm()', 'btn-primary');
         if (r.canSettleLegacyNoShow === true) actions += A('คิดค่าปรับ no-show (ย้อนหลัง)', 'cancel(true)', 'btn-danger');
+        // ฝ่ายค้านรอบ 202 P1-3ข: ปิดเรื่อง "เงินเข้าแต่ยืนยันไม่ได้" — ทางที่ใช้ได้เซิร์ฟเวอร์ตัดสิน (canReopenForPayment)
+        if (r.paymentProblemAt) actions += A('💳 ปิดเรื่องเงินเข้า', 'paymentProblemForm()', 'btn-primary');
         if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('ยกเลิก', 'cancel(false)', 'btn-danger') + (d10(r.checkInDate) <= todayIso() ? A('No-show', 'cancel(true)', 'btn-danger') : '');
         // F-03 — ยกเลิกแล้ว "ต้องคืน" ≠ "คืนแล้ว": ลงบัญชีคืนเงิน + ใบลดหนี้เมื่อพนักงานยืนยันว่าโอนจริงเท่านั้น
         if ((r.status === 'Cancelled' || r.status === 'NoShow' || r.status === 'CheckedOut') && r.refundPending > 0) actions += A('💸 ยืนยันคืนเงินแล้ว', 'refundPaidForm()', 'btn-primary');
@@ -380,9 +382,10 @@
           <div class="fld"><label><input type="checkbox" name="company" ${r.guestTaxId ? 'checked' : ''}> ออกใบกำกับในนามบริษัทของแขก (${esc(r.guestCompanyName || 'ยังไม่มีข้อมูล')})</label></div>
           ${(this.property?.lateCheckOutFee > 0) ? `<div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="late">
             เก็บค่าเช็คเอาต์ช้า ${money(this.property.lateCheckOutFee)} บาท (หลัง ${esc(this.property.checkOutTime || '')} น.)</label></div>` : ''}
+          ${r.canLegacyCheckOut ? `<div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="vatAck"> รับทราบว่าถ้าเดือนเช็คเอาต์เดิม (${Layout.date(r.checkOutDate)}) ยื่น ภ.พ.30 แล้ว ใบย้อนหลังนี้ต้องยื่นแบบเพิ่มเติม</label></div>` : ''}
           <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div></form>`, async () => {
           const f = document.getElementById('cof');
-          await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', chargeLateCheckOut: !!(f.late && f.late.checked), issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null }));
+          await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', chargeLateCheckOut: !!(f.late && f.late.checked), issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null, acknowledgeFiledVatPeriod: !!(f.vatAck && f.vatAck.checked) }));
         }, 'เช็คเอาต์');
       },
       // รอบ 201 ทีม IN (A-IN5): ใบแทนยอดเท่าใบเดิม — ยอด/ชนิดต่าง เซิร์ฟเวอร์ปฏิเสธพร้อมทางไปต่อ (ใบลด/เพิ่มหนี้)
@@ -398,6 +401,21 @@
         }, 'ออกใบใหม่');
       },
       // ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง — บัญชีที่เงินออก: เลือกเอง หรือปล่อยว่าง = บัญชีเดียวกับที่รับมัดจำเข้ามา
+      paymentProblemForm() {
+        const r = this.current;
+        this.sub('ปิดเรื่อง “เงินเข้าแต่ยืนยันไม่ได้”', `<form id="ppf" class="grid2">
+          <div class="hint" style="grid-column:1/-1;white-space:pre-line">${esc(r.paymentProblemNote || '')}</div>
+          <div class="fld" style="grid-column:1/-1"><label>วิธีปิดเรื่อง</label><select class="form-input" name="res">
+            ${r.canReopenForPayment ? '<option value="Reopen">เปิดการจองกลับ (ระบบตรวจห้องว่างจริง) แล้วกด “ยืนยัน + รับมัดจำ”</option>' : ''}
+            <option value="Refunded">คืนเงินแขกแล้ว (ระบุเลขอ้างอิง)</option>
+            <option value="Dismissed">ปิดโดยเหตุผล (เช่น เงินไม่ได้เข้าจริง/บันทึกที่อื่นแล้ว)</option></select></div>
+          <div class="fld"><label>เลขอ้างอิงการคืนเงิน</label><input class="form-input" name="ref"></div>
+          <div class="fld"><label>เหตุผล (บังคับ)</label><input class="form-input" name="reason"></div>
+          <div class="hint" style="grid-column:1/-1">เงินก้อนนี้ยังไม่เคยลงบัญชีรับ (ยืนยันไม่ได้) — “คืนเงินแล้ว” จึงไม่ลงบัญชีคืน · ทุกทางบันทึกประวัติ + audit</div></form>`, async () => {
+          const f = document.getElementById('ppf');
+          await this.call(() => Layout.api().lodgingResolvePaymentProblem(r.id, { resolution: f.res.value, reason: f.reason.value || null, reference: f.ref.value || null }));
+        }, 'ปิดเรื่อง');
+      },
       async refundPaidForm() {
         const r = this.current;
         let banks = [];

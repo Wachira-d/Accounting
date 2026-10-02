@@ -18,7 +18,8 @@ namespace Accounting.Services.Background;
 ///   <item>CheckedIn ที่ค้าง = ห้องยังถูกกัน (ตัวนับห้องว่างอ่าน <c>LodgingHoldRule.EffectiveCheckOut</c>) และสถานะแม่บ้านคง "มีแขก" ⇒
 ///     พนักงานเห็นป้าย "ค้างปิด" ในรายการ แล้วกด "เช็คเอาต์ + ออกบิล" ตามปกติ</item>
 ///   <item>Confirmed/Pending ที่ไม่เคยเช็คอิน ⇒ พนักงานกด "No-show" (คิดค่าปรับ/ค้างคืนตามนโยบาย) หรือยกเลิก/เลื่อนวัน</item>
-///   <item>มิเตอร์ <c>lodging.stay</c> ยังนับเมื่อติดธง (เหตุผลเดิม: ไม่กดเช็คเอาต์ต้องไม่ทำให้ใช้ฟรี) — idempotent ผ่าน MeteredPeriod + IdempotencyKey</item>
+///   <item>มิเตอร์ <c>lodging.stay</c> นับเมื่อติดธง<b>เฉพาะใบที่พักจริง/ยืนยันแล้ว/มีมัดจำ</b> (เหตุผลเดิม: ไม่กดเช็คเอาต์ต้องไม่ทำให้ใช้ฟรี ·
+///     Pending ที่ไม่มีเงิน = ไม่นับ ตรงกับเส้นยกเลิก) — idempotent ผ่าน MeteredPeriod + IdempotencyKey</item>
 ///   <item>ผลรอบ (ติดธงใหม่ · ค้างทั้งหมด) บันทึกลงสถานะงาน (<c>IJobRunRecorder</c>)</item>
 /// </list>
 /// <para>แถวที่รุ่นเดิมประทับไปแล้วไม่ถูกย้ายกลับ — ดูตัวกรอง "ปิดโดยระบบรุ่นเก่า" + ปุ่มออกใบย้อนหลัง/คิดค่าปรับในหน้าการจอง</para>
@@ -105,7 +106,9 @@ public class LodgingNightAuditJob : BackgroundService
             if (kind == LodgingOverdueKind.StayNotCheckedOut) stays++; else arrivals++;
 
             // มิเตอร์: 1 การเข้าพัก = 1 หน่วย (กันซ้ำด้วย MeteredPeriod + IdempotencyKey) · มิเตอร์ล้มไม่ทำให้ธงหาย (นับเป็นตัวเลขบนสถานะงาน)
-            if (r.MeteredPeriod == null && metering != null)
+            // ฝ่ายค้านรอบ 202 P1-2: นับเฉพาะใบที่พักจริง/ยืนยันแล้ว/มีมัดจำ — Pending ที่ไม่มีเงินเลยต้องไม่ถูกคิด (กติกาเดียวกับ CancelCoreAsync:
+            // จองแล้วยกเลิกฟรีก่อนจ่ายมัดจำไม่นับ) · ตัวตัดสิน LodgingOverdueRule.ShouldMeterOnFlag
+            if (r.MeteredPeriod == null && metering != null && LodgingOverdueRule.ShouldMeterOnFlag(r.Status, r.DepositPaid))
             {
                 try
                 {

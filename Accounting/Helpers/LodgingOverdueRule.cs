@@ -86,4 +86,17 @@ public static class LodgingOverdueRule
     public static bool IsLegacyAutoNoShow(LodgingReservationStatus status, string? cancellationReason, decimal cancellationFee, decimal refundAmount)
         => status == LodgingReservationStatus.NoShow && cancellationFee == 0m && refundAmount == 0m
            && cancellationReason != null && cancellationReason.StartsWith(LegacyAutoNoShowReason, StringComparison.Ordinal);
+
+    /// <summary>night audit นับมิเตอร์ <c>lodging.stay</c> ตอนติดธงไหม — ฝ่ายค้านรอบ 202 P1-2: ต้องตรงกับกติกาของเส้นปิดปกติ
+    /// (<c>CancelCoreAsync</c>: จองแล้วยกเลิกฟรีก่อนจ่ายมัดจำต้องไม่ถูกคิด) ⇒ นับเฉพาะ "พักจริง" (เช็คอิน) · ยืนยันแล้ว (กันห้องจริง = no-show ถูกคิดเสมอ) ·
+    /// หรือมีมัดจำ · Pending ที่ไม่มีเงิน = ไม่นับ</summary>
+    public static bool ShouldMeterOnFlag(LodgingReservationStatus status, decimal depositPaid)
+        => status is LodgingReservationStatus.CheckedIn or LodgingReservationStatus.Confirmed || depositPaid > 0m;
+
+    /// <summary>ออกใบเช็คเอาต์ย้อนหลังของแถวรุ่นเก่า: วันใช้บริการ (tax point §78/1) อยู่ในเดือนที่ยื่น ภ.พ.30 แล้ว ⇒ ต้องมี<b>คน</b>รับทราบเอง
+    /// (ใบนี้ต้องยื่นแบบเพิ่มเติมของเดือนนั้น) — ฝ่ายค้านรอบ 202 P1-4: เดิมอนุมัติแบบ SystemWorkflow ⇒ คำเตือน "ยื่นแล้ว" ผ่านเงียบ · null = ไปต่อได้</summary>
+    public static string? BackfillVatAckProblem(bool periodFiled, bool acknowledged, DateTime serviceDate)
+        => !periodFiled || acknowledged ? null
+            : $"วันใช้บริการ {serviceDate:dd/MM/yyyy} อยู่ในเดือนที่ยื่น ภ.พ.30 แล้ว — ใบเช็คเอาต์ย้อนหลังใบนี้ต้องยื่นแบบเพิ่มเติมของเดือนนั้น · "
+              + "ติ๊ก “รับทราบว่าต้องยื่นเพิ่มเติม” ในหน้าเช็คเอาต์แล้วกดอีกครั้ง (หรือปรึกษาผู้ทำบัญชีก่อนออกใบ)";
 }

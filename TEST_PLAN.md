@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **445 ไฟล์ · 4,287 `[Fact]` + 677 `[Theory]` (3,017 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **445 ไฟล์ · 4,300 `[Fact]` + 679 `[Theory]` (3,024 `InlineData`)** ณ 2026-10-02 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -2917,6 +2917,11 @@
 | LDG-202-05 | ข้อ 123/124: คนเสริมเกิน/ห้องไม่รับ ⇒ ปฏิเสธ · เด็กไม่นับความจุ · รวมผู้เข้าพัก = ผู้ใหญ่+เด็ก+ทารก+คนเสริม · ราคาคนเสริมไม่ซ้อนกับแขกเกินมาตรฐาน | ✅ `LodgingOccupancyTests` |
 | LDG-202-06 | เช็คอินก่อนวันจอง 1 วัน (ข้อ 125): คืนนั้นว่าง ⇒ CheckInDate −1 · Nights +1 · ยอด + ราคาคืนนั้น (คืนเดิมไม่เปลี่ยน) · ไม่ว่าง ⇒ `LODGING-EARLY-CHECKIN-FULL` | ⏳ Testcontainers (ด่านจุดเรียกล็อกด้วย required_call_site) |
 | LDG-202-07 | เงินออนไลน์เข้าแต่ยืนยันไม่ได้ ⇒ ธงบนการจอง + event รายการชำระ + หน้าแขก "ได้รับเงินแล้ว" (ไม่โชว์ยอดจ่ายซ้ำ) + อีเมลที่พัก · ตัวกรอง payproblem | ⏳ Testcontainers (ด่านจุดเรียกล็อกด้วย required_call_site) |
+| LDG-202-08 | **ฝ่ายค้าน LO** ห้องชน (P1-1): แขกยังพักคืนนี้ ⇒ ชน · ออกวันนี้ตามกำหนด/ใบยกเลิก ⇒ ไม่ชน · แถวรุ่นเก่าที่เปิดกลับไม่ยืดวันออก (P2-3) · สลิปหลังระบบยกเลิกเพราะหมด hold รับได้ / คนยกเลิกเอง-มีเงินแล้ว ไม่รับ (P1-3ก) | ✅ `LodgingHoldRuleTests` |
+| LDG-202-09 | มิเตอร์ night audit (P1-2) สองทิศ · ภ.พ.30 ยื่นแล้วต้องรับทราบ / รับทราบแล้วหรือยังไม่ยื่น ไปต่อ (P1-4) | ✅ `LodgingOverdueRuleTests` |
+| LDG-202-10 | ราคาคนเสริมว่าง = ไม่ขาย · ราคา 0 ตั้งใจ = ขายฟรี (P2-5) · ราคาคนเสริมเดิมย้อนจาก snapshot (P2-4) | ✅ `LodgingOccupancyTests` |
+| LDG-202-11 | ยืนยันซ้อน (P2-1): เงินออนไลน์ก้อนเดียว 4 คำขอพร้อมกัน ⇒ บันทึกครั้งเดียว · ทิศตรงข้าม สองก้อนจริงพร้อมกัน ⇒ รวมครบ | ✅ `Db/LodgingDoubleBookingDbTests` (Category=Db) |
+| LDG-202-12 | ปิดเรื่องเงินเข้า 3 ทาง (P1-3ข) · ยืนยันภายหลังลงบัญชีพัก gateway (P1-3ค) · คืนสถานะแถวรุ่นเก่าเมื่อล้ม (P2-3) | ⏳ Testcontainers (ล็อกจุดเรียกด้วย required_call_site) |
 
 ### License ส่วนเสริม + โควตาเอกสาร (LIC-*) — LODGING_LICENSING_PLAN §3-§6, §11-§12
 

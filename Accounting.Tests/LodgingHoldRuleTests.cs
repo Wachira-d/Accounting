@@ -112,4 +112,50 @@ public class LodgingHoldRuleTests
         Assert.Equal(0, LodgingAvailability.AvailableRooms(ci, co, 1, 0, new[] { slipPending }, none, Now));
         Assert.Equal(1, LodgingAvailability.AvailableRooms(ci, co, 1, 0, new[] { emptyLapsed }, none, Now));
     }
+
+    // ── ฝ่ายค้านรอบ 202 ──
+
+    [Fact]
+    public void P1_1_เช็คอินก่อนวันจอง_ห้องที่แขกอื่นยังพักคืนนี้_ชน()
+    {
+        var today = new DateTime(2026, 10, 2);
+        var staying = new LodgingHoldFacts(LodgingReservationStatus.CheckedIn, null, 1000m, false, false);
+        // แขก A พัก 101 ถึงพรุ่งนี้ · ใบ B (จองพรุ่งนี้) ขยายมาเริ่มวันนี้ ⇒ คืนนี้ชน
+        Assert.True(LodgingHoldRule.OccupiesUnit(staying, today.AddDays(-2), today.AddDays(1), null, today, today.AddDays(3), Now, today));
+    }
+
+    [Fact]
+    public void P1_1_ทิศตรงข้าม_แขกเดิมออกวันนี้ตามกำหนด_ไม่ชน()
+    {
+        var today = new DateTime(2026, 10, 2);
+        var leavingToday = new LodgingHoldFacts(LodgingReservationStatus.CheckedIn, null, 1000m, false, false);
+        Assert.False(LodgingHoldRule.OccupiesUnit(leavingToday, today.AddDays(-2), today, null, today, today.AddDays(3), Now, today));
+        // ใบที่ถูกยกเลิกแล้วไม่กันห้อง
+        var cancelled = new LodgingHoldFacts(LodgingReservationStatus.Cancelled, null, 0m, false, false);
+        Assert.False(LodgingHoldRule.OccupiesUnit(cancelled, today, today.AddDays(2), null, today, today.AddDays(3), Now, today));
+    }
+
+    [Fact]
+    public void P2_3_แถวรุ่นเก่าที่เปิดกลับแล้วค้าง_ไม่ยืดวันออก()
+    {
+        var today = new DateTime(2026, 10, 2);
+        Assert.Equal(today.AddDays(-30), LodgingHoldRule.EffectiveCheckOut(LodgingReservationStatus.CheckedIn, today.AddDays(-30), today, checkedOutAt: today.AddDays(-28)));
+        // ทิศตรงข้าม: เช็คอินค้างปกติ (ไม่มีเวลาเช็คเอาต์) ยังยืด
+        Assert.Equal(today.AddDays(1), LodgingHoldRule.EffectiveCheckOut(LodgingReservationStatus.CheckedIn, today.AddDays(-30), today, checkedOutAt: null));
+    }
+
+    [Fact]
+    public void P1_3ก_ระบบยกเลิกเพราะหมดhold_รับสลิปได้()
+        => Assert.True(LodgingHoldRule.IsAutoExpiredHold(LodgingReservationStatus.Cancelled, LodgingHoldRule.AutoExpireReason, 0m));
+
+    [Theory]
+    [InlineData("ยกเลิกโดยพนักงาน", 0)]
+    [InlineData("แขกยกเลิกเอง", 0)]
+    [InlineData("หมดเวลาชำระมัดจำ (ระบบยกเลิกอัตโนมัติ)", 500)]   // มีเงินบนใบแล้ว = ไม่ใช่กรณีนี้
+    public void P1_3ก_ทิศตรงข้าม_คนยกเลิกเองหรือมีเงินแล้ว_ไม่รับ(string reason, int paid)
+        => Assert.False(LodgingHoldRule.IsAutoExpiredHold(LodgingReservationStatus.Cancelled, reason, paid));
+
+    [Fact]
+    public void P1_3ก_สถานะอื่นที่เหตุผลตรง_ไม่นับ()
+        => Assert.False(LodgingHoldRule.IsAutoExpiredHold(LodgingReservationStatus.NoShow, LodgingHoldRule.AutoExpireReason, 0m));
 }
