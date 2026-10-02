@@ -63,3 +63,11 @@ JE นำส่ง Dr 21912/Cr ธนาคาร · ไม่ประทับ
 - predicate ที่ตกลงกับทีม F3: `ForeignServiceVat.OwnsPp36(Document)` / `OwnsPp36(type, isForeignService, vat, hasRelatedDocument)` + รูป EF `ForeignServiceVat.OwnsPp36Query` — ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทางไม่ใช่เจ้าของ (ใบลูกสืบทอดธงแล้ว ⇒ นับจากธงตรง ๆ = ซ้ำ)
 - ยอดจ่ายผู้รับเงิน: `ForeignServiceVat.PayeeAmount` / `PayeeAmountQuery` · ป้าย PDF `DocumentLabels.TotalVatSelfAssessedPp36` / `TotalPayeeAmount`
 - ค้าง: ด่าน JE-NO-COUNTERPART (ทีม F1) ต้องเทียบขาเงิน/เจ้าหนี้กับ `PayeeAmount(doc, sourceOwnsPp36)` (PV ปิดหนี้ใบต่างประเทศ Cr ธนาคาร 5,908 ≠ TotalAmount 6,321.56) · E-7 ด่านนำส่งใช้ชั้นงวด (TODO F3: ต่อใบ)
+
+## ฝ่ายค้าน F2+F3 (merge 6a1baa8a) — ส่วนทีม F2
+| ID | ปัญหา | แก้ | สถานะ |
+|---|---|---|---|
+| P1-1 | ธงบน PV ที่อ้างใบต้นทางไม่ตรง "ใบต้นทางเป็นเจ้าของ ภ.พ.36": JE ใช้ใบต้นทาง แต่ด่าน JE ใช้ธงใบลูก · สร้างสืบทอดเฉพาะ false · แก้ร่างติ๊ก/ปลดได้อิสระ ⇒ (ก) PV ร่างเก่าโดนตีตกข้อความผิด (ข) ปลดธงล้ม (ค) PV จ่ายใบไทย 10,700 ติ๊กแล้วจ่าย 10,000 ค้าง 700 เงียบ | `ForeignServiceVat.LinkedVoucherFlag` (ไม่ระบุ ⇒ ตั้งตามใบต้นทาง + หมายเหตุ · ขัด ⇒ ปฏิเสธ `RD-83/6-LINKED-FLAG`) ทั้งสร้าง/แก้ · `DocFacts.SourceOwnsPp36` + `VatNotPaidToPayee` ในด่าน (AutoPost + ตัวสแกน) · migration PV ยังไม่อนุมัติสองทิศ · เทสต์ ก/ข/ค | ✅ 5985acef |
+| P1-2 | DN/CN ฝั่งซื้อของใบเจ้าของ ภ.พ.36 `BalanceDue` 1,070 ขณะ JE เจ้าหนี้ 1,000 | `PayeeAmount(doc, ownsSource)` ตอนสร้าง/แก้ (`VatNotPaidToPayee` ครอบ DebitNote) · migration ใบยังไม่อนุมัติ · (Pp36Ledger รวม CN/DN = ทีม F3) | ✅ 5985acef |
+| P2-4 | documents.html ติ๊ก checkbox ที่ซ่อนกลับเป็น true หลัง onDocTypeChange ⇒ ใบร่างเก่าชนิดขาย/CIL บันทึกไม่ได้ | `_hydrateForeignServiceFlag` ติ๊กเฉพาะเมื่อช่องแสดง · ชนิดที่ติ๊กไม่ได้ ⇒ ถอด + แจ้ง · `tools/foreign_flag_hydrate_sim.js` (โค้ดจริง สองทิศ · รุ่นเก่าล้ม) | ✅ 5985acef |
+| P2-5 | PV เก่าธง false ที่จ่ายใบเจ้าของ ภ.พ.36: `PaidAmount` ตอนอนุมัติ + PDF | อนุมัติ: ส่งค่าเจ้าของใบต้นทาง (resolver เดียวกับ JE) ✅ · PDF: **ตั้งใจไม่ทำ** — ใบที่ยังไม่อนุมัติได้ธงจาก migration · ใบที่อนุมัติก่อนรอบนี้ GL จ่ายเต็มยอดจริง ⇒ พิมพ์เต็มยอดตรง GL (ส่งค่าใบต้นทางเข้า renderer จะพิมพ์ยอดที่ขัด GL) | ✅ 5985acef (PDF ตั้งใจไม่ทำ) |

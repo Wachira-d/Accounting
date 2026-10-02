@@ -5472,12 +5472,15 @@ RULES += [
 _F2_WHY = "รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): "
 RULES += [
     dict(file=DOC, method="CreateDocumentAsync",
-         must=["ForeignServiceVat.PayeeAmount(doc)", "ForeignServiceVat.OwnsPp36("],
-         before=[("ForeignServiceVat.PayeeAmount(doc)", "doc.PaidAmount = createPayee")],
+         must=["ForeignServiceVat.PayeeAmount(doc, createLinkedSrc", "LinkedSourcePp36Async(", "ForeignServiceVat.LinkedVoucherFlag(",
+               "throw new BusinessRuleException(linkedErr"],
+         before=[("ForeignServiceVat.LinkedVoucherFlag(", "ForeignServiceVat.PayeeAmount(doc, createLinkedSrc"),
+                 ("ForeignServiceVat.PayeeAmount(doc, createLinkedSrc", "doc.PaidAmount = createPayee")],
          forbid=["doc.PaidAmount = doc.TotalAmount", "doc.BalanceDue = doc.TotalAmount;"],
          why=_F2_WHY + "ยอดจ่ายแล้ว/ค้างตอนสร้าง = ยอดจ่ายผู้รับเงิน · ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทางเจ้าของ ภ.พ.36 สืบทอดธง (ทุกทางเข้า)"),
     dict(file=DOC, method="UpdateDocumentAsync",
-         must=["ForeignServiceVat.PayeeAmount(doc)", "request.IsForeignService.HasValue"],
+         must=["ForeignServiceVat.PayeeAmount(doc, updSrcOwns)", "request.IsForeignService.HasValue", "ForeignServiceVat.LinkedVoucherFlag(",
+               "throw new BusinessRuleException(updLinkedErr", "updFlagChangedBySystem"],
          forbid=["doc.BalanceDue = doc.TotalAmount - doc.PaidAmount", "doc.PaidAmount = doc.TotalAmount"],
          why=_F2_WHY + "แก้บรรทัด/ปัดเศษ/ติ๊กธงเฉย ๆ ยอดค้างต้องตามยอดจ่ายผู้รับเงิน (ห้าม silent no-op)"),
     dict(file=DOC, method="CreatePaymentAsync",
@@ -5536,6 +5539,26 @@ RULES += [
          must=["ForeignServiceVat.PayeeAmount(d.DocumentType, d.IsForeignService, d.TotalAmount, d.VatAmount)"],
          forbid=["overrideAmount ?? d.TotalAmount"],
          why=_F2_WHY + "ยอดเอกสารที่แสดงคู่รายการธนาคาร = เงินที่ออกจริง"),
+]
+
+
+# ── ฝ่ายค้าน F2+F3 (merge 6a1baa8a) P1-1/P1-2/P2-5 — ธงใบลูกตามใบต้นทาง · ด่าน JE ใช้ค่าเดียวกับ JE · ใบเพิ่ม/ลดหนี้ ──
+_F2X_WHY = "ฝ่ายค้าน F2+F3 (ทีม F2): "
+RULES += [
+    dict(file=DOC, method="AutoPostToJournalAsync",
+         call_args=[("JournalPostingGuard.DocFacts(", "SourceOwnsPp36")],
+         why=_F2X_WHY + "P1-1 ด่าน JE-NO-COUNTERPART ต้องรู้ว่าใบต้นทางเป็นเจ้าของ ภ.พ.36 (ค่าเดียวกับ PayeeAmount(doc, pvSrcOwnsPp36) ของ JE)"),
+    dict(file="Services/Implementations/JournalAnomalyService.cs", method="ScanAsync",
+         call_args=[("JournalPostingGuard.DocFacts(", "SourceOwnsPp36")],
+         must=["ForeignServiceVat.OwnsPp36Query"],
+         why=_F2X_WHY + "P1-1 ตัวสแกนกฎชุดเดียวกับด่านก่อนบันทึก (PV ที่ปิดหนี้ใบเจ้าของ ภ.พ.36)"),
+    dict(file="Services/JournalPostingGuard.cs", method="Validate",
+         must=["ForeignServiceVat.VatNotPaidToPayee(doc.DocumentType, doc.IsForeignService, doc.SourceOwnsPp36)"],
+         forbid=["SplitCredit(doc.IsForeignService && isPurchase"],
+         why=_F2X_WHY + "P1-1 ยอดผู้รับเงินที่คาดใช้ตัวตัดสินเดียวกับ JE (ไม่ใช่ธงของใบลูกอย่างเดียว)"),
+    dict(file=DOC, method="ApproveDocumentAsync#2",
+         must=["ForeignServiceVat.PayeeAmount(doc, (await LinkedSourcePp36Async("],
+         why=_F2X_WHY + "P2-5 ยอดจ่ายแล้วของ PV ที่ปิดหนี้ตอนอนุมัติใช้ resolver เดียวกับ JE (ครอบใบเก่าที่ธงยังไม่ตาม)"),
 ]
 
 

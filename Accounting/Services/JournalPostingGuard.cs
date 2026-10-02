@@ -42,7 +42,10 @@ public static class JournalPostingGuard
         decimal TotalAmount,
         bool IsDeposit = false,
         decimal ExchangeRate = 1m,
-        bool IsForeignService = false);
+        bool IsForeignService = false,
+        /// <summary>ฝ่ายค้าน F2+F3 P1-1: ใบต้นทางของใบนี้ (PV ที่ปิดหนี้) เป็นเจ้าของ ภ.พ.36 — ด่านตัดสิน "ยอดผู้รับเงินที่คาด" ด้วย
+        /// <c>ForeignServiceVat.VatNotPaidToPayee</c> ตัวเดียวกับ JE (<c>PayeeAmount(doc, sourceOwnsPp36)</c>) ⇒ PV เก่าที่ธงยังไม่ตาม ไม่ถูกตีตกด้วยข้อความผิด</summary>
+        bool SourceOwnsPp36 = false);
 
     public sealed record Finding(string RuleCode, bool IsError, string Message);
 
@@ -131,7 +134,10 @@ public static class JournalPostingGuard
         // §83/6 (PP36_REVIEW P0-1): ฝั่งซื้อแตกขาเครดิตด้วยตัวตัดสินเดียว ForeignServiceVat.SplitCredit — ห้ามเขียน total − vat เอง ·
         // ใบไม่ติ๊กธง ⇒ Pp36Credit = 0 ⇒ ยอดผู้รับเงินที่คาด = TotalAmount เท่าเดิมทุกตัวอักษร
         var isPurchase = IsPurchaseFamily(doc.DocumentType);
-        var pp36Split = ForeignServiceVat.SplitCredit(doc.IsForeignService && isPurchase, docTotal, docVat);
+        // ตัวตัดสินเดียวกับ JE (ฝ่ายค้าน F2+F3 P1-1): ธงของใบ หรือใบต้นทางเป็นเจ้าของ ภ.พ.36 (PV ที่ปิดหนี้)
+        var pp36Split = ForeignServiceVat.SplitCredit(
+            isPurchase && ForeignServiceVat.VatNotPaidToPayee(doc.DocumentType, doc.IsForeignService, doc.SourceOwnsPp36),
+            docTotal, docVat);
 
         // ขาเครดิตบัญชีภาษีขาย/ภ.พ.36 (21911/21912/21913):
         //   ใบขาย — ไม่เกิน VAT บนเอกสาร (เดิม)

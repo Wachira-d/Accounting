@@ -40,6 +40,12 @@ public readonly record struct ForeignServiceCreditSplit(decimal PayeeCredit, dec
 /// ทุกเส้นที่ต้องตอบว่า "ขาเครดิตแบ่งยังไง" ต้องเรียกตัวนี้ ห้ามเขียน
 /// <c>totalAmount - vatAmount</c> เองอีก
 /// </summary>
+/// <summary>ผลตัดสินธงของใบสำคัญจ่ายที่อ้างใบต้นทาง (<see cref="ForeignServiceVat.LinkedVoucherFlag"/>)</summary>
+/// <param name="Flag">ธงที่ใบลูกต้องถือ (เมื่อ <paramref name="Refusal"/> มีค่า = ค่าเดิม ไม่เปลี่ยน)</param>
+/// <param name="Refusal">ข้อความปฏิเสธ (ผู้ใช้ส่งค่าที่ขัดใบต้นทาง) · null = ผ่าน</param>
+/// <param name="ChangedBySystem">ระบบเปลี่ยนธงให้ตามใบต้นทาง ⇒ ผู้เรียกต้องจดหมายเหตุ</param>
+public readonly record struct LinkedFlagDecision(bool Flag, string? Refusal, bool ChangedBySystem);
+
 public static class ForeignServiceVat
 {
     /// <summary>ผัง "เจ้าหนี้ ภ.พ.36" — VAT ที่ประเมินเองรอนำส่ง</summary>
@@ -154,7 +160,7 @@ public static class ForeignServiceVat
     /// </summary>
     public static bool VatNotPaidToPayee(DocumentType type, bool isForeignService, bool sourceOwnsPp36 = false)
         => (isForeignService && IsSelfAssessingType(type))
-           || (sourceOwnsPp36 && type is DocumentType.PaymentVoucher or DocumentType.CreditNote);
+           || (sourceOwnsPp36 && type is DocumentType.PaymentVoucher or DocumentType.CreditNote or DocumentType.DebitNote);
 
     /// <summary>
     /// **ยอดที่จ่ายผู้รับเงินจริง — ตัวตั้งเดียวของ "เงินออก/ยอดค้าง" ทุกเส้น** (คำตัดสินข้อ 131)
@@ -204,4 +210,42 @@ public static class ForeignServiceVat
         d.IsForeignService && d.VatAmount > 0m
         && (d.DocumentType == DocumentType.PurchaseInvoice || d.DocumentType == DocumentType.Expense
             || (d.DocumentType == DocumentType.PaymentVoucher && d.RelatedDocumentId == null));
+
+    // ═══ ฝ่ายค้าน F2+F3 P1-1: ธงบนใบสำคัญจ่ายที่อ้างใบต้นทาง = "ใบต้นทางเป็นเจ้าของ ภ.พ.36" เสมอ ═══
+
+    /// <summary>รหัสกติกา "ธงบนใบสำคัญจ่ายที่ปิดหนี้ใบต้นทางต้องตามใบต้นทาง"</summary>
+    public const string LinkedFlagRuleCode = "RD-83/6-LINKED-FLAG";
+
+    /// <summary>
+    /// **ธงบริการต่างประเทศของใบสำคัญจ่ายที่ปิดหนี้ใบต้นทาง — ตัวตัดสินเดียวของเส้นสร้าง/แก้/migration** (ฝ่ายค้าน F2+F3 P1-1)
+    /// <para>═══ ที่มา ═══ ใบลูกมีธงเป็นของตัวเองแต่ "ความจริง" อยู่ที่ใบต้นทาง (ใครตั้ง Cr 21912) ⇒ ธงที่ไม่ตรงทำให้สามทางพัง:
+    /// (ก) PV ร่างเก่าที่ไม่มีธงจ่ายใบ Booking ⇒ ด่าน JE ตีตกด้วยข้อความผิด (ข) ปลดธง ⇒ ล้มเหมือนกัน
+    /// (ค) PV จ่ายใบไทย 10,700 แล้วติ๊กธง ⇒ จ่าย 10,000 ใบต้นทางค้าง 700 ถาวรเงียบ ⇒ ธงของใบลูก<b>ต้องเท่ากับ</b>
+    /// <see cref="OwnsPp36(Document)"/> ของใบต้นทางเสมอ</para>
+    /// <para>ผู้ใช้ไม่ได้ระบุค่า (<paramref name="requested"/> null) ⇒ ระบบตั้งตามใบต้นทาง (<see cref="LinkedFlagDecision.ChangedBySystem"/> บอกว่าต้องจดหมายเหตุ) ·
+    /// ผู้ใช้ส่งค่าที่ขัด ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่เปลี่ยนเงียบทับเจตนาผู้ใช้)</para>
+    /// </summary>
+    /// <param name="sourceOwnsPp36">ใบต้นทางเป็นเจ้าของ ภ.พ.36 (<see cref="OwnsPp36(Document)"/>)</param>
+    /// <param name="currentFlag">ธงที่ใบลูกถืออยู่ตอนนี้</param>
+    /// <param name="requested">ค่าที่ผู้ใช้/ผู้เรียกส่งมา · null = ไม่ได้ระบุ</param>
+    /// <param name="sourceNumber">เลขใบต้นทาง (ใช้ในข้อความ)</param>
+    public static LinkedFlagDecision LinkedVoucherFlag(bool sourceOwnsPp36, bool currentFlag, bool? requested, string sourceNumber)
+    {
+        if (requested is bool r && r != sourceOwnsPp36)
+            return new LinkedFlagDecision(currentFlag, r
+                ? $"ใบสำคัญจ่ายนี้ปิดหนี้ของ {sourceNumber} ซึ่งไม่ได้เป็นบริการต่างประเทศ (ไม่ได้ตั้งหนี้ ภ.พ.36) — ติ๊ก \"ซื้อบริการจากต่างประเทศ\" "
+                  + "บนใบนี้ไม่ได้ (จะจ่ายผู้ขายขาดเท่า VAT และใบต้นทางค้างยอดนั้นถาวร) · ถ้าเป็นบริการต่างประเทศจริง: ยกเลิก/ลบใบนี้ → เปิด "
+                  + $"{sourceNumber} กด \"แก้เป็นบริการต่างประเทศ (ภ.พ.36)\" → ออกใบสำคัญจ่ายใหม่ (ใบใหม่ได้ธงเอง)"
+                : $"ใบสำคัญจ่ายนี้ปิดหนี้ของ {sourceNumber} ซึ่งเป็นบริการต่างประเทศ (ตั้งหนี้ ภ.พ.36 ไว้แล้ว) — ปลดเครื่องหมาย "
+                  + "\"ซื้อบริการจากต่างประเทศ\" บนใบนี้ไม่ได้ (VAT ประเมินเองไม่ได้จ่ายผู้ขาย) · ถ้าใบต้นทางไม่ใช่บริการต่างประเทศ: ยกเลิก/ลบใบนี้ → "
+                  + $"เปิด {sourceNumber} กด \"แก้เป็นซื้อในประเทศ\" → ออกใบสำคัญจ่ายใหม่",
+                false);
+        return new LinkedFlagDecision(sourceOwnsPp36, null, currentFlag != sourceOwnsPp36);
+    }
+
+    /// <summary>หมายเหตุภายในเมื่อระบบตั้งธงตามใบต้นทางเอง (ไม่เงียบ — ผู้ใช้เห็นว่าทำไมธงเปลี่ยน)</summary>
+    public static string LinkedFlagNote(bool flag, string sourceNumber)
+        => flag
+            ? $"[{LinkedFlagRuleCode}] ระบบติ๊ก \"ซื้อบริการจากต่างประเทศ\" ให้ตามใบต้นทาง {sourceNumber} (ตั้งหนี้ ภ.พ.36 ไว้แล้ว) — จ่ายผู้ขายเฉพาะยอดก่อน VAT ประเมินเอง"
+            : $"[{LinkedFlagRuleCode}] ระบบปลดเครื่องหมาย \"ซื้อบริการจากต่างประเทศ\" ตามใบต้นทาง {sourceNumber} (ไม่ใช่บริการต่างประเทศ) — จ่ายผู้ขายเต็มยอดใบต้นทาง";
 }
