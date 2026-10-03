@@ -392,81 +392,12 @@ OCR ไม่ใช่ "ตัวช่วยพิมพ์" แต่เป็
 
 ### ข้อบังคับ
 
-1. **ครบทุก field §86/4** — เมื่อ OCR เสร็จ DTO ที่ส่งไป UI ต้องมี:
-   `SellerName`, `SellerTaxId`, `SellerBranchCode`, `SellerAddress`,
-   `BuyerName`, `BuyerTaxId`, `BuyerBranchCode`, `BuyerAddress`,
-   `InvoiceNo`, `InvoiceDate`, ทุก `Line.Description/Qty/UnitPrice/VatRate`,
-   `Subtotal`, `VatAmount`, `GrandTotal`, `WhtRate` (ถ้ามี), `GlAccountCode` (รายบรรทัด),
-   `PaymentTerms` — **ห้ามมี null/empty** ใน field ที่เอกสารต้องมีตามกฎหมาย
-
-2. **Fallback chain เติมให้เต็ม** — ลำดับการเติมเมื่อ OCR confidence ต่ำ
-   (**ตรงกับโค้ดจริงใน `OcrService.ProcessScanAsync`** — ปรับให้ตรงเมื่อ
-   2026-08-28 หลังพบว่าข้อ 1 เดิมเขียนถึงสิ่งที่ยังไม่มีในระบบ):
-   1. **OCR engine ตามลำดับ**: Azure Document Intelligence → local python
-      service → `EmbeddedTesseractOcrService` (ตัวสุดท้ายคืน**ข้อความล้วน**
-      ไม่มีโครงตาราง)
-   2. **สกัดจากข้อความ** — `SmartFieldExtractor.Enrich` + `EnrichFromRawText`
-      (รหัสสาขา §86/4, เครดิตเทอม, ส่วนลด, หน่วยนับ, จำนวนเงินตัวอักษร ·
-      รอบ 190: ป้ายสาขาท้ายชื่อ `OcrPartyName.StripBranchSuffix` · ประโยคประกาศสาขาผู้ออกใบ
-      `OcrIssuerBranch` · เล่มที่/เลขที่ `OcrBookSerial` · ที่อยู่ผู้ซื้อ `OcrBuyerAddressReader`
-      + invariant "ที่อยู่ผู้ขายที่เป็นบล็อกผู้ซื้อถูกล้าง") · แล้ว**ตรวจวันที่กับป้ายบนกระดาษ**
-      (`OcrDateReader.CrossCheck`) ทุก engine ก่อนด่านคณิต · ชื่อฝั่งเราที่เป็นรหัส/ว่าง →
-      ชื่อบริษัทจากทะเบียน (`OcrPartyResolver.FillOurName`) · รอบ 192 **ยึดยอดรวมทั้งสิ้นก่อน**
-      (`OcrTotalAnchor` — นับชั้นหลักฐานอิสระ ไม่เชื่อป้าย "TOTAL" ตามตัว) แล้ว**แยกองค์ประกอบให้รวมได้ยอดนั้น**
-      (`OcrTotalDecomposer` · ตารางรหัส ภ.พ. `OcrLineVatMarks.ReadGroups`) · รอบ 195 **อัตรา VAT รายบรรทัด** (ตอนสร้างบรรทัด):
-      engine/ผู้ใช้ → สัญลักษณ์บนกระดาษ `OcrLineVatMarks` → **ตัวเลขหัวใบพิสูจน์ทั้งใบ** `OcrLineVatPlanner` → เดาจากชื่อ `ThaiVatTypeRule`
-   3. **แพตเทิร์นที่เรียนไว้** — `DocumentZoneAnalyzer.ApplyLearnedPatternsTo`
-      อ่าน `OcrLearnedPatterns` ของผู้ขายรายนั้น (เติมเฉพาะช่องที่ยังว่าง)
-   4. **วิเคราะห์โซน** — `DocumentZoneAnalyzer.Analyze` ทำงานเมื่อ pipeline
-      หลักไม่ได้ทั้งชื่อผู้ขายและยอดรวม
-   5. **Local distillation model** (`OcrFullReviewDistillationModel` +
-      `GlAccountDistillationModel` ฯลฯ — ตามกฎเหล็ก #1)
-   6. **ทะเบียนราชการ + ประวัติผู้ขาย** (แก้ doc 2026-09-18 — ข้อเดิมเขียนว่า
-      "autofill SellerName/Address/BranchCode จาก `Contact` ล่าสุด" ซึ่ง**ไม่มีใน
-      โค้ด**: บล็อก `[Enrich]` ใน `OcrService` ไหล**ทางเดียว** คือเอาค่าจากสแกน
-      ไปเติมช่องที่ว่างของ `Contact` ไม่เคยอ่านชื่อ Contact กลับมาทับ `VendorName`)
-      ของจริงมีสองชั้น:
-      - `VendorKnownGoodCorrector.ApplyAsync` — ค่าที่เคยยืนยันแล้วของผู้ขายราย
-        นั้น (คีย์ = เลขผู้เสียภาษี) โดย `Source = "UserCorrection"` ชนะ `"AzureDI"`
-        · รันทุก tier รวม **Azure** (เดิมเรียกเฉพาะ tier 2/3) · รอบ 190: **เติม**ที่อยู่ผู้ขาย
-        ที่ว่างจากคลังได้ด้วย (ด่าน `OcrKnownGoodAddressFill`) — เดิมซ่อมได้แค่ค่าที่อ่านมาเพี้ยน
-      - `EnrichFromDbdAsync` — เอาเลขผู้เสียภาษีไปค้นทะเบียน (RD VAT → DBD)
-        แล้ว **`Helpers/DbdIdentityGuard` ตัวเดียว** ตัดสินว่าทะเบียนชนะไหม
-        โดยถามว่า "**กุญแจ**ถูกไหม" (`Helpers/OcrVendorKeyEvidence`: ป้ายกำกับบน
-        กระดาษ + ไม่ใช่เลขผู้ซื้อ/เลขเรา + ไม่ได้อยู่ในบล็อกผู้ซื้อ) **ไม่ใช่**
-        "ชื่อสองชื่อคล้ายกันไหม" — ชื่อแบรนด์ละตินบนโลโก้ ("DECATHLON") ได้คะแนน
-        ความคล้ายกับชื่อนิติบุคคลไทย = 0.000 เท่ากับ "คนละบริษัท" ⇒ ถ้าตัดสิน
-        ด้วยชื่ออย่างเดียว ชื่อโลโก้จะกลายเป็นชื่อคู่ค้าถาวร (บั๊กจริง 2026-09-18)
-   7. **Rule-based defaults** — VAT 7%, BranchCode `00000`, GL account จาก
-      `VendorDefaultGlAccount`, payment terms = company default
-   8. **เดาแบบมีเหตุผล** ใช้ `IAiOrchestrator.AskAsync` เป็น last resort
-      (per กฎเหล็ก #1: ต้อง CAPTURE + DISTILL) — รวม
-      `AiFeatureKey.OcrLineItemSplit` ที่แตกบรรทัดจากข้อความเมื่อ engine
-      ไม่คืนตารางมา (ผ่านด่าน `Helpers/OcrLineSplitGuard` เสมอ)
-
-   > ⚠️ **Vision-LLM tier ยังไม่มีในระบบ** — เดิมข้อ 1 เขียนว่า
-   > "Vision/OCR primary (DeepSeek-VL)" แต่ `DeepSeekProvider.CompleteAsync`
-   > รับแต่ข้อความ ไม่มีทางส่งรูปเข้าไป และไม่มี engine ตัวไหนเรียกโมเดล
-   > vision เลย. **โค้ดเป็น ground truth — doc ผิด จึงแก้ doc**
-   > ถ้าจะทำจริงต้องมี: (ก) ให้ provider ส่ง image content ได้
-   > (ข) engine tier ใหม่ที่ส่งไฟล์สแกน (ค) toggle + โควตา + budget guard
-   > (ง) ด่านตรวจผลลัพธ์เทียบยอดบนกระดาษแบบเดียวกับ `OcrLineSplitGuard`
-   > — **ห้าม merge ครึ่ง ๆ กลาง ๆ** เพราะตัวเลขที่ได้กลายเป็นรายการบัญชีจริง
-
-3. **Confidence + ป้ายเตือน** — field ที่ confidence < 0.85 → highlight สีเหลือง
-   พร้อม tooltip "ตรวจสอบอีกครั้ง" แต่ **ยังต้องมีค่าเติมไว้แล้ว** ไม่ใช่ blank
-
-4. **UI = ปุ่ม "ยืนยัน" เด่นเป็นหลัก** — ไม่ใช่ form ว่าง รอกรอก
-   - **Default action** = approve (Enter / ปุ่มเขียวใหญ่)
-   - **Secondary** = edit (เปิดเฉพาะ field ที่ user แตะ)
-   - ห้ามมี required-field validation error ตอนกด approve (ทุก field ต้อง pre-filled แล้ว)
-
-5. **Round-trip learning** — ทุก field ที่ user แก้ → call
-   `IAiFeedbackRecorder.RecordUserChoiceAsync(feedbackId, userValue, acceptedAi=false)`
-   เพื่อ retrain ทำให้ครั้งหน้า OCR เติมถูกตั้งแต่แรก (per กฎเหล็ก #1)
-
-6. **Multi-page / multi-line table** — ตาราง line items ต้อง parse ครบทุกแถว
-   ห้ามให้ user เพิ่มแถวเอง; เพิ่ม "Add line" เฉพาะกรณี OCR หลุดแล้ว user รายงาน
+1. **ครบทุก field §86/4** — DTO ที่ส่ง UI หลัง OCR ต้องมี ผู้ขาย/ผู้ซื้อ (ชื่อ·เลขภาษี·สาขา·ที่อยู่) · เลขที่/วันที่ · ทุกบรรทัด (รายการ·จำนวน·ราคา·VAT·ผังบัญชี) · ยอดรวม/VAT/สุทธิ · WHT · เครดิตเทอม — **ห้าม null/empty** ในช่องที่กฎหมายบังคับ
+2. **Fallback chain เติมให้เต็ม** (ลำดับจริงใน `OcrService.ProcessScanAsync` · รายละเอียดทุกขั้น + helper ที่เป็น OWNER อยู่ที่ `docs/lessons/ocr-pipeline.md` §"กฎเหล็ก #3"): engine (Azure → python → Tesseract) → สกัดจากข้อความ (`SmartFieldExtractor` + `Ocr*` helpers · ยึดยอดรวมก่อน `OcrTotalAnchor`) → แพตเทิร์นที่เรียนไว้ → วิเคราะห์โซน → local distillation model → ทะเบียนราชการ + ประวัติผู้ขาย (`DbdIdentityGuard` ตัดสินด้วย "กุญแจ" ไม่ใช่ความคล้ายชื่อ) → rule defaults → AI (ผ่าน orchestrator · กฎเหล็ก #1) · **ยังไม่มี Vision-LLM tier** — ห้าม merge ครึ่ง ๆ
+3. **Confidence + ป้ายเตือน** — < 0.85 highlight เหลือง + tooltip แต่**ยังต้องมีค่าเติม** ไม่ใช่ blank
+4. **UI = ปุ่ม "ยืนยัน" เด่น** — default = approve · edit เฉพาะช่องที่แตะ · ห้ามมี required-field error ตอน approve
+5. **Round-trip learning** — ทุกช่องที่ user แก้ → `RecordUserChoiceAsync(feedbackId, userValue, acceptedAi=false)`
+6. **ตาราง line items ต้อง parse ครบทุกแถว** — "Add line" เฉพาะเมื่อ OCR หลุดแล้ว user รายงาน
 
 ### Anti-pattern — ห้ามทำ
 
@@ -567,76 +498,14 @@ return Ok(dto);  // UI โชว์ → user กด "ยืนยัน" จบ
   เท่านั้น _(ที่มา: ConfirmPayment กลืน error แล้ว order "สำเร็จ" ทั้งที่
   stock/เงินไม่ลง)_
 
-### F. เครื่องมือบังคับก่อน commit (env นี้ยังไม่มี .NET SDK จนกว่าเจ้าของจะเปิด host .NET ใน proxy — **CI บน `claude/**` คือ compiler ตัวแรกหลัง push**)
+### F. เครื่องมือบังคับก่อน commit
 
 ```
-python3 tools/di_cycle_check.py        # วงกลม DI (dotnet build จับไม่ได้)
-python3 tools/nullable_arg_check.py    # CS1503 nullable→non-nullable
-python3 tools/using_check.py           # CS0246 ลืม using ของ type ในเรพ
-python3 tools/record_arg_check.py      # CS1739 named arg ที่ record ไม่มี
-python3 tools/accessibility_check.py   # CS0051/CS0050 ชนิด private ในลายเซ็น public
-python3 tools/arg_type_check.py        # CS1503 ส่ง id เข้าพารามิเตอร์ที่รับ entity
-python3 tools/gl_code_check.py         # เลขผังบัญชี hardcode ชนความหมายผังมาตรฐาน
-python3 tools/verbatim_string_check.py # CS1010/CS1056 `"` เดี่ยวปิด verbatim string
-python3 tools/dead_link_check.py      # ลิงก์ /pages/*.html ที่ไม่มีไฟล์ปลายทาง
-python3 tools/localstorage_key_check.py # คีย์ localStorage ที่อ่านแต่ไม่มีใครเขียน
-python3 tools/js_dup_method_check.py   # method ชื่อซ้ำใน object เดียวกัน (ตัวหลังทับเงียบ)
-python3 tools/identifier_space_check.py # CS1001/CS1003 ช่องว่างในชื่อ method/ชนิด · CS1056 ตัวอักษรต้องห้าม (§) ในชื่อ
-python3 tools/namespace_shadow_check.py # CS0234 `Helpers.X` ผูกไป namespace ผิดชั้น
-python3 tools/service_interface_check.py # CS1061 controller เรียกเมธอดที่ลืมประกาศใน interface ของ service (impl+endpoint ครบ แต่ interface ขาด) → ลาก CS0006 ให้เทสต์ล้มตาม
-python3 tools/dto_nullable_contract_check.py # DTO ประกาศ `string` (ไม่ nullable) ทั้งที่ service เติมค่าให้เมื่อว่าง → ASP.NET ใส่ [Required] โดยปริยาย แล้วตีกลับเป็นอังกฤษชื่อ property C# ก่อนถึงโค้ดเรา (ฟ้องเฉพาะตอนสองชั้น**ขัดกัน** — ชั้นที่ throw/BadRequest เองถือว่าตรงกัน ไม่ฟ้อง)
-python3 tools/css_var_check.py       # var(--x) ที่ไม่เคยประกาศ → ปุ่มล่องหน/สีหาย
-python3 tools/undeclared_local_check.py # CS0103 ส่งตัวแปรที่ไม่มีในเมธอดนั้นเป็นอาร์กิวเมนต์
-python3 tools/admin_menu_gate_check.py # เมนู/endpoint ของแพลตฟอร์มที่ลูกค้ามองเห็น
-python3 tools/upload_route_check.py  # โฟลเดอร์อัปโหลดที่เขียนได้แต่ static handler ตอบ 404
-python3 tools/regex_line_span_check.py # \s เป็นตัวคั่นระหว่างตัวเลข → กลืนขึ้นบรรทัดใหม่
-python3 tools/advisory_lock_key_check.py # คีย์ advisory lock ที่สุ่มต่อ process → ล็อกข้ามเครื่องไม่ได้
-python3 tools/csp_external_ref_check.py # สคริปต์/สไตล์ภายนอกที่ CSP ของเราเองไม่อนุญาต → เบราว์เซอร์บล็อกเงียบ
-python3 tools/tab_hidelist_check.py  # panel ของแท็บที่ไม่อยู่ในลิสต์ซ่อน → เปิดแล้วค้างทับแท็บอื่น
-python3 tools/stock_writer_check.py  # เขียนสต็อกนอก IStockLedger → สองความจริงที่ไม่มีวันตรงกัน
-python3 tools/payment_provider_boundary_check.py # โดเมน/คีย์ของ gateway หลุดนอก adapter · ข้อมูลบัตรบนเซิร์ฟเวอร์
-python3 tools/write_permission_gate_check.py # endpoint ที่เขียนข้อมูลแต่ไม่มีด่านสิทธิ์ ([Authorize] ตอบแค่ "ล็อกอินไหม")
-python3 tools/html_attr_escape_check.py # ข้อความอิสระเข้า attribute ไม่ผ่านตัวหนี → แตก attribute ยิงสคริปต์ได้
-python3 tools/escape_helper_check.py # ตัวหนี HTML ที่เขียนเองหนีไม่ครบ 5 ตัว → ปลอดภัยแค่ครึ่งเดียวแต่ดูเหมือนปลอดภัยแล้ว
-python3 tools/string_quote_close_check.py # CS1002 `"` ASCII ในสตริง**ธรรมดา** ปิดสตริงกลางคำ (verbatim_string_check ไม่ครอบ)
-python3 tools/comment_line_break_check.py # CS1519/CS1010 คอมเมนต์ `//`/`///` ถูกตัดบรรทัดกลางข้อความ (ยกข้อความกระดาษที่มีขึ้นบรรทัด) ⇒ ครึ่งหลังเป็นโค้ด (รอบ 199)
-python3 tools/onclick_js_string_check.py # esc() ใน JS string ของ onclick → เบราว์เซอร์ decode entity ก่อน JS อ่าน ⇒ ปิด string ได้อยู่ดี ทั้งหน้าตาย
-python3 tools/sequence_lock_check.py # ออกเลขรันเองด้วยการเรียงแบบข้อความ → ไม่มีล็อก และ "9999" ชนะ "10000" เลขวนกลับทับของเดิม
-python3 tools/deep_link_param_check.py # ลิงก์ส่ง query param ชื่อที่หน้าปลายทางไม่เคยอ่าน → กดแล้วตกที่ลิสต์เปล่า (dead_link_check ดูแค่ว่าไฟล์มีอยู่)
-python3 tools/flag_field_overwrite_check.py # เขียนทับช่องข้อความที่เป็นที่สะสม**และ**มีด่านอ่านธงจากมัน → ธงของด่านหายเงียบ
-python3 tools/ocr_helper_test_check.py # ตัวตัดสิน OCR (Helpers/Ocr*.cs) ที่ไม่มีเทสต์อ้างถึง → แก้แล้วใบที่เคยถูกกลับมาผิดโดยไม่มีอะไรฟ้อง
-python3 tools/tuple_name_merge_check.py # ternary ที่สองสาขาเป็น tuple ชื่อไม่ตรงกัน → C# ทิ้งชื่อ แล้ว CS1061 ไปโผล่ไกลจากจุดที่ผิด
-python3 tools/line_vat_source_check.py # เขียนอัตรา VAT ของบรรทัดตรง ๆ ไม่ผ่าน Layout.setLineVat → ตัวแนะนำทับค่าที่อ่านจากกระดาษ ยอดเพี้ยนเงียบ
-node tools/vat_line_source_sim.js   # ล็อกพฤติกรรมลำดับที่มาของอัตรา VAT ด้วยโค้ดจริง (สองทิศ)
-node tools/validation_field_label_sim.js # ข้อความ validation ต้องชี้ "ป้ายไทยที่ผู้ใช้เห็น" ไม่ใช่ชื่อ property C# · ช่องที่ไม่มีบนหน้าต้องบอกว่าไม่มี (รันโค้ดจริงจาก api.js)
-python3 tools/blank_number_null_check.py # ช่องตัวเลขที่เว้นว่างถูกส่งเป็น `null` → System.Text.Json แปลงเข้า int/decimal ไม่ได้ ⇒ โยน body ทิ้งทั้งก้อน ⇒ ไม่มีอะไรถูกบันทึกและ error ชี้ไปที่ "dto" ที่ไม่มีบนหน้าจอ
-node tools/blank_number_form_sim.js # ล็อก "ว่าง = ตัดคีย์ทิ้ง · data-blank=\"0\" = ศูนย์ · 0 ที่พิมพ์เองต้องไม่หาย" ด้วยโค้ดจริงจากหน้าเว็บ
-# ↑ `tools/*_sim.js` ทุกตัวถูก check_all.sh กวาดรันเอง (แก้ 2026-09-21 — เดิมเขียนไว้ว่ารันแต่ **ไม่เคยรัน**)
-python3 tools/enum_number_compare_check.py # UI ตัดสิน enum ด้วยตัวเลข ทั้งที่ API ส่งเป็น "ชื่อ" → เงื่อนไขเท็จเสมอ ปุ่มไม่ขึ้น ป้ายเป็น "-" · select option ตัวเลขที่ hydrate จาก enum (กติกา 3 · รอบ 193)
-python3 tools/filing_deadline_single_source_check.py # ตารางกำหนดยื่นแบบภาษีที่เขียนซ้ำ → ภ.พ.36 เคยได้วันที่ 23 แทน 15 = เตือนช้ากว่ากฎหมาย 8 วัน
-python3 tools/terminal_status_writer_check.py # สถานะปลายทาง (Filed/Matched/Approved/NoShow/StockDeducted) ประทับนอกเจ้าของกติกา — ratchet baseline (ราก R1)
-python3 tools/ai_feedback_source_check.py # หน้าเว็บบันทึก "คำตอบที่ผู้ใช้เลือก" โดยไม่ส่ง `source` → นับเป็น Implicit ⇒ คลังเรียนรู้ทันทีตายเงียบ
-python3 tools/required_call_site_check.py # ด่านเงิน/ภาษี/สต็อก/สิทธิ์ที่มีแต่ service ไม่เรียก — ล็อกจุดเรียกรายเมธอด 7 ชนิด (must · must_re · must_lit · call_args · before · forbid · `ชื่อ#n` overload) · negative test ในตัวรันทุกครั้ง (ลบ/คอมเมนต์/สลับลำดับ/ใส่สูตรต้องห้าม แล้วต้องฟ้อง) · "เทสต์เรียกแค่ helper" เขียวแม้ถอดการแก้ — ตัวนี้ล็อกว่า service เรียกจริง (รอบ 193)
-python3 tools/settings_reader_check.py # ค่าตั้งที่เก็บ+echo ครบแต่ไม่มีผู้อ่าน ("มีช่อง ≠ มีผล") — ratchet กับ settings_reader_baseline.txt · `--self-test` ถอดผู้อ่านจริงแล้วต้องฟ้อง (รอบ 193)
-python3 tools/approved_status_writer_check.py # เอกสารเกิดมา/ถูกตั้ง `Approved` นอกเส้นที่เรียก `IIssuedDocumentHooks.RunAsync` (e-Tax หลังออกเอกสาร) · hook ต้องอยู่หลัง `CommitAsync` บนเส้นเดียวกัน — ratchet baseline (รอบ 193)
-python3 tools/company_settings_factory_check.py # `new CompanySettings` นอก `Helpers/CompanySettingsFactory` → แถวค่าตั้งเกิดด้วยค่า default ที่ขัดกับธงบริษัท (VAT สองธง · รอบ 193)
-python3 tools/contact_taxid_only_match_check.py # query ผู้ติดต่อด้วยเลขภาษีอย่างเดียวไม่ดูสาขา (กติกา 1) · จับชื่อ/อีเมล/เบอร์หลัง `ContactTaxBranchKey.FindAsync` นอก `SoftScope` (กติกา 2 `#soft`) — ratchet baseline (รอบ 193)
-python3 tools/attachment_gate_check.py # ทางเข้าที่แตะไฟล์แนบ/สแกนแต่ไม่เรียก `IAttachmentAccessGate` (หรือเรียกแล้วทิ้งผล/เรียกหลังแตะไฟล์) · ทุก action ของ OcrController ที่รับ scanId/fileAttachmentId/documentId · negative test ถอดด่านจากไฟล์จริงในตัว (รอบ 193)
-python3 tools/owner_action_wiring_check.py # ด่านเจ้าของ/ปฏิเสธ API key (`[RejectApiKey]` · `[RequireOwner]` · `OwnerActionGuard` · `ApiAccessPolicy` · `RegistrationPolicy`) ต้องอยู่ที่จุดเรียกจริงและ "ใช้ผล" — `--self-test` ถอดทีละแถวจากไฟล์จริง (รอบ 193)
-node tools/api_busy_indicator_sim.js # ตัวแสดง "กำลังทำงาน" กลาง (`ApiBusy` ใน api.js) — นานแสดง · สั้นไม่กระพริบ · ปุ่มกันกดซ้ำ (โค้ดจริง + negative test ในตัว)
-node tools/employee_form_contract_sim.js # ฟอร์มพนักงาน ↔ API: hydrate↔payload สองทิศ · คีย์ ⊆ DTO · ทุกช่องในโมดัลถูก hydrate (ซอร์สจริง · baseline จากคอมมิตก่อนแก้ · รอบ 193)
-python3 tools/doc_commit_sha_check.py # sha ที่ doc อ้างแต่ไม่อยู่บน branch (amend แล้ว sha ที่จดไว้ก่อน commit ตายทันที)
-python3 tools/dead_helper_check.py    # public static ใน Helpers ที่ไม่มีผู้เรียกนอกไฟล์ (นอกคอมเมนต์ · เทสต์ไม่นับ) — ratchet กับ tools/dead_helper_baseline.txt: ล้มเฉพาะตัวใหม่ · "มี ≠ ถูกเรียก" มีตัววัดแล้ว
-python3 tools/test_inventory.py --check # TEST_PLAN §0 ต้องตรงกับ [Fact]/[Theory] จริง (เคยค้าง "~150 เคส/19 ไฟล์" จนผิด 10 เท่า) — วางผล --row ทับ
-node --check                           # ทุก <script> ใน .html ที่แก้
-awk brace-balance                      # ทุก .cs ที่แก้
+bash tools/check_all.sh      # รัน checker ทุกตัว (57) + sim ทุกตัว + node --check + brace + U+FFFD + test_inventory --check + dotnet build/test ถ้ามี SDK — exit code เดียว
+python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษณ์ใด: นิยาม · ผู้เรียกจริง · เทสต์ · คอมเมนต์ (แทน grep ประกอบเอง)
 ```
-> **ทางลัด (รอบ 169): `bash tools/check_all.sh`** รันทุกบรรทัดข้างบนด้วยคำสั่งเดียว (checker ทุกตัว + `node --check`
-> ทุก `<script>` ในไฟล์ที่แก้ + awk brace + U+FFFD + `test_inventory --check` + `dotnet build/test` ถ้ามี SDK) — exit code
-> เดียว · และ **ก่อนแก้สัญลักษณ์ใด** ให้ `python3 tools/callers.py <Symbol>` (นิยาม · ผู้เรียกจริง · เทสต์ · คอมเมนต์ แยกกัน)
-> แทนการประกอบ grep เอง — เหตุผลอยู่ใน `REGRESSION_ROOT_CAUSE_2026-09-18.md` §2.3 (ต้นเหตุอันดับ 2 ของการถดถอย 33 กรณี
-> คือ "แก้เส้นเดียวจาก N โดยไม่ grep call site")
-- แจ้งผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ — รบกวน rebuild ฝั่งคุณ"
+> env นี้ไม่มี .NET SDK ⇒ **CI บน `claude/**` คือ compiler ตัวแรกหลัง push** — อ่านผลผ่าน MCP (`actions_list` → `get_job_logs`) แล้วแก้ก่อนรายงานผู้ใช้ และบอกผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ในเครื่องนี้" ·
+> รายชื่อ checker ทั้ง 57 ตัวพร้อม defect class ที่แต่ละตัวจับ อยู่ที่ `docs/lessons/checker-writing.md` §"รายการ checker ทั้งหมด" — เปิดเมื่อตัวใดฟ้องแล้วต้องรู้ว่ามันตรวจอะไร
 
 ### F2. หลักการ 10 ข้อ (กลั่นจากบทเรียน 142 ข้อ — ตัวเต็มอยู่ใน `docs/lessons/`)
 
@@ -709,64 +578,11 @@ awk brace-balance                      # ทุก .cs ที่แก้
   round-trip test — control ที่ไม่มีเทสต์ยืนยัน = ไม่มี control**
   _(ที่มา: hash chain พังเงียบ ๆ เพราะไม่มีเทสต์เดียวที่ write→verify)_
 
-### H. กันถดถอย — "อะไรที่ทำได้ดีแล้ว ห้ามทำให้แย่ลง" (บทเรียน 2026-09-10)
+### H. กันถดถอย — "อะไรที่ทำได้ดีแล้ว ห้ามทำให้แย่ลง"
 
-> ผู้ใช้: "ก่อนหน้านี้เคยทำงานได้ถูกต้องมากกว่านี้ ทำไมแย่ลง" — ไล่ `git log` แล้วพบว่า
-> การแก้ 4 ครั้งในสัปดาห์เดียว **ถูกทุกครั้งในตัวมันเอง** แต่ทำให้ใบที่เคยถูกกลับมาผิด
-> (รายละเอียดใน `OCR_PIPELINE_REVIEW_2026-09-06.md` §2f RG-01..04)
-
-- **ด่านที่ห้ามตัวเติมค่า "ทับ" อาจกำลังถอดตัวซ่อมของบั๊กอีกตัวที่ไม่มีใครรู้ว่ามี** —
-  `4fd8dd6` ห้าม AmountTriple ทับค่าที่ engine อ่าน (ถูก — Makro 951/49/1,000) แต่ก่อนนั้นการ
-  ทับนั่นเองที่ซ่อมป้าย SubTotal/Total สลับของใบลักกี้เวย์อยู่โดยบังเอิญ ⇒ พอด่านมา ป้ายสลับ
-  โผล่เป็นครั้งแรก. **ก่อนใส่ด่าน/ถอด heuristic ตัวไหน ต้องรันชุดกระดาษจริงในเทสต์ก่อนและหลัง**
-  แล้วอธิบายทุกใบที่คำตอบเปลี่ยน — ใบที่เปลี่ยนโดยอธิบายไม่ได้ = มีบั๊กอีกตัวที่ heuristic นั้น
-  เคยกลบไว้ ต้องแก้ตัวนั้น**ในคอมมิตเดียวกัน** (ที่นี่คือ `OcrHeaderAmounts`)
-- **defect class ที่เพิ่งแก้ในตัวสแกนคำตัวหนึ่ง ต้อง `grep` ตัวสแกนคำ/regex ทุกตัวในไฟล์เดียวกัน
-  วันนั้นเลย** — "แถวยอด 0 ไม่ใช่หลักฐาน" แก้ให้ตัวอ่านประเภทเงินได้ (`1f5cc39`) แต่ตัวสแกนคำ
-  "มัดจำ" ที่เพิ่มไว้**หนึ่งวันก่อน** (`416f095`) ยังอ่านทั้งหน้า ⇒ แถวฟอร์ม "หักเงินมัดจำ 0.00"
-  ทำให้ใบซื้อธรรมดาติด `[DEPOSIT-BUY]` — ญาติของ "แก้ตัวเดียว เหลือที่เหลือ" ในทรงที่เจ็บที่สุด
-  เพราะเป็นบั๊กที่**ตัวเองเพิ่งสร้าง**
-- **ตัวเติมแบบ "เติมเฉพาะเมื่อว่าง" ไม่มีวันซ่อมค่าที่ถูกตัด** — ชื่อผู้ซื้อ "แอม แฮปปี้" (ตัด
-  จาก "หจก. แอม แฮปปี้เนส") ผ่านทุกชั้นเพราะทุกชั้นเห็นว่า "มีค่าแล้ว". ตัวเติมต้องรู้จักเคส
-  "ค่าปัจจุบันเป็นส่วนหนึ่งของบรรทัดกระดาษที่ยาวกว่า" (`OcrPartyName.ExpandTruncated`) และ
-  ห้ามขยายเป็นชื่อคนละบริษัท (ต้องเป็น superstring ไม่ใช่ fuzzy)
-- **ผู้ใช้รายงาน "เคยดีกว่านี้" = triage ด้วย `git log -- <ไฟล์>` ตั้งแต่จุดที่รู้ว่าดี แล้วเทียบ
-  พฤติกรรมของกระดาษใบนั้นทีละคอมมิต** — ไม่ใช่อ่านโค้ดปัจจุบันแล้วเดา; และผลต้องเขียนเป็นตาราง
-  "คอมมิต · สิ่งที่ตั้งใจแก้ · ผลข้างเคียง · แก้ที่" (§2f) เพื่อให้รอบหน้ารู้ว่าเรื่องนี้เคยเกิด
-- **ตัวตัดสินตัวเลข/ธงบนสแกนทุกตัวต้องเป็น pure helper ใน `Helpers/Ocr*.cs` + มีเทสต์ที่ใช้
-  เลข/ข้อความจากกระดาษจริง** — `tools/ocr_helper_test_check.py` ฟ้องคลาสที่ไม่มีเทสต์อ้างถึง.
-  ตรรกะที่ยังฝังใน `OcrService.cs`/`SmartFieldExtractor.cs` คือที่ที่ถดถอยเกิดโดยไม่มีอะไรฟ้อง —
-  แตะเมื่อไรให้ย้ายออกมาเป็น helper พร้อมเทสต์ในคอมมิตเดียวกัน (ทิศเดียวกับ `OcrHeaderAmounts` ·
-  `OcrDepositMarker` · `OcrPartyName` · `OcrPredecessorMatcher`)
-- **เทสต์ของการแก้ต้องล็อก "ใบที่ต้องยังถูก" ด้วย ไม่ใช่แค่ใบที่พัง** — ทุกไฟล์เทสต์ OCR ที่เพิ่ม
-  รอบนี้มีสองครึ่ง: ครึ่งที่พิสูจน์ว่าใบที่พังกลับมาถูก และครึ่งที่พิสูจน์ว่าใบ Makro/ใบส่งออก/ใบที่ป้าย
-  ถูกอยู่แล้ว **ไม่ถูกแตะ** — เทสต์ที่มีแต่ครึ่งแรกผ่านได้ทั้งตอนแก้ถูกและตอน "ปิดด่านทิ้ง"
-- **สามเส้นที่ผลิตของชิ้นเดียวกัน (สร้าง · repopulate · แก้ในฟอร์มก่อน) ต้องเรียกตัวสร้างตัวเดียว**
-  — บรรทัดเอกสารจากสแกนเคยมีตัวสร้าง 3 ชุด (2 ฝั่งเซิร์ฟเวอร์ + 1 สำเนา JS) ⇒ ใบเดียวได้บรรทัด
-  สามแบบ; ยุบเป็น `BuildScanLinesAsync` + `GET line-preview`. ปุ่มที่ "อยากได้ผลเร็วโดยไม่บันทึก"
-  ให้เซิร์ฟเวอร์คำนวณแล้วส่งมา ไม่ใช่ให้ JS คำนวณเอง
-- **หน้าเว็บที่อ่านฟิลด์ซึ่งเซิร์ฟเวอร์ไม่เคยส่ง = 0 ตลอดกาลโดยไม่มี error** — Usage Limits ใน
-  พอร์ทัลแอดมินอ่าน `subscription.current` ที่ endpoint แอดมินไม่เคยส่ง (JS คัดลอกจากหน้าลูกค้า)
-  และ counter `CurrentStorageUsed`/สมุดรายวัน **ไม่มีใครเขียนทั้งเรพ** ⇒ 0/50 ทุกบริษัท. ก่อนเชื่อ
-  ตัวเลขจาก counter ให้ `grep` ว่า**ใครเขียน**มัน; ก่อนอ่านฟิลด์ใน JS ให้เปิด DTO ของ endpoint
-  **ตัวนั้น** ไม่ใช่ endpoint ที่หน้าอื่นใช้ · `undefined` ต้องแสดง "ไม่มีข้อมูล" ไม่ใช่ 0
-- **method group ที่มีพารามิเตอร์ optional ส่งเข้า `Select` = CS0411** (`items.Select(MapToResponse)`
-  เมื่อ `MapToResponse(x, string? y = null)`) — คอมไพเลอร์อนุมานชนิดไม่ได้ ต้องเขียน lambda หรือใช้
-  batch mapper; checker ฝั่ง Python มองไม่เห็น (ต้อง resolve overload) → พึ่ง `dotnet build` ฝั่งผู้ใช้
-
-- **บทเรียนที่จดแล้วยังเกิดซ้ำ 20/33 กรณี = การจดไม่ใช่ด่าน** (รอบ 169 — `REGRESSION_ROOT_CAUSE_2026-09-18.md`)
-  ทีมโบราณคดีไล่ 145 คอมมิตพบการถดถอยที่พิสูจน์ sha คู่ได้ 33 กรณี: เทสต์จับได้ **0** · checker 1 · ผู้ใช้ 39% ·
-  ทีมตรวจรอบถัดไป 30% · และ **20 กรณี defect class ถูกจดในไฟล์นี้ไว้แล้วก่อนเกิด** (`.HasValue` บนชนิดที่คิดว่าถืออยู่
-  ซ้ำ 3 · "แก้ตัวเดียว เหลือที่เหลือ" ซ้ำ 8 · "สอง renderer ห้าม drift" — กฎข้อแรกของ A — ซ้ำใน 3 คอมมิตติด).
-  กลุ่มที่ "จดแล้วไม่กัน" คือกลุ่มที่ต้องรู้**ชนิดจริง** (= compiler ซึ่ง env นี้ไม่มีเพราะ **proxy policy** ไม่ใช่กฎธรรมชาติ
-  — ดู §7.3 O-1/O-2 ที่รอเจ้าของตัดสิน) และกลุ่มที่ต้อง **grep ให้ครบ** (= วินัย → ทำเป็นคำสั่ง `tools/callers.py` +
-  ratchet `tools/dead_helper_check.py`). 79% ของ 33 กรณีอยู่นอกขอบเขต static checker — **หยุดเขียน checker ที่ต้อง type
-  resolution และหยุดจดบทเรียน CSxxxx เพิ่ม**; ก่อนเริ่มงานอ่าน "หลักการ 10 ข้อ + checklist 12 ข้อ" ใน §8 ของรายงานนั้น
-  แทนการไล่ bullet ทั้งหมวด F
-  _(ของแถมที่ยืนยันแล้วรอบเดียวกัน: ข้อ M เคยเขียนว่า tenant isolation "บังคับด้วย global query filter" — **ไม่จริง**_
-  _(203 ตัวกรองแค่ `IsDeleted`) · `SsoRateSchedule.RangesOverlap` มี doc-comment บน `Payroll.cs:493` ว่า "เป็นตัวตรวจ"_
-  _แต่ไม่มีใครเรียก · `PayrollRunFilingScope.CanRemit/CountsTowardFiling` ไม่มีทั้งผู้เรียกและเทสต์ — ทั้งหมดอยู่ใน_
-  _`tools/dead_helper_baseline.txt` 58 แถวที่ต้องถูกตัดสินทีละตัว "ต่อสาย หรือ ลบ" ห้ามเดาแทนเจ้าของ)_
+> ผู้ใช้รายงาน "เคยดีกว่านี้" = triage ด้วย `git log -- <ไฟล์>` จากจุดที่รู้ว่าดี เทียบทีละคอมมิต (ไม่ใช่อ่านโค้ดปัจจุบันแล้วเดา) · ก่อนใส่ด่าน/ถอด heuristic
+> ให้รันชุดกระดาษจริงก่อน-หลัง แล้วอธิบายทุกใบที่คำตอบเปลี่ยน · ตัวตัดสินบนสแกน = pure helper `Helpers/Ocr*.cs` + เทสต์จากกระดาษจริง (`tools/ocr_helper_test_check.py`) ·
+> เทสต์ต้องล็อกทั้ง "ใบที่พังกลับมาถูก" และ "ใบที่ถูกอยู่แล้วไม่ถูกแตะ" · บทเรียนดิบ 33 กรณี + กลไก ratchet อยู่ที่ `docs/lessons/ocr-pipeline.md` §"กฎเหล็ก #4 §H"
 
 ### Litmus test ก่อน commit (engineering)
 
@@ -818,232 +634,17 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - **`/publish`** (`.claude/commands/publish.md`) = คำสั่งปิดรอบ ห่อ F3 ทั้งชุดไว้: ตรวจ branch → `check_all.sh` →
   เอกสารขยับพร้อมโค้ด → ตอบ 6 คำถามในข้อความคอมมิต → push → **อ่านผล CI ผ่าน MCP จนเขียว** → ค่อยรายงาน
   (คอมมิตที่แตะแต่ `**.md` ไม่รัน CI ตาม `paths-ignore` — ต้องบอกผู้ใช้ว่าไม่มีรอบให้รอ ห้ามรายงานว่าเขียว)
+- **ประหยัด token (บทเรียน 2026-10-03 — ไฟล์นี้เคย 130 KB ≈ 45k token ถูกส่งทุก turn ของทุก agent):** ไฟล์นี้ต้องอยู่ใต้ 70 KB — เพิ่มได้เฉพาะ*หลักการ* ส่วนบทเรียน/รายการ/ดัชนี
+  ไป `docs/lessons/` หรือ `docs/REVIEWS_INDEX.md` · เขียนไฟล์ด้วย Write/Edit tool ไม่ใช่ `cat <<EOF` (heredoc ทำให้ตัวไฟล์ทั้งก้อนอยู่ใน context สองรอบ) ·
+  รอผล CI/งานพื้นหลังด้วย `run_in_background` + แจ้งเตือน ไม่ใช่ `sleep` วนถาม · ผลลัพธ์ tool ที่ยาวให้ `| tail`/`grep` ก่อน ไม่ cat ทั้งไฟล์ ·
+  brief ให้ subagent ชี้ไปที่ไฟล์ (`PP36_REVIEW.md` ฯลฯ) แทนวางเนื้อหาซ้ำ · รวมหลายคำสั่ง bash ที่ไม่พึ่งกันไว้ใน call เดียว
 - **commit message** เขียนเป็นไทยได้ อธิบาย *ทำไม* มากกว่า *ทำอะไร*
 - **ห้าม push** main/master โดยไม่มี explicit approval
 - งานพัฒนาทั้งหมดอยู่บน branch ที่ระบุใน prompt ต้น session
 
-## 📘 DOCUMENT_FLOW.md — เอกสารอ้างอิง flow ล่าสุด
+## 📚 เอกสารอ้างอิง (DOCUMENT_FLOW · ACCOUNT_STRUCTURE · ผลตรวจทุกรอบ · DECISION_DOCTRINE) — ดู `docs/REVIEWS_INDEX.md`
 
-`DOCUMENT_FLOW.md` (root ของ repo) คือ **single source of truth** ของ flow
-เอกสารทุกประเภทในระบบ — ตั้งแต่ทางเข้า (สร้าง/OCR/integration/convert/recurring)
-→ lifecycle (Draft → Approved → Sent → Paid/Voided) → ทางออก (PDF, e-Tax XML,
-รายงานภาษี). ใช้เป็น reference เวลาแก้/เพิ่ม feature ที่เกี่ยวกับเอกสาร
-
-### กฎการดูแล (hard requirement)
-
-> **ทุก PR/commit ที่เปลี่ยน flow ต้องอัปเดต `DOCUMENT_FLOW.md` ในคอมมิตเดียวกัน**
-> — ห้ามแยก commit, ห้ามขึ้น TODO ไว้ทำทีหลัง. ถ้าไฟล์นี้ drift จากโค้ดจริง
-> = ทุกคน (รวม AI agent) จะตัดสินใจผิดจาก doc ที่ไม่ตรงความจริง
-
-**ต้องอัปเดตเมื่อแก้สิ่งต่อไปนี้** (ไม่ครบก็ใส่เพิ่มได้):
-1. เพิ่ม/ลด `DocumentType` enum value
-2. เปลี่ยน `DocumentStatus` หรือ transition (เพิ่ม state ใหม่, เปลี่ยน guard)
-3. แก้ `ApproveDocumentAsync` (ลำดับขั้น, เพิ่ม/ลด validation, JE/stock/asset)
-4. แก้ JE posting per type (`AutoPostToJournalAsync`)
-5. แก้ `ApplyStockMovementsAsync` (เปลี่ยน DocumentType ที่กระทบ stock)
-6. แก้ tax point logic (`TaxPointResolver`)
-7. แก้ §86/4 / §82/3 / §82/5 / §65 ตรี gate
-8. แก้ undue VAT reclassification (11640 ↔ 11610)
-9. แก้ deposit lifecycle (Realize/Refund/Apply)
-10. เพิ่ม/แก้ entry point ใหม่ (OCR, integration, convert pair, recurring)
-11. เพิ่ม/แก้ออก channel (PDF template, e-Tax type, รายงานภาษีใหม่)
-12. เพิ่ม/แก้ AI feature (`AiFeatureKey`) — ต้องเพิ่มในตาราง distillation
-13. แก้ retention period / PDPA gate
-
-### Workflow ที่ AI agent ต้องทำ
-
-ก่อน commit ที่กระทบ flow:
-- [ ] อ่าน `DOCUMENT_FLOW.md` ก่อน — ให้รู้ behavior ปัจจุบัน
-- [ ] แก้โค้ด + อัปเดต section ที่เกี่ยวข้องใน `DOCUMENT_FLOW.md`
-  (แก้ file:line, แก้ตาราง, แก้ลำดับขั้นถ้าจำเป็น)
-- [ ] อัปเดตบรรทัดท้ายไฟล์: `Last verified against codebase: YYYY-MM-DD —
-  commit <new-sha>` (รอใส่ sha จริงหลัง commit ก็ได้)
-- [ ] ใส่ทั้ง 2 ไฟล์ใน commit เดียวกัน
-- [ ] **ตรวจว่า sha ที่จดไว้อยู่บน branch จริง** — `git merge-base --is-ancestor <sha> HEAD`
-  ก่อน push ทุกครั้ง. sha ที่เขียนลง doc *ก่อน* commit จะกลายเป็น **dangling ทันทีที่
-  amend/rebase** (แก้ commit message · เพิ่มไฟล์ที่ลืม · ซ่อม build) ⇒ doc ชี้ไปยัง object
-  ที่ `git show` ยังเปิดได้วันนี้แต่ **ไม่อยู่ในประวัติของ branch** และจะหายจริงหลัง `gc`
-  ⇒ คนที่ตามรอยว่า "พฤติกรรมนี้เปลี่ยนที่คอมมิตไหน" จะหาไม่เจอ
-  _(ที่มา: รอบ 163/164 จด `dbaa778`/`0c80a7b` ไว้ ซึ่งเป็น sha ก่อน amend — ของจริงคือ
-  `ff635b0`/`0393d2f`; `git cat-file -t` ตอบว่า "commit" ทั้งคู่จึงดูเหมือนถูก
-  — **`cat-file` พิสูจน์ว่า object มีอยู่ ไม่ได้พิสูจน์ว่าอยู่บน branch**)_
-  _(**และวิธีเติม sha ก็สำคัญ**: `git commit --amend` หลังเติม sha ลง doc **เปลี่ยน sha
-  ที่เพิ่งเขียนไปเสมอ** ⇒ วนไม่รู้จบ. ให้เติม sha ใน **คอมมิตตามหลังอีกใบ** (หรือปล่อย
-  `<pending>` ไว้แล้วตามเก็บ) — จับได้เพราะ `doc_commit_sha_check` ฟ้องทันทีหลัง amend
-  ในรอบที่เพิ่งเขียน checker ตัวนี้เอง)_
-
-### Anti-pattern — ห้ามทำ
-
-```
-❌ "เดี๋ยวค่อยอัปเดต doc ทีหลัง" → doc drift → คนถัดมา (รวม AI) อ่าน doc
-   แล้วทำผิดเพราะ doc ไม่ตรงโค้ด
-❌ commit แยกระหว่างโค้ดกับ doc → ระหว่าง 2 commit นี้ branch อยู่ใน
-   inconsistent state
-❌ อัปเดตแค่ตาราง ไม่อัปเดต file:line → ลิงก์ใน "Quick reference" จะตาย
-   หลัง refactor
-```
-
-### ถ้าพบ doc กับโค้ดไม่ตรง
-
-แปลว่า **doc ผิด** (โค้ดเป็น ground truth). ให้แก้ doc ทันทีในคอมมิต
-เดียวกับงานที่กำลังทำ — ห้ามรอ
-
-## 📗 ACCOUNT_STRUCTURE.md — โครงสร้างลูกค้า/กลุ่มบริษัท/สาขา/บิลลิ่ง/API
-
-`ACCOUNT_STRUCTURE.md` (root) คือ single source of truth ของชั้น
-**BillingAccount → Company → Branch**, ผลิตภัณฑ์ Connected (`/api/v1`),
-`UsageEvent`/pricing, portal `/connect` — ใช้กฎการดูแล**ชุดเดียวกับ
-DOCUMENT_FLOW.md ทุกข้อ**: แตะ entity/พฤติกรรมที่ไฟล์นั้นครอบ (Company,
-Branch, AccountSubscription, Subscription, ExternalIntegration/ApiClient,
-billing, quota resolution) → อัปเดตไฟล์ + ป้ายสถานะ (✅/🔨/📋) + บรรทัด
-`Last verified` ในคอมมิตเดียวกัน. ไฟล์นี้แยกส่วน "มีจริง" กับ "ออกแบบไว้"
-ชัดเจน — ห้ามปล่อยให้ 📋 ที่สร้างเสร็จแล้วยังติดป้ายเดิม
-
-
-## 📙 ERP_REVIEW_2026-09-05.md — ผลตรวจรอบ "ทีม ERP" (A–F) + แผนสู่ ERP
-
-`ERP_REVIEW_2026-09-05.md` (root) คือผลตรวจรอบที่สอง โจทย์จากเจ้าของโปรเจกต์: "ทีมที่ครอบ
-ทุกมุม — ความต่อเนื่อง/ถูกต้อง/ครบถ้วนของข้อมูล · ประเภทเอกสาร จุดแสดงผล จุดให้เลือก ตรงกัน
-ไหม · ระบบเดิมต้องถูกก่อนค่อยขยายเป็น ERP". รายงานเต็มของแต่ละทีมอยู่ใน
-`erp-review/2026-09-05/report-*.md` + `VERIFY-main.md` (สิ่งที่ main agent เปิดไฟล์ยืนยันเอง)
-- **กติกาเดิมทุกข้อของ SYSTEM_REVIEW ใช้กับไฟล์นี้** (verify ก่อนเชื่อ · ติ๊ก `✅ <sha>` ไม่ลบแถว ·
-  §"ตรวจแล้วไม่ใช่บั๊ก" ห้ามรายงานซ้ำ)
-- ครบ 9 ทีม (F บางส่วน — ควรรันซ้ำ) · แก้แล้ว P0 6 + P1 15 ในคอมมิตชุดรอบ 135 · ที่เหลือเป็น backlog
-  เรียงลำดับใน §1/§9 ของไฟล์นั้น · brief สำหรับรอบถัดไป: `erp-review/2026-09-05/BRIEF.md`
-- ราก 9 ข้อที่ต้องซ่อมก่อนขยายเป็น ERP อยู่ใน §6 — **ห้ามเพิ่มโมดูลใหม่ทับรากที่ยังไม่ซ่อม**
-  (โดยเฉพาะ: ชั้น posting เดียว · DocumentTypeRegistry/DocumentStatusRules · สิทธิ์ที่ server ·
-  enum→UI จากแหล่งเดียว · Sales Order)
-- helper ใหม่ที่ทุกเส้นต้องใช้แทนสำเนามือ: `Helpers/DocumentStatusRules` (แทน `== Approved`) ·
-  `Helpers/StockMovementSign` (เครื่องหมาย StockMovement) · `PayrollRunEditPolicy.CanVoid` ·
-  `Helpers/CashSaleStockRules` (ใบเสร็จ standalone ↔ สต๊อก/COGS ตาม `CashSaleStockPolicy`) ·
-  `Helpers/ArApScope` (ชุดชนิดลูกหนี้/เจ้าหนี้ — ใบวางบิล**ไม่ใช่**ลูกหนี้) ·
-  `Helpers/TipAccountResolver` (บัญชีทิป POS/TipPayout — ห้าม 216xx) ·
-  ทุกทางเข้าอนุมัติเอกสาร (เว็บ/กฎ/ลายเซ็น/มือถือ/LINE) ต้องผ่าน `DocumentPermissionHelper.CanApproveAsync`
-- helper กลางจากรอบ 193 (ทุกเส้นต้องใช้ ห้ามเขียนสำเนา): `Helpers/DepositPolicyResolver` (โหมดมัดจำ 3 แบบ) · `Helpers/ContactTaxBranchKey`
-  (คีย์ผู้ติดต่อ = เลขภาษี+สาขา · `SoftScope` · `AdoptTaxId(..., ContactMatchKind)`) · `IIssuedDocumentHooks.RunAsync` (e-Tax หลังออกเอกสาร
-  ทุกทางเข้า — หลัง commit) · `Helpers/CompanyVatStatus` + `CompanySettingsFactory` (ธง VAT · stopgap รอเจ้าของตัดสินต้นทาง) ·
-  `Helpers/InputVatVehicleRule` (§82/5(6)) · `Helpers/OwnerActionGuard` + `[RejectApiKey]`/`[RequireOwner]` (งานระดับเจ้าของห้ามคีย์ API) ·
-  `IAttachmentAccessGate` (ด่านไฟล์แนบ/สแกนตัวเดียว) · `Helpers/DocumentSignedContent` (ลายเซ็นลูกค้าผูก hash เนื้อหา) ·
-  `AuditHashChain.Seal/Analyze` (hash chain canonical ตัวเดียว)
-
-## 📕 SYSTEM_REVIEW_2026-09.md — ลิสต์งานจากการตรวจทั้งระบบ (8 ทีม)
-
-`SYSTEM_REVIEW_2026-09.md` (root) คือผลตรวจทั้งระบบโดยทีมผู้เชี่ยวชาญ 8 ด้าน
-(เอกสาร · onboarding/nav · บัญชี/ภาษี · payroll · OCR/AI · security/arch ·
-frontend · โมดูลรอง) **180 ข้อ (P0 25 · P1 61 · P2 65 · P3 29)** พร้อม file:line
-ทุกข้อ และ P0/P1 ผ่านการ verify ซ้ำโดย main agent — ใช้เป็น backlog หลัก
-
-**สถานะ ณ 2026-09-04: ติ๊กแล้ว 84 แถว · P0 เหลือ 0 · P1 31 · P2 43 · P3 20**
-สิ่งที่เหลือ**ไม่ใช่บั๊กที่แก้ได้ในที่เดียว**อีกแล้ว แบ่งเป็น 3 กอง — ต้องเลือก
-อย่างตั้งใจ ไม่ใช่ไล่ทำตามลำดับ ID:
-1. **ฟีเจอร์ใหม่** (ภ.ง.ด.50 export · ค่าเผื่อหนี้ TFRS บทที่ 9 · ไฟล์โอนเงินเดือน
-   เข้าธนาคาร · หน้าเก็บ ปกส./PVD รายคน · ปฏิทินวันหยุดราชการ) — งานหลายวัน/ชิ้น
-2. **re-design ที่ผลตรวจระบุเองว่าให้ประเมินแยก** (ยุบสองแดชบอร์ด · ชั้นสต็อก
-   ทางเข้าเดียว · component layer · migration lock + `CONCURRENTLY`)
-3. **ของที่ต้องตัดสินใจว่า "ต่อสาย หรือ ลบ"** (E-commerce 460 บรรทัดที่ไม่มี UI ·
-   Open Banking ที่คอมเมนต์เขียนว่า "simulate" · `api.js` 101 เมธอดที่หน้าไม่เรียก)
-   — **ห้ามเดาแทนเจ้าของโปรเจกต์** สองทางเลือกให้ผลต่างกันคนละเรื่อง
-
-### กติกาการใช้
-
-- **อ่าน §1 (20 ข้อแรก) + §2 (ต้นเหตุร่วม) + §3 (ลำดับ sprint) ก่อนลงมือ** —
-  หลายข้อมีรากเดียวกัน แก้ที่รากหนึ่งครั้งปิดได้หลายข้อ
-- **§9 คือรายการที่ตรวจแล้วไม่ใช่บั๊ก** — ห้ามรายงานซ้ำ ห้ามแก้
-- ทุกข้อที่แก้ต้องปฏิบัติตามกฎเหล็ก #4 ครบ (reproduce → pure class + เทสต์ →
-  checker negative test → sync DOCUMENT_FLOW/ACCOUNT_STRUCTURE/TEST_PLAN ในคอมมิตเดียว)
-- เมื่อแก้ข้อใดเสร็จ ให้**ติ๊กในไฟล์นั้น** (เติม `✅ <sha>` หน้า ID) ไม่ลบแถว —
-  เพื่อให้รอบถัดไปรู้ว่าอะไรปิดแล้ว ปิดที่คอมมิตไหน
-- §10 คือส่วนที่ยังไม่ได้ตรวจ เรียงตามความเสี่ยง — ทีมตรวจรอบถัดไปเริ่มจากตรงนั้น
-
-## 📓 DECISION_DOCTRINE.md — ตรวจอะไรก่อน · เมื่อไรถาม AI · เอาคำตอบกลับมาเรียนยังไง
-
-`DECISION_DOCTRINE.md` (root) คือ **กติกากลางของ "ขั้นตอนการตัดสินใจ"** ทั้งระบบ — กลั่นจากโค้ดจริง
-โดยทีม 3 ด้าน (ลำดับชั้นหลักฐาน · เกณฑ์โยนให้ AI · วงจรเรียนรู้) รอบ 177 · **อ่านก่อนเขียนตัวตัดสิน
-(`Helpers/*Evidence.cs` · `*Guard.cs` · `*Policy.cs`) หรือก่อนเพิ่มจุดที่เรียก AI ใหม่ทุกครั้ง**
-- **§1 ลำดับชั้นหลักฐาน (G1–G7)** — เรียงด้วย "ระยะห่างจากของจริง" ไม่ใช่ confidence ที่ผู้เสนอแต่งเอง ·
-  "ไม่รู้" ต้องเป็นค่าใน enum · **เงื่อนไขที่เป็นเท็จเพราะไม่มีข้อมูล ห้ามตกเป็น "ผ่าน"** ·
-  ทิศปลอดภัย = ทิศที่ความเสียหาย**มองเห็นและแก้ทัน** ไม่ใช่ทิศที่เงียบ
-- **§2 ถาม AI ได้เมื่อครบ 4 ข้อพร้อมกัน** + ชั้นการรับคำตอบ 3 ชั้น + **เกณฑ์ต่างกันตามทิศของ
-  ความเสียหาย** (silence-gate ≥0.70 + ต้องทิ้งร่องรอย · warn-gate ไม่มีขั้นต่ำ · write-gate ≥0.70
-  + candidate set) · **ห้ามใช้ `HasModelAnswer` เดี่ยว ๆ** (tier-2 majority ไม่ดูอินพุตเลย)
-- **§3 วงจรเรียนรู้** — คำตอบจริงอยู่ที่ "อนุมัติ" · เก็บสองทิศ · **กันคลังเอียง 5 ข้อ** ·
-  ตัวชี้วัดที่แยก "local โตจริง" ออกจาก "ระบบเงียบลง"
-- **§4 backlog ที่ยืนยันแล้ว** (V1 `OcrFieldArbiter` ไม่ได้ตัดสินแต่หน้าจอบอกว่าตัดสิน · GAP-1 สูตร
-  จับคู่ธนาคารสองชุดที่ให้อันดับต่างกัน · kill-switch ที่ไม่ผ่าน ฯลฯ) · **§5 = ที่ตรวจแล้วไม่จริง
-  ห้ามรายงานซ้ำ** · **§6 = 4 ข้อที่ต้องให้เจ้าของตัดสิน**
-
-## 📗 DECISION_AUDIT_2026-09-18.md — ตรวจ "กระบวนการตัดสินใจ" ทั้งระบบ (8 ทีม) + แผนรอบพัฒนาถัดไป
-
-`DECISION_AUDIT_2026-09-18.md` (root) คือผลตรวจรอบ 181 โดยทีม 8 ด้าน (เอกสาร/ด่านอนุมัติ · ยื่นภาษี · OCR · ธนาคาร/
-จ่ายเงิน · สต็อก/สินทรัพย์ · เงินเดือน · สถาปัตยกรรม AI · POS/CMS/ที่พัก/ทางเข้าภายนอก) ตามโจทย์เจ้าของ "ตัดสินถูก
-หลักการไหม · ลำดับขั้นถูกไหม · ครอบคลุมไหม · เรียก AI + เทรนให้ดีขึ้นเองครบไหม" — **main agent เปิดไฟล์ยืนยันทุกข้อ
-P0/P1 ก่อนเขียน** (✅ ในตาราง) · กติกาเดียวกับ SYSTEM_REVIEW/ERP_REVIEW/DOCTRINE ทุกข้อ
-- **§1 คำตอบ 5 ข้อ** · **§2 ต้นเหตุร่วม 7 แบบ (R1–R7)** — สถานะปลายทางประทับเอง · "ไม่รู้"→ค่าแต่ง · ตารางกฎหมาย
-  สำเนาที่สอง · สองด่านในเมธอดเดียว · ทางเข้าอื่นไม่เดินด่าน · ลูปเรียนรู้ไม่ปิด/สอนตัวเอง · ไม่มีเทสต์ที่ด่านเงิน
-- **§3 ผลตรวจรายทีม** (P0 ที่ยืนยันแล้ว: ด่าน WHT เก่ายังรันหลังด่านใหม่ · CIT 2 ตาราง ภ.ง.ด.50 ใช้ขั้น SME ทุกบริษัท ·
-  Filed จากปุ่ม · OCR serialize บรรทัดก่อน Product master · VendorIntel สวมรอยกระดาษเรื่อง WHT · BankFeed Matched ไม่มีคู่ ·
-  FIFO เศษ `Max(taken,1)` · ด่านสต็อกติดลบถูกข้ามด้วย override · POS ใบกำกับไม่หักส่วนลด · V1 เลข 13 หลัก = นิติบุคคล ·
-  Integration VAT 7 ไม่ดู `IsVatRegistered` · sentinel `__USER_KEPT_EXISTING__` ไหลเข้าตัวแนะนำ GL · กุญแจคลังเขียน≠อ่าน
-  เมื่อนักเรียนตอบ · JS 6 จุดไม่ส่ง `source`) · **§5 = ที่ตรวจแล้วไม่จริง/บรรทัดคลาด ห้ามรายงานซ้ำ** · **§7 = ไม่ใช่ปัญหา ห้ามแก้**
-- **§6 แผนรอบถัดไป**: §6.0 เทสต์ก่อนแตะ (`ApprovalWarningGolden` · `BankMatchGolden` · FIFO/CIT/POS/Payroll · checker
-  `terminal_status_writer`) → §6.1 P0 22 ข้อทำได้เลย → §6.2 P1 รายโดเมน → §6.3 P2 โครงสร้าง → **§6.4 = 9 ข้อที่เจ้าของ
-  ต้องตัดสินก่อน ห้ามเดาแทน** (ฐาน ปกส. รวมเบี้ยเลี้ยง · `BuyerDeclinedTaxInvoice` ประทับเอง · ผลข้างเคียงถอดด่าน WHT เก่า ·
-  VendorIntel auto-fill WHT · "ประกาศว่ายื่น" ต้องมีเลขรับไหม · ตาราง DTA · ขอบเขตฝากขาย/POC/LCNRV · วันเริ่มค่าเสื่อม ·
-  ค้างจากรอบ 180)
-- **ห้ามเพิ่มโมดูล/ฟีเจอร์ทับรากใน §2 ที่ยังไม่ซ่อม** — โดยเฉพาะ R1 (สถานะปลายทาง) และ R5 (ทางเข้าอื่น) เพราะทุกทางเข้า
-  ใหม่จะสืบทอดช่องโหว่เดิม
-
-## 📔 REGRESSION_ROOT_CAUSE_2026-09-18.md — ทำไมของที่เคยดีกลับแย่ลง + กลไกให้ระบบดีขึ้นเรื่อย ๆ
-
-`REGRESSION_ROOT_CAUSE_2026-09-18.md` (root) คือผลตรวจรอบ 169 โดยทีม 4 ด้าน (โบราณคดีการถดถอย 33 กรณี ·
-logic ซ้อน 10 หมวด · สายข้อมูล 8 ค่า · สถาปนิกกระบวนการ) ที่ main agent เปิดไฟล์ยืนยันทุกข้อ — **อ่าน §1 (คำตอบ 5 ข้อ)
-+ §8 (หลักการ 10 ข้อ + checklist ก่อน push 12 ข้อ + ข้อห้าม 7 ข้อ — สำเนาอยู่ใน กฎเหล็ก #4 F2–F4) ก่อนเริ่มงานทุกรอบ** · บทเรียนดิบอยู่ `docs/lessons/`
-- §6 = รายการที่ทีมรายงานมาแล้ว**ไม่จริง** — ห้ามรายงานซ้ำ · §7.3 = 2 เรื่องที่ต้องให้เจ้าของตัดสิน (เปิด host .NET ใน
-  proxy policy · เปิด `claude/**` ใน workflow แบบแก้ "เสียง" ไม่ใช่ปิด "ด่าน") · §10 = backlog พร้อมป้ายว่าใครต้องตัดสิน
-- เครื่องมือที่เกิดจากรอบนี้: `tools/check_all.sh` · `tools/callers.py` · `tools/dead_helper_check.py` (+ baseline) ·
-  `tools/test_inventory.py` — กติกา ratchet: baseline **ห้ามเพิ่มแถว** เพื่อให้ checker เขียว มีแต่ตัดออกเมื่อต่อสาย/ลบแล้ว
-- **คำตัดสินเจ้าของ (รอบ 170)**: (ก) **CI เปิดบน `claude/**` แล้ว** — หลัง push ต้องอ่านผล Actions ผ่าน MCP
-  (`actions_list` → `get_job_logs`) แล้วแก้ก่อนรายงานผู้ใช้; job `test` รันเฉพาะ PR/main/dispatch (ข) เจ้าของจะเปิด host
-  .NET ใน proxy policy — เมื่อ `command -v dotnet` เจอ `check_all.sh` จะ build/test ให้เอง (ค) **50 ทวิ ออกอัตโนมัติเป็น
-  Issued ตอนจ่าย** ทุกทางเข้า — ยอดนำส่ง/ปฏิทิน/รายงาน/ไฟล์ยื่น/แดชบอร์ด อ่านจาก certs ผ่าน `Helpers/WhtCertFilingScope.Filed`
-  ตัวเดียว · เอกสารหัก WHT ที่ไม่มี cert ออกจริง = ช่องโหว่ที่ต้องเตือน+บล็อกนำส่ง ห้ามนับเงียบ (ง) ยุบหมวด F เป็นหลักการ
-  10 ข้อ + ย้ายบทเรียนดิบไป `docs/lessons/` (คอมมิตถัดไป)
-
-## 📒 OCR_PIPELINE_REVIEW_2026-09-06.md — ไปป์ไลน์ OCR → เอกสาร (ทีมตรวจ 5 ด้าน)
-
-`OCR_PIPELINE_REVIEW_2026-09-06.md` (root) คือผลตรวจ **เส้นทางตั้งแต่อัปโหลดจนได้
-เอกสาร + JE** โดยทีม 5 ด้าน (สมองนักบัญชี · วิศวกรรมการสกัดข้อมูล · สถาปัตยกรรม
-การเรียนรู้/AI · UX 1-click · คุณภาพ/ตัวชี้วัด) — โจทย์: "แค่อัพเอกสารไป ก็เหมือนมี
-นักบัญชีที่เก่งที่สุดในโลกมาทำให้". รายงานดิบของแต่ละทีม:
-`erp-review/2026-09-05/ocr-report-T1..T5.md` · โจทย์ที่ให้ทีม: `.../OCR-BRIEF.md`
-- ใช้กติกาเดียวกับ SYSTEM_REVIEW/ERP_REVIEW ทุกข้อ (verify ก่อนเชื่อ · ติ๊ก `✅ <sha>`
-  ไม่ลบแถว · §"ตรวจแล้วไม่ใช่บั๊ก" ห้ามรายงานซ้ำ)
-- §2 = 16 ข้อที่แก้แล้ว · §3 = backlog เรียง P1/P2/P3 · §4 = สถาปัตยกรรมเป้าหมาย
-  (Decision Record + Arbiter · student ต้องตอบได้ · ปิด loop ที่เอกสารที่อนุมัติ ·
-  eval harness + KPI คู่) · §5 = แผน 5 เฟส · §6 = 3 คำถามที่ต้องให้เจ้าของตัดสิน
-- helper ใหม่ที่ทุกเส้นต้องใช้: **`Helpers/OcrLineReconciler`** (กระทบยอด Σ บรรทัด ↔
-  หัวใบ — ห้ามเขียนตรรกะ 4 เคสเองอีก) · `OcrAiAugmentationResult.HasModelAnswer`
-  (ใช้แทน `UsedAi` ทุกจุดที่จะ **นำคำตอบไป apply**) ·
-  **`Helpers/OcrPostingReadiness`** (ตัวตัดสิน "อนุมัติอัตโนมัติได้ไหม" ตัวเดียวของ
-  ทุกช่องทาง — เว็บ/LINE/มือถือ ห้ามเขียนเกณฑ์เอง) · **`Helpers/OcrReviewGuard`**
-  (กรองคำตอบ AI ก่อนแตะฟอร์ม — ยอดเงินรับเป็นชุดและต้องลงตัว) ·
-  **`Helpers/OcrVendorKeyEvidence`** (หลักฐานว่า "เลขที่ใช้ค้นทะเบียนเป็นของผู้ขายจริง" —
-  ป้ายกำกับ + ไม่ใช่เลขผู้ซื้อ/เลขเรา + ไม่ได้อยู่ในบล็อกผู้ซื้อ · ส่งผลให้
-  `DbdIdentityGuard.Judge(..., keyProven:)` ซึ่งเป็น**ตัวตัดสินตัวเดียว**ของทั้งเส้น OCR
-  และเส้น integration — สำเนา inline ใน `OcrService` ถูกถอดแล้ว) ·
-  **`Helpers/InputVatAccountPolicy`** (ธงผังบัญชีปิดการเคลม §82/5 — ใช้ทั้งเส้นคีย์มือ
-  และเส้น OCR) · **`Helpers/RawTextLineSplitter`** (แตกบรรทัดจากข้อความเมื่อไม่มีโมเดล
-  — ต้องผ่าน `OcrLineSplitGuard` เสมอ) · **`Helpers/OcrTargetDocumentType`** (ชนิดเอกสาร
-  ที่สแกนจะกลายเป็น — ด่านสิทธิ์กับเส้นสร้างเอกสารต้องใช้ตัวเดียวกัน **ห้ามคืน "ไม่รู้"**) ·
-  **`Helpers/OcrPostedTruth`** (ช่องไหนของสแกนควร sync ให้ตรงเอกสารที่อนุมัติแล้ว —
-  ห้ามลบค่าเดิมด้วยช่องว่าง/ศูนย์) · `AiResponse.FromLocalModel` (**ธงเดียวที่บอกว่า
-  "นักเรียนตอบ"** — ห้ามเดาจาก `ProviderModel`/`Status` อีก) · ตารางอัตรา/ประเภทเงินได้ ม.40 อ่านจาก
-  **`Helpers/ThaiWhtRateTable`** ตัวเดียว และหน้าเว็บสร้าง dropdown จาก
-  `/api/reference/income-types` (ห้ามพิมพ์อัตราซ้ำใน JS)
-- §2c = รอบ "เริ่มดำเนินการทั้งหมด" — ปิด backlog P1 อีก 13 ข้อใน 4 ชุด (ความทนทาน ·
-  สมองนักบัญชี · การสกัดข้อมูล · UX) ดูตารางในไฟล์นั้น
-
-### บทเรียนจากรอบ OCR — ย้ายไป `docs/lessons/ocr-pipeline.md`
-
-บทเรียน defect class ของไปป์ไลน์ OCR ทั้งหมด (รวมที่เคยอยู่ท้ายไฟล์นี้) อยู่ที่ `docs/lessons/ocr-pipeline.md` —
-กติกาเดียวกับ F5: append ที่นั่น · แตะ CLAUDE.md เฉพาะเมื่อเปลี่ยนหลักการ
+> **hard requirement คงเดิม:** ทุกคอมมิตที่เปลี่ยน flow เอกสาร ⇒ อัปเดต `DOCUMENT_FLOW.md` (§ที่เกี่ยว + บรรทัด `Last verified … commit <sha>`) ในคอมมิตเดียวกัน ·
+> แตะ Company/Branch/Subscription/billing ⇒ `ACCOUNT_STRUCTURE.md` เช่นกัน · sha ที่จดต้องอยู่บน branch (`tools/doc_commit_sha_check.py`) และเติมใน**คอมมิตตามหลัง ห้าม amend** ·
+> doc กับโค้ดไม่ตรง = **doc ผิด** แก้ทันทีในคอมมิตเดียวกัน · ผลตรวจที่ติ๊ก `✅ <sha>` ไม่ลบแถว · §"ตรวจแล้วไม่ใช่บั๊ก" ห้ามรายงานซ้ำ ·
+> ก่อนเขียนตัวตัดสิน (`Helpers/*Evidence|*Guard|*Policy`) หรือจุดเรียก AI ใหม่ อ่าน `DECISION_DOCTRINE.md` §1–§3 · helper กลางที่ทุกเส้นต้องใช้ (ห้ามเขียนสำเนา) อยู่ในดัชนีนั้น §ERP_REVIEW/§OCR_PIPELINE

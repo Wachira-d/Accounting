@@ -67,3 +67,81 @@
   `@"""IsActive"" = true"` เป็น raw string `"""` ⇒ ตัดโค้ดครึ่งหลังของ `AccountingDbContext.cs` (บรรทัด 2528 ลงไป) ทิ้ง ⇒ กติกาใด ๆ ของไฟล์นั้นใช้ไม่ได้มาตลอด ·
   ญาติ: `undeclared_local_check` ฟ้อง `x is not decimal t` ผิด (CS0103 ทั้งที่คอมไพล์ผ่าน · ทีม O1) และฟ้อง `is not { } x` (ผูก x หลัง `if (...) return;`)
   → กติกา: self-test ของ checker ต้องมีเคส "ไฟล์จริงที่ยาวและมีสตริงพิเศษ" ไม่ใช่แค่โค้ดสังเคราะห์สั้น ๆ · checker ที่ฟ้องผิด = checker ที่พัง (F2 ข้อ 6)
+
+---
+
+<!-- ย้ายจาก CLAUDE.md 2026-10-03 (ลดขนาด context ต่อ turn 130KB→~55KB) — เนื้อหาคงเดิมทุกตัวอักษร -->
+
+# รายการ checker ทั้งหมด (เดิม CLAUDE.md กฎเหล็ก #4 §F)
+
+### F. เครื่องมือบังคับก่อน commit (env นี้ยังไม่มี .NET SDK จนกว่าเจ้าของจะเปิด host .NET ใน proxy — **CI บน `claude/**` คือ compiler ตัวแรกหลัง push**)
+
+```
+python3 tools/di_cycle_check.py        # วงกลม DI (dotnet build จับไม่ได้)
+python3 tools/nullable_arg_check.py    # CS1503 nullable→non-nullable
+python3 tools/using_check.py           # CS0246 ลืม using ของ type ในเรพ
+python3 tools/record_arg_check.py      # CS1739 named arg ที่ record ไม่มี
+python3 tools/accessibility_check.py   # CS0051/CS0050 ชนิด private ในลายเซ็น public
+python3 tools/arg_type_check.py        # CS1503 ส่ง id เข้าพารามิเตอร์ที่รับ entity
+python3 tools/gl_code_check.py         # เลขผังบัญชี hardcode ชนความหมายผังมาตรฐาน
+python3 tools/verbatim_string_check.py # CS1010/CS1056 `"` เดี่ยวปิด verbatim string
+python3 tools/dead_link_check.py      # ลิงก์ /pages/*.html ที่ไม่มีไฟล์ปลายทาง
+python3 tools/localstorage_key_check.py # คีย์ localStorage ที่อ่านแต่ไม่มีใครเขียน
+python3 tools/js_dup_method_check.py   # method ชื่อซ้ำใน object เดียวกัน (ตัวหลังทับเงียบ)
+python3 tools/identifier_space_check.py # CS1001/CS1003 ช่องว่างในชื่อ method/ชนิด · CS1056 ตัวอักษรต้องห้าม (§) ในชื่อ
+python3 tools/namespace_shadow_check.py # CS0234 `Helpers.X` ผูกไป namespace ผิดชั้น
+python3 tools/service_interface_check.py # CS1061 controller เรียกเมธอดที่ลืมประกาศใน interface ของ service (impl+endpoint ครบ แต่ interface ขาด) → ลาก CS0006 ให้เทสต์ล้มตาม
+python3 tools/dto_nullable_contract_check.py # DTO ประกาศ `string` (ไม่ nullable) ทั้งที่ service เติมค่าให้เมื่อว่าง → ASP.NET ใส่ [Required] โดยปริยาย แล้วตีกลับเป็นอังกฤษชื่อ property C# ก่อนถึงโค้ดเรา (ฟ้องเฉพาะตอนสองชั้น**ขัดกัน** — ชั้นที่ throw/BadRequest เองถือว่าตรงกัน ไม่ฟ้อง)
+python3 tools/css_var_check.py       # var(--x) ที่ไม่เคยประกาศ → ปุ่มล่องหน/สีหาย
+python3 tools/undeclared_local_check.py # CS0103 ส่งตัวแปรที่ไม่มีในเมธอดนั้นเป็นอาร์กิวเมนต์
+python3 tools/admin_menu_gate_check.py # เมนู/endpoint ของแพลตฟอร์มที่ลูกค้ามองเห็น
+python3 tools/upload_route_check.py  # โฟลเดอร์อัปโหลดที่เขียนได้แต่ static handler ตอบ 404
+python3 tools/regex_line_span_check.py # \s เป็นตัวคั่นระหว่างตัวเลข → กลืนขึ้นบรรทัดใหม่
+python3 tools/advisory_lock_key_check.py # คีย์ advisory lock ที่สุ่มต่อ process → ล็อกข้ามเครื่องไม่ได้
+python3 tools/csp_external_ref_check.py # สคริปต์/สไตล์ภายนอกที่ CSP ของเราเองไม่อนุญาต → เบราว์เซอร์บล็อกเงียบ
+python3 tools/tab_hidelist_check.py  # panel ของแท็บที่ไม่อยู่ในลิสต์ซ่อน → เปิดแล้วค้างทับแท็บอื่น
+python3 tools/stock_writer_check.py  # เขียนสต็อกนอก IStockLedger → สองความจริงที่ไม่มีวันตรงกัน
+python3 tools/payment_provider_boundary_check.py # โดเมน/คีย์ของ gateway หลุดนอก adapter · ข้อมูลบัตรบนเซิร์ฟเวอร์
+python3 tools/write_permission_gate_check.py # endpoint ที่เขียนข้อมูลแต่ไม่มีด่านสิทธิ์ ([Authorize] ตอบแค่ "ล็อกอินไหม")
+python3 tools/html_attr_escape_check.py # ข้อความอิสระเข้า attribute ไม่ผ่านตัวหนี → แตก attribute ยิงสคริปต์ได้
+python3 tools/escape_helper_check.py # ตัวหนี HTML ที่เขียนเองหนีไม่ครบ 5 ตัว → ปลอดภัยแค่ครึ่งเดียวแต่ดูเหมือนปลอดภัยแล้ว
+python3 tools/string_quote_close_check.py # CS1002 `"` ASCII ในสตริง**ธรรมดา** ปิดสตริงกลางคำ (verbatim_string_check ไม่ครอบ)
+python3 tools/comment_line_break_check.py # CS1519/CS1010 คอมเมนต์ `//`/`///` ถูกตัดบรรทัดกลางข้อความ (ยกข้อความกระดาษที่มีขึ้นบรรทัด) ⇒ ครึ่งหลังเป็นโค้ด (รอบ 199)
+python3 tools/onclick_js_string_check.py # esc() ใน JS string ของ onclick → เบราว์เซอร์ decode entity ก่อน JS อ่าน ⇒ ปิด string ได้อยู่ดี ทั้งหน้าตาย
+python3 tools/sequence_lock_check.py # ออกเลขรันเองด้วยการเรียงแบบข้อความ → ไม่มีล็อก และ "9999" ชนะ "10000" เลขวนกลับทับของเดิม
+python3 tools/deep_link_param_check.py # ลิงก์ส่ง query param ชื่อที่หน้าปลายทางไม่เคยอ่าน → กดแล้วตกที่ลิสต์เปล่า (dead_link_check ดูแค่ว่าไฟล์มีอยู่)
+python3 tools/flag_field_overwrite_check.py # เขียนทับช่องข้อความที่เป็นที่สะสม**และ**มีด่านอ่านธงจากมัน → ธงของด่านหายเงียบ
+python3 tools/ocr_helper_test_check.py # ตัวตัดสิน OCR (Helpers/Ocr*.cs) ที่ไม่มีเทสต์อ้างถึง → แก้แล้วใบที่เคยถูกกลับมาผิดโดยไม่มีอะไรฟ้อง
+python3 tools/tuple_name_merge_check.py # ternary ที่สองสาขาเป็น tuple ชื่อไม่ตรงกัน → C# ทิ้งชื่อ แล้ว CS1061 ไปโผล่ไกลจากจุดที่ผิด
+python3 tools/line_vat_source_check.py # เขียนอัตรา VAT ของบรรทัดตรง ๆ ไม่ผ่าน Layout.setLineVat → ตัวแนะนำทับค่าที่อ่านจากกระดาษ ยอดเพี้ยนเงียบ
+node tools/vat_line_source_sim.js   # ล็อกพฤติกรรมลำดับที่มาของอัตรา VAT ด้วยโค้ดจริง (สองทิศ)
+node tools/validation_field_label_sim.js # ข้อความ validation ต้องชี้ "ป้ายไทยที่ผู้ใช้เห็น" ไม่ใช่ชื่อ property C# · ช่องที่ไม่มีบนหน้าต้องบอกว่าไม่มี (รันโค้ดจริงจาก api.js)
+python3 tools/blank_number_null_check.py # ช่องตัวเลขที่เว้นว่างถูกส่งเป็น `null` → System.Text.Json แปลงเข้า int/decimal ไม่ได้ ⇒ โยน body ทิ้งทั้งก้อน ⇒ ไม่มีอะไรถูกบันทึกและ error ชี้ไปที่ "dto" ที่ไม่มีบนหน้าจอ
+node tools/blank_number_form_sim.js # ล็อก "ว่าง = ตัดคีย์ทิ้ง · data-blank=\"0\" = ศูนย์ · 0 ที่พิมพ์เองต้องไม่หาย" ด้วยโค้ดจริงจากหน้าเว็บ
+# ↑ `tools/*_sim.js` ทุกตัวถูก check_all.sh กวาดรันเอง (แก้ 2026-09-21 — เดิมเขียนไว้ว่ารันแต่ **ไม่เคยรัน**)
+python3 tools/enum_number_compare_check.py # UI ตัดสิน enum ด้วยตัวเลข ทั้งที่ API ส่งเป็น "ชื่อ" → เงื่อนไขเท็จเสมอ ปุ่มไม่ขึ้น ป้ายเป็น "-" · select option ตัวเลขที่ hydrate จาก enum (กติกา 3 · รอบ 193)
+python3 tools/filing_deadline_single_source_check.py # ตารางกำหนดยื่นแบบภาษีที่เขียนซ้ำ → ภ.พ.36 เคยได้วันที่ 23 แทน 15 = เตือนช้ากว่ากฎหมาย 8 วัน
+python3 tools/terminal_status_writer_check.py # สถานะปลายทาง (Filed/Matched/Approved/NoShow/StockDeducted) ประทับนอกเจ้าของกติกา — ratchet baseline (ราก R1)
+python3 tools/ai_feedback_source_check.py # หน้าเว็บบันทึก "คำตอบที่ผู้ใช้เลือก" โดยไม่ส่ง `source` → นับเป็น Implicit ⇒ คลังเรียนรู้ทันทีตายเงียบ
+python3 tools/required_call_site_check.py # ด่านเงิน/ภาษี/สต็อก/สิทธิ์ที่มีแต่ service ไม่เรียก — ล็อกจุดเรียกรายเมธอด 7 ชนิด (must · must_re · must_lit · call_args · before · forbid · `ชื่อ#n` overload) · negative test ในตัวรันทุกครั้ง (ลบ/คอมเมนต์/สลับลำดับ/ใส่สูตรต้องห้าม แล้วต้องฟ้อง) · "เทสต์เรียกแค่ helper" เขียวแม้ถอดการแก้ — ตัวนี้ล็อกว่า service เรียกจริง (รอบ 193)
+python3 tools/settings_reader_check.py # ค่าตั้งที่เก็บ+echo ครบแต่ไม่มีผู้อ่าน ("มีช่อง ≠ มีผล") — ratchet กับ settings_reader_baseline.txt · `--self-test` ถอดผู้อ่านจริงแล้วต้องฟ้อง (รอบ 193)
+python3 tools/approved_status_writer_check.py # เอกสารเกิดมา/ถูกตั้ง `Approved` นอกเส้นที่เรียก `IIssuedDocumentHooks.RunAsync` (e-Tax หลังออกเอกสาร) · hook ต้องอยู่หลัง `CommitAsync` บนเส้นเดียวกัน — ratchet baseline (รอบ 193)
+python3 tools/company_settings_factory_check.py # `new CompanySettings` นอก `Helpers/CompanySettingsFactory` → แถวค่าตั้งเกิดด้วยค่า default ที่ขัดกับธงบริษัท (VAT สองธง · รอบ 193)
+python3 tools/contact_taxid_only_match_check.py # query ผู้ติดต่อด้วยเลขภาษีอย่างเดียวไม่ดูสาขา (กติกา 1) · จับชื่อ/อีเมล/เบอร์หลัง `ContactTaxBranchKey.FindAsync` นอก `SoftScope` (กติกา 2 `#soft`) — ratchet baseline (รอบ 193)
+python3 tools/attachment_gate_check.py # ทางเข้าที่แตะไฟล์แนบ/สแกนแต่ไม่เรียก `IAttachmentAccessGate` (หรือเรียกแล้วทิ้งผล/เรียกหลังแตะไฟล์) · ทุก action ของ OcrController ที่รับ scanId/fileAttachmentId/documentId · negative test ถอดด่านจากไฟล์จริงในตัว (รอบ 193)
+python3 tools/owner_action_wiring_check.py # ด่านเจ้าของ/ปฏิเสธ API key (`[RejectApiKey]` · `[RequireOwner]` · `OwnerActionGuard` · `ApiAccessPolicy` · `RegistrationPolicy`) ต้องอยู่ที่จุดเรียกจริงและ "ใช้ผล" — `--self-test` ถอดทีละแถวจากไฟล์จริง (รอบ 193)
+node tools/api_busy_indicator_sim.js # ตัวแสดง "กำลังทำงาน" กลาง (`ApiBusy` ใน api.js) — นานแสดง · สั้นไม่กระพริบ · ปุ่มกันกดซ้ำ (โค้ดจริง + negative test ในตัว)
+node tools/employee_form_contract_sim.js # ฟอร์มพนักงาน ↔ API: hydrate↔payload สองทิศ · คีย์ ⊆ DTO · ทุกช่องในโมดัลถูก hydrate (ซอร์สจริง · baseline จากคอมมิตก่อนแก้ · รอบ 193)
+python3 tools/doc_commit_sha_check.py # sha ที่ doc อ้างแต่ไม่อยู่บน branch (amend แล้ว sha ที่จดไว้ก่อน commit ตายทันที)
+python3 tools/dead_helper_check.py    # public static ใน Helpers ที่ไม่มีผู้เรียกนอกไฟล์ (นอกคอมเมนต์ · เทสต์ไม่นับ) — ratchet กับ tools/dead_helper_baseline.txt: ล้มเฉพาะตัวใหม่ · "มี ≠ ถูกเรียก" มีตัววัดแล้ว
+python3 tools/test_inventory.py --check # TEST_PLAN §0 ต้องตรงกับ [Fact]/[Theory] จริง (เคยค้าง "~150 เคส/19 ไฟล์" จนผิด 10 เท่า) — วางผล --row ทับ
+node --check                           # ทุก <script> ใน .html ที่แก้
+awk brace-balance                      # ทุก .cs ที่แก้
+```
+> **ทางลัด (รอบ 169): `bash tools/check_all.sh`** รันทุกบรรทัดข้างบนด้วยคำสั่งเดียว (checker ทุกตัว + `node --check`
+> ทุก `<script>` ในไฟล์ที่แก้ + awk brace + U+FFFD + `test_inventory --check` + `dotnet build/test` ถ้ามี SDK) — exit code
+> เดียว · และ **ก่อนแก้สัญลักษณ์ใด** ให้ `python3 tools/callers.py <Symbol>` (นิยาม · ผู้เรียกจริง · เทสต์ · คอมเมนต์ แยกกัน)
+> แทนการประกอบ grep เอง — เหตุผลอยู่ใน `REGRESSION_ROOT_CAUSE_2026-09-18.md` §2.3 (ต้นเหตุอันดับ 2 ของการถดถอย 33 กรณี
+> คือ "แก้เส้นเดียวจาก N โดยไม่ grep call site")
+- แจ้งผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ — รบกวน rebuild ฝั่งคุณ"
+
