@@ -2966,39 +2966,8 @@ public partial class TaxService : ITaxService
         if (judgement.LockPeriod)
             report.FilingLockedAt = DateTime.UtcNow;
 
-        // เครดิตภาษีซื้อยกไป: ถ้ารายงานงวดถัดไปถูกสร้างไว้ "ก่อน" งวดนี้ยื่น มัน
-        // จะไม่มีบรรทัด VAT_CREDIT_CF (ตอน generate งวดก่อนยัง Draft) → ผู้ใช้ยื่น
-        // งวดถัดไปโดยเครดิตหายเงียบ = จ่าย VAT เกินจริง. เติมบรรทัดให้ทันทีที่ยื่น
-        // · 2026-10-08: เดิมอยู่หลังบันทึกการยื่นใน try/catch {} — และทางเพิ่มแถวนี้ชน EF (แถวใหม่ผ่านคอลเลกชัน ⇒ UPDATE 0 แถว) ทุกครั้ง
-        //   ⇒ เครดิตยกไป**ไม่เคยถูกเติม**และไม่มีใครรู้ · ตอนนี้บันทึกพร้อมการยื่นใน SaveChanges เดียว (ยื่นสำเร็จ = เครดิตยกไปแล้ว · ล้ม = ล้มทั้งคู่ ดัง)
-        if (report.TaxType == TaxType.VAT && report.NetVat < 0)
-        {
-            var nextPeriod = new DateTime(report.Year, report.Month, 1).AddMonths(1);
-            var nextReport = await _db.TaxReports.Include(r => r.Lines)
-                .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT
-                    && r.Year == nextPeriod.Year && r.Month == nextPeriod.Month
-                    // เฉพาะงวดถัดไปที่ยัง "ร่าง" จริง ๆ — งวดที่ถูกประกาศว่า
-                    // ยื่นแล้ว (Submitted) ห้ามเติมบรรทัดเข้าไปทีหลัง
-                    && r.Status == TaxReportStatus.Draft);
-            if (nextReport != null
-                && !nextReport.Lines.Any(l => l.IncomeTypeCode == "VAT_CREDIT_CF"))
-            {
-                var cf = Math.Abs(report.NetVat);
-                // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
-                _db.AddNewChild(nextReport.Lines, new TaxReportLine
-                {
-                    TaxReportId = nextReport.Id,
-                    LineOrder = (nextReport.Lines.Count == 0 ? 0 : nextReport.Lines.Max(l => l.LineOrder)) + 1,
-                    Description = $"เครดิตภาษีซื้อยกมาจากเดือน {report.Month:D2}/{report.Year}",
-                    IncomeAmount = cf,
-                    TaxRate = 0,
-                    TaxAmount = -cf,
-                    IncomeTypeCode = "VAT_CREDIT_CF"
-                });
-                RecalcVatTotals(nextReport);
-                nextReport.UpdatedAt = DateTime.UtcNow;
-            }
-        }
+        // เครดิตภาษีซื้อยกไปงวดถัดไป (ร่าง) — บันทึกพร้อมการยื่นใน SaveChanges เดียว (ดู SyncNextPeriodVatCreditAsync)
+        await SyncNextPeriodVatCreditAsync(companyId, report);
         await _db.SaveChangesAsync();
 
         return MapToResponse(report);
@@ -3138,6 +3107,65 @@ public partial class TaxService : ITaxService
     /// excluded lines are kept for audit but dropped from the figures.
     /// internal: DocumentService เรียกใช้ตอน void เอกสาร (ติ๊กบรรทัดออกแล้วต้อง
     /// recalc ยอดรายงานด้วยสูตรเดียวกัน — ห้าม drift).</summary>
+    /// <summary>
+    /// บรรทัด "เครดิตภาษีซื้อยกมา" (VAT_CREDIT_CF) ของรายงาน VAT งวดถัดไปที่ยังเป็นร่าง — ให้ตรงกับสถานะ+ยอดของงวดนี้ <b>เสมอ</b>:
+    /// งวดนี้ยื่น/ประกาศแล้วและ NetVat &lt; 0 ⇒ มีบรรทัดเท่ายอดเครดิต (เพิ่มหรือแก้ยอด) · นอกนั้น (ปลดล็อก/ถูกปฏิเสธ/ไม่มีเครดิต) ⇒ ไม่มีบรรทัด
+    ///
+    /// <para>ที่มา (2026-10-08): เดิมเติมหลังยื่นใน <c>catch {}</c> และชน EF ทุกครั้ง ⇒ เครดิตไม่เคยยก · พอแก้ให้เขียนได้ ฝ่ายค้านรอบสามชี้ว่า
+    /// "เติมเฉพาะเมื่อยังไม่มี" ⇒ ปลดล็อกงวดนี้ แก้ยอด แล้วยื่นใหม่ งวดถัดไปค้างเครดิตเก่า = ภาษีขายแสดงต่ำ · ตัวเดียวเรียกจาก ยื่น/ปลดล็อก/ปฏิเสธ
+    /// · ไม่ SaveChanges เอง (ผู้เรียกบันทึกพร้อมการเปลี่ยนสถานะ — ล้มด้วยกัน)</para>
+    /// </summary>
+    private async Task SyncNextPeriodVatCreditAsync(Guid companyId, TaxReport report)
+    {
+        if (report.TaxType != TaxType.VAT) return;
+        var nextPeriod = new DateTime(report.Year, report.Month, 1).AddMonths(1);
+        var nextReport = await _db.TaxReports.Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT
+                && r.Year == nextPeriod.Year && r.Month == nextPeriod.Month
+                // เฉพาะงวดถัดไปที่ยัง "ร่าง" จริง ๆ — งวดที่ประกาศว่ายื่นแล้วห้ามแตะ
+                && r.Status == TaxReportStatus.Draft);
+        if (nextReport == null) return;
+
+        var credit = Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(report.Status) && report.NetVat < 0
+            ? Math.Abs(report.NetVat) : 0m;
+        var existing = nextReport.Lines.Where(l => l.IncomeTypeCode == "VAT_CREDIT_CF").ToList();
+        var description = $"เครดิตภาษีซื้อยกมาจากเดือน {report.Month:D2}/{report.Year}";
+        var keep = credit > 0m ? existing.FirstOrDefault() : null;
+        foreach (var stale in existing.Where(l => !ReferenceEquals(l, keep)))
+        {
+            nextReport.Lines.Remove(stale);
+            _db.Remove(stale);
+        }
+        if (credit > 0m)
+        {
+            if (keep != null)
+            {
+                keep.Description = description;
+                keep.IncomeAmount = credit;
+                keep.TaxRate = 0;
+                keep.TaxAmount = -credit;
+            }
+            else
+            {
+                _db.AddNewChild(nextReport.Lines, new TaxReportLine
+                {
+                    TaxReportId = nextReport.Id,
+                    LineOrder = (nextReport.Lines.Count == 0 ? 0 : nextReport.Lines.Max(l => l.LineOrder)) + 1,
+                    Description = description,
+                    IncomeAmount = credit,
+                    TaxRate = 0,
+                    TaxAmount = -credit,
+                    IncomeTypeCode = "VAT_CREDIT_CF"
+                });
+            }
+        }
+        if (existing.Count > 0 || credit > 0m)
+        {
+            RecalcVatTotals(nextReport);
+            nextReport.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+
     internal static void RecalcVatTotals(TaxReport report)
     {
         if (report.TaxType != TaxType.VAT) return;

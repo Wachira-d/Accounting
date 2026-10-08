@@ -60,9 +60,10 @@ public static class DocumentConversionProgress
     /// ไม่ใส่ใน <see cref="SourceTypes"/> เพราะใบวางบิลยังจบด้วยการรับชำระได้ (ป้ายต้องดูทั้งสองทาง ไม่ใช่การแปลงอย่างเดียว)</summary>
     public static bool ClosesByConversionOrPayment(DocumentType type) => type == DocumentType.BillingNote;
 
-    /// <summary>ชนิดที่ต้องโหลดความคืบหน้าการแปลงมาประกอบป้าย</summary>
-    public static bool NeedsConversionSummary(DocumentType type) =>
-        IsConversionBearing(type) || ClosesByConversionOrPayment(type);
+    /// <summary>ชนิดที่ต้องโหลดความคืบหน้าการแปลงมาประกอบป้าย — array ให้ EF แปลเป็น IN ได้ (ตัวกรอง "คงค้างนาน" ใช้ชุดเดียวกับชิป)</summary>
+    public static readonly DocumentType[] SummaryTypes = SourceTypes.Append(DocumentType.BillingNote).ToArray();
+
+    public static bool NeedsConversionSummary(DocumentType type) => Array.IndexOf(SummaryTypes, type) >= 0;
 
     /// <summary>แกนการเติมเต็มของใบลูก — ตารางเดียวกับด่านกันแปลงเกิน (<c>DocumentService.GetFulfillmentAxis</c> เรียกตัวนี้)</summary>
     public enum Axis { Other, Delivery, Billing }

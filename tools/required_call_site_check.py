@@ -210,9 +210,19 @@ RULES += [
     dict(file=PAYROLL, method="AddPayrollDetailAsync", must=["AddNewChild("], forbid=["run.Details.Add("],
          why="เพิ่มคนเข้ารอบ: Add สองทาง ⇒ ยอดรอบเบิ้ล · คอลเลกชันอย่างเดียว ⇒ 500 concurrency"),
     dict(file="Services/Implementations/TaxService.cs", method="FileTaxReportAsync",
-         must=["AddNewChild("], forbid=["Lines.Add("],
-         before=[("AddNewChild(", "_db.SaveChangesAsync(")],
+         must=["SyncNextPeriodVatCreditAsync("], forbid=["Lines.Add("],
+         before=[("SyncNextPeriodVatCreditAsync(", "_db.SaveChangesAsync(")],
          why="เครดิตภาษีซื้อยกไปบันทึกพร้อมการยื่น (เดิม catch {} กลืน 500 ทุกครั้ง ⇒ เครดิตไม่เคยยก)"),
+    dict(file="Services/Implementations/TaxService.cs", method="SyncNextPeriodVatCreditAsync",
+         must=["AddNewChild(", "DeclaredOrFiled(", "RecalcVatTotals("], forbid=["Lines.Add("],
+         must_re=[r"r\.CompanyId\s*==\s*companyId", r"r\.Status\s*==\s*TaxReportStatus\.Draft"],
+         why="ฝ่ายค้านรอบสาม: เครดิตยกไปต้องตามยอด/สถานะงวดนี้เสมอ (แก้ยอด · ถอนเมื่อปลดล็อก) · แตะเฉพาะงวดถัดไปที่ยังร่าง"),
+    dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="UnlockTaxFilingAsync",
+         must=["SyncNextPeriodVatCreditAsync("], before=[("SyncNextPeriodVatCreditAsync(", "_db.SaveChangesAsync(")],
+         why="ปลดล็อกงวด ⇒ ถอนเครดิตที่ยกไปงวดถัดไป (มิฉะนั้นยื่นใหม่ด้วยยอดใหม่แล้วงวดถัดไปค้างเครดิตเก่า)"),
+    dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="RejectAndReverseTaxReportAsync",
+         must=["SyncNextPeriodVatCreditAsync("], before=[("SyncNextPeriodVatCreditAsync(", "_db.SaveChangesAsync(")],
+         why="ถูกปฏิเสธ ⇒ ถอนเครดิตที่ยกไปงวดถัดไป"),
 ]
 
 RULES += [

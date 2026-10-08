@@ -1295,6 +1295,8 @@ public class DocumentController : ControllerBase
         if (childType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
         var deny = await DenyDocAsync(companyId, userIdGuid, childType.Value, DocPerm.Create, "ยกเลิกการผูกเอกสาร");
         if (deny != null) return Forbid403<DocumentResponse>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ยกเลิกการผูกเอกสาร") is { } hidden)
+            return Forbid403<DocumentResponse>(hidden);
         var result = await _documentService.UnlinkSourceAsync(companyId, documentId, userIdGuid.ToString());
         return Ok(new ApiResponse<DocumentResponse>(true, result, "ยกเลิกการผูกแล้ว"));
     }

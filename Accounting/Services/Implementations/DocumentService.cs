@@ -2260,7 +2260,7 @@ public partial class DocumentService : IDocumentService
         // ตัวตัดสินเดียวกับป้าย (เดิมใบเสนอราคาที่ออกใบแจ้งหนี้ครบแล้วติดทั้งตัวกรองนี้และชิป 🕒 คงค้าง)
         if (staleOnly)
         {
-            var bearing = DocumentConversionProgress.SourceTypes;
+            var bearing = DocumentConversionProgress.SummaryTypes;   // ชุดเดียวกับชิป StaleDays (รวมใบวางบิล · ข้อ 9)
             var fullIds = await ResolveConversionStateIdsAsync(companyId,
                 query.Where(d => bearing.Contains(d.DocumentType)), ConversionProgressState.Full);
             if (fullIds.Count > 0)
@@ -11386,12 +11386,18 @@ public partial class DocumentService : IDocumentService
             if (existingRevenueChild == null && source.DocumentType == DocumentType.DeliveryNote && source.RelatedDocumentId.HasValue)
             {
                 var parentId = source.RelatedDocumentId.Value;
+                // เฉพาะบรรทัดที่ทับกัน (ฝ่ายค้านรอบสาม): QT บรรทัด A แจ้งหนี้ตรง + บรรทัด B ส่งของแล้วแจ้งหนี้จากใบส่งของ = ถูกต้อง ·
+                // ใบเรียกเก็บตรงที่ไม่ได้ยกบรรทัด (ไม่มี SourceLineId) = ถือว่าทั้งใบ ⇒ ยังกัน
+                var dnParentLineIds = source.Lines.Where(l => l.SourceLineId != null).Select(l => l.SourceLineId!.Value).ToList();
                 var billedDirect = await _db.Documents.AsNoTracking()
                     .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == parentId && !d.IsDeleted
                         && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
                             || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
                         && !d.IsDeposit   // ใบมัดจำจากใบเสนอราคา ⇒ ใบแจ้งหนี้จากใบส่งของหักมัดจำได้ตามปกติ
-                        && consuming.Contains(d.Id))
+                        && consuming.Contains(d.Id)
+                        && (!_db.DocumentLines.Any(l => l.DocumentId == d.Id && l.SourceLineId != null)
+                            || _db.DocumentLines.Any(l => l.DocumentId == d.Id && l.SourceLineId != null
+                                && dnParentLineIds.Contains(l.SourceLineId.Value))))
                     .Select(d => d.DocumentNumber)
                     .FirstOrDefaultAsync();
                 if (billedDirect != null)
@@ -11482,10 +11488,15 @@ public partial class DocumentService : IDocumentService
         // ⇒ สต็อกเข้ารอบสอง + 21240 (GR-NI) ค้างไม่มีใครล้าง · ด่านแกนไม่จับเพราะ PI อยู่แกนวางบิล GRN อยู่แกนส่งมอบ
         if (source.DocumentType == DocumentType.PurchaseOrder && targetType == DocumentType.GoodsReceiptNote)
         {
+            // เฉพาะบรรทัดที่กำลังรับ (ฝ่ายค้านรอบสาม): PO ผสม — บรรทัดบริการตั้งหนี้ตรง + บรรทัดสินค้ารับผ่าน GRN = ถูกต้อง
+            var receivingLineIds = spec.Select(x => x.Line.Id).ToList();
             var piNumber = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == source.Id && !d.IsDeleted
                     && d.DocumentType == DocumentType.PurchaseInvoice
-                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                    && (!_db.DocumentLines.Any(l => l.DocumentId == d.Id && l.SourceLineId != null)
+                        || _db.DocumentLines.Any(l => l.DocumentId == d.Id && l.SourceLineId != null
+                            && receivingLineIds.Contains(l.SourceLineId.Value))))
                 .OrderBy(d => d.CreatedAt)
                 .Select(d => d.DocumentNumber)
                 .FirstOrDefaultAsync();
@@ -11659,9 +11670,10 @@ public partial class DocumentService : IDocumentService
             {
                 // ทีมตรวจเส้นแปลง ข้อ 6 (ข้อ 138 ยอดเงินสำคัญที่สุด): จำนวนครบแล้วแต่ยอดเงินยังเหลือ (ใบก่อนแก้ราคา/แบ่งงวดด้วยราคา)
                 // — แปลงเต็มใบเดาไม่ได้ว่างวดที่เหลือคือบรรทัดไหน ⇒ บอกยอดคงเหลือ + ทางไปต่อ แทน "ครบแล้ว" ที่ไม่จริง
-                var (dBase, bBase, _) = await ComputeConsumedBaseAsync(companyId, orderedLines.Select(l => l.Id).ToList());
-                var leftBase = orderedLines.Sum(l => l.Amount) - (axis == FulfillmentAxis.Delivery ? dBase : bBase);
-                if (leftBase > 0.005m)
+                // เฉพาะแกนวางบิล — แกนส่งมอบนับของเป็นชิ้น (ใบส่งของราคาต่างจาก QT ไม่ได้แปลว่ายังส่งไม่ครบ · "แปลงบางส่วน" จะส่งเกิน)
+                var (_, bBase, _) = await ComputeConsumedBaseAsync(companyId, orderedLines.Select(l => l.Id).ToList());
+                var leftBase = orderedLines.Sum(l => l.Amount) - bBase;
+                if (axis == FulfillmentAxis.Billing && leftBase > 0.005m)
                     throw new BusinessRuleException(
                         $"เอกสาร {source.DocumentNumber} ถูกแปลงเพื่อ{AxisLabel(axis)}ครบทุกจำนวนแล้ว แต่ยอดเงินยังเหลือ " +
                         $"{leftBase.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} (ก่อน VAT) — " +
@@ -12043,6 +12055,8 @@ public partial class DocumentService : IDocumentService
                 // ทีมตรวจเส้นแปลง ข้อ 10: เดิมใบที่แปลงไม่ได้หายเงียบ (ผู้ใช้เห็นแค่ "สำเร็จ 3/5") — คืนเลขเอกสาร + เหตุผลให้หน้าเว็บแสดง
                 // · error อื่น (ฐานข้อมูล/บั๊ก) ไม่กลืน — โยนต่อให้ middleware (fail loud)
                 errors.Add($"{numbers.GetValueOrDefault(id) ?? "ไม่พบเอกสาร"}: {ex.Message}");
+                // ใบที่ล้มกลางทางอาจค้างใน change tracker เป็น Added ⇒ SaveChanges ของใบถัดไปจะบันทึกครึ่งใบนั้นไปด้วย (ฝ่ายค้านรอบสาม)
+                _db.ChangeTracker.Clear();
                 _logger.LogInformation("Batch convert: document {DocId} not converted — {Reason}", id, ex.Message);
             }
         }

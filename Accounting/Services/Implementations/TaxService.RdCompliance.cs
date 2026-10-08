@@ -90,6 +90,8 @@ public partial class TaxService
         report.RdAcknowledgedAt = null;
         report.RdSubmissionStatus = null;
         report.Notes = (report.Notes ?? "") + $"\n[UNLOCK by {userId} @ {DateTime.UtcNow:u}] {reason}";
+        // กลับเป็นร่าง ⇒ เครดิตยกไปงวดถัดไป (ร่าง) ต้องถูกถอน — ยื่นใหม่แล้วค่อยยกตามยอดใหม่
+        await SyncNextPeriodVatCreditAsync(companyId, report);
         await _db.SaveChangesAsync();
     }
 
@@ -202,6 +204,7 @@ public partial class TaxService
             // Lift the filing lock so corrections can be made.
             report.FilingLockedAt = null;
             report.Status = TaxReportStatus.Draft;
+            await SyncNextPeriodVatCreditAsync(companyId, report);   // ถูกปฏิเสธ ⇒ ถอนเครดิตที่ยกไปงวดถัดไป (ร่าง)
 
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
