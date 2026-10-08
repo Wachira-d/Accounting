@@ -1035,6 +1035,16 @@ public class DocumentController : ControllerBase
 
     /// <summary>สร้างใบวางบิล (Draft) จากใบค้างชำระหลายใบของลูกค้ารายเดียว —
     /// 1 บรรทัด = 1 ใบ ยอด = คงค้าง · ไม่ลง JE (ตัวหนี้อยู่ที่ใบต้นทาง).</summary>
+    /// <summary>ใบแจ้งหนี้ในใบวางบิลรวม + ยอดคงค้าง (C-02) — หน้า "รับชำระตามใบวางบิล" · สิทธิ์อ่านเดียวกับหน้าเอกสาร + ชั้นความลับของใบวางบิล</summary>
+    [HttpGet("{documentId:guid}/billing-note-invoices")]
+    public async Task<ActionResult<ApiResponse<List<BillingNoteInvoiceItem>>>> GetBillingNoteInvoices(Guid companyId, Guid documentId)
+    {
+        if (await DenySensitiveAsync(companyId, documentId, "ดูใบวางบิล") is { } hidden)
+            return Forbid403<List<BillingNoteInvoiceItem>>(hidden);
+        var items = await _documentService.GetBillingNoteInvoicesAsync(companyId, documentId);
+        return Ok(new ApiResponse<List<BillingNoteInvoiceItem>>(true, items));
+    }
+
     [HttpPost("billing-note/from-invoices")]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> CreateBillingNoteFromInvoices(
         Guid companyId, [FromBody] CreateBillingNoteFromInvoicesRequest request)
@@ -1064,6 +1074,9 @@ public class DocumentController : ControllerBase
         // (ใบเสนอราคา → ใบกำกับภาษี = สร้างใบกำกับ ไม่ใช่แค่แก้ใบเสนอราคา)
         var deny = await DenyDocAsync(companyId, userIdGuid, targetType, DocPerm.Create, "แปลงเป็น");
         if (deny != null) return Forbid403<DocumentResponse>(deny);
+        // ชั้นความลับของใบต้นทาง (C-05) — ผู้ที่ดูใบลับไม่ได้ ต้องแปลงใบนั้นไม่ได้ (เดิมแปลงได้แล้วได้ใบลูกที่เห็นทุกอย่าง)
+        if (await DenySensitiveAsync(companyId, documentId, "แปลง") is { } hidden)
+            return Forbid403<DocumentResponse>(hidden);
         var userId = userIdGuid.ToString();
         var result = await _documentService.ConvertDocumentAsync(companyId, documentId, targetType, userId);
         return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารสำเร็จ"));
@@ -1224,6 +1237,12 @@ public class DocumentController : ControllerBase
         // กรองตามข้อจำกัดของบริษัทด้วย (ไม่จด VAT → ไม่มี "ใบกำกับภาษี" ให้เลือก)
         // — กล่องแปลงเอกสารอ่านรายการนี้ จึงไม่โชว์ตัวเลือกที่กดแล้วต้องเจอ error
         var targets = (await _documentService.GetValidConversionTargetsAsync(companyId, docType.Value)).ToList();
+        // ใบวางบิลรวมใบแจ้งหนี้ (C-02) แปลงไม่ได้ — ด่านเดียวกับ ValidateConversionAsync (BillingNoteKind) · กล่องแปลงต้องไม่เสนอตัวเลือกที่ถูกปฏิเสธ
+        if (docType == DocumentType.BillingNote
+            && Accounting.Helpers.BillingNoteKind.IsRollup(docType.Value,
+                await _db.DocumentLines.AnyAsync(l => l.DocumentId == documentId && l.SourceDocumentId != null && !l.IsDeleted
+                    && l.Document.CompanyId == companyId)))
+            targets.Clear();
         return Ok(new ApiResponse<List<DocumentType>>(true, targets));
     }
 
@@ -1241,6 +1260,8 @@ public class DocumentController : ControllerBase
         var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
         var deny = await DenyDocAsync(companyId, userIdGuid, targetType, DocPerm.Create, "แปลงบางส่วนเป็น");
         if (deny != null) return Forbid403<DocumentResponse>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "แปลง") is { } hidden)
+            return Forbid403<DocumentResponse>(hidden);
         var userId = userIdGuid.ToString();
         var result = await _documentService.ConvertDocumentPartialAsync(
             companyId, documentId, targetType, request, userId);
@@ -1309,6 +1330,8 @@ public class DocumentController : ControllerBase
     public async Task<ActionResult<ApiResponse<DocumentFulfillmentResponse>>> GetFulfillment(
         Guid companyId, Guid documentId)
     {
+        if (await DenySensitiveAsync(companyId, documentId, "ดูสถานะการแปลงของ") is { } hidden)
+            return Forbid403<DocumentFulfillmentResponse>(hidden);
         var result = await _documentService.GetDocumentFulfillmentAsync(companyId, documentId);
         return Ok(new ApiResponse<DocumentFulfillmentResponse>(true, result));
     }
@@ -1320,6 +1343,9 @@ public class DocumentController : ControllerBase
         var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
         var deny = await DenyDocAsync(companyId, userIdGuid, targetType, DocPerm.Create, "แปลงเป็น");
         if (deny != null) return Forbid403<List<DocumentResponse>>(deny);
+        foreach (var srcId in (request.DocumentIds ?? new List<Guid>()).Distinct())
+            if (await DenySensitiveAsync(companyId, srcId, "แปลง") is { } hidden)
+                return Forbid403<List<DocumentResponse>>(hidden);
         var userId = userIdGuid.ToString();
         var (converted, failed) = await _documentService.BatchConvertDocumentsAsync(companyId, request.DocumentIds, targetType, userId);
         // ใบที่แปลงไม่ได้ส่งกลับใน Errors (เลขเอกสาร + เหตุผล) — หน้าเว็บแสดงเป็นคำเตือน ไม่ใช่ "สำเร็จ" เงียบ ๆ

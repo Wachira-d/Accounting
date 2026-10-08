@@ -2854,6 +2854,14 @@ public partial class DocumentService : IDocumentService
 
         if (request.Lines != null)
         {
+            // ฝ่ายค้านชุดสอง (C-02): บรรทัดของใบวางบิลรวมถูกสร้างใหม่ทั้งชุดตอนแก้ ⇒ SourceDocumentId หาย ⇒ ไม่ใช่ "ใบรวม" อีก ⇒ แปลงเป็นใบเสร็จได้ (รายได้ซ้ำ)
+            // + ด่านกันวางบิลซ้ำหลุด · รายการของใบวางบิลรวมมาจากยอดค้างของใบแจ้งหนี้ — แก้หัว/หมายเหตุได้ แก้รายการไม่ได้
+            if (BillingNoteKind.IsRollup(doc.DocumentType, doc.Lines.Any(l => l.SourceDocumentId != null)))
+                throw new BusinessRuleException(
+                    $"รายการของใบวางบิล {doc.DocumentNumber} มาจากยอดค้างของใบแจ้งหนี้ — แก้ไขรายการไม่ได้ (แก้วันที่/กำหนดชำระ/หมายเหตุได้) · "
+                    + "ถ้าต้องเปลี่ยนชุดใบแจ้งหนี้ ให้ยกเลิก/ลบใบวางบิลนี้แล้วสร้างใหม่จาก \"รวมใบค้างชำระ\"",
+                    BillingNoteKind.RuleCode, 409);
+
             // Re-validate on edit — the create path's guards must hold here too
             // (previously an edit could set qty=0 / VatRate=-99 unchecked).
             await ValidateDocumentLinesAsync(companyId, request.Lines);
@@ -6434,6 +6442,16 @@ public partial class DocumentService : IDocumentService
                                 + "\n\nกดรับทราบเพื่อบังคับอนุมัติ");
                     }
                 }
+
+                // ทีมตรวจงานค้าง C-03 (E-05 ทางอ้อม): ใบแจ้งหนี้ซื้อ/ค่าใช้จ่ายที่ผูก **PO ตรง** (สแกน/API/สร้างมือ — ไม่ผ่านด่านแปลง) ทั้งที่บรรทัดนั้น
+                // รับของผ่าน GRN แล้ว ⇒ สต็อกเข้ารอบสอง + 21240 ค้าง · hard block (โครงสร้าง ไม่ใช่ยอด) พร้อมทางไปต่อ
+                if ((doc.DocumentType == DocumentType.PurchaseInvoice || doc.DocumentType == DocumentType.Expense)
+                    && doc.RelatedDocumentId is Guid billedPoId
+                    && await _db.Documents.AsNoTracking().AnyAsync(d => d.Id == billedPoId && d.CompanyId == companyId
+                        && d.DocumentType == DocumentType.PurchaseOrder)
+                    && await PoBillBlockingGrnAsync(companyId, billedPoId,
+                        doc.Lines.Where(l => l.SourceLineId != null).Select(l => l.SourceLineId!.Value).Distinct().ToList()) is { } blockingGrn)
+                    throw new BusinessRuleException(PurchaseReceiptRoute.Message(blockingGrn), PurchaseReceiptRoute.RuleCode, 409);
 
                 // Idempotency guard INSIDE transaction to prevent race condition.
                 // นับเฉพาะ JE ที่ "ยังมีผลจริง": ไม่ใช่ reversal (OriginalEntryId
@@ -11204,6 +11222,30 @@ public partial class DocumentService : IDocumentService
         return (delivery, billing, children.Count);
     }
 
+    /// <summary>เลขใบรับสินค้าที่ทำให้ "บิลบรรทัด PO เหล่านี้ตรงจาก PO" ไม่ได้ (null = บิลได้) — ตัวโหลดเดียวของ
+    /// <see cref="PurchaseReceiptRoute.PoBillBlockedByGrn"/> ใช้ทั้งตอนแปลง PO → PI และตอนอนุมัติใบแจ้งหนี้ซื้อที่ผูก PO (สแกน/API/สร้างมือ)</summary>
+    private async Task<string?> PoBillBlockingGrnAsync(Guid companyId, Guid poId, IReadOnlyCollection<Guid> billedPoLineIds)
+    {
+        var grns = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == poId && !d.IsDeleted
+                && d.DocumentType == DocumentType.GoodsReceiptNote
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+            .OrderBy(d => d.CreatedAt)
+            .Select(d => new
+            {
+                d.DocumentNumber,
+                LinkedLines = d.Lines.Where(l => !l.IsDeleted && l.SourceLineId != null).Select(l => l.SourceLineId!.Value).ToList(),
+            })
+            .ToListAsync();
+        if (grns.Count == 0) return null;
+        var received = grns.SelectMany(g => g.LinkedLines).ToHashSet();
+        var unlinked = grns.Any(g => g.LinkedLines.Count == 0);
+        if (!PurchaseReceiptRoute.PoBillBlockedByGrn(true, billedPoLineIds, received, unlinked)) return null;
+        // บอกเลข GRN ที่ทับจริง (ใบแรกที่รับบรรทัดที่บิล หรือใบแรกถ้าทั้งใบ)
+        return grns.FirstOrDefault(g => g.LinkedLines.Count == 0 || g.LinkedLines.Any(billedPoLineIds.Contains))?.DocumentNumber
+            ?? grns[0].DocumentNumber;
+    }
+
     private readonly record struct BilledViaDeliveryLine(Guid SourceLineId, decimal Quantity, decimal Amount, DocumentType DocumentType);
 
     /// <summary>ทีมตรวจเส้นแปลง ข้อ 2 (2026-10-08): ใบแจ้งหนี้/ใบกำกับ/ใบแจ้งหนี้ซื้อที่ออก <b>จากใบส่งของ/ใบรับสินค้า</b>
@@ -11260,6 +11302,11 @@ public partial class DocumentService : IDocumentService
                 $"ไม่สามารถแปลง {source.DocumentType} → {targetType} ได้ตามมาตรฐานบัญชี " +
                 $"(แปลงได้เฉพาะ: {(allowedNames.Length > 0 ? allowedNames : "ไม่มี — เอกสารนี้เป็นปลายทาง")})");
         }
+
+        // ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ = หนังสือทวงยอด ห้ามแปลง (ใบเสร็จจากใบวางบิลลงแบบขายสด ⇒ รายได้ซ้ำ ·
+        // ลูกหนี้ใบแจ้งหนี้ไม่ถูกตัด) — ใบวางบิลจากใบเสนอราคา (ไม่มี SourceDocumentId) แปลงได้ตามเดิม
+        if (BillingNoteKind.IsRollup(source.DocumentType, source.Lines.Any(l => l.SourceDocumentId != null)))
+            throw new BusinessRuleException(BillingNoteKind.ConvertBlockedMessage(source.DocumentNumber), BillingNoteKind.RuleCode, 409);
 
         // ===== §90/2 — บริษัทไม่จด VAT แปลงเป็น "ใบกำกับภาษี" ไม่ได้ =====
         // ตัวใบกำกับภาษีคือการออกเอกสารเรียกเก็บ VAT โดยตรง ผู้ไม่จดทะเบียนออก
@@ -11471,17 +11518,9 @@ public partial class DocumentService : IDocumentService
         // ตลอดกาล ทั้งที่แกน Delivery/Billing แยกกันจึงไม่มีด่านไหนจับ (ERP_REVIEW E-05)
         if (source.DocumentType == DocumentType.PurchaseOrder && targetType == DocumentType.PurchaseInvoice)
         {
-            var grnNumber = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == source.Id && !d.IsDeleted
-                    && d.DocumentType == DocumentType.GoodsReceiptNote
-                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-                .OrderBy(d => d.CreatedAt)
-                .Select(d => d.DocumentNumber)
-                .FirstOrDefaultAsync();
-            if (grnNumber != null)
-                throw new InvalidOperationException(
-                    $"ใบสั่งซื้อนี้รับของผ่านใบรับสินค้า {grnNumber} แล้ว — ให้เปิดใบรับสินค้านั้นแล้วแปลงเป็นใบแจ้งหนี้ซื้อ " +
-                    "(3-way match) แทนการแปลงจากใบสั่งซื้อตรง ไม่งั้นสต๊อกและบัญชีสินค้าคงเหลือจะลงซ้ำสองรอบ");
+            // ทีมตรวจงานค้าง C-09: เดิมกันทั้งใบเมื่อมี GRN ใดก็ได้ ⇒ PO ผสม (สินค้ารับผ่าน GRN + บริการตั้งหนี้ตรง) ทางตัน — ตัวตัดสินเดียวกับตอนอนุมัติ
+            if (await PoBillBlockingGrnAsync(companyId, source.Id, spec.Select(x => x.Line.Id).ToList()) is { } grnNumber)
+                throw new BusinessRuleException(PurchaseReceiptRoute.Message(grnNumber), PurchaseReceiptRoute.RuleCode, 409);
         }
 
         // ทีมตรวจเส้นแปลง ข้อ 3 (กระจกของ E-05): PO → ใบแจ้งหนี้ซื้อ "ตรง" (รับของ + ตั้งหนี้ในใบเดียว — สต็อกเข้าแล้ว) แล้วมา PO → ใบรับสินค้า
@@ -11563,6 +11602,8 @@ public partial class DocumentService : IDocumentService
             // VAT ซ้ำ (+7%) → ยอดสูงกว่าที่ตกลงกับลูกค้า + ภาษีขายเกินจริง
             PricesIncludeVat: source.PricesIncludeVat,
             BrandId: source.BrandId,   // เอกสารลูกใช้แบรนด์เดียวกับต้นทางเสมอ
+            // ชั้นความลับสืบทอด (ทีมตรวจงานค้าง C-05): เดิมใบลูกเป็น "ทั่วไป" ⇒ ใบเสนอราคาลับแปลงแล้วทุกคนเห็นยอด/คู่ค้าในใบแจ้งหนี้
+            Sensitivity: source.Sensitivity,
             // และออกจากสถานประกอบการเดียวกัน — ใบแจ้งหนี้ออกจากสาขาเชียงใหม่
             // แล้วใบกำกับกลับเป็นสำนักงานใหญ่ = รายงานภาษีขายเข้าผิดสาขา §87
             BranchId: source.BranchId,
@@ -12845,6 +12886,7 @@ public partial class DocumentService : IDocumentService
             // เดิมตกทั้งสอง field ⇒ ลูกค้าได้ใบเสร็จหน้าตาบริษัทเปล่าหลังรับใบแบรนด์
             // (ผลตรวจ P3 / ข้อ 7)
             BrandId = invoice.BrandId,
+            Sensitivity = invoice.Sensitivity,   // ใบเสร็จของใบลับต้องลับตาม (กฎ #4 A · ฝ่ายค้านชุดสอง C-05)
             BranchId = invoice.BranchId,   // และสาขาที่ออกใบกำกับต้นทาง (§87)
             DocumentTemplateId = invoice.DocumentTemplateId,
             ProjectId = invoice.ProjectId,
@@ -13070,6 +13112,9 @@ public partial class DocumentService : IDocumentService
         //     ที่ไม่เคยถูก Dr (AR ติดลบ) หรือเข้า branch ผิดฝั่ง
         //   • ใบเสร็จ/ใบสำคัญรับ/ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จ = เงินเข้า/ออก
         //     จริงไปแล้วตอนอนุมัติ → ชำระซ้ำ = เงินสดเบิ้ล
+        if (doc.DocumentType == DocumentType.BillingNote
+            && await _db.DocumentLines.AnyAsync(l => l.DocumentId == doc.Id && l.SourceDocumentId != null && !l.IsDeleted))
+            throw new BusinessRuleException(BillingNoteKind.PaymentBlockedMessage(doc.DocumentNumber), BillingNoteKind.RuleCode, 409);
         if (!PayableDocumentTypes.Contains(doc.DocumentType))
             throw new InvalidOperationException(
                 $"เอกสารประเภท {doc.DocumentType} รับ/จ่ายชำระตรง ๆ ไม่ได้ — " +
@@ -18628,7 +18673,8 @@ public partial class DocumentService : IDocumentService
         PayeeAmount: ForeignServiceVat.PayeeAmount(d),
         // คำตัดสินข้อ 139 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) · ปุ่มผูกตัดสินที่เซิร์ฟเวอร์ (ข้อมูลบนใบล้วน ไม่แตะฐาน)
         SourceLinkedAt: d.SourceLinkedAt,
-        CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(LinkFacts(d)) is null);   // ตัวประกอบข้อเท็จจริงตัวเดียวกับด่านผูก
+        CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(LinkFacts(d)) is null,   // ตัวประกอบข้อเท็จจริงตัวเดียวกับด่านผูก
+        IsRollupBillingNote: BillingNoteKind.IsRollup(d.DocumentType, d.Lines.Any(l => l.SourceDocumentId != null)));
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

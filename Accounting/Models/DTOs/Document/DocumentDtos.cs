@@ -975,7 +975,9 @@ public record DocumentResponse(
     /// <summary>คำตัดสินข้อ 139: ผูกเข้าใบต้นทางภายหลังเมื่อไร (null = แปลงมา/ไม่ได้ผูก) — มีค่า ⇒ หน้าเว็บโชว์ "ยกเลิกการผูก"</summary>
     DateTime? SourceLinkedAt = null,
     /// <summary>เซิร์ฟเวอร์ตัดสิน (DocumentLinkPolicy.ChildBlockReason) ว่าโชว์ปุ่ม "ผูกกับใบเสนอราคา" ได้ไหม — หน้าเว็บไม่เดาเอง</summary>
-    bool CanLinkToSource = false);
+    bool CanLinkToSource = false,
+    // ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ — หน้าเว็บซ่อนแปลง/รับชำระที่ใบวางบิล แล้วโชว์ "รับชำระตามใบวางบิล" (เซิร์ฟเวอร์ตัดสิน)
+    bool IsRollupBillingNote = false);
 
 /// <summary>คำตัดสินข้อ 139: ผูกใบลูกเข้าใบต้นทาง — จับคู่บรรทัดลูก → บรรทัดต้นทาง (บรรทัดที่ไม่ส่งมา = ไม่นับในความคืบหน้า)</summary>
 public record LinkSourceRequest(

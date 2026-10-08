@@ -83,6 +83,35 @@ public partial class DocumentService
             refs.TryGetValue(d.Id, out var bn) ? bn : null)).ToList();
     }
 
+    /// <summary>ใบแจ้งหนี้/ใบกำกับที่อยู่ในใบวางบิลรวม + ยอดคงค้างปัจจุบัน (C-02) — ทางรับเงินที่ถูกของใบวางบิลรวม คือบันทึกชำระที่ใบเหล่านี้
+    /// ทีละใบ (ตัดลูกหนี้ใบนั้น · ออกใบเสร็จได้) · ใบที่ยกเลิก/ลบแล้วไม่ถูกส่ง · tenant เดียว</summary>
+    public async Task<List<BillingNoteInvoiceItem>> GetBillingNoteInvoicesAsync(Guid companyId, Guid billingNoteId)
+    {
+        var srcIds = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.DocumentId == billingNoteId && !l.IsDeleted && l.SourceDocumentId != null
+                && l.Document.CompanyId == companyId && l.Document.DocumentType == DocumentType.BillingNote)
+            .OrderBy(l => l.LineOrder)
+            .Select(l => l.SourceDocumentId!.Value)
+            .ToListAsync();
+        if (srcIds.Count == 0) return new();
+        // ใบแจ้งหนี้ที่ถูกแทนที่ด้วยใบกำกับ (อัปเกรด INV → TIV ตั้งใบเดิมเป็น Voided · ลูกหนี้ย้ายไปใบกำกับ) ⇒ ตามไปที่ใบกำกับ (ฝ่ายค้านชุดสอง)
+        var successors = await _db.Documents.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.DocumentType == DocumentType.TaxInvoice
+                && t.RelatedDocumentId != null && srcIds.Contains(t.RelatedDocumentId.Value)
+                && t.Status != DocumentStatus.Voided && t.Status != DocumentStatus.Rejected)
+            .Select(t => new { From = t.RelatedDocumentId!.Value, t.Id })
+            .ToListAsync();
+        var follow = successors.GroupBy(x => x.From).ToDictionary(g => g.Key, g => g.First().Id);
+        srcIds = srcIds.Select(id => follow.TryGetValue(id, out var to) ? to : id).ToList();
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && srcIds.Contains(d.Id)
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+            .Select(d => new BillingNoteInvoiceItem(d.Id, d.DocumentNumber, d.DocumentType, d.Status,
+                d.TotalAmount, d.BalanceDue, d.WithholdingTaxAmount, d.VatAmount, d.Currency ?? "THB", d.ExchangeRate))
+            .ToListAsync();
+        return srcIds.Distinct().Select(id => docs.FirstOrDefault(x => x.Id == id)).Where(x => x != null).Select(x => x!).ToList();
+    }
+
     public async Task<DocumentResponse> CreateBillingNoteFromInvoicesAsync(
         Guid companyId, CreateBillingNoteFromInvoicesRequest request, string createdBy)
     {

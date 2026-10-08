@@ -110,7 +110,18 @@ public class DocumentCloneController : ControllerBase
             .FirstOrDefaultAsync(d => d.Id == sourceId && d.CompanyId == companyId);
         if (src == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสารต้นแบบ"));
 
-        var lines = src.Lines.OrderBy(l => l.LineOrder).Select(l => new DocumentLineRequest(
+        // ฝ่ายค้านชุดสอง (C-02/C-05): ชั้นความลับของต้นแบบ — ผู้ที่ดูใบลับไม่ได้ต้องโคลนใบนั้นไม่ได้ (โคลนแล้วได้ยอด/คู่ค้าทั้งหมด)
+        if (Accounting.Helpers.SensitivityAccess.NeedsCheck(src.Sensitivity)
+            && HttpContext.RequestServices.GetService(typeof(ISensitivityService)) is ISensitivityService sens
+            && !await sens.CanViewAsync(companyId, Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User), src.Sensitivity))
+            return StatusCode(403, new ApiResponse<object>(false, null,
+                Accounting.Helpers.SensitivityAccess.DeniedMessage(src.Sensitivity, "คัดลอก")));
+        // ใบวางบิลรวมใบแจ้งหนี้ — โคลน (โดยเฉพาะโคลนเป็นใบเสร็จ) = ยอดที่ตั้งหนี้ไปแล้วถูกเก็บเป็นขายสดอีกรอบ (รายได้ซ้ำ)
+        if (Accounting.Helpers.BillingNoteKind.IsRollup(src.DocumentType, src.Lines.Any(l => !l.IsDeleted && l.SourceDocumentId != null)))
+            return StatusCode(409, new ApiResponse<object>(false, null,
+                "ใบวางบิลนี้รวมใบแจ้งหนี้ที่ตั้งลูกหนี้แล้ว — คัดลอกไม่ได้ (ยอดจะถูกเก็บซ้ำ) · สร้างใบวางบิลใหม่จาก \"รวมใบค้างชำระ\""));
+
+        var lines = src.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).Select(l => new DocumentLineRequest(
             Description: l.Description,
             Quantity: l.Quantity,
             Unit: l.Unit,
@@ -152,6 +163,7 @@ public class DocumentCloneController : ControllerBase
             // โคลนใบแบรนด์รายเดือนแล้วใบใหม่กลับเป็นชื่อบริษัทเงียบ ๆ
             // (defect class เดียวกับ DocumentLanguage ด้านล่าง — ผลตรวจข้อ 7)
             BrandId: src.BrandId,
+            Sensitivity: src.Sensitivity,   // ชั้นความลับสืบทอด (กฎ #4 A · ฝ่ายค้านชุดสอง)
             // สาขาที่ออกใบต้นแบบ — โคลนใบของสาขาเชียงใหม่แล้วใบใหม่กลับเป็น
             // สำนักงานใหญ่ = รหัสสาขาบนใบกำกับผิด §86/4 + เข้ารายงานผิดสาขา §87
             BranchId: src.BranchId,

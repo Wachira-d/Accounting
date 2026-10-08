@@ -1531,6 +1531,16 @@
 
     <!-- Convert Modal -->
     <!-- คำตัดสินข้อ 139: ผูกใบแจ้งหนี้/ใบกำกับที่สร้างแยกเข้ากับใบเสนอราคา (ได้ผลเหมือนแปลงมา · ไม่แตะเนื้อกระดาษ) -->
+    <div class="modal-overlay" id="bnPayModal">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header"><h3 class="modal-title">💰 รับชำระตามใบวางบิล</h3><button class="modal-close" onclick="Layout.closeModal('bnPayModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-help" style="margin-bottom:8px">ใบวางบิลนี้รวมใบแจ้งหนี้ที่ตั้งลูกหนี้ไว้แล้ว — บันทึกชำระที่ใบแจ้งหนี้แต่ละใบ
+            (ตัดลูกหนี้ใบนั้น · ออกใบเสร็จได้ตามปกติ) ไม่ใช่ที่ใบวางบิล</div>
+          <div id="bnPayList" style="overflow-x:auto"></div>
+        </div>
+      </div>
+    </div>
     <div class="modal-overlay" id="linkSourceModal">
       <div class="modal" style="max-width:720px">
         <div class="modal-header"><h3 class="modal-title">🔗 ผูกกับใบเสนอราคา</h3><button class="modal-close" onclick="Layout.closeModal('linkSourceModal')">&times;</button></div>
@@ -10438,7 +10448,8 @@
           // รวม 'Overdue' ด้วย — ใบแจ้งหนี้เกินกำหนดยังต้องแปลง/ออกใบเสร็จได้
           // (บั๊กเดิม: เงื่อนไข Approved/Sent อย่างเดียว ทำให้ใบ Overdue กดแปลงไม่ได้)
           const convertibleStatuses = ['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'];
-          const hasConvertTargets = (this._validConversions?.[d.documentType] || []).length > 0;
+          // ใบวางบิลรวมใบแจ้งหนี้แปลงไม่ได้ (เซิร์ฟเวอร์ตัดสิน isRollupBillingNote · C-02) — ทางรับเงินคือปุ่ม "รับชำระตามใบวางบิล"
+          const hasConvertTargets = !d.isRollupBillingNote && (this._validConversions?.[d.documentType] || []).length > 0;
           if (convertibleStatuses.includes(d.status) && hasConvertTargets) {
             actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
           }
@@ -10502,8 +10513,12 @@
           // ใบเสนอราคา/ใบส่งของ/PO/PR/ใบลดหนี้ ที่ Approved ก็มีปุ่มรับเงิน
           // (backend ตั้ง BalanceDue = TotalAmount ให้ทุกใบ) กดแล้วออกใบเสร็จ
           // จากเอกสารที่ไม่ใช่ตัวตั้งหนี้
-          const payableTypes = ['Invoice', 'TaxInvoice', 'BillingNote', 'DebitNote',
+          // ใบวางบิลไม่ใช่ตัวตั้งหนี้ (เซิร์ฟเวอร์ปฏิเสธ PayableDocumentTypes) — ใบวางบิลรวมใบแจ้งหนี้ใช้ปุ่ม "รับชำระตามใบวางบิล" ด้านล่างแทน (C-02)
+          const payableTypes = ['Invoice', 'TaxInvoice', 'DebitNote',
             'PurchaseInvoice', 'Expense', 'PaymentVoucher'];
+          if (d.isRollupBillingNote && payableStatuses.includes(d.status)) {
+            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.openBillingNotePayments('${d.id}')" title="บันทึกชำระที่ใบแจ้งหนี้แต่ละใบในใบวางบิลนี้ (ตัดลูกหนี้ใบนั้น) — ใบวางบิลรวมแปลง/รับชำระตรงไม่ได้">💰 รับชำระตามใบวางบิล</button>`;
+          }
           if (payableStatuses.includes(d.status) && payableTypes.includes(d.documentType)
               && Number(d.balanceDue || 0) > 0.01) {
             // Emoji prefix matches the next-step banner above so the user
@@ -12962,6 +12977,35 @@
       },
 
       /** คำตัดสินข้อ 139 — เปิดหน้าต่างผูก: รายการใบเสนอราคา + การจับคู่บรรทัดที่เซิร์ฟเวอร์เสนอ (หน้าเว็บไม่ตัดสินสิทธิ์/เงื่อนไขเอง) */
+      /** ใบวางบิลรวมใบแจ้งหนี้ (C-02): รายการใบแจ้งหนี้ + ยอดคงค้างจากเซิร์ฟเวอร์ · แต่ละแถวเปิดหน้าต่าง "บันทึกชำระเงิน" เดิมของใบนั้น
+       *  (WHT · VAT · ออกใบเสร็จ · ค่าธรรมเนียม ทำงานเหมือนรับชำระที่ใบแจ้งหนี้ตรง ๆ) */
+      async openBillingNotePayments(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const items = (await api.getBillingNoteInvoices(id)).data || [];
+          this._bnPayItems = items;
+          const rows = items.map((x, i) => {
+            const open = Number(x.balanceDue || 0) > 0.01;
+            return `<tr><td>${Layout.esc(x.documentNumber)}</td>
+              <td class="text-right">${Layout.money(x.totalAmount)}</td>
+              <td class="text-right"><b>${Layout.money(x.balanceDue)}</b></td>
+              <td class="text-right">${open
+                ? `<button class="btn btn-sm btn-primary" onclick="Page.payBillingNoteInvoice(${i})">💰 บันทึกชำระ</button>`
+                : '<span class="text-gray-500">✓ ชำระครบ</span>'}</td></tr>`;
+          }).join('');
+          document.getElementById('bnPayList').innerHTML = items.length
+            ? `<table class="table" style="min-width:420px"><thead><tr><th>ใบแจ้งหนี้</th><th class="text-right">ยอดทั้งใบ</th><th class="text-right">คงค้าง</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+            : '<div class="text-gray-500">ไม่พบใบแจ้งหนี้ที่ยังมีผลในใบวางบิลนี้</div>';
+          Layout.openModal('bnPayModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      payBillingNoteInvoice(i) {
+        const x = (this._bnPayItems || [])[i]; if (!x) return;
+        Layout.closeModal('bnPayModal');
+        this.recordPayment(x.id, Number(x.balanceDue || 0), Number(x.withholdingTaxAmount || 0), Number(x.totalAmount || 0),
+          x.currency || 'THB', Number(x.exchangeRate || 1), x.documentType, Number(x.vatAmount || 0));
+      },
+
       async openLinkSource(id) {
         const api = Layout.api(); if (!api) return;
         try {

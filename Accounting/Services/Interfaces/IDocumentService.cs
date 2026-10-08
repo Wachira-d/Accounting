@@ -266,6 +266,7 @@ public interface IDocumentService
     // ── ใบวางบิลรวมใบค้างชำระหลายใบ (วิธีใช้จริงในไทย: ขายหลายครั้ง → รอบวางบิล
     //    รวมยอดใบเดียว) — BN ไม่ลง JE, ตัวหนี้ยังอยู่ที่ใบต้นทาง ──
     Task<List<BillingNoteSourceItem>> GetOutstandingInvoicesForBillingAsync(Guid companyId, Guid contactId);
+    Task<List<BillingNoteInvoiceItem>> GetBillingNoteInvoicesAsync(Guid companyId, Guid billingNoteId);
     Task<DocumentResponse> CreateBillingNoteFromInvoicesAsync(Guid companyId, CreateBillingNoteFromInvoicesRequest request, string createdBy);
 
     /// <summary>ชนิดปลายทางที่แปลงได้จริงสำหรับบริษัทนี้ — กรองชนิดที่ติดข้อจำกัด

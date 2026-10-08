@@ -207,6 +207,27 @@ RULES += [
          must_re=[r"catch\s*\(\s*Exception\s+\w+\s*\)\s*when\s*\(\s*\w+\s+is\s+InvalidOperationException"],
          why="ข้อ 10: ใบที่แปลงไม่ได้ต้องคืนให้หน้าเว็บ · ห้ามกลืน error ทุกชนิด (ฐานข้อมูล/บั๊กต้องดัง)"),
     # ฝ่ายค้าน 2026-10-08 P1: แถวใหม่ใต้ parent ที่ติดตามอยู่ผ่าน EfNewChild ตัวเดียว (ไม่ Modified · ไม่เบิ้ลในคอลเลกชัน)
+    # ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ห้ามแปลง/ห้ามรับชำระตรง (รายได้ซ้ำ · ลูกหนี้ใบเดิมไม่ถูกตัด)
+    dict(file=DOC, method="ValidateConversionAsync", must=["BillingNoteKind.IsRollup("],
+         why="C-02: ใบเสร็จจากใบวางบิลรวมลงแบบขายสด ⇒ รายได้ซ้ำ"),
+    dict(file=DOC, method="CreatePaymentAsync", must=["BillingNoteKind.PaymentBlockedMessage("],
+         why="C-02: ข้อความเดิมพาผู้ใช้ไปแปลงใบวางบิลเป็นใบเสร็จ (= เส้นรายได้ซ้ำ)"),
+    # ฝ่ายค้านชุดสอง (C-02/C-05): ทางเลี่ยงใบวางบิลรวม (แก้รายการ · โคลน) + ชั้นความลับของเอกสารลูก
+    dict(file=DOC, method="UpdateDocumentAsync", must=["BillingNoteKind.IsRollup("],
+         why="แก้รายการใบวางบิลรวมสร้างบรรทัดใหม่ ⇒ SourceDocumentId หาย ⇒ แปลงเป็นใบเสร็จได้ (รายได้ซ้ำ)"),
+    dict(file="Controllers/DocumentCloneController.cs", method="Clone",
+         must=["BillingNoteKind.IsRollup(", "CanViewAsync("], must_re=[r"Sensitivity:\s*src\.Sensitivity"],
+         why="โคลนใบวางบิลรวมเป็นใบเสร็จ = รายได้ซ้ำ · ใบลับโคลนแล้วทุกคนเห็น"),
+    dict(file=DOC, method="CreateSettlementReceiptAsync", must_re=[r"Sensitivity\s*=\s*invoice\.Sensitivity"],
+         why="ใบเสร็จของใบลับต้องลับตาม (กฎ #4 A เอกสารลูกสืบทอด)"),
+    # ทีมตรวจงานค้าง C-03/C-09 (E-05): บิลบรรทัด PO ที่รับผ่าน GRN แล้ว — ตัวตัดสินเดียวทั้งตอนแปลงและตอนอนุมัติ (ทางสแกน/API)
+    dict(file=DOC, method="ConvertCoreAsync", must=["PoBillBlockingGrnAsync("],
+         why="C-09: PO ผสมต้องบิลบรรทัดที่ GRN ไม่ได้รับได้ · ตัวตัดสินเดียวกับตอนอนุมัติ"),
+    dict(file=DOC, method="ApproveDocumentAsync#2", must=["PoBillBlockingGrnAsync("],
+         why="C-03: ใบแจ้งหนี้ซื้อจากสแกน/API ที่ผูก PO ตรงข้ามด่านแปลง ⇒ สต็อกเข้าสองรอบ"),
+    dict(file=DOC, method="PoBillBlockingGrnAsync", must=["PurchaseReceiptRoute.PoBillBlockedByGrn("],
+         must_re=[r"d\.CompanyId\s*==\s*companyId"],
+         why="C-03: ตัวโหลดเดียวของกติกา E-05"),
     # คำตัดสินข้อ 113 (ทีมตรวจงานค้าง 2026-10-08): ยกเลิกการนำส่ง + กลับ สปส. รายรอบห้ามแตะ JE ที่ใช้ร่วม
     dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="VoidRemittanceAsync",
          must=["RemittanceVoidPolicy.BlockReason(", "ReverseJournalEntryAsync(", "AddChainedAuditLog("],

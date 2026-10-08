@@ -714,6 +714,7 @@ const API = {
       // ใบวางบิลรวมใบค้างชำระหลายใบ (ลูกค้ารายเดียว)
       getBillingOutstanding: (contactId) => API.get(`${base}/document/billing-note/outstanding?contactId=${contactId}`),
       createBillingNoteFromInvoices: (d) => API.post(`${base}/document/billing-note/from-invoices`, d),
+      getBillingNoteInvoices: (id) => API.get(`${base}/document/${id}/billing-note-invoices`),
       convertDocumentPartial: (id, t, body) => API.post(`${base}/document/${id}/convert-partial/${t}`, body),
       getDocumentFulfillment: (id) => API.get(`${base}/document/${id}/fulfillment`),
       getLinkCandidates: (id) => API.get(`${base}/document/${id}/link-candidates`),

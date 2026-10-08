@@ -104,7 +104,9 @@ public class Pp36LifecycleGoldenDbTests
         => await (from l in db.JournalEntryLines.AsNoTracking()
                   join j in db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
                   join a in db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
-                  where j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted && a.AccountCode == code
+                  where j.CompanyId == companyId && a.AccountCode == code
+                        // ต้นฉบับที่ถูกกลับมีสถานะ Reversed + ตัวกลับ Posted ⇒ บัญชีแยกประเภทนับทั้งคู่ (สุทธิ 0) — นับแค่ Posted = เห็นตัวกลับข้างเดียว
+                        && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
                   select l.DebitAmount - l.CreditAmount).SumAsync();
 
     private static RemitRequest Remit(Seed s, DateTime period, DateTime payDate, string? filing = null) => new(
