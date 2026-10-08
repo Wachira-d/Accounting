@@ -109,25 +109,22 @@ public partial class DocumentService
         var consumed = await ComputeConsumedBaseAsync(companyId, sourceLineIds.ToList());
         var linkingNow = map.Keys.Sum(id => childLineById[id].Amount);
         var sourceBase = source.Lines.Sum(l => l.Amount);
-        string? overNote = null;
+        // สองชั้น ประเมินครบก่อนแล้วถามครั้งเดียว (ฝ่ายค้าน C-01): (ก) บรรทัดที่จับคู่ · (ข) รายได้รวมของใบเสนอราคา (ทุกทาง) + ใบนี้ทั้งใบ
+        var overMsgs = new List<string>();
         if (PartialConvertPolicy.IsOverAmount(consumed.Billing, linkingNow, sourceBase, consumed.LineCount + map.Count))
-        {
-            var msg = PartialConvertPolicy.OverAmountMessage(source.DocumentNumber, "วางบิล", consumed.Billing, linkingNow, sourceBase);
-            if (!request.ConfirmOverSourceAmount)
-                throw new BusinessRuleException(msg, PartialConvertPolicy.OverAmountRule, 422);
-            overNote = msg + " (ผู้ใช้ยืนยันแล้ว)";
-        }
-        // C-01: รายได้รวมของใบเสนอราคา (นับทุกทาง รวมใบแจ้งหนี้ผ่านใบวางบิล/ใบเสร็จขายสด) + ใบนี้ทั้งใบ — ด่านข้างบนเห็นเฉพาะบรรทัดที่จับคู่
+            overMsgs.Add(PartialConvertPolicy.OverAmountMessage(source.DocumentNumber, "วางบิล", consumed.Billing, linkingNow, sourceBase));
         if (await LoadRootRevenueAsync(companyId, source.Id, child.Id) is { } ledger)
         {
-            var childBase = child.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount);
+            var childBase = child.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount) + child.DepositBaseDeducted;
             if (PartialConvertPolicy.IsOverAmount(ledger.Billed, childBase, ledger.RootBase, ledger.LineCount + child.Lines.Count))
-            {
-                var rootMsg = RootRevenueLedger.OverMessage(ledger.RootNumber, ledger.Billed, childBase, ledger.RootBase);
-                if (!request.ConfirmOverSourceAmount)
-                    throw new BusinessRuleException(rootMsg, PartialConvertPolicy.OverAmountRule, 422);
-                overNote = overNote == null ? rootMsg + " (ผู้ใช้ยืนยันแล้ว)" : overNote + " · " + rootMsg;
-            }
+                overMsgs.Add(RootRevenueLedger.OverMessage(ledger.RootNumber, ledger.Billed, childBase, ledger.RootBase));
+        }
+        string? overNote = null;
+        if (overMsgs.Count > 0)
+        {
+            if (!request.ConfirmOverSourceAmount)
+                throw new BusinessRuleException(string.Join("\n", overMsgs), PartialConvertPolicy.OverAmountRule, 422);
+            overNote = string.Join(" · ", overMsgs) + " (ผู้ใช้ยืนยันแล้ว)";
         }
 
         var before = new { child.RelatedDocumentId, Lines = child.Lines.Select(l => new { l.Id, l.SourceLineId }).ToList() };

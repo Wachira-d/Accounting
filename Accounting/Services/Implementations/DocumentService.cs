@@ -11246,7 +11246,7 @@ public partial class DocumentService : IDocumentService
             ?? grns[0].DocumentNumber;
     }
 
-    private readonly record struct RootRevenueState(Guid RootId, string RootNumber, decimal RootBase, decimal Billed, int LineCount);
+    private readonly record struct RootRevenueState(Guid RootId, string RootNumber, decimal RootBase, decimal Billed, int LineCount, string Currency);
 
     /// <summary>ใบเสนอราคาราก + ชนิดใบแม่ของใบที่อ้าง <paramref name="parentId"/> (ใบเสนอราคาตรง หรือ ใบส่งของ/ใบวางบิลที่มาจากใบเสนอราคา) ·
     /// null = ไม่ได้อยู่ใต้ใบเสนอราคา (C-01)</summary>
@@ -11273,14 +11273,14 @@ public partial class DocumentService : IDocumentService
     {
         var root = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == rootQtId && d.CompanyId == companyId && !d.IsDeleted)
-            .Select(d => new { d.DocumentNumber, Base = d.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount) })
+            .Select(d => new { d.DocumentNumber, d.Currency, Base = d.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount) })
             .FirstOrDefaultAsync();
         if (root == null) return null;
         var consuming = ConsumingChildDocIds(companyId);
         var mids = await _db.Documents.AsNoTracking()
+            // ใบกลางที่ยกเลิกภายหลังยังนับ — ใบแจ้งหนี้ที่ออกจากมันไม่ถูกยกเลิกตาม (การเรียกเก็บเกิดแล้วจริง · แบบเดียวกับ LoadBilledViaDeliveryAsync)
             .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.RelatedDocumentId == rootQtId
-                && (d.DocumentType == DocumentType.DeliveryNote || d.DocumentType == DocumentType.BillingNote)
-                && consuming.Contains(d.Id))
+                && (d.DocumentType == DocumentType.DeliveryNote || d.DocumentType == DocumentType.BillingNote))
             .Select(d => new { d.Id, d.DocumentType })
             .ToListAsync();
         var parentType = mids.ToDictionary(m => m.Id, m => m.DocumentType);
@@ -11296,12 +11296,14 @@ public partial class DocumentService : IDocumentService
             .Select(d => new
             {
                 d.DocumentType, ParentId = d.RelatedDocumentId!.Value, d.IsDeposit,
-                Base = d.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount),
+                // ใบที่หักมัดจำ: บรรทัดสุทธิหลังหัก ⇒ บวกฐานมัดจำที่หักกลับ (มูลค่าที่เรียกเก็บจริงของใบเสนอราคา · ใบมัดจำเองไม่นับ)
+                Base = d.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount) + d.DepositBaseDeducted,
                 Lines = d.Lines.Count(l => !l.IsDeleted),
             })
             .ToListAsync();
         var counted = kids.Where(k => RootRevenueLedger.CountsAsRevenue(k.DocumentType, parentType[k.ParentId], k.IsDeposit)).ToList();
-        return new RootRevenueState(rootQtId, root.DocumentNumber, root.Base, counted.Sum(k => k.Base), counted.Sum(k => k.Lines));
+        return new RootRevenueState(rootQtId, root.DocumentNumber, root.Base, counted.Sum(k => k.Base), counted.Sum(k => k.Lines),
+            root.Currency ?? "THB");
     }
 
     private readonly record struct BilledViaDeliveryLine(Guid SourceLineId, decimal Quantity, decimal Amount, DocumentType DocumentType);
@@ -11758,7 +11760,8 @@ public partial class DocumentService : IDocumentService
             {
                 Guid? rootQtId = source.DocumentType == DocumentType.Quotation ? source.Id
                     : (await ResolveRootQuotationAsync(companyId, source.RelatedDocumentId))?.RootId;
-                if (rootQtId is Guid rid && await LoadRootRevenueAsync(companyId, rid, null) is { } ledger && ledger.Billed > 0.005m)
+                if (rootQtId is Guid rid && await LoadRootRevenueAsync(companyId, rid, null) is { } ledger && ledger.Billed > 0.005m
+                    && string.Equals(ledger.Currency, source.Currency ?? "THB", StringComparison.OrdinalIgnoreCase))
                 {
                     var now = orderedLines.Sum(l => l.Amount);
                     if (Accounting.Helpers.PartialConvertPolicy.IsOverAmount(ledger.Billed, now, ledger.RootBase, ledger.LineCount + orderedLines.Count))
@@ -11980,37 +11983,31 @@ public partial class DocumentService : IDocumentService
         var consumedBase = await ComputeConsumedBaseAsync(companyId, source.Lines.Select(l => l.Id).ToList());
         var convertedBefore = axis == FulfillmentAxis.Delivery ? consumedBase.Delivery : consumedBase.Billing;
         var sourceBase = source.Lines.Sum(l => l.Amount);
+        // ด่านยอดเงินสองชั้น (ประเมินครบก่อน แล้วถามครั้งเดียว — ฝ่ายค้าน C-01: เดิมโยนชั้นแรกก่อน ผู้ใช้ไม่เห็นชั้นที่สองตอนยืนยัน):
+        //   (ก) ใบต้นทางนี้ · (ข) รายได้รวมของใบเสนอราคาราก (นับทุกทาง — ตรง · ใบส่งของ · ใบวางบิล · ใบเสร็จขายสด)
+        var overMsgs = new List<string>();
         if (Accounting.Helpers.PartialConvertPolicy.IsOverAmount(convertedBefore, convertingNow, sourceBase,
                 roundingLines: consumedBase.LineCount + spec.Count))
-        {
-            var msg = Accounting.Helpers.PartialConvertPolicy.OverAmountMessage(
-                source.DocumentNumber, axisLabel, convertedBefore, convertingNow, sourceBase);
-            if (!request.ConfirmOverSourceAmount)
-                throw new Accounting.Helpers.BusinessRuleException(
-                    string.Join("\n", warnings.Prepend(msg)),
-                    Accounting.Helpers.PartialConvertPolicy.OverAmountRule, 422);
-            warnings.Insert(0, msg + " (ผู้ใช้ยืนยันแล้ว)");
-        }
-        // C-01: รายได้รวมของใบเสนอราคาราก (นับทุกทาง — ด่านข้างบนเห็นแค่ลูก/หลานผ่านใบส่งของของใบนี้) · ยืนยันได้ (ข้อ 138 เตือนไม่ล็อก)
+            overMsgs.Add(Accounting.Helpers.PartialConvertPolicy.OverAmountMessage(
+                source.DocumentNumber, axisLabel, convertedBefore, convertingNow, sourceBase));
         if (targetType is DocumentType.Invoice or DocumentType.TaxInvoice)
         {
             Guid? rootQtId = source.DocumentType == DocumentType.Quotation ? source.Id
                 : RootRevenueLedger.IsMidDocument(source.DocumentType)
                     ? (await ResolveRootQuotationAsync(companyId, source.RelatedDocumentId))?.RootId
                     : null;
-            var ledger = rootQtId is Guid rid ? await LoadRootRevenueAsync(companyId, rid, null) : null;
-            var alreadyPrompted = warnings.Count > 0 && warnings[0].Contains("(ผู้ใช้ยืนยันแล้ว)");
-            if (ledger is { } lg
+            if (rootQtId is Guid rid && await LoadRootRevenueAsync(companyId, rid, null) is { } lg
                 && Accounting.Helpers.PartialConvertPolicy.IsOverAmount(lg.Billed, convertingNow, lg.RootBase,
                     roundingLines: lg.LineCount + spec.Count))
-            {
-                var rootMsg = RootRevenueLedger.OverMessage(lg.RootNumber, lg.Billed, convertingNow, lg.RootBase);
-                if (!request.ConfirmOverSourceAmount)
-                    throw new Accounting.Helpers.BusinessRuleException(
-                        string.Join("\n", warnings.Prepend(rootMsg)), Accounting.Helpers.PartialConvertPolicy.OverAmountRule, 422);
-                if (!alreadyPrompted) warnings.Insert(0, rootMsg + " (ผู้ใช้ยืนยันแล้ว)");
-                else warnings.Insert(1, rootMsg);
-            }
+                overMsgs.Add(RootRevenueLedger.OverMessage(lg.RootNumber, lg.Billed, convertingNow, lg.RootBase));
+        }
+        if (overMsgs.Count > 0)
+        {
+            if (!request.ConfirmOverSourceAmount)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    string.Join("\n", overMsgs.Concat(warnings)),
+                    Accounting.Helpers.PartialConvertPolicy.OverAmountRule, 422);
+            warnings.InsertRange(0, overMsgs.Select(m => m + " (ผู้ใช้ยืนยันแล้ว)"));
         }
 
         var created = await ConvertCoreAsync(source, targetType, spec, createdBy,
@@ -12018,12 +12015,13 @@ public partial class DocumentService : IDocumentService
 
         // ร่องรอยการยืนยันเกินยอด (ฝ่ายค้านรอบ 138 P3): ลงที่ใบลูกในช่องภายใน (InternalNotes — ไม่พิมพ์ลงกระดาษ)
         // ให้ผู้ตรวจเห็นว่าใครยืนยันแปลงเกินยอดใบต้นทาง เมื่อไร · ไม่ลง Notes เพราะ renderer พิมพ์ช่องนั้นให้ลูกค้าเห็น
-        if (request.ConfirmOverSourceAmount && warnings.Count > 0 && warnings[0].EndsWith("(ผู้ใช้ยืนยันแล้ว)"))
+        var confirmedOver = warnings.Where(w => w.EndsWith("(ผู้ใช้ยืนยันแล้ว)")).ToList();
+        if (request.ConfirmOverSourceAmount && confirmedOver.Count > 0)
         {
             var child = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id && d.CompanyId == companyId);
             if (child != null)
             {
-                var stamp = $"[แปลงเกินยอดใบต้นทาง] {warnings[0]} · โดย {createdBy} · {DateTime.UtcNow.AddHours(7).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} (+07:00)";
+                var stamp = $"[แปลงเกินยอดใบต้นทาง] {string.Join(" · ", confirmedOver)} · โดย {createdBy} · {DateTime.UtcNow.AddHours(7).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} (+07:00)";
                 child.InternalNotes = string.IsNullOrWhiteSpace(child.InternalNotes) ? stamp : child.InternalNotes + "\n" + stamp;
                 await _db.SaveChangesAsync();
             }
@@ -19413,9 +19411,11 @@ public partial class DocumentService : IDocumentService
             && !doc.IsDeposit
             && await ResolveRootQuotationAsync(companyId, doc.RelatedDocumentId) is { } rootRef
             && RootRevenueLedger.CountsAsRevenue(doc.DocumentType, rootRef.ParentType, doc.IsDeposit)
-            && await LoadRootRevenueAsync(companyId, rootRef.RootId, doc.Id) is { } ledger)
+            && await LoadRootRevenueAsync(companyId, rootRef.RootId, doc.Id) is { } ledger
+            // สกุลเงินต่างกัน = เทียบยอดกันไม่ได้ (ไม่เดา · ผูกเอกสารบังคับสกุลเดียวกันอยู่แล้ว)
+            && string.Equals(ledger.Currency, doc.Currency ?? "THB", StringComparison.OrdinalIgnoreCase))
         {
-            var billingNow = doc.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount);
+            var billingNow = doc.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount) + doc.DepositBaseDeducted;
             if (Accounting.Helpers.PartialConvertPolicy.IsOverAmount(ledger.Billed, billingNow, ledger.RootBase,
                     roundingLines: ledger.LineCount + doc.Lines.Count(l => !l.IsDeleted)))
                 warnings.Add(RootRevenueLedger.OverMessage(ledger.RootNumber, ledger.Billed, billingNow, ledger.RootBase));
