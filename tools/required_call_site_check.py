@@ -220,6 +220,20 @@ RULES += [
          why="โคลนใบวางบิลรวมเป็นใบเสร็จ = รายได้ซ้ำ · ใบลับโคลนแล้วทุกคนเห็น"),
     dict(file=DOC, method="CreateSettlementReceiptAsync", must_re=[r"Sensitivity\s*=\s*invoice\.Sensitivity"],
          why="ใบเสร็จของใบลับต้องลับตาม (กฎ #4 A เอกสารลูกสืบทอด)"),
+    # คำตัดสินข้อ 114 Q1: รายการประจำอนุมัติอัตโนมัติต้องเก็บข้อสังเกตที่ผ่าน แล้วแจ้งคน
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateDocumentFromTemplateAsync",
+         must=["Section65TerApprovalWarnings.PassedNotice(", "RecurringApprovedWithNotes"],
+         why="ข้อสังเกต §65 ตรีจากใบประจำต้องถึงคน (ไม่บล็อก ข้อ 110)"),
+    # คำตัดสินข้อ 115 Q1: รอบเงินเดือนอยู่ในการนำส่งตามเวลาจ่ายจริง (ไม่ใช่ CreatedAt ตรง ๆ)
+    dict(file=PAYROLL, method="LoadRecalculateLockEvidenceAsync", must=["RemittanceInclusion.RunCountedAt("],
+         forbid=["(DateTime?)remittedAt : null, run.CreatedAt"],
+         why="รอบที่สร้างก่อนแต่จ่ายหลังนำส่งถูกล็อกผิดเมื่อใช้ CreatedAt"),
+    # ทีมตรวจงานค้าง D5: ส่วนบังคับ §86/4 · §86/9-10 ของ PDF ห้ามห่อ Safe (หายเงียบ = ใบกำกับขาดรายการ)
+    dict(file="Services/Implementations/PdfGenerationService.DocumentRenderer.cs", method="RenderDocumentPdfNative",
+         forbid=["Safe(() => ComposeHeaderAndTitle(", "Safe(() => ComposeContact(", "Safe(() => ComposeItemsTable(",
+                 "Safe(() => ComposeSummary(", "Safe(() => ComposeAdjustmentRef(",
+                 "SafeH(() => ComposeHeaderAndTitle(", "SafeH(() => ComposeContact("],
+         why="D5: section บังคับตามกฎหมายล้มแล้วต้องไม่ได้ PDF ที่ขาดผู้ซื้อ/ตาราง/ยอด"),
     # ทีมตรวจงานค้าง C-03/C-09 (E-05): บิลบรรทัด PO ที่รับผ่าน GRN แล้ว — ตัวตัดสินเดียวทั้งตอนแปลงและตอนอนุมัติ (ทางสแกน/API)
     dict(file=DOC, method="ConvertCoreAsync", must=["PoBillBlockingGrnAsync("],
          why="C-09: PO ผสมต้องบิลบรรทัดที่ GRN ไม่ได้รับได้ · ตัวตัดสินเดียวกับตอนอนุมัติ"),

@@ -181,8 +181,9 @@ public partial class PdfGenerationService
                         {
                             void SafeH(Action a) { try { a(); } catch { /* skip failed section */ } }
                             if (cornerLabel != null) SafeH(() => ComposeCornerLabel(hc));
-                            SafeH(() => ComposeHeaderAndTitle(hc, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer, companyMayIssueAbbreviated));
-                            SafeH(() => ComposeContact(hc, doc, template, accent, L));
+                            // ทีมตรวจงานค้าง D5: หัว/ชื่อเอกสาร และ ผู้ขาย/ผู้ซื้อ = รายการบังคับ §86/4 — ห้ามหายเงียบ (ล้ม = ไปเส้น error ด้านล่าง ไม่ใช่ใบกำกับที่ขาดรายการ)
+                            ComposeHeaderAndTitle(hc, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer, companyMayIssueAbbreviated);
+                            ComposeContact(hc, doc, template, accent, L);
                             // ระยะห่างหัว↔เนื้อหา — Header ติดกับ Content ทันที
                             // ถ้าไม่เว้น ตารางจะชนขอบล่างของกล่องคู่ค้า
                             SafeH(() => hc.Item().Height(6));
@@ -200,14 +201,15 @@ public partial class PdfGenerationService
                         if (!repeatHeader)
                         {
                             if (cornerLabel != null) Safe(() => ComposeCornerLabel(col));
-                            Safe(() => ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer, companyMayIssueAbbreviated));
-                            Safe(() => ComposeContact(col, doc, template, accent, L));
+                            ComposeHeaderAndTitle(col, layout, doc, company, template, b, accent, headerBg, headerText, titleText, L, issuer, companyMayIssueAbbreviated);   // §86/4 บังคับ (D5)
+                            ComposeContact(col, doc, template, accent, L);
                         }
-                        Safe(() => ComposeAdjustmentRef(col, doc, accent, L));
+                        ComposeAdjustmentRef(col, doc, accent, L);   // ใบลด/เพิ่มหนี้ต้องอ้างเลข+วันที่ใบเดิม (§86/9-10) — บังคับ (D5)
                         Safe(() => ComposeSupplierInvoiceNote(col, doc, accent, L));
                         Safe(() => ComposeCurrencyNote(col, doc, accent, L));
-                        Safe(() => ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, L, layout, accent));
-                        Safe(() => ComposeSummary(col, doc, template, accent, layout, L));
+                        // รายการสินค้า + ยอดรวม/VAT/สุทธิ = รายการบังคับ §86/4 (D5) — ไม่ห่อ Safe: ล้มแล้วต้องไม่ได้เอกสารที่ไม่มีตาราง/ไม่มียอด
+                        ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, L, layout, accent);
+                        ComposeSummary(col, doc, template, accent, layout, L);
                         Safe(() => ComposeFooter(col, doc, template, accent, L, issuer));
                         Safe(() => ComposeSignatures(col, template, b, signers, lang));
                         Safe(() => ComposeGlPosting(col, gl, lang, L));

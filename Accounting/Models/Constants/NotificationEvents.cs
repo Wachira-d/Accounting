@@ -49,6 +49,8 @@ public static class NotificationEvents
     /// สาเหตุที่พบบ่อยสุดคือยังไม่ได้ตั้ง webhook URL ในแดชบอร์ดผู้ให้บริการ</summary>
     public const string GatewayPaymentStuck     = "gateway.payment_stuck";
     public const string DepreciationPosted      = "depreciation.posted";
+    /// <summary>คำตัดสินข้อ 114 Q1: รายการประจำอนุมัติอัตโนมัติพร้อมข้อสังเกต §65 ตรี (ไม่บล็อก) — แจ้งผู้ตั้งรายการ</summary>
+    public const string RecurringApprovedWithNotes = "recurring.approved_with_notes";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
@@ -111,6 +113,7 @@ public static class NotificationEvents
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
         ("Accounting", GatewayPaymentStuck, "รับชำระออนไลน์ค้างนานผิดปกติ (ตรวจ webhook)"),
         ("Accounting", DepreciationPosted, "ลงค่าเสื่อมราคาประจำเดือนอัตโนมัติ"),
+        ("Accounting", RecurringApprovedWithNotes, "รายการประจำอนุมัติอัตโนมัติพร้อมข้อสังเกตรายจ่ายต้องห้าม §65 ตรี"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
         ("Accounting", OverdueDunningFirst, "AR เกิน 60 วัน — ส่งหนังสือทวงหนี้รอบที่ 2"),

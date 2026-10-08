@@ -19,6 +19,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     private readonly ILogger<RecurringTransactionService> _logger;
     private readonly IErrorLogService _errorLogService;
     private readonly IEmailScheduleService? _emailSchedule;
+    private readonly INotificationEngine? _notify;
 
     public RecurringTransactionService(
         AccountingDbContext db,
@@ -27,7 +28,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         IWithholdingTaxCertService whtService,
         ILogger<RecurringTransactionService> logger,
         IErrorLogService errorLogService,
-        IEmailScheduleService? emailSchedule = null)
+        IEmailScheduleService? emailSchedule = null,
+        INotificationEngine? notify = null)
     {
         _db = db;
         _documentService = documentService;
@@ -36,6 +38,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         _logger = logger;
         _errorLogService = errorLogService;
         _emailSchedule = emailSchedule;
+        _notify = notify;
     }
 
     /// <summary>ตัวตัดสินกลางว่า template เป็น "สมุดรายวัน" หรือ "เอกสาร" —
@@ -517,7 +520,30 @@ public class RecurringTransactionService : IRecurringTransactionService
             {
                 try
                 {
-                    await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy);
+                    // คำตัดสินข้อ 114 Q1: ข้อสังเกต §65 ตรีที่การอนุมัติอัตโนมัติผ่านไป (ไม่บล็อก — ข้อ 110) ต้องถึงคน — เก็บรายการที่ผ่านแล้วแจ้งผู้ตั้งรายการประจำ
+                    var passed = new List<string>();
+                    await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
+                        Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passed);
+                    if (Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed) is { } notice && _notify != null)
+                    {
+                        try
+                        {
+                            await _notify.DispatchAsync(recurring.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringApprovedWithNotes, new NotificationContext
+                            {
+                                Title = $"รายการประจำอนุมัติ {result.DocumentNumber} พร้อมข้อสังเกต §65 ตรี",
+                                Message = notice,
+                                ActionUrl = "/pages/documents.html#doc=" + result.Id,
+                                EntityType = "Document",
+                                EntityId = result.Id,
+                                RecipientUserId = Guid.TryParse(recurring.CreatedBy, out var ownerId) ? ownerId : null,
+                            });
+                        }
+                        catch (Exception nex) when (nex is not OperationCanceledException)
+                        {
+                            // การแจ้งเตือนล้มไม่ย้อนการอนุมัติ — ข้อสังเกตอยู่บนเอกสาร (หมายเหตุ + audit) แล้ว · ลง log ให้ผู้ดูแลเห็น
+                            _logger.LogWarning(nex, "Recurring {Id}: §65 notice dispatch failed for {Doc}", recurring.Id, result.Id);
+                        }
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

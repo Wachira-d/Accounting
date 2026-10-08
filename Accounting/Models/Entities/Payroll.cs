@@ -175,6 +175,9 @@ public class PayrollRun : TenantEntity
     //   • SsoFilingNumber — เลขรับใบ สปส.1-10 จาก portal (กรอกเมื่อยื่นแล้ว)
     //   • SsoLateFeeAmount — เงินเพิ่ม 2%/เดือน ที่เกิดเมื่อยื่นช้า
     //     (พ.ร.บ.ประกันสังคม §49 — เริ่มนับจากวันที่ 16 ของเดือนถัดไป)
+    /// <summary>คำตัดสินข้อ 115 Q1 (2026-10-08): เวลาที่รอบถูกตั้งเป็น "จ่ายแล้ว" (UTC) — null = ยังไม่จ่าย/ข้อมูลก่อนมีช่องนี้ที่ไม่มี JE ·
+    /// ใช้ตัดสินว่ารอบ "อยู่ใน" การนำส่ง ภ.ง.ด.1 ของงวดหรือไม่ (เดิมใช้ CreatedAt ⇒ รอบที่สร้างก่อนแต่จ่ายหลังนำส่งถูกล็อกผิด)</summary>
+    public DateTime? PaidAt { get; set; }
     public DateTime? SsoSettledAt { get; set; }
     public Guid? SsoSettlementJournalEntryId { get; set; }
     public Guid? SsoSettlementDocumentId { get; set; }

@@ -183,7 +183,7 @@ merge ผู้ติดต่อ repoint FK จาก information_schema · uni
 | E-04 | P0 | S | StockTransferController เขียน movement ตรง | ✅ |
 | E-05 | P0 | M | PO→GRN และ PO→PI ตรงเปิดคู่กัน | ✅ (ด่าน) |
 | E-02 | P1 | M | OPENING/TRANSFER_* ไม่อยู่ใน costing/รายงาน | ○ (§1 ข้อ 3) |
-| E-03 | P1 | S | AllowNegativeStock สองมาตรฐาน (เอกสารข้าม · POS บล็อกทั้งบิล · เช็คระดับบริษัทไม่ใช่คลัง) | ○ |
+| E-03 | P1 | S | AllowNegativeStock สองมาตรฐาน (เอกสารข้าม · POS บล็อกทั้งบิล · เช็คระดับบริษัทไม่ใช่คลัง) | ✅ 3b81ca15 ด่านเดียว `Helpers/NegativeStockGuard` ใน `StockLedger.MoveAsync` (D5-6 ราก E-03) · ตรวจยอดคลังนั้น + ถอดด่านซ้ำใน ProductService (E-08 รอบ 200) |
 | E-06 | P1 | M | consignment Invoice ไม่มี ProductCode + VAT 0 | ○ |
 | E-07 | P1 | M | ปรับสต๊อก/ตรวจนับ/รับโอนขาด ไม่มี JE | ○ (§1 ข้อ 2) |
 | E-08 | P1 | S | ADJUST ทิ้งเครื่องหมาย | ✅ |

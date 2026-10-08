@@ -2816,6 +2816,7 @@ public class PayrollService : IPayrollService
             Accounting.Helpers.PayrollDetailAmounts.RecomputeRunTotals(run);
 
             run.Status = "Paid";
+            run.PaidAt = DateTime.UtcNow;   // ข้อ 115 Q1 — เวลาจ่ายจริง (ตัดสินการอยู่ในการนำส่ง ภ.ง.ด.1)
             run.UpdatedBy = processedBy;
             run.UpdatedAt = DateTime.UtcNow;
 
@@ -3632,6 +3633,7 @@ public class PayrollService : IPayrollService
 
             run.JournalEntryId = null;
             run.Status = "Approved";
+            run.PaidAt = null;   // กลับรายการจ่าย ⇒ ยังไม่จ่าย (จ่ายใหม่ได้เวลาใหม่)
             run.ReopenedAt = DateTime.UtcNow;
             run.ReopenedBy = reopenedBy;
             run.ReopenReason = reason;
@@ -4909,7 +4911,8 @@ public class PayrollService : IPayrollService
                 marks.Add(new PayrollFilingMark(t.TaxType == TaxType.WithholdingTax1 ? PayrollRunLockEvidence.Pnd1Label : PayrollRunLockEvidence.SsoLabel,
                     PayrollFilingSource.LegacyTaxReport));
             if (Accounting.Helpers.RemittanceInclusion.Includes(
-                    pnd1RemittedAt.TryGetValue((y, m), out var remittedAt) ? (DateTime?)remittedAt : null, run.CreatedAt))
+                    pnd1RemittedAt.TryGetValue((y, m), out var remittedAt) ? (DateTime?)remittedAt : null,
+                    Accounting.Helpers.RemittanceInclusion.RunCountedAt(run.PaidAt, run.CreatedAt)))
                 marks.Add(new PayrollFilingMark(PayrollRunLockEvidence.Pnd1Label, PayrollFilingSource.StatutoryRemittance));
             result[run.Id] = PayrollRunLockEvidence.From(marks,
                 runSsoSettled: run.SsoSettledAt.HasValue,
@@ -4951,6 +4954,7 @@ public class PayrollService : IPayrollService
             CanEditAmounts: canEdit, EditLockReason: editReason,
             CanReopen: canReopen, ReopenBlockReason: reopenReason,
             ReopenedAt: r.ReopenedAt, ReopenedBy: r.ReopenedBy, ReopenReason: r.ReopenReason,
+            PaidAt: r.PaidAt,
             CanRecalculate: canRecalc, RecalculateBlockReason: recalcReason,
             RecalculateWarning: PayrollRunEditPolicy.RecalculateWarning(lockEvidence, r.ManualRosterChangedAt),
             CanSetPaymentAccount: PayrollRunEditPolicy.CanSetPaymentAccount(r.Status).Can,

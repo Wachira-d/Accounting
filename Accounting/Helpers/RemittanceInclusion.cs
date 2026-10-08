@@ -9,8 +9,8 @@ namespace Accounting.Helpers;
 /// (<c>StatutoryRemittanceService</c>) จึงนับใบนั้นเป็น "ยังค้างนำส่ง" · รอบเงินเดือนที่ยกเลิกแล้วสร้างใหม่ในเดือนเดียวกันก็ถูกล็อกทันทีด้วยเหตุเดียวกัน</para>
 /// <para>กติกา: นับว่าอยู่ในการนำส่งเฉพาะของที่<b>เกิดก่อนหรือพร้อม</b>เวลาบันทึกการนำส่งล่าสุดของงวด (<c>CreatedAt</c> ของแถวนำส่ง —
 /// ระบบห้ามนำส่งงวดเดิมซ้ำ จึงมีแถวที่ยังไม่ถูกลบได้แถวเดียว · ใช้ค่าล่าสุดกันข้อมูลเก่าที่ซ้ำ) · ไม่มีบันทึกนำส่ง = ไม่อยู่ในการนำส่ง</para>
-/// <para>⚠️ ทิศที่เลือกเมื่อไม่แน่ใจ: รอบเงินเดือนไม่มีเวลา "จ่าย" ของตัวเอง ⇒ ใช้เวลาสร้างรอบ — รอบที่สร้างก่อนนำส่งแต่จ่ายหลังนำส่ง
-/// ยังนับว่าอยู่ในการนำส่ง (ล็อกไว้ ข้อความบอกทางปลด) ดีกว่าปลดรอบที่ยอดออกนอกระบบไปแล้ว</para>
+/// <para>รอบเงินเดือน: นับด้วยเวลาจ่ายจริง <c>PaidAt</c> (ข้อ 115 Q1 · 2026-10-08) · ข้อมูลเก่าที่ไม่มีเวลาจ่าย ⇒ เวลาสร้างรอบ
+/// (ทิศ "ล็อกไว้ก่อน": รอบที่สร้างก่อนนำส่งยังนับว่าอยู่ในการนำส่ง ดีกว่าปลดรอบที่ยอดออกนอกระบบไปแล้ว)</para>
 /// </summary>
 public static class RemittanceInclusion
 {
@@ -21,6 +21,10 @@ public static class RemittanceInclusion
 
     /// <summary>เวลาที่ 50 ทวิ "นับเข้ายอดนำส่ง" — <c>IssuedDate</c> (ทุกทางออกใบประทับเวลาจริงตอนออก) · ไม่มี ⇒ เวลาสร้างแถว</summary>
     public static DateTime CertCountedAt(DateTime? issuedDateUtc, DateTime createdAtUtc) => issuedDateUtc ?? createdAtUtc;
+
+    /// <summary>เวลาที่รอบเงินเดือน "นับเข้ายอดนำส่ง" (คำตัดสินข้อ 115 Q1) — <c>PaidAt</c> (เวลาจ่ายจริง) · ไม่มี (ข้อมูลเก่าที่ไม่มี JE) ⇒
+    /// เวลาสร้างรอบ (ทิศเดิม "ล็อกไว้ก่อน")</summary>
+    public static DateTime RunCountedAt(DateTime? paidAtUtc, DateTime createdAtUtc) => paidAtUtc ?? createdAtUtc;
 
     /// <summary>เวลาบันทึกการนำส่งล่าสุดต่อกุญแจงวด — ผู้เรียกส่งเฉพาะแถวที่ยังไม่ถูกลบของบริษัทนั้น</summary>
     public static Dictionary<TKey, DateTime> LatestByPeriod<TKey>(IEnumerable<(TKey Key, DateTime RecordedAtUtc)> records)

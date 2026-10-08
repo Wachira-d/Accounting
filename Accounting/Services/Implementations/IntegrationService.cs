@@ -996,8 +996,27 @@ public class IntegrationService : IIntegrationService
                     var convertActor = "integration:invoice-sync";
                     var converted = await _documentService.ConvertDocumentAsync(
                         companyId, priorInvoice.Id, DocumentType.TaxInvoice, convertActor);
-                    var approvedTiv = await _documentService.ApproveDocumentAsync(
-                        companyId, converted.Id, convertActor);
+                    global::Accounting.Models.DTOs.Document.DocumentResponse approvedTiv;
+                    try
+                    {
+                        approvedTiv = await _documentService.ApproveDocumentAsync(companyId, converted.Id, convertActor);
+                    }
+                    catch (Exception ex) when (ex is DocumentApprovalWarningsException or Accounting.Helpers.BusinessRuleException
+                                               or InvalidOperationException)
+                    {
+                        // ทีมตรวจงานค้าง D7: เดิมคำเตือน/กฎธุรกิจตอนอนุมัติหลุดเป็น 500 ถึงคู่ค้า + ใบกำกับร่างค้าง (ซึ่งนับเป็นลูกของใบแจ้งหนี้
+                        // ⇒ sync รอบถัดไปถูกด่าน "แปลงซ้ำ" ปฏิเสธ) + sync log ไม่ถูกบันทึกว่า Failed · ตอนนี้: ลบใบร่าง (ยังไม่มีเลข/JE) แล้วตอบล้มพร้อมเหตุผลจริง
+                        await _documentService.DeleteDocumentAsync(companyId, converted.Id);
+                        var why = ex is DocumentApprovalWarningsException awe
+                            ? $"{awe.Message}: {string.Join(" · ", awe.Warnings)}"
+                            : ex.Message;
+                        var reason = $"แปลงใบแจ้งหนี้ {priorInvoice.DocumentNumber} เป็นใบกำกับแล้วอนุมัติไม่ผ่าน — {why} · ตรวจ/อนุมัติในระบบแล้ว sync ใหม่";
+                        log.Status = "Failed";
+                        log.ErrorMessage = reason;
+                        log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
+                        await SaveSyncLog(log, integrationId);
+                        return new InboundSyncResponse(false, reason, priorInvoice.Id, null, null, null, priorInvoice.DocumentNumber);
+                    }
                     log.Status = "Success";
                     log.CreatedDocumentId = approvedTiv.Id;
                     log.ErrorMessage = $"ออกใบกำกับโดยแปลงจากใบแจ้งหนี้ {priorInvoice.DocumentNumber} (ใบแจ้งหนี้ถูกแทนที่อัตโนมัติ)";

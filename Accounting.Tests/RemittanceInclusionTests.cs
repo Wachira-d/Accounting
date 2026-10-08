@@ -122,4 +122,23 @@ public class RemittanceInclusionTests
         Assert.False(PayrollRunEditPolicy.CanVoid(PayrollRunEditPolicy.Paid, null, locked).Can);
         Assert.True(PayrollRunEditPolicy.CanVoid(PayrollRunEditPolicy.Paid, null, PayrollRunLockEvidence.None).Can);
     }
+
+    // ── คำตัดสินข้อ 115 Q1 (2026-10-08): รอบเงินเดือนนับด้วยเวลาจ่ายจริง ──
+    [Fact]
+    public void รอบที่สร้างก่อนนำส่งแต่จ่ายหลังนำส่ง_ไม่อยู่ในการนำส่ง()
+    {
+        var created = new DateTime(2026, 9, 25, 3, 0, 0, DateTimeKind.Utc);
+        var remitted = new DateTime(2026, 10, 5, 3, 0, 0, DateTimeKind.Utc);
+        var paid = new DateTime(2026, 10, 7, 3, 0, 0, DateTimeKind.Utc);
+        Assert.False(RemittanceInclusion.Includes(remitted, RemittanceInclusion.RunCountedAt(paid, created)));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_รอบเก่าที่ไม่มีเวลาจ่าย_ใช้เวลาสร้างรอบ_ล็อกไว้เหมือนเดิม()
+    {
+        var created = new DateTime(2026, 9, 25, 3, 0, 0, DateTimeKind.Utc);
+        var remitted = new DateTime(2026, 10, 5, 3, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(created, RemittanceInclusion.RunCountedAt(null, created));
+        Assert.True(RemittanceInclusion.Includes(remitted, RemittanceInclusion.RunCountedAt(null, created)));
+    }
 }

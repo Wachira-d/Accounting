@@ -314,4 +314,32 @@ public class JournalPostingGuardTests
             ExchangeRate: 35m, IsForeignService: true);
         Assert.Empty(JournalPostingGuard.Validate(je, doc).Where(x => x.IsError));
     }
+
+    // PP36_REVIEW P2-7: ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทางเจ้าของ ภ.พ.36 — Cr 21912 อีกรอบ = นับซ้ำ
+    [Fact]
+    public void Settlement_pv_of_pp36_owner_with_21912_credit_is_blocked()
+    {
+        var je = new List<JournalPostingGuard.LineFacts>
+        {
+            L("21210", AccountType.Liability, dr: 1000m),
+            L("21912", AccountType.Liability, cr: 70m),
+            L("11120", AccountType.Asset, cr: 930m),
+        };
+        var doc = new JournalPostingGuard.DocFacts(DocumentType.PaymentVoucher, 1000m, 70m, 0m, 1070m,
+            IsForeignService: true, SourceOwnsPp36: true);
+        Assert.Contains(JournalPostingGuard.Validate(je, doc), f => f.RuleCode == "JE-PP36-DOUBLE" && f.IsError);
+    }
+
+    [Fact]
+    public void Opposite_settlement_pv_of_pp36_owner_without_21912_passes_double_check()
+    {
+        var je = new List<JournalPostingGuard.LineFacts>
+        {
+            L("21210", AccountType.Liability, dr: 1000m),
+            L("11120", AccountType.Asset, cr: 1000m),
+        };
+        var doc = new JournalPostingGuard.DocFacts(DocumentType.PaymentVoucher, 1000m, 70m, 0m, 1070m,
+            IsForeignService: true, SourceOwnsPp36: true);
+        Assert.DoesNotContain(JournalPostingGuard.Validate(je, doc), f => f.RuleCode == "JE-PP36-DOUBLE");
+    }
 }
