@@ -1717,6 +1717,11 @@ public class PayrollService : IPayrollService
             Accounting.Helpers.PayrollDetailAmounts.SetYtd(d,
                 Accounting.Helpers.PayrollWithholdingTax.PriorYtd(prior.GetValueOrDefault(emp.Id)));
 
+            // 2026-10-08 (ผู้ใช้รายงาน 500 DbUpdateConcurrencyException ทุกครั้งที่ "เพิ่มพนักงานเข้ารอบนี้"):
+            // Id ของ BaseEntity ตั้ง Guid.NewGuid() ไว้แล้ว ⇒ แถวใหม่ที่ EF "เจอ" ผ่านคอลเลกชันของ run ที่ติดตามอยู่ถูกตีเป็น Modified
+            // ⇒ UPDATE แถวที่ไม่มีจริง = affected 0 · ต้อง Add ตรง ๆ ให้เป็น Added (รูปแบบเดียวกับ CalculatePayrollAsync)
+            // · ยังใส่ลงคอลเลกชันด้วยเพราะ RecomputeRunTotals อ่าน run.Details
+            _db.Set<PayrollDetail>().Add(d);
             run.Details.Add(d);
             Accounting.Helpers.PayrollDetailAmounts.RecomputeRunTotals(run);
             // ★ ข้อ 69: เปลี่ยนรายชื่อคนรับเงิน ⇒ รอบที่อนุมัติแล้วกลับเป็น "คำนวณแล้ว" (ต้องอนุมัติใหม่) · ประทับเวลาแก้รายชื่อ (X4)

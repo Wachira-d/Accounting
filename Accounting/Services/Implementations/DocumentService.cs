@@ -2024,6 +2024,7 @@ public partial class DocumentService : IDocumentService
         var srcIds = sourceTotals.Keys.ToList();
         var inactive = DocumentConversionProgress.InactiveChildStatuses;
 
+        var consuming = ConsumingChildDocIds(companyId);
         // (1) จำนวนที่ใบลูกยกบรรทัดไปแล้ว (DocumentLine.SourceLineId → บรรทัดของใบต้นทาง) — ทั้งชุดใน query เดียว
         var consumed = await (
             from cl in _db.DocumentLines.AsNoTracking()
@@ -2033,8 +2034,8 @@ public partial class DocumentService : IDocumentService
             where srcIds.Contains(sl.DocumentId)
                   && sd.CompanyId == companyId
                   && cd.CompanyId == companyId && !cd.IsDeleted
-                  && !inactive.Contains(cd.Status)
-            select new { SourceDocId = sl.DocumentId, ChildId = cd.Id, cd.DocumentType, cl.Quantity })
+                  && consuming.Contains(cd.Id)   // รวมใบแจ้งหนี้ที่ถูกแทนที่ด้วยใบกำกับ (ข้อ 138)
+            select new { SourceDocId = sl.DocumentId, ChildId = cd.Id, cd.DocumentType, cl.Quantity, cl.Amount })
             .ToListAsync();
 
         // (2) ใบลูกที่ยังมีผล — ผูกด้วย RelatedDocumentId (รวมใบที่ไม่ได้ยกรายการ เช่น ใบแจ้งหนี้มัดจำ)
@@ -11111,18 +11112,33 @@ public partial class DocumentService : IDocumentService
     /// <summary>How much of each given source line has already been carried
     /// forward into child documents, split per fulfilment axis. Voided /
     /// Rejected / deleted child documents do not count.</summary>
+    /// <summary>ใบลูกที่ "ยังกินยอดของใบต้นทาง" — ตัวตั้งเดียวของทุกด่าน/ตัวนับความคืบหน้าการแปลง (คำตัดสินข้อ 138 · ทีมตรวจเส้นแปลง ข้อ 1):
+    /// สถานะยังมีผล (ไม่ Voided/Rejected) **หรือ** เป็นใบแจ้งหนี้ที่ถูก "แทนที่" ด้วยใบกำกับภาษีที่ยังมีผล
+    /// (<c>SupersedeSourceInvoiceAsync</c> ตั้งใบแจ้งหนี้เป็น Voided แล้วใบกำกับอ้างบรรทัดของใบแจ้งหนี้ ไม่ใช่ของใบเสนอราคา)
+    /// — เดิมนับเฉพาะสถานะ ⇒ QT → INV → TIV แล้ว QT กลับเป็น "ยังไม่ออกเอกสารต่อ" และแปลงซ้ำได้ = รายได้/ภาษีขายซ้ำ</summary>
+    private IQueryable<Guid> ConsumingChildDocIds(Guid companyId) =>
+        _db.Documents.AsNoTracking()
+            .Where(cd => cd.CompanyId == companyId && !cd.IsDeleted
+                && ((cd.Status != DocumentStatus.Voided && cd.Status != DocumentStatus.Rejected)
+                    || (cd.DocumentType == DocumentType.Invoice && cd.Status == DocumentStatus.Voided
+                        && _db.Documents.Any(t => t.CompanyId == companyId && !t.IsDeleted
+                            && t.RelatedDocumentId == cd.Id && t.DocumentType == DocumentType.TaxInvoice
+                            && t.Status != DocumentStatus.Voided && t.Status != DocumentStatus.Rejected))))
+            .Select(cd => cd.Id);
+
     private async Task<Dictionary<Guid, (decimal Delivery, decimal Billing)>> ComputeConsumptionAsync(
         Guid companyId, List<Guid> sourceLineIds)
     {
         var result = sourceLineIds.ToDictionary(id => id, _ => (Delivery: 0m, Billing: 0m));
         if (sourceLineIds.Count == 0) return result;
 
+        var consuming = ConsumingChildDocIds(companyId);
         var children = await (
             from cl in _db.DocumentLines
             join cd in _db.Documents on cl.DocumentId equals cd.Id
             where cl.SourceLineId != null && sourceLineIds.Contains(cl.SourceLineId.Value)
                   && cd.CompanyId == companyId
-                  && cd.Status != DocumentStatus.Voided && cd.Status != DocumentStatus.Rejected
+                  && consuming.Contains(cd.Id)
             select new { SourceLineId = cl.SourceLineId!.Value, cl.Quantity, cd.DocumentType })
             .ToListAsync();
 
@@ -11140,9 +11156,38 @@ public partial class DocumentService : IDocumentService
         return result;
     }
 
+    /// <summary>คำตัดสินข้อ 138: ยอดเงิน (ฐานก่อน VAT = Σ <c>Amount</c> ของบรรทัดลูก) ที่ถูกแปลงไปแล้วต่อแกน —
+    /// ใช้ <b>ยอดจริงของใบลูก</b> ไม่ใช่จำนวน × ราคาต้นทาง เพราะผู้ใช้แก้ราคาในใบลูกได้ (เช่น แบ่งงวด 50/50 ด้วยการแก้ราคา)
+    /// · กรองเหมือน <see cref="ComputeConsumptionAsync"/> ทุกประการ (ไม่นับใบที่ยกเลิก/ถูกปฏิเสธ · tenant เดียวกัน)</summary>
+    private async Task<(decimal Delivery, decimal Billing, int LineCount)> ComputeConsumedBaseAsync(
+        Guid companyId, List<Guid> sourceLineIds)
+    {
+        if (sourceLineIds.Count == 0) return (0m, 0m, 0);
+        var consuming = ConsumingChildDocIds(companyId);
+        var children = await (
+            from cl in _db.DocumentLines
+            join cd in _db.Documents on cl.DocumentId equals cd.Id
+            where cl.SourceLineId != null && sourceLineIds.Contains(cl.SourceLineId.Value)
+                  && cd.CompanyId == companyId
+                  && consuming.Contains(cd.Id)
+            select new { cl.Amount, cd.DocumentType })
+            .ToListAsync();
+        decimal delivery = 0m, billing = 0m;
+        foreach (var c in children)
+        {
+            switch (GetFulfillmentAxis(c.DocumentType))
+            {
+                case FulfillmentAxis.Delivery: delivery += c.Amount; break;
+                case FulfillmentAxis.Billing: billing += c.Amount; break;
+            }
+        }
+        return (delivery, billing, children.Count);
+    }
+
     /// <summary>Shared validation for both whole-document and partial
     /// conversion — throws on any rule violation.</summary>
-    private async Task ValidateConversionAsync(Document source, DocumentType targetType, Guid companyId)
+    private async Task ValidateConversionAsync(Document source, DocumentType targetType, Guid companyId,
+        bool partialBillingSplit = false)
     {
         // Block converting from Voided/Rejected source — they no longer reflect
         // the customer's true position; new derivative would carry stale data.
@@ -11266,11 +11311,26 @@ public partial class DocumentService : IDocumentService
             var revenueChildTypes = sourceIsPreRevenue
                 ? new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.ReceiptVoucher }
                 : new[] { DocumentType.Invoice, DocumentType.TaxInvoice };
+            // คำตัดสินข้อ 138 (2026-10-08 · ผู้ใช้รายงาน: แปลง QT → ใบแจ้งหนี้บางส่วนแล้ว "ใบที่ 2" ไม่ได้):
+            // แปลงบางส่วนเป็นใบแจ้งหนี้/ใบกำกับจากต้นทางที่ยังไม่รับรู้รายได้ (QT/SO/BN/DN) **อนุญาตหลายใบ** — ยอดรวมทุกใบถูกคุม
+            // ด้วยด่านยอดเงินใน ConvertDocumentPartialAsync (ComputeConsumedBaseAsync) อยู่แล้ว ⇒ ข้ามเฉพาะลูกที่ด่านนั้น "มองเห็น":
+            //   • ลูกชนิด Invoice/TaxInvoice ที่มีบรรทัดอ้าง SourceLineId ของต้นทางนี้ (แปลงมา) — นับในยอดสะสมแล้ว
+            //   • ลูก Receipt/RV (แกน None — ด่านยอดไม่นับ) หรือใบที่ผูกแค่ RelatedDocumentId ไม่มี SourceLineId ⇒ ยังกันเหมือนเดิม
+            //     (มิฉะนั้นรายได้ซ้ำโดยไม่มีด่านไหนเห็น) · ต้นทางเป็น Invoice/TaxInvoice (อัปเกรดใบเดียวกัน) ⇒ กันเหมือนเดิม
+            var allowBillingSplit = partialBillingSplit
+                && (targetType is DocumentType.Invoice or DocumentType.TaxInvoice)
+                && (source.DocumentType is not (DocumentType.Invoice or DocumentType.TaxInvoice));
+            var sourceLineIds = allowBillingSplit ? source.Lines.Select(l => l.Id).ToList() : new List<Guid>();
+            var consuming = ConsumingChildDocIds(companyId);
             var existingRevenueChild = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == source.Id
                     && !d.IsDeleted
                     && revenueChildTypes.Contains(d.DocumentType)
-                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                    && consuming.Contains(d.Id))   // ใบแจ้งหนี้ที่ถูกแทนที่ด้วยใบกำกับยังนับ (ข้อ 138)
+                .Where(d => !allowBillingSplit
+                    || !(d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice)
+                    || !_db.DocumentLines.Any(l => l.DocumentId == d.Id && l.SourceLineId != null
+                                                   && sourceLineIds.Contains(l.SourceLineId.Value)))
                 .Select(d => new { d.DocumentNumber, d.DocumentType })
                 .FirstOrDefaultAsync();
             if (existingRevenueChild != null)
@@ -11633,7 +11693,14 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        await ValidateConversionAsync(source, targetType, companyId);
+        // ใบแจ้งหนี้ → ใบกำกับ = "อัปเกรดใบเดียวกันทั้งฉบับ" (wholeDocRevenueUpgrade ใน ConvertDocumentAsync) — แปลงบางส่วนได้ใบร่าง
+        // ที่อนุมัติไม่ได้เลย (ยอดไม่เท่าใบแจ้งหนี้ ⇒ supersede ปฏิเสธ) ⇒ บอกทางที่ถูกตั้งแต่ตอนกด (ทีมตรวจเส้นแปลง ข้อ 5)
+        if (source.DocumentType == DocumentType.Invoice && targetType == DocumentType.TaxInvoice)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"{source.DocumentNumber} → ใบกำกับภาษี ต้องแปลงทั้งฉบับ (ใบกำกับแทนใบแจ้งหนี้ใบเดิมทั้งใบ) — "
+                + "ถ้าต้องการเก็บเงินเป็นงวด ให้บันทึกรับชำระทีละงวดที่ใบแจ้งหนี้ หรือแบ่งงวดตั้งแต่ตอนแปลงจากใบเสนอราคา",
+                "CONVERT-PARTIAL-INV-TO-TIV");
+        await ValidateConversionAsync(source, targetType, companyId, partialBillingSplit: true);
 
         var axis = GetFulfillmentAxis(targetType);
         if (axis == FulfillmentAxis.None)
@@ -11646,6 +11713,16 @@ public partial class DocumentService : IDocumentService
         var consumption = await ComputeConsumptionAsync(
             companyId, source.Lines.Select(l => l.Id).ToList());
         var byId = source.Lines.ToDictionary(l => l.Id);
+        var axisLabel = AxisLabel(axis);
+        decimal UsedOf(DocumentLine l) => axis == FulfillmentAxis.Delivery
+            ? consumption[l.Id].Delivery : consumption[l.Id].Billing;
+
+        // คำตัดสินข้อ 138 (2026-10-05): **ห้ามล็อกจำนวน** — จำนวนเกินคงเหลือเป็นคำเตือนที่ติดไปกับคำตอบ ·
+        // ด่านเดียวที่หยุดถามคือ "ยอดเงินสะสมเกินใบต้นทาง" (422 + ยืนยันด้วย ConfirmOverSourceAmount แล้วไปต่อได้)
+        // ตัวตัดสินทั้งหมดอยู่ที่ Helpers/PartialConvertPolicy ตัวเดียว (ห้ามเขียนสำเนาเงื่อนไขที่นี่)
+        // ที่มา: ใบเสนอราคา 1 ชิ้น แบ่งเก็บ 2 งวด — งวดสองถูกล็อกที่ 0 เพราะ "คงเหลือ 0 ชิ้น"
+        var asks = new List<Accounting.Helpers.PartialConvertPolicy.LineAsk>();
+        var convertingNow = 0m;
 
         // Preserve source line order in the new document.
         var spec = new List<(DocumentLine Line, decimal Qty)>();
@@ -11654,20 +11731,47 @@ public partial class DocumentService : IDocumentService
         {
             if (!byId.TryGetValue(req.SourceLineId, out var srcLine))
                 throw new InvalidOperationException("ไม่พบรายการต้นทางที่เลือก ในเอกสารนี้");
-            var used = axis == FulfillmentAxis.Delivery
-                ? consumption[srcLine.Id].Delivery : consumption[srcLine.Id].Billing;
-            var remaining = srcLine.Quantity - used;
-            if (req.Quantity > remaining + QtyEpsilon)
-                throw new InvalidOperationException(
-                    $"รายการ '{srcLine.Description}' ขอแปลง {req.Quantity:0.##} " +
-                    $"แต่คงเหลือให้{AxisLabel(axis)}เพียง {remaining:0.##} {srcLine.Unit}");
+            var remaining = srcLine.Quantity - UsedOf(srcLine);
+            asks.Add(new(srcLine.Description, srcLine.Unit, req.Quantity, remaining));
+            convertingNow += Accounting.Helpers.PartialConvertPolicy.ProRataBase(srcLine.Amount, srcLine.Quantity, req.Quantity);
             spec.Add((srcLine, req.Quantity));
         }
         if (spec.Count == 0)
             throw new InvalidOperationException("ไม่มีรายการที่จะแปลง — จำนวนต้องมากกว่า 0");
 
-        return await ConvertCoreAsync(source, targetType, spec, createdBy,
+        var warnings = new List<string>(Accounting.Helpers.PartialConvertPolicy.QuantityWarnings(asks, axisLabel));
+        // ยอดที่แปลงไปแล้ว = ยอดจริงของใบลูก (ผู้ใช้อาจแก้ราคาในใบลูก) — ไม่ใช่จำนวน × ราคาต้นทาง
+        var consumedBase = await ComputeConsumedBaseAsync(companyId, source.Lines.Select(l => l.Id).ToList());
+        var convertedBefore = axis == FulfillmentAxis.Delivery ? consumedBase.Delivery : consumedBase.Billing;
+        var sourceBase = source.Lines.Sum(l => l.Amount);
+        if (Accounting.Helpers.PartialConvertPolicy.IsOverAmount(convertedBefore, convertingNow, sourceBase,
+                roundingLines: consumedBase.LineCount + spec.Count))
+        {
+            var msg = Accounting.Helpers.PartialConvertPolicy.OverAmountMessage(
+                source.DocumentNumber, axisLabel, convertedBefore, convertingNow, sourceBase);
+            if (!request.ConfirmOverSourceAmount)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    string.Join("\n", warnings.Prepend(msg)),
+                    Accounting.Helpers.PartialConvertPolicy.OverAmountRule, 422);
+            warnings.Insert(0, msg + " (ผู้ใช้ยืนยันแล้ว)");
+        }
+
+        var created = await ConvertCoreAsync(source, targetType, spec, createdBy,
             request.DocumentDate, request.DueDate);
+
+        // ร่องรอยการยืนยันเกินยอด (ฝ่ายค้านรอบ 138 P3): ลงที่ใบลูกในช่องภายใน (InternalNotes — ไม่พิมพ์ลงกระดาษ)
+        // ให้ผู้ตรวจเห็นว่าใครยืนยันแปลงเกินยอดใบต้นทาง เมื่อไร · ไม่ลง Notes เพราะ renderer พิมพ์ช่องนั้นให้ลูกค้าเห็น
+        if (request.ConfirmOverSourceAmount && warnings.Count > 0 && warnings[0].EndsWith("(ผู้ใช้ยืนยันแล้ว)"))
+        {
+            var child = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id && d.CompanyId == companyId);
+            if (child != null)
+            {
+                var stamp = $"[แปลงเกินยอดใบต้นทาง] {warnings[0]} · โดย {createdBy} · {DateTime.UtcNow.AddHours(7).ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture)} (+07:00)";
+                child.InternalNotes = string.IsNullOrWhiteSpace(child.InternalNotes) ? stamp : child.InternalNotes + "\n" + stamp;
+                await _db.SaveChangesAsync();
+            }
+        }
+        return warnings.Count == 0 ? created : created with { ConversionWarnings = warnings };
     }
 
     public async Task<DocumentFulfillmentResponse> GetDocumentFulfillmentAsync(Guid companyId, Guid documentId)
@@ -11702,12 +11806,19 @@ public partial class DocumentService : IDocumentService
                 WithholdingTaxRate: l.WithholdingTaxRate,
                 AccountId: l.AccountId,
                 ProjectId: l.ProjectId,
-                ProductCode: l.ProductCode);
+                ProductCode: l.ProductCode,
+                LineAmount: l.Amount);
         }).ToList();
+
+        // ยอดเงินสะสมต่อแกน = ยอดจริงของใบลูก (ตัวเดียวกับด่านใน ConvertDocumentPartialAsync)
+        // — หน้าเว็บแสดงอย่างเดียว ไม่ตัดสินเอง (คำตัดสินข้อ 138)
+        var sourceBase = orderedLines.Sum(l => l.Amount);
+        var (deliveredBase, billedBase, _) = await ComputeConsumedBaseAsync(companyId, orderedLines.Select(l => l.Id).ToList());
 
         return new DocumentFulfillmentResponse(
             source.Id, source.DocumentNumber, source.DocumentType,
-            supportsDelivery, supportsBilling, lines);
+            supportsDelivery, supportsBilling, lines,
+            SourceBaseAmount: sourceBase, BilledBaseAmount: billedBase, DeliveredBaseAmount: deliveredBase);
     }
 
     private async Task CascadeAttachmentsAsync(Guid companyId, Guid sourceDocId, Guid targetDocId, string createdBy)

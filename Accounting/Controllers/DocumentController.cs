@@ -1229,8 +1229,9 @@ public class DocumentController : ControllerBase
 
     /// <summary>
     /// แปลงเอกสารบางส่วน — เลือกเฉพาะบางรายการและบางจำนวน เช่น แยก PO เดียว
-    /// ออกเป็นใบส่งของหลายใบ หรือ Invoice หลายใบ ระบบติดตามจำนวนคงเหลือให้
-    /// (แปลงเกินจำนวนที่สั่ง/คงเหลือไม่ได้).
+    /// ออกเป็นใบส่งของหลายใบ หรือ Invoice หลายใบ ระบบติดตามจำนวนคงเหลือให้ ·
+    /// คำตัดสินข้อ 138: จำนวนเกินคงเหลือ = คำเตือน (ไม่ล็อก) · ยอดสะสมเกินใบต้นทาง = 422 CONVERT-OVER-AMOUNT
+    /// ให้หน้าเว็บถามยืนยันแล้วส่งซ้ำด้วย ConfirmOverSourceAmount=true.
     /// </summary>
     [HttpPost("{documentId:guid}/convert-partial/{targetType}")]
     public async Task<ActionResult<ApiResponse<DocumentResponse>>> ConvertDocumentPartial(

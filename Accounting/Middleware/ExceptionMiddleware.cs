@@ -36,17 +36,25 @@ public class ExceptionMiddleware
         }
     }
 
+    /// <summary>สถานะ HTTP ของ exception — ตัวตั้งเดียวที่ทั้ง "คำตอบถึงผู้ใช้" และ "แถว Error Logs" ใช้ (ห้ามมีตารางที่สอง)</summary>
+    public static int StatusFor(Exception exception) => exception switch
+    {
+        Accounting.Helpers.BusinessRuleException bre => bre.StatusCode,
+        UnauthorizedAccessException => 401,
+        KeyNotFoundException => 404,
+        InvalidOperationException => 400,
+        ArgumentException => 400,
+        FormatException => 400,
+        Microsoft.EntityFrameworkCore.DbUpdateException dbe
+            when dbe.InnerException is Npgsql.PostgresException { SqlState: "23505" } => 409,
+        _ => 500
+    };
+
     private static async Task SaveErrorLogAsync(HttpContext context, Exception exception, string refCode)
     {
-        var statusCode = exception switch
-        {
-            UnauthorizedAccessException => 401,
-            KeyNotFoundException => 404,
-            InvalidOperationException => 400,
-            ArgumentException => 400,
-            FormatException => 400,
-            _ => 500
-        };
+        // ตัวตั้งเดียวกับสถานะที่ตอบผู้ใช้ (HandleExceptionAsync) — เดิมตารางนี้ไม่มี BusinessRuleException/23505
+        // ⇒ Error Logs บันทึก 500 ทั้งที่ผู้ใช้ได้ 400/409/422 (ผู้ดูแลอ่าน log แล้วเข้าใจผิดว่าระบบพัง · 2026-10-08)
+        var statusCode = StatusFor(exception);
 
         // Always use raw ADO.NET — the scoped DbContext may be in a broken state
         // (e.g. failed transaction from the operation that threw the exception)
@@ -102,7 +110,8 @@ public class ExceptionMiddleware
         static bool LooksUserFacing(string? m) =>
             !string.IsNullOrWhiteSpace(m) && m.Any(ch => ch is >= '฀' and <= '๿');
 
-        var (statusCode, message) = exception switch
+        var statusCode = (HttpStatusCode)StatusFor(exception);
+        var (_, message) = exception switch
         {
             // กฎธุรกิจที่ประกาศชัด — ส่งข้อความออกเสมอ ไม่ต้องเดา
             Accounting.Helpers.BusinessRuleException bre
@@ -147,7 +156,13 @@ public class ExceptionMiddleware
 
         context.Response.StatusCode = (int)statusCode;
 
-        var response = new ApiResponse<object>(false, null, translatedMessage);
+        // BusinessRuleException ที่มี RuleCode: ส่งรหัสกฎไปใน data ให้หน้าเว็บตัดสินใจ "ทางไปต่อ" ได้
+        // (เช่น CONTACT-ROLE-CUSTOMER → เสนอเปิดสถานะลูกค้าให้เลย · CONVERT-OVER-AMOUNT → ยืนยันแล้วแปลงต่อ)
+        // ข้อความยังเป็นตัวหลักเหมือนเดิม — รหัสเป็นส่วนเสริม ไม่กระทบผู้เรียกที่อ่านแค่ message
+        object? data = exception is Accounting.Helpers.BusinessRuleException { RuleCode: { Length: > 0 } rc }
+            ? new { ruleCode = rc }
+            : null;
+        var response = new ApiResponse<object>(false, data, translatedMessage);
         var json = JsonSerializer.Serialize(response, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         await context.Response.WriteAsync(json);
     }

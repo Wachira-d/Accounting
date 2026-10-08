@@ -968,7 +968,10 @@ public record DocumentResponse(
     string? Pp36StatusLabel = null,
     /// <summary>รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดจ่ายผู้รับเงิน (<c>ForeignServiceVat.PayeeAmount</c>) — ใบบริการต่างประเทศ = TotalAmount − VAT ประเมินเอง ·
     /// ใบอื่น = TotalAmount · หน้าเว็บใช้เป็นตัวหารสัดส่วน WHT/ตรวจงวดแรก (server computes · page displays) · null = ผู้สร้าง DTO ไม่ได้คำนวณ (หน้าเว็บตกไป TotalAmount)</summary>
-    decimal? PayeeAmount = null);
+    decimal? PayeeAmount = null,
+    /// <summary>คำตัดสินข้อ 138 (2026-10-05): คำเตือนจากการแปลงบางส่วนที่ <b>ไม่หยุด</b> การแปลง (จำนวนเกินคงเหลือ ·
+    /// ยอดเกินใบต้นทางที่ผู้ใช้ยืนยันแล้ว) — มีค่าเฉพาะในคำตอบของ convert-partial · null = ไม่มีคำเตือน/เส้นทางอื่น</summary>
+    IReadOnlyList<string>? ConversionWarnings = null);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>
@@ -1100,7 +1103,11 @@ public record DocumentLineResponse(
 public record PartialConvertRequest(
     List<PartialConvertLineRequest> Lines,
     DateTime? DocumentDate = null,
-    DateTime? DueDate = null);
+    DateTime? DueDate = null,
+    /// <summary>คำตัดสินข้อ 138: ครั้งแรกส่ง false — ถ้ายอดสะสมเกินใบต้นทาง เซิร์ฟเวอร์ตอบ 422 ·
+    /// ผู้ใช้ยืนยันแล้วส่ง true เพื่อแปลงต่อ (จำนวนเกินคงเหลือไม่หยุด — เป็นคำเตือนใน ConversionWarnings) ·
+    /// ชื่อแยกจาก ApproveDocumentRequest.AcknowledgeWarnings โดยตั้งใจ — คนละด่าน (tools/save_approve_warnings_sim.js ข้อ h)</summary>
+    bool ConfirmOverSourceAmount = false);
 
 public record PartialConvertLineRequest(Guid SourceLineId, decimal Quantity);
 
@@ -1113,7 +1120,12 @@ public record DocumentFulfillmentResponse(
     DocumentType DocumentType,
     bool SupportsDelivery,
     bool SupportsBilling,
-    List<DocumentLineFulfillmentResponse> Lines);
+    List<DocumentLineFulfillmentResponse> Lines,
+    /// <summary>ยอดฐาน (Σ Amount ทุกบรรทัด) ของใบต้นทาง — หน้าเว็บใช้แสดง "ยอดครั้งนี้ / สะสม / ใบต้นทาง" เท่านั้น
+    /// ตัวตัดสินอยู่ที่เซิร์ฟเวอร์ (PartialConvertPolicy) — คำตัดสินข้อ 138</summary>
+    decimal SourceBaseAmount = 0m,
+    decimal BilledBaseAmount = 0m,
+    decimal DeliveredBaseAmount = 0m);
 
 public record DocumentLineFulfillmentResponse(
     Guid LineId,
@@ -1131,7 +1143,9 @@ public record DocumentLineFulfillmentResponse(
     decimal WithholdingTaxRate,
     Guid? AccountId,
     Guid? ProjectId,
-    string? ProductCode);
+    string? ProductCode,
+    /// <summary>Amount ของบรรทัดต้นทาง (หลังส่วนลดบรรทัด ก่อน VAT) — หน้าเว็บคิดสัดส่วนตามจำนวนที่กรอกเพื่อแสดงผล</summary>
+    decimal LineAmount = 0m);
 
 public record ContactBrief(Guid Id, string Name, string? TaxId, string? BranchCode = null);
 

@@ -12856,25 +12856,38 @@
         const f = this._convertFulfillment;
         if (!f) return;
         const isDel = axis === 'delivery';
+        // คำตัดสินข้อ 138 (2026-10-05): ห้ามล็อกจำนวน — ช่อง "แปลงครั้งนี้" แก้ได้ทุกแถวเสมอ (ไม่มี disabled/max) ·
+        // จำนวนเกินคงเหลือ = คำเตือนจากเซิร์ฟเวอร์ · ยอดเงินสะสมเกินใบต้นทาง = เซิร์ฟเวอร์ถามยืนยัน 1 ครั้ง (ดู doConvert)
+        // ที่มา: ใบเสนอราคา 1 ชิ้น แบ่งเก็บ 2 งวด — งวดสองเคยถูกล็อกที่ 0 เพราะ "คงเหลือ 0 ชิ้น"
         document.getElementById('convertLinesHint').textContent = isDel
-          ? 'ระบุจำนวนที่จะส่งมอบในใบนี้ — เว้นเป็น 0 เพื่อข้ามรายการ (แยกส่งหลายใบได้)'
-          : 'ระบุจำนวนที่จะวางบิล/แจ้งหนี้ในใบนี้ — เว้นเป็น 0 เพื่อข้ามรายการ (แยกบิลหลายใบได้)';
+          ? 'ระบุจำนวนที่จะส่งมอบในใบนี้ — เว้นเป็น 0 เพื่อข้ามรายการ · ใส่เกินคงเหลือได้ (ระบบเตือน ไม่ล็อก)'
+          : 'ระบุจำนวนที่จะวางบิล/แจ้งหนี้ในใบนี้ — เว้นเป็น 0 เพื่อข้ามรายการ · แบ่งงวดได้ (เช่น 0.5) · ใส่เกินคงเหลือได้ — ระบบดูยอดเงินรวมเป็นหลัก';
         const fmt = n => (Math.round((n + Number.EPSILON) * 10000) / 10000).toLocaleString('en-US');
         let rows = f.lines.map(l => {
           const remaining = isDel ? l.deliveryRemaining : l.billingRemaining;
           const done = isDel ? l.deliveredQuantity : l.billedQuantity;
-          const disabled = remaining <= 0.0001;
-          return `<tr style="${disabled ? 'opacity:.5' : ''}">
+          const fullyDone = remaining <= 0.0001;
+          return `<tr>
             <td style="padding:6px 8px;font-size:12.5px">${Layout.esc(l.description || '')}</td>
             <td style="padding:6px 8px;text-align:right;font-size:12px">${fmt(l.orderedQuantity)}</td>
             <td style="padding:6px 8px;text-align:right;font-size:12px;color:#6b7280">${fmt(done)}</td>
-            <td style="padding:6px 8px;text-align:right;font-size:12px;font-weight:600">${fmt(remaining)}</td>
+            <td style="padding:6px 8px;text-align:right;font-size:12px;font-weight:600;${fullyDone ? 'color:#9ca3af' : ''}">${fmt(remaining)}</td>
             <td style="padding:4px 8px;width:110px">
               <input type="number" id="cvln-${l.lineId}" class="form-input" style="padding:5px 8px;font-size:12.5px;text-align:right"
-                value="${disabled ? 0 : remaining}" min="0" max="${Math.max(0, remaining)}" step="any" ${disabled ? 'disabled' : ''}>
+                value="${fullyDone ? 0 : remaining}" min="0" step="any">
             </td>
           </tr>`;
         }).join('');
+        // ยอดเงิน (ก่อน VAT) — เซิร์ฟเวอร์คำนวณจากยอดจริงของใบลูก หน้าเว็บแสดงอย่างเดียว
+        const srcBase = Number(f.sourceBaseAmount ?? 0);
+        const doneBase = Number(isDel ? (f.deliveredBaseAmount ?? 0) : (f.billedBaseAmount ?? 0));
+        const moneyNote = srcBase > 0
+          ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#f8fafc;font-size:12.5px;line-height:1.7">
+               ยอดใบต้นทาง <b>${Layout.money(srcBase)}</b> · ${isDel ? 'ส่งมอบ' : 'วางบิล'}ไปแล้ว <b>${Layout.money(doneBase)}</b>
+               · คงเหลือ <b>${Layout.money(Math.max(0, srcBase - doneBase))}</b> (ก่อน VAT)
+               <div style="color:#6b7280;font-size:11.5px">ถ้ายอดรวมทุกใบจะเกินใบต้นทาง ระบบจะถามยืนยันก่อน — แก้ราคาในใบร่างที่ได้ภายหลังได้</div>
+             </div>`
+          : '';
         document.getElementById('convertLines').innerHTML = `
           <table style="width:100%;border-collapse:collapse">
             <thead><tr style="background:#f8fafc">
@@ -12885,7 +12898,7 @@
               <th style="padding:6px 8px;text-align:right;font-size:11.5px;color:#6b7280">แปลงครั้งนี้</th>
             </tr></thead>
             <tbody>${rows}</tbody>
-          </table>`;
+          </table>${moneyNote}`;
       },
 
       async doConvert() {
@@ -12934,11 +12947,22 @@
               Layout.toast('กรุณาระบุจำนวนที่จะแปลงอย่างน้อย 1 รายการ', 'error');
               return;
             }
-            converted = await api.convertDocumentPartial(id, realTarget, { lines });
+            // คำตัดสินข้อ 138: ครั้งแรกไม่ยืนยัน · เซิร์ฟเวอร์ตอบ 422 + ruleCode เมื่อยอดสะสมเกินใบต้นทาง ⇒ ถามผู้ใช้แล้วส่งซ้ำ
+            // (ข้อความ/ตัวเลขมาจากเซิร์ฟเวอร์ทั้งหมด — หน้าเว็บไม่ตัดสินเอง)
+            try {
+              converted = await api.convertDocumentPartial(id, realTarget, { lines, confirmOverSourceAmount: false });
+            } catch (e) {
+              if (!(e && e.status === 422 && e.body?.data?.ruleCode === 'CONVERT-OVER-AMOUNT')) throw e;
+              if (!confirm(e.message + '\n\nยืนยันแปลงต่อ? (แก้ราคาในใบร่างที่ได้ภายหลังได้)')) return;
+              converted = await api.convertDocumentPartial(id, realTarget, { lines, confirmOverSourceAmount: true });
+            }
           } else {
             converted = await api.convertDocument(id, realTarget);
           }
           Layout.closeModal('convertModal'); Layout.closeModal('detailModal');
+          const cvWarn = converted?.data?.conversionWarnings;
+          if (Array.isArray(cvWarn) && cvWarn.length)
+            Layout.toast(cvWarn.join(' · '), 'warning', 12000);
           Layout.toast(isPaidCombo
             ? 'แปลงเป็นใบกำกับภาษี/ใบเสร็จรับเงิน (รับเงินครบแล้ว) สำเร็จ'
             : `แปลงเอกสารเป็น${Layout.docTypeLabel(realTarget)}สำเร็จ`);

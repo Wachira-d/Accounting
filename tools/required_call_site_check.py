@@ -22,6 +22,7 @@
 negative test รันทุกครั้งที่รัน checker: (ก) กลายพันธุ์อัตโนมัติต่อชนิดกติกา (ข) การถดถอยจริงที่ฝ่ายค้านลอง
 (M2–M8) ต้องถูกจับ และรูปแบบโค้ดที่ถูกต้อง (FP1 ขึ้นบรรทัดก่อน `.Decide(`) ต้องไม่ถูกฟ้อง
 """
+import functools
 import re
 import sys
 from pathlib import Path
@@ -146,6 +147,28 @@ RULES = [
 #    ได้ด่านเดียวกัน · เทสต์ล็อกแค่ตัวตัดสิน pure (ExpenseClaimActionPolicyTests) — ที่นี่ล็อกว่าเมธอดเขียนทุกตัวเรียกด่านก่อนบันทึก ──
 EXPENSE = "Services/Implementations/ExpenseClaimService.cs"
 _EXPENSE_WHY = "R2-C2 เมธอดเขียนของใบเบิกต้องเรียกด่านสิทธิ์ (ExpenseClaimActionPolicy) ก่อนบันทึก — มือถือ/ทางเข้าอื่นพึ่งด่านนี้"
+# คำตัดสินข้อ 138 (2026-10-05): แปลงบางส่วน "ห้ามล็อกจำนวน — ยอดเงินรวมสำคัญที่สุด" · ด่านเดียวที่หยุดถามคือยอดสะสมเกินใบต้นทาง
+# (ยอดจริงของใบลูก ไม่ใช่จำนวน × ราคาต้นทาง) และต้องยืนยันแล้วไปต่อได้ · ห้ามข้อความล็อกจำนวนเดิมกลับมา
+RULES += [
+    dict(file=DOC, method="ConvertDocumentPartialAsync",
+         must=["PartialConvertPolicy.IsOverAmount(", "PartialConvertPolicy.QuantityWarnings(", "ComputeConsumedBaseAsync("],
+         must_re=[r"if\s*\(\s*!\s*request\.ConfirmOverSourceAmount\s*\)\s*throw\b",
+                  r"ValidateConversionAsync\([^;]*partialBillingSplit:\s*true\s*\)"],
+         before=[("PartialConvertPolicy.IsOverAmount(", "ConvertCoreAsync(")],
+         forbid_lit=["แต่คงเหลือให้"],
+         why="#138 แปลงบางส่วนห้ามล็อกจำนวน — ถามยืนยันเฉพาะยอดเงินสะสมเกินใบต้นทาง (ยอดจริงของใบลูก) แล้วไปต่อได้ · ใบแจ้งหนี้ใบที่ 2+ ต้องผ่านด่านรายได้ซ้ำแบบแบ่งบิล"),
+    # แปลงทั้งฉบับไม่มีด่านยอดเงิน ⇒ ต้องคงด่านรายได้ซ้ำเต็ม (ห้ามส่งธงแบ่งบิล)
+    dict(file=DOC, method="ConvertDocumentAsync",
+         must=["ValidateConversionAsync("],
+         forbid=["partialBillingSplit"],
+         why="#138 แปลงทั้งฉบับไม่มีด่านยอดสะสม — เปิดแบ่งบิลที่นี่ = รายได้ซ้ำโดยไม่มีด่านไหนเห็น"),
+    # ข้ามด่านรายได้ซ้ำได้เฉพาะลูกที่ด่านยอดเงินมองเห็น (มีบรรทัดอ้าง SourceLineId ของต้นทาง)
+    dict(file=DOC, method="ValidateConversionAsync",
+         must_re=[r"sourceLineIds\.Contains\(\s*l\.SourceLineId\.Value\s*\)",
+                  r"source\.DocumentType\s+is\s+not\s*\(\s*DocumentType\.Invoice\s+or\s+DocumentType\.TaxInvoice\s*\)"],
+         why="#138 ลูก Receipt/RV หรือใบที่ไม่มี SourceLineId ไม่ถูกนับในยอดสะสม — ต้องยังกันรายได้ซ้ำ · อัปเกรด INV→TIV ยังกัน"),
+]
+
 RULES += [
     dict(file=EXPENSE, method=m, must=["EnsureClaimActionAsync("],
          before=[("EnsureClaimActionAsync(", "_db.SaveChangesAsync(")], why=_EXPENSE_WHY)
@@ -4691,6 +4714,7 @@ def notes_marker_self_test(files) -> list:
     return fails
 
 
+@functools.lru_cache(maxsize=64)
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
     n = len(text)
@@ -4854,6 +4878,13 @@ def check_rule(text: str, rule):
     body = code[span[0]:span[1]]
     lit_body = mask(text, keep_strings=True)[span[0]:span[1]]
     line0 = code.count("\n", 0, span[0]) + 1
+    return _check_body(body, lit_body, line0, rule)
+
+
+def _check_body(body: str, lit_body: str, line0: int, rule):
+    # แยกจาก check_rule (2026-10-08) ให้ self_test mask เฉพาะ "ตัวเมธอดที่กลายพันธุ์" ไม่ใช่ทั้งไฟล์ — เดิม mask() (สแกนทีละตัวอักษร)
+    # ทั้ง DocumentService.cs ซ้ำ 2 ครั้งต่อ variant × ~1,000 กติกา ⇒ check_all รอบละ 20+ นาที · ผลเท่าเดิม: ขอบเมธอดอยู่ในโค้ดเสมอ
+    rel, meth, why = rule["file"], rule["method"], rule["why"]
     ln = lambda idx: line0 + body.count("\n", 0, idx)
     errs = []
     for p in rule.get("must", []):
@@ -4931,14 +4962,17 @@ REVIEWER_CASES = [
 def self_test() -> list:
     fails = []
     cache = {}
+    mcache = {}
     for rule in RULES:
         rel, meth = rule["file"], rule["method"]
         text = cache.setdefault(rel, (SRC / rel).read_text(encoding="utf-8"))
-        span = method_body(mask(text), meth)
+        masked = mcache.setdefault(rel, mask(text))
+        span = method_body(masked, meth)
         if span is None:
             continue
-        head, body, tail = text[:span[0]], text[span[0]:span[1]], text[span[1]:]
-        run = lambda b: check_rule(head + b + tail, rule)
+        body = text[span[0]:span[1]]
+        line0 = masked.count("\n", 0, span[0]) + 1
+        run = lambda b: _check_body(mask(b), mask(b, keep_strings=True), line0, rule)
         for p in rule.get("must", []):
             removed = _replace_spans(body, _code_spans(body, pat(p)), "REMOVED_CALL_SITE")
             if not any(f"`{p}`" in e for e in run(removed)):
