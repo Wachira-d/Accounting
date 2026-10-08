@@ -995,12 +995,18 @@ public partial class DocumentService : IDocumentService
                 adjSourceType, request.CnDnPurchaseSideOverride)
             : null;
         var adjIsPurchase = adjSideResolved == true;
+        // คำตัดสินข้อ 138ข (2026-10-05): ประเภทคู่ค้าไม่ตรง → ตอบเป็นรหัสกฎ (409) ให้หน้าเว็บเสนอ "เปิดสถานะให้เลยแล้วบันทึกต่อ"
+        // แทนการบอกให้ผู้ใช้ไปเปิดเองที่หน้าผู้ติดต่อ (ทางไปต่อของผู้ใช้ตามหลัก F2 ข้อ 8) — ข้อความเดิมคงไว้ให้ API เก่าอ่านได้
         if ((revenueDocTypes.Contains(request.DocumentType) || (isTwoSidedAdj && !adjIsPurchase))
             && !contact.IsCustomer)
-            throw new InvalidOperationException($"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นลูกค้า — กรุณาเปิดสถานะ 'ลูกค้า' ก่อนออกเอกสารขาย");
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นลูกค้า — กรุณาเปิดสถานะ 'ลูกค้า' ก่อนออกเอกสารขาย",
+                Accounting.Helpers.ContactRoleRule.CustomerRequired, 409);
         if ((purchaseDocTypes.Contains(request.DocumentType) || adjIsPurchase)
             && !contact.IsSupplier)
-            throw new InvalidOperationException($"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นผู้จำหน่าย — กรุณาเปิดสถานะ 'ผู้จำหน่าย' ก่อนออกเอกสารซื้อ");
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ผู้ติดต่อ '{contact.Name}' ไม่ได้ตั้งค่าเป็นผู้จำหน่าย — กรุณาเปิดสถานะ 'ผู้จำหน่าย' ก่อนออกเอกสารซื้อ",
+                Accounting.Helpers.ContactRoleRule.SupplierRequired, 409);
 
         // Validate project tags belong to this company (security: prevent cross-tenant tagging)
         if (request.ProjectId.HasValue)
@@ -1733,7 +1739,10 @@ public partial class DocumentService : IDocumentService
         // % ออกเอกสารต่อ + ใบลูกล่าสุดที่ยังมีผล — ตัวเดียวกับหน้ารวม (LoadConversionSummariesAsync · รอบ 196)
         // หน้ารายละเอียดคำนวณให้ทุกชนิด (เดิมก็เช่นนั้น — ใบแจ้งหนี้→ใบกำกับก็โชว์ "สถานะการแปลง")
         var conv = (await LoadConversionSummariesAsync(companyId,
-                new Dictionary<Guid, decimal> { [documentId] = doc.Lines.Sum(l => l.Quantity) }))
+                new Dictionary<Guid, (decimal Qty, decimal Amount)>
+                {
+                    [documentId] = (doc.Lines.Sum(l => l.Quantity), doc.Lines.Sum(l => l.Amount)),
+                }))
             .GetValueOrDefault(documentId);
 
         // Project-cost booking summary — pull every PCE auto-spawned from
@@ -2017,7 +2026,7 @@ public partial class DocumentService : IDocumentService
     /// </summary>
     /// <param name="sourceTotals">Id ใบต้นทาง → Σ จำนวนบรรทัดของใบนั้น</param>
     private async Task<Dictionary<Guid, ConversionSummary>> LoadConversionSummariesAsync(
-        Guid companyId, IReadOnlyDictionary<Guid, decimal> sourceTotals)
+        Guid companyId, IReadOnlyDictionary<Guid, (decimal Qty, decimal Amount)> sourceTotals)
     {
         var result = new Dictionary<Guid, ConversionSummary>();
         if (sourceTotals.Count == 0) return result;
@@ -2058,12 +2067,13 @@ public partial class DocumentService : IDocumentService
         var linkedBySource = children.Where(c => c.RelatedDocumentId.HasValue)
             .ToLookup(c => c.RelatedDocumentId!.Value);
 
-        foreach (var (srcId, totalQty) in sourceTotals)
+        foreach (var (srcId, total) in sourceTotals)
         {
             var rows = consumedBySource[srcId].ToList();
             var linkedIds = linkedBySource[srcId].Select(c => c.Id).ToList();
-            var progress = DocumentConversionProgress.Evaluate(totalQty,
-                rows.Select(r => (r.DocumentType, r.Quantity)), linkedIds.Count > 0);
+            // ข้อ 138: วัดด้วยยอดเงินเมื่อใบต้นทางมีราคา (ตัวตัดสินเดียว EvaluateByValue)
+            var progress = DocumentConversionProgress.EvaluateByValue(total.Qty, total.Amount,
+                rows.Select(r => (r.DocumentType, r.Quantity, r.Amount)), linkedIds.Count > 0);
             var mine = linkedIds.Concat(rows.Select(r => r.ChildId)).Distinct()
                 .Where(id => childById.ContainsKey(id))
                 .Select(id => childById[id])
@@ -2096,8 +2106,8 @@ public partial class DocumentService : IDocumentService
         var totals = await _db.DocumentLines.AsNoTracking()
             .Where(l => candIds.Contains(l.DocumentId) && l.Document.CompanyId == companyId)
             .GroupBy(l => l.DocumentId)
-            .Select(g => new { DocId = g.Key, Qty = g.Sum(l => l.Quantity) })
-            .ToDictionaryAsync(g => g.DocId, g => g.Qty);
+            .Select(g => new { DocId = g.Key, Qty = g.Sum(l => l.Quantity), Amount = g.Sum(l => l.Amount) })
+            .ToDictionaryAsync(g => g.DocId, g => (g.Qty, g.Amount));
         var sourceTotals = candIds.ToDictionary(id => id, id => totals.GetValueOrDefault(id));
         var summaries = await LoadConversionSummariesAsync(companyId, sourceTotals);
         return summaries.Where(kv => kv.Value.Progress.State == wanted).Select(kv => kv.Key).ToList();
@@ -2328,7 +2338,7 @@ public partial class DocumentService : IDocumentService
         // เดิมไม่ส่ง ⇒ ใบเสนอราคาที่ออกใบแจ้งหนี้แล้วก็ขึ้น "⏳ รอดำเนินการต่อ" ทุกใบ (ป้ายโกหก)
         var conversionTotals = items
             .Where(d => DocumentConversionProgress.IsConversionBearing(d.DocumentType))
-            .ToDictionary(d => d.Id, d => d.Lines.Sum(l => l.Quantity));
+            .ToDictionary(d => d.Id, d => (d.Lines.Sum(l => l.Quantity), d.Lines.Sum(l => l.Amount)));
         var conversionByDoc = await LoadConversionSummariesAsync(companyId, conversionTotals);
         // สถานะ ภ.พ.36 ของทั้งหน้า (batch · ตัวโหลดเดียวกับหน้านำส่ง) — หน้าเว็บแสดงป้ายอย่างเดียว ไม่ตัดสินจากธงเอง (รอบ 203 T-3d/C-P2)
         var pp36States = await Accounting.Helpers.Pp36Ledger.StatesAsync(_db, companyId, ids);
@@ -11815,10 +11825,17 @@ public partial class DocumentService : IDocumentService
         var sourceBase = orderedLines.Sum(l => l.Amount);
         var (deliveredBase, billedBase, _) = await ComputeConsumedBaseAsync(companyId, orderedLines.Select(l => l.Id).ToList());
 
+        var totalQty = orderedLines.Sum(l => l.Quantity);
+        var billedPct = Accounting.Helpers.DocumentConversionProgress.EvaluateByValue(totalQty, sourceBase,
+            new[] { (DocumentType.Invoice, lines.Sum(l => l.BilledQuantity), billedBase) }, false).Percent;
+        var deliveredPct = Accounting.Helpers.DocumentConversionProgress.EvaluateByValue(totalQty, sourceBase,
+            new[] { (DocumentType.DeliveryNote, lines.Sum(l => l.DeliveredQuantity), deliveredBase) }, false).Percent;
+
         return new DocumentFulfillmentResponse(
             source.Id, source.DocumentNumber, source.DocumentType,
             supportsDelivery, supportsBilling, lines,
-            SourceBaseAmount: sourceBase, BilledBaseAmount: billedBase, DeliveredBaseAmount: deliveredBase);
+            SourceBaseAmount: sourceBase, BilledBaseAmount: billedBase, DeliveredBaseAmount: deliveredBase,
+            BilledPercent: billedPct, DeliveredPercent: deliveredPct);
     }
 
     private async Task CascadeAttachmentsAsync(Guid companyId, Guid sourceDocId, Guid targetDocId, string createdBy)
@@ -12470,7 +12487,14 @@ public partial class DocumentService : IDocumentService
             || (request.TaxId != null && NormalizeTaxDigits(request.TaxId) != NormalizeTaxDigits(contact.TaxId))
             || (request.BranchCode != null && NormalizeBranchCode(request.BranchCode) != NormalizeBranchCode(contact.BranchCode));
 
-        if (request.Name != null) contact.Name = request.Name;
+        // ชื่อว่าง = ผู้ติดต่อที่หาไม่เจอในรายการ และข้อความเตือนพิมพ์ชื่อเป็น '' (Error Logs 2026-10-05 · "ผู้ติดต่อ '' ไม่ได้ตั้งค่าเป็นลูกค้า")
+        // ส่ง null = ไม่แก้ชื่อ (เหมือนเดิม) · ส่ง "" หรือช่องว่าง = ปฏิเสธ ไม่ล้างชื่อเงียบ ๆ
+        if (request.Name != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Name))
+                throw new Accounting.Helpers.BusinessRuleException("ชื่อผู้ติดต่อเว้นว่างไม่ได้ — กรอกชื่อบุคคล/บริษัทก่อนบันทึก", "CONTACT-NAME-REQUIRED");
+            contact.Name = request.Name.Trim();
+        }
         // "" = ผู้ใช้ตั้งใจล้างค่า (นิติบุคคลไม่มีคำนำหน้า) — ต้องล้างได้จริง
         if (request.TitleTh != null) contact.TitleTh = NormalizeContactTitle(request.TitleTh) ?? "";
         if (request.TaxId != null) contact.TaxId = request.TaxId;
@@ -18479,7 +18503,12 @@ public partial class DocumentService : IDocumentService
         SettlementOrphanAckAt: d.SettlementOrphanAckAt,
         SettlementOrphanAckBy: d.SettlementOrphanAckBy,
         SettlementOrphanAckReason: d.SettlementOrphanAckReason,
-        PayeeAmount: ForeignServiceVat.PayeeAmount(d));
+        PayeeAmount: ForeignServiceVat.PayeeAmount(d),
+        // คำตัดสินข้อ 139 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) · ปุ่มผูกตัดสินที่เซิร์ฟเวอร์ (ข้อมูลบนใบล้วน ไม่แตะฐาน)
+        SourceLinkedAt: d.SourceLinkedAt,
+        CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(new(
+            d.DocumentType, d.Status, d.RelatedDocumentId.HasValue, d.IsDeposit, d.DepositBaseDeducted,
+            d.ReplacesDocumentId.HasValue, d.Lines.Any(l => l.SourceLineId.HasValue))) is null);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

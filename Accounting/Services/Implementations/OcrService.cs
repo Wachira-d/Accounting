@@ -8263,9 +8263,13 @@ public class OcrService : IOcrService
             ? Math.Round(whtBase * whtRate / 100m, 2, MidpointRounding.AwayFromZero)
             : 0m;
         var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(companyId, result);
+        var linesBefore = document.Lines.ToHashSet();
         await BuildScanLinesAsync(companyId, result, items, document, linkedPo: null,
             poLineMap: new Dictionary<int, Guid?>(), scanDebitAccountId, headerSubTotal, hdrDiscRaw,
             whtRate, headerWht, isSalesSide);
+        // เอกสารนี้โหลดจากฐาน (ติดตามอยู่) — ไม่ทำใน BuildScanLinesAsync เพราะเส้นพรีวิวสร้างบรรทัดบนเอกสารชั่วคราวที่ไม่บันทึก
+        // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+        foreach (var l in document.Lines.Where(l => !linesBefore.Contains(l))) _db.DocumentLines.Add(l);
 
         // Recompute header totals from the rebuilt lines so the document is
         // self-consistent even before the user opens + saves it.

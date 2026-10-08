@@ -1723,6 +1723,8 @@ public partial class AccountingService : IAccountingService
                     LineOrder = 2
                 }
             };
+            // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+            _db.Set<JournalEntryLine>().AddRange(entry.Lines);
             rebuilt++;
         }
 

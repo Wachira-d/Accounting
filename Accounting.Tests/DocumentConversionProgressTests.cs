@@ -283,4 +283,34 @@ public class DocumentConversionProgressTests
         Assert.Equal(th, DocumentTypeNames.Title(t, null));
         Assert.Equal(en, DocumentTypeNames.Title(t, "en"));
     }
+
+    // ── คำตัดสินข้อ 138: วัดด้วยยอดเงินเมื่อใบต้นทางมีราคา ──
+    [Fact]
+    public void ยอดเงิน_แบ่งหนึ่งชิ้นเป็นสองใบครึ่งราคา_ใบแรกได้50ไม่ใช่100()
+    {
+        // ใบเสนอราคา 1 ชิ้น 500 · ใบแจ้งหนี้ใบแรก 1 ชิ้นแต่แก้ราคาเหลือ 250 — สูตรจำนวนเดิมขึ้น "ครบ" ตั้งแต่ใบนี้
+        var p = DocumentConversionProgress.EvaluateByValue(1m, 500m,
+            new[] { (DocumentType.Invoice, 1m, 250m) }, hasActiveLinkedChild: true);
+        Assert.Equal(ConversionProgressState.Partial, p.State);
+        Assert.Equal(50m, p.Percent);
+    }
+
+    [Fact]
+    public void ยอดเงิน_ครบพอดีรวมเศษปัด_ขึ้นครบ()
+    {
+        var p = DocumentConversionProgress.EvaluateByValue(1m, 500m,
+            new[] { (DocumentType.Invoice, 1m, 250m), (DocumentType.Invoice, 0m, 249.996m) }, true);
+        Assert.Equal(ConversionProgressState.Full, p.State);
+        Assert.Equal(100m, p.Percent);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ใบต้นทางไม่มีราคา_ยังใช้จำนวนเหมือนเดิม()
+    {
+        // ใบขอซื้อไม่ใส่ราคา (ยอด 0) — ห้ามแต่ง % จากยอดเงิน ใช้จำนวนแทน
+        var p = DocumentConversionProgress.EvaluateByValue(10m, 0m,
+            new[] { (DocumentType.PurchaseOrder, 4m, 0m) }, true);
+        Assert.Equal(ConversionProgressState.Partial, p.State);
+        Assert.Equal(40m, p.Percent);
+    }
 }

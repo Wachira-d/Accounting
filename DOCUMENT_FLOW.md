@@ -1049,6 +1049,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `ValidateConversionAsync(…, partialBillingSplit: true)` (เฉพาะเส้นแปลงบางส่วน) ข้ามลูก Invoice/TaxInvoice ที่มีบรรทัดอ้าง `SourceLineId`
   ของต้นทาง (ด่านยอดเงินนับแล้ว) · ยังกันเมื่อมีลูก Receipt/RV หรือใบที่ผูกแค่ `RelatedDocumentId` · แปลงทั้งฉบับยังกันเต็ม ·
   ต้นทาง Invoice → TaxInvoice แปลงบางส่วนไม่ได้ (`CONVERT-PARTIAL-INV-TO-TIV` — ใบกำกับแทนใบแจ้งหนี้ทั้งใบ)
+- **ผูกเอกสารที่สร้างแยกเข้าใบเสนอราคาภายหลัง** (คำตัดสินข้อ 139 · 2026-10-08 · `DocumentService.Link.cs` + `Helpers/DocumentLinkPolicy`):
+  ใบลูก = Invoice/TaxInvoice ที่ยังไม่มีต้นทาง (ไม่ใช่มัดจำ/ใบแทน/ยกเลิก) · ใบต้นทาง = ใบเสนอราคาคู่ค้า+สกุลเงินเดียวกัน · เขียนเฉพาะ
+  `RelatedDocumentId` + `SourceLineId` (จับคู่บรรทัดที่เซิร์ฟเวอร์เสนอ ผู้ใช้แก้ได้) + `SourceLinkedAt/By` + audit `LinkToSource` ·
+  ผ่านด่านชุดเดียวกับแปลงบางส่วน (`ValidateConversionAsync(…, partialBillingSplit: true)` + ยอดสะสม 422 `CONVERT-OVER-AMOUNT`) ·
+  **ไม่แตะ `Reference`/เนื้อกระดาษ · ไม่ลง JE · ไม่ขยับสต็อก/ยอดคงค้าง/สถานะ** · ยกเลิกการผูกได้เฉพาะที่ผูกภายหลัง (`SourceLinkedAt != null`) ·
+  ห้ามผูกใบรับเงิน (หลายรายงานตีความ "ไม่มีต้นทาง" = ขายสด) · ปุ่มโชว์ตาม `DocumentResponse.CanLinkToSource` (เซิร์ฟเวอร์ตัดสิน)
+- **ความคืบหน้าการแปลงเป็นยอดเงิน** (ข้อ 138 · `DocumentConversionProgress.EvaluateByValue`): ป้าย "ออก…แล้ว N%" หน้ารวม/รายละเอียด และแถบ
+  "สถานะการส่งมอบ / วางบิล" (`DocumentFulfillmentResponse.BilledPercent/DeliveredPercent`) วัดด้วย Σ Amount ก่อน VAT เมื่อใบต้นทางมีราคา ·
+  ไม่มีราคา (เช่น ใบขอซื้อ) ใช้จำนวนเหมือนเดิม · หน้าเว็บไม่คิด % เอง
+- **คู่ค้าไม่ตรงฝั่งเอกสาร** (ข้อ 138ข · `CreateDocumentAsync`): 409 `CONTACT-ROLE-CUSTOMER/SUPPLIER` (`Helpers/ContactRoleRule`) ⇒ หน้าเอกสาร
+  ถามแล้วเปิดสถานะให้ผู้ติดต่อ (`updateContact` เฉพาะธงเดียว) แล้วสร้างซ้ำ — ผู้ใช้ไม่ต้องออกไปหน้าผู้ติดต่อ
 - **ใบแจ้งหนี้ที่ถูกแทนที่ด้วยใบกำกับยังกินยอดต้นทาง** (`ConsumingChildDocIds` ตัวตั้งเดียว — ใช้ใน `ComputeConsumptionAsync` ·
   `ComputeConsumedBaseAsync` · `LoadConversionSummariesAsync` · ด่านรายได้ซ้ำ): เดิม `SupersedeSourceInvoiceAsync` ตั้งใบแจ้งหนี้เป็น Voided
   แล้วตัวนับข้าม ⇒ QT → INV → TIV กลับเป็น 0% และแปลงซ้ำได้ (รายได้/ภาษีขายซ้ำ) · เศษปัดต่อบรรทัดไม่ทำให้ถามเกินยอด (`roundingLines`)
@@ -4732,7 +4743,9 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 _ก่อนหน้า: 2026-10-02 (รอบ 203 ทีม F3 ฝ่ายค้านบน merge F2+F3 — §6.2g P1-2 ใบลด/เพิ่มหนี้รวมเข้า GL ของใบเจ้าของ · P1-3 เครื่องมือซ่อมต่อใบ · P2-1 backfill ตาม JE + ห้ามรับรู้รายการจ่ายขาด · P2-2 วันใบเสร็จบังคับ + เพดาน §82/3 · P2-3 ภ.พ.30 เป็นบาท · P2-6 ประทับวันจ่ายครั้งแรก (คำตัดสินข้อ 137) — commit 15a29829)_
 
-_Last verified against codebase: 2026-10-05 (คำตัดสินข้อ 138 — §2.4 แปลงบางส่วนห้ามล็อกจำนวน · ยอดสะสมเกินใบต้นทางถามยืนยันแล้วแปลงต่อ · ใบแจ้งหนี้ใบที่ 2+ · ใบแจ้งหนี้ที่ถูกแทนที่ยังนับ — commit <pending>)_
+_ก่อนหน้า: 2026-10-05 (คำตัดสินข้อ 138 — §2.4 แปลงบางส่วนห้ามล็อกจำนวน · ยอดสะสมเกินใบต้นทางถามยืนยันแล้วแปลงต่อ · ใบแจ้งหนี้ใบที่ 2+ · ใบแจ้งหนี้ที่ถูกแทนที่ยังนับ — commit ef150e55)_
+
+_Last verified against codebase: 2026-10-08 (คำตัดสินข้อ 139 — §2.4 ผูกเอกสารภายหลัง · ความคืบหน้าเป็นยอดเงิน · คู่ค้าไม่ตรงฝั่งเสนอเปิดสถานะ — commit <pending>)_
 
 _ก่อนหน้า: 2026-10-02 (PP36 ทีม F2 รอบสอง (ฝ่ายค้าน F2+F3) — §6.2g ธง PV ที่ปิดหนี้ = เจ้าของ ภ.พ.36 ของใบต้นทาง (LinkedVoucherFlag) · ด่าน JE ใช้ VatNotPaidToPayee ตัวเดียวกับ JE · ใบเพิ่ม/ลดหนี้ยอดจ่ายผู้รับเงิน · migration ใบยังไม่อนุมัติ · หน้าเอกสารถอดธงชนิดที่ติ๊กไม่ได้ — commit 5985acef)_
 

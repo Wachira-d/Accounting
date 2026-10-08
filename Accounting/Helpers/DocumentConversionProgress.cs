@@ -74,7 +74,8 @@ public static class DocumentConversionProgress
     /// (เช่น ใบแจ้งหนี้มัดจำที่ไม่ได้ยกรายการ) ⇒ อย่างน้อย "บางส่วน" ห้ามบอกว่ายังไม่ออก
     /// </summary>
     public static Progress Evaluate(decimal totalSourceQty,
-        IEnumerable<(DocumentType ChildType, decimal Quantity)> consumed, bool hasActiveLinkedChild)
+        IEnumerable<(DocumentType ChildType, decimal Quantity)> consumed, bool hasActiveLinkedChild,
+        decimal epsilon = QtyEpsilon)
     {
         decimal delivery = 0m, billing = 0m, other = 0m;
         foreach (var (childType, qty) in consumed)
@@ -90,13 +91,13 @@ public static class DocumentConversionProgress
 
         // ไม่มีจำนวนให้เทียบ (ไม่มีบรรทัด/จำนวนรวม 0) — บอกได้แค่ว่ามีใบลูกหรือไม่ ไม่แต่ง %
         if (totalSourceQty <= 0m)
-            return new Progress(null, hasActiveLinkedChild || furthest > QtyEpsilon
+            return new Progress(null, hasActiveLinkedChild || furthest > epsilon
                 ? ConversionProgressState.Partial : ConversionProgressState.None);
 
-        if (furthest >= totalSourceQty - QtyEpsilon)
+        if (furthest >= totalSourceQty - epsilon)
             return new Progress(100m, ConversionProgressState.Full);
 
-        if (furthest > QtyEpsilon)
+        if (furthest > epsilon)
         {
             var pct = Math.Round(furthest / totalSourceQty * 100m, 1, MidpointRounding.AwayFromZero);
             // ยังไม่ครบ ⇒ ห้ามโชว์ 100 (ปัดขึ้นจาก 99.96)
@@ -104,6 +105,24 @@ public static class DocumentConversionProgress
         }
         return new Progress(0m, hasActiveLinkedChild ? ConversionProgressState.Partial : ConversionProgressState.None);
     }
+
+    /// <summary>
+    /// คำตัดสินข้อ 138 (2026-10-08 · "ยอดเงินรวมสำคัญที่สุด" · "ถ้าครบพอดี ใบเสนอราคาต้องแสดงผลถูกต้อง"): วัดความคืบหน้าด้วย<b>ยอดเงิน</b>
+    /// (Σ Amount ก่อน VAT ของบรรทัดที่ใบลูกยกไป เทียบ Σ Amount ของใบต้นทาง) เมื่อใบต้นทางมีราคา — แบ่งงวด 1 ชิ้นเป็นสองใบครึ่งราคา
+    /// = 50% ไม่ใช่ 100% (สูตรจำนวนเดิมขึ้น "ครบ" ตั้งแต่ใบแรก) และจำนวนต่างหน่วยไม่ถูกบวกปนกัน ·
+    /// ใบต้นทางที่ไม่มีราคา (เช่น ใบขอซื้อที่ไม่ใส่ราคา) ⇒ ใช้จำนวนแทน (สูตรเดิม) ไม่แต่ง %
+    /// </summary>
+    public static Progress EvaluateByValue(decimal totalSourceQty, decimal totalSourceAmount,
+        IEnumerable<(DocumentType ChildType, decimal Quantity, decimal Amount)> consumed, bool hasActiveLinkedChild)
+    {
+        var rows = consumed.ToList();
+        return totalSourceAmount > AmountEpsilon
+            ? Evaluate(totalSourceAmount, rows.Select(r => (r.ChildType, r.Amount)), hasActiveLinkedChild, AmountEpsilon)
+            : Evaluate(totalSourceQty, rows.Select(r => (r.ChildType, r.Quantity)), hasActiveLinkedChild);
+    }
+
+    /// <summary>ความคลาดเคลื่อนของยอดเงิน (ครึ่งสตางค์) — เศษปัดต่อบรรทัดของใบลูกไม่ทำให้ "ครบพอดี" กลายเป็น 99.9%</summary>
+    public const decimal AmountEpsilon = 0.005m;
 
     /// <summary>ใบลูกที่จะเอ่ยชื่อในป้าย (ล่าสุดที่ยังมีผล)</summary>
     public readonly record struct ChildRef(string DocumentNumber, DocumentType DocumentType, DocumentStatus Status);

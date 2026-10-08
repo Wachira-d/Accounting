@@ -1247,6 +1247,42 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารบางส่วนสำเร็จ"));
     }
 
+    /// <summary>คำตัดสินข้อ 139: ใบเสนอราคาที่ผูกเอกสารนี้ได้ (อ่านอย่างเดียว)</summary>
+    [HttpGet("{documentId:guid}/link-candidates")]
+    public async Task<ActionResult<ApiResponse<LinkCandidatesResponse>>> GetLinkCandidates(Guid companyId, Guid documentId)
+    {
+        var result = await _documentService.GetLinkCandidatesAsync(companyId, documentId);
+        return Ok(new ApiResponse<LinkCandidatesResponse>(true, result));
+    }
+
+    /// <summary>คำตัดสินข้อ 139: ผูกใบแจ้งหนี้/ใบกำกับที่สร้างแยกเข้าใบเสนอราคา — สิทธิ์ระดับเดียวกับการแปลง (สร้างเอกสารชนิดนั้น) ·
+    /// ยอดสะสมเกินใบต้นทาง ⇒ 422 CONVERT-OVER-AMOUNT แล้วส่งซ้ำด้วย ConfirmOverSourceAmount=true</summary>
+    [HttpPost("{documentId:guid}/link-source")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> LinkSource(
+        Guid companyId, Guid documentId, [FromBody] LinkSourceRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var childType = await GetDocumentTypeAsync(companyId, documentId);
+        if (childType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        var deny = await DenyDocAsync(companyId, userIdGuid, childType.Value, DocPerm.Create, "ผูกเอกสาร");
+        if (deny != null) return Forbid403<DocumentResponse>(deny);
+        var result = await _documentService.LinkToSourceAsync(companyId, documentId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "ผูกกับใบเสนอราคาแล้ว"));
+    }
+
+    /// <summary>คำตัดสินข้อ 139: ยกเลิกการผูกภายหลัง</summary>
+    [HttpPost("{documentId:guid}/unlink-source")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> UnlinkSource(Guid companyId, Guid documentId)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var childType = await GetDocumentTypeAsync(companyId, documentId);
+        if (childType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        var deny = await DenyDocAsync(companyId, userIdGuid, childType.Value, DocPerm.Create, "ยกเลิกการผูกเอกสาร");
+        if (deny != null) return Forbid403<DocumentResponse>(deny);
+        var result = await _documentService.UnlinkSourceAsync(companyId, documentId, userIdGuid.ToString());
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "ยกเลิกการผูกแล้ว"));
+    }
+
     /// <summary>
     /// สถานะการส่งมอบ/วางบิลรายบรรทัด — จำนวนที่สั่ง, ส่งมอบแล้ว, วางบิลแล้ว
     /// และจำนวนคงเหลือของแต่ละแกน ใช้แสดงในหน้าจอแปลงเอกสารบางส่วน.

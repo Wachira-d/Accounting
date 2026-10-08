@@ -1530,6 +1530,28 @@
     </div>
 
     <!-- Convert Modal -->
+    <!-- คำตัดสินข้อ 139: ผูกใบแจ้งหนี้/ใบกำกับที่สร้างแยกเข้ากับใบเสนอราคา (ได้ผลเหมือนแปลงมา · ไม่แตะเนื้อกระดาษ) -->
+    <div class="modal-overlay" id="linkSourceModal">
+      <div class="modal" style="max-width:720px">
+        <div class="modal-header"><h3 class="modal-title">🔗 ผูกกับใบเสนอราคา</h3><button class="modal-close" onclick="Layout.closeModal('linkSourceModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="linkChildId">
+          <div class="form-help" style="margin-bottom:8px">เลือกใบเสนอราคาของคู่ค้ารายนี้ แล้วจับคู่รายการ — ใบเสนอราคาจะนับยอดของใบนี้เหมือนแปลงมา
+            (ไม่เปลี่ยนเนื้อเอกสาร ไม่ลงบัญชีเพิ่ม)</div>
+          <div class="form-group">
+            <label class="form-label">ใบเสนอราคา</label>
+            <select id="linkSourceSelect" class="form-input" onchange="Page.renderLinkMap()"></select>
+          </div>
+          <div id="linkSourceInfo" class="form-help"></div>
+          <div id="linkMapTable" style="margin-top:8px"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('linkSourceModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="linkSourceSubmit" onclick="Page.doLinkSource()">ผูกเอกสาร</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="convertModal">
       <div class="modal" style="max-width:660px">
         <div class="modal-header"><h3 class="modal-title">แปลงเอกสาร</h3><button class="modal-close" onclick="Layout.closeModal('convertModal')">&times;</button></div>
@@ -8891,6 +8913,31 @@
           if (btn) { btn.disabled = false; btn.textContent = '⟲ ดึงรายการจาก OCR'; }
         }
       },
+      /**
+       * คำตัดสินข้อ 138ข (2026-10-05/08 · ผู้ใช้: "ลูกค้าที่ไม่ตรงประเภท ระบบขึ้นมาให้ดำเนินการเพิ่มประเภทเลยดีกว่า"):
+       * เซิร์ฟเวอร์ตอบ 409 + ruleCode CONTACT-ROLE-CUSTOMER/SUPPLIER เมื่อคู่ค้ายังไม่ได้เปิดสถานะ ⇒ ถามครั้งเดียว →
+       * เปิดสถานะให้ (updateContact เฉพาะธงเดียว — ช่องอื่นส่ง null = ไม่แตะ) → สร้างเอกสารซ้ำ · ผู้ใช้ยกเลิก = โยน error เดิม
+       * (ตัวตัดสินว่าต้องเป็นลูกค้า/ผู้จำหน่ายอยู่ที่เซิร์ฟเวอร์ — หน้าเว็บอ่านแค่รหัสกฎ)
+       */
+      async _createDocumentFixingContactRole(api, payload) {
+        try {
+          return await api.createDocument(payload);
+        } catch (e) {
+          const rule = e && e.status === 409 && e.body?.data?.ruleCode;
+          const asCustomer = rule === 'CONTACT-ROLE-CUSTOMER', asSupplier = rule === 'CONTACT-ROLE-SUPPLIER';
+          if (!(asCustomer || asSupplier) || !payload.contactId) throw e;
+          const role = asCustomer ? 'ลูกค้า' : 'ผู้จำหน่าย';
+          if (!confirm(e.message + '\n\nเปิดสถานะ "' + role + '" ให้ผู้ติดต่อนี้แล้วบันทึกต่อเลยไหม?')) throw e;
+          try {
+            await api.updateContact(payload.contactId, asCustomer ? { isCustomer: true } : { isSupplier: true });
+          } catch (e2) {
+            throw new Error('เปิดสถานะ "' + role + '" ไม่สำเร็จ: ' + (e2.message || e2) + ' — เปิดที่หน้าผู้ติดต่อแล้วบันทึกใหม่');
+          }
+          Layout.toast('เปิดสถานะ "' + role + '" ให้ผู้ติดต่อแล้ว', 'info', 4000);
+          return await api.createDocument(payload);
+        }
+      },
+
       async save(approveAfter = false) {
         const api = Layout.api(); if (!api) return;
         // หัวเอกสาร vs ผังรายบรรทัด — ถามก่อนเมื่อขัดกัน (JE ลงตามบรรทัด)
@@ -9374,7 +9421,7 @@
               : 'แก้ไขเอกสารสำเร็จ');
             this._revisionCtx = null;
           } else {
-            const cr = await api.createDocument(payload);
+            const cr = await this._createDocumentFixingContactRole(api, payload);
             savedDocId = cr.data?.id;
             // Backend อาจ auto-approve Cash PV → ดู status จริงในผลตอบกลับ
             // แล้ว toast ให้สื่อสารถูก (Paid / Approved / Draft)
@@ -10394,6 +10441,13 @@
           const hasConvertTargets = (this._validConversions?.[d.documentType] || []).length > 0;
           if (convertibleStatuses.includes(d.status) && hasConvertTargets) {
             actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
+          }
+          // คำตัดสินข้อ 139 — เซิร์ฟเวอร์ตัดสินว่าโชว์ได้ (canLinkToSource / sourceLinkedAt) หน้าเว็บไม่เดาเงื่อนไขเอง
+          if (d.canLinkToSource) {
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openLinkSource('${d.id}')" title="ผูกใบนี้กับใบเสนอราคาที่มีอยู่ — ใบเสนอราคานับยอดของใบนี้เหมือนแปลงมา (ไม่เปลี่ยนเนื้อเอกสาร ไม่ลงบัญชีเพิ่ม)">🔗 ผูกกับใบเสนอราคา</button>`;
+          }
+          if (d.sourceLinkedAt) {
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.unlinkSource('${d.id}')" title="ยกเลิกการผูกกับใบเสนอราคา (ผูกไว้ภายหลัง ไม่ได้แปลงมา)">✂️ ยกเลิกการผูก</button>`;
           }
           if (d.status === 'Approved' || d.status === 'Sent') {
             if (d.documentType === 'Quotation') {
@@ -12901,6 +12955,77 @@
           </table>${moneyNote}`;
       },
 
+      /** คำตัดสินข้อ 139 — เปิดหน้าต่างผูก: รายการใบเสนอราคา + การจับคู่บรรทัดที่เซิร์ฟเวอร์เสนอ (หน้าเว็บไม่ตัดสินสิทธิ์/เงื่อนไขเอง) */
+      async openLinkSource(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = (await api.getLinkCandidates(id)).data;
+          if (res.blockedReason) { Layout.toast(res.blockedReason, 'warning', 8000); return; }
+          this._linkData = res;
+          document.getElementById('linkChildId').value = id;
+          document.getElementById('linkSourceSelect').innerHTML = res.candidates.map(c =>
+            `<option value="${Layout.esc(c.id)}">${Layout.esc(c.documentNumber)} · ${Layout.date(c.documentDate)} · ยอด ${Layout.money(c.sourceBaseAmount)} · วางบิลแล้ว ${Layout.money(c.billedBaseAmount)}</option>`).join('');
+          this.renderLinkMap();
+          Layout.openModal('linkSourceModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      renderLinkMap() {
+        const res = this._linkData; if (!res) return;
+        const srcId = document.getElementById('linkSourceSelect').value;
+        const cand = res.candidates.find(c => c.id === srcId); if (!cand) return;
+        const remaining = Math.max(0, Number(cand.sourceBaseAmount) - Number(cand.billedBaseAmount));
+        document.getElementById('linkSourceInfo').innerHTML =
+          `ยอดใบเสนอราคา <b>${Layout.money(cand.sourceBaseAmount)}</b> · วางบิลแล้ว <b>${Layout.money(cand.billedBaseAmount)}</b> · คงเหลือ <b>${Layout.money(remaining)}</b> (ก่อน VAT)`;
+        const suggested = Object.fromEntries((cand.suggestedMap || []).map(m => [m.childLineId, m.sourceLineId]));
+        const opts = sel => `<option value="">— ไม่นับ —</option>` + cand.sourceLines.map(sl =>
+          `<option value="${Layout.esc(sl.id)}" ${sl.id === sel ? 'selected' : ''}>${Layout.esc(sl.description || '')} (${Layout.money(sl.amount)})</option>`).join('');
+        document.getElementById('linkMapTable').innerHTML = `<table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:#f8fafc">
+            <th style="padding:6px 8px;text-align:left;font-size:11.5px;color:#6b7280">รายการในเอกสารนี้</th>
+            <th style="padding:6px 8px;text-align:right;font-size:11.5px;color:#6b7280">ยอด</th>
+            <th style="padding:6px 8px;text-align:left;font-size:11.5px;color:#6b7280">ตรงกับรายการในใบเสนอราคา</th>
+          </tr></thead>
+          <tbody>${res.childLines.map(cl => `<tr style="border-top:1px solid #f1f5f9">
+            <td style="padding:5px 8px;font-size:12.5px">${Layout.esc(cl.description || '')}</td>
+            <td style="padding:5px 8px;text-align:right;font-size:12px">${Layout.money(cl.amount)}</td>
+            <td style="padding:4px 8px"><select class="form-input lnk-map" data-child="${Layout.esc(cl.id)}" style="padding:4px 6px;font-size:12px">${opts(suggested[cl.id])}</select></td>
+          </tr>`).join('')}</tbody></table>`;
+      },
+
+      async doLinkSource() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('linkChildId').value;
+        const sourceDocumentId = document.getElementById('linkSourceSelect').value;
+        const lines = [...document.querySelectorAll('#linkMapTable .lnk-map')]
+          .filter(s => s.value).map(s => ({ childLineId: s.dataset.child, sourceLineId: s.value }));
+        if (!lines.length) { Layout.toast('เลือกอย่างน้อย 1 รายการที่ตรงกับใบเสนอราคา', 'error'); return; }
+        try {
+          try {
+            await api.linkDocumentSource(id, { sourceDocumentId, lines, confirmOverSourceAmount: false });
+          } catch (e) {
+            if (!(e && e.status === 422 && e.body?.data?.ruleCode === 'CONVERT-OVER-AMOUNT')) throw e;
+            if (!confirm(e.message + '\n\nยืนยันผูกต่อ?')) return;
+            await api.linkDocumentSource(id, { sourceDocumentId, lines, confirmOverSourceAmount: true });
+          }
+          Layout.closeModal('linkSourceModal');
+          Layout.toast('ผูกกับใบเสนอราคาแล้ว — ใบเสนอราคานับยอดของใบนี้แล้ว', 'success');
+          await this.load();
+          this.detail(id);
+        } catch (e) { Layout.toast(e.message, 'error', 8000); }
+      },
+
+      async unlinkSource(id) {
+        const api = Layout.api(); if (!api) return;
+        if (!confirm('ยกเลิกการผูกเอกสารนี้กับใบเสนอราคา? (ใบเสนอราคาจะไม่นับยอดของใบนี้อีก — เนื้อเอกสารไม่เปลี่ยน)')) return;
+        try {
+          await api.unlinkDocumentSource(id);
+          Layout.toast('ยกเลิกการผูกแล้ว', 'success');
+          await this.load();
+          this.detail(id);
+        } catch (e) { Layout.toast(e.message, 'error', 8000); }
+      },
+
       async doConvert() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('convertDocId').value;
@@ -13005,12 +13130,17 @@
         const sum = sel => f.lines.reduce((s, l) => s + sel(l), 0);
         const ordered = sum(l => l.orderedQuantity);
 
-        const bar = (done, total, label, color) => {
-          const pct = total > 0 ? Math.min(100, Math.round(done / total * 100)) : 0;
+        // ข้อ 138: % มาจากเซิร์ฟเวอร์ (ยอดเงินเมื่อใบมีราคา) — หน้าเว็บไม่คิดเอง · ตัวเลขข้าง % = ยอดเงินก่อน VAT เมื่อมีราคา ไม่งั้นจำนวน
+        const byMoney = Number(f.sourceBaseAmount ?? 0) > 0;
+        const bar = (serverPct, doneQty, doneAmt, label, color) => {
+          const pct = serverPct == null ? 0 : Number(serverPct);
+          const nums = byMoney
+            ? `${Layout.money(doneAmt)}/${Layout.money(f.sourceBaseAmount)}`
+            : `${fmt(doneQty)}/${fmt(ordered)}`;
           return `<div style="flex:1;min-width:180px">
             <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
               <span style="color:#6b7280">${label}</span>
-              <span style="font-weight:600">${fmt(done)}/${fmt(total)} (${pct}%)</span>
+              <span style="font-weight:600">${nums} (${pct}%)</span>
             </div>
             <div style="height:7px;background:#e5e7eb;border-radius:4px;overflow:hidden">
               <div style="height:100%;width:${pct}%;background:${color}"></div>
@@ -13018,8 +13148,8 @@
         };
 
         let summary = '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px">';
-        if (f.supportsDelivery) summary += bar(sum(l => l.deliveredQuantity), ordered, '🚚 ส่งมอบแล้ว', '#0ea5e9');
-        if (f.supportsBilling) summary += bar(sum(l => l.billedQuantity), ordered, '🧾 วางบิล/แจ้งหนี้แล้ว', '#8b5cf6');
+        if (f.supportsDelivery) summary += bar(f.deliveredPercent, sum(l => l.deliveredQuantity), f.deliveredBaseAmount, '🚚 ส่งมอบแล้ว', '#0ea5e9');
+        if (f.supportsBilling) summary += bar(f.billedPercent, sum(l => l.billedQuantity), f.billedBaseAmount, '🧾 วางบิล/แจ้งหนี้แล้ว', '#8b5cf6');
         summary += '</div>';
 
         const dCol = f.supportsDelivery, bCol = f.supportsBilling;

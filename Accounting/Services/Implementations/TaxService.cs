@@ -2985,7 +2985,8 @@ public partial class TaxService : ITaxService
                     && !nextReport.Lines.Any(l => l.IncomeTypeCode == "VAT_CREDIT_CF"))
                 {
                     var cf = Math.Abs(report.NetVat);
-                    nextReport.Lines.Add(new TaxReportLine
+                    // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+                    nextReport.Lines.Add(_db.Set<TaxReportLine>().Add(new TaxReportLine
                     {
                         TaxReportId = nextReport.Id,
                         LineOrder = (nextReport.Lines.Count == 0 ? 0 : nextReport.Lines.Max(l => l.LineOrder)) + 1,
@@ -2994,7 +2995,7 @@ public partial class TaxService : ITaxService
                         TaxRate = 0,
                         TaxAmount = -cf,
                         IncomeTypeCode = "VAT_CREDIT_CF"
-                    });
+                    }).Entity);
                     RecalcVatTotals(nextReport);
                     nextReport.UpdatedAt = DateTime.UtcNow;
                     await _db.SaveChangesAsync();
@@ -3794,7 +3795,8 @@ public partial class TaxService : ITaxService
                             && l.TaxReportId != fresh.Id
                             && l.TaxReport.CompanyId == companyId && l.TaxReport.TaxType == TaxType.VAT);
                         if (!stillOk || claimedElse) continue;
-                        fresh.Lines.Add(new TaxReportLine
+                        // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+                        fresh.Lines.Add(_db.Set<TaxReportLine>().Add(new TaxReportLine
                         {
                             TaxReportId = fresh.Id,
                             LineOrder = (fresh.Lines.Count == 0 ? 0 : fresh.Lines.Max(l => l.LineOrder)) + 1,
@@ -3803,7 +3805,7 @@ public partial class TaxService : ITaxService
                             IncomeAmount = p.IncomeAmount, TaxRate = p.TaxRate, TaxAmount = p.TaxAmount,
                             DocumentId = p.DocumentId, IncomeTypeCode = p.IncomeTypeCode,
                             IsExcluded = p.IsExcluded,
-                        });
+                        }).Entity);
                         changed = true;
                     }
                 }

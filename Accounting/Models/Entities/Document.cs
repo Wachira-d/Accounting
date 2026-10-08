@@ -412,6 +412,10 @@ public class Document : TenantEntity
     public Guid? ReplacesDocumentId { get; set; }
     /// <summary>เหตุผลที่ต้องออกใบแทน (เก็บไว้ให้ผู้สอบบัญชี)</summary>
     public string? ReplacementReason { get; set; }
+    /// <summary>คำตัดสินข้อ 139: ใบนี้ถูก "ผูก" เข้าใบต้นทางภายหลัง (ไม่ได้แปลงมา) เมื่อไร/โดยใคร — มีค่า = ยกเลิกการผูกได้ ·
+    /// null = แปลงมาจริงหรือไม่ได้ผูก (ยกเลิกการผูกไม่ได้ กันแปลงซ้ำแล้วได้สองใบ)</summary>
+    public DateTime? SourceLinkedAt { get; set; }
+    public string? SourceLinkedBy { get; set; }
     public DateTime? ReplacedAt { get; set; }
     /// <summary>ใบแทนชนิด "ยกเลิกและออกใบแทน" (รอบ 200 ทีม V1 · คำตัดสินข้อ 9) — ใบเดิมถูก <b>Voided</b> และรายการบัญชี/การรับชำระ/
     /// สต็อก/คู่จับของรอบโอน <b>ย้ายมาอยู่ใบนี้</b> ⇒ ใบนี้เป็นเจ้าของผลทางบัญชีเอง (ยกเลิกใบนี้ = กลับรายการ/คืนสต็อกตามปกติ) ·

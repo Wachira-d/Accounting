@@ -971,7 +971,29 @@ public record DocumentResponse(
     decimal? PayeeAmount = null,
     /// <summary>คำตัดสินข้อ 138 (2026-10-05): คำเตือนจากการแปลงบางส่วนที่ <b>ไม่หยุด</b> การแปลง (จำนวนเกินคงเหลือ ·
     /// ยอดเกินใบต้นทางที่ผู้ใช้ยืนยันแล้ว) — มีค่าเฉพาะในคำตอบของ convert-partial · null = ไม่มีคำเตือน/เส้นทางอื่น</summary>
-    IReadOnlyList<string>? ConversionWarnings = null);
+    IReadOnlyList<string>? ConversionWarnings = null,
+    /// <summary>คำตัดสินข้อ 139: ผูกเข้าใบต้นทางภายหลังเมื่อไร (null = แปลงมา/ไม่ได้ผูก) — มีค่า ⇒ หน้าเว็บโชว์ "ยกเลิกการผูก"</summary>
+    DateTime? SourceLinkedAt = null,
+    /// <summary>เซิร์ฟเวอร์ตัดสิน (DocumentLinkPolicy.ChildBlockReason) ว่าโชว์ปุ่ม "ผูกกับใบเสนอราคา" ได้ไหม — หน้าเว็บไม่เดาเอง</summary>
+    bool CanLinkToSource = false);
+
+/// <summary>คำตัดสินข้อ 139: ผูกใบลูกเข้าใบต้นทาง — จับคู่บรรทัดลูก → บรรทัดต้นทาง (บรรทัดที่ไม่ส่งมา = ไม่นับในความคืบหน้า)</summary>
+public record LinkSourceRequest(
+    Guid SourceDocumentId,
+    List<LinkLineMap> Lines,
+    bool ConfirmOverSourceAmount = false);
+
+public record LinkLineMap(Guid ChildLineId, Guid SourceLineId);
+
+public record LinkSourceLine(Guid Id, int LineOrder, string Description, decimal Quantity, decimal Amount);
+
+public record LinkCandidate(
+    Guid Id, string DocumentNumber, DateTime DocumentDate, decimal SourceBaseAmount, decimal BilledBaseAmount,
+    List<LinkSourceLine> SourceLines, List<LinkLineSuggestion> SuggestedMap);
+
+public record LinkLineSuggestion(Guid ChildLineId, Guid? SourceLineId);
+
+public record LinkCandidatesResponse(string? BlockedReason, List<LinkSourceLine> ChildLines, List<LinkCandidate> Candidates);
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>
@@ -1125,7 +1147,11 @@ public record DocumentFulfillmentResponse(
     /// ตัวตัดสินอยู่ที่เซิร์ฟเวอร์ (PartialConvertPolicy) — คำตัดสินข้อ 138</summary>
     decimal SourceBaseAmount = 0m,
     decimal BilledBaseAmount = 0m,
-    decimal DeliveredBaseAmount = 0m);
+    decimal DeliveredBaseAmount = 0m,
+    /// <summary>% ที่เซิร์ฟเวอร์คำนวณ (DocumentConversionProgress.EvaluateByValue — ยอดเงินเมื่อมีราคา · จำนวนเมื่อไม่มีราคา)
+    /// หน้าเว็บวาดแถบจากค่านี้อย่างเดียว (เดิม JS คิด % จากจำนวนเองและปัด 99.6 เป็น 100) · null = ไม่มีฐานให้เทียบ</summary>
+    decimal? BilledPercent = null,
+    decimal? DeliveredPercent = null);
 
 public record DocumentLineFulfillmentResponse(
     Guid LineId,

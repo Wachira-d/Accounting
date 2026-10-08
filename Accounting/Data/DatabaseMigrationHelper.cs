@@ -7329,6 +7329,9 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "DecidedAt" timestamptz NULL;""",
         // A-ST8: ลายนิ้วมือชิ้นแผนตอนออกเอกสาร — NULL = เอกสารเดิมทุกใบ (ไม่รู้ ⇒ ตัวเทียบใช้แผนก่อน/หลังแก้แบบเดิม)
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SettlementPieceFingerprint" text NULL;""",
+        // คำตัดสินข้อ 139 (2026-10-08): ผูกใบแจ้งหนี้ที่สร้างแยกเข้าใบเสนอราคาภายหลัง
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SourceLinkedAt" timestamp with time zone NULL;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "SourceLinkedBy" text NULL;""",
         // A-ST9: รุ่นของตัวอ่าน/กติกาคีย์ตอนนำเข้า — NULL = บรรทัดเดิมทุกแถว (ถือว่าตัวอ่านรุ่นก่อน ⇒ คีย์วันที่ตามตัวอักษรยังเทียบได้ = พฤติกรรมเดิม)
         """ALTER TABLE "SettlementLines" ADD COLUMN IF NOT EXISTS "KeyVersion" text NULL;""",
     };

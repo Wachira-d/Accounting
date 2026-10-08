@@ -1029,7 +1029,8 @@ public partial class LodgingService
     private async Task AddChargeCoreAsync(Guid companyId, LodgingReservation r,
         LodgingAddChargeRequest request, string userId)
     {
-        r.Charges.Add(await BuildChargeAsync(companyId, r, request, userId));
+        // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+        r.Charges.Add(_db.Set<LodgingFolioCharge>().Add(await BuildChargeAsync(companyId, r, request, userId)).Entity);
         RecalcFolio(r);
     }
 
@@ -1204,7 +1205,8 @@ public partial class LodgingService
 
             // ออกใบสำเร็จแล้วจึงผูกรายการใหม่เข้าการจอง + ประทับเลขใบทันที — ถ้าขั้นใช้มัดจำด้านล่างล้ม
             // การกดเช็คเอาต์ซ้ำ = ทำขั้นที่ค้างต่อ (ResumeCheckOutAsync) ไม่ออกใบกำกับใบที่สอง และไม่เพิ่มค่าเสียหายซ้ำ
-            foreach (var c in newCharges) r.Charges.Add(c);
+            // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+            foreach (var c in newCharges) { _db.Set<LodgingFolioCharge>().Add(c); r.Charges.Add(c); }
             RecalcFolio(r);
             r.ContactId = contactId;
             r.FinalDocumentId = approved.Id;
@@ -1586,13 +1588,14 @@ public partial class LodgingService
         var vatRate = await EffectiveVatRateAsync(companyId, r.Property);
         if (request.DamageCharge is decimal dmg && dmg > 0)
         {
-            r.Charges.Add(new LodgingFolioCharge
+            // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+            r.Charges.Add(_db.Set<LodgingFolioCharge>().Add(new LodgingFolioCharge
             {
                 CompanyId = companyId, ReservationId = r.Id,
                 Description = "ค่าเสียหาย/ของหาย" + (string.IsNullOrWhiteSpace(request.DamageDescription) ? "" : $" — {request.DamageDescription!.Trim()}"),
                 Quantity = 1, UnitPrice = dmg, Total = Math.Round(dmg, 2, MidpointRounding.AwayFromZero), VatRate = vatRate,
                 Source = LodgingChargeSource.System, Status = LodgingChargeStatus.Pending, ChargedAt = DateTime.UtcNow, CreatedBy = userId,
-            });
+            }).Entity);
             RecalcFolio(r);
         }
         var balance = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount);

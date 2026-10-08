@@ -273,6 +273,12 @@ public interface IDocumentService
     Task<IReadOnlyList<DocumentType>> GetValidConversionTargetsAsync(Guid companyId, DocumentType source);
     /// <summary>แปลงเอกสารบางส่วน — เลือกเฉพาะบางรายการ/บางจำนวน (เช่น แยก PO เดียวเป็นหลายใบส่งของ/หลาย Invoice)</summary>
     Task<DocumentResponse> ConvertDocumentPartialAsync(Guid companyId, Guid documentId, DocumentType targetType, PartialConvertRequest request, string createdBy);
+    /// <summary>คำตัดสินข้อ 139: ใบเสนอราคาที่ผูกใบแจ้งหนี้/ใบกำกับนี้ได้ + การจับคู่บรรทัดที่เสนอ</summary>
+    Task<LinkCandidatesResponse> GetLinkCandidatesAsync(Guid companyId, Guid childId);
+    /// <summary>คำตัดสินข้อ 139: ผูกใบลูกที่สร้างแยกเข้าใบต้นทาง (ไม่แตะกระดาษ/JE/สต็อก)</summary>
+    Task<DocumentResponse> LinkToSourceAsync(Guid companyId, Guid childId, LinkSourceRequest request, string actor);
+    /// <summary>คำตัดสินข้อ 139: ยกเลิกการผูกภายหลัง (เฉพาะใบที่ผูกเอง ไม่ใช่ใบที่แปลงมา)</summary>
+    Task<DocumentResponse> UnlinkSourceAsync(Guid companyId, Guid childId, string actor);
     /// <summary>สถานะการแปลง/ส่งมอบรายบรรทัด — จำนวนสั่ง/ส่งแล้ว/วางบิลแล้ว/คงเหลือ</summary>
     Task<DocumentFulfillmentResponse> GetDocumentFulfillmentAsync(Guid companyId, Guid documentId);
     /// <summary>แปลงหลายเอกสารพร้อมกัน — รวมเป็นเอกสารเดียว (กรณี target ยอมให้รวม) หรือสร้างทีละฉบับ</summary>

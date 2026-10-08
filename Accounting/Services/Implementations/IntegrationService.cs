@@ -3198,6 +3198,8 @@ public class IntegrationService : IIntegrationService
             includeVat: request.IncludeVat, outputVatAllowed: vatProfile.Registered);
         foreach (var l in newLines) l.DocumentId = existing.Id;
         existing.Lines = newLines;   // ให้ JE builder เห็นบรรทัดใหม่ทันที (nav ไม่ได้ Include มา)
+        // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+        _db.DocumentLines.AddRange(newLines);
 
         var subTotal = newLines.Sum(l => l.Amount);
         var totalVat = newLines.Sum(l => l.VatAmount);
@@ -3286,6 +3288,8 @@ public class IntegrationService : IIntegrationService
             inputVatClaimable: vatProfile.Registered);
         foreach (var l in newLines) l.DocumentId = existing.Id;
         existing.Lines = newLines;
+        // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+        _db.DocumentLines.AddRange(newLines);
 
         var subTotal = newLines.Sum(l => l.Amount);
         var totalVat = newLines.Sum(l => l.VatAmount);

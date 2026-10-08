@@ -33,7 +33,9 @@ public class ApiErrorLoggingMiddleware
 
         // Log 4xx and 5xx responses that were NOT already logged by ExceptionMiddleware
         // ExceptionMiddleware sets a flag when it handles an exception
-        if (statusCode >= 400 && !context.Items.ContainsKey("__ErrorLogged"))
+        // 422 = "ถามยืนยันก่อน" ตามออกแบบ (คำเตือนก่อนอนุมัติ ack-flow · ฯลฯ) ไม่ใช่ข้อผิดพลาดของระบบ — เดิมลง Error Logs ทุกครั้ง
+        // (2026-10-05..08: แถว "HTTP 422 error" ที่ /approve ท่วมตาราง กลบข้อผิดพลาดจริง)
+        if (statusCode >= 400 && statusCode != 422 && !context.Items.ContainsKey("__ErrorLogged"))
         {
             var message = statusCode switch
             {

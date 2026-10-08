@@ -19,6 +19,6 @@
 | `checker-writing.md` | การเขียน checker / negative test / simulation | 5 |
 | `ui-frontend.md` | หน้าเว็บ · JS · CSS · เมนู · ลิงก์ | 8 |
 | `process-docs.md` | กระบวนการ · เอกสาร · การตรวจ · "มี ≠ ถูกเรียก" | 8 |
-| `general-design.md` | การออกแบบทั่วไป (ค่า default · สถานะ · ด่าน · fail loud) | 8 |
+| `general-design.md` | การออกแบบทั่วไป (ค่า default · สถานะ · ด่าน · fail loud) | 10 |
 
 รวม 165 ข้อ (รอบ 193 +12) · หลักการที่กลั่นจากทั้งหมดอยู่ใน `CLAUDE.md` กฎเหล็ก #4 F2 (10 ข้อ) · บทเรียนที่ยังอยู่ใน CLAUDE.md: หมวด A–E (checklist) · G (Testing) · H (กันถดถอย — 9 ข้อ)

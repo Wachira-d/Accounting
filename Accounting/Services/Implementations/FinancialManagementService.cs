@@ -297,6 +297,8 @@ public partial class FinancialManagementService : IFinancialManagementService
             dep.RefundedAmount += request.Amount;
             dep.RemainingAmount -= request.Amount;
             dep.Status = dep.RemainingAmount <= 0 ? "FullyRefunded" : "PartiallyRefunded";
+            // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
+            _db.Set<DepositRefund>().Add(refund);
             dep.Refunds.Add(refund);
             await _db.SaveChangesAsync();
             await txn.CommitAsync();
