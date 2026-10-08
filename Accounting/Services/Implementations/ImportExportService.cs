@@ -816,14 +816,14 @@ public class ImportExportService : IImportExportService
                 && l.DebitAmount == debitAmount && l.CreditAmount == creditAmount);
             if (!dupLine)
             {
-                // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-                existing.Lines.Add(_db.Set<JournalEntryLine>().Add(new JournalEntryLine
+                // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+                _db.AddNewChild(existing.Lines, new JournalEntryLine
                 {
                     AccountId = account.Id,
                     DebitAmount = debitAmount,
                     CreditAmount = creditAmount,
                     Description = description
-                }).Entity);
+                });
             }
             existing.TotalDebit = existing.Lines.Sum(l => l.DebitAmount);
             existing.TotalCredit = existing.Lines.Sum(l => l.CreditAmount);
@@ -1131,8 +1131,8 @@ public class ImportExportService : IImportExportService
 
         // Opening AR/AP is a pure receivable/payable carry-over — single line,
         // no new VAT/WHT (that belonged to the original invoice's period).
-        // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-        doc.Lines.Add(_db.Set<DocumentLine>().Add(new DocumentLine
+        // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+        _db.AddNewChild(doc.Lines, new DocumentLine
         {
             LineOrder = 1,
             Description = notes,
@@ -1142,7 +1142,7 @@ public class ImportExportService : IImportExportService
             Amount = amount,
             VatRate = 0,
             VatAmount = 0,
-        }).Entity);
+        });
         doc.SubTotal = amount;
         doc.VatAmount = 0;
         doc.WithholdingTaxAmount = 0;
@@ -1546,14 +1546,14 @@ public class ImportExportService : IImportExportService
         }
 
         decimal M(string key) => decimal.TryParse(row.GetValueOrDefault(key), out var v) ? v : 0;
-        // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-        budget.Lines.Add(_db.Set<BudgetLine>().Add(new BudgetLine
+        // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+        _db.AddNewChild(budget.Lines, new BudgetLine
         {
             AccountId = account.Id,
             Month1 = M("Month1"), Month2 = M("Month2"), Month3 = M("Month3"), Month4 = M("Month4"),
             Month5 = M("Month5"), Month6 = M("Month6"), Month7 = M("Month7"), Month8 = M("Month8"),
             Month9 = M("Month9"), Month10 = M("Month10"), Month11 = M("Month11"), Month12 = M("Month12"),
-        }).Entity);
+        });
     }
 
     private async Task<List<Dictionary<string, string>>> ExportBudgetsAsync(Guid companyId, ExportRequest request)
@@ -1680,8 +1680,8 @@ public class ImportExportService : IImportExportService
             accountId = acct?.Id;
         }
 
-        // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-        doc.Lines.Add(_db.Set<DocumentLine>().Add(new DocumentLine
+        // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+        _db.AddNewChild(doc.Lines, new DocumentLine
         {
             LineOrder = doc.Lines.Count + 1,
             Description = row.GetValueOrDefault("LineDescription") ?? "",
@@ -1696,7 +1696,7 @@ public class ImportExportService : IImportExportService
             WithholdingTaxAmount = whtAmt,
             AccountId = accountId,
             ProductCode = row.GetValueOrDefault("LineProductCode")
-        }).Entity);
+        });
 
         // Recompute header totals each line so the header stays consistent
         // even when the run aborts mid-document.

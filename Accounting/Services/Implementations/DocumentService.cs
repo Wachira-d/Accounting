@@ -2064,6 +2064,10 @@ public partial class DocumentService : IDocumentService
 
         var childById = children.ToDictionary(c => c.Id);
         var consumedBySource = consumed.ToLookup(c => c.SourceDocId);
+        var srcTypes = await _db.Documents.AsNoTracking()
+            .Where(d => srcIds.Contains(d.Id) && d.CompanyId == companyId)
+            .Select(d => new { d.Id, d.DocumentType })
+            .ToDictionaryAsync(d => d.Id, d => d.DocumentType);
         var linkedBySource = children.Where(c => c.RelatedDocumentId.HasValue)
             .ToLookup(c => c.RelatedDocumentId!.Value);
 
@@ -2072,7 +2076,8 @@ public partial class DocumentService : IDocumentService
             var rows = consumedBySource[srcId].ToList();
             var linkedIds = linkedBySource[srcId].Select(c => c.Id).ToList();
             // ข้อ 138: วัดด้วยยอดเงินเมื่อใบต้นทางมีราคา (ตัวตัดสินเดียว EvaluateByValue)
-            var progress = DocumentConversionProgress.EvaluateByValue(total.Qty, total.Amount,
+            var byValue = !srcTypes.TryGetValue(srcId, out var srcType) || DocumentConversionProgress.MeasuresByValue(srcType);
+            var progress = DocumentConversionProgress.EvaluateByValue(total.Qty, byValue ? total.Amount : 0m,
                 rows.Select(r => (r.DocumentType, r.Quantity, r.Amount)), linkedIds.Count > 0);
             var mine = linkedIds.Concat(rows.Select(r => r.ChildId)).Distinct()
                 .Where(id => childById.ContainsKey(id))
@@ -2337,7 +2342,7 @@ public partial class DocumentService : IDocumentService
         // ออกเอกสารต่อแล้วหรือยัง — batch ต่อหน้า (query คงที่ 2 ครั้ง) ด้วยตัวเดียวกับหน้ารายละเอียด (รอบ 196)
         // เดิมไม่ส่ง ⇒ ใบเสนอราคาที่ออกใบแจ้งหนี้แล้วก็ขึ้น "⏳ รอดำเนินการต่อ" ทุกใบ (ป้ายโกหก)
         var conversionTotals = items
-            .Where(d => DocumentConversionProgress.IsConversionBearing(d.DocumentType))
+            .Where(d => DocumentConversionProgress.NeedsConversionSummary(d.DocumentType))
             .ToDictionary(d => d.Id, d => (d.Lines.Sum(l => l.Quantity), d.Lines.Sum(l => l.Amount)));
         var conversionByDoc = await LoadConversionSummariesAsync(companyId, conversionTotals);
         // สถานะ ภ.พ.36 ของทั้งหน้า (batch · ตัวโหลดเดียวกับหน้านำส่ง) — หน้าเว็บแสดงป้ายอย่างเดียว ไม่ตัดสินจากธงเอง (รอบ 203 T-3d/C-P2)
@@ -11151,6 +11156,9 @@ public partial class DocumentService : IDocumentService
                   && consuming.Contains(cd.Id)
             select new { SourceLineId = cl.SourceLineId!.Value, cl.Quantity, cd.DocumentType })
             .ToListAsync();
+        // วางบิลผ่านใบส่งของ/ใบรับสินค้า (หลาน) นับเข้าแกนวางบิลของบรรทัดต้นทาง — ทีมตรวจเส้นแปลง ข้อ 2
+        children.AddRange((await LoadBilledViaDeliveryAsync(companyId, sourceLineIds))
+            .Select(g => new { g.SourceLineId, g.Quantity, g.DocumentType }));
 
         foreach (var c in children)
         {
@@ -11182,6 +11190,8 @@ public partial class DocumentService : IDocumentService
                   && consuming.Contains(cd.Id)
             select new { cl.Amount, cd.DocumentType })
             .ToListAsync();
+        children.AddRange((await LoadBilledViaDeliveryAsync(companyId, sourceLineIds))
+            .Select(g => new { g.Amount, g.DocumentType }));
         decimal delivery = 0m, billing = 0m;
         foreach (var c in children)
         {
@@ -11192,6 +11202,34 @@ public partial class DocumentService : IDocumentService
             }
         }
         return (delivery, billing, children.Count);
+    }
+
+    private readonly record struct BilledViaDeliveryLine(Guid SourceLineId, decimal Quantity, decimal Amount, DocumentType DocumentType);
+
+    /// <summary>ทีมตรวจเส้นแปลง ข้อ 2 (2026-10-08): ใบแจ้งหนี้/ใบกำกับ/ใบแจ้งหนี้ซื้อที่ออก <b>จากใบส่งของ/ใบรับสินค้า</b>
+    /// (หลานของใบต้นทาง: บรรทัดหลาน → บรรทัดใบส่งของ → บรรทัดต้นทาง) — นับเข้าแกน "วางบิล" ของบรรทัดต้นทาง
+    /// · เดิมนับเฉพาะลูกตรง ⇒ QT → DN → INV แล้ว QT → INV อีกใบผ่านทุกด่าน = รายได้/ภาษีขายซ้ำ
+    /// (PO → GRN → PI แล้ว PO → PI ถูกกันที่ ConvertCoreAsync อยู่แล้ว แต่แถบวางบิลของ PO ไม่ขยับ)
+    /// · ผ่านใบวางบิล (QT → BN → INV) <b>ไม่</b>ยก เพราะใบวางบิลนับแกนวางบิลไปแล้ว (ยกซ้ำ = นับสองรอบ)
+    /// · ใบหลานต้องยังมีผล (ConsumingChildDocIds) · ใบส่งของตรงกลางยกเลิกภายหลังก็ยังนับ (การวางบิลเกิดแล้วจริง)</summary>
+    private async Task<List<BilledViaDeliveryLine>> LoadBilledViaDeliveryAsync(Guid companyId, List<Guid> sourceLineIds)
+    {
+        if (sourceLineIds.Count == 0) return new();
+        var consuming = ConsumingChildDocIds(companyId);
+        var rows = await (
+            from gl in _db.DocumentLines.AsNoTracking()
+            join ml in _db.DocumentLines.AsNoTracking() on gl.SourceLineId equals (Guid?)ml.Id
+            join md in _db.Documents.AsNoTracking() on ml.DocumentId equals md.Id
+            join gd in _db.Documents.AsNoTracking() on gl.DocumentId equals gd.Id
+            where ml.SourceLineId != null && sourceLineIds.Contains(ml.SourceLineId.Value)
+                  && md.CompanyId == companyId && !md.IsDeleted
+                  && (md.DocumentType == DocumentType.DeliveryNote || md.DocumentType == DocumentType.GoodsReceiptNote)
+                  && gd.CompanyId == companyId
+                  && consuming.Contains(gd.Id)
+            select new { SourceLineId = ml.SourceLineId!.Value, gl.Quantity, gl.Amount, gd.DocumentType })
+            .ToListAsync();
+        return rows.Where(r => GetFulfillmentAxis(r.DocumentType) == FulfillmentAxis.Billing)
+            .Select(r => new BilledViaDeliveryLine(r.SourceLineId, r.Quantity, r.Amount, r.DocumentType)).ToList();
     }
 
     /// <summary>Shared validation for both whole-document and partial
@@ -11343,11 +11381,40 @@ public partial class DocumentService : IDocumentService
                                                    && sourceLineIds.Contains(l.SourceLineId.Value)))
                 .Select(d => new { d.DocumentNumber, d.DocumentType })
                 .FirstOrDefaultAsync();
+            // ทีมตรวจเส้นแปลง ข้อ 2 (ทิศกลับ): ใบส่งของ → ใบแจ้งหนี้ ทั้งที่ใบเสนอราคาแม่ออกใบแจ้งหนี้/ใบกำกับ/ใบเสร็จ "ตรง" ไปแล้ว
+            // = เก็บเงินสองทางจากการขายครั้งเดียว (ด่านข้างบนเห็นแค่ลูกตรงของใบส่งของ) ⇒ ส่วนที่ยังไม่วางบิลให้แปลงจากใบเสนอราคา (บางส่วน)
+            if (existingRevenueChild == null && source.DocumentType == DocumentType.DeliveryNote && source.RelatedDocumentId.HasValue)
+            {
+                var parentId = source.RelatedDocumentId.Value;
+                var billedDirect = await _db.Documents.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == parentId && !d.IsDeleted
+                        && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
+                            || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                        && !d.IsDeposit   // ใบมัดจำจากใบเสนอราคา ⇒ ใบแจ้งหนี้จากใบส่งของหักมัดจำได้ตามปกติ
+                        && consuming.Contains(d.Id))
+                    .Select(d => d.DocumentNumber)
+                    .FirstOrDefaultAsync();
+                if (billedDirect != null)
+                {
+                    var parentNo = await _db.Documents.AsNoTracking()
+                        .Where(d => d.Id == parentId && d.CompanyId == companyId)
+                        .Select(d => d.DocumentNumber).FirstOrDefaultAsync() ?? "ใบต้นทาง";
+                    throw new BusinessRuleException(
+                        $"{parentNo} ออกเอกสารเรียกเก็บ ({billedDirect}) โดยตรงแล้ว — " +
+                        $"ออกใบแจ้งหนี้จากใบส่งของ {source.DocumentNumber} อีกจะเรียกเก็บซ้ำ · ส่วนที่ยังไม่วางบิลให้ \"แปลงบางส่วน\" จาก {parentNo}",
+                        "CONVERT-BILLED-VIA-PARENT", 409);
+                }
+            }
             if (existingRevenueChild != null)
                 throw new InvalidOperationException(
                     $"เอกสารต้นทาง {source.DocumentNumber} แปลงเป็น {existingRevenueChild.DocumentType} " +
                     $"({existingRevenueChild.DocumentNumber}) ไปแล้ว — แปลงซ้ำจะรับรู้รายได้/ภาษีขายซ้ำ. " +
-                    "ถ้าต้องการออกใหม่ ให้ยกเลิกใบเดิมก่อน");
+                    (existingRevenueChild.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+                        // ทีมตรวจเส้นแปลง ข้อ 4: ใบเสร็จจากใบเสนอราคา = ขายสดทั้งก้อน (ระบบนับยอดงวดของใบเสร็จไม่ได้) — ทางตันเดิม
+                        // บอกแค่ "ยกเลิกใบเดิม" ⇒ บอกทางแบ่งงวดที่นับยอดได้
+                        ? "ถ้าต้องการรับเป็นงวด: ยกเลิกใบเสร็จนั้น แล้วแปลงใบนี้เป็น \"ใบแจ้งหนี้\" แบบบางส่วนทีละงวด " +
+                          "(ระบบนับยอดสะสมให้) แล้วรับชำระจากใบแจ้งหนี้แต่ละใบ"
+                        : "ถ้าต้องการออกใหม่ ให้ยกเลิกใบเดิมก่อน"));
         }
 
         // For derivative types that adjust source's balance, source must be approved
@@ -11409,6 +11476,23 @@ public partial class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     $"ใบสั่งซื้อนี้รับของผ่านใบรับสินค้า {grnNumber} แล้ว — ให้เปิดใบรับสินค้านั้นแล้วแปลงเป็นใบแจ้งหนี้ซื้อ " +
                     "(3-way match) แทนการแปลงจากใบสั่งซื้อตรง ไม่งั้นสต๊อกและบัญชีสินค้าคงเหลือจะลงซ้ำสองรอบ");
+        }
+
+        // ทีมตรวจเส้นแปลง ข้อ 3 (กระจกของ E-05): PO → ใบแจ้งหนี้ซื้อ "ตรง" (รับของ + ตั้งหนี้ในใบเดียว — สต็อกเข้าแล้ว) แล้วมา PO → ใบรับสินค้า
+        // ⇒ สต็อกเข้ารอบสอง + 21240 (GR-NI) ค้างไม่มีใครล้าง · ด่านแกนไม่จับเพราะ PI อยู่แกนวางบิล GRN อยู่แกนส่งมอบ
+        if (source.DocumentType == DocumentType.PurchaseOrder && targetType == DocumentType.GoodsReceiptNote)
+        {
+            var piNumber = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == source.Id && !d.IsDeleted
+                    && d.DocumentType == DocumentType.PurchaseInvoice
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                .OrderBy(d => d.CreatedAt)
+                .Select(d => d.DocumentNumber)
+                .FirstOrDefaultAsync();
+            if (piNumber != null)
+                throw new InvalidOperationException(
+                    $"ใบสั่งซื้อนี้ออกใบแจ้งหนี้ซื้อ {piNumber} ตรงแล้ว (รับของเข้าสต๊อกในใบนั้นแล้ว) — ออกใบรับสินค้าอีกจะลงสต๊อก/บัญชีซ้ำสองรอบ · " +
+                    "ถ้าจะใช้ใบรับสินค้า (3-way match) ให้ยกเลิกใบแจ้งหนี้ซื้อนั้นก่อน");
         }
 
         // ยอดภาษีของใบปลายทางต้อง **ตรงกับใบต้นทางเป๊ะทุกสตางค์** — ลูกค้าถือ
@@ -11572,9 +11656,23 @@ public partial class DocumentService : IDocumentService
                     spec.Add((l, remaining));
             }
             if (spec.Count == 0)
+            {
+                // ทีมตรวจเส้นแปลง ข้อ 6 (ข้อ 138 ยอดเงินสำคัญที่สุด): จำนวนครบแล้วแต่ยอดเงินยังเหลือ (ใบก่อนแก้ราคา/แบ่งงวดด้วยราคา)
+                // — แปลงเต็มใบเดาไม่ได้ว่างวดที่เหลือคือบรรทัดไหน ⇒ บอกยอดคงเหลือ + ทางไปต่อ แทน "ครบแล้ว" ที่ไม่จริง
+                var (dBase, bBase, _) = await ComputeConsumedBaseAsync(companyId, orderedLines.Select(l => l.Id).ToList());
+                var leftBase = orderedLines.Sum(l => l.Amount) - (axis == FulfillmentAxis.Delivery ? dBase : bBase);
+                if (leftBase > 0.005m)
+                    throw new BusinessRuleException(
+                        $"เอกสาร {source.DocumentNumber} ถูกแปลงเพื่อ{AxisLabel(axis)}ครบทุกจำนวนแล้ว แต่ยอดเงินยังเหลือ " +
+                        $"{leftBase.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} (ก่อน VAT) — " +
+                        "ใช้ \"แปลงบางส่วน\" แล้วใส่จำนวนตามสัดส่วนยอดที่เหลือ (ระบบเตือนแต่ไม่ล็อกจำนวน)" +
+                        (Array.IndexOf(DocumentLinkPolicy.SourceTypes, source.DocumentType) >= 0
+                            ? " หรือสร้างใบใหม่แล้วกด \"ผูกกับใบเสนอราคา\"" : ""),
+                        "CONVERT-QTY-DONE-AMOUNT-LEFT", 409);
                 throw new InvalidOperationException(
                     $"เอกสาร {source.DocumentNumber} ถูกแปลงเพื่อ{AxisLabel(axis)}ครบทุกรายการแล้ว " +
                     $"— ไม่มีจำนวนคงเหลือให้แปลง");
+            }
         }
 
         return await ConvertCoreAsync(source, targetType, spec, createdBy);
@@ -11826,9 +11924,10 @@ public partial class DocumentService : IDocumentService
         var (deliveredBase, billedBase, _) = await ComputeConsumedBaseAsync(companyId, orderedLines.Select(l => l.Id).ToList());
 
         var totalQty = orderedLines.Sum(l => l.Quantity);
-        var billedPct = Accounting.Helpers.DocumentConversionProgress.EvaluateByValue(totalQty, sourceBase,
+        var pctBase = Accounting.Helpers.DocumentConversionProgress.MeasuresByValue(source.DocumentType) ? sourceBase : 0m;
+        var billedPct = Accounting.Helpers.DocumentConversionProgress.EvaluateByValue(totalQty, pctBase,
             new[] { (DocumentType.Invoice, lines.Sum(l => l.BilledQuantity), billedBase) }, false).Percent;
-        var deliveredPct = Accounting.Helpers.DocumentConversionProgress.EvaluateByValue(totalQty, sourceBase,
+        var deliveredPct = Accounting.Helpers.DocumentConversionProgress.EvaluateByValue(totalQty, pctBase,
             new[] { (DocumentType.DeliveryNote, lines.Sum(l => l.DeliveredQuantity), deliveredBase) }, false).Percent;
 
         return new DocumentFulfillmentResponse(
@@ -11908,7 +12007,7 @@ public partial class DocumentService : IDocumentService
         }
     }
 
-    public async Task<List<DocumentResponse>> BatchConvertDocumentsAsync(
+    public async Task<(List<DocumentResponse> Converted, List<string> Failed)> BatchConvertDocumentsAsync(
         Guid companyId, List<Guid> documentIds, DocumentType targetType, string createdBy)
     {
         // Run conversions sequentially within a single DbContext — EF Core DbContext
@@ -11927,10 +12026,10 @@ public partial class DocumentService : IDocumentService
 
         // Pre-fetch all sources once; ConvertDocumentAsync will re-load from tracker but
         // EF caches the entity, avoiding a second DB hit.
-        await _db.Documents
+        var numbers = await _db.Documents
             .Include(d => d.Lines)
             .Where(d => documentIds.Contains(d.Id) && d.CompanyId == companyId)
-            .LoadAsync();
+            .ToDictionaryAsync(d => d.Id, d => d.DocumentNumber);
 
         foreach (var id in distinctIds)
         {
@@ -11939,17 +12038,19 @@ public partial class DocumentService : IDocumentService
                 var converted = await ConvertDocumentAsync(companyId, id, targetType, createdBy);
                 results.Add(converted);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is InvalidOperationException or BusinessRuleException or KeyNotFoundException)
             {
-                errors.Add($"{id}: {ex.Message}");
-                _logger.LogWarning(ex, "Batch convert: failed to convert document {DocId}", id);
+                // ทีมตรวจเส้นแปลง ข้อ 10: เดิมใบที่แปลงไม่ได้หายเงียบ (ผู้ใช้เห็นแค่ "สำเร็จ 3/5") — คืนเลขเอกสาร + เหตุผลให้หน้าเว็บแสดง
+                // · error อื่น (ฐานข้อมูล/บั๊ก) ไม่กลืน — โยนต่อให้ middleware (fail loud)
+                errors.Add($"{numbers.GetValueOrDefault(id) ?? "ไม่พบเอกสาร"}: {ex.Message}");
+                _logger.LogInformation("Batch convert: document {DocId} not converted — {Reason}", id, ex.Message);
             }
         }
 
         if (results.Count == 0 && errors.Count > 0)
-            throw new InvalidOperationException("ไม่สามารถแปลงเอกสารได้: " + string.Join("; ", errors));
+            throw new BusinessRuleException("ไม่สามารถแปลงเอกสารได้: " + string.Join(" · ", errors), "CONVERT-BATCH-NONE", 400);
 
-        return results;
+        return (results, errors);
     }
 
     public async Task<DocumentResponse> CreateInvoiceFromObligationAsync(
@@ -12514,7 +12615,14 @@ public partial class DocumentService : IDocumentService
         if (request.Province != null) contact.Province = request.Province;
         if (request.PostalCode != null) contact.PostalCode = request.PostalCode;
         if (request.CountryCode != null) contact.CountryCode = request.CountryCode;
-        contact.Address = request.Address ?? ComposeAddress(contact);
+        // ประกอบที่อยู่ใหม่เฉพาะเมื่อคำขอแตะที่อยู่จริง (ฝ่ายค้าน 2026-10-08 P2): คำขอบางส่วน เช่น เปิดสถานะลูกค้า {isCustomer:true}
+        // จากหน้าเอกสาร (ข้อ 138ข) เดิมเขียน Address = ประกอบจากช่องแยก ⇒ ผู้ติดต่อที่มีแต่ที่อยู่ข้อความ (OCR/นำเข้า) ที่อยู่หายเงียบ ๆ
+        // (ที่อยู่ผู้ซื้อ §86/4)
+        var touchesAddress = request.Address != null || request.BuildingNumber != null || request.BuildingName != null
+            || request.Moo != null || request.StreetName != null || request.SubDistrict != null || request.District != null
+            || request.Province != null || request.PostalCode != null;
+        if (touchesAddress)
+            contact.Address = request.Address ?? ComposeAddress(contact);
         // Phone/Email/ContactPerson: ผู้ใช้ "ลบจนว่าง" ต้องล้างค่าได้ — frontend
         // ส่ง "" เมื่อ cleared. normalize ""/whitespace → null (เก็บ null สะอาด
         // กว่า ""). null ที่แท้จริง (omit) = ไม่เปลี่ยน; "" = ล้าง.
@@ -18385,7 +18493,7 @@ public partial class DocumentService : IDocumentService
         AgingDays: d.AgingDays,
         // ใบต้นทางที่ออกเอกสารต่อครบแล้ว = จบขั้นตอน ⇒ ไม่มีชิป "🕒 คงค้าง" (ตัดสินชุดเดียวกับตัวกรอง staleOnly · รอบ 196)
         StaleDays: conversion?.Progress.State == ConversionProgressState.Full
-            && DocumentConversionProgress.IsConversionBearing(d.DocumentType) ? null : ComputeStaleDays(d),
+            && DocumentConversionProgress.NeedsConversionSummary(d.DocumentType) ? null : ComputeStaleDays(d),
         Currency: d.Currency,
         ExchangeRate: d.ExchangeRate,
         Sensitivity: d.Sensitivity,
@@ -18506,9 +18614,7 @@ public partial class DocumentService : IDocumentService
         PayeeAmount: ForeignServiceVat.PayeeAmount(d),
         // คำตัดสินข้อ 139 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) · ปุ่มผูกตัดสินที่เซิร์ฟเวอร์ (ข้อมูลบนใบล้วน ไม่แตะฐาน)
         SourceLinkedAt: d.SourceLinkedAt,
-        CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(new(
-            d.DocumentType, d.Status, d.RelatedDocumentId.HasValue, d.IsDeposit, d.DepositBaseDeducted,
-            d.ReplacesDocumentId.HasValue, d.Lines.Any(l => l.SourceLineId.HasValue))) is null);
+        CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(LinkFacts(d)) is null);   // ตัวประกอบข้อเท็จจริงตัวเดียวกับด่านผูก
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
@@ -18582,6 +18688,17 @@ public partial class DocumentService : IDocumentService
                 : new DocumentConversionProgress.ChildRef(conversion.Latest.DocumentNumber,
                     conversion.Latest.DocumentType, conversion.Latest.Status);
             return DocumentConversionProgress.Lifecycle(conversion.Progress, latest, conversion.ActiveChildCount);
+        }
+
+        // ใบวางบิลที่แปลงต่อครบแล้ว (ใบแจ้งหนี้/ใบกำกับ/ใบเสร็จรับช่วงไป) = จบหน้าที่ แม้ยอดคงค้างบนใบวางบิลยังไม่ถูกตัด (ข้อ 9)
+        if (DocumentConversionProgress.ClosesByConversionOrPayment(d.DocumentType) && d.BalanceDue > 0.01m
+            && conversion?.Progress.State == ConversionProgressState.Full)
+        {
+            DocumentConversionProgress.ChildRef? bnLatest = conversion.Latest == null
+                ? (DocumentConversionProgress.ChildRef?)null
+                : new DocumentConversionProgress.ChildRef(conversion.Latest.DocumentNumber,
+                    conversion.Latest.DocumentType, conversion.Latest.Status);
+            return DocumentConversionProgress.Lifecycle(conversion.Progress, bnLatest, conversion.ActiveChildCount);
         }
 
         // Per-type rules.

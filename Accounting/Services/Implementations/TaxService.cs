@@ -2965,44 +2965,41 @@ public partial class TaxService : ITaxService
             : Accounting.Helpers.TaxFilingLockPolicy.SubmissionDeclared;
         if (judgement.LockPeriod)
             report.FilingLockedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
 
         // เครดิตภาษีซื้อยกไป: ถ้ารายงานงวดถัดไปถูกสร้างไว้ "ก่อน" งวดนี้ยื่น มัน
         // จะไม่มีบรรทัด VAT_CREDIT_CF (ตอน generate งวดก่อนยัง Draft) → ผู้ใช้ยื่น
         // งวดถัดไปโดยเครดิตหายเงียบ = จ่าย VAT เกินจริง. เติมบรรทัดให้ทันทีที่ยื่น
+        // · 2026-10-08: เดิมอยู่หลังบันทึกการยื่นใน try/catch {} — และทางเพิ่มแถวนี้ชน EF (แถวใหม่ผ่านคอลเลกชัน ⇒ UPDATE 0 แถว) ทุกครั้ง
+        //   ⇒ เครดิตยกไป**ไม่เคยถูกเติม**และไม่มีใครรู้ · ตอนนี้บันทึกพร้อมการยื่นใน SaveChanges เดียว (ยื่นสำเร็จ = เครดิตยกไปแล้ว · ล้ม = ล้มทั้งคู่ ดัง)
         if (report.TaxType == TaxType.VAT && report.NetVat < 0)
         {
-            try
+            var nextPeriod = new DateTime(report.Year, report.Month, 1).AddMonths(1);
+            var nextReport = await _db.TaxReports.Include(r => r.Lines)
+                .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT
+                    && r.Year == nextPeriod.Year && r.Month == nextPeriod.Month
+                    // เฉพาะงวดถัดไปที่ยัง "ร่าง" จริง ๆ — งวดที่ถูกประกาศว่า
+                    // ยื่นแล้ว (Submitted) ห้ามเติมบรรทัดเข้าไปทีหลัง
+                    && r.Status == TaxReportStatus.Draft);
+            if (nextReport != null
+                && !nextReport.Lines.Any(l => l.IncomeTypeCode == "VAT_CREDIT_CF"))
             {
-                var nextPeriod = new DateTime(report.Year, report.Month, 1).AddMonths(1);
-                var nextReport = await _db.TaxReports.Include(r => r.Lines)
-                    .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT
-                        && r.Year == nextPeriod.Year && r.Month == nextPeriod.Month
-                        // เฉพาะงวดถัดไปที่ยัง "ร่าง" จริง ๆ — งวดที่ถูกประกาศว่า
-                        // ยื่นแล้ว (Submitted) ห้ามเติมบรรทัดเข้าไปทีหลัง
-                        && r.Status == TaxReportStatus.Draft);
-                if (nextReport != null
-                    && !nextReport.Lines.Any(l => l.IncomeTypeCode == "VAT_CREDIT_CF"))
+                var cf = Math.Abs(report.NetVat);
+                // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+                _db.AddNewChild(nextReport.Lines, new TaxReportLine
                 {
-                    var cf = Math.Abs(report.NetVat);
-                    // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-                    nextReport.Lines.Add(_db.Set<TaxReportLine>().Add(new TaxReportLine
-                    {
-                        TaxReportId = nextReport.Id,
-                        LineOrder = (nextReport.Lines.Count == 0 ? 0 : nextReport.Lines.Max(l => l.LineOrder)) + 1,
-                        Description = $"เครดิตภาษีซื้อยกมาจากเดือน {report.Month:D2}/{report.Year}",
-                        IncomeAmount = cf,
-                        TaxRate = 0,
-                        TaxAmount = -cf,
-                        IncomeTypeCode = "VAT_CREDIT_CF"
-                    }).Entity);
-                    RecalcVatTotals(nextReport);
-                    nextReport.UpdatedAt = DateTime.UtcNow;
-                    await _db.SaveChangesAsync();
-                }
+                    TaxReportId = nextReport.Id,
+                    LineOrder = (nextReport.Lines.Count == 0 ? 0 : nextReport.Lines.Max(l => l.LineOrder)) + 1,
+                    Description = $"เครดิตภาษีซื้อยกมาจากเดือน {report.Month:D2}/{report.Year}",
+                    IncomeAmount = cf,
+                    TaxRate = 0,
+                    TaxAmount = -cf,
+                    IncomeTypeCode = "VAT_CREDIT_CF"
+                });
+                RecalcVatTotals(nextReport);
+                nextReport.UpdatedAt = DateTime.UtcNow;
             }
-            catch { /* best-effort — การเติมเครดิตงวดถัดไปล้มไม่กระทบการยื่นงวดนี้ */ }
         }
+        await _db.SaveChangesAsync();
 
         return MapToResponse(report);
     }
@@ -3795,8 +3792,8 @@ public partial class TaxService : ITaxService
                             && l.TaxReportId != fresh.Id
                             && l.TaxReport.CompanyId == companyId && l.TaxReport.TaxType == TaxType.VAT);
                         if (!stillOk || claimedElse) continue;
-                        // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-                        fresh.Lines.Add(_db.Set<TaxReportLine>().Add(new TaxReportLine
+                        // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+                        _db.AddNewChild(fresh.Lines, new TaxReportLine
                         {
                             TaxReportId = fresh.Id,
                             LineOrder = (fresh.Lines.Count == 0 ? 0 : fresh.Lines.Max(l => l.LineOrder)) + 1,
@@ -3805,7 +3802,7 @@ public partial class TaxService : ITaxService
                             IncomeAmount = p.IncomeAmount, TaxRate = p.TaxRate, TaxAmount = p.TaxAmount,
                             DocumentId = p.DocumentId, IncomeTypeCode = p.IncomeTypeCode,
                             IsExcluded = p.IsExcluded,
-                        }).Entity);
+                        });
                         changed = true;
                     }
                 }

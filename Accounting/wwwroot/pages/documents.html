@@ -12255,7 +12255,13 @@
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.batchConvertDocuments(ids, target);
-          Layout.toast(res.message || `แปลงสำเร็จ ${res.data.length} ฉบับ`);
+          const failed = Array.isArray(res.errors) ? res.errors : [];
+          if (failed.length) {
+            Layout.toast(`${res.message || ''} — แปลงไม่ได้ ${failed.length} ฉบับ (ดูรายละเอียด)`, 'warning');
+            alert('เอกสารที่แปลงไม่ได้:\n\n' + failed.join('\n'));
+          } else {
+            Layout.toast(res.message || `แปลงสำเร็จ ${res.data.length} ฉบับ`);
+          }
           this.clearDocSelection();
           await this.load();
         } catch (e) {

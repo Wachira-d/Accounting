@@ -1251,8 +1251,20 @@ public class DocumentController : ControllerBase
     [HttpGet("{documentId:guid}/link-candidates")]
     public async Task<ActionResult<ApiResponse<LinkCandidatesResponse>>> GetLinkCandidates(Guid companyId, Guid documentId)
     {
+        // ฝ่ายค้าน 2026-10-08: เดิมสมาชิกที่ล็อกอินอยู่คนใดก็ได้ดูใบเสนอราคา (บรรทัด+ยอด) ของคู่ค้าได้ — ด่านเดียวกับ link-source
+        // + ชั้นความลับทั้งใบลูกและใบเสนอราคาที่เสนอ (ใบลับที่ดูไม่ได้ไม่ถูกเสนอ)
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var childType = await GetDocumentTypeAsync(companyId, documentId);
+        if (childType == null) return NotFound(new ApiResponse<LinkCandidatesResponse>(false, null, "ไม่พบเอกสาร"));
+        var deny = await DenyDocAsync(companyId, userIdGuid, childType.Value, DocPerm.Create, "ผูกเอกสาร");
+        if (deny != null) return Forbid403<LinkCandidatesResponse>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ผูกเอกสาร") is { } hidden)
+            return Forbid403<LinkCandidatesResponse>(hidden);
         var result = await _documentService.GetLinkCandidatesAsync(companyId, documentId);
-        return Ok(new ApiResponse<LinkCandidatesResponse>(true, result));
+        var visible = new List<LinkCandidate>(result.Candidates.Count);
+        foreach (var c in result.Candidates)
+            if (await DenySensitiveAsync(companyId, c.Id, "ผูกเอกสาร") is null) visible.Add(c);
+        return Ok(new ApiResponse<LinkCandidatesResponse>(true, result with { Candidates = visible }));
     }
 
     /// <summary>คำตัดสินข้อ 139: ผูกใบแจ้งหนี้/ใบกำกับที่สร้างแยกเข้าใบเสนอราคา — สิทธิ์ระดับเดียวกับการแปลง (สร้างเอกสารชนิดนั้น) ·
@@ -1266,6 +1278,10 @@ public class DocumentController : ControllerBase
         if (childType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
         var deny = await DenyDocAsync(companyId, userIdGuid, childType.Value, DocPerm.Create, "ผูกเอกสาร");
         if (deny != null) return Forbid403<DocumentResponse>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ผูกเอกสาร") is { } hiddenChild)
+            return Forbid403<DocumentResponse>(hiddenChild);
+        if (request != null && await DenySensitiveAsync(companyId, request.SourceDocumentId, "ผูกเอกสาร") is { } hiddenSrc)
+            return Forbid403<DocumentResponse>(hiddenSrc);
         var result = await _documentService.LinkToSourceAsync(companyId, documentId, request, userIdGuid.ToString());
         return Ok(new ApiResponse<DocumentResponse>(true, result, "ผูกกับใบเสนอราคาแล้ว"));
     }
@@ -1303,9 +1319,10 @@ public class DocumentController : ControllerBase
         var deny = await DenyDocAsync(companyId, userIdGuid, targetType, DocPerm.Create, "แปลงเป็น");
         if (deny != null) return Forbid403<List<DocumentResponse>>(deny);
         var userId = userIdGuid.ToString();
-        var result = await _documentService.BatchConvertDocumentsAsync(companyId, request.DocumentIds, targetType, userId);
-        return Ok(new ApiResponse<List<DocumentResponse>>(true, result,
-            $"แปลงสำเร็จ {result.Count}/{request.DocumentIds.Count} ฉบับ"));
+        var (converted, failed) = await _documentService.BatchConvertDocumentsAsync(companyId, request.DocumentIds, targetType, userId);
+        // ใบที่แปลงไม่ได้ส่งกลับใน Errors (เลขเอกสาร + เหตุผล) — หน้าเว็บแสดงเป็นคำเตือน ไม่ใช่ "สำเร็จ" เงียบ ๆ
+        return Ok(new ApiResponse<List<DocumentResponse>>(true, converted,
+            $"แปลงสำเร็จ {converted.Count}/{request.DocumentIds.Distinct().Count()} ฉบับ", failed.Count > 0 ? failed : null));
     }
 
     [HttpPost("from-obligation/{performanceObligationId:guid}")]

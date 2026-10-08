@@ -282,7 +282,7 @@ public interface IDocumentService
     /// <summary>สถานะการแปลง/ส่งมอบรายบรรทัด — จำนวนสั่ง/ส่งแล้ว/วางบิลแล้ว/คงเหลือ</summary>
     Task<DocumentFulfillmentResponse> GetDocumentFulfillmentAsync(Guid companyId, Guid documentId);
     /// <summary>แปลงหลายเอกสารพร้อมกัน — รวมเป็นเอกสารเดียว (กรณี target ยอมให้รวม) หรือสร้างทีละฉบับ</summary>
-    Task<List<DocumentResponse>> BatchConvertDocumentsAsync(Guid companyId, List<Guid> documentIds, DocumentType targetType, string createdBy);
+    Task<(List<DocumentResponse> Converted, List<string> Failed)> BatchConvertDocumentsAsync(Guid companyId, List<Guid> documentIds, DocumentType targetType, string createdBy);
     /// <summary>สร้างใบแจ้งหนี้จาก Performance Obligation ของ Revenue Contract (ASC 606 / TFRS 15)</summary>
     Task<DocumentResponse> CreateInvoiceFromObligationAsync(Guid companyId, Guid performanceObligationId, string createdBy);
     /// <summary>ตัดหนี้สูญ: Dr 64000 หนี้สูญ, Cr 113 ลูกหนี้ + เคลียร์เอกสาร</summary>

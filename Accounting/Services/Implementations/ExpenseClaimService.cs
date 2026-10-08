@@ -255,8 +255,8 @@ public class ExpenseClaimService : IExpenseClaimService
             var order = 1;
             foreach (var line in request.Lines)
             {
-                // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-                claim.Lines.Add(_db.Set<ExpenseClaimLine>().Add(new ExpenseClaimLine
+                // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+                Accounting.Helpers.EfNewChild.AddNewChild(_db, claim.Lines, new ExpenseClaimLine
                 {
                     ExpenseClaimId = claim.Id,
                     LineOrder = order++,
@@ -270,7 +270,7 @@ public class ExpenseClaimService : IExpenseClaimService
                     AccountId = line.AccountId,
                     Category = line.Category,
                     Reference = line.Reference
-                }).Entity);
+                });
             }
 
             claim.SubTotal = claim.Lines.Sum(l => l.Amount);

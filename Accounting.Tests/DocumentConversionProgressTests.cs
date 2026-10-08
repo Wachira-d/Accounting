@@ -313,4 +313,55 @@ public class DocumentConversionProgressTests
         Assert.Equal(ConversionProgressState.Partial, p.State);
         Assert.Equal(40m, p.Percent);
     }
+
+    // ── ทีมตรวจเส้นแปลง ข้อ 9 (2026-10-08): ใบวางบิลจบได้ทั้งการรับชำระและการแปลงต่อครบ ──
+    private static Document BillingNote(decimal balance) => new()
+    {
+        DocumentType = DocumentType.BillingNote, DocumentNumber = "BN-2026-0004",
+        Status = DocumentStatus.Approved, TotalAmount = 10_700m, BalanceDue = balance,
+    };
+
+    [Fact]
+    public void ใบวางบิลที่ออกใบแจ้งหนี้ครบแล้ว_ป้ายจบ_ไม่ค้างรอรับชำระ()
+    {
+        var p = DocumentConversionProgress.EvaluateByValue(1m, 10_000m,
+            new[] { (DocumentType.Invoice, 1m, 10_000m) }, true);
+        var (status, reason) = DocumentService.ComputeLifecycle(BillingNote(10_700m),
+            Summary(p, Child("INV-2026-0031", DocumentType.Invoice), 1));
+        Assert.Equal("Done", status);
+        Assert.Equal("✓ ออกใบแจ้งหนี้ INV-2026-0031 แล้ว", reason);
+        Assert.True(DocumentConversionProgress.NeedsConversionSummary(DocumentType.BillingNote));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ใบวางบิลแปลงไปครึ่งเดียว_ยังเป็นป้ายรอรับชำระตามเดิม()
+    {
+        var p = DocumentConversionProgress.EvaluateByValue(1m, 10_000m,
+            new[] { (DocumentType.Invoice, 0.5m, 5_000m) }, true);
+        var (status, reason) = DocumentService.ComputeLifecycle(BillingNote(10_700m),
+            Summary(p, Child("INV-2026-0032", DocumentType.Invoice), 1));
+        Assert.Equal("Open", status);
+        Assert.StartsWith("⏳ รอจ่าย/รับชำระ", reason);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ใบวางบิลรับชำระครบโดยไม่แปลง_ยังจบด้วยการชำระ()
+    {
+        var (status, reason) = DocumentService.ComputeLifecycle(BillingNote(0m), null);
+        Assert.Equal("Done", status);
+        Assert.Equal("✓ ชำระครบแล้ว", reason);
+        // ใบวางบิลไม่อยู่ในชุด "จบด้วยการแปลงอย่างเดียว" (ตัวกรอง/ป้ายของใบเสนอราคา)
+        Assert.False(DocumentConversionProgress.IsConversionBearing(DocumentType.BillingNote));
+    }
+
+    [Fact]
+    public void ใบขอซื้อวัดด้วยจำนวน_ใบเสนอราคาวัดด้วยยอดเงิน()
+    {
+        Assert.False(DocumentConversionProgress.MeasuresByValue(DocumentType.PurchaseRequisition));
+        Assert.True(DocumentConversionProgress.MeasuresByValue(DocumentType.Quotation));
+        // สั่งซื้อครบ 10 ชิ้นในราคาที่ต่อรองได้ต่ำกว่าราคาประมาณ ⇒ ผู้เรียกส่งยอด 0 ⇒ วัดด้วยจำนวน = ครบ
+        var p = DocumentConversionProgress.EvaluateByValue(10m, 0m,
+            new[] { (DocumentType.PurchaseOrder, 10m, 8_000m) }, true);
+        Assert.Equal(ConversionProgressState.Full, p.State);
+    }
 }

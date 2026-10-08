@@ -29,12 +29,28 @@ public class ExceptionMiddleware
             // แจ้งรหัสนี้มา ก็เปิด ErrorLogs (หน้า admin) หาแถวจริงได้ทันที
             // (เดิม "เกิดข้อผิดพลาดภายในระบบ" เฉย ๆ ตามรอยไม่ได้เลยว่าใบไหน/บรรทัดไหน)
             var refCode = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
-            _logger.LogError(ex, "Unhandled exception [REF:{Ref}]: {Message}", refCode, ex.Message);
             context.Items["__ErrorLogged"] = true;
-            await SaveErrorLogAsync(context, ex, refCode);
+            if (IsExpectedPrompt(ex))
+            {
+                // คำถามยืนยันตามออกแบบ (ยอดเกินใบต้นทาง 422 · เปิดสถานะคู่ค้า 409 ฯลฯ) — หน้าเว็บจับ ruleCode แล้วถามผู้ใช้ต่อ
+                // ไม่ใช่ข้อผิดพลาดของระบบ ⇒ ไม่ลง Error Logs (ฝ่ายค้าน 2026-10-08 · ตารางเคยท่วมด้วย 422 จนกลบ 500 จริง)
+                _logger.LogInformation("Confirmation prompt [{Rule}] {Status}: {Message}",
+                    ((Accounting.Helpers.BusinessRuleException)ex).RuleCode, StatusFor(ex), ex.Message);
+            }
+            else
+            {
+                _logger.LogError(ex, "Unhandled exception [REF:{Ref}]: {Message}", refCode, ex.Message);
+                await SaveErrorLogAsync(context, ex, refCode);
+            }
             await HandleExceptionAsync(context, ex, refCode);
         }
     }
+
+    /// <summary>คำถามยืนยันที่หน้าเว็บจัดการต่อเอง = กฎธุรกิจที่มีรหัสกฎ + สถานะ 409/422 (ไม่ลง Error Logs) ·
+    /// กฎธุรกิจ 400 (ข้อมูลผิด) และทุกอย่างอื่นยังลงตามเดิม</summary>
+    public static bool IsExpectedPrompt(Exception exception) =>
+        exception is Accounting.Helpers.BusinessRuleException { RuleCode: not null } bre
+        && bre.StatusCode is 409 or 422;
 
     /// <summary>สถานะ HTTP ของ exception — ตัวตั้งเดียวที่ทั้ง "คำตอบถึงผู้ใช้" และ "แถว Error Logs" ใช้ (ห้ามมีตารางที่สอง)</summary>
     public static int StatusFor(Exception exception) => exception switch

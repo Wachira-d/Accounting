@@ -187,6 +187,32 @@ RULES += [
          must_re=[r"sourceLineIds\.Contains\(\s*l\.SourceLineId\.Value\s*\)",
                   r"source\.DocumentType\s+is\s+not\s*\(\s*DocumentType\.Invoice\s+or\s+DocumentType\.TaxInvoice\s*\)"],
          why="#138 ลูก Receipt/RV หรือใบที่ไม่มี SourceLineId ไม่ถูกนับในยอดสะสม — ต้องยังกันรายได้ซ้ำ · อัปเกรด INV→TIV ยังกัน"),
+    # ทีมตรวจเส้นแปลง 2026-10-08 (ข้อ 2/3/6/10) — ด่านที่ถอดแล้วเทสต์ pure-logic ยังเขียว
+    dict(file=DOC, method="ValidateConversionAsync", must_lit=['"CONVERT-BILLED-VIA-PARENT"'],
+         must_re=[r"source\.DocumentType\s*==\s*DocumentType\.DeliveryNote", r"!d\.IsDeposit"],
+         why="ข้อ 2 ทิศกลับ: DN → INV ทั้งที่ QT แม่เก็บเงินตรงแล้ว = เรียกเก็บซ้ำ · ใบมัดจำไม่นับ (หักมัดจำปกติ)"),
+    dict(file=DOC, method="ComputeConsumptionAsync", must=["LoadBilledViaDeliveryAsync("],
+         why="ข้อ 2: ใบแจ้งหนี้ที่ออกจากใบส่งของต้องนับเข้าแกนวางบิลของใบเสนอราคา (QT→DN→INV แล้ว QT→INV ซ้ำ)"),
+    dict(file=DOC, method="ComputeConsumedBaseAsync", must=["LoadBilledViaDeliveryAsync("],
+         why="ข้อ 2: ยอดสะสม (ด่าน 422) ต้องเห็นใบหลานผ่านใบส่งของเหมือนด่านจำนวน"),
+    dict(file=DOC, method="LoadBilledViaDeliveryAsync",
+         must_re=[r"md\.CompanyId\s*==\s*companyId", r"gd\.CompanyId\s*==\s*companyId", r"consuming\.Contains\(\s*gd\.Id\s*\)"],
+         must_lit=["DocumentType.DeliveryNote", "DocumentType.GoodsReceiptNote"],
+         forbid_lit=["DocumentType.BillingNote"],
+         why="ข้อ 2: ยกผ่านใบส่งของ/ใบรับสินค้าเท่านั้น (ผ่านใบวางบิล = นับซ้ำ) · กรองบริษัททั้งสองชั้น (กฎ M)"),
+    dict(file=DOC, method="ConvertCoreAsync",
+         must_re=[r"source\.DocumentType\s*==\s*DocumentType\.PurchaseOrder\s*&&\s*targetType\s*==\s*DocumentType\.GoodsReceiptNote"],
+         why="ข้อ 3: PO → PI ตรงแล้ว PO → GRN = สต็อกเข้าสองรอบ (กระจกของ E-05)"),
+    dict(file=DOC, method="BatchConvertDocumentsAsync", must_lit=["errors.Add("],
+         must_re=[r"catch\s*\(\s*Exception\s+\w+\s*\)\s*when\s*\(\s*\w+\s+is\s+InvalidOperationException"],
+         why="ข้อ 10: ใบที่แปลงไม่ได้ต้องคืนให้หน้าเว็บ · ห้ามกลืน error ทุกชนิด (ฐานข้อมูล/บั๊กต้องดัง)"),
+    # ฝ่ายค้าน 2026-10-08 P1: แถวใหม่ใต้ parent ที่ติดตามอยู่ผ่าน EfNewChild ตัวเดียว (ไม่ Modified · ไม่เบิ้ลในคอลเลกชัน)
+    dict(file=PAYROLL, method="AddPayrollDetailAsync", must=["AddNewChild("], forbid=["run.Details.Add("],
+         why="เพิ่มคนเข้ารอบ: Add สองทาง ⇒ ยอดรอบเบิ้ล · คอลเลกชันอย่างเดียว ⇒ 500 concurrency"),
+    dict(file="Services/Implementations/TaxService.cs", method="FileTaxReportAsync",
+         must=["AddNewChild("], forbid=["Lines.Add("],
+         before=[("AddNewChild(", "_db.SaveChangesAsync(")],
+         why="เครดิตภาษีซื้อยกไปบันทึกพร้อมการยื่น (เดิม catch {} กลืน 500 ทุกครั้ง ⇒ เครดิตไม่เคยยก)"),
 ]
 
 RULES += [
@@ -355,8 +381,8 @@ TUPLE_RULES = [
       "BuildFinalInvoiceLinesAsync(", "ResumeCheckOutAsync(", "SettleCheckOutAsync(",
       "DepositBaseDeducted: depositPlan.BaseDeducted"],
      [("LodgingDepositSettlement.PlanCheckout(", "UpsertFinalDraftAsync("),
-      ("FindOrCreateContactAsync(", "r.Charges.Add("),
-      ("_docService.ApproveDocumentAsync(", "r.Charges.Add(")],
+      ("FindOrCreateContactAsync(", "AddNewChild(r.Charges"),
+      ("_docService.ApproveDocumentAsync(", "AddNewChild(r.Charges")],
      ["DepositAppliedDrivesJournal", "r.FinalDocumentId != null", "BillDiscountAmount: depositPlan"],
      "R3-1 ฐานมัดจำลงช่องของตัวเอง (ห้ามใส่ช่องส่วนลดการค้า) · C2/C5 วางแผนใช้มัดจำ (มัดจำเกินยอด = ค้างคืน) ก่อนออกเลขใบ · ด่าน/สร้างผู้ติดต่อก่อนผูกค่าเสียหาย · "
      "ใบเครดิตห้ามใช้ธงขับ JE (P0-1) · ออกใบแล้วกดซ้ำ = ทำต่อ ไม่ throw"),
@@ -5654,8 +5680,16 @@ RULES += [
 ]
 
 
+_RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
+
+
 def main() -> int:
     errs = []
+    # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
+    for rule in RULES:
+        bad = set(rule) - _RULE_KEYS
+        if bad:
+            errs.append(f"{rule.get('file')}:{rule.get('method')} มีคีย์กติกาที่ตัวตรวจไม่รู้จัก {sorted(bad)} — กติกานี้จะไม่ถูกตรวจ")
     for rule in RULES:
         path = SRC / rule["file"]
         if not path.exists():

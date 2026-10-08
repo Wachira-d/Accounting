@@ -1721,8 +1721,7 @@ public class PayrollService : IPayrollService
             // Id ของ BaseEntity ตั้ง Guid.NewGuid() ไว้แล้ว ⇒ แถวใหม่ที่ EF "เจอ" ผ่านคอลเลกชันของ run ที่ติดตามอยู่ถูกตีเป็น Modified
             // ⇒ UPDATE แถวที่ไม่มีจริง = affected 0 · ต้อง Add ตรง ๆ ให้เป็น Added (รูปแบบเดียวกับ CalculatePayrollAsync)
             // · ยังใส่ลงคอลเลกชันด้วยเพราะ RecomputeRunTotals อ่าน run.Details
-            _db.Set<PayrollDetail>().Add(d);
-            run.Details.Add(d);
+            _db.AddNewChild(run.Details, d);   // ใส่คอลเลกชันครั้งเดียว — fixup ของ EF ใส่ให้แล้วเมื่อตั้ง PayrollRunId (เดิม Add สองทาง ⇒ ยอดรอบเบิ้ล)
             Accounting.Helpers.PayrollDetailAmounts.RecomputeRunTotals(run);
             // ★ ข้อ 69: เปลี่ยนรายชื่อคนรับเงิน ⇒ รอบที่อนุมัติแล้วกลับเป็น "คำนวณแล้ว" (ต้องอนุมัติใหม่) · ประทับเวลาแก้รายชื่อ (X4)
             var statusBefore = run.Status;

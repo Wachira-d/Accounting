@@ -65,6 +65,14 @@ public class PayrollAddDetailDbTests
         var added = Assert.Single(details, d => d.EmployeeId == newEmp);
         Assert.Equal(7000m, added.BaseSalary);
         Assert.Equal(350m, added.SocialSecurityEmployee);   // 5% ของฐาน 7,000 (ม.33)
+
+        // ฝ่ายค้าน 2026-10-08 P1: แก้รอบแรก Add สองทาง (DbSet + run.Details) ⇒ fixup ของ EF ใส่ลงคอลเลกชันให้แล้วอีกครั้ง
+        // ⇒ ยอดรวมรอบนับคนใหม่สองหน (จำนวนคน 3 · ประกันสังคม 700) — ยอดรอบต้องเท่ากับผลรวมแถวจริงในฐาน
+        var run = await check.Set<PayrollRun>().AsNoTracking().SingleAsync(r => r.Id == runId && r.CompanyId == cid);
+        Assert.Equal(2, run.EmployeeCount);
+        Assert.Equal(details.Sum(d => d.SocialSecurityEmployee), run.TotalSocialSecurityEmployee);
+        Assert.Equal(details.Sum(d => d.GrossIncome), run.TotalGrossSalary);
+        Assert.Equal(details.Sum(d => d.NetPay), run.TotalNetPay);
     }
 
     [Fact]

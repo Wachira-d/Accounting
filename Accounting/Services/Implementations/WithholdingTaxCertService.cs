@@ -263,8 +263,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var order = 1;
         foreach (var line in request.Lines)
         {
-            // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-            cert.Lines.Add(_db.Set<WithholdingTaxCertLine>().Add(new WithholdingTaxCertLine
+            // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+            _db.AddNewChild(cert.Lines, new WithholdingTaxCertLine
             {
                 WithholdingTaxCertId = cert.Id,
                 LineOrder = order++,
@@ -275,7 +275,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 TaxRate = line.TaxRate,
                 TaxAmount = line.TaxAmount,
                 Condition = line.Condition
-            }).Entity);
+            });
         }
         cert.TotalIncomeAmount = cert.Lines.Sum(l => l.IncomeAmount);
         cert.TotalTaxAmount = cert.Lines.Sum(l => l.TaxAmount);

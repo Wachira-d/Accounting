@@ -51,6 +51,19 @@ public static class DocumentConversionProgress
 
     public static bool IsConversionBearing(DocumentType type) => Array.IndexOf(SourceTypes, type) >= 0;
 
+    /// <summary>ใบต้นทางชนิดนี้วัดความคืบหน้าด้วยยอดเงิน (ข้อ 138) ได้ไหม — ใบขอซื้อ<b>ไม่</b>: ราคาบนใบขอซื้อเป็นราคาประมาณ
+    /// ใบสั่งซื้อที่ต่อรองได้ถูกกว่าจะไม่มีวันถึง "ครบ" ทั้งที่สั่งครบทุกชิ้น (ฝ่ายค้าน 2026-10-08) ⇒ ใช้จำนวน</summary>
+    public static bool MeasuresByValue(DocumentType sourceType) => sourceType != DocumentType.PurchaseRequisition;
+
+    /// <summary>ทีมตรวจเส้นแปลง ข้อ 9 (2026-10-08): ใบวางบิล "จบ" ได้สองทาง — รับชำระครบ (ยอดคงค้าง) <b>หรือ</b> แปลงเป็นใบแจ้งหนี้/ใบกำกับ/
+    /// ใบเสร็จครบ · เดิมไม่อยู่ในชุดที่โหลดความคืบหน้า ⇒ วางบิลแล้วออกใบแจ้งหนี้ครบก็ยังขึ้น "⏳ รอรับชำระ" ตลอดไป ·
+    /// ไม่ใส่ใน <see cref="SourceTypes"/> เพราะใบวางบิลยังจบด้วยการรับชำระได้ (ป้ายต้องดูทั้งสองทาง ไม่ใช่การแปลงอย่างเดียว)</summary>
+    public static bool ClosesByConversionOrPayment(DocumentType type) => type == DocumentType.BillingNote;
+
+    /// <summary>ชนิดที่ต้องโหลดความคืบหน้าการแปลงมาประกอบป้าย</summary>
+    public static bool NeedsConversionSummary(DocumentType type) =>
+        IsConversionBearing(type) || ClosesByConversionOrPayment(type);
+
     /// <summary>แกนการเติมเต็มของใบลูก — ตารางเดียวกับด่านกันแปลงเกิน (<c>DocumentService.GetFulfillmentAxis</c> เรียกตัวนี้)</summary>
     public enum Axis { Other, Delivery, Billing }
 

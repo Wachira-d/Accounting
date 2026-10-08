@@ -25,4 +25,20 @@ public class ExceptionStatusForTests
         Assert.Equal(404, ExceptionMiddleware.StatusFor(new KeyNotFoundException()));
         Assert.Equal(400, ExceptionMiddleware.StatusFor(new InvalidOperationException("x")));
     }
+
+    [Fact]
+    public void คำถามยืนยัน409_422ที่มีรหัสกฎ_ไม่ลงErrorLogs()
+    {
+        Assert.True(ExceptionMiddleware.IsExpectedPrompt(new BusinessRuleException("ยอดเกิน", "CONVERT-OVER-AMOUNT", 422)));
+        Assert.True(ExceptionMiddleware.IsExpectedPrompt(new BusinessRuleException("ยังไม่เป็นลูกค้า", "CONTACT-ROLE-CUSTOMER", 409)));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ข้อผิดพลาดอื่นยังลงErrorLogs()
+    {
+        Assert.False(ExceptionMiddleware.IsExpectedPrompt(new BusinessRuleException("ชื่อว่าง", "CONTACT-NAME-REQUIRED")));   // 400
+        Assert.False(ExceptionMiddleware.IsExpectedPrompt(new BusinessRuleException("ไม่มีรหัส", null, 409)));
+        Assert.False(ExceptionMiddleware.IsExpectedPrompt(new InvalidOperationException("x")));
+        Assert.False(ExceptionMiddleware.IsExpectedPrompt(new Exception("boom")));
+    }
 }

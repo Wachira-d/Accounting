@@ -894,8 +894,8 @@ public partial class PosService
             foreach (var p in request.Payments ?? new List<OfflinePaymentRequest>())
             {
                 var change = Math.Max(0, p.ReceivedAmount - p.Amount);
-                // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-                order.Payments.Add(_db.Set<PosPayment>().Add(new PosPayment
+                // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+                _db.AddNewChild(order.Payments, new PosPayment
                 {
                     OrderId = order.Id,
                     PaymentMethod = p.PaymentMethod,
@@ -904,7 +904,7 @@ public partial class PosService
                     ChangeAmount = change,
                     ReferenceNo = p.ReferenceNo,
                     PaidAt = request.CompletedAt,
-                }).Entity);
+                });
                 totalPaid += p.Amount;
             }
             if (totalPaid < order.NetAmount - 0.01m)
@@ -2330,8 +2330,8 @@ public partial class PosService
             {
                 foreach (var srcItem in src.Items.Where(i => !i.IsDeleted))
                 {
-                    // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
-                    dest.Items.Add(_db.Set<PosOrderItem>().Add(new PosOrderItem
+                    // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+                    _db.AddNewChild(dest.Items, new PosOrderItem
                     {
                         // PosOrderItem is BaseEntity — CompanyId inherited via dest's OrderId.
                         ProductId = srcItem.ProductId,
@@ -2349,7 +2349,7 @@ public partial class PosService
                         LineOrder = nextLine++,
                         Status = srcItem.Status,
                         Notes = srcItem.Notes != null ? $"{srcItem.Notes} [จาก {src.OrderNumber}]" : $"[จาก {src.OrderNumber}]",
-                    }).Entity);
+                    });
                     srcItem.IsDeleted = true;
                 }
                 src.Status = PosOrderStatus.Voided;

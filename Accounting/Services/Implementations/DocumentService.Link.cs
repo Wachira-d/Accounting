@@ -40,7 +40,8 @@ public partial class DocumentService
         var sourceTypes = DocumentLinkPolicy.SourceTypes;
         var sources = await _db.Documents.AsNoTracking().Include(d => d.Lines)
             .Where(d => d.CompanyId == companyId && sourceTypes.Contains(d.DocumentType)
-                && d.ContactId == child.ContactId && d.Currency == child.Currency
+                && d.ContactId == child.ContactId
+                && (d.Currency ?? "").ToUpper() == (child.Currency ?? "").ToUpper()   // ตรงกับด่านผูก (OrdinalIgnoreCase)
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
             .OrderByDescending(d => d.DocumentDate).ThenByDescending(d => d.CreatedAt)
             .Take(30)
@@ -67,7 +68,11 @@ public partial class DocumentService
             throw new BusinessRuleException("เลือกอย่างน้อย 1 บรรทัดที่ตรงกับรายการในใบเสนอราคา", DocumentLinkPolicy.RuleCode);
 
         await using var tx = await _db.Database.BeginTransactionAsync();
-        // ล็อกใบต้นทาง — กันผูก/แปลงพร้อมกันจนยอดสะสมเกินโดยไม่มีใครเห็น
+        // ล็อกใบลูกก่อนแล้วจึงใบต้นทาง (ลำดับเดียวทุกคำขอ — ไม่ deadlock): ใบลูก = กันผูกใบเดียวกันเข้าสองใบเสนอราคาพร้อมกัน
+        // (ทั้งคู่ผ่านด่าน "ยังไม่มีต้นทาง" · ฝ่ายค้าน 2026-10-08) · ใบต้นทาง = กันผูก/แปลงพร้อมกันจนยอดสะสมเกินโดยไม่มีใครเห็น
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+            childId, companyId);
         await _db.Database.ExecuteSqlRawAsync(
             "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
             request.SourceDocumentId, companyId);
