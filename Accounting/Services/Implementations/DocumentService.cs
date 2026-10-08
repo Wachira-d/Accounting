@@ -11246,6 +11246,64 @@ public partial class DocumentService : IDocumentService
             ?? grns[0].DocumentNumber;
     }
 
+    private readonly record struct RootRevenueState(Guid RootId, string RootNumber, decimal RootBase, decimal Billed, int LineCount);
+
+    /// <summary>ใบเสนอราคาราก + ชนิดใบแม่ของใบที่อ้าง <paramref name="parentId"/> (ใบเสนอราคาตรง หรือ ใบส่งของ/ใบวางบิลที่มาจากใบเสนอราคา) ·
+    /// null = ไม่ได้อยู่ใต้ใบเสนอราคา (C-01)</summary>
+    private async Task<(Guid RootId, DocumentType ParentType)?> ResolveRootQuotationAsync(Guid companyId, Guid? parentId)
+    {
+        if (parentId is not Guid pid) return null;
+        var p = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == pid && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => new { d.Id, d.DocumentType, d.RelatedDocumentId })
+            .FirstOrDefaultAsync();
+        if (p == null) return null;
+        if (p.DocumentType == DocumentType.Quotation) return (p.Id, p.DocumentType);
+        if (RootRevenueLedger.IsMidDocument(p.DocumentType) && p.RelatedDocumentId is Guid gp
+            && await _db.Documents.AsNoTracking().AnyAsync(d => d.Id == gp && d.CompanyId == companyId && !d.IsDeleted
+                && d.DocumentType == DocumentType.Quotation))
+            return (gp, p.DocumentType);
+        return null;
+    }
+
+    /// <summary>รายได้ที่ใบเสนอราคา <paramref name="rootQtId"/> ถูกเรียกเก็บไปแล้วทุกทาง (ตรง · ผ่านใบส่งของ · ผ่านใบวางบิล · ใบเสร็จขายสด) —
+    /// ฐานก่อน VAT (Σ Amount ของบรรทัด) · ใบที่ยังมีผลเท่านั้น (<see cref="ConsumingChildDocIds"/>) · ไม่รวม <paramref name="excludeDocId"/> (ใบที่กำลังตรวจ)
+    /// · ตัวนับเดียวของคำเตือนตอนอนุมัติ/แปลงบางส่วน/ผูก/แปลงเป็นใบเสร็จ (C-01 · <see cref="RootRevenueLedger"/>)</summary>
+    private async Task<RootRevenueState?> LoadRootRevenueAsync(Guid companyId, Guid rootQtId, Guid? excludeDocId)
+    {
+        var root = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == rootQtId && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => new { d.DocumentNumber, Base = d.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount) })
+            .FirstOrDefaultAsync();
+        if (root == null) return null;
+        var consuming = ConsumingChildDocIds(companyId);
+        var mids = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.RelatedDocumentId == rootQtId
+                && (d.DocumentType == DocumentType.DeliveryNote || d.DocumentType == DocumentType.BillingNote)
+                && consuming.Contains(d.Id))
+            .Select(d => new { d.Id, d.DocumentType })
+            .ToListAsync();
+        var parentType = mids.ToDictionary(m => m.Id, m => m.DocumentType);
+        parentType[rootQtId] = DocumentType.Quotation;
+        var parentIds = parentType.Keys.ToList();
+        var kids = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.RelatedDocumentId != null
+                && parentIds.Contains(d.RelatedDocumentId.Value)
+                && (excludeDocId == null || d.Id != excludeDocId.Value)
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice
+                    || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                && consuming.Contains(d.Id))
+            .Select(d => new
+            {
+                d.DocumentType, ParentId = d.RelatedDocumentId!.Value, d.IsDeposit,
+                Base = d.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount),
+                Lines = d.Lines.Count(l => !l.IsDeleted),
+            })
+            .ToListAsync();
+        var counted = kids.Where(k => RootRevenueLedger.CountsAsRevenue(k.DocumentType, parentType[k.ParentId], k.IsDeposit)).ToList();
+        return new RootRevenueState(rootQtId, root.DocumentNumber, root.Base, counted.Sum(k => k.Base), counted.Sum(k => k.Lines));
+    }
+
     private readonly record struct BilledViaDeliveryLine(Guid SourceLineId, decimal Quantity, decimal Amount, DocumentType DocumentType);
 
     /// <summary>ทีมตรวจเส้นแปลง ข้อ 2 (2026-10-08): ใบแจ้งหนี้/ใบกำกับ/ใบแจ้งหนี้ซื้อที่ออก <b>จากใบส่งของ/ใบรับสินค้า</b>
@@ -11693,6 +11751,23 @@ public partial class DocumentService : IDocumentService
         {
             // Settlement / adjustment target หรือ upgrade ทั้งฉบับ — copy every line verbatim.
             spec = orderedLines.Select(l => (l, l.Quantity)).ToList();
+            // C-01: ใบเสร็จขายสดทั้งใบจากใบเสนอราคา/ใบวางบิลจากใบเสนอราคา ทั้งที่ใบเสนอราคาเรียกเก็บทางอื่นไปแล้ว (ใบแจ้งหนี้ผ่านใบส่งของ/ใบวางบิล)
+            // = รายได้ซ้ำทั้งก้อน · แปลงทั้งใบไม่มีขั้นยืนยัน ⇒ กันพร้อมทางไปต่อ (รับชำระที่ใบแจ้งหนี้ที่ออกแล้ว · ส่วนที่เหลือแปลงบางส่วนเป็นใบแจ้งหนี้)
+            if (targetType is DocumentType.Receipt or DocumentType.ReceiptVoucher
+                && (source.DocumentType == DocumentType.Quotation || source.DocumentType == DocumentType.BillingNote))
+            {
+                Guid? rootQtId = source.DocumentType == DocumentType.Quotation ? source.Id
+                    : (await ResolveRootQuotationAsync(companyId, source.RelatedDocumentId))?.RootId;
+                if (rootQtId is Guid rid && await LoadRootRevenueAsync(companyId, rid, null) is { } ledger && ledger.Billed > 0.005m)
+                {
+                    var now = orderedLines.Sum(l => l.Amount);
+                    if (Accounting.Helpers.PartialConvertPolicy.IsOverAmount(ledger.Billed, now, ledger.RootBase, ledger.LineCount + orderedLines.Count))
+                        throw new BusinessRuleException(
+                            RootRevenueLedger.OverMessage(ledger.RootNumber, ledger.Billed, now, ledger.RootBase)
+                            + " — ใบเสร็จขายสดทั้งใบจะรับรู้รายได้ซ้ำ · รับเงินที่ใบแจ้งหนี้ที่ออกแล้ว (บันทึกชำระเงิน) และส่วนที่ยังไม่เรียกเก็บให้ \"แปลงบางส่วน\" เป็นใบแจ้งหนี้",
+                            "CONVERT-RECEIPT-ALREADY-BILLED", 409);
+                }
+            }
         }
         else
         {
@@ -11915,6 +11990,27 @@ public partial class DocumentService : IDocumentService
                     string.Join("\n", warnings.Prepend(msg)),
                     Accounting.Helpers.PartialConvertPolicy.OverAmountRule, 422);
             warnings.Insert(0, msg + " (ผู้ใช้ยืนยันแล้ว)");
+        }
+        // C-01: รายได้รวมของใบเสนอราคาราก (นับทุกทาง — ด่านข้างบนเห็นแค่ลูก/หลานผ่านใบส่งของของใบนี้) · ยืนยันได้ (ข้อ 138 เตือนไม่ล็อก)
+        if (targetType is DocumentType.Invoice or DocumentType.TaxInvoice)
+        {
+            Guid? rootQtId = source.DocumentType == DocumentType.Quotation ? source.Id
+                : RootRevenueLedger.IsMidDocument(source.DocumentType)
+                    ? (await ResolveRootQuotationAsync(companyId, source.RelatedDocumentId))?.RootId
+                    : null;
+            var ledger = rootQtId is Guid rid ? await LoadRootRevenueAsync(companyId, rid, null) : null;
+            var alreadyPrompted = warnings.Count > 0 && warnings[0].Contains("(ผู้ใช้ยืนยันแล้ว)");
+            if (ledger is { } lg
+                && Accounting.Helpers.PartialConvertPolicy.IsOverAmount(lg.Billed, convertingNow, lg.RootBase,
+                    roundingLines: lg.LineCount + spec.Count))
+            {
+                var rootMsg = RootRevenueLedger.OverMessage(lg.RootNumber, lg.Billed, convertingNow, lg.RootBase);
+                if (!request.ConfirmOverSourceAmount)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        string.Join("\n", warnings.Prepend(rootMsg)), Accounting.Helpers.PartialConvertPolicy.OverAmountRule, 422);
+                if (!alreadyPrompted) warnings.Insert(0, rootMsg + " (ผู้ใช้ยืนยันแล้ว)");
+                else warnings.Insert(1, rootMsg);
+            }
         }
 
         var created = await ConvertCoreAsync(source, targetType, spec, createdBy,
@@ -19310,6 +19406,20 @@ public partial class DocumentService : IDocumentService
             warnings.Add($"วันที่เอกสาร ({doc.DocumentDate:yyyy-MM-dd}) ย้อนหลัง {(int)daysPast} วัน — ตรวจรอบการยื่นภาษีก่อนอนุมัติ");
         else if (daysPast < -30)
             warnings.Add($"วันที่เอกสาร ({doc.DocumentDate:yyyy-MM-dd}) ล่วงหน้าเกิน 30 วัน — โดยปกติออกเอกสารวันจริงเท่านั้น");
+
+        // C-01 (ทีมตรวจงานค้าง 2026-10-08): ชั้นสุดท้ายของ "รายได้รวมของใบเสนอราคาเกินยอด" — ครอบทุกทางเข้า (แปลง · ผูก · สร้างมือ/API ที่อ้างต้นทาง ·
+        // แก้ราคาหลังแปลง · แปลงพร้อมกันสองแท็บ) · เตือน ไม่บล็อก (ข้อ 138) · ตัวนับเดียว LoadRootRevenueAsync
+        if (doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.Receipt or DocumentType.ReceiptVoucher
+            && !doc.IsDeposit
+            && await ResolveRootQuotationAsync(companyId, doc.RelatedDocumentId) is { } rootRef
+            && RootRevenueLedger.CountsAsRevenue(doc.DocumentType, rootRef.ParentType, doc.IsDeposit)
+            && await LoadRootRevenueAsync(companyId, rootRef.RootId, doc.Id) is { } ledger)
+        {
+            var billingNow = doc.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount);
+            if (Accounting.Helpers.PartialConvertPolicy.IsOverAmount(ledger.Billed, billingNow, ledger.RootBase,
+                    roundingLines: ledger.LineCount + doc.Lines.Count(l => !l.IsDeleted)))
+                warnings.Add(RootRevenueLedger.OverMessage(ledger.RootNumber, ledger.Billed, billingNow, ledger.RootBase));
+        }
 
         // รอบ 200 ทีม R (B-09): อนุมัติใบขายที่มี VAT เข้าเดือนที่ยื่น/ประกาศยื่น ภ.พ.30 แล้ว — ยกเลิก/กู้คืน/รับรู้มัดจำบล็อกเดือนนั้นอยู่แล้ว
         // แต่การอนุมัติเงียบ ⇒ ภาษีขายก้อนนี้ไปโผล่เป็นบรรทัดที่ติ๊กออกในรายงานเดือนถัดไป · warn-gate (มองเห็น + รับทราบ) ไม่บล็อก

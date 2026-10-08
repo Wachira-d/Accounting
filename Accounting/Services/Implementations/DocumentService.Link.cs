@@ -117,6 +117,18 @@ public partial class DocumentService
                 throw new BusinessRuleException(msg, PartialConvertPolicy.OverAmountRule, 422);
             overNote = msg + " (ผู้ใช้ยืนยันแล้ว)";
         }
+        // C-01: รายได้รวมของใบเสนอราคา (นับทุกทาง รวมใบแจ้งหนี้ผ่านใบวางบิล/ใบเสร็จขายสด) + ใบนี้ทั้งใบ — ด่านข้างบนเห็นเฉพาะบรรทัดที่จับคู่
+        if (await LoadRootRevenueAsync(companyId, source.Id, child.Id) is { } ledger)
+        {
+            var childBase = child.Lines.Where(l => !l.IsDeleted).Sum(l => l.Amount);
+            if (PartialConvertPolicy.IsOverAmount(ledger.Billed, childBase, ledger.RootBase, ledger.LineCount + child.Lines.Count))
+            {
+                var rootMsg = RootRevenueLedger.OverMessage(ledger.RootNumber, ledger.Billed, childBase, ledger.RootBase);
+                if (!request.ConfirmOverSourceAmount)
+                    throw new BusinessRuleException(rootMsg, PartialConvertPolicy.OverAmountRule, 422);
+                overNote = overNote == null ? rootMsg + " (ผู้ใช้ยืนยันแล้ว)" : overNote + " · " + rootMsg;
+            }
+        }
 
         var before = new { child.RelatedDocumentId, Lines = child.Lines.Select(l => new { l.Id, l.SourceLineId }).ToList() };
         child.RelatedDocumentId = source.Id;
