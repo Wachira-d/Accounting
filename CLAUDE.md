@@ -368,8 +368,8 @@ await _recorder.RecordUserChoiceAsync(
 - [ ] **Audit log append-only** `AuditLog(actorId, entityType, entityId, before, after, at, ip, reason)`
   — ห้าม UPDATE/DELETE; ใช้ hash chain (PrevHash + RowHash SHA-256) เป็น tamper-evident
   (รอบ 193: สูตร canonical ตัวเดียว `AuditHashChain.Seal` ฝั่งเขียน / `Analyze` ฝั่งตรวจ — v2 normalize เวลา UTC ไมโครวินาทีให้ round-trip
-  ผ่าน PostgreSQL · ตัวตรวจแยก ถูกแก้ / ขาดตอน / แตกกิ่ง · เขียนแถว audit ผ่าน `AddChainedAuditLog` เท่านั้น · **ยังไม่ serialize ข้ามคำขอ**
-  และยังไม่มีเทสต์ผ่าน DB จริง — รอเจ้าของตัดสิน)
+  ผ่าน PostgreSQL · ตัวตรวจแยก ถูกแก้ / ขาดตอน / แตกกิ่ง · เขียนแถว audit ผ่าน `AddChainedAuditLog` เท่านั้น · รอบ 201: ประทับตอน commit ใต้ `pg_advisory_xact_lock`
+  ต่อบริษัท (serialize ข้ามคำขอแล้ว) + Db test `AuditChainCommitDbTests`)
 - [ ] **Time zone** เก็บ `timestamptz` UTC, แสดง Asia/Bangkok (+07:00); พ.ศ. เฉพาะแบบยื่นภาษี/รายงานทางการ
 - [ ] **เลขเอกสาร** ออกตอน Approve เท่านั้น (Draft `DRAFT-{guid}`), gap-free ตาม §86/4
 - [ ] **Legal reference logging** — ทุก validation rule log `RuleCode` + `LegalReference`
@@ -540,7 +540,7 @@ python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษ
  3. ไม่มี dead helper ใหม่ (dead_helper_check) · TEST_PLAN §0 ตรงเทสต์จริง (test_inventory --check)
  4. doc sha อยู่บน branch (doc_commit_sha_check) — เติม sha ในคอมมิตตามหลัง ห้าม amend
  5. ถ้ามี dotnet: build + test ผ่าน
- 6. หลัง push: อ่านผล Actions ผ่าน MCP actions_list/get_job_logs → แดง = แก้ก่อนรายงานผู้ใช้
+ 6. หลัง push: `bash tools/ci_wait.sh` (background) → แดง = `get_job_logs` แล้วแก้ก่อนรายงานผู้ใช้
 
 ข. คนทำ — ตอบเป็นข้อความในคำอธิบายคอมมิต (ตอบไม่ได้ = ยังไม่ push)
  7. "แก้ที่นี่ แล้ว callers.py/grep รูปแบบเดิมทั้งเรพได้กี่จุด" → ตัวเลข (0 ก็เขียนว่า 0)
@@ -610,8 +610,7 @@ python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษ
   `tools/stock_writer_check.py` = 0 จุดนอก ledger) — ประโยคเดิม "สองความจริงที่ไม่คุยกัน"
   ล้าสมัย · ตาข่ายซ่อมข้อมูลเก่าก่อนเฟส 0 ต่อสายแล้ว (รอบ 201 ทีม IN · C-5): `FindProductTotalMismatchesAsync`
   (รายงานอ่านอย่างเดียว) + `RepairProductTotalsAsync` (ซ่อมเฉพาะแถวที่เลือก · audit) — `ReconcileProductTotalsAsync` เดิมถูกลบ ·
-  ที่ยังค้าง: POS ยังไม่ผูก `Branch`/`Warehouse`
-  · สลิปพิมพ์ "ใบกำกับภาษีอย่างย่อ" โดยไม่ตรวจ ภ.พ.06)
+  POS ผูก `Branch`/`Warehouse` แล้ว · หัวสลิปผ่าน `PosSlipHeader` → `AbbreviatedTaxInvoiceRule` (ตรวจ ภ.พ.06) — ตรวจ 2026-10-08)
 - **Payment gateway (Omise ก่อน · เปลี่ยนเจ้าได้)** — ออกแบบใน `PAYMENT_GATEWAY_DESIGN.md`
   (แก้ doc 2026-10-02 — ข้อเดิม "ไม่มีการเชื่อม gateway ใดเลย" ล้าสมัย: มี `Services/Payments/Providers/OmisePaymentProvider` +
   `ManualSlipPaymentProvider` แล้ว และแขก/ลูกค้าปลายทางจ่ายผ่าน `PublicPaymentController` (`[AllowAnonymous]`
@@ -636,7 +635,7 @@ python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษ
   (คอมมิตที่แตะแต่ `**.md` ไม่รัน CI ตาม `paths-ignore` — ต้องบอกผู้ใช้ว่าไม่มีรอบให้รอ ห้ามรายงานว่าเขียว)
 - **ประหยัด token (บทเรียน 2026-10-03 — ไฟล์นี้เคย 130 KB ≈ 45k token ถูกส่งทุก turn ของทุก agent):** ไฟล์นี้ต้องอยู่ใต้ 70 KB — เพิ่มได้เฉพาะ*หลักการ* ส่วนบทเรียน/รายการ/ดัชนี
   ไป `docs/lessons/` หรือ `docs/REVIEWS_INDEX.md` · เขียนไฟล์ด้วย Write/Edit tool ไม่ใช่ `cat <<EOF` (heredoc ทำให้ตัวไฟล์ทั้งก้อนอยู่ใน context สองรอบ) ·
-  รอผล CI/งานพื้นหลังด้วย `run_in_background` + แจ้งเตือน ไม่ใช่ `sleep` วนถาม · ผลลัพธ์ tool ที่ยาวให้ `| tail`/`grep` ก่อน ไม่ cat ทั้งไฟล์ ·
+  รอผล CI ด้วย `tools/ci_wait.sh` + `run_in_background` ไม่ใช่วน `actions_list`/`sleep` · ผลลัพธ์ tool ที่ยาวให้ `| tail`/`grep` ก่อน ไม่ cat ทั้งไฟล์ ·
   brief ให้ subagent ชี้ไปที่ไฟล์ (`PP36_REVIEW.md` ฯลฯ) แทนวางเนื้อหาซ้ำ · รวมหลายคำสั่ง bash ที่ไม่พึ่งกันไว้ใน call เดียว
 - **commit message** เขียนเป็นไทยได้ อธิบาย *ทำไม* มากกว่า *ทำอะไร*
 - **ห้าม push** main/master โดยไม่มี explicit approval

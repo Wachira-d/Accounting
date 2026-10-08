@@ -207,6 +207,23 @@ RULES += [
          must_re=[r"catch\s*\(\s*Exception\s+\w+\s*\)\s*when\s*\(\s*\w+\s+is\s+InvalidOperationException"],
          why="ข้อ 10: ใบที่แปลงไม่ได้ต้องคืนให้หน้าเว็บ · ห้ามกลืน error ทุกชนิด (ฐานข้อมูล/บั๊กต้องดัง)"),
     # ฝ่ายค้าน 2026-10-08 P1: แถวใหม่ใต้ parent ที่ติดตามอยู่ผ่าน EfNewChild ตัวเดียว (ไม่ Modified · ไม่เบิ้ลในคอลเลกชัน)
+    # คำตัดสินข้อ 113 (ทีมตรวจงานค้าง 2026-10-08): ยกเลิกการนำส่ง + กลับ สปส. รายรอบห้ามแตะ JE ที่ใช้ร่วม
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="VoidRemittanceAsync",
+         must=["RemittanceVoidPolicy.BlockReason(", "ReverseJournalEntryAsync(", "AddChainedAuditLog("],
+         must_lit=["FOR UPDATE"],
+         must_re=[r"r\.SsoSettlementJournalEntryId\s*==\s*jeId", r"r\.CompanyId\s*==\s*companyId"],
+         before=[("RemittanceVoidPolicy.BlockReason(", "ReverseJournalEntryAsync(")],
+         why="กลับ JE ครั้งเดียว + ปลดทุกรอบที่ใช้ JE นี้ (ไม่ใช่รอบเดียว) · ภ.พ.36 ที่รับรู้ภาษีซื้อแล้วต้องถูกกันก่อนกลับ"),
+    dict(file=PAYROLL, method="ReverseSsoSettlementAsync",
+         must=["RemittanceVoidPolicy.SsoPerRunReverseBlock("],
+         before=[("RemittanceVoidPolicy.SsoPerRunReverseBlock(", "ReverseJournalEntryAsync(")],
+         why="JE นำส่งทั้งเดือนใช้ร่วมหลายรอบ — กลับรายรอบ = รอบอื่นค้างธงนำส่ง + กลับ JE ซ้ำ"),
+    # คำตัดสินข้อ 114 Q2 (ทีมตรวจงานค้าง 2026-10-08): ยกเลิกเงินทดรอง — สิทธิ์ + ใบสำคัญจ่ายที่ผูก ผ่านตัวตัดสินเดียว
+    dict(file="Services/Implementations/SalaryAdvanceService.cs", method="VoidAsync",
+         must=["SalaryAdvanceVoidPolicy.CanVoid(", "SalaryAdvanceVoidPolicy.Decide(", "AddChainedAuditLog("],
+         before=[("SalaryAdvanceVoidPolicy.CanVoid(", "SalaryAdvanceVoidPolicy.Decide("),
+                 ("SalaryAdvanceVoidPolicy.Decide(", "DeleteDocumentAsync(")],
+         why="เดิมยกเลิกได้ทั้งที่ใบสำคัญจ่ายลงบัญชีแล้ว (ลูกหนี้ค้าง) และสมาชิกคนใดก็ยกเลิกได้"),
     dict(file=PAYROLL, method="AddPayrollDetailAsync", must=["AddNewChild("], forbid=["run.Details.Add("],
          why="เพิ่มคนเข้ารอบ: Add สองทาง ⇒ ยอดรอบเบิ้ล · คอลเลกชันอย่างเดียว ⇒ 500 concurrency"),
     dict(file="Services/Implementations/TaxService.cs", method="FileTaxReportAsync",

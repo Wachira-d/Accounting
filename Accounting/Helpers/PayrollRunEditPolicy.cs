@@ -239,7 +239,7 @@ public sealed record PayrollFilingMark(string Form, PayrollFilingSource Source)
         PayrollFilingSource.ComplianceFiling =>
             "เปลี่ยนสถานะในปฏิทิน compliance (บันทึกผ่าน API ไม่มีหน้าจอ — ให้ผู้ดูแลระบบแก้ทาง PUT /compliance/filings/{id})",
         PayrollFilingSource.StatutoryRemittance =>
-            "ให้ผู้ดูแลระบบยกเลิกรายการนำส่ง ภ.ง.ด.1 ของงวดนั้นที่บันทึกไว้ (ระบบยังไม่มีปุ่มยกเลิกการนำส่งบนหน้าจอ)",
+            "ให้ผู้มีสิทธิ์ยื่นภาษียกเลิกรายการนำส่ง ภ.ง.ด.1 ของงวดนั้น (หน้า “นำส่งภาษี/ประกันสังคม” → ประวัติ → ยกเลิกการนำส่ง)",
         _ => "กด \"ปลดล็อก/กลับเป็นร่าง\" ที่รายงานภาษีของงวดนั้น (หน้ารายงานภาษี)",
     };
 }

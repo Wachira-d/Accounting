@@ -144,10 +144,15 @@ public class TaxGlReconciliationService
         // รอบ 203 ทีม F3 (E-10): (1) GL ฝั่ง "ตั้งหนี้" = Cr 21912 ของงวด **ไม่รวม JE นำส่ง** (Dr 21912/Cr ธนาคาร) — เดิมนับรวม ⇒ เดือนที่นำส่ง
         // ภายในเดือนเดียวกันได้ GL 0 เทียบรายงาน 413.56 = ผลต่างปลอม −413.56 ทุกครั้ง · (2) สาเหตุ "ใบอนุมัติแล้วไม่มี JE" (ตัวโหลดเดียวกับหน้านำส่ง) ·
         // (3) บรรทัด 11640 — ภาษีซื้อ ภ.พ.36 ที่พัก/รับรู้ในงวด
-        var pp36RemitJeIds = (await _db.StatutoryRemittances.AsNoTracking()
-                .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RemittanceType == "VatPp36" && r.JournalEntryId != null)
+        // รวมรายการนำส่งที่ถูกยกเลิก (ข้อ 113) + ตัวกลับรายการของมัน — มิฉะนั้น JE นำส่ง/ตัวกลับของรายการที่ยกเลิกถูกนับเป็น "ตั้งหนี้" ปลอม
+        var pp36RemitJeIds = (await _db.StatutoryRemittances.AsNoTracking().IgnoreQueryFilters()
+                .Where(r => r.CompanyId == companyId && r.RemittanceType == "VatPp36" && r.JournalEntryId != null)
                 .Select(r => r.JournalEntryId!.Value).ToListAsync())
             .ToHashSet();
+        var pp36RemitReversalIds = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && pp36RemitJeIds.Contains(j.Id) && j.ReversedByEntryId != null)
+            .Select(j => j.ReversedByEntryId!.Value).ToListAsync();
+        pp36RemitJeIds.UnionWith(pp36RemitReversalIds);
         var glPp36 = glRows
             .Where(r => r.AccountCode == Accounting.Helpers.ForeignServiceVat.Pp36PayableCode && !pp36RemitJeIds.Contains(r.JeId))
             .Sum(r => r.CreditAmount - r.DebitAmount);

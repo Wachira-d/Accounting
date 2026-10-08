@@ -365,18 +365,73 @@ public class SalaryAdvanceService : ISalaryAdvanceService
         return await GetByIdAsync(companyId, advance.Id);
     }
 
-    public async Task VoidAsync(Guid companyId, Guid advanceId)
+    /// <summary>ยกเลิกรายการเงินทดรอง — ตัวตัดสิน <see cref="Accounting.Helpers.SalaryAdvanceVoidPolicy"/> (คำตัดสินข้อ 114 Q2):
+    /// ใบสำคัญจ่ายร่างที่ผูกอยู่ถูกลบตาม · ใบรออนุมัติ/ออกแล้ว ⇒ กันพร้อมทางไปต่อ (เดิมยกเลิกได้ทั้งที่ใบสำคัญจ่ายลงบัญชีแล้ว ⇒ ลูกหนี้ค้างไม่มีเจ้าของ) ·
+    /// ผู้ยกเลิกต้องเป็นผู้อนุมัติ/HR Admin/เจ้าของ หรือผู้ขอเองขณะยังไม่อนุมัติ (เดิมไม่ตรวจสิทธิ์เลย)</summary>
+    public async Task VoidAsync(Guid companyId, Guid advanceId, Guid actorUserId)
     {
         var advance = await _db.SalaryAdvances
             .FirstOrDefaultAsync(a => a.Id == advanceId && a.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการเงินทดรองจ่าย");
 
-        if (advance.Status == "Disbursed" || advance.Status == "Cleared")
-            throw new InvalidOperationException(
-                "ไม่สามารถยกเลิกรายการที่จ่ายเงินแล้วได้ — กรุณายกเลิกใบสำคัญจ่ายที่เกี่ยวข้องแทน");
+        var role = await _db.Set<CompanyUser>().AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == actorUserId)
+            .Select(cu => (UserRole?)cu.Role)
+            .FirstOrDefaultAsync();
+        var hasApprover = _permissionService != null
+            && (await _permissionService.HasPermissionAsync(companyId, actorUserId, PermissionKeys.AdvanceApprove)
+                || await _permissionService.HasPermissionAsync(companyId, actorUserId, PermissionKeys.HrAdmin));
+        var isRequester = await _db.Employees.AnyAsync(e => e.Id == advance.EmployeeId && e.CompanyId == companyId
+            && e.UserId == actorUserId);
+        if (!Accounting.Helpers.SalaryAdvanceVoidPolicy.CanVoid(advance.Status,
+                role is UserRole.Owner or UserRole.SystemAdmin, hasApprover, isRequester))
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ไม่มีสิทธิ์ยกเลิกรายการเงินทดรองนี้ — ต้องเป็นผู้อนุมัติเงินทดรอง / HR Admin / เจ้าของบริษัท "
+                + "(ผู้ขอยกเลิกคำขอของตัวเองได้เฉพาะก่อนอนุมัติ)",
+                Accounting.Helpers.SalaryAdvanceVoidPolicy.RuleNoPermission, 403);
 
+        var pv = advance.DisbursementDocumentId is Guid pvId
+            ? await _db.Set<Document>().AsNoTracking()
+                .Where(d => d.Id == pvId && d.CompanyId == companyId && !d.IsDeleted)
+                .Select(d => new { d.Id, d.Status, d.DocumentNumber })
+                .FirstOrDefaultAsync()
+            : null;
+        var decision = Accounting.Helpers.SalaryAdvanceVoidPolicy.Decide(advance.Status, advance.DisbursementDocumentId,
+            pv?.Status, pv?.DocumentNumber);
+        if (decision.Outcome == Accounting.Helpers.SalaryAdvanceVoidOutcome.Block)
+            throw new Accounting.Helpers.BusinessRuleException(decision.Message!, decision.RuleCode, 409);
+
+        // ลบใบร่างก่อน (DeleteDocumentAsync เปิดธุรกรรมของตัวเอง — ห้ามห่อซ้อน) · ล้มกลางทาง = รายการยังไม่ถูกยกเลิก
+        // และใบร่างถูกลบแล้ว ⇒ LinkedPayVoucher.StepFor ได้ Create ⇒ กดยกเลิกซ้ำได้ตามปกติ (ฟื้นตัวเอง)
+        string? deletedVoucher = null;
+        if (decision.Outcome == Accounting.Helpers.SalaryAdvanceVoidOutcome.DeleteDraftVoucher && pv != null)
+        {
+            await _documentService.DeleteDocumentAsync(companyId, pv.Id);
+            deletedVoucher = pv.DocumentNumber;
+            advance.DisbursementDocumentId = null;
+        }
+
+        var before = advance.Status;
         advance.Status = "Voided";
+        advance.UpdatedBy = actorUserId.ToString();
         advance.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = actorUserId,
+            Action = AuditAction.Update,
+            EntityType = "SalaryAdvance",
+            EntityId = advance.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { status = before }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "VoidAdvance",
+                status = advance.Status,
+                advanceNumber = advance.AdvanceNumber,
+                deletedDraftVoucher = deletedVoucher,
+                by = actorUserId,
+            }),
+        });
         await _db.SaveChangesAsync();
     }
 

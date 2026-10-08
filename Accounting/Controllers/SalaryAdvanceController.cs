@@ -115,7 +115,7 @@ public class SalaryAdvanceController : ControllerBase
     [HttpPost("{advanceId:guid}/void")]
     public async Task<ActionResult<ApiResponse<string>>> Void(Guid companyId, Guid advanceId)
     {
-        await _service.VoidAsync(companyId, advanceId);
+        await _service.VoidAsync(companyId, advanceId, JwtHelper.GetUserIdFromClaims(User));   // สิทธิ์ + ใบสำคัญจ่ายที่ผูก ตัดสินใน service (ข้อ 114 Q2)
         return Ok(new ApiResponse<string>(true, null, "ยกเลิกรายการสำเร็จ"));
     }
 }

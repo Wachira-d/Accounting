@@ -32,6 +32,9 @@ public interface IStatutoryRemittanceService
     /// <summary>ผูกไฟล์ใบเสร็จ/หลักฐาน (FileAttachment ที่อัปโหลดแล้ว) กับการนำส่ง.</summary>
     Task AttachReceiptAsync(Guid companyId, Guid remittanceId, Guid attachmentId);
 
+    /// <summary>ยกเลิกการนำส่ง (คำตัดสินข้อ 113) — กลับ JE ครั้งเดียว · ปลดทุกรอบเงินเดือนที่ใช้ JE นี้ · ใบ ภ.พ.36 กลับเป็นค้างนำส่ง · เหตุผลบังคับ</summary>
+    Task<string> VoidRemittanceAsync(Guid companyId, Guid remittanceId, string? reason, string performedBy);
+
     /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD (Dr 11610 / Cr 11640 ลงวันเคลม +
     /// stamp เอกสาร → เข้า ภ.พ.30 เดือนเคลม) — เฉพาะใบที่อยู่ในรายการนำส่งแล้ว · เลข/วันที่ใบเสร็จบังคับ ·
     /// วันเคลมค่าเริ่มต้น = วันที่ใบเสร็จ (ห้ามก่อน) · ห้ามเคลมเข้างวด ภ.พ.30 ที่ยื่นแล้ว (คำตัดสินข้อ 129/133/136)</summary>

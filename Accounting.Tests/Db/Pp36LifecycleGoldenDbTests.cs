@@ -441,4 +441,55 @@ public class Pp36LifecycleGoldenDbTests
         Assert.Equal(2520m, Claimed(usd.Id));      // = Dr 11610 ใน GL (เดิม 70)
         Assert.Equal(413.56m, Claimed(thb.Id));    // ใบบาทไม่เปลี่ยนแม้แต่สตางค์
     }
+
+    // ── คำตัดสินข้อ 113 (ทีมตรวจงานค้าง 2026-10-08): ยกเลิกการนำส่ง ──
+    [Fact]
+    public async Task ซ_ยกเลิกการนำส่ง_กลับJEครั้งเดียว_ใบกลับเป็นค้างนำส่ง_นำส่งใหม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var pv = await SeedPvAsync(db, s, "PV-G-V1", Sep.AddDays(5), 1000m, 70m, withJournal: true);
+        decimal before;
+        using (var check = DbTestDatabase.TryCreateContext()!) before = await BalanceAsync(check, s.CompanyId, "21912");
+        var r = await Svc(db).RemitAsync(s.CompanyId, Remit(s, Sep, Sep.AddDays(20), "RD-V"), "tester");
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).VoidRemittanceAsync(s.CompanyId, r.Id, "บันทึกผิดยอด", Guid.NewGuid().ToString());
+
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(before, await BalanceAsync(check, s.CompanyId, "21912"));            // JE ถูกกลับพอดี (ไม่ขาด ไม่เกิน)
+            Assert.Empty(await check.Pp36RemittanceDocuments.AsNoTracking()
+                .Where(x => x.CompanyId == s.CompanyId && !x.IsDeleted).ToListAsync());
+            Assert.False(await check.Set<StatutoryRemittance>().AnyAsync(x => x.CompanyId == s.CompanyId && !x.IsDeleted));
+        }
+        var dash = await Svc(db).GetDashboardAsync(s.CompanyId, 24);
+        Assert.Equal(70m, Assert.Single(dash.Pending.Where(p => p.RemittanceType == "VatPp36")).Amount);
+
+        // ยกเลิกซ้ำ = ไม่พบ (ไม่กลับ JE สองรอบ)
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            Svc(db).VoidRemittanceAsync(s.CompanyId, r.Id, "ซ้ำ", "tester"));
+        // นำส่งใหม่ได้ (ใบเดิมนับได้อีกครั้งเพราะแถวผูกเดิมถูกลบแบบ soft)
+        var again = await Svc(db).RemitAsync(s.CompanyId, Remit(s, Sep, Sep.AddDays(22), "RD-V2"), "tester");
+        Assert.Equal(70m, again.Amount);
+    }
+
+    [Fact]
+    public async Task ฌ_ทิศตรงข้าม_ภพ36ที่รับรู้ภาษีซื้อแล้ว_ยกเลิกการนำส่งไม่ได้_ไม่มีอะไรถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        await SeedPvAsync(db, s, "PV-G-V2", Sep.AddDays(5), 1000m, 70m, withJournal: true);
+        var r = await Svc(db).RemitAsync(s.CompanyId, Remit(s, Sep, Sep.AddDays(20), "RD-W"), "tester");
+        await Svc(db).RecognizePp36InputVatAsync(s.CompanyId, Sep.Year, Sep.Month, null, "tester", null, Oct.AddDays(1));
+
+        using var req = DbTestDatabase.TryCreateContext()!;
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            Svc(req).VoidRemittanceAsync(s.CompanyId, r.Id, "ลองยกเลิก", "tester"));
+        Assert.Equal(RemittanceVoidPolicy.RulePp36Recognized, ex.RuleCode);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.True(await check.Set<StatutoryRemittance>().AnyAsync(x => x.Id == r.Id && x.CompanyId == s.CompanyId && !x.IsDeleted));
+    }
 }

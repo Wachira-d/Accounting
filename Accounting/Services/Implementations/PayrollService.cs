@@ -5205,6 +5205,18 @@ public class PayrollService : IPayrollService
 
             // เช่นเดียวกับการกลับรายการจ่าย — ไม่มี JE ให้กลับ ต้องบอก ไม่ใช่เงียบ
             var reversedJe = run.SsoSettlementJournalEntryId;
+            // ทีมตรวจงานค้าง 2026-10-08 (ข้อ 113): นำส่ง สปส.1-10 ทั้งเดือนประทับ JE เดียวลงทุกรอบ — กลับรายรอบ = กลับ JE ทั้งก้อนแต่ปลดธงรอบเดียว
+            // (รอบอื่นยังขึ้นนำส่งแล้ว · รอบที่สองกลับ JE ซ้ำ) ⇒ JE ที่ใช้ร่วม ต้องยกเลิกที่ "ยกเลิกการนำส่ง" (ปลดทุกรอบพร้อมกัน)
+            if (reversedJe.HasValue)
+            {
+                var jeId = reversedJe.Value;
+                var otherRuns = await _db.Set<PayrollRun>().CountAsync(r => r.CompanyId == companyId && !r.IsDeleted
+                    && r.Id != run.Id && r.SsoSettlementJournalEntryId == jeId);
+                var monthly = await _db.Set<StatutoryRemittance>().AnyAsync(r => r.CompanyId == companyId && !r.IsDeleted
+                    && r.JournalEntryId == jeId);
+                if (Accounting.Helpers.RemittanceVoidPolicy.SsoPerRunReverseBlock(run.PayrollNumber, otherRuns, monthly) is { } shared)
+                    throw new Accounting.Helpers.BusinessRuleException(shared.Message, shared.RuleCode, 409);
+            }
             if (reversedJe.HasValue && _accountingService != null)
             {
                 var revEntry = await _accountingService.ReverseJournalEntryAsync(

@@ -47,11 +47,16 @@ git push -u origin $(git branch --show-current)
 - ล้มเพราะเน็ต → retry 4 ครั้ง (2s · 4s · 8s · 16s)
 - **ถ้าคอมมิตแตะแต่ `**.md` / `erp-review/**` / `scripts/**`** → CI ไม่รันตาม `paths-ignore`
   บอกผู้ใช้ตรง ๆ ว่า "ไม่มีรอบ CI ให้รอ" **ห้ามรอเก้อแล้วรายงานว่าเขียว**
-- ถ้ารัน: `mcp__github__actions_list` (method `list_workflow_runs`, resource_id `ci.yml`, filter branch นี้)
-  → รอจนสถานะ `completed` (รอบละ ~2-3 นาที; รอด้วย background bash ที่มี until-loop **ห้าม `sleep` ยาวใน foreground**)
+- ถ้ารัน: `bash tools/ci_wait.sh` ด้วย `run_in_background` แล้ว**รอแจ้งเตือน** — มันถาม GitHub เอง (30s→120s · retry เน็ตล้ม)
+  แล้วพิมพ์ `CI <run_id> completed <conclusion> <sha7> <url>` + บรรทัด `job <conclusion> <job_id> <name>` ต่อ job
+  exit 0 เขียว · 1 แดง · 2 หมดเวลา · 3 ไม่มีรอบ (ห้ามรายงานว่าเขียว) · 4 ถูกยกเลิกเพราะมี push ใหม่ (รอ sha ล่าสุด) · 5 เรียก GitHub ไม่ได้
+  **ห้าม** วนเรียก `mcp__github__actions_list` เอง (บทเรียน 2026-10-03: 135 ครั้ง ≈ 0.72 MB เข้า context ทั้งที่ต้องการแค่เขียว/แดง)
+  ไม่มี `gh`/exit 5 → `actions_list` ครั้งเดียวต่อ push ใส่ `per_page: 1`
+  ⚠️ เขียวบน `claude/**` = build + static + เทสต์ DB เท่านั้น — job `dotnet test` (เทสต์หน่วย) ถูก skip ตาม ci.yml (ต้องให้เจ้าของตัดสิน)
 
 ## 7. แดง = แก้ก่อน ห้ามรายงาน
-- `mcp__github__get_job_logs` (`run_id`, `failed_only: true`, `return_content: true`)
+- `mcp__github__get_job_logs` **ครั้งเดียว** (`job_id` จากบรรทัด `job failure …` · `return_content: true` · `tail_lines: 150`)
+  — error ของ dotnet อยู่ท้าย log เสมอ ไม่ต้องดึงเต็ม
 - แก้ในคอมมิตใหม่ (ห้าม amend) → กลับข้อ 2 → วนจนเขียว
 - ถ้า CI จับ build error ที่ checker มองไม่เห็น (ต้องรู้ชนิดจริง เช่น CS1061/CS1503/CS8126/CS1056):
   **อย่าเขียน checker ที่ต้อง type resolution** (F4 ข้อ 1) — ถ้าเป็นรูปทรงของโค้ดล้วนค่อยขยาย checker เดิม

@@ -61,6 +61,12 @@ done
 # `node tools/vat_line_source_sim.js` — แต่จริง ๆ **ไม่เคยรัน** (ตรวจพบ 2026-09-21)
 # = ด่านที่มีแต่ไม่มีใครเรียก ("มี ≠ ถูกเรียก" F2 ข้อ 2) · glob ไว้เพื่อให้ sim ตัวใหม่
 # ถูกรันเองโดยไม่ต้องมาแก้สคริปต์นี้อีก
+# สคริปต์ shell ใน tools/ (เช่น ci_wait.sh) — syntax พังต้องล้มที่นี่ ไม่ใช่ตอน agent เรียกหลัง push
+for f in tools/*.sh; do
+  [ -e "$f" ] || continue
+  bash -n "$f" 2>/dev/null || { red "❌ bash -n $f"; fail=1; }
+done
+
 simfail=0
 if command -v node >/dev/null 2>&1; then
   for f in tools/*_sim.js; do

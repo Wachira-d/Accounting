@@ -18,7 +18,7 @@ public interface ISalaryAdvanceService
     /// (Dr Advance Receivable / Cr Cash) via the central DocumentService.</summary>
     Task<SalaryAdvanceResponse> DisburseAsync(Guid companyId, Guid advanceId, DisburseSalaryAdvanceRequest request, string disbursedBy);
 
-    Task VoidAsync(Guid companyId, Guid advanceId);
+    Task VoidAsync(Guid companyId, Guid advanceId, Guid actorUserId);
 
     /// <summary>Outstanding (Disbursed, OutstandingAmount &gt; 0) advances for an
     /// employee — consumed by the payroll run to compute advance clearing.</summary>

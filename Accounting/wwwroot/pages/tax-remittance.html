@@ -570,6 +570,23 @@
 
       // ═══ ประวัติ ═══════════════════════════════════════════════
       _hf: { type: 'all', q: '' },
+      /** ยกเลิกการนำส่ง (คำตัดสินข้อ 113) — เซิร์ฟเวอร์ตัดสินทั้งหมด (เหตุผลบังคับ · ภ.พ.36 ที่รับรู้ภาษีซื้อแล้วถูกกัน) · หน้าเว็บแค่ถามเหตุผล */
+      async voidRemittance(id) {
+        const r = (this._data.recentHistory || []).find(x => x.id === id);
+        const label = r ? `${r.formCode} ${this.period(r.periodYear, r.periodMonth)}` : '';
+        const reason = prompt(`ยกเลิกการนำส่ง ${label}\n\nระบบจะกลับรายการบัญชีของการนำส่ง (ลงวันนี้) และปลดสถานะ "นำส่งแล้ว" ของรอบเงินเดือน/ใบที่ผูก — ต้องนำส่งใหม่ภายหลัง\n\nเหตุผล (บังคับ):`);
+        if (reason === null) return;
+        if (!reason.trim()) { Layout.toast('ต้องระบุเหตุผล', 'error'); return; }
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.post(`/api/companies/${cid}/remittances/${id}/void`, { reason: reason.trim() });
+          Layout.toast(res.message || 'ยกเลิกการนำส่งแล้ว', 'success', 9000);
+          await this.load();
+        } catch (e) {
+          Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error', 9000);
+        }
+      },
+
       setHistType(v) { this._hf.type = v; this.renderHistory(); },
       // ช่องค้นหาประวัติอยู่ใน #histControls ซึ่ง renderHistory ไม่แตะ → focus ไม่หลุด
       setHistQuery(v) { this._hf.q = v; this.renderHistory(); },
@@ -631,7 +648,8 @@
                     ? (r.pp36Recognized
                       ? `<button class="btn btn-sm btn-outline" style="color:#15803d;border-color:#86efac" onclick="Page.openPp36Detail(${r.periodYear}, ${r.periodMonth})" title="รับรู้ภาษีซื้อแล้ว — กดดูว่าใบไหนเข้า ภ.พ.30 งวดไหน + ย้ายเดือนเคลมได้ที่นี่">✓ เข้า ภ.พ.30 แล้ว · ดู</button>`
                       : `<button class="btn btn-sm btn-primary" onclick="Page.recognizePp36(${r.periodYear}, ${r.periodMonth}, '${r.id}')" title="ได้ใบเสร็จกรมสรรพากรแล้ว → รับรู้ภาษีซื้อ (Dr 11610 / Cr 11640 ลงวันที่ใบเสร็จ) เข้า ภ.พ.30 (§82/4) — ระบบกันรับรู้ซ้ำให้">🧾 รับรู้ภาษีซื้อ</button>`)
-                    : ''}</td>
+                    : ''}
+                    ${r.pp36Recognized ? '' : `<button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="Page.voidRemittance('${r.id}')" title="ยกเลิกการนำส่ง (คำตัดสินข้อ 113) — กลับรายการบัญชี + ปลดสถานะนำส่งของรอบเงินเดือน/ใบ ภ.พ.36 · ใช้เมื่อบันทึกผิด/ต้องแก้ข้อมูลที่ถูกล็อกเพราะนำส่งแล้ว">ยกเลิกการนำส่ง</button>`}</td>
                 </tr>`; }).join('')}</tbody>
             </table>
           </div>

@@ -2110,7 +2110,9 @@ public partial class PosService
             : 0;
         item.TotalAmount = item.SubTotal;
 
-        _db.PosOrderItems.Add(item);
+        // ทีมตรวจงานค้าง 2026-10-08 (D3): เดิม DbSet.Add(item) แล้ว order.Items.Add(item) ท้ายเมธอด — item ตั้ง OrderId และบิลถูกติดตามอยู่
+        // ⇒ relationship fixup ของ EF ใส่ลง order.Items ให้แล้ว + List.Add ซ้ำ ⇒ RecalculateOrder นับรายการสองครั้ง (ยอดบิล/VAT เบิ้ล)
+        _db.AddNewChild(order.Items, item);
 
         // Add modifiers
         if (req.Modifiers != null)
@@ -2148,8 +2150,6 @@ public partial class PosService
                 });
             }
         }
-
-        order.Items.Add(item);
     }
 
     /// <summary>คิดยอดทั้งบิลใหม่จากรายการที่ยังอยู่ + ธงระดับบิล

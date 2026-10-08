@@ -1614,6 +1614,122 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }).OrderBy(x => x.DocumentNumber).ToList();
     }
 
+    /// <summary>
+    /// ยกเลิกการนำส่ง (คำตัดสินข้อ 113 · ทางปลดที่ผู้ดูแลยอมรับ) — ตัวตัดสิน <see cref="Accounting.Helpers.RemittanceVoidPolicy"/>:
+    /// กลับ JE ของการนำส่ง<b>ครั้งเดียว</b> (ลงวันนี้ — ไม่ย้อนเข้างวดที่ปิด) · ปลดธงนำส่งประกันสังคมของ<b>ทุกรอบ</b>ที่ใช้ JE นี้ ·
+    /// ปลดใบ ภ.พ.36 ออกจากรายการนำส่ง (กลับไปเป็นค้างนำส่ง) · รายการนำส่งถูกลบแบบ soft ⇒ ด่านที่อ่าน "นำส่งแล้ว" ทุกตัว
+    /// (ยกเลิก 50 ทวิ · แก้รอบเงินเดือน · แดชบอร์ด) กลับมาเปิดเองเพราะกรอง !IsDeleted อยู่แล้ว · เหตุผลบังคับ + audit
+    /// </summary>
+    public async Task<string> VoidRemittanceAsync(Guid companyId, Guid remittanceId, string? reason, string performedBy)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"StatutoryRemittances\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                remittanceId, companyId);
+            var rec = await _db.Set<StatutoryRemittance>()
+                .FirstOrDefaultAsync(r => r.Id == remittanceId && r.CompanyId == companyId && !r.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบรายการนำส่ง (หรือถูกยกเลิกไปแล้ว)");
+            var links = await _db.Pp36RemittanceDocuments
+                .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.StatutoryRemittanceId == rec.Id)
+                .ToListAsync();
+            // "รับรู้ภาษีซื้อแล้ว" ครบทุกแหล่งเดียวกับหน้านำส่ง (ฝ่ายค้านชุดแรก): แถวผูกที่มี JE รับรู้ · แถวผูกจาก backfill (RecognizedAmount
+            // โดยไม่มี JE id) · ใบที่ภาษีซื้อเข้า 11610 แล้ว (InputVatBecameClaimableAt) · งวดเก่าที่มีแต่ JE อ้างอิง ภ.พ.36R-YYYYMM (ไม่มีแถวผูก)
+            var linkedDocIds = links.Select(l => l.DocumentId).ToList();
+            var pp36Recognized = rec.RemittanceType == "VatPp36" && (
+                links.Any(l => l.RecognizedJournalEntryId != null || l.RecognizedAmount > 0m)
+                || (linkedDocIds.Count > 0 && await _db.Documents.AnyAsync(d => d.CompanyId == companyId
+                        && linkedDocIds.Contains(d.Id) && d.InputVatBecameClaimableAt != null))
+                || (links.Count == 0 && await _db.JournalEntries.AnyAsync(j => j.CompanyId == companyId && !j.IsDeleted
+                        && j.Status == JournalEntryStatus.Posted && j.Reference != null
+                        && j.Reference.StartsWith($"ภ.พ.36R-{rec.PeriodYear}{rec.PeriodMonth:D2}"))));
+            if (Accounting.Helpers.RemittanceVoidPolicy.BlockReason(reason, rec.JournalEntryId.HasValue, pp36Recognized) is { } block)
+                throw new Accounting.Helpers.BusinessRuleException(block.Message, block.RuleCode, 409);
+            var why = reason!.Trim();
+
+            var (_, form, _) = Meta(rec.RemittanceType);
+            var jeId = rec.JournalEntryId!.Value;
+            // JE ถูกกลับด้วยมือที่หน้าสมุดรายวันไปแล้ว (JE นำส่งไม่มี SourceDocumentId จึงกลับเองได้) ⇒ ไม่กลับซ้ำ แต่ยังปลดสถานะให้ (ไม่ติดตาย)
+            var je = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.Id == jeId && j.CompanyId == companyId)
+                .Select(j => new { j.Status, j.ReversedByEntryId })
+                .FirstOrDefaultAsync();
+            var alreadyReversed = je == null || je.ReversedByEntryId != null || je.Status != JournalEntryStatus.Posted;
+            // กลับลงวันที่จ่ายเดิม (งวดของการนำส่งกลับเป็นศูนย์สุทธิ — แบบเดียวกับ ReverseSsoSettlementAsync) · งวดนั้นปิดแล้ว ⇒ วันนี้ตามปฏิทินไทย
+            var payDay = Accounting.Helpers.ThaiDate.CalendarDateUtc(rec.PayDate);
+            var payPeriodClosed = await _db.FiscalPeriods.AsNoTracking().AnyAsync(fp => fp.CompanyId == companyId
+                && fp.StartDate <= payDay && fp.EndDate >= payDay && fp.Status == FiscalPeriodStatus.Closed);
+            var reversalDate = payPeriodClosed ? Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow) : payDay;
+            var reversal = alreadyReversed ? null : await _accounting.ReverseJournalEntryAsync(companyId, jeId,
+                reversalDate: reversalDate,
+                description: $"ยกเลิกการนำส่ง{form} งวด {rec.PeriodMonth:D2}/{rec.PeriodYear} — {why}",
+                systemTriggered: true);
+
+            var runs = await _db.Set<PayrollRun>()
+                .Where(r => r.CompanyId == companyId && r.SsoSettlementJournalEntryId == jeId)
+                .ToListAsync();
+            foreach (var run in runs)
+            {
+                run.SsoSettledAt = null;
+                run.SsoSettlementJournalEntryId = null;
+                run.SsoSettlementDocumentId = null;
+                run.SsoFilingNumber = null;
+                run.SsoLateFeeAmount = 0m;
+                run.UpdatedBy = performedBy;
+                run.UpdatedAt = DateTime.UtcNow;
+            }
+            foreach (var l in links)
+            {
+                l.IsDeleted = true;
+                l.UpdatedBy = performedBy;
+                l.UpdatedAt = DateTime.UtcNow;
+            }
+            rec.IsDeleted = true;
+            rec.UpdatedBy = performedBy;
+            rec.UpdatedAt = DateTime.UtcNow;
+            rec.Note = ((rec.Note ?? "") + $"\n[ยกเลิกการนำส่ง {DateTime.UtcNow:u} โดย {performedBy}] {why}").Trim();
+
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(performedBy, out var actorId) ? actorId : (Guid?)null,
+                Action = AuditAction.Update,
+                EntityType = "StatutoryRemittance",
+                EntityId = rec.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    rec.RemittanceType, rec.PeriodYear, rec.PeriodMonth, rec.Amount, rec.LateFee,
+                    JournalEntryId = jeId, rec.FilingNumber,
+                }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Operation = "VoidRemittance",
+                    Reason = why,
+                    ReversalJournalEntry = reversal?.EntryNumber,
+                    JournalAlreadyReversed = alreadyReversed,
+                    ReversalDate = alreadyReversed ? (DateTime?)null : reversalDate,
+                    UnsettledPayrollRuns = runs.Select(r => r.PayrollNumber),
+                    ReleasedPp36Documents = links.Count,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            return $"ยกเลิกการนำส่ง{form} งวด {rec.PeriodMonth:D2}/{rec.PeriodYear} แล้ว — "
+                + (alreadyReversed ? "รายการบัญชีของการนำส่งถูกกลับไว้ก่อนแล้ว (ไม่กลับซ้ำ)" : $"กลับรายการบัญชี {reversal?.EntryNumber}")
+                + (runs.Count > 0 ? $" · ปลดสถานะนำส่งประกันสังคม {runs.Count} รอบ" : "")
+                + (links.Count > 0 ? $" · ใบ ภ.พ.36 {links.Count} ใบกลับเป็นค้างนำส่ง" : "");
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            _db.ChangeTracker.Clear();   // คลาสเดียวกับ RemitAsync — ของค้างใน tracker ห้ามถูกบันทึกครึ่งเดียว
+            throw;
+        }
+    }
+
     public async Task AttachReceiptAsync(Guid companyId, Guid remittanceId, Guid attachmentId)
     {
         var rec = await _db.Set<StatutoryRemittance>()

@@ -414,7 +414,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async void(id) {
-        if (!confirm('ยืนยันยกเลิกคำขอเงินทดรอง?')) return;
+        if (!confirm('ยืนยันยกเลิกคำขอเงินทดรอง? (ใบสำคัญจ่ายร่างที่ผูกอยู่จะถูกลบตาม · ใบที่อนุมัติแล้วต้องยกเลิกที่หน้าเอกสารก่อน)')) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.voidSalaryAdvance(id);

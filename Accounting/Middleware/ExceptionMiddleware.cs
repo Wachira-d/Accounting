@@ -63,6 +63,11 @@ public class ExceptionMiddleware
         FormatException => 400,
         Microsoft.EntityFrameworkCore.DbUpdateException dbe
             when dbe.InnerException is Npgsql.PostgresException { SqlState: "23505" } => 409,
+        // ทีมตรวจงานค้าง 2026-10-08 (D6): ยังถูกอ้างอิงอยู่ (เช่น ลบผู้ติดต่อที่มีเอกสาร) และคำเตือนก่อนอนุมัติจากทางที่ไม่มีหน้าต่างรับทราบ
+        // (integration/สร้างอัตโนมัติ) — เดิมตกไป 500 "ข้อผิดพลาดภายในระบบ" ทั้งที่ผู้ใช้แก้เองได้ · DbUpdateConcurrencyException คง 500 (บั๊กจริง)
+        Microsoft.EntityFrameworkCore.DbUpdateException dbe
+            when dbe.InnerException is Npgsql.PostgresException { SqlState: "23503" } => 409,
+        Accounting.Services.Implementations.DocumentApprovalWarningsException => 409,
         _ => 500
     };
 
@@ -151,6 +156,13 @@ public class ExceptionMiddleware
                 when dbe.InnerException is Npgsql.PostgresException { SqlState: "23505" }
                 => (HttpStatusCode.Conflict,
                     $"ข้อมูลนี้ซ้ำกับรายการที่มีอยู่แล้ว — รหัส ชื่อ หรือ URL ที่กรอกถูกใช้ไปแล้ว กรุณาเปลี่ยนแล้วลองใหม่ (รหัสอ้างอิง {refCode})"),
+            Microsoft.EntityFrameworkCore.DbUpdateException dbe
+                when dbe.InnerException is Npgsql.PostgresException { SqlState: "23503" }
+                => (HttpStatusCode.Conflict,
+                    $"รายการนี้ยังถูกอ้างอิงโดยข้อมูลอื่น (เช่น เอกสาร/รายการบัญชี) — ลบหรือเปลี่ยนไม่ได้ · ปิดการใช้งานแทน หรือจัดการรายการที่อ้างอิงก่อน (รหัสอ้างอิง {refCode})"),
+            Accounting.Services.Implementations.DocumentApprovalWarningsException awe
+                => (HttpStatusCode.Conflict,
+                    $"{awe.Message}: {string.Join(" · ", awe.Warnings)} — เปิดเอกสารที่หน้าเอกสาร ตรวจแล้วกด “อนุมัติ” (รับทราบคำเตือน)"),
             _ => (HttpStatusCode.InternalServerError,
                 $"เกิดข้อผิดพลาดภายในระบบ (รหัสอ้างอิง {refCode} — แจ้งรหัสนี้ให้ผู้ดูแลระบบเพื่อดูรายละเอียดใน Error Logs)")
         };

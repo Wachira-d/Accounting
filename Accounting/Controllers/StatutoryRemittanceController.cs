@@ -74,6 +74,20 @@ public class StatutoryRemittanceController : ControllerBase
         }
     }
 
+    public sealed record VoidRemittanceRequest(string? Reason);
+
+    /// <summary>ยกเลิกการนำส่ง (คำตัดสินข้อ 113) — กลับ JE ครั้งเดียว · ปลดทุกรอบเงินเดือนที่ใช้ JE นี้ · ใบ ภ.พ.36 กลับเป็นค้างนำส่ง ·
+    /// สิทธิ์เดียวกับการนำส่ง (เงิน+GL จริง) · เหตุผลบังคับ</summary>
+    [HttpPost("{remittanceId:guid}/void")]
+    [RequirePermission(PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<string>>> VoidRemittance(
+        Guid companyId, Guid remittanceId, [FromBody] VoidRemittanceRequest request)
+    {
+        var msg = await _service.VoidRemittanceAsync(companyId, remittanceId, request?.Reason,
+            JwtHelper.GetUserIdFromClaims(User).ToString());
+        return Ok(new ApiResponse<string>(true, msg, msg));
+    }
+
     public sealed record RecognizePp36Request(int PeriodYear, int PeriodMonth, DateTime? RecognizeDate,
         // เลขที่ใบเสร็จกรมสรรพากร (ถ้าไม่ได้กรอกตอนนำส่ง หรือต้องการแก้) —
         // จะถูก stamp ลงเอกสารเป็นเลขใบกำกับ §86/14 และ backfill ลง remittance

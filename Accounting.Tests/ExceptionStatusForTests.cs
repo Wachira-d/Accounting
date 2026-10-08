@@ -41,4 +41,14 @@ public class ExceptionStatusForTests
         Assert.False(ExceptionMiddleware.IsExpectedPrompt(new InvalidOperationException("x")));
         Assert.False(ExceptionMiddleware.IsExpectedPrompt(new Exception("boom")));
     }
+
+    [Fact]
+    public void คำเตือนก่อนอนุมัติจากทางที่ไม่มีหน้าต่างรับทราบ_ได้409_ไม่ใช่500()
+        => Assert.Equal(409, ExceptionMiddleware.StatusFor(
+            new Accounting.Services.Implementations.DocumentApprovalWarningsException(new[] { "ภาษีซื้อจะถูกพัก 11640" })));
+
+    [Fact]
+    public void ทิศตรงข้าม_Concurrencyยังเป็น500_ให้บั๊กจริงดัง()
+        => Assert.Equal(500, ExceptionMiddleware.StatusFor(
+            new Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException("affected 0")));
 }
