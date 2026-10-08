@@ -522,7 +522,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 {
                     // คำตัดสินข้อ 114 Q1: ข้อสังเกต §65 ตรีที่การอนุมัติอัตโนมัติผ่านไป (ไม่บล็อก — ข้อ 110) ต้องถึงคน — เก็บรายการที่ผ่านแล้วแจ้งผู้ตั้งรายการประจำ
                     var passed = new List<string>();
-                    await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
+                    var approvedDoc = await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
                         Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passed);
                     if (Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed) is { } notice && _notify != null)
                     {
@@ -530,7 +530,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                         {
                             await _notify.DispatchAsync(recurring.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringApprovedWithNotes, new NotificationContext
                             {
-                                Title = $"รายการประจำอนุมัติ {result.DocumentNumber} พร้อมข้อสังเกต §65 ตรี",
+                                Title = $"รายการประจำอนุมัติ {approvedDoc.DocumentNumber} พร้อมข้อสังเกต §65 ตรี",   // เลขจริงหลังอนุมัติ (ไม่ใช่ DRAFT-…)
                                 Message = notice,
                                 ActionUrl = "/pages/documents.html#doc=" + result.Id,
                                 EntityType = "Document",

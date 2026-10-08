@@ -2816,7 +2816,9 @@ public class PayrollService : IPayrollService
             Accounting.Helpers.PayrollDetailAmounts.RecomputeRunTotals(run);
 
             run.Status = "Paid";
-            run.PaidAt = DateTime.UtcNow;   // ข้อ 115 Q1 — เวลาจ่ายจริง (ตัดสินการอยู่ในการนำส่ง ภ.ง.ด.1)
+            // ข้อ 115 Q1 — เวลาจ่ายครั้งแรก (ตัดสินการอยู่ในการนำส่ง ภ.ง.ด.1) · กลับรายการจ่ายแล้วจ่ายใหม่ ⇒ คงเวลาเดิม (ฝ่ายค้านชุดสาม:
+            // ล้างตอนกลับรายการ ⇒ ถอยไปใช้ CreatedAt ⇒ รอบที่จ่ายหลังนำส่งกลับถูกล็อกผิดหลังกลับรายการ)
+            run.PaidAt ??= DateTime.UtcNow;
             run.UpdatedBy = processedBy;
             run.UpdatedAt = DateTime.UtcNow;
 
@@ -3633,7 +3635,6 @@ public class PayrollService : IPayrollService
 
             run.JournalEntryId = null;
             run.Status = "Approved";
-            run.PaidAt = null;   // กลับรายการจ่าย ⇒ ยังไม่จ่าย (จ่ายใหม่ได้เวลาใหม่)
             run.ReopenedAt = DateTime.UtcNow;
             run.ReopenedBy = reopenedBy;
             run.ReopenReason = reason;
@@ -4912,7 +4913,9 @@ public class PayrollService : IPayrollService
                     PayrollFilingSource.LegacyTaxReport));
             if (Accounting.Helpers.RemittanceInclusion.Includes(
                     pnd1RemittedAt.TryGetValue((y, m), out var remittedAt) ? (DateTime?)remittedAt : null,
-                    Accounting.Helpers.RemittanceInclusion.RunCountedAt(run.PaidAt, run.CreatedAt)))
+                    Accounting.Helpers.RemittanceInclusion.RunCountedAt(run.PaidAt, run.CreatedAt,
+                        // เคยจ่าย = ตอนนี้ Paid หรือเคยกลับรายการจ่าย (ข้อมูลก่อนมี PaidAt) — ทิศ "ล็อกไว้ก่อน" สำหรับรอบที่อาจอยู่ในเงินที่นำส่งแล้ว
+                        everPaid: run.Status == "Paid" || run.ReopenedAt != null)))
                 marks.Add(new PayrollFilingMark(PayrollRunLockEvidence.Pnd1Label, PayrollFilingSource.StatutoryRemittance));
             result[run.Id] = PayrollRunLockEvidence.From(marks,
                 runSsoSettled: run.SsoSettledAt.HasValue,

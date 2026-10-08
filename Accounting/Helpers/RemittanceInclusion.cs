@@ -24,7 +24,9 @@ public static class RemittanceInclusion
 
     /// <summary>เวลาที่รอบเงินเดือน "นับเข้ายอดนำส่ง" (คำตัดสินข้อ 115 Q1) — <c>PaidAt</c> (เวลาจ่ายจริง) · ไม่มี (ข้อมูลเก่าที่ไม่มี JE) ⇒
     /// เวลาสร้างรอบ (ทิศเดิม "ล็อกไว้ก่อน")</summary>
-    public static DateTime RunCountedAt(DateTime? paidAtUtc, DateTime createdAtUtc) => paidAtUtc ?? createdAtUtc;
+    /// <para>รอบที่ไม่เคยจ่าย (ไม่มี PaidAt · ไม่เคย Paid) ⇒ ไม่มีวันอยู่ในการนำส่ง ⇒ คืน <see cref="DateTime.MaxValue"/> (ฝ่ายค้านชุดสาม)</para>
+    public static DateTime RunCountedAt(DateTime? paidAtUtc, DateTime createdAtUtc, bool everPaid = true)
+        => paidAtUtc ?? (everPaid ? createdAtUtc : DateTime.MaxValue);
 
     /// <summary>เวลาบันทึกการนำส่งล่าสุดต่อกุญแจงวด — ผู้เรียกส่งเฉพาะแถวที่ยังไม่ถูกลบของบริษัทนั้น</summary>
     public static Dictionary<TKey, DateTime> LatestByPeriod<TKey>(IEnumerable<(TKey Key, DateTime RecordedAtUtc)> records)

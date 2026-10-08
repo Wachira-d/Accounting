@@ -263,6 +263,9 @@ public partial class PdfGenerationService
         catch (Exception ex)
         {
             System.Diagnostics.Trace.TraceError($"RenderDocumentPdfNative throw: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+            // ฝ่ายค้านชุดสาม: เส้น e-Tax (PDF/A-3) ห้ามได้ "หน้า error" กลับไป — ผู้เรียกจะฝัง XML ETDA ลงหน้า error แล้วส่ง/ออกเป็นไฟล์ e-Tax
+            // ⇒ โยนต่อให้ catch ของเส้น e-Tax ถอยไป render ปกติ (ส่วนบังคับ §86/4 ไม่ถูกห่อ Safe แล้ว — ล้มต้องไม่ได้ไฟล์ทางการ)
+            if (pdfA) throw;
             // Render minimal PDF ที่แสดง exception message — ให้ผู้ใช้/dev
             // เห็น error จริงๆ (แทนที่จะ fallback ลง HTML→Blocks ที่หน้าตา
             // เรียบและกินทุกอย่างไป). ถ้าตัว diagnostic นี้ก็ throw ต่อ —

@@ -1080,7 +1080,7 @@ public partial class TaxService : ITaxService
         {
             // ทีมตรวจงานค้าง D4: ไม่ล้มทั้งรายงาน (บรรทัดชุดนี้เป็นข้อเสนอ IsExcluded) แต่ห้ามเงียบ — ผู้ใช้ต้องรู้ว่าภาษีซื้อยกมา §82/3 ยังไม่ได้ตรวจ
             _logger?.LogError(ex, "VAT report {Year}/{Month}: input-VAT carry-forward pass failed", report.Year, report.Month);
-            report.Notes = ((report.Notes ?? "") + "\n⚠️ ระบบตรวจ \"ภาษีซื้อยกมาที่ยังไม่เคยเคลม (§82/3)\" ไม่สำเร็จ — กด \"สร้างรายงานใหม่\" อีกครั้ง ถ้ายังขึ้นแจ้งผู้ดูแลระบบ").Trim();
+            report.Notes = ((report.Notes ?? "") + "\n" + SystemCheckWarningPrefix + " \"ภาษีซื้อยกมาที่ยังไม่เคยเคลม (§82/3)\" ไม่สำเร็จ — กด \"สร้างรายงานใหม่\" อีกครั้ง ถ้ายังขึ้นแจ้งผู้ดูแลระบบ").Trim();
         }
 
         // ===== เอกสาร "มาช้า": tax point อยู่งวดก่อน แต่ยังไม่เคยอยู่ในรายงานใด =====
@@ -1221,7 +1221,7 @@ public partial class TaxService : ITaxService
         {
             // ทีมตรวจงานค้าง D4: ชุดนี้คือคำเตือน "ต้องยื่น ภ.พ.30 เพิ่มเติม" ของใบมาช้า — ล้มเงียบ = ผู้ใช้ไม่รู้ว่าต้องยื่นเพิ่มเติม
             _logger?.LogError(ex, "VAT report {Year}/{Month}: late-document sweep failed", report.Year, report.Month);
-            report.Notes = ((report.Notes ?? "") + "\n⚠️ ระบบตรวจ \"เอกสารมาช้าที่อาจต้องยื่น ภ.พ.30 เพิ่มเติม\" ไม่สำเร็จ — กด \"สร้างรายงานใหม่\" อีกครั้ง ถ้ายังขึ้นแจ้งผู้ดูแลระบบ").Trim();
+            report.Notes = ((report.Notes ?? "") + "\n" + SystemCheckWarningPrefix + " \"เอกสารมาช้าที่อาจต้องยื่น ภ.พ.30 เพิ่มเติม\" ไม่สำเร็จ — กด \"สร้างรายงานใหม่\" อีกครั้ง ถ้ายังขึ้นแจ้งผู้ดูแลระบบ").Trim();
         }
 
         // ===== Fallback: scan journal entries that have NO source document =====
@@ -3170,6 +3170,18 @@ public partial class TaxService : ITaxService
         }
     }
 
+    internal const string SystemCheckWarningPrefix = "⚠️ ระบบตรวจ";
+
+    /// <summary>หมายเหตุหลังสร้างรายงานใหม่ = หมายเหตุผู้ใช้เดิม (ตัดคำเตือนระบบของรอบก่อน) + คำเตือนระบบของรอบนี้</summary>
+    internal static string? MergeRegeneratedNotes(string? previousNotes, string? generatedNotes)
+    {
+        static IEnumerable<string> Lines(string? s) => (s ?? "").Split('\n').Select(l => l.TrimEnd()).Where(l => l.Length > 0);
+        var kept = Lines(previousNotes).Where(l => !l.TrimStart().StartsWith(SystemCheckWarningPrefix, StringComparison.Ordinal));
+        var fresh = Lines(generatedNotes).Where(l => l.TrimStart().StartsWith(SystemCheckWarningPrefix, StringComparison.Ordinal));
+        var merged = string.Join("\n", kept.Concat(fresh));
+        return merged.Length == 0 ? null : merged;
+    }
+
     internal static void RecalcVatTotals(TaxReport report)
     {
         if (report.TaxType != TaxType.VAT) return;
@@ -3769,7 +3781,9 @@ public partial class TaxService : ITaxService
             .FirstOrDefaultAsync(r => r.Id == response.Id && r.CompanyId == companyId);
         if (freshForAudit != null)
         {
-            freshForAudit.Notes = keepNotes;
+            // ฝ่ายค้านชุดสาม: หมายเหตุของผู้ใช้คงไว้ แต่คำเตือน "⚠️ ระบบตรวจ … ไม่สำเร็จ" ของรอบก่อนต้องหาย (รอบนี้ตรวจผ่านแล้ว)
+            // และคำเตือนของรอบนี้ (ถ้าล้มอีก) ต้องอยู่ — เดิมทับด้วยหมายเหตุเก่าทั้งก้อน ⇒ เตือนค้างตลอดไป/เตือนใหม่หายเงียบ
+            freshForAudit.Notes = MergeRegeneratedNotes(keepNotes, freshForAudit.Notes);
             freshForAudit.EFilingExportedAt = keepEfAt;
             freshForAudit.EFilingReferenceNumber = keepEfRef;
             freshForAudit.RdAckNumber = keepRdAck;

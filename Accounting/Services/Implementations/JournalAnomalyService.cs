@@ -133,7 +133,9 @@ public class JournalAnomalyService
                     ExchangeRate: doc.ExchangeRate <= 0m ? 1m : doc.ExchangeRate,
                     // §83/6 — กฎชุดเดียวกับด่านก่อนบันทึก (PP36_REVIEW P0-1)
                     IsForeignService: doc.IsForeignService,
-                    SourceOwnsPp36: doc.RelatedDocumentId is Guid srcId && pp36OwnerSourceIds.Contains(srcId))
+                    // ตัวกำหนดเดียวกับ DocumentService.LinkedSourcePp36Async: เฉพาะ PV/CN/DN ที่อ้างใบเจ้าของ ภ.พ.36 (ฝ่ายค้านชุดสาม — ใบซื้อที่เป็นเจ้าของเองไม่นับ)
+                    SourceOwnsPp36: doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.CreditNote or DocumentType.DebitNote
+                        && doc.RelatedDocumentId is Guid srcId && pp36OwnerSourceIds.Contains(srcId))
                 : null;
 
             foreach (var f in JournalPostingGuard.Validate(lines, facts, externalWhtBase.GetValueOrDefault(j.Id)))

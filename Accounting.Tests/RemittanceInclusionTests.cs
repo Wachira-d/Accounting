@@ -141,4 +141,12 @@ public class RemittanceInclusionTests
         Assert.Equal(created, RemittanceInclusion.RunCountedAt(null, created));
         Assert.True(RemittanceInclusion.Includes(remitted, RemittanceInclusion.RunCountedAt(null, created)));
     }
+
+    [Fact]
+    public void รอบที่ไม่เคยจ่าย_ไม่อยู่ในการนำส่งเลย()
+    {
+        var created = new DateTime(2026, 9, 25, 3, 0, 0, DateTimeKind.Utc);
+        var remitted = new DateTime(2026, 10, 5, 3, 0, 0, DateTimeKind.Utc);
+        Assert.False(RemittanceInclusion.Includes(remitted, RemittanceInclusion.RunCountedAt(null, created, everPaid: false)));
+    }
 }
