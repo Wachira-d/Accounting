@@ -212,7 +212,8 @@ public static class OcrEtaxLineNormalizer
     /// เป้า = round(Σ ก่อน VAT × อัตรา/100) · ต่าง = เป้า − Σ VAT · ต่างไม่เป็น 0 และ |ต่าง| ≤ 1 ⇒ บรรทัดที่ |ก่อน VAT| มากที่สุด (ตัวแรกเมื่อเท่ากัน)
     /// VAT += ต่าง · ก่อน VAT −= ต่าง · แก้ <paramref name="nets"/>/<paramref name="vats"/> ในที่ · คืน (บรรทัด, ต่าง) ที่ขยับ ·
     /// สูตรต้นทางล็อกด้วย <c>tools/required_call_site_check.py</c></summary>
-    internal static List<(int Index, decimal Shift)> ReplayTaxRounding(decimal[] nets, decimal[] vats, decimal[] rates)
+    /// <param name="pricesIncludeVat">โหมดของเอกสาร — ราคารวม VAT: ก่อน VAT ขยับสวน VAT (ยอดรวม VAT ของบรรทัดคงที่) · ราคาก่อน VAT: ขยับเฉพาะ VAT</param>
+    internal static List<(int Index, decimal Shift)> ReplayTaxRounding(decimal[] nets, decimal[] vats, decimal[] rates, bool pricesIncludeVat = true)
     {
         var shifted = new List<(int Index, decimal Shift)>();
         foreach (var g in Enumerable.Range(0, nets.Length)
@@ -224,7 +225,7 @@ public static class OcrEtaxLineNormalizer
             if (diff == 0m || Math.Abs(diff) > 1m) continue;
             var j = g.OrderByDescending(i => Math.Abs(nets[i])).First();
             vats[j] += diff;
-            nets[j] -= diff;
+            if (pricesIncludeVat) nets[j] -= diff;
             shifted.Add((j, diff));
         }
         return shifted;

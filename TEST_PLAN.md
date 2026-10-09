@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **472 ไฟล์ · 4,601 `[Fact]` + 724 `[Theory]` (3,185 `InlineData`)** ณ 2026-10-09 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **473 ไฟล์ · 4,602 `[Fact]` + 725 `[Theory]` (3,185 `InlineData`)** ณ 2026-10-09 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -3971,6 +3971,7 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | O-140 | e-Tax ราคารวม VAT ทั้งใบแต่ยอดหัวใบเพี้ยน (เช่น 5 บาท) / บรรทัดที่ต้องใช้เศษเกินเพดาน / บรรทัดที่ตัดสินฐาน VAT ไม่ได้ | ลงตามกระดาษ + `[ETAX-HEADER-GAP]` · บรรทัดยังลงตัว + `[ETAX-LINE-CHECK]` · บรรทัดตัดสินไม่ได้ใช้ตัวแก้จำนวนแบบเดิม (ไม่ค้าง "150 × 1.00 ≠ 65.42") + `[ETAX-LINE-CHECK]` — ทั้งหมด**ห้ามอนุมัติเอง** + แถบเตือนบนหน้าสแกน · ข้อความ Σ-GAP ไม่อ้าง "กระดาษไม่ระบุส่วนลด" — `OcrEtaxLineNormalizerTests` |
 | O-141 | (ฝ่ายค้านรอบห้า ข้อ 3) หน้า review ใบ e-Tax ราคารวม VAT: เพิ่มแถวค่าขนส่ง กรอก 46.73 แล้วติ๊ก "ติ๊กถ้ากรอกราคาไม่รวม VAT" | เซิร์ฟเวอร์แปลงเป็น 50.00 (รวม VAT 7%) แสดงในช่องราคา + ข้อความแจ้ง · ทั้งใบยังเป็นราคารวม VAT · แถวราคาก่อน VAT/ไม่รู้อัตรา ⇒ ปฏิเสธพร้อมเหตุผล (ไม่ทำเงียบ) |
 | O-142 | (รอบ 7 · ใบจริง CRC 2614502187 · 16 บรรทัด) อัปโหลดแล้วสร้างเอกสาร | เอกสารราคารวม VAT ตามกระดาษทุกบรรทัด (จำนวนตาม XML ทั้ง 16 · ราคาต่อหน่วย = ราคาบนกระดาษ ไม่ใช่ยอดส่วนลด · ไม่มีจำนวนเศษ) · ยอด 2,862.62 / VAT 200.38 / รวม 3,063.00 (ขั้นปัด VAT ขยับบรรทัด 3 +0.02) · อนุมัติเองได้ |
+| O-143 | (รอบ 7) คลังกระดาษจริง e-Tax — `EtaxGoldenCorpusTests` | ทุกใบจริงใน `EtaxFixtures` (Shopee · CRC 1/2/3) ได้เอกสารตามแถวคาดหวังทุกตัวเลข (รายบรรทัด จำนวน/ราคา/ส่วนลด/ยอด/VAT · หัวเอกสาร · ราคารวม VAT · ผลต่างปัดเศษ) · ไม่มีแท็กห้ามอนุมัติ · บันทึกซ้ำได้บรรทัดเดิม · เพิ่ม fixture โดยไม่เพิ่มแถวคาดหวัง = แดง |
 | E-01 | บริษัทที่ **ยังไม่ได้ตั้งค่า RD API key/URL** กด "นำส่ง e-Tax" | ต้องได้ error ไทยที่บอกทางไปต่อ (`ETAX-RD-NOT-CONFIGURED`) และสถานะยังเป็น **Signed** — ห้ามเป็น `Submitted` และ `SubmissionId` ต้องว่าง (เดิมประทับ `OFFLINE-…` แล้วล็อกเอกสารถาวร: ส่งซ้ำไม่ได้ · void ไม่ได้) |
 | E-02 | บริษัทเดียวกันเปิด `EtaxAutoSubmit` แล้วกด "ลงนาม" | ต้องได้ผลว่า **ลงนามสำเร็จ** (ไม่ล้มทั้งคำขอ) พร้อม `ErrorMessage` บอกว่ายังไม่ได้นำส่ง |
 | E-03 | ฐานข้อมูลที่มีแถวเก่า `SubmissionId LIKE 'OFFLINE-%'` + `Status=Submitted` | หลัง migration ต้องกลับเป็น `Status=Signed` · `SubmittedAt=NULL` · `SubmissionId=NULL` · `ErrorCode='RD_API_NOT_CONFIGURED'` |
