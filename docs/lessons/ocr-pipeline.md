@@ -1118,6 +1118,35 @@
 - **"ซ้ำ" กับ "ใช้ผลเดิม" เป็นคนละคำตัดสิน** — ธงซ้ำ (คำเตือน §86/4 บันทึกใบเดียวกันสองครั้ง · ไม่สร้างเอกสารอัตโนมัติ · คืนโควตา)
   ต้องอยู่แม้อ่านไฟล์ใหม่ · e-Tax XML อ่านใหม่เสมอ (แน่นอน ไม่ใช้โควตา engine — ไม่มีเหตุผลเสี่ยงคัดลอก) ·
   หมายเหตุ `[DUP-REUSED]` / `[DUP-REEXTRACTED]` บอกผู้ใช้ตรง ๆ ว่าเห็นผลเก่าหรือผลใหม่
+### สถานะความครอบคลุม ณ 2026-10-09 — เส้นกระดาษ (ภาพ/PDF-text · ไม่ใช่ e-Tax XML)
+
+> ตรวจตามมอบหมายเจ้าของ "ครอบคลุมเอกสารทุกรูปแบบ · มีเคสใหม่ต้องพัฒนาขึ้นเรื่อย ๆ · ไม่ทำให้การแก้ครั้งก่อนเปลี่ยน" —
+> กลไกกันถดถอยรอบนี้: `OcrReplayHarness.BuildLines` (golden **ระดับบรรทัด** ทุกใบใน Corpus · `OcrReplayLineGoldenTests`) +
+> `tools/ocr_golden_corpus_check.py` (sample ใน `OcrPaperSamples`/`EtaxFixtures` ที่ไม่มี golden row = แดง) · ตารางนี้คือ "สถานะปัจจุบัน"
+> — แก้ตารางเมื่อโค้ดเปลี่ยน ไม่ append (F4 ข้อ 5) · ความสำคัญ = โอกาสที่ผู้ใช้เจอ × ผลต่อเงิน
+
+| # | รูปแบบเอกสาร | ตัวตัดสิน (pure) | กระดาษใน replay / เทสต์ | สถานะ · ช่องว่างที่เหลือ | ความสำคัญ |
+| --- | --- | --- | --- | --- | --- |
+| 1 | ใบกำกับภาษีเต็มรูป ราคาก่อน VAT มีรายการ | `OcrHeaderAmounts` · `OcrTotalAnchor` · `OcrLineReconciler` (B/C) · `OcrLineVatPlanner` | HardwareBillDiscount · telecom-* · luckyway (ป้ายสลับ) | ✅ ครอบคลุม (golden บรรทัดแล้ว) | สูง |
+| 2 | ใบกำกับอย่างย่อ / สลิป POS ราคารวม VAT (V/N · เงินสด · เงินทอน) | `OcrLineVatMarks` · `OcrLineReconciler` (A/E) · `OcrTotalAnchor.TenderRow` · `VatBackCalcGuard` · **`OcrNonItemRow`** (ใหม่) · `AbbreviatedTaxInvoiceRule` (§82/5(2) ฝั่ง compliance) | WinePro · SupermarketMemberDiscount · WholesaleMixedVat | ✅ แถวเงินสด/เงินทอน/รวม/VAT ในตารางรายการถูกตัดแล้วทั้ง 3 engine (รอบนี้) · ⚠️ ยังไม่มีสลิป 7-Eleven/Lotus/BigC **จริง** ใน corpus (3 ใบจำลองตามแบบ) | สูง |
+| 3 | ร้านค้าออนไลน์ Shopee/Lazada (ส่วนลดหลังใบกำกับ · ยอดจ่าย ≠ ยอดใบกำกับ) | `OcrTotalDecomposer` (PostInvoice) · `OcrSettlementProposal` | UptoyouShopee · ScommerceLazada (มาทาง e-Tax PDF) | ✅ · ⚠️ TikTok Shop / สลิปแอปที่ไม่ใช่ e-Tax ไม่มีตัวอย่าง | กลาง |
+| 4 | บิลสาธารณูปโภครายเดือน (ไฟฟ้า/ประปา/โทรศัพท์/เน็ต) มี **ยอดค้างชำระจากรอบก่อน** | **`OcrPaperAmounts.PriorBalanceRows` + `OcrTotalAnchor` ชั้น `PriorBalanceDecomposition` / บทบาท `PriorBalanceIncluded`** (ใหม่) | TelecomBillPriorBalance · TelecomBillNoArrears · บิลอังกฤษ (OcrPriorBalanceTests) | ✅ ยึดใบกำกับรอบนี้ ไม่ใช่ยอดที่ต้องชำระรวมหนี้เก่า (เดิม: ไทย = คงค่าผิดเงียบ · อังกฤษ = [TOTAL-CONFLICT] ทุกเดือน) · ⚠️ บิล MEA/PEA จริง (ค่า Ft · เงินประกัน · "ค่าไฟฟ้ารวม" ไม่ใช่ป้ายยอดรวม → พึ่ง VatClosure อย่างเดียว) ยังไม่มีตัวอย่าง | สูง |
+| 5 | ค่าเช่า (WHT 5%) / ค่าบริการมี WHT 3% | `PaperWhtReader` · `ThaiWhtRateTable` · `OcrWhtSuggestionGate` · `OcrLineValueShare` | service-wht-printed / -absent (inline) | ✅ หัวใบ+บรรทัดสรุป (300 จากฐาน 10,000) · ⚠️ ยอดหักที่พิมพ์**ก่อน**ป้าย (คอลัมน์สลับ) และยอดไม่มีทศนิยม ("300") ไม่อ่าน — ตั้งใจ (กันหยิบเลขอื่น) · ไม่มีใบเช่าจริง | กลาง |
+| 6 | ใบลดหนี้ / ใบเพิ่มหนี้ | `OcrCreditNoteReasonReader` · `OcrPaperAmounts.OriginalDocWords` (ยอดใบเดิมไม่นับ) · `OcrPaperDocumentType` | OcrTotalAnchorTests (ใบลดหนี้ไม่ Conflict ปลอม) | ⚠️ ไม่มีใบลดหนี้ใน replay corpus ⇒ ผลต่าง + VAT ผลต่าง **ยังไม่ล็อกระดับบรรทัด** | กลาง |
+| 7 | ใบมัดจำ / ใบสุดท้ายหักมัดจำ | `OcrDepositMarker` · `OcrPaperAmounts.DepositRows` (Anchor ไม่ตัดสินแทนวงจรมัดจำ) | deposit-real · deposit-form-row-zero (inline) | ✅ ธงมัดจำ · ⚠️ ใบสุดท้ายที่หักมัดจำ **>0**: Anchor = Unknown ⇒ ยอดรวม = ที่ engine หยิบ (อาจเป็นยอดหลังหักมัดจำ) — ไม่มีตัวตัดสิน/ตัวอย่าง | กลาง |
+| 8 | ใบวางบิล / ใบแจ้งหนี้ (ไม่ใช่ใบกำกับ) | `BillingNoteKind` · `OcrTargetDocumentType` | OcrPriorBalanceTests (ใบวางบิล "ยอดค้างชำระ" = ยอดใบนี้ ไม่นับเป็นยอดยกมา) | ⚠️ ใบวางบิลรวมหลายใบกำกับ (รายการ = เลขใบกำกับ) ไม่มีตัวตัดสินว่า "ไม่ใช่ใบกำกับ/ไม่มี VAT ซื้อใหม่" | กลาง |
+| 9 | หลายหน้า | `OcrPageSet` ("หน้า n จาก m" · "page n of m") | MakroPage3of3 | ✅ ขาดหน้า = [PAGES-PARTIAL] · ⚠️ "1/3" ล้วน ๆ และยอดยกไป/ยกมาระหว่างหน้าไม่อ่าน | ต่ำ |
+| 10 | ราคารวม VAT vs ไม่รวม | `OcrLineReconciler` A/B/E · (e-Tax: `OcrEtaxLineNormalizer` — ทีม A) | WinePro · Supermarket · Hardware · Lazada | ✅ ล็อกระดับบรรทัดแล้ว (ยอดก่อน VAT/VAT/ส่วนลด ต่อบรรทัด) | สูง |
+| 11 | ส่วนลดบรรทัด / ท้ายบิล / คูปอง / สมาชิก | `OcrBillDiscount` · `OcrTotalDecomposer` · `OcrLineReconciler.LineDiscountPercent` · `DocumentRounding` | Hardware (C 5%) · Supermarket (E 5%) · Lazada (C 4.41% + เศษ 0.01) · Shopee (PostInvoice) | ✅ · ⚠️ ป้าย "คูปอง/Coupon/Voucher/โปรโมชั่น" ไม่นับเป็นส่วนลด — ขยายแล้วจะชน golden Shopee (98.00 vs Voucher 135) ⇒ **รอเจ้าของตัดสิน** · ⚠️ คอลัมน์ "ส่วนลด" รายบรรทัดบนกระดาษ engine ภาพไม่ส่ง `LineDiscountAmount` (มีเฉพาะ e-Tax) · ⚠️ **เคส C บรรทัดไม่มีราคาต่อหน่วย** (python/AI split): `UnitPrice = ยอดหลังลด` + `DiscountPercent > 0` + `DiscountAmount = 0` ⇒ เปิดแก้แล้วบันทึก `ComputeLineAmounts` ลดซ้ำอีกรอบ — ล็อกเป็นพฤติกรรมวันนี้ใน golden (คอมเมนต์ใน `OcrReplayHarness.BuildLines`) · แก้ที่ `BuildScanLinesAsync` (ทีม A — diff เสนอในรายงานรอบนี้) | สูง |
+| 12 | VAT 0% / ยกเว้น / ผสม | `OcrLineVatMarks` · `OcrVatGroupTable` (ตารางรหัส ภ.พ.) · `ThaiVatTypeRule` · `OcrAmountIntegrity` | Wholesale (V/N) · Makro 3/3 (รหัส 1/2) · export-zero-rated (inline) | ✅ · ⚠️ ใบส่งออก 0% มีแค่หัวใบใน corpus · ใบผสมที่ไม่มีสัญลักษณ์/ตาราง (Makro 951/49) = บรรทัดสรุป 7% + [Σ-GAP] VatRateMismatch ให้คนแยก (ล็อกแล้ว) | สูง |
+| 13 | ภาษาอังกฤษ | ป้ายอังกฤษใน `OcrTotalAnchor`/`OcrPaperAmounts`/`OcrBillDiscount`/`PaperWhtReader` | export-zero-rated · บิลอังกฤษ (OcrPriorBalanceTests) | ✅ · ⚠️ "Sub Total/Subtotal" อ่านใน `SmartFieldExtractor`/`ParseThaiDocument` (ไม่ใช่ helper → ไม่มี golden) | กลาง |
+| 14 | ใบต่างสาขา (รหัสสาขา 5 หลัก ผู้ขาย/ผู้ซื้อ) | `BranchCodeExtractor` · `OcrIssuerBranch` · `OcrVendorBranchContact` | BranchCodeExtractorTests · OcrPartyZoneRealPaperTests · Makro 00005 | ✅ (นอก replay corpus — ฝั่งคู่ค้า ไม่ใช่ตัวเลข) | สูง |
+| 15 | ค่าขนส่งแยก / service charge ใต้ตาราง | — (ไม่มีตัวตัดสิน) | — | ⚠️ แถว "ค่าขนส่ง 50 / Service charge 10% 100" ที่ engine ไม่คืนเป็นรายการ ⇒ Σ บรรทัด < ฐาน ⇒ LinesShort [Σ-GAP] (ไม่ลงผิด แต่ผู้ใช้เพิ่มแถวเองทุกใบ) · ข้อเสนอ: helper อ่าน "แถวค่าบริการที่พิมพ์" และยอมเติมบรรทัดเฉพาะเมื่อปิดช่องว่างพอดี (ไม่ใช่บรรทัดผีแบบเดิม) — ต่อสายใน `BuildScanLinesAsync` (ทีม A) | สูง |
+| 16 | เงินทอน / รับเงินสด rows | `OcrTotalAnchor.TenderRow` (ยอดรวม) · **`OcrNonItemRow`** (รายการ) | OcrNonItemRowTests 18/16 แถว | ✅ (รอบนี้) | สูง |
+| 17 | ข้อความล้วน (Tesseract) ไม่มีตารางรายการ | `OcrLineSplitGuard` (ครอบ AI `OcrLineItemSplit`) · บรรทัดสรุปใบเดียว | luckyway · makro-correct ฯลฯ (Summary) | ⚠️ ไม่มีตัวแยกบรรทัดจากข้อความนอกจาก AI ⇒ ปิด AI = ได้บรรทัดสรุปใบเดียว (kill-switch ผ่าน แต่กฎเหล็ก #3 ข้อ 6 "ตารางครบทุกแถว" ยังไม่ถึงบนเส้นนี้) — งาน student model `OcrLineItemSplit` (กฎเหล็ก #1 ข้อ 2) | กลาง |
+
+**ลำดับงานต่อ (จากตาราง):** (ก) เคส C ไม่มีราคาต่อหน่วย ลดซ้ำตอนบันทึก (#11 · เงิน · ทีม A) → (ข) แถวค่าขนส่ง/service charge ที่พิมพ์ (#15 · ทุกสัปดาห์) →
+(ค) ใบลดหนี้/ใบหักมัดจำจริงเข้า corpus (#6 #7) → (ง) คูปอง/voucher เป็นส่วนลดไหม (#11 · คำตัดสินเจ้าของ) → (จ) สลิป 7-Eleven/Lotus/MEA จริง (#2 #4 · ขอกระดาษจากเจ้าของ)
 
 ---
 
