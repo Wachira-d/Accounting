@@ -4810,7 +4810,7 @@ _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้า�
 
 _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้างชุดสาม — รอบเงินเดือนนับเข้าการนำส่งด้วย PaidAt · integration ใบกำกับล้มสะอาด — commit 075af3d7)_
 
-_Last verified against codebase: 2026-10-09 (ผู้ใช้รายงาน "ลบทั้งคู่แล้วอัปไฟล์ e-Tax เดิม ได้บรรทัดผิดชุดเดิม" — §ไฟล์ซ้ำ: ธงซ้ำแยกจากการใช้ผลอ่านเดิม · `Helpers/OcrDuplicateReusePolicy` + `OcrScanResult.ExtractionVersion` (`Helpers/OcrExtractionVersion.Current` = 1 · NULL ไม่ใช้ซ้ำ) · e-Tax XML อ่านใหม่เสมอ · ธงซ้ำยังอยู่ — commit <pending>)_
+_Last verified against codebase: 2026-10-09 (ผู้ใช้รายงาน "ลบทั้งคู่แล้วอัปไฟล์ e-Tax เดิม ได้บรรทัดผิดชุดเดิม" — §ไฟล์ซ้ำ: ธงซ้ำแยกจากการใช้ผลอ่านเดิม · `Helpers/OcrDuplicateReusePolicy` + `OcrScanResult.ExtractionVersion` (`Helpers/OcrExtractionVersion.Current` = 1 · NULL ไม่ใช้ซ้ำ) · e-Tax XML อ่านใหม่เสมอ · ธงซ้ำยังอยู่ — commit 58238dfa)_
 
 _ก่อนหน้า: 2026-10-09 (คำตัดสินเจ้าของ "Add DN + GRN" — §2.4 ผูกภายหลัง: ใบแจ้งหนี้ → ใบส่งของ · ใบแจ้งหนี้ซื้อร่าง → ใบรับสินค้าที่อนุมัติแล้ว (ทางซ่อม PO → GRN ของใบสั่งซื้อเดียวกัน) + ผลฝ่ายค้าน (JE ใบรับสินค้า · จับคู่ครบ · ห้ามถอด) — commit <pending>)_
 
