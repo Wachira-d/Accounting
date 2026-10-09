@@ -1446,6 +1446,25 @@ RULES += [
          why="รอบ 195 R2-2: เส้น Tesseract ถอด VAT ด้วยสูตรตัวเดียว หลังด่านยอมเท่านั้น"),
 ]
 
+# ── 2026-10-09 (ตรวจความครอบคลุมเส้นกระดาษ): แถวสรุป/แถวชำระ/เงินทอนที่ engine คืนปนในตารางรายการ ต้องผ่านตัวตัดสินตัวเดียว ─────
+#    Helpers/OcrNonItemRow ทุกทางเข้าที่รับ "ตารางรายการ" จาก engine (Azure prebuilt Items · Azure layout-table fallback · python ocr-service)
+#    — ถอดการเรียกที่ทางเข้าใดทางเข้าหนึ่ง = สลิป POS จากทางนั้นได้บรรทัด "เงินสด/เงินทอน" กลับมาเงียบ ๆ (เทสต์ของ helper ยังเขียว)
+AZURE_DI = "Services/Implementations/Ocr/AzureDocumentIntelligenceService.cs"
+RULES += [
+    dict(file=OCR, method="MapAzureDiToExtractedDataAsync",
+         must=["OcrNonItemRow.IsSummaryOrTenderRow(item.Description)"],
+         before=[("OcrNonItemRow.IsSummaryOrTenderRow(", "data.Items.Add(")],
+         why="2026-10-09: แถวสรุป/ชำระจาก Azure Items ไม่เข้าเป็นบรรทัดสินค้า"),
+    dict(file=OCR, method="ExtractWithLocalServiceAsync",
+         must=["OcrNonItemRow.IsSummaryOrTenderRow(rowDesc)"],
+         before=[("OcrNonItemRow.IsSummaryOrTenderRow(", "data.Items.Add(")],
+         why="2026-10-09: แถวสรุป/ชำระจาก python ocr-service ไม่เข้าเป็นบรรทัดสินค้า"),
+    dict(file=AZURE_DI, method="TryExtractItemsFromTables",
+         must=["OcrNonItemRow.IsSummaryOrTenderRow(desc)", "OcrNonItemRow.DroppedNote("],
+         before=[("OcrNonItemRow.IsSummaryOrTenderRow(", "result.Items.Add(")],
+         why="2026-10-09: ตาราง layout ของ Azure — แถว 'เงินสด/เงินทอน/รวม/VAT' ที่มีตัวอักษรเคยผ่านด่าน 'ไม่มีตัวอักษร' เป็นบรรทัดสินค้า"),
+]
+
 # โฟลเดอร์ OCR ทั้งโฟลเดอร์ (ไม่ใช่รายเมธอด): ห้ามเขียนสูตรถอด VAT 7% จากยอดรวมเอง — ตัวตั้งคือ Helpers/OcrVatBackCalc.SplitInclusive
 # (ค้นบนโค้ดที่ตัดคอมเมนต์+สตริงแล้ว · ตัวตรวจ "VAT บนกระดาษ = 7/107 ของยอด" อยู่ใน Helpers/ ซึ่งไม่ถูกกวาด — เป็นการตรวจ ไม่ใช่การผลิตค่า)
 FOLDER_FORBID = dict(

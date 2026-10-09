@@ -4252,8 +4252,12 @@ public class OcrService : IOcrService
         }
 
         // Map line items
+        // 2026-10-09: แถวสรุป/แถวชำระ/เงินทอน (เงินสด · เงินทอน · รวม · VAT · Card) ที่ตาราง layout/prebuilt คืนปนมา ไม่ใช่สินค้า
+        // — ตัวตัดสินตัวเดียว Helpers/OcrNonItemRow (ตัดเฉพาะที่แน่ใจ · ไม่รู้ = คงไว้ให้ [Σ-GAP] บอกคน)
+        var droppedAzureRows = new List<string>();
         foreach (var item in azure.Items)
         {
+            if (Accounting.Helpers.OcrNonItemRow.IsSummaryOrTenderRow(item.Description)) { droppedAzureRows.Add(item.Description!); continue; }
             data.Items.Add(new OcrExtractedLineItem
             {
                 Description = item.Description,
@@ -4267,6 +4271,8 @@ public class OcrService : IOcrService
                 VatAmount = item.Tax,
             });
         }
+        if (droppedAzureRows.Count > 0)
+            data.ReasoningTrace.Add(Accounting.Helpers.OcrNonItemRow.DroppedNote(droppedAzureRows));
 
         // ── กำหนดชำระที่ใบพิมพ์ไว้ → เครดิตเทอม (T2-04) ──
         // Azure คืน DueDate มาอยู่แล้ว แต่ไม่มีใครอ่าน ⇒ ระบบไปเดาเครดิตเทอมจาก
@@ -5125,17 +5131,23 @@ public class OcrService : IOcrService
             // Parse line items
             if (root.TryGetProperty("items", out var items) && items.ValueKind == System.Text.Json.JsonValueKind.Array)
             {
+                // 2026-10-09: แถวสรุป/แถวชำระ/เงินทอนที่ service คืนปนมาในตาราง (สลิป POS) ไม่ใช่สินค้า — ตัวตัดสินตัวเดียว Helpers/OcrNonItemRow
+                var droppedRows = new List<string>();
                 foreach (var item in items.EnumerateArray())
                 {
+                    var rowDesc = item.TryGetProperty("description", out var descEl) ? descEl.GetString() : null;
+                    if (Accounting.Helpers.OcrNonItemRow.IsSummaryOrTenderRow(rowDesc)) { droppedRows.Add(rowDesc!); continue; }
                     data.Items.Add(new OcrExtractedLineItem
                     {
-                        Description = item.TryGetProperty("description", out var desc) ? desc.GetString() : null,
+                        Description = rowDesc,
                         Quantity = item.TryGetProperty("quantity", out var qty) && qty.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)qty.GetDouble() : null,
                         UnitPrice = item.TryGetProperty("unit_price", out var up) && up.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)up.GetDouble() : null,
                         Amount = item.TryGetProperty("amount", out var amt) && amt.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)amt.GetDouble() : null,
                         SuggestedAccountCode = item.TryGetProperty("suggested_account_code", out var sac) ? sac.GetString() : null,
                     });
                 }
+                if (droppedRows.Count > 0)
+                    data.ReasoningTrace.Add(Accounting.Helpers.OcrNonItemRow.DroppedNote(droppedRows));
             }
 
             var rawText = root.TryGetProperty("raw_text", out var rt) ? rt.GetString() ?? "" : "";

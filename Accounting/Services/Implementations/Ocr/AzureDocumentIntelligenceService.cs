@@ -551,6 +551,13 @@ public class AzureDocumentIntelligenceService
                 if (string.IsNullOrEmpty(desc)) continue;
                 // Pure-digit / amount-like descriptions are summary rows
                 if (desc.All(ch => !char.IsLetter(ch))) continue;
+                // 2026-10-09: แถวสรุป/แถวชำระที่มีตัวอักษร ("เงินสด 1,000.00" · "เงินทอน" · "รวม 3 รายการ" · "VAT 7%") ก็ไม่ใช่สินค้า
+                // — ตัวตัดสินตัวเดียว Helpers/OcrNonItemRow (เดิมผ่านเป็นบรรทัดสินค้าแล้วทำให้ Σ บรรทัดเกินหัวใบทุกสลิป POS)
+                if (Accounting.Helpers.OcrNonItemRow.IsSummaryOrTenderRow(desc))
+                {
+                    result.Warnings.Add(Accounting.Helpers.OcrNonItemRow.DroppedNote(new[] { desc }));
+                    continue;
+                }
 
                 decimal? qty = qtyCol >= 0 ? ParseAmount(grid[r, qtyCol]) : null;
                 decimal? price = priceCol >= 0 ? ParseAmount(grid[r, priceCol]) : null;
