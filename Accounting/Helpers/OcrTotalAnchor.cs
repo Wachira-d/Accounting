@@ -40,6 +40,9 @@ public enum OcrTotalRole
     NetBeforeVat = 6,
     /// <summary>ยอดชำระหลังปัดเศษสตางค์ที่<b>พิมพ์แถว "ปัดเศษ"</b> ไว้ (&lt; 1 บาท — ฝ่ายค้าน C1)</summary>
     RoundedPayable = 7,
+    /// <summary>ยอดที่ต้องชำระซึ่ง<b>รวมยอดค้างชำระจากรอบก่อน</b> (บิลโทรศัพท์/เน็ต/ไฟฟ้า: ใบกำกับรอบนี้ 1,070 + ค้าง 500 = ที่ต้องชำระ
+    /// 1,570) — ยอดค้างเป็นหนี้ของใบก่อน ไม่ใช่ยอดของใบกำกับนี้ (2026-10-09 · <see cref="OcrPaperAmounts.PriorBalanceRows"/>)</summary>
+    PriorBalanceIncluded = 8,
 }
 
 /// <summary>ชนิดหลักฐานของยอดหนึ่ง — จัดเป็น "ชั้นอิสระ" 4 ชั้น: VAT · ตัวอักษร · ป้าย · แถวชำระ</summary>
@@ -58,6 +61,9 @@ public enum OcrTotalEvidenceKind
     /// <summary>ชั้น VAT (อัตราส่วน): VAT ที่พิมพ์ = 7/107 ของยอดนี้ (ไม่มีฐานพิมพ์คู่) — <b>อ่อนกว่า</b>แบบตรงเป๊ะ:
     /// ใช้เป็นชั้น VAT ได้เฉพาะเมื่อไม่มีผู้สมัครตัวไหนบนกระดาษมี VAT แบบตรงเป๊ะ (ฝ่ายค้าน C1 — ใบปัดเศษ)</summary>
     VatRatio = 6,
+    /// <summary>ชั้นแยกยอดค้าง (ชั้นอิสระที่ 5): ยอดที่ต้องชำระ (ป้ายบนกระดาษ) − ยอดค้างชำระจากรอบก่อน (พิมพ์บนกระดาษ) = ยอดนี้
+    /// — สองตัวเลขที่พิมพ์ยืนยันกันเอง (2026-10-09 · บิลค่าบริการรายเดือนที่มีค้างชำระ)</summary>
+    PriorBalanceDecomposition = 7,
 }
 
 /// <summary>หลักฐานหนึ่งชิ้นของยอดหนึ่ง — <paramref name="PaperText"/> = ข้อความบนกระดาษที่ยืนยัน ·
@@ -171,7 +177,9 @@ public static class OcrTotalAnchor
         @"ส่วนลด|discount|sub[ \t-]*total|ก่อน[ \t]*(?:หัก|ภาษี)|before[ \t]*vat|excl|exempt|ยกเว้น|มัดจำ|deposit|"
         + @"หัก[ \t]*ณ[ \t]*ที่[ \t]*จ่าย|withholding|"
         + @"ไม่รวม|จำนวนชิ้น|qty|quantity|รายการ|vatable|taxable|non[- \t]?vat|มีภาษี|ต้องเสียภาษี|ไม่เสียภาษี|"
-        + OcrPaperAmounts.OriginalDocWords, Opt);
+        + OcrPaperAmounts.OriginalDocWords + "|"
+        // 2026-10-09: แถว "ยอดค้างชำระจากรอบก่อน/ยอดยกมา" เป็นหนี้ของใบก่อน — ไม่ใช่ป้ายยอดรวมของใบนี้
+        + OcrPaperAmounts.PriorBalanceWords, Opt);
 
     /// <summary>แถวชำระที่ไม่ใช่เงินสด</summary>
     private static readonly Regex PaymentRow = new(
@@ -253,6 +261,20 @@ public static class OcrTotalAnchor
         AddAmount(e);
         AddAmount(engineAmountDue);
         if (table.Found) AddAmount(table.Gross);
+        // 2026-10-09 บิลค่าบริการรายเดือนที่มีค้างชำระ: "ยอดที่ต้องชำระ" (ป้าย) = ใบกำกับรอบนี้ + ยอดค้างจากรอบก่อน ⇒ ผู้สมัครเพิ่ม =
+        // ป้าย − ยอดค้าง (ต้องพิมพ์อยู่บนกระดาษจริง เช่น "รวมค่าใช้บริการรอบนี้ 1,070.00" — ไม่แต่งตัวเลขที่ไม่มีบนใบ) ·
+        // ไม่มีแถวค้างชำระที่มีเงิน = โค้ดเดิมทุกตัวอักษร
+        var priorRows = OcrPaperAmounts.PriorBalanceRows(rawText);
+        if (priorRows.Count > 0)
+        {
+            var labelled = evidence.Where(t => t.Ev.Kind == OcrTotalEvidenceKind.GrandTotalLabel).Select(t => t.Amount).Distinct().ToList();
+            foreach (var prior in priorRows)
+                foreach (var due in labelled)
+                {
+                    var current = due - prior.Amount;
+                    if (current > 0m && OcrPaperAmounts.IsPrinted(printed, current)) AddAmount(current);
+                }
+        }
 
         // ── ชั้น VAT ของแต่ละผู้สมัคร (แยก ตรงเป๊ะ / อัตราส่วน) ──
         var evLists = new List<List<OcrTotalEvidence>>();
@@ -284,6 +306,16 @@ public static class OcrTotalAnchor
                     if (!closures.ContainsKey(k)) closures[k] = (null, v.Amount);
                     break;
                 }
+            }
+            // ชั้นแยกยอดค้าง: ป้าย "ที่ต้องชำระ" − แถวค้างชำระรอบก่อน = x (ผูกบรรทัดของแถวค้าง — หนึ่งบรรทัดนับได้ชั้นเดียว)
+            foreach (var prior in priorRows)
+            {
+                var due = evidence.FirstOrDefault(t => t.Ev.Kind == OcrTotalEvidenceKind.GrandTotalLabel
+                    && Math.Abs(t.Amount - x - prior.Amount) <= Tol);
+                if (due.Ev.PaperText is null) continue;
+                ev.Add(new OcrTotalEvidence(OcrTotalEvidenceKind.PriorBalanceDecomposition,
+                    $"ยอดที่ต้องชำระ {due.Amount:N2} − ยอดค้างชำระจากรอบก่อน {prior.Amount:N2} = {x:N2} (พิมพ์ทั้งคู่)", prior.LineNo));
+                break;
             }
             evLists.Add(ev);
         }
@@ -431,6 +463,7 @@ public static class OcrTotalAnchor
         if (Take(t => t.Kind == OcrTotalEvidenceKind.AmountInWords)) count++;
         if (Take(t => t.Kind == OcrTotalEvidenceKind.GrandTotalLabel)) count++;
         if (Take(t => t.Kind == OcrTotalEvidenceKind.PaymentRow)) count++;
+        if (Take(t => t.Kind == OcrTotalEvidenceKind.PriorBalanceDecomposition)) count++;
         return count;
     }
 
@@ -442,6 +475,9 @@ public static class OcrTotalAnchor
         if (Math.Abs(diff) <= Tol) return OcrTotalRole.TaxInvoiceTotal;
         var discounts = OcrPaperAmounts.DiscountRows(rawText);
         if (diff > 0m && discounts.Any(d => Math.Abs(d.Amount - diff) <= Tol)) return OcrTotalRole.PreDiscountTotal;
+        // ยอดที่ต้องชำระรวมยอดค้างจากรอบก่อน (พิมพ์แถวค้างชำระไว้) — 2026-10-09
+        if (diff > 0m && OcrPaperAmounts.PriorBalanceRows(rawText).Any(p => Math.Abs(p.Amount - diff) <= Tol))
+            return OcrTotalRole.PriorBalanceIncluded;
         // ปัดเศษสตางค์ที่<b>พิมพ์แถวไว้</b> (< 1 บาท) — ตัวอ่านเดียวกับ EnrichFromRawText (Helpers/ThaiBillSurcharge)
         if (Math.Abs(diff) < 1m && ThaiBillSurcharge.Read(rawText).RoundingAdjustment is decimal rounding
             && Math.Abs(Math.Abs(diff) - Math.Abs(rounding)) <= 0.005m)
@@ -478,6 +514,7 @@ public static class OcrTotalAnchor
                 OcrTotalEvidenceKind.AmountInWords => "จำนวนเงินตัวอักษร",
                 OcrTotalEvidenceKind.GrandTotalLabel => $"ป้าย “{Short(ev.PaperText)}”",
                 OcrTotalEvidenceKind.PaymentRow => $"แถวชำระ “{Short(ev.PaperText)}”",
+                OcrTotalEvidenceKind.PriorBalanceDecomposition => ev.PaperText,
                 _ => ev.PaperText,
             }).Distinct());
 
@@ -488,6 +525,9 @@ public static class OcrTotalAnchor
         OcrTotalRole.WhtDeducted => $"ยอดหลังหัก ณ ที่จ่าย {total - loser:N2}",
         OcrTotalRole.NetBeforeVat => $"ยอดก่อน VAT (VAT {total - loser:N2})",
         OcrTotalRole.RoundedPayable => $"ยอดชำระหลังปัดเศษ {loser - total:+0.00;−0.00} (แถวปัดเศษพิมพ์บนกระดาษ)",
+        OcrTotalRole.PriorBalanceIncluded =>
+            $"ยอดที่ต้องชำระซึ่งรวมยอดค้างชำระจากรอบก่อน {loser - total:N2} — ใบกำกับนี้ลงบัญชีที่ {total:N2} "
+            + "ส่วนยอดค้างเป็นหนี้ของใบก่อนที่ลงไปแล้ว (ตรวจว่าใบก่อนบันทึก/ชำระแล้วหรือยัง)",
         _ => "ยอดที่อธิบายไม่ได้",
     };
 

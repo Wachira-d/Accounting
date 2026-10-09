@@ -174,6 +174,20 @@ public static class OcrReplayHarness
                 new("นมผงเอนฟาโกร เอนฟินิทัส สูตร3 1425 กรัม:สูตร3", 4m, 1228.04m, 4912.15m),
                 new("ค่าจัดส่ง / Shipping Fee", 1m, 0.00m, 0.00m),
             }),
+
+        // ── 2026-10-09 ตรวจความครอบคลุมเส้นกระดาษ: ใบแจ้งค่าบริการรายเดือนที่มียอดค้างชำระจากรอบก่อน ──
+
+        // บิลเน็ตที่มีค้าง 500 — engine หยิบ "ยอดรวมที่ต้องชำระ 1,570" (= ใบกำกับ 1,070 + ค้าง 500) เป็นยอดรวม ⇒ ต้องยึด 1,070
+        new ReplayPaper("telecom-prior-balance", OcrPaperSamples.TelecomBillPriorBalance,
+            EngineSubTotal: 1000m, EngineVat: 70m, EngineTotal: 1570m,
+            LineAmounts: new[] { 1000m },
+            Lines: new ReplayLine[] { new("ค่าบริการรายเดือน", 1m, 1000.00m, 1000.00m) }),
+
+        // บิลเดียวกันรอบที่ไม่มีค้าง (แถวฟอร์ม 0.00) — ใบที่ถูกอยู่แล้ว ห้ามแตะ
+        new ReplayPaper("telecom-no-arrears", OcrPaperSamples.TelecomBillNoArrears,
+            EngineSubTotal: 1000m, EngineVat: 70m, EngineTotal: 1070m,
+            LineAmounts: new[] { 1000m },
+            Lines: new ReplayLine[] { new("ค่าบริการรายเดือน", 1m, 1000.00m, 1000.00m) }),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้

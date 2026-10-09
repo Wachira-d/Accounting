@@ -175,7 +175,9 @@ public class OcrReplayGoldenTests
     [Fact]
     public void ใบเดิมทุกใบในชุด_ยอดรวมและฐานหลังขั้นยึดยอด_เท่าเดิมทุกใบ()
     {
-        var newPapers = new[] { "makro-page3-total-first", "uptoyou-shopee-pay-not-total", "scommerce-lazada-prevat-discount" };
+        // 2026-10-09: ใบบิลเน็ตที่มีค้างชำระถูกยึดยอดใหม่โดยตั้งใจ (ดูเทสต์ด้านล่าง) — ใบรอบที่ไม่มีค้างยังอยู่ในชุด "ห้ามแตะ"
+        var newPapers = new[] { "makro-page3-total-first", "uptoyou-shopee-pay-not-total", "scommerce-lazada-prevat-discount",
+            "telecom-prior-balance" };
         foreach (var p in OcrReplayHarness.Corpus.Where(x => !newPapers.Contains(x.Name)))
         {
             // ขั้นยึดยอดต้องไม่เขียนทับ/ขัดใบเดิมใบไหนเลย
@@ -185,6 +187,31 @@ public class OcrReplayGoldenTests
             // ส่วนลดที่ส่งต่อให้ตัวสร้างบรรทัด = ส่วนลดที่อ่านได้เดิม
             Assert.Equal(Val(p.Name, "BillDiscount") ?? "0.00", Val(p.Name, "DiscountToSpread"));
         }
+    }
+
+    // ── 2026-10-09: บิลค่าบริการรายเดือนที่มี "ยอดค้างชำระจากรอบก่อน" — ใบกำกับรอบนี้ ≠ ยอดที่ต้องชำระ ──────────────
+
+    [Fact]
+    public void บิลเน็ตมีค้าง500_ยึดใบกำกับรอบนี้1070_ไม่ใช่ยอดที่ต้องชำระ1570_ฐาน1000()
+    {
+        Assert.Equal("1570.00", Val("telecom-prior-balance", "HeaderTotal"));          // ค่าที่ engine หยิบ (บั๊ก)
+        Assert.Equal("1500.00", Val("telecom-prior-balance", "NetSubTotal"));          // สูตรเดิมบนยอดผิด = 1,570 − VAT 70
+        Assert.Equal("Proven", Val("telecom-prior-balance", "AnchorVerdict"));
+        Assert.Equal("1070.00", Val("telecom-prior-balance", "AnchorTotal"));
+        Assert.Equal("1000.00", Val("telecom-prior-balance", "AnchoredNetSubTotal"));
+        Assert.Null(Val("telecom-prior-balance", "BillDiscount"));                      // ยอดค้างไม่ใช่ส่วนลด
+        Assert.Equal("None", Val("telecom-prior-balance", "DiscountPlacement"));
+        Assert.Equal("false", Val("telecom-prior-balance", "IsDeposit"));
+    }
+
+    [Fact]
+    public void บิลเน็ตรอบไม่มีค้าง_แถวฟอร์มค้างชำระศูนย์_ยอดเดิมถูกอยู่แล้วห้ามแตะ()
+    {
+        Assert.Equal("Confirmed", Val("telecom-no-arrears", "AnchorVerdict"));
+        Assert.Equal("1070.00", Val("telecom-no-arrears", "AnchorTotal"));
+        Assert.Equal("1000.00", Val("telecom-no-arrears", "NetSubTotal"));
+        Assert.Equal("1000.00", Val("telecom-no-arrears", "AnchoredNetSubTotal"));
+        Assert.Null(Val("telecom-no-arrears", "PaperWhtAmount"));
     }
 
     // ── ตัวเครื่องมือเอง: ต้อง deterministic และต้อง "จับได้" เมื่อคำตอบเปลี่ยน ──

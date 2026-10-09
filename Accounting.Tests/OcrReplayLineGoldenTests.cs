@@ -147,6 +147,23 @@ public class OcrReplayLineGoldenTests
         Assert.Equal("VatRateMismatch", Val("makro-correct", "IntegrityGaps"));
     }
 
+    // ── 2026-10-09: บิลค่าบริการรายเดือน (ค้างชำระจากรอบก่อน) — บรรทัดเดียว 1,000 / 7% / 70 ทั้งใบที่มีค้างและไม่มีค้าง ──
+
+    [Fact]
+    public void บิลเน็ต_บรรทัดค่าบริการ1000_VAT70_ทั้งใบที่มีค้างและไม่มีค้าง_ด่านΣไม่ฟ้องเพราะยึดใบกำกับรอบนี้แล้ว()
+    {
+        foreach (var paper in new[] { "telecom-prior-balance", "telecom-no-arrears" })
+        {
+            Assert.Equal("Items", Val(paper, "LineMode"));
+            Assert.Equal("LinesMatchSubTotal", Val(paper, "ReconCase"));
+            Assert.Equal("(ไม่ใช้)", Val(paper, "LineVatRates"));
+            Assert.Equal("AllStandard7:7", Val(paper, "LineVatPlan"));
+            Assert.Equal("1000.00|7|70.00|1000.00|0|0.00|0.00", Val(paper, "Lines"));
+            // ก่อนแก้: ยอดรวมที่ยึด = 1,570 ⇒ บรรทัด 1,070 ≠ 1,570 ⇒ TotalMismatch — ตอนนี้ยึด 1,070 ⇒ ok
+            Assert.Equal("ok", Val(paper, "IntegrityGaps"));
+        }
+    }
+
     // ── ตัวเครื่องมือ: ทุกใบต้องมีแถวระดับบรรทัด · ไม่มีใบไหนได้ส่วนลดบาทติดลบ · ใบมีรายการ Σ ก่อน VAT + VAT = ยอดรวมเมื่อ ok ──
 
     [Fact]

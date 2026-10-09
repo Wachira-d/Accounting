@@ -258,6 +258,30 @@ public static class OcrPaperAmounts
     public static IReadOnlyList<OcrPrintedAmount> DepositRows(string? rawText)
         => LabelledRows(rawText, DepositLabel, null);
 
+    /// <summary>
+    /// คำบนแถว "ยอดค้างชำระ<b>จากรอบก่อน</b> / ยอดยกมา / Previous balance / Balance B/F" ของใบแจ้งค่าบริการรายเดือน
+    /// (โทรศัพท์ · อินเทอร์เน็ต · ไฟฟ้า · ประปา) — ตัวเลขบนแถวนี้เป็นหนี้ของ<b>ใบก่อน</b> ไม่ใช่ยอดของใบกำกับนี้
+    ///
+    /// <para>ที่มา (2026-10-09 · ตรวจความครอบคลุมเส้นกระดาษ): บิลโทรศัพท์/เน็ตที่มีค้างชำระพิมพ์ "รวมค่าใช้บริการรอบนี้ 1,070 ·
+    /// ยอดค้างชำระจากรอบบิลก่อน 500 · ยอดรวมที่ต้องชำระ 1,570" — engine หยิบ 1,570 (AmountDue) เป็นยอดรวม ⇒ เอกสาร 1,570 /
+    /// VAT 70 / ฐาน 1,500 ทั้งที่ใบกำกับนี้คือ 1,070 (ฐาน 1,000) ⇒ ค่าใช้จ่ายและเจ้าหนี้เกิน 500 ทุกเดือนที่มียอดค้าง (ใบก่อนลงไปแล้ว)
+    /// · <see cref="OcrTotalAnchor"/> ไม่เห็นผู้สมัคร 1,070 เพราะแถว "รวมค่าใช้บริการรอบนี้" ไม่ใช่ป้ายยอดรวม</para>
+    ///
+    /// <para>กติกาคำ: ต้องมีคำที่บอก "ของรอบก่อน" จริง (ยกมา · ค้างชำระ…รอบ/งวด/เดือน/บิล…ก่อน/ที่แล้ว · previous/prior balance · B/F)
+    /// — "ยอดค้างชำระ 10,700" เฉย ๆ บนใบวางบิล/ใบแจ้งหนี้คือ<b>ยอดที่ต้องชำระของใบนี้</b> ห้ามนับ (ทิศตรงข้ามล็อกใน OcrPriorBalanceTests)</para>
+    /// </summary>
+    public const string PriorBalanceWords =
+        @"ยอดยกมา|ยกมาจาก|ค้างชำระ(?:จาก|ของ)?[ \t]*(?:รอบ|งวด|เดือน|บิล|ครั้ง|ใบแจ้ง)[^\n]{0,20}?(?:ก่อน|ที่แล้ว|ที่ผ่านมา)|"
+        + @"(?:รอบ|งวด|เดือน|บิล|ครั้ง)[^\n]{0,12}?(?:ก่อน|ที่แล้ว|ที่ผ่านมา)[^\n]{0,20}?(?:ค้าง|ยกมา)|"
+        + @"previous[ \t]*balance|prior[ \t]*balance|balance[ \t]*(?:b/?f|brought[ \t]*forward|carried[ \t]*forward|from[ \t]*(?:last|previous))|"
+        + @"outstanding[ \t]*(?:balance[ \t]*)?(?:from|b/?f)";
+
+    private static readonly Regex PriorBalanceLabel = new(PriorBalanceWords, Opt);
+
+    /// <summary>แถว "ยอดค้างชำระจากรอบก่อน/ยอดยกมา" ที่มีเงิน &gt; 0 (<see cref="PriorBalanceWords"/>) — แถวยอด 0 ไม่ใช่หลักฐาน (RG-02)</summary>
+    public static IReadOnlyList<OcrPrintedAmount> PriorBalanceRows(string? rawText)
+        => LabelledRows(rawText, PriorBalanceLabel, null);
+
     private static IReadOnlyList<OcrPrintedAmount> LabelledRows(string? rawText, Regex label, Regex? notAmount)
     {
         var lines = Lines(rawText);
