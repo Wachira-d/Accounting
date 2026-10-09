@@ -821,4 +821,39 @@ public class OcrEtaxLineNormalizerTests
         Assert.NotNull(OcrEtaxLineNormalizer.PriceBasisLabel(true));
         Assert.Null(OcrEtaxLineNormalizer.PriceBasisLabel(false));
     }
+
+    // ── ใบจริงใบที่สาม CRC 2614502187 (รอบ 7): 16 บรรทัด · VAT ระดับหัวใบ · ขั้นปัดขยับ 2 สตางค์ ──
+
+    [Fact]
+    public void ใบCRC3_16บรรทัด_เอกสารราคารวมVATตามกระดาษ_หัวใบตรงหลังเล่นซ้ำขั้นปัด()
+    {
+        var r = EtaxPdfXmlExtractor.ParseEtaxXml(EtaxFixtures.CrcThaiwatsadu3Xml)!;
+        Assert.Equal((2862.62m, 200.38m, 3063.00m), (r.LineTotal!.Value, r.VatAmount!.Value, r.GrandTotal!.Value));
+        Assert.Equal(16, r.Items.Count);
+        Assert.Equal(2862.60m, r.Items.Sum(x => x.Amount!.Value));            // Σ ก่อน VAT รายบรรทัดใน XML ≠ หัวใบ 2 สตางค์
+        Assert.Equal(1104.00m, r.Items.Sum(x => x.LineAllowance!.Value));
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(r.Items.Select(Facts).ToList(), r.LineTotal, r.VatAmount, r.GrandTotal);
+        Assert.True(inv.PricesIncludeVat);
+        // ไม่มีแท็กห้ามอนุมัติ — มีแค่ข้อสังเกตว่าขั้นปัดขยับบรรทัด 3 (ท่ออ่อนลูกฟูก ก่อน VAT ใหญ่สุด 623.98 → 624.00)
+        Assert.True(OcrPostingReadiness.Evaluate(string.Join("\n", inv.Notes), true).CanAutoApprove);
+        Assert.Contains(inv.Notes, x => x.StartsWith("[e-Tax] บรรทัดที่ 3: ยอดก่อน VAT ในเอกสาร 624.00 (XML 623.98)", StringComparison.Ordinal));
+        for (var i = 0; i < r.Items.Count; i++)
+        {
+            var li = r.Items[i];
+            var n = inv.Lines[i];
+            // สิ่งที่ห้ามเกิด (ร่างจากโค้ดเก่าบนเซิร์ฟเวอร์จริง): จำนวน 3.00 ทุกบรรทัด · ราคาต่อหน่วย = ยอดส่วนลด (49.46) · จำนวนเศษ 0.75/2.17
+            Assert.Equal(li.Quantity, n.Quantity);
+            Assert.Equal(li.UnitPrice, n.UnitPrice);
+            Assert.NotEqual(li.LineAllowance, n.UnitPrice);
+            Assert.Equal(li.LineAllowance, n.LineDiscount);
+            Assert.Equal(li.NetIncludingVatAmount, n.Amount);
+            Assert.Equal(decimal.Truncate(n.Quantity!.Value), n.Quantity!.Value);
+        }
+        var vats = OcrEtaxLineNormalizer.InclusiveLineVats(inv.Lines.Select(x => (x.Amount!.Value, 7m, true)).ToList(), 200.38m);
+        Assert.NotNull(vats);
+        Assert.Equal(43.66m, vats![2]);
+        var nets = inv.Lines.Select((x, i) => x.Amount!.Value - vats[i]).ToList();
+        Assert.Equal(624.00m, nets[2]);
+        Assert.Equal((2862.62m, 200.38m, 3063.00m), (nets.Sum(), vats.Sum(), inv.Lines.Sum(x => x.Amount!.Value)));
+    }
 }
