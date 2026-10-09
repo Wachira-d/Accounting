@@ -10406,8 +10406,9 @@ public class OcrService : IOcrService
                 QuantityFromEtaxXml = etaxLine.QuantityFromDocument,
                 PriceIncludesVat = etaxLine.PriceIncludesVat,
                 VatStripResidual = etaxLine.VatStripResidual,
-                // อัตราของบรรทัดตาม XML — ทางราคารวม VAT ต้องรู้อัตราเพื่อถอด VAT รายบรรทัดด้วยสูตรเดียวกับเอกสาร
-                VatRate = etaxLine.PriceIncludesVat ? etaxLine.VatRate : null,
+                // อัตราของบรรทัดตาม XML ที่ลงนาม — ทางราคารวม VAT ต้องรู้อัตราเพื่อถอด VAT รายบรรทัดด้วยสูตรเดียวกับเอกสาร · รอบ 7 (เมทริกซ์รูปแบบ XML):
+                // บรรทัดราคาก่อน VAT ก็ใช้อัตราของ XML (เดิม null ⇒ เดาจากชื่อเป็น 7% ⇒ ใบผสม 7%/0% บรรทัด 0% ยอดเล็กได้ VAT เงียบ ๆ)
+                VatRate = Accounting.Helpers.OcrEtaxLineNormalizer.LineVatRate(etaxLine, li.VatRatePercent, li.Description),
                 // ★ หน่วยนับที่ XML ประกาศไว้ (unitCode ตาม UN/ECE Rec.20) —
                 // ตัวสกัดอ่านมาได้ตั้งแต่แรกแต่ตัว map ทิ้งทุกครั้ง ⇒ ทุกบรรทัด
                 // ของใบ e-Tax ตกไปเป็น "ชิ้น" ทั้งที่เอกสารที่มีลายเซ็นดิจิทัล

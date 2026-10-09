@@ -18,8 +18,8 @@ namespace Accounting.Tests;
 ///
 /// <para>ข้อจำกัดที่รู้: <see cref="ScanDocumentSimulator"/> เดินลำดับของ <c>OcrService.MapEtaxToOcrData</c> → <c>SanitizeVatSplitArtifacts</c> →
 /// <c>BuildScanLinesAsync</c> ด้วย helper ตัวจริงทุกตัว แต่ตัวเมธอดใน service (DB) ไม่ได้ถูกเรียก — ลำดับใน service ล็อกด้วย
-/// <c>tools/required_call_site_check.py</c> · ส่วนที่ไม่จำลอง: เดาอัตรา VAT จากชื่อสินค้า (ThaiVatTypeRule.Suggest — ใช้ 7 เมื่อหัวใบมี VAT) ·
-/// ผังบัญชี · WHT</para>
+/// <c>tools/required_call_site_check.py</c> · จำลอง: อัตรา VAT รายบรรทัด (อัตราจาก XML → พิสูจน์ทั้งใบ 7% → เดาจากชื่อ) + ด่านยอดตรงกระดาษ
+/// (OcrAmountIntegrity) · ส่วนที่ไม่จำลอง: สัญลักษณ์ VAT ท้ายบรรทัด/ยอดแยกภาษีจากข้อความดิบ (e-Tax ไม่มี) · ผังบัญชี · WHT</para>
 /// </summary>
 public class EtaxGoldenCorpusTests
 {
@@ -124,7 +124,7 @@ public class EtaxGoldenCorpusTests
 }
 
 /// <summary>เดินลำดับเดียวกับ OcrService (MapEtaxToOcrData → SanitizeVatSplitArtifacts → BuildScanLinesAsync) ด้วย helper ตัวจริง — ดูข้อจำกัดใน
-/// <see cref="EtaxGoldenCorpusTests"/> · ใช้ร่วมกับเมทริกซ์รูปแบบ XML (EtaxFormatMatrixTests)</summary>
+/// <see cref="EtaxGoldenCorpusTests"/> · ใช้ร่วมกับเมทริกซ์รูปแบบ XML (<see cref="EtaxFormatMatrixTests"/>)</summary>
 internal static class ScanDocumentSimulator
 {
     internal sealed record SimLine(decimal Qty, decimal UnitPrice, decimal Discount, decimal Amount, decimal Vat, decimal VatRate);
@@ -151,7 +151,7 @@ internal static class ScanDocumentSimulator
                 Description = r.Items[i].Description, Quantity = n.Quantity, UnitPrice = n.UnitPrice, Amount = n.Amount,
                 LineDiscountAmount = n.LineDiscount, QuantityFromEtaxXml = n.QuantityFromDocument, PriceIncludesVat = n.PriceIncludesVat,
                 VatStripResidual = n.VatStripResidual,
-                VatRate = n.PriceIncludesVat ? n.VatRate : null,
+                VatRate = OcrEtaxLineNormalizer.LineVatRate(n, r.Items[i].VatRatePercent, r.Items[i].Description),
             });
         }
         var hdrSub = r.LineTotal ?? r.TaxBasis ?? 0m;
@@ -184,7 +184,16 @@ internal static class ScanDocumentSimulator
                 items[di].Amount = share;
             }
         }
-        foreach (var it in items) it.VatRate ??= hdrVat > 0m ? 7m : 0m;
+        // อัตรารายบรรทัด: พิสูจน์ทั้งใบ 7% จากหัวใบ (OcrLineVatPlanner · VAT ของ e-Tax = Labelled) → เดาจากชื่อ (ThaiVatTypeRule) เฉพาะบรรทัดที่ยังว่าง
+        var vatPlan = OcrLineVatPlanner.PlanWholeInvoice(items.Select(x => x.Amount ?? 0m).ToList(), items.Select(x => x.VatRate).ToList(),
+            hdrVat, netSub, hdrTotal, incl, paperExemptAmount: null, vatPrintedOnPaper: true);
+        if (vatPlan.Decided)
+            for (var vi = 0; vi < items.Count; vi++)
+                if (!items[vi].VatRate.HasValue && vatPlan.Rates[vi] is decimal planRate) items[vi].VatRate = planRate;
+        foreach (var it in items)
+            it.VatRate ??= hdrVat > 0m
+                ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(it.Description, null, r.SellerTaxId), 7m)
+                : 0m;
         var spread = (incl
                 ? OcrEtaxLineNormalizer.InclusiveLineVats(items.Select(x => (x.Amount ?? 0m, x.VatRate ?? 0m, x.PriceIncludesVat)).ToList(), hdrVat)
                 : null)
@@ -204,6 +213,14 @@ internal static class ScanDocumentSimulator
         }
         var notes = inv.Notes.ToList();
         if (recon.UnreconciledGap != 0m) notes.Add("[Σ-GAP] " + recon.Note);
+        // ด่าน "เอกสารที่จะสร้าง ยอดตรงกับกระดาษไหม" (AppendAmountIntegrityGaps — ไม่มีข้อความดิบ ⇒ ไม่มียอดแยกภาษีบนกระดาษ)
+        var planned = items.Select((it, pi) => new OcrPlannedLine(
+            incl ? R2((it.Amount ?? 0m) - spread[pi]) : it.Amount ?? 0m, it.VatRate ?? 0m, spread[pi])).ToList();
+        foreach (var p in OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal).Problems)
+        {
+            if (recon.UnreconciledGap != 0m && p.Kind is OcrAmountIntegrityKind.TotalMismatch or OcrAmountIntegrityKind.VatRateMismatch) continue;
+            notes.Add("[Σ-GAP] " + p.Message);
+        }
         var verdict = OcrPostingReadiness.Evaluate(string.Join("\n", notes), true);
         return new SimDoc(incl, lines, -shifts.Sum(), hdrSub - hdrDisc, hdrVat, hdrTotal, verdict.CanAutoApprove, verdict.Reason,
             notes, recon.UnreconciledGap);

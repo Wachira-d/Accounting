@@ -270,6 +270,19 @@ public static class OcrEtaxLineNormalizer
         return vats.Sum() == headerVat ? vats : null;
     }
 
+    /// <summary>อัตรา VAT ของบรรทัดเอกสารจากบรรทัด e-Tax (<c>MapEtaxToOcrData</c> · รอบ 7 เมทริกซ์รูปแบบ XML): บรรทัดที่พิสูจน์ราคารวม VAT ⇒ อัตราที่ใช้ถอด ·
+    /// อื่น ๆ ⇒ <c>CalculatedRate</c> ของบรรทัดใน XML ที่ลงนาม (&gt; 0 ⇒ ตามนั้น · 0 ⇒ ไม่มี VAT: "ยกเว้น" เมื่อชื่อเข้าหมวดยกเว้น §81 ไม่งั้น 0%) ·
+    /// ไม่มี/ติดลบ ⇒ null (ชั้นถัดไปของตัวสร้างบรรทัดตัดสิน)
+    /// <para>ที่มา: เดิมส่งอัตราเฉพาะทางราคารวม VAT ⇒ บรรทัดราคาก่อน VAT ทุกบรรทัดถูกเดาอัตราจากชื่อ (7%) ⇒ ใบผสม 7%/0% ที่บรรทัด 0% ยอดเล็ก
+    /// (VAT ส่วนต่าง &lt; 0.10 ต่ำกว่าเกณฑ์ด่านอัตรา) ได้บรรทัด 0% ติด 7% + VAT ที่เฉลี่ยจากหัวใบ <b>เงียบ ๆ</b> · ยอดใหญ่ตก [Σ-GAP] ทั้งที่ XML บอกอัตราไว้แล้ว</para></summary>
+    public static decimal? LineVatRate(OcrEtaxLine line, decimal? xmlRate, string? description)
+    {
+        if (line.VatRate is decimal r && r > 0m) return r;   // อัตราที่ตัวตัดสินใช้ถอด VAT (รวมอัตราที่อนุมานจากยอดสองตัวของบรรทัด)
+        if (xmlRate is not decimal x || x < 0m) return null;
+        if (x > 0m) return x;
+        return ThaiVatTypeRule.LooksExempt(description) ? ThaiVatTypeRule.ExemptRate : 0m;
+    }
+
     /// <summary>ทั้งใบเป็น "ราคารวม VAT ตามกระดาษ" ไหม — มีบรรทัดที่ติดธงอย่างน้อยหนึ่ง และทุกบรรทัดที่ยอดไม่เป็น 0 ติดธง ·
     /// บรรทัดยอด 0 ที่ไม่ติดธง (แถวว่างที่เพิ่งเพิ่ม) ไม่นับ — ฝ่ายค้านรอบสี่ ข้อ 2: เดิม <c>items.All(...)</c> ⇒ เพิ่มแถวเดียว
     /// ทั้งใบหลุดจากราคารวม VAT แล้ว 9 บรรทัดรวม VAT ถูกตีเป็นยอดก่อน VAT (VAT 209.41 → 227.57)</summary>
