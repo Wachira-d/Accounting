@@ -11797,8 +11797,8 @@ public partial class DocumentService : IDocumentService
                         $"เอกสาร {source.DocumentNumber} ถูกแปลงเพื่อ{AxisLabel(axis)}ครบทุกจำนวนแล้ว แต่ยอดเงินยังเหลือ " +
                         $"{leftBase.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} (ก่อน VAT) — " +
                         "ใช้ \"แปลงบางส่วน\" แล้วใส่จำนวนตามสัดส่วนยอดที่เหลือ (ระบบเตือนแต่ไม่ล็อกจำนวน)" +
-                        (Array.IndexOf(DocumentLinkPolicy.SourceTypes, source.DocumentType) >= 0
-                            ? " หรือสร้างใบใหม่แล้วกด \"ผูกกับใบเสนอราคา\"" : ""),
+                        (DocumentLinkPolicy.IsLinkSource(source.DocumentType)
+                            ? " หรือสร้างใบใหม่แล้วกด \"ผูกกับเอกสารต้นทาง\"" : ""),
                         "CONVERT-QTY-DONE-AMOUNT-LEFT", 409);
                 throw new InvalidOperationException(
                     $"เอกสาร {source.DocumentNumber} ถูกแปลงเพื่อ{AxisLabel(axis)}ครบทุกรายการแล้ว " +
@@ -18767,7 +18767,7 @@ public partial class DocumentService : IDocumentService
         PayeeAmount: ForeignServiceVat.PayeeAmount(d),
         // คำตัดสินข้อ 139 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) · ปุ่มผูกตัดสินที่เซิร์ฟเวอร์ (ข้อมูลบนใบล้วน ไม่แตะฐาน)
         SourceLinkedAt: d.SourceLinkedAt,
-        CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(LinkFacts(d)) is null,   // ตัวประกอบข้อเท็จจริงตัวเดียวกับด่านผูก
+        CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(LinkFacts(d, upstream?.DocumentType)) is null,   // ตัวประกอบข้อเท็จจริงตัวเดียวกับด่านผูก
         IsRollupBillingNote: BillingNoteKind.IsRollup(d.DocumentType, d.Lines.Any(l => l.SourceDocumentId != null)));
     }
 

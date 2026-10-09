@@ -991,11 +991,13 @@ public record LinkSourceLine(Guid Id, int LineOrder, string Description, decimal
 
 public record LinkCandidate(
     Guid Id, string DocumentNumber, DateTime DocumentDate, decimal SourceBaseAmount, decimal BilledBaseAmount,
-    List<LinkSourceLine> SourceLines, List<LinkLineSuggestion> SuggestedMap);
+    List<LinkSourceLine> SourceLines, List<LinkLineSuggestion> SuggestedMap,
+    string? SourceTypeName = null);   // ชื่อชนิดใบต้นทาง (ใบเสนอราคา/ใบส่งของ/ใบรับสินค้า) — หน้าเว็บแสดงตรง ไม่แปลเอง
 
 public record LinkLineSuggestion(Guid ChildLineId, Guid? SourceLineId);
 
-public record LinkCandidatesResponse(string? BlockedReason, List<LinkSourceLine> ChildLines, List<LinkCandidate> Candidates);
+public record LinkCandidatesResponse(string? BlockedReason, List<LinkSourceLine> ChildLines, List<LinkCandidate> Candidates,
+    string? SourceLabel = null);   // "ใบเสนอราคา/ใบส่งของ" หรือ "ใบรับสินค้า" ตามชนิดใบลูก (หัวกล่องผูก)
 
 /// <summary>รอบ 200 ทีม V1 — คำขอ "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ (คำตัดสินข้อ 9)</summary>
 /// <param name="ContactId">ผู้ซื้อของใบใหม่ — null = ผู้ซื้อเดิม (เช่น แก้ทะเบียนผู้ติดต่อแล้วต้องการออกใบใหม่)</param>

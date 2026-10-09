@@ -1268,7 +1268,7 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<DocumentResponse>(true, result, "แปลงเอกสารบางส่วนสำเร็จ"));
     }
 
-    /// <summary>คำตัดสินข้อ 139: ใบเสนอราคาที่ผูกเอกสารนี้ได้ (อ่านอย่างเดียว)</summary>
+    /// <summary>คำตัดสินข้อ 139 (+ รุ่นสอง: ใบส่งของ/ใบรับสินค้า): เอกสารต้นทางที่ผูกเอกสารนี้ได้ (อ่านอย่างเดียว)</summary>
     [HttpGet("{documentId:guid}/link-candidates")]
     public async Task<ActionResult<ApiResponse<LinkCandidatesResponse>>> GetLinkCandidates(Guid companyId, Guid documentId)
     {
@@ -1304,7 +1304,7 @@ public class DocumentController : ControllerBase
         if (request != null && await DenySensitiveAsync(companyId, request.SourceDocumentId, "ผูกเอกสาร") is { } hiddenSrc)
             return Forbid403<DocumentResponse>(hiddenSrc);
         var result = await _documentService.LinkToSourceAsync(companyId, documentId, request, userIdGuid.ToString());
-        return Ok(new ApiResponse<DocumentResponse>(true, result, "ผูกกับใบเสนอราคาแล้ว"));
+        return Ok(new ApiResponse<DocumentResponse>(true, result, "ผูกกับเอกสารต้นทางแล้ว"));
     }
 
     /// <summary>คำตัดสินข้อ 139: ยกเลิกการผูกภายหลัง</summary>

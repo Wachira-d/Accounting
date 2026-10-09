@@ -1543,13 +1543,13 @@
     </div>
     <div class="modal-overlay" id="linkSourceModal">
       <div class="modal" style="max-width:720px">
-        <div class="modal-header"><h3 class="modal-title">🔗 ผูกกับใบเสนอราคา</h3><button class="modal-close" onclick="Layout.closeModal('linkSourceModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title">🔗 ผูกกับ<span id="linkSourceTitle">เอกสารต้นทาง</span></h3><button class="modal-close" onclick="Layout.closeModal('linkSourceModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="linkChildId">
-          <div class="form-help" style="margin-bottom:8px">เลือกใบเสนอราคาของคู่ค้ารายนี้ แล้วจับคู่รายการ — ใบเสนอราคาจะนับยอดของใบนี้เหมือนแปลงมา
-            (ไม่เปลี่ยนเนื้อเอกสาร ไม่ลงบัญชีเพิ่ม)</div>
+          <div class="form-help" style="margin-bottom:8px">เลือกเอกสารต้นทางของคู่ค้ารายนี้ แล้วจับคู่รายการ — เอกสารต้นทางจะนับยอดของใบนี้เหมือนแปลงมา
+            (ไม่เปลี่ยนเนื้อเอกสาร · ใบแจ้งหนี้ซื้อฉบับร่างที่ผูกใบรับสินค้า: ตอนอนุมัติจะล้างบัญชีพักรับสินค้า 21240 แทนรับสต็อกซ้ำ)</div>
           <div class="form-group">
-            <label class="form-label">ใบเสนอราคา</label>
+            <label class="form-label" id="linkSourceLabel">เอกสารต้นทาง</label>
             <select id="linkSourceSelect" class="form-input" onchange="Page.renderLinkMap()"></select>
           </div>
           <div id="linkSourceInfo" class="form-help"></div>
@@ -10455,10 +10455,10 @@
           }
           // คำตัดสินข้อ 139 — เซิร์ฟเวอร์ตัดสินว่าโชว์ได้ (canLinkToSource / sourceLinkedAt) หน้าเว็บไม่เดาเงื่อนไขเอง
           if (d.canLinkToSource) {
-            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openLinkSource('${d.id}')" title="ผูกใบนี้กับใบเสนอราคาที่มีอยู่ — ใบเสนอราคานับยอดของใบนี้เหมือนแปลงมา (ไม่เปลี่ยนเนื้อเอกสาร ไม่ลงบัญชีเพิ่ม)">🔗 ผูกกับใบเสนอราคา</button>`;
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openLinkSource('${d.id}')" title="ผูกใบนี้กับเอกสารต้นทางที่มีอยู่ (ใบเสนอราคา/ใบส่งของ · ใบแจ้งหนี้ซื้อฉบับร่าง: ใบรับสินค้า) — ต้นทางนับยอดของใบนี้เหมือนแปลงมา">🔗 ผูกกับเอกสารต้นทาง</button>`;
           }
           if (d.sourceLinkedAt) {
-            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.unlinkSource('${d.id}')" title="ยกเลิกการผูกกับใบเสนอราคา (ผูกไว้ภายหลัง ไม่ได้แปลงมา)">✂️ ยกเลิกการผูก</button>`;
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.unlinkSource('${d.id}')" title="ยกเลิกการผูกกับเอกสารต้นทาง (ผูกไว้ภายหลัง ไม่ได้แปลงมา)">✂️ ยกเลิกการผูก</button>`;
           }
           if (d.status === 'Approved' || d.status === 'Sent') {
             if (d.documentType === 'Quotation') {
@@ -13013,8 +13013,11 @@
           if (res.blockedReason) { Layout.toast(res.blockedReason, 'warning', 8000); return; }
           this._linkData = res;
           document.getElementById('linkChildId').value = id;
+          // ชื่อชนิดต้นทางมาจากเซิร์ฟเวอร์ (DocumentLinkPolicy.SourceLabel / DocumentTypeNames) — หน้าเว็บไม่แปลเอง
+          document.getElementById('linkSourceTitle').textContent = res.sourceLabel || 'เอกสารต้นทาง';
+          document.getElementById('linkSourceLabel').textContent = res.sourceLabel || 'เอกสารต้นทาง';
           document.getElementById('linkSourceSelect').innerHTML = res.candidates.map(c =>
-            `<option value="${Layout.esc(c.id)}">${Layout.esc(c.documentNumber)} · ${Layout.date(c.documentDate)} · ยอด ${Layout.money(c.sourceBaseAmount)} · วางบิลแล้ว ${Layout.money(c.billedBaseAmount)}</option>`).join('');
+            `<option value="${Layout.esc(c.id)}">${Layout.esc(c.sourceTypeName || '')} ${Layout.esc(c.documentNumber)} · ${Layout.date(c.documentDate)} · ยอด ${Layout.money(c.sourceBaseAmount)} · วางบิลแล้ว ${Layout.money(c.billedBaseAmount)}</option>`).join('');
           this.renderLinkMap();
           Layout.openModal('linkSourceModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -13026,7 +13029,7 @@
         const cand = res.candidates.find(c => c.id === srcId); if (!cand) return;
         const remaining = Math.max(0, Number(cand.sourceBaseAmount) - Number(cand.billedBaseAmount));
         document.getElementById('linkSourceInfo').innerHTML =
-          `ยอดใบเสนอราคา <b>${Layout.money(cand.sourceBaseAmount)}</b> · วางบิลแล้ว <b>${Layout.money(cand.billedBaseAmount)}</b> · คงเหลือ <b>${Layout.money(remaining)}</b> (ก่อน VAT)`;
+          `ยอด${Layout.esc(cand.sourceTypeName || 'ต้นทาง')} <b>${Layout.money(cand.sourceBaseAmount)}</b> · วางบิลแล้ว <b>${Layout.money(cand.billedBaseAmount)}</b> · คงเหลือ <b>${Layout.money(remaining)}</b> (ก่อน VAT)`;
         const suggested = Object.fromEntries((cand.suggestedMap || []).map(m => [m.childLineId, m.sourceLineId]));
         const opts = sel => `<option value="">— ไม่นับ —</option>` + cand.sourceLines.map(sl =>
           `<option value="${Layout.esc(sl.id)}" ${sl.id === sel ? 'selected' : ''}>${Layout.esc(sl.description || '')} (${Layout.money(sl.amount)})</option>`).join('');
@@ -13034,7 +13037,7 @@
           <thead><tr style="background:#f8fafc">
             <th style="padding:6px 8px;text-align:left;font-size:11.5px;color:#6b7280">รายการในเอกสารนี้</th>
             <th style="padding:6px 8px;text-align:right;font-size:11.5px;color:#6b7280">ยอด</th>
-            <th style="padding:6px 8px;text-align:left;font-size:11.5px;color:#6b7280">ตรงกับรายการในใบเสนอราคา</th>
+            <th style="padding:6px 8px;text-align:left;font-size:11.5px;color:#6b7280">ตรงกับรายการใน${Layout.esc(cand.sourceTypeName || 'ต้นทาง')}</th>
           </tr></thead>
           <tbody>${res.childLines.map(cl => `<tr style="border-top:1px solid #f1f5f9">
             <td style="padding:5px 8px;font-size:12.5px">${Layout.esc(cl.description || '')}</td>
@@ -13049,7 +13052,7 @@
         const sourceDocumentId = document.getElementById('linkSourceSelect').value;
         const lines = [...document.querySelectorAll('#linkMapTable .lnk-map')]
           .filter(s => s.value).map(s => ({ childLineId: s.dataset.child, sourceLineId: s.value }));
-        if (!lines.length) { Layout.toast('เลือกอย่างน้อย 1 รายการที่ตรงกับใบเสนอราคา', 'error'); return; }
+        if (!lines.length) { Layout.toast('เลือกอย่างน้อย 1 รายการที่ตรงกับเอกสารต้นทาง', 'error'); return; }
         try {
           try {
             await api.linkDocumentSource(id, { sourceDocumentId, lines, confirmOverSourceAmount: false });
@@ -13059,7 +13062,7 @@
             await api.linkDocumentSource(id, { sourceDocumentId, lines, confirmOverSourceAmount: true });
           }
           Layout.closeModal('linkSourceModal');
-          Layout.toast('ผูกกับใบเสนอราคาแล้ว — ใบเสนอราคานับยอดของใบนี้แล้ว', 'success');
+          Layout.toast('ผูกกับเอกสารต้นทางแล้ว — ต้นทางนับยอดของใบนี้แล้ว', 'success');
           await this.load();
           this.detail(id);
         } catch (e) { Layout.toast(e.message, 'error', 8000); }
@@ -13067,7 +13070,7 @@
 
       async unlinkSource(id) {
         const api = Layout.api(); if (!api) return;
-        if (!confirm('ยกเลิกการผูกเอกสารนี้กับใบเสนอราคา? (ใบเสนอราคาจะไม่นับยอดของใบนี้อีก — เนื้อเอกสารไม่เปลี่ยน)')) return;
+        if (!confirm('ยกเลิกการผูกเอกสารนี้กับเอกสารต้นทาง? (ต้นทางจะไม่นับยอดของใบนี้อีก — เนื้อเอกสารไม่เปลี่ยน)')) return;
         try {
           await api.unlinkDocumentSource(id);
           Layout.toast('ยกเลิกการผูกแล้ว', 'success');
