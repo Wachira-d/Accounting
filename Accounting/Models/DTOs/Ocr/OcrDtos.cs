@@ -272,7 +272,10 @@ public record OcrLineItemDto(
     /// รายงานภาษีซื้อ §87</para></summary>
     decimal? VatRate = null,
     /// <summary>ภาษีของบรรทัดนี้หลังเฉลี่ยยอดจากหัวใบ (เฉพาะบรรทัดที่อัตรา &gt; 0)</summary>
-    decimal? VatAmount = null);
+    decimal? VatAmount = null,
+    /// <summary>ส่วนลดรายบรรทัดก่อน VAT (<c>round(Quantity × UnitPrice) − LineDiscountAmount = Amount</c>) — หน้า review แสดง/แก้ได้ ·
+    /// นำเข้าสต็อกใช้ทุนหลังลด (ฝ่ายค้านรอบสอง f1690d11 ข้อ 3/4: เดิม DTO ไม่มีช่องนี้ ⇒ ส่วนลดซ่อน + ทุนสต็อกเป็นราคาก่อนลด)</summary>
+    decimal? LineDiscountAmount = null);
 
 public record OcrCreditPurchaseRequest(int Pages);
 

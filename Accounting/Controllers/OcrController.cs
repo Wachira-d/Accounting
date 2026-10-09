@@ -712,9 +712,10 @@ public class OcrController : ControllerBase
         }, req.ProjectId.HasValue ? "บันทึก project ของบรรทัดแล้ว" : "ยกเลิก project ของบรรทัดแล้ว"));
     }
 
+    /// <param name="LineDiscount">ส่วนลดรายบรรทัดก่อน VAT (คอลัมน์ "ส่วนลด" ของหน้ารีวิว) — null = ไม่แตะ · 0 = ล้าง</param>
     public sealed record SetLineFieldsRequest(
         int LineIndex, string? Description, decimal? Quantity, decimal? UnitPrice,
-        string? AccountCode = null);
+        string? AccountCode = null, decimal? LineDiscount = null);
 
     /// <summary>action = "add" | "delete" · LineIndex ใช้เฉพาะตอน delete</summary>
     public sealed record ModifyLineRequest(string Action, int LineIndex = -1);
@@ -728,13 +729,18 @@ public class OcrController : ControllerBase
     {
         var deny = await ScanGateAsync(companyId, scanId, "แก้บรรทัดของสแกน", write: true);
         if (deny != null) return deny;
-        var amount = await _service.SetExtractedLineFieldsAsync(companyId, scanId,
-            req.LineIndex, req.Description, req.Quantity, req.UnitPrice, req.AccountCode);
+        var (amount, lineDiscount, discountDropped) = await _service.SetExtractedLineFieldsAsync(companyId, scanId,
+            req.LineIndex, req.Description, req.Quantity, req.UnitPrice, req.AccountCode, req.LineDiscount);
+        // ส่วนลดที่เกินยอดก่อนลดถูกทิ้ง — บอกผู้ใช้ตรง ๆ (ห้ามเงียบ · CLAUDE #4A) หน้าแสดงข้อความนี้เป็นคำเตือน
         return Ok(new ApiResponse<object>(true, new
         {
             lineIndex = req.LineIndex,
             amount,
-        }, "บันทึกบรรทัดแล้ว"));
+            lineDiscount,
+            discountDropped,
+        }, discountDropped
+            ? "บันทึกบรรทัดแล้ว — ส่วนลดเกินยอดก่อนลด (จำนวน × ราคา) ระบบล้างส่วนลดของบรรทัดนี้ กรุณาตรวจส่วนลดกับเอกสารอีกครั้ง"
+            : "บันทึกบรรทัดแล้ว"));
     }
 
     /// <summary>เพิ่ม/ลบบรรทัดรายการของผลสแกน — เดิมตาราง review ทำไม่ได้เลย</summary>
@@ -868,8 +874,12 @@ public class OcrController : ControllerBase
         // suggested category + useful-life + confidence. Pre-filtered
         // by the ฿5k threshold + capital-asset keyword list. Cheap
         // (pure in-memory).
+        // ทุนต่อหน่วยจริง = หลังส่วนลดบรรทัด (e-Tax XML · ฝ่ายค้านรอบสอง f1690d11 ข้อ 3) — ตัวเดียวกับที่เติมช่องทุนนำเข้าสต็อกข้างล่าง
+        var effectiveCosts = lines
+            .Select(l => Accounting.Helpers.OcrEtaxLineNormalizer.EffectiveUnitCost(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscountAmount))
+            .ToList();
         var assetDecisions = Services.Implementations.Ocr.FixedAssetDetector.Analyze(
-            lines.Select(l => (l.Description, l.Quantity, l.UnitPrice, l.Amount)).ToList());
+            lines.Select((l, li) => (l.Description, l.Quantity, effectiveCosts[li], l.Amount)).ToList());
 
         // ดึง global pattern ของทุกบรรทัดครั้งเดียวก่อนเข้าลูป — เดิม MatchAsync
         // ยิง GetActivePatternAsync (ตัวเดี่ยว) ทุกบรรทัด = N+1 query ต่อการสแกน
@@ -893,16 +903,17 @@ public class OcrController : ControllerBase
             bool priceAnomaly = false;
             decimal? expectedCost = null;
             string? priceHint = null;
-            if (best != null && line.UnitPrice.HasValue && best.CostPrice > 0)
+            var effCost = effectiveCosts[i];
+            if (best != null && effCost.HasValue && best.CostPrice > 0)
             {
                 expectedCost = best.CostPrice;
-                var diff = Math.Abs(line.UnitPrice.Value - best.CostPrice);
+                var diff = Math.Abs(effCost.Value - best.CostPrice);
                 var pct = diff / best.CostPrice;
                 if (pct >= 0.30m && diff >= 5m)  // 30%+ AND ≥ 5฿ absolute
                 {
                     priceAnomaly = true;
-                    var dir = line.UnitPrice.Value > best.CostPrice ? "สูงกว่า" : "ต่ำกว่า";
-                    priceHint = $"ราคา OCR ฿{line.UnitPrice:N2} {dir}ทุนเดิม ฿{best.CostPrice:N2} ({Math.Round(pct * 100)}%) — ตรวจสอบว่าจับคู่ถูกชนิด/ขนาดไหม";
+                    var dir = effCost.Value > best.CostPrice ? "สูงกว่า" : "ต่ำกว่า";
+                    priceHint = $"ราคา OCR ฿{effCost:N2} {dir}ทุนเดิม ฿{best.CostPrice:N2} ({Math.Round(pct * 100)}%) — ตรวจสอบว่าจับคู่ถูกชนิด/ขนาดไหม";
                 }
             }
 
@@ -1002,7 +1013,9 @@ public class OcrController : ControllerBase
                 AssetConfidence: dec != null ? (double)dec.ConfidenceScore : null,
                 AssetReasons: dec?.Reasons,
                 DefaultDestination: defaultDest,
-                GlobalAssetSuggestion: globalAssetSugg));
+                GlobalAssetSuggestion: globalAssetSugg,
+                LineDiscountAmount: line.LineDiscountAmount,
+                EffectiveUnitCost: effCost));
         }
 
         return Ok(new ApiResponse<OcrStockPreviewResponse>(true, new OcrStockPreviewResponse(

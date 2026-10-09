@@ -14637,7 +14637,11 @@ public partial class DocumentService : IDocumentService
                 TargetDocumentType: doc.DocumentType.ToString());
 
             var change = Accounting.Helpers.OcrPostedTruth.Diff(current, posted);
-            var linesJson = BuildScanItemsJsonFromLines(approvedLines);
+            // ฝ่ายค้านรอบสอง f1690d11 ข้อ 2: สแกน e-Tax (หรือสำเนาของมัน) ต้องเขียนกลับพร้อมธง "จำนวนจากเอกสารที่ลงนาม" + ส่วนลดบรรทัด —
+            // ไม่งั้นสร้างใหม่/ดึงรายการซ้ำ/สำเนาจากอัปไฟล์ซ้ำ รันตัวกันจำนวนระเบิดแล้วหารจำนวนใหม่อีกรอบ
+            var linesJson = BuildScanItemsJsonFromLines(approvedLines,
+                Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(scan.OcrEngine)
+                || Accounting.Helpers.OcrEtaxLineNormalizer.ItemsJsonCarriesSignedQuantities(scan.ExtractedItemsJson));
             var linesChanged = linesJson != null && linesJson != scan.ExtractedItemsJson;
             // ── คำตัดสินข้อ 28 (รอบ 200 ทีม K2 · ฝ่ายค้าน K R2): WHT ที่คนแก้ใน "ฟอร์มเอกสาร" ต้องถึงวงจรเรียนรู้ ──
             // baseline = ค่า WHT บนแถวสแกน (ตัวเดียวกับ K-10) · ต่างจริงเท่านั้น (เอกสารที่สร้างจากสแกนโดยไม่มีใครแตะ = ว่าง ⇒ ไม่สอนตัวเอง) ·
@@ -14718,8 +14722,10 @@ public partial class DocumentService : IDocumentService
 
     /// <summary>แปลงบรรทัดของเอกสารที่อนุมัติแล้วกลับเป็นรูป
     /// <c>OcrScanResult.ExtractedItemsJson</c> เพื่อให้นักเรียนแตกบรรทัดเรียนจาก
-    /// ชุดบรรทัดที่ <b>ลงบัญชีจริง</b> · คืน <c>null</c> เมื่อไม่มีบรรทัด</summary>
-    private static string? BuildScanItemsJsonFromLines(List<DocumentLine> lines)
+    /// ชุดบรรทัดที่ <b>ลงบัญชีจริง</b> · คืน <c>null</c> เมื่อไม่มีบรรทัด
+    /// <para>ส่วนลดบรรทัด (<c>LineDiscountAmount</c>) + ธง <c>QuantityFromEtaxXml</c> ต้องไปด้วย — ชื่อช่องตรงกับ <c>OcrExtractedLineItem</c>
+    /// (ฝ่ายค้านรอบสอง f1690d11 ข้อ 2: เดิมเขียนกลับแค่ จำนวน/ราคา/ยอด ⇒ ส่วนลดหาย แล้วจำนวนถูกหารใหม่ตอนสร้างซ้ำ)</para></summary>
+    private static string? BuildScanItemsJsonFromLines(List<DocumentLine> lines, bool quantitiesFromSignedXml)
     {
         var usable = lines
             .Where(l => !string.IsNullOrWhiteSpace(l.Description))
@@ -14734,6 +14740,8 @@ public partial class DocumentService : IDocumentService
             UnitPrice = l.UnitPrice,
             Amount = l.Amount,
             VatRate = l.VatRate,
+            LineDiscountAmount = l.DiscountAmount > 0m ? l.DiscountAmount : (decimal?)null,
+            QuantityFromEtaxXml = quantitiesFromSignedXml,
         }));
     }
 

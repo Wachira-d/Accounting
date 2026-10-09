@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **470 ไฟล์ · 4,558 `[Fact]` + 719 `[Theory]` (3,171 `InlineData`)** ณ 2026-10-09 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **470 ไฟล์ · 4,564 `[Fact]` + 720 `[Theory]` (3,173 `InlineData`)** ณ 2026-10-09 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -3952,6 +3952,9 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | O-126 | เพิ่มคอลัมน์ข้อความใหม่ให้ `OcrScanResult` แล้วรันเทสต์ | `OcrScanPiiTests` ต้อง**แดง** จนกว่าจะตัดสินว่าช่องนั้นเป็นข้อมูลส่วนบุคคลหรือไม่ |
 | O-127 | การ์ดผลสแกนที่ระบบแนะนำ "บันทึกเข้า Stock" จากบรรทัดตรง Product master (ไม่ใช่จากประวัติผู้ขาย) | ป้ายบนการ์ดต้อง**ไม่**ฟันธงว่า "ผู้ขายรายนี้เคยนำเข้าสินค้า" — เหตุผลจริงอ่านได้ที่ `[EntryMode]` ในแผง Processing Notes |
 | O-128 | อัปโหลด PDF/A-3 e-Tax ของ CRC ไทวัสดุ (`SRCIE26100075384` · ราคาต่อหน่วย **รวม VAT** + ส่วนลดรายบรรทัดรวม VAT · `AllowanceTotalAmount` 1,080) แล้วสร้างเอกสาร | ทุกบรรทัด **จำนวนตาม XML** (3 · 4 · 12 · 10 · 6 · 6 · 4 · 1 · 120 — ไม่ใช่ 2.13/37.38) · ราคาต่อหน่วยก่อน VAT (37.00 → 34.58) · `DiscountAmount` บรรทัด = ส่วนลดก่อน VAT (24.94) · ยอดบรรทัด = `NetLineTotalAmount` · Σ 2,991.59 + VAT 209.41 = 3,201.00 · **ไม่มี** `[Gateway] Qty × UnitPrice ≠ Amount` และไม่มีผลต่างปัดเศษ · ส่วนลดหัวใบไม่ถูกหักซ้ำ · ใบ Shopee (ราคาก่อน VAT ไม่มีส่วนลด) ผลเท่าเดิม — `OcrEtaxLineNormalizerTests` |
+| O-129 | (ฝ่ายค้านรอบสอง f1690d11) e-Tax ราคารวม VAT **ไม่มีส่วนลดบนกระดาษ** — 7 × 10.00 (XML ยอดก่อน VAT 65.42) · 120 × 1.00 (112.15) → สร้างเอกสาร แล้วเปิดแก้ + บันทึกโดยไม่แตะอะไร | บรรทัด 7 × 9.35 − 0.03 = 65.42 · 120 × 0.94 − 0.65 = 112.15 (เศษจากการถอด VAT อยู่ในคอลัมน์ส่วนลดของบรรทัด) · บันทึกซ้ำแล้วยอด/ยอดรวม**ไม่ขยับ** · ใบที่ถอดแล้วลงตัว (3 × 37.00) ไม่มีส่วนลดแต่ง |
+| O-130 | อนุมัติเอกสารจากสแกน e-Tax แล้วกด "สร้างใหม่"/ดึงรายการซ้ำ/อัปโหลดไฟล์เดิมซ้ำ (สำเนา engine Cached) | จำนวนยังเป็นตาม XML (3 · 120) **ไม่ถูกหารใหม่** · ส่วนลดบรรทัดยังอยู่ · บรรทัด e-Tax ≤ ฿1 ไม่ถูกยุบ/ลบ · บรรทัดซ้ำบน e-Tax ไม่ถูกรวม (กระดาษ OCR ยังยุบ/รวมตามเดิม) |
+| O-131 | หน้า review ของสแกน e-Tax: คอลัมน์ "ส่วนลด" + นำเข้าสต็อก | เห็นส่วนลดทุกบรรทัด (24.94 …) แก้ได้ · แก้จำนวน/ราคาแล้วส่วนลดคงเดิม · ตั้งส่วนลดเกินยอดก่อนลด ⇒ ระบบล้างส่วนลด**และขึ้นคำเตือน** · ช่องทุนนำเข้าสต็อกเติม 26.2667 (ยอดหลังลด ÷ จำนวน) ไม่ใช่ 34.58 · ตัวตรวจสินทรัพย์ถาวรใช้ทุนหลังลด — `OcrEtaxLineNormalizerTests` |
 | E-01 | บริษัทที่ **ยังไม่ได้ตั้งค่า RD API key/URL** กด "นำส่ง e-Tax" | ต้องได้ error ไทยที่บอกทางไปต่อ (`ETAX-RD-NOT-CONFIGURED`) และสถานะยังเป็น **Signed** — ห้ามเป็น `Submitted` และ `SubmissionId` ต้องว่าง (เดิมประทับ `OFFLINE-…` แล้วล็อกเอกสารถาวร: ส่งซ้ำไม่ได้ · void ไม่ได้) |
 | E-02 | บริษัทเดียวกันเปิด `EtaxAutoSubmit` แล้วกด "ลงนาม" | ต้องได้ผลว่า **ลงนามสำเร็จ** (ไม่ล้มทั้งคำขอ) พร้อม `ErrorMessage` บอกว่ายังไม่ได้นำส่ง |
 | E-03 | ฐานข้อมูลที่มีแถวเก่า `SubmissionId LIKE 'OFFLINE-%'` + `Status=Submitted` | หลัง migration ต้องกลับเป็น `Status=Signed` · `SubmittedAt=NULL` · `SubmissionId=NULL` · `ErrorCode='RD_API_NOT_CONFIGURED'` |

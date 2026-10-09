@@ -239,10 +239,169 @@ public class OcrEtaxLineNormalizerTests
         Assert.Equal(0m, OcrEtaxLineNormalizer.ProvenLineDiscount(3m, 34.58m, 78.80m, null));
         Assert.Equal(0m, OcrEtaxLineNormalizer.ProvenLineDiscount(3m, 34.58m, 78.80m, 200m));   // เกินยอดก่อนลด
         // แก้ชื่อรายการเฉย ๆ ⇒ ยอดยังเป็นยอดหลังลด (เดิมกลับเป็น 103.74)
-        Assert.Equal((78.80m, (decimal?)24.94m), OcrEtaxLineNormalizer.AmountAfterLineDiscount(3m, 34.58m, 24.94m));
+        Assert.Equal((78.80m, (decimal?)24.94m, false), OcrEtaxLineNormalizer.AmountAfterLineDiscount(3m, 34.58m, 24.94m));
         // ผู้ใช้ลดราคาจนส่วนลดเกินยอดก่อนลด ⇒ ทิ้งส่วนลด (ยอดติดลบไม่มีจริง)
-        Assert.Equal((10.00m, (decimal?)null), OcrEtaxLineNormalizer.AmountAfterLineDiscount(1m, 10.00m, 24.94m));
+        Assert.Equal((10.00m, (decimal?)null, true), OcrEtaxLineNormalizer.AmountAfterLineDiscount(1m, 10.00m, 24.94m));
         // ไม่มีส่วนลด = สูตรเดิม round(จำนวน × ราคา)
-        Assert.Equal((103.74m, (decimal?)null), OcrEtaxLineNormalizer.AmountAfterLineDiscount(3m, 34.58m, null));
+        Assert.Equal((103.74m, (decimal?)null, false), OcrEtaxLineNormalizer.AmountAfterLineDiscount(3m, 34.58m, null));
+    }
+
+    // ══ ฝ่ายค้านรอบสอง (2026-10-09) ══════════════════════════════════════════════════════════════
+
+    /// <summary>สมการที่ DocumentService.ComputeLineAmounts คิดตอนเปิดแก้แล้วบันทึก (ราคาก่อน VAT): round(จำนวน × ราคา) − min(ส่วนลด, ยอดก่อนลด)</summary>
+    private static decimal Resave(decimal q, decimal p, decimal? d)
+    {
+        var gross = R2(q * p);
+        return gross - (d is > 0m ? Math.Min(R2(d.Value), gross) : 0m);
+    }
+
+    [Theory]
+    // ราคารวม VAT ไม่มีส่วนลดบนกระดาษ — เศษจากการถอด VAT ต้องมีที่อยู่ (ข้อ 1)
+    [InlineData(7, 10.00, 65.42, 70.00, 9.35, 0.03)]      // 9.35 × 7 = 65.45 > 65.42
+    [InlineData(120, 1.00, 112.15, 120.00, 0.94, 0.65)]   // 0.93 × 120 = 111.60 < 112.15 ⇒ ขยับราคาเป็น 0.94
+    public void ราคารวมVAT_ไม่มีส่วนลด_บรรทัดลงตัวพอดี_บันทึกซ้ำแล้วยอดไม่หลุด(
+        int qty, double gross, double net, double netIncl, double expectPrice, double expectDisc)
+    {
+        var n = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(
+            qty, (decimal)gross, null, null, 7m, (decimal)net, (decimal)netIncl));
+        Assert.Equal(OcrEtaxPriceBasis.InclusiveOfVat, n.Basis);
+        Assert.Equal((decimal)qty, n.Quantity);
+        Assert.Equal((decimal)expectPrice, n.UnitPrice);
+        Assert.Equal((decimal)expectDisc, n.LineDiscount);
+        Assert.Equal((decimal)net, n.Amount);
+        Assert.Equal((decimal)net, Resave(qty, n.UnitPrice!.Value, n.LineDiscount));
+        // ตัวสร้างบรรทัด/ด่านเห็นเป็นส่วนลดที่อธิบายยอดได้ (ไม่ใช่จำนวนผิด)
+        Assert.Equal((decimal)expectDisc, OcrEtaxLineNormalizer.ProvenLineDiscount(qty, n.UnitPrice, n.Amount, n.LineDiscount));
+    }
+
+    [Fact]
+    public void ราคารวมVAT_ถอดแล้วลงตัวอยู่แล้ว_ไม่แต่งส่วนลด()
+    {
+        // 3 × 37.00 (รวม VAT) = 111 ⇒ 103.74 = 3 × 34.58 พอดี ⇒ ไม่มีเศษ ไม่มีส่วนลด
+        var n = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(3m, 37.00m, null, null, 7m, 103.74m, 111.00m));
+        Assert.Equal(OcrEtaxPriceBasis.InclusiveOfVat, n.Basis);
+        Assert.Equal((3m, 34.58m, 103.74m), (n.Quantity!.Value, n.UnitPrice!.Value, n.Amount!.Value));
+        Assert.Null(n.LineDiscount);
+    }
+
+    [Fact]
+    public void ใบCRC_ทุกบรรทัดบันทึกซ้ำแล้วยอดเท่าXML()
+    {
+        var lines = Crc().Items.Select(Norm).ToList();
+        Assert.All(lines, n => Assert.Equal(n.Amount!.Value, Resave(n.Quantity!.Value, n.UnitPrice!.Value, n.LineDiscount)));
+        Assert.Equal(2991.59m, lines.Sum(n => Resave(n.Quantity!.Value, n.UnitPrice!.Value, n.LineDiscount)));
+    }
+
+    private static OcrExtractedData CrcItemsWithoutPerLineFlag(bool keepDiscount)
+    {
+        var d = new OcrExtractedData();
+        foreach (var li in Crc().Items)
+        {
+            var it = ToItem(li, Norm(li));
+            it.QuantityFromEtaxXml = false;              // JSON ที่ธงหาย (เขียนกลับแบบเดิม · สำเนาเก่า)
+            if (!keepDiscount) it.LineDiscountAmount = null;
+            d.Items.Add(it);
+        }
+        return d;
+    }
+
+    [Fact]
+    public void สแกนEtax_ธงรายบรรทัดหาย_engineยังคุ้มครองจำนวน()
+    {
+        // ข้อ 2: เส้นสร้างซ้ำ/พรีวิว/ดึงรายการซ้ำ ส่ง IsEtaxEngine(result.OcrEngine) — ส่วนลดหายด้วยก็ห้ามหารจำนวน
+        var d = CrcItemsWithoutPerLineFlag(keepDiscount: false);
+        OcrService.SanitizeVatSplitArtifacts(d, quantitiesFromSignedXml: OcrEtaxLineNormalizer.IsEtaxEngine("EtaxXml"));
+        Assert.Equal(new[] { 3m, 4m, 12m, 10m, 6m, 6m, 4m, 1m, 120m }, d.Items.Select(x => x.Quantity!.Value).ToArray());
+        // ทิศตรงข้าม: engine อื่น + ไม่มีธง + ไม่มีส่วนลด ⇒ ตัวกันจำนวนระเบิดทำงานตามเดิม (กระดาษที่อ่านหลงคอลัมน์)
+        var paper = CrcItemsWithoutPerLineFlag(keepDiscount: false);
+        OcrService.SanitizeVatSplitArtifacts(paper, quantitiesFromSignedXml: OcrEtaxLineNormalizer.IsEtaxEngine("AzureDI"));
+        Assert.NotEqual(3m, paper.Items[0].Quantity);
+        Assert.False(OcrEtaxLineNormalizer.IsEtaxEngine("Cached"));
+        Assert.False(OcrEtaxLineNormalizer.IsEtaxEngine(null));
+    }
+
+    [Fact]
+    public void JSONเขียนกลับตอนอนุมัติ_ชื่อช่องตรง_ส่วนลดและธงกลับมาครบ()
+    {
+        // รูปเดียวกับ DocumentService.BuildScanItemsJsonFromLines (ชื่อช่องต้องตรง OcrExtractedLineItem)
+        const string approved = """
+[{"Description":"ยางแบนรองขาแอร์","Quantity":3,"Unit":"ชิ้น","UnitPrice":34.58,"Amount":78.80,"VatRate":7,"LineDiscountAmount":24.94,"QuantityFromEtaxXml":true},
+ {"Description":"ค่าขนส่ง CTD","Quantity":120,"Unit":"ชิ้น","UnitPrice":0.93,"Amount":37.38,"VatRate":7,"LineDiscountAmount":74.22,"QuantityFromEtaxXml":true}]
+""";
+        var items = System.Text.Json.JsonSerializer.Deserialize<List<OcrExtractedLineItem>>(approved)!;
+        Assert.Equal(24.94m, items[0].LineDiscountAmount);
+        Assert.True(items[0].QuantityFromEtaxXml);
+        Assert.True(OcrEtaxLineNormalizer.ItemsJsonCarriesSignedQuantities(approved));
+        var d = new OcrExtractedData();
+        foreach (var it in items) d.Items.Add(it);
+        OcrService.SanitizeVatSplitArtifacts(d);   // engine "Cached" (สำเนา) — ธงรายบรรทัดพอ
+        Assert.Equal((3m, 120m), (d.Items[0].Quantity!.Value, d.Items[1].Quantity!.Value));
+
+        // ทิศตรงข้าม = บั๊กเดิม: เขียนกลับแบบเก่า (ไม่มีสองช่อง) ⇒ จำนวนถูกหารใหม่
+        const string legacy = """[{"Description":"ยางแบนรองขาแอร์","Quantity":3,"Unit":"ชิ้น","UnitPrice":34.58,"Amount":78.80,"VatRate":7}]""";
+        Assert.False(OcrEtaxLineNormalizer.ItemsJsonCarriesSignedQuantities(legacy));
+        var old = new OcrExtractedData();
+        old.Items.AddRange(System.Text.Json.JsonSerializer.Deserialize<List<OcrExtractedLineItem>>(legacy)!);
+        OcrService.SanitizeVatSplitArtifacts(old);
+        Assert.Equal(2.279m, old.Items[0].Quantity);
+        Assert.False(OcrEtaxLineNormalizer.ItemsJsonCarriesSignedQuantities(null));
+        Assert.False(OcrEtaxLineNormalizer.ItemsJsonCarriesSignedQuantities("{not json"));
+    }
+
+    [Fact]
+    public void บรรทัดEtax_ไม่เกิน1บาท_ไม่ถูกยุบหรือลบ_ไม่รวมบรรทัดซ้ำ()
+    {
+        // ข้อ 5: ของจริงราคา 1 บาท (ถุง · ค่าส่ง) บนใบที่ลงนาม ห้ามถูกตีเป็น "เศษ"
+        OcrExtractedData Build(bool signed)
+        {
+            var d = new OcrExtractedData();
+            d.Items.Add(new OcrExtractedLineItem { Description = "สินค้า A", Quantity = 1m, UnitPrice = 500m, Amount = 500m, QuantityFromEtaxXml = signed });
+            d.Items.Add(new OcrExtractedLineItem { Description = "ถุงพลาสติก", Quantity = 1m, UnitPrice = 0.93m, Amount = 0.93m, QuantityFromEtaxXml = signed });
+            d.Items.Add(new OcrExtractedLineItem { Description = "สินค้า A", Quantity = 1m, UnitPrice = 500m, Amount = 500m, QuantityFromEtaxXml = signed });
+            return d;
+        }
+        var etax = Build(signed: true);
+        OcrService.SanitizeVatSplitArtifacts(etax);
+        Assert.Equal(3, etax.Items.Count);
+        Assert.Equal(0.93m, etax.Items[1].Amount);
+        Assert.Equal(1000.93m, etax.Items.Sum(x => x.Amount!.Value));
+        // ทิศตรงข้าม: กระดาษ OCR ⇒ เศษ 0.93 ยุบเข้าบรรทัดใหญ่ (พฤติกรรมเดิม — ยอดรวมคงเดิม บรรทัด 0.93 หายไป)
+        var paper = Build(signed: false);
+        OcrService.SanitizeVatSplitArtifacts(paper);
+        Assert.Equal(2, paper.Items.Count);
+        Assert.DoesNotContain(paper.Items, x => x.Amount == 0.93m);
+        Assert.Equal(1000.93m, paper.Items.Sum(x => x.Amount!.Value));
+        // บรรทัดซ้ำ (ชื่อ+ราคาเดียวกัน) บนกระดาษ OCR ยังถูกรวม · บน e-Tax ไม่รวม
+        OcrExtractedData Dup(bool signed)
+        {
+            var d = new OcrExtractedData();
+            d.Items.Add(new OcrExtractedLineItem { Description = "ค่าแรง", Quantity = 1m, UnitPrice = 300m, Amount = 300m, QuantityFromEtaxXml = signed });
+            d.Items.Add(new OcrExtractedLineItem { Description = "ค่าแรง", Quantity = 1m, UnitPrice = 300m, Amount = 300m, QuantityFromEtaxXml = signed });
+            return d;
+        }
+        var dupEtax = Dup(true); OcrService.SanitizeVatSplitArtifacts(dupEtax);
+        Assert.Equal(2, dupEtax.Items.Count);
+        var dupPaper = Dup(false); OcrService.SanitizeVatSplitArtifacts(dupPaper);
+        Assert.Single(dupPaper.Items);
+        Assert.Equal(2m, dupPaper.Items[0].Quantity);
+    }
+
+    [Fact]
+    public void ทุนนำเข้าสต็อก_หลังส่วนลดบรรทัด_และDTOอ่านส่วนลดจากJSON()
+    {
+        // ข้อ 3: 3 × 34.58 − 24.94 = 78.80 ⇒ ทุน/หน่วย 26.2667 ไม่ใช่ 34.58
+        Assert.Equal(26.2667m, OcrEtaxLineNormalizer.EffectiveUnitCost(3m, 34.58m, 78.80m, 24.94m));
+        // ทิศตรงข้าม: ไม่มีส่วนลด / ส่วนลดที่ไม่อธิบายยอด ⇒ ราคาต่อหน่วยเดิม
+        Assert.Equal(34.58m, OcrEtaxLineNormalizer.EffectiveUnitCost(3m, 34.58m, 103.74m, null));
+        Assert.Equal(34.58m, OcrEtaxLineNormalizer.EffectiveUnitCost(3m, 34.58m, 78.80m, 5m));
+        // ตัวพรีวิวนำเข้าสต็อก (OcrController.StockPreview) อ่าน ExtractedItemsJson เป็น OcrLineItemDto แบบไม่สนตัวพิมพ์ — ส่วนลดต้องมาถึง
+        var json = OcrService.SerializeExtractedItems(new List<OcrExtractedLineItem>
+        {
+            new() { Description = "ยางแบนรองขาแอร์", Quantity = 3m, UnitPrice = 34.58m, Amount = 78.80m, LineDiscountAmount = 24.94m, QuantityFromEtaxXml = true },
+        });
+        var dto = System.Text.Json.JsonSerializer.Deserialize<List<Accounting.Models.DTOs.Ocr.OcrLineItemDto>>(json,
+            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        Assert.Equal(24.94m, dto[0].LineDiscountAmount);
+        Assert.Equal(26.2667m, OcrEtaxLineNormalizer.EffectiveUnitCost(dto[0].Quantity, dto[0].UnitPrice, dto[0].Amount, dto[0].LineDiscountAmount));
     }
 }

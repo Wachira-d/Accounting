@@ -5863,8 +5863,12 @@ RULES += [
          forbid=["Quantity = li.Quantity", "UnitPrice = li.UnitPrice"],
          why=_ETAX_LINE_WHY + "บรรทัด e-Tax ต้องผ่านตัวตัดสินราคารวม/ไม่รวม VAT + ส่วนลดบรรทัด — map ตรงจาก XML = ราคารวม VAT ในเอกสารราคาก่อน VAT"),
     dict(file=OCR, method="SanitizeVatSplitArtifacts",
-         must=["if (item.QuantityFromEtaxXml) continue;", "OcrEtaxLineNormalizer.ProvenLineDiscount("],
-         before=[("if (item.QuantityFromEtaxXml) continue;", "item.Quantity = fixedQty")],
+         must=["bool Signed(OcrExtractedLineItem it) => quantitiesFromSignedXml || it.QuantityFromEtaxXml;",
+               "if (Signed(item)) continue;", "OcrEtaxLineNormalizer.ProvenLineDiscount(",
+               "return emptyDesc && isPhantom && !Signed(it);", "!phantoms.Contains(it) && !Signed(it)",
+               "if (string.IsNullOrEmpty(desc) || Signed(item))"],
+         must_re=[r"var\s+phantoms\s*=\s*data\.Items\.Where\(\s*it\s*=>\s*!\s*Signed\(it\)"],
+         before=[("if (Signed(item)) continue;", "item.Quantity = fixedQty")],
          why=_ETAX_LINE_WHY + "ตัวกันจำนวนระเบิดห้ามหารจำนวนจากยอดบนบรรทัด e-Tax ที่พิสูจน์แล้ว · ส่วนลดบรรทัดไม่ใช่จำนวนผิด"),
     dict(file=OCR, method="BuildScanLinesAsync",
          must=["OcrEtaxLineNormalizer.ProvenLineDiscount(", "+ lineOwnDisc[i]", "lineGross[idx] + lineOwnDisc[idx]"],
@@ -5877,9 +5881,37 @@ RULES += [
          must=["OcrEtaxLineNormalizer.ProvenLineDiscount("],
          why=_ETAX_LINE_WHY + "ด่านต่อบรรทัดเทียบ จำนวน × ราคา − ส่วนลดบรรทัด กับยอด"),
     dict(file=OCR, method="SetExtractedLineFieldsAsync",
-         must=["OcrEtaxLineNormalizer.AmountAfterLineDiscount("],
+         must=["OcrEtaxLineNormalizer.AmountAfterLineDiscount(", "discountDropped = dropped",
+               "line.LineDiscountAmount = lineDiscount.Value > 0m ? lineDiscount.Value : null"],
+         must_re=[r"return\s*\(\s*line\.Amount\s*\?\?\s*0m\s*,\s*line\.LineDiscountAmount\s*,\s*discountDropped\s*\)"],
          forbid=["line.Amount = System.Math.Round(qty * up, 2, MidpointRounding.AwayFromZero)"],
          why=_ETAX_LINE_WHY + "แก้บรรทัดในหน้ารีวิวต้องคงส่วนลดบรรทัด (ไม่งั้นยอดกลับเป็นยอดก่อนลดเงียบ ๆ)"),
+]
+
+
+# ── ฝ่ายค้านรอบสอง f1690d11 (2026-10-09): ทุกเส้นที่อ่าน ExtractedItemsJson แล้วรันตัวกันจำนวนระเบิดต้องคุ้มครองสแกน e-Tax ·
+#    เขียนกลับตอนอนุมัติต้องพาส่วนลด+ธงไปด้วย · ทุนนำเข้าสต็อก = หลังส่วนลด · หน้ารีวิวบอกเมื่อส่วนลดถูกล้าง
+RULES += [
+    dict(file=OCR, method=m,
+         call_args=[("SanitizeVatSplitArtifacts(", "IsEtaxEngine")],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 2: สแกน e-Tax ห้ามถูกหารจำนวนใหม่ตอนสร้างซ้ำ/พรีวิว/ดึงรายการซ้ำ")
+    for m in ("ScanAsync", "CreateDocumentFromScanCoreAsync", "PreviewDocumentLinesAsync", "RepopulateDocumentLinesFromScanAsync")
+] + [
+    dict(file=DOC, method="BuildScanItemsJsonFromLines",
+         must=["LineDiscountAmount = l.DiscountAmount > 0m ? l.DiscountAmount : (decimal?)null",
+               "QuantityFromEtaxXml = quantitiesFromSignedXml"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 2: เขียนบรรทัดที่อนุมัติกลับลงสแกนต้องคงส่วนลด+ธงจำนวนจากเอกสารที่ลงนาม"),
+    dict(file=DOC, method="SyncScanToPostedDocumentAsync",
+         call_args=[("BuildScanItemsJsonFromLines(", "IsEtaxEngine"),
+                    ("BuildScanItemsJsonFromLines(", "ItemsJsonCarriesSignedQuantities")],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 2: สแกน e-Tax/สำเนาของมัน (engine Cached) ต้องได้ธงคืน"),
+    dict(file="Controllers/OcrController.cs", method="StockPreview",
+         must=["OcrEtaxLineNormalizer.EffectiveUnitCost(", "effectiveCosts[li]", "EffectiveUnitCost: effCost"],
+         forbid=["lines.Select(l => (l.Description, l.Quantity, l.UnitPrice, l.Amount))", "line.UnitPrice.Value - best.CostPrice"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 3: ทุนนำเข้าสต็อก/ตัวตรวจสินทรัพย์ = ยอดหลังส่วนลด ÷ จำนวน ไม่ใช่ราคาก่อนลด"),
+    dict(file="Controllers/OcrController.cs", method="SetLineFields",
+         must=["req.LineDiscount", "discountDropped"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 4: ส่วนลดบรรทัดแก้ได้จากหน้ารีวิว · ถูกล้างต้องบอกผู้ใช้"),
 ]
 
 

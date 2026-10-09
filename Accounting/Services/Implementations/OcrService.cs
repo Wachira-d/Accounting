@@ -872,7 +872,7 @@ public class OcrService : IOcrService
             // ทั้ง CreateDocumentFromScanAsync และ AutoCreateDocumentAsync ได้
             // ประโยชน์เหมือนกัน (ก่อนหน้านี้ AutoCreate path ไม่มี reconcile →
             // เอกสารที่สร้างจาก OCR API ได้บรรทัดผิดต่างจาก web UI).
-            SanitizeVatSplitArtifacts(extractedData);
+            SanitizeVatSplitArtifacts(extractedData, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(ocrEngineUsed));
 
             // หน่วยนับ: เอกสารไม่พิมพ์/โมเดลไม่ให้มา → อนุมานจากคำอธิบายด้วยกฎ
             // (ค่าไฟ→"หน่วย" kWh, น้ำ→ลบ.ม., เช่ารายเดือน→เดือน ฯลฯ) ก่อน
@@ -4637,10 +4637,14 @@ public class OcrService : IOcrService
     ///   • ยุบบรรทัดที่ description ตรงกันให้เหลือบรรทัดเดียว (sum amount/qty)
     ///   • drop บรรทัดที่ amount + unit_price เป็น 0 หรือ ≤ ฿1 (rounding artifact)
     /// Idempotent + side-effect-free นอกจาก mutate extractedData.Items.
+    /// <para><paramref name="quantitiesFromSignedXml"/> = สแกนมาจาก e-Tax XML (<c>OcrEtaxLineNormalizer.IsEtaxEngine</c>) ⇒ ทุกบรรทัดคือบรรทัดจริงของ
+    /// เอกสารที่ลงนาม: ไม่หารจำนวนใหม่ · ไม่ยุบเป็นเศษ/ไม่ลบ · ไม่รวมบรรทัดซ้ำ (ฝ่ายค้านรอบสอง f1690d11 ข้อ 2/5 — เส้นสร้างซ้ำ/ดึงรายการซ้ำ/
+    /// สำเนาจากอัปไฟล์ซ้ำ อ่าน JSON ที่ธงรายบรรทัดอาจหาย) · บรรทัดที่ติดธง <c>QuantityFromEtaxXml</c> ได้รับการคุ้มครองเดียวกัน</para>
     /// </summary>
-    internal static void SanitizeVatSplitArtifacts(OcrExtractedData data)
+    internal static void SanitizeVatSplitArtifacts(OcrExtractedData data, bool quantitiesFromSignedXml = false)
     {
         if (data?.Items == null || data.Items.Count == 0) return;
+        bool Signed(OcrExtractedLineItem it) => quantitiesFromSignedXml || it.QuantityFromEtaxXml;
 
         // Suffixes ที่บ่งบอกว่าเป็น footer split — ไม่ใช่ line item จริง.
         // ใช้ trailing-paren match (ตัดเฉพาะที่ขึ้นต้น "(" + จบ ")" ท้าย string)
@@ -4699,7 +4703,7 @@ public class OcrService : IOcrService
             if (amt <= 0m) continue;
             // ★ จำนวนจาก e-Tax XML ที่พิสูจน์สมการบรรทัดแล้ว (Helpers/OcrEtaxLineNormalizer) — เอกสารลงนามไม่มี "อ่านหลงคอลัมน์"
             // ห้ามหารจำนวนใหม่จากยอด (สแกน f1690d11: 3 ชิ้น → 2.13 · ค่าขนส่ง 120 → 37.38 เพราะส่วนลดบรรทัดทำให้ จำนวน × ราคา ≠ ยอด)
-            if (item.QuantityFromEtaxXml) continue;
+            if (Signed(item)) continue;
             var tol = System.Math.Max(1m, System.Math.Abs(amt) * 0.02m);
 
             // ราคา/หน่วยหาย แต่มียอด+จำนวน → หารหาให้ (บิลสาธารณูปโภคพิมพ์
@@ -4757,7 +4761,7 @@ public class OcrService : IOcrService
             var emptyDesc = string.IsNullOrWhiteSpace(it.Description);
             var isPhantom = Math.Abs(EffAmt(it)) <= PHANTOM_THRESHOLD
                 && Math.Abs(it.UnitPrice ?? 0m) <= PHANTOM_THRESHOLD;
-            return emptyDesc && isPhantom;
+            return emptyDesc && isPhantom && !Signed(it);
         });
 
         // 3) ⭐ FOLD phantom remainder (≤ ฿1) เข้าบรรทัดใหญ่สุด — รักษายอดรวม
@@ -4767,11 +4771,13 @@ public class OcrService : IOcrService
         //    ไม่ใช่สินค้าจริง (ขายของ 2 สตางค์ไม่มีจริง) → fold เข้าบรรทัดหลัก.
         if (data.Items.Count >= 2)
         {
+            // บรรทัดจาก e-Tax XML ≤ ฿1 คือสินค้าจริงที่ลงนามแล้ว (ค่าส่ง 1 บาท · ของแถม) — ไม่ใช่เศษ ห้ามยุบ/ลบ (ฝ่ายค้านรอบสอง ข้อ 5)
             var phantoms = data.Items.Where(it =>
-                EffAmt(it) > 0m
+                !Signed(it)
+                && EffAmt(it) > 0m
                 && EffAmt(it) <= PHANTOM_THRESHOLD
                 && (it.UnitPrice ?? 0m) <= PHANTOM_THRESHOLD).ToList();
-            var reals = data.Items.Where(it => !phantoms.Contains(it)).ToList();
+            var reals = data.Items.Where(it => !phantoms.Contains(it) && !Signed(it)).ToList();
             if (phantoms.Count > 0 && reals.Count > 0)
             {
                 var main = reals.OrderByDescending(EffAmt).First();
@@ -4812,7 +4818,8 @@ public class OcrService : IOcrService
                 ? Math.Round(item.UnitPrice!.Value, 2, MidpointRounding.AwayFromZero).ToString(System.Globalization.CultureInfo.InvariantCulture)
                 : "";
             var key = string.IsNullOrEmpty(desc) ? "" : desc + "\u0001" + priceKey;
-            if (string.IsNullOrEmpty(desc))
+            // บรรทัดของเอกสารที่ลงนาม = บรรทัดจริงแยกกัน (ไม่มี "VAT split" ใน XML) — ไม่รวม
+            if (string.IsNullOrEmpty(desc) || Signed(item))
             {
                 merged.Add(item);
                 continue;
@@ -4826,7 +4833,6 @@ public class OcrService : IOcrService
                     existing.LineDiscountAmount = (existing.LineDiscountAmount ?? 0m) + (item.LineDiscountAmount ?? 0m);
                 else if (existing.Quantity is decimal q && q > 0m && existing.Amount is decimal a)
                     existing.UnitPrice = Math.Round(a / q, 2, MidpointRounding.AwayFromZero);
-                existing.QuantityFromEtaxXml = existing.QuantityFromEtaxXml && item.QuantityFromEtaxXml;
                 if (string.IsNullOrEmpty(existing.SuggestedAccountCode)
                     && !string.IsNullOrEmpty(item.SuggestedAccountCode))
                     existing.SuggestedAccountCode = item.SuggestedAccountCode;
@@ -7180,7 +7186,7 @@ public class OcrService : IOcrService
         {
             var tmpSan = new OcrExtractedData();
             foreach (var it in items) tmpSan.Items.Add(it);
-            SanitizeVatSplitArtifacts(tmpSan);
+            SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine));
             items = tmpSan.Items.ToList();
         }
 
@@ -7955,7 +7961,7 @@ public class OcrService : IOcrService
         {
             var tmpSan = new OcrExtractedData();
             foreach (var it in items) tmpSan.Items.Add(it);
-            SanitizeVatSplitArtifacts(tmpSan);
+            SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine));
             items = tmpSan.Items.ToList();
         }
 
@@ -8491,7 +8497,7 @@ public class OcrService : IOcrService
         {
             var tmpSan = new OcrExtractedData();
             foreach (var it in items) tmpSan.Items.Add(it);
-            SanitizeVatSplitArtifacts(tmpSan);
+            SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine));
             items = tmpSan.Items.ToList();
         }
 
@@ -8890,9 +8896,12 @@ public class OcrService : IOcrService
     /// (ตาราง review แสดงเป็นข้อความอย่างเดียว) ทั้งที่กฎเหล็ก #3 ข้อ 1 บังคับ
     /// ให้มี <c>GlAccountCode</c> รายบรรทัด และการแก้ตรงนี้คือสิ่งที่
     /// GlAccountDistillationModel ใช้เรียน</param>
-    public async Task<decimal> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
+    /// <param name="lineDiscount">ส่วนลดรายบรรทัดก่อน VAT ที่ผู้ใช้แก้ในคอลัมน์ "ส่วนลด" ของหน้ารีวิว — null = ไม่แตะ · 0 = ล้าง
+    /// (ฝ่ายค้านรอบสอง f1690d11 ข้อ 4: เดิมส่วนลดเก็บไว้แต่ไม่แสดง/แก้ไม่ได้ ⇒ การแก้จำนวน/ราคาคงหรือทิ้งส่วนลดที่มองไม่เห็นเงียบ ๆ)</param>
+    /// <returns>ยอดใหม่ · ส่วนลดที่คงอยู่ · ส่วนลดถูกทิ้งเพราะเกินยอดก่อนลดไหม (หน้าต้องบอกผู้ใช้)</returns>
+    public async Task<(decimal Amount, decimal? LineDiscount, bool DiscountDropped)> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
         int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
-        string? accountCode = null)
+        string? accountCode = null, decimal? lineDiscount = null)
     {
         var scan = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -8912,7 +8921,7 @@ public class OcrService : IOcrService
             // ส่ง 1 แทนเพื่อให้ `Judge` ตรวจเฉพาะ "ติดลบ" ตามพฤติกรรมเดิมของเส้นนี้
             // ส่วนค่าติดลบยังถูกส่งเข้าไปตรง ๆ จึงยังถูกปฏิเสธ
             var lineSign = Accounting.Helpers.DocumentLineKind.Judge(
-                quantity is null or 0m ? 1m : quantity.Value, unitPrice ?? 0m, discountAmount: 0m);
+                quantity is null or 0m ? 1m : quantity.Value, unitPrice ?? 0m, discountAmount: lineDiscount ?? 0m);
             if (!lineSign.Ok)
                 throw new Accounting.Helpers.BusinessRuleException(
                     lineSign.Reason!, Accounting.Helpers.DocumentLineKind.SignRuleCode);
@@ -8937,24 +8946,28 @@ public class OcrService : IOcrService
         if (unitPrice.HasValue) line.UnitPrice = unitPrice.Value;
         if (accountCode != null)
             line.SuggestedAccountCode = accountCode.Trim() is { Length: > 0 } c ? c : null;
+        if (lineDiscount.HasValue)
+            line.LineDiscountAmount = lineDiscount.Value > 0m ? lineDiscount.Value : null;
 
         // recompute amount จาก qty×price ที่ (แก้แล้ว) — ถ้าครบทั้งคู่
         // บรรทัดที่มีส่วนลดรายบรรทัด (e-Tax XML) — ยอด = round(จำนวน × ราคา) − ส่วนลด · เดิม round(จำนวน × ราคา) ตรง ๆ ⇒ แก้แค่ชื่อรายการ
         // ยอดบรรทัดก็กลับเป็นยอดก่อนลดเงียบ ๆ (ตัวตัดสิน Helpers/OcrEtaxLineNormalizer.AmountAfterLineDiscount)
         var qty = line.Quantity ?? 0m;
         var up = line.UnitPrice ?? 0m;
+        var discountDropped = false;
         if (qty > 0m && up > 0m)
         {
-            var (amountAfterDisc, discKept) =
+            var (amountAfterDisc, discKept, dropped) =
                 Accounting.Helpers.OcrEtaxLineNormalizer.AmountAfterLineDiscount(qty, up, line.LineDiscountAmount);
             line.Amount = amountAfterDisc;
             line.LineDiscountAmount = discKept;
+            discountDropped = dropped;
         }
 
         scan.ExtractedItemsJson = SerializeExtractedItems(items);
         scan.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        return line.Amount ?? 0m;
+        return (line.Amount ?? 0m, line.LineDiscountAmount, discountDropped);
     }
 
     /// <summary>
@@ -10016,7 +10029,7 @@ public class OcrService : IOcrService
             {
                 items = data.Items.Select(i => new OcrLineItemDto(
                     i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode,
-                    i.ProjectId, i.ProjectName, i.Unit, i.VatRate, i.VatAmount)).ToList();
+                    i.ProjectId, i.ProjectName, i.Unit, i.VatRate, i.VatAmount, i.LineDiscountAmount)).ToList();
             }
         }
 
@@ -10060,7 +10073,8 @@ public class OcrService : IOcrService
                     el.TryGetProperty("Unit", out var un) ? un.GetString() : null,
                     // E-OCR-01 — อัตรา/ยอดภาษีรายบรรทัดต้องกลับถึงหน้า review
                     el.TryGetProperty("VatRate", out var vr) && vr.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)vr.GetDouble() : null,
-                    el.TryGetProperty("VatAmount", out var va) && va.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)va.GetDouble() : null
+                    el.TryGetProperty("VatAmount", out var va) && va.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)va.GetDouble() : null,
+                    el.TryGetProperty("LineDiscountAmount", out var ld) && ld.ValueKind == System.Text.Json.JsonValueKind.Number ? ld.GetDecimal() : null
                 )).ToList();
             }
             catch (Exception ex)

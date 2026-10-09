@@ -90,9 +90,10 @@ public interface IOcrService
     /// (กฎเหล็ก #3 — แก้ inline ก่อนสร้างเอกสาร ไม่ต้องสร้างแล้วเข้าไปแก้ทีหลัง).
     /// recompute Amount = qty×unitPrice, persist ลง ExtractedItemsJson, คืน amount
     /// ใหม่. field ที่ส่ง null = คงค่าเดิม.</summary>
-    Task<decimal> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
+    /// <para>คืน (ยอดใหม่, ส่วนลดบรรทัดที่คงอยู่, ส่วนลดถูกทิ้งเพราะเกินยอดก่อนลด) · <paramref name="lineDiscount"/> null = ไม่แตะ · 0 = ล้าง</para>
+    Task<(decimal Amount, decimal? LineDiscount, bool DiscountDropped)> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
         int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
-        string? accountCode = null);
+        string? accountCode = null, decimal? lineDiscount = null);
 
     /// <summary>เพิ่ม/ลบบรรทัดรายการของผลสแกน — <c>action</c> = "add" | "delete"
     /// (เดิมตาราง review เพิ่ม/ลบแถวไม่ได้เลย ⇒ OCR รวมหรือแตกแถวผิดแล้วผู้ใช้

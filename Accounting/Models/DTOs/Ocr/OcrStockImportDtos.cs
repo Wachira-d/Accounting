@@ -80,7 +80,12 @@ public record OcrStockPreviewLine(
     double? AssetConfidence = null,
     List<string>? AssetReasons = null,
     OcrImportDestination DefaultDestination = OcrImportDestination.Stock,
-    GlobalAssetSuggestion? GlobalAssetSuggestion = null);
+    GlobalAssetSuggestion? GlobalAssetSuggestion = null,
+    // ── ทุนต่อหน่วยจริง (ฝ่ายค้านรอบสอง f1690d11 ข้อ 3) ─────────────────
+    // บรรทัดที่มีส่วนลดของตัวเอง (e-Tax XML) — ราคาต่อหน่วยบนใบเป็นราคาก่อนลด (34.58) แต่ทุนที่จ่ายจริง = ยอดหลังลด ÷ จำนวน
+    // (26.2667) · หน้าเติมช่องทุนจากค่านี้ (เซิร์ฟเวอร์คำนวณ — Helpers/OcrEtaxLineNormalizer.EffectiveUnitCost) · ไม่มีส่วนลด = UnitPrice
+    decimal? LineDiscountAmount = null,
+    decimal? EffectiveUnitCost = null);
 
 public record GlobalProductSuggestion(
     string? CanonicalLabel,
