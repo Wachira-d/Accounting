@@ -661,7 +661,10 @@
           if (discEl && res?.data) discEl.value = res.data.lineDiscount != null ? res.data.lineDiscount : '';
           if (res?.data?.discountDropped) Layout.toast(res.message, 'warning');
           // ราคาที่เซิร์ฟเวอร์เก็บจริง (แปลงแล้วเป็นราคารวม VAT) — แสดงตามจริง + จำไว้เทียบว่าคำขอถัดไป "พิมพ์ใหม่" ไหม · ช่องติ๊กใช้ครั้งเดียว
-          if (priceEl && res?.data?.unitPrice != null) {
+          // ⚠️ ติ๊กค้างอยู่ + ช่องราคายังว่าง (ผู้ใช้บันทึกจำนวน/ชื่อ/ส่วนลดก่อน) = ยังรอผู้ใช้พิมพ์ราคาไม่รวม VAT — ห้ามเขียน data-saved ทับด้วย
+          // ราคาเดิม ไม่งั้นพิมพ์เลขเท่าราคาเดิมแล้ว "ไม่นับว่าพิมพ์ใหม่" ⇒ ธงไม่ถูกส่ง ⇒ ถูกเก็บเป็นราคารวม VAT เงียบ ๆ (ทบทวนรอบ 8 ข้อ 2)
+          const awaitingExVatPrice = !!(exVatEl && exVatEl.checked && priceEl && priceEl.value === '');
+          if (priceEl && res?.data?.unitPrice != null && !awaitingExVatPrice) {
             priceEl.dataset.saved = String(res.data.unitPrice);
             if (sendExVat) priceEl.value = res.data.unitPrice;
           }

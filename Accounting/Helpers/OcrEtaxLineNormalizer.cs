@@ -271,16 +271,17 @@ public static class OcrEtaxLineNormalizer
     }
 
     /// <summary>อัตรา VAT ของบรรทัดเอกสารจากบรรทัด e-Tax (<c>MapEtaxToOcrData</c> · รอบ 7 เมทริกซ์รูปแบบ XML): บรรทัดที่พิสูจน์ราคารวม VAT ⇒ อัตราที่ใช้ถอด ·
-    /// อื่น ๆ ⇒ <c>CalculatedRate</c> ของบรรทัดใน XML ที่ลงนาม (&gt; 0 ⇒ ตามนั้น · 0 ⇒ ไม่มี VAT: "ยกเว้น" เมื่อชื่อเข้าหมวดยกเว้น §81 ไม่งั้น 0%) ·
-    /// ไม่มี/ติดลบ ⇒ null (ชั้นถัดไปของตัวสร้างบรรทัดตัดสิน)
+    /// อื่น ๆ ⇒ <c>CalculatedRate</c> ของบรรทัดใน XML ที่ลงนาม (&gt; 0 ⇒ ตามนั้น · 0 ⇒ <b>0%</b> เว้นแต่ XML ประกาศ <c>ExemptionReason(Code)</c> ⇒ "ยกเว้น") ·
+    /// ไม่มี/ติดลบ ⇒ null (ชั้นถัดไปของตัวสร้างบรรทัดตัดสิน) · <b>ไม่เดาจากชื่อสินค้า</b> — XML ที่ลงนามคือความจริง (F2 ข้อ 3 · ทบทวนรอบ 8 ข้อ 3);
+    /// การเดา "ยกเว้น" จากชื่อ (<c>ThaiVatTypeRule.LooksExempt</c>) เหลือเฉพาะสแกนกระดาษที่ไม่มีอัตราให้อ่าน
     /// <para>ที่มา: เดิมส่งอัตราเฉพาะทางราคารวม VAT ⇒ บรรทัดราคาก่อน VAT ทุกบรรทัดถูกเดาอัตราจากชื่อ (7%) ⇒ ใบผสม 7%/0% ที่บรรทัด 0% ยอดเล็ก
     /// (VAT ส่วนต่าง &lt; 0.10 ต่ำกว่าเกณฑ์ด่านอัตรา) ได้บรรทัด 0% ติด 7% + VAT ที่เฉลี่ยจากหัวใบ <b>เงียบ ๆ</b> · ยอดใหญ่ตก [Σ-GAP] ทั้งที่ XML บอกอัตราไว้แล้ว</para></summary>
-    public static decimal? LineVatRate(OcrEtaxLine line, decimal? xmlRate, string? description)
+    public static decimal? LineVatRate(OcrEtaxLine line, decimal? xmlRate, bool xmlDeclaresExemption)
     {
         if (line.VatRate is decimal r && r > 0m) return r;   // อัตราที่ตัวตัดสินใช้ถอด VAT (รวมอัตราที่อนุมานจากยอดสองตัวของบรรทัด)
         if (xmlRate is not decimal x || x < 0m) return null;
         if (x > 0m) return x;
-        return ThaiVatTypeRule.LooksExempt(description) ? ThaiVatTypeRule.ExemptRate : 0m;
+        return xmlDeclaresExemption ? ThaiVatTypeRule.ExemptRate : 0m;
     }
 
     /// <summary>ทั้งใบเป็น "ราคารวม VAT ตามกระดาษ" ไหม — มีบรรทัดที่ติดธงอย่างน้อยหนึ่ง และทุกบรรทัดที่ยอดไม่เป็น 0 ติดธง ·
@@ -534,7 +535,18 @@ public static class OcrEtaxLineNormalizer
             ? $"{LineCheckTag} บรรทัดที่ {index + 1}: ตัดสินไม่ได้ว่าราคารวมหรือไม่รวม VAT — {reason} · ลงจำนวน/ราคาตาม XML "
               + $"ส่วนลด {(n.LineDiscount ?? 0m):0.00} ให้ยอด {n.Amount:0.00} ตรง XML (ไม่หารจำนวนจากยอด) — ตรวจกับกระดาษก่อนอนุมัติ"
             : $"{LineCheckTag} บรรทัดที่ {index + 1}: ตัดสินไม่ได้ว่าราคารวมหรือไม่รวม VAT — {reason} · จำนวน × ราคา ลงยอดของบรรทัดไม่ได้ "
-              + "(คงค่าตาม XML ไม่หารจำนวนจากยอด) — แก้บรรทัดนี้กับกระดาษก่อนอนุมัติ";
+              + $"(คงค่าตาม XML ไม่หารจำนวนจากยอด) — {ShownAmountWarning(n)}แก้บรรทัดนี้กับกระดาษก่อนอนุมัติ";
+    }
+
+    /// <summary>บรรทัดที่ไม่ลงตัว: เอกสารคิดยอดบรรทัดจาก จำนวน × ราคา (ComputeLineAmounts) ⇒ ยอดที่ผู้ใช้เห็นบนเอกสาร <b>ไม่ใช่</b>ยอดใน XML
+    /// จนกว่าจะแก้ (ทบทวนรอบ 8 ข้อ 4 — บอกตรง ๆ ว่าเลขไหนจะโผล่) · ไม่มีจำนวน ⇒ เอกสารใช้ 1</summary>
+    private static string ShownAmountWarning(OcrEtaxLine n)
+    {
+        if (n.UnitPrice is not decimal p || p < 0m || n.Amount is not decimal amt) return "";
+        var q = n.Quantity is decimal qq && qq > 0m ? qq : 1m;
+        var shown = R2(q * p);
+        if (shown == amt) return "";   // เลขเท่ากันพอดี (เช่น ไม่มีจำนวน · 1 × ราคา = ยอด) — ไม่มีอะไรจะเตือนเรื่องยอดที่แสดง
+        return $"บรรทัดเอกสารจะแสดงยอด {shown:N2} ({q:0.###} × {p:N2}) ไม่ใช่ยอดใน XML {amt:N2} จนกว่าจะแก้ · ";
     }
 
     /// <summary>ตัดสินบรรทัดเดียว (ทางราคาก่อน VAT) — ดูกติกาที่หัวคลาส</summary>

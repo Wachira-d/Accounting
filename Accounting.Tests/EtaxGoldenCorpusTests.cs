@@ -151,7 +151,7 @@ internal static class ScanDocumentSimulator
                 Description = r.Items[i].Description, Quantity = n.Quantity, UnitPrice = n.UnitPrice, Amount = n.Amount,
                 LineDiscountAmount = n.LineDiscount, QuantityFromEtaxXml = n.QuantityFromDocument, PriceIncludesVat = n.PriceIncludesVat,
                 VatStripResidual = n.VatStripResidual,
-                VatRate = OcrEtaxLineNormalizer.LineVatRate(n, r.Items[i].VatRatePercent, r.Items[i].Description),
+                VatRate = OcrEtaxLineNormalizer.LineVatRate(n, r.Items[i].VatRatePercent, r.Items[i].DeclaresVatExemption),
             });
         }
         var hdrSub = r.LineTotal ?? r.TaxBasis ?? 0m;

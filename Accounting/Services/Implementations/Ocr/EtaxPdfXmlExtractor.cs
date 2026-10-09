@@ -82,6 +82,13 @@ internal static class EtaxPdfXmlExtractor
         public decimal? TaxBasisAmount { get; set; }
         /// <summary><c>ApplicableTradeTax/CalculatedRate</c> ของบรรทัด</summary>
         public decimal? VatRatePercent { get; set; }
+        /// <summary><c>ApplicableTradeTax/ExemptionReasonCode</c> ของบรรทัด (ขมธอ.3-2560) — ผู้ขายประกาศว่าบรรทัดนี้ "ยกเว้น VAT" ไม่ใช่ 0% ·
+        /// ทบทวนรอบ 8 ข้อ 3: อัตรา 0 ใน XML ที่ลงนามคือ 0% จนกว่า XML เองจะบอกว่ายกเว้น — ห้ามเดาจากชื่อสินค้า (F2 ข้อ 3)</summary>
+        public string? ExemptionReasonCode { get; set; }
+        /// <summary><c>ApplicableTradeTax/ExemptionReason</c> ของบรรทัด (ข้อความ)</summary>
+        public string? ExemptionReason { get; set; }
+        /// <summary>XML ประกาศว่าบรรทัดนี้ยกเว้น VAT (มี ExemptionReason หรือ ExemptionReasonCode)</summary>
+        public bool DeclaresVatExemption => !string.IsNullOrWhiteSpace(ExemptionReasonCode) || !string.IsNullOrWhiteSpace(ExemptionReason);
         /// <summary><c>NetIncludingTaxesLineTotalAmount</c> — ยอดรวม VAT หลังส่วนลดบรรทัด</summary>
         public decimal? NetIncludingVatAmount { get; set; }
     }
@@ -522,6 +529,9 @@ internal static class EtaxPdfXmlExtractor
                     {
                         item.TaxBasisAmount = ParseDecimal(TextOf(lineTax, "BasisAmount"));
                         item.VatRatePercent = ParseDecimal(TextOf(lineTax, "CalculatedRate"));
+                        // ขมธอ.3-2560: บรรทัดยกเว้น VAT ประกาศด้วย ExemptionReasonCode/ExemptionReason — อัตรา 0 เฉย ๆ = 0% (ส่งออก §80/1)
+                        item.ExemptionReasonCode = TextOf(lineTax, "ExemptionReasonCode");
+                        item.ExemptionReason = TextOf(lineTax, "ExemptionReason");
                     }
                     // ส่วนลด/ค่าบริการรายบรรทัด — อาจมีหลายก้อน · ChargeIndicator อาจห่อ <udt:Indicator> (Value รวมข้อความลูกให้แล้ว)
                     foreach (var ac in FindElements(settlementL, "SpecifiedTradeAllowanceCharge"))

@@ -25,7 +25,7 @@ public class EtaxFormatMatrixTests
     // ── ตัวประกอบ XML (โครงตาม ขมธอ.3-2560 · เฉพาะ element ที่ตัวสกัดอ่าน + element รบกวนที่พบในไฟล์จริง) ──
 
     public sealed record XLine(string Name, string? Qty, string? Price, string? Net, string? NetIncl, string? Rate = "7",
-        string? Allowance = null, string? Charge = null, string? UnitCode = null);
+        string? Allowance = null, string? Charge = null, string? UnitCode = null, string? ExemptionReason = null);
 
     public sealed record XInvoice(XLine[] Lines, string? LineTotal, string? TaxBasis, string? Vat, string? Grand,
         string TypeCode = "T02", string? ReferenceId = null);
@@ -68,8 +68,12 @@ public class EtaxFormatMatrixTests
                 sb.Append("<ram:BilledQuantity unitCode=\"").Append(l.UnitCode ?? "").Append("\">").Append(l.Qty).Append("</ram:BilledQuantity>");
             sb.Append("</ram:SpecifiedLineTradeDelivery><ram:SpecifiedLineTradeSettlement>");
             if (l.Rate != null)
-                sb.Append("<ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CalculatedRate>").Append(l.Rate)
-                  .Append("</ram:CalculatedRate></ram:ApplicableTradeTax>");
+            {
+                sb.Append("<ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CalculatedRate>").Append(l.Rate).Append("</ram:CalculatedRate>");
+                if (l.ExemptionReason != null)
+                    sb.Append("<ram:ExemptionReasonCode>VATEX</ram:ExemptionReasonCode><ram:ExemptionReason>").Append(Esc(l.ExemptionReason)).Append("</ram:ExemptionReason>");
+                sb.Append("</ram:ApplicableTradeTax>");
+            }
             if (l.Allowance != null)
                 sb.Append("<ram:SpecifiedTradeAllowanceCharge><ram:ChargeIndicator>false</ram:ChargeIndicator><ram:ActualAmount>").Append(l.Allowance)
                   .Append("</ram:ActualAmount></ram:SpecifiedTradeAllowanceCharge>");
@@ -167,11 +171,16 @@ public class EtaxFormatMatrixTests
         {
             new XLine("บริการส่งออก", "1", "1000.00", "1000.00", "1000.00", Rate: "0"),
         }, "1000.00", "1000.00", "0.00", "1000.00"), Outcome.Coherent, null),
-        // ยกเว้น (สินค้าเกษตร §81) — XML อัตรา 0
+        // ยกเว้น (สินค้าเกษตร §81) — XML อัตรา 0 + ประกาศ ExemptionReason (ขมธอ.3-2560) ⇒ บรรทัด "ยกเว้น"
         ["exempt"] = (new XInvoice(new[]
         {
-            new XLine("ผักสด", "4", "25.00", "100.00", "100.00", Rate: "0"),
+            new XLine("ผักสด", "4", "25.00", "100.00", "100.00", Rate: "0", ExemptionReason: "ยกเว้นภาษีมูลค่าเพิ่มตามมาตรา 81(1)(ก)"),
         }, "100.00", "100.00", "0.00", "100.00"), Outcome.Coherent, null),
+        // ทิศตรงข้าม (ทบทวนรอบ 8 ข้อ 3): ชื่อเข้าหมวดยกเว้นแต่ XML บอก 0% โดยไม่ประกาศยกเว้น ⇒ คง 0% ตาม XML ไม่เดาจากชื่อ
+        ["zero_rated_named_like_exempt"] = (new XInvoice(new[]
+        {
+            new XLine("นมสด ส่งออก", "10", "20.00", "200.00", "200.00", Rate: "0"), new XLine("ผักสด ส่งออก", "4", "25.00", "100.00", "100.00", Rate: "0"),
+        }, "300.00", "300.00", "0.00", "300.00"), Outcome.Coherent, null),
         // ผสม 7%/0% ราคาก่อน VAT (เดิม: เดา 7% ทั้งสองบรรทัด ⇒ [Σ-GAP])
         ["mixed_ex"] = (new XInvoice(new[]
         {
@@ -295,16 +304,45 @@ public class EtaxFormatMatrixTests
         var (doc, _) = Run(Variants["mixed_tiny_zero"].Invoice);
         Assert.Equal((7m, 70.00m), (doc.Lines[0].VatRate, doc.Lines[0].Vat));
         Assert.Equal((0m, 0m), (doc.Lines[1].VatRate, doc.Lines[1].Vat));
-        // ยกเว้น (ชื่อเข้าหมวด §81) ⇒ "ยกเว้น" ไม่ใช่ 0% — ตัวเลขเท่ากัน ต่างแค่คอลัมน์รายงาน
-        Assert.Equal(ThaiVatTypeRule.ExemptRate, OcrEtaxLineNormalizer.LineVatRate(default, 0m, "ผักสด"));
-        Assert.Equal(0m, OcrEtaxLineNormalizer.LineVatRate(default, 0m, "บริการส่งออก"));
-        Assert.Equal(7m, OcrEtaxLineNormalizer.LineVatRate(default, 7m, "สินค้า ก"));
-        // ไม่มีอัตราใน XML / ติดลบ ⇒ ไม่เดา (ชั้นถัดไปตัดสิน)
-        Assert.Null(OcrEtaxLineNormalizer.LineVatRate(default, null, "สินค้า ก"));
-        Assert.Null(OcrEtaxLineNormalizer.LineVatRate(default, -1m, "สินค้า ก"));
+        // อัตรา 0 ใน XML = 0% · "ยกเว้น" เฉพาะเมื่อ XML ประกาศ ExemptionReason(Code) — ตัวเลขเท่ากัน ต่างแค่คอลัมน์รายงาน §87
+        Assert.Equal(ThaiVatTypeRule.ExemptRate, OcrEtaxLineNormalizer.LineVatRate(default, 0m, xmlDeclaresExemption: true));
+        Assert.Equal(0m, OcrEtaxLineNormalizer.LineVatRate(default, 0m, xmlDeclaresExemption: false));
+        Assert.Equal(7m, OcrEtaxLineNormalizer.LineVatRate(default, 7m, false));
+        // ไม่มีอัตราใน XML / ติดลบ ⇒ ไม่เดา (ชั้นถัดไปตัดสิน) — แม้ XML จะประกาศยกเว้น ก็ไม่ตั้งเองโดยไม่มีอัตรา
+        Assert.Null(OcrEtaxLineNormalizer.LineVatRate(default, null, false));
+        Assert.Null(OcrEtaxLineNormalizer.LineVatRate(default, null, true));
+        Assert.Null(OcrEtaxLineNormalizer.LineVatRate(default, -1m, false));
         // บรรทัดที่พิสูจน์ราคารวม VAT ⇒ อัตราที่ใช้ถอด (อนุมานจากยอดสองตัวเมื่อ XML ไม่มีอัตรา)
         var inferred = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(1m, 107.00m, null, null, null, 100.00m, 107.00m));
-        Assert.Equal(7m, OcrEtaxLineNormalizer.LineVatRate(inferred, null, "สินค้า ก"));
+        Assert.Equal(7m, OcrEtaxLineNormalizer.LineVatRate(inferred, null, false));
+    }
+
+    [Fact]
+    public void อัตรา0ในXML_ยกเว้นเฉพาะที่XMLประกาศ_ชื่อสินค้าไม่มีสิทธิ์ตัดสิน()
+    {
+        // ทบทวนรอบ 8 ข้อ 3 (F2 ข้อ 3 "ค่าที่แต่งขึ้นอันตรายกว่าการไม่ตอบ"): XML ที่ลงนามคือความจริง — ชื่อ "นม/ผัก" ไม่ทำให้ 0% กลายเป็นยกเว้น
+        var (ex, exR) = Run(Variants["exempt"].Invoice);
+        Assert.True(exR.Items[0].DeclaresVatExemption);
+        Assert.Equal("VATEX", exR.Items[0].ExemptionReasonCode);
+        Assert.Equal(ThaiVatTypeRule.ExemptRate, ex.Lines[0].VatRate);
+        // ทิศตรงข้าม: ชื่อเข้าหมวดยกเว้น (ThaiVatTypeRule เดาเป็นยกเว้น) แต่ XML 0% ไม่ประกาศ ⇒ 0%
+        var (zr, zrR) = Run(Variants["zero_rated_named_like_exempt"].Invoice);
+        Assert.All(zrR.Items, li => Assert.False(li.DeclaresVatExemption));
+        Assert.All(zr.Lines, l => Assert.Equal(0m, l.VatRate));
+        Assert.True(ThaiVatTypeRule.LooksExempt("นมสด ส่งออก"));   // ยืนยันว่าเคสนี้ "ล่อ" ตัวเดาจากชื่อจริง
+        Assert.True(zr.CanAutoApprove, zr.BlockReason);
+        Assert.Empty(Incoherence(zr, zrR));
+    }
+
+    [Fact]
+    public void บรรทัดค่าบริการ_หมายเหตุบอกยอดที่เอกสารจะแสดง()
+    {
+        // ทบทวนรอบ 8 ข้อ 4: บรรทัด ChargeIndicator ไม่ลงตัว ⇒ เอกสารคิดจาก จำนวน × ราคา (100.00) ไม่ใช่ยอด XML (110.00) — หมายเหตุต้องบอกตรง ๆ
+        var (doc, _) = Run(Variants["line_charge"].Invoice);
+        var note = Assert.Single(doc.Notes, n => n.StartsWith(OcrEtaxLineNormalizer.LineCheckTag, StringComparison.Ordinal));
+        Assert.Contains(OcrEtaxLineNormalizer.ReasonCharge, note);
+        Assert.Contains("บรรทัดเอกสารจะแสดงยอด 100.00 (1 × 100.00) ไม่ใช่ยอดใน XML 110.00", note);
+        Assert.False(doc.CanAutoApprove);
     }
 
     [Theory]
