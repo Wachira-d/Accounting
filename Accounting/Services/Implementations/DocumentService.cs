@@ -6540,14 +6540,13 @@ public partial class DocumentService : IDocumentService
                     // ยังไม่ติ๊กขายปลีก ⇒ เดิมพิมพ์ "ใบเสร็จรับเงิน" ที่มี VAT เงียบ ๆ) หรือเลือกรูปแบบนอกชุดที่อนุญาต ·
                     // ข้อความบอกค่าตั้งที่ต้องเปลี่ยน/ข้อมูลที่ต้องเติม (F2 ข้อ 8) · มัดจำที่นโยบายยังไม่ถือเป็นจุดความรับผิด = ใบเสร็จธรรมดา
                     // ผ่านปกติ (ไม่บังคับ) · อยู่ใต้ IsTaxInvoiceByLaw == null โดยตั้งใจ: ใบจาก Integration/ใบเสร็จรับชำระที่ตรึงบทบาท
-                    // มาแล้วไม่เข้าด่านนี้ (คำตัดสินเดิม: ไม่ให้คำเตือนใหม่ทำระบบภายนอกล้ม) · throw นอก try ของ resolver ข้างล่าง
+                    // มาแล้วไม่เข้าด่านนี้ (คำตัดสินเดิม: ไม่ให้คำเตือนใหม่ทำระบบภายนอกล้ม)
+                    // **คำตัดสินเจ้าของข้อ 140 (2026-10-09): ไม่บล็อก** — กระดาษที่จะเป็นเท็จ/ตัวเลือกนอกชุด = คำเตือนก่อนอนุมัติ (CollectApprovalWarningsAsync
+                    // ตัวเดียวกัน) ที่เว็บ/มือถือต้องกดรับทราบ (409) และทางเข้าอัตโนมัติ/ที่พัก/จ่ายออนไลน์ผ่านพร้อมทิ้งร่องรอย (ApprovalAcknowledgement) ·
+                    // ตรงนี้แค่ตรึงค่าที่ใช้จริง (ไม่มีรูปแบบที่ออกได้ = PlainReceipt หัวลดเหมือนเดิม + ใบเข้ารายงานตรวจข้อมูล)
                     var receiptForm = await DecideReceiptFormAsync(companyId, doc);
                     if (receiptForm != null)
-                    {
-                        if (receiptForm.Blocked)
-                            throw new Accounting.Helpers.BusinessRuleException(receiptForm.BlockMessage!, receiptForm.RuleCode);
                         doc.ReceiptForm = receiptForm.Chosen;
-                    }
 
                     string? resolvedTitle = null;
                     try
@@ -19468,6 +19467,12 @@ public partial class DocumentService : IDocumentService
     {
         var warnings = new List<string>();
         var today = DateTime.UtcNow.Date;
+
+        // รอบ 203 (คำตัดสินข้อ 140): รูปแบบกระดาษหลักฐานรับเงิน — ผู้จด VAT พิมพ์ VAT แต่ออกใบกำกับรูปแบบใดไม่ได้ · นิติบุคคลได้แต่ใบย่อ ·
+        // ตัวเลือกรายใบนอกชุด ⇒ **เตือน+รับทราบ ไม่บล็อก** (ตัวตัดสินเดียวกับที่ตรึง doc.ReceiptForm ตอนออกเลข — Helpers/ReceiptFormRule) ·
+        // ชุดนี้ขึ้นต้น [RCPT-FORM] ⇒ ทางเข้าที่ไม่มีคนเห็น (ที่พัก SystemWorkflow · จ่ายออนไลน์ · API · ใบประจำ) ผ่านพร้อมทิ้งร่องรอย (ApprovalAcknowledgement)
+        if (doc.IsTaxInvoiceByLaw == null && await DecideReceiptFormAsync(companyId, doc) is { HasWarnings: true } receiptFormDecision)
+            warnings.AddRange(receiptFormDecision.Warnings);
 
         // Date drift — covers backdated invoices that may have missed
         // their VAT filing window and forward-dated invoices that look

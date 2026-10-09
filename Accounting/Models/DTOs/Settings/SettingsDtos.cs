@@ -259,6 +259,10 @@ public record CompanySettingsResponse(
     /// <b>เซิร์ฟเวอร์คำนวณด้วย <c>ReceiptFormRule.Matrix</c> ตัวเดียวกับด่านอนุมัติ</b> · หน้าเว็บวาดอย่างเดียว ·
     /// null = เส้นที่ยังไม่ได้คำนวณ (ไม่ใช่ GET/UPDATE settings)</summary>
     public IReadOnlyList<ReceiptFormMatrixRow>? ReceiptFormMatrix { get; init; }
+    /// <summary>สถานะผู้ออกที่ matrix ใช้ (echo จาก <c>Company</c> เพื่อให้หน้าตั้งค่าแสดง "ติ๊กขายปลีกแล้วหรือยัง" + ลิงก์ไปสวิตช์เดิม `#cRetailApproved`
+    /// — ไม่ตั้งค่าให้เองในโค้ด/migration (คำตัดสินข้อ 140)) · null = ยังไม่ได้คำนวณ</summary>
+    public bool? ReceiptFormIssuerVatRegistered { get; init; }
+    public bool? ReceiptFormIssuerRetailApproved { get; init; }
 
     /// <summary>โมดูล CMS ที่บริษัทนี้ใช้จริง ("orders" · "bookings" · "lodging" · "leads") —
     /// คำนวณโดย <c>CmsModuleResolver</c> ฝั่งเซิร์ฟเวอร์ ให้ layout.js ซ่อนเมนูที่ไม่เกี่ยว

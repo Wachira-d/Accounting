@@ -30,8 +30,10 @@ public sealed record ReceiptFormFacts(
 /// <param name="Case">กรณี (คีย์ของค่าตั้งบริษัท)</param>
 /// <param name="Allowed">รูปแบบที่กฎหมายอนุญาตสำหรับใบนี้ (ว่าง = ออกใบนี้ไม่ได้จนกว่าจะแก้ข้อเท็จจริง)</param>
 /// <param name="Default">ค่าแนะนำของระบบใน <paramref name="Allowed"/> (null เมื่อว่าง)</param>
-/// <param name="Chosen">รูปแบบที่จะใช้จริง (ตัวเลือกรายใบ → ค่าตั้งบริษัท → ค่าแนะนำ) · null = ถูกบล็อก</param>
-/// <param name="BlockMessage">ข้อความไทยพร้อมทางไปต่อ · null = ไม่บล็อก</param>
+/// <param name="Chosen">รูปแบบที่จะใช้จริง (ตัวเลือกรายใบ → ค่าตั้งบริษัท → ค่าแนะนำ) · ไม่มีรูปแบบที่อนุญาตเลย ⇒ <c>PlainReceipt</c>
+/// (หัวกระดาษลดเป็น "ใบเสร็จรับเงิน" เหมือนเดิม) <b>พร้อมคำเตือน</b> — คำตัดสินเจ้าของ 2026-10-09 (ข้อ 140): เตือน+รับทราบ ไม่บล็อก</param>
+/// <param name="Warnings">คำเตือนก่อนอนุมัติ (ขึ้นต้น <see cref="ReceiptFormRule.WarningPrefix"/>) — เว็บ/มือถือต้องกดรับทราบ (409) ·
+/// ทางเข้าอัตโนมัติ/ที่พัก/จ่ายออนไลน์ผ่านพร้อมทิ้งร่องรอย (<c>ApprovalAcknowledgement</c>) · ว่าง = ไม่มีอะไรต้องเตือน</param>
 /// <param name="RuleCode">รหัสกฎ (ลง audit · ข้อความ)</param>
 /// <param name="LegalReference">มาตราที่อ้าง</param>
 /// <param name="WhyNot">เหตุผลไทยของ<b>ทุก</b>รูปแบบที่ไม่อนุญาต (หน้าจอแสดงได้ตรง ๆ)</param>
@@ -40,12 +42,12 @@ public sealed record ReceiptFormDecision(
     IReadOnlyList<ReceiptForm> Allowed,
     ReceiptForm? Default,
     ReceiptForm? Chosen,
-    string? BlockMessage,
+    IReadOnlyList<string> Warnings,
     string RuleCode,
     string LegalReference,
     IReadOnlyDictionary<ReceiptForm, string> WhyNot)
 {
-    public bool Blocked => BlockMessage != null;
+    public bool HasWarnings => Warnings.Count > 0;
 }
 
 /// <summary>ตัวเลือก 1 ข้อของแถว matrix ในหน้าตั้งค่า (เซิร์ฟเวอร์คำนวณ · หน้าเว็บวาดอย่างเดียว)</summary>
@@ -96,6 +98,15 @@ public static class ReceiptFormRule
     public const string RuleRefund = "RCPT-FORM-REFUND";
     public const string RuleChoice = "RCPT-FORM-CHOICE";
 
+    /// <summary>คำนำหน้าคำเตือนก่อนอนุมัติของชุดนี้ — <c>ApprovalAcknowledgement</c> ใช้แยกชุด (ทางเข้าที่ไม่มีคนเห็นผ่านพร้อมทิ้งร่องรอย ·
+    /// เว็บ/มือถือต้องรับทราบ) · มาตราอ้างอิงใน audit = <see cref="WarningLegalReference"/></summary>
+    public const string WarningPrefix = "[RCPT-FORM]";
+    public const string WarningLegalReference = "RD-86 / RD-86/4 / RD-86/6 / RD-82/5(2)";
+
+    /// <summary>คำเตือนนี้เป็นของชุดรูปแบบใบเสร็จไหม (ตัวเดียวที่ <c>ApprovalAcknowledgement</c> ถาม)</summary>
+    public static bool IsApprovalWarning(string warning)
+        => warning.StartsWith(WarningPrefix, StringComparison.Ordinal);
+
     private static readonly ReceiptForm[] AllForms =
     {
         ReceiptForm.PlainReceipt, ReceiptForm.ReceiptTaxInvoiceFull,
@@ -133,7 +144,7 @@ public static class ReceiptFormRule
     /// <param name="facts">ข้อเท็จจริง</param>
     /// <param name="companyPreference">ค่าตั้งบริษัทของกรณีนี้ (<see cref="ReceiptFormPolicy.PreferenceFor"/>) · null = ใช้ค่าแนะนำ</param>
     /// <param name="documentChoice">ตัวเลือกรายใบที่ผู้ใช้ตั้งไว้ก่อนอนุมัติ (<c>Document.ReceiptForm</c>) · null = ไม่ได้เลือก ·
-    /// เลือกนอกชุดที่อนุญาต = <b>บล็อก</b>พร้อมเหตุผล (ไม่ทับเงียบ)</param>
+    /// เลือกนอกชุดที่อนุญาต = ใช้ค่าตั้ง/ค่าแนะนำแทน <b>พร้อมคำเตือน</b> (ไม่ทับเงียบ · ไม่บล็อก — คำตัดสินข้อ 140)</param>
     public static ReceiptFormDecision Decide(ReceiptFormFacts facts, ReceiptForm? companyPreference, ReceiptForm? documentChoice)
     {
         var @case = CaseOf(facts);
@@ -141,7 +152,7 @@ public static class ReceiptFormRule
         var whyNot = new Dictionary<ReceiptForm, string>();
         string ruleCode;
         string legal;
-        string? blockWhenEmpty = null;
+        var warnings = new List<string>();
 
         if (facts.SettlesExistingTaxInvoice)
         {
@@ -211,7 +222,9 @@ public static class ReceiptFormRule
                     ? "ใบกำกับเต็มรูปต้องมีชื่อ ที่อยู่ และเลขผู้เสียภาษี 13 หลักของผู้ซื้อ (ม.86/4(3)) — เติมข้อมูลผู้ซื้อก่อน"
                     : "ใบกำกับเต็มรูปต้องมีชื่อ+ที่อยู่ผู้ซื้อ (ม.86/4(3)) — เติมข้อมูลผู้ซื้อ (หรือผู้ซื้อแจ้งไม่ประสงค์รับใบกำกับ ⇒ ใช้อย่างย่อ)";
 
-            if (facts.BuyerNeedsFullForm)
+            // นิติบุคคลที่ข้อมูลครบ ⇒ เต็มรูปเท่านั้น (ใบย่อใช้เป็นภาษีซื้อไม่ได้ §82/5(2)) · ข้อมูลไม่ครบ ⇒ ใบย่อเป็นทางเดียวที่เหลือ
+            // (ถ้าบริษัทมีสิทธิ์) — ออกให้ได้แต่ต้องเตือนให้แนะนำเต็มรูป (คำตัดสินข้อ 140 (ค): เตือน ไม่บล็อก)
+            if (facts.BuyerNeedsFullForm && facts.BuyerFullInfoComplete)
                 whyNot[ReceiptForm.ReceiptTaxInvoiceAbbreviated] =
                     "ผู้ซื้อเป็นนิติบุคคล/ผู้ประกอบการจด VAT ต้องได้ใบกำกับเต็มรูปเพื่อใช้ภาษีซื้อ — ใบกำกับอย่างย่อใช้เป็นภาษีซื้อไม่ได้ (ม.82/5(2))";
             else if (!facts.CompanyMayIssueAbbreviated)
@@ -229,43 +242,49 @@ public static class ReceiptFormRule
             ruleCode = RuleVat;
             legal = "ป.รัษฎากร ม.86 · ม.86/4 · ม.86/6 · ม.82/5(2) · ม.78/1";
 
+            // (ก) คำตัดสินข้อ 140: ไม่มีรูปแบบใบกำกับที่ออกได้ ⇒ **เตือน+รับทราบ ไม่บล็อก** — หัวลดเป็น "ใบเสร็จรับเงิน" เหมือนเดิม
+            // และใบจะถูกลิสต์ในรายงานตรวจข้อมูล (PlainReceiptsWithVat) ให้ออกใบแทนภายหลัง · ข้อความต้องชี้ทางแก้ 2 ทาง
             if (allowed.Count == 0)
-                blockWhenEmpty =
-                    "ออกใบนี้ไม่ได้ — ใบมีภาษีมูลค่าเพิ่ม แต่ยังออกเป็นใบกำกับภาษีรูปแบบใดไม่ได้ · "
+                warnings.Add(WarningPrefix + " ใบนี้มีภาษีมูลค่าเพิ่ม แต่ยังออกเป็นใบกำกับภาษีรูปแบบใดไม่ได้ — หัวกระดาษจะพิมพ์ \"ใบเสร็จรับเงิน\" "
+                    + "ซึ่งไม่ใช่ใบกำกับ (ผู้จด VAT ต้องออกใบกำกับ ม.86) · "
                     + $"เต็มรูป: {whyNot[ReceiptForm.ReceiptTaxInvoiceFull]} · "
                     + $"อย่างย่อ: {whyNot[ReceiptForm.ReceiptTaxInvoiceAbbreviated]} · "
-                    + "ทางแก้: (1) เติมชื่อ+ที่อยู่ผู้ซื้อแล้วอนุมัติใหม่ (ใบกำกับเต็มรูป) หรือ (2) ตั้งค่า → ข้อมูลบริษัท → ติ๊ก "
-                    + "\"ประกอบกิจการขายปลีก/ให้บริการรายย่อย (§86/6)\" (ใบกำกับอย่างย่อ) · "
-                    + "ใบเสร็จรับเงินเปล่าที่พิมพ์ VAT ไม่ใช่ทางเลือก (ม.86)";
+                    + "ทางแก้: (1) เติมที่อยู่แขก/ผู้ซื้อแล้วออกใบแทน (ใบกำกับเต็มรูป) หรือ (2) ตั้งค่า → ข้อมูลบริษัท → ติ๊ก "
+                    + "\"ประกอบกิจการขายปลีก/ให้บริการรายย่อย (§86/6)\" (ใบกำกับอย่างย่อ) · ใบนี้จะอยู่ในหน้า \"ตรวจข้อมูล\" จนกว่าจะออกใบแทน");
         }
 
-        var defaultForm = allowed.Count == 0 ? (ReceiptForm?)null
+        // ค่าแนะนำ (คำตัดสินข้อ 140 ข้อ 2): ที่พัก + แขกบุคคลธรรมดา (ใบเช็คเอาต์/มัดจำที่รับรู้ VAT ทันที) ⇒ **อย่างย่อ** เมื่อบริษัทมีสิทธิ์
+        // (แบบโรงแรมทั่วไป) · ตกกลับเต็มรูปเมื่อข้อมูลครบ · กรณีอื่น (ขายสด/นิติบุคคล) ⇒ เต็มรูปก่อน
+        var lodgingConsumer = facts.Channel == ReceiptFormChannel.Lodging && !facts.BuyerNeedsFullForm;
+        ReceiptForm? defaultForm = allowed.Count == 0 ? null
+            : lodgingConsumer && allowed.Contains(ReceiptForm.ReceiptTaxInvoiceAbbreviated) ? ReceiptForm.ReceiptTaxInvoiceAbbreviated
             : allowed.Contains(ReceiptForm.ReceiptTaxInvoiceFull) ? ReceiptForm.ReceiptTaxInvoiceFull
             : allowed[0];
 
-        string? block = blockWhenEmpty;
-        ReceiptForm? chosen = null;
-        if (block == null)
+        ReceiptForm chosen;
+        if (allowed.Count == 0)
+            chosen = ReceiptForm.PlainReceipt;   // หัวลดเป็นใบเสร็จเหมือนเดิม — คำเตือน (ก) ถูกเพิ่มแล้วข้างบน
+        else if (documentChoice is ReceiptForm dc && allowed.Contains(dc))
+            chosen = dc;
+        else
         {
-            if (documentChoice is ReceiptForm dc)
+            chosen = companyPreference is ReceiptForm pref && allowed.Contains(pref) ? pref : defaultForm!.Value;
+            // (ข) ตัวเลือกรายใบนอกชุดที่อนุญาต (เช่น เลือกอย่างย่อแต่บริษัทไม่มีสิทธิ์) ⇒ ไม่เสนอ/ไม่ใช้ แต่บอกว่าใช้อะไรแทน — ไม่บล็อก ไม่ทับเงียบ
+            if (documentChoice is ReceiptForm bad)
             {
-                if (allowed.Contains(dc)) chosen = dc;
-                else
-                {
-                    block = $"เลือกรูปแบบ \"{Label(dc)}\" ให้ใบนี้ไม่ได้ — "
-                        + (whyNot.TryGetValue(dc, out var w) ? w : "ไม่อยู่ในรูปแบบที่กฎหมายอนุญาตสำหรับใบนี้")
-                        + " · รูปแบบที่เลือกได้: " + string.Join(" / ", allowed.Select(Label))
-                        + " — เปลี่ยนรูปแบบบนใบ หรือล้างเพื่อใช้ค่าตั้งของบริษัท";
-                    ruleCode = RuleChoice;
-                }
+                warnings.Add(WarningPrefix + $" รูปแบบที่เลือกบนใบ \"{Label(bad)}\" ใช้กับใบนี้ไม่ได้ — "
+                    + (whyNot.TryGetValue(bad, out var w) ? w : "ไม่อยู่ในรูปแบบที่กฎหมายอนุญาตสำหรับใบนี้")
+                    + $" · ระบบใช้ \"{Label(chosen)}\" แทน (รูปแบบที่เลือกได้: {string.Join(" / ", allowed.Select(Label))})");
+                ruleCode = RuleChoice;
             }
-            else if (companyPreference is ReceiptForm pref && allowed.Contains(pref))
-                chosen = pref;
-            else
-                chosen = defaultForm;
         }
 
-        return new ReceiptFormDecision(@case, allowed, defaultForm, chosen, block, ruleCode, legal, whyNot);
+        // (ค) นิติบุคคล/ผู้ประกอบการที่ได้แต่ใบย่อ (ข้อมูลไม่ครบสำหรับเต็มรูป) ⇒ ออกให้ แต่เตือนให้แนะนำเต็มรูป (ใช้ภาษีซื้อไม่ได้ §82/5(2))
+        if (chosen == ReceiptForm.ReceiptTaxInvoiceAbbreviated && facts.BuyerNeedsFullForm)
+            warnings.Add(WarningPrefix + " ผู้ซื้อเป็นนิติบุคคล/ผู้ประกอบการจด VAT แต่ข้อมูลไม่ครบสำหรับใบกำกับเต็มรูป — ใบนี้จะเป็น "
+                + "\"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\" ซึ่งผู้ซื้อใช้เป็นภาษีซื้อไม่ได้ (ม.82/5(2)) · แนะนำเติมเลขผู้เสียภาษี/ที่อยู่ผู้ซื้อแล้วออกใบกำกับเต็มรูปแทน");
+
+        return new ReceiptFormDecision(@case, allowed, defaultForm, chosen, warnings, ruleCode, legal, whyNot);
     }
 
     /// <summary>ชื่อสั้นสำหรับ dropdown/ป้าย/ข้อความ (ชุดเดียว — ห้ามหน้าจอแต่งเอง)</summary>

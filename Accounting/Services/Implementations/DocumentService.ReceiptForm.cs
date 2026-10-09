@@ -13,7 +13,8 @@ namespace Accounting.Services.Implementations;
 public partial class DocumentService
 {
     /// <summary>
-    /// ตัดสินรูปแบบกระดาษของใบที่กำลังอนุมัติ — <c>null</c> = ใบชนิดที่ตัวตัดสินไม่ครอบ (<see cref="ReceiptFormRule.AppliesTo"/>)
+    /// ตัดสินรูปแบบกระดาษของใบที่กำลังอนุมัติ — <c>null</c> = ใบชนิดที่ตัวตัดสินไม่ครอบ (<see cref="ReceiptFormRule.AppliesTo"/>) ·
+    /// ผู้เรียก 2 จุด: <c>CollectApprovalWarningsAsync</c> (คำเตือน) และจุดตรึง <c>doc.ReceiptForm</c> ก่อนออกเลข (ค่าที่ใช้) — ตัวเดียวกัน ไม่มีสำเนา
     ///
     /// <para>ข้อเท็จจริงทุกตัวมาจากเจ้าของกติกาเดิม ห้ามประกอบเอง: สิทธิ์อย่างย่อ = <see cref="AbbreviatedTaxInvoiceRule.CanIssue"/>
     /// ช่องทางเอกสาร (ตัวเดียวกับหัวกระดาษ) · มัดจำเป็นจุดความรับผิดไหม = <see cref="DepositPolicyResolver.OfDocument"/> (อ่านนโยบายที่

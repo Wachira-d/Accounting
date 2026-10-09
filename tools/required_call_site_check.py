@@ -1436,9 +1436,13 @@ DOC_RECEIPT_FORM = "Services/Implementations/DocumentService.ReceiptForm.cs"
 RULES += [
     dict(file=DOC, method="ApproveDocumentAsync#2",
          must=["DecideReceiptFormAsync(", "doc.ReceiptForm = receiptForm.Chosen"],
-         must_re=[r"if\s*\(\s*receiptForm\s*\.\s*Blocked\s*\)\s*throw\b"],
          before=[("DecideReceiptFormAsync(", "ResolveDocumentTitleAsync(")],
-         why="รอบ 203: รูปแบบใบเสร็จต้องตรึงลงใบก่อน resolver หัวกระดาษอ่าน · กระดาษเท็จ (พิมพ์ VAT โดยไม่เป็นใบกำกับ) ต้องยังถูกบล็อก"),
+         # คำตัดสินข้อ 140: ห้ามบล็อกด้วยกติกานี้ — คำเตือนไปทาง CollectApprovalWarningsAsync
+         forbid=["receiptForm.Blocked", "receiptForm.BlockMessage"],
+         why="รอบ 203: รูปแบบใบเสร็จต้องตรึงลงใบก่อน resolver หัวกระดาษอ่าน · ไม่มี throw ในด่านนี้ (ข้อ 140: เตือน+รับทราบ)"),
+    dict(file=DOC, method="CollectApprovalWarningsAsync",
+         must=["DecideReceiptFormAsync(", "receiptFormDecision.Warnings"],
+         why="รอบ 203 ข้อ 140: คำเตือนรูปแบบใบเสร็จต้องเข้าชุดคำเตือนก่อนอนุมัติ (เว็บรับทราบ · ทางเข้าอัตโนมัติผ่านพร้อมร่องรอย)"),
     dict(file=DOC_RECEIPT_FORM, method="DecideReceiptFormAsync",
          must=["ReceiptFormRule.AppliesTo(", "ReceiptFormRule.Decide(", "ReceiptFormRule.CaseOf(", "ReceiptFormPolicy.Parse(",
                "DepositPolicyResolver.OfDocument(", "AbbreviatedTaxInvoiceRule.CanIssue(",

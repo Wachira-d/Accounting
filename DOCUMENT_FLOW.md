@@ -3118,8 +3118,10 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
       - **ไม่ใช่กฎตายตัว (คำตัดสินเจ้าของ 2026-10-09)**: `Decide(facts, companyPreference, documentChoice)` คืน `Allowed` (ชุดที่กฎหมายอนุญาต
         สำหรับใบนี้) + `Default` + `Chosen` + เหตุผลไทยของทุกรูปแบบที่ไม่อนุญาต · ค่าตั้งบริษัท `CompanySettings.ReceiptFormPolicyJson`
         (`ReceiptFormPolicy` · JSON `{"<ReceiptFormCase>":"<ReceiptForm>"}` คอลัมน์เดียว) และตัวเลือกรายใบ `Document.ReceiptForm` เลือกได้**เฉพาะในชุดนั้น**
-        — เลือกนอกชุด = บล็อกพร้อมเหตุผล ไม่ทับเงียบ · บล็อกเฉพาะ 3 เรื่อง: (ก) พิมพ์ VAT ของผู้จด VAT โดยไม่เป็นใบกำกับ (ข) อย่างย่อโดยไม่มีสิทธิ์
-        §86/6 (ค) ผู้ซื้อที่ต้องการภาษีซื้อได้แต่ใบย่อ · ข้อความบอกค่าตั้ง/ข้อมูลที่ต้องแก้ (เติมที่อยู่ผู้ซื้อ · ติ๊ก "ประกอบกิจการขายปลีก" · วิธีบันทึกมัดจำ)
+        — **ไม่บล็อก (คำตัดสินเจ้าของข้อ 140 · 2026-10-09)**: (ก) ผู้จด VAT พิมพ์ VAT แต่ออกใบกำกับรูปแบบใดไม่ได้ ⇒ ตรึง `PlainReceipt` (หัวลดเป็น
+        "ใบเสร็จรับเงิน" เหมือนเดิม) + **คำเตือน `[RCPT-FORM]`** บอกทางแก้ 2 ทาง (เติมที่อยู่แขก · ติ๊ก "ประกอบกิจการขายปลีก") + ใบเข้ารายงานตรวจข้อมูล ·
+        (ข) อย่างย่อโดยไม่มีสิทธิ์ §86/6 = ไม่เสนอ/ไม่ใช้ (ตัวเลือกรายใบนอกชุด ⇒ ใช้ค่าตั้ง/ค่าแนะนำแทน + คำเตือนบอกว่าใช้อะไรแทน) ·
+        (ค) นิติบุคคล/ผู้ประกอบการที่เหลือแต่ใบย่อ ⇒ ออกใบย่อให้ + คำเตือนแนะนำเต็มรูป (§82/5(2)) · **ไม่มีทางเข้าไหนถูก throw ด้วยกติกานี้**
       - **มัดจำ = นโยบายบริษัท ไม่ใช่กฎ**: ตัวตัดสิน**รับ** `DepositVatTreatment` ที่ตรึงบนใบ (`DepositPolicyResolver.OfDocument`) เป็นข้อเท็จจริง —
         `FullDeposit`/`VatPendingUndue` (ยังไม่เป็นจุดความรับผิด · คิด VAT ตอนเข้าพัก) ⇒ ใบมัดจำเป็น "ใบเสร็จรับเงิน" ธรรมดา ผ่านปกติ และใบสุดท้าย
         ถือ VAT เต็มแล้วหักมัดจำเป็นการชำระ · `VatImmediate` ⇒ ใบมัดจำพิมพ์ VAT จึงต้องเป็นใบกำกับ (เต็มรูป/อย่างย่อ) และใบสุดท้ายหักฐานที่ออกใบกำกับแล้ว (กลไกเดิม §2.3)
@@ -3127,20 +3129,26 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
         ที่ตรึงบทบาทมาแล้ว**ไม่เข้าด่าน** ตามคำตัดสินเดิมไม่ให้คำเตือนใหม่ทำระบบภายนอกล้ม · สลิป POS ตัดสินที่ `PosSlipHeader` เดิม) →
         `DecideReceiptFormAsync` (`DocumentService.ReceiptForm.cs` — ข้อเท็จจริงจาก `AbbreviatedTaxInvoiceRule.CanIssue` ช่องทางเอกสาร ·
         `DepositPolicyResolver.OfDocument` · `TaxInvoiceCompletenessChecker.IsJuristicBuyer/MissingBuyerFields` · ใบต้นทาง TaxInvoice · `OriginModule`
-        → `ReceiptFormChannel`) → บล็อก = `BusinessRuleException(RCPT-FORM-*)` · ผ่าน = **ตรึง `doc.ReceiptForm` ก่อน** `ResolveDocumentTitleAsync`
-        (ล็อกลำดับใน `tools/required_call_site_check.py`) ⇒ ครอบใบเช็คเอาต์/ใบมัดจำที่พัก · ขายสด · ใบแปลง · API ที่สร้างร่างแล้วอนุมัติ
+        → `ReceiptFormChannel`) เรียก 2 จุด: `CollectApprovalWarningsAsync` (คำเตือน `[RCPT-FORM]` — เว็บ/มือถือ `ApprovalAckSource.None` ⇒ 409
+        `DocumentApprovalWarningsException` รอกด "รับทราบ" แล้วอนุมัติซ้ำ · `SystemWorkflow` (ที่พัก · จ่ายออนไลน์) / `ApiClient` / `Unattended` ⇒ **ผ่าน**
+        พร้อมหมายเหตุภายใน+audit `APPROVE-SYSTEM-PASSED-WARNINGS` — `ApprovalAcknowledgement.PassesWithoutPerson` รวมชุดนี้ · มาตราใน audit
+        `ReceiptFormRule.WarningLegalReference`) และจุดตรึง **`doc.ReceiptForm` ก่อน** `ResolveDocumentTitleAsync` (ล็อกลำดับ+ห้าม throw ใน
+        `tools/required_call_site_check.py`) ⇒ ครอบใบเช็คเอาต์/ใบมัดจำที่พัก · ขายสด · ใบแปลง · API ที่สร้างร่างแล้วอนุมัติ
       - **หัวกระดาษ (สอง renderer · resolver เดียว)**: `ComputeDocumentTitle`/`IsAbbreviatedTaxInvoiceDoc` อ่าน `ReceiptForm == ReceiptTaxInvoiceAbbreviated`
         (`ReceiptFormForcesAbbreviated` — ยังอยู่ใต้สิทธิ์ §86/6) ⇒ บริษัทขายปลีกเลือก "ใบย่อให้แขกบุคคลธรรมดา" ได้แม้ข้อมูลครบ · `TaxService.NotFullTaxInvoice`
-        + e-Tax hook (`IssuedDocumentHooks`) เห็นตรงกับหัว · ค่าอื่น (Full/Plain/PaymentEvidence) หัวเดินกติกาเดิม — เพราะกรณีที่ต่างจากเดิมถูกบล็อกไปแล้ว
+        + e-Tax hook (`IssuedDocumentHooks`) เห็นตรงกับหัว · ค่าอื่น (Full/Plain/PaymentEvidence) หัวเดินกติกาเดิม — ใบที่ไม่มีรูปแบบใดออกได้ตรึง `PlainReceipt`
+        ⇒ หัว "ใบเสร็จรับเงิน" + `IsTaxInvoiceByLaw=false` ⇒ เข้ารายงาน `PlainReceiptsWithVat` (ไม่ใช่ความเงียบ)
       - **ใบที่ออกแล้วไม่แก้ย้อนหลัง** (§86/4): `DataIntegrityReport.PlainReceiptsWithVat` (หน้า `data-integrity.html`) = ใบเสร็จ/ใบสำคัญรับที่ตรึง
         `IsTaxInvoiceByLaw=false` + VAT>0 ของผู้จด VAT (ไม่นับมัดจำ VAT พักรอ · ใบรับชำระใบกำกับ · ใบที่ไม่เคยตรึง NULL) → ผู้ทำบัญชี "ยกเลิกและออกใบแทน" รายใบ
       - **หน้าตั้งค่า** (`settings.html` ข้างโหมด ReceiptIssueMode): ตาราง `CompanySettingsResponse.ReceiptFormMatrix` จาก `ReceiptFormRule.Matrix` ตัวเดียวกับด่าน
-        (7 กรณี × 4 รูปแบบ · อนุญาตไหม + เหตุผล + มาตรา · แถวที่เหลือตัวเลือกเดียว = ไม่มีอะไรให้ตั้ง) · **ค่าแนะนำ**: จด VAT → เต็มรูปเมื่อข้อมูลผู้ซื้อครบ ·
-        ขายปลีก + บุคคลธรรมดา → เสนออย่างย่อให้เลือก · ไม่จด VAT → ใบเสร็จเปล่า · ใบรับชำระใบกำกับ/คืนมัดจำ → หลักฐานรับ/จ่ายอย่างเดียว ·
+        (7 กรณี × 4 รูปแบบ · อนุญาตไหม + เหตุผล + มาตรา · แถวที่เหลือตัวเลือกเดียว = ไม่มีอะไรให้ตั้ง · หัวตารางแสดงสถานะ "จด VAT / ติ๊กขายปลีกแล้วหรือยัง"
+        + ลิงก์ไปสวิตช์เดิม `#cRetailApproved` — **ไม่ตั้งค่าให้เองในโค้ด/migration** ข้อ 140) · **ค่าแนะนำ**: ที่พัก + แขกบุคคลธรรมดา (ใบเช็คเอาต์/มัดจำที่รับรู้ VAT ทันที)
+        → **อย่างย่อ** เมื่อติ๊กขายปลีก (ตกกลับเต็มรูปเมื่อข้อมูลครบ · ข้อ 140 ข้อ 2) · ขายสดทั่วไป → เต็มรูปเมื่อข้อมูลครบ · นิติบุคคล → เต็มรูป ·
+        ไม่จด VAT → ใบเสร็จเปล่า · ใบรับชำระใบกำกับ/คืนมัดจำ → หลักฐานรับ/จ่ายอย่างเดียว ·
         ฟอร์มเอกสาร `fReceiptForm` = ตัวเลือกรายใบ (echo กลับ `DocumentResponse.ReceiptForm/ReceiptFormLabel` · ใบที่ออกแล้วล็อก + บอกเหตุ · ส่งบนใบที่ออกแล้ว = 409 `RCPT-FORM-FROZEN`)
-      - ⚠️ **ผลตอน deploy**: บริษัทจด VAT ที่ยังไม่ติ๊ก "ประกอบกิจการขายปลีก" ออกใบมี VAT ให้ลูกค้าบุคคลธรรมดาที่ไม่มีที่อยู่ จะอนุมัติไม่ผ่าน
-        (ข้อความบอกทางแก้ 2 ทาง) — เคสเจ้าของ (รีสอร์ท · แขก walk-in) ต้องติ๊กขายปลีก §86/6 หรือเก็บที่อยู่แขก · เส้นจ่ายออนไลน์ติดธง
-        "เงินเข้าแต่ยืนยันไม่ได้" (คำตัดสินข้อ 127) แทนที่จะออกใบเสร็จเท็จ
+      - **ผลตอน deploy**: บริษัทจด VAT ที่ยังไม่ติ๊ก "ประกอบกิจการขายปลีก" ออกใบมี VAT ให้ลูกค้าบุคคลธรรมดาที่ไม่มีที่อยู่ — บนเว็บเห็นคำเตือนให้กดรับทราบ
+        (ใบออกได้ หัวเป็นใบเสร็จเหมือนเดิม) · ที่พัก/จ่ายออนไลน์/API/ใบประจำ**ไม่ล้ม ไม่ติดธง 127** ผ่านพร้อมร่องรอย · ใบไปโผล่หน้า "ตรวจข้อมูล" ·
+        เจ้าของติ๊กขายปลีก §86/6 ให้รีสอร์ทเองในหน้าตั้งค่า (ลิงก์จาก matrix) แล้วแขกบุคคลธรรมดาได้ "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" เป็นค่าแนะนำ
 
 ### 5.2 e-Tax XML (XAdES-BES, RSA-SHA256)
 - **Service**: `EtaxInvoiceService.GenerateAsync` (`:87`)
@@ -4297,10 +4305,12 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 > `ApproveDocumentAsync` · `TaxInvoice` เมื่อที่พักคิด VAT) เดินด่าน `ReceiptFormRule` ตอนอนุมัติด้วย `OriginModule = "Lodging"` ⇒ กรณี
 > `LodgingFinalConsumer` / `LodgingFinalBusiness` / `Deposit` · **มัดจำตามนโยบายมัดจำของที่พัก/ประเภท** (`DepositVatTreatment` — §2.3): ยังไม่เป็น
 > จุดความรับผิด ⇒ "ใบเสร็จรับเงิน (เงินมัดจำ)" ธรรมดา ถูกต้อง ไม่บล็อก · รับรู้ VAT ทันที ⇒ ใบมัดจำต้องเป็นใบกำกับ (เต็มรูป/อย่างย่อ) ·
-> ใบสุดท้ายที่พิมพ์ VAT ให้แขกบุคคลธรรมดา: มีชื่อ+ที่อยู่ → เต็มรูป (ค่าแนะนำ) · ที่พักติ๊ก "ประกอบกิจการขายปลีก/บริการรายย่อย §86/6" → เลือกอย่างย่อได้
-> (ตั้งค่าเริ่มต้นต่อกรณีได้) · **ไม่มีทั้งสองอย่าง → อนุมัติไม่ผ่าน** (`RCPT-FORM-VAT` — เดิมพิมพ์ "ใบเสร็จรับเงิน" ที่มี VAT เงียบ ๆ) ·
+> ใบสุดท้ายที่พิมพ์ VAT ให้แขกบุคคลธรรมดา: ที่พักติ๊ก "ประกอบกิจการขายปลีก/บริการรายย่อย §86/6" → **อย่างย่อเป็นค่าแนะนำ** (ข้อ 140 ข้อ 2 · ค่าตั้ง/รายใบ
+> เลือกเต็มรูปได้) · ยังไม่ติ๊ก + มีชื่อ+ที่อยู่ → เต็มรูป · **ไม่มีทั้งสองอย่าง → ออกได้ หัวเป็น "ใบเสร็จรับเงิน" เหมือนเดิม + คำเตือน `[RCPT-FORM]`** ซึ่งเส้นที่พัก
+> (`SystemWorkflow`) ผ่านพร้อมร่องรอย ไม่หยุดเช็คเอาต์ · ใบเข้ารายงานตรวจข้อมูลให้ออกใบแทน ·
 > ในนามบริษัท (`IssueTaxInvoiceToCompany`) → เต็มรูปเท่านั้น · เงินประกันความเสียหาย (RefundableSecurity) ไม่มี VAT = ใบเสร็จธรรมดาเสมอ ·
-> เส้นจ่ายออนไลน์ (`LodgingReservationPaymentHandler`) ที่ถูกบล็อก → ธง "เงินเข้าแต่ยืนยันไม่ได้" ตามคำตัดสินข้อ 127 (ไม่ออกใบเสร็จเท็จ)
+> เส้นจ่ายออนไลน์ (`PublicPaymentController` → `LodgingReservationPaymentHandler` → `ConfirmAsync` → `CreateDepositReceiptAsync` → `ApproveDocumentAsync(SystemWorkflow)`)
+> **ไม่ล้มและไม่ติดธง 127 เพราะกติกานี้** — คำเตือนถูกส่งผ่านพร้อมหมายเหตุภายใน/audit (ข้อ 140 ข้อ 3 · เทสต์ `Receipt_form_warning_stops_only_the_web…`)
 
 > **รอบ 126 — เส้นที่แขกสัมผัสจริง** (`LODGING_BOOKING_AUDIT.md`):
 > | สิ่งที่เพิ่ม | ไฟล์ | หมายเหตุ |
@@ -4902,4 +4912,4 @@ _ก่อนหน้า: 2026-10-02 (รอบ 202 ทีม LW แก้ผ�
 _Last verified against codebase: 2026-10-09 (ตรวจความครอบคลุมเส้นกระดาษ OCR — §2.x "ยึดยอดรวมทั้งสิ้นก่อน": บิลค่าบริการรายเดือนที่มี "ยอดค้างชำระจากรอบก่อน" ยึดใบกำกับรอบนี้ (`OcrPaperAmounts.PriorBalanceRows` · ชั้น `PriorBalanceDecomposition` · บทบาท `PriorBalanceIncluded`) · แถวสรุป/ชำระ/เงินทอนในตารางรายการถูกตัดก่อนเป็นบรรทัดสินค้าทุก engine (`Helpers/OcrNonItemRow`) · กันถดถอยระดับบรรทัด `OcrReplayHarness.BuildLines` + `OcrReplayLineGoldenTests` + `tools/ocr_golden_corpus_check.py` · ตารางสถานะ 17 รูปแบบเอกสารใน `docs/lessons/ocr-pipeline.md` — commit 28a3c93d)_
 
 
-_Last verified against codebase: 2026-10-09 (รอบ 203 — รูปแบบกระดาษหลักฐานรับเงิน (คำถามเจ้าของ "ใบเสร็จที่ออก VAT ต้องเป็น ใบเสร็จรับเงิน/ใบกำกับภาษี หรืออย่างย่อเท่านั้นไหม"): ตัวตัดสินตัวเดียว `Helpers/ReceiptFormRule` (policy engine — ชุดที่กฎหมายอนุญาต + ค่าแนะนำ · ค่าตั้งบริษัท `CompanySettings.ReceiptFormPolicyJson` + ตัวเลือกรายใบ `Document.ReceiptForm` เลือกได้เฉพาะในชุดนั้น · บล็อกเฉพาะกระดาษเท็จ (ก)(ข)(ค) · มัดจำรับนโยบาย `DepositVatTreatment` เป็นข้อเท็จจริง ไม่บังคับใบกำกับ) · ต่อสายที่ `ApproveDocumentAsync` → `DecideReceiptFormAsync` ก่อน resolver หัวกระดาษ · สอง renderer อ่าน `ReceiptForm == Abbreviated` ผ่าน `ComputeDocumentTitle`/`IsAbbreviatedTaxInvoiceDoc` · matrix หน้าตั้งค่า `ReceiptFormRule.Matrix` · รายงาน `DataIntegrityReport.PlainReceiptsWithVat` · `ReceiptFormRuleTests` 25 เทสต์ · §5.1 + §6.5 — commits 524d27fe · ba55637c · 8db3cef6 (UI) · 73703aeb (docs))_
+_Last verified against codebase: 2026-10-09 (รอบ 203 — รูปแบบกระดาษหลักฐานรับเงิน (คำถามเจ้าของ "ใบเสร็จที่ออก VAT ต้องเป็น ใบเสร็จรับเงิน/ใบกำกับภาษี หรืออย่างย่อเท่านั้นไหม"): ตัวตัดสินตัวเดียว `Helpers/ReceiptFormRule` (policy engine — ชุดที่กฎหมายอนุญาต + ค่าแนะนำ · ค่าตั้งบริษัท `CompanySettings.ReceiptFormPolicyJson` + ตัวเลือกรายใบ `Document.ReceiptForm` เลือกได้เฉพาะในชุดนั้น · บล็อกเฉพาะกระดาษเท็จ (ก)(ข)(ค) · มัดจำรับนโยบาย `DepositVatTreatment` เป็นข้อเท็จจริง ไม่บังคับใบกำกับ) · ต่อสายที่ `ApproveDocumentAsync` → `DecideReceiptFormAsync` ก่อน resolver หัวกระดาษ · สอง renderer อ่าน `ReceiptForm == Abbreviated` ผ่าน `ComputeDocumentTitle`/`IsAbbreviatedTaxInvoiceDoc` · matrix หน้าตั้งค่า `ReceiptFormRule.Matrix` · รายงาน `DataIntegrityReport.PlainReceiptsWithVat` · `ReceiptFormRuleTests` 25 เทสต์ · §5.1 + §6.5 — commits ced6f688 · 1baf78e4 · fd076a2f (UI) · 7c75420f + b1e0bfe9 (docs) — rebase บน 22aa6979 · แก้ตามคำตัดสินข้อ 140 (เตือน+รับทราบ ไม่บล็อก · ที่พักค่าแนะนำอย่างย่อ · จ่ายออนไลน์ไม่ล้ม · matrix แสดงสถานะขายปลีก+ลิงก์): <pending>)_

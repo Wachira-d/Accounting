@@ -1340,7 +1340,15 @@
         const rows = this._receiptForm?.matrix;
         if (!rows) { box.textContent = 'ยังไม่ได้รับตารางจากเซิร์ฟเวอร์ — โหลดหน้าใหม่'; return; }
         const esc = Layout.esc;
-        box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+        // สถานะผู้ออก (คำตัดสินข้อ 140): บอกว่า "ติ๊กขายปลีก §86/6 แล้วหรือยัง" + ลิงก์ไปสวิตช์เดิมในหน้าเดียวกัน (#cRetailApproved) — ไม่ตั้งค่าให้เอง
+        const st = this._receiptForm;
+        const stateHtml = st.vat == null ? '' : `<div style="margin-bottom:8px;padding:6px 8px;border-radius:6px;background:${st.retail ? '#ECFDF5' : '#FEF3C7'};border:1px solid ${st.retail ? '#6EE7B7' : '#F59E0B'};color:${st.retail ? '#065F46' : '#92400E'}">
+            ${st.vat ? 'บริษัทจด VAT' : 'บริษัทยังไม่จด VAT (ออกใบเสร็จรับเงินทุกกรณี)'} ·
+            ${st.retail ? 'ติ๊ก "ประกอบกิจการขายปลีก/บริการรายย่อย (§86/6)" แล้ว — เลือกใบกำกับอย่างย่อให้ลูกค้าบุคคลธรรมดาได้'
+                        : 'ยังไม่ติ๊ก "ประกอบกิจการขายปลีก/บริการรายย่อย (§86/6)" — ใบที่มี VAT ให้ลูกค้าที่ไม่มีที่อยู่จะมีคำเตือนตอนอนุมัติและหัวพิมพ์เป็นใบเสร็จรับเงิน'}
+            <a href="#cRetailApproved" style="margin-left:6px;text-decoration:underline" onclick="const c=document.getElementById('cRetailApproved'); if(c){c.scrollIntoView({behavior:'smooth',block:'center'}); c.focus();} return false;">ไปที่ช่องติ๊ก →</a>
+          </div>`;
+        box.innerHTML = stateHtml + `<table style="width:100%;border-collapse:collapse;font-size:12px">
           <thead><tr style="background:#f8fafc"><th style="text-align:left;padding:6px 8px">กรณี</th><th style="text-align:left;padding:6px 8px">ออกเป็น</th><th style="text-align:left;padding:6px 8px">กฎหมาย</th></tr></thead>
           <tbody>${rows.map(r => {
             const allowed = r.options.filter(o => o.allowed);
@@ -2534,7 +2542,7 @@
           this._depositVat = { info: s.depositVatTreatmentInfo, options: s.depositVatTreatmentOptions || [] };
           this.renderDepositVat(s.depositVatTreatment || '');
           // รอบ 203 — รูปแบบกระดาษหลักฐานรับเงินต่อกรณี: matrix จากเซิร์ฟเวอร์ (undefined = ยังไม่ได้คำนวณ ≠ ไม่มีแถว)
-          this._receiptForm = { matrix: s.receiptFormMatrix ?? null };
+          this._receiptForm = { matrix: s.receiptFormMatrix ?? null, vat: s.receiptFormIssuerVatRegistered ?? null, retail: s.receiptFormIssuerRetailApproved ?? null };
           this.renderReceiptFormMatrix();
           this.loadDepositKinds(s.canEdit);   // รอบ 194 — ประเภทเงินมัดจำ (สิทธิ์แก้ = สิทธิ์ตั้งค่าบริษัท)
           document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;

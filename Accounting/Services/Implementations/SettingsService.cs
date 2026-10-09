@@ -60,6 +60,8 @@ public class SettingsService : ISettingsService
             DepositVatTreatmentOptions = Accounting.Helpers.DepositPolicyResolver.Options,
             ReceiptFormMatrix = Accounting.Helpers.ReceiptFormRule.Matrix(
                 vat, mayAbbrevDoc, mayAbbrevSlip, Accounting.Helpers.ReceiptFormPolicy.Parse(r.ReceiptFormPolicyJson)),
+            ReceiptFormIssuerVatRegistered = company?.IsVatRegistered,
+            ReceiptFormIssuerRetailApproved = company?.IsRetailApproved,
         };
     }
 

@@ -51,7 +51,10 @@ public static class ApprovalAcknowledgement
     public const string UnattendedRuleCode = "APPROVE-UNATTENDED-PASSED-S65";
 
     /// <summary>คำเตือนที่ทางเข้าไม่มีคนส่งผ่านได้ (ไม่หยุด) — ชุด §65 ตรี (คำตัดสินข้อ 110) · ตัวตั้งอยู่ที่ <see cref="Section65TerApprovalWarnings.IsWarning"/></summary>
-    private static bool PassesWithoutPerson(string warning) => Section65TerApprovalWarnings.IsWarning(warning);
+    /// รอบ 203 (คำตัดสินข้อ 140): ชุดรูปแบบใบเสร็จ <c>[RCPT-FORM]</c> (<see cref="ReceiptFormRule.IsApprovalWarning"/>) ก็ผ่านโดยไม่มีคน —
+    /// ที่พัก/จ่ายออนไลน์/API ห้ามล้มเพราะกติกานี้ · เว็บ/มือถือ (<see cref="ApprovalAckSource.None"/>) ยังหยุดให้รับทราบ
+    private static bool PassesWithoutPerson(string warning)
+        => Section65TerApprovalWarnings.IsWarning(warning) || ReceiptFormRule.IsApprovalWarning(warning);
 
     /// <summary>คำเตือนที่ยังไม่มีใครรับทราบตามแหล่ง — ว่าง = อนุมัติต่อได้ · ไม่ว่าง = ต้องหยุด (throw คำเตือนชุดนี้)</summary>
     public static IReadOnlyList<string> Unacknowledged(ApprovalAckSource source, IReadOnlyList<string> warnings)
@@ -60,7 +63,7 @@ public static class ApprovalAcknowledgement
         return source switch
         {
             ApprovalAckSource.User => Array.Empty<string>(),
-            ApprovalAckSource.SystemWorkflow => warnings.Where(OcrApprovalGapWarning.IsGapWarning).ToList(),
+            ApprovalAckSource.SystemWorkflow => warnings.Where(OcrApprovalGapWarning.IsGapWarning).ToList(),   // [RCPT-FORM] ไม่ใช่ gap ⇒ ผ่าน
             // คำตัดสินข้อ 110: API ส่งผ่านข้อสังเกต §65 ตรี แล้วคืนธงในผลตอบ (เหมือน [Σ-GAP])
             ApprovalAckSource.ApiClient => warnings.Where(w => !OcrApprovalGapWarning.IsAmountGapWarning(w) && !PassesWithoutPerson(w)).ToList(),
             ApprovalAckSource.Unattended => warnings.Where(w => !PassesWithoutPerson(w)).ToList(),
@@ -189,6 +192,7 @@ public static class ApprovalAcknowledgement
         {
             var r = Section65TerApprovalWarnings.IsWarning(w)
                 ? Section65TerApprovalWarnings.RuleCodeOf(w) ?? Section65TerApprovalWarnings.LegalReferenceFallback
+                : ReceiptFormRule.IsApprovalWarning(w) ? ReceiptFormRule.WarningLegalReference
                 : GeneralWarningsLegalReference;
             if (!refs.Contains(r)) refs.Add(r);
         }
