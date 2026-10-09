@@ -3307,8 +3307,12 @@ public class OcrService : IOcrService
             // expense and then have to reverse it.
             try
             {
+                // ฐานต้นทุน = ก่อน VAT หลังส่วนลดบรรทัด (ฝ่ายค้านรอบสี่ f1690d11 ข้อ 1 — บรรทัด e-Tax ราคารวม VAT ตามกระดาษถือยอดรวม VAT ⇒
+                // เดิมสินทรัพย์/ขาเดบิตเกินจริง 7%) · ตัวเดียวกับพรีวิวนำเข้าสต็อก (OcrController.StockPreview)
                 var assetInput = extractedData.Items
-                    .Select(i => (i.Description, i.Quantity, i.UnitPrice, i.Amount))
+                    .Select(i => (i.Description, i.Quantity,
+                        Accounting.Helpers.OcrEtaxLineNormalizer.EffectiveUnitCost(i.Quantity, i.UnitPrice, i.Amount, i.LineDiscountAmount, i.PriceIncludesVat, i.VatRate),
+                        Accounting.Helpers.OcrEtaxLineNormalizer.ExVatAmount(i.Amount, i.PriceIncludesVat, i.VatRate)))
                     .ToList();
                 var allDecisions = Ocr.FixedAssetDetector.Analyze(assetInput);
                 var assetCandidates = Ocr.FixedAssetDetector.PotentialAssetsOnly(allDecisions);
@@ -3322,8 +3326,9 @@ public class OcrService : IOcrService
                         {
                             lineIndex = d.LineIndex,
                             description = extractedData.Items.ElementAtOrDefault(d.LineIndex)?.Description,
-                            unitPrice = extractedData.Items.ElementAtOrDefault(d.LineIndex)?.UnitPrice,
-                            amount = extractedData.Items.ElementAtOrDefault(d.LineIndex)?.Amount,
+                            // ต้นทุนก่อน VAT (หน้าใช้ amount เป็นราคาซื้อสินทรัพย์) — ค่าเดียวกับที่ตัวตรวจใช้ตัดสินข้างบน
+                            unitPrice = assetInput.ElementAtOrDefault(d.LineIndex).Item3,
+                            amount = assetInput.ElementAtOrDefault(d.LineIndex).Item4,
                             quantity = extractedData.Items.ElementAtOrDefault(d.LineIndex)?.Quantity,
                             suggestedCategory = d.SuggestedCategory,
                             suggestedUsefulLifeMonths = d.SuggestedUsefulLifeMonths,
@@ -7587,7 +7592,9 @@ public class OcrService : IOcrService
                 document.PricesIncludeVat = true;    // Case A — ถอด VAT ออกจากยอดบรรทัดข้างล่าง
             // ★ ฝ่ายค้านรอบสาม f1690d11: บรรทัด e-Tax ราคารวม VAT ตามกระดาษ (กระทบยอดกับสูตรเอกสารผ่านแล้วที่ OcrEtaxLineNormalizer)
             // ⇒ เอกสารต้องเป็นราคารวม VAT เสมอ (ราคา 37.00 · ส่วนลด 26.68 อยู่ฐานรวม VAT) — ไม่ฝากไว้กับตัวจำแนกกรณี
-            if (items.All(x => x.PriceIncludesVat))
+            // ฝ่ายค้านรอบสี่ ข้อ 2: แถวยอด 0 ที่ไม่ติดธง (แถวว่างที่เพิ่งเพิ่ม) ไม่ทำให้ทั้งใบหลุดจากราคารวม VAT — ตัวตัดสินกลางตัวเดียว
+            if (Accounting.Helpers.OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(
+                    items.Select(x => (x.Amount ?? 0m, x.PriceIncludesVat)).ToList()))
                 document.PricesIncludeVat = true;
             if (docDiscountPercent > 0m && recon.TargetLineSum is decimal targetSum && items.Count > 0)
             {
@@ -9040,8 +9047,18 @@ public class OcrService : IOcrService
         switch (action)
         {
             case "add":
-                items.Add(new OcrExtractedLineItem { Description = "", Quantity = 1m, UnitPrice = 0m, Amount = 0m });
+            {
+                // ฝ่ายค้านรอบสี่ f1690d11 ข้อ 2: ใบ e-Tax ราคารวม VAT ตามกระดาษ ⇒ แถวใหม่ (เช่นค่าขนส่งที่ผู้ใช้เพิ่ม) อยู่ฐานเดียวกัน — เดิมแถวใหม่
+                // ไม่มีธง ⇒ ทั้งใบหลุดจากราคารวม VAT แล้ว 9 บรรทัดรวม VAT ถูกตีเป็นยอดก่อน VAT (VAT 209.41 → 227.57)
+                var inherit = Accounting.Helpers.OcrEtaxLineNormalizer.InheritForNewLine(
+                    items.Select(x => (x.Amount ?? 0m, x.PriceIncludesVat, x.VatRate)).ToList());
+                items.Add(new OcrExtractedLineItem
+                {
+                    Description = "", Quantity = 1m, UnitPrice = 0m, Amount = 0m,
+                    PriceIncludesVat = inherit.PriceIncludesVat, VatRate = inherit.VatRate,
+                });
                 break;
+            }
             case "delete":
                 if (lineIndex < 0 || lineIndex >= items.Count)
                     throw new Accounting.Helpers.BusinessRuleException("ไม่พบบรรทัดที่จะลบ");
@@ -9567,7 +9584,7 @@ public class OcrService : IOcrService
             }
         }
 
-        var purchaseCost = req.PurchaseCost ?? line?.Amount ?? line?.UnitPrice ?? 0m;
+        var purchaseCost = req.PurchaseCost ?? Accounting.Helpers.OcrEtaxLineNormalizer.ExVatAmountOfItem(scan.ExtractedItemsJson, req.LineIndex) ?? line?.Amount ?? line?.UnitPrice ?? 0m;
         if (purchaseCost <= 0)
             throw new InvalidOperationException("ราคาซื้อต้องมากกว่า 0");
         var purchaseDate = req.PurchaseDate ?? scan.ExtractedDate ?? DateTime.UtcNow.Date;

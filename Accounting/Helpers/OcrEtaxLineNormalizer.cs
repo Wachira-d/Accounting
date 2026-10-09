@@ -194,10 +194,80 @@ public static class OcrEtaxLineNormalizer
     /// · คืน null เมื่อมีบรรทัดที่ไม่ใช่ราคารวม VAT ตามกระดาษ หรือ Σ ≠ VAT หัวใบ (ผู้เรียกใช้การเฉลี่ยเดิม)</summary>
     public static decimal[]? InclusiveLineVats(IReadOnlyList<(decimal Amount, decimal VatRate, bool PriceIncludesVat)> lines, decimal headerVat)
     {
-        if (lines.Count == 0 || lines.Any(l => !l.PriceIncludesVat || l.VatRate <= 0m)) return null;
-        var vats = lines.Select(l => DocumentLineVatConvention.SplitLine(l.Amount, l.VatRate, null, includeVat: true).Vat).ToArray();
+        // บรรทัดยอด 0 ที่ไม่ติดธง (แถวว่างที่ผู้ใช้เพิ่งเพิ่ม) ไม่มี VAT ให้ถอด — ไม่ทำให้ทั้งใบตกทางเฉลี่ย (ฝ่ายค้านรอบสี่ ข้อ 2)
+        if (!AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, l.PriceIncludesVat)).ToList())) return null;
+        if (lines.Any(l => l.PriceIncludesVat && l.VatRate <= 0m)) return null;
+        var vats = lines.Select(l => l.PriceIncludesVat
+            ? DocumentLineVatConvention.SplitLine(l.Amount, l.VatRate, null, includeVat: true).Vat
+            : 0m).ToArray();
         return vats.Sum() == headerVat ? vats : null;
     }
+
+    /// <summary>ทั้งใบเป็น "ราคารวม VAT ตามกระดาษ" ไหม — มีบรรทัดที่ติดธงอย่างน้อยหนึ่ง และทุกบรรทัดที่ยอดไม่เป็น 0 ติดธง ·
+    /// บรรทัดยอด 0 ที่ไม่ติดธง (แถวว่างที่เพิ่งเพิ่ม) ไม่นับ — ฝ่ายค้านรอบสี่ ข้อ 2: เดิม <c>items.All(...)</c> ⇒ เพิ่มแถวเดียว
+    /// ทั้งใบหลุดจากราคารวม VAT แล้ว 9 บรรทัดรวม VAT ถูกตีเป็นยอดก่อน VAT (VAT 209.41 → 227.57)</summary>
+    public static bool AllLinesPriceIncludeVat(IReadOnlyList<(decimal Amount, bool PriceIncludesVat)> lines)
+        => lines.Any(l => l.PriceIncludesVat) && lines.All(l => l.PriceIncludesVat || l.Amount == 0m);
+
+    /// <summary>ค่าที่แถวใหม่ (ปุ่ม "เพิ่มบรรทัด" ในหน้ารีวิว) ต้องสืบทอด: ถ้าทุกบรรทัดที่ยอดไม่เป็น 0 ถือราคารวม VAT ตามกระดาษ ⇒ แถวใหม่ก็รวม VAT
+    /// (ผู้ใช้กรอกตัวเลขตามกระดาษซึ่งรวม VAT) + อัตราเดียวกันเมื่อทุกบรรทัดอัตราเดียว (ต่างกัน = null ให้ตัวสร้างบรรทัดตัดสิน) ·
+    /// ไม่ใช่ใบราคารวม VAT = (false, null) พฤติกรรมเดิม</summary>
+    public static (bool PriceIncludesVat, decimal? VatRate) InheritForNewLine(IReadOnlyList<(decimal Amount, bool PriceIncludesVat, decimal? VatRate)> existing)
+    {
+        if (!AllLinesPriceIncludeVat(existing.Select(l => (l.Amount, l.PriceIncludesVat)).ToList())) return (false, null);
+        var rates = existing.Where(l => l.PriceIncludesVat).Select(l => l.VatRate).Distinct().ToList();
+        return (true, rates.Count == 1 ? rates[0] : null);
+    }
+
+    /// <summary>ยอด<b>ก่อน VAT</b> ของบรรทัดสแกน — ฐานต้นทุนสินทรัพย์ถาวร/สต็อก (ฝ่ายค้านรอบสี่ ข้อ 1: บรรทัดราคารวม VAT ตามกระดาษถือยอดรวม VAT
+    /// 524.17 ⇒ เดิมสินทรัพย์ + ขาเดบิต JE เกินจริง 7% แทน 489.88) · ไม่ใช่ราคารวม VAT = ยอดเดิม</summary>
+    public static decimal? ExVatAmount(decimal? amount, bool priceIncludesVat, decimal? vatRate)
+        => priceIncludesVat && vatRate is decimal vr && vr > 0m && amount is decimal a
+            ? DocumentLineVatConvention.SplitLine(a, vr, null, includeVat: true).Net
+            : amount;
+
+    /// <summary><see cref="ExVatAmount"/> ของบรรทัดที่ <paramref name="lineIndex"/> ใน <c>ExtractedItemsJson</c> — คืนค่าเฉพาะบรรทัดที่ถือราคารวม VAT
+    /// ตามกระดาษ (null = ให้ผู้เรียกใช้ค่าเดิมของตัวเอง) · JSON เสีย/ไม่มีบรรทัด = null (ไม่ throw)</summary>
+    public static decimal? ExVatAmountOfItem(string? itemsJson, int lineIndex)
+    {
+        if (string.IsNullOrWhiteSpace(itemsJson) || lineIndex < 0) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(itemsJson);
+            var arr = doc.RootElement;
+            if (arr.ValueKind != System.Text.Json.JsonValueKind.Array || lineIndex >= arr.GetArrayLength()) return null;
+            var el = arr[lineIndex];
+            if (el.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !el.TryGetProperty("PriceIncludesVat", out var f) || f.ValueKind != System.Text.Json.JsonValueKind.True)
+                return null;
+            decimal? amount = el.TryGetProperty("Amount", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Number ? a.GetDecimal() : null;
+            decimal? rate = el.TryGetProperty("VatRate", out var r) && r.ValueKind == System.Text.Json.JsonValueKind.Number ? r.GetDecimal() : null;
+            return rate is > 0m && amount.HasValue ? ExVatAmount(amount, true, rate) : null;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
+    /// <summary>บรรทัดที่เขียนกลับลง <c>ExtractedItemsJson</c> ตอนอนุมัติ (ฝ่ายค้านรอบสี่ ข้อ 3) — ยอดฐานเดียวกับราคา (เอกสารราคารวม VAT ⇒
+    /// ก่อน VAT + VAT ของบรรทัด) และส่วนลดที่ทำให้ <c>round(จำนวน × ราคา) − ส่วนลด = ยอด</c> จริง:
+    /// <list type="bullet">
+    /// <item>ส่วนลดบรรทัดอธิบายยอดได้อยู่แล้ว ⇒ ส่วนลดบรรทัด (พฤติกรรมเดิม)</item>
+    /// <item>เอกสารมีส่วนลดท้ายบิล (ไม่มีหักมัดจำ) ⇒ ส่วนลด = ส่วนลดบรรทัด + ส่วนแบ่งส่วนลดท้ายบิลของบรรทัด (round(จำนวน × ราคา) − ยอด)
+    ///   — สร้างใหม่จากสแกนได้ยอดเดิมทุกสตางค์</item>
+    /// <item>อื่น ๆ (หักมัดจำ · ข้อมูลขัดกัน) ⇒ คงส่วนลดบรรทัด + <c>Lost = true</c> ให้ผู้เรียกเขียนหมายเหตุ (ห้ามทิ้งเงียบ)</item>
+    /// </list></summary>
+    public static (decimal Amount, decimal? Discount, bool Lost) WriteBackLine(decimal quantity, decimal unitPrice,
+        decimal lineAmount, decimal lineVat, decimal lineDiscount, bool pricesIncludeVat, bool billDiscountOnly)
+    {
+        var amount = pricesIncludeVat ? lineAmount + lineVat : lineAmount;
+        var gross = R2(quantity * unitPrice);
+        var lineDisc = lineDiscount > 0m ? Math.Min(R2(lineDiscount), gross) : 0m;
+        decimal? kept = lineDisc > 0m ? lineDisc : null;
+        if (gross - lineDisc == amount) return (amount, kept, false);
+        var derived = gross - amount;
+        if (billDiscountOnly && derived > 0m) return (amount, derived, false);
+        return (amount, kept, true);
+    }
+
 
     /// <summary>ป้ายของช่องส่วนลดในตาราง review (เซิร์ฟเวอร์เป็นคนเขียน — หน้าแสดงอย่างเดียว) · null = ไม่มีส่วนลด</summary>
     public static string? DiscountLabel(decimal? lineDiscount, bool priceIncludesVat, decimal? vatStripResidual)

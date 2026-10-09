@@ -5925,14 +5925,18 @@ RULES += [
     for m in ("ScanAsync", "CreateDocumentFromScanCoreAsync", "PreviewDocumentLinesAsync", "RepopulateDocumentLinesFromScanAsync")
 ] + [
     dict(file=DOC, method="BuildScanItemsJsonFromLines",
-         must=["LineDiscountAmount = l.DiscountAmount > 0m ? l.DiscountAmount : (decimal?)null",
-               "QuantityFromEtaxXml = quantitiesFromSignedXml",
-               "Amount = pricesIncludeVat ? l.Amount + l.VatAmount : l.Amount", "PriceIncludesVat = pricesIncludeVat"],
+         must=["OcrEtaxLineNormalizer.WriteBackLine(", "Amount = wb.Amount", "LineDiscountAmount = wb.Discount",
+               "QuantityFromEtaxXml = quantitiesFromSignedXml", "PriceIncludesVat = pricesIncludeVat",
+               "if (wb.Lost) lost.Add(l.LineOrder);"],
+         forbid=["Amount = pricesIncludeVat ? l.Amount + l.VatAmount : l.Amount"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 2: เขียนบรรทัดที่อนุมัติกลับลงสแกนต้องคงส่วนลด+ธงจำนวนจากเอกสารที่ลงนาม"),
     dict(file=DOC, method="SyncScanToPostedDocumentAsync",
          call_args=[("BuildScanItemsJsonFromLines(", "IsEtaxEngine"),
                     ("BuildScanItemsJsonFromLines(", "ItemsJsonCarriesSignedQuantities"),
-                    ("BuildScanItemsJsonFromLines(", "PricesIncludeVat")],
+                    ("BuildScanItemsJsonFromLines(", "PricesIncludeVat"),
+                    ("BuildScanItemsJsonFromLines(", "BillDiscountAmount"),
+                    ("BuildScanItemsJsonFromLines(", "DepositBaseDeducted")],
+         must=["if (linesChanged && writeBackLostLines.Count > 0)"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 2: สแกน e-Tax/สำเนาของมัน (engine Cached) ต้องได้ธงคืน"),
     dict(file="Controllers/OcrController.cs", method="StockPreview",
          must=["OcrEtaxLineNormalizer.EffectiveUnitCost(", "effectiveCosts[li]", "EffectiveUnitCost: effCost",
@@ -5953,8 +5957,9 @@ RULES += [
          must=["foreach (var etaxNote in extractedData.EtaxLineNotes)"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสาม: หมายเหตุ [e-Tax] (เศษจากถอด VAT · เหตุที่ใช้ทางสำรอง) ต้องถึง ProcessingNotes"),
     dict(file=OCR, method="BuildScanLinesAsync",
-         must=["if (items.All(x => x.PriceIncludesVat))", "OcrEtaxLineNormalizer.InclusiveLineVats("],
-         before=[("if (items.All(x => x.PriceIncludesVat))", "OcrEtaxLineNormalizer.InclusiveLineVats(")],
+         must=["OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(", "OcrEtaxLineNormalizer.InclusiveLineVats("],
+         before=[("OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(", "OcrEtaxLineNormalizer.InclusiveLineVats(")],
+         forbid=["items.All(x => x.PriceIncludesVat)"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสาม: บรรทัดราคารวม VAT ตามกระดาษ ⇒ เอกสาร PricesIncludeVat + VAT รายบรรทัดสูตรเดียวกับ ComputeLineAmounts"),
     dict(file=OCR, method="MapToResponse",
          must=["OcrEtaxLineNormalizer.DiscountLabel("],
@@ -5970,6 +5975,22 @@ RULES += [
          must=["var target = Math.Round(g.Sum(i => amts[i].NetAmount) * g.Key / 100m, 2, R);",
                "NetAmount = pricesIncludeVat ? amts[j].NetAmount - diff : amts[j].NetAmount"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสาม: TiesOutInclusive ต้องการ VAT รายบรรทัดรวม = เป้าของขั้นนี้ (ไม่งั้นบรรทัดใหญ่สุดถูกขยับ)"),
+]
+
+
+# ── ฝ่ายค้านรอบสี่ f1690d11 (2026-10-09): ต้นทุนสินทรัพย์จากบรรทัดราคารวม VAT · แถวที่เพิ่มในรีวิวสืบทอดฐานราคา ──
+RULES += [
+    dict(file=OCR, method="ScanAsync",
+         must=["OcrEtaxLineNormalizer.ExVatAmount(i.Amount, i.PriceIncludesVat, i.VatRate)",
+               "amount = assetInput.ElementAtOrDefault(d.LineIndex).Item4"],
+         forbid=[".Select(i => (i.Description, i.Quantity, i.UnitPrice, i.Amount))"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสี่ ข้อ 1: ตัวตรวจ/ผู้สมัครสินทรัพย์ถาวรใช้ต้นทุนก่อน VAT หลังส่วนลด (ไม่ใช่ยอดรวม VAT)"),
+    dict(file=OCR, method="RegisterAssetFromScanAsync",
+         must=["OcrEtaxLineNormalizer.ExVatAmountOfItem(scan.ExtractedItemsJson, req.LineIndex)"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสี่ ข้อ 1: ราคาซื้อสินทรัพย์ตั้งต้นจากบรรทัดราคารวม VAT = ยอดก่อน VAT"),
+    dict(file=OCR, method="ModifyExtractedLineAsync",
+         must=["OcrEtaxLineNormalizer.InheritForNewLine(", "PriceIncludesVat = inherit.PriceIncludesVat", "VatRate = inherit.VatRate"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสี่ ข้อ 2: แถวใหม่ในใบราคารวม VAT ต้องอยู่ฐานเดียวกัน (ไม่งั้นทั้งใบหลุด VAT 209.41 → 227.57)"),
 ]
 
 

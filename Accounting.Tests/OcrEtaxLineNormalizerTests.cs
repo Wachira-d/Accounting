@@ -585,4 +585,79 @@ public class OcrEtaxLineNormalizerTests
         // ทิศตรงข้าม = บั๊กของรอบสอง: ส่วนลดรวม VAT คู่กับยอดก่อน VAT ⇒ ส่วนลดไม่อธิบายยอด
         Assert.Equal(0m, OcrEtaxLineNormalizer.ProvenLineDiscount(3m, 37.00m, 78.80m, 26.68m));
     }
+
+    // ══ ฝ่ายค้านรอบสี่ (2026-10-09) ═══════════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void สินทรัพย์จากบรรทัดราคารวมVAT_ต้นทุนก่อนVAT()
+    {
+        // บรรทัด 9 (DEWALT): 1 × 690.00 − 165.83 = 524.17 รวม VAT ⇒ ต้นทุนสินทรัพย์ 489.88 (เดิม 524.17 ⇒ สินทรัพย์ + เดบิต JE เกิน 7%)
+        var line9 = CrcInvoice().Lines[^2];
+        Assert.Equal(524.17m, line9.Amount);
+        Assert.Equal(489.88m, OcrEtaxLineNormalizer.ExVatAmount(line9.Amount, true, 7m));
+        Assert.Equal(489.88m, OcrEtaxLineNormalizer.EffectiveUnitCost(1m, 690.00m, 524.17m, 165.83m, priceIncludesVat: true, vatRate: 7m));
+        // ทิศตรงข้าม: บรรทัดราคาก่อน VAT ⇒ ยอดเดิมไม่แตะ
+        Assert.Equal(500.93m, OcrEtaxLineNormalizer.ExVatAmount(500.93m, false, 7m));
+        Assert.Equal(500.93m, OcrEtaxLineNormalizer.ExVatAmount(500.93m, true, null));
+        // ค่าตั้งต้นของ "ลงทะเบียนสินทรัพย์จากสแกน" อ่านจาก ExtractedItemsJson
+        const string json = """[{"Description":"ยาง","Quantity":3,"UnitPrice":37.00,"Amount":84.32,"VatRate":7,"LineDiscountAmount":26.68,"PriceIncludesVat":true},{"Description":"DEWALT","Quantity":1,"UnitPrice":690.00,"Amount":524.17,"VatRate":7,"LineDiscountAmount":165.83,"PriceIncludesVat":true},{"Description":"ของ Shopee","Quantity":2,"UnitPrice":250.47,"Amount":500.93,"VatRate":7}]""";
+        Assert.Equal(489.88m, OcrEtaxLineNormalizer.ExVatAmountOfItem(json, 1));
+        Assert.Null(OcrEtaxLineNormalizer.ExVatAmountOfItem(json, 2));   // ไม่ใช่ราคารวม VAT ⇒ ผู้เรียกใช้ยอดเดิม
+        Assert.Null(OcrEtaxLineNormalizer.ExVatAmountOfItem(json, 9));
+        Assert.Null(OcrEtaxLineNormalizer.ExVatAmountOfItem("{bad", 0));
+    }
+
+    private static List<(decimal Amount, bool PriceIncludesVat, decimal? VatRate)> CrcVerbatimItems()
+        => CrcInvoice().Lines.Select(n => (n.Amount!.Value, n.PriceIncludesVat, n.VatRate)).ToList();
+
+    [Fact]
+    public void แถวที่เพิ่มในรีวิว_สืบทอดราคารวมVAT_และทั้งใบยังเป็นราคารวมVAT()
+    {
+        var items = CrcVerbatimItems();
+        Assert.Equal((true, (decimal?)7.00m), OcrEtaxLineNormalizer.InheritForNewLine(items));
+        // แถวว่างที่เพิ่งเพิ่ม (ยอด 0 · ไม่มีธง — เช่นสแกนเก่าก่อนแก้) ไม่ทำให้ทั้งใบหลุด
+        var withBlank = items.Select(x => (x.Amount, x.PriceIncludesVat)).Append((0m, false)).ToList();
+        Assert.True(OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(withBlank));
+        // ผู้ใช้เติมค่าขนส่ง 50 ในแถวที่สืบทอดธง ⇒ ทั้งใบยังราคารวม VAT · VAT รายบรรทัดใช้ได้เมื่อหัวใบรวม VAT ของแถวใหม่ด้วย
+        var withFreight = items.Select(x => (x.Amount, 7m, x.PriceIncludesVat)).Append((50m, 7m, true)).ToList();
+        Assert.True(OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(withFreight.Select(x => (x.Item1, x.Item3)).ToList()));
+        var vats = OcrEtaxLineNormalizer.InclusiveLineVats(withFreight, 209.41m + 3.27m);   // 50 − round(50 ÷ 1.07) = 3.27
+        Assert.NotNull(vats);
+        Assert.Equal(3.27m, vats![^1]);
+        // หัวใบยังเป็น 209.41 (กระดาษ) ⇒ Σ ไม่ตรง ⇒ null ให้ตัวสร้างบรรทัดเฉลี่ยตามเดิม (ไม่ throw · ไม่ตีทั้งใบเป็นก่อน VAT)
+        Assert.Null(OcrEtaxLineNormalizer.InclusiveLineVats(withFreight, 209.41m));
+        // แถวว่างยอด 0 ไม่มีธงใน InclusiveLineVats ⇒ VAT 0 ไม่ทำให้ตกทางเฉลี่ย
+        var withBlankVat = items.Select(x => (x.Amount, 7m, x.PriceIncludesVat)).Append((0m, 0m, false)).ToList();
+        Assert.Equal(209.41m, OcrEtaxLineNormalizer.InclusiveLineVats(withBlankVat, 209.41m)!.Sum());
+    }
+
+    [Fact]
+    public void แถวที่เพิ่ม_ทิศตรงข้าม_ใบไม่ใช่ราคารวมVAT_หรือแถวมีค่าแต่ไม่มีธง()
+    {
+        // ใบราคาก่อน VAT ⇒ แถวใหม่ไม่ติดธง (พฤติกรรมเดิม)
+        Assert.Equal((false, (decimal?)null), OcrEtaxLineNormalizer.InheritForNewLine(new[] { (500.93m, false, (decimal?)null) }));
+        // อัตราต่างกัน ⇒ สืบทอดธงแต่ไม่เดาอัตรา
+        Assert.Equal((true, (decimal?)null), OcrEtaxLineNormalizer.InheritForNewLine(new[] { (107m, true, (decimal?)7m), (100m, true, (decimal?)0.5m) }));
+        // แถวที่มียอดแต่ไม่มีธง = ใบปน ⇒ ไม่ใช่ราคารวม VAT ทั้งใบ
+        var mixed = CrcVerbatimItems().Select(x => (x.Amount, x.PriceIncludesVat)).Append((50m, false)).ToList();
+        Assert.False(OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(mixed));
+        // ไม่มีแถวไหนติดธงเลย ⇒ false (แถวว่างล้วนไม่ใช่หลักฐาน)
+        Assert.False(OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(new[] { (0m, false) }));
+    }
+
+    [Fact]
+    public void เขียนกลับตอนอนุมัติ_พาส่วนลดท้ายบิล_และบอกดังเมื่อหักมัดจำ()
+    {
+        // เอกสารราคารวม VAT ไม่มีส่วนลดท้ายบิล: ก่อน VAT 78.80 + VAT 5.52 = 84.32 = 111 − 26.68 ⇒ ส่วนลดบรรทัดตามเดิม
+        Assert.Equal((84.32m, (decimal?)26.68m, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 78.80m, 5.52m, 26.68m, true, false));
+        // ผู้ใช้เพิ่มส่วนลดท้ายบิล: บรรทัดเหลือก่อน VAT 70.00 + VAT 4.90 = 74.90 ⇒ ส่วนลดที่เขียนกลับ = 111 − 74.90 = 36.10 (บรรทัด + ส่วนแบ่งท้ายบิล)
+        var wb = OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscountOnly: true);
+        Assert.Equal((74.90m, (decimal?)36.10m, false), wb);
+        Assert.Equal(36.10m, OcrEtaxLineNormalizer.ProvenLineDiscount(3m, 37.00m, wb.Amount, wb.Discount));   // สร้างใหม่ได้ยอดเดิม
+        // ทิศตรงข้าม: หักมัดจำ (ไม่ใช่ส่วนลด) ⇒ ไม่แต่งเป็นส่วนลด · Lost = true ให้ผู้เรียกเขียนหมายเหตุ
+        Assert.Equal((74.90m, (decimal?)26.68m, true), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscountOnly: false));
+        // เอกสารราคาก่อน VAT ปกติ ⇒ ค่าเดิมทุกตัว
+        Assert.Equal((78.80m, (decimal?)24.94m, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 78.80m, 5.52m, 24.94m, false, false));
+        Assert.Equal((103.74m, (decimal?)null, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 103.74m, 7.26m, 0m, false, false));
+    }
 }

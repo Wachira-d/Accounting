@@ -14642,7 +14642,9 @@ public partial class DocumentService : IDocumentService
             var linesJson = BuildScanItemsJsonFromLines(approvedLines,
                 Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(scan.OcrEngine)
                 || Accounting.Helpers.OcrEtaxLineNormalizer.ItemsJsonCarriesSignedQuantities(scan.ExtractedItemsJson),
-                doc.PricesIncludeVat);
+                doc.PricesIncludeVat,
+                billDiscountOnly: doc.BillDiscountAmount > 0m && doc.DepositBaseDeducted == 0m,
+                lostLines: out var writeBackLostLines);
             var linesChanged = linesJson != null && linesJson != scan.ExtractedItemsJson;
             // ── คำตัดสินข้อ 28 (รอบ 200 ทีม K2 · ฝ่ายค้าน K R2): WHT ที่คนแก้ใน "ฟอร์มเอกสาร" ต้องถึงวงจรเรียนรู้ ──
             // baseline = ค่า WHT บนแถวสแกน (ตัวเดียวกับ K-10) · ต่างจริงเท่านั้น (เอกสารที่สร้างจากสแกนโดยไม่มีใครแตะ = ว่าง ⇒ ไม่สอนตัวเอง) ·
@@ -14665,6 +14667,11 @@ public partial class DocumentService : IDocumentService
             if (change.TotalAmount != null) scan.ExtractedTotalAmount = change.TotalAmount;
             if (change.TargetDocumentType != null) scan.TargetDocumentType = change.TargetDocumentType;
             if (linesChanged) scan.ExtractedItemsJson = linesJson;
+            // ฝ่ายค้านรอบสี่ ข้อ 3: บรรทัดที่ยอดหลังหักมัดจำ/ข้อมูลขัดกัน อธิบายด้วย จำนวน × ราคา − ส่วนลด ไม่ได้ ⇒ สร้างใหม่จากสแกนนี้จะไม่มีการหักนั้น — บอกดัง ๆ
+            if (linesChanged && writeBackLostLines.Count > 0)
+                scan.ProcessingNotes = (scan.ProcessingNotes ?? "")
+                    + $"\n[SCAN-WRITEBACK] บรรทัดที่ {string.Join(", ", writeBackLostLines)} ของเอกสาร {doc.DocumentNumber}: ยอดหลังหักท้ายบิล/มัดจำ "
+                    + "อธิบายด้วย จำนวน × ราคา − ส่วนลด ไม่ได้ — ถ้าสร้างเอกสารใหม่จากสแกนนี้ การหักนั้นจะไม่ตามไป ตรวจกับเอกสารเดิมก่อนอนุมัติ";
 
             // ★ ตัวชี้วัดคุณภาพ (D4): การแก้ Draft ก่อนอนุมัติก็คือ "ผู้ใช้ต้องแก้"
             // เหมือนกับการแก้ในหน้า review — ไม่งั้น first-pass accept rate จะสูงเกินจริง
@@ -14728,26 +14735,38 @@ public partial class DocumentService : IDocumentService
     /// (ฝ่ายค้านรอบสอง f1690d11 ข้อ 2: เดิมเขียนกลับแค่ จำนวน/ราคา/ยอด ⇒ ส่วนลดหาย แล้วจำนวนถูกหารใหม่ตอนสร้างซ้ำ)</para>
     /// <para>เอกสารราคารวม VAT (ฝ่ายค้านรอบสาม f1690d11): <c>DocumentLine.Amount</c> เป็นยอดก่อน VAT แต่ราคา/ส่วนลดรวม VAT ⇒ เขียน
     /// <c>Amount</c> = ยอดก่อน VAT + VAT ของบรรทัด (= ยอดรวม VAT หลังส่วนลด ฐานเดียวกับราคา) + ธง <c>PriceIncludesVat</c> — เดิมคัดลอก
-    /// ส่วนลดรวม VAT คู่กับยอดก่อน VAT ⇒ "จำนวน × ราคา − ส่วนลด ≠ ยอด" แล้วสร้างใหม่ตก [Σ-GAP]</para></summary>
-    private static string? BuildScanItemsJsonFromLines(List<DocumentLine> lines, bool quantitiesFromSignedXml, bool pricesIncludeVat)
+    /// ส่วนลดรวม VAT คู่กับยอดก่อน VAT ⇒ "จำนวน × ราคา − ส่วนลด ≠ ยอด" แล้วสร้างใหม่ตก [Σ-GAP]</para>
+    /// <para>ฝ่ายค้านรอบสี่ ข้อ 3: ยอด/ส่วนลดต่อบรรทัดผ่าน <c>OcrEtaxLineNormalizer.WriteBackLine</c> — ส่วนแบ่งส่วนลดท้ายบิลถูกพาไปในส่วนลดของบรรทัด
+    /// (สร้างใหม่ได้ยอดเดิม) · หักมัดจำ/ข้อมูลขัดกัน ⇒ <paramref name="lostLines"/> (LineOrder) ให้ผู้เรียกเขียนหมายเหตุ ห้ามทิ้งเงียบ</para></summary>
+    private static string? BuildScanItemsJsonFromLines(List<DocumentLine> lines, bool quantitiesFromSignedXml, bool pricesIncludeVat,
+        bool billDiscountOnly, out List<int> lostLines)
     {
+        var lost = new List<int>();
+        lostLines = lost;
         var usable = lines
             .Where(l => !string.IsNullOrWhiteSpace(l.Description))
             .OrderBy(l => l.LineOrder)
             .ToList();
         if (usable.Count == 0) return null;
-        return System.Text.Json.JsonSerializer.Serialize(usable.Select(l => new
+        var rows = usable.Select(l =>
         {
-            Description = l.Description,
-            Quantity = l.Quantity,
-            Unit = l.Unit,
-            UnitPrice = l.UnitPrice,
-            Amount = pricesIncludeVat ? l.Amount + l.VatAmount : l.Amount,
-            VatRate = l.VatRate,
-            LineDiscountAmount = l.DiscountAmount > 0m ? l.DiscountAmount : (decimal?)null,
-            QuantityFromEtaxXml = quantitiesFromSignedXml,
-            PriceIncludesVat = pricesIncludeVat,
-        }));
+            var wb = Accounting.Helpers.OcrEtaxLineNormalizer.WriteBackLine(
+                l.Quantity, l.UnitPrice, l.Amount, l.VatAmount, l.DiscountAmount, pricesIncludeVat, billDiscountOnly);
+            if (wb.Lost) lost.Add(l.LineOrder);
+            return new
+            {
+                Description = l.Description,
+                Quantity = l.Quantity,
+                Unit = l.Unit,
+                UnitPrice = l.UnitPrice,
+                Amount = wb.Amount,
+                VatRate = l.VatRate,
+                LineDiscountAmount = wb.Discount,
+                QuantityFromEtaxXml = quantitiesFromSignedXml,
+                PriceIncludesVat = pricesIncludeVat,
+            };
+        }).ToList();
+        return System.Text.Json.JsonSerializer.Serialize(rows);
     }
 
     private async Task RecordLineAccountFeedbackAsync(Guid companyId, IEnumerable<DocumentLine> lines, CancellationToken ct = default)
