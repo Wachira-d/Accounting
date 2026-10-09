@@ -2489,6 +2489,22 @@ public class AdminController : ControllerBase
         var accountName = string.IsNullOrWhiteSpace(req.AccountName) ? null : req.AccountName.Trim();
         var weight = Math.Max(1, req.Weight ?? 1);
 
+        // ความรู้ระบบกลาง = ค่าตั้งต้นของ "ทุกบริษัท" ⇒ ห้ามสอนหนี้สิน/ทุนเป็นผังเดบิตของผู้ขาย (เจ้าหนี้กรรมการ/ถอนใช้ส่วนตัวเป็น
+        // ความสัมพันธ์เฉพาะบริษัท · ฝ่ายค้านรอบสาม f1690d11 · ตัวตัดสินเดียว OcrAccountPlacement.IsLearnableLineAccount) — ไม่มีผังของบริษัท
+        // ให้ดูประเภท จึงใช้ผังมาตรฐานของระบบ · รหัสที่ไม่อยู่ในผังมาตรฐาน = ไม่รู้ประเภท ⇒ สอนตามเดิม
+        var systemCodes = new[] { req.AccountCode }
+            .Concat(req.Lines?.Select(l => l.AccountCode) ?? Enumerable.Empty<string?>())
+            .Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c!.Trim()).Distinct();
+        foreach (var sysCode in systemCodes)
+        {
+            var templateType = Accounting.Services.ChartOfAccountTemplates.GetCommonAccounts()
+                .FirstOrDefault(t => t.Code == sysCode)?.Type;
+            var refuse = Accounting.Helpers.OcrAccountPlacement.LearnedDebitLabel(templateType);
+            if (refuse != null)
+                return BadRequest(new ApiResponse<object>(false, null,
+                    $"รหัส {sysCode} ในผังมาตรฐานเป็น{refuse} — ความรู้ระบบกลางใช้กับทุกบริษัท จึงไม่สอนบัญชีนี้เป็นผังของผู้ขาย"));
+        }
+
         // 1. ExpenseCategoryLearner (system-wide) — per-line records
         var trainedLines = 0;
         if (req.Lines != null && req.Lines.Count > 0 && !string.IsNullOrEmpty(req.AccountCode))

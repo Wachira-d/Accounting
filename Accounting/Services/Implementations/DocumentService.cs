@@ -3083,7 +3083,7 @@ public partial class DocumentService : IDocumentService
         // ตัดสินใจ — accept หรือ override)
         var savedLines = await _db.DocumentLines.AsNoTracking()
             .Where(l => l.DocumentId == doc.Id).ToListAsync();
-        await RecordLineAccountFeedbackAsync(savedLines);
+        await RecordLineAccountFeedbackAsync(doc.CompanyId, savedLines);
         var updated = await GetDocumentAsync(companyId, documentId);
         await FireWebhookAsync(companyId, "document.updated", updated);
         return updated;
@@ -6827,7 +6827,7 @@ public partial class DocumentService : IDocumentService
         // (ข้ามถ้า UserChosenAnswer เคย set แล้ว) → ปลอดภัย ถ้า Update เคย fire
         var approvedLines = await _db.DocumentLines.AsNoTracking()
             .Where(l => l.DocumentId == doc.Id).ToListAsync();
-        await RecordLineAccountFeedbackAsync(approvedLines);
+        await RecordLineAccountFeedbackAsync(doc.CompanyId, approvedLines);
 
         // ปิดลูปที่ "เอกสารที่ลงจริง" ไม่ใช่ "ช่องบนสแกน" (สถาปัตยกรรมเป้าหมาย D3)
         // — ผู้ใช้เปิด Draft แล้วแก้ชื่อผู้ขาย/วันที่/ยอด/รหัสสาขาก่อนอนุมัติได้
@@ -14745,7 +14745,7 @@ public partial class DocumentService : IDocumentService
         }));
     }
 
-    private async Task RecordLineAccountFeedbackAsync(IEnumerable<DocumentLine> lines, CancellationToken ct = default)
+    private async Task RecordLineAccountFeedbackAsync(Guid companyId, IEnumerable<DocumentLine> lines, CancellationToken ct = default)
     {
         if (_feedbackRecorder == null) return;
         var pending = lines.Where(l => l.GlAccountAiFeedbackId.HasValue && l.AccountId.HasValue).ToList();
@@ -14754,19 +14754,17 @@ public partial class DocumentService : IDocumentService
         var accountIds = pending.Select(l => l.AccountId!.Value).Distinct().ToList();
         // batch load AI's original answer + chosen account code
         var aiAnswers = await _db.AiSuggestionFeedbacks.AsNoTracking()
-            .Where(f => feedbackIds.Contains(f.Id))
+            .Where(f => f.CompanyId == companyId && feedbackIds.Contains(f.Id))
             .Select(f => new { f.Id, f.AiPrimaryAnswer, f.UserChosenAnswer })
             .ToListAsync(ct);
         var aiAnswerMap = aiAnswers.ToDictionary(a => a.Id);
-        var acctRows = await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => accountIds.Contains(a.Id))
-            .Select(a => new { a.Id, a.AccountCode, a.AccountType })
-            .ToListAsync(ct);
-        // หนี้สิน/ทุนไม่ใช่คำตอบของ "ผังบรรทัด" — ไม่สอนนักเรียน GL (สแกนจริง f1690d11: บรรทัดลง 21230 เจ้าหนี้กรรมการ
-        // แล้วถูกสอนกลับเป็นคำตอบของผู้ขายรายนั้น · ตัวตัดสินเดียว OcrAccountPlacement.IsLearnableLineAccount)
-        var codeMap = acctRows
-            .Where(a => Accounting.Helpers.OcrAccountPlacement.IsLearnableLineAccount(a.AccountType))
-            .ToDictionary(a => a.Id, a => a.AccountCode);
+        // กฎ M: CompanyId ทุก query (ผังบัญชีของบริษัทนี้เท่านั้น)
+        // ฝ่ายค้านรอบสาม f1690d11: ไม่ตัดหนี้สิน/ทุนทิ้งที่นี่ — บรรทัดของเอกสารที่ผู้ใช้บันทึก/อนุมัติคือคำตอบของผู้ใช้
+        // (ใบคืนเงินกรรมการ Dr 21230 ต้องปิดแถว feedback ได้ ไม่งั้นค้างตลอดกาลและนักเรียนไม่เคยเรียน) · ด่านท้ายไปป์ไลน์ OCR
+        // กันไม่ให้ค่านี้กลับมาเป็นผังค่าใช้จ่ายเอง
+        var codeMap = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
+            .ToDictionaryAsync(a => a.Id, a => a.AccountCode, ct);
 
         foreach (var line in pending)
         {

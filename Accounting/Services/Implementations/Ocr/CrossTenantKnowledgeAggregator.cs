@@ -208,6 +208,17 @@ public class CrossTenantKnowledgeAggregator
             .Where(g => g.Select(v => v.CompanyId).Distinct().Count() >= minTenants)
             .ToList();
 
+        // ── ผังเดบิตที่ห้ามเป็น "ค่าตั้งต้นของผู้เช่ารายอื่น" (ฝ่ายค้านรอบสาม f1690d11 · F2 #9) ──
+        // หนี้สิน/ทุนของบริษัทหนึ่ง (21230 เจ้าหนี้กรรมการ · ถอนใช้ส่วนตัว) เป็นความสัมพันธ์เฉพาะบริษัทนั้น — ส่งต่อเป็น cold-start
+        // ให้บริษัทอื่น = ใบแรกของผู้ขายรายนั้นได้เดบิตหนี้สินของคนอื่น · ตัวตัดสินเดียว OcrAccountPlacement.IsLearnableLineAccount
+        var notSeedable = (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => companyIds.Contains(a.CompanyId) && !a.IsDeleted)
+                .Select(a => new { a.CompanyId, a.AccountCode, a.AccountType })
+                .ToListAsync(ct))
+            .Where(a => !Accounting.Helpers.OcrAccountPlacement.IsLearnableLineAccount(a.AccountType))
+            .Select(a => (a.CompanyId, a.AccountCode))
+            .ToHashSet();
+
         int promoted = 0;
         foreach (var g in grouped)
         {
@@ -231,7 +242,10 @@ public class CrossTenantKnowledgeAggregator
                 foreach (var kv in ParseBreakdown(v.DocumentTypeBreakdownJson))
                     combinedDocType[kv.Key] = combinedDocType.GetValueOrDefault(kv.Key) + kv.Value;
                 foreach (var kv in ParseBreakdown(v.DebitAccountBreakdownJson))
+                {
+                    if (notSeedable.Contains((v.CompanyId, kv.Key))) continue;
                     combinedDebit[kv.Key] = combinedDebit.GetValueOrDefault(kv.Key) + kv.Value;
+                }
                 if (v.TypicalWhtRate.HasValue)
                 {
                     wAvgWhtRate = ((wAvgWhtRate ?? 0) * whtRateWeight + v.TypicalWhtRate.Value * v.WhtUsageCount)
@@ -243,7 +257,8 @@ public class CrossTenantKnowledgeAggregator
                     paymentTermsSum = (paymentTermsSum ?? 0) + v.TypicalPaymentTermsDays.Value;
                     paymentTermsCount++;
                 }
-                if (string.IsNullOrEmpty(bestDebitName))
+                if (string.IsNullOrEmpty(bestDebitName) && !string.IsNullOrEmpty(v.MostCommonDebitAccountCode)
+                    && !notSeedable.Contains((v.CompanyId, v.MostCommonDebitAccountCode)))
                     bestDebitName = v.MostCommonDebitAccountName;
             }
 

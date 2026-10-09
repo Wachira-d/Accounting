@@ -1719,10 +1719,14 @@ public class OcrController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.AccountCode))
             return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุรหัสบัญชีที่ต้องการสอน"));
 
-        var accountName = await _db.ChartOfAccounts
+        var sampleAccount = await _db.ChartOfAccounts
             .Where(a => a.CompanyId == companyId && a.AccountCode == request.AccountCode && !a.IsDeleted)
-            .Select(a => a.AccountName)
+            .Select(a => new { a.AccountName, a.AccountType })
             .FirstOrDefaultAsync();
+        var accountName = sampleAccount?.AccountName;
+        // คำสอนของผู้ดูแล = คำตอบแบบ explicit ⇒ สอนได้ทุกประเภท (กติกาเดียวกับคำแก้ของผู้ใช้ · ฝ่ายค้านรอบสาม f1690d11)
+        // แต่ต้องบอกว่าหนี้สิน/ทุนจะไม่ถูกเติมเป็นผังค่าใช้จ่ายของสแกนเอง (ข้อความตัวเดียว OcrAccountPlacement.LearnedDebitLabel)
+        var sampleAccountLabel = Accounting.Helpers.OcrAccountPlacement.LearnedDebitLabel(sampleAccount?.AccountType);
 
         // 1. Train ExpenseCategoryLearner (per vendor + description → account)
         await learner.RecordAsync(
@@ -1757,7 +1761,8 @@ public class OcrController : ControllerBase
             trainedDocumentType = docType?.ToString(),
             whtRate = request.WhtRate,
             paymentTermsDays = request.PaymentTermsDays
-        }, $"สอนระบบเรียบร้อย: ผู้ขาย '{request.VendorName ?? request.VendorTaxId}' → {request.AccountCode}{(docType.HasValue ? $" + {docType.Value}" : "")}{(request.WhtRate.HasValue ? $" + WHT {request.WhtRate}%" : "")}"));
+        }, $"สอนระบบเรียบร้อย: ผู้ขาย '{request.VendorName ?? request.VendorTaxId}' → {request.AccountCode}{(docType.HasValue ? $" + {docType.Value}" : "")}{(request.WhtRate.HasValue ? $" + WHT {request.WhtRate}%" : "")}"
+            + (sampleAccountLabel != null ? $" · ⚠️ {request.AccountCode} เป็น{sampleAccountLabel}" : "")));
     }
 
     public record AdminTrainRequest(
@@ -2003,8 +2008,16 @@ public class OcrController : ControllerBase
         if (intel == null)
             return Ok(new ApiResponse<object>(true, null, "ไม่พบประวัติของผู้ขายรายนี้"));
 
+        // ผังเดบิตที่เรียนไว้เป็นหนี้สิน/ทุน ⇒ ต้องติดป้าย ไม่ใช่แสดงเหมือน "ผังค่าใช้จ่ายที่แนะนำ" (ฝ่ายค้านรอบสาม f1690d11)
+        var learnedDebitType = string.IsNullOrEmpty(intel.MostCommonDebitAccountCode) ? null
+            : await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.AccountCode == intel.MostCommonDebitAccountCode && !a.IsDeleted)
+                .Select(a => (Models.Enums.AccountType?)a.AccountType)
+                .FirstOrDefaultAsync();
         return Ok(new ApiResponse<object>(true, new
         {
+            MostCommonDebitAccountType = learnedDebitType?.ToString(),
+            MostCommonDebitAccountWarning = Accounting.Helpers.OcrAccountPlacement.LearnedDebitLabel(learnedDebitType),
             intel.VendorName, intel.VendorTaxId,
             intel.MostCommonDocumentType, intel.MostCommonDocumentTypeCount,
             intel.TotalDocuments, intel.DocumentTypeBreakdownJson,

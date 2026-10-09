@@ -78,6 +78,13 @@ public static class OcrAccountPlacement
     public static bool IsLearnableLineAccount(AccountType? type)
         => type is not (AccountType.Liability or AccountType.Equity);
 
+    /// <summary>ป้ายของผังเดบิตที่ "เรียนไว้" เมื่อเป็นหนี้สิน/ทุน — ข้อความเดียวของหน้า/endpoint ที่แสดงความรู้ของผู้ขาย
+    /// (ฝ่ายค้านรอบสาม f1690d11: ห้ามแสดง 21230 ในฐานะ "ผังค่าใช้จ่ายที่ระบบแนะนำ") · null = ผังค่าใช้จ่าย/สินทรัพย์/ไม่รู้ประเภท</summary>
+    public static string? LearnedDebitLabel(AccountType? type)
+        => IsLearnableLineAccount(type) ? null
+            : $"{TypeName(type!.Value)} — ไม่ใช่ผังค่าใช้จ่าย: สแกนของผู้ขายรายนี้จะไม่ถูกเติมบัญชีนี้เอง "
+              + "(ระบบเติมผังตามหมวดพร้อมไฮไลต์เหลืองและเหตุผล ให้ผู้ใช้เลือกบัญชีนี้เองเมื่อเป็นการชำระหนี้/ถอนใช้ส่วนตัว)";
+
     /// <summary>คู่ที่<b>เก็บไว้แล้ว</b> (อาจเป็นค่าที่ผู้ใช้เลือก) — ตัวเดียวของ "เส้นสร้างเอกสาร" และ "การ์ดบนหน้าจอ"
     /// เพื่อให้สิ่งที่ผู้ใช้เห็น = สิ่งที่ลงบัญชีจริง (คู่สลับ ⇒ สลับ · แหล่งเงินเป็นค่าใช้จ่าย/รายได้ ⇒ ตัด · เดบิตหนี้สินลำพังคงไว้)</summary>
     public static Result ResolveStored(GlAccountCandidate? debit, GlAccountCandidate? credit)
@@ -106,8 +113,11 @@ public static class OcrAccountPlacement
     /// </summary>
     /// <param name="debit">เดบิตหลังรวมกับค่าที่เก็บไว้</param>
     /// <param name="credit">เครดิตหลังรวมกับค่าที่เก็บไว้</param>
+    /// <param name="ourRole">บทบาทเราบนแถวสแกน — ใช้เติมคำแนะนำ "เปลี่ยนเอกสารที่จะสร้าง" เมื่อเราเป็นผู้ขายแต่เป้าหมายเป็นใบสำคัญจ่าย</param>
+    /// <param name="targetDocumentType">เป้าหมายบนแถวสแกน</param>
     public static CorrectionResult DecideCorrection(
-        GlAccountCandidate? debit, GlAccountCandidate? credit, bool userSentDebit, bool userSentCredit)
+        GlAccountCandidate? debit, GlAccountCandidate? credit, bool userSentDebit, bool userSentCredit,
+        string? ourRole = null, string? targetDocumentType = null)
     {
         var check = Check(debit, credit, debitIsSystemSuggested: false);
         if (check.Verdict == Verdict.Swapped && userSentDebit && userSentCredit)
@@ -115,9 +125,46 @@ public static class OcrAccountPlacement
         if (userSentCredit && credit is { } c && !PaymentSourceOk(c.Type))
             return new(CorrectionAction.RejectCredit, debit?.Code, c.Code,
                 $"บัญชีเครดิต (แหล่งเงิน) {Label(c)} เป็น{TypeName(c.Type)} — ใบซื้อ/จ่ายต้องเครดิตเงินสด/ธนาคาร/เจ้าหนี้/ทุน "
-                + "ถ้าตั้งใจให้เป็นบัญชีค่าใช้จ่าย ให้เลือกไว้ที่ \"บัญชีเดบิต\" แทน — ยังไม่บันทึกคำแก้นี้");
+                + "ถ้าตั้งใจให้เป็นบัญชีค่าใช้จ่าย ให้เลือกไว้ที่ \"บัญชีเดบิต\" แทน"
+                + (SellerOnPaymentVoucher(ourRole, targetDocumentType)
+                    ? " · ใบนี้ระบบอ่านว่าเราเป็นผู้ขาย แต่ \"เอกสารที่จะสร้าง\" เป็นใบสำคัญจ่าย — ถ้าเป็นใบที่เรารับเงิน ให้เปลี่ยน \"เอกสารที่จะสร้าง\" (เช่น ใบเสร็จรับเงิน) แทนการเลือกบัญชี"
+                    : "")
+                + " — ยังไม่บันทึกคำแก้นี้");
         return new(CorrectionAction.Keep, debit?.Code, credit?.Code, null);
     }
+
+    private static bool SellerOnPaymentVoucher(string? ourRole, string? targetDocumentType)
+        => string.Equals(ourRole, "Seller", StringComparison.OrdinalIgnoreCase)
+           && string.Equals(targetDocumentType, nameof(DocumentType.PaymentVoucher), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>ผู้ใช้ส่งเดบิต "ค่าที่จอแสดง" กลับมาโดยไม่เปลี่ยน และค่านั้น<b>ระบบเป็นคนวางให้</b> (จอสลับ/แก้คู่ที่เก็บไว้) ⇒ ไม่ใช่คำตอบของผู้ใช้
+    /// — ห้ามสอนเป็น Explicit (DOCTRINE §3 ห้ามระบบยืนยันตัวเอง · ฝ่ายค้านรอบสาม f1690d11)</summary>
+    /// <param name="submittedDebit">เดบิตที่หน้าเว็บส่งมา</param>
+    /// <param name="shownDebit">เดบิตที่จอแสดง (หลัง <see cref="ResolveStored"/>)</param>
+    /// <param name="storedDebit">เดบิตที่เก็บไว้ในแถวก่อนแก้</param>
+    public static bool IsSystemPlacedEcho(string? submittedDebit, string? shownDebit, string? storedDebit)
+        => !string.IsNullOrWhiteSpace(submittedDebit)
+           && !OcrCorrectedFieldList.AccountChanged(submittedDebit, shownDebit)
+           && OcrCorrectedFieldList.AccountChanged(shownDebit, storedDebit);
+
+    /// <summary>
+    /// **ประวัติของผู้ขายรายนี้ (คำตอบของผู้ใช้) ลงเดบิตเป็นหนี้สิน/ทุน แต่ใบนี้ได้ผังค่าใช้จ่าย** — ฝ่ายค้านรอบสาม f1690d11:
+    /// ผู้ขาย "คืนเงินกรรมการ" (Dr 21230 / Cr ธนาคาร) หรือ "ถอนใช้ส่วนตัว" (ทุน) ห้ามได้ผังค่าใช้จ่ายแบบมั่นใจ — กดผ่านหนึ่งคลิก = ค่าใช้จ่ายหักภาษีผิด ·
+    /// คืนเหตุผล (ผู้เรียกกดความมั่นใจช่องเดบิต ≤ <see cref="HistoryConflictConfidenceCap"/> + ลง ProcessingNotes) · null = ไม่ขัดกัน
+    /// </summary>
+    /// <param name="learned">ผังเดบิตที่ประวัติ/ตัวเรียนรู้ของผู้ขายเสนอ (พร้อมประเภท)</param>
+    /// <param name="finalDebitCode">ผังเดบิตที่ใบนี้จะได้หลังทุกชั้น</param>
+    public static string? HistoryConflict(GlAccountCandidate? learned, string? finalDebitCode)
+    {
+        if (learned is not { } l || ExpenseDebitOk(l.Type)) return null;
+        if (string.Equals(l.Code, finalDebitCode, StringComparison.Ordinal)) return null;
+        return $"ประวัติของผู้ขายรายนี้ผู้ใช้เคยลงเดบิต {Label(l)} ({TypeName(l.Type)}) — ใบนี้ระบบเติมผัง"
+            + (string.IsNullOrEmpty(finalDebitCode) ? "ว่างไว้" : $" {finalDebitCode}")
+            + " ให้แทน · ถ้าใบนี้เป็นการชำระหนี้เดิม/ถอนใช้ส่วนตัว ให้เลือก " + l.Code + " เอง (ลงเป็นค่าใช้จ่ายผิด = หักภาษีเกิน)";
+    }
+
+    /// <summary>ความมั่นใจสูงสุดของช่องเดบิตเมื่อ <see cref="HistoryConflict"/> ไม่ว่าง — ต่ำกว่าเกณฑ์ไฮไลต์ 0.85</summary>
+    public const double HistoryConflictConfidenceCap = 0.5;
 
     private static bool ExpenseDebitOk(AccountType t) => t is AccountType.Expense or AccountType.Asset;
 
@@ -155,8 +202,8 @@ public static class OcrAccountPlacement
 
         if (debitBad && debitIsSystemSuggested)
             return new(null, cCode, Verdict.DebitRejected,
-                $"บัญชีเดบิตที่ระบบเสนอ {Label(debit!.Value)} เป็น{TypeName(debit.Value.Type)} — ใบซื้อ/จ่ายต้องเดบิตค่าใช้จ่ายหรือสินทรัพย์ "
-                + "(เดบิตหนี้สิน = ตัดหนี้ที่ไม่เคยตั้ง) — ไม่ใช้ค่านี้ เว้นว่างให้เลือกเอง");
+                $"บัญชีเดบิตที่ระบบเสนอ {Label(debit!.Value)} เป็น{TypeName(debit.Value.Type)} — ระบบไม่เติมให้เป็นผังค่าใช้จ่ายเอง "
+                + "ถ้าใบนี้คือการชำระหนี้เดิม/ถอนใช้ส่วนตัว (เช่น คืนเงินกรรมการ) ให้เลือกบัญชีนี้ที่ \"บัญชีเดบิต\" เอง");
 
         return new(dCode, cCode, Verdict.Ok, null);
     }

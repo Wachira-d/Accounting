@@ -64,8 +64,18 @@ public static class OcrCorrectedFieldList
         Add("VatAmount", c.VatAmount);
         Add("TotalAmount", c.TotalAmount);
         Add("ExpenseCategory", c.ExpenseCategory);
-        Add("DebitAccountCode", c.DebitAccountCode);
-        Add("CreditAccountCode", c.CreditAccountCode);
+        // ผังบัญชี Dr/Cr (ฝ่ายค้านรอบสาม f1690d11): หน้ารีวิวส่งทั้งสอง dropdown ทุกครั้ง ⇒ นับเฉพาะเมื่อเปลี่ยนจากคู่ที่<b>จอแสดง</b>
+        // (Accounts baseline · null = กติกาเดิม "ส่งมา = แก้")
+        if (before?.Accounts is not OcrAccountsBaseline acc)
+        {
+            Add("DebitAccountCode", c.DebitAccountCode);
+            Add("CreditAccountCode", c.CreditAccountCode);
+        }
+        else
+        {
+            if (AccountChanged(c.DebitAccountCode, acc.DebitCode)) fields.Add("DebitAccountCode");
+            if (AccountChanged(c.CreditAccountCode, acc.CreditCode)) fields.Add("CreditAccountCode");
+        }
         if (before?.Wht is not OcrWhtBaseline wht)
         {
             Add("HasWht", c.HasWht);
@@ -143,6 +153,12 @@ public static class OcrCorrectedFieldList
 
     /// <summary>ข้อความอิสระที่ส่งมา ≠ ค่าที่เก็บไว้ไหม — ว่าง ≡ ไม่มีค่า · ตัดช่องว่างหัวท้ายและยุบช่องว่างซ้อน (hydrate ลง input แล้วส่งกลับ
     /// ต้องไม่นับว่าแก้) · ตัวพิมพ์เล็ก/ใหญ่นับว่าต่าง (ผู้ใช้แก้ตัวสะกดได้)</summary>
+    /// <summary>ผู้ใช้<b>เปลี่ยน</b>ผังบัญชีช่องนี้จากที่จอแสดงไหม — ว่าง/ไม่ส่ง = ไม่เปลี่ยน · รหัสเทียบตรงตัวหลังตัดช่องว่างหัวท้าย
+    /// (ตัวเดียวของ "ผู้ใช้ส่งฝั่งนี้" ใน <c>SubmitCorrectionAsync</c> และ <see cref="From"/>)</summary>
+    public static bool AccountChanged(string? submitted, string? shown)
+        => !string.IsNullOrWhiteSpace(submitted)
+           && !string.Equals(submitted.Trim(), (shown ?? "").Trim(), StringComparison.Ordinal);
+
     internal static bool TextChanged(string? submitted, string? stored)
         => !string.Equals(Squash(submitted), Squash(stored), StringComparison.Ordinal);
 
@@ -165,7 +181,11 @@ public static class OcrCorrectedFieldList
 /// <summary>ค่าที่สแกนเก็บไว้<b>ก่อน</b>รับคำแก้ — ตัวป้อนของ <see cref="OcrCorrectedFieldList.From"/> ให้แยก "ผู้ใช้เปลี่ยนค่า"
 /// ออกจาก "หน้าเว็บส่งค่าเดิมกลับมา" (รอบ 197 ฝ่ายค้าน K-1: รหัสสาขาสองฝั่ง · รอบ 200 K-10: ช่อง WHT ผ่าน <paramref name="Wht"/>)</summary>
 public sealed record OcrCorrectionBaseline(string? VendorBranchCode, string? BuyerBranchCode, OcrWhtBaseline? Wht = null,
-    OcrTextBaseline? VendorAddress = null);
+    OcrTextBaseline? VendorAddress = null, OcrAccountsBaseline? Accounts = null);
+
+/// <summary>คู่ผังบัญชี Dr/Cr ที่หน้ารีวิว<b>แสดง</b>ก่อนรับคำแก้ (หลังด่านวางฝั่ง <see cref="OcrAccountPlacement.ResolveStored"/> —
+/// ค่าเดียวกับที่ฟอร์ม hydrate ลง dropdown)</summary>
+public sealed record OcrAccountsBaseline(string? DebitCode, string? CreditCode);
 
 /// <summary>ค่าข้อความหนึ่งช่องของสแกนก่อนรับคำแก้ (null ทั้งตัว = ผู้เรียกไม่มีค่าก่อนแก้ ⇒ กติกาเดิม "ส่งมา = แก้")</summary>
 public sealed record OcrTextBaseline(string? Value);

@@ -455,4 +455,80 @@ public class OcrF1690EtaxScanTests
         Assert.True(OcrAccountPlacement.IsLearnableLineAccount(AccountType.Revenue));
         Assert.True(OcrAccountPlacement.IsLearnableLineAccount(null));
     }
+
+    // ═══════════════ ฝ่ายค้านรอบสาม f1690d11 ═══════════════
+
+    [Fact]
+    public void ฝั่งที่ผู้ใช้ส่ง_คือเปลี่ยนจากที่จอแสดง_ไม่ใช่แค่มีค่า()
+    {
+        // หน้าเว็บส่งทั้งสอง dropdown ทุกครั้ง — ค่าเดิมที่จอแสดงไม่ใช่ "ผู้ใช้เลือก"
+        Assert.False(OcrCorrectedFieldList.AccountChanged("51530", "51530"));
+        Assert.False(OcrCorrectedFieldList.AccountChanged(" 51530 ", "51530"));
+        Assert.False(OcrCorrectedFieldList.AccountChanged(null, "51530"));
+        Assert.False(OcrCorrectedFieldList.AccountChanged("", "51530"));
+        // ทิศตรงข้าม: เปลี่ยนจริง / จอว่างแล้วผู้ใช้เลือก
+        Assert.True(OcrCorrectedFieldList.AccountChanged("52120", "51530"));
+        Assert.True(OcrCorrectedFieldList.AccountChanged("52120", null));
+    }
+
+    [Fact]
+    public void ช่องที่ผู้ใช้แก้_ผังบัญชีนับเฉพาะที่เปลี่ยนจากจอ_เมื่อมีค่าก่อนแก้()
+    {
+        var req = new Accounting.Models.DTOs.Ocr.OcrCorrectionRequest(DebitAccountCode: "51530", CreditAccountCode: "21230");
+        var shown = new OcrCorrectionBaseline(null, null, Accounts: new OcrAccountsBaseline("51530", "21230"));
+        var fields = OcrCorrectedFieldList.From(req, shown);
+        Assert.DoesNotContain("DebitAccountCode", fields);
+        Assert.DoesNotContain("CreditAccountCode", fields);
+        var changed = OcrCorrectedFieldList.From(req with { DebitAccountCode = "52120" }, shown);
+        Assert.Contains("DebitAccountCode", changed);
+        Assert.DoesNotContain("CreditAccountCode", changed);
+        // ไม่มีค่าก่อนแก้ = กติกาเดิม (ส่งมา = แก้)
+        Assert.Contains("DebitAccountCode", OcrCorrectedFieldList.From(req));
+    }
+
+    [Fact]
+    public void ค่าที่ระบบวางบนจอแล้วผู้ใช้ส่งกลับไม่เปลี่ยน_ไม่ใช่คำตอบของผู้ใช้()
+    {
+        // แถวเก่าเก็บ Dr 21230 · จอสลับเป็น 51530 · ผู้ใช้กดบันทึกโดยไม่แตะ ⇒ ไม่สอนเป็น Explicit
+        Assert.True(OcrAccountPlacement.IsSystemPlacedEcho("51530", shownDebit: "51530", storedDebit: "21230"));
+        // ทิศตรงข้าม: ผู้ใช้เปลี่ยนเอง · จอไม่ได้แก้อะไร (ค่าที่เก็บ = ค่าที่เห็น)
+        Assert.False(OcrAccountPlacement.IsSystemPlacedEcho("52120", shownDebit: "51530", storedDebit: "21230"));
+        Assert.False(OcrAccountPlacement.IsSystemPlacedEcho("51530", shownDebit: "51530", storedDebit: "51530"));
+        Assert.False(OcrAccountPlacement.IsSystemPlacedEcho(null, shownDebit: "51530", storedDebit: "21230"));
+    }
+
+    [Fact]
+    public void ประวัติผู้ขายเป็นหนี้สิน_แต่ใบนี้ได้ผังค่าใช้จ่าย_ต้องเตือนและกดความมั่นใจ()
+    {
+        var conflict = OcrAccountPlacement.HistoryConflict(Director21230, "52120");
+        Assert.NotNull(conflict);
+        Assert.Contains("21230", conflict);
+        Assert.True(OcrAccountPlacement.HistoryConflictConfidenceCap < 0.85);
+        // ทิศตรงข้าม: ประวัติเป็นค่าใช้จ่าย · ใบนี้ได้บัญชีเดียวกับประวัติ (ผู้ใช้เลือกเอง) · ไม่มีประวัติ ⇒ ไม่เตือน
+        Assert.Null(OcrAccountPlacement.HistoryConflict(RoomRepair51530, "52120"));
+        Assert.Null(OcrAccountPlacement.HistoryConflict(Director21230, "21230"));
+        Assert.Null(OcrAccountPlacement.HistoryConflict(null, "52120"));
+    }
+
+    [Fact]
+    public void คำแก้_แหล่งเงินเป็นค่าใช้จ่ายบนใบที่เราเป็นผู้ขาย_ชี้ให้เปลี่ยนเอกสารที่จะสร้าง()
+    {
+        var seller = OcrAccountPlacement.DecideCorrection(Supplies52120, RoomRepair51530, true, true,
+            ourRole: "Seller", targetDocumentType: "PaymentVoucher");
+        Assert.Equal(OcrAccountPlacement.CorrectionAction.RejectCredit, seller.Action);
+        Assert.Contains("เอกสารที่จะสร้าง", seller.Reason);
+        // ทิศตรงข้าม: เราเป็นผู้ซื้อ ⇒ ไม่ชี้ไปเปลี่ยนชนิดเอกสาร
+        var buyer = OcrAccountPlacement.DecideCorrection(Supplies52120, RoomRepair51530, true, true,
+            ourRole: "Buyer", targetDocumentType: "PaymentVoucher");
+        Assert.DoesNotContain("เอกสารที่จะสร้าง", buyer.Reason);
+    }
+
+    [Fact]
+    public void ป้ายความรู้ผู้ขาย_หนี้สินทุนติดป้าย_ค่าใช้จ่ายไม่ติด()
+    {
+        Assert.Contains("หนี้สิน", OcrAccountPlacement.LearnedDebitLabel(AccountType.Liability));
+        Assert.NotNull(OcrAccountPlacement.LearnedDebitLabel(AccountType.Equity));
+        Assert.Null(OcrAccountPlacement.LearnedDebitLabel(AccountType.Expense));
+        Assert.Null(OcrAccountPlacement.LearnedDebitLabel(null));
+    }
 }
