@@ -98,10 +98,15 @@
     /* Scan Cards Grid */
     .scan-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      /* min(100%,360px): จอแคบกว่า 360px ต้องไม่ถูกบังคับคอลัมน์ 360px */
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
       gap: 16px;
     }
     .scan-card {
+      /* min-width:0 — ลูกของ grid มี min-width:auto ⇒ ชื่อไฟล์/เลขที่เอกสารแบบ nowrap
+         ดันการ์ดให้กว้าง ~730px บนจอ 412px แล้ว .page-content ตัดขอบขวาทิ้ง
+         (ผู้ใช้มือถือรายงาน: ปุ่มแถวล่างหาย เลื่อนไปดูไม่ได้) */
+      min-width: 0;
       background: #fff; border: 1px solid var(--gray-200);
       border-radius: var(--radius-lg); padding: 20px;
       transition: box-shadow .2s, border-color .2s;
@@ -154,28 +159,29 @@
 
     /* Extracted Info */
     .scan-info-grid {
-      display: grid; grid-template-columns: 1fr 1fr;
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 6px 16px; margin-bottom: 14px;
       font-size: 13px;
     }
-    .scan-info-item { display: flex; flex-direction: column; }
+    .scan-info-item { display: flex; flex-direction: column; min-width: 0; }
     .scan-info-label { color: var(--gray-400); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em; }
-    .scan-info-value { color: var(--gray-800); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* ตัดบรรทัดได้ (เลขที่เอกสารยาวต้องเห็นครบ ไม่ใช่ถูกตัดเป็น …) */
+    .scan-info-value { color: var(--gray-800); font-weight: 500; overflow-wrap: anywhere; }
 
     /* Contact Match */
     .contact-match {
-      display: flex; align-items: center; gap: 8px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
       padding: 8px 12px; background: var(--gray-50);
       border-radius: var(--radius); margin-bottom: 14px;
       font-size: 13px;
     }
     .contact-match .icon { font-size: 16px; }
-    .contact-match-name { flex: 1; font-weight: 500; color: var(--gray-700); }
+    .contact-match-name { flex: 1 1 120px; min-width: 0; font-weight: 500; color: var(--gray-700); overflow-wrap: anywhere; }
     .contact-match .btn { padding: 4px 10px; font-size: 11px; }
 
     /* Scan Card Actions */
-    .scan-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-    .scan-card-actions .btn { font-size: 12px; padding: 6px 12px; }
+    .scan-card-actions { display: flex; gap: 8px; flex-wrap: wrap; min-width: 0; }
+    .scan-card-actions .btn { font-size: 12px; padding: 6px 12px; max-width: 100%; white-space: normal; }
     .btn-danger-outline { background: transparent; color: var(--danger, #EF4444); border: 1px solid var(--danger, #EF4444); border-radius: var(--radius, 6px); cursor: pointer; }
     .btn-danger-outline:hover { background: var(--danger, #EF4444); color: #fff; }
 
@@ -305,6 +311,9 @@
       .upload-zone { padding: 32px 16px; }
       .config-section { flex-direction: column; align-items: flex-start; }
       .modal { max-width: 95vw !important; }
+      .scan-card { padding: 14px; }
+      /* ชื่อไฟล์ยาว: บนมือถือให้เห็น 2 บรรทัดแทน … บรรทัดเดียว */
+      .scan-card-filename { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     }
   </style>
 </head>

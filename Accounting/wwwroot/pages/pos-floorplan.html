@@ -9,6 +9,8 @@
   <style>
     /* ===== Floor plan editor ===== */
     .fp-layout { display:grid; grid-template-columns:240px 1fr 280px; gap:0; height:calc(100vh - 60px); background:#f1f5f9; }
+    /* จอแคบ: 3 คอลัมน์ 240+280px ไม่พอ ⇒ แผงคุณสมบัติโต๊ะเคยตกขอบขวา (ถูกตัด เลื่อนไม่ได้) — เรียงซ้อนแทน ผังเลื่อนในกล่องตัวเอง */
+    @media (max-width:900px) { .fp-layout { grid-template-columns:minmax(0,1fr); height:auto; } .fp-canvas-wrap { min-height:60vh; max-height:75vh; } }
     .fp-side { background:#fff; padding:14px; overflow:auto; }
     .fp-side h3 { margin:0 0 10px; font-size:14px; color:#475569; text-transform:uppercase; letter-spacing:.5px; }
     .fp-floor-item { display:flex; align-items:center; gap:8px; padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; margin-bottom:4px; }

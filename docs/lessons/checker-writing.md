@@ -93,6 +93,7 @@ python3 tools/namespace_shadow_check.py # CS0234 `Helpers.X` ผูกไป nam
 python3 tools/service_interface_check.py # CS1061 controller เรียกเมธอดที่ลืมประกาศใน interface ของ service (impl+endpoint ครบ แต่ interface ขาด) → ลาก CS0006 ให้เทสต์ล้มตาม
 python3 tools/dto_nullable_contract_check.py # DTO ประกาศ `string` (ไม่ nullable) ทั้งที่ service เติมค่าให้เมื่อว่าง → ASP.NET ใส่ [Required] โดยปริยาย แล้วตีกลับเป็นอังกฤษชื่อ property C# ก่อนถึงโค้ดเรา (ฟ้องเฉพาะตอนสองชั้น**ขัดกัน** — ชั้นที่ throw/BadRequest เองถือว่าตรงกัน ไม่ฟ้อง)
 python3 tools/css_var_check.py       # var(--x) ที่ไม่เคยประกาศ → ปุ่มล่องหน/สีหาย
+python3 tools/mobile_overflow_check.py # มือถือถูกตัดขอบ/เลื่อนไม่ได้: viewport · ตาข่าย .page-content{overflow-x:auto} ≤768px · overflow hidden/min-width บนกล่องระดับหน้า · minmax(≥300px) ไม่ห่อ min(100%,…) · ตาราง ≥4 คอลัมน์นอกกล่องเลื่อน — `--self-test` ฉีดบั๊กลงสำเนาไฟล์จริง (2026-10-09)
 python3 tools/undeclared_local_check.py # CS0103 ส่งตัวแปรที่ไม่มีในเมธอดนั้นเป็นอาร์กิวเมนต์
 python3 tools/admin_menu_gate_check.py # เมนู/endpoint ของแพลตฟอร์มที่ลูกค้ามองเห็น
 python3 tools/upload_route_check.py  # โฟลเดอร์อัปโหลดที่เขียนได้แต่ static handler ตอบ 404

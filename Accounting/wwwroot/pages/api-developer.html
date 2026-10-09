@@ -46,6 +46,8 @@
     .status-table th{background:var(--gray-50);font-weight:600;text-align:left}
     .badge-sm{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
     @media(max-width:900px){.api-sidebar{display:none}.api-main{padding:16px}}
+    /* มือถือ: path ยาวไม่มีช่องว่าง ⇒ ให้ขึ้นบรรทัดใหม่ได้ (เดิมชื่อ endpoint + ลูกศรถูกตัดขอบ) */
+    @media(max-width:600px){.endpoint-header{flex-wrap:wrap;padding:12px 14px;gap:8px}.endpoint-path{min-width:0;overflow-wrap:anywhere}.endpoint-title{flex:1 1 100%}}
   </style>
 </head>
 <body>

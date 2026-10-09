@@ -28,6 +28,11 @@
     .qs-row input:focus, .qs-row textarea:focus { outline:none; border-color:#0f172a; box-shadow:0 0 0 3px rgba(15,23,42,.08); }
     .qs-row .hint { font-size:12px; color:#94a3b8; margin-top:4px; }
     @media (max-width:560px) { .qs-row { grid-template-columns:1fr; gap:4px; } }
+    /* ลูกของ grid มี min-width:auto ⇒ <input> ขนาดตั้งต้น ~20 ตัวอักษรดันแถวรายการ/ปุ่มชนิดเอกสาร
+       ให้กว้างเกินจอมือถือ (หน้าทั้งหน้าเลื่อนข้าง 501px บนจอ 390px) */
+    .qs-row > *, .qs-line > *, .qs-doctype > * { min-width:0; }
+    .qs-line input { width:100%; box-sizing:border-box; }
+    @media (max-width:420px) { .qs-line { grid-template-columns:minmax(0,1fr) 64px 92px 36px; } }
 
     .qs-customer-list { background:#fff; border:1px solid #cbd5e1; border-radius:8px; max-height:240px; overflow:auto;
       margin-top:4px; box-shadow:0 4px 12px rgba(0,0,0,.05); }

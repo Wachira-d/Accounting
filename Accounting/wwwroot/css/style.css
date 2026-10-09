@@ -248,7 +248,9 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .pagination button:disabled { opacity: .5; cursor: default; }
 
 /* ===== Tabs ===== */
-.tabs { display: flex; gap: 0; border-bottom: 2px solid var(--gray-200); margin-bottom: 24px; }
+/* flex-wrap: แท็บเยอะ (หน้าเอกสาร 1366px) เคยล้นขวาแล้วถูก .page-content{overflow-x:hidden} ตัดทิ้ง
+   — "ใบสำคัญจ่าย"/"ใบรับรองแทนใบเสร็จ" กดไม่ได้ · ขึ้นแถวใหม่แทน (จอ ≤768px ยังเป็นแถวเดียวเลื่อนข้างตามเดิม) */
+.tabs { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 2px solid var(--gray-200); margin-bottom: 24px; }
 .tab { padding: 10px 20px; font-size: 14px; font-weight: 500; color: var(--gray-500); border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .2s; cursor: pointer; }
 .tab:hover { color: var(--gray-700); }
 .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
@@ -916,3 +918,58 @@ body.ui-mode-simple .advanced-only { display: none !important; }
 }
 .bulk-bar button { background: rgba(255,255,255,.2); color: #fff; border: 1px solid rgba(255,255,255,.3); }
 .bulk-bar button:hover { background: rgba(255,255,255,.3); }
+
+/* =====================================================================
+   Mobile overflow guard (2026-10-09 · ผู้ใช้ Android ~412px รายงาน
+   "หน้า OCR บนมือถือเห็นปุ่มเมนูไม่ครบ เลื่อนไม่ได้")
+   ---------------------------------------------------------------------
+   ต้นเหตุร่วม: .main-content / .page-content ตั้ง overflow-x:hidden ⇒ อะไร
+   ก็ตามที่กว้างกว่าจอถูก "ตัดทิ้ง" และเลื่อนไปดูไม่ได้ (ปุ่มท้ายแถวหาย).
+   กติกา: ของที่กว้างกว่าจอต้อง (1) หดหรือขึ้นบรรทัดใหม่ หรือ (2) เลื่อนได้
+   ภายในกล่องตัวเอง — ห้ามถูกตัดเงียบ ๆ. ทุกข้อจำกัดไว้ที่จอ ≤768px
+   เดสก์ท็อปไม่ถูกแตะ. ด่าน static: tools/mobile_overflow_check.py
+   ===================================================================== */
+@media (max-width: 768px) {
+  /* (1) ตาข่ายสุดท้าย: ถ้ายังมีของล้น ให้เลื่อนดูได้ภายในเนื้อหน้า แทนการตัดทิ้ง */
+  .page-content { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* (2) หัวแอป: ช่องค้นหา flex:1 มี min-width:auto ⇒ ดันกลุ่มขวา (ภาษา/กระดิ่ง/
+     ผู้ใช้) ตกขอบจอ · ชื่อหน้ายาวขึ้น 3 บรรทัด */
+  .header-left { min-width: 0; flex: 0 1 auto; gap: 8px; }
+  .header-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 34vw; }
+  .header-center { min-width: 0; margin: 0 6px !important; }
+  .header-center kbd { display: none; }
+  #globalSearchInput { padding-right: 10px !important; min-width: 0; }
+  .header-right { flex-shrink: 0; }
+  #appLangSwitcher { margin-right: 0 !important; }
+
+  /* (3) แถวปุ่มของหัวหน้า (page-header) ไม่มี flex-wrap ⇒ ปุ่มท้ายตกขอบ */
+  .page-header > * { max-width: 100%; min-width: 0; }
+  .page-header .flex,
+  .page-header [style*="display:flex"],
+  .page-header [style*="display: flex"],
+  .page-header > div:last-child { flex-wrap: wrap; }
+  .page-header input[type="date"] { max-width: 100%; }
+
+  /* (4) grid ที่ประกาศคอลัมน์แบบ inline (repeat(5,1fr) ฯลฯ): ลูกของ grid มี
+     min-width:auto ⇒ คอลัมน์ 1fr ขยายตามเนื้อหาจนล้น — ให้หดได้ + ยุบเหลือ 2 คอลัมน์ */
+  [style*="grid-template-columns"] > * { min-width: 0; }
+  .page-content [style*="grid-template-columns:repeat(4"],
+  .page-content [style*="grid-template-columns:repeat(5"],
+  .page-content [style*="grid-template-columns:repeat(6"],
+  .page-content [style*="grid-template-columns: repeat(4"],
+  .page-content [style*="grid-template-columns: repeat(5"],
+  .page-content [style*="grid-template-columns: repeat(6"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+
+  /* (5) ตาราง: หัวคอลัมน์ไม่ตัดกลางคำ ("ราย/ละเอียด") · ตารางหลายคอลัมน์ (≥6)
+     กว้างพอให้อ่านได้แล้วเลื่อนซ้าย-ขวาใน .table-container แทนการบีบทุกคอลัมน์ */
+  .table-container .table th { white-space: nowrap; }
+  .table-container > .table:has(> thead > tr > th:nth-child(6)) { min-width: 680px; }
+
+  /* (6) modal ห้ามกว้างกว่าจอ (บางหน้าตั้ง max-width/min-width แบบ inline) */
+  .modal { max-width: calc(100vw - 16px) !important; min-width: 0 !important; }
+
+  /* (7) ข้อความยาวไม่มีช่องว่าง (เลขที่เอกสาร/ชื่อไฟล์/อีเมล) ตัดบรรทัดเมื่อล้น
+     (break-word ไม่ลด min-content ⇒ ไม่ทำให้คอลัมน์ตารางถูกบีบเพิ่ม) */
+  .page-content .card, .modal-body { overflow-wrap: break-word; }
+}

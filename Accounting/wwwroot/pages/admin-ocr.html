@@ -8,7 +8,9 @@
   <link rel="stylesheet" href="/css/style.css">
   <style>
     .ocr-grid { display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
-    @media (max-width:1024px) { .ocr-grid { grid-template-columns: 1fr; } }
+    /* minmax(0,1fr) + min-width:0 — ลูกของ grid ไม่ขยายตามเนื้อหาจนล้นจอมือถือ */
+    .ocr-grid > * { min-width:0; }
+    @media (max-width:1024px) { .ocr-grid { grid-template-columns: minmax(0, 1fr); } }
     .status-pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
     .status-ok { background:#dcfce7; color:#166534; }
     .status-warn { background:#fef3c7; color:#92400e; }
@@ -138,7 +140,7 @@
 
           <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center">
             <label style="font-size:13px;font-weight:600">Provider:</label>
-            <select id="testProvider" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px">
+            <select id="testProvider" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;min-width:0;max-width:100%">
               <option value="embedded">Embedded Tesseract (in-process)</option>
               <option value="azure">Azure DI (cloud)</option>
               <option value="python">Python service (PaddleOCR+EasyOCR)</option>
