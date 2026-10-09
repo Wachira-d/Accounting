@@ -14668,10 +14668,10 @@ public partial class DocumentService : IDocumentService
             if (change.TargetDocumentType != null) scan.TargetDocumentType = change.TargetDocumentType;
             if (linesChanged) scan.ExtractedItemsJson = linesJson;
             // ฝ่ายค้านรอบสี่ ข้อ 3: บรรทัดที่ยอดหลังหักมัดจำ/ข้อมูลขัดกัน อธิบายด้วย จำนวน × ราคา − ส่วนลด ไม่ได้ ⇒ สร้างใหม่จากสแกนนี้จะไม่มีการหักนั้น — บอกดัง ๆ
-            if (linesChanged && writeBackLostLines.Count > 0)
-                scan.ProcessingNotes = (scan.ProcessingNotes ?? "")
-                    + $"\n{Accounting.Helpers.OcrEtaxLineNormalizer.WriteBackLostTag} บรรทัดที่ {string.Join(", ", writeBackLostLines)} ของเอกสาร {doc.DocumentNumber}: ยอดหลังหักมัดจำ "
-                    + "อธิบายด้วย จำนวน × ราคา − ส่วนลด ไม่ได้ — ถ้าสร้างเอกสารใหม่จากสแกนนี้ การหักนั้นจะไม่ตามไป ตรวจกับเอกสารเดิมก่อนอนุมัติ";
+            // ทบทวน e8547899 ข้อ 3: ข้อความบอกเหตุจริงรายบรรทัด (เดิม "ยอดหลังหักมัดจำ" ทุกกรณี แม้เอกสารไม่มีมัดจำ)
+            if (linesChanged && writeBackLostLines.Count > 0
+                && Accounting.Helpers.OcrEtaxLineNormalizer.WriteBackLostNote(doc.DocumentNumber, writeBackLostLines) is string writeBackNote)
+                scan.ProcessingNotes = (scan.ProcessingNotes ?? "") + "\n" + writeBackNote;
 
             // ★ ตัวชี้วัดคุณภาพ (D4): การแก้ Draft ก่อนอนุมัติก็คือ "ผู้ใช้ต้องแก้"
             // เหมือนกับการแก้ในหน้า review — ไม่งั้น first-pass accept rate จะสูงเกินจริง
@@ -14739,9 +14739,9 @@ public partial class DocumentService : IDocumentService
     /// <para>ฝ่ายค้านรอบสี่ ข้อ 3: ยอด/ส่วนลดต่อบรรทัดผ่าน <c>OcrEtaxLineNormalizer.WriteBackLine</c> — ส่วนแบ่งส่วนลดท้ายบิลถูกพาไปในส่วนลดของบรรทัด
     /// (สร้างใหม่ได้ยอดเดิม) · หักมัดจำ/ข้อมูลขัดกัน ⇒ <paramref name="lostLines"/> (LineOrder) ให้ผู้เรียกเขียนหมายเหตุ ห้ามทิ้งเงียบ</para></summary>
     private static string? BuildScanItemsJsonFromLines(List<DocumentLine> lines, bool quantitiesFromSignedXml, bool pricesIncludeVat,
-        decimal billDiscount, decimal depositBase, out List<int> lostLines)
+        decimal billDiscount, decimal depositBase, out List<(int Line, Accounting.Helpers.OcrWriteBackLoss Loss)> lostLines)
     {
-        var lost = new List<int>();
+        var lost = new List<(int Line, Accounting.Helpers.OcrWriteBackLoss Loss)>();
         lostLines = lost;
         var usable = lines
             .Where(l => !string.IsNullOrWhiteSpace(l.Description))
@@ -14752,7 +14752,7 @@ public partial class DocumentService : IDocumentService
         {
             var wb = Accounting.Helpers.OcrEtaxLineNormalizer.WriteBackLine(
                 l.Quantity, l.UnitPrice, l.Amount, l.VatAmount, l.DiscountAmount, pricesIncludeVat, billDiscount, depositBase);
-            if (wb.Lost) lost.Add(l.LineOrder);
+            if (wb.Lost) lost.Add((l.LineOrder, wb.Loss));
             return new
             {
                 Description = l.Description,

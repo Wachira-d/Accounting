@@ -634,6 +634,12 @@
           const acctEl = row.querySelector('[data-line-acct]');
           const discEl = row.querySelector('[data-line-disc]');
           const exVatEl = row.querySelector('[data-line-exvat]');
+          // ช่องติ๊ก "กรอกราคาไม่รวม VAT" ไม่บันทึกเอง — ส่งธงเฉพาะคำขอที่ราคาถูกพิมพ์ใหม่ (ทบทวน e8547899 ข้อ 1: เดิมติ๊กแล้วบันทึกทันที ⇒
+          // พิมพ์ก่อนติ๊ก/ติ๊กซ้ำ = แปลงราคาที่แปลงแล้ว คิด VAT สองชั้น) · การแปลงทั้งหมดอยู่ที่เซิร์ฟเวอร์
+          const savedPrice = priceEl ? priceEl.dataset.saved : undefined;
+          const priceEdited = !!(priceEl && priceEl.value !== ''
+            && (savedPrice === undefined || savedPrice === '' || Number(priceEl.value) !== Number(savedPrice)));
+          const sendExVat = !!(exVatEl && exVatEl.checked && priceEdited);
           const res = await API.post(`/api/companies/${cid}/ocr/${scanId}/line-fields`, {
             lineIndex,
             description: descEl ? descEl.value : null,
@@ -646,7 +652,7 @@
             // ส่วนลดรายบรรทัด (ก่อน VAT) — ช่องว่าง = ล้าง (0) · เซิร์ฟเวอร์คิด รวม = จำนวน × ราคา − ส่วนลด
             lineDiscount: discEl ? (discEl.value === '' ? 0 : Number(discEl.value)) : null,
             // แถวราคารวม VAT ที่ผู้ใช้กรอกราคาไม่รวม VAT — เซิร์ฟเวอร์แปลงเป็นฐานรวม VAT ของใบ (ไม่มีสูตรในหน้า)
-            priceEnteredExVat: !!(exVatEl && exVatEl.checked),
+            priceEnteredExVat: sendExVat,
           });
           const amt = res?.data?.amount;
           const amtCell = row.querySelector('[data-line-amt]');
@@ -654,13 +660,37 @@
           // ค่าส่วนลดที่เซิร์ฟเวอร์เก็บจริง (ถูกล้างเมื่อเกินยอดก่อนลด) — แสดงตามจริง + บอกผู้ใช้ ห้ามเงียบ
           if (discEl && res?.data) discEl.value = res.data.lineDiscount != null ? res.data.lineDiscount : '';
           if (res?.data?.discountDropped) Layout.toast(res.message, 'warning');
-          // ค่าที่เซิร์ฟเวอร์แปลงแล้ว (ราคารวม VAT) — แสดงตามจริง · ช่องติ๊กเป็นคำสั่งครั้งเดียว
-          if (exVatEl && exVatEl.checked) {
-            exVatEl.checked = false;
-            if (priceEl && res?.data?.unitPrice != null) priceEl.value = res.data.unitPrice;
-            if (res?.data?.conversionNote) Layout.toast(res.message, 'info');
+          // ราคาที่เซิร์ฟเวอร์เก็บจริง (แปลงแล้วเป็นราคารวม VAT) — แสดงตามจริง + จำไว้เทียบว่าคำขอถัดไป "พิมพ์ใหม่" ไหม · ช่องติ๊กใช้ครั้งเดียว
+          if (priceEl && res?.data?.unitPrice != null) {
+            priceEl.dataset.saved = String(res.data.unitPrice);
+            if (sendExVat) priceEl.value = res.data.unitPrice;
           }
+          if (sendExVat) {
+            exVatEl.checked = false;
+            priceEl.placeholder = '';
+          }
+          if (res?.data?.conversionNote) Layout.toast(res.message, 'info');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /// ช่องติ๊ก "กรอกราคาไม่รวม VAT" — <b>ไม่บันทึกเอง</b> (ทบทวน e8547899 ข้อ 1): ติ๊ก = เปิดช่องราคาให้พิมพ์ราคาไม่รวม VAT ใหม่ (ล้างช่อง ·
+      /// ราคาเดิมเป็น placeholder) ⇒ พิมพ์ก่อนแล้วค่อยติ๊กก็พิมพ์ซ้ำค่าเดิมได้ · ยกเลิกติ๊กโดยยังไม่พิมพ์ ⇒ คืนราคาเดิม · ราคาที่บันทึกไว้ไม่ถูกแปลงเด็ดขาด
+      exVatHint(el) {
+        const row = el ? el.closest('tr[data-line-row]') : null;
+        const priceEl = row ? row.querySelector('[data-line-price]') : null;
+        if (!priceEl) return;
+        if (el.checked) {
+          priceEl.dataset.beforeTick = priceEl.value;
+          priceEl.dataset.saved = '';
+          priceEl.placeholder = priceEl.value;
+          priceEl.value = '';
+          priceEl.focus();
+          Layout.toast('พิมพ์ราคาไม่รวม VAT ในช่องราคา — ระบบแปลงเป็นราคารวม VAT ตอนบันทึกราคานั้น (ราคาที่บันทึกไว้แล้วไม่ถูกแปลง)', 'info');
+        } else if (priceEl.value === '' && priceEl.dataset.beforeTick !== undefined) {
+          priceEl.value = priceEl.dataset.beforeTick;
+          priceEl.dataset.saved = priceEl.dataset.beforeTick;
+          priceEl.placeholder = '';
+        }
       },
 
       /** เพิ่ม/ลบบรรทัดรายการ — เดิมตาราง review ทำไม่ได้เลย ⇒ OCR รวมสองแถว
@@ -2783,7 +2813,7 @@
                 <table style="width:100%;min-width:790px;font-size:12px;border-collapse:collapse;table-layout:fixed">
                   <colgroup><col style="width:26px"><col><col style="width:62px"><col style="width:84px"><col style="width:70px"><col style="width:82px"><col style="width:76px"><col style="width:52px"><col style="width:15%"><col style="width:15%"></colgroup>
                   <tr style="background:var(--gray-100)"><th style="padding:4px 2px"></th><th style="padding:4px 6px;text-align:left">รายละเอียด</th><th style="padding:4px 6px;text-align:right">จำนวน</th><th style="padding:4px 6px;text-align:right">ราคา</th><th style="padding:4px 6px;text-align:right" title="ส่วนลดของบรรทัด (บาท) — รวม = จำนวน × ราคา − ส่วนลด · ราคา/ส่วนลด/รวม ของแต่ละบรรทัดอยู่ฐานเดียวกัน (รวม VAT หรือก่อน VAT ตามป้ายของช่องนั้น — ชี้ที่ช่องเพื่อดูว่าเป็นส่วนลดตามเอกสาร หรือเศษจากการถอด VAT) · แก้ได้ · แก้จำนวน/ราคาแล้วส่วนลดคงเดิม ถ้าส่วนลดเกินยอดก่อนลด ระบบล้างส่วนลดและแจ้งเตือน">ส่วนลด</th><th style="padding:4px 6px;text-align:right">รวม</th><th style="padding:4px 6px;text-align:center" title="อัตราภาษีของบรรทัดนี้ — 'ยกเว้น' = §81 · ค่าที่แสดงคืออัตราที่เซิร์ฟเวอร์จะใช้จริงตอนสร้างเอกสาร">VAT</th><th style="padding:4px 6px;text-align:center">หน่วย</th><th style="padding:4px 6px">บัญชี</th><th style="padding:4px 6px">โครงการ</th></tr>
-                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 2px;text-align:center"><button class="btn btn-sm btn-danger-outline" style="padding:1px 6px;font-size:11px" onclick="Page.modifyLine('${Layout.jsArg(scan.id)}','delete',${idx})" title="ลบบรรทัดนี้ (OCR แตกแถวเกิน)">✕</button></td><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 4px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 4px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่">${it.priceBasisLabel ? `<label style="display:block;font-size:10px;color:var(--gray-500);margin-top:2px;line-height:1.2"><input type="checkbox" data-line-exvat onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="vertical-align:middle;margin:0 2px 0 0">${Layout.esc(it.priceBasisLabel)}</label>` : ''}</td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-disc value="${it.lineDiscountAmount != null ? it.lineDiscountAmount : ''}" placeholder="0" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 4px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="${Layout.esc(it.lineDiscountLabel || 'ส่วนลดของบรรทัด (บาท) — รวม = จำนวน × ราคา − ส่วนลด · เว้นว่าง = ไม่มีส่วนลด')}"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;text-align:center;font-size:11px;color:var(--gray-600)" data-line-vat="${idx}" title="ตัดสินที่เซิร์ฟเวอร์ — แก้ได้ที่ฟอร์มเอกสาร">${it.vatRate == null ? '…' : (it.vatRate < 0 ? 'ยกเว้น' : it.vatRate + '%')}</td><td style="padding:4px 6px;text-align:center;font-size:11px;color:var(--gray-600)">${Layout.esc(it.unit || '-')}</td><td style="padding:4px 6px"><select data-line-acct data-init-acct="${Layout.esc(it.suggestedAccountCode || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;min-width:150px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="ผังบัญชีของบรรทัดนี้ — แก้ได้ ระบบจะเรียนรู้เพื่อให้ครั้งหน้าเดาถูกตั้งแต่แรก"><option value="">${Layout.esc(it.suggestedAccountCode || '— เลือกบัญชี —')}</option></select></td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${Layout.esc(scan.id)}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
+                  ${scan.extractedItems.map((it, idx) => `<tr style="border-bottom:1px solid var(--gray-100)" data-line-row="${idx}"><td style="padding:4px 2px;text-align:center"><button class="btn btn-sm btn-danger-outline" style="padding:1px 6px;font-size:11px" onclick="Page.modifyLine('${Layout.jsArg(scan.id)}','delete',${idx})" title="ลบบรรทัดนี้ (OCR แตกแถวเกิน)">✕</button></td><td style="padding:4px 6px"><input data-line-desc value="${Layout.esc(it.description || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="แก้รายละเอียดได้ (กด Tab/Enter เพื่อบันทึก)"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-qty value="${it.quantity != null ? it.quantity : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 4px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้จำนวน — ระบบคำนวณยอดรวมให้ใหม่"></td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-price data-saved="${it.unitPrice != null ? it.unitPrice : ''}" value="${it.unitPrice != null ? it.unitPrice : ''}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 4px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="แก้ราคาต่อหน่วย — ระบบคำนวณยอดรวมให้ใหม่">${it.priceBasisLabel ? `<label style="display:block;font-size:10px;color:var(--gray-500);margin-top:2px;line-height:1.2"><input type="checkbox" data-line-exvat onchange="Page.exVatHint(this)" style="vertical-align:middle;margin:0 2px 0 0">${Layout.esc(it.priceBasisLabel)}</label>` : ''}</td><td style="padding:4px 6px;text-align:right"><input type="number" step="any" min="0" data-line-disc value="${it.lineDiscountAmount != null ? it.lineDiscountAmount : ''}" placeholder="0" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;box-sizing:border-box;padding:3px 4px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px;text-align:right" title="${Layout.esc(it.lineDiscountLabel || 'ส่วนลดของบรรทัด (บาท) — รวม = จำนวน × ราคา − ส่วนลด · เว้นว่าง = ไม่มีส่วนลด')}"></td><td style="padding:4px 6px;text-align:right" data-line-amt>${it.amount != null ? Layout.money(it.amount) : '-'}</td><td style="padding:4px 6px;text-align:center;font-size:11px;color:var(--gray-600)" data-line-vat="${idx}" title="ตัดสินที่เซิร์ฟเวอร์ — แก้ได้ที่ฟอร์มเอกสาร">${it.vatRate == null ? '…' : (it.vatRate < 0 ? 'ยกเว้น' : it.vatRate + '%')}</td><td style="padding:4px 6px;text-align:center;font-size:11px;color:var(--gray-600)">${Layout.esc(it.unit || '-')}</td><td style="padding:4px 6px"><select data-line-acct data-init-acct="${Layout.esc(it.suggestedAccountCode || '')}" onchange="Page.saveLineFields('${Layout.esc(scan.id)}', ${idx})" style="width:100%;min-width:150px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px" title="ผังบัญชีของบรรทัดนี้ — แก้ได้ ระบบจะเรียนรู้เพื่อให้ครั้งหน้าเดาถูกตั้งแต่แรก"><option value="">${Layout.esc(it.suggestedAccountCode || '— เลือกบัญชี —')}</option></select></td><td style="padding:4px 6px"><select data-line-project="${idx}" onchange="Page.setLineProject('${Layout.esc(scan.id)}', ${idx}, this.value)" style="width:100%;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;font-size:11px">${this._projectOptionsHtml(it.projectId)}</select></td></tr>`).join('')}
                 </table>
                 </div>
                 <!-- สรุป VAT ของตารางนี้ — เติมโดย _loadLineVatPreview() จากผลของ

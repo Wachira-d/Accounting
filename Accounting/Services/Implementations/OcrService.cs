@@ -4700,9 +4700,9 @@ public class OcrService : IOcrService
     internal static void SanitizeVatSplitArtifacts(OcrExtractedData data, bool quantitiesFromSignedXml = false)
     {
         if (data?.Items == null || data.Items.Count == 0) return;
-        // รอบ 6 (ใบ 2614501699): บรรทัด e-Tax ที่ตัวตัดสินตัดสินไม่ได้ (EtaxUndecided) ไม่ถูกคุ้มครองด้วยธงระดับสแกน — ตัวแก้จำนวนแบบเดิมทำให้
-        // บรรทัดลงตัว (มีหมายเหตุ [ETAX-LINE-CHECK] ห้ามอนุมัติเองอยู่แล้ว) · เดิมคุ้มครองแล้วปล่อย 150 × 1.00 ≠ 65.42 ค้าง = แย่ทั้งสองทาง
-        bool Signed(OcrExtractedLineItem it) => (quantitiesFromSignedXml && !it.EtaxUndecided) || it.QuantityFromEtaxXml;
+        // ทบทวน e8547899 ข้อ 2: รอบ 6 เคยปล่อยบรรทัด e-Tax ที่ตัดสินฐานราคาไม่ได้ให้ตัวแก้จำนวนแบบเดิม ⇒ 3 → 2.13 (จำนวนที่แต่งขึ้นบนเอกสารที่ลงนาม) ·
+        // ตอนนี้ทุกบรรทัดของ e-Tax คุ้มครองหมด — บรรทัดที่ตัดสินไม่ได้ลงตัวด้วยส่วนลดที่คำนวณ (OcrEtaxLineNormalizer.Normalize) + [ETAX-LINE-CHECK]
+        bool Signed(OcrExtractedLineItem it) => quantitiesFromSignedXml || it.QuantityFromEtaxXml;
 
         // Suffixes ที่บ่งบอกว่าเป็น footer split — ไม่ใช่ line item จริง.
         // ใช้ trailing-paren match (ตัดเฉพาะที่ขึ้นต้น "(" + จบ ")" ท้าย string)
@@ -8974,7 +8974,8 @@ public class OcrService : IOcrService
     /// <returns>ยอดใหม่ · ส่วนลดที่คงอยู่ · ส่วนลดถูกทิ้งเพราะเกินยอดก่อนลดไหม (หน้าต้องบอกผู้ใช้)</returns>
     /// <param name="priceEnteredExVat">ฝ่ายค้านรอบห้า ข้อ 3: true = ราคา/ส่วนลดที่กรอกในแถวนี้ "ไม่รวม VAT" บนใบราคารวม VAT ⇒ เซิร์ฟเวอร์แปลงเป็นฐานรวม VAT
     /// ของใบ (เอกสารมีธงราคารวม VAT ระดับเอกสารเดียว — แถวปนฐานไม่ได้ ถ้าปล่อยแถวเป็นก่อน VAT ทั้งใบจะหลุดเป็นก่อน VAT แบบรอบสี่ ข้อ 2) ·
-    /// แถวที่ไม่ใช่ราคารวม VAT / ไม่รู้อัตรา ⇒ ปฏิเสธพร้อมเหตุผล (ไม่ทำเงียบ)</param>
+    /// แถวที่ไม่ใช่ราคารวม VAT / ไม่รู้อัตรา ⇒ ปฏิเสธพร้อมเหตุผล (ไม่ทำเงียบ) · ทบทวน e8547899 ข้อ 1: แปลงเฉพาะ <paramref name="unitPrice"/> ที่ส่งมาในคำขอนี้
+    /// (ไม่มี ⇒ ปฏิเสธ) · ส่วนลดแปลงเมื่อต่างจากค่าที่เก็บ · idempotent (<c>OcrEtaxLineNormalizer.ApplyReviewPriceEntry</c>)</param>
     public async Task<(decimal Amount, decimal? LineDiscount, bool DiscountDropped, decimal? UnitPrice, string? ConversionNote)> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
         int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
         string? accountCode = null, decimal? lineDiscount = null, bool priceEnteredExVat = false)
@@ -9019,33 +9020,26 @@ public class OcrService : IOcrService
         var line = items[lineIndex];
         if (description != null) line.Description = description.Trim();
         if (quantity.HasValue) line.Quantity = quantity.Value;
-        if (unitPrice.HasValue) line.UnitPrice = unitPrice.Value;
         if (accountCode != null)
             line.SuggestedAccountCode = accountCode.Trim() is { Length: > 0 } c ? c : null;
-        if (lineDiscount.HasValue)
+        // ราคา/ส่วนลด + ช่องติ๊ก "กรอกราคาไม่รวม VAT" — ตัวตัดสินเดียว (ทบทวน e8547899 ข้อ 1: แปลงเฉพาะราคาที่ส่งมาในคำขอนี้ · ส่วนลดแปลงเมื่อเปลี่ยน
+        // จากค่าที่เก็บไว้ · idempotent — เดิมแปลงราคาที่เก็บไว้ ⇒ ติ๊กหลังพิมพ์/ติ๊กซ้ำ = คิด VAT ซ้ำ)
+        var priceEdit = Accounting.Helpers.OcrEtaxLineNormalizer.ApplyReviewPriceEntry(
+            line.UnitPrice, line.LineDiscountAmount, line.PriceIncludesVat, line.VatRate,
+            Accounting.Helpers.OcrEtaxLineNormalizer.DominantVatRate(items.Select(x => (x.PriceIncludesVat, x.VatRate)).ToList()),
+            unitPrice, lineDiscount, priceEnteredExVat);
+        line.UnitPrice = priceEdit.UnitPrice;
+        if (priceEdit.DiscountChanged)
         {
-            // ปัด 2 ตำแหน่งตอนเก็บเสมอ (ฝ่ายค้านรอบสาม ข้อ 4: จำนวน/ราคาว่างหรือ 0 ⇒ ไม่ผ่านขั้นคำนวณยอดข้างล่างที่ปัดให้)
-            var storedDisc = lineDiscount.Value > 0m ? Math.Round(lineDiscount.Value, 2, MidpointRounding.AwayFromZero) : 0m;
-            if (storedDisc != (line.LineDiscountAmount ?? 0m)) line.VatStripResidual = null;   // ค่าใหม่เป็นของผู้ใช้ — ไม่ใช่เศษจากถอด VAT แล้ว
-            line.LineDiscountAmount = storedDisc > 0m ? storedDisc : null;
+            line.LineDiscountAmount = priceEdit.Discount;
+            line.VatStripResidual = null;   // ค่าใหม่เป็นของผู้ใช้ — ไม่ใช่เศษจากถอด VAT แล้ว
         }
-        string? conversionNote = null;
-        if (priceEnteredExVat)
+        if (priceEdit.AppliedRate is decimal convRate)
         {
-            if (!line.PriceIncludesVat)
-                throw new Accounting.Helpers.BusinessRuleException("แถวนี้เป็นราคาก่อน VAT อยู่แล้ว — ไม่ต้องแปลง");
-            var convRate = line.VatRate is > 0m ? line.VatRate
-                : Accounting.Helpers.OcrEtaxLineNormalizer.DominantVatRate(items.Select(x => (x.PriceIncludesVat, x.VatRate)).ToList());
-            var converted = Accounting.Helpers.OcrEtaxLineNormalizer.ConvertExVatEntryToInclusive(
-                line.UnitPrice ?? 0m, line.LineDiscountAmount, convRate)
-                ?? throw new Accounting.Helpers.BusinessRuleException(
-                    "ไม่รู้อัตรา VAT ของแถวนี้ — แปลงราคาไม่รวม VAT เป็นราคารวม VAT ไม่ได้ กรอกราคารวม VAT เอง หรือแก้ที่ฟอร์มเอกสาร");
-            conversionNote = $"แปลงราคาไม่รวม VAT {line.UnitPrice ?? 0m:N2} เป็นราคารวม VAT {converted.UnitPrice:N2} (VAT {convRate:0.##}%) ให้อยู่ฐานเดียวกับทั้งใบ";
-            line.UnitPrice = converted.UnitPrice;
-            line.LineDiscountAmount = converted.Discount;
             line.VatRate ??= convRate;
             line.VatStripResidual = null;
         }
+        var conversionNote = priceEdit.ConversionNote;
 
         // recompute amount จาก qty×price ที่ (แก้แล้ว) — ถ้าครบทั้งคู่
         // บรรทัดที่มีส่วนลดรายบรรทัด (e-Tax XML) — ยอด = round(จำนวน × ราคา) − ส่วนลด · เดิม round(จำนวน × ราคา) ตรง ๆ ⇒ แก้แค่ชื่อรายการ
@@ -10412,7 +10406,6 @@ public class OcrService : IOcrService
                 QuantityFromEtaxXml = etaxLine.QuantityFromDocument,
                 PriceIncludesVat = etaxLine.PriceIncludesVat,
                 VatStripResidual = etaxLine.VatStripResidual,
-                EtaxUndecided = etaxLine.Basis == Accounting.Helpers.OcrEtaxPriceBasis.Unknown,
                 // อัตราของบรรทัดตาม XML — ทางราคารวม VAT ต้องรู้อัตราเพื่อถอด VAT รายบรรทัดด้วยสูตรเดียวกับเอกสาร
                 VatRate = etaxLine.PriceIncludesVat ? etaxLine.VatRate : null,
                 // ★ หน่วยนับที่ XML ประกาศไว้ (unitCode ตาม UN/ECE Rec.20) —
@@ -11511,8 +11504,8 @@ internal class OcrExtractedLineItem
     /// (null = ไม่มี) · ตอนนี้มีแหล่งเดียวคือ e-Tax XML (<c>Helpers/OcrEtaxLineNormalizer</c>) · ตัวสร้างบรรทัดเอกสารลงเป็น
     /// <c>DocumentLine.DiscountAmount</c> · ที่มา: สแกน f1690d11 (CRC ไทวัสดุ) ส่วนลดบรรทัดหายแล้วจำนวนถูกหารจากยอด</summary>
     public decimal? LineDiscountAmount { get; set; }
-    /// <summary>true = จำนวนมาจาก <c>BilledQuantity</c> ของ e-Tax XML ที่พิสูจน์สมการบรรทัดแล้ว ⇒ ตัวกัน "จำนวนระเบิด"
-    /// (<c>SanitizeVatSplitArtifacts</c>) ห้ามหารจำนวนใหม่จากยอด (เอกสารลงนามดิจิทัล ไม่มี "อ่านหลงคอลัมน์")</summary>
+    /// <summary>true = บรรทัดมาจาก e-Tax XML (จำนวนคือ <c>BilledQuantity</c> ทุกบรรทัด รวมบรรทัดที่ตัดสินฐานราคาไม่ได้) ⇒ ตัวกัน "จำนวนระเบิด"
+    /// (<c>SanitizeVatSplitArtifacts</c>) ห้ามหารจำนวนใหม่จากยอด/ยุบ/รวมบรรทัด (เอกสารลงนามดิจิทัล ไม่มี "อ่านหลงคอลัมน์")</summary>
     public bool QuantityFromEtaxXml { get; set; }
     /// <summary>true = ราคา · ส่วนลด · ยอด ของบรรทัดนี้ <b>รวม VAT</b> ตามกระดาษ (e-Tax ที่กระทบยอดผ่าน — ฝ่ายค้านรอบสาม f1690d11) ⇒
     /// ตัวสร้างบรรทัดตั้งเอกสาร <c>PricesIncludeVat</c> + ถอด VAT รายบรรทัดด้วยสูตรเดียวกับ DocumentService · ทุนสต็อกถอด VAT ก่อนหาร</summary>
@@ -11520,9 +11513,6 @@ internal class OcrExtractedLineItem
     /// <summary>ส่วนของ <see cref="LineDiscountAmount"/> ที่เป็น "เศษจากการถอด VAT" (ไม่ใช่ส่วนลดบนเอกสาร) — หน้า review แสดงป้ายตามนี้ ·
     /// ผู้ใช้แก้ส่วนลดเอง ⇒ ล้าง (ค่าใหม่เป็นของผู้ใช้)</summary>
     public decimal? VatStripResidual { get; set; }
-    /// <summary>true = บรรทัด e-Tax ที่ตัดสินฐาน VAT ไม่ได้ (จำนวน × ราคา − ส่วนลด ไม่ตรงยอดทั้งสองแบบ) ⇒ ตัวแก้จำนวนแบบเดิมทำงานได้แม้สแกนเป็น e-Tax
-    /// (รอบ 6 · หมายเหตุ [ETAX-LINE-CHECK] หยุดอนุมัติเอง)</summary>
-    public bool EtaxUndecided { get; set; }
     public string? SuggestedAccountCode { get; set; }
     /// <summary>Per-line project assignment captured in the review UI.
     /// Persisted so re-opening the review after a crash preserves the

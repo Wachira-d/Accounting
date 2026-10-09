@@ -4,10 +4,24 @@ using System.Linq;
 
 namespace Accounting.Helpers;
 
+/// <summary>เหตุที่บรรทัดที่เขียนกลับลงสแกนตอนอนุมัติ อธิบายด้วย จำนวน × ราคา − ส่วนลด ไม่ได้ (<see cref="OcrEtaxLineNormalizer.WriteBackLine"/>)</summary>
+public enum OcrWriteBackLoss
+{
+    /// <summary>บรรทัดอธิบายได้ครบ (จำนวน × ราคา − ส่วนลด = ยอด หลังพาส่วนลดท้ายบิล)</summary>
+    None = 0,
+    /// <summary>เอกสารหักมัดจำ — ส่วนมัดจำไม่ตามไปเมื่อสร้างใหม่จากสแกน</summary>
+    DepositDeducted = 1,
+    /// <summary>ยอดมากกว่า round(จำนวน × ราคา) − ส่วนลด — ข้อมูลบรรทัดขัดกัน</summary>
+    AmountAboveLine = 2,
+    /// <summary>ยอดน้อยกว่า แต่เอกสารไม่มีส่วนลดท้ายบิล/มัดจำอธิบาย</summary>
+    UnexplainedReduction = 3,
+}
+
 /// <summary>ราคาต่อหน่วยของบรรทัด e-Tax XML รวม VAT หรือยังไม่รวม — พิสูจน์ด้วยเลขของบรรทัดเอง (<see cref="OcrEtaxLineNormalizer.Normalize"/>)</summary>
 public enum OcrEtaxPriceBasis
 {
-    /// <summary>พิสูจน์ไม่ได้ (ไม่มีจำนวน/ราคา/ยอด · มีค่าบริการรายบรรทัด · ตัวเลขไม่ลงตัวทั้งสองทาง) ⇒ พฤติกรรมเดิมทุกตัวอักษร</summary>
+    /// <summary>พิสูจน์ไม่ได้ (ไม่มีจำนวน/ราคา/ยอด · มีค่าบริการรายบรรทัด · ตัวเลขไม่ลงตัวทั้งสองทาง/ตรงทั้งสองทาง) ⇒ จำนวน/ราคาตาม XML ·
+    /// ส่วนลด = round(จำนวน × ราคา) − ยอด เมื่อไม่ติดลบ · หมายเหตุห้ามอนุมัติเองระบุเหตุ (ห้ามหารจำนวนจากยอด)</summary>
     Unknown = 0,
     /// <summary>จำนวน × ราคา − ส่วนลด ≈ <c>NetLineTotalAmount</c> (ยอดก่อน VAT) — ราคาก่อน VAT (Shopee)</summary>
     ExclusiveOfVat = 1,
@@ -33,16 +47,19 @@ public readonly record struct OcrEtaxLineFacts(
 /// <param name="UnitPrice">ราคาต่อหน่วย — รวม VAT ตามกระดาษเมื่อ <paramref name="PriceIncludesVat"/> · ไม่งั้นก่อน VAT (ทศนิยม 2 ตำแหน่ง · คำตัดสินรอบ 193 ข้อ 8)</param>
 /// <param name="LineDiscount">ส่วนลดรายบรรทัด ฐานเดียวกับราคา (null = ไม่มี)</param>
 /// <param name="Amount">ยอดหลังส่วนลด ฐานเดียวกับราคา — รวม VAT (<c>NetIncludingTaxesLineTotalAmount</c>) หรือก่อน VAT (<c>NetLineTotalAmount</c>)</param>
-/// <param name="QuantityFromDocument">true = จำนวนพิสูจน์แล้วจากเอกสารที่ลงนาม ⇒ ตัวกัน "จำนวนระเบิด" ห้ามเขียนทับ</param>
+/// <param name="QuantityFromDocument">true = บรรทัดมาจาก XML ที่ลงนาม ⇒ ตัวกัน "จำนวนระเบิด" ห้ามเขียนทับจำนวน/ยุบ/รวมบรรทัด — <b>ทุกบรรทัด</b>ของ
+/// <see cref="OcrEtaxLineNormalizer.Normalize"/> (รวมบรรทัดที่ตัดสินฐานราคาไม่ได้ · ทบทวน e8547899 ข้อ 2: ห้ามหารจำนวนจากยอดบนบรรทัด e-Tax เด็ดขาด)</param>
 /// <param name="PriceIncludesVat">true = บรรทัดถือค่าตามกระดาษ "รวม VAT" ทุกตัว (เอกสารต้องเป็น <c>PricesIncludeVat</c>) — ได้จาก <see cref="OcrEtaxLineNormalizer.NormalizeInvoice"/> เท่านั้น</param>
 /// <param name="VatStripResidual">ส่วนของส่วนลดที่ "แต่งขึ้น" จากการถอด VAT แล้วปัดราคา (ไม่ใช่ส่วนลดบนเอกสาร) · null = ไม่มี</param>
 /// <param name="VatRate">อัตรา VAT ของบรรทัดตาม XML</param>
 /// <param name="ResidualOverCap">true = เศษจากการถอด VAT เกินเพดาน แต่ยังใช้เป็นส่วนลดเพื่อให้บรรทัดลงตัว (ห้ามทิ้งบรรทัดที่ จำนวน × ราคา − ส่วนลด ≠ ยอด) —
 /// ผู้เรียกต้องเขียนหมายเหตุที่ห้ามอนุมัติเอง (<see cref="OcrEtaxLineNormalizer.LineCheckTag"/>)</param>
+/// <param name="UndecidedReason">เหตุที่ตัดสินฐานราคาไม่ได้ (<see cref="OcrEtaxPriceBasis.Unknown"/> เท่านั้น) — ค่าบริการรายบรรทัด · ตรงทั้งสองฐาน ·
+/// ไม่ตรงทั้งสองฐาน · ข้อมูลไม่ครบ/ติดลบ — <see cref="OcrEtaxLineNormalizer.NormalizeInvoice"/> เขียนหมายเหตุห้ามอนุมัติเองตามเหตุนี้</param>
 public readonly record struct OcrEtaxLine(
     OcrEtaxPriceBasis Basis, decimal? Quantity, decimal? UnitPrice, decimal? LineDiscount, decimal? Amount,
     bool QuantityFromDocument, bool PriceIncludesVat = false, decimal? VatStripResidual = null, decimal? VatRate = null,
-    bool ResidualOverCap = false);
+    bool ResidualOverCap = false, string? UndecidedReason = null);
 
 /// <summary>ผลตัดสินทั้งใบ (<see cref="OcrEtaxLineNormalizer.NormalizeInvoice"/>)</summary>
 /// <param name="PricesIncludeVat">true = สร้างเอกสารแบบ "ราคารวม VAT" ด้วยค่าตามกระดาษทุกบรรทัด (กระทบยอดกับสูตรของ DocumentService แล้ว)</param>
@@ -88,7 +105,7 @@ public static class OcrEtaxLineNormalizer
     /// <summary>ป้ายห้ามอนุมัติเอง: ทั้งใบราคารวม VAT ตามกระดาษ แต่ยอดหัวใบไม่ลงตัวกับบรรทัดแม้ผ่านขั้นปัด VAT ของเอกสารแล้ว (ใบ 2614501699 รอบ 6)</summary>
     public const string HeaderGapTag = "[ETAX-HEADER-GAP]";
 
-    /// <summary>ป้ายห้ามอนุมัติเอง: บรรทัดที่ต้องใช้เศษจากถอด VAT เกินเพดาน หรือบรรทัดที่ตัดสินฐาน VAT ไม่ได้ (ใช้ตัวแก้จำนวนแบบเดิม)</summary>
+    /// <summary>ป้ายห้ามอนุมัติเอง: บรรทัดที่ต้องใช้เศษจากถอด VAT เกินเพดาน หรือบรรทัดที่ตัดสินฐาน VAT ไม่ได้ (จำนวน/ราคาตาม XML · ส่วนลดที่คำนวณหรือไม่ลงตัว)</summary>
     public const string LineCheckTag = "[ETAX-LINE-CHECK]";
 
     /// <summary>
@@ -130,8 +147,8 @@ public static class OcrEtaxLineNormalizer
                     + $"(เกินเพดาน {MaxVatStripResidual:0.00} บาท / {MaxVatStripResidualShare * 100m:0.#}%) เป็นส่วนลด — ไม่ใช่ส่วนลดบนเอกสาร ตรวจราคา/ส่วนลดบรรทัดนี้ก่อนอนุมัติ");
             else if (n.VatStripResidual is decimal r && r != 0m)
                 notes.Add($"{NoteTag} เศษจากถอด VAT {Math.Abs(r):0.00} บาท ไม่ใช่ส่วนลดบนเอกสาร — บรรทัดที่ {i + 1} (ส่วนลดก่อน VAT {(n.LineDiscount ?? 0m):0.00} รวมเศษนี้แล้ว)");
-            if (n.Basis == OcrEtaxPriceBasis.Unknown && n.Quantity is > 0m)
-                notes.Add($"{LineCheckTag} บรรทัดที่ {i + 1}: ตัดสินไม่ได้ว่าราคารวมหรือไม่รวม VAT (จำนวน × ราคา − ส่วนลด ไม่ตรงยอดทั้งสองแบบ) — ใช้ตัวแก้จำนวนแบบเดิม ตรวจกับกระดาษก่อนอนุมัติ");
+            if (n.Basis == OcrEtaxPriceBasis.Unknown)
+                notes.Add(UndecidedNote(i, n));
             ex.Add(n);
         }
         return new OcrEtaxInvoiceLines(false, ex, notes);
@@ -296,12 +313,62 @@ public static class OcrEtaxLineNormalizer
     /// <summary>แปลงราคาที่ผู้ใช้กรอก "ก่อน VAT" ในแถวของใบราคารวม VAT ให้เป็นฐานรวม VAT ของใบ (ฝ่ายค้านรอบห้า ข้อ 3 — ใบเอกสารมีธงราคารวม VAT
     /// ระดับเอกสารเดียว บรรทัดปนฐานไม่ได้ ⇒ แปลงแถวนั้นให้อยู่ฐานเดียวกัน แทนการปล่อยให้ทั้งใบหลุดเป็นก่อน VAT) · round(ค่า × (100+อัตรา)/100, 2) ·
     /// ไม่รู้อัตรา ⇒ null (ไม่แปลง — ผู้เรียกบอกผู้ใช้)</summary>
-    public static (decimal UnitPrice, decimal? Discount)? ConvertExVatEntryToInclusive(decimal unitPrice, decimal? discount, decimal? vatRate)
+    internal static (decimal UnitPrice, decimal? Discount)? ConvertExVatEntryToInclusive(decimal unitPrice, decimal? discount, decimal? vatRate)
     {
         if (vatRate is not decimal vr || vr <= 0m) return null;
         var factor = (100m + vr) / 100m;
         decimal? d = discount is > 0m ? R2(discount.Value * factor) : null;
         return (R2(unitPrice * factor), d);
+    }
+
+    /// <summary>ผลแก้ราคา/ส่วนลดของแถวในตาราง review (<see cref="ApplyReviewPriceEntry"/>)</summary>
+    /// <param name="UnitPrice">ราคาที่ต้องเก็บ (ฐานของแถว)</param>
+    /// <param name="Discount">ส่วนลดที่ต้องเก็บ (null = ไม่มี)</param>
+    /// <param name="DiscountChanged">true = ส่วนลดเปลี่ยนจากค่าที่เก็บไว้ (ค่าใหม่เป็นของผู้ใช้ ⇒ ล้างเศษจากถอด VAT)</param>
+    /// <param name="AppliedRate">อัตราที่ใช้แปลงราคาไม่รวม VAT (null = ไม่ได้แปลง)</param>
+    /// <param name="ConversionNote">ข้อความถึงผู้ใช้ (แปลงแล้ว / ไม่แปลงเพราะราคาไม่ได้ถูกแก้) · null = ไม่มีอะไรต้องบอก</param>
+    public readonly record struct OcrReviewPriceEdit(decimal? UnitPrice, decimal? Discount, bool DiscountChanged, decimal? AppliedRate,
+        string? ConversionNote);
+
+    /// <summary>แก้ราคา/ส่วนลดของแถวในตาราง review (ตัวตัดสินเดียวของ <c>OcrService.SetExtractedLineFieldsAsync</c>) — ทบทวน e8547899 ข้อ 1 (MEDIUM):
+    /// เดิมช่องติ๊ก "กรอกราคาไม่รวม VAT" บันทึกเองทุกครั้งที่ติ๊ก แล้วเซิร์ฟเวอร์แปลง "ราคาที่เก็บไว้" ⇒ พิมพ์ราคาก่อนแล้วค่อยติ๊ก = แปลงราคาที่แปลงแล้ว
+    /// · ติ๊กสองรอบ = คิด VAT ซ้ำสองชั้น · ส่วนลดรวม VAT ที่ไม่ได้แตะก็ถูกคูณ 1.07 อีก ⇒ กติกา (ทุกคำขอ idempotent):
+    /// <list type="bullet">
+    /// <item>แปลงเฉพาะ <b>ราคาที่ส่งมาในคำขอนี้</b> — ธงมาโดยไม่มีราคา ⇒ ปฏิเสธ (ห้ามแปลงราคาที่เก็บไว้) · ผลคิดจากค่าที่ส่งมาไม่ใช่ค่าที่เก็บ ⇒
+    /// คำขอเดิมซ้ำสองครั้งได้สถานะเดียวกัน</item>
+    /// <item>แปลงส่วนลดเฉพาะเมื่อค่าที่ส่งมาต่างจากค่าที่เก็บไว้ (ส่วนลดที่ไม่ได้แตะเป็นฐานรวม VAT อยู่แล้ว)</item>
+    /// <item>หน้าส่งธงเฉพาะคำขอที่ช่องราคาถูกพิมพ์ใหม่หลังติ๊ก (ช่องติ๊กไม่บันทึกเอง — <c>document-scan.html</c> <c>exVatHint</c>)</item>
+    /// </list></summary>
+    public static OcrReviewPriceEdit ApplyReviewPriceEntry(decimal? storedUnitPrice, decimal? storedDiscount, bool rowPriceIncludesVat,
+        decimal? rowVatRate, decimal? fallbackVatRate, decimal? sentUnitPrice, decimal? sentDiscount, bool priceEnteredExVat)
+    {
+        var price = sentUnitPrice ?? storedUnitPrice;
+        var disc = storedDiscount;
+        var discChanged = false;
+        if (sentDiscount.HasValue)
+        {
+            // ปัด 2 ตำแหน่งตอนเก็บเสมอ (ฝ่ายค้านรอบสาม ข้อ 4)
+            var sd = sentDiscount.Value > 0m ? R2(sentDiscount.Value) : 0m;
+            if (sd != (storedDiscount ?? 0m))
+            {
+                disc = sd > 0m ? sd : null;
+                discChanged = true;
+            }
+        }
+        if (!priceEnteredExVat) return new OcrReviewPriceEdit(price, disc, discChanged, null, null);
+
+        if (sentUnitPrice is not decimal entered)
+            throw new BusinessRuleException("ติ๊ก \"กรอกราคาไม่รวม VAT\" ต้องมาพร้อมราคาที่กรอกใหม่ในคำขอเดียวกัน — ระบบไม่แปลงราคาที่บันทึกไว้แล้ว (กันคิด VAT ซ้ำ)");
+        if (!rowPriceIncludesVat)
+            throw new BusinessRuleException("แถวนี้เป็นราคาก่อน VAT อยู่แล้ว — ไม่ต้องแปลง");
+        var rate = rowVatRate is > 0m ? rowVatRate : fallbackVatRate;
+        var converted = ConvertExVatEntryToInclusive(entered, discChanged ? disc : null, rate)
+            ?? throw new BusinessRuleException(
+                "ไม่รู้อัตรา VAT ของแถวนี้ — แปลงราคาไม่รวม VAT เป็นราคารวม VAT ไม่ได้ กรอกราคารวม VAT เอง หรือแก้ที่ฟอร์มเอกสาร");
+        var note = $"แปลงราคาไม่รวม VAT {entered:N2} เป็นราคารวม VAT {converted.UnitPrice:N2} (VAT {rate:0.##}%) ให้อยู่ฐานเดียวกับทั้งใบ";
+        if (discChanged && disc.HasValue)
+            note += $" · ส่วนลด {disc.Value:N2} เป็น {(converted.Discount ?? 0m):N2}";
+        return new OcrReviewPriceEdit(converted.UnitPrice, discChanged ? converted.Discount : disc, discChanged, rate, note);
     }
 
     /// <summary>ป้ายฐานราคาของแถวในตาราง review (เซิร์ฟเวอร์เขียน — ฝ่ายค้านรอบห้า ข้อ 3): แถวราคารวม VAT ตามกระดาษ ⇒ ข้อความของช่องติ๊ก
@@ -367,22 +434,46 @@ public static class OcrEtaxLineNormalizer
     /// <param name="billDiscount"><c>Document.BillDiscountAmount</c> (ส่วนลดการค้าท้ายบิล)</param>
     /// <param name="depositBase"><c>Document.DepositBaseDeducted</c> (ฐานหักมัดจำ) — ฝ่ายค้านรอบห้า ข้อ 5: มีมัดจำด้วย ⇒ ส่วนแบ่งส่วนลดการค้ายังไปกับส่วนลดบรรทัด
     /// (แบ่งส่วนที่บรรทัดถูกหักตามสัดส่วน ส่วนลดการค้า : มัดจำ) · เฉพาะส่วนมัดจำที่ "หาย" ⇒ ยอดที่เขียน = ก่อนหักมัดจำ + <c>Lost = true</c></param>
-    public static (decimal Amount, decimal? Discount, bool Lost) WriteBackLine(decimal quantity, decimal unitPrice,
+    /// <returns><c>Loss</c> = เหตุที่บรรทัดอธิบายด้วย จำนวน × ราคา − ส่วนลด ไม่ได้ (ทบทวน e8547899 ข้อ 3: หมายเหตุต้องบอกเหตุจริง — เดิมเขียน
+    /// "ยอดหลังหักมัดจำ" ทุกกรณี ทั้งที่บรรทัดที่หายอาจไม่มีมัดจำเลย) · <c>Lost</c> = <c>Loss != None</c></returns>
+    public static (decimal Amount, decimal? Discount, bool Lost, OcrWriteBackLoss Loss) WriteBackLine(decimal quantity, decimal unitPrice,
         decimal lineAmount, decimal lineVat, decimal lineDiscount, bool pricesIncludeVat, decimal billDiscount, decimal depositBase)
     {
         var amount = pricesIncludeVat ? lineAmount + lineVat : lineAmount;
         var gross = R2(quantity * unitPrice);
         var lineDisc = lineDiscount > 0m ? Math.Min(R2(lineDiscount), gross) : 0m;
         decimal? kept = lineDisc > 0m ? lineDisc : null;
-        if (gross - lineDisc == amount) return (amount, kept, false);
+        if (gross - lineDisc == amount) return (amount, kept, false, OcrWriteBackLoss.None);
         var reduction = gross - lineDisc - amount;
+        if (reduction < 0m) return (amount, kept, true, OcrWriteBackLoss.AmountAboveLine);
         var headerReduction = Math.Max(0m, billDiscount) + Math.Max(0m, depositBase);
-        if (reduction <= 0m || headerReduction <= 0m) return (amount, kept, true);
-        if (depositBase <= 0m) return (amount, lineDisc + reduction, false);
+        if (headerReduction <= 0m) return (amount, kept, true, OcrWriteBackLoss.UnexplainedReduction);
+        if (depositBase <= 0m) return (amount, lineDisc + reduction, false, OcrWriteBackLoss.None);
         var tradeShare = billDiscount > 0m ? R2(reduction * billDiscount / headerReduction) : 0m;
         var disc = lineDisc + tradeShare;
-        return (gross - disc, disc > 0m ? disc : null, true);
+        return (gross - disc, disc > 0m ? disc : null, true, OcrWriteBackLoss.DepositDeducted);
     }
+
+    /// <summary>หมายเหตุ <see cref="WriteBackLostTag"/> ของเอกสารหนึ่งใบ — แยกเหตุรายบรรทัด (หักมัดจำ · ยอดมากกว่าบรรทัด · ยอดถูกลดโดยไม่มีอะไรอธิบาย) ·
+    /// ไม่มีบรรทัดที่หาย ⇒ null</summary>
+    public static string? WriteBackLostNote(string? documentNumber, IReadOnlyList<(int Line, OcrWriteBackLoss Loss)> lost)
+    {
+        var parts = lost.Where(x => x.Loss != OcrWriteBackLoss.None)
+            .GroupBy(x => x.Loss)
+            .OrderBy(g => (int)g.Key)
+            .Select(g => $"บรรทัดที่ {string.Join(", ", g.Select(x => x.Line))} {WriteBackLossText(g.Key)}")
+            .ToList();
+        if (parts.Count == 0) return null;
+        return $"{WriteBackLostTag} เอกสาร {documentNumber}: {string.Join(" · ", parts)} — อธิบายด้วย จำนวน × ราคา − ส่วนลด ไม่ได้ "
+            + "ถ้าสร้างเอกสารใหม่จากสแกนนี้ ส่วนนั้นจะไม่ตามไป ตรวจกับเอกสารเดิมก่อนอนุมัติ";
+    }
+
+    private static string WriteBackLossText(OcrWriteBackLoss loss) => loss switch
+    {
+        OcrWriteBackLoss.DepositDeducted => "ยอดหลังหักมัดจำ (เขียนกลับเป็นยอดก่อนหักมัดจำ)",
+        OcrWriteBackLoss.AmountAboveLine => "ยอดมากกว่า จำนวน × ราคา − ส่วนลด (ข้อมูลบรรทัดขัดกัน)",
+        _ => "ยอดถูกลดโดยไม่มีส่วนลดท้ายบิล/มัดจำอธิบาย",
+    };
 
 
     /// <summary>ป้ายของช่องส่วนลดในตาราง review (เซิร์ฟเวอร์เป็นคนเขียน — หน้าแสดงอย่างเดียว) · null = ไม่มีส่วนลด</summary>
@@ -395,21 +486,58 @@ public static class OcrEtaxLineNormalizer
         return "ส่วนลดของบรรทัด (ก่อน VAT)";
     }
 
+    /// <summary>เหตุที่ตัดสินฐานราคาไม่ได้ — ข้อความในหมายเหตุ <see cref="LineCheckTag"/> (ทบทวน e8547899 ข้อ 2: บอกเหตุจริง ไม่ใช่ข้อความเดียวทุกกรณี)</summary>
+    internal const string ReasonMissing = "XML ไม่มีจำนวน/ราคา/ยอดของบรรทัด";
+    internal const string ReasonNegative = "ตัวเลขของบรรทัดติดลบ (จำนวน/ราคา/ยอด/ส่วนลด)";
+    internal const string ReasonCharge = "บรรทัดมีค่าบริการเพิ่ม (ChargeIndicator=true) ซึ่งเอกสารไม่มีช่องรองรับ";
+    internal const string ReasonBoth = "จำนวน × ราคา − ส่วนลด ตรงทั้งยอดก่อน VAT และยอดรวม VAT (VAT ของบรรทัดน้อยจนแยกฐานไม่ได้)";
+    internal const string ReasonNeither = "จำนวน × ราคา − ส่วนลด ไม่ตรงทั้งยอดก่อน VAT และยอดรวม VAT";
+    internal const string ReasonNoRate = "ราคารวม VAT แต่หาอัตรา VAT ของบรรทัดไม่ได้";
+
+    /// <summary>บรรทัดที่ตัดสินฐานราคาไม่ได้ — <b>จำนวนและราคาตาม XML เสมอ</b> (ห้ามหารจำนวนจากยอด · ทบทวน e8547899 ข้อ 2: เดิมปล่อยให้ตัวแก้จำนวน
+    /// แบบเดิมทำ 3 → 2.13 ซึ่งเป็นจำนวนที่แต่งขึ้นบนบรรทัดของเอกสารที่ลงนาม) · ส่วนลด = round(จำนวน × ราคา) − ยอด เมื่อไม่ติดลบ (บรรทัดลงตัวตาม
+    /// สูตร ComputeLineAmounts) · ติดลบ/ข้อมูลไม่ครบ ⇒ คงค่าตาม XML ไม่ลงตัว · ทั้งสองกรณี <see cref="NormalizeInvoice"/> เขียน <see cref="LineCheckTag"/></summary>
+    private static OcrEtaxLine Undecided(OcrEtaxLineFacts f, string reason)
+    {
+        decimal? disc = null;
+        if (f.BilledQuantity is decimal q && q > 0m && f.GrossUnitPrice is decimal g && g >= 0m && f.NetAmount is decimal net && net >= 0m)
+        {
+            var d = R2(q * g) - net;
+            if (d > 0m) disc = d;
+        }
+        return new OcrEtaxLine(OcrEtaxPriceBasis.Unknown, f.BilledQuantity, f.GrossUnitPrice, disc, f.NetAmount, true, UndecidedReason: reason);
+    }
+
+    /// <summary>บรรทัดลงตัวตามสูตรเอกสาร: จำนวน &gt; 0 · ราคา ≥ 0 · 0 ≤ ส่วนลด ≤ round(จำนวน × ราคา) · round(จำนวน × ราคา) − ส่วนลด = ยอด</summary>
+    private static bool LineTiesOut(OcrEtaxLine n)
+        => n.Quantity is decimal q && q > 0m && n.UnitPrice is decimal p && p >= 0m && n.Amount is decimal a && a >= 0m
+           && R2(q * p) - (n.LineDiscount ?? 0m) == a;
+
+    /// <summary>หมายเหตุห้ามอนุมัติเองของบรรทัดที่ตัดสินไม่ได้ — ระบุเหตุจริง + บอกว่าบรรทัดลงตัวด้วยส่วนลดที่คำนวณ หรือยังไม่ลงตัว</summary>
+    private static string UndecidedNote(int index, OcrEtaxLine n)
+    {
+        var reason = n.UndecidedReason ?? ReasonNeither;
+        return LineTiesOut(n)
+            ? $"{LineCheckTag} บรรทัดที่ {index + 1}: ตัดสินไม่ได้ว่าราคารวมหรือไม่รวม VAT — {reason} · ลงจำนวน/ราคาตาม XML "
+              + $"ส่วนลด {(n.LineDiscount ?? 0m):0.00} ให้ยอด {n.Amount:0.00} ตรง XML (ไม่หารจำนวนจากยอด) — ตรวจกับกระดาษก่อนอนุมัติ"
+            : $"{LineCheckTag} บรรทัดที่ {index + 1}: ตัดสินไม่ได้ว่าราคารวมหรือไม่รวม VAT — {reason} · จำนวน × ราคา ลงยอดของบรรทัดไม่ได้ "
+              + "(คงค่าตาม XML ไม่หารจำนวนจากยอด) — แก้บรรทัดนี้กับกระดาษก่อนอนุมัติ";
+    }
+
     /// <summary>ตัดสินบรรทัดเดียว (ทางราคาก่อน VAT) — ดูกติกาที่หัวคลาส</summary>
     public static OcrEtaxLine Normalize(OcrEtaxLineFacts f)
     {
-        var keep = new OcrEtaxLine(OcrEtaxPriceBasis.Unknown, f.BilledQuantity, f.GrossUnitPrice, null, f.NetAmount, false);
-        if (f.BilledQuantity is not decimal q || q <= 0m) return keep;
-        if (f.GrossUnitPrice is not decimal g || g < 0m) return keep;
-        if (f.NetAmount is not decimal net || net < 0m) return keep;
-        if (f.LineCharge is > 0m) return keep;
+        if (f.BilledQuantity is not decimal q || f.GrossUnitPrice is not decimal g || f.NetAmount is not decimal net)
+            return Undecided(f, ReasonMissing);
+        if (q <= 0m || g < 0m || net < 0m) return Undecided(f, ReasonNegative);
+        if (f.LineCharge is > 0m) return Undecided(f, ReasonCharge);
         var allowance = f.LineAllowance ?? 0m;
-        if (allowance < 0m) return keep;
+        if (allowance < 0m) return Undecided(f, ReasonNegative);
 
         var afterAllowance = R2(q * g) - allowance;
         var matchesNet = Math.Abs(afterAllowance - net) <= Tol;
         var matchesIncl = f.NetIncludingVatAmount is decimal ni && ni != net && Math.Abs(afterAllowance - ni) <= Tol;
-        if (matchesNet == matchesIncl) return keep;   // ไม่ลงตัวทั้งคู่ หรือกำกวม (ยอดเล็กจน VAT < 2 สตางค์)
+        if (matchesNet == matchesIncl) return Undecided(f, matchesNet ? ReasonBoth : ReasonNeither);
 
         if (matchesNet)
         {
@@ -422,7 +550,7 @@ public static class OcrEtaxLineNormalizer
         var rate = f.VatRatePercent is decimal vr && vr > 0m
             ? vr
             : net > 0m ? Math.Round((f.NetIncludingVatAmount!.Value / net - 1m) * 100m, 0, MidpointRounding.AwayFromZero) : 0m;
-        if (rate <= 0m) return keep;
+        if (rate <= 0m) return Undecided(f, ReasonNoRate);
         var unitEx = R2(g * 100m / (100m + rate));
         // ฝ่ายค้านรอบสอง (ข้อ 1): ราคาที่ถอด VAT แล้วปัด 2 ตำแหน่ง × จำนวน ไม่เท่ายอดก่อน VAT เสมอ — 7 × 10.00 (รวม VAT) ⇒ 9.35 × 7 = 65.45
         // แต่ XML 65.42 · 120 × 1.00 ⇒ 0.93 × 120 = 111.60 แต่ XML 112.15 · ถ้าไม่มีอะไรรับเศษนี้ ตอนเปิดแก้แล้วบันทึก
@@ -432,10 +560,10 @@ public static class OcrEtaxLineNormalizer
         if (R2(q * unitEx) < net)
             unitEx = Math.Max(unitEx, Math.Ceiling(net / q * 100m) / 100m);
         var grossEx = R2(q * unitEx);
-        if (grossEx < net) return keep;   // ป้องกันไว้ — ตามคณิตศาสตร์เกิดไม่ได้
+        if (grossEx < net) return Undecided(f, ReasonNeither);   // ป้องกันไว้ — ตามคณิตศาสตร์เกิดไม่ได้
         decimal? discEx = grossEx - net > 0m ? grossEx - net : null;
         // ฝ่ายค้านรอบสาม: "เศษจากการถอด VAT" = ส่วนลดก่อน VAT ที่ได้ − ส่วนลดบนกระดาษที่ถอด VAT แล้ว · เกินเพดาน (1 บาท และ 0.5% ของบรรทัด)
-        // ⇒ ราคา 2 ตำแหน่งบิดค่ามากเกินจะเรียกว่าเศษ ⇒ ไม่ตัดสิน (Unknown = พฤติกรรมเดิม ให้คนตรวจ)
+        // ⇒ ราคา 2 ตำแหน่งบิดค่ามากเกินจะเรียกว่าเศษ ⇒ ติดธง ResidualOverCap ให้คนตรวจ
         var allowanceEx = allowance > 0m ? R2(allowance * 100m / (100m + rate)) : 0m;
         var residual = (discEx ?? 0m) - allowanceEx;
         // รอบ 6 (ใบ 2614501699 ข้อ 2): เดิมเกินเพดาน ⇒ Unknown แต่บรรทัดยังถูกคุ้มครองจากตัวแก้จำนวน ⇒ 150 × 1.00 − 0 ≠ 65.42 (แย่ทั้งสองทาง) ·

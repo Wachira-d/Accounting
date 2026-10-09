@@ -206,15 +206,17 @@ public class OcrEtaxLineNormalizerTests
     }
 
     [Fact]
-    public void ไม่มีBilledQuantity_พฤติกรรมเดิม()
+    public void ไม่มีBilledQuantity_คงค่าตามXML_ไม่แต่งจำนวน_และบอกเหตุ()
     {
+        // ทบทวน e8547899 ข้อ 2: บรรทัดของ XML ที่ลงนามถูกคุ้มครองจากตัวแก้จำนวนเสมอ (QuantityFromDocument) — ไม่มีจำนวนก็ห้ามหารจากยอด
         var n = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(null, 37.00m, 26.68m, null, 7m, 78.80m, 84.32m));
         Assert.Equal(OcrEtaxPriceBasis.Unknown, n.Basis);
         Assert.Null(n.Quantity);
         Assert.Equal(37.00m, n.UnitPrice);
         Assert.Null(n.LineDiscount);
         Assert.Equal(78.80m, n.Amount);
-        Assert.False(n.QuantityFromDocument);
+        Assert.True(n.QuantityFromDocument);
+        Assert.Equal(OcrEtaxLineNormalizer.ReasonMissing, n.UndecidedReason);
     }
 
     [Fact]
@@ -227,28 +229,34 @@ public class OcrEtaxLineNormalizerTests
     }
 
     [Theory]
-    // ไม่ลงตัวทั้งสองทาง (ส่วนลดหาย/ตัวเลขขัดกัน) ⇒ ห้ามเดา
-    [InlineData(3, 37.00, 0, 78.80, 84.32)]
-    // ยอดเล็กจน ยอดก่อน/รวม VAT ห่างกันไม่ถึง 2 สตางค์ ⇒ กำกวม
-    [InlineData(1, 0.10, 0, 0.09, 0.10)]
-    public void ตัวเลขพิสูจน์ไม่ได้_คงค่าเดิมทุกตัว(int qty, double gross, double allowance, double net, double netIncl)
+    // ไม่ลงตัวทั้งสองทาง (ส่วนลดหาย/ตัวเลขขัดกัน) ⇒ ห้ามเดาฐานราคา — ส่วนลด = 111.00 − 78.80
+    [InlineData(3, 37.00, 0, 78.80, 84.32, 32.20, false)]
+    // ยอดเล็กจน ยอดก่อน/รวม VAT ห่างกันไม่ถึง 2 สตางค์ ⇒ กำกวม (ตรงทั้งสองฐาน) — ส่วนลด 0.10 − 0.09
+    [InlineData(1, 0.10, 0, 0.09, 0.10, 0.01, true)]
+    public void ตัวเลขพิสูจน์ไม่ได้_จำนวนราคาตามXML_ส่วนลดทำให้ลงตัว(int qty, double gross, double allowance, double net, double netIncl,
+        double expectDiscount, bool bothBases)
     {
+        // ทบทวน e8547899 ข้อ 2: เดิมคงค่าแล้วปล่อยให้ตัวแก้จำนวนหาร 3 → 2.13 — ตอนนี้จำนวน/ราคาตาม XML เสมอ ส่วนลด = round(จำนวน × ราคา) − ยอด
         var n = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(
             qty, (decimal)gross, (decimal)allowance, null, 7m, (decimal)net, (decimal)netIncl));
         Assert.Equal(OcrEtaxPriceBasis.Unknown, n.Basis);
         Assert.Equal((decimal)qty, n.Quantity);
         Assert.Equal((decimal)gross, n.UnitPrice);
-        Assert.Null(n.LineDiscount);
+        Assert.Equal((decimal)expectDiscount, n.LineDiscount);
         Assert.Equal((decimal)net, n.Amount);
-        Assert.False(n.QuantityFromDocument);
+        Assert.Equal(n.Amount, R2(n.Quantity!.Value * n.UnitPrice!.Value) - n.LineDiscount!.Value);
+        Assert.True(n.QuantityFromDocument);
+        Assert.Equal(bothBases ? OcrEtaxLineNormalizer.ReasonBoth : OcrEtaxLineNormalizer.ReasonNeither, n.UndecidedReason);
     }
 
     [Fact]
-    public void บรรทัดมีค่าบริการ_ไม่ตัดสิน()
+    public void บรรทัดมีค่าบริการ_ไม่ตัดสินฐาน_เหตุคือค่าบริการ()
     {
         var n = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(3m, 37.00m, 26.68m, 5m, 7m, 78.80m, 84.32m));
         Assert.Equal(OcrEtaxPriceBasis.Unknown, n.Basis);
-        Assert.Equal(37.00m, n.UnitPrice);
+        Assert.Equal((3m, 37.00m), (n.Quantity!.Value, n.UnitPrice!.Value));
+        Assert.Equal(OcrEtaxLineNormalizer.ReasonCharge, n.UndecidedReason);
+        Assert.True(n.QuantityFromDocument);
     }
 
     [Fact]
@@ -551,28 +559,102 @@ public class OcrEtaxLineNormalizerTests
         Assert.False(OcrPostingReadiness.Evaluate(string.Join("\n", inv.Notes), true).CanAutoApprove);
     }
 
-    [Fact]
-    public void บรรทัดตัดสินไม่ได้_ไม่ถูกคุ้มครอง_ตัวแก้จำนวนทำให้ลงตัว_และห้ามอนุมัติเอง()
+    private static OcrExtractedLineItem ItemOf(string desc, OcrEtaxLine n) => new()
     {
-        // จำนวน × ราคา − ส่วนลด ไม่ตรงยอดทั้งสองแบบ ⇒ Unknown + [ETAX-LINE-CHECK]
+        Description = desc, Quantity = n.Quantity, UnitPrice = n.UnitPrice, Amount = n.Amount,
+        LineDiscountAmount = n.LineDiscount, QuantityFromEtaxXml = n.QuantityFromDocument,
+    };
+
+    [Fact]
+    public void บรรทัดตัดสินไม่ได้_จำนวนตามXML_ส่วนลดทำให้ลงตัว_และห้ามอนุมัติเอง()
+    {
+        // ทบทวน e8547899 ข้อ 2 (MEDIUM-LOW): รอบ 6 ปล่อยบรรทัดนี้ให้ตัวแก้จำนวนแบบเดิม ⇒ 3 → ≈2.13 = จำนวนที่แต่งขึ้นบนเอกสารที่ลงนาม ·
+        // ตอนนี้: จำนวน 3 · ราคา 37.00 ตาม XML · ส่วนลด 111.00 − 78.80 = 32.20 ⇒ บรรทัดลงตัว + [ETAX-LINE-CHECK] ระบุเหตุ
         var odd = new OcrEtaxLineFacts(3m, 37.00m, 0m, null, 7m, 78.80m, 84.32m);
         var ok = new OcrEtaxLineFacts(2m, 250.47m, null, null, 7m, 500.93m, 536.00m);
         var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { odd, ok }, 579.73m, 40.58m, 620.31m);
         Assert.False(inv.PricesIncludeVat);
-        Assert.Equal(OcrEtaxPriceBasis.Unknown, inv.Lines[0].Basis);
-        Assert.Contains(inv.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.LineCheckTag + " บรรทัดที่ 1: ตัดสินไม่ได้", StringComparison.Ordinal));
-        // สแกน e-Tax (ธงระดับสแกน) แต่บรรทัด EtaxUndecided ⇒ ตัวแก้จำนวนทำงาน ⇒ ไม่เหลือบรรทัดที่ จำนวน × ราคา ≠ ยอด
+        var n = inv.Lines[0];
+        Assert.Equal(OcrEtaxPriceBasis.Unknown, n.Basis);
+        Assert.Equal((3m, 37.00m, 32.20m, 78.80m), (n.Quantity!.Value, n.UnitPrice!.Value, n.LineDiscount!.Value, n.Amount!.Value));
+        var note = Assert.Single(inv.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.LineCheckTag + " บรรทัดที่ 1: ตัดสินไม่ได้", StringComparison.Ordinal));
+        Assert.Contains(OcrEtaxLineNormalizer.ReasonNeither, note);
+        Assert.Contains("ส่วนลด 32.20", note);
+        Assert.False(OcrPostingReadiness.Evaluate(string.Join("\n", inv.Notes), true).CanAutoApprove);
+
+        // ตัวกันจำนวนระเบิดบนสแกน e-Tax: จำนวนคงเดิม · บรรทัดลงตัวด้วยส่วนลด
         var d = new OcrExtractedData();
-        d.Items.Add(new OcrExtractedLineItem { Description = "x", Quantity = 3m, UnitPrice = 37.00m, Amount = 78.80m, EtaxUndecided = true });
-        d.Items.Add(new OcrExtractedLineItem { Description = "y", Quantity = 2m, UnitPrice = 250.47m, Amount = 500.93m, QuantityFromEtaxXml = true });
+        d.Items.Add(ItemOf("x", n));
+        d.Items.Add(ItemOf("y", inv.Lines[1]));
         OcrService.SanitizeVatSplitArtifacts(d, quantitiesFromSignedXml: true);
-        Assert.True(Math.Abs(R2(d.Items[0].Quantity!.Value * d.Items[0].UnitPrice!.Value) - 78.80m) <= 0.05m);
-        Assert.Equal(2m, d.Items[1].Quantity);   // บรรทัดที่ตัดสินแล้วยังถูกคุ้มครอง
-        // ทิศตรงข้าม: บรรทัดที่ไม่ได้ติด EtaxUndecided บนสแกน e-Tax ⇒ คุ้มครองเหมือนเดิม
+        Assert.Equal(new[] { 3m, 2m }, d.Items.Select(x => x.Quantity!.Value).ToArray());
+        Assert.Equal(78.80m, R2(d.Items[0].Quantity!.Value * d.Items[0].UnitPrice!.Value) - d.Items[0].LineDiscountAmount!.Value);
+        // ธงระดับสแกนอย่างเดียว (ธงรายบรรทัดหาย) ⇒ ยังคุ้มครอง
         var d2 = new OcrExtractedData();
         d2.Items.Add(new OcrExtractedLineItem { Description = "x", Quantity = 3m, UnitPrice = 37.00m, Amount = 78.80m });
         OcrService.SanitizeVatSplitArtifacts(d2, quantitiesFromSignedXml: true);
         Assert.Equal(3m, d2.Items[0].Quantity);
+        // ธงรายบรรทัดอย่างเดียว (สำเนาจากอัปไฟล์ซ้ำ engine "Cached") ⇒ ยังคุ้มครอง
+        var d3 = new OcrExtractedData();
+        d3.Items.Add(ItemOf("x", n));
+        OcrService.SanitizeVatSplitArtifacts(d3);
+        Assert.Equal(3m, d3.Items[0].Quantity);
+        // ทิศตรงข้าม: สแกนกระดาษ (ไม่มีธงใด · ไม่มีส่วนลด) ⇒ ตัวแก้จำนวนแบบเดิมยังทำงานกับเคสหลงคอลัมน์
+        var d4 = new OcrExtractedData();
+        d4.Items.Add(new OcrExtractedLineItem { Description = "x", Quantity = 3m, UnitPrice = 37.00m, Amount = 78.80m });
+        OcrService.SanitizeVatSplitArtifacts(d4);
+        Assert.NotEqual(3m, d4.Items[0].Quantity);
+    }
+
+    [Fact]
+    public void บรรทัดตัดสินไม่ได้ซ้ำชื่อ_ไม่ถูกรวม()
+    {
+        // สองบรรทัดชื่อ+ราคาเดียวกันบน XML ที่ลงนาม = สองบรรทัดจริง ⇒ ห้ามรวม (รอบ 6 EtaxUndecided ทำให้หลุดการคุ้มครองการรวมด้วย)
+        var f = new OcrEtaxLineFacts(3m, 37.00m, 0m, null, 7m, 78.80m, 84.32m);
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { f, f }, 157.60m, 11.03m, 168.63m);
+        Assert.Equal(2, inv.Notes.Count(x => x.StartsWith(OcrEtaxLineNormalizer.LineCheckTag, StringComparison.Ordinal)));
+        var d = new OcrExtractedData();
+        foreach (var n in inv.Lines) d.Items.Add(ItemOf("ปูนซีเมนต์", n));
+        OcrService.SanitizeVatSplitArtifacts(d, quantitiesFromSignedXml: true);
+        Assert.Equal(2, d.Items.Count);
+        Assert.All(d.Items, x => Assert.Equal((3m, 32.20m, 78.80m), (x.Quantity!.Value, x.LineDiscountAmount!.Value, x.Amount!.Value)));
+        // ทิศตรงข้าม: บรรทัดสแกนกระดาษชื่อ+ราคาเดียวกัน (ไม่มีธง) ⇒ ยังรวมตามเดิม
+        var p = new OcrExtractedData();
+        p.Items.Add(new OcrExtractedLineItem { Description = "ปูนซีเมนต์", Quantity = 1m, UnitPrice = 37.00m, Amount = 37.00m });
+        p.Items.Add(new OcrExtractedLineItem { Description = "ปูนซีเมนต์", Quantity = 1m, UnitPrice = 37.00m, Amount = 37.00m });
+        OcrService.SanitizeVatSplitArtifacts(p);
+        Assert.Equal(2m, Assert.Single(p.Items).Quantity);
+    }
+
+    [Theory]
+    // จำนวน × ราคา ต่ำกว่ายอด ⇒ ส่วนลดติดลบใช้ไม่ได้ ⇒ คงค่าตาม XML (ไม่ลงตัว) + หมายเหตุว่าลงตัวไม่ได้
+    [InlineData("neither")]
+    // ค่าบริการรายบรรทัด: 1 × 100 + 10 = 110 ⇒ ส่วนลดติดลบ ⇒ ไม่ลงตัว + เหตุ "ค่าบริการ"
+    [InlineData("charge")]
+    // ยอดติดลบ (ใบลดหนี้ที่ใส่เครื่องหมายลบในบรรทัด) ⇒ ไม่ลงตัว + เหตุ "ติดลบ"
+    [InlineData("negative")]
+    // ไม่มีจำนวน ⇒ ไม่ลงตัว + เหตุ "ไม่มีจำนวน" (เดิมไม่มีหมายเหตุเลย = ผ่านเงียบ)
+    [InlineData("missing")]
+    public void บรรทัดตัดสินไม่ได้ที่ลงตัวไม่ได้_คงค่าตามXML_หมายเหตุระบุเหตุจริง(string kind)
+    {
+        var (facts, reason) = kind switch
+        {
+            "neither" => (new OcrEtaxLineFacts(1m, 10.00m, null, null, 7m, 50.00m, 53.50m), OcrEtaxLineNormalizer.ReasonNeither),
+            "charge" => (new OcrEtaxLineFacts(1m, 100.00m, null, 10.00m, 7m, 110.00m, 117.70m), OcrEtaxLineNormalizer.ReasonCharge),
+            "negative" => (new OcrEtaxLineFacts(1m, 100.00m, null, null, 7m, -100.00m, -107.00m), OcrEtaxLineNormalizer.ReasonNegative),
+            _ => (new OcrEtaxLineFacts(null, 100.00m, null, null, 7m, 100.00m, 107.00m), OcrEtaxLineNormalizer.ReasonMissing),
+        };
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { facts }, facts.NetAmount, 7m, 107m);
+        var n = Assert.Single(inv.Lines);
+        Assert.Equal(OcrEtaxPriceBasis.Unknown, n.Basis);
+        Assert.Equal((facts.BilledQuantity, facts.GrossUnitPrice, facts.NetAmount), (n.Quantity, n.UnitPrice, n.Amount));
+        Assert.Null(n.LineDiscount);
+        Assert.True(n.QuantityFromDocument);
+        var note = Assert.Single(inv.Notes);
+        Assert.StartsWith(OcrEtaxLineNormalizer.LineCheckTag + " บรรทัดที่ 1: ตัดสินไม่ได้", note);
+        Assert.Contains(reason, note);
+        Assert.Contains("ลงยอดของบรรทัดไม่ได้", note);
+        Assert.False(OcrPostingReadiness.Evaluate(note, true).CanAutoApprove);
     }
 
     // ── ใบจริงใบที่สอง CRC 2614501699 (รอบ 6): VAT คิดระดับหัวใบ ──
@@ -744,17 +826,17 @@ public class OcrEtaxLineNormalizerTests
     public void เขียนกลับตอนอนุมัติ_พาส่วนลดท้ายบิล_และบอกดังเมื่อหักมัดจำ()
     {
         // เอกสารราคารวม VAT ไม่มีส่วนลดท้ายบิล: ก่อน VAT 78.80 + VAT 5.52 = 84.32 = 111 − 26.68 ⇒ ส่วนลดบรรทัดตามเดิม
-        Assert.Equal((84.32m, (decimal?)26.68m, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 78.80m, 5.52m, 26.68m, true, 0m, 0m));
+        Assert.Equal((84.32m, (decimal?)26.68m, false, OcrWriteBackLoss.None), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 78.80m, 5.52m, 26.68m, true, 0m, 0m));
         // ผู้ใช้เพิ่มส่วนลดท้ายบิล: บรรทัดเหลือก่อน VAT 70.00 + VAT 4.90 = 74.90 ⇒ ส่วนลดที่เขียนกลับ = 111 − 74.90 = 36.10 (บรรทัด + ส่วนแบ่งท้ายบิล)
         var wb = OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscount: 100m, depositBase: 0m);
-        Assert.Equal((74.90m, (decimal?)36.10m, false), wb);
+        Assert.Equal((74.90m, (decimal?)36.10m, false, OcrWriteBackLoss.None), wb);
         Assert.Equal(36.10m, OcrEtaxLineNormalizer.ProvenLineDiscount(3m, 37.00m, wb.Amount, wb.Discount));   // สร้างใหม่ได้ยอดเดิม
         // ทิศตรงข้าม: หักมัดจำ (ไม่ใช่ส่วนลด) ⇒ ไม่แต่งเป็นส่วนลด · Lost = true ให้ผู้เรียกเขียนหมายเหตุ
         // (ฝ่ายค้านรอบห้า ข้อ 5: ยอดที่เขียน = ก่อนหักมัดจำ 84.32 — ส่วนมัดจำคือส่วนที่หาย ไม่ใช่ส่วนลด)
-        Assert.Equal((84.32m, (decimal?)26.68m, true), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscount: 0m, depositBase: 100m));
+        Assert.Equal((84.32m, (decimal?)26.68m, true, OcrWriteBackLoss.DepositDeducted), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscount: 0m, depositBase: 100m));
         // เอกสารราคาก่อน VAT ปกติ ⇒ ค่าเดิมทุกตัว
-        Assert.Equal((78.80m, (decimal?)24.94m, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 78.80m, 5.52m, 24.94m, false, 0m, 0m));
-        Assert.Equal((103.74m, (decimal?)null, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 103.74m, 7.26m, 0m, false, 0m, 0m));
+        Assert.Equal((78.80m, (decimal?)24.94m, false, OcrWriteBackLoss.None), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 78.80m, 5.52m, 24.94m, false, 0m, 0m));
+        Assert.Equal((103.74m, (decimal?)null, false, OcrWriteBackLoss.None), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 103.74m, 7.26m, 0m, false, 0m, 0m));
     }
 
     // ══ ฝ่ายค้านรอบห้า (2026-10-09) ═══════════════════════════════════════════════════════════════════════════════
@@ -764,13 +846,38 @@ public class OcrEtaxLineNormalizerTests
     {
         // บรรทัดถูกหัก 84.32 − 74.90 = 9.42 จากส่วนลดการค้า 50 + มัดจำ 50 ⇒ ส่วนลดการค้าของบรรทัด = round(9.42 × 50/100) = 4.71
         var wb = OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscount: 50m, depositBase: 50m);
-        Assert.Equal((79.61m, (decimal?)31.39m, true), wb);
+        Assert.Equal((79.61m, (decimal?)31.39m, true, OcrWriteBackLoss.DepositDeducted), wb);
         // สร้างใหม่จากสแกน: ส่วนลด (บรรทัด + การค้า) อธิบายยอดได้ ⇒ ส่วนลดการค้าไม่หาย · Lost = true เพราะส่วนมัดจำไม่ตามไป (หมายเหตุ [SCAN-WRITEBACK])
         Assert.Equal(31.39m, OcrEtaxLineNormalizer.ProvenLineDiscount(3m, 37.00m, wb.Amount, wb.Discount));
         // ทิศตรงข้าม: ส่วนลดการค้าอย่างเดียว ⇒ ไม่หายเลย
         Assert.False(OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscount: 50m, depositBase: 0m).Lost);
         // ข้อมูลขัดกัน (ยอดมากกว่า จำนวน × ราคา − ส่วนลด) ⇒ ไม่แต่ง · Lost
         Assert.True(OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 80.00m, 5.60m, 26.68m, true, 50m, 0m).Lost);
+    }
+
+    [Fact]
+    public void เขียนกลับบรรทัดหาย_หมายเหตุบอกเหตุจริง_ไม่ใช่หักมัดจำทุกกรณี()
+    {
+        // ทบทวน e8547899 ข้อ 3 (LOW): เดิมข้อความ "ยอดหลังหักมัดจำ" ทุกกรณี — บรรทัดที่หายโดยไม่มีมัดจำก็ถูกบอกว่าหักมัดจำ
+        // ยอดมากกว่า จำนวน × ราคา − ส่วนลด (84.32 + 5.60 > 111 − 26.68) ⇒ ข้อมูลขัดกัน
+        Assert.Equal(OcrWriteBackLoss.AmountAboveLine, OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 80.00m, 5.60m, 26.68m, true, 50m, 0m).Loss);
+        // ยอดน้อยกว่า แต่เอกสารไม่มีส่วนลดท้ายบิล/มัดจำ ⇒ ไม่มีอะไรอธิบาย
+        Assert.Equal(OcrWriteBackLoss.UnexplainedReduction, OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, 0m, 0m).Loss);
+        var note = OcrEtaxLineNormalizer.WriteBackLostNote("PI-001", new[]
+        {
+            (2, OcrWriteBackLoss.AmountAboveLine), (5, OcrWriteBackLoss.UnexplainedReduction),
+        })!;
+        Assert.StartsWith(OcrEtaxLineNormalizer.WriteBackLostTag + " เอกสาร PI-001:", note);
+        Assert.Contains("บรรทัดที่ 2 ยอดมากกว่า", note);
+        Assert.Contains("บรรทัดที่ 5 ยอดถูกลดโดยไม่มีส่วนลดท้ายบิล/มัดจำอธิบาย", note);
+        Assert.DoesNotContain("หักมัดจำ (", note);
+        Assert.False(OcrPostingReadiness.Evaluate(note, true).CanAutoApprove);
+        // ทิศตรงข้าม: หักมัดจำจริง ⇒ ยังบอกว่าหักมัดจำ · รวมบรรทัดเหตุเดียวกัน
+        var dep = OcrEtaxLineNormalizer.WriteBackLostNote("PI-002", new[] { (1, OcrWriteBackLoss.DepositDeducted), (3, OcrWriteBackLoss.DepositDeducted) })!;
+        Assert.Contains("บรรทัดที่ 1, 3 ยอดหลังหักมัดจำ", dep);
+        // ไม่มีบรรทัดหาย ⇒ ไม่มีหมายเหตุ
+        Assert.Null(OcrEtaxLineNormalizer.WriteBackLostNote("PI-003", new[] { (1, OcrWriteBackLoss.None) }));
+        Assert.Null(OcrEtaxLineNormalizer.WriteBackLostNote("PI-003", Array.Empty<(int, OcrWriteBackLoss)>()));
     }
 
     [Fact]
@@ -820,6 +927,89 @@ public class OcrEtaxLineNormalizerTests
         // ป้ายช่องติ๊กมีเฉพาะแถวราคารวม VAT
         Assert.NotNull(OcrEtaxLineNormalizer.PriceBasisLabel(true));
         Assert.Null(OcrEtaxLineNormalizer.PriceBasisLabel(false));
+    }
+
+    // ── ทบทวน e8547899 ข้อ 1 (MEDIUM): ช่องติ๊ก "กรอกราคาไม่รวม VAT" คิด VAT ซ้ำ + ขึ้นกับลำดับคลิก ──
+    // สถานะแถวในสแกน (ราคา · ส่วนลด) → คำขอ line-fields หนึ่งคำขอ (ราคาที่ส่ง · ส่วนลดที่ส่ง · ธง) ผ่านตัวตัดสินเดียวกับ SetExtractedLineFieldsAsync
+
+    private sealed record ReviewRow(decimal? Price, decimal? Discount);
+
+    private static ReviewRow Send(ReviewRow row, decimal? price, decimal? discount, bool exVat, decimal? rowRate = 7m)
+    {
+        var e = OcrEtaxLineNormalizer.ApplyReviewPriceEntry(row.Price, row.Discount, rowPriceIncludesVat: true, rowRate, fallbackVatRate: null,
+            price, discount, exVat);
+        return new ReviewRow(e.UnitPrice, e.Discount);
+    }
+
+    [Fact]
+    public void ติ๊กแล้วพิมพ์ราคา_แปลงครั้งเดียว_ส่วนลดเดิมไม่ถูกแปลง()
+    {
+        // แถว CRC: ราคารวม VAT 37.00 ส่วนลด (รวม VAT) 26.68 · ผู้ใช้ติ๊ก (ไม่บันทึก) แล้วพิมพ์ 100 ไม่รวม VAT ⇒ คำขอเดียว: ราคา 100 + ส่วนลดเดิม + ธง
+        var row = Send(new ReviewRow(37.00m, 26.68m), 100m, 26.68m, exVat: true);
+        Assert.Equal(new ReviewRow(107.00m, 26.68m), row);
+        var e = OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, 26.68m, true, 7m, null, 100m, 26.68m, true);
+        Assert.False(e.DiscountChanged);
+        Assert.Equal(7m, e.AppliedRate);
+        Assert.Contains("107.00", e.ConversionNote);
+        // คำขอเดิมซ้ำ (ส่งซ้ำ/กดซ้ำ) ⇒ สถานะเดิม (idempotent — คิดจากราคาที่ส่ง ไม่ใช่ราคาที่เก็บ)
+        Assert.Equal(row, Send(row, 100m, 26.68m, exVat: true));
+        // คำขอถัดไปของหน้า (แก้ชื่อรายการ) ส่งราคาที่แสดง 107.00 โดยไม่มีธง ⇒ ไม่แตะ
+        Assert.Equal(row, Send(row, 107.00m, 26.68m, exVat: false));
+    }
+
+    [Fact]
+    public void พิมพ์ราคาก่อนแล้วค่อยติ๊ก_ติ๊กไม่บันทึกราคาที่เก็บไว้ไม่ถูกแปลง()
+    {
+        // พิมพ์ 100 ก่อน (ยังไม่ติ๊ก) ⇒ เก็บ 100 ตามที่พิมพ์ (ฐานของแถว = รวม VAT)
+        var row = Send(new ReviewRow(37.00m, 26.68m), 100m, 26.68m, exVat: false);
+        Assert.Equal(new ReviewRow(100m, 26.68m), row);
+        // ติ๊ก = ไม่มีคำขอ · คำขอที่มีธงแต่ไม่มีราคา (หน้าเก่า/API) ⇒ ปฏิเสธ — เดิมแปลงราคาที่เก็บไว้ 100 → 107 โดยผู้ใช้ไม่ได้พิมพ์อะไร
+        var ex = Assert.Throws<BusinessRuleException>(() => Send(row, null, 26.68m, exVat: true));
+        Assert.Contains("ต้องมาพร้อมราคาที่กรอกใหม่", ex.Message);
+        // ติ๊กแล้วพิมพ์ราคาไม่รวม VAT (หน้าเปิดช่องราคาให้พิมพ์ซ้ำได้แม้ค่าเดิม) ⇒ แปลงครั้งเดียว
+        Assert.Equal(new ReviewRow(107.00m, 26.68m), Send(row, 100m, 26.68m, exVat: true));
+    }
+
+    [Fact]
+    public void ติ๊กสองรอบ_ไม่คิดVATซ้ำสองชั้น()
+    {
+        var row = new ReviewRow(37.00m, 26.68m);
+        // ติ๊ก/ยกเลิก/ติ๊ก ไม่มีคำขอ — ถ้ามีคำขอธงอย่างเดียวหลุดมาก็ถูกปฏิเสธทุกครั้ง ราคาไม่ขยับ
+        Assert.Throws<BusinessRuleException>(() => Send(row, null, null, exVat: true));
+        Assert.Throws<BusinessRuleException>(() => Send(row, null, null, exVat: true));
+        // พิมพ์ราคาหลังติ๊ก ⇒ 46.73 → 50.00 · ส่งซ้ำอีกรอบ ⇒ ยัง 50.00 (เดิม 50.00 → 53.50 = VAT สองชั้น)
+        var once = Send(row, 46.73m, 26.68m, exVat: true);
+        Assert.Equal(50.00m, once.Price);
+        Assert.Equal(50.00m, Send(once, 46.73m, 26.68m, exVat: true).Price);
+        Assert.NotEqual(53.50m, Send(once, 46.73m, 26.68m, exVat: true).Price);
+    }
+
+    [Fact]
+    public void ส่วนลดไม่เปลี่ยน_ไม่ถูกแปลง_ส่วนลดที่พิมพ์ใหม่พร้อมธง_ถูกแปลงครั้งเดียว()
+    {
+        // ส่วนลดเท่าค่าที่เก็บ (ฐานรวม VAT อยู่แล้ว) ⇒ ไม่คูณ 1.07 อีก
+        var e = OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, 26.68m, true, 7m, null, 100m, 26.68m, true);
+        Assert.Equal((107.00m, 26.68m, false), (e.UnitPrice!.Value, e.Discount!.Value, e.DiscountChanged));
+        // ส่วนลดใหม่ 10 (ไม่รวม VAT) มาพร้อมราคาใหม่ในคำขอเดียว (API) ⇒ 10.70 · ส่งซ้ำ ⇒ ยัง 10.70 (10 ≠ 10.70 ที่เก็บ ⇒ คิดจากค่าที่ส่ง)
+        var row = Send(new ReviewRow(37.00m, 26.68m), 100m, 10m, exVat: true);
+        Assert.Equal(new ReviewRow(107.00m, 10.70m), row);
+        Assert.Equal(row, Send(row, 100m, 10m, exVat: true));
+        // ไม่มีธง: ส่วนลดเปลี่ยน ⇒ เก็บตามที่พิมพ์ (ปัด 2 ตำแหน่ง) · ช่องว่าง (0) ⇒ ล้าง
+        Assert.Equal(new ReviewRow(37.00m, 5.56m), Send(new ReviewRow(37.00m, 26.68m), 37.00m, 5.555m, exVat: false));
+        Assert.Equal(new ReviewRow(37.00m, null), Send(new ReviewRow(37.00m, 26.68m), 37.00m, 0m, exVat: false));
+        Assert.True(OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, 26.68m, true, 7m, null, null, 0m, false).DiscountChanged);
+        Assert.False(OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, 26.68m, true, 7m, null, null, 26.68m, false).DiscountChanged);
+    }
+
+    [Fact]
+    public void ธงบนแถวที่ไม่ใช่ราคารวมVAT_หรือไม่รู้อัตรา_ปฏิเสธพร้อมเหตุผล()
+    {
+        Assert.Contains("ราคาก่อน VAT อยู่แล้ว", Assert.Throws<BusinessRuleException>(() =>
+            OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, null, false, 7m, null, 100m, null, true)).Message);
+        Assert.Contains("ไม่รู้อัตรา VAT", Assert.Throws<BusinessRuleException>(() =>
+            OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, null, true, null, null, 100m, null, true)).Message);
+        // แถวไม่มีอัตรา ⇒ ใช้อัตราหลักของใบ (fallback)
+        Assert.Equal(107.00m, OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, null, true, null, 7m, 100m, null, true).UnitPrice);
     }
 
     // ── ใบจริงใบที่สาม CRC 2614502187 (รอบ 7): 16 บรรทัด · VAT ระดับหัวใบ · ขั้นปัดขยับ 2 สตางค์ ──

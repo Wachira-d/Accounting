@@ -150,7 +150,7 @@ internal static class ScanDocumentSimulator
             {
                 Description = r.Items[i].Description, Quantity = n.Quantity, UnitPrice = n.UnitPrice, Amount = n.Amount,
                 LineDiscountAmount = n.LineDiscount, QuantityFromEtaxXml = n.QuantityFromDocument, PriceIncludesVat = n.PriceIncludesVat,
-                VatStripResidual = n.VatStripResidual, EtaxUndecided = n.Basis == OcrEtaxPriceBasis.Unknown,
+                VatStripResidual = n.VatStripResidual,
                 VatRate = n.PriceIncludesVat ? n.VatRate : null,
             });
         }

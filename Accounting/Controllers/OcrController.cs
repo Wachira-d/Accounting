@@ -711,7 +711,8 @@ public class OcrController : ControllerBase
     }
 
     /// <param name="LineDiscount">ส่วนลดรายบรรทัดก่อน VAT (คอลัมน์ "ส่วนลด" ของหน้ารีวิว) — null = ไม่แตะ · 0 = ล้าง</param>
-    /// <param name="PriceEnteredExVat">true = ราคา/ส่วนลดที่กรอกในแถวนี้ไม่รวม VAT (ใบราคารวม VAT) ⇒ เซิร์ฟเวอร์แปลงเป็นฐานรวม VAT ของใบ</param>
+    /// <param name="PriceEnteredExVat">true = ราคาที่ส่งมาในคำขอนี้ (ต้องมี <c>UnitPrice</c>) ไม่รวม VAT (ใบราคารวม VAT) ⇒ เซิร์ฟเวอร์แปลงเป็นฐานรวม VAT ของใบ ·
+    /// ส่วนลดแปลงเฉพาะเมื่อต่างจากค่าที่เก็บ (ส่งธงเฉพาะคำขอที่ราคาถูกพิมพ์ใหม่)</param>
     public sealed record SetLineFieldsRequest(
         int LineIndex, string? Description, decimal? Quantity, decimal? UnitPrice,
         string? AccountCode = null, decimal? LineDiscount = null, bool PriceEnteredExVat = false);
