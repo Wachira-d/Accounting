@@ -11,11 +11,13 @@ public sealed record ReplayPaper(
     string? VendorNameFromEngine = null, decimal? BaseAmount = null,
     decimal[]? LineAmounts = null,
     IReadOnlyList<ReplayLine>? Lines = null,
-    string? VendorTaxId = null);
+    string? VendorTaxId = null,
+    IReadOnlyList<ReplayLine>? EngineLines = null);
 
 /// <summary>บรรทัดรายการ<b>ตามที่กระดาษพิมพ์</b> (คำอธิบาย · จำนวน · ราคาต่อหน่วย · ยอด) — ป้อนขั้นสร้างบรรทัดเอกสาร
 /// (2026-10-09 ratchet ระดับบรรทัด) · ใบที่ให้แต่ <see cref="ReplayPaper.LineAmounts"/> จะถูกแปลงเป็นบรรทัดที่ไม่มีจำนวน/ราคา
-/// (เหมือน engine ที่คืนแค่ยอด)</summary>
+/// (เหมือน engine ที่คืนแค่ยอด) · <see cref="ReplayPaper.EngineLines"/> = แถว<b>ตามที่ engine คืน</b> เมื่อต่างจากที่พิมพ์ (ต้นฉบับ+สำเนา ⇒
+/// ชุดเดิมสองรอบ) — ด่านแถวซ้ำ (<see cref="OcrDuplicateLineGuard"/>) ต้องพาแถวกลับมาเท่า <c>Lines</c></summary>
 public sealed record ReplayLine(string? Description, decimal? Quantity, decimal? UnitPrice, decimal Amount);
 
 /// <summary>ผลของขั้นสร้างบรรทัดเอกสาร (<see cref="OcrReplayHarness.BuildLines"/>) — ทุกช่องเป็นข้อความอ่านออก เพื่อล็อกเป็น golden</summary>
@@ -24,8 +26,11 @@ public sealed record ReplayLine(string? Description, decimal? Quantity, decimal?
 /// <param name="Lines">หนึ่งบรรทัดต่อรายการ คั่นด้วย <c>;</c> — รูป <c>ยอดก่อนVAT|อัตรา|VAT|ราคาต่อหน่วย|ส่วนลด%|ส่วนลดบาท|หัก ณ ที่จ่าย</c></param>
 /// <param name="Gaps">ช่องว่างที่ตัวสร้างจะเขียนเป็น <c>[Σ-GAP]</c> (เคสกระทบยอด + ชนิดปัญหาของ <see cref="OcrAmountIntegrity"/>) · <c>ok</c> = ไม่มี</param>
 /// <param name="RoundingAdjustment">ผลต่างปัดเศษหัวเอกสาร (= −Σ shift ของบรรทัด)</param>
+/// <param name="DuplicateRowsDropped">จำนวนแถวที่ด่านแถวซ้ำ (<see cref="OcrDuplicateLineGuard"/>) ตัดออกก่อนทุกขั้น — 0 = ไม่ตัด
+/// (2026-10-09 ใบต้นฉบับ+สำเนา · <see cref="ReplayPaper.EngineLines"/>)</param>
 public sealed record ReplayBuiltLines(
-    string Mode, string? ReconCase, bool PricesIncludeVat, string Lines, string Gaps, decimal RoundingAdjustment);
+    string Mode, string? ReconCase, bool PricesIncludeVat, string Lines, string Gaps, decimal RoundingAdjustment,
+    int DuplicateRowsDropped = 0);
 
 /// <summary>คำตอบหนึ่งช่องของใบหนึ่ง</summary>
 public sealed record ReplayAnswer(string Paper, string Field, string? Value);
@@ -55,6 +60,16 @@ public sealed record ReplayAnswer(string Paper, string Field, string? Value);
 /// </summary>
 public static class OcrReplayHarness
 {
+    /// <summary>5 บรรทัดของใบ BS2026100001 ตามที่กระดาษพิมพ์ (คำอธิบายตามหน้า review ของผู้ใช้ · จำนวน × ราคา = ยอด ทุกบรรทัด · Σ 21,005.00)</summary>
+    private static readonly ReplayLine[] BoonsapPrintedLines =
+    {
+        new("สายไฟ FD-CV 0.6/1KV 1*16 mm2 YAZAKI ดำ", 100m, 103.16m, 10316.00m),
+        new("สายไฟ FD-0.6/1K.V-CV 1x10 SQ.mm ยาซากิ (ดำ)", 50m, 69.26m, 3463.00m),
+        new("สายไฟ IEC 01 THW 1 x 6 SQ.MM YAZAKI สีดำ", 100m, 36.18m, 3618.00m),
+        new("สายไฟ IEC 01 THW 1 x 4 SQ.MM YAZAKI ดำ", 100m, 22.08m, 2208.00m),
+        new("สายไฟ IEC 01 THW 1 x 2.5 SQ.MM YAZAKI สีดำ", 100m, 14.00m, 1400.00m),
+    };
+
     /// <summary>ชุดกระดาษจริงที่เคยทำให้เกิดการถดถอย — <b>ห้ามลบแถว</b> เพิ่มได้อย่างเดียว
     /// (ตัวเลข/ข้อความยกมาจากเคสที่บันทึกไว้ในเทสต์/คอมเมนต์ของเรพ)</summary>
     public static IReadOnlyList<ReplayPaper> Corpus { get; } = new[]
@@ -189,6 +204,24 @@ public static class OcrReplayHarness
             EngineSubTotal: 1000m, EngineVat: 70m, EngineTotal: 1070m,
             LineAmounts: new[] { 1000m },
             Lines: new ReplayLine[] { new("ค่าบริการรายเดือน", 1m, 1000.00m, 1000.00m) }),
+
+        // ── 2026-10-09 ผู้ใช้รายงาน "จำนวนทุกบรรทัด ×2" — PDF ต้นฉบับ (หน้า 1) + สำเนา (หน้า 2) ของใบเดียวกัน ──
+
+        // ใบ BS2026100001 บุญทรัพย์ ถาวร (กระดาษจริง): engine คืน 5 บรรทัดสองรอบ (EngineLines) ⇒ ต้องกลับมา 5 บรรทัดจำนวน 100/50/100/100/100
+        // (คำอธิบายใน Lines = ตามที่ engine/หน้า review แสดง · ตัวเลขทุกตัวจากกระดาษ · ข้อความ text-layer จริงใน OcrPaperSamples)
+        new ReplayPaper("boonsap-original-copy-pages", OcrPaperSamples.BoonsapOriginalCopyPages,
+            EngineSubTotal: 21005.00m, EngineVat: 1470.35m, EngineTotal: 22475.35m,
+            LineAmounts: new[] { 10316.00m, 3463.00m, 3618.00m, 2208.00m, 1400.00m },
+            Lines: BoonsapPrintedLines,
+            EngineLines: BoonsapPrintedLines.Concat(BoonsapPrintedLines).ToList()),
+
+        // ทิศตรงข้าม: กระดาษพิมพ์รายการเดียวกันสองบรรทัดจริง (น้ำดื่ม 10 ขวด × 2 บรรทัด · หัวใบ 100) — Σ ทุกแถวตรงหัวใบ ⇒ ห้ามตัด
+        new ReplayPaper("water-genuine-repeat-rows",
+            "ใบเสร็จรับเงิน/ใบกำกับภาษี\nน้ำดื่ม 10 ขวด 5.00 50.00\nน้ำดื่ม 10 ขวด 5.00 50.00\n"
+            + "รวมเป็นเงิน 100.00\nภาษีมูลค่าเพิ่ม 7% 7.00\nรวมทั้งสิ้น 107.00",
+            EngineSubTotal: 100m, EngineVat: 7m, EngineTotal: 107m,
+            LineAmounts: new[] { 50m, 50m },
+            Lines: new ReplayLine[] { new("น้ำดื่ม", 10m, 5.00m, 50.00m), new("น้ำดื่ม", 10m, 5.00m, 50.00m) }),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -282,6 +315,8 @@ public static class OcrReplayHarness
             result.Add(new(p.Name, "Lines", built.Lines));
             result.Add(new(p.Name, "IntegrityGaps", built.Gaps));
             result.Add(new(p.Name, "RoundingAdjustment", built.RoundingAdjustment.ToString("0.00")));
+            // 2026-10-09 ใบต้นฉบับ+สำเนา: จำนวนแถวที่ด่านแถวซ้ำตัด (ช่องใหม่ทุกใบ — ใบเดิมได้ 0)
+            result.Add(new(p.Name, "DupRowsDropped", built.DuplicateRowsDropped.ToString()));
         }
         return result;
     }
@@ -306,10 +341,27 @@ public static class OcrReplayHarness
         ReplayPaper p, decimal? headerSub, decimal? headerVat, decimal? anchoredTotal, decimal discountToSpread, PaperWht paperWht)
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
-        var lines = p.Lines
+        IReadOnlyList<ReplayLine>? printedRows = p.Lines
             ?? p.LineAmounts?.Select(a => new ReplayLine(null, null, null, a)).ToList();
         if (p.Lines != null && p.LineAmounts != null && !p.Lines.Select(l => l.Amount).SequenceEqual(p.LineAmounts))
             throw new InvalidOperationException($"{p.Name}: Lines กับ LineAmounts ยอดไม่ตรงกัน — กระดาษใบเดียวต้องมีตัวเลขชุดเดียว");
+
+        // 2026-10-09 ตรงกับ SanitizeVatSplitArtifacts ข้อ 3b (ก่อนขั้นยุบ/กระทบยอดทุกขั้น): แถวตามที่ engine คืน (EngineLines — PDF ต้นฉบับ+สำเนา
+        // ให้ชุดเดิมสองรอบ) เดินด่านแถวซ้ำด้วยยอดหัวใบ · ใบที่ไม่มี EngineLines = แถวที่พิมพ์ (ไม่มีอะไรซ้ำ ⇒ 0 · ช่องเดิมไม่เปลี่ยน)
+        var lines = p.EngineLines ?? printedRows;
+        var duplicateRowsDropped = 0;
+        if (lines is { Count: >= 2 })
+        {
+            var dup = OcrDuplicateLineGuard.Decide(
+                lines.Select(l => new OcrCandidateRow(l.Description, l.Quantity, l.UnitPrice, l.Amount)).ToList(),
+                headerSub, headerVat, anchoredTotal);
+            if (dup.Deduped)
+            {
+                var kept = lines;
+                lines = dup.KeepIndexes.Select(i => kept[i]).ToList();
+                duplicateRowsDropped = dup.DroppedCount;
+            }
+        }
 
         var hdrSub = headerSub ?? 0m;
         var hdrVat = headerVat ?? 0m;
@@ -438,7 +490,7 @@ public static class OcrReplayHarness
                 rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt, lineWht));
             }
             return new ReplayBuiltLines("Items", recon.Case.ToString(), pricesIncludeVat,
-                string.Join(";", rows), GapText(gaps), -roundingShift);
+                string.Join(";", rows), GapText(gaps), -roundingShift, duplicateRowsDropped);
         }
 
         // ไม่มีรายการ — ตารางสรุปตามกลุ่มภาษีบนกระดาษ (Makro 3/3) ก่อน แล้วค่อยบรรทัดสรุปใบเดียว

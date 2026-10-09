@@ -164,6 +164,47 @@ public class OcrReplayLineGoldenTests
         }
     }
 
+    // ── 2026-10-09 ผู้ใช้รายงาน: PDF ต้นฉบับ+สำเนา ⇒ engine คืน 5 บรรทัดสองรอบ ⇒ จำนวนเคย ×2 (ตัดสินที่ OcrDuplicateLineGuard) ──
+
+    [Fact]
+    public void ใบบุญทรัพย์_ต้นฉบับบวกสำเนา_สิบแถวจากengine_กลับมาห้าบรรทัดจำนวนตามกระดาษ_Σ21005_VAT1470_35_ไม่มีΣGAP()
+    {
+        // ก่อนแก้ (หน้าจอผู้ใช้): จำนวน 200/100/200/200/200 · Σ 42,010 = 2 × 21,005 ⇒ Ambiguous [Σ-GAP] · ตอนนี้ด่านแถวซ้ำตัด 5 แถวที่ถูกอ่านซ้ำ
+        // (Σ ทุกแถว 42,010 ไม่ตรงหัวใบ · Σ หลังนับครั้งเดียว 21,005 ตรงยอดก่อน VAT) ⇒ เคส B · VAT 1,470.35 เฉลี่ยตามสัดส่วน:
+        // 722.12 · 242.41 · 253.26 · 154.56 · เศษ 98.00 (Σ 1,470.35) · 7% × 21,005 = 1,470.35 พอดี ⇒ ทั้งใบ 7% · 10,316 + 1,470.35 … = 22,475.35 ✓
+        Assert.Equal("5", Val("boonsap-original-copy-pages", "DupRowsDropped"));
+        Assert.Equal("Items", Val("boonsap-original-copy-pages", "LineMode"));
+        Assert.Equal("LinesMatchSubTotal", Val("boonsap-original-copy-pages", "ReconCase"));
+        Assert.Equal("false", Val("boonsap-original-copy-pages", "PricesIncludeVat"));
+        Assert.Equal("21005.00", Val("boonsap-original-copy-pages", "HeaderSubTotal"));
+        Assert.Equal("22475.35", Val("boonsap-original-copy-pages", "HeaderTotal"));
+        Assert.Equal("false", Val("boonsap-original-copy-pages", "HeaderSwapped"));
+        Assert.Equal(
+            "10316.00|7|722.12|103.16|0|0.00|0.00;3463.00|7|242.41|69.26|0|0.00|0.00;3618.00|7|253.26|36.18|0|0.00|0.00;"
+            + "2208.00|7|154.56|22.08|0|0.00|0.00;1400.00|7|98.00|14.00|0|0.00|0.00",
+            Val("boonsap-original-copy-pages", "Lines"));
+        Assert.Equal("ok", Val("boonsap-original-copy-pages", "IntegrityGaps"));
+        Assert.Equal("0.00", Val("boonsap-original-copy-pages", "RoundingAdjustment"));
+    }
+
+    [Fact]
+    public void ใบน้ำดื่ม_กระดาษพิมพ์สองบรรทัดเหมือนกันจริง_หัวใบ100_ไม่ถูกตัด_สองบรรทัด50_VATบรรทัดละ3_50()
+    {
+        // Σ ทุกแถว 100 = ยอดก่อน VAT ⇒ กระดาษพิมพ์ซ้ำจริง ⇒ ด่านแถวซ้ำไม่แตะ (0) · เคส B · VAT 7 เฉลี่ย 3.50/3.50 · 50+3.5+50+3.5 = 107 ✓
+        Assert.Equal("0", Val("water-genuine-repeat-rows", "DupRowsDropped"));
+        Assert.Equal("LinesMatchSubTotal", Val("water-genuine-repeat-rows", "ReconCase"));
+        Assert.Equal("50.00|7|3.50|5.00|0|0.00|0.00;50.00|7|3.50|5.00|0|0.00|0.00", Val("water-genuine-repeat-rows", "Lines"));
+        Assert.Equal("ok", Val("water-genuine-repeat-rows", "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void ใบเดิมทุกใบในชุด_ด่านแถวซ้ำไม่ตัดอะไร_DupRowsDroppedเป็นศูนย์()
+    {
+        var all = OcrReplayHarness.Run();
+        foreach (var p in OcrReplayHarness.Corpus.Where(p => p.EngineLines == null))
+            Assert.Equal("0", all.Single(a => a.Paper == p.Name && a.Field == "DupRowsDropped").Value);
+    }
+
     // ── ตัวเครื่องมือ: ทุกใบต้องมีแถวระดับบรรทัด · ไม่มีใบไหนได้ส่วนลดบาทติดลบ · ใบมีรายการ Σ ก่อน VAT + VAT = ยอดรวมเมื่อ ok ──
 
     [Fact]
