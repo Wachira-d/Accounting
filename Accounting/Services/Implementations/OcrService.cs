@@ -634,7 +634,7 @@ public class OcrService : IOcrService
             // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
             var gatewayConfig = BuildGatewayConfig(siteSettings);
             var lineItemsForValidation = extractedData.Items
-                .Select(i => new OcrConfidenceGateway.LineItemForValidation(i.Quantity, i.UnitPrice, i.Amount))
+                .Select(i => new OcrConfidenceGateway.LineItemForValidation(i.Quantity, i.UnitPrice, i.Amount, i.LineDiscountAmount))
                 .ToList();
             var whtRatePct = extractedData.HasWht && extractedData.WhtRate.HasValue
                 ? extractedData.WhtRate.Value
@@ -4649,6 +4649,9 @@ public class OcrService : IOcrService
             var up = item.UnitPrice ?? 0m;
             var qty = item.Quantity ?? 0m;
             if (amt <= 0m) continue;
+            // ★ จำนวนจาก e-Tax XML ที่พิสูจน์สมการบรรทัดแล้ว (Helpers/OcrEtaxLineNormalizer) — เอกสารลงนามไม่มี "อ่านหลงคอลัมน์"
+            // ห้ามหารจำนวนใหม่จากยอด (สแกน f1690d11: 3 ชิ้น → 2.13 · ค่าขนส่ง 120 → 37.38 เพราะส่วนลดบรรทัดทำให้ จำนวน × ราคา ≠ ยอด)
+            if (item.QuantityFromEtaxXml) continue;
             var tol = System.Math.Max(1m, System.Math.Abs(amt) * 0.02m);
 
             // ราคา/หน่วยหาย แต่มียอด+จำนวน → หารหาให้ (บิลสาธารณูปโภคพิมพ์
@@ -4660,7 +4663,9 @@ public class OcrService : IOcrService
             }
             if (up <= 0m || qty <= 0m) continue;
 
-            var computed = System.Math.Round(up * qty, 2, MidpointRounding.AwayFromZero);
+            // ส่วนลดรายบรรทัดที่อธิบายยอดได้จริง = ไม่ใช่จำนวนผิด (ตัวตัดสินเดียวกับด่าน [Gateway] และตัวสร้างบรรทัด)
+            var computed = System.Math.Round(up * qty, 2, MidpointRounding.AwayFromZero)
+                - Accounting.Helpers.OcrEtaxLineNormalizer.ProvenLineDiscount(qty, up, amt, item.LineDiscountAmount);
             if (System.Math.Abs(computed - amt) <= tol) continue;   // ตรงอยู่แล้ว
 
             // ⚠️ แยกสองเคสให้ถูกตัว (บั๊กจริง — บิลค่าไฟ 59 ล้าน):
@@ -4724,8 +4729,15 @@ public class OcrService : IOcrService
                 var main = reals.OrderByDescending(EffAmt).First();
                 var foldAmt = phantoms.Sum(EffAmt);
                 main.Amount = EffAmt(main) + foldAmt;
-                if (main.Quantity is decimal mq && mq > 0m)
-                    main.UnitPrice = Math.Round(main.Amount.Value / mq, 2, MidpointRounding.AwayFromZero);
+                // บรรทัดที่มีส่วนลดของตัวเอง: เศษที่ยุบเข้าไปลดส่วนลดลงแทนการหารราคาใหม่ (ราคา × จำนวน − ส่วนลด = ยอด ยังลงตัว)
+                if (main.LineDiscountAmount is decimal mainDisc && mainDisc >= foldAmt)
+                    main.LineDiscountAmount = mainDisc - foldAmt > 0m ? mainDisc - foldAmt : null;
+                else
+                {
+                    main.LineDiscountAmount = null;
+                    if (main.Quantity is decimal mq && mq > 0m)
+                        main.UnitPrice = Math.Round(main.Amount.Value / mq, 2, MidpointRounding.AwayFromZero);
+                }
                 foreach (var p in phantoms) data.Items.Remove(p);
             }
         }
@@ -4761,8 +4773,12 @@ public class OcrService : IOcrService
             {
                 existing.Quantity = (existing.Quantity ?? 0m) + (item.Quantity ?? 0m);
                 existing.Amount = (existing.Amount ?? 0m) + (item.Amount ?? 0m);
-                if (existing.Quantity is decimal q && q > 0m && existing.Amount is decimal a)
+                // ส่วนลดรายบรรทัดรวมตามกัน (ราคาเท่ากันอยู่แล้วตามคีย์) — ห้ามหารราคาใหม่จากยอดหลังลด
+                if (existing.LineDiscountAmount.HasValue || item.LineDiscountAmount.HasValue)
+                    existing.LineDiscountAmount = (existing.LineDiscountAmount ?? 0m) + (item.LineDiscountAmount ?? 0m);
+                else if (existing.Quantity is decimal q && q > 0m && existing.Amount is decimal a)
                     existing.UnitPrice = Math.Round(a / q, 2, MidpointRounding.AwayFromZero);
+                existing.QuantityFromEtaxXml = existing.QuantityFromEtaxXml && item.QuantityFromEtaxXml;
                 if (string.IsNullOrEmpty(existing.SuggestedAccountCode)
                     && !string.IsNullOrEmpty(item.SuggestedAccountCode))
                     existing.SuggestedAccountCode = item.SuggestedAccountCode;
@@ -7422,8 +7438,17 @@ public class OcrService : IOcrService
             // ยอดก่อนลดของแต่ละบรรทัด — ตัวเดียวของกระทบยอด/กระจายส่วนลด/ส่วนลดรายบรรทัด (รอบ 192:
             // ยอดที่พิมพ์ชนะ ราคา×จำนวน เมื่อต่างแค่เศษปัดของราคาต่อหน่วย · Lazada 4,912.15 ไม่ใช่ 4,912.16)
             // เก็บไว้ก่อนตัวกระจายส่วนลดเขียนทับ Amount
+            // ★ ส่วนลดรายบรรทัดที่เอกสารประกาศเอง (e-Tax XML · Helpers/OcrEtaxLineNormalizer) เป็นของบรรทัดนั้น ไม่ใช่ส่วนลดท้ายบิล ⇒
+            // ยอดที่ใช้กระทบยอดกับหัวใบ = ยอดหลังส่วนลดบรรทัด (= Amount) · ไม่งั้น Σ ก่อนลดบรรทัดถูกตีเป็น "ส่วนลดท้ายบิล"/[Σ-GAP]
+            // (สแกน f1690d11 · ใบ CRC ไทวัสดุ: Σ ยอดก่อนลด 4,000 เทียบหัวใบ 2,991.59) · ไม่มีส่วนลดบรรทัด = สูตรเดิมทุกตัวอักษร
+            var lineOwnDisc = items
+                .Select(x => Accounting.Helpers.OcrEtaxLineNormalizer.ProvenLineDiscount(
+                    x.Quantity, x.UnitPrice, x.Amount, x.LineDiscountAmount))
+                .ToList();
             var lineGross = items
-                .Select(x => Accounting.Helpers.OcrTotalDecomposer.LineGross(x.Quantity, x.UnitPrice, x.Amount))
+                .Select((x, gi) => lineOwnDisc[gi] > 0m
+                    ? x.Amount!.Value
+                    : Accounting.Helpers.OcrTotalDecomposer.LineGross(x.Quantity, x.UnitPrice, x.Amount))
                 .ToList();
             var grossSum = lineGross.Sum();
 
@@ -7572,7 +7597,7 @@ public class OcrService : IOcrService
             // ภาษี (TaxService.VatableBase = SubTotal − บรรทัดยกเว้น) ⇒ ผลต่างต้องมาจากบรรทัดที่มี VAT เท่านั้น
             var (priceShifts, priceShiftWarning) = Accounting.Helpers.DocumentRounding.CapShifts(items
                 .Select((it, idx) => it.VatRate is decimal itRate && itRate <= 0m ? 0m
-                    : Accounting.Helpers.DocumentRounding.FromPrintedLine(it.Quantity, it.UnitPrice, lineGross[idx]).Shift)
+                    : Accounting.Helpers.DocumentRounding.FromPrintedLine(it.Quantity, it.UnitPrice, lineGross[idx] + lineOwnDisc[idx]).Shift)
                 .ToList());
             if (priceShiftWarning != null)
                 result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] " + priceShiftWarning;
@@ -7653,10 +7678,12 @@ public class OcrService : IOcrService
                     DiscountPercent = Accounting.Helpers.OcrLineReconciler.LineDiscountPercent(docDiscountPercent, lineGross[i]),
                     // รอบ 192: บรรทัดที่มีราคาต่อหน่วยใช้ยอดก่อนลดตัวเดียวกับที่ใช้กระจาย (lineGross — ยอดที่พิมพ์ชนะ
                     // เศษปัดของราคาต่อหน่วย) ⇒ Σ ส่วนลดบรรทัด = ส่วนลดบนกระดาษพอดี · ไม่มีราคาต่อหน่วย = สูตรเดิม
-                    DiscountAmount = docDiscountPercent > 0m
+                    DiscountAmount = (docDiscountPercent > 0m
                         ? Math.Round((item.UnitPrice.HasValue ? lineGross[i] : (item.Amount ?? 0) * (item.Quantity ?? 1m))
                             - amount, 2, MidpointRounding.AwayFromZero)
-                        : 0m,
+                        : 0m)
+                        // + ส่วนลดรายบรรทัดของเอกสารเอง (ก่อน VAT) ⇒ round(จำนวน × ราคา) − ส่วนลด = Amount ตรงกับ DocumentService.ComputeLineAmounts
+                        + lineOwnDisc[i],
                     // ⚠️ Case A (ราคา/หน่วยรวม VAT แล้ว): `DocumentLine.Amount` ต้องเป็น
                     // ยอด **ก่อน VAT** ตาม convention ของ DocumentService
                     // (`Amount = ComputeLineAmounts(...).NetAmount` — UnitPrice คงเป็นราคา
@@ -8834,10 +8861,17 @@ public class OcrService : IOcrService
             line.SuggestedAccountCode = accountCode.Trim() is { Length: > 0 } c ? c : null;
 
         // recompute amount จาก qty×price ที่ (แก้แล้ว) — ถ้าครบทั้งคู่
+        // บรรทัดที่มีส่วนลดรายบรรทัด (e-Tax XML) — ยอด = round(จำนวน × ราคา) − ส่วนลด · เดิม round(จำนวน × ราคา) ตรง ๆ ⇒ แก้แค่ชื่อรายการ
+        // ยอดบรรทัดก็กลับเป็นยอดก่อนลดเงียบ ๆ (ตัวตัดสิน Helpers/OcrEtaxLineNormalizer.AmountAfterLineDiscount)
         var qty = line.Quantity ?? 0m;
         var up = line.UnitPrice ?? 0m;
         if (qty > 0m && up > 0m)
-            line.Amount = System.Math.Round(qty * up, 2, MidpointRounding.AwayFromZero);
+        {
+            var (amountAfterDisc, discKept) =
+                Accounting.Helpers.OcrEtaxLineNormalizer.AmountAfterLineDiscount(qty, up, line.LineDiscountAmount);
+            line.Amount = amountAfterDisc;
+            line.LineDiscountAmount = discKept;
+        }
 
         scan.ExtractedItemsJson = SerializeExtractedItems(items);
         scan.UpdatedAt = DateTime.UtcNow;
@@ -10086,14 +10120,24 @@ public class OcrService : IOcrService
             data.FieldConfidence[k] = 1.0;
         }
 
+        var etaxLinesNormalized = 0;
         foreach (var li in etax.Items)
         {
+            // ★ บรรทัด e-Tax → บรรทัดราคาก่อน VAT ผ่านตัวตัดสินตัวเดียว (Helpers/OcrEtaxLineNormalizer · สแกน f1690d11):
+            // พิสูจน์จากเลขของบรรทัดเองว่าราคารวม VAT ไหม · จำนวนจริงตาม BilledQuantity · ส่วนลดบรรทัดก่อน VAT · ยอด = NetLineTotalAmount
+            // พิสูจน์ไม่ได้ = ค่าเดิมทุกตัว (จำนวน·ราคา·ยอด ตาม XML)
+            var etaxLine = Accounting.Helpers.OcrEtaxLineNormalizer.Normalize(new Accounting.Helpers.OcrEtaxLineFacts(
+                li.Quantity, li.UnitPrice, li.LineAllowance, li.LineCharge, li.VatRatePercent, li.Amount, li.NetIncludingVatAmount));
+            if (etaxLine.Basis == Accounting.Helpers.OcrEtaxPriceBasis.InclusiveOfVat || etaxLine.LineDiscount.HasValue)
+                etaxLinesNormalized++;
             data.Items.Add(new OcrExtractedLineItem
             {
                 Description = li.Description,
-                Quantity = li.Quantity,
-                UnitPrice = li.UnitPrice,
-                Amount = li.Amount,
+                Quantity = etaxLine.Quantity,
+                UnitPrice = etaxLine.UnitPrice,
+                Amount = etaxLine.Amount,
+                LineDiscountAmount = etaxLine.LineDiscount,
+                QuantityFromEtaxXml = etaxLine.QuantityFromDocument,
                 // ★ หน่วยนับที่ XML ประกาศไว้ (unitCode ตาม UN/ECE Rec.20) —
                 // ตัวสกัดอ่านมาได้ตั้งแต่แรกแต่ตัว map ทิ้งทุกครั้ง ⇒ ทุกบรรทัด
                 // ของใบ e-Tax ตกไปเป็น "ชิ้น" ทั้งที่เอกสารที่มีลายเซ็นดิจิทัล
@@ -10106,6 +10150,10 @@ public class OcrService : IOcrService
         data.ReasoningTrace.Add(
             $"[Tier 0] ดึงค่าจาก e-Tax XML ที่ฝังใน PDF/A-3 — เอกสาร {etax.DocumentTypeName} " +
             $"({etax.DocumentTypeCode}) เลขที่ {etax.DocumentNumber}, ยอดรวม {etax.GrandTotal:N2} {etax.Currency}");
+        if (etaxLinesNormalized > 0)
+            data.ReasoningTrace.Add(
+                $"[Tier 0] {etaxLinesNormalized} บรรทัดของ e-Tax XML มีราคารวม VAT และ/หรือส่วนลดรายบรรทัด (พิสูจน์จาก จำนวน × ราคา − ส่วนลด " +
+                "= ยอดของบรรทัด) — ลงเป็นราคาก่อน VAT + ส่วนลดก่อน VAT · จำนวนตาม XML · ส่วนลดรวมหัวใบอยู่ในยอดบรรทัดแล้ว ไม่หักซ้ำ");
         return data;
     }
 
@@ -11177,6 +11225,13 @@ internal class OcrExtractedLineItem
     public decimal? Quantity { get; set; }
     public decimal? UnitPrice { get; set; }
     public decimal? Amount { get; set; }
+    /// <summary>ส่วนลดรายบรรทัด <b>ก่อน VAT</b> ที่เอกสารประกาศไว้ — <c>round(Quantity × UnitPrice, 2) − LineDiscountAmount = Amount</c>
+    /// (null = ไม่มี) · ตอนนี้มีแหล่งเดียวคือ e-Tax XML (<c>Helpers/OcrEtaxLineNormalizer</c>) · ตัวสร้างบรรทัดเอกสารลงเป็น
+    /// <c>DocumentLine.DiscountAmount</c> · ที่มา: สแกน f1690d11 (CRC ไทวัสดุ) ส่วนลดบรรทัดหายแล้วจำนวนถูกหารจากยอด</summary>
+    public decimal? LineDiscountAmount { get; set; }
+    /// <summary>true = จำนวนมาจาก <c>BilledQuantity</c> ของ e-Tax XML ที่พิสูจน์สมการบรรทัดแล้ว ⇒ ตัวกัน "จำนวนระเบิด"
+    /// (<c>SanitizeVatSplitArtifacts</c>) ห้ามหารจำนวนใหม่จากยอด (เอกสารลงนามดิจิทัล ไม่มี "อ่านหลงคอลัมน์")</summary>
+    public bool QuantityFromEtaxXml { get; set; }
     public string? SuggestedAccountCode { get; set; }
     /// <summary>Per-line project assignment captured in the review UI.
     /// Persisted so re-opening the review after a crash preserves the

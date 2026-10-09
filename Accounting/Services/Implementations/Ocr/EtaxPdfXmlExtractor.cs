@@ -72,6 +72,18 @@ internal static class EtaxPdfXmlExtractor
         public string? Unit { get; set; }
         public decimal? UnitPrice { get; set; }
         public decimal? Amount { get; set; }
+        // รอบ 2026-10-09 (สแกน f1690d11 · CRC ไทวัสดุ): ตัวเลขที่เดิมถูกทิ้ง — ไม่มีสามตัวนี้ระบบพิสูจน์ไม่ได้ว่าราคารวม VAT
+        // หรือไม่ และส่วนลดรายบรรทัดหายไป ⇒ ตัวกันจำนวนระเบิดหารจำนวนจากยอด (3 ชิ้น → 2.13) · ตัวตัดสิน Helpers/OcrEtaxLineNormalizer
+        /// <summary>Σ ส่วนลดรายบรรทัด (<c>SpecifiedTradeAllowanceCharge</c> ที่ <c>ChargeIndicator=false</c>) ตามที่ XML ประกาศ</summary>
+        public decimal? LineAllowance { get; set; }
+        /// <summary>Σ ค่าบริการรายบรรทัด (<c>ChargeIndicator=true</c>)</summary>
+        public decimal? LineCharge { get; set; }
+        /// <summary><c>ApplicableTradeTax/BasisAmount</c> ของบรรทัด (ผู้ขายบางรายเป็นฐานก่อนส่วนลด) — เก็บไว้ตรวจย้อน ไม่ใช้ตัดสิน</summary>
+        public decimal? TaxBasisAmount { get; set; }
+        /// <summary><c>ApplicableTradeTax/CalculatedRate</c> ของบรรทัด</summary>
+        public decimal? VatRatePercent { get; set; }
+        /// <summary><c>NetIncludingTaxesLineTotalAmount</c> — ยอดรวม VAT หลังส่วนลดบรรทัด</summary>
+        public decimal? NetIncludingVatAmount { get; set; }
     }
 
     /// <summary>
@@ -500,8 +512,25 @@ internal static class EtaxPdfXmlExtractor
                     // LineTotalAmount ⇒ เดิมยอดบรรทัดว่างทุกบรรทัด แล้วตัวสร้างบรรทัดต้องคูณราคา×จำนวนเอง (250.47 × 2 = 500.94
                     // ≠ 500.93 ที่ XML ประกาศ) · ลำดับ: Net ก่อน (ตรงสเปก ขมธอ.3-2560) แล้วค่อยชื่อเดิม
                     if (monSum != null)
+                    {
                         item.Amount = ParseDecimal(TextOf(monSum, "NetLineTotalAmount"))
                             ?? ParseDecimal(TextOf(monSum, "LineTotalAmount"));
+                        item.NetIncludingVatAmount = ParseDecimal(TextOf(monSum, "NetIncludingTaxesLineTotalAmount"));
+                    }
+                    var lineTax = FindElement(settlementL, "ApplicableTradeTax");
+                    if (lineTax != null)
+                    {
+                        item.TaxBasisAmount = ParseDecimal(TextOf(lineTax, "BasisAmount"));
+                        item.VatRatePercent = ParseDecimal(TextOf(lineTax, "CalculatedRate"));
+                    }
+                    // ส่วนลด/ค่าบริการรายบรรทัด — อาจมีหลายก้อน · ChargeIndicator อาจห่อ <udt:Indicator> (Value รวมข้อความลูกให้แล้ว)
+                    foreach (var ac in FindElements(settlementL, "SpecifiedTradeAllowanceCharge"))
+                    {
+                        if (ParseDecimal(TextOf(ac, "ActualAmount")) is not decimal acAmt || acAmt == 0m) continue;
+                        var isCharge = string.Equals(TextOf(ac, "ChargeIndicator"), "true", StringComparison.OrdinalIgnoreCase);
+                        if (isCharge) item.LineCharge = (item.LineCharge ?? 0m) + acAmt;
+                        else item.LineAllowance = (item.LineAllowance ?? 0m) + acAmt;
+                    }
                 }
                 r.Items.Add(item);
             }

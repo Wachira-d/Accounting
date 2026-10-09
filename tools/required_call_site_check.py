@@ -5820,6 +5820,37 @@ RULES += [
 ]
 
 
+# ── 2026-10-09 สแกน f1690d11 (CRC ไทวัสดุ e-Tax): บรรทัด e-Tax ราคารวม VAT + ส่วนลดรายบรรทัด ⇒ จำนวนถูกหารจากยอด (3 → 2.13) ──
+# ตัวตัดสินเดียว Helpers/OcrEtaxLineNormalizer · ล็อกทุกจุดที่ "จำนวน × ราคา ≠ ยอด" ถูกตีความ (ตัวสกัด→ตัวกันจำนวนระเบิด→ด่าน→ตัวสร้างบรรทัด→แก้ในรีวิว)
+_ETAX_LINE_WHY = "สแกน f1690d11 (2026-10-09): "
+RULES += [
+    dict(file=OCR, method="MapEtaxToOcrData",
+         must=["OcrEtaxLineNormalizer.Normalize(", "Quantity = etaxLine.Quantity", "UnitPrice = etaxLine.UnitPrice",
+               "LineDiscountAmount = etaxLine.LineDiscount", "QuantityFromEtaxXml = etaxLine.QuantityFromDocument"],
+         call_args=[("OcrEtaxLineFacts(", "LineAllowance"), ("OcrEtaxLineFacts(", "NetIncludingVatAmount")],
+         forbid=["Quantity = li.Quantity", "UnitPrice = li.UnitPrice"],
+         why=_ETAX_LINE_WHY + "บรรทัด e-Tax ต้องผ่านตัวตัดสินราคารวม/ไม่รวม VAT + ส่วนลดบรรทัด — map ตรงจาก XML = ราคารวม VAT ในเอกสารราคาก่อน VAT"),
+    dict(file=OCR, method="SanitizeVatSplitArtifacts",
+         must=["if (item.QuantityFromEtaxXml) continue;", "OcrEtaxLineNormalizer.ProvenLineDiscount("],
+         before=[("if (item.QuantityFromEtaxXml) continue;", "item.Quantity = fixedQty")],
+         why=_ETAX_LINE_WHY + "ตัวกันจำนวนระเบิดห้ามหารจำนวนจากยอดบนบรรทัด e-Tax ที่พิสูจน์แล้ว · ส่วนลดบรรทัดไม่ใช่จำนวนผิด"),
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must=["OcrEtaxLineNormalizer.ProvenLineDiscount(", "+ lineOwnDisc[i]", "lineGross[idx] + lineOwnDisc[idx]"],
+         before=[("OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrLineReconciler.Classify(")],
+         why=_ETAX_LINE_WHY + "ส่วนลดบรรทัดลง DocumentLine.DiscountAmount และไม่ถูกตีเป็นส่วนลดท้ายบิล/ผลต่างปัดเศษ"),
+    dict(file=OCR, method="ScanAsync",
+         call_args=[("OcrConfidenceGateway.LineItemForValidation(", "LineDiscountAmount")],
+         why=_ETAX_LINE_WHY + "ด่าน [Gateway] ต้องรู้ส่วนลดบรรทัด (เดิมฟ้อง Qty × UnitPrice ≠ Amount 9 บรรทัดบนใบที่ถูกทุกบรรทัด)"),
+    dict(file="Services/Implementations/Ocr/OcrConfidenceGateway.cs", method="Validate",
+         must=["OcrEtaxLineNormalizer.ProvenLineDiscount("],
+         why=_ETAX_LINE_WHY + "ด่านต่อบรรทัดเทียบ จำนวน × ราคา − ส่วนลดบรรทัด กับยอด"),
+    dict(file=OCR, method="SetExtractedLineFieldsAsync",
+         must=["OcrEtaxLineNormalizer.AmountAfterLineDiscount("],
+         forbid=["line.Amount = System.Math.Round(qty * up, 2, MidpointRounding.AwayFromZero)"],
+         why=_ETAX_LINE_WHY + "แก้บรรทัดในหน้ารีวิวต้องคงส่วนลดบรรทัด (ไม่งั้นยอดกลับเป็นยอดก่อนลดเงียบ ๆ)"),
+]
+
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

@@ -31,8 +31,10 @@ public static class OcrConfidenceGateway
     }
 
     /// <summary>Line-item shape used by validation. Mirrors OcrExtractedLineItem
-    /// — kept simple so callers can pass either internal or DTO objects.</summary>
-    public sealed record LineItemForValidation(decimal? Quantity, decimal? UnitPrice, decimal? Amount);
+    /// — kept simple so callers can pass either internal or DTO objects.
+    /// <para><paramref name="LineDiscount"/> = ส่วนลดรายบรรทัดก่อน VAT ที่เอกสารประกาศ (e-Tax XML) — ด่านต่อบรรทัดเทียบ
+    /// จำนวน × ราคา − ส่วนลด กับยอด ผ่าน <c>Helpers/OcrEtaxLineNormalizer.ProvenLineDiscount</c> (เดิมฟ้อง 9 บรรทัดบนใบ CRC ไทวัสดุที่ถูกทุกบรรทัด)</para></summary>
+    public sealed record LineItemForValidation(decimal? Quantity, decimal? UnitPrice, decimal? Amount, decimal? LineDiscount = null);
 
     public static GatewayResult Validate(
         decimal modelConfidence,
@@ -269,7 +271,9 @@ public static class OcrConfidenceGateway
             {
                 if (item.Quantity.HasValue && item.UnitPrice.HasValue && item.Amount.HasValue)
                 {
-                    var expected = item.Quantity.Value * item.UnitPrice.Value;
+                    var expected = item.Quantity.Value * item.UnitPrice.Value
+                        - Accounting.Helpers.OcrEtaxLineNormalizer.ProvenLineDiscount(
+                            item.Quantity, item.UnitPrice, item.Amount, item.LineDiscount);
                     if (Math.Abs(expected - item.Amount.Value) > config.MathTolerance)
                         brokenLines++;
                 }
