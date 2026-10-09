@@ -189,7 +189,8 @@ public class OcrService : IOcrService
             forceRescan,
             duplicateOf is null ? null : new Accounting.Helpers.OcrPriorScanFacts(
                 duplicateOf.Id, duplicateOf.IsDeleted, duplicateOf.ScanStatus,
-                duplicateOf.IsDuplicate, duplicateOf.OcrEngine, duplicateOf.ExtractionVersion));
+                duplicateOf.IsDuplicate, duplicateOf.OcrEngine, duplicateOf.ExtractionVersion,
+                UserCorrectedFields: duplicateOf.UserCorrectedFields));
 
         var scanResult = new OcrScanResult
         {
@@ -9989,8 +9990,15 @@ public class OcrService : IOcrService
         {
             var prior = await _db.Set<OcrScanResult>().AsNoTracking()
                 .Where(r => r.CompanyId == companyId && r.Id == result.DuplicateOfScanId.Value)
-                .Select(r => new { r.CreatedDocumentId, r.OriginalFileName })
+                .Select(r => new { r.CreatedDocumentId, r.OriginalFileName, r.DuplicateOfScanId })
                 .FirstOrDefaultAsync();
+            // ฝ่ายค้าน D2 (2026-10-09): ต้นฉบับที่หยิบมาอาจเป็นแถว "ไฟล์ซ้ำที่อ่านใหม่" (ไม่สร้างเอกสารเอง) — ตามไปอีกหนึ่งชั้น
+            // ถึงต้นฉบับแท้ที่สร้างเอกสารไว้ ไม่งั้นคำเตือน "สร้างเป็นเอกสาร X ไปแล้ว" หายหลังอัปซ้ำครั้งที่สอง
+            if (prior != null && prior.CreatedDocumentId == null && prior.DuplicateOfScanId is Guid rootId)
+                prior = await _db.Set<OcrScanResult>().AsNoTracking()
+                    .Where(r => r.CompanyId == companyId && r.Id == rootId)
+                    .Select(r => new { r.CreatedDocumentId, r.OriginalFileName, r.DuplicateOfScanId })
+                    .FirstOrDefaultAsync() ?? prior;
             if (prior?.CreatedDocumentId != null)
             {
                 var priorNo = await _db.Documents.AsNoTracking()

@@ -241,11 +241,9 @@ public class OcrController : ControllerBase
             throw;
         }
 
-        // Refund if scan returned a duplicate (no new OCR work was actually done),
-        // failed silently (status != Completed), or extracted everything from an
-        // embedded e-Tax XML (no OCR engine ever ran — the page count was
-        // pre-charged but never consumed).
-        if (result.IsDuplicate || result.ScanStatus != "Completed" || result.OcrEngine == "EtaxXml")
+        // คืนโควตาเฉพาะเมื่อไม่ได้ใช้ engine จริง (ล้มเหลว · e-Tax XML · คัดลอกผลเดิม) — ตัวตัดสินเดียว
+        // Helpers/OcrQuotaRefundRule · ไม่ใช่ตามธงไฟล์ซ้ำ: ไฟล์ซ้ำที่ถูก "อ่านใหม่" ด้วย Azure ต้องเสียโควตา (ฝ่ายค้าน D1 2026-10-09)
+        if (Accounting.Helpers.OcrQuotaRefundRule.ShouldRefund(result.ScanStatus, result.OcrEngine))
             await _quota.RefundAsync(companyId);
 
         return Ok(new ApiResponse<OcrResultResponse>(true, result));

@@ -7,7 +7,9 @@ public sealed record OcrPriorScanFacts(
     string? ScanStatus,
     bool IsDuplicate,
     string? OcrEngine,
-    int? ExtractionVersion);
+    int? ExtractionVersion,
+    /// <summary>ช่องที่ผู้ใช้เคยแก้บนสแกนเดิม (ฝ่ายค้าน D3): ตอนอ่านใหม่ไม่คัดลอกค่าที่แก้มาให้ — บอกผู้ใช้ว่าต้องตรวจช่องไหนซ้ำ</summary>
+    string? UserCorrectedFields = null);
 
 /// <summary>ไฟล์ซ้ำแล้วทำอะไรกับ "ผลอ่าน"</summary>
 public enum OcrDuplicateReuseAction
@@ -125,7 +127,10 @@ public static class OcrDuplicateReusePolicy
                 $"ผลอ่านเดิมมาจากตัวแกะรุ่น {ver} (รุ่นปัจจุบัน {verdict.CurrentVersion})",
             _ => "ไม่ใช้ผลอ่านเดิม",
         };
+        var corrected = string.IsNullOrWhiteSpace(p.UserCorrectedFields)
+            ? ""
+            : $" · ค่าที่เคยแก้บนสแกนเดิม ({p.UserCorrectedFields.Trim()}) ไม่ได้คัดลอกมา — ตรวจช่องเหล่านี้ซ้ำ";
         return $"{ReExtractedTag} ไฟล์นี้ตรงกับสแกน {p.Id} ทุกไบต์ แต่อ่านไฟล์ใหม่ด้วยตัวแกะรุ่น {verdict.CurrentVersion} — {why} "
-            + "· ยังนับเป็นไฟล์ซ้ำ (ตรวจว่าไม่ได้บันทึกใบเดียวกันสองครั้ง)";
+            + "· ยังนับเป็นไฟล์ซ้ำ (ตรวจว่าไม่ได้บันทึกใบเดียวกันสองครั้ง)" + corrected;
     }
 }

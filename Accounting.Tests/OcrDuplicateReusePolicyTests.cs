@@ -133,4 +133,21 @@ public class OcrDuplicateReusePolicyTests
         OcrScanSnapshot.CopyExtractionFrom(src, dst);
         Assert.Equal(OcrExtractionVersion.Current, dst.ExtractionVersion);
     }
+
+    [Fact]
+    public void อ่านใหม่_บอกช่องที่ผู้ใช้เคยแก้บนสแกนเดิม_ไม่คัดลอกค่ามาเงียบๆ()
+    {
+        // ฝ่ายค้าน D3 (2026-10-09): เส้นคัดลอกเดิมพาค่าที่แก้มาด้วย · เส้นอ่านใหม่ไม่พา ⇒ ต้องบอกผู้ใช้ว่าตรวจช่องไหนซ้ำ
+        var v = OcrDuplicateReusePolicy.Decide(false, new OcrPriorScanFacts(PriorId, false, "Completed", false, "AzureDI", null,
+            UserCorrectedFields: "VendorName,TotalAmount"));
+        Assert.False(v.ReuseExtraction);
+        Assert.Contains("VendorName,TotalAmount", OcrDuplicateReusePolicy.Note(v));
+        // ทิศตรงข้าม: ไม่เคยแก้ ⇒ ไม่มีประโยคนี้ · ใช้ผลเดิม ⇒ ไม่มีประโยคนี้ (ค่าที่แก้ถูกคัดลอกมาอยู่แล้ว)
+        var none = OcrDuplicateReusePolicy.Decide(false, new OcrPriorScanFacts(PriorId, false, "Completed", false, "AzureDI", null));
+        Assert.DoesNotContain("ไม่ได้คัดลอกมา", OcrDuplicateReusePolicy.Note(none));
+        var reused = OcrDuplicateReusePolicy.Decide(false, new OcrPriorScanFacts(PriorId, false, "Completed", false, "AzureDI",
+            OcrExtractionVersion.Current, UserCorrectedFields: "VendorName"));
+        Assert.True(reused.ReuseExtraction);
+        Assert.DoesNotContain("ไม่ได้คัดลอกมา", OcrDuplicateReusePolicy.Note(reused));
+    }
 }

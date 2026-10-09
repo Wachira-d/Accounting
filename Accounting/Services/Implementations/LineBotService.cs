@@ -587,9 +587,9 @@ public class LineBotService : ILineBotService
             _logger.LogError(ex, "LINE OCR scan failed for company {CompanyId}", companyId);
             return "❌ อ่านเอกสารไม่สำเร็จ — ลองถ่ายใหม่ให้ชัดขึ้น หรืออัปโหลดผ่านหน้าเว็บ";
         }
-        // คืนโควต้าตามกติกาเดียวกับ upload หน้าเว็บ: งานซ้ำ/ล้มเหลว/e-Tax XML
-        // (ไม่ได้ใช้ OCR engine จริง) ไม่ควรเสียเครดิต
-        if (result.IsDuplicate || result.ScanStatus != "Completed" || result.OcrEngine == "EtaxXml")
+        // คืนโควต้าตามกติกาเดียวกับ upload หน้าเว็บ (Helpers/OcrQuotaRefundRule): ล้มเหลว · e-Tax XML · คัดลอกผลเดิม
+        // — ไฟล์ซ้ำที่ถูกอ่านใหม่ด้วย engine จริงไม่คืน (ฝ่ายค้าน D1 2026-10-09)
+        if (Accounting.Helpers.OcrQuotaRefundRule.ShouldRefund(result.ScanStatus, result.OcrEngine))
             await _ocrQuota.RefundAsync(companyId);
 
         // สร้างเอกสารสำเร็จ → ส่งการ์ด Flex พร้อมปุ่ม "อนุมัติเลย" กดจบในแชท
