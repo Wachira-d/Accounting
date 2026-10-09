@@ -6586,6 +6586,10 @@ public static class DatabaseMigrationHelper
             // ═══ รอบ 201 ทีม OC · ฝ่ายค้าน OCX-1 (C-23 · คำตัดสินข้อ 96) — "ผู้ใช้เปลี่ยนเลขผู้เสียภาษีผู้ขาย" ตามกติกา baseline ═══
             // ⚠️ ไม่ backfill โดยเจตนา — DEFAULT false = ไม่รู้ ⇒ ไม่ถอดผู้ติดต่อที่ผูกไว้ (ทิศที่ไม่สร้างผู้ติดต่อเลขเพี้ยน)
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorTaxIdUserChanged" boolean NOT NULL DEFAULT false;""",
+            // ═══ 2026-10-09 · ผู้ใช้รายงาน "ลบทั้งคู่แล้วอัปไฟล์เดิมใหม่ ได้ผลผิดชุดเดิม" — รุ่นของตัวแกะที่ผลิตผลอ่าน ═══
+            // ด่านไฟล์ซ้ำใช้ผลอ่านเดิมซ้ำเฉพาะเมื่อรุ่นตรง Helpers/OcrExtractionVersion.Current (ตัวตัดสิน Helpers/OcrDuplicateReusePolicy)
+            // ⚠️ ไม่ backfill โดยเจตนา — NULL = "รุ่นไม่ทราบ" ⇒ แถวเก่าทุกแถวไม่ถูกคัดลอกอีก (อัปไฟล์เดิม = อ่านใหม่ด้วยโค้ดปัจจุบัน · ยังติดธงซ้ำ)
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "ExtractionVersion" integer NULL;""",
 
             // ═══ รอบ 184 · KPI คู่ — แยก "นักเรียนโตจริง" ออกจาก "ระบบเงียบลง" ═══
             // `UsedAi` ที่ลดลงตีความได้สองทางที่ตรงกันข้าม (นักเรียนเก่งขึ้น = ดี ·

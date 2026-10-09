@@ -498,10 +498,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - (C) ส่วนลด — `grossSum > total` → คำนวณ `docDiscountPercent` ลงทุกบรรทัด
   - (D) OCR ขาด — `grossSum < subtotal` → ปล่อยให้ user แก้
 - **Quota refund**: ถ้า re-OCR (retry) ไม่ใช้ quota ใหม่ (`OcrService.cs`)
-- **ไฟล์ซ้ำ (hash ตรง) → เส้น `Cached`** (`OcrService.ScanAsync`):
-  - เกณฑ์เลือกต้นฉบับ: `CompanyId` เดียวกัน · `FileHash` ตรง · `ScanStatus =
-    Completed` · **`!IsDuplicate`** (กันสำเนาของสำเนา) · `OrderByDescending
-    (CreatedAt)` = ผลอ่านล่าสุดที่เป็นของจริง (deterministic)
+- **ไฟล์ซ้ำ (hash ตรง) → ธงซ้ำเสมอ · ใช้ผลอ่านเดิมเฉพาะเมื่อยังใช้ได้** (`OcrService.ScanAsync` ·
+  ตัวตัดสินตัวเดียว `Helpers/OcrDuplicateReusePolicy.Decide` · 2026-10-09 ผู้ใช้รายงาน "ลบทั้งคู่แล้วอัปไฟล์เดิม ได้ผลผิดชุดเดิม"):
+  - เกณฑ์เลือกต้นฉบับ: `CompanyId` เดียวกัน · `FileHash` ตรง · `!IsDeleted` · `ScanStatus =
+    Completed` · **ผลอ่านจริง** (`!IsDuplicate` หรือ engine จริงที่ไม่ใช่ `Cached` — กันสำเนาของสำเนา) ·
+    `OrderByDescending(CreatedAt)` = ผลอ่านล่าสุดที่เป็นของจริง (deterministic)
+  - "ลบทั้งคู่" (`DeleteScanAsync` cascade) **ลบแถวสแกนจริง** (`Remove` — ไม่ใช่ soft delete) + soft-delete เอกสาร Draft ⇒
+    สแกนที่ลบไม่ถูกนับเป็นต้นฉบับ (ตัวตัดสินก็ตอบ `NotDuplicate` ถ้าเจอแถว `IsDeleted`)
+  - **ใช้ผลอ่านเดิมซ้ำ** (`ReuseExtraction` → เส้น `Cached` ข้างล่าง) เฉพาะเมื่อ `OcrScanResult.ExtractionVersion ==
+    Helpers/OcrExtractionVersion.Current` **และ** ต้นฉบับไม่ใช่ `EtaxXml` · ไม่งั้น **อ่านไฟล์ใหม่เต็มเส้น** (`ReExtract`) แต่
+    **ยังติดธง `IsDuplicate` + `DuplicateOfScanId`** (คำเตือนบันทึกใบเดียวกันสองครั้ง · ไม่สร้างเอกสารอัตโนมัติ · `/upload` คืนโควตา)
+    · หมายเหตุบรรทัดแรก `[DUP-REEXTRACTED]` บอกเหตุ (รุ่นตัวแกะ/e-Tax/สำเนา) · เส้นใช้ซ้ำมี `[DUP-REUSED]`
+  - ทุกแถวประทับ `ExtractionVersion` ตอนสแกน (สำเนาได้รุ่นของต้นฉบับ) · แถวก่อนมีคอลัมน์ = NULL ⇒ ไม่ถูกใช้ซ้ำอีก ·
+    **แก้ตัวแกะจนผลของไฟล์เดิมเปลี่ยน ⇒ เพิ่ม `OcrExtractionVersion.Current` ในคอมมิตเดียวกัน**
+  - ตัวกันกดซ้ำ 60 วินาทีของ `/upload` (`OcrController`) กับ 10 นาทีของ LINE ยังคืนสแกนล่าสุดเดิม (กันส่งซ้ำ ไม่ใช่แคชผลอ่าน)
   - คัดลอกผ่าน **`Helpers/OcrScanSnapshot.CopyExtractionFrom`** ตัวเดียว —
     **deny-list**: คัดลอกทุกช่องที่ประกาศบน `OcrScanResult` ยกเว้น 15 ช่องที่เป็น
     ตัวตนของแถว (ไฟล์แนบ · hash · สถานะ · engine · notes · RetryCount ·
@@ -513,7 +523,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     + ช่อง §86/4 + `TargetDocumentType` ครบเท่าต้นฉบับ — สำคัญเพราะขั้นสร้าง
     เอกสารอ่าน raw text ไปตัดสิน **สกุลเงิน · เหตุผลใบลดหนี้ §86/10 ·
     ประเภทเงินได้ 50 ทวิ · เงินมัดจำ · คำเตือน RD compliance**
-  - `OcrEngine = "Cached"`, `ProcessingNotes = "Duplicate of scan {id}"`,
+  - `OcrEngine = "Cached"`, `ProcessingNotes = "Duplicate of scan {id}"` + `[DUP-REUSED] …`,
     ไม่มี engine ตัวไหนทำงาน ⇒ `/upload` **คืนโควตา** (`result.IsDuplicate`)
   - **"สแกนใหม่" = `POST /ocr/{scanId}/retry`** → `ScanAsync(forceRescan: true)`
     ข้ามด่าน hash แล้วเดิน engine จริง · สร้าง **แถวใหม่** (แถวเดิมเก็บผลอ่านเดิม
@@ -4800,7 +4810,9 @@ _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้า�
 
 _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้างชุดสาม — รอบเงินเดือนนับเข้าการนำส่งด้วย PaidAt · integration ใบกำกับล้มสะอาด — commit 075af3d7)_
 
-_Last verified against codebase: 2026-10-09 (คำตัดสินเจ้าของ "Add DN + GRN" — §2.4 ผูกภายหลัง: ใบแจ้งหนี้ → ใบส่งของ · ใบแจ้งหนี้ซื้อร่าง → ใบรับสินค้าที่อนุมัติแล้ว (ทางซ่อม PO → GRN ของใบสั่งซื้อเดียวกัน) + ผลฝ่ายค้าน (JE ใบรับสินค้า · จับคู่ครบ · ห้ามถอด) — commit <pending>)_
+_Last verified against codebase: 2026-10-09 (ผู้ใช้รายงาน "ลบทั้งคู่แล้วอัปไฟล์ e-Tax เดิม ได้บรรทัดผิดชุดเดิม" — §ไฟล์ซ้ำ: ธงซ้ำแยกจากการใช้ผลอ่านเดิม · `Helpers/OcrDuplicateReusePolicy` + `OcrScanResult.ExtractionVersion` (`Helpers/OcrExtractionVersion.Current` = 1 · NULL ไม่ใช้ซ้ำ) · e-Tax XML อ่านใหม่เสมอ · ธงซ้ำยังอยู่ — commit <pending>)_
+
+_ก่อนหน้า: 2026-10-09 (คำตัดสินเจ้าของ "Add DN + GRN" — §2.4 ผูกภายหลัง: ใบแจ้งหนี้ → ใบส่งของ · ใบแจ้งหนี้ซื้อร่าง → ใบรับสินค้าที่อนุมัติแล้ว (ทางซ่อม PO → GRN ของใบสั่งซื้อเดียวกัน) + ผลฝ่ายค้าน (JE ใบรับสินค้า · จับคู่ครบ · ห้ามถอด) — commit <pending>)_
 
 _ก่อนหน้า: 2026-10-09 (รายงานอ่านอย่างเดียว "ตรวจข้อมูลจากบั๊กที่แก้แล้ว" · ลบ endpoint 3-way match ที่ไม่มีผู้เรียก — commit 04284bab)_
 

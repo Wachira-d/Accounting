@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **470 ไฟล์ · 4,590 `[Fact]` + 721 `[Theory]` (3,174 `InlineData`)** ณ 2026-10-09 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **471 ไฟล์ · 4,598 `[Fact]` + 722 `[Theory]` (3,177 `InlineData`)** ณ 2026-10-09 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -3708,6 +3708,11 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | DUP-05 | กด "แกะใหม่" (`/ocr/{scanId}/retry`) | อ่านไฟล์ด้วย engine จริง (ข้ามด่าน hash) · แถวเดิม**ไม่ค้าง** `Processing` · ข้อความตอบกลับบอกเลขสแกนปลายทาง |
 | DUP-06 | สแกนสถานะ `Failed` → กดปุ่ม "สแกนใหม่" | ทำงานได้ (เดิมยิง scanId ไป endpoint ที่รับ fileAttachmentId ⇒ "File attachment not found." ทุกครั้ง) |
 | DUP-07 | retry เกินจำนวนที่แอดมินตั้ง | 429 พร้อมข้อความ · `RetryCount` ไม่ถูกเพิ่มเมื่อไม่มีไฟล์ต้นฉบับ |
+| DUP-08 | ไฟล์เดิม + ต้นฉบับรุ่นตัวแกะเดียวกัน (`ExtractionVersion == OcrExtractionVersion.Current`) + ไม่ถูกลบ | ใช้ผลเดิม (`Cached`) ตามเดิม · หมายเหตุ `[DUP-REUSED]` — `OcrDuplicateReusePolicyTests` |
+| DUP-09 | "ลบทั้งคู่" แล้วอัปไฟล์เดิม | สแกนที่ลบไม่ถูกหยิบ (ลบจริง + `!IsDeleted`) · ถ้ายังเจอแถว `IsDeleted` ⇒ `NotDuplicate` อ่านใหม่ |
+| DUP-10 | ต้นฉบับรุ่นอื่น / NULL (แถวก่อนมีคอลัมน์) | **อ่านใหม่** แต่ `IsDuplicate=true` + `DuplicateOfScanId` · หมายเหตุ `[DUP-REEXTRACTED]` บอกรุ่น · คืนโควตา · ไม่สร้างเอกสารอัตโนมัติ |
+| DUP-11 | ไฟล์ e-Tax XML (ต้นฉบับ engine `EtaxXml`) | อ่านใหม่เสมอแม้รุ่นตรง · ธงซ้ำยังอยู่ |
+| DUP-12 | อัปครั้งที่ 3 หลังครั้งที่ 2 อ่านใหม่ (ติดธงซ้ำ · engine จริง) | ใช้ผลของครั้งที่ 2 ได้ (ผลอ่านจริง ไม่ใช่ `Cached`) · `forceRescan` ข้ามด่านทั้งด่านเหมือนเดิม |
 
 ### ค. กล่อง Raw OCR Text (`document-scan.html` — `_rawTextPanel`)
 

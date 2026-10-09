@@ -22,7 +22,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATTERN = re.compile(r'(?:commit|✅)\s+`?([0-9a-f]{7,40})`?')
-SKIP_DIRS = {'.git', 'node_modules', 'bin', 'obj'}
+SKIP_DIRS = {'.git', 'node_modules', 'bin', 'obj', ".claude"}
 
 
 def git(*args):

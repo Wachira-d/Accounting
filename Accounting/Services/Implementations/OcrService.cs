@@ -169,15 +169,27 @@ public class OcrService : IOcrService
         //   • `OrderByDescending(CreatedAt)` — เดิมไม่มี OrderBy ⇒ ได้แถวไหนขึ้นกับ
         //     query plan (ไม่ deterministic) · เลือก "ต้นฉบับล่าสุด" เพราะหลังผู้ใช้
         //     กดสแกนใหม่ด้วย engine ที่ดีกว่า ผลที่ใหม่กว่าคือผลที่ควรใช้ต่อ
+        //
+        // ⚠️ 2026-10-09 (ผู้ใช้รายงาน: e-Tax ไทวัสดุ บรรทัดผิด → "ลบทั้งคู่" → อัปไฟล์เดิมใหม่ ได้ตัวเลขผิดชุดเดิม):
+        //   "ไฟล์ซ้ำ" (ธงเตือน + ไม่สร้างเอกสารอัตโนมัติ + คืนโควตา) แยกจาก "ใช้ผลอ่านเดิมซ้ำ" แล้ว —
+        //   ใช้ซ้ำเฉพาะผลอ่านจริงของตัวแกะรุ่นปัจจุบัน (ExtractionVersion) และไม่ใช่ e-Tax XML (อ่านใหม่ถูก/แน่นอน) ·
+        //   ตัวตัดสินตัวเดียว Helpers/OcrDuplicateReusePolicy · สแกนที่ถูกลบไม่ถูกนับ (DeleteScanAsync ลบจริง + query filter !IsDeleted)
+        //   ผู้สมัครต้นฉบับ: ผลอ่านจริง — ไม่ใช่สำเนา Cached (กันสำเนาของสำเนา) แต่แถวที่ติดธงซ้ำแต่อ่านไฟล์จริงใช้ได้
         OcrScanResult? duplicateOf = null;
         if (!forceRescan && !string.IsNullOrEmpty(fileHash))
         {
             duplicateOf = await _db.Set<OcrScanResult>()
-                .Where(r => r.CompanyId == companyId && r.FileHash == fileHash
-                            && r.ScanStatus == "Completed" && !r.IsDuplicate)
+                .Where(r => r.CompanyId == companyId && r.FileHash == fileHash && !r.IsDeleted
+                            && r.ScanStatus == "Completed"
+                            && (!r.IsDuplicate || (r.OcrEngine != null && r.OcrEngine != "Cached")))
                 .OrderByDescending(r => r.CreatedAt)
                 .FirstOrDefaultAsync();
         }
+        var dupVerdict = Accounting.Helpers.OcrDuplicateReusePolicy.Decide(
+            forceRescan,
+            duplicateOf is null ? null : new Accounting.Helpers.OcrPriorScanFacts(
+                duplicateOf.Id, duplicateOf.IsDeleted, duplicateOf.ScanStatus,
+                duplicateOf.IsDuplicate, duplicateOf.OcrEngine, duplicateOf.ExtractionVersion));
 
         var scanResult = new OcrScanResult
         {
@@ -187,8 +199,12 @@ public class OcrService : IOcrService
             ScanStatus = "Processing",
             Confidence = 0m,
             FileHash = fileHash,
-            IsDuplicate = duplicateOf != null,
-            DuplicateOfScanId = duplicateOf?.Id,
+            IsDuplicate = dupVerdict.IsDuplicate,
+            DuplicateOfScanId = dupVerdict.DuplicateOfScanId,
+            // รุ่นของตัวแกะที่ผลิตผลอ่านแถวนี้ — เส้นคัดลอกข้างล่างรับรุ่นของต้นฉบับ (ซึ่งตรงรุ่นปัจจุบันเสมอเพราะ Decide บังคับ)
+            ExtractionVersion = Accounting.Helpers.OcrExtractionVersion.Current,
+            // ไฟล์ซ้ำแต่อ่านใหม่ ⇒ บอกตั้งแต่บรรทัดแรกว่าเป็นไฟล์ซ้ำและทำไมไม่ใช้ผลเดิม (บรรทัดถัดไปของไปป์ไลน์ต่อท้ายเสมอ)
+            ProcessingNotes = dupVerdict.ReuseExtraction ? null : Accounting.Helpers.OcrDuplicateReusePolicy.Note(dupVerdict),
             // Record the uploader (resolved to a real user — the integration
             // operator via X-Acting-User, or the web user, or the owner) so the
             // auto-created document's creator signature reflects who actually
@@ -203,7 +219,7 @@ public class OcrService : IOcrService
         _db.Set<OcrScanResult>().Add(scanResult);
         await _db.SaveChangesAsync();
 
-        if (duplicateOf != null)
+        if (dupVerdict.ReuseExtraction && duplicateOf != null)
         {
             // คัดลอก **ผลการอ่านทั้งหมด** ผ่านตัวกลางตัวเดียว — เดิมเป็นรายการช่อง
             // ที่เขียนด้วยมือ **10 ช่องจาก 49 ช่องที่ควรคัดลอก** ⇒ ข้อความดิบ · รายการสินค้า ·
@@ -215,13 +231,14 @@ public class OcrService : IOcrService
             // CS0234 (กติกาใน CLAUDE.md §F · จับได้ด้วย tools/namespace_shadow_check.py)
             Accounting.Helpers.OcrScanSnapshot.CopyExtractionFrom(duplicateOf, scanResult);
             scanResult.ScanStatus = "Completed";
-            scanResult.OcrEngine = "Cached";   // copied from a prior scan; no OCR engine ran
+            scanResult.OcrEngine = Accounting.Helpers.OcrDuplicateReusePolicy.CachedEngine;   // copied from a prior scan; no OCR engine ran
             // คำตัดสินเกี่ยวกับ "ตัวกระดาษ" (§82/5 เคลมไม่ได้ · ยังไม่ใช่ใบกำกับ · วันที่เดา ·
             // ยอดบรรทัดไม่ครบ) ต้องติดไปกับสำเนาด้วย — เดิมถูกเขียนทับทั้งก้อน ⇒ อัปไฟล์เดิม
             // ซ้ำแล้วใบกำกับอย่างย่อกลับมาเคลมภาษีซื้อได้ (ผลตรวจ 2026-09-06 · T5-N1)
             var carriedNotes = Accounting.Helpers.OcrScanSnapshot.DecisionNotes(duplicateOf.ProcessingNotes);
             scanResult.ProcessingNotes =
                 $"Duplicate of scan {duplicateOf.Id} (engine: {duplicateOf.OcrEngine ?? "unknown"})"
+                + "\n" + Accounting.Helpers.OcrDuplicateReusePolicy.Note(dupVerdict)
                 + (carriedNotes.Length > 0 ? "\n" + carriedNotes : "");
             scanResult.ProcessedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();

@@ -243,6 +243,12 @@ public class OcrScanResult : TenantEntity
     /// = ไม่รู้ ⇒ ไม่ถอด (ไม่ backfill) · ร่องรอยของการอัปโหลดครั้งนั้น ไม่คัดลอกไปสแกนสำเนา</para></summary>
     public bool VendorTaxIdUserChanged { get; set; }
 
+    /// <summary>รุ่นของตัวแกะที่ผลิตผลอ่านของแถวนี้ (2026-10-09 · ผู้ใช้รายงาน "ลบแล้วอัปไฟล์เดิมใหม่ ได้ผลผิดชุดเดิม") —
+    /// ประทับจาก <c>Helpers/OcrExtractionVersion.Current</c> ตอนสแกน · แถวสำเนา (Cached) ได้รุ่นของต้นฉบับตามไปด้วย (เป็นคุณสมบัติของ "ผลอ่าน")
+    /// <para>ผู้อ่าน: <c>Helpers/OcrDuplicateReusePolicy.Decide</c> — ใช้ผลอ่านเดิมซ้ำเฉพาะรุ่นตรง · NULL = แถวก่อนมีคอลัมน์ = รุ่นไม่ทราบ ⇒ ไม่ใช้ซ้ำ
+    /// (ไม่ backfill โดยเจตนา — ไม่รู้ว่าผลเก่าผลิตจากโค้ดรุ่นไหน)</para></summary>
+    public int? ExtractionVersion { get; set; }
+
     /// <summary>**สมุดที่มาของค่ารายช่อง** — JSON ของ
     /// <c>Helpers/OcrFieldArbiter.ToJson()</c> (สถาปัตยกรรมเป้าหมาย D1)
     ///
