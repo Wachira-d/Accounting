@@ -713,9 +713,10 @@ public class OcrController : ControllerBase
     }
 
     /// <param name="LineDiscount">ส่วนลดรายบรรทัดก่อน VAT (คอลัมน์ "ส่วนลด" ของหน้ารีวิว) — null = ไม่แตะ · 0 = ล้าง</param>
+    /// <param name="PriceEnteredExVat">true = ราคา/ส่วนลดที่กรอกในแถวนี้ไม่รวม VAT (ใบราคารวม VAT) ⇒ เซิร์ฟเวอร์แปลงเป็นฐานรวม VAT ของใบ</param>
     public sealed record SetLineFieldsRequest(
         int LineIndex, string? Description, decimal? Quantity, decimal? UnitPrice,
-        string? AccountCode = null, decimal? LineDiscount = null);
+        string? AccountCode = null, decimal? LineDiscount = null, bool PriceEnteredExVat = false);
 
     /// <summary>action = "add" | "delete" · LineIndex ใช้เฉพาะตอน delete</summary>
     public sealed record ModifyLineRequest(string Action, int LineIndex = -1);
@@ -729,8 +730,8 @@ public class OcrController : ControllerBase
     {
         var deny = await ScanGateAsync(companyId, scanId, "แก้บรรทัดของสแกน", write: true);
         if (deny != null) return deny;
-        var (amount, lineDiscount, discountDropped) = await _service.SetExtractedLineFieldsAsync(companyId, scanId,
-            req.LineIndex, req.Description, req.Quantity, req.UnitPrice, req.AccountCode, req.LineDiscount);
+        var (amount, lineDiscount, discountDropped, unitPrice, conversionNote) = await _service.SetExtractedLineFieldsAsync(companyId, scanId,
+            req.LineIndex, req.Description, req.Quantity, req.UnitPrice, req.AccountCode, req.LineDiscount, req.PriceEnteredExVat);
         // ส่วนลดที่เกินยอดก่อนลดถูกทิ้ง — บอกผู้ใช้ตรง ๆ (ห้ามเงียบ · CLAUDE #4A) หน้าแสดงข้อความนี้เป็นคำเตือน
         return Ok(new ApiResponse<object>(true, new
         {
@@ -738,9 +739,11 @@ public class OcrController : ControllerBase
             amount,
             lineDiscount,
             discountDropped,
+            unitPrice,
+            conversionNote,
         }, discountDropped
             ? "บันทึกบรรทัดแล้ว — ส่วนลดเกินยอดก่อนลด (จำนวน × ราคา) ระบบล้างส่วนลดของบรรทัดนี้ กรุณาตรวจส่วนลดกับเอกสารอีกครั้ง"
-            : "บันทึกบรรทัดแล้ว"));
+            : conversionNote is null ? "บันทึกบรรทัดแล้ว" : "บันทึกบรรทัดแล้ว — " + conversionNote));
     }
 
     /// <summary>เพิ่ม/ลบบรรทัดรายการของผลสแกน — เดิมตาราง review ทำไม่ได้เลย</summary>

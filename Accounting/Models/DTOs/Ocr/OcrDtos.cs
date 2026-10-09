@@ -280,7 +280,9 @@ public record OcrLineItemDto(
     bool PriceIncludesVat = false,
     /// <summary>ป้ายของช่องส่วนลดที่เซิร์ฟเวอร์เขียน (<c>OcrEtaxLineNormalizer.DiscountLabel</c>) — บอกฐาน (รวม/ก่อน VAT) และ
     /// "เศษจากการถอด VAT" ที่ไม่ใช่ส่วนลดบนเอกสาร · null = ไม่มีส่วนลด</summary>
-    string? LineDiscountLabel = null);
+    string? LineDiscountLabel = null,
+    /// <summary>ป้ายช่องติ๊ก "กรอกราคาไม่รวม VAT" ของแถวราคารวม VAT (เซิร์ฟเวอร์เขียน · <c>OcrEtaxLineNormalizer.PriceBasisLabel</c>) · null = ไม่แสดง</summary>
+    string? PriceBasisLabel = null);
 
 public record OcrCreditPurchaseRequest(int Pages);
 

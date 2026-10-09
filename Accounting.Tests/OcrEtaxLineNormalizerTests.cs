@@ -805,4 +805,20 @@ public class OcrEtaxLineNormalizerTests
         Assert.Contains("บรรทัดที่ 3 ราคารวม VAT แต่ไม่รู้อัตรา VAT", OcrEtaxLineNormalizer.AssetCostNote(false, new[] { 3 }));
         Assert.Null(OcrEtaxLineNormalizer.AssetCostNote(false, Array.Empty<int>()));
     }
+
+    [Fact]
+    public void แถวกรอกราคาไม่รวมVAT_ในใบราคารวมVAT_แปลงเป็นฐานรวมVAT()
+    {
+        // ฝ่ายค้านรอบห้า ข้อ 3: ผู้ใช้เพิ่มค่าขนส่ง 46.73 (ไม่รวม VAT) ในใบราคารวม VAT ⇒ 50.00 รวม VAT · ถอดกลับได้ 46.73 เท่าเดิม
+        var conv = OcrEtaxLineNormalizer.ConvertExVatEntryToInclusive(46.73m, 9.35m, 7m);
+        Assert.Equal((50.00m, (decimal?)10.00m), conv);
+        Assert.Equal(46.73m, DocumentLineVatConvention.SplitLine(conv!.Value.UnitPrice, 7m, null, true).Net);
+        Assert.Equal((50.00m, (decimal?)null), OcrEtaxLineNormalizer.ConvertExVatEntryToInclusive(46.73m, null, 7m));
+        // ทิศตรงข้าม: ไม่รู้อัตรา ⇒ ไม่แปลง (ผู้เรียกปฏิเสธพร้อมเหตุผล)
+        Assert.Null(OcrEtaxLineNormalizer.ConvertExVatEntryToInclusive(46.73m, null, null));
+        Assert.Null(OcrEtaxLineNormalizer.ConvertExVatEntryToInclusive(46.73m, null, 0m));
+        // ป้ายช่องติ๊กมีเฉพาะแถวราคารวม VAT
+        Assert.NotNull(OcrEtaxLineNormalizer.PriceBasisLabel(true));
+        Assert.Null(OcrEtaxLineNormalizer.PriceBasisLabel(false));
+    }
 }

@@ -292,6 +292,22 @@ public static class OcrEtaxLineNormalizer
         return groups[0].Rate;
     }
 
+    /// <summary>แปลงราคาที่ผู้ใช้กรอก "ก่อน VAT" ในแถวของใบราคารวม VAT ให้เป็นฐานรวม VAT ของใบ (ฝ่ายค้านรอบห้า ข้อ 3 — ใบเอกสารมีธงราคารวม VAT
+    /// ระดับเอกสารเดียว บรรทัดปนฐานไม่ได้ ⇒ แปลงแถวนั้นให้อยู่ฐานเดียวกัน แทนการปล่อยให้ทั้งใบหลุดเป็นก่อน VAT) · round(ค่า × (100+อัตรา)/100, 2) ·
+    /// ไม่รู้อัตรา ⇒ null (ไม่แปลง — ผู้เรียกบอกผู้ใช้)</summary>
+    public static (decimal UnitPrice, decimal? Discount)? ConvertExVatEntryToInclusive(decimal unitPrice, decimal? discount, decimal? vatRate)
+    {
+        if (vatRate is not decimal vr || vr <= 0m) return null;
+        var factor = (100m + vr) / 100m;
+        decimal? d = discount is > 0m ? R2(discount.Value * factor) : null;
+        return (R2(unitPrice * factor), d);
+    }
+
+    /// <summary>ป้ายฐานราคาของแถวในตาราง review (เซิร์ฟเวอร์เขียน — ฝ่ายค้านรอบห้า ข้อ 3): แถวราคารวม VAT ตามกระดาษ ⇒ ข้อความของช่องติ๊ก
+    /// "กรอกราคาไม่รวม VAT" (ระบบแปลงด้วย <see cref="ConvertExVatEntryToInclusive"/>) · แถวอื่น = null (ไม่แสดงช่อง)</summary>
+    public static string? PriceBasisLabel(bool priceIncludesVat)
+        => priceIncludesVat ? "ราคารวม VAT · ติ๊กถ้ากรอกราคาไม่รวม VAT" : null;
+
     /// <summary>หมายเหตุ <c>[ASSET-COST]</c> ของผู้สมัครสินทรัพย์ถาวรตอนสแกน (ฝ่ายค้านรอบห้า ข้อ 2) — กระดาษที่ไม่ใช่ e-Tax: ระบบยังไม่รู้ตอนนั้นว่า
     /// ทั้งใบพิมพ์ราคารวม VAT ไหม (ตัดสินตอนสร้างบรรทัดเอกสาร) ⇒ ไม่เดา บอกให้ตรวจ · บรรทัดราคารวม VAT ที่ไม่รู้อัตรา ⇒ ไม่เสนอราคา · null = ไม่ต้องเตือน</summary>
     public static string? AssetCostNote(bool paperScanWithVat, IReadOnlyList<int> inclusiveUnknownRateLines)

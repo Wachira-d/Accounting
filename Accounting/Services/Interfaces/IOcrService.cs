@@ -91,9 +91,10 @@ public interface IOcrService
     /// recompute Amount = qty×unitPrice, persist ลง ExtractedItemsJson, คืน amount
     /// ใหม่. field ที่ส่ง null = คงค่าเดิม.</summary>
     /// <para>คืน (ยอดใหม่, ส่วนลดบรรทัดที่คงอยู่, ส่วนลดถูกทิ้งเพราะเกินยอดก่อนลด) · <paramref name="lineDiscount"/> null = ไม่แตะ · 0 = ล้าง</para>
-    Task<(decimal Amount, decimal? LineDiscount, bool DiscountDropped)> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
+    /// <para><paramref name="priceEnteredExVat"/> = แปลงราคาไม่รวม VAT ที่กรอกในแถวของใบราคารวม VAT เป็นฐานรวม VAT (คืนราคาใหม่ + ข้อความ)</para>
+    Task<(decimal Amount, decimal? LineDiscount, bool DiscountDropped, decimal? UnitPrice, string? ConversionNote)> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
         int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
-        string? accountCode = null, decimal? lineDiscount = null);
+        string? accountCode = null, decimal? lineDiscount = null, bool priceEnteredExVat = false);
 
     /// <summary>เพิ่ม/ลบบรรทัดรายการของผลสแกน — <c>action</c> = "add" | "delete"
     /// (เดิมตาราง review เพิ่ม/ลบแถวไม่ได้เลย ⇒ OCR รวมหรือแตกแถวผิดแล้วผู้ใช้

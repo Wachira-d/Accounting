@@ -8954,9 +8954,12 @@ public class OcrService : IOcrService
     /// <param name="lineDiscount">ส่วนลดรายบรรทัดก่อน VAT ที่ผู้ใช้แก้ในคอลัมน์ "ส่วนลด" ของหน้ารีวิว — null = ไม่แตะ · 0 = ล้าง
     /// (ฝ่ายค้านรอบสอง f1690d11 ข้อ 4: เดิมส่วนลดเก็บไว้แต่ไม่แสดง/แก้ไม่ได้ ⇒ การแก้จำนวน/ราคาคงหรือทิ้งส่วนลดที่มองไม่เห็นเงียบ ๆ)</param>
     /// <returns>ยอดใหม่ · ส่วนลดที่คงอยู่ · ส่วนลดถูกทิ้งเพราะเกินยอดก่อนลดไหม (หน้าต้องบอกผู้ใช้)</returns>
-    public async Task<(decimal Amount, decimal? LineDiscount, bool DiscountDropped)> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
+    /// <param name="priceEnteredExVat">ฝ่ายค้านรอบห้า ข้อ 3: true = ราคา/ส่วนลดที่กรอกในแถวนี้ "ไม่รวม VAT" บนใบราคารวม VAT ⇒ เซิร์ฟเวอร์แปลงเป็นฐานรวม VAT
+    /// ของใบ (เอกสารมีธงราคารวม VAT ระดับเอกสารเดียว — แถวปนฐานไม่ได้ ถ้าปล่อยแถวเป็นก่อน VAT ทั้งใบจะหลุดเป็นก่อน VAT แบบรอบสี่ ข้อ 2) ·
+    /// แถวที่ไม่ใช่ราคารวม VAT / ไม่รู้อัตรา ⇒ ปฏิเสธพร้อมเหตุผล (ไม่ทำเงียบ)</param>
+    public async Task<(decimal Amount, decimal? LineDiscount, bool DiscountDropped, decimal? UnitPrice, string? ConversionNote)> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
         int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
-        string? accountCode = null, decimal? lineDiscount = null)
+        string? accountCode = null, decimal? lineDiscount = null, bool priceEnteredExVat = false)
     {
         var scan = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -9008,6 +9011,23 @@ public class OcrService : IOcrService
             if (storedDisc != (line.LineDiscountAmount ?? 0m)) line.VatStripResidual = null;   // ค่าใหม่เป็นของผู้ใช้ — ไม่ใช่เศษจากถอด VAT แล้ว
             line.LineDiscountAmount = storedDisc > 0m ? storedDisc : null;
         }
+        string? conversionNote = null;
+        if (priceEnteredExVat)
+        {
+            if (!line.PriceIncludesVat)
+                throw new Accounting.Helpers.BusinessRuleException("แถวนี้เป็นราคาก่อน VAT อยู่แล้ว — ไม่ต้องแปลง");
+            var convRate = line.VatRate is > 0m ? line.VatRate
+                : Accounting.Helpers.OcrEtaxLineNormalizer.DominantVatRate(items.Select(x => (x.PriceIncludesVat, x.VatRate)).ToList());
+            var converted = Accounting.Helpers.OcrEtaxLineNormalizer.ConvertExVatEntryToInclusive(
+                line.UnitPrice ?? 0m, line.LineDiscountAmount, convRate)
+                ?? throw new Accounting.Helpers.BusinessRuleException(
+                    "ไม่รู้อัตรา VAT ของแถวนี้ — แปลงราคาไม่รวม VAT เป็นราคารวม VAT ไม่ได้ กรอกราคารวม VAT เอง หรือแก้ที่ฟอร์มเอกสาร");
+            conversionNote = $"แปลงราคาไม่รวม VAT {line.UnitPrice ?? 0m:N2} เป็นราคารวม VAT {converted.UnitPrice:N2} (VAT {convRate:0.##}%) ให้อยู่ฐานเดียวกับทั้งใบ";
+            line.UnitPrice = converted.UnitPrice;
+            line.LineDiscountAmount = converted.Discount;
+            line.VatRate ??= convRate;
+            line.VatStripResidual = null;
+        }
 
         // recompute amount จาก qty×price ที่ (แก้แล้ว) — ถ้าครบทั้งคู่
         // บรรทัดที่มีส่วนลดรายบรรทัด (e-Tax XML) — ยอด = round(จำนวน × ราคา) − ส่วนลด · เดิม round(จำนวน × ราคา) ตรง ๆ ⇒ แก้แค่ชื่อรายการ
@@ -9027,7 +9047,7 @@ public class OcrService : IOcrService
         scan.ExtractedItemsJson = SerializeExtractedItems(items);
         scan.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
-        return (line.Amount ?? 0m, line.LineDiscountAmount, discountDropped);
+        return (line.Amount ?? 0m, line.LineDiscountAmount, discountDropped, line.UnitPrice, conversionNote);
     }
 
     /// <summary>
@@ -10116,7 +10136,8 @@ public class OcrService : IOcrService
                     i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode,
                     i.ProjectId, i.ProjectName, i.Unit, i.VatRate, i.VatAmount, i.LineDiscountAmount,
                     i.PriceIncludesVat,
-                    Accounting.Helpers.OcrEtaxLineNormalizer.DiscountLabel(i.LineDiscountAmount, i.PriceIncludesVat, i.VatStripResidual))).ToList();
+                    Accounting.Helpers.OcrEtaxLineNormalizer.DiscountLabel(i.LineDiscountAmount, i.PriceIncludesVat, i.VatStripResidual),
+                    Accounting.Helpers.OcrEtaxLineNormalizer.PriceBasisLabel(i.PriceIncludesVat))).ToList();
             }
         }
 
@@ -10166,7 +10187,9 @@ public class OcrService : IOcrService
                     Accounting.Helpers.OcrEtaxLineNormalizer.DiscountLabel(
                         el.TryGetProperty("LineDiscountAmount", out var ld2) && ld2.ValueKind == System.Text.Json.JsonValueKind.Number ? ld2.GetDecimal() : null,
                         el.TryGetProperty("PriceIncludesVat", out var piv2) && piv2.ValueKind == System.Text.Json.JsonValueKind.True,
-                        el.TryGetProperty("VatStripResidual", out var vsr) && vsr.ValueKind == System.Text.Json.JsonValueKind.Number ? vsr.GetDecimal() : null)
+                        el.TryGetProperty("VatStripResidual", out var vsr) && vsr.ValueKind == System.Text.Json.JsonValueKind.Number ? vsr.GetDecimal() : null),
+                    Accounting.Helpers.OcrEtaxLineNormalizer.PriceBasisLabel(
+                        el.TryGetProperty("PriceIncludesVat", out var piv3) && piv3.ValueKind == System.Text.Json.JsonValueKind.True)
                 )).ToList();
             }
             catch (Exception ex)

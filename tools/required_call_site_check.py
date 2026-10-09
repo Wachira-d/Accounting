@@ -5911,7 +5911,7 @@ RULES += [
          must=["OcrEtaxLineNormalizer.AmountAfterLineDiscount(", "discountDropped = dropped",
                "Math.Round(lineDiscount.Value, 2, MidpointRounding.AwayFromZero)",
                "line.LineDiscountAmount = storedDisc > 0m ? storedDisc : null", "line.VatStripResidual = null"],
-         must_re=[r"return\s*\(\s*line\.Amount\s*\?\?\s*0m\s*,\s*line\.LineDiscountAmount\s*,\s*discountDropped\s*\)"],
+         must_re=[r"return\s*\(\s*line\.Amount\s*\?\?\s*0m\s*,\s*line\.LineDiscountAmount\s*,\s*discountDropped\s*,\s*line\.UnitPrice\s*,\s*conversionNote\s*\)"],
          forbid=["line.Amount = System.Math.Round(qty * up, 2, MidpointRounding.AwayFromZero)"],
          why=_ETAX_LINE_WHY + "แก้บรรทัดในหน้ารีวิวต้องคงส่วนลดบรรทัด (ไม่งั้นยอดกลับเป็นยอดก่อนลดเงียบ ๆ)"),
 ]
@@ -6016,6 +6016,21 @@ RULES += [
     dict(file=DOC, method="BuildScanItemsJsonFromLines",
          call_args=[("OcrEtaxLineNormalizer.WriteBackLine(", "depositBase"), ("OcrEtaxLineNormalizer.WriteBackLine(", "billDiscount")],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบห้า ข้อ 5: ส่วนลดการค้ายังไปกับส่วนลดบรรทัดแม้มีมัดจำ — เฉพาะส่วนมัดจำที่หาย"),
+]
+
+
+# ── ฝ่ายค้านรอบห้า ข้อ 3: แถวราคารวม VAT ที่ผู้ใช้กรอกราคาไม่รวม VAT ⇒ เซิร์ฟเวอร์แปลงเป็นฐานรวม VAT ของใบ (ไม่ปล่อยแถวปนฐาน) ──
+RULES += [
+    dict(file=OCR, method="SetExtractedLineFieldsAsync",
+         must=["OcrEtaxLineNormalizer.ConvertExVatEntryToInclusive(", "OcrEtaxLineNormalizer.DominantVatRate(",
+               "if (!line.PriceIncludesVat)"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบห้า ข้อ 3: แปลงราคาไม่รวม VAT ในแถวของใบราคารวม VAT ที่เซิร์ฟเวอร์ · ไม่รู้อัตรา/ไม่ใช่แถวรวม VAT ⇒ ปฏิเสธพร้อมเหตุผล"),
+    dict(file="Controllers/OcrController.cs", method="SetLineFields",
+         must=["req.PriceEnteredExVat", "conversionNote"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบห้า ข้อ 3: ส่งคำสั่งแปลง + คืนราคาใหม่และข้อความให้หน้าแสดง"),
+    dict(file=OCR, method="MapToResponse",
+         must=["OcrEtaxLineNormalizer.PriceBasisLabel("],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบห้า ข้อ 3: ป้ายช่องติ๊กฐานราคาเซิร์ฟเวอร์เป็นคนเขียน"),
 ]
 
 
