@@ -583,4 +583,403 @@ public static class EtaxFixtures
     </rsm:SupplyChainTradeTransaction>
 </rsm:TaxInvoice_CrossIndustryInvoice>
 """;
+
+    /// <summary>
+    /// ไฟล์ e-Tax XML <b>จริง</b> ใบที่สองของ CRC ไทวัสดุ (T03 · คำสั่งซื้อ 2614501699 · ผู้ใช้สแกน 2026-10-09 รอบ 6) — ถอดจาก
+    /// <c>c9b6f069-60956-900041371-E2-2614501699.pdf</c> · ตัดเหมือน <see cref="CrcThaiwatsaduXml"/> (ลายเซ็น · PI · notes ที่ซ้ำ/เป็น "-")
+    /// <para>จุดสำคัญ: ทุกบรรทัดราคารวม VAT แต่ผู้ขายคิด VAT ระดับหัวใบ (3,160.00 ÷ 1.07) ⇒ Σ ก่อน VAT รายบรรทัด 2,953.26 ≠ หัวใบ 2,953.27 ·
+    /// Σ VAT รายบรรทัด 206.74 ≠ 206.73 — ขั้น ReconcileTaxRounding ของเอกสารขยับบรรทัดใหญ่สุด 1 สตางค์แล้วตรงกระดาษ</para>
+    /// </summary>
+    public const string CrcThaiwatsadu2Xml = """
+<rsm:TaxInvoice_CrossIndustryInvoice xmlns:ram="urn:etda:uncefact:data:standard:TaxInvoice_ReusableAggregateBusinessInformationEntity:2" xmlns:rsm="urn:etda:uncefact:data:standard:TaxInvoice_CrossIndustryInvoice:2">
+    <rsm:ExchangedDocumentContext>
+        <ram:GuidelineSpecifiedDocumentContextParameter>
+            <ram:ID schemeAgencyID="ETDA" schemeVersionID="v2.0">ER3-2560</ram:ID>
+        </ram:GuidelineSpecifiedDocumentContextParameter>
+    </rsm:ExchangedDocumentContext>
+    <rsm:ExchangedDocument>
+        <ram:ID>CBRIE26100125485</ram:ID>
+        <ram:Name>ใบเสร็จรับเงิน/ใบกำกับภาษี</ram:Name>
+        <ram:TypeCode listAgencyID="RD/ETDA" listID="1001_ThaiDocumentNameCodeInvoice" listVersionID="15A">T03</ram:TypeCode>
+        <ram:IssueDateTime>2026-10-05T18:01:00</ram:IssueDateTime>
+        <ram:Purpose>-</ram:Purpose>
+        <ram:CreationDateTime>2026-10-05T18:01:05</ram:CreationDateTime>
+        <ram:IncludedNote>
+            <ram:Subject>DocumentName</ram:Subject>
+            <ram:Content>ใบกำกับภาษี/ใบเสร็จรับเงิน</ram:Content>
+        </ram:IncludedNote>
+        <ram:IncludedNote>
+            <ram:Subject>AllowanceTotalAmount</ram:Subject>
+            <ram:Content>1080.00</ram:Content>
+        </ram:IncludedNote>
+        <ram:IncludedNote>
+            <ram:Subject>TradeAllowanceReason</ram:Subject>
+            <ram:Content>หักเงินมัดจำ</ram:Content>
+        </ram:IncludedNote>
+    </rsm:ExchangedDocument>
+    <rsm:SupplyChainTradeTransaction>
+        <ram:ApplicableHeaderTradeAgreement>
+            <ram:SellerTradeParty>
+                <ram:Name>บริษัท ซีอาร์ซี ไทวัสดุ จำกัด</ram:Name>
+                <ram:SpecifiedTaxRegistration>
+                    <ram:ID schemeID="TXID">010555502121500043</ram:ID>
+                </ram:SpecifiedTaxRegistration>
+                <ram:DefinedTradeContact>
+                    <ram:PersonName>-</ram:PersonName>
+                    <ram:DepartmentName>-</ram:DepartmentName>
+                </ram:DefinedTradeContact>
+                <ram:PostalTradeAddress>
+                    <ram:PostcodeCode>10540</ram:PostcodeCode>
+                    <ram:CityName>1103</ram:CityName>
+                    <ram:CitySubDivisionName>110302</ram:CitySubDivisionName>
+                    <ram:CountryID>TH</ram:CountryID>
+                    <ram:CountrySubDivisionID>11</ram:CountrySubDivisionID>
+                    <ram:BuildingNumber>88/88</ram:BuildingNumber>
+                </ram:PostalTradeAddress>
+            </ram:SellerTradeParty>
+            <ram:BuyerTradeParty>
+                <ram:ID>0001719904</ram:ID>
+                <ram:Name>ห้างหุ้นส่วนจำกัด แอม แฮปปี้เนส</ram:Name>
+                <ram:SpecifiedTaxRegistration>
+                    <ram:ID schemeID="TXID">020356200587100000</ram:ID>
+                </ram:SpecifiedTaxRegistration>
+                <ram:DefinedTradeContact>
+                    <ram:PersonName>-</ram:PersonName>
+                    <ram:DepartmentName>-</ram:DepartmentName>
+                </ram:DefinedTradeContact>
+                <ram:PostalTradeAddress>
+                    <ram:PostcodeCode>20110</ram:PostcodeCode>
+                    <ram:BuildingName>-</ram:BuildingName>
+                    <ram:LineOne> เลขที่ 202/24 หมู่ที่ 5 ซอย บ้านห้วยกุ่ม4 </ram:LineOne>
+                    <ram:LineTwo>-</ram:LineTwo>
+                    <ram:LineThree>-</ram:LineThree>
+                    <ram:LineFour>-</ram:LineFour>
+                    <ram:LineFive>-</ram:LineFive>
+                    <ram:StreetName>-</ram:StreetName>
+                    <ram:CountryID>TH</ram:CountryID>
+                    <ram:BuildingNumber>-</ram:BuildingNumber>
+                </ram:PostalTradeAddress>
+            </ram:BuyerTradeParty>
+            <ram:BuyerOrderReferencedDocument>
+                <ram:IssuerAssignedID>2614501699</ram:IssuerAssignedID>
+            </ram:BuyerOrderReferencedDocument>
+        </ram:ApplicableHeaderTradeAgreement>
+        <ram:ApplicableHeaderTradeDelivery>
+            <ram:ShipToTradeParty>
+                <ram:ID>-</ram:ID>
+                <ram:Name>-</ram:Name>
+                <ram:DefinedTradeContact>
+                    <ram:PersonName>-</ram:PersonName>
+                    <ram:DepartmentName>-</ram:DepartmentName>
+                </ram:DefinedTradeContact>
+                <ram:PostalTradeAddress>
+                    <ram:PostcodeCode>-</ram:PostcodeCode>
+                    <ram:BuildingName>-</ram:BuildingName>
+                    <ram:LineOne>-</ram:LineOne>
+                    <ram:LineTwo>-</ram:LineTwo>
+                    <ram:LineThree>-</ram:LineThree>
+                    <ram:LineFour>-</ram:LineFour>
+                    <ram:LineFive>-</ram:LineFive>
+                    <ram:StreetName>-</ram:StreetName>
+                    <ram:BuildingNumber>-</ram:BuildingNumber>
+                </ram:PostalTradeAddress>
+            </ram:ShipToTradeParty>
+            <ram:ShipFromTradeParty>
+                <ram:ID>-</ram:ID>
+                <ram:Name>-</ram:Name>
+                <ram:DefinedTradeContact>
+                    <ram:PersonName>-</ram:PersonName>
+                    <ram:DepartmentName>-</ram:DepartmentName>
+                </ram:DefinedTradeContact>
+                <ram:PostalTradeAddress>
+                    <ram:PostcodeCode>-</ram:PostcodeCode>
+                    <ram:BuildingName>-</ram:BuildingName>
+                    <ram:LineOne>-</ram:LineOne>
+                    <ram:LineTwo>-</ram:LineTwo>
+                    <ram:LineThree>-</ram:LineThree>
+                    <ram:LineFour>-</ram:LineFour>
+                    <ram:LineFive>-</ram:LineFive>
+                    <ram:StreetName>-</ram:StreetName>
+                    <ram:BuildingNumber>-</ram:BuildingNumber>
+                </ram:PostalTradeAddress>
+            </ram:ShipFromTradeParty>
+        </ram:ApplicableHeaderTradeDelivery>
+        <ram:ApplicableHeaderTradeSettlement>
+            <ram:InvoiceCurrencyCode>THB</ram:InvoiceCurrencyCode>
+            <ram:ApplicableTradeTax>
+                <ram:TypeCode>VAT</ram:TypeCode>
+                <ram:CalculatedRate>7.00</ram:CalculatedRate>
+                <ram:BasisAmount currencyID="THB">2953.27</ram:BasisAmount>
+                <ram:CalculatedAmount currencyID="THB">206.73</ram:CalculatedAmount>
+            </ram:ApplicableTradeTax>
+            <ram:ApplicableTradeTax>
+                <ram:TypeCode>FRE</ram:TypeCode>
+                <ram:CalculatedRate>0.00</ram:CalculatedRate>
+                <ram:BasisAmount currencyID="THB">0.00</ram:BasisAmount>
+                <ram:CalculatedAmount currencyID="THB">0.00</ram:CalculatedAmount>
+            </ram:ApplicableTradeTax>
+            <ram:SpecifiedTradeAllowanceCharge>
+                <ram:ChargeIndicator>false</ram:ChargeIndicator>
+                <ram:ActualAmount currencyID="THB">0.00</ram:ActualAmount>
+                <ram:Reason>หักเงินมัดจำ</ram:Reason>
+            </ram:SpecifiedTradeAllowanceCharge>
+            <ram:SpecifiedTradePaymentTerms>
+                <ram:Description>-</ram:Description>
+            </ram:SpecifiedTradePaymentTerms>
+            <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+                <ram:LineTotalAmount currencyID="THB">2953.27</ram:LineTotalAmount>
+                <ram:AllowanceTotalAmount currencyID="THB">1080.00</ram:AllowanceTotalAmount>
+                <ram:TaxBasisTotalAmount currencyID="THB">2953.27</ram:TaxBasisTotalAmount>
+                <ram:TaxTotalAmount currencyID="THB">206.73</ram:TaxTotalAmount>
+                <ram:GrandTotalAmount currencyID="THB">3160.00</ram:GrandTotalAmount>
+            </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+        </ram:ApplicableHeaderTradeSettlement>
+        <ram:IncludedSupplyChainTradeLineItem>
+            <ram:AssociatedDocumentLineDocument>
+                <ram:LineID>1</ram:LineID>
+            </ram:AssociatedDocumentLineDocument>
+            <ram:SpecifiedTradeProduct>
+                <ram:ID>8858901304411</ram:ID>
+                <ram:Name>ท่อ HDPE ร้อยสายไฟ 32 มม.  ตรามือ 398-32-1R(PN6) 100ม. ดำ</ram:Name>
+                <ram:Description>-</ram:Description>
+            </ram:SpecifiedTradeProduct>
+            <ram:SpecifiedLineTradeAgreement>
+                <ram:GrossPriceProductTradePrice>
+                    <ram:ChargeAmount currencyID="THB">1730.00</ram:ChargeAmount>
+                </ram:GrossPriceProductTradePrice>
+            </ram:SpecifiedLineTradeAgreement>
+            <ram:SpecifiedLineTradeDelivery>
+                <ram:BilledQuantity unitCode="-">1.00</ram:BilledQuantity>
+            </ram:SpecifiedLineTradeDelivery>
+            <ram:SpecifiedLineTradeSettlement>
+                <ram:ApplicableTradeTax>
+                    <ram:TypeCode>VAT</ram:TypeCode>
+                    <ram:CalculatedRate>7.00</ram:CalculatedRate>
+                    <ram:BasisAmount currencyID="THB">1616.82</ram:BasisAmount>
+                    <ram:CalculatedAmount currencyID="THB">113.18</ram:CalculatedAmount>
+                </ram:ApplicableTradeTax>
+                <ram:SpecifiedTradeAllowanceCharge>
+                    <ram:ChargeIndicator>false</ram:ChargeIndicator>
+                    <ram:ActualAmount currencyID="THB">422.99</ram:ActualAmount>
+                </ram:SpecifiedTradeAllowanceCharge>
+                <ram:SpecifiedTradeSettlementLineMonetarySummation>
+                    <ram:TaxTotalAmount>0</ram:TaxTotalAmount>
+                    <ram:NetLineTotalAmount currencyID="THB">1221.50</ram:NetLineTotalAmount>
+                    <ram:NetIncludingTaxesLineTotalAmount currencyID="THB">1307.01</ram:NetIncludingTaxesLineTotalAmount>
+                </ram:SpecifiedTradeSettlementLineMonetarySummation>
+            </ram:SpecifiedLineTradeSettlement>
+        </ram:IncludedSupplyChainTradeLineItem>
+        <ram:IncludedSupplyChainTradeLineItem>
+            <ram:AssociatedDocumentLineDocument>
+                <ram:LineID>2</ram:LineID>
+            </ram:AssociatedDocumentLineDocument>
+            <ram:SpecifiedTradeProduct>
+                <ram:ID>8858901302974</ram:ID>
+                <ram:Name>ข้อต่อตรงท่อร้อยสายไฟ PE แบบสวม Type A 32 มม. ตรามือ 398-350-32R ดำ</ram:Name>
+                <ram:Description>-</ram:Description>
+            </ram:SpecifiedTradeProduct>
+            <ram:SpecifiedLineTradeAgreement>
+                <ram:GrossPriceProductTradePrice>
+                    <ram:ChargeAmount currencyID="THB">30.00</ram:ChargeAmount>
+                </ram:GrossPriceProductTradePrice>
+            </ram:SpecifiedLineTradeAgreement>
+            <ram:SpecifiedLineTradeDelivery>
+                <ram:BilledQuantity unitCode="-">6.00</ram:BilledQuantity>
+            </ram:SpecifiedLineTradeDelivery>
+            <ram:SpecifiedLineTradeSettlement>
+                <ram:ApplicableTradeTax>
+                    <ram:TypeCode>VAT</ram:TypeCode>
+                    <ram:CalculatedRate>7.00</ram:CalculatedRate>
+                    <ram:BasisAmount currencyID="THB">168.22</ram:BasisAmount>
+                    <ram:CalculatedAmount currencyID="THB">11.78</ram:CalculatedAmount>
+                </ram:ApplicableTradeTax>
+                <ram:SpecifiedTradeAllowanceCharge>
+                    <ram:ChargeIndicator>false</ram:ChargeIndicator>
+                    <ram:ActualAmount currencyID="THB">44.01</ram:ActualAmount>
+                </ram:SpecifiedTradeAllowanceCharge>
+                <ram:SpecifiedTradeSettlementLineMonetarySummation>
+                    <ram:TaxTotalAmount>0</ram:TaxTotalAmount>
+                    <ram:NetLineTotalAmount currencyID="THB">127.09</ram:NetLineTotalAmount>
+                    <ram:NetIncludingTaxesLineTotalAmount currencyID="THB">135.99</ram:NetIncludingTaxesLineTotalAmount>
+                </ram:SpecifiedTradeSettlementLineMonetarySummation>
+            </ram:SpecifiedLineTradeSettlement>
+        </ram:IncludedSupplyChainTradeLineItem>
+        <ram:IncludedSupplyChainTradeLineItem>
+            <ram:AssociatedDocumentLineDocument>
+                <ram:LineID>3</ram:LineID>
+            </ram:AssociatedDocumentLineDocument>
+            <ram:SpecifiedTradeProduct>
+                <ram:ID>8858901309638</ram:ID>
+                <ram:Name>ท่อโค้งไฟฟ้าพีอี 90? 32 มม.  ตรามือ 398-350-32RS ดำ</ram:Name>
+                <ram:Description>-</ram:Description>
+            </ram:SpecifiedTradeProduct>
+            <ram:SpecifiedLineTradeAgreement>
+                <ram:GrossPriceProductTradePrice>
+                    <ram:ChargeAmount currencyID="THB">118.00</ram:ChargeAmount>
+                </ram:GrossPriceProductTradePrice>
+            </ram:SpecifiedLineTradeAgreement>
+            <ram:SpecifiedLineTradeDelivery>
+                <ram:BilledQuantity unitCode="-">4.00</ram:BilledQuantity>
+            </ram:SpecifiedLineTradeDelivery>
+            <ram:SpecifiedLineTradeSettlement>
+                <ram:ApplicableTradeTax>
+                    <ram:TypeCode>VAT</ram:TypeCode>
+                    <ram:CalculatedRate>7.00</ram:CalculatedRate>
+                    <ram:BasisAmount currencyID="THB">441.12</ram:BasisAmount>
+                    <ram:CalculatedAmount currencyID="THB">30.88</ram:CalculatedAmount>
+                </ram:ApplicableTradeTax>
+                <ram:SpecifiedTradeAllowanceCharge>
+                    <ram:ChargeIndicator>false</ram:ChargeIndicator>
+                    <ram:ActualAmount currencyID="THB">115.40</ram:ActualAmount>
+                </ram:SpecifiedTradeAllowanceCharge>
+                <ram:SpecifiedTradeSettlementLineMonetarySummation>
+                    <ram:TaxTotalAmount>0</ram:TaxTotalAmount>
+                    <ram:NetLineTotalAmount currencyID="THB">333.27</ram:NetLineTotalAmount>
+                    <ram:NetIncludingTaxesLineTotalAmount currencyID="THB">356.60</ram:NetIncludingTaxesLineTotalAmount>
+                </ram:SpecifiedTradeSettlementLineMonetarySummation>
+            </ram:SpecifiedLineTradeSettlement>
+        </ram:IncludedSupplyChainTradeLineItem>
+        <ram:IncludedSupplyChainTradeLineItem>
+            <ram:AssociatedDocumentLineDocument>
+                <ram:LineID>5</ram:LineID>
+            </ram:AssociatedDocumentLineDocument>
+            <ram:SpecifiedTradeProduct>
+                <ram:ID>8859042890849</ram:ID>
+                <ram:Name>ตู้คอนซูมเมอร์ยูนิตครบชุด 4 ช่อง RCBO 50A CT ELECTRIC CTU-4R RCBO 50A ขาว</ram:Name>
+                <ram:Description>-</ram:Description>
+            </ram:SpecifiedTradeProduct>
+            <ram:SpecifiedLineTradeAgreement>
+                <ram:GrossPriceProductTradePrice>
+                    <ram:ChargeAmount currencyID="THB">1130.00</ram:ChargeAmount>
+                </ram:GrossPriceProductTradePrice>
+            </ram:SpecifiedLineTradeAgreement>
+            <ram:SpecifiedLineTradeDelivery>
+                <ram:BilledQuantity unitCode="-">1.00</ram:BilledQuantity>
+            </ram:SpecifiedLineTradeDelivery>
+            <ram:SpecifiedLineTradeSettlement>
+                <ram:ApplicableTradeTax>
+                    <ram:TypeCode>VAT</ram:TypeCode>
+                    <ram:CalculatedRate>7.00</ram:CalculatedRate>
+                    <ram:BasisAmount currencyID="THB">1056.07</ram:BasisAmount>
+                    <ram:CalculatedAmount currencyID="THB">73.93</ram:CalculatedAmount>
+                </ram:ApplicableTradeTax>
+                <ram:SpecifiedTradeAllowanceCharge>
+                    <ram:ChargeIndicator>false</ram:ChargeIndicator>
+                    <ram:ActualAmount currencyID="THB">276.28</ram:ActualAmount>
+                </ram:SpecifiedTradeAllowanceCharge>
+                <ram:SpecifiedTradeSettlementLineMonetarySummation>
+                    <ram:TaxTotalAmount>0</ram:TaxTotalAmount>
+                    <ram:NetLineTotalAmount currencyID="THB">797.87</ram:NetLineTotalAmount>
+                    <ram:NetIncludingTaxesLineTotalAmount currencyID="THB">853.72</ram:NetIncludingTaxesLineTotalAmount>
+                </ram:SpecifiedTradeSettlementLineMonetarySummation>
+            </ram:SpecifiedLineTradeSettlement>
+        </ram:IncludedSupplyChainTradeLineItem>
+        <ram:IncludedSupplyChainTradeLineItem>
+            <ram:AssociatedDocumentLineDocument>
+                <ram:LineID>6</ram:LineID>
+            </ram:AssociatedDocumentLineDocument>
+            <ram:SpecifiedTradeProduct>
+                <ram:ID>8850304238584</ram:ID>
+                <ram:Name>เทปพันสายไฟ Temflex170 3M Z053-0037 20 เมตร ดำ</ram:Name>
+                <ram:Description>-</ram:Description>
+            </ram:SpecifiedTradeProduct>
+            <ram:SpecifiedLineTradeAgreement>
+                <ram:GrossPriceProductTradePrice>
+                    <ram:ChargeAmount currencyID="THB">38.00</ram:ChargeAmount>
+                </ram:GrossPriceProductTradePrice>
+            </ram:SpecifiedLineTradeAgreement>
+            <ram:SpecifiedLineTradeDelivery>
+                <ram:BilledQuantity unitCode="-">5.00</ram:BilledQuantity>
+            </ram:SpecifiedLineTradeDelivery>
+            <ram:SpecifiedLineTradeSettlement>
+                <ram:ApplicableTradeTax>
+                    <ram:TypeCode>VAT</ram:TypeCode>
+                    <ram:CalculatedRate>7.00</ram:CalculatedRate>
+                    <ram:BasisAmount currencyID="THB">177.57</ram:BasisAmount>
+                    <ram:CalculatedAmount currencyID="THB">12.43</ram:CalculatedAmount>
+                </ram:ApplicableTradeTax>
+                <ram:SpecifiedTradeAllowanceCharge>
+                    <ram:ChargeIndicator>false</ram:ChargeIndicator>
+                    <ram:ActualAmount currencyID="THB">46.45</ram:ActualAmount>
+                </ram:SpecifiedTradeAllowanceCharge>
+                <ram:SpecifiedTradeSettlementLineMonetarySummation>
+                    <ram:TaxTotalAmount>0</ram:TaxTotalAmount>
+                    <ram:NetLineTotalAmount currencyID="THB">134.16</ram:NetLineTotalAmount>
+                    <ram:NetIncludingTaxesLineTotalAmount currencyID="THB">143.55</ram:NetIncludingTaxesLineTotalAmount>
+                </ram:SpecifiedTradeSettlementLineMonetarySummation>
+            </ram:SpecifiedLineTradeSettlement>
+        </ram:IncludedSupplyChainTradeLineItem>
+        <ram:IncludedSupplyChainTradeLineItem>
+            <ram:AssociatedDocumentLineDocument>
+                <ram:LineID>7</ram:LineID>
+            </ram:AssociatedDocumentLineDocument>
+            <ram:SpecifiedTradeProduct>
+                <ram:ID>2000604201344</ram:ID>
+                <ram:Name>คีมย้ำหางปลาคอร์ดเอ็น GIANT KINGKONG PRO PL2028 สี น้ำเงิน-เทา</ram:Name>
+                <ram:Description>-</ram:Description>
+            </ram:SpecifiedTradeProduct>
+            <ram:SpecifiedLineTradeAgreement>
+                <ram:GrossPriceProductTradePrice>
+                    <ram:ChargeAmount currencyID="THB">388.00</ram:ChargeAmount>
+                </ram:GrossPriceProductTradePrice>
+            </ram:SpecifiedLineTradeAgreement>
+            <ram:SpecifiedLineTradeDelivery>
+                <ram:BilledQuantity unitCode="-">1.00</ram:BilledQuantity>
+            </ram:SpecifiedLineTradeDelivery>
+            <ram:SpecifiedLineTradeSettlement>
+                <ram:ApplicableTradeTax>
+                    <ram:TypeCode>VAT</ram:TypeCode>
+                    <ram:CalculatedRate>7.00</ram:CalculatedRate>
+                    <ram:BasisAmount currencyID="THB">362.62</ram:BasisAmount>
+                    <ram:CalculatedAmount currencyID="THB">25.38</ram:CalculatedAmount>
+                </ram:ApplicableTradeTax>
+                <ram:SpecifiedTradeAllowanceCharge>
+                    <ram:ChargeIndicator>false</ram:ChargeIndicator>
+                    <ram:ActualAmount currencyID="THB">94.87</ram:ActualAmount>
+                </ram:SpecifiedTradeAllowanceCharge>
+                <ram:SpecifiedTradeSettlementLineMonetarySummation>
+                    <ram:TaxTotalAmount>0</ram:TaxTotalAmount>
+                    <ram:NetLineTotalAmount currencyID="THB">273.95</ram:NetLineTotalAmount>
+                    <ram:NetIncludingTaxesLineTotalAmount currencyID="THB">293.13</ram:NetIncludingTaxesLineTotalAmount>
+                </ram:SpecifiedTradeSettlementLineMonetarySummation>
+            </ram:SpecifiedLineTradeSettlement>
+        </ram:IncludedSupplyChainTradeLineItem>
+        <ram:IncludedSupplyChainTradeLineItem>
+            <ram:AssociatedDocumentLineDocument>
+                <ram:LineID>8</ram:LineID>
+            </ram:AssociatedDocumentLineDocument>
+            <ram:SpecifiedTradeProduct>
+                <ram:ID>2000602613033</ram:ID>
+                <ram:Name>ค่าขนส่ง CTD</ram:Name>
+                <ram:Description>-</ram:Description>
+            </ram:SpecifiedTradeProduct>
+            <ram:SpecifiedLineTradeAgreement>
+                <ram:GrossPriceProductTradePrice>
+                    <ram:ChargeAmount currencyID="THB">1.00</ram:ChargeAmount>
+                </ram:GrossPriceProductTradePrice>
+            </ram:SpecifiedLineTradeAgreement>
+            <ram:SpecifiedLineTradeDelivery>
+                <ram:BilledQuantity unitCode="-">150.00</ram:BilledQuantity>
+            </ram:SpecifiedLineTradeDelivery>
+            <ram:SpecifiedLineTradeSettlement>
+                <ram:ApplicableTradeTax>
+                    <ram:TypeCode>VAT</ram:TypeCode>
+                    <ram:CalculatedRate>7.00</ram:CalculatedRate>
+                    <ram:BasisAmount currencyID="THB">140.19</ram:BasisAmount>
+                    <ram:CalculatedAmount currencyID="THB">9.81</ram:CalculatedAmount>
+                </ram:ApplicableTradeTax>
+                <ram:SpecifiedTradeAllowanceCharge>
+                    <ram:ChargeIndicator>false</ram:ChargeIndicator>
+                    <ram:ActualAmount currencyID="THB">80.00</ram:ActualAmount>
+                </ram:SpecifiedTradeAllowanceCharge>
+                <ram:SpecifiedTradeSettlementLineMonetarySummation>
+                    <ram:TaxTotalAmount>0</ram:TaxTotalAmount>
+                    <ram:NetLineTotalAmount currencyID="THB">65.42</ram:NetLineTotalAmount>
+                    <ram:NetIncludingTaxesLineTotalAmount currencyID="THB">70.00</ram:NetIncludingTaxesLineTotalAmount>
+                </ram:SpecifiedTradeSettlementLineMonetarySummation>
+            </ram:SpecifiedLineTradeSettlement>
+        </ram:IncludedSupplyChainTradeLineItem>
+    </rsm:SupplyChainTradeTransaction>
+</rsm:TaxInvoice_CrossIndustryInvoice>
+""";
 }

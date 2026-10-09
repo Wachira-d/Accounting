@@ -132,7 +132,7 @@ public static class OcrLineReconciler
                         $"ส่วนลดท้ายบิล {headerDiscount:N2} ({pct:0.##}%) กระจายลงทุกบรรทัด");
                 }
                 return new(OcrLineReconcileCase.Ambiguous, false, 0m, null, headerTotal - grossSum,
-                    $"Σ บรรทัด {grossSum:N2} มากกว่ายอดรวม {headerTotal:N2} แต่กระดาษไม่ระบุส่วนลด — ตรวจสอบบรรทัด");
+                    $"Σ บรรทัด {grossSum:N2} มากกว่ายอดรวม {headerTotal:N2} " + DiscountExplainsNothing(headerDiscount) + " — ตรวจสอบบรรทัด");
             }
             if (grossSum < headerTotal - Tolerance)
                 return new(OcrLineReconcileCase.LinesShort, false, 0m, null, headerTotal - grossSum,
@@ -148,6 +148,13 @@ public static class OcrLineReconciler
         // Σ บรรทัด > ยอดก่อน VAT แต่ไม่ตรงยอดรวม และกระดาษไม่บอกส่วนลด → ไม่เดา
         return new(OcrLineReconcileCase.Ambiguous, false, 0m, null, headerSubTotal - grossSum,
             $"Σ บรรทัด {grossSum:N2} มากกว่ายอดก่อน VAT {headerSubTotal:N2} ({grossSum - headerSubTotal:N2}) "
-            + "แต่ไม่ตรงยอดรวม VAT และกระดาษไม่ระบุส่วนลด — ตรวจสอบราคาต่อหน่วย/ส่วนลด");
+            + "แต่ไม่ตรงยอดรวม VAT " + DiscountExplainsNothing(headerDiscount) + " — ตรวจสอบราคาต่อหน่วย/ส่วนลด");
     }
+
+    /// <summary>รอบ 6 (ใบ e-Tax 2614501699): ข้อความเดิม "กระดาษไม่ระบุส่วนลด" เท็จเมื่อกระดาษมีส่วนลด (ส่วนลดรายบรรทัด 1,080) — ตัวตัดสินนี้รู้แค่
+    /// ส่วนลดท้ายบิลที่อ่านได้ ⇒ พูดเท่าที่รู้: ส่วนลดท้ายบิลที่อ่านได้อธิบายส่วนต่างไม่ได้</summary>
+    private static string DiscountExplainsNothing(decimal headerDiscount)
+        => headerDiscount > 0m
+            ? $"และส่วนลดท้ายบิลที่อ่านได้ ({headerDiscount:N2}) อธิบายส่วนต่างไม่ได้"
+            : "และไม่พบส่วนลดท้ายบิลที่อธิบายส่วนต่างได้ (ส่วนลดรายบรรทัด ถ้ามี ต้องอยู่ในยอดบรรทัดแล้ว)";
 }

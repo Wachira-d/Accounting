@@ -37,9 +37,12 @@ public readonly record struct OcrEtaxLineFacts(
 /// <param name="PriceIncludesVat">true = บรรทัดถือค่าตามกระดาษ "รวม VAT" ทุกตัว (เอกสารต้องเป็น <c>PricesIncludeVat</c>) — ได้จาก <see cref="OcrEtaxLineNormalizer.NormalizeInvoice"/> เท่านั้น</param>
 /// <param name="VatStripResidual">ส่วนของส่วนลดที่ "แต่งขึ้น" จากการถอด VAT แล้วปัดราคา (ไม่ใช่ส่วนลดบนเอกสาร) · null = ไม่มี</param>
 /// <param name="VatRate">อัตรา VAT ของบรรทัดตาม XML</param>
+/// <param name="ResidualOverCap">true = เศษจากการถอด VAT เกินเพดาน แต่ยังใช้เป็นส่วนลดเพื่อให้บรรทัดลงตัว (ห้ามทิ้งบรรทัดที่ จำนวน × ราคา − ส่วนลด ≠ ยอด) —
+/// ผู้เรียกต้องเขียนหมายเหตุที่ห้ามอนุมัติเอง (<see cref="OcrEtaxLineNormalizer.LineCheckTag"/>)</param>
 public readonly record struct OcrEtaxLine(
     OcrEtaxPriceBasis Basis, decimal? Quantity, decimal? UnitPrice, decimal? LineDiscount, decimal? Amount,
-    bool QuantityFromDocument, bool PriceIncludesVat = false, decimal? VatStripResidual = null, decimal? VatRate = null);
+    bool QuantityFromDocument, bool PriceIncludesVat = false, decimal? VatStripResidual = null, decimal? VatRate = null,
+    bool ResidualOverCap = false);
 
 /// <summary>ผลตัดสินทั้งใบ (<see cref="OcrEtaxLineNormalizer.NormalizeInvoice"/>)</summary>
 /// <param name="PricesIncludeVat">true = สร้างเอกสารแบบ "ราคารวม VAT" ด้วยค่าตามกระดาษทุกบรรทัด (กระทบยอดกับสูตรของ DocumentService แล้ว)</param>
@@ -79,8 +82,14 @@ public static class OcrEtaxLineNormalizer
     /// <summary>และไม่เกิน 0.5% ของยอดบรรทัด (ก่อน VAT) — เกินนี้ = ราคาต่อหน่วย 2 ตำแหน่งบิดค่ามากเกินจะเรียกว่าเศษ ⇒ ไม่ตัดสิน (Unknown)</summary>
     public const decimal MaxVatStripResidualShare = 0.005m;
 
-    /// <summary>ป้ายของ ProcessingNotes ที่ตัวตัดสินนี้เขียน</summary>
+    /// <summary>ป้ายของ ProcessingNotes ที่ตัวตัดสินนี้เขียน (ข้อสังเกต — ไม่บล็อก)</summary>
     public const string NoteTag = "[e-Tax]";
+
+    /// <summary>ป้ายห้ามอนุมัติเอง: ทั้งใบราคารวม VAT ตามกระดาษ แต่ยอดหัวใบไม่ลงตัวกับบรรทัดแม้ผ่านขั้นปัด VAT ของเอกสารแล้ว (ใบ 2614501699 รอบ 6)</summary>
+    public const string HeaderGapTag = "[ETAX-HEADER-GAP]";
+
+    /// <summary>ป้ายห้ามอนุมัติเอง: บรรทัดที่ต้องใช้เศษจากถอด VAT เกินเพดาน หรือบรรทัดที่ตัดสินฐาน VAT ไม่ได้ (ใช้ตัวแก้จำนวนแบบเดิม)</summary>
+    public const string LineCheckTag = "[ETAX-LINE-CHECK]";
 
     /// <summary>
     /// <b>ตัดสินทั้งใบ</b> — ฝ่ายค้านรอบสาม (2026-10-09): ทางราคาก่อน VAT ต้อง "แต่ง" ส่วนลดจากเศษการถอด VAT (7 × 10.00 รวม VAT ⇒ 9.35 − 0.03)
@@ -102,16 +111,27 @@ public static class OcrEtaxLineNormalizer
                 return new OcrEtaxLine(OcrEtaxPriceBasis.InclusiveOfVat, p.Qty, p.Gross, p.Allowance > 0m ? R2(p.Allowance) : null,
                     p.NetIncl, true, PriceIncludesVat: true, VatStripResidual: null, VatRate: p.Rate);
             }).ToList();
-            var tie = TiesOutInclusive(verbatim, proofs.Select(x => x!.Value.Net).ToList(), headerLineTotal, headerVat, grandTotal);
-            if (tie is null) return new OcrEtaxInvoiceLines(true, verbatim, notes);
-            notes.Add($"{NoteTag} ราคาบนเอกสารรวม VAT ทุกบรรทัด แต่ถอด VAT ตามสูตรเอกสารแล้วไม่ตรง XML ({tie}) — ลงเป็นราคาก่อน VAT รายบรรทัดแทน");
+            // ใบ 2614501699 (รอบ 6): ผู้ขายคิด VAT ระดับหัวใบ (3,160 ÷ 1.07) ⇒ Σ ก่อน VAT รายบรรทัด 2,953.26 ≠ หัวใบ 2,953.27 — ขั้น
+            // ReconcileTaxRounding ของเอกสารขยับบรรทัดใหญ่สุด 1 สตางค์แล้วได้หัวใบตรงกระดาษ ⇒ ตัวพิสูจน์ "เล่นซ้ำ" ขั้นนั้น (ไม่ใช่บังคับรายบรรทัดเท่า XML)
+            // · ทุกบรรทัดพิสูจน์ราคารวม VAT แล้ว ⇒ ใช้ค่าตามกระดาษเสมอ (ทางนี้ถูกกว่าทางสำรองที่ต้องแต่งส่วนลด) · หัวใบยังไม่ลงตัว ⇒ หมายเหตุห้ามอนุมัติเอง
+            var tieNotes = new List<string>();
+            var tie = TiesOutInclusive(verbatim, proofs.Select(x => x!.Value.Net).ToList(), headerLineTotal, headerVat, grandTotal, tieNotes);
+            notes.AddRange(tieNotes);
+            if (tie is not null)
+                notes.Add($"{HeaderGapTag} ราคาบนเอกสารรวม VAT ทุกบรรทัด — ลงตามกระดาษ แต่ถอด VAT ตามสูตรเอกสารแล้วไม่ตรงยอดใน XML ({tie}) — ตรวจยอดกับกระดาษก่อนอนุมัติ");
+            return new OcrEtaxInvoiceLines(true, verbatim, notes);
         }
         var ex = new List<OcrEtaxLine>(lines.Count);
         for (var i = 0; i < lines.Count; i++)
         {
             var n = Normalize(lines[i]);
-            if (n.VatStripResidual is decimal r && r != 0m)
+            if (n.ResidualOverCap)
+                notes.Add($"{LineCheckTag} บรรทัดที่ {i + 1}: ราคารวม VAT ถอดเป็นราคาก่อน VAT แล้วต้องใช้เศษ {Math.Abs(n.VatStripResidual ?? 0m):0.00} บาท "
+                    + $"(เกินเพดาน {MaxVatStripResidual:0.00} บาท / {MaxVatStripResidualShare * 100m:0.#}%) เป็นส่วนลด — ไม่ใช่ส่วนลดบนเอกสาร ตรวจราคา/ส่วนลดบรรทัดนี้ก่อนอนุมัติ");
+            else if (n.VatStripResidual is decimal r && r != 0m)
                 notes.Add($"{NoteTag} เศษจากถอด VAT {Math.Abs(r):0.00} บาท ไม่ใช่ส่วนลดบนเอกสาร — บรรทัดที่ {i + 1} (ส่วนลดก่อน VAT {(n.LineDiscount ?? 0m):0.00} รวมเศษนี้แล้ว)");
+            if (n.Basis == OcrEtaxPriceBasis.Unknown && n.Quantity is > 0m)
+                notes.Add($"{LineCheckTag} บรรทัดที่ {i + 1}: ตัดสินไม่ได้ว่าราคารวมหรือไม่รวม VAT (จำนวน × ราคา − ส่วนลด ไม่ตรงยอดทั้งสองแบบ) — ใช้ตัวแก้จำนวนแบบเดิม ตรวจกับกระดาษก่อนอนุมัติ");
             ex.Add(n);
         }
         return new OcrEtaxInvoiceLines(false, ex, notes);
@@ -149,8 +169,9 @@ public static class OcrEtaxLineNormalizer
     /// <param name="headerLineTotal"><c>LineTotalAmount</c> หัวใบ</param>
     /// <param name="headerVat"><c>TaxTotalAmount</c> หัวใบ</param>
     /// <param name="grandTotal"><c>GrandTotalAmount</c> หัวใบ</param>
+    /// <param name="shiftNotes">รับหมายเหตุบรรทัดที่ขั้นปัด VAT ของเอกสารขยับ (ก่อน VAT ต่างจาก XML เท่าที่ขยับ) · null = ไม่เก็บ</param>
     internal static string? TiesOutInclusive(IReadOnlyList<OcrEtaxLine> lines, IReadOnlyList<decimal> expectedNets,
-        decimal? headerLineTotal, decimal? headerVat, decimal? grandTotal)
+        decimal? headerLineTotal, decimal? headerVat, decimal? grandTotal, List<string>? shiftNotes = null)
     {
         if (headerLineTotal is not decimal hl || headerVat is not decimal hv || grandTotal is not decimal gt)
             return "หัวใบไม่มียอดก่อน VAT/VAT/ยอดรวม ให้เทียบ";
@@ -176,17 +197,37 @@ public static class OcrEtaxLineNormalizer
             if (nets[i] != expectedNets[i]) return $"บรรทัดที่ {i + 1}: ถอด VAT ได้ {nets[i]:0.00} ≠ ยอดก่อน VAT ใน XML {expectedNets[i]:0.00}";
             grossSum += after;
         }
-        foreach (var grp in Enumerable.Range(0, lines.Count).GroupBy(i => rates[i]))
-        {
-            var target = R2(grp.Sum(i => nets[i]) * grp.Key / 100m);
-            var lineVat = grp.Sum(i => vats[i]);
-            if (target != lineVat)
-                return $"VAT รายบรรทัดอัตรา {grp.Key:0.##}% รวม {lineVat:0.00} ≠ {target:0.00} (ระบบจะขยับบรรทัดใหญ่สุด)";
-        }
+        // เล่นซ้ำขั้น VAT ของ ReconcileTaxRounding (โหมดราคารวม VAT) — บรรทัดที่ถูกขยับ ก่อน VAT ต่างจาก XML ได้เท่าที่ขยับ (บันทึกหมายเหตุ)
+        foreach (var (idx, shift) in ReplayTaxRounding(nets, vats, rates))
+            shiftNotes?.Add($"{NoteTag} บรรทัดที่ {idx + 1}: ยอดก่อน VAT ในเอกสาร {nets[idx]:0.00} (XML {nets[idx] + shift:0.00}) — ขั้นปัด VAT ระดับเอกสาร "
+                + $"ขยับ {(-shift):+0.00;-0.00} เพื่อให้ VAT รวมตรงหัวใบ (ผู้ขายคิด VAT จากยอดรวมทั้งใบ)");
         if (nets.Sum() != hl) return $"Σ ก่อน VAT {nets.Sum():0.00} ≠ หัวใบ {hl:0.00}";
         if (vats.Sum() != hv) return $"Σ VAT {vats.Sum():0.00} ≠ หัวใบ {hv:0.00}";
         if (grossSum != gt) return $"Σ รวม VAT {grossSum:0.00} ≠ ยอดรวมหัวใบ {gt:0.00}";
         return null;
+    }
+
+    /// <summary>
+    /// <b>สำเนาเพื่อพิสูจน์</b>ของขั้น VAT ใน <c>DocumentService.ReconcileTaxRounding</c> (โหมดราคารวม VAT): ต่อกลุ่มอัตรา (เฉพาะบรรทัดอัตรา &gt; 0 และยอดก่อน VAT ≠ 0)
+    /// เป้า = round(Σ ก่อน VAT × อัตรา/100) · ต่าง = เป้า − Σ VAT · ต่างไม่เป็น 0 และ |ต่าง| ≤ 1 ⇒ บรรทัดที่ |ก่อน VAT| มากที่สุด (ตัวแรกเมื่อเท่ากัน)
+    /// VAT += ต่าง · ก่อน VAT −= ต่าง · แก้ <paramref name="nets"/>/<paramref name="vats"/> ในที่ · คืน (บรรทัด, ต่าง) ที่ขยับ ·
+    /// สูตรต้นทางล็อกด้วย <c>tools/required_call_site_check.py</c></summary>
+    internal static List<(int Index, decimal Shift)> ReplayTaxRounding(decimal[] nets, decimal[] vats, decimal[] rates)
+    {
+        var shifted = new List<(int Index, decimal Shift)>();
+        foreach (var g in Enumerable.Range(0, nets.Length)
+                     .Where(i => rates[i] > 0m && nets[i] != 0m)
+                     .GroupBy(i => rates[i]))
+        {
+            var target = R2(g.Sum(i => nets[i]) * g.Key / 100m);
+            var diff = target - g.Sum(i => vats[i]);
+            if (diff == 0m || Math.Abs(diff) > 1m) continue;
+            var j = g.OrderByDescending(i => Math.Abs(nets[i])).First();
+            vats[j] += diff;
+            nets[j] -= diff;
+            shifted.Add((j, diff));
+        }
+        return shifted;
     }
 
     /// <summary>VAT รายบรรทัดของเอกสาร "ราคารวม VAT ตามกระดาษ" = สูตรเดียวกับ ComputeLineAmounts (<see cref="DocumentLineVatConvention.SplitLine"/>) —
@@ -197,9 +238,17 @@ public static class OcrEtaxLineNormalizer
         // บรรทัดยอด 0 ที่ไม่ติดธง (แถวว่างที่ผู้ใช้เพิ่งเพิ่ม) ไม่มี VAT ให้ถอด — ไม่ทำให้ทั้งใบตกทางเฉลี่ย (ฝ่ายค้านรอบสี่ ข้อ 2)
         if (!AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, l.PriceIncludesVat)).ToList())) return null;
         if (lines.Any(l => l.PriceIncludesVat && l.VatRate <= 0m)) return null;
-        var vats = lines.Select(l => l.PriceIncludesVat
-            ? DocumentLineVatConvention.SplitLine(l.Amount, l.VatRate, null, includeVat: true).Vat
-            : 0m).ToArray();
+        var nets = new decimal[lines.Count];
+        var vats = new decimal[lines.Count];
+        var rates = new decimal[lines.Count];
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (!lines[i].PriceIncludesVat) continue;   // แถวว่าง ยอด 0
+            (nets[i], vats[i]) = DocumentLineVatConvention.SplitLine(lines[i].Amount, lines[i].VatRate, null, includeVat: true);
+            rates[i] = lines[i].VatRate;
+        }
+        // ผลเดียวกับที่ DocumentService จะได้ตอนบันทึก (ComputeLineAmounts + ReconcileTaxRounding) — ใบ 2614501699: บรรทัดใหญ่สุด VAT −0.01
+        ReplayTaxRounding(nets, vats, rates);
         return vats.Sum() == headerVat ? vats : null;
     }
 
@@ -372,11 +421,12 @@ public static class OcrEtaxLineNormalizer
         // ⇒ ราคา 2 ตำแหน่งบิดค่ามากเกินจะเรียกว่าเศษ ⇒ ไม่ตัดสิน (Unknown = พฤติกรรมเดิม ให้คนตรวจ)
         var allowanceEx = allowance > 0m ? R2(allowance * 100m / (100m + rate)) : 0m;
         var residual = (discEx ?? 0m) - allowanceEx;
-        if (residual != 0m
-            && (Math.Abs(residual) > MaxVatStripResidual || Math.Abs(residual) > net * MaxVatStripResidualShare))
-            return keep;
+        // รอบ 6 (ใบ 2614501699 ข้อ 2): เดิมเกินเพดาน ⇒ Unknown แต่บรรทัดยังถูกคุ้มครองจากตัวแก้จำนวน ⇒ 150 × 1.00 − 0 ≠ 65.42 (แย่ทั้งสองทาง) ·
+        // ตอนนี้: ฐานรวม VAT พิสูจน์แล้ว ⇒ ใช้ส่วนลดที่ทำให้บรรทัดลงตัว (ไม่ทิ้งบรรทัดที่ขัดกันเอง) + ธงให้ผู้เรียกเขียนหมายเหตุห้ามอนุมัติเอง
+        var overCap = residual != 0m
+            && (Math.Abs(residual) > MaxVatStripResidual || Math.Abs(residual) > net * MaxVatStripResidualShare);
         return new OcrEtaxLine(OcrEtaxPriceBasis.InclusiveOfVat, q, unitEx, discEx, net, true,
-            PriceIncludesVat: false, VatStripResidual: residual != 0m ? residual : null, VatRate: rate);
+            PriceIncludesVat: false, VatStripResidual: residual != 0m ? residual : null, VatRate: rate, ResidualOverCap: overCap);
     }
 
     /// <summary>ชื่อ engine ของเส้น e-Tax XML (<c>OcrScanResult.OcrEngine</c>) — ตัวเดียวที่ตัวกันจำนวนระเบิด/การเขียนบรรทัดกลับ ใช้ตัดสินว่า

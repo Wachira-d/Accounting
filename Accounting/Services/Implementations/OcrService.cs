@@ -4682,7 +4682,9 @@ public class OcrService : IOcrService
     internal static void SanitizeVatSplitArtifacts(OcrExtractedData data, bool quantitiesFromSignedXml = false)
     {
         if (data?.Items == null || data.Items.Count == 0) return;
-        bool Signed(OcrExtractedLineItem it) => quantitiesFromSignedXml || it.QuantityFromEtaxXml;
+        // รอบ 6 (ใบ 2614501699): บรรทัด e-Tax ที่ตัวตัดสินตัดสินไม่ได้ (EtaxUndecided) ไม่ถูกคุ้มครองด้วยธงระดับสแกน — ตัวแก้จำนวนแบบเดิมทำให้
+        // บรรทัดลงตัว (มีหมายเหตุ [ETAX-LINE-CHECK] ห้ามอนุมัติเองอยู่แล้ว) · เดิมคุ้มครองแล้วปล่อย 150 × 1.00 ≠ 65.42 ค้าง = แย่ทั้งสองทาง
+        bool Signed(OcrExtractedLineItem it) => (quantitiesFromSignedXml && !it.EtaxUndecided) || it.QuantityFromEtaxXml;
 
         // Suffixes ที่บ่งบอกว่าเป็น footer split — ไม่ใช่ line item จริง.
         // ใช้ trailing-paren match (ตัดเฉพาะที่ขึ้นต้น "(" + จบ ")" ท้าย string)
@@ -10362,6 +10364,7 @@ public class OcrService : IOcrService
                 QuantityFromEtaxXml = etaxLine.QuantityFromDocument,
                 PriceIncludesVat = etaxLine.PriceIncludesVat,
                 VatStripResidual = etaxLine.VatStripResidual,
+                EtaxUndecided = etaxLine.Basis == Accounting.Helpers.OcrEtaxPriceBasis.Unknown,
                 // อัตราของบรรทัดตาม XML — ทางราคารวม VAT ต้องรู้อัตราเพื่อถอด VAT รายบรรทัดด้วยสูตรเดียวกับเอกสาร
                 VatRate = etaxLine.PriceIncludesVat ? etaxLine.VatRate : null,
                 // ★ หน่วยนับที่ XML ประกาศไว้ (unitCode ตาม UN/ECE Rec.20) —
@@ -11469,6 +11472,9 @@ internal class OcrExtractedLineItem
     /// <summary>ส่วนของ <see cref="LineDiscountAmount"/> ที่เป็น "เศษจากการถอด VAT" (ไม่ใช่ส่วนลดบนเอกสาร) — หน้า review แสดงป้ายตามนี้ ·
     /// ผู้ใช้แก้ส่วนลดเอง ⇒ ล้าง (ค่าใหม่เป็นของผู้ใช้)</summary>
     public decimal? VatStripResidual { get; set; }
+    /// <summary>true = บรรทัด e-Tax ที่ตัดสินฐาน VAT ไม่ได้ (จำนวน × ราคา − ส่วนลด ไม่ตรงยอดทั้งสองแบบ) ⇒ ตัวแก้จำนวนแบบเดิมทำงานได้แม้สแกนเป็น e-Tax
+    /// (รอบ 6 · หมายเหตุ [ETAX-LINE-CHECK] หยุดอนุมัติเอง)</summary>
+    public bool EtaxUndecided { get; set; }
     public string? SuggestedAccountCode { get; set; }
     /// <summary>Per-line project assignment captured in the review UI.
     /// Persisted so re-opening the review after a crash preserves the

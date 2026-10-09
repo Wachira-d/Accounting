@@ -83,13 +83,8 @@ public class OcrEtaxLineNormalizerTests
     {
         _ = netIncl;
         var n = Norm(Crc().Items.Single(x => x.LineNo == lineId));
-        if (lineId == 10)
-        {
-            // ทางสำรองราคาก่อน VAT: 120 × 0.93 − 74.22 ⇒ เศษจากถอด VAT 0.55 > 0.5% ของ 37.38 ⇒ ไม่ตัดสิน (ฝ่ายค้านรอบสาม)
-            Assert.Equal(OcrEtaxPriceBasis.Unknown, n.Basis);
-            Assert.False(n.QuantityFromDocument);
-            return;
-        }
+        // ทางสำรองราคาก่อน VAT: ค่าขนส่ง 120 × 0.93 − 74.22 ⇒ เศษจากถอด VAT 0.55 > 0.5% ของ 37.38 ⇒ ยังลงตัว แต่ติดธงเกินเพดาน (รอบ 6)
+        Assert.Equal(lineId == 10, n.ResidualOverCap);
         Assert.Equal(OcrEtaxPriceBasis.InclusiveOfVat, n.Basis);
         Assert.Equal(qty, n.Quantity);                                   // ไม่เคยหารจากยอด
         Assert.True(n.QuantityFromDocument);
@@ -109,7 +104,7 @@ public class OcrEtaxLineNormalizerTests
         Assert.Equal((3m, 34.58m, 24.94m, 78.80m), (l1.Quantity!.Value, l1.UnitPrice!.Value, l1.LineDiscount!.Value, l1.Amount!.Value));
         Assert.Equal(0.01m, l1.VatStripResidual);   // 24.94 − round(26.68 ÷ 1.07) = 24.93 ⇒ เศษ 1 สตางค์ (อยู่ในเพดาน)
         // ค่าขนส่ง: ทางสำรองไม่ตัดสิน (เศษเกินเพดาน) · ทางหลัก (ทั้งใบราคารวม VAT) ⇒ ค่าตามกระดาษ 120 × 1.00 − 80.00 = 40.00 รวม VAT
-        Assert.Equal(OcrEtaxPriceBasis.Unknown, Norm(items.Single(x => x.LineNo == 10)).Basis);
+        Assert.True(Norm(items.Single(x => x.LineNo == 10)).ResidualOverCap);
         var ship = CrcInvoice().Lines[^1];
         Assert.Equal((120m, 1.00m, 80.00m, 40.00m), (ship.Quantity!.Value, ship.UnitPrice!.Value, ship.LineDiscount!.Value, ship.Amount!.Value));
         Assert.True(ship.PriceIncludesVat);
@@ -486,30 +481,38 @@ public class OcrEtaxLineNormalizerTests
     }
 
     [Fact]
-    public void หัวใบไม่ลงตัว_หรือไม่มีหัวใบ_ใช้ทางสำรองราคาก่อนVAT_พร้อมหมายเหตุ()
+    public void หัวใบไม่ลงตัว_หรือไม่มีหัวใบ_ยังลงตามกระดาษ_พร้อมหมายเหตุห้ามอนุมัติเอง()
     {
-        // VAT หัวใบ 209.40 ≠ Σ VAT รายบรรทัด 209.41 ⇒ ห้ามตั้งเอกสารราคารวม VAT (บันทึกซ้ำแล้วยอดหลุด)
+        // รอบ 6: ทุกบรรทัดพิสูจน์ราคารวม VAT ⇒ ใช้ค่าตามกระดาษเสมอ (ทางสำรองต้องแต่งส่วนลด) · หัวใบไม่ลงตัว ⇒ [ETAX-HEADER-GAP] ห้ามอนุมัติเอง
         var bad = CrcInvoice(vat: 209.40m);
-        Assert.False(bad.PricesIncludeVat);
-        Assert.Contains(bad.Notes, x => x.StartsWith("[e-Tax] ราคาบนเอกสารรวม VAT ทุกบรรทัด", StringComparison.Ordinal));
-        Assert.All(bad.Lines, n => Assert.False(n.PriceIncludesVat));
-        Assert.Equal(OcrEtaxPriceBasis.Unknown, bad.Lines[^1].Basis);              // ค่าขนส่ง: เศษเกินเพดาน
-        Assert.Equal((3m, 34.58m, 24.94m), (bad.Lines[0].Quantity!.Value, bad.Lines[0].UnitPrice!.Value, bad.Lines[0].LineDiscount!.Value));
-        Assert.Contains(bad.Notes, x => x == "[e-Tax] เศษจากถอด VAT 0.01 บาท ไม่ใช่ส่วนลดบนเอกสาร — บรรทัดที่ 1 (ส่วนลดก่อน VAT 24.94 รวมเศษนี้แล้ว)");
-        // ไม่มียอดหัวใบให้เทียบ ⇒ ทางสำรองเช่นกัน
-        Assert.False(CrcInvoice(lineTotal: null).PricesIncludeVat);
+        Assert.True(bad.PricesIncludeVat);
+        Assert.All(bad.Lines, n => Assert.True(n.PriceIncludesVat));
+        var gap = Assert.Single(bad.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.HeaderGapTag, StringComparison.Ordinal));
+        Assert.Contains("Σ VAT 209.41 ≠ หัวใบ 209.40", gap);
+        Assert.False(OcrPostingReadiness.Evaluate(string.Join("\n", bad.Notes), true).CanAutoApprove);
+        // ไม่มียอดหัวใบให้เทียบ ⇒ เช่นกัน
+        var noHeader = CrcInvoice(lineTotal: null);
+        Assert.True(noHeader.PricesIncludeVat);
+        Assert.Contains(noHeader.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.HeaderGapTag, StringComparison.Ordinal));
     }
 
     [Fact]
-    public void VATรายบรรทัดรวมไม่เท่าเป้าของReconcileTaxRounding_ใช้ทางสำรอง()
+    public void ขั้นปัดVATของเอกสาร_ถูกเล่นซ้ำ_ไม่ใช่บังคับรายบรรทัด()
     {
-        // 3 บรรทัด × 1.00 รวม VAT: ก่อน VAT 0.93 + VAT 0.07 ต่อบรรทัด ⇒ Σ VAT 0.21 แต่ round(2.79 × 7%) = 0.20 ⇒ DocumentService จะขยับ
-        // บรรทัดใหญ่สุด 1 สตางค์ ⇒ ก่อน VAT รายบรรทัดหลุดจาก XML ⇒ ห้ามทางหลัก
+        // 3 บรรทัด × 1.00 รวม VAT: ก่อน VAT 0.93 + VAT 0.07 ⇒ Σ VAT 0.21 แต่ round(2.79 × 7%) = 0.20 ⇒ ReconcileTaxRounding ขยับบรรทัดแรก
+        // (|ก่อน VAT| เท่ากัน ⇒ ตัวแรก) VAT −0.01 · ก่อน VAT +0.01 ⇒ 2.80 / 0.20 / 3.00 = หัวใบแบบผู้ขายคิด VAT ระดับเอกสาร (3.00 ÷ 1.07)
         var f = new OcrEtaxLineFacts(1m, 1.00m, null, null, 7m, 0.93m, 1.00m);
-        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { f, f, f }, 2.79m, 0.21m, 3.00m);
-        Assert.False(inv.PricesIncludeVat);
-        Assert.Contains(inv.Notes, x => x.Contains("ระบบจะขยับบรรทัดใหญ่สุด", StringComparison.Ordinal));
-        Assert.Null(OcrEtaxLineNormalizer.InclusiveLineVats(new[] { (1.00m, 7m, true), (1.00m, 7m, true), (1.00m, 7m, true) }, 0.20m));
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { f, f, f }, 2.80m, 0.20m, 3.00m);
+        Assert.True(inv.PricesIncludeVat);
+        Assert.DoesNotContain(inv.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.HeaderGapTag, StringComparison.Ordinal));
+        Assert.Contains(inv.Notes, x => x.StartsWith("[e-Tax] บรรทัดที่ 1: ยอดก่อน VAT ในเอกสาร 0.94 (XML 0.93)", StringComparison.Ordinal));
+        Assert.Equal(new[] { 0.06m, 0.07m, 0.07m },
+            OcrEtaxLineNormalizer.InclusiveLineVats(new[] { (1.00m, 7m, true), (1.00m, 7m, true), (1.00m, 7m, true) }, 0.20m));
+        // ทิศตรงข้าม: หัวใบที่ "ไม่ปัดระดับเอกสาร" (2.79 / 0.21) ⇒ เอกสารจะได้ 2.80/0.20 ไม่ตรง ⇒ ห้ามอนุมัติเอง
+        var other = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { f, f, f }, 2.79m, 0.21m, 3.00m);
+        Assert.True(other.PricesIncludeVat);
+        Assert.Contains(other.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.HeaderGapTag, StringComparison.Ordinal));
+        Assert.Null(OcrEtaxLineNormalizer.InclusiveLineVats(new[] { (1.00m, 7m, true), (1.00m, 7m, true), (1.00m, 7m, true) }, 0.21m));
     }
 
     [Fact]
@@ -526,21 +529,111 @@ public class OcrEtaxLineNormalizerTests
     }
 
     [Fact]
-    public void เศษจากถอดVATเกินเพดาน_ไม่ตัดสิน()
+    public void เศษจากถอดVATเกินเพดาน_บรรทัดยังลงตัว_และติดธง()
     {
-        // 120 × 1.00 รวม VAT ทางสำรอง: 0.94 × 120 − 112.15 = 0.65 > 0.5% ของ 112.15 (0.56) ⇒ Unknown (ค่าเดิม)
+        // 120 × 1.00 รวม VAT ทางสำรอง: 0.94 × 120 − 112.15 = 0.65 > 0.5% ของ 112.15 (0.56) ⇒ รอบ 6: ไม่ทิ้งบรรทัดที่ขัดกันเอง —
+        // ใช้ส่วนลด 0.65 ให้ลงตัว + ResidualOverCap ⇒ ผู้เรียกเขียน [ETAX-LINE-CHECK] ห้ามอนุมัติเอง
         var n = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(120m, 1.00m, null, null, 7m, 112.15m, 120.00m));
-        Assert.Equal(OcrEtaxPriceBasis.Unknown, n.Basis);
-        Assert.Equal((120m, 1.00m, 112.15m), (n.Quantity!.Value, n.UnitPrice!.Value, n.Amount!.Value));
-        Assert.Null(n.LineDiscount);
-        Assert.Null(n.VatStripResidual);
-        // เกิน 1 บาท (บรรทัดใหญ่): 1,000 × 0.10 รวม VAT ⇒ 0.09 × 1,000 = 90 < 93.46 ⇒ 0.10 × 1,000 − 93.46 = 6.54 > 1.00 ⇒ Unknown
-        var big = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(1000m, 0.10m, null, null, 7m, 93.46m, 100.00m));
-        Assert.Equal(OcrEtaxPriceBasis.Unknown, big.Basis);
-        // ทั้งใบที่ไม่ผ่านทางหลัก ⇒ ไม่มีหมายเหตุเศษของบรรทัดที่ไม่ตัดสิน
-        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { new OcrEtaxLineFacts(120m, 1.00m, null, null, 7m, 112.15m, 120.00m) }, null, null, null);
+        Assert.Equal(OcrEtaxPriceBasis.InclusiveOfVat, n.Basis);
+        Assert.True(n.ResidualOverCap);
+        Assert.Equal((120m, 0.94m, 0.65m, 112.15m), (n.Quantity!.Value, n.UnitPrice!.Value, n.LineDiscount!.Value, n.Amount!.Value));
+        Assert.Equal(n.Amount, R2(n.Quantity.Value * n.UnitPrice.Value) - n.LineDiscount.Value);
+        // ทิศตรงข้าม: เศษในเพดาน ⇒ ไม่ติดธง
+        Assert.False(OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(7m, 10.00m, null, null, 7m, 65.42m, 70.00m)).ResidualOverCap);
+        // ทั้งใบปน (บรรทัดนี้ + บรรทัดราคาก่อน VAT) ⇒ ทางสำรอง + หมายเหตุห้ามอนุมัติเอง
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[]
+        {
+            new OcrEtaxLineFacts(120m, 1.00m, null, null, 7m, 112.15m, 120.00m),
+            new OcrEtaxLineFacts(2m, 250.47m, null, null, 7m, 500.93m, 536.00m),
+        }, 613.08m, 42.92m, 656.00m);
         Assert.False(inv.PricesIncludeVat);
-        Assert.DoesNotContain(inv.Notes, x => x.Contains("เศษจากถอด VAT", StringComparison.Ordinal));
+        Assert.Contains(inv.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.LineCheckTag + " บรรทัดที่ 1", StringComparison.Ordinal));
+        Assert.False(OcrPostingReadiness.Evaluate(string.Join("\n", inv.Notes), true).CanAutoApprove);
+    }
+
+    [Fact]
+    public void บรรทัดตัดสินไม่ได้_ไม่ถูกคุ้มครอง_ตัวแก้จำนวนทำให้ลงตัว_และห้ามอนุมัติเอง()
+    {
+        // จำนวน × ราคา − ส่วนลด ไม่ตรงยอดทั้งสองแบบ ⇒ Unknown + [ETAX-LINE-CHECK]
+        var odd = new OcrEtaxLineFacts(3m, 37.00m, 0m, null, 7m, 78.80m, 84.32m);
+        var ok = new OcrEtaxLineFacts(2m, 250.47m, null, null, 7m, 500.93m, 536.00m);
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { odd, ok }, 579.73m, 40.58m, 620.31m);
+        Assert.False(inv.PricesIncludeVat);
+        Assert.Equal(OcrEtaxPriceBasis.Unknown, inv.Lines[0].Basis);
+        Assert.Contains(inv.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.LineCheckTag + " บรรทัดที่ 1: ตัดสินไม่ได้", StringComparison.Ordinal));
+        // สแกน e-Tax (ธงระดับสแกน) แต่บรรทัด EtaxUndecided ⇒ ตัวแก้จำนวนทำงาน ⇒ ไม่เหลือบรรทัดที่ จำนวน × ราคา ≠ ยอด
+        var d = new OcrExtractedData();
+        d.Items.Add(new OcrExtractedLineItem { Description = "x", Quantity = 3m, UnitPrice = 37.00m, Amount = 78.80m, EtaxUndecided = true });
+        d.Items.Add(new OcrExtractedLineItem { Description = "y", Quantity = 2m, UnitPrice = 250.47m, Amount = 500.93m, QuantityFromEtaxXml = true });
+        OcrService.SanitizeVatSplitArtifacts(d, quantitiesFromSignedXml: true);
+        Assert.True(Math.Abs(R2(d.Items[0].Quantity!.Value * d.Items[0].UnitPrice!.Value) - 78.80m) <= 0.05m);
+        Assert.Equal(2m, d.Items[1].Quantity);   // บรรทัดที่ตัดสินแล้วยังถูกคุ้มครอง
+        // ทิศตรงข้าม: บรรทัดที่ไม่ได้ติด EtaxUndecided บนสแกน e-Tax ⇒ คุ้มครองเหมือนเดิม
+        var d2 = new OcrExtractedData();
+        d2.Items.Add(new OcrExtractedLineItem { Description = "x", Quantity = 3m, UnitPrice = 37.00m, Amount = 78.80m });
+        OcrService.SanitizeVatSplitArtifacts(d2, quantitiesFromSignedXml: true);
+        Assert.Equal(3m, d2.Items[0].Quantity);
+    }
+
+    // ── ใบจริงใบที่สอง CRC 2614501699 (รอบ 6): VAT คิดระดับหัวใบ ──
+
+    private static EtaxPdfXmlExtractor.ExtractResult Crc2()
+    {
+        var r = EtaxPdfXmlExtractor.ParseEtaxXml(EtaxFixtures.CrcThaiwatsadu2Xml);
+        Assert.NotNull(r);
+        return r!;
+    }
+
+    [Fact]
+    public void ใบCRC2_VATระดับหัวใบ_เอกสารราคารวมVATตามกระดาษ_หัวใบตรงหลังเล่นซ้ำขั้นปัด()
+    {
+        var r = Crc2();
+        Assert.Equal((2953.27m, 206.73m, 3160.00m), (r.LineTotal!.Value, r.VatAmount!.Value, r.GrandTotal!.Value));
+        Assert.Equal(7, r.Items.Count);
+        Assert.Equal(2953.26m, r.Items.Sum(x => x.Amount!.Value));            // Σ ก่อน VAT รายบรรทัดใน XML ≠ หัวใบ 1 สตางค์
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(r.Items.Select(Facts).ToList(), r.LineTotal, r.VatAmount, r.GrandTotal);
+        Assert.True(inv.PricesIncludeVat);
+        Assert.DoesNotContain(inv.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.HeaderGapTag, StringComparison.Ordinal));
+        Assert.Contains(inv.Notes, x => x.StartsWith("[e-Tax] บรรทัดที่ 1: ยอดก่อน VAT ในเอกสาร 1221.51 (XML 1221.50)", StringComparison.Ordinal));
+        Assert.True(OcrPostingReadiness.Evaluate(string.Join("\n", inv.Notes), true).CanAutoApprove);
+        for (var i = 0; i < r.Items.Count; i++)
+        {
+            var li = r.Items[i];
+            var n = inv.Lines[i];
+            Assert.Equal((li.Quantity, li.UnitPrice, li.LineAllowance, li.NetIncludingVatAmount), (n.Quantity, n.UnitPrice, n.LineDiscount, n.Amount));
+        }
+        // ค่าขนส่ง CTD: 150 × 1.00 − 80.00 = 70.00 รวม VAT (ไม่ใช่ 150 × 1.00 ส่วนลด 0 ยอด 65.42)
+        Assert.Equal((150m, 1.00m, 80.00m, 70.00m), (inv.Lines[^1].Quantity!.Value, inv.Lines[^1].UnitPrice!.Value, inv.Lines[^1].LineDiscount!.Value, inv.Lines[^1].Amount!.Value));
+        // VAT รายบรรทัดที่ตัวสร้างบรรทัดใช้ = ผลของ ComputeLineAmounts + ReconcileTaxRounding ⇒ ก่อน VAT 2,953.27 · VAT 206.73 · รวม 3,160.00
+        var vats = OcrEtaxLineNormalizer.InclusiveLineVats(inv.Lines.Select(x => (x.Amount!.Value, 7m, true)).ToList(), 206.73m);
+        Assert.NotNull(vats);
+        Assert.Equal(new[] { 85.50m, 8.90m, 23.33m, 55.85m, 9.39m, 19.18m, 4.58m }, vats);
+        var nets = inv.Lines.Select((x, i) => x.Amount!.Value - vats![i]).ToList();
+        Assert.Equal(1221.51m, nets[0]);
+        Assert.Equal(2953.27m, nets.Sum());
+        Assert.Equal(206.73m, vats!.Sum());
+        Assert.Equal(3160.00m, inv.Lines.Sum(x => x.Amount!.Value));
+    }
+
+    [Fact]
+    public void ใบCRC2_หัวใบเพี้ยน5บาท_หมายเหตุและห้ามอนุมัติเอง()
+    {
+        var r = Crc2();
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(r.Items.Select(Facts).ToList(), 2958.27m, 206.73m, 3165.00m);
+        Assert.True(inv.PricesIncludeVat);   // บรรทัดยังลงตามกระดาษ
+        Assert.Contains(inv.Notes, x => x.StartsWith(OcrEtaxLineNormalizer.HeaderGapTag, StringComparison.Ordinal) && x.Contains("2958.27", StringComparison.Ordinal));
+        Assert.False(OcrPostingReadiness.Evaluate(string.Join("\n", inv.Notes), true).CanAutoApprove);
+    }
+
+    [Fact]
+    public void ข้อความΣGAP_ไม่อ้างว่ากระดาษไม่มีส่วนลด()
+    {
+        // ตัวเลขจริงที่ผู้ใช้เห็น: Σ บรรทัด 3,037.84 > ก่อน VAT 2,953.27 — ใบนี้มีส่วนลดรายบรรทัด 1,080 ⇒ "กระดาษไม่ระบุส่วนลด" เป็นเท็จ
+        var rec = OcrLineReconciler.Classify(3037.84m, 2953.27m, 206.73m, 3160.00m, 0m);
+        Assert.Equal(OcrLineReconcileCase.Ambiguous, rec.Case);
+        Assert.DoesNotContain("กระดาษไม่ระบุส่วนลด", rec.Note);
+        Assert.Contains("ไม่พบส่วนลดท้ายบิลที่อธิบายส่วนต่างได้", rec.Note);
+        Assert.Contains("(50.00) อธิบายส่วนต่างไม่ได้", OcrLineReconciler.Classify(3037.84m, 2953.27m, 206.73m, 3160.00m, 50m).Note);
     }
 
     [Fact]
