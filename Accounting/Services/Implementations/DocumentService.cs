@@ -14750,9 +14750,15 @@ public partial class DocumentService : IDocumentService
             .Select(f => new { f.Id, f.AiPrimaryAnswer, f.UserChosenAnswer })
             .ToListAsync(ct);
         var aiAnswerMap = aiAnswers.ToDictionary(a => a.Id);
-        var codeMap = await _db.ChartOfAccounts.AsNoTracking()
+        var acctRows = await _db.ChartOfAccounts.AsNoTracking()
             .Where(a => accountIds.Contains(a.Id))
-            .ToDictionaryAsync(a => a.Id, a => a.AccountCode, ct);
+            .Select(a => new { a.Id, a.AccountCode, a.AccountType })
+            .ToListAsync(ct);
+        // หนี้สิน/ทุนไม่ใช่คำตอบของ "ผังบรรทัด" — ไม่สอนนักเรียน GL (สแกนจริง f1690d11: บรรทัดลง 21230 เจ้าหนี้กรรมการ
+        // แล้วถูกสอนกลับเป็นคำตอบของผู้ขายรายนั้น · ตัวตัดสินเดียว OcrAccountPlacement.IsLearnableLineAccount)
+        var codeMap = acctRows
+            .Where(a => Accounting.Helpers.OcrAccountPlacement.IsLearnableLineAccount(a.AccountType))
+            .ToDictionary(a => a.Id, a => a.AccountCode);
 
         foreach (var line in pending)
         {

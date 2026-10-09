@@ -1486,6 +1486,7 @@ public class OcrService : IOcrService
                 .Where(l => l.Amount > 0m)
                 .ToList();
             var categoryDiagnostics = new List<string>();
+            var minorityWhtParts = new List<Accounting.Helpers.OcrMinorityWhtPart>();
             var categoryResult = Ocr.ExpenseCategoryResolver.Resolve(
                 vendorName: extractedData.VendorName,
                 headerDescription: extractedData.ExpenseCategory,
@@ -1495,9 +1496,20 @@ public class OcrService : IOcrService
                 businessType: companyContext?.BusinessType,
                 zeroAmountLineDescriptions: zeroLines,
                 pricedLines: pricedLines,
-                diagnostics: categoryDiagnostics);
+                diagnostics: categoryDiagnostics,
+                minorityWhtParts: minorityWhtParts);
             foreach (var diag in categoryDiagnostics)
                 extractedData.ReasoningTrace.Add("[Category] " + diag);
+            // ส่วนน้อยที่กฎหมายให้หักและถึงเกณฑ์ 1,000 บาท — ต้องมองเห็นบนหน้าสแกน (ฝ่ายค้านรอบ f1690d11 · ม.54 ผู้จ่ายรับผิด)
+            // ระบบไม่หักให้เอง: แท็ก + ช่องอัตราหักไฮไลต์เหลือง ให้ผู้ใช้ตัดสินเฉพาะยอดส่วนนั้น
+            foreach (var whtPart in minorityWhtParts)
+            {
+                scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
+                    + "\n" + Accounting.Helpers.OcrMinorityWhtPart.Tag + " " + whtPart.Reason;
+                extractedData.FieldConfidence[Accounting.Helpers.OcrFieldKeys.WhtRate] = Math.Min(
+                    extractedData.FieldConfidence.GetValueOrDefault(Accounting.Helpers.OcrFieldKeys.WhtRate, 1.0),
+                    Accounting.Helpers.OcrMinorityWhtPart.WhtFieldConfidenceCap);
+            }
             if (categoryResult != null)
                 Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult, categoryResolverText);
             else if (!string.IsNullOrWhiteSpace(extractedData.ExpenseCategory))
@@ -2405,8 +2417,9 @@ public class OcrService : IOcrService
             // ทุกชั้นข้างบน (กติกาตะกร้า · NaiveBayes · ตัวเรียนหมวด · ประวัติผู้ขาย · นักเรียน/AI · แหล่งเงินตั้งต้น)
             // เติมรหัสโดยไม่ดูประเภทบัญชี ⇒ ประวัติที่ถูกสอนด้วย Dr 21230 เจ้าหนี้กรรมการ กลับมาเป็นเดบิตของใบถัดไป
             // ด่านเดียวตรงนี้ (หลังทุกชั้น · ก่อนบันทึก) — ค่าที่ระบบเสนอทั้งหัวใบและรายบรรทัด
-            if (Accounting.Helpers.OcrAccountPlacement.AppliesTo(
-                    extractedData.TargetDocumentType, extractedData.OurRole == "Seller"))
+            if (Accounting.Helpers.OcrAccountPlacement.AppliesToScan(
+                    extractedData.TargetDocumentType, extractedData.DocumentType,
+                    hasLinkedPurchaseOrder: false, extractedData.OurRole))
             {
                 var placeCodes = new[] { extractedData.DebitAccountCode, extractedData.CreditAccountCode }
                     .Concat(extractedData.Items.Select(i => i.SuggestedAccountCode))
@@ -2437,6 +2450,23 @@ public class OcrService : IOcrService
                     extractedData.ReasoningTrace.Add(Accounting.Helpers.OcrAccountPlacement.Tag + " " + placement.Reason);
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "")
                         + "\n" + Accounting.Helpers.OcrAccountPlacement.Tag + " " + placement.Reason;
+                    // กฎเหล็ก #3: ตัดเดบิตแล้วห้ามปล่อยว่าง — ใช้ผังค่าใช้จ่ายตามหมวดที่ตัวจัดหมวดอ่านจากใบนี้
+                    // (ฝ่ายค้านรอบ f1690d11: ผู้ขายที่ถูกสอนเดบิต 21230 ไว้ จะได้ช่องว่างทุกใบ)
+                    if (extractedData.DebitAccountCode == null)
+                    {
+                        var seededDebit = await PickCategorySeededDebitAsync(companyId,
+                            categoryResult?.AccountCode, categoryResult?.AccountName ?? extractedData.ExpenseCategory);
+                        if (seededDebit is { } sd)
+                        {
+                            extractedData.DebitAccountCode = sd.Code;
+                            extractedData.DebitAccountName = sd.Name;
+                            extractedData.ReasoningTrace.Add(Accounting.Helpers.OcrAccountPlacement.Tag
+                                + $" ใช้ผังตามหมวดของใบนี้แทน: {sd.Code} {sd.Name} (ตรวจก่อนอนุมัติ)");
+                        }
+                        else
+                            extractedData.ReasoningTrace.Add(Accounting.Helpers.OcrAccountPlacement.Tag
+                                + " ไม่พบผังค่าใช้จ่ายตามหมวดในผังบัญชีของบริษัท — เว้นบัญชีเดบิตไว้ให้เลือก");
+                    }
                 }
                 // รายบรรทัด: ผังที่ตัวเรียน/สินค้า master เสนอ ห้ามเป็นหนี้สิน/ทุน/รายได้ (ตกไปใช้ผังหัวใบแทน)
                 foreach (var placeItem in extractedData.Items)
@@ -3889,6 +3919,24 @@ public class OcrService : IOcrService
     ///      do use spaces (English or mixed).
     /// Returns null when nothing distinctive (≥3 chars) is left.
     /// </summary>
+    /// <summary>ผังเดบิตค่าใช้จ่าย/สินทรัพย์ตาม "หมวดที่ตัวจัดหมวดอ่านจากใบนี้" — ใช้เมื่อด่านวางฝั่งตัดเดบิตที่ระบบเสนอทิ้ง
+    /// (กฎเหล็ก #3 ห้ามปล่อยว่าง) · ตัวเลือกผ่าน <see cref="Accounting.Helpers.GlDebitAccountPicker"/> ตัวเดียว (ไม่มีหนี้สิน/ทุน/รายได้)
+    /// · null = ผังของบริษัทไม่มีบัญชีที่เข้าหมวดเลย (ไม่แต่งเอง)</summary>
+    private async Task<Accounting.Helpers.GlAccountCandidate?> PickCategorySeededDebitAsync(
+        Guid companyId, string? seedCode, string? seedName)
+    {
+        var keyword = ExtractDistinctiveKeyword(seedName);
+        var code = string.IsNullOrWhiteSpace(seedCode) ? null : seedCode.Trim();
+        if (code == null && keyword == null) return null;
+        var candidates = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                && ((code != null && a.AccountCode.StartsWith(code))
+                    || (keyword != null && a.AccountName.Contains(keyword))))
+            .Select(a => new Accounting.Helpers.GlAccountCandidate(a.AccountCode, a.AccountName, a.AccountType))
+            .ToListAsync();
+        return Accounting.Helpers.GlDebitAccountPicker.Pick(candidates, code);
+    }
+
     private static string? ExtractDistinctiveKeyword(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
@@ -5163,6 +5211,8 @@ public class OcrService : IOcrService
                 + $"\n[Re-infer] ผู้ใช้แก้ข้อมูลระบุตัวตน → อนุมานใหม่: บทบาท {finalRole} "
                 + $"· เอกสารที่จะสร้าง {result.TargetDocumentType}";
         }
+        // ระบบสลับคู่ Dr/Cr ให้ (ไม่ใช่ผู้ใช้เลือกค่านี้เอง) — ตัวเรียนรู้ห้ามรับเป็นคำตอบแบบ Explicit (ฝ่ายค้านรอบ f1690d11)
+        string? swappedDebitCode = null;
         if (correction.DebitAccountCode != null || correction.CreditAccountCode != null)
         {
             // SuggestedAccountsJson is the canonical store for the
@@ -5208,9 +5258,12 @@ public class OcrService : IOcrService
             // ── Dr/Cr ต้องวางถูกฝั่ง (Helpers/OcrAccountPlacement · สแกนจริง f1690d11) ──
             // หน้าตรวจส่ง Dr 21230 เจ้าหนี้กรรมการ / Cr 51530 ต้นทุนซ่อมบำรุงห้องพัก มา ⇒ เดิมเก็บตรง ๆ แล้ว (ก) ใบสำคัญจ่าย
             // ลงทุกบรรทัดที่ 21230 แหล่งเงิน 51530 (ข) ตัวเรียนรู้ถูกสอนว่าเดบิตของผู้ขายรายนี้คือ 21230
-            // ค่าที่ผู้ใช้เลือก: คู่สลับ ⇒ สลับกลับ · แหล่งเงินเป็นค่าใช้จ่าย/รายได้ ⇒ ตัดทิ้ง · เดบิตหนี้สินลำพังคงไว้ (ชำระหนี้เดิม)
+            // ตัดสินเฉพาะฝั่งที่ผู้ใช้ส่ง (OcrAccountPlacement.DecideCorrection): ส่งทั้งคู่กลับด้าน ⇒ สลับ ·
+            // แหล่งเงินที่ผู้ใช้เลือกเป็นค่าใช้จ่าย/รายได้ ⇒ ปฏิเสธพร้อมเหตุผล (หน้าเว็บขึ้น toast ข้อความนี้ · ห้ามเก็บเงียบ) ·
+            // เดบิตหนี้สินที่ผู้ใช้เลือกเอง (ชำระหนี้เดิม) คงไว้ · ฝั่งที่ผู้ใช้ไม่ได้ส่ง ไม่แตะ
             if ((finalDebit != null || finalCredit != null)
-                && Accounting.Helpers.OcrAccountPlacement.AppliesTo(result.TargetDocumentType, result.OurRole == "Seller"))
+                && Accounting.Helpers.OcrAccountPlacement.AppliesToScan(
+                    result.TargetDocumentType, result.DocumentType, result.LinkedPurchaseOrderId.HasValue, result.OurRole))
             {
                 var corrCodes = new[] { finalDebit, finalCredit }
                     .Where(c => !string.IsNullOrEmpty(c)).Select(c => c!).ToList();
@@ -5221,19 +5274,20 @@ public class OcrService : IOcrService
                 Accounting.Helpers.GlAccountCandidate? corrCand(string? code)
                     => string.IsNullOrEmpty(code) ? null
                         : corrRows.Where(r => r.Code == code).Select(r => (Accounting.Helpers.GlAccountCandidate?)r).FirstOrDefault();
-                var corrPlacement = Accounting.Helpers.OcrAccountPlacement.Check(
-                    corrCand(finalDebit), corrCand(finalCredit), debitIsSystemSuggested: false);
-                if (corrPlacement.Verdict != Accounting.Helpers.OcrAccountPlacement.Verdict.Ok)
+                var corrDecision = Accounting.Helpers.OcrAccountPlacement.DecideCorrection(
+                    corrCand(finalDebit), corrCand(finalCredit),
+                    userSentDebit: !string.IsNullOrEmpty(debitCode), userSentCredit: !string.IsNullOrEmpty(creditCode));
+                if (corrDecision.Action == Accounting.Helpers.OcrAccountPlacement.CorrectionAction.RejectCredit)
+                    throw new Accounting.Helpers.BusinessRuleException(corrDecision.Reason!, "OCR-ACCT-PLACEMENT");
+                if (corrDecision.Action == Accounting.Helpers.OcrAccountPlacement.CorrectionAction.Swap)
                 {
-                    finalDebit = corrPlacement.DebitCode;
+                    finalDebit = corrDecision.DebitCode;
                     finalDebitName = corrCand(finalDebit)?.Name;
-                    finalCredit = corrPlacement.CreditCode;
+                    finalCredit = corrDecision.CreditCode;
                     finalCreditName = corrCand(finalCredit)?.Name;
+                    swappedDebitCode = finalDebit;
                     result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                        + "\n" + Accounting.Helpers.OcrAccountPlacement.Tag + " " + corrPlacement.Reason;
-                    // ตัวเรียนรู้ข้างล่างอ่าน correction.DebitAccountCode — ต้องได้ค่าหลังสลับ ไม่ใช่ค่าที่กลับด้าน
-                    if (corrPlacement.Verdict == Accounting.Helpers.OcrAccountPlacement.Verdict.Swapped)
-                        correction = correction with { DebitAccountCode = finalDebit, CreditAccountCode = finalCredit };
+                        + "\n" + Accounting.Helpers.OcrAccountPlacement.Tag + " " + corrDecision.Reason;
                 }
             }
             result.SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(new
@@ -5243,6 +5297,24 @@ public class OcrService : IOcrService
                 CreditAccountCode = finalCredit,
                 CreditAccountName = finalCreditName,
             });
+        }
+
+        // ── ผังเดบิตที่ตัวเรียนรู้จะได้ (ฝ่ายค้านรอบ f1690d11) ──
+        // หนี้สิน/ทุนไม่ใช่คำตอบของ "จ่ายค่าอะไร" — สอนไป = ใบถัดไปของผู้ขายได้เดบิต 21230 แล้วด่านท้ายไปป์ไลน์ตัดทิ้งทุกใบ ·
+        // คู่ที่ระบบสลับให้ไม่สอนประวัติผู้ขาย/ตัวเรียนหมวด (ไม่ใช่คำตอบของผู้ใช้) — feedback GL ได้แบบ Implicit
+        string? learnDebitCode = null;
+        if (!string.IsNullOrEmpty(correction.DebitAccountCode) && swappedDebitCode == null)
+        {
+            var learnDebitType = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.AccountCode == correction.DebitAccountCode && !a.IsDeleted)
+                .Select(a => (Accounting.Models.Enums.AccountType?)a.AccountType)
+                .FirstOrDefaultAsync();
+            if (Accounting.Helpers.OcrAccountPlacement.IsLearnableLineAccount(learnDebitType))
+                learnDebitCode = correction.DebitAccountCode;
+            else
+                _logger.LogInformation(
+                    "ไม่สอนตัวเรียนรู้ด้วยผังเดบิต {Code} ({Type}) จากคำแก้ของสแกน {ScanId} — หนี้สิน/ทุนไม่ใช่ผังของบรรทัดค่าใช้จ่าย",
+                    correction.DebitAccountCode, learnDebitType, result.Id);
         }
 
         // ★ ตัวชี้วัดคุณภาพ (D4): "ผู้ใช้แก้จริง" ต้องแยกจาก "ระบบบันทึกแถว"
@@ -5405,7 +5477,7 @@ public class OcrService : IOcrService
                     correction.VendorTaxId ?? result.ExtractedVendorTaxId,
                     correction.VendorName ?? result.ExtractedVendorName,
                     corrTarget,
-                    debitAccountCode: correction.DebitAccountCode,
+                    debitAccountCode: learnDebitCode,
                     debitAccountName: null,
                     whtRate: whtLearn.Learn ? correction.WhtRate : null,
                     paymentTermsDays: null,
@@ -5420,10 +5492,11 @@ public class OcrService : IOcrService
         // ───── Train the category learner from this correction ─────
         // When user manually picks a debit account (the expense category) for a vendor,
         // remember it so future scans of the same vendor pre-fill that account.
-        if (!string.IsNullOrEmpty(correction.DebitAccountCode))
+        var feedbackDebitCode = learnDebitCode ?? swappedDebitCode;
+        if (!string.IsNullOrEmpty(learnDebitCode))
         {
             var debitName = await _db.ChartOfAccounts
-                .Where(a => a.CompanyId == companyId && a.AccountCode == correction.DebitAccountCode && !a.IsDeleted)
+                .Where(a => a.CompanyId == companyId && a.AccountCode == learnDebitCode && !a.IsDeleted)
                 .Select(a => a.AccountName)
                 .FirstOrDefaultAsync();
             await _categoryLearner.RecordAsync(
@@ -5431,8 +5504,11 @@ public class OcrService : IOcrService
                 correction.VendorTaxId ?? result.ExtractedVendorTaxId,
                 correction.VendorName ?? result.ExtractedVendorName,
                 correction.ExpenseCategory ?? result.ExpenseCategory,
-                correction.DebitAccountCode,
+                learnDebitCode,
                 debitName);
+        }
+        if (!string.IsNullOrEmpty(feedbackDebitCode))
+        {
 
             // ── Close the DeepSeek distillation loop ──
             // When this scan was classified by DeepSeek, record the user's
@@ -5446,10 +5522,13 @@ public class OcrService : IOcrService
                 try
                 {
                     var acceptedAi = result.GlAccountUsedAi
-                        && string.Equals(aiSuggestedDebitBefore, correction.DebitAccountCode, StringComparison.Ordinal);
+                        && string.Equals(aiSuggestedDebitBefore, feedbackDebitCode, StringComparison.Ordinal);
                     await _feedbackRecorder.RecordUserChoiceAsync(
-                        result.GlAccountAiFeedbackId.Value, correction.DebitAccountCode, acceptedAi, default,
-                        Accounting.Models.Enums.UserChoiceSource.Explicit);   // ผู้ใช้ส่งรหัสผังมาในคำแก้เอง
+                        result.GlAccountAiFeedbackId.Value, feedbackDebitCode, acceptedAi, default,
+                        // ผู้ใช้ส่งรหัสผังมาเอง = Explicit · ระบบสลับคู่ให้ = Implicit (ไม่ใช่ผู้ใช้เลือกค่านี้)
+                        swappedDebitCode != null
+                            ? Accounting.Models.Enums.UserChoiceSource.Implicit
+                            : Accounting.Models.Enums.UserChoiceSource.Explicit);
                 }
                 catch (Exception ex)
                 {
@@ -6856,7 +6935,7 @@ public class OcrService : IOcrService
         // a GL pick wherever the classifier produced one.
         // ★ คู่ Dr/Cr ของสแกนผ่านด่านวางฝั่งตัวเดียว (Helpers/OcrAccountPlacement · สแกนจริง f1690d11) — แถวที่เก็บไว้
         //   ก่อนแก้ (Dr 21230 เจ้าหนี้กรรมการ / Cr 51530 ต้นทุนซ่อมบำรุง) ถูกสลับกลับตอนอ่าน ไม่ต้องรอ migration
-        var scanAccounts = await ResolveScanAccountCodesAsync(companyId, result, docType, isSalesSide);
+        var scanAccounts = await ResolveScanAccountCodesAsync(companyId, result, docType);
         var scanDebitCode = scanAccounts.DebitCode;
         var scanDebitAccountId = scanDebitCode == null ? null
             : await _db.ChartOfAccounts.AsNoTracking()
@@ -7921,7 +8000,7 @@ public class OcrService : IOcrService
         var headerWht = whtRate > 0
             ? Math.Round(whtBase * whtRate / 100m, 2, MidpointRounding.AwayFromZero)
             : 0m;
-        var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(companyId, result, docType, isSalesSide);
+        var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(companyId, result, docType);
 
         var document = new Document { CompanyId = companyId, DocumentType = docType };
         await BuildScanLinesAsync(companyId, result, items, document, linkedPo, poLineMap,
@@ -8027,9 +8106,9 @@ public class OcrService : IOcrService
     /// <summary>ผังเดบิตระดับสแกน (จาก SuggestedAccountsJson.DebitAccountCode) → Id ในผังของ
     /// บริษัท — ใช้เป็น fallback ของบรรทัดที่ไม่มีผังของตัวเอง · ตัวเดียวทั้งสองทางเข้า</summary>
     private async Task<Guid?> ResolveScanDebitAccountIdAsync(
-        Guid companyId, OcrScanResult result, DocumentType docType, bool isSalesSide)
+        Guid companyId, OcrScanResult result, DocumentType docType)
     {
-        var codes = await ResolveScanAccountCodesAsync(companyId, result, docType, isSalesSide);
+        var codes = await ResolveScanAccountCodesAsync(companyId, result, docType);
         var debitCode = codes.DebitCode;
         if (debitCode == null) return null;
         return await _db.ChartOfAccounts.AsNoTracking()
@@ -8045,7 +8124,7 @@ public class OcrService : IOcrService
     /// สลับกลับ · <b>Cr เป็นค่าใช้จ่าย/รายได้</b> ตัดทิ้ง · Dr หนี้สินลำพังคงไว้ (ใบชำระหนี้เดิมเป็นรายการจริง) ·
     /// แถวที่บันทึกไว้ก่อนด่านนี้ (สแกนจริง f1690d11) ถูกแก้ตอนอ่าน — ไม่แตะข้อมูลที่เก็บไว้</para></summary>
     private async Task<(string? DebitCode, string? CreditCode, string? Reason)> ResolveScanAccountCodesAsync(
-        Guid companyId, OcrScanResult result, DocumentType docType, bool isSalesSide)
+        Guid companyId, OcrScanResult result, DocumentType docType)
     {
         string? debitCode = null, creditCode = null;
         if (!string.IsNullOrWhiteSpace(result.SuggestedAccountsJson))
@@ -8069,7 +8148,7 @@ public class OcrService : IOcrService
         if (string.IsNullOrWhiteSpace(debitCode)) debitCode = null;
         if (string.IsNullOrWhiteSpace(creditCode)) creditCode = null;
         if ((debitCode == null && creditCode == null)
-            || !Accounting.Helpers.OcrAccountPlacement.AppliesTo(docType.ToString(), isSalesSide))
+            || !Accounting.Helpers.OcrAccountPlacement.AppliesTo(docType, result.OurRole))
             return (debitCode, creditCode, null);
 
         var pairCodes = new[] { debitCode, creditCode }.Where(c => c != null).Select(c => c!).ToList();
@@ -8080,8 +8159,7 @@ public class OcrService : IOcrService
         Accounting.Helpers.GlAccountCandidate? pairCand(string? code)
             => code == null ? null
                 : pairRows.Where(r => r.Code == code).Select(r => (Accounting.Helpers.GlAccountCandidate?)r).FirstOrDefault();
-        var check = Accounting.Helpers.OcrAccountPlacement.Check(
-            pairCand(debitCode), pairCand(creditCode), debitIsSystemSuggested: false);
+        var check = Accounting.Helpers.OcrAccountPlacement.ResolveStored(pairCand(debitCode), pairCand(creditCode));
         return check.Verdict == Accounting.Helpers.OcrAccountPlacement.Verdict.Ok
             ? (debitCode, creditCode, null)
             : (check.DebitCode, check.CreditCode, check.Reason);
@@ -8431,7 +8509,7 @@ public class OcrService : IOcrService
             ? Math.Round(whtBase * whtRate / 100m, 2, MidpointRounding.AwayFromZero)
             : 0m;
         var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(
-            companyId, result, document.DocumentType, isSalesSide);
+            companyId, result, document.DocumentType);
         var linesBefore = document.Lines.ToHashSet();
         await BuildScanLinesAsync(companyId, result, items, document, linkedPo: null,
             poLineMap: new Dictionary<int, Guid?>(), scanDebitAccountId, headerSubTotal, hdrDiscRaw,
@@ -9493,26 +9571,18 @@ public class OcrService : IOcrService
                     // Find a default credit account: scan's suggested CreditAccount,
                     // else the first Liability/Equity account configured as "AP"/"Cash"
                     Guid? creditAccountId = null;
-                    if (!string.IsNullOrEmpty(scan.SuggestedAccountsJson))
+                    // ★ แหล่งเงินผ่านด่านวางฝั่งตัวเดียวกับเส้นสร้างเอกสาร (ฝ่ายค้านรอบ f1690d11: เส้นนี้เคยอ่าน
+                    //   CreditAccountCode จาก JSON ตรง ๆ ⇒ แถวที่เก็บ Cr 51530 ค่าใช้จ่ายไว้ ลง JE ตั้งสินทรัพย์ Cr ค่าใช้จ่าย)
+                    //   อ่าน JSON ไม่ได้ = ResolveScanAccountCodesAsync log ไว้แล้ว ⇒ fallback ข้างล่างหยิบเจ้าหนี้ตัวแรก
+                    var assetDocType = Accounting.Helpers.OcrTargetDocumentType.Resolve(
+                        null, scan.TargetDocumentType, scan.DocumentType, scan.LinkedPurchaseOrderId.HasValue).Type;
+                    var assetAccounts = await ResolveScanAccountCodesAsync(companyId, scan, assetDocType);
+                    var assetCreditCode = assetAccounts.CreditCode;
+                    if (!string.IsNullOrWhiteSpace(assetCreditCode))
                     {
-                        try
-                        {
-                            using var doc = System.Text.Json.JsonDocument.Parse(scan.SuggestedAccountsJson);
-                            if (doc.RootElement.TryGetProperty("CreditAccountCode", out var cc) && cc.GetString() is string code)
-                            {
-                                creditAccountId = await _db.ChartOfAccounts.AsNoTracking()
-                                    .Where(a => a.CompanyId == companyId && a.AccountCode == code && !a.IsDeleted)
-                                    .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            // เส้นทางเงิน (JE ตั้งสินทรัพย์) — ห้ามเงียบ: ถ้าอ่านไม่ได้
-                            // fallback ข้างล่างจะหยิบ "บัญชีเจ้าหนี้ตัวแรกที่ขึ้นต้น 21"
-                            // มาลงแทน ซึ่งเป็นการเดาที่ผู้ใช้ไม่มีทางรู้
-                            _logger.LogWarning(ex,
-                                "อ่านบัญชีเครดิตที่แนะนำของสแกน {ScanId} ไม่ได้ — จะตกไปใช้บัญชีเจ้าหนี้ตัวแรก", scan.Id);
-                        }
+                        creditAccountId = await _db.ChartOfAccounts.AsNoTracking()
+                            .Where(a => a.CompanyId == companyId && a.AccountCode == assetCreditCode && !a.IsDeleted)
+                            .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
                     }
                     if (!creditAccountId.HasValue)
                     {
@@ -9872,8 +9942,50 @@ public class OcrService : IOcrService
         // หน้าเว็บจะได้เลิกถือลิสต์ salesTypes ของตัวเอง (ดูหมายเหตุใน DTO)
         var sideMap = Accounting.Helpers.DocumentSide.BuildSideMap()
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+
+        // ── ผังที่การ์ด/หน้าตรวจแสดง = ผังที่เส้นสร้างเอกสารลงจริง (ฝ่ายค้านรอบ f1690d11) ──
+        // แถวเก่าที่เก็บ Dr 21230 / Cr 51530 ไว้ ถูกสลับตอนสร้างเอกสาร (ResolveScanAccountCodesAsync) ⇒ หน้าจอต้องเห็นคู่เดียวกัน
+        // ด้วยตัวตัดสินเดียวกัน (OcrAccountPlacement.ResolveStored + AppliesToScan) ไม่ใช่ JSON ดิบ
+        var shownCodes = items
+            .Where(x => x.SuggestedAccounts != null)
+            .SelectMany(x => new[] { x.SuggestedAccounts!.DebitAccountCode, x.SuggestedAccounts.CreditAccountCode })
+            .Where(c => !string.IsNullOrEmpty(c)).Select(c => c!).Distinct().ToList();
+        var shownRows = shownCodes.Count == 0
+            ? new List<Accounting.Helpers.GlAccountCandidate>()
+            : await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && shownCodes.Contains(a.AccountCode))
+                .Select(a => new Accounting.Helpers.GlAccountCandidate(a.AccountCode, a.AccountName, a.AccountType))
+                .ToListAsync();
+        Accounting.Helpers.GlAccountCandidate? shownCand(string? code)
+            => string.IsNullOrEmpty(code) ? null
+                : shownRows.Where(r => r.Code == code).Select(r => (Accounting.Helpers.GlAccountCandidate?)r).FirstOrDefault();
+        OcrResultResponse placeShown(OcrResultResponse x)
+        {
+            var sa = x.SuggestedAccounts;
+            if (sa == null || !Accounting.Helpers.OcrAccountPlacement.AppliesToScan(
+                    x.TargetDocumentType, x.DocumentType, x.LinkedPurchaseOrderId.HasValue, x.OurRole))
+                return x;
+            var placed = Accounting.Helpers.OcrAccountPlacement.ResolveStored(
+                shownCand(sa.DebitAccountCode), shownCand(sa.CreditAccountCode));
+            if (placed.Verdict == Accounting.Helpers.OcrAccountPlacement.Verdict.Ok) return x;
+            var notes = x.ProcessingNotes ?? "";
+            return x with
+            {
+                SuggestedAccounts = sa with
+                {
+                    DebitAccountCode = placed.DebitCode,
+                    DebitAccountName = shownCand(placed.DebitCode)?.Name,
+                    CreditAccountCode = placed.CreditCode,
+                    CreditAccountName = shownCand(placed.CreditCode)?.Name,
+                },
+                ProcessingNotes = placed.Reason == null || notes.Contains(placed.Reason, StringComparison.Ordinal)
+                    ? x.ProcessingNotes
+                    : notes + "\n" + Accounting.Helpers.OcrAccountPlacement.Tag + " " + placed.Reason,
+            };
+        }
+
         return items
-            .Select(x => x with
+            .Select(x => placeShown(x) with
             {
                 ComplianceIssues = Ocr.OcrScanComplianceEvaluator.Evaluate(x, ourTaxId),
                 DocumentSideMap = sideMap,

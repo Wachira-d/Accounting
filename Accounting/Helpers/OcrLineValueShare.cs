@@ -64,3 +64,23 @@ public static class OcrLineValueShare
         return new Share(matched, total, count, descs);
     }
 }
+
+/// <summary>
+/// ส่วนของใบที่ "ถูกตัดออกจากการตัดสินหมวดเพราะเป็นส่วนน้อย" แต่<b>หมวดนั้นมีอัตราหัก ณ ที่จ่ายตามกฎหมาย และยอดส่วนนั้นถึงเกณฑ์
+/// 1,000 บาท</b> — ฝ่ายค้านรอบ f1690d11: ตัดหมวดทิ้งเงียบ ๆ = หักขาด (ผู้จ่ายรับผิด ม.54) ⇒ ผู้เรียกต้องติดแท็ก
+/// <see cref="Tag"/> ใน ProcessingNotes และกดความมั่นใจช่องอัตราหักให้ต่ำกว่า 0.85 (ไฮไลต์เหลือง) — ระบบไม่หักเงินให้เอง
+/// </summary>
+public readonly record struct OcrMinorityWhtPart(
+    string Category, string? WhtIncomeTypeCode, decimal StatutoryRate, decimal Amount, string Reason)
+{
+    /// <summary>แท็กใน ProcessingNotes</summary>
+    public const string Tag = "[WHT-PARTIAL]";
+
+    /// <summary>ความมั่นใจสูงสุดของช่องอัตราหักเมื่อมีส่วนนี้ — ต่ำกว่าเกณฑ์ไฮไลต์ 0.85 เสมอ</summary>
+    public const double WhtFieldConfidenceCap = 0.5;
+
+    /// <summary>ส่วนน้อยนี้ต้องให้คนตรวจหักไหม — หมวดมีอัตราตามกฎหมาย และยอดส่วนนั้นถึงเกณฑ์ (ตัวตัดสินเกณฑ์ตัวเดียว
+    /// <see cref="ThaiWhtRateTable.ShouldWithhold"/>)</summary>
+    public static bool NeedsReview(decimal? statutoryRate, OcrLineValueShare.Share share)
+        => statutoryRate is > 0m && share.Known && ThaiWhtRateTable.ShouldWithhold(share.MatchedValue);
+}

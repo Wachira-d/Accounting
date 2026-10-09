@@ -512,9 +512,12 @@ public class VendorIntelligenceService
         {
             var account = await _db.ChartOfAccounts
                 .Where(a => a.Id == dominantAccountId.Value && a.CompanyId == companyId)
-                .Select(a => new { a.AccountCode, a.AccountName })
+                .Select(a => new { a.AccountCode, a.AccountName, a.AccountType })
                 .FirstOrDefaultAsync();
-            if (account != null)
+            // หนี้สิน/ทุนไม่ใช่ "ผังของค่าใช้จ่าย" — สอนไป = สแกนใบถัดไปของผู้ขายได้เดบิต 21230 เจ้าหนี้กรรมการ
+            // (สแกนจริง f1690d11 · ตัวตัดสินเดียว OcrAccountPlacement.IsLearnableLineAccount)
+            if (account != null
+                && Accounting.Helpers.OcrAccountPlacement.IsLearnableLineAccount(account.AccountType))
             {
                 var debitBreakdown = ParseBreakdown(intel.DebitAccountBreakdownJson);
                 debitBreakdown[account.AccountCode] = debitBreakdown.GetValueOrDefault(account.AccountCode) + 1;
@@ -838,7 +841,9 @@ public class VendorIntelligenceService
                     // Header-level fallback — find the account from CoA
                     dominantLine = d.ExpenseCategory;  // Eager-loaded if available
                 }
-                if (dominantLine != null)
+                // หนี้สิน/ทุนไม่สอนเป็นผังเดบิตของผู้ขาย (สแกนจริง f1690d11 · OcrAccountPlacement.IsLearnableLineAccount)
+                if (dominantLine != null
+                    && Accounting.Helpers.OcrAccountPlacement.IsLearnableLineAccount(dominantLine.AccountType))
                 {
                     var code = dominantLine.AccountCode;
                     debitBreakdown[code] = debitBreakdown.GetValueOrDefault(code) + 1;

@@ -260,12 +260,33 @@ public class OcrF1690EtaxScanTests
     {
         var lines = new[] { ("ตู้เย็น 2 ประตู", 20000m), ("ค่าขนส่งและติดตั้งนอกเขต", 1500m) };
         var diags = new List<string>();
+        var parts = new List<OcrMinorityWhtPart>();
         ExpenseCategoryResolver.Resolve(
             vendorName: "หจก. สมชายพาณิชย์", headerDescription: null,
             lineDescriptions: lines.Select(l => (string?)l.Item1).ToList(),
             rawText: null, industry: IndustryType.Hotel,
-            pricedLines: Priced(lines), diagnostics: diags);
+            pricedLines: Priced(lines), diagnostics: diags, minorityWhtParts: parts);
         Assert.Contains(diags, d => d.Contains("ถึงเกณฑ์ 1,000 บาท") && d.Contains("1,500.00"));
+        // ต้องมองเห็นบนหน้าสแกน (แท็ก [WHT-PARTIAL] + ช่องอัตราหักเหลือง) ไม่ใช่แค่ trace
+        Assert.Contains(parts, p => p.Category == "ค่าขนส่ง / ค่าจัดส่ง" && p.StatutoryRate == 1m && p.Amount == 1500m);
+        Assert.True(OcrMinorityWhtPart.WhtFieldConfidenceCap < 0.85);
+    }
+
+    [Fact]
+    public void หมวด_ส่วนน้อยต่ำกว่าเกณฑ์_ไม่ขึ้นแท็กหักขาด()
+    {
+        var parts = new List<OcrMinorityWhtPart>();
+        ExpenseCategoryResolver.Resolve(
+            vendorName: Vendor, headerDescription: null,
+            lineDescriptions: RealLines.Select(l => (string?)l.Description).ToList(),
+            rawText: OcrEtaxXmlText.ContentOnly(RealXml), industry: IndustryType.Hotel,
+            pricedLines: Priced(RealLines), minorityWhtParts: parts);
+        Assert.Empty(parts);   // ค่าส่ง 37.38 < 1,000 — ไม่ใช่เหตุให้เตือนหักขาด (คำเตือนที่ฟ้องใบถูก = ปิดด่าน)
+        var share = OcrLineValueShare.Measure(Priced(RealLines), d => d.Contains("ขนส่ง"));
+        Assert.False(OcrMinorityWhtPart.NeedsReview(1m, share));
+        Assert.False(OcrMinorityWhtPart.NeedsReview(null,
+            OcrLineValueShare.Measure(new[] { new OcrPricedLine("ค่าขนส่ง", 5000m), new OcrPricedLine("ของ", 20000m) },
+                d => d.Contains("ขนส่ง"))));
     }
 
     [Fact]
@@ -348,14 +369,90 @@ public class OcrF1690EtaxScanTests
     }
 
     [Fact]
-    public void คู่บัญชี_ใช้เฉพาะใบซื้อที่เดบิตค่าใช้จ่าย()
+    public void คู่บัญชี_ใช้เฉพาะใบซื้อที่เดบิตค่าใช้จ่าย_รวมใบรับรองแทนใบเสร็จ()
     {
-        Assert.True(OcrAccountPlacement.AppliesTo("PaymentVoucher", isSalesSide: false));
-        Assert.True(OcrAccountPlacement.AppliesTo("PurchaseInvoice", isSalesSide: false));
-        Assert.True(OcrAccountPlacement.AppliesTo("Expense", isSalesSide: false));
+        Assert.True(OcrAccountPlacement.AppliesTo(DocumentType.PaymentVoucher, "Buyer"));
+        Assert.True(OcrAccountPlacement.AppliesTo(DocumentType.PurchaseInvoice, null));
+        Assert.True(OcrAccountPlacement.AppliesTo(DocumentType.Expense, null));
+        Assert.True(OcrAccountPlacement.AppliesTo(DocumentType.CertificateInLieu, null));
+        // ใบสำคัญจ่ายเป็นฝั่งซื้อเสมอ (DocumentSide ตัวเดียวกับเส้นสร้างเอกสาร) — บทบาทที่อนุมานผิดไม่ปิดด่าน
+        Assert.True(OcrAccountPlacement.AppliesTo(DocumentType.PaymentVoucher, "Seller"));
         // ใบลดหนี้ฝั่งซื้อ = Dr เจ้าหนี้ / Cr ต้นทุน เป็นรายการจริง · ฝั่งขาย Cr รายได้ ⇒ ไม่ตรวจ
-        Assert.False(OcrAccountPlacement.AppliesTo("CreditNote", isSalesSide: false));
-        Assert.False(OcrAccountPlacement.AppliesTo("PaymentVoucher", isSalesSide: true));
-        Assert.False(OcrAccountPlacement.AppliesTo(null, isSalesSide: false));
+        Assert.False(OcrAccountPlacement.AppliesTo(DocumentType.CreditNote, "Buyer"));
+        Assert.False(OcrAccountPlacement.AppliesTo(DocumentType.TaxInvoice, "Seller"));
+        Assert.False(OcrAccountPlacement.AppliesTo(DocumentType.Receipt, null));
+    }
+
+    [Fact]
+    public void คู่บัญชี_ตัวตัดสินฝั่งของแถวสแกน_ใช้ชนิดที่เส้นสร้างเอกสารจะสร้างจริง()
+    {
+        // เป้าหมายว่าง: กระดาษใบกำกับ ⇒ ใบแจ้งหนี้ซื้อ (fallback เดียวกับ OcrTargetDocumentType.Resolve) ⇒ ตรวจ
+        Assert.True(OcrAccountPlacement.AppliesToScan(null, "TaxInvoice", false, null));
+        Assert.True(OcrAccountPlacement.AppliesToScan(null, "Receipt", false, null));
+        Assert.True(OcrAccountPlacement.AppliesToScan("PaymentVoucher", "TaxInvoice", false, "Buyer"));
+        // ผูก PO แล้ว = ใบแจ้งหนี้ซื้อเสมอ
+        Assert.True(OcrAccountPlacement.AppliesToScan("Invoice", "TaxInvoice", true, "Seller"));
+        // ทิศตรงข้าม: ฝั่งขาย/ใบมัดจำ/ใบลดหนี้ ไม่ตรวจ
+        Assert.False(OcrAccountPlacement.AppliesToScan("Invoice", "TaxInvoice", false, "Seller"));
+        Assert.False(OcrAccountPlacement.AppliesToScan("Deposit", "Receipt", false, "Seller"));
+        Assert.False(OcrAccountPlacement.AppliesToScan("CreditNote", "CreditNote", false, "Buyer"));
+    }
+
+    [Fact]
+    public void คู่บัญชี_คู่ที่เก็บไว้_การ์ดกับเส้นสร้างเอกสารใช้ตัวเดียวกัน()
+    {
+        var r = OcrAccountPlacement.ResolveStored(Director21230, RoomRepair51530);
+        Assert.Equal(OcrAccountPlacement.Verdict.Swapped, r.Verdict);
+        Assert.Equal(("51530", "21230"), (r.DebitCode, r.CreditCode));
+        // เดบิตหนี้สินลำพังที่ผู้ใช้อาจเลือกเอง (ชำระหนี้เดิม) ไม่ถูกตัดตอนอ่าน
+        Assert.Equal(OcrAccountPlacement.Verdict.Ok, OcrAccountPlacement.ResolveStored(Director21230, Cash11111).Verdict);
+    }
+
+    // ═══════════════ คำแก้จากหน้าตรวจ (ฝ่ายค้านรอบ f1690d11 ข้อ 5) ═══════════════
+
+    [Fact]
+    public void คำแก้_ผู้ใช้ส่งทั้งคู่กลับด้าน_สลับ()
+    {
+        var d = OcrAccountPlacement.DecideCorrection(Director21230, RoomRepair51530, userSentDebit: true, userSentCredit: true);
+        Assert.Equal(OcrAccountPlacement.CorrectionAction.Swap, d.Action);
+        Assert.Equal(("51530", "21230"), (d.DebitCode, d.CreditCode));
+    }
+
+    [Fact]
+    public void คำแก้_ผู้ใช้เลือกแหล่งเงินเป็นค่าใช้จ่าย_ปฏิเสธพร้อมเหตุผล_ไม่เก็บเงียบ()
+    {
+        var withGoodDebit = OcrAccountPlacement.DecideCorrection(Supplies52120, RoomRepair51530, true, true);
+        Assert.Equal(OcrAccountPlacement.CorrectionAction.RejectCredit, withGoodDebit.Action);
+        Assert.Contains("51530", withGoodDebit.Reason);
+        Assert.Contains("บัญชีเดบิต", withGoodDebit.Reason);
+        // ส่งแค่เครดิต (เดบิตเดิมของระบบเป็นหนี้สิน) — ไม่สลับฝั่งที่ผู้ใช้ไม่ได้ส่ง ⇒ ปฏิเสธเครดิตที่ผู้ใช้ส่ง
+        var onlyCredit = OcrAccountPlacement.DecideCorrection(Director21230, RoomRepair51530, false, true);
+        Assert.Equal(OcrAccountPlacement.CorrectionAction.RejectCredit, onlyCredit.Action);
+    }
+
+    [Fact]
+    public void คำแก้_ทิศตรงข้าม_ไม่แตะฝั่งที่ผู้ใช้ไม่ได้ส่ง_และคู่ที่ถูก()
+    {
+        // ส่งแค่เดบิต 21230 · เครดิตเดิมของระบบเป็นค่าใช้จ่าย ⇒ ไม่ย้ายเดบิตของผู้ใช้ไปเป็นเครดิต (เส้นอ่านจัดการเครดิตของระบบเอง)
+        var onlyDebit = OcrAccountPlacement.DecideCorrection(Director21230, RoomRepair51530, true, false);
+        Assert.Equal(OcrAccountPlacement.CorrectionAction.Keep, onlyDebit.Action);
+        Assert.Equal(("21230", "51530"), (onlyDebit.DebitCode, onlyDebit.CreditCode));
+        // ชำระหนี้กรรมการเอง Dr 21230 / Cr เงินสด
+        Assert.Equal(OcrAccountPlacement.CorrectionAction.Keep,
+            OcrAccountPlacement.DecideCorrection(Director21230, Cash11111, true, true).Action);
+        Assert.Equal(OcrAccountPlacement.CorrectionAction.Keep,
+            OcrAccountPlacement.DecideCorrection(RoomRepair51530, Director21230, true, true).Action);
+    }
+
+    [Fact]
+    public void ตัวเรียนรู้_ไม่สอนหนี้สินและทุนเป็นผังบรรทัด()
+    {
+        Assert.False(OcrAccountPlacement.IsLearnableLineAccount(AccountType.Liability));
+        Assert.False(OcrAccountPlacement.IsLearnableLineAccount(AccountType.Equity));
+        // ทิศตรงข้าม: ค่าใช้จ่าย/สินทรัพย์ (ฝั่งซื้อ) · รายได้ (ฝั่งขาย) · ไม่รู้ประเภท ยังสอนตามเดิม
+        Assert.True(OcrAccountPlacement.IsLearnableLineAccount(AccountType.Expense));
+        Assert.True(OcrAccountPlacement.IsLearnableLineAccount(AccountType.Asset));
+        Assert.True(OcrAccountPlacement.IsLearnableLineAccount(AccountType.Revenue));
+        Assert.True(OcrAccountPlacement.IsLearnableLineAccount(null));
     }
 }

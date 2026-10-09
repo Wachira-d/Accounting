@@ -55,6 +55,8 @@ internal static class ExpenseCategoryResolver
     /// <param name="pricedLines">บรรทัดที่มีเงินพร้อมยอด — เมื่อส่งมา หมวดที่ชนะด้วยคำบน<b>บรรทัดส่วนน้อยของมูลค่า</b>
     /// (<see cref="Accounting.Helpers.OcrLineValueShare"/>) จะ<b>ไม่ได้ตัดสินหมวดของทั้งใบ</b> เว้นแต่มีหลักฐานจากชื่อผู้ขาย/หัวเรื่อง ·
     /// null = พฤติกรรมเดิม (ไม่รู้ยอด ⇒ ไม่ตัดสินแทน)</param>
+    /// <param name="minorityWhtParts">รับส่วนน้อยที่หมวดมีอัตราหักตามกฎหมายและยอดถึงเกณฑ์ 1,000 บาท — ผู้เรียกติดแท็ก
+    /// <see cref="Accounting.Helpers.OcrMinorityWhtPart.Tag"/> + กดความมั่นใจช่องอัตราหัก</param>
     /// <param name="diagnostics">รับเหตุผลของหมวดที่ถูกตัดเพราะเป็นบรรทัดส่วนน้อย (พร้อมเกณฑ์ 1,000 บาทของยอดส่วนนั้น) —
     /// ได้เสมอแม้ไม่มีหมวดไหนชนะ (ผู้เรียกเขียนลง trace · ห้ามเงียบ)</param>
     public static CategoryResult? Resolve(
@@ -66,7 +68,8 @@ internal static class ExpenseCategoryResolver
         BusinessType? businessType = null,
         IEnumerable<string?>? zeroAmountLineDescriptions = null,
         IReadOnlyList<Accounting.Helpers.OcrPricedLine>? pricedLines = null,
-        List<string>? diagnostics = null)
+        List<string>? diagnostics = null,
+        List<Accounting.Helpers.OcrMinorityWhtPart>? minorityWhtParts = null)
     {
         var reasons = new List<string>();
         // สามชั้น: ข้อมูลที่ **ผูกกับเงิน** (ผู้ขาย/หัวเรื่อง/บรรทัดที่มียอด)
@@ -138,7 +141,13 @@ internal static class ExpenseCategoryResolver
             if (lineMinority && !anchored && !brandExactHit && !brandFuzzyHit)
             {
                 // หลักฐานผูกกับเงินของหมวดนี้มีแค่บรรทัดส่วนน้อย ⇒ ไม่ให้ตัดสินหมวด/ประเภทเงินได้ของทั้งใบ · ต้องบอกเหตุผล
-                diagnostics?.Add(MinorityLineReason(rule, share!.Value));
+                var minorityReason = MinorityLineReason(rule, share!.Value);
+                diagnostics?.Add(minorityReason);
+                // หมวดที่ถูกตัดมีอัตราหักตามกฎหมาย + ยอดส่วนนั้นถึงเกณฑ์ ⇒ ผู้เรียกต้องทำให้มองเห็น (ห้ามหายเงียบ = หักขาด)
+                if (Accounting.Helpers.OcrMinorityWhtPart.NeedsReview(rule.StatutoryWhtRate, share.Value))
+                    minorityWhtParts?.Add(new Accounting.Helpers.OcrMinorityWhtPart(
+                        rule.Category, rule.WhtIncomeTypeCode, rule.StatutoryWhtRate!.Value,
+                        share.Value.MatchedValue, minorityReason));
                 continue;
             }
             if (kwScore == 0) continue;
@@ -185,7 +194,7 @@ internal static class ExpenseCategoryResolver
         if (rule.StatutoryWhtRate is not > 0m) return text;
         var it = Accounting.Helpers.ThaiWhtRateTable.Find(rule.WhtIncomeTypeCode);
         var label = it != null ? $"{it.TaxSection} {it.Name}" : rule.Category;
-        return Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(share.MatchedValue)
+        return Accounting.Helpers.OcrMinorityWhtPart.NeedsReview(rule.StatutoryWhtRate, share)
             ? text + $" · ส่วนนี้ ({label}) ถึงเกณฑ์ 1,000 บาท — ตรวจว่าต้องหัก ณ ที่จ่าย {rule.StatutoryWhtRate}% "
                 + $"เฉพาะยอด {share.MatchedValue:N2} (ไม่ใช่ทั้งใบ)"
             : text + $" · ยอดส่วนนี้ ({label}) ต่ำกว่าเกณฑ์ 1,000 บาท (ท.ป.4/2528 ข้อ 12) — ไม่ต้องหัก ณ ที่จ่าย";

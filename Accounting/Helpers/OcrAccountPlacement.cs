@@ -21,7 +21,7 @@ namespace Accounting.Helpers;
 /// <item><b>Dr เป็นหนี้สิน/ทุน/รายได้</b> ⇒ ปฏิเสธ<b>เฉพาะค่าที่ระบบเสนอ</b> (ตัวเรียนรู้/ประวัติ/AI) ·
 ///   ผู้ใช้เลือกเองยังได้ (ใบสำคัญจ่ายชำระหนี้เดิม Dr เจ้าหนี้ / Cr ธนาคาร เป็นรายการจริง) — ทางไปต่อของผู้ใช้ (F2 ข้อ 8)</item>
 /// </list>
-/// ใช้กับใบฝั่งซื้อที่เดบิตค่าใช้จ่าย (ใบสำคัญจ่าย · ใบแจ้งหนี้ซื้อ · ค่าใช้จ่าย) เท่านั้น — ใบลดหนี้ฝั่งซื้อ (Dr เจ้าหนี้ / Cr
+/// ใช้กับใบฝั่งซื้อที่เดบิตค่าใช้จ่าย (ใบสำคัญจ่าย · ใบแจ้งหนี้ซื้อ · ค่าใช้จ่าย · ใบรับรองแทนใบเสร็จ) เท่านั้น — ใบลดหนี้ฝั่งซื้อ (Dr เจ้าหนี้ / Cr
 /// ต้นทุน) และฝั่งขาย ผู้เรียกต้องไม่ส่งมา (<see cref="AppliesTo"/>)</para>
 /// </summary>
 public static class OcrAccountPlacement
@@ -48,9 +48,76 @@ public static class OcrAccountPlacement
     /// <summary>แท็กใน ProcessingNotes — ผู้ใช้เห็นบนหน้าสแกน</summary>
     public const string Tag = "[ACCT-PLACEMENT]";
 
-    /// <summary>ชนิดเอกสารเป้าหมายที่ "Dr = ค่าใช้จ่าย/สินทรัพย์ · Cr = แหล่งเงิน/เจ้าหนี้" — ที่เดียวของรายการนี้</summary>
-    public static bool AppliesTo(string? targetDocumentType, bool isSalesSide)
-        => !isSalesSide && targetDocumentType is "PaymentVoucher" or "Expense" or "PurchaseInvoice";
+    /// <summary>ชนิดเอกสารที่ "Dr = ค่าใช้จ่าย/สินทรัพย์ · Cr = แหล่งเงิน/เจ้าหนี้" — ที่เดียวของรายการนี้
+    /// (ใบรับรองแทนใบเสร็จ = ใบจ่ายค่าใช้จ่ายรูปแบบหนึ่ง · ฝ่ายค้านรอบ f1690d11)</summary>
+    private static readonly HashSet<DocumentType> ExpenseShaped = new()
+    {
+        DocumentType.PaymentVoucher, DocumentType.Expense,
+        DocumentType.PurchaseInvoice, DocumentType.CertificateInLieu,
+    };
+
+    /// <summary>ด่านนี้ใช้กับเอกสาร<b>ชนิดที่จะสร้างจริง</b>ไหม — ฝั่งตัดสินด้วย
+    /// <see cref="DocumentSide.IsSales"/> ตัวเดียวกับเส้นสร้างเอกสาร</summary>
+    public static bool AppliesTo(DocumentType type, string? ourRole)
+        => ExpenseShaped.Contains(type) && !DocumentSide.IsSales(type, ourRole);
+
+    /// <summary>ตัวตัดสิน "ใช้ด่านไหม" ของ<b>แถวสแกน</b> (ไปป์ไลน์ · แก้ผลสแกน · การ์ดบนหน้าจอ · ลงทะเบียนสินทรัพย์) —
+    /// ชนิดเอกสารมาจาก <see cref="OcrTargetDocumentType.Resolve"/> ตัวเดียวกับเส้นสร้างเอกสาร ⇒ เป้าหมายว่าง/บทบาทไม่รู้
+    /// ได้คำตอบเดียวกันทุกทาง (เดิมไปป์ไลน์ดู <c>OurRole == "Seller"</c> + ชื่อเป้าหมายตรง ๆ ส่วนเส้นอ่านดูชนิดที่ resolve แล้ว
+    /// ⇒ เป้าหมายว่างได้สองคำตอบ)</summary>
+    public static bool AppliesToScan(
+        string? scanTargetDocumentType, string? scannedPaperType, bool hasLinkedPurchaseOrder, string? ourRole)
+    {
+        var resolved = OcrTargetDocumentType.Resolve(null, scanTargetDocumentType, scannedPaperType, hasLinkedPurchaseOrder);
+        return !resolved.IsDeposit && AppliesTo(resolved.Type, ourRole);
+    }
+
+    /// <summary>บัญชีประเภทนี้สอนตัวเรียนรู้ (ประวัติผู้ขาย · ตัวเรียนหมวด · feedback ผังบัญชี) เป็น "ผังของบรรทัด" ได้ไหม —
+    /// หนี้สิน/ทุน ไม่ใช่คำตอบของ "จ่ายค่าอะไร" ทั้งฝั่งซื้อและขาย (สอนไป = ใบถัดไปของผู้ขายได้เดบิต 21230 อีก) ·
+    /// ไม่รู้ประเภท (null) = สอนตามเดิม</summary>
+    public static bool IsLearnableLineAccount(AccountType? type)
+        => type is not (AccountType.Liability or AccountType.Equity);
+
+    /// <summary>คู่ที่<b>เก็บไว้แล้ว</b> (อาจเป็นค่าที่ผู้ใช้เลือก) — ตัวเดียวของ "เส้นสร้างเอกสาร" และ "การ์ดบนหน้าจอ"
+    /// เพื่อให้สิ่งที่ผู้ใช้เห็น = สิ่งที่ลงบัญชีจริง (คู่สลับ ⇒ สลับ · แหล่งเงินเป็นค่าใช้จ่าย/รายได้ ⇒ ตัด · เดบิตหนี้สินลำพังคงไว้)</summary>
+    public static Result ResolveStored(GlAccountCandidate? debit, GlAccountCandidate? credit)
+        => Check(debit, credit, debitIsSystemSuggested: false);
+
+    public enum CorrectionAction
+    {
+        /// <summary>เก็บตามที่ผู้ใช้ส่ง</summary>
+        Keep = 0,
+        /// <summary>ผู้ใช้ส่ง<b>ทั้งคู่</b>มากลับด้าน ⇒ สลับ (ระบบสลับให้ ≠ ผู้ใช้เลือก — ห้ามบันทึกเป็นคำตอบแบบ Explicit)</summary>
+        Swap = 1,
+        /// <summary>แหล่งเงินที่ผู้ใช้เลือกเป็นค่าใช้จ่าย/รายได้ ⇒ ปฏิเสธคำแก้พร้อมเหตุผล (ห้ามเก็บเงียบ)</summary>
+        RejectCredit = 2,
+    }
+
+    /// <summary>ผลตัดสินของ "คำแก้ผลสแกน" ที่มีผังบัญชี</summary>
+    public readonly record struct CorrectionResult(CorrectionAction Action, string? DebitCode, string? CreditCode, string? Reason);
+
+    /// <summary>
+    /// **คำแก้จากหน้าตรวจ** — ตัดสินเฉพาะฝั่งที่ผู้ใช้ส่งมา (ฝ่ายค้านรอบ f1690d11: ห้ามเติม/ย้ายฝั่งที่ผู้ใช้ไม่ได้ส่ง)
+    /// <list type="bullet">
+    /// <item>ส่งทั้งคู่และกลับด้านพอดี ⇒ <see cref="CorrectionAction.Swap"/></item>
+    /// <item>ส่งแหล่งเงินที่เป็นค่าใช้จ่าย/รายได้ (และไม่ใช่คู่สลับที่ส่งมาทั้งคู่) ⇒ <see cref="CorrectionAction.RejectCredit"/></item>
+    /// <item>อื่น ๆ (รวมเดบิตหนี้สินที่ผู้ใช้เลือกเอง = ชำระหนี้เดิม) ⇒ <see cref="CorrectionAction.Keep"/></item>
+    /// </list>
+    /// </summary>
+    /// <param name="debit">เดบิตหลังรวมกับค่าที่เก็บไว้</param>
+    /// <param name="credit">เครดิตหลังรวมกับค่าที่เก็บไว้</param>
+    public static CorrectionResult DecideCorrection(
+        GlAccountCandidate? debit, GlAccountCandidate? credit, bool userSentDebit, bool userSentCredit)
+    {
+        var check = Check(debit, credit, debitIsSystemSuggested: false);
+        if (check.Verdict == Verdict.Swapped && userSentDebit && userSentCredit)
+            return new(CorrectionAction.Swap, check.DebitCode, check.CreditCode, check.Reason);
+        if (userSentCredit && credit is { } c && !PaymentSourceOk(c.Type))
+            return new(CorrectionAction.RejectCredit, debit?.Code, c.Code,
+                $"บัญชีเครดิต (แหล่งเงิน) {Label(c)} เป็น{TypeName(c.Type)} — ใบซื้อ/จ่ายต้องเครดิตเงินสด/ธนาคาร/เจ้าหนี้/ทุน "
+                + "ถ้าตั้งใจให้เป็นบัญชีค่าใช้จ่าย ให้เลือกไว้ที่ \"บัญชีเดบิต\" แทน — ยังไม่บันทึกคำแก้นี้");
+        return new(CorrectionAction.Keep, debit?.Code, credit?.Code, null);
+    }
 
     private static bool ExpenseDebitOk(AccountType t) => t is AccountType.Expense or AccountType.Asset;
 
