@@ -1743,11 +1743,9 @@
           this._whtBasis = sr?.data?.whtRecognitionBasis || 'Cash';
           // รอบ 203 — ป้ายรูปแบบใบเสร็จ/ใบกำกับมาจากเซิร์ฟเวอร์ (ReceiptFormRule.Label ผ่าน matrix) ทับข้อความสำรองใน markup
           // เพื่อไม่ให้หน้านี้ถือสำเนาป้ายคนละชุดกับหน้าตั้งค่า/กระดาษ (ไม่มี matrix = คงข้อความสำรอง)
-          const _rfRow = (sr?.data?.receiptFormMatrix || [])[0];
-          if (_rfRow?.options) {
-            const _rfSel = document.getElementById('fReceiptForm');
-            _rfRow.options.forEach(o => { const opt = _rfSel?.querySelector(`option[value="${o.value}"]`); if (opt) opt.textContent = o.label; });
-          }
+          // (ฝ่ายค้านรอบ 203 ข้อ 5: ป้าย+ค่าแนะนำต้องเป็นของ "กรณีของใบนี้" ไม่ใช่แถวแรกของตาราง) — เก็บทั้งตาราง แล้ว _rfApplyCase เลือกแถวตามชนิดใบ
+          this._rfMatrix = sr?.data?.receiptFormMatrix || null;
+          this._rfApplyCase();
           // แกนวิเคราะห์ เปิด/ปิดต่อบริษัท — ปิดแล้วซ่อนช่องทั้ง form + filter
           // (ฟอร์มเบาลงสำหรับบริษัทที่ไม่ใช้ ข้อมูลเดิมไม่หาย)
           this._showProject = sr?.data?.showProjectOnDocuments !== false;
@@ -4147,6 +4145,25 @@
           hint: 'ใช้เมื่อลูกค้าจ่ายแล้วและไม่ขอใบกำกับเต็มรูป — ออก "ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ" ระบบบันทึกรับเงินให้อัตโนมัติ · ไม่ต้องมีเลขภาษี/ที่อยู่ผู้ซื้อ · VAT ขายยังนำส่งครบตามปกติ แต่ผู้ซื้อนำใบนี้ไปเคลมภาษีซื้อไม่ได้ · เหมาะกับขายปลีก/บริการรายย่อยแก่ผู้บริโภค (§86/6 — ต้องเป็นกิจการขายปลีก · ภ.พ.06 ใช้เฉพาะสลิปจากเครื่อง POS)' },
       },
 
+      /** รูปแบบใบเสร็จ/ใบกำกับรายใบ (รอบ 203): เลือกแถว matrix ของ "กรณีของใบนี้" แล้ววางป้ายตัวเลือก + ค่าแนะนำจากเซิร์ฟเวอร์
+       *  (ReceiptFormRule.Matrix ตัวเดียวกับด่านอนุมัติ) — หน้านี้สร้างได้แค่เอกสารทั่วไป/ใบมัดจำ ⇒ กรณี = Deposit หรือ CashSale
+       *  (ใบที่พัก/สลิป/ใบรับชำระไม่ได้สร้างจากฟอร์มนี้) · ไม่มีตารางหรือไม่พบแถว = คงข้อความสำรองใน markup */
+      _rfApplyCase(docType) {
+        const sel = document.getElementById('fReceiptForm'); if (!sel || !this._rfMatrix) return;
+        const dt = docType || document.getElementById('fDocType')?.value || '';
+        const caseKey = dt === 'Deposit' ? 'Deposit' : 'CashSale';
+        const row = this._rfMatrix.find(r => r.case === caseKey); if (!row) return;
+        row.options.forEach(o => {
+          const opt = sel.querySelector(`option[value="${o.value}"]`); if (!opt) return;
+          opt.textContent = o.label + (o.allowed ? '' : ' — ไม่อนุญาตสำหรับกรณีนี้');
+          opt.disabled = !o.allowed; opt.title = o.whyNot || '';
+        });
+        const def = row.options.find(o => o.value === (row.preference || row.default));
+        const first = sel.querySelector('option[value=""]');
+        if (first) first.textContent = row.preference
+          ? `ตามค่าตั้งบริษัท: ${def?.label || row.preference}`
+          : `ตามค่าตั้งบริษัท (ค่าแนะนำ: ${def?.label || row.default || '—'})`;
+      },
       /** enum ReceiptIssueMode ที่เซิร์ฟเวอร์ส่งมา (ชื่อหรือเลขก็ได้ตาม serializer)
        *  → เลข 0/1/2 เสมอ. undefined = เซิร์ฟเวอร์รุ่นเก่ายังไม่ส่ง = ใบเดียวจบ
        *  (พฤติกรรมเดิม) ไม่ใช่ "ไม่รู้แล้วล็อกทุกอย่าง" */
@@ -6061,6 +6078,7 @@
           if (rfRow) {
             rfRow.style.display = canDecline ? '' : 'none';
             if (!canDecline) { const sel = document.getElementById('fReceiptForm'); if (sel) sel.value = ''; }
+            this._rfApplyCase(docType);
           }
         }
         // Tax Point §78/§78/1 — แสดงเฉพาะเอกสารที่กระทบ VAT (ขาย/ซื้อ)

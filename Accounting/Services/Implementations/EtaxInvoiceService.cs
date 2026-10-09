@@ -173,6 +173,13 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             // ไปล้มที่ "กรุณาระบุเลขผู้ซื้อ" แทน · ใบกำกับที่ผู้ซื้อไม่ประสงค์รับแต่มีเลขครบ ถูกส่งเป็น T01 ได้)
             // เกณฑ์ตัวเดียวกับหัว PDF · hook e-Tax อัตโนมัติข้ามเงียบเฉพาะส่วน "โดยเจตนา"
             // (TaxService.NotFullTaxInvoiceByDesign — R2-C6) ส่วนที่เหลือ (นิติบุคคลข้อมูลไม่ครบ) มาล้มดังที่นี่
+            // รอบ 203 (ฝ่ายค้านข้อ 1a): ใบที่ตรึงรูปแบบ "อย่างย่อ" (ค่าตั้ง/ตัวเลือกของบริษัท — ผู้ซื้ออาจข้อมูลครบ) ⇒ บอกเหตุที่แท้จริง
+            // ไม่ใช่ "— ขาด " ว่าง ๆ · ยังไม่รองรับ T04 ⇒ ทางไปต่อ = เปลี่ยนรูปแบบใบก่อนอนุมัติ หรือออกใบแทนเป็นเต็มรูป
+            if (document.VatAmount > 0.005m && document.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated)
+                throw new InvalidOperationException(
+                    $"เอกสาร {document.DocumentNumber} ตรึงเป็น \"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\" (§86/6) ตอนอนุมัติ — "
+                    + "ออก e-Tax เต็มรูปไม่ได้ (ระบบยังไม่รองรับใบกำกับอย่างย่อ T04) · เปลี่ยนรูปแบบใบเป็นเต็มรูปก่อนอนุมัติ "
+                    + "หรือ \"ยกเลิกและออกใบแทน\" เป็นใบกำกับเต็มรูปแล้วสร้าง e-Tax ที่ใบนั้น");
             if (document.VatAmount > 0.005m && TaxService.NotFullTaxInvoice(document))
             {
                 var missing = document.Contact == null

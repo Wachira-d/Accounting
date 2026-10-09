@@ -17,8 +17,8 @@ public class ReceiptFormRuleTests
     private static ReceiptFormFacts Facts(
         bool vat = true, bool mayAbbrev = true, bool hasVat = true, DepositVatTreatment? deposit = null,
         bool juristic = false, bool complete = true, bool settles = false, bool refund = false,
-        ReceiptFormChannel channel = ReceiptFormChannel.Document)
-        => new(vat, mayAbbrev, hasVat, deposit, juristic, complete, settles, refund, channel);
+        ReceiptFormChannel channel = ReceiptFormChannel.Document, bool hasTaxId = false)
+        => new(vat, mayAbbrev, hasVat, deposit, juristic, complete, settles, refund, channel, hasTaxId);
 
     private static ReceiptFormDecision D(ReceiptFormFacts f, ReceiptForm? pref = null, ReceiptForm? choice = null)
         => ReceiptFormRule.Decide(f, pref, choice);
@@ -276,14 +276,36 @@ public class ReceiptFormRuleTests
     }
 
     [Fact]
-    public void Applies_to_receipts_always_and_tax_invoices_only_with_vat()
+    public void Applies_to_receipts_always_and_tax_invoices_only_when_they_evidence_payment()
     {
-        Assert.True(ReceiptFormRule.AppliesTo(DocumentType.Receipt, 0m));
-        Assert.True(ReceiptFormRule.AppliesTo(DocumentType.ReceiptVoucher, 0m));
-        Assert.True(ReceiptFormRule.AppliesTo(DocumentType.TaxInvoice, 7m));
-        Assert.False(ReceiptFormRule.AppliesTo(DocumentType.TaxInvoice, 0m));   // ใบกำกับ 0%/ยกเว้น เดินกติกาเดิม
-        Assert.False(ReceiptFormRule.AppliesTo(DocumentType.Invoice, 7m));
-        Assert.False(ReceiptFormRule.AppliesTo(DocumentType.CreditNote, 7m));
+        Assert.True(ReceiptFormRule.AppliesTo(DocumentType.Receipt, 0m, false));
+        Assert.True(ReceiptFormRule.AppliesTo(DocumentType.ReceiptVoucher, 0m, false));
+        Assert.True(ReceiptFormRule.AppliesTo(DocumentType.TaxInvoice, 7m, taxInvoiceIsPaymentEvidencing: true));
+        // ฝ่ายค้านรอบ 203 ข้อ 2: ใบกำกับขายเชื่อ (ยังไม่รับเงิน · ใบรวมที่ยังไม่จ่าย) อยู่นอกขอบเขต — หัว/กติกาเดิมไม่ถูกแตะ
+        Assert.False(ReceiptFormRule.AppliesTo(DocumentType.TaxInvoice, 7m, taxInvoiceIsPaymentEvidencing: false));
+        Assert.False(ReceiptFormRule.AppliesTo(DocumentType.TaxInvoice, 0m, true));   // ใบกำกับ 0%/ยกเว้น เดินกติกาเดิม
+        Assert.False(ReceiptFormRule.AppliesTo(DocumentType.Invoice, 7m, true));
+        Assert.False(ReceiptFormRule.AppliesTo(DocumentType.CreditNote, 7m, true));
+    }
+
+    [Fact]
+    public void Individual_with_tax_id_defaults_to_full_even_in_a_retail_hotel()
+    {
+        // ฝ่ายค้านรอบ 203 ข้อ 1b: บุคคลธรรมดาที่จด VAT (เลขไม่ขึ้นต้น 0 ⇒ ไม่ใช่นิติบุคคล) แจ้งเลขภาษี+ที่อยู่ ⇒ ต้องได้เต็มรูป ไม่งั้นเสียภาษีซื้อ §82/5(2)
+        var withId = D(Facts(channel: ReceiptFormChannel.Lodging, hasTaxId: true), pref: ReceiptForm.ReceiptTaxInvoiceAbbreviated);
+        Assert.Equal(ReceiptFormCase.LodgingFinalBusiness, withId.Case);
+        Assert.Equal(ReceiptForm.ReceiptTaxInvoiceFull, withId.Default);
+        Assert.Equal(ReceiptForm.ReceiptTaxInvoiceFull, withId.Chosen);   // ค่าตั้งบริษัท "อย่างย่อ" ไม่ทับ
+        Assert.False(withId.HasWarnings);
+        // อย่างย่อได้เฉพาะเลือกเองรายใบ — และต้องมีคำเตือน
+        var explicitAbbrev = D(Facts(channel: ReceiptFormChannel.Lodging, hasTaxId: true), choice: ReceiptForm.ReceiptTaxInvoiceAbbreviated);
+        Assert.Equal(ReceiptForm.ReceiptTaxInvoiceAbbreviated, explicitAbbrev.Chosen);
+        Assert.Contains("82/5(2)", Assert.Single(explicitAbbrev.Warnings));
+        // ทิศตรงข้าม: แขกบุคคลธรรมดาไม่มีเลขภาษี ⇒ ค่าแนะนำอย่างย่อตามเดิม (ข้อ 140 ข้อ 2)
+        var noId = D(Facts(channel: ReceiptFormChannel.Lodging));
+        Assert.Equal(ReceiptFormCase.LodgingFinalConsumer, noId.Case);
+        Assert.Equal(ReceiptForm.ReceiptTaxInvoiceAbbreviated, noId.Chosen);
+        Assert.False(noId.HasWarnings);
     }
 
     // ── matrix หน้าตั้งค่า ───────────────────────────────────────────

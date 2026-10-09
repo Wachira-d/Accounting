@@ -26,7 +26,12 @@ public partial class DocumentService
     /// </summary>
     private async Task<ReceiptFormDecision?> DecideReceiptFormAsync(Guid companyId, Document doc)
     {
-        if (!ReceiptFormRule.AppliesTo(doc.DocumentType, doc.VatAmount)) return null;
+        // ใบกำกับภาษีเข้าตัวตัดสินเฉพาะที่เป็นหลักฐานรับเงินด้วย (ฝ่ายค้านรอบ 203 ข้อ 2): ขายเงินสด · รับเงินครบ ณ วันออก · ใบเช็คเอาต์ที่พัก
+        // (รับเงินหน้าเคาน์เตอร์ — คำตัดสินข้อ 140 ข้อ 2 ให้แขกบุคคลได้ใบย่อ) · ServedAsReceipt ยังไม่ถูกคำนวณ ณ จุดอนุมัติ (resolver ตั้งตอน render) จึงเป็น false ที่นี่
+        var channel = ReceiptFormRule.ChannelOf(doc.OriginModule);
+        var taxInvoicePaysNow = doc.IssuedAsCashReceipt || doc.ServedAsReceipt || doc.PaidOnIssue
+            || doc.PaymentType == PaymentType.Cash || channel == ReceiptFormChannel.Lodging;
+        if (!ReceiptFormRule.AppliesTo(doc.DocumentType, doc.VatAmount, taxInvoicePaysNow)) return null;
 
         var issuer = await _db.Companies.AsNoTracking()
             .Where(c => c.Id == companyId)
@@ -62,7 +67,9 @@ public partial class DocumentService
                 && Tax.TaxInvoiceCompletenessChecker.MissingBuyerFields(buyer).Count == 0,
             SettlesExistingTaxInvoice: settlesTaxInvoice,
             IsRefund: false,
-            Channel: ReceiptFormRule.ChannelOf(doc.OriginModule));
+            Channel: channel,
+            // ฝ่ายค้าน 1b: บุคคลธรรมดาที่แจ้งเลขภาษี 13 หลัก (ไม่ขึ้นต้น 0 ⇒ IsJuristicBuyer=false) ก็ต้องการเต็มรูป
+            BuyerHasTaxId: buyer != null && Tax.TaxInvoiceCompletenessChecker.IsValidThaiTaxId(buyer.TaxId));
         var policy = ReceiptFormPolicy.Parse(policyJson);
         return ReceiptFormRule.Decide(facts, policy.PreferenceFor(ReceiptFormRule.CaseOf(facts)), doc.ReceiptForm);
     }

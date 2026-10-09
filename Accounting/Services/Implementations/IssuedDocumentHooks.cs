@@ -85,6 +85,10 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
             if (skip != EtaxAutoSkip.None)
             {
                 _logger.LogInformation("Auto e-Tax skipped for {DocNumber}: {Reason}", doc.DocumentNumber, skip);
+                // ฝ่ายค้านรอบ 203 ข้อ 1a: ใบที่ตรึงรูปแบบ "อย่างย่อ" (ค่าตั้ง/ตัวเลือกของบริษัท) ⇒ e-Tax ถูกข้าม — ห้ามเงียบ: ป้ายบนใบบอกเหตุ
+                // (ระบบยังไม่รองรับ T04 ใบกำกับอย่างย่อ — EtaxDocumentTypeMap มี T01/T02/T03/80/81) · ทางไปต่อ: เปลี่ยนรูปแบบใบก่อนอนุมัติ หรือออกใบแทน
+                if (skip == EtaxAutoSkip.NotFullTaxInvoice && doc.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated)
+                    await StampNoteAsync(companyId, doc, EtaxSkippedAbbreviatedNote, ct);
                 return IssuedDocumentHookResult.Nothing;
             }
 
@@ -126,8 +130,19 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
 
     /// <summary>ประทับป้ายลง <c>InternalNotes</c> — **บันทึกเฉพาะแถวเอกสารนี้** (ExecuteUpdate) ไม่ใช่ SaveChanges ทั้ง context
     /// (ฝ่ายค้าน P-3: entity อื่นที่ขั้นก่อนหน้า Add ค้างไว้แล้วล้ม จะติดไปกับการบันทึกป้าย) · บันทึกไม่ได้ = LogError</summary>
-    private async Task StampFailureAsync(Guid companyId, Document doc, string reason, CancellationToken ct)
+    private Task StampFailureAsync(Guid companyId, Document doc, string reason, CancellationToken ct)
+        => StampNoteAsync(companyId, doc, null, ct, reason);
+
+    /// <summary>ป้ายเมื่อข้าม e-Tax อัตโนมัติเพราะใบตรึงเป็น "ใบกำกับอย่างย่อ" (รอบ 203 · ฝ่ายค้านข้อ 1a) — ลงครั้งเดียวต่อใบ</summary>
+    internal const string EtaxSkippedAbbreviatedNote =
+        "[ETAX-SKIPPED] รูปแบบใบ=อย่างย่อ — ใบนี้ตรึงเป็น \"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\" (§86/6) ระบบจึงไม่ออก e-Tax เต็มรูป (ยังไม่รองรับ T04) · "
+        + "ถ้าลูกค้าต้องการ e-Tax ให้เปลี่ยนรูปแบบใบเป็นเต็มรูปก่อนอนุมัติ หรือ \"ยกเลิกและออกใบแทน\" เป็นเต็มรูป";
+
+    /// <summary>ประทับข้อความลง <c>InternalNotes</c> แถวเดียว (ExecuteUpdate) — <paramref name="note"/> = ข้อความตรง (ลงครั้งเดียวถ้ามีอยู่แล้ว) ·
+    /// <c>null</c> + <paramref name="failureReason"/> = ป้าย <c>[ETAX-AUTO-FAILED]</c> เดิมผ่าน <c>EtaxAutoFailedNote.Append</c></summary>
+    private async Task StampNoteAsync(Guid companyId, Document doc, string? note, CancellationToken ct, string? failureReason = null)
     {
+        var reason = failureReason ?? note ?? "";
         try
         {
             // อ่านค่าล่าสุดจากฐาน (ไม่ใช่จาก entity ที่อาจค้างค่าเก่า) แล้วต่อท้าย — ป้ายเดิมถูกแทน ไม่สะสม
@@ -135,7 +150,14 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
                 .Where(d => d.Id == doc.Id && d.CompanyId == companyId)
                 .Select(d => d.InternalNotes)
                 .FirstOrDefaultAsync(ct);
-            var updated = EtaxAutoFailedNote.Append(current, reason);
+            string updated;
+            if (note != null)
+            {
+                if (current != null && current.Contains(note, StringComparison.Ordinal)) return;   // ลงแล้ว — ไม่ซ้ำ (hook ถูกเรียกซ้ำได้)
+                updated = string.IsNullOrWhiteSpace(current) ? note : current.TrimEnd() + "\n\n" + note;
+            }
+            else
+                updated = EtaxAutoFailedNote.Append(current, reason);
             await _db.Documents
                 .Where(d => d.Id == doc.Id && d.CompanyId == companyId)
                 .ExecuteUpdateAsync(s => s.SetProperty(d => d.InternalNotes, updated), ct);

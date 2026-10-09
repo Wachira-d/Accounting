@@ -1435,7 +1435,8 @@ RULES += [
 DOC_RECEIPT_FORM = "Services/Implementations/DocumentService.ReceiptForm.cs"
 RULES += [
     dict(file=DOC, method="ApproveDocumentAsync#2",
-         must=["DecideReceiptFormAsync(", "doc.ReceiptForm = receiptForm.Chosen"],
+         must=["DecideReceiptFormAsync(", "doc.ReceiptForm = receiptForm.Chosen", "AddChainedAuditLog("],
+         must_lit=['"ReceiptFormChoiceOverridden"'],   # ตัวเลือกรายใบที่ถูกแทนต้องลง audit (ฝ่ายค้านรอบ 203 ข้อ 5)
          before=[("DecideReceiptFormAsync(", "ResolveDocumentTitleAsync(")],
          # คำตัดสินข้อ 140: ห้ามบล็อกด้วยกติกานี้ — คำเตือนไปทาง CollectApprovalWarningsAsync
          forbid=["receiptForm.Blocked", "receiptForm.BlockMessage"],
@@ -1446,7 +1447,9 @@ RULES += [
     dict(file=DOC_RECEIPT_FORM, method="DecideReceiptFormAsync",
          must=["ReceiptFormRule.AppliesTo(", "ReceiptFormRule.Decide(", "ReceiptFormRule.CaseOf(", "ReceiptFormPolicy.Parse(",
                "DepositPolicyResolver.OfDocument(", "AbbreviatedTaxInvoiceRule.CanIssue(",
-               "TaxInvoiceCompletenessChecker.IsJuristicBuyer(", "TaxInvoiceCompletenessChecker.MissingBuyerFields("],
+               "TaxInvoiceCompletenessChecker.IsJuristicBuyer(", "TaxInvoiceCompletenessChecker.MissingBuyerFields(",
+               # ฝ่ายค้านรอบ 203: ใบกำกับเข้าตัวตัดสินเฉพาะที่เป็นหลักฐานรับเงิน · ผู้ซื้อแจ้งเลขภาษี = ต้องการเต็มรูป
+               "doc.IssuedAsCashReceipt", "TaxInvoiceCompletenessChecker.IsValidThaiTaxId("],
          forbid=["IsRetailApproved &&", "IsRetailApproved ||", "DepositOutputVatDeferred ?", "ContactType ==", "ContactType.JuristicPerson"],
          why="รอบ 203: ตัวตัดสินรับข้อเท็จจริงจากเจ้าของกติกาเดิมเท่านั้น — ไม่มีสำเนาเกณฑ์ขายปลีก/มัดจำ/นิติบุคคลชุดที่สอง"),
 ]

@@ -6546,7 +6546,36 @@ public partial class DocumentService : IDocumentService
                     // ตรงนี้แค่ตรึงค่าที่ใช้จริง (ไม่มีรูปแบบที่ออกได้ = PlainReceipt หัวลดเหมือนเดิม + ใบเข้ารายงานตรวจข้อมูล)
                     var receiptForm = await DecideReceiptFormAsync(companyId, doc);
                     if (receiptForm != null)
+                    {
+                        // ฝ่ายค้านรอบ 203 ข้อ 5: ตัวเลือกรายใบของผู้ใช้ที่ระบบไม่ใช้ ต้องมีร่องรอยบนใบ + audit (ไม่ใช่แค่คำเตือนที่ถูกรับทราบ)
+                        if (doc.ReceiptForm is ReceiptForm userChoice && receiptForm.Chosen is ReceiptForm chosenForm && userChoice != chosenForm)
+                        {
+                            var overrideNote = $"{Accounting.Helpers.ReceiptFormRule.WarningPrefix} ผู้ใช้เลือก \"{Accounting.Helpers.ReceiptFormRule.Label(userChoice)}\" "
+                                + $"ก่อนอนุมัติ · ระบบตรึง \"{Accounting.Helpers.ReceiptFormRule.Label(chosenForm)}\" ({receiptForm.RuleCode})"
+                                + (receiptForm.Warnings.Count > 0 ? " — " + string.Join(" · ", receiptForm.Warnings) : "");
+                            AppendInternalNote(doc, overrideNote);
+                            _db.AddChainedAuditLog(new AuditLog
+                            {
+                                CompanyId = companyId,
+                                Action = AuditAction.Update,
+                                EntityType = "Document",
+                                EntityId = doc.Id.ToString(),
+                                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                                {
+                                    action = "ReceiptFormChoiceOverridden",
+                                    documentNumber = doc.DocumentNumber,
+                                    userChoice = userChoice.ToString(),
+                                    chosen = chosenForm.ToString(),
+                                    receiptFormCase = receiptForm.Case.ToString(),
+                                    ruleCode = receiptForm.RuleCode,
+                                    legalReference = receiptForm.LegalReference,
+                                    warnings = receiptForm.Warnings,
+                                    by = approvedBy,
+                                }),
+                            });
+                        }
                         doc.ReceiptForm = receiptForm.Chosen;
+                    }
 
                     string? resolvedTitle = null;
                     try

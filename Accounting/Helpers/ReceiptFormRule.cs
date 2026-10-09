@@ -15,6 +15,8 @@ namespace Accounting.Helpers;
 /// <param name="SettlesExistingTaxInvoice">ใบนี้คือใบเสร็จรับชำระของ "ใบกำกับภาษี" ที่ออกไปแล้ว (<c>RelatedDocumentId</c> → TaxInvoice)</param>
 /// <param name="IsRefund">กระดาษคืนเงินมัดจำ (ไม่ใช่ใบรับ)</param>
 /// <param name="Channel">ช่องทางที่ออก</param>
+/// <param name="BuyerHasTaxId">ผู้ซื้อแจ้งเลขผู้เสียภาษี 13 หลัก (ฝ่ายค้านรอบ 203 ข้อ 1b): บุคคลธรรมดาที่จด VAT (เลขไม่ขึ้นต้น 0 ⇒
+/// <c>IsJuristicBuyer</c> = false) ก็ต้องการเต็มรูปเพื่อใช้ภาษีซื้อ — ค่าแนะนำ = เต็มรูป · อย่างย่อได้เฉพาะเลือกเองรายใบ + คำเตือน</param>
 public sealed record ReceiptFormFacts(
     bool CompanyVatRegistered,
     bool CompanyMayIssueAbbreviated,
@@ -24,7 +26,8 @@ public sealed record ReceiptFormFacts(
     bool BuyerFullInfoComplete,
     bool SettlesExistingTaxInvoice,
     bool IsRefund,
-    ReceiptFormChannel Channel);
+    ReceiptFormChannel Channel,
+    bool BuyerHasTaxId = false);
 
 /// <summary>ผลตัดสินรูปแบบกระดาษของใบหนึ่ง</summary>
 /// <param name="Case">กรณี (คีย์ของค่าตั้งบริษัท)</param>
@@ -113,11 +116,14 @@ public static class ReceiptFormRule
         ReceiptForm.ReceiptTaxInvoiceAbbreviated, ReceiptForm.PaymentEvidenceOnly,
     };
 
-    /// <summary>ชนิดเอกสารที่ตัวตัดสินนี้ครอบ — ใบเสร็จ/ใบสำคัญรับทุกใบ · ใบกำกับภาษีเฉพาะที่มี VAT (ใบกำกับ 0%/ยกเว้น เดินกติกา
-    /// <see cref="TaxInvoiceSeriesPolicy.IsZeroRatedFullTaxInvoice"/> เดิม ไม่เกี่ยวกับรูปแบบใบเสร็จ)</summary>
-    public static bool AppliesTo(DocumentType type, decimal vatAmount)
+    /// <summary>ชนิดเอกสารที่ตัวตัดสินนี้ครอบ — ใบเสร็จ/ใบสำคัญรับทุกใบ · ใบกำกับภาษีเฉพาะที่มี VAT <b>และเป็นหลักฐานรับเงินด้วย</b>
+    /// (<paramref name="taxInvoiceIsPaymentEvidencing"/> — ขายเงินสด <c>IssuedAsCashReceipt</c> · รับเงินครบ ณ วันออก <c>PaidOnIssue</c>/<c>PaymentType=Cash</c> ·
+    /// <c>ServedAsReceipt</c> · ใบเช็คเอาต์ที่พัก) — ใบกำกับขายเชื่อที่ยังไม่รับเงิน<b>อยู่นอกขอบเขต</b> (หัว/กติกาเดิมไม่เปลี่ยน — ฝ่ายค้านรอบ 203 ข้อ 2:
+    /// เดิมใบรวมขายเชื่อ + ค่าตั้งอย่างย่อได้หัว "ใบกำกับภาษีอย่างย่อ" ทั้งที่ยังไม่มีการรับเงิน) · ใบกำกับ 0%/ยกเว้น เดินกติกา
+    /// <see cref="TaxInvoiceSeriesPolicy.IsZeroRatedFullTaxInvoice"/> เดิม</summary>
+    public static bool AppliesTo(DocumentType type, decimal vatAmount, bool taxInvoiceIsPaymentEvidencing)
         => type is DocumentType.Receipt or DocumentType.ReceiptVoucher
-           || (type == DocumentType.TaxInvoice && vatAmount > 0.005m);
+           || (type == DocumentType.TaxInvoice && vatAmount > 0.005m && taxInvoiceIsPaymentEvidencing);
 
     /// <summary>ช่องทางจาก <c>Document.OriginModule</c> — "Lodging" = ที่พัก · อื่น/ว่าง = เอกสารทั่วไป (POS ไม่ผ่านเส้นนี้ — สลิปตัดสินที่ <see cref="PosSlipHeader"/>)</summary>
     public static ReceiptFormChannel ChannelOf(string? originModule)
@@ -128,6 +134,10 @@ public static class ReceiptFormRule
     private static bool VatDueNow(ReceiptFormFacts f)
         => f.HasVatLines && (f.DepositTreatment is null || f.DepositTreatment == DepositVatTreatment.VatImmediate);
 
+    /// <summary>ผู้ซื้อต้องการใบกำกับเต็มรูป — นิติบุคคล/ผู้ประกอบการ (<c>BuyerNeedsFullForm</c>) <b>หรือ</b> แจ้งเลขผู้เสียภาษี 13 หลักมา
+    /// (<c>BuyerHasTaxId</c> — บุคคลธรรมดาที่จด VAT ใช้ภาษีซื้อได้ ใบย่อทำให้เสียสิทธิ์ §82/5(2) โดยไม่มีใครเตือน)</summary>
+    private static bool NeedsFullForm(ReceiptFormFacts f) => f.BuyerNeedsFullForm || f.BuyerHasTaxId;
+
     /// <summary>กรณีของใบ (คีย์ค่าตั้ง) — ลำดับ: รับชำระใบกำกับ → คืนเงิน → มัดจำ → สลิป → ที่พัก (บุคคล/นิติบุคคล) → ขายสด</summary>
     public static ReceiptFormCase CaseOf(ReceiptFormFacts f)
     {
@@ -136,7 +146,7 @@ public static class ReceiptFormRule
         if (f.DepositTreatment is not null) return ReceiptFormCase.Deposit;
         if (f.Channel == ReceiptFormChannel.PosSlip) return ReceiptFormCase.PosSlip;
         if (f.Channel == ReceiptFormChannel.Lodging)
-            return f.BuyerNeedsFullForm ? ReceiptFormCase.LodgingFinalBusiness : ReceiptFormCase.LodgingFinalConsumer;
+            return NeedsFullForm(f) ? ReceiptFormCase.LodgingFinalBusiness : ReceiptFormCase.LodgingFinalConsumer;
         return ReceiptFormCase.CashSale;
     }
 
@@ -255,7 +265,8 @@ public static class ReceiptFormRule
 
         // ค่าแนะนำ (คำตัดสินข้อ 140 ข้อ 2): ที่พัก + แขกบุคคลธรรมดา (ใบเช็คเอาต์/มัดจำที่รับรู้ VAT ทันที) ⇒ **อย่างย่อ** เมื่อบริษัทมีสิทธิ์
         // (แบบโรงแรมทั่วไป) · ตกกลับเต็มรูปเมื่อข้อมูลครบ · กรณีอื่น (ขายสด/นิติบุคคล) ⇒ เต็มรูปก่อน
-        var lodgingConsumer = facts.Channel == ReceiptFormChannel.Lodging && !facts.BuyerNeedsFullForm;
+        var needsFull = NeedsFullForm(facts);
+        var lodgingConsumer = facts.Channel == ReceiptFormChannel.Lodging && !needsFull;
         ReceiptForm? defaultForm = allowed.Count == 0 ? null
             : lodgingConsumer && allowed.Contains(ReceiptForm.ReceiptTaxInvoiceAbbreviated) ? ReceiptForm.ReceiptTaxInvoiceAbbreviated
             : allowed.Contains(ReceiptForm.ReceiptTaxInvoiceFull) ? ReceiptForm.ReceiptTaxInvoiceFull
@@ -268,7 +279,10 @@ public static class ReceiptFormRule
             chosen = dc;
         else
         {
-            chosen = companyPreference is ReceiptForm pref && allowed.Contains(pref) ? pref : defaultForm!.Value;
+            // ผู้ซื้อที่ต้องการเต็มรูป (นิติบุคคล/แจ้งเลขภาษี): ค่าตั้งบริษัท "อย่างย่อ" ไม่ทับ — อย่างย่อได้เฉพาะเลือกเองรายใบ (ฝ่ายค้าน 1b)
+            var prefUsable = companyPreference is ReceiptForm pref && allowed.Contains(pref)
+                && !(needsFull && pref == ReceiptForm.ReceiptTaxInvoiceAbbreviated);
+            chosen = prefUsable ? companyPreference!.Value : defaultForm!.Value;
             // (ข) ตัวเลือกรายใบนอกชุดที่อนุญาต (เช่น เลือกอย่างย่อแต่บริษัทไม่มีสิทธิ์) ⇒ ไม่เสนอ/ไม่ใช้ แต่บอกว่าใช้อะไรแทน — ไม่บล็อก ไม่ทับเงียบ
             if (documentChoice is ReceiptForm bad)
             {
@@ -279,10 +293,12 @@ public static class ReceiptFormRule
             }
         }
 
-        // (ค) นิติบุคคล/ผู้ประกอบการที่ได้แต่ใบย่อ (ข้อมูลไม่ครบสำหรับเต็มรูป) ⇒ ออกให้ แต่เตือนให้แนะนำเต็มรูป (ใช้ภาษีซื้อไม่ได้ §82/5(2))
-        if (chosen == ReceiptForm.ReceiptTaxInvoiceAbbreviated && facts.BuyerNeedsFullForm)
-            warnings.Add(WarningPrefix + " ผู้ซื้อเป็นนิติบุคคล/ผู้ประกอบการจด VAT แต่ข้อมูลไม่ครบสำหรับใบกำกับเต็มรูป — ใบนี้จะเป็น "
-                + "\"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\" ซึ่งผู้ซื้อใช้เป็นภาษีซื้อไม่ได้ (ม.82/5(2)) · แนะนำเติมเลขผู้เสียภาษี/ที่อยู่ผู้ซื้อแล้วออกใบกำกับเต็มรูปแทน");
+        // (ค) ผู้ซื้อที่ต้องการเต็มรูป (นิติบุคคล · หรือแจ้งเลขผู้เสียภาษีมา) แต่ใบนี้จะเป็นใบย่อ (ข้อมูลไม่ครบ · หรือเลือกเองรายใบ) ⇒ ออกให้ แต่เตือน
+        // ให้แนะนำเต็มรูป (ใบย่อใช้เป็นภาษีซื้อไม่ได้ §82/5(2) — ผู้ซื้อเสียสิทธิ์โดยไม่รู้ตัว)
+        if (chosen == ReceiptForm.ReceiptTaxInvoiceAbbreviated && needsFull)
+            warnings.Add(WarningPrefix + " ผู้ซื้อเป็นนิติบุคคล/ผู้ประกอบการ หรือแจ้งเลขผู้เสียภาษี 13 หลักมา (ต้องการใช้ภาษีซื้อ) แต่ใบนี้จะเป็น "
+                + "\"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\" ซึ่งใช้เป็นภาษีซื้อไม่ได้ (ม.82/5(2)) · "
+                + (facts.BuyerFullInfoComplete ? "เลือกรูปแบบ \"ใบกำกับเต็มรูป\" บนใบ (ข้อมูลผู้ซื้อครบแล้ว)" : "เติมเลขผู้เสียภาษี/ที่อยู่ผู้ซื้อแล้วออกใบกำกับเต็มรูปแทน"));
 
         return new ReceiptFormDecision(@case, allowed, defaultForm, chosen, warnings, ruleCode, legal, whyNot);
     }
@@ -302,7 +318,7 @@ public static class ReceiptFormRule
     {
         ReceiptFormCase.LodgingFinalConsumer => "ที่พัก — ใบเช็คเอาต์ให้แขกบุคคลธรรมดา",
         ReceiptFormCase.LodgingFinalBusiness => "ที่พัก — ใบเช็คเอาต์ในนามบริษัท/นิติบุคคล",
-        ReceiptFormCase.Deposit => "ใบรับมัดจำ (ที่พัก/ทั่วไป)",
+        ReceiptFormCase.Deposit => "ใบรับมัดจำ — ค่าตั้งเดียวกันทั้งที่พักและทั่วไป (แถวนี้แสดงกรณีที่พัก · ค่าแนะนำ: ที่พัก=อย่างย่อเมื่อมีสิทธิ์ · ทั่วไป=เต็มรูป)",
         ReceiptFormCase.PosSlip => "สลิป POS (เครื่องบันทึกการเก็บเงิน)",
         ReceiptFormCase.CashSale => "ขายสด — ใบเสนอราคา → ใบเสร็จ / ใบเสร็จที่คีย์เอง (ลูกค้าบุคคลธรรมดา)",
         ReceiptFormCase.SettlementOfTaxInvoice => "ใบเสร็จรับชำระของใบกำกับภาษีที่ออกแล้ว",
@@ -346,8 +362,11 @@ public static class ReceiptFormRule
             var configurable = d.Allowed.Count > 1 && c != ReceiptFormCase.PosSlip;
             string? note = c switch
             {
-                ReceiptFormCase.PosSlip => "แถวนี้แสดงผลของกติกาช่องทางสลิปอย่างเดียว (ตั้งค่าที่ ข้อมูลบริษัท → ขายปลีก / ภ.พ.06)",
-                ReceiptFormCase.Deposit => "ค่าที่ตั้งตรงนี้มีผลเฉพาะมัดจำที่นโยบาย \"รับรู้ VAT ทันที\" — มัดจำที่ยังไม่เป็นจุดความรับผิดเป็นใบเสร็จรับเงินเสมอ",
+                ReceiptFormCase.PosSlip => "แสดงกติกา · ไม่มีตัวเลือก — สลิปไม่ผ่านตัวตัดสินนี้ (PosSlipHeader ตัดสินรายบิล · ตั้งค่าที่ ข้อมูลบริษัท → ขายปลีก / ภ.พ.06)",
+                ReceiptFormCase.DepositRefund => "แสดงกติกา · ไม่มีตัวเลือก — การคืนเงินไม่ผ่านตัวตัดสินนี้ (เส้นคืนมัดจำ/ใบลดหนี้เดิม)",
+                ReceiptFormCase.SettlementOfTaxInvoice => "แสดงกติกา · ไม่มีตัวเลือก — ใบรับชำระของใบกำกับที่ออกแล้วเป็นหลักฐานรับเงินเสมอ",
+                ReceiptFormCase.Deposit => "ค่าที่ตั้งตรงนี้มีผลเฉพาะมัดจำที่นโยบาย \"รับรู้ VAT ทันที\" — มัดจำที่ยังไม่เป็นจุดความรับผิดเป็นใบเสร็จรับเงินเสมอ · "
+                    + "แถวตัวแทน = ที่พัก (ค่าแนะนำอย่างย่อ) · มัดจำจากหน้าเอกสารทั่วไปใช้ค่าตั้งเดียวกัน ค่าแนะนำเต็มรูป",
                 _ => null,
             };
             rows.Add(new ReceiptFormMatrixRow(
