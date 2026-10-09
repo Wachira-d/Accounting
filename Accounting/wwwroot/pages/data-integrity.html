@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตรวจข้อมูลจากบั๊กที่แก้แล้ว — Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!--
+    คำตัดสินเจ้าของ 2026-10-08: ข้อมูลที่อาจบันทึกผิดจากบั๊กที่แก้แล้ว → "รายงานอ่านอย่างเดียวก่อน" ให้ผู้ทำบัญชีตรวจแล้วซ่อมรายตัว
+    หน้านี้แสดงผลอย่างเดียว — ทุกการตัดสินมาจากเซิร์ฟเวอร์ (DataIntegrityReportService) ไม่มีสูตรในฝั่ง JS (F2 ข้อ 5)
+  -->
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ตรวจข้อมูลจากบั๊กที่แก้แล้ว</h2>
+        <p class="page-subtitle">รายการที่อาจบันทึกผิดก่อนแก้บั๊ก (2026-10-08) — รายงานให้ผู้ทำบัญชีตรวจ ระบบไม่แก้ข้อมูลให้</p>
+      </div>
+      <div><button class="btn btn-primary" id="btnRun">🔎 ตรวจ</button></div>
+    </div>
+    <div id="resultBox"></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      sections: [
+        ['posOrderTotals', 'บิล POS ที่ยอดบิลไม่เท่าผลรวมรายการ', 'เดิมรายการถูกนับสองครั้งตอนเพิ่มรายการ ⇒ ยอดบิล/VAT อาจเบิ้ล — ตรวจกับเงินที่รับจริงและรายการบัญชีของกะ'],
+        ['rollupBillingNoteChildren', 'เอกสารที่แปลงจากใบวางบิลรวมใบแจ้งหนี้', 'ใบเสร็จจากใบวางบิลลงแบบขายสด ⇒ รายได้ซ้ำกับใบแจ้งหนี้ในใบวางบิล และลูกหนี้ใบเดิมไม่ถูกตัด'],
+        ['purchaseInvoicesBilledFromPoWithGrn', 'ใบแจ้งหนี้ซื้อที่ผูกใบสั่งซื้อตรงทั้งที่มีใบรับสินค้า', 'อาจรับสต็อกเข้าสองรอบ (21240 ค้าง) — ใบสั่งซื้อที่ผสมบริการ/สินค้าอาจถูกต้อง ตรวจรายตัว'],
+        ['payrollRunTotals', 'รอบเงินเดือนที่ยอดรวมไม่เท่าผลรวมแถว', 'เดิมเพิ่มพนักงานเข้ารอบแล้วยอดรวมเบิ้ล — รอบที่ยังไม่จ่ายกด "คำนวณใหม่" · รอบที่จ่ายแล้วให้ผู้ทำบัญชีตรวจรายการบัญชี'],
+      ],
+      init() {
+        if (!Layout.init('reports')) return;
+        Layout.setTitle('ตรวจข้อมูลจากบั๊กที่แก้แล้ว');
+        document.getElementById('btnRun').addEventListener('click', () => this.run());
+      },
+      async run() {
+        const box = document.getElementById('resultBox');
+        box.innerHTML = '<div class="card"><div style="padding:18px;color:#64748b">กำลังตรวจ…</div></div>';
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getDataIntegritySuspects();
+          this.render(res && res.data ? res.data : null, res && res.message);
+        } catch (e) {
+          box.innerHTML = '';
+          Layout.toast(e.message, 'error');
+        }
+      },
+      render(data, message) {
+        const box = document.getElementById('resultBox');
+        // ไม่มีข้อมูล = ตรวจไม่สำเร็จ (ไม่ใช่ "ไม่พบปัญหา") — F2 ข้อ 5
+        if (data == null) {
+          box.innerHTML = '<div class="card"><div style="padding:18px;color:#b91c1c">ไม่ได้รับผลตรวจจากเซิร์ฟเวอร์</div></div>';
+          return;
+        }
+        const esc = (v) => Layout.esc(v == null ? '' : String(v));
+        const money = (v) => v == null ? '-' : esc(Layout.money(v));
+        box.innerHTML = `<div class="card" style="margin-bottom:12px"><div style="padding:14px 18px">${esc(message || '')}</div></div>` +
+          this.sections.map(([key, title, note]) => {
+            const rows = Array.isArray(data[key]) ? data[key] : [];
+            const body = rows.length === 0
+              ? '<div style="padding:12px 18px;color:#15803d">✓ ไม่พบรายการ</div>'
+              : `<div style="padding:0 18px 18px;overflow-x:auto"><table class="data-table" style="font-size:13px;min-width:560px">
+                  <thead><tr><th>เลขที่</th><th>วันที่</th><th>รายละเอียด</th><th style="text-align:right">ค่าที่เก็บไว้</th><th style="text-align:right">ค่าที่ควรเป็น</th></tr></thead>
+                  <tbody>${rows.map(r => `<tr><td>${esc(r.number)}</td><td>${esc(Layout.date(r.date))}</td>
+                    <td style="font-size:12px">${esc(r.detail)}</td><td style="text-align:right">${money(r.stored)}</td>
+                    <td style="text-align:right">${money(r.expected)}</td></tr>`).join('')}</tbody></table></div>`;
+            return `<div class="card" style="margin-bottom:12px">
+              <div class="card-header"><h3 class="card-title">${esc(title)} (${rows.length})</h3></div>
+              <div style="padding:0 18px 6px;color:#64748b;font-size:12px">${esc(note)}</div>${body}</div>`;
+          }).join('');
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

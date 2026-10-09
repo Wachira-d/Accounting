@@ -1525,6 +1525,8 @@ const API = {
       ocrUnlinkPredecessor: (scanId) => API.del(`${base}/ocr/${scanId}/link-predecessor`),
       // รอบ 193: ข้อเสนอบรรทัดปรับส่วนต่างยอดชำระของเอกสารที่มาจากสแกน (หน้าบันทึกการชำระ) + รายงานตัวเลขเก่าที่ผิด (อ่านอย่างเดียว)
       getOcrSettlementProposal: (documentId) => API.get(`${base}/ocr/documents/${documentId}/settlement-proposal`),
+      // รายงานอ่านอย่างเดียว: ข้อมูลที่อาจบันทึกผิดจากบั๊กที่แก้แล้ว (คำตัดสินเจ้าของ 2026-10-08)
+      getDataIntegritySuspects: () => API.get(`${base}/data-integrity/suspects`),
       getOcrAmountAudit: (params = {}) => {
         const qs = new URLSearchParams();
         if (params.from) qs.set('from', params.from);

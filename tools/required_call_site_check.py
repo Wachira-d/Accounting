@@ -310,6 +310,13 @@ RULES += [
     dict(file=MOBILE, method="HandleExpenseClaimApprovalAsync", must=["ApproveAsync(", "RejectAsync("],
          forbid=["ExpenseClaimStatus.Approved;", "ExpenseClaimStatus.Rejected;"],
          why="R2-C2/Q7 มือถืออนุมัติใบเบิกต้องเดินเมธอดเดียวกับเว็บ (ด่านสิทธิ์ · SoD · §65 ทวิ · CertificateInLieu) — ห้ามตั้งสถานะเอง"),
+    # ทีมตรวจงานค้าง 2026-10-08 (คำตัดสินเจ้าของ "รายงานอ่านอย่างเดียวก่อน"): รายงานทั้งบริษัทต้องกรองบริษัททุก query + ห้ามเขียนอะไร
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="GetAsync",
+         must=["o.CompanyId == companyId", "l.Document.CompanyId == companyId", "d.CompanyId == companyId",
+               "pi.CompanyId == companyId", "po.CompanyId == companyId", "g.CompanyId == companyId",
+               "r.CompanyId == companyId", "AsNoTracking()"],
+         forbid=["SaveChanges", ".Remove(", ".Update(", "ExecuteUpdate", "ExecuteDelete"],
+         why="กฎ M tenant isolation ทุก query ย่อย · รายงานนี้อ่านอย่างเดียว ซ่อมรายตัวหลังผู้ทำบัญชีอนุมัติเท่านั้น"),
 ]
 
 # ── กติกาทรง tuple (ทีม C3 · O1 · L2 ฯลฯ) — `(ไฟล์, เมธอด, must[], before[(a, b)], forbid[], เหตุผล)` ──────────────
