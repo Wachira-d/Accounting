@@ -895,6 +895,15 @@ public class OcrService : IOcrService
             // เอกสารที่สร้างจาก OCR API ได้บรรทัดผิดต่างจาก web UI).
             SanitizeVatSplitArtifacts(extractedData, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(ocrEngineUsed));
 
+            // 2026-10-09 ฝ่ายค้านข้อ 2: ระบบตัดแถวที่อ่านซ้ำเอง ([DUP-ROWS] จาก Sanitize ข้อ 3b หรือจาก line-split) ต้องขึ้น ProcessingNotes —
+            // OcrPostingReadiness อ่านแท็กจากตรงนั้น ⇒ เอกสารที่ระบบแก้ข้อมูลเองไม่อนุมัติเองจนกว่าคนจะดู (trace อย่างเดียวไม่มีผู้อ่านเชิงธุรกิจ)
+            foreach (var dupRowsNote in extractedData.ReasoningTrace
+                         .Where(t => t.StartsWith(Accounting.Helpers.OcrDuplicateLineGuard.Tag, StringComparison.Ordinal)))
+            {
+                if (!(scanResult.ProcessingNotes ?? "").Contains(dupRowsNote, StringComparison.Ordinal))
+                    scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + dupRowsNote;
+            }
+
             // หน่วยนับ: เอกสารไม่พิมพ์/โมเดลไม่ให้มา → อนุมานจากคำอธิบายด้วยกฎ
             // (ค่าไฟ→"หน่วย" kWh, น้ำ→ลบ.ม., เช่ารายเดือน→เดือน ฯลฯ) ก่อน
             // serialize — ทั้ง path "สร้างทันที" และ handoff เข้าฟอร์มได้หน่วย
@@ -4813,10 +4822,9 @@ public class OcrService : IOcrService
 
         // EffAmt = ยอดบรรทัดที่เชื่อถือได้ — Amount ถ้ามี, ไม่งั้น UnitPrice×Quantity.
         // กันเคส external OCR ส่งแต่ UnitPrice+Quantity ไม่ได้ส่ง Amount.
+        // สูตรเดียวกับด่านแถวซ้ำ (OcrDuplicateLineGuard.EffectiveAmount) — ฝ่ายค้าน 2026-10-09 ข้อ 4: ห้ามมีสองสูตร
         static decimal EffAmt(OcrExtractedLineItem it)
-            => (it.Amount ?? 0m) > 0m
-                ? it.Amount!.Value
-                : (it.UnitPrice ?? 0m) * (it.Quantity ?? 1m);
+            => Accounting.Helpers.OcrDuplicateLineGuard.EffectiveAmount(it.Amount, it.UnitPrice, it.Quantity);
 
         // 2) drop บรรทัดที่กลายเป็นว่าง / phantom remainder (amount + price ≤ ฿1)
         const decimal PHANTOM_THRESHOLD = 1m;
@@ -4871,7 +4879,10 @@ public class OcrService : IOcrService
             var dupRows = dupCandidates
                 .Select(it => new Accounting.Helpers.OcrCandidateRow(it.Description, it.Quantity, it.UnitPrice, it.Amount, it.LineDiscountAmount))
                 .ToList();
-            var dup = Accounting.Helpers.OcrDuplicateLineGuard.Decide(dupRows, data.SubTotal, data.VatAmount, data.TotalAmount);
+            // ส่วนลดท้ายบิลที่อ่านได้ (EnrichFromRawText เติมก่อนถึงที่นี่ · ส่วนลดหลังใบกำกับถูกล้างเป็น null แล้ว) — ใบที่มีส่วนลด
+            // Σ บรรทัด = หัวใบ + ส่วนลด ไม่งั้นใบต้นฉบับ+สำเนาที่มีส่วนลดจะ "ไม่ตรงทั้งสองทาง" แล้วหลุดไปขั้น 4 เป็น ×2 เงียบ (ฝ่ายค้านข้อ 1)
+            var dup = Accounting.Helpers.OcrDuplicateLineGuard.Decide(
+                dupRows, data.SubTotal, data.VatAmount, data.TotalAmount, data.DiscountAmount ?? 0m);
             if (dup.Deduped)
             {
                 var keepIdx = new HashSet<int>(dup.KeepIndexes);

@@ -1526,10 +1526,17 @@ RULES += [
 #    — ถอดการเรียกที่จุดใด = ใบต้นฉบับ+สำเนากลับมาจำนวน ×2 เงียบ ๆ (เทสต์ของ helper ยังเขียว)
 RULES += [
     dict(file=OCR, method="SanitizeVatSplitArtifacts",
-         must=["OcrDuplicateLineGuard.Decide("],
-         call_args=[("OcrDuplicateLineGuard.Decide(", "data.SubTotal")],
+         must=["OcrDuplicateLineGuard.Decide(", "OcrDuplicateLineGuard.EffectiveAmount("],
+         # ฝ่ายค้านข้อ 1: ส่วนลดท้ายบิลของสแกนต้องถึงตัวตัดสิน (ใบมีส่วนลด Σ บรรทัด = หัวใบ + ส่วนลด) · ข้อ 4: EffAmt ใช้สูตรเดียวกับ helper
+         call_args=[("OcrDuplicateLineGuard.Decide(", "data.SubTotal"), ("OcrDuplicateLineGuard.Decide(", "data.DiscountAmount")],
          before=[("OcrDuplicateLineGuard.Decide(", "seen.TryGetValue(key, out var existing)")],
-         why="2026-10-09 BS2026100001: ตัดแถวที่ถูกอ่านซ้ำด้วยยอดหัวใบจริง ก่อนขั้นยุบชื่อ+ราคาที่บวกจำนวน"),
+         why="2026-10-09 BS2026100001: ตัดแถวที่ถูกอ่านซ้ำด้วยยอดหัวใบ+ส่วนลดจริง ก่อนขั้นยุบชื่อ+ราคาที่บวกจำนวน · ยอดบรรทัดสูตรเดียว"),
+    # ฝ่ายค้านข้อ 2: [DUP-ROWS] จาก trace ต้องถึง ProcessingNotes (ผู้อ่าน = OcrPostingReadiness) หลัง Sanitize — ไม่งั้นเอกสารที่ระบบตัดแถวเองอนุมัติเองได้
+    dict(file=OCR, method="ScanAsync",
+         must=["OcrDuplicateLineGuard.Tag"],
+         before=[("SanitizeVatSplitArtifacts(extractedData", "OcrDuplicateLineGuard.Tag")],
+         must_re=[r"scanResult\.ProcessingNotes\s*=\s*\(\s*scanResult\.ProcessingNotes\s*\?\?[^;]*\+\s*dupRowsNote\s*;"],
+         why="2026-10-09 ฝ่ายค้านข้อ 2: หมายเหตุ [DUP-ROWS] ต้องเขียนลง ProcessingNotes ให้ OcrPostingReadiness หยุดอนุมัติเอง"),
     dict(file="Helpers/OcrLineSplitGuard.cs", method="Evaluate",
          must=["OcrDuplicateLineGuard.Decide("],
          before=[("OcrDuplicateLineGuard.Decide(", "parsed.Sum(")],
@@ -1539,6 +1546,7 @@ RULES += [
          why="2026-10-09 BS2026100001: หมายเหตุการตัดแถวซ้ำต้องถึง trace ของสแกน (ล้มดัง ไม่ตัดเงียบ)"),
     dict(file=HARNESS, method="BuildLines",
          must=["OcrDuplicateLineGuard.Decide("],
+         call_args=[("OcrDuplicateLineGuard.Decide(", "discountToSpread")],
          before=[("OcrDuplicateLineGuard.Decide(", "OcrLineReconciler.Classify(")],
          why="2026-10-09 BS2026100001: harness เล่นซ้ำด่านแถวซ้ำก่อนกระทบยอด — golden ของใบต้นฉบับ+สำเนาถึงล็อกคำตอบที่ service ให้จริง"),
 ]

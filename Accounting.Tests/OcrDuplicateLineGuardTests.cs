@@ -60,20 +60,38 @@ public class OcrDuplicateLineGuardTests
     }
 
     [Fact]
-    public void กระดาษพิมพ์รายการซ้ำจริง_น้ำดื่มสองบรรทัดหัวใบ100_Σทุกแถวตรงหัวใบ_คงทุกแถว()
+    public void กระดาษพิมพ์รายการซ้ำจริง_น้ำดื่มสองบรรทัดหัวใบ100_คงทุกแถว()
     {
+        // ชุดเดียว × 2 ไม่เข้ารูป "สำเนาทั้งหน้า" (ฝ่ายค้านข้อ 2) ⇒ ไม่แตะตั้งแต่ขั้นรูปแบบ — ขั้นยุบเดิมรวมเป็น 20 ขวดเหมือนเดิม
         var rows = new List<OcrCandidateRow> { new("น้ำดื่ม", 10m, 5.00m, 50.00m), new("น้ำดื่ม", 10m, 5.00m, 50.00m) };
         var d = OcrDuplicateLineGuard.Decide(rows, 100m, 7m, 107m);
         Assert.False(d.Deduped);
         Assert.Equal(new[] { 0, 1 }, d.KeepIndexes.ToArray());
         Assert.Equal(0, d.DroppedCount);
+        Assert.Contains("ไม่มีแถวอื่นเทียบ", d.Reason);
+    }
+
+    [Fact]
+    public void กระดาษพิมพ์สองรายการซ้ำจริงทั้งคู่_Σทุกแถวตรงหัวใบ_คงทุกแถว()
+    {
+        // น้ำดื่ม 50 + ขนม 30 พิมพ์สองรอบจริง (ซื้อสองชุด) · หัวใบ 160 = Σ ทุกแถว ⇒ ซ้ำจริง (เข้ารูปสำเนาแต่หัวใบบอกว่าไม่ใช่)
+        var rows = new List<OcrCandidateRow>
+        {
+            new("น้ำดื่ม", 10m, 5m, 50m), new("ขนม", 1m, 30m, 30m), new("น้ำดื่ม", 10m, 5m, 50m), new("ขนม", 1m, 30m, 30m),
+        };
+        var d = OcrDuplicateLineGuard.Decide(rows, 160m, 11.20m, 171.20m);
+        Assert.False(d.Deduped);
+        Assert.Equal(4, d.KeepIndexes.Count);
         Assert.Contains("ซ้ำจริง", d.Reason);
     }
 
     [Fact]
-    public void ไม่มียอดหัวใบ_แถวเหมือนกันสองแถว_ไม่เดา_คงทุกแถว()
+    public void ไม่มียอดหัวใบ_เข้ารูปสำเนาทั้งหน้า_แต่ไม่เดา_คงทุกแถว()
     {
-        var rows = new List<OcrCandidateRow> { new("น้ำดื่ม", 10m, 5.00m, 50.00m), new("น้ำดื่ม", 10m, 5.00m, 50.00m) };
+        var rows = new List<OcrCandidateRow>
+        {
+            new("น้ำดื่ม", 10m, 5m, 50m), new("ขนม", 1m, 30m, 30m), new("น้ำดื่ม", 10m, 5m, 50m), new("ขนม", 1m, 30m, 30m),
+        };
         var d = OcrDuplicateLineGuard.Decide(rows, null, null, null);
         Assert.False(d.Deduped);
         Assert.Contains("ไม่มียอดหัวใบ", d.Reason);
@@ -100,14 +118,66 @@ public class OcrDuplicateLineGuardTests
     }
 
     [Fact]
-    public void หน้าสองยกมาแค่บางแถว_ซ้ำสามแถว_Σหลังตัดตรงหัวใบ_ตัดเฉพาะแถวที่ซ้ำ()
+    public void หน้าสองยกมาแค่บางแถว_ซ้ำไม่เท่ากันทุกชุด_ไม่ใช่รูปแบบสำเนาทั้งหน้า_ไม่แตะ()
     {
+        // ฝ่ายค้านข้อ 2/3: 5 แถว + ยกมา 3 แถวแรก ⇒ ชุดซ้ำ ×2 สามชุด · ชุดเดี่ยวสองชุด — นอกรูป "สำเนาทั้งหน้า" ⇒ คงทุกแถว
+        // (ขั้นยุบเดิมยังรวมคู่ที่เหมือนกัน ⇒ ×2 บางบรรทัด แล้ว [Σ-GAP] ฟ้อง — ยอมรับ · จดในตารางครอบคลุมข้อ 9)
         var rows = BoonsapRows(1);
-        rows.AddRange(BoonsapRows(1).Take(3));     // หน้า 2 พิมพ์ซ้ำ 3 แถวแรก (ยกมา)
+        rows.AddRange(BoonsapRows(1).Take(3));
         var d = OcrDuplicateLineGuard.Decide(rows, BoonsapSub, BoonsapVat, BoonsapTotal);
-        Assert.True(d.Deduped);
-        Assert.Equal(3, d.DroppedCount);
-        Assert.Equal(new[] { 0, 1, 2, 3, 4 }, d.KeepIndexes.ToArray());
+        Assert.False(d.Deduped);
+        Assert.Equal(8, d.KeepIndexes.Count);
+        Assert.Contains("ไม่ใช่รูปแบบสำเนาทั้งหน้า", d.Reason);
+    }
+
+    [Fact]
+    public void หัวใบอ่านเพี้ยนเป็นยอดบรรทัดเดียว_น้ำดื่ม20บาทสามแถว_หัวใบ20_ไม่มีแถวอื่นเทียบ_ไม่แตะ()
+    {
+        // ฝ่ายค้านข้อ 2: ถ้าตัด จะเหลือ 1 แถว Σ 20 = หัวใบ(ที่อ่านผิด) แล้วเอกสารดู "สะอาด" — รูปแบบ 1 ชุด × k ไม่ใช่สำเนาทั้งหน้า ⇒ ให้คนดู
+        var rows = Enumerable.Repeat(new OcrCandidateRow("น้ำดื่ม", 1m, 20m, 20m), 3).ToList();
+        var d = OcrDuplicateLineGuard.Decide(rows, 20m, 0m, 20m);
+        Assert.False(d.Deduped);
+        Assert.Equal(3, d.KeepIndexes.Count);
+        Assert.Contains("ไม่มีแถวอื่นเทียบ", d.Reason);
+    }
+
+    [Fact]
+    public void สองแถวซ้ำบวกหนึ่งแถวเดี่ยว_หัวใบอ่านเพี้ยนเป็น100_ซ้ำไม่เท่ากัน_ไม่แตะ()
+    {
+        var rows = new List<OcrCandidateRow>
+        {
+            new("น้ำดื่ม", 1m, 50m, 50m), new("น้ำดื่ม", 1m, 50m, 50m), new("ข้าว", 1m, 50m, 50m),
+        };
+        var d = OcrDuplicateLineGuard.Decide(rows, 100m, 0m, 100m);   // หัวใบจริง 150 แต่อ่านได้ 100
+        Assert.False(d.Deduped);
+        Assert.Equal(3, d.KeepIndexes.Count);
+    }
+
+    // ── ฝ่ายค้านข้อ 1: ใบที่พิมพ์ส่วนลดท้ายบิล — Σ บรรทัดก่อนลด = หัวใบ + ส่วนลด ──────────────────────────────────────────
+
+    [Fact]
+    public void ต้นฉบับบวกสำเนา_มีส่วนลดท้ายบิล1005_ฐาน20000_ไม่ส่งส่วนลดจะไม่ตรงทั้งสองทาง_ส่งส่วนลดแล้วตัดได้()
+    {
+        // กระดาษ: Σ บรรทัด 21,005 · ส่วนลด 1,005 · ก่อน VAT 20,000 · VAT 1,400 · รวม 21,400 — engine คืนสองรอบ (42,010)
+        var without = OcrDuplicateLineGuard.Decide(BoonsapRows(2), 20000m, 1400m, 21400m);
+        Assert.False(without.Deduped);                    // ไม่รู้ส่วนลด ⇒ ไม่เดา (คงเดิม — แล้ว [Σ-GAP] ฟ้อง)
+        var with = OcrDuplicateLineGuard.Decide(BoonsapRows(2), 20000m, 1400m, 21400m, headerDiscount: 1005m);
+        Assert.True(with.Deduped);
+        Assert.Equal(5, with.DroppedCount);
+        Assert.Contains("ยอดก่อน VAT + ส่วนลด", with.Reason);
+    }
+
+    [Fact]
+    public void ใบมีส่วนลด_กระดาษพิมพ์แถวเหมือนกันสองแถวจริง_Σทุกแถวลบส่วนลดเท่ากับฐาน_คงทุกแถว()
+    {
+        // A 600 × 2 แถว + B 300 ×2 แถว (Σ 1,800) · ส่วนลด 100 · ก่อน VAT 1,700 ⇒ Σ ทุกแถว = ฐาน + ส่วนลด ⇒ ซ้ำจริง
+        var rows = new List<OcrCandidateRow>
+        {
+            new("A", 1m, 600m, 600m), new("B", 1m, 300m, 300m), new("A", 1m, 600m, 600m), new("B", 1m, 300m, 300m),
+        };
+        var d = OcrDuplicateLineGuard.Decide(rows, 1700m, 119m, 1819m, headerDiscount: 100m);
+        Assert.False(d.Deduped);
+        Assert.Contains("ซ้ำจริง", d.Reason);
     }
 
     [Fact]
@@ -125,17 +195,48 @@ public class OcrDuplicateLineGuardTests
     }
 
     [Fact]
-    public void คำอธิบายต่างแค่ช่องว่างและตัวพิมพ์_ถือว่าแถวเดียวกัน_แต่แถวไม่มีคำอธิบายไม่ถือว่าซ้ำกับใคร()
+    public void คำอธิบายต่างแค่ช่องว่างและตัวพิมพ์_ถือว่าแถวเดียวกัน()
     {
         var rows = new List<OcrCandidateRow>
         {
-            new("สาย ไฟ  THW 1x6", 100m, 36.18m, 3618m), new("สายไฟ thw 1X6", 100m, 36.18m, 3618m),
-            new("", 1m, 100m, 100m), new(null, 1m, 100m, 100m),
+            new("สายไฟ  THW   1x6 ", 100m, 36.18m, 3618m), new("ปูน", 1m, 100m, 100m),
+            new("สายไฟ thw 1X6", 100m, 36.18m, 3618m), new("ปูน", 1m, 100m, 100m),
         };
-        var d = OcrDuplicateLineGuard.Decide(rows, 3818m, 267.26m, 4085.26m);
+        var d = OcrDuplicateLineGuard.Decide(rows, 3718m, 260.26m, 3978.26m);
         Assert.True(d.Deduped);
-        Assert.Equal(new[] { 0, 2, 3 }, d.KeepIndexes.ToArray());
-        Assert.Equal(1, d.DroppedCount);
+        Assert.Equal(new[] { 0, 1 }, d.KeepIndexes.ToArray());
+        Assert.Equal(2, d.DroppedCount);
+    }
+
+    [Fact]
+    public void แถวไม่มีคำอธิบาย_ไม่ถือว่าซ้ำกับใคร_ทำให้ไม่เข้ารูปสำเนาทั้งหน้า_ไม่แตะ()
+    {
+        var rows = new List<OcrCandidateRow>
+        {
+            new("A", 1m, 100m, 100m), new("", 1m, 100m, 100m), new("A", 1m, 100m, 100m), new(null, 1m, 100m, 100m),
+        };
+        var d = OcrDuplicateLineGuard.Decide(rows, 300m, 21m, 321m);
+        Assert.False(d.Deduped);
+        Assert.Equal(4, d.KeepIndexes.Count);
+    }
+
+    [Fact]
+    public void EffectiveAmount_สูตรเดียวกับEffAmtของSanitize_ยอด0ใช้ราคาคูณจำนวน()
+    {
+        Assert.Equal(300m, OcrDuplicateLineGuard.EffectiveAmount(300m, 1m, 999m));
+        Assert.Equal(250m, OcrDuplicateLineGuard.EffectiveAmount(0m, 25m, 10m));
+        Assert.Equal(250m, OcrDuplicateLineGuard.EffectiveAmount(null, 25m, 10m));
+        Assert.Equal(25m, OcrDuplicateLineGuard.EffectiveAmount(null, 25m, null));
+    }
+
+    [Fact]
+    public void แท็กDUP_ROWS_อยู่ในแท็กห้ามอนุมัติเอง_และหยุดอนุมัติเองจริง()
+    {
+        // ฝ่ายค้านข้อ 2: ระบบตัดแถวเองแล้ว Σ ตรง ⇒ ไม่มี [Σ-GAP]/[MATH] — ต้องมีแท็กของตัวเองหยุดการอนุมัติ
+        Assert.Contains(OcrPostingReadiness.BlockingTags, t => t.Tag == OcrDuplicateLineGuard.Tag);
+        var v = OcrPostingReadiness.Evaluate("[Tier] Azure DI\n" + OcrDuplicateLineGuard.Tag + " ตัดแถวที่ถูกอ่านซ้ำ 5 แถว", hasUsableDate: true);
+        Assert.False(v.CanAutoApprove);
+        Assert.Contains(OcrScanSnapshot.DecisionNoteTags, t => t == OcrDuplicateLineGuard.Tag);
     }
 
     // ── ด่านจริง: SanitizeVatSplitArtifacts (จุดที่เคยรวมจำนวน ×2) ───────────────────────────────────────────────────
@@ -178,6 +279,29 @@ public class OcrDuplicateLineGuardTests
         Assert.Equal(5.00m, it.UnitPrice);
         Assert.Equal(100.00m, it.Amount);
         Assert.DoesNotContain(d.ReasoningTrace, t => t.StartsWith(OcrDuplicateLineGuard.Tag));
+    }
+
+    [Fact]
+    public void Sanitize_น้ำดื่ม20บาทสามแถว_หัวใบอ่านเพี้ยนเป็น20_ไม่ตัด_ขั้นยุบเดิมรวมเป็น60_ให้ด่านΣฟ้อง()
+    {
+        var d = new OcrExtractedData { SubTotal = 20m, VatAmount = 0m, TotalAmount = 20m };
+        for (var i = 0; i < 3; i++) d.Items.Add(new() { Description = "น้ำดื่ม", Quantity = 1m, UnitPrice = 20m, Amount = 20m });
+        OcrService.SanitizeVatSplitArtifacts(d);
+        var it = Assert.Single(d.Items);
+        Assert.Equal(3m, it.Quantity);
+        Assert.Equal(60m, it.Amount);
+        Assert.DoesNotContain(d.ReasoningTrace, t => t.StartsWith(OcrDuplicateLineGuard.Tag));
+    }
+
+    [Fact]
+    public void Sanitize_ต้นฉบับบวกสำเนาที่มีส่วนลดท้ายบิล_ใช้DiscountAmountของสแกน_ตัดได้()
+    {
+        var d = BoonsapScan(copies: 2);
+        d.SubTotal = 20000m; d.VatAmount = 1400m; d.TotalAmount = 21400m; d.DiscountAmount = 1005m;
+        OcrService.SanitizeVatSplitArtifacts(d);
+        Assert.Equal(5, d.Items.Count);
+        Assert.Equal(21005.00m, d.Items.Sum(i => i.Amount!.Value));
+        Assert.Contains(d.ReasoningTrace, t => t.StartsWith(OcrDuplicateLineGuard.Tag));
     }
 
     [Fact]

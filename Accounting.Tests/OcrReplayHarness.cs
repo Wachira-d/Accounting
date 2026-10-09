@@ -352,9 +352,10 @@ public static class OcrReplayHarness
         var duplicateRowsDropped = 0;
         if (lines is { Count: >= 2 })
         {
+            // ส่วนลดท้ายบิลที่ตัวสร้างบรรทัดยอมให้กระจาย (PostInvoice = 0 แล้วจาก OcrTotalDecomposer) — ตรงกับ service ที่ส่ง data.DiscountAmount
             var dup = OcrDuplicateLineGuard.Decide(
                 lines.Select(l => new OcrCandidateRow(l.Description, l.Quantity, l.UnitPrice, l.Amount)).ToList(),
-                headerSub, headerVat, anchoredTotal);
+                headerSub, headerVat, anchoredTotal, discountToSpread);
             if (dup.Deduped)
             {
                 var kept = lines;
