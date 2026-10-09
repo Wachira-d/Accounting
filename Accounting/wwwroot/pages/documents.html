@@ -449,6 +449,18 @@
                   <span style="display:block;color:#64748b;font-size:11px">VAT ขายยังลงรายงานภาษีขาย/ภ.พ.30 ครบ — นำส่งภาษีได้ปกติ · ผู้ซื้อเคลมภาษีซื้อไม่ได้</span>
                 </span>
               </label>
+              <!-- รูปแบบกระดาษหลักฐานรับเงินรายใบ (รอบ 203 · Helpers/ReceiptFormRule) — ว่าง = ให้ค่าตั้งบริษัท/ค่าแนะนำตัดสินตอนอนุมัติ ·
+                   ตัวเลือกที่ผิดกฎหมายสำหรับใบนี้ เซิร์ฟเวอร์ปฏิเสธตอนอนุมัติพร้อมเหตุผล (ไม่ทับเงียบ) · ป้ายมาจาก ReceiptFormRule.Label -->
+              <div id="fReceiptFormRow" style="display:none;margin-top:8px;font-size:13px">
+                <label class="form-label" style="font-size:12px;margin-bottom:2px">รูปแบบใบเสร็จ/ใบกำกับของใบนี้</label>
+                <select class="form-input" id="fReceiptForm" style="font-size:13px">
+                  <option value="">ตามค่าตั้งบริษัท (ค่าแนะนำ: ใบกำกับเต็มรูปเมื่อข้อมูลผู้ซื้อครบ)</option>
+                  <option value="ReceiptTaxInvoiceFull">ใบเสร็จรับเงิน/ใบกำกับภาษี (เต็มรูป §86/4)</option>
+                  <option value="ReceiptTaxInvoiceAbbreviated">ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ (§86/6 — เฉพาะกิจการขายปลีก)</option>
+                  <option value="PlainReceipt">ใบเสร็จรับเงิน (ไม่มี VAT ที่ถึงกำหนด)</option>
+                </select>
+                <div class="text-xs" style="color:#64748b;margin-top:2px">ผู้จด VAT ที่ใบพิมพ์ VAT ต้องเป็นใบกำกับเต็มรูปหรืออย่างย่อ (ม.86) — ตั้งค่าเริ่มต้นต่อกรณีได้ที่ ตั้งค่า → รูปแบบการออกใบกำกับ/ใบเสร็จ</div>
+              </div>
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
               <input type="hidden" id="fContactId">
@@ -1729,6 +1741,13 @@
           // เกณฑ์รับรู้ WHT — ตัดสินว่าใบเสร็จที่ตัดลูกหนี้ต้องเติมยอด gross
           // (Cash: ใบแจ้งหนี้ตั้ง AR ไว้ gross) หรือ net (Accrual)
           this._whtBasis = sr?.data?.whtRecognitionBasis || 'Cash';
+          // รอบ 203 — ป้ายรูปแบบใบเสร็จ/ใบกำกับมาจากเซิร์ฟเวอร์ (ReceiptFormRule.Label ผ่าน matrix) ทับข้อความสำรองใน markup
+          // เพื่อไม่ให้หน้านี้ถือสำเนาป้ายคนละชุดกับหน้าตั้งค่า/กระดาษ (ไม่มี matrix = คงข้อความสำรอง)
+          const _rfRow = (sr?.data?.receiptFormMatrix || [])[0];
+          if (_rfRow?.options) {
+            const _rfSel = document.getElementById('fReceiptForm');
+            _rfRow.options.forEach(o => { const opt = _rfSel?.querySelector(`option[value="${o.value}"]`); if (opt) opt.textContent = o.label; });
+          }
           // แกนวิเคราะห์ เปิด/ปิดต่อบริษัท — ปิดแล้วซ่อนช่องทั้ง form + filter
           // (ฟอร์มเบาลงสำหรับบริษัทที่ไม่ใช้ ข้อมูลเดิมไม่หาย)
           this._showProject = sr?.data?.showProjectOnDocuments !== false;
@@ -6037,6 +6056,12 @@
             const cb = document.getElementById('fBuyerDeclinedTaxInvoice');
             if (cb) cb.checked = false;
           }
+          // รอบ 203 — ตัวเลือกรูปแบบใบเสร็จ/ใบกำกับรายใบ: เงื่อนไขเดียวกับช่อง "ไม่ประสงค์รับใบกำกับ" (ชนิดที่ ReceiptFormRule ครอบ + บริษัทจด VAT)
+          const rfRow = document.getElementById('fReceiptFormRow');
+          if (rfRow) {
+            rfRow.style.display = canDecline ? '' : 'none';
+            if (!canDecline) { const sel = document.getElementById('fReceiptForm'); if (sel) sel.value = ''; }
+          }
         }
         // Tax Point §78/§78/1 — แสดงเฉพาะเอกสารที่กระทบ VAT (ขาย/ซื้อ)
         // Quotation/PR/PO/DN/BillingNote ไม่ตกในงวด VAT จึงไม่ต้องโชว์
@@ -8372,8 +8397,10 @@
          'fInputVatAccountCodeOverride',
          // ข้อมูลใบกำกับภาษีของผู้ขาย (input VAT / ภ.พ.30) — เดิมไม่ถูกล้าง →
          // เอกสารใหม่ยังค้างเลขผู้เสียภาษี/เลขที่/วันที่ใบกำกับของใบก่อนหน้า
-         'fSupplierTaxIdReadonly','fSupplierInvoiceNumberPV','fSupplierTaxInvoiceDatePV']
-          .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+         'fSupplierTaxIdReadonly','fSupplierInvoiceNumberPV','fSupplierTaxInvoiceDatePV',
+         // รอบ 203 — รูปแบบใบเสร็จ/ใบกำกับรายใบ: ฟอร์มใหม่ต้องไม่ค้างค่า/สถานะล็อกของใบก่อน
+         'fReceiptForm']
+          .forEach(id => { const el = document.getElementById(id); if (el) { el.value = ''; if (id === 'fReceiptForm') { el.disabled = false; el.title = ''; } } });
         // ล้างสถานะเทอมชำระเงิน/วันเครดิตของฟอร์มก่อนหน้า (list UI + provenance)
         this.renderPaymentTerms('', null);
         {
@@ -8821,6 +8848,14 @@
           if (fCash) { fCash.checked = !!d.issuedAsCashReceipt; this.onCashReceiptToggle?.(); }
           const fDecl = document.getElementById('fBuyerDeclinedTaxInvoice');
           if (fDecl) fDecl.checked = !!d.buyerDeclinedTaxInvoice;
+          // รอบ 203 — รูปแบบใบเสร็จ/ใบกำกับรายใบ (echo กลับจาก DocumentResponse.receiptForm · ใบที่ออกแล้ว = ค่าที่ตรึง อ่านอย่างเดียว)
+          const fRf = document.getElementById('fReceiptForm');
+          if (fRf) {
+            fRf.value = d.receiptForm || '';
+            if (fRf.value !== (d.receiptForm || '')) fRf.value = '';   // ค่าที่ markup ไม่มี (เช่น PaymentEvidenceOnly) — แสดงเป็น "ตามค่าตั้ง"
+            fRf.disabled = !['Draft', 'WaitingApproval', 'Rejected'].includes(d.status);
+            fRf.title = fRf.disabled ? 'ตรึงพร้อมเลขที่ตอนอนุมัติแล้ว — เปลี่ยนได้ด้วย "ยกเลิกและออกใบแทน" เท่านั้น (§86/4)' : '';
+          }
           // เจตนา "รับเงินครบแล้ว" (tax_paid) — เดิมไม่เคย persist/hydrate ⇒
           // เลือกโหมดแล้วปิดฟอร์ม เปิดใหม่ตัวเลือกหาย + หัวใบร่างไม่รวม
           // (defect class "เก็บแล้วต้อง echo กลับ" — เคสจริงจากผู้ใช้)
@@ -9198,6 +9233,13 @@
           ...((_effectiveDocType === 'CreditNote' || _effectiveDocType === 'DebitNote')
             ? { cnDnPurchaseSideOverride: this._cnSideIsPurchase() } : {}),
           buyerDeclinedTaxInvoice: document.getElementById('fBuyerDeclinedTaxInvoice')?.checked || false,
+          // รอบ 203 — รูปแบบใบเสร็จ/ใบกำกับรายใบ: ส่งเฉพาะเมื่อช่องยังแก้ได้ (ใบที่ออกแล้วถูกตรึง — ส่งไป = เซิร์ฟเวอร์ปฏิเสธ 409 ตามเจตนา)
+          // สร้างใหม่: ""=null (ให้ค่าตั้งบริษัท) · แก้ไข: ""=ล้างค่าเดิม (receiptFormClear) — กติกาเดียวกับช่องอื่นของฟอร์มนี้
+          ...((() => {
+            const sel = document.getElementById('fReceiptForm');
+            if (!sel || sel.disabled || sel.closest('#fReceiptFormRow')?.style.display === 'none') return {};
+            return sel.value ? { receiptForm: sel.value } : (this.editingId ? { receiptFormClear: true } : {});
+          })()),
           // ส่วนลดท้ายบิล (จากยอดรวม) — โหมด % → billDiscountPercent, โหมด ฿ → billDiscountAmount
           billDiscountPercent: (document.getElementById('fBillDiscountMode')?.value === 'pct')
             ? (parseFloat(document.getElementById('fBillDiscount')?.value) || 0) : 0,

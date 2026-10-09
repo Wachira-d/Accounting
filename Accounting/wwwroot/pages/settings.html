@@ -489,6 +489,17 @@
           </span>
         </label>
       </div>
+      <!-- รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203 · Helpers/ReceiptFormRule) — ตาราง/ตัวเลือก/เหตุผล/มาตรา
+           มาจากเซิร์ฟเวอร์ทั้งหมด (CompanySettingsResponse.ReceiptFormMatrix) หน้านี้วาดอย่างเดียว ไม่มีสำเนากติกา -->
+      <div class="form-group" style="max-width:760px;margin-top:14px" id="sReceiptFormBox">
+        <div style="font-size:13px;font-weight:700;margin-bottom:4px">🧾 แต่ละกรณีให้ออกใบเสร็จแบบไหน (รูปแบบทางกฎหมายของกระดาษ)</div>
+        <div class="text-xs text-gray-500" style="line-height:1.6;margin-bottom:8px">
+          ตัวเลือกในแต่ละแถวคือรูปแบบที่<b>กฎหมายอนุญาตสำหรับบริษัทนี้</b>เท่านั้น (ม.86 · ม.86/4 · ม.86/6 · ม.82/5(2)) —
+          ผู้จด VAT ที่กระดาษพิมพ์ยอด VAT ต้องเป็นใบกำกับภาษี (เต็มรูปหรืออย่างย่อ) · ใบเสร็จรับเงินเปล่าใช้ได้เมื่อไม่มี VAT ที่ถึงกำหนด
+          (ไม่จด VAT · ยกเว้น §81 · มัดจำที่นโยบายยังไม่ถือเป็นจุดความรับผิด) · ค่าที่ตั้งตรงนี้มีผลกับ<b>ใบใหม่</b>ตอนอนุมัติ และผู้ใช้ยังเลือกต่างออกไปรายใบได้ภายในชุดเดียวกัน
+        </div>
+        <div id="sReceiptFormMatrix" class="text-xs">กำลังโหลด…</div>
+      </div>
       <!-- วิธีบันทึกเงินมัดจำ (รอบ 193 #34) — ตัวเลือก/คำอธิบาย/คำเตือนมาจากเซิร์ฟเวอร์ทั้งหมด (DepositPolicyResolver) -->
       <div class="form-group" style="max-width:640px;margin-top:14px" id="sDepositVatBox">
         <div style="font-size:13px;font-weight:700;margin-bottom:4px">🤝 วิธีบันทึกเงินมัดจำ (VAT ของมัดจำ)</div>
@@ -1321,6 +1332,43 @@
         el.innerHTML = serverText
           ? Layout.esc(serverText)
           : '⚠️ ยังไม่ได้บันทึก — กด "บันทึกการตั้งค่า" แล้วระบบจะยืนยันผลของโหมดนี้';
+      },
+      // ===== รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203 · Helpers/ReceiptFormRule) =====
+      // เซิร์ฟเวอร์ส่งทุกแถว × ทุกตัวเลือก พร้อม "อนุญาตไหม + เหตุผล + มาตรา" — หน้านี้วาดและเก็บค่าที่เลือก ไม่ตัดสินอะไรเอง
+      renderReceiptFormMatrix() {
+        const box = document.getElementById('sReceiptFormMatrix'); if (!box) return;
+        const rows = this._receiptForm?.matrix;
+        if (!rows) { box.textContent = 'ยังไม่ได้รับตารางจากเซิร์ฟเวอร์ — โหลดหน้าใหม่'; return; }
+        const esc = Layout.esc;
+        box.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="background:#f8fafc"><th style="text-align:left;padding:6px 8px">กรณี</th><th style="text-align:left;padding:6px 8px">ออกเป็น</th><th style="text-align:left;padding:6px 8px">กฎหมาย</th></tr></thead>
+          <tbody>${rows.map(r => {
+            const allowed = r.options.filter(o => o.allowed);
+            const current = r.preference || '';
+            // แถวที่กฎหมายเหลือทางเดียว = แสดงเป็นข้อความ (ไม่มีอะไรให้ตั้ง) · แถวที่เลือกได้ = select (ตัวเลือกที่ไม่อนุญาตโชว์แบบปิด + เหตุผลใน title)
+            const control = r.configurable
+              ? `<select class="form-input" data-rf-case="${esc(r.case)}" style="font-size:12px;padding:4px 6px">
+                   <option value="">ค่าแนะนำ — ${esc(r.options.find(o => o.value === r.default)?.label || r.default || '')}</option>
+                   ${r.options.map(o => `<option value="${esc(o.value)}" ${o.allowed ? '' : 'disabled'} ${o.value === current ? 'selected' : ''} title="${esc(o.whyNot || '')}">${esc(o.label)}${o.allowed ? '' : ' — ไม่อนุญาต'}</option>`).join('')}
+                 </select>`
+              : (allowed.length === 1
+                  ? `<b>${esc(allowed[0].label)}</b>`
+                  : `<span style="color:#b91c1c">ยังออกไม่ได้ — ${esc(r.options.map(o => o.whyNot).filter(Boolean)[0] || '')}</span>`);
+            const blocked = r.options.filter(o => !o.allowed && o.whyNot);
+            return `<tr style="border-top:1px solid #e2e8f0;vertical-align:top">
+              <td style="padding:6px 8px;width:36%"><b>${esc(r.label)}</b><div style="color:#64748b;margin-top:2px">${esc(r.description)}</div></td>
+              <td style="padding:6px 8px;width:40%">${control}${r.note ? `<div style="color:#92400e;margin-top:4px">${esc(r.note)}</div>` : ''}</td>
+              <td style="padding:6px 8px;color:#64748b">${esc(r.legalReference)}${blocked.length ? `<details style="margin-top:4px"><summary style="cursor:pointer">ทำไมตัวเลือกอื่นไม่ได้</summary>${blocked.map(o => `<div style="margin-top:3px"><b>${esc(o.label)}</b>: ${esc(o.whyNot)}</div>`).join('')}</details>` : ''}</td>
+            </tr>`;
+          }).join('')}</tbody></table>`;
+      },
+      // ค่าที่ผู้ใช้เลือกในแถวที่ตั้งได้ → JSON object {"<case>":"<form>"} · ยังไม่โหลด matrix = null (เซิร์ฟเวอร์ไม่แตะ) ·
+      // ไม่เลือกอะไรเลย = "{}" (ล้างกลับค่าแนะนำ) — ค่าถูกตรวจซ้ำที่เซิร์ฟเวอร์ (ReceiptFormPolicy.Normalize) และตอนอนุมัติทุกใบ
+      collectReceiptFormPolicy() {
+        if (!this._receiptForm?.matrix) return null;
+        const out = {};
+        document.querySelectorAll('select[data-rf-case]').forEach(sel => { if (sel.value) out[sel.dataset.rfCase] = sel.value; });
+        return JSON.stringify(out);
       },
 
       // ===== หัวเรื่องเอกสารตั้งเอง =====
@@ -2485,6 +2533,9 @@
           if (_uniCb) _uniCb.checked = (s.unifyTaxInvoiceNumberSeries ?? true) !== false;
           this._depositVat = { info: s.depositVatTreatmentInfo, options: s.depositVatTreatmentOptions || [] };
           this.renderDepositVat(s.depositVatTreatment || '');
+          // รอบ 203 — รูปแบบกระดาษหลักฐานรับเงินต่อกรณี: matrix จากเซิร์ฟเวอร์ (undefined = ยังไม่ได้คำนวณ ≠ ไม่มีแถว)
+          this._receiptForm = { matrix: s.receiptFormMatrix ?? null };
+          this.renderReceiptFormMatrix();
           this.loadDepositKinds(s.canEdit);   // รอบ 194 — ประเภทเงินมัดจำ (สิทธิ์แก้ = สิทธิ์ตั้งค่าบริษัท)
           document.getElementById('sShowProjectOnDocuments').checked = s.showProjectOnDocuments !== false;
           document.getElementById('sShowCostCenterOnDocuments').checked = s.showCostCenterOnDocuments !== false;
@@ -2717,6 +2768,8 @@
             // "" = ล้างกลับค่าแนะนำ (server: null=ไม่แก้ · ""=ล้าง · ค่าอื่นต้องมีในผัง)
             posTipPayableAccountCode: (document.getElementById('sPosTipAccountCode')?.value ?? '').trim(),
             unifyTaxInvoiceNumberSeries: document.getElementById('sUnifyTaxInvoiceSeries')?.checked || false,
+            // รูปแบบใบเสร็จต่อกรณี (รอบ 203) — null = matrix ยังไม่โหลด ⇒ เซิร์ฟเวอร์ไม่แตะ · "{}" = ล้างทั้งหมด (กลับค่าแนะนำ)
+            receiptFormPolicyJson: this.collectReceiptFormPolicy(),
             // วิธีบันทึกเงินมัดจำ — "" = กลับไปใช้ค่าตามประเภทธุรกิจ (ล้างค่า) · ไม่โหลดตัวเลือก = ไม่แตะ
             ...(this._depositVat ? (() => {
               const v = document.querySelector('input[name="sDepositVat"]:checked')?.value ?? '';
