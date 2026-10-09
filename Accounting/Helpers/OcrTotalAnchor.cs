@@ -177,9 +177,9 @@ public static class OcrTotalAnchor
         @"ส่วนลด|discount|sub[ \t-]*total|ก่อน[ \t]*(?:หัก|ภาษี)|before[ \t]*vat|excl|exempt|ยกเว้น|มัดจำ|deposit|"
         + @"หัก[ \t]*ณ[ \t]*ที่[ \t]*จ่าย|withholding|"
         + @"ไม่รวม|จำนวนชิ้น|qty|quantity|รายการ|vatable|taxable|non[- \t]?vat|มีภาษี|ต้องเสียภาษี|ไม่เสียภาษี|"
-        + OcrPaperAmounts.OriginalDocWords + "|"
-        // 2026-10-09: แถว "ยอดค้างชำระจากรอบก่อน/ยอดยกมา" เป็นหนี้ของใบก่อน — ไม่ใช่ป้ายยอดรวมของใบนี้
-        + OcrPaperAmounts.PriorBalanceWords, Opt);
+        + OcrPaperAmounts.OriginalDocWords, Opt);
+    // แถว "ยอดค้างชำระจากรอบก่อน/ยอดยกมา" ตัดออกจากป้ายยอดรวม**เฉพาะเมื่อคำนั้นนำหน้าป้าย** (ดูลูปป้าย — OcrPaperAmounts.PriorBalanceLabelIndex) ·
+    // ฝ่ายค้าน 2026-10-09: ใส่ไว้ใน NotGrand ทั้งแถวทำให้ "ยอดรวมที่ต้องชำระ (รวมยอดยกมา) 1,570" เสียหลักฐานป้าย
 
     /// <summary>แถวชำระที่ไม่ใช่เงินสด</summary>
     private static readonly Regex PaymentRow = new(
@@ -237,6 +237,9 @@ public static class OcrTotalAnchor
             }
             var gm = GrandLabel.Match(line);
             if (!gm.Success || NotGrand.IsMatch(line)) continue;
+            // "ยอดยกมา/ค้างชำระจากรอบก่อน …" ที่นำหน้าป้าย = แถวหนี้ใบก่อน ไม่ใช่ป้ายยอดรวม · ป้ายที่มาก่อนแล้วตามด้วย "(รวมยอดยกมา)" ยังเป็นป้าย
+            var priorIdx = OcrPaperAmounts.PriorBalanceLabelIndex(line);
+            if (priorIdx >= 0 && priorIdx < gm.Index) continue;
             var after = OcrPaperAmounts.MoneyOn(line[(gm.Index + gm.Length)..]);
             decimal? amt = after.Count > 0 ? after[after.Count - 1] : null;
             var text = line.Trim();
@@ -380,6 +383,18 @@ public static class OcrTotalAnchor
                 && Explain(bb.Amount, a.Amount, rawText, vats) == OcrTotalRole.Unknown)).ToList();
             if (unexplained.Count >= 2)
                 return Conflict(unexplained[0], unexplained[1], e, candidates);
+        }
+
+        // ── ใบมีแถวยอดค้างชำระจากรอบก่อน แต่แยกยอดใบกำกับรอบนี้ไม่ได้ (ยอดรอบนี้ไม่พิมพ์ · มีค่าปรับ/ค่าธรรมเนียมเพิ่ม) และค่าที่ engine อ่าน
+        //    เป็นแค่ป้าย "ที่ต้องชำระ" ที่ไม่มี VAT ปิด ⇒ ยอดนั้นน่าจะรวมหนี้เก่า — ห้ามอนุมัติเอง (ฝ่ายค้าน 2026-10-09: เดิมคืน Unknown เงียบ ⇒ ฐาน §82/3 ผิด)
+        if (e is not null && priorRows.Count > 0 && eCand is { HasVatEvidence: false }
+            && eCand.Evidence.Any(t => t.Kind == OcrTotalEvidenceKind.GrandTotalLabel))
+        {
+            var priorText = string.Join(" · ", priorRows.Select(p => $"{p.Amount:N2}"));
+            return new(OcrTotalVerdict.Unsure, null, e, OcrTotalRole.Unknown, null, null, candidates,
+                $"กระดาษมีแถวยอดค้างชำระจากรอบก่อน {priorText} และยอดที่อ่านได้ {e.Value:N2} ไม่มี VAT ปิดยอด — "
+                + "น่าจะเป็นยอดที่ต้องชำระรวมหนี้เก่า/ค่าปรับ ไม่ใช่ยอดใบกำกับรอบนี้ แต่ระบบแยกยอดรอบนี้จากตัวเลขบนกระดาษไม่ได้ "
+                + "(ยอดรอบนี้ไม่ได้พิมพ์ หรือมีรายการเพิ่มที่ไม่ลงตัว) — ตรวจกับกระดาษแล้วแก้ยอดรวม/ฐาน/VAT ก่อนอนุมัติ");
         }
 
         // ── ไม่มีใครพิสูจน์ได้ — เตือนเฉพาะเมื่อยอดอื่นมีหลักฐานแข็ง (ตัวอักษร) มากกว่าค่า engine ชัดเจน ──

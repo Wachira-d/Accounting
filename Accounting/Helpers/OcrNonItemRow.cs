@@ -37,10 +37,33 @@ public static class OcrNonItemRow
         "promptpay", "qr code", "qr", "visa", "mastercard", "truemoney", "wallet",
         // แถวสรุป
         "รวมเงินทั้งสิ้น", "รวมทั้งสิ้น", "รวมทั้งหมด", "รวมสุทธิ", "รวมเงิน", "รวม", "ยอดรวม", "ยอดสุทธิ", "สุทธิ", "ยอดเงิน",
-        "ภาษีมูลค่าเพิ่ม", "ภาษี", "ส่วนลดท้ายบิล", "ส่วนลดรวม", "ส่วนลด",
-        "grand total", "sub total", "subtotal", "net total", "total", "vat", "tax", "discount", "amount due", "balance due",
+        "จำนวนเงินรวม", "ราคารวม", "มูลค่าสินค้า", "ราคาสินค้า", "ยอดที่ต้องชำระ",
+        "ภาษีมูลค่าเพิ่ม", "ภาษี", "หัก ณ ที่จ่าย", "หักภาษี", "ภาษีหัก", "ส่วนลดท้ายบิล", "ส่วนลดรวม", "ส่วนลด",
+        "grand total", "sub total", "subtotal", "net total", "total", "vat", "tax", "discount", "amount due", "balance due", "balance",
         "net amount", "net amt", "amount",
     };
+
+    /// <summary>ป้ายที่ปรากฏ<b>ตรงไหนของบรรทัดก็ได้</b>แล้วยังแปลว่า "แถวสรุป/ชำระ" (ไม่กำกวม — ไม่มีสินค้าชื่อแบบนี้) — ใช้โดยตัวแตกบรรทัดจาก
+    /// ข้อความล้วน (<see cref="RawTextLineSplitter"/>) ซึ่งการตัดเกินไม่เสียหาย (ด่าน <see cref="OcrLineSplitGuard"/> ต้องการ Σ ตรงอยู่แล้ว) ·
+    /// คำกำกวม ("รวม" · "ภาษี" · "cash" · "total") อยู่ใน <see cref="Primary"/> อย่างเดียว (ต้องเป็นคำแรก) — ชุดคำสรุป/ชำระของเส้น OCR มีที่นี่ที่เดียว
+    /// (ฝ่ายค้าน 2026-10-09 F2 ข้อ 4: เดิม RawTextLineSplitter.SummaryMarkers เป็นสำเนาที่สองที่ไม่ตรงกัน)</summary>
+    private static readonly string[] ContainsAnywhere =
+    {
+        "รวมเงิน", "รวมทั้งสิ้น", "ยอดรวม", "รวมสุทธิ", "จำนวนเงินรวม", "ราคารวม", "มูลค่าสินค้า", "ยอดสุทธิ", "ยอดที่ต้องชำระ",
+        "ส่วนลด", "ภาษีมูลค่าเพิ่ม", "ภาษีมูลค่า", "หัก ณ ที่จ่าย", "หักภาษี", "ภาษีหัก",
+        "เงินสด", "เงินทอน", "เงินรับ", "รับเงิน", "ยอดชำระ", "ชำระเงิน", "โอนเงิน", "เงินโอน", "บัตรเครดิต", "บัตรเดบิต", "พร้อมเพย์",
+        "subtotal", "sub total", "grand total", "net total", "amount due", "balance due", "credit card", "promptpay",
+    };
+
+    /// <summary>บรรทัดข้อความล้วน "พูดถึง" แถวสรุป/ชำระไหม — <see cref="IsSummaryOrTenderRow"/> (คำแรก) หรือมีป้ายไม่กำกวมอยู่ตรงไหนก็ได้
+    /// (<see cref="ContainsAnywhere"/>) · ใช้กับตัวแตกบรรทัดจากข้อความล้วนเท่านั้น (ตารางจาก engine ใช้ตัวเข้มอย่างเดียว — ตัดสินค้าจริงทิ้ง = ยอดขาดเงียบ)</summary>
+    public static bool MentionsSummaryLabel(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return false;
+        if (IsSummaryOrTenderRow(line)) return true;
+        var lower = line.ToLowerInvariant();
+        return ContainsAnywhere.Any(m => lower.Contains(m, StringComparison.Ordinal));
+    }
 
     /// <summary>คำประกอบที่แถวสรุป/ชำระใช้ต่อท้ายป้ายได้ (คำอื่นนอกนี้ = สินค้า)</summary>
     private static readonly HashSet<string> Allowed = new(StringComparer.Ordinal)

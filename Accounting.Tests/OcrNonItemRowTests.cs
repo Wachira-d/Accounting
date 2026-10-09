@@ -76,6 +76,30 @@ public class OcrNonItemRowTests
         Assert.Contains("เงินทอน 226.00", note);
     }
 
+    // ── ชุดคำเดียวของเส้น OCR: ตัวแตกบรรทัดจากข้อความล้วนถาม MentionsSummaryLabel (หลวม) — ตารางจาก engine ถามตัวเข้ม ──
+
+    [Theory]
+    [InlineData("ค่าบริการรวมภาษีมูลค่าเพิ่ม 1,070.00")]       // ป้ายอยู่กลางบรรทัด — ตัวเข้มคงไว้ ตัวหลวมตัด
+    [InlineData("หัก ณ ที่จ่าย 3% 300.00")]
+    [InlineData("มูลค่าสินค้า 687.20")]
+    [InlineData("รวมเงิน 3,000.00")]
+    [InlineData("เงินทอน 290.00")]
+    public void บรรทัดข้อความล้วนที่พูดถึงแถวสรุป_ตัวแตกบรรทัดต้องข้าม(string line)
+    {
+        Assert.True(OcrNonItemRow.MentionsSummaryLabel(line), line);
+        Assert.Empty(RawTextLineSplitter.Split(line));
+    }
+
+    [Theory]
+    [InlineData("รวมมิตรทะเล 120.00")]
+    [InlineData("ค่าขนส่ง 700.00")]
+    [InlineData("ภาษีป้าย (ค่าธรรมเนียม) 500.00")]            // เดิม SummaryMarkers "ภาษี" ตัดทิ้ง — ค่าใช้จ่ายจริง
+    public void สินค้า_บริการจริง_ตัวแตกบรรทัดคงไว้(string line)
+    {
+        Assert.False(OcrNonItemRow.MentionsSummaryLabel(line), line);
+        Assert.Single(RawTextLineSplitter.Split("หัวบิล\n" + line));
+    }
+
     [Fact]
     public void รายการจริงของกระดาษในชุดreplay_ไม่มีบรรทัดไหนถูกตัด()
     {

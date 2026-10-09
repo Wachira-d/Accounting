@@ -10,7 +10,8 @@ public sealed record ReplayPaper(
     decimal? EngineSubTotal = null, decimal? EngineVat = null, decimal? EngineTotal = null,
     string? VendorNameFromEngine = null, decimal? BaseAmount = null,
     decimal[]? LineAmounts = null,
-    IReadOnlyList<ReplayLine>? Lines = null);
+    IReadOnlyList<ReplayLine>? Lines = null,
+    string? VendorTaxId = null);
 
 /// <summary>บรรทัดรายการ<b>ตามที่กระดาษพิมพ์</b> (คำอธิบาย · จำนวน · ราคาต่อหน่วย · ยอด) — ป้อนขั้นสร้างบรรทัดเอกสาร
 /// (2026-10-09 ratchet ระดับบรรทัด) · ใบที่ให้แต่ <see cref="ReplayPaper.LineAmounts"/> จะถูกแปลงเป็นบรรทัดที่ไม่มีจำนวน/ราคา
@@ -333,7 +334,10 @@ public static class OcrReplayHarness
         {
             var n = lines.Count;
             var printed = lines.Select(l => l.Amount).ToList();
-            var lineGross = lines.Select(l => OcrTotalDecomposer.LineGross(l.Quantity, l.UnitPrice, l.Amount)).ToList();
+            // ตรงกับ service: บรรทัดที่เอกสารประกาศส่วนลดรายบรรทัดเอง (e-Tax) ใช้ยอดหลังลด — กระดาษไม่มีช่องนี้ ⇒ 0 ทุกบรรทัด (เรียกตัวเดียวกัน ไม่ประกอบเอง)
+            var lineOwnDisc = lines.Select(l => OcrEtaxLineNormalizer.ProvenLineDiscount(l.Quantity, l.UnitPrice, l.Amount, null)).ToList();
+            var lineGross = lines.Select((l, gi) => lineOwnDisc[gi] > 0m ? l.Amount
+                : OcrTotalDecomposer.LineGross(l.Quantity, l.UnitPrice, l.Amount)).ToList();
             var grossSum = lineGross.Sum();
 
             var netSubForRecon = hdrSub;
@@ -345,6 +349,9 @@ public static class OcrReplayHarness
             var recon = OcrLineReconciler.Classify(grossSum, netSubForRecon, hdrVat, hdrTotal, hdrDiscRaw);
             var docDiscountPercent = recon.DiscountPercent;
             var pricesIncludeVat = recon.PricesIncludeVat;
+            // ตรงกับ service: บรรทัด e-Tax ที่ติดธงราคารวม VAT ทั้งใบ ⇒ เอกสารราคารวม VAT — บรรทัดกระดาษไม่มีธง ⇒ false เสมอ
+            if (OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, false)).ToList()))
+                pricesIncludeVat = true;
 
             var amounts = printed.ToArray();
             if (docDiscountPercent > 0m && recon.TargetLineSum is decimal targetSum && grossSum > 0m)
@@ -364,7 +371,10 @@ public static class OcrReplayHarness
             var markPick = OcrLineVatMarks.Assign(printed, paperVatSplit, hdrVat);
             if (markPick.Applied)
                 for (var i = 0; i < n; i++) rates[i] ??= markPick.Rates[i];
-            var vatPrinted = OcrHeaderVatEvidence.Classify(p.RawText, null, hdrVat, null) == OcrHeaderVatSource.Labelled;
+            // ตรงกับ service: ข้อความดิบ + ข้อความ normalize · engine/หมายเหตุของสแกนไม่มีในชุดกระดาษ (null) · ยอดรวมที่ยึด
+            var vatPrinted = OcrHeaderVatEvidence.Classify(p.RawText,
+                Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(p.RawText), hdrVat, null, null, anchoredTotal)
+                == OcrHeaderVatSource.Labelled;
             var plan = OcrLineVatPlanner.PlanWholeInvoice(amounts, rates, hdrVat, netSubForRecon, hdrTotal, pricesIncludeVat,
                 OcrLineVatPlanner.PaperExemptAmount(paperVatSplit, OcrLineVatMarks.ReadGroups(p.RawText)), vatPrinted);
             if (plan.Decided)
@@ -372,7 +382,7 @@ public static class OcrReplayHarness
             var standardVatRate = hdrVat > 0m ? 7m : 0m;
             for (var i = 0; i < n; i++)
                 rates[i] ??= hdrVat > 0m
-                    ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(lines[i].Description, null, null), standardVatRate)
+                    ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(lines[i].Description, null, p.VendorTaxId), standardVatRate)
                     : 0m;
 
             // บรรทัดจากภาพ/ข้อความไม่มีธง PriceIncludesVat (เป็นของ e-Tax XML) ⇒ InclusiveLineVats คืน null ⇒ เฉลี่ยหัวใบตามเดิม

@@ -122,9 +122,10 @@ public class OcrPriorBalanceTests
     }
 
     [Fact]
-    public void แถวค้างชำระที่ไม่พิมพ์ยอดใบกำกับรอบนี้ไว้_ไม่แต่งผู้สมัครขึ้นเอง_คงพฤติกรรมเดิม()
+    public void แถวค้างชำระที่ไม่พิมพ์ยอดใบกำกับรอบนี้ไว้_ไม่แต่งผู้สมัครขึ้นเอง_แต่ต้องUnsureไม่ใช่เงียบ()
     {
         // ไม่มีบรรทัด "รวมค่าใช้บริการรอบนี้ 1,070" บนกระดาษ ⇒ 1,570 − 500 = 1,070 ไม่ได้พิมพ์ ⇒ ไม่เพิ่มผู้สมัคร (F2 ข้อ 3: ไม่แต่งตัวเลขที่ไม่มีบนใบ)
+        // ฝ่ายค้าน 2026-10-09 ข้อ 2: แต่ยอดที่อ่านได้ (ป้าย ไม่มี VAT ปิด) น่าจะรวมหนี้เก่า ⇒ [TOTAL-UNSURE] ห้ามอนุมัติเอง — ไม่ใช่ Unknown เงียบ
         const string text =
             "ใบแจ้งค่าใช้บริการ/ใบกำกับภาษี\n"
             + "ค่าบริการรายเดือน                  1,000.00\n"
@@ -133,7 +134,67 @@ public class OcrPriorBalanceTests
             + "ยอดรวมที่ต้องชำระ                   1,570.00\n";
         var r = OcrTotalAnchor.Find(text, 1570m);
         Assert.DoesNotContain(r.Candidates, c => c.Amount == 1070m);
-        Assert.NotEqual(OcrTotalVerdict.Proven, r.Verdict);
+        Assert.Equal(OcrTotalVerdict.Unsure, r.Verdict);
+        Assert.StartsWith(OcrTotalAnchor.UnsureTag, OcrTotalAnchor.Note(r));
+        var plan = OcrTotalAnchor.Plan(r, 1000m, 70m);
+        Assert.Null(plan.Total);                                   // ไม่แตะค่า
+        Assert.Equal(OcrTotalAnchor.DisputedConfidenceCap, plan.TotalConfidenceCap);
+    }
+
+    [Fact]
+    public void บิลมีค้าง500และค่าปรับ50_ยอดรอบนี้ไม่พิมพ์_Unsureพร้อมแท็ก_ไม่ใช่คงค่าผิดเงียบ()
+    {
+        // 1,070 + ค้าง 500 + ค่าปรับ 50 = 1,620 — 1,620 − 500 = 1,120 ไม่ได้พิมพ์ ⇒ แยกไม่ได้ · เดิมคืน Unknown ⇒ เอกสาร 1,620 / VAT 70 / ฐาน 1,550 เงียบ
+        const string text =
+            "ใบแจ้งค่าใช้บริการ/ใบกำกับภาษี\n"
+            + "ค่าบริการรายเดือน                  1,000.00\n"
+            + "ภาษีมูลค่าเพิ่ม 7%                     70.00\n"
+            + "ยอดค้างชำระจากรอบบิลก่อน              500.00\n"
+            + "ค่าปรับชำระล่าช้า                       50.00\n"
+            + "ยอดรวมที่ต้องชำระ                   1,620.00\n";
+        var r = OcrTotalAnchor.Find(text, 1620m);
+        Assert.Equal(OcrTotalVerdict.Unsure, r.Verdict);
+        Assert.Contains("500.00", r.Reason);
+        Assert.NotNull(OcrTotalAnchor.Note(r));
+    }
+
+    [Theory]
+    [InlineData("ยอดค้างชำระรอบนี้ กรุณาชำระก่อนวันที่ 15/11/2569 10,700.00")]   // "ก่อน" = กำหนดชำระ
+    [InlineData("งวดที่ 1 ชำระก่อนส่งมอบ ยอดค้างชำระ 50,000.00")]               // งวดสัญญา ไม่ใช่รอบก่อน
+    [InlineData("ยอดค้างชำระ 10,700.00")]                                      // ยอดของใบนี้
+    [InlineData("กรุณาชำระภายใน 7 วัน 1,570.00")]
+    [InlineData("ยอดยกมา -200.00")]                                            // เครดิตยกมา (จ่ายเกิน)
+    [InlineData("ยอดยกมา (200.00)")]
+    [InlineData("Previous Balance (200.00)")]
+    [InlineData("ยอดค้างชำระจากรอบบิลก่อน 0.00")]                              // แถวฟอร์มยอด 0
+    public void แถวที่ไม่ใช่ยอดยกมาที่เป็นหนี้_ไม่นับ(string row)
+        => Assert.Empty(OcrPaperAmounts.PriorBalanceRows("ค่าบริการ 1,000.00\n" + row + "\nยอดรวมที่ต้องชำระ 1,570.00"));
+
+    [Theory]
+    [InlineData("ยอดคงค้างยกมา 500.00")]                                       // NT/TOT
+    [InlineData("ยอดค้างชำระก่อนหน้า 500.00")]
+    [InlineData("ค้างชำระรอบก่อนหน้า 500.00")]
+    [InlineData("ยอดค้างชำระของเดือนที่แล้ว 500.00")]
+    public void แถวยกมารูปอื่นที่บิลไทยใช้_นับได้(string row)
+    {
+        var rows = OcrPaperAmounts.PriorBalanceRows("ค่าบริการ 1,000.00\n" + row + "\nยอดรวมที่ต้องชำระ 1,570.00");
+        Assert.Single(rows);
+        Assert.Equal(500m, rows[0].Amount);
+    }
+
+    [Fact]
+    public void ป้ายที่ต้องชำระที่วงเล็บว่ารวมยอดยกมา_ยังเป็นหลักฐานป้ายของยอดนั้น()
+    {
+        // ฝ่ายค้าน 2026-10-09 ข้อ 1: เดิมคำยกมาใน NotGrand ทั้งแถวทำให้ป้ายนี้หายไปจากหลักฐาน — ตอนนี้ตัดเฉพาะเมื่อคำยกมานำหน้าป้าย
+        var text = OcrPaperSamples.TelecomBillPriorBalance.Replace("ยอดรวมที่ต้องชำระ ", "ยอดรวมที่ต้องชำระ (รวมยอดยกมา) ");
+        Assert.Single(OcrPaperAmounts.PriorBalanceRows(text));     // แถว "(รวมยอดยกมา) 1,570" ไม่ใช่แถวยอดยกมา — เหลือแถว 500 แถวเดียว
+        var r = OcrTotalAnchor.Find(text, 1570m);
+        Assert.Equal(OcrTotalVerdict.Proven, r.Verdict);
+        Assert.Equal(1070m, r.Total);
+        var loser = r.Candidates.Single(c => c.Amount == 1570m);
+        Assert.Contains(loser.Evidence, ev => ev.Kind == OcrTotalEvidenceKind.GrandTotalLabel);
+        // และแถว "ยอดยกมา 500" ที่นำหน้าป้ายไม่กลายเป็นป้ายยอดรวม
+        Assert.DoesNotContain(r.Candidates, c => c.Amount == 500m && c.Evidence.Any(ev => ev.Kind == OcrTotalEvidenceKind.GrandTotalLabel));
     }
 
     [Fact]

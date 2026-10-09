@@ -1463,6 +1463,37 @@ RULES += [
          must=["OcrNonItemRow.IsSummaryOrTenderRow(desc)", "OcrNonItemRow.DroppedNote("],
          before=[("OcrNonItemRow.IsSummaryOrTenderRow(", "result.Items.Add(")],
          why="2026-10-09: ตาราง layout ของ Azure — แถว 'เงินสด/เงินทอน/รวม/VAT' ที่มีตัวอักษรเคยผ่านด่าน 'ไม่มีตัวอักษร' เป็นบรรทัดสินค้า"),
+    # ฝ่ายค้าน 2026-10-09 ข้อ 3: ทางเข้าที่ 4 = บรรทัดที่โมเดล/นักเรียน/RawTextLineSplitter แตกมา (ผ่าน OcrLineSplitGuard) ต้องเดินด่านเดียวกัน ·
+    # และ RawTextLineSplitter ห้ามมีสำเนาคำสรุปชุดที่สอง — ต้องถาม OcrNonItemRow.MentionsSummaryLabel
+    dict(file=OCR, method="TrySplitLineItemsAsync",
+         must=["OcrNonItemRow.IsSummaryOrTenderRow(line.Description)"],
+         before=[("OcrLineSplitGuard.Evaluate(", "OcrNonItemRow.IsSummaryOrTenderRow("),
+                 ("OcrNonItemRow.IsSummaryOrTenderRow(", "data.Items.Add(")],
+         why="2026-10-09: บรรทัดจาก line-split (AI/นักเรียน/กติกา) ไม่ให้แถวเงินสด/เงินทอน/รวม เป็นสินค้า"),
+    dict(file="Helpers/RawTextLineSplitter.cs", method="Split",
+         must=["OcrNonItemRow.MentionsSummaryLabel(line)"],
+         forbid=["SummaryMarkers"],
+         why="2026-10-09 F2 ข้อ 4: คำสรุป/ชำระ/เงินทอนของเส้น OCR อยู่ที่ OcrNonItemRow ที่เดียว — ตัวแตกบรรทัดห้ามมีลิสต์ของตัวเอง"),
+]
+
+# ── ฝ่ายค้าน 2026-10-09 ข้อ 4: replay harness ระดับบรรทัด (Accounting.Tests/OcrReplayHarness.BuildLines) ต้องเรียก helper ชุดเดียวกับ ───
+#    BuildScanLinesAsync — ลิสต์เดียวใช้กับทั้งสองเมธอด ⇒ เพิ่ม/ถอด helper ฝั่งใดฝั่งหนึ่งแล้วอีกฝั่งไม่ตาม = แดง (ป้องกัน harness ล็อกคำตอบที่ service ไม่ได้ให้)
+LINE_PIPELINE_HELPERS = [
+    "OcrLineVatMarks.Read(", "OcrHeaderVatEvidence.Classify(", "OcrLineVatMarks.Assign(",
+    "OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrTotalDecomposer.LineGross(", "OcrHeaderAmounts.NetSubTotal(",
+    "OcrLineReconciler.Classify(", "OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(",
+    "OcrLineVatPlanner.PlanWholeInvoice(", "OcrLineVatPlanner.PaperExemptAmount(", "OcrLineVatMarks.ReadGroups(",
+    "ThaiVatTypeRule.ToVatRate(", "ThaiVatTypeRule.Suggest(", "OcrEtaxLineNormalizer.InclusiveLineVats(", "ThaiVatTypeRule.SpreadHeaderVat(",
+    "DocumentRounding.CapShifts(", "DocumentRounding.FromPrintedLine(",
+    "OcrLineReconciler.LineDiscountPercent(", "OcrTotalDecomposer.SummaryGroupLines(", "OcrTotalDecomposer.Decompose(",
+]
+HARNESS = "../Accounting.Tests/OcrReplayHarness.cs"
+RULES += [
+    # ด่าน Σ: service เรียกผ่าน AppendAmountIntegrityGaps (ห่อ OcrAmountIntegrity.Check) · harness เรียก Check ตรง
+    dict(file=OCR, method="BuildScanLinesAsync", must=list(LINE_PIPELINE_HELPERS) + ["AppendAmountIntegrityGaps("],
+         why="2026-10-09 ข้อ 4: ชุด helper ของตัวสร้างบรรทัด = ชุดที่ harness เล่นซ้ำ (ลิสต์เดียวกัน)"),
+    dict(file=HARNESS, method="BuildLines", must=list(LINE_PIPELINE_HELPERS) + ["OcrAmountIntegrity.Check("],
+         why="2026-10-09 ข้อ 4: replay harness ต้องเรียก helper ชุดเดียวกับ BuildScanLinesAsync — ไม่งั้น golden ล็อกคำตอบที่ service ไม่ได้ให้"),
 ]
 
 # โฟลเดอร์ OCR ทั้งโฟลเดอร์ (ไม่ใช่รายเมธอด): ห้ามเขียนสูตรถอด VAT 7% จากยอดรวมเอง — ตัวตั้งคือ Helpers/OcrVatBackCalc.SplitInclusive

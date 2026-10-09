@@ -38,7 +38,13 @@ GOLDEN_GLOB = "OcrReplay*GoldenTests.cs"
 ETAX_FILE = "EtaxFixtures.cs"
 
 CONST_RE = re.compile(r"public\s+const\s+string\s+(\w+)\s*=\s*", re.M)
-PAPER_RE = re.compile(r"new\s+ReplayPaper\(\s*\"(?P<name>[^\"]+)\"\s*,\s*(?P<src>OcrPaperSamples\.(?P<sample>\w+)|\")", re.M)
+# ทุก ReplayPaper ถูกนับ — ไม่ว่าข้อความมาจาก OcrPaperSamples · literal inline · หรือแหล่งอื่น (ฝ่ายค้าน 2026-10-09 ข้อ 5: รุ่นแรกข้ามแหล่งอื่นเงียบ)
+PAPER_RE = re.compile(r"new\s+ReplayPaper\(\s*\"(?P<name>[^\"]+)\"\s*,\s*(?P<src>[^,\n]*)", re.M)
+SAMPLE_SRC_RE = re.compile(r"OcrPaperSamples\.(\w+)")
+# golden row = ชื่อใบเป็นอาร์กิวเมนต์แรกของ Val("…") หรืออยู่ในอาร์เรย์ชื่อใบ new[] { "…", … } ที่วน Val(paper, …) —
+# ไม่ใช่ literal ตัวพิมพ์เล็กใด ๆ ("ok" · "ambiguous" เป็นค่าของช่อง ไม่ใช่ชื่อใบ)
+VAL_RE = re.compile(r"\bVal\(\s*\"([^\"]+)\"")
+NAME_ARRAY_RE = re.compile(r"new\s*\[\]\s*\{([^}]*)\}", re.S)
 
 
 def strip_comments(text):
@@ -58,14 +64,21 @@ def sample_consts(samples_text):
 
 def corpus_papers(harness_text):
     """คืน list ของ (ชื่อใบ, ชื่อ sample หรือ None เมื่อเป็นข้อความ inline)"""
-    return [(m.group("name"), m.group("sample")) for m in PAPER_RE.finditer(strip_comments(harness_text))]
+    out = []
+    for m in PAPER_RE.finditer(strip_comments(harness_text)):
+        sm = SAMPLE_SRC_RE.search(m.group("src"))
+        out.append((m.group("name"), sm.group(1) if sm else None))
+    return out
 
 
 def golden_names(golden_texts):
     """ชื่อใบทุกตัวที่ปรากฏเป็น string literal ในไฟล์ golden (นอกคอมเมนต์)"""
     names = set()
     for t in golden_texts:
-        names.update(re.findall(r"\"([a-z0-9][a-z0-9-]*)\"", strip_comments(t)))
+        code = strip_comments(t)
+        names.update(VAL_RE.findall(code))
+        for arr in NAME_ARRAY_RE.findall(code):
+            names.update(re.findall(r"\"([^\"]+)\"", arr))
     return names
 
 
@@ -163,12 +176,17 @@ def self_test():
           "        new ReplayPaper(\"inline-covered\",\n            \"ใบเสร็จ\\nรวม 1.00\"),\n"
           "        new ReplayPaper(\"inline-no-golden\", \"ใบเสร็จ\\nรวม 2.00\"),\n"
           "        // new ReplayPaper(\"commented-out\", OcrPaperSamples.Nope),\n"
+          "        new ReplayPaper(\"ok\", \"ใบที่ชื่อเหมือนค่าช่อง\\nรวม 3.00\"),\n"
+          "        new ReplayPaper(\"external-source\", OtherFixtures.SomeText),\n"
+          "        new ReplayPaper(\"external-covered\", OtherFixtures.OtherText),\n"
           "    };\n}\n")
         w("OcrReplayGoldenTests.cs",
           "public class OcrReplayGoldenTests\n{\n"
           "    [Fact] public void A() => Assert.Equal(\"1.00\", Val(\"covered-paper\", \"HeaderTotal\"));\n"
           "    [Fact] public void B() => Assert.Equal(\"1.00\", Val(\"inline-covered\", \"HeaderTotal\"));\n"
           "    // Val(\"inline-no-golden\", \"X\")  ← อยู่ในคอมเมนต์ ไม่นับ\n"
+          "    [Fact] public void C() => Assert.Equal(\"ok\", Val(\"covered-paper\", \"IntegrityGaps\"));   // \"ok\" เป็นค่าช่อง ไม่ใช่ชื่อใบ\n"
+          "    [Fact] public void D() { foreach (var paper in new[] { \"external-covered\" }) Assert.Equal(\"1.00\", Val(paper, \"HeaderTotal\")); }\n"
           "}\n")
         w(ETAX_FILE,
           "public static class EtaxFixtures\n{\n"
@@ -194,7 +212,10 @@ def self_test():
         expect("EtaxFixtures.CommentOnlyXml" in joined, "e-Tax fixture ที่ถูกอ้างแค่ในคอมเมนต์ถูกฟ้อง")
         expect("EtaxFixtures.UsedXml" not in joined, "e-Tax fixture ที่มีเทสต์อ้างไม่ถูกฟ้อง")
         expect("EtaxFixtures.Bom" not in joined, "ค่าคงที่สั้น (BOM) ไม่นับเป็นเอกสาร")
-        expected_count = 5
+        expect("\"ok\"" in joined, "ใบที่ชื่อเหมือนค่าช่อง (\"ok\") ไม่ผ่านเพราะ literal ค่าช่อง — ต้องมี Val(\"ok\", …) จริง")
+        expect("\"external-source\"" in joined, "ใบที่อ้างข้อความจากแหล่งอื่น (ไม่ใช่ OcrPaperSamples) ไม่ถูกข้าม — ไม่มี golden ต้องถูกฟ้อง")
+        expect("\"external-covered\"" not in joined, "ใบแหล่งอื่นที่มีชื่อในอาร์เรย์ที่วน Val(paper, …) ถือว่ามี golden row")
+        expected_count = 7
         expect(len(problems) == expected_count, f"จำนวนข้อฟ้องตรงที่คาด ({len(problems)}/{expected_count})")
         # ไฟล์จริงของเรพต้องผ่าน (checker ที่ฟ้องผิด = checker ที่พัง)
         real = collect()

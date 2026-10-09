@@ -271,16 +271,59 @@ public static class OcrPaperAmounts
     /// — "ยอดค้างชำระ 10,700" เฉย ๆ บนใบวางบิล/ใบแจ้งหนี้คือ<b>ยอดที่ต้องชำระของใบนี้</b> ห้ามนับ (ทิศตรงข้ามล็อกใน OcrPriorBalanceTests)</para>
     /// </summary>
     public const string PriorBalanceWords =
-        @"ยอดยกมา|ยกมาจาก|ค้างชำระ(?:จาก|ของ)?[ \t]*(?:รอบ|งวด|เดือน|บิล|ครั้ง|ใบแจ้ง)[^\n]{0,20}?(?:ก่อน|ที่แล้ว|ที่ผ่านมา)|"
-        + @"(?:รอบ|งวด|เดือน|บิล|ครั้ง)[^\n]{0,12}?(?:ก่อน|ที่แล้ว|ที่ผ่านมา)[^\n]{0,20}?(?:ค้าง|ยกมา)|"
+        // คำว่า "ก่อน" ต้อง<b>ติด</b>คำบอกรอบ (รอบก่อน · รอบบิลก่อน · งวดที่แล้ว) — ฝ่ายค้าน 2026-10-09: "ยอดค้างชำระรอบนี้ กรุณาชำระก่อนวันที่ …" และ
+        // "งวดที่ 1 ชำระก่อนส่งมอบ ยอดค้างชำระ 50,000" เคยแมตช์เพราะ "ก่อน" = กำหนดชำระ ไม่ใช่ "ของรอบก่อน"
+        @"ยอดยกมา|ยกมาจาก|คงค้าง[^\n]{0,6}ยกมา|"
+        + @"ค้างชำระ(?:จาก|ของ)?[ \t]*(?:(?:รอบ|งวด|เดือน|บิล|ครั้ง|ใบแจ้ง)(?:บิล|หนี้)?)?(?:ก่อนหน้า|ที่แล้ว|ที่ผ่านมา)|"
+        + @"ค้างชำระ(?:จาก|ของ)?[ \t]*(?:รอบ|งวด|เดือน|บิล|ครั้ง|ใบแจ้ง)(?:บิล|หนี้)?ก่อน|"
+        + @"(?:รอบ|งวด|เดือน|บิล|ครั้ง)(?:บิล)?(?:ก่อน(?:หน้า)?|ที่แล้ว|ที่ผ่านมา)[^\n]{0,20}?(?:ค้าง|ยกมา)|"
         + @"previous[ \t]*balance|prior[ \t]*balance|balance[ \t]*(?:b/?f|brought[ \t]*forward|carried[ \t]*forward|from[ \t]*(?:last|previous))|"
         + @"outstanding[ \t]*(?:balance[ \t]*)?(?:from|b/?f)";
 
     private static readonly Regex PriorBalanceLabel = new(PriorBalanceWords, Opt);
 
-    /// <summary>แถว "ยอดค้างชำระจากรอบก่อน/ยอดยกมา" ที่มีเงิน &gt; 0 (<see cref="PriorBalanceWords"/>) — แถวยอด 0 ไม่ใช่หลักฐาน (RG-02)</summary>
+    /// <summary>แถวที่มีคำว่าค้าง/ยกมาแต่ตัวเลขเป็น<b>กำหนดชำระ/ยอดอื่น</b> ("กรุณาชำระก่อนวันที่ 15/11 10,700" · "ชำระภายใน …") — ไม่ใช่ยอดยกมา ·
+    /// "ค้างชำระก่อนหน้า" (NT) ยังเป็นยอดยกมา จึงยกเว้น</summary>
+    private static readonly Regex PriorBalanceNotAmount = new(
+        @"ชำระก่อน(?!หน้า)|ก่อนวันที่|ภายในวันที่|ภายใน[ \t]*\d|กำหนดชำระ|due[ \t]*date|pay[ \t]*(?:before|by|within)|"
+        // "ยอดรวมที่ต้องชำระ (รวมยอดยกมา) 1,570" — วงเล็บอธิบายว่า "รวมยอดยกมาแล้ว" ตัวเลขคือยอดที่ต้องชำระ ไม่ใช่ยอดยกมา
+        + @"\([ \t]*รวม[^\n)]{0,12}(?:ยกมา|ค้าง)[^\n)]{0,8}\)|incl\w*\.?[ \t]*(?:previous|prior)[ \t]*balance", Opt);
+
+    /// <summary>ยอดยกมาที่พิมพ์<b>ติดลบ/ในวงเล็บ</b> = เครดิตยกมา (จ่ายเกิน/คืนเงิน) ไม่ใช่หนี้ค้าง — ไม่นับ (<see cref="MoneyOn"/> คืนค่าสัมบูรณ์ จึงต้องดูเครื่องหมายเอง)</summary>
+    private static readonly Regex NegativeMoneyFirst = new(@"[-−(][ \t]*$", RegexOptions.CultureInvariant);
+
+    /// <summary>แถว "ยอดค้างชำระจากรอบก่อน/ยอดยกมา" ที่มีเงิน &gt; 0 (<see cref="PriorBalanceWords"/>) — แถวยอด 0 ไม่ใช่หลักฐาน (RG-02) ·
+    /// แถวกำหนดชำระ (<see cref="PriorBalanceNotAmount"/>) และยอดติดลบ/วงเล็บ (เครดิตยกมา) ไม่นับ</summary>
     public static IReadOnlyList<OcrPrintedAmount> PriorBalanceRows(string? rawText)
-        => LabelledRows(rawText, PriorBalanceLabel, null);
+    {
+        var lines = Lines(rawText);
+        var list = new List<OcrPrintedAmount>();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            var m = PriorBalanceLabel.Match(line);
+            if (!m.Success || PriorBalanceNotAmount.IsMatch(line)) continue;
+            var after = line[(m.Index + m.Length)..];
+            // ตัดส่วนที่ไม่ใช่ตัวเลขนำหน้าออก (ป้ายยาวต่อท้าย เช่น "ยอดยกมา (บาท) …") แล้วดูเครื่องหมายของเลขตัวแรก
+            var firstDigit = after.IndexOfAny("0123456789".ToCharArray());
+            if (firstDigit < 0) continue;
+            var lead = after[..firstDigit];
+            if (NegativeMoneyFirst.IsMatch(lead.Length > 3 ? lead[^3..] : lead)) continue;
+            var money = MoneyOn(after);
+            if (money.Count == 0 || money[money.Count - 1] <= 0m) continue;
+            list.Add(new OcrPrintedAmount(money[money.Count - 1], i, line.Trim()));
+        }
+        return list;
+    }
+
+    /// <summary>ตำแหน่งของคำ "ยอดยกมา/ค้างชำระจากรอบก่อน" บนบรรทัด (−1 = ไม่มี) — <see cref="OcrTotalAnchor"/> ใช้ตัดแถวค้างออกจากป้ายยอดรวม
+    /// <b>เฉพาะเมื่อคำนั้นมาก่อนป้าย</b> ("ยอดรวมที่ต้องชำระ (รวมยอดยกมา) 1,570" ยังเป็นป้ายยอดที่ต้องชำระ — ฝ่ายค้าน 2026-10-09)</summary>
+    public static int PriorBalanceLabelIndex(string? line)
+    {
+        if (string.IsNullOrEmpty(line)) return -1;
+        var m = PriorBalanceLabel.Match(line);
+        return m.Success ? m.Index : -1;
+    }
 
     private static IReadOnlyList<OcrPrintedAmount> LabelledRows(string? rawText, Regex label, Regex? notAmount)
     {

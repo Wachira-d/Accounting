@@ -10570,8 +10570,12 @@ public class OcrService : IOcrService
                 return;
             }
 
+            // 2026-10-09 (ฝ่ายค้าน F2 ข้อ 4): บรรทัดที่โมเดล/นักเรียนแตกมาเดินด่านแถวสรุป/ชำระตัวเดียวกับตารางของ engine —
+            // แถว "เงินสด/เงินทอน/รวม" ที่หลุดมาจะไม่กลายเป็นสินค้า (บอกใน trace · Σ ที่ไม่ตรงหลังตัดให้ด่าน [Σ-GAP] ตอนสร้างบรรทัดฟ้อง)
+            var droppedSplitRows = new List<string>();
             foreach (var line in guard.Lines)
             {
+                if (Accounting.Helpers.OcrNonItemRow.IsSummaryOrTenderRow(line.Description)) { droppedSplitRows.Add(line.Description ?? ""); continue; }
                 data.Items.Add(new OcrExtractedLineItem
                 {
                     Description = line.Description,
@@ -10581,6 +10585,8 @@ public class OcrService : IOcrService
                     Unit = line.Unit,
                 });
             }
+            if (droppedSplitRows.Count > 0)
+                data.ReasoningTrace.Add(Accounting.Helpers.OcrNonItemRow.DroppedNote(droppedSplitRows));
             // ปิด loop การเรียนรู้ (กฎเหล็ก #1 ขั้น CAPTURE) — เก็บ feedbackId
             // ไว้กับสแกน เพื่อให้ตอนผู้ใช้แก้/ยืนยันรายการในหน้า review
             // ระบบส่งคำตอบจริงกลับไปสอนได้ ไม่งั้น = จ่าย token ฟรีทุกใบ

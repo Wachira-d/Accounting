@@ -23,14 +23,11 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class RawTextLineSplitter
 {
-    /// <summary>บรรทัดสรุป/ยอดรวม — ห้ามกลายเป็นรายการสินค้า</summary>
-    private static readonly string[] SummaryMarkers =
+    /// <summary>บรรทัดหัว/ท้ายเอกสารที่ไม่ใช่รายการ (เลขที่ · วันที่ · เลขภาษี · โทร · สาขา · ลายเซ็น · หมายเหตุ) — ห้ามกลายเป็นรายการสินค้า
+    /// · คำสรุป/ชำระ/เงินทอน <b>ไม่อยู่ที่นี่</b>: ตัวตัดสินตัวเดียวคือ <see cref="OcrNonItemRow.MentionsSummaryLabel"/>
+    /// (ฝ่ายค้าน 2026-10-09 F2 ข้อ 4 — เดิมมีสำเนาคำสรุปชุดที่สองที่ไม่ตรงกับ OcrNonItemRow)</summary>
+    private static readonly string[] MetaMarkers =
     {
-        "รวมเงิน", "รวมทั้งสิ้น", "ยอดรวม", "รวมสุทธิ", "จำนวนเงินรวม", "ราคารวม",
-        "มูลค่าสินค้า", "ส่วนลด", "ภาษีมูลค่าเพิ่ม", "ภาษีมูลค่า", "vat", "ภาษี",
-        "หัก ณ ที่จ่าย", "หักภาษี", "เงินสด", "เงินทอน", "เงินรับ", "รับเงิน",
-        "total", "subtotal", "sub total", "grand", "change", "cash", "balance",
-        "amount due", "ยอดชำระ", "ชำระเงิน", "โอนเงิน", "บัตรเครดิต",
         "เลขที่", "วันที่", "เลขประจำตัว", "โทร", "tel", "tax id", "สาขา",
         "ลายมือชื่อ", "ผู้รับเงิน", "ผู้มีอำนาจ", "หมายเหตุ",
     };
@@ -77,7 +74,8 @@ public static class RawTextLineSplitter
             if (line.Length < 4) continue;
 
             var lower = line.ToLowerInvariant();
-            if (SummaryMarkers.Any(m => lower.Contains(m))) continue;
+            if (MetaMarkers.Any(m => lower.Contains(m))) continue;
+            if (OcrNonItemRow.MentionsSummaryLabel(line)) continue;
 
             var m = TrailingAmount.Match(line);
             if (!m.Success) continue;
