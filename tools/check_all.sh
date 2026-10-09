@@ -51,7 +51,8 @@ done
 # owner_action_wiring_check (ทีม W หลังฝ่ายค้าน): ถอดด่านเจ้าของ/คีย์ออกจากไฟล์จริงแล้วต้องฟ้อง
 # write_permission_gate_check · audit_direct_add_check (รอบ 201 ทีม PL): ratchet deny-list/ทางเข้าแถว audit — ฉีดจุดใหม่ลงไฟล์จริงแล้วต้องฟ้อง
 # mobile_overflow_check (2026-10-09 · มือถือ OCR ตัดขอบ): ฉีด viewport หาย/minmax(360px)/ถอดตาข่าย .page-content/แกะ table-container ลงสำเนาไฟล์จริงแล้วต้องฟ้อง
-for f in tools/contact_taxid_only_match_check.py tools/settings_reader_check.py tools/owner_action_wiring_check.py tools/settlement_line_type_rules_check.py tools/settlement_adapter_boundary_check.py tools/terminal_status_writer_check.py tools/comment_line_break_check.py tools/write_permission_gate_check.py tools/audit_direct_add_check.py tools/mobile_overflow_check.py; do
+# ocr_golden_corpus_check (2026-10-09 · ratchet กระดาษ OCR): ไฟล์สังเคราะห์ที่มี sample ไม่อยู่ใน Corpus / ใบไม่มี golden row / e-Tax fixture ไม่มีเทสต์ ต้องถูกฟ้อง · ของจริงต้องผ่าน
+for f in tools/contact_taxid_only_match_check.py tools/settings_reader_check.py tools/owner_action_wiring_check.py tools/settlement_line_type_rules_check.py tools/settlement_adapter_boundary_check.py tools/terminal_status_writer_check.py tools/comment_line_break_check.py tools/write_permission_gate_check.py tools/audit_direct_add_check.py tools/mobile_overflow_check.py tools/ocr_golden_corpus_check.py; do
   [ -e "$f" ] || continue
   out=$(python3 "$f" --self-test 2>&1); rc=$?
   if [ $rc -ne 0 ]; then red "❌ self-test $f"; echo "$out" | tail -20; fail=1; fi

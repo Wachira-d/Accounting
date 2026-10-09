@@ -9,7 +9,22 @@ public sealed record ReplayPaper(
     string Name, string RawText,
     decimal? EngineSubTotal = null, decimal? EngineVat = null, decimal? EngineTotal = null,
     string? VendorNameFromEngine = null, decimal? BaseAmount = null,
-    decimal[]? LineAmounts = null);
+    decimal[]? LineAmounts = null,
+    IReadOnlyList<ReplayLine>? Lines = null);
+
+/// <summary>บรรทัดรายการ<b>ตามที่กระดาษพิมพ์</b> (คำอธิบาย · จำนวน · ราคาต่อหน่วย · ยอด) — ป้อนขั้นสร้างบรรทัดเอกสาร
+/// (2026-10-09 ratchet ระดับบรรทัด) · ใบที่ให้แต่ <see cref="ReplayPaper.LineAmounts"/> จะถูกแปลงเป็นบรรทัดที่ไม่มีจำนวน/ราคา
+/// (เหมือน engine ที่คืนแค่ยอด)</summary>
+public sealed record ReplayLine(string? Description, decimal? Quantity, decimal? UnitPrice, decimal Amount);
+
+/// <summary>ผลของขั้นสร้างบรรทัดเอกสาร (<see cref="OcrReplayHarness.BuildLines"/>) — ทุกช่องเป็นข้อความอ่านออก เพื่อล็อกเป็น golden</summary>
+/// <param name="Mode"><c>Items</c> (มีรายการ) · <c>VatGroups</c> (ไม่มีรายการแต่กระดาษพิมพ์ตารางสรุปตามกลุ่มภาษี) · <c>Summary</c> (บรรทัดสรุปใบเดียว)</param>
+/// <param name="ReconCase">เคสของ <see cref="OcrLineReconciler"/> (เฉพาะ Items · อื่น ๆ = null)</param>
+/// <param name="Lines">หนึ่งบรรทัดต่อรายการ คั่นด้วย <c>;</c> — รูป <c>ยอดก่อนVAT|อัตรา|VAT|ราคาต่อหน่วย|ส่วนลด%|ส่วนลดบาท|หัก ณ ที่จ่าย</c></param>
+/// <param name="Gaps">ช่องว่างที่ตัวสร้างจะเขียนเป็น <c>[Σ-GAP]</c> (เคสกระทบยอด + ชนิดปัญหาของ <see cref="OcrAmountIntegrity"/>) · <c>ok</c> = ไม่มี</param>
+/// <param name="RoundingAdjustment">ผลต่างปัดเศษหัวเอกสาร (= −Σ shift ของบรรทัด)</param>
+public sealed record ReplayBuiltLines(
+    string Mode, string? ReconCase, bool PricesIncludeVat, string Lines, string Gaps, decimal RoundingAdjustment);
 
 /// <summary>คำตอบหนึ่งช่องของใบหนึ่ง</summary>
 public sealed record ReplayAnswer(string Paper, string Field, string? Value);
@@ -89,20 +104,52 @@ public static class OcrReplayHarness
         // ใบ A ของเจ้าของ (Wine Pro) — ใบที่ถูกอยู่แล้ว: V ทุกบรรทัด · บรรทัด 0.00 · VAT INCLUDED
         new ReplayPaper("winepro-vat-included", OcrPaperSamples.WinePro,
             EngineSubTotal: 3357.94m, EngineVat: 235.06m, EngineTotal: 3593m,
-            LineAmounts: new[] { 524m, 3069m, 0m }),
+            LineAmounts: new[] { 524m, 3069m, 0m },
+            // 2026-10-09 ratchet ระดับบรรทัด: จำนวน × ราคาตามที่กระดาษพิมพ์ (ช่องเดิมของใบนี้ไม่เปลี่ยน — Lines ป้อนเฉพาะขั้นสร้างบรรทัด)
+            Lines: new ReplayLine[]
+            {
+                new("BELCOLLE Moscato d' Asti DOCG", 1m, 524.00m, 524.00m),
+                new("VINA TOLDOS Red", 12m, 255.75m, 3069.00m),
+                new("2 BOTTLES WOVEN WINE BAG (Wine", 1m, 0.00m, 0.00m),
+            }),
 
         // ใบกำกับร้านวัสดุ ลดท้ายบิล 5% — ตัวอ่านเดิมหยิบ "ยอดหลังหักส่วนลด 1,325.25" เป็นส่วนลด
+        // 2026-10-09: เพิ่มรายการตามที่กระดาษพิมพ์ (3 บรรทัด) ⇒ ใบนี้ได้แถวใหม่ LineVatRates/LineVatPlan/Lines (ช่องเดิมไม่เปลี่ยน)
         new ReplayPaper("hardware-bill-discount", OcrPaperSamples.HardwareBillDiscount,
-            EngineSubTotal: 1395m, EngineVat: 92.77m, EngineTotal: 1418.02m),
+            EngineSubTotal: 1395m, EngineVat: 92.77m, EngineTotal: 1418.02m,
+            LineAmounts: new[] { 370m, 890m, 135m },
+            Lines: new ReplayLine[]
+            {
+                new("ปูนกาวซีเมนต์ 20 กก.", 2m, 185.00m, 370.00m),
+                new("สีน้ำอะครีลิค 3.5 ลิตร", 1m, 890.00m, 890.00m),
+                new("แปรงทาสี 4 นิ้ว", 3m, 45.00m, 135.00m),
+            }),
 
         // ใบซูเปอร์มาร์เก็ตราคารวม VAT ลดสมาชิก (engine หยิบ "รวม 774" เป็น SubTotal)
+        // 2026-10-09: เพิ่มรายการตามที่กระดาษพิมพ์ (3 บรรทัด · ราคารวม VAT) ⇒ แถวใหม่เท่านั้น
         new ReplayPaper("supermarket-member-discount", OcrPaperSamples.SupermarketMemberDiscount,
-            EngineSubTotal: 774m, EngineVat: 48.10m, EngineTotal: 735.30m),
+            EngineSubTotal: 774m, EngineVat: 48.10m, EngineTotal: 735.30m,
+            LineAmounts: new[] { 159m, 438m, 177m },
+            Lines: new ReplayLine[]
+            {
+                new("น้ำยาล้างจาน 3,600 มล.", 1m, 159.00m, 159.00m),
+                new("กระดาษทิชชู่ 24 ม้วน", 2m, 219.00m, 438.00m),
+                new("ถุงขยะ 30x40 นิ้ว", 3m, 59.00m, 177.00m),
+            }),
 
         // ใบค้าส่งผสมสินค้ายกเว้น §81 (N) กับสินค้า VAT (V)
         new ReplayPaper("wholesale-mixed-vat", OcrPaperSamples.WholesaleMixedVat,
             EngineSubTotal: 764m, EngineVat: 28m, EngineTotal: 792m,
-            LineAmounts: OcrPaperSamples.WholesaleLineAmounts),
+            LineAmounts: OcrPaperSamples.WholesaleLineAmounts,
+            Lines: new ReplayLine[]
+            {
+                new("ไข่ไก่ เบอร์ 2 (30 ฟอง)", 1m, 125.00m, 125.00m),
+                new("หมูสามชั้น 1 กก.", 1m, 189.00m, 189.00m),
+                new("ผักกาดขาว", 2m, 25.00m, 50.00m),
+                new("น้ำมันพืช 1 ลิตร", 2m, 52.00m, 104.00m),
+                new("น้ำปลา 700 มล.", 3m, 35.00m, 105.00m),
+                new("ผงซักฟอก 2.7 กก.", 1m, 219.00m, 219.00m),
+            }),
 
         // ── รอบ 192 (Total-first): กระดาษจริง 3 ใบของเจ้าของ (BRIEF-TOTAL) ──
 
@@ -113,13 +160,20 @@ public static class OcrReplayHarness
         // Shopee — ใบกำกับ 536 · ส่วนลดพิเศษ 98 หลัง VAT · จ่าย 438
         new ReplayPaper("uptoyou-shopee-pay-not-total", OcrPaperSamples.UptoyouShopee,
             EngineSubTotal: 500.93m, EngineVat: 35.07m, EngineTotal: 536.00m,
-            LineAmounts: new[] { 536.00m }),
+            LineAmounts: new[] { 536.00m },
+            Lines: new ReplayLine[] { new("[ซัก + ปรับ] ไฮยีน เลิฟทัช น้ำยาปรับผ้านุ่ม 1000 มล. + น้ำยาซักผ้า 1400 มล. [แพ็คคู่]", 2m, 268.00m, 536.00m) }),
 
         // Lazada — ส่วนลด 216.82 ก่อน VAT · แถว (0.00) ของกลุ่มยกเว้น
         new ReplayPaper("scommerce-lazada-prevat-discount", OcrPaperSamples.ScommerceLazada,
             EngineSubTotal: 4912.15m, EngineVat: 328.67m, EngineTotal: 5024.00m,
             // รอบ 195: ยอดบรรทัดตามที่พิมพ์ (นมผง 4,912.15 · ค่าจัดส่ง 0.00) — ให้ขั้น 7 (ชั้นพิสูจน์ทั้งใบ) ตรวจใบนี้ได้
-            LineAmounts: new[] { 4912.15m, 0.00m }),
+            LineAmounts: new[] { 4912.15m, 0.00m },
+            // 4 × 1,228.04 = 4,912.16 แต่พิมพ์ 4,912.15 — ยอดที่พิมพ์ชนะ · ส่วนต่าง 0.01 ไปที่ผลต่างปัดเศษหัวเอกสาร (รอบ 193 ข้อ 8)
+            Lines: new ReplayLine[]
+            {
+                new("นมผงเอนฟาโกร เอนฟินิทัส สูตร3 1425 กรัม:สูตร3", 4m, 1228.04m, 4912.15m),
+                new("ค่าจัดส่ง / Shipping Fee", 1m, 0.00m, 0.00m),
+            }),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -203,8 +257,197 @@ public static class OcrReplayHarness
                     ? plan.Verdict + ":" + string.Join(",", plan.Rates.Select(r => r?.ToString("0.##") ?? "-"))
                     : plan.Verdict.ToString()));
             }
+
+            // 8. 2026-10-09 ratchet ระดับบรรทัด — บรรทัดเอกสารที่จะถูกสร้างจริง (ยอด/อัตรา/VAT/ส่วนลด/หัก ณ ที่จ่าย ต่อบรรทัด)
+            //    เล่นซ้ำขั้น pure ของ BuildScanLinesAsync ทั้งสามสาขา (มีรายการ · ตารางกลุ่มภาษี · บรรทัดสรุป) — แถวใหม่ทั้งหมด
+            var built = BuildLines(p, n.SubTotal, n.Vat, anchoredTotal, shape.DiscountToSpread, wht);
+            result.Add(new(p.Name, "LineMode", built.Mode));
+            result.Add(new(p.Name, "ReconCase", built.ReconCase));
+            result.Add(new(p.Name, "PricesIncludeVat", built.PricesIncludeVat ? "true" : "false"));
+            result.Add(new(p.Name, "Lines", built.Lines));
+            result.Add(new(p.Name, "IntegrityGaps", built.Gaps));
+            result.Add(new(p.Name, "RoundingAdjustment", built.RoundingAdjustment.ToString("0.00")));
         }
         return result;
+    }
+
+    /// <summary>
+    /// **เล่นซ้ำขั้นสร้างบรรทัดเอกสารของ <c>OcrService.BuildScanLinesAsync</c> ด้วยตัวตัดสิน pure ชุดเดียวกัน** (ไม่มี DB)
+    ///
+    /// <para>ลำดับตรงกับ service: ยอดก่อนลดของบรรทัด (<see cref="OcrTotalDecomposer.LineGross"/>) → ฐานกระทบยอดหลังส่วนลด
+    /// (<see cref="OcrHeaderAmounts.NetSubTotal"/>) → จำแนกเคส (<see cref="OcrLineReconciler.Classify"/>) → กระจายส่วนลด (เคส C/E) →
+    /// อัตรา VAT: สัญลักษณ์บนกระดาษ (<see cref="OcrLineVatMarks.Assign"/>) → ตัวเลขหัวใบพิสูจน์ทั้งใบ (<see cref="OcrLineVatPlanner"/>) →
+    /// เดาจากชื่อ (<see cref="ThaiVatTypeRule"/>) → เฉลี่ย VAT หัวใบ (<see cref="ThaiVatTypeRule.SpreadHeaderVat"/>) → ผลต่างปัดเศษของ
+    /// ราคาต่อหน่วย (<see cref="DocumentRounding"/>) → ด่าน Σ (<see cref="OcrAmountIntegrity.Check"/>)</para>
+    ///
+    /// <para>สิ่งที่<b>ไม่</b>เล่นซ้ำ (ต้องมี DB/ข้อมูลสแกน): ผังบัญชี · PO · ประเภทเงินได้ ม.40 · ธง <c>PriceIncludesVat</c> ของบรรทัด e-Tax
+    /// (กระดาษไม่มี ⇒ ส่ง false ทุกบรรทัด เหมือน engine ภาพ) · อัตราหัก ณ ที่จ่ายใช้ที่กระดาษพิมพ์ (<see cref="PaperWhtReader"/>) แทน
+    /// <c>result.HasWht/WhtRate</c> ซึ่งในไปป์ไลน์จริงมาได้หลายทาง</para>
+    ///
+    /// <para>⚠️ ค่าที่ล็อกคือ "คำตอบวันนี้" — รวมถึงพฤติกรรมที่น่าสงสัย (เช่น บรรทัดไม่มีราคาต่อหน่วยในเคส C ได้ <c>ส่วนลดบาท = 0</c>
+    /// ทั้งที่ % ส่วนลด &gt; 0) เพื่อให้การแก้ครั้งถัดไป<b>มองเห็น</b>ว่าใบไหนเปลี่ยน ไม่ใช่เพื่อรับรองว่าถูก</para>
+    /// </summary>
+    public static ReplayBuiltLines BuildLines(
+        ReplayPaper p, decimal? headerSub, decimal? headerVat, decimal? anchoredTotal, decimal discountToSpread, PaperWht paperWht)
+    {
+        const MidpointRounding R = MidpointRounding.AwayFromZero;
+        var lines = p.Lines
+            ?? p.LineAmounts?.Select(a => new ReplayLine(null, null, null, a)).ToList();
+        if (p.Lines != null && p.LineAmounts != null && !p.Lines.Select(l => l.Amount).SequenceEqual(p.LineAmounts))
+            throw new InvalidOperationException($"{p.Name}: Lines กับ LineAmounts ยอดไม่ตรงกัน — กระดาษใบเดียวต้องมีตัวเลขชุดเดียว");
+
+        var hdrSub = headerSub ?? 0m;
+        var hdrVat = headerVat ?? 0m;
+        var hdrTotal = anchoredTotal ?? 0m;
+        var hdrDiscRaw = discountToSpread;
+        // CreateDocumentFromScanCoreAsync: whtBase = ยอดรวม − VAT · อัตราจาก HasWht/WhtRate (ที่นี่ = ที่กระดาษพิมพ์)
+        var whtRate = paperWht.Amount.HasValue ? (paperWht.RatePercent ?? 0m) : 0m;
+        var whtBase = Math.Max(0m, hdrTotal - hdrVat);
+        var headerWht = whtRate > 0m ? Math.Round(whtBase * whtRate / 100m, 2, R) : 0m;
+        var headerSubTotal = OcrHeaderAmounts.NetSubTotal(headerSub, headerVat, anchoredTotal, hdrDiscRaw);
+        var paperVatSplit = OcrLineVatMarks.Read(p.RawText);
+
+        static string Fmt(decimal net, decimal rate, decimal vat, decimal unit, decimal discPct, decimal discAmt, decimal wht)
+            => $"{net:0.00}|{rate:0.##}|{vat:0.00}|{unit:0.00}|{discPct:0.##}|{discAmt:0.00}|{wht:0.00}";
+        static string GapText(IEnumerable<string> gaps)
+        {
+            var list = gaps.ToList();
+            return list.Count == 0 ? "ok" : string.Join(",", list);
+        }
+
+        if (lines is { Count: > 0 })
+        {
+            var n = lines.Count;
+            var printed = lines.Select(l => l.Amount).ToList();
+            var lineGross = lines.Select(l => OcrTotalDecomposer.LineGross(l.Quantity, l.UnitPrice, l.Amount)).ToList();
+            var grossSum = lineGross.Sum();
+
+            var netSubForRecon = hdrSub;
+            if (hdrDiscRaw > 0m && hdrTotal > 0m)
+                netSubForRecon = OcrHeaderAmounts.NetSubTotal(hdrSub, hdrVat, hdrTotal, hdrDiscRaw);
+            else if (hdrSub <= 0m && hdrTotal > 0m)
+                netSubForRecon = Math.Max(0m, hdrTotal - hdrVat);
+
+            var recon = OcrLineReconciler.Classify(grossSum, netSubForRecon, hdrVat, hdrTotal, hdrDiscRaw);
+            var docDiscountPercent = recon.DiscountPercent;
+            var pricesIncludeVat = recon.PricesIncludeVat;
+
+            var amounts = printed.ToArray();
+            if (docDiscountPercent > 0m && recon.TargetLineSum is decimal targetSum && grossSum > 0m)
+            {
+                decimal assigned = 0m;
+                for (var i = 0; i < n; i++)
+                {
+                    var share = i == n - 1 ? targetSum - assigned
+                        : Math.Round(targetSum * lineGross[i] / grossSum, 2, R);
+                    assigned += share;
+                    amounts[i] = share;
+                }
+            }
+
+            // อัตรา VAT รายบรรทัด — ลำดับเดียวกับ service
+            var rates = new decimal?[n];
+            var markPick = OcrLineVatMarks.Assign(printed, paperVatSplit, hdrVat);
+            if (markPick.Applied)
+                for (var i = 0; i < n; i++) rates[i] ??= markPick.Rates[i];
+            var vatPrinted = OcrHeaderVatEvidence.Classify(p.RawText, null, hdrVat, null) == OcrHeaderVatSource.Labelled;
+            var plan = OcrLineVatPlanner.PlanWholeInvoice(amounts, rates, hdrVat, netSubForRecon, hdrTotal, pricesIncludeVat,
+                OcrLineVatPlanner.PaperExemptAmount(paperVatSplit, OcrLineVatMarks.ReadGroups(p.RawText)), vatPrinted);
+            if (plan.Decided)
+                for (var i = 0; i < n; i++) rates[i] ??= plan.Rates[i];
+            var standardVatRate = hdrVat > 0m ? 7m : 0m;
+            for (var i = 0; i < n; i++)
+                rates[i] ??= hdrVat > 0m
+                    ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(lines[i].Description, null, null), standardVatRate)
+                    : 0m;
+
+            // บรรทัดจากภาพ/ข้อความไม่มีธง PriceIncludesVat (เป็นของ e-Tax XML) ⇒ InclusiveLineVats คืน null ⇒ เฉลี่ยหัวใบตามเดิม
+            var spreadVat = (pricesIncludeVat
+                    ? OcrEtaxLineNormalizer.InclusiveLineVats(
+                        amounts.Select((a, i) => (a, rates[i] ?? 0m, false)).ToList(), hdrVat)
+                    : null)
+                ?? ThaiVatTypeRule.SpreadHeaderVat(amounts.Select((a, i) => (a, rates[i] ?? 0m)).ToList(), hdrVat);
+
+            var planned = new List<OcrPlannedLine>(n);
+            for (var i = 0; i < n; i++)
+                planned.Add(new OcrPlannedLine(
+                    pricesIncludeVat ? Math.Round(amounts[i] - spreadVat[i], 2, R) : amounts[i],
+                    rates[i] ?? standardVatRate, spreadVat[i]));
+            var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
+            var gaps = new List<string>();
+            if (recon.UnreconciledGap != 0m) gaps.Add("Σ-GAP:" + recon.Case);
+            foreach (var problem in check.Problems)
+            {
+                if (recon.UnreconciledGap != 0m
+                    && problem.Kind is OcrAmountIntegrityKind.TotalMismatch or OcrAmountIntegrityKind.VatRateMismatch)
+                    continue;
+                gaps.Add(problem.Kind.ToString());
+            }
+
+            // ผลต่างปัดเศษของราคาต่อหน่วย — เฉพาะบรรทัดที่มี VAT (ฝ่ายค้าน P5 รอบ 193) · บรรทัดกระดาษไม่มีส่วนลดรายบรรทัดของเอกสาร (lineOwnDisc = 0)
+            var (shifts, _) = DocumentRounding.CapShifts(lines
+                .Select((l, i) => rates[i] is decimal r && r <= 0m ? 0m
+                    : DocumentRounding.FromPrintedLine(l.Quantity, l.UnitPrice, lineGross[i]).Shift)
+                .ToList());
+
+            var lineAmountSum = amounts.Sum();
+            decimal whtAssigned = 0m, roundingShift = 0m;
+            var rows = new List<string>(n);
+            for (var i = 0; i < n; i++)
+            {
+                var amount = amounts[i];
+                var lineVat = spreadVat[i];
+                decimal lineWht = 0m;
+                if (headerWht > 0m && lineAmountSum > 0m)
+                {
+                    lineWht = i == n - 1 ? Math.Round(headerWht - whtAssigned, 2, R)
+                        : Math.Round(headerWht * amount / lineAmountSum, 2, R);
+                    whtAssigned += lineWht;
+                }
+                roundingShift += shifts[i];
+                var unitPrice = lines[i].UnitPrice ?? amount;
+                var discPct = OcrLineReconciler.LineDiscountPercent(docDiscountPercent, lineGross[i]);
+                var discAmt = docDiscountPercent > 0m
+                    ? Math.Round((lines[i].UnitPrice.HasValue ? lineGross[i] : amount * (lines[i].Quantity ?? 1m)) - amount, 2, R)
+                    : 0m;
+                var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shifts[i];
+                rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt, lineWht));
+            }
+            return new ReplayBuiltLines("Items", recon.Case.ToString(), pricesIncludeVat,
+                string.Join(";", rows), GapText(gaps), -roundingShift);
+        }
+
+        // ไม่มีรายการ — ตารางสรุปตามกลุ่มภาษีบนกระดาษ (Makro 3/3) ก่อน แล้วค่อยบรรทัดสรุปใบเดียว
+        var groups = OcrTotalDecomposer.SummaryGroupLines(
+            OcrTotalDecomposer.Decompose(p.RawText, headerSub, headerVat, anchoredTotal, hdrDiscRaw),
+            anchoredTotal, headerVat, headerSubTotal);
+        if (groups.Count > 0 && headerWht == 0m)
+        {
+            var planned = new List<OcrPlannedLine>(groups.Count);
+            var rows = new List<string>(groups.Count);
+            foreach (var g in groups)
+            {
+                var rate = g.Kind switch
+                {
+                    OcrVatGroupKind.Standard7 => 7m,
+                    OcrVatGroupKind.ZeroRated => 0m,
+                    _ => ThaiVatTypeRule.ExemptRate,
+                };
+                planned.Add(new OcrPlannedLine(g.Net, rate, g.Vat));
+                rows.Add(Fmt(g.Net, rate, g.Vat, g.Net, 0m, 0m, 0m));
+            }
+            var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
+            return new ReplayBuiltLines("VatGroups", null, false, string.Join(";", rows),
+                GapText(check.Problems.Select(x => x.Kind.ToString())), 0m);
+        }
+
+        var summaryRate = hdrVat > 0m ? 7m : 0m;
+        var summaryCheck = OcrAmountIntegrity.Check(
+            new[] { new OcrPlannedLine(headerSubTotal, summaryRate, hdrVat) }, hdrVat, hdrTotal,
+            paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
+        return new ReplayBuiltLines("Summary", null, false,
+            Fmt(headerSubTotal, summaryRate, hdrVat, headerSubTotal, 0m, 0m, headerWht),
+            GapText(summaryCheck.Problems.Select(x => x.Kind.ToString())), 0m);
     }
 
     /// <summary>ตารางผลต่าง "ก่อน → หลัง" — <b>ว่าง = ไม่มีใบไหนเปลี่ยนคำตอบ</b></summary>
