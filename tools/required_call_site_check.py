@@ -5981,7 +5981,7 @@ RULES += [
 # ── ฝ่ายค้านรอบสี่ f1690d11 (2026-10-09): ต้นทุนสินทรัพย์จากบรรทัดราคารวม VAT · แถวที่เพิ่มในรีวิวสืบทอดฐานราคา ──
 RULES += [
     dict(file=OCR, method="ScanAsync",
-         must=["OcrEtaxLineNormalizer.ExVatAmount(i.Amount, i.PriceIncludesVat, i.VatRate)",
+         must=["OcrEtaxLineNormalizer.ExVatAmount(i.Amount, i.PriceIncludesVat, i.VatRate, assetFallbackRate)",
                "amount = assetInput.ElementAtOrDefault(d.LineIndex).Item4"],
          forbid=[".Select(i => (i.Description, i.Quantity, i.UnitPrice, i.Amount))"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสี่ ข้อ 1: ตัวตรวจ/ผู้สมัครสินทรัพย์ถาวรใช้ต้นทุนก่อน VAT หลังส่วนลด (ไม่ใช่ยอดรวม VAT)"),
@@ -5991,6 +5991,26 @@ RULES += [
     dict(file=OCR, method="ModifyExtractedLineAsync",
          must=["OcrEtaxLineNormalizer.InheritForNewLine(", "PriceIncludesVat = inherit.PriceIncludesVat", "VatRate = inherit.VatRate"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสี่ ข้อ 2: แถวใหม่ในใบราคารวม VAT ต้องอยู่ฐานเดียวกัน (ไม่งั้นทั้งใบหลุด VAT 209.41 → 227.57)"),
+]
+
+
+# ── ฝ่ายค้านรอบห้า f1690d11 (2026-10-09): แถวราคารวม VAT ไม่รู้อัตรา · มัดจำ + ส่วนลดการค้า · [SCAN-WRITEBACK] ต้องดัง ──
+RULES += [
+    dict(file=OCR, method="ScanAsync",
+         must=["OcrEtaxLineNormalizer.DominantVatRate(", "OcrEtaxLineNormalizer.AssetCostNote("],
+         call_args=[("OcrEtaxLineNormalizer.ExVatAmount(", "assetFallbackRate"),
+                    ("OcrEtaxLineNormalizer.EffectiveUnitCost(", "assetFallbackRate")],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบห้า ข้อ 2/4: ผู้สมัครสินทรัพย์ใช้อัตราหลักของใบเมื่อแถวไม่รู้อัตรา · ไม่เดาฐาน VAT ของกระดาษ ⇒ หมายเหตุ [ASSET-COST]"),
+    dict(file="Controllers/OcrController.cs", method="StockPreview",
+         call_args=[("OcrEtaxLineNormalizer.EffectiveUnitCost(", "stockFallbackRate")],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบห้า ข้อ 4: ทุนนำเข้าสต็อกของแถวราคารวม VAT ไม่รู้อัตรา ⇒ อัตราหลักของใบ · ไม่มี ⇒ ไม่เติมจากราคารวม VAT"),
+    dict(file=DOC, method="SyncScanToPostedDocumentAsync",
+         must=["billDiscount: doc.BillDiscountAmount, depositBase: doc.DepositBaseDeducted"],
+         must_lit=["{Accounting.Helpers.OcrEtaxLineNormalizer.WriteBackLostTag}"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบห้า ข้อ 1/5: แท็กห้ามอนุมัติตัวเดียว (OcrPostingReadiness อ่าน) · ส่งยอดส่วนลดการค้าและมัดจำแยกกัน"),
+    dict(file=DOC, method="BuildScanItemsJsonFromLines",
+         call_args=[("OcrEtaxLineNormalizer.WriteBackLine(", "depositBase"), ("OcrEtaxLineNormalizer.WriteBackLine(", "billDiscount")],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบห้า ข้อ 5: ส่วนลดการค้ายังไปกับส่วนลดบรรทัดแม้มีมัดจำ — เฉพาะส่วนมัดจำที่หาย"),
 ]
 
 

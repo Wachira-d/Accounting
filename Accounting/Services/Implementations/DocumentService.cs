@@ -14643,7 +14643,7 @@ public partial class DocumentService : IDocumentService
                 Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(scan.OcrEngine)
                 || Accounting.Helpers.OcrEtaxLineNormalizer.ItemsJsonCarriesSignedQuantities(scan.ExtractedItemsJson),
                 doc.PricesIncludeVat,
-                billDiscountOnly: doc.BillDiscountAmount > 0m && doc.DepositBaseDeducted == 0m,
+                billDiscount: doc.BillDiscountAmount, depositBase: doc.DepositBaseDeducted,
                 lostLines: out var writeBackLostLines);
             var linesChanged = linesJson != null && linesJson != scan.ExtractedItemsJson;
             // ── คำตัดสินข้อ 28 (รอบ 200 ทีม K2 · ฝ่ายค้าน K R2): WHT ที่คนแก้ใน "ฟอร์มเอกสาร" ต้องถึงวงจรเรียนรู้ ──
@@ -14670,7 +14670,7 @@ public partial class DocumentService : IDocumentService
             // ฝ่ายค้านรอบสี่ ข้อ 3: บรรทัดที่ยอดหลังหักมัดจำ/ข้อมูลขัดกัน อธิบายด้วย จำนวน × ราคา − ส่วนลด ไม่ได้ ⇒ สร้างใหม่จากสแกนนี้จะไม่มีการหักนั้น — บอกดัง ๆ
             if (linesChanged && writeBackLostLines.Count > 0)
                 scan.ProcessingNotes = (scan.ProcessingNotes ?? "")
-                    + $"\n[SCAN-WRITEBACK] บรรทัดที่ {string.Join(", ", writeBackLostLines)} ของเอกสาร {doc.DocumentNumber}: ยอดหลังหักท้ายบิล/มัดจำ "
+                    + $"\n{Accounting.Helpers.OcrEtaxLineNormalizer.WriteBackLostTag} บรรทัดที่ {string.Join(", ", writeBackLostLines)} ของเอกสาร {doc.DocumentNumber}: ยอดหลังหักมัดจำ "
                     + "อธิบายด้วย จำนวน × ราคา − ส่วนลด ไม่ได้ — ถ้าสร้างเอกสารใหม่จากสแกนนี้ การหักนั้นจะไม่ตามไป ตรวจกับเอกสารเดิมก่อนอนุมัติ";
 
             // ★ ตัวชี้วัดคุณภาพ (D4): การแก้ Draft ก่อนอนุมัติก็คือ "ผู้ใช้ต้องแก้"
@@ -14739,7 +14739,7 @@ public partial class DocumentService : IDocumentService
     /// <para>ฝ่ายค้านรอบสี่ ข้อ 3: ยอด/ส่วนลดต่อบรรทัดผ่าน <c>OcrEtaxLineNormalizer.WriteBackLine</c> — ส่วนแบ่งส่วนลดท้ายบิลถูกพาไปในส่วนลดของบรรทัด
     /// (สร้างใหม่ได้ยอดเดิม) · หักมัดจำ/ข้อมูลขัดกัน ⇒ <paramref name="lostLines"/> (LineOrder) ให้ผู้เรียกเขียนหมายเหตุ ห้ามทิ้งเงียบ</para></summary>
     private static string? BuildScanItemsJsonFromLines(List<DocumentLine> lines, bool quantitiesFromSignedXml, bool pricesIncludeVat,
-        bool billDiscountOnly, out List<int> lostLines)
+        decimal billDiscount, decimal depositBase, out List<int> lostLines)
     {
         var lost = new List<int>();
         lostLines = lost;
@@ -14751,7 +14751,7 @@ public partial class DocumentService : IDocumentService
         var rows = usable.Select(l =>
         {
             var wb = Accounting.Helpers.OcrEtaxLineNormalizer.WriteBackLine(
-                l.Quantity, l.UnitPrice, l.Amount, l.VatAmount, l.DiscountAmount, pricesIncludeVat, billDiscountOnly);
+                l.Quantity, l.UnitPrice, l.Amount, l.VatAmount, l.DiscountAmount, pricesIncludeVat, billDiscount, depositBase);
             if (wb.Lost) lost.Add(l.LineOrder);
             return new
             {

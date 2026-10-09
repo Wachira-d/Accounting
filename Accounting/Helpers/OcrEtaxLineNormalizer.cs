@@ -220,11 +220,46 @@ public static class OcrEtaxLineNormalizer
     }
 
     /// <summary>ยอด<b>ก่อน VAT</b> ของบรรทัดสแกน — ฐานต้นทุนสินทรัพย์ถาวร/สต็อก (ฝ่ายค้านรอบสี่ ข้อ 1: บรรทัดราคารวม VAT ตามกระดาษถือยอดรวม VAT
-    /// 524.17 ⇒ เดิมสินทรัพย์ + ขาเดบิต JE เกินจริง 7% แทน 489.88) · ไม่ใช่ราคารวม VAT = ยอดเดิม</summary>
-    public static decimal? ExVatAmount(decimal? amount, bool priceIncludesVat, decimal? vatRate)
-        => priceIncludesVat && vatRate is decimal vr && vr > 0m && amount is decimal a
-            ? DocumentLineVatConvention.SplitLine(a, vr, null, includeVat: true).Net
-            : amount;
+    /// 524.17 ⇒ เดิมสินทรัพย์ + ขาเดบิต JE เกินจริง 7% แทน 489.88) · ไม่ใช่ราคารวม VAT = ยอดเดิม
+    /// <para>ฝ่ายค้านรอบห้า ข้อ 4: บรรทัดราคารวม VAT ที่ไม่รู้อัตรา (แถวที่เพิ่มในใบหลายอัตรา) ⇒ ใช้ <paramref name="fallbackRate"/> (อัตราหลักของใบ ·
+    /// <see cref="DominantVatRate"/>) · ไม่มีอีก ⇒ <b>null</b> (ผู้เรียกต้องใช้ทางที่ปลอดภัย + บอกผู้ใช้) — เดิมคืนยอดรวม VAT ตรง ๆ = ตีเป็นก่อน VAT เงียบ ๆ</para></summary>
+    public static decimal? ExVatAmount(decimal? amount, bool priceIncludesVat, decimal? vatRate, decimal? fallbackRate = null)
+    {
+        if (!priceIncludesVat) return amount;
+        var rate = vatRate is > 0m ? vatRate : fallbackRate is > 0m ? fallbackRate : null;
+        if (rate is not decimal vr || amount is not decimal a) return null;
+        return DocumentLineVatConvention.SplitLine(a, vr, null, includeVat: true).Net;
+    }
+
+    /// <summary>อัตรา VAT หลักของใบ "ราคารวม VAT ตามกระดาษ" = อัตราที่บรรทัดติดธงใช้มากที่สุด (เสมอกัน/ไม่มี = null) — ใช้แทนอัตราของแถวที่ไม่รู้อัตรา</summary>
+    public static decimal? DominantVatRate(IEnumerable<(bool PriceIncludesVat, decimal? VatRate)> lines)
+    {
+        var groups = lines.Where(l => l.PriceIncludesVat && l.VatRate is > 0m)
+            .GroupBy(l => l.VatRate!.Value)
+            .Select(g => (Rate: g.Key, Count: g.Count()))
+            .OrderByDescending(g => g.Count)
+            .ToList();
+        if (groups.Count == 0 || (groups.Count > 1 && groups[0].Count == groups[1].Count)) return null;
+        return groups[0].Rate;
+    }
+
+    /// <summary>หมายเหตุ <c>[ASSET-COST]</c> ของผู้สมัครสินทรัพย์ถาวรตอนสแกน (ฝ่ายค้านรอบห้า ข้อ 2) — กระดาษที่ไม่ใช่ e-Tax: ระบบยังไม่รู้ตอนนั้นว่า
+    /// ทั้งใบพิมพ์ราคารวม VAT ไหม (ตัดสินตอนสร้างบรรทัดเอกสาร) ⇒ ไม่เดา บอกให้ตรวจ · บรรทัดราคารวม VAT ที่ไม่รู้อัตรา ⇒ ไม่เสนอราคา · null = ไม่ต้องเตือน</summary>
+    public static string? AssetCostNote(bool paperScanWithVat, IReadOnlyList<int> inclusiveUnknownRateLines)
+    {
+        var parts = new List<string>();
+        if (paperScanWithVat)
+            parts.Add("ราคาซื้อสินทรัพย์ที่เสนอมาจากยอดบรรทัดบนกระดาษ — ถ้ากระดาษพิมพ์ราคารวม VAT ต้นทุนสินทรัพย์ต้องเป็นยอดก่อน VAT (ตรวจก่อนลงทะเบียน)");
+        if (inclusiveUnknownRateLines.Count > 0)
+            parts.Add($"บรรทัดที่ {string.Join(", ", inclusiveUnknownRateLines)} ราคารวม VAT แต่ไม่รู้อัตรา VAT — ไม่เสนอราคาซื้อ กรอกเองตอนลงทะเบียน");
+        return parts.Count == 0 ? null : AssetCostTag + " " + string.Join(" · ", parts);
+    }
+
+    /// <summary>ป้ายหมายเหตุต้นทุนสินทรัพย์จากสแกน (ไม่บล็อก — คำเตือนบนหน้า)</summary>
+    public const string AssetCostTag = "[ASSET-COST]";
+
+    /// <summary>ป้ายหมายเหตุบนสแกนเมื่อเขียนบรรทัดที่อนุมัติกลับแล้วอธิบายการหักมัดจำ/ข้อมูลขัดกันไม่ได้ — <c>OcrPostingReadiness</c> ห้ามอนุมัติเอง</summary>
+    public const string WriteBackLostTag = "[SCAN-WRITEBACK]";
 
     /// <summary><see cref="ExVatAmount"/> ของบรรทัดที่ <paramref name="lineIndex"/> ใน <c>ExtractedItemsJson</c> — คืนค่าเฉพาะบรรทัดที่ถือราคารวม VAT
     /// ตามกระดาษ (null = ให้ผู้เรียกใช้ค่าเดิมของตัวเอง) · JSON เสีย/ไม่มีบรรทัด = null (ไม่ throw)</summary>
@@ -242,7 +277,15 @@ public static class OcrEtaxLineNormalizer
                 return null;
             decimal? amount = el.TryGetProperty("Amount", out var a) && a.ValueKind == System.Text.Json.JsonValueKind.Number ? a.GetDecimal() : null;
             decimal? rate = el.TryGetProperty("VatRate", out var r) && r.ValueKind == System.Text.Json.JsonValueKind.Number ? r.GetDecimal() : null;
-            return rate is > 0m && amount.HasValue ? ExVatAmount(amount, true, rate) : null;
+            // ไม่รู้อัตราของบรรทัด ⇒ อัตราหลักของใบ · ยังไม่รู้ ⇒ 0 (ไม่ใช่ null): ผู้เรียกต้องไม่ตกไปใช้ยอดรวม VAT — ด่าน "ราคาซื้อต้องมากกว่า 0"
+            // ของผู้เรียกบังคับให้กรอกราคาเอง (หมายเหตุ [ASSET-COST] บนสแกนบอกเหตุผลไว้แล้ว)
+            var fallback = DominantVatRate(arr.EnumerateArray()
+                .Where(x => x.ValueKind == System.Text.Json.JsonValueKind.Object)
+                .Select(x => (
+                    x.TryGetProperty("PriceIncludesVat", out var xf) && xf.ValueKind == System.Text.Json.JsonValueKind.True,
+                    x.TryGetProperty("VatRate", out var xr) && xr.ValueKind == System.Text.Json.JsonValueKind.Number ? xr.GetDecimal() : (decimal?)null))
+                .ToList());
+            return ExVatAmount(amount, true, rate, fallback) ?? 0m;
         }
         catch (System.Text.Json.JsonException) { return null; }
     }
@@ -255,17 +298,24 @@ public static class OcrEtaxLineNormalizer
     ///   — สร้างใหม่จากสแกนได้ยอดเดิมทุกสตางค์</item>
     /// <item>อื่น ๆ (หักมัดจำ · ข้อมูลขัดกัน) ⇒ คงส่วนลดบรรทัด + <c>Lost = true</c> ให้ผู้เรียกเขียนหมายเหตุ (ห้ามทิ้งเงียบ)</item>
     /// </list></summary>
+    /// <param name="billDiscount"><c>Document.BillDiscountAmount</c> (ส่วนลดการค้าท้ายบิล)</param>
+    /// <param name="depositBase"><c>Document.DepositBaseDeducted</c> (ฐานหักมัดจำ) — ฝ่ายค้านรอบห้า ข้อ 5: มีมัดจำด้วย ⇒ ส่วนแบ่งส่วนลดการค้ายังไปกับส่วนลดบรรทัด
+    /// (แบ่งส่วนที่บรรทัดถูกหักตามสัดส่วน ส่วนลดการค้า : มัดจำ) · เฉพาะส่วนมัดจำที่ "หาย" ⇒ ยอดที่เขียน = ก่อนหักมัดจำ + <c>Lost = true</c></param>
     public static (decimal Amount, decimal? Discount, bool Lost) WriteBackLine(decimal quantity, decimal unitPrice,
-        decimal lineAmount, decimal lineVat, decimal lineDiscount, bool pricesIncludeVat, bool billDiscountOnly)
+        decimal lineAmount, decimal lineVat, decimal lineDiscount, bool pricesIncludeVat, decimal billDiscount, decimal depositBase)
     {
         var amount = pricesIncludeVat ? lineAmount + lineVat : lineAmount;
         var gross = R2(quantity * unitPrice);
         var lineDisc = lineDiscount > 0m ? Math.Min(R2(lineDiscount), gross) : 0m;
         decimal? kept = lineDisc > 0m ? lineDisc : null;
         if (gross - lineDisc == amount) return (amount, kept, false);
-        var derived = gross - amount;
-        if (billDiscountOnly && derived > 0m) return (amount, derived, false);
-        return (amount, kept, true);
+        var reduction = gross - lineDisc - amount;
+        var headerReduction = Math.Max(0m, billDiscount) + Math.Max(0m, depositBase);
+        if (reduction <= 0m || headerReduction <= 0m) return (amount, kept, true);
+        if (depositBase <= 0m) return (amount, lineDisc + reduction, false);
+        var tradeShare = billDiscount > 0m ? R2(reduction * billDiscount / headerReduction) : 0m;
+        var disc = lineDisc + tradeShare;
+        return (gross - disc, disc > 0m ? disc : null, true);
     }
 
 
@@ -362,10 +412,16 @@ public static class OcrEtaxLineNormalizer
     /// <para>บรรทัดราคารวม VAT ตามกระดาษ (<paramref name="priceIncludesVat"/>) = ยอดหลังลดถอด VAT แล้ว ÷ จำนวน (ฐานเดียวกับ
     /// <c>DocumentLine.Amount</c> ที่ DocumentService ใช้ลงทุนสต็อก) — 84.32 รวม VAT ⇒ 78.80 ÷ 3 = 26.2667 ไม่ใช่ 28.1067</para></summary>
     public static decimal? EffectiveUnitCost(decimal? quantity, decimal? unitPrice, decimal? amount, decimal? lineDiscount,
-        bool priceIncludesVat = false, decimal? vatRate = null)
+        bool priceIncludesVat = false, decimal? vatRate = null, decimal? fallbackRate = null)
     {
-        if (priceIncludesVat && vatRate is decimal vr && vr > 0m && quantity is decimal pq && pq > 0m && amount is decimal pa)
-            return Math.Round(DocumentLineVatConvention.SplitLine(pa, vr, null, includeVat: true).Net / pq, 4, MidpointRounding.AwayFromZero);
+        if (priceIncludesVat)
+        {
+            // ราคารวม VAT: ต้องถอด VAT ก่อนหาร · ไม่รู้อัตรา (แม้อัตราหลักของใบ) ⇒ null — ไม่คืนราคารวม VAT เป็นทุน (ฝ่ายค้านรอบห้า ข้อ 4)
+            var net = ExVatAmount(amount, true, vatRate, fallbackRate);
+            return net is decimal n && quantity is decimal pq && pq > 0m
+                ? Math.Round(n / pq, 4, MidpointRounding.AwayFromZero)
+                : null;
+        }
         if (ProvenLineDiscount(quantity, unitPrice, amount, lineDiscount) <= 0m) return unitPrice;
         var q = quantity ?? 1m;
         if (q <= 0m || amount is not decimal a) return unitPrice;

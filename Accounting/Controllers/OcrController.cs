@@ -875,9 +875,12 @@ public class OcrController : ControllerBase
         // by the ฿5k threshold + capital-asset keyword list. Cheap
         // (pure in-memory).
         // ทุนต่อหน่วยจริง = หลังส่วนลดบรรทัด (e-Tax XML · ฝ่ายค้านรอบสอง f1690d11 ข้อ 3) — ตัวเดียวกับที่เติมช่องทุนนำเข้าสต็อกข้างล่าง
+        // ฝ่ายค้านรอบห้า ข้อ 4: แถวราคารวม VAT ที่ไม่รู้อัตรา ⇒ อัตราหลักของใบ · ยังไม่รู้ ⇒ null (หน้าไม่เติมทุนจากราคารวม VAT)
+        var stockFallbackRate = Accounting.Helpers.OcrEtaxLineNormalizer.DominantVatRate(
+            lines.Select(l => (l.PriceIncludesVat, l.VatRate)).ToList());
         var effectiveCosts = lines
             .Select(l => Accounting.Helpers.OcrEtaxLineNormalizer.EffectiveUnitCost(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscountAmount,
-                l.PriceIncludesVat, l.VatRate))
+                l.PriceIncludesVat, l.VatRate, stockFallbackRate))
             .ToList();
         var assetDecisions = Services.Implementations.Ocr.FixedAssetDetector.Analyze(
             lines.Select((l, li) => (l.Description, l.Quantity, effectiveCosts[li], l.Amount)).ToList());

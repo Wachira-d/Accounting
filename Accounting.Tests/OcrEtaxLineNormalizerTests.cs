@@ -598,7 +598,9 @@ public class OcrEtaxLineNormalizerTests
         Assert.Equal(489.88m, OcrEtaxLineNormalizer.EffectiveUnitCost(1m, 690.00m, 524.17m, 165.83m, priceIncludesVat: true, vatRate: 7m));
         // ทิศตรงข้าม: บรรทัดราคาก่อน VAT ⇒ ยอดเดิมไม่แตะ
         Assert.Equal(500.93m, OcrEtaxLineNormalizer.ExVatAmount(500.93m, false, 7m));
-        Assert.Equal(500.93m, OcrEtaxLineNormalizer.ExVatAmount(500.93m, true, null));
+        // ฝ่ายค้านรอบห้า ข้อ 4: ราคารวม VAT แต่ไม่รู้อัตรา ⇒ ไม่คืนยอดรวม VAT เป็น "ก่อน VAT" — ใช้อัตราหลักของใบ หรือ null
+        Assert.Null(OcrEtaxLineNormalizer.ExVatAmount(535.00m, true, null));
+        Assert.Equal(500.00m, OcrEtaxLineNormalizer.ExVatAmount(535.00m, true, null, fallbackRate: 7m));
         // ค่าตั้งต้นของ "ลงทะเบียนสินทรัพย์จากสแกน" อ่านจาก ExtractedItemsJson
         const string json = """[{"Description":"ยาง","Quantity":3,"UnitPrice":37.00,"Amount":84.32,"VatRate":7,"LineDiscountAmount":26.68,"PriceIncludesVat":true},{"Description":"DEWALT","Quantity":1,"UnitPrice":690.00,"Amount":524.17,"VatRate":7,"LineDiscountAmount":165.83,"PriceIncludesVat":true},{"Description":"ของ Shopee","Quantity":2,"UnitPrice":250.47,"Amount":500.93,"VatRate":7}]""";
         Assert.Equal(489.88m, OcrEtaxLineNormalizer.ExVatAmountOfItem(json, 1));
@@ -649,15 +651,65 @@ public class OcrEtaxLineNormalizerTests
     public void เขียนกลับตอนอนุมัติ_พาส่วนลดท้ายบิล_และบอกดังเมื่อหักมัดจำ()
     {
         // เอกสารราคารวม VAT ไม่มีส่วนลดท้ายบิล: ก่อน VAT 78.80 + VAT 5.52 = 84.32 = 111 − 26.68 ⇒ ส่วนลดบรรทัดตามเดิม
-        Assert.Equal((84.32m, (decimal?)26.68m, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 78.80m, 5.52m, 26.68m, true, false));
+        Assert.Equal((84.32m, (decimal?)26.68m, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 78.80m, 5.52m, 26.68m, true, 0m, 0m));
         // ผู้ใช้เพิ่มส่วนลดท้ายบิล: บรรทัดเหลือก่อน VAT 70.00 + VAT 4.90 = 74.90 ⇒ ส่วนลดที่เขียนกลับ = 111 − 74.90 = 36.10 (บรรทัด + ส่วนแบ่งท้ายบิล)
-        var wb = OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscountOnly: true);
+        var wb = OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscount: 100m, depositBase: 0m);
         Assert.Equal((74.90m, (decimal?)36.10m, false), wb);
         Assert.Equal(36.10m, OcrEtaxLineNormalizer.ProvenLineDiscount(3m, 37.00m, wb.Amount, wb.Discount));   // สร้างใหม่ได้ยอดเดิม
         // ทิศตรงข้าม: หักมัดจำ (ไม่ใช่ส่วนลด) ⇒ ไม่แต่งเป็นส่วนลด · Lost = true ให้ผู้เรียกเขียนหมายเหตุ
-        Assert.Equal((74.90m, (decimal?)26.68m, true), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscountOnly: false));
+        // (ฝ่ายค้านรอบห้า ข้อ 5: ยอดที่เขียน = ก่อนหักมัดจำ 84.32 — ส่วนมัดจำคือส่วนที่หาย ไม่ใช่ส่วนลด)
+        Assert.Equal((84.32m, (decimal?)26.68m, true), OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscount: 0m, depositBase: 100m));
         // เอกสารราคาก่อน VAT ปกติ ⇒ ค่าเดิมทุกตัว
-        Assert.Equal((78.80m, (decimal?)24.94m, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 78.80m, 5.52m, 24.94m, false, false));
-        Assert.Equal((103.74m, (decimal?)null, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 103.74m, 7.26m, 0m, false, false));
+        Assert.Equal((78.80m, (decimal?)24.94m, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 78.80m, 5.52m, 24.94m, false, 0m, 0m));
+        Assert.Equal((103.74m, (decimal?)null, false), OcrEtaxLineNormalizer.WriteBackLine(3m, 34.58m, 103.74m, 7.26m, 0m, false, 0m, 0m));
+    }
+
+    // ══ ฝ่ายค้านรอบห้า (2026-10-09) ═══════════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void มัดจำพร้อมส่วนลดการค้า_พาส่วนลดการค้า_เฉพาะส่วนมัดจำหาย()
+    {
+        // บรรทัดถูกหัก 84.32 − 74.90 = 9.42 จากส่วนลดการค้า 50 + มัดจำ 50 ⇒ ส่วนลดการค้าของบรรทัด = round(9.42 × 50/100) = 4.71
+        var wb = OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscount: 50m, depositBase: 50m);
+        Assert.Equal((79.61m, (decimal?)31.39m, true), wb);
+        // สร้างใหม่จากสแกน: ส่วนลด (บรรทัด + การค้า) อธิบายยอดได้ ⇒ ส่วนลดการค้าไม่หาย · Lost = true เพราะส่วนมัดจำไม่ตามไป (หมายเหตุ [SCAN-WRITEBACK])
+        Assert.Equal(31.39m, OcrEtaxLineNormalizer.ProvenLineDiscount(3m, 37.00m, wb.Amount, wb.Discount));
+        // ทิศตรงข้าม: ส่วนลดการค้าอย่างเดียว ⇒ ไม่หายเลย
+        Assert.False(OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 70.00m, 4.90m, 26.68m, true, billDiscount: 50m, depositBase: 0m).Lost);
+        // ข้อมูลขัดกัน (ยอดมากกว่า จำนวน × ราคา − ส่วนลด) ⇒ ไม่แต่ง · Lost
+        Assert.True(OcrEtaxLineNormalizer.WriteBackLine(3m, 37.00m, 80.00m, 5.60m, 26.68m, true, 50m, 0m).Lost);
+    }
+
+    [Fact]
+    public void เขียนกลับหักมัดจำ_ห้ามอนุมัติเอง_และติดไปกับสำเนา()
+    {
+        var notes = "[Tier] e-Tax\n" + OcrEtaxLineNormalizer.WriteBackLostTag + " บรรทัดที่ 1 ของเอกสาร PI-001: ยอดหลังหักมัดจำ …";
+        var v = OcrPostingReadiness.Evaluate(notes, true);
+        Assert.False(v.CanAutoApprove);
+        Assert.Contains("หักมัดจำ", v.Reason);
+        Assert.Contains(OcrEtaxLineNormalizer.WriteBackLostTag, OcrScanSnapshot.DecisionNotes(notes));
+        // ทิศตรงข้าม: หมายเหตุ [e-Tax] / [ASSET-COST] เป็นข้อสังเกต ไม่บล็อก
+        Assert.True(OcrPostingReadiness.Evaluate("[e-Tax] เศษจากถอด VAT 0.03 บาท ไม่ใช่ส่วนลดบนเอกสาร\n"
+            + OcrEtaxLineNormalizer.AssetCostTag + " ราคาซื้อ…", true).CanAutoApprove);
+    }
+
+    [Fact]
+    public void อัตราหลักของใบ_และหมายเหตุต้นทุนสินทรัพย์()
+    {
+        Assert.Equal(7m, OcrEtaxLineNormalizer.DominantVatRate(new[] { (true, (decimal?)7m), (true, (decimal?)7m), (true, (decimal?)10m), (false, (decimal?)null) }));
+        Assert.Null(OcrEtaxLineNormalizer.DominantVatRate(new[] { (true, (decimal?)7m), (true, (decimal?)10m) }));   // เสมอกัน ⇒ ไม่เดา
+        Assert.Null(OcrEtaxLineNormalizer.DominantVatRate(new[] { (false, (decimal?)7m) }));                    // ไม่ใช่ราคารวม VAT
+        // ทุนสต็อก/สินทรัพย์ของแถวไม่รู้อัตรา: อัตราหลัก ⇒ ถอด VAT · ไม่มี ⇒ null (ไม่ใช่ราคารวม VAT)
+        Assert.Equal(46.73m, OcrEtaxLineNormalizer.EffectiveUnitCost(1m, 50m, 50m, null, priceIncludesVat: true, vatRate: null, fallbackRate: 7m));
+        Assert.Null(OcrEtaxLineNormalizer.EffectiveUnitCost(1m, 50m, 50m, null, priceIncludesVat: true, vatRate: null));
+        // ราคาซื้อตั้งต้นของลงทะเบียนสินทรัพย์: แถวไม่รู้อัตรา ใช้อัตราหลักของใบใน JSON · ไม่มีเลย ⇒ 0 (บังคับกรอกเอง ไม่ตกไปใช้ยอดรวม VAT)
+        const string json = """[{"Amount":107,"VatRate":7,"PriceIncludesVat":true},{"Amount":50,"PriceIncludesVat":true}]""";
+        Assert.Equal(46.73m, OcrEtaxLineNormalizer.ExVatAmountOfItem(json, 1));
+        Assert.Equal(0m, OcrEtaxLineNormalizer.ExVatAmountOfItem("""[{"Amount":50,"PriceIncludesVat":true}]""", 0));
+        // หมายเหตุ: กระดาษที่ไม่ใช่ e-Tax (ยังไม่รู้ว่าทั้งใบรวม VAT) · แถวไม่รู้อัตรา · ไม่มีอะไรต้องเตือน
+        Assert.StartsWith(OcrEtaxLineNormalizer.AssetCostTag + " ราคาซื้อสินทรัพย์ที่เสนอมาจากยอดบรรทัดบนกระดาษ",
+            OcrEtaxLineNormalizer.AssetCostNote(true, Array.Empty<int>()));
+        Assert.Contains("บรรทัดที่ 3 ราคารวม VAT แต่ไม่รู้อัตรา VAT", OcrEtaxLineNormalizer.AssetCostNote(false, new[] { 3 }));
+        Assert.Null(OcrEtaxLineNormalizer.AssetCostNote(false, Array.Empty<int>()));
     }
 }

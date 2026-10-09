@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **470 ไฟล์ · 4,582 `[Fact]` + 721 `[Theory]` (3,174 `InlineData`)** ณ 2026-10-09 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **470 ไฟล์ · 4,585 `[Fact]` + 721 `[Theory]` (3,174 `InlineData`)** ณ 2026-10-09 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -3960,6 +3960,8 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | O-134 | (ฝ่ายค้านรอบสี่ f1690d11) สแกน e-Tax CRC (ราคารวม VAT) → การ์ด "อาจเป็นสินทรัพย์ถาวร" ของบรรทัด DEWALT → ลงทะเบียนสินทรัพย์โดยไม่กรอกราคาเอง | ราคาซื้อตั้งต้น = **489.88** (ก่อน VAT หลังส่วนลด) ไม่ใช่ 524.17 · ตัวตรวจสินทรัพย์ใช้ต้นทุนเดียวกัน · บรรทัดราคาก่อน VAT ใช้ยอดเดิม |
 | O-135 | หน้า review ใบ CRC กด "➕ เพิ่มบรรทัด" แล้วกรอกค่าขนส่ง 1 × 50 → สร้างเอกสาร | แถวใหม่สืบทอด "ราคารวม VAT" + อัตรา 7 · เอกสารยังเป็นราคารวม VAT · VAT **ไม่**กระโดดเป็น 227.57 (บรรทัดเดิมไม่ถูกตีเป็นก่อน VAT) · Σ ไม่ตรงหัวใบ ⇒ [Σ-GAP] ให้ตรวจ · แถวว่างยอด 0 ที่ยังไม่กรอกไม่ทำให้ทั้งใบหลุด |
 | O-136 | อนุมัติเอกสารราคารวม VAT ที่ผู้ใช้เพิ่มส่วนลดท้ายบิล แล้วกด "สร้างใหม่" จากสแกน | บรรทัดที่เขียนกลับมีส่วนลด = ส่วนลดบรรทัด + ส่วนแบ่งท้ายบิล ⇒ สร้างใหม่ได้ยอดเดิม · เอกสารที่หักมัดจำ ⇒ หมายเหตุ `[SCAN-WRITEBACK]` บนสแกน (ไม่ทิ้งเงียบ) — `OcrEtaxLineNormalizerTests` |
+| O-137 | (ฝ่ายค้านรอบห้า f1690d11) สแกนที่มีหมายเหตุ `[SCAN-WRITEBACK]` (เขียนกลับจากเอกสารที่หักมัดจำ) → สร้างเอกสารใหม่/อนุมัติอัตโนมัติ | ขึ้นคำเตือนบนหน้าสแกน (ข้อความจากเซิร์ฟเวอร์) · **ไม่อนุมัติเอง** พร้อมเหตุผล · สำเนาจากอัปไฟล์ซ้ำก็หยุดเช่นกัน · เอกสารมีทั้งส่วนลดการค้าและมัดจำ ⇒ ส่วนลดการค้ายังตามไปในส่วนลดบรรทัด เฉพาะมัดจำที่หาย |
+| O-138 | แถวราคารวม VAT ที่ไม่รู้อัตรา (ใบหลายอัตรา) → พรีวิวสต็อก / การ์ดสินทรัพย์ / ลงทะเบียนสินทรัพย์ | ใช้อัตราหลักของใบถอด VAT · ไม่มีอัตราหลัก ⇒ ไม่เสนอทุน/ราคาซื้อ (ไม่ใช้ยอดรวม VAT) + `[ASSET-COST]` · กระดาษที่ไม่ใช่ e-Tax ที่มี VAT และมีผู้สมัครสินทรัพย์ ⇒ `[ASSET-COST]` เตือนตรวจฐาน VAT ของราคาซื้อ — `OcrEtaxLineNormalizerTests` |
 | E-01 | บริษัทที่ **ยังไม่ได้ตั้งค่า RD API key/URL** กด "นำส่ง e-Tax" | ต้องได้ error ไทยที่บอกทางไปต่อ (`ETAX-RD-NOT-CONFIGURED`) และสถานะยังเป็น **Signed** — ห้ามเป็น `Submitted` และ `SubmissionId` ต้องว่าง (เดิมประทับ `OFFLINE-…` แล้วล็อกเอกสารถาวร: ส่งซ้ำไม่ได้ · void ไม่ได้) |
 | E-02 | บริษัทเดียวกันเปิด `EtaxAutoSubmit` แล้วกด "ลงนาม" | ต้องได้ผลว่า **ลงนามสำเร็จ** (ไม่ล้มทั้งคำขอ) พร้อม `ErrorMessage` บอกว่ายังไม่ได้นำส่ง |
 | E-03 | ฐานข้อมูลที่มีแถวเก่า `SubmissionId LIKE 'OFFLINE-%'` + `Status=Submitted` | หลัง migration ต้องกลับเป็น `Status=Signed` · `SubmittedAt=NULL` · `SubmissionId=NULL` · `ErrorCode='RD_API_NOT_CONFIGURED'` |

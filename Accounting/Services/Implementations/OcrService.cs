@@ -3309,10 +3309,13 @@ public class OcrService : IOcrService
             {
                 // ฐานต้นทุน = ก่อน VAT หลังส่วนลดบรรทัด (ฝ่ายค้านรอบสี่ f1690d11 ข้อ 1 — บรรทัด e-Tax ราคารวม VAT ตามกระดาษถือยอดรวม VAT ⇒
                 // เดิมสินทรัพย์/ขาเดบิตเกินจริง 7%) · ตัวเดียวกับพรีวิวนำเข้าสต็อก (OcrController.StockPreview)
+                // ฝ่ายค้านรอบห้า ข้อ 4: บรรทัดราคารวม VAT ที่ไม่รู้อัตรา ⇒ อัตราหลักของใบ · ยังไม่รู้ ⇒ ไม่เสนอราคา (null) + หมายเหตุ [ASSET-COST]
+                var assetFallbackRate = Accounting.Helpers.OcrEtaxLineNormalizer.DominantVatRate(
+                    extractedData.Items.Select(i => (i.PriceIncludesVat, i.VatRate)).ToList());
                 var assetInput = extractedData.Items
                     .Select(i => (i.Description, i.Quantity,
-                        Accounting.Helpers.OcrEtaxLineNormalizer.EffectiveUnitCost(i.Quantity, i.UnitPrice, i.Amount, i.LineDiscountAmount, i.PriceIncludesVat, i.VatRate),
-                        Accounting.Helpers.OcrEtaxLineNormalizer.ExVatAmount(i.Amount, i.PriceIncludesVat, i.VatRate)))
+                        Accounting.Helpers.OcrEtaxLineNormalizer.EffectiveUnitCost(i.Quantity, i.UnitPrice, i.Amount, i.LineDiscountAmount, i.PriceIncludesVat, i.VatRate, assetFallbackRate),
+                        Accounting.Helpers.OcrEtaxLineNormalizer.ExVatAmount(i.Amount, i.PriceIncludesVat, i.VatRate, assetFallbackRate)))
                     .ToList();
                 var allDecisions = Ocr.FixedAssetDetector.Analyze(assetInput);
                 var assetCandidates = Ocr.FixedAssetDetector.PotentialAssetsOnly(allDecisions);
@@ -3337,6 +3340,17 @@ public class OcrService : IOcrService
                         }));
                     extractedData.ReasoningTrace.Add(
                         $"[FixedAsset] พบ {assetCandidates.Count} รายการที่อาจเป็นสินทรัพย์ถาวร — รอ user ยืนยัน (Register Asset)");
+                    // ฝ่ายค้านรอบห้า ข้อ 2: กระดาษที่ไม่ใช่ e-Tax — "ราคารวม VAT ทั้งใบ" ตัดสินทีหลัง (ตัวสร้างบรรทัดเอกสาร) ⇒ ตอนนี้ไม่เดา บอกให้ตรวจ ·
+                    // บรรทัดราคารวม VAT ที่ไม่รู้อัตรา ⇒ ไม่เสนอราคา (ข้อ 4) — ตัวเขียนข้อความ Helpers/OcrEtaxLineNormalizer.AssetCostNote
+                    if (Accounting.Helpers.OcrEtaxLineNormalizer.AssetCostNote(
+                            paperScanWithVat: !extractedData.Items.Any(i => i.PriceIncludesVat)
+                                && !Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(ocrEngineUsed)
+                                && (extractedData.VatAmount ?? 0m) > 0m,
+                            inclusiveUnknownRateLines: assetCandidates
+                                .Where(d => extractedData.Items.ElementAtOrDefault(d.LineIndex) is { PriceIncludesVat: true }
+                                    && assetInput.ElementAtOrDefault(d.LineIndex).Item4 is null)
+                                .Select(d => d.LineIndex + 1).ToList()) is string assetCostNote)
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + assetCostNote;
                 }
             }
             catch (Exception ex)
