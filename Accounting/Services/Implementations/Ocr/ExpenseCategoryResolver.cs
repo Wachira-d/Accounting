@@ -52,6 +52,11 @@ internal static class ExpenseCategoryResolver
     /// และ**ห้ามใช้ตัดสินประเภทเงินได้ ม.40** เพราะยอด 0 ไม่ได้บอกว่าจ่ายอะไรจริง
     /// (บทเรียนเดียวกับฟอร์ม 50 ทวิ ที่พิมพ์ทุกประเภทไว้ให้ติ๊ก: สิ่งที่ตอบคำถาม
     /// คือ**แถวที่มีจำนวนเงิน** ไม่ใช่คำที่ปรากฏบนหน้า)</param>
+    /// <param name="pricedLines">บรรทัดที่มีเงินพร้อมยอด — เมื่อส่งมา หมวดที่ชนะด้วยคำบน<b>บรรทัดส่วนน้อยของมูลค่า</b>
+    /// (<see cref="Accounting.Helpers.OcrLineValueShare"/>) จะ<b>ไม่ได้ตัดสินหมวดของทั้งใบ</b> เว้นแต่มีหลักฐานจากชื่อผู้ขาย/หัวเรื่อง ·
+    /// null = พฤติกรรมเดิม (ไม่รู้ยอด ⇒ ไม่ตัดสินแทน)</param>
+    /// <param name="diagnostics">รับเหตุผลของหมวดที่ถูกตัดเพราะเป็นบรรทัดส่วนน้อย (พร้อมเกณฑ์ 1,000 บาทของยอดส่วนนั้น) —
+    /// ได้เสมอแม้ไม่มีหมวดไหนชนะ (ผู้เรียกเขียนลง trace · ห้ามเงียบ)</param>
     public static CategoryResult? Resolve(
         string? vendorName,
         string? headerDescription,
@@ -59,13 +64,18 @@ internal static class ExpenseCategoryResolver
         string? rawText,
         IndustryType? industry = null,
         BusinessType? businessType = null,
-        IEnumerable<string?>? zeroAmountLineDescriptions = null)
+        IEnumerable<string?>? zeroAmountLineDescriptions = null,
+        IReadOnlyList<Accounting.Helpers.OcrPricedLine>? pricedLines = null,
+        List<string>? diagnostics = null)
     {
         var reasons = new List<string>();
         // สามชั้น: ข้อมูลที่ **ผูกกับเงิน** (ผู้ขาย/หัวเรื่อง/บรรทัดที่มียอด)
         // น้ำหนักเต็ม · บรรทัดยอด 0 + rawText ทั้งใบเป็นหลักฐานอ่อน (มีข้อความแฝง
         // เยอะ เช่น เงื่อนไขท้ายบิลที่มีคำว่า "ที่ปรึกษา"/"ภาษีอากร") นับครึ่งเดียว
-        var primaryCorpus = BuildCorpus(vendorName, headerDescription, lineDescriptions, null).ToLowerInvariant();
+        // ชั้นผูกกับเงินแยกเป็น "หัวใบ" (ผู้ขาย/หัวเรื่อง) กับ "บรรทัด" เพื่อรู้ว่าหมวดชนะด้วยบรรทัดล้วนไหม
+        var anchorCorpus = BuildCorpus(vendorName, headerDescription, null, null).ToLowerInvariant();
+        var lineCorpus = BuildCorpus(null, null, lineDescriptions, null).ToLowerInvariant();
+        var primaryCorpus = (anchorCorpus + " " + lineCorpus).ToLowerInvariant();
         var weakParts = BuildCorpus(null, null, zeroAmountLineDescriptions, rawText);
         var corpus = (primaryCorpus + " " + weakParts).ToLowerInvariant();
 
@@ -80,10 +90,21 @@ internal static class ExpenseCategoryResolver
             // บรรทัดที่มียอด) — ใช้เป็นเงื่อนไขของการเสนอ **ประเภทเงินได้ ม.40**
             // ห้ามให้คำที่เจอเฉพาะใน rawText/แถวยอด 0 ตัดสินอัตราหัก ณ ที่จ่าย
             bool moneyBacked = false;
+            // ── บรรทัดส่วนน้อยของมูลค่าห้ามตัดสินหมวดทั้งใบ (สแกนจริง f1690d11: ค่าขนส่ง 37.38 จาก 2,991.59) ──
+            var share = pricedLines == null
+                ? (Accounting.Helpers.OcrLineValueShare.Share?)null
+                : Accounting.Helpers.OcrLineValueShare.Measure(pricedLines, d => RuleKeywordIn(rule, d));
+            var lineMinority = share is { IsMinority: true };
+            bool anchored = false;
             foreach (var kw in rule.Keywords)
             {
                 var k = kw.ToLowerInvariant();
-                if (primaryCorpus.Contains(k)) { kwScore += kw.Length >= 6 ? 2m : 1m; moneyBacked = true; }
+                if (anchorCorpus.Contains(k)) { kwScore += kw.Length >= 6 ? 2m : 1m; moneyBacked = true; anchored = true; }
+                else if (lineCorpus.Contains(k))
+                {
+                    // คำบนบรรทัดส่วนน้อย = ไม่นับเลย (รวมถึงเสียงสะท้อนของบรรทัดเดียวกันใน rawText)
+                    if (!lineMinority) { kwScore += kw.Length >= 6 ? 2m : 1m; moneyBacked = true; }
+                }
                 else if (corpus.Contains(k)) kwScore += kw.Length >= 6 ? 1m : 0.5m;
             }
             // Vendor-brand matches outweigh single keyword hits because they're
@@ -99,6 +120,7 @@ internal static class ExpenseCategoryResolver
             // n-gram cosine to catch OCR variants of brand names ("ปตท."
             // misread as "ปตธ.", "บริษัท ปตท จำกัด" vs short "ปตท") —
             // half-weight because fuzzy is less reliable than exact.
+            bool brandFuzzyHit = false;
             if (!brandExactHit && !string.IsNullOrEmpty(vendorName))
             {
                 foreach (var brand in rule.VendorBrands)
@@ -108,9 +130,16 @@ internal static class ExpenseCategoryResolver
                     {
                         kwScore += 2;     // half of exact match's +4
                         moneyBacked = true;   // ชื่อผู้ขายคือหลักฐานที่ผูกกับเงินเสมอ
+                        brandFuzzyHit = true;
                         break;
                     }
                 }
+            }
+            if (lineMinority && !anchored && !brandExactHit && !brandFuzzyHit)
+            {
+                // หลักฐานผูกกับเงินของหมวดนี้มีแค่บรรทัดส่วนน้อย ⇒ ไม่ให้ตัดสินหมวด/ประเภทเงินได้ของทั้งใบ · ต้องบอกเหตุผล
+                diagnostics?.Add(MinorityLineReason(rule, share!.Value));
+                continue;
             }
             if (kwScore == 0) continue;
 
@@ -134,6 +163,32 @@ internal static class ExpenseCategoryResolver
                 + "(ข้อความทั้งใบ/แถวยอด 0) → เสนอหมวดได้ แต่ไม่เสนอประเภทเงินได้/อัตราหัก ณ ที่จ่าย");
         return new CategoryResult(best.Category, best.AccountCode, best.AccountName,
             best.StatutoryWhtRate, best.WhtIncomeTypeCode, conf, reasons, bestMoneyBacked);
+    }
+
+    /// <summary>คำอธิบายบรรทัดนี้มีคำของหมวดนั้นไหม — กติกาเดียวกับการให้คะแนน (contains แบบไม่สนตัวพิมพ์)</summary>
+    private static bool RuleKeywordIn(CategoryRule rule, string description)
+    {
+        var d = description.ToLowerInvariant();
+        foreach (var kw in rule.Keywords)
+            if (d.Contains(kw.ToLowerInvariant())) return true;
+        return false;
+    }
+
+    /// <summary>เหตุผลของหมวดที่ถูกตัดเพราะชนะด้วยบรรทัดส่วนน้อย — บอกเกณฑ์ 1,000 บาทของ<b>ยอดส่วนนั้น</b>
+    /// (ท.ป.4/2528 ข้อ 12 · ตัวตัดสินเกณฑ์ตัวเดียว <see cref="Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold"/>)</summary>
+    private static string MinorityLineReason(CategoryRule rule, Accounting.Helpers.OcrLineValueShare.Share share)
+    {
+        var lines = string.Join(", ", share.MatchedDescriptions.Take(3).Select(d => $"'{d}'"));
+        var text = $"บรรทัด {lines} ยอด {share.MatchedValue:N2} = {share.Ratio:P1} ของมูลค่ารายการ "
+            + $"{share.TotalValue:N2} — เป็นส่วนน้อยของใบ (< {Accounting.Helpers.OcrLineValueShare.MinDominantShare:P0}) "
+            + $"จึงไม่ใช้ตัดสินหมวด '{rule.Category}' ของทั้งใบ";
+        if (rule.StatutoryWhtRate is not > 0m) return text;
+        var it = Accounting.Helpers.ThaiWhtRateTable.Find(rule.WhtIncomeTypeCode);
+        var label = it != null ? $"{it.TaxSection} {it.Name}" : rule.Category;
+        return Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(share.MatchedValue)
+            ? text + $" · ส่วนนี้ ({label}) ถึงเกณฑ์ 1,000 บาท — ตรวจว่าต้องหัก ณ ที่จ่าย {rule.StatutoryWhtRate}% "
+                + $"เฉพาะยอด {share.MatchedValue:N2} (ไม่ใช่ทั้งใบ)"
+            : text + $" · ยอดส่วนนี้ ({label}) ต่ำกว่าเกณฑ์ 1,000 บาท (ท.ป.4/2528 ข้อ 12) — ไม่ต้องหัก ณ ที่จ่าย";
     }
 
     /// <summary>Per-industry weighting factor for a category. Returns 1.0

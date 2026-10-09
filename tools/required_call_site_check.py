@@ -5785,6 +5785,40 @@ RULES += [
          why=_F2X_WHY + "P2-5 ยอดจ่ายแล้วของ PV ที่ปิดหนี้ตอนอนุมัติใช้ resolver เดียวกับ JE (ครอบใบเก่าที่ธงยังไม่ตาม)"),
 ]
 
+# ── สแกนจริง f1690d11 (2026-10-09 · e-Tax ซีอาร์ซี ไทวัสดุ → โรงแรม): มัดจำปลอมจากชื่อแท็ก XML · หมวด/WHT จากบรรทัดส่วนน้อย ·
+#    Dr/Cr กลับด้าน (Dr 21230 เจ้าหนี้กรรมการ / Cr 51530 ต้นทุนซ่อมบำรุง) — เทสต์ล็อกแค่ helper ⇒ ล็อกจุดเรียกที่นี่
+_F1690_WHY = "สแกนจริง f1690d11: "
+RULES += [
+    dict(file=OCR, method="ScanAsync",
+         must=["OcrDepositMarker.Decide(", "OcrEtaxXmlText.ContentOnly(extractedText)",
+               "OcrAccountPlacement.AppliesTo(", "OcrAccountPlacement.Check("],
+         call_args=[("ExpenseCategoryResolver.Resolve(", "pricedLines"),
+                    ("ExpenseCategoryResolver.Resolve(", "diagnostics")],
+         before=[("OcrAccountPlacement.Check(", "SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(")],
+         why=_F1690_WHY + "ตัวจัดหมวดต้องรู้ยอดรายบรรทัด (บรรทัดส่วนน้อยห้ามตัดสินหมวด/WHT ทั้งใบ) และไม่เห็นชื่อแท็ก XML · "
+             "คู่ Dr/Cr ที่ระบบเสนอผ่านด่านวางฝั่งก่อนบันทึก"),
+    dict(file="Services/Implementations/Ocr/ExpenseCategoryResolver.cs", method="Resolve",
+         must=["OcrLineValueShare.Measure(", "MinorityLineReason("],
+         must_re=[r"if\s*\(\s*lineMinority\s*&&\s*!\s*anchored"],
+         why=_F1690_WHY + "หมวดที่ชนะด้วยบรรทัดส่วนน้อยของมูลค่า (ค่าขนส่ง 37.38 จาก 2,991.59) ต้องถูกตัดพร้อมเหตุผล"),
+    dict(file=OCR, method="ResolveScanAccountCodesAsync",
+         must=["OcrAccountPlacement.AppliesTo(", "OcrAccountPlacement.Check("],
+         forbid=["debitIsSystemSuggested: true"],
+         why=_F1690_WHY + "แถวที่เก็บไว้ (อาจเป็นค่าที่ผู้ใช้เลือก) ผ่านด่านแบบผู้ใช้ — คู่สลับสลับกลับ · แหล่งเงินเป็นค่าใช้จ่ายตัดทิ้ง"),
+    dict(file=OCR, method="ResolveScanDebitAccountIdAsync",
+         must=["ResolveScanAccountCodesAsync("],
+         why=_F1690_WHY + "ผังบรรทัดของพรีวิว/เติมบรรทัดใหม่ใช้คู่ Dr/Cr ที่ผ่านด่านตัวเดียวกับเส้นสร้างเอกสาร"),
+    dict(file=OCR, method="CreateDocumentFromScanCoreAsync",
+         must=["ResolveScanAccountCodesAsync("],
+         forbid_lit=['TryGetProperty("CreditAccountCode"'],
+         why=_F1690_WHY + "แหล่งเงินของใบที่สร้างมาจากคู่ที่ผ่านด่าน — ห้ามอ่าน CreditAccountCode จาก JSON ตรง ๆ อีก"),
+    dict(file=OCR, method="SubmitCorrectionAsync",
+         must=["OcrAccountPlacement.Check("],
+         must_re=[r"correction\s*=\s*correction\s+with\s*\{\s*DebitAccountCode\s*=\s*finalDebit"],
+         before=[("OcrAccountPlacement.Check(", "_categoryLearner.RecordAsync(")],
+         why=_F1690_WHY + "คำแก้ที่ส่ง Dr/Cr กลับด้านต้องถูกสลับก่อนเก็บ และตัวเรียนรู้ต้องได้ค่าหลังสลับ"),
+]
+
 
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
