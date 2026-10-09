@@ -29,11 +29,20 @@ public class OcrEtaxLineNormalizerTests
         => OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(
             li.Quantity, li.UnitPrice, li.LineAllowance, li.LineCharge, li.VatRatePercent, li.Amount, li.NetIncludingVatAmount));
 
+    private static OcrEtaxLineFacts Facts(EtaxPdfXmlExtractor.LineItem li)
+        => new(li.Quantity, li.UnitPrice, li.LineAllowance, li.LineCharge, li.VatRatePercent, li.Amount, li.NetIncludingVatAmount);
+
+    /// <summary>ทั้งใบผ่าน <see cref="OcrEtaxLineNormalizer.NormalizeInvoice"/> (ทางที่ MapEtaxToOcrData ใช้จริง)</summary>
+    private static OcrEtaxInvoiceLines CrcInvoice(decimal? lineTotal = 2991.59m, decimal? vat = 209.41m, decimal? grand = 3201.00m)
+        => OcrEtaxLineNormalizer.NormalizeInvoice(Crc().Items.Select(Facts).ToList(), lineTotal, vat, grand);
+
     /// <summary>บรรทัดเอกสาร (สิ่งที่ MapEtaxToOcrData ประกอบ) จากผลตัดสิน</summary>
     private static OcrExtractedLineItem ToItem(EtaxPdfXmlExtractor.LineItem li, OcrEtaxLine n) => new()
     {
         Description = li.Description, Quantity = n.Quantity, UnitPrice = n.UnitPrice, Amount = n.Amount,
         LineDiscountAmount = n.LineDiscount, QuantityFromEtaxXml = n.QuantityFromDocument,
+        PriceIncludesVat = n.PriceIncludesVat, VatStripResidual = n.VatStripResidual,
+        VatRate = n.PriceIncludesVat ? n.VatRate : null,
     };
 
     // LineID · BilledQuantity · ราคา (รวม VAT) · ส่วนลด (รวม VAT) · ยอดก่อน VAT · ยอดรวม VAT — ตัวเลขบนไฟล์จริงทุกตัว
@@ -74,6 +83,13 @@ public class OcrEtaxLineNormalizerTests
     {
         _ = netIncl;
         var n = Norm(Crc().Items.Single(x => x.LineNo == lineId));
+        if (lineId == 10)
+        {
+            // ทางสำรองราคาก่อน VAT: 120 × 0.93 − 74.22 ⇒ เศษจากถอด VAT 0.55 > 0.5% ของ 37.38 ⇒ ไม่ตัดสิน (ฝ่ายค้านรอบสาม)
+            Assert.Equal(OcrEtaxPriceBasis.Unknown, n.Basis);
+            Assert.False(n.QuantityFromDocument);
+            return;
+        }
         Assert.Equal(OcrEtaxPriceBasis.InclusiveOfVat, n.Basis);
         Assert.Equal(qty, n.Quantity);                                   // ไม่เคยหารจากยอด
         Assert.True(n.QuantityFromDocument);
@@ -91,8 +107,12 @@ public class OcrEtaxLineNormalizerTests
         var items = Crc().Items;
         var l1 = Norm(items.Single(x => x.LineNo == 1));
         Assert.Equal((3m, 34.58m, 24.94m, 78.80m), (l1.Quantity!.Value, l1.UnitPrice!.Value, l1.LineDiscount!.Value, l1.Amount!.Value));
-        var ship = Norm(items.Single(x => x.LineNo == 10));   // "ค่าขนส่ง CTD"
-        Assert.Equal((120m, 0.93m, 74.22m, 37.38m), (ship.Quantity!.Value, ship.UnitPrice!.Value, ship.LineDiscount!.Value, ship.Amount!.Value));
+        Assert.Equal(0.01m, l1.VatStripResidual);   // 24.94 − round(26.68 ÷ 1.07) = 24.93 ⇒ เศษ 1 สตางค์ (อยู่ในเพดาน)
+        // ค่าขนส่ง: ทางสำรองไม่ตัดสิน (เศษเกินเพดาน) · ทางหลัก (ทั้งใบราคารวม VAT) ⇒ ค่าตามกระดาษ 120 × 1.00 − 80.00 = 40.00 รวม VAT
+        Assert.Equal(OcrEtaxPriceBasis.Unknown, Norm(items.Single(x => x.LineNo == 10)).Basis);
+        var ship = CrcInvoice().Lines[^1];
+        Assert.Equal((120m, 1.00m, 80.00m, 40.00m), (ship.Quantity!.Value, ship.UnitPrice!.Value, ship.LineDiscount!.Value, ship.Amount!.Value));
+        Assert.True(ship.PriceIncludesVat);
     }
 
     [Fact]
@@ -100,9 +120,13 @@ public class OcrEtaxLineNormalizerTests
     {
         var r = Crc();
         Assert.Equal(9, r.Items.Count);
-        var lines = r.Items.Select(Norm).ToList();
-        Assert.Equal(2991.59m, lines.Sum(x => x.Amount!.Value));
-        Assert.Equal(r.LineTotal, lines.Sum(x => x.Amount!.Value));
+        var inv = CrcInvoice();
+        Assert.True(inv.PricesIncludeVat);
+        var lines = inv.Lines;
+        // ยอดบรรทัด (รวม VAT หลังส่วนลดบรรทัด) รวม = ยอดรวมทั้งสิ้นของหัวใบ
+        Assert.Equal(3201.00m, lines.Sum(x => x.Amount!.Value));
+        // ถอด VAT รายบรรทัดด้วยสูตรเอกสาร ⇒ ก่อน VAT รวม = LineTotal ของหัวใบ
+        Assert.Equal(r.LineTotal, lines.Sum(x => DocumentLineVatConvention.SplitLine(x.Amount!.Value, 7m, null, true).Net));
         Assert.Equal(2991.59m, r.TaxBasis);
         Assert.Equal(209.41m, r.VatAmount);
         Assert.Equal(3201.00m, r.GrandTotal);
@@ -110,8 +134,8 @@ public class OcrEtaxLineNormalizerTests
         // AllowanceTotalAmount 1,080.00 (รวม VAT) = Σ ส่วนลดบรรทัด — อยู่ในยอดบรรทัดแล้ว: LineTotal − TaxBasis = 0 ⇒ ไม่มีส่วนลดท้ายบิล
         Assert.Equal(1080.00m, r.Items.Sum(x => x.LineAllowance!.Value));
         Assert.Equal(0m, r.LineTotal!.Value - r.TaxBasis!.Value);
-        // Σ (จำนวน × ราคาก่อน VAT − ส่วนลดก่อน VAT) = ฐานภาษีหัวใบพอดี
-        Assert.Equal(2991.59m, lines.Sum(x => R2(x.Quantity!.Value * x.UnitPrice!.Value) - x.LineDiscount!.Value));
+        // ส่วนลดบรรทัดตามกระดาษ (รวม VAT) รวม = AllowanceTotalAmount พอดี — ไม่มีการแต่ง
+        Assert.Equal(1080.00m, lines.Sum(x => x.LineDiscount!.Value));
     }
 
     [Fact]
@@ -119,11 +143,12 @@ public class OcrEtaxLineNormalizerTests
     {
         var r = Crc();
         var d = new OcrExtractedData();
-        foreach (var li in r.Items) d.Items.Add(ToItem(li, Norm(li)));
+        var inv = CrcInvoice();
+        for (var i = 0; i < r.Items.Count; i++) d.Items.Add(ToItem(r.Items[i], inv.Lines[i]));
         OcrService.SanitizeVatSplitArtifacts(d);
         Assert.Equal(9, d.Items.Count);
         Assert.Equal(new[] { 3m, 4m, 12m, 10m, 6m, 6m, 4m, 1m, 120m }, d.Items.Select(x => x.Quantity!.Value).ToArray());
-        Assert.Equal(2991.59m, d.Items.Sum(x => x.Amount!.Value));
+        Assert.Equal(3201.00m, d.Items.Sum(x => x.Amount!.Value));
         Assert.All(d.Items, x => Assert.Equal(x.Amount, R2(x.Quantity!.Value * x.UnitPrice!.Value) - x.LineDiscountAmount!.Value));
     }
 
@@ -153,7 +178,7 @@ public class OcrEtaxLineNormalizerTests
     [Fact]
     public void ด่านGateway_ส่วนลดบรรทัดอธิบายยอด_ไม่ฟ้อง_ไม่ส่งส่วนลดยังฟ้อง()
     {
-        var lines = Crc().Items.Select(Norm).ToList();
+        var lines = CrcInvoice().Lines;
         Assert.False(QtyWarning(Gate(lines.Select(n =>
             new OcrConfidenceGateway.LineItemForValidation(n.Quantity, n.UnitPrice, n.Amount, n.LineDiscount)))));
         // ทิศตรงข้าม: ส่วนลดหาย (หรือส่วนลดที่ไม่อธิบายยอด) ⇒ ด่านต้องยังฟ้อง
@@ -257,8 +282,8 @@ public class OcrEtaxLineNormalizerTests
 
     [Theory]
     // ราคารวม VAT ไม่มีส่วนลดบนกระดาษ — เศษจากการถอด VAT ต้องมีที่อยู่ (ข้อ 1)
+    // ทางสำรอง (ราคาก่อน VAT) — ใช้เมื่อใบไม่ผ่านทางหลักเท่านั้น · เศษ 0.03 ≤ 1 บาท และ ≤ 0.5% ของ 65.42 (0.33) ⇒ ใช้ได้
     [InlineData(7, 10.00, 65.42, 70.00, 9.35, 0.03)]      // 9.35 × 7 = 65.45 > 65.42
-    [InlineData(120, 1.00, 112.15, 120.00, 0.94, 0.65)]   // 0.93 × 120 = 111.60 < 112.15 ⇒ ขยับราคาเป็น 0.94
     public void ราคารวมVAT_ไม่มีส่วนลด_บรรทัดลงตัวพอดี_บันทึกซ้ำแล้วยอดไม่หลุด(
         int qty, double gross, double net, double netIncl, double expectPrice, double expectDisc)
     {
@@ -272,6 +297,7 @@ public class OcrEtaxLineNormalizerTests
         Assert.Equal((decimal)net, Resave(qty, n.UnitPrice!.Value, n.LineDiscount));
         // ตัวสร้างบรรทัด/ด่านเห็นเป็นส่วนลดที่อธิบายยอดได้ (ไม่ใช่จำนวนผิด)
         Assert.Equal((decimal)expectDisc, OcrEtaxLineNormalizer.ProvenLineDiscount(qty, n.UnitPrice, n.Amount, n.LineDiscount));
+        Assert.Equal((decimal)expectDisc, n.VatStripResidual);   // ทั้งก้อนคือเศษ — ไม่มีส่วนลดบนกระดาษ
     }
 
     [Fact]
@@ -287,9 +313,15 @@ public class OcrEtaxLineNormalizerTests
     [Fact]
     public void ใบCRC_ทุกบรรทัดบันทึกซ้ำแล้วยอดเท่าXML()
     {
-        var lines = Crc().Items.Select(Norm).ToList();
-        Assert.All(lines, n => Assert.Equal(n.Amount!.Value, Resave(n.Quantity!.Value, n.UnitPrice!.Value, n.LineDiscount)));
-        Assert.Equal(2991.59m, lines.Sum(n => Resave(n.Quantity!.Value, n.UnitPrice!.Value, n.LineDiscount)));
+        // ทางหลัก: เอกสารราคารวม VAT — ComputeLineAmounts (โหมดราคารวม VAT) คิดใหม่ตอนบันทึกซ้ำ ⇒ ก่อน VAT รายบรรทัด = NetLineTotalAmount
+        var r = Crc();
+        var lines = CrcInvoice().Lines;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var after = Resave(lines[i].Quantity!.Value, lines[i].UnitPrice!.Value, lines[i].LineDiscount);
+            Assert.Equal(lines[i].Amount!.Value, after);
+            Assert.Equal(r.Items[i].Amount, DocumentLineVatConvention.SplitLine(after, 7m, null, true).Net);
+        }
     }
 
     private static OcrExtractedData CrcItemsWithoutPerLineFlag(bool keepDiscount)
@@ -403,5 +435,154 @@ public class OcrEtaxLineNormalizerTests
             new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
         Assert.Equal(24.94m, dto[0].LineDiscountAmount);
         Assert.Equal(26.2667m, OcrEtaxLineNormalizer.EffectiveUnitCost(dto[0].Quantity, dto[0].UnitPrice, dto[0].Amount, dto[0].LineDiscountAmount));
+    }
+
+    // ══ ฝ่ายค้านรอบสาม (2026-10-09): ทางหลัก = ราคารวม VAT ตามกระดาษ · ทางสำรอง = ราคาก่อน VAT + เพดานเศษ ═════════════════
+
+    [Fact]
+    public void ใบCRC_ทั้งใบราคารวมVAT_เอกสารราคารวมVATด้วยค่าตามกระดาษ()
+    {
+        var r = Crc();
+        var inv = CrcInvoice();
+        Assert.True(inv.PricesIncludeVat);
+        Assert.Empty(inv.Notes);
+        for (var i = 0; i < r.Items.Count; i++)
+        {
+            var li = r.Items[i];
+            var n = inv.Lines[i];
+            Assert.True(n.PriceIncludesVat);
+            Assert.True(n.QuantityFromDocument);
+            Assert.Equal(li.Quantity, n.Quantity);              // 3 · 4 · … · 120
+            Assert.Equal(li.UnitPrice, n.UnitPrice);            // 37.00 — ราคาบนกระดาษ (รวม VAT)
+            Assert.Equal(li.LineAllowance, n.LineDiscount);     // 26.68 — ส่วนลดบนกระดาษ (รวม VAT)
+            Assert.Equal(li.NetIncludingVatAmount, n.Amount);   // 84.32
+            Assert.Null(n.VatStripResidual);                    // ไม่มีส่วนลดที่แต่งขึ้น
+            Assert.Equal(7.00m, n.VatRate);
+        }
+        Assert.Null(OcrEtaxLineNormalizer.TiesOutInclusive(inv.Lines, r.Items.Select(x => x.Amount!.Value).ToList(), 2991.59m, 209.41m, 3201.00m));
+        // VAT รายบรรทัด (สูตรเดียวกับ ComputeLineAmounts) รวม = VAT หัวใบ 209.41 ⇒ ตัวสร้างบรรทัดใช้แทนการเฉลี่ย
+        var vats = OcrEtaxLineNormalizer.InclusiveLineVats(inv.Lines.Select(x => (x.Amount!.Value, 7m, true)).ToList(), 209.41m);
+        Assert.NotNull(vats);
+        Assert.Equal(209.41m, vats!.Sum());
+        Assert.Equal(5.52m, vats[0]);                           // 84.32 − 78.80
+    }
+
+    [Theory]
+    // ใบบรรทัดเดียว ราคารวม VAT ไม่มีส่วนลด — ทางหลักไม่ต้องแต่งเศษ (เทียบทางสำรองที่ต้องตั้ง 9.35 − 0.03 / 0.94 − 0.65)
+    [InlineData(7, 10.00, 65.42, 4.58, 70.00)]
+    [InlineData(120, 1.00, 112.15, 7.85, 120.00)]
+    public void ราคารวมVAT_ไม่มีส่วนลด_ทางหลักใช้ราคาตามกระดาษ_ไม่มีเศษ(int qty, double gross, double net, double vat, double total)
+    {
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(
+            new[] { new OcrEtaxLineFacts(qty, (decimal)gross, null, null, 7m, (decimal)net, (decimal)total) },
+            (decimal)net, (decimal)vat, (decimal)total);
+        Assert.True(inv.PricesIncludeVat);
+        var n = Assert.Single(inv.Lines);
+        Assert.Equal(((decimal)qty, (decimal)gross, (decimal)total), (n.Quantity!.Value, n.UnitPrice!.Value, n.Amount!.Value));
+        Assert.Null(n.LineDiscount);
+        Assert.Empty(inv.Notes);
+        // บันทึกซ้ำ (โหมดราคารวม VAT) ⇒ ก่อน VAT = XML
+        Assert.Equal((decimal)net, DocumentLineVatConvention.SplitLine(Resave(qty, n.UnitPrice.Value, null), 7m, null, true).Net);
+    }
+
+    [Fact]
+    public void หัวใบไม่ลงตัว_หรือไม่มีหัวใบ_ใช้ทางสำรองราคาก่อนVAT_พร้อมหมายเหตุ()
+    {
+        // VAT หัวใบ 209.40 ≠ Σ VAT รายบรรทัด 209.41 ⇒ ห้ามตั้งเอกสารราคารวม VAT (บันทึกซ้ำแล้วยอดหลุด)
+        var bad = CrcInvoice(vat: 209.40m);
+        Assert.False(bad.PricesIncludeVat);
+        Assert.Contains(bad.Notes, x => x.StartsWith("[e-Tax] ราคาบนเอกสารรวม VAT ทุกบรรทัด", StringComparison.Ordinal));
+        Assert.All(bad.Lines, n => Assert.False(n.PriceIncludesVat));
+        Assert.Equal(OcrEtaxPriceBasis.Unknown, bad.Lines[^1].Basis);              // ค่าขนส่ง: เศษเกินเพดาน
+        Assert.Equal((3m, 34.58m, 24.94m), (bad.Lines[0].Quantity!.Value, bad.Lines[0].UnitPrice!.Value, bad.Lines[0].LineDiscount!.Value));
+        Assert.Contains(bad.Notes, x => x == "[e-Tax] เศษจากถอด VAT 0.01 บาท ไม่ใช่ส่วนลดบนเอกสาร — บรรทัดที่ 1 (ส่วนลดก่อน VAT 24.94 รวมเศษนี้แล้ว)");
+        // ไม่มียอดหัวใบให้เทียบ ⇒ ทางสำรองเช่นกัน
+        Assert.False(CrcInvoice(lineTotal: null).PricesIncludeVat);
+    }
+
+    [Fact]
+    public void VATรายบรรทัดรวมไม่เท่าเป้าของReconcileTaxRounding_ใช้ทางสำรอง()
+    {
+        // 3 บรรทัด × 1.00 รวม VAT: ก่อน VAT 0.93 + VAT 0.07 ต่อบรรทัด ⇒ Σ VAT 0.21 แต่ round(2.79 × 7%) = 0.20 ⇒ DocumentService จะขยับ
+        // บรรทัดใหญ่สุด 1 สตางค์ ⇒ ก่อน VAT รายบรรทัดหลุดจาก XML ⇒ ห้ามทางหลัก
+        var f = new OcrEtaxLineFacts(1m, 1.00m, null, null, 7m, 0.93m, 1.00m);
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { f, f, f }, 2.79m, 0.21m, 3.00m);
+        Assert.False(inv.PricesIncludeVat);
+        Assert.Contains(inv.Notes, x => x.Contains("ระบบจะขยับบรรทัดใหญ่สุด", StringComparison.Ordinal));
+        Assert.Null(OcrEtaxLineNormalizer.InclusiveLineVats(new[] { (1.00m, 7m, true), (1.00m, 7m, true), (1.00m, 7m, true) }, 0.20m));
+    }
+
+    [Fact]
+    public void บรรทัดปนราคารวมและไม่รวมVAT_ใช้ทางสำรอง()
+    {
+        var incl = new OcrEtaxLineFacts(3m, 37.00m, 26.68m, null, 7m, 78.80m, 84.32m);
+        var excl = new OcrEtaxLineFacts(2m, 250.47m, null, null, 7m, 500.93m, 536.00m);
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { incl, excl }, 579.73m, 40.59m, 620.32m);
+        Assert.False(inv.PricesIncludeVat);
+        Assert.Equal(OcrEtaxPriceBasis.InclusiveOfVat, inv.Lines[0].Basis);
+        Assert.False(inv.Lines[0].PriceIncludesVat);
+        Assert.Equal(OcrEtaxPriceBasis.ExclusiveOfVat, inv.Lines[1].Basis);
+        Assert.Equal((2m, 250.47m, 500.93m), (inv.Lines[1].Quantity!.Value, inv.Lines[1].UnitPrice!.Value, inv.Lines[1].Amount!.Value));
+    }
+
+    [Fact]
+    public void เศษจากถอดVATเกินเพดาน_ไม่ตัดสิน()
+    {
+        // 120 × 1.00 รวม VAT ทางสำรอง: 0.94 × 120 − 112.15 = 0.65 > 0.5% ของ 112.15 (0.56) ⇒ Unknown (ค่าเดิม)
+        var n = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(120m, 1.00m, null, null, 7m, 112.15m, 120.00m));
+        Assert.Equal(OcrEtaxPriceBasis.Unknown, n.Basis);
+        Assert.Equal((120m, 1.00m, 112.15m), (n.Quantity!.Value, n.UnitPrice!.Value, n.Amount!.Value));
+        Assert.Null(n.LineDiscount);
+        Assert.Null(n.VatStripResidual);
+        // เกิน 1 บาท (บรรทัดใหญ่): 1,000 × 0.10 รวม VAT ⇒ 0.09 × 1,000 = 90 < 93.46 ⇒ 0.10 × 1,000 − 93.46 = 6.54 > 1.00 ⇒ Unknown
+        var big = OcrEtaxLineNormalizer.Normalize(new OcrEtaxLineFacts(1000m, 0.10m, null, null, 7m, 93.46m, 100.00m));
+        Assert.Equal(OcrEtaxPriceBasis.Unknown, big.Basis);
+        // ทั้งใบที่ไม่ผ่านทางหลัก ⇒ ไม่มีหมายเหตุเศษของบรรทัดที่ไม่ตัดสิน
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(new[] { new OcrEtaxLineFacts(120m, 1.00m, null, null, 7m, 112.15m, 120.00m) }, null, null, null);
+        Assert.False(inv.PricesIncludeVat);
+        Assert.DoesNotContain(inv.Notes, x => x.Contains("เศษจากถอด VAT", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Shopee_ทั้งใบ_ไม่เปลี่ยน()
+    {
+        var r = EtaxPdfXmlExtractor.ParseEtaxXml(EtaxFixtures.ShopeeUptoyouXml)!;
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(r.Items.Select(Facts).ToList(), r.LineTotal, r.VatAmount, r.GrandTotal);
+        Assert.False(inv.PricesIncludeVat);
+        Assert.Empty(inv.Notes);
+        var n = Assert.Single(inv.Lines);
+        Assert.Equal((OcrEtaxPriceBasis.ExclusiveOfVat, 2m, 250.47m, 500.93m), (n.Basis, n.Quantity!.Value, n.UnitPrice!.Value, n.Amount!.Value));
+        Assert.Null(n.LineDiscount);
+        Assert.False(n.PriceIncludesVat);
+    }
+
+    [Fact]
+    public void ป้ายส่วนลด_เซิร์ฟเวอร์บอกฐานและเศษ()
+    {
+        Assert.Null(OcrEtaxLineNormalizer.DiscountLabel(null, false, null));
+        Assert.Contains("รวม VAT", OcrEtaxLineNormalizer.DiscountLabel(26.68m, true, null));
+        Assert.Contains("เศษจากการถอด VAT 0.03 บาท (ไม่ใช่ส่วนลดบนเอกสาร)", OcrEtaxLineNormalizer.DiscountLabel(0.03m, false, 0.03m));
+        Assert.Equal("ส่วนลดของบรรทัด (ก่อน VAT)", OcrEtaxLineNormalizer.DiscountLabel(50m, false, null));
+    }
+
+    [Fact]
+    public void ราคารวมVAT_ทุนสต็อกถอดVATก่อนหาร_และJSONเขียนกลับรอบใหม่()
+    {
+        // 3 × 37.00 − 26.68 = 84.32 รวม VAT ⇒ 78.80 ÷ 3 = 26.2667 (ไม่ใช่ 28.1067)
+        Assert.Equal(26.2667m, OcrEtaxLineNormalizer.EffectiveUnitCost(3m, 37.00m, 84.32m, 26.68m, priceIncludesVat: true, vatRate: 7m));
+        Assert.Equal(34.58m, OcrEtaxLineNormalizer.EffectiveUnitCost(3m, 37.00m, 111.00m, null, priceIncludesVat: true, vatRate: 7m));
+        // ทิศตรงข้าม: ไม่ใช่ราคารวม VAT ⇒ สูตรเดิม
+        Assert.Equal(37.00m, OcrEtaxLineNormalizer.EffectiveUnitCost(3m, 37.00m, 111.00m, null));
+        // เขียนกลับตอนอนุมัติเอกสารราคารวม VAT: ยอด = ก่อน VAT + VAT (ฐานเดียวกับราคา/ส่วนลด) ⇒ ส่วนลดยังอธิบายยอดได้
+        const string approvedIncl = """[{"Description":"ยางแบนรองขาแอร์","Quantity":3,"Unit":"ชิ้น","UnitPrice":37.00,"Amount":84.32,"VatRate":7,"LineDiscountAmount":26.68,"QuantityFromEtaxXml":true,"PriceIncludesVat":true}]""";
+        var item = System.Text.Json.JsonSerializer.Deserialize<List<OcrExtractedLineItem>>(approvedIncl)![0];
+        Assert.True(item.PriceIncludesVat);
+        Assert.Equal(26.68m, OcrEtaxLineNormalizer.ProvenLineDiscount(item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount));
+        var dto = System.Text.Json.JsonSerializer.Deserialize<List<Accounting.Models.DTOs.Ocr.OcrLineItemDto>>(approvedIncl,
+            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })![0];
+        Assert.True(dto.PriceIncludesVat);
+        Assert.Equal(26.2667m, OcrEtaxLineNormalizer.EffectiveUnitCost(dto.Quantity, dto.UnitPrice, dto.Amount, dto.LineDiscountAmount, dto.PriceIncludesVat, dto.VatRate));
+        // ทิศตรงข้าม = บั๊กของรอบสอง: ส่วนลดรวม VAT คู่กับยอดก่อน VAT ⇒ ส่วนลดไม่อธิบายยอด
+        Assert.Equal(0m, OcrEtaxLineNormalizer.ProvenLineDiscount(3m, 37.00m, 78.80m, 26.68m));
     }
 }

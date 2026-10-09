@@ -14641,7 +14641,8 @@ public partial class DocumentService : IDocumentService
             // ไม่งั้นสร้างใหม่/ดึงรายการซ้ำ/สำเนาจากอัปไฟล์ซ้ำ รันตัวกันจำนวนระเบิดแล้วหารจำนวนใหม่อีกรอบ
             var linesJson = BuildScanItemsJsonFromLines(approvedLines,
                 Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(scan.OcrEngine)
-                || Accounting.Helpers.OcrEtaxLineNormalizer.ItemsJsonCarriesSignedQuantities(scan.ExtractedItemsJson));
+                || Accounting.Helpers.OcrEtaxLineNormalizer.ItemsJsonCarriesSignedQuantities(scan.ExtractedItemsJson),
+                doc.PricesIncludeVat);
             var linesChanged = linesJson != null && linesJson != scan.ExtractedItemsJson;
             // ── คำตัดสินข้อ 28 (รอบ 200 ทีม K2 · ฝ่ายค้าน K R2): WHT ที่คนแก้ใน "ฟอร์มเอกสาร" ต้องถึงวงจรเรียนรู้ ──
             // baseline = ค่า WHT บนแถวสแกน (ตัวเดียวกับ K-10) · ต่างจริงเท่านั้น (เอกสารที่สร้างจากสแกนโดยไม่มีใครแตะ = ว่าง ⇒ ไม่สอนตัวเอง) ·
@@ -14724,8 +14725,11 @@ public partial class DocumentService : IDocumentService
     /// <c>OcrScanResult.ExtractedItemsJson</c> เพื่อให้นักเรียนแตกบรรทัดเรียนจาก
     /// ชุดบรรทัดที่ <b>ลงบัญชีจริง</b> · คืน <c>null</c> เมื่อไม่มีบรรทัด
     /// <para>ส่วนลดบรรทัด (<c>LineDiscountAmount</c>) + ธง <c>QuantityFromEtaxXml</c> ต้องไปด้วย — ชื่อช่องตรงกับ <c>OcrExtractedLineItem</c>
-    /// (ฝ่ายค้านรอบสอง f1690d11 ข้อ 2: เดิมเขียนกลับแค่ จำนวน/ราคา/ยอด ⇒ ส่วนลดหาย แล้วจำนวนถูกหารใหม่ตอนสร้างซ้ำ)</para></summary>
-    private static string? BuildScanItemsJsonFromLines(List<DocumentLine> lines, bool quantitiesFromSignedXml)
+    /// (ฝ่ายค้านรอบสอง f1690d11 ข้อ 2: เดิมเขียนกลับแค่ จำนวน/ราคา/ยอด ⇒ ส่วนลดหาย แล้วจำนวนถูกหารใหม่ตอนสร้างซ้ำ)</para>
+    /// <para>เอกสารราคารวม VAT (ฝ่ายค้านรอบสาม f1690d11): <c>DocumentLine.Amount</c> เป็นยอดก่อน VAT แต่ราคา/ส่วนลดรวม VAT ⇒ เขียน
+    /// <c>Amount</c> = ยอดก่อน VAT + VAT ของบรรทัด (= ยอดรวม VAT หลังส่วนลด ฐานเดียวกับราคา) + ธง <c>PriceIncludesVat</c> — เดิมคัดลอก
+    /// ส่วนลดรวม VAT คู่กับยอดก่อน VAT ⇒ "จำนวน × ราคา − ส่วนลด ≠ ยอด" แล้วสร้างใหม่ตก [Σ-GAP]</para></summary>
+    private static string? BuildScanItemsJsonFromLines(List<DocumentLine> lines, bool quantitiesFromSignedXml, bool pricesIncludeVat)
     {
         var usable = lines
             .Where(l => !string.IsNullOrWhiteSpace(l.Description))
@@ -14738,10 +14742,11 @@ public partial class DocumentService : IDocumentService
             Quantity = l.Quantity,
             Unit = l.Unit,
             UnitPrice = l.UnitPrice,
-            Amount = l.Amount,
+            Amount = pricesIncludeVat ? l.Amount + l.VatAmount : l.Amount,
             VatRate = l.VatRate,
             LineDiscountAmount = l.DiscountAmount > 0m ? l.DiscountAmount : (decimal?)null,
             QuantityFromEtaxXml = quantitiesFromSignedXml,
+            PriceIncludesVat = pricesIncludeVat,
         }));
     }
 

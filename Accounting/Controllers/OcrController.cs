@@ -876,7 +876,8 @@ public class OcrController : ControllerBase
         // (pure in-memory).
         // ทุนต่อหน่วยจริง = หลังส่วนลดบรรทัด (e-Tax XML · ฝ่ายค้านรอบสอง f1690d11 ข้อ 3) — ตัวเดียวกับที่เติมช่องทุนนำเข้าสต็อกข้างล่าง
         var effectiveCosts = lines
-            .Select(l => Accounting.Helpers.OcrEtaxLineNormalizer.EffectiveUnitCost(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscountAmount))
+            .Select(l => Accounting.Helpers.OcrEtaxLineNormalizer.EffectiveUnitCost(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscountAmount,
+                l.PriceIncludesVat, l.VatRate))
             .ToList();
         var assetDecisions = Services.Implementations.Ocr.FixedAssetDetector.Analyze(
             lines.Select((l, li) => (l.Description, l.Quantity, effectiveCosts[li], l.Amount)).ToList());

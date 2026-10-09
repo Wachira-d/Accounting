@@ -275,7 +275,12 @@ public record OcrLineItemDto(
     decimal? VatAmount = null,
     /// <summary>ส่วนลดรายบรรทัดก่อน VAT (<c>round(Quantity × UnitPrice) − LineDiscountAmount = Amount</c>) — หน้า review แสดง/แก้ได้ ·
     /// นำเข้าสต็อกใช้ทุนหลังลด (ฝ่ายค้านรอบสอง f1690d11 ข้อ 3/4: เดิม DTO ไม่มีช่องนี้ ⇒ ส่วนลดซ่อน + ทุนสต็อกเป็นราคาก่อนลด)</summary>
-    decimal? LineDiscountAmount = null);
+    decimal? LineDiscountAmount = null,
+    /// <summary>true = ราคา/ส่วนลด/ยอดของบรรทัดนี้รวม VAT ตามกระดาษ (e-Tax ราคารวม VAT — ฝ่ายค้านรอบสาม f1690d11)</summary>
+    bool PriceIncludesVat = false,
+    /// <summary>ป้ายของช่องส่วนลดที่เซิร์ฟเวอร์เขียน (<c>OcrEtaxLineNormalizer.DiscountLabel</c>) — บอกฐาน (รวม/ก่อน VAT) และ
+    /// "เศษจากการถอด VAT" ที่ไม่ใช่ส่วนลดบนเอกสาร · null = ไม่มีส่วนลด</summary>
+    string? LineDiscountLabel = null);
 
 public record OcrCreditPurchaseRequest(int Pages);
 

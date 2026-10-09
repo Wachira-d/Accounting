@@ -84,6 +84,7 @@ public record OcrStockPreviewLine(
     // ── ทุนต่อหน่วยจริง (ฝ่ายค้านรอบสอง f1690d11 ข้อ 3) ─────────────────
     // บรรทัดที่มีส่วนลดของตัวเอง (e-Tax XML) — ราคาต่อหน่วยบนใบเป็นราคาก่อนลด (34.58) แต่ทุนที่จ่ายจริง = ยอดหลังลด ÷ จำนวน
     // (26.2667) · หน้าเติมช่องทุนจากค่านี้ (เซิร์ฟเวอร์คำนวณ — Helpers/OcrEtaxLineNormalizer.EffectiveUnitCost) · ไม่มีส่วนลด = UnitPrice
+    // · บรรทัดราคารวม VAT ตามกระดาษ = ถอด VAT ก่อนหาร (ฐานเดียวกับ DocumentLine.Amount — ฝ่ายค้านรอบสาม)
     decimal? LineDiscountAmount = null,
     decimal? EffectiveUnitCost = null);
 

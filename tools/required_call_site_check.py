@@ -5880,9 +5880,12 @@ RULES += [
 _ETAX_LINE_WHY = "สแกน f1690d11 (2026-10-09): "
 RULES += [
     dict(file=OCR, method="MapEtaxToOcrData",
-         must=["OcrEtaxLineNormalizer.Normalize(", "Quantity = etaxLine.Quantity", "UnitPrice = etaxLine.UnitPrice",
-               "LineDiscountAmount = etaxLine.LineDiscount", "QuantityFromEtaxXml = etaxLine.QuantityFromDocument"],
-         call_args=[("OcrEtaxLineFacts(", "LineAllowance"), ("OcrEtaxLineFacts(", "NetIncludingVatAmount")],
+         must=["OcrEtaxLineNormalizer.NormalizeInvoice(", "Quantity = etaxLine.Quantity", "UnitPrice = etaxLine.UnitPrice",
+               "LineDiscountAmount = etaxLine.LineDiscount", "QuantityFromEtaxXml = etaxLine.QuantityFromDocument",
+               "PriceIncludesVat = etaxLine.PriceIncludesVat", "VatStripResidual = etaxLine.VatStripResidual",
+               "data.EtaxLineNotes.AddRange(etaxLines.Notes)"],
+         call_args=[("OcrEtaxLineFacts(", "LineAllowance"), ("OcrEtaxLineFacts(", "NetIncludingVatAmount"),
+                    ("OcrEtaxLineNormalizer.NormalizeInvoice(", "etax.GrandTotal")],
          forbid=["Quantity = li.Quantity", "UnitPrice = li.UnitPrice"],
          why=_ETAX_LINE_WHY + "บรรทัด e-Tax ต้องผ่านตัวตัดสินราคารวม/ไม่รวม VAT + ส่วนลดบรรทัด — map ตรงจาก XML = ราคารวม VAT ในเอกสารราคาก่อน VAT"),
     dict(file=OCR, method="SanitizeVatSplitArtifacts",
@@ -5905,7 +5908,8 @@ RULES += [
          why=_ETAX_LINE_WHY + "ด่านต่อบรรทัดเทียบ จำนวน × ราคา − ส่วนลดบรรทัด กับยอด"),
     dict(file=OCR, method="SetExtractedLineFieldsAsync",
          must=["OcrEtaxLineNormalizer.AmountAfterLineDiscount(", "discountDropped = dropped",
-               "line.LineDiscountAmount = lineDiscount.Value > 0m ? lineDiscount.Value : null"],
+               "Math.Round(lineDiscount.Value, 2, MidpointRounding.AwayFromZero)",
+               "line.LineDiscountAmount = storedDisc > 0m ? storedDisc : null", "line.VatStripResidual = null"],
          must_re=[r"return\s*\(\s*line\.Amount\s*\?\?\s*0m\s*,\s*line\.LineDiscountAmount\s*,\s*discountDropped\s*\)"],
          forbid=["line.Amount = System.Math.Round(qty * up, 2, MidpointRounding.AwayFromZero)"],
          why=_ETAX_LINE_WHY + "แก้บรรทัดในหน้ารีวิวต้องคงส่วนลดบรรทัด (ไม่งั้นยอดกลับเป็นยอดก่อนลดเงียบ ๆ)"),
@@ -5922,19 +5926,50 @@ RULES += [
 ] + [
     dict(file=DOC, method="BuildScanItemsJsonFromLines",
          must=["LineDiscountAmount = l.DiscountAmount > 0m ? l.DiscountAmount : (decimal?)null",
-               "QuantityFromEtaxXml = quantitiesFromSignedXml"],
+               "QuantityFromEtaxXml = quantitiesFromSignedXml",
+               "Amount = pricesIncludeVat ? l.Amount + l.VatAmount : l.Amount", "PriceIncludesVat = pricesIncludeVat"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 2: เขียนบรรทัดที่อนุมัติกลับลงสแกนต้องคงส่วนลด+ธงจำนวนจากเอกสารที่ลงนาม"),
     dict(file=DOC, method="SyncScanToPostedDocumentAsync",
          call_args=[("BuildScanItemsJsonFromLines(", "IsEtaxEngine"),
-                    ("BuildScanItemsJsonFromLines(", "ItemsJsonCarriesSignedQuantities")],
+                    ("BuildScanItemsJsonFromLines(", "ItemsJsonCarriesSignedQuantities"),
+                    ("BuildScanItemsJsonFromLines(", "PricesIncludeVat")],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 2: สแกน e-Tax/สำเนาของมัน (engine Cached) ต้องได้ธงคืน"),
     dict(file="Controllers/OcrController.cs", method="StockPreview",
-         must=["OcrEtaxLineNormalizer.EffectiveUnitCost(", "effectiveCosts[li]", "EffectiveUnitCost: effCost"],
+         must=["OcrEtaxLineNormalizer.EffectiveUnitCost(", "effectiveCosts[li]", "EffectiveUnitCost: effCost",
+               "l.PriceIncludesVat, l.VatRate"],
          forbid=["lines.Select(l => (l.Description, l.Quantity, l.UnitPrice, l.Amount))", "line.UnitPrice.Value - best.CostPrice"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 3: ทุนนำเข้าสต็อก/ตัวตรวจสินทรัพย์ = ยอดหลังส่วนลด ÷ จำนวน ไม่ใช่ราคาก่อนลด"),
     dict(file="Controllers/OcrController.cs", method="SetLineFields",
          must=["req.LineDiscount", "discountDropped"],
          why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสอง ข้อ 4: ส่วนลดบรรทัดแก้ได้จากหน้ารีวิว · ถูกล้างต้องบอกผู้ใช้"),
+]
+
+
+# ── ฝ่ายค้านรอบสาม f1690d11 (2026-10-09): ใบ e-Tax ราคารวม VAT ทุกบรรทัด ⇒ เอกสาร PricesIncludeVat ด้วยค่าตามกระดาษ (ไม่แต่งส่วนลด) ·
+#    ตัวพิสูจน์ (OcrEtaxLineNormalizer.TiesOutInclusive) เป็นสำเนาสูตรของ DocumentService ⇒ ล็อกสูตรต้นทางไว้ที่นี่: เปลี่ยนสูตรที่นั่น = checker แดง
+#    = ต้องแก้ตัวพิสูจน์ด้วย (ไม่งั้นตัวพิสูจน์ "ผ่าน" ใบที่บันทึกซ้ำแล้วยอดหลุด)
+RULES += [
+    dict(file=OCR, method="ScanAsync",
+         must=["foreach (var etaxNote in extractedData.EtaxLineNotes)"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสาม: หมายเหตุ [e-Tax] (เศษจากถอด VAT · เหตุที่ใช้ทางสำรอง) ต้องถึง ProcessingNotes"),
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must=["if (items.All(x => x.PriceIncludesVat))", "OcrEtaxLineNormalizer.InclusiveLineVats("],
+         before=[("if (items.All(x => x.PriceIncludesVat))", "OcrEtaxLineNormalizer.InclusiveLineVats(")],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสาม: บรรทัดราคารวม VAT ตามกระดาษ ⇒ เอกสาร PricesIncludeVat + VAT รายบรรทัดสูตรเดียวกับ ComputeLineAmounts"),
+    dict(file=OCR, method="MapToResponse",
+         must=["OcrEtaxLineNormalizer.DiscountLabel("],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสาม: ป้ายช่องส่วนลด (รวม/ก่อน VAT · เศษจากถอด VAT) เซิร์ฟเวอร์เป็นคนเขียน"),
+    dict(file=DOC, method="ComputeLineAmounts",
+         must=["var gross = Math.Round(line.Quantity * line.UnitPrice, 2, R);",
+               "? Math.Min(Math.Round(line.DiscountAmount.Value, 2, R), gross)",
+               "var afterDiscount = gross - discountAmt;",
+               "net = Math.Round(afterDiscount * 100m / (100m + line.VatRate), 2, R);",
+               "vatAmt = afterDiscount - net;"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสาม: OcrEtaxLineNormalizer.TiesOutInclusive จำลองสูตรนี้ — เปลี่ยนสูตรต้องแก้ตัวพิสูจน์ด้วย"),
+    dict(file=DOC, method="ReconcileTaxRounding",
+         must=["var target = Math.Round(g.Sum(i => amts[i].NetAmount) * g.Key / 100m, 2, R);",
+               "NetAmount = pricesIncludeVat ? amts[j].NetAmount - diff : amts[j].NetAmount"],
+         why=_ETAX_LINE_WHY + "ฝ่ายค้านรอบสาม: TiesOutInclusive ต้องการ VAT รายบรรทัดรวม = เป้าของขั้นนี้ (ไม่งั้นบรรทัดใหญ่สุดถูกขยับ)"),
 ]
 
 
