@@ -1520,6 +1520,29 @@ RULES += [
          why="2026-10-09 ข้อ 4: replay harness ต้องเรียก helper ชุดเดียวกับ BuildScanLinesAsync — ไม่งั้น golden ล็อกคำตอบที่ service ไม่ได้ให้"),
 ]
 
+# ── 2026-10-09 (ผู้ใช้รายงาน ใบ BS2026100001 บุญทรัพย์ ถาวร — PDF ต้นฉบับ+สำเนา ⇒ engine คืน 5 บรรทัดสองรอบ ⇒ ขั้นยุบรวมจำนวนเป็น ×2):
+#    "แถวเดียวกันที่ถูกอ่านสองรอบ" ตัดสินที่ Helpers/OcrDuplicateLineGuard ตัวเดียว · ต้องถูกเรียก **ก่อน** ขั้นยุบชื่อ+ราคา (seen.TryGetValue) ด้วยยอดหัวใบจริง
+#    (data.SubTotal) · ทางเข้าที่สอง = บรรทัดจากข้อความ (OcrLineSplitGuard.Evaluate ก่อนเทียบ Σ) · harness เล่นซ้ำด่านเดียวกันก่อนกระทบยอด
+#    — ถอดการเรียกที่จุดใด = ใบต้นฉบับ+สำเนากลับมาจำนวน ×2 เงียบ ๆ (เทสต์ของ helper ยังเขียว)
+RULES += [
+    dict(file=OCR, method="SanitizeVatSplitArtifacts",
+         must=["OcrDuplicateLineGuard.Decide("],
+         call_args=[("OcrDuplicateLineGuard.Decide(", "data.SubTotal")],
+         before=[("OcrDuplicateLineGuard.Decide(", "seen.TryGetValue(key, out var existing)")],
+         why="2026-10-09 BS2026100001: ตัดแถวที่ถูกอ่านซ้ำด้วยยอดหัวใบจริง ก่อนขั้นยุบชื่อ+ราคาที่บวกจำนวน"),
+    dict(file="Helpers/OcrLineSplitGuard.cs", method="Evaluate",
+         must=["OcrDuplicateLineGuard.Decide("],
+         before=[("OcrDuplicateLineGuard.Decide(", "parsed.Sum(")],
+         why="2026-10-09 BS2026100001: บรรทัดจากข้อความต้นฉบับ+สำเนา (Σ = 2 × หัวใบ) ตัดซ้ำก่อนเทียบ Σ — ไม่งั้นทิ้งทั้งชุดเป็นบรรทัดสรุปใบเดียว"),
+    dict(file=OCR, method="TrySplitLineItemsAsync",
+         must=["guard.DedupeNote"],
+         why="2026-10-09 BS2026100001: หมายเหตุการตัดแถวซ้ำต้องถึง trace ของสแกน (ล้มดัง ไม่ตัดเงียบ)"),
+    dict(file=HARNESS, method="BuildLines",
+         must=["OcrDuplicateLineGuard.Decide("],
+         before=[("OcrDuplicateLineGuard.Decide(", "OcrLineReconciler.Classify(")],
+         why="2026-10-09 BS2026100001: harness เล่นซ้ำด่านแถวซ้ำก่อนกระทบยอด — golden ของใบต้นฉบับ+สำเนาถึงล็อกคำตอบที่ service ให้จริง"),
+]
+
 # โฟลเดอร์ OCR ทั้งโฟลเดอร์ (ไม่ใช่รายเมธอด): ห้ามเขียนสูตรถอด VAT 7% จากยอดรวมเอง — ตัวตั้งคือ Helpers/OcrVatBackCalc.SplitInclusive
 # (ค้นบนโค้ดที่ตัดคอมเมนต์+สตริงแล้ว · ตัวตรวจ "VAT บนกระดาษ = 7/107 ของยอด" อยู่ใน Helpers/ ซึ่งไม่ถูกกวาด — เป็นการตรวจ ไม่ใช่การผลิตค่า)
 FOLDER_FORBID = dict(

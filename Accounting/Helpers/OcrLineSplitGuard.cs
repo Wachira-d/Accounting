@@ -39,7 +39,12 @@ public static class OcrLineSplitGuard
         bool Accepted,
         IReadOnlyList<SplitLine> Lines,
         decimal Sum,
-        string? Reason);
+        string? Reason)
+    {
+        /// <summary>หมายเหตุเมื่อด่านแถวซ้ำ (<see cref="OcrDuplicateLineGuard"/>) ตัดบรรทัดที่ถูกอ่านสองรอบออกก่อนเทียบ Σ
+        /// (null = ไม่ได้ตัด) — ผู้เรียกเขียนลง trace ให้คนเห็นว่าระบบตัดอะไร</summary>
+        public string? DedupeNote { get; init; }
+    }
 
     private static GuardResult Reject(string reason, decimal sum = 0m)
         => new(false, Array.Empty<SplitLine>(), sum, reason);
@@ -91,6 +96,19 @@ public static class OcrLineSplitGuard
 
             if (parsed.Count == 0) return Reject("ไม่มีบรรทัดที่ใช้ได้เลย");
 
+            // 2026-10-09 (ใบ BS2026100001 ต้นฉบับ+สำเนา): ข้อความที่พิมพ์ใบเดียวกันสองหน้าให้บรรทัดชุดเดิมสองรอบ ⇒ Σ = 2 × หัวใบ
+            // ⇒ เดิมทิ้งทั้งชุด (ได้บรรทัดสรุปใบเดียว) · ตัวตัดสินเดียวกับตารางของ engine ตัดแถวที่ถูกอ่านซ้ำก่อนเทียบ Σ —
+            // กระดาษที่พิมพ์รายการซ้ำจริง (Σ ทุกแถวตรงหัวใบ) ไม่ถูกแตะ
+            var dup = OcrDuplicateLineGuard.Decide(
+                parsed.Select(x => new OcrCandidateRow(x.Description, x.Quantity, x.UnitPrice, x.Amount)).ToList(),
+                subTotal, 0m, totalAmount);
+            string? dedupeNote = null;
+            if (dup.Deduped)
+            {
+                parsed = dup.KeepIndexes.Select(i => parsed[i]).ToList();
+                dedupeNote = dup.Reason;
+            }
+
             var sum = parsed.Sum(x => x.Amount);
             var matchesSub = subTotal > 0m && Math.Abs(sum - subTotal) <= ToleranceBaht;
             var matchesTotal = totalAmount > 0m && Math.Abs(sum - totalAmount) <= ToleranceBaht;
@@ -99,7 +117,7 @@ public static class OcrLineSplitGuard
                     $"ผลรวมบรรทัด ฿{sum:N2} ไม่ตรงกับยอดบนกระดาษ " +
                     $"(ก่อนภาษี ฿{subTotal:N2} / รวม ฿{totalAmount:N2})", sum);
 
-            return new GuardResult(true, parsed, sum, null);
+            return new GuardResult(true, parsed, sum, null) { DedupeNote = dedupeNote };
         }
 
         static decimal? Num(JsonElement el, string name)

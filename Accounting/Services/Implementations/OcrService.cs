@@ -4860,6 +4860,27 @@ public class OcrService : IOcrService
             }
         }
 
+        // 3b) ⭐ 2026-10-09 (ผู้ใช้รายงาน · ใบ BS2026100001 บุญทรัพย์ ถาวร): PDF หน้า 1 ต้นฉบับ + หน้า 2 สำเนา ⇒ engine คืน
+        //     5 บรรทัดเดิมสองรอบ ⇒ ขั้น 4 ข้างล่าง (ยุบชื่อ+ราคาเท่ากัน) **บวกจำนวน/ยอด** ⇒ ทุกบรรทัด ×2 (100 → 200) ราคาคงเดิม
+        //     Σ 42,010 = 2 × 21,005 · ตัวตัดสินตัวเดียว Helpers/OcrDuplicateLineGuard: "แถวเดียวกันที่ถูกเห็นซ้ำ" (Σ หลังนับ
+        //     ครั้งเดียวตรงหัวใบ) ตัดเหลือแถวแรก · "กระดาษพิมพ์ซ้ำจริง" (Σ ทุกแถวตรงหัวใบ) คงไว้ให้ขั้น 4 รวมเหมือนเดิม ·
+        //     ไม่รู้ = ไม่แตะ · บรรทัด e-Tax (ลงนาม) ไม่เดินด่านนี้
+        if (!quantitiesFromSignedXml && data.Items.Count >= 2)
+        {
+            var dupCandidates = data.Items.Where(it => !Signed(it)).ToList();
+            var dupRows = dupCandidates
+                .Select(it => new Accounting.Helpers.OcrCandidateRow(it.Description, it.Quantity, it.UnitPrice, it.Amount, it.LineDiscountAmount))
+                .ToList();
+            var dup = Accounting.Helpers.OcrDuplicateLineGuard.Decide(dupRows, data.SubTotal, data.VatAmount, data.TotalAmount);
+            if (dup.Deduped)
+            {
+                var keepIdx = new HashSet<int>(dup.KeepIndexes);
+                for (var i = dupCandidates.Count - 1; i >= 0; i--)
+                    if (!keepIdx.Contains(i)) data.Items.Remove(dupCandidates[i]);
+                data.ReasoningTrace.Add(dup.Reason);
+            }
+        }
+
         // 4) ยุบบรรทัดที่ description ตรงกันจริง ๆ (สินค้าซ้ำ — เคส VAT split
         //    ที่ external แตกสินค้าเดียวเป็น 2 บรรทัดเท่า ๆ กัน). หลัง fold
         //    phantom แล้ว ที่เหลือคือบรรทัดสินค้าจริง — merge ตาม description.
@@ -10587,6 +10608,9 @@ public class OcrService : IOcrService
             }
             if (droppedSplitRows.Count > 0)
                 data.ReasoningTrace.Add(Accounting.Helpers.OcrNonItemRow.DroppedNote(droppedSplitRows));
+            // 2026-10-09: ข้อความต้นฉบับ+สำเนาให้บรรทัดชุดเดิมสองรอบ — ด่านตัดแถวซ้ำ (OcrDuplicateLineGuard ใน Evaluate) บอกคนว่าตัดอะไร
+            if (guard.DedupeNote is string dedupeNote)
+                data.ReasoningTrace.Add(dedupeNote);
             // ปิด loop การเรียนรู้ (กฎเหล็ก #1 ขั้น CAPTURE) — เก็บ feedbackId
             // ไว้กับสแกน เพื่อให้ตอนผู้ใช้แก้/ยืนยันรายการในหน้า review
             // ระบบส่งคำตอบจริงกลับไปสอนได้ ไม่งั้น = จ่าย token ฟรีทุกใบ
