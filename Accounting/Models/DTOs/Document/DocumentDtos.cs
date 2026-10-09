@@ -976,6 +976,8 @@ public record DocumentResponse(
     DateTime? SourceLinkedAt = null,
     /// <summary>เซิร์ฟเวอร์ตัดสิน (DocumentLinkPolicy.ChildBlockReason) ว่าโชว์ปุ่ม "ผูกกับใบเสนอราคา" ได้ไหม — หน้าเว็บไม่เดาเอง</summary>
     bool CanLinkToSource = false,
+    /// <summary>เซิร์ฟเวอร์ตัดสิน (DocumentLinkPolicy.UnlinkBlockReason) ว่าโชว์ปุ่ม "ยกเลิกการผูก" ได้ไหม — ใบแจ้งหนี้ซื้อถอดไม่ได้</summary>
+    bool CanUnlinkSource = false,
     // ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ — หน้าเว็บซ่อนแปลง/รับชำระที่ใบวางบิล แล้วโชว์ "รับชำระตามใบวางบิล" (เซิร์ฟเวอร์ตัดสิน)
     bool IsRollupBillingNote = false);
 

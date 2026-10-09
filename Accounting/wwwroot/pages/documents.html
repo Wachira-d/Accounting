@@ -10453,11 +10453,11 @@
           if (convertibleStatuses.includes(d.status) && hasConvertTargets) {
             actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.openConvert('${d.id}')">แปลงเอกสาร</button>`;
           }
-          // คำตัดสินข้อ 139 — เซิร์ฟเวอร์ตัดสินว่าโชว์ได้ (canLinkToSource / sourceLinkedAt) หน้าเว็บไม่เดาเงื่อนไขเอง
+          // คำตัดสินข้อ 139 — เซิร์ฟเวอร์ตัดสินว่าโชว์ได้ (canLinkToSource / canUnlinkSource) หน้าเว็บไม่เดาเงื่อนไขเอง
           if (d.canLinkToSource) {
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openLinkSource('${d.id}')" title="ผูกใบนี้กับเอกสารต้นทางที่มีอยู่ (ใบเสนอราคา/ใบส่งของ · ใบแจ้งหนี้ซื้อฉบับร่าง: ใบรับสินค้า) — ต้นทางนับยอดของใบนี้เหมือนแปลงมา">🔗 ผูกกับเอกสารต้นทาง</button>`;
           }
-          if (d.sourceLinkedAt) {
+          if (d.canUnlinkSource) {
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.unlinkSource('${d.id}')" title="ยกเลิกการผูกกับเอกสารต้นทาง (ผูกไว้ภายหลัง ไม่ได้แปลงมา)">✂️ ยกเลิกการผูก</button>`;
           }
           if (d.status === 'Approved' || d.status === 'Sent') {

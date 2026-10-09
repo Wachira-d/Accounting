@@ -82,10 +82,29 @@ public class DocumentLinkPolicyTests
     }
 
     [Fact]
-    public void ถอดการผูก_ใบแจ้งหนี้ซื้อร่างและใบขายทุกสถานะ_ได้()
+    public void ถอดการผูก_ใบขายทุกสถานะได้_ใบแจ้งหนี้ซื้อร่างก็ถอดไม่ได้()
     {
-        Assert.Null(DocumentLinkPolicy.UnlinkBlockReason(DocumentType.PurchaseInvoice, DocumentStatus.Draft));
         Assert.Null(DocumentLinkPolicy.UnlinkBlockReason(DocumentType.Invoice, DocumentStatus.Paid));
+        // ฝ่ายค้าน 2026-10-09: ใบร่างที่ย้ายมาจาก PO ถอดแล้วเป็นใบเดี่ยว ⇒ ด่าน PI-PO-HAS-GRN มองไม่เห็น ⇒ รับสต็อกซ้ำตอนอนุมัติ
+        Assert.NotNull(DocumentLinkPolicy.UnlinkBlockReason(DocumentType.PurchaseInvoice, DocumentStatus.Draft));
+    }
+
+    [Fact]
+    public void ใบแจ้งหนี้ซื้อต้องจับคู่ครบทุกบรรทัด_ใบขายจับคู่บางบรรทัดได้()
+    {
+        Assert.NotNull(DocumentLinkPolicy.LineMapBlockReason(DocumentType.PurchaseInvoice, activeChildLines: 2, mappedLines: 1));
+        Assert.Null(DocumentLinkPolicy.LineMapBlockReason(DocumentType.PurchaseInvoice, activeChildLines: 2, mappedLines: 2));
+        Assert.Null(DocumentLinkPolicy.LineMapBlockReason(DocumentType.Invoice, activeChildLines: 2, mappedLines: 1));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ใบรับสินค้าอนุมัติแล้วแต่ไม่มีรายการบัญชี_ผูกไม่ได้()
+    {
+        Assert.NotNull(DocumentLinkPolicy.SourceBlockReason(DocumentType.PurchaseInvoice, DocumentType.GoodsReceiptNote,
+            DocumentStatus.Approved, true, true, grnHasPostedJournal: false));
+        // ใบส่งของไม่ต้องมี JE (ไม่ลงบัญชีอยู่แล้ว)
+        Assert.Null(DocumentLinkPolicy.SourceBlockReason(DocumentType.Invoice, DocumentType.DeliveryNote,
+            DocumentStatus.Approved, true, true, grnHasPostedJournal: false));
     }
 
     [Theory]

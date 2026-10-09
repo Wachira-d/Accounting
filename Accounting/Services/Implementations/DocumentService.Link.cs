@@ -23,6 +23,11 @@ public partial class DocumentService
         child.ReplacesDocumentId.HasValue, child.Lines.Any(l => l.SourceLineId.HasValue),
         ParentIsPurchaseOrder: child.RelatedDocumentId.HasValue && parentType == DocumentType.PurchaseOrder);
 
+    /// <summary>ใบรับสินค้ามี JE ที่ลงแล้ว — หลักฐานชุดเดียวกับ <c>GetReceivedViaGrnAccrualAccountAsync</c> ที่ตอนอนุมัติใช้ตัดสินว่าจะล้าง 21240</summary>
+    private Task<bool> GrnHasPostedJournalAsync(Guid companyId, Guid grnId) =>
+        _db.JournalEntries.AsNoTracking().AnyAsync(j => j.SourceDocumentId == grnId
+            && j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted);
+
     private Task<DocumentType?> ParentTypeAsync(Guid companyId, Guid? parentId) => parentId is not Guid pid
         ? Task.FromResult<DocumentType?>(null)
         : _db.Documents.AsNoTracking().Where(d => d.Id == pid && d.CompanyId == companyId)
@@ -56,7 +61,9 @@ public partial class DocumentService
                 && (d.Currency ?? "").ToUpper() == (child.Currency ?? "").ToUpper()   // ตรงกับด่านผูก (OrdinalIgnoreCase)
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                 && (d.DocumentType != DocumentType.GoodsReceiptNote
-                    || (d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval))
+                    || (d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                        && _db.JournalEntries.Any(j => j.SourceDocumentId == d.Id && j.CompanyId == companyId
+                            && j.Status == JournalEntryStatus.Posted)))
                 && (poParent == null || d.RelatedDocumentId == poParent))
             .OrderByDescending(d => d.DocumentDate).ThenByDescending(d => d.CreatedAt)
             .Take(30)
@@ -112,7 +119,9 @@ public partial class DocumentService
         if (childBlock != null) throw new BusinessRuleException(childBlock, DocumentLinkPolicy.RuleCode);
         var srcBlock = DocumentLinkPolicy.SourceBlockReason(child.DocumentType, source.DocumentType, source.Status,
             source.ContactId == child.ContactId, string.Equals(source.Currency, child.Currency, StringComparison.OrdinalIgnoreCase),
-            childPoMismatch: childFacts.ParentIsPurchaseOrder && source.RelatedDocumentId != child.RelatedDocumentId);
+            childPoMismatch: childFacts.ParentIsPurchaseOrder && source.RelatedDocumentId != child.RelatedDocumentId,
+            grnHasPostedJournal: source.DocumentType != DocumentType.GoodsReceiptNote
+                                 || await GrnHasPostedJournalAsync(companyId, source.Id));
         if (srcBlock != null) throw new BusinessRuleException(srcBlock, DocumentLinkPolicy.RuleCode);
 
         // ด่านชุดเดียวกับการแปลงบางส่วน: คู่ชนิดที่แปลงได้ · ใบต้นทางถูกยกเลิก · วงกลม · รายได้ซ้ำ (ลูกที่ด่านยอดมองไม่เห็น)
@@ -129,6 +138,10 @@ public partial class DocumentService
                 throw new BusinessRuleException("บรรทัดต้นทางที่เลือกไม่ใช่ของเอกสารต้นทางนี้", DocumentLinkPolicy.RuleCode);
             map[m.ChildLineId] = m.SourceLineId;
         }
+        // ใบแจ้งหนี้ซื้อ → ใบรับสินค้า: ตอนอนุมัติล้าง 21240 ด้วยยอดทั้งใบ ⇒ ต้องจับคู่ครบทุกบรรทัด (ฝ่ายค้าน 2026-10-09)
+        if (DocumentLinkPolicy.LineMapBlockReason(child.DocumentType, child.Lines.Count(l => !l.IsDeleted),
+                map.Keys.Count(id => !childLineById[id].IsDeleted)) is { } mapBlock)
+            throw new BusinessRuleException(mapBlock, DocumentLinkPolicy.RuleCode);
 
         // ยอดสะสมเกินใบต้นทาง ⇒ ถามยืนยันครั้งเดียว (ตัวตัดสินเดียวกับการแปลงบางส่วน · ข้อ 138)
         var consumed = await ComputeConsumedBaseAsync(companyId, sourceLineIds.ToList());
@@ -195,6 +208,11 @@ public partial class DocumentService
 
     public async Task<DocumentResponse> UnlinkSourceAsync(Guid companyId, Guid childId, string actor)
     {
+        // ล็อกใบลูกก่อนตรวจสถานะ (ฝ่ายค้าน 2026-10-09) — กันอนุมัติพร้อมกันจนได้ใบที่ล้าง 21240 แล้วแต่ไม่มีต้นทาง
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+            childId, companyId);
         var child = await _db.Documents.Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == childId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
@@ -232,6 +250,7 @@ public partial class DocumentService
             }),
         });
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
         return await GetDocumentAsync(companyId, child.Id);
     }
 }

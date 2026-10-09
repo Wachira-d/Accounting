@@ -30,4 +30,12 @@ public class PurchaseReceiptRouteTests
     [Fact]
     public void ทิศตรงข้าม_ไม่มีGRNที่ยังมีผล_บิลจากPOได้()
         => Assert.False(PurchaseReceiptRoute.PoBillBlockedByGrn(false, Array.Empty<Guid>(), Array.Empty<Guid>(), false));
+
+    [Fact]
+    public void ข้อความ_ใบบันทึกค่าใช้จ่ายไม่ชี้ปุ่มผูกที่ไม่มี()
+    {
+        // ฝ่ายค้าน 2026-10-09: ด่านเดียวกันโยนให้ Expense ด้วย แต่ Expense ไม่มีปุ่ม "ผูกกับเอกสารต้นทาง"
+        Assert.Contains("ผูกกับเอกสารต้นทาง", PurchaseReceiptRoute.Message("GRN-1"));
+        Assert.DoesNotContain("ผูกกับเอกสารต้นทาง", PurchaseReceiptRoute.Message("GRN-1", canRelink: false));
+    }
 }

@@ -73,8 +73,10 @@ public static class DocumentLinkPolicy
 
     /// <summary>ใบต้นทางรับการผูกได้ไหม (ฝั่งที่ต้องรู้จากฐาน: คู่ค้า/สกุลเงินตรงกัน)</summary>
     /// <param name="childPoMismatch">ใบลูกผูกใบสั่งซื้ออยู่ แต่ใบรับสินค้านี้ไม่ใช่ของใบสั่งซื้อนั้น</param>
+    /// <param name="grnHasPostedJournal">ใบรับสินค้ามี JE ที่ลงแล้ว (ตั้ง 21240 จริง) — หลักฐานเดียวกับที่ตอนอนุมัติใช้ตัดสินว่าจะล้าง 21240
+    /// (<c>GetReceivedViaGrnAccrualAccountAsync</c>) · สถานะ "อนุมัติ" อย่างเดียวไม่พอ (ใบเก่าที่ไม่มี JE ⇒ ใบแจ้งหนี้ซื้อจะรับสต็อกซ้ำเงียบ ๆ)</param>
     public static string? SourceBlockReason(DocumentType childType, DocumentType sourceType, DocumentStatus sourceStatus,
-        bool sameContact, bool sameCurrency, bool childPoMismatch = false)
+        bool sameContact, bool sameCurrency, bool childPoMismatch = false, bool grnHasPostedJournal = true)
     {
         if (Array.IndexOf(SourceTypesFor(childType), sourceType) < 0)
             return childType == DocumentType.PurchaseInvoice
@@ -85,6 +87,8 @@ public static class DocumentLinkPolicy
         // ใบรับสินค้าต้องลง GR-NI แล้ว — ใบแจ้งหนี้ซื้อล้าง 21240 เฉพาะเมื่อใบรับสินค้ามี JE (GetReceivedViaGrnAccrualAccountAsync)
         if (sourceType == DocumentType.GoodsReceiptNote && sourceStatus is DocumentStatus.Draft or DocumentStatus.WaitingApproval)
             return "ใบรับสินค้านี้ยังไม่อนุมัติ (ยังไม่รับสต็อก/ตั้ง 21240) — อนุมัติใบรับสินค้าก่อนแล้วจึงผูก";
+        if (sourceType == DocumentType.GoodsReceiptNote && !grnHasPostedJournal)
+            return "ใบรับสินค้านี้ไม่มีรายการบัญชีตั้ง 21240 ที่ลงแล้ว — ผูกแล้วใบแจ้งหนี้ซื้อจะรับสต็อกซ้ำ · ให้ผู้ทำบัญชีตรวจใบรับสินค้าก่อน";
         if (!sameContact)
             return "เอกสารต้นทางเป็นของคู่ค้าคนละราย — ผูกได้เฉพาะคู่ค้าเดียวกัน";
         if (!sameCurrency)
@@ -94,10 +98,26 @@ public static class DocumentLinkPolicy
         return null;
     }
 
-    /// <summary>ยกเลิกการผูกภายหลังได้ไหม — ใบแจ้งหนี้ซื้อที่ไม่ใช่ร่างแล้ว ลงบัญชีโดยอาศัยการผูก (ล้าง 21240) ⇒ ถอดไม่ได้</summary>
+    /// <summary>
+    /// ยกเลิกการผูกภายหลังได้ไหม — ใบแจ้งหนี้ซื้อ<b>ทุกสถานะ</b>ถอดไม่ได้ (ฝ่ายค้าน 2026-10-09): ใบที่ลงแล้วลงบัญชีโดยอาศัยการผูก (ล้าง 21240) ·
+    /// ใบร่างที่ย้ายมาจากใบสั่งซื้อ ถ้าถอดจะกลายเป็นใบเดี่ยวที่ด่าน <c>PI-PO-HAS-GRN</c> มองไม่เห็น ⇒ อนุมัติแล้วรับสต็อกซ้ำ ·
+    /// ผูกผิดใบ: ลบ/ยกเลิกใบร่างแล้วออกใหม่จากใบรับสินค้า
+    /// </summary>
     public static string? UnlinkBlockReason(DocumentType childType, DocumentStatus childStatus) =>
-        childType == DocumentType.PurchaseInvoice && childStatus != DocumentStatus.Draft
-            ? "ใบแจ้งหนี้ซื้อนี้ลงบัญชีโดยล้าง 21240 ของใบรับสินค้าแล้ว — ยกเลิกการผูกไม่ได้ (ยกเลิกทั้งใบแทน)"
+        childType == DocumentType.PurchaseInvoice
+            ? (childStatus == DocumentStatus.Draft
+                ? "ใบแจ้งหนี้ซื้อที่ผูกใบรับสินค้าแล้วยกเลิกการผูกไม่ได้ (ถอดแล้วจะรับสต็อกซ้ำตอนอนุมัติ) — ถ้าผูกผิดใบ ให้ลบใบร่างนี้แล้วแปลงใหม่จากใบรับสินค้าที่ถูก"
+                : "ใบแจ้งหนี้ซื้อนี้ลงบัญชีโดยล้าง 21240 ของใบรับสินค้าแล้ว — ยกเลิกการผูกไม่ได้ (ยกเลิกทั้งใบแทน)")
+            : null;
+
+    /// <summary>
+    /// ใบแจ้งหนี้ซื้อ → ใบรับสินค้า ต้องจับคู่<b>ทุกบรรทัด</b> (ฝ่ายค้าน 2026-10-09): ตอนอนุมัติ ใบที่อ้างใบรับสินค้าล้าง 21240 ด้วยยอดทั้งใบและไม่รับสต็อก
+    /// ทุกบรรทัด ⇒ บรรทัดที่ไม่ได้รับผ่านใบรับสินค้านี้ (บริการ/ค่าขนส่ง/รับผ่านใบรับสินค้าอื่น) จะลง Dr 21240 ผิดบัญชี · ฝั่งขายจับคู่บางบรรทัดได้ (แค่ความคืบหน้า)
+    /// </summary>
+    public static string? LineMapBlockReason(DocumentType childType, int activeChildLines, int mappedLines) =>
+        childType == DocumentType.PurchaseInvoice && mappedLines < activeChildLines
+            ? $"ใบแจ้งหนี้ซื้อที่ผูกใบรับสินค้าต้องจับคู่ครบทุกรายการ (จับคู่ {mappedLines} จาก {activeChildLines}) — ตอนอนุมัติระบบล้าง 21240 ด้วยยอดทั้งใบ · "
+              + "รายการที่ไม่ได้รับผ่านใบรับสินค้านี้ (บริการ/ค่าขนส่ง/ใบรับสินค้าอื่น) ให้แยกเป็นใบแจ้งหนี้ซื้ออีกใบ"
             : null;
 
     public readonly record struct LineKey(Guid Id, int LineOrder, string? ProductCode, string? Description);

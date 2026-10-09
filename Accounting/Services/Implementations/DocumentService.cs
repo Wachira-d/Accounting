@@ -6451,7 +6451,8 @@ public partial class DocumentService : IDocumentService
                         && d.DocumentType == DocumentType.PurchaseOrder)
                     && await PoBillBlockingGrnAsync(companyId, billedPoId,
                         doc.Lines.Where(l => l.SourceLineId != null).Select(l => l.SourceLineId!.Value).Distinct().ToList()) is { } blockingGrn)
-                    throw new BusinessRuleException(PurchaseReceiptRoute.Message(blockingGrn), PurchaseReceiptRoute.RuleCode, 409);
+                    throw new BusinessRuleException(PurchaseReceiptRoute.Message(blockingGrn,
+                        canRelink: doc.DocumentType == DocumentType.PurchaseInvoice), PurchaseReceiptRoute.RuleCode, 409);
 
                 // Idempotency guard INSIDE transaction to prevent race condition.
                 // นับเฉพาะ JE ที่ "ยังมีผลจริง": ไม่ใช่ reversal (OriginalEntryId
@@ -18768,6 +18769,7 @@ public partial class DocumentService : IDocumentService
         // คำตัดสินข้อ 139 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) · ปุ่มผูกตัดสินที่เซิร์ฟเวอร์ (ข้อมูลบนใบล้วน ไม่แตะฐาน)
         SourceLinkedAt: d.SourceLinkedAt,
         CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(LinkFacts(d, upstream?.DocumentType)) is null,   // ตัวประกอบข้อเท็จจริงตัวเดียวกับด่านผูก
+        CanUnlinkSource: d.SourceLinkedAt != null && Accounting.Helpers.DocumentLinkPolicy.UnlinkBlockReason(d.DocumentType, d.Status) is null,
         IsRollupBillingNote: BillingNoteKind.IsRollup(d.DocumentType, d.Lines.Any(l => l.SourceDocumentId != null)));
     }
 

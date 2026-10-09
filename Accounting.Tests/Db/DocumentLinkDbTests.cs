@@ -52,6 +52,17 @@ public class DocumentLinkDbTests
         return d;
     }
 
+    /// <summary>ใบรับสินค้าที่ลงบัญชีแล้ว (ตั้ง 21240) — หลักฐานที่ด่านผูกและตอนอนุมัติใช้ร่วมกัน</summary>
+    private static async Task PostJeAsync(Accounting.Data.AccountingDbContext db, Seed s, Document doc)
+    {
+        db.JournalEntries.Add(new JournalEntry
+        {
+            CompanyId = s.CompanyId, EntryNumber = "JV-" + doc.DocumentNumber, EntryDate = doc.DocumentDate,
+            Status = JournalEntryStatus.Posted, SourceDocumentId = doc.Id, TotalDebit = 1_000m, TotalCredit = 1_000m,
+        });
+        await db.SaveChangesAsync();
+    }
+
     private static DocumentService Svc(Accounting.Data.AccountingDbContext db) =>
         new(db, new AccountingService(db), null!, null!, null!, NullLogger<DocumentService>.Instance, null!, null!, null!);
 
@@ -65,6 +76,8 @@ public class DocumentLinkDbTests
         var grn = await DocAsync(db, s, DocumentType.GoodsReceiptNote, "GRN-LK-1", po.Id, lineSourceId: po.Lines.Single().Id);
         var otherPo = await DocAsync(db, s, DocumentType.PurchaseOrder, "PO-LK-2", null);
         var otherGrn = await DocAsync(db, s, DocumentType.GoodsReceiptNote, "GRN-LK-2", otherPo.Id, lineSourceId: otherPo.Lines.Single().Id);
+        await PostJeAsync(db, s, grn);
+        await PostJeAsync(db, s, otherGrn);
         // ใบจากสแกนที่ผูกใบสั่งซื้อตรง (ทั้งหัวและบรรทัด) — ด่าน PI-PO-HAS-GRN กันตอนอนุมัติ
         var pi = await DocAsync(db, s, DocumentType.PurchaseInvoice, "DRAFT-LK-1", po.Id, DocumentStatus.Draft, po.Lines.Single().Id);
         var piLineId = pi.Lines.Single().Id;
@@ -93,6 +106,42 @@ public class DocumentLinkDbTests
         Assert.Equal(grn.Lines.Single().Id, after.Lines.Single().SourceLineId);
         Assert.NotNull(after.SourceLinkedAt);
         Assert.Equal(DocumentStatus.Draft, after.Status);                      // ผูกไม่อนุมัติ/ไม่ลงบัญชีเอง
+
+        // ถอดไม่ได้ — ถอดแล้วจะเป็นใบเดี่ยวที่ด่าน PI-PO-HAS-GRN มองไม่เห็น ⇒ อนุมัติแล้วรับสต็อกซ้ำ (ฝ่ายค้าน 2026-10-09)
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).UnlinkSourceAsync(s.CompanyId, pi.Id, "db-test"));
+    }
+
+    [Fact]
+    public async Task ทิศตรงข้าม_ใบรับสินค้าไม่มีรายการบัญชี_หรือจับคู่ไม่ครบทุกบรรทัด_ผูกไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var po = await DocAsync(db, s, DocumentType.PurchaseOrder, "PO-LK-4", null);
+        var grnNoJe = await DocAsync(db, s, DocumentType.GoodsReceiptNote, "GRN-LK-4", po.Id, lineSourceId: po.Lines.Single().Id);
+        var pi = await DocAsync(db, s, DocumentType.PurchaseInvoice, "DRAFT-LK-4", null, DocumentStatus.Draft);
+
+        // (ก) อนุมัติแล้วแต่ไม่มี JE ตั้ง 21240 ⇒ ตอนอนุมัติจะถอยไปรับสต็อกเอง = ซ้ำกับใบรับสินค้า ⇒ ไม่เสนอ + ส่งตรงถูกกัน
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.DoesNotContain((await Svc(req).GetLinkCandidatesAsync(s.CompanyId, pi.Id)).Candidates, c => c.Id == grnNoJe.Id);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).LinkToSourceAsync(s.CompanyId, pi.Id,
+                new LinkSourceRequest(grnNoJe.Id, new() { new LinkLineMap(pi.Lines.Single().Id, grnNoJe.Lines.Single().Id) }), "db-test"));
+
+        // (ข) มี JE แล้ว แต่ใบแจ้งหนี้ซื้อมีบรรทัดค่าขนส่งที่ไม่ได้รับผ่านใบรับสินค้า ⇒ ล้าง 21240 ทั้งใบผิด ⇒ ต้องจับคู่ครบ
+        await PostJeAsync(db, s, grnNoJe);
+        db.DocumentLines.Add(new DocumentLine
+        {
+            DocumentId = pi.Id, LineOrder = 2, Description = "ค่าขนส่ง", Quantity = 1, UnitPrice = 50m, Amount = 50m,
+        });
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).LinkToSourceAsync(s.CompanyId, pi.Id,
+                new LinkSourceRequest(grnNoJe.Id, new() { new LinkLineMap(pi.Lines.Single(l => l.LineOrder == 1).Id, grnNoJe.Lines.Single().Id) }), "db-test"));
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Null((await check.Documents.AsNoTracking().SingleAsync(d => d.Id == pi.Id && d.CompanyId == s.CompanyId)).RelatedDocumentId);
     }
 
     [Fact]
