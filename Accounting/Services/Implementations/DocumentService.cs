@@ -1222,6 +1222,10 @@ public partial class DocumentService : IDocumentService
                 OriginModule = string.IsNullOrWhiteSpace(originModule) ? null : originModule.Trim(),
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
                 BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice ?? false,
+                // รูปแบบกระดาษหลักฐานรับเงินที่ผู้ใช้เลือกรายใบ (รอบ 203) — เก็บเฉพาะชนิดที่ตัวตัดสินครอบ (ใบเสร็จ/ใบสำคัญรับ/ใบกำกับ)
+                // ชนิดอื่นส่งมา = ทิ้ง (ไม่มีความหมาย) · ตรวจว่าอยู่ในชุดที่อนุญาตตอนอนุมัติ (DecideReceiptFormAsync) ไม่ใช่ตอนสร้างร่าง
+                ReceiptForm = request.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher or DocumentType.TaxInvoice
+                    ? request.ReceiptForm : null,
                 // ขายเงินสด ใบเดียว (เฉพาะ TaxInvoice ฝั่งขาย) — AutoPost ลงแบบเงินสด
                 // ไม่ตั้งลูกหนี้ + ไม่ออกใบเสร็จแยก, e-Tax T03. approve ปิดยอด Paid
                 IssuedAsCashReceipt = (request.IssuedAsCashReceipt ?? false)
@@ -2734,6 +2738,18 @@ public partial class DocumentService : IDocumentService
             doc.DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal.Value;
         }
         if (request.BuyerDeclinedTaxInvoice.HasValue) doc.BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice.Value;
+        // รูปแบบกระดาษหลักฐานรับเงิน (รอบ 203) — ใบที่ออกเลขแล้วตรึงค่าไว้ (§86/4) แก้ไม่ได้ ⇒ ปฏิเสธดัง ไม่ใช่ทิ้งเงียบ (silent no-op)
+        if (request.ReceiptForm.HasValue || request.ReceiptFormClear == true)
+        {
+            if (Accounting.Helpers.DocumentStatusRules.IsIssued(doc.Status))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "รูปแบบใบเสร็จ/ใบกำกับของใบนี้ถูกตรึงพร้อมเลขที่ตอนอนุมัติแล้ว แก้ย้อนหลังไม่ได้ (§86/4) — "
+                    + "ถ้าต้องเปลี่ยนรูปแบบ ให้ \"ยกเลิกและออกใบแทน\"", "RCPT-FORM-FROZEN");
+            if (doc.DocumentType is not (DocumentType.Receipt or DocumentType.ReceiptVoucher or DocumentType.TaxInvoice))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "รูปแบบใบเสร็จ/ใบกำกับตั้งได้เฉพาะใบเสร็จรับเงิน ใบสำคัญรับ และใบกำกับภาษี", "RCPT-FORM-TYPE");
+            doc.ReceiptForm = request.ReceiptFormClear == true ? null : request.ReceiptForm;
+        }
         // ใบแจ้งหนี้/ใบกำกับภาษี (combined) — ใช้ได้เฉพาะ doc ชนิด TaxInvoice.
         // เดิมชนิดไม่ตรง = ดรอปธงเงียบ ๆ (silent no-op): ผู้ใช้ติ๊กบนใบแจ้งหนี้
         // Draft ตอนแก้ไข → บันทึกสำเร็จแต่ไม่มีอะไรเปลี่ยน. update เปลี่ยนชนิด
@@ -6517,6 +6533,22 @@ public partial class DocumentService : IDocumentService
                 // ต้องหยุดนิ่งเท่ากัน
                 if (doc.IsTaxInvoiceByLaw == null)
                 {
+                    // ── รอบ 203: รูปแบบกระดาษหลักฐานรับเงิน (Helpers/ReceiptFormRule) — ตัดสิน **ก่อน** หัวกระดาษ ──
+                    // ค่าที่ใช้ (ตัวเลือกรายใบ → ค่าตั้งบริษัท → ค่าแนะนำ · เฉพาะในชุดที่กฎหมายอนุญาต) ตรึงลง doc.ReceiptForm
+                    // พร้อมเลขที่ แล้ว ComputeDocumentTitle ของทั้งสอง renderer อ่านค่านี้ไปพิมพ์ · บล็อกเฉพาะกระดาษที่จะเป็นเท็จ:
+                    // ผู้จด VAT พิมพ์ VAT โดยไม่เป็นใบกำกับรูปแบบใด (เคสเจ้าของ 2026-10-09 — รีสอร์ทจด VAT · แขกไม่มีที่อยู่ ·
+                    // ยังไม่ติ๊กขายปลีก ⇒ เดิมพิมพ์ "ใบเสร็จรับเงิน" ที่มี VAT เงียบ ๆ) หรือเลือกรูปแบบนอกชุดที่อนุญาต ·
+                    // ข้อความบอกค่าตั้งที่ต้องเปลี่ยน/ข้อมูลที่ต้องเติม (F2 ข้อ 8) · มัดจำที่นโยบายยังไม่ถือเป็นจุดความรับผิด = ใบเสร็จธรรมดา
+                    // ผ่านปกติ (ไม่บังคับ) · อยู่ใต้ IsTaxInvoiceByLaw == null โดยตั้งใจ: ใบจาก Integration/ใบเสร็จรับชำระที่ตรึงบทบาท
+                    // มาแล้วไม่เข้าด่านนี้ (คำตัดสินเดิม: ไม่ให้คำเตือนใหม่ทำระบบภายนอกล้ม) · throw นอก try ของ resolver ข้างล่าง
+                    var receiptForm = await DecideReceiptFormAsync(companyId, doc);
+                    if (receiptForm != null)
+                    {
+                        if (receiptForm.Blocked)
+                            throw new Accounting.Helpers.BusinessRuleException(receiptForm.BlockMessage!, receiptForm.RuleCode);
+                        doc.ReceiptForm = receiptForm.Chosen;
+                    }
+
                     string? resolvedTitle = null;
                     try
                     {
@@ -18759,6 +18791,9 @@ public partial class DocumentService : IDocumentService
         // ── ช่องที่รับตอน Create/Update แต่เดิมไม่เคย echo กลับ ──────────
         // (ดูหมายเหตุใน DocumentResponse — "เก็บแล้วต้อง echo กลับ")
         BuyerDeclinedTaxInvoice: d.BuyerDeclinedTaxInvoice,
+        // รูปแบบกระดาษหลักฐานรับเงิน (รอบ 203) + ป้ายไทยจากเจ้าของข้อความตัวเดียว
+        ReceiptForm: d.ReceiptForm,
+        ReceiptFormLabel: d.ReceiptForm is ReceiptForm rfLabel ? Accounting.Helpers.ReceiptFormRule.Label(rfLabel) : null,
         // ไม่มีคอลัมน์ของตัวเอง — งวดเคลมถูกเก็บเป็น InputVatBecameClaimableAt
         // (วันที่ 1 ของเดือน) เจ้าของกฎคือ InputVatClaimPeriodRules ⇒ คำนวณ
         // ที่เดียวตรงนี้แล้วส่งเป็น "yyyy-MM" ให้ฟอร์ม ห้ามให้หน้าเว็บประกอบเอง

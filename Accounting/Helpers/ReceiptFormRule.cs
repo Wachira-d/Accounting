@@ -114,7 +114,7 @@ public static class ReceiptFormRule
             ? ReceiptFormChannel.Lodging : ReceiptFormChannel.Document;
 
     /// <summary>VAT ของใบนี้ "ถึงกำหนด" ตอนออกใบไหม — มี VAT และ (ไม่ใช่มัดจำ หรือ นโยบายมัดจำ = รับรู้ทันที)</summary>
-    public static bool VatDueNow(ReceiptFormFacts f)
+    private static bool VatDueNow(ReceiptFormFacts f)
         => f.HasVatLines && (f.DepositTreatment is null || f.DepositTreatment == DepositVatTreatment.VatImmediate);
 
     /// <summary>กรณีของใบ (คีย์ค่าตั้ง) — ลำดับ: รับชำระใบกำกับ → คืนเงิน → มัดจำ → สลิป → ที่พัก (บุคคล/นิติบุคคล) → ขายสด</summary>
@@ -279,7 +279,7 @@ public static class ReceiptFormRule
     };
 
     /// <summary>ชื่อกรณีสำหรับหัวแถว matrix</summary>
-    public static string CaseLabel(ReceiptFormCase c) => c switch
+    internal static string CaseLabel(ReceiptFormCase c) => c switch
     {
         ReceiptFormCase.LodgingFinalConsumer => "ที่พัก — ใบเช็คเอาต์ให้แขกบุคคลธรรมดา",
         ReceiptFormCase.LodgingFinalBusiness => "ที่พัก — ใบเช็คเอาต์ในนามบริษัท/นิติบุคคล",
@@ -292,7 +292,7 @@ public static class ReceiptFormRule
     };
 
     /// <summary>คำอธิบายกรณี (บรรทัดใต้หัวแถว)</summary>
-    public static string CaseDescription(ReceiptFormCase c) => c switch
+    private static string CaseDescription(ReceiptFormCase c) => c switch
     {
         ReceiptFormCase.LodgingFinalConsumer => "แขกไม่มีเลขผู้เสียภาษีนิติบุคคล — ถ้ามีชื่อ+ที่อยู่ออกเต็มรูปได้ · กิจการขายปลีก/บริการรายย่อยเลือกอย่างย่อได้",
         ReceiptFormCase.LodgingFinalBusiness => "แขกขอใบกำกับในนามบริษัท — ต้องเต็มรูปเท่านั้นเพื่อใช้ภาษีซื้อ",

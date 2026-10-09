@@ -24,7 +24,7 @@ public class DataIntegrityController : ControllerBase
     public async Task<ActionResult<ApiResponse<DataIntegrityReport>>> Suspects(Guid companyId)
     {
         var r = await _service.GetAsync(companyId);
-        var n = r.PosOrderTotals.Count + r.RollupBillingNoteChildren.Count + r.PurchaseInvoicesBilledFromPoWithGrn.Count + r.PayrollRunTotals.Count;
+        var n = r.Total;   // นับทุกหมวดที่ record รู้จัก (รอบ 203: เพิ่ม PlainReceiptsWithVat) — ที่เดียว ไม่ลืมหมวดใหม่
         return Ok(new ApiResponse<DataIntegrityReport>(true, r, n == 0 ? "ไม่พบรายการที่ต้องตรวจ" : $"พบ {n} รายการที่ควรให้ผู้ทำบัญชีตรวจ"));
     }
 }

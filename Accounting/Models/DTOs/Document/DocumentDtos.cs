@@ -30,6 +30,9 @@ public record CreateDocumentRequest(
     string? DepositAppliedRef = null,
     bool? DepositAppliedDrivesJournal = null,
     bool? BuyerDeclinedTaxInvoice = null,
+    // รูปแบบกระดาษหลักฐานรับเงินที่ผู้ใช้เลือกรายใบ (รอบ 203 · Helpers/ReceiptFormRule) — null = ให้ค่าตั้งบริษัท/ค่าแนะนำตัดสิน
+    // ตอนอนุมัติ · เลือกนอกชุดที่กฎหมายอนุญาต = อนุมัติไม่ผ่านพร้อมเหตุผล (ไม่ทับเงียบ) · ใช้กับใบเสร็จ/ใบสำคัญรับ/ใบกำกับภาษีเท่านั้น
+    ReceiptForm? ReceiptForm = null,
     // ขายเงินสด: ออก "ใบกำกับภาษี/ใบเสร็จรับเงิน" ใบเดียว (ไม่ตั้งลูกหนี้ + ไม่ออก
     // ใบเสร็จหลักฐานแยก). TaxInvoice + IssuedAsCashReceipt → AutoPost ลงแบบเงินสด
     // (Dr เงินสด/Cr รายได้+VAT + กลับมัดจำถ้ามี), e-Tax T03, หัว "ใบเสร็จรับเงิน/
@@ -301,6 +304,10 @@ public record UpdateDocumentRequest(
     string? DepositAppliedRef = null,
     bool? DepositAppliedDrivesJournal = null,
     bool? BuyerDeclinedTaxInvoice = null,
+    // รูปแบบกระดาษหลักฐานรับเงิน (รอบ 203): null = คงค่าเดิม · ReceiptFormClear=true = ล้างกลับไปใช้ค่าตั้งบริษัท ·
+    // ใบที่ออกเลขแล้วแก้ไม่ได้ (ตรึงตอนอนุมัติ §86/4) ⇒ ส่งมาบนใบที่ออกแล้ว = ปฏิเสธดัง ไม่ใช่ silent no-op
+    ReceiptForm? ReceiptForm = null,
+    bool? ReceiptFormClear = null,
     // ส่วนลดท้ายบิล (จากยอดรวม) — null = คงค่าเดิม
     decimal? BillDiscountPercent = null,
     decimal? BillDiscountAmount = null,
@@ -914,6 +921,11 @@ public record DocumentResponse(
     /// — ข้อความไทยพร้อมทางไปต่อ (<c>PdfGenerationService.AbbreviatedDowngradeNotice</c>) ·
     /// null = ไม่ได้ถูกลด หรือเส้นทางที่ยังไม่ได้คำนวณ (รายการหลายใบ)</summary>
     string? TaxInvoiceTitleNotice = null,
+    /// <summary>รูปแบบกระดาษหลักฐานรับเงิน (รอบ 203 · <c>Helpers/ReceiptFormRule</c>) — ก่อนอนุมัติ = ตัวเลือกรายใบ ·
+    /// หลังอนุมัติ = ค่าที่ตรึง · null = ไม่ได้เลือก/ใบก่อนมีฟีเจอร์ · echo ให้ฟอร์ม hydrate (กฎ "เก็บแล้วต้อง echo กลับ")</summary>
+    ReceiptForm? ReceiptForm = null,
+    /// <summary>ป้ายไทยของ <c>ReceiptForm</c> (เซิร์ฟเวอร์เป็นเจ้าของข้อความ — <c>ReceiptFormRule.Label</c>) · null เมื่อไม่มีค่า</summary>
+    string? ReceiptFormLabel = null,
     /// <summary>ยอดชำระจริงที่ต่างจากยอดเอกสาร (รอบ 193 — echo ให้ฟอร์ม hydrate · null = จ่ายเต็มตามยอด)</summary>
     decimal? ActualPaidAmount = null,
     /// <summary>ผลต่างจากการปัดเศษ (SubTotal = Σ บรรทัด + ค่านี้) — echo ให้ฟอร์ม/หน้ารายละเอียดแสดง · 0 = ไม่มี</summary>

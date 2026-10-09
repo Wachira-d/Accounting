@@ -3223,7 +3223,10 @@ public partial class TaxService : ITaxService
     /// (ภาระเกิดจาก tax point ไม่ใช่หัวกระดาษ) แต่ผู้ซื้อเคลมภาษีซื้อไม่ได้ —
     /// จึงติดธงไว้ในรายงานให้ตามแก้ได้ทั้งงวด</summary>
     internal static bool NotFullTaxInvoice(Document doc)
-        => NotFullTaxInvoice(doc.VatAmount, doc.BuyerDeclinedTaxInvoice, doc.Contact);
+        // รอบ 203 — รูปแบบที่ตรึงไว้เป็น "อย่างย่อ" (บริษัทขายปลีกเลือกให้แขกบุคคลธรรมดาแม้ข้อมูลครบ · Helpers/ReceiptFormRule)
+        // = ไม่ใช่ใบกำกับเต็มรูปเช่นกัน — รายงานภาษีขาย/e-Tax ต้องเห็นตรงกับหัวกระดาษ (predicate เดียวกับ IsAbbreviatedTaxInvoiceDoc)
+        => (doc.VatAmount > 0.005m && doc.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated)
+           || NotFullTaxInvoice(doc.VatAmount, doc.BuyerDeclinedTaxInvoice, doc.Contact);
 
     /// <summary>แกนของ <see cref="NotFullTaxInvoice(Document)"/> — ให้ผู้เรียกที่ถือผู้ติดต่อแยกจากเอกสาร
     /// (เช่น e-Tax hook ที่ได้เอกสารมาโดยไม่มี navigation) ใช้เกณฑ์<b>ตัวเดียวกัน</b> ไม่ต้องเขียนซ้ำ (รอบ 193 C-1)</summary>

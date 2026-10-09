@@ -37,13 +37,29 @@ public class SettingsService : ISettingsService
     /// ตัวตัดสินตัวเดียว Helpers/DepositPolicyResolver (หน้าเว็บห้ามคำนวณเอง)</summary>
     private async Task<CompanySettingsResponse> WithDepositVatInfoAsync(Guid companyId, CompanySettingsResponse r)
     {
-        var industry = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
-            .Select(c => (IndustryType?)c.IndustryType).FirstOrDefaultAsync() ?? IndustryType.General;
+        var company = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => new { c.IndustryType, c.IsVatRegistered, c.IsRetailApproved, c.PhoR06ApprovedDate })
+            .FirstOrDefaultAsync();
+        var industry = company?.IndustryType ?? IndustryType.General;
+        // รอบ 203 — ตาราง "รูปแบบกระดาษหลักฐานรับเงินต่อกรณี": สิทธิ์ §86/6 ของทั้งสองช่องทางมาจาก AbbreviatedTaxInvoiceRule ตัวเดียว
+        // (วันที่ = วันนี้ — สลิปลงวันที่ก่อนอนุมัติ ภ.พ.06 ยังตัดสินรายใบที่ PosSlipHeader) · แถวทุกแถวคำนวณด้วย ReceiptFormRule.Decide
+        // ตัวเดียวกับด่านอนุมัติ ⇒ หน้าตั้งค่าเห็นชุดเดียวกับที่ใบจริงจะเจอ
+        var requirePhoR06 = await _db.SiteSettings.AsNoTracking()
+            .Select(x => (bool?)x.RequirePhoR06ForAbbreviatedTaxInvoice)
+            .FirstOrDefaultAsync() ?? true;
+        var vat = company?.IsVatRegistered ?? false;
+        var retail = company?.IsRetailApproved ?? false;
+        var mayAbbrevDoc = Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
+            vat, retail, company?.PhoR06ApprovedDate, DateTime.UtcNow, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
+        var mayAbbrevSlip = Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
+            vat, retail, company?.PhoR06ApprovedDate, DateTime.UtcNow, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.CashRegisterSlip);
         return r with
         {
             DepositVatTreatmentInfo = Accounting.Helpers.DepositPolicyResolver.Resolve(
                 Accounting.Helpers.DepositPolicyResolver.NatureOf(industry), r.DepositVatTreatment),
             DepositVatTreatmentOptions = Accounting.Helpers.DepositPolicyResolver.Options,
+            ReceiptFormMatrix = Accounting.Helpers.ReceiptFormRule.Matrix(
+                vat, mayAbbrevDoc, mayAbbrevSlip, Accounting.Helpers.ReceiptFormPolicy.Parse(r.ReceiptFormPolicyJson)),
         };
     }
 
@@ -107,6 +123,10 @@ public class SettingsService : ISettingsService
             settings.ReceiptIssueMode = request.ReceiptIssueMode.Value;
         if (request.UnifyTaxInvoiceNumberSeries.HasValue)
             settings.UnifyTaxInvoiceNumberSeries = request.UnifyTaxInvoiceNumberSeries.Value;
+        // รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203) — null = ไม่แก้ · ""/"{}" = ล้าง · คีย์/ค่าที่ไม่รู้จัก = ปฏิเสธดัง (ไม่ข้ามเงียบ)
+        // ค่าที่เก็บเป็นแค่ "ความชอบ" — ReceiptFormRule เลือกใช้เฉพาะเมื่ออยู่ในชุดที่กฎหมายอนุญาตของใบนั้น
+        if (request.ReceiptFormPolicyJson != null)
+            settings.ReceiptFormPolicyJson = ReceiptFormPolicy.Normalize(request.ReceiptFormPolicyJson);
         // วิธีบันทึกเงินมัดจำ (รอบ 193 #34) — ค่าที่ไม่มีในระบบ = ปฏิเสธดัง ๆ (ไม่ใช่ข้ามเงียบ = silent no-op)
         if (request.DepositVatTreatmentClear == true)
             settings.DepositVatTreatment = null;
@@ -690,6 +710,8 @@ public class SettingsService : ISettingsService
     {
         // มีคนยืนยันสถานะ VAT แล้วหรือยัง — หน้าเอกสาร/แดชบอร์ดใช้ขึ้นแถบให้ไปตั้งค่า (ฝ่ายค้าน C-9)
         VatStatusConfirmed = s.VatStatusConfirmedAt != null,
+        // รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203) — echo ค่าดิบ · ตาราง matrix เติมใน WithDepositVatInfoAsync (ต้องใช้ธงบริษัท)
+        ReceiptFormPolicyJson = s.ReceiptFormPolicyJson,
     };
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(

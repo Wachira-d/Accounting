@@ -1465,7 +1465,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         var buyerDeclined = doc.BuyerDeclinedTaxInvoice
             || (doc.Contact?.IsWalkInCustomer ?? false)
             || Buyer864Incomplete(doc);
-        if (!hasCustomTitle && !buyerDeclined)
+        // รอบ 203 — รูปแบบที่ตรึง/เลือกไว้เป็น "อย่างย่อ" (บริษัทขายปลีกตั้งค่าให้แขกบุคคลธรรมดาได้ใบย่อแม้ข้อมูลครบ · Helpers/ReceiptFormRule)
+        // ⇒ ข้าม branch เต็มรูป ไปเข้า branch อย่างย่อข้างล่าง (predicate ตัวเดียวกับข้อความ §86/6(6) ของทั้งสอง renderer) ·
+        // ยังอยู่ใต้สิทธิ์ §86/6 (companyMayIssueAbbreviated) — ด่านอนุมัติไม่ตรึงค่านี้ให้บริษัทที่ไม่มีสิทธิ์อยู่แล้ว
+        var chosenAbbreviated = ReceiptFormForcesAbbreviated(doc, companyMayIssueAbbreviated);
+        if (!hasCustomTitle && !buyerDeclined && !chosenAbbreviated)
         {
             // ขายเงินสด B2B (IssuedAsCashReceipt) → หัวตรงกับ e-Tax T03 pairing เป๊ะ
             // "ใบเสร็จรับเงิน/ใบกำกับภาษี" (ก่อน combined/servedAsReceipt)
@@ -1726,7 +1730,15 @@ public partial class PdfGenerationService : IPdfGenerationService
                or DocumentType.Receipt or DocumentType.ReceiptVoucher
            && (doc.BuyerDeclinedTaxInvoice
                || (doc.Contact?.IsWalkInCustomer ?? false)
-               || Buyer864Incomplete(doc));
+               || Buyer864Incomplete(doc)
+               // รอบ 203 — บริษัท/ผู้ใช้เลือกรูปแบบ "อย่างย่อ" ไว้ (Document.ReceiptForm ตรึงตอนอนุมัติ · Helpers/ReceiptFormRule)
+               || doc.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated);
+
+    /// <summary>รูปแบบที่ตรึง/เลือกไว้บนใบคือ "อย่างย่อ" และบริษัทมีสิทธิ์ §86/6 — ตัวเดียวที่ <see cref="ComputeDocumentTitle"/> ใช้ข้าม
+    /// branch เต็มรูป (รอบ 203) · ไม่มีสิทธิ์ ⇒ false (หัวเดินกติกาเดิม — ด่านอนุมัติไม่ตรึงค่านี้ให้บริษัทที่ไม่มีสิทธิ์อยู่แล้ว
+    /// แต่ธงบริษัทอาจถูกปลดทีหลัง: ใบที่ออกแล้วใช้ค่าที่ตรึง <c>IsTaxInvoiceByLaw</c> ผ่าน <c>HeadingMayUseAbbreviated</c>)</summary>
+    internal static bool ReceiptFormForcesAbbreviated(Document doc, bool companyMayIssueAbbreviated)
+        => companyMayIssueAbbreviated && doc.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated;
 
     /// <summary>ใบนี้ "ควรเป็นใบกำกับภาษีอย่างย่อ" (มี VAT · ผู้ซื้อไม่มีข้อมูล §86/4 ครบ) แต่หัวถูกลดเป็น
     /// "ใบเสร็จรับเงิน" เพราะบริษัทยังไม่มีสิทธิ์ §86/6 — คืนข้อความบอกผู้ใช้ (null = ไม่ได้ถูกลด)

@@ -352,6 +352,7 @@ public static class SettlementPaidReissue
         nameof(Document.SettlesTaxInvoiceSource), nameof(Document.AdjustmentOriginalNumber), nameof(Document.AdjustmentOriginalDate),
         nameof(Document.AdjustmentOriginalSubTotal), nameof(Document.AdjustmentOriginalOurNumber), nameof(Document.AdjustmentOriginalHasVat),
         nameof(Document.IssuedAsCashReceipt), nameof(Document.IsTaxInvoiceByLaw), nameof(Document.PaidOnIssue),
+        nameof(Document.ReceiptForm),   // รอบ 203: ใบแทนคือการขายเดียวกัน — รูปแบบกระดาษที่ตรึงไว้ตามไป (คู่กับ IsTaxInvoiceByLaw)
         nameof(Document.InputVatAccountCodeOverride), nameof(Document.IsDeposit), nameof(Document.DepositRealizedAmount),
         nameof(Document.DepositRealizedAt), nameof(Document.DepositDeferredAccountCode), nameof(Document.DepositOutputVatDeferred),
         nameof(Document.DepositAppliedAmount), nameof(Document.DepositAppliedRef), nameof(Document.DepositAppliedDrivesJournal),

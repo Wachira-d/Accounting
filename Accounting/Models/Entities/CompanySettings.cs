@@ -294,6 +294,14 @@ public class CompanySettings : TenantEntity
     // Helpers/ReceiptIssuePolicy ตัวเดียว ห้ามเช็ค enum เองในแต่ละไฟล์
     public ReceiptIssueMode ReceiptIssueMode { get; set; } = ReceiptIssueMode.Combined;
 
+    // ── รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203 · คำถามเจ้าของ 2026-10-09) ──
+    // แกนที่สาม: ReceiptIssueMode คุม "ออกกี่ใบ" · UnifyTaxInvoiceNumberSeries คุม "เลขชุดไหน" · อันนี้คุม
+    // "กระดาษประกาศตัวเป็นอะไร" (ใบเสร็จเปล่า / ใบเสร็จ+ใบกำกับเต็มรูป / +อย่างย่อ / หลักฐานรับชำระ) ต่อกรณี
+    // (ใบเช็คเอาต์แขกบุคคล · มัดจำ · ขายสด …) · JSON object {"<ReceiptFormCase>":"<ReceiptForm>"} คอลัมน์เดียว
+    // (เหตุผลที่ไม่แยกคอลัมน์อยู่ที่ Helpers/ReceiptFormPolicy) · NULL = ใช้ค่าแนะนำทุกกรณี (= พฤติกรรมเดิม: เต็มรูปเมื่อทำได้)
+    // ค่าตั้งเลือกได้เฉพาะในชุดที่ ReceiptFormRule อนุญาต — ไม่มีวันปล่อยรูปแบบที่ผิดกฎหมายผ่าน · ผู้อ่าน: DocumentService.DecideReceiptFormAsync
+    public string? ReceiptFormPolicyJson { get; set; }
+
     // ── "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV เสมอ" ──
     // แกนคนละแกนกับ ReceiptIssueMode: อันนั้นคุม "ออกกี่ใบ" อันนี้คุม "ใบไหนใช้
     // เลขชุดไหน". เปิดแล้วเล่มใบกำกับเหลือชุดเดียว (รายงานภาษีขาย §87 เรียงไม่

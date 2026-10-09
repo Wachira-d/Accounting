@@ -12,7 +12,13 @@ public sealed record DataIntegrityReport(
     List<DataIntegritySuspect> PosOrderTotals,
     List<DataIntegritySuspect> RollupBillingNoteChildren,
     List<DataIntegritySuspect> PurchaseInvoicesBilledFromPoWithGrn,
-    List<DataIntegritySuspect> PayrollRunTotals);
+    List<DataIntegritySuspect> PayrollRunTotals,
+    // รอบ 203 — ใบเสร็จที่ออกแล้วของผู้จด VAT ซึ่งพิมพ์ VAT แต่หัวไม่ใช่ใบกำกับ (ตรึง IsTaxInvoiceByLaw=false) · อ่านอย่างเดียว
+    List<DataIntegritySuspect> PlainReceiptsWithVat)
+{
+    public int Total => PosOrderTotals.Count + RollupBillingNoteChildren.Count + PurchaseInvoicesBilledFromPoWithGrn.Count
+        + PayrollRunTotals.Count + PlainReceiptsWithVat.Count;
+}
 
 /// <summary>
 /// รายงานตรวจข้อมูลที่บันทึกไว้แล้วจากบั๊กที่แก้วันที่ 2026-10-08 (ทีมตรวจงานค้าง) — <b>อ่านอย่างเดียว ไม่ซ่อมอะไร</b>
@@ -98,6 +104,34 @@ public class DataIntegrityReportService
                 $"สถานะ {r.Status} · จำนวนคนที่บันทึก {r.EmployeeCount} / แถวจริง {r.Count} — กด \"คำนวณใหม่\" (ถ้ายังไม่จ่าย) หรือให้ผู้ทำบัญชีตรวจ JE", r.TotalNetPay, r.Net))
             .ToList();
 
-        return new DataIntegrityReport(pos, bnList, piList, runs);
+        // ── รอบ 203 (คำถามเจ้าของ 2026-10-09): ใบเสร็จ/ใบสำคัญรับที่ออกแล้วของผู้จด VAT ซึ่งพิมพ์ VAT แต่หัวไม่ใช่ใบกำกับ ──
+        // เกณฑ์ = ค่าที่ตรึงตอนอนุมัติ IsTaxInvoiceByLaw == false (หัวไม่มีคำว่าใบกำกับ) + VAT > 0 · ไม่นับ: มัดจำที่ VAT พักรอ
+        // (ยังไม่ใช่จุดความรับผิด — นโยบายบริษัท) · ใบรับชำระของใบกำกับที่ออกแล้ว (VAT รายงานที่ต้นทาง) · ใบที่ไม่เคยตรึง (NULL ≠ false — G3)
+        // ห้ามแก้ใบย้อนหลัง (เลขออกแล้ว §86/4) ⇒ ผู้ทำบัญชีเดินเส้น "ยกเลิกและออกใบแทน" รายใบ · ด่านอนุมัติรอบ 203 กันใบใหม่ไม่ให้เกิดซ้ำ
+        var issuerVat = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId).Select(c => (bool?)c.IsVatRegistered).FirstOrDefaultAsync() ?? false;
+        var plainVatReceipts = new List<DataIntegritySuspect>();
+        if (issuerVat)
+        {
+            var rows = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                    && (d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                    && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                    && d.VatAmount > 0.005m
+                    && d.IsTaxInvoiceByLaw == false
+                    && !(d.IsDeposit && d.DepositOutputVatDeferred)
+                    && !(d.RelatedDocumentId != null && _db.Documents.Any(s => s.Id == d.RelatedDocumentId
+                        && s.CompanyId == companyId && s.DocumentType == DocumentType.TaxInvoice)))
+                .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.DocumentType, d.VatAmount, d.TotalAmount, d.IsDeposit })
+                .OrderBy(d => d.DocumentDate)
+                .ToListAsync();
+            plainVatReceipts = rows.Select(d => new DataIntegritySuspect("PlainReceiptWithVat", d.Id, d.DocumentNumber, d.DocumentDate,
+                $"{(d.IsDeposit ? "ใบมัดจำ" : d.DocumentType.ToString())} พิมพ์ VAT {d.VatAmount:N2} แต่หัวเป็น \"ใบเสร็จรับเงิน\" (ไม่ใช่ใบกำกับ) — "
+                + "ผู้จด VAT ต้องออกใบกำกับภาษี (เต็มรูป/อย่างย่อ) · ยกเลิกและออกใบแทนหลังเติมที่อยู่ผู้ซื้อ หรือตั้งค่า \"ประกอบกิจการขายปลีก\" §86/6",
+                d.TotalAmount, null)).ToList();
+        }
+
+        return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts);
     }
 }

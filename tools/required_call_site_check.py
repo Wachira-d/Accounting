@@ -1430,6 +1430,23 @@ RULES += [
 # ── รอบ 195 ฝ่ายค้านรอบสอง R2-2: ตัวถอด 7/107 ชุดที่สาม (CrossValidator.FillMissingAmounts → ZoneFallback) ไม่ถามด่าน · ไม่ติดแท็ก · banker's
 #    ⇒ ถอดได้ที่ Helpers/OcrVatBackCalc ที่เดียว (SplitInclusive · Plan → VatBackCalcGuard.Decide) · ผู้เรียกทุกตัวล็อกไว้ที่นี่
 #    + FOLDER_FORBID ข้างล่างกวาดทั้งโฟลเดอร์ OCR ห้ามสูตร ÷1.07 · ÷107 · ÷(1 + อัตรา) เขียนเอง
+# รอบ 203 — รูปแบบกระดาษหลักฐานรับเงิน (Helpers/ReceiptFormRule): ด่านอนุมัติต้องตัดสิน "ก่อน" หัวกระดาษ · ใช้ผล · บล็อกต้องยัง throw ·
+# ข้อเท็จจริงทุกตัวมาจากเจ้าของกติกาเดิม (สิทธิ์ §86/6 · นโยบายมัดจำ · ความครบ §86/4) ห้ามประกอบเองในชั้น service
+DOC_RECEIPT_FORM = "Services/Implementations/DocumentService.ReceiptForm.cs"
+RULES += [
+    dict(file=DOC, method="ApproveDocumentAsync#2",
+         must=["DecideReceiptFormAsync(", "doc.ReceiptForm = receiptForm.Chosen"],
+         must_re=[r"if\s*\(\s*receiptForm\s*\.\s*Blocked\s*\)\s*throw\b"],
+         before=[("DecideReceiptFormAsync(", "ResolveDocumentTitleAsync(")],
+         why="รอบ 203: รูปแบบใบเสร็จต้องตรึงลงใบก่อน resolver หัวกระดาษอ่าน · กระดาษเท็จ (พิมพ์ VAT โดยไม่เป็นใบกำกับ) ต้องยังถูกบล็อก"),
+    dict(file=DOC_RECEIPT_FORM, method="DecideReceiptFormAsync",
+         must=["ReceiptFormRule.AppliesTo(", "ReceiptFormRule.Decide(", "ReceiptFormRule.CaseOf(", "ReceiptFormPolicy.Parse(",
+               "DepositPolicyResolver.OfDocument(", "AbbreviatedTaxInvoiceRule.CanIssue(",
+               "TaxInvoiceCompletenessChecker.IsJuristicBuyer(", "TaxInvoiceCompletenessChecker.MissingBuyerFields("],
+         forbid=["IsRetailApproved &&", "IsRetailApproved ||", "DepositOutputVatDeferred ?", "ContactType ==", "ContactType.JuristicPerson"],
+         why="รอบ 203: ตัวตัดสินรับข้อเท็จจริงจากเจ้าของกติกาเดิมเท่านั้น — ไม่มีสำเนาเกณฑ์ขายปลีก/มัดจำ/นิติบุคคลชุดที่สอง"),
+]
+
 CROSSV = "Services/Implementations/Ocr/CrossValidator.cs"
 RULES += [
     dict(file=CROSSV, method="FillMissingAmounts",

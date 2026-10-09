@@ -74,7 +74,9 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
             {
                 var buyer = doc.Contact ?? await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
                     .FirstOrDefaultAsync(c => c.Id == doc.ContactId && c.CompanyId == companyId, ct);
-                notFull = TaxService.NotFullTaxInvoiceByDesign(doc.VatAmount, doc.BuyerDeclinedTaxInvoice, buyer);
+                notFull = TaxService.NotFullTaxInvoiceByDesign(doc.VatAmount, doc.BuyerDeclinedTaxInvoice, buyer)
+                    // รอบ 203 — บริษัท/ผู้ใช้เลือกรูปแบบ "อย่างย่อ" ไว้ (Document.ReceiptForm ตรึงตอนอนุมัติ) = ไม่ใช่เต็มรูปโดยเจตนาเช่นกัน
+                    || doc.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated;
             }
 
             var skip = EtaxAutoIssueScope.Judge(doc.DocumentType, doc.Status,

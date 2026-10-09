@@ -89,6 +89,9 @@ public record UpdateCompanySettingsRequest(
     ReceiptIssueMode? ReceiptIssueMode = null,
     // "หัวมีคำว่าใบกำกับภาษี → เลขชุด TIV เสมอ" (null = ไม่แก้)
     bool? UnifyTaxInvoiceNumberSeries = null,
+    // รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203) — JSON object {"<ReceiptFormCase>":"<ReceiptForm>"} ·
+    // null = ไม่แก้ · "" หรือ "{}" = ล้างทั้งหมด (กลับค่าแนะนำ) · คีย์/ค่าที่ไม่รู้จัก = ปฏิเสธดัง (Helpers/ReceiptFormPolicy.Normalize)
+    string? ReceiptFormPolicyJson = null,
     // ภาษาของเอกสารที่ออกทุกใบ: "th" | "en" (null = ไม่แก้). โหมด en พิมพ์หัว
     // สองภาษาบนเอกสารภาษี เพื่อคงคำว่า "ใบกำกับภาษี" ตาม §86/4
     string? DocumentLanguage = null,
@@ -249,6 +252,13 @@ public record CompanySettingsResponse(
     public DepositVatTreatmentDecision? DepositVatTreatmentInfo { get; init; }
     /// <summary>ตัวเลือกทั้งหมด (ชื่อ enum + ป้าย + คำอธิบาย + มาตรา) — หน้าเว็บสร้าง radio จากลิสต์นี้</summary>
     public IReadOnlyList<DepositVatTreatmentOption>? DepositVatTreatmentOptions { get; init; }
+
+    /// <summary>ค่าตั้ง "รูปแบบกระดาษหลักฐานรับเงินต่อกรณี" ที่เก็บไว้ (JSON มาตรฐานจาก <c>ReceiptFormPolicy.Normalize</c> · null = ค่าแนะนำทุกกรณี)</summary>
+    public string? ReceiptFormPolicyJson { get; init; }
+    /// <summary>ตาราง matrix (รอบ 203): ทุกกรณี × ทุกรูปแบบ พร้อม "อนุญาตไหม + เหตุผล/มาตรา" + ค่าที่ตั้ง + ค่าแนะนำ —
+    /// <b>เซิร์ฟเวอร์คำนวณด้วย <c>ReceiptFormRule.Matrix</c> ตัวเดียวกับด่านอนุมัติ</b> · หน้าเว็บวาดอย่างเดียว ·
+    /// null = เส้นที่ยังไม่ได้คำนวณ (ไม่ใช่ GET/UPDATE settings)</summary>
+    public IReadOnlyList<ReceiptFormMatrixRow>? ReceiptFormMatrix { get; init; }
 
     /// <summary>โมดูล CMS ที่บริษัทนี้ใช้จริง ("orders" · "bookings" · "lodging" · "leads") —
     /// คำนวณโดย <c>CmsModuleResolver</c> ฝั่งเซิร์ฟเวอร์ ให้ layout.js ซ่อนเมนูที่ไม่เกี่ยว

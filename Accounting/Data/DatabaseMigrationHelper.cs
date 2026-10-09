@@ -4951,6 +4951,11 @@ public static class DatabaseMigrationHelper
             // บทบาททางกฎหมายของเอกสาร ตรึงตอนอนุมัติพร้อมเลขที่ — nullable เพราะ
             // ใบที่อนุมัติก่อนมีฟีเจอร์นี้ "ยังไม่เคยตรึง" (≠ ไม่ใช่ใบกำกับ)
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "IsTaxInvoiceByLaw" boolean NULL;""",
+            // รอบ 203 — รูปแบบกระดาษหลักฐานรับเงิน (Helpers/ReceiptFormRule): ก่อนอนุมัติ = ตัวเลือกรายใบ · ตอนอนุมัติตรึง
+            // ค่าที่ใช้จริง · NULL บนใบที่ออกแล้ว = ใบก่อนมีฟีเจอร์ (หัวตามกติกาเดิม — ห้ามตีความเป็นรูปแบบใด)
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReceiptForm" integer NULL;""",
+            // รอบ 203 — ค่าตั้งบริษัท "แต่ละกรณีให้ออกใบแบบไหน" JSON object คอลัมน์เดียว (NULL = ค่าแนะนำทุกกรณี = พฤติกรรมเดิม)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "ReceiptFormPolicyJson" text NULL;""",
 
             // ===== DocumentAdjustingJournalLines (Option 1: เพิ่ม Dr/Cr ลอย) =====
             // ใช้รองรับเคส PV/Doc 1 ใบ มี Dr/Cr เพิ่มเติมที่ไม่ map กับ DocumentLine
