@@ -55,6 +55,38 @@ public static class ContactHydration
         await db.HydrateContactsAsync(companyId, docs);
     }
 
+    /// <summary>โหลดผู้ถูกหักภาษี (<see cref="Document.WhtPayeeContactId"/>) ของเอกสารที่ตั้งผู้ถูกหักแยกจากผู้ติดต่อ — รวมที่ถูก soft-delete ·
+    /// ใช้คู่กับ <see cref="WhtPayeeOf"/> (ใบที่ไม่ได้ตั้ง = ผู้ติดต่อของเอกสาร) · ทุกจุดที่แบ่ง ภ.ง.ด.3/53/54 จากเอกสารต้องอ่านผู้ถูกหัก ไม่ใช่ผู้รับเงิน</summary>
+    public static async Task<IReadOnlyDictionary<Guid, Contact>> LoadWhtPayeeContactsAsync(
+        this AccountingDbContext db, Guid companyId, IEnumerable<Document> docs)
+    {
+        var ids = docs
+            .Where(d => d.WhtPayeeContactId is Guid p && p != Guid.Empty && p != d.ContactId)
+            .Select(d => d.WhtPayeeContactId!.Value).Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<Guid, Contact>();
+        return await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && ids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id);
+    }
+
+    /// <summary>ผู้ถูกหักภาษีของเอกสาร (ต้อง hydrate <see cref="Document.Contact"/> และโหลดแผนที่จาก <see cref="LoadWhtPayeeContactsAsync"/> แล้ว) ·
+    /// ตั้งผู้ถูกหักไว้แต่หาไม่เจอ ⇒ null (ไม่ตกกลับไปผู้รับเงินเงียบ ๆ — จะได้แบบ ภ.ง.ด. ผิดคน)</summary>
+    public static Contact? WhtPayeeOf(Document doc, IReadOnlyDictionary<Guid, Contact> payees)
+    {
+        var id = WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+        if (id == doc.ContactId) return doc.Contact;
+        return payees.TryGetValue(id, out var c) ? c : null;
+    }
+
+    /// <summary>ผู้ถูกหักภาษีของเอกสารใบเดียว — ไม่ได้ตั้งแยก = <see cref="Document.Contact"/> (ต้อง hydrate ก่อน)</summary>
+    public static async Task<Contact?> LoadWhtPayeeAsync(this AccountingDbContext db, Guid companyId, Document doc)
+    {
+        var id = WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+        if (id == doc.ContactId) return doc.Contact;
+        return await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == id);
+    }
+
     /// <summary>ผูก PayeeContact (รวมที่ถูก soft-delete) เข้า
     /// <see cref="WithholdingTaxCert.PayeeContact"/> — required nav บน Contact ที่มี
     /// filter !IsDeleted เช่นกัน → .Include(w => w.PayeeContact) จะ INNER JOIN ตัด

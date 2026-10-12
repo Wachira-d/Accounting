@@ -1046,6 +1046,29 @@
             </div>
           </div>
 
+          <!-- คำขอเจ้าของ 2026-10-12 — 50 ทวิ ของใบฝั่งผู้หัก (ใบสำคัญจ่าย/ค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ/ใบรับรองแทนใบเสร็จ) ที่มียอดหัก ณ ที่จ่าย:
+               ติ๊ก "สร้างอัตโนมัติ" (ค่าตั้งต้น = เปิด = พฤติกรรมเดิม) + ผู้ถูกหักที่ไม่ใช่ผู้รับเงิน (ซื้อประกันผ่านโบรกเกอร์ → 50 ทวิ ในนามบริษัทประกัน) ·
+               แสดง/ซ่อนโดย Page.refreshWhtCertPanel (เรียกจาก calcSum) · ค่าเก็บบนเอกสาร (WhtCertAutoIssue/WhtPayeeContactId) echo กลับตอนแก้ไข -->
+          <div id="whtCertPanel" style="display:none;margin-top:12px;padding:12px 14px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:10px">
+            <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="fWhtCertAutoIssue" checked style="margin-top:3px">
+              <span><b>สร้างหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) อัตโนมัติเมื่ออนุมัติ/จ่าย</b><br>
+                <span style="color:#475569;font-size:12px">ไม่ติ๊ก = ระบบไม่สร้างใบเอง — ใบจะรอในหน้า "หนังสือรับรองหัก ณ ที่จ่าย" → "เอกสารรอออกใบ" ให้ออกเอง (ไม่ถูกลืม)</span></span>
+            </label>
+            <div style="margin-top:10px">
+              <div style="font-size:13px;font-weight:600;color:#334155">ผู้ถูกหักภาษี ณ ที่จ่าย (ชื่อบน 50 ทวิ และแบบ ภ.ง.ด.)</div>
+              <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;margin-top:4px">
+                <input type="checkbox" id="fWhtPayeeDiffers" style="margin-top:3px" onchange="Page.onWhtPayeeDiffersToggle()">
+                <span>ผู้ถูกหักภาษีเป็นคนละรายกับผู้รับเงิน <span style="color:#64748b;font-size:12px">(เช่น จ่ายค่าเบี้ยประกันผ่านโบรกเกอร์ — ใบสำคัญจ่ายชื่อโบรกเกอร์ แต่ 50 ทวิ ออกในนามบริษัทประกัน)</span></span>
+              </label>
+              <div id="whtPayeePickWrap" style="display:none;margin-top:6px">
+                <input type="hidden" id="fWhtPayeeContactId">
+                <div><input type="text" class="form-input" id="fWhtPayee" placeholder="พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ถูกหัก..."></div>
+              </div>
+              <div id="whtPayeeInfo" class="form-help" style="margin-top:6px;font-size:12px;line-height:1.7"></div>
+            </div>
+          </div>
+
           <!-- ── โซน 4: รายละเอียดเพิ่มเติม (หมายเหตุ + ไฟล์แนบ) — ย้ายมาท้าย
                หลังยอดรวม เพื่อ flow: ข้อมูล → การเงิน → รายการ → ยอด → เพิ่มเติม ── -->
           <div class="doc-section-head"><span class="dsh-icon">📝</span> รายละเอียดเพิ่มเติม
@@ -3188,6 +3211,121 @@
         } catch (e) { /* แบนเนอร์คงข้อความกลาง "อัตรา ม.70 ตามตารางของระบบ" — ไม่ใช่เส้นเงิน ไม่บล็อกฟอร์ม */ }
       },
 
+      // ── คำขอเจ้าของ 2026-10-12: แผง 50 ทวิ (สร้างอัตโนมัติ + ผู้ถูกหักภาษี) ──
+      // ชนิดที่ "เราเป็นผู้หัก" — ชุดเดียวกับ Helpers/WhtRemitScope.PayerSideTypes (ใช้แค่ตัดสินการแสดงแผง · เซิร์ฟเวอร์ปฏิเสธชนิดอื่นเองอยู่แล้ว)
+      WHT_PAYER_TYPES: ['PaymentVoucher', 'Expense', 'PurchaseInvoice', 'CertificateInLieu'],
+      refreshWhtCertPanel(wht) {
+        const panel = document.getElementById('whtCertPanel');
+        if (!panel) return;
+        const type = document.getElementById('fDocType')?.value || '';
+        const show = Number(wht || 0) > 0 && this.WHT_PAYER_TYPES.includes(type);
+        panel.style.display = show ? '' : 'none';
+        if (show) {
+          this._ensureWhtPayeeAutocomplete();
+          this._renderWhtPayeeInfo();
+        }
+      },
+      _ensureWhtPayeeAutocomplete() {
+        if (this._whtPayeeAC) return;
+        this._whtPayeeAC = Layout.contactAutocomplete('fWhtPayee', 'fWhtPayeeContactId', {
+          placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ถูกหัก...',
+          onSelect: (c) => { this._whtPayeeContact = c; this._renderWhtPayeeInfo(); },
+        }) || true;
+      },
+      onWhtPayeeDiffersToggle() {
+        const on = document.getElementById('fWhtPayeeDiffers')?.checked;
+        const wrap = document.getElementById('whtPayeePickWrap');
+        if (wrap) wrap.style.display = on ? '' : 'none';
+        if (!on) {
+          const hid = document.getElementById('fWhtPayeeContactId'); if (hid) hid.value = '';
+          const inp = document.getElementById('fWhtPayee'); if (inp) inp.value = '';
+          this._whtPayeeContact = null;
+        } else {
+          this._ensureWhtPayeeAutocomplete();
+          setTimeout(() => document.getElementById('fWhtPayee')?.focus(), 0);
+        }
+        this._renderWhtPayeeInfo();
+      },
+      // ข้อมูลที่จะพิมพ์บน 50 ทวิ (ชื่อ · เลขผู้เสียภาษี · สาขา · ที่อยู่) — มาจากผู้ติดต่อที่เลือก ไม่ต้องกรอกซ้ำ
+      _renderWhtPayeeInfo() {
+        const box = document.getElementById('whtPayeeInfo');
+        if (!box) return;
+        const differs = document.getElementById('fWhtPayeeDiffers')?.checked;
+        const payeeId = document.getElementById('fWhtPayeeContactId')?.value || '';
+        if (differs && !payeeId) {
+          box.innerHTML = '<span style="color:#b45309">เลือกผู้ถูกหักภาษีจากรายชื่อผู้ติดต่อ (ไม่เลือก = ใช้ผู้รับเงินของเอกสาร)</span>';
+          return;
+        }
+        let c = null;
+        if (differs) {
+          c = this._whtPayeeContact && this._whtPayeeContact.id === payeeId ? this._whtPayeeContact : null;
+        } else {
+          const cid = document.getElementById('fContactId')?.value;
+          c = (this._selectedContact && this._selectedContact.id === cid) ? this._selectedContact
+            : ((this.contacts || []).find(x => x.id === cid) || null);
+        }
+        if (!c) {
+          box.innerHTML = differs ? '' : '<span style="color:#64748b">50 ทวิ จะออกในนามผู้รับเงินของเอกสารนี้</span>';
+          return;
+        }
+        const tax = String(c.taxId || '').replace(/\D/g, '');
+        const addr = [c.address, c.subDistrict, c.district, c.province, c.postalCode].filter(Boolean).join(' ');
+        box.innerHTML = '50 ทวิ จะออกในนาม <b>' + Layout.esc(c.name || '') + '</b>'
+          + (tax ? ' · เลขผู้เสียภาษี ' + Layout.esc(tax)
+                 : ' · <span style="color:#b91c1c">ยังไม่มีเลขผู้เสียภาษี — ออก 50 ทวิ อัตโนมัติไม่ได้จนกว่าจะเติมที่ข้อมูลผู้ติดต่อ</span>')
+          + (c.branchLabel ? ' · ' + Layout.esc(c.branchLabel) : '')
+          + (addr ? '<br>' + Layout.esc(addr) : '');
+      },
+      // ฟอร์มใหม่ (d = null) = ค่าตั้งต้น · เปิดแก้ = ค่าที่บันทึกไว้ (ผู้ถูกหักดึงชื่อ/เลขจากผู้ติดต่อ)
+      async _hydrateWhtCertPanel(d) {
+        const auto = document.getElementById('fWhtCertAutoIssue');
+        if (auto) auto.checked = !d || d.whtCertAutoIssue !== false;
+        const differs = document.getElementById('fWhtPayeeDiffers');
+        const hid = document.getElementById('fWhtPayeeContactId');
+        const inp = document.getElementById('fWhtPayee');
+        const payeeId = (d && d.whtPayeeContactId) ? d.whtPayeeContactId : '';
+        if (differs) differs.checked = !!payeeId;
+        if (hid) hid.value = payeeId;
+        if (inp) inp.value = '';
+        this._whtPayeeContact = null;
+        const wrap = document.getElementById('whtPayeePickWrap');
+        if (wrap) wrap.style.display = payeeId ? '' : 'none';
+        if (payeeId) {
+          const api = Layout.api();
+          try {
+            const r = api ? await api.getContact(payeeId) : null;
+            const c = (r && r.data) || null;
+            if (c && document.getElementById('fWhtPayeeContactId')?.value === payeeId) {
+              this._whtPayeeContact = c;
+              if (inp) inp.value = c.name || '';
+            }
+          } catch (e) {
+            Layout.toast('โหลดข้อมูลผู้ถูกหักภาษีของใบนี้ไม่สำเร็จ: ' + (e.message || '') + ' — ค่าที่บันทึกไว้ยังอยู่', 'warning', 7000);
+          }
+        }
+        this._renderWhtPayeeInfo();
+      },
+      // payload: แผงซ่อน ⇒ ไม่ส่ง (เซิร์ฟเวอร์: สร้าง = ค่าตั้งต้น · แก้ไข = คงค่าเดิม) · ไม่ติ๊ก "คนละราย" ตอนแก้ไข ⇒ Guid.Empty = กลับไปใช้ผู้รับเงิน
+      _whtCertPayload() {
+        const panel = document.getElementById('whtCertPanel');
+        if (!panel || panel.style.display === 'none') return {};
+        const differs = document.getElementById('fWhtPayeeDiffers')?.checked;
+        const payeeId = document.getElementById('fWhtPayeeContactId')?.value || '';
+        return {
+          whtCertAutoIssue: !!document.getElementById('fWhtCertAutoIssue')?.checked,
+          whtPayeeContactId: (differs && payeeId) ? payeeId
+            : (this.editingId ? '00000000-0000-0000-0000-000000000000' : null),
+        };
+      },
+      // ผล 50 ทวิ อัตโนมัติจากคำตอบอนุมัติ/บันทึกจ่าย — ล้มต้องดัง (เดิมกลืนที่เซิร์ฟเวอร์ ผู้ใช้ไม่รู้)
+      _toastWhtCertNotice(msg) {
+        if (msg) Layout.toast('50 ทวิ: ' + msg, 'warning', 12000);
+      },
+      _toastWhtCertFailed(approveRes) {
+        const reason = approveRes && approveRes.data && approveRes.data.whtCertAutoFailedReason;
+        if (reason) this._toastWhtCertNotice('ออกอัตโนมัติไม่สำเร็จ: ' + reason + ' — ใบอยู่ในลิสต์ "เอกสารรอออกใบ" ที่หน้าหนังสือรับรองหัก ณ ที่จ่าย');
+      },
+
       // ฝ่ายค้าน F2+F3 P2-4 — ติ๊ก "ซื้อบริการจากต่างประเทศ" ตอนเปิดแก้ใบเดิม: ติ๊กได้เฉพาะเมื่อช่องแสดงอยู่ (ชนิดที่ติ๊กได้ —
       // onDocTypeChange ตัดสินการแสดงไปแล้ว · ไม่มีสำเนารายชื่อชนิดที่นี่) · ชนิดที่ติ๊กไม่ได้แต่ใบเดิมมีธง ⇒ ถอดออก + บอกผู้ใช้ว่าทำไม
       // คืนค่า = ธงที่ฟอร์มถืออยู่หลัง hydrate
@@ -3241,6 +3379,7 @@
         const contactId = document.getElementById('fContactId').value;
         const c = this._selectedContact || this.contacts?.find(x => x.id === contactId);
         this._refreshContactBranchHint();
+        this._renderWhtPayeeInfo();   // 50 ทวิ: ผู้ถูกหัก = ผู้รับเงิน (เมื่อไม่ได้ตั้งแยก) ⇒ ข้อมูลบนแผงต้องตามผู้ติดต่อใหม่
         // Fill recipient email if empty (don't clobber user-entered address)
         if (c?.email) {
           const toEl = document.getElementById('fEmailTo');
@@ -8043,6 +8182,7 @@
         }
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
+        this.refreshWhtCertPanel(wht);
         // บอกตรง ๆ เมื่อยอด VAT ที่แสดง = "ค่าที่บันทึกไว้" และต่างจากการคิดจาก
         // ฐานรวม — ผู้ใช้จะได้ไม่งงว่าดีดเครื่องคิดเลขแล้วไม่ตรง และรู้ว่าต้องทำ
         // อะไรถ้าอยากให้คิดใหม่ (แก้ช่องใดช่องหนึ่งของบรรทัด)
@@ -8364,6 +8504,7 @@
 
       openCreate(side) {
         this.editingId = null;
+        this._hydrateWhtCertPanel(null);   // 50 ทวิ: ใบใหม่ = สร้างอัตโนมัติ + ผู้ถูกหัก = ผู้รับเงิน (ห้ามค้างจากใบก่อน)
         this._hydrateBrand(null);   // ใบใหม่ = ชื่อบริษัท ไม่ใช่ค่าค้างจากใบก่อน
         this._hydrateBranch(null);  // และสาขา = ตามค่าบริษัท (ห้ามค้างจากใบก่อน)
         this._hydrateTemplate(null);
@@ -8843,6 +8984,8 @@
           // ฝ่ายค้าน F2+F3 P2-4: ติ๊กกลับเฉพาะชนิดที่ติ๊กได้ (ช่องที่ onDocTypeChange แสดงอยู่) — ใบร่างเก่าชนิดขาย/CIL ที่ธงหลุดมา
           // เดิมถูกติ๊กกลับในช่องที่ซ่อน ⇒ payload ส่ง true ⇒ เซิร์ฟเวอร์ปฏิเสธ (ชนิดนี้ติ๊กไม่ได้) ⇒ บันทึกไม่ได้เลย
           const fsOn = this._hydrateForeignServiceFlag(d);
+          // คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ติ๊ก 50 ทวิ อัตโนมัติ + ผู้ถูกหัก
+          this._hydrateWhtCertPanel(d);
           // sync banner วงจร ภ.พ.36 อย่างเดียว — ไม่เรียก onForeignServiceToggle
           // เพราะตัวนั้นตั้ง VAT 7% ให้บรรทัดที่เป็น 0 ด้วย (เหมาะกับตอนผู้ใช้
           // เพิ่งติ๊กเอง ไม่ใช่ตอน hydrate ใบเดิมที่ค่าถูกบันทึกไว้แล้ว)
@@ -9403,6 +9546,8 @@
           branchId: this._pinnedFieldValue('fBranch', this._branchesLoaded),
           documentTemplateId: this._pinnedFieldValue('fTemplate', this._templatesLoaded),
           isForeignService: document.getElementById('fIsForeignService')?.checked || false,
+          // คำขอเจ้าของ 2026-10-12 — 50 ทวิ อัตโนมัติ + ผู้ถูกหัก (แผงซ่อน = ใบไม่มี WHT/ไม่ใช่ฝั่งผู้หัก ⇒ ไม่ส่ง = คงค่าเดิม/ค่าตั้งต้น)
+          ...this._whtCertPayload(),
           // เงินมัดจำ/รับล่วงหน้า — เฉพาะ Receipt/ReceiptVoucher: ลง "ขายรอรับรู้"
           // (217xx) แทนรายได้. depositOutputVatDeferred เลือกจังหวะ tax point.
           isDeposit: _docType === 'Deposit'
@@ -9774,7 +9919,9 @@
        */
       async _approveConfirmingWarnings(api, docId) {
         try {
-          await api.approveDocument(docId, { acknowledgeWarnings: false });
+          const ok = await api.approveDocument(docId, { acknowledgeWarnings: false });
+          // คำขอเจ้าของ 2026-10-12: ออก 50 ทวิ อัตโนมัติไม่สำเร็จ ⇒ บอกทันที (ทางอนุมัติทุกปุ่มของหน้านี้ผ่านตรงนี้)
+          this._toastWhtCertFailed?.(ok);
           return { approved: true };
         } catch (e) {
           const data = e && e.status === 422 && e.body && e.body.data;
@@ -9783,7 +9930,8 @@
             this._showApprovalWarnings(docId, data.warnings, data.aiHints,
               async () => {
                 try {
-                  await api.approveDocument(docId, { acknowledgeWarnings: true });
+                  const ok2 = await api.approveDocument(docId, { acknowledgeWarnings: true });
+                  this._toastWhtCertFailed?.(ok2);
                   resolve({ approved: true });
                 } catch (e2) { reject(e2); }
               },
@@ -11955,7 +12103,7 @@
           }
           submit.disabled = true; submit.textContent = 'กำลังบันทึก...';
           try {
-            await api.createPayment({
+            const payRes = await api.createPayment({
               documentId: docId,
               paymentDate,
               amount,
@@ -11984,6 +12132,7 @@
             Layout.toast(_issued
               ? 'บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ + ออกใบเสร็จรับเงินให้แล้ว'
               : 'บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success', 6000);
+            this._toastWhtCertNotice(payRes?.data?.whtCertNotice);
             wrap.classList.remove('active');
             Layout.closeModal('detailModal');
             await this.load();

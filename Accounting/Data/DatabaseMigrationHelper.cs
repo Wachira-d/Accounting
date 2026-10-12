@@ -3301,6 +3301,14 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtCertSkipped" boolean NOT NULL DEFAULT false;
             """,
+            // 50 ทวิ อัตโนมัติ (คำขอเจ้าของ 2026-10-12): ติ๊ก "สร้างอัตโนมัติ" ต่อใบ (ค่าตั้งต้น true = พฤติกรรมเดิมของใบเก่าทุกใบ)
+            // + ผู้ถูกหักที่ไม่ใช่ผู้ติดต่อของเอกสาร (ประกันผ่านโบรกเกอร์ → 50 ทวิ ในนามบริษัทประกัน) · null = ผู้ติดต่อของเอกสาร
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtCertAutoIssue" boolean NOT NULL DEFAULT true;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtPayeeContactId" uuid NULL;
+            """,
             // External preparer signature override — name + signature image
             // (base64/data-URI) supplied by an integrating system for the
             // "ผู้จัดทำ" slot when the preparer is not a NextAcc User.

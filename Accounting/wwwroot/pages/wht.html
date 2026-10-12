@@ -980,9 +980,11 @@
           }
           tbody.innerHTML = this.pendingDocs.map(d => `<tr>
             <td><input type="checkbox" class="pending-check" value="${d.documentId}"></td>
-            <td class="font-medium">${d.documentNumber}</td>
+            <td class="font-medium">${Layout.esc(d.documentNumber || '')}</td>
             <td>${Layout.date(d.documentDate)}</td>
-            <td>${d.contactName} ${d.contactTaxId ? '<span class="text-gray-400 text-xs">('+d.contactTaxId+')</span>' : ''}</td>
+            <td>${Layout.esc(d.contactName || '')} ${d.contactTaxId ? '<span class="text-gray-400 text-xs">(' + Layout.esc(d.contactTaxId) + ')</span>' : ''}
+              ${d.payeeDiffersFromContact ? '<div class="text-xs" style="color:#3730a3">ผู้ถูกหัก (ชื่อบน 50 ทวิ): <b>' + Layout.esc(d.payeeName || '—') + '</b>' + (d.payeeTaxId ? ' (' + Layout.esc(d.payeeTaxId) + ')' : '') + '</div>' : ''}
+              ${d.pendingLabel ? '<div class="text-xs" style="color:' + (d.autoIssueFailedReason ? '#b91c1c' : '#64748b') + '">' + Layout.esc(d.pendingLabel) + '</div>' : ''}</td>
             <td class="text-right">${Layout.money(d.subTotal)}</td>
             <td class="text-right font-semibold text-danger">${Layout.money(d.withholdingTaxAmount)}</td>
             <td style="white-space:nowrap">

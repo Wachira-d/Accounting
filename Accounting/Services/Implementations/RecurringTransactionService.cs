@@ -510,7 +510,13 @@ public class RecurringTransactionService : IRecurringTransactionService
                 CombinedInvoiceTaxInvoice: root.TryGetProperty("combinedInvoiceTaxInvoice", out var citEl)
                     && citEl.ValueKind == JsonValueKind.True,
                 BuyerDeclinedTaxInvoice: root.TryGetProperty("buyerDeclinedTaxInvoice", out var bdtEl)
-                    && bdtEl.ValueKind == JsonValueKind.True ? true : (bool?)null
+                    && bdtEl.ValueKind == JsonValueKind.True ? true : (bool?)null,
+                // คำขอเจ้าของ 2026-10-12 — 50 ทวิ: ค่าเบี้ยประกันรายเดือนผ่านโบรกเกอร์ (ผู้ถูกหัก = บริษัทประกัน) · template เก่าไม่มี key
+                // = null = เปิดอัตโนมัติ/ผู้ถูกหัก = ผู้ติดต่อ (พฤติกรรมเดิมเป๊ะ) · CreateDocumentAsync ตรวจผู้ถูกหัก (บริษัทนี้ · ชนิดฝั่งผู้หัก) อีกชั้น
+                WhtCertAutoIssue: root.TryGetProperty("whtCertAutoIssue", out var waiEl)
+                    && waiEl.ValueKind is JsonValueKind.True or JsonValueKind.False ? waiEl.GetBoolean() : (bool?)null,
+                WhtPayeeContactId: root.TryGetProperty("whtPayeeContactId", out var wpEl)
+                    && wpEl.ValueKind == JsonValueKind.String && Guid.TryParse(wpEl.GetString(), out var wpId) ? wpId : null
             );
 
             var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy);

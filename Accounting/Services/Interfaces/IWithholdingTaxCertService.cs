@@ -25,6 +25,12 @@ public interface IWithholdingTaxCertService
     /// <param name="paymentWhtAmount">ยอดภาษีหักของ "งวดนั้น" — ถ้าน้อยกว่ายอดทั้งเอกสาร
     /// ระบบจะเฉลี่ยยอดรายบรรทัดตามสัดส่วน</param>
     Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null, Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null);
+    /// <summary>ทางเดียวของการออก 50 ทวิ อัตโนมัติจากเอกสาร — ตัดสินด้วย <c>Helpers/WhtCertIssuePlan</c> · ไม่ throw (ล้ม = ป้ายบนเอกสาร +
+    /// เหตุผลในผลลัพธ์) · <paramref name="paidAtTrigger"/> ใช้กับจุดอนุมัติ · <paramref name="issueAsIssued"/> false = ฉบับร่าง (ซิงค์ที่ยังไม่จ่าย)</summary>
+    Task<WhtAutoIssueOutcome> TryAutoIssueForDocumentAsync(Guid companyId, Guid documentId,
+        Accounting.Helpers.WhtCertIssueTrigger trigger, string createdBy,
+        DateTime? paymentDate = null, Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null,
+        bool paidAtTrigger = true, bool issueAsIssued = true);
     Task<List<PendingWhtDocumentResponse>> GetPendingDocumentsAsync(Guid companyId, int? year = null, int? month = null);
     Task<BulkGenerateWhtResponse> BulkGenerateAsync(Guid companyId, BulkGenerateWhtRequest request, string createdBy);
     /// <summary>Dismiss a document from the "waiting to issue cert" list — the

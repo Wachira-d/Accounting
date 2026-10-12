@@ -1912,21 +1912,23 @@ public class IntegrationService : IIntegrationService
             _logger.LogWarning("WHT auto-generate skipped for document {DocId}: WHT service unavailable", document.Id);
             return " (มีภาษีหัก ณ ที่จ่าย — กรุณาออกหนังสือรับรองในระบบ)";
         }
-        try
+        // ทางเดียวกับอนุมัติ/บันทึกจ่าย (WhtCertIssuePlan · คำขอเจ้าของ 2026-10-12) — ล้ม = ป้ายบนเอกสาร + ลิสต์รอออกใบ + ข้อความในคำตอบซิงค์
+        var outcome = await _whtCertService.TryAutoIssueForDocumentAsync(
+            companyId, document.Id, Accounting.Helpers.WhtCertIssueTrigger.IntegrationSync, "integration-sync",
+            issueAsIssued: paid);
+        if (outcome.CertificateNumber is string certNo)
         {
-            var cert = await _whtCertService.AutoGenerateFromDocumentAsync(
-                companyId, document.Id, autoIssue: paid, "integration-sync");
             _logger.LogInformation("WHT certificate {CertNo} auto-{Mode} for synced document {DocId}",
-                cert.CertificateNumber, paid ? "issued" : "drafted", document.Id);
+                certNo, paid ? "issued" : "drafted", document.Id);
             return paid
-                ? $" + ออกหนังสือรับรองหัก ณ ที่จ่าย {cert.CertificateNumber}"
-                : $" + เตรียมหนังสือรับรองหัก ณ ที่จ่าย {cert.CertificateNumber} (ฉบับร่าง — ออกจริงเมื่อจ่ายเงิน)";
+                ? $" + ออกหนังสือรับรองหัก ณ ที่จ่าย {certNo}"
+                : $" + เตรียมหนังสือรับรองหัก ณ ที่จ่าย {certNo} (ฉบับร่าง — ออกจริงเมื่อจ่ายเงิน)";
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "WHT auto-generate failed for synced document {DocId}", document.Id);
-            return " (ออกหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติไม่สำเร็จ — กรุณาออกในระบบ)";
-        }
+        if (outcome.Failed)
+            return $" (ออกหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติไม่สำเร็จ: {outcome.FailureReason} — กรุณาออกในระบบ)";
+        return outcome.Action == Accounting.Helpers.WhtCertIssueAction.ManualPending
+            ? $" ({outcome.Message})"
+            : "";
     }
 
     /// <summary>Resolve the correct VAT GL account with TYPE validation so

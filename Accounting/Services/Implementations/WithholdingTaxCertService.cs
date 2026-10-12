@@ -515,10 +515,26 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             whtRatio = paymentWhtAmount.Value / doc.WithholdingTaxAmount;
         }
 
+        // ── ผู้ถูกหักภาษี (คำขอเจ้าของ 2026-10-12) — ไม่ใช่ผู้รับเงินเสมอไป: ซื้อประกันผ่านโบรกเกอร์ ใบสำคัญจ่ายชื่อโบรกเกอร์
+        // แต่ผู้มีเงินได้ = บริษัทประกัน ⇒ 50 ทวิ ชื่อ/เลขผู้เสียภาษี/สาขา/ที่อยู่/แบบ ภ.ง.ด. มาจาก "ผู้ถูกหัก" ตัวเดียว (WhtCertIssuePlan.PayeeOf)
+        var payeeId = WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+        var payee = payeeId == doc.ContactId
+            ? doc.Contact
+            : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .FirstOrDefaultAsync(c => c.Id == payeeId && c.CompanyId == companyId)
+              ?? throw new BusinessRuleException(
+                  $"ไม่พบผู้ถูกหักภาษีที่เลือกไว้บนเอกสาร {doc.DocumentNumber} — เลือกผู้ถูกหักใหม่ แล้วออกใบอีกครั้ง",
+                  WhtCertIssuePlan.PayeeRuleCode);
+        var payeeForeign = Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, payee?.CountryCode);
+        // 50 ทวิ/แบบ ภ.ง.ด. ต้องมีเลขประจำตัวผู้เสียภาษีของผู้ถูกหัก (ผู้รับต่างประเทศ ภ.ง.ด.54 ยกเว้น) — ออกใบที่ไม่มีเลข = ยื่นไม่ผ่าน
+        // ⇒ ล้มดังพร้อมทางไปต่อ (ทางอัตโนมัติ: ป้ายบนเอกสาร + ลิสต์รอออกใบ · ทางกดเอง: ข้อความ 400)
+        if (WhtCertIssuePlan.PayeeTaxIdProblem(payee?.Name, payee?.TaxId, payeeForeign) is string payeeProblem)
+            throw new BusinessRuleException(payeeProblem, WhtCertIssuePlan.PayeeRuleCode);
+
         // ประเภทแบบ ภ.ง.ด.53 นิติบุคคล / ภ.ง.ด.3 บุคคลธรรมดา — ตรวจจากหลายสัญญาณ
         // (เลขภาษี 13 หลัก + ContactType + ชื่อ) ไม่ใช่แค่ ContactType ที่ default เป็น
-        // Individual (เคสบริษัทที่ contact สร้างจาก integration แล้วไม่ตั้ง type)
-        var (taxFormType, _, _) = ResolveWhtFormType(doc.Contact, null, doc.IsForeignService);
+        // Individual (เคสบริษัทที่ contact สร้างจาก integration แล้วไม่ตั้ง type) · ตัดสินจาก "ผู้ถูกหัก" ไม่ใช่ผู้รับเงิน
+        var (taxFormType, _, _) = ResolveWhtFormType(payee, null, doc.IsForeignService);
 
         // เลขเดือน = เดือน "เงินได้ที่จ่าย" (tax month) ไม่ใช่เดือนที่ generate (UtcNow)
         // → ตรงกับ TaxMonth ที่ลงในใบ + สอดคล้องกับ CreateAsync (WHT-YYYYMM-####)
@@ -541,7 +557,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         {
             CompanyId = companyId,
             CertificateNumber = certNumber,
-            PayeeContactId = doc.ContactId,
+            PayeeContactId = payeeId,
             TaxFormType = taxFormType,
             // ภ.ง.ด.3/53 = cash basis: เดือนภาษีตาม "วันจ่ายจริง" (audit F13) —
             // เดิมใช้ DocumentDate → cert ตกงวดเดือนตั้งหนี้ทั้งที่ยังไม่จ่าย
@@ -610,6 +626,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         }
 
         _db.WithholdingTaxCerts.Add(cert);
+        // ออกใบได้แล้ว (ทางใดก็ตาม) ⇒ ป้าย "ออกอัตโนมัติไม่สำเร็จ" ของเอกสารหมดความหมาย — ล้างในคำสั่งบันทึกเดียวกับใบ
+        doc.InternalNotes = WhtCertAutoFailedNote.Clear(doc.InternalNotes);
         await _db.SaveChangesAsync();
 
         // When the cert is issued straight away (integration sync / one-click),
@@ -625,6 +643,94 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         }
 
         return await GetByIdAsync(companyId, cert.Id);
+    }
+
+    /// <summary>
+    /// **ทางเดียวของการออก 50 ทวิ "อัตโนมัติ" จากเอกสาร** (อนุมัติ · บันทึกจ่าย · จ่ายหลายใบ · ซิงค์ · สร้างทั้งเดือน) — คำขอเจ้าของ 2026-10-12
+    ///
+    /// <para>1) โหลดข้อเท็จจริง (ใบที่มีอยู่ · ติ๊กออกอัตโนมัติ · ผู้ถูกหัก) → 2) <see cref="WhtCertIssuePlan.Decide"/> ตัวเดียว →
+    /// 3) ออกใบผ่าน <see cref="AutoGenerateFromDocumentAsync"/> · ล้ม = <b>ไม่กลืน</b>: ป้ายบนเอกสาร (<see cref="WhtCertAutoFailedNote"/>) +
+    /// เหตุผลกลับในผลลัพธ์ (ผู้เรียกส่งต่อถึงหน้าจอ) + ใบโผล่ในลิสต์รอออกใบ · การอนุมัติ/การจ่ายเองยังสำเร็จ (ห้ามบล็อกการจ่ายเงิน)</para>
+    ///
+    /// <para>ในธุรกรรมของผู้เรียก: ครอบด้วย savepoint — ออกใบล้มระดับฐานข้อมูล (PostgreSQL ตั้ง transaction เป็น aborted) ต้องไม่ลาก
+    /// การอนุมัติ/การจ่ายทั้งก้อนล้มตาม · ถอดแถวใบที่ค้างใน ChangeTracker ด้วย ไม่งั้น SaveChanges ครั้งถัดไปของผู้เรียกจะพยายามบันทึกซ้ำ</para>
+    /// </summary>
+    public async Task<WhtAutoIssueOutcome> TryAutoIssueForDocumentAsync(
+        Guid companyId, Guid documentId, WhtCertIssueTrigger trigger, string createdBy,
+        DateTime? paymentDate = null, Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null,
+        bool paidAtTrigger = true, bool issueAsIssued = true)
+    {
+        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
+        if (doc == null)
+            return new WhtAutoIssueOutcome(WhtCertIssueAction.NotApplicable, null, null, null, "ไม่พบเอกสาร");
+
+        var active = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && w.DocumentId == documentId
+                && w.Status != WithholdingTaxCertStatus.Voided)
+            .Select(w => new { w.SourcePaymentId, w.Status })
+            .ToListAsync();
+        var decision = WhtCertIssuePlan.Decide(new WhtCertIssueFacts(
+            trigger, doc.DocumentType, doc.Status, paymentWhtAmount ?? doc.WithholdingTaxAmount,
+            AutoIssueEnabled: doc.WhtCertAutoIssue,
+            DismissedFromPending: doc.WhtCertSkipped,
+            doc.ContactId, doc.WhtPayeeContactId,
+            PaidAtTrigger: paidAtTrigger,
+            HasSourcePayment: sourcePaymentId.HasValue,
+            ActiveCertsForThisPayment: sourcePaymentId.HasValue ? active.Count(a => a.SourcePaymentId == sourcePaymentId) : 0,
+            ActiveFullDocCertsNotDraft: active.Count(a => a.SourcePaymentId == null && a.Status != WithholdingTaxCertStatus.Draft),
+            ActiveCertsAny: active.Count));
+        if (decision.Action != WhtCertIssueAction.IssueNow)
+            return new WhtAutoIssueOutcome(decision.Action, null, null, null, decision.Reason);
+
+        var tx = _db.Database.CurrentTransaction is { SupportsSavepoints: true } current ? current : null;
+        const string savepoint = "wht_cert_auto_issue";
+        if (tx != null)
+        {
+            // บันทึกงานค้างของผู้เรียก (การอนุมัติ/การจ่าย) ก่อนตั้ง savepoint — ไม่งั้น SaveChanges ข้างในจะพางานของผู้เรียกเข้าไปหลัง
+            // savepoint แล้วถูกย้อนทิ้งตอนออกใบล้ม ขณะที่ ChangeTracker เชื่อว่าบันทึกแล้ว (งานอนุมัติหายเงียบ)
+            await _db.SaveChangesAsync();
+            await tx.CreateSavepointAsync(savepoint);
+        }
+        try
+        {
+            var cert = await AutoGenerateFromDocumentAsync(companyId, documentId, issueAsIssued, createdBy,
+                paymentDate, sourcePaymentId, paymentWhtAmount);
+            return new WhtAutoIssueOutcome(WhtCertIssueAction.IssueNow, cert.Id, cert.CertificateNumber, null,
+                $"ออกหนังสือรับรองหัก ณ ที่จ่าย {cert.CertificateNumber}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (tx != null) await tx.RollbackToSavepointAsync(savepoint);
+            // ถอดแถว 50 ทวิ ทุกสถานะออกจาก ChangeTracker — Added (ยังไม่ลงฐาน) จะถูกบันทึกซ้ำตอนผู้เรียก SaveChanges ·
+            // Unchanged/Modified หลัง savepoint ถูกย้อนในฐานแล้วแต่ tracker ยังจำค่าใหม่ (สถานะค้างผิดความจริง)
+            foreach (var entry in _db.ChangeTracker.Entries()
+                         .Where(e => e.Entity is WithholdingTaxCert or WithholdingTaxCertLine)
+                         .ToList())
+                entry.State = EntityState.Detached;
+
+            // ล้มหลังบันทึกใบไปแล้ว (นอกธุรกรรม — เช่นตอนแนบไฟล์/อ่านกลับ) = ใบมีอยู่จริง ⇒ ไม่ใช่ความล้มเหลวของการออกใบ
+            // (ก่อนเข้ามา ยังไม่มีใบของการจ่ายนี้ — ไม่งั้นตัวตัดสินตอบ AlreadyIssued ไปแล้ว)
+            var nowCovered = await _db.WithholdingTaxCerts.AsNoTracking().AnyAsync(w =>
+                w.CompanyId == companyId && w.DocumentId == documentId
+                && w.Status != WithholdingTaxCertStatus.Voided
+                && (sourcePaymentId == null || w.SourcePaymentId == sourcePaymentId));
+            if (nowCovered)
+                return new WhtAutoIssueOutcome(WhtCertIssueAction.AlreadyIssued, null, null, null,
+                    "ออกหนังสือรับรองหัก ณ ที่จ่ายของการจ่ายนี้แล้ว");
+
+            // ข้อความถึงผู้ใช้: กฎธุรกิจ = ข้อความไทยตรง ๆ · อย่างอื่น = ชนิดข้อผิดพลาด (ห้ามรั่วข้อความภายในของ framework)
+            var reason = ex is BusinessRuleException or KeyNotFoundException
+                    || (ex is InvalidOperationException && ex.GetType() == typeof(InvalidOperationException)
+                        && ex.Message.Any(ch => ch >= '\u0E00' && ch <= '\u0E7F'))
+                ? ex.Message
+                : $"ระบบขัดข้อง ({ex.GetType().Name}) — กด \"สร้างใบ\" ที่ลิสต์รอออกใบเพื่อลองใหม่";
+            _logger.LogWarning(ex, "ออก 50 ทวิ อัตโนมัติ ({Trigger}) ของเอกสาร {Doc} ไม่สำเร็จ — ติดป้ายบนเอกสาร + ลิสต์รอออกใบ",
+                trigger, doc.DocumentNumber);
+            doc.InternalNotes = WhtCertAutoFailedNote.Append(doc.InternalNotes, reason);
+            await _db.SaveChangesAsync();
+            return new WhtAutoIssueOutcome(WhtCertIssueAction.IssueNow, null, null, reason,
+                $"ออก 50 ทวิ อัตโนมัติไม่สำเร็จ: {reason}");
+        }
     }
 
     public async Task<List<PendingWhtDocumentResponse>> GetPendingDocumentsAsync(
@@ -665,15 +771,29 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         var docs = await query.OrderByDescending(d => d.DocumentDate).ToListAsync();
         await _db.HydrateContactsAsync(companyId, docs);
+        // ผู้ถูกหักที่ไม่ใช่ผู้ติดต่อของเอกสาร (ประกันผ่านโบรกเกอร์) — ลิสต์ต้องบอกว่า 50 ทวิ จะออกในนามใคร
+        var payees = await _db.LoadWhtPayeeContactsAsync(companyId, docs);
 
-        return docs.Select(d => new PendingWhtDocumentResponse(
-            d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate,
-            d.ContactId, d.Contact.Name, d.Contact.TaxId,
-            d.SubTotal, d.WithholdingTaxAmount,
-            d.Lines.Where(l => l.WithholdingTaxAmount > 0).Select(l => new PendingWhtLineInfo(
-                l.Description, l.IncomeTypeCode, l.Amount,
-                l.WithholdingTaxRate, l.WithholdingTaxAmount)).ToList()
-        )).ToList();
+        return docs.Select(d =>
+        {
+            var payee = ContactHydration.WhtPayeeOf(d, payees);
+            var failed = WhtCertAutoFailedNote.ReasonOf(d.InternalNotes);
+            var paid = d.Status == DocumentStatus.Paid || (d.BalanceDue <= 0.005m && d.PaidAmount > 0.005m);
+            return new PendingWhtDocumentResponse(
+                d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate,
+                d.ContactId, d.Contact?.Name ?? "", d.Contact?.TaxId,
+                d.SubTotal, d.WithholdingTaxAmount,
+                d.Lines.Where(l => l.WithholdingTaxAmount > 0).Select(l => new PendingWhtLineInfo(
+                    l.Description, l.IncomeTypeCode, l.Amount,
+                    l.WithholdingTaxRate, l.WithholdingTaxAmount)).ToList(),
+                PayeeContactId: WhtCertIssuePlan.PayeeOf(d.ContactId, d.WhtPayeeContactId),
+                PayeeName: payee?.Name,
+                PayeeTaxId: payee?.TaxId,
+                PayeeDiffersFromContact: d.WhtPayeeContactId.HasValue && d.WhtPayeeContactId != d.ContactId,
+                AutoIssueEnabled: d.WhtCertAutoIssue,
+                AutoIssueFailedReason: failed,
+                PendingLabel: WhtCertIssuePlan.PendingLabel(d.WhtCertAutoIssue, failed, paid));
+        }).ToList();
     }
 
     public async Task DismissPendingAsync(Guid companyId, Guid documentId, bool dismiss)
@@ -695,17 +815,17 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         foreach (var doc in pending)
         {
-            try
+            // ทางเดียวกับอนุมัติ/บันทึกจ่าย (WhtCertIssuePlan) — ใบที่ตั้ง "ไม่สร้างอัตโนมัติ" ไม่ถูกกวาดออกทั้งเดือน
+            // (ผู้ใช้ตั้งใจตรวจผู้ถูกหักเอง) ⇒ ข้ามพร้อมเหตุผล · ล้ม = ป้ายบนเอกสาร + เหตุผลในผลลัพธ์ ไม่หายเงียบ
+            var outcome = await TryAutoIssueForDocumentAsync(companyId, doc.DocumentId, WhtCertIssueTrigger.Bulk,
+                createdBy, issueAsIssued: request.AutoIssue);
+            if (outcome.CertificateId is Guid certId)
             {
-                var cert = await AutoGenerateFromDocumentAsync(
-                    companyId, doc.DocumentId, request.AutoIssue, createdBy);
-                generated.Add(cert);
+                generated.Add(await GetByIdAsync(companyId, certId));
+                continue;
             }
-            catch (Exception ex)
-            {
-                skipped++;
-                skippedReasons.Add($"{doc.DocumentNumber}: {ex.Message}");
-            }
+            skipped++;
+            skippedReasons.Add($"{doc.DocumentNumber}: {outcome.FailureReason ?? outcome.Message}");
         }
 
         return new BulkGenerateWhtResponse(

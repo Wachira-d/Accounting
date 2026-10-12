@@ -195,7 +195,7 @@
         const saveBtn = document.querySelector('#formModal .btn-primary');
         if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'กำลังบันทึก...'; }
         try {
-          await api.createPayment({
+          const payRes = await api.createPayment({
             documentId: docId,
             paymentDate: document.getElementById('fDate').value,
             amount,
@@ -204,7 +204,10 @@
             bankAccountId: document.getElementById('fBankAcc').value || null,
             notes: document.getElementById('fNotes').value || null,
           });
-          Layout.closeModal('formModal'); Layout.toast('บันทึกการชำระเงินสำเร็จ'); await this.load();
+          Layout.closeModal('formModal'); Layout.toast('บันทึกการชำระเงินสำเร็จ');
+          // คำขอเจ้าของ 2026-10-12: ออก 50 ทวิ อัตโนมัติไม่สำเร็จ/ตั้งให้ออกเอง ⇒ เซิร์ฟเวอร์ส่งข้อความมา ต้องบอกผู้ใช้ (ล้มดัง)
+          if (payRes && payRes.data && payRes.data.whtCertNotice) Layout.toast('50 ทวิ: ' + payRes.data.whtCertNotice, 'warning', 12000);
+          await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
         finally {
           this._saving = false;

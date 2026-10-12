@@ -53,8 +53,11 @@ public static class ApprovalAcknowledgement
     /// <summary>คำเตือนที่ทางเข้าไม่มีคนส่งผ่านได้ (ไม่หยุด) — ชุด §65 ตรี (คำตัดสินข้อ 110) · ตัวตั้งอยู่ที่ <see cref="Section65TerApprovalWarnings.IsWarning"/></summary>
     /// รอบ 203 (คำตัดสินข้อ 140): ชุดรูปแบบใบเสร็จ <c>[RCPT-FORM]</c> (<see cref="ReceiptFormRule.IsApprovalWarning"/>) ก็ผ่านโดยไม่มีคน —
     /// ที่พัก/จ่ายออนไลน์/API ห้ามล้มเพราะกติกานี้ · เว็บ/มือถือ (<see cref="ApprovalAckSource.None"/>) ยังหยุดให้รับทราบ
+    /// คำขอเจ้าของ 2026-10-12: ชุดผู้ถูกหักภาษี <c>[WHT-PAYEE]</c> (<see cref="WhtCertIssuePlan.IsApprovalWarning"/>) ก็ผ่าน — 50 ทวิ ที่ออกไม่ได้
+    /// ล้มดังอยู่แล้วที่ตัวเอกสาร (ป้าย + ลิสต์รอออกใบ) · ห้ามหยุดใบประจำ/API ที่เคยอนุมัติผ่าน
     private static bool PassesWithoutPerson(string warning)
-        => Section65TerApprovalWarnings.IsWarning(warning) || ReceiptFormRule.IsApprovalWarning(warning);
+        => Section65TerApprovalWarnings.IsWarning(warning) || ReceiptFormRule.IsApprovalWarning(warning)
+           || WhtCertIssuePlan.IsApprovalWarning(warning);
 
     /// <summary>คำเตือนที่ยังไม่มีใครรับทราบตามแหล่ง — ว่าง = อนุมัติต่อได้ · ไม่ว่าง = ต้องหยุด (throw คำเตือนชุดนี้)</summary>
     public static IReadOnlyList<string> Unacknowledged(ApprovalAckSource source, IReadOnlyList<string> warnings)

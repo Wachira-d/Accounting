@@ -572,6 +572,16 @@ public class Document : TenantEntity
     /// internal accruals, intra-company reclassifications).</summary>
     public bool WhtCertSkipped { get; set; }
 
+    /// <summary>ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) <b>อัตโนมัติ</b>เมื่ออนุมัติ(จ่ายแล้ว)/บันทึกจ่ายไหม — ค่าตั้งต้น true
+    /// (= พฤติกรรมเดิมตั้งแต่รอบ 170) · false = ระบบไม่สร้างใบเอง ใบไปรอในลิสต์ "รอออกใบหัก ณ ที่จ่าย" ให้ผู้ใช้ออกเอง
+    /// (เช่น ต้องตรวจผู้ถูกหักก่อน · ผู้รับเงินออกหลักฐานอื่น) · ตัวตัดสินเดียว <c>Helpers/WhtCertIssuePlan</c></summary>
+    public bool WhtCertAutoIssue { get; set; } = true;
+
+    /// <summary>ผู้ถูกหักภาษี ณ ที่จ่าย เมื่อ<b>ไม่ใช่</b>ผู้ติดต่อของเอกสาร (null = ผู้ติดต่อของเอกสาร) — เคสจริง: ซื้อประกันผ่านโบรกเกอร์
+    /// (จ่ายเงินให้โบรกเกอร์ แต่ผู้มีเงินได้ = บริษัทประกัน) · ตัวแทนรับเงินแทนตัวการ · 50 ทวิ ภ.ง.ด.3/53/54 และผัง 2191x
+    /// ตัดสินจากผู้ถูกหักคนนี้ ไม่ใช่ผู้รับเงิน · อ่านผ่าน <c>WhtCertIssuePlan.PayeeOf</c> ตัวเดียว</summary>
+    public Guid? WhtPayeeContactId { get; set; }
+
     /// <summary>Access-control classification — None for the regular sales
     /// stream, Payroll/ExecutivePay/HrPersonal for restricted records.
     /// Owner picks which roles can see each kind in CompanySensitivitySettings.</summary>

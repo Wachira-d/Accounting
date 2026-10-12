@@ -163,7 +163,11 @@ public record CreateDocumentRequest(
     // ไม่ระบุทั้งคู่ = พฤติกรรมเดิมทุกตัวอักษร (บรรทัด/ธง/บัญชีตามที่ส่งมา) · ระบุ ⇒ DepositPolicyResolver.ResolveKind +
     // DepositDocumentShaping.Apply ตัดสินรูปใบ (VAT บรรทัด · DepositOutputVatDeferred · บัญชีหนี้สิน) ทับค่าที่ส่งมา
     Guid? DepositKindId = null,
-    string? DepositKindCode = null);
+    string? DepositKindCode = null,
+    // คำขอเจ้าของ 2026-10-12 — 50 ทวิ: สร้างอัตโนมัติเมื่ออนุมัติ/จ่ายไหม (null = เปิด = พฤติกรรมเดิม) ·
+    // ผู้ถูกหักภาษีที่ไม่ใช่ผู้ติดต่อของเอกสาร (ประกันผ่านโบรกเกอร์ — 50 ทวิ ในนามบริษัทประกัน) null = ผู้ติดต่อ · เฉพาะ PV/ค่าใช้จ่าย/PI/CIL
+    bool? WhtCertAutoIssue = null,
+    Guid? WhtPayeeContactId = null);
 
 // ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
 // เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
@@ -332,7 +336,10 @@ public record UpdateDocumentRequest(
     decimal? DepositBaseDeducted = null,
     // รอบ 194 — ประเภทเงินมัดจำ: null = คงค่าเดิม (ใบที่มีประเภท ⇒ บรรทัดที่ส่งมาถูกจัดรูปตามประเภทเดิมอีกครั้ง) ·
     // Guid.Empty = ล้างประเภท (กลับไปตามบรรทัด/ธงที่ส่งมา) · ค่าอื่น = เปลี่ยนประเภท (เฉพาะใบร่าง/ถูกตีกลับ · ต้องส่งบรรทัดมาด้วย)
-    Guid? DepositKindId = null);
+    Guid? DepositKindId = null,
+    // คำขอเจ้าของ 2026-10-12 — 50 ทวิ อัตโนมัติ: null = คงค่าเดิม · ผู้ถูกหัก: null = คงค่าเดิม · Guid.Empty = กลับไปใช้ผู้ติดต่อของเอกสาร
+    bool? WhtCertAutoIssue = null,
+    Guid? WhtPayeeContactId = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -991,7 +998,14 @@ public record DocumentResponse(
     /// <summary>เซิร์ฟเวอร์ตัดสิน (DocumentLinkPolicy.UnlinkBlockReason) ว่าโชว์ปุ่ม "ยกเลิกการผูก" ได้ไหม — ใบแจ้งหนี้ซื้อถอดไม่ได้</summary>
     bool CanUnlinkSource = false,
     // ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ — หน้าเว็บซ่อนแปลง/รับชำระที่ใบวางบิล แล้วโชว์ "รับชำระตามใบวางบิล" (เซิร์ฟเวอร์ตัดสิน)
-    bool IsRollupBillingNote = false);
+    bool IsRollupBillingNote = false,
+    /// <summary>คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ติ๊ก "สร้าง 50 ทวิ อัตโนมัติ" ของใบ</summary>
+    bool WhtCertAutoIssue = true,
+    /// <summary>ผู้ถูกหักภาษีที่ตั้งแยกจากผู้ติดต่อ (null = ผู้ติดต่อของเอกสาร) — หน้าเว็บดึงชื่อ/เลขผู้เสียภาษีจากผู้ติดต่อนี้</summary>
+    Guid? WhtPayeeContactId = null,
+    /// <summary>ออก 50 ทวิ อัตโนมัติไม่สำเร็จ — เหตุผลจากป้ายบนเอกสาร (<c>WhtCertAutoFailedNote</c>) · null = ไม่มีป้าย ·
+    /// คำตอบของ "อนุมัติ" มีค่านี้ ⇒ หน้าเว็บแจ้งผู้ใช้ทันที (ล้มดัง — เดิมกลืนด้วย LogWarning)</summary>
+    string? WhtCertAutoFailedReason = null);
 
 /// <summary>คำตัดสินข้อ 139: ผูกใบลูกเข้าใบต้นทาง — จับคู่บรรทัดลูก → บรรทัดต้นทาง (บรรทัดที่ไม่ส่งมา = ไม่นับในความคืบหน้า)</summary>
 public record LinkSourceRequest(
@@ -1663,7 +1677,10 @@ public record PaymentResponse(
     /// <summary>รอบ 193: ยอดหนี้ที่การชำระนี้ปิดด้วยบรรทัดปรับ (ไม่ใช่เงินสด) — ยอดที่ปิดทั้งหมด = Amount + ค่านี้ · 0 = ไม่มี</summary>
     decimal SettlementAdjustmentAmount = 0m,
     /// <summary>รอบ 193: บรรทัดปรับทั้งชุด (JSON — AccountCode/Amount/Reason) · null = ไม่มี</summary>
-    string? SettlementAdjustmentsJson = null);
+    string? SettlementAdjustmentsJson = null,
+    /// <summary>คำขอเจ้าของ 2026-10-12 — ผล 50 ทวิ อัตโนมัติของการจ่ายนี้ที่ผู้ใช้ต้องรู้ (ออกไม่สำเร็จ + เหตุผล · ตั้งไว้ให้ออกเอง) ·
+    /// null = ออกสำเร็จ/ไม่เกี่ยว · มีเฉพาะในคำตอบของการบันทึกจ่าย (ล้มดัง — เดิมกลืนด้วย LogWarning)</summary>
+    string? WhtCertNotice = null);
 
 
 /// <summary>ผลของการ "ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว"

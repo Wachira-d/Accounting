@@ -78,6 +78,9 @@ public class DocumentCloneController : ControllerBase
             isDeposit = src.IsDeposit,
             depositKindId = src.IsDeposit ? src.DepositKindId : null,
             depositOutputVatDeferred = src.IsDeposit && src.DepositOutputVatDeferred,
+            // คำขอเจ้าของ 2026-10-12 — 50 ทวิ: ติ๊กสร้างอัตโนมัติ + ผู้ถูกหักตามต้นแบบ (ให้ตรงกับที่ POST สร้างจริง)
+            whtCertAutoIssue = src.WhtCertAutoIssue,
+            whtPayeeContactId = Accounting.Helpers.WhtCertIssuePlan.AppliesTo(src.DocumentType) ? src.WhtPayeeContactId : null,
             depositDeferredAccountCode = src.IsDeposit ? src.DepositDeferredAccountCode : null,
             reference = $"คัดลอกจาก {src.DocumentNumber}",
             projectId = src.ProjectId,
@@ -188,7 +191,12 @@ public class DocumentCloneController : ControllerBase
             // **ฐานมัดจำที่หัก (DepositBaseDeducted) + เลขใบมัดจำ ไม่ตาม โดยเจตนา**: ใบโคลน = การขายใหม่ มัดจำใบเดิมถูกใช้/รับรู้
             // กับใบต้นแบบไปแล้ว ⇒ พ่วงไป = หักมัดจำที่ใช้แล้วซ้ำ (อนุมัติล้ม หรือรับรู้มัดจำก้อนอื่นของลูกค้าเกิน)
             BillDiscountPercent: src.BillDiscountPercent > 0 ? src.BillDiscountPercent : null,
-            BillDiscountAmount: src.BillDiscountPercent <= 0 && src.BillDiscountAmount > 0 ? src.BillDiscountAmount : null
+            BillDiscountAmount: src.BillDiscountPercent <= 0 && src.BillDiscountAmount > 0 ? src.BillDiscountAmount : null,
+            // คำขอเจ้าของ 2026-10-12 — เอกสารลูกสืบทอด (กฎ #4 A): ค่าเบี้ยประกันรายเดือนผ่านโบรกเกอร์ = เคสหลักของการโคลน ·
+            // ผู้ถูกหักตามไปเฉพาะเมื่อชนิดปลายทางเป็นฝั่งผู้หัก (ชนิดอื่นถูกปฏิเสธ)
+            WhtCertAutoIssue: src.WhtCertAutoIssue,
+            WhtPayeeContactId: Accounting.Helpers.WhtCertIssuePlan.AppliesTo(options?.OverrideType ?? src.DocumentType)
+                ? src.WhtPayeeContactId : null
         );
 
         // ── รอบ 194 — โคลนใบมัดจำ (ช่องโหว่เดิม: ไม่พา IsDeposit ⇒ ใบโคลนลงรายได้แทนหนี้สินมัดจำ) ──

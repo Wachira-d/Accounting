@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.DTOs.Tax;
@@ -99,6 +100,8 @@ public record BulkGenerateWhtResponse(
     List<string> SkippedReasons,
     List<WithholdingTaxCertResponse> Certificates);
 
+/// <summary>แถวในลิสต์ "รอออกใบหัก ณ ที่จ่าย" — <c>Contact*</c> = ผู้รับเงินของเอกสาร · <c>Payee*</c> = ผู้ถูกหักภาษีที่ 50 ทวิ จะออกในนาม
+/// (ต่างกันได้ เช่น ประกันผ่านโบรกเกอร์) · <c>PendingLabel</c> = เหตุที่ยังไม่มีใบ คำนวณที่เซิร์ฟเวอร์ (<c>WhtCertIssuePlan.PendingLabel</c>)</summary>
 public record PendingWhtDocumentResponse(
     Guid DocumentId,
     string DocumentNumber,
@@ -109,7 +112,33 @@ public record PendingWhtDocumentResponse(
     string? ContactTaxId,
     decimal SubTotal,
     decimal WithholdingTaxAmount,
-    List<PendingWhtLineInfo> Lines);
+    List<PendingWhtLineInfo> Lines,
+    Guid? PayeeContactId = null,
+    string? PayeeName = null,
+    string? PayeeTaxId = null,
+    bool PayeeDiffersFromContact = false,
+    bool AutoIssueEnabled = true,
+    string? AutoIssueFailedReason = null,
+    string? PendingLabel = null);
+
+/// <summary>ผลของการออก 50 ทวิ อัตโนมัติจากเอกสาร (<c>IWithholdingTaxCertService.TryAutoIssueForDocumentAsync</c>) ·
+/// <paramref name="FailureReason"/> ≠ null = พยายามออกแล้วล้ม (เอกสารติดป้าย + อยู่ในลิสต์รอออกใบ) — ผู้เรียกต้องส่งต่อถึงผู้ใช้</summary>
+public sealed record WhtAutoIssueOutcome(
+    WhtCertIssueAction Action,
+    Guid? CertificateId,
+    string? CertificateNumber,
+    string? FailureReason,
+    string Message)
+{
+    public bool Failed => FailureReason != null;
+
+    /// <summary>ข้อความที่ต้องบอกผู้ใช้ (null = ไม่มีอะไรต้องบอก) — ล้ม · หรือไม่ออกเพราะตั้งให้ออกเอง</summary>
+    public string? UserNotice => Failed
+        ? Message
+        : Action == WhtCertIssueAction.ManualPending
+            ? "ยังไม่ได้ออก 50 ทวิ: " + Message
+            : null;
+}
 
 public record PendingWhtLineInfo(
     string Description,

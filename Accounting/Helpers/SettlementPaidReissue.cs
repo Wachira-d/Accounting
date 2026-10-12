@@ -369,7 +369,7 @@ public static class SettlementPaidReissue
         nameof(Document.BillDiscountAmount), nameof(Document.DepositBaseDeducted), nameof(Document.VatAmount),
         nameof(Document.WithholdingTaxAmount), nameof(Document.TotalAmount), nameof(Document.PaidAmount), nameof(Document.BalanceDue),
         nameof(Document.RoundingAdjustment), nameof(Document.ActualPaidAmount), nameof(Document.Notes), nameof(Document.OriginModule),
-        nameof(Document.WhtCertSkipped), nameof(Document.Sensitivity), nameof(Document.CustomAppendix), nameof(Document.CustomFooterNotes),
+        nameof(Document.WhtCertSkipped), nameof(Document.WhtCertAutoIssue), nameof(Document.WhtPayeeContactId), nameof(Document.Sensitivity), nameof(Document.CustomAppendix), nameof(Document.CustomFooterNotes),
         nameof(Document.CustomTermsAndConditions), nameof(Document.RevenueContractId), nameof(Document.PerformanceObligationId),
         nameof(Document.CertificateReason), nameof(Document.CertifierName), nameof(Document.CertifierPosition), nameof(Document.WitnessName),
         nameof(Document.WitnessPosition), nameof(Document.PaymentDate), nameof(Document.IsForeignService),

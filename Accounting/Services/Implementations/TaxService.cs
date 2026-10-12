@@ -1735,7 +1735,10 @@ public partial class TaxService : ITaxService
             var (form, _, _) = WithholdingTaxCertService.ResolveWhtFormType(c, null, docIsForeignService);
             return report.TaxType == form;
         }
-        docs = docs.Where(d => PayeeInScope(d.Contact, d.IsForeignService)).ToList();
+        // ผู้ถูกหัก ≠ ผู้รับเงินได้ (คำขอเจ้าของ 2026-10-12 · ประกันผ่านโบรกเกอร์) — แบ่งแบบ + ชื่อ/เลขในแถวเตือนจาก "ผู้ถูกหัก" ตัวเดียวกับ 50 ทวิ
+        var whtPayees = await _db.LoadWhtPayeeContactsAsync(companyId, docs);
+        Contact? PayeeOf(Document d) => Accounting.Helpers.ContactHydration.WhtPayeeOf(d, whtPayees);
+        docs = docs.Where(d => PayeeInScope(PayeeOf(d), d.IsForeignService)).ToList();
 
         // ── กันนับซ้ำสาย "ตั้งหนี้ → ใบสำคัญจ่าย" — ทั้ง PI/Expense และ PV ที่
         // แปลง/ผูกกัน ถือ WithholdingTaxAmount บนเอกสารทั้งคู่ ⇒ เดิมเข้ารายงาน
@@ -1883,6 +1886,7 @@ public partial class TaxService : ITaxService
         // แถวยังอยู่ให้เห็นว่ามีใบค้างออก + นักบัญชีติ๊กกลับเข้ามือได้เมื่อจงใจ
         foreach (var doc in docs)
         {
+            var payee = PayeeOf(doc);
             var docWhtLines = doc.Lines.Where(l => l.WithholdingTaxAmount > 0).ToList();
             if (docWhtLines.Count > 0)
             {
@@ -1892,11 +1896,11 @@ public partial class TaxService : ITaxService
                     // ⚠️ ต้องส่ง **ชนิดผู้รับจริง** เข้าไป — เดิม `GetWhtRate` ตั้ง
                     // `payeeIsJuristic: true` ตายตัว ⇒ ดอกเบี้ย 40(4)(ก) ที่จ่ายให้
                     // บุคคลธรรมดาแสดง **1% แทน 15%** ทั้งที่ยอดที่หักจริงบอกเป็นอย่างอื่น
-                    // (`doc.Contact` อยู่ในมืออยู่แล้ว — บรรทัดล่างใช้ `doc.Contact?.TaxId`)
+                    // (ผู้ถูกหัก `payee` = ตัวเดียวกับที่ 50 ทวิ ใช้ — ไม่ใช่ผู้รับเงินของเอกสารเสมอไป)
                     var payeeIsJuristic = Accounting.Helpers.WhtPayeeKind.IsJuristic(
-                        doc.Contact?.TaxId,
-                        doc.Contact?.ContactType ?? Models.Enums.ContactType.Individual,
-                        doc.Contact?.Name);
+                        payee?.TaxId,
+                        payee?.ContactType ?? Models.Enums.ContactType.Individual,
+                        payee?.Name);
                     var whtRate = line.WithholdingTaxRate > 0
                         ? line.WithholdingTaxRate
                         : GetWhtRate(line.IncomeTypeCode, line.Amount, line.WithholdingTaxAmount, payeeIsJuristic);
@@ -1905,8 +1909,8 @@ public partial class TaxService : ITaxService
                     {
                         TaxReportId = report.Id,
                         LineOrder = lineOrder++,
-                        TaxPayerId = doc.Contact?.TaxId,
-                        TaxPayerName = doc.Contact?.Name ?? "",
+                        TaxPayerId = payee?.TaxId,
+                        TaxPayerName = payee?.Name ?? "",
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"{Accounting.Helpers.WhtUnissuedCertGate.UnissuedCertMarker} — {line.Description} "
                             + "(ออกใบที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" แล้วกด \"สร้างใหม่\")",
@@ -1929,8 +1933,8 @@ public partial class TaxService : ITaxService
                 {
                     TaxReportId = report.Id,
                     LineOrder = lineOrder++,
-                    TaxPayerId = doc.Contact?.TaxId,
-                    TaxPayerName = doc.Contact?.Name ?? "",
+                    TaxPayerId = payee?.TaxId,
+                    TaxPayerName = payee?.Name ?? "",
                     TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                     Description = $"{Accounting.Helpers.WhtUnissuedCertGate.UnissuedCertMarker} — {doc.DocumentNumber} "
                         + "(ออกใบที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" แล้วกด \"สร้างใหม่\")",
