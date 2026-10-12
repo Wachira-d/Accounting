@@ -72,7 +72,10 @@ public record WithholdingTaxCertLineResponse(
     decimal TaxAmount,
     string? Condition,
     // "รายการ" ที่แบบ 50 ทวิ พิมพ์ในช่อง (ระบุ) ของแถว 6 — `WhtCertFormText.LineSpec` (หน้าเว็บแสดงอย่างเดียว ไม่คิดเอง)
-    string? CertificateSpecText = null);
+    string? CertificateSpecText = null,
+    // แถวบนแบบ 50 ทวิ ("1" "2" "3" "4a" "4b" "5" "6") — `ThaiWhtRateTable.CertificateRow` ตัวเดียวกับ renderer ทั้งสอง (ฝ่ายค้าน M6 ·
+    // เดิมหน้าเว็บจับคู่รหัสตรงตัวเอง ⇒ รหัสแบบมาตรา "40(8)" ตกแถว 6 บนหน้าเว็บ แต่ PDF ลงแถว 5)
+    string? CertificateRow = null);
 
 public enum WithholdingTaxCertType
 {

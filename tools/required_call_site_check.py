@@ -6250,8 +6250,15 @@ RULES += [
          must=["ThaiWhtRateTable.CheckRateForType("], forbid=["switch", ".Contains("],
          why=_WHT203 + "ทะเบียนภาษีถูกหัก — ตัวตรวจอัตราอ่านตารางกลาง (เดิมจับคำเอง รหัสจาก dropdown ไม่ถูกตรวจเลย)"),
     dict(file=DOC, method="CollectApprovalWarningsAsync",
-         must=["ThaiWhtRateTable.CheckRateForType("],
-         why=_WHT203 + "อนุมัติเอกสารฝั่งจ่าย: อัตราเทียบประเภทเงินได้ของบรรทัด + ชนิดผู้รับ"),
+         must=["WhtLineRateWarning.ForDomesticPayee(", "whtPayeeForWarn?.TaxId"],
+         before=[("LoadWhtPayeeAsync(companyId, doc)", "WhtLineRateWarning.ForDomesticPayee(")],
+         forbid=["Detect(doc.Contact?.TaxId", "IsForeignPayee(doc.IsForeignService, doc.Contact?.CountryCode)"],
+         why=_WHT203 + "อนุมัติเอกสารฝั่งจ่าย: อัตราเทียบประเภทเงินได้ของบรรทัด + ชนิด \"ผู้ถูกหัก\" (ฝ่ายค้าน M2 — ไม่ใช่ผู้รับเงินบน PV) · "
+             "ข้อความผ่านตัวประกอบที่ติดป้าย [WHT-RATE] (M3)"),
+    dict(file="Helpers/WhtLineRateWarning.cs", method="ForDomesticPayee",
+         must=["ThaiWhtRateTable.CheckRateForType(", "WhtPayeeKind.Detect("],
+         must_lit=["$\"{Prefix} อัตรา WHT ของ"],
+         why=_WHT203 + "ฝ่ายค้าน M3: คำเตือนอัตรา-ประเภทขึ้นต้นป้ายเสมอ (ไม่งั้นทางเข้าไม่มีคนถูกหยุด) · ตัวตัดสินอัตราเดียวกับ 50 ทวิ/ทะเบียนเครดิต"),
     # ประเภทเงินได้รายบรรทัด (DocumentLineIncomeTypeTests): เก็บแล้วต้อง echo กลับ · แก้ไขไม่ส่ง = คงค่าเดิม
     dict(file=DOC, method="ValidateDocumentLinesAsync",
          must=["DocumentLineIncomeType.Decide("],
@@ -6288,6 +6295,44 @@ RULES += [
     dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildFootnote",
          must=["WhtCertFormText.FootnoteItems"], forbid_lit=["กรณีอื่น"],
          why="50 ทวิ QuestPDF: หมายเหตุครบ 3 ข้อจากตัวตั้งเดียว (เดิมขาด \"นอกเหนือจาก 1. และ 2.\")"),
+]
+
+
+# ── ฝ่ายค้านงาน WHT/50 ทวิ (2026-10-12 · cbc0f705..56ff4998) — WhtAdversarialFixTests ล็อก helper · กติกาข้างล่างล็อกจุดเรียก ──
+_WHTADV = "ฝ่ายค้าน WHT 2026-10-12 · WhtAdversarialFixTests: "
+RULES += [
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildProjectedGlAsync",
+         must=["LoadWhtPayeeAsync(companyId, doc)", "CodeChain(doc.IsForeignService, whtPayee?.CountryCode"],
+         forbid=["CodeChain(doc.IsForeignService, doc.Contact?.CountryCode", "PreferredLabel(doc.IsForeignService, doc.Contact?.CountryCode"],
+         why=_WHTADV + "M1 พรีวิว GL ผัง 21916/21917/21918 ตามผู้ถูกหัก — ตัวเดียวกับ JE จริง (AutoPostToJournalAsync)"),
+    dict(file="Helpers/ApprovalAcknowledgement.cs", method="PassesWithoutPerson",
+         must=["WhtLineRateWarning.IsApprovalWarning(", "WhtCertIssuePlan.IsApprovalWarning("],
+         why=_WHTADV + "M3 นโยบายเจ้าของ \"เตือน ไม่บล็อก\": คำเตือน [WHT-RATE]/[WHT-PAYEE] ไม่หยุดใบประจำ/LINE/OCR อนุมัติอัตโนมัติ/API"),
+    dict(file=DOC, method="ConvertCoreAsync",
+         must=["IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(s.Line.IncomeTypeCode)"],
+         why=_WHTADV + "M4 แปลงเอกสาร: ประเภทเงินได้รายบรรทัดตามไปกับอัตรา WHT (เดิมหาย ⇒ 50 ทวิ ตก \"8\")"),
+    dict(file=CLONE, method="Clone",
+         must=["DocumentLineIncomeType.Inherit(l.IncomeTypeCode)"],
+         why=_WHTADV + "M4 คัดลอกเอกสาร: ตัวสืบทอดเดียวกับเส้นแปลง (ค่าเก่าที่ชี้ขาดไม่ได้ไม่ทำให้คัดลอกล้ม)"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateDocumentFromTemplateAsync",
+         must=["DocumentLineIncomeType.Inherit(", "WhtCertIssuePlan.RecurringTemplateAutoIssue(", "ApprovalAckSource.Unattended"],
+         forbid=["_whtService.CreateAsync(", "GenerateWhtCertFromTemplateAsync("], forbid_lit=["\"40(8)\""],
+         why=_WHTADV + "M4/M5 ใบประจำ: ประเภทเงินได้จากเทมเพลต · 50 ทวิ ออกทางเดียวกับใบคีย์มือ (อนุมัติ/จ่าย → TryAutoIssueForDocumentAsync) — "
+             "ห้ามกลับไปออกใบตรงด้วยรหัสฝัง/ผู้ถูกหักผิดคน/ข้ามติ๊ก"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="MapLineToResponse",
+         must=["CertificateRow: Accounting.Helpers.ThaiWhtRateTable.CertificateRow(l.IncomeTypeCode)"],
+         why=_WHTADV + "M6 แถว 50 ทวิ ของหน้าเว็บมาจากเซิร์ฟเวอร์ (ตัวตัดสินเดียวกับ PDF) — หน้าไม่จับคู่รหัสเอง"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
+         before=[("WhtCertIssuePlan.PayeeTaxIdProblem(", "WithholdingTaxCertStatus.Voided;")],
+         why=_WHTADV + "L1 ตรวจผู้ถูกหัก/เลขผู้เสียภาษีก่อนยกเลิกใบร่างระดับเอกสาร — ด่านล้มต้องไม่ทิ้งใบร่างที่ถูกยกเลิกไปแล้ว"),
+    dict(file=DOC, method="CreateDocumentAsync",
+         must=["DocumentLineIncomeType.PayerSideProblem("],
+         why=_WHTADV + "L3 เอกสารฝั่งผู้จ่ายเลือก gov1/1 ไม่ได้ (ปฏิเสธพร้อมเหตุผล)"),
+    dict(file=DOC, method="UpdateDocumentAsync",
+         must=["DocumentLineIncomeType.PayerSideProblem("],
+         call_args=[("DocumentLineIncomeType.PayerSideProblem(", "KeptFromPrevious(prevIncomeTypes")],
+         before=[("DocumentLineIncomeType.PayerSideProblem(", "_db.DocumentLines.RemoveRange(doc.Lines)")],
+         why=_WHTADV + "L3 แก้ไข: ปฏิเสธเฉพาะการเลือกใหม่ (ค่าเดิมของบรรทัดเดียวกันบันทึกซ้ำได้) · ตรวจก่อนลบบรรทัด"),
 ]
 
 

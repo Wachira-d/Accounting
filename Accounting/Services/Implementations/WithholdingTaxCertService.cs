@@ -453,6 +453,24 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         if (doc.WithholdingTaxAmount <= 0)
             throw new InvalidOperationException("เอกสารนี้ไม่มีภาษีหัก ณ ที่จ่าย");
 
+        // ฝ่ายค้าน L1 (2026-10-12): ตรวจผู้ถูกหัก/เลขผู้เสียภาษี **ก่อน** ขั้นยกเลิกใบร่างระดับเอกสารข้างล่าง — เดิมตรวจหลัง ⇒ ด่านนี้ล้ม
+        // (ออกใบไม่ได้) แต่ใบร่างเดิมถูกยกเลิกไปแล้ว (ทางกดเองไม่มี savepoint ย้อน) = เสียใบร่างโดยไม่ได้ใบใหม่
+        // ── ผู้ถูกหักภาษี (คำขอเจ้าของ 2026-10-12) — ไม่ใช่ผู้รับเงินเสมอไป: ซื้อประกันผ่านโบรกเกอร์ ใบสำคัญจ่ายชื่อโบรกเกอร์
+        // แต่ผู้มีเงินได้ = บริษัทประกัน ⇒ 50 ทวิ ชื่อ/เลขผู้เสียภาษี/สาขา/ที่อยู่/แบบ ภ.ง.ด. มาจาก "ผู้ถูกหัก" ตัวเดียว (WhtCertIssuePlan.PayeeOf)
+        var payeeId = WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+        var payee = payeeId == doc.ContactId
+            ? doc.Contact
+            : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .FirstOrDefaultAsync(c => c.Id == payeeId && c.CompanyId == companyId)
+              ?? throw new BusinessRuleException(
+                  $"ไม่พบผู้ถูกหักภาษีที่เลือกไว้บนเอกสาร {doc.DocumentNumber} — เลือกผู้ถูกหักใหม่ แล้วออกใบอีกครั้ง",
+                  WhtCertIssuePlan.PayeeRuleCode);
+        var payeeForeign = Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, payee?.CountryCode);
+        // 50 ทวิ/แบบ ภ.ง.ด. ต้องมีเลขประจำตัวผู้เสียภาษีของผู้ถูกหัก (ผู้รับต่างประเทศ ภ.ง.ด.54 ยกเว้น) — ออกใบที่ไม่มีเลข = ยื่นไม่ผ่าน
+        // ⇒ ล้มดังพร้อมทางไปต่อ (ทางอัตโนมัติ: ป้ายบนเอกสาร + ลิสต์รอออกใบ · ทางกดเอง: ข้อความ 400)
+        if (WhtCertIssuePlan.PayeeTaxIdProblem(payee?.Name, payee?.TaxId, payeeForeign) is string payeeProblem)
+            throw new BusinessRuleException(payeeProblem, WhtCertIssuePlan.PayeeRuleCode);
+
         // Idempotency — ภ.ง.ด.3/53 เป็น cash basis: จ่ายเป็นงวดต้องออกใบ "งวดละใบ"
         // ตามยอดที่หักจริงของงวดนั้น จึงเช็คซ้ำที่ระดับ "งวดการจ่าย" เมื่อระบุ
         // sourcePaymentId มา (เดิมเช็คระดับเอกสาร → งวดที่ 2 เป็นต้นไปออกใบไม่ได้
@@ -517,22 +535,6 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         {
             whtRatio = paymentWhtAmount.Value / doc.WithholdingTaxAmount;
         }
-
-        // ── ผู้ถูกหักภาษี (คำขอเจ้าของ 2026-10-12) — ไม่ใช่ผู้รับเงินเสมอไป: ซื้อประกันผ่านโบรกเกอร์ ใบสำคัญจ่ายชื่อโบรกเกอร์
-        // แต่ผู้มีเงินได้ = บริษัทประกัน ⇒ 50 ทวิ ชื่อ/เลขผู้เสียภาษี/สาขา/ที่อยู่/แบบ ภ.ง.ด. มาจาก "ผู้ถูกหัก" ตัวเดียว (WhtCertIssuePlan.PayeeOf)
-        var payeeId = WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
-        var payee = payeeId == doc.ContactId
-            ? doc.Contact
-            : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-                .FirstOrDefaultAsync(c => c.Id == payeeId && c.CompanyId == companyId)
-              ?? throw new BusinessRuleException(
-                  $"ไม่พบผู้ถูกหักภาษีที่เลือกไว้บนเอกสาร {doc.DocumentNumber} — เลือกผู้ถูกหักใหม่ แล้วออกใบอีกครั้ง",
-                  WhtCertIssuePlan.PayeeRuleCode);
-        var payeeForeign = Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, payee?.CountryCode);
-        // 50 ทวิ/แบบ ภ.ง.ด. ต้องมีเลขประจำตัวผู้เสียภาษีของผู้ถูกหัก (ผู้รับต่างประเทศ ภ.ง.ด.54 ยกเว้น) — ออกใบที่ไม่มีเลข = ยื่นไม่ผ่าน
-        // ⇒ ล้มดังพร้อมทางไปต่อ (ทางอัตโนมัติ: ป้ายบนเอกสาร + ลิสต์รอออกใบ · ทางกดเอง: ข้อความ 400)
-        if (WhtCertIssuePlan.PayeeTaxIdProblem(payee?.Name, payee?.TaxId, payeeForeign) is string payeeProblem)
-            throw new BusinessRuleException(payeeProblem, WhtCertIssuePlan.PayeeRuleCode);
 
         // ประเภทแบบ ภ.ง.ด.53 นิติบุคคล / ภ.ง.ด.3 บุคคลธรรมดา — ตรวจจากหลายสัญญาณ
         // (เลขภาษี 13 หลัก + ContactType + ชื่อ) ไม่ใช่แค่ ContactType ที่ default เป็น
@@ -923,6 +925,16 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         => ThaiAddressFormatter.Format(address, buildingNumber, buildingName, moo, streetName,
             subDistrict, district, province, postalCode);
 
+    /// <summary>บรรทัด 50 ทวิ → คำตอบ — แถวบนแบบ (<c>CertificateRow</c>) จากตัวตัดสินเดียวกับ renderer ทั้งสอง (ฝ่ายค้าน M6 · หน้าเว็บแสดงอย่างเดียว)</summary>
+    private static WithholdingTaxCertLineResponse MapLineToResponse(WithholdingTaxCertLine l)
+    {
+        return new WithholdingTaxCertLineResponse(
+            l.Id, l.IncomeTypeCode, GetIncomeTypeName(l.IncomeTypeCode),
+            l.IncomeDescription, l.PaymentDate, l.IncomeAmount, l.TaxRate, l.TaxAmount, l.Condition,
+            Accounting.Helpers.WhtCertFormText.LineSpec(l),
+            CertificateRow: Accounting.Helpers.ThaiWhtRateTable.CertificateRow(l.IncomeTypeCode));
+    }
+
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(
         w.Id, w.CertificateNumber, w.CompanyId,
         company.Name, company.TaxId, company.BranchCode,
@@ -935,10 +947,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         w.TaxFormType, GetTaxFormName(w.TaxFormType),
         w.TaxYear, w.TaxMonth, w.CertificateType, w.Status,
         w.TotalIncomeAmount, w.TotalTaxAmount,
-        w.Lines.OrderBy(l => l.LineOrder).Select(l => new WithholdingTaxCertLineResponse(
-            l.Id, l.IncomeTypeCode, GetIncomeTypeName(l.IncomeTypeCode),
-            l.IncomeDescription, l.PaymentDate, l.IncomeAmount, l.TaxRate, l.TaxAmount, l.Condition,
-            Accounting.Helpers.WhtCertFormText.LineSpec(l))).ToList(),
+        w.Lines.OrderBy(l => l.LineOrder).Select(MapLineToResponse).ToList(),
         w.IssuedDate, w.CreatedAt,
         w.DocumentId, w.Document?.DocumentNumber,
         w.SourcePayrollRunId,

@@ -92,6 +92,13 @@ public static class WhtCertIssuePlan
     public static Guid? NormalizeOverride(Guid contactId, Guid? requested)
         => requested is Guid p && p != Guid.Empty && p != contactId ? p : null;
 
+    /// <summary>ติ๊ก "สร้าง 50 ทวิ อัตโนมัติ" ของใบที่รายการประจำสร้าง — ค่าใหม่ <c>whtCertAutoIssue</c> ชนะ · ไม่มีค่าใหม่ = ติ๊กเดิมของหน้า
+    /// รายการประจำ <c>autoGenerateWht</c> (ความหมายเดียวกัน "สร้างหนังสือรับรองอัตโนมัติเมื่อมี WHT") · ไม่มีทั้งคู่ = null (ค่าตั้งต้นของเอกสาร = เปิด)
+    /// <para>ฝ่ายค้าน M5 (2026-10-12): เดิมติ๊ก autoGenerateWht ไปเรียกตัวออกใบตรงหลังสร้างใบ (ข้ามตัวตัดสินนี้ · ผู้ถูกหักผิดคน · รหัส "40(8)" ฝัง)
+    /// และติ๊กปิดไม่มีผลกับการออกตอนอนุมัติ — ตอนนี้ติ๊กนี้คือติ๊กบนเอกสาร แล้วออกใบทางเดียวกับใบคีย์มือ</para></summary>
+    public static bool? RecurringTemplateAutoIssue(bool? whtCertAutoIssue, bool? legacyAutoGenerateWht)
+        => whtCertAutoIssue ?? legacyAutoGenerateWht;
+
     /// <summary>ตัดสินว่าจะออกใบไหม</summary>
     public static WhtCertIssueDecision Decide(WhtCertIssueFacts f)
     {

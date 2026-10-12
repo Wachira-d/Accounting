@@ -428,12 +428,11 @@
         // หน้าเว็บมีหน้าที่แสดงอย่างเดียว — drift เป็นศูนย์โดยโครงสร้าง (กลไก
         // เดียวกับ `complianceIssues` / `MENU_SECTIONS` / `documentTitle`)
         // รหัสที่เซิร์ฟเวอร์ไม่รู้จักตกแถว 6 เสมอ ⇒ "โผล่ผิดแถว" ไม่ใช่ "หายเงียบ"
-        const rowKeyOf = (line) => {
-          const t = this._incomeTypes.find(x => String(x.code) === String(line.incomeTypeCode));
-          return 'r' + (t?.certificateRow || '6');
-        };
+        // ฝ่ายค้าน M6: แถวมาจาก `line.certificateRow` ที่เซิร์ฟเวอร์ตัดสินต่อบรรทัด (ThaiWhtRateTable.CertificateRow ตัวเดียวกับ PDF) —
+        // เดิมหาในตารางประเภทด้วยรหัสตรงตัว ⇒ รหัสแบบมาตรา "40(8)" (ข้อมูลเก่า) ตกแถว 6 บนหน้าเว็บ ขณะที่ PDF ลงแถว 5
+        const rowKeyOf = (line) => 'r' + (line.certificateRow || '6');
         const buckets = { r1: [], r2: [], r3: [], r4a: [], r4b: [], r5: [], r6: [] };
-        allLines.forEach(l => buckets[rowKeyOf(l)].push(l));
+        allLines.forEach(l => (buckets[rowKeyOf(l)] || buckets.r6).push(l));
         const row = (key) => {
           const ls = buckets[key];
           return { has: ls.length > 0, inc: ls.reduce((s,l)=>s+l.incomeAmount,0), tax: ls.reduce((s,l)=>s+l.taxAmount,0), date: ls.length > 0 ? ls[0].paymentDate : null };
@@ -1034,14 +1033,24 @@
         const checked = [...document.querySelectorAll('.pending-check:checked')].map(cb => cb.value);
         if (!checked.length) { Layout.toast('กรุณาเลือกเอกสาร', 'error'); return; }
         const api = Layout.api(); if (!api) return;
-        let ok = 0, fail = 0;
+        // ฝ่ายค้าน L4: เดิม `catch { fail++ }` กลืนเหตุผล (ไม่มีเลขผู้เสียภาษี · ไม่พบผู้ถูกหัก ฯลฯ) ⇒ ผู้ใช้เห็นแค่ "ล้มเหลว N" ไม่รู้จะแก้อะไร ·
+        // ตอนนี้บอกเหตุผลรายใบ (ข้อความจากเซิร์ฟเวอร์ · Layout.toast escape ให้แล้ว)
+        let ok = 0;
+        const failures = [];
         for (const docId of checked) {
           try {
             await api.autoGenerateWht({ documentId: docId, autoIssue: false });
             ok++;
-          } catch { fail++; }
+          } catch (e) {
+            const docNo = (this.pendingDocs.find(d => String(d.documentId) === String(docId)) || {}).documentNumber || docId;
+            failures.push(`${docNo}: ${(e && e.message) || 'ไม่ทราบสาเหตุ'}`);
+          }
         }
-        Layout.toast(`สร้างสำเร็จ ${ok} รายการ` + (fail > 0 ? `, ล้มเหลว ${fail} รายการ` : ''));
+        if (failures.length) {
+          Layout.toast(`สร้างสำเร็จ ${ok} รายการ, ล้มเหลว ${failures.length} รายการ — ` + failures.join(' · '), 'error', 20000);
+        } else {
+          Layout.toast(`สร้างสำเร็จ ${ok} รายการ`);
+        }
         await this.openPending();
         await this.load();
       },

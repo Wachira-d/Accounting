@@ -1043,6 +1043,13 @@ public partial class DocumentService : IDocumentService
         // Validate the line items (shared with UpdateDocumentAsync so an edit
         // can't bypass the same accounting guards a create enforces).
         await ValidateDocumentLinesAsync(companyId, request.Lines);
+        // ฝ่ายค้าน L3: เอกสารฝั่งผู้จ่ายเลือก gov1 (ม.69 ทวิ) / 1 (เงินเดือน) ไม่ได้ — ตัวตัดสินเดียว DocumentLineIncomeType.PayerSideProblem
+        foreach (var createPtLine in request.Lines!)
+        {
+            if (Accounting.Helpers.DocumentLineIncomeType.PayerSideProblem(
+                    Accounting.Helpers.WhtCertIssuePlan.AppliesTo(request.DocumentType), createPtLine.IncomeTypeCode, null) is string createPayerSideErr)
+                throw new BusinessRuleException($"บรรทัด \"{createPtLine.Description}\": {createPayerSideErr}", "WHT-INCOME-TYPE");
+        }
 
         // Fiscal-period lock at CREATE — don't even let a document be drafted
         // into a closed/locked period (previously only blocked at approval,
@@ -2902,6 +2909,15 @@ public partial class DocumentService : IDocumentService
             // รอบ 203: ประเภทเงินได้ของบรรทัดเดิม (ลำดับ + คำอธิบาย) ก่อนลบ — ผู้เรียกที่ไม่ส่งช่องนี้ต้องไม่ล้างค่าเดิม
             var prevIncomeTypes = doc.Lines.Where(x => !x.IsDeleted).OrderBy(x => x.LineOrder)
                 .Select(x => ((string?)x.Description, x.IncomeTypeCode)).ToList();
+            // ฝ่ายค้าน L3: ปฏิเสธเฉพาะการ "เลือกใหม่" เป็น gov1/1 บนเอกสารฝั่งผู้จ่าย — ค่าเดิมของบรรทัดเดียวกันยังบันทึกซ้ำได้ · ตรวจก่อนลบบรรทัด
+            for (var ptIdx = 0; ptIdx < request.Lines.Count; ptIdx++)
+            {
+                var ptLine = request.Lines[ptIdx];
+                if (Accounting.Helpers.DocumentLineIncomeType.PayerSideProblem(
+                        Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType), ptLine.IncomeTypeCode,
+                        Accounting.Helpers.DocumentLineIncomeType.KeptFromPrevious(prevIncomeTypes, ptIdx, ptLine.Description)) is string payerSideErr)
+                    throw new BusinessRuleException($"บรรทัด \"{ptLine.Description}\": {payerSideErr}", "WHT-INCOME-TYPE");
+            }
 
             _db.DocumentLines.RemoveRange(doc.Lines);
 
@@ -11737,7 +11753,9 @@ public partial class DocumentService : IDocumentService
             // จะสร้างเศษของตัวเองและทำให้ผลรวมของใบย่อยหลายใบไม่ตรงต้นทางอยู่ดี)
             VatAmountOverride: carryStoredVat && s.Qty >= s.Line.Quantity && s.Line.VatRate > 0
                 ? s.Line.VatAmount
-                : null)).ToList();
+                : null,
+            // ฝ่ายค้าน M4: ประเภทเงินได้ ม.40 รายบรรทัดต้องตามไปกับอัตรา WHT (เดิมหาย ⇒ 50 ทวิ ของใบปลายทางตก "8" เสมอ)
+            IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(s.Line.IncomeTypeCode))).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
             targetType, documentDate ?? DateTime.UtcNow, dueDate ?? source.DueDate, source.ContactId,
@@ -20083,20 +20101,21 @@ public partial class DocumentService : IDocumentService
         // ด่านข้างบนรู้แค่ว่า 1% "เป็นอัตราตามกฎหมาย" ⇒ ค่าบริการที่หัก 1% (หักขาด · ม.54) หรือเบี้ยประกันที่หัก 3% เงียบสนิท ·
         // เตือนเท่านั้น (ไม่บล็อก) · ผู้รับต่างประเทศ ⇒ ข้าม (ตัวตัดสิน ม.70 ด้านล่างดูแล) · ไม่รู้ชนิดผู้รับ ⇒ ยอมรับอัตราของชนิดใดชนิดหนึ่ง
         // ฝั่งจ่ายเท่านั้น (ผู้รับ = คู่ค้าบนเอกสาร) — ฝั่งขาย "ผู้รับ" คือบริษัทเราเอง ชนิดผู้รับจากคู่ค้าจะผิดตัว
+        // ฝ่ายค้าน M2 (2026-10-12): ชนิดผู้รับ = "ผู้ถูกหักภาษี" (WhtPayeeContactId — เช่น บริษัทประกัน) ไม่ใช่ผู้รับเงินบน PV (นายหน้า) ⇒
+        // โหลดผู้ถูกหักก่อนด่านในประเทศ (เดิมคำนวณหลังด่านนี้ ⇒ ด่านอ่าน doc.Contact) · ใช้ตัวเดียวกันทั้งด่านในประเทศ/ต่างประเทศ/ผู้ถูกหัก
+        // M3: ข้อความขึ้นต้น [WHT-RATE] (WhtLineRateWarning) ⇒ ทางเข้าที่ไม่มีคนเห็นไม่ถูกหยุด (นโยบายเจ้าของ: เตือน ไม่บล็อก)
+        var whtPayeeForWarn = doc.WithholdingTaxAmount > 0m && Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType)
+            ? await _db.LoadWhtPayeeAsync(companyId, doc)
+            : doc.Contact;
         if ((doc.DocumentType == DocumentType.PaymentVoucher
              || doc.DocumentType == DocumentType.Expense
              || doc.DocumentType == DocumentType.PurchaseInvoice)
-            && !Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, doc.Contact?.CountryCode))
+            && !Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, whtPayeeForWarn?.CountryCode))
         {
-            var domesticPayeeJuristic = Accounting.Helpers.WhtPayeeKind.Detect(doc.Contact?.TaxId,
-                doc.Contact?.ContactType ?? ContactType.Unknown, doc.Contact?.Name);
-            var domesticPayDate = doc.PaymentDate ?? doc.DocumentDate;
-            foreach (var line in doc.Lines.Where(l => l.WithholdingTaxRate > 0m && !string.IsNullOrWhiteSpace(l.IncomeTypeCode)))
-            {
-                if (Accounting.Helpers.ThaiWhtRateTable.CheckRateForType(line.IncomeTypeCode, line.WithholdingTaxRate,
-                        domesticPayeeJuristic, domesticPayDate) is string typeRateWarn)
-                    warnings.Add($"อัตรา WHT ของ '{line.Description}': {typeRateWarn}");
-            }
+            warnings.AddRange(Accounting.Helpers.WhtLineRateWarning.ForDomesticPayee(
+                doc.Lines.Select(l => ((string?)l.Description, l.IncomeTypeCode, l.WithholdingTaxRate)),
+                whtPayeeForWarn?.TaxId, whtPayeeForWarn?.ContactType ?? ContactType.Unknown, whtPayeeForWarn?.Name,
+                doc.PaymentDate ?? doc.DocumentDate));
         }
 
         // ── ด่านหัก ณ ที่จ่าย "ชุดเก่า" ถูกถอดแล้ว (ผลตรวจ D1-B1 รอบ 181) ──
@@ -20113,9 +20132,7 @@ public partial class DocumentService : IDocumentService
 
         // ── ผู้ถูกหักภาษี (คำขอเจ้าของ 2026-10-12) — ตรวจ "ผู้ถูกหัก" ไม่ใช่ผู้รับเงิน (ประกันผ่านโบรกเกอร์: ผู้รับเงิน = โบรกเกอร์ ·
         // ผู้มีเงินได้ = บริษัทประกัน) · ชื่อต่างจากผู้รับเงินเป็นเรื่องปกติ ⇒ ไม่เตือนเพราะชื่อต่าง · เตือนเฉพาะสิ่งที่ทำให้ 50 ทวิ ออกไม่ได้/ผิดคน
-        var whtPayeeForWarn = doc.WithholdingTaxAmount > 0m && Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType)
-            ? await _db.LoadWhtPayeeAsync(companyId, doc)
-            : doc.Contact;
+        // (whtPayeeForWarn โหลดไว้ก่อนด่านอัตราในประเทศข้างบน — ตัวเดียวกัน)
         if (doc.WithholdingTaxAmount > 0m && Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType))
         {
             if (doc.WhtPayeeContactId.HasValue && whtPayeeForWarn == null)

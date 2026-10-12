@@ -7959,6 +7959,10 @@
         const row = sel.closest('.line-card');
         const wht = row?.querySelector('[data-f="wht"]');
         if (!wht || wht.dataset.userTouched === '1') return;
+        // ฝ่ายค้าน L6: อัตราที่มาจากใบเดิม (เปิดแก้) / OCR / ใบต้นทาง ไม่ใช่ userTouched แต่ก็ห้ามทับ — เติมเฉพาะช่องว่าง/0
+        // หรือช่องที่ตัวเลือกประเภทนี้เติมเองไว้ก่อน (dataset.autoSrc = 'incomeType') · ไม่งั้นเลือกประเภทแล้วอัตรา 1% ที่ OCR อ่านจากกระดาษถูกแทนเงียบ ๆ
+        const curRate = parseFloat(wht.value) || 0;
+        if (curRate > 0 && wht.dataset.autoSrc !== 'incomeType') return;
         const t = (this._whtIncomeTypes || []).find(x => x.code === sel.value);
         if (!t) return;
         const ind = t.individualRate, jur = t.juristicRate;

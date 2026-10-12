@@ -142,7 +142,8 @@ public class DocumentCloneController : ControllerBase
             // และผลต่างปัดเศษที่ยกไปจะไม่ใช่ของบรรทัดชุดเดียวกัน
             DiscountAmount: l.DiscountAmount > 0 ? l.DiscountAmount : null,
             // รอบ 203: ประเภทเงินได้ ม.40 ตามไปกับอัตราหัก (เอกสารลูกต้องสืบทอด — null เป็น null)
-            IncomeTypeCode: l.IncomeTypeCode
+            // ฝ่ายค้าน M4: ผ่านตัวสืบทอดเดียวกับเส้นแปลง — ค่าเก่าที่ตารางชี้ขาดไม่ได้ = ไม่ระบุ (ไม่ทำให้คัดลอกล้ม)
+            IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(l.IncomeTypeCode)
         )).ToList();
 
         var docDate = options?.OverrideDate ?? DateTime.UtcNow.Date;

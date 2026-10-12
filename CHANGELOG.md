@@ -4623,3 +4623,14 @@ _Last verified against codebase: 2026-10-12 (50 ทวิ ข้อความ/
 QuestPDF แก้ drift: หมายเหตุข้อ 3 ขาด "นอกเหนือจาก 1. และ 2." · (2.2) ตัดท้าย · (2.3) "ก่อนรอบบัญชี" · ตรวจภาพก่อน/หลังด้วย Chromium: ต่างเฉพาะ 3 จุดข้างบน ·
 คงไว้โดยตั้งใจ (รอบ 72 `6f8e7115`): ฉบับที่ 3 · ป้ายลงชื่อ "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" (แบบทางการ "ผู้จ่ายเงิน" — รอคำตัดสินเจ้าของ) ·
 checker `required_call_site_check` +4 กติกา (negative: ใส่ `{certNum}` กลับในช่องลำดับที่แล้วฟ้อง) — commit dadf0e3f)_
+
+_2026-10-12 — ผลตรวจฝ่ายค้านงาน WHT/50 ทวิ (diff cbc0f705..56ff4998 · นโยบายเจ้าของ: เตือน ไม่บล็อก · ผู้ถูกหักต่างจากผู้รับเงินต้องถูกใช้ทุกที่):
+M1 พรีวิว GL `PdfGenerationService.WhtPayableAsync` ตัดสินผัง 2191x จาก `LoadWhtPayeeAsync` (ตรง JE จริง) ·
+M2 ด่านอัตราเทียบประเภทเงินได้ตอนอนุมัติใช้ชนิดผู้ถูกหัก (นายหน้าบุคคล/ประกันนิติบุคคล ไม่เตือนผิดใบถูก) ·
+M3 ป้าย `[WHT-RATE]` (`Helpers/WhtLineRateWarning`) + `ApprovalAcknowledgement.PassesWithoutPerson` — ใบประจำ/LINE/OCR อนุมัติอัตโนมัติ/API ไม่ถูกหยุดเพราะคำเตือนนี้ ·
+M4 `DocumentLineIncomeType.Inherit` — แปลง/คัดลอก/รายการประจำสืบทอดประเภทเงินได้รายบรรทัด ·
+M5 รายการประจำถอด `GenerateWhtCertFromTemplateAsync` (ออกใบตรงด้วย "40(8)" ข้ามตัวตัดสิน) — ติ๊ก `autoGenerateWht` = `WhtCertAutoIssue` ของใบ แล้วออกทางอนุมัติ/จ่าย ·
+M6 `WithholdingTaxCertLineResponse.CertificateRow` + wht.html จัดแถวจากค่านี้ ·
+L1 ตรวจผู้ถูกหักก่อนยกเลิกใบร่างระดับเอกสาร · L3 ฝั่งผู้จ่ายเลือก gov1/1 ใหม่ไม่ได้ (`PayerSideProblem`) · L4 สร้างใบที่เลือกบอกเหตุผลรายใบ ·
+L6 เลือกประเภทเงินได้ไม่ทับอัตราจากใบเดิม/OCR · เทสต์ `WhtAdversarialFixTests` · กติกาจุดเรียก `_WHTADV` 9 ข้อ (+แก้กติกาเดิมของ `CollectApprovalWarningsAsync`) —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_

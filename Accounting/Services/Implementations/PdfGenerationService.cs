@@ -699,12 +699,17 @@ public partial class PdfGenerationService : IPdfGenerationService
             // ⇒ นิติบุคคลที่ ContactType ยังเป็นค่า default จะเห็นพรีวิว **21916**
             // แต่ JE จริงลง **21917** · และที่นี่ไม่รู้จัก 21918 (ภ.ง.ด.54) เลย
             // (defect class "สอง renderer ห้าม drift" — กฎเหล็ก #4 A ข้อแรก)
+            // ⚠️ ตัดสินจาก "ผู้ถูกหักภาษี" (WhtPayeeContactId — เช่น บริษัทประกัน) ไม่ใช่
+            // ผู้รับเงินบน PV (นายหน้า) — JE จริงทุกเส้นใช้ `_db.LoadWhtPayeeAsync` ⇒
+            // เดิมพรีวิวอ่าน doc.Contact ⇒ นายหน้าบุคคล + ประกันนิติบุคคล พรีวิว 21916
+            // แต่ JE ลง 21917 (ผลตรวจฝ่ายค้าน M1)
+            var whtPayee = await _db.LoadWhtPayeeAsync(companyId, doc);
             var chain = Accounting.Helpers.WhtPayableAccount.CodeChain(
-                doc.IsForeignService, doc.Contact?.CountryCode, doc.Contact?.TaxId,
-                doc.Contact?.ContactType ?? ContactType.Individual, doc.Contact?.Name);
+                doc.IsForeignService, whtPayee?.CountryCode, whtPayee?.TaxId,
+                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name);
             var label = Accounting.Helpers.WhtPayableAccount.PreferredLabel(
-                doc.IsForeignService, doc.Contact?.CountryCode, doc.Contact?.TaxId,
-                doc.Contact?.ContactType ?? ContactType.Individual, doc.Contact?.Name);
+                doc.IsForeignService, whtPayee?.CountryCode, whtPayee?.TaxId,
+                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name);
             return await ByCodeChain(chain.ToArray(), label);
         }
         // ขาเงินออก/เข้า (ธนาคาร > ผังที่เลือก > เงินสด) — ใช้ร่วม PV settlement

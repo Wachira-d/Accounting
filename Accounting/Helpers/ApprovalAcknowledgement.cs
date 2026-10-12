@@ -55,9 +55,13 @@ public static class ApprovalAcknowledgement
     /// ที่พัก/จ่ายออนไลน์/API ห้ามล้มเพราะกติกานี้ · เว็บ/มือถือ (<see cref="ApprovalAckSource.None"/>) ยังหยุดให้รับทราบ
     /// คำขอเจ้าของ 2026-10-12: ชุดผู้ถูกหักภาษี <c>[WHT-PAYEE]</c> (<see cref="WhtCertIssuePlan.IsApprovalWarning"/>) ก็ผ่าน — 50 ทวิ ที่ออกไม่ได้
     /// ล้มดังอยู่แล้วที่ตัวเอกสาร (ป้าย + ลิสต์รอออกใบ) · ห้ามหยุดใบประจำ/API ที่เคยอนุมัติผ่าน
+    /// ฝ่ายค้าน M3 (2026-10-12): ชุดอัตรา WHT ไม่ตรงประเภทเงินได้ <c>[WHT-RATE]</c> (<see cref="WhtLineRateWarning.IsApprovalWarning"/>) ก็ผ่าน —
+    /// นโยบายเจ้าของ "เตือน ไม่บล็อก" · เดิมไม่มีป้าย ⇒ ใบประจำ/LINE/OCR อนุมัติอัตโนมัติ/API ถูกหยุดเพราะคำเตือนนี้ · เว็บ/มือถือยังแสดงให้กดรับทราบ
     private static bool PassesWithoutPerson(string warning)
-        => Section65TerApprovalWarnings.IsWarning(warning) || ReceiptFormRule.IsApprovalWarning(warning)
-           || WhtCertIssuePlan.IsApprovalWarning(warning);
+    {
+        return Section65TerApprovalWarnings.IsWarning(warning) || ReceiptFormRule.IsApprovalWarning(warning)
+            || WhtCertIssuePlan.IsApprovalWarning(warning) || WhtLineRateWarning.IsApprovalWarning(warning);
+    }
 
     /// <summary>คำเตือนที่ยังไม่มีใครรับทราบตามแหล่ง — ว่าง = อนุมัติต่อได้ · ไม่ว่าง = ต้องหยุด (throw คำเตือนชุดนี้)</summary>
     public static IReadOnlyList<string> Unacknowledged(ApprovalAckSource source, IReadOnlyList<string> warnings)

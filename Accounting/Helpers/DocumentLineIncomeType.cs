@@ -34,6 +34,38 @@ public static class DocumentLineIncomeType
             : new Verdict(t.Code, null);
     }
 
+    /// <summary>ประเภทที่ "เอกสารฝั่งผู้จ่าย" (ใบสำคัญจ่าย · ค่าใช้จ่าย · ใบแจ้งหนี้ซื้อ · ใบรับรองแทนใบเสร็จ) <b>เลือกใหม่ไม่ได้</b> —
+    /// <c>gov1</c> = เงินได้ที่หน่วยงานรัฐหักเรา (ม.69 ทวิ · ฝั่งทะเบียนภาษีถูกหัก) · <c>1</c> = เงินเดือน 40(1) อัตราก้าวหน้า (ภ.ง.ด.1 ผ่านระบบเงินเดือน)</summary>
+    public static readonly IReadOnlyList<string> NotForPayerSide = new[] { "gov1", "1" };
+
+    /// <summary>
+    /// ข้อความปฏิเสธเมื่อเอกสารฝั่งผู้จ่าย<b>เลือกใหม่</b>เป็นประเภทใน <see cref="NotForPayerSide"/> (null = ใช้ได้) — ฝ่ายค้าน L3 (2026-10-12)
+    /// <para>ปฏิเสธเฉพาะ "การเปลี่ยน": ค่าที่เก็บไว้แล้วบนบรรทัดเดียวกัน (<paramref name="kept"/>) ยังโหลด/บันทึกซ้ำได้ (ข้อมูลเก่าไม่ถูกขังจนแก้ใบไม่ได้) ·
+    /// ฝั่งรับเงินไม่ตรวจ (ใบแจ้งหนี้ให้หน่วยงานรัฐ = gov1 ถูกต้อง)</para>
+    /// </summary>
+    /// <param name="payerSide">เอกสารเป็นฝั่งผู้จ่ายไหม (<see cref="WhtCertIssuePlan.AppliesTo"/>)</param>
+    /// <param name="requested">ค่าที่ส่งมา (null = ไม่ส่ง · "" = ล้าง)</param>
+    /// <param name="kept">ค่าเดิมของบรรทัดเดียวกัน (สร้าง = null)</param>
+    public static string? PayerSideProblem(bool payerSide, string? requested, string? kept)
+    {
+        if (!payerSide) return null;
+        var code = Decide(requested, kept).Code;
+        if (code is null || !NotForPayerSide.Contains(code)) return null;
+        if (string.Equals(code, Inherit(kept), StringComparison.Ordinal)) return null;
+        return code == "gov1"
+            ? "ประเภท \"เงินได้ที่ส่วนราชการ/องค์การของรัฐจ่าย (ม.69 ทวิ)\" ใช้กับเงินที่หน่วยงานรัฐหักเรา (บันทึกที่ทะเบียนภาษีถูกหัก ณ ที่จ่าย) — "
+              + "เอกสารจ่ายของบริษัทเลือกประเภทนี้ไม่ได้ · เลือกประเภทเงินได้ของสิ่งที่จ่ายจริง (เช่น ค่าบริการ 40(8))"
+            : "ประเภท \"เงินเดือน ค่าจ้าง 40(1)\" หักตามอัตราก้าวหน้าและยื่น ภ.ง.ด.1 ผ่านเมนูเงินเดือน — "
+              + "เอกสารจ่ายเลือกประเภทนี้ไม่ได้ (50 ทวิ/ภ.ง.ด.3 จะผิดแบบ) · จ่ายเงินเดือนผ่านเมนูเงินเดือน หรือเลือกประเภทที่ตรงกับสิ่งที่จ่าย";
+    }
+
+    /// <summary>ค่าที่เอกสารลูก/ใบที่ generate <b>สืบทอด</b> จากบรรทัดต้นทาง (แปลงเอกสาร · คัดลอก · รายการประจำ) — กฎเหล็ก #4 A "เอกสารลูกต้องสืบทอด"
+    /// (ฝ่ายค้าน M4 · 2026-10-12: เดิมการแปลงไม่ส่งช่องนี้ ⇒ PO→PV/PI ได้ใบไม่มีประเภท ⇒ 50 ทวิ ตก "8" เสมอ)
+    /// · null → null (ห้ามแปลงเป็นค่าตั้งต้น) · ค่าที่ตารางกลางชี้ขาดได้ → รหัสมาตรฐาน · ค่าเก่าที่ชี้ขาดไม่ได้ → null
+    /// (ข้อมูลก่อนมีด่าน — ห้ามทำให้การแปลงทั้งใบล้มด้วยค่าที่ผู้ใช้ไม่ได้พิมพ์ในคำขอนี้)</summary>
+    public static string? Inherit(string? stored)
+        => string.IsNullOrWhiteSpace(stored) ? null : ThaiWhtRateTable.Resolve(stored)?.Code;
+
     /// <summary>ค่าเดิมของ "บรรทัดเดียวกัน" ตอนแก้ไข — ลำดับเดียวกัน + คำอธิบายเดิม (ตัดช่องว่าง) ·
     /// ไม่ตรง = null (บรรทัดถูกสลับ/แก้คำอธิบาย ⇒ ไม่เดาว่าเป็นบรรทัดเดิม)</summary>
     public static string? KeptFromPrevious(IReadOnlyList<(string? Description, string? Code)> previous, int index, string? description)

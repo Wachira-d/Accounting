@@ -15,7 +15,6 @@ public class RecurringTransactionService : IRecurringTransactionService
     private readonly AccountingDbContext _db;
     private readonly IDocumentService _documentService;
     private readonly IAccountingService _accountingService;
-    private readonly IWithholdingTaxCertService _whtService;
     private readonly ILogger<RecurringTransactionService> _logger;
     private readonly IErrorLogService _errorLogService;
     private readonly IEmailScheduleService? _emailSchedule;
@@ -25,7 +24,6 @@ public class RecurringTransactionService : IRecurringTransactionService
         AccountingDbContext db,
         IDocumentService documentService,
         IAccountingService accountingService,
-        IWithholdingTaxCertService whtService,
         ILogger<RecurringTransactionService> logger,
         IErrorLogService errorLogService,
         IEmailScheduleService? emailSchedule = null,
@@ -34,7 +32,6 @@ public class RecurringTransactionService : IRecurringTransactionService
         _db = db;
         _documentService = documentService;
         _accountingService = accountingService;
-        _whtService = whtService;
         _logger = logger;
         _errorLogService = errorLogService;
         _emailSchedule = emailSchedule;
@@ -456,7 +453,11 @@ public class RecurringTransactionService : IRecurringTransactionService
                         // กลับเคลมได้
                         ProductCode: line.TryGetProperty("productCode", out var pc) && pc.ValueKind == JsonValueKind.String ? pc.GetString() : null,
                         IsVatClaimable: !line.TryGetProperty("isVatClaimable", out var ivc) || ivc.ValueKind != JsonValueKind.False,
-                        DiscountAmount: line.TryGetProperty("discountAmount", out var da) && da.ValueKind == JsonValueKind.Number ? da.GetDecimal() : null
+                        DiscountAmount: line.TryGetProperty("discountAmount", out var da) && da.ValueKind == JsonValueKind.Number ? da.GetDecimal() : null,
+                        // ฝ่ายค้าน M4 (2026-10-12): ประเภทเงินได้รายบรรทัดของเทมเพลต (ช่อง fIncomeType ของหน้ารายการประจำ) — เดิมไม่อ่าน ⇒
+                        // ใบที่ generate ไม่มีประเภท ⇒ 50 ทวิ ได้ "8" เสมอ · ค่าที่ตารางกลางชี้ขาดไม่ได้ (เทมเพลตเก่า) = ไม่ระบุ (ไม่ทำให้ทั้งรอบล้ม)
+                        IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(
+                            line.TryGetProperty("incomeTypeCode", out var itc) && itc.ValueKind == JsonValueKind.String ? itc.GetString() : null)
                     ));
                 }
             }
@@ -513,8 +514,13 @@ public class RecurringTransactionService : IRecurringTransactionService
                     && bdtEl.ValueKind == JsonValueKind.True ? true : (bool?)null,
                 // คำขอเจ้าของ 2026-10-12 — 50 ทวิ: ค่าเบี้ยประกันรายเดือนผ่านโบรกเกอร์ (ผู้ถูกหัก = บริษัทประกัน) · template เก่าไม่มี key
                 // = null = เปิดอัตโนมัติ/ผู้ถูกหัก = ผู้ติดต่อ (พฤติกรรมเดิมเป๊ะ) · CreateDocumentAsync ตรวจผู้ถูกหัก (บริษัทนี้ · ชนิดฝั่งผู้หัก) อีกชั้น
-                WhtCertAutoIssue: root.TryGetProperty("whtCertAutoIssue", out var waiEl)
-                    && waiEl.ValueKind is JsonValueKind.True or JsonValueKind.False ? waiEl.GetBoolean() : (bool?)null,
+                // ฝ่ายค้าน M5: ติ๊ก "สร้างหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติ" ของหน้ารายการประจำ (autoGenerateWht) = ติ๊กเดียวกับบนเอกสาร —
+                // ตัวตัดสินเดียว WhtCertIssuePlan.RecurringTemplateAutoIssue (เดิมติ๊กนี้ไปเรียก CreateAsync ตรงด้วยรหัส "40(8)" ข้ามตัวตัดสิน)
+                WhtCertAutoIssue: Accounting.Helpers.WhtCertIssuePlan.RecurringTemplateAutoIssue(
+                    root.TryGetProperty("whtCertAutoIssue", out var waiEl)
+                        && waiEl.ValueKind is JsonValueKind.True or JsonValueKind.False ? waiEl.GetBoolean() : (bool?)null,
+                    root.TryGetProperty("autoGenerateWht", out var awEl)
+                        && awEl.ValueKind is JsonValueKind.True or JsonValueKind.False ? awEl.GetBoolean() : (bool?)null),
                 WhtPayeeContactId: root.TryGetProperty("whtPayeeContactId", out var wpEl)
                     && wpEl.ValueKind == JsonValueKind.String && Guid.TryParse(wpEl.GetString(), out var wpId) ? wpId : null
             );
@@ -560,20 +566,11 @@ public class RecurringTransactionService : IRecurringTransactionService
                 }
             }
 
-            // Auto-generate WHT certificate if requested and there's WHT > 0
-            var autoWht = root.TryGetProperty("autoGenerateWht", out var awEl) && awEl.ValueKind == JsonValueKind.True;
-            if (autoWht && result != null && result.WithholdingTaxAmount > 0)
-            {
-                try
-                {
-                    await GenerateWhtCertFromTemplateAsync(recurring.CompanyId, result.Id, contactId, root, performedBy);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Auto-WHT cert generation failed for recurring document {DocId}", result.Id);
-                    await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoWht/{result.Id}");
-                }
-            }
+            // ── 50 ทวิ ของใบที่ generate (ฝ่ายค้าน M5 · 2026-10-12) ──
+            // ไม่ออกใบเองที่นี่อีกแล้ว: เดิมเรียก _whtService.CreateAsync ตรง (รหัส "40(8)" ฝัง · ผู้ถูกหัก = ผู้ติดต่อเสมอ · ไม่ดูติ๊กบนใบ ·
+            // ออกให้ทั้งใบร่าง/ใบเครดิตที่ยังไม่จ่าย) ⇒ ข้าม WhtCertIssuePlan ทั้งตัว · ตอนนี้ 50 ทวิ ออกทางเดียวกับใบคีย์มือ:
+            // อนุมัติอัตโนมัติข้างบน (ApproveDocumentAsync → TryAutoIssueForDocumentAsync · Approve) หรืออนุมัติ/บันทึกจ่ายทีหลัง (Payment)
+            // — เคารพติ๊ก WhtCertAutoIssue · ผู้ถูกหัก WhtPayeeContactId · ประเภทเงินได้รายบรรทัด · ล้ม = ป้ายบนเอกสาร + ลิสต์รอออกใบ
 
             _logger.LogInformation("Created document {DocNumber} from recurring {RecurringId}", result?.DocumentNumber, recurring.Id);
 
@@ -593,67 +590,6 @@ public class RecurringTransactionService : IRecurringTransactionService
             _logger.LogError(ex, "Failed to create document from recurring template {RecurringId}", recurring.Id);
             throw;
         }
-    }
-
-    private async Task GenerateWhtCertFromTemplateAsync(Guid companyId, Guid documentId, Guid payeeContactId, JsonElement root, string performedBy)
-    {
-        // Re-load the document with lines so we get accurate per-line WHT amounts
-        var doc = await _db.Documents
-            .Include(d => d.Lines)
-            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId);
-        if (doc == null) return;
-
-        var whtLines = doc.Lines.Where(l => l.WithholdingTaxAmount > 0).ToList();
-        if (whtLines.Count == 0) return;
-
-        // Income type code: prefer line-level template field, fallback to first non-empty
-        string defaultCode = "40(8)";
-        if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var l in linesEl.EnumerateArray())
-            {
-                if (l.TryGetProperty("incomeTypeCode", out var codeEl) &&
-                    codeEl.ValueKind == JsonValueKind.String &&
-                    !string.IsNullOrWhiteSpace(codeEl.GetString()))
-                {
-                    defaultCode = codeEl.GetString()!;
-                    break;
-                }
-            }
-        }
-
-        var now = doc.DocumentDate;
-        var certLines = whtLines.Select((l, i) => new Models.DTOs.Tax.WithholdingTaxCertLineRequest(
-            IncomeTypeCode: !string.IsNullOrWhiteSpace(l.IncomeTypeCode) ? l.IncomeTypeCode! : defaultCode,
-            IncomeDescription: l.Description,
-            PaymentDate: now,
-            IncomeAmount: l.Amount,
-            TaxRate: l.WithholdingTaxRate,
-            TaxAmount: l.WithholdingTaxAmount,
-            Condition: "หักภาษี ณ ที่จ่าย"
-        )).ToList();
-
-        var certRequest = new Models.DTOs.Tax.CreateWithholdingTaxCertRequest(
-            PayeeContactId: payeeContactId,
-            TaxFormType: null,                          // service auto-detects from contact
-            TaxYear: now.Year + 543,                    // Buddhist year
-            TaxMonth: now.Month,
-            CertificateType: Models.DTOs.Tax.WithholdingTaxCertType.Withhold,
-            Lines: certLines
-        );
-
-        var cert = await _whtService.CreateAsync(companyId, certRequest, performedBy);
-
-        // Link cert <-> document for traceability
-        var entity = await _db.WithholdingTaxCerts.FirstOrDefaultAsync(w => w.Id == cert.Id);
-        if (entity != null)
-        {
-            entity.DocumentId = documentId;
-            await _db.SaveChangesAsync();
-        }
-
-        _logger.LogInformation("Auto-generated WHT certificate {CertNumber} for document {DocNumber}",
-            cert.CertificateNumber, doc.DocumentNumber);
     }
 
     private async Task CreateJournalFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions)

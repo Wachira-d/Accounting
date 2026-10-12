@@ -3344,6 +3344,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   | โอนก้อนเดียวปิดหลายใบ | `DocumentService.CreateMultiDocPaymentAsync` (หลัง commit · ทีละใบ) | `Payment` |
   | ซิงค์ integration (`expense.created` ยังไม่จ่าย = ร่าง · PV = ออกจริง) | `IntegrationService.TryAutoGenerateWhtAsync` | `IntegrationSync` (`issueAsIssued: paid`) |
   | "สร้างใบทั้งเดือน" หน้า 50 ทวิ | `WithholdingTaxCertService.BulkGenerateAsync` | `Bulk` |
+  | รายการประจำ (ฝ่ายค้าน M5 2026-10-12) | **ไม่มีจุดเรียกของตัวเอง** — ใบที่ generate ออก 50 ทวิ ผ่านอนุมัติอัตโนมัติ (`ApproveDocumentAsync` · `Unattended`) หรืออนุมัติ/จ่ายทีหลัง · ติ๊ก "สร้างหนังสือรับรองอัตโนมัติ" ของหน้ารายการประจำ (`autoGenerateWht`) = `WhtCertAutoIssue` ของใบ (`WhtCertIssuePlan.RecurringTemplateAutoIssue` · ค่าใหม่ `whtCertAutoIssue` ชนะ) · เดิมเรียก `CreateAsync` ตรงด้วยรหัส "40(8)" ฝัง/ผู้ติดต่อเป็นผู้ถูกหักเสมอ/ออกให้ใบร่างและใบเครดิตที่ยังไม่จ่าย — ถอดแล้ว | (Approve/Payment) |
   | ผู้ใช้กด "สร้างใบ" ทีละใบ (ลิสต์รอออกใบ) | `POST withholding-tax-certs/auto-generate` → `AutoGenerateFromDocumentAsync` ตรง (ตั้งใจออก · ล้ม = 400) | (Manual) |
   - **ติ๊ก "สร้างหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) อัตโนมัติเมื่ออนุมัติ/จ่าย"** (`Document.WhtCertAutoIssue` · ค่าตั้งต้น **true** = พฤติกรรมเดิม ·
     ใบเก่าทุกใบ = true ผ่าน `ADD COLUMN … DEFAULT true`) — false ⇒ ทางอัตโนมัติทุกทาง (รวม "สร้างใบทั้งเดือน") **ไม่ออก** · ใบรออยู่ในลิสต์
@@ -3362,6 +3363,17 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     `DocumentResponse.WhtCertAutoFailedReason` (หน้าเอกสาร toast หลังอนุมัติ) + `PaymentResponse.WhtCertNotice` (toast หลังบันทึกจ่าย) + ลิสต์รอออกใบ
     (`AutoIssueFailedReason`) · ออกใบสำเร็จทางใดก็ตาม ⇒ ล้างป้าย · การอนุมัติ/การจ่าย**ยังสำเร็จ** — ในธุรกรรมของผู้เรียกครอบด้วย savepoint
     (บันทึกงานค้างของผู้เรียกก่อนตั้ง savepoint ⇒ ย้อนเฉพาะการออกใบ) · "มีใบแล้ว" = `AlreadyIssued` ไม่ใช่ความล้มเหลว
+  - **ผลตรวจฝ่ายค้าน 2026-10-12** (`WhtAdversarialFixTests` · กติกา `_WHTADV` ใน `tools/required_call_site_check.py` · นโยบายเจ้าของ "เตือน ไม่บล็อก"
+    และผู้ถูกหักที่ต่างจากผู้รับเงินต้องถูกใช้ทุกที่): **M1** พรีวิว GL (`PdfGenerationService.BuildProjectedGlAsync` → `WhtPayableAsync`) ตัดสินผัง
+    21916/21917/21918 จาก `_db.LoadWhtPayeeAsync(companyId, doc)` ตัวเดียวกับ JE จริง (เดิมอ่าน `doc.Contact`) · **M2** ด่านอัตราเทียบประเภทเงินได้ตอนอนุมัติ
+    ใช้ชนิด**ผู้ถูกหัก** (`whtPayeeForWarn` โหลดก่อนด่านในประเทศ · ตัวเดียวกับด่าน ม.70/ผู้ถูกหัก) · **M3** ข้อความผ่าน `Helpers/WhtLineRateWarning` ขึ้นต้น
+    `[WHT-RATE]` ⇒ `ApprovalAcknowledgement.PassesWithoutPerson` ส่งผ่านทางเข้าไม่มีคน (ใบประจำ · LINE · OCR อนุมัติอัตโนมัติ · API v1) · เว็บ/มือถือยังให้กดรับทราบ ·
+    **M4** เอกสารลูกสืบทอดประเภทเงินได้รายบรรทัดผ่าน `DocumentLineIncomeType.Inherit` (แปลง `ConvertCoreAsync` · คัดลอก · รายการประจำอ่าน `incomeTypeCode`
+    ของบรรทัดเทมเพลต · ค่าเก่าที่ตารางชี้ขาดไม่ได้ = ไม่ระบุ ไม่ทำให้ทั้งใบล้ม · ใบแทน `SettlementPaidReissue.LineCarriedFields` มีอยู่แล้ว) · **M5** ดูแถวรายการประจำในตาราง ·
+    **M6** `WithholdingTaxCertLineResponse.CertificateRow` (`ThaiWhtRateTable.CertificateRow` ต่อบรรทัด) — wht.html จัดแถวจากค่านี้ (เดิมจับคู่รหัสตรงตัว ⇒ "40(8)" ตกแถว 6) ·
+    **L1** `AutoGenerateFromDocumentAsync` ตรวจผู้ถูกหัก/เลขผู้เสียภาษีก่อนยกเลิกใบร่างระดับเอกสาร · **L3** เอกสารฝั่งผู้จ่ายเลือก `gov1`/`1` **ใหม่**ไม่ได้
+    (`DocumentLineIncomeType.PayerSideProblem` · 400 WHT-INCOME-TYPE · ค่าที่เก็บไว้แล้วบนบรรทัดเดียวกันบันทึกซ้ำได้ · ฝั่งขายไม่ตรวจ) · **L4** "สร้างใบที่เลือก" บอกเหตุผลรายใบ ·
+    **L6** เลือกประเภทเงินได้ไม่ทับอัตราที่มาจากใบเดิม/OCR (เติมเฉพาะช่องว่าง/0 หรือที่ตัวเลือกเติมเอง `dataset.autoSrc='incomeType'`) · Last verified `commit <pending>`
   - กระดาษ 2 ฉบับ ("สำหรับยื่นแบบ" + "เก็บไว้") มาจาก renderer เดิม (ไม่เปลี่ยน)
 - **เกณฑ์เงินสด (ท.ป.4/2528) — ออกใบจริงเฉพาะตอน "จ่ายเงินแล้ว"**
   (`AutoGenerateFromDocumentAsync`):
@@ -4995,3 +5007,5 @@ _Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภ�
 _Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภทเงินได้รายบรรทัดของเอกสาร: `DocumentLineRequest/Response.IncomeTypeCode` + `Helpers/DocumentLineIncomeType` (แก้ไขไม่ส่ง = คงค่าเดิม · "" = ล้าง · ค่าแปลกถูกปฏิเสธ) · documents.html ช่อง "ประเภทเงินได้" ฝั่งจ่าย · โคลนสืบทอด · `DocumentLineIncomeTypeTests` · §5.4 — commit db9e4c80)_
 
 _Last verified against codebase: 2026-10-12 (รอบ 203 — ค่าเบี้ยประกันวินาศภัยเป็น "เหตุให้สงสัย" ใน `WhtServiceHints` + prompt `WhtCategoryPrompt` อ่านรหัส/อัตราจาก `ThaiWhtRateTable` (`CodeList`) · §5.4 — commit cf624327)_
+
+_Last verified against codebase: 2026-10-12 (ผลตรวจฝ่ายค้านงาน WHT/50 ทวิ cbc0f705..56ff4998 — §5.4: M1 พรีวิว GL ตามผู้ถูกหัก · M2/M3 ด่านอัตรา-ประเภทใช้ผู้ถูกหัก + ป้าย `[WHT-RATE]` (`Helpers/WhtLineRateWarning`) ผ่านทางเข้าไม่มีคน · M4 `DocumentLineIncomeType.Inherit` ในแปลง/คัดลอก/รายการประจำ · M5 รายการประจำออก 50 ทวิ ทางเดียวกับใบคีย์มือ (`WhtCertIssuePlan.RecurringTemplateAutoIssue`) · M6 `CertificateRow` ต่อบรรทัดจากเซิร์ฟเวอร์ · L1 ตรวจผู้ถูกหักก่อนยกเลิกใบร่าง · L3 `PayerSideProblem` · L4/L6 หน้าเว็บ · `WhtAdversarialFixTests` — commit <pending>)_
