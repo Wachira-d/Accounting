@@ -339,20 +339,18 @@ Respond ONLY as JSON:
 /// </summary>
 public static class WhtCategoryPrompt
 {
-    public const string SystemPrompt = @"You are a Thai tax expert. Given a vendor + line description + amount, propose the correct WHT (ภาษีหัก ณ ที่จ่าย) code + rate per Thai Revenue Department.
+    // รอบ 203: รายการรหัส/อัตราสร้างจากตารางกฎหมายตัวเดียว (Helpers/ThaiWhtRateTable) — เดิมพิมพ์ตารางไว้ใน prompt เอง
+    // และผิดกฎหมาย ("บุคคลธรรมดา 1% ตาม §50" · "40(2) ค่าวิชาชีพ" · "รับเหมาบุคคล 1%") ⇒ ครูถูกสอนให้ตอบอัตราผิด ·
+    // ไม่มีค่าเบี้ยประกันวินาศภัย/รางวัล ⇒ ตอบรหัสที่ระบบรู้จักไม่ได้ · ตัวตรวจคำตอบ (ThaiWhtRateTable.Find) ใช้ชุดเดียวกัน
+    public static readonly string SystemPrompt = @"You are a Thai tax expert. Given a vendor + line description + amount, propose the correct WHT (ภาษีหัก ณ ที่จ่าย) code + rate per Thai Revenue Department.
 
-Common Thai WHT codes (รหัสประเภทเงินได้):
-- 40(8) บริการทั่วไป (services)   : 3% (juristic) / 1% (individual via §50)
-- 40(5) ค่าเช่า (rent)            : 5%
-- 40(8) ค่าโฆษณา                  : 2%
-- 40(8) รับเหมาก่อสร้าง            : 3% (juristic) / 1% (individual)
-- 40(3) ค่าลิขสิทธิ์               : 3-15%
-- 40(2) ค่าวิชาชีพ                 : 3%
-- §50 บุคคลธรรมดา                  : 1%
-- Sales of goods                  : ไม่ต้องหัก WHT
+Allowed WHT income codes — answer with the CODE (first column). This list is the system's single legal table; any other code is rejected:
+" + CodeList() + @"
+- Sales of goods : ไม่ต้องหัก WHT (answer ""None"")
 
 Rules:
-1. If vendor is บุคคลธรรมดา (Personal) → likely 1% per §50bis.
+1. Use ONLY the rates shown for the payee kind (individual / juristic). ""-"" means the code does not apply to that payee kind.
+   Do not invent rates (e.g. there is no general 1% rate for individuals).
 2. If pure sale of goods → primary = ""None"" (no WHT).
 3. ฿1,000 threshold (ท.ป.4/2528 ข้อ 12) is **cumulative per payer-payee-contract**,
    NOT per line. Use `line.paid_to_vendor_this_year` + `line.amount`:
@@ -378,6 +376,17 @@ Respond ONLY as JSON:
   ""reasoning"": ""<1-2 sentences>"",
   ""suggested_actions"": [""<rate_percent: 1|2|3|5|10>""]
 }";
+
+    /// <summary>รายการรหัสจากตารางกลาง — บรรทัดละประเภท: รหัส | มาตรา ชื่อ | อัตราบุคคล / นิติบุคคล</summary>
+    private static string CodeList()
+    {
+        return string.Join("\n", Accounting.Helpers.ThaiWhtRateTable.All.Select(t =>
+            $"- {t.Code} | {t.TaxSection} {t.Name} | individual {RateText(t.IndividualRate)} / juristic {RateText(t.JuristicRate)}"
+            + (t.Note is null ? "" : $" ({t.Note})")));
+    }
+
+    /// <summary>อัตราเป็นข้อความ — null = ไม่ใช้กับผู้รับชนิดนี้ ("-")</summary>
+    private static string RateText(decimal? rate) => rate is decimal v ? $"{v:0.##}%" : "-";
 
     public sealed record VendorWhtHistory(
         string IncomeCode,

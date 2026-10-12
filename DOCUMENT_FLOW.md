@@ -3421,6 +3421,9 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   hydrate ตอนแก้ไข + จากข้อเสนอ OCR) · ใบโคลนสืบทอด (`DocumentCloneController` ทั้ง prefill และ POST). ข้อจำกัดที่ยังอยู่: expense.html /
   มือถือ / API v1 ยังไม่ส่งช่องนี้ (ไม่ล้างค่าเดิม แต่สร้างใหม่ได้ "ไม่ระบุ" ⇒ 50 ทวิ อัตโนมัติได้ `"8"` แถว 5 ไม่ระบุชื่อ) ·
   ไม่มีแบบ ภ.ง.ด.2 (`TaxType` ไม่มี) · ดู DECISIONS ข้อ 147
+  **ด่าน "มีเหตุให้สงสัย"** (`WhtServiceHints`) รู้จักค่าเบี้ยประกันวินาศภัย ("เบี้ยประกันภัย" · "ประกันวินาศภัย" · "ประกันอัคคีภัย" ·
+  "ประกันภัยรถยนต์" — ไม่ใช่ "ประกัน" เดี่ยว ๆ เพราะประกันชีวิต/ประกันสังคมไม่อยู่ในข่ายหัก) · prompt ถามประเภทเงินได้
+  (`WhtCategoryPrompt.SystemPrompt`) สร้างรายการรหัส/อัตราจากตารางกลาง (`CodeList`) — เดิมพิมพ์ตารางที่ผิดกฎหมายไว้เอง
 - **PDF**: `PdfGenerationService.WhtCert.cs` (QuestPDF) **และ**
   `PdfGenerationService.cs:2237` (HTML) — **ทั้งสองตัวจัดบรรทัดลงแถว 1–6 ของแบบ
   ผ่าน `ThaiWhtRateTable.CertificateRow` ตัวเดียว** ห้ามเขียน allow-list ของรหัสเอง
@@ -4979,4 +4982,6 @@ _Last verified against codebase: 2026-10-09 (รอบ 203 — รูปแบ�
 
 _Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภทเงินได้ครบทุกแบบ (คำถามเจ้าของ "หักค่าเบี้ยประกันภัย 1% ลงถูกช่องในใบหัก ณ ที่จ่ายไหม"): `ThaiWhtRateTable.All` เพิ่ม `8ins`/`8pr`/`8cp`/`8ent`/`gov1` + ข้อมูลต่อแถว `CertificateRowText`/`PndFileCode`/`LegalReference` · `Resolve` · `CertificateRowText(code)` (API ให้ renderer) · `CertificateRowSpecification` → `WithholdingTaxCertResponse.CertificateRowSpecs` · `CheckRateForType` ต่อสาย 3 ทางเข้า · `PndIncomeTypeCode.ForFile`/`GetIncomeTypeName`/`WhtCreditService.CheckRate`/ค่าตั้งต้นผู้ติดต่อ อ่านตารางเดียว · wht-credit.html เก็บรหัส · `WhtIncomeTypeCatalogTests` · §5.4 — commit 2e3c811d)_
 
-_Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภทเงินได้รายบรรทัดของเอกสาร: `DocumentLineRequest/Response.IncomeTypeCode` + `Helpers/DocumentLineIncomeType` (แก้ไขไม่ส่ง = คงค่าเดิม · "" = ล้าง · ค่าแปลกถูกปฏิเสธ) · documents.html ช่อง "ประเภทเงินได้" ฝั่งจ่าย · โคลนสืบทอด · `DocumentLineIncomeTypeTests` · §5.4 — commit <pending>)_
+_Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภทเงินได้รายบรรทัดของเอกสาร: `DocumentLineRequest/Response.IncomeTypeCode` + `Helpers/DocumentLineIncomeType` (แก้ไขไม่ส่ง = คงค่าเดิม · "" = ล้าง · ค่าแปลกถูกปฏิเสธ) · documents.html ช่อง "ประเภทเงินได้" ฝั่งจ่าย · โคลนสืบทอด · `DocumentLineIncomeTypeTests` · §5.4 — commit df2952d3)_
+
+_Last verified against codebase: 2026-10-12 (รอบ 203 — ค่าเบี้ยประกันวินาศภัยเป็น "เหตุให้สงสัย" ใน `WhtServiceHints` + prompt `WhtCategoryPrompt` อ่านรหัส/อัตราจาก `ThaiWhtRateTable` (`CodeList`) · §5.4 — commit <pending>)_

@@ -201,6 +201,20 @@ public class WhtIncomeTypeCatalogTests
         Assert.NotNull(ThaiWhtRateTable.CheckRateForType("8", 1.5m, true, Pay2026));
     }
 
+    // ─────────── ด่าน "มีเหตุให้สงสัย" รู้จักค่าเบี้ยประกันวินาศภัย ───────────
+
+    [Theory]
+    [InlineData("เบี้ยประกันภัยรถยนต์ ทะเบียน กข 1234")]
+    [InlineData("ค่าเบี้ยประกันอัคคีภัย สำนักงาน")]
+    public void ค่าเบี้ยประกันวินาศภัย_เป็นเหตุให้ถามเรื่องหัก(string desc)
+        => Assert.True(WhtServiceHints.Scan(new[] { new WhtLineFact(desc, null, null, 12_000m) }).Suspicious);
+
+    [Theory]
+    [InlineData("เบี้ยประกันชีวิตกรรมการ")]     // ประกันชีวิตไม่อยู่ในข่ายหัก
+    [InlineData("เงินสมทบประกันสังคม")]
+    public void ประกันชีวิตและประกันสังคม_ไม่เป็นเหตุ(string desc)
+        => Assert.False(WhtServiceHints.Scan(new[] { new WhtLineFact(desc, null, null, 12_000m) }).Suspicious);
+
     // ─────────── ทะเบียนภาษีถูกหัก: ตัวตรวจอัตราอ่านตารางกลาง ───────────
 
     [Theory]
