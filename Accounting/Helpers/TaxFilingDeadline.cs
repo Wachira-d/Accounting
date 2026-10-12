@@ -16,7 +16,8 @@ namespace Accounting.Helpers;
 /// <list type="bullet">
 /// <item>ภ.พ.30 — ป.รัษฎากร §83 วรรคสอง: ภายในวันที่ 15 ของเดือนถัดไป</item>
 /// <item>ภ.พ.36 — §83/6: ภายใน 7 วันนับแต่วันสิ้นเดือนที่จ่าย</item>
-/// <item>ภ.ง.ด.1/3/53 — §52 · §59 + ท.ป.4/2528: ภายใน 7 วันนับแต่วันสิ้นเดือน</item>
+/// <item>ภ.ง.ด.1/2/3/53 — §52 · §59 + ท.ป.4/2528: ภายใน 7 วันนับแต่วันสิ้นเดือน (ภ.ง.ด.2 = ม.59 เหมือน ภ.ง.ด.3 · รอบ 204 ข้อ 148 ·
+/// e-Filing ภายในวันที่ 15 ตามมาตรการขยายเวลาทางอินเทอร์เน็ตที่ครอบ ภ.ง.ด.1/2/3/53)</item>
 /// <item>ภ.ง.ด.54 — §70: ภายใน 7 วันนับแต่วันสิ้นเดือนที่จ่าย</item>
 /// <item>สปส.1-10 — พ.ร.บ.ประกันสังคม 2533 §47: ภายในวันที่ 15 ของเดือนถัดไป</item>
 /// <item>เลื่อนวันหยุด — <b>ป.พ.พ. §193/8</b>: วันสุดท้ายตรงวันหยุด ให้นับวันทำการถัดไป</item>
@@ -94,6 +95,7 @@ public static class TaxFilingDeadline
         TaxType.VAT => "VatPp30",
         TaxType.VatPp36 => "VatPp36",
         TaxType.WithholdingTax1 => "WhtPnd1",
+        TaxType.WithholdingTax2 => "WhtPnd2",   // รอบ 204 ข้อ 148 — กติกาวันเดียวกับ ภ.ง.ด.3 (ค่า default 7 + e-Filing +8)
         TaxType.WithholdingTax3 => "WhtPnd3",
         TaxType.WithholdingTax53 => "WhtPnd53",
         TaxType.WithholdingTax54 => "WhtPnd54",

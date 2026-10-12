@@ -206,6 +206,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(SettlementSchemaStatements());
         list.AddRange(Round201DvStatements());   // รอบ 201 ทีม DV (บล็อกท้ายไฟล์)
         list.AddRange(Round202LodgingWebStatements());   // รอบ 202 ทีม LW (บล็อกท้ายไฟล์)
+        list.AddRange(Round204Pnd2Statements());   // รอบ 204 ภ.ง.ด.2 (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7455,6 +7456,19 @@ public static class DatabaseMigrationHelper
         {
             Accounting.Helpers.LodgingSiteSeedMigration.RoomBlocksSql(),
             Accounting.Helpers.LodgingSiteSeedMigration.AutoSeedServiceCleanupSql(),
+        };
+    }
+
+    // ═══ รอบ 204 — แบบ ภ.ง.ด.2 (คำตัดสินเจ้าของ DECISIONS ข้อ 148) ═══
+
+    /// <summary>ผัง 21915 "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 2" ให้บริษัทเดิมที่มีกลุ่ม 219 แต่ไม่มีแถวนี้ (บริษัทใหม่ได้จากผังมาตรฐานอยู่แล้ว) ·
+    /// ตัวสร้าง SQL เดียว <see cref="Accounting.Helpers.WhtPayableAccount.MigrationSeedSql"/> · <c>ON CONFLICT DO NOTHING</c> ⇒ รันทุกบูตได้ ·
+    /// ไม่ย้ายยอดเดิม (ใบดอกเบี้ย/ปันผลที่เคยลง 21916 ⇒ หน้าตรวจข้อมูลรายการให้ผู้ทำบัญชีตัดสินรายใบ — ห้ามย้าย GL ที่ยื่นแล้วเงียบ ๆ)</summary>
+    internal static IReadOnlyList<string> Round204Pnd2Statements()
+    {
+        return new[]
+        {
+            Accounting.Helpers.WhtPayableAccount.MigrationSeedSql(),
         };
     }
 }

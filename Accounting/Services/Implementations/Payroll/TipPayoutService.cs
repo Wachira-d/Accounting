@@ -18,7 +18,7 @@ namespace Accounting.Services.Implementations.Payroll;
 ///    - **§50 ทวิ check**: ถ้า cumulative payout ที่เกิน 1,000 บาท/รอบจ่าย
 ///      จากผู้จ่ายเดียวกัน → หัก WHT 3% (ม.40(2) ค่าบริการ)
 ///    - Dr 2160 ทิป (clear liability) / Cr เงินสด/ธนาคาร (พนักงานรับ)
-///      / Cr 21915 WHT payable (ถ้ามี)
+///      / Cr 21916 WHT payable ภ.ง.ด.3 (ถ้ามี — รอบ 204: เดิม 21915 = ผัง ภ.ง.ด.2 ผิดแบบกับ 50 ทวิ ของทิป)
 ///    - ออก หนังสือรับรอง 50 ทวิ ทุกคน (ม.50(7))
 /// 5. Reset 2160 balance ของรอบนั้น
 ///
@@ -94,9 +94,11 @@ public class TipPayoutService : ITipPayoutService
         var cash = await _db.ChartOfAccounts.AsNoTracking()
             .FirstOrDefaultAsync(a => a.CompanyId == companyId
                 && a.AccountCode.StartsWith("1011") && a.IsActive, ct);
+        // รอบ 204: ผังค้างจ่ายตามแบบที่ 50 ทวิ ของทิปลง (ภ.ง.ด.3 = 21916) — ตัวตัดสินเดียว TipShareAllocation.PayableAccountCode
+        var whtPayableCode = Accounting.Helpers.TipShareAllocation.PayableAccountCode;
         var whtPayable = await _db.ChartOfAccounts.AsNoTracking()
             .FirstOrDefaultAsync(a => a.CompanyId == companyId
-                && a.AccountCode == "21915" && a.IsActive, ct);
+                && a.AccountCode == whtPayableCode && a.IsActive, ct);
         if (tipLiab == null || cash == null)
             throw new InvalidOperationException(
                 "ไม่พบบัญชีทิปค้างจ่าย (ตั้งได้ที่ ตั้งค่า → POS → บัญชีทิปพนักงาน; ค่าแนะนำ 21814/21819) หรือบัญชีเงินสด 1011 — สร้าง/ตั้งค่าก่อน");
@@ -122,7 +124,7 @@ public class TipPayoutService : ITipPayoutService
         var builder = Journal.JournalEntryBuilder
             .For(_db, companyId, DateTime.UtcNow.Date)
             .Description($"จ่ายทิปพนักงานงวด {periodStart:yyyy-MM-dd} ถึง {periodEnd:yyyy-MM-dd}")
-            .Reference($"TIP-PAYOUT-{periodEnd:yyyyMM}")
+            .Reference($"{Accounting.Helpers.TipShareAllocation.JournalReferencePrefix}{periodEnd:yyyyMM}")
             .CreatedBy(actor);
 
         // Dr 2160 (เคลียร์ liability)
@@ -155,10 +157,10 @@ public class TipPayoutService : ITipPayoutService
         }
 
         // Cr WHT payable ถ้ามี withholding
-        // รอบ 200 (D-05): ไม่มีผัง 21915 ⇒ เดิมข้ามขา Cr เงียบ ๆ แล้ว JE ไม่สมดุล (ล้มด้วยข้อความที่ไม่บอกทางแก้) — บอกตรง ๆ ก่อนลงบัญชี
+        // รอบ 200 (D-05): ไม่มีผังค้างจ่าย ⇒ เดิมข้ามขา Cr เงียบ ๆ แล้ว JE ไม่สมดุล (ล้มด้วยข้อความที่ไม่บอกทางแก้) — บอกตรง ๆ ก่อนลงบัญชี
         if (totalWhtWithheld > 0 && whtPayable == null)
             throw new Accounting.Helpers.BusinessRuleException(
-                $"ทิปงวดนี้ต้องหักภาษี ณ ที่จ่าย {totalWhtWithheld:N2} บาท แต่ไม่พบผัง 21915 (ภาษีหัก ณ ที่จ่ายค้างจ่าย) — "
+                $"ทิปงวดนี้ต้องหักภาษี ณ ที่จ่าย {totalWhtWithheld:N2} บาท แต่ไม่พบผัง {whtPayableCode} (ภาษีหัก ณ ที่จ่ายค้างจ่าย ภ.ง.ด.3) — "
                 + "สร้าง/เปิดใช้ผังนี้ที่หน้าผังบัญชีก่อน แล้วกดจ่ายทิปอีกครั้ง");
         if (totalWhtWithheld > 0)
             builder.Credit(whtPayable!.Id, totalWhtWithheld, $"หัก ณ ที่จ่ายทิป §50 ทวิ");

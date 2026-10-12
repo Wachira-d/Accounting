@@ -103,7 +103,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // จุดเดียวคุมได้หมด. ภ.ง.ด.3↔53 derive จาก juristic status ของ payee จริง
         var payee = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.PayeeContactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
-        var (resolvedForm, corrected, reason) = ResolveWhtFormType(payee, request.TaxFormType);
+        // รอบ 204: ส่งประเภทเงินได้ของบรรทัดที่มีภาษีด้วย — ดอกเบี้ย/ปันผลจ่ายบุคคลธรรมดา ⇒ ภ.ง.ด.2 (ข้อ 148)
+        var (resolvedForm, corrected, reason) = ResolveWhtFormType(payee, request.TaxFormType,
+            withheldIncomeTypeCodes: CertRequestIncomeCodes(request));
         if (corrected)
             _logger.LogWarning(
                 "WHT cert: แก้ประเภทแบบจาก {From} → {To} ({Reason}) payee={Payee} taxId={TaxId} — ค่าที่ส่งมาไม่ตรงกับสถานะผู้ถูกหัก",
@@ -257,7 +259,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // ตรวจ/แก้ประเภทแบบตาม payee เหมือน CreateAsync — แก้มือก็ต้องถูกกฎ
         // (ภ.ง.ด.3↔53 ขึ้นกับผู้ถูกหัก ไม่ใช่สิ่งที่ user เลือกได้ตามใจ)
         var updPayee = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.PayeeContactId && c.CompanyId == companyId);
-        var (updForm, updCorrected, updReason) = ResolveWhtFormType(updPayee, request.TaxFormType ?? cert.TaxFormType);
+        var (updForm, updCorrected, updReason) = ResolveWhtFormType(updPayee, request.TaxFormType ?? cert.TaxFormType,
+            withheldIncomeTypeCodes: CertRequestIncomeCodes(request));
         if (updCorrected)
             _logger.LogWarning("WHT cert update: แก้ประเภทแบบ → {To} ({Reason}) payee={Payee}", updForm, updReason, updPayee?.Name);
         cert.TaxFormType = updForm;
@@ -539,7 +542,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // ประเภทแบบ ภ.ง.ด.53 นิติบุคคล / ภ.ง.ด.3 บุคคลธรรมดา — ตรวจจากหลายสัญญาณ
         // (เลขภาษี 13 หลัก + ContactType + ชื่อ) ไม่ใช่แค่ ContactType ที่ default เป็น
         // Individual (เคสบริษัทที่ contact สร้างจาก integration แล้วไม่ตั้ง type) · ตัดสินจาก "ผู้ถูกหัก" ไม่ใช่ผู้รับเงิน
-        var (taxFormType, _, _) = ResolveWhtFormType(payee, null, doc.IsForeignService);
+        // รอบ 204 (ข้อ 148): ประเภทเงินได้ของบรรทัดที่หัก — ชุดเดียวกับ JE (WhtIncomeCodes) ⇒ ดอกเบี้ย/ปันผลบุคคลธรรมดา = ภ.ง.ด.2 ตรงผัง 21915
+        var (taxFormType, _, _) = ResolveWhtFormType(payee, null, doc.IsForeignService,
+            await _db.LoadWithheldAsync(companyId, doc));
 
         // เลขเดือน = เดือน "เงินได้ที่จ่าย" (tax month) ไม่ใช่เดือนที่ generate (UtcNow)
         // → ตรงกับ TaxMonth ที่ลงในใบ + สอดคล้องกับ CreateAsync (WHT-YYYYMM-####)
@@ -842,6 +847,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     /// วิเคราะห์แบบ ภ.ง.ด. อัตโนมัติจาก ContactType ของผู้ติดต่อ
     /// นิติบุคคล → ภ.ง.ด.53, บุคคลธรรมดา → ภ.ง.ด.3
     /// </summary>
+    /// <summary>รหัสเงินได้ของบรรทัดคำขอที่มีภาษี (ใบคีย์มือ/แก้ใบ) — เกณฑ์เดียวกับ <see cref="Accounting.Helpers.WhtIncomeCodes"/> (ภาษี &gt; 0)</summary>
+    private static IReadOnlyList<string?> CertRequestIncomeCodes(CreateWithholdingTaxCertRequest request)
+        => (request.Lines ?? new List<WithholdingTaxCertLineRequest>())
+            .Where(l => l.TaxAmount > 0m).Select(l => (string?)l.IncomeTypeCode).ToList();
+
     private static TaxType DetermineTaxFormType(Contact contact)
     {
         return contact.ContactType switch
@@ -879,11 +889,16 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     /// หาใบนั้นไม่เจอ (cert คนละ TaxFormType) และ mine จากเอกสารก็ไม่ได้เพราะถูก
     /// <c>certCoveredDocIds</c> ตัดออก ⇒ <b>ใบหายจาก ภ.ง.ด.54 ทั้งใบ ไปโผล่ 53 แทน</b>
     /// ขณะที่ GL ตั้งหนี้ไว้ที่ 21918 ⇒ ยื่นผิดแบบ + 21918 ไม่มีวันถูกล้าง</param>
+    /// <param name="withheldIncomeTypeCodes">รอบ 204 (คำตัดสินข้อ 148): รหัสเงินได้ของบรรทัดที่หัก — ผู้รับบุคคลธรรมดาที่ทุกบรรทัดเป็น ม.40(4)
+    /// ⇒ ภ.ง.ด.2 (ตัวตัดสินเดียว <see cref="Accounting.Helpers.WhtPayeeKind.IndividualForm"/>) · null = ไม่รู้ประเภท (พฤติกรรมเดิม)</param>
     internal static (TaxType formType, bool corrected, string reason) ResolveWhtFormType(
-        Contact? contact, TaxType? requested, bool documentIsForeignService = false)
+        Contact? contact, TaxType? requested, bool documentIsForeignService = false,
+        IEnumerable<string?>? withheldIncomeTypeCodes = null)
     {
-        // แบบที่ไม่ใช่แกน 3/53 → ปล่อยตามที่ขอ (income-type-driven)
+        // แบบที่ไม่ใช่แกน 2/3/53 → ปล่อยตามที่ขอ (ภ.ง.ด.1 เงินเดือน · ภ.ง.ด.54 ที่ผู้เรียกระบุเอง)
+        // รอบ 204: ภ.ง.ด.2 เข้าแกนแล้ว — เดิมปล่อยผ่านเฉย ๆ ⇒ ขอ ภ.ง.ด.2 ให้บริษัทก็ได้ (ผิดแบบ: นิติบุคคลอยู่ ภ.ง.ด.53)
         if (requested.HasValue
+            && requested.Value != TaxType.WithholdingTax2
             && requested.Value != TaxType.WithholdingTax3
             && requested.Value != TaxType.WithholdingTax53)
             return (requested.Value, false, "");
@@ -904,6 +919,16 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         else if (juristic == false) { correct = TaxType.WithholdingTax3; reason = "payee เป็นบุคคลธรรมดา"; }
         else if (contact != null) { correct = DetermineTaxFormType(contact); reason = "จาก ContactType"; }
         else { correct = requested ?? TaxType.WithholdingTax3; reason = "ไม่พบ payee"; }
+
+        // ── แกนประเภทเงินได้ของผู้รับบุคคลธรรมดา (รอบ 204 ข้อ 148): ม.40(4) ทั้งใบ ⇒ ภ.ง.ด.2 (ม.50(2) · ม.59) ──
+        // ผู้ใช้ขอ ภ.ง.ด.2 เองกับบุคคลธรรมดา ⇒ เคารพ (แบบ ภ.ง.ด.2 ของกรมมีแถว ม.40(3) ด้วย — ตารางยังไม่ตัดสินเอง ข้อเสนอข้อ 149)
+        if (correct == TaxType.WithholdingTax3)
+        {
+            if (requested == TaxType.WithholdingTax2)
+                return (TaxType.WithholdingTax2, false, "ผู้ใช้เลือก ภ.ง.ด.2 · payee บุคคลธรรมดา");
+            if (Accounting.Helpers.WhtPayeeKind.IndividualForm(withheldIncomeTypeCodes) == TaxType.WithholdingTax2)
+            { correct = TaxType.WithholdingTax2; reason += " · เงินได้ ม.40(4) ทั้งใบ (ภ.ง.ด.2)"; }
+        }
 
         var corrected = requested.HasValue && requested.Value != correct;
         return (correct, corrected, reason);

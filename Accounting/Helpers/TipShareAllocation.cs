@@ -12,6 +12,15 @@ public static class TipShareAllocation
     /// <summary>ประเภทเงินได้ของทิปที่ระบบใช้วันนี้ (ม.40(2) ค่าบริการ · ภ.ง.ด.3) — ห้ามพิมพ์อัตราเองที่อื่น</summary>
     public const string IncomeTypeCode = "2";
 
+    /// <summary>คำนำหน้า <c>JournalEntry.Reference</c> ของ JE จ่ายทิป (<c>TIP-PAYOUT-yyyyMM</c>) — ผู้อ่าน: รายงาน ภ.ง.ด.2 (ตัด JE ทิปที่เคยลง 21915
+    /// ออกจากแถวรายการบัญชีไม่มีเอกสาร) + หน้าตรวจข้อมูล (รายการ JE ทิปเดิมที่ลงผัง 21915) · รอบ 204</summary>
+    public const string JournalReferencePrefix = "TIP-PAYOUT-";
+
+    /// <summary>ผังค้างจ่ายภาษีของทิป = ผังของ<b>แบบที่ 50 ทวิ ทิปลง</b> (ภ.ง.ด.3 → 21916) — ตัวตัดสินเดียว <see cref="WhtPayableAccount.CodeFor"/>
+    /// <para>รอบ 204: เดิม JE ทิปลง <b>21915</b> (ผัง ภ.ง.ด.2) ขณะที่ 50 ทวิ ของทิปเป็น ภ.ง.ด.3 ⇒ นำส่ง ภ.ง.ด.3 Dr 21916 ที่ไม่มียอด · 21915 ค้าง ·
+    /// และพอ ภ.ง.ด.2 มีผู้ใช้จริงแล้ว ยอดทิปจะไปปน ภ.ง.ด.2 — ใบเก่าที่ลง 21915 ไปแล้ว: หน้าตรวจข้อมูลรายการให้ผู้ทำบัญชีโอนรายใบ</para></summary>
+    public static string PayableAccountCode => WhtPayableAccount.CodeFor(Models.Enums.TaxType.WithholdingTax3)!;
+
     /// <summary>อัตรา WHT (%) ของทิปจ่ายบุคคล — อ่านจาก <see cref="ThaiWhtRateTable"/> ตัวเดียว</summary>
     public static decimal WhtRatePercent => ThaiWhtRateTable.RateFor(IncomeTypeCode, payeeIsJuristic: false) ?? 0m;
 

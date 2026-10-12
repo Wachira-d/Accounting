@@ -457,6 +457,61 @@ public static class ThaiWhtRateTable
     }
 
     /// <summary>
+    /// เงินได้ที่เก็บไว้ (รหัส/มาตรา ทุกรูปที่ <see cref="Resolve"/> รับ) เป็น<b>เงินได้ ม.40(4)</b> (ดอกเบี้ย/เงินปันผล …) ไหม —
+    /// ผู้อ่านเดียวคือตัวเลือกแบบ ภ.ง.ด.2 (<c>WhtPayeeKind.ResolveForm</c>)
+    ///
+    /// <para>ม.50(2) + ม.59: ผู้จ่ายเงินได้ ม.40(4) ให้<b>บุคคลธรรมดา</b>หักแล้วยื่น <b>ภ.ง.ด.2</b> · ผู้รับนิติบุคคลไทยอยู่ ภ.ง.ด.53
+    /// (ท.ป.4/2528) · ผู้รับต่างประเทศอยู่ ภ.ง.ด.54 (ม.70) — คำตัดสินเจ้าของ DECISIONS ข้อ 148</para>
+    ///
+    /// <para>รับ <c>"40(4)"</c> เปล่า ๆ (ไม่ระบุ (ก)/(ข)) ด้วย — ชี้ขาดไม่ได้ว่าดอกเบี้ยหรือปันผล (คนละอัตรา) แต่<b>แบบ</b>ชี้ขาดได้แล้วว่าเป็น ม.40(4) ·
+    /// null/ว่าง/ไม่รู้จัก ⇒ false (ไม่รู้ ≠ ดอกเบี้ย — ใบเดิมไม่ถูกย้ายแบบเพราะเดา · หลักการ #3)</para>
+    /// <para>⚠️ ม.40(3) ค่าสิทธิจ่ายบุคคลธรรมดา: แบบ ภ.ง.ด.2 ของกรมสรรพากรมีแถว ม.40(3) ด้วย (ม.50(2) อัตราก้าวหน้า) แต่คำตัดสินข้อ 148
+    /// ครอบเฉพาะ ม.40(4) ⇒ ตารางยังให้ ม.40(3) อยู่ ภ.ง.ด.3 อัตรา 3% ตามเดิม (ข้อเสนอข้อ 149 รอเจ้าของ/นักบัญชี) — ห้ามขยายที่นี่เงียบ ๆ</para>
+    /// </summary>
+    public static bool IsSection40_4(string? stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored)) return false;
+        var t = Resolve(stored);
+        var section = (t?.TaxSection ?? stored).Replace(" ", "");
+        return section.StartsWith("40(4)", StringComparison.Ordinal);
+    }
+
+    /// <summary>รหัสเงินได้ ม.40(4) จาก<b>อัตราที่หักจริง</b> — ใช้เฉพาะแถวที่ไม่มีเอกสารบอกประเภท (JV ลงผัง 21915 ของรายงาน ภ.ง.ด.2) ·
+    /// อัตราบุคคลธรรมดาตามตารางนี้: ดอกเบี้ย <c>4a</c> 15% · เงินปันผล <c>4b</c> 10% (คลาดได้ ±0.05 จากการปัดเศษ) · อัตราอื่น ⇒ <c>"40(4)"</c>
+    /// (บอกแบบได้ แต่ไม่เดาวงเล็บ — หลักการ #3)</summary>
+    public static string Section40_4CodeFromRate(decimal ratePercent)
+    {
+        foreach (var t in All.Where(x => x.TaxSection.StartsWith("40(4)", StringComparison.Ordinal)))
+            if (t.IndividualRate is decimal r && Math.Abs(r - ratePercent) <= 0.05m)
+                return t.Code;
+        return "40(4)";
+    }
+
+    /// <summary>ส่วนผสมของประเภทเงินได้ในบรรทัดที่<b>หักภาษีจริง</b>ของเอกสาร/หนังสือรับรองหนึ่งใบ (ผล <see cref="ClassifySection40_4"/>)</summary>
+    public enum Section40_4Mix
+    {
+        /// <summary>ไม่มีบรรทัดที่หัก (หรือ WHT ระดับหัวเอกสารอย่างเดียว) — ไม่รู้ประเภท ⇒ แบบเดิม (ภ.ง.ด.3/53)</summary>
+        Unknown = 0,
+        /// <summary>ทุกบรรทัดที่หักเป็น ม.40(4)</summary>
+        AllSection40_4 = 1,
+        /// <summary>ไม่มีบรรทัด ม.40(4) เลย</summary>
+        NoSection40_4 = 2,
+        /// <summary>ปน ม.40(4) กับเงินได้อื่น (บรรทัดที่ไม่ระบุประเภทนับเป็น "อื่น") — คนละแบบยื่น ⇒ ต้องแยกใบ</summary>
+        Mixed = 3,
+    }
+
+    /// <summary>จำแนกรหัสเงินได้ของบรรทัดที่หักภาษี — ตัวตัดสินเดียวของ "ใบนี้เป็น ภ.ง.ด.2 ทั้งใบไหม"</summary>
+    /// <param name="withheldIncomeTypeCodes">รหัสของบรรทัดที่ <c>WithholdingTaxAmount &gt; 0</c> เท่านั้น (null ในลิสต์ = บรรทัดหักแต่ไม่ระบุประเภท)</param>
+    public static Section40_4Mix ClassifySection40_4(IEnumerable<string?>? withheldIncomeTypeCodes)
+    {
+        var codes = withheldIncomeTypeCodes?.ToList();
+        if (codes == null || codes.Count == 0) return Section40_4Mix.Unknown;
+        var hits = codes.Count(IsSection40_4);
+        if (hits == 0) return Section40_4Mix.NoSection40_4;
+        return hits == codes.Count ? Section40_4Mix.AllSection40_4 : Section40_4Mix.Mixed;
+    }
+
+    /// <summary>
     /// ด่าน ฿1,000 (ท.ป.4/2528 ข้อ 12) — <b>สะสมต่อคู่สัญญา ไม่ใช่ต่อบรรทัด</b>
     ///
     /// <para>จ่ายงวดละ 800 สามงวดในสัญญาเดียวกัน ต้องหักตั้งแต่งวดที่ยอดสะสม

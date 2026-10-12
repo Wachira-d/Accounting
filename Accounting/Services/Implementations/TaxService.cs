@@ -88,7 +88,9 @@ public partial class TaxService : ITaxService
             }
             else if (request.TaxType == TaxType.WithholdingTax3
                   || request.TaxType == TaxType.WithholdingTax53
-                  || request.TaxType == TaxType.WithholdingTax54)
+                  || request.TaxType == TaxType.WithholdingTax54
+                  // รอบ 204 (คำตัดสินข้อ 148): ภ.ง.ด.2 — ดอกเบี้ย/เงินปันผล ม.40(4) จ่ายบุคคลธรรมดา · generator เดียวกัน (แบ่งแบบด้วยตัวตัดสินเดียว)
+                  || request.TaxType == TaxType.WithholdingTax2)
             {
                 // PND.54 reuses the WHT report generator — the difference is
                 // in the form's per-line IncomeTypeCode and the e-Filing export
@@ -1710,7 +1712,7 @@ public partial class TaxService : ITaxService
         // ภ.ง.ด.53 = นิติบุคคลไทย, ภ.ง.ด.54 = ผู้รับต่างประเทศ (ม.70) —
         // เดิมไม่กรองเลย ทำให้ 3 กับ 53 ของงวดเดียวกันเป็นรายงานฝาแฝด
         // ยอดนำส่งรวมเป็น 2 เท่าของที่หักจริง
-        bool PayeeInScope(Contact? c, bool docIsForeignService = false)
+        bool PayeeInScope(Contact? c, bool docIsForeignService, IReadOnlyList<string?> withheldIncomeCodes)
         {
             // สัญญาณ "ต่างประเทศ" มี 2 ทาง: CountryCode ของ contact (มักไม่ได้กรอก)
             // และธง IsForeignService บนเอกสาร (ผู้ใช้ติ๊กเองตอนสร้าง PV — เชื่อถือได้
@@ -1724,7 +1726,7 @@ public partial class TaxService : ITaxService
             if (report.TaxType == TaxType.WithholdingTax54) return foreign;
             if (foreign) return false;
 
-            if (report.TaxType is not (TaxType.WithholdingTax3 or TaxType.WithholdingTax53))
+            if (report.TaxType is not (TaxType.WithholdingTax2 or TaxType.WithholdingTax3 or TaxType.WithholdingTax53))
                 return true;
 
             // ใช้ resolver ตัวเดียวกับที่ออก 50 ทวิ (ResolveWhtFormType) — สำคัญ 2 อย่าง:
@@ -1732,13 +1734,14 @@ public partial class TaxService : ITaxService
             // (2) DetectJuristic คืน null ได้เมื่อ "ไม่มีสัญญาณชัด" — ถ้ากรองด้วยค่านั้น
             //     ตรง ๆ ผู้รับกลุ่มนี้จะหายจากทั้ง ภ.ง.ด.3 และ 53 (ไม่ถูกนำส่งเลย)
             //     ส่วน resolver มี fallback DetermineTaxFormType ให้ลงแบบใดแบบหนึ่งเสมอ
-            var (form, _, _) = WithholdingTaxCertService.ResolveWhtFormType(c, null, docIsForeignService);
+            // รอบ 204 (ข้อ 148): ส่งประเภทเงินได้ของบรรทัดที่หักด้วย — ดอกเบี้ย/ปันผลจ่ายบุคคลธรรมดา = ภ.ง.ด.2 (ตัวเดียวกับ 50 ทวิ/ผัง 21915)
+            var (form, _, _) = WithholdingTaxCertService.ResolveWhtFormType(c, null, docIsForeignService, withheldIncomeCodes);
             return report.TaxType == form;
         }
         // ผู้ถูกหัก ≠ ผู้รับเงินได้ (คำขอเจ้าของ 2026-10-12 · ประกันผ่านโบรกเกอร์) — แบ่งแบบ + ชื่อ/เลขในแถวเตือนจาก "ผู้ถูกหัก" ตัวเดียวกับ 50 ทวิ
         var whtPayees = await _db.LoadWhtPayeeContactsAsync(companyId, docs);
         Contact? PayeeOf(Document d) => Accounting.Helpers.ContactHydration.WhtPayeeOf(d, whtPayees);
-        docs = docs.Where(d => PayeeInScope(PayeeOf(d), d.IsForeignService)).ToList();
+        docs = docs.Where(d => PayeeInScope(PayeeOf(d), d.IsForeignService, Accounting.Helpers.WhtIncomeCodes.Withheld(d.Lines))).ToList();
 
         // ── กันนับซ้ำสาย "ตั้งหนี้ → ใบสำคัญจ่าย" — ทั้ง PI/Expense และ PV ที่
         // แปลง/ผูกกัน ถือ WithholdingTaxAmount บนเอกสารทั้งคู่ ⇒ เดิมเข้ารายงาน
@@ -1778,7 +1781,7 @@ public partial class TaxService : ITaxService
         // บาท ก.ค. แต่ ภงด.53 ก.ค. = 0.00). ใช้ทะเบียน cert เป็นแหล่งแรก → สองหน้า
         // reconcile กันเสมอ
         var lineOrder = 1;
-        if (report.TaxType is TaxType.WithholdingTax3 or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)
+        if (report.TaxType is TaxType.WithholdingTax2 or TaxType.WithholdingTax3 or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)
         {
             // ห้าม Include(PayeeContact) — required nav + query filter !IsDeleted
             // → INNER JOIN ตัด cert ของ payee ที่ถูกลบออกจากจอ (ไฟล์ยื่น
@@ -1992,8 +1995,13 @@ public partial class TaxService : ITaxService
             .ToListAsync();
 
         if (journalOnlyEntryIds.Any()
-            && report.TaxType is TaxType.WithholdingTax3 or TaxType.WithholdingTax53)
+            && report.TaxType is TaxType.WithholdingTax2 or TaxType.WithholdingTax3 or TaxType.WithholdingTax53)
         {
+            // รอบ 204 (ข้อ 148) — ภ.ง.ด.2: เงินปันผล/ดอกเบี้ยจ่ายผู้ถือหุ้น/กรรมการมักลงด้วย JV ล้วน (ไม่มีชนิดเอกสาร "จ่ายปันผล") ·
+            // แถวจาก JV ของ 21915 ขึ้นเป็น <b>แถวติ๊กออก</b> ไม่ใช่นับเข้ายอด: 50 ทวิ ภ.ง.ด.2 ของปันผลเป็นใบคีย์มือที่ไม่ผูกเอกสาร ⇒ นับทั้งใบรับรอง
+            // และ JV = นำส่งซ้ำ · ผู้ทำบัญชีเห็นแถวแล้วออก 50 ทวิ (หรือติ๊กกลับเข้ามาเมื่อจงใจ) · JE จ่ายทิปที่เคยลง 21915 (ผิดผัง — แก้แล้ว
+            // TipPayoutService) ไม่ใช่ ภ.ง.ด.2 ⇒ ตัดออก (หน้าตรวจข้อมูลรายการให้โอนผัง)
+            var isPnd2 = report.TaxType == TaxType.WithholdingTax2;
             // เฉพาะบัญชี WHT ค้างจ่าย "ของแบบนี้" เท่านั้น — เดิม match หลวม 3 ทาง:
             //   (1) prefix "2191" ⇒ กวาดบัญชี VAT 21911/21912/21913 เข้ามาด้วย —
             //       JV auto-reconcile มัดจำที่แตะ 21913 (ภาษีขายรอเรียกเก็บ 7%)
@@ -2004,9 +2012,12 @@ public partial class TaxService : ITaxService
             //       คนละฝั่งกับยอดที่เราต้องนำส่ง — ห้ามเข้าแบบนำส่งเด็ดขาด
             //   (3) ไม่แยกแบบ ⇒ แถวเดียวกันเข้าทั้ง ภงด.3 และ ภงด.53 = ซ้ำ 2 แบบ
             // ผังแยกแบบให้อยู่แล้ว: 21916 = ภ.ง.ด.3 / 21917 = ภ.ง.ด.53
-            var formCode = report.TaxType == TaxType.WithholdingTax3 ? "21916" : "21917";
-            var formTagSpace = report.TaxType == TaxType.WithholdingTax3 ? "ภ.ง.ด. 3" : "ภ.ง.ด. 53";
-            var formTagTight = report.TaxType == TaxType.WithholdingTax3 ? "ภ.ง.ด.3" : "ภ.ง.ด.53";
+            var formCode = Accounting.Helpers.WhtPayableAccount.CodeFor(report.TaxType)!;
+            var formTagSpace = report.TaxType switch
+            {
+                TaxType.WithholdingTax2 => "ภ.ง.ด. 2", TaxType.WithholdingTax3 => "ภ.ง.ด. 3", _ => "ภ.ง.ด. 53",
+            };
+            var formTagTight = formTagSpace.Replace("ภ.ง.ด. ", "ภ.ง.ด.");
             var whtLines = await _db.JournalEntryLines
                 .Include(l => l.Account)
                 .Include(l => l.JournalEntry)
@@ -2025,6 +2036,8 @@ public partial class TaxService : ITaxService
             foreach (var grp in byEntry)
             {
                 var je = grp.First().JournalEntry;
+                if (isPnd2 && (je.Reference ?? "").StartsWith(Accounting.Helpers.TipShareAllocation.JournalReferencePrefix, StringComparison.Ordinal))
+                    continue;   // JE จ่ายทิปเดิมที่ลง 21915 — ทิป = ม.40(2) ภ.ง.ด.3 (50 ทวิ ของทิปอยู่ ภ.ง.ด.3 แล้ว)
                 var whtAmount = grp.Sum(l => l.CreditAmount - l.DebitAmount);
                 if (whtAmount <= 0) continue;
 
@@ -2050,13 +2063,17 @@ public partial class TaxService : ITaxService
                     LineOrder = lineOrder++,
                     TransactionDate = je.EntryDate,
                     // เลขที่เอกสาร = เลขเอกสารจริงที่ JE อ้างถึง (แกะจาก ref/desc)
-                    Description = ExtractDocRefFromJe(je),
+                    Description = isPnd2
+                        ? $"{Accounting.Helpers.WhtUnissuedCertGate.JournalOnlyPnd2Marker} — {ExtractDocRefFromJe(je)} (ออก 50 ทวิ ภ.ง.ด.2 ให้ผู้รับ แล้วกด \"สร้างใหม่\")"
+                        : ExtractDocRefFromJe(je),
                     TaxPayerName = string.IsNullOrWhiteSpace(wPayerName) ? je.Description : wPayerName,
                     TaxPayerId = wPayerId,
                     IncomeAmount = baseAmount,
                     TaxRate = estimatedRate,
                     TaxAmount = whtAmount,
-                    IncomeTypeCode = "40(8)"
+                    // ภ.ง.ด.2: ประเภทจากอัตราตามกฎหมาย (15% ดอกเบี้ย · 10% ปันผล) — อัตราอื่น ⇒ "40(4)" (ไม่เดา (ก)/(ข))
+                    IncomeTypeCode = isPnd2 ? Accounting.Helpers.ThaiWhtRateTable.Section40_4CodeFromRate(estimatedRate) : "40(8)",
+                    IsExcluded = isPnd2,
                 });
             }
         }
@@ -2921,7 +2938,7 @@ public partial class TaxService : ITaxService
         // ประกาศยอดไม่ครบได้ แล้วไปชนด่านตอนจ่ายทีหลัง (ด่านไม่สมมาตร · D2-B1a).
         // แถวเตือนถูกสร้างโดย GenerateWhtReport ด้วย IsExcluded=true + marker ของ
         // Helpers/WhtUnissuedCertGate ตัวเดียวกัน
-        if (report.TaxType is TaxType.WithholdingTax1 or TaxType.WithholdingTax3
+        if (report.TaxType is TaxType.WithholdingTax1 or TaxType.WithholdingTax2 or TaxType.WithholdingTax3
             or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)
         {
             var unissued = Accounting.Helpers.WhtUnissuedCertGate.Evaluate(
@@ -3262,7 +3279,7 @@ public partial class TaxService : ITaxService
 
     internal static void RecalcWhtTotals(TaxReport report)
     {
-        if (report.TaxType is not (TaxType.WithholdingTax1 or TaxType.WithholdingTax3
+        if (report.TaxType is not (TaxType.WithholdingTax1 or TaxType.WithholdingTax2 or TaxType.WithholdingTax3
             or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)) return;
         var active = report.Lines
             .Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY")
@@ -3896,6 +3913,8 @@ public partial class TaxService : ITaxService
     public async Task<int> AutoRefreshReportsAsync(Guid companyId, int months = 2)
     {
         var now = DateTime.UtcNow;
+        // รอบ 204: ภ.ง.ด.2 ไม่อยู่ในชุดนี้โดยตั้งใจ — เป็นแบบนาน ๆ ครั้ง (จ่ายปันผล/ดอกเบี้ยบุคคล) ถ้าสร้างอัตโนมัติจะได้รายงานเปล่าทุกเดือนทุกบริษัท
+        // (เสียงรบกวน = ผู้ใช้เลิกดูหน้ารายงาน) · สร้างเองที่หน้ารายงานภาษี + หน้านำส่ง/ปฏิทินเตือนจากเอกสาร/50 ทวิ ที่มีอยู่จริงแล้ว
         var taxTypes = new[] { TaxType.VAT, TaxType.WithholdingTax3, TaxType.WithholdingTax53 };
         int refreshed = 0;
 

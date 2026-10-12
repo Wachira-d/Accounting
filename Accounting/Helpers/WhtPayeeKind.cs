@@ -3,7 +3,8 @@ using Accounting.Models.Enums;
 namespace Accounting.Helpers;
 
 /// <summary>
-/// ตัวตัดสิน "ผู้ถูกหักภาษีคนนี้อยู่แบบไหน — ภ.ง.ด.3 / 53 / 54" **ตัวเดียวของทั้งระบบ**
+/// ตัวตัดสิน "ผู้ถูกหักภาษีคนนี้อยู่แบบไหน — ภ.ง.ด.2 / 3 / 53 / 54" **ตัวเดียวของทั้งระบบ**
+/// (ภ.ง.ด.2 = แกนประเภทเงินได้ ม.40(4) ของผู้รับบุคคลธรรมดา · รอบ 204 คำตัดสินข้อ 148 — ดู <see cref="ResolveForm"/>)
 ///
 /// ทำไมต้องรวมมาไว้ที่นี่ (บั๊กจริง 2026-09-16): ยอด ภ.ง.ด.3/53 ของงวดเดียวกันถูก
 /// ผลิตจาก 5 ที่ และแต่ละที่แบ่งแบบคนละกติกา —
@@ -129,14 +130,47 @@ public static class WhtPayeeKind
     /// (ช่องนี้ถูกใช้เป็น <c>PayeeTitle</c> ของไฟล์ ภ.ง.ด.3 อยู่แล้ว)</summary>
     private static readonly string[] IndividualTitles = { "นาย", "นาง", "นางสาว", "น.ส.", "ด.ช.", "ด.ญ." };
 
-    /// <summary>แบบ ภ.ง.ด. ที่ผู้ถูกหักรายนี้ต้องอยู่ — ตัวตัดสินตัวเดียวที่ทุกหน้าใช้</summary>
+    /// <summary>แบบ ภ.ง.ด. ที่ผู้ถูกหักรายนี้ต้องอยู่ — ตัวตัดสินตัวเดียวที่ทุกหน้าใช้
+    ///
+    /// <para><b>รอบ 204 (คำตัดสินเจ้าของ DECISIONS ข้อ 148) — แกนที่สอง "ประเภทเงินได้"</b>: ผู้รับบุคคลธรรมดาในประเทศที่<b>ทุกบรรทัดที่หัก</b>
+    /// เป็นเงินได้ ม.40(4) (ดอกเบี้ย/เงินปันผล) ⇒ <b>ภ.ง.ด.2</b> (ม.50(2) · ม.59) · เดิมตกไป ภ.ง.ด.3 = ยื่นผิดแบบ ·
+    /// นิติบุคคลไทยยังอยู่ ภ.ง.ด.53 · ผู้รับต่างประเทศยังอยู่ ภ.ง.ด.54 (ม.70) แม้เป็นดอกเบี้ย/ปันผล</para>
+    /// <para>ใบที่<b>ปน</b> ม.40(4) กับเงินได้อื่น (<see cref="ThaiWhtRateTable.Section40_4Mix.Mixed"/>) หรือไม่รู้ประเภท ⇒ ภ.ง.ด.3 ตามเดิม
+    /// (หนึ่งเอกสาร = หนึ่งผังค้างจ่าย/หนึ่ง 50 ทวิ) แล้ว<b>ล้มดัง</b>ด้วย <see cref="Pnd2MixWarning"/> ตอนอนุมัติ + หน้าตรวจข้อมูล ⇒ ผู้ใช้แยกใบ —
+    /// ห้ามย้ายทั้งใบไป ภ.ง.ด.2 (ค่าบริการจะไปอยู่ผิดแบบแทน)</para></summary>
+    /// <param name="withheldIncomeTypeCodes">รหัสประเภทเงินได้ของบรรทัดที่หักภาษีจริง (<see cref="WhtIncomeCodes"/>) ·
+    /// null = ผู้เรียกไม่รู้ประเภทเงินได้ ⇒ ตัดสินจากผู้รับอย่างเดียว (พฤติกรรมเดิม)</param>
     public static TaxType ResolveForm(bool documentIsForeignService, string? countryCode,
-        string? taxId, ContactType contactType, string? name)
+        string? taxId, ContactType contactType, string? name,
+        IEnumerable<string?>? withheldIncomeTypeCodes = null)
     {
         if (IsForeignPayee(documentIsForeignService, countryCode))
             return TaxType.WithholdingTax54;
-        return IsJuristic(taxId, contactType, name)
-            ? TaxType.WithholdingTax53
+        if (IsJuristic(taxId, contactType, name))
+            return TaxType.WithholdingTax53;
+        return IndividualForm(withheldIncomeTypeCodes);
+    }
+
+    /// <summary>แบบของผู้รับ<b>บุคคลธรรมดาในประเทศ</b>ตามประเภทเงินได้ — ภ.ง.ด.2 เมื่อทุกบรรทัดที่หักเป็น ม.40(4) · ไม่งั้น ภ.ง.ด.3
+    /// (ใช้ร่วมกับ <c>WithholdingTaxCertService.ResolveWhtFormType</c> ที่ตัดสินชนิดผู้รับเองจาก <c>Contact</c> — ห้ามเขียนกติกา ม.40(4) ซ้ำที่นั่น)</summary>
+    public static TaxType IndividualForm(IEnumerable<string?>? withheldIncomeTypeCodes)
+        => ThaiWhtRateTable.ClassifySection40_4(withheldIncomeTypeCodes) == ThaiWhtRateTable.Section40_4Mix.AllSection40_4
+            ? TaxType.WithholdingTax2
             : TaxType.WithholdingTax3;
+
+    /// <summary>
+    /// คำเตือน "ใบเดียวปนดอกเบี้ย/ปันผล (ภ.ง.ด.2) กับเงินได้อื่น (ภ.ง.ด.3)" ของผู้รับบุคคลธรรมดาในประเทศ — null = ไม่ต้องเตือน
+    /// (ผู้รับนิติบุคคล/ต่างประเทศ: ทุกประเภทอยู่แบบเดียวกันอยู่แล้ว ⇒ เงียบ · ใบที่ไม่ปน ⇒ เงียบ)
+    /// <para>ผู้เรียก: คำเตือนก่อนอนุมัติ (<c>[WHT-PAYEE]</c> — เตือน ไม่บล็อก) + หน้าตรวจข้อมูล (<c>DataIntegrityReportService</c>)</para>
+    /// </summary>
+    public static string? Pnd2MixWarning(bool documentIsForeignService, string? countryCode,
+        string? taxId, ContactType contactType, string? name, IEnumerable<string?>? withheldIncomeTypeCodes)
+    {
+        if (IsForeignPayee(documentIsForeignService, countryCode)) return null;
+        if (IsJuristic(taxId, contactType, name)) return null;
+        if (ThaiWhtRateTable.ClassifySection40_4(withheldIncomeTypeCodes) != ThaiWhtRateTable.Section40_4Mix.Mixed) return null;
+        return "ใบนี้ปนดอกเบี้ย/เงินปันผล ม.40(4) (ยื่น ภ.ง.ด.2) กับเงินได้ประเภทอื่น (ยื่น ภ.ง.ด.3) ของผู้รับบุคคลธรรมดา — "
+            + "ระบบลงทั้งใบเป็น ภ.ง.ด.3 (ผัง 21916 · 50 ทวิ ใบเดียว) ⇒ ส่วนดอกเบี้ย/ปันผลจะยื่นผิดแบบ · "
+            + "แยกดอกเบี้ย/ปันผลเป็นเอกสารอีกใบ (ม.50(2) · ม.59)";
     }
 }

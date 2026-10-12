@@ -26,11 +26,16 @@ public static class SettlementChartSeed
 
     /// <summary>INSERT ผังทั้งสามให้บริษัทที่มีกลุ่มแม่ในผังมาตรฐานแล้ว (113 · 531 · 571) — ผูก <c>ParentAccountId</c> กับกลุ่มแม่ของบริษัทนั้น ·
     /// <c>ON CONFLICT DO NOTHING</c> (unique CompanyId+AccountCode) ⇒ รันทุกบูตได้ ไม่ทับรหัสที่ลูกค้าตั้งเอง · ไม่ย้ายยอดใด ๆ</summary>
-    public static string MigrationSeedSql()
+    public static string MigrationSeedSql() => SeedSqlFor(SeededCodes);
+
+    /// <summary>ตัวสร้าง SQL ตัวเดียวของ "ใส่แถวผังมาตรฐานให้บริษัทเดิม" — ผูกกลุ่มแม่ 3 หลักของบริษัทนั้น · <c>ON CONFLICT DO NOTHING</c> ·
+    /// รหัสต้องมีใน <see cref="ChartOfAccountTemplates.GetCommonAccounts"/> (ไม่มี ⇒ ล้มตอนสร้าง SQL — ห้ามแต่งชื่อผังเอง) ·
+    /// ผู้ใช้: ผังของ Settlement (รอบ 198) · ผัง 21915 ภ.ง.ด.2 (<see cref="WhtPayableAccount.MigrationSeedSql"/> · รอบ 204)</summary>
+    public static string SeedSqlFor(IEnumerable<string> codes)
     {
         var common = ChartOfAccountTemplates.GetCommonAccounts();
         var inv = System.Globalization.CultureInfo.InvariantCulture;
-        var rows = SeededCodes.Select(code =>
+        var rows = codes.Select(code =>
         {
             var t = common.Single(a => a.Code == code);
             return "('" + Q(t.Code) + "','" + Q(ParentGroupCode(t.Code)) + "','" + Q(t.NameTh) + "','" + Q(t.NameEn) + "',"

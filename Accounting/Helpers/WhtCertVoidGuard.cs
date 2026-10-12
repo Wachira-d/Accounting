@@ -73,7 +73,7 @@ public static class WhtCertVoidGuard
         var remitted = await db.StatutoryRemittances.AsNoTracking()
             .Where(r => r.CompanyId == companyId && !r.IsDeleted && years.Contains(r.PeriodYear)
                 && (r.RemittanceType == "WhtPnd1" || r.RemittanceType == "WhtPnd3" || r.RemittanceType == "WhtPnd53"
-                    || r.RemittanceType == "WhtPnd54"))
+                    || r.RemittanceType == "WhtPnd54" || r.RemittanceType == "WhtPnd2"))   // รอบ 204: ภ.ง.ด.2
             .Select(r => new { r.RemittanceType, r.PeriodYear, r.PeriodMonth, r.CreatedAt })
             .ToListAsync(ct);
         var remittedAt = RemittanceInclusion.LatestByPeriod(remitted
@@ -104,6 +104,7 @@ public static class WhtCertVoidGuard
     internal static TaxType? RemittanceForm(string? remittanceType) => remittanceType switch
     {
         "WhtPnd1" => TaxType.WithholdingTax1,
+        "WhtPnd2" => TaxType.WithholdingTax2,   // รอบ 204 ข้อ 148 — ภ.ง.ด.2 มี 50 ทวิ และบันทึกนำส่ง
         "WhtPnd3" => TaxType.WithholdingTax3,
         "WhtPnd53" => TaxType.WithholdingTax53,
         // ฝ่ายค้านรอบสาม PR2 (P2-5): ภ.ง.ด.54 (จ่ายต่างประเทศ ม.70) มี 50 ทวิ และมีบันทึกนำส่ง — เดิมหลุด (FormLabel รองรับอยู่แล้ว)
@@ -114,6 +115,7 @@ public static class WhtCertVoidGuard
     private static string FormLabel(TaxType t) => t switch
     {
         TaxType.WithholdingTax1 => "ภ.ง.ด.1",
+        TaxType.WithholdingTax2 => "ภ.ง.ด.2",
         TaxType.WithholdingTax3 => "ภ.ง.ด.3",
         TaxType.WithholdingTax53 => "ภ.ง.ด.53",
         TaxType.WithholdingTax54 => "ภ.ง.ด.54",

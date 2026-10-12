@@ -46,6 +46,11 @@ public static class WhtUnissuedCertGate
     /// <summary>คำนำหน้าแถว "มีหนังสือรับรองแต่ยังเป็นร่าง"</summary>
     public const string DraftCertMarker = "⚠️ หนังสือรับรองยังเป็นร่าง";
 
+    /// <summary>คำนำหน้าแถวรายงาน ภ.ง.ด.2 ที่มาจาก<b>รายการบัญชีไม่มีเอกสาร</b> (JV ลงผัง 21915 — ปันผล/ดอกเบี้ยที่ลงด้วย JV) · รอบ 204
+    /// <para>แถวติ๊กออก (ไม่นับยอด) แต่<b>ไม่บล็อกการยื่น</b> — คนละ marker กับสองตัวบนโดยตั้งใจ: JV ไม่มีลิงก์ถึง 50 ทวิ ⇒ ออกใบแล้วแถวก็ยังอยู่
+    /// ถ้าบล็อก = ยื่นไม่ได้ตลอดกาล · ผู้ทำบัญชีติ๊กกลับเข้ามาได้เมื่อจงใจ (ไม่มีใบรับรองคีย์มือของรายการนั้น)</para></summary>
+    public const string JournalOnlyPnd2Marker = "ℹ️ รายการบัญชี 21915 ไม่มีเอกสาร";
+
     /// <summary>รหัสด่าน — ชุดเดียวกับที่ <c>RemitAsync</c> ใช้ เพื่อให้ผู้ใช้
     /// เห็นเหตุผลเดียวกันไม่ว่าจะชนด่านที่ "ยื่นแบบ" หรือที่ "นำส่งเงิน"</summary>
     public const string RuleCode = "WHT-CERT-UNISSUED";
@@ -55,6 +60,7 @@ public static class WhtUnissuedCertGate
     public static string FormLabel(Models.Enums.TaxType taxType) => taxType switch
     {
         Models.Enums.TaxType.WithholdingTax1 => "ภ.ง.ด.1",
+        Models.Enums.TaxType.WithholdingTax2 => "ภ.ง.ด.2",
         Models.Enums.TaxType.WithholdingTax3 => "ภ.ง.ด.3",
         Models.Enums.TaxType.WithholdingTax53 => "ภ.ง.ด.53",
         Models.Enums.TaxType.WithholdingTax54 => "ภ.ง.ด.54",
@@ -68,6 +74,7 @@ public static class WhtUnissuedCertGate
         => (formType ?? "").ToUpperInvariant() switch
         {
             "PND.1" => Models.Enums.TaxType.WithholdingTax1,
+            "PND.2" => Models.Enums.TaxType.WithholdingTax2,
             "PND.3" => Models.Enums.TaxType.WithholdingTax3,
             "PND.53" => Models.Enums.TaxType.WithholdingTax53,
             "PND.54" => Models.Enums.TaxType.WithholdingTax54,
