@@ -921,7 +921,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         else { correct = requested ?? TaxType.WithholdingTax3; reason = "ไม่พบ payee"; }
 
         // ── แกนประเภทเงินได้ของผู้รับบุคคลธรรมดา (รอบ 204 ข้อ 148): ม.40(4) ทั้งใบ ⇒ ภ.ง.ด.2 (ม.50(2) · ม.59) ──
-        // ผู้ใช้ขอ ภ.ง.ด.2 เองกับบุคคลธรรมดา ⇒ เคารพ (แบบ ภ.ง.ด.2 ของกรมมีแถว ม.40(3) ด้วย — ตารางยังไม่ตัดสินเอง ข้อเสนอข้อ 149)
+        // ผู้ใช้ขอ ภ.ง.ด.2 เองกับบุคคลธรรมดา ⇒ เคารพ (แบบ ภ.ง.ด.2 ของกรมมีแถว ม.40(3) ด้วย — ตารางยังไม่ตัดสินเอง — คำถามค้าง DOCUMENT_FLOW §5.4)
         if (correct == TaxType.WithholdingTax3)
         {
             if (requested == TaxType.WithholdingTax2)

@@ -6345,6 +6345,38 @@ RULES += [
 ]
 
 
+# ── รอบ 204 — แบบ ภ.ง.ด.2 (คำตัดสินเจ้าของ DECISIONS ข้อ 148 · Pnd2FormTests ล็อก helper · กติกาข้างล่างล็อกจุดเรียก) ──
+# ตัวตัดสินแบบ/ผังรับ "ประเภทเงินได้ของบรรทัดที่หัก" — ทางที่ไม่ส่ง = ดอกเบี้ย/ปันผลบุคคลตกกลับ ภ.ง.ด.3 เงียบ ๆ (GL 21915 ≠ ทะเบียน/นำส่ง)
+_PND2 = "รอบ 204 ภ.ง.ด.2 (ข้อ 148): "
+RULES += [
+    dict(file=DOCSVC, method="AutoPostToJournalAsync",
+         must=["LoadWithheldAsync(companyId, doc)"],
+         why=_PND2 + "JE ตอนอนุมัติ — ผัง 21915 ของดอกเบี้ย/ปันผลบุคคล ต้องได้จากชุดรหัสเดียวกับ 50 ทวิ"),
+    dict(file=DOCSVC, method="CreatePaymentJournalAsync",
+         must=["LoadWithheldAsync(companyId, doc)"],
+         why=_PND2 + "JE รายงวด (เกณฑ์เงินสด) — ทางจ่ายไม่ Include บรรทัด ⇒ ต้องอ่านผ่านตัวโหลดที่อ่านฐานเอง ไม่ใช่ doc.Lines ว่าง"),
+    dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
+         must=["WhtPayeeKind.Pnd2MixWarning("], must_lit=['ApprovalWarningPrefix + " " + pnd2Mix'],
+         why=_PND2 + "ใบปนดอกเบี้ย/ปันผลกับเงินได้อื่นของบุคคล ⇒ เตือนให้แยกใบ ([WHT-PAYEE] เตือน ไม่บล็อก)"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
+         must=["ResolveWhtFormType(payee, null, doc.IsForeignService,", "LoadWithheldAsync(companyId, doc)"],
+         why=_PND2 + "50 ทวิ อัตโนมัติลงแบบตามประเภทเงินได้ (ตรงผังของ JE)"),
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
+         must=["WhtIncomeCodes.Withheld(d.Lines)", "WhtPayableAccount.CodeFor(report.TaxType)"],
+         forbid_lit=['report.TaxType == TaxType.WithholdingTax3 ? "21916"'],
+         why=_PND2 + "รายงานแบ่งแบบด้วยประเภทเงินได้ + ผังของแบบจากตัวตั้งเดียว (เดิมสูตร 3/53 พิมพ์รหัสเอง)"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="GetDashboardAsync",
+         must=["d.IncomeCodes)"], must_lit=['"WhtPnd2"'],
+         why=_PND2 + "หน้านำส่ง: ภ.ง.ด.2 มีแถวของตัวเอง + เอกสารที่ยังไม่มี 50 ทวิ แบ่งแบบด้วยประเภทเงินได้"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="GetFilingCalendarAsync",
+         must=["d.IncomeCodes)"], must_lit=['"WhtPnd2"'],
+         why=_PND2 + "ปฏิทินยื่น: แบบเดียวกับหน้านำส่ง (สองจอของ service เดียวกันห้ามเล่าคนละเรื่อง)"),
+    dict(file="Services/Implementations/Payroll/TipPayoutService.cs", method="DistributeAndPayoutAsync",
+         must=["TipShareAllocation.PayableAccountCode"], must_lit=["TipShareAllocation.JournalReferencePrefix"],
+         forbid_lit=['a.AccountCode == "21915"'],
+         why=_PND2 + "ทิป = ม.40(2) ภ.ง.ด.3 ⇒ ผัง 21916 (เดิม 21915 ผัง ภ.ง.ด.2 — นำส่ง ภ.ง.ด.3 Dr บัญชีที่ไม่มียอด)"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 
