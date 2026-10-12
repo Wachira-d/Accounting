@@ -672,7 +672,6 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var decision = WhtCertIssuePlan.Decide(new WhtCertIssueFacts(
             trigger, doc.DocumentType, doc.Status, paymentWhtAmount ?? doc.WithholdingTaxAmount,
             AutoIssueEnabled: doc.WhtCertAutoIssue,
-            DismissedFromPending: doc.WhtCertSkipped,
             doc.ContactId, doc.WhtPayeeContactId,
             PaidAtTrigger: paidAtTrigger,
             HasSourcePayment: sourcePaymentId.HasValue,

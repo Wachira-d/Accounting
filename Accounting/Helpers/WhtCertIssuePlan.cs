@@ -44,7 +44,6 @@ public sealed record WhtCertIssueFacts(
     DocumentStatus Status,
     decimal WithholdingTaxAmount,
     bool AutoIssueEnabled,
-    bool DismissedFromPending,
     Guid ContactId,
     Guid? PayeeContactId,
     bool PaidAtTrigger,
@@ -65,7 +64,7 @@ public sealed record WhtCertIssueDecision(WhtCertIssueAction Action, Guid PayeeC
 /// ออกไม่สำเร็จก็ถูกกลืนด้วย LogWarning (ไม่มีใครเห็น)</para>
 ///
 /// <para>กติกา: ไม่มี WHT/ไม่ใช่ฝั่งผู้จ่าย/ยกเลิก-ตีกลับ ⇒ ไม่เกี่ยว · มีใบครอบแล้ว ⇒ ไม่ออกซ้ำ ·
-/// ทางอัตโนมัติ (อนุมัติ/จ่าย/ซิงค์/ทั้งเดือน) + ผู้ใช้ปิดติ๊ก หรือกด "ข้าม" ไว้ ⇒ รอในลิสต์ (ไม่ออกเอง) ·
+/// ทางอัตโนมัติ (อนุมัติ/จ่าย/ซิงค์/ทั้งเดือน) + ผู้ใช้ปิดติ๊ก ⇒ รอในลิสต์ (ไม่ออกเอง) ·
 /// อนุมัติแต่ยังไม่จ่าย ⇒ รอวันจ่าย · ที่เหลือ ⇒ ออกเดี๋ยวนี้ · กดทีละใบ (Manual) = ผู้ใช้ตั้งใจ ⇒ ออกแม้ปิดติ๊ก</para>
 /// </summary>
 public static class WhtCertIssuePlan
@@ -114,12 +113,11 @@ public static class WhtCertIssuePlan
 
         if (f.Trigger != WhtCertIssueTrigger.Manual)
         {
+            // ปุ่ม "ข้าม" ในลิสต์รอออกใบ (WhtCertSkipped) แค่ซ่อนจากลิสต์ — ไม่ปิดการออกตอนจ่าย (พฤติกรรมเดิม · ผู้ใช้กดข้ามใบเครดิต
+            // ที่ยังไม่จ่ายเพราะ "ยังไม่ถึงเวลา" แล้วจ่ายทีหลังต้องได้ใบ) · ปิดการออกอัตโนมัติด้วยติ๊กบนใบเท่านั้น
             if (!f.AutoIssueEnabled)
                 return D(WhtCertIssueAction.ManualPending,
                     "ตั้งไว้ไม่ให้สร้าง 50 ทวิ อัตโนมัติ — ออกใบเองที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" → \"เอกสารรอออกใบ\"");
-            if (f.DismissedFromPending)
-                return D(WhtCertIssueAction.ManualPending,
-                    "เอกสารนี้ถูกกด \"ข้าม\" ออกจากลิสต์รอออกใบ — ระบบไม่ออกใบเอง");
         }
 
         if (f.Trigger == WhtCertIssueTrigger.Approve && !f.PaidAtTrigger)

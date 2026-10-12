@@ -3347,7 +3347,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   | ผู้ใช้กด "สร้างใบ" ทีละใบ (ลิสต์รอออกใบ) | `POST withholding-tax-certs/auto-generate` → `AutoGenerateFromDocumentAsync` ตรง (ตั้งใจออก · ล้ม = 400) | (Manual) |
   - **ติ๊ก "สร้างหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) อัตโนมัติเมื่ออนุมัติ/จ่าย"** (`Document.WhtCertAutoIssue` · ค่าตั้งต้น **true** = พฤติกรรมเดิม ·
     ใบเก่าทุกใบ = true ผ่าน `ADD COLUMN … DEFAULT true`) — false ⇒ ทางอัตโนมัติทุกทาง (รวม "สร้างใบทั้งเดือน") **ไม่ออก** · ใบรออยู่ในลิสต์
-    "เอกสารรอออกใบ" (`GetPendingDocumentsAsync` ป้าย "ตั้งไว้ให้ออกใบเอง") · ผู้ใช้กด "สร้างใบ" เองได้เสมอ · ใบที่กด "ข้าม" (`WhtCertSkipped`) ทางอัตโนมัติก็ไม่ออก
+    "เอกสารรอออกใบ" (`GetPendingDocumentsAsync` ป้าย "ตั้งไว้ให้ออกใบเอง") · ผู้ใช้กด "สร้างใบ" เองได้เสมอ · ปุ่ม "ข้าม" (`WhtCertSkipped`) แค่ซ่อนจากลิสต์ — **ไม่**ปิดการออกตอนจ่าย (พฤติกรรมเดิม · ปิดด้วยติ๊กเท่านั้น)
   - **ผู้ถูกหักภาษีแยกจากผู้รับเงิน** (`Document.WhtPayeeContactId` · null = ผู้ติดต่อของเอกสาร · ตัวอ่านเดียว `WhtCertIssuePlan.PayeeOf`) — ซื้อประกันผ่าน
     โบรกเกอร์: ใบสำคัญจ่ายชื่อโบรกเกอร์ (ผู้รับเงิน · §65 ตรี (11)(18) ยังดูผู้รับเงิน) · **50 ทวิ ชื่อ/เลข/สาขา/ที่อยู่ = บริษัทประกัน** ·
     แบบ ภ.ง.ด.3/53/54 (`ResolveWhtFormType(payee…)`) · ผังหนี้ 21916/21917/21918 ใน JE (`AutoPostToJournalAsync` → `LoadWhtPayeeAsync`) ·
@@ -4910,7 +4910,7 @@ _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้า�
 
 _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้างชุดสาม — รอบเงินเดือนนับเข้าการนำส่งด้วย PaidAt · integration ใบกำกับล้มสะอาด — commit 075af3d7)_
 
-_Last verified against codebase: 2026-10-12 (คำขอเจ้าของ "ใบสำคัญจ่ายหัก ณ ที่จ่าย — ติ๊กสร้าง 50 ทวิ อัตโนมัติ + ผู้ถูกหักคนละชื่อ (ประกันผ่านโบรกเกอร์)" — §5.4: ทุกทางเข้าอัตโนมัติ (อนุมัติ · จ่าย · จ่ายหลายใบ · ซิงค์ · ทั้งเดือน) ผ่าน `TryAutoIssueForDocumentAsync` → `Helpers/WhtCertIssuePlan` ตัวเดียว · `Document.WhtCertAutoIssue` (ค่าตั้งต้น true) · `Document.WhtPayeeContactId` อ่านที่ 50 ทวิ/แบบ ภ.ง.ด./ผัง 2191x/รายงาน/หน้านำส่ง · ล้มดัง `[WHT-CERT-AUTO-FAILED]` + คำตอบอนุมัติ/จ่าย + ลิสต์รอออกใบ · savepoint ในธุรกรรมผู้เรียก — commit <pending>)_
+_Last verified against codebase: 2026-10-12 (คำขอเจ้าของ "ใบสำคัญจ่ายหัก ณ ที่จ่าย — ติ๊กสร้าง 50 ทวิ อัตโนมัติ + ผู้ถูกหักคนละชื่อ (ประกันผ่านโบรกเกอร์)" — §5.4: ทุกทางเข้าอัตโนมัติ (อนุมัติ · จ่าย · จ่ายหลายใบ · ซิงค์ · ทั้งเดือน) ผ่าน `TryAutoIssueForDocumentAsync` → `Helpers/WhtCertIssuePlan` ตัวเดียว · `Document.WhtCertAutoIssue` (ค่าตั้งต้น true) · `Document.WhtPayeeContactId` อ่านที่ 50 ทวิ/แบบ ภ.ง.ด./ผัง 2191x/รายงาน/หน้านำส่ง · ล้มดัง `[WHT-CERT-AUTO-FAILED]` + คำตอบอนุมัติ/จ่าย + ลิสต์รอออกใบ · savepoint ในธุรกรรมผู้เรียก — commit 9cba636e · ปุ่ม "ข้าม" ไม่ปิดการออกตอนจ่าย (คงพฤติกรรมเดิม): <pending>)_
 
 _Last verified against codebase: 2026-10-09 (ผู้ใช้รายงาน "ลบทั้งคู่แล้วอัปไฟล์ e-Tax เดิม ได้บรรทัดผิดชุดเดิม" — §ไฟล์ซ้ำ: ธงซ้ำแยกจากการใช้ผลอ่านเดิม · `Helpers/OcrDuplicateReusePolicy` + `OcrScanResult.ExtractionVersion` (`Helpers/OcrExtractionVersion.Current` = 1 · NULL ไม่ใช้ซ้ำ) · e-Tax XML อ่านใหม่เสมอ · ธงซ้ำยังอยู่ — commit 58238dfa)_
 

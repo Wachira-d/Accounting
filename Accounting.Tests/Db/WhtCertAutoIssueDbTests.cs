@@ -136,6 +136,25 @@ public class WhtCertAutoIssueDbTests
     }
 
     [Fact]
+    public async Task กดข้ามจากลิสต์แล้วจ่ายเงิน_ยังออกใบ_ข้ามไม่ใช่การปิดอัตโนมัติ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var pv = await PvAsync(db, s, "PV-WHT-SKIP", s.InsurerId);
+        pv.WhtCertSkipped = true;   // ผู้ใช้กด "ข้าม" ตอนใบยังไม่จ่าย (พฤติกรรมเดิม: จ่ายแล้วยังได้ใบ)
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var o = await Svc(req).TryAutoIssueForDocumentAsync(s.CompanyId, pv.Id, WhtCertIssueTrigger.Payment, "tester");
+            Assert.Equal(WhtCertIssueAction.IssueNow, o.Action);
+            Assert.False(o.Failed, o.Message);
+        }
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Single(await CertsAsync(check, s.CompanyId, pv.Id));
+    }
+
+    [Fact]
     public async Task ปิดติ๊ก_ไม่ออกใบ_อยู่ในลิสต์รอออกใบ_กดเองแล้วออกได้()
     {
         using var db = DbTestDatabase.TryCreateContext();

@@ -19,9 +19,9 @@ public class WhtCertIssuePlanTests
         WhtCertIssueTrigger trigger = WhtCertIssueTrigger.Approve,
         DocumentType type = DocumentType.PaymentVoucher,
         DocumentStatus status = DocumentStatus.Paid,
-        decimal wht = 300m, bool auto = true, bool dismissed = false, Guid? payee = null,
+        decimal wht = 300m, bool auto = true, Guid? payee = null,
         bool paid = true, bool perPayment = false, int samePayment = 0, int fullIssued = 0, int any = 0)
-        => new(trigger, type, status, wht, auto, dismissed, Broker, payee, paid, perPayment, samePayment, fullIssued, any);
+        => new(trigger, type, status, wht, auto, Broker, payee, paid, perPayment, samePayment, fullIssued, any);
 
     // ── ค่าตั้งต้น = พฤติกรรมเดิม (ติ๊กเปิด) ──
 
@@ -80,10 +80,6 @@ public class WhtCertIssuePlanTests
     public void ปิดติ๊ก_แต่ผู้ใช้กดสร้างใบเอง_ออกได้()   // ทิศตรงข้าม: ปิดอัตโนมัติ ≠ ห้ามออก
         => Assert.Equal(WhtCertIssueAction.IssueNow, WhtCertIssuePlan.Decide(F(WhtCertIssueTrigger.Manual, auto: false)).Action);
 
-    [Fact]
-    public void กดข้ามจากลิสต์แล้ว_ทางอัตโนมัติไม่ออก()
-        => Assert.Equal(WhtCertIssueAction.ManualPending,
-            WhtCertIssuePlan.Decide(F(WhtCertIssueTrigger.Payment, dismissed: true)).Action);
 
     // ── ไม่เกี่ยว / ซ้ำ ──
 
