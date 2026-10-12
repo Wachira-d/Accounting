@@ -395,6 +395,7 @@ public enum TaxType
     WithholdingTax54 = 8, // ภงด.54 (Foreign WHT — บริการต่างประเทศ)
     VatPp36 = 9,          // ภพ.36 (Foreign service VAT)
     StampDuty = 10,       // อากรแสตมป์ (Code §103-105 ประมวลรัษฎากร)
+    WithholdingTax2 = 11, // ภงด.2 — ดอกเบี้ย/เงินปันผล ม.40(4) จ่ายบุคคลธรรมดา (คำตัดสินเจ้าของ 2026-10-12 · DECISIONS ข้อ 148)
 }
 
 /// <summary>

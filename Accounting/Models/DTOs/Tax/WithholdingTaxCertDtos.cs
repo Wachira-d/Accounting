@@ -80,7 +80,8 @@ public record WithholdingTaxCertLineResponse(
 public enum WithholdingTaxCertType
 {
     Withhold = 1,      // หักภาษี ณ ที่จ่าย
-    PayAlways = 2      // ออกภาษีให้ตลอดไป
+    PayAlways = 2,     // ออกภาษีให้ตลอดไป
+    PayOnce = 3        // ออกภาษีให้ครั้งเดียว (คำตัดสินเจ้าของ 2026-10-12 · DECISIONS ข้อ 148)
 }
 
 public enum WithholdingTaxCertStatus
