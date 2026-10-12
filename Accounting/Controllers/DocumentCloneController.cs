@@ -97,7 +97,8 @@ public class DocumentCloneController : ControllerBase
                 projectId = l.ProjectId,
                 productCode = l.ProductCode,
                 isVatClaimable = l.IsVatClaimable,
-                vatNonClaimableReason = l.VatNonClaimableReason
+                vatNonClaimableReason = l.VatNonClaimableReason,
+                incomeTypeCode = l.IncomeTypeCode
             })
         }));
     }
@@ -139,7 +140,9 @@ public class DocumentCloneController : ControllerBase
             VatNonClaimableReason: l.VatNonClaimableReason,
             // ส่วนลดบาทรายบรรทัดต้องตามไปเหมือนเส้นแปลง (ConvertCoreAsync) — เดิมหาย ⇒ ใบโคลนแพงกว่าต้นแบบ
             // และผลต่างปัดเศษที่ยกไปจะไม่ใช่ของบรรทัดชุดเดียวกัน
-            DiscountAmount: l.DiscountAmount > 0 ? l.DiscountAmount : null
+            DiscountAmount: l.DiscountAmount > 0 ? l.DiscountAmount : null,
+            // รอบ 203: ประเภทเงินได้ ม.40 ตามไปกับอัตราหัก (เอกสารลูกต้องสืบทอด — null เป็น null)
+            IncomeTypeCode: l.IncomeTypeCode
         )).ToList();
 
         var docDate = options?.OverrideDate ?? DateTime.UtcNow.Date;

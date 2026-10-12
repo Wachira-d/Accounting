@@ -223,7 +223,10 @@ public record DocumentLineRequest(
     // ระบบจะ honor ค่านี้แทนการคิด net × VatRate (กัน external/integration
     // ส่งยอดจ่ายจริงมาแล้ว NextAcc คิด VAT ใหม่จนเกิดส่วนต่าง ค้างชำระผี).
     // null = คิดตามปกติ (backward compatible).
-    decimal? VatAmountOverride = null);
+    decimal? VatAmountOverride = null,
+    // รอบ 203: ประเภทเงินได้ ม.40 ของบรรทัด (รหัสใน ThaiWhtRateTable) — ตัดสินแถว 50 ทวิ + รหัสไฟล์ ภ.ง.ด. ·
+    // null = ไม่ส่ง (แก้ไข: คงค่าเดิมของบรรทัดเดียวกัน) · "" = ล้าง · ตัวตัดสิน Helpers/DocumentLineIncomeType
+    string? IncomeTypeCode = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,
@@ -1147,7 +1150,9 @@ public record DocumentLineResponse(
     Guid? GlAccountAiFeedbackId = null,
     // ชื่อผังบัญชี (denormalized) — ใช้ใน reclassify modal แสดงผังเดิม +
     // detail table ระบุชื่อบัญชีคู่กับ code
-    string? AccountName = null);
+    string? AccountName = null,
+    // รอบ 203: ประเภทเงินได้ ม.40 ที่เก็บไว้ — ฟอร์มแก้ไข hydrate จากช่องนี้ (เก็บแล้วต้อง echo กลับ)
+    string? IncomeTypeCode = null);
 
 // ===== Flexible / partial document conversion =====
 

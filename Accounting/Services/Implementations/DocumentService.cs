@@ -464,6 +464,11 @@ public partial class DocumentService : IDocumentService
         if (lines == null || lines.Count == 0)
             throw new InvalidOperationException("ต้องมีรายการสินค้าอย่างน้อย 1 รายการ");
 
+        // รอบ 203: ประเภทเงินได้ ม.40 ที่ส่งมาต้องชี้ขาดได้ในตารางกลาง — ไม่งั้นทุกผู้อ่าน (50 ทวิ/ภ.ง.ด.) ตกแถว "อื่น ๆ" เงียบ ๆ
+        foreach (var l in lines)
+            if (Accounting.Helpers.DocumentLineIncomeType.Decide(l.IncomeTypeCode, null).Error is string incomeTypeErr)
+                throw new BusinessRuleException($"บรรทัด \"{l.Description}\": {incomeTypeErr}", "WHT-INCOME-TYPE");
+
         // P7 (N+1): ตรวจว่ารหัสบัญชีของทุกบรรทัดมีจริง — เดิม AnyAsync **ต่อบรรทัด**
         // ⇒ เอกสาร 50 บรรทัด = 50 query ทุกครั้งที่สร้าง/แก้ (และ import ที่ยิงหลาย
         // ใบพร้อมกันคูณเข้าไปอีก). ดึงชุด id ที่ใช้ได้ทีเดียวก่อนลูป
@@ -1608,6 +1613,8 @@ public partial class DocumentService : IDocumentService
                     IsLandedCost = line.IsLandedCost,
                     VatNonClaimableReason = enforcedClaimable ? null : enforcedReason,
                     GlAccountAiFeedbackId = line.GlAccountAiFeedbackId,
+                    // รอบ 203: ประเภทเงินได้ ม.40 (ตรวจแล้วใน ValidateDocumentLinesAsync) — สร้าง: ไม่ส่ง = ไม่ระบุ
+                    IncomeTypeCode = Accounting.Helpers.DocumentLineIncomeType.Decide(line.IncomeTypeCode, null).Code,
                 });
             }
 
@@ -2892,6 +2899,10 @@ public partial class DocumentService : IDocumentService
             // (previously an edit could set qty=0 / VatRate=-99 unchecked).
             await ValidateDocumentLinesAsync(companyId, request.Lines);
 
+            // รอบ 203: ประเภทเงินได้ของบรรทัดเดิม (ลำดับ + คำอธิบาย) ก่อนลบ — ผู้เรียกที่ไม่ส่งช่องนี้ต้องไม่ล้างค่าเดิม
+            var prevIncomeTypes = doc.Lines.Where(x => !x.IsDeleted).OrderBy(x => x.LineOrder)
+                .Select(x => ((string?)x.Description, x.IncomeTypeCode)).ToList();
+
             _db.DocumentLines.RemoveRange(doc.Lines);
 
             if (request.PricesIncludeVat.HasValue) doc.PricesIncludeVat = request.PricesIncludeVat.Value;
@@ -3012,6 +3023,9 @@ public partial class DocumentService : IDocumentService
                     IsLandedCost = line.IsLandedCost,
                     VatNonClaimableReason = enforcedClaimable ? null : enforcedReason,
                     GlAccountAiFeedbackId = line.GlAccountAiFeedbackId,
+                    // รอบ 203: ไม่ส่ง = คงค่าเดิมของบรรทัดเดียวกัน (ฟอร์ม/API รุ่นเก่าต้องไม่ล้างประเภทที่ OCR เติมไว้) · "" = ล้าง
+                    IncomeTypeCode = Accounting.Helpers.DocumentLineIncomeType.Decide(line.IncomeTypeCode,
+                        Accounting.Helpers.DocumentLineIncomeType.KeptFromPrevious(prevIncomeTypes, updLineIdx, line.Description)).Code,
                 });
             }
 
@@ -18729,7 +18743,8 @@ public partial class DocumentService : IDocumentService
             IsLandedCost: l.IsLandedCost,
             AccountCode: l.Account != null ? l.Account.AccountCode : null,
             GlAccountAiFeedbackId: l.GlAccountAiFeedbackId,
-            AccountName: l.Account != null ? l.Account.AccountName : null)).ToList(),
+            AccountName: l.Account != null ? l.Account.AccountName : null,
+            IncomeTypeCode: l.IncomeTypeCode)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,

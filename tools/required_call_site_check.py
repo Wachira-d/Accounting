@@ -6252,6 +6252,20 @@ RULES += [
     dict(file=DOC, method="CollectApprovalWarningsAsync",
          must=["ThaiWhtRateTable.CheckRateForType("],
          why=_WHT203 + "อนุมัติเอกสารฝั่งจ่าย: อัตราเทียบประเภทเงินได้ของบรรทัด + ชนิดผู้รับ"),
+    # ประเภทเงินได้รายบรรทัด (DocumentLineIncomeTypeTests): เก็บแล้วต้อง echo กลับ · แก้ไขไม่ส่ง = คงค่าเดิม
+    dict(file=DOC, method="ValidateDocumentLinesAsync",
+         must=["DocumentLineIncomeType.Decide("],
+         why=_WHT203 + "ประเภทเงินได้ที่ชี้ขาดไม่ได้ถูกปฏิเสธพร้อมเหตุผล (ไม่ตกแถว 6 ของ 50 ทวิ เงียบ ๆ)"),
+    dict(file=DOC, method="CreateDocumentAsync",
+         must=["DocumentLineIncomeType.Decide(line.IncomeTypeCode"],
+         why=_WHT203 + "ใบคีย์มือระบุประเภทเงินได้ได้ (เดิมไม่มีช่อง ⇒ 50 ทวิ ได้ \"8\" เสมอ)"),
+    dict(file=DOC, method="UpdateDocumentAsync",
+         must=["DocumentLineIncomeType.KeptFromPrevious(", "DocumentLineIncomeType.Decide(line.IncomeTypeCode"],
+         before=[("prevIncomeTypes", "_db.DocumentLines.RemoveRange(doc.Lines)")],
+         why=_WHT203 + "แก้ไขแล้วบันทึก ประเภทที่ OCR เติมไว้ต้องไม่หายเงียบ ๆ (เก็บค่าเดิมก่อนลบบรรทัด)"),
+    dict(file=DOC, method="MapDocumentToResponse",
+         must=["IncomeTypeCode: l.IncomeTypeCode"],
+         why=_WHT203 + "echo ประเภทเงินได้กลับให้ฟอร์มแก้ไข hydrate"),
 ]
 
 

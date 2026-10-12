@@ -50,6 +50,8 @@
     }
     .line-card .lc-total .lc-total-val { font-weight: 700; font-size: 16px; color: #1f2937; }
     .line-card .lc-project-row { margin-top: 8px; }
+    /* รอบ 203: ประเภทเงินได้ ม.40 รายบรรทัด — มีความหมายเฉพาะฝั่งจ่าย (เราเป็นผู้หัก) */
+    #linesTable:not([data-doc-side="expense"]) .lc-income-type { display: none; }
     .line-card .lc-project-row select { width: 100%; font-size: 13px; padding: 7px 10px; }
 
     /* Mobile: numeric fields 2-per-row, big tap targets */
@@ -1729,6 +1731,8 @@
         this._loadTemplates();
         // รอบ 194 — ประเภทเงินมัดจำ (ล้ม = ตัวเลือก "ตามค่าตั้งต้นบริษัท" · ฟอร์มยังใช้ได้) · เก็บ promise ไว้ให้ hydrate รอ (P4 ฝ่ายค้าน)
         this._depositKindsReady = this._loadDepositKinds();
+        // รอบ 203 — ตารางประเภทเงินได้ ม.40 จากเซิร์ฟเวอร์ (ไม่ await — ล้ม = ช่องเหลือ "ไม่ระบุ" + ค่าที่เก็บไว้ไม่หาย)
+        this._loadWhtIncomeTypes();
         // Listen for the "+ สร้างใหม่" cross-tab hand-off — contacts.html
         // posts the new contact id back via postMessage; we auto-pick it
         // here so the user doesn't have to retype/search after creating.
@@ -2263,6 +2267,9 @@
           // WHT — ใช้ค่า per-line ก่อน, fallback to header-level จาก OCR
           row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate
             ?? (payload.hasWht && payload.whtRate ? payload.whtRate : 0);
+          // รอบ 203: ประเภทเงินได้ที่ OCR เสนอ (บรรทัดก่อน แล้วระดับใบเมื่อบรรทัดนี้มีการหัก)
+          this._setLineIncomeType(row, l.incomeTypeCode
+            || ((parseFloat(row.querySelector('[data-f="wht"]').value) || 0) > 0 ? payload.whtIncomeTypeCode : null));
           // OCR per-line project allocation (set by the OCR review modal).
           const pSel = row.querySelector('[data-f="project"]');
           if (pSel && l.projectId) pSel.value = l.projectId;
@@ -6418,6 +6425,7 @@
         }
         Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate || 0, 'doc');
         row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
+        this._setLineIncomeType(row, l.incomeTypeCode);
         // VAT claimability — hydrate จาก server. ตั้ง userOverride=1
         // เพื่อไม่ให้ heuristic regex เปลี่ยนค่าทับ user/AI choice
         // ที่บันทึกไว้แล้ว.
@@ -7902,6 +7910,64 @@
         this.page = 1;
         this.load();
       },
+      /** ตารางประเภทเงินได้ ม.40 (รอบ 203) — **มาจากเซิร์ฟเวอร์เท่านั้น** (`/api/reference/income-types` ←
+       *  `Helpers/ThaiWhtRateTable`) ห้ามพิมพ์รายการ/อัตราในหน้านี้ */
+      _whtIncomeTypes: [],
+      async _loadWhtIncomeTypes() {
+        try {
+          const res = await API.get('/api/reference/income-types');
+          this._whtIncomeTypes = res?.data || [];
+        } catch { this._whtIncomeTypes = []; return; }
+        // แถวที่สร้างก่อนตารางมาถึง — เติมตัวเลือกแล้วตั้งค่าที่รอไว้ (dataset.want) กลับ
+        document.querySelectorAll('#linesBody [data-f="incomeType"]').forEach(sel => {
+          const row = sel.closest('.line-card');
+          const want = sel.dataset.want || sel.value || '';
+          sel.innerHTML = this._incomeTypeOptHtml();
+          if (row) this._setLineIncomeType(row, want, true);
+        });
+      },
+      _incomeTypeOptHtml() {
+        return '<option value="">— ไม่ระบุ —</option>' + (this._whtIncomeTypes || []).map(t =>
+          `<option value="${Layout.esc(t.code)}" title="${Layout.esc(t.note || t.legalReference || '')}">${Layout.esc(t.taxSection)} ${Layout.esc(t.name)}</option>`).join('');
+      },
+      /** ตั้งค่าช่องประเภทเงินได้ของแถว — รหัสที่ยังไม่อยู่ในตัวเลือก (ตารางยังโหลดไม่เสร็จ/ล้ม) ใส่เป็นตัวเลือกชั่วคราว
+       *  ห้ามปล่อยว่าง (บันทึกแล้วค่าที่เก็บไว้หายเงียบ ๆ) */
+      _setLineIncomeType(row, code, keepTouched = false) {
+        const sel = row?.querySelector('[data-f="incomeType"]');
+        if (!sel) return;
+        const v = code || '';
+        sel.dataset.want = v;
+        if (!keepTouched) delete sel.dataset.userTouched;
+        if (v && !Array.from(sel.options).some(o => o.value === v)) {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = v;
+          sel.appendChild(o);
+        }
+        sel.value = v;
+      },
+      _lineIncomeTypePayload(row) {
+        const sel = row.querySelector('[data-f="incomeType"]');
+        if (!sel) return null;
+        if (sel.value) return sel.value;
+        return sel.dataset.userTouched === '1' ? '' : null;
+      },
+      /** เลือกประเภทเงินได้ ⇒ เติมอัตราหักตามกฎหมายให้ **เฉพาะเมื่อผู้ใช้ยังไม่ได้พิมพ์อัตราเอง** (ค่าผู้ใช้ชนะเสมอ) ·
+       *  ประเภทที่อัตราขึ้นกับชนิดผู้รับ (ดอกเบี้ย 15%/1%) ไม่เติม — ให้คนกรอก แล้วด่านอนุมัติเตือนถ้าไม่ตรง */
+      onLineIncomeTypeChange(sel) {
+        sel.dataset.userTouched = '1';
+        sel.dataset.want = sel.value;
+        const row = sel.closest('.line-card');
+        const wht = row?.querySelector('[data-f="wht"]');
+        if (!wht || wht.dataset.userTouched === '1') return;
+        const t = (this._whtIncomeTypes || []).find(x => x.code === sel.value);
+        if (!t) return;
+        const ind = t.individualRate, jur = t.juristicRate;
+        const rate = ind == null ? jur : (jur == null ? ind : (ind === jur ? jur : null));
+        if (rate == null) return;
+        wht.value = rate;
+        wht.dataset.autoSrc = 'incomeType';
+        this.calcSum();
+      },
       lineCount: 0,
       addLine() {
         const i = this.lineCount++;
@@ -7944,7 +8010,9 @@
             <div class="lc-field lc-claim"><label title="VAT เคลม ภพ.30 ได้หรือไม่ (§82/5)">เคลม VAT</label>
               <span class="vat-claim-toggle" data-f="vatClaim" data-claim="true" data-reason="" onclick="Page.toggleLineVatClaim(this)" title="VAT เคลมได้ — ขึ้น ภพ.30 เป็น ภาษีซื้อ" style="cursor:pointer;user-select:none">✓</span></div>
             <div class="lc-field"><label>หัก ณ ที่จ่าย %</label>
-              <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="wht" oninput="Page.calcSum()"></div>
+              <input type="number" class="form-input" inputmode="decimal" value="0" step="0.01" data-f="wht" oninput="this.dataset.userTouched='1';Page.calcSum()"></div>
+            <div class="lc-field lc-income-type"><label title="ประเภทเงินได้ ม.40 — ตัดสินแถวบนหนังสือรับรอง 50 ทวิ และแบบ ภ.ง.ด.">ประเภทเงินได้</label>
+              <select class="form-select" data-f="incomeType" onchange="Page.onLineIncomeTypeChange(this)">${this._incomeTypeOptHtml()}</select></div>
           </div>
           <div class="lc-project-row">
             <select class="form-select" data-f="project" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติระบบลงค่าใช้จ่ายเข้าโครงการให้อัตโนมัติ">${projOptHtml}</select>
@@ -9215,6 +9283,9 @@
             vatRate: isVatExempt ? -1 : (rawVat || 0),
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           };
+          // รอบ 203: ประเภทเงินได้ ม.40 — ไม่ส่ง = เซิร์ฟเวอร์คงค่าเดิม · "" เฉพาะเมื่อผู้ใช้เลือก "ไม่ระบุ" เอง
+          const incomeTypeVal = this._lineIncomeTypePayload(row);
+          if (incomeTypeVal !== null) line.incomeTypeCode = incomeTypeVal;
           // Persist the product linkage when the user picked one via the typeahead.
           // Server keys on productCode (string), not the id, because Code is the
           // user-facing immutable identifier in DocumentLine.
