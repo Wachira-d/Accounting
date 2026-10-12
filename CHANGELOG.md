@@ -4638,4 +4638,4 @@ L6 เลือกประเภทเงินได้ไม่ทับอ�
 _รอบ 203 (ต่อ) — ฝ่ายค้านรอบสองของงาน WHT: ด่าน L3 (ฝั่งผู้จ่ายเลือก gov1/1 ไม่ได้) ชนกับ M4 (เอกสารลูกสืบทอดประเภท) ⇒ แปลง PO→PV/คัดลอก/รายการประจำ
 ที่ต้นทางเก็บ gov1/1 ล้มทั้งใบ และรายการประจำวนล้มเงียบ ๆ ทุกรอบ · แก้: `DocumentLineIncomeType.Inherit(stored, targetIsPayerSide)` ทิ้งประเภทต้องห้ามเมื่อปลายทางเป็นฝั่งผู้จ่าย ·
 `KeptForPayerSideCheck` (รหัสที่มีอยู่แล้วบนเอกสารบันทึกซ้ำได้แม้แก้คำอธิบาย/แทรกบรรทัด) · OCR `ForSystemWrittenPayerLine` · มาตราอ้างอิงของคำเตือน WHT ที่ผ่านโดยไม่มีคน
-= `WhtWarningsLegalReference` · เทสต์ `WhtDerivedIncomeTypeTests` · กติกาจุดเรียก +2 (แก้ 3) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending-r2>)_
+= `WhtWarningsLegalReference` · เทสต์ `WhtDerivedIncomeTypeTests` · กติกาจุดเรียก +2 (แก้ 3) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fea3d362)_
