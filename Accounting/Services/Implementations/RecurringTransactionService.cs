@@ -457,7 +457,8 @@ public class RecurringTransactionService : IRecurringTransactionService
                         // ฝ่ายค้าน M4 (2026-10-12): ประเภทเงินได้รายบรรทัดของเทมเพลต (ช่อง fIncomeType ของหน้ารายการประจำ) — เดิมไม่อ่าน ⇒
                         // ใบที่ generate ไม่มีประเภท ⇒ 50 ทวิ ได้ "8" เสมอ · ค่าที่ตารางกลางชี้ขาดไม่ได้ (เทมเพลตเก่า) = ไม่ระบุ (ไม่ทำให้ทั้งรอบล้ม)
                         IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(
-                            line.TryGetProperty("incomeTypeCode", out var itc) && itc.ValueKind == JsonValueKind.String ? itc.GetString() : null)
+                            line.TryGetProperty("incomeTypeCode", out var itc) && itc.ValueKind == JsonValueKind.String ? itc.GetString() : null,
+                            Accounting.Helpers.WhtCertIssuePlan.AppliesTo(docType))
                     ));
                 }
             }

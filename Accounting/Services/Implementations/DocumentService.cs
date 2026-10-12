@@ -2915,7 +2915,7 @@ public partial class DocumentService : IDocumentService
                 var ptLine = request.Lines[ptIdx];
                 if (Accounting.Helpers.DocumentLineIncomeType.PayerSideProblem(
                         Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType), ptLine.IncomeTypeCode,
-                        Accounting.Helpers.DocumentLineIncomeType.KeptFromPrevious(prevIncomeTypes, ptIdx, ptLine.Description)) is string payerSideErr)
+                        Accounting.Helpers.DocumentLineIncomeType.KeptForPayerSideCheck(prevIncomeTypes, ptIdx, ptLine.Description, ptLine.IncomeTypeCode)) is string payerSideErr)
                     throw new BusinessRuleException($"บรรทัด \"{ptLine.Description}\": {payerSideErr}", "WHT-INCOME-TYPE");
             }
 
@@ -11755,7 +11755,8 @@ public partial class DocumentService : IDocumentService
                 ? s.Line.VatAmount
                 : null,
             // ฝ่ายค้าน M4: ประเภทเงินได้ ม.40 รายบรรทัดต้องตามไปกับอัตรา WHT (เดิมหาย ⇒ 50 ทวิ ของใบปลายทางตก "8" เสมอ)
-            IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(s.Line.IncomeTypeCode))).ToList();
+            IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(s.Line.IncomeTypeCode,
+                Accounting.Helpers.WhtCertIssuePlan.AppliesTo(targetType)))).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
             targetType, documentDate ?? DateTime.UtcNow, dueDate ?? source.DueDate, source.ContactId,

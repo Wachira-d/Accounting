@@ -66,6 +66,23 @@ public static class DocumentLineIncomeType
     public static string? Inherit(string? stored)
         => string.IsNullOrWhiteSpace(stored) ? null : ThaiWhtRateTable.Resolve(stored)?.Code;
 
+    /// <summary>
+    /// สืบทอดลงเอกสารชนิด <paramref name="targetIsPayerSide"/> — ฝ่ายค้านรอบสอง (2026-10-12): ประเภทใน <see cref="NotForPayerSide"/>
+    /// ที่ติดมาจากต้นทาง (PO/เทมเพลตรายการประจำ/ใบเก่าก่อนมีด่าน) ลงเอกสารฝั่งผู้จ่ายเป็น null แทนการส่งต่อ —
+    /// มิฉะนั้น <see cref="PayerSideProblem"/> ใน CreateDocumentAsync ปฏิเสธ ⇒ แปลง/คัดลอกล้ม และรายการประจำหยุดสร้างใบเงียบ ๆ
+    /// (ผู้ใช้ไม่ได้เลือกค่านี้ในคำขอนี้) · ฝั่งรับเงินคงค่าเดิม (ใบแจ้งหนี้ให้หน่วยงานรัฐ = gov1 ถูกต้อง)
+    /// </summary>
+    /// <summary>ค่าที่ระบบเขียนลงบรรทัดฝั่งผู้จ่ายเอง (OCR/คำแก้จากหน้าสแกน) — ประเภทใน <see cref="NotForPayerSide"/> ⇒ null ·
+    /// ค่าอื่นคงรูปเดิม (ไม่ normalize — ค่าที่ตารางชี้ขาดไม่ได้ยังเก็บไว้ให้คนเห็น) · ฝ่ายค้านรอบสอง (2026-10-12)</summary>
+    public static string? ForSystemWrittenPayerLine(string? code)
+        => Inherit(code) is string resolved && NotForPayerSide.Contains(resolved) ? null : code;
+
+    public static string? Inherit(string? stored, bool targetIsPayerSide)
+    {
+        var code = Inherit(stored);
+        return targetIsPayerSide && code is not null && NotForPayerSide.Contains(code) ? null : code;
+    }
+
     /// <summary>ค่าเดิมของ "บรรทัดเดียวกัน" ตอนแก้ไข — ลำดับเดียวกัน + คำอธิบายเดิม (ตัดช่องว่าง) ·
     /// ไม่ตรง = null (บรรทัดถูกสลับ/แก้คำอธิบาย ⇒ ไม่เดาว่าเป็นบรรทัดเดิม)</summary>
     public static string? KeptFromPrevious(IReadOnlyList<(string? Description, string? Code)> previous, int index, string? description)
@@ -75,5 +92,19 @@ public static class DocumentLineIncomeType
         return string.Equals((prevDesc ?? "").Trim(), (description ?? "").Trim(), StringComparison.Ordinal)
             ? prevCode
             : null;
+    }
+
+    /// <summary>
+    /// ค่าเดิมที่ "บันทึกซ้ำได้" สำหรับด่าน <see cref="PayerSideProblem"/> ตอนแก้ไข — ฝ่ายค้านรอบสอง (2026-10-12): เดิมใช้
+    /// <see cref="KeptFromPrevious"/> (ลำดับ+คำอธิบายเดียวกัน) ⇒ แก้คำอธิบาย/แทรกบรรทัดข้างบน แล้วบันทึกไม่ได้ทั้งที่ไม่ได้เลือกประเภทใหม่ ·
+    /// ตอนนี้: ถ้ารหัสที่ส่งมามีอยู่แล้วบนบรรทัดใดของเอกสารนี้ ⇒ คืนรหัสนั้น (ถือว่าเป็นค่าเดิม) · ไม่งั้นใช้ค่าของบรรทัดเดียวกัน
+    /// </summary>
+    public static string? KeptForPayerSideCheck(IReadOnlyList<(string? Description, string? Code)> previous, int index,
+        string? description, string? requested)
+    {
+        var req = Inherit(requested);
+        if (req is not null && previous.Any(p => string.Equals(Inherit(p.Code), req, StringComparison.Ordinal)))
+            return req;
+        return KeptFromPrevious(previous, index, description);
     }
 }

@@ -4634,3 +4634,8 @@ M6 `WithholdingTaxCertLineResponse.CertificateRow` + wht.html จัดแถว
 L1 ตรวจผู้ถูกหักก่อนยกเลิกใบร่างระดับเอกสาร · L3 ฝั่งผู้จ่ายเลือก gov1/1 ใหม่ไม่ได้ (`PayerSideProblem`) · L4 สร้างใบที่เลือกบอกเหตุผลรายใบ ·
 L6 เลือกประเภทเงินได้ไม่ทับอัตราจากใบเดิม/OCR · เทสต์ `WhtAdversarialFixTests` · กติกาจุดเรียก `_WHTADV` 9 ข้อ (+แก้กติกาเดิมของ `CollectApprovalWarningsAsync`) —
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2e038dde)_
+
+_รอบ 203 (ต่อ) — ฝ่ายค้านรอบสองของงาน WHT: ด่าน L3 (ฝั่งผู้จ่ายเลือก gov1/1 ไม่ได้) ชนกับ M4 (เอกสารลูกสืบทอดประเภท) ⇒ แปลง PO→PV/คัดลอก/รายการประจำ
+ที่ต้นทางเก็บ gov1/1 ล้มทั้งใบ และรายการประจำวนล้มเงียบ ๆ ทุกรอบ · แก้: `DocumentLineIncomeType.Inherit(stored, targetIsPayerSide)` ทิ้งประเภทต้องห้ามเมื่อปลายทางเป็นฝั่งผู้จ่าย ·
+`KeptForPayerSideCheck` (รหัสที่มีอยู่แล้วบนเอกสารบันทึกซ้ำได้แม้แก้คำอธิบาย/แทรกบรรทัด) · OCR `ForSystemWrittenPayerLine` · มาตราอ้างอิงของคำเตือน WHT ที่ผ่านโดยไม่มีคน
+= `WhtWarningsLegalReference` · เทสต์ `WhtDerivedIncomeTypeTests` · กติกาจุดเรียก +2 (แก้ 3) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending-r2>)_

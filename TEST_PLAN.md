@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **485 ไฟล์ · 4,749 `[Fact]` + 757 `[Theory]` (3,360 `InlineData`)** ณ 2026-10-12 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **486 ไฟล์ · 4,753 `[Fact]` + 759 `[Theory]` (3,374 `InlineData`)** ณ 2026-10-12 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -992,6 +992,7 @@
 | WHTADV-L3 | PV เลือกประเภท `gov1`/`1` ใหม่ | 400 ข้อความไทยบอกทางไปต่อ · ใบเดิมที่เก็บค่าไว้แล้วเปิดแก้-บันทึกได้ · ใบแจ้งหนี้ฝั่งขายเลือก `gov1` ได้ |
 | WHTADV-L4 | "สร้างใบที่เลือก" แล้วบางใบล้ม | toast บอกเลขเอกสาร + เหตุผลรายใบ |
 | WHTADV-L6 | เปิดแก้ใบที่อัตรา 1% (จาก OCR/ใบเดิม) แล้วเลือกประเภท | อัตรา 1% **ไม่ถูกทับ** · ช่องว่าง/0 หรือที่ตัวเลือกเติมเองไว้ ⇒ เติมอัตราตามประเภท |
+| WHTADV-R2 | PO/เทมเพลตรายการประจำที่บรรทัดเก็บ "เงินเดือน (1)" หรือ "gov1" → แปลง/สร้างเป็นใบสำคัญจ่าย | ใบสร้างได้ บรรทัดไม่มีประเภท (ไม่ล้ม · รายการประจำเดินต่อ) · ใบแจ้งหนี้ขายคง gov1 · แก้คำอธิบายบรรทัดที่มี gov1 เดิมแล้วบันทึกได้ · เลือก gov1 ใหม่บน PV ยังถูกปฏิเสธ | `WhtDerivedIncomeTypeTests` |
 
 ---
 

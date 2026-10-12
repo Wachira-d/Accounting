@@ -6309,10 +6309,10 @@ RULES += [
          must=["WhtLineRateWarning.IsApprovalWarning(", "WhtCertIssuePlan.IsApprovalWarning("],
          why=_WHTADV + "M3 นโยบายเจ้าของ \"เตือน ไม่บล็อก\": คำเตือน [WHT-RATE]/[WHT-PAYEE] ไม่หยุดใบประจำ/LINE/OCR อนุมัติอัตโนมัติ/API"),
     dict(file=DOC, method="ConvertCoreAsync",
-         must=["IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(s.Line.IncomeTypeCode)"],
+         must=["IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(s.Line.IncomeTypeCode,", "WhtCertIssuePlan.AppliesTo(targetType)"],
          why=_WHTADV + "M4 แปลงเอกสาร: ประเภทเงินได้รายบรรทัดตามไปกับอัตรา WHT (เดิมหาย ⇒ 50 ทวิ ตก \"8\")"),
     dict(file=CLONE, method="Clone",
-         must=["DocumentLineIncomeType.Inherit(l.IncomeTypeCode)"],
+         must=["DocumentLineIncomeType.Inherit(l.IncomeTypeCode,", "WhtCertIssuePlan.AppliesTo(options?.OverrideType ?? src.DocumentType)"],
          why=_WHTADV + "M4 คัดลอกเอกสาร: ตัวสืบทอดเดียวกับเส้นแปลง (ค่าเก่าที่ชี้ขาดไม่ได้ไม่ทำให้คัดลอกล้ม)"),
     dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateDocumentFromTemplateAsync",
          must=["DocumentLineIncomeType.Inherit(", "WhtCertIssuePlan.RecurringTemplateAutoIssue(", "ApprovalAckSource.Unattended"],
@@ -6330,9 +6330,18 @@ RULES += [
          why=_WHTADV + "L3 เอกสารฝั่งผู้จ่ายเลือก gov1/1 ไม่ได้ (ปฏิเสธพร้อมเหตุผล)"),
     dict(file=DOC, method="UpdateDocumentAsync",
          must=["DocumentLineIncomeType.PayerSideProblem("],
-         call_args=[("DocumentLineIncomeType.PayerSideProblem(", "KeptFromPrevious(prevIncomeTypes")],
+         call_args=[("DocumentLineIncomeType.PayerSideProblem(", "KeptForPayerSideCheck(prevIncomeTypes")],
          before=[("DocumentLineIncomeType.PayerSideProblem(", "_db.DocumentLines.RemoveRange(doc.Lines)")],
          why=_WHTADV + "L3 แก้ไข: ปฏิเสธเฉพาะการเลือกใหม่ (ค่าเดิมของบรรทัดเดียวกันบันทึกซ้ำได้) · ตรวจก่อนลบบรรทัด"),
+    # ฝ่ายค้านรอบสอง (2026-10-12 · WhtDerivedIncomeTypeTests): L3 + M4 รวมกันทำให้เอกสารลูกล้ม (gov1/1 จากต้นทาง ⇒ PV ถูกปฏิเสธ ·
+    # รายการประจำหยุดสร้างใบเงียบ ๆ) ⇒ ทุกเส้นสืบทอดส่ง "ชนิดปลายทางเป็นฝั่งผู้จ่ายไหม" · OCR ทิ้งประเภทต้องห้ามก่อนเขียนบรรทัดฝั่งผู้จ่าย
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateDocumentFromTemplateAsync",
+         must=["WhtCertIssuePlan.AppliesTo(docType)"],
+         why=_WHTADV + "รอบสอง: รายการประจำสืบทอดประเภทลงใบฝั่งผู้จ่ายโดยทิ้ง gov1/1 (ไม่ใช่ล้มแล้ววนลองทุกรอบ)"),
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must=["DocumentLineIncomeType.ForSystemWrittenPayerLine(result.WhtIncomeTypeCode)"],
+         forbid=["? result.WhtIncomeTypeCode : null"],
+         why=_WHTADV + "รอบสอง: OCR ฝั่งซื้อไม่เขียน gov1/1 ลงบรรทัด (มิฉะนั้นแปลง/แก้ใบภายหลังล้มด่าน L3)"),
 ]
 
 

@@ -187,6 +187,9 @@ public static class ApprovalAcknowledgement
     /// <summary>มาตราอ้างอิงของคำเตือนทั่วไปก่อนอนุมัติ (ใบกำกับ §86 · ภาษีซื้อต้องห้าม §82/5(1)) — ค่าเดิมของ audit ก่อนรอบ 201</summary>
     public const string GeneralWarningsLegalReference = "RD-86 / RD-82/5(1)";
 
+    /// <summary>มาตราของคำเตือนหัก ณ ที่จ่าย <c>[WHT-PAYEE]</c>/<c>[WHT-RATE]</c> — ม.50/ม.54 + ท.ป.4/2528 (ฝ่ายค้านรอบสอง 2026-10-12: เดิมตกไปอ้าง §86/§82/5(1))</summary>
+    public const string WhtWarningsLegalReference = "RD-50 / RD-54 / ท.ป.4/2528";
+
     /// <summary>
     /// **มาตราอ้างอิงของร่องรอย "อนุมัติทั้งที่มีคำเตือน" ตามชุดคำเตือนที่ผ่านจริง** (ฝ่ายค้านรอบ 201 รอบสาม P2-4 · กฎ M Legal reference logging) —
     /// เดิมประทับ <see cref="GeneralWarningsLegalReference"/> ตายตัวทุกแถว ⇒ ทางเข้าอัตโนมัติ/API ที่ผ่านได้แค่ชุด §65 ตรี กลับอ้าง §86/§82/5(1)
@@ -200,6 +203,7 @@ public static class ApprovalAcknowledgement
             var r = Section65TerApprovalWarnings.IsWarning(w)
                 ? Section65TerApprovalWarnings.RuleCodeOf(w) ?? Section65TerApprovalWarnings.LegalReferenceFallback
                 : ReceiptFormRule.IsApprovalWarning(w) ? ReceiptFormRule.WarningLegalReference
+                : WhtCertIssuePlan.IsApprovalWarning(w) || WhtLineRateWarning.IsApprovalWarning(w) ? WhtWarningsLegalReference
                 : GeneralWarningsLegalReference;
             if (!refs.Contains(r)) refs.Add(r);
         }

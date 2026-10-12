@@ -7911,7 +7911,7 @@ public class OcrService : IOcrService
                     // ไฟล์ ภ.ง.ด.3/53 ก็ map จากค่าเดียวกันนี้ ⇒ ไม่เติมที่นี่
                     // = ทุกใบจากเส้น OCR ตกไปเป็น "8 ค่าบริการอื่น ๆ" เสมอ
                     // (เดิมเส้น OCR ไม่เคยเซ็ตเลย ⇒ ต้องไปกรอกในใบทุกครั้ง)
-                    IncomeTypeCode = !isSalesSide && whtRate > 0m ? result.WhtIncomeTypeCode : null,
+                    IncomeTypeCode = !isSalesSide && whtRate > 0m ? Accounting.Helpers.DocumentLineIncomeType.ForSystemWrittenPayerLine(result.WhtIncomeTypeCode) : null,
                     AccountId = lineAccountId,
                     GlAccountAiFeedbackId = lineGlFeedbackId,
                     ProductCode = lineProductCode,
@@ -8007,7 +8007,7 @@ public class OcrService : IOcrService
                 WithholdingTaxAmount = headerWht,
                 // ประเภทเงินได้ ม.40 — เหมือนสาขามีรายการย่อย: ตัวออก 50 ทวิ /
                 // ไฟล์ ภ.ง.ด.3/53 อ่านค่านี้จากบรรทัด ไม่ใช่จากหัวเอกสาร
-                IncomeTypeCode = !isSalesSide && whtRate > 0m ? result.WhtIncomeTypeCode : null,
+                IncomeTypeCode = !isSalesSide && whtRate > 0m ? Accounting.Helpers.DocumentLineIncomeType.ForSystemWrittenPayerLine(result.WhtIncomeTypeCode) : null,
                 // Scan-level suggested debit GL — previously this branch left
                 // the account empty even when the classifier knew the answer.
                 AccountId = scanDebitAccountId,
