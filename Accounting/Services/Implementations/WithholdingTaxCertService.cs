@@ -937,7 +937,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         w.TotalIncomeAmount, w.TotalTaxAmount,
         w.Lines.OrderBy(l => l.LineOrder).Select(l => new WithholdingTaxCertLineResponse(
             l.Id, l.IncomeTypeCode, GetIncomeTypeName(l.IncomeTypeCode),
-            l.IncomeDescription, l.PaymentDate, l.IncomeAmount, l.TaxRate, l.TaxAmount, l.Condition)).ToList(),
+            l.IncomeDescription, l.PaymentDate, l.IncomeAmount, l.TaxRate, l.TaxAmount, l.Condition,
+            Accounting.Helpers.WhtCertFormText.LineSpec(l))).ToList(),
         w.IssuedDate, w.CreatedAt,
         w.DocumentId, w.Document?.DocumentNumber,
         w.SourcePayrollRunId,

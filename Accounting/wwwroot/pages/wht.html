@@ -440,6 +440,11 @@
         };
         const r1 = row('r1'), r2 = row('r2'), r3 = row('r3');
         const r4a = row('r4a'), r4b = row('r4b'), r5 = row('r5'), r6 = row('r6');
+        // ช่อง "ลำดับที่ ... ในแบบ" = ลำดับของผู้ถูกหักในใบแนบ ภ.ง.ด. เดือนนั้น (ไว้สอบยัน) ไม่ใช่เลขที่หนังสือรับรอง (มีที่ "เลขที่" แล้ว)
+        // ลำดับในไฟล์ ภ.ง.ด.3/53 นับต่อบรรทัดและเลื่อนเมื่อมีใบถูกยกเลิก ⇒ ยังคำนวณให้คงที่ไม่ได้ ⇒ เว้นว่างให้ผู้ยื่นเขียน (เดิมพิมพ์เลขที่หนังสือรับรอง)
+        // แถว 6 "อื่น ๆ (ระบุ)" พิมพ์รายการของบรรทัดที่ตกแถวนี้ — ข้อความมาจากเซิร์ฟเวอร์ (`certificateSpecText` ←
+        // `WhtCertFormText.LineSpec`) หน้าไม่คิดเอง · แถว 5 ไม่มีช่องระบุบนแบบทางการ ⇒ ไม่พิมพ์
+        const row6Spec = [...new Set(buckets.r6.map(l => l.certificateSpecText).filter(Boolean))].join(', ');
         // ด่านก่อนพิมพ์: Σ แถว 1-6 ต้องเท่ากับยอดรวมที่เซิร์ฟเวอร์คำนวณ
         // (ถ้าไม่เท่า = มีบรรทัดตกหล่นจากทุกแถว — ห้ามพิมพ์เอกสารที่ยอดไม่ตรงเงียบ ๆ)
         const rowTaxSum = [r1, r2, r3, r4a, r4b, r5, r6].reduce((s, r) => s + r.tax, 0);
@@ -493,8 +498,9 @@
           // 13-digit number, so render this row with empty boxes — DO NOT slice the
           // first 10 digits off the 13-digit ID. Separators are dashes, matching the
           // 13-digit row.
+          // กลุ่ม 1-4-4-1 ตามแบบทางการ (เดิม 3-4-3) — ตัวตั้งเดียวกับ C# `WhtCertFormText.TaxId10Groups`
           const empty = '          ';
-          const groups = [empty.slice(0,3), empty.slice(3,7), empty.slice(7,10)];
+          const groups = [empty.slice(0,1), empty.slice(1,5), empty.slice(5,9), empty.slice(9,10)];
           return groups.map(g =>
             g.split('').map(() => `<span class="tb">&nbsp;</span>`).join('')
           ).join('<span class="ts">-</span>');
@@ -579,7 +585,7 @@
               <tr><td class="ftype-cell">
                 <table class="inner" cellspacing="0"><tr>
                   <td style="width:240px;vertical-align:top">
-                    <div>ลำดับที่ <span class="sq">${d.certificateNumber||'&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'}</span> ในแบบ</div>
+                    <div>ลำดับที่ <span class="sq">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> ในแบบ</div>
                     <div class="hint-text" style="padding-left:0;margin-top:2px">(ให้สามารถอ้างอิงหรือสอบยันกันได้ระหว่างลำดับที่ตามหนังสือรับรองฯ กับแบบยื่นรายการภาษีหักที่จ่าย)</div>
                   </td>
                   <td style="vertical-align:top">
@@ -660,7 +666,7 @@
                       ${mk(r5)}
                     </tr>
                     <tr>
-                      <td class="it-type">6. อื่น ๆ (ระบุ) ........................................................................................</td>
+                      <td class="it-type">6. อื่น ๆ (ระบุ) ${row6Spec ? `<u class="ul">&nbsp;${Layout.esc(row6Spec)}&nbsp;</u>` : '........................................................................................'}</td>
                       ${mk(r6)}
                     </tr>
                     <tr class="total-row">

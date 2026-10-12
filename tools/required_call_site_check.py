@@ -6269,6 +6269,25 @@ RULES += [
     dict(file=DOC, method="MapDocumentToResponse",
          must=["IncomeTypeCode: l.IncomeTypeCode"],
          why=_WHT203 + "echo ประเภทเงินได้กลับให้ฟอร์มแก้ไข hydrate"),
+    # 2026-10-12 (เจ้าของ: 50 ทวิ "ตัวหนังสือและรูปแบบทำให้ตรง"): สอง renderer ฝั่ง C# อ่านข้อความแบบจาก WhtCertFormText ตัวเดียว
+    # (เดิม QuestPDF เพี้ยนจาก HTML: หมายเหตุข้อ 3 · (2.2) · (2.3)) · แถว 6 (ระบุ) ผ่าน Row6Spec ตัวเดียว · ช่องลำดับที่ห้ามพิมพ์เลขที่หนังสือรับรอง
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
+         must=["WhtCertFormText.Row6Spec(", "WhtCertFormText.Copies.Count", "WhtCertFormText.TaxId10Groups"],
+         must_lit=["{WhtCertFormText.Title}", "{WhtCertFormText.Row5}", "{WhtCertFormText.SeqLabel} <span class='sq'>&nbsp;</span>",
+                   "string.Join(\"<br>\", WhtCertFormText.FootnoteItems)"],
+         forbid_lit=["<span class='sq'>{certNum}", "ฉบับที่", "หนังสือรับรองการหัก", "ตามมาตรา", "ภ.ง.ด.", "ประทับตรา", "หมายเหตุ", "คำเตือน"],
+         why="50 ทวิ HTML: ข้อความแบบจาก WhtCertFormText · ลำดับที่ ไม่ใช่เลขที่หนังสือรับรอง · แถว 6 ระบุผ่าน Row6Spec"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildWhtCertPdf",
+         must=["WhtCertFormText.Copies.Count", "WhtCertFormText.PayerHeading", "WhtCertFormText.PayeeHeading"],
+         forbid_lit=["ฉบับที่", "หนังสือรับรองการหัก", "ผู้มีหน้าที่หักภาษี", "ผู้ถูกหักภาษี"],
+         why="50 ทวิ QuestPDF: ข้อความแบบจาก WhtCertFormText ตัวเดียวกับ HTML (กฎ #4 A สอง renderer ห้าม drift)"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildIncomeTable",
+         must=["WhtCertFormText.Row6Spec(", "WhtCertFormText.Row5", "WhtCertFormText.Div22b", "WhtCertFormText.Div23b"],
+         forbid_lit=["ตามมาตรา", "ของกำไรสุทธิ", "อื่น ๆ (ระบุ)"],
+         why="50 ทวิ QuestPDF: แถวเงินได้/4(ข) ใช้ข้อความและการตัดบรรทัดเดียวกับ HTML · แถว 6 ระบุผ่าน Row6Spec"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildFootnote",
+         must=["WhtCertFormText.FootnoteItems"], forbid_lit=["กรณีอื่น"],
+         why="50 ทวิ QuestPDF: หมายเหตุครบ 3 ข้อจากตัวตั้งเดียว (เดิมขาด \"นอกเหนือจาก 1. และ 2.\")"),
 ]
 
 

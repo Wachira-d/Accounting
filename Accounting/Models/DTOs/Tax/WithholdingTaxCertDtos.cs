@@ -70,7 +70,9 @@ public record WithholdingTaxCertLineResponse(
     decimal IncomeAmount,
     decimal TaxRate,
     decimal TaxAmount,
-    string? Condition);
+    string? Condition,
+    // "รายการ" ที่แบบ 50 ทวิ พิมพ์ในช่อง (ระบุ) ของแถว 6 — `WhtCertFormText.LineSpec` (หน้าเว็บแสดงอย่างเดียว ไม่คิดเอง)
+    string? CertificateSpecText = null);
 
 public enum WithholdingTaxCertType
 {
