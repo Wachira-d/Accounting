@@ -3373,7 +3373,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     **M6** `WithholdingTaxCertLineResponse.CertificateRow` (`ThaiWhtRateTable.CertificateRow` ต่อบรรทัด) — wht.html จัดแถวจากค่านี้ (เดิมจับคู่รหัสตรงตัว ⇒ "40(8)" ตกแถว 6) ·
     **L1** `AutoGenerateFromDocumentAsync` ตรวจผู้ถูกหัก/เลขผู้เสียภาษีก่อนยกเลิกใบร่างระดับเอกสาร · **L3** เอกสารฝั่งผู้จ่ายเลือก `gov1`/`1` **ใหม่**ไม่ได้
     (`DocumentLineIncomeType.PayerSideProblem` · 400 WHT-INCOME-TYPE · ค่าที่เก็บไว้แล้วบนบรรทัดเดียวกันบันทึกซ้ำได้ · ฝั่งขายไม่ตรวจ) · **L4** "สร้างใบที่เลือก" บอกเหตุผลรายใบ ·
-    **L6** เลือกประเภทเงินได้ไม่ทับอัตราที่มาจากใบเดิม/OCR (เติมเฉพาะช่องว่าง/0 หรือที่ตัวเลือกเติมเอง `dataset.autoSrc='incomeType'`) · Last verified `commit <pending>`
+    **L6** เลือกประเภทเงินได้ไม่ทับอัตราที่มาจากใบเดิม/OCR (เติมเฉพาะช่องว่าง/0 หรือที่ตัวเลือกเติมเอง `dataset.autoSrc='incomeType'`) · Last verified `commit 2e038dde`
   - กระดาษ 2 ฉบับ ("สำหรับยื่นแบบ" + "เก็บไว้") มาจาก renderer เดิม (ไม่เปลี่ยน)
 - **เกณฑ์เงินสด (ท.ป.4/2528) — ออกใบจริงเฉพาะตอน "จ่ายเงินแล้ว"**
   (`AutoGenerateFromDocumentAsync`):
@@ -5008,4 +5008,4 @@ _Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภ�
 
 _Last verified against codebase: 2026-10-12 (รอบ 203 — ค่าเบี้ยประกันวินาศภัยเป็น "เหตุให้สงสัย" ใน `WhtServiceHints` + prompt `WhtCategoryPrompt` อ่านรหัส/อัตราจาก `ThaiWhtRateTable` (`CodeList`) · §5.4 — commit cf624327)_
 
-_Last verified against codebase: 2026-10-12 (ผลตรวจฝ่ายค้านงาน WHT/50 ทวิ cbc0f705..56ff4998 — §5.4: M1 พรีวิว GL ตามผู้ถูกหัก · M2/M3 ด่านอัตรา-ประเภทใช้ผู้ถูกหัก + ป้าย `[WHT-RATE]` (`Helpers/WhtLineRateWarning`) ผ่านทางเข้าไม่มีคน · M4 `DocumentLineIncomeType.Inherit` ในแปลง/คัดลอก/รายการประจำ · M5 รายการประจำออก 50 ทวิ ทางเดียวกับใบคีย์มือ (`WhtCertIssuePlan.RecurringTemplateAutoIssue`) · M6 `CertificateRow` ต่อบรรทัดจากเซิร์ฟเวอร์ · L1 ตรวจผู้ถูกหักก่อนยกเลิกใบร่าง · L3 `PayerSideProblem` · L4/L6 หน้าเว็บ · `WhtAdversarialFixTests` — commit <pending>)_
+_Last verified against codebase: 2026-10-12 (ผลตรวจฝ่ายค้านงาน WHT/50 ทวิ cbc0f705..56ff4998 — §5.4: M1 พรีวิว GL ตามผู้ถูกหัก · M2/M3 ด่านอัตรา-ประเภทใช้ผู้ถูกหัก + ป้าย `[WHT-RATE]` (`Helpers/WhtLineRateWarning`) ผ่านทางเข้าไม่มีคน · M4 `DocumentLineIncomeType.Inherit` ในแปลง/คัดลอก/รายการประจำ · M5 รายการประจำออก 50 ทวิ ทางเดียวกับใบคีย์มือ (`WhtCertIssuePlan.RecurringTemplateAutoIssue`) · M6 `CertificateRow` ต่อบรรทัดจากเซิร์ฟเวอร์ · L1 ตรวจผู้ถูกหักก่อนยกเลิกใบร่าง · L3 `PayerSideProblem` · L4/L6 หน้าเว็บ · `WhtAdversarialFixTests` — commit 2e038dde)_

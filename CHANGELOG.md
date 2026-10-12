@@ -4633,4 +4633,4 @@ M5 รายการประจำถอด `GenerateWhtCertFromTemplateAsync`
 M6 `WithholdingTaxCertLineResponse.CertificateRow` + wht.html จัดแถวจากค่านี้ ·
 L1 ตรวจผู้ถูกหักก่อนยกเลิกใบร่างระดับเอกสาร · L3 ฝั่งผู้จ่ายเลือก gov1/1 ใหม่ไม่ได้ (`PayerSideProblem`) · L4 สร้างใบที่เลือกบอกเหตุผลรายใบ ·
 L6 เลือกประเภทเงินได้ไม่ทับอัตราจากใบเดิม/OCR · เทสต์ `WhtAdversarialFixTests` · กติกาจุดเรียก `_WHTADV` 9 ข้อ (+แก้กติกาเดิมของ `CollectApprovalWarningsAsync`) —
-ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2e038dde)_
