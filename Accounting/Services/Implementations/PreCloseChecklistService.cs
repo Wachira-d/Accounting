@@ -85,7 +85,8 @@ public class PreCloseChecklistService
         // checklist ข้อนี้จึงเตือนผิดที่มาตลอด. ตรวจเฉพาะ 3/53 และพาไปหน้ารายงานภาษี
         var whtExists = await _db.TaxReports.AsNoTracking()
             .CountAsync(r => r.CompanyId == companyId
-                && (r.TaxType == TaxType.WithholdingTax3 || r.TaxType == TaxType.WithholdingTax53)
+                && (r.TaxType == TaxType.WithholdingTax3 || r.TaxType == TaxType.WithholdingTax53
+                    || r.TaxType == TaxType.WithholdingTax2)   // รอบ 204: ภ.ง.ด.2 นับเป็นรายงาน WHT ของงวดด้วย
                 && r.Year == year && r.Month == month);
         items.Add(new("WHT_REPORTS", "รายงาน ภงด.3/53", whtExists >= 1,
             whtExists >= 1 ? "Info" : "Warning",

@@ -120,10 +120,11 @@ public class TaxGlReconciliationService
             glInputVat, vatReport?.InputVat ?? 0m, vatReport?.Status.ToString(),
             tolerance, start, endExclusive, isOutputVat: false, vatReport));
 
-        // ══════════════ ภ.ง.ด.3 / 53 / 54 — ภาษีหัก ณ ที่จ่าย ══════════════
-        // GL: Cr 21916 (ภ.ง.ด.3) / 21917 (ภ.ง.ด.53) / 21918 (ภ.ง.ด.54)
+        // ══════════════ ภ.ง.ด.2 / 3 / 53 / 54 — ภาษีหัก ณ ที่จ่าย ══════════════
+        // GL: Cr 21915 (ภ.ง.ด.2 · รอบ 204) / 21916 (ภ.ง.ด.3) / 21917 (ภ.ง.ด.53) / 21918 (ภ.ง.ด.54)
         foreach (var (form, code, taxType) in new[]
         {
+            ("ภ.ง.ด.2", Accounting.Helpers.WhtPayableAccount.Pnd2Code, TaxType.WithholdingTax2),
             ("ภ.ง.ด.3", "21916", TaxType.WithholdingTax3),
             ("ภ.ง.ด.53", "21917", TaxType.WithholdingTax53),
             ("ภ.ง.ด.54", "21918", TaxType.WithholdingTax54),

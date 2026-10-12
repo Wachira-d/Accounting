@@ -80,6 +80,7 @@ public partial class TaxService
             TaxType.VAT => "PP30",
             TaxType.VatPp36 => "PP36",
             TaxType.WithholdingTax1 => "PND1",
+            TaxType.WithholdingTax2 => "PND2",
             TaxType.WithholdingTax3 => "PND3",
             TaxType.WithholdingTax53 => "PND53",
             TaxType.WithholdingTax54 => "PND54",
@@ -253,7 +254,7 @@ public partial class TaxService
         // (NetVat ของ CIT ถูก reuse เก็บกำไรก่อนภาษี) โดยไม่มียอดภาษีจริงเลย
         switch (report.TaxType)
         {
-            case TaxType.WithholdingTax3 or TaxType.WithholdingTax53 or TaxType.WithholdingTax54:
+            case TaxType.WithholdingTax2 or TaxType.WithholdingTax3 or TaxType.WithholdingTax53 or TaxType.WithholdingTax54:
                 rows.Add(Row(W, "เงินได้ที่จ่าย (ฐานหัก)", Round2(report.TotalIncome)));
                 rows.Add(Row(W, "ภาษีหัก ณ ที่จ่ายนำส่ง", Round2(report.TotalTaxWithheld)));
                 break;

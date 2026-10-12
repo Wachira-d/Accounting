@@ -859,80 +859,69 @@ public class TaxFilingExportService : ITaxFilingExportService
             $"ภ.ง.ด.91 ประจำปี {year} จำนวน {byEmployee.Count} คน รายได้รวม {totalIncome:N2} บาท ภาษีรวม {totalWht:N2} บาท");
     }
 
-    /// <summary>ภ.ง.ด.2 — Monthly dividend WHT. Multi-tier detection:
-    ///   (1) JournalEntry.Tags ที่มี "DIVIDEND" / "PND2" / "ปันผล"
-    ///       (CSV tag-based — แม่นที่สุด, ผู้ใช้/system ตั้งได้)
-    ///   (2) JournalEntry.Description มีคำว่า "เงินปันผล" (heuristic)
-    ///   (3) Account.AccountCode "21915" หรือ AccountName มี "ปันผล"
-    ///       (ผังบัญชี-based — รองรับ custom code)
-    /// รวม union ของทั้ง 3 → ลด miss สำหรับบริษัทที่ใช้ผังบัญชี custom.</summary>
+    /// <summary>
+    /// ภ.ง.ด.2 — ภาษีหัก ณ ที่จ่ายเงินได้ ม.40(4) (ดอกเบี้ย/เงินปันผล) ที่จ่าย<b>บุคคลธรรมดา</b> (ม.50(2) · ม.59) — รอบ 204 คำตัดสินข้อ 148
+    ///
+    /// <para><b>แหล่งเดียวกับ ภ.ง.ด.3/53</b>: หนังสือรับรอง 50 ทวิ ที่ออกแล้ว (<see cref="WhtCertFilingScope.Filed"/>) ที่ <c>TaxFormType = ภ.ง.ด.2</c>
+    /// → <see cref="PndTextFileFormat"/> layout เดียว (detail rows ล้วน · หน้า import ของสรรพากร/RD Prep ให้ผู้ใช้ map คอลัมน์เอง ·
+    /// Col7 = รหัสจาก <see cref="PndIncomeTypeCode"/>: ดอกเบี้ย <c>4A</c> · ปันผล <c>4B</c> — <b>ยังไม่ยืนยันกับหน้า import ภ.ง.ด.2 จริง</b>)</para>
+    ///
+    /// <para>เดิม (ก่อนรอบ 204) เมธอดนี้เดาจาก JE (tag "DIVIDEND"/คำว่า "เงินปันผล"/ผัง 21915) แล้วเขียนแถว <c>D|…|—|—|—|—|…</c>
+    /// — <b>ไม่มีเลขผู้เสียภาษี/ชื่อผู้รับเลย</b> (ใช้ยื่นไม่ได้) + ไม่แยกบุคคล/นิติบุคคล + นับ JE ทิปที่ลง 21915 เป็นปันผล ·
+    /// ตอนนี้ JV ลง 21915 ที่ไม่มี 50 ทวิ ⇒ <b>บอกในสรุป</b> (ไม่ใส่ไฟล์ ไม่หายเงียบ) ให้ไปออกใบก่อน</para>
+    /// </summary>
     public async Task<TaxFilingExportResult> ExportPnd2Async(Guid companyId, int year, int month)
     {
-        var company = await GetCompanyAsync(companyId);
-        var thaiYear = year + 543;
-        var period = $"{thaiYear:D4}{month:D2}";
-        var monthStart = new DateTime(year, month, 1);
-        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+        var certs = await _db.WithholdingTaxCerts
+            .Include(w => w.Lines)   // ไม่ Include PayeeContact — hydrate แยก (กัน INNER JOIN ตัด payee ที่ถูกลบ)
+            .Where(w => w.CompanyId == companyId
+                && w.TaxFormType == TaxType.WithholdingTax2
+                && w.TaxYear == year && w.TaxMonth == month
+                && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(w.Status))
+            .ToListAsync();
+        await _db.HydratePayeeContactsAsync(companyId, certs);
 
-        // หาบรรทัด JE ที่เกี่ยวกับเงินปันผล — multi-tier detection
-        var lines = await _db.JournalEntryLines.AsNoTracking()
-            .Include(l => l.JournalEntry).Include(l => l.Account)
+        var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
+        var totalTax = certs.Sum(c => c.TotalTaxAmount);
+        var rows = BuildPndRows(certs, juristicPayee: false);
+        var body = PndTextFileFormat.Build(rows);
+
+        var needReview = rows.Where(PndTextFileFormat.NeedsNameReview).ToList();
+        var reviewNote = needReview.Count == 0 ? "" :
+            $" · ⚠️ {needReview.Count} รายแยกชื่อตัว/ชื่อสกุลไม่ได้ "
+            + $"({string.Join(", ", needReview.Take(3).Select(r => r.PayeeName))}"
+            + (needReview.Count > 3 ? ", …" : "") + ") — "
+            + "กรอกช่อง “คำนำหน้า” ที่ผู้ติดต่อ แล้วสร้างไฟล์ใหม่";
+
+        // JV ลงผัง 21915 ในเดือนนี้ที่ไม่มีเอกสารต้นทาง (ปันผล/ดอกเบี้ยที่ลงด้วยรายการบัญชีล้วน) — ไม่รู้ผู้รับ ⇒ ใส่ไฟล์ไม่ได้ · ห้ามหายเงียบ
+        var monthStart = new DateTime(year, month, 1);
+        var monthEnd = monthStart.AddMonths(1);
+        var pnd2Code = WhtPayableAccount.Pnd2Code;
+        var tipPrefix = TipShareAllocation.JournalReferencePrefix;
+        var journalOnly = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.Status == Models.Enums.JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate >= monthStart && l.JournalEntry.EntryDate <= monthEnd
-                && (
-                    // (1) JE Tags
-                    (l.JournalEntry.Tags != null && (
-                        l.JournalEntry.Tags.Contains("DIVIDEND")
-                        || l.JournalEntry.Tags.Contains("PND2")
-                        || l.JournalEntry.Tags.Contains("ปันผล")))
-                    // (2) Description heuristic
-                    || (l.JournalEntry.Description != null && l.JournalEntry.Description.Contains("เงินปันผล"))
-                    // (3) Account code/name
-                    || (l.Account!.AccountCode == "21915"
-                        || (l.Account.AccountName != null && l.Account.AccountName.Contains("ปันผล")))
-                ))
+                && l.JournalEntry.EntryDate >= monthStart && l.JournalEntry.EntryDate < monthEnd
+                && l.JournalEntry.SourceDocumentId == null
+                && l.JournalEntry.ReversedByEntryId == null && l.JournalEntry.OriginalEntryId == null
+                && (l.JournalEntry.Reference == null || !l.JournalEntry.Reference.StartsWith(tipPrefix))
+                && l.Account != null && l.Account.AccountCode == pnd2Code
+                && l.CreditAmount > 0)
+            .Select(l => new { l.JournalEntryId, l.CreditAmount })
             .ToListAsync();
-
-        // Group by JE → 1 dividend payment per shareholder
-        var byJe = lines.GroupBy(l => l.JournalEntryId)
-            .Select(g => new {
-                EntryId = g.Key,
-                Date = g.First().JournalEntry.EntryDate,
-                Description = g.First().JournalEntry.Description ?? "เงินปันผล",
-                // WHT line = บัญชี WHT (21915 หรือ name มี "ปันผล" / "หัก ณ ที่จ่าย")
-                WhtAmount = g.Where(x => x.Account != null && (
-                        x.Account.AccountCode == "21915"
-                        || (x.Account.AccountName != null && (x.Account.AccountName.Contains("ปันผล")
-                            || x.Account.AccountName.Contains("หัก ณ ที่จ่าย")))))
-                    .Sum(x => x.CreditAmount),
-                // Dividend amount = expense/equity side (ไม่ใช่ WHT, ไม่ใช่ cash 111)
-                DividendAmount = g.Where(x => x.Account != null
-                        && x.Account.AccountCode != "21915"
-                        && !x.Account.AccountCode.StartsWith("111")
-                        && (x.Account.AccountName == null || !x.Account.AccountName.Contains("หัก ณ ที่จ่าย")))
-                                  .Sum(x => Math.Abs(x.DebitAmount - x.CreditAmount))
-            })
-            .Where(x => x.WhtAmount > 0)
-            .ToList();
-
-        var sb = new System.Text.StringBuilder();
-        var totalIncome = byJe.Sum(x => x.DividendAmount);
-        var totalWht = byJe.Sum(x => x.WhtAmount);
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.2|{period}|{byJe.Count}|{totalIncome:F2}|{totalWht:F2}");
-        int seq = 1;
-        foreach (var je in byJe)
-        {
-            var payDate = $"{je.Date.Day:D2}/{je.Date.Month:D2}/{je.Date.Year + 543}";
-            // §40(4)(ข) เงินปันผล — IncomeType=4, Condition=1 (หัก ณ ที่จ่าย)
-            sb.AppendLine($"D|{seq++}|—|—|—|—|{payDate}|4|{je.DividendAmount:F2}|{je.WhtAmount:F2}|1|{Esc(je.Description)}");
-        }
-        sb.AppendLine($"T|{byJe.Count}|{totalIncome:F2}|{totalWht:F2}");
+        var journalNote = journalOnly.Count == 0 ? "" :
+            $" · ⚠️ มีรายการบัญชีลงผัง {pnd2Code} โดยไม่มีเอกสาร {journalOnly.Select(x => x.JournalEntryId).Distinct().Count()} รายการ "
+            + $"(ภาษี {journalOnly.Sum(x => x.CreditAmount):N2} บาท) ที่ไม่อยู่ในไฟล์นี้ — ออกหนังสือรับรอง 50 ทวิ แบบ ภ.ง.ด.2 ให้ผู้รับเงิน"
+            + " (หน้า “หนังสือรับรองหัก ณ ที่จ่าย”) แล้วสร้างไฟล์ใหม่ · ถ้าออกใบแล้ว ไม่ต้องทำอะไร";
 
         return new TaxFilingExportResult(
-            "PND2", "ภ.ง.ด.2", $"PND2_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
-            byJe.Count, totalIncome, totalWht,
-            $"ภ.ง.ด.2 เดือน {month}/{year} เงินปันผล {byJe.Count} รายการ ภาษีรวม {totalWht:N2} บาท");
+            "PND2", "ภ.ง.ด.2", $"PND2_{year}{month:D2}.txt", "text/plain", AsBytes(body),
+            certs.Count, totalIncome, totalTax,
+            $"ภ.ง.ด.2 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท "
+            + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
+            + reviewNote
+            + journalNote
+            + WhtRateNote(rows));
     }
 
     /// <summary>ภ.พ.36 — Foreign service VAT self-assessment per §83/6.

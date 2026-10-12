@@ -8,11 +8,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-/// <summary>หน้านำส่งภาษี/ประกันสังคมรวม (สปส.1-10 + ภงด.1/3/53 + ภพ.30).
+/// <summary>หน้านำส่งภาษี/ประกันสังคมรวม (สปส.1-10 + ภงด.1/2/3/53/54 + ภพ.30/36).
 /// แหล่งหนี้ต่องวด:
 ///   • SSO   — PayrollRun ที่ Paid + ยังไม่ settle (SsoSettledAt == null)
 ///   • ภงด.1 — PayrollRun.TotalWithholdingTax (ภาษีเงินเดือน)
-///   • ภงด.3/53 — เอกสารที่มี WithholdingTaxAmount แยกตามชนิดผู้ติดต่อ
+///   • ภงด.2/3/53/54 — 50 ทวิ ที่ออกแล้ว (+ เอกสารที่ยังไม่มีใบเป็นคำเตือน) แบ่งแบบด้วย WhtPayeeKind.ResolveForm ตัวเดียว
+///     (ภ.ง.ด.2 = ดอกเบี้ย/ปันผล ม.40(4) จ่ายบุคคลธรรมดา · รอบ 204 คำตัดสินข้อ 148)
 ///   • ภพ.30 — อ่านจาก TaxReports ที่ generate ไว้แล้ว (NetVat > 0) — ไม่คำนวณสด
 ///     ในหน้านี้เพื่อกันหน้าค้างจากการคำนวณ VAT หลายเดือน
 /// ยอดค้าง = หนี้ − ที่นำส่งแล้ว (StatutoryRemittance; SSO ใช้ SsoSettledAt).</summary>
@@ -34,6 +35,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     {
         "SsoSps110" => ("ประกันสังคม", "สปส.1-10", "21815"),
         "WhtPnd1"   => ("ภาษีหัก ณ ที่จ่าย (เงินเดือน)", "ภ.ง.ด.1", "21914"),
+        // รอบ 204 (คำตัดสินข้อ 148): ม.40(4) ดอกเบี้ย/เงินปันผล จ่ายบุคคลธรรมดา (ม.50(2) · ม.59) — ผังจากตัวตัดสินเดียว WhtPayableAccount
+        "WhtPnd2"   => ("ภาษีหัก ณ ที่จ่าย (ดอกเบี้ย/เงินปันผล บุคคลธรรมดา)", "ภ.ง.ด.2", Accounting.Helpers.WhtPayableAccount.Pnd2Code),
         "WhtPnd3"   => ("ภาษีหัก ณ ที่จ่าย (บุคคลธรรมดา)", "ภ.ง.ด.3", "21916"),
         "WhtPnd53"  => ("ภาษีหัก ณ ที่จ่าย (นิติบุคคล)", "ภ.ง.ด.53", "21917"),
         // ม.70 — WHT จ่ายนิติบุคคลต่างประเทศ (คู่กับ ภ.พ.36 บนใบเดียวกัน):
@@ -210,6 +213,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 .Select(d => new { d.Id, d.DocumentType, d.RelatedDocumentId,
                     d.WithholdingTaxAmount, d.PaymentDate, d.DocumentDate,
                     d.IsForeignService, d.WhtPayeeContactId,
+                    // รอบ 204: ประเภทเงินได้ของบรรทัดที่หัก (เกณฑ์เดียวกับ WhtIncomeCodes) — แยก ภ.ง.ด.2 ออกจาก ภ.ง.ด.3
+                    IncomeCodes = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).Select(l => l.IncomeTypeCode).ToList(),
                     CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual,
                     CTaxId = d.Contact != null ? d.Contact.TaxId : null,
                     CName = d.Contact != null ? d.Contact.Name : null,
@@ -252,14 +257,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             // ม.70: WHT จ่ายต่างประเทศ (ใบ ภ.พ.36) ยื่น **ภ.ง.ด.54** — ห้ามนับปน ภงด.3/53
             // certs แบ่งแบบด้วย TaxFormType ที่ตั้งตอนออกใบ (ResolveWhtFormType) · เอกสารที่หลุด
             // แบ่งด้วย WhtPayeeKind.ResolveForm ตัวเดียวกับทะเบียน 50 ทวิ
-            foreach (var typ in new[] { "WhtPnd3", "WhtPnd53", "WhtPnd54" })
+            foreach (var typ in new[] { "WhtPnd2", "WhtPnd3", "WhtPnd53", "WhtPnd54" })
             {
-                var wantForm = typ switch
-                {
-                    "WhtPnd53" => TaxType.WithholdingTax53,
-                    "WhtPnd54" => TaxType.WithholdingTax54,
-                    _ => TaxType.WithholdingTax3,
-                };
+                var wantForm = ReportTypeOf(typ)!.Value;   // map เดียวกับปฏิทิน/สถานะยื่น (รอบ 204: + ภ.ง.ด.2)
                 var certGroups = certs
                     .Where(c => c.TaxFormType == wantForm && InRange(c.TaxYear, c.TaxMonth))
                     .GroupBy(c => (c.TaxYear, c.TaxMonth))
@@ -269,8 +269,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 var gapGroups = whtDocs
                     .Where(d => !coveredDocIds.Contains(d.Id)
                         && wantForm == (d.WhtPayeeContactId is Guid gp && gapPayees.TryGetValue(gp, out var gk)
-                            ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, gk.Country, gk.TaxId, gk.Type, gk.Name)
-                            : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName)))
+                            ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, gk.Country, gk.TaxId, gk.Type, gk.Name, d.IncomeCodes)
+                            : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes)))
                     .Select(d => new { Date = (d.PaymentDate ?? d.DocumentDate), d.WithholdingTaxAmount })
                     .Where(d => InRange(d.Date.Year, d.Date.Month))
                     .GroupBy(d => (d.Date.Year, d.Date.Month))
@@ -291,7 +291,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 }
             }
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ ภงด.3/53 ไม่สำเร็จ"); }
+        catch (Exception ex) { _logger.LogWarning(ex, "คำนวณ ภงด.2/3/53/54 ไม่สำเร็จ"); }
 
         // ── ภพ.30 — ใช้รายงานที่ generate/บันทึกไว้แล้ว (เร็ว — ไม่คำนวณ VAT สดหลาย
         //    เดือนในหน้านี้ ซึ่งเคยทำให้หน้าค้างโหลด). ผู้ใช้ generate ภ.พ.30 หน้า
@@ -477,6 +477,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         "VatPp30"   => (true,  "ผู้ประกอบการจด VAT ต้องยื่นทุกเดือนแม้ไม่มีรายรับ (ป.รัษฎากร §83)"),
         "SsoSps110" => (true,  "นายจ้างที่ขึ้นทะเบียนต้องยื่นทุกเดือนแม้ไม่มีค่าจ้าง (พ.ร.บ.ประกันสังคม §47)"),
         "WhtPnd1"   => (true,  "ยื่นทุกเดือนที่มีการจ่ายเงินได้ ม.40(1)(2) แม้ภาษีหัก = 0 (ท.ป.4/2528)"),
+        "WhtPnd2"   => (false, "ยื่นเฉพาะเดือนที่จ่ายดอกเบี้ย/เงินปันผล ม.40(4) ให้บุคคลธรรมดา (ป.รัษฎากร ม.50(2) · ม.59)"),
         "WhtPnd3"   => (false, "ยื่นเฉพาะเดือนที่มีการหักภาษีบุคคลธรรมดา (ท.ป.4/2528)"),
         "WhtPnd53"  => (false, "ยื่นเฉพาะเดือนที่มีการหักภาษีนิติบุคคล (ท.ป.4/2528)"),
         "WhtPnd54"  => (false, "ยื่นเฉพาะเดือนที่จ่ายเงินได้ให้ผู้รับในต่างประเทศ (ป.รัษฎากร ม.70)"),
@@ -516,6 +517,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     {
         "VatPp30"   => TaxType.VAT,
         "WhtPnd1"   => TaxType.WithholdingTax1,
+        "WhtPnd2"   => TaxType.WithholdingTax2,   // รอบ 204 ข้อ 148
         "WhtPnd3"   => TaxType.WithholdingTax3,
         "WhtPnd53"  => TaxType.WithholdingTax53,
         // ม.70 — เดิมตกหล่นจาก map นี้ ⇒ ปฏิทินยื่นไม่รู้จัก ภ.ง.ด.54 เลย
@@ -685,6 +687,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 .Select(d => new { d.Id, d.DocumentType, d.RelatedDocumentId,
                     d.WithholdingTaxAmount, d.VatAmount, d.IsForeignService,
                     d.PaymentDate, d.DocumentDate, d.WhtPayeeContactId,
+                    IncomeCodes = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).Select(l => l.IncomeTypeCode).ToList(),   // รอบ 204
                     CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual,
                     CTaxId = d.Contact != null ? d.Contact.TaxId : null,
                     CName = d.Contact != null ? d.Contact.Name : null,
@@ -703,9 +706,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 if (d.WithholdingTaxAmount > 0 && !coveredCalDocIds.Contains(d.Id))
                     whtGaps.Add(new WhtGapSnap(dt.Year, dt.Month,
                         d.WhtPayeeContactId is Guid cp && calPayees.TryGetValue(cp, out var ck)
-                            ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, ck.Country, ck.TaxId, ck.Type, ck.Name)
+                            ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, ck.Country, ck.TaxId, ck.Type, ck.Name, d.IncomeCodes)
                             : Accounting.Helpers.WhtPayeeKind.ResolveForm(
-                                d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName),
+                                d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes),
                         d.WithholdingTaxAmount));
             }
         }
@@ -719,7 +722,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
         // ── ประกอบเป็นตาราง ──
         var rows = new List<FilingCalendarRow>();
-        var order = new[] { "VatPp30", "WhtPnd1", "SsoSps110", "WhtPnd3", "WhtPnd53",
+        var order = new[] { "VatPp30", "WhtPnd1", "SsoSps110", "WhtPnd2", "WhtPnd3", "WhtPnd53",
             "WhtPnd54", "VatPp36" };
         foreach (var type in order)
         {
@@ -873,6 +876,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                             + "ตรวจว่าพนักงานกรอกเลขประจำตัวผู้เสียภาษีครบ แล้วกด “สร้างเอกสารใหม่” ที่รอบเงินเดือน";
                 }
                 break;
+            case "WhtPnd2":
             case "WhtPnd3":
             case "WhtPnd53":
             case "WhtPnd54":

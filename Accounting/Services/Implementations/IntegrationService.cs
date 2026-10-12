@@ -2499,10 +2499,11 @@ public class IntegrationService : IIntegrationService
                     // 12 ทางเข้าที่ไม่เคยตั้งค่า) **และไม่รู้จัก 21918 (ภ.ง.ด.54) เลย**
                     // ⇒ WHT ของการจ่ายต่างประเทศตกไปกอง ภ.ง.ด.3/53 ⇒ ตอนกดนำส่งจะ
                     // Dr บัญชีที่ไม่มียอด = ยอดค้างที่ล้างไม่ได้ (ผลตรวจรอบ 180)
+                    // รอบ 204 (ข้อ 148): + ประเภทเงินได้ของบรรทัดที่หัก ⇒ ดอกเบี้ย/ปันผลบุคคลธรรมดาลง 21915 (ภ.ง.ด.2) ตรงกับ 50 ทวิ
                     var whtChain = Accounting.Helpers.WhtPayableAccount.CodeChain(
                         document.IsForeignService, expenseContact?.CountryCode, expenseContact?.TaxId,
                         expenseContact?.ContactType ?? Models.Enums.ContactType.Individual,
-                        expenseContact?.Name);
+                        expenseContact?.Name, await _db.LoadWithheldAsync(companyId, document));
                     ChartOfAccount? whtAcc = null;
                     foreach (var code in whtChain)
                     {
@@ -4134,7 +4135,8 @@ public class IntegrationService : IIntegrationService
                 .FirstOrDefaultAsync(c => c.Id == document.ContactId);
             var payChain = Accounting.Helpers.WhtPayableAccount.CodeChain(
                 document.IsForeignService, supplier?.CountryCode, supplier?.TaxId,
-                supplier?.ContactType ?? Models.Enums.ContactType.Individual, supplier?.Name);
+                supplier?.ContactType ?? Models.Enums.ContactType.Individual, supplier?.Name,
+                await _db.LoadWithheldAsync(companyId, document));   // รอบ 204 ข้อ 148
             var whtCode = payChain[0];
             var whtAccount = await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == whtCode && a.IsActive)

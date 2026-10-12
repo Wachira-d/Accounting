@@ -30,7 +30,7 @@ public record PlatformHolidayYearDto(int Year, List<PlatformHolidayDto> Holidays
 public class AdminPlatformHolidayController : ControllerBase
 {
     private static readonly string[] Kinds = { "Public", "Substitute", "Special" };
-    private static readonly string[] MonthlyKeys = { "VatPp30", "VatPp36", "WhtPnd1", "WhtPnd3", "WhtPnd53", "WhtPnd54", "SsoSps110" };
+    private static readonly string[] MonthlyKeys = { "VatPp30", "VatPp36", "WhtPnd1", "WhtPnd2", "WhtPnd3", "WhtPnd53", "WhtPnd54", "SsoSps110" };
 
     private readonly AccountingDbContext _db;
     private readonly ILogger<AdminPlatformHolidayController> _logger;

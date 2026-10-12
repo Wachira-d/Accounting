@@ -50,7 +50,8 @@ public static class JournalPostingGuard
     public sealed record Finding(string RuleCode, bool IsError, string Message);
 
     // ── กลุ่มบัญชีที่กฎอ้างถึง (ตรงรหัส/prefix ตามผังมาตรฐาน) ──────────────
-    private static readonly string[] WhtPayableCodes = { "21916", "21917", "21918" };
+    // รอบ 204: + 21915 (ภ.ง.ด.2) — ชุดเดียวจาก WhtPayableAccount (เดิมพิมพ์รหัสเอง ⇒ JE ดอกเบี้ย/ปันผลบุคคลไม่ถูกนับเป็นขา WHT)
+    private static readonly string[] WhtPayableCodes = Accounting.Helpers.WhtPayableAccount.DocumentPayableCodes.ToArray();
     private static readonly string[] InputVatCodes = { "11610", "11640" };
     private static readonly string[] OutputVatCodes = { "21911", "21912", "21913" };
 

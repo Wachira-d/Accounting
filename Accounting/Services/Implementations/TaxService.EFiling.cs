@@ -18,6 +18,7 @@ public partial class TaxService
     //
     // Forms supported:
     //   * PND.1   — withholding from salary (เงินเดือน)
+    //   * PND.2   — withholding on ม.40(4) interest/dividends paid to individuals (รอบ 204 ข้อ 148)
     //   * PND.3   — withholding from individuals
     //   * PND.53  — withholding from juristic persons
     //   * PND.54  — withholding from foreign payments
@@ -46,6 +47,7 @@ public partial class TaxService
         switch (formType)
         {
             case "PND.1":
+            case "PND.2":
             case "PND.3":
             case "PND.53":
             case "PND.54":
@@ -61,7 +63,7 @@ public partial class TaxService
                 (body, totalAmount, totalTax, lineCount) = await BuildCitAsync(companyId, company, year);
                 break;
             default:
-                throw new ArgumentException($"FormType '{formType}' ยังไม่รองรับ — ใช้ได้: PND.1, PND.3, PND.53, PND.54, PND.50, PP.30, PP.36");
+                throw new ArgumentException($"FormType '{formType}' ยังไม่รองรับ — ใช้ได้: PND.1, PND.2, PND.3, PND.53, PND.54, PND.50, PP.30, PP.36");
         }
 
         var export = new EFilingExport
@@ -84,6 +86,7 @@ public partial class TaxService
         var taxType = formType switch
         {
             "PND.1" => TaxType.WithholdingTax1,
+            "PND.2" => TaxType.WithholdingTax2,
             "PND.3" => TaxType.WithholdingTax3,
             "PND.53" => TaxType.WithholdingTax53,
             "PND.54" => TaxType.WithholdingTax54,

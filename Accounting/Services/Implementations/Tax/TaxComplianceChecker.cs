@@ -100,6 +100,7 @@ public class TaxComplianceChecker : ITaxComplianceChecker
         switch (report.TaxType)
         {
             case TaxType.VAT: CheckVatPp30(report, findings); break;
+            case TaxType.WithholdingTax2:   // รอบ 204 — ภ.ง.ด.2 ใช้ invariant เดียวกัน (ยอดหัว = Σ บรรทัด · เลขผู้เสียภาษีครบ)
             case TaxType.WithholdingTax3:
             case TaxType.WithholdingTax53: CheckPnd3_53(report, findings); break;
             case TaxType.WithholdingTax1: CheckPnd1(report, findings); break;
