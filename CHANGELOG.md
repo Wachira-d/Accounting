@@ -4622,4 +4622,4 @@ _Last verified against codebase: 2026-10-12 (50 ทวิ ข้อความ/
 ข้อความแบบของ HTML+QuestPDF ย้ายไป `Helpers/WhtCertFormText.cs` (HTML ออกเหมือนเดิมทุกไบต์ — `WhtCertFormTextTests` ชิ้นส่วนทองคำ 24 ชิ้น) ·
 QuestPDF แก้ drift: หมายเหตุข้อ 3 ขาด "นอกเหนือจาก 1. และ 2." · (2.2) ตัดท้าย · (2.3) "ก่อนรอบบัญชี" · ตรวจภาพก่อน/หลังด้วย Chromium: ต่างเฉพาะ 3 จุดข้างบน ·
 คงไว้โดยตั้งใจ (รอบ 72 `6f8e7115`): ฉบับที่ 3 · ป้ายลงชื่อ "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" (แบบทางการ "ผู้จ่ายเงิน" — รอคำตัดสินเจ้าของ) ·
-checker `required_call_site_check` +4 กติกา (negative: ใส่ `{certNum}` กลับในช่องลำดับที่แล้วฟ้อง) — commit <pending>)_
+checker `required_call_site_check` +4 กติกา (negative: ใส่ `{certNum}` กลับในช่องลำดับที่แล้วฟ้อง) — commit 06fa7b9b)_
