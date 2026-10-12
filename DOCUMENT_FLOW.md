@@ -4984,4 +4984,4 @@ _Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภ�
 
 _Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภทเงินได้รายบรรทัดของเอกสาร: `DocumentLineRequest/Response.IncomeTypeCode` + `Helpers/DocumentLineIncomeType` (แก้ไขไม่ส่ง = คงค่าเดิม · "" = ล้าง · ค่าแปลกถูกปฏิเสธ) · documents.html ช่อง "ประเภทเงินได้" ฝั่งจ่าย · โคลนสืบทอด · `DocumentLineIncomeTypeTests` · §5.4 — commit df2952d3)_
 
-_Last verified against codebase: 2026-10-12 (รอบ 203 — ค่าเบี้ยประกันวินาศภัยเป็น "เหตุให้สงสัย" ใน `WhtServiceHints` + prompt `WhtCategoryPrompt` อ่านรหัส/อัตราจาก `ThaiWhtRateTable` (`CodeList`) · §5.4 — commit <pending>)_
+_Last verified against codebase: 2026-10-12 (รอบ 203 — ค่าเบี้ยประกันวินาศภัยเป็น "เหตุให้สงสัย" ใน `WhtServiceHints` + prompt `WhtCategoryPrompt` อ่านรหัส/อัตราจาก `ThaiWhtRateTable` (`CodeList`) · §5.4 — commit 8878765f)_
