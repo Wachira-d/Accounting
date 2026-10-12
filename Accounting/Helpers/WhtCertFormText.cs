@@ -148,23 +148,24 @@ public static class WhtCertFormText
     /// "รายการ" ที่พิมพ์ในช่อง (ระบุ) ของแถว 6 อื่น ๆ — บรรทัดที่ตกแถว 6 (<see cref="ThaiWhtRateTable.CertificateRow"/> = "6")
     /// · ชื่อประเภทจากตารางกลาง → คำอธิบายบรรทัด → รหัส · ไม่มีบรรทัด = null (renderer พิมพ์เส้นจุด)
     /// <para>แถว 5 ไม่มีช่อง (ระบุ) บนแบบทางการ ⇒ ไม่พิมพ์รายการ (ข้อความแถว 5 คงเดิมคำต่อคำ)</para>
-    /// <para>TODO(ทีมที่ขยาย <c>ThaiWhtRateTable</c> ด้วย <c>CertificateRowText</c> ต่อประเภท): สลับ <c>t.Name</c> เป็น
-    /// <c>t.CertificateRowText ?? t.Name</c> ใน <see cref="LineSpec"/> ที่นี่ที่เดียว</para>
+    /// <para>ตัวตั้งข้อความ "ระบุ" ตัวเดียว = <see cref="ThaiWhtRateTable.CertificateRowSpecification"/> (ชื่อประเภทจาก
+    /// <c>CertificateRowText</c> · null = ห้ามพิมพ์ชื่อประเภท ห้าม fallback ไป <c>Name</c>) — ที่นี่แค่เรียงตามลำดับบรรทัดแล้วส่งต่อ</para>
     /// </summary>
     public static string? Row6Spec(IEnumerable<WithholdingTaxCertLine> lines)
     {
-        var specs = lines.Where(l => ThaiWhtRateTable.CertificateRow(l.IncomeTypeCode) == "6")
-            .OrderBy(l => l.LineOrder).Select(LineSpec)
-            .Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.Ordinal).ToList();
-        return specs.Count == 0 ? null : string.Join(", ", specs);
+        return ThaiWhtRateTable.CertificateRowSpecification("6",
+            lines.OrderBy(l => l.LineOrder).Select(l => ((string?)l.IncomeTypeCode, (string?)LineSpecOrNull(l))));
     }
 
     /// <summary>รายการของบรรทัดเดียว — ส่งให้หน้าเว็บผ่าน <c>WithholdingTaxCertLineResponse.CertificateSpecText</c> (หน้าไม่คิดเอง)</summary>
     public static string LineSpec(WithholdingTaxCertLine line)
+        => LineSpecOrNull(line) ?? (line.IncomeTypeCode ?? "").Trim();
+
+    /// <summary>ข้อความ "ระบุ" ของบรรทัด: ชื่อประเภทบนแบบ (<see cref="ThaiWhtRateTable.CertificateRowText"/>) → คำอธิบายบรรทัด</summary>
+    private static string? LineSpecOrNull(WithholdingTaxCertLine line)
     {
-        var t = ThaiWhtRateTable.Find(line.IncomeTypeCode);
-        if (t != null && !string.IsNullOrWhiteSpace(t.Name)) return t.Name.Trim();
-        if (!string.IsNullOrWhiteSpace(line.IncomeDescription)) return line.IncomeDescription.Trim();
-        return (line.IncomeTypeCode ?? "").Trim();
+        var text = ThaiWhtRateTable.CertificateRowText(line.IncomeTypeCode);
+        if (!string.IsNullOrWhiteSpace(text)) return text.Trim();
+        return string.IsNullOrWhiteSpace(line.IncomeDescription) ? null : line.IncomeDescription.Trim();
     }
 }
