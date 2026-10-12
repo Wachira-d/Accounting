@@ -877,6 +877,7 @@ const API = {
       exportPnd1: (year, month) => `${base}/tax-filing-export/pnd1?year=${year}&month=${month}`,
       exportPnd3: (year, month) => `${base}/tax-filing-export/pnd3?year=${year}&month=${month}`,
       exportPnd53: (year, month) => `${base}/tax-filing-export/pnd53?year=${year}&month=${month}`,
+      exportPnd2: (year, month) => `${base}/tax-filing-export/pnd2?year=${year}&month=${month}`,
       exportPnd1k: (year) => `${base}/tax-filing-export/pnd1k?year=${year}`,
       exportPp30: (year, month) => `${base}/tax-filing-export/pp30?year=${year}&month=${month}`,
       exportSso110: (year, month) => `${base}/tax-filing-export/sso110?year=${year}&month=${month}`,

@@ -14,10 +14,14 @@ public sealed record DataIntegrityReport(
     List<DataIntegritySuspect> PurchaseInvoicesBilledFromPoWithGrn,
     List<DataIntegritySuspect> PayrollRunTotals,
     // รอบ 203 — ใบเสร็จที่ออกแล้วของผู้จด VAT ซึ่งพิมพ์ VAT แต่หัวไม่ใช่ใบกำกับ (ตรึง IsTaxInvoiceByLaw=false) · อ่านอย่างเดียว
-    List<DataIntegritySuspect> PlainReceiptsWithVat)
+    List<DataIntegritySuspect> PlainReceiptsWithVat,
+    // รอบ 204 (คำตัดสินข้อ 148) — ดอกเบี้ย/ปันผล ม.40(4) จ่ายบุคคลธรรมดาที่บันทึกเป็น ภ.ง.ด.3 ก่อนมีแบบ ภ.ง.ด.2 (50 ทวิ · เอกสารที่ลง 21916 · ใบปน) · อ่านอย่างเดียว
+    List<DataIntegritySuspect> Section40_4RecordedAsPnd3,
+    // รอบ 204 — JE จ่ายทิปเดิมที่ลงภาษีหักไว้ที่ 21915 (ผัง ภ.ง.ด.2) ทั้งที่ 50 ทวิ ของทิปเป็น ภ.ง.ด.3 (21916) · อ่านอย่างเดียว
+    List<DataIntegritySuspect> TipWhtPostedToPnd2Account)
 {
     public int Total => PosOrderTotals.Count + RollupBillingNoteChildren.Count + PurchaseInvoicesBilledFromPoWithGrn.Count
-        + PayrollRunTotals.Count + PlainReceiptsWithVat.Count;
+        + PayrollRunTotals.Count + PlainReceiptsWithVat.Count + Section40_4RecordedAsPnd3.Count + TipWhtPostedToPnd2Account.Count;
 }
 
 /// <summary>
@@ -132,6 +136,113 @@ public class DataIntegrityReportService
                 d.TotalAmount, null)).ToList();
         }
 
-        return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts);
+        var (pnd3Section40_4, tipOn21915) = await LoadPnd2SuspectsAsync(companyId);
+        return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915);
+    }
+
+    /// <summary>
+    /// รอบ 204 (คำตัดสินเจ้าของ DECISIONS ข้อ 148) — ข้อมูลที่บันทึกไว้ก่อนมีแบบ ภ.ง.ด.2 · <b>อ่านอย่างเดียว ไม่ย้ายแบบ/ไม่ย้าย GL ให้</b>
+    /// (50 ทวิ ที่ออกแล้วส่งมอบผู้รับไปแล้ว + ภ.ง.ด.3 ที่ยื่นแล้วแก้ย้อนหลังไม่ได้ ⇒ ผู้ทำบัญชีตัดสินรายใบ: ยื่นเพิ่มเติม/ยกเลิกออกใบแทน/โอนผัง)
+    /// <list type="bullet">
+    /// <item>50 ทวิ แบบ ภ.ง.ด.3 (ไม่ยกเลิก) ที่มีบรรทัดเงินได้ ม.40(4) — ตัวตัดสินเดียว <see cref="Accounting.Helpers.ThaiWhtRateTable.IsSection40_4"/></item>
+    /// <item>เอกสารฝั่งจ่ายที่บรรทัดหักทั้งหมดเป็น ม.40(4) แต่ JE ลง Cr 21916 (ก่อนรอบ 204) — ตอนนี้ตัวตัดสินจัดเป็น ภ.ง.ด.2 ⇒ หน้านำส่ง ภ.ง.ด.2 จะ Dr 21915
+    /// ขณะที่ยอดค้างอยู่ 21916</item>
+    /// <item>เอกสารของผู้รับบุคคลธรรมดาที่ปน ม.40(4) กับเงินได้อื่น — <see cref="Accounting.Helpers.WhtPayeeKind.Pnd2MixWarning"/> (ต้องแยกใบ)</item>
+    /// <item>JE จ่ายทิป (<see cref="Accounting.Helpers.TipShareAllocation.JournalReferencePrefix"/>) ที่ Cr 21915</item>
+    /// </list>
+    /// </summary>
+    private async Task<(List<DataIntegritySuspect> Section40_4, List<DataIntegritySuspect> TipOn21915)> LoadPnd2SuspectsAsync(Guid companyId)
+    {
+        var result = new List<DataIntegritySuspect>();
+
+        // ① 50 ทวิ ภ.ง.ด.3 ที่มีเงินได้ ม.40(4) — กรองหยาบใน SQL (รหัสขึ้นต้น "4" = 4a/4b/40(4)…) แล้วตัดสินด้วยตารางกลางในหน่วยความจำ
+        var certRows = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && !w.IsDeleted
+                && w.TaxFormType == TaxType.WithholdingTax3
+                && w.Status != Models.DTOs.Tax.WithholdingTaxCertStatus.Voided
+                && w.Lines.Any(l => !l.IsDeleted && l.IncomeTypeCode.StartsWith("4")))
+            .Select(w => new
+            {
+                w.Id, w.CertificateNumber, w.TaxYear, w.TaxMonth, w.IssuedDate, w.CreatedAt, w.Status, w.TotalTaxAmount,
+                Lines = w.Lines.Where(l => !l.IsDeleted).Select(l => new { l.IncomeTypeCode, l.TaxAmount }).ToList(),
+            })
+            .ToListAsync();
+        foreach (var c in certRows)
+        {
+            var hit = c.Lines.Where(l => Accounting.Helpers.ThaiWhtRateTable.IsSection40_4(l.IncomeTypeCode)).ToList();
+            if (hit.Count == 0) continue;
+            var all = hit.Count == c.Lines.Count;
+            result.Add(new DataIntegritySuspect("Pnd3CertWithSection40_4", c.Id, c.CertificateNumber,
+                c.IssuedDate ?? c.CreatedAt,
+                $"50 ทวิ แบบ ภ.ง.ด.3 (สถานะ {c.Status} · งวด {c.TaxMonth:D2}/{c.TaxYear}) มีดอกเบี้ย/เงินปันผล ม.40(4) "
+                + (all ? "ทั้งใบ" : $"{hit.Count} จาก {c.Lines.Count} บรรทัด")
+                + " — ม.50(2) ให้ยื่น ภ.ง.ด.2 · ใบที่ยื่นแล้วห้ามแก้ย้อนหลัง: ให้ผู้ทำบัญชีตัดสิน (ยื่น ภ.ง.ด.3 เพิ่มเติมลดยอด + ยื่น ภ.ง.ด.2 · ยกเลิกแล้วออกใบแทน)",
+                hit.Sum(l => l.TaxAmount), null));
+        }
+
+        // ② เอกสารฝั่งจ่ายที่บรรทัดหักเป็น ม.40(4) (ทั้งใบ = ลง 21916 ไปแล้ว · ปน = ต้องแยกใบ)
+        var payerSide = Accounting.Helpers.WhtRemitScope.PayerSideTypes;
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted
+                && payerSide.Contains(d.DocumentType)
+                && d.WithholdingTaxAmount > 0
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && d.Lines.Any(l => !l.IsDeleted && l.WithholdingTaxAmount > 0 && l.IncomeTypeCode != null && l.IncomeTypeCode.StartsWith("4")))
+            .Select(d => new
+            {
+                d.Id, d.DocumentNumber, d.DocumentDate, d.WithholdingTaxAmount, d.IsForeignService, d.ContactId, d.WhtPayeeContactId,
+                Codes = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).Select(l => l.IncomeTypeCode).ToList(),
+                PostedTo21916 = _db.JournalEntryLines.Any(jl => jl.JournalEntry.CompanyId == companyId
+                    && jl.JournalEntry.SourceDocumentId == d.Id
+                    && jl.JournalEntry.Status == JournalEntryStatus.Posted
+                    && jl.Account != null && jl.Account.AccountCode == Accounting.Helpers.WhtPayableAccount.Pnd3Code
+                    && jl.CreditAmount > 0),
+            })
+            .ToListAsync();
+        var contactIds = docs.Select(d => Accounting.Helpers.WhtCertIssuePlan.PayeeOf(d.ContactId, d.WhtPayeeContactId)).Distinct().ToList();
+        var contacts = contactIds.Count == 0
+            ? new Dictionary<Guid, Contact>()
+            : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id);
+        foreach (var d in docs)
+        {
+            contacts.TryGetValue(Accounting.Helpers.WhtCertIssuePlan.PayeeOf(d.ContactId, d.WhtPayeeContactId), out var payee);
+            var mix = Accounting.Helpers.ThaiWhtRateTable.ClassifySection40_4(d.Codes);
+            if (mix == Accounting.Helpers.ThaiWhtRateTable.Section40_4Mix.AllSection40_4 && d.PostedTo21916)
+            {
+                result.Add(new DataIntegritySuspect("Pnd2DocPostedToPnd3Account", d.Id, d.DocumentNumber, d.DocumentDate,
+                    $"ดอกเบี้ย/เงินปันผล ม.40(4) ทั้งใบ จ่าย {payee?.Name ?? "(ไม่พบผู้ถูกหัก)"} — ลงภาษีค้างจ่ายไว้ที่ 21916 (ภ.ง.ด.3) ก่อนมีแบบ ภ.ง.ด.2 · "
+                    + "ตอนนี้ระบบจัดใบนี้เป็น ภ.ง.ด.2 (นำส่งจาก 21915) ⇒ โอนยอด 21916 → 21915 ด้วยรายการปรับปรุง หรือให้ผู้ทำบัญชีตัดสินถ้า ภ.ง.ด.3 งวดนั้นยื่นแล้ว",
+                    d.WithholdingTaxAmount, null));
+            }
+            else if (mix == Accounting.Helpers.ThaiWhtRateTable.Section40_4Mix.Mixed
+                && Accounting.Helpers.WhtPayeeKind.Pnd2MixWarning(d.IsForeignService, payee?.CountryCode, payee?.TaxId,
+                    payee?.ContactType ?? ContactType.Unknown, payee?.Name, d.Codes) is string mixWarn)
+            {
+                result.Add(new DataIntegritySuspect("Section40_4MixedDocument", d.Id, d.DocumentNumber, d.DocumentDate,
+                    mixWarn, d.WithholdingTaxAmount, null));
+            }
+        }
+
+        // ③ JE จ่ายทิปที่ลงภาษีหักไว้ 21915
+        var tipPrefix = Accounting.Helpers.TipShareAllocation.JournalReferencePrefix;
+        var pnd2Code = Accounting.Helpers.WhtPayableAccount.Pnd2Code;
+        var tipRows = await _db.JournalEntryLines.AsNoTracking()
+            .Where(jl => jl.JournalEntry.CompanyId == companyId
+                && jl.JournalEntry.Status == JournalEntryStatus.Posted
+                && jl.JournalEntry.Reference != null && jl.JournalEntry.Reference.StartsWith(tipPrefix)
+                && jl.Account != null && jl.Account.AccountCode == pnd2Code
+                && jl.CreditAmount > 0)
+            .Select(jl => new { jl.JournalEntryId, jl.JournalEntry.EntryNumber, jl.JournalEntry.EntryDate, jl.CreditAmount })
+            .ToListAsync();
+        var tips = tipRows.GroupBy(t => new { t.JournalEntryId, t.EntryNumber, t.EntryDate })
+            .Select(g => new DataIntegritySuspect("TipWhtOnPnd2Account", g.Key.JournalEntryId, g.Key.EntryNumber, g.Key.EntryDate,
+                $"จ่ายทิปลงภาษีหัก ณ ที่จ่ายไว้ที่ {pnd2Code} (ผัง ภ.ง.ด.2) แต่ 50 ทวิ ของทิปเป็น ภ.ง.ด.3 — โอนยอดไป "
+                + $"{Accounting.Helpers.WhtPayableAccount.Pnd3Code} ด้วยรายการปรับปรุง ก่อนนำส่ง ภ.ง.ด.3 ของงวดนั้น (ระบบแก้ทางลงบัญชีของทิปแล้วในรอบ 204)",
+                g.Sum(x => x.CreditAmount), null))
+            .OrderBy(x => x.Date).ToList();
+
+        return (result.OrderBy(x => x.Date).ToList(), tips);
     }
 }

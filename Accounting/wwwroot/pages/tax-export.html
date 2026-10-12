@@ -71,6 +71,19 @@
         </div>
       </div>
 
+      <!-- ภ.ง.ด.2 (รอบ 204 คำตัดสินข้อ 148) -->
+      <div class="card" id="cardPND2">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.2</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีหัก ณ ที่จ่าย ดอกเบี้ย/เงินปันผล บุคคลธรรมดา (รายเดือน)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND2">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd2')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND2')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
       <!-- ภ.พ.30 -->
       <div class="card" id="cardPP30">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -179,7 +192,7 @@
       async loadPreviews() {
         const api = Layout.api(); if (!api) return;
         const { year, month } = this.getYM();
-        const forms = ['PND1','PND3','PND53','PP30','SSO110'];
+        const forms = ['PND1','PND3','PND53','PND2','PP30','SSO110'];
         for (const code of forms) {
           try {
             const res = await api.previewTaxExport(code, year, month);
@@ -206,6 +219,7 @@
           case 'pnd1': url = api.exportPnd1(year, month); break;
           case 'pnd3': url = api.exportPnd3(year, month); break;
           case 'pnd53': url = api.exportPnd53(year, month); break;
+          case 'pnd2': url = api.exportPnd2(year, month); break;
           case 'pnd1k': url = api.exportPnd1k(year); break;
           case 'pp30': url = api.exportPp30(year, month); break;
           case 'sso110': url = api.exportSso110(year, month); break;
@@ -246,7 +260,7 @@
       async preview(formCode) {
         const api = Layout.api(); if (!api) return;
         const { year, month } = this.getYM();
-        const formNames = { PND1:'ภ.ง.ด.1', PND3:'ภ.ง.ด.3', PND53:'ภ.ง.ด.53', PND1K:'ภ.ง.ด.1ก', PP30:'ภ.พ.30', SSO110:'สปส.1-10', SSO110X:'สปส.1-10 (Excel)' };
+        const formNames = { PND1:'ภ.ง.ด.1', PND3:'ภ.ง.ด.3', PND53:'ภ.ง.ด.53', PND2:'ภ.ง.ด.2', PND1K:'ภ.ง.ด.1ก', PP30:'ภ.พ.30', SSO110:'สปส.1-10', SSO110X:'สปส.1-10 (Excel)' };
         document.getElementById('previewTitle').textContent = `ตัวอย่างข้อมูล ${formNames[formCode] || formCode}`;
         try {
           // Fetch actual file content
@@ -256,6 +270,7 @@
             case 'PND1': url = api.exportPnd1(year, month); break;
             case 'PND3': url = api.exportPnd3(year, month); break;
             case 'PND53': url = api.exportPnd53(year, month); break;
+            case 'PND2': url = api.exportPnd2(year, month); break;
             case 'PND1K': url = api.exportPnd1k(year); break;
             case 'PP30': url = api.exportPp30(year, month); break;
             case 'SSO110': url = api.exportSso110(year, month); break;

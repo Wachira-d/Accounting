@@ -33,6 +33,8 @@
         <option value="">ทุกแบบ</option>
         <option value="WithholdingTax3">ภ.ง.ด.3</option>
         <option value="WithholdingTax53">ภ.ง.ด.53</option>
+        <option value="WithholdingTax2">ภ.ง.ด.2</option>
+        <option value="WithholdingTax54">ภ.ง.ด.54</option>
         <option value="WithholdingTax1">ภ.ง.ด.1</option>
       </select>
       <select class="filter-select" id="statusFilter" onchange="Page.filter()">
@@ -63,7 +65,7 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">แบบ *</label>
-              <select class="form-select" id="fFormType" onchange="Page.onFormTypeChange()"><option value="WithholdingTax3">ภ.ง.ด.3</option><option value="WithholdingTax53">ภ.ง.ด.53</option><option value="WithholdingTax54">ภ.ง.ด.54 (จ่ายต่างประเทศ ม.70)</option><option value="WithholdingTax1">ภ.ง.ด.1</option></select>
+              <select class="form-select" id="fFormType" onchange="Page.onFormTypeChange()"><option value="WithholdingTax3">ภ.ง.ด.3</option><option value="WithholdingTax53">ภ.ง.ด.53</option><option value="WithholdingTax2">ภ.ง.ด.2 (ดอกเบี้ย/เงินปันผล บุคคลธรรมดา)</option><option value="WithholdingTax54">ภ.ง.ด.54 (จ่ายต่างประเทศ ม.70)</option><option value="WithholdingTax1">ภ.ง.ด.1</option></select>
             </div>
             <div class="form-group"><label class="form-label">ประเภท *</label>
               <select class="form-select" id="fCertType"><option value="Withhold">หัก ณ ที่จ่าย</option><option value="PayAlways">ออกให้ตลอดไป</option></select>
@@ -239,7 +241,7 @@
         if (statusF) items = items.filter(w => w.status === statusF);
         const tbody = document.getElementById('tableBody');
         if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
-        const formMap = { WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1' };
+        const formMap = { WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax2: 'ภ.ง.ด.2', WithholdingTax54: 'ภ.ง.ด.54', WithholdingTax1: 'ภ.ง.ด.1' };
         tbody.innerHTML = items.map(w => `<tr>
           <td class="font-medium">${w.certificateNumber || '-'}</td>
           <td>${Layout.esc(w.payeeName)}</td>
@@ -264,7 +266,7 @@
         try {
           const res = await api.getWhtCert(id);
           const d = res.data || {};
-          const formMap = { WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1' };
+          const formMap = { WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax2: 'ภ.ง.ด.2', WithholdingTax54: 'ภ.ง.ด.54', WithholdingTax1: 'ภ.ง.ด.1' };
           const certTypeMap = { Withhold: 'หัก ณ ที่จ่าย', PayAlways: 'ออกให้ตลอดไป' };
           let html = `
             <div class="grid grid-2 gap-4" style="margin-bottom:16px">

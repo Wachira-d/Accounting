@@ -27,6 +27,7 @@
       <div class="tab" data-type="VAT" onclick="Page.setType(this)">ภาษีมูลค่าเพิ่ม</div>
       <div class="tab" data-type="WithholdingTax3" onclick="Page.setType(this)">หัก ณ ที่จ่าย (ภ.ง.ด.3)</div>
       <div class="tab" data-type="WithholdingTax53" onclick="Page.setType(this)">หัก ณ ที่จ่าย (ภ.ง.ด.53)</div>
+      <div class="tab" data-type="WithholdingTax2" onclick="Page.setType(this)">หัก ณ ที่จ่าย (ภ.ง.ด.2)</div>
       <div class="tab" data-type="VatPp36" onclick="Page.setType(this)">ภ.พ.36 (บริการต่างประเทศ)</div>
       <div class="tab" data-type="CorporateIncomeTax" onclick="Page.setType(this)">ภาษีนิติบุคคล</div>
     </div>
@@ -88,6 +89,7 @@
               <option value="VAT">ภาษีมูลค่าเพิ่ม (ภ.พ.30)</option>
               <option value="WithholdingTax3">หัก ณ ที่จ่าย (ภ.ง.ด.3)</option>
               <option value="WithholdingTax53">หัก ณ ที่จ่าย (ภ.ง.ด.53)</option>
+              <option value="WithholdingTax2">หัก ณ ที่จ่าย (ภ.ง.ด.2 — ดอกเบี้ย/เงินปันผล บุคคลธรรมดา)</option>
               <option value="VatPp36">ภ.พ.36 — นำส่ง VAT แทนผู้ขายต่างประเทศ (§83/6)</option>
               <option value="CorporateIncomeTax">ภาษีนิติบุคคล</option>
             </select>
@@ -158,7 +160,7 @@
       page: 1, taxType: '',
       allReports: [],
       selectedTax: new Set(),
-      typeMap: { VAT: 'ภ.พ.30', WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax1: 'ภ.ง.ด.1', WithholdingTax54: 'ภ.ง.ด.54', VatPp36: 'ภ.พ.36', SocialSecurity: 'ประกันสังคม', CorporateIncomeTax: 'ภาษีนิติบุคคล', PersonalIncomeTax91: 'ภ.ง.ด.91' },
+      typeMap: { VAT: 'ภ.พ.30', WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax2: 'ภ.ง.ด.2', WithholdingTax1: 'ภ.ง.ด.1', WithholdingTax54: 'ภ.ง.ด.54', VatPp36: 'ภ.พ.36', SocialSecurity: 'ประกันสังคม', CorporateIncomeTax: 'ภาษีนิติบุคคล', PersonalIncomeTax91: 'ภ.ง.ด.91' },
       monthNames: ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'],
       onTaxCheck(cb) {
         if (cb.checked) this.selectedTax.add(cb.dataset.id); else this.selectedTax.delete(cb.dataset.id);
@@ -1086,6 +1088,7 @@
           'WithholdingTax53':'PND.53', '3':'PND.53',
           'WithholdingTax1':'PND.1', '4':'PND.1',
           'WithholdingTax54':'PND.54', '8':'PND.54',
+          'WithholdingTax2':'PND.2', '11':'PND.2',
           'VatPp36':'PP.36', '9':'PP.36',
           'CorporateIncomeTax':'PND.50', '6':'PND.50',
         };
