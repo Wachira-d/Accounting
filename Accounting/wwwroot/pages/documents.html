@@ -10512,7 +10512,10 @@
               <div class="text-sm">ยอดรวมก่อน VAT${(Number(d.billDiscountAmount || 0) > 0 || Number(d.depositBaseDeducted || 0) > 0) ? ' (หลังส่วนลด)' : ''}: <strong>${Layout.money(d.subTotal)}</strong></div>
               <div class="text-sm">ภาษีมูลค่าเพิ่ม (VAT): <strong>${Layout.money(d.vatAmount)}</strong></div>
               ${Number(d.withholdingTaxAmount || 0) > 0 ? `
-              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong> <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a></div>` : ''}
+              <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong> <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a></div>
+              ${d.whtCertAutoFailedReason ? `<div class="text-sm" style="margin-top:4px;padding:6px 10px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:6px;color:#991B1B">⚠️ ออก 50 ทวิ อัตโนมัติไม่สำเร็จ: ${Layout.esc(d.whtCertAutoFailedReason)} — แก้ตามข้อความแล้วกด "สร้างใบ" ที่ <a href="/pages/wht.html">หน้าหนังสือรับรองหัก ณ ที่จ่าย → เอกสารรอออกใบ</a></div>` : ''}
+              ${d.whtCertAutoIssue === false ? `<div class="text-xs" style="margin-top:2px;color:#64748b">ตั้งไว้ไม่ให้สร้าง 50 ทวิ อัตโนมัติ — ออกใบเองที่หน้าหนังสือรับรองหัก ณ ที่จ่าย</div>` : ''}
+              ${d.whtPayeeContactId ? `<div class="text-xs" style="margin-top:2px;color:#3730a3">ผู้ถูกหักภาษีตั้งแยกจากผู้รับเงิน — 50 ทวิ ออกในนามผู้ถูกหักที่เลือกไว้ (เปิดแก้ไขใบร่างเพื่อดู/เปลี่ยน)</div>` : ''}` : ''}
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.actualPaidAmount != null ? `
               <div class="text-sm" style="color:#92400e" title="ใบกำกับคงยอดเต็มตามใบ — ส่วนต่างลงที่ปรับปรุงรายการบัญชี (ใบสำคัญจ่าย) หรือบรรทัดปรับตอนบันทึกการชำระ">ยอดชำระจริง: <strong>${Layout.money(d.actualPaidAmount)}</strong> (ต่างจากยอดเอกสาร ${Layout.money(Number(d.actualPaidAmount) - Number(d.totalAmount))})</div>` : ''}
