@@ -6230,6 +6230,31 @@ RULES += [
 ]
 
 
+# ── รอบ 203 (คำถามเจ้าของ "หักค่าเบี้ยประกัน 1% ลงถูกช่องไหม"): ประเภทเงินได้มีตารางเดียว ThaiWhtRateTable — ทุกผู้อ่าน
+#    ค่าที่เก็บไว้ (ป้าย · รหัส Col7 · ตัวตรวจอัตรา · ข้อความ "ระบุ" 50 ทวิ) ต้องผ่านตาราง ห้ามมี switch/ตารางอัตราชุดที่สอง ──
+_WHT203 = "รอบ 203 · WhtIncomeTypeCatalogTests: "
+RULES += [
+    dict(file="Helpers/PndIncomeTypeCode.cs", method="ForFile",
+         must=["ThaiWhtRateTable.Resolve("], forbid=["switch"],
+         why=_WHT203 + "รหัส Col7 ไฟล์ ภ.ง.ด. อ่านจากแถวในตารางกลาง (เดิม switch ชุดที่สอง ⇒ ประเภทใหม่ตก default เงียบ)"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="GetIncomeTypeName",
+         must=["ThaiWhtRateTable.Resolve("], forbid=["switch"],
+         why=_WHT203 + "ป้ายประเภทบนหน้า 50 ทวิ จากตารางกลาง (เดิมไม่รู้จัก 8ad/8tr)"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="IssueWarningsAsync",
+         must=["ThaiWhtRateTable.CheckRateForType("],
+         why=_WHT203 + "ออก/แก้ 50 ทวิ ในประเทศ เตือนอัตราไม่ตรงประเภท+ชนิดผู้รับ (ตัวตัดสินเดียวกับตอนอนุมัติเอกสาร)"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="CertificateRowSpecs",
+         must=["ThaiWhtRateTable.CertificateRowSpecification("],
+         why=_WHT203 + "ข้อความ \"ระบุ\" แถว 5/6 ที่หน้าพรีวิวแสดง มาจากตัวตัดสินเดียวกับ renderer"),
+    dict(file="Services/Implementations/WhtCreditService.cs", method="CheckRate",
+         must=["ThaiWhtRateTable.CheckRateForType("], forbid=["switch", ".Contains("],
+         why=_WHT203 + "ทะเบียนภาษีถูกหัก — ตัวตรวจอัตราอ่านตารางกลาง (เดิมจับคำเอง รหัสจาก dropdown ไม่ถูกตรวจเลย)"),
+    dict(file=DOC, method="CollectApprovalWarningsAsync",
+         must=["ThaiWhtRateTable.CheckRateForType("],
+         why=_WHT203 + "อนุมัติเอกสารฝั่งจ่าย: อัตราเทียบประเภทเงินได้ของบรรทัด + ชนิดผู้รับ"),
+]
+
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

@@ -26,6 +26,12 @@ public static class ThaiWhtRateTable
 {
     /// <param name="IndividualRate">อัตราเมื่อผู้รับเป็นบุคคลธรรมดา (%) — null = ไม่มีอัตราคงที่</param>
     /// <param name="JuristicRate">อัตราเมื่อผู้รับเป็นนิติบุคคลไทย (%) — null = ไม่ใช้กับนิติบุคคล</param>
+    /// <param name="CertificateRowText">ข้อความ "ระบุ" ที่พิมพ์ต่อท้ายแถว 5/6 ของ 50 ทวิ ให้หนังสือรับรองบอกว่า
+    /// <b>จ่ายค่าอะไร</b> (แถว 5 ของแบบเป็นรายการ "เช่น …" รวมสิบกว่าประเภท — ไม่ระบุ = ผู้รับ/สรรพากรอ่านไม่ออก) ·
+    /// null = ไม่พิมพ์ (แถว 1–4 ชื่อแถวเฉพาะเจาะจงอยู่แล้ว · รหัสรวม "8" เป็นค่าตั้งต้นของเอกสารที่ไม่ได้ระบุประเภท
+    /// ⇒ ห้ามพิมพ์ "ค่าจ้างทำของ" ลงใบที่อาจเป็นค่าเบี้ยประกัน — ค่าที่แต่งขึ้นอันตรายกว่าการไม่ระบุ · หลักการ #3)</param>
+    /// <param name="PndFileCode">รหัสช่อง Col7 ของไฟล์นำเข้า ภ.ง.ด. (ผู้อ่านเดียว <see cref="PndIncomeTypeCode.ForFile"/>)</param>
+    /// <param name="LegalReference">ตัวบทที่ให้อัตรานี้ — ใช้ในข้อความเตือนอัตราไม่ตรงประเภท</param>
     public sealed record IncomeType(
         string Code,
         string Name,
@@ -33,46 +39,99 @@ public static class ThaiWhtRateTable
         decimal? IndividualRate,
         decimal? JuristicRate,
         IReadOnlyList<string> ApplicableForms,
-        string? Note = null);
+        string? Note = null,
+        string? CertificateRowText = null,
+        string PndFileCode = "6",
+        string LegalReference = "ม.3 เตรส · ท.ป.4/2528");
 
-    /// <summary>ทุกประเภทที่ระบบรองรับ เรียงตามลำดับมาตรา</summary>
+    /// <summary>ทุกประเภทที่ระบบรองรับ เรียงตามลำดับมาตรา
+    ///
+    /// <para>⚠️ <b>ลำดับมีความหมาย</b>: <see cref="Find"/> ด้วยเลขมาตรา ("40(8)") คืน<b>แถวแรก</b>ของมาตรานั้น
+    /// ⇒ แถวรวมของแต่ละมาตรา ("8" ค่าจ้างทำของ/ค่าบริการ) ต้องมาก่อนประเภทย่อยเสมอ (ข้อมูลเก่าที่เก็บเป็นเลขมาตรา
+    /// ต้องได้คำตอบเดิม)</para>
+    ///
+    /// <para>รอบ 203 (คำถามเจ้าของ "หักค่าเบี้ยประกันภัย 1% ลงถูกช่องไหม"): เพิ่มประเภทตามคำสั่ง ม.3 เตรส ที่แบบ 50 ทวิ
+    /// แถว 5 ระบุชื่อไว้เองแต่ตารางไม่มี — ค่าเบี้ยประกันวินาศภัย · รางวัลส่งเสริมการขาย · รางวัลประกวด/ชิงโชค ·
+    /// ค่าแสดงของนักแสดงสาธารณะ + เงินได้ที่หน่วยงานรัฐหัก 1% (ม.69 ทวิ · ฝั่งเครดิตภาษีที่ถูกหัก) —
+    /// ข้อที่ยังต้องยืนยันกับนักบัญชีอยู่ใน erp-review/2026-09-29/DECISIONS.md (รอเจ้าของ/นักบัญชียืนยัน)</para></summary>
     public static readonly IReadOnlyList<IncomeType> All = new[]
     {
         new IncomeType("1", "เงินเดือน ค่าจ้าง บำนาญ", "40(1)",
             IndividualRate: null, JuristicRate: null,
             new[] { "ภ.ง.ด.1" },
-            Note: "อัตราขั้นบันไดตามฐานภาษีเงินได้บุคคลธรรมดา — ไม่มีอัตราคงที่"),
+            Note: "อัตราขั้นบันไดตามฐานภาษีเงินได้บุคคลธรรมดา — ไม่มีอัตราคงที่",
+            PndFileCode: "1", LegalReference: "ม.50(1) (อัตราก้าวหน้า)"),
         new IncomeType("2", "ค่านายหน้า/ค่าบริการ", "40(2)",
             IndividualRate: 3m, JuristicRate: 3m,
-            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" }),
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            PndFileCode: "2"),
         new IncomeType("3", "ค่าแห่งลิขสิทธิ์/ค่าสิทธิ", "40(3)",
             IndividualRate: 3m, JuristicRate: 3m,
-            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" }),
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            PndFileCode: "3"),
         new IncomeType("4a", "ดอกเบี้ย", "40(4)(ก)",
             IndividualRate: 15m, JuristicRate: 1m,
             new[] { "ภ.ง.ด.2", "ภ.ง.ด.53" },
-            Note: "บุคคลธรรมดา 15% · นิติบุคคลไทย 1%"),
+            Note: "บุคคลธรรมดา 15% · นิติบุคคลไทย 1%",
+            PndFileCode: "4A", LegalReference: "ม.50(2) (บุคคล 15%) · ท.ป.4/2528 (นิติบุคคล 1%)"),
         new IncomeType("4b", "เงินปันผล", "40(4)(ข)",
             IndividualRate: 10m, JuristicRate: 10m,
-            new[] { "ภ.ง.ด.2", "ภ.ง.ด.53" }),
+            new[] { "ภ.ง.ด.2", "ภ.ง.ด.53" },
+            PndFileCode: "4B", LegalReference: "ม.50(2) (บุคคล) · ท.ป.4/2528 (นิติบุคคล)"),
         new IncomeType("5", "ค่าเช่าทรัพย์สิน", "40(5)",
             IndividualRate: 5m, JuristicRate: 5m,
-            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" }),
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            CertificateRowText: "ค่าเช่าทรัพย์สิน", PndFileCode: "5"),
         new IncomeType("6", "ค่าวิชาชีพอิสระ", "40(6)",
             IndividualRate: 3m, JuristicRate: 3m,
-            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" }),
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            CertificateRowText: "ค่าวิชาชีพอิสระ", PndFileCode: "6"),
         new IncomeType("7", "ค่ารับเหมา", "40(7)",
             IndividualRate: 3m, JuristicRate: 3m,
-            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" }),
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            CertificateRowText: "ค่ารับเหมา", PndFileCode: "6"),       // §3 เตรส ค่าจ้างทำของ (ดู PndIncomeTypeCode)
         new IncomeType("8", "ค่าจ้างทำของ/ค่าบริการอื่น", "40(8)",
             IndividualRate: 3m, JuristicRate: 3m,
-            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" }),
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            // CertificateRowText = null โดยตั้งใจ: "8" คือค่าตั้งต้นของใบที่ไม่ได้ระบุประเภท (WithholdingTaxCertService
+            // AutoGenerateFromDocumentAsync) ⇒ พิมพ์ "ค่าจ้างทำของ" ลงใบที่อาจเป็นค่าเบี้ยประกัน = ข้อความที่แต่งขึ้น
+            PndFileCode: "6"),
         new IncomeType("8ad", "ค่าโฆษณา", "40(8)",
             IndividualRate: 2m, JuristicRate: 2m,
-            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" }),
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            CertificateRowText: "ค่าโฆษณา", PndFileCode: "6"),
         new IncomeType("8tr", "ค่าขนส่ง (ไม่ใช่ขนส่งสาธารณะ)", "40(8)",
             IndividualRate: 1m, JuristicRate: 1m,
-            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" }),
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            CertificateRowText: "ค่าขนส่ง", PndFileCode: "6"),
+        // ── รอบ 203: ประเภทที่แบบ 50 ทวิ แถว 5 ระบุชื่อเองแต่ตารางเดิมไม่มี ──
+        new IncomeType("8ins", "ค่าเบี้ยประกันวินาศภัย", "40(8)",
+            // ผู้รับต้องเป็นบริษัทประกันวินาศภัย (นิติบุคคล) — บุคคลธรรมดาไม่มีอัตรา (null ⇒ ให้คนกรอก ห้ามยืมอัตรานิติบุคคล)
+            IndividualRate: null, JuristicRate: 1m,
+            new[] { "ภ.ง.ด.53" },
+            Note: "เฉพาะประกันวินาศภัย (รถยนต์ อัคคีภัย ทรัพย์สิน ฯลฯ) — เบี้ยประกันชีวิตไม่อยู่ในประเภทนี้",
+            CertificateRowText: "ค่าเบี้ยประกันวินาศภัย", PndFileCode: "6"),
+        new IncomeType("8pr", "รางวัล/ส่วนลด/ประโยชน์จากการส่งเสริมการขาย", "40(8)",
+            IndividualRate: 3m, JuristicRate: 3m,
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            CertificateRowText: "รางวัล ส่วนลดหรือประโยชน์ใด ๆ เนื่องจากการส่งเสริมการขาย", PndFileCode: "6"),
+        new IncomeType("8cp", "รางวัลในการประกวด การแข่งขัน การชิงโชค", "40(8)",
+            IndividualRate: 5m, JuristicRate: 5m,
+            new[] { "ภ.ง.ด.3", "ภ.ง.ด.53" },
+            CertificateRowText: "รางวัลในการประกวด การแข่งขัน การชิงโชค", PndFileCode: "6"),
+        new IncomeType("8ent", "ค่าแสดงของนักแสดงสาธารณะ (ผู้มีถิ่นที่อยู่ในประเทศไทย)", "40(8)",
+            // นักแสดงเป็นบุคคลธรรมดา — จ่ายผ่านบริษัทจัดหา = ค่าบริการ "8" ไม่ใช่ประเภทนี้
+            IndividualRate: 5m, JuristicRate: null,
+            new[] { "ภ.ง.ด.3" },
+            Note: "นักแสดงที่ไม่มีถิ่นที่อยู่ในประเทศไทยใช้เกณฑ์อื่น — ต้องให้ผู้ทำบัญชีกำหนด",
+            CertificateRowText: "ค่าแสดงของนักแสดงสาธารณะ", PndFileCode: "6"),
+        new IncomeType("gov1", "เงินได้ที่ส่วนราชการ/องค์การของรัฐจ่าย (หัก 1%)", "ม.69 ทวิ",
+            // ฝั่ง "เราถูกหัก" (ทะเบียนเครดิตภาษี) — ผู้จ่ายเป็นหน่วยงานรัฐ · บริษัทเอกชนห้ามใช้ประเภทนี้ออก 50 ทวิ ของตัวเอง
+            IndividualRate: null, JuristicRate: 1m,
+            new[] { "ภ.ง.ด.53" },
+            Note: "ใช้เมื่อผู้จ่ายเป็นส่วนราชการ/องค์การของรัฐ/เทศบาล เท่านั้น — บริษัทเอกชนห้ามเลือกประเภทนี้",
+            CertificateRowText: "เงินได้ที่หน่วยงานของรัฐจ่าย (หักร้อยละ 1 ตาม ม.69 ทวิ)", PndFileCode: "6",
+            LegalReference: "ป.รัษฎากร ม.69 ทวิ"),
     };
 
     /// <summary>
@@ -245,6 +304,133 @@ public static class ThaiWhtRateTable
                    string.Equals(t.Code, key, StringComparison.OrdinalIgnoreCase))
             ?? All.FirstOrDefault(t =>
                    string.Equals(t.TaxSection, key, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// หาประเภทจาก<b>ค่าที่เก็บไว้ทุกรูปที่พบจริงในเรพ</b> — รหัส ("8ad") · เลขมาตรา ("40(8)") ·
+    /// ละตินของมาตรา ("40(4)(a)" / "40(4)a") · และรูป "มาตรา + ชื่อ" ที่ตัวอ่าน 50 ทวิ ที่ได้รับ
+    /// (<see cref="WhtCertIncomeType.Infer"/>) เขียนลง <c>WhtCreditReceived.IncomeTypeCode</c>
+    /// ("40(8) ค่าโฆษณา") — คืน null เมื่อชี้ขาดไม่ได้ (ห้ามเดา)
+    ///
+    /// <para>ที่มา (รอบ 203): <c>WhtCreditService.CheckRate</c> เคยถือตารางอัตราชุดที่สองจับคำเอง และหน้า
+    /// wht-credit.html เก็บค่า <b>เลขมาตรา</b> ⇒ เลือก "ค่าโฆษณา 2%" แล้วเก็บเป็น "40(8)" ⇒ ตัวตรวจคาด 3% ⇒
+    /// เตือนใบที่ถูก · ทุกผู้อ่านค่าที่เก็บไว้ต้องผ่านตัวนี้ตัวเดียว</para>
+    /// </summary>
+    public static IncomeType? Resolve(string? stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored)) return null;
+        var direct = Find(stored);
+        if (direct != null) return direct;
+
+        var compact = stored.Trim();
+        var m = System.Text.RegularExpressions.Regex.Match(compact,
+            @"^\s*(?<sec>40\s*\(\s*\d\s*\)(?:\s*\(\s*[กขab]\s*\)|[ab](?![A-Za-z]))?)\s*(?<rest>.*)$");
+        if (!m.Success)
+            return null;
+        var sec = m.Groups["sec"].Value.Replace(" ", "");
+        // ละติน → ไทย (ตารางเก็บ (ก)/(ข))
+        sec = sec.Replace("(a)", "(ก)").Replace("(b)", "(ข)");
+        if (sec.EndsWith(")a", StringComparison.Ordinal)) sec = sec[..^1] + "(ก)";
+        if (sec.EndsWith(")b", StringComparison.Ordinal)) sec = sec[..^1] + "(ข)";
+        var rest = m.Groups["rest"].Value.Trim();
+
+        var sameSection = All.Where(t => string.Equals(t.TaxSection, sec, StringComparison.Ordinal)).ToList();
+        if (sameSection.Count == 0) return null;
+        if (rest.Length >= 4)
+        {
+            // ประเภทย่อยก่อน (เจาะจงกว่า) — "ค่าโฆษณา" ต้องได้ 8ad ไม่ใช่แถวรวม 8 · ข้ามแถวแรก (แถวรวมของมาตรา)
+            foreach (var t in sameSection.Skip(1))
+            {
+                if ((t.CertificateRowText != null && rest.Contains(t.CertificateRowText, StringComparison.Ordinal))
+                    || t.Name.Contains(rest, StringComparison.Ordinal))
+                    return t;
+            }
+        }
+        return sameSection[0];
+    }
+
+    /// <summary>แถว 5/6 ของแบบ 50 ทวิ ที่ต้อง "ระบุ" ว่าจ่ายอะไร</summary>
+    private static bool CertificateRowTakesSpecification(string row) => row is "5" or "6";
+
+    /// <summary>แถวบนแบบ 50 ทวิ ที่มีช่อง "ระบุ" — ใช้สร้าง <c>CertificateRowSpecs</c></summary>
+    public static readonly IReadOnlyList<string> CertificateRowsWithSpecification = new[] { "5", "6" };
+
+    /// <summary>ความยาวสูงสุดของข้อความ "ระบุ" บนแถว — ช่องบนแบบมีที่บรรทัดเดียว</summary>
+    public const int CertificateSpecificationMaxLength = 120;
+
+    /// <summary>
+    /// ข้อความ "ระบุ" ของ<b>ประเภทเงินได้หนึ่งรหัส</b> บนแถว 5/6 ของ 50 ทวิ — API ของ renderer (HTML/QuestPDF) ·
+    /// รับค่าที่เก็บไว้ทุกรูป (ผ่าน <see cref="Resolve"/>)
+    ///
+    /// <para>⚠️ <b>null มีความหมาย = "อย่าพิมพ์ชื่อประเภท"</b> ห้ามผู้เรียกเติมด้วย <see cref="IncomeType.Name"/> เอง:
+    /// รหัสรวม "8" คือค่าตั้งต้นของใบที่ไม่ได้ระบุประเภท (อาจเป็นค่าเบี้ยประกัน) และรหัสที่ไม่รู้จักต้องใช้คำอธิบายบรรทัด
+    /// (ดู <see cref="CertificateRowSpecification"/>) — การเติมชื่อเองคือการพิมพ์ข้อความที่แต่งขึ้นลงเอกสารราชการ</para>
+    /// </summary>
+    public static string? CertificateRowText(string? code) => Resolve(code)?.CertificateRowText;
+
+    /// <summary>
+    /// ข้อความ "ระบุ" ของ<b>ทั้งแถว</b> <paramref name="row"/> บน 50 ทวิ จากบรรทัดของหนังสือรับรอง (หลายบรรทัดในแถวเดียว ⇒
+    /// รวมชื่อไม่ซ้ำ) — ส่งออกทาง <c>WithholdingTaxCertResponse.CertificateRowSpecs</c> ให้หน้าพรีวิวแสดงอย่างเดียว
+    ///
+    /// <para>แถว 5: ชื่อประเภทจาก <see cref="IncomeType.CertificateRowText"/> (ไม่พิมพ์ถ้าเป็นรหัสรวม "8") ·
+    /// แถว 6 "อื่น ๆ (ระบุ)": ชื่อประเภท หรือ<b>คำอธิบายบรรทัด</b>เมื่อรหัสไม่รู้จัก — แถว 6 ว่างคือแบบที่กรอกไม่ครบ ·
+    /// แถว 1–4 คืน null (ชื่อแถวเจาะจงอยู่แล้ว)</para>
+    /// </summary>
+    public static string? CertificateRowSpecification(string row,
+        IEnumerable<(string? Code, string? Description)> lines)
+    {
+        if (!CertificateRowTakesSpecification(row)) return null;
+        var parts = new List<string>();
+        foreach (var (code, description) in lines)
+        {
+            if (!string.Equals(CertificateRow(code), row, StringComparison.Ordinal)) continue;
+            var text = CertificateRowText(code);
+            if (string.IsNullOrWhiteSpace(text) && row == "6")
+                text = description;
+            text = text?.Trim();
+            if (!string.IsNullOrEmpty(text) && !parts.Contains(text, StringComparer.Ordinal))
+                parts.Add(text);
+        }
+        if (parts.Count == 0) return null;
+        var joined = string.Join(", ", parts);
+        return joined.Length <= CertificateSpecificationMaxLength
+            ? joined
+            : joined[..(CertificateSpecificationMaxLength - 1)] + "…";
+    }
+
+    /// <summary>
+    /// <b>อัตราที่ใช้ตรงกับประเภทเงินได้ + ชนิดผู้รับไหม</b> — ตัวตัดสินเดียวของคำเตือน "อัตราไม่ตรงประเภท"
+    /// (อนุมัติเอกสาร · ออก/แก้ 50 ทวิ ด้วยมือ · ทะเบียนภาษีถูกหัก) · คืนข้อความไทย หรือ null = ไม่ต้องเตือน
+    ///
+    /// <para>เตือนเท่านั้น ไม่บล็อก (ใบจริงอาจมีเหตุ เช่น อนุสัญญาภาษีซ้อน/คำสั่งเฉพาะ) · ไม่รู้ชนิดผู้รับ ⇒ ยอมรับอัตราของ
+    /// ชนิดใดชนิดหนึ่ง (G3: ไม่รู้ ≠ ผิด) · อัตราลดชั่วคราวที่จ่าย<b>ในช่วง</b>ประกาศ ⇒ เงียบ (ตัวตัดสิน
+    /// <see cref="ClassifyRate"/> ตัวเดิม) · ประเภทที่กฎหมายไม่กำหนดอัตราคงที่ (เงินเดือน) ⇒ เงียบ</para>
+    /// </summary>
+    /// <param name="code">รหัส/มาตราที่เก็บไว้ (ผ่าน <see cref="Resolve"/>)</param>
+    /// <param name="ratePercent">อัตราที่ใช้ (%) — ≤ 0 = ไม่ได้หัก ⇒ เงียบ</param>
+    /// <param name="payeeIsJuristic">ชนิดผู้รับ — null = ไม่รู้</param>
+    /// <param name="paymentDate">วันที่จ่าย (สำหรับอัตราลดชั่วคราว)</param>
+    public static string? CheckRateForType(string? code, decimal ratePercent, bool? payeeIsJuristic, DateTime paymentDate)
+    {
+        if (ratePercent <= 0m) return null;
+        var t = Resolve(code);
+        if (t == null) return null;
+        var expected = new List<decimal>();
+        if (payeeIsJuristic != false && t.JuristicRate is decimal j) expected.Add(j);
+        if (payeeIsJuristic != true && t.IndividualRate is decimal i) expected.Add(i);
+        if (expected.Count == 0) return null;
+        if (expected.Any(e => Math.Abs(e - ratePercent) < 0.005m)) return null;
+        if (ClassifyRate(ratePercent, paymentDate).Standing == RateStanding.TemporaryInForce) return null;
+
+        var who = payeeIsJuristic switch
+        {
+            true => "ผู้รับเป็นนิติบุคคล",
+            false => "ผู้รับเป็นบุคคลธรรมดา",
+            _ => "ผู้รับ",
+        };
+        return $"อัตรา {ratePercent:0.##}% ไม่ตรงกับ \"{t.Name}\" ({t.TaxSection}) — {who} ควรหัก "
+            + string.Join(" หรือ ", expected.Distinct().Select(e => $"{e:0.##}%"))
+            + $" ({t.LegalReference}) · ตรวจประเภทเงินได้หรืออัตราอีกครั้ง (หักขาด ผู้จ่ายรับผิดในส่วนที่ขาด ม.54)";
     }
 
     /// <summary>อัตราที่ควรใช้กับผู้รับรายนี้ — null = ไม่มีอัตราคงที่ (ต้องให้คนกรอก)</summary>

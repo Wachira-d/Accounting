@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Data;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -30,7 +31,9 @@ public class WhtCreditService
         Guid? AttachmentId, Guid? ClaimedInTaxReportId, DateTime? ClaimedAt,
         int? CarriedFromTaxYear, string? Notes,
         // เตือนเมื่ออัตราที่ถูกหักไม่ตรงประเภทเงินได้ (ท.ป.4/2528)
-        string? RateWarning);
+        string? RateWarning,
+        // รอบ 203: รหัสประเภทในตารางกลาง (null = ค่าที่เก็บไว้ชี้ขาดไม่ได้)
+        string? IncomeTypeCodeResolved = null);
 
     public record WhtCreditSummary(
         int TaxYear,
@@ -135,7 +138,10 @@ public class WhtCreditService
             w.IncomeTypeCode, w.IncomeAmount, w.WhtRate, w.WhtAmount,
             w.Status.ToString(), w.DocumentId, w.DocNo,
             w.AttachmentId, w.ClaimedInTaxReportId, w.ClaimedAt, w.CarriedFromTaxYear, w.Notes,
-            CheckRate(w.IncomeTypeCode, w.WhtRate))).ToList();
+            CheckRate(w.IncomeTypeCode, w.WhtRate, w.CertificateDate ?? DateTime.UtcNow),
+            // รหัสในตารางกลางของค่าที่เก็บไว้ (ข้อมูลเก่าเก็บเป็นเลขมาตรา/ข้อความจากตัวอ่าน 50 ทวิ) — หน้าแก้ไขใช้เลือก
+            // ตัวเลือกให้ตรง ไม่งั้น select ว่าง ⇒ บันทึกแล้วประเภทเดิมหายเงียบ ๆ
+            ThaiWhtRateTable.Resolve(w.IncomeTypeCode)?.Code)).ToList();
     }
 
     /// <summary>สรุปยอดต่อปีภาษี + กระทบกับยอดบัญชี 11910 จริง
@@ -533,25 +539,13 @@ public class WhtCreditService
             : null;
 
     /// <summary>ตรวจอัตราที่ผู้จ่ายหักมา เทียบกับ ท.ป.4/2528 — ผู้จ่ายหักผิดอัตรา
-    /// เกิดขึ้นบ่อย (หัก 5% ค่าบริการแทน 3%) ทำให้เครดิตไม่ตรงกับที่เขานำส่งจริง</summary>
-    private static string? CheckRate(string? incomeType, decimal rate)
+    /// เกิดขึ้นบ่อย (หัก 5% ค่าบริการแทน 3%) ทำให้เครดิตไม่ตรงกับที่เขานำส่งจริง
+    ///
+    /// <para>รอบ 203: ตัวตัดสินกลาง <see cref="ThaiWhtRateTable.CheckRateForType"/> — เดิมเป็นตารางอัตราชุดที่สองที่จับคำเอง
+    /// ⇒ รหัสจาก dropdown ("8ad"/"5") ไม่เคยถูกตรวจเลย และค่าที่หน้าเว็บเก็บเป็นเลขมาตรา ("40(8)") ทำให้ใบค่าโฆษณา 2%
+    /// ถูกเตือนว่า "ปกติ 3%" · ผู้ถูกหักคือบริษัทเรา (นิติบุคคล) เหมือนเดิม</para></summary>
+    internal static string? CheckRate(string? incomeType, decimal rate, DateTime paymentDate)
     {
-        if (string.IsNullOrWhiteSpace(incomeType) || rate <= 0) return null;
-        var expected = incomeType.Replace(" ", "") switch
-        {
-            // อัตราพิเศษต้องตรวจ "ก่อน" กลุ่มหลัก มิฉะนั้นจะถูก 40(8) กลืนแล้วเตือนผิด
-            var t when t.Contains("โฆษณา") => 2m,                                  // ท.ป.4/2528 ข้อ 10
-            var t when t.Contains("ขนส่ง") => 1m,                                  // ข้อ 12/1 (ไม่ใช่ขนส่งสาธารณะ)
-            var t when t.Contains("40(4)(ข)") || t.Contains("เงินปันผล") => 10m,   // ปันผล ≠ ดอกเบี้ย
-            var t when t.Contains("40(2)") || t.Contains("40(7)") || t.Contains("40(8)") => 3m,
-            var t when t.Contains("40(3)") || t.Contains("40(6)") => 3m,
-            var t when t.Contains("40(5)") => 5m,
-            // 40(4)(ก) ดอกเบี้ย — ผู้รับเป็นนิติบุคคล 1% (บุคคลธรรมดา 15% ไม่ใช่เคสของบริษัท)
-            var t when t.Contains("40(4)") => 1m,
-            _ => 0m,
-        };
-        if (expected <= 0) return null;
-        return Math.Abs(rate - expected) < 0.01m ? null
-            : $"อัตราที่ถูกหัก {rate:N2}% ไม่ตรงกับ {incomeType} (ปกติ {expected:N0}%) — ตรวจกับผู้จ่าย";
+        return ThaiWhtRateTable.CheckRateForType(incomeType, rate, payeeIsJuristic: true, paymentDate);
     }
 }

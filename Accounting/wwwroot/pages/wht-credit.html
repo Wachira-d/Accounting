@@ -157,7 +157,9 @@
         }
         for (const t of this._incomeTypes) {
           const o = document.createElement('option');
-          o.value = t.taxSection || t.code;
+          // รอบ 203: เก็บ **รหัส** ไม่ใช่เลขมาตรา — หลายประเภทอยู่มาตราเดียวกัน (40(8): ค่าบริการ 3% · โฆษณา 2% ·
+          // ขนส่ง 1% · เบี้ยประกันวินาศภัย 1%) ⇒ เก็บ "40(8)" = เลือกโฆษณาแล้วตัวตรวจอัตราคาด 3% (เตือนใบที่ถูก)
+          o.value = t.code;
           o.dataset.code = t.code || '';
           const rateLabel = (t.individualRate == null && t.juristicRate == null)
             ? 'อัตราขั้นบันได'
@@ -176,11 +178,27 @@
         const sel = document.getElementById('mIncomeType');
         const rate = document.getElementById('mRate');
         if (!sel || !rate || rate.value) return;
-        const t = this._incomeTypes.find(x => (x.taxSection || x.code) === sel.value);
+        const t = this._incomeTypes.find(x => x.code === sel.value);
         if (!t) return;
         // ผู้ถูกหักคือ "เรา" ซึ่งเป็นนิติบุคคลในเคสปกติ — ใช้อัตรานิติบุคคลก่อน
         const r = t.juristicRate ?? t.individualRate;
         if (r != null) { rate.value = r; this.calc(); }
+      },
+
+      /** ตั้งช่องประเภทตอนเปิดแก้ — รหัสที่เซิร์ฟเวอร์ชี้ขาดแล้ว (`incomeTypeCodeResolved` จากตารางกลาง) ชนะค่าดิบ ·
+       *  ค่าเดิมที่ชี้ขาดไม่ได้ ⇒ ใส่เป็นตัวเลือก "(ค่าเดิม)" ให้เห็น — ห้ามปล่อย select ว่าง (บันทึกแล้วประเภทหายเงียบ ๆ) */
+      _hydrateIncomeType(r) {
+        const sel = document.getElementById('mIncomeType');
+        if (!sel) return;
+        sel.querySelectorAll('option[data-legacy="1"]').forEach(o => o.remove());
+        const want = r.incomeTypeCodeResolved || r.incomeTypeCode || '';
+        if (want && !Array.from(sel.options).some(o => o.value === want)) {
+          const o = document.createElement('option');
+          o.value = want; o.dataset.legacy = '1';
+          o.textContent = `(ค่าเดิม) ${want}`;
+          sel.appendChild(o);
+        }
+        sel.value = want;
       },
 
       _year() { return parseInt(document.getElementById('fYear').value, 10); },
@@ -299,7 +317,7 @@
         this.editingId = null;
         document.getElementById('mTitle').textContent = 'บันทึกหนังสือรับรอง';
         ['mCertNo','mCertDate','mPayer','mPayerTax','mBase','mRate','mAmt','mNotes'].forEach(id => document.getElementById(id).value = '');
-        document.getElementById('mIncomeType').value = '';
+        this._hydrateIncomeType({});   // ล้างค่า + ตัวเลือก "(ค่าเดิม)" ของใบก่อน
         document.getElementById('mForm').value = '53';
         document.getElementById('mYear').value = this._year();
         document.getElementById('mFile').value = '';
@@ -318,7 +336,7 @@
         document.getElementById('mCertDate').value = r.certificateDate ? Layout.dateInput(r.certificateDate) : '';
         document.getElementById('mPayer').value = r.payerName || '';
         document.getElementById('mPayerTax').value = r.payerTaxId || '';
-        document.getElementById('mIncomeType').value = r.incomeTypeCode || '';
+        this._hydrateIncomeType(r);
         document.getElementById('mRate').value = r.whtRate || '';
         document.getElementById('mBase').value = r.incomeAmount || '';
         document.getElementById('mAmt').value = r.whtAmount || '';

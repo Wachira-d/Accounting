@@ -19144,11 +19144,14 @@ public partial class DocumentService : IDocumentService
         }
 
         // WHT rate & income type: นิติบุคคล default = ค่าบริการ 3%, บุคคลธรรมดา = ค่าจ้าง 3%
-        var defaultWhtRate = 3m;
+        // รอบ 203: อัตรา/ป้ายจากตารางกลางตัวเดียว (เดิมพิมพ์ 3% + ป้ายไว้ที่นี่อีกชุด)
         var defaultIncomeCode = contactType == ContactType.JuristicPerson ? "8" : "6";
-        var defaultIncomeLabel = contactType == ContactType.JuristicPerson
-            ? "ค่าบริการอื่นๆ (40(8))"
-            : "ค่าวิชาชีพอิสระ (40(6))";
+        var defaultIncomeType = Accounting.Helpers.ThaiWhtRateTable.Find(defaultIncomeCode);
+        var defaultWhtRate = Accounting.Helpers.ThaiWhtRateTable.RateFor(defaultIncomeCode,
+            payeeIsJuristic: contactType == ContactType.JuristicPerson) ?? 0m;
+        var defaultIncomeLabel = defaultIncomeType is null
+            ? defaultIncomeCode
+            : $"{defaultIncomeType.Name} ({defaultIncomeType.TaxSection})";
 
         var contactTypeLabel = contactType switch
         {
@@ -20059,6 +20062,26 @@ public partial class DocumentService : IDocumentService
                 warnings.Add($"อัตรา WHT ของ '{line.Description}' = {line.WithholdingTaxRate}% — ไม่ใช่อัตราตามกฎหมาย ("
                     + string.Join(" / ", Accounting.Helpers.ThaiWhtRateTable.StatutoryRates.Select(r => $"{r:0.##}"))
                     + "%) ตรวจ Income Type Code อีกครั้ง");
+        }
+
+        // ── รอบ 203: อัตราเทียบ "ประเภทเงินได้ของบรรทัด + ชนิดผู้รับ" (ในประเทศ) — ตัวตัดสินเดียว ThaiWhtRateTable.CheckRateForType ──
+        // ด่านข้างบนรู้แค่ว่า 1% "เป็นอัตราตามกฎหมาย" ⇒ ค่าบริการที่หัก 1% (หักขาด · ม.54) หรือเบี้ยประกันที่หัก 3% เงียบสนิท ·
+        // เตือนเท่านั้น (ไม่บล็อก) · ผู้รับต่างประเทศ ⇒ ข้าม (ตัวตัดสิน ม.70 ด้านล่างดูแล) · ไม่รู้ชนิดผู้รับ ⇒ ยอมรับอัตราของชนิดใดชนิดหนึ่ง
+        // ฝั่งจ่ายเท่านั้น (ผู้รับ = คู่ค้าบนเอกสาร) — ฝั่งขาย "ผู้รับ" คือบริษัทเราเอง ชนิดผู้รับจากคู่ค้าจะผิดตัว
+        if ((doc.DocumentType == DocumentType.PaymentVoucher
+             || doc.DocumentType == DocumentType.Expense
+             || doc.DocumentType == DocumentType.PurchaseInvoice)
+            && !Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, doc.Contact?.CountryCode))
+        {
+            var domesticPayeeJuristic = Accounting.Helpers.WhtPayeeKind.Detect(doc.Contact?.TaxId,
+                doc.Contact?.ContactType ?? ContactType.Unknown, doc.Contact?.Name);
+            var domesticPayDate = doc.PaymentDate ?? doc.DocumentDate;
+            foreach (var line in doc.Lines.Where(l => l.WithholdingTaxRate > 0m && !string.IsNullOrWhiteSpace(l.IncomeTypeCode)))
+            {
+                if (Accounting.Helpers.ThaiWhtRateTable.CheckRateForType(line.IncomeTypeCode, line.WithholdingTaxRate,
+                        domesticPayeeJuristic, domesticPayDate) is string typeRateWarn)
+                    warnings.Add($"อัตรา WHT ของ '{line.Description}': {typeRateWarn}");
+            }
         }
 
         // ── ด่านหัก ณ ที่จ่าย "ชุดเก่า" ถูกถอดแล้ว (ผลตรวจ D1-B1 รอบ 181) ──

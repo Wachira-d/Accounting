@@ -81,7 +81,9 @@ public static class SettlementReferenceCatalog
         },
         // รอบ 200 ทีม WF (คำตัดสินข้อ 41): ประเภทเงินได้ของค่าธรรมเนียมต่อประเภทบรรทัด — ค่าตั้งต้นสองบริบท + ตัวเลือกรหัสจากตารางกฎหมายตัวเดียว
         SettlementWhtIncomeType.Options(),
-        ThaiWhtRateTable.All.Where(t => t.Code != "1")
+        // รอบ 203: เฉพาะประเภท ม.40 ที่มีอัตราเมื่อผู้รับเป็นนิติบุคคล (ผู้ให้บริการรับชำระเป็นบริษัท) — ตัดเงินเดือน ·
+        // นักแสดงสาธารณะ (บุคคลเท่านั้น) · หน่วยงานรัฐ ม.69 ทวิ (ฝั่งถูกหัก) ซึ่งเลือกแล้วจะได้อัตรา 0 เงียบ ๆ
+        ThaiWhtRateTable.All.Where(t => t.JuristicRate is not null && t.TaxSection.StartsWith("40(", StringComparison.Ordinal))
             .Select(t => new SettlementEnumOption(t.Code, $"{t.TaxSection} {t.Name}"))
             .Prepend(new SettlementEnumOption(SettlementWhtIncomeType.NoWithholding, "ไม่หัก ณ ที่จ่าย"))
             .ToList());

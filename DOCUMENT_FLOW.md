@@ -3399,6 +3399,22 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ฝั่งซื้อ + `whtRate > 0` เท่านั้น) จากรหัส `ThaiWhtRateTable` ที่
   `ExpenseCategoryResolver` เดาไว้ (`8`/`5`/`8ad`/`8tr`/…); เดิมไม่เคยเซ็ตเลย ⇒
   ทุกใบจากเส้น OCR ตกเป็น `"8"` ค่าบริการอื่น ๆ เสมอ
+- **ตารางประเภทเงินได้ตัวเดียว `Helpers/ThaiWhtRateTable.All`** (รอบ 203 · คำถามเจ้าของ "หักค่าเบี้ยประกันภัย 1% ลงถูกช่องไหม") —
+  รหัส `1` `2` `3` `4a` `4b` `5` `6` `7` `8` `8ad` `8tr` + ใหม่ `8ins` ค่าเบี้ยประกันวินาศภัย (นิติบุคคล 1% · บุคคลไม่มีอัตรา) ·
+  `8pr` รางวัล/ส่วนลดส่งเสริมการขาย 3% · `8cp` รางวัลประกวด/แข่งขัน/ชิงโชค 5% · `8ent` นักแสดงสาธารณะ (ผู้มีถิ่นที่อยู่) 5% ·
+  `gov1` หน่วยงานรัฐหัก 1% ม.69 ทวิ (ฝั่งทะเบียนภาษีถูกหัก → แถว 6). แต่ละแถวถือ **แถว 50 ทวิ** (ผ่าน `CertificateRow` เดิม) ·
+  **ข้อความ "ระบุ"** `CertificateRowText` (API ของ renderer: `ThaiWhtRateTable.CertificateRowText(code)` — null = ห้ามพิมพ์ชื่อประเภท
+  โดยเฉพาะรหัสรวม `8` ที่เป็นค่าตั้งต้นของใบไม่ระบุประเภท) · **รหัส Col7** `PndFileCode` (ผู้อ่าน `PndIncomeTypeCode.ForFile`) ·
+  **ตัวบท** `LegalReference`. ผู้อ่านค่าที่เก็บไว้ทุกตัวผ่าน `ThaiWhtRateTable.Resolve` (รหัส · เลขมาตรา · ละติน · "40(8) ค่าโฆษณา"
+  จากตัวอ่าน 50 ทวิ ที่ได้รับ) — ป้ายบนหน้า 50 ทวิ (`GetIncomeTypeName`) · ค่าตั้งต้นผู้ติดต่อ · ตัวตรวจอัตราทะเบียนภาษีถูกหัก
+  (`WhtCreditService.CheckRate`) เลิกถือสำเนามือ. **คำเตือนอัตราไม่ตรงประเภท + ชนิดผู้รับ** (ไม่บล็อก · ตัวตัดสินเดียว
+  `ThaiWhtRateTable.CheckRateForType` · อัตราลดชั่วคราวในช่วงประกาศเงียบ): อนุมัติเอกสารฝั่งจ่าย (`CollectApprovalWarningsAsync` —
+  เฉพาะบรรทัดที่มี `IncomeTypeCode`) · ออก/แก้ 50 ทวิ ภ.ง.ด.3/53 ด้วยมือ (`IssueWarningsAsync`) · ทะเบียนภาษีถูกหัก.
+  `WithholdingTaxCertResponse.CertificateRowSpecs` (คีย์ "5"/"6") = ข้อความ "ระบุ" ทั้งแถวให้หน้าพรีวิวแสดง.
+  wht-credit.html เก็บ **รหัส** แทนเลขมาตรา (เดิม 8/8ad/8tr เก็บเป็น "40(8)" เหมือนกัน) และเปิดแก้ด้วย `incomeTypeCodeResolved`
+  (ค่าที่ชี้ขาดไม่ได้โชว์เป็นตัวเลือก "(ค่าเดิม)" — ไม่หายเงียบ). ข้อจำกัดที่ยังอยู่: เอกสารคีย์มือ (documents.html/expense.html)
+  ยังไม่มีช่องประเภทเงินได้ต่อบรรทัด (`DocumentLineRequest` ไม่มี `IncomeTypeCode`) ⇒ 50 ทวิ ที่ออกอัตโนมัติจากใบคีย์มือได้ `"8"` เสมอ
+  (แถว 5 ถูกสำหรับค่าเบี้ยประกัน แต่ไม่ระบุชื่อ) · ไม่มีแบบ ภ.ง.ด.2 (`TaxType` ไม่มี) · ดู DECISIONS ข้อ 147
 - **PDF**: `PdfGenerationService.WhtCert.cs` (QuestPDF) **และ**
   `PdfGenerationService.cs:2237` (HTML) — **ทั้งสองตัวจัดบรรทัดลงแถว 1–6 ของแบบ
   ผ่าน `ThaiWhtRateTable.CertificateRow` ตัวเดียว** ห้ามเขียน allow-list ของรหัสเอง
@@ -4954,3 +4970,5 @@ _Last verified against codebase: 2026-10-09 (ตรวจความครอ�
 
 
 _Last verified against codebase: 2026-10-09 (รอบ 203 — รูปแบบกระดาษหลักฐานรับเงิน (คำถามเจ้าของ "ใบเสร็จที่ออก VAT ต้องเป็น ใบเสร็จรับเงิน/ใบกำกับภาษี หรืออย่างย่อเท่านั้นไหม"): ตัวตัดสินตัวเดียว `Helpers/ReceiptFormRule` (policy engine — ชุดที่กฎหมายอนุญาต + ค่าแนะนำ · ค่าตั้งบริษัท `CompanySettings.ReceiptFormPolicyJson` + ตัวเลือกรายใบ `Document.ReceiptForm` เลือกได้เฉพาะในชุดนั้น · บล็อกเฉพาะกระดาษเท็จ (ก)(ข)(ค) · มัดจำรับนโยบาย `DepositVatTreatment` เป็นข้อเท็จจริง ไม่บังคับใบกำกับ) · ต่อสายที่ `ApproveDocumentAsync` → `DecideReceiptFormAsync` ก่อน resolver หัวกระดาษ · สอง renderer อ่าน `ReceiptForm == Abbreviated` ผ่าน `ComputeDocumentTitle`/`IsAbbreviatedTaxInvoiceDoc` · matrix หน้าตั้งค่า `ReceiptFormRule.Matrix` · รายงาน `DataIntegrityReport.PlainReceiptsWithVat` · `ReceiptFormRuleTests` 25 เทสต์ · §5.1 + §6.5 — commits ced6f688 · 1baf78e4 · fd076a2f (UI) · 7c75420f + b1e0bfe9 (docs) — rebase บน 22aa6979 · แก้ตามคำตัดสินข้อ 140 (เตือน+รับทราบ ไม่บล็อก · ที่พักค่าแนะนำอย่างย่อ · จ่ายออนไลน์ไม่ล้ม · matrix แสดงสถานะขายปลีก+ลิงก์): 09ac103d)_
+
+_Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภทเงินได้ครบทุกแบบ (คำถามเจ้าของ "หักค่าเบี้ยประกันภัย 1% ลงถูกช่องในใบหัก ณ ที่จ่ายไหม"): `ThaiWhtRateTable.All` เพิ่ม `8ins`/`8pr`/`8cp`/`8ent`/`gov1` + ข้อมูลต่อแถว `CertificateRowText`/`PndFileCode`/`LegalReference` · `Resolve` · `CertificateRowText(code)` (API ให้ renderer) · `CertificateRowSpecification` → `WithholdingTaxCertResponse.CertificateRowSpecs` · `CheckRateForType` ต่อสาย 3 ทางเข้า · `PndIncomeTypeCode.ForFile`/`GetIncomeTypeName`/`WhtCreditService.CheckRate`/ค่าตั้งต้นผู้ติดต่อ อ่านตารางเดียว · wht-credit.html เก็บรหัส · `WhtIncomeTypeCatalogTests` · §5.4 — commit <pending>)_

@@ -202,6 +202,16 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 payee?.CountryCode,
                 cert.Lines.OrderBy(l => l.LineOrder).Select(l => ((string?)l.IncomeTypeCode, l.TaxRate, l.PaymentDate)).ToList()));
 
+        // รอบ 203: ใบในประเทศ (ภ.ง.ด.3/53) — อัตราแต่ละแถวเทียบประเภทเงินได้ + ชนิดผู้รับ ผ่านตัวตัดสินเดียวกับตอนอนุมัติเอกสาร
+        // (เดิมออกใบ "ค่าเบี้ยประกัน 3%" หรือ "ค่าบริการ 1%" ได้เงียบ ๆ — หักขาด ผู้จ่ายรับผิด ม.54)
+        if (cert.TaxFormType is TaxType.WithholdingTax3 or TaxType.WithholdingTax53)
+        {
+            var payeeJuristic = DetectJuristic(payee);
+            foreach (var ln in cert.Lines.OrderBy(x => x.LineOrder))
+                if (ThaiWhtRateTable.CheckRateForType(ln.IncomeTypeCode, ln.TaxRate, payeeJuristic, ln.PaymentDate) is string rateWarn)
+                    warnings.Add($"แถว \"{ln.IncomeDescription}\": {rateWarn}");
+        }
+
         if (cert.CertificateType == WithholdingTaxCertType.PayAlways && cert.DocumentId is Guid docId && cert.TotalTaxAmount > 0m)
         {
             var doc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
@@ -421,19 +431,12 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     // รอบ 200 ทีม WF: ป้ายแบบจากตัวตั้งเดียว (WhtUnissuedCertGate.FormLabel) — สำเนาเดิมไม่รู้จัก ภ.ง.ด.54 ⇒ ใบ 54 โชว์ "WithholdingTax54"
     private static string GetTaxFormName(TaxType type) => WhtUnissuedCertGate.FormLabel(type);
 
-    private static string GetIncomeTypeName(string code) => code switch
+    // รอบ 203: ป้ายจากตารางกลางตัวเดียว (ThaiWhtRateTable) — เดิมเป็น switch ชุดที่สองที่ไม่รู้จัก 8ad/8tr/ประเภทใหม่
+    // ⇒ ใบค่าโฆษณาโชว์ "ประเภทเงินได้ 8ad" · รหัสที่ไม่รู้จักยังคืนรูปเดิม (ไม่หายเงียบ)
+    private static string GetIncomeTypeName(string code)
     {
-        "1" => "เงินเดือน ค่าจ้าง บำนาญ (40(1))",
-        "2" => "ค่านายหน้า (40(2))",
-        "3" => "ค่าแห่งลิขสิทธิ์ (40(3))",
-        "4a" => "ดอกเบี้ย (40(4)(a))",
-        "4b" => "เงินปันผล (40(4)(b))",
-        "5" => "ค่าเช่าทรัพย์สิน (40(5))",
-        "6" => "ค่าวิชาชีพอิสระ (40(6))",
-        "7" => "ค่ารับเหมา (40(7))",
-        "8" => "ค่าบริการอื่นๆ (40(8))",
-        _ => $"ประเภทเงินได้ {code}"
-    };
+        return ThaiWhtRateTable.Resolve(code) is { } t ? $"{t.Name} ({t.TaxSection})" : $"ประเภทเงินได้ {code}";
+    }
 
     // ==================== Auto-Generate from Document ====================
 
@@ -940,5 +943,18 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         w.SourcePayrollRunId,
         // แก้ไขได้ = Draft + สร้างเอง (ไม่ผูกเอกสาร/payroll)
         IsEditable: w.Status == WithholdingTaxCertStatus.Draft
-                    && !w.DocumentId.HasValue && !w.SourcePayrollRunId.HasValue);
+                    && !w.DocumentId.HasValue && !w.SourcePayrollRunId.HasValue,
+        CertificateRowSpecs: CertificateRowSpecs(w));
+
+    /// <summary>ข้อความ "ระบุ" ของแถว 5/6 (รอบ 203) — ตัวตัดสินเดียว <see cref="ThaiWhtRateTable.CertificateRowSpecification"/></summary>
+    private static IReadOnlyDictionary<string, string> CertificateRowSpecs(WithholdingTaxCert w)
+    {
+        var lines = w.Lines.OrderBy(l => l.LineOrder)
+            .Select(l => ((string?)l.IncomeTypeCode, (string?)l.IncomeDescription)).ToList();
+        var specs = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var row in ThaiWhtRateTable.CertificateRowsWithSpecification)
+            if (ThaiWhtRateTable.CertificateRowSpecification(row, lines) is string spec)
+                specs[row] = spec;
+        return specs;
+    }
 }

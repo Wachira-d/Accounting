@@ -196,6 +196,9 @@ public class WithholdingTaxCertController : ControllerBase
             CertificateRow = Accounting.Helpers.ThaiWhtRateTable.CertificateRow(t.Code),
             t.ApplicableForms,
             t.Note,
+            // รอบ 203: ข้อความ "ระบุ" ที่จะพิมพ์บนแถว 5/6 ของ 50 ทวิ + ตัวบทของอัตรา — แสดงอย่างเดียว
+            CertificateRowText = Accounting.Helpers.ThaiWhtRateTable.CertificateRowText(t.Code),
+            t.LegalReference,
             // รอบ 200 ทีม WF (ฝ่ายค้าน W-5): อัตราตั้งต้นเมื่อจ่ายนิติบุคคลต่างประเทศ (ภ.ง.ด.54) จากตัวตัดสิน ม.70 ตัวเดียว —
             // null = ประเภทนี้ไม่อยู่ใน ม.70/ชี้ขาดไม่ได้ ⇒ หน้าเว็บล้างช่องให้ผู้ทำบัญชีกรอกเอง (ห้ามเติมอัตราในประเทศแทน)
             ForeignRate = ForeignDecision(t.Code).RatePercent,

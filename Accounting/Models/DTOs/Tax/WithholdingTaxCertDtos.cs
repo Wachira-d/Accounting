@@ -56,7 +56,10 @@ public record WithholdingTaxCertResponse(
     bool IsEditable = false,
     // รอบ 200 ทีม WF (ฝ่ายค้าน W-5 · คำตัดสินข้อ 40): คำเตือนตอนออก/แก้ใบ (ไม่บล็อก) — อัตรา ภ.ง.ด.54 ไม่ตรงตัวตัดสิน ม.70 ·
     // ภ.พ.36 ของเอกสารต้นทางไม่รวมภาษีที่ออกแทน · null = ไม่ได้ตรวจ (ตอบจาก GET) · [] = ตรวจแล้วไม่มีปัญหา
-    IReadOnlyList<string>? Warnings = null);
+    IReadOnlyList<string>? Warnings = null,
+    // รอบ 203: ข้อความ "ระบุ" ของแถว 5/6 บนแบบ 50 ทวิ (คีย์ "5"/"6" · ไม่มีคีย์ = ไม่มีอะไรระบุ) — คำนวณจากตารางกลาง
+    // ThaiWhtRateTable.CertificateRowSpecification ตัวเดียว ให้หน้าพรีวิวแสดงอย่างเดียว (server computes · page displays)
+    IReadOnlyDictionary<string, string>? CertificateRowSpecs = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,
