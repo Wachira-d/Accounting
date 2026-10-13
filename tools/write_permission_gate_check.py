@@ -206,6 +206,8 @@ READ_ONLY_POSTS_IN_FILE = {
     ("DocumentTemplateController.cs", "PreviewHtmlDraft"),
     ("DocumentTemplateController.cs", "GenerateWhtPdf"),
     ("DocumentTemplateController.cs", "GenerateReceiptPdf"),
+    # รอบ 204: พรีวิวผู้จ่ายออกภาษีแทน — pure (WhtGrossUp) ไม่แตะ _db/_whtService (ตรวจด้วยตาตอนเพิ่ม)
+    ("WithholdingTaxCertController.cs", "GrossUpPreview"),
 }
 
 # POST ที่เป็น "งานของผู้ใช้เอง" (ไม่มีข้อมูลของคนอื่นให้แตะ) — ระบุเป็น (ไฟล์, เมธอด) ไม่ใช่ชื่อเมธอดลอย ๆ

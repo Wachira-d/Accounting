@@ -1813,7 +1813,7 @@ public partial class TaxService : ITaxService
                             // จะเติมค่า default แทน (สาขา 00000 · เงื่อนไข 1 · ไม่มีคำนำหน้า)
                             TaxPayerTitle = cert.PayeeContact?.TitleTh,
                             TaxPayerBranchCode = cert.PayeeContact?.BranchCode,
-                            WhtCondition = (int)cert.CertificateType is 2 ? 2 : 1,
+                            WhtCondition = Accounting.Helpers.WhtGrossUp.FilingCondition(cert.CertificateType),   // รอบ 204: 1/2/3 (เดิม "ครั้งเดียว" ตกเป็น 1)
                         });
                 }
                 else
@@ -1833,7 +1833,7 @@ public partial class TaxService : ITaxService
                         IncomeTypeCode = "40(8)",
                         TaxPayerTitle = cert.PayeeContact?.TitleTh,
                         TaxPayerBranchCode = cert.PayeeContact?.BranchCode,
-                        WhtCondition = (int)cert.CertificateType is 2 ? 2 : 1,
+                        WhtCondition = Accounting.Helpers.WhtGrossUp.FilingCondition(cert.CertificateType),   // รอบ 204: 1/2/3 (เดิม "ครั้งเดียว" ตกเป็น 1)
                     });
                 }
             }
@@ -1865,7 +1865,7 @@ public partial class TaxService : ITaxService
                     IncomeTypeCode = "40(8)", IsExcluded = true,
                     TaxPayerTitle = cert.PayeeContact?.TitleTh,
                     TaxPayerBranchCode = cert.PayeeContact?.BranchCode,
-                    WhtCondition = (int)cert.CertificateType is 2 ? 2 : 1,
+                    WhtCondition = Accounting.Helpers.WhtGrossUp.FilingCondition(cert.CertificateType),   // รอบ 204: 1/2/3 (เดิม "ครั้งเดียว" ตกเป็น 1)
                 });
             }
 

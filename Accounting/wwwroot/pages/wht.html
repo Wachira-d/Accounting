@@ -68,7 +68,7 @@
               <select class="form-select" id="fFormType" onchange="Page.onFormTypeChange()"><option value="WithholdingTax3">ภ.ง.ด.3</option><option value="WithholdingTax53">ภ.ง.ด.53</option><option value="WithholdingTax2">ภ.ง.ด.2 (ดอกเบี้ย/เงินปันผล บุคคลธรรมดา)</option><option value="WithholdingTax54">ภ.ง.ด.54 (จ่ายต่างประเทศ ม.70)</option><option value="WithholdingTax1">ภ.ง.ด.1</option></select>
             </div>
             <div class="form-group"><label class="form-label">ประเภท *</label>
-              <select class="form-select" id="fCertType"><option value="Withhold">หัก ณ ที่จ่าย</option><option value="PayAlways">ออกให้ตลอดไป</option></select>
+              <select class="form-select" id="fCertType" onchange="Page.onCertTypeChange()"><option value="Withhold">หัก ณ ที่จ่าย</option><option value="PayAlways">ออกให้ตลอดไป</option><option value="PayOnce">ออกให้ครั้งเดียว</option></select>
             </div>
           </div>
           <div class="form-row">
@@ -81,6 +81,16 @@
             <tbody id="linesBody"></tbody>
           </table></div>
           <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="Page.addLine()">+ เพิ่มรายการ</button>
+          <!-- รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: เงินได้บน 50 ทวิ = ยอดที่ตกลงจ่าย + ภาษีที่ออกแทน (ม.39) · คิดที่เซิร์ฟเวอร์ (Helpers/WhtGrossUp) -->
+          <div id="grossUpCalc" style="display:none;margin-top:10px;padding:10px 12px;border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;font-size:12px">
+            <div style="font-weight:600;margin-bottom:6px">ผู้จ่ายออกภาษีแทน — คำนวณเงินได้จากยอดที่ตกลงจ่าย (ภาษีที่ออกแทนเป็นเงินได้ของผู้รับ ม.39)</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <label for="fGrossBase">ยอดที่ตกลงจ่าย</label><input type="number" class="form-input" id="fGrossBase" step="0.01" style="width:130px">
+              <label for="fGrossRate">อัตรา%</label><input type="number" class="form-input" id="fGrossRate" step="0.01" style="width:70px">
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.addGrossUpLine()">ใส่เป็นรายการเงินได้</button>
+            </div>
+            <div id="grossUpHint" style="margin-top:6px;color:#475569"></div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -267,7 +277,7 @@
           const res = await api.getWhtCert(id);
           const d = res.data || {};
           const formMap = { WithholdingTax3: 'ภ.ง.ด.3', WithholdingTax53: 'ภ.ง.ด.53', WithholdingTax2: 'ภ.ง.ด.2', WithholdingTax54: 'ภ.ง.ด.54', WithholdingTax1: 'ภ.ง.ด.1' };
-          const certTypeMap = { Withhold: 'หัก ณ ที่จ่าย', PayAlways: 'ออกให้ตลอดไป' };
+          const certTypeMap = { Withhold: 'หัก ณ ที่จ่าย', PayAlways: 'ออกให้ตลอดไป', PayOnce: 'ออกให้ครั้งเดียว' };
           let html = `
             <div class="grid grid-2 gap-4" style="margin-bottom:16px">
               <div><span class="text-gray-500 text-xs">เลขที่</span><div class="font-semibold">${d.certificateNumber || '-'}</div></div>
@@ -955,6 +965,36 @@
         row.querySelector('[data-f="rate"]').addEventListener('input', () => { rateInput.dataset.userTouched = '1'; calc(); });
         document.getElementById('linesBody').appendChild(row);
       },
+      // รอบ 204 — "ออกให้ตลอดไป/ครั้งเดียว" ⇒ โชว์ตัวช่วยคิดเงินได้ (เซิร์ฟเวอร์คิด · หน้าเว็บไม่มีสูตร gross-up)
+      onCertTypeChange() {
+        const t = document.getElementById('fCertType')?.value;
+        const box = document.getElementById('grossUpCalc');
+        if (box) box.style.display = (t === 'PayAlways' || t === 'PayOnce') ? '' : 'none';
+        const hint = document.getElementById('grossUpHint'); if (hint) hint.innerHTML = '';
+      },
+      async addGrossUpLine() {
+        const api = Layout.api(); if (!api) return;
+        const certType = document.getElementById('fCertType')?.value || 'Withhold';
+        const base = parseFloat(document.getElementById('fGrossBase')?.value) || 0;
+        const rate = parseFloat(document.getElementById('fGrossRate')?.value) || 0;
+        if (base <= 0 || rate <= 0) { Layout.toast('กรอกยอดที่ตกลงจ่ายและอัตราภาษีก่อน', 'error'); return; }
+        try {
+          const r = await api.whtGrossUpPreview({ certType, lines: [{ base, ratePercent: rate }] });
+          const p = (r && r.data) || null;
+          if (!p) return;
+          let row = Array.from(document.querySelectorAll('#linesBody tr'))
+            .find(tr => !(parseFloat(tr.querySelector('[data-f="income"]')?.value) > 0));
+          if (!row) { this.addLine(); row = document.getElementById('linesBody').lastElementChild; }
+          row.querySelector('[data-f="income"]').value = Number(p.certIncome).toFixed(2);
+          const rateEl = row.querySelector('[data-f="rate"]');
+          rateEl.value = rate; rateEl.dataset.userTouched = '1';
+          row.querySelector('[data-f="tax"]').value = Number(p.tax).toFixed(2);
+          const hint = document.getElementById('grossUpHint');
+          if (hint) hint.innerHTML = '<b>' + Layout.esc(p.label || '') + '</b>: เงินได้ ' + Layout.money(p.certIncome)
+            + ' · ภาษี ' + Layout.money(p.tax) + ' · ผู้จ่ายออกแทน ' + Layout.money(p.payerBorne)
+            + ' · หักจากผู้รับ ' + Layout.money(p.payeeBorne) + ' (ยื่น ภ.ง.ด. เงื่อนไข ' + Layout.esc(String(p.filingCondition)) + ')';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
       // เปลี่ยนแบบ ภ.ง.ด. ⇒ เติมอัตราตั้งต้นของแบบนั้นใหม่ให้ทุกแถวที่ผู้ใช้ยังไม่ได้พิมพ์อัตราเอง
       onFormTypeChange() {
         document.querySelectorAll('#linesBody tr').forEach(row => { if (typeof row._applyRate === 'function') row._applyRate(); });
@@ -965,6 +1005,7 @@
         if (this._contactAC) this._contactAC.clear();
         document.getElementById('fFormType').value = 'WithholdingTax3';
         document.getElementById('fCertType').value = 'Withhold';
+        this.onCertTypeChange();
         document.getElementById('fYear').value = new Date().getFullYear();
         document.getElementById('fMonth').value = new Date().getMonth() + 1;
         document.getElementById('linesBody').innerHTML = '';
@@ -1156,6 +1197,7 @@
           const fci = document.getElementById('fContactInput'); if (fci && d.payeeName) fci.value = d.payeeName;
           document.getElementById('fFormType').value = d.taxFormType || 'WithholdingTax3';
           document.getElementById('fCertType').value = d.certificateType || 'Withhold';
+          this.onCertTypeChange();
           document.getElementById('fYear').value = d.taxYear || new Date().getFullYear();
           document.getElementById('fMonth').value = d.taxMonth || (new Date().getMonth() + 1);
           document.getElementById('linesBody').innerHTML = '';

@@ -159,3 +159,14 @@ public record PendingWhtLineInfo(
     decimal Amount,
     decimal WithholdingTaxRate,
     decimal WithholdingTaxAmount);
+
+// ===== รอบ 204 (คำตัดสินข้อ 148 (4)) — พรีวิวผู้จ่ายออกภาษีแทน: หน้าเว็บส่งฐาน/อัตรา เซิร์ฟเวอร์คิดด้วย Helpers/WhtGrossUp ตัวเดียว (หน้าเว็บไม่มีสูตร) =====
+public record WhtGrossUpPreviewLine(decimal Base, decimal RatePercent);
+
+/// <param name="SubTotal">ฐานรวมของเอกสาร (หลังส่วนลด + ผลต่างปัดเศษ) — ส่งมาเมื่อต้องการ "ยอดจ่ายผู้รับ" · null = ไม่คิด</param>
+/// <param name="Vat">VAT รวมของเอกสาร (คู่กับ SubTotal)</param>
+public record WhtGrossUpPreviewRequest(
+    WithholdingTaxCertType CertType,
+    List<WhtGrossUpPreviewLine>? Lines,
+    decimal? SubTotal = null,
+    decimal? Vat = null);

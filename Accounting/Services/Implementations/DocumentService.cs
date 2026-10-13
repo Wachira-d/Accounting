@@ -779,6 +779,54 @@ public partial class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: แทนที่ภาษีหัก ณ ที่จ่ายรายบรรทัดด้วยผลของ <see cref="WhtGrossUp.ForLines"/>
+    /// (ตัวตั้งเดียว · ฐาน = ยอดบรรทัดก่อน VAT หลังส่วนลด) · หัก ณ ที่จ่าย ⇒ ไม่แตะ (ค่าจาก ComputeLineAmounts/ReconcileTaxRounding เดิมทุกสตางค์) ·
+    /// คืนส่วนที่ผู้จ่ายออกแทนรวม (→ <c>Document.WhtPayerBorneAmount</c>)</summary>
+    private static decimal ApplyWhtGrossUp(IReadOnlyList<DocumentLineRequest> lines, LineAmounts[] amts, WithholdingTaxCertType type)
+    {
+        if (!WhtGrossUp.IsPayerBorne(type)) return 0m;
+        var per = WhtGrossUp.ForLines(
+            Enumerable.Range(0, lines.Count).Select(i => (amts[i].NetAmount, lines[i].WithholdingTaxRate)).ToList(), type);
+        for (var i = 0; i < amts.Length; i++)
+            amts[i] = amts[i] with { WhtAmount = per[i].Tax };
+        return WhtGrossUp.Totals(per).PayerBorne;
+    }
+
+    /// <summary>รอบ 204 — ค่าที่เก็บลง <c>Document.WhtCertType</c>: ไม่ส่ง = หัก ณ ที่จ่าย · ใบฝั่งรับเงินตั้ง "ออกแทน" ไม่ได้ ⇒ ล้มดังพร้อมเหตุผล</summary>
+    private static WithholdingTaxCertType ResolveWhtCertType(DocumentType documentType, WithholdingTaxCertType? requested)
+    {
+        var type = WhtGrossUp.Normalize(requested ?? WithholdingTaxCertType.Withhold);
+        if (WhtGrossUp.TypeError(documentType, type) is string err)
+            throw new BusinessRuleException(err, WhtGrossUp.RuleCode);
+        return type;
+    }
+
+    /// <summary>รอบ 204 — เงื่อนไขของใบ + ใบที่ปิดหนี้ใบต้นทางฝั่งผู้จ่าย: ไม่ส่งค่า ⇒ สืบทอดจากใบต้นทาง (กฎ #4 A) · ส่งค่าต่างจากใบต้นทาง ⇒ ล้มดัง
+    /// (ยอดจ่ายต้องตรงเจ้าหนี้ที่ใบต้นทางตั้ง — <see cref="WhtGrossUp.SourceMismatchReason"/>)</summary>
+    private async Task<WithholdingTaxCertType> ResolveWhtCertTypeAsync(Guid companyId, Document doc, WithholdingTaxCertType? requested)
+    {
+        WithholdingTaxCertType? sourceType = null;
+        string? sourceNumber = null;
+        if (doc.RelatedDocumentId is Guid srcId && WhtCertIssuePlan.AppliesTo(doc.DocumentType))
+        {
+            var src = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == srcId && d.CompanyId == companyId)
+                .Select(d => new { d.DocumentType, d.WhtCertType, d.DocumentNumber })
+                .FirstOrDefaultAsync();
+            if (src != null && WhtCertIssuePlan.AppliesTo(src.DocumentType))
+            {
+                sourceType = WhtGrossUp.Normalize(src.WhtCertType);
+                sourceNumber = src.DocumentNumber;
+            }
+        }
+        var type = requested.HasValue
+            ? ResolveWhtCertType(doc.DocumentType, requested)
+            : sourceType ?? WithholdingTaxCertType.Withhold;
+        if (sourceType is WithholdingTaxCertType st && WhtGrossUp.SourceMismatchReason(st, type, sourceNumber) is string mismatch)
+            throw new BusinessRuleException(mismatch, WhtGrossUp.RuleCode);
+        return type;
+    }
+
     /// <summary>ยุบ VAT-split phantom lines — choke point สุดท้ายครอบคลุมทุก
     /// path (frontend form / integration / OCR handoff ที่เข้าทาง POST /documents).
     /// เคส: external OCR แตกสินค้า 1 ตัวเป็น "...(ส่วนมีภาษี)" + "...(ส่วนไม่มีภาษี)"
@@ -1540,6 +1588,8 @@ public partial class DocumentService : IDocumentService
             // คำขอเจ้าของ 2026-10-12 — ติ๊ก "สร้าง 50 ทวิ อัตโนมัติ" (ไม่ส่ง = เปิด = พฤติกรรมเดิม) + ผู้ถูกหักแยกจากผู้รับเงิน
             doc.WhtCertAutoIssue = request.WhtCertAutoIssue ?? true;
             doc.WhtPayeeContactId = await ResolveWhtPayeeContactIdAsync(companyId, doc, request.WhtPayeeContactId);
+            // รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: ไม่ส่ง = หัก ณ ที่จ่าย (พฤติกรรมเดิม) · ใบฝั่งรับเงินตั้งไม่ได้ (ล้มดัง)
+            doc.WhtCertType = await ResolveWhtCertTypeAsync(companyId, doc, request.WhtCertType);
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
             var createLines = request.Lines ?? [];
@@ -1551,6 +1601,7 @@ public partial class DocumentService : IDocumentService
             for (int i = 0; i < createLines.Count; i++)
                 createAmts[i] = ComputeLineAmounts(createLines[i], request.PricesIncludeVat, billAlloc[i]);
             ReconcileTaxRounding(createLines, createAmts, request.PricesIncludeVat);
+            var createWhtBorne = ApplyWhtGrossUp(createLines, createAmts, doc.WhtCertType);
             int lineIdx = -1;
             foreach (var line in createLines)
             {
@@ -1636,7 +1687,9 @@ public partial class DocumentService : IDocumentService
             doc.DepositBaseDeducted = createDepositBase;   // R3-1: ยอดก่อนหักท้ายบิล = SubTotal + BillDiscountAmount + DepositBaseDeducted
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
-            doc.TotalAmount = doc.SubTotal + totalVat - totalWht;
+            // รอบ 204: ผู้จ่ายออกภาษีแทน ⇒ ยอดจ่ายผู้รับ = ฐาน + VAT − ภาษีนำส่ง + ส่วนที่ออกแทน (หัก ณ ที่จ่าย ⇒ ส่วนที่ออกแทน 0 = สูตรเดิม)
+            doc.WhtPayerBorneAmount = createWhtBorne;
+            doc.TotalAmount = WhtGrossUp.PayeeTotal(doc.SubTotal, totalVat, totalWht, createWhtBorne);
             // Cash-settled documents carry no outstanding balance — the cash
             // already moved, so PaidAmount = ยอดจ่ายผู้รับเงิน and BalanceDue = 0. This is
             // what keeps a จ่ายทันที voucher out of the aging / ค้างชำระ report.
@@ -2731,6 +2784,14 @@ public partial class DocumentService : IDocumentService
             doc.WhtPayeeContactId = await ResolveWhtPayeeContactIdAsync(companyId, doc, request.WhtPayeeContactId);
         else if (doc.WhtPayeeContactId == doc.ContactId)
             doc.WhtPayeeContactId = null;
+        // รอบ 204 — ผู้จ่ายออกภาษีแทน: null = คงค่าเดิม · เปลี่ยนโดยไม่ส่งบรรทัด ⇒ คิดภาษีใหม่จากบรรทัดที่บันทึกไว้ (ห้าม silent no-op — ดูท้ายบล็อกบรรทัด)
+        var updWhtCertTypeChanged = false;
+        if (request.WhtCertType.HasValue)
+        {
+            var requestedWhtType = await ResolveWhtCertTypeAsync(companyId, doc, request.WhtCertType);
+            updWhtCertTypeChanged = requestedWhtType != WhtGrossUp.Normalize(doc.WhtCertType);
+            doc.WhtCertType = requestedWhtType;
+        }
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
@@ -2972,6 +3033,7 @@ public partial class DocumentService : IDocumentService
             for (int i = 0; i < request.Lines.Count; i++)
                 updAmts[i] = ComputeLineAmounts(request.Lines[i], doc.PricesIncludeVat, updBillAlloc[i]);
             ReconcileTaxRounding(request.Lines, updAmts, doc.PricesIncludeVat);
+            var updWhtBorne = ApplyWhtGrossUp(request.Lines, updAmts, doc.WhtCertType);
             int updLineIdx = -1;
             foreach (var line in request.Lines)
             {
@@ -3053,7 +3115,8 @@ public partial class DocumentService : IDocumentService
             doc.DepositBaseDeducted = updDepositBase;
             doc.VatAmount = totalVat;
             doc.WithholdingTaxAmount = totalWht;
-            doc.TotalAmount = doc.SubTotal + totalVat - totalWht;
+            doc.WhtPayerBorneAmount = updWhtBorne;   // รอบ 204 — สูตรเดียวกับตอนสร้าง
+            doc.TotalAmount = WhtGrossUp.PayeeTotal(doc.SubTotal, totalVat, totalWht, updWhtBorne);
 
             // Preserve / apply the settlement basis on edit. A cash-settled
             // voucher must stay fully paid (BalanceDue = 0, no due date) even
@@ -3089,6 +3152,29 @@ public partial class DocumentService : IDocumentService
             else
             {
                 doc.BalanceDue = updPayee - doc.PaidAmount;
+            }
+        }
+        else if (updWhtCertTypeChanged)
+        {
+            // รอบ 204: เปลี่ยน "ผู้จ่ายออกภาษีแทน" โดยไม่ส่งบรรทัด — คิดภาษีใหม่จากบรรทัดที่บันทึกไว้ด้วยสูตรเดียว (WhtGrossUp.ForLines)
+            // ไม่ใช่ silent no-op (กฎ #4 A) · ยอดจ่าย/ค้างตามตัวตั้งเดียวกับบล็อกบรรทัดข้างบน
+            var keptLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+            var keptWht = WhtGrossUp.ForLines(keptLines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
+            for (var i = 0; i < keptLines.Count; i++)
+                keptLines[i].WithholdingTaxAmount = keptWht[i].Tax;
+            var (keptTax, keptBorne) = WhtGrossUp.Totals(keptWht);
+            doc.WithholdingTaxAmount = keptTax;
+            doc.WhtPayerBorneAmount = keptBorne;
+            doc.TotalAmount = WhtGrossUp.PayeeTotal(doc.SubTotal, doc.VatAmount, keptTax, keptBorne);
+            var keptPayee = ForeignServiceVat.PayeeAmount(doc, updSrcOwns);
+            if (doc.PaymentType == Models.Enums.PaymentType.Cash)
+            {
+                doc.PaidAmount = keptPayee;
+                doc.BalanceDue = 0m;
+            }
+            else
+            {
+                doc.BalanceDue = keptPayee - doc.PaidAmount;
             }
         }
 
@@ -11806,7 +11892,9 @@ public partial class DocumentService : IDocumentService
                 && (targetType != DocumentType.PaymentVoucher || ForeignServiceVat.OwnsPp36(source)),
             // รอบ 193 (ฝ่ายค้าน C2): ผลต่างปัดเศษตามไปเมื่อยกทุกบรรทัดครบจำนวน — ไม่งั้น 5,024.00 → 5,024.01
             RoundingAdjustment: Accounting.Helpers.DocumentRounding.Inherit(source.RoundingAdjustment,
-                spec.Count == source.Lines.Count(l => !l.IsDeleted) && spec.All(s => s.Qty >= s.Line.Quantity))), createdBy,
+                spec.Count == source.Lines.Count(l => !l.IsDeleted) && spec.All(s => s.Qty >= s.Line.Quantity)),
+            // รอบ 204 (เอกสารลูกสืบทอด): ผู้จ่ายออกภาษีแทนตามไป PI/ค่าใช้จ่าย → ใบสำคัญจ่าย — ส่งตั้งแต่ create ให้ภาษี/ยอดจ่ายคิดสูตรเดียวกับใบแม่
+            WhtCertType: Accounting.Helpers.WhtGrossUp.Inherit(source.WhtCertType, source.DocumentType, targetType)), createdBy,
             isFullTaxInvoiceReplacement: isFullTaxInvoiceReplacement);
 
         // Link new document to source + propagate appendix/contract metadata
@@ -16130,6 +16218,26 @@ public partial class DocumentService : IDocumentService
             pendingLines.Add((accountId, Conv(debit), Conv(credit), desc));
             lineProjects.Add(proj ?? doc.ProjectId);
         }
+        // รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: ภาษีที่นำส่ง (Cr 2191x = WithholdingTaxAmount) มากกว่าส่วนที่หักจากผู้รับ ⇒ ส่วนที่ออกแทน
+        // เป็นค่าใช้จ่ายของผู้จ่าย · Dr ผังของบรรทัด (ทางเดียวกับรอบโอน settlement W3) ตามยอดรายบรรทัดจากสูตรเดียว WhtGrossUp.ForLines ·
+        // ยอดรวมไม่ตรงหัวเอกสาร (บรรทัดถูกแก้ทางอื่นหลังบันทึก) ⇒ ล้มดัง ไม่ลง JE ที่ไม่สมดุล/ผิดเงียบ ๆ · หัก ณ ที่จ่าย ⇒ ไม่มีขานี้
+        void AddPayerBorneWhtExpense()
+        {
+            if (doc.WhtPayerBorneAmount == 0m) return;
+            var borneLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+            var borneParts = WhtGrossUp.ForLines(borneLines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
+            if (WhtGrossUp.MismatchReason(doc.DocumentNumber, doc.WhtPayerBorneAmount, borneParts) is string borneMismatch)
+                throw new BusinessRuleException(borneMismatch, WhtGrossUp.RuleCode);
+            for (var bi = 0; bi < borneLines.Count; bi++)
+            {
+                if (borneParts[bi].PayerBorne == 0m) continue;
+                var borneAccountId = borneLines[bi].AccountId ?? defaultExpense?.Id
+                    ?? throw new InvalidOperationException("ไม่พบบัญชีค่าใช้จ่ายสำหรับภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน — เลือกผังบัญชีของรายการก่อนอนุมัติ");
+                AddLine(borneAccountId, borneParts[bi].PayerBorne, 0,
+                    $"ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน ({WhtGrossUp.Label(doc.WhtCertType)}) - {borneLines[bi].Description}",
+                    borneLines[bi].ProjectId);
+            }
+        }
 
         // ============================================================
         // SALES SIDE: Invoice / TaxInvoice (full sale on credit)
@@ -16744,6 +16852,7 @@ public partial class DocumentService : IDocumentService
             if (cilVatResidual > 0.005m && (cilFirstAccount ?? defaultExpense?.Id) is Guid cilResidualAccount)
                 AddLine(cilResidualAccount, cilVatResidual, 0,
                     "ภาษีซื้อที่เคลมไม่ได้ (รวมเป็นต้นทุน) - ใบรับรองแทนใบเสร็จ");
+            AddPayerBorneWhtExpense();   // รอบ 204 — ภาษีที่ออกแทน (เงินสดจ่าย = TotalAmount รวมส่วนนี้แล้ว)
 
             if (moneyAccount != null)
                 AddLine(moneyAccount.Id, 0, doc.TotalAmount,
@@ -16815,6 +16924,9 @@ public partial class DocumentService : IDocumentService
                     AddLine(expenseAccountId.Value, debitAmount, 0, desc, docLine.ProjectId);
                 }
             }
+
+            // รอบ 204 — ภาษีที่ผู้จ่ายออกแทน (ทั้งสาย GRN และสายปกติ · เจ้าหนี้ = TotalAmount ที่รวมส่วนนี้แล้ว)
+            AddPayerBorneWhtExpense();
 
             // Dr: ภาษีซื้อ — บัญชีปลายทางขึ้นกับ completeness §86/4 + override:
             //   1) มี override → ใช้ user-pick (เช่น 51000 ต้นทุนขาย ตาม §82/5)
@@ -17590,6 +17702,8 @@ public partial class DocumentService : IDocumentService
                         : $"{docLine.Description} (รวม VAT ต้องห้าม{(string.IsNullOrWhiteSpace(docLine.VatNonClaimableReason) ? "" : " - " + docLine.VatNonClaimableReason)})";
                     AddLine(expenseAccountId.Value, debitAmount, 0, desc, docLine.ProjectId);
                 }
+
+                AddPayerBorneWhtExpense();   // รอบ 204 — ภาษีที่ผู้จ่ายออกแทน (เงินออก = TotalAmount รวมส่วนนี้แล้ว)
 
                 var claimableVatPv = doc.Lines.Where(l => l.IsVatClaimable).Sum(l => l.VatAmount);
                 if (claimableVatPv > 0)
@@ -18936,6 +19050,9 @@ public partial class DocumentService : IDocumentService
         // คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) + ป้าย "ออก 50 ทวิ อัตโนมัติไม่สำเร็จ" (ล้มดัง)
         WhtCertAutoIssue: d.WhtCertAutoIssue,
         WhtPayeeContactId: d.WhtPayeeContactId,
+        // รอบ 204 — ผู้จ่ายออกภาษีแทน (echo กลับให้ฟอร์มแก้ไข)
+        WhtCertType: Accounting.Helpers.WhtGrossUp.Normalize(d.WhtCertType),
+        WhtPayerBorneAmount: d.WhtPayerBorneAmount,
         WhtCertAutoFailedReason: Accounting.Helpers.WhtCertAutoFailedNote.ReasonOf(d.InternalNotes));
     }
 

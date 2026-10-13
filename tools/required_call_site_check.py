@@ -6356,6 +6356,42 @@ RULES += [
          why=_WHTADV + "รอบสอง: OCR ฝั่งซื้อไม่เขียน gov1/1 ลงบรรทัด (มิฉะนั้นแปลง/แก้ใบภายหลังล้มด่าน L3)"),
 ]
 
+# รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน (ออกให้ตลอดไป/ครั้งเดียว): สูตรมีที่เดียว Helpers/WhtGrossUp · เทสต์ (WhtGrossUpTests) ล็อก helper
+# ⇒ ล็อกจุดเรียกใน service: ยอดสุทธิ · ขา Dr ค่าใช้จ่ายของส่วนที่ออกแทน (3 สาย) · ประเภท/เงินได้บน 50 ทวิ · คอลัมน์เงื่อนไข Col11
+_WHTBORNE = "รอบ 204 ผู้จ่ายออกภาษีแทน: "
+RULES += [
+    dict(file=DOC, method="CreateDocumentAsync",
+         must=["ResolveWhtCertTypeAsync(", "ApplyWhtGrossUp(", "WhtGrossUp.PayeeTotal("],
+         before=[("ApplyWhtGrossUp(", "WhtGrossUp.PayeeTotal(")],
+         forbid=["doc.SubTotal + totalVat - totalWht"],
+         why=_WHTBORNE + "สร้างเอกสาร: ภาษีรายบรรทัดผ่าน WhtGrossUp ก่อนรวมยอด · ยอดจ่ายผู้รับ = PayeeTotal (รวมส่วนที่ออกแทน)"),
+    dict(file=DOC, method="UpdateDocumentAsync",
+         must=["ResolveWhtCertTypeAsync(", "ApplyWhtGrossUp(", "WhtGrossUp.ForLines(", "updWhtCertTypeChanged"],
+         forbid=["doc.SubTotal + totalVat - totalWht"],
+         why=_WHTBORNE + "แก้เอกสาร: สูตรเดียวกับตอนสร้าง · เปลี่ยนเงื่อนไขโดยไม่ส่งบรรทัดต้องคิดใหม่ (ห้าม silent no-op)"),
+    dict(file=DOC, method="AutoPostToJournalAsync",
+         must=["WhtGrossUp.MismatchReason("],
+         # สามจุดเรียกผูกกับโค้ดข้างเคียงของแต่ละสาย (pattern เส้นตรง — ห้าม [\s\S]* ซ้อน: ล้มแล้ว backtrack ทั้งเมธอดจนค้าง)
+         must_re=[r"AddLine\(\s*cilResidualAccount[^;]*;\s*AddPayerBorneWhtExpense\(\)\s*;",
+                  r"AddPayerBorneWhtExpense\(\)\s*;\s*var\s+claimableVatPi\b",
+                  r"AddPayerBorneWhtExpense\(\)\s*;\s*var\s+claimableVatPv\b"],
+         why=_WHTBORNE + "JE: Dr ส่วนที่ออกแทนทั้งสาม (ใบรับรองแทนใบเสร็จ · PI/ค่าใช้จ่าย · ใบสำคัญจ่ายเดี่ยว) — ไม่งั้นเจ้าหนี้/เงินออกรวมส่วนที่ออกแทนแต่ฝั่ง Dr ขาด (JE-BAL)"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
+         must=["WhtGrossUp.Normalize(doc.WhtCertType)", "WhtGrossUp.ForLines(", "WhtGrossUp.MismatchReason("],
+         must_re=[r"IncomeAmount\s*=\s*Prorate\(\s*line\.Amount\s*\+\s*borneByLine"],
+         forbid=["CertificateType = WithholdingTaxCertType.Withhold"],
+         why=_WHTBORNE + "50 ทวิ จากเอกสาร: เงื่อนไขตามเอกสาร · เงินได้ = ฐาน + ภาษีที่ออกแทน (ม.39)"),
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="BuildPndRows",
+         must=["WhtGrossUp.FilingCondition("], forbid=["is 2 ? 2 : 1"],
+         why=_WHTBORNE + "ไฟล์ ภ.ง.ด. Col11 1/2/3 — เดิม \"ออกให้ครั้งเดียว\" ตกเป็น 1"),
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
+         must=["WhtGrossUp.FilingCondition("], forbid=["is 2 ? 2 : 1"],
+         why=_WHTBORNE + "รายงาน ภ.ง.ด. (ต้นทางของปุ่ม e-Filing) เงื่อนไข 1/2/3"),
+    dict(file="Services/Implementations/Tax/Section65TerValidator.cs", method="Evaluate",
+         must=["PayerBorneWhtRuleCode", "doc.WhtPayerBorneAmount"],
+         why=_WHTBORNE + "§65 ตรี (3) บวกกลับส่วนที่ออกแทน (ไม่มีสัญญา = เสน่หา)"),
+]
+
 
 # ── รอบ 204 — แบบ ภ.ง.ด.2 (คำตัดสินเจ้าของ DECISIONS ข้อ 148 · Pnd2FormTests ล็อก helper · กติกาข้างล่างล็อกจุดเรียก) ──
 # ตัวตัดสินแบบ/ผังรับ "ประเภทเงินได้ของบรรทัดที่หัก" — ทางที่ไม่ส่ง = ดอกเบี้ย/ปันผลบุคคลตกกลับ ภ.ง.ด.3 เงียบ ๆ (GL 21915 ≠ ทะเบียน/นำส่ง)

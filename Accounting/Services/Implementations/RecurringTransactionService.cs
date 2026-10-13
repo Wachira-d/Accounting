@@ -523,7 +523,12 @@ public class RecurringTransactionService : IRecurringTransactionService
                     root.TryGetProperty("autoGenerateWht", out var awEl)
                         && awEl.ValueKind is JsonValueKind.True or JsonValueKind.False ? awEl.GetBoolean() : (bool?)null),
                 WhtPayeeContactId: root.TryGetProperty("whtPayeeContactId", out var wpEl)
-                    && wpEl.ValueKind == JsonValueKind.String && Guid.TryParse(wpEl.GetString(), out var wpId) ? wpId : null
+                    && wpEl.ValueKind == JsonValueKind.String && Guid.TryParse(wpEl.GetString(), out var wpId) ? wpId : null,
+                // รอบ 204 (เอกสารลูกสืบทอด) — ผู้จ่ายออกภาษีแทนของรายการประจำ ("PayAlways"/"PayOnce"/"Withhold" หรือ 1/2/3) · template เก่าไม่มี key
+                // = หัก ณ ที่จ่าย (พฤติกรรมเดิม) · ใบปลายทางฝั่งรับเงิน ⇒ ไม่ส่ง (ตัวสืบทอดเดียว WhtGrossUp.Inherit — ไม่ให้รายการประจำล้มทุกงวด)
+                WhtCertType: ParseTemplateWhtCertType(root) is { } tplWhtType
+                    ? Accounting.Helpers.WhtGrossUp.Inherit(tplWhtType, docType, docType)
+                    : null
             );
 
             var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy);
@@ -787,5 +792,19 @@ public class RecurringTransactionService : IRecurringTransactionService
                 System.Globalization.CultureInfo.InvariantCulture, out var s) ? s : fallback,
             _ => fallback,
         };
+    }
+
+    /// <summary>รอบ 204 — อ่าน "whtCertType" จาก template (ชื่อ enum หรือเลข 1/2/3) · ไม่มี/อ่านไม่ออก ⇒ null (= หัก ณ ที่จ่าย)</summary>
+    private static Accounting.Models.DTOs.Tax.WithholdingTaxCertType? ParseTemplateWhtCertType(JsonElement root)
+    {
+        if (!root.TryGetProperty("whtCertType", out var el)) return null;
+        if (el.ValueKind == JsonValueKind.String
+            && Enum.TryParse<Accounting.Models.DTOs.Tax.WithholdingTaxCertType>(el.GetString(), ignoreCase: true, out var byName)
+            && Enum.IsDefined(byName))
+            return byName;
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var n)
+            && Enum.IsDefined(typeof(Accounting.Models.DTOs.Tax.WithholdingTaxCertType), n))
+            return (Accounting.Models.DTOs.Tax.WithholdingTaxCertType)n;
+        return null;
     }
 }

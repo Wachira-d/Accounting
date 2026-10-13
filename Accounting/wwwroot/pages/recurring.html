@@ -119,6 +119,14 @@
             </div>
             <div class="form-group">
               <label class="form-label"><input type="checkbox" id="fAutoWht" checked> สร้างหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติ (เมื่อมี WHT)</label>
+              <!-- รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: ใช้กับเอกสารฝั่งผู้จ่าย (ใบสำคัญจ่าย/ค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ) ·
+                   ชนิดอื่นเซิร์ฟเวอร์ไม่ใช้ค่านี้ (WhtGrossUp.Inherit) · ภาษีคิดที่เซิร์ฟเวอร์ตอนออกเอกสารแต่ละงวด -->
+              <label class="form-label" for="fWhtCertType" style="margin-top:6px">เงื่อนไขการหักภาษี (เอกสารฝั่งผู้จ่าย)</label>
+              <select class="form-select" id="fWhtCertType">
+                <option value="Withhold">หัก ณ ที่จ่าย (หักจากยอดที่จ่าย)</option>
+                <option value="PayOnce">ผู้จ่ายออกภาษีให้ครั้งเดียว</option>
+                <option value="PayAlways">ผู้จ่ายออกภาษีให้ตลอดไป (ผู้รับได้ยอดเต็ม)</option>
+              </select>
             </div>
           </div>
           <div class="form-group">
@@ -317,6 +325,7 @@ const Page = {
     document.getElementById('fExpenseCategory').value = '';
     document.getElementById('fAutoApprove').checked = false;
     document.getElementById('fAutoWht').checked = true;
+    document.getElementById('fWhtCertType').value = 'Withhold';
     document.getElementById('fAutoSendEmail').checked = false;
     this.onAutoFlagChange();
     this.loadEmailStatus();
@@ -488,6 +497,7 @@ const Page = {
       paymentAccountId: paymentAccountId,
       expenseCategoryId: expenseCategoryId,
       autoGenerateWht: document.getElementById('fAutoWht').checked,
+      whtCertType: document.getElementById('fWhtCertType').value || 'Withhold',
       // ⚠️ เดิม hardcode dueDays: 30 โดยไม่มีช่องให้กรอก ⇒ ใบที่ generate ครบ
       // กำหนด +30 เสมอ ขัดกับเครดิตจริงของคู่ค้า (เช่น Net 45) ทุกใบทุกเดือน
       // → ไม่ส่ง = ให้ระบบใช้เครดิตของคู่ค้า/ค่าตั้งต้นเอกสารเป็นตัวตัดสิน
@@ -624,6 +634,8 @@ const Page = {
           document.getElementById('fIncomeType').value = this.resolveIncomeTypeValue(line.incomeTypeCode);
         }
         if (td.autoGenerateWht !== undefined) document.getElementById('fAutoWht').checked = td.autoGenerateWht;
+        // รอบ 204 — echo กลับ (template เก่าไม่มี key = หัก ณ ที่จ่าย)
+        document.getElementById('fWhtCertType').value = ['PayOnce', 'PayAlways'].includes(td.whtCertType) ? td.whtCertType : 'Withhold';
         if (td.paymentAccountId) savedPaymentChannelVal = 'account:' + td.paymentAccountId;
         else if (td.bankAccountId) savedPaymentChannelVal = 'bank:' + td.bankAccountId;
         savedExpenseCategoryId = td.expenseCategoryId || '';

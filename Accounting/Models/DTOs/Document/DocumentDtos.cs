@@ -3,6 +3,7 @@ using Accounting.Models.Enums;
 // รอบ 200 ทีม V1G: alias ระดับ global — ใต้ namespace นี้ `Accounting.` ผูกไป Accounting.Models.DTOs.Accounting ก่อน (namespace_shadow_check)
 using ReissueRequestView = Accounting.Helpers.ReissueRequestView;
 using EtaxCancellationPath = Accounting.Helpers.EtaxCancellationPath;
+using Accounting.Models.DTOs.Tax;   // รอบ 204 — WithholdingTaxCertType (ผู้จ่ายออกภาษีแทน) · ชื่อเดียวที่ใช้จาก namespace นี้ (ตรวจแล้วไม่ชนชื่อใน DTOs.Document)
 
 namespace Accounting.Models.DTOs.Document;
 
@@ -167,7 +168,10 @@ public record CreateDocumentRequest(
     // คำขอเจ้าของ 2026-10-12 — 50 ทวิ: สร้างอัตโนมัติเมื่ออนุมัติ/จ่ายไหม (null = เปิด = พฤติกรรมเดิม) ·
     // ผู้ถูกหักภาษีที่ไม่ใช่ผู้ติดต่อของเอกสาร (ประกันผ่านโบรกเกอร์ — 50 ทวิ ในนามบริษัทประกัน) null = ผู้ติดต่อ · เฉพาะ PV/ค่าใช้จ่าย/PI/CIL
     bool? WhtCertAutoIssue = null,
-    Guid? WhtPayeeContactId = null);
+    Guid? WhtPayeeContactId = null,
+    // รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: null = หัก ณ ที่จ่าย (พฤติกรรมเดิม) · PayAlways ออกให้ตลอดไป · PayOnce ออกให้ครั้งเดียว ·
+    // เฉพาะใบฝั่งผู้จ่าย (WhtCertIssuePlan.AppliesTo) — ใบชนิดอื่นส่งค่าที่ไม่ใช่หัก ณ ที่จ่าย = 400 ข้อความไทย
+    WithholdingTaxCertType? WhtCertType = null);
 
 // ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
 // เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
@@ -342,7 +346,9 @@ public record UpdateDocumentRequest(
     Guid? DepositKindId = null,
     // คำขอเจ้าของ 2026-10-12 — 50 ทวิ อัตโนมัติ: null = คงค่าเดิม · ผู้ถูกหัก: null = คงค่าเดิม · Guid.Empty = กลับไปใช้ผู้ติดต่อของเอกสาร
     bool? WhtCertAutoIssue = null,
-    Guid? WhtPayeeContactId = null);
+    Guid? WhtPayeeContactId = null,
+    // รอบ 204 — ผู้จ่ายออกภาษีแทน: null = คงค่าเดิม · ค่าใหม่ ⇒ คิดภาษี/ยอดสุทธิใหม่จากบรรทัด (ส่งบรรทัดมาด้วยหรือไม่ก็ได้)
+    WithholdingTaxCertType? WhtCertType = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -1006,6 +1012,10 @@ public record DocumentResponse(
     bool WhtCertAutoIssue = true,
     /// <summary>ผู้ถูกหักภาษีที่ตั้งแยกจากผู้ติดต่อ (null = ผู้ติดต่อของเอกสาร) — หน้าเว็บดึงชื่อ/เลขผู้เสียภาษีจากผู้ติดต่อนี้</summary>
     Guid? WhtPayeeContactId = null,
+    /// <summary>รอบ 204 — เงื่อนไขการหักภาษี (หัก ณ ที่จ่าย/ออกให้ตลอดไป/ออกให้ครั้งเดียว) · echo กลับให้ฟอร์มแก้ไข (กฎ #4 A)</summary>
+    WithholdingTaxCertType WhtCertType = WithholdingTaxCertType.Withhold,
+    /// <summary>รอบ 204 — ส่วนของภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน (รวมอยู่ใน WithholdingTaxAmount · ไม่หักจากยอดจ่ายผู้รับ)</summary>
+    decimal WhtPayerBorneAmount = 0m,
     /// <summary>ออก 50 ทวิ อัตโนมัติไม่สำเร็จ — เหตุผลจากป้ายบนเอกสาร (<c>WhtCertAutoFailedNote</c>) · null = ไม่มีป้าย ·
     /// คำตอบของ "อนุมัติ" มีค่านี้ ⇒ หน้าเว็บแจ้งผู้ใช้ทันที (ล้มดัง — เดิมกลืนด้วย LogWarning)</summary>
     string? WhtCertAutoFailedReason = null);

@@ -573,7 +573,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             // เดิมใช้ DocumentDate → cert ตกงวดเดือนตั้งหนี้ทั้งที่ยังไม่จ่าย
             TaxYear = (paymentDate ?? doc.PaymentDate ?? doc.DocumentDate).Year,
             TaxMonth = (paymentDate ?? doc.PaymentDate ?? doc.DocumentDate).Month,
-            CertificateType = WithholdingTaxCertType.Withhold,
+            // รอบ 204 (คำตัดสินข้อ 148 (4)): เงื่อนไขบน 50 ทวิ = ของเอกสาร (หัก ณ ที่จ่าย/ออกให้ตลอดไป/ออกให้ครั้งเดียว) — เดิมตายตัว "หัก ณ ที่จ่าย"
+            CertificateType = WhtGrossUp.Normalize(doc.WhtCertType),
             DocumentId = documentId,
             SourcePaymentId = sourcePaymentId,
             CreatedBy = createdBy
@@ -582,6 +583,18 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // Create lines from document lines that have WHT
         var order = 1;
         var whtLines = doc.Lines.Where(l => l.WithholdingTaxAmount > 0).ToList();
+        // รอบ 204 — เงินได้บน 50 ทวิ = ฐาน + ภาษีที่ผู้จ่ายออกแทน (ม.39) · ส่วนที่ออกแทนรายบรรทัดจากสูตรเดียวกับตอนบันทึก/ลงบัญชี (WhtGrossUp.ForLines) ·
+        // ไม่ตรงยอดหัวเอกสาร ⇒ ล้มดัง (ไม่ออกใบเงินได้ผิด) · หัก ณ ที่จ่าย ⇒ ส่วนที่ออกแทน 0 = เงินได้เท่าเดิมทุกสตางค์
+        var borneByLine = new Dictionary<Guid, decimal>();
+        if (WhtGrossUp.IsPayerBorne(doc.WhtCertType))
+        {
+            var allLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+            var parts = WhtGrossUp.ForLines(allLines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
+            if (WhtGrossUp.MismatchReason(doc.DocumentNumber, doc.WhtPayerBorneAmount, parts) is string borneMismatch)
+                throw new BusinessRuleException(borneMismatch, WhtGrossUp.RuleCode);
+            for (var i = 0; i < allLines.Count; i++)
+                borneByLine[allLines[i].Id] = parts[i].PayerBorne;
+        }
         // ยอดของงวด: เฉลี่ยตามสัดส่วน (whtRatio = 1 เมื่อจ่ายครั้งเดียว/เต็มจำนวน)
         decimal Prorate(decimal v) => whtRatio == 1m
             ? v : Math.Round(v * whtRatio, 2, MidpointRounding.AwayFromZero);
@@ -596,7 +609,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 IncomeDescription = $"ตามเอกสาร {doc.DocumentNumber}"
                     + (whtRatio == 1m ? "" : $" (จ่ายงวดนี้ {whtRatio:P0})"),
                 PaymentDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate,
-                IncomeAmount = Prorate(doc.SubTotal),
+                IncomeAmount = Prorate(doc.SubTotal + doc.WhtPayerBorneAmount),
                 TaxRate = doc.SubTotal > 0 ? doc.WithholdingTaxAmount * 100 / doc.SubTotal : 3m,
                 TaxAmount = paymentWhtAmount ?? doc.WithholdingTaxAmount
             });
@@ -611,7 +624,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     IncomeTypeCode = line.IncomeTypeCode ?? "8",
                     IncomeDescription = line.Description,
                     PaymentDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate,
-                    IncomeAmount = Prorate(line.Amount),
+                    IncomeAmount = Prorate(line.Amount + borneByLine.GetValueOrDefault(line.Id)),
                     TaxRate = line.WithholdingTaxRate,
                     TaxAmount = Prorate(line.WithholdingTaxAmount)
                 });

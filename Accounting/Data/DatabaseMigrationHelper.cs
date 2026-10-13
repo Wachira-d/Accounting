@@ -3310,6 +3310,14 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtPayeeContactId" uuid NULL;
             """,
+            // รอบ 204 (คำตัดสินข้อ 148 (4)): ผู้จ่ายออกภาษีแทน — เงื่อนไข 1 หัก ณ ที่จ่าย (ใบเก่าทุกใบ = พฤติกรรมเดิม) · 2 ออกให้ตลอดไป · 3 ออกให้ครั้งเดียว
+            // + ส่วนที่ผู้จ่ายออกแทน (0 = ไม่มี) · สูตร Helpers/WhtGrossUp
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtCertType" integer NOT NULL DEFAULT 1;
+            """,
+            """
+            ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtPayerBorneAmount" numeric(18,2) NOT NULL DEFAULT 0;
+            """,
             // External preparer signature override — name + signature image
             // (base64/data-URI) supplied by an integrating system for the
             // "ผู้จัดทำ" slot when the preparer is not a NextAcc User.

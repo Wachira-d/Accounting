@@ -720,8 +720,9 @@ public class TaxFilingExportService : ITaxFilingExportService
         foreach (var cert in certs.OrderBy(c => c.CertificateNumber))
         {
             var contact = cert.PayeeContact;
-            // เงื่อนไขการหักภาษี (Col11): 1 = หัก ณ ที่จ่าย, 2 = ออกให้ตลอดไป
-            var condition = (int)cert.CertificateType is 2 ? 2 : 1;
+            // เงื่อนไขการหักภาษี (Col11): 1 = หัก ณ ที่จ่าย · 2 = ออกให้ตลอดไป · 3 = ออกให้ครั้งเดียว — ตัวเดียว WhtGrossUp.FilingCondition
+            // (รอบ 204: เดิม `is 2 ? 2 : 1` ⇒ ใบ "ออกให้ครั้งเดียว" ยื่นเป็นเงื่อนไข 1)
+            var condition = Accounting.Helpers.WhtGrossUp.FilingCondition(cert.CertificateType);
             var certLines = cert.Lines?.OrderBy(l => l.LineOrder).ToList()
                 ?? new List<WithholdingTaxCertLine>();
 

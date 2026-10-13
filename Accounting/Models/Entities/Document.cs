@@ -582,6 +582,15 @@ public class Document : TenantEntity
     /// ตัดสินจากผู้ถูกหักคนนี้ ไม่ใช่ผู้รับเงิน · อ่านผ่าน <c>WhtCertIssuePlan.PayeeOf</c> ตัวเดียว</summary>
     public Guid? WhtPayeeContactId { get; set; }
 
+    /// <summary>รอบ 204 (คำตัดสินข้อ 148 (4)) — เงื่อนไขการหักภาษี ณ ที่จ่ายของใบฝั่งผู้จ่าย: หัก ณ ที่จ่าย (ค่าตั้งต้น = พฤติกรรมเดิม) ·
+    /// ผู้จ่ายออกให้ตลอดไป · ออกให้ครั้งเดียว · ภาษีคิดผ่าน <c>Helpers/WhtGrossUp</c> ตัวเดียว · ออก 50 ทวิ เป็นประเภทเดียวกัน (ช่อง (1)(2)(3))</summary>
+    public Accounting.Models.DTOs.Tax.WithholdingTaxCertType WhtCertType { get; set; } = Accounting.Models.DTOs.Tax.WithholdingTaxCertType.Withhold;
+
+    /// <summary>รอบ 204 — ส่วนของภาษีหัก ณ ที่จ่ายที่ผู้จ่าย<b>ออกแทน</b> (ไม่หักจากเงินที่จ่ายผู้รับ · ลงเป็นค่าใช้จ่าย Dr ผังของบรรทัด) ·
+    /// <c>WithholdingTaxAmount</c> = ภาษีที่นำส่งทั้งก้อน (รวมส่วนนี้) · <c>TotalAmount</c> = ยอดจ่ายผู้รับ = ฐาน + VAT − ภาษีนำส่ง + ส่วนนี้ ·
+    /// หัก ณ ที่จ่าย ⇒ 0 เสมอ</summary>
+    public decimal WhtPayerBorneAmount { get; set; }
+
     /// <summary>Access-control classification — None for the regular sales
     /// stream, Payroll/ExecutivePay/HrPersonal for restricted records.
     /// Owner picks which roles can see each kind in CompanySensitivitySettings.</summary>

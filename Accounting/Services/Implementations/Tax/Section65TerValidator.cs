@@ -332,9 +332,28 @@ public static class Section65TerValidator
             }
         }
 
+        // รอบ 204 (คำตัดสินข้อ 148 (4)) — ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน (ออกให้ตลอดไป/ครั้งเดียว): เป็นรายจ่ายได้เฉพาะเมื่อสัญญา/ข้อตกลงกำหนดให้
+        // ผู้จ่ายรับภาระภาษี (เป็นส่วนหนึ่งของค่าตอบแทน) · ไม่มีสัญญา ⇒ ให้โดยเสน่หา §65 ตรี (3) · ระบบไม่รู้ว่ามีสัญญาไหม ⇒ บวกกลับไว้ก่อน
+        // ตามกฎ L(3) (default nonDeductible + เตือน) แล้วให้นักบัญชียืนยัน — ยอด = ส่วนที่ออกแทนบนเอกสาร (ตัวตั้งเดียว Helpers/WhtGrossUp)
+        // ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จที่ปิดหนี้ใบต้นทาง (RelatedDocumentId) ไม่ลงค่าใช้จ่ายซ้ำ (JE สาย settlement) ⇒ ไม่บวกกลับซ้ำ
+        var postsBorneExpense = !(doc.RelatedDocumentId.HasValue
+            && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.CertificateInLieu);
+        if (postsBorneExpense && doc.WhtPayerBorneAmount > 0m && Accounting.Helpers.WhtGrossUp.IsPayerBorne(doc.WhtCertType))
+        {
+            findings.Add(new(PayerBorneWhtRuleCode, "ป.รัษฎากร §65 ตรี (3) · ม.39 (ภาษีที่ออกแทนเป็นเงินได้ของผู้รับ)",
+                doc.WhtPayerBorneAmount,
+                $"ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน ({Accounting.Helpers.WhtGrossUp.Label(doc.WhtCertType)}) {doc.WhtPayerBorneAmount:N2} — "
+                + "หักเป็นรายจ่ายได้เฉพาะเมื่อสัญญา/ข้อตกลงกำหนดให้ผู้จ่ายรับภาระภาษี มิฉะนั้นเป็นการให้โดยเสน่หา · ระบบบวกกลับไว้ก่อน "
+                + "(มีสัญญา ⇒ นักบัญชีตัดรายการบวกกลับในกระดาษทำการ ภ.ง.ด.50 พร้อมเก็บสัญญาไว้)",
+                HardBlock: false, NeedsConfirmation: true));
+        }
+
         var total = findings.Sum(f => f.AddBackAmount);
         return new Result(total, findings);
     }
+
+    /// <summary>รหัสกฎของภาษีที่ผู้จ่ายออกแทน (รอบ 204) — ขึ้นต้น "RD-65ter" ให้ชุดคำเตือนตอนอนุมัติอ่านรหัสได้ (<c>Section65TerApprovalWarnings.RuleCodeOf</c>)</summary>
+    public const string PayerBorneWhtRuleCode = "RD-65ter(3)-WHT-BORNE";
 
     /// <summary>ฝ่ายค้านรอบ 201 RTX-4: ค่าปรับภาษาอังกฤษทั้งคำ (penalty/penalties · fine/fines/fined · surcharge/surcharges) ·
     /// "fuel surcharge" (ค่าน้ำมันส่วนเพิ่มของขนส่ง) ไม่ใช่ค่าปรับ</summary>

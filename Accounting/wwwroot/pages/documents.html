@@ -1069,6 +1069,17 @@
               </div>
               <div id="whtPayeeInfo" class="form-help" style="margin-top:6px;font-size:12px;line-height:1.7"></div>
             </div>
+            <!-- รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: ค่าเก็บบนเอกสาร (WhtCertType) echo กลับตอนแก้ไข · ภาษี/ยอดจ่าย/เงินได้บน 50 ทวิ
+                 คิดที่เซิร์ฟเวอร์ (POST withholding-tax-certs/gross-up-preview → Helpers/WhtGrossUp) — หน้าเว็บแสดงอย่างเดียว ไม่มีสูตร -->
+            <div style="margin-top:10px">
+              <label for="fWhtCertType" style="font-size:13px;font-weight:600;color:#334155">เงื่อนไขการหักภาษี (ช่องบน 50 ทวิ)</label>
+              <select class="form-select" id="fWhtCertType" style="margin-top:4px" onchange="Page.calcSum()">
+                <option value="Withhold">(1) หัก ณ ที่จ่าย — หักจากยอดที่จ่ายผู้รับ</option>
+                <option value="PayOnce">(3) ผู้จ่ายออกภาษีให้ครั้งเดียว</option>
+                <option value="PayAlways">(2) ผู้จ่ายออกภาษีให้ตลอดไป — ผู้รับได้ยอดเต็ม</option>
+              </select>
+              <div id="whtGrossUpPreview" class="form-help" style="display:none;margin-top:6px;font-size:12px;line-height:1.7"></div>
+            </div>
           </div>
 
           <!-- ── โซน 4: รายละเอียดเพิ่มเติม (หมายเหตุ + ไฟล์แนบ) — ย้ายมาท้าย
@@ -3283,10 +3294,55 @@
           + (c.branchLabel ? ' · ' + Layout.esc(c.branchLabel) : '')
           + (addr ? '<br>' + Layout.esc(addr) : '');
       },
+      // รอบ 204 (คำตัดสินข้อ 148 (4)) — พรีวิวผู้จ่ายออกภาษีแทน: เซิร์ฟเวอร์คิด (WhtGrossUp) · หน้าเว็บแสดงอย่างเดียว ·
+      // ผลตอบช้ากว่าการพิมพ์ครั้งถัดไป ⇒ ทิ้ง (seq) · ล้ม ⇒ บอกตรง ๆ ว่ายอดบนจอยังเป็นแบบหัก ณ ที่จ่าย (ยอดจริงคิดตอนบันทึก)
+      _refreshWhtGrossUp(subTotal, vat) {
+        const box = document.getElementById('whtGrossUpPreview');
+        const panel = document.getElementById('whtCertPanel');
+        const type = document.getElementById('fWhtCertType')?.value || 'Withhold';
+        const seq = (this._whtGrossUpSeq = (this._whtGrossUpSeq || 0) + 1);
+        clearTimeout(this._whtGrossUpTimer);
+        if (!box || !panel || panel.style.display === 'none' || type === 'Withhold') {
+          if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+          return;
+        }
+        const api = Layout.api(); if (!api) return;
+        box.style.display = '';
+        this._whtGrossUpTimer = setTimeout(async () => {
+          try {
+            const r = await API.quietly(() => api.whtGrossUpPreview({
+              certType: type, lines: this._whtPreviewRows || [], subTotal, vat }));
+            if (seq !== this._whtGrossUpSeq) return;
+            const p = (r && r.data) || null;
+            if (!p) return;
+            document.getElementById('sumWht').textContent = Layout.money(p.tax);
+            if (p.payeeTotal != null) {
+              document.getElementById('sumTotal').textContent = Layout.money(p.payeeTotal);
+              const wordsEl = document.getElementById('sumTotalWords');
+              if (wordsEl && window.UxHelpers?.AmountInWords)
+                wordsEl.textContent = p.payeeTotal > 0 ? '(' + window.UxHelpers.AmountInWords.convert(p.payeeTotal) + ')' : '';
+              this.updateDepositSummary(p.payeeTotal);
+            }
+            box.innerHTML = '<b>' + Layout.esc(p.label || '') + '</b> — ภาษีที่นำส่ง ' + Layout.money(p.tax)
+              + ' · ผู้จ่ายออกแทน ' + Layout.money(p.payerBorne)
+              + (Number(p.payeeBorne) ? ' · หักจากผู้รับ ' + Layout.money(p.payeeBorne) : ' · ไม่หักจากผู้รับ')
+              + '<br>เงินได้ที่ลงบน 50 ทวิ ' + Layout.money(p.certIncome)
+              + ' · ส่วนที่ออกแทนลงเป็นค่าใช้จ่าย (บวกกลับ ภ.ง.ด.50 §65 ตรี (3) ถ้าไม่มีสัญญาให้ผู้จ่ายรับภาระภาษี)';
+          } catch (e) {
+            if (seq !== this._whtGrossUpSeq) return;
+            box.innerHTML = '<span style="color:#b91c1c">คำนวณภาษีที่ผู้จ่ายออกแทนไม่สำเร็จ: ' + Layout.esc(e.message || '')
+              + ' — ยอดบนจอยังเป็นแบบหัก ณ ที่จ่าย · ระบบคิดยอดจริงให้ตอนบันทึก</span>';
+          }
+        }, 250);
+      },
       // ฟอร์มใหม่ (d = null) = ค่าตั้งต้น · เปิดแก้ = ค่าที่บันทึกไว้ (ผู้ถูกหักดึงชื่อ/เลขจากผู้ติดต่อ)
       async _hydrateWhtCertPanel(d) {
         const auto = document.getElementById('fWhtCertAutoIssue');
         if (auto) auto.checked = !d || d.whtCertAutoIssue !== false;
+        // รอบ 204 — เงื่อนไขการหักภาษี: echo กลับ (ฟอร์มใหม่/ใบเก่า = หัก ณ ที่จ่าย · ห้ามค้างค่าใบก่อน)
+        const certType = document.getElementById('fWhtCertType');
+        if (certType) certType.value = (d && ['PayOnce', 'PayAlways'].includes(d.whtCertType)) ? d.whtCertType : 'Withhold';
+        if (certType && certType.value !== 'Withhold') setTimeout(() => this.calcSum(), 0);   // ยอดบนจอตามเงื่อนไขที่บันทึกไว้
         const differs = document.getElementById('fWhtPayeeDiffers');
         const hid = document.getElementById('fWhtPayeeContactId');
         const inp = document.getElementById('fWhtPayee');
@@ -3320,6 +3376,7 @@
         const payeeId = document.getElementById('fWhtPayeeContactId')?.value || '';
         return {
           whtCertAutoIssue: !!document.getElementById('fWhtCertAutoIssue')?.checked,
+          whtCertType: document.getElementById('fWhtCertType')?.value || 'Withhold',
           whtPayeeContactId: (differs && payeeId) ? payeeId
             : (this.editingId ? '00000000-0000-0000-0000-000000000000' : null),
         };
@@ -8254,6 +8311,8 @@
         }
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
+        // รอบ 204 — ฐาน/อัตรารายบรรทัดสุดท้ายสำหรับพรีวิวผู้จ่ายออกภาษีแทน (เซิร์ฟเวอร์คิด)
+        this._whtPreviewRows = rows.map(r => ({ base: r.net, ratePercent: r.whtR }));
         this.refreshWhtCertPanel(wht);
         // บอกตรง ๆ เมื่อยอด VAT ที่แสดง = "ค่าที่บันทึกไว้" และต่างจากการคิดจาก
         // ฐานรวม — ผู้ใช้จะได้ไม่งงว่าดีดเครื่องคิดเลขแล้วไม่ตรง และรู้ว่าต้องทำ
@@ -8283,6 +8342,8 @@
         if (wordsEl && window.UxHelpers?.AmountInWords) {
           wordsEl.textContent = totalCalc > 0 ? '(' + window.UxHelpers.AmountInWords.convert(totalCalc) + ')' : '';
         }
+        // รอบ 204 — ผู้จ่ายออกภาษีแทน: ภาษีนำส่ง/ยอดจ่ายผู้รับจากเซิร์ฟเวอร์ (หัก ณ ที่จ่าย ⇒ ไม่เรียก · ยอดข้างบนเดิมทุกสตางค์)
+        this._refreshWhtGrossUp((sub - billDisc) + roundingAdj, vat);
         // Keep email template's amount in sync — only when email is enabled to
         // avoid wasted DOM work on every keystroke during line editing.
         if (document.getElementById('fSendEmail')?.checked) this.refreshEmailTemplate();

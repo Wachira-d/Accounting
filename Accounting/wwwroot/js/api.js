@@ -896,6 +896,8 @@ const API = {
       getPendingWht: (q = '') => API.get(`${base}/withholding-tax-certs/pending${q}`),
       dismissPendingWht: (docId) => API.post(`${base}/withholding-tax-certs/pending/${docId}/dismiss`, {}),
       bulkGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/bulk-generate`, d),
+      // รอบ 204 — พรีวิวผู้จ่ายออกภาษีแทน (เซิร์ฟเวอร์คิด · WhtGrossUp) — เรียกระหว่างพิมพ์ ⇒ ผู้เรียกห่อ API.quietly
+      whtGrossUpPreview: (d) => API.post(`${base}/withholding-tax-certs/gross-up-preview`, d),
       // ===== CMS / Website Builder =====
       cmsListSites: (q = '') => API.get(`${base}/cms/sites${q}`),
       cmsGetSite: (id) => API.get(`${base}/cms/sites/${id}`),

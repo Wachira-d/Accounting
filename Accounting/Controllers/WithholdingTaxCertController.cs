@@ -151,6 +151,34 @@ public class WithholdingTaxCertController : ControllerBase
             $"สร้างสำเร็จ {result.Generated} รายการ" + (result.Skipped > 0 ? $", ข้าม {result.Skipped} รายการ" : "")));
     }
 
+    /// <summary>รอบ 204 (คำตัดสินข้อ 148 (4)) — พรีวิว "ผู้จ่ายออกภาษีแทน" ของฟอร์มเอกสาร/ฟอร์ม 50 ทวิ: ภาษีนำส่ง · ส่วนที่ผู้จ่ายออกแทน · เงินได้บน 50 ทวิ ·
+    /// เงื่อนไข Col11 — คิดด้วย <see cref="WhtGrossUp.ForLines"/> ตัวเดียวกับตอนบันทึก (หน้าเว็บไม่มีสำเนาสูตร · กฎ #4 F2 ข้อ 5) · ไม่แตะฐานข้อมูล</summary>
+    [HttpPost("gross-up-preview")]
+    public ActionResult<ApiResponse<object>> GrossUpPreview(Guid companyId, [FromBody] WhtGrossUpPreviewRequest request)
+    {
+        var type = WhtGrossUp.Normalize(request.CertType);
+        var input = (request.Lines ?? new List<WhtGrossUpPreviewLine>()).Take(500)
+            .Select(l => (Base: Math.Round(l.Base, 2, MidpointRounding.AwayFromZero), l.RatePercent)).ToList();
+        var per = WhtGrossUp.ForLines(input, type);
+        var (tax, borne) = WhtGrossUp.Totals(per);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            CertType = type,
+            Label = WhtGrossUp.Label(type),
+            FilingCondition = WhtGrossUp.FilingCondition(type),
+            Tax = tax,
+            PayerBorne = borne,
+            PayeeBorne = tax - borne,
+            CertIncome = per.Where((_, i) => input[i].RatePercent > 0m).Sum(p => p.CertIncome),
+            Lines = per.Select(p => new { p.Tax, p.PayerBorne, p.CertIncome, p.PayeeBorne }),
+            // ยอดจ่ายผู้รับ = สูตรเดียวกับ TotalAmount ตอนบันทึก (WhtGrossUp.PayeeTotal) · ไม่ส่งฐาน/VAT ⇒ null
+            PayeeTotal = request.SubTotal is decimal sub
+                ? WhtGrossUp.PayeeTotal(sub, request.Vat ?? 0m, tax, borne)
+                : (decimal?)null,
+            LegalReference = WhtGrossUp.LegalReference,
+        }));
+    }
+
     /// <summary>ข้อมูลอ้างอิง: คำนำหน้าชื่อ — ให้ทุกหน้าสร้าง dropdown จากที่นี่
     /// ไม่ใช่พิมพ์ตัวเลือกซ้ำในแต่ละหน้า (เดิม employees.html มี "ดร." แต่
     /// payroll.html ไม่มี ทั้งที่เป็นช่องเดียวกันของข้อมูลชุดเดียวกัน)</summary>

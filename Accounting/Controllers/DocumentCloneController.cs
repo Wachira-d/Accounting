@@ -81,6 +81,8 @@ public class DocumentCloneController : ControllerBase
             // คำขอเจ้าของ 2026-10-12 — 50 ทวิ: ติ๊กสร้างอัตโนมัติ + ผู้ถูกหักตามต้นแบบ (ให้ตรงกับที่ POST สร้างจริง)
             whtCertAutoIssue = src.WhtCertAutoIssue,
             whtPayeeContactId = Accounting.Helpers.WhtCertIssuePlan.AppliesTo(src.DocumentType) ? src.WhtPayeeContactId : null,
+            // รอบ 204 — ผู้จ่ายออกภาษีแทนตามต้นแบบ (ตัวสืบทอดเดียว WhtGrossUp.Inherit · ให้ตรงกับที่ POST สร้างจริง)
+            whtCertType = Accounting.Helpers.WhtGrossUp.Inherit(src.WhtCertType, src.DocumentType, src.DocumentType),
             depositDeferredAccountCode = src.IsDeposit ? src.DepositDeferredAccountCode : null,
             reference = $"คัดลอกจาก {src.DocumentNumber}",
             projectId = src.ProjectId,
@@ -201,7 +203,9 @@ public class DocumentCloneController : ControllerBase
             // ผู้ถูกหักตามไปเฉพาะเมื่อชนิดปลายทางเป็นฝั่งผู้หัก (ชนิดอื่นถูกปฏิเสธ)
             WhtCertAutoIssue: src.WhtCertAutoIssue,
             WhtPayeeContactId: Accounting.Helpers.WhtCertIssuePlan.AppliesTo(options?.OverrideType ?? src.DocumentType)
-                ? src.WhtPayeeContactId : null
+                ? src.WhtPayeeContactId : null,
+            // รอบ 204 — ผู้จ่ายออกภาษีแทนตามต้นแบบเมื่อปลายทางเป็นฝั่งผู้จ่าย (ค่าธรรมเนียมต่างประเทศรายเดือนที่ออกภาษีแทน = เคสโคลน)
+            WhtCertType: Accounting.Helpers.WhtGrossUp.Inherit(src.WhtCertType, src.DocumentType, options?.OverrideType ?? src.DocumentType)
         );
 
         // ── รอบ 194 — โคลนใบมัดจำ (ช่องโหว่เดิม: ไม่พา IsDeposit ⇒ ใบโคลนลงรายได้แทนหนี้สินมัดจำ) ──

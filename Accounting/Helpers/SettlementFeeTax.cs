@@ -180,8 +180,9 @@ public static class SettlementFeeTax
         if (ratePercent <= 0m || preVatBase <= 0m || whtMode == SettlementFeeWhtMode.None) return (0m, 0m, 0m);
         if (whtMode == SettlementFeeWhtMode.SelfWithholdPayerBorne)
         {
-            var borneWht = R(preVatBase * ratePercent / (100m - ratePercent));
-            return (borneWht, preVatBase + borneWht, borneWht);
+            // รอบ 204: สูตรออกภาษีแทนตลอดไปมีตัวตั้งเดียว (WhtGrossUp — เอกสารคีย์มือ/50 ทวิ ใช้ตัวเดียวกัน) · ผลเท่าเดิมทุกสตางค์
+            var borne = WhtGrossUp.OnBase(preVatBase, ratePercent, Accounting.Models.DTOs.Tax.WithholdingTaxCertType.PayAlways);
+            return (borne.Tax, borne.CertIncome, borne.PayerBorne);
         }
         return (R(preVatBase * ratePercent / 100m), preVatBase, 0m);
     }

@@ -159,7 +159,9 @@ public static class GatewaySettlementMath
 
     /// <summary>หัก ณ ที่จ่ายแบบ<b>ออกภาษีแทน</b> (gross-up) จากค่าบริการ<b>ก่อน VAT</b> — ฐานตามกฎหมาย (G-4)</summary>
     public static decimal WhtOnFee(decimal feeBeforeVat)
-        => feeBeforeVat <= 0m ? 0m : R(feeBeforeVat * ServiceWhtRate / (1m - ServiceWhtRate));
+        => feeBeforeVat <= 0m ? 0m
+            // รอบ 204: ตัวตั้งเดียวของ "ออกให้ตลอดไป" (WhtGrossUp) — r/(100−r) เท่ากับ r/(1−r) ทุกสตางค์
+            : WhtGrossUp.OnBase(feeBeforeVat, ServiceWhtRate * 100m, Accounting.Models.DTOs.Tax.WithholdingTaxCertType.PayAlways).Tax;
 
     /// <summary>จุดตัด "คืนเงินก่อน/หลังรอบโอนนี้" (ฝ่ายค้าน R-E2) = <b>เที่ยงคืนต้นวันเงินเข้า</b> ตามเวลาไทย (เป็นเวลา UTC)
     ///
