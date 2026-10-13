@@ -6749,6 +6749,10 @@ RULES += [
                "TaxType.WithholdingTax54", "d.IsForeignService"],
          must_re=[r"w\.CompanyId\s*==\s*companyId", r"d\.CompanyId\s*==\s*companyId(?:.|\n)*d\.CompanyId\s*==\s*companyId"],
          why=_TEAMC_1013 + "A12 กิจกรรมโหลดแบบ tenant-scoped ทุก query · ใบ/เอกสารที่ยกเลิกไม่นับ"),
+    dict(file="Services/Implementations/TaxCalendarService.cs", method="LoadSeedActivityAsync",
+         must=["WhtPayableAccount.Pnd2Code", "WhtPayableAccount.Pnd54Code", "glPayableCodes.Contains(WhtPayableAccount.Pnd2Code)",
+               "glPayableCodes.Contains(WhtPayableAccount.Pnd54Code)", "JournalEntryStatus.Posted", "l.JournalEntry.CompanyId == companyId"],
+         why=_TEAMC_1013 + "ฝ่ายค้าน: ภาระ ภ.ง.ด.2/54 ที่อยู่ใน GL (ยังไม่มี 50 ทวิ) ต้องนับเป็นกิจกรรม — มิฉะนั้นปฏิทินถอนแถวเตือนของภาระจริง"),
     # B4: ใบกำกับอย่างย่อใน ETDA = T05/T06 (T04 = ใบส่งของ/ใบกำกับภาษีเต็มรูป — EtaxPdfXmlExtractor.MapTypeCodeToInternal) · ข้อความถึงผู้ใช้ห้ามกลับไปเรียก T04
     dict(file="Services/Implementations/EtaxInvoiceService.cs", method="GenerateAsync",
          must_lit=["ใบกำกับภาษีอย่างย่อ T05/T06"], forbid_lit=["อย่างย่อ T04"],

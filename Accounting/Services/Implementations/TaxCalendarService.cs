@@ -243,9 +243,23 @@ public class TaxCalendarService : ITaxCalendarService
                 && d.Contact.CountryCode.ToUpper() != "TH"
                 && d.DocumentDate >= fromDate && d.DocumentDate < toDateExclusive);
 
+        // ฝ่ายค้านกระดาน 2026-10-13: บัญชี WHT ค้างจ่ายใน GL = หลักฐานภาระจริง — รายงาน ภ.ง.ด. นับจากเอกสาร/JV ที่ยังไม่มี 50 ทวิ ด้วย
+        // (ดอกเบี้ยจ่ายบุคคลที่ยังรอออกใบ · ปันผลลง JV ล้วนก่อนคีย์ใบ · ผู้ถูกหักต่างประเทศที่ตั้งแยกจากผู้ติดต่อ) ⇒ ถ้าดูแค่ใบ ปฏิทินจะไม่สร้าง/ถอนแถวเตือนทั้งที่ต้องยื่นจริง
+        var glPayableCodes = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.ReversedByEntryId == null && l.JournalEntry.OriginalEntryId == null
+                && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate < toDateExclusive
+                && l.CreditAmount > 0
+                && l.Account != null
+                && (l.Account.AccountCode == WhtPayableAccount.Pnd2Code || l.Account.AccountCode == WhtPayableAccount.Pnd54Code))
+            .Select(l => l.Account!.AccountCode)
+            .Distinct()
+            .ToListAsync();
+
         return new TaxCalendarSeedScope.SeedActivity(
-            Pnd2: certForms.Contains(TaxType.WithholdingTax2),
-            Pnd54: certForms.Contains(TaxType.WithholdingTax54) || hasForeignPayeeWht,
+            Pnd2: certForms.Contains(TaxType.WithholdingTax2) || glPayableCodes.Contains(WhtPayableAccount.Pnd2Code),
+            Pnd54: certForms.Contains(TaxType.WithholdingTax54) || hasForeignPayeeWht || glPayableCodes.Contains(WhtPayableAccount.Pnd54Code),
             Pp36: hasForeignService);
     }
 
