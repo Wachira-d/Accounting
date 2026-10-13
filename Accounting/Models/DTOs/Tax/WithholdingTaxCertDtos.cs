@@ -99,7 +99,9 @@ public enum WithholdingTaxCertStatus
 // ===== Auto-generate DTOs =====
 public record AutoGenerateWhtRequest(
     Guid DocumentId,
-    bool AutoIssue = false);
+    bool AutoIssue = false,
+    // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ออกใบของผู้ถูกหักรายนี้ (ใบรายเดียวไม่ต้องส่ง)
+    Guid? PayeeContactId = null);
 
 public record BulkGenerateWhtRequest(
     int Year,
@@ -132,7 +134,39 @@ public record PendingWhtDocumentResponse(
     bool PayeeDiffersFromContact = false,
     bool AutoIssueEnabled = true,
     string? AutoIssueFailedReason = null,
-    string? PendingLabel = null);
+    string? PendingLabel = null,
+    /// <summary>รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — แถวต่อผู้ถูกหัก (ยอด · มีใบแล้วไหม) · ใบรายเดียว = null</summary>
+    List<PendingWhtPayeeInfo>? Payees = null,
+    /// <summary>รอบ 204 (ข้อ 142/145): 50 ทวิ ที่ออกแล้วต้องตรวจ/ออกใหม่ (<c>WhtCertReviewNote</c>) — ใบโผล่ในลิสต์แม้มีใบแล้ว</summary>
+    string? ReviewReason = null);
+
+/// <summary>ผู้ถูกหักหนึ่งรายของใบหลายผู้ถูกหัก (รอบ 204 ข้อ 143) — ยอด/แบบมาจากเซิร์ฟเวอร์ (<c>WhtPayeeSplit</c>)</summary>
+public record PendingWhtPayeeInfo(
+    Guid PayeeContactId,
+    string? PayeeName,
+    string? PayeeTaxId,
+    decimal WithholdingTaxAmount,
+    bool HasCertificate,
+    string? CertificateNumber);
+
+/// <summary>รอบ 204 (ข้อ 145): เปลี่ยนผู้ถูกหักภาษีหลังอนุมัติ — <c>WhtPayeeContactId</c> หัวเอกสาร (null/Guid.Empty = ผู้รับเงินของเอกสาร) ·
+/// <c>Lines</c> ผู้ถูกหักรายบรรทัด (ไม่ส่ง = คงเดิม) · <c>Reason</c> บังคับ (audit)</summary>
+public record ChangeWhtPayeeRequest(
+    Guid? WhtPayeeContactId,
+    List<ChangeWhtPayeeLine>? Lines,
+    string Reason);
+
+public record ChangeWhtPayeeLine(Guid LineId, Guid? WhtPayeeContactId);
+
+/// <summary>รอบ 204: รับทราบป้าย "50 ทวิ ต้องตรวจ" — เหตุผล/สิ่งที่ทำไปแล้ว (บังคับ · audit)</summary>
+public record WhtCertReviewAckRequest(string? Reason);
+
+/// <summary>ผลการเปลี่ยนผู้ถูกหัก — ใบที่ยกเลิก · ใบที่ออกใหม่ · JE ปรับปรุงผัง (null = แบบไม่เปลี่ยน ไม่ต้องย้ายผัง) · ข้อความถึงผู้ใช้</summary>
+public record ChangeWhtPayeeResponse(
+    List<string> VoidedCertificates,
+    List<string> IssuedCertificates,
+    string? AdjustmentJournalNumber,
+    List<string> Notices);
 
 /// <summary>ผลของการออก 50 ทวิ อัตโนมัติจากเอกสาร (<c>IWithholdingTaxCertService.TryAutoIssueForDocumentAsync</c>) ·
 /// <paramref name="FailureReason"/> ≠ null = พยายามออกแล้วล้ม (เอกสารติดป้าย + อยู่ในลิสต์รอออกใบ) — ผู้เรียกต้องส่งต่อถึงผู้ใช้</summary>
@@ -141,7 +175,9 @@ public sealed record WhtAutoIssueOutcome(
     Guid? CertificateId,
     string? CertificateNumber,
     string? FailureReason,
-    string Message)
+    string Message,
+    // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ทุกใบที่ออกในการเรียกครั้งนี้ (ใบรายเดียว = null · ใช้ CertificateId ตามเดิม)
+    IReadOnlyList<Guid>? CertificateIds = null)
 {
     public bool Failed => FailureReason != null;
 

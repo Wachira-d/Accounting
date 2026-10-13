@@ -712,6 +712,23 @@ public class DocumentController : ControllerBase
             "เปลี่ยนผังบัญชีสำเร็จ (สร้าง JE คู่ใหม่ลงงวดเดิม)"));
     }
 
+    /// <summary>รอบ 204 (ข้อ 145): เปลี่ยนผู้ถูกหักภาษีหลังอนุมัติ — ยกเลิก 50 ทวิ เดิม (เหตุผล · audit) + JE ย้ายผัง 2191x เมื่อแบบเปลี่ยน +
+    /// ออกใบใหม่เดือนภาษีเดิม · เดือนที่ยื่น/นำส่งแล้ว ⇒ 409 · สิทธิ์ระดับเดียวกับอนุมัติ (กระทบ GL + แบบ ภ.ง.ด.)</summary>
+    [HttpPost("{documentId:guid}/wht-payee")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Tax.ChangeWhtPayeeResponse>>> ChangeWhtPayee(
+        Guid companyId, Guid documentId, [FromBody] Accounting.Models.DTOs.Tax.ChangeWhtPayeeRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null)
+            return NotFound(new ApiResponse<Accounting.Models.DTOs.Tax.ChangeWhtPayeeResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<Accounting.Models.DTOs.Tax.ChangeWhtPayeeResponse>(
+                $"ไม่มีสิทธิ์เปลี่ยนผู้ถูกหักภาษีของเอกสาร {docType} (ต้องการ Document.Approve)");
+        var result = await _documentService.ChangeWhtPayeeAsync(companyId, documentId, request, userIdGuid.ToString(), userIdGuid);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.ChangeWhtPayeeResponse>(true, result, "เปลี่ยนผู้ถูกหักภาษีแล้ว"));
+    }
+
     /// <summary>เปลี่ยน "แหล่งเงิน" (บัญชี Cr เงินสด/ธนาคาร) ของเอกสารจ่าย/รับ
     /// สดหลัง approve — แก้เคส OCR เลือกธนาคารผิดโดยไม่ต้อง void. post
     /// correcting-JE (Dr ผังเก่า / Cr ผังใหม่). ดู gate ใน

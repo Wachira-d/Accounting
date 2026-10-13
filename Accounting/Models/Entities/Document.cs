@@ -801,6 +801,11 @@ public class DocumentLine : BaseEntity
     public decimal WithholdingTaxAmount { get; set; }
     public string? IncomeTypeCode { get; set; }  // รหัสประเภทเงินได้ สำหรับภาษีหัก ณ ที่จ่าย
 
+    /// <summary>ผู้ถูกหักภาษี ณ ที่จ่ายของ<b>บรรทัดนี้</b> เมื่อไม่ใช่ผู้ถูกหักของหัวเอกสาร (null = ตามหัวเอกสาร · รอบ 204 ข้อ 143) —
+    /// ใบสำคัญจ่ายใบเดียวจ่ายหลายผู้มีเงินได้ (โบรกเกอร์ส่งเบี้ยของบริษัทประกัน 2 แห่ง) ⇒ 50 ทวิ แยกใบต่อผู้ถูกหัก · แบบ ภ.ง.ด./ผัง 2191x ต่อผู้ถูกหัก ·
+    /// อ่านผ่าน <c>Helpers/WhtPayeeSplit</c> ตัวเดียว · เก็บเฉพาะเอกสารฝั่งผู้จ่ายที่บรรทัดมีอัตราหัก</summary>
+    public Guid? WhtPayeeContactId { get; set; }
+
     // Account mapping for auto-posting
     public Guid? AccountId { get; set; }
     public ChartOfAccount? Account { get; set; }

@@ -3318,6 +3318,10 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtPayerBorneAmount" numeric(18,2) NOT NULL DEFAULT 0;
             """,
+            // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — null = ตามหัวเอกสาร (ใบเดิมทุกใบ = ผู้ถูกหักรายเดียวเหมือนเดิม)
+            """
+            ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "WhtPayeeContactId" uuid NULL;
+            """,
             // External preparer signature override — name + signature image
             // (base64/data-URI) supplied by an integrating system for the
             // "ผู้จัดทำ" slot when the preparer is not a NextAcc User.

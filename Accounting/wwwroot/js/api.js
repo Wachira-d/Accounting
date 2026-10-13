@@ -895,6 +895,9 @@ const API = {
       autoGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/auto-generate`, d),
       getPendingWht: (q = '') => API.get(`${base}/withholding-tax-certs/pending${q}`),
       dismissPendingWht: (docId) => API.post(`${base}/withholding-tax-certs/pending/${docId}/dismiss`, {}),
+      // รอบ 204 (ข้อ 142/145): รับทราบป้าย "50 ทวิ ต้องตรวจ" (เหตุผลบังคับ · audit) · เปลี่ยนผู้ถูกหักหลังอนุมัติ
+      ackWhtCertReview: (docId, reason) => API.post(`${base}/withholding-tax-certs/pending/${docId}/review-ack`, { reason }),
+      changeWhtPayee: (docId, body) => API.post(`${base}/document/${docId}/wht-payee`, body),
       bulkGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/bulk-generate`, d),
       // รอบ 204 — พรีวิวผู้จ่ายออกภาษีแทน (เซิร์ฟเวอร์คิด · WhtGrossUp) — เรียกระหว่างพิมพ์ ⇒ ผู้เรียกห่อ API.quietly
       whtGrossUpPreview: (d) => API.post(`${base}/withholding-tax-certs/gross-up-preview`, d),

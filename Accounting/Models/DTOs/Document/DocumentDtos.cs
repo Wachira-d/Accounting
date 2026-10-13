@@ -230,7 +230,10 @@ public record DocumentLineRequest(
     decimal? VatAmountOverride = null,
     // รอบ 203: ประเภทเงินได้ ม.40 ของบรรทัด (รหัสใน ThaiWhtRateTable) — ตัดสินแถว 50 ทวิ + รหัสไฟล์ ภ.ง.ด. ·
     // null = ไม่ส่ง (แก้ไข: คงค่าเดิมของบรรทัดเดียวกัน) · "" = ล้าง · ตัวตัดสิน Helpers/DocumentLineIncomeType
-    string? IncomeTypeCode = null);
+    string? IncomeTypeCode = null,
+    // รอบ 204 (ข้อ 143): ผู้ถูกหักภาษีของบรรทัดนี้ เมื่อไม่ใช่ผู้ถูกหักของหัวเอกสาร — null = ไม่ส่ง (แก้ไข: คงค่าเดิมของบรรทัดเดียวกัน) ·
+    // Guid.Empty = ล้าง (ตามหัวเอกสาร) · ตัวตัดสิน Helpers/WhtPayeeSplit
+    Guid? WhtPayeeContactId = null);
 
 public record UpdateDocumentRequest(
     DateTime? DocumentDate,
@@ -1018,7 +1021,12 @@ public record DocumentResponse(
     decimal WhtPayerBorneAmount = 0m,
     /// <summary>ออก 50 ทวิ อัตโนมัติไม่สำเร็จ — เหตุผลจากป้ายบนเอกสาร (<c>WhtCertAutoFailedNote</c>) · null = ไม่มีป้าย ·
     /// คำตอบของ "อนุมัติ" มีค่านี้ ⇒ หน้าเว็บแจ้งผู้ใช้ทันที (ล้มดัง — เดิมกลืนด้วย LogWarning)</summary>
-    string? WhtCertAutoFailedReason = null);
+    string? WhtCertAutoFailedReason = null,
+    /// <summary>รอบ 204 (ข้อ 142/145): 50 ทวิ ที่ออกแล้วต้องตรวจ/ออกใหม่ (ใบลดหนี้ลดฐานหลังยื่น · ยกเลิกการจ่ายแต่ใบออกแล้ว) —
+    /// จากป้าย <c>WhtCertReviewNote</c> · null = ไม่มี</summary>
+    string? WhtCertReviewReason = null,
+    /// <summary>รอบ 204 (ข้อ 143): จำนวนผู้ถูกหักของใบ (เซิร์ฟเวอร์นับด้วย <c>WhtPayeeSplit</c>) — มากกว่า 1 ⇒ 50 ทวิ แยกใบต่อผู้ถูกหัก</summary>
+    int WhtPayeeCount = 0);
 
 /// <summary>คำตัดสินข้อ 139: ผูกใบลูกเข้าใบต้นทาง — จับคู่บรรทัดลูก → บรรทัดต้นทาง (บรรทัดที่ไม่ส่งมา = ไม่นับในความคืบหน้า)</summary>
 public record LinkSourceRequest(
@@ -1162,7 +1170,9 @@ public record DocumentLineResponse(
     // detail table ระบุชื่อบัญชีคู่กับ code
     string? AccountName = null,
     // รอบ 203: ประเภทเงินได้ ม.40 ที่เก็บไว้ — ฟอร์มแก้ไข hydrate จากช่องนี้ (เก็บแล้วต้อง echo กลับ)
-    string? IncomeTypeCode = null);
+    string? IncomeTypeCode = null,
+    // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด (null = ตามหัวเอกสาร) — เก็บแล้วต้อง echo กลับ (กฎ #4 A)
+    Guid? WhtPayeeContactId = null);
 
 // ===== Flexible / partial document conversion =====
 

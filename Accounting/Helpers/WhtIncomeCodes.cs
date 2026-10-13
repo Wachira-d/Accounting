@@ -21,6 +21,25 @@ public static class WhtIncomeCodes
             .Select(l => l.IncomeTypeCode)
             .ToList();
 
+    /// <summary>รหัสของบรรทัดที่หักของ<b>ผู้ถูกหักรายหนึ่ง</b> บนใบหลายผู้ถูกหัก (รอบ 204 ข้อ 143 × ภ.ง.ด.2) — <paramref name="lineIndexes"/> =
+    /// <see cref="WhtPayeePortion.LineIndexes"/> ที่ชี้เข้า <paramref name="orderedLines"/> (รายการเดียวกับที่ส่งเข้า <see cref="WhtPayeeSplit.Portions"/>) ·
+    /// เกณฑ์เดียวกับ <see cref="Withheld(IEnumerable{DocumentLine}?)"/> ⇒ ใบรายเดียว (ทุกบรรทัดที่หักเป็นของรายเดียว) ได้ชุดรหัสเท่ากับทั้งใบ</summary>
+    public static IReadOnlyList<string?> WithheldAt(IReadOnlyList<DocumentLine> orderedLines, IReadOnlyList<int> lineIndexes)
+        => Withheld(lineIndexes.Where(i => i >= 0 && i < orderedLines.Count).Select(i => orderedLines[i]));
+
+    /// <summary>รหัสของบรรทัดที่หักซึ่งเป็นของผู้ถูกหัก <paramref name="payeeContactId"/> (ผู้ถูกหักของบรรทัดตาม <see cref="WhtPayeeSplit.LinePayeeOf"/>) —
+    /// ผู้เรียกที่ถือเอกสารทั้งใบแต่ไม่ได้ผ่าน <see cref="WhtPayeeSplit.Portions"/> (รายงาน ภ.ง.ด. · 50 ทวิ ต่อราย) · ใบรายเดียว = ทั้งใบ</summary>
+    public static IReadOnlyList<string?> WithheldForPayee(IEnumerable<DocumentLine>? lines, Guid docContactId, Guid? docPayeeOverride,
+        Guid payeeContactId)
+        => Withheld((lines ?? Enumerable.Empty<DocumentLine>())
+            .Where(l => WhtPayeeSplit.LinePayeeOf(docContactId, docPayeeOverride, l.WhtPayeeContactId) == payeeContactId));
+
+    /// <summary>เหมือน <see cref="WithheldAt(IReadOnlyList{DocumentLine}, IReadOnlyList{int})"/> สำหรับผู้เรียกที่ project บรรทัดใน SQL แล้ว —
+    /// <paramref name="lineCodes"/> = รหัสเงินได้ของบรรทัด<b>ลำดับเดียวกับที่ส่งเข้า</b> <see cref="WhtPayeeSplit.Portions"/>
+    /// (ผู้เรียกกรองบรรทัดที่หัก <c>WithholdingTaxAmount &gt; 0</c> ใน SQL — เกณฑ์เดียวกับ <see cref="Withheld(IEnumerable{DocumentLine}?)"/>)</summary>
+    public static IReadOnlyList<string?> At(IReadOnlyList<string?> lineCodes, IReadOnlyList<int> lineIndexes)
+        => lineIndexes.Where(i => i >= 0 && i < lineCodes.Count).Select(i => lineCodes[i]).ToList();
+
     /// <summary>รหัสของบรรทัดหนังสือรับรอง 50 ทวิ ที่มีภาษี (pure)</summary>
     public static IReadOnlyList<string?> Withheld(IEnumerable<WithholdingTaxCertLine>? lines)
         => (lines ?? Enumerable.Empty<WithholdingTaxCertLine>())

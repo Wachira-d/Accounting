@@ -212,16 +212,21 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
                 .Select(d => new { d.Id, d.DocumentType, d.RelatedDocumentId,
                     d.WithholdingTaxAmount, d.PaymentDate, d.DocumentDate,
-                    d.IsForeignService, d.WhtPayeeContactId,
+                    d.IsForeignService, d.WhtPayeeContactId, d.ContactId,
                     // รอบ 204: ประเภทเงินได้ของบรรทัดที่หัก (เกณฑ์เดียวกับ WhtIncomeCodes) — แยก ภ.ง.ด.2 ออกจาก ภ.ง.ด.3
                     IncomeCodes = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).Select(l => l.IncomeTypeCode).ToList(),
                     CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual,
                     CTaxId = d.Contact != null ? d.Contact.TaxId : null,
                     CName = d.Contact != null ? d.Contact.Name : null,
-                    CCountry = d.Contact != null ? d.Contact.CountryCode : null })
+                    CCountry = d.Contact != null ? d.Contact.CountryCode : null,
+                    // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — ใบหลายผู้ถูกหักแบ่งแบบต่อผู้ถูกหัก
+                    LinePayees = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0)
+                        .OrderBy(l => l.LineOrder)
+                        .Select(l => new { l.WhtPayeeContactId, l.WithholdingTaxAmount, l.IncomeTypeCode }).ToList() })
                 .ToListAsync();
             // ผู้ถูกหัก ≠ ผู้รับเงินได้ (คำขอเจ้าของ 2026-10-12) — แบ่ง 3/53/54 ของใบที่ยังไม่มี 50 ทวิ จากผู้ถูกหักตัวเดียวกับทะเบียน
-            var gapPayees = await LoadPayeeKindsAsync(companyId, whtDocs.Select(d => d.WhtPayeeContactId));
+            var gapPayees = await LoadPayeeKindsAsync(companyId, whtDocs.Select(d => d.WhtPayeeContactId)
+                .Concat(whtDocs.SelectMany(d => d.LinePayees.Select(l => l.WhtPayeeContactId))));
 
             // ⚠️ ตัดใบตั้งหนี้ที่มีใบสำคัญจ่ายคลุมแล้ว — ทั้งคู่ถือ
             // WithholdingTaxAmount ⇒ เดิมนับสองครั้ง (และข้ามเดือนถ้าจ่ายคนละเดือน)
@@ -248,11 +253,42 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 .ToListAsync();
             // เอกสารที่หัก WHT แล้วแต่ยังไม่มี 50 ทวิ ที่ออกจริง — ไม่กรองเดือนของ cert เพราะผู้ใช้แก้
             // TaxMonth ให้ต่างจากเดือนจ่ายได้ (ใบยังคุมเอกสารนั้นอยู่ ไม่ใช่ช่องโหว่)
-            var coveredDocIds = (await _db.WithholdingTaxCerts.AsNoTracking()
+            var coveredCerts = await _db.WithholdingTaxCerts.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.DocumentId != null
                     && filedStatuses.Contains(c.Status))
-                .Select(c => c.DocumentId!.Value)
-                .ToListAsync()).ToHashSet();
+                .Select(c => new { DocumentId = c.DocumentId!.Value, c.PayeeContactId })
+                .ToListAsync();
+            var coveredDocIds = coveredCerts.Select(c => c.DocumentId).ToHashSet();
+            // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ครอบต่อ (เอกสาร, ผู้ถูกหัก) · ใบรายเดียว = ครอบระดับเอกสารเหมือนเดิม
+            var coveredPairs = coveredCerts.Select(c => (c.DocumentId, c.PayeeContactId)).ToHashSet();
+            var gapItems = new List<(DateTime Date, TaxType Form, decimal Amount, Guid DocId)>();
+            foreach (var d in whtDocs)
+            {
+                var portions = Accounting.Helpers.WhtPayeeSplit.Portions(d.ContactId, d.WhtPayeeContactId,
+                    d.LinePayees.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
+                    d.WithholdingTaxAmount);
+                var date = d.PaymentDate ?? d.DocumentDate;
+                if (!Accounting.Helpers.WhtPayeeSplit.IsMultiPayee(portions))
+                {
+                    if (coveredDocIds.Contains(d.Id)) continue;
+                    gapItems.Add((date, d.WhtPayeeContactId is Guid gp && gapPayees.TryGetValue(gp, out var gk)
+                        ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, gk.Country, gk.TaxId, gk.Type, gk.Name, d.IncomeCodes)
+                        : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes),
+                        d.WithholdingTaxAmount, d.Id));
+                    continue;
+                }
+                var lineCodes = d.LinePayees.Select(l => l.IncomeTypeCode).ToList();
+                foreach (var p in portions)
+                {
+                    if (coveredPairs.Contains((d.Id, p.PayeeContactId))) continue;
+                    // ภ.ง.ด.2 ต่อผู้ถูกหัก — รหัสเงินได้ของบรรทัดของรายนี้เท่านั้น (WhtIncomeCodes.At)
+                    var pCodes = Accounting.Helpers.WhtIncomeCodes.At(lineCodes, p.LineIndexes);
+                    gapItems.Add((date, p.PayeeContactId != d.ContactId && gapPayees.TryGetValue(p.PayeeContactId, out var pk)
+                        ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, pk.Country, pk.TaxId, pk.Type, pk.Name, pCodes)
+                        : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, pCodes),
+                        p.WithholdingTaxAmount, d.Id));
+                }
+            }
 
             // ม.70: WHT จ่ายต่างประเทศ (ใบ ภ.พ.36) ยื่น **ภ.ง.ด.54** — ห้ามนับปน ภงด.3/53
             // certs แบ่งแบบด้วย TaxFormType ที่ตั้งตอนออกใบ (ResolveWhtFormType) · เอกสารที่หลุด
@@ -266,16 +302,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     .ToDictionary(g => (Year: g.Key.TaxYear, Month: g.Key.TaxMonth),
                         g => (Amount: g.Sum(x => x.TotalTaxAmount),
                               Payees: g.Select(x => x.PayeeContactId).Distinct().Count()));
-                var gapGroups = whtDocs
-                    .Where(d => !coveredDocIds.Contains(d.Id)
-                        && wantForm == (d.WhtPayeeContactId is Guid gp && gapPayees.TryGetValue(gp, out var gk)
-                            ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, gk.Country, gk.TaxId, gk.Type, gk.Name, d.IncomeCodes)
-                            : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes)))
-                    .Select(d => new { Date = (d.PaymentDate ?? d.DocumentDate), d.WithholdingTaxAmount })
-                    .Where(d => InRange(d.Date.Year, d.Date.Month))
-                    .GroupBy(d => (d.Date.Year, d.Date.Month))
+                var gapGroups = gapItems
+                    .Where(g => g.Form == wantForm && InRange(g.Date.Year, g.Date.Month))
+                    .GroupBy(g => (g.Date.Year, g.Date.Month))
                     .ToDictionary(g => (Year: g.Key.Year, Month: g.Key.Month),
-                        g => (Count: g.Count(), Amount: g.Sum(x => x.WithholdingTaxAmount)));
+                        g => (Count: g.Select(x => x.DocId).Distinct().Count(), Amount: g.Sum(x => x.Amount)));
                 foreach (var key in certGroups.Keys.Union(gapGroups.Keys).OrderBy(k => k.Year).ThenBy(k => k.Month))
                 {
                     var hasCerts = certGroups.TryGetValue(key, out var cg);
@@ -667,11 +698,14 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                         TaxType.WithholdingTax1, g1.TaxAmount));
             }
 
-            var coveredCalDocIds = (await _db.WithholdingTaxCerts.AsNoTracking()
+            var coveredCalCerts = await _db.WithholdingTaxCerts.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.DocumentId != null
                     && calFiled.Contains(c.Status))
-                .Select(c => c.DocumentId!.Value)
-                .ToListAsync()).ToHashSet();
+                .Select(c => new { DocumentId = c.DocumentId!.Value, c.PayeeContactId })
+                .ToListAsync();
+            var coveredCalDocIds = coveredCalCerts.Select(c => c.DocumentId).ToHashSet();
+            // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ครอบต่อ (เอกสาร, ผู้ถูกหัก) · ตัวเดียวกับหน้านำส่ง
+            var coveredCalPairs = coveredCalCerts.Select(c => (c.DocumentId, c.PayeeContactId)).ToHashSet();
 
             // กติกาชุดเดียวกับ GetDashboardAsync (สองจอของ service เดียวกัน เคย
             // คำนวณคนละแบบ): ฝั่งซื้อเท่านั้น · กันใบตั้งหนี้ + ใบสำคัญจ่ายนับซ้ำ ·
@@ -686,14 +720,18 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
                 .Select(d => new { d.Id, d.DocumentType, d.RelatedDocumentId,
                     d.WithholdingTaxAmount, d.VatAmount, d.IsForeignService,
-                    d.PaymentDate, d.DocumentDate, d.WhtPayeeContactId,
+                    d.PaymentDate, d.DocumentDate, d.WhtPayeeContactId, d.ContactId,
                     IncomeCodes = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).Select(l => l.IncomeTypeCode).ToList(),   // รอบ 204
                     CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual,
                     CTaxId = d.Contact != null ? d.Contact.TaxId : null,
                     CName = d.Contact != null ? d.Contact.Name : null,
-                    CCountry = d.Contact != null ? d.Contact.CountryCode : null })
+                    CCountry = d.Contact != null ? d.Contact.CountryCode : null,
+                    LinePayees = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0)
+                        .OrderBy(l => l.LineOrder)
+                        .Select(l => new { l.WhtPayeeContactId, l.WithholdingTaxAmount, l.IncomeTypeCode }).ToList() })
                 .ToListAsync();
-            var calPayees = await LoadPayeeKindsAsync(companyId, docs.Select(d => d.WhtPayeeContactId));
+            var calPayees = await LoadPayeeKindsAsync(companyId, docs.Select(d => d.WhtPayeeContactId)
+                .Concat(docs.SelectMany(d => d.LinePayees.Select(l => l.WhtPayeeContactId))));
             // ⚠️ กรอง `wht != 0` ใน helper (PV ที่ไม่มี WHT ไม่ได้คลุมภาระของใบตั้งหนี้ — เดิม query นี้ดึง PV ภ.พ.36 เข้ามาด้วย ⇒ ยอด ภ.ง.ด.53 หาย · รอบ 203 ภ.พ.36 ย้ายไป Pp36Ledger แล้ว)
             var settledByPv = Accounting.Helpers.WhtRemitScope.SettledSourceIds(
                 docs, d => d.DocumentType, d => d.RelatedDocumentId, d => d.WithholdingTaxAmount);
@@ -703,6 +741,25 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     continue;
                 var dt = d.PaymentDate ?? d.DocumentDate;
                 // ยอดจริงมาจาก certs (ข้างบน) — เอกสารที่ยังไม่มีใบออกจริงเก็บเป็น "ช่องโหว่" ให้ช่องปฏิทินเตือน
+                var calPortions = Accounting.Helpers.WhtPayeeSplit.Portions(d.ContactId, d.WhtPayeeContactId,
+                    d.LinePayees.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
+                    d.WithholdingTaxAmount);
+                if (Accounting.Helpers.WhtPayeeSplit.IsMultiPayee(calPortions))
+                {
+                    // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ช่องโหว่ต่อผู้ถูกหัก แบบของผู้ถูกหักรายนั้น
+                    // ภ.ง.ด.2 ต่อผู้ถูกหัก — รหัสเงินได้ของบรรทัดของรายนี้เท่านั้น (ตัวเดียวกับหน้านำส่ง)
+                    var calLineCodes = d.LinePayees.Select(l => l.IncomeTypeCode).ToList();
+                    foreach (var p in calPortions.Where(p => !coveredCalPairs.Contains((d.Id, p.PayeeContactId))))
+                    {
+                        var pCodes = Accounting.Helpers.WhtIncomeCodes.At(calLineCodes, p.LineIndexes);
+                        whtGaps.Add(new WhtGapSnap(dt.Year, dt.Month,
+                            p.PayeeContactId != d.ContactId && calPayees.TryGetValue(p.PayeeContactId, out var pk)
+                                ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, pk.Country, pk.TaxId, pk.Type, pk.Name, pCodes)
+                                : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, pCodes),
+                            p.WithholdingTaxAmount));
+                    }
+                    continue;
+                }
                 if (d.WithholdingTaxAmount > 0 && !coveredCalDocIds.Contains(d.Id))
                     whtGaps.Add(new WhtGapSnap(dt.Year, dt.Month,
                         d.WhtPayeeContactId is Guid cp && calPayees.TryGetValue(cp, out var ck)

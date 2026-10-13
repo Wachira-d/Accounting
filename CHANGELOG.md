@@ -4672,3 +4672,15 @@ _รอบ 204 (ต่อ) — ฝ่ายค้านงาน ภ.ง.ด.2: 
 ผ่าน `TipShareAllocation.IsTipJournalReference` · (2) ภ.ง.ด.2 ที่ผู้ใช้เลือกเองให้ค่าบริการของบุคคลถูกเคารพเงียบ ๆ ⇒ `WhtPayeeKind.Pnd2ChoiceAllowed` ·
 (3) ใบ ภ.ง.ด.2 ไม่ถูกตรวจอัตรา ⇒ เพิ่มในด่าน `IssueWarningsAsync` · (5) ข้อความ JE-WHT-MISSING ขาด 21915 · ข้อ 4 (ปฏิทิน ภ.ง.ด.2 รายเดือนทุกบริษัท)
 คงไว้ — สอดคล้องกับ ภ.ง.ด.54/ภ.พ.36 · เทสต์ใน `Pnd2FormTests` · กติกาจุดเรียก +3 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8f4190c7_
+_รอบ 204 — คำตัดสินเจ้าของข้อ 148 (ทำข้อเสนอ 142/143/145 + ช่องในหน้ารายการประจำ) · ทีม T4 (ทำคู่ขนานกับ T1 renderer 50 ทวิ · T2 ผู้จ่ายออกภาษีแทน · T3 ภ.ง.ด.2):
+**(143) ใบเดียวหลายผู้ถูกหัก** — `DocumentLine.WhtPayeeContactId` (ADD COLUMN IF NOT EXISTS) + ตัวแบ่งเดียว `Helpers/WhtPayeeSplit` · 50 ทวิ ออกต่อผู้ถูกหัก
+(`TryAutoIssueMultiPayeeAsync` → `TryAutoIssueCoreAsync(payeeOnly)` · idempotent ต่อ (เอกสาร, ผู้ถูกหัก[, งวด]) · ยอดงวดเฉลี่ย `Allocate`) · `AutoGenerateFromDocumentAsync(payeeContactId)`
+(ใบหลายรายไม่ระบุ = 400) · JE ทุกขา WHT ฝั่งผู้จ่าย + พรีวิว GL ผ่าน `ResolveWhtPayableSplitAsync`/`WhtPayableSplitAsync` (ผังต่อผู้ถูกหัก · ใบลดหนี้อ่านผู้ถูกหักจากใบต้นทาง) ·
+ลิสต์รอออกใบ `Payees[]` · รายงาน ภ.ง.ด. แถวเตือน + หน้านำส่ง/ปฏิทิน ครอบต่อ (เอกสาร, ผู้ถูกหัก) · คำเตือนก่อนอนุมัติรายผู้ถูกหัก · ฟอร์ม/hydrate/สืบทอด (แปลง · คัดลอก · รายการประจำ · ใบแทน) ·
+**ใบผู้ถูกหักรายเดียวเดินเส้นเดิมทุกประการ** ·
+**(142) ใบลดหนี้ลดฐานหลังออกใบ** — `AdjustCertsForCreditNoteAsync` ตอนอนุมัติใบลดหนี้ + `Helpers/WhtCertReissuePlan` (ยกเลิก+ออกใหม่เดือนเดิม / ยกเลิกอย่างเดียว / ป้าย `[WHT-CERT-REVIEW]`
+เมื่อยื่นแล้ว·รายงวด·จับคู่ไม่ได้·ยังไม่มีใบ) ใต้ savepoint · audit ·
+**(145) เปลี่ยนผู้ถูกหักหลังอนุมัติ** — `POST document/{id}/wht-payee` → `ChangeWhtPayeeAsync` + `Helpers/WhtPayeeChangePlan` (ด่านยื่นแล้วรายใบ+รายงวด 409 · JE ย้ายผัง 2191x ·
+ยกเลิกใบ+audit · ออกใหม่เดือนเดิม) · ยกเลิกการจ่ายหลังออกใบ ⇒ ป้าย `[WHT-CERT-REVIEW]` (เดิมแค่ LogWarning) · รับทราบ `POST withholding-tax-certs/pending/{id}/review-ack` (`Tax.File` · เหตุผลบังคับ) ·
+**recurring.html** ช่องผู้ถูกหัก + `whtCertAutoIssue` hydrate/คงค่า · เทสต์ `WhtPayeeSplitTests` · `WhtCertReissuePlanTests` · Db `WhtMultiPayeeDbTests` · กติกาจุดเรียก +17 (แก้ 4) —
+**หลังรวมกับ ภ.ง.ด.2/ผู้จ่ายออกภาษีแทน** (cherry-pick บน c62292d7): ตัวแบ่งผังต่อผู้ถูกหักส่งรหัสเงินได้ของบรรทัดของรายนั้น (`WhtIncomeCodes.WithheldAt/At/WithheldForPayee`) ทุกทาง — JE 7 จุด + รายงวด + พรีวิว GL + 50 ทวิ ต่อราย + รายงาน/นำส่ง/ปฏิทิน + คำเตือนใบปน + หน้าตรวจข้อมูล · `ChangeWhtPayeeAsync` นับ 21915 · 50 ทวิ ต่อรายคง `CertificateType`/เงินได้รวมส่วนที่ออกแทน · recurring.html คงทั้ง `whtCertType` และช่องผู้ถูกหัก · เทสต์ `WhtPayeeIncomeCodesTests` · กติกาจุดเรียก `_PND2` ย้ายจาก "JE ต้องเรียก LoadWithheldAsync" เป็น "JE ห้ามเรียกตัวเลือกผังตรง + ตัวแบ่งต้องส่งรหัส" · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_

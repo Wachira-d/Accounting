@@ -1272,6 +1272,44 @@
       </div>
     </div>
 
+
+    <!-- รอบ 204 (ข้อ 145): เปลี่ยนผู้ถูกหักภาษีหลังอนุมัติ — ยกเลิก 50 ทวิ เดิม (เหตุผล · audit) · ย้ายผัง 2191x เมื่อแบบเปลี่ยน · ออกใบใหม่เดือนภาษีเดิม ·
+         ข้อความผลลัพธ์/ด่าน "ยื่นแล้ว" มาจากเซิร์ฟเวอร์ทั้งหมด (หน้านี้แสดงอย่างเดียว) -->
+    <div class="modal-overlay" id="whtPayeeChangeModal">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <h3 class="modal-title">เปลี่ยนผู้ถูกหักภาษี ณ ที่จ่าย</h3>
+          <button class="modal-close" onclick="Layout.closeModal('whtPayeeChangeModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="wpcInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px"></div>
+          <div class="form-group">
+            <label style="display:flex;gap:8px;align-items:center;font-size:13px">
+              <input type="checkbox" id="wpcDiffers" onchange="document.getElementById('wpcPayeeWrap').style.display = this.checked ? '' : 'none'">
+              ผู้ถูกหักของเอกสารเป็นคนละรายกับผู้รับเงิน
+            </label>
+            <div id="wpcPayeeWrap" style="display:none;margin-top:6px;position:relative">
+              <input type="text" class="form-input" id="wpcPayee">
+              <input type="hidden" id="wpcPayeeId">
+            </div>
+          </div>
+          <div id="wpcLines"></div>
+          <div class="form-group">
+            <label class="form-label">เหตุผล <span class="req">*</span></label>
+            <input type="text" class="form-input" id="wpcReason" placeholder="เช่น ผู้มีเงินได้คือบริษัทประกัน ไม่ใช่โบรกเกอร์">
+          </div>
+          <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
+            ⚠️ ระบบจะ<b>ยกเลิก 50 ทวิ เดิม</b>ของผู้ถูกหักที่เปลี่ยน · ลง <b>JE ย้ายผังหนี้ภาษีหัก ณ ที่จ่าย</b> เมื่อแบบ ภ.ง.ด. เปลี่ยน (3/53/54) ·
+            แล้วออกใบใหม่ในนามผู้ถูกหักที่ถูก (เดือนภาษีเดิม) — ถ้าแบบเดือนนั้นยื่น/นำส่งแล้ว ระบบไม่เปลี่ยนให้ (ต้องยื่นเพิ่มเติม)
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('whtPayeeChangeModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitWhtPayeeChange()">เปลี่ยนผู้ถูกหัก</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ตรวจสอบ/แก้ไขรายการบัญชี (JE) ของเอกสารที่อนุมัติแล้ว — แก้ผังบัญชี
          เพิ่ม/ลดบรรทัด และเลือกวันที่ลงใบปรับปรุงได้ในที่เดียว. ระบบลง "ใบสำคัญ
          ปรับปรุง" ใหม่ตามผลต่าง ไม่แก้ใบเดิม (audit trail ครบ) -->
@@ -2349,6 +2387,85 @@
       /** Option 1 reclassify: เปลี่ยนผังบัญชี (line.AccountId) ของเอกสารที่
        * approved แล้ว — Expense/PI/PV เท่านั้น. ระบบจะ post reclassify-JE
        * คู่ใหม่ (Dr ผังใหม่ / Cr ผังเก่า) ใต้ฉาก. ไม่แก้เอกสารต้นฉบับ */
+      // ── รอบ 204 (ข้อ 145): เปลี่ยนผู้ถูกหักภาษีหลังอนุมัติ ──
+      async openWhtPayeeChange(docId) {
+        const api = Layout.api(); if (!api) return;
+        let d;
+        try { d = (await api.getDocument(docId)).data; } catch (e) { Layout.toast(e.message, 'error'); return; }
+        if (!d) return;
+        this._wpcDoc = d;
+        const info = document.getElementById('wpcInfo');
+        if (info) info.innerHTML = 'เอกสาร <b>' + Layout.esc(d.documentNumber || '') + '</b> · ผู้รับเงิน '
+          + Layout.esc((d.contact && d.contact.name) || '') + ' · ภาษีหัก ณ ที่จ่าย <b>' + Layout.money(d.withholdingTaxAmount) + '</b>';
+        const differs = document.getElementById('wpcDiffers');
+        const hid = document.getElementById('wpcPayeeId');
+        const inp = document.getElementById('wpcPayee');
+        if (differs) differs.checked = !!d.whtPayeeContactId;
+        document.getElementById('wpcPayeeWrap').style.display = d.whtPayeeContactId ? '' : 'none';
+        if (hid) hid.value = d.whtPayeeContactId || '';
+        if (inp) inp.value = '';
+        if (!this._wpcAC) {
+          Layout.contactAutocomplete('wpcPayee', 'wpcPayeeId', { placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ถูกหัก...' });
+          this._wpcAC = true;
+        }
+        const whtLines = (d.lines || []).filter(l => Number(l.withholdingTaxAmount || 0) > 0);
+        const box = document.getElementById('wpcLines');
+        box.innerHTML = whtLines.length < 2 ? '' : '<div class="form-label" style="margin-bottom:4px">ผู้ถูกหักรายบรรทัด (เว้นว่าง = ตามผู้ถูกหักของเอกสาร)</div>'
+          + whtLines.map((l, i) => `<div class="wpc-line" data-line-id="${Layout.esc(l.id)}" style="display:flex;gap:8px;align-items:center;margin-bottom:6px;font-size:12px">
+              <div style="flex:1">${Layout.esc(l.description || '')} <span style="color:#64748b">(หัก ${Layout.money(l.withholdingTaxAmount)})</span></div>
+              <div style="flex:1;position:relative"><input type="text" class="form-input" id="wpcL${i}" style="font-size:12px"><input type="hidden" id="wpcLId${i}" value="${Layout.esc(l.whtPayeeContactId || '')}"></div>
+            </div>`).join('');
+        whtLines.forEach((l, i) => {
+          if (whtLines.length < 2) return;
+          Layout.contactAutocomplete('wpcL' + i, 'wpcLId' + i, { placeholder: 'ตามผู้ถูกหักของเอกสาร' });
+          if (l.whtPayeeContactId) {
+            api.getContact(l.whtPayeeContactId).then(r => {
+              const el = document.getElementById('wpcL' + i);
+              if (el && r && r.data) el.value = r.data.name || '';
+            }).catch(e => Layout.toast('โหลดชื่อผู้ถูกหักรายบรรทัดไม่สำเร็จ: ' + (e.message || ''), 'warning', 7000));
+          }
+        });
+        if (d.whtPayeeContactId) {
+          try { const r = await api.getContact(d.whtPayeeContactId); if (inp && r && r.data) inp.value = r.data.name || ''; }
+          catch (e) { Layout.toast('โหลดผู้ถูกหักของเอกสารไม่สำเร็จ: ' + (e.message || '') + ' — ค่าที่บันทึกไว้ยังอยู่', 'warning', 7000); }
+        }
+        document.getElementById('wpcReason').value = '';
+        Layout.openModal('whtPayeeChangeModal');
+      },
+      async submitWhtPayeeChange() {
+        const d = this._wpcDoc; if (!d) return;
+        const api = Layout.api(); if (!api) return;
+        const differs = document.getElementById('wpcDiffers')?.checked;
+        const inp = document.getElementById('wpcPayee');
+        const hid = document.getElementById('wpcPayeeId');
+        if (hid && hid.value && inp && !inp.value.trim()) hid.value = '';
+        const payeeId = differs ? (hid?.value || '') : '';
+        if (differs && !payeeId) { Layout.toast('เลือกผู้ถูกหักภาษีจากรายชื่อผู้ติดต่อ', 'error'); return; }
+        const lines = [...document.querySelectorAll('#wpcLines .wpc-line')].map((row, i) => {
+          const lin = document.getElementById('wpcL' + i);
+          const lid = document.getElementById('wpcLId' + i);
+          if (lid && lid.value && lin && !lin.value.trim()) lid.value = '';
+          return { lineId: row.dataset.lineId, whtPayeeContactId: (lid && lid.value) || '00000000-0000-0000-0000-000000000000' };
+        });
+        const reason = (document.getElementById('wpcReason')?.value || '').trim();
+        try {
+          const res = await api.changeWhtPayee(d.id, {
+            whtPayeeContactId: payeeId || '00000000-0000-0000-0000-000000000000',
+            lines: lines.length ? lines : null,
+            reason,
+          });
+          const r = (res && res.data) || {};
+          const parts = [];
+          if ((r.voidedCertificates || []).length) parts.push('ยกเลิก 50 ทวิ ' + r.voidedCertificates.join(', '));
+          if ((r.issuedCertificates || []).length) parts.push('ออกใบใหม่ ' + r.issuedCertificates.join(', '));
+          if (r.adjustmentJournalNumber) parts.push('JE ย้ายผัง ' + r.adjustmentJournalNumber);
+          Layout.toast('เปลี่ยนผู้ถูกหักภาษีแล้ว' + (parts.length ? ' — ' + parts.join(' · ') : ''), 'success', 9000);
+          (r.notices || []).forEach(n => Layout.toast(n, 'warning', 12000));
+          Layout.closeModal('whtPayeeChangeModal');
+          await this.load();
+          await this.detail(d.id);
+        } catch (e) { Layout.toast(e.message, 'error', 12000); }
+      },
       async openReclassifyLine(docId, lineId, oldAccountCode, description, amount) {
         this._reclassifyCtx = { docId, lineId, oldAccountCode };
         document.getElementById('rclInfo').innerHTML =
@@ -3242,6 +3359,70 @@
           this._ensureWhtPayeeAutocomplete();
           this._renderWhtPayeeInfo();
         }
+        this._refreshLineWhtPayeeRows();
+      },
+      // ── รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด ──
+      // แสดงเฉพาะชนิดฝั่งผู้จ่าย + บรรทัดที่มีอัตราหัก · ซ่อน = ไม่ส่ง (เซิร์ฟเวอร์ normalize เป็น "ตามหัวเอกสาร" เอง)
+      _refreshLineWhtPayeeRows() {
+        const type = document.getElementById('fDocType')?.value || '';
+        const payer = this.WHT_PAYER_TYPES.includes(type);
+        document.querySelectorAll('#linesBody .line-card').forEach(row => {
+          const box = row.querySelector('[data-f="whtPayeeRow"]');
+          if (!box) return;
+          const rate = parseFloat(row.querySelector('[data-f="wht"]')?.value) || 0;
+          const show = payer && rate > 0;
+          box.style.display = show ? 'flex' : 'none';
+          if (show) this._ensureLineWhtPayeeAC(row);
+        });
+      },
+      _ensureLineWhtPayeeAC(row) {
+        const inp = row.querySelector('[data-f="whtPayeeName"]');
+        const hid = row.querySelector('[data-f="whtPayeeId"]');
+        if (!inp || !hid || inp.dataset.acReady === '1') return;
+        inp.dataset.acReady = '1';
+        Layout.contactAutocomplete(inp.id, hid.id, {
+          placeholder: 'ตามผู้ถูกหักของเอกสาร (พิมพ์เพื่อเลือกรายอื่น)',
+          onSelect: () => { hid.dataset.userTouched = '1'; },
+        });
+      },
+      /** ตั้งผู้ถูกหักของแถว (เปิดแก้ไข/คัดลอก) — ชื่อดึงจากผู้ติดต่อ (เซิร์ฟเวอร์เก็บแค่ id) · ล้ม = คง id ไว้ (ห้ามหายเงียบ) */
+      async _setLineWhtPayee(row, payeeId) {
+        const hid = row?.querySelector('[data-f="whtPayeeId"]');
+        const inp = row?.querySelector('[data-f="whtPayeeName"]');
+        if (!hid || !inp) return;
+        hid.value = payeeId || '';
+        delete hid.dataset.userTouched;
+        inp.value = '';
+        if (!payeeId) return;
+        this._lineWhtPayeeNames = this._lineWhtPayeeNames || {};
+        try {
+          if (!this._lineWhtPayeeNames[payeeId]) {
+            const api = Layout.api();
+            const r = api ? await api.getContact(payeeId) : null;
+            this._lineWhtPayeeNames[payeeId] = (r && r.data && r.data.name) || '';
+          }
+          if (hid.value === payeeId) inp.value = this._lineWhtPayeeNames[payeeId];
+        } catch (e) {
+          Layout.toast('โหลดชื่อผู้ถูกหักรายบรรทัดไม่สำเร็จ: ' + (e.message || '') + ' — ค่าที่บันทึกไว้ยังอยู่', 'warning', 7000);
+        }
+      },
+      clearLineWhtPayee(btn) {
+        const row = btn.closest('.line-card');
+        const hid = row?.querySelector('[data-f="whtPayeeId"]');
+        const inp = row?.querySelector('[data-f="whtPayeeName"]');
+        if (hid) { hid.value = ''; hid.dataset.userTouched = '1'; }
+        if (inp) inp.value = '';
+      },
+      /** payload: แถวซ่อน ⇒ undefined (ไม่ส่ง) · เลือกไว้ ⇒ id · ว่าง ⇒ สร้าง = null / แก้ไข = Guid.Empty (ล้างเป็น "ตามหัวเอกสาร") */
+      _lineWhtPayeePayload(row) {
+        const box = row.querySelector('[data-f="whtPayeeRow"]');
+        if (!box || box.style.display === 'none') return undefined;
+        const hid = row.querySelector('[data-f="whtPayeeId"]');
+        const inp = row.querySelector('[data-f="whtPayeeName"]');
+        // พิมพ์ชื่อแล้วลบทิ้ง (ไม่ได้เลือกจากรายการ) = ล้าง
+        if (hid && hid.value && inp && !inp.value.trim()) hid.value = '';
+        if (hid && hid.value) return hid.value;
+        return this.editingId ? '00000000-0000-0000-0000-000000000000' : null;
       },
       _ensureWhtPayeeAutocomplete() {
         if (this._whtPayeeAC) return;
@@ -6483,6 +6664,8 @@
         Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate || 0, 'doc');
         row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
         this._setLineIncomeType(row, l.incomeTypeCode);
+        // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — เก็บแล้วต้อง echo กลับ (ฟอร์มแก้ไขไม่ล้างค่าเงียบ ๆ)
+        this._setLineWhtPayee(row, l.whtPayeeContactId || null);
         // VAT claimability — hydrate จาก server. ตั้ง userOverride=1
         // เพื่อไม่ให้ heuristic regex เปลี่ยนค่าทับ user/AI choice
         // ที่บันทึกไว้แล้ว.
@@ -8075,6 +8258,16 @@
             <div class="lc-field lc-income-type"><label title="ประเภทเงินได้ ม.40 — ตัดสินแถวบนหนังสือรับรอง 50 ทวิ และแบบ ภ.ง.ด.">ประเภทเงินได้</label>
               <select class="form-select" data-f="incomeType" onchange="Page.onLineIncomeTypeChange(this)">${this._incomeTypeOptHtml()}</select></div>
           </div>
+          <!-- รอบ 204 (ข้อ 143): ผู้ถูกหักภาษีรายบรรทัด — โชว์เฉพาะเอกสารฝั่งผู้จ่ายที่บรรทัดมีอัตราหัก (Page._refreshLineWhtPayeeRows) ·
+               ว่าง = ตามผู้ถูกหักของหัวเอกสาร · ผู้ถูกหักต่างกัน ⇒ 50 ทวิ แยกใบต่อผู้ถูกหัก -->
+          <div class="lc-wht-payee-row" data-f="whtPayeeRow" style="display:none;margin-top:6px;align-items:center;gap:8px;font-size:12px">
+            <label style="color:#475569;min-width:64px" title="ผู้มีเงินได้ของรายการนี้ (ชื่อบน 50 ทวิ) — เว้นว่าง = ผู้ถูกหักของเอกสาร">ผู้ถูกหัก</label>
+            <div style="flex:1;position:relative">
+              <input type="text" class="form-input" data-f="whtPayeeName" id="lwpName${i}" style="font-size:13px">
+              <input type="hidden" data-f="whtPayeeId" id="lwpId${i}">
+            </div>
+            <button type="button" class="btn btn-sm btn-secondary" title="กลับไปใช้ผู้ถูกหักของหัวเอกสาร" onclick="Page.clearLineWhtPayee(this)">ตามหัวเอกสาร</button>
+          </div>
           <div class="lc-project-row">
             <select class="form-select" data-f="project" title="กำหนดโครงการรายบรรทัด — เมื่ออนุมัติระบบลงค่าใช้จ่ายเข้าโครงการให้อัตโนมัติ">${projOptHtml}</select>
           </div>
@@ -9351,6 +9544,9 @@
           // รอบ 203: ประเภทเงินได้ ม.40 — ไม่ส่ง = เซิร์ฟเวอร์คงค่าเดิม · "" เฉพาะเมื่อผู้ใช้เลือก "ไม่ระบุ" เอง
           const incomeTypeVal = this._lineIncomeTypePayload(row);
           if (incomeTypeVal !== null) line.incomeTypeCode = incomeTypeVal;
+          // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — แถวซ่อน = ไม่ส่ง (เซิร์ฟเวอร์คงค่าเดิม/normalize)
+          const linePayeeVal = this._lineWhtPayeePayload(row);
+          if (linePayeeVal !== undefined) line.whtPayeeContactId = linePayeeVal;
           // Persist the product linkage when the user picked one via the typeahead.
           // Server keys on productCode (string), not the id, because Code is the
           // user-facing immutable identifier in DocumentLine.
@@ -10651,7 +10847,10 @@
               <div class="text-sm">ภาษีหัก ณ ที่จ่าย: <strong>-${Layout.money(d.withholdingTaxAmount)}</strong> <a href="/pages/wht.html?documentId=${d.id}" style="font-size:11px;margin-left:8px">ดูใบหัก ณ ที่จ่าย →</a></div>
               ${d.whtCertAutoFailedReason ? `<div class="text-sm" style="margin-top:4px;padding:6px 10px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:6px;color:#991B1B">⚠️ ออก 50 ทวิ อัตโนมัติไม่สำเร็จ: ${Layout.esc(d.whtCertAutoFailedReason)} — แก้ตามข้อความแล้วกด "สร้างใบ" ที่ <a href="/pages/wht.html">หน้าหนังสือรับรองหัก ณ ที่จ่าย → เอกสารรอออกใบ</a></div>` : ''}
               ${d.whtCertAutoIssue === false ? `<div class="text-xs" style="margin-top:2px;color:#64748b">ตั้งไว้ไม่ให้สร้าง 50 ทวิ อัตโนมัติ — ออกใบเองที่หน้าหนังสือรับรองหัก ณ ที่จ่าย</div>` : ''}
-              ${d.whtPayeeContactId ? `<div class="text-xs" style="margin-top:2px;color:#3730a3">ผู้ถูกหักภาษีตั้งแยกจากผู้รับเงิน — 50 ทวิ ออกในนามผู้ถูกหักที่เลือกไว้ (เปิดแก้ไขใบร่างเพื่อดู/เปลี่ยน)</div>` : ''}` : ''}
+              ${d.whtPayeeContactId ? `<div class="text-xs" style="margin-top:2px;color:#3730a3">ผู้ถูกหักภาษีตั้งแยกจากผู้รับเงิน — 50 ทวิ ออกในนามผู้ถูกหักที่เลือกไว้ (เปิดแก้ไขใบร่างเพื่อดู/เปลี่ยน)</div>` : ''}
+              ${Number(d.whtPayeeCount || 0) > 1 ? `<div class="text-xs" style="margin-top:2px;color:#3730a3">ผู้ถูกหักภาษี ${Number(d.whtPayeeCount)} ราย (ตั้งรายบรรทัด) — 50 ทวิ แยกใบต่อผู้ถูกหัก</div>` : ''}
+              ${d.whtCertReviewReason ? `<div class="text-sm" style="margin-top:4px;padding:6px 10px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;color:#92400E">⚠️ 50 ทวิ ต้องตรวจ: ${Layout.esc(d.whtCertReviewReason)} — จัดการแล้วกด "รับทราบ" ที่ <a href="/pages/wht.html">หน้าหนังสือรับรองหัก ณ ที่จ่าย → เอกสารรอออกใบ</a></div>` : ''}
+              ${(this.WHT_PAYER_TYPES.includes(d.documentType) && ['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'].includes(d.status)) ? `<div style="margin-top:4px"><button type="button" class="btn btn-sm btn-secondary" onclick="Page.openWhtPayeeChange('${d.id}')" title="ยกเลิก 50 ทวิ เดิม · ย้ายผังหนี้ภาษีหัก ณ ที่จ่ายเมื่อแบบเปลี่ยน · ออกใบใหม่ในนามผู้ถูกหักที่ถูก">เปลี่ยนผู้ถูกหักภาษี</button></div>` : ''}` : ''}
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.actualPaidAmount != null ? `
               <div class="text-sm" style="color:#92400e" title="ใบกำกับคงยอดเต็มตามใบ — ส่วนต่างลงที่ปรับปรุงรายการบัญชี (ใบสำคัญจ่าย) หรือบรรทัดปรับตอนบันทึกการชำระ">ยอดชำระจริง: <strong>${Layout.money(d.actualPaidAmount)}</strong> (ต่างจากยอดเอกสาร ${Layout.money(Number(d.actualPaidAmount) - Number(d.totalAmount))})</div>` : ''}

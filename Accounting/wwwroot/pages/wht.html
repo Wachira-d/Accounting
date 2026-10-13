@@ -128,6 +128,24 @@
       </div>
     </div>
 
+    <!-- รอบ 204 (ข้อ 142/145): รับทราบป้าย "50 ทวิ ต้องตรวจ" — เหตุผลบังคับ (audit) · เซิร์ฟเวอร์ล้างป้าย -->
+    <div class="modal-overlay" id="reviewAckModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header"><h3 class="modal-title">รับทราบ: 50 ทวิ ต้องตรวจ</h3><button class="modal-close" onclick="Layout.closeModal('reviewAckModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="raInfo" style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px;color:#92400E"></div>
+          <div class="form-group">
+            <label class="form-label">ทำอะไรไปแล้ว <span class="req">*</span></label>
+            <input type="text" class="form-input" id="raReason" placeholder="เช่น ยกเลิกใบเดิมและออกใบใหม่แล้ว / ยื่น ภ.ง.ด.53 เพิ่มเติมแล้ว">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reviewAckModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitReviewAck()">บันทึกการรับทราบ</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Bulk Generate Modal -->
     <div class="modal-overlay" id="bulkModal">
       <div class="modal" style="max-width:500px">
@@ -1025,32 +1043,67 @@
             tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:30px">ไม่มีเอกสารรอออกใบ</td></tr>';
             return;
           }
-          tbody.innerHTML = this.pendingDocs.map(d => `<tr>
+          // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก = แถวย่อยต่อผู้ถูกหัก (ปุ่มสร้างใบรายผู้ถูกหัก) · (ข้อ 142/145): ป้าย "50 ทวิ ต้องตรวจ" + ปุ่มรับทราบ ·
+          // ยอด/ป้าย/สถานะมาจากเซิร์ฟเวอร์ (หน้านี้แสดงอย่างเดียว)
+          tbody.innerHTML = this.pendingDocs.map(d => {
+            const multi = Array.isArray(d.payees) && d.payees.length > 1;
+            const payeeRows = multi ? '<div style="margin-top:4px">' + d.payees.map(p => '<div class="text-xs" style="color:#3730a3;margin-top:2px">ผู้ถูกหัก: <b>'
+              + Layout.esc(p.payeeName || '—') + '</b>' + (p.payeeTaxId ? ' (' + Layout.esc(p.payeeTaxId) + ')' : '')
+              + ' · หัก ' + Layout.money(p.withholdingTaxAmount) + ' '
+              + (p.hasCertificate
+                ? '<span style="color:#15803d">✓ ' + Layout.esc(p.certificateNumber || 'มีใบแล้ว') + '</span>'
+                : `<button class="btn btn-sm btn-primary" style="padding:1px 8px;font-size:11px" onclick="Page.autoGenerate('${d.documentId}','${p.payeeContactId}')">สร้างใบ</button>`)
+              + '</div>').join('') + '</div>' : '';
+            const labelColor = d.reviewReason ? '#92400e' : (d.autoIssueFailedReason ? '#b91c1c' : '#64748b');
+            return `<tr>
             <td><input type="checkbox" class="pending-check" value="${d.documentId}"></td>
             <td class="font-medium">${Layout.esc(d.documentNumber || '')}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${Layout.esc(d.contactName || '')} ${d.contactTaxId ? '<span class="text-gray-400 text-xs">(' + Layout.esc(d.contactTaxId) + ')</span>' : ''}
-              ${d.payeeDiffersFromContact ? '<div class="text-xs" style="color:#3730a3">ผู้ถูกหัก (ชื่อบน 50 ทวิ): <b>' + Layout.esc(d.payeeName || '—') + '</b>' + (d.payeeTaxId ? ' (' + Layout.esc(d.payeeTaxId) + ')' : '') + '</div>' : ''}
-              ${d.pendingLabel ? '<div class="text-xs" style="color:' + (d.autoIssueFailedReason ? '#b91c1c' : '#64748b') + '">' + Layout.esc(d.pendingLabel) + '</div>' : ''}</td>
+              ${!multi && d.payeeDiffersFromContact ? '<div class="text-xs" style="color:#3730a3">ผู้ถูกหัก (ชื่อบน 50 ทวิ): <b>' + Layout.esc(d.payeeName || '—') + '</b>' + (d.payeeTaxId ? ' (' + Layout.esc(d.payeeTaxId) + ')' : '') + '</div>' : ''}
+              ${payeeRows}
+              ${d.pendingLabel ? '<div class="text-xs" style="color:' + labelColor + '">' + Layout.esc(d.pendingLabel) + '</div>' : ''}</td>
             <td class="text-right">${Layout.money(d.subTotal)}</td>
             <td class="text-right font-semibold text-danger">${Layout.money(d.withholdingTaxAmount)}</td>
             <td style="white-space:nowrap">
-              <button class="btn btn-sm btn-primary" onclick="Page.autoGenerate('${d.documentId}')">สร้างใบ</button>
+              ${multi ? '' : `<button class="btn btn-sm btn-primary" onclick="Page.autoGenerate('${d.documentId}')">สร้างใบ</button>`}
+              ${d.reviewReason ? `<button class="btn btn-sm btn-secondary" onclick="Page.openReviewAck('${d.documentId}')" title="จัดการ 50 ทวิ แล้ว (ยกเลิก/ออกใหม่/ยื่นเพิ่มเติม) — บันทึกเหตุผลลงประวัติ">รับทราบ</button>` : ''}
               <button class="btn btn-sm btn-secondary" onclick="Page.dismissPending('${d.documentId}','${Layout.jsArg(d.documentNumber||'')}')" title="ข้ามเอกสารนี้ — จะไม่แสดงในรายการรอออกอีก (ไม่ลบเอกสารต้นทาง)">ข้าม</button>
             </td>
-          </tr>`).join('');
+          </tr>`;
+          }).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       toggleCheckAll(el) {
         document.querySelectorAll('.pending-check').forEach(cb => cb.checked = el.checked);
       },
-      async autoGenerate(docId) {
+      async autoGenerate(docId, payeeContactId) {
         const api = Layout.api(); if (!api) return;
         try {
-          await api.autoGenerateWht({ documentId: docId, autoIssue: false });
+          // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ออกใบของผู้ถูกหักที่กด (ใบรายเดียวไม่ส่ง)
+          await api.autoGenerateWht({ documentId: docId, autoIssue: false, payeeContactId: payeeContactId || null });
           Layout.toast('สร้างใบหัก ณ ที่จ่ายสำเร็จ');
           await this.openPending();
           await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // รอบ 204 (ข้อ 142/145): รับทราบป้าย "50 ทวิ ต้องตรวจ"
+      openReviewAck(docId) {
+        const d = this.pendingDocs.find(x => String(x.documentId) === String(docId)) || {};
+        this._reviewAckDocId = docId;
+        const info = document.getElementById('raInfo');
+        if (info) info.innerHTML = 'เอกสาร <b>' + Layout.esc(d.documentNumber || '') + '</b>: ' + Layout.esc(d.reviewReason || '');
+        const r = document.getElementById('raReason'); if (r) r.value = '';
+        Layout.openModal('reviewAckModal');
+      },
+      async submitReviewAck() {
+        const api = Layout.api(); if (!api || !this._reviewAckDocId) return;
+        const reason = (document.getElementById('raReason')?.value || '').trim();
+        try {
+          await api.ackWhtCertReview(this._reviewAckDocId, reason);
+          Layout.toast('บันทึกการรับทราบแล้ว');
+          Layout.closeModal('reviewAckModal');
+          await this.openPending();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async dismissPending(docId, docNumber) {
@@ -1080,12 +1133,17 @@
         let ok = 0;
         const failures = [];
         for (const docId of checked) {
-          try {
-            await api.autoGenerateWht({ documentId: docId, autoIssue: false });
-            ok++;
-          } catch (e) {
-            const docNo = (this.pendingDocs.find(d => String(d.documentId) === String(docId)) || {}).documentNumber || docId;
-            failures.push(`${docNo}: ${(e && e.message) || 'ไม่ทราบสาเหตุ'}`);
+          const pd = this.pendingDocs.find(d => String(d.documentId) === String(docId)) || {};
+          // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ออกใบทีละผู้ถูกหักที่ยังไม่มีใบ
+          const payeeIds = Array.isArray(pd.payees) && pd.payees.length > 1
+            ? pd.payees.filter(p => !p.hasCertificate).map(p => p.payeeContactId) : [null];
+          for (const payeeId of payeeIds) {
+            try {
+              await api.autoGenerateWht({ documentId: docId, autoIssue: false, payeeContactId: payeeId });
+              ok++;
+            } catch (e) {
+              failures.push(`${pd.documentNumber || docId}: ${(e && e.message) || 'ไม่ทราบสาเหตุ'}`);
+            }
           }
         }
         if (failures.length) {

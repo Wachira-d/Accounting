@@ -24,7 +24,8 @@ public interface IWithholdingTaxCertService
     /// (ภ.ง.ด.3/53 = cash basis) เพื่อให้ออกใบได้งวดละใบและกันออกซ้ำต่องวด</param>
     /// <param name="paymentWhtAmount">ยอดภาษีหักของ "งวดนั้น" — ถ้าน้อยกว่ายอดทั้งเอกสาร
     /// ระบบจะเฉลี่ยยอดรายบรรทัดตามสัดส่วน</param>
-    Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null, Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null);
+    /// <param name="payeeContactId">รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ผู้ถูกหักที่จะออกใบ (บังคับสำหรับใบหลายราย · ใบรายเดียวไม่ใช้)</param>
+    Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null, Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null, Guid? payeeContactId = null);
     /// <summary>ทางเดียวของการออก 50 ทวิ อัตโนมัติจากเอกสาร — ตัดสินด้วย <c>Helpers/WhtCertIssuePlan</c> · ไม่ throw (ล้ม = ป้ายบนเอกสาร +
     /// เหตุผลในผลลัพธ์) · <paramref name="paidAtTrigger"/> ใช้กับจุดอนุมัติ · <paramref name="issueAsIssued"/> false = ฉบับร่าง (ซิงค์ที่ยังไม่จ่าย)</summary>
     Task<WhtAutoIssueOutcome> TryAutoIssueForDocumentAsync(Guid companyId, Guid documentId,
@@ -37,4 +38,10 @@ public interface IWithholdingTaxCertService
     /// source document stays exactly as-is, we just stop prompting. Set
     /// dismiss=false to re-add it.</summary>
     Task DismissPendingAsync(Guid companyId, Guid documentId, bool dismiss);
+    /// <summary>รอบ 204 (ข้อ 142): ใบลดหนี้ซื้อลดภาษีหักหลังออก 50 ทวิ — ยกเลิก+ออกใหม่เดือนเดิม หรือติดป้าย "ต้องตรวจ" (ไม่ throw)</summary>
+    Task<IReadOnlyList<string>> AdjustCertsForCreditNoteAsync(Guid companyId, Guid creditNoteId, string actor, Guid? userId = null);
+    /// <summary>รอบ 204: ติดป้าย "50 ทวิ ต้องตรวจ" บนเอกสาร (tracked) + audit · <paramref name="save"/> false = ผู้เรียกบันทึกเอง (อยู่ในธุรกรรมของผู้เรียก)</summary>
+    Task FlagReviewAsync(Guid companyId, Accounting.Models.Entities.Document doc, string reason, Guid? userId = null, bool save = true);
+    /// <summary>รอบ 204: ผู้ใช้จัดการแล้ว — ล้างป้าย "ต้องตรวจ" + audit พร้อมเหตุผล (บังคับ)</summary>
+    Task AcknowledgeReviewAsync(Guid companyId, Guid documentId, string? reason, Guid? userId);
 }

@@ -420,6 +420,7 @@ public static class SettlementPaidReissue
         nameof(DocumentLine.WithholdingTaxAmount), nameof(DocumentLine.IncomeTypeCode), nameof(DocumentLine.AccountId),
         nameof(DocumentLine.ProjectId), nameof(DocumentLine.SourceLineId), nameof(DocumentLine.SourceDocumentId),
         nameof(DocumentLine.IsVatClaimable), nameof(DocumentLine.IsLandedCost), nameof(DocumentLine.VatNonClaimableReason),
+        nameof(DocumentLine.WhtPayeeContactId),   // รอบ 204 (ข้อ 143) — ผู้ถูกหักรายบรรทัดตามรายการ (ใบขายเป็น null เสมอ)
     };
 
     /// <summary>ช่องของบรรทัดที่ไม่ตามไป</summary>

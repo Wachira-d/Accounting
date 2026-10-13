@@ -1741,7 +1741,15 @@ public partial class TaxService : ITaxService
         // ผู้ถูกหัก ≠ ผู้รับเงินได้ (คำขอเจ้าของ 2026-10-12 · ประกันผ่านโบรกเกอร์) — แบ่งแบบ + ชื่อ/เลขในแถวเตือนจาก "ผู้ถูกหัก" ตัวเดียวกับ 50 ทวิ
         var whtPayees = await _db.LoadWhtPayeeContactsAsync(companyId, docs);
         Contact? PayeeOf(Document d) => Accounting.Helpers.ContactHydration.WhtPayeeOf(d, whtPayees);
-        docs = docs.Where(d => PayeeInScope(PayeeOf(d), d.IsForeignService, Accounting.Helpers.WhtIncomeCodes.Withheld(d.Lines))).ToList();
+        // รอบ 204 (ข้อ 143): ผู้ถูกหักของบรรทัด (ใบหลายผู้ถูกหัก) — ใบรายเดียว = ผู้ถูกหักของหัวเอกสารเหมือนเดิม
+        Contact? LinePayeeOf(Document d, DocumentLine l) => Accounting.Helpers.ContactHydration.WhtLinePayeeOf(d, l, whtPayees);
+        bool HasLinePayees(Document d) => d.Lines.Any(l => !l.IsDeleted && l.WithholdingTaxAmount > 0 && l.WhtPayeeContactId.HasValue);
+        // รอบ 204 (ภ.ง.ด.2 × ข้อ 143): แบบของผู้ถูกหักแต่ละรายตัดสินด้วยรหัสเงินได้ของ "บรรทัดของรายนั้น" — ใบรายเดียว = ทุกบรรทัดที่หัก (เดิม)
+        IReadOnlyList<string?> LinePayeeCodes(Document d, DocumentLine l) => Accounting.Helpers.WhtIncomeCodes.WithheldForPayee(d.Lines,
+            d.ContactId, d.WhtPayeeContactId, Accounting.Helpers.WhtPayeeSplit.LinePayeeOf(d.ContactId, d.WhtPayeeContactId, l.WhtPayeeContactId));
+        docs = docs.Where(d => (!HasLinePayees(d) && PayeeInScope(PayeeOf(d), d.IsForeignService, Accounting.Helpers.WhtIncomeCodes.Withheld(d.Lines)))
+            || (HasLinePayees(d) && d.Lines.Any(l => !l.IsDeleted && l.WithholdingTaxAmount > 0
+                && PayeeInScope(LinePayeeOf(d, l), d.IsForeignService, LinePayeeCodes(d, l))))).ToList();
 
         // ── กันนับซ้ำสาย "ตั้งหนี้ → ใบสำคัญจ่าย" — ทั้ง PI/Expense และ PV ที่
         // แปลง/ผูกกัน ถือ WithholdingTaxAmount บนเอกสารทั้งคู่ ⇒ เดิมเข้ารายงาน
@@ -1781,6 +1789,7 @@ public partial class TaxService : ITaxService
         // บาท ก.ค. แต่ ภงด.53 ก.ค. = 0.00). ใช้ทะเบียน cert เป็นแหล่งแรก → สองหน้า
         // reconcile กันเสมอ
         var lineOrder = 1;
+        var certCoveredPairs = new HashSet<(Guid DocumentId, Guid PayeeContactId)>();
         if (report.TaxType is TaxType.WithholdingTax2 or TaxType.WithholdingTax3 or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)
         {
             // ห้าม Include(PayeeContact) — required nav + query filter !IsDeleted
@@ -1872,16 +1881,19 @@ public partial class TaxService : ITaxService
             // เอกสารที่มี cert ใบใดก็ตามครอบแล้ว (ทุกสถานะยกเว้น Voided, เดือนไหน
             // ก็ตาม — จ่าย ก.ค. ใบตั้งหนี้ มิ.ย. แถวจริงอยู่เดือนของ cert; cert
             // ร่างก็มีบรรทัดเตือนของตัวเองแล้ว) → ไม่ mine จากเอกสารซ้ำ
-            var certCoveredDocIds = (await _db.WithholdingTaxCerts.AsNoTracking()
+            var coveringCerts = await _db.WithholdingTaxCerts.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && c.DocumentId != null
                     && c.Status != Models.DTOs.Tax.WithholdingTaxCertStatus.Voided)
-                .Select(c => c.DocumentId!.Value)
-                .ToListAsync())
-                .ToHashSet();
-            docs = docs.Where(d => !certCoveredDocIds.Contains(d.Id)).ToList();
+                .Select(c => new { DocumentId = c.DocumentId!.Value, c.PayeeContactId })
+                .ToListAsync();
+            var certCoveredDocIds = coveringCerts.Select(c => c.DocumentId).ToHashSet();
+            // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ใบที่ออกให้ผู้ถูกหักบางราย ครอบเฉพาะรายนั้น (รายที่ยังไม่มีใบยังขึ้นแถวเตือน)
+            certCoveredPairs = coveringCerts.Select(c => (c.DocumentId, c.PayeeContactId)).ToHashSet();
+            docs = docs.Where(d => !certCoveredDocIds.Contains(d.Id) || HasLinePayees(d)).ToList();
         }
 
         // ═════ ส่วนเสริม: เอกสารมี WHT แต่ยังไม่ออกหนังสือรับรอง ═════
+        // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — แถวเตือนต่อบรรทัดในนามผู้ถูกหักของบรรทัด · ข้ามบรรทัดที่ผู้ถูกหักนั้นมีใบแล้ว/อยู่คนละแบบ
         // **IsExcluded = true ตั้งแต่ generate** (A2): แบบ ภ.ง.ด. นำส่งตามหนังสือ
         // รับรอง 50 ทวิ ที่ออกจริง — ไฟล์ e-Filing นับเฉพาะ cert Issued/Printed
         // อยู่แล้ว ถ้าแถวเตือนนับเข้ายอด ยอดบนจอจะ "เกิน" ไฟล์ยื่นเสมอ (เคสจริง:
@@ -1890,11 +1902,18 @@ public partial class TaxService : ITaxService
         foreach (var doc in docs)
         {
             var payee = PayeeOf(doc);
-            var docWhtLines = doc.Lines.Where(l => l.WithholdingTaxAmount > 0).ToList();
+            var docMultiPayee = HasLinePayees(doc);
+            var docWhtLines = doc.Lines.Where(l => l.WithholdingTaxAmount > 0
+                && (!docMultiPayee
+                    || (PayeeInScope(LinePayeeOf(doc, l), doc.IsForeignService, LinePayeeCodes(doc, l))
+                        && !certCoveredPairs.Contains((doc.Id, Accounting.Helpers.WhtPayeeSplit.LinePayeeOf(
+                            doc.ContactId, doc.WhtPayeeContactId, l.WhtPayeeContactId)))))).ToList();
+            if (docMultiPayee && docWhtLines.Count == 0) continue;
             if (docWhtLines.Count > 0)
             {
                 foreach (var line in docWhtLines)
                 {
+                    if (docMultiPayee) payee = LinePayeeOf(doc, line);
                     // Determine WHT rate from income type or use line rate
                     // ⚠️ ต้องส่ง **ชนิดผู้รับจริง** เข้าไป — เดิม `GetWhtRate` ตั้ง
                     // `payeeIsJuristic: true` ตายตัว ⇒ ดอกเบี้ย 40(4)(ก) ที่จ่ายให้

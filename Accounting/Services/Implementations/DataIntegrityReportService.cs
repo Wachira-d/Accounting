@@ -192,6 +192,9 @@ public class DataIntegrityReportService
             {
                 d.Id, d.DocumentNumber, d.DocumentDate, d.WithholdingTaxAmount, d.IsForeignService, d.ContactId, d.WhtPayeeContactId,
                 Codes = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).Select(l => l.IncomeTypeCode).ToList(),
+                // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — ใบหลายผู้ถูกหักตรวจ "ปน" ต่อราย (ลำดับ/เกณฑ์เดียวกับ Codes)
+                WhtLines = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).OrderBy(l => l.LineOrder)
+                    .Select(l => new { l.WhtPayeeContactId, l.WithholdingTaxAmount, l.IncomeTypeCode }).ToList(),
                 PostedTo21916 = _db.JournalEntryLines.Any(jl => jl.JournalEntry.CompanyId == companyId
                     && jl.JournalEntry.SourceDocumentId == d.Id
                     && jl.JournalEntry.Status == JournalEntryStatus.Posted
@@ -199,7 +202,9 @@ public class DataIntegrityReportService
                     && jl.CreditAmount > 0),
             })
             .ToListAsync();
-        var contactIds = docs.Select(d => Accounting.Helpers.WhtCertIssuePlan.PayeeOf(d.ContactId, d.WhtPayeeContactId)).Distinct().ToList();
+        var contactIds = docs.Select(d => Accounting.Helpers.WhtCertIssuePlan.PayeeOf(d.ContactId, d.WhtPayeeContactId))
+            .Concat(docs.SelectMany(d => d.WhtLines.Where(l => l.WhtPayeeContactId.HasValue).Select(l => l.WhtPayeeContactId!.Value)))
+            .Distinct().ToList();
         var contacts = contactIds.Count == 0
             ? new Dictionary<Guid, Contact>()
             : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
@@ -216,12 +221,24 @@ public class DataIntegrityReportService
                     + "ตอนนี้ระบบจัดใบนี้เป็น ภ.ง.ด.2 (นำส่งจาก 21915) ⇒ โอนยอด 21916 → 21915 ด้วยรายการปรับปรุง หรือให้ผู้ทำบัญชีตัดสินถ้า ภ.ง.ด.3 งวดนั้นยื่นแล้ว",
                     d.WithholdingTaxAmount, null));
             }
-            else if (mix == Accounting.Helpers.ThaiWhtRateTable.Section40_4Mix.Mixed
-                && Accounting.Helpers.WhtPayeeKind.Pnd2MixWarning(d.IsForeignService, payee?.CountryCode, payee?.TaxId,
-                    payee?.ContactType ?? ContactType.Unknown, payee?.Name, d.Codes) is string mixWarn)
+            else if (mix == Accounting.Helpers.ThaiWhtRateTable.Section40_4Mix.Mixed)
             {
-                result.Add(new DataIntegritySuspect("Section40_4MixedDocument", d.Id, d.DocumentNumber, d.DocumentDate,
-                    mixWarn, d.WithholdingTaxAmount, null));
+                // ใบหลายผู้ถูกหัก: แบบตัดสินต่อราย ⇒ "ปน" ต้องปนภายในผู้ถูกหักรายเดียวกัน (ดอกเบี้ยของ ก + ค่าบริการของ ข ไม่ใช่ใบปน)
+                var portions = Accounting.Helpers.WhtPayeeSplit.Portions(d.ContactId, d.WhtPayeeContactId,
+                    d.WhtLines.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
+                    d.WithholdingTaxAmount);
+                var lineCodes = d.WhtLines.Select(l => l.IncomeTypeCode).ToList();
+                foreach (var portion in portions)
+                {
+                    var portionPayee = portions.Count <= 1 ? payee : contacts.GetValueOrDefault(portion.PayeeContactId);
+                    var portionCodes = portions.Count <= 1 ? (IReadOnlyList<string?>)d.Codes
+                        : Accounting.Helpers.WhtIncomeCodes.At(lineCodes, portion.LineIndexes);
+                    if (Accounting.Helpers.WhtPayeeKind.Pnd2MixWarning(d.IsForeignService, portionPayee?.CountryCode, portionPayee?.TaxId,
+                            portionPayee?.ContactType ?? ContactType.Unknown, portionPayee?.Name, portionCodes) is string mixWarn)
+                        result.Add(new DataIntegritySuspect("Section40_4MixedDocument", d.Id, d.DocumentNumber, d.DocumentDate,
+                            portions.Count <= 1 ? mixWarn : $"{portionPayee?.Name ?? "ผู้ถูกหัก"}: {mixWarn}",
+                            portions.Count <= 1 ? d.WithholdingTaxAmount : portion.WithholdingTaxAmount, null));
+                }
             }
         }
 

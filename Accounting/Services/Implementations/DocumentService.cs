@@ -1602,6 +1602,9 @@ public partial class DocumentService : IDocumentService
                 createAmts[i] = ComputeLineAmounts(createLines[i], request.PricesIncludeVat, billAlloc[i]);
             ReconcileTaxRounding(createLines, createAmts, request.PricesIncludeVat);
             var createWhtBorne = ApplyWhtGrossUp(createLines, createAmts, doc.WhtCertType);
+            // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — ตรวจ (ผู้ติดต่อของบริษัทนี้ · เอกสารฝั่งผู้จ่าย) แล้วเก็บแบบ normalize (Helpers/WhtPayeeSplit)
+            var createLinePayees = await ResolveLineWhtPayeesAsync(companyId, doc,
+                createLines.Select(l => (l.WhtPayeeContactId, true, l.WithholdingTaxRate)).ToList());
             int lineIdx = -1;
             foreach (var line in createLines)
             {
@@ -1673,6 +1676,7 @@ public partial class DocumentService : IDocumentService
                     GlAccountAiFeedbackId = line.GlAccountAiFeedbackId,
                     // รอบ 203: ประเภทเงินได้ ม.40 (ตรวจแล้วใน ValidateDocumentLinesAsync) — สร้าง: ไม่ส่ง = ไม่ระบุ
                     IncomeTypeCode = Accounting.Helpers.DocumentLineIncomeType.Decide(line.IncomeTypeCode, null).Code,
+                    WhtPayeeContactId = createLinePayees[lineIdx],
                 });
             }
 
@@ -2970,6 +2974,9 @@ public partial class DocumentService : IDocumentService
             // รอบ 203: ประเภทเงินได้ของบรรทัดเดิม (ลำดับ + คำอธิบาย) ก่อนลบ — ผู้เรียกที่ไม่ส่งช่องนี้ต้องไม่ล้างค่าเดิม
             var prevIncomeTypes = doc.Lines.Where(x => !x.IsDeleted).OrderBy(x => x.LineOrder)
                 .Select(x => ((string?)x.Description, x.IncomeTypeCode)).ToList();
+            // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดเดิม — ผู้เรียกที่ไม่ส่งช่องนี้ (ฟอร์ม/API รุ่นเก่า) ต้องไม่ล้างค่าเดิม
+            var prevLinePayees = doc.Lines.Where(x => !x.IsDeleted).OrderBy(x => x.LineOrder)
+                .Select(x => ((string?)x.Description, x.WhtPayeeContactId)).ToList();
             // ฝ่ายค้าน L3: ปฏิเสธเฉพาะการ "เลือกใหม่" เป็น gov1/1 บนเอกสารฝั่งผู้จ่าย — ค่าเดิมของบรรทัดเดียวกันยังบันทึกซ้ำได้ · ตรวจก่อนลบบรรทัด
             for (var ptIdx = 0; ptIdx < request.Lines.Count; ptIdx++)
             {
@@ -3034,6 +3041,9 @@ public partial class DocumentService : IDocumentService
                 updAmts[i] = ComputeLineAmounts(request.Lines[i], doc.PricesIncludeVat, updBillAlloc[i]);
             ReconcileTaxRounding(request.Lines, updAmts, doc.PricesIncludeVat);
             var updWhtBorne = ApplyWhtGrossUp(request.Lines, updAmts, doc.WhtCertType);
+            var updLinePayees = await ResolveLineWhtPayeesAsync(companyId, doc,
+                request.Lines.Select((l, i) => (Accounting.Helpers.WhtPayeeSplit.RequestedOrKept(l.WhtPayeeContactId, prevLinePayees, i, l.Description),
+                    l.WhtPayeeContactId.HasValue, l.WithholdingTaxRate)).ToList());
             int updLineIdx = -1;
             foreach (var line in request.Lines)
             {
@@ -3104,6 +3114,7 @@ public partial class DocumentService : IDocumentService
                     // รอบ 203: ไม่ส่ง = คงค่าเดิมของบรรทัดเดียวกัน (ฟอร์ม/API รุ่นเก่าต้องไม่ล้างประเภทที่ OCR เติมไว้) · "" = ล้าง
                     IncomeTypeCode = Accounting.Helpers.DocumentLineIncomeType.Decide(line.IncomeTypeCode,
                         Accounting.Helpers.DocumentLineIncomeType.KeptFromPrevious(prevIncomeTypes, updLineIdx, line.Description)).Code,
+                    WhtPayeeContactId = updLinePayees[updLineIdx],
                 });
             }
 
@@ -3583,6 +3594,33 @@ public partial class DocumentService : IDocumentService
             throw new BusinessRuleException("ไม่พบผู้ถูกหักภาษีที่เลือก (ต้องเป็นผู้ติดต่อของบริษัทนี้ที่ยังใช้งานอยู่) — เลือกใหม่",
                 Accounting.Helpers.WhtCertIssuePlan.PayeeRuleCode);
         return payeeId;
+    }
+
+    /// <summary>รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดที่จะเก็บ — ค่าที่ผู้เรียก<b>ส่งมา</b>ต้องเป็นผู้ติดต่อของบริษัทนี้ที่ยังใช้งาน และใช้ได้เฉพาะเอกสาร
+    /// ฝั่งผู้จ่าย (ห้ามรับแล้วไม่มีผล — silent no-op) · ค่าที่คงจากบรรทัดเดิมไม่ตรวจซ้ำ (ผู้ติดต่อที่ถูกลบภายหลังต้องไม่ทำให้แก้ใบไม่ได้) ·
+    /// normalize ด้วย <see cref="Accounting.Helpers.WhtPayeeSplit.NormalizeLineOverride"/> (ตรงกับหัวเอกสาร/ไม่มีอัตราหัก ⇒ null)</summary>
+    private async Task<List<Guid?>> ResolveLineWhtPayeesAsync(Guid companyId, Document doc,
+        IReadOnlyList<(Guid? Value, bool Explicit, decimal Rate)> lines)
+    {
+        var payerSide = Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType);
+        var docPayee = Accounting.Helpers.WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+        var asked = lines.Where(l => l.Explicit && l.Value is Guid g && g != Guid.Empty && g != docPayee)
+            .Select(l => l.Value!.Value).Distinct().ToList();
+        if (asked.Count > 0)
+        {
+            if (!payerSide)
+                throw new BusinessRuleException(
+                    $"{DocTypeLabel(doc.DocumentType)}ไม่ใช่เอกสารที่บริษัทเป็นผู้หักภาษี ณ ที่จ่าย — ตั้ง \"ผู้ถูกหักภาษีรายบรรทัด\" ได้เฉพาะใบสำคัญจ่าย/ค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ/ใบรับรองแทนใบเสร็จ",
+                    Accounting.Helpers.WhtPayeeSplit.RuleCode);
+            var found = await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && asked.Contains(c.Id))
+                .Select(c => c.Id).ToListAsync();
+            if (found.Count != asked.Count)
+                throw new BusinessRuleException("ไม่พบผู้ถูกหักภาษีรายบรรทัดที่เลือก (ต้องเป็นผู้ติดต่อของบริษัทนี้ที่ยังใช้งานอยู่) — เลือกใหม่",
+                    Accounting.Helpers.WhtPayeeSplit.RuleCode);
+        }
+        return lines.Select(l => Accounting.Helpers.WhtPayeeSplit.NormalizeLineOverride(
+            doc.ContactId, doc.WhtPayeeContactId, l.Value, payerSide, l.Rate)).ToList();
     }
 
     /// <summary>snapshot สภาพเอกสารทั้งใบเป็น JSON โครงคงที่ — เก็บลง
@@ -6950,6 +6988,17 @@ public partial class DocumentService : IDocumentService
                         companyId, doc.Id, Accounting.Helpers.WhtCertIssueTrigger.Approve, approvedBy,
                         doc.PaymentDate ?? doc.DocumentDate, paidAtTrigger: whtPaidOnApprove);
 
+                // ===== รอบ 204 (ข้อ 142): ใบลดหนี้ซื้อลดภาษีหัก ณ ที่จ่าย หลังออก 50 ทวิ แล้ว =====
+                // JE ของใบลดหนี้ลดหนี้ 2191x ไปแล้ว ⇒ 50 ทวิ ของใบต้นทางต้องตาม: ยกเลิก+ออกใหม่เดือนภาษีเดิม (เดือนยังไม่ยื่น) ·
+                // ระบบตัดสินแทนไม่ได้ ⇒ ป้าย "50 ทวิ ต้องตรวจ" บนใบต้นทาง + ลิสต์รอออกใบ + audit · ไม่ throw (การอนุมัติใบลดหนี้ไม่ล้มตาม)
+                if (doc.DocumentType == DocumentType.CreditNote && doc.RelatedDocumentId.HasValue
+                    && doc.WithholdingTaxAmount > 0 && _whtService != null)
+                {
+                    foreach (var whtCnNotice in await _whtService.AdjustCertsForCreditNoteAsync(companyId, doc.Id, approvedBy,
+                                 Guid.TryParse(approvedBy, out var cnApprover) ? cnApprover : null))
+                        AppendInternalNote(doc, "[WHT-CN] " + whtCnNotice);
+                }
+
                 if (!doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
                 {
                     await ApplyProjectBillingAsync(companyId, doc, +1);
@@ -7786,6 +7835,222 @@ public partial class DocumentService : IDocumentService
             lineId, doc.DocumentNumber, oldAccount.AccountCode, newAccount.AccountCode, actor);
 
         return await GetDocumentAsync(companyId, documentId);
+    }
+
+    /// <summary>
+    /// **เปลี่ยนผู้ถูกหักภาษีหลังอนุมัติ** (ข้อเสนอ 145 · เจ้าของอนุมัติข้อ 148 · รอบ 204) — การกระทำที่ตั้งใจ ไม่ใช่แก้คอลัมน์เฉย ๆ:
+    /// <list type="number">
+    /// <item>ตัวตัดสิน <see cref="WhtPayeeChangePlan.BlockReason"/> (ฝั่งผู้จ่าย · อนุมัติแล้ว · มีเหตุผล · มีอะไรเปลี่ยน) + ด่านยื่นแล้ว:
+    /// 50 ทวิ ที่จะยกเลิกอยู่ในแบบที่ยื่น/นำส่งแล้ว (<see cref="WhtCertVoidGuard"/>) หรือแบบเดิม/แบบใหม่ของเดือนภาษีนั้นยื่น/นำส่งแล้ว ⇒ 409 (ยื่นเพิ่มเติม — คนตัดสิน)</item>
+    /// <item>หนี้ WHT ที่ลงไว้จริงของเอกสาร (ผัง 21916/21917/21918 จาก JE ของใบนี้) ย้ายผังด้วย JE ปรับปรุงเมื่อแบบเปลี่ยน (3↔53↔54) — ไม่เปลี่ยนยอด</item>
+    /// <item>ยกเลิก 50 ทวิ ของผู้ถูกหักที่เปลี่ยน (audit พร้อมเหตุผล) → เก็บผู้ถูกหักใหม่ (audit ก่อน/หลัง) → ออกใบใหม่เดือนภาษีเดิม (ล้ม = ป้าย + ลิสต์รอออกใบ)</item>
+    /// </list>
+    /// ทุกอย่างก่อนออกใบใหม่อยู่ในธุรกรรมเดียว — ล้มกลางทาง = ไม่มีอะไรถูกเขียน
+    /// </summary>
+    public async Task<ChangeWhtPayeeResponse> ChangeWhtPayeeAsync(Guid companyId, Guid documentId,
+        ChangeWhtPayeeRequest request, string actor, Guid? userId)
+    {
+        if (_whtService == null)
+            throw new InvalidOperationException("บริการหนังสือรับรองหัก ณ ที่จ่ายไม่พร้อม — เปลี่ยนผู้ถูกหักไม่ได้");
+        var doc = await _db.Documents.Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        await _db.HydrateContactAsync(companyId, doc);
+        var payerSide = WhtCertIssuePlan.AppliesTo(doc.DocumentType);
+        var lines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+
+        // ── ปลายทาง: ผู้ถูกหักหัวเอกสาร + รายบรรทัด (normalize ตัวเดียวกับฟอร์มแก้ไข) ──
+        var newDocPayee = WhtCertIssuePlan.NormalizeOverride(doc.ContactId, request.WhtPayeeContactId);
+        var asked = (request.Lines ?? new List<ChangeWhtPayeeLine>()).GroupBy(l => l.LineId)
+            .ToDictionary(g => g.Key, g => g.Last().WhtPayeeContactId);
+        if (asked.Keys.Any(id => lines.All(l => l.Id != id)))
+            throw new BusinessRuleException("บรรทัดที่ระบุไม่อยู่ในเอกสารนี้", WhtPayeeChangePlan.RuleCode);
+        var newLinePayees = lines.ToDictionary(l => l.Id, l => WhtPayeeSplit.NormalizeLineOverride(doc.ContactId, newDocPayee,
+            asked.TryGetValue(l.Id, out var req) ? req : l.WhtPayeeContactId, payerSide, l.WithholdingTaxRate));
+        var wantedIds = newLinePayees.Values.Where(v => v.HasValue).Select(v => v!.Value)
+            .Concat(newDocPayee.HasValue ? new[] { newDocPayee.Value } : Array.Empty<Guid>()).Distinct().ToList();
+        var foundIds = await _db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && wantedIds.Contains(c.Id)).Select(c => c.Id).ToListAsync();
+        if (foundIds.Count != wantedIds.Count)
+            throw new BusinessRuleException("ไม่พบผู้ถูกหักภาษีที่เลือก (ต้องเป็นผู้ติดต่อของบริษัทนี้ที่ยังใช้งานอยู่) — เลือกใหม่",
+                WhtPayeeChangePlan.RuleCode);
+
+        var oldPortions = WhtPayeeSplit.Portions(doc.ContactId, doc.WhtPayeeContactId,
+            lines.Select(l => new WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(), doc.WithholdingTaxAmount);
+        var newPortions = WhtPayeeSplit.Portions(doc.ContactId, newDocPayee,
+            lines.Select(l => new WhtPayeeLine(newLinePayees[l.Id], l.WithholdingTaxAmount)).ToList(), doc.WithholdingTaxAmount);
+        var anythingChanges = newDocPayee != doc.WhtPayeeContactId || lines.Any(l => newLinePayees[l.Id] != l.WhtPayeeContactId);
+
+        // ผู้ถูกหักที่ "ส่วน" เปลี่ยน (หาย/ยอดเปลี่ยน) ⇒ ใบของเขาต้องยกเลิก · ใบรายเดียว = ใบทุกใบของเอกสาร (เหมือนกติกาครอบระดับเอกสาร)
+        var unchangedPayees = oldPortions.Where(o => newPortions.Any(n => n.PayeeContactId == o.PayeeContactId
+            && n.WithholdingTaxAmount == o.WithholdingTaxAmount)).Select(o => o.PayeeContactId).ToHashSet();
+        var activeCerts = await _db.WithholdingTaxCerts
+            .Where(w => w.CompanyId == companyId && w.DocumentId == doc.Id && w.Status != WithholdingTaxCertStatus.Voided)
+            .ToListAsync();
+        var certsToVoid = anythingChanges
+            ? activeCerts.Where(c => !WhtPayeeSplit.IsMultiPayee(oldPortions) && !WhtPayeeSplit.IsMultiPayee(newPortions)
+                    || !unchangedPayees.Contains(c.PayeeContactId)).ToList()
+            : new List<WithholdingTaxCert>();
+
+        // ── ด่านยื่นแล้ว: รายใบ + รายงวด (แบบของผู้ถูกหักเดิมและใหม่ ในเดือนภาษีของการจ่าย) ──
+        var payeeIds = oldPortions.Concat(newPortions).Select(p => p.PayeeContactId).Distinct().ToList();
+        var payeeContacts = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && payeeIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+        // แบบของผู้ถูกหักตัดสินด้วยรหัสเงินได้ของ "บรรทัดของรายนั้น" (ภ.ง.ด.2 ต่อราย · รอบ 204 ทีม T3) — ส่วนเดิม/ส่วนใหม่สร้างจาก `lines` ลำดับเดียวกัน
+        TaxType FormOf(WhtPayeePortion portion)
+        {
+            var c = payeeContacts.GetValueOrDefault(portion.PayeeContactId);
+            return WhtPayeeKind.ResolveForm(doc.IsForeignService, c?.CountryCode, c?.TaxId, c?.ContactType ?? ContactType.Unknown, c?.Name,
+                WhtIncomeCodes.WithheldAt(lines, portion.LineIndexes));
+        }
+        var touchedForms = oldPortions.Concat(newPortions).Where(p => !unchangedPayees.Contains(p.PayeeContactId))
+            .Select(FormOf).Distinct().ToList();
+        var taxDate = doc.PaymentDate ?? doc.DocumentDate;
+        string? filed = null;
+        if (anythingChanges)
+            filed = await WhtCertVoidGuard.CheckAsync(_db, companyId, certsToVoid.Select(c => c.Id).ToList())
+                ?? await WhtPayeeChangePlan.PeriodFiledReasonAsync(_db, companyId, touchedForms, taxDate.Year, taxDate.Month);
+        if (WhtPayeeChangePlan.BlockReason(payerSide, doc.Status, doc.WithholdingTaxAmount, request.Reason, anythingChanges, filed) is string block)
+            throw new BusinessRuleException(block, WhtPayeeChangePlan.RuleCode, 409);
+
+        // ── หนี้ WHT ที่ลงไว้จริงและยังมีผล (JE ของเอกสารนี้ที่ไม่ถูกกลับ และไม่ใช่ตัวกลับ — กติกาเดียวกับรายงาน ภ.ง.ด.) → ปลายทางตามผู้ถูกหักใหม่ ──
+        var payableCodes = WhtPayableAccount.DocumentPayableCodes.ToArray();   // 21915/21916/21917/21918 — ชุดเดียว (ภ.ง.ด.2 รวมด้วย)
+        var posted = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntry.CompanyId == companyId && l.JournalEntry.SourceDocumentId == doc.Id
+                && !l.JournalEntry.IsDeleted && !l.IsDeleted
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.JournalEntry.ReversedByEntryId == null && l.JournalEntry.OriginalEntryId == null
+                && payableCodes.Contains(l.Account.AccountCode))
+            .GroupBy(l => l.Account.AccountCode)
+            .Select(g => new { Code = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+            .ToListAsync();
+        var current = posted.Where(p => p.Net != 0m).ToDictionary(p => p.Code, p => p.Net);
+        var postedTotal = current.Values.Sum();
+        var target = new Dictionary<string, decimal>();
+        foreach (var (payeeId, part) in WhtPayeeSplit.Allocate(newPortions, postedTotal))
+        {
+            var newPortion = newPortions.First(np => np.PayeeContactId == payeeId);
+            var acc = await ResolveWhtPayableAccountAsync(companyId, payeeContacts.GetValueOrDefault(payeeId), doc.IsForeignService,
+                    WhtIncomeCodes.WithheldAt(lines, newPortion.LineIndexes))
+                ?? throw new BusinessRuleException("ไม่พบผังภาษีหัก ณ ที่จ่ายค้างจ่าย (21915/21916/21917/21918) สำหรับผู้ถูกหักรายใหม่ — สร้างผังก่อน",
+                    WhtPayeeChangePlan.RuleCode);
+            target[acc.AccountCode] = target.GetValueOrDefault(acc.AccountCode) + part;
+        }
+        var deltas = postedTotal == 0m ? Array.Empty<(string AccountCode, decimal Delta)>() : WhtPayeeChangePlan.PayableDeltas(current, target);
+
+        var notices = new List<string>();
+        if (postedTotal == 0m)
+            notices.Add(doc.RelatedDocumentId.HasValue
+                ? "หนี้ภาษีหัก ณ ที่จ่ายของใบนี้ตั้งไว้ที่เอกสารต้นทาง (หรือยังไม่ลงบัญชี) — ไม่ได้ย้ายผัง ตรวจผัง 2191x ของเอกสารต้นทางเองถ้าแบบเปลี่ยน"
+                : "ยังไม่มีรายการหนี้ภาษีหัก ณ ที่จ่ายของใบนี้ในบัญชี — ไม่ได้ย้ายผัง");
+
+        // ช่วงที่จะยกเลิกใบ: เก็บยอดต่องวดจ่ายไว้ออกใบใหม่เท่ายอดเดิม (งวดละใบ · เดือนภาษีเดิม)
+        var reissuePlan = certsToVoid
+            .Select(c => new { c.SourcePaymentId, c.TaxYear, c.TaxMonth })
+            .Distinct()
+            .Select(k => new
+            {
+                k.SourcePaymentId,
+                PaymentDate = activeCerts.Where(c => c.SourcePaymentId == k.SourcePaymentId && c.TaxYear == k.TaxYear && c.TaxMonth == k.TaxMonth)
+                    .Select(c => (DateTime?)new DateTime(c.TaxYear, c.TaxMonth, 1)).First(),
+                PaymentWht = k.SourcePaymentId == null ? (decimal?)null
+                    : activeCerts.Where(c => c.SourcePaymentId == k.SourcePaymentId).Sum(c => c.TotalTaxAmount),
+            }).ToList();
+        var voidIds = certsToVoid.Select(c => c.Id).ToList();
+        var certLinePaymentDates = await _db.WithholdingTaxCertLines.AsNoTracking()
+            .Where(l => voidIds.Contains(l.WithholdingTaxCertId))
+            .Select(l => new { l.WithholdingTaxCertId, l.PaymentDate }).ToListAsync();
+
+        string? adjustmentNumber = null;
+        var voidedNumbers = new List<string>();
+        await using (var tx = await _db.Database.BeginTransactionAsync())
+        {
+            if (deltas.Count > 0)
+            {
+                var entryDate = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+                if (await Journal.JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, entryDate) is string closed)
+                    throw new BusinessRuleException(closed, WhtPayeeChangePlan.RuleCode, 409);
+                var builder = Journal.JournalEntryBuilder.For(_db, companyId, entryDate)
+                    .Description($"ย้ายหนี้ภาษีหัก ณ ที่จ่ายตามผู้ถูกหักที่เปลี่ยน — {doc.DocumentNumber} • {request.Reason.Trim()}")
+                    .Reference(doc.DocumentNumber)
+                    .SourceDocument(doc.Id)
+                    .Project(doc.ProjectId);
+                foreach (var (code, delta) in deltas)
+                {
+                    var acc = await FindAccountAsync(companyId, code)
+                        ?? throw new BusinessRuleException($"ไม่พบผังบัญชี {code}", WhtPayeeChangePlan.RuleCode);
+                    builder = delta > 0m
+                        ? builder.Credit(acc.Id, delta, $"Cr {code} — ภาษีหัก ณ ที่จ่ายค้างจ่าย (ผู้ถูกหักใหม่)")
+                        : builder.Debit(acc.Id, -delta, $"Dr {code} — ภาษีหัก ณ ที่จ่ายค้างจ่าย (ผู้ถูกหักเดิม)");
+                }
+                adjustmentNumber = (await builder.PostAsync(actor)).EntryNumber;
+            }
+
+            foreach (var c in certsToVoid)
+            {
+                c.Status = WithholdingTaxCertStatus.Voided;
+                c.UpdatedAt = DateTime.UtcNow;
+                c.UpdatedBy = actor;
+                voidedNumbers.Add(c.CertificateNumber);
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
+                    EntityType = "WithholdingTaxCert", EntityId = c.Id.ToString(),
+                    OldValues = System.Text.Json.JsonSerializer.Serialize(new { c.CertificateNumber, Status = "Issued", c.PayeeContactId, c.TotalTaxAmount }),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        Status = "Voided", Reason = request.Reason.Trim(), RuleCode = WhtPayeeChangePlan.RuleCode,
+                        LegalReference = "ท.ป.4/2528 (50 ทวิ ต้องออกในนามผู้มีเงินได้)", DocumentNumber = doc.DocumentNumber,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+            }
+
+            var before = new { doc.WhtPayeeContactId, Lines = lines.Select(l => new { l.Id, l.WhtPayeeContactId }).ToList() };
+            doc.WhtPayeeContactId = newDocPayee;
+            foreach (var l in lines) l.WhtPayeeContactId = newLinePayees[l.Id];
+            doc.InternalNotes = WhtCertAutoFailedNote.Clear(doc.InternalNotes);
+            doc.UpdatedAt = DateTime.UtcNow;
+            doc.UpdatedBy = actor;
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
+                EntityType = "Document", EntityId = doc.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    WhtPayeeContactId = newDocPayee,
+                    Lines = lines.Select(l => new { l.Id, l.WhtPayeeContactId }).ToList(),
+                    Reason = request.Reason.Trim(), RuleCode = WhtPayeeChangePlan.RuleCode,
+                    VoidedCertificates = voidedNumbers, AdjustmentJournal = adjustmentNumber,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+
+        // ── ออกใบใหม่ (นอกธุรกรรม — ล้ม = ป้ายบนเอกสาร + ลิสต์รอออกใบ ไม่ย้อนการเปลี่ยน) · เดือนภาษีเดิม (วันจ่ายบนใบเดิม) ──
+        var issued = new List<string>();
+        foreach (var r in reissuePlan)
+        {
+            var oldCertIds = certsToVoid.Where(c => c.SourcePaymentId == r.SourcePaymentId).Select(c => c.Id).ToList();
+            var payDate = certLinePaymentDates.Where(x => oldCertIds.Contains(x.WithholdingTaxCertId))
+                .Select(x => (DateTime?)x.PaymentDate).FirstOrDefault() ?? r.PaymentDate;
+            var outcome = await _whtService.TryAutoIssueForDocumentAsync(companyId, doc.Id, WhtCertIssueTrigger.Manual, actor,
+                payDate, r.SourcePaymentId, r.PaymentWht);
+            if (outcome.CertificateIds is { Count: > 0 } ids)
+                issued.AddRange(await _db.WithholdingTaxCerts.AsNoTracking()
+                    .Where(w => w.CompanyId == companyId && ids.Contains(w.Id)).Select(w => w.CertificateNumber).ToListAsync());
+            else if (outcome.CertificateNumber is string num) issued.Add(num);
+            if (outcome.UserNotice is string notice) notices.Add(notice);
+        }
+        if (certsToVoid.Count == 0 && anythingChanges)
+            notices.Add("ยังไม่มี 50 ทวิ ของผู้ถูกหักที่เปลี่ยน — ระบบจะออกในนามผู้ถูกหักใหม่ตอนจ่าย/ที่ลิสต์รอออกใบ");
+
+        _logger.LogInformation("เปลี่ยนผู้ถูกหักภาษี {Doc}: ยกเลิก {Voided} ออกใหม่ {Issued} JE {Je} โดย {Actor}",
+            doc.DocumentNumber, string.Join(",", voidedNumbers), string.Join(",", issued), adjustmentNumber, actor);
+        return new ChangeWhtPayeeResponse(voidedNumbers, issued, adjustmentNumber, notices);
     }
 
     /// <summary>
@@ -10570,6 +10835,13 @@ public partial class DocumentService : IDocumentService
                     _logger.LogWarning(
                         "VoidPayment {Doc}: หนังสือรับรอง 50 ทวิ {Cert} สถานะ {Status} ยังไม่ถูกยกเลิก — ออกให้ผู้ถูกหักแล้ว กรุณายกเลิก/ออกใหม่ด้วยตนเอง",
                         doc.DocumentNumber, cert.CertificateNumber, cert.Status);
+                    // รอบ 204 (ข้อ 145 · ช่องโหว่ "ยกเลิกการจ่ายหลังออกใบ แค่ log"): ล้มดังที่ตัวเอกสาร + ลิสต์รอออกใบ + audit —
+                    // ใบออกให้ผู้ถูกหักแล้ว ห้ามยกเลิกเงียบ ⇒ ให้คนตัดสิน (ยกเลิกใบ / ยื่นเพิ่มเติมถ้ายื่นแล้ว)
+                    if (_whtService != null)
+                        await _whtService.FlagReviewAsync(companyId, doc,
+                            $"ยกเลิกการชำระ {payment.PaymentNumber} แต่ 50 ทวิ {cert.CertificateNumber} ออกให้ผู้ถูกหักแล้ว — "
+                            + "ยกเลิกใบนี้ที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" (ถ้ายื่นแบบเดือนนั้นแล้วต้องยื่นเพิ่มเติม) แล้วกด \"รับทราบ\"",
+                            save: false);
                 }
             }
         }
@@ -10825,6 +11097,12 @@ public partial class DocumentService : IDocumentService
                     _logger.LogWarning(
                         "VoidPayment {PayNo}: หนังสือรับรอง 50 ทวิ {Cert} สถานะ {Status} ยังไม่ถูกยกเลิก — ออกให้ผู้ถูกหักแล้ว กรุณายกเลิก/ออกใหม่ด้วยตนเอง",
                         pn, cert.CertificateNumber, cert.Status);
+                    // รอบ 204: ล้มดังที่ตัวเอกสาร (ตัวเดียวกับเส้นใบเดียว)
+                    if (_whtService != null && cert.DocumentId is Guid certDocId && docMap.TryGetValue(certDocId, out var certDoc))
+                        await _whtService.FlagReviewAsync(companyId, certDoc,
+                            $"ยกเลิกการชำระ {pn} แต่ 50 ทวิ {cert.CertificateNumber} ออกให้ผู้ถูกหักแล้ว — "
+                            + "ยกเลิกใบนี้ที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" (ถ้ายื่นแบบเดือนนั้นแล้วต้องยื่นเพิ่มเติม) แล้วกด \"รับทราบ\"",
+                            save: false);
                 }
             }
         }
@@ -11842,6 +12120,9 @@ public partial class DocumentService : IDocumentService
                 : null,
             // ฝ่ายค้าน M4: ประเภทเงินได้ ม.40 รายบรรทัดต้องตามไปกับอัตรา WHT (เดิมหาย ⇒ 50 ทวิ ของใบปลายทางตก "8" เสมอ)
             IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(s.Line.IncomeTypeCode,
+                Accounting.Helpers.WhtCertIssuePlan.AppliesTo(targetType)),
+            // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดสืบทอด (ใบแจ้งหนี้ซื้อ → ใบสำคัญจ่าย) · ปลายทางฝั่งอื่น = null
+            WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritLinePayee(s.Line.WhtPayeeContactId,
                 Accounting.Helpers.WhtCertIssuePlan.AppliesTo(targetType)))).ToList();
 
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
@@ -14369,6 +14650,88 @@ public partial class DocumentService : IDocumentService
         return null;
     }
 
+    /// <summary>รอบ 204 (ข้อ 143): ส่วนของผู้ถูกหักของเอกสาร (ตัวแบ่งเดียว <see cref="Accounting.Helpers.WhtPayeeSplit"/>) —
+    /// ใบลดหนี้/เพิ่มหนี้ที่อ้างใบฝั่งผู้จ่าย: ผู้ถูกหักมาจาก<b>ใบต้นทาง</b> (บรรทัดที่อ้าง SourceLineId → ผู้ถูกหักของบรรทัดต้นทาง ·
+    /// ไม่อ้าง = ผู้ถูกหักหัวเอกสารต้นทาง) เพราะใบลดหนี้ตั้งผู้ถูกหักเองไม่ได้ และต้องกลับรายการเข้าผังเดียวกับที่ใบต้นทางตั้งไว้</summary>
+    internal async Task<IReadOnlyList<Accounting.Helpers.WhtPayeePortion>> WhtPayeePortionsAsync(Guid companyId, Document doc)
+        => (await WhtPayeePortionsWithLinesAsync(companyId, doc)).Portions;
+
+    /// <summary>ส่วนของผู้ถูกหัก + บรรทัดของเอกสาร<b>ลำดับเดียวกับที่ส่งเข้าตัวแบ่ง</b> (<c>WhtPayeePortion.LineIndexes</c> ชี้เข้ารายการนี้) —
+    /// ให้ผู้เรียกหยิบรหัสเงินได้ของบรรทัดที่หักของผู้ถูกหักแต่ละราย (<see cref="Accounting.Helpers.WhtIncomeCodes.WithheldAt"/> · ภ.ง.ด.2/21915 ต่อราย)</summary>
+    private async Task<(IReadOnlyList<Accounting.Helpers.WhtPayeePortion> Portions, IReadOnlyList<DocumentLine> Lines)> WhtPayeePortionsWithLinesAsync(
+        Guid companyId, Document doc)
+    {
+        // บางเส้น (บันทึกจ่าย) โหลดเอกสารมาโดยไม่มีบรรทัด — ห้ามตีความว่า "ไม่มีบรรทัดหัก" (ใบหลายผู้ถูกหักจะลงผังเดียวผิดคน)
+        var docLines = (doc.Lines.Count > 0 || doc.WithholdingTaxAmount == 0m
+            ? doc.Lines.Where(l => !l.IsDeleted).ToList()
+            : await _db.DocumentLines.AsNoTracking()
+                .Where(l => l.DocumentId == doc.Id && l.Document.CompanyId == companyId).ToListAsync())
+            .OrderBy(l => l.LineOrder).ToList();
+        if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote && doc.RelatedDocumentId is Guid srcId)
+        {
+            var src = await _db.Documents.AsNoTracking().Include(d => d.Lines)
+                .FirstOrDefaultAsync(d => d.Id == srcId && d.CompanyId == companyId);
+            if (src != null && Accounting.Helpers.WhtCertIssuePlan.AppliesTo(src.DocumentType))
+            {
+                var srcLinePayee = src.Lines.ToDictionary(l => l.Id,
+                    l => Accounting.Helpers.WhtPayeeSplit.LinePayeeOf(src.ContactId, src.WhtPayeeContactId, l.WhtPayeeContactId));
+                return (Accounting.Helpers.WhtPayeeSplit.Portions(src.ContactId, src.WhtPayeeContactId,
+                    docLines
+                        .Select(l => new Accounting.Helpers.WhtPayeeLine(
+                            l.SourceLineId is Guid sl && srcLinePayee.TryGetValue(sl, out var p) ? p : null,
+                            l.WithholdingTaxAmount)).ToList(),
+                    doc.WithholdingTaxAmount), docLines);
+            }
+        }
+        return (Accounting.Helpers.WhtPayeeSplit.Portions(doc.ContactId, doc.WhtPayeeContactId,
+            docLines
+                .Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
+            doc.WithholdingTaxAmount), docLines);
+    }
+
+    /// <summary>รอบ 204 (ข้อ 143): ผังหนี้ WHT (21916/21917/21918) <b>ต่อผู้ถูกหัก</b> ของยอด <paramref name="amount"/> (เฉลี่ยตามสัดส่วนของแต่ละผู้ถูกหัก ·
+    /// Σ = ยอดที่ขอเป๊ะ · ผู้ถูกหักที่ลงผังเดียวกันรวมเป็นบรรทัดเดียว) — ทุกจุดที่ JE ลง/กลับหนี้ WHT ฝั่งผู้จ่ายอ่านที่นี่ ·
+    /// ใบผู้ถูกหักรายเดียว = ผู้ถูกหักตัวเดิม (<c>LoadWhtPayeeAsync</c>) ผังเดียว ยอดเดียว — <b>JE เดิมทุกประการ</b> ·
+    /// ผังไม่พบ = ข้ามส่วนนั้น (พฤติกรรมเดิมของผังเดี่ยว — ด่านสมดุล JE ล้มดังเอง)</summary>
+    private async Task<List<(ChartOfAccount Account, decimal Amount)>> ResolveWhtPayableSplitAsync(Guid companyId, Document doc, decimal amount)
+    {
+        var result = new List<(ChartOfAccount Account, decimal Amount)>();
+        if (amount == 0m) return result;
+        var (portions, portionLines) = await WhtPayeePortionsWithLinesAsync(companyId, doc);
+        if (portions.Count <= 1)
+        {
+            var onlyPayee = portions.Count == 1 ? portions[0].PayeeContactId
+                : Accounting.Helpers.WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+            var payeeContact = onlyPayee == Accounting.Helpers.WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId)
+                ? await _db.LoadWhtPayeeAsync(companyId, doc)
+                : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == onlyPayee);
+            // ใบรายเดียว: รหัสเงินได้ของทุกบรรทัดที่หัก (ภ.ง.ด.2 ⇒ 21915) — ตัวโหลดเดียวกับเส้นเดิม (รอบ 204 ทีม T3)
+            if (await ResolveWhtPayableAccountAsync(companyId, payeeContact, doc.IsForeignService,
+                    await _db.LoadWithheldAsync(companyId, doc)) is { } single)
+                result.Add((single, amount));
+            return result;
+        }
+        var ids = portions.Select(p => p.PayeeContactId).ToList();
+        var contacts = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && ids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id);
+        var codesOf = portions.ToDictionary(p => p.PayeeContactId,
+            p => Accounting.Helpers.WhtIncomeCodes.WithheldAt(portionLines, p.LineIndexes));
+        foreach (var (payeeId, part) in Accounting.Helpers.WhtPayeeSplit.Allocate(portions, amount))
+        {
+            if (part == 0m) continue;
+            // ใบหลายผู้ถูกหัก: แบบ/ผังตัดสินต่อราย ด้วยรหัสเงินได้ของ "บรรทัดของรายนั้น" เท่านั้น (ดอกเบี้ยของบุคคล ก ⇒ 21915 แม้ใบมีค่าบริการของบุคคล ข)
+            var acct = await ResolveWhtPayableAccountAsync(companyId, contacts.GetValueOrDefault(payeeId), doc.IsForeignService,
+                codesOf.GetValueOrDefault(payeeId) ?? Array.Empty<string?>());
+            if (acct == null) continue;
+            var at = result.FindIndex(r => r.Account.Id == acct.Id);
+            if (at >= 0) result[at] = (result[at].Account, result[at].Amount + part);
+            else result.Add((acct, part));
+        }
+        return result;
+    }
+
     /// <summary>Get (creating once if absent) the "goods received not
     /// invoiced" accrual account (21240) used by the 3-way-match GRN flow.
     /// Auto-creating it means the feature works for existing companies whose
@@ -16730,19 +17093,21 @@ public partial class DocumentService : IDocumentService
             {
                 // Sales: WHT-Asset 11910 (we got withheld); Purchase: WHT-Payable
                 // by counterparty type (Individual→ภ.ง.ด.3 21916, Juristic→ภ.ง.ด.53 21917).
-                var whtAcc = isPurchaseSide
-                    ? await ResolveWhtPayableAccountAsync(companyId, await _db.LoadWhtPayeeAsync(companyId, doc), doc.IsForeignService,
-                        await _db.LoadWithheldAsync(companyId, doc))
-                    : await FindAccountAsync(companyId, "11910");
-                if (whtAcc != null)
+                // รอบ 204 (ข้อ 143): ฝั่งซื้อแบ่งตามผู้ถูกหัก (ผู้ถูกหักมาจากใบต้นทาง — ใบรายเดียว = ผังเดียวเหมือนเดิม)
+                var whtSplit = isPurchaseSide
+                    ? await ResolveWhtPayableSplitAsync(companyId, doc, doc.WithholdingTaxAmount)
+                    : await FindAccountAsync(companyId, "11910") is { } whtAssetAcc
+                        ? new List<(ChartOfAccount Account, decimal Amount)> { (whtAssetAcc, doc.WithholdingTaxAmount) }
+                        : new List<(ChartOfAccount Account, decimal Amount)>();
+                foreach (var (whtAcc, whtAmt) in whtSplit)
                 {
                     // WHT-Asset behaves like revenue (sales) — opposite for purchase
                     // Sales CN→Cr WHT (reverse claim), DN→Dr WHT (add claim)
                     // Purch CN→Dr WHT-Payable (reverse), DN→Cr WHT-Payable (add)
                     var whtIsDebit = isPurchaseSide ? isCreditNote : !isCreditNote;
                     AddLine(whtAcc.Id,
-                        whtIsDebit ? doc.WithholdingTaxAmount : 0,
-                        whtIsDebit ? 0 : doc.WithholdingTaxAmount,
+                        whtIsDebit ? whtAmt : 0,
+                        whtIsDebit ? 0 : whtAmt,
                         $"{typeLabel} ภาษีหัก ณ ที่จ่าย");
                 }
             }
@@ -16809,10 +17174,9 @@ public partial class DocumentService : IDocumentService
                             $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
                     if (thisWht > 0)
                     {
-                        var whtAcc = await ResolveWhtPayableAccountAsync(companyId, await _db.LoadWhtPayeeAsync(companyId, doc), doc.IsForeignService,
-                        await _db.LoadWithheldAsync(companyId, doc));
-                        if (whtAcc != null)
-                            AddLine(whtAcc.Id, 0, thisWht, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
+                        // รอบ 204 (ข้อ 143): แบ่งผังตามผู้ถูกหัก (ใบรายเดียว = บรรทัดเดียวเหมือนเดิม)
+                        foreach (var (whtAcc, whtAmt) in await ResolveWhtPayableSplitAsync(companyId, doc, thisWht))
+                            AddLine(whtAcc.Id, 0, whtAmt, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)");
                     }
                 }
                 else
@@ -16860,10 +17224,9 @@ public partial class DocumentService : IDocumentService
 
             if (doc.WithholdingTaxAmount > 0)
             {
-                var whtAcc = await ResolveWhtPayableAccountAsync(companyId, await _db.LoadWhtPayeeAsync(companyId, doc), doc.IsForeignService,
-                        await _db.LoadWithheldAsync(companyId, doc));
-                if (whtAcc != null)
-                    AddLine(whtAcc.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+                // รอบ 204 (ข้อ 143): แบ่งผังตามผู้ถูกหัก (ใบรายเดียว = บรรทัดเดียวเหมือนเดิม)
+                foreach (var (whtAcc, whtAmt) in await ResolveWhtPayableSplitAsync(companyId, doc, doc.WithholdingTaxAmount))
+                    AddLine(whtAcc.Id, 0, whtAmt, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
             }
             }
         }
@@ -16999,8 +17362,14 @@ public partial class DocumentService : IDocumentService
             // Accrual only — Cash basis defers to the PaymentVoucher path.
             if (whtBasis == Models.Enums.WhtRecognitionBasis.Accrual && doc.WithholdingTaxAmount > 0)
             {
-                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, await _db.LoadWhtPayeeAsync(companyId, doc), doc.IsForeignService,
-                        await _db.LoadWithheldAsync(companyId, doc));
+                // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหักที่แบบต่างกัน ⇒ ผังต่อผู้ถูกหัก (ไม่แยกตามอัตรา) · ใบรายเดียว/แบบเดียวกัน = เส้นเดิมทุกประการ
+                var whtAccrualSplit = await ResolveWhtPayableSplitAsync(companyId, doc, doc.WithholdingTaxAmount);
+                if (whtAccrualSplit.Count > 1)
+                {
+                    foreach (var (splitAcc, splitAmt) in whtAccrualSplit)
+                        AddLine(splitAcc.Id, 0, splitAmt, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+                }
+                var whtAccount = whtAccrualSplit.Count == 1 ? whtAccrualSplit[0].Account : null;
                 if (whtAccount != null)
                 {
                     // Group WHT by rate for clear audit trail
@@ -17643,13 +18012,16 @@ public partial class DocumentService : IDocumentService
                     }
                     if (thisWht > 0)
                     {
-                        var whtAccount = await ResolveWhtPayableAccountAsync(companyId, await _db.LoadWhtPayeeAsync(companyId, doc), doc.IsForeignService,
-                        await _db.LoadWithheldAsync(companyId, doc));
-                        if (whtAccount != null)
+                        // รอบ 204 (ข้อ 143): แบ่งผังตามผู้ถูกหัก — แปลงสกุลเงินยอดรวมครั้งเดียว แล้วแบ่ง (Σ = ยอดเดิมเป๊ะ · ใบรายเดียว = บรรทัดเดียวเหมือนเดิม)
+                        var pvWhtSplit = await ResolveWhtPayableSplitAsync(companyId, doc, PvSrcThb(thisWht));
+                        if (pvWhtSplit.Count > 0)
                         {
                             pvWhtThb = PvSrcThb(thisWht);
-                            pendingLines.Add((whtAccount.Id, 0m, pvWhtThb, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)"));
-                            lineProjects.Add(doc.ProjectId);
+                            foreach (var (whtAccount, whtThb) in pvWhtSplit)
+                            {
+                                pendingLines.Add((whtAccount.Id, 0m, whtThb, "ภาษีหัก ณ ที่จ่ายค้างจ่าย (ภ.ง.ด.)"));
+                                lineProjects.Add(doc.ProjectId);
+                            }
                         }
                     }
                 }
@@ -17766,10 +18138,9 @@ public partial class DocumentService : IDocumentService
 
                 if (doc.WithholdingTaxAmount > 0)
                 {
-                    var whtAccount = await ResolveWhtPayableAccountAsync(companyId, await _db.LoadWhtPayeeAsync(companyId, doc), doc.IsForeignService,
-                        await _db.LoadWithheldAsync(companyId, doc));
-                    if (whtAccount != null)
-                        AddLine(whtAccount.Id, 0, doc.WithholdingTaxAmount, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
+                    // รอบ 204 (ข้อ 143): แบ่งผังตามผู้ถูกหัก (ใบรายเดียว = บรรทัดเดียวเหมือนเดิม)
+                    foreach (var (whtAccount, whtAmt) in await ResolveWhtPayableSplitAsync(companyId, doc, doc.WithholdingTaxAmount))
+                        AddLine(whtAccount.Id, 0, whtAmt, "ภาษีหัก ณ ที่จ่ายค้างจ่าย");
                 }
             }
         }
@@ -18616,10 +18987,9 @@ public partial class DocumentService : IDocumentService
             // Cash basis: Cr WHT-Payable for this installment's withholding.
             if (postPerPaymentWht)
             {
-                var whtAccount = await ResolveWhtPayableAccountAsync(companyId, await _db.LoadWhtPayeeAsync(companyId, doc), doc.IsForeignService,
-                        await _db.LoadWithheldAsync(companyId, doc));
-                if (whtAccount != null)
-                    pendingLines.Add((whtAccount.Id, 0, thbWht, $"WHT (ค้างจ่าย) งวด {payment.PaymentNumber}"));
+                // รอบ 204 (ข้อ 143): แบ่งผังตามผู้ถูกหักตามสัดส่วน (ใบรายเดียว = บรรทัดเดียวเหมือนเดิม)
+                foreach (var (whtAccount, whtThbPart) in await ResolveWhtPayableSplitAsync(companyId, doc, thbWht))
+                    pendingLines.Add((whtAccount.Id, 0, whtThbPart, $"WHT (ค้างจ่าย) งวด {payment.PaymentNumber}"));
             }
             // Realized FX ฝั่งจ่าย: จ่าย THB มากกว่าที่ AP ตั้งไว้ = ขาดทุน (Dr),
             // น้อยกว่า = กำไร (Cr)
@@ -18886,7 +19256,8 @@ public partial class DocumentService : IDocumentService
             AccountCode: l.Account != null ? l.Account.AccountCode : null,
             GlAccountAiFeedbackId: l.GlAccountAiFeedbackId,
             AccountName: l.Account != null ? l.Account.AccountName : null,
-            IncomeTypeCode: l.IncomeTypeCode)).ToList(),
+            IncomeTypeCode: l.IncomeTypeCode,
+            WhtPayeeContactId: l.WhtPayeeContactId)).ToList(),
         d.CreatedAt,
         EtaxInvoiceId: etax?.EtaxId,
         EtaxStatus: etax?.Status,
@@ -19053,7 +19424,15 @@ public partial class DocumentService : IDocumentService
         // รอบ 204 — ผู้จ่ายออกภาษีแทน (echo กลับให้ฟอร์มแก้ไข)
         WhtCertType: Accounting.Helpers.WhtGrossUp.Normalize(d.WhtCertType),
         WhtPayerBorneAmount: d.WhtPayerBorneAmount,
-        WhtCertAutoFailedReason: Accounting.Helpers.WhtCertAutoFailedNote.ReasonOf(d.InternalNotes));
+        WhtCertAutoFailedReason: Accounting.Helpers.WhtCertAutoFailedNote.ReasonOf(d.InternalNotes),
+        // รอบ 204 (ข้อ 142/145/143): ป้าย "50 ทวิ ต้องตรวจ" + จำนวนผู้ถูกหัก (เซิร์ฟเวอร์ตัดสิน · หน้าเว็บแสดงอย่างเดียว)
+        WhtCertReviewReason: Accounting.Helpers.WhtCertReviewNote.ReasonOf(d.InternalNotes),
+        WhtPayeeCount: Accounting.Helpers.WhtCertIssuePlan.AppliesTo(d.DocumentType)
+            ? Accounting.Helpers.WhtPayeeSplit.Portions(d.ContactId, d.WhtPayeeContactId,
+                d.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
+                    .Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
+                d.WithholdingTaxAmount).Count
+            : 0);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
@@ -20239,8 +20618,10 @@ public partial class DocumentService : IDocumentService
              || doc.DocumentType == DocumentType.PurchaseInvoice)
             && !Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, whtPayeeForWarn?.CountryCode))
         {
+            // รอบ 204 (ข้อ 143): บรรทัดที่มีผู้ถูกหักของตัวเอง ตรวจกับชนิดผู้รับของผู้ถูกหักรายนั้น (บล็อกข้างล่าง) — ไม่ใช่ของหัวเอกสาร
             warnings.AddRange(Accounting.Helpers.WhtLineRateWarning.ForDomesticPayee(
-                doc.Lines.Select(l => ((string?)l.Description, l.IncomeTypeCode, l.WithholdingTaxRate)),
+                doc.Lines.Where(l => l.WhtPayeeContactId == null)
+                    .Select(l => ((string?)l.Description, l.IncomeTypeCode, l.WithholdingTaxRate)),
                 whtPayeeForWarn?.TaxId, whtPayeeForWarn?.ContactType ?? ContactType.Unknown, whtPayeeForWarn?.Name,
                 doc.PaymentDate ?? doc.DocumentDate));
         }
@@ -20272,12 +20653,49 @@ public partial class DocumentService : IDocumentService
             // (หนึ่งใบ = หนึ่งผัง/หนึ่ง 50 ทวิ) ⇒ เตือนให้แยกใบ — ตัวตัดสินเดียว WhtPayeeKind.Pnd2MixWarning · เตือน ไม่บล็อก ([WHT-PAYEE])
             if (whtPayeeForWarn != null
                 && Accounting.Helpers.WhtPayeeKind.Pnd2MixWarning(doc.IsForeignService, whtPayeeForWarn.CountryCode, whtPayeeForWarn.TaxId,
-                    whtPayeeForWarn.ContactType, whtPayeeForWarn.Name, Accounting.Helpers.WhtIncomeCodes.Withheld(doc.Lines)) is string pnd2Mix)
+                    whtPayeeForWarn.ContactType, whtPayeeForWarn.Name,
+                    // ใบหลายผู้ถูกหัก (ข้อ 143): ตรวจเฉพาะบรรทัดของผู้ถูกหักหัวเอกสาร — รายบรรทัดตรวจในลูปข้างล่าง (แบบตัดสินต่อราย)
+                    Accounting.Helpers.WhtIncomeCodes.WithheldForPayee(doc.Lines, doc.ContactId, doc.WhtPayeeContactId,
+                        Accounting.Helpers.WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId))) is string pnd2Mix)
                 warnings.Add(Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix + " " + pnd2Mix);
             var ownTaxId = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
             if (whtPayeeForWarn != null && Accounting.Helpers.ThaiTaxId.IsValid(ownTaxId)
                 && Accounting.Helpers.ThaiTaxId.Same(ownTaxId, whtPayeeForWarn.TaxId))
                 warnings.Add($"{Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix} ผู้ถูกหักภาษี \"{whtPayeeForWarn.Name}\" มีเลขผู้เสียภาษีเดียวกับบริษัทเราเอง — บริษัทหักภาษีตัวเองไม่ได้ ตรวจผู้ถูกหักอีกครั้ง");
+
+            // ── รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — ด่านเดียวกับผู้ถูกหักหัวเอกสาร (ไม่พบ · เลขผู้เสียภาษี · บริษัทเราเอง) + อัตราในประเทศ
+            //    เทียบชนิดผู้รับของผู้ถูกหักรายนั้น · ป้าย [WHT-PAYEE]/[WHT-RATE] เดิม ⇒ ทางเข้าที่ไม่มีคนเห็นไม่ถูกหยุด (ข้อ 146)
+            var linePayeeIds = doc.Lines.Where(l => l.WhtPayeeContactId.HasValue && l.WithholdingTaxAmount > 0m)
+                .Select(l => l.WhtPayeeContactId!.Value).Distinct().ToList();
+            if (linePayeeIds.Count > 0)
+            {
+                var linePayees = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                    .Where(c => c.CompanyId == companyId && linePayeeIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+                foreach (var lpId in linePayeeIds)
+                {
+                    var lp = linePayees.GetValueOrDefault(lpId);
+                    var lpLines = doc.Lines.Where(l => l.WhtPayeeContactId == lpId).ToList();
+                    var lpLabel = string.Join(", ", lpLines.Select(l => $"\"{l.Description}\""));
+                    if (lp == null || lp.IsDeleted)
+                    {
+                        warnings.Add($"{Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix} ไม่พบผู้ถูกหักภาษีของรายการ {lpLabel} — 50 ทวิ ของรายการนี้จะออกไม่ได้ (แก้ใบเลือกผู้ถูกหักใหม่)");
+                        continue;
+                    }
+                    var lpForeign = Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, lp.CountryCode);
+                    if (Accounting.Helpers.WhtCertIssuePlan.PayeeTaxIdProblem(lp.Name, lp.TaxId, lpForeign) is string lpTaxWarn)
+                        warnings.Add(Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix + " " + (doc.WhtCertAutoIssue ? "50 ทวิ อัตโนมัติจะออกไม่ได้: " : "") + lpTaxWarn);
+                    if (Accounting.Helpers.ThaiTaxId.IsValid(ownTaxId) && Accounting.Helpers.ThaiTaxId.Same(ownTaxId, lp.TaxId))
+                        warnings.Add($"{Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix} ผู้ถูกหักภาษี \"{lp.Name}\" มีเลขผู้เสียภาษีเดียวกับบริษัทเราเอง — บริษัทหักภาษีตัวเองไม่ได้ ตรวจผู้ถูกหักอีกครั้ง");
+                    if (!lpForeign)
+                        warnings.AddRange(Accounting.Helpers.WhtLineRateWarning.ForDomesticPayee(
+                            lpLines.Select(l => ((string?)l.Description, l.IncomeTypeCode, l.WithholdingTaxRate)),
+                            lp.TaxId, lp.ContactType, lp.Name, doc.PaymentDate ?? doc.DocumentDate));
+                    // ภ.ง.ด.2 ปนกับเงินได้อื่นของผู้ถูกหักรายนี้ (ตัวตัดสินเดียว WhtPayeeKind.Pnd2MixWarning · รหัสของบรรทัดของรายนี้เท่านั้น)
+                    if (Accounting.Helpers.WhtPayeeKind.Pnd2MixWarning(doc.IsForeignService, lp.CountryCode, lp.TaxId, lp.ContactType, lp.Name,
+                            Accounting.Helpers.WhtIncomeCodes.WithheldForPayee(doc.Lines, doc.ContactId, doc.WhtPayeeContactId, lpId)) is string lpPnd2Mix)
+                        warnings.Add($"{Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix} {lp.Name}: {lpPnd2Mix}");
+                }
+            }
         }
 
         // ── จ่ายต่างประเทศ (ม.70 ภ.ง.ด.54) — อัตรารายบรรทัดเทียบกับตัวตัดสินเดียว ForeignWhtRateResolver (รอบ 200 ทีม W · คำตัดสินข้อ 13) ──

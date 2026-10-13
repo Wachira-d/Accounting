@@ -60,9 +60,15 @@ public static class ContactHydration
     public static async Task<IReadOnlyDictionary<Guid, Contact>> LoadWhtPayeeContactsAsync(
         this AccountingDbContext db, Guid companyId, IEnumerable<Document> docs)
     {
-        var ids = docs
+        var docList = docs as IReadOnlyCollection<Document> ?? docs.ToList();
+        var ids = docList
             .Where(d => d.WhtPayeeContactId is Guid p && p != Guid.Empty && p != d.ContactId)
-            .Select(d => d.WhtPayeeContactId!.Value).Distinct().ToList();
+            .Select(d => d.WhtPayeeContactId!.Value)
+            // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด (เฉพาะบรรทัดที่โหลดมากับเอกสาร) — ผู้เรียกที่แบ่งแบบรายบรรทัดหาได้จากแผนที่เดียวกัน
+            .Concat(docList.SelectMany(d => d.Lines)
+                .Where(l => !l.IsDeleted && l.WhtPayeeContactId is Guid lp && lp != Guid.Empty)
+                .Select(l => l.WhtPayeeContactId!.Value))
+            .Distinct().ToList();
         if (ids.Count == 0) return new Dictionary<Guid, Contact>();
         return await db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.CompanyId == companyId && ids.Contains(c.Id))
@@ -74,6 +80,15 @@ public static class ContactHydration
     public static Contact? WhtPayeeOf(Document doc, IReadOnlyDictionary<Guid, Contact> payees)
     {
         var id = WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+        if (id == doc.ContactId) return doc.Contact;
+        return payees.TryGetValue(id, out var c) ? c : null;
+    }
+
+    /// <summary>รอบ 204 (ข้อ 143): ผู้ถูกหักของ<b>บรรทัด</b> (ค่าบนบรรทัดชนะ · ว่าง = ผู้ถูกหักของหัวเอกสาร) — แผนที่จาก <see cref="LoadWhtPayeeContactsAsync"/> ·
+    /// ตั้งไว้แต่หาไม่เจอ ⇒ null (ไม่ตกกลับไปผู้รับเงินเงียบ ๆ)</summary>
+    public static Contact? WhtLinePayeeOf(Document doc, DocumentLine line, IReadOnlyDictionary<Guid, Contact> payees)
+    {
+        var id = WhtPayeeSplit.LinePayeeOf(doc.ContactId, doc.WhtPayeeContactId, line.WhtPayeeContactId);
         if (id == doc.ContactId) return doc.Contact;
         return payees.TryGetValue(id, out var c) ? c : null;
     }

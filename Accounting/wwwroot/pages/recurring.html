@@ -129,6 +129,16 @@
               </select>
             </div>
           </div>
+          <!-- รอบ 204 (ข้อ 148 ข้อ 4): ผู้ถูกหักภาษีแยกจากผู้ติดต่อ (templateData.whtPayeeContactId) — เดิมตั้งได้แค่ทาง API แล้วหน้านี้บันทึกทับหาย ·
+               แสดงเฉพาะชนิดที่บริษัทเป็นผู้หัก (ชนิดอื่นเซิร์ฟเวอร์ปฏิเสธ) -->
+          <div class="form-group" id="fWhtPayeeGroup" style="display:none">
+            <label class="form-label" style="font-weight:normal"><input type="checkbox" id="fWhtPayeeDiffers" onchange="Page.onWhtPayeeDiffersToggle()">
+              ผู้ถูกหักภาษี (ชื่อบน 50 ทวิ) เป็นคนละรายกับผู้ติดต่อ — เช่น ค่าเบี้ยประกันจ่ายผ่านโบรกเกอร์ ผู้ถูกหักคือบริษัทประกัน</label>
+            <div id="fWhtPayeeWrap" style="display:none;position:relative;margin-top:6px">
+              <input type="text" class="form-input" id="fWhtPayee">
+              <input type="hidden" id="fWhtPayeeContactId">
+            </div>
+          </div>
           <div class="form-group">
             <label class="form-label"><input type="checkbox" id="fAutoSendEmail" onchange="Page.onAutoFlagChange()"> 📧 ส่งอีเมลเอกสาร (แนบ PDF) ให้ผู้ติดต่อทันทีที่ระบบสร้างเอกสาร</label>
             <div id="autoEmailHint" style="margin-top:6px;padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.6;background:#f8fafc;border:1px solid #e2e8f0;color:#475569">
@@ -327,6 +337,8 @@ const Page = {
     document.getElementById('fAutoWht').checked = true;
     document.getElementById('fWhtCertType').value = 'Withhold';
     document.getElementById('fAutoSendEmail').checked = false;
+    this._editingTd = null;
+    await this._hydrateWhtPayee(null);
     this.onAutoFlagChange();
     this.loadEmailStatus();
     await this.loadFormData();
@@ -455,11 +467,45 @@ const Page = {
     } catch (e) { this.expenseCategories = []; }
   },
 
+  WHT_PAYER_TYPES: ['PaymentVoucher', 'Expense', 'PurchaseInvoice', 'CertificateInLieu'],
+  _ensureWhtPayeeAC() {
+    if (!this._whtPayeeAC)
+      this._whtPayeeAC = Layout.contactAutocomplete('fWhtPayee', 'fWhtPayeeContactId',
+        { placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ถูกหัก...' });
+  },
+  onWhtPayeeDiffersToggle() {
+    const on = document.getElementById('fWhtPayeeDiffers')?.checked;
+    const wrap = document.getElementById('fWhtPayeeWrap');
+    if (wrap) wrap.style.display = on ? '' : 'none';
+    this._ensureWhtPayeeAC();
+    if (!on && this._whtPayeeAC) this._whtPayeeAC.clear();
+  },
+  /** ฟอร์มใหม่ = ว่าง · เปิดแก้ = ค่าที่บันทึกไว้ (ชื่อดึงจากผู้ติดต่อ) — ห้ามค้างค่าของรายการก่อน */
+  async _hydrateWhtPayee(payeeId) {
+    this._ensureWhtPayeeAC();
+    const differs = document.getElementById('fWhtPayeeDiffers');
+    if (differs) differs.checked = !!payeeId;
+    const wrap = document.getElementById('fWhtPayeeWrap');
+    if (wrap) wrap.style.display = payeeId ? '' : 'none';
+    if (this._whtPayeeAC) this._whtPayeeAC.setValue(payeeId || '', '');
+    if (!payeeId) return;
+    try {
+      const api = Layout.api();
+      const r = api ? await api.getContact(payeeId) : null;
+      if (r && r.data && document.getElementById('fWhtPayeeContactId')?.value === payeeId)
+        this._whtPayeeAC.setValue(payeeId, r.data.name || '');
+    } catch (e) {
+      Layout.toast('โหลดผู้ถูกหักภาษีของรายการนี้ไม่สำเร็จ: ' + (e.message || '') + ' — ค่าที่บันทึกไว้ยังอยู่', 'warning', 7000);
+    }
+  },
   onDocTypeChange() {
     const docType = document.getElementById('fDocType')?.value;
     const expenseTypes = ['Expense', 'PaymentVoucher', 'PurchaseInvoice', 'PurchaseOrder'];
     const ecGroup = document.getElementById('fExpenseCategoryGroup');
     if (ecGroup) ecGroup.style.display = expenseTypes.includes(docType) ? '' : 'none';
+    // ชนิดที่ "บริษัทเป็นผู้หัก" — ชุดเดียวกับ Helpers/WhtRemitScope.PayerSideTypes (ใช้แค่ตัดสินการแสดง · เซิร์ฟเวอร์ปฏิเสธชนิดอื่นเอง)
+    const wpGroup = document.getElementById('fWhtPayeeGroup');
+    if (wpGroup) wpGroup.style.display = this.WHT_PAYER_TYPES.includes(docType) ? '' : 'none';
     // ข้อความเตือน "ส่งอีเมลฝั่งซื้อ" ขึ้นกับชนิดเอกสาร → re-render ทุกครั้ง
     this.renderAutoEmailHint();
   },
@@ -484,19 +530,35 @@ const Page = {
     else if (paymentChannelVal.startsWith('account:')) paymentAccountId = paymentChannelVal.substring(8);
     const expenseCategoryId = document.getElementById('fExpenseCategory')?.value || null;
 
-    const templateData = JSON.stringify({
-      lines: [{
+    // รอบ 204: คีย์ที่ตั้งผ่าน API แต่หน้านี้ไม่มีช่อง (เช่น ผู้ถูกหักรายบรรทัด) ต้องไม่หายตอนบันทึก — ตั้งต้นจากเทมเพลตเดิมแล้วทับเฉพาะช่องของหน้านี้ ·
+    // ยกเว้น dueDays (หน้านี้ตั้งใจไม่ส่ง — ให้ใช้เครดิตของคู่ค้า · ดูคอมเมนต์ข้างล่าง)
+    const prevTd = Object.assign({}, this._editingTd || {});
+    delete prevTd.dueDays;
+    const prevLine = (Array.isArray(prevTd.lines) && prevTd.lines[0]) || {};
+    const docTypeNow = document.getElementById('fDocType').value;
+    const payerSide = this.WHT_PAYER_TYPES.includes(docTypeNow);
+    const payeeDiffers = payerSide && document.getElementById('fWhtPayeeDiffers')?.checked;
+    const payeeId = payeeDiffers ? (document.getElementById('fWhtPayeeContactId')?.value || '') : '';
+    if (payeeDiffers && !payeeId) { Layout.toast('เลือกผู้ถูกหักภาษีจากรายชื่อผู้ติดต่อ (หรือเอาเครื่องหมายถูกออก)', 'error'); return; }
+    const autoWht = document.getElementById('fAutoWht').checked;
+    const templateData = JSON.stringify(Object.assign(prevTd, {
+      lines: [Object.assign({}, prevLine, {
         description: description || name,
         quantity: 1,
         unitPrice: amount,
         vatRate: vatRate,
         withholdingTaxRate: whtRate,
         incomeTypeCode: incomeType
-      }],
+      })],
       bankAccountId: bankAccountId,
       paymentAccountId: paymentAccountId,
       expenseCategoryId: expenseCategoryId,
-      autoGenerateWht: document.getElementById('fAutoWht').checked,
+      // ติ๊กเดียวกับ "สร้าง 50 ทวิ อัตโนมัติ" บนเอกสาร — เขียนทั้งคีย์ใหม่ (ชนะ) และคีย์เดิม (ความหมายเดียวกัน · WhtCertIssuePlan.RecurringTemplateAutoIssue)
+      autoGenerateWht: autoWht,
+      whtCertAutoIssue: autoWht,
+      // ผู้ถูกหักแยกจากผู้ติดต่อ — ชนิดฝั่งอื่น/ไม่ติ๊ก = null (ตามผู้ติดต่อ)
+      whtPayeeContactId: payeeId || null,
+      // รอบ 204 — ผู้จ่ายออกภาษีแทน (เงื่อนไข 1/2/3)
       whtCertType: document.getElementById('fWhtCertType').value || 'Withhold',
       // ⚠️ เดิม hardcode dueDays: 30 โดยไม่มีช่องให้กรอก ⇒ ใบที่ generate ครบ
       // กำหนด +30 เสมอ ขัดกับเครดิตจริงของคู่ค้า (เช่น Net 45) ทุกใบทุกเดือน
@@ -504,7 +566,7 @@ const Page = {
       // หัวรวม "ใบแจ้งหนี้/ใบกำกับภาษี" — backend อ่าน key นี้ตอน generate
       // (RecurringTransactionService) แล้วส่งเข้า CreateDocumentRequest
       combinedInvoiceTaxInvoice: document.getElementById('fDocType').value === 'TaxInvoiceCombined'
-    });
+    }));
 
     // pseudo "TaxInvoiceCombined" → ชนิดจริงคือ TaxInvoice (enum backend ไม่รู้จัก pseudo)
     const _selDocType = document.getElementById('fDocType').value;
@@ -622,8 +684,12 @@ const Page = {
 
       let savedPaymentChannelVal = '';
       let savedExpenseCategoryId = '';
+      let savedWhtPayeeId = null;
+      this._editingTd = null;
       try {
         const td = JSON.parse(r.templateData || '{}');
+        this._editingTd = td;
+        savedWhtPayeeId = td.whtPayeeContactId || null;
         const line = td.lines && td.lines[0];
         if (line) {
           document.getElementById('fVatRate').value = line.vatRate ?? 7;
@@ -633,7 +699,9 @@ const Page = {
           // null เงียบ ๆ (กติกา "เก็บแล้วต้อง echo กลับ")
           document.getElementById('fIncomeType').value = this.resolveIncomeTypeValue(line.incomeTypeCode);
         }
-        if (td.autoGenerateWht !== undefined) document.getElementById('fAutoWht').checked = td.autoGenerateWht;
+        // คีย์ใหม่ whtCertAutoIssue ชนะ (ตั้งผ่าน API ได้) · ไม่มี = คีย์เดิม autoGenerateWht
+        const savedAutoWht = td.whtCertAutoIssue ?? td.autoGenerateWht;
+        if (savedAutoWht !== undefined && savedAutoWht !== null) document.getElementById('fAutoWht').checked = !!savedAutoWht;
         // รอบ 204 — echo กลับ (template เก่าไม่มี key = หัก ณ ที่จ่าย)
         document.getElementById('fWhtCertType').value = ['PayOnce', 'PayAlways'].includes(td.whtCertType) ? td.whtCertType : 'Withhold';
         if (td.paymentAccountId) savedPaymentChannelVal = 'account:' + td.paymentAccountId;
@@ -649,6 +717,7 @@ const Page = {
       if (r.contactId && this._contactAC) this._contactAC.setValue(r.contactId, r.contactName || '');
       if (savedPaymentChannelVal) document.getElementById('fPaymentChannel').value = savedPaymentChannelVal;
       if (savedExpenseCategoryId) document.getElementById('fExpenseCategory').value = savedExpenseCategoryId;
+      await this._hydrateWhtPayee(savedWhtPayeeId);
       this.onDocTypeChange();
       Layout.openModal('formModal');
     } catch (err) { Layout.toast(err.message, 'error'); }

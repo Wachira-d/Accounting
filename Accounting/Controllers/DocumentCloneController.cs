@@ -100,7 +100,10 @@ public class DocumentCloneController : ControllerBase
                 productCode = l.ProductCode,
                 isVatClaimable = l.IsVatClaimable,
                 vatNonClaimableReason = l.VatNonClaimableReason,
-                incomeTypeCode = l.IncomeTypeCode
+                incomeTypeCode = l.IncomeTypeCode,
+                // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดตามต้นแบบ (ให้ตรงกับที่ POST สร้างจริง)
+                whtPayeeContactId = Accounting.Helpers.WhtPayeeSplit.InheritLinePayee(l.WhtPayeeContactId,
+                    Accounting.Helpers.WhtCertIssuePlan.AppliesTo(src.DocumentType))
             })
         }));
     }
@@ -146,6 +149,9 @@ public class DocumentCloneController : ControllerBase
             // รอบ 203: ประเภทเงินได้ ม.40 ตามไปกับอัตราหัก (เอกสารลูกต้องสืบทอด — null เป็น null)
             // ฝ่ายค้าน M4: ผ่านตัวสืบทอดเดียวกับเส้นแปลง — ค่าเก่าที่ตารางชี้ขาดไม่ได้ = ไม่ระบุ (ไม่ทำให้คัดลอกล้ม)
             IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(l.IncomeTypeCode,
+                Accounting.Helpers.WhtCertIssuePlan.AppliesTo(options?.OverrideType ?? src.DocumentType)),
+            // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดสืบทอด (ปลายทางฝั่งอื่น = null)
+            WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritLinePayee(l.WhtPayeeContactId,
                 Accounting.Helpers.WhtCertIssuePlan.AppliesTo(options?.OverrideType ?? src.DocumentType))
         )).ToList();
 

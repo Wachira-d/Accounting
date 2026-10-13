@@ -110,7 +110,9 @@ public class WithholdingTaxCertController : ControllerBase
         Guid companyId, [FromBody] AutoGenerateWhtRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _whtService.AutoGenerateFromDocumentAsync(companyId, request.DocumentId, request.AutoIssue, userId);
+        // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ออกใบของผู้ถูกหักที่เลือก (ใบรายเดียวไม่ต้องส่ง)
+        var result = await _whtService.AutoGenerateFromDocumentAsync(companyId, request.DocumentId, request.AutoIssue, userId,
+            payeeContactId: request.PayeeContactId);
         return StatusCode(201, new ApiResponse<WithholdingTaxCertResponse>(true, result, "สร้างหนังสือรับรองหัก ณ ที่จ่ายจากเอกสารสำเร็จ"));
     }
 
@@ -133,6 +135,17 @@ public class WithholdingTaxCertController : ControllerBase
         await _whtService.DismissPendingAsync(companyId, documentId, dismiss: true);
         return Ok(new ApiResponse<object>(true, null, "ข้ามเอกสารนี้แล้ว — จะไม่แสดงในรายการรอออกอีก"));
     }
+    /// <summary>รอบ 204 (ข้อ 142/145): ผู้ใช้จัดการ 50 ทวิ ที่ติดป้าย "ต้องตรวจ" แล้ว — ล้างป้าย + audit พร้อมเหตุผล (บังคับ)</summary>
+    [HttpPost("pending/{documentId:guid}/review-ack")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<object>>> AcknowledgeReview(Guid companyId, Guid documentId,
+        [FromBody] WhtCertReviewAckRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _whtService.AcknowledgeReviewAsync(companyId, documentId, request?.Reason, userId);
+        return Ok(new ApiResponse<object>(true, null, "บันทึกการรับทราบแล้ว — ป้าย \"50 ทวิ ต้องตรวจ\" ถูกล้าง"));
+    }
+
     [HttpPost("pending/{documentId:guid}/restore")]
     public async Task<ActionResult<ApiResponse<object>>> RestorePending(Guid companyId, Guid documentId)
     {

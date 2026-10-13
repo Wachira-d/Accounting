@@ -458,6 +458,11 @@ public class RecurringTransactionService : IRecurringTransactionService
                         // ใบที่ generate ไม่มีประเภท ⇒ 50 ทวิ ได้ "8" เสมอ · ค่าที่ตารางกลางชี้ขาดไม่ได้ (เทมเพลตเก่า) = ไม่ระบุ (ไม่ทำให้ทั้งรอบล้ม)
                         IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(
                             line.TryGetProperty("incomeTypeCode", out var itc) && itc.ValueKind == JsonValueKind.String ? itc.GetString() : null,
+                            Accounting.Helpers.WhtCertIssuePlan.AppliesTo(docType)),
+                        // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดของเทมเพลต — ไม่มี key = ตามหัวเอกสาร (พฤติกรรมเดิม) · ชนิดฝั่งอื่น = null
+                        WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritLinePayee(
+                            line.TryGetProperty("whtPayeeContactId", out var lwpEl) && lwpEl.ValueKind == JsonValueKind.String
+                                && Guid.TryParse(lwpEl.GetString(), out var lwpId) ? lwpId : null,
                             Accounting.Helpers.WhtCertIssuePlan.AppliesTo(docType))
                     ));
                 }

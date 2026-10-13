@@ -714,6 +714,38 @@ public partial class PdfGenerationService : IPdfGenerationService
                 whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name, withheldCodes);
             return await ByCodeChain(chain.ToArray(), label);
         }
+        // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — พรีวิวแบ่งผังต่อผู้ถูกหักเหมือน JE จริง (DocumentService.ResolveWhtPayableSplitAsync ·
+        // ตัวแบ่งเดียว WhtPayeeSplit) · ใบรายเดียว = WhtPayableAsync() บรรทัดเดียวเหมือนเดิม
+        async Task<List<(string Code, string Name, decimal Amount)>> WhtPayableSplitAsync(decimal amount)
+        {
+            var orderedLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+            var portions = Accounting.Helpers.WhtPayeeSplit.Portions(doc.ContactId, doc.WhtPayeeContactId,
+                orderedLines.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
+                doc.WithholdingTaxAmount);
+            if (portions.Count <= 1)
+            {
+                var one = await WhtPayableAsync();
+                return new() { (one.Code, one.Name, amount) };
+            }
+            var ids = portions.Select(p => p.PayeeContactId).ToList();
+            var payees = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.CompanyId == companyId && ids.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+            var parts = new List<(string Code, string Name, decimal Amount)>();
+            foreach (var (payeeId, part) in Accounting.Helpers.WhtPayeeSplit.Allocate(portions, amount))
+            {
+                var c = payees.GetValueOrDefault(payeeId);
+                // รหัสเงินได้ของบรรทัดของผู้ถูกหักรายนี้เท่านั้น — เหมือน JE (ResolveWhtPayableSplitAsync · ภ.ง.ด.2 ⇒ 21915 ต่อราย)
+                var payeeCodes = Accounting.Helpers.WhtIncomeCodes.WithheldAt(orderedLines,
+                    portions.First(p => p.PayeeContactId == payeeId).LineIndexes);
+                var chain = Accounting.Helpers.WhtPayableAccount.CodeChain(
+                    doc.IsForeignService, c?.CountryCode, c?.TaxId, c?.ContactType ?? ContactType.Individual, c?.Name, payeeCodes);
+                var label = Accounting.Helpers.WhtPayableAccount.PreferredLabel(
+                    doc.IsForeignService, c?.CountryCode, c?.TaxId, c?.ContactType ?? ContactType.Individual, c?.Name, payeeCodes);
+                var acc = await ByCodeChain(chain.ToArray(), label);
+                parts.Add((acc.Code, acc.Name, part));
+            }
+            return parts;
+        }
         // ขาเงินออก/เข้า (ธนาคาร > ผังที่เลือก > เงินสด) — ใช้ร่วม PV settlement
         async Task<(string Code, string Name)> MoneyAccountAsync()
         {
@@ -785,8 +817,8 @@ public partial class PdfGenerationService : IPdfGenerationService
             };
             if (pvWht > 0)
             {
-                var w = await WhtPayableAsync();
-                pvLines.Add(new GlPostingLine(w.Code, w.Name, 0m, pvWht));
+                foreach (var w in await WhtPayableSplitAsync(pvWht))
+                    pvLines.Add(new GlPostingLine(w.Code, w.Name, 0m, w.Amount));
             }
             pvLines.Add(new GlPostingLine(payFrom.Code, payFrom.Name, 0m, pvPayee));
 
@@ -841,8 +873,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                 // เดิม hardcode "21510" — ในผังมาตรฐาน (ChartOfAccountTemplates)
                 // 21510 คือ "เงินมัดจำรับล่วงหน้าค่าห้องพัก" ⇒ พรีวิวโชว์ WHT
                 // เข้าบัญชีมัดจำ ทั้งที่ JE จริงลง 21916/21917 ถูกต้อง
-                var w = await WhtPayableAsync();
-                lines.Add(new GlPostingLine(w.Code, w.Name, 0m, doc.WithholdingTaxAmount));
+                foreach (var w in await WhtPayableSplitAsync(doc.WithholdingTaxAmount))
+                    lines.Add(new GlPostingLine(w.Code, w.Name, 0m, w.Amount));
             }
             else
             {
