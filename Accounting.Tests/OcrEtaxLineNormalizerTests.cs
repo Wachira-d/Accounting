@@ -963,9 +963,13 @@ public class OcrEtaxLineNormalizerTests
         // พิมพ์ 100 ก่อน (ยังไม่ติ๊ก) ⇒ เก็บ 100 ตามที่พิมพ์ (ฐานของแถว = รวม VAT)
         var row = Send(new ReviewRow(37.00m, 26.68m), 100m, 26.68m, exVat: false);
         Assert.Equal(new ReviewRow(100m, 26.68m), row);
-        // ติ๊ก = ไม่มีคำขอ · คำขอที่มีธงแต่ไม่มีราคา (หน้าเก่า/API) ⇒ ปฏิเสธ — เดิมแปลงราคาที่เก็บไว้ 100 → 107 โดยผู้ใช้ไม่ได้พิมพ์อะไร
-        var ex = Assert.Throws<BusinessRuleException>(() => Send(row, null, 26.68m, exVat: true));
-        Assert.Contains("ต้องมาพร้อมราคาที่กรอกใหม่", ex.Message);
+        // ติ๊ก = ไม่มีคำขอ · คำขอที่มีธงแต่ไม่มีราคา (หน้าเก่า/API) ⇒ ไม่แปลง + หมายเหตุ (คำสั่งเจ้าของ 2026-10-13 ไม่ปฏิเสธ) —
+        // เดิมรอบแรกแปลงราคาที่เก็บไว้ 100 → 107 โดยผู้ใช้ไม่ได้พิมพ์อะไร · ห้ามกลับไปแปลงค่าที่เก็บ
+        Assert.Equal(row, Send(row, null, 26.68m, exVat: true));
+        var noPrice = OcrEtaxLineNormalizer.ApplyReviewPriceEntry(100m, 26.68m, true, 7m, null, null, 26.68m, true);
+        Assert.Equal(100m, noPrice.UnitPrice);
+        Assert.Null(noPrice.AppliedRate);
+        Assert.Equal(OcrEtaxLineNormalizer.ExVatNoOpNoPriceNote, noPrice.ConversionNote);
         // ติ๊กแล้วพิมพ์ราคาไม่รวม VAT (หน้าเปิดช่องราคาให้พิมพ์ซ้ำได้แม้ค่าเดิม) ⇒ แปลงครั้งเดียว
         Assert.Equal(new ReviewRow(107.00m, 26.68m), Send(row, 100m, 26.68m, exVat: true));
     }
@@ -974,9 +978,9 @@ public class OcrEtaxLineNormalizerTests
     public void ติ๊กสองรอบ_ไม่คิดVATซ้ำสองชั้น()
     {
         var row = new ReviewRow(37.00m, 26.68m);
-        // ติ๊ก/ยกเลิก/ติ๊ก ไม่มีคำขอ — ถ้ามีคำขอธงอย่างเดียวหลุดมาก็ถูกปฏิเสธทุกครั้ง ราคาไม่ขยับ
-        Assert.Throws<BusinessRuleException>(() => Send(row, null, null, exVat: true));
-        Assert.Throws<BusinessRuleException>(() => Send(row, null, null, exVat: true));
+        // ติ๊ก/ยกเลิก/ติ๊ก ไม่มีคำขอ — ถ้ามีคำขอธงอย่างเดียวหลุดมาก็ไม่แปลงทุกครั้ง ราคาไม่ขยับ (no-op + หมายเหตุ ไม่ใช่ปฏิเสธ)
+        Assert.Equal(row, Send(row, null, null, exVat: true));
+        Assert.Equal(row, Send(Send(row, null, null, exVat: true), null, null, exVat: true));
         // พิมพ์ราคาหลังติ๊ก ⇒ 46.73 → 50.00 · ส่งซ้ำอีกรอบ ⇒ ยัง 50.00 (เดิม 50.00 → 53.50 = VAT สองชั้น)
         var once = Send(row, 46.73m, 26.68m, exVat: true);
         Assert.Equal(50.00m, once.Price);
@@ -1002,10 +1006,18 @@ public class OcrEtaxLineNormalizerTests
     }
 
     [Fact]
-    public void ธงบนแถวที่ไม่ใช่ราคารวมVAT_หรือไม่รู้อัตรา_ปฏิเสธพร้อมเหตุผล()
+    public void ธงบนแถวที่ไม่ใช่ราคารวมVAT_ไม่แปลงพร้อมหมายเหตุ_ไม่รู้อัตรา_ยังปฏิเสธ()
     {
-        Assert.Contains("ราคาก่อน VAT อยู่แล้ว", Assert.Throws<BusinessRuleException>(() =>
-            OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, null, false, 7m, null, 100m, null, true)).Message);
+        // คำสั่งเจ้าของ 2026-10-13: แถวราคาก่อน VAT อยู่แล้ว ⇒ ไม่แปลง + หมายเหตุ (ไม่ปฏิเสธ) · ราคาที่พิมพ์มาเก็บตามที่พิมพ์ · ส่วนลดที่ส่งมายังบันทึก
+        var already = OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, null, false, 7m, null, 100m, 5m, true);
+        Assert.Equal(100m, already.UnitPrice);
+        Assert.Equal(5m, already.Discount);
+        Assert.True(already.DiscountChanged);
+        Assert.Null(already.AppliedRate);
+        Assert.Contains("ราคาก่อน VAT อยู่แล้ว — ไม่แปลง", already.ConversionNote);
+        // ไม่มีราคาในคำขอ + แถวก่อน VAT ⇒ ราคาที่เก็บไว้ไม่ขยับ
+        Assert.Equal(37.00m, OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, null, false, 7m, null, null, null, true).UnitPrice);
+        // ทิศตรงข้าม: ไม่รู้อัตรา VAT ของแถวราคารวม VAT ⇒ ยังปฏิเสธ (แปลงไม่ได้จริง — ไม่เดาอัตรา)
         Assert.Contains("ไม่รู้อัตรา VAT", Assert.Throws<BusinessRuleException>(() =>
             OcrEtaxLineNormalizer.ApplyReviewPriceEntry(37.00m, null, true, null, null, 100m, null, true)).Message);
         // แถวไม่มีอัตรา ⇒ ใช้อัตราหลักของใบ (fallback)

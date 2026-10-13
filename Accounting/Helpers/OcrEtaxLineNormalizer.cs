@@ -348,7 +348,8 @@ public static class OcrEtaxLineNormalizer
     /// เดิมช่องติ๊ก "กรอกราคาไม่รวม VAT" บันทึกเองทุกครั้งที่ติ๊ก แล้วเซิร์ฟเวอร์แปลง "ราคาที่เก็บไว้" ⇒ พิมพ์ราคาก่อนแล้วค่อยติ๊ก = แปลงราคาที่แปลงแล้ว
     /// · ติ๊กสองรอบ = คิด VAT ซ้ำสองชั้น · ส่วนลดรวม VAT ที่ไม่ได้แตะก็ถูกคูณ 1.07 อีก ⇒ กติกา (ทุกคำขอ idempotent):
     /// <list type="bullet">
-    /// <item>แปลงเฉพาะ <b>ราคาที่ส่งมาในคำขอนี้</b> — ธงมาโดยไม่มีราคา ⇒ ปฏิเสธ (ห้ามแปลงราคาที่เก็บไว้) · ผลคิดจากค่าที่ส่งมาไม่ใช่ค่าที่เก็บ ⇒
+    /// <item>แปลงเฉพาะ <b>ราคาที่ส่งมาในคำขอนี้</b> — ธงมาโดยไม่มีราคา / แถวเป็นราคาก่อน VAT อยู่แล้ว ⇒ ไม่แปลง + หมายเหตุ (คำสั่งเจ้าของ 2026-10-13:
+    /// ไม่ปฏิเสธ · ห้ามแปลงราคาที่เก็บไว้) · ไม่รู้อัตรา VAT ⇒ ยังปฏิเสธ (แปลงไม่ได้จริง) · ผลคิดจากค่าที่ส่งมาไม่ใช่ค่าที่เก็บ ⇒
     /// คำขอเดิมซ้ำสองครั้งได้สถานะเดียวกัน</item>
     /// <item>แปลงส่วนลดเฉพาะเมื่อค่าที่ส่งมาต่างจากค่าที่เก็บไว้ (ส่วนลดที่ไม่ได้แตะเป็นฐานรวม VAT อยู่แล้ว)</item>
     /// <item>หน้าส่งธงเฉพาะคำขอที่ช่องราคาถูกพิมพ์ใหม่หลังติ๊ก (ช่องติ๊กไม่บันทึกเอง — <c>document-scan.html</c> <c>exVatHint</c>)</item>
@@ -371,10 +372,12 @@ public static class OcrEtaxLineNormalizer
         }
         if (!priceEnteredExVat) return new OcrReviewPriceEdit(price, disc, discChanged, null, null);
 
-        if (sentUnitPrice is not decimal entered)
-            throw new BusinessRuleException("ติ๊ก \"กรอกราคาไม่รวม VAT\" ต้องมาพร้อมราคาที่กรอกใหม่ในคำขอเดียวกัน — ระบบไม่แปลงราคาที่บันทึกไว้แล้ว (กันคิด VAT ซ้ำ)");
+        // คำสั่งเจ้าของ 2026-10-13 (ไม่ล็อกตาย): สองกรณีนี้ "ไม่มีอะไรต้องแปลง" ⇒ ไม่แปลง + บอกผู้ใช้ (ไม่ปฏิเสธทั้งคำขอ — ช่องอื่นในคำขอเดียวกัน
+        // เช่น ชื่อรายการ/ส่วนลด ยังบันทึกตามปกติ) · ราคาที่บันทึกไว้แล้วไม่ถูกแปลงซ้ำเด็ดขาด (กันคิด VAT สองชั้น — ทบทวน e8547899 ข้อ 1)
         if (!rowPriceIncludesVat)
-            throw new BusinessRuleException("แถวนี้เป็นราคาก่อน VAT อยู่แล้ว — ไม่ต้องแปลง");
+            return new OcrReviewPriceEdit(price, disc, discChanged, null, ExVatNoOpAlreadyExVatNote);
+        if (sentUnitPrice is not decimal entered)
+            return new OcrReviewPriceEdit(price, disc, discChanged, null, ExVatNoOpNoPriceNote);
         var rate = rowVatRate is > 0m ? rowVatRate : fallbackVatRate;
         var converted = ConvertExVatEntryToInclusive(entered, discChanged ? disc : null, rate)
             ?? throw new BusinessRuleException(
@@ -384,6 +387,12 @@ public static class OcrEtaxLineNormalizer
             note += $" · ส่วนลด {disc.Value:N2} เป็น {(converted.Discount ?? 0m):N2}";
         return new OcrReviewPriceEdit(converted.UnitPrice, discChanged ? converted.Discount : disc, discChanged, rate, note);
     }
+
+    /// <summary>หมายเหตุเมื่อติ๊ก "กรอกราคาไม่รวม VAT" บนแถวที่เป็นราคาก่อน VAT อยู่แล้ว — ไม่แปลง (ไม่ปฏิเสธ)</summary>
+    public const string ExVatNoOpAlreadyExVatNote = "ราคาก่อน VAT อยู่แล้ว — ไม่แปลง";
+
+    /// <summary>หมายเหตุเมื่อติ๊ก "กรอกราคาไม่รวม VAT" โดยไม่มีราคาที่กรอกใหม่ในคำขอ — ไม่แปลงราคาที่บันทึกไว้ (ไม่ปฏิเสธ)</summary>
+    public const string ExVatNoOpNoPriceNote = "ไม่มีราคาที่กรอกใหม่ในคำขอนี้ — ไม่แปลงราคาที่บันทึกไว้แล้ว (กันคิด VAT ซ้ำ) · พิมพ์ราคาไม่รวม VAT ในช่องราคาเพื่อแปลง";
 
     /// <summary>ป้ายฐานราคาของแถวในตาราง review (เซิร์ฟเวอร์เขียน — ฝ่ายค้านรอบห้า ข้อ 3): แถวราคารวม VAT ตามกระดาษ ⇒ ข้อความของช่องติ๊ก
     /// "กรอกราคาไม่รวม VAT" (ระบบแปลงด้วย <see cref="ConvertExVatEntryToInclusive"/>) · แถวอื่น = null (ไม่แสดงช่อง)</summary>
