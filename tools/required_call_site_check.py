@@ -6349,6 +6349,9 @@ RULES += [
 # ตัวตัดสินแบบ/ผังรับ "ประเภทเงินได้ของบรรทัดที่หัก" — ทางที่ไม่ส่ง = ดอกเบี้ย/ปันผลบุคคลตกกลับ ภ.ง.ด.3 เงียบ ๆ (GL 21915 ≠ ทะเบียน/นำส่ง)
 _PND2 = "รอบ 204 ภ.ง.ด.2 (ข้อ 148): "
 RULES += [
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildProjectedGlAsync",
+         must=["LoadWithheldAsync(companyId, doc)", "whtPayee?.Name, withheldCodes)"],
+         why=_PND2 + "พรีวิว GL ก่อนอนุมัติใช้ชุดรหัสเงินได้เดียวกับ JE จริง (ดอกเบี้ยบุคคล ⇒ 21915 ไม่ใช่ 21916)"),
     dict(file=DOCSVC, method="AutoPostToJournalAsync",
          must=["LoadWithheldAsync(companyId, doc)"],
          why=_PND2 + "JE ตอนอนุมัติ — ผัง 21915 ของดอกเบี้ย/ปันผลบุคคล ต้องได้จากชุดรหัสเดียวกับ 50 ทวิ"),

@@ -704,12 +704,14 @@ public partial class PdfGenerationService : IPdfGenerationService
             // เดิมพรีวิวอ่าน doc.Contact ⇒ นายหน้าบุคคล + ประกันนิติบุคคล พรีวิว 21916
             // แต่ JE ลง 21917 (ผลตรวจฝ่ายค้าน M1)
             var whtPayee = await _db.LoadWhtPayeeAsync(companyId, doc);
+            // รอบ 204 ภ.ง.ด.2: ดอกเบี้ย/ปันผลจ่ายบุคคล ⇒ 21915 — ส่งประเภทเงินได้ของบรรทัดที่หักจริงเหมือน JE (ResolveWhtPayableAccountAsync)
+            var withheldCodes = await _db.LoadWithheldAsync(companyId, doc);
             var chain = Accounting.Helpers.WhtPayableAccount.CodeChain(
                 doc.IsForeignService, whtPayee?.CountryCode, whtPayee?.TaxId,
-                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name);
+                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name, withheldCodes);
             var label = Accounting.Helpers.WhtPayableAccount.PreferredLabel(
                 doc.IsForeignService, whtPayee?.CountryCode, whtPayee?.TaxId,
-                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name);
+                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name, withheldCodes);
             return await ByCodeChain(chain.ToArray(), label);
         }
         // ขาเงินออก/เข้า (ธนาคาร > ผังที่เลือก > เงินสด) — ใช้ร่วม PV settlement
