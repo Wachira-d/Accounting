@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **493 ไฟล์ · 4,873 `[Fact]` + 776 `[Theory]` (3,446 `InlineData`)** ณ 2026-10-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **494 ไฟล์ · 4,884 `[Fact]` + 784 `[Theory]` (3,479 `InlineData`)** ณ 2026-10-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4266,6 +4266,8 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | OCR-VAT-06 | เทียบค่าที่แสดงกับเอกสารที่สร้างจริง | อัตรา/ยอด VAT รายบรรทัดในตาราง review = ที่ปรากฏบนเอกสารหลังกด "สร้างเอกสาร" ทุกบรรทัด (จับคู่ด้วย `sourceItemIndex` ไม่ใช่ลำดับ) |
 | OCR-UI-01 | ตาราง "รายการที่อ่านได้" ที่ชื่อสินค้ายาว | ช่อง "รายละเอียด" ต้องกว้างที่สุดในตาราง (colgroup + `table-layout:fixed`) · จำนวน 62px · ราคา 84px · ตารางไม่ล้นออกนอกกรอบ (wrapper `overflow-x:auto`, min-width 720px) |
 | OCR-CASEC-01 | สแกนใบที่มีส่วนลดท้ายบิล 5% แต่บรรทัดไม่มีราคาต่อหน่วย (370/890/135) → สร้างเอกสาร → เปิดแก้ → บันทึก | ยอดไม่ขยับ 1,325.25 / VAT 92.77 / รวม 1,418.02 (ส่วนลด % ของบรรทัด = 0) · ทิศตรงข้าม: ใบที่มีราคาต่อหน่วยคง % เดิม · golden `hardware-bill-discount-amounts-only` (`OcrCaseCLineDiscountTests`) |
+| TEAMC-01 | ออก 50 ทวิ ประจำปีพนักงาน (ภ.ง.ด.1ก) ที่มีประกันสังคม 9,000 + กองทุนสำรองเลี้ยงชีพ 12,000 ทั้งปี | ช่องกองทุนประกันสังคม/กองทุนสำรองเลี้ยงชีพพิมพ์ยอด · กบข. ว่าง · ใบของผู้ขาย/ wht.html ไม่เปลี่ยน (`WhtCertFormTextTests`) |
+| TEAMC-02 | บริษัทที่ไม่เคยออก 50 ทวิ ภ.ง.ด.2/54 และไม่มีเอกสารบริการต่างประเทศ กด "เริ่มต้นปฏิทิน" | ไม่มีรายการ ภ.ง.ด.2/2ก/54/ภ.พ.36 ค้างรอ (แถวที่ระบบสร้างเดิมและยังไม่มีใครแตะถูกลบแบบ soft) · แถวที่ผู้ใช้กรอก/ทำเครื่องหมายไม่ถูกแตะ · มีกิจกรรมแล้วกดใหม่ได้แถวกลับ (`TaxCalendarSeedScopeTests`) |
 | OCR-ROLE-01 | บิลเงินสดเขียนมือ (scan c0f55862): กรอบบน = ร้าน · ช่อง "นาม" = บริษัทเรา · 3,500 บาท | `OurRole = Buyer` · เอกสารเป้าหมายเป็นฝั่ง**ซื้อ** (ใบสำคัญจ่าย/ค่าใช้จ่าย) — ห้ามเสนอใบแจ้งหนี้ขาย · Reasoning มี `[SelfParty]` |
 | OCR-ROLE-02 | ใบเดียวกัน — ช่องคู่ค้า | ชื่อผู้ซื้อ = บริษัทเรา · **ช่องผู้ขายว่าง** พร้อมคะแนนต่ำ (ไฮไลต์เหลือง) — ห้ามใส่ชื่อบริษัทเราเองเป็นผู้ขาย และห้ามจับคู่ Contact เป็นตัวเราเอง |
 | OCR-ROLE-03 | สแกน**ใบที่เราออกเอง** (มีป้าย "ผู้ขาย: <บริษัทเรา>" + "ผู้ซื้อ: <ลูกค้า>") | `OurRole = Seller` เหมือนเดิม — ด่านใหม่ต้องไม่กลับทิศใบที่เดิมถูกอยู่แล้ว |
