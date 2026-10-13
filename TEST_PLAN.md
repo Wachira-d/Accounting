@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **487 ไฟล์ · 4,780 `[Fact]` + 767 `[Theory]` (3,414 `InlineData`)** ณ 2026-10-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **488 ไฟล์ · 4,794 `[Fact]` + 771 `[Theory]` (3,428 `InlineData`)** ณ 2026-10-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
