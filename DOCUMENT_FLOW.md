@@ -85,6 +85,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Flow**: อัปโหลด → OCR เก็บ `OcrScanResult` → review modal → "สร้างเอกสาร"
 - **Endpoint**: `POST /api/companies/{id}/ocr/{scanId}/create-document`
   (`?targetType=` เลือกชนิด · `?approve=true` = **สร้าง + อนุมัติทันที**)
+- **บรรทัดจากสแกนที่ไม่มีราคาต่อหน่วย (เคส C · รอบ 204 ทีม D)**: ราคาต่อหน่วย = ยอดหลังกระจายส่วนลดท้ายบิล ⇒ ส่วนลด % = 0 (ตัวตัดสินเดียว `OcrLineReconciler.LineDiscount` — เดิมติด % ทั้งบิลไว้ ⇒ เปิดแก้แล้วบันทึก `ComputeLineAmounts` หักซ้ำ 950 ลด 5% ⇒ 902.50) · ยอด/VAT/ยอดรวมตอนสร้างไม่ขยับ · golden เดิมเปลี่ยน 0 แถว · ข้อค้าง: เอกสารเก่าก่อนแก้ยังติด % (ไม่มี migration) · จำนวน < 1 ยังให้ส่วนลดบาทติดลบ (มีมาก่อน) · Last verified `commit 1c46ebcd`
 - **ผูกใบต้นทางทุกชนิด (2026-09-10 · `Helpers/OcrPredecessorMatcher`)** — ตอนสแกนเสร็จ
   `SuggestPredecessorLinkAsync` หา "เอกสารเปิดอยู่ของคู่ค้าเดียวกัน" ที่มีชนิดอยู่ใน
   `DocumentService.GetPredecessorTypes(target)` (ด้านกลับของ `ValidConversions` — PO/GRN → ใบซื้อ ·
