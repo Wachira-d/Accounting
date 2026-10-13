@@ -4714,3 +4714,7 @@ _รอบ 204 (ต่อ) — แก้ผลฝ่ายค้านรอบ�
 (`WhtPayeeSplit.ExplicitHeaderConflictReason` — สร้าง/แก้ไข/แก้ไขไม่ส่งบรรทัด/เปลี่ยนผู้ถูกหัก) · เอกสารลูกยกหัวเอกสารที่สืบทอดตามบรรทัดก่อนส่ง (`LiftSinglePayee`) ·
 **(5)** รายการประจำที่ไม่อนุมัติอัตโนมัติใบนั้น ⇒ `RecordAutoApproveFailureAsync` แทน LogWarning · เทสต์ `WhtPayeeSplitTests` +6 · `WhtCertIssuePlanTests` +2 ·
 `WhtCertReissuePlanTests` +1 · `Db/WhtMultiPayeeDbTests` +3 · TEST_PLAN WHT204-21..25 · กติกาจุดเรียก `_WHT204_ADV2` +9 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7b88c053)_
+
+_รอบ 204 (ต่อ) — ฝ่ายค้านรอบสามหลายผู้ถูกหัก (หลัง 7b88c053): ป้าย "ผู้ถูกหักถูกตัดทิ้ง" ไม่ตามไปใบที่คัดลอก/แปลง ⇒ เดือนถัดไป 50 ทวิ ออกในนามโบรกเกอร์อัตโนมัติ
+(กฎ #4 A) — `InheritPendingDroppedReview` · ฟอร์มแก้ไข/โมดัลส่งหัวเอกสารเดิมกลับแล้วโดน 400 — `ChangedHeaderRequest` · รายการประจำบรรทัดราคา 0 ทำให้โดน 400 ทุกรอบ —
+นับเฉพาะยอด > 0 · เทสต์ `WhtPayeeSplitTests` · กติกาจุดเรียก +4 (แก้ 3) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending-r3>_

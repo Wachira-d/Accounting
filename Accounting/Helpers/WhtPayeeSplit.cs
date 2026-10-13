@@ -72,6 +72,27 @@ public static class WhtPayeeSplit
     public static string? MarkDroppedInheritedPayees(string? notes, string? sourceNumber, int dropped)
         => DroppedInheritedPayeeNote(sourceNumber, dropped) is string reason ? WhtCertReviewNote.Append(notes, reason) : notes;
 
+    /// <summary>
+    /// ผู้ถูกหักหัวเอกสารที่ "ผู้ใช้เปลี่ยนในคำขอนี้จริง" สำหรับด่าน <see cref="ExplicitHeaderConflictReason"/> — ฝ่ายค้านรอบ 204 (หลัง 7b88c053):
+    /// ฟอร์มแก้ไข/โมดัลเปลี่ยนผู้ถูกหักส่งค่าหัวเอกสารที่โหลดมาเดิมกลับทุกครั้ง ⇒ เดิมลบบรรทัด/ตั้งทุกบรรทัดเป็นผู้ถูกหักเดียวกันแล้วโดน 400 ทั้งที่ไม่ได้แตะหัวเอกสาร ·
+    /// ค่าเท่าค่าที่เก็บไว้ (หลัง normalize) ⇒ null (ไม่ถือว่าระบุมา → ยกผู้ถูกหักรายบรรทัดขึ้นหัวเอกสารตามปกติ) · ค่าใหม่ ⇒ คืนค่าที่ขอ
+    /// </summary>
+    public static Guid? ChangedHeaderRequest(Guid contactId, Guid? requested, Guid? stored)
+        => WhtCertIssuePlan.NormalizeOverride(contactId, requested) is Guid p && p != WhtCertIssuePlan.NormalizeOverride(contactId, stored)
+            ? p : null;
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ 204 (หลัง 7b88c053): ป้าย "ผู้ถูกหักถูกตัดทิ้ง" ที่ยังไม่รับทราบบน<b>ต้นทาง</b>ต้องตามไปเอกสารลูกฝั่งผู้จ่าย (คัดลอก/แปลง) —
+    /// ต้นทางเก็บผู้ถูกหักสำรองไว้แล้ว (เช่นโบรกเกอร์) ⇒ ลูกไม่มีอะไร "ถูกตัด" อีก ⇒ เดิมลูกไม่ติดป้ายแล้ว 50 ทวิ ออกผิดคนอัตโนมัติ (กฎ #4 A เอกสารลูกต้องสืบทอด) ·
+    /// ลูกมีป้ายนี้อยู่แล้ว / ต้นทางไม่มี / ลูกไม่ใช่ฝั่งผู้จ่าย ⇒ คืนค่าเดิมทุกตัวอักษร
+    /// </summary>
+    public static string? InheritPendingDroppedReview(string? childNotes, string? sourceNotes, bool childIsPayerSide)
+        => childIsPayerSide
+           && PendingDroppedPayeeReview(childNotes) is null
+           && PendingDroppedPayeeReview(sourceNotes) is string r
+            ? WhtCertReviewNote.Append(childNotes, r)
+            : childNotes;
+
     /// <summary>เหตุผลของป้าย "ผู้ถูกหักที่สืบทอดถูกตัดทิ้ง" ที่ยังไม่รับทราบ (null = ไม่มี) — ป้ายต้องตรวจเรื่องอื่น (ใบลดหนี้ ฯลฯ) ไม่นับ</summary>
     public static string? PendingDroppedPayeeReview(string? notes)
         => WhtCertReviewNote.Reasons(notes).FirstOrDefault(r => r.StartsWith(DroppedPayeeTag, StringComparison.Ordinal));

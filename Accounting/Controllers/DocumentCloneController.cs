@@ -255,10 +255,14 @@ public class DocumentCloneController : ControllerBase
         // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้าย "50 ทวิ ต้องตรวจ" บนใบใหม่ + บอกในคำตอบ — ไม่เปลี่ยนผู้ถูกหักเงียบ ๆ ·
         // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ป้ายเดียวกับที่ WhtCertIssuePlan.Decide/คำเตือนอนุมัติอ่าน (เดิมหมายเหตุธรรมดา ⇒ 50 ทวิ ออกผิดคนเงียบ)
         var droppedNote = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayeeNote(src.DocumentNumber, cloneDroppedPayees);
-        if (droppedNote != null
+        // ฝ่ายค้านรอบ 204 (หลัง 7b88c053): ต้นทางที่ยังมีป้ายผู้ถูกหักถูกตัดทิ้ง (ไม่รับทราบ) ⇒ ใบที่คัดลอกติดป้ายเดียวกัน (มิฉะนั้นเดือนถัดไป 50 ทวิ ออกในนามโบรกเกอร์อัตโนมัติ)
+        var srcPendingDropped = Accounting.Helpers.WhtPayeeSplit.PendingDroppedPayeeReview(src.InternalNotes);
+        if ((droppedNote != null || srcPendingDropped != null)
             && await _db.Documents.FirstOrDefaultAsync(d => d.Id == newDoc.Id && d.CompanyId == companyId) is { } cloned)
         {
             cloned.InternalNotes = Accounting.Helpers.WhtPayeeSplit.MarkDroppedInheritedPayees(cloned.InternalNotes, src.DocumentNumber, cloneDroppedPayees);
+            cloned.InternalNotes = Accounting.Helpers.WhtPayeeSplit.InheritPendingDroppedReview(cloned.InternalNotes, src.InternalNotes,
+                Accounting.Helpers.WhtCertIssuePlan.AppliesTo(cloned.DocumentType));
             await _db.SaveChangesAsync();
         }
         return Ok(new ApiResponse<object>(true, new

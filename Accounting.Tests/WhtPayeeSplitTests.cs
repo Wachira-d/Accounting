@@ -356,4 +356,40 @@ public class WhtPayeeSplitTests
         Assert.Contains("ยกเลิกใบ CIL-001", noRoute);
         Assert.DoesNotContain("แยกใบลดหนี้", noRoute);
     }
+
+    // ── ฝ่ายค้านรอบ 204 (หลัง 7b88c053) ──
+
+    [Fact]
+    public void ป้ายผู้ถูกหักถูกตัดทิ้งของต้นทาง_ตามไปใบลูกฝั่งผู้จ่าย_ไม่ซ้ำ()
+    {
+        var src = WhtPayeeSplit.MarkDroppedInheritedPayees(null, "PV-001", 1);
+        var child = WhtPayeeSplit.InheritPendingDroppedReview("หมายเหตุลูก", src, childIsPayerSide: true);
+        Assert.NotNull(WhtPayeeSplit.PendingDroppedPayeeReview(child));
+        Assert.Contains("หมายเหตุลูก", child);
+        // ลูกมีป้ายอยู่แล้ว ⇒ ไม่ต่อซ้ำ
+        Assert.Equal(child, WhtPayeeSplit.InheritPendingDroppedReview(child, src, childIsPayerSide: true));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ต้นทางไม่มีป้าย_หรือลูกไม่ใช่ฝั่งผู้จ่าย_ไม่แตะหมายเหตุ()
+    {
+        var src = WhtPayeeSplit.MarkDroppedInheritedPayees(null, "PV-001", 1);
+        Assert.Equal("ลูก", WhtPayeeSplit.InheritPendingDroppedReview("ลูก", null, childIsPayerSide: true));
+        Assert.Equal("ลูก", WhtPayeeSplit.InheritPendingDroppedReview("ลูก", "หมายเหตุอื่น", childIsPayerSide: true));
+        Assert.Equal("ลูก", WhtPayeeSplit.InheritPendingDroppedReview("ลูก", src, childIsPayerSide: false));
+        Assert.Null(WhtPayeeSplit.InheritPendingDroppedReview(null, null, childIsPayerSide: true));
+    }
+
+    [Fact]
+    public void ฟอร์มส่งหัวเอกสารค่าเดิมกลับ_ไม่นับว่าระบุใหม่()
+    {
+        // ค่าเดิม (หลัง normalize) ⇒ null — ไม่เข้าด่านขัดกับบรรทัด (ยกผู้ถูกหักรายบรรทัดขึ้นหัวตามปกติ)
+        Assert.Null(WhtPayeeSplit.ChangedHeaderRequest(Broker, InsurerA, InsurerA));
+        Assert.Null(WhtPayeeSplit.ChangedHeaderRequest(Broker, Broker, null));          // เท่าผู้ติดต่อ = ค่าเดิม (ไม่ตั้ง)
+        Assert.Null(WhtPayeeSplit.ChangedHeaderRequest(Broker, Guid.Empty, InsurerA));  // ล้างค่า ไม่ใช่ระบุผู้ถูกหัก
+        Assert.Null(WhtPayeeSplit.ChangedHeaderRequest(Broker, null, InsurerA));
+        // ทิศตรงข้าม: เปลี่ยนจริง ⇒ คืนค่าที่ขอ (ด่านยังทำงาน)
+        Assert.Equal(InsurerB, WhtPayeeSplit.ChangedHeaderRequest(Broker, InsurerB, InsurerA));
+        Assert.Equal(InsurerA, WhtPayeeSplit.ChangedHeaderRequest(Broker, InsurerA, null));
+    }
 }

@@ -435,8 +435,16 @@ public class RecurringTransactionService : IRecurringTransactionService
             static Guid? TplPayee(JsonElement el) => el.TryGetProperty("whtPayeeContactId", out var tpEl)
                 && tpEl.ValueKind == JsonValueKind.String && Guid.TryParse(tpEl.GetString(), out var tpId) ? tpId : null;
             // ฝ่ายค้านรอบ 204 (หลัง 0f428969): นับเฉพาะผู้ถูกหักที่มีผลกับภาษีหัก (บรรทัดที่มีอัตราหัก · หัวเอกสารที่มีบรรทัดหักตามอยู่)
-            static bool TplCarriesWht(JsonElement el) => el.TryGetProperty("withholdingTaxRate", out var twEl)
-                && twEl.ValueKind == JsonValueKind.Number && twEl.GetDecimal() > 0m;
+            // ฝ่ายค้านรอบ 204 (หลัง 7b88c053): "หักภาษีจริง" = อัตรา > 0 และยอดบรรทัด > 0 (ตรงกับตอนสร้างที่ดูยอดภาษีที่คำนวณได้) —
+            // เดิมดูแค่อัตรา ⇒ บรรทัดราคา 0 ที่ตั้งอัตราไว้ทำให้ไม่ยกผู้ถูกหัก แล้วตอนสร้างโดนด่านหัวเอกสารขัดกับบรรทัด 400 ทุกรอบ
+            static bool TplCarriesWht(JsonElement el)
+            {
+                if (!(el.TryGetProperty("withholdingTaxRate", out var twEl) && twEl.ValueKind == JsonValueKind.Number && twEl.GetDecimal() > 0m))
+                    return false;
+                var tq = el.TryGetProperty("quantity", out var tqEl) && tqEl.ValueKind == JsonValueKind.Number ? tqEl.GetDecimal() : 1m;
+                var tp = el.TryGetProperty("unitPrice", out var tpEl) && tpEl.ValueKind == JsonValueKind.Number ? tpEl.GetDecimal() : 0m;
+                return tq * tp > 0m;
+            }
             var tplLineWht = new List<(Guid? Payee, bool CarriesWht)>();
             if (root.TryGetProperty("lines", out var tplLinesEl) && tplLinesEl.ValueKind == JsonValueKind.Array)
                 foreach (var tplLine in tplLinesEl.EnumerateArray())
