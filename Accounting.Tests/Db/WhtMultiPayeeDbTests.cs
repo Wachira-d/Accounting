@@ -519,4 +519,172 @@ public class WhtMultiPayeeDbTests
         Assert.Equal(s.InsurerId, after.WhtPayeeContactId);
         Assert.Null(after.Lines.Single().WhtPayeeContactId);
     }
+
+    // ══════ ทีม A (กระดานตัดสิน 2026-10-13 · A1) — ป้าย "ผู้ถูกหักถูกตัดทิ้ง" ล้างเองเมื่อผู้ใช้เปลี่ยนผู้ถูกหักจริง (ผ่านเมธอดจริง) ══════
+
+    private const string OtherReview = "ยกเลิกการชำระ PAY-A1 แต่ 50 ทวิ ออกให้ผู้ถูกหักแล้ว — ตรวจ/ยกเลิกใบเอง";
+
+    private static async Task<Document> DroppedDraftPvAsync(Accounting.Data.AccountingDbContext db, Seed s, string no)
+    {
+        var pv = await SinglePvAsync(db, s, no, null);
+        pv.Status = DocumentStatus.Draft;
+        pv.PaidAmount = 0m;
+        pv.InternalNotes = WhtPayeeSplit.MarkDroppedInheritedPayees(
+            WhtCertReviewNote.Append("หมายเหตุภายใน", OtherReview), "PI-A1", 1);
+        await db.SaveChangesAsync();
+        return pv;
+    }
+
+    private static Task<List<AuditLog>> ResolvedAuditAsync(Accounting.Data.AccountingDbContext db, Guid companyId, Guid docId)
+        => db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.EntityType == "Document" && a.EntityId == docId.ToString()
+                && a.NewValues != null && a.NewValues.Contains(WhtPayeeSplit.DroppedPayeeResolvedRuleCode))
+            .ToListAsync();
+
+    [Fact]
+    public async Task A1_แก้ไขใบร่าง_บันทึกซ้ำค่าเดิม_ป้ายอยู่_เปลี่ยนผู้ถูกหักจริง_ล้างเฉพาะป้ายนั้น_audit()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var pv = await DroppedDraftPvAsync(db, s, "PV-A1-UPD");
+        var noChange = new Accounting.Models.DTOs.Document.UpdateDocumentRequest(null, null, null, null, null, null);
+
+        // ทิศตรงข้าม: ฟอร์มส่งค่าเดิมกลับ (ผู้ถูกหัก = ผู้ติดต่อเดิม) ⇒ ป้ายอยู่ครบ ไม่มี audit ล้างป้าย
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await DocSvc(req).UpdateDocumentAsync(s.CompanyId, pv.Id, noChange with { WhtPayeeContactId = s.BrokerId });
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var kept = await req.Documents.AsNoTracking().FirstAsync(d => d.Id == pv.Id);
+            Assert.NotNull(WhtPayeeSplit.PendingDroppedPayeeReview(kept.InternalNotes));
+            Assert.Contains(OtherReview, WhtCertReviewNote.Reasons(kept.InternalNotes));
+            Assert.Empty(await ResolvedAuditAsync(req, s.CompanyId, pv.Id));
+        }
+
+        // เลือกผู้ถูกหักใหม่ (บริษัทประกัน) ⇒ ป้ายผู้ถูกหักถูกตัดหาย · ป้ายเรื่องอื่น + หมายเหตุเดิมอยู่ · audit RD-50BIS-PAYEE-DROPPED-RESOLVED
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await DocSvc(req).UpdateDocumentAsync(s.CompanyId, pv.Id, noChange with { WhtPayeeContactId = s.InsurerId });
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var after = await check.Documents.AsNoTracking().FirstAsync(d => d.Id == pv.Id);
+        Assert.Equal(s.InsurerId, after.WhtPayeeContactId);
+        Assert.Null(WhtPayeeSplit.PendingDroppedPayeeReview(after.InternalNotes));
+        Assert.Equal(new[] { OtherReview }, WhtCertReviewNote.Reasons(after.InternalNotes));
+        Assert.StartsWith("หมายเหตุภายใน", after.InternalNotes);
+        var audit = Assert.Single(await ResolvedAuditAsync(check, s.CompanyId, pv.Id));
+        Assert.Contains("PI-A1", audit.OldValues);
+    }
+
+    [Fact]
+    public async Task A1_เปลี่ยนผู้ถูกหักหลังอนุมัติ_ล้างป้ายผู้ถูกหักถูกตัด_ป้ายเรื่องอื่นอยู่_audit()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        await SeedWhtAccountsAsync(db, s.CompanyId);
+        var pv = await SinglePvAsync(db, s, "PV-A1-CHG", null);
+        pv.InternalNotes = WhtPayeeSplit.MarkDroppedInheritedPayees(WhtCertReviewNote.Append(null, OtherReview), "PI-A1", 1);
+        await db.SaveChangesAsync();
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await DocSvc(req).ChangeWhtPayeeAsync(s.CompanyId, pv.Id,
+                new ChangeWhtPayeeRequest(s.InsurerId, null, "ผู้มีเงินได้คือบริษัทประกัน"), "tester", null);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var after = await check.Documents.AsNoTracking().FirstAsync(d => d.Id == pv.Id);
+        Assert.Null(WhtPayeeSplit.PendingDroppedPayeeReview(after.InternalNotes));
+        Assert.Equal(new[] { OtherReview }, WhtCertReviewNote.Reasons(after.InternalNotes));   // ป้ายเรื่องอื่นต้องรับทราบเอง
+        Assert.Single(await ResolvedAuditAsync(check, s.CompanyId, pv.Id));
+    }
+
+    // ══════ ทีม A (A4) — ผู้ถูกหักรายบรรทัดต่างประเทศ: ม.70 ตรวจกับ "รายนั้น" · ใบรายเดียวผลเดิมทุกตัวอักษร ══════
+
+    private static async Task<Contact> ForeignAsync(Accounting.Data.AccountingDbContext db, Guid companyId)
+    {
+        var c = new Contact
+        {
+            CompanyId = companyId, Name = "Global Reinsurance Pte Ltd", CountryCode = "SG",
+            ContactType = ContactType.JuristicPerson, IsSupplier = true,
+        };
+        db.Contacts.Add(c);
+        await db.SaveChangesAsync();
+        return c;
+    }
+
+    private static async Task<Document> PvWithLinesAsync(Accounting.Data.AccountingDbContext db, Seed s, Guid contactId, string no,
+        params (string Desc, string Code, decimal Rate, Guid? LinePayee)[] lines)
+    {
+        var d = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = contactId, DocumentType = DocumentType.PaymentVoucher, DocumentNumber = no,
+            Status = DocumentStatus.Draft, DocumentDate = DateTime.UtcNow.Date, PaymentDate = DateTime.UtcNow.Date, Currency = "THB",
+        };
+        var order = 1;
+        foreach (var (desc, code, rate, payee) in lines)
+        {
+            var wht = Math.Round(1_000m * rate / 100m, 2, MidpointRounding.AwayFromZero);
+            d.Lines.Add(new DocumentLine
+            {
+                LineOrder = order++, Description = desc, Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m,
+                WithholdingTaxRate = rate, WithholdingTaxAmount = wht, IncomeTypeCode = code, WhtPayeeContactId = payee,
+            });
+            d.SubTotal += 1_000m;
+            d.WithholdingTaxAmount += wht;
+        }
+        d.TotalAmount = d.SubTotal - d.WithholdingTaxAmount;
+        d.BalanceDue = d.TotalAmount;
+        db.Documents.Add(d);
+        await db.SaveChangesAsync();
+        return d;
+    }
+
+    private static List<string> Foreign(IReadOnlyList<string> warnings) => warnings.Where(w => w.StartsWith("🌐", StringComparison.Ordinal)).ToList();
+
+    [Fact]
+    public async Task A4_ผู้ถูกหักรายบรรทัดต่างประเทศ_เตือนม70ในนามรายนั้น_บรรทัดในประเทศไม่โดนเตือนผิดคน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var foreign = await ForeignAsync(db, s.CompanyId);
+        // หัวเอกสารในประเทศ (โบรกเกอร์) · บรรทัด 2 ผู้ถูกหักต่างประเทศ ค่านายหน้า 40(2) หัก 3% (ม.70 = 15%)
+        var pv = await PvWithLinesAsync(db, s, s.BrokerId, "PV-A4-1",
+            ("ค่าบริการนายหน้า", "8", 3m, null), ("ค่าคอมมิชชั่นต่างประเทศ", "2", 3m, foreign.Id));
+        using var req = DbTestDatabase.TryCreateContext()!;
+        var fw = Foreign(await DocSvc(req).PreviewApprovalWarningsAsync(s.CompanyId, pv.Id));
+        var w = Assert.Single(fw);                                                    // เดิม: เงียบ (ผู้ถูกหักต่างประเทศรายบรรทัดไม่มีด่าน)
+        Assert.Contains("ค่าคอมมิชชั่นต่างประเทศ", w);
+        Assert.Contains(foreign.Name, w);
+        Assert.Contains("15", w);
+    }
+
+    [Fact]
+    public async Task A4_หัวเอกสารต่างประเทศ_บรรทัดของผู้ถูกหักในประเทศ_ไม่ถูกตรวจม70ด้วยหัวเอกสาร()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var foreign = await ForeignAsync(db, s.CompanyId);
+        var pv = await PvWithLinesAsync(db, s, foreign.Id, "PV-A4-2",
+            ("ค่าคอมมิชชั่น", "2", 15m, null), ("ค่าเบี้ยประกันในประเทศ", "8", 1m, s.InsurerId));
+        using var req = DbTestDatabase.TryCreateContext()!;
+        // เดิม: บรรทัด 2 (ผู้ถูกหัก = บริษัทประกันไทย) โดนเตือน ม.70 ตามผู้ถูกหักหัวเอกสาร · บรรทัด 1 หักถูก 15% ⇒ ไม่มีคำเตือนต่างประเทศเลย
+        Assert.Empty(Foreign(await DocSvc(req).PreviewApprovalWarningsAsync(s.CompanyId, pv.Id)));
+    }
+
+    [Fact]
+    public async Task A4_ทิศเดิม_ใบรายเดียวผู้รับต่างประเทศ_คำเตือนเดิมทุกตัวอักษร()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var foreign = await ForeignAsync(db, s.CompanyId);
+        var pv = await PvWithLinesAsync(db, s, foreign.Id, "PV-A4-3",
+            ("ค่าคอมมิชชั่น", "2", 3m, null), ("ค่าสิทธิ", "3", 15m, null));
+        using var req = DbTestDatabase.TryCreateContext()!;
+        var fw = Foreign(await DocSvc(req).PreviewApprovalWarningsAsync(s.CompanyId, pv.Id));
+        // รูปข้อความเดิมของด่านหัวเอกสาร (ตัวตัดสินเดียวกัน) — ใบรายเดียวไม่มีผู้ถูกหักรายบรรทัด ⇒ ต้องตรงทุกตัวอักษร
+        var scope = ForeignWhtPayeeCheck.ScopeOf(foreign.TaxId, foreign.ContactType, foreign.Name);
+        var expected = "🌐 จ่ายต่างประเทศ 'ค่าคอมมิชชั่น': " + ForeignWhtPayeeCheck.Warning(scope,
+            ForeignWhtRateResolver.ResolveForIncomeCode("2", "SG", ResidenceCertificate.None, DateTime.UtcNow.Date), 3m);
+        Assert.Equal(new[] { expected }, fw);
+    }
 }

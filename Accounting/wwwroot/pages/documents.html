@@ -2387,6 +2387,24 @@
       /** Option 1 reclassify: เปลี่ยนผังบัญชี (line.AccountId) ของเอกสารที่
        * approved แล้ว — Expense/PI/PV เท่านั้น. ระบบจะ post reclassify-JE
        * คู่ใหม่ (Dr ผังใหม่ / Cr ผังเก่า) ใต้ฉาก. ไม่แก้เอกสารต้นฉบับ */
+      /** ทีม A (กระดานตัดสิน 2026-10-13 · A1b): รับทราบป้าย "50 ทวิ ต้องตรวจ" จากหน้าเอกสารเอง (ใช้ได้ทั้งใบร่าง — เดิมทางเดียวคือหน้า
+       *  "เอกสารรอออกใบ" ซึ่งไม่แสดงใบร่าง) · เหตุผลบังคับ · เส้นเดียวกับหน้า 50 ทวิ (api.ackWhtCertReview → AcknowledgeReviewAsync) ·
+       *  ล้างทุกเรื่องในป้าย (กติกาเดิมของปุ่มรับทราบ) — ข้อความ/การตัดสินมาจากเซิร์ฟเวอร์ ไม่มีกติกาในหน้านี้ */
+      async ackWhtCertReview(docId) {
+        const api = Layout.api(); if (!api) return;
+        const reason = (prompt('รับทราบ "50 ทวิ ต้องตรวจ" — ระบุสิ่งที่ตรวจ/ทำไปแล้ว (บังคับ · บันทึกลงประวัติ)\n'
+          + 'เช่น "ตรวจแล้ว ผู้ถูกหักคือผู้รับเงินจริง" / "ยกเลิกใบเดิมและออกใหม่แล้ว" / "ยื่นแบบเพิ่มเติมแล้ว"') || '').trim();
+        if (!reason) { Layout.toast('ยังไม่ได้รับทราบ — ต้องระบุเหตุผล', 'warning'); return; }
+        try {
+          await api.ackWhtCertReview(docId, reason);
+          Layout.toast('บันทึกการรับทราบแล้ว — ป้าย "50 ทวิ ต้องตรวจ" ถูกล้าง', 'success');
+          await this.detail(docId);
+        } catch (e) {
+          if (e && e.status === 403) Layout.toast('รับทราบไม่ได้ — ต้องมีสิทธิ์ Tax.File (ยื่นภาษี) · ให้ผู้มีสิทธิ์กดรับทราบ', 'error', 9000);
+          else Layout.toast(e.message, 'error', 9000);
+        }
+      },
+
       // ── รอบ 204 (ข้อ 145): เปลี่ยนผู้ถูกหักภาษีหลังอนุมัติ ──
       async openWhtPayeeChange(docId) {
         const api = Layout.api(); if (!api) return;
@@ -6664,6 +6682,9 @@
         Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate || 0, 'doc');
         row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
         this._setLineIncomeType(row, l.incomeTypeCode);
+        // ทีม A (A11): จำค่าที่โหลดมาตอน "แก้ไขใบเดิม" (ลำดับ + คำอธิบาย + รหัส) — ไม่แตะแล้วตรงทั้งสามอย่าง ⇒ payload ไม่ส่งช่องนี้ (เซิร์ฟเวอร์คงค่าเดิม
+        // รวมรหัสเก่าที่ตารางชี้ขาดไม่ได้) · ใบลด/เพิ่มหนี้ที่เติมจากใบต้นทาง (carryStoredVat=false) เป็นใบใหม่ ⇒ ไม่จำ
+        if (opts.carryStoredVat !== false) this._markHydratedIncomeType(row);
         // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — เก็บแล้วต้อง echo กลับ (ฟอร์มแก้ไขไม่ล้างค่าเงียบ ๆ)
         this._setLineWhtPayee(row, l.whtPayeeContactId || null);
         // VAT claimability — hydrate จาก server. ตั้ง userOverride=1
@@ -8185,9 +8206,25 @@
         }
         sel.value = v;
       },
-      _lineIncomeTypePayload(row) {
+      /** ทีม A (A11): ประทับค่าที่โหลดจากใบเดิม — ลำดับแถว ณ ตอนโหลด (= ลำดับบรรทัดที่บันทึกไว้) + คำอธิบาย + รหัส */
+      _markHydratedIncomeType(row) {
+        const sel = row?.querySelector('[data-f="incomeType"]');
+        if (!sel) return;
+        sel.dataset.hydratedCode = sel.value || '';
+        sel.dataset.hydratedDesc = (row.querySelector('[data-f="desc"]')?.value || '').trim();
+        sel.dataset.hydratedIdx = String(Array.from(document.querySelectorAll('#linesBody .line-card')).indexOf(row));
+      },
+      /** ค่าประเภทเงินได้ที่จะส่ง — null = ไม่ส่ง (เซิร์ฟเวอร์คงค่าเดิมของบรรทัดลำดับ+คำอธิบายเดียวกัน) · "" = ผู้ใช้เลือก "ไม่ระบุ" เอง
+       *  @param {number} [payloadIdx] ลำดับของบรรทัดนี้ใน payload (ตัวเลือก — ไม่ส่ง = ไม่ใช้กติกา A11)
+       *  ทีม A (A11): ไม่แตะ + ค่า/ลำดับ/คำอธิบายเท่าตอนโหลดใบเดิม ⇒ null — รหัสเก่าที่ตารางชี้ขาดไม่ได้จึงไม่ถูกส่งกลับไปให้ล้ม 400 ·
+       *  ลำดับหรือคำอธิบายเปลี่ยน ⇒ ส่งค่าเดิม (เซิร์ฟเวอร์รับรหัสที่ตรงตัวกับที่เก็บบนใบนี้) — ไม่หายเงียบเพราะจับคู่บรรทัดไม่ได้ */
+      _lineIncomeTypePayload(row, payloadIdx) {
         const sel = row.querySelector('[data-f="incomeType"]');
         if (!sel) return null;
+        if (sel.dataset.userTouched !== '1' && sel.dataset.hydratedCode !== undefined && payloadIdx !== undefined
+            && sel.value === sel.dataset.hydratedCode
+            && String(payloadIdx) === sel.dataset.hydratedIdx
+            && (row.querySelector('[data-f="desc"]')?.value || '').trim() === sel.dataset.hydratedDesc) return null;
         if (sel.value) return sel.value;
         return sel.dataset.userTouched === '1' ? '' : null;
       },
@@ -9542,7 +9579,7 @@
             withholdingTaxRate: parseFloat(row.querySelector('[data-f="wht"]').value) || 0,
           };
           // รอบ 203: ประเภทเงินได้ ม.40 — ไม่ส่ง = เซิร์ฟเวอร์คงค่าเดิม · "" เฉพาะเมื่อผู้ใช้เลือก "ไม่ระบุ" เอง
-          const incomeTypeVal = this._lineIncomeTypePayload(row);
+          const incomeTypeVal = this._lineIncomeTypePayload(row, lines.length);
           if (incomeTypeVal !== null) line.incomeTypeCode = incomeTypeVal;
           // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — แถวซ่อน = ไม่ส่ง (เซิร์ฟเวอร์คงค่าเดิม/normalize)
           const linePayeeVal = this._lineWhtPayeePayload(row);
@@ -10849,7 +10886,7 @@
               ${d.whtCertAutoIssue === false ? `<div class="text-xs" style="margin-top:2px;color:#64748b">ตั้งไว้ไม่ให้สร้าง 50 ทวิ อัตโนมัติ — ออกใบเองที่หน้าหนังสือรับรองหัก ณ ที่จ่าย</div>` : ''}
               ${d.whtPayeeContactId ? `<div class="text-xs" style="margin-top:2px;color:#3730a3">ผู้ถูกหักภาษีตั้งแยกจากผู้รับเงิน — 50 ทวิ ออกในนามผู้ถูกหักที่เลือกไว้ (เปิดแก้ไขใบร่างเพื่อดู/เปลี่ยน)</div>` : ''}
               ${Number(d.whtPayeeCount || 0) > 1 ? `<div class="text-xs" style="margin-top:2px;color:#3730a3">ผู้ถูกหักภาษี ${Number(d.whtPayeeCount)} ราย (ตั้งรายบรรทัด) — 50 ทวิ แยกใบต่อผู้ถูกหัก</div>` : ''}
-              ${d.whtCertReviewReason ? `<div class="text-sm" style="margin-top:4px;padding:6px 10px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;color:#92400E">⚠️ 50 ทวิ ต้องตรวจ: ${Layout.esc(d.whtCertReviewReason)} — จัดการแล้วกด "รับทราบ" ที่ <a href="/pages/wht.html">หน้าหนังสือรับรองหัก ณ ที่จ่าย → เอกสารรอออกใบ</a></div>` : ''}
+              ${d.whtCertReviewReason ? `<div class="text-sm" style="margin-top:4px;padding:6px 10px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;color:#92400E">⚠️ 50 ทวิ ต้องตรวจ: ${Layout.esc(d.whtCertReviewReason)} — จัดการแล้วกด "รับทราบ" (ที่นี่ หรือ <a href="/pages/wht.html">หน้าหนังสือรับรองหัก ณ ที่จ่าย → เอกสารรอออกใบ</a>) <button type="button" class="btn btn-sm btn-secondary" style="margin-left:6px;padding:2px 10px;font-size:11.5px" onclick="Page.ackWhtCertReview('${Layout.jsArg(d.id)}')" title="บันทึกว่าจัดการ 50 ทวิ แล้ว (เหตุผลบังคับ · ลงประวัติ) — ต้องมีสิทธิ์ยื่นภาษี (Tax.File)">✔ รับทราบ</button></div>` : ''}
               ${(this.WHT_PAYER_TYPES.includes(d.documentType) && ['Approved', 'Sent', 'PartiallyPaid', 'Paid', 'Overdue'].includes(d.status)) ? `<div style="margin-top:4px"><button type="button" class="btn btn-sm btn-secondary" onclick="Page.openWhtPayeeChange('${d.id}')" title="ยกเลิก 50 ทวิ เดิม · ย้ายผังหนี้ภาษีหัก ณ ที่จ่ายเมื่อแบบเปลี่ยน · ออกใบใหม่ในนามผู้ถูกหักที่ถูก">เปลี่ยนผู้ถูกหักภาษี</button></div>` : ''}` : ''}
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.actualPaidAmount != null ? `
@@ -12163,6 +12200,7 @@
                     <label class="form-label" style="color:#854d0e">หัก ณ ที่จ่าย ที่ลูกค้าหักงวดนี้ <span style="color:#854d0e;font-weight:normal;font-size:11px">(บังคับเฉพาะ Cash basis — เริ่มต้นจาก proportional auto)</span></label>
                     <input id="rpWht" class="form-input" type="number" step="0.01" min="0" style="border-color:#fbbf24">
                     <div id="rpWhtHint" class="form-help" style="color:#854d0e"></div>
+                    <div id="rpWhtReview" class="text-sm" style="display:none;margin-top:6px;padding:6px 10px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;color:#92400E"></div>
                   </div>
                 </div>
                 <div id="rpFxRow" style="display:none;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:10px 12px">
@@ -12210,6 +12248,7 @@
           document.body.appendChild(wrap);
         }
         // (Re)bind state for this document.
+        wrap.dataset.docId = String(docId);   // ผลโหลดแบบ async (ป้าย 50 ทวิ ต้องตรวจ) ต้องเป็นของใบที่เปิดอยู่ — ห้ามใบก่อนหน้ามาทับ
         document.getElementById('rpBalanceDisplay').textContent = Layout.money(balanceDue);
         const amountEl = document.getElementById('rpAmount');
         const dateEl = document.getElementById('rpDate');
@@ -12388,6 +12427,22 @@
         recalcWht();
         amountEl.removeEventListener('input', recalcWht);
         amountEl.addEventListener('input', recalcWht);
+        // ทีม A (A3-UI): ป้าย "50 ทวิ ต้องตรวจ" ของเอกสาร (เช่น ใบลดหนี้ลดภาษีหักแล้ว — ยอดหักงวดนี้/50 ทวิ ต้องตามยอดที่ลด) แสดงข้างช่องหัก ณ ที่จ่าย ·
+        // ข้อความมาจากเซิร์ฟเวอร์ (DocumentResponse.whtCertReviewReason) ทั้งก้อน — หน้านี้ไม่ตัดสินเอง
+        const rpWhtReview = document.getElementById('rpWhtReview');
+        const showWhtReview = (reason) => {
+          if (!rpWhtReview) return;
+          rpWhtReview.style.display = (hasWht && reason) ? 'block' : 'none';
+          rpWhtReview.innerHTML = (hasWht && reason) ? '⚠️ 50 ทวิ ต้องตรวจ: ' + Layout.esc(reason) : '';
+        };
+        showWhtReview(null);
+        if (hasWht) {
+          const cur = this._currentDoc;
+          if (cur && String(cur.id) === String(docId)) showWhtReview(cur.whtCertReviewReason);
+          else Layout.api()?.getDocument(docId)
+            .then(r => { if (document.getElementById('rpModal')?.dataset.docId === String(docId)) showWhtReview(r?.data?.whtCertReviewReason); })
+            .catch(e => Layout.toast('โหลดป้าย "50 ทวิ ต้องตรวจ" ของเอกสารไม่สำเร็จ: ' + (e.message || ''), 'warning', 7000));
+        }
         // เอกสารสกุลต่างประเทศ → เปิดช่อง rate วันชำระ (default = rate เอกสาร)
         // ต่างจาก rate เอกสาร → backend post กำไร/ขาดทุนอัตราแลกเปลี่ยน realized
         const rpFxRow = document.getElementById('rpFxRow');

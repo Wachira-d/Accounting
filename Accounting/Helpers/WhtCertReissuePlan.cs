@@ -240,9 +240,15 @@ public static class WhtCertReviewNote
         return notes!.Replace("\r\n", "\n").Split("\n\n")
             .Select(p => p.Trim())
             .Where(p => p.StartsWith(Marker, StringComparison.Ordinal))
-            .Select(p => p.Substring(Marker.Length))
-            .Select(t => (t.StartsWith(Lead, StringComparison.Ordinal) ? t.Substring(Lead.Length) : t).Trim())
+            .Select(ReasonOfParagraph)
             .ToList();
+    }
+
+    /// <summary>เหตุผลของย่อหน้าป้ายหนึ่งย่อหน้า (ตัดช่องว่างแล้ว · ขึ้นต้นด้วย <see cref="Marker"/>) — ตัวถอดเดียวของ <see cref="Reasons"/> และ <see cref="ClearWhere"/></summary>
+    private static string ReasonOfParagraph(string trimmedParagraph)
+    {
+        var t = trimmedParagraph.Substring(Marker.Length);
+        return (t.StartsWith(Lead, StringComparison.Ordinal) ? t.Substring(Lead.Length) : t).Trim();
     }
 
     /// <summary>เรื่องที่ค้างรวมเป็นข้อความเดียว (null = ไม่มีป้าย) — ช่องของคำตอบให้หน้าเว็บแสดง</summary>
@@ -259,6 +265,24 @@ public static class WhtCertReviewNote
         var paras = notes!.Replace("\r\n", "\n").Split("\n\n")
             .Where(p => !p.TrimStart().StartsWith(Marker, StringComparison.Ordinal));
         var joined = string.Join("\n\n", paras).Trim();
+        return joined.Length == 0 ? null : joined;
+    }
+
+    /// <summary>
+    /// ถอด<b>เฉพาะ</b>ย่อหน้าของป้ายที่เหตุผลเข้าเงื่อนไข (ทีม A กระดานตัดสิน 2026-10-13 — ป้าย "ผู้ถูกหักถูกตัดทิ้ง" ล้างเองเมื่อผู้ใช้เลือกผู้ถูกหักใหม่จริง) ·
+    /// ป้ายเรื่องอื่น (ใบลดหนี้ · ยกเลิกการจ่าย) และข้อความอื่นคงเดิม · ไม่มีย่อหน้าใดเข้าเงื่อนไข ⇒ คืนค่าเดิมทุกตัวอักษร · เหลือแต่ช่องว่าง ⇒ null
+    /// </summary>
+    public static string? ClearWhere(string? notes, Func<string, bool> reasonMatches)
+    {
+        if (!Has(notes)) return notes;
+        var paras = notes!.Replace("\r\n", "\n").Split("\n\n");
+        bool Drop(string p)
+        {
+            var t = p.Trim();
+            return t.StartsWith(Marker, StringComparison.Ordinal) && reasonMatches(ReasonOfParagraph(t));
+        }
+        if (!paras.Any(Drop)) return notes;
+        var joined = string.Join("\n\n", paras.Where(p => !Drop(p))).Trim();
         return joined.Length == 0 ? null : joined;
     }
 }

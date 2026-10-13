@@ -71,4 +71,39 @@ public class DocumentLineIncomeTypeTests
         Assert.Null(DocumentLineIncomeType.KeptFromPrevious(prev, 1, "ค่าเบี้ยประกันรถ"));   // บรรทัดใหม่
         Assert.Null(DocumentLineIncomeType.KeptFromPrevious(prev, -1, "ค่าเบี้ยประกันรถ"));
     }
+
+    // ══════ ทีม A (กระดานตัดสิน 2026-10-13 · A11): รหัสเก่าที่ตารางชี้ขาดไม่ได้ ไม่ขังใบตอนแก้ไข ══════
+
+    private const string Legacy = "LEGACY-ค่าบริการเก่า";
+
+    [Fact]
+    public void A11_แก้ไข_ส่งรหัสเก่าตรงตัวกับที่เก็บบนใบนี้_ผ่านและเก็บรูปเดิม()
+    {
+        Assert.Null(ThaiWhtRateTable.Resolve(Legacy));                              // สมมติฐานของเทสต์: ตารางชี้ขาดไม่ได้จริง
+        var v = DocumentLineIncomeType.Decide(Legacy, null, new string?[] { "8", Legacy });
+        Assert.Null(v.Error);
+        Assert.Equal(Legacy, v.Code);                                               // ไม่ normalize · ไม่ล้าง · ไม่แต่ง
+        // ไม่ส่ง (ฟอร์มไม่แตะ) ⇒ คงค่าเดิมของบรรทัดเดียวกันเหมือนเดิม
+        Assert.Equal(Legacy, DocumentLineIncomeType.Decide(null, Legacy, new string?[] { Legacy }).Code);
+    }
+
+    [Fact]
+    public void A11_ทิศตรงข้าม_เลือกใหม่เป็นค่าที่ชี้ขาดไม่ได้_ยังปฏิเสธ()
+    {
+        // ใบนี้เก็บรหัสเก่าอีกตัว — ค่าใหม่ที่ไม่ตรงตัวยังล้ม 400
+        Assert.NotNull(DocumentLineIncomeType.Decide("LEGACY-อื่น", null, new string?[] { Legacy }).Error);
+        // ต่างแค่ช่องว่าง/ตัวพิมพ์ ⇒ ไม่ใช่ "ตรงตัว" (ห้ามเดา)
+        Assert.NotNull(DocumentLineIncomeType.Decide(" " + Legacy, null, new string?[] { Legacy }).Error);
+        // เอกสารใหม่ (ไม่มีรหัสที่เก็บไว้) ⇒ ปฏิเสธเหมือนเดิม · overload สองอาร์กิวเมนต์ = ว่าง
+        Assert.NotNull(DocumentLineIncomeType.Decide(Legacy, null, Array.Empty<string?>()).Error);
+        Assert.NotNull(DocumentLineIncomeType.Decide(Legacy, null).Error);
+        Assert.NotNull(DocumentLineIncomeType.Decide(Legacy, null, new string?[] { null }).Error);
+    }
+
+    [Fact]
+    public void A11_ทิศเดิม_ค่าที่ชี้ขาดได้_ยังเป็นรหัสมาตรฐาน_ล้างได้()
+    {
+        Assert.Equal("5", DocumentLineIncomeType.Decide("40(5)", null, new string?[] { Legacy }).Code);
+        Assert.Null(DocumentLineIncomeType.Decide("", Legacy, new string?[] { Legacy }).Code);   // ผู้ใช้เลือก "ไม่ระบุ" เอง ⇒ ล้าง
+    }
 }

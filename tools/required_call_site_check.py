@@ -6756,6 +6756,39 @@ RULES += [
          why=_TEAMC_1013 + "B4 ข้อความ \"ยังไม่รองรับ\" อ้างรหัส ETDA ของใบกำกับอย่างย่อให้ถูก (T05/T06 ไม่ใช่ T04)"),
 ]
 
+# ══════ ทีม A กระดานตัดสิน 2026-10-13 (A1 ป้ายผู้ถูกหักถูกตัดล้างเอง · A4 ผู้ถูกหักรายบรรทัดต่างประเทศ · A11 รหัสเงินได้เก่าไม่ขังใบ) ══════
+_TEAM_A_1013 = "ทีม A กระดานตัดสิน 2026-10-13: "
+RULES += [
+    dict(file=DOC, method="UpdateDocumentAsync",
+         must=["WhtPayeeSplit.ClearDroppedPayeeReview(", "WhtPayeeSplit.DroppedPayeeResolvedRuleCode"],
+         must_re=[r"is\s+string\s+resolvedDropReason\s*\)\s*\{\s*doc\.InternalNotes\s*=\s*updReviewNotes\s*;\s*_db\.AddChainedAuditLog\("],
+         before=[("updPayeesBefore =", "LiftStoredLineWhtPayees("),
+                 ("updPayeesBefore =", "RemoveRange(doc.Lines)"),
+                 ("WhtPayeeSplit.ClearDroppedPayeeReview(", "SaveChangesAsync(")],
+         forbid=["WhtCertReviewNote.Clear("],
+         call_args=[("ValidateDocumentLinesAsync(", "storedIncomeCodes"),
+                    ("DocumentLineIncomeType.Decide(", "storedIncomeCodes")],
+         why=_TEAM_A_1013 + "(A1) ชุดผู้ถูกหักก่อนแก้อ่านก่อนแตะหัว/บรรทัด · ล้างเฉพาะป้ายผู้ถูกหักถูกตัด (ห้ามล้างทุกป้าย) + audit ก่อนบันทึก · "
+             + "(A11) รหัสเงินได้ที่เก็บบนใบนี้ส่งกลับตรงตัวได้ทั้งด่านตรวจและตอนสร้างบรรทัด"),
+    dict(file=DOC, method="ChangeWhtPayeeAsync",
+         must=["WhtPayeeSplit.ClearDroppedPayeeReview(doc.InternalNotes, oldPortions, newPortions)",
+               "WhtPayeeSplit.DroppedPayeeResolvedRuleCode"],
+         must_re=[r"doc\.InternalNotes\s*=\s*WhtCertAutoFailedNote\.Clear\(\s*chgReviewNotes\s*\)",
+                  r"is\s+string\s+chgResolvedReason\s*\)\s*_db\.AddChainedAuditLog\("],
+         before=[("WhtPayeeSplit.ClearDroppedPayeeReview(", "tx.CommitAsync(")],
+         forbid=["WhtCertReviewNote.Clear("],
+         why=_TEAM_A_1013 + "(A1) เปลี่ยนผู้ถูกหักหลังอนุมัติ ⇒ ล้างเฉพาะป้ายผู้ถูกหักถูกตัดในธุรกรรมเดียวกัน + audit (ป้ายเรื่องอื่นต้องรับทราบเอง)"),
+    dict(file=DOC, method="CollectApprovalWarningsAsync",
+         must=["ForeignWhtPayeeCheck.ScopeOf(lp.TaxId, lp.ContactType, lp.Name)",
+               "ForeignWhtRateResolver.ResolveForIncomeCode(lpLine.IncomeTypeCode, lp.CountryCode"],
+         must_re=[r"is\s+string\s+lpForeignWarn\s*\)\s*warnings\.Add\(",
+                  r"doc\.Lines\.Where\(\s*l\s*=>\s*l\.WhtPayeeContactId\s*==\s*null\s*&&"],
+         why=_TEAM_A_1013 + "(A4) ผู้ถูกหักรายบรรทัดต่างประเทศตรวจ ม.70 กับรายนั้น · ด่าน ม.70 ของหัวเอกสารตรวจเฉพาะบรรทัดที่ตามหัวเอกสาร"),
+    dict(file=DOC, method="ValidateDocumentLinesAsync",
+         call_args=[("DocumentLineIncomeType.Decide(", "storedIncomeCodes")],
+         why=_TEAM_A_1013 + "(A11) ด่านรหัสเงินได้รับรหัสที่เก็บบนใบนี้ (ตัวตัดสินเดียว DocumentLineIncomeType.Decide)"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

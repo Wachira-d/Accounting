@@ -25,13 +25,24 @@ public static class DocumentLineIncomeType
     /// <param name="requested">ค่าที่ส่งมา — null = ไม่ได้ส่ง · "" = ล้าง</param>
     /// <param name="kept">ค่าเดิมของบรรทัดเดียวกัน (ตอนแก้ไข · ตอนสร้าง = null)</param>
     public static Verdict Decide(string? requested, string? kept)
+        => Decide(requested, kept, Array.Empty<string?>());
+
+    /// <summary>
+    /// ตัดสินค่าที่จะเก็บ <b>ตอนแก้ไข</b> — ทีม A (กระดานตัดสิน 2026-10-13 · A11): รหัสเก่าที่ตารางกลางชี้ขาดไม่ได้ (ข้อมูลก่อนมีด่าน · OCR
+    /// เก็บรูปเดิมไว้ให้คนเห็น — <see cref="ForSystemWrittenPayerLine"/>) เดิมทำให้ "เปิดแก้แล้วบันทึก" ล้ม 400 ทุกครั้ง ทั้งที่ผู้ใช้ไม่ได้แตะช่องนี้ ⇒
+    /// ค่าที่ส่งมา<b>ตรงตัวอักษร</b>กับรหัสที่เก็บอยู่แล้วบนเอกสารนี้ (<paramref name="storedOnDoc"/>) ⇒ ผ่านและเก็บรูปเดิม (ไม่ normalize ·
+    /// ไม่แต่งค่า) · <b>เลือกใหม่</b>เป็นค่าที่ชี้ขาดไม่ได้ / เอกสารใหม่ (storedOnDoc ว่าง) ⇒ ปฏิเสธเหมือนเดิม · ค่าที่ชี้ขาดได้ ⇒ รหัสมาตรฐานเหมือนเดิม
+    /// </summary>
+    /// <param name="storedOnDoc">รหัสที่เก็บอยู่บนบรรทัดของเอกสารนี้ก่อนแก้ (ตอนสร้าง = ว่าง)</param>
+    public static Verdict Decide(string? requested, string? kept, IReadOnlyCollection<string?> storedOnDoc)
     {
         if (requested is null) return new Verdict(kept, null);
         if (string.IsNullOrWhiteSpace(requested)) return new Verdict(null, null);
         var t = ThaiWhtRateTable.Resolve(requested);
-        return t is null
-            ? new Verdict(null, $"ประเภทเงินได้ \"{requested.Trim()}\" ไม่อยู่ในตารางประเภทเงินได้ ม.40 ของระบบ — เลือกจากรายการ")
-            : new Verdict(t.Code, null);
+        if (t is not null) return new Verdict(t.Code, null);
+        if (storedOnDoc.Any(c => c is not null && string.Equals(c, requested, StringComparison.Ordinal)))
+            return new Verdict(requested, null);
+        return new Verdict(null, $"ประเภทเงินได้ \"{requested.Trim()}\" ไม่อยู่ในตารางประเภทเงินได้ ม.40 ของระบบ — เลือกจากรายการ");
     }
 
     /// <summary>ประเภทที่ "เอกสารฝั่งผู้จ่าย" (ใบสำคัญจ่าย · ค่าใช้จ่าย · ใบแจ้งหนี้ซื้อ · ใบรับรองแทนใบเสร็จ) <b>เลือกใหม่ไม่ได้</b> —

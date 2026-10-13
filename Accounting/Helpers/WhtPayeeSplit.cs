@@ -95,15 +95,47 @@ public static class WhtPayeeSplit
 
     /// <summary>เหตุผลของป้าย "ผู้ถูกหักที่สืบทอดถูกตัดทิ้ง" ที่ยังไม่รับทราบ (null = ไม่มี) — ป้ายต้องตรวจเรื่องอื่น (ใบลดหนี้ ฯลฯ) ไม่นับ</summary>
     public static string? PendingDroppedPayeeReview(string? notes)
-        => WhtCertReviewNote.Reasons(notes).FirstOrDefault(r => r.StartsWith(DroppedPayeeTag, StringComparison.Ordinal));
+        => WhtCertReviewNote.Reasons(notes).FirstOrDefault(IsDroppedPayeeReason);
 
     /// <summary>คำเตือนก่อนอนุมัติของใบที่ยังมีป้ายผู้ถูกหักถูกตัดทิ้ง (ชุด <see cref="WhtCertIssuePlan.ApprovalWarningPrefix"/> — เว็บถามยืนยัน ·
-    /// ทางเข้าไม่มีคนผ่านตามนโยบายเดิม แต่ 50 ทวิ ไม่ออกอัตโนมัติจนกว่าจะรับทราบ) · ไม่มีป้าย = null</summary>
+    /// ทางเข้าไม่มีคนผ่านตามนโยบายเดิม แต่ 50 ทวิ ไม่ออกอัตโนมัติจนกว่าจะรับทราบ) · ไม่มีป้าย = null
+    /// <para>ทีม A (กระดานตัดสิน 2026-10-13): ทางไปต่อชี้ที่ปุ่ม "รับทราบ" บนป้ายของหน้าเอกสารนี้เอง (ใช้ได้ทั้งใบร่าง) หรือเลือกผู้ถูกหักใหม่ในฟอร์มแก้ไข
+    /// (ป้ายล้างเอง — <see cref="ClearDroppedPayeeReview"/>) · หน้า "เอกสารรอออกใบ" ยังรับทราบได้เหมือนเดิม</para></summary>
     public static string? DroppedPayeeApprovalWarning(string? notes)
         => PendingDroppedPayeeReview(notes) is string r
-            ? $"{WhtCertIssuePlan.ApprovalWarningPrefix} {r} · 50 ทวิ จะไม่ออกอัตโนมัติจนกว่าจะตรวจผู้ถูกหักแล้วกด \"รับทราบ\" "
-              + "(หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" → \"เอกสารรอออกใบ\")"
+            ? $"{WhtCertIssuePlan.ApprovalWarningPrefix} {r} · 50 ทวิ จะไม่ออกอัตโนมัติจนกว่าจะตรวจผู้ถูกหัก — "
+              + "เลือกผู้ถูกหักใหม่ในฟอร์มแก้ไขเอกสาร (ป้ายล้างให้เอง) หรือถ้าผู้ถูกหักที่ใช้อยู่ถูกแล้ว กด \"รับทราบ\" ที่ป้าย \"50 ทวิ ต้องตรวจ\" "
+              + "บนหน้ารายละเอียดเอกสารนี้ (หรือหน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" → \"เอกสารรอออกใบ\")"
             : null;
+
+    /// <summary>รหัสกติกาของ audit "ป้ายผู้ถูกหักถูกตัดทิ้งล้างเองเพราะผู้ใช้เปลี่ยนผู้ถูกหักแล้ว"</summary>
+    public const string DroppedPayeeResolvedRuleCode = "RD-50BIS-PAYEE-DROPPED-RESOLVED";
+
+    /// <summary>
+    /// ผู้ใช้เปลี่ยน<b>ชุดผู้ถูกหักที่มีผลจริง</b>ของใบไหม (ทีม A กระดานตัดสิน 2026-10-13) — เทียบชุด id ของส่วนจาก <see cref="Portions"/> ก่อน/หลัง ·
+    /// ไม่สนลำดับ/ยอด/บรรทัด (เพิ่มบรรทัดที่หักของผู้ถูกหักเดิม ≠ เปลี่ยนผู้ถูกหัก) ·
+    /// <b>ฝั่งใดว่าง ⇒ false</b>: ก่อนว่าง (ยังไม่หัก) แล้วมีส่วนของผู้ติดต่อเอกสาร = ระบบเติมให้ ไม่ใช่ผู้ใช้เลือก · หลังว่าง (ลบภาษีหักทิ้ง)
+    /// = ไม่ได้เลือกผู้ถูกหักใหม่ — ป้ายต้องอยู่ (เพิ่มภาษีหักกลับมาทีหลังจะได้ผู้ติดต่อของเอกสารเดิมที่ยังไม่มีใครตรวจ)
+    /// </summary>
+    public static bool PayeeSetChanged(IReadOnlyList<WhtPayeePortion> before, IReadOnlyList<WhtPayeePortion> after)
+        => before.Count > 0 && after.Count > 0
+           && !before.Select(p => p.PayeeContactId).ToHashSet().SetEquals(after.Select(p => p.PayeeContactId));
+
+    /// <summary>
+    /// ล้างป้าย <see cref="DroppedPayeeTag"/> <b>เฉพาะย่อหน้านั้น</b> เมื่อผู้ใช้เปลี่ยนชุดผู้ถูกหักจริง (<see cref="PayeeSetChanged"/>) —
+    /// ป้ายเรื่องอื่น (ใบลดหนี้ลดฐาน · ยกเลิกการจ่าย) ไม่ถูกแตะด้วยการแก้เอกสาร (ต้อง "รับทราบ" พร้อมเหตุผลเท่านั้น) ·
+    /// บันทึกซ้ำด้วยค่าเดิม/ไม่มีป้าย ⇒ (หมายเหตุเดิมทุกตัวอักษร, null) · ล้างแล้ว ⇒ Resolved = เหตุผลของป้ายที่ถูกล้าง (ผู้เรียกเขียน audit
+    /// <see cref="DroppedPayeeResolvedRuleCode"/>)
+    /// </summary>
+    public static (string? Notes, string? Resolved) ClearDroppedPayeeReview(string? notes,
+        IReadOnlyList<WhtPayeePortion> before, IReadOnlyList<WhtPayeePortion> after)
+    {
+        var pending = WhtCertReviewNote.Reasons(notes).Where(IsDroppedPayeeReason).ToList();
+        if (pending.Count == 0 || !PayeeSetChanged(before, after)) return (notes, null);
+        return (WhtCertReviewNote.ClearWhere(notes, IsDroppedPayeeReason), string.Join(" · ", pending));
+    }
+
+    private static bool IsDroppedPayeeReason(string reason) => reason.StartsWith(DroppedPayeeTag, StringComparison.Ordinal);
 
     /// <summary>เหตุผลที่รายการประจำ "ไม่อนุมัติอัตโนมัติ" ใบที่ผู้ถูกหักของเทมเพลตถูกตัดทิ้ง (ส่งเข้าเส้นรายงานการอนุมัติอัตโนมัติไม่สำเร็จเส้นเดียวกับเหตุอื่น)</summary>
     public static string DroppedPayeeAutoApproveSkipReason(int dropped)

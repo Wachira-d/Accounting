@@ -392,4 +392,75 @@ public class WhtPayeeSplitTests
         Assert.Equal(InsurerB, WhtPayeeSplit.ChangedHeaderRequest(Broker, InsurerB, InsurerA));
         Assert.Equal(InsurerA, WhtPayeeSplit.ChangedHeaderRequest(Broker, InsurerA, null));
     }
+
+    // ══════ ทีม A (กระดานตัดสิน 2026-10-13 · A1): ป้าย "ผู้ถูกหักถูกตัดทิ้ง" ล้างเองเมื่อผู้ใช้เปลี่ยนผู้ถูกหักจริง — เฉพาะป้ายนั้น ══════
+
+    private static IReadOnlyList<WhtPayeePortion> P(params Guid[] payees)
+        => payees.Select((p, i) => new WhtPayeePortion(p, 10m, new[] { i })).ToList();
+
+    [Fact]
+    public void A1_ชุดผู้ถูกหักเปลี่ยน_เทียบเป็นชุด_ไม่สนลำดับยอดบรรทัด()
+    {
+        Assert.True(WhtPayeeSplit.PayeeSetChanged(P(Broker), P(InsurerA)));                 // หัวเอกสาร: โบรกเกอร์ → บริษัทประกัน
+        Assert.True(WhtPayeeSplit.PayeeSetChanged(P(Broker, InsurerA), P(InsurerB, InsurerA))); // รายบรรทัดหนึ่งราย
+        Assert.True(WhtPayeeSplit.PayeeSetChanged(P(Broker), P(Broker, InsurerA)));          // แยกบรรทัดให้ผู้ถูกหักรายใหม่
+        // ทิศตรงข้าม: ชุดเดิม (สลับลำดับ/ยอดเปลี่ยน/เพิ่มบรรทัดของรายเดิม) ⇒ ไม่นับ
+        Assert.False(WhtPayeeSplit.PayeeSetChanged(P(Broker, InsurerA), P(InsurerA, Broker)));
+        Assert.False(WhtPayeeSplit.PayeeSetChanged(
+            new[] { new WhtPayeePortion(Broker, 30m, new[] { 0 }) },
+            new[] { new WhtPayeePortion(Broker, 45m, new[] { 0, 1 }) }));
+        // ฝั่งใดว่าง ⇒ ไม่นับ (ไม่ได้ "เลือก" ผู้ถูกหัก)
+        Assert.False(WhtPayeeSplit.PayeeSetChanged(P(), P(Broker)));
+        Assert.False(WhtPayeeSplit.PayeeSetChanged(P(Broker), P()));
+    }
+
+    [Fact]
+    public void A1_เปลี่ยนผู้ถูกหักจริง_ล้างเฉพาะป้ายผู้ถูกหักถูกตัด_ป้ายเรื่องอื่นและหมายเหตุอยู่ครบ()
+    {
+        var notes = WhtCertReviewNote.Append("หมายเหตุภายในเดิม", "ใบลดหนี้ CN-001 ลดฐานหลังยื่นแล้ว — ยื่นแบบเพิ่มเติม");
+        notes = WhtPayeeSplit.MarkDroppedInheritedPayees(notes, "PI-001", 1);
+        var (cleared, resolved) = WhtPayeeSplit.ClearDroppedPayeeReview(notes, P(Broker), P(InsurerA));
+        Assert.NotNull(resolved);
+        Assert.StartsWith(WhtPayeeSplit.DroppedPayeeTag, resolved);
+        Assert.Contains("PI-001", resolved);
+        Assert.Null(WhtPayeeSplit.PendingDroppedPayeeReview(cleared));
+        Assert.Equal(new[] { "ใบลดหนี้ CN-001 ลดฐานหลังยื่นแล้ว — ยื่นแบบเพิ่มเติม" }, WhtCertReviewNote.Reasons(cleared));
+        Assert.StartsWith("หมายเหตุภายในเดิม", cleared);
+    }
+
+    [Fact]
+    public void A1_ทิศตรงข้าม_บันทึกซ้ำค่าเดิม_หรือไม่มีป้าย_หรือป้ายเรื่องอื่นอย่างเดียว_ไม่แตะหมายเหตุ()
+    {
+        var marked = WhtPayeeSplit.MarkDroppedInheritedPayees("เดิม", "PI-001", 1);
+        var same = WhtPayeeSplit.ClearDroppedPayeeReview(marked, P(Broker), P(Broker));      // ฟอร์มส่งค่าเดิมกลับ
+        Assert.Equal(marked, same.Notes);
+        Assert.Null(same.Resolved);
+        var removedWht = WhtPayeeSplit.ClearDroppedPayeeReview(marked, P(Broker), P());     // ลบภาษีหักทิ้ง ≠ เลือกผู้ถูกหัก
+        Assert.Equal(marked, removedWht.Notes);
+        Assert.Null(removedWht.Resolved);
+        Assert.Equal(("เดิม", (string?)null), WhtPayeeSplit.ClearDroppedPayeeReview("เดิม", P(Broker), P(InsurerA)));
+        // ป้ายเรื่องอื่น (ใบลดหนี้) ไม่ถูกล้างด้วยการแก้เอกสาร — ต้องรับทราบพร้อมเหตุผลเท่านั้น
+        var other = WhtCertReviewNote.Append(null, "ใบลดหนี้ CN-001 ลดฐานหลังยื่นแล้ว — ยื่นแบบเพิ่มเติม");
+        Assert.Equal((other, (string?)null), WhtPayeeSplit.ClearDroppedPayeeReview(other, P(Broker), P(InsurerA)));
+    }
+
+    [Fact]
+    public void A1_ClearWhere_ไม่มีย่อหน้าเข้าเงื่อนไข_คืนค่าเดิมทุกตัวอักษร_ล้างหมดเหลือว่าง_null()
+    {
+        var other = WhtCertReviewNote.Append("  เดิม\r\n", "เรื่องอื่น");
+        Assert.Same(other, WhtCertReviewNote.ClearWhere(other, r => r.StartsWith(WhtPayeeSplit.DroppedPayeeTag, StringComparison.Ordinal)));
+        Assert.Null(WhtCertReviewNote.ClearWhere(null, _ => true));
+        var only = WhtPayeeSplit.MarkDroppedInheritedPayees(null, "PI-001", 1);
+        Assert.Null(WhtCertReviewNote.ClearWhere(only, _ => true));
+    }
+
+    [Fact]
+    public void A1c_คำเตือนก่อนอนุมัติ_ชี้ปุ่มรับทราบบนหน้าเอกสาร_และฟอร์มแก้ไข()
+    {
+        var warn = WhtPayeeSplit.DroppedPayeeApprovalWarning(WhtPayeeSplit.MarkDroppedInheritedPayees(null, "PI-001", 1));
+        Assert.NotNull(warn);
+        Assert.True(WhtCertIssuePlan.IsApprovalWarning(warn!));
+        Assert.Contains("หน้ารายละเอียดเอกสารนี้", warn);
+        Assert.Contains("ฟอร์มแก้ไขเอกสาร", warn);
+    }
 }
