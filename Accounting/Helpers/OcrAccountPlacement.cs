@@ -17,7 +17,8 @@ namespace Accounting.Helpers;
 /// <list type="number">
 /// <item><b>คู่สลับ</b> — Dr เป็นหนี้สิน/ทุน และ Cr เป็นค่าใช้จ่าย/รายได้ ขณะที่ "สลับกลับ" แล้วถูกทั้งสองฝั่ง ⇒ สลับ
 ///   (ไม่มีรายการซื้อ/จ่ายใดที่เดบิตหนี้สินพร้อมเครดิตค่าใช้จ่าย — นั่นคือรายการกลับบัญชี ซึ่งไม่ได้มาจากกระดาษใบซื้อ)</item>
-/// <item><b>Cr เป็นค่าใช้จ่าย/รายได้</b> ⇒ ปฏิเสธ (แหล่งเงินต้องเป็นเงินสด/ธนาคาร/เจ้าหนี้/ทุน) — ทั้งค่าที่ระบบเสนอและที่ผู้ใช้เลือก</item>
+/// <item><b>Cr เป็นค่าใช้จ่าย/รายได้</b> ⇒ ตัดค่าที่ระบบเสนอ · ค่าที่ผู้ใช้เลือก = เตือน + ถามยืนยัน (ยืนยันแล้วเก็บตามผู้ใช้ + audit ·
+///   คำสั่งเจ้าของ 2026-10-13 ไม่ล็อกตาย)</item>
 /// <item><b>Dr เป็นหนี้สิน/ทุน/รายได้</b> ⇒ ปฏิเสธ<b>เฉพาะค่าที่ระบบเสนอ</b> (ตัวเรียนรู้/ประวัติ/AI) ·
 ///   ผู้ใช้เลือกเองยังได้ (ใบสำคัญจ่ายชำระหนี้เดิม Dr เจ้าหนี้ / Cr ธนาคาร เป็นรายการจริง) — ทางไปต่อของผู้ใช้ (F2 ข้อ 8)</item>
 /// </list>
@@ -87,8 +88,24 @@ public static class OcrAccountPlacement
 
     /// <summary>คู่ที่<b>เก็บไว้แล้ว</b> (อาจเป็นค่าที่ผู้ใช้เลือก) — ตัวเดียวของ "เส้นสร้างเอกสาร" และ "การ์ดบนหน้าจอ"
     /// เพื่อให้สิ่งที่ผู้ใช้เห็น = สิ่งที่ลงบัญชีจริง (คู่สลับ ⇒ สลับ · แหล่งเงินเป็นค่าใช้จ่าย/รายได้ ⇒ ตัด · เดบิตหนี้สินลำพังคงไว้)</summary>
-    public static Result ResolveStored(GlAccountCandidate? debit, GlAccountCandidate? credit)
-        => Check(debit, credit, debitIsSystemSuggested: false);
+    /// <param name="acknowledgedCreditCode">รหัสแหล่งเงินที่ผู้ใช้<b>ยืนยันแล้ว</b>ว่าตั้งใจ (คำสั่งเจ้าของ 2026-10-13 "ระบบห้ามล็อกตาย —
+    /// ผู้ใช้ตัดสิน ระบบเตือน") — ตรงกับเครดิตที่เก็บไว้ ⇒ คงคู่ตามผู้ใช้ทุกทาง (จอ · สร้างเอกสาร · JE สินทรัพย์) ·
+    /// ไม่ตรง (ผู้ใช้เปลี่ยนเครดิตไปแล้ว) = กติกาเดิม</param>
+    public static Result ResolveStored(GlAccountCandidate? debit, GlAccountCandidate? credit, string? acknowledgedCreditCode = null)
+        => IsAcknowledgedCredit(credit?.Code, acknowledgedCreditCode)
+            ? new(debit?.Code, credit?.Code, Verdict.Ok, null)
+            : Check(debit, credit, debitIsSystemSuggested: false);
+
+    /// <summary>ชื่อช่องใน <c>SuggestedAccountsJson</c> ที่เก็บ "รหัสแหล่งเงินที่ผู้ใช้ยืนยันแล้ว" — ที่เดียวของชื่อนี้</summary>
+    public const string AckJsonProperty = "CreditPlacementAckCode";
+
+    /// <summary>รหัสกฎของ audit เมื่อผู้ใช้ยืนยันแหล่งเงินที่เป็นค่าใช้จ่าย/รายได้</summary>
+    public const string OverrideRuleCode = "OCR-ACCT-PLACEMENT-OVERRIDE";
+
+    /// <summary>การยืนยันยังมีผลไหม — มีผลเฉพาะกับรหัสเครดิตตัวที่ผู้ใช้ยืนยัน (เปลี่ยนเครดิต = การยืนยันเดิมหมดผล)</summary>
+    public static bool IsAcknowledgedCredit(string? creditCode, string? acknowledgedCreditCode)
+        => !string.IsNullOrWhiteSpace(creditCode) && !string.IsNullOrWhiteSpace(acknowledgedCreditCode)
+           && string.Equals(creditCode.Trim(), acknowledgedCreditCode.Trim(), StringComparison.Ordinal);
 
     public enum CorrectionAction
     {
@@ -96,8 +113,11 @@ public static class OcrAccountPlacement
         Keep = 0,
         /// <summary>ผู้ใช้ส่ง<b>ทั้งคู่</b>มากลับด้าน ⇒ สลับ (ระบบสลับให้ ≠ ผู้ใช้เลือก — ห้ามบันทึกเป็นคำตอบแบบ Explicit)</summary>
         Swap = 1,
-        /// <summary>แหล่งเงินที่ผู้ใช้เลือกเป็นค่าใช้จ่าย/รายได้ ⇒ ปฏิเสธคำแก้พร้อมเหตุผล (ห้ามเก็บเงียบ)</summary>
+        /// <summary>แหล่งเงินที่ผู้ใช้เลือกเป็นค่าใช้จ่าย/รายได้ และ<b>ยังไม่ยืนยัน</b> ⇒ ถามยืนยัน (409 พร้อมเหตุผล · ห้ามเก็บเงียบ)</summary>
         RejectCredit = 2,
+        /// <summary>เหมือน <see cref="RejectCredit"/> แต่ผู้ใช้<b>ยืนยันแล้ว</b> ⇒ เก็บคู่ตามผู้ใช้ + audit
+        /// <see cref="OverrideRuleCode"/> · ห้ามสอนตัวเรียนรู้ (คู่ที่ผิดรูปแบบ ยังไม่มีใครตรวจ)</summary>
+        KeepAcknowledged = 3,
     }
 
     /// <summary>ผลตัดสินของ "คำแก้ผลสแกน" ที่มีผังบัญชี</summary>
@@ -107,7 +127,8 @@ public static class OcrAccountPlacement
     /// **คำแก้จากหน้าตรวจ** — ตัดสินเฉพาะฝั่งที่ผู้ใช้ส่งมา (ฝ่ายค้านรอบ f1690d11: ห้ามเติม/ย้ายฝั่งที่ผู้ใช้ไม่ได้ส่ง)
     /// <list type="bullet">
     /// <item>ส่งทั้งคู่และกลับด้านพอดี ⇒ <see cref="CorrectionAction.Swap"/></item>
-    /// <item>ส่งแหล่งเงินที่เป็นค่าใช้จ่าย/รายได้ (และไม่ใช่คู่สลับที่ส่งมาทั้งคู่) ⇒ <see cref="CorrectionAction.RejectCredit"/></item>
+    /// <item>ส่งแหล่งเงินที่เป็นค่าใช้จ่าย/รายได้ (และไม่ใช่คู่สลับที่ส่งมาทั้งคู่) ⇒ <see cref="CorrectionAction.RejectCredit"/> (ถามยืนยัน) ·
+    ///   ผู้ใช้ยืนยันแล้ว (<paramref name="acknowledged"/>) ⇒ <see cref="CorrectionAction.KeepAcknowledged"/> (คำสั่งเจ้าของ 2026-10-13: ไม่ล็อกตาย)</item>
     /// <item>อื่น ๆ (รวมเดบิตหนี้สินที่ผู้ใช้เลือกเอง = ชำระหนี้เดิม) ⇒ <see cref="CorrectionAction.Keep"/></item>
     /// </list>
     /// </summary>
@@ -115,21 +136,27 @@ public static class OcrAccountPlacement
     /// <param name="credit">เครดิตหลังรวมกับค่าที่เก็บไว้</param>
     /// <param name="ourRole">บทบาทเราบนแถวสแกน — ใช้เติมคำแนะนำ "เปลี่ยนเอกสารที่จะสร้าง" เมื่อเราเป็นผู้ขายแต่เป้าหมายเป็นใบสำคัญจ่าย</param>
     /// <param name="targetDocumentType">เป้าหมายบนแถวสแกน</param>
+    /// <param name="acknowledged">ผู้ใช้กดยืนยันคำเตือนแหล่งเงินแล้ว (<c>OcrCorrectionRequest.AcknowledgeAccountPlacement</c>)</param>
     public static CorrectionResult DecideCorrection(
         GlAccountCandidate? debit, GlAccountCandidate? credit, bool userSentDebit, bool userSentCredit,
-        string? ourRole = null, string? targetDocumentType = null)
+        string? ourRole = null, string? targetDocumentType = null, bool acknowledged = false)
     {
         var check = Check(debit, credit, debitIsSystemSuggested: false);
         if (check.Verdict == Verdict.Swapped && userSentDebit && userSentCredit)
             return new(CorrectionAction.Swap, check.DebitCode, check.CreditCode, check.Reason);
         if (userSentCredit && credit is { } c && !PaymentSourceOk(c.Type))
-            return new(CorrectionAction.RejectCredit, debit?.Code, c.Code,
-                $"บัญชีเครดิต (แหล่งเงิน) {Label(c)} เป็น{TypeName(c.Type)} — ใบซื้อ/จ่ายต้องเครดิตเงินสด/ธนาคาร/เจ้าหนี้/ทุน "
+        {
+            var why = $"บัญชีเครดิต (แหล่งเงิน) {Label(c)} เป็น{TypeName(c.Type)} — ใบซื้อ/จ่ายปกติเครดิตเงินสด/ธนาคาร/เจ้าหนี้/ทุน "
                 + "ถ้าตั้งใจให้เป็นบัญชีค่าใช้จ่าย ให้เลือกไว้ที่ \"บัญชีเดบิต\" แทน"
                 + (SellerOnPaymentVoucher(ourRole, targetDocumentType)
                     ? " · ใบนี้ระบบอ่านว่าเราเป็นผู้ขาย แต่ \"เอกสารที่จะสร้าง\" เป็นใบสำคัญจ่าย — ถ้าเป็นใบที่เรารับเงิน ให้เปลี่ยน \"เอกสารที่จะสร้าง\" (เช่น ใบเสร็จรับเงิน) แทนการเลือกบัญชี"
-                    : "")
-                + " — ยังไม่บันทึกคำแก้นี้");
+                    : "");
+            return acknowledged
+                ? new(CorrectionAction.KeepAcknowledged, debit?.Code, c.Code,
+                    why + " — ผู้ใช้ยืนยันให้บันทึกตามที่เลือก (ระบบไม่นำคู่นี้ไปสอนตัวเรียนรู้)")
+                : new(CorrectionAction.RejectCredit, debit?.Code, c.Code,
+                    why + " — ยังไม่บันทึกคำแก้นี้ · ถ้าตั้งใจใช้บัญชีนี้จริง กดยืนยันเพื่อบันทึกตามที่เลือก");
+        }
         return new(CorrectionAction.Keep, debit?.Code, credit?.Code, null);
     }
 

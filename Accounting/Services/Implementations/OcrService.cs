@@ -5204,7 +5204,8 @@ public class OcrService : IOcrService
         }
     }
 
-    public async Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction)
+    public async Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction,
+        Guid? performedByUserId = null)
     {
         var result = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -5328,6 +5329,8 @@ public class OcrService : IOcrService
         }
         // ระบบสลับคู่ Dr/Cr ให้ (ไม่ใช่ผู้ใช้เลือกค่านี้เอง) — ตัวเรียนรู้ห้ามรับเป็นคำตอบแบบ Explicit (ฝ่ายค้านรอบ f1690d11)
         string? swappedDebitCode = null;
+        // ผู้ใช้ยืนยันแหล่งเงินที่เป็นค่าใช้จ่าย/รายได้ (คำสั่งเจ้าของ 2026-10-13 — ไม่ล็อกตาย) ⇒ เก็บตามผู้ใช้ + audit · ห้ามสอนตัวเรียนรู้ด้วยคู่นี้
+        var placementOverridden = false;
         if (correction.DebitAccountCode != null || correction.CreditAccountCode != null)
         {
             // SuggestedAccountsJson is the canonical store for the
@@ -5353,6 +5356,7 @@ public class OcrService : IOcrService
             // Preserve any side the admin didn't touch from the existing JSON.
             string? existingDebit = null, existingCredit = null;
             string? existingDebitName = null, existingCreditName = null;
+            string? existingCreditAck = null;
             if (!string.IsNullOrEmpty(result.SuggestedAccountsJson))
             {
                 try
@@ -5363,6 +5367,9 @@ public class OcrService : IOcrService
                     if (r.TryGetProperty("CreditAccountCode", out var c)) existingCredit = c.GetString();
                     if (r.TryGetProperty("DebitAccountName", out var dn)) existingDebitName = dn.GetString();
                     if (r.TryGetProperty("CreditAccountName", out var cn)) existingCreditName = cn.GetString();
+                    if (r.TryGetProperty(Accounting.Helpers.OcrAccountPlacement.AckJsonProperty, out var ack)
+                        && ack.ValueKind == System.Text.Json.JsonValueKind.String)
+                        existingCreditAck = ack.GetString();
                 }
                 catch { /* malformed — overwrite */ }
             }
@@ -5390,13 +5397,45 @@ public class OcrService : IOcrService
                     => string.IsNullOrEmpty(code) ? null
                         : corrRows.Where(r => r.Code == code).Select(r => (Accounting.Helpers.GlAccountCandidate?)r).FirstOrDefault();
                 // "ส่งมา" = เปลี่ยนจากคู่ที่หน้าจอแสดง (OcrCorrectedFieldList.AccountChanged) — ไม่ใช่แค่มีค่า
+                // คำสั่งเจ้าของ 2026-10-13 (ไม่ล็อกตาย): แหล่งเงินเป็นค่าใช้จ่าย/รายได้ = เตือน + ถามยืนยัน (409 · หน้าเว็บ confirm แล้วส่งซ้ำพร้อม
+                // AcknowledgeAccountPlacement) — ไม่ใช่ปฏิเสธถาวร · ยืนยันแล้ว ⇒ เก็บคู่ตามผู้ใช้ + audit + ไม่สอนตัวเรียนรู้
                 var corrDecision = Accounting.Helpers.OcrAccountPlacement.DecideCorrection(
                     corrCand(finalDebit), corrCand(finalCredit),
                     userSentDebit: Accounting.Helpers.OcrCorrectedFieldList.AccountChanged(debitCode, shownAccounts.DebitCode),
                     userSentCredit: Accounting.Helpers.OcrCorrectedFieldList.AccountChanged(creditCode, shownAccounts.CreditCode),
-                    ourRole: result.OurRole, targetDocumentType: result.TargetDocumentType);
+                    ourRole: result.OurRole, targetDocumentType: result.TargetDocumentType,
+                    acknowledged: correction.AcknowledgeAccountPlacement == true);
                 if (corrDecision.Action == Accounting.Helpers.OcrAccountPlacement.CorrectionAction.RejectCredit)
-                    throw new Accounting.Helpers.BusinessRuleException(corrDecision.Reason!, "OCR-ACCT-PLACEMENT");
+                    throw new Accounting.Helpers.BusinessRuleException(corrDecision.Reason!, "OCR-ACCT-PLACEMENT", 409);
+                if (corrDecision.Action == Accounting.Helpers.OcrAccountPlacement.CorrectionAction.KeepAcknowledged)
+                {
+                    placementOverridden = true;
+                    existingCreditAck = finalCredit;
+                    result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                        + "\n" + Accounting.Helpers.OcrAccountPlacement.Tag + " " + corrDecision.Reason;
+                    // audit ก่อน SaveChanges ตัวเดียวของคำแก้ (แถวสแกน + audit บันทึกพร้อมกัน) — CLAUDE M: RuleCode ลง audit
+                    _db.AddChainedAuditLog(new AuditLog
+                    {
+                        CompanyId = companyId,
+                        UserId = performedByUserId,
+                        Action = Models.Enums.AuditAction.Update,
+                        EntityType = "OcrScanResult",
+                        EntityId = result.Id.ToString(),
+                        OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            DebitAccountCode = shownAccounts.DebitCode,
+                            CreditAccountCode = shownAccounts.CreditCode,
+                        }),
+                        NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            RuleCode = Accounting.Helpers.OcrAccountPlacement.OverrideRuleCode,
+                            DebitAccountCode = finalDebit,
+                            CreditAccountCode = finalCredit,
+                            Reason = corrDecision.Reason,
+                        }),
+                        Timestamp = DateTime.UtcNow,
+                    });
+                }
                 if (corrDecision.Action == Accounting.Helpers.OcrAccountPlacement.CorrectionAction.Swap)
                 {
                     finalDebit = corrDecision.DebitCode;
@@ -5408,13 +5447,24 @@ public class OcrService : IOcrService
                         + "\n" + Accounting.Helpers.OcrAccountPlacement.Tag + " " + corrDecision.Reason;
                 }
             }
-            result.SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(new
+            // การยืนยันแหล่งเงินติดไปกับรหัสเครดิตตัวที่ยืนยัน — บันทึกครั้งถัดไป (หน้าเว็บส่งทั้งสอง dropdown ทุกครั้ง) ไม่ทำให้หาย ·
+            // เปลี่ยนเครดิตเป็นตัวอื่น = การยืนยันเดิมหมดผล (ไม่พกไปเป็นใบอนุญาตของบัญชีอื่น)
+            var keepAck = Accounting.Helpers.OcrAccountPlacement.IsAcknowledgedCredit(finalCredit, existingCreditAck)
+                ? finalCredit : null;
+            var accountsJson = new System.Text.Json.Nodes.JsonObject
             {
-                DebitAccountCode = finalDebit,
-                DebitAccountName = finalDebitName,
-                CreditAccountCode = finalCredit,
-                CreditAccountName = finalCreditName,
-            });
+                ["DebitAccountCode"] = finalDebit,
+                ["DebitAccountName"] = finalDebitName,
+                ["CreditAccountCode"] = finalCredit,
+                ["CreditAccountName"] = finalCreditName,
+            };
+            if (keepAck != null)
+            {
+                accountsJson[Accounting.Helpers.OcrAccountPlacement.AckJsonProperty] = keepAck;
+                // คู่ที่ยังอยู่ใต้การยืนยัน — บันทึกซ้ำ (ส่งค่าเดิมกลับมา) ก็ไม่สอนตัวเรียนรู้ด้วยคู่นี้
+                placementOverridden = true;
+            }
+            result.SuggestedAccountsJson = accountsJson.ToJsonString();
         }
 
         // ── ผังเดบิตที่ตัวเรียนรู้จะได้ (ฝ่ายค้านรอบสาม f1690d11) ──
@@ -5426,7 +5476,9 @@ public class OcrService : IOcrService
             && Accounting.Helpers.OcrAccountPlacement.IsSystemPlacedEcho(
                 correction.DebitAccountCode, shownAccounts.DebitCode, storedDebit: aiSuggestedDebitBefore))
             swappedDebitCode = correction.DebitAccountCode;
-        string? learnDebitCode = swappedDebitCode == null ? correction.DebitAccountCode : null;
+        // คู่ที่ผู้ใช้ยืนยันทับคำเตือนแหล่งเงิน = ยังไม่มีใครตรวจว่าถูก ⇒ ไม่สอนผังเดบิต (ประวัติผู้ขาย · ตัวเรียนหมวด · feedback GL) จากคำแก้นี้
+        // (แถว feedback ของ AI คงสถานะ "ยังไม่รู้คำตอบ" — ไม่ใช่สอนด้วยคู่ที่ผิดรูปแบบ)
+        string? learnDebitCode = swappedDebitCode == null && !placementOverridden ? correction.DebitAccountCode : null;
 
         // ★ ตัวชี้วัดคุณภาพ (D4): "ผู้ใช้แก้จริง" ต้องแยกจาก "ระบบบันทึกแถว"
         // — เดิมนับจาก UpdatedAt != null ซึ่งขยับทุกครั้งที่ระบบเซฟเอง ⇒ อัตราการแก้
@@ -5603,7 +5655,7 @@ public class OcrService : IOcrService
         // ───── Train the category learner from this correction ─────
         // When user manually picks a debit account (the expense category) for a vendor,
         // remember it so future scans of the same vendor pre-fill that account.
-        var feedbackDebitCode = learnDebitCode ?? swappedDebitCode;
+        var feedbackDebitCode = placementOverridden ? null : learnDebitCode ?? swappedDebitCode;
         if (!string.IsNullOrEmpty(learnDebitCode))
         {
             var debitName = await _db.ChartOfAccounts
@@ -8251,7 +8303,7 @@ public class OcrService : IOcrService
     private async Task<(string? DebitCode, string? CreditCode, string? Reason)> ResolveScanAccountCodesAsync(
         Guid companyId, OcrScanResult result, DocumentType docType)
     {
-        string? debitCode = null, creditCode = null;
+        string? debitCode = null, creditCode = null, creditAck = null;
         if (!string.IsNullOrWhiteSpace(result.SuggestedAccountsJson))
         {
             try
@@ -8263,6 +8315,10 @@ public class OcrService : IOcrService
                 if (sa.RootElement.TryGetProperty("CreditAccountCode", out var cac)
                     && cac.ValueKind == System.Text.Json.JsonValueKind.String)
                     creditCode = cac.GetString();
+                // แหล่งเงินที่ผู้ใช้ยืนยันทับคำเตือนแล้ว (คำสั่งเจ้าของ 2026-10-13) — ResolveStored คงคู่ตามผู้ใช้
+                if (sa.RootElement.TryGetProperty(Accounting.Helpers.OcrAccountPlacement.AckJsonProperty, out var ack)
+                    && ack.ValueKind == System.Text.Json.JsonValueKind.String)
+                    creditAck = ack.GetString();
             }
             catch (System.Text.Json.JsonException ex)
             {
@@ -8284,7 +8340,7 @@ public class OcrService : IOcrService
         Accounting.Helpers.GlAccountCandidate? pairCand(string? code)
             => code == null ? null
                 : pairRows.Where(r => r.Code == code).Select(r => (Accounting.Helpers.GlAccountCandidate?)r).FirstOrDefault();
-        var check = Accounting.Helpers.OcrAccountPlacement.ResolveStored(pairCand(debitCode), pairCand(creditCode));
+        var check = Accounting.Helpers.OcrAccountPlacement.ResolveStored(pairCand(debitCode), pairCand(creditCode), creditAck);
         return check.Verdict == Accounting.Helpers.OcrAccountPlacement.Verdict.Ok
             ? (debitCode, creditCode, null)
             : (check.DebitCode, check.CreditCode, check.Reason);
@@ -10149,7 +10205,7 @@ public class OcrService : IOcrService
                     x.TargetDocumentType, x.DocumentType, x.LinkedPurchaseOrderId.HasValue, x.OurRole))
                 return x;
             var placed = Accounting.Helpers.OcrAccountPlacement.ResolveStored(
-                shownCand(sa.DebitAccountCode), shownCand(sa.CreditAccountCode));
+                shownCand(sa.DebitAccountCode), shownCand(sa.CreditAccountCode), sa.CreditPlacementAckCode);
             if (placed.Verdict == Accounting.Helpers.OcrAccountPlacement.Verdict.Ok) return x;
             var notes = x.ProcessingNotes ?? "";
             return x with
@@ -10219,7 +10275,9 @@ public class OcrService : IOcrService
                     sa.TryGetProperty("CreditAccountCode", out var cac) ? cac.GetString() : null,
                     sa.TryGetProperty("CreditAccountName", out var can) ? can.GetString() : null,
                     sa.TryGetProperty("VatAccountCode", out var vac) ? vac.GetString() : null,
-                    sa.TryGetProperty("VatAccountName", out var van) ? van.GetString() : null);
+                    sa.TryGetProperty("VatAccountName", out var van) ? van.GetString() : null,
+                    sa.TryGetProperty(Accounting.Helpers.OcrAccountPlacement.AckJsonProperty, out var pak)
+                        && pak.ValueKind == System.Text.Json.JsonValueKind.String ? pak.GetString() : null);
             }
             catch (Exception ex)
             {

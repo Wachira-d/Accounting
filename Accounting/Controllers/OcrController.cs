@@ -781,7 +781,11 @@ public class OcrController : ControllerBase
     {
         var deny = await ScanGateAsync(companyId, scanId, "แก้ผลอ่านของสแกน", write: true);
         if (deny != null) return deny;
-        await _service.SubmitCorrectionAsync(companyId, scanId, correction);
+        // ผู้แก้ลง audit เมื่อยืนยันแหล่งเงินทับคำเตือน (OCR-ACCT-PLACEMENT-OVERRIDE) — กุญแจ int_ ไม่มีผู้ใช้จริง ⇒ null (แบบเดียวกับเส้นลบสแกน)
+        Guid? actor;
+        try { actor = JwtHelper.GetUserIdFromClaims(User); if (actor == Guid.Empty) actor = null; }
+        catch { actor = null; }
+        await _service.SubmitCorrectionAsync(companyId, scanId, correction, actor);
         return Ok(new ApiResponse<object>(true, null, "Correction saved and sent to learning service"));
     }
 

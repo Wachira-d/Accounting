@@ -3724,6 +3724,18 @@
         } catch { /* เงียบ — ผู้ใช้ยังเลือกเป้าหมายเองได้ */ }
       },
 
+      /** ส่งคำแก้ผลสแกน — เซิร์ฟเวอร์ตอบ 409 OCR-ACCT-PLACEMENT (แหล่งเงินที่เลือกเป็นบัญชีค่าใช้จ่าย/รายได้) ⇒ แสดงเหตุผล
+       *  ของเซิร์ฟเวอร์ให้ผู้ใช้ตัดสิน แล้วส่งซ้ำพร้อม acknowledgeAccountPlacement (คำสั่งเจ้าของ 2026-10-13: ระบบเตือน ผู้ใช้ตัดสิน
+       *  ไม่ล็อกตาย) · กดยกเลิก = โยน error เดิมต่อ (ไม่บันทึก — ผู้เรียกแสดงข้อความ) · ข้อความ/กติกาอยู่ฝั่งเซิร์ฟเวอร์ทั้งหมด */
+      async _ocrCorrectWithAck(api, scanId, correction) {
+        try { return await api.ocrCorrect(scanId, correction); }
+        catch (e) {
+          if (!(e && e.status === 409 && e.body?.data?.ruleCode === 'OCR-ACCT-PLACEMENT')) throw e;
+          if (!confirm((e.message || '') + '\n\nยืนยันบันทึกบัญชีตามที่เลือกหรือไม่? (ระบบจะบันทึกประวัติการยืนยันไว้)')) throw e;
+          return await api.ocrCorrect(scanId, { ...correction, acknowledgeAccountPlacement: true });
+        }
+      },
+
       /** persist review edits ลง scan (เงียบ — ไม่มี toast/ปุ่มเปลี่ยน) */
       async _persistReviewEdits({ required = false } = {}) {
         if (!this._reviewScan) return;
@@ -3734,7 +3746,7 @@
         // รอให้การบันทึก "รายบรรทัด" ที่ค้างอยู่จบก่อน (ดู saveLineFields)
         if (this._pendingLineSaves.size)
           await Promise.allSettled([...this._pendingLineSaves]);
-        try { await api.ocrCorrect(this._reviewScan.id, this._buildReviewCorrection()); }
+        try { await this._ocrCorrectWithAck(api, this._reviewScan.id, this._buildReviewCorrection()); }
         catch (e) {
           // ⚠️ เดิม catch เปล่า พร้อมหมายเหตุว่า "create จะใช้ค่าเดิมถ้า save ล้ม"
           // — นั่นคือ silent no-op เต็มรูปแบบ: ผู้ใช้แก้ข้อมูล กดสร้าง แล้วได้
@@ -3792,7 +3804,7 @@
         const correction = this._buildReviewCorrection();
 
         try {
-          await api.ocrCorrect(this._reviewScan.id, correction);
+          await this._ocrCorrectWithAck(api, this._reviewScan.id, correction);
           Layout.toast('บันทึกการแก้ไขสำเร็จ — ระบบเรียนรู้จากการแก้ไขของคุณแล้ว ครั้งต่อไปจะแกะข้อมูลแม่นยำขึ้น', 'success');
           btn.textContent = '✅ บันทึกและสอนแล้ว';
           btn.className = 'btn btn-success';

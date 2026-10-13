@@ -251,7 +251,10 @@ public record OcrDbdInfo(
 public record OcrSuggestedAccountsDto(
     string? DebitAccountCode, string? DebitAccountName,
     string? CreditAccountCode, string? CreditAccountName,
-    string? VatAccountCode = null, string? VatAccountName = null);
+    string? VatAccountCode = null, string? VatAccountName = null,
+    /// <summary>รหัสแหล่งเงินที่ผู้ใช้ยืนยันแล้วว่าตั้งใจ แม้เป็นค่าใช้จ่าย/รายได้ (<c>OcrAccountPlacement.AckJsonProperty</c>) —
+    /// ตรงกับ <see cref="CreditAccountCode"/> ⇒ จอ/เส้นสร้างเอกสารคงคู่ตามผู้ใช้ · null = ไม่มีการยืนยัน</summary>
+    string? CreditPlacementAckCode = null);
 
 public record OcrLineItemDto(
     string? Description, decimal? Quantity, decimal? UnitPrice, decimal? Amount,
@@ -345,7 +348,11 @@ public record OcrCorrectionRequest(
     /// รอบ 197 ฝ่ายค้าน K-1: หน้าเว็บส่ง <see cref="VendorBranchCode"/> มาทุกครั้งที่บันทึก/สร้างเอกสาร ⇒ "ส่งค่ามา" ≠ "ผู้ใช้แก้"
     /// ⇒ นับว่าแก้เฉพาะเมื่อค่าเปลี่ยนจากที่สแกนเก็บไว้ <b>หรือ</b> ผู้ใช้พิมพ์ยืนยันค่าเดิม (สาขาที่ระบบไม่แน่ใจแต่ถูกแล้ว —
     /// ถ้าไม่มีธงนี้ ผู้ใช้ไม่มีทางยืนยันสาขาที่หลักฐานอ่อนได้เลย) · ตัวตัดสิน = <c>OcrCorrectedFieldList.From</c></summary>
-    bool? VendorBranchConfirmed = null);
+    bool? VendorBranchConfirmed = null,
+    /// <summary>ผู้ใช้กดยืนยันคำเตือน "แหล่งเงินเป็นบัญชีค่าใช้จ่าย/รายได้" แล้ว (หน้าเว็บส่งซ้ำหลังได้ 409 <c>OCR-ACCT-PLACEMENT</c>) —
+    /// คำสั่งเจ้าของ 2026-10-13: ระบบเตือน ผู้ใช้ตัดสิน · true ⇒ เก็บคู่ตามผู้ใช้ + audit <c>OCR-ACCT-PLACEMENT-OVERRIDE</c>
+    /// + ไม่สอนตัวเรียนรู้ด้วยคู่นี้ · null/false ⇒ 409 พร้อมเหตุผล</summary>
+    bool? AcknowledgeAccountPlacement = null);
 
 /// <summary>
 /// Request to record a Journal Entry directly from a scan — the "บันทึก JE

@@ -133,7 +133,9 @@ public interface IOcrService
 
     Task<OcrResultResponse> UnlinkPredecessorAsync(Guid companyId, Guid scanResultId);
 
-    Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction);
+    /// <param name="performedByUserId">ผู้แก้ — ลง audit เมื่อยืนยันแหล่งเงินทับคำเตือน (<c>OCR-ACCT-PLACEMENT-OVERRIDE</c>)</param>
+    Task SubmitCorrectionAsync(Guid companyId, Guid scanResultId, OcrCorrectionRequest correction,
+        Guid? performedByUserId = null);
     Task DeleteScanAsync(Guid companyId, Guid scanResultId, bool cascadeCreatedDocument = false, string? reason = null, Guid? performedByUserId = null);
     Task<object> RegisterAssetFromScanAsync(Guid companyId, Guid scanResultId,
         Controllers.OcrController.RegisterAssetFromScanRequest req,
