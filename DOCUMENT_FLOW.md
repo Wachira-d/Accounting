@@ -3486,7 +3486,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     จาก `WithholdingTaxCertResponse` (server computes · page displays · เดิมหน้าเทียบชื่อ enum เอง ภ.ง.ด.2 ไม่มีวันติ๊ก) · กติกาจุดเรียกใน
     `tools/required_call_site_check.py` (HTML · `BuildFormTypeRow` · `BuildConditionsRow`) · เทสต์ `WhtCertFormTextTests` (ป้ายลงชื่อ 3 renderer · ติ๊ก ภ.ง.ด.2/ครั้งเดียว ·
     ทิศตรงข้าม ภ.ง.ด.54 ไม่ติ๊ก · ใบ 53/หัก ณ ที่จ่าย เดิมไม่ถูกแตะ · โครงสร้าง) · **ยังไม่ทำ (ข้อมูลไม่มี)**: แถวย่อย 4(ข) (1.1)–(2.5) แยกยอดรายช่อง ·
-    ยอดกองทุน กบข./ประกันสังคม/สำรองเลี้ยงชีพ (ว่างเสมอ) · ช่อง (4) อื่น ๆ ของผู้จ่ายเงิน (ไม่มีค่าใน enum) · Last verified `commit f0f9baf7`
+    ยอดกองทุน กบข./ประกันสังคม/สำรองเลี้ยงชีพ (ว่างเสมอ) · ช่อง (4) อื่น ๆ ของผู้จ่ายเงิน (ไม่มีค่าใน enum) · Last verified `commit 002126b3`
 - **ประเภทแบบ guard (ภ.ง.ด.3 ↔ 53)**: `ResolveWhtFormType` + `DetectJuristic`
   บังคับที่ **ทุก create path** (`CreateAsync`, `AutoGenerateFromDocumentAsync`,
   `UpdateAsync`) — ประเภทแบบขึ้นกับ **ผู้ถูกหักภาษี**: นิติบุคคล → 53,

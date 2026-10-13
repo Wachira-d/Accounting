@@ -4659,4 +4659,4 @@ _รอบ 204 — 50 ทวิ ตามแบบทางการ (คำต�
 (ภ.ง.ด.2 → (3) — เดิมไม่มี renderer ไหนติ๊ก) / `PayerConditionIndex` (`PayOnce` → (3)) · หน้าเว็บอ่าน `WithholdingTaxCertResponse.FormBoxIndex/PayerConditionIndex`
 (เดิมเทียบชื่อ enum เอง) · ที่มาของข้อความ: rd.go.th เข้าไม่ได้จากเครื่องนี้ ⇒ ใช้ภาพแบบที่เจ้าของส่ง วัดความกว้างบรรทัดเทียบบรรทัดอ้างอิงในภาพเดียวกัน
 (ต่างกัน 6–10 px = คำต่าง · ช่องว่างเดี่ยว ~1.5 px วัดไม่ได้ ⇒ คงเดิม) · ภาพก่อน/หลัง Chromium ยังพอดี A4 3 หน้า · เทสต์ `WhtCertFormTextTests` +10 ·
-กติกาจุดเรียก +3 (negative: ใส่ `cert.CertificateType ==` กลับใน `BuildConditionsRow` แล้วฟ้อง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f0f9baf7)_
+กติกาจุดเรียก +3 (negative: ใส่ `cert.CertificateType ==` กลับใน `BuildConditionsRow` แล้วฟ้อง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 002126b3)_
