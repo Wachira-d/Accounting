@@ -4703,4 +4703,4 @@ JE ลงผังของรายบรรทัดแต่ 50 ทวิ/พ
 **P3-3** `ChangeWhtPayeeAsync` ธุรกรรมเดียว + `FOR UPDATE` · **P3-4** ด่านยื่นแล้วทุกเดือนที่จ่าย/มี 50 ทวิ (`AffectedPeriods`) · **P3-5** `Allocate` เศษเหลือมากสุด (ไม่มีส่วนติดลบ) ·
 **P3-6** สืบทอดผู้ถูกหัก (หัว + บรรทัด) ผ่าน `InheritPayee` + `ActiveContactIdsAsync` — ผู้ติดต่อถูกลบ = null + ป้าย (รายการประจำไม่อนุมัติอัตโนมัติใบนั้น) ·
 **P3-7** ระบุผู้ถูกหักไม่ตรงใบรายเดียว = 400 · เทสต์ `WhtPayeeSplitTests` · `WhtCertReissuePlanTests` · `Db/WhtMultiPayeeDbTests` +6 · TEST_PLAN WHT204-13..20 ·
-กติกาจุดเรียก `_WHT204_ADV` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+กติกาจุดเรียก `_WHT204_ADV` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 0f428969)_
