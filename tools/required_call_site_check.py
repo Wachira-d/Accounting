@@ -6397,6 +6397,16 @@ RULES += [
 # ตัวตัดสินแบบ/ผังรับ "ประเภทเงินได้ของบรรทัดที่หัก" — ทางที่ไม่ส่ง = ดอกเบี้ย/ปันผลบุคคลตกกลับ ภ.ง.ด.3 เงียบ ๆ (GL 21915 ≠ ทะเบียน/นำส่ง)
 _PND2 = "รอบ 204 ภ.ง.ด.2 (ข้อ 148): "
 RULES += [
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
+         must=["TipShareAllocation.IsTipJournalReference(je.Reference)"],
+         forbid=["isPnd2 && (je.Reference"],
+         why=_PND2 + "ฝ่ายค้านข้อ 1: JE จ่ายทิปข้ามทุกแบบในสาขา JV ล้วน — 50 ทวิ ของทิปนับแล้ว (มิฉะนั้นภาษี ภ.ง.ด.3 เบิ้ล + แถวปลอมในไฟล์ยื่น)"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="ResolveWhtFormType",
+         must=["WhtPayeeKind.Pnd2ChoiceAllowed(withheldIncomeTypeCodes)"],
+         why=_PND2 + "ฝ่ายค้านข้อ 2: เคารพ ภ.ง.ด.2 ที่ผู้ใช้เลือกเฉพาะเมื่อประเภทเงินได้ไม่ขัด"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="IssueWarningsAsync",
+         must=["TaxType.WithholdingTax2 or TaxType.WithholdingTax3 or TaxType.WithholdingTax53"],
+         why=_PND2 + "ฝ่ายค้านข้อ 3: ใบ ภ.ง.ด.2 ตรวจอัตราเทียบประเภทเงินได้ด้วย (ม.54)"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildProjectedGlAsync",
          must=["LoadWithheldAsync(companyId, doc)", "whtPayee?.Name, withheldCodes)"],
          why=_PND2 + "พรีวิว GL ก่อนอนุมัติใช้ชุดรหัสเงินได้เดียวกับ JE จริง (ดอกเบี้ยบุคคล ⇒ 21915 ไม่ใช่ 21916)"),

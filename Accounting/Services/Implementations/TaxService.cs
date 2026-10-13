@@ -2036,8 +2036,11 @@ public partial class TaxService : ITaxService
             foreach (var grp in byEntry)
             {
                 var je = grp.First().JournalEntry;
-                if (isPnd2 && (je.Reference ?? "").StartsWith(Accounting.Helpers.TipShareAllocation.JournalReferencePrefix, StringComparison.Ordinal))
-                    continue;   // JE จ่ายทิปเดิมที่ลง 21915 — ทิป = ม.40(2) ภ.ง.ด.3 (50 ทวิ ของทิปอยู่ ภ.ง.ด.3 แล้ว)
+                // JE จ่ายทิป — ข้ามทุกแบบ: ภ.ง.ด.2 = JE เดิมที่ลง 21915 ผิดผัง · ภ.ง.ด.3 = JE ใหม่ลง 21916 ซึ่ง 50 ทวิ ภ.ง.ด.3 ของทิป
+                // (TipPayoutService ออกต่อพนักงาน) นับไว้แล้วในสาขาใบรับรอง ⇒ นับ JE อีกรอบ = ยอดภาษีเบิ้ล + แถวผู้รับปลอมในไฟล์ยื่น
+                // (ฝ่ายค้านรอบ 204 ข้อ 1 — ก่อนรอบ 204 JE ทิปลง 21915 จึงไม่เคยเข้าสาขานี้ของ ภ.ง.ด.3: คงพฤติกรรมเดิม)
+                if (Accounting.Helpers.TipShareAllocation.IsTipJournalReference(je.Reference))
+                    continue;
                 var whtAmount = grp.Sum(l => l.CreditAmount - l.DebitAmount);
                 if (whtAmount <= 0) continue;
 

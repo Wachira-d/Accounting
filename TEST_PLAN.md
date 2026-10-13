@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **488 ไฟล์ · 4,794 `[Fact]` + 771 `[Theory]` (3,428 `InlineData`)** ณ 2026-10-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **488 ไฟล์ · 4,795 `[Fact]` + 772 `[Theory]` (3,431 `InlineData`)** ณ 2026-10-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -1010,6 +1010,8 @@
 | PND2-11 | กำหนดยื่น ภ.ง.ด.2 | เท่า ภ.ง.ด.3 ทุกเดือน (7 กระดาษ · 15 e-Filing · เลื่อนวันหยุด) · ปฏิทินภาษี/หน้านำส่งมีแถว ภ.ง.ด.2 · `ComplianceService`/AutoRefresh **ไม่**สร้างภาระทุกเดือน (แบบนาน ๆ ครั้ง) |
 | PND2-12 | ประกัน พ.ร.บ. รถยนต์ ("ค่า พ.ร.บ. รถจักรยานยนต์" · "ประกันภัยภาคบังคับ") ที่ไม่ได้หัก | `WhtServiceHints` สงสัย (8ins 1%) · ทิศตรงข้าม: เบี้ยประกันชีวิต · ประกันสังคมตาม พ.ร.บ.ประกันสังคม · หนังสือ พ.ร.บ.การบัญชี ไม่สงสัย |
 | PND2-13 | พรีวิว GL ก่อนอนุมัติ (`PdfGenerationService.BuildProjectedGlAsync`) ใบดอกเบี้ยจ่ายบุคคล | พรีวิว 21915 ตรงกับ JE จริง (`CodeChain`/`PreferredLabel` รับ `LoadWithheldAsync`) · ล็อกด้วย required_call_site `_PND2` |
+| PND2-14 | จ่ายทิป (ภาษี 300) แล้วออก 50 ทวิ ภ.ง.ด.3 ของทิป → สร้างรายงาน ภ.ง.ด.3 | ภาษีทิปนับครั้งเดียว (จากใบรับรอง) · ไม่มีแถว JV ทิปซ้ำในรายงาน/ไฟล์ยื่น (`TipShareAllocation.IsTipJournalReference`) |
+| PND2-15 | ใบ 50 ทวิ คีย์มือ บุคคล ค่าบริการ 40(8) เลือก ภ.ง.ด.2 · ใบดอกเบี้ยบุคคลหัก 1% | ค่าบริการถูกแก้เป็น ภ.ง.ด.3 · ใบดอกเบี้ยออกพร้อมคำเตือนอัตรา (15%) · ใบปันผลไม่กรอกประเภทเลือก ภ.ง.ด.2 ได้ | `Pnd2FormTests` |
 ### 50 ทวิ ตามแบบทางการ — รอบ 204 · คำตัดสินเจ้าของข้อ 148 (`WhtCertFormTextTests` + กติกาจุดเรียกกลุ่ม 50 ทวิ ใน `tools/required_call_site_check.py`)
 
 | รหัส | เคส | คาดหวัง |

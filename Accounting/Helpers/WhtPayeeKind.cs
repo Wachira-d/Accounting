@@ -159,6 +159,24 @@ public static class WhtPayeeKind
             : TaxType.WithholdingTax3;
 
     /// <summary>
+    /// ผู้ใช้<b>เลือก ภ.ง.ด.2 เอง</b>ให้ผู้รับบุคคลธรรมดาได้ไหม — ได้เมื่อบรรทัดที่หักไม่มีรหัสเงินได้ที่ชี้ว่าเป็นเงินได้อื่น
+    /// (ทุกรหัสที่ระบุเป็น ม.40(3)/40(4) · ไม่ระบุรหัสเลย = เคารพการเลือก) — ฝ่ายค้านรอบ 204 ข้อ 2: เดิมเคารพทุกกรณี ⇒ ค่าบริการ 40(8)
+    /// ของบุคคลที่เลือก ภ.ง.ด.2 ไปเข้าไฟล์ ภ.ง.ด.2 + 21915 เงียบ ๆ และใบที่แก้ประเภทภายหลังติด ภ.ง.ด.2 ค้าง
+    /// </summary>
+    public static bool Pnd2ChoiceAllowed(IEnumerable<string?>? withheldIncomeTypeCodes)
+    {
+        if (withheldIncomeTypeCodes == null) return true;
+        foreach (var c in withheldIncomeTypeCodes)
+        {
+            if (string.IsNullOrWhiteSpace(c)) continue;
+            if (ThaiWhtRateTable.IsSection40_4(c)) continue;
+            if (ThaiWhtRateTable.Resolve(c)?.Code == "3") continue;   // ม.40(3) ค่าสิทธิ — อยู่ในแบบ ภ.ง.ด.2 ของกรม
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// คำเตือน "ใบเดียวปนดอกเบี้ย/ปันผล (ภ.ง.ด.2) กับเงินได้อื่น (ภ.ง.ด.3)" ของผู้รับบุคคลธรรมดาในประเทศ — null = ไม่ต้องเตือน
     /// (ผู้รับนิติบุคคล/ต่างประเทศ: ทุกประเภทอยู่แบบเดียวกันอยู่แล้ว ⇒ เงียบ · ใบที่ไม่ปน ⇒ เงียบ)
     /// <para>ผู้เรียก: คำเตือนก่อนอนุมัติ (<c>[WHT-PAYEE]</c> — เตือน ไม่บล็อก) + หน้าตรวจข้อมูล (<c>DataIntegrityReportService</c>)</para>

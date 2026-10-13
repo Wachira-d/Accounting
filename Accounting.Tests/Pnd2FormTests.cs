@@ -148,6 +148,32 @@ public class Pnd2FormTests
     }
 
     [Fact]
+    public void ฝ่ายค้าน204_ข้อ2_เลือกภงด2ให้ค่าบริการของบุคคล_ถูกแก้เป็นภงด3()
+    {
+        // เดิมเคารพทุกกรณี ⇒ ค่าบริการ 40(8) เข้าไฟล์ ภ.ง.ด.2 + 21915 เงียบ ๆ · ใบที่แก้ประเภทภายหลังติด ภ.ง.ด.2 ค้าง
+        var (form, corrected, _) = WithholdingTaxCertService.ResolveWhtFormType(Person(), TaxType.WithholdingTax2,
+            withheldIncomeTypeCodes: new[] { "8" });
+        Assert.Equal(TaxType.WithholdingTax3, form);
+        Assert.True(corrected);
+        // ปนดอกเบี้ย + ค่าบริการ ⇒ ไม่เคารพเช่นกัน
+        Assert.Equal(TaxType.WithholdingTax3, WithholdingTaxCertService.ResolveWhtFormType(Person(), TaxType.WithholdingTax2,
+            withheldIncomeTypeCodes: new[] { "4a", "8" }).formType);
+        // ทิศตรงข้าม: ไม่ระบุรหัสเลย ⇒ ยังเคารพการเลือก (ใบคีย์มือปันผลที่ไม่กรอกประเภท)
+        Assert.Equal(TaxType.WithholdingTax2, WithholdingTaxCertService.ResolveWhtFormType(Person(), TaxType.WithholdingTax2,
+            withheldIncomeTypeCodes: new string?[] { null, "" }).formType);
+        Assert.True(WhtPayeeKind.Pnd2ChoiceAllowed(null));
+        Assert.True(WhtPayeeKind.Pnd2ChoiceAllowed(new[] { "4b", "40(4)(ก)", "3" }));
+        Assert.False(WhtPayeeKind.Pnd2ChoiceAllowed(new[] { "8ins" }));
+    }
+
+    [Theory]
+    [InlineData("TIP-PAYOUT-2026-10", true)]
+    [InlineData("JV-2026-10-0001", false)]
+    [InlineData(null, false)]
+    public void ฝ่ายค้าน204_ข้อ1_JEจ่ายทิป_ระบุได้ด้วยตัวตัดสินเดียว(string? reference, bool expected)
+        => Assert.Equal(expected, TipShareAllocation.IsTipJournalReference(reference));
+
+    [Fact]
     public void ใบ50ทวิ_ทิศตรงข้าม_ค่าบริการบุคคล_ยังภงด3_ภงด1และ54ผ่านตามที่ขอ()
     {
         Assert.Equal(TaxType.WithholdingTax3,

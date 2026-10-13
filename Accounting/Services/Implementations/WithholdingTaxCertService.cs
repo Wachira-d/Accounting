@@ -206,7 +206,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         // รอบ 203: ใบในประเทศ (ภ.ง.ด.3/53) — อัตราแต่ละแถวเทียบประเภทเงินได้ + ชนิดผู้รับ ผ่านตัวตัดสินเดียวกับตอนอนุมัติเอกสาร
         // (เดิมออกใบ "ค่าเบี้ยประกัน 3%" หรือ "ค่าบริการ 1%" ได้เงียบ ๆ — หักขาด ผู้จ่ายรับผิด ม.54)
-        if (cert.TaxFormType is TaxType.WithholdingTax3 or TaxType.WithholdingTax53)
+        // ฝ่ายค้านรอบ 204 ข้อ 3: ภ.ง.ด.2 (ดอกเบี้ย 15% / ปันผล 10% ของบุคคล) ตรวจด้วย — หัก 1% แบบนิติบุคคลต้องไม่ผ่านเงียบ (ม.54)
+        if (cert.TaxFormType is TaxType.WithholdingTax2 or TaxType.WithholdingTax3 or TaxType.WithholdingTax53)
         {
             var payeeJuristic = DetectJuristic(payee);
             foreach (var ln in cert.Lines.OrderBy(x => x.LineOrder))
@@ -937,7 +938,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // ผู้ใช้ขอ ภ.ง.ด.2 เองกับบุคคลธรรมดา ⇒ เคารพ (แบบ ภ.ง.ด.2 ของกรมมีแถว ม.40(3) ด้วย — ตารางยังไม่ตัดสินเอง — คำถามค้าง DOCUMENT_FLOW §5.4)
         if (correct == TaxType.WithholdingTax3)
         {
-            if (requested == TaxType.WithholdingTax2)
+            // ฝ่ายค้านรอบ 204 ข้อ 2: เคารพเฉพาะเมื่อประเภทเงินได้ไม่ขัด (มีบรรทัดเงินได้อื่น ⇒ ตกลง ภ.ง.ด.3 + corrected=true ให้ผู้ใช้เห็น)
+            if (requested == TaxType.WithholdingTax2 && Accounting.Helpers.WhtPayeeKind.Pnd2ChoiceAllowed(withheldIncomeTypeCodes))
                 return (TaxType.WithholdingTax2, false, "ผู้ใช้เลือก ภ.ง.ด.2 · payee บุคคลธรรมดา");
             if (Accounting.Helpers.WhtPayeeKind.IndividualForm(withheldIncomeTypeCodes) == TaxType.WithholdingTax2)
             { correct = TaxType.WithholdingTax2; reason += " · เงินได้ ม.40(4) ทั้งใบ (ภ.ง.ด.2)"; }

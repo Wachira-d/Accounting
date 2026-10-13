@@ -123,7 +123,7 @@ public static class JournalPostingGuard
         if (whtCr == 0 && docWht > 1m && IsPurchaseFamily(doc.DocumentType))
             findings.Add(new Finding("JE-WHT-MISSING", false,
                 $"เอกสารมีภาษีหัก ณ ที่จ่าย {docWht:N2} " +
-                "แต่ JE ไม่มีบรรทัดบัญชี WHT ค้างจ่าย (21916/21917/21918)"));
+                $"แต่ JE ไม่มีบรรทัดบัญชี WHT ค้างจ่าย ({string.Join("/", WhtPayableCodes)})"));
 
         // 2) VAT ใน GL ต้องไม่ "เกิน" เอกสาร (น้อยกว่าได้ — เคสไม่เคลม/พักรอใบกำกับ)
         var inputVatDr = Rnd(lines.Where(l => IsInputVat(l.AccountCode)).Sum(l => l.Debit - l.Credit));
