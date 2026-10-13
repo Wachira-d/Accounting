@@ -352,9 +352,6 @@ public static class ThaiWhtRateTable
     /// <summary>แถว 5/6 ของแบบ 50 ทวิ ที่ต้อง "ระบุ" ว่าจ่ายอะไร</summary>
     private static bool CertificateRowTakesSpecification(string row) => row is "5" or "6";
 
-    /// <summary>แถวบนแบบ 50 ทวิ ที่มีช่อง "ระบุ" — ใช้สร้าง <c>CertificateRowSpecs</c></summary>
-    public static readonly IReadOnlyList<string> CertificateRowsWithSpecification = new[] { "5", "6" };
-
     /// <summary>ความยาวสูงสุดของข้อความ "ระบุ" บนแถว — ช่องบนแบบมีที่บรรทัดเดียว</summary>
     public const int CertificateSpecificationMaxLength = 120;
 
@@ -370,7 +367,7 @@ public static class ThaiWhtRateTable
 
     /// <summary>
     /// ข้อความ "ระบุ" ของ<b>ทั้งแถว</b> <paramref name="row"/> บน 50 ทวิ จากบรรทัดของหนังสือรับรอง (หลายบรรทัดในแถวเดียว ⇒
-    /// รวมชื่อไม่ซ้ำ) — ส่งออกทาง <c>WithholdingTaxCertResponse.CertificateRowSpecs</c> ให้หน้าพรีวิวแสดงอย่างเดียว
+    /// รวมชื่อไม่ซ้ำ) — ผู้อ่านจริงคือ <c>WhtCertFormText.Row6Spec</c> (renderer ทั้งสามพิมพ์เฉพาะแถว 6 — แถว 5 คงข้อความตามแบบ คำตัดสินข้อ 148(2))
     ///
     /// <para>แถว 5: ชื่อประเภทจาก <see cref="IncomeType.CertificateRowText"/> (ไม่พิมพ์ถ้าเป็นรหัสรวม "8") ·
     /// แถว 6 "อื่น ๆ (ระบุ)": ชื่อประเภท หรือ<b>คำอธิบายบรรทัด</b>เมื่อรหัสไม่รู้จัก — แถว 6 ว่างคือแบบที่กรอกไม่ครบ ·
