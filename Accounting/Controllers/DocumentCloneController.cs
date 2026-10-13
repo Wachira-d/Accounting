@@ -270,6 +270,9 @@ public class DocumentCloneController : ControllerBase
             newDocumentId = newDoc.Id,
             newDocumentNumber = newDoc.DocumentNumber,
             sourceDocumentNumber = src.DocumentNumber
-        }, $"คัดลอกจาก {src.DocumentNumber} → {newDoc.DocumentNumber} เรียบร้อย" + (droppedNote != null ? " · " + droppedNote : "")));
+        }, $"คัดลอกจาก {src.DocumentNumber} → {newDoc.DocumentNumber} เรียบร้อย" + (droppedNote != null ? " · " + droppedNote : "")
+            // ป้ายที่สืบทอดจากต้นทาง — บอกในคำตอบด้วย (ล้มดัง 3 ที่: ตัวเอกสาร · ลิสต์รอออกใบ · คำตอบผู้เรียก)
+            + (droppedNote == null && srcPendingDropped != null && Accounting.Helpers.WhtCertIssuePlan.AppliesTo(newDoc.DocumentType)
+                ? " · ต้นทางยังติดป้าย \"50 ทวิ ต้องตรวจ\" (ผู้ถูกหักถูกลบ) — ใบใหม่ติดป้ายเดียวกัน ตรวจผู้ถูกหักก่อนอนุมัติ" : "")));
     }
 }

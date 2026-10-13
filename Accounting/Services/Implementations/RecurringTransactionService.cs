@@ -443,7 +443,10 @@ public class RecurringTransactionService : IRecurringTransactionService
                     return false;
                 var tq = el.TryGetProperty("quantity", out var tqEl) && tqEl.ValueKind == JsonValueKind.Number ? tqEl.GetDecimal() : 1m;
                 var tp = el.TryGetProperty("unitPrice", out var tpEl) && tpEl.ValueKind == JsonValueKind.Number ? tpEl.GetDecimal() : 0m;
-                return tq * tp > 0m;
+                // ส่วนลด % และส่วนลดบาทของบรรทัด (ตรงกับตอนสร้าง) — ลด 100% ⇒ ไม่มีภาษีหัก ⇒ ไม่นับ
+                var tdp = el.TryGetProperty("discountPercent", out var tdpEl) && tdpEl.ValueKind == JsonValueKind.Number ? tdpEl.GetDecimal() : 0m;
+                var tda = el.TryGetProperty("discountAmount", out var tdaEl) && tdaEl.ValueKind == JsonValueKind.Number ? tdaEl.GetDecimal() : 0m;
+                return tq * tp * (1m - tdp / 100m) - tda > 0m;
             }
             var tplLineWht = new List<(Guid? Payee, bool CarriesWht)>();
             if (root.TryGetProperty("lines", out var tplLinesEl) && tplLinesEl.ValueKind == JsonValueKind.Array)
