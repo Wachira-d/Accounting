@@ -28,15 +28,15 @@ public static class TaxCalendarSeedScope
     public const string Pp36 = "ภ.พ.36";
 
     /// <summary>กิจกรรมของบริษัทในช่วง <see cref="ActivityYears"/> — ผู้เรียกโหลดจากฐาน (tenant-scoped) แล้วส่งมา</summary>
-    public sealed record Activity(bool Pnd2, bool Pnd54, bool Pp36)
+    public sealed record SeedActivity(bool Pnd2, bool Pnd54, bool Pp36)
     {
-        public static readonly Activity None = new(false, false, false);
+        public static readonly SeedActivity None = new(false, false, false);
     }
 
     /// <summary>ช่วงปี (ค.ศ.) ที่นับกิจกรรม: ปีก่อน + ปีของปฏิทิน — บริษัทที่จ่ายปีที่แล้วมักจ่ายต่อ (ต้นปียังไม่มีใบของปีนี้)</summary>
     public static (int FromYear, int ToYear) ActivityYears(int year) => (year - 1, year);
 
-    private static bool? Gate(string? taxFormCode, Activity activity) => taxFormCode switch
+    private static bool? Gate(string? taxFormCode, SeedActivity activity) => taxFormCode switch
     {
         Pnd2 or Pnd2a => activity.Pnd2,
         Pnd54 => activity.Pnd54,
@@ -45,13 +45,13 @@ public static class TaxCalendarSeedScope
     };
 
     /// <summary>สร้างแถวของแบบนี้ให้บริษัทไหม — แบบที่ไม่ผูกกับกิจกรรม = สร้างเสมอ</summary>
-    public static bool ShouldSeed(string? taxFormCode, Activity activity) => Gate(taxFormCode, activity) ?? true;
+    public static bool ShouldSeed(string? taxFormCode, SeedActivity activity) => Gate(taxFormCode, activity) ?? true;
 
     /// <summary>
     /// แถวนี้ "ระบบสร้างแล้วไม่มีใครแตะ" ไหม — ถอนได้เฉพาะแบบนี้ · Overdue นับด้วยเพราะ <c>GetOverdueAsync</c> ประทับเองจาก Pending
     /// (แถวเลยกำหนดปลอมคืออาการที่ต้องแก้) · ข้อมูลใด ๆ ที่ผู้ใช้กรอก = เป็นของผู้ใช้ ห้ามแตะ
     /// </summary>
-    public static bool CanRetract(string? status, DateTime? filedDate, string? filingReference, decimal? taxAmount, string? notes)
+    private static bool CanRetract(string? status, DateTime? filedDate, string? filingReference, decimal? taxAmount, string? notes)
         => (string.Equals(status, "Pending", StringComparison.OrdinalIgnoreCase)
             || string.Equals(status, "Overdue", StringComparison.OrdinalIgnoreCase))
            && filedDate == null
@@ -60,7 +60,7 @@ public static class TaxCalendarSeedScope
            && string.IsNullOrWhiteSpace(notes);
 
     /// <summary>ตอนสร้างปฏิทินใหม่: แถวเดิมนี้ต้อง soft-delete ไหม (แบบผูกกิจกรรม · ไม่มีกิจกรรม · ไม่มีใครแตะ)</summary>
-    public static bool ShouldRetract(TaxCalendarEvent row, Activity activity)
+    public static bool ShouldRetract(TaxCalendarEvent row, SeedActivity activity)
         => !row.IsDeleted
            && !ShouldSeed(row.TaxFormCode, activity)
            && CanRetract(row.Status, row.FiledDate, row.FilingReference, row.TaxAmount, row.Notes);

@@ -11,8 +11,8 @@ namespace Accounting.Tests;
 /// </summary>
 public class TaxCalendarSeedScopeTests
 {
-    private static readonly TaxCalendarSeedScope.Activity All = new(true, true, true);
-    private static readonly TaxCalendarSeedScope.Activity None = TaxCalendarSeedScope.Activity.None;
+    private static readonly TaxCalendarSeedScope.SeedActivity All = new(true, true, true);
+    private static readonly TaxCalendarSeedScope.SeedActivity None = TaxCalendarSeedScope.SeedActivity.None;
 
     [Theory]
     [InlineData("ภ.ง.ด.2")]
@@ -33,13 +33,13 @@ public class TaxCalendarSeedScopeTests
     [Fact]
     public void EachGate_ReadsItsOwnActivity()
     {
-        var pnd2Only = new TaxCalendarSeedScope.Activity(Pnd2: true, Pnd54: false, Pp36: false);
+        var pnd2Only = new TaxCalendarSeedScope.SeedActivity(Pnd2: true, Pnd54: false, Pp36: false);
         Assert.True(TaxCalendarSeedScope.ShouldSeed("ภ.ง.ด.2", pnd2Only));
         Assert.True(TaxCalendarSeedScope.ShouldSeed("ภ.ง.ด.2ก", pnd2Only));
         Assert.False(TaxCalendarSeedScope.ShouldSeed("ภ.ง.ด.54", pnd2Only));
         Assert.False(TaxCalendarSeedScope.ShouldSeed("ภ.พ.36", pnd2Only));
 
-        var foreignOnly = new TaxCalendarSeedScope.Activity(Pnd2: false, Pnd54: true, Pp36: true);
+        var foreignOnly = new TaxCalendarSeedScope.SeedActivity(Pnd2: false, Pnd54: true, Pp36: true);
         Assert.False(TaxCalendarSeedScope.ShouldSeed("ภ.ง.ด.2", foreignOnly));
         Assert.True(TaxCalendarSeedScope.ShouldSeed("ภ.ง.ด.54", foreignOnly));
         Assert.True(TaxCalendarSeedScope.ShouldSeed("ภ.พ.36", foreignOnly));

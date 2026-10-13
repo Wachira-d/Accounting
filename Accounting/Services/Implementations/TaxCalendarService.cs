@@ -210,7 +210,7 @@ public class TaxCalendarService : ITaxCalendarService
     /// กิจกรรมที่ตัดสินว่าบริษัทต้องมีแถว ภ.ง.ด.2/2ก · ภ.ง.ด.54 · ภ.พ.36 บนปฏิทินไหม (A12) — ช่วงปีจาก <see cref="TaxCalendarSeedScope.ActivityYears"/> ·
     /// ทุก query กรอง <c>CompanyId == companyId</c> + ไม่นับใบ/เอกสารที่ถูกยกเลิกหรือลบ
     /// </summary>
-    private async Task<TaxCalendarSeedScope.Activity> LoadSeedActivityAsync(Guid companyId, int year)
+    private async Task<TaxCalendarSeedScope.SeedActivity> LoadSeedActivityAsync(Guid companyId, int year)
     {
         var (fromYear, toYear) = TaxCalendarSeedScope.ActivityYears(year);
         var fromDate = new DateTime(fromYear, 1, 1);
@@ -243,7 +243,7 @@ public class TaxCalendarService : ITaxCalendarService
                 && d.Contact.CountryCode.ToUpper() != "TH"
                 && d.DocumentDate >= fromDate && d.DocumentDate < toDateExclusive);
 
-        return new TaxCalendarSeedScope.Activity(
+        return new TaxCalendarSeedScope.SeedActivity(
             Pnd2: certForms.Contains(TaxType.WithholdingTax2),
             Pnd54: certForms.Contains(TaxType.WithholdingTax54) || hasForeignPayeeWht,
             Pp36: hasForeignService);
