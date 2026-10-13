@@ -4684,3 +4684,12 @@ _รอบ 204 — คำตัดสินเจ้าของข้อ 148 (�
 ยกเลิกใบ+audit · ออกใหม่เดือนเดิม) · ยกเลิกการจ่ายหลังออกใบ ⇒ ป้าย `[WHT-CERT-REVIEW]` (เดิมแค่ LogWarning) · รับทราบ `POST withholding-tax-certs/pending/{id}/review-ack` (`Tax.File` · เหตุผลบังคับ) ·
 **recurring.html** ช่องผู้ถูกหัก + `whtCertAutoIssue` hydrate/คงค่า · เทสต์ `WhtPayeeSplitTests` · `WhtCertReissuePlanTests` · Db `WhtMultiPayeeDbTests` · กติกาจุดเรียก +17 (แก้ 4) —
 **หลังรวมกับ ภ.ง.ด.2/ผู้จ่ายออกภาษีแทน** (cherry-pick บน c62292d7): ตัวแบ่งผังต่อผู้ถูกหักส่งรหัสเงินได้ของบรรทัดของรายนั้น (`WhtIncomeCodes.WithheldAt/At/WithheldForPayee`) ทุกทาง — JE 7 จุด + รายงวด + พรีวิว GL + 50 ทวิ ต่อราย + รายงาน/นำส่ง/ปฏิทิน + คำเตือนใบปน + หน้าตรวจข้อมูล · `ChangeWhtPayeeAsync` นับ 21915 · 50 ทวิ ต่อรายคง `CertificateType`/เงินได้รวมส่วนที่ออกแทน · recurring.html คงทั้ง `whtCertType` และช่องผู้ถูกหัก · เทสต์ `WhtPayeeIncomeCodesTests` · กติกาจุดเรียก `_PND2` ย้ายจาก "JE ต้องเรียก LoadWithheldAsync" เป็น "JE ห้ามเรียกตัวเลือกผังตรง + ตัวแบ่งต้องส่งรหัส" · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 778e95f9)_
+
+_รอบ 204 (ต่อ) — แก้ผลฝ่ายค้านงานผู้จ่ายออกภาษีแทน (T2): **P1-1** ใบบริการต่างประเทศ + ออกแทน ⇒ 400 พร้อมทางไปต่อ (`WhtGrossUp.TypeError` รับธงต่างประเทศ ·
+สร้าง/แก้ไข (ตัดสินทุกครั้ง)/`ReclassifyForeignServiceAsync` · ข้อมูลเดิมล้มดังที่ JE) — ทางเลือก "คิด VAT บน `Pp36Base` ตอนบันทึก" ไม่ทำ (แตะ VAT ทุกเส้น) ·
+**P1-2** ใบลด/เพิ่มหนี้ฝั่งซื้อสืบทอด `WhtCertType` จากใบต้นทางฝั่งผู้จ่าย (`ResolveWhtCertTypeAsync` · `IsAdjustmentNote`) + JE กลับขาส่วนที่ออกแทน
+(`AddPayerBorneWhtExpense(reverse)`) + ด่านเงื่อนไขไม่ตรงใบต้นทาง + 50 ทวิ ออกใหม่ตามใบลดหนี้ลดเงินได้รวมส่วนที่ออกแทน (ประสานกับข้อ 142 ทีม T4) ·
+**P2-1** แถว "บวก ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน" (`DocumentLabels.TotalWhtPayerBorne`) สอง renderer · **P2-2** พรีวิว GL มีขาส่วนที่ออกแทน ·
+**P3-1** แถวเตือนรายงาน ภ.ง.ด. เงินได้รวมส่วนที่ออกแทน + Col11 ตามเอกสาร · **P3-2** ซิงค์ค่าใช้จ่ายตั้งเงื่อนไขกลับเป็นหัก ณ ที่จ่ายพร้อมหมายเหตุ ·
+**P3-3** recurring.html ช่องเงื่อนไขเฉพาะชนิดฝั่งผู้จ่าย · เทสต์ `WhtGrossUpTests` (+6 สองทิศ: PI−CN ≡ PI เล็ก · ไม่กลับขา = ไม่สมดุล · 50 ทวิ ลดเงินได้) ·
+TEST_PLAN WHTBORNE-10..16 · กติกาจุดเรียก `_WHTBORNE_ADV` +10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_

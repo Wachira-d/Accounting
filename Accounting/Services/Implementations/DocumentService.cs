@@ -792,22 +792,20 @@ public partial class DocumentService : IDocumentService
         return WhtGrossUp.Totals(per).PayerBorne;
     }
 
-    /// <summary>รอบ 204 — ค่าที่เก็บลง <c>Document.WhtCertType</c>: ไม่ส่ง = หัก ณ ที่จ่าย · ใบฝั่งรับเงินตั้ง "ออกแทน" ไม่ได้ ⇒ ล้มดังพร้อมเหตุผล</summary>
-    private static WithholdingTaxCertType ResolveWhtCertType(DocumentType documentType, WithholdingTaxCertType? requested)
-    {
-        var type = WhtGrossUp.Normalize(requested ?? WithholdingTaxCertType.Withhold);
-        if (WhtGrossUp.TypeError(documentType, type) is string err)
-            throw new BusinessRuleException(err, WhtGrossUp.RuleCode);
-        return type;
-    }
-
-    /// <summary>รอบ 204 — เงื่อนไขของใบ + ใบที่ปิดหนี้ใบต้นทางฝั่งผู้จ่าย: ไม่ส่งค่า ⇒ สืบทอดจากใบต้นทาง (กฎ #4 A) · ส่งค่าต่างจากใบต้นทาง ⇒ ล้มดัง
-    /// (ยอดจ่ายต้องตรงเจ้าหนี้ที่ใบต้นทางตั้ง — <see cref="WhtGrossUp.SourceMismatchReason"/>)</summary>
-    private async Task<WithholdingTaxCertType> ResolveWhtCertTypeAsync(Guid companyId, Document doc, WithholdingTaxCertType? requested)
+    /// <summary>รอบ 204 — ค่าที่เก็บลง <c>Document.WhtCertType</c> ของใบ + ใบที่ปิดหนี้/ลดหนี้ใบต้นทางฝั่งผู้จ่าย (ตัวตัดสินเดียวของ create/update):
+    /// <list type="bullet">
+    /// <item>ส่งค่า ⇒ ค่านั้น · ไม่ส่ง ⇒ ใบต้นทางฝั่งผู้จ่าย (สืบทอด — กฎ #4 A) ไม่มี ⇒ <paramref name="keepIfUnspecified"/> (แก้ไข = ค่าเดิม · สร้าง = หัก ณ ที่จ่าย)</item>
+    /// <item>ตรวจ <see cref="WhtGrossUp.TypeError"/> กับค่าสุดท้าย <b>ทุกครั้ง</b> — รวมเคสติ๊ก "บริการต่างประเทศ" ทีหลังโดยไม่ส่งเงื่อนไข (ฝ่ายค้าน P1-1)
+    /// และใบลด/เพิ่มหนี้ที่ไม่มีใบต้นทางฝั่งผู้จ่าย (P1-2)</item>
+    /// <item>ต่างจากใบต้นทาง ⇒ ล้มดัง (<see cref="WhtGrossUp.SourceMismatchReason"/> — ยอดจ่าย/ยอดลดต้องตรงเจ้าหนี้ที่ใบต้นทางตั้ง)</item>
+    /// </list></summary>
+    private async Task<WithholdingTaxCertType> ResolveWhtCertTypeAsync(Guid companyId, Document doc, WithholdingTaxCertType? requested,
+        WithholdingTaxCertType? keepIfUnspecified = null)
     {
         WithholdingTaxCertType? sourceType = null;
         string? sourceNumber = null;
-        if (doc.RelatedDocumentId is Guid srcId && WhtCertIssuePlan.AppliesTo(doc.DocumentType))
+        if (doc.RelatedDocumentId is Guid srcId
+            && (WhtCertIssuePlan.AppliesTo(doc.DocumentType) || WhtGrossUp.IsAdjustmentNote(doc.DocumentType)))
         {
             var src = await _db.Documents.AsNoTracking()
                 .Where(d => d.Id == srcId && d.CompanyId == companyId)
@@ -820,8 +818,10 @@ public partial class DocumentService : IDocumentService
             }
         }
         var type = requested.HasValue
-            ? ResolveWhtCertType(doc.DocumentType, requested)
-            : sourceType ?? WithholdingTaxCertType.Withhold;
+            ? WhtGrossUp.Normalize(requested.Value)
+            : sourceType ?? WhtGrossUp.Normalize(keepIfUnspecified ?? WithholdingTaxCertType.Withhold);
+        if (WhtGrossUp.TypeError(doc.DocumentType, type, doc.IsForeignService, sourceType.HasValue) is string err)
+            throw new BusinessRuleException(err, WhtGrossUp.RuleCode);
         if (sourceType is WithholdingTaxCertType st && WhtGrossUp.SourceMismatchReason(st, type, sourceNumber) is string mismatch)
             throw new BusinessRuleException(mismatch, WhtGrossUp.RuleCode);
         return type;
@@ -2789,10 +2789,11 @@ public partial class DocumentService : IDocumentService
         else if (doc.WhtPayeeContactId == doc.ContactId)
             doc.WhtPayeeContactId = null;
         // รอบ 204 — ผู้จ่ายออกภาษีแทน: null = คงค่าเดิม · เปลี่ยนโดยไม่ส่งบรรทัด ⇒ คิดภาษีใหม่จากบรรทัดที่บันทึกไว้ (ห้าม silent no-op — ดูท้ายบล็อกบรรทัด)
+        // ฝ่ายค้าน P1-1/P1-2: ตัดสินทุกครั้ง (ไม่ใช่เฉพาะเมื่อส่งค่า) — ติ๊ก "บริการต่างประเทศ" ทีหลังบนใบ "ออกแทน" ต้องล้มดัง ·
+        // ใบลด/เพิ่มหนี้ตามเงื่อนไขของใบต้นทางฝั่งผู้จ่ายเสมอ (ใบร่างที่บันทึกก่อนแก้นี้ได้ค่าถูกเมื่อเปิดแก้แล้วบันทึก)
         var updWhtCertTypeChanged = false;
-        if (request.WhtCertType.HasValue)
         {
-            var requestedWhtType = await ResolveWhtCertTypeAsync(companyId, doc, request.WhtCertType);
+            var requestedWhtType = await ResolveWhtCertTypeAsync(companyId, doc, request.WhtCertType, keepIfUnspecified: doc.WhtCertType);
             updWhtCertTypeChanged = requestedWhtType != WhtGrossUp.Normalize(doc.WhtCertType);
             doc.WhtCertType = requestedWhtType;
         }
@@ -8133,6 +8134,10 @@ public partial class DocumentService : IDocumentService
                 + "ที่ฟอร์มปกติแล้วค่อยอนุมัติ (ไม่ต้องใช้เมนูนี้)");
 
         // ── เงื่อนไขเฉพาะของ §83/6 (ตรงกับด่านตอนอนุมัติ ไม่ใช่กติกาชุดที่สอง) ──
+        // รอบ 204 ฝ่ายค้าน P1-1: ใบ "ผู้จ่ายออกภาษีแทน" เปลี่ยนเป็นบริการต่างประเทศไม่ได้ (VAT ภ.พ.36 ต้องคิดบนฐานรวมภาษีที่ออกแทน) — ตัวตัดสินเดียวกับตอนบันทึก
+        if (toForeignService
+            && WhtGrossUp.TypeError(doc.DocumentType, doc.WhtCertType, isForeignService: true, hasPayerSideSource: true) is string fsBorneErr)
+            throw new BusinessRuleException(fsBorneErr, WhtGrossUp.RuleCode);
         if (toForeignService && doc.VatAmount <= 0)
             throw new InvalidOperationException(
                 "ใบนี้ไม่มี VAT — ภ.พ.36 ต้องประเมิน VAT 7% จากยอดจ่ายเสมอ "
@@ -16584,9 +16589,13 @@ public partial class DocumentService : IDocumentService
         // รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: ภาษีที่นำส่ง (Cr 2191x = WithholdingTaxAmount) มากกว่าส่วนที่หักจากผู้รับ ⇒ ส่วนที่ออกแทน
         // เป็นค่าใช้จ่ายของผู้จ่าย · Dr ผังของบรรทัด (ทางเดียวกับรอบโอน settlement W3) ตามยอดรายบรรทัดจากสูตรเดียว WhtGrossUp.ForLines ·
         // ยอดรวมไม่ตรงหัวเอกสาร (บรรทัดถูกแก้ทางอื่นหลังบันทึก) ⇒ ล้มดัง ไม่ลง JE ที่ไม่สมดุล/ผิดเงียบ ๆ · หัก ณ ที่จ่าย ⇒ ไม่มีขานี้
-        void AddPayerBorneWhtExpense()
+        // ฝ่ายค้าน P1-2: ใบลดหนี้ซื้อของใบ "ออกแทน" กลับขานี้ (reverse = Cr) · ใบเพิ่มหนี้ซื้อ = Dr เหมือนใบตั้งหนี้ — ผังเดียวกับที่ใบต้นทางลง (AccountId ?? defaultExpense)
+        // ฝ่ายค้าน P1-1: ใบบริการต่างประเทศ (ภ.พ.36) ที่ "ออกแทน" (ข้อมูลก่อนด่านตอนบันทึก) ⇒ ล้มดังด้วยเหตุผลเดียวกับด่านบันทึก (VAT ประเมินขาด)
+        void AddPayerBorneWhtExpense(bool reverse = false)
         {
             if (doc.WhtPayerBorneAmount == 0m) return;
+            if (WhtGrossUp.TypeError(doc.DocumentType, doc.WhtCertType, doc.IsForeignService, hasPayerSideSource: true) is string borneTypeErr)
+                throw new BusinessRuleException(borneTypeErr, WhtGrossUp.RuleCode);
             var borneLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
             var borneParts = WhtGrossUp.ForLines(borneLines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
             if (WhtGrossUp.MismatchReason(doc.DocumentNumber, doc.WithholdingTaxAmount, doc.WhtPayerBorneAmount, borneParts) is string borneMismatch)
@@ -16596,8 +16605,8 @@ public partial class DocumentService : IDocumentService
                 if (borneParts[bi].PayerBorne == 0m) continue;
                 var borneAccountId = borneLines[bi].AccountId ?? defaultExpense?.Id
                     ?? throw new InvalidOperationException("ไม่พบบัญชีค่าใช้จ่ายสำหรับภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน — เลือกผังบัญชีของรายการก่อนอนุมัติ");
-                AddLine(borneAccountId, borneParts[bi].PayerBorne, 0,
-                    $"ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน ({WhtGrossUp.Label(doc.WhtCertType)}) - {borneLines[bi].Description}",
+                AddLine(borneAccountId, reverse ? 0 : borneParts[bi].PayerBorne, reverse ? borneParts[bi].PayerBorne : 0,
+                    $"{(reverse ? "กลับ" : "")}ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน ({WhtGrossUp.Label(doc.WhtCertType)}) - {borneLines[bi].Description}",
                     borneLines[bi].ProjectId);
             }
         }
@@ -17031,6 +17040,27 @@ public partial class DocumentService : IDocumentService
                         + (isPurchaseSide && !docLine.IsVatClaimable ? " (รวมภาษีซื้อต้องห้าม §82/5)" : ""),
                     docLine.ProjectId);
             }
+
+            // === รอบ 204 ฝ่ายค้าน P1-2: ภาษีที่ผู้จ่ายออกแทน (ใบต้นทาง "ออกให้ตลอดไป/ครั้งเดียว" — ใบนี้สืบทอดเงื่อนไข ResolveWhtCertTypeAsync) ===
+            // ใบลดหนี้ซื้อ: Dr เจ้าหนี้ (TotalAmount = ฐาน + VAT − ภาษี + ออกแทน) + Dr 2191x (ภาษี) = Cr ค่าใช้จ่าย + Cr VAT + **Cr ส่วนที่ออกแทน** ⇒ สมดุล ·
+            // ใบเพิ่มหนี้ซื้อ = ทิศกลับ (Dr ส่วนที่ออกแทน เหมือนใบตั้งหนี้) · เดิมไม่มีขานี้ + คิดภาษีแบบหัก ณ ที่จ่าย ⇒ AP/WHT/ค่าใช้จ่ายค้างคนละยอด ·
+            // ฝั่งขายมีส่วนที่ออกแทนไม่ได้ (เราไม่ใช่ผู้จ่าย) ⇒ ล้มดัง ไม่ลง JE ที่ไม่สมดุล
+            if (doc.WhtPayerBorneAmount != 0m)
+            {
+                if (!isPurchaseSide)
+                    throw new BusinessRuleException(
+                        $"{typeLabel} {doc.DocumentNumber} ถือภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน แต่ถูกจัดเป็นฝั่งขาย — ใบลด/เพิ่มหนี้ของใบ \"ผู้จ่ายออกภาษีแทน\" "
+                        + "ต้องลงฝั่งซื้อ (ย้ายฝั่งกลับ หรืออ้างใบต้นทางฝั่งผู้จ่ายให้ถูก)", WhtGrossUp.RuleCode);
+                AddPayerBorneWhtExpense(reverse: isCreditNote);
+            }
+            // ใบลด/เพิ่มหนี้ที่มีภาษีหักแต่เงื่อนไขไม่ตรงใบต้นทางฝั่งผู้จ่าย (ใบร่างที่บันทึกก่อนแก้ P1-2 · อ้างใบต้นทางตอนอนุมัติด้วยเลขใบกำกับผู้ขาย) ⇒
+            // ภาษี/ยอดคิดคนละสูตรกับหนี้ที่ใบต้นทางตั้ง ⇒ ล้มดังพร้อมทางไปต่อ (ไม่ลง JE ที่ค้าง AP/WHT)
+            if (isPurchaseSide && source != null && WhtCertIssuePlan.AppliesTo(source.DocumentType) && doc.WithholdingTaxAmount > 0m
+                && WhtGrossUp.Normalize(source.WhtCertType) != WhtGrossUp.Normalize(doc.WhtCertType))
+                throw new BusinessRuleException(
+                    $"{typeLabel} {doc.DocumentNumber} คิดภาษีหัก ณ ที่จ่ายแบบ \"{WhtGrossUp.Label(doc.WhtCertType)}\" แต่ใบต้นทาง {source.DocumentNumber} "
+                    + $"เป็น \"{WhtGrossUp.Label(source.WhtCertType)}\" — ยอดลด/เพิ่มหนี้จะไม่ตรงหนี้ที่ตั้งไว้ · ทางไปต่อ: อ้างใบต้นทางในช่องเอกสารอ้างอิง "
+                    + $"แล้วเปิดแก้ไข{typeLabel}และบันทึกอีกครั้ง (ระบบตั้งเงื่อนไขและคิดภาษีตามใบต้นทางให้)", WhtGrossUp.RuleCode);
 
             // === VAT line ===
             // ฝั่งซื้อคิดเฉพาะส่วนที่ **เคลมได้** — ส่วนที่ต้องห้ามถูกพับเข้าบรรทัด

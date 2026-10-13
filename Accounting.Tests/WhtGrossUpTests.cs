@@ -138,11 +138,118 @@ public class WhtGrossUpTests
     [Fact]
     public void TypeError_only_for_receiving_side_documents()
     {
-        Assert.NotNull(WhtGrossUp.TypeError(DocumentType.Invoice, WithholdingTaxCertType.PayAlways));
-        Assert.NotNull(WhtGrossUp.TypeError(DocumentType.Receipt, WithholdingTaxCertType.PayOnce));
-        Assert.Null(WhtGrossUp.TypeError(DocumentType.Invoice, WithholdingTaxCertType.Withhold));
+        Assert.NotNull(WhtGrossUp.TypeError(DocumentType.Invoice, WithholdingTaxCertType.PayAlways, false, false));
+        Assert.NotNull(WhtGrossUp.TypeError(DocumentType.Receipt, WithholdingTaxCertType.PayOnce, false, false));
+        Assert.Null(WhtGrossUp.TypeError(DocumentType.Invoice, WithholdingTaxCertType.Withhold, false, false));
         foreach (var t in new[] { DocumentType.PaymentVoucher, DocumentType.Expense, DocumentType.PurchaseInvoice, DocumentType.CertificateInLieu })
-            Assert.Null(WhtGrossUp.TypeError(t, WithholdingTaxCertType.PayAlways));
+            Assert.Null(WhtGrossUp.TypeError(t, WithholdingTaxCertType.PayAlways, false, false));
+    }
+
+    // ── ฝ่ายค้าน P1-1: บริการต่างประเทศ (ภ.พ.36) + ผู้จ่ายออกแทน ⇒ ปฏิเสธ (VAT ประเมินขาด) ──
+
+    [Fact]
+    public void TypeError_rejects_payer_borne_on_foreign_service_with_way_forward()
+    {
+        foreach (var t in new[] { DocumentType.PaymentVoucher, DocumentType.Expense, DocumentType.PurchaseInvoice })
+        foreach (var ct in new[] { WithholdingTaxCertType.PayAlways, WithholdingTaxCertType.PayOnce })
+        {
+            var err = WhtGrossUp.TypeError(t, ct, isForeignService: true, hasPayerSideSource: false);
+            Assert.NotNull(err);
+            Assert.Contains("ภ.พ.36", err);
+            Assert.Contains("ทางไปต่อ", err);
+        }
+        // ตัวเลขในทางไปต่อ: ยอดบรรทัดรวมภาษีที่ออกแทน = ตกลงจ่ายสุทธิ / (1 − 15%) ⇒ หัก ณ ที่จ่ายแล้วผู้รับได้สุทธิเท่าเดิม · ฐาน ภ.พ.36 = Pp36Base
+        var grossBase = 11_764.71m;
+        var withhold = WhtGrossUp.OnBase(grossBase, 15m, WithholdingTaxCertType.Withhold);
+        Assert.Equal(10_000m, grossBase - withhold.Tax);
+        var alwaysOnNet = WhtGrossUp.OnBase(10_000m, 15m, WithholdingTaxCertType.PayAlways);
+        Assert.Equal(grossBase, ForeignServiceVat.Pp36Base(10_000m, alwaysOnNet.PayerBorne));
+    }
+
+    [Fact]
+    public void TypeError_foreign_service_withhold_untouched_opposite_direction()
+    {
+        // ใบต่างประเทศแบบหัก ณ ที่จ่าย (พฤติกรรมเดิมทุกใบ) ⇒ ผ่าน · ใบในประเทศ "ออกแทน" ⇒ ผ่าน
+        Assert.Null(WhtGrossUp.TypeError(DocumentType.PaymentVoucher, WithholdingTaxCertType.Withhold, isForeignService: true, hasPayerSideSource: false));
+        Assert.Null(WhtGrossUp.TypeError(DocumentType.PaymentVoucher, WithholdingTaxCertType.PayAlways, isForeignService: false, hasPayerSideSource: false));
+    }
+
+    // ── ฝ่ายค้าน P1-2: ใบลด/เพิ่มหนี้สืบทอดเงื่อนไขจากใบต้นทางฝั่งผู้จ่าย ──
+
+    [Fact]
+    public void TypeError_notes_allowed_only_with_payer_side_source()
+    {
+        foreach (var t in new[] { DocumentType.CreditNote, DocumentType.DebitNote })
+        {
+            Assert.True(WhtGrossUp.IsAdjustmentNote(t));
+            Assert.Null(WhtGrossUp.TypeError(t, WithholdingTaxCertType.PayAlways, false, hasPayerSideSource: true));
+            Assert.NotNull(WhtGrossUp.TypeError(t, WithholdingTaxCertType.PayOnce, false, hasPayerSideSource: false));
+            Assert.Null(WhtGrossUp.TypeError(t, WithholdingTaxCertType.Withhold, false, hasPayerSideSource: false));
+        }
+        Assert.False(WhtGrossUp.IsAdjustmentNote(DocumentType.PaymentVoucher));
+    }
+
+    /// <summary>JE ใบตั้งหนี้ + ใบลดหนี้ (ทรงเดียวกับ AutoPostToJournalAsync: ใบลดหนี้ซื้อ Dr เจ้าหนี้ + Dr 2191x = Cr ค่าใช้จ่าย + Cr VAT + Cr ส่วนที่ออกแทน) —
+    /// คืนยอดสุทธิต่อผัง (Dr − Cr)</summary>
+    private static Dictionary<string, decimal> PiMinusCn(WithholdingTaxCertType type, decimal piBase, decimal cnBase, bool cnBorneLeg)
+    {
+        var net = new Dictionary<string, decimal>();
+        void Post(string code, decimal dr, decimal cr) => net[code] = net.GetValueOrDefault(code) + dr - cr;
+        var pi = WhtGrossUp.OnBase(piBase, 3m, type);
+        var piVat = Math.Round(piBase * 0.07m, 2, MidpointRounding.AwayFromZero);
+        Post("53110", piBase + pi.PayerBorne, 0m);
+        Post("11610", piVat, 0m);
+        Post("21220", 0m, WhtGrossUp.PayeeTotal(piBase, piVat, pi.Tax, pi.PayerBorne));
+        Post("21917", 0m, pi.Tax);
+        var cn = WhtGrossUp.OnBase(cnBase, 3m, type);   // ใบลดหนี้สืบทอดเงื่อนไข ⇒ สูตรเดียวกัน
+        var cnVat = Math.Round(cnBase * 0.07m, 2, MidpointRounding.AwayFromZero);
+        Post("21220", WhtGrossUp.PayeeTotal(cnBase, cnVat, cn.Tax, cn.PayerBorne), 0m);
+        Post("21917", cn.Tax, 0m);
+        Post("53110", 0m, cnBase + (cnBorneLeg ? cn.PayerBorne : 0m));
+        Post("11610", 0m, cnVat);
+        return net;
+    }
+
+    [Theory]
+    [InlineData(WithholdingTaxCertType.PayAlways)]
+    [InlineData(WithholdingTaxCertType.PayOnce)]
+    [InlineData(WithholdingTaxCertType.Withhold)]
+    public void CreditNote_on_payer_borne_source_balances_and_equals_smaller_invoice(WithholdingTaxCertType type)
+    {
+        var net = PiMinusCn(type, 10_000m, 1_000m, cnBorneLeg: true);
+        Assert.Equal(0m, net.Values.Sum());   // ทั้งสองใบสมดุล
+        // ใบตั้งหนี้ 10,000 − ใบลดหนี้ 1,000 ≡ ใบตั้งหนี้ 9,000 (เจ้าหนี้ · ภาษีนำส่ง · ค่าใช้จ่ายรวมส่วนที่ออกแทน) — ไม่มีอะไรค้าง
+        var nine = WhtGrossUp.OnBase(9_000m, 3m, type);
+        Assert.Equal(-nine.Tax, net["21917"]);
+        Assert.Equal(-WhtGrossUp.PayeeTotal(9_000m, 630m, nine.Tax, nine.PayerBorne), net["21220"]);
+        Assert.Equal(9_000m + nine.PayerBorne, net["53110"]);
+    }
+
+    [Fact]
+    public void CreditNote_cert_reissue_cuts_income_including_borne_tax()
+    {
+        // 50 ทวิ ของใบตั้งหนี้ "ตลอดไป" 10,000 @3%: เงินได้ 10,309.28 · ภาษี 309.28 — ใบลดหนี้ 1,000 ลดเงินได้ = ฐาน + ส่วนที่ออกแทน (ม.39)
+        // (WithholdingTaxCertService.AdjustCertsForCreditNoteAsync) ⇒ ใบใหม่ = 50 ทวิ ของใบ 9,000 เป๊ะ
+        var pi = WhtGrossUp.OnBase(10_000m, 3m, WithholdingTaxCertType.PayAlways);
+        var cn = WhtGrossUp.OnBase(1_000m, 3m, WithholdingTaxCertType.PayAlways);
+        var d = WhtCertReissuePlan.ForCreditNote(
+            new[] { new WhtCertAmountLine("8", 3m, pi.CertIncome, pi.Tax, "ค่าบริการ", new DateTime(2026, 9, 15), "2") },
+            new[] { new WhtCertAmountLine("8", 3m, 1_000m + cn.PayerBorne, cn.Tax, "ลดหนี้", new DateTime(2026, 9, 20)) },
+            null, false, 1, "WHT-202609-0001");
+        Assert.Equal(WhtCertReissueAction.Reissue, d.Action);
+        var l = Assert.Single(d.NewLines);
+        var nine = WhtGrossUp.OnBase(9_000m, 3m, WithholdingTaxCertType.PayAlways);
+        Assert.Equal(nine.CertIncome, l.IncomeAmount);
+        Assert.Equal(nine.Tax, l.TaxAmount);
+        Assert.Equal("2", l.Condition);   // เงื่อนไขออกให้ตลอดไปคงเดิม
+    }
+
+    [Fact]
+    public void CreditNote_without_borne_reversal_is_unbalanced_negative_test()
+    {
+        // บั๊กเดิม P1-2 ทรงหนึ่ง: ใบลดหนี้คิดสูตรเดียวกันแต่ไม่กลับขาส่วนที่ออกแทน ⇒ JE ไม่สมดุลเท่าส่วนที่ออกแทน (30.93)
+        var net = PiMinusCn(WithholdingTaxCertType.PayAlways, 10_000m, 1_000m, cnBorneLeg: false);
+        Assert.Equal(WhtGrossUp.OnBase(1_000m, 3m, WithholdingTaxCertType.PayAlways).PayerBorne, net.Values.Sum());   // Dr เกิน Cr
     }
 
     [Fact]

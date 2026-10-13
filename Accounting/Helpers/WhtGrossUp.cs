@@ -59,13 +59,36 @@ public static class WhtGrossUp
     /// ตัวเดียวของ TaxService/TaxFilingExportService (เดิมเขียน <c>is 2 ? 2 : 1</c> สี่ที่ ⇒ ใบ "ครั้งเดียว" ยื่นเป็นเงื่อนไข 1)</summary>
     public static int FilingCondition(WithholdingTaxCertType type) => (int)Normalize(type);
 
-    /// <summary>ใบชนิดนี้ตั้ง "ผู้จ่ายออกภาษีแทน" ได้ไหม — ได้เฉพาะใบฝั่งผู้จ่าย (<see cref="WhtCertIssuePlan.AppliesTo"/>) · null = ได้/เป็นค่าตั้งต้น ·
-    /// ข้อความ = เหตุผลภาษาไทยให้ผู้เรียกโยน (ใบฝั่งรับเงิน: ผู้จ่ายของเราเป็นคนตัดสินว่าจะออกภาษีแทนไหม ไม่ใช่เรา)</summary>
-    public static string? TypeError(Accounting.Models.Enums.DocumentType documentType, WithholdingTaxCertType requested)
-        => IsPayerBorne(requested) && !WhtCertIssuePlan.AppliesTo(documentType)
-            ? $"\"ผู้จ่ายออกภาษีแทน ({Label(requested)})\" ใช้ได้เฉพาะใบสำคัญจ่าย/บันทึกค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ/ใบรับรองแทนใบเสร็จ — "
-              + "เอกสารฝั่งรับเงินให้เลือก \"หัก ณ ที่จ่าย\" (ผู้จ่ายเป็นผู้ออก 50 ทวิ ให้เรา)"
-            : null;
+    /// <summary>ใบลดหนี้/ใบเพิ่มหนี้ — เงื่อนไขภาษีหัก ณ ที่จ่ายไม่ได้ตั้งเอง แต่<b>สืบทอดจากใบต้นทางฝั่งผู้จ่าย</b> (ฝ่ายค้าน P1-2 · รอบ 204):
+    /// ใบลดหนี้ของใบ "ออกให้ตลอดไป" ต้องคิดภาษีแบบ gross-up และกลับขา Dr ส่วนที่ออกแทนด้วย — ไม่งั้น GL ค้าง AP/WHT/ค่าใช้จ่ายไม่ตรงกัน</summary>
+    public static bool IsAdjustmentNote(Accounting.Models.Enums.DocumentType documentType)
+        => documentType is Accounting.Models.Enums.DocumentType.CreditNote or Accounting.Models.Enums.DocumentType.DebitNote;
+
+    /// <summary>ใบชนิดนี้ตั้ง "ผู้จ่ายออกภาษีแทน" ได้ไหม — null = ได้/เป็นค่าตั้งต้น · ข้อความ = เหตุผลภาษาไทย + ทางไปต่อให้ผู้เรียกโยน (400)
+    /// <list type="bullet">
+    /// <item>ใบฝั่งผู้จ่าย (<see cref="WhtCertIssuePlan.AppliesTo"/>) — ได้ · <b>ยกเว้นบริการต่างประเทศ</b> (<paramref name="isForeignService"/> · ภ.พ.36 §83/6):
+    /// ฐาน ภ.พ.36 ต้องรวมภาษีที่ออกแทน (<see cref="ForeignServiceVat.Pp36Base"/> · คำตัดสินข้อ 40) แต่ VAT ของเอกสารคิดจากยอดบรรทัดตอนบันทึก ⇒
+    /// ใบ "ออกแทน" ประเมิน VAT ขาดเงียบ ๆ (ฝ่ายค้าน P1-1) ⇒ ปฏิเสธพร้อมทางไปต่อ (กรอกยอดบรรทัดรวมภาษีที่ออกแทนเอง)</item>
+    /// <item>ใบลด/เพิ่มหนี้ (<see cref="IsAdjustmentNote"/>) — ได้เฉพาะเมื่อมีใบต้นทางฝั่งผู้จ่าย (<paramref name="hasPayerSideSource"/> · ค่าต้องตรงใบต้นทาง —
+    /// <see cref="SourceMismatchReason"/>)</item>
+    /// <item>ใบฝั่งรับเงิน — ไม่ได้ (ผู้จ่ายของเราเป็นคนตัดสินว่าจะออกภาษีแทนไหม ไม่ใช่เรา)</item>
+    /// </list></summary>
+    public static string? TypeError(Accounting.Models.Enums.DocumentType documentType, WithholdingTaxCertType requested,
+        bool isForeignService, bool hasPayerSideSource)
+    {
+        if (!IsPayerBorne(requested)) return null;
+        if (isForeignService)
+            return $"\"ผู้จ่ายออกภาษีแทน ({Label(requested)})\" ใช้กับบริการจากต่างประเทศ (ภ.พ.36 §83/6) ยังไม่ได้ — ฐาน ภ.พ.36 ต้องรวมภาษีที่ออกแทน "
+                + "(คำตัดสินข้อ 40) แต่ VAT ของเอกสารคิดจากยอดบรรทัด ⇒ VAT จะประเมินขาด · ทางไปต่อ: เลือก \"หัก ณ ที่จ่าย\" แล้วกรอกยอดบรรทัดเป็นยอดรวมภาษีที่ออกแทน "
+                + "(ตกลงจ่ายสุทธิ 10,000 หัก 15% ⇒ ยอดบรรทัด 11,764.71 · VAT ภ.พ.36 คิดบนฐานนี้) หรือเอาเครื่องหมาย \"บริการต่างประเทศ\" ออกถ้าไม่ใช่";
+        if (WhtCertIssuePlan.AppliesTo(documentType)) return null;
+        if (IsAdjustmentNote(documentType))
+            return hasPayerSideSource ? null
+                : $"ใบลดหนี้/ใบเพิ่มหนี้ตั้ง \"ผู้จ่ายออกภาษีแทน ({Label(requested)})\" เองไม่ได้ — เงื่อนไขสืบทอดจากใบต้นทางฝั่งผู้จ่าย "
+                  + "(ใบแจ้งหนี้ซื้อ/บันทึกค่าใช้จ่าย/ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จ) เท่านั้น · อ้างใบต้นทาง หรือเลือก \"หัก ณ ที่จ่าย\"";
+        return $"\"ผู้จ่ายออกภาษีแทน ({Label(requested)})\" ใช้ได้เฉพาะใบสำคัญจ่าย/บันทึกค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ/ใบรับรองแทนใบเสร็จ — "
+              + "เอกสารฝั่งรับเงินให้เลือก \"หัก ณ ที่จ่าย\" (ผู้จ่ายเป็นผู้ออก 50 ทวิ ให้เรา)";
+    }
 
     /// <summary>**เอกสารลูกสืบทอด** (แปลง · คัดลอก · รายการประจำ — กฎ #4 A): ใบฝั่งผู้จ่าย → ใบฝั่งผู้จ่าย (PI/ค่าใช้จ่าย → ใบสำคัญจ่าย) ถือเงื่อนไขเดียวกับต้นทาง
     /// (ใบที่จ่ายจริง/ออก 50 ทวิ ต้องคิดภาษีแบบเดียวกับที่ตั้งหนี้ไว้ ไม่งั้นยอดจ่ายไม่ตรงเจ้าหนี้) · ข้ามฝั่ง/ใบปลายทางฝั่งรับเงิน ⇒ null (= หัก ณ ที่จ่าย)</summary>

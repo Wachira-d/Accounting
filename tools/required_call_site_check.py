@@ -6512,6 +6512,46 @@ RULES += [
          why=_PND2 + "ทิป = ม.40(2) ภ.ง.ด.3 ⇒ ผัง 21916 (เดิม 21915 ผัง ภ.ง.ด.2 — นำส่ง ภ.ง.ด.3 Dr บัญชีที่ไม่มียอด)"),
 ]
 
+# รอบ 204 — แก้ผลฝ่ายค้านงานผู้จ่ายออกภาษีแทน (P1-1 ภ.พ.36 · P1-2 ใบลด/เพิ่มหนี้ · P2-1 กระดาษ · P2-2 พรีวิว GL · P3-1 รายงาน · P3-2 ซิงค์)
+_WHTBORNE_ADV = "รอบ 204 ฝ่ายค้านผู้จ่ายออกภาษีแทน: "
+RULES += [
+    dict(file=DOC, method="ResolveWhtCertTypeAsync",
+         must=["WhtGrossUp.TypeError(doc.DocumentType, type, doc.IsForeignService, sourceType.HasValue)",
+               "WhtGrossUp.IsAdjustmentNote(doc.DocumentType)", "WhtGrossUp.SourceMismatchReason("],
+         why=_WHTBORNE_ADV + "P1-1/P1-2: ตัวตัดสินเงื่อนไขตรวจค่าสุดท้ายกับธงบริการต่างประเทศ · ใบลด/เพิ่มหนี้สืบทอดจากใบต้นทางฝั่งผู้จ่าย"),
+    dict(file=DOC, method="UpdateDocumentAsync",
+         must=["keepIfUnspecified: doc.WhtCertType"],
+         forbid=["if (request.WhtCertType.HasValue)"],
+         why=_WHTBORNE_ADV + "P1-1: ตัดสินเงื่อนไขทุกครั้งที่แก้ (ติ๊กบริการต่างประเทศทีหลังบนใบออกแทนต้องล้มดัง · ใบลดหนี้ร่างเดิมได้เงื่อนไขของใบต้นทาง)"),
+    dict(file=DOC, method="AutoPostToJournalAsync",
+         must=["AddPayerBorneWhtExpense(reverse: isCreditNote)",
+               "WhtGrossUp.TypeError(doc.DocumentType, doc.WhtCertType, doc.IsForeignService, hasPayerSideSource: true)"],
+         must_re=[r"WhtGrossUp\.Normalize\(source\.WhtCertType\)\s*!=\s*WhtGrossUp\.Normalize\(doc\.WhtCertType\)"],
+         why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ซื้อกลับขาส่วนที่ออกแทน (ใบเพิ่มหนี้ Dr) + เงื่อนไขไม่ตรงใบต้นทาง = ล้มดัง · P1-1: ใบต่างประเทศ+ออกแทน (ข้อมูลเก่า) ไม่ลง JE"),
+    dict(file=DOC, method="ReclassifyForeignServiceAsync",
+         must=["WhtGrossUp.TypeError(doc.DocumentType, doc.WhtCertType, isForeignService: true"],
+         why=_WHTBORNE_ADV + "P1-1: เปลี่ยนใบออกแทนเป็นบริการต่างประเทศย้อนหลังไม่ได้ (ทางเข้าที่สามของธง)"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AdjustCertsForCreditNoteAsync",
+         must=["WhtGrossUp.ForLines(", "cnBorneByLine.GetValueOrDefault(l.Id)", "cn.SubTotal + cn.WhtPayerBorneAmount"],
+         why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ลดเงินได้บน 50 ทวิ = ฐาน + ส่วนที่ออกแทน (ม.39) — ตรงกับเงินได้ของใบเดิม"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildDocumentHtml",
+         must_lit=["{L.TotalWhtPayerBorne}", "doc.WhtPayerBorneAmount > 0"],
+         why=_WHTBORNE_ADV + "P2-1: กระดาษบวกลงยอด — แถวผู้จ่ายออกแทน (+) (คู่กับ QuestPDF)"),
+    dict(file="Services/Implementations/PdfGenerationService.DocumentRenderer.cs", method="ComposeSummary",
+         must=["L.TotalWhtPayerBorne", "doc.WhtPayerBorneAmount > 0"],
+         why=_WHTBORNE_ADV + "P2-1: สอง renderer ห้าม drift — แถวผู้จ่ายออกแทนใน QuestPDF ด้วย"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildProjectedGlAsync",
+         must=["WhtGrossUp.ForLines(", "gross - doc.WithholdingTaxAmount + previewBorne"],
+         why=_WHTBORNE_ADV + "P2-2: พรีวิว GL มีขา Dr ส่วนที่ออกแทน + เจ้าหนี้รวมส่วนนี้ (ตรง JE จริง)"),
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
+         must=["WhtGrossUp.FilingCondition(doc.WhtCertType)", "unissuedBorne.GetValueOrDefault(line.Id)", "WhtCondition = unissuedCondition"],
+         why=_WHTBORNE_ADV + "P3-1: แถวเตือนใบยังไม่ออก 50 ทวิ — เงินได้รวมส่วนที่ออกแทน + เงื่อนไข Col11 ของเอกสาร"),
+    dict(file="Services/Implementations/IntegrationService.cs", method="ResyncUpdateExpenseCoreAsync",
+         must=["WhtGrossUp.PayeeTotal(", "existing.WhtPayerBorneAmount = 0m"],
+         forbid=["existing.TotalAmount = subTotal + totalVat - totalWht"],
+         why=_WHTBORNE_ADV + "P3-2: ซิงค์ทับยอดแบบหัก ณ ที่จ่าย ⇒ ตั้งเงื่อนไขกลับอย่างประกาศ (ไม่ค้าง WhtCertType/ส่วนที่ออกแทน)"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

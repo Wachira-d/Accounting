@@ -843,6 +843,26 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         if (lines.Count == 0) return null;
 
+        // รอบ 204 ฝ่ายค้าน P2-2: ภาษีที่ผู้จ่ายออกแทน — mirror ของ AddPayerBorneWhtExpense ใน AutoPostToJournalAsync (Dr ผังของบรรทัด ·
+        // ยอดรายบรรทัดจากสูตรเดียว WhtGrossUp.ForLines บนบรรทัดลำดับเดียวกับ JE) · เดิมพรีวิวไม่มีขานี้ + ขาเจ้าหนี้ = ยอด − ภาษี ⇒ พรีวิวไม่ตรง JE จริง
+        decimal previewBorne = 0m;
+        if (isPurchase && doc.WhtPayerBorneAmount != 0m)
+        {
+            var borneLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+            var borneParts = WhtGrossUp.ForLines(borneLines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
+            for (var bi = 0; bi < borneLines.Count; bi++)
+            {
+                if (borneParts[bi].PayerBorne == 0m) continue;
+                var bl = borneLines[bi];
+                (string Code, string Name) bAcc =
+                    (bl.AccountId.HasValue && accById.TryGetValue(bl.AccountId.Value, out var b1)) ? b1
+                    : (doc.ExpenseCategoryId.HasValue && accById.TryGetValue(doc.ExpenseCategoryId.Value, out var b2)) ? b2
+                    : ("", bl.Description ?? "ค่าใช้จ่าย");
+                lines.Add(new GlPostingLine(bAcc.Code, bAcc.Name, borneParts[bi].PayerBorne, 0m));
+                previewBorne += borneParts[bi].PayerBorne;
+            }
+        }
+
         // §83/6 บริการต่างประเทศ — ตัวแยกขาเครดิตตัวเดียวกับ AutoPostToJournalAsync
         var pp36 = ForeignServiceVat.SelfAssessedVat(doc.IsForeignService, doc.VatAmount);
 
@@ -894,7 +914,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var gross = lineNet + doc.VatAmount;
         var contraAmt = ForeignServiceVat
-            .SplitCredit(doc.IsForeignService, gross - doc.WithholdingTaxAmount, doc.VatAmount)
+            .SplitCredit(doc.IsForeignService, gross - doc.WithholdingTaxAmount + previewBorne, doc.VatAmount)
             .PayeeCredit;
         (string Code, string Name) contra;
 
@@ -2311,6 +2331,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         var printTotals = ResolvePrintTotals(doc, L);
         if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{printTotals.VatLabel}</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalWht}</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
+        // รอบ 204 ฝ่ายค้าน P2-1: ผู้จ่ายออกภาษีแทน (+) — ยอดสุทธิ = ฐาน + VAT − ภาษีนำส่ง + ส่วนนี้ (WhtGrossUp.PayeeTotal) · เงื่อนไขเดียวกับแถวภาษีหัก
+        // (ซ่อนแถวภาษีก็ซ่อนแถวนี้ — กระดาษต้องบวกลงยอดเสมอ) · คู่กับ QuestPDF renderer (PdfGenerationService.DocumentRenderer) ห้าม drift
+        if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0 && doc.WhtPayerBorneAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalWhtPayerBorne}</span><span>{doc.WhtPayerBorneAmount:N2}</span></div>");
         // หักเงินมัดจำ (display-only): ยอดรวมทั้งสิ้น → หักมัดจำ (แตกบรรทัดต่อใบถ้า
         // หลายใบ ยอดต่อใบจาก apply JE จริง) → ยอดชำระสุทธิ
         if (doc.DepositAppliedAmount > 0)

@@ -1909,6 +1909,16 @@ public partial class TaxService : ITaxService
                         && !certCoveredPairs.Contains((doc.Id, Accounting.Helpers.WhtPayeeSplit.LinePayeeOf(
                             doc.ContactId, doc.WhtPayeeContactId, l.WhtPayeeContactId)))))).ToList();
             if (docMultiPayee && docWhtLines.Count == 0) continue;
+            // รอบ 204 ฝ่ายค้าน P3-1: ใบ "ผู้จ่ายออกภาษีแทน" — เงินได้ = ฐาน + ส่วนที่ออกแทนของบรรทัด (ม.39 · สูตรเดียว WhtGrossUp.ForLines ตัวเดียวกับ 50 ทวิ/JE) ·
+            // เงื่อนไข Col11 = ของเอกสาร (WhtGrossUp.FilingCondition) — เดิมแถวเตือนลงฐานล้วน + เงื่อนไข 1 ⇒ ไม่ตรง 50 ทวิ ที่จะออกจริง
+            var unissuedBorne = new Dictionary<Guid, decimal>();
+            if (Accounting.Helpers.WhtGrossUp.IsPayerBorne(doc.WhtCertType))
+            {
+                var borneAll = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+                var borneParts = Accounting.Helpers.WhtGrossUp.ForLines(borneAll.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
+                for (var bi = 0; bi < borneAll.Count; bi++) unissuedBorne[borneAll[bi].Id] = borneParts[bi].PayerBorne;
+            }
+            var unissuedCondition = Accounting.Helpers.WhtGrossUp.FilingCondition(doc.WhtCertType);
             if (docWhtLines.Count > 0)
             {
                 foreach (var line in docWhtLines)
@@ -1936,12 +1946,13 @@ public partial class TaxService : ITaxService
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"{Accounting.Helpers.WhtUnissuedCertGate.UnissuedCertMarker} — {line.Description} "
                             + "(ออกใบที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" แล้วกด \"สร้างใหม่\")",
-                        IncomeAmount = line.Amount,
+                        IncomeAmount = line.Amount + unissuedBorne.GetValueOrDefault(line.Id),
                         TaxRate = whtRate,
                         TaxAmount = line.WithholdingTaxAmount,
                         DocumentId = doc.Id,
                         IncomeTypeCode = line.IncomeTypeCode ?? "40(8)",
                         IsExcluded = true,
+                        WhtCondition = unissuedCondition,
                     });
                 }
             }
@@ -1950,7 +1961,7 @@ public partial class TaxService : ITaxService
                 // WHT อยู่ระดับเอกสาร (กรอกยอดตอนบันทึกจ่าย) — เดิมใบแบบนี้
                 // "หาย" จากรายงานทั้งใบเพราะ loop รายบรรทัดไม่เจออะไร
                 // + ผลต่างปัดเศษ (รอบ 193 ฝ่ายค้าน P5): ฐานเงินได้ = ฐานหัวเอกสาร (SubTotal = Σ บรรทัด + ผลต่าง) ไม่ใช่ Σ บรรทัดเดี่ยว ๆ
-                var docBase = doc.Lines.Sum(l => l.Amount) + doc.RoundingAdjustment;
+                var docBase = doc.Lines.Sum(l => l.Amount) + doc.RoundingAdjustment + doc.WhtPayerBorneAmount;   // P3-1: + ส่วนที่ออกแทน (ม.39)
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id,
@@ -1968,6 +1979,7 @@ public partial class TaxService : ITaxService
                     DocumentId = doc.Id,
                     IncomeTypeCode = "40(8)",
                     IsExcluded = true,
+                    WhtCondition = unissuedCondition,
                 });
             }
         }

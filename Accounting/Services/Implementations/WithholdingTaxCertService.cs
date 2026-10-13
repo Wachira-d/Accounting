@@ -1061,6 +1061,15 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // บรรทัดใบลดหนี้ → ผู้ถูกหัก (อ้างบรรทัดต้นทาง = ผู้ถูกหักของบรรทัดนั้น · ไม่อ้าง = ใบรายเดียวเท่านั้นที่ชี้ได้)
         var reductions = new Dictionary<Guid, List<WhtCertAmountLine>>();
         var cnWhtLines = cn.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0m).OrderBy(l => l.LineOrder).ToList();
+        // ฝ่ายค้าน P1-2: ใบลดหนี้ของใบ "ผู้จ่ายออกภาษีแทน" (สืบทอดเงื่อนไข) — เงินได้ที่ลดบน 50 ทวิ = ฐาน + ภาษีที่ออกแทนของบรรทัดนั้น (ม.39 · สูตรเดียว
+        // WhtGrossUp.ForLines ตัวเดียวกับตอนออกใบ/ลง JE) · หัก ณ ที่จ่าย ⇒ 0 = ยอดเดิมทุกสตางค์
+        var cnBorneByLine = new Dictionary<Guid, decimal>();
+        if (WhtGrossUp.IsPayerBorne(cn.WhtCertType))
+        {
+            var cnAll = cn.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+            var cnParts = WhtGrossUp.ForLines(cnAll.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), cn.WhtCertType);
+            for (var i = 0; i < cnAll.Count; i++) cnBorneByLine[cnAll[i].Id] = cnParts[i].PayerBorne;
+        }
         if (cnWhtLines.Count == 0)
         {
             var only = certs.Count == 1 && !multi && certs[0].Lines.Count == 1 ? certs[0].Lines.First() : null;
@@ -1072,7 +1081,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             }
             reductions[singlePayee] = new List<WhtCertAmountLine>
             {
-                new(only.IncomeTypeCode, only.TaxRate, cn.SubTotal, cn.WithholdingTaxAmount, cn.DocumentNumber, cn.DocumentDate),
+                new(only.IncomeTypeCode, only.TaxRate, cn.SubTotal + cn.WhtPayerBorneAmount, cn.WithholdingTaxAmount, cn.DocumentNumber, cn.DocumentDate),
             };
         }
         foreach (var l in cnWhtLines)
@@ -1088,7 +1097,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             }
             if (!reductions.TryGetValue(pid, out var list)) reductions[pid] = list = new List<WhtCertAmountLine>();
             // รหัสเดียวกับที่ตัวออกใบใส่ให้บรรทัดที่ไม่มีประเภท (AutoGenerateFromDocumentAsync)
-            list.Add(new WhtCertAmountLine(l.IncomeTypeCode ?? "8", l.WithholdingTaxRate, l.Amount, l.WithholdingTaxAmount, l.Description, cn.DocumentDate));
+            list.Add(new WhtCertAmountLine(l.IncomeTypeCode ?? "8", l.WithholdingTaxRate, l.Amount + cnBorneByLine.GetValueOrDefault(l.Id),
+                l.WithholdingTaxAmount, l.Description, cn.DocumentDate));
         }
 
         foreach (var (payeeId, cuts) in reductions)

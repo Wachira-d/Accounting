@@ -121,12 +121,15 @@
               <label class="form-label"><input type="checkbox" id="fAutoWht" checked> สร้างหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติ (เมื่อมี WHT)</label>
               <!-- รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: ใช้กับเอกสารฝั่งผู้จ่าย (ใบสำคัญจ่าย/ค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ) ·
                    ชนิดอื่นเซิร์ฟเวอร์ไม่ใช้ค่านี้ (WhtGrossUp.Inherit) · ภาษีคิดที่เซิร์ฟเวอร์ตอนออกเอกสารแต่ละงวด -->
+              <!-- ฝ่ายค้าน P3-3: แสดงเฉพาะชนิดฝั่งผู้จ่าย (ชนิดอื่นเซิร์ฟเวอร์ไม่ใช้ค่านี้ — ห้ามมีช่องที่กดแล้วไม่มีผล · กฎ #4 A) -->
+              <div id="fWhtCertTypeGroup" style="display:none">
               <label class="form-label" for="fWhtCertType" style="margin-top:6px">เงื่อนไขการหักภาษี (เอกสารฝั่งผู้จ่าย)</label>
               <select class="form-select" id="fWhtCertType">
                 <option value="Withhold">หัก ณ ที่จ่าย (หักจากยอดที่จ่าย)</option>
                 <option value="PayOnce">ผู้จ่ายออกภาษีให้ครั้งเดียว</option>
                 <option value="PayAlways">ผู้จ่ายออกภาษีให้ตลอดไป (ผู้รับได้ยอดเต็ม)</option>
               </select>
+              </div>
             </div>
           </div>
           <!-- รอบ 204 (ข้อ 148 ข้อ 4): ผู้ถูกหักภาษีแยกจากผู้ติดต่อ (templateData.whtPayeeContactId) — เดิมตั้งได้แค่ทาง API แล้วหน้านี้บันทึกทับหาย ·
@@ -506,6 +509,9 @@ const Page = {
     // ชนิดที่ "บริษัทเป็นผู้หัก" — ชุดเดียวกับ Helpers/WhtRemitScope.PayerSideTypes (ใช้แค่ตัดสินการแสดง · เซิร์ฟเวอร์ปฏิเสธชนิดอื่นเอง)
     const wpGroup = document.getElementById('fWhtPayeeGroup');
     if (wpGroup) wpGroup.style.display = this.WHT_PAYER_TYPES.includes(docType) ? '' : 'none';
+    // ฝ่ายค้าน P3-3: เงื่อนไขผู้จ่ายออกภาษีแทน — ชุดชนิดเดียวกัน (WhtGrossUp.TypeError ปฏิเสธชนิดอื่น · WhtGrossUp.Inherit ไม่ส่งต่อ)
+    const ctGroup = document.getElementById('fWhtCertTypeGroup');
+    if (ctGroup) ctGroup.style.display = this.WHT_PAYER_TYPES.includes(docType) ? '' : 'none';
     // ข้อความเตือน "ส่งอีเมลฝั่งซื้อ" ขึ้นกับชนิดเอกสาร → re-render ทุกครั้ง
     this.renderAutoEmailHint();
   },
@@ -559,7 +565,8 @@ const Page = {
       // ผู้ถูกหักแยกจากผู้ติดต่อ — ชนิดฝั่งอื่น/ไม่ติ๊ก = null (ตามผู้ติดต่อ)
       whtPayeeContactId: payeeId || null,
       // รอบ 204 — ผู้จ่ายออกภาษีแทน (เงื่อนไข 1/2/3)
-      whtCertType: document.getElementById('fWhtCertType').value || 'Withhold',
+      // ชนิดฝั่งอื่น (ช่องซ่อน) ⇒ หัก ณ ที่จ่ายเสมอ — ไม่เก็บค่าค้างจากชนิดก่อนหน้า
+      whtCertType: payerSide ? (document.getElementById('fWhtCertType').value || 'Withhold') : 'Withhold',
       // ⚠️ เดิม hardcode dueDays: 30 โดยไม่มีช่องให้กรอก ⇒ ใบที่ generate ครบ
       // กำหนด +30 เสมอ ขัดกับเครดิตจริงของคู่ค้า (เช่น Net 45) ทุกใบทุกเดือน
       // → ไม่ส่ง = ให้ระบบใช้เครดิตของคู่ค้า/ค่าตั้งต้นเอกสารเป็นตัวตัดสิน

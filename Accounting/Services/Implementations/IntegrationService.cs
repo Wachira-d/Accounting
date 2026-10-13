@@ -3321,8 +3321,19 @@ public class IntegrationService : IIntegrationService
         existing.SubTotal = subTotal;
         existing.VatAmount = totalVat;
         existing.WithholdingTaxAmount = totalWht;
-        // SubTotal เป็นฐานก่อน VAT เสมอแล้ว (SplitLineVat) ⇒ ยอดรวมต้องบวก VAT
-        existing.TotalAmount = subTotal + totalVat - totalWht;
+        // รอบ 204 ฝ่ายค้าน P3-2: ระบบต้นทางคิดภาษีแบบหัก ณ ที่จ่ายเสมอ (สัญญา inbound ไม่มีเงื่อนไขผู้จ่ายออกแทน) และเป็นเจ้าของยอด ⇒
+        // ใบที่ผู้ใช้ตั้ง "ออกแทน" ไว้ในระบบเรา กลับเป็นหัก ณ ที่จ่ายอย่างประกาศ (หมายเหตุบนใบ) — เดิมเขียนยอดแบบหัก ณ ที่จ่ายทับแต่
+        // WhtCertType/WhtPayerBorneAmount ค้าง ⇒ ยอดสุทธิ ≠ เงื่อนไข · 50 ทวิ/JE ล้มด้วย MismatchReason ทีหลังโดยไม่รู้สาเหตุ
+        if (Accounting.Helpers.WhtGrossUp.IsPayerBorne(existing.WhtCertType) || existing.WhtPayerBorneAmount != 0m)
+        {
+            existing.Notes = (existing.Notes ?? "")
+                + $"\n[Resync] เงื่อนไขภาษีหัก ณ ที่จ่าย \"{Accounting.Helpers.WhtGrossUp.Label(existing.WhtCertType)}\" กลับเป็น \"หัก ณ ที่จ่าย\" "
+                + "ตามยอดของระบบต้นทาง (ระบบต้นทางคิดภาษีแบบหักจากผู้รับ) — ถ้ายังต้องการให้ผู้จ่ายออกแทน ให้แก้ที่ระบบต้นทางหรือแก้เงื่อนไขในใบนี้อีกครั้ง";
+            existing.WhtCertType = Accounting.Models.DTOs.Tax.WithholdingTaxCertType.Withhold;
+        }
+        existing.WhtPayerBorneAmount = 0m;
+        // SubTotal เป็นฐานก่อน VAT เสมอแล้ว (SplitLineVat) ⇒ ยอดรวมต้องบวก VAT — ตัวตั้งเดียว WhtGrossUp.PayeeTotal (ส่วนที่ออกแทน 0 = สูตรเดิม)
+        existing.TotalAmount = Accounting.Helpers.WhtGrossUp.PayeeTotal(subTotal, totalVat, totalWht, existing.WhtPayerBorneAmount);
         existing.BalanceDue = existing.TotalAmount;
         await _db.SaveChangesAsync();
 
