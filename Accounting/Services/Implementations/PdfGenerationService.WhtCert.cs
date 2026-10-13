@@ -36,8 +36,10 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public partial class PdfGenerationService
 {
+    /// <param name="funds">ยอด "เงินที่จ่ายเข้า" กองทุน (A9 · 2026-10-13) — ใบรายปีของพนักงานเท่านั้น · null = เส้นว่างเหมือนเดิม ·
+    /// พารามิเตอร์เดียวกับ HTML <c>BuildWithholdingTaxCertHtml</c> (สอง renderer ห้าม drift)</param>
     private byte[] BuildWhtCertPdf(WithholdingTaxCert cert, Company company,
-        byte[]? signatureBytes = null, string? signerName = null)
+        byte[]? signatureBytes = null, string? signerName = null, WhtCertFundAmounts? funds = null)
     {
         EnsureThaiFontsRegistered();
         // ใบหัก ณ ที่จ่าย — ให้ใช้ฟอนต์ตระกูล Sarabun ก่อน (ให้ตรงกับไฟล์ที่
@@ -109,7 +111,7 @@ public partial class PdfGenerationService
                                 formTypeOf: cert);
                             BuildIncomeTable(form, lines, cert.TotalIncomeAmount, cert.TotalTaxAmount);
                             BuildTotalInWords(form, cert.TotalTaxAmount);
-                            BuildFundLine(form);
+                            BuildFundLine(form, funds);
                             BuildConditionsRow(form, cert);
                             BuildBottomSplit(form, cert.IssuedDate, sigImg, signerName);
                         });
@@ -395,14 +397,17 @@ public partial class PdfGenerationService
             });
     }
 
-    private static void BuildFundLine(QuestPDF.Fluent.ColumnDescriptor col)
+    // A9 (2026-10-13): ใบรายปีของพนักงานพิมพ์ยอดประกันสังคม/สำรองเลี้ยงชีพ — ตัวจัดรูปแบบเดียวกับ HTML (WhtCertFormText.FundAmountText) ·
+    // ไม่มีค่า (ใบผู้รับเงินทั่วไป · กบข.) = เส้นว่างเดิม
+    private static void BuildFundLine(QuestPDF.Fluent.ColumnDescriptor col, WhtCertFundAmounts? funds)
     {
+        static string Cell(decimal? amount) => " " + (WhtCertFormText.FundAmountText(amount) ?? "________") + " ";
         col.Item().BorderBottom(1).BorderColor(Colors.Black).Padding(5).Text(t =>
         {
             t.Span(WhtCertFormText.FundLead + " ").Bold().FontSize(9);
-            t.Span(WhtCertFormText.FundGov + " ________ " + WhtCertFormText.Baht + "  " +
-                   WhtCertFormText.FundSso + " ________ " + WhtCertFormText.Baht + "  " +
-                   WhtCertFormText.FundPvd + " ________ " + WhtCertFormText.Baht).FontSize(9);
+            t.Span(WhtCertFormText.FundGov + Cell(funds?.Gov) + WhtCertFormText.Baht + "  " +
+                   WhtCertFormText.FundSso + Cell(funds?.Sso) + WhtCertFormText.Baht + "  " +
+                   WhtCertFormText.FundPvd + Cell(funds?.Pvd) + WhtCertFormText.Baht).FontSize(9);
         });
     }
 

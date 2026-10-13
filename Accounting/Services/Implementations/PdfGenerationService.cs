@@ -175,11 +175,14 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// entity — for employee annual certificates that aggregate PayrollDetail
     /// rows for the year. Reuses the same QuestPDF layout as the supplier path
     /// (BuildWhtCertPdf) so RD compliance stays identical.</summary>
-    public async Task<byte[]> BuildEmployeeAnnualCertPdfAsync(Guid companyId, WithholdingTaxCert inMemoryCert)
+    /// <param name="funds">ยอด "เงินที่จ่ายเข้า" ประกันสังคม/สำรองเลี้ยงชีพของพนักงานทั้งปี (A9 · 2026-10-13 ·
+    /// <see cref="WhtCertFormText.EmployeeAnnualFunds"/>) — ไม่ใช่คอลัมน์ในฐานข้อมูล (ใบนี้อยู่ใน memory)</param>
+    public async Task<byte[]> BuildEmployeeAnnualCertPdfAsync(Guid companyId, WithholdingTaxCert inMemoryCert,
+        WhtCertFundAmounts funds)
     {
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var (sigBytes, sigName) = await ResolveCertSignatoryAsync(companyId, inMemoryCert.CreatedBy);
-        return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName);
+        return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds);
     }
 
     /// <summary>Resolve the signer for a cert — exact same fallback chain
@@ -2578,8 +2581,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         + "<br/><span style='color:#64748b'>เริ่มใช้ฟรีที่ www.nextacc.net</span>"
         + "</div>";
 
+    /// <param name="funds">ยอด "เงินที่จ่ายเข้า" กองทุน (A9 · 2026-10-13) — ใบรายปีของพนักงานเท่านั้น
+    /// (<see cref="WhtCertFormText.EmployeeAnnualFunds"/>) · null/ช่องที่เป็น null = เส้นว่างเหมือนเดิมทุกไบต์ ·
+    /// พารามิเตอร์เดียวกับ QuestPDF <c>BuildWhtCertPdf</c> (สอง renderer ห้าม drift)</param>
     internal static string BuildWithholdingTaxCertHtml(WithholdingTaxCert cert, Company company,
-        string? sigBase64 = null, string? sigName = null)
+        string? sigBase64 = null, string? sigName = null, WhtCertFundAmounts? funds = null)
     {
         var sb = new StringBuilder();
         var certNum = WebUtility.HtmlEncode(cert.CertificateNumber);
@@ -2764,8 +2770,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine($"<tr><td class='totxt-cell'><b>{WhtCertFormText.TotalWords}</b> <i>{WhtCertFormText.TotalWordsHint}</i> <u class='ul' style='display:inline-block;min-width:480px'>&nbsp;<b>{ThaiNumberToText(cert.TotalTaxAmount)}</b>&nbsp;</u></td></tr>");
 
             // Fund
+            // A9 (2026-10-13): ใบรายปีของพนักงานพิมพ์ยอดจริง (ตัวจัดรูปแบบเดียว WhtCertFormText.FundAmountText) · ไม่มีค่า = เส้นว่างเดิม
             const string fundBlank = "<u class='ul'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u>";
-            sb.AppendLine($"<tr><td class='fund-cell'><b>{WhtCertFormText.FundLead}</b> {WhtCertFormText.FundGov} {fundBlank} {WhtCertFormText.Baht} {WhtCertFormText.FundSso} {fundBlank} {WhtCertFormText.Baht} {WhtCertFormText.FundPvd} {fundBlank} {WhtCertFormText.Baht}</td></tr>");
+            string FundCell(decimal? amount) => WhtCertFormText.FundAmountText(amount) is string amt
+                ? $"<u class='ul'>&nbsp;{amt}&nbsp;</u>" : fundBlank;
+            sb.AppendLine($"<tr><td class='fund-cell'><b>{WhtCertFormText.FundLead}</b> {WhtCertFormText.FundGov} {FundCell(funds?.Gov)} {WhtCertFormText.Baht} {WhtCertFormText.FundSso} {FundCell(funds?.Sso)} {WhtCertFormText.Baht} {WhtCertFormText.FundPvd} {FundCell(funds?.Pvd)} {WhtCertFormText.Baht}</td></tr>");
 
             // Conditions
             sb.AppendLine("<tr><td class='cond-cell'><table class='inner' cellspacing='0'><tr>");

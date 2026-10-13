@@ -1,6 +1,9 @@
 using Accounting.Data;
+using Accounting.Helpers;
+using Accounting.Models.DTOs.Tax;
 using Accounting.Models.DTOs.TaxCalendar;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -57,6 +60,10 @@ public class TaxCalendarService : ITaxCalendarService
             .GroupBy(e => (e.TaxFormCode, e.Month))
             .ToDictionary(g => g.Key, g => g.First());
 
+        // กระดาน 2026-10-13 (A12): ภ.ง.ด.2/2ก · ภ.ง.ด.54 · ภ.พ.36 สร้างเฉพาะบริษัทที่มีกิจกรรมจริง (เดิมสร้างให้ทุกบริษัท ⇒ เลยกำหนด/เตือนปลอม)
+        // · ตัวตัดสินเดียว Helpers/TaxCalendarSeedScope · แบบอื่นสร้างเสมอเหมือนเดิม
+        var activity = await LoadSeedActivityAsync(companyId, year);
+
         // ⚠️ ภ.ง.ด.50/51 ผูกกับ **รอบบัญชีของบริษัท** ไม่ใช่ปีปฏิทิน —
         // `TaxService.GenerateCitReport` อ่าน `FiscalYearStartMonth` อยู่แล้ว
         // แต่ปฏิทินนี้ hardcode 31 พ.ค. ⇒ บริษัทที่รอบไม่ตรงปีปฏิทินได้วันผิดทั้งปี
@@ -76,13 +83,13 @@ public class TaxCalendarService : ITaxCalendarService
         var monthlyForms = new[]
         {
             ("ภ.พ.30", "แบบแสดงรายการภาษีมูลค่าเพิ่ม", "VatPp30"),
-            ("ภ.พ.36", "แบบนำส่ง VAT จากการจ่ายค่าบริการต่างประเทศ", "VatPp36"),
+            (TaxCalendarSeedScope.Pp36, "แบบนำส่ง VAT จากการจ่ายค่าบริการต่างประเทศ", "VatPp36"),
             ("ภ.ง.ด.1", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (เงินเดือน)", "WhtPnd1"),
             // รอบ 204 (คำตัดสินข้อ 148): ดอกเบี้ย/เงินปันผล ม.40(4) จ่ายบุคคลธรรมดา (ม.50(2) · ม.59)
-            ("ภ.ง.ด.2", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (ดอกเบี้ย/เงินปันผล บุคคลธรรมดา)", "WhtPnd2"),
+            (TaxCalendarSeedScope.Pnd2, "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (ดอกเบี้ย/เงินปันผล บุคคลธรรมดา)", "WhtPnd2"),
             ("ภ.ง.ด.3", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (บุคคลธรรมดา)", "WhtPnd3"),
             ("ภ.ง.ด.53", "แบบยื่นภาษีเงินได้หัก ณ ที่จ่าย (นิติบุคคล)", "WhtPnd53"),
-            ("ภ.ง.ด.54", "แบบนำส่งภาษีเงินได้หัก ณ ที่จ่าย (จ่ายต่างประเทศ ม.70)", "WhtPnd54"),
+            (TaxCalendarSeedScope.Pnd54, "แบบนำส่งภาษีเงินได้หัก ณ ที่จ่าย (จ่ายต่างประเทศ ม.70)", "WhtPnd54"),
             ("สปส.1-10", "แบบรายการแสดงการส่งเงินสมทบประกันสังคม", "SsoSps110"),
         };
 
@@ -93,6 +100,7 @@ public class TaxCalendarService : ITaxCalendarService
         // Create monthly events for all 12 months
         foreach (var (code, name, remitKey) in monthlyForms)
         {
+            if (!TaxCalendarSeedScope.ShouldSeed(code, activity)) continue;   // A12 — แบบผูกกิจกรรมที่บริษัทไม่มี
             for (var month = 1; month <= 12; month++)
             {
                 // ⚠️ e-Filing ต้องนับจากวันครบกำหนด **ก่อนเลื่อนวันหยุด** — เดิมที่นี่
@@ -128,13 +136,14 @@ public class TaxCalendarService : ITaxCalendarService
             ("ภ.ง.ด.51", "แบบแสดงรายการภาษีเงินได้นิติบุคคลครึ่งปี", halfEnd.AddMonths(2), 8),
             ("ภ.ง.ด.1ก", "แบบสรุปภาษีเงินได้หัก ณ ที่จ่าย (ประจำปี)", new DateTime(year + 1, 2, 28), 8),
             ("สบช.3", "แบบนำส่งงบการเงิน (กรมพัฒนาธุรกิจการค้า)", new DateTime(year + 1, 5, 31), 0),
-            ("ภ.ง.ด.2ก", "แบบสรุป WHT เงินปันผล/ดอกเบี้ย ประจำปี", new DateTime(year + 1, 1, 31), 8),
+            (TaxCalendarSeedScope.Pnd2a, "แบบสรุป WHT เงินปันผล/ดอกเบี้ย ประจำปี", new DateTime(year + 1, 1, 31), 8),
             ("ภ.ง.ด.3ก", "แบบสรุป WHT บุคคลธรรมดา ประจำปี", new DateTime(year + 1, 1, 31), 8),
             ("ภ.ง.ด.53ก", "แบบสรุป WHT นิติบุคคล ประจำปี", new DateTime(year + 1, 1, 31), 8),
         };
 
         foreach (var (code, name, dueDate, eFilingExtra) in annualForms)
         {
+            if (!TaxCalendarSeedScope.ShouldSeed(code, activity)) continue;   // A12 — ภ.ง.ด.2ก ตามกิจกรรม ภ.ง.ด.2
             // ⚠️ e-Filing ต้องนับ +8 จากวันครบกำหนด **ก่อนเลื่อนวันหยุด** แล้วค่อย
             // เลื่อนทั้งคู่ (มาตรการกระทรวงการคลังขยายจากวันตามกฎหมาย ไม่ใช่จากวัน
             // ที่เลื่อนแล้ว) — เดิมบล็อกนี้เลื่อนก่อนแล้วบวก ⇒ ได้ช้ากว่าจริง 1-2 วัน
@@ -183,7 +192,61 @@ public class TaxCalendarService : ITaxCalendarService
             row.UpdatedAt = DateTime.UtcNow;
             refreshed++;
         }
-        if (added > 0 || refreshed > 0) await _db.SaveChangesAsync();
+
+        // A12: สร้างใหม่ ⇒ ถอนแถวของแบบที่ไม่มีกิจกรรม (soft-delete) เฉพาะแถวที่ระบบสร้างแล้วไม่มีใครแตะ — แถวที่ผู้ใช้ทำเครื่องหมาย/กรอกไว้ห้ามแตะ
+        // (ข้อมูลเก่าที่สร้างให้ทุกบริษัทไปแล้ว = ของเสียที่ persist ⇒ ต้องซ่อมด้วย ไม่ใช่แค่หยุดสร้างใหม่ · F2 ข้อ 9)
+        var retracted = 0;
+        foreach (var row in existingRows)
+        {
+            if (!TaxCalendarSeedScope.ShouldRetract(row, activity)) continue;
+            row.IsDeleted = true;
+            row.UpdatedAt = DateTime.UtcNow;
+            retracted++;
+        }
+        if (added > 0 || refreshed > 0 || retracted > 0) await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// กิจกรรมที่ตัดสินว่าบริษัทต้องมีแถว ภ.ง.ด.2/2ก · ภ.ง.ด.54 · ภ.พ.36 บนปฏิทินไหม (A12) — ช่วงปีจาก <see cref="TaxCalendarSeedScope.ActivityYears"/> ·
+    /// ทุก query กรอง <c>CompanyId == companyId</c> + ไม่นับใบ/เอกสารที่ถูกยกเลิกหรือลบ
+    /// </summary>
+    private async Task<TaxCalendarSeedScope.Activity> LoadSeedActivityAsync(Guid companyId, int year)
+    {
+        var (fromYear, toYear) = TaxCalendarSeedScope.ActivityYears(year);
+        var fromDate = new DateTime(fromYear, 1, 1);
+        var toDateExclusive = new DateTime(toYear + 1, 1, 1);
+
+        // 50 ทวิ แบบ ภ.ง.ด.2 / ภ.ง.ด.54 ที่ยังมีผล (ใบร่างนับ — ผู้ใช้กำลังจะจ่าย)
+        var certForms = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && !w.IsDeleted
+                && w.Status != WithholdingTaxCertStatus.Voided
+                && w.TaxYear >= fromYear && w.TaxYear <= toYear
+                && (w.TaxFormType == TaxType.WithholdingTax2 || w.TaxFormType == TaxType.WithholdingTax54))
+            .Select(w => w.TaxFormType)
+            .Distinct()
+            .ToListAsync();
+
+        // เอกสารจ่ายค่าบริการต่างประเทศ (ภ.พ.36 · ม.83/6) — ตัวเดียวกับที่ลง 21912
+        var hasForeignService = await _db.Documents.AsNoTracking()
+            .AnyAsync(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided
+                && d.IsForeignService
+                && d.DocumentDate >= fromDate && d.DocumentDate < toDateExclusive);
+
+        // ผู้รับต่างประเทศที่หักภาษี (ม.70) โดยไม่ได้ติ๊กค่าบริการต่างประเทศ — ทางเดียวกับ WhtPayeeKind.IsForeignPayee (ประเทศของคู่ค้า ≠ TH)
+        // · ภ.ง.ด.54 ที่ขาดเตือนแพงกว่าเตือนเกิน ⇒ นับกว้าง
+        var hasForeignPayeeWht = hasForeignService || await _db.Documents.AsNoTracking()
+            .AnyAsync(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.Status != DocumentStatus.Voided
+                && d.WithholdingTaxAmount > 0
+                && d.Contact.CountryCode != null && d.Contact.CountryCode != ""
+                && d.Contact.CountryCode.ToUpper() != "TH"
+                && d.DocumentDate >= fromDate && d.DocumentDate < toDateExclusive);
+
+        return new TaxCalendarSeedScope.Activity(
+            Pnd2: certForms.Contains(TaxType.WithholdingTax2),
+            Pnd54: certForms.Contains(TaxType.WithholdingTax54) || hasForeignPayeeWht,
+            Pp36: hasForeignService);
     }
 
     public async Task<TaxCalendarEventResponse> UpdateEventAsync(Guid companyId, Guid eventId, UpdateTaxCalendarEventRequest request)

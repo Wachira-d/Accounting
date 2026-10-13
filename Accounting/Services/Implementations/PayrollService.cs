@@ -3240,6 +3240,12 @@ public class PayrollService : IPayrollService
                 // Effective rate (display): tax / income × 100. แสดงเป็น
                 // อัตราเฉลี่ยรายปี (RD ยอมรับ).
                 var effRate = totalIncome > 0 ? Math.Round(totalTax * 100m / totalIncome, 2, MidpointRounding.AwayFromZero) : 0m;
+                // A9 (2026-10-13): ช่อง "เงินที่จ่ายเข้า" ของ 50 ทวิ (ภ.ง.ด.1ก) — ส่วนลูกจ้างที่หักจากเงินเดือนทั้งปี (เดิมพิมพ์เส้นว่างเสมอ)
+                // · ประกันสังคม/สำรองเลี้ยงชีพจากแถวเดียวกับยอดเงินได้ (ชุดรอบ Paid/Approved ของปีนี้) · กบข. ไม่มีข้อมูล ⇒ ว่าง
+                // · ตัวตัดสิน "ยอดไหนพิมพ์/ว่าง" อยู่ที่ WhtCertFormText.EmployeeAnnualFunds ที่เดียว
+                var ssoEmployeeTotal = g.Sum(d => d.SocialSecurityEmployee);
+                var pvdEmployeeTotal = g.Sum(d => d.ProvidentFundEmployee);
+                var funds = Accounting.Helpers.WhtCertFormText.EmployeeAnnualFunds(ssoEmployeeTotal, pvdEmployeeTotal);
 
                 var cert = new WithholdingTaxCert
                 {
@@ -3273,7 +3279,7 @@ public class PayrollService : IPayrollService
                     });
                 }
 
-                var pdfBytes = await pdf.BuildEmployeeAnnualCertPdfAsync(companyId, cert);
+                var pdfBytes = await pdf.BuildEmployeeAnnualCertPdfAsync(companyId, cert, funds);
                 // Audit trail: record every 50ทวิ generation so a dispute
                 // ("ผมไม่เคยได้ใบรับรอง") has an answer (when + who + which
                 // employee + amounts).
@@ -3291,6 +3297,7 @@ public class PayrollService : IPayrollService
                         emp.EmployeeCode, CitizenId = Accounting.Helpers.PiiMask.CitizenId(emp.CitizenId),
                         Year = year,
                         TotalIncome = totalIncome, TotalTax = totalTax,
+                        SsoEmployee = funds.Sso, PvdEmployee = funds.Pvd,
                     }),
                     Timestamp = DateTime.UtcNow,
                 });

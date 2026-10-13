@@ -325,6 +325,78 @@ public class WhtCertFormTextTests
         Assert.Contains("PayerConditionIndex: Accounting.Helpers.WhtCertFormText.PayerConditionIndex(w.CertificateType)", svc);
     }
 
+    // ───────── A9 (2026-10-13): "เงินที่จ่ายเข้า" กองทุนบนใบรายปีของพนักงาน (ภ.ง.ด.1ก) ─────────
+
+    private const string FundBlankHtml = "<u class='ul'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u>";
+    private const string FundCellBlankHtml =
+        "<tr><td class='fund-cell'><b>เงินที่จ่ายเข้า</b> กบข./กสจ./กองทุนสงเคราะห์ครูโรงเรียนเอกชน " + FundBlankHtml
+        + " บาท กองทุนประกันสังคม " + FundBlankHtml + " บาท กองทุนสำรองเลี้ยงชีพ " + FundBlankHtml + " บาท</td></tr>";
+
+    [Fact]
+    public void EmployeeAnnualFunds_SsoAndPvd_FromTotals_GovAlwaysBlank()
+    {
+        var f = WhtCertFormText.EmployeeAnnualFunds(9000m, 12000.50m);
+        Assert.Null(f.Gov);                       // ระบบไม่มีข้อมูล กบข. — ไม่รู้ = ว่าง (ห้ามแต่ง 0.00)
+        Assert.Equal(9000m, f.Sso);
+        Assert.Equal(12000.50m, f.Pvd);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(-5, 0)]
+    public void EmployeeAnnualFunds_NoContribution_IsBlank_NotZero(int sso, int pvd)   // int — InlineData ส่ง decimal ตรงไม่ได้
+    {
+        // ทิศตรงข้าม: พนักงานที่ไม่ได้สมทบ เห็นช่องว่าง (เหมือนแบบกรอกมือ) ไม่ใช่ "0.00"
+        var f = WhtCertFormText.EmployeeAnnualFunds(sso, pvd);
+        Assert.Equal(new WhtCertFundAmounts(null, null, null), f);
+    }
+
+    [Theory]
+    [InlineData("9000", "9,000.00")]
+    [InlineData("1.005", "1.01")]        // AwayFromZero (ไม่ใช่ banker's → 1.00)
+    [InlineData("1234567.8", "1,234,567.80")]
+    public void FundAmountText_FormatsTwoDecimals_AwayFromZero(string amount, string expected)
+        => Assert.Equal(expected, WhtCertFormText.FundAmountText(decimal.Parse(amount, System.Globalization.CultureInfo.InvariantCulture)));
+
+    [Fact]
+    public void FundAmountText_Null_IsNull_SoRendererPrintsItsBlank()
+        => Assert.Null(WhtCertFormText.FundAmountText(null));
+
+    [Fact]
+    public void Html_EmployeeAnnualCert_PrintsSsoAndPvdAmounts_GovBlank()
+    {
+        var cert = Cert(TaxType.WithholdingTax1, WithholdingTaxCertType.Withhold, Line("1", "เงินเดือน เดือน 01/2026"));
+        var html = PdfGenerationService.BuildWithholdingTaxCertHtml(cert, Payer(),
+            funds: WhtCertFormText.EmployeeAnnualFunds(9000m, 1500m));
+        var expected = "<tr><td class='fund-cell'><b>เงินที่จ่ายเข้า</b> กบข./กสจ./กองทุนสงเคราะห์ครูโรงเรียนเอกชน " + FundBlankHtml
+            + " บาท กองทุนประกันสังคม <u class='ul'>&nbsp;9,000.00&nbsp;</u> บาท กองทุนสำรองเลี้ยงชีพ <u class='ul'>&nbsp;1,500.00&nbsp;</u> บาท</td></tr>";
+        Assert.Equal(3, Regex.Matches(html, Regex.Escape(expected)).Count);   // ทุกฉบับ (1–3) ตรงกัน
+        Assert.DoesNotContain(FundCellBlankHtml, html);
+    }
+
+    [Fact]
+    public void Html_SupplierCert_FundCellStaysBlank_ByteIdentical()
+    {
+        // ทิศตรงข้าม: ใบผู้รับเงินทั่วไป (ไม่ส่ง funds) และ funds ว่างทุกช่อง ⇒ เส้นว่างเดิมทุกไบต์ — ผลลัพธ์ทั้งหน้าเท่ากัน
+        var noFunds = Html(Line("8"));
+        Assert.Equal(3, Regex.Matches(noFunds, Regex.Escape(FundCellBlankHtml)).Count);
+        var allNull = PdfGenerationService.BuildWithholdingTaxCertHtml(Cert(Line("8")), Payer(),
+            funds: new WhtCertFundAmounts(null, null, null));
+        Assert.Equal(noFunds, allNull);
+    }
+
+    [Fact]
+    public void Renderers_FundLine_ShareTheSameFormatter()
+    {
+        // สอง renderer ฝั่ง C# จัดรูปแบบยอดกองทุนผ่านตัวเดียว (QuestPDF ไม่มีรูปแบบตัวเลขของตัวเอง) · หน้าพิมพ์ wht.html ยังว่าง (ใบผู้รับเงินทั่วไป)
+        var qp = StripComments(File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/Services/Implementations/PdfGenerationService.WhtCert.cs")));
+        Assert.Contains("BuildFundLine(form, funds);", qp);
+        Assert.Contains("WhtCertFormText.FundAmountText(amount)", qp);
+        var src = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/Services/Implementations/PdfGenerationService.cs"));
+        Assert.Contains("return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds);", src);
+        Assert.Contains("WhtCertFormText.FundAmountText(amount)", src);
+    }
+
     private static string PrintSegment()
     {
         var page = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/wwwroot/pages/wht.html"));

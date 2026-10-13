@@ -5,6 +5,13 @@ using Accounting.Models.Enums;
 namespace Accounting.Helpers;
 
 /// <summary>
+/// "เงินที่จ่ายเข้า" กองทุน 3 ช่องบนแบบ 50 ทวิ (กบข./กสจ./กองทุนสงเคราะห์ครูฯ · ประกันสังคม · สำรองเลี้ยงชีพ) — null = ช่องว่าง
+/// <para>เป็นพารามิเตอร์ของ renderer <b>ไม่ใช่คอลัมน์ในฐานข้อมูล</b>: ใบรายปีของพนักงานสร้างใน memory ทุกครั้งจาก PayrollDetail
+/// (<see cref="WhtCertFormText.EmployeeAnnualFunds"/>) · ใบผู้รับเงินทั่วไปไม่ส่ง ⇒ ว่างเหมือนเดิม</para>
+/// </summary>
+public sealed record WhtCertFundAmounts(decimal? Gov, decimal? Sso, decimal? Pvd);
+
+/// <summary>
 /// **ข้อความทุกคำบนแบบ "หนังสือรับรองการหักภาษี ณ ที่จ่าย ตามมาตรา 50 ทวิ" — ที่เดียวของ renderer ฝั่ง C# ทั้งสองตัว**
 /// (HTML <c>PdfGenerationService.BuildWithholdingTaxCertHtml</c> + QuestPDF <c>PdfGenerationService.WhtCert.cs</c>)
 ///
@@ -103,6 +110,25 @@ public static class WhtCertFormText
     public const string FundSso = "กองทุนประกันสังคม";
     public const string FundPvd = "กองทุนสำรองเลี้ยงชีพ";
     public const string Baht = "บาท";
+
+    /// <summary>
+    /// ยอด "เงินที่จ่ายเข้า" กองทุนของใบ 50 ทวิ <b>รายปีของพนักงาน (ภ.ง.ด.1ก)</b> — ตัวตั้งเดียวของ <see cref="WhtCertFundAmounts"/>
+    /// (คำตัดสิน 2026-10-13 · A9). ส่วนลูกจ้างที่หักจากเงินเดือนทั้งปี: ประกันสังคม = Σ <c>PayrollDetail.SocialSecurityEmployee</c> ·
+    /// สำรองเลี้ยงชีพ = Σ <c>PayrollDetail.ProvidentFundEmployee</c> · <b>กบข./กสจ. = null เสมอ</b> (ระบบไม่มีข้อมูลกองทุนนี้ — ไม่รู้ = ช่องว่าง
+    /// ไม่ใช่ 0.00 · F2 ข้อ 3) · ยอดรวม ≤ 0 ⇒ null (พนักงานที่ไม่ได้สมทบเห็นช่องว่างเหมือนแบบที่กรอกมือ ไม่ใช่ "0.00")
+    /// <para>ใบของผู้รับเงินทั่วไป (ภ.ง.ด.3/53/2) ไม่ส่งค่านี้ ⇒ renderer พิมพ์เส้นว่างเหมือนเดิมทุกไบต์</para>
+    /// </summary>
+    public static WhtCertFundAmounts EmployeeAnnualFunds(decimal ssoEmployeeTotal, decimal pvdEmployeeTotal)
+        => new(Gov: null,
+               Sso: ssoEmployeeTotal > 0 ? ssoEmployeeTotal : null,
+               Pvd: pvdEmployeeTotal > 0 ? pvdEmployeeTotal : null);
+
+    /// <summary>ตัวเลขที่พิมพ์ในช่องกองทุน — <b>ตัวจัดรูปแบบเดียวของทั้งสอง renderer ฝั่ง C#</b> (HTML + QuestPDF) ·
+    /// null = ไม่มีค่า ⇒ renderer พิมพ์เส้นว่างของตัวเอง (ไม่ใช่ "0.00") · ปัดสองตำแหน่งแบบ AwayFromZero (กฎ #4 E)</summary>
+    public static string? FundAmountText(decimal? amount)
+        => amount is decimal a
+            ? Math.Round(a, 2, MidpointRounding.AwayFromZero).ToString("N2", System.Globalization.CultureInfo.InvariantCulture)
+            : null;
 
     public const string PayerConditionHeading = "ผู้จ่ายเงิน";
     public static readonly IReadOnlyList<string> PayerConditions = new[]

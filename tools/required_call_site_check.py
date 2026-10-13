@@ -6709,6 +6709,53 @@ RULES += [
          why=_WHT204_ADV2 + "(5) ไม่อนุมัติอัตโนมัติเพราะผู้ถูกหักถูกตัดทิ้ง = เส้นรายงานเดียวกับการอนุมัติอัตโนมัติล้ม (ไม่ใช่ LogWarning)"),
 ]
 
+# กระดานตัดสิน 2026-10-13 ทีม C — A9: 50 ทวิ รายปีของพนักงาน (ภ.ง.ด.1ก) พิมพ์ "เงินที่จ่ายเข้า" ประกันสังคม/สำรองเลี้ยงชีพ (เดิมว่างเสมอ)
+# · ยอดจาก PayrollDetail ชุดเดียวกับยอดเงินได้ · ตัวตัดสิน/ตัวจัดรูปแบบอยู่ที่ WhtCertFormText ที่เดียว · สอง renderer รับพารามิเตอร์เดียวกัน
+# (เทสต์ WhtCertFormTextTests ล็อก helper + HTML ทั้งสองทิศ — กติกาข้างล่างล็อกจุดเรียกที่เทสต์ helper มองไม่เห็น)
+_TEAMC_1013 = "กระดาน 2026-10-13 ทีม C: "
+RULES += [
+    dict(file="Services/Implementations/PayrollService.cs", method="GenerateAnnualEmployeeWhtCertsAsync",
+         must=["WhtCertFormText.EmployeeAnnualFunds(ssoEmployeeTotal, pvdEmployeeTotal)",
+               "BuildEmployeeAnnualCertPdfAsync(companyId, cert, funds)"],
+         must_re=[r"ssoEmployeeTotal\s*=\s*g\.Sum\(d\s*=>\s*d\.SocialSecurityEmployee\)",
+                  r"pvdEmployeeTotal\s*=\s*g\.Sum\(d\s*=>\s*d\.ProvidentFundEmployee\)"],
+         before=[("WhtCertFormText.EmployeeAnnualFunds(", "BuildEmployeeAnnualCertPdfAsync(")],
+         why=_TEAMC_1013 + "A9 ใบรายปีของพนักงานส่งยอดกองทุนส่วนลูกจ้างทั้งปีให้ renderer (เดิมช่องว่างเสมอ) — ตัดสินผ่าน EmployeeAnnualFunds ที่เดียว"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildEmployeeAnnualCertPdfAsync",
+         must=["BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds)"],
+         why=_TEAMC_1013 + "A9 ยอดกองทุนไหลถึง QuestPDF (ไม่ทิ้งพารามิเตอร์กลางทาง)"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildWhtCertPdf",
+         must=["BuildFundLine(form, funds)"],
+         why=_TEAMC_1013 + "A9 QuestPDF ส่งยอดกองทุนถึงบรรทัด \"เงินที่จ่ายเข้า\""),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildFundLine",
+         must=["WhtCertFormText.FundAmountText(", "funds?.Gov", "funds?.Sso", "funds?.Pvd"],
+         forbid=["ToString("],
+         why=_TEAMC_1013 + "A9 QuestPDF จัดรูปแบบยอดกองทุนผ่านตัวเดียวกับ HTML (สอง renderer ห้าม drift)"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
+         must=["WhtCertFormText.FundAmountText("],
+         must_lit=["{FundCell(funds?.Gov)}", "{FundCell(funds?.Sso)}", "{FundCell(funds?.Pvd)}"],
+         why=_TEAMC_1013 + "A9 HTML รับยอดกองทุนพารามิเตอร์เดียวกับ QuestPDF · จัดรูปแบบผ่านตัวเดียว"),
+    # A12: ปฏิทินภาษีสร้าง ภ.ง.ด.2/2ก · 54 · ภ.พ.36 เฉพาะบริษัทที่มีกิจกรรม (เดิมทุกบริษัท ⇒ เลยกำหนด/เตือนปลอม) · ถอนแถวที่ไม่มีใครแตะตอนสร้างใหม่
+    # (TaxCalendarSeedScopeTests ล็อก helper ทั้งสองทิศ — กติกาข้างล่างล็อกว่าทั้งสองลูปและการถอนเรียกตัวตัดสินจริง)
+    dict(file="Services/Implementations/TaxCalendarService.cs", method="InitializeYearAsync",
+         must=["LoadSeedActivityAsync(companyId, year)", "TaxCalendarSeedScope.ShouldRetract(row, activity)"],
+         must_re=[r"(?s)foreach \(var \(code, name, remitKey\) in monthlyForms\)\s*\{\s*if \(!TaxCalendarSeedScope\.ShouldSeed\(code, activity\)\) continue;",
+                  r"(?s)foreach \(var \(code, name, dueDate, eFilingExtra\) in annualForms\)\s*\{\s*if \(!TaxCalendarSeedScope\.ShouldSeed\(code, activity\)\) continue;",
+                  r"retracted\s*>\s*0\)\s*await _db\.SaveChangesAsync\(\)"],
+         before=[("LoadSeedActivityAsync(companyId, year)", "monthlyForms")],
+         forbid=["_db.Set<TaxCalendarEvent>().Remove("],
+         why=_TEAMC_1013 + "A12 แบบผูกกิจกรรมสร้างผ่าน TaxCalendarSeedScope ทั้งรายเดือน/รายปี · ถอนแบบ soft-delete เฉพาะแถวที่ไม่มีใครแตะ"),
+    dict(file="Services/Implementations/TaxCalendarService.cs", method="LoadSeedActivityAsync",
+         must=["TaxCalendarSeedScope.ActivityYears(year)", "WithholdingTaxCertStatus.Voided", "DocumentStatus.Voided", "TaxType.WithholdingTax2",
+               "TaxType.WithholdingTax54", "d.IsForeignService"],
+         must_re=[r"w\.CompanyId\s*==\s*companyId", r"d\.CompanyId\s*==\s*companyId(?:.|\n)*d\.CompanyId\s*==\s*companyId"],
+         why=_TEAMC_1013 + "A12 กิจกรรมโหลดแบบ tenant-scoped ทุก query · ใบ/เอกสารที่ยกเลิกไม่นับ"),
+    # B4: ใบกำกับอย่างย่อใน ETDA = T05/T06 (T04 = ใบส่งของ/ใบกำกับภาษีเต็มรูป — EtaxPdfXmlExtractor.MapTypeCodeToInternal) · ข้อความถึงผู้ใช้ห้ามกลับไปเรียก T04
+    dict(file="Services/Implementations/EtaxInvoiceService.cs", method="GenerateAsync",
+         must_lit=["ใบกำกับภาษีอย่างย่อ T05/T06"], forbid_lit=["อย่างย่อ T04"],
+         why=_TEAMC_1013 + "B4 ข้อความ \"ยังไม่รองรับ\" อ้างรหัส ETDA ของใบกำกับอย่างย่อให้ถูก (T05/T06 ไม่ใช่ T04)"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

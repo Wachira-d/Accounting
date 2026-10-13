@@ -3173,6 +3173,11 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 - **ขาเข้า (สแกน PDF ที่ฝัง XML)**: `EtaxPdfXmlExtractor.MapTypeCodeToInternal` ตาราง ETDA ครบ (T03 = ใบเสร็จ/ใบกำกับ) · §2.2 ข้อ #10
 - **Types ที่ generate**: `Invoice` / `TaxInvoice` / `DebitNote` /
   `CreditNote` / `Receipt` (เฉพาะที่มี VAT)
+- **ใบกำกับภาษีอย่างย่อ (§86/6) = ETDA T05/T06 — ยังไม่ออก e-Tax** (กระดาน 2026-10-13 B4 · แก้ข้อความ): ใบที่ตรึง `ReceiptTaxInvoiceAbbreviated`
+  ⇒ `GenerateAsync` ปฏิเสธพร้อมทางไปต่อ (เปลี่ยนรูปแบบเป็นเต็มรูปก่อนอนุมัติ / ยกเลิกและออกใบแทน) · hook อัตโนมัติข้ามแล้วประทับ `[ETAX-SKIPPED]` ·
+  ข้อความเดิมเรียก "ใบกำกับอย่างย่อ T04" ผิด — **T04 คือใบส่งของ/ใบกำกับภาษีเต็มรูป** (ตาราง `EtaxPdfXmlExtractor.MapTypeCodeToInternal`: T05/T06 ⇒ อย่างย่อ ·
+  T02/T03/T04/388 ⇒ เต็มรูป) · กติกา `tools/required_call_site_check.py` ห้ามข้อความกลับไปเป็น "อย่างย่อ T04" · ⚠️ ป้าย `IssuedDocumentHooks.EtaxSkippedAbbreviatedNote`
+  (ข้อความที่ persist ลง `InternalNotes` แล้ว) ยังเขียน "(ยังไม่รองรับ T04)" — แก้ต้องตัดสินเรื่องใบที่ประทับไว้ก่อน (ตัวกันซ้ำเทียบข้อความเต็ม) · Last verified 2026-10-13
 - **Schema**: UBL 2.1 + ETDA profile (DocumentTypeCode T01–T04,
   ISO 8601 +07:00, CurrencyCode=THB)
 - **Signing**: private key เก็บใน `Company.EtaxPrivateKeyBlobEncrypted`
@@ -3334,6 +3339,17 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ปฏิทินภาษี (`TaxCalendarService`) เตือนตาม `DueDate` = วันกระดาษอยู่แล้วและแสดง `EFilingDueDate` คู่กัน · ยืนยันตัวบทแล้วเอาแบบออกจากชุด `EFilingExtensionUnconfirmed` ที่เดียว
   · ฝ่ายค้านรอบ 201 RTX-6: รายการรอนำส่งเรียงตาม `WarnDueDate ?? EFilingDueDate` · ตัวตรวจรายงานใช้วันหยุดราชการชุดเดียวกัน (`WarnByFor(…, holidays)` +
   `PlatformHolidayStore`) · ข้อความกำกับบอกเมื่อ "เลยวันกระดาษแล้วแต่ยังไม่ถึงวัน e-Filing" (`EFilingCaveat(type, due, today)`)
+
+- **ปฏิทินภาษี (`TaxCalendarService.InitializeYearAsync` · หน้า `tax-calendar.html` ปุ่ม "เริ่มต้นปฏิทิน") — แบบที่ผูกกับกิจกรรม (กระดาน 2026-10-13 A12)**:
+  เดิมสร้างแถว Pending ภ.ง.ด.2 ทุกเดือนให้**ทุกบริษัท** (รอบ 204) ⇒ บริษัทที่ไม่เคยจ่ายดอกเบี้ย/ปันผลให้บุคคลธรรมดาเห็นเลยกำหนด/เตือนปลอมทุกเดือน ·
+  ตอนนี้ตัวตัดสินเดียว `Helpers/TaxCalendarSeedScope`: **ภ.ง.ด.2 + ภ.ง.ด.2ก** ⇐ มี 50 ทวิ แบบ ภ.ง.ด.2 ที่ไม่ถูกยกเลิก (ใบร่างนับ) ·
+  **ภ.ง.ด.54** ⇐ 50 ทวิ แบบ ภ.ง.ด.54 · เอกสาร `IsForeignService` · หรือเอกสารหักภาษีที่คู่ค้าประเทศ ≠ TH (ทางเดียวกับ `WhtPayeeKind.IsForeignPayee` — นับกว้าง
+  เพราะเตือนขาดแพงกว่าเตือนเกิน) · **ภ.พ.36** ⇐ เอกสาร `IsForeignService` · ช่วงที่นับ = ปีก่อน + ปีของปฏิทิน (`ActivityYears`) · ทุก query กรอง `CompanyId` ·
+  **ภ.ง.ด.3/53 และแบบอื่นสร้างเสมอเหมือนเดิม** · กดสร้างใหม่ ⇒ แถวของแบบที่ไม่มีกิจกรรมถูก soft-delete **เฉพาะแถวที่ระบบสร้างแล้วไม่มีใครแตะ**
+  (`CanRetract`: Pending หรือ Overdue ที่ `GetOverdueAsync` ประทับเอง · ไม่มีวันยื่น/เลขอ้างอิง/ยอด/หมายเหตุ) — Filed/NotApplicable/InProgress/มีข้อมูล ห้ามแตะ ·
+  ทางไปต่อเมื่อเริ่มมีกิจกรรม: ออก 50 ทวิ/บันทึกเอกสารแล้วกด "เริ่มต้นปฏิทิน" อีกครั้ง แถวกลับมา · ⚠️ ปุ่มยังตอบ "สร้างสำเร็จ" โดยไม่บอกว่าแบบใดถูกข้าม
+  (`ITaxCalendarService`/controller นอกขอบเขตรอบนี้) · ปฏิทินนำส่งบน dashboard (`GetFilingCalendarAsync`) เป็นอีกตัว คำนวณสดตามยอด ไม่เกี่ยว ·
+  เทสต์ `TaxCalendarSeedScopeTests` (สองทิศ) · กติกาจุดเรียก `tools/required_call_site_check.py` (`InitializeYearAsync` · `LoadSeedActivityAsync`) · Last verified 2026-10-13
 
 ### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
 - **Service**: `WithholdingTaxCertService`
@@ -3603,7 +3619,15 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     จาก `WithholdingTaxCertResponse` (server computes · page displays · เดิมหน้าเทียบชื่อ enum เอง ภ.ง.ด.2 ไม่มีวันติ๊ก) · กติกาจุดเรียกใน
     `tools/required_call_site_check.py` (HTML · `BuildFormTypeRow` · `BuildConditionsRow`) · เทสต์ `WhtCertFormTextTests` (ป้ายลงชื่อ 3 renderer · ติ๊ก ภ.ง.ด.2/ครั้งเดียว ·
     ทิศตรงข้าม ภ.ง.ด.54 ไม่ติ๊ก · ใบ 53/หัก ณ ที่จ่าย เดิมไม่ถูกแตะ · โครงสร้าง) · **ยังไม่ทำ (ข้อมูลไม่มี)**: แถวย่อย 4(ข) (1.1)–(2.5) แยกยอดรายช่อง ·
-    ยอดกองทุน กบข./ประกันสังคม/สำรองเลี้ยงชีพ (ว่างเสมอ) · ช่อง (4) อื่น ๆ ของผู้จ่ายเงิน (ไม่มีค่าใน enum) · Last verified `commit 002126b3`
+    ยอดกองทุน กบข. (ว่างเสมอ — ระบบไม่มีข้อมูล) · ช่อง (4) อื่น ๆ ของผู้จ่ายเงิน (ไม่มีค่าใน enum) · Last verified `commit 002126b3`
+  - **กระดาน 2026-10-13 (A9) — "เงินที่จ่ายเข้า" บนใบรายปีของพนักงาน (ภ.ง.ด.1ก · `PayrollService.GenerateAnnualEmployeeWhtCertsAsync`)**: พิมพ์ยอด
+    **กองทุนประกันสังคม = Σ `PayrollDetail.SocialSecurityEmployee`** และ **กองทุนสำรองเลี้ยงชีพ = Σ `PayrollDetail.ProvidentFundEmployee`** ของปี (แถวชุดเดียวกับยอดเงินได้:
+    รอบ Paid/Approved · `GrossIncome > 0`) · ตัวตัดสินเดียว `WhtCertFormText.EmployeeAnnualFunds` (กบข. = null เสมอ · ยอด ≤ 0 = ว่าง ไม่ใช่ "0.00") ·
+    ส่งเป็นพารามิเตอร์ `WhtCertFundAmounts(Gov, Sso, Pvd)` (**ไม่ใช่คอลัมน์** — ใบรายปีอยู่ใน memory) ผ่าน `BuildEmployeeAnnualCertPdfAsync` → `BuildWhtCertPdf` → `BuildFundLine` ·
+    HTML `BuildWithholdingTaxCertHtml(…, funds)` รับพารามิเตอร์เดียวกัน (สอง renderer ห้าม drift) · ตัวจัดรูปแบบเดียว `WhtCertFormText.FundAmountText` (N2 · AwayFromZero) ·
+    ใบผู้รับเงินทั่วไปและหน้าพิมพ์ `wht.html` **ว่างเหมือนเดิมทุกไบต์** · audit `WhtCertAnnual` เก็บ `SsoEmployee`/`PvdEmployee` ด้วย ·
+    เทสต์ `WhtCertFormTextTests` (พิมพ์ยอด · ใบผู้รับเงินทั่วไปไม่เปลี่ยน · กบข. ว่าง · ไม่มีสมทบ = ว่าง · รูปแบบ N2) · กติกาจุดเรียก (`GenerateAnnualEmployeeWhtCertsAsync` ·
+    `BuildEmployeeAnnualCertPdfAsync` · `BuildWhtCertPdf` · `BuildFundLine` · HTML) · Last verified 2026-10-13
 - **ประเภทแบบ guard (ภ.ง.ด.3 ↔ 53)**: `ResolveWhtFormType` + `DetectJuristic`
   บังคับที่ **ทุก create path** (`CreateAsync`, `AutoGenerateFromDocumentAsync`,
   `UpdateAsync`) — ประเภทแบบขึ้นกับ **ผู้ถูกหักภาษี**: นิติบุคคล → 53,

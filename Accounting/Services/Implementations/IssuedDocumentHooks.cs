@@ -86,7 +86,8 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
             {
                 _logger.LogInformation("Auto e-Tax skipped for {DocNumber}: {Reason}", doc.DocumentNumber, skip);
                 // ฝ่ายค้านรอบ 203 ข้อ 1a: ใบที่ตรึงรูปแบบ "อย่างย่อ" (ค่าตั้ง/ตัวเลือกของบริษัท) ⇒ e-Tax ถูกข้าม — ห้ามเงียบ: ป้ายบนใบบอกเหตุ
-                // (ระบบยังไม่รองรับ T04 ใบกำกับอย่างย่อ — EtaxDocumentTypeMap มี T01/T02/T03/80/81) · ทางไปต่อ: เปลี่ยนรูปแบบใบก่อนอนุมัติ หรือออกใบแทน
+                // (ระบบยังไม่รองรับ e-Tax ใบกำกับอย่างย่อ ETDA T05/T06 — EtaxDocumentTypeMap มี T01/T02/T03/80/81 · T04 คือใบส่งของ/ใบกำกับภาษี
+                // เต็มรูป ไม่ใช่อย่างย่อ ตาม EtaxPdfXmlExtractor.MapTypeCodeToInternal · แก้คอมเมนต์ 2026-10-13 B4) · ทางไปต่อ: เปลี่ยนรูปแบบใบก่อนอนุมัติ หรือออกใบแทน
                 if (skip == EtaxAutoSkip.NotFullTaxInvoice && doc.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated)
                     await StampNoteAsync(companyId, doc, EtaxSkippedAbbreviatedNote, ct);
                 return IssuedDocumentHookResult.Nothing;
