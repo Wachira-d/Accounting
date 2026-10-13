@@ -4713,4 +4713,4 @@ _รอบ 204 (ต่อ) — แก้ผลฝ่ายค้านรอบ�
 ใบรับรองแทนใบเสร็จ: ไม่เพิ่มเส้น CIL→CN/DN (เลือกข้อความทางไปต่อแทน) · **(4)** หัวเอกสารที่ระบุเองขัดกับผู้ถูกหักรายบรรทัดรายเดียว = 400
 (`WhtPayeeSplit.ExplicitHeaderConflictReason` — สร้าง/แก้ไข/แก้ไขไม่ส่งบรรทัด/เปลี่ยนผู้ถูกหัก) · เอกสารลูกยกหัวเอกสารที่สืบทอดตามบรรทัดก่อนส่ง (`LiftSinglePayee`) ·
 **(5)** รายการประจำที่ไม่อนุมัติอัตโนมัติใบนั้น ⇒ `RecordAutoApproveFailureAsync` แทน LogWarning · เทสต์ `WhtPayeeSplitTests` +6 · `WhtCertIssuePlanTests` +2 ·
-`WhtCertReissuePlanTests` +1 · `Db/WhtMultiPayeeDbTests` +3 · TEST_PLAN WHT204-21..25 · กติกาจุดเรียก `_WHT204_ADV2` +9 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+`WhtCertReissuePlanTests` +1 · `Db/WhtMultiPayeeDbTests` +3 · TEST_PLAN WHT204-21..25 · กติกาจุดเรียก `_WHT204_ADV2` +9 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7b88c053)_
