@@ -196,6 +196,18 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 | ทางเข้า HTTP + หน้าจอ (ทีม D) | `Controllers/SettlementController.cs` · `wwwroot/pages/settlements.html` · `wwwroot/pages/settlement-channels.html` · `js/api.js` (`…Settlement…`) | ✅ route `api/companies/{companyId}/settlement/…` (ตาราง endpoint ใน DOCUMENT_FLOW §2.10) · เมนู `settlements`/`settlement-channels` ใต้ "เงิน & ธนาคาร" · ป้ายจาก `GET settlement/reference` (`Helpers/SettlementReferenceCatalog`) · ปุ่มตามสถานะจาก `Helpers/SettlementBatchActions` · ผู้สมัครเงินเข้าจาก `Helpers/SettlementBankCandidates` |
 | สิทธิ์ `Settlement.View` · `Settlement.Import` · `Settlement.Post` · `Settlement.Channels` | `Models/Constants/PermissionKeys.cs` · `Helpers/SettlementPermissionScope.cs` · `PermissionService.AccountantDefaultKeys` · template "Accountant" | ✅ หมวด "ธนาคาร" ในหน้าบทบาท · นักบัญชีได้อัตโนมัติ · ลงบัญชี/ยกเลิก/ยกเลิกรอบ/จับคู่ธนาคาร/chargeback/ตั้งค่าช่องทาง ห้ามคีย์ API · ไฟล์ต้นฉบับ (`AttachmentPermissionScope["SettlementBatch"]`) อ่าน Import/Post · ลบ Import |
 
+### 3.1e ผังภาษีหัก ณ ที่จ่ายค้างจ่ายต่อแบบ ภ.ง.ด. ✅ รอบ 204 (คำตัดสินเจ้าของ DECISIONS ข้อ 148) — ชั้น Company (ผังของบริษัท)
+
+| ผัง | แบบ | ผู้ตัดสิน | สถานะ |
+| --- | --- | --- | --- |
+| **21915** ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 2 | ดอกเบี้ย/เงินปันผล ม.40(4) จ่ายบุคคลธรรมดาในประเทศ (ม.50(2) · ม.59) — ทุกบรรทัดที่หักเป็น ม.40(4) | `Helpers/WhtPayableAccount` (`Pnd2Code` · `CodeChain` ตกไป 21916→21917 เมื่อผังไม่ครบ) ← `WhtPayeeKind.ResolveForm(…, รหัสเงินได้)` | ✅ บริษัทใหม่ได้จาก seed (แถวนี้อยู่ในผังมาตรฐานตั้งแต่แรก) · บริษัทเดิมที่มีกลุ่ม 219 ได้จาก migration `WhtPayableAccount.MigrationSeedSql` (ตัวสร้าง SQL เดียว `SettlementChartSeed.SeedSqlFor` · ON CONFLICT DO NOTHING · ไม่ย้ายยอด) · นำส่ง `WhtPnd2` Dr 21915 · กระทบยอด GL ↔ รายงาน ภ.ง.ด.2 |
+| 21916 / 21917 / 21918 | ภ.ง.ด.3 / 53 / 54 | ตัวเดียวกัน | ✅ เดิม · ทิปพนักงาน (ม.40(2) ภ.ง.ด.3) ลง **21916** แล้ว (เดิมลง 21915 ผิดแบบ — JE เดิมอยู่ในหน้าตรวจข้อมูล) |
+| 21914 | ภ.ง.ด.1 | รอบเงินเดือน | ✅ เดิม (ไม่อยู่ใน `WhtPayableAccount.DocumentPayableCodes` — ไม่ได้มาจากเอกสารซื้อ) |
+
+ข้อมูลเดิมที่บันทึกเป็น ภ.ง.ด.3 ก่อนรอบ 204 (50 ทวิ · เอกสารที่ลง 21916 · ใบปน 40(4)+อื่น) **ไม่ถูกย้ายแบบ/ย้าย GL ให้** — `DataIntegrityReport.Section40_4RecordedAsPnd3`
++ `TipWhtPostedToPnd2Account` ให้ผู้ทำบัญชีตัดสินรายใบ
+
+
 ### 3.1b ที่พัก (Lodging) ✅ รอบ 124 — ชั้น Company → Site/Branch → LodgingProperty
 
 - `LodgingProperty` (`Models/Entities/Lodging.cs`) = "ที่พัก 1 แห่ง" ถือการตั้งค่าทั้งหมด (เวลาเข้า-ออก · กติกาจอง ·
@@ -868,6 +880,8 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - [ ] SLA + status page ก่อนเซ็นลูกค้า Connected รายแรก
 
 ---
+
+_Last verified against codebase: 2026-10-12 (rev 42 · รอบ 204 — **§3.1e** ผัง 21915 ภ.ง.ด.2 (ตัวตัดสิน `WhtPayableAccount` + migration ผังให้บริษัทเดิม) · ทิปลง 21916 — commits 8a9f2cac · dc5164ee · 661d08b1)_
 
 _Last verified against codebase: 2026-10-01 (rev 41 · รอบ 201 ทีม IN — **§ สาขา** เล่มเลขต่อสาขา: เครื่องออกเลขรับรหัสสาขาแล้ว (🔨) · สวิตช์บริษัท + ผู้เรียกส่งสาขา 📋 — commit a4dfa177)_
 

@@ -4639,3 +4639,12 @@ _รอบ 203 (ต่อ) — ฝ่ายค้านรอบสองขอ�
 ที่ต้นทางเก็บ gov1/1 ล้มทั้งใบ และรายการประจำวนล้มเงียบ ๆ ทุกรอบ · แก้: `DocumentLineIncomeType.Inherit(stored, targetIsPayerSide)` ทิ้งประเภทต้องห้ามเมื่อปลายทางเป็นฝั่งผู้จ่าย ·
 `KeptForPayerSideCheck` (รหัสที่มีอยู่แล้วบนเอกสารบันทึกซ้ำได้แม้แก้คำอธิบาย/แทรกบรรทัด) · OCR `ForSystemWrittenPayerLine` · มาตราอ้างอิงของคำเตือน WHT ที่ผ่านโดยไม่มีคน
 = `WhtWarningsLegalReference` · เทสต์ `WhtDerivedIncomeTypeTests` · กติกาจุดเรียก +2 (แก้ 3) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fea3d362)_
+
+_รอบ 204 — แบบ ภ.ง.ด.2 (คำตัดสินเจ้าของ DECISIONS ข้อ 148 (3)(4)): ดอกเบี้ย/เงินปันผล ม.40(4) จ่ายบุคคลธรรมดาในประเทศเคยตกไป ภ.ง.ด.3 ทุกทาง ·
+ตัวตัดสินแบบ `WhtPayeeKind.ResolveForm` ได้แกนที่สอง "ประเภทเงินได้ของบรรทัดที่หัก" (`Helpers/WhtIncomeCodes` · `ThaiWhtRateTable.IsSection40_4/ClassifySection40_4`) ·
+ใบปน ⇒ ภ.ง.ด.3 เดิม + คำเตือน `[WHT-PAYEE]` · ผัง 21915 (`WhtPayableAccount.Pnd2Code` + migration ผังให้บริษัทเดิมผ่าน `SettlementChartSeed.SeedSqlFor`) ·
+JE อนุมัติ/รายงวด/integration · 50 ทวิ อัตโนมัติ/คีย์มือ · รายงาน `WithholdingTax2` (แถว JV 21915 ติ๊กออกไม่บล็อก) · e-Filing PND.2 · `ExportPnd2Async` อ่าน 50 ทวิ
+(เดิมเดาจาก JE แถวไม่มีเลขผู้เสียภาษี) · หน้านำส่ง/ปฏิทิน `WhtPnd2` · ปฏิทินภาษี · กระทบยอด GL · ด่าน JE · หน้าเว็บ 5 หน้า · หน้าตรวจข้อมูล 2 หมวด (อ่านอย่างเดียว) ·
+ทิปลง 21916 (เดิม 21915 ผิดแบบกับ 50 ทวิ ภ.ง.ด.3) · ประกัน พ.ร.บ. รถยนต์ = `8ins` ใน `WhtServiceHints` · `Pnd2FormTests` · กติกาจุดเรียก `_PND2` 8 ข้อ ·
+ค้าง: พรีวิว GL (`PdfGenerationService` — ไฟล์ทีม T1) ยังไม่ส่งรหัสเงินได้ · รหัส Col7 หน้า import ภ.ง.ด.2 ยังไม่ยืนยัน · ม.40(3) จ่ายบุคคลยังอยู่ ภ.ง.ด.3 —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commits 8a9f2cac · dc5164ee · 661d08b1 · e56730a3)_
