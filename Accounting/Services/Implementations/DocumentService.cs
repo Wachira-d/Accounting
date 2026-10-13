@@ -1604,7 +1604,8 @@ public partial class DocumentService : IDocumentService
             var createWhtBorne = ApplyWhtGrossUp(createLines, createAmts, doc.WhtCertType);
             // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — ตรวจ (ผู้ติดต่อของบริษัทนี้ · เอกสารฝั่งผู้จ่าย) แล้วเก็บแบบ normalize (Helpers/WhtPayeeSplit)
             var createLinePayees = await ResolveLineWhtPayeesAsync(companyId, doc,
-                createLines.Select((l, i) => (l.WhtPayeeContactId, true, l.WithholdingTaxRate, createAmts[i].WhtAmount)).ToList());
+                createLines.Select((l, i) => (l.WhtPayeeContactId, true, l.WithholdingTaxRate, createAmts[i].WhtAmount)).ToList(),
+                request.WhtPayeeContactId);
             int lineIdx = -1;
             foreach (var line in createLines)
             {
@@ -2789,7 +2790,7 @@ public partial class DocumentService : IDocumentService
         else if (doc.WhtPayeeContactId == doc.ContactId)
             doc.WhtPayeeContactId = null;
         // ฝ่ายค้าน P1: ไม่ส่งบรรทัด ⇒ บรรทัดเดิมคงอยู่ — ยกผู้ถูกหักรายเดียวของทุกบรรทัดที่หักขึ้นหัวเอกสาร (ส่งบรรทัด ⇒ ResolveLineWhtPayeesAsync ทำให้)
-        if (request.Lines == null) LiftStoredLineWhtPayees(doc);
+        if (request.Lines == null) LiftStoredLineWhtPayees(doc, request.WhtPayeeContactId);
         // รอบ 204 — ผู้จ่ายออกภาษีแทน: null = คงค่าเดิม · เปลี่ยนโดยไม่ส่งบรรทัด ⇒ คิดภาษีใหม่จากบรรทัดที่บันทึกไว้ (ห้าม silent no-op — ดูท้ายบล็อกบรรทัด)
         // ฝ่ายค้าน P1-1/P1-2: ตัดสินทุกครั้ง (ไม่ใช่เฉพาะเมื่อส่งค่า) — ติ๊ก "บริการต่างประเทศ" ทีหลังบนใบ "ออกแทน" ต้องล้มดัง ·
         // ใบลด/เพิ่มหนี้ตามเงื่อนไขของใบต้นทางฝั่งผู้จ่ายเสมอ (ใบร่างที่บันทึกก่อนแก้นี้ได้ค่าถูกเมื่อเปิดแก้แล้วบันทึก)
@@ -3046,7 +3047,8 @@ public partial class DocumentService : IDocumentService
             var updWhtBorne = ApplyWhtGrossUp(request.Lines, updAmts, doc.WhtCertType);
             var updLinePayees = await ResolveLineWhtPayeesAsync(companyId, doc,
                 request.Lines.Select((l, i) => (Accounting.Helpers.WhtPayeeSplit.RequestedOrKept(l.WhtPayeeContactId, prevLinePayees, i, l.Description),
-                    l.WhtPayeeContactId.HasValue, l.WithholdingTaxRate, updAmts[i].WhtAmount)).ToList());
+                    l.WhtPayeeContactId.HasValue, l.WithholdingTaxRate, updAmts[i].WhtAmount)).ToList(),
+                request.WhtPayeeContactId);
             int updLineIdx = -1;
             foreach (var line in request.Lines)
             {
@@ -3604,8 +3606,10 @@ public partial class DocumentService : IDocumentService
     /// normalize ด้วย <see cref="Accounting.Helpers.WhtPayeeSplit.NormalizeLineOverride"/> (ตรงกับหัวเอกสาร/ไม่มีอัตราหัก ⇒ null) ·
     /// ฝ่ายค้าน P1: ทุกบรรทัดที่หักเป็นของผู้ถูกหักรายเดียว Y ≠ หัวเอกสาร ⇒ ยก Y ขึ้น <c>doc.WhtPayeeContactId</c> แล้วบรรทัด = null
     /// (<see cref="Accounting.Helpers.WhtPayeeSplit.LiftSinglePayee"/> ตัวเดียวกับ ChangeWhtPayeeAsync) — 50 ทวิ/พรีวิว GL/หน้านำส่งที่อ่านหัวเอกสารได้คนเดียวกับ JE</summary>
+    /// <param name="explicitHeaderRequest">ผู้ถูกหักหัวเอกสารที่ผู้เรียกส่งมาในคำขอนี้ (null/Guid.Empty = ไม่ระบุ) — ฝ่ายค้านรอบ 204 (หลัง 0f428969):
+    /// ระบุมาแต่ทุกบรรทัดที่หักระบุผู้ถูกหักรายเดียวกันรายอื่น ⇒ 400 (<see cref="Accounting.Helpers.WhtPayeeSplit.ExplicitHeaderConflictReason"/>) แทนการยกทับเงียบ ๆ</param>
     private async Task<List<Guid?>> ResolveLineWhtPayeesAsync(Guid companyId, Document doc,
-        IReadOnlyList<(Guid? Value, bool Explicit, decimal Rate, decimal WhtAmount)> lines)
+        IReadOnlyList<(Guid? Value, bool Explicit, decimal Rate, decimal WhtAmount)> lines, Guid? explicitHeaderRequest)
     {
         var payerSide = Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType);
         var docPayee = Accounting.Helpers.WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
@@ -3627,18 +3631,27 @@ public partial class DocumentService : IDocumentService
         var normalized = lines.Select(l => Accounting.Helpers.WhtPayeeSplit.NormalizeLineOverride(
             doc.ContactId, doc.WhtPayeeContactId, l.Value, payerSide, l.Rate)).ToList();
         if (!payerSide) return normalized;
+        var normalizedLines = normalized.Select((v, i) => new Accounting.Helpers.WhtPayeeLine(v, lines[i].WhtAmount)).ToList();
+        if (Accounting.Helpers.WhtPayeeSplit.ExplicitHeaderConflictReason(explicitHeaderRequest, normalizedLines) is string headerConflict)
+            throw new BusinessRuleException(headerConflict, Accounting.Helpers.WhtPayeeSplit.RuleCode);
         var (liftedDocPayee, liftedLines) = Accounting.Helpers.WhtPayeeSplit.LiftSinglePayee(doc.ContactId, doc.WhtPayeeContactId,
-            normalized.Select((v, i) => new Accounting.Helpers.WhtPayeeLine(v, lines[i].WhtAmount)).ToList());
+            normalizedLines);
         doc.WhtPayeeContactId = liftedDocPayee;
         return liftedLines.ToList();
     }
 
     /// <summary>ฝ่ายค้าน P1 (รอบ 204): แก้ไขโดยไม่ส่งบรรทัด — ยกผู้ถูกหักรายบรรทัดที่บันทึกไว้ขึ้นหัวเอกสารด้วยตัวเดียวกับตอนบันทึกบรรทัด
     /// (<see cref="Accounting.Helpers.WhtPayeeSplit.LiftSinglePayee"/>) · ใบหลายผู้ถูกหัก/ไม่มีบรรทัดหัก = ไม่เปลี่ยน</summary>
-    private static void LiftStoredLineWhtPayees(Document doc)
+    private static void LiftStoredLineWhtPayees(Document doc, Guid? explicitHeaderRequest)
     {
         if (!Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType)) return;
         var stored = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+        // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ระบุผู้ถูกหักหัวเอกสารมาในคำขอ แต่ทุกบรรทัดที่หัก (ที่บันทึกไว้) เป็นของผู้ถูกหักรายอื่นรายเดียว ⇒ 400 (ไม่ยกทับเงียบ)
+        if (Accounting.Helpers.WhtPayeeSplit.ExplicitHeaderConflictReason(explicitHeaderRequest,
+                stored.Select(l => new Accounting.Helpers.WhtPayeeLine(
+                    Accounting.Helpers.WhtPayeeSplit.NormalizeLineOverride(doc.ContactId, doc.WhtPayeeContactId, l.WhtPayeeContactId, true, l.WithholdingTaxRate),
+                    l.WithholdingTaxAmount)).ToList()) is string headerConflict)
+            throw new BusinessRuleException(headerConflict, Accounting.Helpers.WhtPayeeSplit.RuleCode);
         var (liftedDocPayee, liftedLines) = Accounting.Helpers.WhtPayeeSplit.LiftSinglePayee(doc.ContactId, doc.WhtPayeeContactId,
             stored.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList());
         doc.WhtPayeeContactId = liftedDocPayee;
@@ -7902,6 +7915,10 @@ public partial class DocumentService : IDocumentService
         // ฝ่ายค้าน P1: ทุกบรรทัดที่หักเลือกผู้ถูกหักรายเดียวกัน ⇒ ยกขึ้นหัวเอกสาร (ตัวเดียวกับฟอร์มสร้าง/แก้ไข — ไม่เก็บรูป "หัว X ทุกบรรทัด Y")
         if (payerSide)
         {
+            // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ระบุหัวเอกสารมาเอง แต่ทุกบรรทัดที่หักเลือกผู้ถูกหักรายอื่นรายเดียว ⇒ 400 (ไม่ยกทับหัวเอกสารเงียบ ๆ)
+            if (WhtPayeeSplit.ExplicitHeaderConflictReason(request.WhtPayeeContactId,
+                    lines.Select(l => new WhtPayeeLine(newLinePayees[l.Id], l.WithholdingTaxAmount)).ToList()) is string headerConflict)
+                throw new BusinessRuleException(headerConflict, WhtPayeeSplit.RuleCode);
             var (liftedDocPayee, liftedLines) = WhtPayeeSplit.LiftSinglePayee(doc.ContactId, newDocPayee,
                 lines.Select(l => new WhtPayeeLine(newLinePayees[l.Id], l.WithholdingTaxAmount)).ToList());
             newDocPayee = liftedDocPayee;
@@ -8016,6 +8033,10 @@ public partial class DocumentService : IDocumentService
                     .Select(c => (DateTime?)new DateTime(c.TaxYear, c.TaxMonth, 1)).First(),
                 PaymentWht = k.SourcePaymentId == null ? (decimal?)null
                     : activeCerts.Where(c => c.SourcePaymentId == k.SourcePaymentId).Sum(c => c.TotalTaxAmount),
+                // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ใบแทนของใบร่างยังเป็นร่าง — สถานะก่อนประทับยกเลิก (แผนนี้ ToList ก่อนลูปยกเลิกข้างล่าง)
+                IssueAsIssued = WhtCertReissuePlan.ReplacementIssuesAsIssued(certsToVoid
+                    .Where(c => c.SourcePaymentId == k.SourcePaymentId && c.TaxYear == k.TaxYear && c.TaxMonth == k.TaxMonth)
+                    .Select(c => c.Status)),
             }).ToList();
         var voidIds = certsToVoid.Select(c => c.Id).ToList();
         var certLinePaymentDates = await _db.WithholdingTaxCertLines.AsNoTracking()
@@ -8048,6 +8069,7 @@ public partial class DocumentService : IDocumentService
 
             foreach (var c in certsToVoid)
             {
+                var oldCertStatus = c.Status;   // ก่อนประทับ — audit บอกสถานะจริง (เดิมพิมพ์ "Issued" ตายตัวแม้ใบเดิมเป็นร่าง)
                 c.Status = WithholdingTaxCertStatus.Voided;
                 c.UpdatedAt = DateTime.UtcNow;
                 c.UpdatedBy = actor;
@@ -8056,7 +8078,7 @@ public partial class DocumentService : IDocumentService
                 {
                     CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
                     EntityType = "WithholdingTaxCert", EntityId = c.Id.ToString(),
-                    OldValues = System.Text.Json.JsonSerializer.Serialize(new { c.CertificateNumber, Status = "Issued", c.PayeeContactId, c.TotalTaxAmount }),
+                    OldValues = System.Text.Json.JsonSerializer.Serialize(new { c.CertificateNumber, Status = oldCertStatus.ToString(), c.PayeeContactId, c.TotalTaxAmount }),
                     NewValues = System.Text.Json.JsonSerializer.Serialize(new
                     {
                         Status = "Voided", Reason = request.Reason.Trim(), RuleCode = WhtPayeeChangePlan.RuleCode,
@@ -8098,7 +8120,7 @@ public partial class DocumentService : IDocumentService
             var payDate = certLinePaymentDates.Where(x => oldCertIds.Contains(x.WithholdingTaxCertId))
                 .Select(x => (DateTime?)x.PaymentDate).FirstOrDefault() ?? r.PaymentDate;
             var outcome = await _whtService.TryAutoIssueForDocumentAsync(companyId, doc.Id, WhtCertIssueTrigger.Manual, actor,
-                payDate, r.SourcePaymentId, r.PaymentWht);
+                payDate, r.SourcePaymentId, r.PaymentWht, issueAsIssued: r.IssueAsIssued);
             if (outcome.CertificateIds is { Count: > 0 } ids)
                 issued.AddRange(await _db.WithholdingTaxCerts.AsNoTracking()
                     .Where(w => w.CompanyId == companyId && ids.Contains(w.Id)).Select(w => w.CertificateNumber).ToListAsync());
@@ -12183,8 +12205,18 @@ public partial class DocumentService : IDocumentService
         var inheritPayeeLines = Accounting.Helpers.WhtCertIssuePlan.AppliesTo(targetType);
         var activePayees = await _db.ActiveContactIdsAsync(companyId,
             spec.Select(s => s.Line.WhtPayeeContactId).Append(source.WhtPayeeContactId));
-        var droppedPayees = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayees(new[] { source.WhtPayeeContactId }, inheritPayeeHeader, activePayees)
-            + Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayees(spec.Select(s => s.Line.WhtPayeeContactId), inheritPayeeLines, activePayees);
+        // ฝ่ายค้านรอบ 204 (หลัง 0f428969): นับเฉพาะผู้ถูกหักที่มีผลกับภาษีหัก (บรรทัดที่หัก · หัวเอกสารที่มีบรรทัดหักตามอยู่) — ตัดทิ้ง ⇒ ป้าย "50 ทวิ ต้องตรวจ"
+        // (ไม่ใช่หมายเหตุธรรมดา) ที่ Decide/คำเตือนอนุมัติอ่าน · ผู้ถูกหักหัวเอกสาร "ยกตามบรรทัด" ก่อนส่ง (ตัวยกเดียว LiftSinglePayee) — หัวเอกสารที่สืบทอด
+        // ไม่ใช่ค่าที่ผู้ใช้ระบุเอง ห้ามชนด่าน "ระบุหัวเอกสารขัดกับรายบรรทัด" (แปลงบางบรรทัดของใบหลายผู้ถูกหัก = รายบรรทัดรายเดียว)
+        var inheritLineWht = spec.Select(s => (Payee: s.Line.WhtPayeeContactId, CarriesWht: s.Line.WithholdingTaxAmount > 0m)).ToList();
+        var droppedPayees = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedWhtPayees(source.WhtPayeeContactId, inheritPayeeHeader,
+            inheritLineWht, inheritPayeeLines, activePayees);
+        var inheritedHeaderPayee = Accounting.Helpers.WhtPayeeSplit.InheritPayee(source.WhtPayeeContactId, inheritPayeeHeader, activePayees);
+        if (inheritPayeeHeader)
+            inheritedHeaderPayee = Accounting.Helpers.WhtPayeeSplit.LiftSinglePayee(source.ContactId, inheritedHeaderPayee,
+                spec.Select(s => new Accounting.Helpers.WhtPayeeLine(
+                    Accounting.Helpers.WhtPayeeSplit.InheritPayee(s.Line.WhtPayeeContactId, inheritPayeeLines, activePayees),
+                    s.Line.WithholdingTaxAmount)).ToList()).DocPayeeOverride;
 
         // SourceLineId travels through the DTO so CreateDocumentAsync stamps
         // it inside its own transaction — every new line is linked 1:1 to the
@@ -12268,7 +12300,7 @@ public partial class DocumentService : IDocumentService
             WhtCertType: Accounting.Helpers.WhtGrossUp.Inherit(source.WhtCertType, source.DocumentType, targetType),
             // ฝ่ายค้าน P1/P3-6 (รอบ 204): ผู้ถูกหักหัวเอกสารส่งตั้งแต่ create (เดิมตั้งทีหลัง ⇒ ตัวยกผู้ถูกหักรายบรรทัดขึ้นหัวเอกสารตอนบันทึก
             // ตัดสินเทียบผู้ติดต่อ แล้วถูกทับด้วยผู้ถูกหักหัวเอกสารของต้นทาง = แปลงบางบรรทัดแล้วผู้ถูกหักผิดคน)
-            WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritPayee(source.WhtPayeeContactId, inheritPayeeHeader, activePayees)), createdBy,
+            WhtPayeeContactId: inheritedHeaderPayee), createdBy,
             isFullTaxInvoiceReplacement: isFullTaxInvoiceReplacement);
 
         // Link new document to source + propagate appendix/contract metadata
@@ -12297,8 +12329,7 @@ public partial class DocumentService : IDocumentService
             if (Accounting.Helpers.WhtCertIssuePlan.AppliesTo(created.DocumentType)
                 && Accounting.Helpers.WhtCertIssuePlan.AppliesTo(source.DocumentType))
                 created.WhtCertAutoIssue = source.WhtCertAutoIssue;
-            if (Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayeeNote(source.DocumentNumber, droppedPayees) is string droppedNote)
-                AppendInternalNote(created, droppedNote);
+            created.InternalNotes = Accounting.Helpers.WhtPayeeSplit.MarkDroppedInheritedPayees(created.InternalNotes, source.DocumentNumber, droppedPayees);
             await _db.SaveChangesAsync();
         }
 
@@ -14774,9 +14805,13 @@ public partial class DocumentService : IDocumentService
                     src.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
                         .Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
                     src.WithholdingTaxAmount));
+                // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ทางไปต่อ "แปลง" แนะเฉพาะเมื่อใบต้นทางแปลงเป็นชนิดนี้ได้จริง (ตาราง ValidConversions ·
+                // ใบสำคัญจ่ายที่จ่ายชำระเอกสารตั้งหนี้แปลงไม่ได้ — ValidateConversionAsync) — ใบรับรองแทนใบเสร็จไม่มีเส้นแปลง ⇒ ข้อความบอกทางอื่น
+                var srcConvertsToNote = GetValidConversionTargets(src.DocumentType).Contains(doc.DocumentType)
+                    && !(src.DocumentType == DocumentType.PaymentVoucher && src.RelatedDocumentId.HasValue);
                 if (Accounting.Helpers.WhtPayeeSplit.UnmappedAdjustmentLineReason(doc.DocumentNumber, src.DocumentNumber, srcMulti,
                         docLines.Select(l => (l.Description, l.WithholdingTaxAmount,
-                            l.SourceLineId is Guid mapped && srcLinePayee.ContainsKey(mapped))).ToList()) is string unmapped)
+                            l.SourceLineId is Guid mapped && srcLinePayee.ContainsKey(mapped))).ToList(), srcConvertsToNote) is string unmapped)
                     throw new BusinessRuleException(unmapped, Accounting.Helpers.WhtPayeeSplit.RuleCode);
                 return (Accounting.Helpers.WhtPayeeSplit.Portions(src.ContactId, src.WhtPayeeContactId,
                     docLines
@@ -20771,6 +20806,10 @@ public partial class DocumentService : IDocumentService
         // (whtPayeeForWarn โหลดไว้ก่อนด่านอัตราในประเทศข้างบน — ตัวเดียวกัน)
         if (doc.WithholdingTaxAmount > 0m && Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType))
         {
+            // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ใบที่สืบทอดมาแล้วผู้ถูกหักของต้นทางถูกตัดทิ้ง (ผู้ติดต่อถูกลบ) — ชุด [WHT-PAYEE]: เว็บถามยืนยัน ·
+            // ทางเข้าไม่มีคนผ่านตามนโยบายเดิม แต่ 50 ทวิ ไม่ออกอัตโนมัติจนกว่าจะกด "รับทราบ" (WhtCertIssuePlan.Decide อ่านป้ายเดียวกัน)
+            if (Accounting.Helpers.WhtPayeeSplit.DroppedPayeeApprovalWarning(doc.InternalNotes) is string droppedPayeeWarn)
+                warnings.Add(droppedPayeeWarn);
             if (doc.WhtPayeeContactId.HasValue && whtPayeeForWarn == null)
                 warnings.Add(Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix + " ไม่พบผู้ถูกหักภาษีที่เลือกไว้ — 50 ทวิ จะออกไม่ได้ (แก้ใบเลือกผู้ถูกหักใหม่ หรือกลับไปใช้ผู้รับเงิน)");
             var whtPayeeForeign = Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, whtPayeeForWarn?.CountryCode);

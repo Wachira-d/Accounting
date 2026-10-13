@@ -184,4 +184,15 @@ public class WhtCertReissuePlanTests
         Assert.Equal(new[] { (2026, 9) }, WhtPayeeChangePlan.AffectedPeriods(new DateTime(2026, 9, 30),
             Array.Empty<DateTime>(), Array.Empty<(int, int)>()).Select(p => (p.Year, p.Month)));
     }
+
+    [Fact]
+    public void เปลี่ยนผู้ถูกหัก_ใบแทนของกลุ่มใบร่างเป็นร่าง_มีใบออกแล้วในกลุ่มได้ใบออกแล้ว()
+    {
+        var draft = Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Draft;
+        var issued = Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued;
+        Assert.False(WhtCertReissuePlan.ReplacementIssuesAsIssued(new[] { draft }));          // เดิม: ออกแล้วเสมอ (issueAsIssued ค่าตั้งต้น)
+        Assert.False(WhtCertReissuePlan.ReplacementIssuesAsIssued(new[] { draft, draft }));
+        Assert.True(WhtCertReissuePlan.ReplacementIssuesAsIssued(new[] { issued }));         // ทิศตรงข้าม: ใบออกแล้วได้ใบออกแล้วเหมือนเดิม
+        Assert.True(WhtCertReissuePlan.ReplacementIssuesAsIssued(new[] { draft, issued }));
+    }
 }

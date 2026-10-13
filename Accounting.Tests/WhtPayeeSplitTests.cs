@@ -122,7 +122,8 @@ public class WhtPayeeSplitTests
         Assert.Equal(InsurerA, WhtPayeeSplit.InheritPayee(InsurerA, targetIsPayerSide: true, active));
         Assert.Null(WhtPayeeSplit.InheritPayee(InsurerA, targetIsPayerSide: false, active));
         Assert.Null(WhtPayeeSplit.InheritPayee(null, targetIsPayerSide: true, active));
-        Assert.Equal(0, WhtPayeeSplit.DroppedInheritedPayees(new Guid?[] { InsurerA, null, InsurerB }, true, active));
+        Assert.Equal(0, WhtPayeeSplit.DroppedInheritedWhtPayees(InsurerA, true,
+            new (Guid?, bool)[] { (null, true), (InsurerB, true) }, true, active));
         Assert.Null(WhtPayeeSplit.DroppedInheritedPayeeNote("PI-001", 0));   // ไม่มีอะไรถูกตัด = ไม่มีป้าย (ใบปกติไม่ถูกแตะ)
     }
 
@@ -134,12 +135,15 @@ public class WhtPayeeSplitTests
         var active = new HashSet<Guid> { InsurerA };   // InsurerB ถูกลบ
         Assert.Null(WhtPayeeSplit.InheritPayee(InsurerB, targetIsPayerSide: true, active));
         Assert.Equal(InsurerA, WhtPayeeSplit.InheritPayee(InsurerA, targetIsPayerSide: true, active));
-        Assert.Equal(2, WhtPayeeSplit.DroppedInheritedPayees(new Guid?[] { InsurerB, InsurerA, InsurerB, null }, true, active));
-        Assert.Equal(0, WhtPayeeSplit.DroppedInheritedPayees(new Guid?[] { InsurerB }, targetIsPayerSide: false, active));   // ฝั่งอื่นไม่สืบทอดอยู่แล้ว
+        // หัวเอกสาร B (ถูกลบ · มีบรรทัดหักตามหัว) + บรรทัดหัก A (อยู่) + บรรทัดหัก B (ถูกลบ) + บรรทัดหักตามหัว = 2
+        Assert.Equal(2, WhtPayeeSplit.DroppedInheritedWhtPayees(InsurerB, true,
+            new (Guid?, bool)[] { (InsurerA, true), (InsurerB, true), (null, true) }, true, active));
+        Assert.Equal(0, WhtPayeeSplit.DroppedInheritedWhtPayees(InsurerB, false,
+            new (Guid?, bool)[] { (InsurerB, true) }, false, active));   // ฝั่งอื่นไม่สืบทอดอยู่แล้ว
         var note = WhtPayeeSplit.DroppedInheritedPayeeNote("PI-001", 2);
         Assert.NotNull(note);
         Assert.Contains("PI-001", note);
-        Assert.Contains(WhtPayeeSplit.RuleCode, note);
+        Assert.StartsWith(WhtPayeeSplit.DroppedPayeeTag, note);
     }
 
     // ── ฝ่ายค้าน P1: ทุกบรรทัดที่หักเป็นของผู้ถูกหักรายบรรทัดรายเดียว Y ≠ หัวเอกสาร X ──
@@ -235,7 +239,7 @@ public class WhtPayeeSplitTests
     public void ใบลดหนี้ของใบหลายผู้ถูกหัก_บรรทัดหักไม่อ้างบรรทัดต้นทาง_ปฏิเสธพร้อมทางไปต่อ()
     {
         var reason = WhtPayeeSplit.UnmappedAdjustmentLineReason("CN-001", "PV-001", sourceIsMultiPayee: true,
-            new (string?, decimal, bool)[] { ("ลดเบี้ย A", 3m, true), ("ลดค่าบริการ", 1.5m, false) });
+            new (string?, decimal, bool)[] { ("ลดเบี้ย A", 3m, true), ("ลดค่าบริการ", 1.5m, false) }, sourceConvertsToNote: true);
         Assert.NotNull(reason);
         Assert.Contains("ลดค่าบริการ", reason);
         Assert.Contains("แปลง", reason);   // ทางไปต่อ
@@ -246,9 +250,9 @@ public class WhtPayeeSplitTests
     public void ใบลดหนี้_ทิศตรงข้าม_ใบต้นทางรายเดียว_หรืออ้างครบ_หรือบรรทัดไม่หัก_ผ่าน()
     {
         var unmapped = new (string?, decimal, bool)[] { ("ลดค่าบริการ", 1.5m, false) };
-        Assert.Null(WhtPayeeSplit.UnmappedAdjustmentLineReason("CN-001", "PV-001", sourceIsMultiPayee: false, unmapped));   // ใบรายเดียว = เส้นเดิม
+        Assert.Null(WhtPayeeSplit.UnmappedAdjustmentLineReason("CN-001", "PV-001", sourceIsMultiPayee: false, unmapped, true));   // ใบรายเดียว = เส้นเดิม
         Assert.Null(WhtPayeeSplit.UnmappedAdjustmentLineReason("CN-001", "PV-001", true,
-            new (string?, decimal, bool)[] { ("ลดเบี้ย A", 3m, true), ("ค่าขนส่ง", 0m, false) }));
+            new (string?, decimal, bool)[] { ("ลดเบี้ย A", 3m, true), ("ค่าขนส่ง", 0m, false) }, true));
     }
 
     [Fact]
@@ -275,5 +279,81 @@ public class WhtPayeeSplitTests
     {
         Assert.True(WhtCertIssuePlan.AppliesTo(DocumentType.PaymentVoucher));
         Assert.False(WhtCertIssuePlan.AppliesTo(DocumentType.CreditNote));   // ใบลดหนี้ตั้งผู้ถูกหักเองไม่ได้ — อ่านจากใบต้นทาง
+    }
+
+    // ══════ ฝ่ายค้านรอบสอง (หลัง 0f428969) ══════
+
+    [Fact]
+    public void ผู้ถูกหักสืบทอดถูกตัด_นับเฉพาะบรรทัดที่หักภาษี_หัวเอกสารนับเมื่อมีบรรทัดหักตามหัว()
+    {
+        var active = new HashSet<Guid> { InsurerA };   // InsurerB ถูกลบ
+        // บรรทัดที่ไม่หักภาษีชี้ผู้ถูกหักที่ถูกลบ + หัวเอกสารถูกลบแต่ไม่มีบรรทัดหักใดตามหัว ⇒ ไม่มีผลกับ 50 ทวิ = 0 (ไม่ติดป้ายเกินจริง)
+        Assert.Equal(0, WhtPayeeSplit.DroppedInheritedWhtPayees(InsurerB, true,
+            new (Guid?, bool)[] { (InsurerA, true), (InsurerB, false) }, true, active));
+        // ทิศตรงข้าม: บรรทัดหักตามหัวเอกสาร ⇒ หัวเอกสารที่ถูกลบนับ · บรรทัดหักที่ชี้ผู้ถูกลบนับ
+        Assert.Equal(1, WhtPayeeSplit.DroppedInheritedWhtPayees(InsurerB, true,
+            new (Guid?, bool)[] { (InsurerA, true), (null, true) }, true, active));
+        Assert.Equal(1, WhtPayeeSplit.DroppedInheritedWhtPayees(null, true,
+            new (Guid?, bool)[] { (InsurerB, true), (InsurerB, false) }, true, active));
+    }
+
+    [Fact]
+    public void ผู้ถูกหักสืบทอดถูกตัด_ติดป้ายต้องตรวจ_Decideและคำเตือนอนุมัติอ่านได้_รับทราบแล้วหาย()
+    {
+        const string before = "หมายเหตุเดิม";
+        Assert.Equal(before, WhtPayeeSplit.MarkDroppedInheritedPayees(before, "PI-001", 0));   // ไม่มีอะไรถูกตัด = ไม่แตะ
+        Assert.Null(WhtPayeeSplit.PendingDroppedPayeeReview(before));
+        Assert.Null(WhtPayeeSplit.DroppedPayeeApprovalWarning(before));
+
+        var marked = WhtPayeeSplit.MarkDroppedInheritedPayees(before, "PI-001", 1);
+        Assert.True(WhtCertReviewNote.Has(marked));                                            // ลิสต์รอออกใบโชว์ "ต้องตรวจ"
+        Assert.StartsWith(before, marked);
+        Assert.Contains("PI-001", WhtPayeeSplit.PendingDroppedPayeeReview(marked));
+        var warn = WhtPayeeSplit.DroppedPayeeApprovalWarning(marked);
+        Assert.NotNull(warn);
+        Assert.True(WhtCertIssuePlan.IsApprovalWarning(warn!));                                // ชุด [WHT-PAYEE] — เว็บถาม · ไม่มีคนผ่าน
+        Assert.Equal(marked, WhtPayeeSplit.MarkDroppedInheritedPayees(marked, "PI-001", 1));  // ซ้ำเรื่องเดิมไม่เพิ่ม
+        Assert.Null(WhtPayeeSplit.PendingDroppedPayeeReview(WhtCertReviewNote.Clear(marked))); // รับทราบ (ล้างป้าย) ⇒ หาย
+    }
+
+    [Fact]
+    public void ป้ายต้องตรวจเรื่องอื่น_ไม่ใช่ผู้ถูกหักถูกตัด_ไม่ถูกนับ()
+    {
+        var other = WhtCertReviewNote.Append(null, "ใบลดหนี้ CN-001 ลดฐานหลังยื่นแล้ว — ยื่นแบบเพิ่มเติม");
+        Assert.True(WhtCertReviewNote.Has(other));
+        Assert.Null(WhtPayeeSplit.PendingDroppedPayeeReview(other));
+        Assert.Null(WhtPayeeSplit.DroppedPayeeApprovalWarning(other));
+    }
+
+    [Fact]
+    public void หัวเอกสารที่ระบุเอง_ขัดกับผู้ถูกหักรายบรรทัดรายเดียว_ปฏิเสธ()
+    {
+        var reason = WhtPayeeSplit.ExplicitHeaderConflictReason(InsurerB, new[] { L(30m, InsurerA), L(15m, InsurerA), L(0m) });
+        Assert.NotNull(reason);
+        Assert.Contains("ทางไปต่อ", reason);
+    }
+
+    [Fact]
+    public void หัวเอกสารขัดกับรายบรรทัด_ทิศตรงข้าม_ไม่ระบุหัว_มีบรรทัดตามหัว_หลายราย_ไม่มีบรรทัดหัก_ผ่าน()
+    {
+        var allA = new[] { L(30m, InsurerA), L(15m, InsurerA) };
+        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(null, allA));          // ไม่ระบุหัว (แปลง/คัดลอก/ฟอร์มไม่ติ๊ก) = ยกตามเดิม
+        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(Guid.Empty, allA));    // ล้างหัว = ยกตามเดิม
+        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(InsurerB, new[] { L(30m, InsurerA), L(15m) }));          // บรรทัดตามหัว
+        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(InsurerB, new[] { L(30m, InsurerA), L(15m, Broker) }));  // หลายราย
+        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(InsurerB, new[] { L(0m, InsurerA) }));                   // ไม่มีบรรทัดหัก
+    }
+
+    [Fact]
+    public void ใบลดหนี้ไม่อ้างบรรทัด_ทางไปต่อทำได้จริง_ไม่แนะแยกใบ_ไม่มีเส้นแปลงบอกทางอื่น()
+    {
+        var unmapped = new (string?, decimal, bool)[] { ("ลดค่าบริการ", 1.5m, false) };
+        var withRoute = WhtPayeeSplit.UnmappedAdjustmentLineReason("CN-001", "PV-001", true, unmapped, sourceConvertsToNote: true);
+        Assert.Contains("แปลง", withRoute);
+        Assert.DoesNotContain("แยกใบลดหนี้", withRoute);   // เดิมแนะทางที่ด่านเดิมฟ้องซ้ำ
+        var noRoute = WhtPayeeSplit.UnmappedAdjustmentLineReason("CN-002", "CIL-001", true, unmapped, sourceConvertsToNote: false);
+        Assert.Contains("แปลงเป็นใบลด/เพิ่มหนี้ไม่ได้", noRoute);
+        Assert.Contains("ยกเลิกใบ CIL-001", noRoute);
+        Assert.DoesNotContain("แยกใบลดหนี้", noRoute);
     }
 }

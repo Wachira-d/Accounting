@@ -40,6 +40,12 @@ public static class WhtCertReissuePlan
             ? Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Draft
             : Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued;
 
+    /// <summary>ฝ่ายค้านรอบ 204 (หลัง 0f428969): ใบที่ออกแทน "กลุ่ม" ใบเดิม (งวดจ่ายเดียวกัน — เปลี่ยนผู้ถูกหักหลังอนุมัติ) ออกเป็น "ออกแล้ว" ไหม ·
+    /// ตัดสินด้วย <see cref="ReplacementStatus"/> ตัวเดียว: มีใบเดิมใดไม่ใช่ร่าง ⇒ ออกแล้ว · ทุกใบเป็นร่าง ⇒ ร่าง (เดิมออกแล้วเสมอ ⇒ ใบร่างที่ผู้ใช้ยังไม่ออก
+    /// กลายเป็นใบที่เข้าแบบยื่น) · ต้องส่งสถานะ<b>ก่อน</b>ประทับยกเลิก</summary>
+    public static bool ReplacementIssuesAsIssued(IEnumerable<Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus> oldStatusesBeforeVoid)
+        => oldStatusesBeforeVoid.Any(st => ReplacementStatus(st) != Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Draft);
+
     /// <summary>ฝ่ายค้าน P2b (รอบ 204): ยกเลิกใบลดหนี้ซื้อที่ลดภาษีหัก ณ ที่จ่ายไปแล้ว (ตอนอนุมัติ 50 ทวิ ของใบต้นทางถูกยกเลิก+ออกใหม่ยอดที่ลด
     /// หรือติดป้าย) — ยกเลิกใบลดหนี้แล้วภาษีหักกลับเป็นยอดเต็ม แต่ 50 ทวิ ยังเป็นยอดที่ลด ⇒ ข้อความป้าย "50 ทวิ ต้องตรวจ" บนใบต้นทาง ·
     /// ไม่เข้าเงื่อนไข (ไม่ใช่ใบลดหนี้ · ไม่มีภาษีหัก · ฝั่งขาย · ยังไม่อนุมัติ · ใบต้นทางไม่มี 50 ทวิ) ⇒ null</summary>

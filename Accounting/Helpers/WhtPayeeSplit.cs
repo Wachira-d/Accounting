@@ -42,15 +42,75 @@ public static class WhtPayeeSplit
     public static Guid? InheritPayee(Guid? stored, bool targetIsPayerSide, IReadOnlySet<Guid> activeContacts)
         => targetIsPayerSide && stored is Guid p && p != Guid.Empty && activeContacts.Contains(p) ? p : null;
 
-    /// <summary>จำนวนผู้ถูกหัก (หัวเอกสาร + รายบรรทัด) ที่ถูกตัดทิ้งตอนสืบทอดเพราะผู้ติดต่อถูกลบ (คู่กับ <see cref="InheritPayee"/>)</summary>
-    public static int DroppedInheritedPayees(IEnumerable<Guid?> stored, bool targetIsPayerSide, IReadOnlySet<Guid> activeContacts)
-        => !targetIsPayerSide ? 0 : stored.Count(s => s is Guid p && p != Guid.Empty && !activeContacts.Contains(p));
+    /// <summary>จำนวนผู้ถูกหักที่ถูกตัดทิ้งตอนสืบทอดเพราะผู้ติดต่อถูกลบ (คู่กับ <see cref="InheritPayee"/>) — <b>นับเฉพาะที่มีผลกับภาษีหัก</b>
+    /// (ฝ่ายค้านรอบ 204 หลัง 0f428969): ผู้ถูกหักรายบรรทัดนับเฉพาะบรรทัดที่มีภาษีหัก (<c>CarriesWht</c>) · ผู้ถูกหักหัวเอกสารนับเฉพาะเมื่อมีบรรทัดที่หัก
+    /// "ตามหัวเอกสาร" (ไม่มีผู้ถูกหักรายบรรทัดที่สืบทอดได้) — บรรทัดที่ไม่หักภาษี/หัวเอกสารที่ไม่มีบรรทัดใดใช้ ถูกตัดทิ้งก็ไม่ทำให้ 50 ทวิ ผิดคน</summary>
+    public static int DroppedInheritedWhtPayees(Guid? headerPayee, bool headerInherits,
+        IReadOnlyList<(Guid? Payee, bool CarriesWht)> lines, bool linesInherit, IReadOnlySet<Guid> activeContacts)
+    {
+        bool Dropped(Guid? stored) => stored is Guid p && p != Guid.Empty && !activeContacts.Contains(p);
+        var lineDropped = linesInherit ? lines.Count(l => l.CarriesWht && Dropped(l.Payee)) : 0;
+        var headerUsed = lines.Any(l => l.CarriesWht && InheritPayee(l.Payee, linesInherit, activeContacts) == null);
+        return lineDropped + (headerInherits && headerUsed && Dropped(headerPayee) ? 1 : 0);
+    }
 
-    /// <summary>หมายเหตุภายในของใบใหม่เมื่อผู้ถูกหักของต้นทางถูกลบ — ตรวจก่อนอนุมัติ (ล้มดังที่ตัวเอกสาร ไม่ใช่เปลี่ยนเงียบ) · 0 = null</summary>
+    /// <summary>ป้ายของ "ผู้ถูกหักที่สืบทอดถูกตัดทิ้ง" ภายในป้าย <see cref="WhtCertReviewNote"/> — ตัวตรวจ <see cref="PendingDroppedPayeeReview"/> อ่านจากนี้</summary>
+    public const string DroppedPayeeTag = "[RD-50BIS-PAYEE-DROPPED]";
+
+    /// <summary>เหตุผลของป้ายเมื่อผู้ถูกหักของต้นทางถูกลบ — ตรวจก่อนอนุมัติ (ล้มดังที่ตัวเอกสาร ไม่ใช่เปลี่ยนเงียบ) · 0 = null</summary>
     public static string? DroppedInheritedPayeeNote(string? sourceNumber, int dropped)
         => dropped <= 0 ? null
-            : $"[{RuleCode}] ผู้ถูกหักภาษีของเอกสารต้นทาง {sourceNumber} {dropped} รายการ (หัวเอกสาร/รายบรรทัด) ถูกลบออกจากผู้ติดต่อแล้ว — "
+            : $"{DroppedPayeeTag} ผู้ถูกหักภาษีของเอกสารต้นทาง {sourceNumber} {dropped} รายการ (หัวเอกสาร/รายบรรทัดที่หักภาษี) ถูกลบออกจากผู้ติดต่อแล้ว — "
               + "ใบนี้ใช้ผู้ถูกหักของหัวเอกสาร/ผู้ติดต่อของเอกสารแทน ตรวจ/เลือกผู้ถูกหักใหม่ก่อนอนุมัติ (50 ทวิ ออกในนามผู้ถูกหัก)";
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ 204 (หลัง 0f428969): ติดป้าย <b>"50 ทวิ ต้องตรวจ"</b> (<see cref="WhtCertReviewNote"/>) บนใบใหม่เมื่อผู้ถูกหักที่สืบทอดถูกตัดทิ้ง —
+    /// เดิมเป็นหมายเหตุธรรมดาที่การอนุมัติ/การออกใบอัตโนมัติไม่อ่าน ⇒ 50 ทวิ ออกในนามผู้ติดต่อของเอกสาร (เช่นโบรกเกอร์แทนบริษัทประกัน) เงียบ ๆ ·
+    /// ป้ายนี้: ลิสต์รอออกใบโชว์ "ต้องตรวจ" · <see cref="WhtCertIssuePlan.Decide"/> ไม่ออกอัตโนมัติ · คำเตือนก่อนอนุมัติ — ล้างด้วย "รับทราบ" ·
+    /// ไม่มีอะไรถูกตัด ⇒ คืนค่าเดิมทุกตัวอักษร (ใบปกติไม่ถูกแตะ)
+    /// </summary>
+    public static string? MarkDroppedInheritedPayees(string? notes, string? sourceNumber, int dropped)
+        => DroppedInheritedPayeeNote(sourceNumber, dropped) is string reason ? WhtCertReviewNote.Append(notes, reason) : notes;
+
+    /// <summary>เหตุผลของป้าย "ผู้ถูกหักที่สืบทอดถูกตัดทิ้ง" ที่ยังไม่รับทราบ (null = ไม่มี) — ป้ายต้องตรวจเรื่องอื่น (ใบลดหนี้ ฯลฯ) ไม่นับ</summary>
+    public static string? PendingDroppedPayeeReview(string? notes)
+        => WhtCertReviewNote.Reasons(notes).FirstOrDefault(r => r.StartsWith(DroppedPayeeTag, StringComparison.Ordinal));
+
+    /// <summary>คำเตือนก่อนอนุมัติของใบที่ยังมีป้ายผู้ถูกหักถูกตัดทิ้ง (ชุด <see cref="WhtCertIssuePlan.ApprovalWarningPrefix"/> — เว็บถามยืนยัน ·
+    /// ทางเข้าไม่มีคนผ่านตามนโยบายเดิม แต่ 50 ทวิ ไม่ออกอัตโนมัติจนกว่าจะรับทราบ) · ไม่มีป้าย = null</summary>
+    public static string? DroppedPayeeApprovalWarning(string? notes)
+        => PendingDroppedPayeeReview(notes) is string r
+            ? $"{WhtCertIssuePlan.ApprovalWarningPrefix} {r} · 50 ทวิ จะไม่ออกอัตโนมัติจนกว่าจะตรวจผู้ถูกหักแล้วกด \"รับทราบ\" "
+              + "(หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" → \"เอกสารรอออกใบ\")"
+            : null;
+
+    /// <summary>เหตุผลที่รายการประจำ "ไม่อนุมัติอัตโนมัติ" ใบที่ผู้ถูกหักของเทมเพลตถูกตัดทิ้ง (ส่งเข้าเส้นรายงานการอนุมัติอัตโนมัติไม่สำเร็จเส้นเดียวกับเหตุอื่น)</summary>
+    public static string DroppedPayeeAutoApproveSkipReason(int dropped)
+        => $"ผู้ถูกหักภาษีของเทมเพลต {dropped} รายการ (ที่หักภาษี) ถูกลบออกจากผู้ติดต่อแล้ว — ใบนี้ใช้ผู้ถูกหักของหัวเอกสาร/ผู้ติดต่อแทน "
+           + "จึงไม่อนุมัติอัตโนมัติ (50 ทวิ ออกในนามผู้ถูกหัก) · ตรวจ/เลือกผู้ถูกหัก แล้วอนุมัติเอง และกด \"รับทราบ\" ป้าย 50 ทวิ ต้องตรวจ";
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ 204 (หลัง 0f428969): ผู้ถูกหักหัวเอกสาร<b>ที่ผู้เรียกระบุมาเอง</b> (<paramref name="explicitHeaderRequest"/> — ไม่ใช่ว่าง/Guid.Empty)
+    /// ขัดกับผู้ถูกหักรายบรรทัด: ทุกบรรทัดที่มีภาษีหักระบุผู้ถูกหักรายเดียวกัน Y ที่ไม่ใช่หัวเอกสาร ⇒ หัวเอกสารไม่มีผลกับบรรทัดใดเลย และตัวยก
+    /// (<see cref="LiftSinglePayee"/>) จะทับเป็น Y เงียบ ๆ ⇒ ปฏิเสธพร้อมทางไปต่อ · <paramref name="normalizedLines"/> = ผู้ถูกหักรายบรรทัดหลัง
+    /// <see cref="NormalizeLineOverride"/> (ตรงกับหัวเอกสาร = null) · ไม่ระบุหัวเอกสาร/มีบรรทัดตามหัวเอกสาร/หลายราย ⇒ null (เส้นเดิม)
+    /// </summary>
+    public static string? ExplicitHeaderConflictReason(Guid? explicitHeaderRequest, IReadOnlyList<WhtPayeeLine> normalizedLines)
+    {
+        if (explicitHeaderRequest is not Guid h || h == Guid.Empty) return null;
+        Guid? only = null;
+        foreach (var l in normalizedLines)
+        {
+            if (l.WithholdingTaxAmount <= 0m) continue;
+            if (l.LinePayeeContactId is not Guid p || p == Guid.Empty) return null;   // บรรทัดนี้ตามหัวเอกสาร ⇒ หัวเอกสารมีผล
+            if (only is Guid o && o != p) return null;                                 // หลายราย ⇒ ไม่ยก
+            only = p;
+        }
+        return only == null ? null
+            : "ผู้ถูกหักภาษีหัวเอกสารที่เลือกไม่ตรงกับผู้ถูกหักรายบรรทัด — ทุกรายการที่หักภาษีระบุผู้ถูกหักรายอื่น (รายเดียวกันทุกบรรทัด) "
+              + "ผู้ถูกหักหัวเอกสารจึงไม่มีผลกับรายการใดเลย · ทางไปต่อ: ตั้งผู้ถูกหักหัวเอกสารเป็นรายเดียวกับรายบรรทัด (แล้วล้างช่องรายบรรทัด) "
+              + "หรือล้างผู้ถูกหักรายบรรทัดให้รายการตามหัวเอกสาร";
+    }
 
     /// <summary>ค่าที่ผู้เรียก "ส่งมา" ตอนแก้ไขเอกสาร: null = ไม่ส่ง (คงค่าเดิมของบรรทัดลำดับ+คำอธิบายเดียวกัน — ฟอร์ม/API รุ่นเก่าต้องไม่ล้าง) ·
     /// Guid.Empty = ล้าง (กลับไปตามหัวเอกสาร) · id = ค่าใหม่</summary>
@@ -195,17 +255,25 @@ public static class WhtPayeeSplit
     /// ฝ่ายค้าน P2c (รอบ 204): ใบลด/เพิ่มหนี้ที่อ้างใบต้นทาง<b>หลายผู้ถูกหัก</b> — ทุกบรรทัดที่มีภาษีหักต้องอ้างบรรทัดของใบต้นทาง (SourceLineId)
     /// ไม่งั้นระบบไม่รู้ว่าลด/เพิ่มหนี้ภาษีของผู้ถูกหักรายใด (เดิมตกไปผังของผู้ถูกหักหัวเอกสารเงียบ ๆ) ⇒ ข้อความปฏิเสธพร้อมทางไปต่อ ·
     /// ใบต้นทางรายเดียว/ทุกบรรทัดอ้างครบ ⇒ null (เส้นเดิม)
+    /// <para>ฝ่ายค้านรอบ 204 (หลัง 0f428969): ทางไปต่อต้องทำได้จริง — เดิมแนะ "แยกใบลดหนี้ต่อผู้ถูกหัก" ซึ่งยังไม่อ้างบรรทัด (ด่านเดิมฟ้องซ้ำ) และแนะ "แปลง"
+    /// แม้ชนิดใบต้นทางไม่มีเส้นแปลงเป็นใบลด/เพิ่มหนี้ (ใบรับรองแทนใบเสร็จ) ⇒ <paramref name="sourceConvertsToNote"/> = มีเส้นแปลง (ตาราง ValidConversions)
+    /// · ไม่มี ⇒ ทางไปต่อ = อ้างเอกสารตั้งหนี้ที่ใบนั้นจ่ายชำระ (แปลงจากเอกสารนั้น) หรือยกเลิกใบต้นทางแล้วออกใหม่ด้วยยอดที่ถูกต้อง</para>
     /// </summary>
     public static string? UnmappedAdjustmentLineReason(string? noteNumber, string? sourceNumber, bool sourceIsMultiPayee,
-        IReadOnlyList<(string? Description, decimal WithholdingTaxAmount, bool MappedToSourceLine)> lines)
+        IReadOnlyList<(string? Description, decimal WithholdingTaxAmount, bool MappedToSourceLine)> lines, bool sourceConvertsToNote)
     {
         if (!sourceIsMultiPayee) return null;
         var bad = lines.Where(l => l.WithholdingTaxAmount > 0m && !l.MappedToSourceLine).Select(l => l.Description).ToList();
         if (bad.Count == 0) return null;
         var names = string.Join(" · ", bad);
-        return $"ใบลด/เพิ่มหนี้ {noteNumber}: รายการ \"{names}\" มีภาษีหัก ณ ที่จ่ายแต่ไม่ได้อ้างบรรทัดของใบ {sourceNumber} "
-               + "ซึ่งมีผู้ถูกหักภาษีหลายราย — ระบบไม่รู้ว่าปรับหนี้ภาษีของผู้ถูกหักรายใด · ทางไปต่อ: สร้างใบลด/เพิ่มหนี้ด้วยการ \"แปลง\" จากใบ "
-               + $"{sourceNumber} (เลือกรายการที่ปรับ — ระบบผูกบรรทัดให้) แทนการพิมพ์รายการเอง หรือแยกใบลดหนี้ต่อผู้ถูกหัก";
+        var head = $"ใบลด/เพิ่มหนี้ {noteNumber}: รายการ \"{names}\" มีภาษีหัก ณ ที่จ่ายแต่ไม่ได้อ้างบรรทัดของใบ {sourceNumber} "
+                   + "ซึ่งมีผู้ถูกหักภาษีหลายราย — ระบบไม่รู้ว่าปรับหนี้ภาษีของผู้ถูกหักรายใด · ";
+        return sourceConvertsToNote
+            ? head + $"ทางไปต่อ: ลบใบร่างนี้แล้วสร้างใบลด/เพิ่มหนี้ด้วยการ \"แปลง\" จากใบ {sourceNumber} (เลือกรายการ/จำนวนที่ปรับ — ระบบผูกบรรทัดให้ "
+                   + "ใบเดียวปรับได้หลายผู้ถูกหัก) แทนการพิมพ์รายการเอง"
+            : head + $"ใบ {sourceNumber} แปลงเป็นใบลด/เพิ่มหนี้ไม่ได้ · ทางไปต่อ: ถ้าใบนี้จ่ายชำระเอกสารตั้งหนี้ (ค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ) ให้ \"แปลง\" "
+                   + "ใบลด/เพิ่มหนี้จากเอกสารตั้งหนี้นั้น · ถ้าไม่ใช่ ให้ยกเลิกใบ " + sourceNumber + " แล้วออกใหม่ด้วยยอดที่ถูกต้อง "
+                   + "(ตรวจ/ยกเลิก 50 ทวิ ของใบเดิมด้วย)";
     }
 
     /// <summary>ผู้ถูกหักที่ยังไม่มี 50 ทวิ (ใบที่ยังไม่ยกเลิก) — ใบรายเดียว: มีใบใดก็ตาม = ครบ (พฤติกรรมเดิม · ใบเก่าที่ออกในนามอื่นด้วยมือ

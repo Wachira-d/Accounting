@@ -138,8 +138,16 @@ public class DocumentCloneController : ControllerBase
         var cloneSrcLines = src.Lines.Where(l => !l.IsDeleted).ToList();
         var cloneActivePayees = await Accounting.Helpers.ContactHydration.ActiveContactIdsAsync(_db, companyId,
             cloneSrcLines.Select(l => l.WhtPayeeContactId).Append(src.WhtPayeeContactId));
-        var cloneDroppedPayees = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayees(
-            cloneSrcLines.Select(l => l.WhtPayeeContactId).Append(src.WhtPayeeContactId), clonePayerSide, cloneActivePayees);
+        // ฝ่ายค้านรอบ 204 (หลัง 0f428969): นับเฉพาะผู้ถูกหักที่มีผลกับภาษีหัก · ตัดทิ้ง ⇒ ป้าย "50 ทวิ ต้องตรวจ" (Decide/คำเตือนอนุมัติอ่าน) ·
+        // หัวเอกสารที่สืบทอด "ยกตามบรรทัด" ก่อนส่ง (ตัวยกเดียว) — ไม่ใช่ค่าที่ผู้ใช้ระบุ ห้ามชนด่านหัวเอกสารขัดกับรายบรรทัด
+        var cloneDroppedPayees = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedWhtPayees(src.WhtPayeeContactId, clonePayerSide,
+            cloneSrcLines.Select(l => (Payee: l.WhtPayeeContactId, CarriesWht: l.WithholdingTaxAmount > 0m)).ToList(), clonePayerSide, cloneActivePayees);
+        var cloneHeaderPayee = Accounting.Helpers.WhtPayeeSplit.InheritPayee(src.WhtPayeeContactId, clonePayerSide, cloneActivePayees);
+        if (clonePayerSide)
+            cloneHeaderPayee = Accounting.Helpers.WhtPayeeSplit.LiftSinglePayee(src.ContactId, cloneHeaderPayee,
+                cloneSrcLines.OrderBy(l => l.LineOrder).Select(l => new Accounting.Helpers.WhtPayeeLine(
+                    Accounting.Helpers.WhtPayeeSplit.InheritPayee(l.WhtPayeeContactId, clonePayerSide, cloneActivePayees),
+                    l.WithholdingTaxAmount)).ToList()).DocPayeeOverride;
 
         var lines = src.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).Select(l => new DocumentLineRequest(
             Description: l.Description,
@@ -218,7 +226,7 @@ public class DocumentCloneController : ControllerBase
             // คำขอเจ้าของ 2026-10-12 — เอกสารลูกสืบทอด (กฎ #4 A): ค่าเบี้ยประกันรายเดือนผ่านโบรกเกอร์ = เคสหลักของการโคลน ·
             // ผู้ถูกหักตามไปเฉพาะเมื่อชนิดปลายทางเป็นฝั่งผู้หัก (ชนิดอื่นถูกปฏิเสธ)
             WhtCertAutoIssue: src.WhtCertAutoIssue,
-            WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritPayee(src.WhtPayeeContactId, clonePayerSide, cloneActivePayees),
+            WhtPayeeContactId: cloneHeaderPayee,
             // รอบ 204 — ผู้จ่ายออกภาษีแทนตามต้นแบบเมื่อปลายทางเป็นฝั่งผู้จ่าย (ค่าธรรมเนียมต่างประเทศรายเดือนที่ออกภาษีแทน = เคสโคลน)
             WhtCertType: Accounting.Helpers.WhtGrossUp.Inherit(src.WhtCertType, src.DocumentType, options?.OverrideType ?? src.DocumentType)
         );
@@ -244,12 +252,13 @@ public class DocumentCloneController : ControllerBase
         // Identity.Name เป็นชื่อ/อีเมล ทำให้เอกสารโคลนไม่มีลายเซ็นผู้จัดทำ
         var createdBy = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
         var newDoc = await _docs.CreateDocumentAsync(companyId, req, createdBy);
-        // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้ายบนใบใหม่ (หมายเหตุภายใน) + บอกในคำตอบ — ไม่เปลี่ยนผู้ถูกหักเงียบ ๆ
+        // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้าย "50 ทวิ ต้องตรวจ" บนใบใหม่ + บอกในคำตอบ — ไม่เปลี่ยนผู้ถูกหักเงียบ ๆ ·
+        // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ป้ายเดียวกับที่ WhtCertIssuePlan.Decide/คำเตือนอนุมัติอ่าน (เดิมหมายเหตุธรรมดา ⇒ 50 ทวิ ออกผิดคนเงียบ)
         var droppedNote = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayeeNote(src.DocumentNumber, cloneDroppedPayees);
         if (droppedNote != null
             && await _db.Documents.FirstOrDefaultAsync(d => d.Id == newDoc.Id && d.CompanyId == companyId) is { } cloned)
         {
-            cloned.InternalNotes = string.IsNullOrWhiteSpace(cloned.InternalNotes) ? droppedNote : cloned.InternalNotes.TrimEnd() + "\n\n" + droppedNote;
+            cloned.InternalNotes = Accounting.Helpers.WhtPayeeSplit.MarkDroppedInheritedPayees(cloned.InternalNotes, src.DocumentNumber, cloneDroppedPayees);
             await _db.SaveChangesAsync();
         }
         return Ok(new ApiResponse<object>(true, new

@@ -413,4 +413,110 @@ public class WhtMultiPayeeDbTests
         var portion = Assert.Single(await svc.WhtPayeePortionsAsync(s.CompanyId, mapped));
         Assert.Equal(s.InsurerId, portion.PayeeContactId);   // ผู้ถูกหักของบรรทัดต้นทาง
     }
+
+    // ══════ ฝ่ายค้านรอบสอง (หลัง 0f428969) — ผ่านเมธอดจริง ══════
+
+    private static async Task SeedWhtAccountsAsync(Accounting.Data.AccountingDbContext db, Guid companyId)
+    {
+        foreach (var (code, name) in new[] { ("21916", "ภาษีหัก ณ ที่จ่ายค้างจ่าย ภ.ง.ด.3"), ("21917", "ภาษีหัก ณ ที่จ่ายค้างจ่าย ภ.ง.ด.53") })
+            db.ChartOfAccounts.Add(new ChartOfAccount
+            {
+                CompanyId = companyId, AccountCode = code, AccountName = name, AccountType = AccountType.Liability, Level = 4, IsActive = true,
+            });
+        await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task ผู้ถูกหักสืบทอดถูกตัด_ป้ายต้องตรวจ_อนุมัติไม่ออก50ทวิอัตโนมัติ_อยู่ในลิสต์_รับทราบแล้วออกได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        // ใบที่แปลง/คัดลอก/รายการประจำสร้างหลังผู้ถูกหัก (บริษัทประกัน) ถูกลบ ⇒ ใช้ผู้ติดต่อ (โบรกเกอร์) แทน + ป้าย (WhtPayeeSplit.MarkDroppedInheritedPayees)
+        var pv = await SinglePvAsync(db, s, "PV-DROP-1", null);
+        pv.InternalNotes = WhtPayeeSplit.MarkDroppedInheritedPayees(pv.InternalNotes, "PI-DROP-1", 1);
+        await db.SaveChangesAsync();
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var o = await Svc(req).TryAutoIssueForDocumentAsync(s.CompanyId, pv.Id, WhtCertIssueTrigger.Approve, "tester");
+            Assert.Equal(WhtCertIssueAction.ManualPending, o.Action);   // เดิม: ออกในนามโบรกเกอร์เงียบ ๆ
+            Assert.False(o.Failed);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Empty(await CertsAsync(req, s.CompanyId, pv.Id));
+            var row = Assert.Single((await Svc(req).GetPendingDocumentsAsync(s.CompanyId)).Where(p => p.DocumentId == pv.Id));
+            Assert.Contains(WhtPayeeSplit.DroppedPayeeTag, row.ReviewReason);
+            Assert.StartsWith("50 ทวิ ต้องตรวจ", row.PendingLabel);
+            await Svc(req).AcknowledgeReviewAsync(s.CompanyId, pv.Id, "ตรวจแล้ว ผู้ถูกหักคือโบรกเกอร์จริง", null);
+        }
+        // ทิศตรงข้าม/ทางไปต่อ: รับทราบแล้ว ⇒ ทางอัตโนมัติออกตามเดิม
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.False((await Svc(req).TryAutoIssueForDocumentAsync(s.CompanyId, pv.Id, WhtCertIssueTrigger.Approve, "tester")).Failed);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(s.BrokerId, Assert.Single(await CertsAsync(check, s.CompanyId, pv.Id)).PayeeContactId);
+    }
+
+    [Fact]
+    public async Task เปลี่ยนผู้ถูกหัก_ใบเดิมเป็นร่าง_ใบที่ออกแทนยังเป็นร่าง_ใบเดิมออกแล้วได้ใบออกแล้ว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        await SeedWhtAccountsAsync(db, s.CompanyId);
+        var draftPv = await SinglePvAsync(db, s, "PV-CHG-DRAFT", null);
+        var issuedPv = await SinglePvAsync(db, s, "PV-CHG-ISSUED", null);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            await Svc(req).AutoGenerateFromDocumentAsync(s.CompanyId, draftPv.Id, autoIssue: false, "tester");
+            await Svc(req).AutoGenerateFromDocumentAsync(s.CompanyId, issuedPv.Id, autoIssue: true, "tester");
+        }
+        var request = new ChangeWhtPayeeRequest(s.InsurerId, null, "ผู้มีเงินได้คือบริษัทประกัน");
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await DocSvc(req).ChangeWhtPayeeAsync(s.CompanyId, draftPv.Id, request, "tester", null);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await DocSvc(req).ChangeWhtPayeeAsync(s.CompanyId, issuedPv.Id, request, "tester", null);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var neoDraft = Assert.Single(await CertsAsync(check, s.CompanyId, draftPv.Id), c => c.Status != WithholdingTaxCertStatus.Voided);
+        Assert.Equal(s.InsurerId, neoDraft.PayeeContactId);
+        Assert.Equal(WithholdingTaxCertStatus.Draft, neoDraft.Status);   // เดิม: "ออกแล้ว" ทั้งที่ผู้ใช้ยังไม่ออกใบเดิม
+        var neoIssued = Assert.Single(await CertsAsync(check, s.CompanyId, issuedPv.Id), c => c.Status != WithholdingTaxCertStatus.Voided);
+        Assert.Equal(s.InsurerId, neoIssued.PayeeContactId);
+        Assert.Equal(WithholdingTaxCertStatus.Issued, neoIssued.Status);
+    }
+
+    [Fact]
+    public async Task เปลี่ยนผู้ถูกหัก_ระบุหัวเอกสารขัดกับผู้ถูกหักรายบรรทัด_400ไม่มีอะไรถูกเขียน_ไม่ระบุหัวยกตามบรรทัด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        await SeedWhtAccountsAsync(db, s.CompanyId);
+        var pv = await SinglePvAsync(db, s, "PV-CHG-CONFLICT", null);
+        var lineId = pv.Lines.Single().Id;
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => DocSvc(req).ChangeWhtPayeeAsync(s.CompanyId, pv.Id,
+                new ChangeWhtPayeeRequest(s.PersonId, new List<ChangeWhtPayeeLine> { new(lineId, s.InsurerId) }, "แก้ผู้ถูกหัก"), "tester", null));
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains("ไม่ตรงกับผู้ถูกหักรายบรรทัด", ex.Message);   // เดิม: หัวเอกสาร (บุคคล) ถูกทับเป็นบริษัทประกันเงียบ ๆ
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var stored = await req.Documents.AsNoTracking().Include(d => d.Lines).FirstAsync(d => d.Id == pv.Id);
+            Assert.Null(stored.WhtPayeeContactId);
+            Assert.Null(stored.Lines.Single().WhtPayeeContactId);
+        }
+        // ทิศตรงข้าม: ไม่ระบุหัวเอกสาร (Guid.Empty) + รายบรรทัดรายเดียว ⇒ ยกขึ้นหัวเอกสารตามเดิม
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await DocSvc(req).ChangeWhtPayeeAsync(s.CompanyId, pv.Id,
+                new ChangeWhtPayeeRequest(Guid.Empty, new List<ChangeWhtPayeeLine> { new(lineId, s.InsurerId) }, "แก้ผู้ถูกหัก"), "tester", null);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var after = await check.Documents.AsNoTracking().Include(d => d.Lines).FirstAsync(d => d.Id == pv.Id);
+        Assert.Equal(s.InsurerId, after.WhtPayeeContactId);
+        Assert.Null(after.Lines.Single().WhtPayeeContactId);
+    }
 }

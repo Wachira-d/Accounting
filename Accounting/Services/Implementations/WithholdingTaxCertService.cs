@@ -786,7 +786,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             HasSourcePayment: sourcePaymentId.HasValue,
             ActiveCertsForThisPayment: sourcePaymentId.HasValue ? active.Count(a => a.SourcePaymentId == sourcePaymentId) : 0,
             ActiveFullDocCertsNotDraft: active.Count(a => a.SourcePaymentId == null && a.Status != WithholdingTaxCertStatus.Draft),
-            ActiveCertsAny: active.Count));
+            ActiveCertsAny: active.Count,
+            // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ป้ายผู้ถูกหักที่สืบทอดถูกตัดทิ้ง (ยังไม่รับทราบ) ⇒ ไม่ออกอัตโนมัติ (รอในลิสต์ "ต้องตรวจ")
+            PayeeReviewPending: WhtPayeeSplit.PendingDroppedPayeeReview(doc.InternalNotes) != null));
         if (decision.Action != WhtCertIssueAction.IssueNow)
             return new WhtAutoIssueOutcome(decision.Action, null, null, null, decision.Reason);
 

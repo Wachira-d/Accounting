@@ -38,6 +38,8 @@ public enum WhtCertIssueAction
 /// <param name="ActiveCertsForThisPayment">ใบที่ยังไม่ยกเลิกของ "งวดจ่ายนี้ + เอกสารนี้"</param>
 /// <param name="ActiveFullDocCertsNotDraft">ใบระดับทั้งเอกสาร (ไม่ผูกงวด) ที่ออกจริงแล้ว (ไม่ใช่ร่าง ไม่ยกเลิก)</param>
 /// <param name="ActiveCertsAny">ใบที่ยังไม่ยกเลิกของเอกสารนี้ทุกชนิด</param>
+/// <param name="PayeeReviewPending">ผู้ถูกหักต้องตรวจ — ผู้ถูกหักที่สืบทอดจากเอกสารต้นทางถูกตัดทิ้ง (<see cref="WhtPayeeSplit.PendingDroppedPayeeReview"/>)
+/// และยังไม่ได้กด "รับทราบ" · ค่าตั้งต้น false = พฤติกรรมเดิม</param>
 public sealed record WhtCertIssueFacts(
     WhtCertIssueTrigger Trigger,
     DocumentType DocumentType,
@@ -50,7 +52,8 @@ public sealed record WhtCertIssueFacts(
     bool HasSourcePayment,
     int ActiveCertsForThisPayment,
     int ActiveFullDocCertsNotDraft,
-    int ActiveCertsAny);
+    int ActiveCertsAny,
+    bool PayeeReviewPending = false);
 
 /// <summary>คำตอบ: ทำอะไร · ออกในนามใคร · เหตุผลภาษาไทย (แสดงผู้ใช้ได้)</summary>
 public sealed record WhtCertIssueDecision(WhtCertIssueAction Action, Guid PayeeContactId, string Reason);
@@ -125,6 +128,12 @@ public static class WhtCertIssuePlan
             if (!f.AutoIssueEnabled)
                 return D(WhtCertIssueAction.ManualPending,
                     "ตั้งไว้ไม่ให้สร้าง 50 ทวิ อัตโนมัติ — ออกใบเองที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" → \"เอกสารรอออกใบ\"");
+            // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ผู้ถูกหักที่สืบทอดถูกตัดทิ้ง (ผู้ติดต่อถูกลบ) ⇒ ใบนี้ใช้ผู้ติดต่อของเอกสารแทน — ห้ามออกอัตโนมัติ
+            // ในนามที่อาจผิดคน (ท.ป.4/2528) · ทางอัตโนมัติรอในลิสต์ (ป้าย "ต้องตรวจ") จนกว่าจะกด "รับทราบ" · กดทีละใบ (Manual) = คนตัดสินแล้ว ⇒ ออกได้
+            if (f.PayeeReviewPending)
+                return D(WhtCertIssueAction.ManualPending,
+                    "ผู้ถูกหักภาษีของใบนี้ต้องตรวจ (ผู้ถูกหักที่สืบทอดจากเอกสารต้นทางถูกลบ) — ไม่ออก 50 ทวิ อัตโนมัติจนกว่าจะตรวจผู้ถูกหักแล้วกด "
+                    + "\"รับทราบ\" ที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" → \"เอกสารรอออกใบ\"");
         }
 
         if (f.Trigger == WhtCertIssueTrigger.Approve && !f.PaidAtTrigger)

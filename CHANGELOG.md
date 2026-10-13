@@ -4704,3 +4704,13 @@ JE ลงผังของรายบรรทัดแต่ 50 ทวิ/พ
 **P3-6** สืบทอดผู้ถูกหัก (หัว + บรรทัด) ผ่าน `InheritPayee` + `ActiveContactIdsAsync` — ผู้ติดต่อถูกลบ = null + ป้าย (รายการประจำไม่อนุมัติอัตโนมัติใบนั้น) ·
 **P3-7** ระบุผู้ถูกหักไม่ตรงใบรายเดียว = 400 · เทสต์ `WhtPayeeSplitTests` · `WhtCertReissuePlanTests` · `Db/WhtMultiPayeeDbTests` +6 · TEST_PLAN WHT204-13..20 ·
 กติกาจุดเรียก `_WHT204_ADV` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 0f428969)_
+
+_รอบ 204 (ต่อ) — แก้ผลฝ่ายค้านรอบสองงานหลายผู้ถูกหัก (หลัง 0f428969): **(1)** ผู้ถูกหักที่สืบทอด (แปลง/คัดลอก/รายการประจำ) ถูกตัดทิ้งเพราะผู้ติดต่อถูกลบ
+เดิมเป็นหมายเหตุธรรมดา ⇒ 50 ทวิ ออกในนามผู้ติดต่อของเอกสารเงียบ ๆ — ตอนนี้นับเฉพาะที่มีผลกับภาษีหัก (`WhtPayeeSplit.DroppedInheritedWhtPayees`) แล้วติดป้าย
+`[WHT-CERT-REVIEW]` (`MarkDroppedInheritedPayees` · แท็ก `[RD-50BIS-PAYEE-DROPPED]`) ที่ `WhtCertIssuePlan.Decide` อ่าน (`PayeeReviewPending` ⇒ ทางอัตโนมัติรอในลิสต์) +
+คำเตือนอนุมัติ `[WHT-PAYEE]` (`DroppedPayeeApprovalWarning`) — ล้างด้วย "รับทราบ" · **(2)** `ChangeWhtPayeeAsync` ใบแทนของใบร่างเป็นร่าง
+(`WhtCertReissuePlan.ReplacementIssuesAsIssued` → `ReplacementStatus`) · **(3)** ข้อความ P2c ไม่แนะ "แยกใบลดหนี้ต่อผู้ถูกหัก" (ด่านฟ้องซ้ำ) และแนะ "แปลง" เฉพาะเมื่อมีเส้นแปลงจริง ·
+ใบรับรองแทนใบเสร็จ: ไม่เพิ่มเส้น CIL→CN/DN (เลือกข้อความทางไปต่อแทน) · **(4)** หัวเอกสารที่ระบุเองขัดกับผู้ถูกหักรายบรรทัดรายเดียว = 400
+(`WhtPayeeSplit.ExplicitHeaderConflictReason` — สร้าง/แก้ไข/แก้ไขไม่ส่งบรรทัด/เปลี่ยนผู้ถูกหัก) · เอกสารลูกยกหัวเอกสารที่สืบทอดตามบรรทัดก่อนส่ง (`LiftSinglePayee`) ·
+**(5)** รายการประจำที่ไม่อนุมัติอัตโนมัติใบนั้น ⇒ `RecordAutoApproveFailureAsync` แทน LogWarning · เทสต์ `WhtPayeeSplitTests` +6 · `WhtCertIssuePlanTests` +2 ·
+`WhtCertReissuePlanTests` +1 · `Db/WhtMultiPayeeDbTests` +3 · TEST_PLAN WHT204-21..25 · กติกาจุดเรียก `_WHT204_ADV2` +9 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_

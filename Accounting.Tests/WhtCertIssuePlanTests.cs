@@ -145,4 +145,28 @@ public class WhtCertIssuePlanTests
         Assert.Empty(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.ApiClient, w));
         Assert.Single(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.None, w));
     }
+
+    // ── ฝ่ายค้านรอบ 204 (หลัง 0f428969): ผู้ถูกหักที่สืบทอดถูกตัดทิ้ง (ป้ายต้องตรวจยังไม่รับทราบ) ⇒ ไม่ออกอัตโนมัติ ──
+
+    [Theory]
+    [InlineData(WhtCertIssueTrigger.Approve)]
+    [InlineData(WhtCertIssueTrigger.Payment)]
+    [InlineData(WhtCertIssueTrigger.IntegrationSync)]
+    [InlineData(WhtCertIssueTrigger.Bulk)]
+    public void ผู้ถูกหักต้องตรวจ_ทางอัตโนมัติไม่ออก_รอในลิสต์(WhtCertIssueTrigger trigger)
+    {
+        var d = WhtCertIssuePlan.Decide(F(trigger) with { PayeeReviewPending = true });
+        Assert.Equal(WhtCertIssueAction.ManualPending, d.Action);
+        Assert.Contains("รับทราบ", d.Reason);
+    }
+
+    [Fact]
+    public void ผู้ถูกหักต้องตรวจ_ทิศตรงข้าม_กดทีละใบออกได้_ไม่มีป้ายออกตามเดิม_มีใบแล้วไม่ออกซ้ำ()
+    {
+        Assert.Equal(WhtCertIssueAction.IssueNow,
+            WhtCertIssuePlan.Decide(F(WhtCertIssueTrigger.Manual) with { PayeeReviewPending = true }).Action);   // คนตัดสินแล้ว
+        Assert.Equal(WhtCertIssueAction.IssueNow, WhtCertIssuePlan.Decide(F()).Action);                       // ค่าตั้งต้น = พฤติกรรมเดิม
+        Assert.Equal(WhtCertIssueAction.AlreadyIssued,
+            WhtCertIssuePlan.Decide(F(any: 1) with { PayeeReviewPending = true }).Action);
+    }
 }
