@@ -54,4 +54,8 @@ public class WithholdingTaxCertLine : BaseEntity
     public decimal TaxRate { get; set; }
     public decimal TaxAmount { get; set; }
     public string? Condition { get; set; }
+    /// <summary>รอบ 204 (schema only — ต่อสายในคอมมิตตามหลัง) — แถวย่อยเงินปันผลบน 50 ทวิ ("1.1".."1.4", "2.1".."2.5") · null = ไม่ใช่ปันผล/พฤติกรรมเดิม</summary>
+    public string? DividendSubRow { get; set; }
+    /// <summary>รอบ 204 (schema only) — อัตราภาษีเครดิตเงินปันผล (%) ของแถวย่อย · null = ไม่ระบุ</summary>
+    public decimal? DividendCreditRate { get; set; }
 }

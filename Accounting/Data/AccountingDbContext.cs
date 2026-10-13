@@ -1486,6 +1486,8 @@ public class AccountingDbContext : DbContext
             e.Property(l => l.TaxAmount).HasPrecision(18, 2);
             e.Property(l => l.IncomeTypeCode).HasMaxLength(10);
             e.Property(l => l.IncomeDescription).HasMaxLength(500);
+            e.Property(l => l.DividendSubRow).HasMaxLength(8);          // รอบ 204 (schema only)
+            e.Property(l => l.DividendCreditRate).HasPrecision(5, 2);   // รอบ 204 (schema only)
         });
 
         // ======================================================================

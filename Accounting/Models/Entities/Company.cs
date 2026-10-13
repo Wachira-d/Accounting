@@ -65,6 +65,11 @@ public class Company : BaseEntity
     /// เพดาน revenue-based.</summary>
     public decimal PaidUpCapital { get; set; }
     public bool IsWhtRegistered { get; set; } = true;    // หัก ณ ที่จ่าย
+    /// <summary>รอบ 204 (schema only — ต่อสายในคอมมิตตามหลัง) — แบบยื่นค่าสิทธิ (ม.40(3)) ที่จ่ายบุคคลธรรมดา ·
+    /// <c>Pnd3</c> (ค่าตั้งต้น) = พฤติกรรมเดิม</summary>
+    public WhtRoyaltyIndividualForm WhtRoyaltyIndividualForm { get; set; } = WhtRoyaltyIndividualForm.Pnd3;
+    /// <summary>รอบ 204 (schema only) — วันที่เริ่มใช้ ภ.ง.ด.2 กับค่าสิทธิบุคคลธรรมดา · null = ไม่กำหนด</summary>
+    public DateTime? WhtRoyaltyPnd2From { get; set; }
     public bool IsSocialSecurityRegistered { get; set; } // จดทะเบียนประกันสังคม
     public string? SocialSecurityAccountNo { get; set; } // เลขที่บัญชีประกันสังคม
 

@@ -2286,6 +2286,16 @@ public enum WhtPayerFormType
     Pnd53 = 53,
 }
 
+/// <summary>รอบ 204 (schema only — ต่อสายในคอมมิตตามหลัง) — แบบยื่นภาษีหัก ณ ที่จ่ายของค่าสิทธิ ม.40(3) ที่จ่ายบุคคลธรรมดา
+/// (<c>Company.WhtRoyaltyIndividualForm</c>) · ค่าเป็น int ในฐาน ห้ามเปลี่ยนเลข</summary>
+public enum WhtRoyaltyIndividualForm
+{
+    /// <summary>ภ.ง.ด.3 — พฤติกรรมเดิม (legacy · ค่าตั้งต้น)</summary>
+    Pnd3 = 0,
+    /// <summary>ภ.ง.ด.2</summary>
+    Pnd2 = 1,
+}
+
 // ==================== Lodging (ธุรกิจที่พัก: โรงแรม · รีสอร์ท · โฮสเทล · บ้านพัก) ====================
 // ที่มา: สกัดโดเมนจาก TakeTime (Ipsos-Dev-TH) + PMS มาตรฐาน แล้วออกแบบใหม่ให้ต่อกับ
 // แกนบัญชี/ภาษีของระบบนี้ (มัดจำ §78/1 · ใบกำกับ §86/4 · เลข gap-free)

@@ -3615,6 +3615,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     พร้อมหมายเหตุบนใบ (เดิมค้าง `WhtCertType` ⇒ อนุมัติ/50 ทวิ ล้มด้วย `MismatchReason` โดยไม่รู้สาเหตุ) · **P3-3** `recurring.html` ช่องเงื่อนไขแสดงเฉพาะชนิดฝั่งผู้จ่าย
     (ชนิดอื่นส่ง `Withhold`) · **ยังไม่ทำ**: VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทนตอนบันทึก (ทางเลือกที่ปฏิเสธไว้แทน) · ~~รายงาน ภ.พ.36 นับภาษีออกแทนเฉพาะ 50 ทวิ "ตลอดไป"~~
     → **ทำแล้ว (บอร์ด 2026-10-13 ทีม B · A5b)**: รายงาน ภ.พ.36 + คำเตือนตอนออก/แก้ 50 ทวิ นับ "ออกให้ครั้งเดียว" ด้วย (ดู §5.4 จ่ายต่างประเทศ ด้านล่าง)
+- **คอลัมน์ WHT รอบ 204 (schema only — wired by later commits · `DatabaseMigrationHelper.Round204DirectiveStatements`)**: `Document.WhtBorneByContract`/`WhtViaEWithholding` (bool, false) · `Contact.WhtBorneByContractDefault` (bool, false) · `Company.WhtRoyaltyIndividualForm` (enum `WhtRoyaltyIndividualForm` int, 0 = ภ.ง.ด.3 เดิม) / `WhtRoyaltyPnd2From` (timestamptz NULL) · `WithholdingTaxCertLine.DividendSubRow` (varchar(8) NULL) / `DividendCreditRate` (numeric(5,2) NULL) — ยังไม่มีผู้อ่าน/ผู้เขียน ค่าตั้งต้น = พฤติกรรมเดิม
 - **PDF**: `PdfGenerationService.WhtCert.cs` (QuestPDF) **และ**
   `PdfGenerationService.cs:2237` (HTML) — **ทั้งสองตัวจัดบรรทัดลงแถว 1–6 ของแบบ
   ผ่าน `ThaiWhtRateTable.CertificateRow` ตัวเดียว** ห้ามเขียน allow-list ของรหัสเอง

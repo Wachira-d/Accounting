@@ -207,6 +207,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round201DvStatements());   // รอบ 201 ทีม DV (บล็อกท้ายไฟล์)
         list.AddRange(Round202LodgingWebStatements());   // รอบ 202 ทีม LW (บล็อกท้ายไฟล์)
         list.AddRange(Round204Pnd2Statements());   // รอบ 204 ภ.ง.ด.2 (บล็อกท้ายไฟล์)
+        list.AddRange(Round204DirectiveStatements());   // รอบ 204 คอลัมน์ WHT (schema only · บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7483,4 +7484,17 @@ public static class DatabaseMigrationHelper
             Accounting.Helpers.WhtPayableAccount.MigrationSeedSql(),
         };
     }
+
+    /// <summary>รอบ 204 — คอลัมน์หัก ณ ที่จ่าย <b>schema only</b> (ยังไม่มีผู้อ่าน/ผู้เขียน — ต่อสายในคอมมิตตามหลัง) ·
+    /// ค่าตั้งต้นทุกคอลัมน์ = พฤติกรรมเดิม (false / 0 = ภ.ง.ด.3 / NULL) · <c>ADD COLUMN IF NOT EXISTS</c> ⇒ รันทุกบูตได้</summary>
+    internal static IReadOnlyList<string> Round204DirectiveStatements() => new List<string>
+    {
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtBorneByContract" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtViaEWithholding" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "WhtBorneByContractDefault" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "WhtRoyaltyIndividualForm" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "WhtRoyaltyPnd2From" timestamp with time zone NULL;""",
+        """ALTER TABLE "WithholdingTaxCertLines" ADD COLUMN IF NOT EXISTS "DividendSubRow" character varying(8) NULL;""",
+        """ALTER TABLE "WithholdingTaxCertLines" ADD COLUMN IF NOT EXISTS "DividendCreditRate" numeric(5,2) NULL;""",
+    };
 }

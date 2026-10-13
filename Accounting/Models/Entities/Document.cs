@@ -591,6 +591,14 @@ public class Document : TenantEntity
     /// หัก ณ ที่จ่าย ⇒ 0 เสมอ</summary>
     public decimal WhtPayerBorneAmount { get; set; }
 
+    /// <summary>รอบ 204 (schema only — ต่อสายในคอมมิตตามหลัง) — มีสัญญาให้ผู้จ่ายรับภาระภาษีหัก ณ ที่จ่าย (§65 ตรี (3)) ·
+    /// false (ค่าตั้งต้น) = พฤติกรรมเดิม</summary>
+    public bool WhtBorneByContract { get; set; }
+
+    /// <summary>รอบ 204 (schema only — ต่อสายในคอมมิตตามหลัง) — หักภาษี ณ ที่จ่ายผ่าน e-Withholding ของธนาคาร ·
+    /// false (ค่าตั้งต้น) = พฤติกรรมเดิม</summary>
+    public bool WhtViaEWithholding { get; set; }
+
     /// <summary>Access-control classification — None for the regular sales
     /// stream, Payroll/ExecutivePay/HrPersonal for restricted records.
     /// Owner picks which roles can see each kind in CompanySensitivitySettings.</summary>
@@ -995,6 +1003,10 @@ public class Contact : TenantEntity
     /// ชนิด TaxInvoice แทน Invoice + เตือนถ้าข้อมูล §86/4 (TaxId/สาขา/ที่อยู่)
     /// ไม่ครบ. Default false = เลือกชนิดเอกสารเองตามปกติ.</summary>
     public bool DefaultIssueTaxInvoice { get; set; } = false;
+
+    /// <summary>รอบ 204 (schema only — ต่อสายในคอมมิตตามหลัง) — ค่าตั้งต้นของ <see cref="Document.WhtBorneByContract"/>
+    /// สำหรับผู้ติดต่อรายนี้ (มีสัญญาให้ผู้จ่ายรับภาระภาษี §65 ตรี (3)) · false = พฤติกรรมเดิม</summary>
+    public bool WhtBorneByContractDefault { get; set; }
 
     /// <summary>เครดิตเทอมของลูกค้ารายนี้ — จำนวนวันเครดิต (เช่น 30 = Net 30).
     /// null = ใช้ค่าเริ่มต้นบริษัท (CompanySettings.DefaultPaymentDueDays). เมื่อ
