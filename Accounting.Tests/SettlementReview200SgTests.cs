@@ -127,7 +127,7 @@ public class SettlementReview200SgTests
     public void R2M3_เอกสารคีย์grossup529_41_50ทวิออกให้ตลอดไป_ฐานภพ36คือ529_41ไม่ใช่608_82_และไม่เตือนVATขาด()
     {
         // ตัวเลขในรายงาน: บรรทัด 529.41 · WHT บนเอกสาร 79.41 · ภ.พ.36 37.06 · 50 ทวิ เงินได้ 529.41 ภาษี 79.41
-        var borne = ForeignServiceVat.BorneTaxOutsideLines(529.41m, 79.41m, 529.41m, 79.41m);
+        var borne = ForeignServiceVat.BorneTaxOutsideLines(WithholdingTaxCertType.PayAlways, 529.41m, 79.41m, 529.41m, 79.41m);
         Assert.Equal(0m, borne);
         Assert.Equal(529.41m, ForeignServiceVat.Pp36Base(529.41m, borne));
         Assert.Equal(0m, ForeignServiceVat.Pp36Shortfall(529.41m, borne, 37.06m));
@@ -139,23 +139,23 @@ public class SettlementReview200SgTests
     [Fact]
     public void R2M3_ทิศตรงข้าม_ใบค่าธรรมเนียมรอบโอน450_50ทวิเงินได้529_41_ยังบวกภาษีออกแทน_ฐาน529_41ภาษี37_06()
     {
-        var borne = ForeignServiceVat.BorneTaxOutsideLines(450m, 0m, 529.41m, 79.41m);
+        var borne = ForeignServiceVat.BorneTaxOutsideLines(WithholdingTaxCertType.PayAlways, 450m, 0m, 529.41m, 79.41m);
         Assert.Equal(79.41m, borne);
         Assert.Equal(529.41m, ForeignServiceVat.Pp36Base(450m, borne));
         Assert.Equal(37.06m, ForeignServiceVat.SelfAssessedVatOn(ForeignServiceVat.Pp36Base(450m, borne)));
         // ใบคีย์มือเดิม (ภ.พ.36 31.50 บนฐาน 450) + 50 ทวิ ออกให้ตลอดไปภายหลัง ⇒ ยังเตือนขาด 5.56 (W-3 ไม่ถูกถอด)
         Assert.Equal(5.56m, ForeignServiceVat.Pp36Shortfall(450m, borne, 31.50m));
         // ไม่มีภาษีออกแทน ⇒ 0
-        Assert.Equal(0m, ForeignServiceVat.BorneTaxOutsideLines(450m, 0m, 450m, 0m));
+        Assert.Equal(0m, ForeignServiceVat.BorneTaxOutsideLines(WithholdingTaxCertType.PayAlways, 450m, 0m, 450m, 0m));
     }
 
     [Fact]
     public void R2M3_50ทวิครอบบางงวด_ตัดสินจากWHTบนเอกสาร()
     {
         // บรรทัดสุทธิ 900 ไม่มี WHT บนเอกสาร (ภาษีจ่ายแยก) · 50 ทวิ งวดแรก 529.41/79.41 ⇒ บรรทัดยังไม่รวม ⇒ บวก
-        Assert.Equal(79.41m, ForeignServiceVat.BorneTaxOutsideLines(900m, 0m, 529.41m, 79.41m));
+        Assert.Equal(79.41m, ForeignServiceVat.BorneTaxOutsideLines(WithholdingTaxCertType.PayAlways, 900m, 0m, 529.41m, 79.41m));
         // บรรทัด gross-up 1,058.82 มี WHT บนเอกสาร 158.82 · 50 ทวิ งวดแรกใบเดียว ⇒ บรรทัดรวมแล้ว ⇒ ไม่บวก
-        Assert.Equal(0m, ForeignServiceVat.BorneTaxOutsideLines(1058.82m, 158.82m, 529.41m, 79.41m));
+        Assert.Equal(0m, ForeignServiceVat.BorneTaxOutsideLines(WithholdingTaxCertType.PayAlways, 1058.82m, 158.82m, 529.41m, 79.41m));
     }
 
     [Fact]

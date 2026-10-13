@@ -1629,16 +1629,20 @@ public partial class TaxService : ITaxService
                 .ToDictionary(g => g.Key, g => g.Sum(n => (n.DocumentType == DocumentType.CreditNote ? -1m : 1m)
                     * Accounting.Helpers.DocumentFx.ToBaht(n.SubTotal, n.ExchangeRate)));
         var filedCertStatuses = Accounting.Helpers.WhtCertFilingScope.Filed;
+        // บอร์ดตัดสิน 2026-10-13 (ทีม B · A5b): นับ 50 ทวิ "ออกให้ครั้งเดียว" ด้วย (ส่วนที่ผู้จ่ายออกแทนรอบแรกเป็นเงินได้ของผู้รับ ม.39 ⇒ มูลค่าบริการ §79) —
+        // เดิมกรองเฉพาะ "ตลอดไป" ⇒ ฐาน ภ.พ.36 ของใบ "ครั้งเดียว" ขาดเงียบ · รวมยอดแยกตามเงื่อนไข (สูตรส่วนที่ออกแทนต่างกัน) แล้วให้ตัวตัดสินเดียวคิดต่อเงื่อนไข
         var borneByDoc = pp36DocIds.Count == 0
-            ? new Dictionary<Guid, (decimal Income, decimal Tax)>()
+            ? new Dictionary<Guid, List<(WithholdingTaxCertType Type, decimal Income, decimal Tax)>>()
             : (await _db.WithholdingTaxCerts.AsNoTracking()
                     .Where(w => w.CompanyId == companyId && w.DocumentId != null && pp36DocIds.Contains(w.DocumentId.Value)
-                        && w.CertificateType == WithholdingTaxCertType.PayAlways
+                        && (w.CertificateType == WithholdingTaxCertType.PayAlways || w.CertificateType == WithholdingTaxCertType.PayOnce)
                         && filedCertStatuses.Contains(w.Status))
-                    .Select(w => new { DocId = w.DocumentId!.Value, w.TotalIncomeAmount, w.TotalTaxAmount })
+                    .Select(w => new { DocId = w.DocumentId!.Value, w.CertificateType, w.TotalIncomeAmount, w.TotalTaxAmount })
                     .ToListAsync())
                 .GroupBy(x => x.DocId)
-                .ToDictionary(g => g.Key, g => (Income: g.Sum(x => x.TotalIncomeAmount), Tax: g.Sum(x => x.TotalTaxAmount)));
+                .ToDictionary(g => g.Key, g => g.GroupBy(x => x.CertificateType)
+                    .Select(t => (Type: t.Key, Income: t.Sum(x => x.TotalIncomeAmount), Tax: t.Sum(x => x.TotalTaxAmount)))
+                    .ToList());
 
         var lineOrder = 1;
         foreach (var doc in docs.OrderBy(d => pp36Rows[d.Id].PeriodDate).ThenBy(d => d.DocumentNumber))
@@ -1651,7 +1655,7 @@ public partial class TaxService : ITaxService
             // ได้ฐาน 0 ทั้งที่มี VAT นำส่ง (จอ+ไฟล์ยื่นโชว์ฐาน 0.00)
             var serviceValue = Accounting.Helpers.DocumentVatFallback.TaxBase(doc.Lines, doc.SubTotal, doc.TotalAmount, doc.VatAmount);
             var borneOutside = borneByDoc.TryGetValue(doc.Id, out var borne)
-                ? Accounting.Helpers.ForeignServiceVat.BorneTaxOutsideLines(serviceValue, doc.WithholdingTaxAmount, borne.Income, borne.Tax)
+                ? borne.Sum(b => Accounting.Helpers.ForeignServiceVat.BorneTaxOutsideLines(b.Type, serviceValue, doc.WithholdingTaxAmount, b.Income, b.Tax))
                 : 0m;
             // E-4: ฐานแปลงบาทด้วยตัวแปลงเดียวกับ JE (DocumentFx) · ภาษี = ยอดที่ GL/รายการนำส่งถือ (บาทอยู่แล้ว)
             var baseAmount = Accounting.Helpers.DocumentFx.ToBaht(

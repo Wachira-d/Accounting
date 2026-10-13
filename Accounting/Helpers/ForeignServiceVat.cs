@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 
@@ -82,28 +83,51 @@ public static class ForeignServiceVat
 
     /// <summary>
     /// **ภาษีที่ออกแทนส่วนที่ "ยังไม่อยู่ในยอดบรรทัดของเอกสาร"** — ตัวตัดสินตัวเดียวของรายงาน ภ.พ.36 (<c>TaxService.GeneratePp36Report</c>) และคำเตือนตอนออก/แก้
-    /// 50 ทวิ (<c>WithholdingTaxCertService.IssueWarningsAsync</c>) · ฝ่ายค้านรอบสอง R2M-3
+    /// 50 ทวิ (<c>WithholdingTaxCertService.IssueWarningsAsync</c>) · ฝ่ายค้านรอบสอง R2M-3 · <b>ครอบ "ออกให้ครั้งเดียว" ด้วย</b> (บอร์ดตัดสิน 2026-10-13 · ทีม B · A5b)
     /// <para>═══ ที่มา (บั๊กจริง) ═══ เดิมบวกภาษีของ 50 ทวิ "ออกให้ตลอดไป" เข้าฐาน<b>ทุกเอกสาร</b> ⇒ ใบที่นักบัญชีคีย์แบบ gross-up แล้ว (บรรทัด 529.41 ·
-    /// หัก 15% = 79.41 · ภ.พ.36 37.06 ถูกอยู่แล้ว) ได้ฐาน 608.82 (อัตราแสดง 6.09%) + คำเตือน "VAT ขาด 5.56" ⇒ ทำตาม = ยื่น ภ.พ.36 เกิน + ภาษีซื้อ 11640 เกิน</para>
+    /// หัก 15% = 79.41 · ภ.พ.36 37.06 ถูกอยู่แล้ว) ได้ฐาน 608.82 (อัตราแสดง 6.09%) + คำเตือน "VAT ขาด 5.56" ⇒ ทำตาม = ยื่น ภ.พ.36 เกิน + ภาษีซื้อ 11640 เกิน ·
+    /// ต่อมา (A5b) ผู้เรียกทั้งสองกรองเฉพาะ 50 ทวิ "ตลอดไป" ⇒ ใบ "ออกให้ครั้งเดียว" ที่ผู้จ่ายออกภาษีแทนรอบแรก (เป็นเงินได้ของผู้รับ ม.39 ⇒ ส่วนของมูลค่าบริการ §79)
+    /// หายจากฐาน ภ.พ.36 เงียบ ๆ</para>
+    /// <para>═══ ส่วนที่ผู้จ่ายออกแทนบน 50 ทวิ (สูตรเดียวกับ <see cref="WhtGrossUp.OnBase"/>) ═══ ตลอดไป = ภาษีทั้งก้อน ·
+    /// ครั้งเดียว = เงินได้ − ฐาน โดยเงินได้ = ฐาน × (1 + r) และภาษี = เงินได้ × r ⇒ ส่วนที่ออกแทน = เงินได้ × ภาษี / (เงินได้ + ภาษี)
+    /// (10,300 / 309 ⇒ 300 · 517.50 / 77.63 ⇒ 67.50) · หัก ณ ที่จ่าย = 0 (ผู้รับรับภาระเอง ไม่มีส่วนที่ออกแทน)</para>
     /// <para>═══ ตัดสินจากข้อเท็จจริงบนเอกสาร (ไม่เดา) ═══ เงินได้บน 50 ทวิ (= มูลค่าบริการรวมภาษีออกแทน) เทียบยอดบรรทัดของเอกสาร:
     /// <list type="number">
-    /// <item>เงินได้ ≈ ยอดบรรทัด + ภาษี ⇒ บรรทัดยังไม่รวม (ใบค่าธรรมเนียมรอบโอน: 450 + 79.41 = 529.41) ⇒ บวกภาษีทั้งก้อน</item>
+    /// <item>เงินได้ ≈ ยอดบรรทัด + ส่วนที่ออกแทน ⇒ บรรทัดยังไม่รวม (ใบค่าธรรมเนียมรอบโอน: 450 + 79.41 = 529.41 · ครั้งเดียว 10,000 + 300 = 10,300) ⇒ บวกทั้งก้อน
+    /// (ครั้งเดียวใช้ส่วนต่างจริง เงินได้ − ยอดบรรทัด)</item>
     /// <item>เงินได้ ≈ ยอดบรรทัด ⇒ บรรทัดรวมแล้ว (gross-up) ⇒ 0</item>
     /// <item>อื่น ๆ (50 ทวิ ครอบบางงวด): เอกสารมีภาษีหัก ณ ที่จ่ายบนตัว ⇒ บรรทัดคือเงินได้รวม (ผู้จ่ายหักจากยอดบรรทัด) ⇒ 0 ·
-    /// ไม่มี ⇒ ภาษีจ่ายแยกนอกเอกสาร ⇒ บวกภาษีทั้งก้อน</item>
-    /// </list> ความคลาดเคลื่อนที่ยอมรับ ±0.01 ต่อก้อน (เศษปัด)</para>
+    /// ไม่มี ⇒ ภาษีจ่ายแยกนอกเอกสาร ⇒ บวกส่วนที่ออกแทนบน 50 ทวิ</item>
+    /// </list> ความคลาดเคลื่อนที่ยอมรับ ±0.01 ต่อก้อน (เศษปัด · ครั้งเดียว ±0.02 เพราะส่วนที่ออกแทนถอดจากภาษีที่ปัดแล้ว)</para>
     /// </summary>
+    /// <param name="certType">เงื่อนไขบน 50 ทวิ (ตลอดไป / ครั้งเดียว · หัก ณ ที่จ่าย ⇒ 0)</param>
     /// <param name="serviceValue">ฐานค่าบริการของเอกสาร (ยอดบรรทัด — <c>DocumentVatFallback.TaxBase</c>)</param>
     /// <param name="documentWht">ภาษีหัก ณ ที่จ่ายที่ตั้งบนเอกสาร (<c>Document.WithholdingTaxAmount</c>)</param>
-    /// <param name="certIncome">เงินได้รวมบน 50 ทวิ "ออกให้ตลอดไป" ที่ผูกเอกสาร (ที่ออกแล้ว)</param>
-    /// <param name="certTax">ภาษีรวมบน 50 ทวิ เหล่านั้น (= ภาษีที่ผู้จ่ายออกแทน)</param>
-    public static decimal BorneTaxOutsideLines(decimal serviceValue, decimal documentWht, decimal certIncome, decimal certTax)
+    /// <param name="certIncome">เงินได้รวมบน 50 ทวิ เงื่อนไขนี้ที่ผูกเอกสาร (ที่ออกแล้ว)</param>
+    /// <param name="certTax">ภาษีรวมบน 50 ทวิ เหล่านั้น</param>
+    public static decimal BorneTaxOutsideLines(WithholdingTaxCertType certType, decimal serviceValue, decimal documentWht,
+        decimal certIncome, decimal certTax)
     {
         if (certTax <= 0m) return 0m;
         const decimal tol = 0.01m;
-        if (Math.Abs(certIncome - (serviceValue + certTax)) <= tol) return certTax;
-        if (Math.Abs(certIncome - serviceValue) <= tol) return 0m;
-        return documentWht > 0m ? 0m : certTax;
+        switch (WhtGrossUp.Normalize(certType))
+        {
+            case WithholdingTaxCertType.PayAlways:
+                if (Math.Abs(certIncome - (serviceValue + certTax)) <= tol) return certTax;
+                if (Math.Abs(certIncome - serviceValue) <= tol) return 0m;
+                return documentWht > 0m ? 0m : certTax;
+            case WithholdingTaxCertType.PayOnce:
+            {
+                if (certIncome <= 0m) return 0m;
+                var borneOnCert = Math.Round(certIncome * certTax / (certIncome + certTax), 2, MidpointRounding.AwayFromZero);
+                var uplift = certIncome - serviceValue;
+                if (uplift > tol && Math.Abs(uplift - borneOnCert) <= 2 * tol) return uplift;
+                if (Math.Abs(uplift) <= tol) return 0m;
+                return documentWht > 0m ? 0m : borneOnCert;
+            }
+            default:
+                return 0m;
+        }
     }
 
     /// <summary>VAT ที่ประเมินเอง (ภ.พ.36) บนฐาน — round(ฐาน × อัตรา VAT ตามกฎหมาย, AwayFromZero) · อัตราจาก <see cref="PartnerVatRate.StatutoryRate"/> ตัวเดียว</summary>

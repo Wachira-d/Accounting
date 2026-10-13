@@ -6304,9 +6304,8 @@ RULES += [
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="IssueWarningsAsync",
          must=["ThaiWhtRateTable.CheckRateForType("],
          why=_WHT203 + "ออก/แก้ 50 ทวิ ในประเทศ เตือนอัตราไม่ตรงประเภท+ชนิดผู้รับ (ตัวตัดสินเดียวกับตอนอนุมัติเอกสาร)"),
-    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="CertificateRowSpecs",
-         must=["ThaiWhtRateTable.CertificateRowSpecification("],
-         why=_WHT203 + "ข้อความ \"ระบุ\" แถว 5/6 ที่หน้าพรีวิวแสดง มาจากตัวตัดสินเดียวกับ renderer"),
+    # (ลบ 2026-10-13 ทีม B · A10: กติกา CertificateRowSpecs — ช่องคำตอบที่ไม่มีหน้าใดอ่าน ถอดทิ้งแล้ว · ข้อความ "ระบุ" แถว 5/6
+    #  พิมพ์ผ่าน WhtCertFormText → ThaiWhtRateTable.CertificateRowSpecification ตัวเดียวทั้ง HTML/QuestPDF)
     dict(file="Services/Implementations/WhtCreditService.cs", method="CheckRate",
          must=["ThaiWhtRateTable.CheckRateForType("], forbid=["switch", ".Contains("],
          why=_WHT203 + "ทะเบียนภาษีถูกหัก — ตัวตรวจอัตราอ่านตารางกลาง (เดิมจับคำเอง รหัสจาก dropdown ไม่ถูกตรวจเลย)"),
@@ -6787,6 +6786,27 @@ RULES += [
     dict(file=DOC, method="ValidateDocumentLinesAsync",
          call_args=[("DocumentLineIncomeType.Decide(", "storedIncomeCodes")],
          why=_TEAM_A_1013 + "(A11) ด่านรหัสเงินได้รับรหัสที่เก็บบนใบนี้ (ตัวตัดสินเดียว DocumentLineIncomeType.Decide)"),
+]
+
+# บอร์ดตัดสิน 2026-10-13 ทีม B — A3: ใบลดหนี้ซื้อมาก่อน 50 ทวิ ป้ายต้องบอกตัวเลข · A5b: ฐาน ภ.พ.36 ครอบ 50 ทวิ "ออกให้ครั้งเดียว"
+_BOARD1013_B = "บอร์ด 2026-10-13 ทีม B: "
+RULES += [
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AdjustCertsForCreditNoteAsync",
+         must=["WhtCreditNoteRemainder.Compute(", "WhtCreditNoteRemainder.BeforeAnyCertReason(prefix, figures)",
+               "WhtCreditNoteRemainder.PartlyPaidReason(prefix, figures)", "WhtCreditNoteRemainder.Notice(src.DocumentNumber, figures)",
+               "n.RelatedDocumentId == src.Id", "n.CompanyId == companyId", "n.Id != cn.Id", "certs.Sum(c => c.TotalTaxAmount)"],
+         before=[("WhtCreditNoteRemainder.Compute(", "WhtCreditNoteRemainder.BeforeAnyCertReason(")],
+         forbid_lit=["ตอนออกใบให้ลดยอดตามใบลดหนี้ (ระบบยังไม่หักให้เอง)", "ตรวจยอดบน 50 ทวิ ของงวดที่จ่ายแล้วกับงวดที่เหลือเอง"],
+         why=_BOARD1013_B + "A3 ป้าย \"50 ทวิ ต้องตรวจ\" ของใบลดหนี้ก่อนออกใบ/จ่ายไม่ครบ บอกยอดที่ต้องกรอก (ใบเดิม − ใบลดหนี้ทุกใบที่มีผล − ที่ออกใบแล้ว) "
+             "จากตัวคิดเดียว — ห้ามกลับไปให้ผู้ใช้คิดเอง"),
+    dict(file="Services/Implementations/TaxService.cs", method="GeneratePp36Report",
+         must=["WithholdingTaxCertType.PayOnce", "WithholdingTaxCertType.PayAlways",
+               "ForeignServiceVat.BorneTaxOutsideLines(b.Type, serviceValue, doc.WithholdingTaxAmount, b.Income, b.Tax)"],
+         why=_BOARD1013_B + "A5b รายงาน ภ.พ.36 นับส่วนที่ผู้จ่ายออกแทนของ 50 ทวิ \"ครั้งเดียว\" ด้วย — คิดต่อเงื่อนไขผ่านตัวตัดสินเดียว"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="IssueWarningsAsync",
+         must=["WithholdingTaxCertType.PayOnce", "ForeignServiceVat.BorneTaxOutsideLines(cert.CertificateType,"],
+         forbid=["cert.CertificateType == WithholdingTaxCertType.PayAlways &&"],
+         why=_BOARD1013_B + "A5b คำเตือน \"VAT ขาด\" ตอนออก/แก้ 50 ทวิ \"ครั้งเดียว\" ใช้ตัวตัดสินเดียวกับรายงาน"),
 ]
 
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}

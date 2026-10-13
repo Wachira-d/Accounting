@@ -205,7 +205,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     warnings.Add($"แถว \"{ln.IncomeDescription}\": {rateWarn}");
         }
 
-        if (cert.CertificateType == WithholdingTaxCertType.PayAlways && cert.DocumentId is Guid docId && cert.TotalTaxAmount > 0m)
+        // บอร์ดตัดสิน 2026-10-13 (ทีม B · A5b): "ออกให้ครั้งเดียว" ก็มีส่วนที่ผู้จ่ายออกแทน (ม.39) ⇒ ตรวจฐาน ภ.พ.36 ด้วย — ตัวตัดสินเดียวกับรายงาน คิดตามเงื่อนไขของใบ
+        if (cert.CertificateType is WithholdingTaxCertType.PayAlways or WithholdingTaxCertType.PayOnce
+            && cert.DocumentId is Guid docId && cert.TotalTaxAmount > 0m)
         {
             var doc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
                 .FirstOrDefaultAsync(d => d.Id == docId && d.CompanyId == companyId && !d.IsDeleted);
@@ -213,7 +215,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             {
                 var serviceValue = DocumentVatFallback.TaxBase(doc.Lines, doc.SubTotal, doc.TotalAmount, doc.VatAmount);
                 // ฝ่ายค้านรอบสอง R2M-3: บรรทัดที่คีย์ gross-up แล้ว (เงินได้บน 50 ทวิ = ยอดบรรทัด) ห้ามบวกภาษีออกแทนซ้ำ — ตัวตัดสินเดียวกับรายงาน ภ.พ.36
-                var borneOutside = ForeignServiceVat.BorneTaxOutsideLines(serviceValue, doc.WithholdingTaxAmount,
+                var borneOutside = ForeignServiceVat.BorneTaxOutsideLines(cert.CertificateType, serviceValue, doc.WithholdingTaxAmount,
                     cert.TotalIncomeAmount, cert.TotalTaxAmount);
                 var gap = ForeignServiceVat.Pp36Shortfall(serviceValue, borneOutside, doc.VatAmount);
                 if (gap > 0m)
@@ -1018,19 +1020,27 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             .Where(w => w.CompanyId == companyId && w.DocumentId == src.Id && w.Status != WithholdingTaxCertStatus.Voided)
             .ToListAsync();
         var prefix = $"ใบลดหนี้ {cn.DocumentNumber} ลดภาษีหัก ณ ที่จ่าย {cn.WithholdingTaxAmount:N2} บาท";
-        if (certs.Count == 0)
+        if (certs.Count == 0 || src.BalanceDue > 0.01m)
         {
-            // ยังไม่มีใบ (ยังไม่จ่าย/ออกเอง) — ใบที่จะออกทีหลังคิดจากยอดของใบต้นทาง ⇒ ต้องมีคนตรวจยอดตอนออก
-            await FlagReviewAsync(companyId, src, $"{prefix} แต่ใบต้นทางยังไม่มี 50 ทวิ — ตอนออกใบให้ลดยอดตามใบลดหนี้ (ระบบยังไม่หักให้เอง)", userId);
-            notices.Add($"{src.DocumentNumber}: ติดป้าย \"50 ทวิ ต้องตรวจ\"");
-            return notices;
-        }
-
-        // ใบต้นทางยังจ่ายไม่ครบ — ใบลดหนี้เกณฑ์เงินสดไม่แตะหนี้ 2191x (ลง gross) และใบที่มีอยู่เป็นของงวดที่จ่ายแล้ว ⇒ ระบบเลือกแทนไม่ได้ว่าลดตรงไหน
-        if (src.BalanceDue > 0.01m)
-        {
-            await FlagReviewAsync(companyId, src, $"{prefix} แต่ใบต้นทางยังจ่ายไม่ครบ — ตรวจยอดบน 50 ทวิ ของงวดที่จ่ายแล้วกับงวดที่เหลือเอง", userId);
-            notices.Add($"{src.DocumentNumber}: ติดป้าย \"50 ทวิ ต้องตรวจ\"");
+            // บอร์ดตัดสิน 2026-10-13 (A3): ป้ายต้องบอกตัวเลขที่ต้องกรอก ไม่ใช่ "ลดยอดเอง" — ภาษีหักที่เหลือ = ใบเดิม − ใบลดหนี้ทุกใบที่มีผลของใบต้นทาง
+            // (ใบนี้ + ใบก่อนหน้า · ใบที่สองต้องไม่ลืมใบแรก) − 50 ทวิ ที่ออกแล้วของงวดที่จ่าย · ตัวคิด/ข้อความตัวเดียว WhtCreditNoteRemainder
+            var cnNotIssued = DocumentStatusRules.NotIssued;
+            var otherCnWht = await _db.Documents.AsNoTracking()
+                .Where(n => n.CompanyId == companyId && !n.IsDeleted && n.Id != cn.Id
+                    && n.DocumentType == DocumentType.CreditNote && n.RelatedDocumentId == src.Id
+                    && n.CnDnPurchaseSideOverride != false
+                    && !cnNotIssued.Contains(n.Status) && n.Status != DocumentStatus.Voided
+                    && n.WithholdingTaxAmount > 0m)
+                .Select(n => n.WithholdingTaxAmount)
+                .ToListAsync();
+            var figures = WhtCreditNoteRemainder.Compute(src.WithholdingTaxAmount,
+                otherCnWht.Append(cn.WithholdingTaxAmount).ToList(), certs.Sum(c => c.TotalTaxAmount));
+            // ยังไม่มีใบ (ยังไม่จ่าย/ออกเอง) — ใบที่จะออกทีหลังคิดจากช่องภาษีหักตอนบันทึกจ่าย ⇒ บอกยอดที่ต้องแก้ ·
+            // ยังจ่ายไม่ครบ — ใบลดหนี้เกณฑ์เงินสดไม่แตะหนี้ 2191x (ลง gross) และใบที่มีอยู่เป็นของงวดที่จ่ายแล้ว ⇒ ระบบเลือกแทนไม่ได้ว่าลดตรงไหน
+            await FlagReviewAsync(companyId, src, certs.Count == 0
+                ? WhtCreditNoteRemainder.BeforeAnyCertReason(prefix, figures)
+                : WhtCreditNoteRemainder.PartlyPaidReason(prefix, figures), userId);
+            notices.Add(WhtCreditNoteRemainder.Notice(src.DocumentNumber, figures));
             return notices;
         }
 
@@ -1399,19 +1409,6 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // แก้ไขได้ = Draft + สร้างเอง (ไม่ผูกเอกสาร/payroll)
         IsEditable: w.Status == WithholdingTaxCertStatus.Draft
                     && !w.DocumentId.HasValue && !w.SourcePayrollRunId.HasValue,
-        CertificateRowSpecs: CertificateRowSpecs(w),
         FormBoxIndex: Accounting.Helpers.WhtCertFormText.FormBoxIndex(w.TaxFormType),
         PayerConditionIndex: Accounting.Helpers.WhtCertFormText.PayerConditionIndex(w.CertificateType));
-
-    /// <summary>ข้อความ "ระบุ" ของแถว 5/6 (รอบ 203) — ตัวตัดสินเดียว <see cref="ThaiWhtRateTable.CertificateRowSpecification"/></summary>
-    private static IReadOnlyDictionary<string, string> CertificateRowSpecs(WithholdingTaxCert w)
-    {
-        var lines = w.Lines.OrderBy(l => l.LineOrder)
-            .Select(l => ((string?)l.IncomeTypeCode, (string?)l.IncomeDescription)).ToList();
-        var specs = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var row in ThaiWhtRateTable.CertificateRowsWithSpecification)
-            if (ThaiWhtRateTable.CertificateRowSpecification(row, lines) is string spec)
-                specs[row] = spec;
-        return specs;
-    }
 }
