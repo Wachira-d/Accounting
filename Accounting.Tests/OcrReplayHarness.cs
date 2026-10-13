@@ -141,6 +141,13 @@ public static class OcrReplayHarness
                 new("แปรงทาสี 4 นิ้ว", 3m, 45.00m, 135.00m),
             }),
 
+        // ทีม D 2026-10-13 (B5 · "เคส C ไม่มีราคาต่อหน่วย"): กระดาษใบเดียวกับข้างบน แต่ engine คืน**แค่ยอดบรรทัด** (ไม่มีจำนวน/ราคา —
+        // รูปแบบที่ engine ภาพคืนบ่อย) ⇒ ตัวสร้างเก็บ UnitPrice = ยอดหลังกระจายส่วนลด · หัวใบ/ยอด/VAT เท่าใบข้างบนทุกตัว
+        // ล็อกว่าบรรทัดแบบนี้ได้ส่วนลด 0% (เดิม 5% ⇒ เปิดแก้แล้วบันทึก ComputeLineAmounts หักซ้ำ 351.50 → 333.92)
+        new ReplayPaper("hardware-bill-discount-amounts-only", OcrPaperSamples.HardwareBillDiscount,
+            EngineSubTotal: 1395m, EngineVat: 92.77m, EngineTotal: 1418.02m,
+            LineAmounts: new[] { 370m, 890m, 135m }),
+
         // ใบซูเปอร์มาร์เก็ตราคารวม VAT ลดสมาชิก (engine หยิบ "รวม 774" เป็น SubTotal)
         // 2026-10-09: เพิ่มรายการตามที่กระดาษพิมพ์ (3 บรรทัด · ราคารวม VAT) ⇒ แถวใหม่เท่านั้น
         new ReplayPaper("supermarket-member-discount", OcrPaperSamples.SupermarketMemberDiscount,
@@ -334,8 +341,9 @@ public static class OcrReplayHarness
     /// (กระดาษไม่มี ⇒ ส่ง false ทุกบรรทัด เหมือน engine ภาพ) · อัตราหัก ณ ที่จ่ายใช้ที่กระดาษพิมพ์ (<see cref="PaperWhtReader"/>) แทน
     /// <c>result.HasWht/WhtRate</c> ซึ่งในไปป์ไลน์จริงมาได้หลายทาง</para>
     ///
-    /// <para>⚠️ ค่าที่ล็อกคือ "คำตอบวันนี้" — รวมถึงพฤติกรรมที่น่าสงสัย (เช่น บรรทัดไม่มีราคาต่อหน่วยในเคส C ได้ <c>ส่วนลดบาท = 0</c>
-    /// ทั้งที่ % ส่วนลด &gt; 0) เพื่อให้การแก้ครั้งถัดไป<b>มองเห็น</b>ว่าใบไหนเปลี่ยน ไม่ใช่เพื่อรับรองว่าถูก</para>
+    /// <para>⚠️ ค่าที่ล็อกคือ "คำตอบวันนี้" — รวมถึงพฤติกรรมที่น่าสงสัย เพื่อให้การแก้ครั้งถัดไป<b>มองเห็น</b>ว่าใบไหนเปลี่ยน
+    /// ไม่ใช่เพื่อรับรองว่าถูก (ตัวอย่างที่แก้แล้ว: บรรทัดไม่มีราคาต่อหน่วยในเคส C เคยได้ % ส่วนลด &gt; 0 คู่ <c>ส่วนลดบาท = 0</c> ⇒
+    /// เปิดแก้แล้วบันทึกหักซ้ำ — ทีม D 2026-10-13 B5 ตอนนี้ 0% ผ่าน <see cref="OcrLineReconciler.LineDiscount"/>)</para>
     /// </summary>
     public static ReplayBuiltLines BuildLines(
         ReplayPaper p, decimal? headerSub, decimal? headerVat, decimal? anchoredTotal, decimal discountToSpread, PaperWht paperWht)
@@ -483,10 +491,9 @@ public static class OcrReplayHarness
                 }
                 roundingShift += shifts[i];
                 var unitPrice = lines[i].UnitPrice ?? amount;
-                var discPct = OcrLineReconciler.LineDiscountPercent(docDiscountPercent, lineGross[i]);
-                var discAmt = docDiscountPercent > 0m
-                    ? Math.Round((lines[i].UnitPrice.HasValue ? lineGross[i] : amount * (lines[i].Quantity ?? 1m)) - amount, 2, R)
-                    : 0m;
+                // ตรงกับ service: ตัวตัดสินตัวเดียว (ไม่มีราคาต่อหน่วย ⇒ 0% — ทีม D 2026-10-13 B5)
+                var (discPct, discAmt) = OcrLineReconciler.LineDiscount(
+                    docDiscountPercent, lineGross[i], lines[i].UnitPrice.HasValue, amount, lines[i].Quantity);
                 var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shifts[i];
                 rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt, lineWht));
             }

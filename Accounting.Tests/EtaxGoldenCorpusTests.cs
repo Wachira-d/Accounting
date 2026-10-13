@@ -207,7 +207,8 @@ internal static class ScanDocumentSimulator
         {
             var it = items[i];
             var amount = it.Amount ?? 0m;
-            var disc = (docPct > 0m ? R2((it.UnitPrice.HasValue ? lineGross[i] : amount * (it.Quantity ?? 1m)) - amount) : 0m) + own[i];
+            // ตัวตัดสินตัวเดียวกับ service (OcrLineReconciler.LineDiscount) — SimLine เก็บแค่ส่วนลดบาท (Resave ใช้บาท)
+            var disc = OcrLineReconciler.LineDiscount(docPct, lineGross[i], it.UnitPrice.HasValue, amount, it.Quantity).Amount + own[i];
             lines.Add(new SimLine(it.Quantity ?? 1m, it.UnitPrice ?? it.Amount ?? 0m, disc,
                 (incl ? R2(amount - spread[i]) : amount) + shifts[i], spread[i], it.VatRate ?? 0m));
         }

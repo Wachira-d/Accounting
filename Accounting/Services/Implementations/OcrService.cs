@@ -7841,6 +7841,10 @@ public class OcrService : IOcrService
                 var lineAccountId = accountPick.AccountId;
 
                 var amount = item.Amount ?? 0;
+                // ส่วนลดที่ลงบรรทัด (% + บาท) — ตัวตัดสินตัวเดียว OcrLineReconciler.LineDiscount (ทีม D 2026-10-13 B5):
+                // กระดาษไม่มีราคาต่อหน่วย ⇒ UnitPrice เก็บยอดหลังลด ⇒ % = 0 (เดิมติด % ⇒ ComputeLineAmounts หักซ้ำตอนเปิดแก้แล้วบันทึก)
+                var lineDisc = Accounting.Helpers.OcrLineReconciler.LineDiscount(
+                    docDiscountPercent, lineGross[i], item.UnitPrice.HasValue, amount, item.Quantity);
                 var priceShift = priceShifts[i];
                 lineRoundingShift += priceShift;
                 // Last line absorbs the rounding remainder (both VAT and WHT)
@@ -7877,13 +7881,11 @@ public class OcrService : IOcrService
                     UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
                     // ส่วนลด: ราคา/หน่วยคงเป็นราคาเต็ม, ใส่ % ส่วนลด, Amount = ยอดหลังลด
                     // · บรรทัดยอดก่อนลด 0 (ค่าส่งฟรี) ไม่ได้ % — ไม่มีส่วนลดบนกระดาษ (รอบ 195 · OcrLineReconciler.LineDiscountPercent)
-                    DiscountPercent = Accounting.Helpers.OcrLineReconciler.LineDiscountPercent(docDiscountPercent, lineGross[i]),
+                    // · ไม่มีราคาต่อหน่วยบนกระดาษ (UnitPrice = ยอดหลังลด) ⇒ 0% (ทีม D 2026-10-13 B5 · OcrLineReconciler.LineDiscount)
+                    DiscountPercent = lineDisc.Percent,
                     // รอบ 192: บรรทัดที่มีราคาต่อหน่วยใช้ยอดก่อนลดตัวเดียวกับที่ใช้กระจาย (lineGross — ยอดที่พิมพ์ชนะ
                     // เศษปัดของราคาต่อหน่วย) ⇒ Σ ส่วนลดบรรทัด = ส่วนลดบนกระดาษพอดี · ไม่มีราคาต่อหน่วย = สูตรเดิม
-                    DiscountAmount = (docDiscountPercent > 0m
-                        ? Math.Round((item.UnitPrice.HasValue ? lineGross[i] : (item.Amount ?? 0) * (item.Quantity ?? 1m))
-                            - amount, 2, MidpointRounding.AwayFromZero)
-                        : 0m)
+                    DiscountAmount = lineDisc.Amount
                         // + ส่วนลดรายบรรทัดของเอกสารเอง (ก่อน VAT) ⇒ round(จำนวน × ราคา) − ส่วนลด = Amount ตรงกับ DocumentService.ComputeLineAmounts
                         + lineOwnDisc[i],
                     // ⚠️ Case A (ราคา/หน่วยรวม VAT แล้ว): `DocumentLine.Amount` ต้องเป็น

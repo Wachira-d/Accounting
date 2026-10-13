@@ -93,6 +93,23 @@ public class OcrReplayLineGoldenTests
     }
 
     [Fact]
+    public void ใบร้านวัสดุ_engineคืนแค่ยอดบรรทัด_ราคาที่เก็บเป็นยอดหลังลด_ส่วนลดศูนย์เปอร์เซ็นต์_ยอดVATรวมเท่าใบที่มีราคา()
+    {
+        // ทีม D 2026-10-13 (B5): กระดาษใบเดียวกับข้างบน แต่บรรทัดไม่มีจำนวน/ราคา ⇒ ยอดหลังกระจาย 351.50 · 845.50 · 128.25 (เท่าข้างบน)
+        // VAT 24.61 · 59.19 · 8.97 (เท่าข้างบน) · ราคาที่เก็บ = ยอดหลังลด ⇒ ส่วนลด 0% / 0.00 บาท
+        // (เดิม 5% / 0.00 ⇒ เปิดแก้แล้วบันทึก ComputeLineAmounts หัก 5% ซ้ำ: 351.50 → 333.92 — ล็อกด้วย OcrCaseCLineDiscountTests)
+        Assert.Equal("Items", Val("hardware-bill-discount-amounts-only", "LineMode"));
+        Assert.Equal("DiscountOnSubTotal", Val("hardware-bill-discount-amounts-only", "ReconCase"));
+        Assert.Equal("false", Val("hardware-bill-discount-amounts-only", "PricesIncludeVat"));
+        Assert.Equal("AllStandard7:7,7,7", Val("hardware-bill-discount-amounts-only", "LineVatPlan"));
+        Assert.Equal(
+            "351.50|7|24.61|351.50|0|0.00|0.00;845.50|7|59.19|845.50|0|0.00|0.00;128.25|7|8.97|128.25|0|0.00|0.00",
+            Val("hardware-bill-discount-amounts-only", "Lines"));
+        Assert.Equal("ok", Val("hardware-bill-discount-amounts-only", "IntegrityGaps"));
+        Assert.Equal("0.00", Val("hardware-bill-discount-amounts-only", "RoundingAdjustment"));
+    }
+
+    [Fact]
     public void ใบซูเปอร์มาร์เก็ต_ราคารวมVATลดสมาชิก5เปอร์เซ็นต์_เคสE_ถอดVATจากยอดหลังลด_ฐานรวม687_20()
     {
         // 774 − 38.70 = 735.30 = ยอดรวม (ไม่ใช่ฐาน) ⇒ เคส E 5% ราคารวม VAT · กระจาย: 151.05 · 416.10 · เศษ 168.15

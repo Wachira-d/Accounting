@@ -69,6 +69,35 @@ public static class OcrLineReconciler
     public static decimal LineDiscountPercent(decimal docDiscountPercent, decimal lineGross)
         => lineGross == 0m ? 0m : docDiscountPercent;
 
+    /// <summary>ส่วนลดที่ "ลงบรรทัดหนึ่ง" ตอนสร้างเอกสารจากสแกน (% + บาท) เมื่อกระจายส่วนลดท้ายบิล (เคส C/E/C-legacy) — ตัวตัดสินตัวเดียว
+    /// ของ <c>OcrService.BuildScanLinesAsync</c> + replay harness + เทสต์ (ไม่รวมส่วนลดรายบรรทัดของเอกสารเอง <c>lineOwnDisc</c> ที่ผู้เรียกบวกเพิ่ม)
+    /// <para><b>สัญญา:</b> ราคาต่อหน่วยที่เก็บ × จำนวน − ส่วนลด (ตามสูตร <c>DocumentService.ComputeLineAmounts</c>: ส่วนลดบาท &gt; 0 ใช้บาท ·
+    /// ไม่งั้นใช้ %) = ยอดบรรทัดหลังลด ⇒ เปิดเอกสารแล้วบันทึก ยอดไม่ขยับ</para>
+    /// <para><b>ทีม D 2026-10-13 (B5 · "เคส C ไม่มีราคาต่อหน่วย"):</b> กระดาษไม่พิมพ์ราคาต่อหน่วย ⇒ ตัวสร้างเก็บ
+    /// <c>UnitPrice = Amount</c> ซึ่ง<b>เป็นยอดหลังลดแล้ว</b> (ตัวกระจายส่วนลดเขียนทับ Amount ก่อน) · เดิมยังติด % ของทั้งใบ + ส่วนลดบาท 0
+    /// (จำนวน 1) ⇒ ComputeLineAmounts หัก % ซ้ำจากยอดที่ลดแล้ว — เปิดแก้แล้วบันทึก เงินลดลงเอง (เช่น 950 × 5% ⇒ 902.50) ·
+    /// ตอนนี้: ราคาเก็บยอดสุทธิ ⇒ % = 0 · ส่วนลดบาท = ส่วนที่ทำให้ round(จำนวน × ราคา) ลงยอดสุทธิ (จำนวน 1 ⇒ 0 · สูตรเดิมทุกตัวอักษร)
+    /// · บรรทัดที่มีราคาต่อหน่วย = สูตรเดิมทุกตัวอักษร (ราคาเต็ม · % ของทั้งใบ · บาท = ยอดก่อนลด − ยอดหลังลด)</para></summary>
+    /// <param name="docDiscountPercent"><see cref="OcrLineReconcileResult.DiscountPercent"/> (0 = ไม่มีส่วนลดท้ายบิล)</param>
+    /// <param name="lineGross">ยอดก่อนลดของบรรทัด (ตัวเดียวกับที่ใช้กระจาย)</param>
+    /// <param name="hasUnitPrice">กระดาษ/engine ให้ราคาต่อหน่วยมา (<c>item.UnitPrice.HasValue</c>) — false ⇒ ราคาที่เก็บ = ยอดหลังลด</param>
+    /// <param name="lineNetAmount">ยอดบรรทัดหลังกระจายส่วนลด (<c>item.Amount</c> หลังตัวกระจาย)</param>
+    /// <param name="quantity">จำนวนที่อ่านได้ (null = 1)</param>
+    public static (decimal Percent, decimal Amount) LineDiscount(
+        decimal docDiscountPercent, decimal lineGross, bool hasUnitPrice, decimal lineNetAmount, decimal? quantity)
+    {
+        if (!hasUnitPrice)
+        {
+            // ราคาที่เก็บเป็นยอดสุทธิแล้ว — ห้ามมี % (ComputeLineAmounts จะหักซ้ำเมื่อส่วนลดบาทเป็น 0)
+            var netDisc = docDiscountPercent > 0m
+                ? Math.Round(lineNetAmount * (quantity ?? 1m) - lineNetAmount, 2, MidpointRounding.AwayFromZero)
+                : 0m;
+            return (0m, netDisc);
+        }
+        return (LineDiscountPercent(docDiscountPercent, lineGross),
+            docDiscountPercent > 0m ? Math.Round(lineGross - lineNetAmount, 2, MidpointRounding.AwayFromZero) : 0m);
+    }
+
     /// <param name="grossSum">Σ (qty × unitPrice) หรือ amount ของบรรทัดที่ OCR อ่านได้ (ก่อนส่วนลด/VAT)</param>
     /// <param name="headerSubTotal">ยอดก่อน VAT บนหัวใบ (0 = ไม่มี/อ่านไม่ได้)</param>
     /// <param name="headerVat">VAT บนหัวใบ (0 = ไม่มี)</param>

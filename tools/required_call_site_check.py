@@ -1376,10 +1376,12 @@ RULES += [
 RULES += [
     dict(file=OCR, method="BuildScanLinesAsync",
          must=["OcrLineVatPlanner.PlanWholeInvoice(", "OcrLineVatPlanner.PaperExemptAmount(",
-               "OcrLineReconciler.LineDiscountPercent("],
+               "OcrLineReconciler.LineDiscount("],
          must_re=[r"if\s*\(\s*vatPlan\s*\.\s*Decided\s*\)", r"vatPlan\s*\.\s*Rates\s*\[\s*vpi\s*\]"],
          before=[("OcrLineVatPlanner.PlanWholeInvoice(", "ThaiVatTypeRule.Suggest(")],
-         forbid=["DiscountPercent = docDiscountPercent,"],
+         # ทีม D 2026-10-13 B5: % ส่วนลดของบรรทัดมาจาก LineDiscount ตัวเดียว (ไม่มีราคาต่อหน่วย ⇒ 0% · ไม่งั้น ComputeLineAmounts หักซ้ำ)
+         forbid=["DiscountPercent = docDiscountPercent,",
+                 "DiscountPercent = Accounting.Helpers.OcrLineReconciler.LineDiscountPercent("],
          why="รอบ 195: อัตรา VAT บรรทัด = engine/ผู้ใช้ > สัญลักษณ์บนกระดาษ > ตัวเลขหัวใบพิสูจน์ทั้งใบ > เดาจากชื่อ · บรรทัดยอด 0 ไม่ได้ % ส่วนลด"),
     dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
          must=["OcrLineVatPlanner.RateAdvice(", "OcrApprovalGapWarning.Build("],
@@ -1509,7 +1511,7 @@ LINE_PIPELINE_HELPERS = [
     "OcrLineVatPlanner.PlanWholeInvoice(", "OcrLineVatPlanner.PaperExemptAmount(", "OcrLineVatMarks.ReadGroups(",
     "ThaiVatTypeRule.ToVatRate(", "ThaiVatTypeRule.Suggest(", "OcrEtaxLineNormalizer.InclusiveLineVats(", "ThaiVatTypeRule.SpreadHeaderVat(",
     "DocumentRounding.CapShifts(", "DocumentRounding.FromPrintedLine(",
-    "OcrLineReconciler.LineDiscountPercent(", "OcrTotalDecomposer.SummaryGroupLines(", "OcrTotalDecomposer.Decompose(",
+    "OcrLineReconciler.LineDiscount(", "OcrTotalDecomposer.SummaryGroupLines(", "OcrTotalDecomposer.Decompose(",
 ]
 HARNESS = "../Accounting.Tests/OcrReplayHarness.cs"
 RULES += [
