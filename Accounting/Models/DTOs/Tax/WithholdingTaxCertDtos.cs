@@ -59,7 +59,11 @@ public record WithholdingTaxCertResponse(
     IReadOnlyList<string>? Warnings = null,
     // รอบ 203: ข้อความ "ระบุ" ของแถว 5/6 บนแบบ 50 ทวิ (คีย์ "5"/"6" · ไม่มีคีย์ = ไม่มีอะไรระบุ) — คำนวณจากตารางกลาง
     // ThaiWhtRateTable.CertificateRowSpecification ตัวเดียว ให้หน้าพรีวิวแสดงอย่างเดียว (server computes · page displays)
-    IReadOnlyDictionary<string, string>? CertificateRowSpecs = null);
+    IReadOnlyDictionary<string, string>? CertificateRowSpecs = null,
+    // รอบ 204: ช่องที่หน้าพิมพ์ 50 ทวิ (wht.html) ต้องติ๊ก — ดัชนีใน WhtCertFormText.FormBoxes / PayerConditions จากตัวตัดสินเดียว
+    // WhtCertFormText.FormBoxIndex / PayerConditionIndex (ตัวเดียวกับ HTML + QuestPDF · หน้าไม่จับคู่ชื่อ enum เอง) · null = ไม่ติ๊กช่องใด
+    int? FormBoxIndex = null,
+    int? PayerConditionIndex = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,

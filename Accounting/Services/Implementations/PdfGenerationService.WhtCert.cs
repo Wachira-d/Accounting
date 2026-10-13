@@ -102,10 +102,11 @@ public partial class PdfGenerationService
                             // ชื่อผู้ถูกหัก = คำนำหน้า (Contact.TitleTh) + ชื่อ — หน้าผู้ติดต่อบอกให้กรอกชื่อ
                             // "ไม่ต้องใส่คำนำหน้า" ⇒ ถ้าไม่ต่อตรงนี้ ใบรับรองพิมพ์ "สมชาย ใจดี" ขณะไฟล์
                             // ภ.ง.ด.3 ประกาศ "นาย" = สอง renderer ของผู้ถูกหักคนเดียวเล่าคนละชื่อ
+                            // "ลำดับที่ … ในแบบ" + ช่องแบบยื่นอยู่ในกรอบผู้ถูกหัก ตามแบบทางการ (รอบ 204 · เดิมกรอบแยก)
                             BuildPartyBlock(form, WhtCertFormText.PayeeHeading, cert.PayeeContact.TaxId,
                                 Accounting.Helpers.ThaiTitleHelper.WithTitle(cert.PayeeContact.TitleTh, cert.PayeeContact.Name)
-                                + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName), payeeAddr);
-                            BuildFormTypeRow(form, cert);
+                                + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName), payeeAddr,
+                                formTypeOf: cert);
                             BuildIncomeTable(form, lines, cert.TotalIncomeAmount, cert.TotalTaxAmount);
                             BuildTotalInWords(form, cert.TotalTaxAmount);
                             BuildFundLine(form);
@@ -157,7 +158,7 @@ public partial class PdfGenerationService
 
     // ── Party block (payer or payee) — TIN boxes + name + address ────
     private static void BuildPartyBlock(QuestPDF.Fluent.ColumnDescriptor col, string heading,
-        string? taxId, string name, string fullAddress)
+        string? taxId, string name, string fullAddress, WithholdingTaxCert? formTypeOf = null)
     {
         col.Item().BorderBottom(1).BorderColor(Colors.Black).Padding(5).Column(c =>
         {
@@ -178,22 +179,15 @@ public partial class PdfGenerationService
                     rr.AutoItem().Element(e => DrawTinBoxes(e, taxId));
                 });
             });
-            // Row 1b: legacy 10-digit TIN row (matches the official form which
-            // still prints the old format underneath the 13-digit boxes).
-            c.Item().PaddingTop(2).Row(r =>
-            {
-                r.RelativeItem().AlignRight().Row(rr =>
-                {
-                    rr.AutoItem().AlignBottom().PaddingRight(3).Text(WhtCertFormText.TaxId10).FontSize(7.5f);
-                    rr.AutoItem().Element(e => DrawOldTinBoxes(e));
-                });
-            });
-            // Row 2: name field with dotted underline
+            // Row 2: name field with dotted underline + legacy 10-digit TIN boxes on the SAME row (right) —
+            // ตามแบบทางการ (รอบ 204 · เดิมช่อง 10 หลักแยกบรรทัดเหนือชื่อ)
             c.Item().PaddingTop(2).Row(r =>
             {
                 r.ConstantItem(40).Text(WhtCertFormText.Name).Bold();
                 r.RelativeItem().Border(0).BorderBottom(0.5f).BorderColor(Colors.Black)
                     .Text(" " + (name ?? "") + " ").FontSize(10);
+                r.AutoItem().PaddingLeft(6).AlignBottom().PaddingRight(3).Text(WhtCertFormText.TaxId10).FontSize(7.5f);
+                r.AutoItem().AlignBottom().Element(e => DrawOldTinBoxes(e));
             });
             c.Item().PaddingLeft(40).Text(WhtCertFormText.NameHint)
                 .FontSize(7.5f).Italic().FontColor(Colors.Grey.Darken1);
@@ -206,6 +200,8 @@ public partial class PdfGenerationService
             });
             c.Item().PaddingLeft(40).Text(WhtCertFormText.AddressHint)
                 .FontSize(7.5f).Italic().FontColor(Colors.Grey.Darken1);
+            if (formTypeOf is { } ftCert)
+                c.Item().PaddingTop(4).Element(e => BuildFormTypeRow(e, ftCert));
         });
     }
 
@@ -246,12 +242,11 @@ public partial class PdfGenerationService
     }
 
     // ── Form-type checkbox grid (ภ.ง.ด.1ก / 1ก พิเศษ / 2 / 3 / 2ก / 3ก / 53)
-    private static void BuildFormTypeRow(QuestPDF.Fluent.ColumnDescriptor col, WithholdingTaxCert cert)
+    // ช่องที่ติ๊กจากตัวตัดสินเดียว WhtCertFormText.FormBoxIndex (ตัวเดียวกับ HTML + หน้าพิมพ์ wht.html) — รอบ 204: ภ.ง.ด.2 → (3)
+    private static void BuildFormTypeRow(QuestPDF.Infrastructure.IContainer container, WithholdingTaxCert cert)
     {
-        bool Pnd1k  = cert.TaxFormType == TaxType.WithholdingTax1;
-        bool Pnd3   = cert.TaxFormType == TaxType.WithholdingTax3;
-        bool Pnd53  = cert.TaxFormType == TaxType.WithholdingTax53;
-        col.Item().BorderBottom(1).BorderColor(Colors.Black).Padding(5).Row(r =>
+        var box = WhtCertFormText.FormBoxIndex(cert.TaxFormType);
+        container.Row(r =>
         {
             r.ConstantItem(200).Column(c =>
             {
@@ -269,16 +264,11 @@ public partial class PdfGenerationService
             {
                 c.Item().Row(rr =>
                 {
-                    DrawCheckOption(rr, Pnd1k, WhtCertFormText.FormBoxes[0]);
-                    DrawCheckOption(rr, false, WhtCertFormText.FormBoxes[1]);
-                    DrawCheckOption(rr, false, WhtCertFormText.FormBoxes[2]);
-                    DrawCheckOption(rr, Pnd3,  WhtCertFormText.FormBoxes[3]);
+                    for (var i = 0; i < 4; i++) DrawCheckOption(rr, box == i, WhtCertFormText.FormBoxes[i]);
                 });
                 c.Item().PaddingTop(2).Row(rr =>
                 {
-                    DrawCheckOption(rr, false, WhtCertFormText.FormBoxes[4]);
-                    DrawCheckOption(rr, false, WhtCertFormText.FormBoxes[5]);
-                    DrawCheckOption(rr, Pnd53, WhtCertFormText.FormBoxes[6]);
+                    for (var i = 4; i < 7; i++) DrawCheckOption(rr, box == i, WhtCertFormText.FormBoxes[i]);
                     rr.RelativeItem();
                 });
             });
@@ -407,25 +397,27 @@ public partial class PdfGenerationService
 
     private static void BuildFundLine(QuestPDF.Fluent.ColumnDescriptor col)
     {
-        col.Item().BorderBottom(1).BorderColor(Colors.Black).Padding(5)
-            .Text(WhtCertFormText.FundGov + " ________ " + WhtCertFormText.Baht + "  " +
-                  WhtCertFormText.FundSso + " ________ " + WhtCertFormText.Baht + "  " +
-                  WhtCertFormText.FundPvd + " ________ " + WhtCertFormText.Baht)
-            .FontSize(9);
+        col.Item().BorderBottom(1).BorderColor(Colors.Black).Padding(5).Text(t =>
+        {
+            t.Span(WhtCertFormText.FundLead + " ").Bold().FontSize(9);
+            t.Span(WhtCertFormText.FundGov + " ________ " + WhtCertFormText.Baht + "  " +
+                   WhtCertFormText.FundSso + " ________ " + WhtCertFormText.Baht + "  " +
+                   WhtCertFormText.FundPvd + " ________ " + WhtCertFormText.Baht).FontSize(9);
+        });
     }
 
     private static void BuildConditionsRow(QuestPDF.Fluent.ColumnDescriptor col, WithholdingTaxCert cert)
     {
-        bool isWithhold  = cert.CertificateType == Models.DTOs.Tax.WithholdingTaxCertType.Withhold;
-        bool isPayAlways = cert.CertificateType == Models.DTOs.Tax.WithholdingTaxCertType.PayAlways;
+        // ตัวตัดสินเดียว WhtCertFormText.PayerConditionIndex — รอบ 204: ออกให้ครั้งเดียว (PayOnce) → (3)
+        var cond = WhtCertFormText.PayerConditionIndex(cert.CertificateType);
         col.Item().BorderBottom(1).BorderColor(Colors.Black).Padding(5).Row(r =>
         {
             var pc = WhtCertFormText.PayerConditions;
             r.ConstantItem(75).AlignMiddle().Text(WhtCertFormText.PayerConditionHeading).Bold().FontSize(10);
-            DrawCheckOption(r, isWithhold,  pc[0]);
-            DrawCheckOption(r, isPayAlways, pc[1]);
-            DrawCheckOption(r, false,       pc[2]);
-            DrawCheckOption(r, false,       pc[3] + " ________");
+            DrawCheckOption(r, cond == 0, pc[0]);
+            DrawCheckOption(r, cond == 1, pc[1]);
+            DrawCheckOption(r, cond == 2, pc[2]);
+            DrawCheckOption(r, cond == 3, pc[3] + " ________");
         });
     }
 
@@ -437,10 +429,11 @@ public partial class PdfGenerationService
         var yy = issuedDate.HasValue ? (issuedDate.Value.Year + 543).ToString() : "______";
         col.Item().Row(r =>
         {
-            r.RelativeItem(35).BorderRight(1).BorderColor(Colors.Black).Padding(6).Column(c =>
+            // คำเตือน: หัวข้อซ้าย ข้อความห้อยด้านขวา ตามแบบทางการ (รอบ 204 · เดิมหัวข้อกลางอยู่เหนือข้อความ)
+            r.RelativeItem(35).BorderRight(1).BorderColor(Colors.Black).Padding(6).Row(w =>
             {
-                c.Item().AlignCenter().Text(WhtCertFormText.WarningHeading).Bold().FontSize(10);
-                c.Item().PaddingTop(2).Text(WhtCertFormText.WarningText).FontSize(8);
+                w.AutoItem().PaddingRight(4).Text(WhtCertFormText.WarningHeading).Bold().FontSize(9);
+                w.RelativeItem().Text(WhtCertFormText.WarningText).FontSize(8);
             });
             // Right cell: signature column on the left + circular stamp pinned
             // to the right edge, vertically centred — matches the official form
@@ -511,13 +504,17 @@ public partial class PdfGenerationService
 
     private static void BuildFootnote(QuestPDF.Fluent.ColumnDescriptor col)
     {
-        col.Item().PaddingTop(3).Text(t =>
+        // ข้อ 1 อยู่บรรทัดเดียวกับ "หมายถึง" · ข้อ 2–3 ตรงแนวข้อ 1 ตามแบบทางการ (รอบ 204 · เดิมทุกข้อขึ้นบรรทัดใหม่)
+        col.Item().PaddingTop(3).Row(r =>
         {
-            t.Span(WhtCertFormText.FootnoteHeading + " ").Bold().FontSize(9);
-            t.Span(WhtCertFormText.FootnoteLead + " ").FontSize(8.5f);
-            t.Span("*").FontColor(Colors.Red.Darken2).FontSize(8.5f);
-            t.Span(" " + WhtCertFormText.FootnoteLeadTail).FontSize(8.5f);
+            r.AutoItem().PaddingRight(4).Text(t =>
+            {
+                t.Span(WhtCertFormText.FootnoteHeading + " ").Bold().FontSize(9);
+                t.Span(WhtCertFormText.FootnoteLead + " ").FontSize(8.5f);
+                t.Span("*").FontColor(Colors.Red.Darken2).FontSize(8.5f);
+                t.Span(" " + WhtCertFormText.FootnoteLeadTail).FontSize(8.5f);
+            });
+            r.RelativeItem().Text(string.Join("\n", WhtCertFormText.FootnoteItems)).FontSize(8);
         });
-        col.Item().PaddingLeft(20).Text(string.Join("\n", WhtCertFormText.FootnoteItems)).FontSize(8);
     }
 }

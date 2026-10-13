@@ -1,4 +1,6 @@
+using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
 
@@ -56,7 +58,9 @@ public static class WhtCertFormText
         "(5) ภ.ง.ด.2ก", "(6) ภ.ง.ด.3ก", "(7) ภ.ง.ด.53",
     };
 
-    public const string ColIncomeType = "ประเภทเงินได้พึงประเมินที่จ่าย";
+    /// <summary>หัวคอลัมน์ตามแบบทางการ "ประเภทเงินได้พึงประเมินจ่าย" (ไม่มี "ที่" — รอบ 204 · เดิม "…ประเมินที่จ่าย") ·
+    /// ที่มา: ภาพแบบที่เจ้าของส่ง (คำตัดสินข้อ 148) วัดความกว้างตัวอักษรเทียบหัวคอลัมน์ "จำนวนเงินที่จ่าย" ในภาพเดียวกัน</summary>
+    public const string ColIncomeType = "ประเภทเงินได้พึงประเมินจ่าย";
     public const string ColDate1 = "วัน เดือน";
     public const string ColDate2 = "หรือปีภาษี ที่จ่าย";
     public const string ColAmount = "จำนวนเงินที่จ่าย";
@@ -68,8 +72,10 @@ public static class WhtCertFormText
     public const string Row3 = "3. ค่าแห่งลิขสิทธิ์ ฯลฯ ตามมาตรา 40 (3)";
     public const string Row4a = "4. (ก) ดอกเบี้ย ฯลฯ ตามมาตรา 40 (4) (ก)";
     public const string Row4b = "(ข) เงินปันผล เงินส่วนแบ่งกำไร ฯลฯ ตามมาตรา 40 (4) (ข)";
-    public const string Div1a = "(1) กรณีผู้ได้รับเงินปันผลได้รับเครดิตภาษี โดยจ่ายจาก";
-    public const string Div1b = "กำไรสุทธิของกิจการที่ต้องเสียภาษีเงินได้นิติบุคคลในอัตราดังนี้";
+    // 4(ข) — ข้อความและจุดตัดบรรทัดตามแบบทางการ (รอบ 204 · คำตัดสินข้อ 148 "เป๊ะทุกอย่าง") — เดิม: ตัดหลัง "โดยจ่ายจาก" ·
+    // "กิจการที่ต้องเสียภาษี…ในอัตราดังนี้" · (2.2) "เงินปันผลหรือเงินส่วนแบ่ง…" · (2.3) "กำไรสุทธิส่วนที่ได้หัก… 5 ปี / ก่อนรอบระยะเวลา…"
+    public const string Div1a = "(1) กรณีผู้ได้รับเงินปันผลได้รับเครดิตภาษี โดยจ่ายจากกำไรสุทธิของ";
+    public const string Div1b = "กิจการที่ได้ต้องเสียภาษีเงินได้นิติบุคคลในอัตรา ดังนี้";
     public const string Div11 = "(1.1) อัตราร้อยละ 30 ของกำไรสุทธิ";
     public const string Div12 = "(1.2) อัตราร้อยละ 25 ของกำไรสุทธิ";
     public const string Div13 = "(1.3) อัตราร้อยละ 20 ของกำไรสุทธิ";
@@ -77,10 +83,10 @@ public static class WhtCertFormText
     public const string Div14Tail = "ของกำไรสุทธิ";
     public const string Div2 = "(2) กรณีผู้ได้รับเงินปันผลไม่ได้รับเครดิตภาษี เนื่องจากจ่ายจาก";
     public const string Div21 = "(2.1) กำไรสุทธิของกิจการที่ได้รับยกเว้นภาษีเงินได้นิติบุคคล";
-    public const string Div22a = "(2.2) เงินปันผลหรือเงินส่วนแบ่งของกำไรที่ได้รับยกเว้น";
-    public const string Div22b = "ไม่ต้องนำมารวมคำนวณเป็นรายได้เพื่อเสียภาษีเงินได้นิติบุคคล";
-    public const string Div23a = "(2.3) กำไรสุทธิส่วนที่ได้หักผลขาดทุนสุทธิยกมาไม่เกิน 5 ปี";
-    public const string Div23b = "ก่อนรอบระยะเวลาบัญชีปีปัจจุบัน";
+    public const string Div22a = "(2.2) เงินปันผลหรือส่วนแบ่งของกำไรที่ได้รับยกเว้นไม่ต้องนำมารวม";
+    public const string Div22b = "คำนวณเป็นรายได้เพื่อเสียภาษีเงินได้นิติบุคคล";
+    public const string Div23a = "(2.3) กำไรสุทธิที่ได้หักผลขาดทุนสุทธิยกมาไม่เกิน 5 ปีก่อนรอบระยะ";
+    public const string Div23b = "เวลาบัญชีปีปัจจุบัน";
     public const string Div24 = "(2.4) กำไรที่รับรู้ทางบัญชีโดยวิธีส่วนได้เสีย (equity method)";
     public const string Div25 = "(2.5) อื่น ๆ (ระบุ)";
     public const string Row5 = "5. การจ่ายเงินได้ที่ต้องหักภาษี ณ ที่จ่าย ตามคำสั่งกรมสรรพากรที่ออกตามมาตรา 3 เตรส เช่น รางวัล ส่วนลดหรือประโยชน์ใด ๆ เนื่องจากการส่งเสริมการขาย รางวัลในการประกวด การแข่งขัน การชิงโชค ค่าแสดงของนักแสดงสาธารณะ ค่าจ้างทำของ ค่าโฆษณา ค่าเช่า ค่าขนส่ง ค่าบริการ ค่าเบี้ยประกันวินาศภัย ฯลฯ";
@@ -91,7 +97,9 @@ public static class WhtCertFormText
     public const string TotalWords = "รวมเงินภาษีที่หักนำส่ง";
     public const string TotalWordsHint = "(ตัวอักษร)";
 
-    public const string FundGov = "เงินที่จ่ายเข้า กบข./กสจ./กองทุนสงเคราะห์ครูโรงเรียนเอกชน";
+    /// <summary>หัวบรรทัดกองทุน (ตัวหนาบนแบบทางการ) — ต่อด้วย <see cref="FundGov"/> · รอบ 204 แยกจาก FundGov เดิม (ข้อความรวมเท่าเดิม)</summary>
+    public const string FundLead = "เงินที่จ่ายเข้า";
+    public const string FundGov = "กบข./กสจ./กองทุนสงเคราะห์ครูโรงเรียนเอกชน";
     public const string FundSso = "กองทุนประกันสังคม";
     public const string FundPvd = "กองทุนสำรองเลี้ยงชีพ";
     public const string Baht = "บาท";
@@ -106,8 +114,9 @@ public static class WhtCertFormText
     public const string WarningText = "ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร ต้องรับโทษทางอาญาตามมาตรา 35 แห่งประมวลรัษฎากร";
     public const string Certify = "ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ";
     public const string SignLead = "ลงชื่อ";
-    /// <summary>แบบทางการพิมพ์ "ผู้จ่ายเงิน" — ระบบใช้ "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" โดยตั้งใจตั้งแต่รอบ 72 (commit 6f8e7115) · รอคำตัดสินเจ้าของ</summary>
-    public const string SignRole = "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย";
+    /// <summary>ป้ายท้ายช่องลงชื่อตามแบบทางการ "ผู้จ่ายเงิน" — คำตัดสินเจ้าของข้อ 148 (2026-10-12) ทุก renderer
+    /// (รอบ 72 `6f8e7115` เคยเปลี่ยนเป็น "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" — ยกเลิกแล้ว)</summary>
+    public const string SignRole = "ผู้จ่ายเงิน";
     public const string SignDateHint = "(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)";
     public static readonly IReadOnlyList<string> StampLines = new[] { "ประทับตรา", "นิติบุคคล", "(ถ้ามี)" };
 
@@ -134,7 +143,7 @@ public static class WhtCertFormText
             Title, Subtitle, BookNo, CertNo, PayerHeading, PayeeHeading, TaxId13, TaxId10, Name, NameHint, Address, AddressHint,
             SeqLabel, SeqInForm, SeqHint, ColIncomeType, ColDate1, ColDate2, ColAmount, ColTax1, ColTax2,
             Row1, Row2, Row3, Row4a, Row4b, Div1a, Div1b, Div11, Div12, Div13, Div14, Div14Tail, Div2, Div21, Div22a, Div22b,
-            Div23a, Div23b, Div24, Div25, Row5, Row6, Total, TotalWords, TotalWordsHint, FundGov, FundSso, FundPvd, Baht,
+            Div23a, Div23b, Div24, Div25, Row5, Row6, Total, TotalWords, TotalWordsHint, FundLead, FundGov, FundSso, FundPvd, Baht,
             PayerConditionHeading, WarningHeading, WarningText, Certify, SignLead, SignRole, SignDateHint,
             FootnoteHeading, FootnoteLead, FootnoteLeadTail,
         }) yield return s;
@@ -143,6 +152,34 @@ public static class WhtCertFormText
         foreach (var s in StampLines) yield return s;
         foreach (var s in FootnoteItems) yield return s;
     }
+
+    /// <summary>
+    /// ช่องแบบยื่นที่ต้องติ๊ก (ดัชนีใน <see cref="FormBoxes"/>) — <b>ตัวตัดสินเดียวของทั้ง 3 renderer</b> (HTML · QuestPDF · หน้าพิมพ์ใน
+    /// <c>wht.html</c> ผ่าน <c>WithholdingTaxCertResponse.FormBoxIndex</c> — หน้าไม่จับคู่ชื่อแบบเอง) · null = ไม่มีช่องบนแบบ (เช่น ภ.ง.ด.54)
+    /// <para>ภ.ง.ด.1 → (1) ภ.ง.ด.1ก (ค่าเดิม) · ภ.ง.ด.2 → (3) (รอบ 204 · คำตัดสินข้อ 148 · เดิมไม่มีแบบนี้ ช่อง (3) ว่างเสมอ) ·
+    /// ภ.ง.ด.3 → (4) · ภ.ง.ด.53 → (7) · ช่อง (2) 1ก พิเศษ / (5) 2ก / (6) 3ก ไม่มีแบบในระบบ ⇒ ไม่ติ๊ก</para>
+    /// </summary>
+    public static int? FormBoxIndex(TaxType formType) => formType switch
+    {
+        TaxType.WithholdingTax1 => 0,
+        TaxType.WithholdingTax2 => 2,
+        TaxType.WithholdingTax3 => 3,
+        TaxType.WithholdingTax53 => 6,
+        _ => null,
+    };
+
+    /// <summary>
+    /// เงื่อนไข "ผู้จ่ายเงิน" ที่ต้องติ๊ก (ดัชนีใน <see cref="PayerConditions"/>) — ตัวตัดสินเดียวของทั้ง 3 renderer
+    /// (หน้าเว็บผ่าน <c>WithholdingTaxCertResponse.PayerConditionIndex</c>) · (1) หัก ณ ที่จ่าย · (2) ออกให้ตลอดไป ·
+    /// (3) ออกให้ครั้งเดียว (รอบ 204 · <c>PayOnce</c>) · (4) อื่น ๆ ไม่มีค่าในระบบ ⇒ null = ไม่ติ๊กช่องใด
+    /// </summary>
+    public static int? PayerConditionIndex(WithholdingTaxCertType certificateType) => certificateType switch
+    {
+        WithholdingTaxCertType.Withhold => 0,
+        WithholdingTaxCertType.PayAlways => 1,
+        WithholdingTaxCertType.PayOnce => 2,
+        _ => null,
+    };
 
     /// <summary>
     /// "รายการ" ที่พิมพ์ในช่อง (ระบุ) ของแถว 6 อื่น ๆ — บรรทัดที่ตกแถว 6 (<see cref="ThaiWhtRateTable.CertificateRow"/> = "6")

@@ -979,7 +979,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // แก้ไขได้ = Draft + สร้างเอง (ไม่ผูกเอกสาร/payroll)
         IsEditable: w.Status == WithholdingTaxCertStatus.Draft
                     && !w.DocumentId.HasValue && !w.SourcePayrollRunId.HasValue,
-        CertificateRowSpecs: CertificateRowSpecs(w));
+        CertificateRowSpecs: CertificateRowSpecs(w),
+        FormBoxIndex: Accounting.Helpers.WhtCertFormText.FormBoxIndex(w.TaxFormType),
+        PayerConditionIndex: Accounting.Helpers.WhtCertFormText.PayerConditionIndex(w.CertificateType));
 
     /// <summary>ข้อความ "ระบุ" ของแถว 5/6 (รอบ 203) — ตัวตัดสินเดียว <see cref="ThaiWhtRateTable.CertificateRowSpecification"/></summary>
     private static IReadOnlyDictionary<string, string> CertificateRowSpecs(WithholdingTaxCert w)

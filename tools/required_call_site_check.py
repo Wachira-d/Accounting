@@ -6295,6 +6295,18 @@ RULES += [
     dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildFootnote",
          must=["WhtCertFormText.FootnoteItems"], forbid_lit=["กรณีอื่น"],
          why="50 ทวิ QuestPDF: หมายเหตุครบ 3 ข้อจากตัวตั้งเดียว (เดิมขาด \"นอกเหนือจาก 1. และ 2.\")"),
+    # รอบ 204 · คำตัดสินข้อ 148: ช่องที่ติ๊ก (แบบยื่น · เงื่อนไขผู้จ่ายเงิน) จากตัวตัดสินเดียว — ภ.ง.ด.2 → (3) · ออกให้ครั้งเดียว → (3)
+    # เดิมแต่ละ renderer เทียบ enum เอง ⇒ ภ.ง.ด.2 ไม่มี renderer ไหนติ๊ก · หน้าพิมพ์ wht.html ได้ดัชนีผ่าน DTO (WhtCertFormTextTests ล็อกฝั่ง JS)
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
+         must=["WhtCertFormText.FormBoxIndex(cert.TaxFormType)", "WhtCertFormText.PayerConditionIndex(cert.CertificateType)"],
+         forbid=["cert.TaxFormType == ", "cert.CertificateType == "],
+         why="50 ทวิ HTML: ติ๊กช่องแบบยื่น/เงื่อนไขผู้จ่ายเงินจาก WhtCertFormText ตัวเดียว (รอบ 204 · ภ.ง.ด.2 · ออกให้ครั้งเดียว)"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildFormTypeRow",
+         must=["WhtCertFormText.FormBoxIndex(cert.TaxFormType)"], forbid=["cert.TaxFormType == "],
+         why="50 ทวิ QuestPDF: ช่องแบบยื่นจากตัวตัดสินเดียวกับ HTML (รอบ 204 · ภ.ง.ด.2 → (3))"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildConditionsRow",
+         must=["WhtCertFormText.PayerConditionIndex(cert.CertificateType)"], forbid=["cert.CertificateType == "],
+         why="50 ทวิ QuestPDF: เงื่อนไขผู้จ่ายเงินจากตัวตัดสินเดียวกับ HTML (รอบ 204 · ออกให้ครั้งเดียว → (3))"),
 ]
 
 

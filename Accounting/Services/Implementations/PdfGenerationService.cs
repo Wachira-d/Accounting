@@ -2556,8 +2556,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             => string.Join("<span class='ts'>&nbsp;</span>", WhtCertFormText.TaxId10Groups
                 .Select(n => string.Concat(Enumerable.Repeat("<span class='tb'> </span>", n))));
         string Chk(bool v) => v ? "&#9745;" : "&#9744;";
-        string Fc(TaxType t) => cert.TaxFormType == t ? "&#9745;" : "&#9744;";
-        var T = (Func<int, string>)(i => WhtCertFormText.FormBoxes[i]);
+        // ช่องที่ติ๊ก (แบบยื่น · เงื่อนไขผู้จ่ายเงิน) จากตัวตัดสินเดียว `WhtCertFormText.FormBoxIndex/PayerConditionIndex` —
+        // ตัวเดียวกับ QuestPDF และหน้าพิมพ์ใน wht.html (ผ่าน DTO) · รอบ 204: ภ.ง.ด.2 → (3) · ออกให้ครั้งเดียว → (3)
+        var formBox = WhtCertFormText.FormBoxIndex(cert.TaxFormType);
+        var payerCond = WhtCertFormText.PayerConditionIndex(cert.CertificateType);
+        string Box(int i) => $"<td><span class='ck'>{Chk(formBox == i)}</span> <b>{WhtCertFormText.FormBoxes[i]}</b></td>";
         // แถว 6 "อื่น ๆ (ระบุ)" พิมพ์รายการของบรรทัดที่ตกแถวนี้ (แถว 5 ไม่มีช่องระบุบนแบบ ⇒ ไม่พิมพ์)
         var row6Spec = WhtCertFormText.Row6Spec(lines);
 
@@ -2583,8 +2586,6 @@ public partial class PdfGenerationService : IPdfGenerationService
             return $"<td class='dtc'>{d.Day} {ThaiMonthAbbr(d.Month)} {d.Year + 543}</td><td class='amt'>{ml.Sum(l => l.IncomeAmount):N2}</td><td class='amt'>{ml.Sum(l => l.TaxAmount):N2}</td>";
         }
 
-        var isWithhold = cert.CertificateType == Models.DTOs.Tax.WithholdingTaxCertType.Withhold;
-        var isPayAlways = cert.CertificateType == Models.DTOs.Tax.WithholdingTaxCertType.PayAlways;
         var issuedDay = cert.IssuedDate?.Day.ToString() ?? "&nbsp;&nbsp;";
         var issuedMonth = cert.IssuedDate.HasValue ? (cert.IssuedDate.Value.Month).ToString() : "&nbsp;&nbsp;";
         var issuedYear = cert.IssuedDate.HasValue ? (cert.IssuedDate.Value.Year + 543).ToString() : "&nbsp;&nbsp;&nbsp;&nbsp;";
@@ -2665,8 +2666,8 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             // Payer
             sb.AppendLine("<tr><td class='sec-cell'>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayerHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(company.TaxId)}</td></tr></table>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td colspan='2' style='text-align:right;font-size:12px;padding-top:2px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(company.Name + CertBranchSuffix(company.TaxId, company.BranchCode, company.BranchName))}&nbsp;</u></td></tr></table>");
+            // ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ)
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(company.Name + CertBranchSuffix(company.TaxId, company.BranchCode, company.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.NameHint}</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Address}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(fullAddress)}&nbsp;</u></td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.AddressHint}</div>");
@@ -2675,20 +2676,20 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             // Payee
             sb.AppendLine("<tr><td class='sec-cell'>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayeeHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(cert.PayeeContact.TaxId)}</td></tr></table>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td colspan='2' style='text-align:right;font-size:12px;padding-top:2px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(cert.PayeeContact.Name + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName))}&nbsp;</u></td></tr></table>");
+            // ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ)
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(cert.PayeeContact.Name + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.NameHint}</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Address}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(payeeAddr)}&nbsp;</u></td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.AddressHint}</div>");
-            sb.AppendLine("</td></tr>");
 
-            // Form type checkboxes
-            sb.AppendLine("<tr><td class='ftype-cell'><table class='inner' cellspacing='0'><tr>");
+            // ลำดับที่ … ในแบบ + ช่องแบบยื่น — อยู่ในกรอบเดียวกับผู้ถูกหัก ตามแบบทางการ (รอบ 204 · เดิมเป็นกรอบแยก)
+            sb.AppendLine("<div class='ftype-cell' style='padding:4px 0 0'><table class='inner' cellspacing='0'><tr>");
             sb.AppendLine($"<td style='width:240px;vertical-align:top'><div>{WhtCertFormText.SeqLabel} <span class='sq'>&nbsp;</span> {WhtCertFormText.SeqInForm}</div><div class='hint-text' style='padding-left:0;margin-top:2px'>{WhtCertFormText.SeqHint}</div></td>");
             sb.AppendLine("<td style='vertical-align:top'><table class='inner ftype-grid' cellspacing='0'>");
-            sb.AppendLine($"<tr><td><span class='ck'>{Fc(TaxType.WithholdingTax1)}</span> <b>{T(0)}</b></td><td><span class='ck'>&#9744;</span> <b>{T(1)}</b></td><td><span class='ck'>&#9744;</span> <b>{T(2)}</b></td><td><span class='ck'>{Fc(TaxType.WithholdingTax3)}</span> <b>{T(3)}</b></td></tr>");
-            sb.AppendLine($"<tr><td><span class='ck'>&#9744;</span> <b>{T(4)}</b></td><td><span class='ck'>&#9744;</span> <b>{T(5)}</b></td><td><span class='ck'>{Fc(TaxType.WithholdingTax53)}</span> <b>{T(6)}</b></td><td></td></tr>");
-            sb.AppendLine("</table></td></tr></table></td></tr>");
+            sb.AppendLine($"<tr>{Box(0)}{Box(1)}{Box(2)}{Box(3)}</tr>");
+            sb.AppendLine($"<tr>{Box(4)}{Box(5)}{Box(6)}<td></td></tr>");
+            sb.AppendLine("</table></td></tr></table></div>");
+            sb.AppendLine("</td></tr>");
 
             // Income table
             sb.AppendLine("<tr><td style='padding:0'><table class='IT' cellspacing='0'><thead><tr>");
@@ -2709,21 +2710,22 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
 
             // Fund
             const string fundBlank = "<u class='ul'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u>";
-            sb.AppendLine($"<tr><td class='fund-cell'>{WhtCertFormText.FundGov} {fundBlank} {WhtCertFormText.Baht} {WhtCertFormText.FundSso} {fundBlank} {WhtCertFormText.Baht} {WhtCertFormText.FundPvd} {fundBlank} {WhtCertFormText.Baht}</td></tr>");
+            sb.AppendLine($"<tr><td class='fund-cell'><b>{WhtCertFormText.FundLead}</b> {WhtCertFormText.FundGov} {fundBlank} {WhtCertFormText.Baht} {WhtCertFormText.FundSso} {fundBlank} {WhtCertFormText.Baht} {WhtCertFormText.FundPvd} {fundBlank} {WhtCertFormText.Baht}</td></tr>");
 
             // Conditions
             sb.AppendLine("<tr><td class='cond-cell'><table class='inner' cellspacing='0'><tr>");
             var pc = WhtCertFormText.PayerConditions;
             sb.AppendLine($"<td style='white-space:nowrap;width:80px'><b>{WhtCertFormText.PayerConditionHeading}</b></td>");
-            sb.AppendLine($"<td><span class='ck'>{Chk(isWithhold)}</span> {pc[0]}</td>");
-            sb.AppendLine($"<td><span class='ck'>{Chk(isPayAlways)}</span> {pc[1]}</td>");
-            sb.AppendLine($"<td><span class='ck'>&#9744;</span> {pc[2]}</td>");
-            sb.AppendLine($"<td><span class='ck'>&#9744;</span> {pc[3]} <u class='ul'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></td>");
+            sb.AppendLine($"<td><span class='ck'>{Chk(payerCond == 0)}</span> {pc[0]}</td>");
+            sb.AppendLine($"<td><span class='ck'>{Chk(payerCond == 1)}</span> {pc[1]}</td>");
+            sb.AppendLine($"<td><span class='ck'>{Chk(payerCond == 2)}</span> {pc[2]}</td>");
+            sb.AppendLine($"<td><span class='ck'>{Chk(payerCond == 3)}</span> {pc[3]} <u class='ul'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></td>");
             sb.AppendLine("</tr></table></td></tr>");
 
             // Warning + Signature
             sb.AppendLine("<tr><td style='padding:0'><table class='inner bottom-split' cellspacing='0'><tr>");
-            sb.AppendLine($"<td class='bottom-left'><div style='text-align:center;margin-bottom:2px'><b>{WhtCertFormText.WarningHeading}</b></div>{WhtCertFormText.WarningText}</td>");
+            // คำเตือน: หัวข้อซ้าย ข้อความห้อยด้านขวา ตามแบบทางการ (รอบ 204 · เดิมหัวข้อกลางอยู่เหนือข้อความ)
+            sb.AppendLine($"<td class='bottom-left'><table class='inner' cellspacing='0'><tr><td style='white-space:nowrap;vertical-align:top;padding:0 6px 0 0'><b>{WhtCertFormText.WarningHeading}</b></td><td style='vertical-align:top;padding:0'>{WhtCertFormText.WarningText}</td></tr></table></td>");
             sb.AppendLine($"<td class='bottom-right'><div style='margin-bottom:6px'>{WhtCertFormText.Certify}</div>");
             // ลายเซ็น: ฝังรูป + ชื่อผู้เซ็นถ้ามี (ให้ตรงกับไฟล์ที่ download); ไม่มี → เส้นจุด
             var sigInner = !string.IsNullOrWhiteSpace(sigBase64)
@@ -2737,7 +2739,8 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("</table>");
 
             // Footnote
-            sb.AppendLine($"<div class='footnote'><b>{WhtCertFormText.FootnoteHeading}</b>&nbsp; {WhtCertFormText.FootnoteLead}<span style='color:#900'>*</span> {WhtCertFormText.FootnoteLeadTail}<div style='padding-left:24px'>{string.Join("<br>", WhtCertFormText.FootnoteItems)}</div></div>");
+            // หมายเหตุ: ข้อ 1 อยู่บรรทัดเดียวกับ "หมายถึง" · ข้อ 2–3 ตรงแนวข้อ 1 ตามแบบทางการ (รอบ 204 · เดิมทุกข้อขึ้นบรรทัดใหม่)
+            sb.AppendLine($"<div class='footnote'><table class='inner' cellspacing='0' style='width:auto'><tr><td style='white-space:nowrap;vertical-align:top;padding:0 4px 0 0'><b>{WhtCertFormText.FootnoteHeading}</b>&nbsp; {WhtCertFormText.FootnoteLead}<span style='color:#900'>*</span> {WhtCertFormText.FootnoteLeadTail}</td><td style='vertical-align:top;padding:0'>{string.Join("<br>", WhtCertFormText.FootnoteItems)}</td></tr></table></div>");
             sb.AppendLine("</div>");
         }
 

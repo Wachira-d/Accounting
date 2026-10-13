@@ -414,8 +414,12 @@
         };
 
         const allLines = d.lines || [];
-        const fc = (type) => (d.taxFormType === type || d.taxFormName === type) ? '&#9745;' : '&#9744;';
         const chk = (cond) => cond ? '&#9745;' : '&#9744;';
+        // ช่องที่ติ๊ก (แบบยื่น 7 ช่อง · เงื่อนไขผู้จ่ายเงิน 4 ช่อง) — ดัชนีมาจากเซิร์ฟเวอร์ (`formBoxIndex` / `payerConditionIndex` ←
+        // `WhtCertFormText.FormBoxIndex/PayerConditionIndex` ตัวเดียวกับ PDF ทั้งสอง) หน้าไม่จับคู่ชื่อ enum เอง · รอบ 204:
+        // ภ.ง.ด.2 → (3) ภ.ง.ด.2 · ออกให้ครั้งเดียว → (3) (เดิมหน้าเทียบชื่อแบบเอง ภ.ง.ด.2 ไม่มีวันติ๊ก)
+        const box = (i) => chk(d.formBoxIndex === i);
+        const cond = (i) => chk(d.payerConditionIndex === i);
 
         // แถวบนแบบ 50 ทวิ ตัดสินจาก **มาตรา** ที่เซิร์ฟเวอร์ส่งมากับตารางประเภท
         // เงินได้ (`_incomeTypes[].taxSection`) ไม่ใช่ลิสต์รหัสที่พิมพ์มือ
@@ -456,10 +460,6 @@
           : '<td></td><td></td><td></td>';
         const blank = '<td></td><td></td><td></td>';
 
-        const formRef = d.taxFormType === 'WithholdingTax1' ? 'ภ.ง.ด.1' :
-                        d.taxFormType === 'WithholdingTax3' ? 'ภ.ง.ด.3' :
-                        d.taxFormType === 'WithholdingTax53' ? 'ภ.ง.ด.53' : (d.taxFormName || 'ภ.ง.ด.___');
-
         const thaiBahtText = (n) => {
           if (!n || n === 0) return 'ศูนย์บาทถ้วน';
           const u = ['','หนึ่ง','สอง','สาม','สี่','ห้า','หก','เจ็ด','แปด','เก้า'];
@@ -480,13 +480,6 @@
             return r;
           };
           return cv(baht) + 'บาท' + (satang > 0 ? cv(satang) + 'สตางค์' : 'ถ้วน');
-        };
-
-        const thaiMonths = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
-        const thaiDate = (iso) => {
-          if (!iso) return '......... เดือน .................. พ.ศ. ..........';
-          const dt = new Date(iso);
-          return `${dt.getDate()} เดือน ${thaiMonths[dt.getMonth()]} พ.ศ. ${dt.getFullYear() + 543}`;
         };
 
         const dot = (text, width) => `<span style="display:inline-block;min-width:${width||'auto'};border-bottom:1px dotted #555;padding:0 6px;min-height:1em">${text||''}</span>`;
@@ -511,6 +504,7 @@
         const voidMark = (d.status === 'Voided')
           ? `<div class="void-watermark">ยกเลิก<small>CANCELLED</small></div>`
           : '';
+        const issued = d.issuedDate ? new Date(d.issuedDate) : null;
         const buildCopy = (copyNum) => {
           return `
           <div class="wht-page">
@@ -546,12 +540,11 @@
                   <td class="sec-hdr" style="vertical-align:top;padding-right:8px">ผู้มีหน้าที่หักภาษี ณ ที่จ่าย :-</td>
                   <td style="white-space:nowrap;text-align:right">เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style="color:#900">*</span> ${taxIdBoxes(d.payerTaxId)}</td>
                 </tr></table>
-                <table class="inner" cellspacing="0"><tr>
-                  <td colspan="2" style="text-align:right;font-size:12px;padding-top:2px">เลขประจำตัวผู้เสียภาษีอากร ${oldTaxIdBoxes(d.payerTaxId)}</td>
-                </tr></table>
+                <!-- ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ) -->
                 <table class="inner" cellspacing="0"><tr>
                   <td class="f-lbl">ชื่อ</td>
                   <td><u class="ul">&nbsp;${Layout.esc(d.payerName || '')}&nbsp;</u></td>
+                  <td style="white-space:nowrap;text-align:right;font-size:12px;padding-left:8px">เลขประจำตัวผู้เสียภาษีอากร ${oldTaxIdBoxes(d.payerTaxId)}</td>
                 </tr></table>
                 <div class="hint-text">(ให้ระบุว่าเป็น บุคคล นิติบุคคล บริษัท สมาคม หรือคณะบุคคล)</div>
                 <table class="inner" cellspacing="0"><tr>
@@ -567,12 +560,11 @@
                   <td class="sec-hdr" style="vertical-align:top;padding-right:8px">ผู้ถูกหักภาษี ณ ที่จ่าย :-</td>
                   <td style="white-space:nowrap;text-align:right">เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style="color:#900">*</span> ${taxIdBoxes(d.payeeTaxId)}</td>
                 </tr></table>
-                <table class="inner" cellspacing="0"><tr>
-                  <td colspan="2" style="text-align:right;font-size:12px;padding-top:2px">เลขประจำตัวผู้เสียภาษีอากร ${oldTaxIdBoxes(d.payeeTaxId)}</td>
-                </tr></table>
+                <!-- ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ) -->
                 <table class="inner" cellspacing="0"><tr>
                   <td class="f-lbl">ชื่อ</td>
                   <td><u class="ul">&nbsp;${Layout.esc(d.payeeName || '')}&nbsp;</u></td>
+                  <td style="white-space:nowrap;text-align:right;font-size:12px;padding-left:8px">เลขประจำตัวผู้เสียภาษีอากร ${oldTaxIdBoxes(d.payeeTaxId)}</td>
                 </tr></table>
                 <div class="hint-text">(ให้ระบุว่าเป็น บุคคล นิติบุคคล บริษัท สมาคม หรือคณะบุคคล)</div>
                 <table class="inner" cellspacing="0"><tr>
@@ -580,10 +572,9 @@
                   <td><u class="ul">&nbsp;${Layout.esc(d.payeeAddress || '')}&nbsp;</u></td>
                 </tr></table>
                 <div class="hint-text">(ให้ระบุ ชื่ออาคาร/หมู่บ้าน ห้องเลขที่ ชั้นที่ เลขที่ ตรอก/ซอย หมู่ที่ ถนน ตำบล/แขวง อำเภอ/เขต จังหวัด)</div>
-              </td></tr>
 
-              <!-- ===== FORM TYPE (ลำดับที่ ในแบบ) ===== -->
-              <tr><td class="ftype-cell">
+              <!-- ===== FORM TYPE (ลำดับที่ ในแบบ) — อยู่ในกรอบผู้ถูกหัก ตามแบบทางการ (รอบ 204 · เดิมกรอบแยก) ===== -->
+              <div class="ftype-cell" style="padding:3px 0 0">
                 <table class="inner" cellspacing="0"><tr>
                   <td style="width:240px;vertical-align:top">
                     <div>ลำดับที่ <span class="sq">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> ในแบบ</div>
@@ -592,20 +583,21 @@
                   <td style="vertical-align:top">
                     <table class="inner ftype-grid" cellspacing="0">
                       <tr>
-                        <td><span class="ck">${fc('WithholdingTax1')}</span> <b>(1) ภ.ง.ด.1ก</b></td>
-                        <td><span class="ck">&#9744;</span> <b>(2) ภ.ง.ด.1ก พิเศษ</b></td>
-                        <td><span class="ck">&#9744;</span> <b>(3) ภ.ง.ด.2</b></td>
-                        <td><span class="ck">${fc('WithholdingTax3')}</span> <b>(4) ภ.ง.ด.3</b></td>
+                        <td><span class="ck">${box(0)}</span> <b>(1) ภ.ง.ด.1ก</b></td>
+                        <td><span class="ck">${box(1)}</span> <b>(2) ภ.ง.ด.1ก พิเศษ</b></td>
+                        <td><span class="ck">${box(2)}</span> <b>(3) ภ.ง.ด.2</b></td>
+                        <td><span class="ck">${box(3)}</span> <b>(4) ภ.ง.ด.3</b></td>
                       </tr>
                       <tr>
-                        <td><span class="ck">&#9744;</span> <b>(5) ภ.ง.ด.2ก</b></td>
-                        <td><span class="ck">&#9744;</span> <b>(6) ภ.ง.ด.3ก</b></td>
-                        <td><span class="ck">${fc('WithholdingTax53')}</span> <b>(7) ภ.ง.ด.53</b></td>
+                        <td><span class="ck">${box(4)}</span> <b>(5) ภ.ง.ด.2ก</b></td>
+                        <td><span class="ck">${box(5)}</span> <b>(6) ภ.ง.ด.3ก</b></td>
+                        <td><span class="ck">${box(6)}</span> <b>(7) ภ.ง.ด.53</b></td>
                         <td></td>
                       </tr>
                     </table>
                   </td>
                 </tr></table>
+              </div>
               </td></tr>
 
               <!-- ===== INCOME TABLE ===== -->
@@ -613,7 +605,7 @@
                 <table class="IT" cellspacing="0">
                   <thead>
                     <tr>
-                      <th style="width:46%">ประเภทเงินได้พึงประเมินที่จ่าย</th>
+                      <th style="width:46%">ประเภทเงินได้พึงประเมินจ่าย</th>
                       <th style="width:14%">วัน เดือน<br>หรือปีภาษี ที่จ่าย</th>
                       <th style="width:20%">จำนวนเงินที่จ่าย</th>
                       <th style="width:20%">ภาษีที่หัก<br>และนำส่งไว้</th>
@@ -640,8 +632,8 @@
                       <td class="it-type">
                         &nbsp;&nbsp;&nbsp;(ข) เงินปันผล เงินส่วนแบ่งกำไร ฯลฯ ตามมาตรา 40 (4) (ข)
                         <div class="div-indent" style="margin-top:2px">
-                          (1) กรณีผู้ได้รับเงินปันผลได้รับเครดิตภาษี โดยจ่ายจาก<br>
-                          &nbsp;&nbsp;&nbsp;&nbsp;กำไรสุทธิของกิจการที่ต้องเสียภาษีเงินได้นิติบุคคลในอัตราดังนี้
+                          (1) กรณีผู้ได้รับเงินปันผลได้รับเครดิตภาษี โดยจ่ายจากกำไรสุทธิของ<br>
+                          &nbsp;&nbsp;&nbsp;&nbsp;กิจการที่ได้ต้องเสียภาษีเงินได้นิติบุคคลในอัตรา ดังนี้
                           <div class="div-indent">
                             (1.1) อัตราร้อยละ 30 ของกำไรสุทธิ<br>
                             (1.2) อัตราร้อยละ 25 ของกำไรสุทธิ<br>
@@ -651,10 +643,10 @@
                           (2) กรณีผู้ได้รับเงินปันผลไม่ได้รับเครดิตภาษี เนื่องจากจ่ายจาก
                           <div class="div-indent">
                             (2.1) กำไรสุทธิของกิจการที่ได้รับยกเว้นภาษีเงินได้นิติบุคคล<br>
-                            (2.2) เงินปันผลหรือเงินส่วนแบ่งของกำไรที่ได้รับยกเว้น<br>
-                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ไม่ต้องนำมารวมคำนวณเป็นรายได้เพื่อเสียภาษีเงินได้นิติบุคคล<br>
-                            (2.3) กำไรสุทธิส่วนที่ได้หักผลขาดทุนสุทธิยกมาไม่เกิน 5 ปี<br>
-                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ก่อนรอบระยะเวลาบัญชีปีปัจจุบัน<br>
+                            (2.2) เงินปันผลหรือส่วนแบ่งของกำไรที่ได้รับยกเว้นไม่ต้องนำมารวม<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;คำนวณเป็นรายได้เพื่อเสียภาษีเงินได้นิติบุคคล<br>
+                            (2.3) กำไรสุทธิที่ได้หักผลขาดทุนสุทธิยกมาไม่เกิน 5 ปีก่อนรอบระยะ<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;เวลาบัญชีปีปัจจุบัน<br>
                             (2.4) กำไรที่รับรู้ทางบัญชีโดยวิธีส่วนได้เสีย (equity method)<br>
                             (2.5) อื่น ๆ (ระบุ) ........................................................
                           </div>
@@ -690,7 +682,7 @@
 
               <!-- FUND ROW -->
               <tr><td class="fund-cell">
-                เงินที่จ่ายเข้า กบข./กสจ./กองทุนสงเคราะห์ครูโรงเรียนเอกชน <span class="fund-blank"></span> บาท
+                <b>เงินที่จ่ายเข้า</b> กบข./กสจ./กองทุนสงเคราะห์ครูโรงเรียนเอกชน <span class="fund-blank"></span> บาท
                 กองทุนประกันสังคม <span class="fund-blank"></span> บาท
                 กองทุนสำรองเลี้ยงชีพ <span class="fund-blank"></span> บาท
               </td></tr>
@@ -699,10 +691,10 @@
               <tr><td class="cond-cell">
                 <table class="inner" cellspacing="0"><tr>
                   <td style="white-space:nowrap;width:80px"><b>ผู้จ่ายเงิน</b></td>
-                  <td><span class="ck">${chk(d.certificateType === 'Withhold')}</span> (1) หัก ณ ที่จ่าย</td>
-                  <td><span class="ck">${chk(d.certificateType === 'PayAlways')}</span> (2) ออกให้ตลอดไป</td>
-                  <td><span class="ck">${chk(d.certificateType === 'PayOnce')}</span> (3) ออกให้ครั้งเดียว</td>
-                  <td><span class="ck">${chk(d.certificateType === 'Other')}</span> (4) อื่น ๆ (ระบุ) <u class="ul">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></td>
+                  <td><span class="ck">${cond(0)}</span> (1) หัก ณ ที่จ่าย</td>
+                  <td><span class="ck">${cond(1)}</span> (2) ออกให้ตลอดไป</td>
+                  <td><span class="ck">${cond(2)}</span> (3) ออกให้ครั้งเดียว</td>
+                  <td><span class="ck">${cond(3)}</span> (4) อื่น ๆ (ระบุ) <u class="ul">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></td>
                 </tr></table>
               </td></tr>
 
@@ -710,7 +702,11 @@
               <tr><td style="padding:0">
                 <table class="inner bottom-split" cellspacing="0"><tr>
                   <td class="bottom-left">
-                    <b>คำเตือน</b> ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร ต้องรับโทษทางอาญาตามมาตรา 35 แห่งประมวลรัษฎากร
+                    <!-- หัวข้อซ้าย ข้อความห้อยด้านขวา ตามแบบทางการ (รอบ 204) -->
+                    <table class="inner" cellspacing="0"><tr>
+                      <td style="white-space:nowrap;vertical-align:top;padding:0 6px 0 0"><b>คำเตือน</b></td>
+                      <td style="vertical-align:top;padding:0">ผู้มีหน้าที่ออกหนังสือรับรองการหักภาษี ณ ที่จ่าย ฝ่าฝืนไม่ปฏิบัติตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร ต้องรับโทษทางอาญาตามมาตรา 35 แห่งประมวลรัษฎากร</td>
+                    </tr></table>
                   </td>
                   <td class="bottom-right">
                     <div style="margin-bottom:6px;white-space:nowrap;font-size:11.5px">ขอรับรองว่าข้อความและตัวเลขดังกล่าวข้างต้นถูกต้องตรงกับความจริงทุกประการ</div>
@@ -718,12 +714,13 @@
                       <div class="sig-line" style="text-align:right;position:relative">
                         ลงชื่อ <span class="sig-dots">${signature.image
                           ? `<img class="sig-img" src="${signature.image.startsWith('data:') ? signature.image : `data:image/png;base64,${signature.image}`}" alt="signature">`
-                          : ''}</span> ผู้มีหน้าที่หักภาษี ณ ที่จ่าย
+                          : ''}</span> ผู้จ่ายเงิน
                       </div>
+                      <!-- วันที่ออกเป็นสามช่อง วัน / เดือน / ปี (พ.ศ.) ตามแบบทางการ + ตรงกับ PDF ทั้งสอง (รอบ 204 · เดิม "12 ตุลาคม 2569" บรรทัดเดียว) -->
                       <div class="sig-date">
-                        <span class="sig-date-line">${d.issuedDate
-                          ? `${new Date(d.issuedDate).getDate()} ${thaiMonths[new Date(d.issuedDate).getMonth()]} ${new Date(d.issuedDate).getFullYear()+543}`
-                          : '&nbsp;'}</span>
+                        <span class="sig-dots-sm">${issued ? issued.getDate() : '&nbsp;&nbsp;'}</span> /
+                        <span class="sig-dots-sm">${issued ? issued.getMonth() + 1 : '&nbsp;&nbsp;'}</span> /
+                        <span class="sig-dots-sm">${issued ? issued.getFullYear() + 543 : '&nbsp;&nbsp;&nbsp;&nbsp;'}</span>
                       </div>
                       <div style="text-align:center;font-size:11px;color:#444">(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)</div>
                     </div>
@@ -734,13 +731,16 @@
             </table>
 
             <!-- หมายเหตุ (outside frame) -->
+            <!-- ข้อ 1 อยู่บรรทัดเดียวกับ "หมายถึง" · ข้อ 2–3 ตรงแนวข้อ 1 ตามแบบทางการ (รอบ 204) -->
             <div class="footnote">
-              <b>หมายเหตุ</b>&nbsp; เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style="color:#900">*</span> หมายถึง
-              <div style="padding-left:24px">
-                1. กรณีบุคคลธรรมดาไทย ให้ใช้เลขประจำตัวประชาชนของกรมการปกครอง<br>
-                2. กรณีนิติบุคคล ให้ใช้เลขทะเบียนนิติบุคคลของกรมพัฒนาธุรกิจการค้า<br>
-                3. กรณีอื่น ๆ นอกเหนือจาก 1. และ 2. ให้ใช้เลขประจำตัวผู้เสียภาษีอากร (13 หลัก) ของกรมสรรพากร
-              </div>
+              <table class="inner" cellspacing="0" style="width:auto"><tr>
+                <td style="white-space:nowrap;vertical-align:top;padding:0 4px 0 0"><b>หมายเหตุ</b>&nbsp; เลขประจำตัวผู้เสียภาษีอากร (13 หลัก)<span style="color:#900">*</span> หมายถึง</td>
+                <td style="vertical-align:top;padding:0">
+                  1. กรณีบุคคลธรรมดาไทย ให้ใช้เลขประจำตัวประชาชนของกรมการปกครอง<br>
+                  2. กรณีนิติบุคคล ให้ใช้เลขทะเบียนนิติบุคคลของกรมพัฒนาธุรกิจการค้า<br>
+                  3. กรณีอื่น ๆ นอกเหนือจาก 1. และ 2. ให้ใช้เลขประจำตัวผู้เสียภาษีอากร (13 หลัก) ของกรมสรรพากร
+                </td>
+              </tr></table>
             </div>
           </div>`;
         };
@@ -851,7 +851,6 @@
   .sig-dots { display:inline-block; min-width:200px; border-bottom:1px dotted #000; vertical-align:bottom; position:relative; height:34px; }
   .sig-img { position:absolute; left:50%; bottom:1px; transform:translateX(-50%); max-height:32px; max-width:190px; object-fit:contain; }
   .sig-date { text-align:center; margin:3px 0 0; font-size:13px; }
-  .sig-date-line { display:inline-block; min-width:200px; border-bottom:1px dotted #000; text-align:center; padding:0 8px; }
   .sig-dots-sm { display:inline-block; min-width:36px; border-bottom:1px dotted #000; text-align:center; padding:0 4px; }
   .stamp-area {
     position:absolute; right:6px; top:50%; transform:translateY(-50%);
