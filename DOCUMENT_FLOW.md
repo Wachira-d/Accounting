@@ -3564,7 +3564,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   เฉพาะบรรทัดที่มี `IncomeTypeCode`) · ออก/แก้ 50 ทวิ ภ.ง.ด.3/53 ด้วยมือ (`IssueWarningsAsync`) · ทะเบียนภาษีถูกหัก.
   ข้อความ "ระบุ" ทั้งแถวบนกระดาษ = `ThaiWhtRateTable.CertificateRowSpecification` ผ่าน `WhtCertFormText.Row6Spec` (HTML + QuestPDF ตัวเดียว) ·
   (บอร์ด 2026-10-13 ทีม B · A10: ช่องคำตอบ `WithholdingTaxCertResponse.CertificateRowSpecs` และ `CertificateRowText` ของ `/api/reference/income-types`
-  **ถอดแล้ว** — ไม่มีหน้า/เทสต์ใดอ่าน (grep html/js/tests = 0) · คอลัมน์ `CertificateRowText` ในตารางยังอยู่ ผู้อ่านคือ `WhtCertFormText`).
+  **ถอดแล้ว** — ไม่มีหน้า/เทสต์ใดอ่าน (grep html/js/tests = 0) · คอลัมน์ `CertificateRowText` ในตารางยังอยู่ ผู้อ่านคือ `WhtCertFormText` · commit 49d700d8).
   wht-credit.html เก็บ **รหัส** แทนเลขมาตรา (เดิม 8/8ad/8tr เก็บเป็น "40(8)" เหมือนกัน) และเปิดแก้ด้วย `incomeTypeCodeResolved`
   (ค่าที่ชี้ขาดไม่ได้โชว์เป็นตัวเลือก "(ค่าเดิม)" — ไม่หายเงียบ).
   **ประเภทเงินได้รายบรรทัดของเอกสาร** (รอบ 203): `DocumentLineRequest.IncomeTypeCode` → `DocumentLine.IncomeTypeCode` →
@@ -3678,7 +3678,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   `IssueWarningsAsync`) นับ `PayAlways` **และ** `PayOnce` (เดิมกรองแค่ตลอดไป ⇒ ส่วนที่ออกแทนรอบแรกหายจากฐานเงียบ) · ส่วนที่ออกแทนบนใบ: ตลอดไป = ภาษีทั้งก้อน (ตัวเลขเดิมทุกสตางค์) ·
   ครั้งเดียว = เงินได้ × ภาษี / (เงินได้ + ภาษี) (สูตรกลับของ `WhtGrossUp.OnBase` — 10,300/309 ⇒ 300 · 517.50/77.63 ⇒ 67.50) · กิ่ง: เงินได้ − ยอดบรรทัด ตรงส่วนที่ออกแทน (±0.02) ⇒ บวกส่วนต่างจริง
   (มี WHT บนเอกสารหรือไม่ก็ตาม — เหมือนกิ่งแรกของตลอดไป) · เงินได้ ≈ ยอดบรรทัด ⇒ 0 · อื่น ๆ (ใบครอบบางงวด) ⇒ มี WHT บนเอกสาร 0 / ไม่มี บวกส่วนที่ออกแทนบนใบ · หัก ณ ที่จ่าย ⇒ 0 ·
-  450 @15% ครั้งเดียว ⇒ ฐาน 517.50 ⇒ ภ.พ.36 36.23 (บรรทัดคิด 31.50 ⇒ เตือนขาด 4.73) · เทสต์ `ForeignServiceVatTests.A5b_*`
+  450 @15% ครั้งเดียว ⇒ ฐาน 517.50 ⇒ ภ.พ.36 36.23 (บรรทัดคิด 31.50 ⇒ เตือนขาด 4.73) · เทสต์ `ForeignServiceVatTests.A5b_*` · Last verified `commit 49d700d8`
 
 ### 5.5 Integration ภายนอก (เอาออก)
 - `GET /api/companies/{id}/documents/{id}` คืน `DocumentResponse`
