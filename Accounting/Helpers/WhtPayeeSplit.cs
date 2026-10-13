@@ -117,7 +117,7 @@ public static class WhtPayeeSplit
     /// <b>ฝั่งใดว่าง ⇒ false</b>: ก่อนว่าง (ยังไม่หัก) แล้วมีส่วนของผู้ติดต่อเอกสาร = ระบบเติมให้ ไม่ใช่ผู้ใช้เลือก · หลังว่าง (ลบภาษีหักทิ้ง)
     /// = ไม่ได้เลือกผู้ถูกหักใหม่ — ป้ายต้องอยู่ (เพิ่มภาษีหักกลับมาทีหลังจะได้ผู้ติดต่อของเอกสารเดิมที่ยังไม่มีใครตรวจ)
     /// </summary>
-    public static bool PayeeSetChanged(IReadOnlyList<WhtPayeePortion> before, IReadOnlyList<WhtPayeePortion> after)
+    internal static bool PayeeSetChanged(IReadOnlyList<WhtPayeePortion> before, IReadOnlyList<WhtPayeePortion> after)
         => before.Count > 0 && after.Count > 0
            && !before.Select(p => p.PayeeContactId).ToHashSet().SetEquals(after.Select(p => p.PayeeContactId));
 
