@@ -230,4 +230,187 @@ public class WhtMultiPayeeDbTests
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.DoesNotContain((await Svc(check).GetPendingDocumentsAsync(s.CompanyId)), p => p.DocumentId == pv.Id);
     }
+
+    // ══════ ฝ่ายค้านรอบ 204 (หลัง 778e95f9/c3f47b4d) — ผ่านเมธอดจริง ══════
+
+    private static DocumentService DocSvc(Accounting.Data.AccountingDbContext db)
+        => new(db, new AccountingService(db), null!, Svc(db), null!, NullLogger<DocumentService>.Instance, null!, null!, null!);
+
+    /// <summary>PV จ่ายแล้วบรรทัดเดียว ค่าบริการ 1,000 หัก 3% — <paramref name="linePayee"/> = ผู้ถูกหักรายบรรทัด (null = ตามหัวเอกสาร)</summary>
+    private static async Task<Document> SinglePvAsync(Accounting.Data.AccountingDbContext db, Seed s, string no, Guid? linePayee)
+    {
+        var d = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.BrokerId, DocumentType = DocumentType.PaymentVoucher, DocumentNumber = no,
+            Status = DocumentStatus.Paid, DocumentDate = DateTime.UtcNow.Date, PaymentDate = DateTime.UtcNow.Date,
+            SubTotal = 1_000m, WithholdingTaxAmount = 30m, TotalAmount = 970m, PaidAmount = 970m, BalanceDue = 0m, Currency = "THB",
+        };
+        d.Lines.Add(new DocumentLine
+        {
+            LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m,
+            WithholdingTaxRate = 3m, WithholdingTaxAmount = 30m, IncomeTypeCode = "8", WhtPayeeContactId = linePayee,
+        });
+        db.Documents.Add(d);
+        await db.SaveChangesAsync();
+        return d;
+    }
+
+    [Fact]
+    public async Task P1_ทุกบรรทัดตั้งผู้ถูกหักรายบรรทัดรายเดียว_50ทวิในนามรายนั้น_ตรงกับJE_ไม่ใช่หัวเอกสาร()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        // ข้อมูลที่บันทึกก่อนแก้ (ใบร่างรูป "หัว = นายหน้า · ทุกบรรทัด = บริษัทประกัน") — ตัวอ่านต้องได้คนเดียวกับ JE (WhtPayeeSplit.Portions)
+        var pv = await SinglePvAsync(db, s, "PV-P1-1", s.InsurerId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.False((await Svc(req).TryAutoIssueForDocumentAsync(s.CompanyId, pv.Id, WhtCertIssueTrigger.Approve, "tester")).Failed);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var cert = Assert.Single(await CertsAsync(check, s.CompanyId, pv.Id));
+        Assert.Equal(s.InsurerId, cert.PayeeContactId);
+        Assert.Equal(TaxType.WithholdingTax53, cert.TaxFormType);
+        Assert.DoesNotContain((await Svc(check).GetPendingDocumentsAsync(s.CompanyId)), p => p.DocumentId == pv.Id);
+    }
+
+    [Fact]
+    public async Task P1_ทิศตรงข้าม_ใบรายเดียวปกติ_50ทวิในนามหัวเอกสารเหมือนเดิม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var pv = await SinglePvAsync(db, s, "PV-P1-2", null);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.False((await Svc(req).TryAutoIssueForDocumentAsync(s.CompanyId, pv.Id, WhtCertIssueTrigger.Approve, "tester")).Failed);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(s.BrokerId, Assert.Single(await CertsAsync(check, s.CompanyId, pv.Id)).PayeeContactId);
+    }
+
+    [Fact]
+    public async Task P3_7_ใบรายเดียว_ระบุผู้ถูกหักไม่ตรง_ปฏิเสธ_ไม่ออกใบ_ระบุตรง_ออกได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var pv = await SinglePvAsync(db, s, "PV-P37", null);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Svc(req).AutoGenerateFromDocumentAsync(s.CompanyId, pv.Id, autoIssue: true, "tester", payeeContactId: s.PersonId));
+            Assert.Equal(400, ex.StatusCode);
+            Assert.Contains("ผู้ถูกหักภาษีรายเดียว", ex.Message);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Empty(await CertsAsync(req, s.CompanyId, pv.Id));
+            await Svc(req).AutoGenerateFromDocumentAsync(s.CompanyId, pv.Id, autoIssue: true, "tester", payeeContactId: s.BrokerId);
+        }
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(s.BrokerId, Assert.Single(await CertsAsync(check, s.CompanyId, pv.Id)).PayeeContactId);
+    }
+
+    [Fact]
+    public async Task P3_1_ใบลดหนี้ลดฐาน_ใบเดิมเป็นร่าง_ใบที่ออกแทนยังเป็นร่าง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var pv = await SinglePvAsync(db, s, "PV-P31", null);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).AutoGenerateFromDocumentAsync(s.CompanyId, pv.Id, autoIssue: false, "tester");
+        var cn = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.BrokerId, DocumentType = DocumentType.CreditNote, DocumentNumber = "PV-P31-CN",
+            Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date, RelatedDocumentId = pv.Id,
+            SubTotal = 400m, WithholdingTaxAmount = 12m, TotalAmount = 388m, Currency = "THB",
+        };
+        cn.Lines.Add(new DocumentLine
+        {
+            LineOrder = 1, Description = "ลดค่าบริการ", Quantity = 1, UnitPrice = 400m, Amount = 400m,
+            WithholdingTaxRate = 3m, WithholdingTaxAmount = 12m, IncomeTypeCode = "8", SourceLineId = pv.Lines.First().Id,
+        });
+        db.Documents.Add(cn);
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Contains(await Svc(req).AdjustCertsForCreditNoteAsync(s.CompanyId, cn.Id, "tester"), n => n.Contains("ออกใบใหม่"));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var neo = Assert.Single(await CertsAsync(check, s.CompanyId, pv.Id), c => c.Status != WithholdingTaxCertStatus.Voided);
+        Assert.Equal(WithholdingTaxCertStatus.Draft, neo.Status);   // เดิม: "ออกแล้ว" (เข้าแบบยื่นทันทีทั้งที่ผู้ใช้ยังไม่ออกใบ)
+        Assert.Equal(18m, neo.TotalTaxAmount);
+    }
+
+    [Fact]
+    public async Task P2a_มีใบลดหนี้อนุมัติแล้วอ้างอยู่_เปลี่ยนผู้ถูกหัก409_ไม่มีอะไรถูกเขียน_ยกเลิกใบลดหนี้แล้วเปลี่ยนได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        foreach (var (code, name) in new[] { ("21916", "ภาษีหัก ณ ที่จ่ายค้างจ่าย ภ.ง.ด.3"), ("21917", "ภาษีหัก ณ ที่จ่ายค้างจ่าย ภ.ง.ด.53") })
+            db.ChartOfAccounts.Add(new ChartOfAccount
+            {
+                CompanyId = s.CompanyId, AccountCode = code, AccountName = name, AccountType = AccountType.Liability, Level = 4, IsActive = true,
+            });
+        var pv = await SinglePvAsync(db, s, "PV-P2A", null);
+        var cn = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.BrokerId, DocumentType = DocumentType.CreditNote, DocumentNumber = "CN-P2A",
+            Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date, RelatedDocumentId = pv.Id,
+            SubTotal = 400m, WithholdingTaxAmount = 12m, TotalAmount = 388m, Currency = "THB",
+        };
+        db.Documents.Add(cn);
+        await db.SaveChangesAsync();
+        var request = new ChangeWhtPayeeRequest(s.InsurerId, null, "ผู้มีเงินได้คือบริษัทประกัน");
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                DocSvc(req).ChangeWhtPayeeAsync(s.CompanyId, pv.Id, request, "tester", null));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Contains("CN-P2A", ex.Message);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Null((await req.Documents.AsNoTracking().FirstAsync(d => d.Id == pv.Id)).WhtPayeeContactId);
+
+        // ทิศตรงข้าม / ทางไปต่อ: ยกเลิกใบลดหนี้แล้ว ⇒ เปลี่ยนได้ (ด่านไม่ฟ้องใบที่ไม่มีใบลดหนี้มีผล)
+        cn.Status = DocumentStatus.Voided;
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await DocSvc(req).ChangeWhtPayeeAsync(s.CompanyId, pv.Id, request, "tester", null);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(s.InsurerId, (await check.Documents.AsNoTracking().FirstAsync(d => d.Id == pv.Id)).WhtPayeeContactId);
+    }
+
+    [Fact]
+    public async Task P2c_ใบลดหนี้ของใบหลายผู้ถูกหัก_บรรทัดหักไม่อ้างบรรทัดต้นทาง_ล้มดัง_อ้างแล้วผ่าน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var pv = await MultiPvAsync(db, s, "PV-P2C");
+        Document Cn(string no, Guid? sourceLineId)
+        {
+            var cn = new Document
+            {
+                CompanyId = s.CompanyId, ContactId = s.BrokerId, DocumentType = DocumentType.CreditNote, DocumentNumber = no,
+                Status = DocumentStatus.Draft, DocumentDate = DateTime.UtcNow.Date, RelatedDocumentId = pv.Id,
+                SubTotal = 100m, WithholdingTaxAmount = 1m, TotalAmount = 99m, Currency = "THB",
+            };
+            cn.Lines.Add(new DocumentLine
+            {
+                LineOrder = 1, Description = "ลดเบี้ยประกัน", Quantity = 1, UnitPrice = 100m, Amount = 100m,
+                WithholdingTaxRate = 1m, WithholdingTaxAmount = 1m, IncomeTypeCode = "8", SourceLineId = sourceLineId,
+            });
+            return cn;
+        }
+        var unmapped = Cn("CN-P2C-1", null);
+        var mapped = Cn("CN-P2C-2", pv.Lines.OrderBy(l => l.LineOrder).First().Id);
+        db.Documents.AddRange(unmapped, mapped);
+        await db.SaveChangesAsync();
+
+        using var req = DbTestDatabase.TryCreateContext()!;
+        var svc = DocSvc(req);
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.WhtPayeePortionsAsync(s.CompanyId, unmapped));
+        Assert.Contains("แปลง", ex.Message);
+        var portion = Assert.Single(await svc.WhtPayeePortionsAsync(s.CompanyId, mapped));
+        Assert.Equal(s.InsurerId, portion.PayeeContactId);   // ผู้ถูกหักของบรรทัดต้นทาง
+    }
 }

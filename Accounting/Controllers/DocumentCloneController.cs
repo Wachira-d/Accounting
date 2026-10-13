@@ -52,6 +52,10 @@ public class DocumentCloneController : ControllerBase
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == sourceId && d.CompanyId == companyId);
         if (src == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสารต้นแบบ"));
+        // ฝ่ายค้าน P3-6 (รอบ 204): ผู้ถูกหักที่ผู้ติดต่อถูกลบ ⇒ ไม่พรีฟิล (ตัวสืบทอดเดียวกับ POST — WhtPayeeSplit.InheritPayee)
+        var previewPayerSide = Accounting.Helpers.WhtCertIssuePlan.AppliesTo(src.DocumentType);
+        var previewActivePayees = await Accounting.Helpers.ContactHydration.ActiveContactIdsAsync(_db, companyId,
+            src.Lines.Select(l => l.WhtPayeeContactId).Append(src.WhtPayeeContactId));
 
         return Ok(new ApiResponse<object>(true, new
         {
@@ -80,7 +84,7 @@ public class DocumentCloneController : ControllerBase
             depositOutputVatDeferred = src.IsDeposit && src.DepositOutputVatDeferred,
             // คำขอเจ้าของ 2026-10-12 — 50 ทวิ: ติ๊กสร้างอัตโนมัติ + ผู้ถูกหักตามต้นแบบ (ให้ตรงกับที่ POST สร้างจริง)
             whtCertAutoIssue = src.WhtCertAutoIssue,
-            whtPayeeContactId = Accounting.Helpers.WhtCertIssuePlan.AppliesTo(src.DocumentType) ? src.WhtPayeeContactId : null,
+            whtPayeeContactId = Accounting.Helpers.WhtPayeeSplit.InheritPayee(src.WhtPayeeContactId, previewPayerSide, previewActivePayees),
             // รอบ 204 — ผู้จ่ายออกภาษีแทนตามต้นแบบ (ตัวสืบทอดเดียว WhtGrossUp.Inherit · ให้ตรงกับที่ POST สร้างจริง)
             whtCertType = Accounting.Helpers.WhtGrossUp.Inherit(src.WhtCertType, src.DocumentType, src.DocumentType),
             depositDeferredAccountCode = src.IsDeposit ? src.DepositDeferredAccountCode : null,
@@ -102,8 +106,7 @@ public class DocumentCloneController : ControllerBase
                 vatNonClaimableReason = l.VatNonClaimableReason,
                 incomeTypeCode = l.IncomeTypeCode,
                 // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดตามต้นแบบ (ให้ตรงกับที่ POST สร้างจริง)
-                whtPayeeContactId = Accounting.Helpers.WhtPayeeSplit.InheritLinePayee(l.WhtPayeeContactId,
-                    Accounting.Helpers.WhtCertIssuePlan.AppliesTo(src.DocumentType))
+                whtPayeeContactId = Accounting.Helpers.WhtPayeeSplit.InheritPayee(l.WhtPayeeContactId, previewPayerSide, previewActivePayees)
             })
         }));
     }
@@ -130,6 +133,14 @@ public class DocumentCloneController : ControllerBase
             return StatusCode(409, new ApiResponse<object>(false, null,
                 "ใบวางบิลนี้รวมใบแจ้งหนี้ที่ตั้งลูกหนี้แล้ว — คัดลอกไม่ได้ (ยอดจะถูกเก็บซ้ำ) · สร้างใบวางบิลใหม่จาก \"รวมใบค้างชำระ\""));
 
+        // ฝ่ายค้าน P3-6 (รอบ 204): ผู้ถูกหัก (หัวเอกสาร + รายบรรทัด) ที่ผู้ติดต่อถูกลบ ⇒ สืบทอดเป็น null + หมายเหตุบนใบใหม่ (เดิมคัดลอกล้มทุกครั้ง)
+        var clonePayerSide = Accounting.Helpers.WhtCertIssuePlan.AppliesTo(options?.OverrideType ?? src.DocumentType);
+        var cloneSrcLines = src.Lines.Where(l => !l.IsDeleted).ToList();
+        var cloneActivePayees = await Accounting.Helpers.ContactHydration.ActiveContactIdsAsync(_db, companyId,
+            cloneSrcLines.Select(l => l.WhtPayeeContactId).Append(src.WhtPayeeContactId));
+        var cloneDroppedPayees = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayees(
+            cloneSrcLines.Select(l => l.WhtPayeeContactId).Append(src.WhtPayeeContactId), clonePayerSide, cloneActivePayees);
+
         var lines = src.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).Select(l => new DocumentLineRequest(
             Description: l.Description,
             Quantity: l.Quantity,
@@ -151,8 +162,7 @@ public class DocumentCloneController : ControllerBase
             IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(l.IncomeTypeCode,
                 Accounting.Helpers.WhtCertIssuePlan.AppliesTo(options?.OverrideType ?? src.DocumentType)),
             // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดสืบทอด (ปลายทางฝั่งอื่น = null)
-            WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritLinePayee(l.WhtPayeeContactId,
-                Accounting.Helpers.WhtCertIssuePlan.AppliesTo(options?.OverrideType ?? src.DocumentType))
+            WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritPayee(l.WhtPayeeContactId, clonePayerSide, cloneActivePayees)
         )).ToList();
 
         var docDate = options?.OverrideDate ?? DateTime.UtcNow.Date;
@@ -208,8 +218,7 @@ public class DocumentCloneController : ControllerBase
             // คำขอเจ้าของ 2026-10-12 — เอกสารลูกสืบทอด (กฎ #4 A): ค่าเบี้ยประกันรายเดือนผ่านโบรกเกอร์ = เคสหลักของการโคลน ·
             // ผู้ถูกหักตามไปเฉพาะเมื่อชนิดปลายทางเป็นฝั่งผู้หัก (ชนิดอื่นถูกปฏิเสธ)
             WhtCertAutoIssue: src.WhtCertAutoIssue,
-            WhtPayeeContactId: Accounting.Helpers.WhtCertIssuePlan.AppliesTo(options?.OverrideType ?? src.DocumentType)
-                ? src.WhtPayeeContactId : null,
+            WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritPayee(src.WhtPayeeContactId, clonePayerSide, cloneActivePayees),
             // รอบ 204 — ผู้จ่ายออกภาษีแทนตามต้นแบบเมื่อปลายทางเป็นฝั่งผู้จ่าย (ค่าธรรมเนียมต่างประเทศรายเดือนที่ออกภาษีแทน = เคสโคลน)
             WhtCertType: Accounting.Helpers.WhtGrossUp.Inherit(src.WhtCertType, src.DocumentType, options?.OverrideType ?? src.DocumentType)
         );
@@ -235,11 +244,19 @@ public class DocumentCloneController : ControllerBase
         // Identity.Name เป็นชื่อ/อีเมล ทำให้เอกสารโคลนไม่มีลายเซ็นผู้จัดทำ
         var createdBy = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
         var newDoc = await _docs.CreateDocumentAsync(companyId, req, createdBy);
+        // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้ายบนใบใหม่ (หมายเหตุภายใน) + บอกในคำตอบ — ไม่เปลี่ยนผู้ถูกหักเงียบ ๆ
+        var droppedNote = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayeeNote(src.DocumentNumber, cloneDroppedPayees);
+        if (droppedNote != null
+            && await _db.Documents.FirstOrDefaultAsync(d => d.Id == newDoc.Id && d.CompanyId == companyId) is { } cloned)
+        {
+            cloned.InternalNotes = string.IsNullOrWhiteSpace(cloned.InternalNotes) ? droppedNote : cloned.InternalNotes.TrimEnd() + "\n\n" + droppedNote;
+            await _db.SaveChangesAsync();
+        }
         return Ok(new ApiResponse<object>(true, new
         {
             newDocumentId = newDoc.Id,
             newDocumentNumber = newDoc.DocumentNumber,
             sourceDocumentNumber = src.DocumentNumber
-        }, $"คัดลอกจาก {src.DocumentNumber} → {newDoc.DocumentNumber} เรียบร้อย"));
+        }, $"คัดลอกจาก {src.DocumentNumber} → {newDoc.DocumentNumber} เรียบร้อย" + (droppedNote != null ? " · " + droppedNote : "")));
     }
 }

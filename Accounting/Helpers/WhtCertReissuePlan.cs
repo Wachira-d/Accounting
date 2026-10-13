@@ -33,6 +33,26 @@ public static class WhtCertReissuePlan
 {
     public const string RuleCode = "RD-50BIS-CN-REISSUE";
 
+    /// <summary>ฝ่ายค้าน P3-1 (รอบ 204): สถานะของใบที่ออกแทนใบเดิม — ใบเดิมเป็นร่าง ⇒ ร่าง (ไม่เข้าแบบยื่นจนกว่าผู้ใช้ออกใบ) · อื่น ๆ ⇒ ออกแล้ว ·
+    /// ต้องส่งสถานะ <b>ก่อน</b>ประทับยกเลิก (เดิมเทียบหลังประทับ Voided ⇒ ได้ "ออกแล้ว" เสมอ)</summary>
+    public static Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus ReplacementStatus(Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus oldStatusBeforeVoid)
+        => oldStatusBeforeVoid == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Draft
+            ? Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Draft
+            : Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued;
+
+    /// <summary>ฝ่ายค้าน P2b (รอบ 204): ยกเลิกใบลดหนี้ซื้อที่ลดภาษีหัก ณ ที่จ่ายไปแล้ว (ตอนอนุมัติ 50 ทวิ ของใบต้นทางถูกยกเลิก+ออกใหม่ยอดที่ลด
+    /// หรือติดป้าย) — ยกเลิกใบลดหนี้แล้วภาษีหักกลับเป็นยอดเต็ม แต่ 50 ทวิ ยังเป็นยอดที่ลด ⇒ ข้อความป้าย "50 ทวิ ต้องตรวจ" บนใบต้นทาง ·
+    /// ไม่เข้าเงื่อนไข (ไม่ใช่ใบลดหนี้ · ไม่มีภาษีหัก · ฝั่งขาย · ยังไม่อนุมัติ · ใบต้นทางไม่มี 50 ทวิ) ⇒ null</summary>
+    public static string? CreditNoteVoidedReason(DocumentType type, DocumentStatus statusBeforeVoid, decimal withholdingTaxAmount,
+        bool? purchaseSideOverride, bool sourceIsPayerSide, int sourceActiveCerts, string? creditNoteNumber)
+    {
+        if (type != DocumentType.CreditNote || withholdingTaxAmount <= 0m || purchaseSideOverride == false || !sourceIsPayerSide) return null;
+        if (statusBeforeVoid is DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Voided or DocumentStatus.Rejected) return null;
+        if (sourceActiveCerts <= 0) return null;
+        return $"ใบลดหนี้ {creditNoteNumber} ที่ลดภาษีหัก ณ ที่จ่าย {withholdingTaxAmount:N2} บาท ถูกยกเลิก — ภาษีหักของใบนี้กลับเป็นยอดเต็ม "
+               + "แต่ 50 ทวิ อาจเป็นยอดที่ลดตามใบลดหนี้ (ต่ำกว่าที่หักจริง) · ตรวจยอดบน 50 ทวิ แล้วยกเลิก/ออกใบใหม่เอง (หรือยื่นแบบเพิ่มเติมถ้าเดือนนั้นยื่นแล้ว)";
+    }
+
     /// <param name="certLines">แถวบน 50 ทวิ ที่ยังมีผลของผู้ถูกหักนี้ (ใบเดียว)</param>
     /// <param name="reductions">ยอดที่ใบลดหนี้ลด (เงินได้ + ภาษีหัก) ของผู้ถูกหักนี้ — บวก = ลด</param>
     /// <param name="filedReason">เหตุผลจากด่านยื่นแล้ว (<see cref="WhtCertVoidGuard"/>) · null = ยกเลิกได้</param>
@@ -121,9 +141,37 @@ public static class WhtPayeeChangePlan
 
     /// <summary>แบบ ภ.ง.ด. ของเดือนภาษีนั้นถูกประกาศว่ายื่น/ยื่นแล้ว หรือมีบันทึกนำส่งแล้วไหม — ข้อความเหตุผล (null = ยังไม่ยื่น/นำส่ง) ·
     /// หลักฐานชุดเดียวกับ <see cref="WhtCertVoidGuard"/> (รายงานภาษีสถานะ <see cref="TaxFilingLockPolicy.DeclaredOrFiledStatuses"/> ·
-    /// <c>StatutoryRemittance</c> แปลงชนิดด้วย <see cref="WhtCertVoidGuard.RemittanceForm"/>) แต่ระดับ "งวด" (ใช้เมื่อยังไม่มีใบให้ตรวจรายใบ)</summary>
+    /// <c>StatutoryRemittance</c> แปลงชนิดด้วย <see cref="WhtCertVoidGuard.RemittanceForm"/>) แต่ระดับ "งวด" (ใช้เมื่อยังไม่มีใบให้ตรวจรายใบ)
+    /// <para>ฝ่ายค้าน P3-4 (รอบ 204): ตรวจ<b>ทุกงวด</b>ใน <paramref name="periods"/> (<see cref="AffectedPeriods"/> — เดือนภาษีของเอกสาร + ทุกเดือนที่มีการจ่าย/50 ทวิ) ·
+    /// เดิมดูแค่ PaymentDate ?? DocumentDate ⇒ ใบจ่ายสองงวดข้ามเดือน งวดแรกยื่นแล้วแต่ระบบยังยกเลิก/ออกใบใหม่ให้</para></summary>
     public static async Task<string?> PeriodFiledReasonAsync(AccountingDbContext db, Guid companyId,
-        IReadOnlyCollection<TaxType> forms, int year, int month, CancellationToken ct = default)
+        IReadOnlyCollection<TaxType> forms, IReadOnlyCollection<(int Year, int Month)> periods, CancellationToken ct = default)
+    {
+        foreach (var (year, month) in periods)
+            if (await PeriodFiledReasonAsync(db, companyId, forms, year, month, ct) is string reason)
+                return reason;
+        return null;
+    }
+
+    /// <summary>งวด (ปี, เดือน) ที่การเปลี่ยนผู้ถูกหักแตะ — เดือนภาษีของเอกสาร + ทุกเดือนที่มีการจ่าย + ทุกเดือนภาษีของ 50 ทวิ ที่ยังมีผล · ไม่ซ้ำ · เรียงตามเวลา</summary>
+    public static IReadOnlyList<(int Year, int Month)> AffectedPeriods(DateTime taxDate, IEnumerable<DateTime> paymentDates,
+        IEnumerable<(int Year, int Month)> certPeriods)
+        => new[] { (taxDate.Year, taxDate.Month) }
+            .Concat(paymentDates.Select(d => (d.Year, d.Month)))
+            .Concat(certPeriods)
+            .Distinct().OrderBy(p => p.Item1).ThenBy(p => p.Item2).ToList();
+
+    /// <summary>ฝ่ายค้าน P2a (รอบ 204): ใบลด/เพิ่มหนี้ที่อนุมัติแล้วและหักภาษีอ้างเอกสารนี้ ⇒ ห้ามเปลี่ยนผู้ถูกหัก (409) พร้อมทางไปต่อ ·
+    /// เหตุ: ยอดหนี้ WHT ที่ย้ายผังนับเฉพาะ JE ของเอกสารนี้ (ไม่รวมตัวกลับของใบลดหนี้) และ 50 ทวิ ที่ออกใหม่คิดจากบรรทัดของเอกสารนี้ (ไม่หักใบลดหนี้)
+    /// ⇒ ผังผู้ถูกหักเดิมค้างยอดติดลบ + 50 ทวิ เกินยอดที่หักจริง · ไม่มีใบลด/เพิ่มหนี้ ⇒ null (เส้นเดิม)</summary>
+    public static string? AdjustmentNotesReason(string? documentNumber, IReadOnlyCollection<string> approvedNoteNumbers)
+        => approvedNoteNumbers.Count == 0 ? null
+            : $"เอกสาร {documentNumber} มีใบลด/เพิ่มหนี้ที่อนุมัติแล้วและหักภาษี ณ ที่จ่ายอ้างอยู่ ({string.Join(", ", approvedNoteNumbers)}) — "
+              + "เปลี่ยนผู้ถูกหักตอนนี้ ระบบย้ายหนี้ภาษีและออก 50 ทวิ ใหม่ได้ไม่ตรงยอดหลังลด/เพิ่มหนี้ · ทางไปต่อ: ยกเลิกใบลด/เพิ่มหนี้ก่อน "
+              + "แล้วเปลี่ยนผู้ถูกหัก จากนั้นออกใบลด/เพิ่มหนี้ใหม่ — หรือให้นักบัญชีปรับรายการบัญชี/50 ทวิ เอง";
+
+    private static async Task<string?> PeriodFiledReasonAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyCollection<TaxType> forms, int year, int month, CancellationToken ct)
     {
         if (forms.Count == 0) return null;
         var formList = forms.Distinct().ToList();

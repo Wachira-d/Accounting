@@ -127,4 +127,61 @@ public class WhtCertReissuePlanTests
         var both = WhtCertReviewNote.Append(WhtCertAutoFailedNote.Build("ไม่มีเลข"), "ต้องตรวจ");
         Assert.NotNull(WhtCertAutoFailedNote.ReasonOf(WhtCertReviewNote.Clear(both)));
     }
+
+    // ── ฝ่ายค้านรอบ 204 (หลัง 778e95f9/c3f47b4d) ──
+
+    [Fact]
+    public void P3_1_ใบแทนของใบร่างเป็นร่าง_ใบออกแล้วได้ใบออกแล้ว()
+    {
+        Assert.Equal(Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Draft,
+            WhtCertReissuePlan.ReplacementStatus(Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Draft));
+        Assert.Equal(Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued,
+            WhtCertReissuePlan.ReplacementStatus(Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued));
+        Assert.Equal(Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued,
+            WhtCertReissuePlan.ReplacementStatus(Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Printed));
+    }
+
+    [Fact]
+    public void P2b_ยกเลิกใบลดหนี้ซื้อที่ลดภาษีหักแล้ว_ใบต้นทางมี50ทวิ_ติดป้ายต้องตรวจ()
+    {
+        var r = WhtCertReissuePlan.CreditNoteVoidedReason(DocumentType.CreditNote, DocumentStatus.Approved, 12m,
+            purchaseSideOverride: null, sourceIsPayerSide: true, sourceActiveCerts: 1, "CN-001");
+        Assert.NotNull(r);
+        Assert.Contains("CN-001", r);
+        Assert.Contains("12.00", r);
+    }
+
+    [Theory]
+    [InlineData(DocumentType.DebitNote, DocumentStatus.Approved, 12, null, true, 1)]      // ใบเพิ่มหนี้ไม่ได้ออก 50 ทวิ ใหม่ตอนอนุมัติ
+    [InlineData(DocumentType.CreditNote, DocumentStatus.Draft, 12, null, true, 1)]        // ร่างไม่เคยแตะ 50 ทวิ
+    [InlineData(DocumentType.CreditNote, DocumentStatus.Approved, 0, null, true, 1)]      // ไม่มีภาษีหัก
+    [InlineData(DocumentType.CreditNote, DocumentStatus.Approved, 12, false, true, 1)]    // ฝั่งขาย
+    [InlineData(DocumentType.CreditNote, DocumentStatus.Approved, 12, null, false, 1)]    // ใบต้นทางไม่ใช่ฝั่งผู้จ่าย
+    [InlineData(DocumentType.CreditNote, DocumentStatus.Approved, 12, null, true, 0)]     // ใบต้นทางไม่มี 50 ทวิ
+    public void P2b_ทิศตรงข้าม_ไม่ติดป้าย(DocumentType type, DocumentStatus status, int wht, bool? purchaseSide, bool srcPayer, int certs)
+        => Assert.Null(WhtCertReissuePlan.CreditNoteVoidedReason(type, status, wht, purchaseSide, srcPayer, certs, "CN-X"));
+
+    [Fact]
+    public void P2a_มีใบลดหนี้อนุมัติแล้วอ้างอยู่_ห้ามเปลี่ยนผู้ถูกหัก_พร้อมทางไปต่อ_ไม่มี_ผ่าน()
+    {
+        var r = WhtPayeeChangePlan.AdjustmentNotesReason("PV-001", new[] { "CN-001" });
+        Assert.NotNull(r);
+        Assert.Contains("CN-001", r);
+        Assert.Contains("ยกเลิกใบลด/เพิ่มหนี้ก่อน", r);
+        Assert.Null(WhtPayeeChangePlan.AdjustmentNotesReason("PV-001", Array.Empty<string>()));
+        // ทางเข้า 409: ข้อความนี้ไหลผ่าน BlockReason ช่อง filedReason (เปลี่ยนจริงเท่านั้น)
+        Assert.Equal(r, WhtPayeeChangePlan.BlockReason(true, DocumentStatus.Paid, 30m, "ผิดคน", anythingChanges: true, r));
+    }
+
+    [Fact]
+    public void P3_4_งวดที่ตรวจ_รวมทุกเดือนที่จ่ายและทุกเดือนของ50ทวิ_ไม่ซ้ำ_เรียงเวลา()
+    {
+        var periods = WhtPayeeChangePlan.AffectedPeriods(new DateTime(2026, 9, 30),
+            new[] { new DateTime(2026, 8, 31), new DateTime(2026, 9, 1), new DateTime(2026, 10, 5) },
+            new[] { (2026, 8), (2026, 10) });
+        Assert.Equal(new[] { (2026, 8), (2026, 9), (2026, 10) }, periods.Select(p => (p.Year, p.Month)));
+        // ใบจ่ายครั้งเดียว = เดือนภาษีของเอกสารเดือนเดียว (เส้นเดิม)
+        Assert.Equal(new[] { (2026, 9) }, WhtPayeeChangePlan.AffectedPeriods(new DateTime(2026, 9, 30),
+            Array.Empty<DateTime>(), Array.Empty<(int, int)>()).Select(p => (p.Year, p.Month)));
+    }
 }

@@ -3400,7 +3400,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     ข้อยกเว้นเดียวจากแบบทางการ) · แก้ doc รอบ 204 (บรรทัดเดิม "2 ฉบับ" ล้าสมัยตั้งแต่รอบ 72)
   - **รอบ 204 (คำตัดสินเจ้าของข้อ 148 · ข้อเสนอ 142/143/145)** — `Last verified commit 778e95f9`
     - **ใบเดียวหลายผู้ถูกหัก (ข้อ 143)** · `DocumentLine.WhtPayeeContactId` (null = ตามหัวเอกสาร · ADD COLUMN IF NOT EXISTS ใน `DatabaseMigrationHelper`) ·
-      ตัวแบ่งเดียว `Helpers/WhtPayeeSplit` (`Portions` · `Allocate` · `UncoveredPayees` · `NormalizeLineOverride` · `RequestedOrKept` · `InheritLinePayee`) —
+      ตัวแบ่งเดียว `Helpers/WhtPayeeSplit` (`Portions` · `Allocate` · `UncoveredPayees` · `NormalizeLineOverride` · `RequestedOrKept` · `InheritPayee` · `EffectiveSinglePayee` · `LiftSinglePayee`) —
       **ใบผู้ถูกหักรายเดียว = ส่วนเดียว ⇒ ทุกเส้นเดินทางเดิมทุกประการ** (50 ทวิ · JE · รายงาน · หน้านำส่ง):
       | จุด | พฤติกรรมใบหลายผู้ถูกหัก |
       | --- | --- |
@@ -3431,6 +3431,33 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     - **รายการประจำ** (recurring.html): ช่อง "ผู้ถูกหักภาษีคนละรายกับผู้ติดต่อ" (`templateData.whtPayeeContactId` · เฉพาะชนิดฝั่งผู้จ่าย) + ติ๊กออกอัตโนมัติเขียนทั้ง
       `whtCertAutoIssue`/`autoGenerateWht` · hydrate ตอนแก้ (คีย์ใหม่ชนะ) · บันทึกตั้งต้นจากเทมเพลตเดิม (คีย์ที่ตั้งผ่าน API ไม่หาย · ยกเว้น `dueDays` ที่หน้านี้ตั้งใจไม่ส่ง)
     - **รวมกับ ภ.ง.ด.2 (ทีม T3)** — แบบ/ผังต่อผู้ถูกหักตัดสินด้วย**รหัสเงินได้ของบรรทัดของรายนั้น** (`WhtIncomeCodes.WithheldAt`/`At`/`WithheldForPayee`): `ResolveWhtPayableSplitAsync` (ใบรายเดียว = `LoadWithheldAsync` ทั้งใบเหมือนเดิม · หลายราย = ต่อราย ⇒ ดอกเบี้ยบุคคล ก ลง 21915 แม้ใบมีค่าบริการของ ข) · พรีวิว GL `WhtPayableSplitAsync` · 50 ทวิ ต่อราย (`AutoGenerateFromDocumentAsync(payeeContactId)`) · รายงาน ภ.ง.ด. แถวเตือน · หน้านำส่ง/ปฏิทิน · คำเตือน "ใบปน ม.40(4)" ต่อราย (อนุมัติ + หน้าตรวจข้อมูล) · `ChangeWhtPayeeAsync` นับ/ย้ายหนี้ 21915 ด้วย (`WhtPayableAccount.DocumentPayableCodes`) · 50 ทวิ ต่อรายคงเงื่อนไขผู้จ่ายออกแทน (`CertificateType` + เงินได้ = ฐาน + ส่วนที่ออกแทน) · ใบออกใหม่จากใบลดหนี้คง `CertificateType`/เงื่อนไขรายบรรทัด
+    - **แก้ผลฝ่ายค้านหลายผู้ถูกหัก (หลัง 778e95f9 + c3f47b4d)** — Last verified `commit <pending>`:
+      **P1 ทุกบรรทัดที่หักตั้งผู้ถูกหักรายบรรทัดรายเดียว Y ≠ หัวเอกสาร X** — เดิม `Portions` คืนส่วนเดียวของ Y (JE ลงผังของ Y) แต่ 50 ทวิ/พรีวิว GL/ช่องโหว่หน้านำส่ง
+      อ่าน "ใบรายเดียว = หัวเอกสาร X" ⇒ คนละคน · แก้สองชั้น: (1) **ตอนบันทึก** `WhtPayeeSplit.LiftSinglePayee` ยก Y ขึ้น `Document.WhtPayeeContactId` แล้วบรรทัด = null —
+      ตัวเดียวของ สร้าง/แก้ไข (`ResolveLineWhtPayeesAsync` · แก้ไขไม่ส่งบรรทัด `LiftStoredLineWhtPayees`) และ `ChangeWhtPayeeAsync` ⇒ ไม่มีข้อมูลรูป "หัว X ทุกบรรทัด Y" ใหม่
+      (ส่วนของตัวแบ่ง/JE เท่าเดิมทุกประการ) · (2) **ตัวอ่าน** `WhtPayeeSplit.EffectiveSinglePayee` (ผู้ถูกหักที่มีผลจริงของใบรายเดียว = ส่วนเดียวที่ `Portions` คืน)
+      ใช้ที่ `ContactHydration.WhtPayeeOf`/`LoadWhtPayeeAsync` (พรีวิว GL · คำเตือนอนุมัติ · รายงาน ภ.ง.ด.) · `AutoGenerateFromDocumentAsync` · ลิสต์รอออกใบ ·
+      ใบลดหนี้ออก 50 ทวิ ใหม่ · หน้านำส่ง/ปฏิทิน · หน้าตรวจข้อมูล — ใบร่างที่บันทึกก่อนแก้ก็ได้คนเดียวกับ JE · แปลงเอกสารส่งผู้ถูกหักหัวเอกสารไปกับคำขอสร้าง
+      (เดิมตั้งทับหลังสร้าง ⇒ ทับผลยก) ·
+      **P2a** `ChangeWhtPayeeAsync` เมื่อมีใบลด/เพิ่มหนี้ที่อนุมัติแล้ว (ไม่ร่าง/ไม่ยกเลิก) และหักภาษีอ้างเอกสาร ⇒ **409** `WhtPayeeChangePlan.AdjustmentNotesReason`
+      (ยอดย้ายผังนับเฉพาะ JE ของใบนี้ และ 50 ทวิ ที่ออกใหม่คิดจากบรรทัดของใบนี้ ⇒ ผังเพี้ยน/ใบเกิน) · ทางไปต่อ: ยกเลิกใบลด/เพิ่มหนี้ → เปลี่ยนผู้ถูกหัก → ออกใบลด/เพิ่มหนี้ใหม่
+      หรือให้นักบัญชีปรับเอง ·
+      **P2b** ยกเลิกใบลดหนี้ซื้อที่ลดภาษีหักแล้ว (`VoidDocumentAsync` · ใบต้นทางมี 50 ทวิ) ⇒ ป้าย `[WHT-CERT-REVIEW]` บนใบต้นทาง (`WhtCertReissuePlan.CreditNoteVoidedReason` ·
+      ระบบไม่ออกใหม่เอง — เดือนอาจยื่นแล้ว/ผู้ถูกหักถือใบอยู่) ·
+      **P2c** ใบลด/เพิ่มหนี้ฝั่งซื้อที่หักภาษีของ**ใบต้นทางหลายผู้ถูกหัก** — ทุกบรรทัดที่หักต้องอ้างบรรทัดต้นทาง (`SourceLineId`) ไม่งั้น `BusinessRuleException`
+      (`WhtPayeeSplit.UnmappedAdjustmentLineReason`) ตอนอนุมัติ (`ApproveDocumentAsync` ก่อน JE — ครอบโหมดลง gross) และใน JE (`WhtPayeePortionsWithLinesAsync`) ·
+      ทางไปต่อ: สร้างด้วยการ "แปลง" จากใบต้นทาง (ระบบผูกบรรทัด) · ใบต้นทางรายเดียว = เส้นเดิม ·
+      **P3-1** ใบออกแทนตามใบลดหนี้ของ 50 ทวิ ที่เป็น**ร่าง** = ร่าง (`WhtCertReissuePlan.ReplacementStatus` — จำสถานะก่อนประทับยกเลิก · เดิมได้ "ออกแล้ว" เสมอ) ·
+      **P3-2** เลขที่ 50 ทวิ `WHT-YYYYMM-####` ออกที่ `NextCertificateNumberAsync` ตัวเดียว (`CreateAsync` · `AutoGenerateFromDocumentAsync` · ใบออกใหม่ — เดิมสำเนา MAX+1 สามที่ ·
+      กติกาจุดเรียกห้าม `CertificateNumber.StartsWith(`/`.Max() + 1` ในสองเมธอดแรก) ·
+      **P3-3** `ChangeWhtPayeeAsync` ทั้งเมธอดอยู่ในธุรกรรมเดียว + ล็อกแถวเอกสาร `FOR UPDATE` (`LockDocumentsForPaymentVoidAsync`) ก่อนอ่าน ·
+      **P3-4** ด่าน "ยื่น/นำส่งแล้ว" รายงวดตรวจทุกเดือนใน `WhtPayeeChangePlan.AffectedPeriods` (เดือนภาษีของเอกสาร + ทุกเดือนที่มีการจ่าย/การจัดสรรจ่าย + ทุกเดือนของ 50 ทวิ ที่มีผล) ·
+      **P3-5** `WhtPayeeSplit.Allocate` แบ่งเป็นสตางค์แบบเศษเหลือมากสุด — ทุกส่วนเครื่องหมายเดียวกับยอด · Σ เป๊ะ (เดิม 4 ส่วนเท่ากัน 0.02 ⇒ 0.01/0.01/0.01/−0.01) ·
+      ใบรายเดียว = ยอดทั้งก้อน · **P3-6** แปลง/คัดลอก (พรีวิว+POST)/รายการประจำ สืบทอดผู้ถูกหัก (หัวเอกสาร + รายบรรทัด) ผ่าน `WhtPayeeSplit.InheritPayee` +
+      `ContactHydration.ActiveContactIdsAsync` — ผู้ติดต่อที่ถูกลบ ⇒ null (บรรทัด = ตามหัวเอกสาร · หัวเอกสาร = ผู้ติดต่อของเอกสาร) + หมายเหตุภายใน
+      `DroppedInheritedPayeeNote` บนใบใหม่ (คัดลอก: ในข้อความตอบด้วย · รายการประจำ: **ไม่อนุมัติอัตโนมัติใบนั้น**) — เดิมตัวตรวจตอนสร้างปฏิเสธ ⇒ ล้มทุกครั้ง ·
+      **P3-7** `AutoGenerateFromDocumentAsync(payeeContactId)` บนใบรายเดียวที่ระบุผู้ถูกหักไม่ตรงผู้ถูกหักที่มีผลจริง ⇒ 400 พร้อมทางไปต่อ (เดิมเมินเงียบ) ·
+      เทสต์ `WhtPayeeSplitTests` · `WhtCertReissuePlanTests` (สองทิศ) · `Db/WhtMultiPayeeDbTests` (P1 ทั้งสองทิศ · P3-7 · P3-1 · P2a 409 + ทางไปต่อ · P2c) · กติกา `_WHT204_ADV`
 - **เกณฑ์เงินสด (ท.ป.4/2528) — ออกใบจริงเฉพาะตอน "จ่ายเงินแล้ว"**
   (`AutoGenerateFromDocumentAsync`):
   - **จ่ายแล้ว** (PV, ใบที่ `BalanceDue<=0 && PaidAmount>0` ตอน approve,
@@ -5060,6 +5087,8 @@ _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้า�
 _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้างชุดสอง — §2.7b ใบวางบิลรวมแปลง/รับชำระตรงไม่ได้ · E-05 ตอนอนุมัติ · ชั้นความลับในการแปลง — commit 47a7a78e)_
 
 _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้างชุดสาม — รอบเงินเดือนนับเข้าการนำส่งด้วย PaidAt · integration ใบกำกับล้มสะอาด — commit 075af3d7)_
+
+_Last verified against codebase: 2026-10-13 (รอบ 204 — แก้ผลฝ่ายค้านงานหลายผู้ถูกหัก (หลัง 778e95f9 + c3f47b4d): §5.4 P1 ผู้ถูกหักรายบรรทัดรายเดียวยกขึ้นหัวเอกสาร + ตัวอ่าน `EffectiveSinglePayee` · P2a ใบลด/เพิ่มหนี้อนุมัติแล้ว ⇒ เปลี่ยนผู้ถูกหัก 409 · P2b ยกเลิกใบลดหนี้ติดป้ายใบต้นทาง · P2c ใบลดหนี้ไม่อ้างบรรทัดของใบหลายผู้ถูกหัก = ล้มดัง · P3-1..7 — commit <pending>)_
 
 _Last verified against codebase: 2026-10-13 (รอบ 204 — แก้ผลฝ่ายค้านงานผู้จ่ายออกภาษีแทน: §5.4 P1-1 บริการต่างประเทศ+ออกแทน = 400 ทุกทางเข้าของธง · P1-2 ใบลด/เพิ่มหนี้ฝั่งซื้อสืบทอดเงื่อนไข + JE กลับขาส่วนที่ออกแทน + 50 ทวิ ลดเงินได้รวมส่วนนี้ · P2-1 แถวผู้จ่ายออกแทนบนกระดาษสอง renderer · P2-2 พรีวิว GL · P3-1 แถวเตือนรายงาน ภ.ง.ด. · P3-2 ซิงค์ตั้งเงื่อนไขกลับอย่างประกาศ · P3-3 recurring.html — commit c3f47b4d)_
 

@@ -118,21 +118,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // บังคับ format ขอแค่ unique ต่อ company × ปีภาษี — เพิ่มเดือนไม่กระทบ uniqueness
         // และให้เลขเดียวกับใบที่ auto-gen จากใบสำคัญจ่าย (WHT-YYYYMM-####).
         var mmSeg = request.TaxMonth is >= 1 and <= 12 ? request.TaxMonth : DateTime.UtcNow.Month;
-        var whtPrefix = $"WHT-{request.TaxYear}{mmSeg:D2}-";
-        // Numeric MAX on the parsed suffix avoids the lexicographic bug that
-        // returned "9999" once a tenant crossed 10,000 certs in a year
-        // (same fix DocumentNumberGenerator uses). Cap padding at 5 digits
-        // — well above any realistic SME annual volume.
-        var existingNumbers = await _db.WithholdingTaxCerts
-            .IgnoreQueryFilters()
-            .Where(w => w.CompanyId == companyId && w.CertificateNumber.StartsWith(whtPrefix))
-            .Select(w => w.CertificateNumber)
-            .ToListAsync();
-        var whtSeq = existingNumbers
-            .Select(n => int.TryParse(n.Substring(whtPrefix.Length), out var p) ? p : 0)
-            .DefaultIfEmpty(0)
-            .Max() + 1;
-        var certNumber = $"{whtPrefix}{whtSeq:D4}";
+        // ฝ่ายค้าน P3-2: ตัวออกเลขตัวเดียว (NextCertificateNumberAsync — MAX ตัวเลขของส่วนท้าย ไม่ใช่เรียงตัวอักษร)
+        var certNumber = await NextCertificateNumberAsync(companyId, request.TaxYear, mmSeg);
 
         if (request.DocumentId.HasValue)
         {
@@ -466,10 +453,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // แต่ผู้มีเงินได้ = บริษัทประกัน ⇒ 50 ทวิ ชื่อ/เลขผู้เสียภาษี/สาขา/ที่อยู่/แบบ ภ.ง.ด. มาจาก "ผู้ถูกหัก" ตัวเดียว (WhtCertIssuePlan.PayeeOf)
         // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ออกได้ทีละผู้ถูกหัก (หนึ่ง 50 ทวิ = ผู้ถูกหักหนึ่งราย) · ไม่ระบุ = ล้มดังพร้อมทางไปต่อ ·
         // ใบรายเดียว = ตัวแปร payeeOnly เป็น null ⇒ ทุกขั้นข้างล่างเดินทางเดิมทุกประการ
-        var portions = WhtPayeeSplit.Portions(doc.ContactId, doc.WhtPayeeContactId,
-            doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
-                .Select(l => new WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
-            doc.WithholdingTaxAmount);
+        var docWhtLines = WhtPayeeSplit.LinesOf(doc);
+        var portions = WhtPayeeSplit.Portions(doc.ContactId, doc.WhtPayeeContactId, docWhtLines, doc.WithholdingTaxAmount);
         Guid? payeeOnly = null;
         if (WhtPayeeSplit.IsMultiPayee(portions))
         {
@@ -481,7 +466,14 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         }
         var portion = payeeOnly is Guid po ? portions.First(p => p.PayeeContactId == po) : null;
 
-        var payeeId = payeeOnly ?? WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+        // ฝ่ายค้าน P1 (รอบ 204): ใบรายเดียว = ผู้ถูกหัก "ที่มีผลจริง" (ทุกบรรทัดที่หักเป็นของผู้ถูกหักรายบรรทัด Y ⇒ Y — ตรงกับ JE) ไม่ใช่หัวเอกสารดิบ
+        var payeeId = payeeOnly ?? WhtPayeeSplit.EffectiveSinglePayee(doc.ContactId, doc.WhtPayeeContactId, docWhtLines);
+        // ฝ่ายค้าน P3-7: ระบุผู้ถูกหักมากับใบรายเดียวแต่ไม่ตรงผู้ถูกหักของใบ ⇒ ปฏิเสธ (เดิมเมินเงียบแล้วออกในนามอื่น = silent no-op)
+        if (payeeOnly == null && payeeContactId is Guid askedPayee && askedPayee != Guid.Empty && askedPayee != payeeId)
+            throw new BusinessRuleException(
+                $"เอกสาร {doc.DocumentNumber} มีผู้ถูกหักภาษีรายเดียว — 50 ทวิ ออกในนามผู้ถูกหักของเอกสารเท่านั้น (ไม่ใช่ผู้ที่ระบุมา) · "
+                + "ถ้าผู้ถูกหักผิด ให้เปลี่ยนผู้ถูกหักที่เอกสาร (ร่าง: ฟอร์มแก้ไข · อนุมัติแล้ว: \"เปลี่ยนผู้ถูกหัก\") แล้วออกใบอีกครั้ง",
+                WhtPayeeSplit.RuleCode);
         var payee = payeeId == doc.ContactId
             ? doc.Contact
             : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
@@ -580,19 +572,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // เลขเดือน = เดือน "เงินได้ที่จ่าย" (tax month) ไม่ใช่เดือนที่ generate (UtcNow)
         // → ตรงกับ TaxMonth ที่ลงในใบ + สอดคล้องกับ CreateAsync (WHT-YYYYMM-####)
         var autoDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate;
-        var autoYm = autoDate.ToString("yyyyMM");
-        var autoPrefix = $"WHT-{autoYm}-";
-        // Numeric max (same fix as CreateAsync above).
-        var autoExisting = await _db.WithholdingTaxCerts
-            .IgnoreQueryFilters()
-            .Where(w => w.CompanyId == companyId && w.CertificateNumber.StartsWith(autoPrefix))
-            .Select(w => w.CertificateNumber)
-            .ToListAsync();
-        var autoSeq = autoExisting
-            .Select(n => int.TryParse(n.Substring(autoPrefix.Length), out var p) ? p : 0)
-            .DefaultIfEmpty(0)
-            .Max() + 1;
-        var certNumber = $"{autoPrefix}{autoSeq:D4}";
+        // ฝ่ายค้าน P3-2: เลขที่ผ่านตัวออกเลขตัวเดียว (เดิมสำเนา MAX+1 สามที่)
+        var certNumber = await NextCertificateNumberAsync(companyId, autoDate.Year, autoDate.Month);
 
         var cert = new WithholdingTaxCert
         {
@@ -958,10 +939,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 d.Lines.Where(l => l.WithholdingTaxAmount > 0).Select(l => new PendingWhtLineInfo(
                     l.Description, l.IncomeTypeCode, l.Amount,
                     l.WithholdingTaxRate, l.WithholdingTaxAmount)).ToList(),
-                PayeeContactId: WhtCertIssuePlan.PayeeOf(d.ContactId, d.WhtPayeeContactId),
+                // ฝ่ายค้าน P1: ผู้ถูกหักที่มีผลจริง (ตัวเดียวกับ ContactHydration.WhtPayeeOf ข้างบน)
+                PayeeContactId: WhtPayeeSplit.EffectiveSinglePayee(d),
                 PayeeName: payee?.Name,
                 PayeeTaxId: payee?.TaxId,
-                PayeeDiffersFromContact: d.WhtPayeeContactId.HasValue && d.WhtPayeeContactId != d.ContactId,
+                PayeeDiffersFromContact: WhtPayeeSplit.EffectiveSinglePayee(d) != d.ContactId,
                 AutoIssueEnabled: d.WhtCertAutoIssue,
                 AutoIssueFailedReason: failed,
                 PendingLabel: label,
@@ -1056,7 +1038,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var multi = WhtPayeeSplit.IsMultiPayee(portions);
         var srcLinePayee = srcLines.ToDictionary(l => l.Id,
             l => WhtPayeeSplit.LinePayeeOf(src.ContactId, src.WhtPayeeContactId, l.WhtPayeeContactId));
-        var singlePayee = WhtCertIssuePlan.PayeeOf(src.ContactId, src.WhtPayeeContactId);
+        var singlePayee = WhtPayeeSplit.EffectiveSinglePayee(src.ContactId, src.WhtPayeeContactId,
+            srcLines.Select(l => new WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList());
 
         // บรรทัดใบลดหนี้ → ผู้ถูกหัก (อ้างบรรทัดต้นทาง = ผู้ถูกหักของบรรทัดนั้น · ไม่อ้าง = ใบรายเดียวเท่านั้นที่ชี้ได้)
         var reductions = new Dictionary<Guid, List<WhtCertAmountLine>>();
@@ -1145,6 +1128,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         }
         try
         {
+            // ฝ่ายค้าน P3-1: จำสถานะเดิมก่อนประทับ Voided — ใบร่างต้องได้ใบแทนเป็นร่าง (เดิมเทียบหลังประทับ ⇒ ได้ "ออกแล้ว" เสมอ = เข้าแบบยื่นทันที)
+            var oldStatus = oldCert.Status;
             oldCert.Status = WithholdingTaxCertStatus.Voided;
             oldCert.UpdatedAt = DateTime.UtcNow;
             oldCert.UpdatedBy = actor;
@@ -1160,7 +1145,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     TaxYear = oldCert.TaxYear,
                     TaxMonth = oldCert.TaxMonth,
                     CertificateType = oldCert.CertificateType,
-                    Status = oldCert.Status == WithholdingTaxCertStatus.Draft ? WithholdingTaxCertStatus.Draft : WithholdingTaxCertStatus.Issued,
+                    Status = WhtCertReissuePlan.ReplacementStatus(oldStatus),
                     IssuedDate = DateTime.UtcNow,
                     DocumentId = oldCert.DocumentId,
                     SourcePaymentId = oldCert.SourcePaymentId,
@@ -1218,7 +1203,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         }
     }
 
-    /// <summary>เลขที่ 50 ทวิ ถัดไปของเดือนภาษี (WHT-YYYYMM-####) — รูปเดียวกับ <see cref="CreateAsync"/>/<see cref="AutoGenerateFromDocumentAsync"/></summary>
+    /// <summary>เลขที่ 50 ทวิ ถัดไปของเดือนภาษี (WHT-YYYYMM-####) — <b>ตัวออกเลขตัวเดียว</b> ของ <see cref="CreateAsync"/> ·
+    /// <see cref="AutoGenerateFromDocumentAsync"/> · ใบออกใหม่ตามใบลดหนี้ (ฝ่ายค้าน P3-2 รอบ 204 — เดิมสำเนา MAX+1 สามที่ · กติกาจุดเรียกห้ามประกอบเอง) ·
+    /// เลขรันต่อ "เดือนภาษี" (บริษัท × ปี × เดือน) · MAX ของเลขท้าย (ไม่ใช่เรียงตัวอักษร — กันเลข "9999" ค้างเมื่อเกิน 10,000 ใบ) ·
+    /// RD e-Filing ไม่บังคับรูปแบบ ขอแค่ไม่ซ้ำต่อบริษัท × ปีภาษี</summary>
     private async Task<string> NextCertificateNumberAsync(Guid companyId, int taxYear, int taxMonth)
     {
         var prefix = $"WHT-{taxYear}{taxMonth:D2}-";

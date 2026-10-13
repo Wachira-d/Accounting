@@ -79,7 +79,8 @@ public static class ContactHydration
     /// ตั้งผู้ถูกหักไว้แต่หาไม่เจอ ⇒ null (ไม่ตกกลับไปผู้รับเงินเงียบ ๆ — จะได้แบบ ภ.ง.ด. ผิดคน)</summary>
     public static Contact? WhtPayeeOf(Document doc, IReadOnlyDictionary<Guid, Contact> payees)
     {
-        var id = WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+        // ฝ่ายค้าน P1 (รอบ 204): ทุกบรรทัดที่หักเป็นของผู้ถูกหักรายบรรทัดรายเดียว ⇒ ผู้ถูกหักของใบคือรายนั้น (ตรงกับ JE · WhtPayeeSplit.EffectiveSinglePayee)
+        var id = WhtPayeeSplit.EffectiveSinglePayee(doc);
         if (id == doc.ContactId) return doc.Contact;
         return payees.TryGetValue(id, out var c) ? c : null;
     }
@@ -96,10 +97,23 @@ public static class ContactHydration
     /// <summary>ผู้ถูกหักภาษีของเอกสารใบเดียว — ไม่ได้ตั้งแยก = <see cref="Document.Contact"/> (ต้อง hydrate ก่อน)</summary>
     public static async Task<Contact?> LoadWhtPayeeAsync(this AccountingDbContext db, Guid companyId, Document doc)
     {
-        var id = WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId);
+        // ฝ่ายค้าน P1 (รอบ 204): ผู้ถูกหัก "ที่มีผลจริง" ของใบรายเดียว (บรรทัดที่โหลดมา) — ไม่มีบรรทัด = หัวเอกสาร (ข้อมูลที่บันทึกถูกยกขึ้นหัวเอกสารแล้ว)
+        var id = WhtPayeeSplit.EffectiveSinglePayee(doc);
         if (id == doc.ContactId) return doc.Contact;
         return await db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == id);
+    }
+
+    /// <summary>ฝ่ายค้าน P3-6 (รอบ 204): ผู้ติดต่อที่ยังใช้งาน (ไม่ถูกลบ) ของบริษัทนี้จากชุด id — ตัวกรองตอนสืบทอดผู้ถูกหักรายบรรทัด
+    /// (<see cref="WhtPayeeSplit.InheritPayee"/>) · เกณฑ์เดียวกับตัวตรวจตอนสร้าง (query filter ของ Contact)</summary>
+    public static async Task<HashSet<Guid>> ActiveContactIdsAsync(this AccountingDbContext db, Guid companyId, IEnumerable<Guid?> ids)
+    {
+        var wanted = ids.Where(i => i is Guid g && g != Guid.Empty).Select(i => i!.Value).Distinct().ToList();
+        if (wanted.Count == 0) return new HashSet<Guid>();
+        var found = await db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && wanted.Contains(c.Id))
+            .Select(c => c.Id).ToListAsync();
+        return found.ToHashSet();
     }
 
     /// <summary>ผูก PayeeContact (รวมที่ถูก soft-delete) เข้า

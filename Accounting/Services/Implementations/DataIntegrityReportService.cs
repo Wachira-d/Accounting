@@ -202,7 +202,11 @@ public class DataIntegrityReportService
                     && jl.CreditAmount > 0),
             })
             .ToListAsync();
-        var contactIds = docs.Select(d => Accounting.Helpers.WhtCertIssuePlan.PayeeOf(d.ContactId, d.WhtPayeeContactId))
+        // ฝ่ายค้าน P1 (รอบ 204): ผู้ถูกหักที่มีผลจริงของใบรายเดียว (ทุกบรรทัดที่หักเป็นของรายบรรทัดรายเดียว ⇒ รายนั้น)
+        Guid EffectivePayee(Guid contactId, Guid? payeeOverride, IEnumerable<(Guid? Payee, decimal Wht)> lines)
+            => Accounting.Helpers.WhtPayeeSplit.EffectiveSinglePayee(contactId, payeeOverride,
+                lines.Select(l => new Accounting.Helpers.WhtPayeeLine(l.Payee, l.Wht)).ToList());
+        var contactIds = docs.Select(d => EffectivePayee(d.ContactId, d.WhtPayeeContactId, d.WhtLines.Select(l => (l.WhtPayeeContactId, l.WithholdingTaxAmount))))
             .Concat(docs.SelectMany(d => d.WhtLines.Where(l => l.WhtPayeeContactId.HasValue).Select(l => l.WhtPayeeContactId!.Value)))
             .Distinct().ToList();
         var contacts = contactIds.Count == 0
@@ -212,7 +216,7 @@ public class DataIntegrityReportService
                 .ToDictionaryAsync(c => c.Id);
         foreach (var d in docs)
         {
-            contacts.TryGetValue(Accounting.Helpers.WhtCertIssuePlan.PayeeOf(d.ContactId, d.WhtPayeeContactId), out var payee);
+            contacts.TryGetValue(EffectivePayee(d.ContactId, d.WhtPayeeContactId, d.WhtLines.Select(l => (l.WhtPayeeContactId, l.WithholdingTaxAmount))), out var payee);
             var mix = Accounting.Helpers.ThaiWhtRateTable.ClassifySection40_4(d.Codes);
             if (mix == Accounting.Helpers.ThaiWhtRateTable.Section40_4Mix.AllSection40_4 && d.PostedTo21916)
             {

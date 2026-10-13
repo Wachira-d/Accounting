@@ -271,7 +271,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 if (!Accounting.Helpers.WhtPayeeSplit.IsMultiPayee(portions))
                 {
                     if (coveredDocIds.Contains(d.Id)) continue;
-                    gapItems.Add((date, d.WhtPayeeContactId is Guid gp && gapPayees.TryGetValue(gp, out var gk)
+                    // ฝ่ายค้าน P1 (รอบ 204): ผู้ถูกหักที่มีผลจริง (ทุกบรรทัดที่หักเป็นของผู้ถูกหักรายบรรทัดรายเดียว ⇒ รายนั้น · ตรงกับ JE/50 ทวิ)
+                    var gapPayee = Accounting.Helpers.WhtPayeeSplit.EffectiveSinglePayee(d.ContactId, d.WhtPayeeContactId,
+                        d.LinePayees.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList());
+                    gapItems.Add((date, gapPayee != d.ContactId && gapPayees.TryGetValue(gapPayee, out var gk)
                         ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, gk.Country, gk.TaxId, gk.Type, gk.Name, d.IncomeCodes)
                         : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes),
                         d.WithholdingTaxAmount, d.Id));
@@ -760,9 +763,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     }
                     continue;
                 }
+                // ฝ่ายค้าน P1 (รอบ 204): ผู้ถูกหักที่มีผลจริงของใบรายเดียว (ตัวเดียวกับหน้านำส่ง)
+                var calPayee = Accounting.Helpers.WhtPayeeSplit.EffectiveSinglePayee(d.ContactId, d.WhtPayeeContactId,
+                    d.LinePayees.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList());
                 if (d.WithholdingTaxAmount > 0 && !coveredCalDocIds.Contains(d.Id))
                     whtGaps.Add(new WhtGapSnap(dt.Year, dt.Month,
-                        d.WhtPayeeContactId is Guid cp && calPayees.TryGetValue(cp, out var ck)
+                        calPayee != d.ContactId && calPayees.TryGetValue(calPayee, out var ck)
                             ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, ck.Country, ck.TaxId, ck.Type, ck.Name, d.IncomeCodes)
                             : Accounting.Helpers.WhtPayeeKind.ResolveForm(
                                 d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes),

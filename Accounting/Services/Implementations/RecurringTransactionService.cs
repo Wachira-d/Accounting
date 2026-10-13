@@ -430,6 +430,17 @@ public class RecurringTransactionService : IRecurringTransactionService
             var baseDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow);
             string? Sub(string? s) => ApplyRecurringPlaceholders(s, baseDate);
 
+            // ฝ่ายค้าน P3-6 (รอบ 204): ผู้ถูกหัก (หัวเอกสาร + รายบรรทัด) ของเทมเพลตที่ผู้ติดต่อถูกลบไปแล้ว ⇒ สืบทอดเป็น null + หมายเหตุบนใบ +
+            // ไม่อนุมัติอัตโนมัติใบนั้น (เดิมตัวตรวจตอนสร้างปฏิเสธ ⇒ รายการประจำล้มทุกงวดจนกว่าจะกู้ผู้ติดต่อ) — ตัวสืบทอดเดียว WhtPayeeSplit.InheritPayee
+            static Guid? TplPayee(JsonElement el) => el.TryGetProperty("whtPayeeContactId", out var tpEl)
+                && tpEl.ValueKind == JsonValueKind.String && Guid.TryParse(tpEl.GetString(), out var tpId) ? tpId : null;
+            var tplPayeeIds = new List<Guid?> { TplPayee(root) };
+            if (root.TryGetProperty("lines", out var tplLinesEl) && tplLinesEl.ValueKind == JsonValueKind.Array)
+                tplPayeeIds.AddRange(tplLinesEl.EnumerateArray().Select(TplPayee));
+            var tplActivePayees = await Accounting.Helpers.ContactHydration.ActiveContactIdsAsync(_db, recurring.CompanyId, tplPayeeIds);
+            var tplPayerSide = Accounting.Helpers.WhtCertIssuePlan.AppliesTo(docType);
+            var droppedPayees = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayees(tplPayeeIds, tplPayerSide, tplActivePayees);
+
             // Extract lines from template
             var lines = new List<Models.DTOs.Document.DocumentLineRequest>();
             if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
@@ -460,10 +471,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                             line.TryGetProperty("incomeTypeCode", out var itc) && itc.ValueKind == JsonValueKind.String ? itc.GetString() : null,
                             Accounting.Helpers.WhtCertIssuePlan.AppliesTo(docType)),
                         // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดของเทมเพลต — ไม่มี key = ตามหัวเอกสาร (พฤติกรรมเดิม) · ชนิดฝั่งอื่น = null
-                        WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritLinePayee(
-                            line.TryGetProperty("whtPayeeContactId", out var lwpEl) && lwpEl.ValueKind == JsonValueKind.String
-                                && Guid.TryParse(lwpEl.GetString(), out var lwpId) ? lwpId : null,
-                            Accounting.Helpers.WhtCertIssuePlan.AppliesTo(docType))
+                        WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritPayee(TplPayee(line), tplPayerSide, tplActivePayees)
                     ));
                 }
             }
@@ -527,8 +535,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                         && waiEl.ValueKind is JsonValueKind.True or JsonValueKind.False ? waiEl.GetBoolean() : (bool?)null,
                     root.TryGetProperty("autoGenerateWht", out var awEl)
                         && awEl.ValueKind is JsonValueKind.True or JsonValueKind.False ? awEl.GetBoolean() : (bool?)null),
-                WhtPayeeContactId: root.TryGetProperty("whtPayeeContactId", out var wpEl)
-                    && wpEl.ValueKind == JsonValueKind.String && Guid.TryParse(wpEl.GetString(), out var wpId) ? wpId : null,
+                WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritPayee(TplPayee(root), tplPayerSide, tplActivePayees),
                 // รอบ 204 (เอกสารลูกสืบทอด) — ผู้จ่ายออกภาษีแทนของรายการประจำ ("PayAlways"/"PayOnce"/"Withhold" หรือ 1/2/3) · template เก่าไม่มี key
                 // = หัก ณ ที่จ่าย (พฤติกรรมเดิม) · ใบปลายทางฝั่งรับเงิน ⇒ ไม่ส่ง (ตัวสืบทอดเดียว WhtGrossUp.Inherit — ไม่ให้รายการประจำล้มทุกงวด)
                 WhtCertType: ParseTemplateWhtCertType(root) is { } tplWhtType
@@ -538,8 +545,22 @@ public class RecurringTransactionService : IRecurringTransactionService
 
             var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy);
 
-            // Auto-approve if configured
-            if (recurring.AutoApprove && result != null)
+            // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้ายบนใบ (ล้มดังที่ตัวเอกสาร) + ไม่อนุมัติอัตโนมัติ (50 ทวิ จะออกผิดคน) · ใบอื่นเดินทางเดิม
+            if (result != null && Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayeeNote($"รายการประจำ \"{recurring.Name}\"", droppedPayees) is string droppedNote)
+            {
+                var droppedDoc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == result.Id && d.CompanyId == recurring.CompanyId);
+                if (droppedDoc != null)
+                {
+                    var note = droppedNote + (recurring.AutoApprove ? " · ไม่อนุมัติอัตโนมัติใบนี้ (ผู้ถูกหักต้องให้คนตรวจ)" : "");
+                    droppedDoc.InternalNotes = string.IsNullOrWhiteSpace(droppedDoc.InternalNotes) ? note : droppedDoc.InternalNotes.TrimEnd() + "\n\n" + note;
+                    await _db.SaveChangesAsync();
+                }
+                _logger.LogWarning("Recurring {Id}: ผู้ถูกหักภาษีของเทมเพลต {Count} รายการถูกลบ — ใบ {Doc} ใช้ผู้ถูกหักหัวเอกสาร/ผู้ติดต่อแทน (ไม่อนุมัติอัตโนมัติ)",
+                    recurring.Id, droppedPayees, result.Id);
+            }
+
+            // Auto-approve if configured (ผู้ถูกหักถูกตัดทิ้ง = ไม่อนุมัติอัตโนมัติ — ข้างบน)
+            if (recurring.AutoApprove && result != null && droppedPayees == 0)
             {
                 try
                 {
