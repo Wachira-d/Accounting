@@ -168,8 +168,10 @@ public class WhtGrossUpTests
     public void MismatchReason_fails_loud_when_stored_borne_differs_from_lines()
     {
         var per = WhtGrossUp.ForLines(new List<(decimal, decimal)> { (10_000m, 3m) }, WithholdingTaxCertType.PayAlways);
-        Assert.Null(WhtGrossUp.MismatchReason("EXP-1", 309.28m, per));
-        Assert.NotNull(WhtGrossUp.MismatchReason("EXP-1", 300m, per));
+        Assert.Null(WhtGrossUp.MismatchReason("EXP-1", 309.28m, 309.28m, per));
+        Assert.NotNull(WhtGrossUp.MismatchReason("EXP-1", 309.28m, 300m, per));
+        // ซิงค์ภายนอกเขียนภาษีกลับเป็นแบบหัก ณ ที่จ่าย (300) ทั้งที่เอกสารตั้ง "ตลอดไป" ⇒ ต้องฟ้อง ไม่ลง JE ที่ไม่สมดุล
+        Assert.NotNull(WhtGrossUp.MismatchReason("EXP-1", 300m, 309.28m, per));
     }
 
     // ── JE สมดุล (โครงเดียวกับ AutoPostToJournalAsync สายค่าใช้จ่าย accrual) ──

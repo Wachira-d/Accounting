@@ -16226,7 +16226,7 @@ public partial class DocumentService : IDocumentService
             if (doc.WhtPayerBorneAmount == 0m) return;
             var borneLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
             var borneParts = WhtGrossUp.ForLines(borneLines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
-            if (WhtGrossUp.MismatchReason(doc.DocumentNumber, doc.WhtPayerBorneAmount, borneParts) is string borneMismatch)
+            if (WhtGrossUp.MismatchReason(doc.DocumentNumber, doc.WithholdingTaxAmount, doc.WhtPayerBorneAmount, borneParts) is string borneMismatch)
                 throw new BusinessRuleException(borneMismatch, WhtGrossUp.RuleCode);
             for (var bi = 0; bi < borneLines.Count; bi++)
             {

@@ -140,13 +140,13 @@ public static class WhtGrossUp
     public static decimal PayeeTotal(decimal subTotal, decimal vat, decimal tax, decimal payerBorne)
         => subTotal + vat - tax + payerBorne;
 
-    /// <summary>ข้อความเหตุผลเมื่อ Σ ส่วนที่ออกแทนรายบรรทัด (คิดใหม่จากบรรทัดที่บันทึก) ไม่ตรงยอดบนหัวเอกสาร — null = ตรง ·
-    /// ผู้เรียก (ลงบัญชี/ออก 50 ทวิ) ต้อง<b>ล้มดัง</b> ไม่ใช้ค่าใดค่าหนึ่งเงียบ ๆ (บรรทัดถูกแก้ทางอื่นหลังบันทึก)</summary>
-    public static string? MismatchReason(string? documentNumber, decimal storedPayerBorne, IReadOnlyList<WhtGrossUpAmounts> perLine)
+    /// <summary>ข้อความเหตุผลเมื่อยอดที่คิดใหม่จากบรรทัดที่บันทึก (ภาษีนำส่ง · ส่วนที่ออกแทน) ไม่ตรงยอดบนหัวเอกสาร — null = ตรง ·
+    /// ผู้เรียก (ลงบัญชี/ออก 50 ทวิ) ต้อง<b>ล้มดัง</b> ไม่ใช้ค่าใดค่าหนึ่งเงียบ ๆ (บรรทัด/ยอดถูกเขียนทับทางอื่นหลังบันทึก เช่นซิงค์ภายนอกคิดยอดแบบหัก ณ ที่จ่าย)</summary>
+    public static string? MismatchReason(string? documentNumber, decimal storedTax, decimal storedPayerBorne, IReadOnlyList<WhtGrossUpAmounts> perLine)
     {
-        var sum = perLine.Sum(a => a.PayerBorne);
-        if (Math.Abs(sum - storedPayerBorne) <= 0.005m) return null;
-        return $"ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทนบนเอกสาร {documentNumber} ({storedPayerBorne:N2}) ไม่ตรงกับที่คิดจากรายการ ({sum:N2}) — "
-            + "เปิดแก้ไขเอกสารแล้วบันทึกอีกครั้งเพื่อคำนวณใหม่ก่อนอนุมัติ/ออก 50 ทวิ";
+        var (tax, borne) = Totals(perLine);
+        if (Math.Abs(borne - storedPayerBorne) <= 0.005m && Math.Abs(tax - storedTax) <= 0.005m) return null;
+        return $"ภาษีหัก ณ ที่จ่ายบนเอกสาร {documentNumber} (นำส่ง {storedTax:N2} · ผู้จ่ายออกแทน {storedPayerBorne:N2}) ไม่ตรงกับที่คิดจากรายการ "
+            + $"(นำส่ง {tax:N2} · ออกแทน {borne:N2}) — เปิดแก้ไขเอกสารแล้วบันทึกอีกครั้งเพื่อคำนวณใหม่ก่อนอนุมัติ/ออก 50 ทวิ";
     }
 }

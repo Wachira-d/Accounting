@@ -590,7 +590,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         {
             var allLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
             var parts = WhtGrossUp.ForLines(allLines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
-            if (WhtGrossUp.MismatchReason(doc.DocumentNumber, doc.WhtPayerBorneAmount, parts) is string borneMismatch)
+            if (WhtGrossUp.MismatchReason(doc.DocumentNumber, doc.WithholdingTaxAmount, doc.WhtPayerBorneAmount, parts) is string borneMismatch)
                 throw new BusinessRuleException(borneMismatch, WhtGrossUp.RuleCode);
             for (var i = 0; i < allLines.Count; i++)
                 borneByLine[allLines[i].Id] = parts[i].PayerBorne;
