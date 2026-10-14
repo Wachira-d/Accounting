@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **512 ไฟล์ · 5,094 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+**512 ไฟล์ · 5,094 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5835,3 +5835,22 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | ETL0-18 | นักเรียน ImportColumnMatch/ImportDataReview (โครง) + 58/59 generic | ทะเบียนนักเรียนครบ · รายการค้าง 34 → 32 · kill-switch ผ่าน orchestrator จริง | ✅ `AiKillSwitchOrchestratorTests` (ทีม A เติมสมอง) |
 | ETL0-19 | สิทธิ์นำเข้า "stock-adjustments" (สะกดจริงของหน้าเว็บ) | Inventory.Adjust ทุกสะกด · สะกดใกล้เคียงที่ไม่ใช่ชนิดจริง = คีย์สำรองที่เข้มที่สุด | ✅ `ImportExportPermissionScopeTests` |
 | ETL0-20 | ไฟล์ต้นทางของ batch (`FileAttachments` ชนิด `ImportBatch`) | รู้จักชนิด · ระบบแนบเอง · คีย์ = สิทธิ์นำเข้าชนิดของ batch (พนักงาน = HR.Admin) · ไม่พบ batch = คีย์ที่เข้มที่สุด | ✅ `AttachmentPermissionScopeTests` · ⏳ ด่านจริงใน `AttachmentAccessGate` (Testcontainers) |
+## ตัวเลือกผู้ติดต่อมาตรฐานเดียวทั้งระบบ — `Layout.contactPicker` + หน้าต่างเพิ่มผู้ติดต่อด่วน (คำสั่งเจ้าของ 2026-10-14)
+
+> ทุกช่องที่เลือกผู้ติดต่อเพื่อบันทึก มีปุ่ม "+ สร้างใหม่" แบบหน้าออกเอกสาร (ใส่ให้อัตโนมัติ) · เพิ่มในหน้าเดิมโดยฟอร์มที่กรอกค้างไม่หาย ·
+> กติกาทั้งหมดอยู่ที่ `POST document/contacts` (perm:Contact.Edit · กันซ้ำเลขภาษี+สาขา · InferContactType) — หน้าแค่ประกอบ payload
+
+| ID | กรณี | คาดหวัง | สถานะ |
+| --- | --- | --- | --- |
+| CP-01 | พิมพ์ชื่อที่ไม่มีในทะเบียน → แถว "➕ เพิ่มผู้ติดต่อใหม่" / ปุ่ม "+ สร้างใหม่" | หน้าต่างเปิดในหน้าเดิม · ชื่อที่พิมพ์ไหลเข้า · ฝั่งตั้งต้นตามหน้า (WHT/เช็ค/ใบจ่าย = ผู้ขาย · ลูกค้า = ลูกค้า · เอกสาร = ตาม `linesTable.dataset.docSide`) | ✅ `tools/contact_picker_sim.js` · 📋 E2E |
+| CP-02 | พิมพ์เลขผู้เสียภาษี 13 หลัก (checksum ถูก) ที่ไม่มีในทะเบียน | หน้าต่างเปิดเอง · ดึงชื่อ/ที่อยู่จากทะเบียน (`GET /api/dbd/juristic/{เลข}`) · **ไม่สร้างเงียบ** (เดิมสร้าง "นิติบุคคล {เลข}" เมื่อทะเบียนไม่ตอบ) | 📋 E2E |
+| CP-03 | ไม่เลือกประเภท / เลขผิด checksum / สาขาที่ 00000 / ไม่เลือกฝั่ง | ข้อความในหน้าต่างชี้ช่อง · ไม่เรียก API | ✅ sim |
+| CP-04 | ประเภท "ให้ระบบตัดสิน" + สำนักงานใหญ่ | ส่ง `contactType:null, branchCode:null` (ส่ง 00000 จะทำให้เลขบุคคลธรรมดากลายเป็นนิติบุคคลใน InferContactType) | ✅ sim (negative) |
+| CP-05 | เลข+สาขาซ้ำกับรายเดิม (ใช้งาน / ปิดใช้งาน) | ใช้งาน = แผงเสนอ "ใช้รายนี้" + เซิร์ฟเวอร์คืนรายเดิม ⇒ เลือกรายเดิม แจ้ง "แทนการสร้างซ้ำ" · ปิดใช้งาน = ไม่เลือก ข้อความในหน้าต่าง | ✅ sim · 📋 E2E |
+| CP-06 | ผู้ใช้ role ไม่มี perm:Contact.Edit | ปุ่ม/แถวสร้างถูกซ่อน · legacy `*` ยังเห็นปุ่ม — เซิร์ฟเวอร์ 403 ⇒ ข้อความเซิร์ฟเวอร์ในหน้าต่าง | ✅ sim · 📋 E2E |
+| CP-07 | "เปิดฟอร์มเต็ม (แท็บใหม่)" → บันทึก / กด "ใช้รายนี้" ในแท็บผู้ติดต่อ | แท็บปิดเอง · ช่องต้นทางเลือกผู้ติดต่อ + `onSelect` | 📋 E2E |
+| CP-08 | เปิดแก้หนังสือรับรองหัก ณ ที่จ่ายฉบับร่าง (wht.html) | ช่องผู้ถูกหักโชว์ชื่อ (เดิมว่าง: `setText?.()` ไม่มีจริง + id `fContactInput` ผิด) | 📋 E2E |
+| CP-09 | หน้าต่าง "เปลี่ยนผู้ถูกหัก" ของเอกสารที่ตั้งผู้ถูกหักไว้ | โชว์ชื่อผู้ถูกหักที่บันทึกไว้ (เดิมล้างช่องชื่อ) | 📋 E2E |
+| CP-10 | ยกเลิกและออกใบแทน — ผู้ซื้อของใบใหม่ | ค้นทั้งทะเบียน (เดิม `<select>` 200 รายแรก) · ค่าตั้งต้น = ผู้ซื้อเดิม · ว่าง = ผู้ซื้อเดิม · พิมพ์ค้างไม่เลือก = เตือน | 📋 E2E |
+| CP-11 | เช็คจ่าย · เช็คล่วงหน้า · statement · จ่ายรวมผู้ขาย · ฝากขาย · พอร์ทัลลูกค้า · alias สินค้า · vendor portal · เงินมัดจำ | ทุกช่องเป็นตัวเลือกกลาง (statement/จ่ายรวม/ใบแจ้งหนี้จากเวลา = ไม่มีปุ่มสร้าง) · เงินมัดจำส่ง `contactId` เมื่อเลือกจากทะเบียน + พิมพ์ชื่ออิสระได้ | ✅ `tools/contact_picker_check.py` R2–R4 · 📋 E2E |
+| CP-12 | เงินมัดจำส่ง `contactId` ของบริษัทอื่น | 404 "ไม่พบผู้ติดต่อนี้ในบริษัท" (`FinancialManagementService.CreateDepositAsync`) | 📋 (ยังไม่มีเทสต์ DB) |

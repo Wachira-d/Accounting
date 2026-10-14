@@ -57,7 +57,7 @@
         <div class="modal-header"><h3 class="modal-title">สร้างสิทธิ์เข้าถึง Portal</h3><button class="modal-close" onclick="Layout.closeModal('createModal')">&times;</button></div>
         <div class="modal-body">
           <div class="form-group"><label class="form-label">ลูกค้า (ผู้ติดต่อ) *</label>
-            <select class="form-select" id="accessContact"><option value="">-- เลือกลูกค้า --</option></select>
+            <input type="hidden" id="accessContactId"><input type="text" class="form-input" id="accessContact">
           </div>
           <div class="form-group"><label class="form-label">อีเมลสำหรับเข้าถึง *</label><input type="email" class="form-input" id="accessEmail" placeholder="อีเมลที่ลูกค้าจะใช้ login"></div>
           <div class="form-group"><label class="form-label">รหัสผ่านเริ่มต้น *</label><input type="text" class="form-input" id="accessPassword" placeholder="รหัสผ่านเริ่มต้น"></div>
@@ -142,26 +142,27 @@ const Page = {
 
   async openCreate() {
     const api = Layout.api(); if (!api) return;
-    try {
-      const res = await api.getContacts('?pageSize=200');
-      const contacts = res.data?.items || res.data || [];
-      const sel = document.getElementById('accessContact');
-      sel.innerHTML = '<option value="">-- เลือกลูกค้า --</option>' +
-        contacts.map(c => `<option value="${c.id}" data-email="${Layout.esc(c.email||'')}">${Layout.esc(c.name)}</option>`).join('');
-      sel.onchange = function() {
-        const opt = this.options[this.selectedIndex];
-        const email = opt?.dataset?.email;
-        if (email) document.getElementById('accessEmail').value = email;
-      };
-    } catch (err) { /* ignore */ }
-    document.getElementById('accessEmail').value = '';
+    const emailEl = document.getElementById('accessEmail');
+    if (!this._accessPicker) {
+      emailEl.addEventListener('input', () => { emailEl.dataset.userTouched = '1'; });
+      this._accessPicker = Layout.contactPicker('accessContact', 'accessContactId', {
+        side: 'customer', placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของลูกค้า...',
+        // อีเมลของผู้ติดต่อเป็นค่าตั้งต้น — ค่าที่ผู้ใช้พิมพ์เองชนะเสมอ (dataset.userTouched)
+        onSelect: (c) => {
+          if (c && c.email && emailEl.dataset.userTouched !== '1') { emailEl.value = c.email; emailEl.dataset.autoSrc = 'contact'; }
+        },
+      });
+    }
+    if (this._accessPicker) this._accessPicker.clear();
+    emailEl.value = '';
+    delete emailEl.dataset.userTouched; delete emailEl.dataset.autoSrc;
     document.getElementById('accessPassword').value = '';
     Layout.openModal('createModal');
   },
 
   async saveAccess() {
     const api = Layout.api(); if (!api) return;
-    const contactId = document.getElementById('accessContact').value;
+    const contactId = document.getElementById('accessContactId').value;
     const email = document.getElementById('accessEmail').value;
     const password = document.getElementById('accessPassword').value;
     if (!contactId || !email || !password) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }

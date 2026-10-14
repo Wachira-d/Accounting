@@ -19,7 +19,7 @@
     <div class="card">
       <h3>ออก token ใหม่</h3>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;max-width:760px">
-        <div><label>Contact (ผู้ติดต่อ)</label><input id="contactId" class="form-input" placeholder="contact guid"></div>
+        <div><label>Contact (ผู้ติดต่อ)</label><input type="hidden" id="contactId"><input type="text" id="contactName" class="form-input"></div>
         <div><label>บทบาท</label>
           <select id="role" class="form-input">
             <option value="Vendor">Vendor — เห็น PO + invoice</option>
@@ -48,9 +48,19 @@
       async init() {
         if (!Layout.init('vendor-portal-admin')) return;
         Layout.setTitle('Vendor Portal — Admin');
+        // ผู้ติดต่อ — ตัวเลือกกลาง (เดิมต้องพิมพ์ GUID เอง) · บทบาท Vendor = ผู้ขาย · Customer = ลูกค้า
+        const emailEl = document.getElementById('recipientEmail');
+        emailEl.addEventListener('input', () => { emailEl.dataset.userTouched = '1'; });
+        Layout.contactPicker('contactName', 'contactId', {
+          side: () => (document.getElementById('role').value === 'Customer' ? 'customer' : 'supplier'),
+          onSelect: (c) => {
+            if (c && c.email && emailEl.dataset.userTouched !== '1') { emailEl.value = c.email; emailEl.dataset.autoSrc = 'contact'; }
+          },
+        });
       },
       async issue() {
         const cid = Layout.getCompanyId();
+        if (!document.getElementById('contactId').value) { Layout.toast('กรุณาเลือกผู้ติดต่อจากรายการ', 'error'); return; }
         try {
           const r = await API.post(`/api/companies/${cid}/vendor-portal/tokens`, {
             contactId: document.getElementById('contactId').value,

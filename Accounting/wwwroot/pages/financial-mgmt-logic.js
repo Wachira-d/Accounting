@@ -9,6 +9,11 @@ const Page = {
     API.init();
     this.api = Layout.api();
     if (!this.api) return;
+    // ผู้ติดต่อของเงินมัดจำ — ตัวเลือกกลาง · จ่ายมัดจำ = ผู้ขาย/ผู้ให้เช่า · รับมัดจำ = ลูกค้า (ฝั่งตั้งต้นของรายใหม่)
+    Layout.contactPicker('depContact', 'depContactId', {
+      side: () => (document.getElementById('depDir')?.value === 'Received' ? 'customer' : 'supplier'),
+      placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษี (ไม่อยู่ในทะเบียน = พิมพ์ชื่อไว้ได้)',
+    });
     await this.loadAccounts();
     await this.loadPrepaid();
   },
@@ -113,6 +118,7 @@ const Page = {
         depositType: document.getElementById('depType').value,
         amount: parseFloat(document.getElementById('depAmount').value),
         transactionDate: document.getElementById('depDate').value,
+        contactId: document.getElementById('depContactId').value || null,
         contactName: document.getElementById('depContact').value || null,
         depositAccountId: document.getElementById('depAcc').value,
         cashAccountId: document.getElementById('depCashAcc').value || null

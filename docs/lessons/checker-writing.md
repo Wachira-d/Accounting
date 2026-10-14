@@ -114,6 +114,8 @@ python3 tools/deep_link_param_check.py # ลิงก์ส่ง query param �
 python3 tools/flag_field_overwrite_check.py # เขียนทับช่องข้อความที่เป็นที่สะสม**และ**มีด่านอ่านธงจากมัน → ธงของด่านหายเงียบ
 python3 tools/ocr_helper_test_check.py # ตัวตัดสิน OCR (Helpers/Ocr*.cs) ที่ไม่มีเทสต์อ้างถึง → แก้แล้วใบที่เคยถูกกลับมาผิดโดยไม่มีอะไรฟ้อง
 python3 tools/ocr_golden_corpus_check.py # กระดาษตัวอย่าง OCR (OcrPaperSamples / EtaxFixtures) ที่ไม่มี golden row ใน replay harness → "มีเคสใหม่ = ต้องเพิ่ม golden row" · ใบใน Corpus ที่ไม่มี Assert · `--self-test` ไฟล์สังเคราะห์ (2026-10-09)
+python3 tools/contact_picker_check.py # ช่องเลือกผู้ติดต่อที่ไม่ใช้ตัวกลาง Layout.contactPicker: ชื่อเก่า contactAutocomplete · <select> ผู้ติดต่อ · อ่านรายชื่อตรงเกินโควตาต่อไฟล์ (ratchet) · id ที่ picker อ้างไม่มีในหน้า · layout.js ถอดปุ่มสร้าง/การตรวจผล/escape — `--self-test` ฉีดบั๊ก 10 แบบลงสำเนาไฟล์จริง (2026-10-14)
+node tools/contact_picker_sim.js   # หน้าต่างเพิ่มผู้ติดต่อด่วน: ค่าที่พิมพ์ค้าง → เลขภาษี/ชื่อ · ฝั่งตั้งต้น · สิทธิ์ · payload (สาขา/ชนิด "ให้ระบบตัดสิน") · ผลเซิร์ฟเวอร์ (รายเดิม/ปิดใช้งาน) — โค้ดจริง + negative 7 แบบ (2026-10-14)
 python3 tools/tuple_name_merge_check.py # ternary ที่สองสาขาเป็น tuple ชื่อไม่ตรงกัน → C# ทิ้งชื่อ แล้ว CS1061 ไปโผล่ไกลจากจุดที่ผิด
 python3 tools/line_vat_source_check.py # เขียนอัตรา VAT ของบรรทัดตรง ๆ ไม่ผ่าน Layout.setLineVat → ตัวแนะนำทับค่าที่อ่านจากกระดาษ ยอดเพี้ยนเงียบ
 node tools/vat_line_source_sim.js   # ล็อกพฤติกรรมลำดับที่มาของอัตรา VAT ด้วยโค้ดจริง (สองทิศ)

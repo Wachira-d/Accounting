@@ -192,7 +192,7 @@ const Page = {
       document.getElementById('eProject').innerHTML = '<option value="">-- ไม่ระบุ --</option>' + projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
     } catch (err) { /* ignore */ }
     if (!this._contactAC) {
-      this._contactAC = Layout.contactAutocomplete('eContact', 'eContactId');
+      this._contactAC = Layout.contactPicker('eContact', 'eContactId', { side: 'customer' });
     }
     if (this._contactAC) this._contactAC.clear();
     Layout.openModal('entryModal');
@@ -253,7 +253,8 @@ const Page = {
     document.getElementById('invContact').value = '';
     document.getElementById('invFrom').value = '';
     document.getElementById('invTo').value = '';
-    if (!this._invAC) this._invAC = Layout.contactAutocomplete('invContact', 'invContactId');
+    // allowCreate:false — ใบแจ้งหนี้ดึงจากเวลาที่บันทึกไว้แล้ว ลูกค้าที่เพิ่งสร้างไม่มีเวลาค้างให้เรียกเก็บ
+    if (!this._invAC) this._invAC = Layout.contactPicker('invContact', 'invContactId', { side: 'customer', allowCreate: false });
     Layout.openModal('invModal');
   },
 

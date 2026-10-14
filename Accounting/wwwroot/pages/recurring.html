@@ -439,7 +439,7 @@ const Page = {
   async loadFormData() {
     const api = Layout.api(); if (!api) return;
     if (!this._contactAC) {
-      this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
+      this._contactAC = Layout.contactPicker('fContact', 'fContactId');
     }
     try {
       const [baRes, pcRes] = await Promise.all([
@@ -473,7 +473,7 @@ const Page = {
   WHT_PAYER_TYPES: ['PaymentVoucher', 'Expense', 'PurchaseInvoice', 'CertificateInLieu'],
   _ensureWhtPayeeAC() {
     if (!this._whtPayeeAC)
-      this._whtPayeeAC = Layout.contactAutocomplete('fWhtPayee', 'fWhtPayeeContactId',
+      this._whtPayeeAC = Layout.contactPicker('fWhtPayee', 'fWhtPayeeContactId',
         { placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ถูกหัก...' });
   },
   onWhtPayeeDiffersToggle() {

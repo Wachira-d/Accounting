@@ -68,7 +68,7 @@
         <label>สินค้า *</label>
         <select id="fProduct" class="form-select"><option value="">— เลือกสินค้า —</option></select>
         <label id="fContactLabel" style="margin-top:8px">คู่ค้า *</label>
-        <select id="fContact" class="form-select"><option value="">— เลือกคู่ค้า —</option></select>
+        <input type="hidden" id="fContactId"><input type="text" id="fContact" class="form-input">
         <div style="display:flex;gap:10px;margin-top:8px">
           <div style="flex:1"><label>จำนวน *</label><input id="fQty" type="number" class="form-input" min="0" step="0.0001"></div>
           <div style="flex:1"><label>ราคา/หน่วยที่ตกลง</label><input id="fPrice" type="number" class="form-input" min="0" step="0.01" placeholder="ใส่ตอนนี้หรือทีหลังก็ได้"></div>
@@ -159,11 +159,14 @@
         // Products: outbound should only show goods we own; both list all for now.
         document.getElementById('fProduct').innerHTML = '<option value="">— เลือกสินค้า —</option>' +
           this._products.map(p => `<option value="${p.id}">${this.esc(p.code||'')} ${this.esc(p.name||'')}</option>`).join('');
-        // Contacts: inbound→suppliers, outbound→customers (fall back to all).
-        const wanted = this._contacts.filter(c => isIn ? c.isSupplier : c.isCustomer);
-        const list = wanted.length ? wanted : this._contacts;
-        document.getElementById('fContact').innerHTML = '<option value="">— เลือกคู่ค้า —</option>' +
-          list.map(c => `<option value="${c.id}">${this.esc(c.name||'')}${c.taxId ? ' ('+this.esc(c.taxId)+')' : ''}</option>`).join('');
+        // คู่ค้า — ตัวเลือกกลาง (ค้นทั้งทะเบียน · เพิ่มใหม่ในหน้าเดิม) · รับฝากเข้า = ผู้ขาย · ฝากขายออก = ลูกค้า (ฝั่งตั้งต้นของรายใหม่)
+        if (!this._contactPicker)
+          this._contactPicker = Layout.contactPicker('fContact', 'fContactId', {
+            side: () => (this._formDir === 'Inbound' ? 'supplier' : 'customer'),
+            // รายที่เพิ่งเลือก/สร้าง → ใส่ในตารางชื่อของรายการฝากขายด้วย (ตารางโชว์ชื่อได้ทันทีหลังบันทึก)
+            onSelect: (c) => { if (c && !this._contacts.some(x => x.id === c.id)) this._contacts.push(c); },
+          });
+        if (this._contactPicker) this._contactPicker.clear();
         document.getElementById('fQty').value = '';
         document.getElementById('fPrice').value = '';
         document.getElementById('fDate').value = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
@@ -173,7 +176,7 @@
       async submitForm() {
         const cid = Layout.getCompanyId();
         const productId = document.getElementById('fProduct').value;
-        const contactId = document.getElementById('fContact').value;
+        const contactId = document.getElementById('fContactId').value;
         const qty = +document.getElementById('fQty').value;
         const price = document.getElementById('fPrice').value ? +document.getElementById('fPrice').value : null;
         const date = document.getElementById('fDate').value;

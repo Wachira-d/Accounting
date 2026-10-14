@@ -113,7 +113,7 @@ const Page = {
 
   async openCreate() {
     if (!this._contactAC) {
-      this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
+      this._contactAC = Layout.contactPicker('fContact', 'fContactId', { side: 'customer' });
     }
     this._contactAC.clear();
     ['fNumber','fStart','fEnd','fAmount','fDesc'].forEach(id => document.getElementById(id).value = '');
@@ -123,6 +123,7 @@ const Page = {
   async save() {
     const api = Layout.api(); if (!api) return;
     const data = { contractNumber: document.getElementById('fNumber').value, contactId: document.getElementById('fContactId').value, startDate: document.getElementById('fStart').value, endDate: document.getElementById('fEnd').value, totalAmount: parseFloat(document.getElementById('fAmount').value) || 0, recognitionMethod: document.getElementById('fMethod').value, description: document.getElementById('fDesc').value };
+    if (!data.contactId) { Layout.toast('กรุณาเลือกลูกค้าจากรายการ (หรือกด "+ สร้างใหม่")', 'error'); return; }
     if (!data.contractNumber || !data.totalAmount) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
     try { await api.createRevenueContract(data); Layout.toast('สร้างสัญญาสำเร็จ'); Layout.closeModal('formModal'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
   },

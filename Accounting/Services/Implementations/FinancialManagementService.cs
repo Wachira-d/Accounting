@@ -179,6 +179,12 @@ public partial class FinancialManagementService : IFinancialManagementService
 
     public async Task<DepositResponse> CreateDepositAsync(Guid companyId, CreateDepositRequest request, string userId)
     {
+        // ผู้ติดต่อต้องเป็นของบริษัทนี้ (กฎ M tenant isolation) — หน้าเงินมัดจำเริ่มส่ง ContactId จากตัวเลือกผู้ติดต่อกลาง
+        // (2026-10-14) · เดิมรับ id อะไรก็ได้แล้วเก็บตรง ๆ
+        if (request.ContactId is Guid depContactId
+            && !await _db.Contacts.AnyAsync(c => c.Id == depContactId && c.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบผู้ติดต่อนี้ในบริษัท — เลือกผู้ติดต่อใหม่จากรายการ");
+
         var refNo = $"DEP-{DateTime.UtcNow:yyyyMM}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
 
         var entity = new DepositTransaction

@@ -633,6 +633,15 @@
         // หรือปิด modal + เลื่อนไปแก้ contact เดิม
         const cb = window.opener?.Page?.onContactCreated || window.parent?.Page?.onContactCreated;
         if (typeof cb === 'function') { cb({ id }); }
+        // เปิดมาจาก "เปิดฟอร์มเต็ม" ของตัวเลือกผู้ติดต่อกลาง (returnto=opener) ⇒ ส่งรายที่เลือกกลับไปให้ช่องต้นทางเลือก
+        // (ตัวรับกลาง Layout._ensureContactCreatedListener ดึงผู้ติดต่อตัวเต็มเอง — ส่งแค่ id)
+        if (this._returnToOpener && window.opener && !window.opener.closed) {
+          try {
+            window.opener.postMessage({ type: 'contact-created', contactId: id }, window.location.origin);
+            setTimeout(() => window.close(), 300);
+            return;
+          } catch (_) { /* แท็บต้นทางปิดไปแล้ว — อยู่หน้านี้ต่อ */ }
+        }
         document.getElementById('fuzzyMatchBox').style.display = 'none';
         if (typeof Layout.toast === 'function') Layout.toast('เลือกผู้ติดต่อรายเดิมแล้ว');
         // refresh เพื่อโชว์รายการที่ highlight
