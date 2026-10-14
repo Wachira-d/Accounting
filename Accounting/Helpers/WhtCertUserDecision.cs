@@ -76,4 +76,23 @@ public static class WhtCertPayeeTaxIdDraft
         => payeeProblem != null && manualRequest && !autoIssue;
 
     public static string WarningFor(string payeeProblem) => $"{Warning}: {payeeProblem}";
+
+    // ═══ ฝ่ายค้านรอบ 204 L5 — "ออก" ร่างที่ไม่มีเลขผู้เสียภาษีภายหลัง (WithholdingTaxCertService.IssueAsync) ═══
+    // เดิมไม่ตรวจซ้ำ ⇒ ร่างจาก #20 (หรือใบที่สร้างเองโดยไม่มีเลข) กด "ออก" แล้วเข้าแบบยื่นทั้งที่ไม่มีเลข ⇒ ยื่น ภ.ง.ด. อิเล็กทรอนิกส์ไม่ผ่าน ·
+    // คำสั่งเจ้าของ (ข้อ 150) ⇒ ไม่ล็อกตาย: เตือน + ผู้ใช้รับทราบแล้วออกได้ (audit) · ไม่รับทราบ ⇒ 409 พร้อมทางไปต่อ
+
+    /// <summary>รหัสกฎของ 409 "ออกใบโดยผู้ถูกหักไม่มีเลขผู้เสียภาษี — ต้องรับทราบ" (หน้าเว็บอ่านรหัสนี้แล้วถามรับทราบ)</summary>
+    public const string IssueNeedsAckRuleCode = "RD-50BIS-ISSUE-NO-TAXID";
+    /// <summary>รหัสกฎของ audit "ออกใบโดยไม่มีเลขผู้เสียภาษี (รับทราบ)"</summary>
+    public const string IssueAckRuleCode = "RD-50BIS-ISSUE-NO-TAXID-ACK";
+    public const string IssueLegalReference = "ท.ป.4/2528 · แบบ ภ.ง.ด. ต้องมีเลขประจำตัวผู้เสียภาษีของผู้ถูกหัก";
+
+    /// <summary>ทางไปต่อที่ต่อท้ายข้อความ 409</summary>
+    public const string IssueWayForward =
+        " · ทางไปต่อ (แนะนำ): เติมเลขผู้เสียภาษีที่ข้อมูลผู้ติดต่อ แล้วกด \"ออก\" อีกครั้ง · ถ้าต้องออกใบให้ผู้ถูกหักก่อน: ติ๊ก \"รับทราบ — ออกโดยไม่มีเลขผู้เสียภาษี\" "
+        + "(ใบนี้จะเข้าแบบ ภ.ง.ด. ของงวด — การยื่นทางอิเล็กทรอนิกส์จะไม่ผ่านจนกว่าจะเติมเลข)";
+
+    /// <summary>คำเตือนในคำตอบเมื่อออกแบบรับทราบ</summary>
+    public static string IssuedWithoutTaxIdWarning(string payeeProblem)
+        => $"ออกแล้วโดยผู้ใช้รับทราบว่าไม่มีเลขผู้เสียภาษี: {payeeProblem} — เติมเลขก่อนยื่นแบบ ภ.ง.ด.";
 }

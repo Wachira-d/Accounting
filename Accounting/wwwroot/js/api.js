@@ -888,7 +888,7 @@ const API = {
       getWhtCert: (id) => API.get(`${base}/withholding-tax-certs/${id}`),
       createWhtCert: (d) => API.post(`${base}/withholding-tax-certs`, d),
       updateWhtCert: (id, d) => API.put(`${base}/withholding-tax-certs/${id}`, d),
-      issueWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/issue`),
+      issueWhtCert: (id, d) => API.post(`${base}/withholding-tax-certs/${id}/issue`, d),   // d = { acknowledgeMissingTaxId } (ฝ่ายค้านรอบ 204 L5)
       voidWhtCert: (id, d) => API.post(`${base}/withholding-tax-certs/${id}/void`, d),   // d = { acknowledgeFiled, reason } (รอบ 204 ทีม D)
       deleteWhtCert: (id) => API.del(`${base}/withholding-tax-certs/${id}`),
       getWhtByContact: (contactId, q = '') => API.get(`${base}/withholding-tax-certs/contacts/${contactId}${q}`),

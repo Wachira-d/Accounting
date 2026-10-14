@@ -14,6 +14,9 @@ public interface IWithholdingTaxCertService
     Task<WithholdingTaxCertResponse> GetByIdAsync(Guid companyId, Guid certId);
     Task<PagedResponse<WithholdingTaxCertResponse>> GetAllAsync(Guid companyId, TaxType? taxFormType, int? year, int? month, PagedRequest request);
     Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId);
+    /// <summary>ฝ่ายค้านรอบ 204 L5: ออกใบ — ผู้ถูกหักไม่มีเลขผู้เสียภาษี (ไม่ใช่ผู้รับต่างประเทศ) ⇒ 409 <c>RD-50BIS-ISSUE-NO-TAXID</c> พร้อมทางไปต่อ ·
+    /// <paramref name="ack"/>.AcknowledgeMissingTaxId ⇒ ออกได้ + คำเตือน + audit</summary>
+    Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId, WhtCertIssueRequest? ack, Guid? userId = null);
     Task VoidAsync(Guid companyId, Guid certId);
     /// <summary>รอบ 204 ทีม D (#23): ยกเลิกพร้อม "รับทราบ — จะยื่นแบบเพิ่มเติม" (ผู้ถือ Tax.File + เหตุผล) — คืนป้ายงวดที่ต้องยื่นเพิ่มเติม (null = ไม่แตะงวดที่ยื่นแล้ว)</summary>
     Task<string?> VoidAsync(Guid companyId, Guid certId, WhtCertVoidRequest? ack, Guid? userId = null, bool holdsTaxFile = false);

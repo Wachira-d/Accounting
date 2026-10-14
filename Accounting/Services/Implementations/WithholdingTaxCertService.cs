@@ -348,13 +348,45 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
 
-    public async Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId)
+    public Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId)
+        => IssueAsync(companyId, certId, null);
+
+    public async Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId, WhtCertIssueRequest? ack, Guid? userId = null)
     {
         var cert = await _db.WithholdingTaxCerts.FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
 
         if (cert.Status != WithholdingTaxCertStatus.Draft)
             throw new InvalidOperationException("สามารถออกหนังสือรับรองได้เฉพาะที่เป็น Draft เท่านั้น");
+
+        // ฝ่ายค้านรอบ 204 L5: ร่างที่สร้างโดยผู้ถูกหักยังไม่มีเลขผู้เสียภาษี (#20 · สร้างเอง) ⇒ ตรวจซ้ำตอน "ออก" (ใบที่ออกแล้วเข้าแบบ ภ.ง.ด.) ·
+        // ตัวตรวจเดียวกับตอนสร้างจากเอกสาร (WhtCertIssuePlan.PayeeTaxIdProblem · ผู้รับต่างประเทศ ภ.ง.ด.54 ยกเว้น) · ไม่ล็อกตาย: รับทราบแล้วออกได้ + audit
+        var issuePayee = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.Id == cert.PayeeContactId && c.CompanyId == companyId);
+        var issueDocForeign = cert.DocumentId is Guid issueDocId
+            && await _db.Documents.AsNoTracking().AnyAsync(d => d.Id == issueDocId && d.CompanyId == companyId && d.IsForeignService);
+        var issuePayeeProblem = WhtCertIssuePlan.PayeeTaxIdProblem(issuePayee?.Name, issuePayee?.TaxId,
+            cert.TaxFormType == TaxType.WithholdingTax54 || Accounting.Helpers.WhtPayeeKind.IsForeignPayee(issueDocForeign, issuePayee?.CountryCode));
+        string[]? issueWarnings = null;
+        if (issuePayeeProblem != null)
+        {
+            if (ack?.AcknowledgeMissingTaxId != true)
+                throw new BusinessRuleException(issuePayeeProblem + WhtCertPayeeTaxIdDraft.IssueWayForward,
+                    WhtCertPayeeTaxIdDraft.IssueNeedsAckRuleCode, 409);
+            issueWarnings = new[] { WhtCertPayeeTaxIdDraft.IssuedWithoutTaxIdWarning(issuePayeeProblem) };
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
+                EntityType = "WithholdingTaxCert", EntityId = cert.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new { cert.CertificateNumber, Status = cert.Status.ToString() }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Status = "Issued", PayeeProblem = issuePayeeProblem,
+                    RuleCode = WhtCertPayeeTaxIdDraft.IssueAckRuleCode, LegalReference = WhtCertPayeeTaxIdDraft.IssueLegalReference,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+        }
 
         cert.Status = WithholdingTaxCertStatus.Issued;
         cert.IssuedDate = DateTime.UtcNow;
@@ -370,7 +402,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             catch (Exception ex) { _logger.LogWarning(ex, "WHT cert email enqueue failed Cert={Id}", cert.Id); }
         }
 
-        return await GetByIdAsync(companyId, cert.Id);
+        var issued = await GetByIdAsync(companyId, cert.Id);
+        return issueWarnings == null ? issued : issued with { Warnings = issueWarnings };
     }
 
     /// <summary>ยกเลิก 50 ทวิ — ใบที่อยู่ในแบบที่ยื่น/นำส่งแล้ว (<see cref="WhtCertVoidGuard"/>) ⇒ 409 พร้อมทางไปต่อ ·

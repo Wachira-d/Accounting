@@ -6541,6 +6541,17 @@ RULES += [
     dict(file="Services/Implementations/IntegrationService.cs", method="CreatePaymentVoucherJournalAsync",
          must=["EWithholdingScope.RequireAccount(payEWhtVia,"],
          why=_R204ADV + "L3: ใบสำคัญจ่ายจาก integration ตัวตัดสินเดียวกับ DocumentService"),
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="IssueAsync#1",
+         must=["WhtCertIssuePlan.PayeeTaxIdProblem(issuePayee?.Name, issuePayee?.TaxId,", "WhtCertPayeeTaxIdDraft.IssueNeedsAckRuleCode",
+               "WhtCertPayeeTaxIdDraft.IssueAckRuleCode", "AddChainedAuditLog("],
+         before=[("WhtCertIssuePlan.PayeeTaxIdProblem(", "cert.Status = WithholdingTaxCertStatus.Issued")],
+         why=_R204ADV + "L5: ออกร่างที่ผู้ถูกหักไม่มีเลขผู้เสียภาษี ⇒ ตรวจซ้ำก่อนเปลี่ยนสถานะ · รับทราบแล้วออกได้ + audit (ไม่ล็อกตาย)"),
+    dict(file="Controllers/WithholdingTaxCertController.cs", method="Issue",
+         must=["_whtService.IssueAsync(companyId, certId, request, JwtHelper.GetUserIdFromClaims(User))"],
+         why=_R204ADV + "L5: endpoint ส่งการรับทราบ + ผู้ทำรายการ (audit มี UserId)"),
+    dict(file=DOC, method="SetWhtBorneByContractAsync",
+         must=["UserId = Guid.TryParse(actor, out var borneActor) ? borneActor : null"],
+         why=_R204ADV + "L7a: audit แก้ \"มีสัญญา\" ต้องมีผู้ทำรายการ (UserId) ไม่ใช่แค่ข้อความใน NewValues"),
 ]
 
 # ── รอบ 204 — แบบ ภ.ง.ด.2 (คำตัดสินเจ้าของ DECISIONS ข้อ 148 · Pnd2FormTests ล็อก helper · กติกาข้างล่างล็อกจุดเรียก) ──

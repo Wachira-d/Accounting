@@ -8597,6 +8597,8 @@ public partial class DocumentService : IDocumentService
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
+            // ฝ่ายค้านรอบ 204 L7a: ผู้ทำรายการต้องอยู่ในคอลัมน์ UserId (ค้น/กรอง audit ได้) ไม่ใช่แค่ข้อความ actor ใน NewValues
+            UserId = Guid.TryParse(actor, out var borneActor) ? borneActor : null,
             Action = AuditAction.Update,
             EntityType = "Document",
             EntityId = documentId.ToString(),

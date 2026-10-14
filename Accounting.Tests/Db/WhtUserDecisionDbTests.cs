@@ -284,6 +284,59 @@ public class WhtUserDecisionDbTests
             && a.EntityId == created.Id.ToString() && a.NewValues != null && a.NewValues.Contains(WhtCertIssuePlan.PayeeRuleCode)));
     }
 
+    // ══════ ฝ่ายค้านรอบ 204 L5: "ออก" ร่างที่ผู้ถูกหักไม่มีเลขผู้เสียภาษี — ตรวจซ้ำ · รับทราบแล้วออกได้ ══════
+
+    [Fact]
+    public async Task ออกร่างที่ไม่มีเลขผู้เสียภาษี_ไม่รับทราบถูกกั้น_รับทราบแล้วออกได้พร้อมaudit_ผู้ถูกหักมีเลขออกได้ตามเดิม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var noTaxPv = await SinglePvAsync(db, s, "PV-L5-NOTAX", s.NoTaxIdId);
+        var okPv = await SinglePvAsync(db, s, "PV-L5-OK", s.PersonId);
+        WithholdingTaxCertResponse draft, okDraft;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            draft = await Svc(req).AutoGenerateFromDocumentAsync(s.CompanyId, noTaxPv.Id, autoIssue: false, "tester", manualRequest: true);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            okDraft = await Svc(req).AutoGenerateFromDocumentAsync(s.CompanyId, okPv.Id, autoIssue: false, "tester", manualRequest: true);
+        Assert.Equal(WithholdingTaxCertStatus.Draft, draft.Status);
+        Assert.Equal(WithholdingTaxCertStatus.Draft, okDraft.Status);
+
+        // ไม่รับทราบ (รวมทางไม่มีคน — overload สองอาร์กิวเมนต์) ⇒ 409 + ทางไปต่อ · ใบยังเป็นร่าง
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).IssueAsync(s.CompanyId, draft.Id));
+            Assert.Equal(WhtCertPayeeTaxIdDraft.IssueNeedsAckRuleCode, ex.RuleCode);
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Contains("รับทราบ — ออกโดยไม่มีเลขผู้เสียภาษี", ex.Message);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(WithholdingTaxCertStatus.Draft,
+                (await req.WithholdingTaxCerts.AsNoTracking().SingleAsync(w => w.Id == draft.Id && w.CompanyId == s.CompanyId)).Status);
+
+        // รับทราบ ⇒ ออกได้ + คำเตือน + audit
+        var actor = Guid.NewGuid();
+        WithholdingTaxCertResponse issued;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            issued = await Svc(req).IssueAsync(s.CompanyId, draft.Id, new WhtCertIssueRequest(AcknowledgeMissingTaxId: true), actor);
+        Assert.Equal(WithholdingTaxCertStatus.Issued, issued.Status);
+        Assert.Contains(issued.Warnings!, w => w.StartsWith("ออกแล้วโดยผู้ใช้รับทราบ"));
+
+        // ทิศตรงข้าม: ผู้ถูกหักมีเลข ⇒ ออกได้โดยไม่ต้องรับทราบ ไม่มีคำเตือน
+        WithholdingTaxCertResponse okIssued;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            okIssued = await Svc(req).IssueAsync(s.CompanyId, okDraft.Id);
+        Assert.Equal(WithholdingTaxCertStatus.Issued, okIssued.Status);
+        Assert.Null(okIssued.Warnings);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.True(await check.AuditLogs.AsNoTracking().AnyAsync(a => a.CompanyId == s.CompanyId && a.EntityType == "WithholdingTaxCert"
+            && a.EntityId == draft.Id.ToString() && a.UserId == actor && a.NewValues != null
+            && a.NewValues.Contains(WhtCertPayeeTaxIdDraft.IssueAckRuleCode)));
+        Assert.False(await check.AuditLogs.AsNoTracking().AnyAsync(a => a.CompanyId == s.CompanyId && a.EntityId == okDraft.Id.ToString()
+            && a.NewValues != null && a.NewValues.Contains(WhtCertPayeeTaxIdDraft.IssueAckRuleCode)));
+    }
+
     // ══════ #21 แบบ ภ.ง.ด. ที่ระบบแก้ — แจ้งในคำตอบ ══════
 
     [Fact]

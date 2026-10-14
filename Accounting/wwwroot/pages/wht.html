@@ -369,9 +369,19 @@
       async issueCert(id) {
         const api = Layout.api(); if (!api) return;
         try {
-          await api.issueWhtCert(id);
+          let res;
+          try {
+            res = await api.issueWhtCert(id);
+          } catch (e) {
+            // ฝ่ายค้านรอบ 204 L5: ผู้ถูกหักไม่มีเลขผู้เสียภาษี (409 RD-50BIS-ISSUE-NO-TAXID) — ไม่ใช่ทางตัน: รับทราบแล้วออกได้ · ข้อความ/ทางไปต่อมาจากเซิร์ฟเวอร์
+            if (!(e && e.status === 409 && e.body?.data?.ruleCode === 'RD-50BIS-ISSUE-NO-TAXID')) throw e;
+            const ok = await Layout.confirmDanger({ title: 'รับทราบ — ออกโดยไม่มีเลขผู้เสียภาษี', message: Layout.esc(e.message), mode: 'math' });
+            if (!ok) return;
+            res = await api.issueWhtCert(id, { acknowledgeMissingTaxId: true });
+          }
           Layout.closeModal('detailModal');
-          Layout.toast('ออกหนังสือรับรองสำเร็จ');
+          const msg = res?.message || 'ออกหนังสือรับรองสำเร็จ';
+          Layout.toast(msg, msg === 'ออกหนังสือรับรองสำเร็จ' ? 'success' : 'warning', 12000);
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

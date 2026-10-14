@@ -173,6 +173,10 @@ public record ChangeWhtPayeeLine(Guid LineId, Guid? WhtPayeeContactId);
 /// <c>Reason</c> บังคับเมื่อรับทราบ (audit) · ไม่ส่ง body = ยกเลิกปกติ (ยื่นแล้ว ⇒ 409 พร้อมทางไปต่อ)</summary>
 public record WhtCertVoidRequest(bool AcknowledgeFiled = false, string? Reason = null);
 
+/// <summary>ฝ่ายค้านรอบ 204 L5 — ออก 50 ทวิ ที่ผู้ถูกหักไม่มีเลขผู้เสียภาษี: <c>AcknowledgeMissingTaxId = true</c> = ผู้ใช้รับทราบแล้วออกได้ (audit) ·
+/// ไม่ส่ง body = ตรวจแล้ว 409 <c>RD-50BIS-ISSUE-NO-TAXID</c> เมื่อไม่มีเลข</summary>
+public record WhtCertIssueRequest(bool AcknowledgeMissingTaxId = false);
+
 /// <summary>รอบ 204: รับทราบป้าย "50 ทวิ ต้องตรวจ" — เหตุผล/สิ่งที่ทำไปแล้ว (บังคับ · audit)</summary>
 public record WhtCertReviewAckRequest(string? Reason);
 

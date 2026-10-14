@@ -61,11 +61,15 @@ public class WithholdingTaxCertController : ControllerBase
         return Ok(new ApiResponse<PagedResponse<WithholdingTaxCertResponse>>(true, result));
     }
 
+    /// <summary>ออก 50 ทวิ · ฝ่ายค้านรอบ 204 L5: ผู้ถูกหักไม่มีเลขผู้เสียภาษี ⇒ 409 (<c>RD-50BIS-ISSUE-NO-TAXID</c>) พร้อมทางไปต่อ —
+    /// ส่ง <c>{ acknowledgeMissingTaxId: true }</c> ⇒ ออกได้ + คำเตือน + audit · ไม่ส่ง body = ตรวจตามปกติ</summary>
     [HttpPost("{certId:guid}/issue")]
-    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> Issue(Guid companyId, Guid certId)
+    public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> Issue(Guid companyId, Guid certId,
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] WhtCertIssueRequest? request = null)
     {
-        var result = await _whtService.IssueAsync(companyId, certId);
-        return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result, "ออกหนังสือรับรองสำเร็จ"));
+        var result = await _whtService.IssueAsync(companyId, certId, request, JwtHelper.GetUserIdFromClaims(User));
+        return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result,
+            result.Warnings is { Count: > 0 } w ? "ออกหนังสือรับรองแล้ว — " + string.Join(" · ", w) : "ออกหนังสือรับรองสำเร็จ"));
     }
 
     /// <summary>ยกเลิก 50 ทวิ · รอบ 204 ทีม D (#23): ใบในแบบที่ยื่นแล้ว ⇒ 409 (<c>RD-50TWI-FILED</c>) พร้อมทางไปต่อ — ผู้ถือ Tax.File ส่ง

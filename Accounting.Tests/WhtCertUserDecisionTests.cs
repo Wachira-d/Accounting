@@ -162,4 +162,15 @@ public class WhtCertUserDecisionTests
         Assert.Equal("ใบร่าง — เติมเลขผู้เสียภาษีก่อนออก/ยื่น", WhtCertPayeeTaxIdDraft.Warning);
         Assert.StartsWith(WhtCertPayeeTaxIdDraft.Warning, WhtCertPayeeTaxIdDraft.WarningFor("ผู้ถูกหักภาษี \"ก\" ยังไม่มีเลข"));
     }
+
+    [Fact]
+    public void ออกร่างไม่มีเลข_ทางไปต่อบอกทั้งเติมเลขและรับทราบ_รหัสกฎแยกจากaudit()
+    {
+        // ฝ่ายค้านรอบ 204 L5 — หน้าเว็บอ่านรหัส 409 นี้แล้วถามรับทราบ (wht.html) · audit ใช้รหัสคนละตัว
+        Assert.Equal("RD-50BIS-ISSUE-NO-TAXID", WhtCertPayeeTaxIdDraft.IssueNeedsAckRuleCode);
+        Assert.NotEqual(WhtCertPayeeTaxIdDraft.IssueNeedsAckRuleCode, WhtCertPayeeTaxIdDraft.IssueAckRuleCode);
+        Assert.Contains("เติมเลขผู้เสียภาษี", WhtCertPayeeTaxIdDraft.IssueWayForward);
+        Assert.Contains("รับทราบ — ออกโดยไม่มีเลขผู้เสียภาษี", WhtCertPayeeTaxIdDraft.IssueWayForward);
+        Assert.Contains("ผู้ถูกหักภาษี \"ก\"", WhtCertPayeeTaxIdDraft.IssuedWithoutTaxIdWarning("ผู้ถูกหักภาษี \"ก\" ยังไม่มีเลข"));
+    }
 }
