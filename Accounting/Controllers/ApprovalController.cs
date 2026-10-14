@@ -93,6 +93,24 @@ public class ApprovalController : ControllerBase
         return Ok(new ApiResponse<List<ApprovalRequestResponse>>(true, result));
     }
 
+    /// <summary>ID#11 (รอบ 2026-10-14 ทีม F4): คำขอที่ค้างเพราะผู้อนุมัติออกจากบริษัทแล้ว — ผู้ดูแล (สิทธิ์ตั้งค่าบริษัท ชุดเดียวกับแก้กฎ) เห็นและโอนต่อได้</summary>
+    [HttpGet("requests/stalled")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    public async Task<ActionResult<ApiResponse<List<ApprovalRequestResponse>>>> GetStalled(Guid companyId)
+        => Ok(new ApiResponse<List<ApprovalRequestResponse>>(true, await _approvalService.GetStalledRequestsAsync(companyId)));
+
+    /// <summary>ID#11: โอนขั้นที่ค้างให้สมาชิกคนใหม่ — ด่านเดียวกับแก้กฎการอนุมัติ (CompanySettings.Edit + ไม่รับ API key)</summary>
+    [HttpPost("requests/{requestId:guid}/reassign")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("โอนผู้อนุมัติ")]
+    public async Task<ActionResult<ApiResponse<ApprovalRequestResponse>>> Reassign(
+        Guid companyId, Guid requestId, [FromBody] ReassignApproverRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _approvalService.ReassignApproverAsync(companyId, requestId, userId, request);
+        return Ok(new ApiResponse<ApprovalRequestResponse>(true, result, "โอนผู้อนุมัติแล้ว — แจ้งผู้อนุมัติคนใหม่เรียบร้อย"));
+    }
+
     [HttpPost("requests/{requestId:guid}/action")]
     public async Task<ActionResult<ApiResponse<ApprovalRequestResponse>>> SubmitAction(
         Guid companyId, Guid requestId, [FromBody] SubmitApprovalActionRequest request)

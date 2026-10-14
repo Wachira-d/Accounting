@@ -296,14 +296,16 @@ public class MobileApiService : IMobileApiService
         );
     }
 
-    public async Task<MobileQuickActionsResponse> GetQuickActionsAsync(Guid companyId)
+    public async Task<MobileQuickActionsResponse> GetQuickActionsAsync(Guid companyId, Guid userId)
     {
-        // Pending documents awaiting approval
+        // ฝ่ายค้าน F4 (ID#9): นับเฉพาะคำขอที่ "รอคุณ" (ผู้อนุมัติของขั้นปัจจุบัน) — เกณฑ์เดียวกับ ApprovalService.GetPendingApprovalsAsync
+        // และด่านใน SubmitActionAsync (เดิมนับทั้งบริษัท ⇒ แอปโชว์ว่ามีให้อนุมัติ แล้วกดได้ 403)
         var pendingDocuments = await _db.ApprovalRequests
             .CountAsync(ar => ar.CompanyId == companyId
                 && ar.EntityType == "Document"
                 && ar.OverallStatus == ApprovalStatus.Pending
-                && !ar.IsDeleted);
+                && !ar.IsDeleted
+                && ar.Actions.Any(a => a.ApproverUserId == userId && a.Status == ApprovalStatus.Pending && a.StepOrder == ar.CurrentStep));
 
         // Pending expense claims awaiting approval
         var pendingExpenses = await _db.ExpenseClaims
@@ -316,7 +318,8 @@ public class MobileApiService : IMobileApiService
             .CountAsync(ar => ar.CompanyId == companyId
                 && ar.EntityType == "Payroll"
                 && ar.OverallStatus == ApprovalStatus.Pending
-                && !ar.IsDeleted);
+                && !ar.IsDeleted
+                && ar.Actions.Any(a => a.ApproverUserId == userId && a.Status == ApprovalStatus.Pending && a.StepOrder == ar.CurrentStep));
 
         return new MobileQuickActionsResponse(
             CanApproveDocuments: pendingDocuments > 0,
@@ -331,13 +334,10 @@ public class MobileApiService : IMobileApiService
     public async Task<MobileApprovalResponse> QuickApproveAsync(Guid companyId, Guid entityId, string entityType, string action, Guid userId,
         bool acknowledgeWarnings = false)
     {
-        var isApprove = action.Equals("approve", StringComparison.OrdinalIgnoreCase);
-        var isReject = action.Equals("reject", StringComparison.OrdinalIgnoreCase);
-
-        if (!isApprove && !isReject)
-        {
-            return new MobileApprovalResponse(false, $"Unknown action '{action}'. Use 'approve' or 'reject'.", entityType, entityId);
-        }
+        // รอบ 2026-10-14 ทีม F4 (ID#9 · ID#18): ข้อผิดพลาดเป็นสถานะ HTTP + ข้อความไทยพร้อมทางไปต่อ (เดิมตอบ 200 + อังกฤษ + GUID)
+        var newStatus = Accounting.Helpers.ApprovalApproverCheck.ParseMobileAction(action)
+            ?? throw new BusinessRuleException("คำสั่งต้องเป็น approve (อนุมัติ) หรือ reject (ปฏิเสธ) — อัปเดตแอปแล้วลองใหม่", "MOBILE-APPROVE-ACTION", 400);
+        var isApprove = newStatus == ApprovalStatus.Approved;
 
         // Handle expense claims directly (they have their own status field)
         if (entityType.Equals("ExpenseClaim", StringComparison.OrdinalIgnoreCase))
@@ -346,133 +346,46 @@ public class MobileApiService : IMobileApiService
         }
 
         // Handle document and other entity types via the approval workflow
-        var approvalRequest = await _db.ApprovalRequests
-            .Include(ar => ar.Actions)
-            .FirstOrDefaultAsync(ar => ar.CompanyId == companyId
+        var approvalRequest = await _db.ApprovalRequests.AsNoTracking()
+            .Where(ar => ar.CompanyId == companyId
                 && ar.EntityId == entityId
                 && ar.EntityType == entityType
                 && ar.OverallStatus == ApprovalStatus.Pending
-                && !ar.IsDeleted);
-
+                && !ar.IsDeleted)
+            .Select(ar => new { ar.Id })
+            .FirstOrDefaultAsync();
         if (approvalRequest is null)
+            throw await NoPendingRequestErrorAsync(companyId, entityType, entityId);
+
+        // ── ID#9: ช่องมือถือเดินกติกาเดียวกับเว็บ — ApprovalService.SubmitActionAsync เป็นเจ้าของตัวเดียว ──
+        // เดิมเส้นนี้เขียนกติกาเองชุดที่สอง: ไม่ตรวจว่าผู้กดเป็นผู้อนุมัติของขั้นนี้ (ใครก็เลื่อนขั้น/ตีกลับได้) · ตรวจสิทธิ์เฉพาะขั้นสุดท้าย ·
+        // เพิ่มแถว ApprovalAction ใหม่แทนการแก้แถวที่รออยู่ (ขั้นเดียวมีสองแถว แถวของผู้อนุมัติตัวจริงค้าง Pending) ·
+        // ตอนนี้ทุกด่าน (ผู้อนุมัติของขั้น · ผู้ขอห้ามอนุมัติเอง · สิทธิ์อนุมัติเอกสารขั้นสุดท้าย · คำเตือนต้องกดรับทราบ ·
+        // ตีกลับเป็นร่าง · อนุมัติเอกสารผ่าน ApproveDocumentAsync เท่านั้น) อยู่ที่เดียว
+        var approvals = _services.GetService(typeof(IApprovalService)) as IApprovalService
+            ?? throw new InvalidOperationException("ไม่พบบริการอนุมัติ (IApprovalService) — อนุมัติผ่านมือถือไม่ได้");
+        Accounting.Models.DTOs.Approval.ApprovalRequestResponse result;
+        try
         {
-            return new MobileApprovalResponse(false, $"No pending approval request found for {entityType} {entityId}.", entityType, entityId);
+            result = await approvals.SubmitActionAsync(companyId, approvalRequest.Id, userId,
+                new Accounting.Models.DTOs.Approval.SubmitApprovalActionRequest(
+                    newStatus, isApprove ? "อนุมัติผ่านมือถือ" : "ปฏิเสธผ่านมือถือ", acknowledgeWarnings));
+        }
+        catch (DocumentApprovalWarningsException ex)
+        {
+            // รอบ 193 (คำตัดสินเจ้าของข้อ 12 · ฝ่ายค้าน C5): ขั้นสุดท้ายมีคำเตือน ⇒ ยังไม่บันทึกอะไร — แอปแสดงรายการแล้วเรียกซ้ำด้วย acknowledgeWarnings=true
+            return new MobileApprovalResponse(false,
+                "มีคำเตือนที่ต้องกด \"รับทราบ\" ก่อนอนุมัติ: " + string.Join(" · ", ex.Warnings),
+                entityType, entityId, Warnings: ex.Warnings, RequiresAcknowledgement: true);
         }
 
-        // ── รอบ 193 (คำตัดสินเจ้าของข้อ 12): ขั้นสุดท้ายที่จะอนุมัติเอกสารจริง ──
-        // เส้นนี้ส่ง acknowledgeWarnings:true ให้ ApproveDocumentAsync (แอปไม่มีหน้าต่างยืนยันคำเตือน) ⇒ คำเตือน
-        // "ยอดจากสแกนไม่ตรงกระดาษ" ต้องถูกแสดงให้คนกดรับทราบ**ก่อน** — คืนรายการโดยยังไม่บันทึกอะไรเลย
-        if (isApprove && !acknowledgeWarnings && entityType.Equals("Document", StringComparison.OrdinalIgnoreCase))
-        {
-            var stepsTotal = await _db.Set<ApprovalStep>()
-                .CountAsync(s => s.ApprovalRuleId == approvalRequest.ApprovalRuleId);
-            if (approvalRequest.CurrentStep >= stepsTotal)
-            {
-                // รอบ 193 (ฝ่ายค้าน C5): คำเตือนก่อนอนุมัติ<b>ทุกชุด</b> (ตัวเดียวกับเว็บ — ไม่เรียก AI) · เดิมดูแค่ [Σ-GAP]
-                // แล้วส่ง acknowledgeWarnings:true ⇒ คำเตือนชนิดอื่นถูกประทับ "รับทราบ" ในนามผู้ใช้ที่ไม่เคยเห็น
-                var docSvcPreview = _services.GetService(typeof(IDocumentService)) as IDocumentService
-                    ?? throw new InvalidOperationException("ไม่พบบริการเอกสาร (IDocumentService) — อนุมัติผ่านมือถือไม่ได้");
-                var pendingWarnings = await docSvcPreview.PreviewApprovalWarningsAsync(companyId, entityId);
-                if (pendingWarnings.Count > 0)
-                    return new MobileApprovalResponse(false,
-                        "มีคำเตือนที่ต้องกด \"รับทราบ\" ก่อนอนุมัติ: " + string.Join(" · ", pendingWarnings),
-                        entityType, entityId, Warnings: pendingWarnings, RequiresAcknowledgement: true);
-            }
-        }
-
-        var newStatus = isApprove ? ApprovalStatus.Approved : ApprovalStatus.Rejected;
-
-        // Record the approval action
-        var approvalAction = new ApprovalAction
-        {
-            ApprovalRequestId = approvalRequest.Id,
-            StepOrder = approvalRequest.CurrentStep,
-            ApproverUserId = userId,
-            Status = newStatus,
-            ActionAt = DateTime.UtcNow,
-            Comments = isApprove ? "Approved via mobile" : "Rejected via mobile"
-        };
-
-        _db.ApprovalActions.Add(approvalAction);
-
-        // Captured here (method scope) so the post-SaveChanges training call below
-        // can read them outside the `if (isApprove)` branch.
-        Guid? approvedDocumentCompanyId = null;
-        Guid? approvedDocumentId = null;
-
-        if (isApprove)
-        {
-            // Check if there are more steps
-            var totalSteps = await _db.Set<ApprovalStep>()
-                .CountAsync(s => s.ApprovalRuleId == approvalRequest.ApprovalRuleId);
-
-            if (approvalRequest.CurrentStep >= totalSteps)
-            {
-                // Final step: mark as fully approved
-                approvalRequest.OverallStatus = ApprovalStatus.Approved;
-
-                // เอกสารต้องอนุมัติผ่าน ApproveDocumentAsync **เท่านั้น** — เดิมเส้นนี้ตั้ง
-                // `document.Status = Approved` ตรง ๆ ⇒ เอกสาร "อนุมัติแล้ว" แต่เลขยัง
-                // DRAFT-{guid} · ไม่มี JE · ไม่ตัดสต๊อก · ไม่ผ่านด่าน §86/4/§82/5/งวดปิด
-                // แล้วรับชำระต่อได้ ⇒ GL กับสถานะเอกสารเล่าคนละเรื่องถาวร
-                // (ทางเข้าที่ 4 ที่ DOCUMENT_FLOW §3.2 ไม่รู้จัก — ผลตรวจ ERP_REVIEW B-02).
-                // ถ้า approve ล้ม (ด่านทางบัญชี/ภาษี) ให้โยนออกไปตรง ๆ — ApprovalRequest
-                // ยังไม่ถูก save จึงยังเป็น Pending ให้กดใหม่หลังแก้เอกสาร (fail loud)
-                if (entityType.Equals("Document", StringComparison.OrdinalIgnoreCase))
-                {
-                    var docSvc = _services.GetService(typeof(IDocumentService)) as IDocumentService
-                        ?? throw new InvalidOperationException("ไม่พบบริการเอกสาร (IDocumentService) — อนุมัติผ่านมือถือไม่ได้");
-                    // ด่านสิทธิ์เดียวกับเว็บ — เดิมช่องมือถือไม่ตรวจเลยว่าผู้กดอนุมัติได้ไหม (ERP_REVIEW G-05)
-                    var perms = _services.GetService(typeof(IPermissionService)) as IPermissionService
-                        ?? throw new InvalidOperationException("ไม่พบบริการสิทธิ์ (IPermissionService)");
-                    var docType = await _db.Documents.AsNoTracking()
-                        .Where(d => d.Id == entityId && d.CompanyId == companyId && !d.IsDeleted)
-                        .Select(d => (DocumentType?)d.DocumentType)
-                        .FirstOrDefaultAsync()
-                        ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
-                    if (!await DocumentPermissionHelper.CanApproveAsync(perms, companyId, userId, docType))
-                        throw new BusinessRuleException(
-                            $"ไม่มีสิทธิ์อนุมัติเอกสาร {docType} (ต้องการ Document.Approve หรือสิทธิ์อนุมัติฝั่งซื้อ/ขาย)",
-                            "PERM-DOC-APPROVE", 403);
-                    // ผู้ใช้เห็นรายการแล้วกดรับทราบ = User · ไม่มีคำเตือนตอนถาม = None (ถ้าเกิดคำเตือนใหม่ระหว่างนั้น ⇒ หยุด ไม่ประทับแทน)
-                    var approved = await docSvc.ApproveDocumentAsync(companyId, entityId, userId.ToString(),
-                        acknowledgeWarnings ? Accounting.Helpers.ApprovalAckSource.User : Accounting.Helpers.ApprovalAckSource.None,
-                        withAiHints: false);
-                    approvedDocumentCompanyId = companyId;
-                    approvedDocumentId = approved.Id;
-                }
-            }
-            else
-            {
-                // Advance to next step
-                approvalRequest.CurrentStep++;
-            }
-        }
-        else
-        {
-            approvalRequest.OverallStatus = ApprovalStatus.Rejected;
-
-            // ตีกลับ = เด้งเอกสารกลับ Draft ให้ผู้ขอแก้แล้วส่งใหม่ — กติกาเดียวกับ
-            // ApprovalService.RejectAsync (เดิมตั้ง Rejected ซึ่งเป็นสถานะปลายทาง:
-            // แก้ได้แต่อนุมัติ/ส่งใหม่ไม่ได้ — ผลตรวจ ERP_REVIEW B-03) · scope CompanyId
-            if (entityType.Equals("Document", StringComparison.OrdinalIgnoreCase))
-            {
-                var document = await _db.Documents.FirstOrDefaultAsync(d =>
-                    d.Id == entityId && d.CompanyId == companyId && !d.IsDeleted);
-                if (document is not null && document.Status == DocumentStatus.WaitingApproval)
-                {
-                    document.Status = DocumentStatus.Draft;
-                    document.UpdatedAt = DateTime.UtcNow;
-                }
-            }
-        }
-
-        approvalRequest.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
+        // ลำดับอนุมัติครบแต่อนุมัติเอกสารจริงไม่สำเร็จ (ด่านบัญชี/ภาษี) ⇒ ไม่ใช่ "สำเร็จ" — ข้อความไทยพร้อมทางไปต่อตัวเดียวกับหมายเหตุบนเอกสาร
+        if (result.FinalizeError != null)
+            return new MobileApprovalResponse(false, result.FinalizeError, entityType, entityId);
 
         // Train vendor intelligence if a document was approved this round
-        if (approvedDocumentCompanyId.HasValue && approvedDocumentId.HasValue)
-            await _vendorIntel.TryTrainAsync(approvedDocumentCompanyId.Value, approvedDocumentId.Value);
+        if (result.OverallStatus == ApprovalStatus.Approved && entityType.Equals("Document", StringComparison.OrdinalIgnoreCase))
+            await _vendorIntel.TryTrainAsync(companyId, entityId);
 
         // Enqueue the change to the sync queue so other mobile users receive it
         var syncEntry = new SyncQueue
@@ -482,7 +395,7 @@ public class MobileApiService : IMobileApiService
             EntityType = entityType,
             EntityId = entityId,
             OperationType = "Update",
-            PayloadJson = JsonSerializer.Serialize(new { status = newStatus.ToString(), approvedBy = userId }),
+            PayloadJson = JsonSerializer.Serialize(new { status = result.OverallStatus.ToString(), approvedBy = userId }),
             QueuedAt = DateTime.UtcNow,
             IsProcessed = true,
             ProcessedAt = DateTime.UtcNow
@@ -491,11 +404,37 @@ public class MobileApiService : IMobileApiService
         _db.Set<SyncQueue>().Add(syncEntry);
         await _db.SaveChangesAsync();
 
-        var resultMessage = isApprove
-            ? $"{entityType} {entityId} has been approved."
-            : $"{entityType} {entityId} has been rejected.";
+        var resultMessage = !isApprove
+            ? "ปฏิเสธแล้ว — รายการกลับไปให้ผู้ขอแก้ไขแล้วส่งใหม่"
+            : result.OverallStatus == ApprovalStatus.Approved
+                ? "อนุมัติแล้ว (ครบทุกขั้น)"
+                : $"อนุมัติขั้นของคุณแล้ว — ส่งต่อผู้อนุมัติขั้นที่ {result.CurrentStep}";
 
         return new MobileApprovalResponse(true, resultMessage, entityType, entityId);
+    }
+
+    /// <summary>ไม่มีคำขอที่รออยู่ — ฝ่ายค้าน F4: ถ้าลำดับอนุมัติครบแล้วแต่ระบบอนุมัติเอกสารไม่สำเร็จ (FinalizeError ของรอบก่อน) บอกทางไปต่อ
+    /// (อนุมัติเอกสารตรงที่หน้าเอกสาร — gate ปล่อยเพราะคำขออนุมัติครบแล้ว) แทน "ไม่พบ" ที่ทำให้ผู้ใช้กดซ้ำไม่จบ</summary>
+    private async Task<Exception> NoPendingRequestErrorAsync(Guid companyId, string entityType, Guid entityId)
+    {
+        var latest = await _db.ApprovalRequests.AsNoTracking()
+            .Where(ar => ar.CompanyId == companyId && ar.EntityId == entityId && ar.EntityType == entityType && !ar.IsDeleted)
+            .OrderByDescending(ar => ar.RequestedAt)
+            .Select(ar => (ApprovalStatus?)ar.OverallStatus)
+            .FirstOrDefaultAsync();
+        if (latest == ApprovalStatus.Approved && entityType.Equals("Document", StringComparison.OrdinalIgnoreCase))
+        {
+            var docStatus = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == entityId && d.CompanyId == companyId && !d.IsDeleted)
+                .Select(d => (DocumentStatus?)d.Status)
+                .FirstOrDefaultAsync();
+            if (docStatus is DocumentStatus.Draft or DocumentStatus.WaitingApproval)
+                return new BusinessRuleException(
+                    "ลำดับอนุมัติครบทุกขั้นแล้ว แต่ระบบอนุมัติเอกสารยังไม่สำเร็จ — เปิดเอกสารบนเว็บดูเหตุผลในหมายเหตุภายใน แก้ตามนั้นแล้วกด “อนุมัติ” ที่หน้าเอกสาร",
+                    "MOBILE-APPROVE-FINALIZE-PENDING", 409);
+        }
+        return new KeyNotFoundException(
+            "ไม่พบคำขออนุมัติที่รออยู่ของรายการนี้ (อาจถูกอนุมัติ/ปฏิเสธไปแล้ว) — ดึงรายการรออนุมัติใหม่ในแอป");
     }
 
     // ==================== Private Helpers ====================
@@ -509,9 +448,9 @@ public class MobileApiService : IMobileApiService
                 && !ec.IsDeleted);
 
         if (claim is null)
-        {
-            return new MobileApprovalResponse(false, $"No pending expense claim found with ID {entityId}.", "ExpenseClaim", entityId);
-        }
+            // ID#18: เดิมตอบ 200 + อังกฤษ + GUID ⇒ 404 + ไทยพร้อมทางไปต่อ
+            throw new KeyNotFoundException(
+                "ไม่พบใบเบิกที่รออนุมัติรายการนี้ (อาจถูกอนุมัติ/ปฏิเสธไปแล้ว) — ดึงรายการรออนุมัติใหม่ในแอป");
 
         // ฝ่ายค้านรอบสอง 193 (R2-C2 · Q7): เดิมตั้งสถานะเองตรง ๆ — ไม่ตรวจสิทธิ์ (ผู้ยื่นอนุมัติใบตัวเองทางมือถือได้) และไม่สร้าง
         // ใบรับรองแทนใบเสร็จ (§65 ทวิ) ของใบ no-receipt · ตอนนี้เดินเมธอดเดียวกับเว็บ (ExpenseClaimService.ApproveAsync/RejectAsync)

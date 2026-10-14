@@ -66,6 +66,10 @@ public class WebhookService : IWebhookService
         return MapToResponse(registration);
     }
 
+    /// <summary>ID#18 (รอบ 2026-10-14 ทีม F4): เดิม "Webhook registration {guid} not found." (อังกฤษ + GUID · 400) ⇒ 404 + ไทยพร้อมทางไปต่อ</summary>
+    private const string WebhookNotFound =
+        "ไม่พบ webhook นี้ในบริษัท (อาจถูกลบแล้ว) — รีเฟรชหน้า Webhooks แล้วเลือกรายการใหม่";
+
     public async Task<List<WebhookRegistrationResponse>> GetRegistrationsAsync(Guid companyId)
     {
         var registrations = await _db.Set<WebhookRegistration>()
@@ -80,7 +84,7 @@ public class WebhookService : IWebhookService
     {
         var registration = await _db.Set<WebhookRegistration>()
             .FirstOrDefaultAsync(w => w.Id == webhookId && w.CompanyId == companyId && !w.IsDeleted)
-            ?? throw new InvalidOperationException($"Webhook registration {webhookId} not found.");
+            ?? throw new KeyNotFoundException(WebhookNotFound);
 
         if (request.Name is not null) registration.Name = request.Name;
         if (request.Url is not null)
@@ -106,7 +110,7 @@ public class WebhookService : IWebhookService
     {
         var registration = await _db.Set<WebhookRegistration>()
             .FirstOrDefaultAsync(w => w.Id == webhookId && w.CompanyId == companyId && !w.IsDeleted)
-            ?? throw new InvalidOperationException($"Webhook registration {webhookId} not found.");
+            ?? throw new KeyNotFoundException(WebhookNotFound);
 
         registration.IsDeleted = true;
         registration.IsActive = false;
@@ -118,7 +122,7 @@ public class WebhookService : IWebhookService
     {
         var registration = await _db.Set<WebhookRegistration>()
             .FirstOrDefaultAsync(w => w.Id == webhookId && w.CompanyId == companyId && !w.IsDeleted)
-            ?? throw new InvalidOperationException($"Webhook registration {webhookId} not found.");
+            ?? throw new KeyNotFoundException(WebhookNotFound);
 
         var testPayload = new
         {
@@ -159,7 +163,7 @@ public class WebhookService : IWebhookService
             .AnyAsync(w => w.Id == webhookId && w.CompanyId == companyId && !w.IsDeleted);
 
         if (!exists)
-            throw new InvalidOperationException($"Webhook registration {webhookId} not found.");
+            throw new KeyNotFoundException(WebhookNotFound);
 
         var query = _db.Set<WebhookDelivery>()
             .Where(d => d.WebhookRegistrationId == webhookId && !d.IsDeleted)
@@ -192,7 +196,7 @@ public class WebhookService : IWebhookService
         var delivery = await _db.Set<WebhookDelivery>()
             .Include(d => d.Registration)
             .FirstOrDefaultAsync(d => d.Id == deliveryId && d.Registration.CompanyId == companyId && !d.IsDeleted)
-            ?? throw new InvalidOperationException($"Webhook delivery {deliveryId} not found.");
+            ?? throw new KeyNotFoundException("ไม่พบประวัติการส่ง webhook รายการนี้ (อาจถูกลบแล้ว) — เปิดประวัติการส่งของ webhook ใหม่แล้วเลือกรายการที่ต้องการส่งซ้ำ");
 
         var payload = JsonSerializer.Deserialize<object>(delivery.PayloadJson);
         await DeliverWebhookAsync(delivery.Registration, delivery.EventType, payload ?? new { });

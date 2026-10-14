@@ -1574,6 +1574,9 @@ const API = {
       getApprovalRequest: (id) => API.get(`${base}/approval/requests/${id}`),
       getPendingApprovals: () => API.get(`${base}/approval/pending`),
       submitAction: (id, d) => API.post(`${base}/approval/requests/${id}/action`, d),
+      // ID#11: คำขอที่ค้างเพราะผู้อนุมัติออกจากบริษัทแล้ว + โอนผู้อนุมัติ (สิทธิ์ตั้งค่าบริษัท)
+      getStalledApprovals: () => API.get(`${base}/approval/requests/stalled`),
+      reassignApprover: (id, d) => API.post(`${base}/approval/requests/${id}/reassign`, d),
       // Settings
       getSettings: () => API.get(`${base}/settings`),
       updateSettings: (d) => API.put(`${base}/settings`, d),

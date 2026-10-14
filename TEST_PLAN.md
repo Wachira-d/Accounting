@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **520 ไฟล์ · 5,181 `[Fact]` + 818 `[Theory]` (3,624 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **527 ไฟล์ · 5,209 `[Fact]` + 826 `[Theory]` (3,652 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5931,3 +5931,30 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | MF3-14 | ใบสำคัญด้วยมือ vs ทางอัตโนมัติ | ด้วยมือ: ปิดใช้/บัญชีคุม บล็อก (บรรทัดที่ N · ไม่มี GUID) · อัตโนมัติ: ผังปิดใช้ลงได้ (ปิดงวด) · ผัง/สาขาบริษัทอื่น บล็อกทั้งสองทาง | ✅ `MoneyAccountDbTests` (Db) |
 | MF3-15 | จุดเรียกด่าน (จ่ายเงินเดือน · หน้ารอบ · ตั้งแหล่งจ่าย · สปส. · นำส่ง · ตั้งค่า · payment-channels · ใบสำคัญ · สินทรัพย์ · สรุปรายวัน · mapping · gateway · ที่พัก · ผู้ติดต่อ) | ถอดการเรียกแล้ว checker ฟ้อง | ✅ `tools/required_call_site_check.py` |
 | MF3-16 | จ่ายเงินเดือนจริงที่มีรหัสรายคนปิดใช้ / ที่พักยืนยันมัดจำด้วยบัญชีธนาคารที่ปิดใช้ / สรุปรายวันหมวดไม่จับคู่ | ล้มดังพร้อมทางไปต่อ ไม่มี JE บางส่วน | ⏳ เส้นเต็ม (ต้อง seed ผังเงินเดือน/ที่พักครบ) — ล็อกจุดเรียกด้วย MF3-15 |
+## WF-F4 — ผู้อนุมัติ · มือถือ · ผู้ลงนามข้ามบริษัท · อีเมล/รายงานตั้งเวลา (2026-10-14 ทีม F4 · `erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md` ส่วนที่ 2 ID#9/10/11/12/18/25)
+
+> เทสต์ DB (`Category=Db`) รันจริงใน job `db-test` เท่านั้น — env ของ agent ไม่มี SDK/ฐาน ⇒ **ยังไม่ได้คอมไพล์/รันในเครื่องนี้**
+
+| ID | สถานการณ์ | คาดหวัง | เทสต์ |
+| --- | --- | --- | --- |
+| WF4-01 | (ID#9) มือถือ: สมาชิกที่ไม่ใช่ผู้อนุมัติของขั้นกด approve / reject | 403 `APPROVAL-NOT-ASSIGNED` ข้อความไทยไม่มี GUID · คำขอยัง Pending · ApprovalAction ยัง 1 แถว (เดิมเพิ่มแถวใหม่) | ✅ `ApprovalWorkflowMembershipDbTests` |
+| WF4-02 | (ID#9) มือถือ: ผู้อนุมัติตัวจริงกด approve | สำเร็จ · แถว ApprovalAction เดิมถูกแก้เป็น Approved (ไม่เพิ่มแถว) · ข้อความไทย | ✅ `ApprovalWorkflowMembershipDbTests` |
+| WF4-03 | (ID#9/18) มือถือ: ไม่มีคำขอที่รออยู่ · คำสั่งไม่รู้จัก | 404 ไทย (เดิม 200 + อังกฤษ + GUID) · 400 | ✅ `ApprovalWorkflowMembershipDbTests` · `ApprovalApproverCheckTests` |
+| WF4-04 | (ID#9) ขั้นสุดท้ายของเอกสาร (เว็บ+มือถือ — เจ้าของเดียว `SubmitActionAsync`) ผู้อนุมัติไม่มีสิทธิ์อนุมัติเอกสาร | 403 `PERM-DOC-APPROVE` ก่อนบันทึก · ทิศตรงข้าม: มีสิทธิ์ = อนุมัติ · การปฏิเสธไม่ต้องใช้สิทธิ์อนุมัติ | ✅ `ApprovalWorkflowMembershipDbTests` (Theory) |
+| WF4-05 | (ID#11) ส่งขออนุมัติ — กฎชี้ผู้อนุมัติที่ออกจากบริษัทแล้ว | 409 `APPROVAL-APPROVER-DEPARTED` บอกขั้น+ชื่อ+ไปแก้กฎ · ไม่สร้างคำขอ · ทิศตรงข้าม: สมาชิกครบ = ส่งได้ | ✅ `ApprovalWorkflowMembershipDbTests` · `ApprovalApproverCheckTests` |
+| WF4-06 | (ID#11) คำขอค้างเพราะผู้อนุมัติถูกถอดออกหลังส่ง | `GET approval/requests/stalled` เห็น + ป้าย `staleApproverNotice` · โอนให้ผู้ขอ = 409 · โอนให้สมาชิก = แก้แถวเดิม + หมายเหตุ + audit · คนใหม่อนุมัติได้ | ✅ `ApprovalWorkflowMembershipDbTests` |
+| WF4-07 | (ID#11) โอนขั้นที่ผู้อนุมัติเดิมยังเป็นสมาชิก | 409 ไม่แตะแถว (ไม่ใช่ช่องเปลี่ยนคนตามใจ) | ✅ `ApprovalWorkflowMembershipDbTests` |
+| WF4-08 | (ID#10) ผู้อนุมัติเริ่มต้นของ workflow ข้ามบริษัทออกจากบริษัทแล้ว + เปิดอนุมัติอัตโนมัติ | ไม่อนุมัติ/ไม่ลงนามอัตโนมัติ · เอกสารเข้ายัง PendingApproval + หมายเหตุบอกเหตุ/ทางไปต่อ · หน้าตั้งค่าได้ `defaultApproverNotice` · ทิศตรงข้าม: ยังเป็นสมาชิก = อนุมัติอัตโนมัติในชื่อคนนั้น | ✅ `CrossTenantSignerDbTests` (Theory) |
+| WF4-09 | (ID#10) อนุมัติด้วยมือโดยระบุ `signatureUserId` เป็นผู้ใช้ของบริษัทอื่น | 400 `XTENANT-SIGNER` ไม่มี DocumentApproval/ลายเซ็นถูกประทับ | ✅ `CrossTenantSignerDbTests` · `CrossTenantSignerResolverTests` |
+| WF4-10 | (ID#10) ตั้งผู้อนุมัติเริ่มต้นเป็นคนนอก · ลายเซ็นเริ่มต้นของคนอื่น | ปฏิเสธ ค่าเดิมไม่ถูกแตะ · ลายเซ็นของผู้อนุมัติเอง = ตั้งได้ · PUT ต้องมีสิทธิ์ตั้งค่าบริษัท | ✅ `CrossTenantSignerDbTests` · `CrossTenantSignerResolverTests` |
+| WF4-11 | (ID#12) คิวอีเมลของใบที่ถูกยกเลิกหลังเข้าคิว (รอบเดียวกับใบปกติ) | ใบยกเลิก = `Skipped` + เหตุผล ไม่ส่ง · ใบปกติ = `Sent` | ✅ `ScheduledEmailRecheckDbTests` |
+| WF4-12 | (ID#12) คำเตือนชำระ: ใบชำระครบแล้ว · ใบที่ชำระบางส่วนหลังเข้าคิว | ชำระครบ = ข้าม · ค้าง = ส่งด้วยยอดค้างชำระ ณ เวลาส่ง (400.00 ไม่ใช่ 1,000.00) | ✅ `ScheduledEmailRecheckDbTests` · `ScheduledEmailSendCheckTests` |
+| WF4-13 | (ID#12) สร้าง PDF แนบไม่สำเร็จ | ไม่ส่งอีเมลเปล่า · ไม่ประทับ Sent · Pending + RetryCount 1 + เลื่อน 15 นาที + เหตุผลไทย | ✅ `ScheduledEmailRecheckDbTests` |
+| WF4-14 | (ID#25) รายงานตั้งเวลา: ล้มบางราย / ทุกราย / ไม่มีผู้รับ | `PARTIAL` (ประทับส่งแล้ว) · `ERROR` (ไม่ประทับ LastSentAt) · `SKIPPED` · ข้อความยาวตัดที่รายละเอียดไม่ใช่ทางไปต่อ · ปุ่ม "ส่งทันที" ส่งจริงแล้วตอบผลจริง (เดิมประทับ OK โดยไม่ส่ง) | ✅ `ScheduledEmailSendCheckTests` · `required_call_site_check` SendNow |
+| WF4-15 | (ID#18) WebhookService ไม่พบ webhook/ประวัติการส่ง | 404 ไทยพร้อมทางไปต่อ (เดิม 400 อังกฤษ + GUID) | — (ข้อความ · `required_call_site_check` ไม่ล็อก) |
+| WF4-16 | (ฝ่ายค้าน F4) อนุมัติข้ามบริษัทด้วยมือ ระบุ `signatureUserId` เป็นเพื่อนร่วมบริษัทที่ไม่ใช่ผู้อนุมัติเริ่มต้น | 400 — ลงนามได้เฉพาะในชื่อตัวเอง/ผู้อนุมัติเริ่มต้น · Guid ว่าง = ไม่ระบุ (ตัวเดียวกับ controller) | ✅ `CrossTenantSignerResolverTests` |
+| WF4-17 | (ฝ่ายค้าน F4) โอนผู้อนุมัติให้คนที่อนุมัติขั้นอื่นของคำขอเดียวกันแล้ว | 409 (คนเดียวผ่านสองขั้นไม่ได้) | ✅ `ApprovalApproverCheckTests` |
+| WF4-18 | (ฝ่ายค้าน F4) ตั้งขั้นอนุมัติแบบลายเซ็น (`SetupApprovalAsync`) ด้วยผู้ใช้ที่ไม่ใช่สมาชิก | 400 บอกขั้น + ทางไปต่อ ก่อนพลิกสถานะ | — (`required_call_site_check` SetupApprovalAsync) |
+| WF4-19 | (ฝ่ายค้าน F4) คิวอีเมล 50 ทวิ ที่ถูกยกเลิกหลังเข้าคิว | `Skipped` + เหตุผล | ✅ `ScheduledEmailSendCheckTests` |
+| WF4-20 | (ฝ่ายค้าน F4) ตัวนับ quick-actions ของแอป · กฎที่ผู้อนุมัติขั้นสุดท้ายไม่มีสิทธิ์อนุมัติเอกสาร · "ส่งทันที" ระหว่างรอบอัตโนมัติ | นับเฉพาะ "รอคุณ" · หน้ากฎแสดงคำเตือน (ไม่บล็อก) · 409 ให้ลองใหม่ (ล็อกเดียวกับรอบตามเวลา) + ต้องมีสิทธิ์ส่งออกรายงาน | — (`required_call_site_check`) |
+

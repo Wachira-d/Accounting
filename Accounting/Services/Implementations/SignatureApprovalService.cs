@@ -133,6 +133,20 @@ public class SignatureApprovalService : ISignatureApprovalService
                 + "หรือตั้งขั้นอนุมัติตั้งแต่ตอนที่ยังเป็นร่าง",
                 "DOC-APPROVAL-SETUP-TOO-LATE");
 
+        // 2026-10-14 ทีม F4 (ฝ่ายค้าน ID#11 ทางเข้าอื่น): ผู้อนุมัติภายในที่ระบุเป็นผู้ใช้ต้องเป็นสมาชิกที่ใช้งานอยู่ของบริษัทนี้ — เดิมรับ Guid อะไรก็ได้
+        // (ผู้ใช้ที่ลาออก/ของบริษัทอื่น) ⇒ เอกสารค้าง WaitingApproval เพราะมีแค่คนนั้นที่กดได้ · ตัวตัดสินสมาชิกตัวเดียวกับกฎอนุมัติ
+        var namedApprovers = (request.Steps ?? new List<ApprovalStepInput>())
+            .Where(s => s.ApproverUserId is { } g && g != Guid.Empty).ToList();
+        var activeApprovers = await CompanyMembership.ActiveMemberIdsAsync(
+            _db, companyId, namedApprovers.Select(s => s.ApproverUserId!.Value));
+        var notMembers = namedApprovers.Where(s => !activeApprovers.Contains(s.ApproverUserId!.Value))
+            .Select(s => s.StepOrder).OrderBy(o => o).ToList();
+        if (notMembers.Count > 0)
+            throw new BusinessRuleException(
+                $"ผู้อนุมัติขั้นที่ {string.Join(", ", notMembers)} ไม่ได้เป็นสมาชิกที่ใช้งานอยู่ของบริษัทนี้ — เลือกผู้อนุมัติจากรายชื่อสมาชิกใหม่ "
+                + "(ผู้อนุมัติภายนอก/ลูกค้าให้ระบุชื่อและอีเมลแทนผู้ใช้)",
+                ApprovalApproverCheck.DepartedRuleCode, 400);
+
         // Remove existing pending approvals
         var existing = await _db.Set<DocumentApproval>()
             .Where(a => a.DocumentId == request.DocumentId && a.Status == ApprovalStatus.Pending && !a.IsDeleted)

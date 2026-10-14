@@ -80,6 +80,11 @@ public class SmartApprovalRoutingService : ISmartApprovalRoutingService
                                            a.ActionAt,
                                        }).ToListAsync(ct);
 
+        // 2026-10-14 ทีม F4 (ID#11): ไม่แนะนำผู้อนุมัติที่ออกจากบริษัทแล้ว (แนะนำแล้วกฎบันทึกไม่ได้ / ส่งคำขอไปค้าง) — ตัวตัดสินสมาชิกตัวเดียว
+        var activeApprovers = await Accounting.Helpers.CompanyMembership.ActiveMemberIdsAsync(
+            _db, companyId, historicalActions.Select(a => a.ApproverUserId), ct);
+        historicalActions = historicalActions.Where(a => activeApprovers.Contains(a.ApproverUserId)).ToList();
+
         if (historicalActions.Count == 0) return null;
 
         // Filter by amount bucket (in-memory because bucket comparison

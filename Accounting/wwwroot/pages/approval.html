@@ -24,6 +24,22 @@
     <div class="tabs">
       <div class="tab active" onclick="Page.setTab('pending',this)">รออนุมัติ</div>
       <div class="tab" onclick="Page.setTab('rules',this)">กฎการอนุมัติ</div>
+      <!-- ID#11: แสดงเฉพาะผู้ดูแล (สิทธิ์ตั้งค่าบริษัท) เมื่อมีคำขอค้างเพราะผู้อนุมัติออกจากบริษัทแล้ว -->
+      <div class="tab" id="tabStalledBtn" style="display:none" onclick="Page.setTab('stalled',this)">ค้างเพราะผู้อนุมัติออก <span id="stalledCount" class="pill pill-danger" style="margin-left:4px"></span></div>
+    </div>
+
+    <!-- ID#11: คำขอที่ค้างเพราะผู้อนุมัติไม่ได้เป็นสมาชิกบริษัทแล้ว — ผู้ดูแลโอนให้สมาชิกคนใหม่ (ผู้ขอเองรับโอนไม่ได้) -->
+    <div id="tabStalled" style="display:none">
+      <div class="card" style="padding:10px 14px;margin-bottom:12px;background:#fef2f2;border-left:4px solid #ef4444;font-size:13px">
+        คำขอเหล่านี้รอผู้อนุมัติที่ออกจากบริษัทแล้ว (ถูกถอดออก/ปิดบัญชี) — จะไม่มีใครอนุมัติได้จนกว่าจะโอนให้สมาชิกคนใหม่ ·
+        ถ้าต้องการเปลี่ยนผู้อนุมัติถาวร ให้แก้กฎในแท็บ “กฎการอนุมัติ” ด้วย
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th data-i18n="common.type">ประเภท</th><th>ผู้ขอ</th><th>วันที่ขอ</th><th>ขั้นที่ค้าง</th><th>โอนให้</th></tr></thead>
+          <tbody id="stalledBody"><tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Pending Approvals -->
@@ -137,13 +153,55 @@
         if (!Layout.init('approval')) return;
         Layout.setTitle('ระบบอนุมัติ');
         await this.load();
+        this.loadStalled();
+      },
+      // === STALLED (ID#11) ===
+      /** คำขอที่ค้างเพราะผู้อนุมัติออกจากบริษัท — ผู้ไม่มีสิทธิ์ตั้งค่าบริษัทได้ 403 ⇒ ซ่อนแท็บเงียบ ๆ (ไม่ใช่ข้อผิดพลาดของผู้ใช้) */
+      async loadStalled() {
+        const api = Layout.api(); if (!api) return;
+        let items;
+        try { const res = await api.getStalledApprovals(); items = res.data || []; }
+        catch (e) {
+          if (e && e.status === 403) { document.getElementById('tabStalledBtn').style.display = 'none'; return; }
+          Layout.toast(e.message, 'error'); return;
+        }
+        document.getElementById('tabStalledBtn').style.display = items.length ? '' : 'none';
+        document.getElementById('stalledCount').textContent = items.length || '';
+        const members = items.length ? await this._loadMembers() : [];
+        const typeMap = { Document: 'เอกสาร', Payment: 'การชำระเงิน', ExpenseClaim: 'เบิกค่าใช้จ่าย', Journal: 'รายการบัญชี', PayrollRun: 'เงินเดือน' };
+        const tbody = document.getElementById('stalledBody');
+        if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ไม่มีคำขอที่ค้าง</td></tr>'; return; }
+        const opts = members.map(m => `<option value="${Layout.esc(m.userId)}">${Layout.esc(m.fullName || m.email)}</option>`).join('');
+        tbody.innerHTML = items.map(a => (a.actions || []).filter(x => x.approverDeparted).map(x => `<tr>
+            <td>${typeMap[a.entityType] || Layout.esc(a.entityType)}</td>
+            <td>${Layout.esc(a.requestedByName || '-')}</td>
+            <td>${Layout.date(a.requestedAt)}</td>
+            <td>ขั้นที่ ${Number(x.stepOrder)}: ${Layout.esc(x.approverName || '(ผู้ใช้ที่ถูกลบ)')}<div style="font-size:11px;color:#dc2626">${Layout.esc(a.staleApproverNotice || '')}</div></td>
+            <td class="flex gap-1">
+              <select class="form-select" data-reassign-request="${Layout.esc(a.id)}" data-reassign-step="${Number(x.stepOrder)}"><option value="">— เลือกสมาชิก —</option>${opts}</select>
+              <button class="btn btn-sm btn-primary" data-request="${Layout.esc(a.id)}" data-step="${Number(x.stepOrder)}" onclick="Page.reassign(this.dataset.request, Number(this.dataset.step))">โอน</button>
+            </td>
+          </tr>`).join('')).join('');
+      },
+      async reassign(requestId, stepOrder) {
+        const sel = [...document.querySelectorAll('#stalledBody select[data-reassign-request]')]
+          .find(el => el.dataset.reassignRequest === requestId && Number(el.dataset.reassignStep) === stepOrder);
+        if (!sel || !sel.value) { Layout.toast('เลือกสมาชิกที่จะรับโอนก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.reassignApprover(requestId, { newApproverUserId: sel.value, stepOrder });
+          Layout.toast(res.message || 'โอนผู้อนุมัติแล้ว');
+          await this.loadStalled();
+        } catch (e) { Layout.toast(e.message, 'error', 12000); }
       },
       setTab(tab, el) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
         document.getElementById('tabPending').style.display = tab === 'pending' ? '' : 'none';
         document.getElementById('tabRules').style.display = tab === 'rules' ? '' : 'none';
+        document.getElementById('tabStalled').style.display = tab === 'stalled' ? '' : 'none';
         if (tab === 'rules') this.loadRules();
+        if (tab === 'stalled') this.loadStalled();
       },
       // === PENDING ===
       async load() {
@@ -298,7 +356,7 @@
             <td class="font-medium">${Layout.esc(r.name || '-')}</td>
             <td>${r.documentType ? Layout.esc(Layout.docTypeLabel(r.documentType)) : 'ทุกประเภทเอกสาร'}</td>
             <td>${r.minAmount != null || r.maxAmount != null ? Layout.money(r.minAmount || 0) + ' - ' + (r.maxAmount != null ? Layout.money(r.maxAmount) : 'ไม่จำกัด') : 'ทั้งหมด'}</td>
-            <td class="text-xs">${Layout.esc((r.steps || []).slice().sort((a, b) => a.stepOrder - b.stepOrder).map(s => s.approverName).join(' → ') || '-')}</td>
+            <td class="text-xs">${Layout.esc((r.steps || []).slice().sort((a, b) => a.stepOrder - b.stepOrder).map(s => s.approverName).join(' → ') || '-')}${r.warning ? `<div style="color:#b45309;margin-top:4px">⚠ ${Layout.esc(r.warning)}</div>` : ''}</td>
             <td>${r.isActive !== false ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
             <td class="flex gap-1">
               <button class="btn btn-sm btn-ghost" onclick="Page.editRule('${r.id}')" data-i18n="common.edit">แก้ไข</button>

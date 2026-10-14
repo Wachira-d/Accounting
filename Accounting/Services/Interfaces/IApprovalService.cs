@@ -20,6 +20,12 @@ public interface IApprovalService
     Task<List<ApprovalRequestResponse>> GetPendingApprovalsAsync(Guid companyId, Guid userId);
     Task<ApprovalRequestResponse> SubmitActionAsync(Guid companyId, Guid requestId, Guid userId, SubmitApprovalActionRequest request);
 
+    /// <summary>ID#11 — คำขอที่ค้างเพราะผู้อนุมัติของขั้นที่ยังไม่ได้ทำออกจากบริษัทแล้ว (หน้าอนุมัติของผู้ดูแล)</summary>
+    Task<List<ApprovalRequestResponse>> GetStalledRequestsAsync(Guid companyId);
+
+    /// <summary>ID#11 — โอนขั้นที่ค้างให้สมาชิกคนใหม่ (เฉพาะขั้นที่ผู้อนุมัติเดิมออกไปแล้ว · ห้ามโอนให้ผู้ขอ)</summary>
+    Task<ApprovalRequestResponse> ReassignApproverAsync(Guid companyId, Guid requestId, Guid actorUserId, ReassignApproverRequest request);
+
     // Escalation
     Task<int> EscalateOverdueApprovalsAsync();
 

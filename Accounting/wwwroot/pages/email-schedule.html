@@ -321,7 +321,7 @@
               : q.status === 'Pending'
               ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.cancel('${q.id}')">ยกเลิก</button>` : '';
             return `<tr>
-              <td data-label="สถานะ"><span class="pill ${pill}">${q.status}</span></td>
+              <td data-label="สถานะ"><span class="pill ${pill}">${Layout.esc(q.statusLabel || q.status)}</span></td>
               <td data-label="ผู้รับ" style="font-family:monospace;font-size:12px">${Layout.esc(q.toEmail)}</td>
               <td data-label="เรื่อง">${Layout.esc(q.subject)}${q.errorMessage ? `<div style="font-size:11px;color:#ef4444;margin-top:4px">⚠ ${Layout.esc(q.errorMessage)}</div>` : ''}</td>
               <td data-label="นัดส่ง" style="font-size:12px">${new Date(q.scheduledFor).toLocaleString('th-TH')}</td>

@@ -101,19 +101,31 @@ public class ScheduledReportController : ControllerBase
         return Ok(new ApiResponse<object>(true, null, "ลบแล้ว"));
     }
 
-    /// <summary>Trigger ทันที (skip schedule) — สำหรับ admin test.</summary>
+    /// <summary>ส่งทันที (ไม่รอรอบตามเวลา) — ส่งจริงผ่านตัวส่งเดียวกับรอบตามเวลา แล้วตอบผลจริง
+    /// · ID#25 (รอบ 2026-10-14 ทีม F4): เดิมประทับ LastSentAt + "OK" โดยไม่ได้ส่งอะไร ⇒ หน้าจอบอกส่งแล้ว และรอบจริงถูกข้าม 23 ชม. ·
+    /// ฝ่ายค้าน F4: ตอนนี้ส่งตัวเลขการเงินออกนอกระบบจริง ⇒ ต้องมีสิทธิ์ส่งออกรายงาน · ไม่ส่งรายงานที่ถูกลบ · ล็อกเดียวกับรอบตามเวลา (กันส่งซ้ำ)</summary>
     [HttpPost("{id:guid}/send-now")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ReportsExport)]
     public async Task<ActionResult<ApiResponse<object>>> SendNow(
         Guid companyId, Guid id,
-        [FromServices] IServiceProvider sp)
+        [FromServices] IServiceProvider sp,
+        [FromServices] ILogger<ScheduledReportController> logger)
     {
         var s = await _db.ScheduledReports
-            .FirstOrDefaultAsync(x => x.Id == id && x.CompanyId == companyId);
-        if (s == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ"));
+            .FirstOrDefaultAsync(x => x.Id == id && x.CompanyId == companyId && !x.IsDeleted);
+        if (s == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายงานตามกำหนดเวลานี้ (อาจถูกลบแล้ว) — รีเฟรชรายการ"));
 
-        s.LastSentAt = DateTime.UtcNow;
-        s.LastResult = "OK (Manual trigger — dispatcher จะส่งจริงรอบถัดไป)";
-        await _db.SaveChangesAsync();
-        return Ok(new ApiResponse<object>(true, new { s.LastSentAt }, "Queue ส่งแล้ว"));
+        Accounting.Helpers.ScheduledReportOutcome.Result? outcome = null;
+        var ran = await Accounting.Helpers.JobLock.RunExclusiveAsync(_db, Accounting.Helpers.AdvisoryLockKey.BackgroundJob,
+            nameof(Accounting.Services.Implementations.ScheduledReportDispatcher), async () =>
+            {
+                outcome = await Accounting.Services.Implementations.ScheduledReportDispatcher.DispatchAndRecordAsync(
+                    sp, _db, s, logger, HttpContext.RequestAborted);
+                await _db.SaveChangesAsync();
+            }, logger, ct: HttpContext.RequestAborted);
+        if (!ran || outcome == null)
+            return Conflict(new ApiResponse<object>(false, null,
+                "ระบบกำลังส่งรายงานรอบอัตโนมัติอยู่ — รอสักครู่แล้วกด “ส่งทันที” อีกครั้ง (กันผู้รับได้รายงานซ้ำ)"));
+        return Ok(new ApiResponse<object>(outcome.AnyDelivered, new { s.LastSentAt, s.LastResult }, s.LastResult));
     }
 }

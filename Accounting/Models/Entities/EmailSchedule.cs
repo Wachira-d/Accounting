@@ -90,8 +90,8 @@ public class EmailQueue : TenantEntity
     public string? CcEmail { get; set; }
     public string? BccEmail { get; set; }
 
-    /// <summary>subject + body — render template ตอน enqueue เพื่อเก็บ snapshot
-    /// (template เปลี่ยนภายหลังไม่กระทบงานที่ queue ไว้).</summary>
+    /// <summary>subject + body — render ตอน enqueue · ID#12 (2026-10-14): คิวของเอกสารที่ยังมีกฎจริงถูก render ใหม่ตอนส่ง
+    /// ด้วยค่า ณ เวลาส่ง (ยอดค้างชำระปัจจุบัน) — คิวจากกฎเสมือน (รายการประจำ) ใช้ snapshot ตอน enqueue.</summary>
     public string Subject { get; set; } = "";
     public string Body { get; set; } = "";
 
@@ -103,7 +103,8 @@ public class EmailQueue : TenantEntity
     /// ScheduledFor &lt;= now AND Status = Pending.</summary>
     public DateTime ScheduledFor { get; set; }
 
-    /// <summary>Pending | Sending | Sent | Failed | Cancelled.</summary>
+    /// <summary>Pending | Sending | Sent | Failed | Cancelled | Skipped (ระบบข้าม — เอกสารถูกยกเลิก/ชำระครบหลังเข้าคิว ·
+    /// เหตุผลอยู่ใน ErrorMessage · ID#12 · ป้ายไทยจาก Helpers/ScheduledEmailSendCheck.StatusLabel).</summary>
     public string Status { get; set; } = "Pending";
 
     public int RetryCount { get; set; }
