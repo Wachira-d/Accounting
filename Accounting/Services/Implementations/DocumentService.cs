@@ -8071,12 +8071,14 @@ public partial class DocumentService : IDocumentService
         var payeeIds = oldPortions.Concat(newPortions).Select(p => p.PayeeContactId).Distinct().ToList();
         var payeeContacts = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.CompanyId == companyId && payeeIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+        // ผู้รวมงานกระดาน 2026-10-13: ค่าตั้งค่าสิทธิ ม.40(3) ⇒ ภ.ง.ด.2 (ทีม C) — ตัวโหลดเดียวกับ JE (ResolveWhtPayableSplitAsync)
+        var chgRoyaltyAsPnd2 = await ResolveRoyaltyPolicyAsync(companyId, doc.PaymentDate ?? doc.DocumentDate);
         // แบบของผู้ถูกหักตัดสินด้วยรหัสเงินได้ของ "บรรทัดของรายนั้น" (ภ.ง.ด.2 ต่อราย · รอบ 204 ทีม T3) — ส่วนเดิม/ส่วนใหม่สร้างจาก `lines` ลำดับเดียวกัน
         TaxType FormOf(WhtPayeePortion portion)
         {
             var c = payeeContacts.GetValueOrDefault(portion.PayeeContactId);
             return WhtPayeeKind.ResolveForm(doc.IsForeignService, c?.CountryCode, c?.TaxId, c?.ContactType ?? ContactType.Unknown, c?.Name,
-                WhtIncomeCodes.WithheldAt(lines, portion.LineIndexes));
+                WhtIncomeCodes.WithheldAt(lines, portion.LineIndexes), chgRoyaltyAsPnd2);
         }
         var touchedForms = oldPortions.Concat(newPortions).Where(p => !unchangedPayees.Contains(p.PayeeContactId))
             .Select(FormOf).Distinct().ToList();
@@ -8148,7 +8150,7 @@ public partial class DocumentService : IDocumentService
         {
             var newPortion = newPortions.First(np => np.PayeeContactId == payeeId);
             var acc = await ResolveWhtPayableAccountAsync(companyId, payeeContacts.GetValueOrDefault(payeeId), doc.IsForeignService,
-                    WhtIncomeCodes.WithheldAt(lines, newPortion.LineIndexes))
+                    WhtIncomeCodes.WithheldAt(lines, newPortion.LineIndexes), chgRoyaltyAsPnd2)
                 ?? throw new BusinessRuleException("ไม่พบผังภาษีหัก ณ ที่จ่ายค้างจ่าย (21915/21916/21917/21918) สำหรับผู้ถูกหักรายใหม่ — สร้างผังก่อน",
                     WhtPayeeChangePlan.RuleCode);
             target[acc.AccountCode] = target.GetValueOrDefault(acc.AccountCode) + part;

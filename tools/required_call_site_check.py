@@ -7053,6 +7053,14 @@ RULES += [
          why=_TEAM_D + "2f แถวย่อยปันผล 4(ข) จากตัวตั้งเดียว (ตัวเดียวกับ HTML + หน้าพิมพ์)"),
 ]
 
+RULES += [
+    dict(file=DOC, method="ChangeWhtPayeeAsync",
+         must=["ResolveRoyaltyPolicyAsync(companyId, doc.PaymentDate ?? doc.DocumentDate)",
+               "WhtIncomeCodes.WithheldAt(lines, portion.LineIndexes), chgRoyaltyAsPnd2)",
+               "WhtIncomeCodes.WithheldAt(lines, newPortion.LineIndexes), chgRoyaltyAsPnd2)"],
+         why="ผู้รวมงานกระดาน 2026-10-13: เปลี่ยนผู้ถูกหักใช้ค่าตั้งค่าสิทธิ ม.40(3) เดียวกับ JE — มิฉะนั้นย้ายผังไป 21916 ทั้งที่ JE เดิมลง 21915"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 
