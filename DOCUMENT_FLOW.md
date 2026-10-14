@@ -85,7 +85,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Flow**: อัปโหลด → OCR เก็บ `OcrScanResult` → review modal → "สร้างเอกสาร"
 - **Endpoint**: `POST /api/companies/{id}/ocr/{scanId}/create-document`
   (`?targetType=` เลือกชนิด · `?approve=true` = **สร้าง + อนุมัติทันที**)
-- **บรรทัดจากสแกนที่ไม่มีราคาต่อหน่วย (เคส C · รอบ 204 ทีม D)**: ราคาต่อหน่วย = ยอดหลังกระจายส่วนลดท้ายบิล ⇒ ส่วนลด % = 0 (ตัวตัดสินเดียว `OcrLineReconciler.LineDiscount` — เดิมติด % ทั้งบิลไว้ ⇒ เปิดแก้แล้วบันทึก `ComputeLineAmounts` หักซ้ำ 950 ลด 5% ⇒ 902.50) · ยอด/VAT/ยอดรวมตอนสร้างไม่ขยับ · golden เดิมเปลี่ยน 0 แถว · ข้อค้าง: เอกสารเก่าก่อนแก้ยังติด % (ไม่มี migration) · จำนวน < 1 ยังให้ส่วนลดบาทติดลบ (มีมาก่อน) · Last verified `commit 1c46ebcd`
+- **บรรทัดจากสแกนที่ไม่มีราคาต่อหน่วย (เคส C · รอบ 204 ทีม D)**: ราคาต่อหน่วย = ยอดหลังกระจายส่วนลดท้ายบิล ⇒ ส่วนลด % = 0 (ตัวตัดสินเดียว `OcrLineReconciler.LineDiscount` — เดิมติด % ทั้งบิลไว้ ⇒ เปิดแก้แล้วบันทึก `ComputeLineAmounts` หักซ้ำ 950 ลด 5% ⇒ 902.50) · ยอด/VAT/ยอดรวมตอนสร้างไม่ขยับ · golden เดิมเปลี่ยน 0 แถว · เอกสารเก่าก่อนแก้ยังติด % (ไม่มี migration อัตโนมัติ) ⇒ หน้าตรวจข้อมูลแถว `OcrLineDiscountWouldChangeOnResave` + ปุ่ม "แก้" รายใบ (ทีม E 2026-10-13 · ดูข้อถัดไป) · Last verified `commit 1c46ebcd`
+- **จำนวน < 1 ไม่มีราคาต่อหน่วย (ทีม E 2026-10-13)**: `OcrLineReconciler.LineDiscount` คืน `(Percent, Amount, UnitPrice?)` — ราคา = ปัดขึ้น 2 ตำแหน่งของ ยอด ÷ จำนวน ·
+  ส่วนลดบาท = round(จำนวน × ราคา) − ยอด (0–0.01) · % = 0 (เดิมส่วนลดบาทติดลบ ⇒ บันทึกซ้ำได้ 0.35 × 100 = 35.00) · จำนวน ≥ 1 / มีราคา = สูตรเดิมทุกตัวอักษร ·
+  `BuildScanLinesAsync` + replay harness ใช้ราคาที่คืน (rcs) · golden เดิมเปลี่ยน 0 แถว · Last verified `commit 27153d42`
+- **แก้ผลสแกน: แหล่งเงินเป็นค่าใช้จ่าย/รายได้ = เตือน + ยืนยัน (ทีม E 2026-10-13 · คำสั่งเจ้าของ "ไม่ล็อกตาย")**: `POST {scanId}/correct` ⇒ 409 `OCR-ACCT-PLACEMENT`
+  พร้อมเหตุผล · หน้า `document-scan.html` confirm() แล้วส่งซ้ำพร้อม `acknowledgeAccountPlacement: true` ⇒ เก็บคู่ตามผู้ใช้ (`SuggestedAccountsJson.CreditPlacementAckCode` ผูกกับรหัสเครดิตที่ยืนยัน —
+  `OcrAccountPlacement.ResolveStored` ของจอ/สร้างเอกสาร/JE สินทรัพย์ไม่ตัดทิ้ง) + audit `OCR-ACCT-PLACEMENT-OVERRIDE` · **ไม่สอนตัวเรียนรู้** (VendorIntel/หมวด/feedback GL) ด้วยคู่ที่ยืนยันทับคำเตือน ·
+  คู่สลับ (ส่งทั้งคู่กลับด้าน) ยังสลับให้เหมือนเดิม · Last verified `commit 14d0977f`
+- **หน้าตรวจข้อมูล: เอกสารจากสแกนที่ "เปิดแก้แล้วบันทึก ยอดขยับ" (ทีม E 2026-10-13)**: `DataIntegrityReport.OcrLineDiscountWouldChangeOnResave` = เอกสารที่สร้างจากสแกน
+  (`OcrScanResult.CreatedDocumentId` · ไม่ยกเลิก) ที่บรรทัด `DiscountPercent > 0` + `DiscountAmount = 0` และการบันทึกซ้ำ (`DocumentService.ResaveLineNets` = AllocateBillDeductions →
+  ComputeLineAmounts → ReconcileTaxRounding ตัวจริง) ได้ยอดต่างจากที่เก็บ > 0.01 · ปุ่ม "แก้" รายใบ → `POST data-integrity/ocr-line-discount/{documentId}/fix` →
+  `DocumentService.FixOcrLineDiscountAsync` (partial `DocumentService.OcrLineFix.cs`): % = 0 + ส่วนลดบาท/ราคาใหม่ (`OcrLineDiscountRepair`) · **จำลองก่อนเขียน** — เงินบรรทัดใดจะขยับ ⇒
+  ปฏิเสธ (ไม่บันทึก) · ไม่แตะยอด/VAT/ยอดรวม/JE/เลขที่ ⇒ ทุกสถานะที่ไม่ใช่ยกเลิก · audit `OCR-LINE-DISC-FIX` ก่อน/หลัง · สิทธิ์ ReportsFinancial + สร้าง (ร่าง)/อนุมัติ (ออกแล้ว) ของทิศเอกสาร ·
+  ไม่มี migration อัตโนมัติ · ตัวตรวจกับตัวแก้ใช้ `FindOcrLineDiscountIssues` ตัวเดียว
+- **ช่องติ๊ก "กรอกราคาไม่รวม VAT" ที่ไม่มีอะไรต้องแปลง (ทีม E 2026-10-13)**: แถวราคาก่อน VAT อยู่แล้ว / คำขอไม่มีราคาใหม่ ⇒ ไม่แปลง + หมายเหตุ (ไม่ปฏิเสธทั้งคำขอ) ·
+  ราคาที่บันทึกไว้ไม่ถูกแปลงซ้ำ · ไม่รู้อัตรา VAT ยังปฏิเสธ (`OcrEtaxLineNormalizer.ApplyReviewPriceEntry`) · Last verified `commit b1053f69`
 - **ผูกใบต้นทางทุกชนิด (2026-09-10 · `Helpers/OcrPredecessorMatcher`)** — ตอนสแกนเสร็จ
   `SuggestPredecessorLinkAsync` หา "เอกสารเปิดอยู่ของคู่ค้าเดียวกัน" ที่มีชนิดอยู่ใน
   `DocumentService.GetPredecessorTypes(target)` (ด้านกลับของ `ValidConversions` — PO/GRN → ใบซื้อ ·
@@ -2886,6 +2901,9 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   รายการเงินเดือน (`PayrollWithholdingTax.ItemAmount/ItemBuckets` ตัวเดียวกับเส้นคำนวณ · เบี้ยเลี้ยงจากการลงเวลา/ที่บริษัทตั้งเองไม่อยู่ในพรีวิว — บอกใน `Basis`) ·
   คืน `SuggestedWithholdingTax` (≥ 0) + `ComputedWithholding` (ติดลบได้ = คืนภาษีหักเกิน) + ที่มา · หน้าเว็บเติมลงช่องภาษีเมื่อผู้ใช้ยังไม่พิมพ์เอง (`dataset.userTouched` ·
   ค่าผู้ใช้ชนะ · ปุ่ม "ใช้ค่าที่ระบบเสนอ" ให้เลือกเอง) · ผู้ใช้ต้องกดบันทึกเอง · golden: `PayrollWithholdingTaxTests` เทียบสูตร inline เดิมจาก `9c9580e6` ทุกช่อง
+- **รอบที่ยกเลิกก่อนมีการยกเลิก 50 ทวิ ตามรอบ (DECISIONS ข้อ 111 · ทีม E 2026-10-13)**: หน้าตรวจข้อมูล (`data-integrity.html`) แถว
+  `VoidedPayrollRunsWithIssuedWhtCerts` = รอบ `Status == "Voided"` ที่ 50 ทวิ (`SourcePayrollRunId`) ยังสถานะ Issued/Printed · **อ่านอย่างเดียว** (ระบบไม่ยกเลิกให้ —
+  ใบอาจยื่นแล้ว = ประทับสถานะปลายทางเอง R1) · ลิงก์ไปหน้า 50 ทวิ พร้อมเลขใบ (หน้า `wht.html` ยังไม่มีพารามิเตอร์เปิดใบตามรหัส — ค้นด้วยเลข) · `OcrLineDiscountFixDbTests`
 - **🚫 ยกเลิกรอบ (รอบ 201 PR2 · ข้อ 70)** — ปุ่มบนหน้ารายละเอียดรอบ (`payroll.html` `voidRun`) → `POST runs/{id}/void` body `VoidPayrollRunRequest { reason }` ·
   `PayrollRunResponse.CanVoid/VoidBlockReason` จาก `PayrollRunEditPolicy.CanVoid` (ตัวเดียวกับ `VoidPayrollAsync`) · กดไม่ได้ ⇒ disabled + เหตุผล · **เหตุผลบังคับ ≥ 5 ตัวอักษร**
   (service) + `AddChainedAuditLog` (`void-run` · สถานะก่อน · กลับ JE ไหม) · อ่านก่อนล็อกแบบไม่ติดตาม (แถวใต้ `FromSqlRaw … FOR UPDATE` เป็นค่าจริง) ·
@@ -3159,7 +3177,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
         ไม่ถูกแตะ** (เดิมค่าตั้งอย่างย่อทำให้หัวเป็น "ใบกำกับภาษีอย่างย่อ") · ผู้ซื้อที่แจ้งเลขผู้เสียภาษี 13 หลัก (`ReceiptFormFacts.BuyerHasTaxId` ← `IsValidThaiTaxId`)
         = ต้องการเต็มรูปเหมือนนิติบุคคล (บุคคลธรรมดาที่จด VAT เลขไม่ขึ้นต้น 0): ค่าแนะนำเต็มรูป · ค่าตั้งบริษัท "อย่างย่อ" ไม่ทับ · อย่างย่อได้เฉพาะเลือกเองรายใบ + คำเตือน §82/5(2) ·
         ตัวเลือกรายใบที่ระบบไม่ใช้ ⇒ หมายเหตุภายใน `[RCPT-FORM] ผู้ใช้เลือก … ระบบตรึง …` + audit `ReceiptFormChoiceOverridden`
-      - **ผลต่อ e-Tax เมื่อตรึง "อย่างย่อ"**: ระบบยังไม่รองรับ T04 (`EtaxDocumentTypeMap` มี T01/T02/T03/80/81) ⇒ e-Tax อัตโนมัติ**ข้ามพร้อมป้าย**
+      - **ผลต่อ e-Tax เมื่อตรึง "อย่างย่อ"**: ระบบยังไม่รองรับ e-Tax ใบกำกับภาษีอย่างย่อ T05/T06 (`EtaxDocumentTypeMap` มี T01/T02/T03/80/81 · แก้ข้อความ 2026-10-13) ⇒ e-Tax อัตโนมัติ**ข้ามพร้อมป้าย**
         `[ETAX-SKIPPED] รูปแบบใบ=อย่างย่อ` บนใบ (`IssuedDocumentHooks.StampNoteAsync` · ลงครั้งเดียว) · สร้าง e-Tax เองได้ข้อความระบุรูปแบบที่ตรึง
         ("ใบนี้ตรึงเป็นใบกำกับอย่างย่อ — ออก e-Tax เต็มรูปไม่ได้ · เปลี่ยนรูปแบบใบก่อนอนุมัติ หรือออกใบแทน") แทน "— ขาด " ว่าง ·
         ⚠️ บริษัทที่ติ๊กขายปลีกและใช้ e-Tax อัตโนมัติ: แขกบุคคลธรรมดา (ไม่มีเลขภาษี) ได้ใบย่อ ⇒ ไม่มี e-Tax ของใบนั้น — ถ้าต้องการ e-Tax ให้ตั้งค่า

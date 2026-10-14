@@ -6,7 +6,11 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Services.Implementations;
 
 /// <summary>แถวที่อาจผิดจากบั๊กที่แก้แล้ว — ให้ผู้ทำบัญชีตรวจทีละรายการ (คำตัดสินเจ้าของ 2026-10-08: รายงานอ่านอย่างเดียวก่อน ซ่อมรายตัวหลังอนุมัติ)</summary>
-public sealed record DataIntegritySuspect(string Kind, Guid Id, string Number, DateTime Date, string Detail, decimal? Stored, decimal? Expected);
+/// <param name="LinkUrl">ลิงก์ไปรายการต้นทาง (เซิร์ฟเวอร์ประกอบ — หน้าแสดงอย่างเดียว) · null = ไม่มี</param>
+/// <param name="LinkLabel">ข้อความของลิงก์</param>
+/// <param name="FixPath">เส้นทาง POST (ต่อท้าย <c>api/companies/{companyId}/</c>) ของปุ่ม "แก้" รายแถว · null = แถวอ่านอย่างเดียว</param>
+public sealed record DataIntegritySuspect(string Kind, Guid Id, string Number, DateTime Date, string Detail, decimal? Stored, decimal? Expected,
+    string? LinkUrl = null, string? LinkLabel = null, string? FixPath = null);
 
 public sealed record DataIntegrityReport(
     List<DataIntegritySuspect> PosOrderTotals,
@@ -18,10 +22,15 @@ public sealed record DataIntegrityReport(
     // รอบ 204 (คำตัดสินข้อ 148) — ดอกเบี้ย/ปันผล ม.40(4) จ่ายบุคคลธรรมดาที่บันทึกเป็น ภ.ง.ด.3 ก่อนมีแบบ ภ.ง.ด.2 (50 ทวิ · เอกสารที่ลง 21916 · ใบปน) · อ่านอย่างเดียว
     List<DataIntegritySuspect> Section40_4RecordedAsPnd3,
     // รอบ 204 — JE จ่ายทิปเดิมที่ลงภาษีหักไว้ที่ 21915 (ผัง ภ.ง.ด.2) ทั้งที่ 50 ทวิ ของทิปเป็น ภ.ง.ด.3 (21916) · อ่านอย่างเดียว
-    List<DataIntegritySuspect> TipWhtPostedToPnd2Account)
+    List<DataIntegritySuspect> TipWhtPostedToPnd2Account,
+    // ทีม E 2026-10-13 — เอกสารจากสแกนที่ "เปิดแก้แล้วบันทึก ยอดขยับ" (ส่วนลด % ซ้อนบนราคาที่ลดแล้ว · ก่อนทีม D B5) · มีปุ่ม "แก้" รายใบ (metadata อย่างเดียว)
+    List<DataIntegritySuspect> OcrLineDiscountWouldChangeOnResave,
+    // DECISIONS ข้อ 111 — รอบเงินเดือนที่ยกเลิกแล้วแต่ 50 ทวิ ยังสถานะออกแล้ว · อ่านอย่างเดียว (ไม่ยกเลิกให้ — อาจยื่นไปแล้ว)
+    List<DataIntegritySuspect> VoidedPayrollRunsWithIssuedWhtCerts)
 {
     public int Total => PosOrderTotals.Count + RollupBillingNoteChildren.Count + PurchaseInvoicesBilledFromPoWithGrn.Count
-        + PayrollRunTotals.Count + PlainReceiptsWithVat.Count + Section40_4RecordedAsPnd3.Count + TipWhtPostedToPnd2Account.Count;
+        + PayrollRunTotals.Count + PlainReceiptsWithVat.Count + Section40_4RecordedAsPnd3.Count + TipWhtPostedToPnd2Account.Count
+        + OcrLineDiscountWouldChangeOnResave.Count + VoidedPayrollRunsWithIssuedWhtCerts.Count;
 }
 
 /// <summary>
@@ -137,7 +146,97 @@ public class DataIntegrityReportService
         }
 
         var (pnd3Section40_4, tipOn21915) = await LoadPnd2SuspectsAsync(companyId);
-        return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915);
+        var ocrLineDiscount = await LoadOcrLineDiscountSuspectsAsync(companyId);
+        var voidedRunCerts = await LoadVoidedPayrollRunCertsAsync(companyId);
+        return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
+            ocrLineDiscount, voidedRunCerts);
+    }
+
+    /// <summary>เส้นทางปุ่ม "แก้" ของแถวส่วนลดบรรทัดจากสแกน — ตัวเดียวกับ route ของ <c>DataIntegrityController.FixOcrLineDiscount</c></summary>
+    public static string OcrLineDiscountFixPath(Guid documentId) => $"data-integrity/ocr-line-discount/{documentId}/fix";
+
+    /// <summary>
+    /// ทีม E 2026-10-13 — เอกสารที่สร้างจากสแกน (ไม่ยกเลิก) ที่มีบรรทัด <c>DiscountPercent &gt; 0</c> + <c>DiscountAmount = 0</c> และการบันทึกซ้ำ
+    /// (ตัวคำนวณจริงของ <c>UpdateDocumentAsync</c>) ได้ยอดก่อน VAT ต่างจากที่เก็บเกิน 0.01 — ตัวตัดสินเดียว
+    /// <see cref="DocumentService.FindOcrLineDiscountIssues"/> (ตัวเดียวกับปุ่ม "แก้") · ไม่แก้อะไรเอง
+    /// </summary>
+    private async Task<List<DataIntegritySuspect>> LoadOcrLineDiscountSuspectsAsync(Guid companyId)
+    {
+        var scanDocIds = _db.Set<OcrScanResult>().AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.CreatedDocumentId != null)
+            .Select(s => s.CreatedDocumentId!.Value);
+        var docs = await _db.Documents.AsNoTracking()
+            .Include(d => d.Lines)
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.Status != DocumentStatus.Voided
+                && scanDocIds.Contains(d.Id)
+                && d.Lines.Any(l => !l.IsDeleted && l.DiscountPercent > 0m && l.DiscountAmount == 0m))
+            .OrderBy(d => d.DocumentDate)
+            .ToListAsync();
+        var result = new List<DataIntegritySuspect>();
+        foreach (var d in docs)
+        {
+            var lines = d.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+            List<OcrLineDiscountFinding> issues;
+            try { issues = DocumentService.FindOcrLineDiscountIssues(d, lines); }
+            catch (Accounting.Helpers.BusinessRuleException ex)
+            {
+                // ส่วนหักท้ายบิลเกินยอด (ข้อมูลเก่า) — จำลองไม่ได้ ⇒ บอกตรง ๆ ไม่ข้ามเงียบ (F2 ข้อ 7)
+                result.Add(new DataIntegritySuspect("OcrLineDiscountWouldChangeOnResave", d.Id, d.DocumentNumber, d.DocumentDate,
+                    $"จำลองการบันทึกซ้ำไม่ได้: {ex.Message} — ตรวจในฟอร์มเอกสาร", null, null,
+                    $"/pages/documents.html?openDoc={d.Id}", "เปิดเอกสาร"));
+                continue;
+            }
+            if (issues.Count == 0) continue;
+            var detail = string.Join(" · ", issues.Select(i =>
+                $"บรรทัดที่ {i.LineOrder} \"{i.Description}\" ส่วนลด {i.DiscountPercent:0.##}% ซ้อนบนราคาที่ลดแล้ว: เก็บ {i.Stored:N2} ⇒ บันทึกซ้ำได้ {i.AfterResave:N2}"));
+            result.Add(new DataIntegritySuspect("OcrLineDiscountWouldChangeOnResave", d.Id, d.DocumentNumber, d.DocumentDate,
+                $"สถานะ {d.Status} · {detail} — ยอดที่เก็บไว้ถูกตามกระดาษ · กด \"แก้\" เพื่อตั้งส่วนลด % = 0 (ยอด/VAT/ยอดรวมไม่เปลี่ยน)",
+                issues.Sum(i => i.Stored), issues.Sum(i => i.AfterResave),
+                $"/pages/documents.html?openDoc={d.Id}", "เปิดเอกสาร", OcrLineDiscountFixPath(d.Id)));
+        }
+        return result;
+    }
+
+    /// <summary>ปุ่ม "แก้" ของแถวส่วนลดบรรทัดจากสแกน — ส่งต่อให้ <see cref="DocumentService.FixOcrLineDiscountAsync"/> (ตัวตัดสินเดียวกับรายงาน)</summary>
+    public Task<OcrLineDiscountFixResult> FixOcrLineDiscountAsync(Guid companyId, Guid documentId, Guid? actorUserId)
+        => DocumentService.FixOcrLineDiscountAsync(_db, companyId, documentId, actorUserId);
+
+    /// <summary>ชนิด/สถานะของเอกสาร (ของบริษัทนี้) — ให้ controller ตรวจสิทธิ์ตามทิศเอกสารก่อนแก้ · null = ไม่พบ</summary>
+    public async Task<(DocumentType Type, DocumentStatus Status)?> DocumentTypeAsync(Guid companyId, Guid documentId)
+    {
+        var row = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => new { d.DocumentType, d.Status })
+            .FirstOrDefaultAsync();
+        return row == null ? null : (row.DocumentType, row.Status);
+    }
+
+    /// <summary>
+    /// DECISIONS ข้อ 111 (+ ข้อ 113) — รอบเงินเดือนที่ยกเลิกแล้ว (<c>Status == "Voided"</c>) แต่ 50 ทวิ ที่ออกจากรอบนั้น (<c>SourcePayrollRunId</c>)
+    /// ยังสถานะออกแล้ว/พิมพ์แล้ว · <b>อ่านอย่างเดียว</b>: ใบอาจยื่นไปแล้ว ⇒ เครื่องยกเลิกเอง = ประทับสถานะปลายทางเอง (R1) — ผู้ทำบัญชีตัดสินรายใบ
+    /// (ยังไม่ยื่น ⇒ ยกเลิกที่หน้า 50 ทวิ · ยื่นแล้ว ⇒ ยื่นแบบเพิ่มเติม)
+    /// </summary>
+    private async Task<List<DataIntegritySuspect>> LoadVoidedPayrollRunCertsAsync(Guid companyId)
+    {
+        var rows = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && !w.IsDeleted && w.SourcePayrollRunId != null
+                && (w.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Issued
+                    || w.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Printed)
+                && _db.Set<PayrollRun>().Any(r => r.Id == w.SourcePayrollRunId && r.CompanyId == companyId && r.Status == "Voided"))
+            .Select(w => new
+            {
+                w.Id, w.CertificateNumber, w.IssuedDate, w.CreatedAt, w.Status, w.TaxFormType, w.TaxYear, w.TaxMonth, w.TotalTaxAmount,
+                Payee = w.PayeeContact != null ? w.PayeeContact.Name : null,
+                Run = _db.Set<PayrollRun>().Where(r => r.Id == w.SourcePayrollRunId && r.CompanyId == companyId)
+                    .Select(r => r.PayrollNumber).FirstOrDefault(),
+            })
+            .OrderBy(w => w.TaxYear).ThenBy(w => w.TaxMonth).ThenBy(w => w.CertificateNumber)
+            .ToListAsync();
+        return rows.Select(w => new DataIntegritySuspect("VoidedPayrollRunIssuedWhtCert", w.Id, w.CertificateNumber, w.IssuedDate ?? w.CreatedAt,
+            $"รอบเงินเดือน {w.Run} ยกเลิกแล้ว แต่ 50 ทวิ {w.CertificateNumber} ({w.TaxFormType} · งวด {w.TaxMonth:D2}/{w.TaxYear} · ผู้รับ {w.Payee ?? "-"}) "
+            + $"ยังสถานะ {w.Status} — ระบบไม่ยกเลิกให้ (อาจยื่นไปแล้ว) · ยังไม่ยื่น ⇒ ยกเลิกใบนี้ที่หน้า 50 ทวิ · ยื่นแล้ว ⇒ ยื่นแบบเพิ่มเติมลดยอด",
+            w.TotalTaxAmount, null,
+            "/pages/wht.html", $"เปิดหน้า 50 ทวิ (ค้นเลข {w.CertificateNumber})")).ToList();
     }
 
     /// <summary>
