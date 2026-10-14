@@ -84,7 +84,7 @@ public static class WhtRoyaltyPolicy
     }
 
     /// <summary>อ่านประวัติช่วงที่ปิดแล้ว (<c>yyyy-MM-dd..yyyy-MM-dd;…</c> — ตัวเขียนเดียว <see cref="FormatHistory"/>) · ว่าง = ไม่มี</summary>
-    public static IReadOnlyList<WhtRoyaltyWindow> ParseHistory(string? history)
+    private static IReadOnlyList<WhtRoyaltyWindow> ParseHistory(string? history)
     {
         if (string.IsNullOrWhiteSpace(history)) return Array.Empty<WhtRoyaltyWindow>();
         var result = new List<WhtRoyaltyWindow>();
@@ -101,7 +101,7 @@ public static class WhtRoyaltyPolicy
     }
 
     /// <summary>เขียนประวัติแบบ canonical — ตัดช่วงว่าง · เรียงตามวันเริ่ม · รวมช่วงที่ซ้อน/ต่อกัน · ไม่มีช่วง ⇒ null</summary>
-    public static string? FormatHistory(IEnumerable<WhtRoyaltyWindow> windows)
+    private static string? FormatHistory(IEnumerable<WhtRoyaltyWindow> windows)
     {
         var merged = new List<WhtRoyaltyWindow>();
         foreach (var w in windows.Where(w => w.Until > w.From).OrderBy(w => w.From))
@@ -157,7 +157,7 @@ public static class WhtRoyaltyPolicy
 
     /// <summary>ผลของ <see cref="AppliesTo"/> ต่างกันระหว่าง <paramref name="before"/> กับ <paramref name="after"/> ในวันใดของช่วง
     /// [<paramref name="start"/>, <paramref name="endExclusive"/>) ไหม (ตรวจวันแรกของช่วง + ทุกจุดเปลี่ยนในช่วง — ผลเป็นขั้นบันได)</summary>
-    public static bool ChangedWithin(WhtRoyaltySetting before, WhtRoyaltySetting after, DateTime start, DateTime endExclusive)
+    private static bool ChangedWithin(WhtRoyaltySetting before, WhtRoyaltySetting after, DateTime start, DateTime endExclusive)
     {
         var s = ThaiDate.CalendarDateUtc(start);
         var e = ThaiDate.CalendarDateUtc(endExclusive);

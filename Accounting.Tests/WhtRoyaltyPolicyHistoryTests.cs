@@ -98,22 +98,22 @@ public class WhtRoyaltyPolicyHistoryTests
     }
 
     [Fact]
-    public void ประวัติ_canonical_รวมช่วงซ้อน_เรียง_ตัดช่วงว่าง_อ่านกลับได้()
+    public void ประวัติ_canonical_รวมช่วงซ้อน_เรียงตามเวลา_ข้อมูลเสียไม่มีผล()
     {
-        var w = new[]
-        {
-            new WhtRoyaltyWindow(D(2026, 12, 1), D(2027, 1, 1)),
-            new WhtRoyaltyWindow(D(2026, 9, 1), D(2026, 10, 1)),
-            new WhtRoyaltyWindow(D(2026, 9, 15), D(2026, 10, 15)),   // ซ้อน
-            new WhtRoyaltyWindow(D(2026, 10, 15), D(2026, 10, 20)),  // ต่อกัน
-            new WhtRoyaltyWindow(D(2026, 5, 1), D(2026, 5, 1)),      // ว่าง
-        };
-        var text = WhtRoyaltyPolicy.FormatHistory(w);
-        Assert.Equal("2026-09-01..2026-10-20;2026-12-01..2027-01-01", text);
-        Assert.Equal(text, WhtRoyaltyPolicy.FormatHistory(WhtRoyaltyPolicy.ParseHistory(text)));
-        Assert.Null(WhtRoyaltyPolicy.FormatHistory(Array.Empty<WhtRoyaltyWindow>()));
-        Assert.Empty(WhtRoyaltyPolicy.ParseHistory(null));
-        Assert.Empty(WhtRoyaltyPolicy.ParseHistory("garbage;2026-13-01..2026-14-01"));
+        // ช่วง 1/9–1/10 → เปิดใหม่ย้อนไป 15/9 (ซ้อนช่วงเก่า) → ปิด 20/10 ⇒ ประวัติรวมเป็นช่วงเดียว
+        var off = WhtRoyaltyPolicy.ApplyUpdate(On(D(2026, 9, 1)), WhtRoyaltyIndividualForm.Pnd3, null, Now, requestedPnd3From: D(2026, 10, 1));
+        var reopened = WhtRoyaltyPolicy.ApplyUpdate(off, WhtRoyaltyIndividualForm.Pnd2, D(2026, 9, 15), Now);
+        var merged = WhtRoyaltyPolicy.ApplyUpdate(reopened, WhtRoyaltyIndividualForm.Pnd3, null, Now, requestedPnd3From: D(2026, 10, 20));
+        Assert.Equal("2026-09-01..2026-10-20", merged.Pnd2History);
+        // ช่วงต่อท้ายที่เก่ากว่า ⇒ เรียงตามเวลา
+        var earlier = WhtRoyaltyPolicy.ApplyUpdate(
+            WhtRoyaltyPolicy.ApplyUpdate(merged, WhtRoyaltyIndividualForm.Pnd2, D(2026, 5, 1), Now),
+            WhtRoyaltyIndividualForm.Pnd3, null, Now, requestedPnd3From: D(2026, 6, 1));
+        Assert.Equal("2026-05-01..2026-06-01;2026-09-01..2026-10-20", earlier.Pnd2History);
+        // ข้อมูลในฐานที่อ่านไม่ได้ ⇒ ไม่มีผล (ไม่แต่งช่วงขึ้นเอง)
+        var garbage = new WhtRoyaltySetting(WhtRoyaltyIndividualForm.Pnd3, null, "garbage;2026-13-01..2026-14-01;2026-09-10..2026-09-01");
+        Assert.False(garbage.AppliesTo(D(2026, 9, 5)));
+        Assert.Null(WhtRoyaltyPolicy.Summary(garbage));
     }
 
     // ══════════ M2 — รู้ว่าการบันทึกแตะงวดที่ยื่นแล้ว ══════════
