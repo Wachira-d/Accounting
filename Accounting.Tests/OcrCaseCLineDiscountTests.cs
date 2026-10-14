@@ -33,7 +33,7 @@ public class OcrCaseCLineDiscountTests
     {
         // ใบ 1,000 + 500 ลดท้ายบิล 75 (5%) ⇒ บรรทัดแรกหลังกระจาย = 950 · กระดาษไม่มีราคา ⇒ UnitPrice ที่เก็บ = 950
         var d = OcrLineReconciler.LineDiscount(5m, lineGross: 1000m, hasUnitPrice: false, lineNetAmount: 950m, quantity: null);
-        Assert.Equal((0m, 0m), d);
+        Assert.Equal((0m, 0m, (decimal?)null), d);
         Assert.Equal(950m, Resave(1m, 950m, d.Percent, d.Amount));
 
         // ก่อนแก้ (คู่ที่ตัวสร้างเคยเก็บ: 5% · 0 บาท) ⇒ ComputeLineAmounts หัก 5% ซ้ำ = 902.50 — เงินหายเอง 47.50
@@ -60,14 +60,14 @@ public class OcrCaseCLineDiscountTests
         Assert.Equal(50m, d.Amount);
         Assert.Equal(950m, Resave(2m, 500m, d.Percent, d.Amount));
         // บรรทัดยอดก่อนลด 0 (ค่าส่งฟรี) ไม่ได้ % (รอบ 195 · คงเดิม)
-        Assert.Equal((0m, 0m), OcrLineReconciler.LineDiscount(4.41m, 0m, hasUnitPrice: true, lineNetAmount: 0m, quantity: 1m));
+        Assert.Equal((0m, 0m, (decimal?)null), OcrLineReconciler.LineDiscount(4.41m, 0m, hasUnitPrice: true, lineNetAmount: 0m, quantity: 1m));
     }
 
     [Fact]
     public void ไม่มีส่วนลดท้ายบิล_ทุกบรรทัดศูนย์_ทั้งมีและไม่มีราคาต่อหน่วย()
     {
-        Assert.Equal((0m, 0m), OcrLineReconciler.LineDiscount(0m, 1000m, hasUnitPrice: true, lineNetAmount: 1000m, quantity: 2m));
-        Assert.Equal((0m, 0m), OcrLineReconciler.LineDiscount(0m, 1000m, hasUnitPrice: false, lineNetAmount: 1000m, quantity: 2m));
+        Assert.Equal((0m, 0m, (decimal?)null), OcrLineReconciler.LineDiscount(0m, 1000m, hasUnitPrice: true, lineNetAmount: 1000m, quantity: 2m));
+        Assert.Equal((0m, 0m, (decimal?)null), OcrLineReconciler.LineDiscount(0m, 1000m, hasUnitPrice: false, lineNetAmount: 1000m, quantity: 2m));
     }
 
     // ── ทั้งใบจาก replay harness (กระดาษร้านวัสดุ ลด 5%) — บรรทัดที่ตัวสร้างเขียน → บันทึกซ้ำ ⇒ ฐาน/VAT/ยอดรวมตรงกระดาษ ─────────

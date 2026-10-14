@@ -1520,6 +1520,12 @@ RULES += [
          why="2026-10-09 ข้อ 4: ชุด helper ของตัวสร้างบรรทัด = ชุดที่ harness เล่นซ้ำ (ลิสต์เดียวกัน)"),
     dict(file=HARNESS, method="BuildLines", must=list(LINE_PIPELINE_HELPERS) + ["OcrAmountIntegrity.Check("],
          why="2026-10-09 ข้อ 4: replay harness ต้องเรียก helper ชุดเดียวกับ BuildScanLinesAsync — ไม่งั้น golden ล็อกคำตอบที่ service ไม่ได้ให้"),
+    # ทีม E 2026-10-13: จำนวน < 1 ไม่มีราคาต่อหน่วย ⇒ ราคาที่เก็บมาจาก LineDiscount (ไม่งั้นส่วนลดติดลบ ⇒ บันทึกซ้ำได้ จำนวน × ยอด) — ทั้ง service และ harness
+    dict(file=OCR, method="BuildScanLinesAsync", must=["UnitPrice = lineDisc.UnitPrice ?? item.UnitPrice ?? item.Amount ?? 0"],
+         forbid=["UnitPrice = item.UnitPrice ?? item.Amount ?? 0,"],
+         why="ทีม E 2026-10-13: ราคาต่อหน่วยของบรรทัดไม่มีราคา + จำนวน < 1 มาจาก OcrLineReconciler.LineDiscount ตัวเดียว"),
+    dict(file=HARNESS, method="BuildLines", must=["decidedUnitPrice ?? lines[i].UnitPrice ?? amount"],
+         why="ทีม E 2026-10-13: harness ใช้ราคาที่ตัวตัดสินคืนเหมือน service"),
 ]
 
 # ── 2026-10-09 (ผู้ใช้รายงาน ใบ BS2026100001 บุญทรัพย์ ถาวร — PDF ต้นฉบับ+สำเนา ⇒ engine คืน 5 บรรทัดสองรอบ ⇒ ขั้นยุบรวมจำนวนเป็น ×2):

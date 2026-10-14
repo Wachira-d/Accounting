@@ -490,10 +490,10 @@ public static class OcrReplayHarness
                     whtAssigned += lineWht;
                 }
                 roundingShift += shifts[i];
-                var unitPrice = lines[i].UnitPrice ?? amount;
-                // ตรงกับ service: ตัวตัดสินตัวเดียว (ไม่มีราคาต่อหน่วย ⇒ 0% — ทีม D 2026-10-13 B5)
-                var (discPct, discAmt) = OcrLineReconciler.LineDiscount(
+                // ตรงกับ service: ตัวตัดสินตัวเดียว (ไม่มีราคาต่อหน่วย ⇒ 0% — ทีม D 2026-10-13 B5 · จำนวน < 1 ไม่มีราคา ⇒ ราคาจากตัวตัดสิน — ทีม E)
+                var (discPct, discAmt, decidedUnitPrice) = OcrLineReconciler.LineDiscount(
                     docDiscountPercent, lineGross[i], lines[i].UnitPrice.HasValue, amount, lines[i].Quantity);
+                var unitPrice = decidedUnitPrice ?? lines[i].UnitPrice ?? amount;
                 var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shifts[i];
                 rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt, lineWht));
             }

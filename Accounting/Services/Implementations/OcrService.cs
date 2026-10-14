@@ -7930,7 +7930,8 @@ public class OcrService : IOcrService
                     // "ชิ้น" · "ชิ้น" บนบรรทัดที่กฎรู้จัก (สแกนเก่าที่ default
                     // ค้างมา) → แทนด้วยหน่วยจริง · หน่วยอื่น = ตามที่ระบุเสมอ
                     Unit = UnitInferrer.Resolve(item.Unit, item.Description),
-                    UnitPrice = item.UnitPrice ?? item.Amount ?? 0,
+                    // ไม่มีราคาต่อหน่วย + จำนวน < 1 ⇒ ราคาจากตัวตัดสิน (ปัดขึ้นของ ยอด ÷ จำนวน · ทีม E 2026-10-13) — เดิมเก็บยอดเป็นราคา ⇒ บันทึกซ้ำได้ จำนวน × ยอด
+                    UnitPrice = lineDisc.UnitPrice ?? item.UnitPrice ?? item.Amount ?? 0,
                     // ส่วนลด: ราคา/หน่วยคงเป็นราคาเต็ม, ใส่ % ส่วนลด, Amount = ยอดหลังลด
                     // · บรรทัดยอดก่อนลด 0 (ค่าส่งฟรี) ไม่ได้ % — ไม่มีส่วนลดบนกระดาษ (รอบ 195 · OcrLineReconciler.LineDiscountPercent)
                     // · ไม่มีราคาต่อหน่วยบนกระดาษ (UnitPrice = ยอดหลังลด) ⇒ 0% (ทีม D 2026-10-13 B5 · OcrLineReconciler.LineDiscount)

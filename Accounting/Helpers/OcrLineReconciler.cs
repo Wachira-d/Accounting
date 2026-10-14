@@ -83,19 +83,32 @@ public static class OcrLineReconciler
     /// <param name="hasUnitPrice">กระดาษ/engine ให้ราคาต่อหน่วยมา (<c>item.UnitPrice.HasValue</c>) — false ⇒ ราคาที่เก็บ = ยอดหลังลด</param>
     /// <param name="lineNetAmount">ยอดบรรทัดหลังกระจายส่วนลด (<c>item.Amount</c> หลังตัวกระจาย)</param>
     /// <param name="quantity">จำนวนที่อ่านได้ (null = 1)</param>
-    public static (decimal Percent, decimal Amount) LineDiscount(
+    /// <returns><c>UnitPrice</c> = ราคาต่อหน่วยที่ผู้เรียก<b>ต้องเก็บแทน</b> <c>item.UnitPrice ?? item.Amount</c> · null = ใช้ค่าเดิม
+    /// (มีค่าเฉพาะกรณี "ไม่มีราคาต่อหน่วย + จำนวน &lt; 1" — ทีม E 2026-10-13)</returns>
+    /// <remarks><b>ทีม E 2026-10-13 (จำนวน &lt; 1 ไม่มีราคา — ช่องว่างที่จดไว้ใน ocr-pipeline.md §สถานะความครอบคลุม แถว 11):</b>
+    /// ราคาที่เก็บ = ยอดสุทธิ ⇒ round(จำนวน × ยอด) &lt; ยอด ⇒ สูตรเดิมให้ส่วนลดบาทติดลบ (0.35 × 100 − 100 = −65) ซึ่ง ComputeLineAmounts
+    /// ไม่รับ (ส่วนลด ≤ 0 ⇒ ใช้ %) ⇒ บันทึกซ้ำได้ 35.00 แทน 100.00 · ตอนนี้: ราคา = ปัดขึ้น 2 ตำแหน่งของ ยอด ÷ จำนวน (ค่าน้อยสุดที่
+    /// round(จำนวน × ราคา) ≥ ยอด) · ส่วนลดบาท = round(จำนวน × ราคา) − ยอด (≥ 0 · ≤ 0.01) · % = 0 ⇒ บันทึกซ้ำได้ยอดเดิมทุกสตางค์ ·
+    /// จำนวน ≥ 1 / ไม่มีจำนวน / มีราคาต่อหน่วย / ยอด ≤ 0 = สูตรเดิมทุกตัวอักษร</remarks>
+    public static (decimal Percent, decimal Amount, decimal? UnitPrice) LineDiscount(
         decimal docDiscountPercent, decimal lineGross, bool hasUnitPrice, decimal lineNetAmount, decimal? quantity)
     {
+        if (!hasUnitPrice && quantity is decimal q && q > 0m && q < 1m && lineNetAmount > 0m)
+        {
+            var unitPrice = Math.Ceiling(lineNetAmount / q * 100m) / 100m;
+            var fill = Math.Round(q * unitPrice, 2, MidpointRounding.AwayFromZero) - lineNetAmount;
+            return (0m, Math.Max(0m, fill), unitPrice);
+        }
         if (!hasUnitPrice)
         {
             // ราคาที่เก็บเป็นยอดสุทธิแล้ว — ห้ามมี % (ComputeLineAmounts จะหักซ้ำเมื่อส่วนลดบาทเป็น 0)
             var netDisc = docDiscountPercent > 0m
                 ? Math.Round(lineNetAmount * (quantity ?? 1m) - lineNetAmount, 2, MidpointRounding.AwayFromZero)
                 : 0m;
-            return (0m, netDisc);
+            return (0m, netDisc, null);
         }
         return (LineDiscountPercent(docDiscountPercent, lineGross),
-            docDiscountPercent > 0m ? Math.Round(lineGross - lineNetAmount, 2, MidpointRounding.AwayFromZero) : 0m);
+            docDiscountPercent > 0m ? Math.Round(lineGross - lineNetAmount, 2, MidpointRounding.AwayFromZero) : 0m, null);
     }
 
     /// <param name="grossSum">Σ (qty × unitPrice) หรือ amount ของบรรทัดที่ OCR อ่านได้ (ก่อนส่วนลด/VAT)</param>
