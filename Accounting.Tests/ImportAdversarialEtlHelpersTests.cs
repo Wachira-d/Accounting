@@ -43,10 +43,11 @@ public class ImportAdversarialEtlHelpersTests
         Assert.Equal("99,999.99", ImportPiiFields.RedactForPrompt("employees", null, "25,000.00"));
         Assert.Equal("9999999999999", ImportPiiFields.RedactForPrompt("employees", null, "1101700203450"));
         Assert.Equal("99/99/9999", ImportPiiFields.RedactForPrompt("employees", null, "01/01/2569"));
-        // ชนิดอื่น: เลขรูปบัตรประชาชนบุคคล + อีเมล ⇒ รูป · เลขนิติบุคคล/ข้อความ ⇒ คงเดิม
-        Assert.Equal("9999999999999", ImportPiiFields.RedactForPrompt("contacts", null, "1101700203450"));
-        Assert.Equal("xxxxxxx@example.com", ImportPiiFields.RedactForPrompt("contacts", null, "somchai@example.com"));
-        Assert.Equal("0105556000001", ImportPiiFields.RedactForPrompt("contacts", null, "0105556000001"));
+        Assert.Equal("xxxxxxx@example.com", ImportPiiFields.RedactForPrompt("employees", "Email", "somchai@example.com"));
+        Assert.Equal("สมชาย", ImportPiiFields.RedactForPrompt("employees", "FirstNameTh", "สมชาย"));   // ช่องที่ไม่อ่อนไหวของพนักงานคงเดิม
+        // ชนิดอื่นคงเดิม — นักเรียนตรวจข้อมูลอ่านค่าจริง (checksum เลขผู้เสียภาษี) จาก prompt เดียวกัน
+        Assert.Equal("1101700203450", ImportPiiFields.RedactForPrompt("contacts", null, "1101700203450"));
+        Assert.Equal("0105556000001", ImportPiiFields.RedactForPrompt("contacts", "TaxId", "0105556000001"));
         Assert.Equal("บริษัท สยามทดสอบ จำกัด", ImportPiiFields.RedactForPrompt("contacts", null, "บริษัท สยามทดสอบ จำกัด"));
         Assert.Equal("1,234.50", ImportPiiFields.RedactForPrompt("journal-entries", "DebitAmount", "1,234.50"));
     }

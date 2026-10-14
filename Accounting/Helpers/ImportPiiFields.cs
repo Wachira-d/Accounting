@@ -67,17 +67,15 @@ public static class ImportPiiFields
     }
 
     /// <summary>
-    /// ตัวอย่างค่าที่จะส่งให้ AI (จับคู่คอลัมน์ · ตรวจข้อมูล) — ชนิดที่มี PII: ช่องอ่อนไหว/คอลัมน์ที่ยังไม่รู้ชนิด ⇒ เหลือแค่ "รูป" (ตัวเลข → 9 · อีเมลปิดชื่อ)
-    /// · ชนิดอื่น: เฉพาะค่าที่รูปเหมือนเลขบัตรประชาชนบุคคล (13 หลักขึ้นต้น 1–8) และอีเมล ⇒ รูป · ที่เหลือคงเดิม (หัวตาราง/ข้อความธุรกิจช่วยโมเดลเดา)
+    /// ตัวอย่างค่าที่จะส่งให้ AI (จับคู่คอลัมน์ · ตรวจข้อมูล) — ชนิดที่มี PII: ช่องอ่อนไหว/คอลัมน์ที่ยังไม่รู้ชนิด ⇒ เหลือแค่ "รูป" (ตัวเลข → 9 · อีเมลปิดชื่อ ·
+    /// ยังเห็นว่าเป็นวันที่/ยอด/เลข 13 หลัก) · ชนิดอื่นคงเดิม — นักเรียนตรวจข้อมูล (27) อ่านค่าจริงจาก prompt เดียวกัน (checksum เลขผู้เสียภาษี ·
+    /// เลขไทย) ⇒ ปิดค่าของทะเบียนผู้ติดต่อ = นักเรียนตีเลขถูกว่าผิด
     /// </summary>
     public static string? RedactForPrompt(string? entityType, string? field, string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return value;
         var fields = Fields(entityType);
-        if (fields != null && (field == null || fields.ContainsKey(field))) return Shape(value);
-        var digits = Digits(value);
-        if (digits.Length == 13 && digits[0] is >= '1' and <= '8' && value.Count(char.IsLetter) == 0) return Shape(value);
-        return value.Contains('@') ? Shape(value) : value;
+        return fields != null && (field == null || fields.ContainsKey(field)) ? Shape(value) : value;
     }
 
     private static string Digits(string value) => new(value.Where(char.IsDigit).ToArray());
