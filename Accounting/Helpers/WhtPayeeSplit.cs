@@ -73,7 +73,7 @@ public static class WhtPayeeSplit
         => DroppedInheritedPayeeNote(sourceNumber, dropped) is string reason ? WhtCertReviewNote.Append(notes, reason) : notes;
 
     /// <summary>
-    /// ผู้ถูกหักหัวเอกสารที่ "ผู้ใช้เปลี่ยนในคำขอนี้จริง" สำหรับด่าน <see cref="ExplicitHeaderConflictReason"/> — ฝ่ายค้านรอบ 204 (หลัง 7b88c053):
+    /// ผู้ถูกหักหัวเอกสารที่ "ผู้ใช้เปลี่ยนในคำขอนี้จริง" สำหรับด่าน <see cref="HeaderConflictException"/> — ฝ่ายค้านรอบ 204 (หลัง 7b88c053):
     /// ฟอร์มแก้ไข/โมดัลเปลี่ยนผู้ถูกหักส่งค่าหัวเอกสารที่โหลดมาเดิมกลับทุกครั้ง ⇒ เดิมลบบรรทัด/ตั้งทุกบรรทัดเป็นผู้ถูกหักเดียวกันแล้วโดน 400 ทั้งที่ไม่ได้แตะหัวเอกสาร ·
     /// ค่าเท่าค่าที่เก็บไว้ (หลัง normalize) ⇒ null (ไม่ถือว่าระบุมา → ยกผู้ถูกหักรายบรรทัดขึ้นหัวเอกสารตามปกติ) · ค่าใหม่ ⇒ คืนค่าที่ขอ
     /// </summary>
@@ -142,13 +142,23 @@ public static class WhtPayeeSplit
         => $"ผู้ถูกหักภาษีของเทมเพลต {dropped} รายการ (ที่หักภาษี) ถูกลบออกจากผู้ติดต่อแล้ว — ใบนี้ใช้ผู้ถูกหักของหัวเอกสาร/ผู้ติดต่อแทน "
            + "จึงไม่อนุมัติอัตโนมัติ (50 ทวิ ออกในนามผู้ถูกหัก) · ตรวจ/เลือกผู้ถูกหัก แล้วอนุมัติเอง และกด \"รับทราบ\" ป้าย 50 ทวิ ต้องตรวจ";
 
+    /// <summary>รหัสกฎของคำตอบ "หัวเอกสารขัดกับรายบรรทัด — ผู้ใช้เลือกทางเอง" (รอบ 204 ทีม D #7) — หน้าเว็บอ่านรหัสนี้แล้วเสนอสองปุ่ม
+    /// "ใช้ X ทั้งใบ (ล้างรายบรรทัด)" / "ใช้ Y" (เดิมรหัสรวม <see cref="RuleCode"/> ⇒ หน้าแยกไม่ออก ผู้ใช้เห็นแค่ข้อความ)</summary>
+    public const string HeaderConflictRuleCode = "RD-50BIS-PAYEE-HEADER-CONFLICT";
+
+    private const string HeaderConflictMessage =
+        "ผู้ถูกหักภาษีหัวเอกสารที่เลือกไม่ตรงกับผู้ถูกหักรายบรรทัด — ทุกรายการที่หักภาษีระบุผู้ถูกหักรายอื่น (รายเดียวกันทุกบรรทัด) "
+        + "ผู้ถูกหักหัวเอกสารจึงไม่มีผลกับรายการใดเลย · ทางไปต่อ: ตั้งผู้ถูกหักหัวเอกสารเป็นรายเดียวกับรายบรรทัด (แล้วล้างช่องรายบรรทัด) "
+        + "หรือล้างผู้ถูกหักรายบรรทัดให้รายการตามหัวเอกสาร";
+
     /// <summary>
     /// ฝ่ายค้านรอบ 204 (หลัง 0f428969): ผู้ถูกหักหัวเอกสาร<b>ที่ผู้เรียกระบุมาเอง</b> (<paramref name="explicitHeaderRequest"/> — ไม่ใช่ว่าง/Guid.Empty)
     /// ขัดกับผู้ถูกหักรายบรรทัด: ทุกบรรทัดที่มีภาษีหักระบุผู้ถูกหักรายเดียวกัน Y ที่ไม่ใช่หัวเอกสาร ⇒ หัวเอกสารไม่มีผลกับบรรทัดใดเลย และตัวยก
     /// (<see cref="LiftSinglePayee"/>) จะทับเป็น Y เงียบ ๆ ⇒ ปฏิเสธพร้อมทางไปต่อ · <paramref name="normalizedLines"/> = ผู้ถูกหักรายบรรทัดหลัง
     /// <see cref="NormalizeLineOverride"/> (ตรงกับหัวเอกสาร = null) · ไม่ระบุหัวเอกสาร/มีบรรทัดตามหัวเอกสาร/หลายราย ⇒ null (เส้นเดิม)
     /// </summary>
-    public static string? ExplicitHeaderConflictReason(Guid? explicitHeaderRequest, IReadOnlyList<WhtPayeeLine> normalizedLines)
+    private static (Guid HeaderPayeeId, Guid LinePayeeId)? ExplicitHeaderConflict(Guid? explicitHeaderRequest,
+        IReadOnlyList<WhtPayeeLine> normalizedLines)
     {
         if (explicitHeaderRequest is not Guid h || h == Guid.Empty) return null;
         Guid? only = null;
@@ -159,11 +169,28 @@ public static class WhtPayeeSplit
             if (only is Guid o && o != p) return null;                                 // หลายราย ⇒ ไม่ยก
             only = p;
         }
-        return only == null ? null
-            : "ผู้ถูกหักภาษีหัวเอกสารที่เลือกไม่ตรงกับผู้ถูกหักรายบรรทัด — ทุกรายการที่หักภาษีระบุผู้ถูกหักรายอื่น (รายเดียวกันทุกบรรทัด) "
-              + "ผู้ถูกหักหัวเอกสารจึงไม่มีผลกับรายการใดเลย · ทางไปต่อ: ตั้งผู้ถูกหักหัวเอกสารเป็นรายเดียวกับรายบรรทัด (แล้วล้างช่องรายบรรทัด) "
-              + "หรือล้างผู้ถูกหักรายบรรทัดให้รายการตามหัวเอกสาร";
+        return only is Guid y ? (h, y) : null;
     }
+
+    /// <summary>
+    /// ข้อผิดพลาด 400 ของหัวเอกสารที่ขัดกับรายบรรทัด (รอบ 204 ทีม D #7 · คำสั่งเจ้าของ 2026-10-13 ผู้ใช้ตัดสิน) — รหัส <see cref="HeaderConflictRuleCode"/> +
+    /// <c>details = { headerPayeeId, linePayeeId }</c> (ผ่าน <see cref="Exception.Data"/> คีย์ <see cref="DetailsKey"/> ที่ middleware ส่งต่อ) ให้หน้าเว็บเสนอทางเลือก
+    /// "ใช้หัวเอกสารทั้งใบ (ล้างรายบรรทัด)" หรือ "ใช้ผู้ถูกหักรายบรรทัด" แล้วส่งใหม่ · ข้อความเดิมทุกตัวอักษร (ทางเข้า API เดิมอ่านข้อความเหมือนเดิม) · ไม่ขัด ⇒ null
+    /// </summary>
+    public static BusinessRuleException? HeaderConflictException(Guid? explicitHeaderRequest, IReadOnlyList<WhtPayeeLine> normalizedLines)
+    {
+        if (ExplicitHeaderConflict(explicitHeaderRequest, normalizedLines) is not { } pair) return null;
+        var ex = new BusinessRuleException(HeaderConflictMessage, HeaderConflictRuleCode);
+        ex.Data[DetailsKey] = new Dictionary<string, object?>
+        {
+            ["headerPayeeId"] = pair.HeaderPayeeId,
+            ["linePayeeId"] = pair.LinePayeeId,
+        };
+        return ex;
+    }
+
+    /// <summary>คีย์ใน <see cref="Exception.Data"/> ที่ <c>ExceptionMiddleware</c> ส่งต่อเป็น <c>data.details</c> คู่กับ <c>data.ruleCode</c></summary>
+    public const string DetailsKey = "details";
 
     /// <summary>ค่าที่ผู้เรียก "ส่งมา" ตอนแก้ไขเอกสาร: null = ไม่ส่ง (คงค่าเดิมของบรรทัดลำดับ+คำอธิบายเดียวกัน — ฟอร์ม/API รุ่นเก่าต้องไม่ล้าง) ·
     /// Guid.Empty = ล้าง (กลับไปตามหัวเอกสาร) · id = ค่าใหม่</summary>
@@ -328,6 +355,34 @@ public static class WhtPayeeSplit
                    + "ใบลด/เพิ่มหนี้จากเอกสารตั้งหนี้นั้น · ถ้าไม่ใช่ ให้ยกเลิกใบ " + sourceNumber + " แล้วออกใหม่ด้วยยอดที่ถูกต้อง "
                    + "(ตรวจ/ยกเลิก 50 ทวิ ของใบเดิมด้วย)";
     }
+
+    /// <summary>
+    /// รอบ 204 ทีม D (#10 · คำสั่งเจ้าของ 2026-10-13 ไม่ล็อกตาย): ผังหนี้ WHT (2191x) ที่ "ทุกผู้ถูกหัก" ของใบลด/เพิ่มหนี้ที่ไม่อ้างบรรทัดตกลงเหมือนกัน —
+    /// รับชุดผัง (<c>WhtPayableAccount.CodeChain</c> ตัวแรกของแต่ละราย/ส่วน) · ทุกตัวเหมือนกัน ⇒ รหัสนั้น (ลงบัญชีถูกผังแม้ไม่รู้ว่าเป็นของรายใด —
+    /// ไม่ต้องบล็อก แค่ติดป้าย 50 ทวิ ต้องตรวจ) · ต่างกัน/ว่าง/ไม่รู้ ⇒ null (คงด่าน <see cref="UnmappedAdjustmentLineReason"/> พร้อมทางไปต่อ)
+    /// </summary>
+    public static string? SharedPayableCode(IEnumerable<IReadOnlyList<string>> codeChains)
+    {
+        string? shared = null;
+        var any = false;
+        foreach (var chain in codeChains)
+        {
+            var first = chain.Count > 0 ? chain[0] : null;
+            if (string.IsNullOrEmpty(first)) return null;
+            if (any && !string.Equals(shared, first, StringComparison.Ordinal)) return null;
+            shared = first;
+            any = true;
+        }
+        return any ? shared : null;
+    }
+
+    /// <summary>ป้าย "50 ทวิ ต้องตรวจ" บน<b>ใบต้นทาง</b>เมื่อใบลด/เพิ่มหนี้ไม่อ้างบรรทัดแต่ผู้ถูกหักทุกรายลงผังเดียวกัน (<see cref="SharedPayableCode"/>) —
+    /// ลงบัญชีได้ (ผังถูก) แต่ระบบไม่รู้ว่าต้องปรับ 50 ทวิ ของรายใด ⇒ ไม่ยกเลิก/ออกใบแทนเอง · คนตรวจแล้วกด "รับทราบ"</summary>
+    public static string UnmappedSharedAccountReview(string? noteNumber, string? sourceNumber, IEnumerable<string?> lineDescriptions,
+        string payableCode)
+        => $"ใบลด/เพิ่มหนี้ {noteNumber}: รายการ \"{string.Join(" · ", lineDescriptions)}\" มีภาษีหัก ณ ที่จ่ายแต่ไม่ได้อ้างบรรทัดของใบ {sourceNumber} "
+           + $"(ผู้ถูกหักหลายราย) — ผู้ถูกหักทุกรายลงผังเดียวกัน ({payableCode}) ระบบจึงลงบัญชีให้ แต่ไม่รู้ว่า 50 ทวิ ของรายใดต้องปรับ · "
+           + "ตรวจยอดบน 50 ทวิ แล้วยกเลิก/ออกใบใหม่เองที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" (หรือยื่นแบบเพิ่มเติมถ้าเดือนนั้นยื่นแล้ว) แล้วกด \"รับทราบ\"";
 
     /// <summary>ผู้ถูกหักที่ยังไม่มี 50 ทวิ (ใบที่ยังไม่ยกเลิก) — ใบรายเดียว: มีใบใดก็ตาม = ครบ (พฤติกรรมเดิม · ใบเก่าที่ออกในนามอื่นด้วยมือ
     /// ไม่ถูกนับว่าขาด) · ใบหลายราย: ตรวจต่อผู้ถูกหัก</summary>

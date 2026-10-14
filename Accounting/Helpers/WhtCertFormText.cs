@@ -207,6 +207,89 @@ public static class WhtCertFormText
         _ => null,
     };
 
+    // ───────── รอบ 204 ทีม D (2f): แถวย่อยเงินปันผล 4(ข) — ผู้ใช้เลือกแถวย่อยได้ (ไม่บังคับ) · ตัวตั้งเดียวของ 3 renderer ─────────
+
+    /// <summary>แถวย่อยของ 4(ข) ตามแบบทางการ — (1.1)–(1.4) ได้รับเครดิตภาษี · (2.1)–(2.5) ไม่ได้รับเครดิตภาษี</summary>
+    public static readonly IReadOnlyList<string> DividendSubRowCodes = new[] { "1.1", "1.2", "1.3", "1.4", "2.1", "2.2", "2.3", "2.4", "2.5" };
+
+    /// <summary>แถวย่อยที่ต้องระบุอัตราเครดิตภาษีเอง ("(1.4) อัตราอื่น ๆ (ระบุ)")</summary>
+    public const string DividendOtherRateSubRow = "1.4";
+
+    /// <summary>
+    /// ปัญหาของแถวย่อยปันผลที่ผู้ใช้ส่งมากับบรรทัด 50 ทวิ (null = ใช้ได้ · ไม่ส่งเลย = ใช้ได้เสมอ) — แถวย่อยใช้ได้เฉพาะบรรทัดที่ประเภทเงินได้ตกแถว 4(ข)
+    /// (<see cref="ThaiWhtRateTable.CertificateRow"/>) · รหัสต้องอยู่ใน <see cref="DividendSubRowCodes"/> · อัตราเครดิตภาษีใช้ได้เฉพาะ (1.4) และอยู่ระหว่าง 0–100
+    /// (ห้ามรับแล้วไม่มีผล — silent no-op)
+    /// </summary>
+    public static string? DividendSubRowProblem(string? incomeTypeCode, string? subRow, decimal? creditRate)
+    {
+        var sr = string.IsNullOrWhiteSpace(subRow) ? null : subRow.Trim();
+        if (sr == null)
+            return creditRate.HasValue ? "อัตราเครดิตภาษีเงินปันผลใช้กับแถวย่อย (1.4) อัตราอื่น ๆ เท่านั้น — เลือกแถวย่อย (1.4) ก่อน" : null;
+        if (ThaiWhtRateTable.CertificateRow(incomeTypeCode) != "4b")
+            return "แถวย่อยเงินปันผลใช้ได้เฉพาะรายการประเภทเงินได้ 40(4)(ข) เงินปันผล — ล้างแถวย่อยหรือเปลี่ยนประเภทเงินได้";
+        if (!DividendSubRowCodes.Contains(sr))
+            return $"แถวย่อยเงินปันผล \"{sr}\" ไม่มีบนแบบ 50 ทวิ — เลือก (1.1)–(1.4) หรือ (2.1)–(2.5)";
+        if (creditRate.HasValue && sr != DividendOtherRateSubRow)
+            return "อัตราเครดิตภาษีเงินปันผลใช้กับแถวย่อย (1.4) อัตราอื่น ๆ เท่านั้น";
+        if (creditRate is decimal r && (r <= 0m || r >= 100m))
+            return "อัตราเครดิตภาษีเงินปันผล (1.4) ต้องมากกว่า 0 และน้อยกว่า 100";
+        return null;
+    }
+
+    /// <summary>ค่าที่เก็บลงบรรทัด (ผ่าน <see cref="DividendSubRowProblem"/> แล้ว) — ว่าง ⇒ null · อัตราปัดสองตำแหน่ง (AwayFromZero)</summary>
+    public static (string? SubRow, decimal? CreditRate) NormalizeDividendSubRow(string? subRow, decimal? creditRate)
+    {
+        var sr = string.IsNullOrWhiteSpace(subRow) ? null : subRow.Trim();
+        return (sr, sr == DividendOtherRateSubRow && creditRate is decimal r ? Math.Round(r, 2, MidpointRounding.AwayFromZero) : null);
+    }
+
+    /// <summary>อัตราเครดิตภาษีที่พิมพ์ในช่อง (1.4) — ตัวเลข + "%" (null = เส้นจุดเดิม)</summary>
+    private static string? DividendCreditRateText(decimal? rate)
+        => rate is decimal r ? r.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%" : null;
+
+    /// <summary>บรรทัดข้อความหนึ่งบรรทัดในบล็อก 4(ข) — <c>Indent</c> 0 = หัว (ข) · 1 = (1)/(2) · 2 = แถวย่อย · <c>Continuation</c> = บรรทัดต่อของข้อความยาว</summary>
+    public sealed record DividendBlockLine(string Text, int Indent, bool Continuation);
+
+    /// <summary>แถวหนึ่งของบล็อก 4(ข) เมื่อพิมพ์แบบแยกแถวย่อย — <c>SubRow</c> null = แถวหัว (ยอดของบรรทัดที่ไม่ระบุแถวย่อย) หรือหัว (2) (ไม่มียอด)</summary>
+    public sealed record DividendBlockRow(string? SubRow, IReadOnlyList<DividendBlockLine> Lines, bool HasAmount,
+        decimal IncomeAmount, decimal TaxAmount, DateTime? PaymentDate);
+
+    /// <summary>
+    /// <b>บล็อก 4(ข) แบบแยกแถวย่อย — ตัวตั้งเดียวของทั้ง 3 renderer</b> (HTML · QuestPDF · หน้าพิมพ์ <c>wht.html</c> ผ่าน
+    /// <c>WithholdingTaxCertResponse.DividendBlock</c>) · ยอดของบรรทัดที่ระบุแถวย่อยพิมพ์ "บนแถวย่อยนั้น" · บรรทัด 4(ข) ที่ไม่ระบุ = แถวหัว (ข) ·
+    /// <b>ไม่มีบรรทัดใดระบุแถวย่อย ⇒ null</b> (renderer พิมพ์บล็อกเดิมทุกไบต์ — ใบเดิม/ใบอัตโนมัติไม่ถูกแตะ)
+    /// </summary>
+    public static IReadOnlyList<DividendBlockRow>? DividendBlock(IEnumerable<WithholdingTaxCertLine> lines)
+    {
+        var div = lines.Where(l => ThaiWhtRateTable.CertificateRow(l.IncomeTypeCode) == "4b").OrderBy(l => l.LineOrder).ToList();
+        static string? SubOf(WithholdingTaxCertLine l)
+            => string.IsNullOrWhiteSpace(l.DividendSubRow) || !DividendSubRowCodes.Contains(l.DividendSubRow.Trim()) ? null : l.DividendSubRow.Trim();
+        if (!div.Any(l => SubOf(l) != null)) return null;
+        DividendBlockRow Row(string? sub, IReadOnlyList<DividendBlockLine> text, bool hasAmount)
+        {
+            var hits = hasAmount ? div.Where(l => SubOf(l) == sub).ToList() : new List<WithholdingTaxCertLine>();
+            return new DividendBlockRow(sub, text, hits.Count > 0, hits.Sum(l => l.IncomeAmount), hits.Sum(l => l.TaxAmount),
+                hits.Count > 0 ? hits[0].PaymentDate : null);
+        }
+        static DividendBlockLine L(string t, int indent, bool cont = false) => new(t, indent, cont);
+        var rate14 = DividendCreditRateText(div.Where(l => SubOf(l) == DividendOtherRateSubRow).Select(l => l.DividendCreditRate)
+            .FirstOrDefault(r => r.HasValue));
+        return new[]
+        {
+            Row(null, new[] { L(Row4b, 0), L(Div1a, 1), L(Div1b, 1, true) }, true),
+            Row("1.1", new[] { L(Div11, 2) }, true),
+            Row("1.2", new[] { L(Div12, 2) }, true),
+            Row("1.3", new[] { L(Div13, 2) }, true),
+            Row("1.4", new[] { L($"{Div14} {rate14 ?? ".................."} {Div14Tail}", 2) }, true),
+            Row(null, new[] { L(Div2, 1) }, false),
+            Row("2.1", new[] { L(Div21, 2) }, true),
+            Row("2.2", new[] { L(Div22a, 2), L(Div22b, 2, true) }, true),
+            Row("2.3", new[] { L(Div23a, 2), L(Div23b, 2, true) }, true),
+            Row("2.4", new[] { L(Div24, 2) }, true),
+            Row("2.5", new[] { L(Div25 + " ........................................................", 2) }, true),
+        };
+    }
+
     /// <summary>
     /// "รายการ" ที่พิมพ์ในช่อง (ระบุ) ของแถว 6 อื่น ๆ — บรรทัดที่ตกแถว 6 (<see cref="ThaiWhtRateTable.CertificateRow"/> = "6")
     /// · ชื่อประเภทจากตารางกลาง → คำอธิบายบรรทัด → รหัส · ไม่มีบรรทัด = null (renderer พิมพ์เส้นจุด)

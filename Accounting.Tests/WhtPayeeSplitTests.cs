@@ -328,7 +328,7 @@ public class WhtPayeeSplitTests
     [Fact]
     public void หัวเอกสารที่ระบุเอง_ขัดกับผู้ถูกหักรายบรรทัดรายเดียว_ปฏิเสธ()
     {
-        var reason = WhtPayeeSplit.ExplicitHeaderConflictReason(InsurerB, new[] { L(30m, InsurerA), L(15m, InsurerA), L(0m) });
+        var reason = WhtPayeeSplit.HeaderConflictException(InsurerB, new[] { L(30m, InsurerA), L(15m, InsurerA), L(0m) })?.Message;
         Assert.NotNull(reason);
         Assert.Contains("ทางไปต่อ", reason);
     }
@@ -337,11 +337,11 @@ public class WhtPayeeSplitTests
     public void หัวเอกสารขัดกับรายบรรทัด_ทิศตรงข้าม_ไม่ระบุหัว_มีบรรทัดตามหัว_หลายราย_ไม่มีบรรทัดหัก_ผ่าน()
     {
         var allA = new[] { L(30m, InsurerA), L(15m, InsurerA) };
-        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(null, allA));          // ไม่ระบุหัว (แปลง/คัดลอก/ฟอร์มไม่ติ๊ก) = ยกตามเดิม
-        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(Guid.Empty, allA));    // ล้างหัว = ยกตามเดิม
-        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(InsurerB, new[] { L(30m, InsurerA), L(15m) }));          // บรรทัดตามหัว
-        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(InsurerB, new[] { L(30m, InsurerA), L(15m, Broker) }));  // หลายราย
-        Assert.Null(WhtPayeeSplit.ExplicitHeaderConflictReason(InsurerB, new[] { L(0m, InsurerA) }));                   // ไม่มีบรรทัดหัก
+        Assert.Null(WhtPayeeSplit.HeaderConflictException(null, allA)?.Message);          // ไม่ระบุหัว (แปลง/คัดลอก/ฟอร์มไม่ติ๊ก) = ยกตามเดิม
+        Assert.Null(WhtPayeeSplit.HeaderConflictException(Guid.Empty, allA)?.Message);    // ล้างหัว = ยกตามเดิม
+        Assert.Null(WhtPayeeSplit.HeaderConflictException(InsurerB, new[] { L(30m, InsurerA), L(15m) })?.Message);          // บรรทัดตามหัว
+        Assert.Null(WhtPayeeSplit.HeaderConflictException(InsurerB, new[] { L(30m, InsurerA), L(15m, Broker) })?.Message);  // หลายราย
+        Assert.Null(WhtPayeeSplit.HeaderConflictException(InsurerB, new[] { L(0m, InsurerA) })?.Message);                   // ไม่มีบรรทัดหัก
     }
 
     [Fact]

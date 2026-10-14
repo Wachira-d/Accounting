@@ -725,7 +725,10 @@ public class DocumentController : ControllerBase
         if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
             return Forbid403<Accounting.Models.DTOs.Tax.ChangeWhtPayeeResponse>(
                 $"ไม่มีสิทธิ์เปลี่ยนผู้ถูกหักภาษีของเอกสาร {docType} (ต้องการ Document.Approve)");
-        var result = await _documentService.ChangeWhtPayeeAsync(companyId, documentId, request, userIdGuid.ToString(), userIdGuid);
+        // รอบ 204 ทีม D (#8c): รับทราบงวดที่ยื่นแล้ว = งานของผู้ยื่นภาษี — ตรวจสิทธิ์ Tax.File เฉพาะเมื่อขอรับทราบ (service ตัดสิน 403 พร้อมข้อความ)
+        var holdsTaxFile = request.AcknowledgeFiledPeriod
+            && await _permissions.HasPermissionAsync(companyId, userIdGuid, Accounting.Models.Constants.PermissionKeys.TaxFile);
+        var result = await _documentService.ChangeWhtPayeeAsync(companyId, documentId, request, userIdGuid.ToString(), userIdGuid, holdsTaxFile);
         return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.ChangeWhtPayeeResponse>(true, result, "เปลี่ยนผู้ถูกหักภาษีแล้ว"));
     }
 

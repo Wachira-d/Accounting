@@ -889,7 +889,7 @@ const API = {
       createWhtCert: (d) => API.post(`${base}/withholding-tax-certs`, d),
       updateWhtCert: (id, d) => API.put(`${base}/withholding-tax-certs/${id}`, d),
       issueWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/issue`),
-      voidWhtCert: (id) => API.post(`${base}/withholding-tax-certs/${id}/void`),
+      voidWhtCert: (id, d) => API.post(`${base}/withholding-tax-certs/${id}/void`, d),   // d = { acknowledgeFiled, reason } (รอบ 204 ทีม D)
       deleteWhtCert: (id) => API.del(`${base}/withholding-tax-certs/${id}`),
       getWhtByContact: (contactId, q = '') => API.get(`${base}/withholding-tax-certs/contacts/${contactId}${q}`),
       autoGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/auto-generate`, d),

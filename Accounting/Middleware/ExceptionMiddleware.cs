@@ -187,8 +187,11 @@ public class ExceptionMiddleware
         // BusinessRuleException ที่มี RuleCode: ส่งรหัสกฎไปใน data ให้หน้าเว็บตัดสินใจ "ทางไปต่อ" ได้
         // (เช่น CONTACT-ROLE-CUSTOMER → เสนอเปิดสถานะลูกค้าให้เลย · CONVERT-OVER-AMOUNT → ยืนยันแล้วแปลงต่อ)
         // ข้อความยังเป็นตัวหลักเหมือนเดิม — รหัสเป็นส่วนเสริม ไม่กระทบผู้เรียกที่อ่านแค่ message
-        object? data = exception is Accounting.Helpers.BusinessRuleException { RuleCode: { Length: > 0 } rc }
-            ? new { ruleCode = rc }
+        // รอบ 204 ทีม D: กฎที่ให้ผู้ใช้เลือกทางเอง (เช่น RD-50BIS-PAYEE-HEADER-CONFLICT) แนบรายละเอียดผ่าน Exception.Data["details"] ⇒ data.details
+        object? data = exception is Accounting.Helpers.BusinessRuleException { RuleCode: { Length: > 0 } rc } breData
+            ? (breData.Data[Accounting.Helpers.WhtPayeeSplit.DetailsKey] is { } details
+                ? new { ruleCode = rc, details }
+                : (object)new { ruleCode = rc })
             : null;
         var response = new ApiResponse<object>(false, data, translatedMessage);
         var json = JsonSerializer.Serialize(response, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });

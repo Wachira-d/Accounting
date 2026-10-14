@@ -15,6 +15,8 @@ public interface IWithholdingTaxCertService
     Task<PagedResponse<WithholdingTaxCertResponse>> GetAllAsync(Guid companyId, TaxType? taxFormType, int? year, int? month, PagedRequest request);
     Task<WithholdingTaxCertResponse> IssueAsync(Guid companyId, Guid certId);
     Task VoidAsync(Guid companyId, Guid certId);
+    /// <summary>รอบ 204 ทีม D (#23): ยกเลิกพร้อม "รับทราบ — จะยื่นแบบเพิ่มเติม" (ผู้ถือ Tax.File + เหตุผล) — คืนป้ายงวดที่ต้องยื่นเพิ่มเติม (null = ไม่แตะงวดที่ยื่นแล้ว)</summary>
+    Task<string?> VoidAsync(Guid companyId, Guid certId, WhtCertVoidRequest? ack, Guid? userId = null, bool holdsTaxFile = false);
     Task DeleteAsync(Guid companyId, Guid certId);
     Task DeleteAsync(Guid companyId, Guid certId, Guid? userId);
     Task<List<WithholdingTaxCertResponse>> GetByContactAsync(Guid companyId, Guid contactId, int? year = null);
@@ -25,7 +27,9 @@ public interface IWithholdingTaxCertService
     /// <param name="paymentWhtAmount">ยอดภาษีหักของ "งวดนั้น" — ถ้าน้อยกว่ายอดทั้งเอกสาร
     /// ระบบจะเฉลี่ยยอดรายบรรทัดตามสัดส่วน</param>
     /// <param name="payeeContactId">รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ผู้ถูกหักที่จะออกใบ (บังคับสำหรับใบหลายราย · ใบรายเดียวไม่ใช้)</param>
-    Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null, Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null, Guid? payeeContactId = null);
+    /// <param name="manualRequest">รอบ 204 ทีม D (#20): ผู้ใช้กด "สร้างใบ" เอง — ผู้ถูกหักไม่มีเลขผู้เสียภาษี + ไม่ออกทันที ⇒ ออกเป็นร่าง + คำเตือน
+    /// (<c>WhtCertPayeeTaxIdDraft</c>) แทนการปฏิเสธ · ทางอัตโนมัติไม่ส่ง (false = พฤติกรรมเดิม)</param>
+    Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null, Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null, Guid? payeeContactId = null, bool manualRequest = false, Guid? userId = null);
     /// <summary>ทางเดียวของการออก 50 ทวิ อัตโนมัติจากเอกสาร — ตัดสินด้วย <c>Helpers/WhtCertIssuePlan</c> · ไม่ throw (ล้ม = ป้ายบนเอกสาร +
     /// เหตุผลในผลลัพธ์) · <paramref name="paidAtTrigger"/> ใช้กับจุดอนุมัติ · <paramref name="issueAsIssued"/> false = ฉบับร่าง (ซิงค์ที่ยังไม่จ่าย)</summary>
     Task<WhtAutoIssueOutcome> TryAutoIssueForDocumentAsync(Guid companyId, Guid documentId,

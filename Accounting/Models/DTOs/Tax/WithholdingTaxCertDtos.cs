@@ -23,7 +23,11 @@ public record WithholdingTaxCertLineRequest(
     decimal IncomeAmount,
     decimal TaxRate,
     decimal TaxAmount,
-    string? Condition);
+    string? Condition,
+    // รอบ 204 ทีม D (2f): แถวย่อยเงินปันผล 4(ข) ("1.1".."1.4","2.1".."2.5") — ไม่บังคับ · ใช้ได้เฉพาะบรรทัดประเภท 40(4)(ข) ·
+    // อัตราเครดิตภาษีเฉพาะ (1.4) · ตรวจด้วย WhtCertFormText.DividendSubRowProblem (ส่งผิด = 400 ไม่ใช่ทิ้งเงียบ)
+    string? DividendSubRow = null,
+    decimal? DividendCreditRate = null);
 
 public record WithholdingTaxCertResponse(
     Guid Id,
@@ -60,7 +64,12 @@ public record WithholdingTaxCertResponse(
     // รอบ 204: ช่องที่หน้าพิมพ์ 50 ทวิ (wht.html) ต้องติ๊ก — ดัชนีใน WhtCertFormText.FormBoxes / PayerConditions จากตัวตัดสินเดียว
     // WhtCertFormText.FormBoxIndex / PayerConditionIndex (ตัวเดียวกับ HTML + QuestPDF · หน้าไม่จับคู่ชื่อ enum เอง) · null = ไม่ติ๊กช่องใด
     int? FormBoxIndex = null,
-    int? PayerConditionIndex = null);
+    int? PayerConditionIndex = null,
+    // รอบ 204 ทีม D (#21): ระบบแก้แบบ ภ.ง.ด. จากที่ผู้ใช้เลือก (ResolveWhtFormType) — ข้อความแจ้งผู้ใช้ (WhtCertFormCorrection.Notice) ·
+    // null = ไม่ได้แก้ / ไม่ได้ตรวจ (ตอบจาก GET) · เดิมแก้เงียบแล้ว LogWarning อย่างเดียว
+    string? FormCorrectionNotice = null,
+    // รอบ 204 ทีม D (2f): บล็อก 4(ข) แบบแยกแถวย่อย (WhtCertFormText.DividendBlock — ตัวเดียวกับ PDF) · null = ไม่มีบรรทัดใดระบุแถวย่อย ⇒ หน้าพิมพ์บล็อกเดิม
+    IReadOnlyList<WhtCertFormText.DividendBlockRow>? DividendBlock = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,
@@ -76,7 +85,10 @@ public record WithholdingTaxCertLineResponse(
     string? CertificateSpecText = null,
     // แถวบนแบบ 50 ทวิ ("1" "2" "3" "4a" "4b" "5" "6") — `ThaiWhtRateTable.CertificateRow` ตัวเดียวกับ renderer ทั้งสอง (ฝ่ายค้าน M6 ·
     // เดิมหน้าเว็บจับคู่รหัสตรงตัวเอง ⇒ รหัสแบบมาตรา "40(8)" ตกแถว 6 บนหน้าเว็บ แต่ PDF ลงแถว 5)
-    string? CertificateRow = null);
+    string? CertificateRow = null,
+    // รอบ 204 ทีม D (2f): echo แถวย่อยปันผล/อัตราเครดิต (1.4) ให้ฟอร์มแก้ไข hydrate
+    string? DividendSubRow = null,
+    decimal? DividendCreditRate = null);
 
 public enum WithholdingTaxCertType
 {
@@ -147,13 +159,19 @@ public record PendingWhtPayeeInfo(
     string? CertificateNumber);
 
 /// <summary>รอบ 204 (ข้อ 145): เปลี่ยนผู้ถูกหักภาษีหลังอนุมัติ — <c>WhtPayeeContactId</c> หัวเอกสาร (null/Guid.Empty = ผู้รับเงินของเอกสาร) ·
-/// <c>Lines</c> ผู้ถูกหักรายบรรทัด (ไม่ส่ง = คงเดิม) · <c>Reason</c> บังคับ (audit)</summary>
+/// <c>Lines</c> ผู้ถูกหักรายบรรทัด (ไม่ส่ง = คงเดิม) · <c>Reason</c> บังคับ (audit) ·
+/// <c>AcknowledgeFiledPeriod</c> (รอบ 204 ทีม D #8c) = ผู้มีสิทธิ์ยื่นภาษี (Tax.File) รับทราบว่างวดยื่น/นำส่งแล้วและจะยื่นแบบเพิ่มเติมเอง (ใช้ Reason เป็นเหตุผล)</summary>
 public record ChangeWhtPayeeRequest(
     Guid? WhtPayeeContactId,
     List<ChangeWhtPayeeLine>? Lines,
-    string Reason);
+    string Reason,
+    bool AcknowledgeFiledPeriod = false);
 
 public record ChangeWhtPayeeLine(Guid LineId, Guid? WhtPayeeContactId);
+
+/// <summary>รอบ 204 ทีม D (#23): ยกเลิก 50 ทวิ — <c>AcknowledgeFiled</c> = ผู้มีสิทธิ์ยื่นภาษีรับทราบว่าใบอยู่ในแบบที่ยื่นแล้วและจะยื่นแบบเพิ่มเติมเอง ·
+/// <c>Reason</c> บังคับเมื่อรับทราบ (audit) · ไม่ส่ง body = ยกเลิกปกติ (ยื่นแล้ว ⇒ 409 พร้อมทางไปต่อ)</summary>
+public record WhtCertVoidRequest(bool AcknowledgeFiled = false, string? Reason = null);
 
 /// <summary>รอบ 204: รับทราบป้าย "50 ทวิ ต้องตรวจ" — เหตุผล/สิ่งที่ทำไปแล้ว (บังคับ · audit)</summary>
 public record WhtCertReviewAckRequest(string? Reason);

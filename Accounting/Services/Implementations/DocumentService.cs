@@ -3722,7 +3722,7 @@ public partial class DocumentService : IDocumentService
     /// ฝ่ายค้าน P1: ทุกบรรทัดที่หักเป็นของผู้ถูกหักรายเดียว Y ≠ หัวเอกสาร ⇒ ยก Y ขึ้น <c>doc.WhtPayeeContactId</c> แล้วบรรทัด = null
     /// (<see cref="Accounting.Helpers.WhtPayeeSplit.LiftSinglePayee"/> ตัวเดียวกับ ChangeWhtPayeeAsync) — 50 ทวิ/พรีวิว GL/หน้านำส่งที่อ่านหัวเอกสารได้คนเดียวกับ JE</summary>
     /// <param name="explicitHeaderRequest">ผู้ถูกหักหัวเอกสารที่ผู้เรียกส่งมาในคำขอนี้ (null/Guid.Empty = ไม่ระบุ) — ฝ่ายค้านรอบ 204 (หลัง 0f428969):
-    /// ระบุมาแต่ทุกบรรทัดที่หักระบุผู้ถูกหักรายเดียวกันรายอื่น ⇒ 400 (<see cref="Accounting.Helpers.WhtPayeeSplit.ExplicitHeaderConflictReason"/>) แทนการยกทับเงียบ ๆ</param>
+    /// ระบุมาแต่ทุกบรรทัดที่หักระบุผู้ถูกหักรายเดียวกันรายอื่น ⇒ 400 (<see cref="Accounting.Helpers.WhtPayeeSplit.HeaderConflictException"/>) แทนการยกทับเงียบ ๆ</param>
     private async Task<List<Guid?>> ResolveLineWhtPayeesAsync(Guid companyId, Document doc,
         IReadOnlyList<(Guid? Value, bool Explicit, decimal Rate, decimal WhtAmount)> lines, Guid? explicitHeaderRequest)
     {
@@ -3747,8 +3747,9 @@ public partial class DocumentService : IDocumentService
             doc.ContactId, doc.WhtPayeeContactId, l.Value, payerSide, l.Rate)).ToList();
         if (!payerSide) return normalized;
         var normalizedLines = normalized.Select((v, i) => new Accounting.Helpers.WhtPayeeLine(v, lines[i].WhtAmount)).ToList();
-        if (Accounting.Helpers.WhtPayeeSplit.ExplicitHeaderConflictReason(explicitHeaderRequest, normalizedLines) is string headerConflict)
-            throw new BusinessRuleException(headerConflict, Accounting.Helpers.WhtPayeeSplit.RuleCode);
+        // รอบ 204 ทีม D (#7): ขัดกัน ⇒ 400 รหัส RD-50BIS-PAYEE-HEADER-CONFLICT + {headerPayeeId, linePayeeId} — หน้าเว็บให้ผู้ใช้เลือกทางแล้วส่งใหม่
+        if (Accounting.Helpers.WhtPayeeSplit.HeaderConflictException(explicitHeaderRequest, normalizedLines) is { } headerConflict)
+            throw headerConflict;
         var (liftedDocPayee, liftedLines) = Accounting.Helpers.WhtPayeeSplit.LiftSinglePayee(doc.ContactId, doc.WhtPayeeContactId,
             normalizedLines);
         doc.WhtPayeeContactId = liftedDocPayee;
@@ -3762,11 +3763,11 @@ public partial class DocumentService : IDocumentService
         if (!Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType)) return;
         var stored = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
         // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ระบุผู้ถูกหักหัวเอกสารมาในคำขอ แต่ทุกบรรทัดที่หัก (ที่บันทึกไว้) เป็นของผู้ถูกหักรายอื่นรายเดียว ⇒ 400 (ไม่ยกทับเงียบ)
-        if (Accounting.Helpers.WhtPayeeSplit.ExplicitHeaderConflictReason(explicitHeaderRequest,
+        if (Accounting.Helpers.WhtPayeeSplit.HeaderConflictException(explicitHeaderRequest,
                 stored.Select(l => new Accounting.Helpers.WhtPayeeLine(
                     Accounting.Helpers.WhtPayeeSplit.NormalizeLineOverride(doc.ContactId, doc.WhtPayeeContactId, l.WhtPayeeContactId, true, l.WithholdingTaxRate),
-                    l.WithholdingTaxAmount)).ToList()) is string headerConflict)
-            throw new BusinessRuleException(headerConflict, Accounting.Helpers.WhtPayeeSplit.RuleCode);
+                    l.WithholdingTaxAmount)).ToList()) is { } headerConflict)
+            throw headerConflict;   // รอบ 204 ทีม D (#7): รหัสแยก + ผู้ถูกหักทั้งสองฝั่ง ให้หน้าเว็บเสนอทางเลือก
         var (liftedDocPayee, liftedLines) = Accounting.Helpers.WhtPayeeSplit.LiftSinglePayee(doc.ContactId, doc.WhtPayeeContactId,
             stored.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList());
         doc.WhtPayeeContactId = liftedDocPayee;
@@ -8004,7 +8005,7 @@ public partial class DocumentService : IDocumentService
     /// ทุกอย่างก่อนออกใบใหม่อยู่ในธุรกรรมเดียว — ล้มกลางทาง = ไม่มีอะไรถูกเขียน
     /// </summary>
     public async Task<ChangeWhtPayeeResponse> ChangeWhtPayeeAsync(Guid companyId, Guid documentId,
-        ChangeWhtPayeeRequest request, string actor, Guid? userId)
+        ChangeWhtPayeeRequest request, string actor, Guid? userId, bool holdsTaxFile = false)
     {
         if (_whtService == null)
             throw new InvalidOperationException("บริการหนังสือรับรองหัก ณ ที่จ่ายไม่พร้อม — เปลี่ยนผู้ถูกหักไม่ได้");
@@ -8031,10 +8032,11 @@ public partial class DocumentService : IDocumentService
         if (payerSide)
         {
             // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ระบุหัวเอกสารมาเอง แต่ทุกบรรทัดที่หักเลือกผู้ถูกหักรายอื่นรายเดียว ⇒ 400 (ไม่ยกทับหัวเอกสารเงียบ ๆ)
-            if (WhtPayeeSplit.ExplicitHeaderConflictReason(
+            // รอบ 204 ทีม D (#7): รหัส RD-50BIS-PAYEE-HEADER-CONFLICT + {headerPayeeId, linePayeeId} — โมดัลเปลี่ยนผู้ถูกหักเสนอสองทางแล้วส่งใหม่
+            if (WhtPayeeSplit.HeaderConflictException(
                     WhtPayeeSplit.ChangedHeaderRequest(doc.ContactId, request.WhtPayeeContactId, doc.WhtPayeeContactId),
-                    lines.Select(l => new WhtPayeeLine(newLinePayees[l.Id], l.WithholdingTaxAmount)).ToList()) is string headerConflict)
-                throw new BusinessRuleException(headerConflict, WhtPayeeSplit.RuleCode);
+                    lines.Select(l => new WhtPayeeLine(newLinePayees[l.Id], l.WithholdingTaxAmount)).ToList()) is { } headerConflict)
+                throw headerConflict;
             var (liftedDocPayee, liftedLines) = WhtPayeeSplit.LiftSinglePayee(doc.ContactId, newDocPayee,
                 lines.Select(l => new WhtPayeeLine(newLinePayees[l.Id], l.WithholdingTaxAmount)).ToList());
             newDocPayee = liftedDocPayee;
@@ -8080,6 +8082,8 @@ public partial class DocumentService : IDocumentService
             .Select(FormOf).Distinct().ToList();
         var taxDate = doc.PaymentDate ?? doc.DocumentDate;
         string? filed = null;
+        string? adjustmentBlock = null;
+        IReadOnlyList<(int Year, int Month)> periods = Array.Empty<(int Year, int Month)>();
         if (anythingChanges)
         {
             // ฝ่ายค้าน P2a: ใบลด/เพิ่มหนี้ที่อนุมัติแล้วและหักภาษีอ้างใบนี้ — ยอดย้ายผังนับเฉพาะ JE ของใบนี้ (ไม่รวมตัวกลับของใบลดหนี้) และ 50 ทวิ ที่ออกใหม่
@@ -8098,14 +8102,33 @@ public partial class DocumentService : IDocumentService
             paymentDates.AddRange(await _db.PaymentAllocations.AsNoTracking()
                 .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.DocumentId == doc.Id && !a.Payment.IsDeleted)
                 .Select(a => a.Payment.PaymentDate).ToListAsync());
-            var periods = WhtPayeeChangePlan.AffectedPeriods(taxDate, paymentDates,
+            periods = WhtPayeeChangePlan.AffectedPeriods(taxDate, paymentDates,
                 activeCerts.Select(c => (c.TaxYear, c.TaxMonth)).ToList());
-            filed = WhtPayeeChangePlan.AdjustmentNotesReason(doc.DocumentNumber, adjustmentNotes)
-                ?? await WhtCertVoidGuard.CheckAsync(_db, companyId, certsToVoid.Select(c => c.Id).ToList())
+            // ใบลด/เพิ่มหนี้ที่อ้างอยู่ = ยอดย้ายผัง/50 ทวิ ใหม่ผิด (ความถูกต้องของข้อมูล) ⇒ บล็อกเสมอพร้อมทางไปต่อ
+            adjustmentBlock = WhtPayeeChangePlan.AdjustmentNotesReason(doc.DocumentNumber, adjustmentNotes);
+            // ด่านยื่นแล้ว (รายใบ + รายงวด) คำนวณเสมอ — รอบ 204 ทีม D (#8c): แยกทางตามการรับทราบข้างล่าง (ไม่ข้ามด่าน)
+            filed = await WhtCertVoidGuard.CheckAsync(_db, companyId, certsToVoid.Select(c => c.Id).ToList())
                 ?? await WhtPayeeChangePlan.PeriodFiledReasonAsync(_db, companyId, touchedForms, periods);
         }
-        if (WhtPayeeChangePlan.BlockReason(payerSide, doc.Status, doc.WithholdingTaxAmount, request.Reason, anythingChanges, filed) is string block)
+        if (WhtPayeeChangePlan.BlockReason(payerSide, doc.Status, doc.WithholdingTaxAmount, request.Reason, anythingChanges, adjustmentBlock) is string block)
             throw new BusinessRuleException(block, WhtPayeeChangePlan.RuleCode, 409);
+        // รอบ 204 ทีม D (#8c · คำสั่งเจ้าของ 2026-10-13 ไม่ล็อกตาย): งวดที่ยื่น/นำส่งแล้ว — ไม่รับทราบ ⇒ 409 รหัส RD-50BIS-PAYEE-CHANGE-FILED พร้อมทางไปต่อ ·
+        // ผู้ถือ Tax.File รับทราบ + เหตุผล ⇒ ดำเนินการต่อ แล้วติดป้าย "ต้องยื่น ภ.ง.ด.X เพิ่มเติม งวด MM/YYYY" + audit RD-50BIS-PAYEE-CHANGE-FILED-ACK
+        string? filedLabel = null;
+        if (filed != null)
+        {
+            if (!request.AcknowledgeFiledPeriod)
+                throw new BusinessRuleException(filed + WhtFiledPeriodAck.WayForward, WhtFiledPeriodAck.PayeeChangeNeedsAckRuleCode, 409);
+            if (WhtFiledPeriodAck.AckProblem(true, request.Reason, holdsTaxFile) is string ackProblem)
+                throw new BusinessRuleException(ackProblem, WhtFiledPeriodAck.PayeeChangeNeedsAckRuleCode, holdsTaxFile ? 400 : 403);
+            var filedCandidates = certsToVoid.Select(c => (c.TaxFormType, c.TaxYear, c.TaxMonth))
+                .Concat(touchedForms.SelectMany(f => periods.Select(p => (f, p.Year, p.Month))))
+                .ToList();
+            // ใบอยู่ในการนำส่งของงวดแต่ไม่มีหลักฐานระดับงวดอื่น — ใช้ข้อความด่านรายใบเป็นป้าย (ห้ามป้ายว่าง)
+            filedLabel = WhtFiledPeriodAck.SupplementaryFilingLabels(
+                    await WhtPayeeChangePlan.FiledPeriodsAsync(_db, companyId, filedCandidates))
+                ?? filed;
+        }
 
         // ── หนี้ WHT ที่ลงไว้จริงและยังมีผล (JE ของเอกสารนี้ที่ไม่ถูกกลับ และไม่ใช่ตัวกลับ — กติกาเดียวกับรายงาน ภ.ง.ด.) → ปลายทางตามผู้ถูกหักใหม่ ──
         var payableCodes = WhtPayableAccount.DocumentPayableCodes.ToArray();   // 21915/21916/21917/21918 — ชุดเดียว (ภ.ง.ด.2 รวมด้วย)
@@ -8211,6 +8234,25 @@ public partial class DocumentService : IDocumentService
             // (ป้ายเรื่องอื่น เช่น ใบลดหนี้ลดฐาน ยังต้องรับทราบพร้อมเหตุผล) · ตัวตัดสินเดียว WhtPayeeSplit.ClearDroppedPayeeReview
             var (chgReviewNotes, chgResolvedDrop) = WhtPayeeSplit.ClearDroppedPayeeReview(doc.InternalNotes, oldPortions, newPortions);
             doc.InternalNotes = WhtCertAutoFailedNote.Clear(chgReviewNotes);
+            if (filedLabel != null)
+            {
+                // รอบ 204 ทีม D (#8c): ป้าย "50 ทวิ ต้องตรวจ" = งวดที่ต้องยื่นแบบเพิ่มเติม (ลิสต์รอออกใบโชว์จนกว่าจะรับทราบว่ายื่นแล้ว) + audit การรับทราบ
+                doc.InternalNotes = WhtCertReviewNote.Append(doc.InternalNotes,
+                    $"เปลี่ยนผู้ถูกหักทั้งที่งวดยื่น/นำส่งแล้ว (ผู้มีสิทธิ์ยื่นภาษีรับทราบ: {request.Reason.Trim()}) — {filedLabel}");
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
+                    EntityType = "Document", EntityId = doc.Id.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        FiledPeriodAcknowledged = filed, SupplementaryFiling = filedLabel, Reason = request.Reason.Trim(),
+                        RuleCode = WhtFiledPeriodAck.PayeeChangeAckRuleCode, LegalReference = WhtFiledPeriodAck.LegalReference,
+                        DocumentNumber = doc.DocumentNumber,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+                notices.Add($"{filedLabel} — ติดป้าย \"50 ทวิ ต้องตรวจ\" บนเอกสารนี้แล้ว (กด \"รับทราบ\" หลังยื่นแบบเพิ่มเติม)");
+            }
             if (chgResolvedDrop is string chgResolvedReason)
                 _db.AddChainedAuditLog(new AuditLog
                 {
@@ -15167,7 +15209,19 @@ public partial class DocumentService : IDocumentService
                 if (Accounting.Helpers.WhtPayeeSplit.UnmappedAdjustmentLineReason(doc.DocumentNumber, src.DocumentNumber, srcMulti,
                         docLines.Select(l => (l.Description, l.WithholdingTaxAmount,
                             l.SourceLineId is Guid mapped && srcLinePayee.ContainsKey(mapped))).ToList(), srcConvertsToNote) is string unmapped)
-                    throw new BusinessRuleException(unmapped, Accounting.Helpers.WhtPayeeSplit.RuleCode);
+                {
+                    // รอบ 204 ทีม D (#10 · คำสั่งเจ้าของ 2026-10-13 ไม่ล็อกตาย): ผู้ถูกหักทุกรายของใบต้นทาง (และผู้ถูกหักหัวเอกสารที่บรรทัดไม่อ้างจะตกไป)
+                    // ลงผัง 2191x เดียวกัน ⇒ JE ถูกผังแน่นอน — ไม่บล็อก · ติดป้าย "50 ทวิ ต้องตรวจ" บนใบต้นทาง (ระบบไม่ปรับ 50 ทวิ แทน) ·
+                    // ผังต่างกัน (แบบ ภ.ง.ด. ต่างกัน) ⇒ คงด่านเดิมพร้อมทางไปต่อ
+                    var unmappedLines = docLines.Where(l => l.WithholdingTaxAmount > 0m
+                        && !(l.SourceLineId is Guid ml && srcLinePayee.ContainsKey(ml))).ToList();
+                    if (await SharedUnmappedPayableCodeAsync(companyId, doc, src, unmappedLines) is not string sharedCode)
+                        throw new BusinessRuleException(unmapped, Accounting.Helpers.WhtPayeeSplit.RuleCode);
+                    if (_whtService != null
+                        && await _db.Documents.FirstOrDefaultAsync(d => d.Id == src.Id && d.CompanyId == companyId) is { } trackedSrc)
+                        await _whtService.FlagReviewAsync(companyId, trackedSrc, Accounting.Helpers.WhtPayeeSplit.UnmappedSharedAccountReview(
+                            doc.DocumentNumber, src.DocumentNumber, unmappedLines.Select(l => (string?)l.Description), sharedCode), save: false);
+                }
                 return (Accounting.Helpers.WhtPayeeSplit.Portions(src.ContactId, src.WhtPayeeContactId,
                     docLines
                         .Select(l => new Accounting.Helpers.WhtPayeeLine(
@@ -15180,6 +15234,31 @@ public partial class DocumentService : IDocumentService
             docLines
                 .Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
             doc.WithholdingTaxAmount), docLines);
+    }
+
+    /// <summary>รอบ 204 ทีม D (#10): ผัง 2191x ที่ใช้ร่วมกันของ "ทุกผู้ถูกหักของใบต้นทาง" + "ผู้ถูกหักหัวเอกสารของใบต้นทางกับบรรทัดที่ไม่อ้าง"
+    /// (บรรทัดที่ไม่อ้างตกไปผู้ถูกหักหัวเอกสาร — <see cref="Accounting.Helpers.WhtPayeeSplit.LinePayeeOf"/>) · ลำดับผังจาก
+    /// <see cref="Accounting.Helpers.WhtPayableAccount.CodeChain"/> ตัวเดียวกับ JE (<see cref="ResolveWhtPayableAccountAsync"/>) · ต่างกัน ⇒ null</summary>
+    private async Task<string?> SharedUnmappedPayableCodeAsync(Guid companyId, Document note, Document src, IReadOnlyList<DocumentLine> unmappedLines)
+    {
+        var srcLines = src.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+        var srcPortions = Accounting.Helpers.WhtPayeeSplit.Portions(src.ContactId, src.WhtPayeeContactId,
+            srcLines.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
+            src.WithholdingTaxAmount);
+        var srcHeaderPayee = Accounting.Helpers.WhtCertIssuePlan.PayeeOf(src.ContactId, src.WhtPayeeContactId);
+        var ids = srcPortions.Select(p => p.PayeeContactId).Append(srcHeaderPayee).Distinct().ToList();
+        var contacts = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && ids.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+        IReadOnlyList<string> ChainOf(Guid payeeId, IEnumerable<string?> codes)
+        {
+            var c = contacts.GetValueOrDefault(payeeId);
+            return Accounting.Helpers.WhtPayableAccount.CodeChain(note.IsForeignService, c?.CountryCode, c?.TaxId,
+                c?.ContactType ?? ContactType.Individual, c?.Name, codes);
+        }
+        var chains = srcPortions
+            .Select(p => ChainOf(p.PayeeContactId, Accounting.Helpers.WhtIncomeCodes.WithheldAt(srcLines, p.LineIndexes)))
+            .Append(ChainOf(srcHeaderPayee, Accounting.Helpers.WhtIncomeCodes.Withheld(unmappedLines)));
+        return Accounting.Helpers.WhtPayeeSplit.SharedPayableCode(chains);
     }
 
     /// <summary>รอบ 204 (ข้อ 143): ผังหนี้ WHT (21916/21917/21918) <b>ต่อผู้ถูกหัก</b> ของยอด <paramref name="amount"/> (เฉลี่ยตามสัดส่วนของแต่ละผู้ถูกหัก ·

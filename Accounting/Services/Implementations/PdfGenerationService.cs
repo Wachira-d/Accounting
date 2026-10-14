@@ -2662,6 +2662,19 @@ public partial class PdfGenerationService : IPdfGenerationService
             return $"<td class='dtc'>{d.Day} {ThaiMonthAbbr(d.Month)} {d.Year + 543}</td><td class='amt'>{ml.Sum(l => l.IncomeAmount):N2}</td><td class='amt'>{ml.Sum(l => l.TaxAmount):N2}</td>";
         }
 
+        // รอบ 204 ทีม D (2f): แถวย่อยเงินปันผล 4(ข) — ตัวตั้งเดียว WhtCertFormText.DividendBlock (ตัวเดียวกับ QuestPDF + หน้าพิมพ์ wht.html) ·
+        // null (ไม่มีบรรทัดใดระบุแถวย่อย) ⇒ บล็อกเดิมทุกไบต์
+        var divBlock = WhtCertFormText.DividendBlock(lines);
+        string DivRow(WhtCertFormText.DividendBlockRow r)
+        {
+            var text = string.Concat(r.Lines.Select(l =>
+                $"<div style='padding-left:{(l.Indent == 0 ? 12 : l.Indent * 16) + (l.Continuation ? 12 : 0)}px'>{WebUtility.HtmlEncode(l.Text)}</div>"));
+            var cells = r.HasAmount && r.PaymentDate is DateTime pd
+                ? $"<td class='dtc'>{pd.Day} {ThaiMonthAbbr(pd.Month)} {pd.Year + 543}</td><td class='amt'>{r.IncomeAmount:N2}</td><td class='amt'>{r.TaxAmount:N2}</td>"
+                : "<td></td><td></td><td></td>";
+            return $"<tr class='div-sub'><td class='it-type'>{text}</td>{cells}</tr>";
+        }
+
         var issuedDay = cert.IssuedDate?.Day.ToString() ?? "&nbsp;&nbsp;";
         var issuedMonth = cert.IssuedDate.HasValue ? (cert.IssuedDate.Value.Month).ToString() : "&nbsp;&nbsp;";
         var issuedYear = cert.IssuedDate.HasValue ? (cert.IssuedDate.Value.Year + 543).ToString() : "&nbsp;&nbsp;&nbsp;&nbsp;";
@@ -2775,6 +2788,9 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine($"<tr><td class='it-type'>{WhtCertFormText.Row2}</td>{Mk("2")}</tr>");
             sb.AppendLine($"<tr><td class='it-type'>{WhtCertFormText.Row3}</td>{Mk("3")}</tr>");
             sb.AppendLine($"<tr><td class='it-type'>{WhtCertFormText.Row4a}</td>{Mk("4a")}</tr>");
+            if (divBlock != null)
+                foreach (var dr in divBlock) sb.AppendLine(DivRow(dr));
+            else
             sb.AppendLine($"<tr><td class='it-type'>&nbsp;&nbsp;&nbsp;{WhtCertFormText.Row4b}<div class='div-indent' style='margin-top:2px'>{WhtCertFormText.Div1a}<br>&nbsp;&nbsp;&nbsp;&nbsp;{WhtCertFormText.Div1b}<div class='div-indent'>{WhtCertFormText.Div11}<br>{WhtCertFormText.Div12}<br>{WhtCertFormText.Div13}<br>{WhtCertFormText.Div14} .................. {WhtCertFormText.Div14Tail}</div>{WhtCertFormText.Div2}<div class='div-indent'>{WhtCertFormText.Div21}<br>{WhtCertFormText.Div22a}<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{WhtCertFormText.Div22b}<br>{WhtCertFormText.Div23a}<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{WhtCertFormText.Div23b}<br>{WhtCertFormText.Div24}<br>{WhtCertFormText.Div25} ........................................................</div></div></td>{Mk("4b")}</tr>");
             sb.AppendLine($"<tr><td class='it-type it-s5'>{WhtCertFormText.Row5}</td>{Mk("5")}</tr>");
             sb.AppendLine($"<tr><td class='it-type'>{WhtCertFormText.Row6} {(row6Spec != null ? $"<u class='ul'>&nbsp;{WebUtility.HtmlEncode(row6Spec)}&nbsp;</u>" : "........................................................................................")}</td>{Mk("other")}</tr>");

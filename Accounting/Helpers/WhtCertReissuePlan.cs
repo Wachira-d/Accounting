@@ -179,22 +179,45 @@ public static class WhtPayeeChangePlan
     private static async Task<string?> PeriodFiledReasonAsync(AccountingDbContext db, Guid companyId,
         IReadOnlyCollection<TaxType> forms, int year, int month, CancellationToken ct)
     {
-        if (forms.Count == 0) return null;
+        var (reported, remitted) = await FiledFormsAsync(db, companyId, forms, year, month, ct);
+        if (reported.Count > 0)
+            return $"{WhtUnissuedCertGate.FormLabel(reported[0])} เดือน {month:00}/{year + 543} ยื่นแล้ว — ต้องยื่นแบบเพิ่มเติม (ให้นักบัญชีตัดสิน) ระบบไม่เปลี่ยนให้";
+        if (remitted.Count > 0)
+            return $"{WhtUnissuedCertGate.FormLabel(remitted[0])} เดือน {month:00}/{year + 543} บันทึกนำส่งแล้ว — ต้องยื่นแบบเพิ่มเติม (ให้นักบัญชีตัดสิน) ระบบไม่เปลี่ยนให้ "
+                + "(ถ้าบันทึกนำส่งผิด ให้ผู้มีสิทธิ์ยกเลิกรายการนำส่งก่อน)";
+        return null;
+    }
+
+    /// <summary>รอบ 204 ทีม D (#8c): (แบบ, ปี, เดือน) ที่ยื่น/นำส่งแล้วจริงในชุดที่ถาม — หลักฐานชุดเดียวกับ <c>PeriodFiledReasonAsync</c>
+    /// (ตัวอ่านเดียว <c>FiledFormsAsync</c>) · ใช้ติดป้าย "ต้องยื่น ภ.ง.ด.X เพิ่มเติม งวด MM/YYYY" เมื่อผู้มีสิทธิ์ยื่นภาษีรับทราบแล้วดำเนินการต่อ</summary>
+    public static async Task<IReadOnlyList<(TaxType Form, int Year, int Month)>> FiledPeriodsAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyCollection<(TaxType Form, int Year, int Month)> candidates, CancellationToken ct = default)
+    {
+        var result = new List<(TaxType Form, int Year, int Month)>();
+        foreach (var grp in candidates.Distinct().GroupBy(c => (c.Year, c.Month)))
+        {
+            var (reported, remitted) = await FiledFormsAsync(db, companyId, grp.Select(g => g.Form).ToList(), grp.Key.Year, grp.Key.Month, ct);
+            result.AddRange(reported.Concat(remitted).Distinct().Select(f => (f, grp.Key.Year, grp.Key.Month)));
+        }
+        return result.Distinct().ToList();
+    }
+
+    /// <summary>ตัวอ่านเดียวของ "แบบที่ยื่น/นำส่งแล้ว" ของเดือนหนึ่ง (รายงานภาษีสถานะประกาศ/ยื่น · บันทึกนำส่ง) — ทั้งข้อความเหตุผลและป้ายใช้ชุดนี้</summary>
+    private static async Task<(List<TaxType> Reported, List<TaxType> Remitted)> FiledFormsAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyCollection<TaxType> forms, int year, int month, CancellationToken ct)
+    {
+        if (forms.Count == 0) return (new List<TaxType>(), new List<TaxType>());
         var formList = forms.Distinct().ToList();
         var reported = await db.TaxReports.AsNoTracking()
             .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.Year == year && t.Month == month
                 && formList.Contains(t.TaxType) && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
-            .Select(t => (TaxType?)t.TaxType).FirstOrDefaultAsync(ct);
-        if (reported is TaxType rf)
-            return $"{WhtUnissuedCertGate.FormLabel(rf)} เดือน {month:00}/{year + 543} ยื่นแล้ว — ต้องยื่นแบบเพิ่มเติม (ให้นักบัญชีตัดสิน) ระบบไม่เปลี่ยนให้";
+            .Select(t => t.TaxType).ToListAsync(ct);
         var remitTypes = await db.StatutoryRemittances.AsNoTracking()
             .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.PeriodYear == year && r.PeriodMonth == month)
             .Select(r => r.RemittanceType).ToListAsync(ct);
-        foreach (var rt in remitTypes)
-            if (WhtCertVoidGuard.RemittanceForm(rt) is TaxType f && formList.Contains(f))
-                return $"{WhtUnissuedCertGate.FormLabel(f)} เดือน {month:00}/{year + 543} บันทึกนำส่งแล้ว — ต้องยื่นแบบเพิ่มเติม (ให้นักบัญชีตัดสิน) ระบบไม่เปลี่ยนให้ "
-                    + "(ถ้าบันทึกนำส่งผิด ให้ผู้มีสิทธิ์ยกเลิกรายการนำส่งก่อน)";
-        return null;
+        var remitted = remitTypes.Select(WhtCertVoidGuard.RemittanceForm)
+            .Where(f => f is TaxType ft && formList.Contains(ft)).Select(f => f!.Value).ToList();
+        return (reported.Distinct().ToList(), remitted.Distinct().ToList());
     }
 
     /// <summary>ผลต่างยอดหนี้ WHT ต่อผัง (ปัจจุบัน → ปลายทาง) — บวก = ต้องเพิ่มเครดิต (Cr) · ลบ = ต้องลด (Dr) · ผังที่ไม่ขยับไม่อยู่ในผล ·

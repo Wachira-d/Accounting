@@ -146,6 +146,28 @@
       </div>
     </div>
 
+    <!-- รอบ 204 ทีม D (#23 · คำสั่งเจ้าของ 2026-10-13 ไม่ล็อกตาย): ใบอยู่ในแบบที่ยื่นแล้ว — ผู้มีสิทธิ์ยื่นภาษีรับทราบ + เหตุผล แล้วยกเลิกต่อได้
+         (เซิร์ฟเวอร์ตรวจสิทธิ์ Tax.File · ติดป้ายงวดที่ต้องยื่นเพิ่มเติม · audit) -->
+    <div class="modal-overlay" id="filedAckModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3 class="modal-title">ใบนี้อยู่ในแบบที่ยื่น/นำส่งแล้ว</h3><button class="modal-close" onclick="Page.closeFiledAck(null)">&times;</button></div>
+        <div class="modal-body">
+          <div id="faInfo" style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px;color:#7F1D1D"></div>
+          <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:10px">
+            <input type="checkbox" id="faAck"> <span>รับทราบ — จะยื่นแบบเพิ่มเติมเอง (ต้องเป็นผู้มีสิทธิ์ยื่นภาษี)</span>
+          </label>
+          <div class="form-group">
+            <label class="form-label" for="faReason">เหตุผล <span class="req">*</span></label>
+            <input type="text" class="form-input" id="faReason" placeholder="เช่น ออกใบผิดผู้ถูกหัก — จะยื่น ภ.ง.ด.53 เพิ่มเติม">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Page.closeFiledAck(null)">ยกเลิก</button>
+          <button class="btn btn-danger" onclick="Page.submitFiledAck()">ดำเนินการต่อ</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Bulk Generate Modal -->
     <div class="modal-overlay" id="bulkModal">
       <div class="modal" style="max-width:500px">
@@ -357,11 +379,43 @@
         if (!(await Layout.confirmDanger({ title: 'ยกเลิกหนังสือรับรอง', message: 'หนังสือรับรองหัก ณ ที่จ่ายจะถูกยกเลิก ไม่สามารถออกเลขที่เดิมซ้ำได้', mode: 'math' }))) return;
         const api = Layout.api(); if (!api) return;
         try {
-          await api.voidWhtCert(id);
+          let res;
+          try {
+            res = await api.voidWhtCert(id);
+          } catch (e) {
+            // รอบ 204 ทีม D (#23): ใบในแบบที่ยื่นแล้ว (409 RD-50TWI-FILED) — ไม่ใช่ทางตัน: ผู้มีสิทธิ์ยื่นภาษีรับทราบพร้อมเหตุผลแล้วยกเลิกต่อได้
+            if (!(e && e.status === 409 && e.body?.data?.ruleCode === 'RD-50TWI-FILED')) throw e;
+            const reason = await this.askFiledAck(e.message);
+            if (reason == null) return;
+            res = await api.voidWhtCert(id, { acknowledgeFiled: true, reason });
+          }
           Layout.closeModal('detailModal');
-          Layout.toast('ยกเลิกสำเร็จ');
+          const msg = res?.message || 'ยกเลิกสำเร็จ';
+          Layout.toast(msg, msg === 'ยกเลิกสำเร็จ' ? 'success' : 'warning', 12000);
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // รอบ 204 ทีม D: กล่องรับทราบ "งวดที่ยื่นแล้ว" — คืนเหตุผล (null = ยกเลิก) · ข้อความจากเซิร์ฟเวอร์ผ่าน Layout.esc
+      askFiledAck(message) {
+        return new Promise(resolve => {
+          this._filedAckResolve = resolve;
+          const info = document.getElementById('faInfo'); if (info) info.innerHTML = Layout.esc(message || '');
+          const ack = document.getElementById('faAck'); if (ack) ack.checked = false;
+          const r = document.getElementById('faReason'); if (r) r.value = '';
+          Layout.openModal('filedAckModal');
+        });
+      },
+      submitFiledAck() {
+        const ack = document.getElementById('faAck')?.checked;
+        const reason = (document.getElementById('faReason')?.value || '').trim();
+        if (!ack) { Layout.toast('ติ๊ก "รับทราบ — จะยื่นแบบเพิ่มเติมเอง" ก่อน', 'error'); return; }
+        if (!reason) { Layout.toast('ระบุเหตุผล (บันทึกลงประวัติ)', 'error'); return; }
+        this.closeFiledAck(reason);
+      },
+      closeFiledAck(reason) {
+        Layout.closeModal('filedAckModal');
+        const done = this._filedAckResolve; this._filedAckResolve = null;
+        if (done) done(reason);
       },
       async downloadPdf(id, certNumber) {
         const api = Layout.api(); if (!api) return;
@@ -487,6 +541,14 @@
           ? `<td class="dtc">${Layout.date(r.date)}</td><td class="amt">${Layout.money(r.inc)}</td><td class="amt">${Layout.money(r.tax)}</td>`
           : '<td></td><td></td><td></td>';
         const blank = '<td></td><td></td><td></td>';
+        // รอบ 204 ทีม D (2f): แถวย่อยปันผล 4(ข) — แถว/ข้อความ/ยอดมาจากเซิร์ฟเวอร์ (`dividendBlock` ← WhtCertFormText.DividendBlock ตัวเดียวกับ PDF ทั้งสอง)
+        // หน้าแสดงอย่างเดียว · null = ไม่มีบรรทัดใดระบุแถวย่อย ⇒ พิมพ์บล็อกเดิม
+        const divRowsHtml = Array.isArray(d.dividendBlock) ? d.dividendBlock.map(r =>
+          `<tr><td class="it-type">${(r.lines || []).map(l =>
+            `<div style="padding-left:${(l.indent === 0 ? 12 : l.indent * 16) + (l.continuation ? 12 : 0)}px">${Layout.esc(l.text)}</div>`).join('')}</td>`
+          + (r.hasAmount
+            ? `<td class="dtc">${Layout.date(r.paymentDate)}</td><td class="amt">${Layout.money(r.incomeAmount)}</td><td class="amt">${Layout.money(r.taxAmount)}</td>`
+            : blank) + '</tr>').join('') : null;
 
         const thaiBahtText = (n) => {
           if (!n || n === 0) return 'ศูนย์บาทถ้วน';
@@ -656,7 +718,7 @@
                       <td class="it-type">4. (ก) ดอกเบี้ย ฯลฯ ตามมาตรา 40 (4) (ก)</td>
                       ${mk(r4a)}
                     </tr>
-                    <tr>
+                    ${divRowsHtml != null ? divRowsHtml : `<tr>
                       <td class="it-type">
                         &nbsp;&nbsp;&nbsp;(ข) เงินปันผล เงินส่วนแบ่งกำไร ฯลฯ ตามมาตรา 40 (4) (ข)
                         <div class="div-indent" style="margin-top:2px">
@@ -681,7 +743,7 @@
                         </div>
                       </td>
                       ${mk(r4b)}
-                    </tr>
+                    </tr>`}
                     <tr>
                       <td class="it-type it-s5">5. การจ่ายเงินได้ที่ต้องหักภาษี ณ ที่จ่าย ตามคำสั่งกรมสรรพากรที่ออกตามมาตรา 3 เตรส เช่น รางวัล ส่วนลดหรือประโยชน์ใด ๆ เนื่องจากการส่งเสริมการขาย รางวัลในการประกวด การแข่งขัน การชิงโชค ค่าแสดงของนักแสดงสาธารณะ ค่าจ้างทำของ ค่าโฆษณา ค่าเช่า ค่าขนส่ง ค่าบริการ ค่าเบี้ยประกันวินาศภัย ฯลฯ</td>
                       ${mk(r5)}
@@ -941,8 +1003,12 @@
         const row = document.createElement('tr');
         row.innerHTML = `
           <td><select class="form-select" data-f="code" style="font-size:12px">${
-            this._incomeTypes.map(x => `<option value="${Layout.esc(x.code)}" data-rate="${Layout.esc(x.defaultRate ?? '')}" data-foreign-rate="${Layout.esc(x.foreignRate ?? '')}">${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`).join('')
-          }</select></td>
+            this._incomeTypes.map(x => `<option value="${Layout.esc(x.code)}" data-rate="${Layout.esc(x.defaultRate ?? '')}" data-foreign-rate="${Layout.esc(x.foreignRate ?? '')}" data-div-subs="${Layout.esc((x.dividendSubRows || []).join(','))}">${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`).join('')
+          }</select>
+          <div data-f="divWrap" style="display:none;margin-top:4px;gap:4px;align-items:center;font-size:11px">
+            <select class="form-select" data-f="divSub" style="font-size:11px" title="แถวย่อยบนแบบ 50 ทวิ 4(ข) — ไม่บังคับ"></select>
+            <input type="number" class="form-input" data-f="divRate" step="0.01" placeholder="อัตรา %" style="font-size:11px;width:70px;display:none" title="(1.4) อัตราอื่น ๆ — อัตราภาษีเงินได้นิติบุคคลของกิจการที่จ่าย">
+          </div></td>
           <td><input type="date" class="form-input" data-f="date" value="${today}" style="font-size:12px"></td>
           <td><input type="number" class="form-input text-right" data-f="income" step="0.01" style="font-size:12px"></td>
           <td><input type="number" class="form-input text-right" data-f="rate" step="0.01" style="font-size:12px;width:60px"></td>
@@ -976,7 +1042,23 @@
           calc();
         };
         row._applyRate = () => { if (!rateInput.dataset.userTouched) applyRate(); };
-        codeSel.addEventListener('change', () => { delete rateInput.dataset.userTouched; applyRate(); });
+        // รอบ 204 ทีม D (2f): แถวย่อยปันผล — ตัวเลือกมาจากเซิร์ฟเวอร์ (`dividendSubRows` ของประเภทที่ตกแถว 4(ข)) · ประเภทอื่น = ซ่อน + ล้าง (ไม่ส่ง)
+        const divWrap = row.querySelector('[data-f="divWrap"]');
+        const divSub = row.querySelector('[data-f="divSub"]');
+        const divRate = row.querySelector('[data-f="divRate"]');
+        row._syncDivSub = () => {
+          const subs = (codeSel.selectedOptions[0]?.dataset.divSubs || '').split(',').filter(Boolean);
+          const keep = divSub.value;
+          divSub.innerHTML = '<option value="">4(ข) — ไม่ระบุแถวย่อย</option>'
+            + subs.map(c => `<option value="${Layout.esc(c)}">(${Layout.esc(c)})</option>`).join('');
+          divSub.value = subs.includes(keep) ? keep : '';
+          divWrap.style.display = subs.length ? 'flex' : 'none';
+          divRate.style.display = divSub.value === '1.4' ? '' : 'none';
+          if (divSub.value !== '1.4') divRate.value = '';
+        };
+        divSub.addEventListener('change', () => row._syncDivSub());
+        row._syncDivSub();
+        codeSel.addEventListener('change', () => { delete rateInput.dataset.userTouched; applyRate(); row._syncDivSub(); });
         applyRate();
 
         row.querySelector('[data-f="income"]').addEventListener('input', calc);
@@ -1081,8 +1163,10 @@
         const api = Layout.api(); if (!api) return;
         try {
           // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ออกใบของผู้ถูกหักที่กด (ใบรายเดียวไม่ส่ง)
-          await api.autoGenerateWht({ documentId: docId, autoIssue: false, payeeContactId: payeeContactId || null });
+          const res = await api.autoGenerateWht({ documentId: docId, autoIssue: false, payeeContactId: payeeContactId || null });
           Layout.toast('สร้างใบหัก ณ ที่จ่ายสำเร็จ');
+          // รอบ 204 ทีม D (#20): ผู้ถูกหักยังไม่มีเลขผู้เสียภาษี ⇒ เซิร์ฟเวอร์ออกเป็นร่าง + คำเตือน (เติมเลขก่อนออก/ยื่น)
+          (res?.data?.warnings || []).forEach(w => Layout.toast(w, 'warning', 15000));
           await this.openPending();
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -1139,8 +1223,9 @@
             ? pd.payees.filter(p => !p.hasCertificate).map(p => p.payeeContactId) : [null];
           for (const payeeId of payeeIds) {
             try {
-              await api.autoGenerateWht({ documentId: docId, autoIssue: false, payeeContactId: payeeId });
+              const res = await api.autoGenerateWht({ documentId: docId, autoIssue: false, payeeContactId: payeeId });
               ok++;
+              (res?.data?.warnings || []).forEach(w => Layout.toast(`${pd.documentNumber || docId}: ${w}`, 'warning', 15000));
             } catch (e) {
               failures.push(`${pd.documentNumber || docId}: ${(e && e.message) || 'ไม่ทราบสาเหตุ'}`);
             }
@@ -1201,6 +1286,10 @@
           const income = parseFloat(row.querySelector('[data-f="income"]').value) || 0;
           if (!date) { valid = false; }
           if (income <= 0) { valid = false; }
+          // รอบ 204 ทีม D (2f): แถวย่อยปันผล — ส่งเฉพาะเมื่อช่องแสดงอยู่และเลือกไว้ (เซิร์ฟเวอร์ตรวจด้วย WhtCertFormText.DividendSubRowProblem)
+          const divShown = row.querySelector('[data-f="divWrap"]')?.style.display !== 'none';
+          const divSubVal = divShown ? (row.querySelector('[data-f="divSub"]')?.value || '') : '';
+          const divRateVal = divSubVal === '1.4' ? parseFloat(row.querySelector('[data-f="divRate"]')?.value) : NaN;
           lines.push({
             incomeTypeCode: row.querySelector('[data-f="code"]').value,
             incomeDescription: '',
@@ -1208,6 +1297,8 @@
             incomeAmount: income,
             taxRate: parseFloat(row.querySelector('[data-f="rate"]').value) || 0,
             taxAmount: parseFloat(row.querySelector('[data-f="tax"]').value) || 0,
+            dividendSubRow: divSubVal || null,
+            dividendCreditRate: Number.isFinite(divRateVal) ? divRateVal : null,
           });
         });
         if (!valid) { Layout.toast('กรุณากรอกวันจ่ายและยอดเงินได้ให้ครบ', 'error'); return; }
@@ -1231,6 +1322,8 @@
           }
           // รอบ 200 ทีม WF (W-5 · ข้อ 40): คำเตือนจากเซิร์ฟเวอร์ (อัตรา ภ.ง.ด.54 ไม่ตรง ม.70 · ภ.พ.36 ไม่รวมภาษีออกแทน) — แสดงนาน ไม่บล็อก
           (res?.data?.warnings || []).forEach(w => Layout.toast(w, 'warning', 15000));
+          // รอบ 204 ทีม D (#21): ระบบแก้แบบ ภ.ง.ด. จากที่เลือก — ข้อความจากเซิร์ฟเวอร์ (WhtCertFormCorrection) แจ้งให้เห็น ไม่เปลี่ยนเงียบ
+          if (res?.data?.formCorrectionNotice) Layout.toast(res.data.formCorrectionNotice, 'warning', 15000);
           this._editCertId = null;
           Layout.closeModal('formModal');
           await this.load();
@@ -1263,6 +1356,12 @@
             this.addLine();
             const row = document.getElementById('linesBody').lastElementChild;
             row.querySelector('[data-f="code"]').value = l.incomeTypeCode || '1';
+            // รอบ 204 ทีม D (2f): hydrate แถวย่อยปันผล/อัตรา (1.4) ที่บันทึกไว้ — ห้ามหายเงียบตอนแก้แล้วบันทึก
+            row._syncDivSub?.();
+            const ds = row.querySelector('[data-f="divSub"]');
+            if (ds) { ds.value = l.dividendSubRow || ''; row._syncDivSub?.(); }
+            const dr = row.querySelector('[data-f="divRate"]');
+            if (dr && l.dividendCreditRate != null) dr.value = l.dividendCreditRate;
             row.querySelector('[data-f="date"]').value = l.paymentDate ? Layout.toDateInput(l.paymentDate) : Layout.toDateInput(new Date());
             row.querySelector('[data-f="income"]').value = l.incomeAmount || 0;
             row.querySelector('[data-f="rate"]').value = l.taxRate || 0;

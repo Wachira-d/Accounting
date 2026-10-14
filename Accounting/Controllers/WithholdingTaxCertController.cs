@@ -68,11 +68,18 @@ public class WithholdingTaxCertController : ControllerBase
         return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result, "ออกหนังสือรับรองสำเร็จ"));
     }
 
+    /// <summary>ยกเลิก 50 ทวิ · รอบ 204 ทีม D (#23): ใบในแบบที่ยื่นแล้ว ⇒ 409 (<c>RD-50TWI-FILED</c>) พร้อมทางไปต่อ — ผู้ถือ Tax.File ส่ง
+    /// <c>{ acknowledgeFiled: true, reason }</c> ⇒ ยกเลิกได้ + ป้ายงวดที่ต้องยื่นเพิ่มเติม · ไม่ส่ง body = พฤติกรรมเดิม</summary>
     [HttpPost("{certId:guid}/void")]
-    public async Task<ActionResult<ApiResponse<bool>>> Void(Guid companyId, Guid certId)
+    public async Task<ActionResult<ApiResponse<bool>>> Void(Guid companyId, Guid certId,
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] WhtCertVoidRequest? request = null)
     {
-        await _whtService.VoidAsync(companyId, certId);
-        return Ok(new ApiResponse<bool>(true, true, "ยกเลิกสำเร็จ"));
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var holdsTaxFile = request?.AcknowledgeFiled == true
+            && await HttpContext.RequestServices.GetRequiredService<IPermissionService>()
+                .HasPermissionAsync(companyId, uid, Accounting.Models.Constants.PermissionKeys.TaxFile);
+        var label = await _whtService.VoidAsync(companyId, certId, request, uid, holdsTaxFile);
+        return Ok(new ApiResponse<bool>(true, true, label == null ? "ยกเลิกสำเร็จ" : $"ยกเลิกสำเร็จ — {label}"));
     }
 
     // ฝ่ายค้านรอบ 193 W-C1: ลบ 50 ทวิถาวร (หลักฐานนำส่งภาษี) — งานของคน ไม่ใช่คีย์
@@ -109,10 +116,11 @@ public class WithholdingTaxCertController : ControllerBase
     public async Task<ActionResult<ApiResponse<WithholdingTaxCertResponse>>> AutoGenerate(
         Guid companyId, [FromBody] AutoGenerateWhtRequest request)
     {
-        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var uid = JwtHelper.GetUserIdFromClaims(User);
         // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ออกใบของผู้ถูกหักที่เลือก (ใบรายเดียวไม่ต้องส่ง)
-        var result = await _whtService.AutoGenerateFromDocumentAsync(companyId, request.DocumentId, request.AutoIssue, userId,
-            payeeContactId: request.PayeeContactId);
+        // รอบ 204 ทีม D (#20): ทางนี้คือคนกด "สร้างใบ" — ผู้ถูกหักไม่มีเลขผู้เสียภาษี ⇒ ร่าง + คำเตือน (Warnings) แทนการปฏิเสธ
+        var result = await _whtService.AutoGenerateFromDocumentAsync(companyId, request.DocumentId, request.AutoIssue, uid.ToString(),
+            payeeContactId: request.PayeeContactId, manualRequest: true, userId: uid);
         return StatusCode(201, new ApiResponse<WithholdingTaxCertResponse>(true, result, "สร้างหนังสือรับรองหัก ณ ที่จ่ายจากเอกสารสำเร็จ"));
     }
 
@@ -247,6 +255,9 @@ public class WithholdingTaxCertController : ControllerBase
             // (เดิม wht.html ถือ allow-list ของรหัสที่พิมพ์มือ ซึ่งตกรหัสที่ระบบ
             //  เองสร้าง `8ad`/`8tr` ⇒ ช่องประเภทว่างแต่ยอดรวมเต็ม — D-03/F-02)
             CertificateRow = Accounting.Helpers.ThaiWhtRateTable.CertificateRow(t.Code),
+            // รอบ 204 ทีม D (2f): แถวย่อยปันผลที่เลือกได้ (เฉพาะประเภทที่ตกแถว 4(ข)) — ตัวตั้งเดียว WhtCertFormText.DividendSubRowCodes
+            DividendSubRows = Accounting.Helpers.ThaiWhtRateTable.CertificateRow(t.Code) == "4b"
+                ? Accounting.Helpers.WhtCertFormText.DividendSubRowCodes : null,
             t.ApplicableForms,
             t.Note,
             // รอบ 203: ตัวบทของอัตรา — แสดงอย่างเดียว (ช่อง CertificateRowText เดิมถอดแล้ว 2026-10-13: ไม่มีหน้าใดอ่าน ·

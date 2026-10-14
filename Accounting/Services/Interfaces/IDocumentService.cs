@@ -207,9 +207,9 @@ public interface IDocumentService
     Task<DocumentResponse> ReclassifyLineAccountAsync(Guid companyId, Guid documentId,
         Guid lineId, Guid newAccountId, string? reason, string actor);
     /// <summary>รอบ 204 (ข้อ 145): เปลี่ยนผู้ถูกหักภาษีหลังอนุมัติ — ยกเลิก 50 ทวิ เดิม (เหตุผล · audit) + JE ย้ายผัง 2191x เมื่อแบบเปลี่ยน +
-    /// ออกใบใหม่ในนามผู้ถูกหักที่ถูก · เดือนที่ยื่น/นำส่งแล้ว ⇒ 409</summary>
+    /// ออกใบใหม่ในนามผู้ถูกหักที่ถูก · เดือนที่ยื่น/นำส่งแล้ว ⇒ 409 (รอบ 204 ทีม D: ผู้ถือ Tax.File รับทราบ ⇒ ไปต่อ + ป้ายยื่นเพิ่มเติม)</summary>
     Task<Accounting.Models.DTOs.Tax.ChangeWhtPayeeResponse> ChangeWhtPayeeAsync(Guid companyId, Guid documentId,
-        Accounting.Models.DTOs.Tax.ChangeWhtPayeeRequest request, string actor, Guid? userId);
+        Accounting.Models.DTOs.Tax.ChangeWhtPayeeRequest request, string actor, Guid? userId, bool holdsTaxFile = false);
     /// <summary>เปลี่ยน "แหล่งเงิน" (บัญชี Cr เงินสด/ธนาคาร) ของเอกสารจ่าย/รับ
     /// สดที่ approve แล้ว — post correcting-JE (Dr ผังเก่า / Cr ผังใหม่) ขนาด
     /// PaidAmount. แก้เคส OCR เลือกธนาคารผิดโดยไม่ต้อง void. แหล่งเงินใหม่ระบุ

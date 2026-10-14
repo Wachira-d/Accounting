@@ -112,6 +112,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             _logger.LogWarning(
                 "WHT cert: แก้ประเภทแบบจาก {From} → {To} ({Reason}) payee={Payee} taxId={TaxId} — ค่าที่ส่งมาไม่ตรงกับสถานะผู้ถูกหัก",
                 request.TaxFormType, resolvedForm, reason, payee.Name, payee.TaxId);
+        // รอบ 204 ทีม D (#21 · คำสั่งเจ้าของ 2026-10-13 "ระบบแนะนำ ไม่เปลี่ยนเงียบ"): แบบที่ถูกแก้ต้องบอกผู้ใช้ในคำตอบ (เดิมแค่ LogWarning = ไม่ดัง · F2 ข้อ 7)
+        var formNotice = corrected ? WhtCertFormCorrection.Notice(request.TaxFormType, resolvedForm, reason) : null;
         var taxFormType = (TaxType?)resolvedForm;
 
         // เลขที่ 50ทวิ = WHT-{ปีค.ศ.}{เดือน 2 หลัก}-{running 4 หลัก} รันต่อ "เดือนภาษี"
@@ -156,9 +158,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             CreatedBy = createdBy
         };
 
+        ValidateDividendSubRows(request);
         var order = 1;
         foreach (var line in request.Lines)
         {
+            var (divSub, divRate) = WhtCertFormText.NormalizeDividendSubRow(line.DividendSubRow, line.DividendCreditRate);
             cert.Lines.Add(new WithholdingTaxCertLine
             {
                 LineOrder = order++,
@@ -168,7 +172,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 IncomeAmount = line.IncomeAmount,
                 TaxRate = line.TaxRate,
                 TaxAmount = line.TaxAmount,
-                Condition = line.Condition
+                Condition = line.Condition,
+                DividendSubRow = divSub,           // รอบ 204 ทีม D (2f)
+                DividendCreditRate = divRate,
             });
         }
 
@@ -179,7 +185,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         await _db.SaveChangesAsync();
 
         var created = await GetByIdAsync(companyId, cert.Id);
-        return created with { Warnings = await IssueWarningsAsync(companyId, cert, payee) };
+        return created with { Warnings = await IssueWarningsAsync(companyId, cert, payee), FormCorrectionNotice = formNotice };
     }
 
     /// <summary>
@@ -259,6 +265,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             royaltyAsPnd2: (await WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(CertRequestTaxDate(request)));
         if (updCorrected)
             _logger.LogWarning("WHT cert update: แก้ประเภทแบบ → {To} ({Reason}) payee={Payee}", updForm, updReason, updPayee?.Name);
+        // รอบ 204 ทีม D (#21): แบบที่ถูกแก้ส่งกลับให้หน้าเว็บแจ้งผู้ใช้ (ตัวประกอบข้อความเดียวกับ CreateAsync)
+        var updFormNotice = updCorrected ? WhtCertFormCorrection.Notice(request.TaxFormType ?? cert.TaxFormType, updForm, updReason) : null;
         cert.TaxFormType = updForm;
         cert.TaxYear = request.TaxYear;
         cert.TaxMonth = request.TaxMonth;
@@ -267,11 +275,13 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         cert.UpdatedAt = DateTime.UtcNow;
 
         // แทนที่ lines ทั้งหมด
+        ValidateDividendSubRows(request);
         _db.WithholdingTaxCertLines.RemoveRange(cert.Lines);
         cert.Lines.Clear();
         var order = 1;
         foreach (var line in request.Lines)
         {
+            var (divSub, divRate) = WhtCertFormText.NormalizeDividendSubRow(line.DividendSubRow, line.DividendCreditRate);
             // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
             _db.AddNewChild(cert.Lines, new WithholdingTaxCertLine
             {
@@ -283,7 +293,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 IncomeAmount = line.IncomeAmount,
                 TaxRate = line.TaxRate,
                 TaxAmount = line.TaxAmount,
-                Condition = line.Condition
+                Condition = line.Condition,
+                DividendSubRow = divSub,           // รอบ 204 ทีม D (2f)
+                DividendCreditRate = divRate,
             });
         }
         cert.TotalIncomeAmount = cert.Lines.Sum(l => l.IncomeAmount);
@@ -291,7 +303,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
         await _db.SaveChangesAsync();
         var updated = await GetByIdAsync(companyId, cert.Id);
-        return updated with { Warnings = await IssueWarningsAsync(companyId, cert, updPayee) };
+        return updated with { Warnings = await IssueWarningsAsync(companyId, cert, updPayee), FormCorrectionNotice = updFormNotice };
     }
 
     public async Task<WithholdingTaxCertResponse> GetByIdAsync(Guid companyId, Guid certId)
@@ -361,18 +373,56 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         return await GetByIdAsync(companyId, cert.Id);
     }
 
-    public async Task VoidAsync(Guid companyId, Guid certId)
+    /// <summary>ยกเลิก 50 ทวิ — ใบที่อยู่ในแบบที่ยื่น/นำส่งแล้ว (<see cref="WhtCertVoidGuard"/>) ⇒ 409 พร้อมทางไปต่อ ·
+    /// รอบ 204 ทีม D (#23 · คำสั่งเจ้าของ 2026-10-13 ไม่ล็อกตาย): ผู้มีสิทธิ์ยื่นภาษี (Tax.File) รับทราบพร้อมเหตุผล (<paramref name="ack"/>) ⇒
+    /// ยกเลิกได้ + ป้าย "ต้องยื่น ภ.ง.ด.X เพิ่มเติม งวด MM/YYYY" บนเอกสารต้นทาง (ถ้ามี) + audit <see cref="WhtFiledPeriodAck.VoidAckRuleCode"/> ·
+    /// คืนข้อความป้าย (null = ยกเลิกปกติ ไม่แตะงวดที่ยื่นแล้ว) · ทางไม่มีคน (ยกเลิกเอกสาร · ยกเลิกการลงบัญชีรอบโอน) ไม่ส่ง ack ⇒ 409 เหมือนเดิม</summary>
+    public async Task<string?> VoidAsync(Guid companyId, Guid certId, WhtCertVoidRequest? ack, Guid? userId = null, bool holdsTaxFile = false)
     {
         var cert = await _db.WithholdingTaxCerts.FirstOrDefaultAsync(w => w.Id == certId && w.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบหนังสือรับรองหัก ณ ที่จ่าย");
 
         // รอบ 198 ฝ่ายค้าน C-2: ใบที่อยู่ในแบบ ภ.ง.ด. ที่ยื่นแล้ว (ผู้ถูกหักถือฉบับจริง · ยอดนำส่งแล้ว) ห้ามหายเงียบ — ตัวตัดสินตัวเดียว
-        if (await WhtCertVoidGuard.CheckAsync(_db, companyId, new[] { certId }) is string filed)
-            throw new BusinessRuleException(filed, "RD-50TWI-FILED", 409);
+        // (คำนวณก่อนเสมอ แล้วแยกทางตามการรับทราบ — ด่านไม่ถูกข้าม)
+        var filed = await WhtCertVoidGuard.CheckAsync(_db, companyId, new[] { certId });
+        var acknowledged = ack?.AcknowledgeFiled == true;
+        if (filed != null && !acknowledged)
+            throw new BusinessRuleException(filed + WhtFiledPeriodAck.WayForward, WhtFiledPeriodAck.VoidNeedsAckRuleCode, 409);
+        if (filed != null && WhtFiledPeriodAck.AckProblem(acknowledged, ack?.Reason, holdsTaxFile) is string ackProblem)
+            throw new BusinessRuleException(ackProblem, WhtFiledPeriodAck.VoidNeedsAckRuleCode, holdsTaxFile ? 400 : 403);
 
+        var oldStatus = cert.Status;
         cert.Status = WithholdingTaxCertStatus.Voided;
+        string? label = null;
+        if (filed != null)
+        {
+            label = WhtFiledPeriodAck.SupplementaryFilingLabel(cert.TaxFormType, cert.TaxYear, cert.TaxMonth);
+            var reason = ack!.Reason!.Trim();
+            cert.UpdatedAt = DateTime.UtcNow;
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = userId, Action = AuditAction.Update,
+                EntityType = "WithholdingTaxCert", EntityId = cert.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new { cert.CertificateNumber, Status = oldStatus.ToString(), cert.TotalTaxAmount }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Status = "Voided", Reason = reason, FiledGuard = filed, SupplementaryFiling = label,
+                    RuleCode = WhtFiledPeriodAck.VoidAckRuleCode, LegalReference = WhtFiledPeriodAck.LegalReference,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            // ป้ายบนเอกสารต้นทาง ⇒ ลิสต์ "เอกสารรอออกใบ" โชว์ "ต้องตรวจ" จนกว่าผู้ใช้จะรับทราบว่ายื่นเพิ่มเติมแล้ว (ล้มดังที่ตัวข้อมูล)
+            if (cert.DocumentId is Guid srcDocId
+                && await _db.Documents.FirstOrDefaultAsync(d => d.Id == srcDocId && d.CompanyId == companyId) is { } srcDoc)
+                await FlagReviewAsync(companyId, srcDoc,
+                    $"ยกเลิก 50 ทวิ {cert.CertificateNumber} ที่อยู่ในแบบที่ยื่นแล้ว (ผู้มีสิทธิ์ยื่นภาษีรับทราบ: {reason}) — {label}", userId, save: false);
+        }
         await _db.SaveChangesAsync();
+        return label;
     }
+
+    /// <summary>ทางเดิม (ไม่มีคนรับทราบ — ยกเลิกเอกสาร/ยกเลิกการลงบัญชีรอบโอน) — ยื่นแล้ว ⇒ 409 เหมือนเดิม</summary>
+    public Task VoidAsync(Guid companyId, Guid certId) => VoidAsync(companyId, certId, null);
 
     public async Task DeleteAsync(Guid companyId, Guid certId)
     {
@@ -441,7 +491,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
 
     public async Task<WithholdingTaxCertResponse> AutoGenerateFromDocumentAsync(
         Guid companyId, Guid documentId, bool autoIssue, string createdBy, DateTime? paymentDate = null,
-        Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null, Guid? payeeContactId = null)
+        Guid? sourcePaymentId = null, decimal? paymentWhtAmount = null, Guid? payeeContactId = null,
+        bool manualRequest = false, Guid? userId = null)
     {
         var doc = await _db.Documents
             .Include(d => d.Lines)   // ไม่ Include Contact — hydrate แยก (กัน INNER JOIN ทำ doc = null → 50 ทวิ ออกไม่ได้)
@@ -489,7 +540,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var payeeForeign = Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, payee?.CountryCode);
         // 50 ทวิ/แบบ ภ.ง.ด. ต้องมีเลขประจำตัวผู้เสียภาษีของผู้ถูกหัก (ผู้รับต่างประเทศ ภ.ง.ด.54 ยกเว้น) — ออกใบที่ไม่มีเลข = ยื่นไม่ผ่าน
         // ⇒ ล้มดังพร้อมทางไปต่อ (ทางอัตโนมัติ: ป้ายบนเอกสาร + ลิสต์รอออกใบ · ทางกดเอง: ข้อความ 400)
-        if (WhtCertIssuePlan.PayeeTaxIdProblem(payee?.Name, payee?.TaxId, payeeForeign) is string payeeProblem)
+        // รอบ 204 ทีม D (#20 · คำสั่งเจ้าของ 2026-10-13 ไม่ล็อกตาย): ผู้ใช้กด "สร้างใบ" เอง (ไม่ออกทันที) ⇒ ออกเป็นฉบับร่าง (ไม่เข้าแบบยื่น) + คำเตือน + audit ·
+        // ทางอัตโนมัติ/ขอออกทันที ⇒ ปฏิเสธเหมือนเดิม (ป้ายบนเอกสาร + ลิสต์รอออกใบ) — ตัวตัดสินเดียว WhtCertPayeeTaxIdDraft.DraftInstead
+        var payeeProblem = WhtCertIssuePlan.PayeeTaxIdProblem(payee?.Name, payee?.TaxId, payeeForeign);
+        var draftForMissingTaxId = WhtCertPayeeTaxIdDraft.DraftInstead(payeeProblem, manualRequest, autoIssue);
+        if (payeeProblem != null && !draftForMissingTaxId)
             throw new BusinessRuleException(payeeProblem, WhtCertIssuePlan.PayeeRuleCode);
 
         // Idempotency — ภ.ง.ด.3/53 เป็น cash basis: จ่ายเป็นงวดต้องออกใบ "งวดละใบ"
@@ -674,6 +729,25 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         doc.InternalNotes = WhtCertAutoFailedNote.Clear(doc.InternalNotes);
         await _db.SaveChangesAsync();
 
+        if (draftForMissingTaxId)
+        {
+            // audit หลังใบลงฐานแล้ว (ต้องมี Id) — ผู้ใช้เลือกสร้างร่างทั้งที่ผู้ถูกหักยังไม่มีเลขผู้เสียภาษี
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = userId, Action = AuditAction.Create,
+                EntityType = "WithholdingTaxCert", EntityId = cert.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    cert.CertificateNumber, Status = cert.Status.ToString(), PayeeContactId = payeeId,
+                    Warning = WhtCertPayeeTaxIdDraft.Warning, PayeeProblem = payeeProblem, DocumentNumber = doc.DocumentNumber,
+                    RuleCode = WhtCertIssuePlan.PayeeRuleCode,
+                    LegalReference = "ท.ป.4/2528 (50 ทวิ ต้องมีเลขประจำตัวผู้เสียภาษีของผู้ถูกหัก)",
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+        }
+
         // When the cert is issued straight away (integration sync / one-click),
         // save its PDF onto the source document automatically.
         if (autoIssue)
@@ -686,7 +760,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             catch (Exception ex) { _logger.LogWarning(ex, "WHT cert email enqueue failed Cert={Id}", cert.Id); }
         }
 
-        return await GetByIdAsync(companyId, cert.Id);
+        var generated = await GetByIdAsync(companyId, cert.Id);
+        return draftForMissingTaxId
+            ? generated with { Warnings = new[] { WhtCertPayeeTaxIdDraft.WarningFor(payeeProblem!) } }
+            : generated;
     }
 
     /// <summary>
@@ -1285,6 +1362,15 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     /// วิเคราะห์แบบ ภ.ง.ด. อัตโนมัติจาก ContactType ของผู้ติดต่อ
     /// นิติบุคคล → ภ.ง.ด.53, บุคคลธรรมดา → ภ.ง.ด.3
     /// </summary>
+    /// <summary>รอบ 204 ทีม D (2f): แถวย่อยปันผลที่ส่งมาต้องใช้ได้จริง (ตัวตัดสินเดียว <see cref="WhtCertFormText.DividendSubRowProblem"/>) — ผิด ⇒ 400 พร้อมทางแก้
+    /// (ห้ามรับแล้วทิ้งเงียบ) · ไม่ส่ง ⇒ ผ่าน</summary>
+    private static void ValidateDividendSubRows(CreateWithholdingTaxCertRequest request)
+    {
+        foreach (var l in request.Lines ?? new List<WithholdingTaxCertLineRequest>())
+            if (WhtCertFormText.DividendSubRowProblem(l.IncomeTypeCode, l.DividendSubRow, l.DividendCreditRate) is string problem)
+                throw new BusinessRuleException(problem, "RD-50BIS-DIVIDEND-SUBROW");
+    }
+
     /// <summary>รหัสเงินได้ของบรรทัดคำขอที่มีภาษี (ใบคีย์มือ/แก้ใบ) — เกณฑ์เดียวกับ <see cref="Accounting.Helpers.WhtIncomeCodes"/> (ภาษี &gt; 0)</summary>
     private static IReadOnlyList<string?> CertRequestIncomeCodes(CreateWithholdingTaxCertRequest request)
         => (request.Lines ?? new List<WithholdingTaxCertLineRequest>())
@@ -1413,7 +1499,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             l.Id, l.IncomeTypeCode, GetIncomeTypeName(l.IncomeTypeCode),
             l.IncomeDescription, l.PaymentDate, l.IncomeAmount, l.TaxRate, l.TaxAmount, l.Condition,
             Accounting.Helpers.WhtCertFormText.LineSpec(l),
-            CertificateRow: Accounting.Helpers.ThaiWhtRateTable.CertificateRow(l.IncomeTypeCode));
+            CertificateRow: Accounting.Helpers.ThaiWhtRateTable.CertificateRow(l.IncomeTypeCode),
+            DividendSubRow: l.DividendSubRow, DividendCreditRate: l.DividendCreditRate);
     }
 
     private static WithholdingTaxCertResponse MapToResponse(WithholdingTaxCert w, Company company) => new(
@@ -1436,5 +1523,6 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         IsEditable: w.Status == WithholdingTaxCertStatus.Draft
                     && !w.DocumentId.HasValue && !w.SourcePayrollRunId.HasValue,
         FormBoxIndex: Accounting.Helpers.WhtCertFormText.FormBoxIndex(w.TaxFormType),
-        PayerConditionIndex: Accounting.Helpers.WhtCertFormText.PayerConditionIndex(w.CertificateType));
+        PayerConditionIndex: Accounting.Helpers.WhtCertFormText.PayerConditionIndex(w.CertificateType),
+        DividendBlock: Accounting.Helpers.WhtCertFormText.DividendBlock(w.Lines));
 }

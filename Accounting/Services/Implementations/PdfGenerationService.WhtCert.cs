@@ -350,6 +350,24 @@ public partial class PdfGenerationService
             Row(WhtCertFormText.Row2, Match("2"));
             Row(WhtCertFormText.Row3, Match("3"));
             Row(WhtCertFormText.Row4a, Match("4a"));
+            // รอบ 204 ทีม D (2f): ผู้ใช้ระบุแถวย่อยปันผล ⇒ ยอดพิมพ์บนแถวย่อยนั้น (ตัวตั้งเดียว WhtCertFormText.DividendBlock — ตัวเดียวกับ HTML/หน้าพิมพ์) ·
+            // ไม่ระบุ (null) ⇒ บล็อกเดิมทุกประการ
+            var divBlock = WhtCertFormText.DividendBlock(lines);
+            if (divBlock != null)
+            {
+                foreach (var dr in divBlock)
+                {
+                    tbl.Cell().Border(1).BorderColor(Colors.Black).Padding(3).Column(cell =>
+                    {
+                        foreach (var dl in dr.Lines)
+                            cell.Item().PaddingLeft(dl.Indent == 0 ? 0 : (dl.Indent == 1 ? 10 : 22) + (dl.Continuation ? 8 : 0))
+                                .Text((dl.Indent == 0 ? "    " : "") + dl.Text).FontSize(dl.Indent == 0 ? 8 : 7.5f);
+                    });
+                    NumCells(dr.HasAmount ? (dr.IncomeAmount, dr.TaxAmount, dr.PaymentDate) : (0m, 0m, (DateTime?)null));
+                }
+            }
+            else
+            {
             // Row 4(ข) — the dividend block with the full nested sub-list, to
             // match the official RD form verbatim.
             tbl.Cell().Border(1).BorderColor(Colors.Black).Padding(3).Column(cell =>
@@ -372,6 +390,7 @@ public partial class PdfGenerationService
                 cell.Item().PaddingLeft(22).Text(WhtCertFormText.Div25 + " ............................................").FontSize(7.5f);
             });
             NumCells(Match("4b"));
+            }
             Row(WhtCertFormText.Row5, Match("5"), 8f);
             // แถว 6 อื่น ๆ (ระบุ) — พิมพ์รายการของบรรทัดที่ตกแถวนี้ (แถว 5 ไม่มีช่องระบุบนแบบ)
             Row(WhtCertFormText.Row6 + " " + (row6Spec ?? "........................................................"),

@@ -1311,9 +1311,16 @@
             <label class="form-label">เหตุผล <span class="req">*</span></label>
             <input type="text" class="form-input" id="wpcReason" placeholder="เช่น ผู้มีเงินได้คือบริษัทประกัน ไม่ใช่โบรกเกอร์">
           </div>
+          <!-- รอบ 204 ทีม D (#8c): งวดที่ยื่น/นำส่งแล้ว — เซิร์ฟเวอร์ตอบ 409 RD-50BIS-PAYEE-CHANGE-FILED ⇒ โชว์ข้อความ + ช่องรับทราบ (ผู้ถือ Tax.File) -->
+          <div id="wpcFiledBox" style="display:none;font-size:12px;color:#7f1d1d;background:#fef2f2;border:1px solid #fca5a5;padding:8px;border-radius:6px;margin-bottom:8px">
+            <div id="wpcFiledMsg" style="margin-bottom:6px"></div>
+            <label style="display:flex;gap:8px;align-items:flex-start">
+              <input type="checkbox" id="wpcFiledAck"> <span>รับทราบ — จะยื่นแบบเพิ่มเติมเอง (ต้องเป็นผู้มีสิทธิ์ยื่นภาษี · ใช้เหตุผลข้างบน)</span>
+            </label>
+          </div>
           <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
             ⚠️ ระบบจะ<b>ยกเลิก 50 ทวิ เดิม</b>ของผู้ถูกหักที่เปลี่ยน · ลง <b>JE ย้ายผังหนี้ภาษีหัก ณ ที่จ่าย</b> เมื่อแบบ ภ.ง.ด. เปลี่ยน (3/53/54) ·
-            แล้วออกใบใหม่ในนามผู้ถูกหักที่ถูก (เดือนภาษีเดิม) — ถ้าแบบเดือนนั้นยื่น/นำส่งแล้ว ระบบไม่เปลี่ยนให้ (ต้องยื่นเพิ่มเติม)
+            แล้วออกใบใหม่ในนามผู้ถูกหักที่ถูก (เดือนภาษีเดิม) — ถ้าแบบเดือนนั้นยื่น/นำส่งแล้ว ต้องให้ผู้มีสิทธิ์ยื่นภาษีรับทราบก่อน (ระบบติดป้ายงวดที่ต้องยื่นเพิ่มเติม)
           </div>
         </div>
         <div class="modal-footer">
@@ -2461,7 +2468,38 @@
           catch (e) { Layout.toast('โหลดผู้ถูกหักของเอกสารไม่สำเร็จ: ' + (e.message || '') + ' — ค่าที่บันทึกไว้ยังอยู่', 'warning', 7000); }
         }
         document.getElementById('wpcReason').value = '';
+        const filedBox = document.getElementById('wpcFiledBox'); if (filedBox) filedBox.style.display = 'none';
+        const filedAck = document.getElementById('wpcFiledAck'); if (filedAck) filedAck.checked = false;
         Layout.openModal('whtPayeeChangeModal');
+      },
+      /**
+       * รอบ 204 ทีม D (#7 · คำสั่งเจ้าของ 2026-10-13 ผู้ใช้ตัดสิน): หัวเอกสารขัดกับผู้ถูกหักรายบรรทัด (400 RD-50BIS-PAYEE-HEADER-CONFLICT +
+       * details {headerPayeeId, linePayeeId}) ⇒ ถามสองทาง: 'header' = ใช้ผู้ถูกหักหัวเอกสารทั้งใบ (ล้างรายบรรทัด) · 'line' = ใช้ผู้ถูกหักรายบรรทัด ·
+       * null = ยกเลิก · ชื่อมาจากช่องบนฟอร์ม (ไม่มี = ป้ายกลาง) · ข้อความผ่าน Layout.esc
+       */
+      _askWhtPayeeHeaderChoice(message, headerName, lineName) {
+        return new Promise(resolve => {
+          let wrap = document.getElementById('whtPayeeHeaderChoiceModal');
+          if (!wrap) {
+            wrap = document.createElement('div');
+            wrap.id = 'whtPayeeHeaderChoiceModal';
+            wrap.className = 'modal-overlay';
+            wrap.innerHTML = '<div class="modal" style="max-width:520px"><div class="modal-header"><h3 class="modal-title">ผู้ถูกหักหัวเอกสารไม่ตรงกับรายบรรทัด</h3>'
+              + '<button class="modal-close" data-choice="">&times;</button></div>'
+              + '<div class="modal-body"><div id="wphcMsg" style="font-size:12px;line-height:1.5;margin-bottom:10px"></div></div>'
+              + '<div class="modal-footer" style="flex-wrap:wrap;gap:6px"><button class="btn btn-secondary" data-choice="">ยกเลิก</button>'
+              + '<button class="btn btn-primary" id="wphcHeader" data-choice="header"></button>'
+              + '<button class="btn btn-primary" id="wphcLine" data-choice="line"></button></div></div>';
+            document.body.appendChild(wrap);
+          }
+          document.getElementById('wphcMsg').innerHTML = Layout.esc(message || '');
+          document.getElementById('wphcHeader').textContent = 'ใช้ ' + (headerName || 'ผู้ถูกหักหัวเอกสาร') + ' ทั้งใบ (ล้างรายบรรทัด)';
+          document.getElementById('wphcLine').textContent = 'ใช้ ' + (lineName || 'ผู้ถูกหักรายบรรทัด');
+          wrap.querySelectorAll('[data-choice]').forEach(b => {
+            b.onclick = () => { Layout.closeModal('whtPayeeHeaderChoiceModal'); resolve(b.dataset.choice || null); };
+          });
+          Layout.openModal('whtPayeeHeaderChoiceModal');
+        });
       },
       async submitWhtPayeeChange() {
         const d = this._wpcDoc; if (!d) return;
@@ -2479,12 +2517,40 @@
           return { lineId: row.dataset.lineId, whtPayeeContactId: (lid && lid.value) || '00000000-0000-0000-0000-000000000000' };
         });
         const reason = (document.getElementById('wpcReason')?.value || '').trim();
+        const EMPTY = '00000000-0000-0000-0000-000000000000';
+        const body = {
+          whtPayeeContactId: payeeId || EMPTY,
+          lines: lines.length ? lines : null,
+          reason,
+          // รอบ 204 ทีม D (#8c): ติ๊กรับทราบงวดที่ยื่นแล้ว (เซิร์ฟเวอร์ตรวจสิทธิ์ Tax.File + เหตุผล)
+          acknowledgeFiledPeriod: !!document.getElementById('wpcFiledAck')?.checked
+            && document.getElementById('wpcFiledBox')?.style.display !== 'none',
+        };
         try {
-          const res = await api.changeWhtPayee(d.id, {
-            whtPayeeContactId: payeeId || '00000000-0000-0000-0000-000000000000',
-            lines: lines.length ? lines : null,
-            reason,
-          });
+          let res;
+          try {
+            res = await api.changeWhtPayee(d.id, body);
+          } catch (e) {
+            const rule = e && e.body?.data?.ruleCode;
+            if (e && e.status === 409 && rule === 'RD-50BIS-PAYEE-CHANGE-FILED') {
+              // ไม่ใช่ทางตัน: โชว์เหตุผลจากเซิร์ฟเวอร์ + ช่องรับทราบ แล้วให้ผู้ใช้กดอีกครั้ง
+              const fb = document.getElementById('wpcFiledBox'); if (fb) fb.style.display = '';
+              const fm = document.getElementById('wpcFiledMsg'); if (fm) fm.innerHTML = Layout.esc(e.message || '');
+              Layout.toast('งวดนี้ยื่น/นำส่งแล้ว — ถ้าจะดำเนินการต่อ ติ๊ก "รับทราบ" แล้วกดเปลี่ยนอีกครั้ง', 'warning', 9000);
+              return;
+            }
+            if (!(e && e.status === 400 && rule === 'RD-50BIS-PAYEE-HEADER-CONFLICT')) throw e;
+            const det = e.body?.data?.details || {};
+            const lineIdx = [...document.querySelectorAll('#wpcLines .wpc-line')]
+              .findIndex((_, i) => document.getElementById('wpcLId' + i)?.value === det.linePayeeId);
+            const lineName = lineIdx >= 0 ? (document.getElementById('wpcL' + lineIdx)?.value || '') : '';
+            const choice = await this._askWhtPayeeHeaderChoice(e.message, inp?.value || '', lineName);
+            if (!choice) return;
+            res = await api.changeWhtPayee(d.id, choice === 'header'
+              ? { ...body, whtPayeeContactId: det.headerPayeeId || body.whtPayeeContactId,
+                  lines: body.lines ? body.lines.map(l => ({ ...l, whtPayeeContactId: EMPTY })) : null }
+              : { ...body, whtPayeeContactId: EMPTY });
+          }
           const r = (res && res.data) || {};
           const parts = [];
           if ((r.voidedCertificates || []).length) parts.push('ยกเลิก 50 ทวิ ' + r.voidedCertificates.join(', '));
@@ -10202,7 +10268,33 @@
           Layout.closeModal('formModal');
           this.editingId = null;
           await this.load();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        } catch (e) {
+          // รอบ 204 ทีม D (#7): หัวเอกสารขัดกับผู้ถูกหักรายบรรทัด ⇒ ให้ผู้ใช้เลือกทาง แล้วบันทึกใหม่ (ไม่ใช่ทางตัน)
+          if (e && e.status === 400 && e.body?.data?.ruleCode === 'RD-50BIS-PAYEE-HEADER-CONFLICT'
+              && await this._applyWhtPayeeHeaderChoice(e)) return this.save(approveAfter);
+          Layout.toast(e.message, 'error');
+        }
+      },
+      /** ทีม D (#7): ใช้ทางที่ผู้ใช้เลือกกับฟอร์ม — 'header' ล้างผู้ถูกหักรายบรรทัดทุกแถว · 'line' ล้างผู้ถูกหักหัวเอกสาร (เซิร์ฟเวอร์ยกรายบรรทัดขึ้นหัวเอง) ·
+       *  คืน true = ให้บันทึกใหม่ */
+      async _applyWhtPayeeHeaderChoice(e) {
+        const det = e.body?.data?.details || {};
+        const rows = [...document.querySelectorAll('.line-card')];
+        const lineRow = rows.find(r => r.querySelector('[data-f="whtPayeeId"]')?.value === det.linePayeeId);
+        const lineName = lineRow?.querySelector('[data-f="whtPayeeName"]')?.value || '';
+        const choice = await this._askWhtPayeeHeaderChoice(e.message, document.getElementById('fWhtPayee')?.value || '', lineName);
+        if (!choice) return false;
+        if (choice === 'header') {
+          rows.forEach(r => {
+            const hid = r.querySelector('[data-f="whtPayeeId"]');
+            const inp = r.querySelector('[data-f="whtPayeeName"]');
+            if (hid && hid.value) { hid.value = ''; hid.dataset.userTouched = '1'; if (inp) inp.value = ''; }
+          });
+        } else {
+          const differs = document.getElementById('fWhtPayeeDiffers');
+          if (differs) { differs.checked = false; this.onWhtPayeeDiffersToggle(); }
+        }
+        return true;
       },
 
       /**
