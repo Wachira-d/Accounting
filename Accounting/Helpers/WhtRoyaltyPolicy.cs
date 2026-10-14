@@ -104,7 +104,7 @@ public static class WhtRoyaltyPolicy
     private static string? FormatHistory(IEnumerable<WhtRoyaltyWindow> windows)
     {
         var merged = new List<WhtRoyaltyWindow>();
-        foreach (var w in windows.Where(w => w.Until > w.From).OrderBy(w => w.From))
+        foreach (var w in windows.Where(x => x.Until > x.From).OrderBy(x => x.From))
         {
             if (merged.Count > 0 && w.From <= merged[^1].Until)
                 merged[^1] = merged[^1] with { Until = w.Until > merged[^1].Until ? w.Until : merged[^1].Until };
@@ -168,7 +168,7 @@ public static class WhtRoyaltyPolicy
     /// <summary>วันแรก (ปฏิทินไทย) ที่ผลของค่าตั้งเปลี่ยน · null = ทุกวันได้ผลเท่าเดิม (บันทึกเรื่องอื่น/ยืนยันแบบเดิม)</summary>
     public static DateTime? FirstChangedDate(WhtRoyaltySetting before, WhtRoyaltySetting after)
     {
-        foreach (var b in Boundaries(before).Concat(Boundaries(after)).Distinct().OrderBy(b => b))
+        foreach (var b in Boundaries(before).Concat(Boundaries(after)).Distinct().OrderBy(x => x))
             if (AppliesTo(before, b) != AppliesTo(after, b)) return b;
         return null;
     }
