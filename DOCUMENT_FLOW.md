@@ -97,7 +97,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (`OcrScanResult.CreatedDocumentId` · ไม่ยกเลิก) ที่บรรทัด `DiscountPercent > 0` + `DiscountAmount = 0` และการบันทึกซ้ำ (`DocumentService.ResaveLineNets` = AllocateBillDeductions →
   ComputeLineAmounts → ReconcileTaxRounding ตัวจริง) ได้ยอดต่างจากที่เก็บ > 0.01 · ปุ่ม "แก้" รายใบ → `POST data-integrity/ocr-line-discount/{documentId}/fix` →
   `DocumentService.FixOcrLineDiscountAsync` (partial `DocumentService.OcrLineFix.cs`): % = 0 + ส่วนลดบาท/ราคาใหม่ (`OcrLineDiscountRepair`) · **จำลองก่อนเขียน** — เงินบรรทัดใดจะขยับ ⇒
-  ปฏิเสธ (ไม่บันทึก) · ไม่แตะยอด/VAT/ยอดรวม/JE/เลขที่ ⇒ ทุกสถานะที่ไม่ใช่ยกเลิก · audit `OCR-LINE-DISC-FIX` ก่อน/หลัง · สิทธิ์ ReportsFinancial + สร้าง (ร่าง)/อนุมัติ (ออกแล้ว) ของทิศเอกสาร ·
+  ปฏิเสธ (ไม่บันทึก) · ไม่แตะยอด/VAT/ยอดรวม/JE/เลขที่ ⇒ ทุกสถานะที่ไม่ใช่ยกเลิก **ยกเว้นใบขายที่ออกแล้ว** (§86/4 — ฝ่ายค้านรอบ 204 L2 · §5.4) · audit `OCR-LINE-DISC-FIX` ก่อน/หลัง · สิทธิ์ ReportsFinancial + สร้าง (ร่าง)/อนุมัติ (ออกแล้ว) ของทิศเอกสาร ·
   ไม่มี migration อัตโนมัติ · ตัวตรวจกับตัวแก้ใช้ `FindOcrLineDiscountIssues` ตัวเดียว · Last verified `commit d8c6bc96`
 - **ช่องติ๊ก "กรอกราคาไม่รวม VAT" ที่ไม่มีอะไรต้องแปลง (ทีม E 2026-10-13)**: แถวราคาก่อน VAT อยู่แล้ว / คำขอไม่มีราคาใหม่ ⇒ ไม่แปลง + หมายเหตุ (ไม่ปฏิเสธทั้งคำขอ) ·
   ราคาที่บันทึกไว้ไม่ถูกแปลงซ้ำ · ไม่รู้อัตรา VAT ยังปฏิเสธ (`OcrEtaxLineNormalizer.ApplyReviewPriceEntry`) · Last verified `commit 7e4cecb3`
@@ -3658,7 +3658,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   - **รอบ 204 ทีม B (คำสั่งเจ้าของ 2026-10-13 "ระบบไม่ล็อกตาย")** — Last verified `commit dc7aabeb`:
     **บริการต่างประเทศ + ผู้จ่ายออกแทน บันทึกได้** (`WhtGrossUp.TypeError` ไม่ดูธงต่างประเทศแล้ว — เหลือกันใบฝั่งรับเงิน (ทางไปต่อ: ลงยอด gross-up 10,000 @3% ⇒ 10,309.28
     แบบหัก ณ ที่จ่ายปกติ) และใบลด/เพิ่มหนี้ที่ไม่มีใบต้นทางฝั่งผู้จ่าย) · **VAT ภ.พ.36 คิดบนฐานรวมภาษีที่ออกแทนตั้งแต่บันทึก**: `ApplyForeignServiceBorneVat` หลัง
-    `ApplyWhtGrossUp` (สร้าง/แก้ไข · เฉพาะ `IsForeignService` และส่วนที่ออกแทน ≠ 0) → `ForeignServiceVat.VatWithBorne` (VAT บรรทัด = round((ฐาน + ออกแทน) × อัตรา) ·
+    `ApplyWhtGrossUp` (สร้าง/แก้ไข · `IsForeignService` **หรือใบลด/เพิ่มหนี้ที่อ้างใบเจ้าของ ภ.พ.36** (ฝ่ายค้านรอบ 204 M1 ข้างล่าง) และส่วนที่ออกแทน ≠ 0) → `ForeignServiceVat.VatWithBorne` (VAT บรรทัด = round((ฐาน + ออกแทน) × อัตรา) ·
     กระทบยอดต่อกลุ่มอัตรา ⇒ Σ = `SelfAssessedVatOn(Pp36Base(Σ ฐาน, Σ ออกแทน))`) — 450 @15% ตลอดไป ⇒ ออกแทน 79.41 · ภ.พ.36 37.06 บนฐาน 529.41 · บรรทัด `Amount` ยังเป็นมูลค่าที่ตกลง ·
     `TotalAmount = PayeeTotal(ฐาน, VAT ใหม่, ภาษี, ออกแทน)` ⇒ ยอดจ่ายผู้รับ (`PayeeAmount`) = ฐาน − ส่วนที่หักจากผู้รับ · **JE สมดุล**: Dr ฐาน + VAT (11640) + ออกแทน =
     Cr 21912 VAT + เจ้าหนี้ (ฐาน − ภาษี + ออกแทน) + 2191x ภาษี (`AddPayerBorneWhtExpense` ไม่ล้มเพราะธงต่างประเทศแล้ว · `MismatchReason` คงเดิม) ·
@@ -3767,6 +3767,25 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ครั้งเดียว = เงินได้ × ภาษี / (เงินได้ + ภาษี) (สูตรกลับของ `WhtGrossUp.OnBase` — 10,300/309 ⇒ 300 · 517.50/77.63 ⇒ 67.50) · กิ่ง: เงินได้ − ยอดบรรทัด ตรงส่วนที่ออกแทน (±0.02) ⇒ บวกส่วนต่างจริง
   (มี WHT บนเอกสารหรือไม่ก็ตาม — เหมือนกิ่งแรกของตลอดไป) · เงินได้ ≈ ยอดบรรทัด ⇒ 0 · อื่น ๆ (ใบครอบบางงวด) ⇒ มี WHT บนเอกสาร 0 / ไม่มี บวกส่วนที่ออกแทนบนใบ · หัก ณ ที่จ่าย ⇒ 0 ·
   450 @15% ครั้งเดียว ⇒ ฐาน 517.50 ⇒ ภ.พ.36 36.23 (บรรทัดคิด 31.50 ⇒ เตือนขาด 4.73) · เทสต์ `ForeignServiceVatTests.A5b_*` · Last verified `commit b45c5f32`
+
+- **ฝ่ายค้านรอบ 204 (M1 · L2–L5 · L7a — หลักข้อ 150 "ไม่ล็อกตาย": บล็อกเฉพาะที่กฎหมาย/GL บังคับ พร้อมทางไปต่อ)** — Last verified `commit 6896c768`:
+  - **M1 ใบลด/เพิ่มหนี้ของใบบริการต่างประเทศที่ผู้จ่ายออกแทน** — ใบลดหนี้ติ๊กธงต่างประเทศไม่ได้ (`Pp36Lifecycle.FlagTypeError`) แต่สืบทอด "ออกแทน" จากใบต้นทาง ⇒
+    VAT ต้องบนฐานรวมภาษีที่ออกแทนเหมือนใบเจ้าของ: ตัวตัดสินเดียว `ForeignServiceVat.BorneVatApplies(isForeignService, sourceOwnsPp36, ออกแทน)` ของสร้าง/แก้/แก้โดยไม่ส่งบรรทัด
+    (`sourceOwnsPp36` = `LinkedSourcePp36Async` → `OwnsPp36(ใบต้นทาง)`) ⇒ ลดเต็มใบ JE กลับ 21912/11640 ครบ (เดิม 31.50 แทน 37.06 ⇒ ค้าง 5.56) ·
+    `[PP36-BASE]` ครอบใบลด/เพิ่มหนี้ที่อ้างใบเจ้าของ (`Pp36BaseApprovalWarning(doc, sourceOwnsPp36)` · ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทางยังไม่ครอบ) ·
+    รายงาน ภ.พ.36 ฐานที่ใบลด/เพิ่มหนี้ขยับ = ±`Pp36Base(SubTotal, ออกแทน)` (`ForeignServiceVat.Pp36NoteBaseDelta` — ไม่มีออกแทน = เท่าเดิม) ⇒ ลดเต็มใบไม่มีแถว · ลดครึ่งใบอัตรา 7.00% ·
+    ใบลดหนี้ที่อนุมัติแล้วก่อนแก้ไม่ถูกแก้ย้อนหลัง (JE ลงแล้ว) · เทสต์ `ForeignServicePayerBorneVatTests` (M1) · `Pp36LifecycleGoldenDbTests.ซ_*`
+  - **L2 ปุ่มแก้ส่วนลดบรรทัดจากสแกน** (`FixOcrLineDiscountAsync`) — ใบขายที่เราออกแล้ว (§86/4 · ใบลด/เพิ่มหนี้ตัดสินฝั่งด้วย `AdjustmentNoteAccount.ResolvePostedSide` · ไม่รู้ฝั่ง = ขาย)
+    ⇒ 409 `OCR-LINE-DISC-FIX` + ทางไปต่อ "ยกเลิกใบนี้แล้วออกใบแทน" · แถวรายงาน `OcrLineDiscountWouldChangeOnResave` ไม่มีปุ่ม (`FixPath` null) + เหตุผล ·
+    ใบขายร่าง/ใบฝั่งซื้อทุกสถานะแก้ได้เหมือนเดิม · ตัวตัดสินเดียว `Helpers/OcrLineDiscountFixScope` ผ่าน `DocumentService.OcrLineDiscountFixRefusalAsync` · `OcrLineDiscountFixDbTests`
+  - **L3 e-Withholding ไม่มีผัง 21923** ⇒ ล้มดัง 422 `WHT-EWHT-NO-21923` + ทางไปต่อ (สร้างผัง / ปลดธงถ้านำส่งเอง) — `EWithholdingScope.RequireAccount` ตัวเดียวของ
+    `ResolveWhtPayableSplitAsync` (ทุกเส้น JE) และ `IntegrationService` สองเส้น (เดิมตก 2191x เงียบ ขณะที่หน้านำส่ง/รายงานตัดใบนี้ออก) · พรีวิว GL แสดงผังที่ขาด
+  - **L4 เกณฑ์เงินสด + ภาษีหักตอนจ่ายระหว่าง NetCap กับเพดานใบเดิม** — ยังรับตามผู้ใช้ · คำเตือน `WhtPaymentSuggestion.AboveNetWarning(..., cashBasis)` บอกยอดเดบิตที่จะค้างในเจ้าหนี้
+    (`CashBasisResidueNote` — Dr เจ้าหนี้ = เงิน + ภาษีหัก) ทั้งบันทึกจ่ายใบเดียว · ชำระหลายใบ · endpoint แนะนำยอด
+  - **L5 "ออก" 50 ทวิ ร่างที่ผู้ถูกหักไม่มีเลขผู้เสียภาษี** (`IssueAsync`) — ตรวจซ้ำด้วย `WhtCertIssuePlan.PayeeTaxIdProblem` (ภ.ง.ด.54/ผู้รับต่างประเทศยกเว้น) ·
+    ไม่รับทราบ ⇒ 409 `RD-50BIS-ISSUE-NO-TAXID` + ทางไปต่อ · `POST …/issue {acknowledgeMissingTaxId:true}` ⇒ ออก + คำเตือน + audit `RD-50BIS-ISSUE-NO-TAXID-ACK` (UserId) ·
+    `wht.html` ถามรับทราบ · รอบโอน (overload ไม่มีการรับทราบ) ⇒ 409 (แผนรอบโอนกั้นคู่ค้าไม่มีเลขก่อนอยู่แล้ว) · `WhtUserDecisionDbTests`
+  - **L7a** audit `SetWhtBorneByContract` มี `UserId` (เดิมแค่ข้อความ actor)
 
 ### 5.5 Integration ภายนอก (เอาออก)
 - `GET /api/companies/{id}/documents/{id}` คืน `DocumentResponse`
