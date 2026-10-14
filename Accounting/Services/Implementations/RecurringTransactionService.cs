@@ -784,22 +784,44 @@ public class RecurringTransactionService : IRecurringTransactionService
         if (type == "document" && contactId == null)
             throw new InvalidOperationException("Template ประเภท document ต้องมี ContactId (ลูกค้า/ผู้ขาย)");
 
-        // Collect bank/payment/expense category refs
+        // ช่องทางรับ/จ่าย: "bankAccountId" = รหัสทะเบียนบัญชีธนาคาร (ตาราง BankAccounts — ExecuteRecurringAsync
+        // ส่งเข้า CreateDocumentRequest.BankAccountId) · "paymentAccountId"/"expenseCategoryId" = รหัสผังบัญชี
+        // (2026-10-14: เดิมรวม bankAccountId เข้าชุดผังบัญชี ⇒ เลือกบัญชีธนาคารแล้วบันทึกไม่ได้ทุกใบ
+        // "Template มี accountId ที่ไม่พบในผังบัญชี")
         Guid? bankId = ParseGuidProperty(root, "bankAccountId");
         Guid? paymentId = ParseGuidProperty(root, "paymentAccountId");
-        if (bankId.HasValue) accountIds.Add(bankId.Value);
+        Guid? expenseCategoryId = ParseGuidProperty(root, "expenseCategoryId");
         if (paymentId.HasValue) accountIds.Add(paymentId.Value);
+        if (expenseCategoryId.HasValue) accountIds.Add(expenseCategoryId.Value);
+
+        if (bankId.HasValue)
+        {
+            var bank = await _db.BankAccounts.AsNoTracking()
+                .Where(b => b.CompanyId == companyId && b.Id == bankId.Value)
+                .Select(b => new { b.AccountName, b.IsActive })
+                .FirstOrDefaultAsync();
+            if (bank == null)
+                throw new InvalidOperationException(
+                    "บัญชีธนาคารที่เลือกในช่องทางรับ/จ่ายเงินไม่พบในบริษัทนี้ (อาจถูกลบไปแล้ว) — เลือกช่องทางรับ/จ่ายใหม่แล้วบันทึกอีกครั้ง");
+            if (!bank.IsActive)
+                throw new InvalidOperationException(
+                    $"บัญชีธนาคาร \"{bank.AccountName}\" ถูกปิดใช้งาน — เปิดใช้งานที่หน้าบัญชีธนาคาร หรือเลือกช่องทางรับ/จ่ายอื่น");
+        }
 
         if (accountIds.Count > 0)
         {
-            var validIds = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && a.IsActive && accountIds.Contains(a.Id))
-                .Select(a => a.Id)
+            var found = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.IsActive })
                 .ToListAsync();
-            var missing = accountIds.Except(validIds).ToList();
+            var missing = accountIds.Except(found.Select(a => a.Id)).ToList();
             if (missing.Count > 0)
                 throw new InvalidOperationException(
-                    $"Template มี accountId ที่ไม่พบในผังบัญชี (อาจถูกลบหรือคนละบริษัท): {string.Join(", ", missing.Take(3))}{(missing.Count > 3 ? $" ... +{missing.Count - 3}" : "")}");
+                    $"รายการประจำอ้างบัญชีที่ไม่พบในผังบัญชีของบริษัทนี้ {missing.Count} บัญชี (อาจถูกลบไปแล้ว) — เลือกบัญชีในบรรทัดรายการ/ช่องทางรับจ่ายใหม่แล้วบันทึกอีกครั้ง");
+            var inactive = found.Where(a => !a.IsActive).ToList();
+            if (inactive.Count > 0)
+                throw new InvalidOperationException(
+                    $"บัญชีถูกปิดใช้งาน: {string.Join(", ", inactive.Take(3).Select(a => $"{a.AccountCode} {a.AccountName}"))}{(inactive.Count > 3 ? $" … +{inactive.Count - 3}" : "")} — เปิดใช้งานที่ผังบัญชี หรือเลือกบัญชีอื่น");
         }
 
         if (contactId.HasValue)
