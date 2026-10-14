@@ -41,13 +41,18 @@ public static class ImportExportPermissionScope
     public const string FallbackKey = PermissionKeys.JournalManage;
 
     /// <summary>ชื่อชนิดข้อมูลแบบมาตรฐาน — สะกดได้หลายแบบในเรพ
-    /// (<c>chartofaccounts</c> / <c>chart-of-accounts</c>) ·
-    /// <c>private</c>: ผู้เรียกต้องถามผ่าน <see cref="ForImport"/>/<see cref="ForExport"/></summary>
-    private static string Normalize(string? entityType)
+    /// (<c>chartofaccounts</c> / <c>chart-of-accounts</c> / <c>stock-adjustments</c>) · ตัวเดียวของทั้งเส้นนำเข้า:
+    /// ด่านสิทธิ์ที่นี่ + ทะเบียน target ของศูนย์นำเข้าข้อมูล (<c>ImportTargetRegistry</c> · รอบ 205) ใช้คีย์เดียวกัน ⇒ "ชนิดที่ target รู้จัก"
+    /// กับ "ชนิดที่ด่านสิทธิ์รู้จัก" สะกดต่างกันไม่ได้</summary>
+    public static string NormalizeEntityType(string? entityType)
         => (entityType ?? "").Trim().ToLowerInvariant().Replace("-", "").Replace("_", "");
 
     /// <summary>สิทธิ์ที่ต้องมีเพื่อ<b>นำเข้า</b>ข้อมูลชนิดนี้</summary>
-    public static string ForImport(string? entityType) => Normalize(entityType) switch
+    /// <remarks>รอบ 205 T0 (IMPORT_ETL_REVIEW §1): หน้าเว็บ/ImportExportService สะกด <c>"stock-adjustments"</c> (พหูพจน์) ⇒ normalize ได้
+    /// <c>"stockadjustments"</c> ซึ่งเดิมไม่อยู่ในตาราง (มีแต่ <c>"stockadjustment"</c>) จึงตกไป <see cref="FallbackKey"/> (Journal.Manage) —
+    /// นักบัญชีที่ไม่มีสิทธิ์ปรับสต็อกนำเข้าการปรับสต็อกได้ · รับทั้งสองสะกด ⇒ ใช้ Inventory.Adjust ชุดเดียวกับสต็อกยกมา ·
+    /// ผู้ที่ถูกกันใหม่: ข้อความปฏิเสธบอกให้เจ้าของเพิ่มสิทธิ์ Inventory.Adjust (<see cref="DeniedMessage"/>)</remarks>
+    public static string ForImport(string? entityType) => NormalizeEntityType(entityType) switch
     {
         "contacts" => PermissionKeys.ContactEdit,
         "products" => PermissionKeys.ProductEdit,
@@ -56,7 +61,7 @@ public static class ImportExportPermissionScope
             => PermissionKeys.JournalManage,
         "documents" or "payments" => PermissionKeys.DocumentCreate,
         "banktransactions" => PermissionKeys.BankReconcile,
-        "stockopening" or "stockadjustment" or "stockmovements" or "stockbalances"
+        "stockopening" or "stockadjustment" or "stockadjustments" or "stockmovements" or "stockbalances"
             => PermissionKeys.InventoryAdjust,
         "fixedassets" => PermissionKeys.AssetManage,
         // ทะเบียนพนักงาน = เงินเดือน + เลขบัตรประชาชน + เลขบัญชีธนาคาร
@@ -65,7 +70,7 @@ public static class ImportExportPermissionScope
     };
 
     /// <summary>สิทธิ์ที่ต้องมีเพื่อ<b>ส่งออก</b>ข้อมูลชนิดนี้เป็นไฟล์</summary>
-    public static string ForExport(string? entityType) => Normalize(entityType) switch
+    public static string ForExport(string? entityType) => NormalizeEntityType(entityType) switch
     {
         // ไฟล์ทะเบียนพนักงานมี CitizenId 13 หลัก + เลขบัญชี + เงินเดือน
         // ⇒ PDPA ม.26: เปิดได้เฉพาะผู้มีสิทธิ์ดูข้อมูลส่วนบุคคล

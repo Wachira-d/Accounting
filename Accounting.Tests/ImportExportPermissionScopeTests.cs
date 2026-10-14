@@ -118,6 +118,32 @@ public class ImportExportPermissionScopeTests
         }
     }
 
+    // ═══ รอบ 205 T0 — "stock-adjustments" (พหูพจน์ที่หน้าเว็บ/ImportExportService ใช้จริง) เคยหลุดไป Journal.Manage ═══
+
+    [Theory]
+    [InlineData("stock-adjustments")]   // สะกดที่หน้า import-export.html + ImportExportService ส่งจริง
+    [InlineData("stockadjustments")]
+    [InlineData("stock_adjustments")]
+    [InlineData("stock-adjustment")]    // สะกดเดิมยังได้คีย์เดิม
+    public void ปรับสต็อก_ทุกสะกด_ต้องใช้สิทธิ์ปรับสต็อก_ไม่ใช่ตกไปคีย์สำรอง(string entityType)
+    {
+        Assert.Equal(PermissionKeys.InventoryAdjust, ImportExportPermissionScope.ForImport(entityType));
+        Assert.NotEqual(ImportExportPermissionScope.FallbackKey, ImportExportPermissionScope.ForImport(entityType));
+    }
+
+    [Theory]
+    [InlineData("stock-adjustmentz")]   // ทิศตรงข้าม: สะกดใกล้เคียงที่ไม่ใช่ชนิดจริงยังต้องตกคีย์ที่เข้มที่สุด (ไม่เดา)
+    [InlineData("adjustments")]
+    public void สะกดใกล้เคียงที่ไม่ใช่ชนิดจริง_ยังตกไปคีย์ที่เข้มที่สุด(string entityType)
+        => Assert.Equal(ImportExportPermissionScope.FallbackKey, ImportExportPermissionScope.ForImport(entityType));
+
+    [Theory]
+    [InlineData("Stock-Adjustments", "stockadjustments")]
+    [InlineData(" chart_of_accounts ", "chartofaccounts")]
+    [InlineData(null, "")]
+    public void ตัว_normalize_ชนิดข้อมูลตัวเดียว_ใช้ร่วมกับทะเบียน_target(string? raw, string expected)
+        => Assert.Equal(expected, ImportExportPermissionScope.NormalizeEntityType(raw));
+
     [Fact]
     public void ข้อความปฏิเสธต้องบอกทางไปต่อเสมอ()
     {

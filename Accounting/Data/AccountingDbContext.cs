@@ -345,6 +345,9 @@ public class AccountingDbContext : DbContext
     // Smart Import
     public DbSet<SmartImportSession> SmartImportSessions => Set<SmartImportSession>();
     public DbSet<SmartImportColumnMapping> SmartImportColumnMappings => Set<SmartImportColumnMapping>();
+    // ศูนย์นำเข้าข้อมูล (Import Hub · รอบ 205 T0) — แถวพัก + แม่แบบจับคู่คอลัมน์ต่อบริษัท
+    public DbSet<ImportStagedRow> ImportStagedRows => Set<ImportStagedRow>();
+    public DbSet<ImportMappingTemplate> ImportMappingTemplates => Set<ImportMappingTemplate>();
 
     // POS
     public DbSet<PosTerminal> PosTerminals => Set<PosTerminal>();
@@ -2247,6 +2250,55 @@ public class AccountingDbContext : DbContext
                 .HasForeignKey(m => m.SessionId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasQueryFilter(m => !m.IsDeleted);
+        });
+
+        // ===== Import Hub (รอบ 205 T0 · IMPORT_ETL_REVIEW §2.2) — ต้องตรงกับ DatabaseMigrationHelper (ฐานใหม่ได้จาก EnsureCreated) =====
+        modelBuilder.Entity<SmartImportSession>(e =>
+        {
+            e.Property(s => s.FileSha256).HasMaxLength(64);
+            e.Property(s => s.SheetName).HasMaxLength(200);
+            e.Property(s => s.Encoding).HasMaxLength(32);
+            e.Property(s => s.Delimiter).HasMaxLength(4);
+            e.Property(s => s.HeaderSignature).HasMaxLength(64);
+            e.Property(s => s.SourceSystem).HasMaxLength(64);
+            e.Property(s => s.ClaimedBy).HasMaxLength(100);
+            // worker หา batch ที่รอคิว/ค้าง (Status + HeartbeatAt) · เตือนไฟล์ซ้ำด้วย hash
+            e.HasIndex(s => new { s.Status, s.HeartbeatAt }).HasDatabaseName("IX_SmartImportSessions_Status_Heartbeat");
+            e.HasIndex(s => new { s.CompanyId, s.FileSha256 }).HasDatabaseName("IX_SmartImportSessions_Company_FileSha256");
+        });
+        modelBuilder.Entity<ImportStagedRow>(e =>
+        {
+            e.HasIndex(r => new { r.SessionId, r.RowNo }).IsUnique().HasDatabaseName("UX_ImportStagedRows_Session_RowNo");
+            e.HasIndex(r => new { r.CompanyId, r.CommittedEntityType, r.CommittedEntityId }).HasDatabaseName("IX_ImportStagedRows_Company_Committed");
+            e.HasIndex(r => new { r.SessionId, r.Status }).HasDatabaseName("IX_ImportStagedRows_Session_Status");
+            // PDPA ม.26 — ค่าดิบ/ค่าที่แปลง/ค่าเดิมก่อนทับ มีเลขบัตร/เลขบัญชี/เงินเดือนได้ ⇒ เข้ารหัสทั้งก้อน (ห้าม query ด้วยค่าข้างใน)
+            e.Property(r => r.RawJson).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(r => r.MappedJson).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(r => r.OriginalMappedJson).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(r => r.BeforeJson).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(r => r.DisplayKey).HasMaxLength(300);
+            e.Property(r => r.MatchKind).HasMaxLength(32);
+            e.Property(r => r.GroupKey).HasMaxLength(200);
+            e.Property(r => r.CommittedEntityType).HasMaxLength(64);
+            e.Property(r => r.Confidence).HasPrecision(5, 4);
+            e.Property(r => r.MatchScore).HasPrecision(5, 4);
+            e.HasOne(r => r.Session)
+                .WithMany(s => s.StagedRows)
+                .HasForeignKey(r => r.SessionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(r => !r.IsDeleted);
+        });
+        modelBuilder.Entity<ImportMappingTemplate>(e =>
+        {
+            e.HasIndex(t => new { t.CompanyId, t.EntityType, t.HeaderSignature })
+                .IsUnique()
+                .HasFilter("\"IsDeleted\" = false")
+                .HasDatabaseName("UX_ImportMappingTemplates_Company_Entity_Signature");
+            e.Property(t => t.EntityType).HasMaxLength(50);
+            e.Property(t => t.HeaderSignature).HasMaxLength(64);
+            e.Property(t => t.SourceSystem).HasMaxLength(64);
+            e.Property(t => t.Name).HasMaxLength(200);
+            e.HasQueryFilter(t => !t.IsDeleted);
         });
 
         // ===== Global Query Filters for Child Entities =====

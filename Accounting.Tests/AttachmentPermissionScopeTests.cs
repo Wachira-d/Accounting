@@ -150,4 +150,27 @@ public class AttachmentPermissionScopeTests
         Assert.Contains("สินทรัพย์ถาวร", msg);
         Assert.Contains("เพิ่มสิทธิ์", msg);   // ทางไปต่อ
     }
+
+    // ── รอบ 205 T0: ไฟล์ต้นทางของศูนย์นำเข้าข้อมูล ──
+
+    [Fact]
+    public void ไฟล์นำเข้า_รู้จักชนิด_ระบบแนบเอง_และตัดสินด้วยชนิดข้อมูลของชุดนำเข้า()
+    {
+        var rule = AttachmentPermissionScope.Resolve("ImportBatch");
+        Assert.True(rule.IsKnown);                       // ไม่ตกเป็น "ไม่รู้จัก" (ซึ่งอ่านได้ระดับสมาชิก)
+        Assert.Equal(AttachmentOwnerKind.ImportBatch, rule.Kind);
+        Assert.False(rule.ClientUploadAllowed);          // แนบผ่านเส้นสร้างชุดนำเข้าเท่านั้น
+        Assert.False(rule.AllowsUnsavedOwner);
+    }
+
+    [Theory]
+    [InlineData("employees", PermissionKeys.HrAdmin)]          // ทะเบียนพนักงาน = PII ⇒ เปิดไฟล์ได้เฉพาะคนที่นำเข้าพนักงานได้
+    [InlineData("contacts", PermissionKeys.ContactEdit)]
+    [InlineData("stock-adjustments", PermissionKeys.InventoryAdjust)]
+    public void ไฟล์นำเข้า_คีย์เท่ากับสิทธิ์นำเข้าชนิดนั้น(string batchEntityType, string key)
+        => Assert.Equal(key, AttachmentPermissionScope.ImportBatchKey(batchEntityType));
+
+    [Fact]
+    public void ไฟล์นำเข้า_ไม่พบชุด_ใช้คีย์ที่เข้มที่สุด_ไม่ใช่ผ่าน()
+        => Assert.Equal(ImportExportPermissionScope.FallbackKey, AttachmentPermissionScope.ImportBatchKey(null));
 }

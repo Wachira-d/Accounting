@@ -1029,7 +1029,175 @@ public enum ImportSessionStatus
     Importing = 6,         // กำลัง Import
     Completed = 7,         // Import สำเร็จ
     Failed = 8,            // Import ล้มเหลว
-    AwaitingDuplicateResolution = 9   // ตรวจพบของซ้ำ — รอ user เลือก
+    AwaitingDuplicateResolution = 9,  // ตรวจพบของซ้ำ — รอ user เลือก
+    // ── ศูนย์นำเข้าข้อมูล (Import Hub · รอบ 205 · IMPORT_ETL_REVIEW §2.2) — ค่าเดิม 0–9 คงไว้ (แถวเก่าในฐาน) ──
+    Queued = 10,              // ไฟล์ใหญ่ (> 2,000 แถว) รอ ImportBatchWorker หยิบไปทำ
+    Staged = 11,              // แปลง/ตรวจครบแล้ว อยู่ใน ImportStagedRows รอผู้ใช้ตรวจ-ยืนยัน
+    Committing = 12,          // กำลังลงข้อมูลจริง (ผ่าน writer/domain service เดิม)
+    PartiallyCompleted = 13,  // ลงได้บางแถว (โหมด GoodRowsOnly) — แถวที่ล้มแก้แล้วลงซ้ำได้ (idempotent)
+    Undone = 14,              // ย้อนการนำเข้าแล้ว
+    Cancelled = 15            // ผู้ใช้ยกเลิกก่อนลงข้อมูล
+}
+
+// ==================== ศูนย์นำเข้าข้อมูล (Import Hub · รอบ 205 T0) ====================
+// สัญญาของทีม A–E — ค่าตัวเลขถูกเก็บในฐาน (ImportStagedRows/SmartImportSessions) ⇒ ห้ามเปลี่ยนเลขของค่าที่มีแล้ว · ออก JSON เป็น "ชื่อ"
+
+/// <summary>สถานะต่อแถวใน <c>ImportStagedRows</c></summary>
+public enum ImportRowStatus
+{
+    Pending = 0,     // ยังไม่ตรวจ
+    Valid = 1,       // ผ่าน ไม่มีคำเตือน
+    Warning = 2,     // ลงได้ แต่ต้องรับทราบคำเตือนตอน commit (คำตัดสินข้อ 150)
+    Error = 3,       // บล็อก (เฉพาะกรณีใน IMPORT_ETL_REVIEW §2.5) — ต้องแก้หรือข้าม
+    Excluded = 4,    // ผู้ใช้ตัดออก
+    Committed = 5,   // ลงข้อมูลแล้ว (CommittedEntityId มีค่า) — commit ซ้ำต้องข้าม (idempotent)
+    Failed = 6,      // ลงไม่สำเร็จ (CommitError) — แก้แล้ว commit ซ้ำได้
+    Undone = 7       // ย้อนแล้ว
+}
+
+/// <summary>สิ่งที่จะทำกับแถวตอน commit</summary>
+public enum ImportRowAction
+{
+    Create = 0,
+    Update = 1,   // ทับของเดิม (MatchedEntityId) — เก็บค่าเดิมใน BeforeJson เพื่อย้อน
+    Merge = 2,    // เติมเฉพาะช่องที่ของเดิมว่าง
+    Skip = 3
+}
+
+/// <summary>ชั้นที่จับคู่คอลัมน์ได้ — เรียงตามลำดับความเชื่อถือ (ชั้นต่ำห้ามทับชั้นสูง · IMPORT_ETL_REVIEW §2.3)</summary>
+public enum ImportMapSource
+{
+    None = 0,         // ยังไม่จับคู่
+    Template = 1,     // 📌 แม่แบบของบริษัท (หัวตารางชุดนี้เคยยืนยันแล้ว)
+    Exact = 2,        // ชื่อตรงกับ field
+    Synonym = 3,      // 📚 คำพ้อง (ImportFieldSynonymSeed)
+    Learned = 4,      // 🧠 header→field ที่ผู้ใช้บริษัทนี้ยืนยันแล้ว
+    DataPattern = 5,  // รูปข้อมูลในคอลัมน์ (เลข 13 หลัก = เลขภาษี ฯลฯ)
+    Ai = 6,           // 🤖 AI (ImportColumnMatch) — ติดป้าย AI เฉพาะตอนเรียกจริง (UsedAi)
+    User = 7          // ✋ ผู้ใช้เลือกเอง
+}
+
+/// <summary>โหมด commit — เลือกได้ต่อชุด</summary>
+public enum ImportCommitMode
+{
+    GoodRowsOnly = 0,   // ลงแถวที่ผ่าน ข้ามแถวที่ผิด (ค่าเริ่ม)
+    AllOrNothing = 1    // ผิดแถวเดียว = ไม่ลงเลย
+}
+
+/// <summary>ขั้นของ pipeline (Extract→Transform→Stage→Review→Commit→Learn→Undo) — worker ใช้ทำต่อจากขั้นที่ค้าง</summary>
+public enum ImportBatchPhase
+{
+    None = 0,
+    Extract = 1,     // อ่านไฟล์ · encoding · ชีต · แถวหัวตาราง
+    Transform = 2,   // จับคู่คอลัมน์ · normalize · จับคู่ข้อมูลเดิม · issue
+    Stage = 3,       // เขียน ImportStagedRows
+    Review = 4,      // รอผู้ใช้ตรวจ/แก้/ยืนยัน
+    Commit = 5,      // ลงข้อมูลจริง
+    Learn = 6,       // แม่แบบ + RecordUserChoiceAsync
+    Undo = 7         // ย้อนการนำเข้า
+}
+
+/// <summary>ชนิดไฟล์ที่ <c>ImportTabularReader.Sniff</c> ตัดสินจากเนื้อไฟล์ (ไม่เชื่อนามสกุลอย่างเดียว)</summary>
+public enum ImportFileKind
+{
+    Unknown = 0,
+    Csv = 1,
+    Tsv = 2,
+    Xlsx = 3,
+    Xls = 4,    // BIFF8 — MiniExcel อ่านไม่ได้ ⇒ ล้มดัง "บันทึกเป็น .xlsx" (คำตัดสินข้อ 151)
+    Ofx = 5,    // statement ธนาคาร — ทีม C (BankOfxParser) ไม่ใช่ตาราง
+    Qif = 6,    // ยังไม่รองรับ (คำตัดสินข้อ 151)
+    Xml = 7,    // e-Tax XML ⇒ แนะนำทาง OCR
+    Json = 8,
+    Pdf = 9,    // ยังไม่รองรับ
+    Html = 10   // ไฟล์ "xls" ที่จริงเป็นหน้าเว็บ (ธนาคารบางแห่งส่งออกแบบนี้)
+}
+
+/// <summary>ลำดับวัน/เดือนของวันที่ตัวเลขในไฟล์นำเข้า (ตัวแปลงจริงอยู่ที่ ImportValueNormalizer)</summary>
+public enum ImportDateOrder
+{
+    Auto = 0,          // ไทยเป็นค่าเริ่ม (วัน/เดือน) — ค่าที่สลับได้จริงติดคำเตือน
+    DayMonthYear = 1,
+    MonthDayYear = 2
+}
+
+/// <summary>ความรุนแรงของ issue — Error เฉพาะกรณีบล็อกตามคำตัดสินข้อ 150 (§2.5) นอกนั้น Warning ที่รับทราบได้</summary>
+public enum ImportIssueSeverity
+{
+    Info = 0,
+    Warning = 1,
+    Error = 2
+}
+
+/// <summary>ใครเป็นผู้ยก issue/คำแนะนำ — ป้ายซื่อสัตย์ ("🤖 AI แนะนำ" เฉพาะ <see cref="Ai"/>)</summary>
+public enum ImportIssueSource
+{
+    Rule = 0,         // กติกา/ตัวตรวจของระบบ
+    Normalizer = 1,   // ตัวแปลงค่า (ImportValueNormalizer)
+    Match = 2,        // ตัวจับคู่ข้อมูลเดิม (ImportEntityResolver)
+    Target = 3,       // ตัวตรวจของ IImportTarget (กฎธุรกิจของชนิดข้อมูลนั้น)
+    Ai = 4,
+    User = 5
+}
+
+/// <summary>สภาพของเซลล์ในตาราง review — หน้าเว็บระบายสีตามนี้ (เซิร์ฟเวอร์ตัดสิน · F2 ข้อ 5)</summary>
+public enum ImportCellState
+{
+    Original = 0,       // ตามไฟล์
+    Normalized = 1,     // เขียว — แปลงรูปแล้ว (ค่าเดิมใน tooltip)
+    AutoFilled = 2,     // ฟ้า — ระบบเติมให้ (ไฟล์ว่าง)
+    LowConfidence = 3,  // เหลือง — < 0.85 แต่ไม่ว่าง (กฎเหล็ก #3 ข้อ 3)
+    Error = 4,          // แดง
+    UserEdited = 5
+}
+
+/// <summary>ชนิดค่าของ field ปลายทาง — เลือกตัวแปลงใน ImportValueNormalizer</summary>
+public enum ImportFieldType
+{
+    Text = 0,
+    Integer = 1,
+    Decimal = 2,
+    Amount = 3,
+    Date = 4,
+    Flag = 5,
+    TaxId = 6,
+    BranchCode = 7,
+    VatRate = 8,
+    Phone = 9,
+    Email = 10,
+    Enum = 11,
+    AccountCode = 12,
+    Reference = 13    // เลขอ้างอิง/เลขเอกสาร — ห้ามผ่านตัวเลข (scientific = เสียหลัก)
+}
+
+/// <summary>รูปการลงข้อมูลของ IImportTarget (IMPORT_ETL_REVIEW §2.4)</summary>
+public enum ImportCommitStyle
+{
+    SharedTransaction = 0,       // pipeline เปิดธุรกรรมเดียว + savepoint ต่อ chunk 200 แถว
+    OwnTransactionPerGroup = 1   // domain service เปิดธุรกรรมเอง (DocumentService ฯลฯ) — commit ทีละกลุ่ม idempotent
+}
+
+/// <summary>คำสั่งยกชุดในหน้า review</summary>
+public enum ImportBulkOp
+{
+    ApplySuggestions = 0,
+    RejectSuggestions = 1,
+    SetAction = 2,
+    Exclude = 3,
+    Include = 4,
+    SetField = 5
+}
+
+/// <summary>วิธีย้อนแถวหนึ่ง (IMPORT_ETL_REVIEW §2.9)</summary>
+public enum ImportUndoKind
+{
+    None = 0,                  // ย้อนไม่ได้ (ดู BlockReason/WayForward)
+    SoftDelete = 1,            // master ที่สร้าง — ถ้าไม่มีการอ้าง
+    RestoreBefore = 2,         // ที่อัปเดต — คืนจาก BeforeJson
+    DeleteDraft = 3,           // เอกสารร่าง — ลบผ่าน DocumentService
+    ReverseEntry = 4,          // รับชำระ — ทางกลับรายการเดิม
+    CompensatingMovement = 5,  // สต็อก — movement ชดเชยผ่าน StockLedger
+    Rollback = 6               // งบทดลองยกมา — MigrationWizardService.RollbackAsync
 }
 
 /// <summary>ทางเลือกของ user เมื่อ import detect ของซ้ำ.</summary>
@@ -2147,6 +2315,17 @@ public enum AiFeatureKey
     /// ⇒ ปิด AI แล้วลงบัญชีได้ครบ เพียงแต่ผู้ใช้เลือกประเภทบรรทัดที่ไม่รู้จักเอง · ปิดลูปด้วย <c>SettlementLine.ClassifyAiFeedbackId</c>
     /// ตอนผู้ใช้ยืนยัน/แก้ประเภท (ทีม B/D)</para></summary>
     SettlementLineClassify = 57,
+
+    /// <summary>จับคู่บัญชีในไฟล์นำเข้า (งบทดลอง/ยอดยกมา/JE) กับผังบัญชีของบริษัท (รอบ 205 · IMPORT_ETL_REVIEW §2.6)
+    /// <para>คำตอบเดี่ยว = รหัสผังบัญชี ⇒ student = <c>GenericFeedbackDistillationModel</c> (DistillationModelRegistry.GenericFeatureKeys) ·
+    /// local / cold start = <c>ImportAccountCodeResolver</c> (รหัสตรง → AccountMappings → n-gram ชื่อ → หมวดเลขหน้า) ·
+    /// ด่าน = คำตอบต้อง ∈ รหัสผังของบริษัท · ปิดลูปต่อแถวตอนผู้ใช้ยืนยัน (ทีม D)</para></summary>
+    ImportAccountMap = 58,
+
+    /// <summary>ตัดสินแถวนำเข้าที่กำกวมว่าตรงกับผู้ติดต่อ/สินค้าเดิมตัวไหน (รอบ 205 · IMPORT_ETL_REVIEW §2.6)
+    /// <para>คำตอบเดี่ยว = id ผู้สมัคร หรือ "NEW" ⇒ student = <c>GenericFeedbackDistillationModel</c> · เรียกเฉพาะ top-2 ห่าง &lt; 0.05 และไม่มีเลขภาษี ·
+    /// ด่าน = คำตอบ ∈ candidate ids ∪ {"NEW"} · ชื่อคล้ายอย่างเดียวห้าม merge อัตโนมัติ (คำตัดสินข้อ 151 (5)) · ปิดลูปตอนผู้ใช้ยืนยัน (ทีม B)</para></summary>
+    ImportEntityMatch = 59,
 
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,

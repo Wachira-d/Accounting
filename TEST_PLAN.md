@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **509 ไฟล์ · 5,038 `[Fact]` + 801 `[Theory]` (3,542 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **512 ไฟล์ · 5,094 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5808,3 +5808,30 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | LW-12 | snapshot ก่อนรอบ 158 (P2-3) | 5 บล็อกรุ่น d2ad229b^ อยู่ในชุดที่แทน · เว็บใหม่ไม่มี · แก้แม้ตัวเดียว = ไม่แทน | ✅ |
 | LW-13 | IsLodgingSite (P2-4) | Hotel หรือมีที่พักผูก = จริง · สปาไม่มีที่พัก = เท็จ | ✅ |
 | LW-14 | หน้าจอง: คนเสริมแยก + quote ส่งทารก + แผงตามเพดาน (P1-1/P1-2) | ตาม `LodgingOccupancy` · negative 3 แบบ | ✅ `tools/lodging_guest_split_sim.js` |
+
+---
+
+## ETL-T0 — ศูนย์นำเข้าข้อมูล: schema + สัญญา + ตัวอ่าน/ตัวแปลงค่าฐาน (รอบ 205 T0 · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md`)
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| ETL0-01 | CSV TIS-620 (Express) · CSV UTF-8 ไทย | 874 ถอดได้ + บอก `windows-874` · UTF-8 **ไม่ถูกอ่านเป็น 874** (ถอด UTF-8 เข้มงวดก่อน) · ไบต์ที่ไม่ใช่ทั้งคู่ = `encoding` ล้มดัง (BusinessRuleException 400) | ✅ `ImportTabularReaderTests` |
+| ETL0-02 | CSV อัฒภาค + ค่าในคำพูดขึ้นบรรทัดใหม่ · คำพูดไม่ปิด · จุลภาคธรรมดา | ตัวคั่น `;` · ค่าข้ามบรรทัดอยู่ช่องเดียว · `csv-quote` ล้มดัง · ไฟล์ปกติไม่ถูกแตะ | ✅ `ImportTabularReaderTests` |
+| ETL0-03 | `.xls` BIFF8 · ไฟล์ชื่อ .xls ที่จริงเป็น TSV · XML e-Tax · OFX · QIF · HTML · JSON · PDF · ไฟล์ว่าง | `.xls` = `xls-legacy` "บันทึกเป็น .xlsx" (คำตัดสินข้อ 151) · TSV ปลอมนามสกุลอ่านได้ (ตัดสินจากเนื้อไฟล์) · ชนิดอื่นล้มดังพร้อมรหัส + ทางไปต่อ | ✅ `ImportTabularReaderTests` |
+| ETL0-04 | xlsx หลายชีต · ชีตที่ไม่มี | `ListSheets` ตามลำดับ · ไม่ระบุ = ชีตแรก · เลือกชีตได้ · ตัวเลขคงรูป invariant · ชื่อชีตผิด = `sheet-not-found` พร้อมรายชื่อ | ✅ `ImportTabularReaderTests` |
+| ETL0-05 | `SettlementFileReader` หลังกลายเป็น wrapper | ยังโยน `SettlementFormatException` รหัสเดิม + ข้อความของ settlement · เทสต์ settlement เดิมทั้งหมดไม่แก้ | ✅ `ImportTabularReaderTests` + ชุด Settlement* เดิม |
+| ETL0-06 | วันที่ "05/08/2569" · "25/08/2569" · ISO · ระบุ เดือน/วัน · Excel serial · เลขไทย · ชื่อเดือน ไทย/อังกฤษ · มีเวลา · ค่าเพี้ยน · ว่าง | 2026-08-05 + คำเตือน `date-order-assumed` เฉพาะค่าที่สลับได้จริง · ISO ไม่สลับ · serial 46239 = 2026-08-05 · เพี้ยน = issue ไม่ throw · ว่าง = ไม่มีค่า | ✅ `ImportValueNormalizerTests` |
+| ETL0-07 | ยอด "(1,000.00)" · "1,000.00-" · เลขไทย · ฿ + ปัด AwayFromZero · ตัวเลขไม่ใช่เงินไม่ปัด | -1000 · 100.00 · Number 1.125 คงเดิม · ข้อความ = `amount-invalid` | ✅ `ImportValueNormalizerTests` |
+| ETL0-08 | ใช่/Y/1/✓/มี · ไม่ใช่/N/0/ไม่มี · "อาจจะ" | true/false ทุกรูป (เดิม `bool.TryParse` = false) · คำอื่น = `flag-invalid` ไม่เดา | ✅ `ImportValueNormalizerTests` |
+| ETL0-09 | เลขภาษีมีขีด · "1.23457E+12" · 12 หลักที่ Excel ตัดศูนย์ · checksum ผิด | ผ่าน · `taxid-lost-precision` ไม่มีค่าแนะนำ (กู้ไม่ได้) · `taxid-leading-zero` **แนะนำ** "0…" ไม่ใส่เอง · `taxid-invalid` | ✅ `ImportValueNormalizerTests` |
+| ETL0-10 | สาขา สำนักงานใหญ่/สนญ./HQ/head office/0 · "สาขาที่ 3"/"Branch 7" · ข้อความชื่อสาขา | 00000 · 00003/00007 · `branch-invalid` | ✅ `ImportValueNormalizerTests` |
+| ETL0-11 | VAT "7%"/"7"/"0.07"/"0" · "ยกเว้น" · "10%" · "เจ็ด" | 7/7/7/0 · ยกเว้น = ค่า null + `vat-exempt` (Info ไม่ใช่ 0%) · ไม่ปกติ = คำเตือน · อ่านไม่ได้ = issue | ✅ `ImportValueNormalizerTests` |
+| ETL0-12 | เบอร์ +66 · อีเมล · ข้อความยาวเกิน · enum ชื่อ/คำพ้อง/เลข · เลขอ้างอิง scientific | 0812345678 · ตัวเล็ก · ตัดพร้อม `text-truncated` · ค่าไม่รู้จัก = `enum-invalid` · `reference-lost-precision` (ตัวอักษรปนตัวเลขไม่ถูกจับ) | ✅ `ImportValueNormalizerTests` |
+| ETL0-13 | `ImportCellNormalizer` ตามชนิด field | แปลงรูป = เขียว (ค่าเดิมเก็บใน Raw) · ตรงรูปอยู่แล้ว = ไม่แตะ · ช่องบังคับเพี้ยน/ว่าง = Error · ไม่บังคับ = Warning · คำแนะนำไหลถึง `ImportIssueDto.Suggested` · Source = Normalizer (ไม่ติดป้าย AI) | ✅ `ImportValueNormalizerTests` |
+| ETL0-14 | migration ↔ model ของ EF | ตาราง `ImportStagedRows`/`ImportMappingTemplates` มีทุกคอลัมน์ · ทุก index ชื่อ/unique/partial ตรง · คอลัมน์ใหม่ 23 ตัวของ `SmartImportSessions` ครบ (ค่าตั้งต้น = พฤติกรรมเดิม) · อยู่ในเส้นหลัก · ไม่มี UPDATE/DELETE | ✅ `ImportHubSchemaTests` · ⏳ Testcontainers |
+| ETL0-15 | PII ในแถวพัก (PDPA ม.26) | RawJson/MappedJson/OriginalMappedJson/BeforeJson ใช้ `EncryptedColumnConverter` · round-trip คืนค่าเดิม · ค่าเก็บไม่มีเลขบัตร · DisplayKey/IssuesJson ไม่เข้ารหัส (query ได้) | ✅ `ImportHubSchemaTests` |
+| ETL0-16 | ค่าที่เก็บในฐาน + คีย์ล็อก | AiFeatureKey 58/59 · ImportSessionStatus 9 เดิม/10–15 ใหม่ · ค่า enum แถว · `AdvisoryLockKey.ImportBatch` ผูกบริษัท | ✅ `ImportHubSchemaTests` |
+| ETL0-17 | DI + ทะเบียน target | `AddImportHub` ลงสัญญาทุกตัว + worker · target = ผล scan ทุกตัว · ไม่เอา abstract · หา "chart-of-accounts" = "chartofaccounts" (normalize เดียวกับด่านสิทธิ์) · ชนิดซ้ำล้มดัง | ✅ `ImportHubSchemaTests` |
+| ETL0-18 | นักเรียน ImportColumnMatch/ImportDataReview (โครง) + 58/59 generic | ทะเบียนนักเรียนครบ · รายการค้าง 34 → 32 · kill-switch ผ่าน orchestrator จริง | ✅ `AiKillSwitchOrchestratorTests` (ทีม A เติมสมอง) |
+| ETL0-19 | สิทธิ์นำเข้า "stock-adjustments" (สะกดจริงของหน้าเว็บ) | Inventory.Adjust ทุกสะกด · สะกดใกล้เคียงที่ไม่ใช่ชนิดจริง = คีย์สำรองที่เข้มที่สุด | ✅ `ImportExportPermissionScopeTests` |
+| ETL0-20 | ไฟล์ต้นทางของ batch (`FileAttachments` ชนิด `ImportBatch`) | รู้จักชนิด · ระบบแนบเอง · คีย์ = สิทธิ์นำเข้าชนิดของ batch (พนักงาน = HR.Admin) · ไม่พบ batch = คีย์ที่เข้มที่สุด | ✅ `AttachmentPermissionScopeTests` · ⏳ ด่านจริงใน `AttachmentAccessGate` (Testcontainers) |

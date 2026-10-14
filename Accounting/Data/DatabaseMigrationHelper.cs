@@ -209,6 +209,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round204Pnd2Statements());   // รอบ 204 ภ.ง.ด.2 (บล็อกท้ายไฟล์)
         list.AddRange(Round204DirectiveStatements());   // รอบ 204 คอลัมน์ WHT (schema only · บล็อกท้ายไฟล์)
         list.AddRange(Round204RoyaltyHistoryStatements());   // รอบ 204 ฝ่ายค้าน M2/L6 — ประวัติค่าตั้งค่าสิทธิ (ก่อน Round204Pnd2Statements)
+        list.AddRange(Round205ImportHubStatements());   // รอบ 205 T0 ศูนย์นำเข้าข้อมูล (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7508,5 +7509,46 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "WhtRoyaltyPnd2From" timestamp with time zone NULL;""",
         """ALTER TABLE "WithholdingTaxCertLines" ADD COLUMN IF NOT EXISTS "DividendSubRow" character varying(8) NULL;""",
         """ALTER TABLE "WithholdingTaxCertLines" ADD COLUMN IF NOT EXISTS "DividendCreditRate" numeric(5,2) NULL;""",
+    };
+
+    // ═══ รอบ 205 T0 — ศูนย์นำเข้าข้อมูล (Import Hub / ETL · IMPORT_ETL_REVIEW §2.2 · คำตัดสินข้อ 151) ═══
+
+    /// <summary>schema ของ Import Hub — <b>รันทุกบูตได้</b> (IF NOT EXISTS ทุกบรรทัด · ไม่มี UPDATE) · ชื่อ/ชนิด/index ต้องตรงกับ
+    /// <c>AccountingDbContext</c> (ฐานใหม่ได้จาก EnsureCreated — เทสต์ <c>ImportHubSchemaTests</c> ล็อก) · ลำดับ: คอลัมน์ของ session → ตาราง → index ·
+    /// คอลัมน์ใหม่ของ <c>SmartImportSessions</c> ค่าตั้งต้น = พฤติกรรมเดิม (NULL/0/false · HeaderRowSpan = 1) ⇒ session เดิมไม่เปลี่ยนความหมาย ·
+    /// <c>ImportStagedRows.RawJson/MappedJson/OriginalMappedJson/BeforeJson</c> เป็น text เพราะเก็บ ciphertext (EncryptedColumnConverter) ไม่ใช่ jsonb</summary>
+    internal static IReadOnlyList<string> Round205ImportHubStatements() => new List<string>
+    {
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "SourceFileAttachmentId" uuid NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "FileSha256" varchar(64) NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "SheetName" varchar(200) NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "SheetNamesJson" text NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "HeaderRowIndex" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "HeaderRowSpan" integer NOT NULL DEFAULT 1;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "Encoding" varchar(32) NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "Delimiter" varchar(4) NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "HeaderSignature" varchar(64) NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "MappingTemplateId" uuid NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "SourceSystem" varchar(64) NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "Phase" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "CommitMode" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "ProcessedRows" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "ClaimedBy" varchar(100) NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "ClaimedAt" timestamp without time zone NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "HeartbeatAt" timestamp without time zone NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "ColumnMatchAiFeedbackId" uuid NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "ColumnMatchUsedAi" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "OptionsJson" text NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "ReviewSummaryJson" text NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "UndoneAt" timestamp without time zone NULL;""",
+        """ALTER TABLE "SmartImportSessions" ADD COLUMN IF NOT EXISTS "UndoneBy" text NULL;""",
+        """CREATE INDEX IF NOT EXISTS "IX_SmartImportSessions_Status_Heartbeat" ON "SmartImportSessions" ("Status", "HeartbeatAt");""",
+        """CREATE INDEX IF NOT EXISTS "IX_SmartImportSessions_Company_FileSha256" ON "SmartImportSessions" ("CompanyId", "FileSha256");""",
+        """CREATE TABLE IF NOT EXISTS "ImportStagedRows" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "SessionId" uuid NOT NULL, "RowNo" integer NOT NULL DEFAULT 0, "RawJson" text NULL, "MappedJson" text NULL, "OriginalMappedJson" text NULL, "BeforeJson" text NULL, "DisplayKey" varchar(300) NULL, "IssuesJson" text NULL, "Confidence" numeric(5,4) NOT NULL DEFAULT 0, "Status" integer NOT NULL DEFAULT 0, "Action" integer NOT NULL DEFAULT 0, "MatchedEntityId" uuid NULL, "MatchKind" varchar(32) NULL, "MatchScore" numeric(5,4) NULL, "GroupKey" varchar(200) NULL, "CommittedEntityType" varchar(64) NULL, "CommittedEntityId" uuid NULL, "CommitError" text NULL, "UserEdited" boolean NOT NULL DEFAULT false, "AiFeedbackIdsJson" text NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_ImportStagedRows_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE, CONSTRAINT "FK_ImportStagedRows_SmartImportSessions_SessionId" FOREIGN KEY ("SessionId") REFERENCES "SmartImportSessions"("Id") ON DELETE CASCADE);""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_ImportStagedRows_Session_RowNo" ON "ImportStagedRows" ("SessionId", "RowNo");""",
+        """CREATE INDEX IF NOT EXISTS "IX_ImportStagedRows_Session_Status" ON "ImportStagedRows" ("SessionId", "Status");""",
+        """CREATE INDEX IF NOT EXISTS "IX_ImportStagedRows_Company_Committed" ON "ImportStagedRows" ("CompanyId", "CommittedEntityType", "CommittedEntityId");""",
+        """CREATE TABLE IF NOT EXISTS "ImportMappingTemplates" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "EntityType" varchar(50) NOT NULL, "HeaderSignature" varchar(64) NOT NULL, "SourceSystem" varchar(64) NULL, "Name" varchar(200) NOT NULL, "HeadersJson" text NULL, "ColumnMapJson" text NOT NULL DEFAULT '[]', "OptionsJson" text NULL, "UseCount" integer NOT NULL DEFAULT 0, "LastUsedAt" timestamp without time zone NULL, "ConfirmedByUser" boolean NOT NULL DEFAULT false, "AutoCommitWhenClean" boolean NOT NULL DEFAULT false, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_ImportMappingTemplates_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE);""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_ImportMappingTemplates_Company_Entity_Signature" ON "ImportMappingTemplates" ("CompanyId", "EntityType", "HeaderSignature") WHERE "IsDeleted" = false;""",
     };
 }

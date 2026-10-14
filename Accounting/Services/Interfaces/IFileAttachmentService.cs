@@ -17,6 +17,10 @@ public interface IFileAttachmentService
     /// <summary>Fetch a single attachment by id, scoped to the calling tenant.
     /// Returns null if the attachment doesn't exist or belongs to another company.</summary>
     Task<FileAttachmentResponse?> GetByIdAsync(Guid companyId, Guid attachmentId);
+    /// <summary>อ่านไบต์ของไฟล์แนบ — <b>เฉพาะของบริษัทนี้</b> (ไฟล์ของบริษัทอื่น/ไม่มี/ถูกลบ ⇒ <c>null</c> ไม่แยกให้ผู้เรียกเดา) ·
+    /// แถวมีแต่ไฟล์จริงหายจากที่เก็บ ⇒ โยน <see cref="FileNotFoundException"/> (ล้มดัง — ไม่ใช่คืนไฟล์ว่าง) ·
+    /// <b>ไม่ตรวจสิทธิ์ผู้ใช้</b> — ผู้เรียกต้องผ่าน <c>IAttachmentAccessGate</c> ก่อน (รอบ 205 T0: ศูนย์นำเข้าข้อมูลอ่านไฟล์ต้นทางมาวิเคราะห์ใหม่)</summary>
+    Task<byte[]?> ReadBytesAsync(Guid companyId, Guid attachmentId, CancellationToken ct = default);
     /// <param name="keepPhysicalFile">true = ถอดจากรายการ (soft-delete) แต่เก็บไฟล์จริงไว้ — หลักฐานประกอบรายการบัญชี
     /// ที่ต้องเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10 · ป.รัษฎากร §87/3)</param>
     Task DeleteAsync(Guid companyId, Guid attachmentId, bool keepPhysicalFile = false);

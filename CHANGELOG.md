@@ -4756,3 +4756,15 @@ _รอบ 204 (ต่อ) — ฝ่ายค้านรอบรวมคำ�
 _รอบ 204 (ต่อ) — ฝ่ายค้านรอบสาม (ไม่มีระดับกลางขึ้นไป · แก้ระดับต่ำที่กระทบตัวเลข): ปิด ภ.ง.ด.2 แล้วล้างวันเริ่ม (กันเปิดใหม่แล้วช่วง ภ.ง.ด.3 ระหว่างกลางพลิกเงียบ) ·
 ด่านแผนรอบโอนตรวจเลขผู้เสียภาษีแพลตฟอร์มด้วยตัวเดียวกับตอนออก 50 ทวิ (เลขผิดรูปหยุดก่อนลงบัญชี) · เปลี่ยนผู้ถูกหักนับวันจ่ายของการจ่ายหลายใบ + ตัวตัดสินเกณฑ์เงินสดเดียว
 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4064b258_
+
+_รอบ 205 T0 — ศูนย์นำเข้าข้อมูล (Import Hub / ETL · คำตัดสินข้อ 151 · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md`): วางฐานให้ทีม A–E ทำขนาน —
+schema (ขยาย `SmartImportSessions` 23 คอลัมน์ + ตาราง `ImportStagedRows` (RawJson/MappedJson/OriginalMappedJson/BeforeJson เข้ารหัส PDPA ม.26)
++ `ImportMappingTemplates` · migration ADD COLUMN/CREATE TABLE IF NOT EXISTS) · enum สถานะ batch/แถว/แหล่งจับคู่/โหมด commit/ขั้น pipeline ·
+`AiFeatureKey.ImportAccountMap = 58` / `ImportEntityMatch = 59` (generic student) · นักเรียนโครงของ ImportColumnMatch/ImportDataReview (ถอดจากรายการค้าง 34 → 32 ·
+ทีม A เติมสมอง) · สัญญา DTO ทุก endpoint (`Models/DTOs/Import/ImportHubDtos.cs`) + interface 7 ตัวใน `Services/Import/` + โครง implementation + DI
+(`AddImportHub` · scan `IImportTarget` อัตโนมัติ · `ImportBatchWorker`) · ตัวอ่านไฟล์กลาง `ImportTabularReader` (ย้ายจาก SettlementFileReader ซึ่งเหลือเป็น
+wrapper · ตัดสินชนิดจากเนื้อไฟล์ · หลายชีต · .xls/XML/PDF/QIF/OFX ล้มดังพร้อมทางไปต่อ) · ตัวแปลงค่า `ImportValueNormalizer` (มอบให้ owner เดิม:
+ThaiDate · SettlementValueParser · ThaiTaxIdValidator · TaxBranchCode — "ใช่"/"Y" ไม่เป็น false อีก · วันที่ไม่สลับเงียบ) · plumbing: ล็อก `import-batch` ·
+ไฟล์แนบชนิด `ImportBatch` (สิทธิ์ = นำเข้าชนิดของ batch) · `IFileAttachmentService.ReadBytesAsync` · สิทธิ์นำเข้า "stock-adjustments" = Inventory.Adjust
+(เดิมหลุดไป Journal.Manage) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>_
+

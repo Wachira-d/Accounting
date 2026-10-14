@@ -35,6 +35,10 @@ public static class DistillationModelRegistry
         // รอบ 201 ทีม AI · A-AI4 (H-6): PaymentVoucherAccountingSuggestion มีสองรูปคำถาม (รายบรรทัด = คำตอบเดี่ยว ·
         // ทั้งใบ = {"lines":[…]}) ⇒ generic ตอบรูปทั้งใบไม่ได้ (bulk PV ขึ้น "AI ตอบ JSON ไม่ valid" ทั้งที่ไม่ได้เรียก AI)
         typeof(PaymentVoucherAccountingDistillationModel),
+        // รอบ 205 T0 (IMPORT_ETL_REVIEW §2.6): นักเรียนของศูนย์นำเข้าข้อมูล — คำตอบเป็นโครงสร้าง ({"mappings":[…]} / ผลตรวจทั้งชุด)
+        // ⇒ bespoke · T0 วางโครง (PredictAsync = ไม่มีคำตอบ) · ทีม A เติมสมองจากชั้น local (คำพ้อง/แม่แบบ/ImportReviewHeuristics)
+        typeof(ImportColumnMatchDistillationModel),
+        typeof(ImportDataReviewDistillationModel),
     };
 
     /// <summary>feature ที่คำตอบเป็น <b>คำตอบเดี่ยว</b> — ใช้ <see cref="GenericFeedbackDistillationModel"/> หนึ่งตัวต่อ feature
@@ -51,6 +55,9 @@ public static class DistillationModelRegistry
         AiFeatureKey.OcrProjectMatch,
         // รอบ 198 — ประเภทบรรทัด settlement (คำตอบเดียว = ชื่อ SettlementLineType) · ด่าน SettlementLineTypeRules.ParseClassifierAnswer
         AiFeatureKey.SettlementLineClassify,
+        // รอบ 205 — ศูนย์นำเข้าข้อมูล: รหัสผังบัญชีของแถวงบทดลอง (ด่าน ∈ ผังบริษัท) · id ผู้ติดต่อ/สินค้าเดิมหรือ "NEW" (ด่าน ∈ candidate)
+        AiFeatureKey.ImportAccountMap,
+        AiFeatureKey.ImportEntityMatch,
     };
 
     /// <summary>แชตบอต (free-form Q→A — จับคู่คำถามด้วย embedding) → <see cref="ChatAnswerDistillationModel"/></summary>
@@ -86,8 +93,6 @@ public static class DistillationModelRegistry
             [AiFeatureKey.ForecastNarrative] = GapCallsAi,
             [AiFeatureKey.FxRateSuggestion] = GapCallsAi,
             [AiFeatureKey.GlAccountSlotSuggestion] = GapCallsAi,
-            [AiFeatureKey.ImportColumnMatch] = GapCallsAi + " · มี heuristic จับคู่คอลัมน์ของตัวเอง",
-            [AiFeatureKey.ImportDataReview] = GapCallsAi + " · มี ImportReviewHeuristics",
             [AiFeatureKey.InventoryAbcAnalysis] = GapCallsAi,
             [AiFeatureKey.InventoryReorderPointSuggestion] = GapCallsAi,
             [AiFeatureKey.ManualJeAccountSuggestion] = GapCallsAi,

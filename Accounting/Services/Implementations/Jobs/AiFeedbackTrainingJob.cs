@@ -429,6 +429,12 @@ public class AiFeedbackTrainingJob : BackgroundService
         nameof(AiFeatureKey.InventoryAbcAnalysis),
         // Sprint-15: generic GL-account-slot suggestion
         nameof(AiFeatureKey.GlAccountSlotSuggestion),
+        // รอบ 205 — ศูนย์นำเข้าข้อมูล (IMPORT_ETL_REVIEW §2.6): นักเรียนอ่าน AiSuggestionFeedback ตรง (generic 58/59 ·
+        // bespoke 26/27 ของทีม A) ⇒ ที่นี่แค่ mark consumed ให้ LocalModelHealth นับ — ไม่มีตาราง pattern แยก
+        nameof(AiFeatureKey.ImportColumnMatch),
+        nameof(AiFeatureKey.ImportDataReview),
+        nameof(AiFeatureKey.ImportAccountMap),
+        nameof(AiFeatureKey.ImportEntityMatch),
     };
 
     /// <summary>
@@ -509,6 +515,11 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.CustomerRfmSegmentation) => true,
             nameof(AiFeatureKey.InventoryAbcAnalysis) => true,
             nameof(AiFeatureKey.GlAccountSlotSuggestion) => true,
+            // รอบ 205 — ศูนย์นำเข้าข้อมูล (consume-only · นักเรียนอ่าน feedback ตรง)
+            nameof(AiFeatureKey.ImportColumnMatch) => true,
+            nameof(AiFeatureKey.ImportDataReview) => true,
+            nameof(AiFeatureKey.ImportAccountMap) => true,
+            nameof(AiFeatureKey.ImportEntityMatch) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in

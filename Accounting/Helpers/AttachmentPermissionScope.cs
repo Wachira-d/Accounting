@@ -52,6 +52,9 @@ public enum AttachmentOwnerKind
     /// <summary>ไฟล์ต้นฉบับของสแกน — ถ้าสแกน<b>ผูกกับเอกสารแล้ว</b> ใช้ด่านของเอกสารนั้น (ใบเดียวกัน = ด่านเดียวกัน
     /// ไม่ว่าจะเปิดผ่านไฟล์แนบของเอกสาร · รูปสแกน · หรือรายการสแกน) · ยังไม่ผูก ใช้คีย์ของ OCR (<see cref="AttachmentPermissionScope.ScanOwner"/>)</summary>
     OcrScan,
+    /// <summary>ไฟล์ต้นทางของ batch ศูนย์นำเข้าข้อมูล (รอบ 205) — คีย์ขึ้นกับ<b>ชนิดข้อมูลของ batch</b> (ค้นแถว <c>SmartImportSessions</c> ก่อน)
+    /// ผ่าน <see cref="AttachmentPermissionScope.ImportBatchKey"/> · ทั้งอ่านและเขียน (ไฟล์ทะเบียนพนักงาน/ผู้ติดต่อมี PII)</summary>
+    ImportBatch,
 }
 
 /// <summary>ผลของ <see cref="AttachmentPermissionScope.Resolve"/></summary>
@@ -150,6 +153,9 @@ public static class AttachmentPermissionScope
             ["SettlementBatch"] = Rule("SettlementBatch", AttachmentOwnerKind.KeyGated, SettlementPermissionScope.SourceFileWriters.ToArray(), SettlementPermissionScope.SourceFileReaders.ToArray(), false, "รอบโอนเงินจากแพลตฟอร์ม (settlement)"),
             ["SiteOrder"] = Rule("SiteOrder", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.CmsOrderManage }, new[] { PermissionKeys.CmsOrderManage }, false, "คำสั่งซื้อจากเว็บไซต์"),
             ["OcrScan"] = ocr,
+            // รอบ 205 T0: ไฟล์ต้นทางของศูนย์นำเข้าข้อมูล (ระบบแนบตอนสร้าง batch · ไม่รับอัปโหลดผ่านหน้าไฟล์แนบ) — คีย์ไม่คงที่ต่อชนิด
+            // (ขึ้นกับชนิดข้อมูลของ batch) ⇒ WriteAnyOf/ReadAnyOf ว่าง แล้วด่าน (AttachmentAccessGate) ถาม ImportBatchKey(ชนิดของ batch)
+            ["ImportBatch"] = Rule("ImportBatch", AttachmentOwnerKind.ImportBatch, None, None, false, "ไฟล์นำเข้าข้อมูล"),
         };
         return t;
     }
@@ -161,6 +167,14 @@ public static class AttachmentPermissionScope
         if (key.Length > 0 && Table.TryGetValue(key, out var rule)) return rule;
         return new AttachmentScopeRule(null, AttachmentOwnerKind.Unknown, None, None, false, false, "ไม่ทราบชนิด");
     }
+
+    /// <summary>
+    /// **คีย์ของไฟล์ต้นทาง batch นำเข้า** = สิทธิ์<b>นำเข้า</b>ชนิดข้อมูลของ batch (<see cref="ImportExportPermissionScope.ForImport"/> ตัวเดียว ·
+    /// คนที่นำเข้าทะเบียนพนักงานได้เท่านั้นที่เปิดไฟล์ทะเบียนพนักงานที่อัปโหลดไว้ได้) · ไม่พบ batch (<paramref name="batchEntityType"/> = null)
+    /// ⇒ คีย์สำรองที่เข้มที่สุด ไม่ใช่ผ่าน (DOCTRINE §1 G3)
+    /// </summary>
+    public static string ImportBatchKey(string? batchEntityType)
+        => ImportExportPermissionScope.ForImport(batchEntityType);
 
     /// <summary>ข้อความเมื่อชนิดไม่อยู่ในตาราง — บอกว่าทำไมและทำอะไรต่อได้</summary>
     public static string UnknownTypeMessage(string? entityType)

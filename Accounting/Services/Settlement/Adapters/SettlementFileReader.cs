@@ -1,29 +1,29 @@
-using System.Globalization;
-using System.Text;
-using MiniExcelLibs;
+using Accounting.Helpers;
 
 namespace Accounting.Services.Settlement.Adapters;
 
 /// <summary>
 /// **อ่านไฟล์ settlement เป็นแถวของข้อความ — ทีละแถว (ไม่โหลดทั้งตารางเข้าหน่วยความจำ)**
 ///
-/// <para>CSV: ถอดรหัส UTF-8 (มี/ไม่มี BOM) · UTF-16 (BOM) · Windows-874/TIS-620 (ไฟล์ Excel ไทยที่ "บันทึกเป็น CSV") —
-/// ตัดสินด้วยการถอด UTF-8 แบบเข้มงวดก่อน ห้ามถอดแบบหลวม (อักขระเสีย U+FFFD จะกลายเป็นป้ายประเภทที่ไม่มีใครรู้จัก) ·
-/// ตัวคั่น , ; tab ตัดสินจากบรรทัดแรกที่ไม่ว่าง · ค่าในเครื่องหมายคำพูดขึ้นบรรทัดใหม่ได้ · <c>""</c> = คำพูดในค่า</para>
-/// <para>Excel (.xlsx): MiniExcel เท่านั้น (CLAUDE.md "Excel ใช้ MiniExcel") · แผ่นแรก · ค่าตัวเลข/วันที่คงรูป invariant
-/// (ตัวแปลงค่าใน <see cref="SettlementValueParser"/> อ่านต่อ)</para>
+/// <para>รอบ 205 T0 (IMPORT_ETL_REVIEW §2.3): เนื้อตัวอ่าน (ถอดรหัส · CSV · xlsx · เพดาน · รูปค่าในเซลล์) ย้ายไปเป็น owner เดียวที่
+/// <see cref="ImportTabularReader"/> ให้ทุกเส้นนำเข้าใช้ร่วม — ไฟล์นี้เหลือเป็น <b>wrapper บาง</b> ที่คง public API + พฤติกรรมของ settlement ไว้เหมือนเดิม:
+/// ตัดสินชนิดจากนามสกุล (<see cref="SettlementFileInput.IsExcel"/>/<see cref="SettlementFileInput.IsCsv"/>) · ชีตแรก · โยน
+/// <see cref="SettlementFormatException"/> ด้วยรหัสเดิมและข้อความเดิมของ settlement (<see cref="Translate(ImportFormatException, int, int)"/>)</para>
+///
+/// <para>CSV: UTF-8 (มี/ไม่มี BOM) · UTF-16 (BOM) · Windows-874/TIS-620 — ถอด UTF-8 แบบเข้มงวดก่อน · ตัวคั่น , ; tab จากบรรทัดแรก ·
+/// Excel (.xlsx): MiniExcel เท่านั้น · ค่าตัวเลข/วันที่คงรูป invariant (ตัวแปลงค่าใน <see cref="SettlementValueParser"/> อ่านต่อ)</para>
 /// </summary>
 public static class SettlementFileReader
 {
     /// <summary>ขนาดไฟล์สูงสุด — ตรงกับเพดานของ attachment abstraction (25 MB) เพราะไฟล์ต้นฉบับต้องเก็บได้</summary>
-    public const long MaxFileBytes = 25L * 1024 * 1024;
+    public const long MaxFileBytes = ImportTabularReader.MaxFileBytes;
 
     /// <summary>จำนวนแถวสูงสุดต่อไฟล์ (รวมหัวตาราง) — review198-D D-P4: xlsx 25 MB คลายได้หลาย GB / CSV แถวสั้นนับแสน ⇒ ทุกแถวเข้า list +
     /// ธุรกรรมเดียว · อ่านทีละแถวแล้วหยุดทันทีที่เกิน (ไม่อ่านส่วนที่เหลือของไฟล์) · รายงานรอบโอนจริงต่อรอบอยู่ในหลักพัน–หมื่นแถว</summary>
-    public const int MaxRows = 100_000;
+    public const int MaxRows = ImportTabularReader.MaxRows;
 
     /// <summary>จำนวนคอลัมน์สูงสุดต่อแถว (Excel อ้างคอลัมน์ไกลสุด XFD ได้ ⇒ แถวเดียวกลายเป็นอาร์เรย์ 16,384 ช่อง)</summary>
-    public const int MaxColumns = 500;
+    public const int MaxColumns = ImportTabularReader.MaxColumns;
 
     /// <summary>แถวของไฟล์ (ไม่ตัดแถวว่าง — ผู้เรียกข้ามเอง) · ค่าแต่ละช่องตัดช่องว่างหัวท้ายแล้ว · เกิน <see cref="MaxRows"/>/<see cref="MaxColumns"/> ⇒ ล้มดังภาษาไทย</summary>
     public static IEnumerable<IReadOnlyList<string>> ReadRows(SettlementFileInput file) => Open(file).Rows;
@@ -39,11 +39,12 @@ public static class SettlementFileReader
         if (file.Content.LongLength > MaxFileBytes)
             throw new SettlementFormatException("file-too-large",
                 $"ไฟล์ใหญ่เกิน {MaxFileBytes / (1024 * 1024)} MB — ส่งออกรายงานทีละรอบโอน (ช่วงวันที่สั้นลง) แล้วนำเข้าทีละไฟล์");
-        if (file.IsExcel) return new SettlementFileRows(Capped(ReadExcel(file.Content), MaxRows, MaxColumns), null);
+        if (file.IsExcel)
+            return new SettlementFileRows(Capped(ImportTabularReader.ReadExcel(file.Content), MaxRows, MaxColumns), null);
         if (file.IsCsv)
         {
             var text = Decode(file.Content);
-            return new SettlementFileRows(Capped(ReadCsv(text), MaxRows, MaxColumns), DetectDelimiter(StripBom(text)));
+            return new SettlementFileRows(Capped(ReadCsv(text), MaxRows, MaxColumns), ImportTabularReader.DetectDelimiter(StripBom(text)));
         }
         throw new SettlementFormatException("unsupported-type",
             "รองรับเฉพาะไฟล์ .csv และ .xlsx — ถ้าเป็น .xls ให้เปิดใน Excel แล้วบันทึกเป็น .xlsx ก่อน");
@@ -51,179 +52,57 @@ public static class SettlementFileReader
 
     /// <summary>ตัดการอ่านทันทีที่แถว/คอลัมน์เกินเพดาน (lazy — แถวที่เกินไม่ถูกอ่านต่อ) — ข้อความบอกทางไปต่อ (F2 ข้อ 8)</summary>
     public static IEnumerable<IReadOnlyList<string>> Capped(IEnumerable<IReadOnlyList<string>> rows, int maxRows, int maxColumns)
-    {
-        var n = 0;
-        foreach (var r in rows)
-        {
-            if (++n > maxRows)
-                throw new SettlementFormatException("too-many-rows",
-                    $"ไฟล์มีมากกว่า {maxRows:N0} แถว — ส่งออกรายงานทีละรอบโอน (ช่วงวันที่สั้นลง) แล้วนำเข้าทีละไฟล์");
-            if (r.Count > maxColumns)
-                throw new SettlementFormatException("too-many-columns",
-                    $"แถวที่ {n:N0} มีมากกว่า {maxColumns:N0} คอลัมน์ — ไฟล์อาจเสีย/มีข้อมูลค้างที่คอลัมน์ไกล ๆ ส่งออกรายงานจากแพลตฟอร์มใหม่");
-            yield return r;
-        }
-    }
+        => Translated(ImportTabularReader.Capped(rows, maxRows, maxColumns), maxRows, maxColumns);
 
     /// <summary>ถอดรหัสข้อความ CSV — ถอดไม่ได้ทั้ง UTF-8 และ Windows-874 ⇒ ล้มดัง (ไม่เดา)</summary>
     public static string Decode(byte[] bytes)
     {
-        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
-            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
-        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
-            return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
-        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
-            return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
-        try
-        {
-            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
-        }
-        catch (DecoderFallbackException)
-        {
-            // ไฟล์ CSV จาก Excel ภาษาไทยรุ่นเก่า = Windows-874 — เรียก provider ตรง ไม่ต้อง RegisterProvider ทั้ง process ·
-            // ถอดแบบเข้มงวดเหมือนกัน (ไบต์ที่ไม่มีในตาราง 874 = ไม่ใช่ไฟล์ไทย ⇒ ล้มดัง ไม่ใช่อักขระเสียเงียบ)
-            var thai = CodePagesEncodingProvider.Instance.GetEncoding(874, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
-            if (thai != null)
-            {
-                try { return thai.GetString(bytes); }
-                catch (DecoderFallbackException) { /* ตกไปล้มดังข้างล่าง */ }
-            }
-            throw new SettlementFormatException("encoding",
-                "อ่านอักขระในไฟล์ไม่ได้ (ไม่ใช่ UTF-8 หรือ TIS-620) — เปิดไฟล์ใน Excel แล้ว \"บันทึกเป็น CSV UTF-8\" หรือบันทึกเป็น .xlsx");
-        }
+        try { return ImportTabularReader.Decode(bytes); }
+        catch (ImportFormatException ex) { throw Translate(ex, MaxRows, MaxColumns); }
     }
 
     /// <summary>แยก CSV ทีละแถว — ค่าในเครื่องหมายคำพูดข้ามบรรทัดได้ · คำพูดไม่ปิดจนจบไฟล์ ⇒ ล้มดัง</summary>
     public static IEnumerable<IReadOnlyList<string>> ReadCsv(string content)
-    {
-        content = StripBom(content);
-        var delimiter = DetectDelimiter(content);
-        var cell = new StringBuilder();
-        var row = new List<string>();
-        var inQuotes = false;
-        var i = 0;
-        while (i < content.Length)
-        {
-            var c = content[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < content.Length && content[i + 1] == '"') { cell.Append('"'); i += 2; continue; }
-                    inQuotes = false; i++; continue;
-                }
-                cell.Append(c); i++; continue;
-            }
-            if (c == '"' && cell.ToString().Trim().Length == 0) { cell.Clear(); inQuotes = true; i++; continue; }
-            if (c == delimiter) { row.Add(cell.ToString().Trim()); cell.Clear(); i++; continue; }
-            if (c == '\r' || c == '\n')
-            {
-                row.Add(cell.ToString().Trim()); cell.Clear();
-                yield return row;
-                row = new List<string>();
-                if (c == '\r' && i + 1 < content.Length && content[i + 1] == '\n') i++;
-                i++; continue;
-            }
-            cell.Append(c); i++;
-        }
-        if (inQuotes)
-            throw new SettlementFormatException("csv-quote",
-                "ไฟล์ CSV มีเครื่องหมายคำพูด (\") ที่ไม่ปิด — ไฟล์อาจถูกตัดกลางทาง ส่งออกรายงานจากแพลตฟอร์มใหม่");
-        if (cell.Length > 0 || row.Count > 0)
-        {
-            row.Add(cell.ToString().Trim());
-            yield return row;
-        }
-    }
+        => Translated(ImportTabularReader.ReadCsv(content), MaxRows, MaxColumns);
+
+    /// <summary>ค่าในช่อง Excel → ข้อความที่ตัวแปลงค่าอ่านต่อได้แน่นอน (ไม่ขึ้นกับ culture ของเครื่อง) — owner = <see cref="ImportTabularReader.CellText"/></summary>
+    internal static string CellText(object? v) => ImportTabularReader.CellText(v);
+
+    /// <summary>"A" → 0 · "AB" → 27 · คีย์ที่ไม่ใช่ตัวอักษรคอลัมน์ ⇒ -1 — owner = <see cref="ImportTabularReader.ColumnIndex"/></summary>
+    internal static int ColumnIndex(string key) => ImportTabularReader.ColumnIndex(key);
 
     private static string StripBom(string content) => content.Length > 0 && content[0] == '\uFEFF' ? content[1..] : content;
 
-    private static char DetectDelimiter(string content)
+    /// <summary>ห่อการอ่านแบบ lazy — <see cref="ImportFormatException"/> ที่โผล่ตอน MoveNext แปลงเป็น <see cref="SettlementFormatException"/>
+    /// (รหัสเดิม · ข้อความของ settlement) · ข้อผิดพลาดชนิดอื่นไหลผ่านตามเดิม</summary>
+    private static IEnumerable<IReadOnlyList<string>> Translated(IEnumerable<IReadOnlyList<string>> rows, int maxRows, int maxColumns)
     {
-        var end = content.IndexOf('\n');
-        var first = end < 0 ? content : content[..end];
-        var commas = first.Count(ch => ch == ',');
-        var tabs = first.Count(ch => ch == '\t');
-        var semis = first.Count(ch => ch == ';');
-        if (tabs > commas && tabs >= semis) return '\t';
-        if (semis > commas) return ';';
-        return ',';
-    }
-
-    private static IEnumerable<IReadOnlyList<string>> ReadExcel(byte[] bytes)
-    {
-        // MiniExcel อ่านแบบ lazy (ทีละแถว) — ข้อผิดพลาดของไฟล์โผล่ตอน MoveNext ⇒ แปลงเป็นข้อความไทยทุกจุด
-        using var stream = new MemoryStream(bytes, writable: false);
-        IEnumerator<IDictionary<string, object>> it;
-        try
+        using var it = rows.GetEnumerator();
+        while (true)
         {
-            it = MiniExcel.Query(stream, useHeaderRow: false).Cast<IDictionary<string, object>>().GetEnumerator();
-        }
-        catch (Exception ex)
-        {
-            throw new SettlementFormatException("xlsx-unreadable",
-                $"อ่านไฟล์ Excel ไม่ได้ — ตรวจว่าเป็น .xlsx ที่ไม่ได้ตั้งรหัสผ่าน ({ex.Message})");
-        }
-        using (it)
-        {
-            while (true)
-            {
-                bool has;
-                IDictionary<string, object>? r = null;
-                try
-                {
-                    has = it.MoveNext();
-                    if (has) r = it.Current;
-                }
-                catch (Exception ex)
-                {
-                    throw new SettlementFormatException("xlsx-unreadable",
-                        $"อ่านไฟล์ Excel ไม่ได้ — ตรวจว่าเป็น .xlsx ที่ไม่ได้ตั้งรหัสผ่าน ({ex.Message})");
-                }
-                if (!has || r == null) yield break;
-                var max = -1;
-                foreach (var k in r.Keys) max = Math.Max(max, ColumnIndex(k));
-                var cells = new string[max + 1];
-                for (var c = 0; c < cells.Length; c++) cells[c] = "";
-                foreach (var kv in r)
-                {
-                    var idx = ColumnIndex(kv.Key);
-                    if (idx >= 0) cells[idx] = CellText(kv.Value);
-                }
-                yield return cells;
-            }
+            bool has;
+            try { has = it.MoveNext(); }
+            catch (ImportFormatException ex) { throw Translate(ex, maxRows, maxColumns); }
+            if (!has) break;
+            yield return it.Current;
         }
     }
 
-    /// <summary>ค่าในช่อง Excel → ข้อความที่ตัวแปลงค่าอ่านต่อได้แน่นอน (ไม่ขึ้นกับ culture ของเครื่อง)</summary>
-    internal static string CellText(object? v) => v switch
+    /// <summary>รหัสเดียวกับตัวอ่านกลาง · ข้อความของ settlement (พูดถึง "รายงานจากแพลตฟอร์ม/รอบโอน") คงเหมือนก่อนรอบ 205</summary>
+    internal static SettlementFormatException Translate(ImportFormatException ex, int maxRows, int maxColumns) => ex.Code switch
     {
-        null => "",
-        DateTime d => d.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-        double d => d.ToString("R", CultureInfo.InvariantCulture),
-        float f => f.ToString("R", CultureInfo.InvariantCulture),
-        // R-B7: เลข ≥ 1e15 ในเซลล์ตัวเลขของ Excel เสียหลักท้ายไปแล้ว (Excel เก็บ 15 หลัก) — คงรูป scientific ให้ด่านเลขอ้างอิงเห็น
-        // (SettlementValueParser.IdLostPrecision) แทนที่จะพิมพ์เลขเต็มที่ดูถูกแต่หลักท้ายผิด · ยอดเงินอ่านรูปนี้ได้ตามเดิม
-        decimal m when Math.Abs(m) >= 1e15m => ((double)m).ToString("R", CultureInfo.InvariantCulture),
-        long l when l >= 1_000_000_000_000_000L || l <= -1_000_000_000_000_000L => ((double)l).ToString("R", CultureInfo.InvariantCulture),
-        decimal m => m.ToString(CultureInfo.InvariantCulture),
-        IFormattable f => f.ToString(null, CultureInfo.InvariantCulture).Trim(),
-        _ => (v.ToString() ?? "").Trim(),
+        "too-many-rows" => new SettlementFormatException(ex.Code,
+            $"ไฟล์มีมากกว่า {maxRows:N0} แถว — ส่งออกรายงานทีละรอบโอน (ช่วงวันที่สั้นลง) แล้วนำเข้าทีละไฟล์"),
+        "too-many-columns" => new SettlementFormatException(ex.Code,
+            $"แถวที่ {(ex.RowNumber ?? 0):N0} มีมากกว่า {maxColumns:N0} คอลัมน์ — ไฟล์อาจเสีย/มีข้อมูลค้างที่คอลัมน์ไกล ๆ ส่งออกรายงานจากแพลตฟอร์มใหม่"),
+        "encoding" => new SettlementFormatException(ex.Code,
+            "อ่านอักขระในไฟล์ไม่ได้ (ไม่ใช่ UTF-8 หรือ TIS-620) — เปิดไฟล์ใน Excel แล้ว \"บันทึกเป็น CSV UTF-8\" หรือบันทึกเป็น .xlsx"),
+        "csv-quote" => new SettlementFormatException(ex.Code,
+            "ไฟล์ CSV มีเครื่องหมายคำพูด (\") ที่ไม่ปิด — ไฟล์อาจถูกตัดกลางทาง ส่งออกรายงานจากแพลตฟอร์มใหม่"),
+        "xlsx-unreadable" => new SettlementFormatException(ex.Code,
+            $"อ่านไฟล์ Excel ไม่ได้ — ตรวจว่าเป็น .xlsx ที่ไม่ได้ตั้งรหัสผ่าน ({ex.Detail ?? ex.Message})"),
+        _ => new SettlementFormatException(ex.Code, ex.Message),
     };
-
-    /// <summary>"A" → 0 · "AB" → 27 · คีย์ที่ไม่ใช่ตัวอักษรคอลัมน์ ⇒ -1</summary>
-    internal static int ColumnIndex(string key)
-    {
-        if (string.IsNullOrEmpty(key)) return -1;
-        var n = 0;
-        foreach (var ch in key)
-        {
-            var u = char.ToUpperInvariant(ch);
-            if (u < 'A' || u > 'Z') return -1;
-            n = n * 26 + (u - 'A' + 1);
-        }
-        return n - 1;
-    }
 }
 
 /// <summary>ไฟล์ที่เปิดแล้ว — แถว (lazy) + ตัวคั่นคอลัมน์ของ CSV (<c>null</c> = xlsx)</summary>

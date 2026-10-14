@@ -159,6 +159,19 @@ public class AttachmentAccessGate : IAttachmentAccessGate
                     access == AttachmentAccess.Write ? rule.WriteAnyOf : rule.ReadAnyOf, verb);
             }
 
+            case AttachmentOwnerKind.ImportBatch:
+            {
+                // รอบ 205 T0: ไฟล์ต้นทางของ batch นำเข้า — คีย์ = สิทธิ์นำเข้าชนิดของ batch (ทั้งอ่านและเขียน · ไฟล์มี PII ได้) ·
+                // ไม่พบ batch: เขียน = 404 · อ่าน = ใช้คีย์สำรองที่เข้มที่สุด (ImportBatchKey(null)) ไม่ใช่ผ่าน
+                var batchType = await _db.SmartImportSessions.AsNoTracking()
+                    .Where(s => s.Id == entityId && s.CompanyId == companyId)
+                    .Select(s => s.EntityType)
+                    .FirstOrDefaultAsync();
+                if (batchType == null && access == AttachmentAccess.Write) return new(404, "ไม่พบชุดนำเข้าข้อมูลนี้ในบริษัท");
+                return await DenyKeysAsync(companyId, userId, rule,
+                    new[] { AttachmentPermissionScope.ImportBatchKey(batchType) }, verb);
+            }
+
             default: // AttachmentOwnerKind.KeyGated
             {
                 if (access == AttachmentAccess.Read)

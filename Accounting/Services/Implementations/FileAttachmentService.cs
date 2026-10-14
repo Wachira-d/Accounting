@@ -208,6 +208,20 @@ public class FileAttachmentService : IFileAttachmentService
         return attachment == null ? null : MapToResponse(attachment, attachment.UploadedByUser?.FullName ?? "");
     }
 
+    public async Task<byte[]?> ReadBytesAsync(Guid companyId, Guid attachmentId, CancellationToken ct = default)
+    {
+        // tenant isolation: CompanyId ในเงื่อนไขเสมอ · query filter ตัดแถวที่ถูกลบ (soft-delete) อยู่แล้ว
+        var path = await _db.FileAttachments.AsNoTracking()
+            .Where(f => f.Id == attachmentId && f.CompanyId == companyId)
+            .Select(f => f.StoragePath)
+            .FirstOrDefaultAsync(ct);
+        if (path == null) return null;
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            throw new FileNotFoundException(
+                "ไม่พบไฟล์ต้นฉบับในที่เก็บ (แถวไฟล์แนบยังอยู่แต่ไฟล์จริงหาย) — อัปโหลดไฟล์ใหม่อีกครั้ง", path);
+        return await File.ReadAllBytesAsync(path, ct);
+    }
+
     public async Task DeleteAsync(Guid companyId, Guid attachmentId, bool keepPhysicalFile = false)
     {
         var attachment = await _db.FileAttachments

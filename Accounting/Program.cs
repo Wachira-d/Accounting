@@ -454,6 +454,9 @@ builder.Services.AddScoped<Accounting.Services.Implementations.DataIntegrityRepo
 builder.Services.AddScoped<IArApAnalysisService, ArApAnalysisService>();
 builder.Services.AddScoped<IExpenseClaimService, ExpenseClaimService>();
 builder.Services.AddScoped<IImportExportService, ImportExportService>();
+// รอบ 205 T0 — ศูนย์นำเข้าข้อมูล (Import Hub / ETL · IMPORT_ETL_REVIEW §2.4): pipeline · writer · resolver · แม่แบบ · กระทบยอด ·
+// IImportTarget ทุกตัว (scan อัตโนมัติ — ทีม A–E เพิ่ม target/service ที่ AddImportHub ไม่แตะไฟล์นี้) · ImportBatchWorker
+Accounting.Services.Import.ImportHubServiceRegistration.AddImportHub(builder.Services);
 builder.Services.AddScoped<IAuditTrailService, AuditTrailService>();
 builder.Services.AddScoped<IWithholdingTaxCertService, WithholdingTaxCertService>();
 

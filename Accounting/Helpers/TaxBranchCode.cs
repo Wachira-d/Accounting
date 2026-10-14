@@ -26,11 +26,12 @@ public static class TaxBranchCode
     public const string HeadOffice = "00000";
 
     /// <summary>ชื่อสาขาที่แท้จริงหมายถึง "สำนักงานใหญ่" (ทุกสะกดที่พบบ่อย) — กัน
-    /// การต่อท้ายชื่อ default ที่ขัดกับรหัสสาขาจริง เช่น "สาขาที่ 3 (สำนักงานใหญ่)"</summary>
-    private static bool IsHeadOfficeName(string? name)
+    /// การต่อท้ายชื่อ default ที่ขัดกับรหัสสาขาจริง เช่น "สาขาที่ 3 (สำนักงานใหญ่)" ·
+    /// รอบ 205 T0: public ให้ตัวแปลงค่าไฟล์นำเข้า (<c>ImportValueNormalizer.BranchCode</c>) ใช้รายการเดียวกัน (ห้ามมีสำเนาที่สอง) + "HQ"</summary>
+    public static bool IsHeadOfficeName(string? name)
     {
         var n = name?.Trim();
-        return n is "สำนักงานใหญ่" or "สนญ" or "สนญ." or "สำนักงานใหญ" or "Head Office" or "HeadOffice" or "HO";
+        return n is "สำนักงานใหญ่" or "สนญ" or "สนญ." or "สำนักงานใหญ" or "Head Office" or "HeadOffice" or "HO" or "HQ";
     }
 
     /// <summary>

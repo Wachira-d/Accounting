@@ -90,6 +90,12 @@ public static class AdvisoryLockKey
     /// (unique index เป็นตาข่ายชั้นสุดท้าย แต่ชนแล้วทั้งไฟล์ล้มด้วยข้อความของฐานข้อมูล)</summary>
     public const string SettlementImport = "settlement-import";
 
+    /// <summary>ทำงานกับ batch ของศูนย์นำเข้าข้อมูล (Import Hub · รอบ 205) — part = Id ของ batch (<c>SmartImportSession.Id</c>) ผูก companyId ·
+    /// worker วิเคราะห์ไฟล์ใหญ่ / commit / undo ของ batch เดียวกันต้องไม่ซ้อนกัน (สองเครื่องหยิบ batch เดียวกัน = แถวลงซ้ำ) ·
+    /// ใช้ผ่าน <c>JobLock.RunExclusiveAsync(db, ImportBatch, batchId.ToString(), …, companyId)</c> (session lock — commit ผ่าน domain service
+    /// ที่เปิดธุรกรรมเองหลายขั้น xact lock จะหลุดตั้งแต่ขั้นแรก)</summary>
+    public const string ImportBatch = "import-batch";
+
     /// <summary>สร้างผู้ติดต่อกลาง "ลูกค้าเงินสด" ของบริษัท (<c>WalkInCustomerContact</c>) — part = "" · ตรวจ-แล้ว-สร้างเป็น read-modify-write:
     /// ลงบัญชีรอบโอนสองช่องทางพร้อมกัน (คนละล็อกช่องทาง) หรือ integration = ได้สองแถว แล้ว <c>FirstOrDefault(IsWalkInCustomer)</c>
     /// หยิบแถวไหนก็ได้ (review198-C C-13)</summary>
