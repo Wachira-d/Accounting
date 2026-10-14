@@ -725,7 +725,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         // ตัวแบ่งเดียว WhtPayeeSplit) · ใบรายเดียว = WhtPayableAsync() บรรทัดเดียวเหมือนเดิม
         async Task<List<(string Code, string Name, decimal Amount)>> WhtPayableSplitAsync(decimal amount)
         {
-            // รอบ 204 (c3): e-Withholding — ทั้งยอดลง 21923 เหมือน JE จริง (DocumentService.ResolveWhtPayableSplitAsync · ผังไม่มี ⇒ ตกเส้นเดิม)
+            // รอบ 204 (c3): e-Withholding — ทั้งยอดลง 21923 เหมือน JE จริง (DocumentService.ResolveWhtPayableSplitAsync · ผังไม่มี ⇒ แสดงผังที่ขาด)
             // ใบลูกที่อ้างใบต้นทางที่ติ๊ก e-Withholding = ผังของใบต้นทาง (ตัวตัดสินเดียว EWithholdingScope — ตัวเดียวกับ JE)
             if (await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, doc))
             {
@@ -734,6 +734,9 @@ public partial class PdfGenerationService : IPdfGenerationService
                         && x.Level >= 4 && x.IsActive)
                     .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
                 if (eWht != null) return new() { (eWht.AccountCode, eWht.AccountName, amount) };
+                // ฝ่ายค้านรอบ 204 L3: JE จริงล้มดังเมื่อไม่มีผัง (EWithholdingScope.RequireAccount) ⇒ พรีวิวต้องไม่ตกไป 2191x เงียบ — แสดงผังที่ขาดพร้อมทางไปต่อ
+                return new() { (Accounting.Helpers.WhtPayableAccount.EWithholdingCode,
+                    $"⚠️ ไม่พบผัง {Accounting.Helpers.WhtPayableAccount.EWithholdingCode} — สร้างผังก่อนอนุมัติ (ใบ e-Withholding ลงบัญชีไม่ได้)", amount) };
             }
             var orderedLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
             var portions = Accounting.Helpers.WhtPayeeSplit.Portions(doc.ContactId, doc.WhtPayeeContactId,

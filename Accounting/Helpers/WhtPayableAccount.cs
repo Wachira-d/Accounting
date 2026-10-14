@@ -159,6 +159,31 @@ public static class EWithholdingScope
     /// (<c>WhtUnissuedCertGate</c> ไม่บล็อกไฟล์ยื่นด้วยแถวนี้)</summary>
     public const string ReportMarker = "ℹ️ หักผ่าน e-Withholding (ธนาคารนำส่งแล้ว — ไม่ยื่นซ้ำ)";
 
+    /// <summary>รหัสกฎ "ใบ e-Withholding แต่บริษัทไม่มีผัง 21923" (ฝ่ายค้านรอบ 204 L3)</summary>
+    public const string MissingAccountRuleCode = "WHT-EWHT-NO-21923";
+
+    /// <summary>ข้อความล้มดัง + ทางไปต่อ เมื่อใบ e-Withholding ไม่มีผัง 21923</summary>
+    public static string MissingAccountMessage(string? documentNumber)
+        => $"{(string.IsNullOrWhiteSpace(documentNumber) ? "เอกสารนี้" : documentNumber)} หักภาษีผ่าน e-Withholding (ธนาคารนำส่งแทน) แต่บริษัทไม่มีผัง "
+           + $"{WhtPayableAccount.EWithholdingCode} \"ภาษีหัก ณ ที่จ่ายรอธนาคารนำส่ง (e-Withholding)\" — ลงบัญชีไม่ได้ (ถ้าลงผังภาษีหัก ณ ที่จ่ายค้างจ่ายปกติ "
+           + "ยอดจะค้างในผังที่หน้านำส่ง/รายงาน ภ.ง.ด. ไม่นับ) · ทางไปต่อ: สร้างผัง 21923 ภายใต้กลุ่ม 219 ในผังบัญชีแล้วทำรายการอีกครั้ง "
+           + "หรือปลดเครื่องหมาย \"หักผ่าน e-Withholding\" ถ้าเรานำส่งเอง";
+
+    /// <summary>
+    /// **ผัง 21923 ของใบ e-Withholding — ล้มดังเมื่อไม่มี** (ฝ่ายค้านรอบ 204 L3 · ตัวตัดสินเดียวของ JE <c>DocumentService.ResolveWhtPayableSplitAsync</c>
+    /// และ <c>IntegrationService</c> ทั้งสองเส้น) · เดิมไม่มีผัง ⇒ ตกไปลง 2191x เงียบ ๆ ขณะที่ผู้อ่านทุกตัว (หน้านำส่ง · รายงาน/ไฟล์ ภ.ง.ด.) ตัดใบนี้ออก
+    /// ⇒ หนี้ภาษีค้างใน 2191x ที่ไม่มีใครเห็นว่าต้องนำส่ง · ผัง 21923 อยู่ในผังมาตรฐาน + migration ใส่ให้บริษัทเดิมแล้ว ⇒ ไม่มี = ข้อมูลผิดปกติที่ต้องแก้
+    /// </summary>
+    /// <param name="isVia">ผลของ <see cref="IsViaAsync"/></param>
+    /// <param name="eWithholdingAccount">ผัง 21923 ที่ผู้เรียกหาได้ (null = ไม่มี)</param>
+    /// <param name="documentNumber">เลขเอกสาร (ข้อความ)</param>
+    /// <returns>null = ไม่ใช่ใบ e-Withholding (ผู้เรียกใช้ผังปกติ) · ไม่ใช่ null = ผังที่ต้องลง</returns>
+    public static T? RequireAccount<T>(bool isVia, T? eWithholdingAccount, string? documentNumber) where T : class
+    {
+        if (!isVia) return null;
+        return eWithholdingAccount ?? throw new BusinessRuleException(MissingAccountMessage(documentNumber), MissingAccountRuleCode, 422);
+    }
+
     /// <summary>กติกา pure — ธงของใบเอง หรือใบต้นทางฝั่งผู้จ่ายที่ติ๊ก</summary>
     internal static bool IsVia(bool ownFlag, DocumentType? sourceType, bool sourceFlag)
         => ownFlag || (sourceType is DocumentType st && WhtCertIssuePlan.AppliesTo(st) && sourceFlag);

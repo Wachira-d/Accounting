@@ -15273,9 +15273,12 @@ public partial class DocumentService : IDocumentService
     {
         var result = new List<(ChartOfAccount Account, decimal Amount)>();
         if (amount == 0m) return result;
-        // รอบ 204 (c3): e-Withholding — ธนาคารหัก/นำส่งแทน ⇒ ทั้งยอดลง 21923 (ไม่ใช่หนี้ ภ.ง.ด. ที่เรานำส่งเอง) · ผังไม่มี ⇒ ตกเส้นเดิม (ยังลงบัญชีได้)
-        if (await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, doc)
-            && await FindAccountAsync(companyId, Accounting.Helpers.WhtPayableAccount.EWithholdingCode) is { } eWht)
+        // รอบ 204 (c3): e-Withholding — ธนาคารหัก/นำส่งแทน ⇒ ทั้งยอดลง 21923 (ไม่ใช่หนี้ ภ.ง.ด. ที่เรานำส่งเอง)
+        // ฝ่ายค้านรอบ 204 L3: ผังไม่มี ⇒ ล้มดังพร้อมทางไปต่อ (เดิมตกไป 2191x เงียบ ขณะที่หน้านำส่ง/รายงาน ภ.ง.ด. ตัดใบนี้ออก ⇒ หนี้ค้างที่ไม่มีใครเห็น)
+        var eWhtVia = await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, doc);
+        if (Accounting.Helpers.EWithholdingScope.RequireAccount(eWhtVia,
+                eWhtVia ? await FindAccountAsync(companyId, Accounting.Helpers.WhtPayableAccount.EWithholdingCode) : null,
+                doc.DocumentNumber) is { } eWht)
         {
             result.Add((eWht, amount));
             return result;

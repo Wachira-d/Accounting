@@ -329,4 +329,26 @@ public class WhtRoyaltyEWithholdingTests
         Assert.Contains("21923", EWithholdingClearing.ReminderTitle(open));
         Assert.Contains("2569", EWithholdingClearing.ReminderTitle(open));   // พ.ศ.
     }
+
+    // ══════════ ฝ่ายค้านรอบ 204 L3 — ใบ e-Withholding ไม่มีผัง 21923 ⇒ ล้มดัง (ไม่ตก 2191x เงียบ) ══════════
+
+    [Fact]
+    public void ใบeWithholdingไม่มีผัง21923_ล้มดังพร้อมทางไปต่อ_มีผังได้ผังนั้น()
+    {
+        var acc = new ChartOfAccount { AccountCode = WhtPayableAccount.EWithholdingCode, AccountName = "ภาษีหัก ณ ที่จ่ายรอธนาคารนำส่ง (e-Withholding)" };
+        Assert.Same(acc, EWithholdingScope.RequireAccount(true, acc, "PV-1"));
+        var ex = Assert.Throws<BusinessRuleException>(() => EWithholdingScope.RequireAccount<ChartOfAccount>(true, null, "PV-1"));
+        Assert.Equal(EWithholdingScope.MissingAccountRuleCode, ex.RuleCode);
+        Assert.Contains("PV-1", ex.Message);
+        Assert.Contains("21923", ex.Message);
+        Assert.Contains("ทางไปต่อ", ex.Message);
+    }
+
+    [Fact]
+    public void ใบไม่ใช่eWithholding_ไม่ล้มและใช้ผังปกติ_ทิศตรงข้าม()
+    {
+        // ไม่ใช่ e-Withholding ⇒ null (ผู้เรียกใช้ CodeChain ปกติ) ทั้งที่บริษัทมีหรือไม่มีผัง 21923
+        Assert.Null(EWithholdingScope.RequireAccount<ChartOfAccount>(false, null, "PV-2"));
+        Assert.Null(EWithholdingScope.RequireAccount(false, new ChartOfAccount { AccountCode = "21923" }, "PV-2"));
+    }
 }

@@ -6531,6 +6531,16 @@ RULES += [
     dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadOcrLineDiscountSuspectsAsync",
          must=["DocumentService.OcrLineDiscountFixRefusalAsync(_db, companyId, d)", "fixRefusal == null ? OcrLineDiscountFixPath(d.Id) : null"],
          why=_R204ADV + "L2: แถวรายงานซ่อนปุ่ม \"แก้\" ด้วยตัวตัดสินเดียวกับตัวแก้ (server-computed)"),
+    dict(file=DOC, method="ResolveWhtPayableSplitAsync",
+         must=["EWithholdingScope.RequireAccount(eWhtVia,"],
+         forbid=["&& await FindAccountAsync(companyId, Accounting.Helpers.WhtPayableAccount.EWithholdingCode) is { } eWht"],
+         why=_R204ADV + "L3: ใบ e-Withholding ไม่มีผัง 21923 ⇒ ล้มดัง (เดิมตก 2191x เงียบ ขณะที่หน้านำส่ง/รายงานตัดใบนี้ออก)"),
+    dict(file="Services/Implementations/IntegrationService.cs", method="BuildIntegrationJournalLinesAsync",
+         must=["EWithholdingScope.RequireAccount(intEWhtVia,"],
+         why=_R204ADV + "L3: เส้น integration ตัวตัดสินเดียวกับ DocumentService"),
+    dict(file="Services/Implementations/IntegrationService.cs", method="CreatePaymentVoucherJournalAsync",
+         must=["EWithholdingScope.RequireAccount(payEWhtVia,"],
+         why=_R204ADV + "L3: ใบสำคัญจ่ายจาก integration ตัวตัดสินเดียวกับ DocumentService"),
 ]
 
 # ── รอบ 204 — แบบ ภ.ง.ด.2 (คำตัดสินเจ้าของ DECISIONS ข้อ 148 · Pnd2FormTests ล็อก helper · กติกาข้างล่างล็อกจุดเรียก) ──

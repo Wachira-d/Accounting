@@ -2502,7 +2502,15 @@ public class IntegrationService : IIntegrationService
                     // รอบ 204 (ข้อ 148): + ประเภทเงินได้ของบรรทัดที่หัก ⇒ ดอกเบี้ย/ปันผลบุคคลธรรมดาลง 21915 (ภ.ง.ด.2) ตรงกับ 50 ทวิ
                     // กระดานตัดสิน 2026-10-13 (ส่งต่อจากทีม C): ค่าตั้งค่าสิทธิ ม.40(3) ⇒ ภ.ง.ด.2 + ใบ e-Withholding ⇒ 21923 — ตัวตัดสินเดียวกับ JE ของ DocumentService
                     var intRoyalty = await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId);
-                    var whtChain = (await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, document)
+                    // ฝ่ายค้านรอบ 204 L3: ใบ e-Withholding ⇒ 21923 เท่านั้น · ไม่มีผัง ⇒ ล้มดัง (เดิมตกไป 2191x เงียบ — ตัวตัดสินเดียวกับ DocumentService)
+                    var intEWhtVia = await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, document);
+                    var intEWhtAcc = Accounting.Helpers.EWithholdingScope.RequireAccount(intEWhtVia,
+                        intEWhtVia
+                            ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive
+                                && a.AccountCode == Accounting.Helpers.WhtPayableAccount.EWithholdingCode)
+                            : null,
+                        document.DocumentNumber);
+                    var whtChain = (intEWhtAcc != null
                             ? new[] { Accounting.Helpers.WhtPayableAccount.EWithholdingCode }
                             : Array.Empty<string>())
                         .Concat(Accounting.Helpers.WhtPayableAccount.CodeChain(
@@ -2511,8 +2519,8 @@ public class IntegrationService : IIntegrationService
                             expenseContact?.Name, await _db.LoadWithheldAsync(companyId, document),
                             Accounting.Helpers.WhtRoyaltyPolicy.AppliesTo(intRoyalty.Form, intRoyalty.Pnd2From, document.PaymentDate ?? document.DocumentDate)))
                         .ToList();
-                    ChartOfAccount? whtAcc = null;
-                    foreach (var code in whtChain)
+                    ChartOfAccount? whtAcc = intEWhtAcc;
+                    foreach (var code in intEWhtAcc != null ? new List<string>() : whtChain)
                     {
                         whtAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(
                             a => a.CompanyId == companyId && a.IsActive && a.AccountCode == code);
@@ -4153,7 +4161,15 @@ public class IntegrationService : IIntegrationService
                 .FirstOrDefaultAsync(c => c.Id == document.ContactId);
             // กระดานตัดสิน 2026-10-13 (ส่งต่อจากทีม C): ค่าตั้งค่าสิทธิ ม.40(3) + ใบ e-Withholding ⇒ 21923 (ตัวตัดสินเดียวกับ DocumentService)
             var payRoyalty = await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId);
-            var payChain = (await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, document)
+            // ฝ่ายค้านรอบ 204 L3: ใบ e-Withholding ⇒ 21923 เท่านั้น · ไม่มีผัง ⇒ ล้มดัง (ไม่ตกไปผัง 2191x ตัวแรกเงียบ ๆ)
+            var payEWhtVia = await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, document);
+            var payEWhtAcc = Accounting.Helpers.EWithholdingScope.RequireAccount(payEWhtVia,
+                payEWhtVia
+                    ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive
+                        && a.AccountCode == Accounting.Helpers.WhtPayableAccount.EWithholdingCode)
+                    : null,
+                document.DocumentNumber);
+            var payChain = (payEWhtAcc != null
                     ? new[] { Accounting.Helpers.WhtPayableAccount.EWithholdingCode }
                     : Array.Empty<string>())
                 .Concat(Accounting.Helpers.WhtPayableAccount.CodeChain(
@@ -4163,7 +4179,8 @@ public class IntegrationService : IIntegrationService
                     Accounting.Helpers.WhtRoyaltyPolicy.AppliesTo(payRoyalty.Form, payRoyalty.Pnd2From, document.PaymentDate ?? document.DocumentDate)))
                 .ToList();
             var whtCode = payChain[0];
-            var whtAccount = await _db.ChartOfAccounts
+            var whtAccount = payEWhtAcc
+                ?? await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == whtCode && a.IsActive)
                 ?? await _db.ChartOfAccounts
                     .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("2191")
