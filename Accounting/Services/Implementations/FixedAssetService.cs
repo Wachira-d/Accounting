@@ -26,6 +26,17 @@ public class FixedAssetService : IFixedAssetService
         if (existing)
             throw new InvalidOperationException($"รหัสสินทรัพย์ {request.AssetCode} ซ้ำ");
 
+        // ผังบัญชีจากคำขอ: ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม — ตัวตัดสินเดียว PostingAccountGuard (2026-10-14 · ID#13) ·
+        // เดิมเก็บดิบ ๆ แล้วงานค่าเสื่อมรายเดือน (DepreciationBackgroundService) ลงสมุดด้วย id เหล่านี้ทุกเดือน
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.AssetAccountId, "บัญชีสินทรัพย์"),
+            (request.DepreciationExpenseAccountId, "บัญชีค่าเสื่อมราคา"),
+            (request.AccumulatedDepreciationAccountId, "บัญชีค่าเสื่อมราคาสะสม"),
+            (request.LeaseLiabilityAccountId, "บัญชีหนี้สินตามสัญญาเช่า"),
+            (request.PostAcquisitionJournalEntry ? request.CreditAccountId : null, "บัญชีเครดิต (เงินสด/เจ้าหนี้)"),
+        });
+
         // For a Right-of-Use lease, useful life defaults to the lease term if
         // the caller didn't supply it explicitly — TFRS 16 amortizes over the
         // shorter of useful life or lease term, and lease term is the safer
@@ -314,6 +325,13 @@ public class FixedAssetService : IFixedAssetService
         // เลือกแล้วบันทึกไม่มีผล — สินทรัพย์ที่ถอดออกจากโครงการยังคิดค่าเสื่อม
         // เข้าโครงการที่ปิดไปแล้วต่อ)
         static Guid? G(Guid? v) => v == Guid.Empty ? null : v;
+        // ผังที่เปลี่ยน: ตัวตัดสินเดียวกับตอนสร้าง (ID#13) — Guid.Empty (ปลดค่า) ข้ามโดย EnsurePostingAccountsAsync
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.AssetAccountId, "บัญชีสินทรัพย์"),
+            (request.DepreciationExpenseAccountId, "บัญชีค่าเสื่อมราคา"),
+            (request.AccumulatedDepreciationAccountId, "บัญชีค่าเสื่อมราคาสะสม"),
+        });
         if (request.AssetAccountId.HasValue) asset.AssetAccountId = G(request.AssetAccountId);
         if (request.DepreciationExpenseAccountId.HasValue) asset.DepreciationExpenseAccountId = G(request.DepreciationExpenseAccountId);
         if (request.AccumulatedDepreciationAccountId.HasValue) asset.AccumulatedDepreciationAccountId = G(request.AccumulatedDepreciationAccountId);

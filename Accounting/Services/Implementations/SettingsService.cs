@@ -33,6 +33,24 @@ public class SettingsService : ISettingsService
             MapToResponse(companyId, settings) with { CmsModules = await ComputeCmsModulesAsync(companyId) });
     }
 
+    /// <summary>ป้าย + คำเตือนของแหล่งเงินเริ่มต้นที่บันทึกไว้ (PC#6 · ID#22) — ตัวตัดสินเดียวกับตอนใช้จริง
+    /// (<see cref="MoneyAccountDirectory"/>): ใช้ไม่ได้แล้ว = ข้อความพร้อมทางไปต่อ · ไม่ใช่ผังเงินสด/ธนาคาร = คำเตือน</summary>
+    private async Task<(string? Label, string? Warning)> DefaultPaymentAccountInfoAsync(Guid companyId, Guid? accountId)
+    {
+        if (accountId is not Guid id || id == Guid.Empty) return (null, null);
+        var ctx = await _db.LoadMoneyContextAsync(companyId);
+        var facts = await _db.LoadPostingFactsAsync(companyId, new[] { id });
+        facts.TryGetValue(id, out var f);
+        var label = f is null ? null : $"{f.Code} {f.Name}";
+        var problem = ctx.SourceProblem(f);
+        if (problem != Accounting.Helpers.PostingAccountProblem.None)
+            return (label, Accounting.Helpers.PostingAccountRule.Message(problem, f, "แหล่งเงินเริ่มต้นที่บันทึกไว้")
+                + " · ระหว่างนี้รายการที่ใช้ค่าเริ่มต้น (เงินเดือน/นำส่ง สปส./ภาษี) จะบันทึกไม่ได้จนกว่าจะแก้");
+        return ctx.IsMoneyAccount(f!.Id, f.Code)
+            ? (label, null)
+            : (label, Accounting.Helpers.MoneyAccountRule.NotMoneyAccountWarning(f.Code, f.Name, "แหล่งเงินเริ่มต้น"));
+    }
+
     /// <summary>เติมผลตัดสิน "วิธีบันทึกเงินมัดจำ" (รอบ 193 #34) — ค่าตั้งต้นตามประเภทธุรกิจมาจาก Company.IndustryType
     /// ตัวตัดสินตัวเดียว Helpers/DepositPolicyResolver (หน้าเว็บห้ามคำนวณเอง)</summary>
     private async Task<CompanySettingsResponse> WithDepositVatInfoAsync(Guid companyId, CompanySettingsResponse r)
@@ -53,8 +71,16 @@ public class SettingsService : ISettingsService
             vat, retail, company?.PhoR06ApprovedDate, DateTime.UtcNow, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.Document);
         var mayAbbrevSlip = Accounting.Helpers.AbbreviatedTaxInvoiceRule.CanIssue(
             vat, retail, company?.PhoR06ApprovedDate, DateTime.UtcNow, requirePhoR06, Accounting.Helpers.AbbreviatedInvoiceChannel.CashRegisterSlip);
+        var (defLabel, defWarning) = await DefaultPaymentAccountInfoAsync(companyId, r.DefaultPaymentAccountId);
+        var moneyPrefixes = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted)
+            .Select(x => x.MoneyAccountCodePrefixes).FirstOrDefaultAsync();
         return r with
         {
+            DefaultPaymentAccountLabel = defLabel,
+            DefaultPaymentAccountWarning = defWarning,
+            MoneyAccountCodePrefixes = moneyPrefixes,
+            MoneyAccountCodePrefixesEffective = string.Join(", ", Accounting.Helpers.MoneyAccountRule.ParsePrefixes(moneyPrefixes)),
             DepositVatTreatmentInfo = Accounting.Helpers.DepositPolicyResolver.Resolve(
                 Accounting.Helpers.DepositPolicyResolver.NatureOf(industry), r.DepositVatTreatment),
             DepositVatTreatmentOptions = Accounting.Helpers.DepositPolicyResolver.Options,
@@ -239,11 +265,33 @@ public class SettingsService : ISettingsService
         if (request.OcrBuyerInvoiceDefaultTarget.HasValue)
             settings.OcrBuyerInvoiceDefaultTarget = request.OcrBuyerInvoiceDefaultTarget.Value;
 
-        // OCR แหล่งเงิน default. Guid.Empty = ล้างค่า (กลับ auto-pick);
-        // null = ไม่แตะ; ค่าอื่น = ตั้งบัญชีนั้น.
+        // แหล่งเงิน default (OCR · เงินเดือน · นำส่ง สปส./ภาษี). Guid.Empty = ล้างค่า (กลับ auto-pick); null = ไม่แตะ; ค่าอื่น = ตั้งบัญชีนั้น
+        // — 2026-10-14 (PC#6 · ID#22): ตรวจก่อนเก็บ (ของบริษัทนี้ · เปิดใช้ · ลงรายการได้ — ตัวตัดสินเดียวกับตอนใช้จ่ายจริง) ·
+        // เดิมเก็บดิบ ๆ แล้วเงินเดือน/นำส่งลงผังนั้นตรง ๆ · ไม่ใช่ผังเงินสด/ธนาคาร = เตือน (DefaultPaymentAccountWarning) ไม่บล็อก ·
+        // ค่าเดิมที่ส่งกลับมาเหมือนเดิม (ผู้ใช้ไม่ได้แตะ) ไม่ตรวจซ้ำ — ไม่ให้การบันทึกเรื่องอื่นล้มเพราะค่าเก่า (คำเตือนแสดงแยก)
         if (request.DefaultPaymentAccountId.HasValue)
-            settings.DefaultPaymentAccountId = request.DefaultPaymentAccountId.Value == Guid.Empty
-                ? null : request.DefaultPaymentAccountId.Value;
+        {
+            var newDefault = request.DefaultPaymentAccountId.Value;
+            if (newDefault != Guid.Empty && newDefault != settings.DefaultPaymentAccountId)
+            {
+                var moneyCtx = await _db.LoadMoneyContextAsync(companyId);
+                var facts = await _db.LoadPostingFactsAsync(companyId, new[] { newDefault });
+                facts.TryGetValue(newDefault, out var f);
+                var problem = moneyCtx.SourceProblem(f);
+                if (problem != Accounting.Helpers.PostingAccountProblem.None)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        Accounting.Helpers.PostingAccountRule.Message(problem, f, "แหล่งเงินเริ่มต้น")!,
+                        Accounting.Helpers.PostingAccountRule.RuleCode);
+            }
+            settings.DefaultPaymentAccountId = newDefault == Guid.Empty ? null : newDefault;
+        }
+        // รหัสผังเงินสด/ธนาคารของบริษัท (PC#11): null = ไม่แตะ · "" = ล้าง · รูปแบบผิด = ปฏิเสธพร้อมตัวอย่าง (ไม่ใช่เก็บเงียบ)
+        if (request.MoneyAccountCodePrefixes != null)
+        {
+            var (normalized, err) = Accounting.Helpers.MoneyAccountRule.NormalizeSetting(request.MoneyAccountCodePrefixes);
+            if (err != null) throw new Accounting.Helpers.BusinessRuleException(err, "SET-MONEY-PREFIXES");
+            settings.MoneyAccountCodePrefixes = normalized;
+        }
 
         if (request.AutoAttachWhtCertPdf.HasValue)
             settings.AutoAttachWhtCertPdf = request.AutoAttachWhtCertPdf.Value;

@@ -4946,6 +4946,9 @@ public static class DatabaseMigrationHelper
             // null = พฤติกรรมเดิม (auto-pick bank รหัสต่ำสุด). ตั้งเป็น
             // ChartOfAccount.Id ของบัญชีเงินสด/ธนาคารหลัก → OCR ใช้เป็น default.
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DefaultPaymentAccountId" uuid NULL;""",
+            // 2026-10-14 (PC#11): รหัสขึ้นต้นของผังเงินสด/ธนาคารสำหรับบริษัทที่ใช้ผังบัญชีของตัวเอง
+            // (null = ผังมาตรฐาน 111/1133/2123 — Helpers/MoneyAccountRule ตัวเดียว)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "MoneyAccountCodePrefixes" varchar(200) NULL;""",
 
             // ===== CompanySettings: กองทุนเงินทดแทน (กท.20ก) =====
             // อัตราสมทบนายจ้างฝ่ายเดียว 0.2–1.0% ตามประเภทกิจการ. default 0.2%

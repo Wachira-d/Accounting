@@ -301,6 +301,23 @@
         try { const res = await fn(); Layout.toast(res.message || 'สำเร็จ'); Layout.closeModal('subModal'); if (res.data?.reservationNumber) this.renderReservation(res.data); await this.loadDash(); if (!document.getElementById('tabList').classList.contains('hidden')) await this.loadList(); return res; }
         catch (e) { Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); throw e; }
       },
+      // บัญชีธนาคารที่รับเงิน (PC#8 · 2026-10-14) — เดิมยืนยันมัดจำ/เช็คเอาต์ไม่มีช่องนี้ ⇒ เงินโอนลงเงินสด 11111 ทุกใบ ·
+      // แสดงเฉพาะบัญชีที่เปิดใช้ · ยังไม่ผูกผัง = เลือกไม่ได้พร้อมเหตุผล (เซิร์ฟเวอร์ตรวจซ้ำด้วยตัวหาตัวเดียว MoneyAccountDirectory)
+      async bankSelect(name) {
+        let banks = [];
+        try { const b = await Layout.api().getBankAccounts(); banks = (b.data?.items || b.data || []).filter(x => x.isActive !== false); }
+        catch (e) { Layout.toast('โหลดรายการบัญชีธนาคารไม่สำเร็จ — ' + (e.message || 'ลองเปิดหน้าต่างนี้ใหม่'), 'error', 7000); }
+        return `<select class="form-input" name="${name}"><option value="">— เงินสด / ตามค่าตั้ง —</option>${banks.map(b =>
+          `<option value="${esc(b.id)}" ${b.linkedAccountId ? '' : 'disabled'}>${esc(b.accountName || b.bankName || '')} ${esc(b.accountNumber || '')}${b.linkedAccountId ? '' : ' (ยังไม่ผูกผังบัญชี — ผูกที่หน้า “บัญชีธนาคาร”)'}</option>`).join('')}</select>`;
+      },
+      // โอน/พร้อมเพย์ = เงินเข้าบัญชีธนาคาร ⇒ ต้องเลือกบัญชี (ระบบไม่เดาว่าเข้าบัญชีไหน) · บัตร/e-Wallet ลงบัญชีพักของช่องทางนั้นได้ ⇒ ไม่บังคับ
+      bankMissing(f, amount) {
+        const m = +f.pm.value;
+        if (!(amount > 0) || f.bank.value || !(m === 2 || m === 5)) return false;
+        Layout.toast('เลือก “รับเข้าบัญชีธนาคาร” ก่อน — วิธีชำระเป็นโอน/พร้อมเพย์ เงินต้องลงบัญชีธนาคารที่รับจริง (ยังไม่มีในรายการ ให้เพิ่มที่หน้า “บัญชีธนาคาร”)', 'error', 8000);
+        f.bank.focus();
+        return true;
+      },
       pmSelect(name, def) { return `<select class="form-input" name="${name}">${Object.entries(PM).map(([k, v]) => `<option value="${k}" ${+k === def ? 'selected' : ''}>${v}</option>`).join('')}</select>`; },
       async assign(reservationRoomId, unitId) { await this.call(() => Layout.api().lodgingAssign(this.current.id, { reservationRoomId, unitId: unitId || null })); },
       // ปฏิเสธสลิป — เหตุผล**บังคับ** เพราะข้อความนี้ถูกส่งถึงแขกตรง ๆ
@@ -331,17 +348,20 @@
         }, 'ปฏิเสธสลิป');
       },
 
-      confirmForm(extra) {
+      async confirmForm(extra) {
         const r = this.current; const due = Math.max(0, r.depositRequired - r.depositPaid);
+        const bankSel = await this.bankSelect('bank');
         this.sub(extra ? 'รับชำระเพิ่ม' : 'ยืนยันการจอง + บันทึกรับมัดจำ', `<form id="cf" class="grid2">
           <div class="fld"><label>ยอดที่รับ (0 = ยืนยันโดยไม่รับเงิน)</label><input class="form-input" type="number" step="0.01" min="0" name="amount" value="${extra ? r.balanceDue : due}"></div>
           <div class="fld"><label>วิธีชำระ</label>${this.pmSelect('pm', 2)}</div>
+          <div class="fld"><label>รับเข้าบัญชีธนาคาร (บังคับเมื่อโอน/พร้อมเพย์)</label>${bankSel}</div>
           <div class="fld"><label>อ้างอิง (เลขที่โอน)</label><input class="form-input" name="ref" value="${esc(r.paymentReference || '')}"></div>
           <div class="fld"><label>วันที่รับเงิน</label><input class="form-input" type="date" name="date" value="${todayIso()}"></div>
           <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div>
           <div class="hint" style="grid-column:1/-1">ยอด > 0 จะออก <b>ใบเสร็จมัดจำ</b> (Cr ขายรอรับรู้) ผ่านเลขเอกสาร gap-free${extra ? ' · <b>ไม่เปลี่ยนสถานะการจอง</b> (ยกเว้นที่พักเปิด “ยืนยันอัตโนมัติเมื่อได้รับมัดจำ”)' : ' และยืนยันห้องให้ทันที'}</div></form>`, async () => {
           const f = document.getElementById('cf');
-          await this.call(() => Layout.api().lodgingConfirm(r.id, { depositAmount: +f.amount.value, paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, paymentDate: f.date.value ? f.date.value + 'T00:00:00' : null, note: f.note.value || null, confirmReservation: !extra }));
+          if (this.bankMissing(f, +f.amount.value)) return false;
+          await this.call(() => Layout.api().lodgingConfirm(r.id, { depositAmount: +f.amount.value, paymentMethod: +f.pm.value, bankAccountId: f.bank.value || null, paymentReference: f.ref.value || null, paymentDate: f.date.value ? f.date.value + 'T00:00:00' : null, note: f.note.value || null, confirmReservation: !extra }));
         }, extra ? 'บันทึกรับชำระ' : 'ยืนยัน');
       },
       checkInForm() {
@@ -373,8 +393,9 @@
         }, 'เพิ่ม');
       },
       async cancelCharge(chargeId) { if (!confirm('ยกเลิกรายการนี้?')) return; await this.call(() => Layout.api().lodgingCancelCharge(this.current.id, chargeId)); },
-      checkOutForm() {
+      async checkOutForm() {
         const r = this.current;
+        const bankSel = await this.bankSelect('bank');
         this.sub('เช็คเอาต์ + ออกเอกสาร', `<form id="cof" class="grid2">
           <div class="hint" style="grid-column:1/-1">ระบบจะออก <b>ใบกำกับภาษี/ใบแจ้งหนี้</b> ทั้งการเข้าพัก (ค่าห้อง + บริการเสริม + folio + service charge) หักมัดจำ ${money(r.depositPaid)} ตามวิธีบันทึกของใบมัดจำ${r.depositVatTreatmentLabel ? ' (' + esc(r.depositVatTreatmentLabel) + ')' : ''} แล้วรับชำระส่วนที่เหลือ ${money(r.balanceDue)}</div>
           ${r.securityDepositHeld > 0 ? `<div class="warn" style="grid-column:1/-1">🔒 มีเงินประกัน ${money(r.securityDepositHeld)} — <b>ไม่ถูกหักในใบนี้</b> (เงินประกันไม่ใช่ค่าห้อง) · ถ้าจะใช้เงินประกันจ่ายค่าเสียหาย ให้เลือก “ออกใบแจ้งหนี้” ด้านล่าง แล้วกด “ปิดเงินประกัน” หลังเช็คเอาต์เพื่อตัดชำระใบนี้ + คืนส่วนที่เหลือ</div>` : ''}
@@ -382,6 +403,7 @@
           <div class="fld"><label>รายละเอียดค่าเสียหาย</label><input class="form-input" name="dmgd"></div>
           <div class="fld"><label>รับชำระส่วนที่เหลือตอนนี้</label><select class="form-input" name="collect"><option value="true">รับเงินเลย</option><option value="false">ออกใบแจ้งหนี้ (เครดิต/agent)</option></select></div>
           <div class="fld"><label>วิธีชำระ</label>${this.pmSelect('pm', 1)}</div>
+          <div class="fld"><label>รับเข้าบัญชีธนาคาร (บังคับเมื่อโอน/พร้อมเพย์)</label>${bankSel}</div>
           <div class="fld"><label>อ้างอิง</label><input class="form-input" name="ref"></div>
           <div class="fld"><label><input type="checkbox" name="company" ${r.guestTaxId ? 'checked' : ''}> ออกใบกำกับในนามบริษัทของแขก (${esc(r.guestCompanyName || 'ยังไม่มีข้อมูล')})</label></div>
           ${(this.property?.lateCheckOutFee > 0) ? `<div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="late">
@@ -389,7 +411,8 @@
           ${r.canLegacyCheckOut ? `<div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="vatAck"> รับทราบว่าถ้าเดือนเช็คเอาต์เดิม (${Layout.date(r.checkOutDate)}) ยื่น ภ.พ.30 แล้ว ใบย้อนหลังนี้ต้องยื่นแบบเพิ่มเติม</label></div>` : ''}
           <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div></form>`, async () => {
           const f = document.getElementById('cof');
-          await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', chargeLateCheckOut: !!(f.late && f.late.checked), issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null, acknowledgeFiledVatPeriod: !!(f.vatAck && f.vatAck.checked) }));
+          if (f.collect.value === 'true' && this.bankMissing(f, r.balanceDue + (+f.dmg.value || 0))) return false;
+          await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, bankAccountId: f.collect.value === 'true' ? (f.bank.value || null) : null, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', chargeLateCheckOut: !!(f.late && f.late.checked), issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null, acknowledgeFiledVatPeriod: !!(f.vatAck && f.vatAck.checked) }));
         }, 'เช็คเอาต์');
       },
       // รอบ 201 ทีม IN (A-IN5): ใบแทนยอดเท่าใบเดิม — ยอด/ชนิดต่าง เซิร์ฟเวอร์ปฏิเสธพร้อมทางไปต่อ (ใบลด/เพิ่มหนี้)

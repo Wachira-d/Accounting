@@ -56,6 +56,12 @@ public partial class FinancialManagementService : IFinancialManagementService
 
     public async Task<PrepaidExpenseResponse> CreatePrepaidExpenseAsync(Guid companyId, CreatePrepaidExpenseRequest request, string userId)
     {
+        // ผังบัญชีจากคำขอ: ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม — ตัวตัดสินเดียว PostingAccountGuard (2026-10-14 · ID#13) ·
+        // เดิมเขียนลง JournalEntryLine.AccountId ดิบ ๆ ⇒ ผังบริษัทอื่น/ปิดใช้/บัญชีคุมลงสมุดได้
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.PrepaidAccountId, "บัญชีค่าใช้จ่ายจ่ายล่วงหน้า"), (request.ExpenseAccountId, "บัญชีค่าใช้จ่าย"),
+        });
         var refNo = $"PPD-{DateTime.UtcNow:yyyyMM}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
         var amountPerPeriod = Math.Round(request.TotalAmount / request.TotalPeriods, 2, MidpointRounding.AwayFromZero);
 
@@ -185,6 +191,12 @@ public partial class FinancialManagementService : IFinancialManagementService
             && !await _db.Contacts.AnyAsync(c => c.Id == depContactId && c.CompanyId == companyId))
             throw new KeyNotFoundException("ไม่พบผู้ติดต่อนี้ในบริษัท — เลือกผู้ติดต่อใหม่จากรายการ");
 
+        // ผังบัญชีจากคำขอ: ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม — ตัวตัดสินเดียว PostingAccountGuard (2026-10-14 · ID#13) ·
+        // เดิมเขียนลง JournalEntryLine.AccountId ดิบ ๆ ⇒ ผังบริษัทอื่น/ปิดใช้/บัญชีคุมลงสมุดได้
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.DepositAccountId, "บัญชีเงินมัดจำ"), (request.CashAccountId, "บัญชีเงินสด/ธนาคาร"),
+        });
         var refNo = $"DEP-{DateTime.UtcNow:yyyyMM}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
 
         var entity = new DepositTransaction
@@ -599,6 +611,12 @@ public partial class FinancialManagementService : IFinancialManagementService
 
     public async Task<AccruedExpenseResponse> CreateAccruedExpenseAsync(Guid companyId, CreateAccruedExpenseRequest request, string userId)
     {
+        // ผังบัญชีจากคำขอ: ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม — ตัวตัดสินเดียว PostingAccountGuard (2026-10-14 · ID#13) ·
+        // เดิมเขียนลง JournalEntryLine.AccountId ดิบ ๆ ⇒ ผังบริษัทอื่น/ปิดใช้/บัญชีคุมลงสมุดได้
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.ExpenseAccountId, "บัญชีค่าใช้จ่าย"), (request.AccruedAccountId, "บัญชีค่าใช้จ่ายค้างจ่าย"),
+        });
         var refNo = $"ACR-{DateTime.UtcNow:yyyyMM}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
 
         var entity = new AccruedExpense
@@ -664,9 +682,9 @@ public partial class FinancialManagementService : IFinancialManagementService
         if (request.Amount > entity.RemainingAmount)
             throw new InvalidOperationException("จำนวนเงินมากกว่ายอดค้างจ่าย");
 
-        var cashAccId = request.CashAccountId
-            ?? (await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.IsActive))?.Id
-            ?? throw new InvalidOperationException("ไม่พบบัญชีเงินสด");
+        // แหล่งเงิน: ตัวหาตัวเดียว (MoneyAccountDirectory · 2026-10-14 ID#13) — ผังที่เลือกต้องของบริษัทนี้/เปิดใช้/ลงรายการได้ ·
+        // ไม่เลือก = แหล่งเงินเริ่มต้นของบริษัท → ผังเงินสดรหัสต่ำสุด (เดิม StartsWith("111") ไม่เรียง ⇒ อาจได้บัญชีคุม 111)
+        var cashAccId = await _db.ResolveSourceGlAsync(companyId, null, request.CashAccountId, "บัญชีเงินสด/ธนาคารที่จ่าย");
 
         // Journal: Dr Accrued / Cr Cash
         var jeNum = await NextJvNumberAsync(companyId);

@@ -1853,41 +1853,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
             && a.AccountCode.StartsWith("58"));
 
-    private async Task<Guid> ResolveBankGlAsync(Guid companyId, Guid? bankAccountId, Guid? bankGlAccountId = null)
+    /// <summary>แหล่งเงินของการนำส่ง — ตัวหาตัวเดียวของระบบ <see cref="MoneyAccountDirectory.ResolveSourceGlAsync"/> (2026-10-14 · PC#6/#17 · ID#19):
+    /// ผังที่เลือกตรง → บัญชีธนาคาร → แหล่งเงินเริ่มต้นของบริษัท (ตรวจบริษัท/เปิดใช้/ลงรายการได้) → ผังเงินสด/ธนาคารรหัสต่ำสุด ·
+    /// เดิมเป็นสำเนาในไฟล์นี้ที่ใช้ค่าตั้งบริษัทดิบ ๆ และรายงาน "ไม่พบ" เป็น "ยังไม่ผูก"</summary>
+    private Task<Guid> ResolveBankGlAsync(Guid companyId, Guid? bankAccountId, Guid? bankGlAccountId = null)
     {
-        Guid? bankGlId = null;
-        // 1) เลือก GL เงินสด/ธนาคาร/ช่องจ่ายอื่นโดยตรง (payment channel) — ต้องเป็น
-        //    ผังของบริษัทนี้ + active + posting level (anti-spoof: validate ตัวตน)
-        if (bankGlAccountId.HasValue && bankGlAccountId.Value != Guid.Empty)
-        {
-            bankGlId = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.Id == bankGlAccountId.Value && a.CompanyId == companyId
-                    && a.IsActive && !a.IsDeleted && a.Level >= 4)
-                .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
-            if (!bankGlId.HasValue)
-                throw new InvalidOperationException("บัญชีแหล่งเงินที่เลือกไม่ถูกต้อง — เลือกใหม่อีกครั้ง");
-        }
-        // 2) เลือกผ่าน BankAccount (map → LinkedAccountId)
-        if (!bankGlId.HasValue && bankAccountId.HasValue)
-        {
-            bankGlId = await _db.BankAccounts.AsNoTracking()
-                .Where(b => b.Id == bankAccountId.Value && b.CompanyId == companyId)
-                .Select(b => b.LinkedAccountId).FirstOrDefaultAsync();
-            if (!bankGlId.HasValue)
-                throw new InvalidOperationException("บัญชีธนาคารที่เลือกยังไม่ผูกผังบัญชี (LinkedAccountId)");
-        }
-        if (!bankGlId.HasValue)
-        {
-            var cs = await _db.Set<CompanySettings>().AsNoTracking()
-                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-                .Select(c => c.DefaultPaymentAccountId).FirstOrDefaultAsync();
-            if (cs.HasValue) bankGlId = cs;
-        }
-        if (!bankGlId.HasValue)
-            bankGlId = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                    && a.AccountCode.StartsWith("111") && a.Level >= 4)
-                .OrderBy(a => a.AccountCode).Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
-        return bankGlId ?? throw new InvalidOperationException("ไม่พบบัญชีเงินสด/ธนาคาร (111x)");
+        return _db.ResolveSourceGlAsync(companyId, bankAccountId, bankGlAccountId, "บัญชีแหล่งเงินที่ใช้นำส่ง");
     }
 }

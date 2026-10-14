@@ -271,6 +271,12 @@ public class CompanySettings : TenantEntity
     // Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน metadata จะชนะค่านี้อีกที.
     public Guid? DefaultPaymentAccountId { get; set; }
 
+    /// <summary>รหัสขึ้นต้นของผังเงินสด/ธนาคาร/ช่องจ่าย สำหรับบริษัทที่ใช้ผังบัญชีของตัวเอง (คั่นด้วยจุลภาค เช่น "101, 102") ·
+    /// null = ผังมาตรฐาน (111 / 1133 / 2123) · ผู้อ่านเดียว: <c>Helpers/MoneyAccountRule</c> ผ่าน <c>MoneyAccountDirectory</c>
+    /// (รายการช่องทางเงิน · แหล่งเงินเริ่มต้น · ตรวจแหล่งจ่ายเงินเดือน) — 2026-10-14 PC#11</summary>
+    [System.ComponentModel.DataAnnotations.MaxLength(200)]
+    public string? MoneyAccountCodePrefixes { get; set; }
+
     // ── พ.ร.บ.การบัญชี ม.7 — ผู้ทำบัญชี (Bookkeeper / CPD) ──
     // กฎหมาย: งบการเงินที่นำส่ง DBD ต้องระบุชื่อ + เลขทะเบียนผู้ทำบัญชี (CPD)
     // ที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี. ไม่มี = ยื่นไม่ได้ (ผู้บริหารรับผิด

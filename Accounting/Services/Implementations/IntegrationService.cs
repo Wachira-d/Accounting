@@ -284,8 +284,24 @@ public class IntegrationService : IIntegrationService
             .ToListAsync();
     }
 
+    /// <summary>integration ของบริษัทนี้เท่านั้น (tenant — ID#13) · ไม่พบ = 404 ภาษาไทยพร้อมทางไปต่อ</summary>
+    private async Task EnsureIntegrationOwnedAsync(Guid companyId, Guid integrationId)
+    {
+        var owned = await _db.Set<ExternalIntegration>().AsNoTracking()
+            .AnyAsync(i => i.Id == integrationId && i.CompanyId == companyId && !i.IsDeleted);
+        if (!owned)
+            throw new KeyNotFoundException("ไม่พบการเชื่อมต่อระบบที่เลือกในบริษัทนี้ — เปิดหน้า \"เชื่อมต่อระบบ\" แล้วเลือกการเชื่อมต่อใหม่");
+    }
+
     public async Task<AccountMappingResponse> CreateMappingAsync(Guid companyId, Guid integrationId, CreateAccountMappingRequest request)
     {
+        // 2026-10-14 (ID#13): integration ต้องเป็นของบริษัทนี้ + ผังเดบิต/เครดิตลงรายการได้ (ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม)
+        // — เดิมรับ id ดิบ ๆ แล้วสรุปยอดรายวัน/รายการขายลงสมุดด้วย id เหล่านี้ (ผังบริษัทอื่นลงได้ผ่าน API)
+        await EnsureIntegrationOwnedAsync(companyId, integrationId);
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.DebitAccountId, "บัญชีเดบิตของการจับคู่"), (request.CreditAccountId, "บัญชีเครดิตของการจับคู่"),
+        });
         var mapping = new IntegrationAccountMapping
         {
             CompanyId = companyId,
@@ -309,8 +325,13 @@ public class IntegrationService : IIntegrationService
     {
         var mapping = await _db.Set<IntegrationAccountMapping>()
             .FirstOrDefaultAsync(m => m.Id == mappingId && m.IntegrationId == integrationId && m.CompanyId == companyId && !m.IsDeleted)
-            ?? throw new KeyNotFoundException("ไม่พบ Mapping");
+            ?? throw new KeyNotFoundException("ไม่พบการจับคู่ผังบัญชีนี้ในการเชื่อมต่อที่เลือก");
 
+        // ผังที่เปลี่ยน: ตัวตัดสินเดียวกับตอนสร้าง (ID#13)
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.DebitAccountId, "บัญชีเดบิตของการจับคู่"), (request.CreditAccountId, "บัญชีเครดิตของการจับคู่"),
+        });
         if (request.ExternalCategory != null) mapping.ExternalCategory = request.ExternalCategory;
         if (request.ExternalCode != null) mapping.ExternalCode = request.ExternalCode;
         if (request.ExternalDescription != null) mapping.ExternalDescription = request.ExternalDescription;
@@ -731,6 +752,12 @@ public class IntegrationService : IIntegrationService
             // หักเงินประกันแบบขับ JE ⇒ ปฏิเสธ (DEP-SEC-DEDUCT) — ตรวจก่อนทุกเส้น (idempotent/resync/สร้างใหม่) ไม่มีการออกเลข
             if (await DepositKindPayloadRejectionAsync(companyId, request) is string kindReject)
                 return await RejectTaxedDrivesAsync(log, integrationId, sw, kindReject, null, null);
+            // 2026-10-14 (ID#14): บัญชีรับเงิน (paymentAccountId) ต้องเป็นผังของบริษัทนี้ · เปิดใช้ · ลงรายการได้ — เดิมเก็บดิบ ๆ
+            // ⇒ id ผิดชนิด (เช่น BankAccount.Id) ได้ 23503 ที่ข้อความพาไปผิดทาง · id ของบริษัทอื่นทำให้ JE ตกไปเงินสด 111 เงียบ ๆ
+            if (request.PaymentAccountId is Guid payAccId && payAccId != Guid.Empty
+                && await _db.PostingAccountProblemAsync(companyId, payAccId, "paymentAccountId (บัญชีรับเงิน)") is string payAccProblem)
+                return await RejectTaxedDrivesAsync(log, integrationId, sw,
+                    payAccProblem + " · ระบบต้นทางต้องส่ง id ผังบัญชีเงินสด/ธนาคารของบริษัทนี้ (ไม่ใช่ id บัญชีธนาคาร) หรือไม่ส่งช่องนี้", null, null);
 
             // Idempotency: if a document with the same ExternalRef already exists,
             // return it instead of creating a duplicate. This makes re-syncs safe.
@@ -1624,6 +1651,29 @@ public class IntegrationService : IIntegrationService
             var journalLines = new List<JournalEntryLine>();
             int lineOrder = 1;
 
+            // 2026-10-14 (ID#14): หมวดที่ไม่มีการจับคู่ = ปฏิเสธทั้งสรุป (ไม่ลงบางส่วน) — เดิมข้ามด้วย LogWarning แล้วลง JE เฉพาะหมวดที่จับคู่ได้
+            // และตอบ "สำเร็จ" ⇒ ยอดขายรายวันในสมุดขาดไปเงียบ ๆ โดยไม่มีใครรู้
+            var unmapped = request.Lines
+                .Where(line => !mappings.Any(m => m.ExternalCategory.Equals(line.Category, StringComparison.OrdinalIgnoreCase))
+                               && !mappings.Any(m => m.ExternalCategory == "DEFAULT"))
+                .Select(line => line.Category).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (unmapped.Count > 0)
+                return await RejectTaxedDrivesAsync(log, integrationId, sw,
+                    $"ยังไม่ได้จับคู่ผังบัญชีของหมวด {string.Join(", ", unmapped.Select(c => $"\"{c}\""))} — ระบบไม่ลงสรุปรายวันบางส่วน "
+                    + "(ยอดในสมุดจะขาด) · ไปที่หน้า \"เชื่อมต่อระบบ\" → จับคู่ผังบัญชี แล้วเพิ่มหมวดนี้ (หรือหมวด DEFAULT) แล้วส่งสรุปใหม่",
+                    null, null);
+            // ผังที่จับคู่ไว้ต้องยังลงรายการได้ (ปิดใช้/ถูกลบ/เป็นบัญชีคุมหลังตั้งการจับคู่) — ตัวตัดสินเดียว PostingAccountGuard
+            var mappedAccountIds = mappings.SelectMany(m => new[] { m.DebitAccountId, m.CreditAccountId })
+                .Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
+            var mappedFacts = await _db.LoadPostingFactsAsync(companyId, mappedAccountIds);
+            foreach (var id in mappedAccountIds)
+            {
+                mappedFacts.TryGetValue(id, out var mf);
+                if (Accounting.Helpers.PostingAccountRule.Problem(mf, "ผังที่จับคู่ไว้ของการเชื่อมต่อนี้") is string mappedProblem)
+                    return await RejectTaxedDrivesAsync(log, integrationId, sw,
+                        mappedProblem + " · แก้ที่หน้า \"เชื่อมต่อระบบ\" → จับคู่ผังบัญชี แล้วส่งสรุปใหม่", null, null);
+            }
+
             foreach (var line in request.Lines)
             {
                 // Find mapping by category
@@ -1631,11 +1681,7 @@ public class IntegrationService : IIntegrationService
                     m.ExternalCategory.Equals(line.Category, StringComparison.OrdinalIgnoreCase))
                     ?? mappings.FirstOrDefault(m => m.ExternalCategory == "DEFAULT");
 
-                if (mapping == null)
-                {
-                    _logger.LogWarning("No mapping found for category '{Category}' in integration {IntegrationId}", line.Category, integrationId);
-                    continue;
-                }
+                if (mapping == null) continue;   // ไม่เกิด — ตรวจครบแล้วข้างบน
 
                 if (mapping.DebitAccountId.HasValue)
                 {
@@ -1704,7 +1750,7 @@ public class IntegrationService : IIntegrationService
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Daily summary journal created", null, null, journalEntry.Id, null, journalEntry.EntryNumber);
+            return new InboundSyncResponse(true, "บันทึกสรุปรายวันลงสมุดบัญชีแล้ว", null, null, journalEntry.Id, null, journalEntry.EntryNumber);
         }
         catch (Exception ex)
         {
@@ -4541,7 +4587,9 @@ public class IntegrationService : IIntegrationService
             var original = await _db.JournalEntries
                 .Include(j => j.Lines)
                 .FirstOrDefaultAsync(j => j.Id == request.OriginalJournalEntryId && j.CompanyId == companyId)
-                ?? throw new KeyNotFoundException($"ไม่พบรายการต้นฉบับ: {request.OriginalJournalEntryId}");
+                ?? throw new KeyNotFoundException(
+                    "ไม่พบรายการบัญชีต้นฉบับที่ระบบต้นทางอ้างถึง (originalJournalEntryId) ในบริษัทนี้ — "
+                    + "ระบบต้นทางต้องส่ง id รายการบัญชีที่ระบบนี้ตอบกลับตอนสร้าง (journalEntryId) ไม่ใช่เลขของระบบต้นทาง");
 
             if (original.Status != JournalEntryStatus.Posted)
                 throw new InvalidOperationException("สามารถกลับรายการได้เฉพาะรายการที่มีสถานะ Posted");

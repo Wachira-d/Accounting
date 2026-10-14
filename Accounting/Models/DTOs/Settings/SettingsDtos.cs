@@ -76,6 +76,10 @@ public record UpdateCompanySettingsRequest(
     // แนบ PDF ใบหัก ณ ที่จ่าย (50ทวิ) เข้าใบสำคัญจ่ายอัตโนมัติ (default ปิด)
     bool? AutoAttachWhtCertPdf = null,
 
+    // 2026-10-14 (PC#11): รหัสขึ้นต้นของผังเงินสด/ธนาคาร สำหรับผังบัญชีของบริษัทเอง — null = ไม่แก้ · "" = ล้าง (กลับผังมาตรฐาน)
+    // · กติกาอยู่ที่ Helpers/MoneyAccountRule ตัวเดียว
+    string? MoneyAccountCodePrefixes = null,
+
     // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) — จำเป็นก่อน finalize งบ + XBRL export
     string? BookkeeperName = null,
     string? BookkeeperCpdNumber = null,
@@ -273,6 +277,16 @@ public record CompanySettingsResponse(
     /// false = บริษัทจากหน้าสมัคร/SSO ที่ไม่เคยถูกถาม ⇒ หน้าเอกสาร/แดชบอร์ดขึ้นแถบให้ไปตั้งค่า (รอบ 193 ฝ่ายค้าน C-9) ·
     /// null = เส้นที่ไม่ได้คำนวณ (หน้าเว็บต้องไม่แสดงแถบ)</summary>
     public bool? VatStatusConfirmed { get; init; }
+
+    /// <summary>ป้าย "รหัส ชื่อผัง" ของแหล่งเงินเริ่มต้นที่บันทึกไว้ — หน้าเว็บใช้เติมตัวเลือกกลับเมื่อผังนั้นไม่อยู่ในรายการแล้ว
+    /// (ปิดใช้/เป็นบัญชีคุม) แทนการแสดง "อัตโนมัติ" แล้วบันทึกทับเป็นค่าว่าง (PC#6 · ID#22) · null = ไม่ได้ตั้ง/ไม่พบ</summary>
+    public string? DefaultPaymentAccountLabel { get; init; }
+    /// <summary>ปัญหาของแหล่งเงินเริ่มต้น (ใช้ไม่ได้แล้ว · ไม่ใช่ผังเงินสด/ธนาคาร) พร้อมทางไปต่อ — null = ใช้ได้/ไม่ได้ตั้ง</summary>
+    public string? DefaultPaymentAccountWarning { get; init; }
+    /// <summary>ค่าตั้งรหัสผังเงินสด/ธนาคารที่บริษัทตั้งเอง (null = ผังมาตรฐาน)</summary>
+    public string? MoneyAccountCodePrefixes { get; init; }
+    /// <summary>รหัสขึ้นต้นที่ระบบใช้จริงตอนนี้ (มาตรฐานหรือของบริษัท) — หน้าเว็บแสดงอย่างเดียว</summary>
+    public string? MoneyAccountCodePrefixesEffective { get; init; }
 }
 
 // ===== Landing Page Services (Public) =====

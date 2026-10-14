@@ -86,17 +86,12 @@ public partial class AccountingService : IAccountingService
         return accounts.Select(MapAccountToResponse).ToList();
     }
 
-    public async Task<List<AccountResponse>> GetPaymentChannelAccountsAsync(Guid companyId)
+    /// <summary>ช่องทางเงินสำหรับ dropdown — กติกา "ที่อยู่ของเงิน" ตัวเดียวที่ <see cref="Accounting.Helpers.MoneyAccountRule"/>
+    /// (ผ่าน <see cref="MoneyAccountDirectory"/>) · เดิมเขียน prefix 111/1133/2123 + ตัด 1112 ไว้ที่นี่ และหน้าเว็บ 5 หน้ากรอง '1112' ซ้ำเอง
+    /// (PC#11) · includeBank=false (ค่าเดิม) = เฉพาะกลุ่ม "other" (หน้าเดิมที่ยังกรอง '1112' ได้ผลเท่าเดิม) · true = ทุกแถว + ป้ายกลุ่ม</summary>
+    public Task<List<PaymentChannelAccountResponse>> GetPaymentChannelAccountsAsync(Guid companyId, bool includeBank = false)
     {
-        var prefixes = new[] { "111", "1133", "2123" };
-        var accounts = await _db.ChartOfAccounts
-            .Where(a => a.CompanyId == companyId && a.IsActive
-                && a.Level >= 4
-                && prefixes.Any(p => a.AccountCode.StartsWith(p))
-                && !a.AccountCode.StartsWith("1112"))
-            .OrderBy(a => a.AccountCode)
-            .ToListAsync();
-        return accounts.Select(MapAccountToResponse).ToList();
+        return _db.GetPaymentChannelsAsync(companyId, includeBank);
     }
 
     public async Task<AccountResponse> UpdateAccountAsync(Guid companyId, Guid accountId, UpdateAccountRequest request)
@@ -292,6 +287,56 @@ public partial class AccountingService : IAccountingService
 
     // ==================== Journal Entries ====================
 
+    /// <summary>ด่านเข้มของใบสำคัญที่ผู้ใช้บันทึกเอง (POST journals) — ผังทุกบรรทัด: ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม
+    /// (ตัวตัดสินเดียว <see cref="Accounting.Helpers.PostingAccountRule"/>) + สาขา/มิติ/โครงการของบริษัทนี้ (2026-10-14 · ID#24) ·
+    /// แยกจาก <see cref="CreateJournalEntryAsync"/> เพราะทางอัตโนมัติ (ปิดงวดสิ้นปี) ต้องล้างยอดผังที่ปิดใช้แล้วได้</summary>
+    public Task ValidateManualJournalAsync(Guid companyId, CreateJournalEntryRequest request)
+        => ValidateJournalReferencesAsync(companyId, request.Lines, request.BranchId, request.DimensionId, request.ProjectId, strictAccounts: true);
+
+    /// <summary>ตรวจการอ้างอิงของใบสำคัญ — ผัง (ไม่พบ = บล็อกเสมอ · เปิดใช้/บัญชีคุม เมื่อ <paramref name="strictAccounts"/>) และ
+    /// สาขา/มิติ/โครงการ ทั้งระดับหัวและรายบรรทัด ต้องเป็นของบริษัทนี้ · ข้อความบอกบรรทัด + ที่แก้ (ไม่มี GUID)</summary>
+    private async Task ValidateJournalReferencesAsync(Guid companyId, IReadOnlyList<JournalLineRequest> lines,
+        Guid? branchId, Guid? dimensionId, Guid? projectId, bool strictAccounts)
+    {
+        var facts = await _db.LoadPostingFactsAsync(companyId, lines.Select(l => l.AccountId));
+        for (var i = 0; i < lines.Count; i++)
+        {
+            facts.TryGetValue(lines[i].AccountId, out var f);
+            var problem = Accounting.Helpers.PostingAccountRule.Check(f);
+            if (!strictAccounts && problem != Accounting.Helpers.PostingAccountProblem.NotFound) continue;
+            var msg = Accounting.Helpers.PostingAccountRule.Message(problem, f, $"บรรทัดที่ {i + 1}");
+            if (msg != null) throw new Accounting.Helpers.BusinessRuleException(msg, Accounting.Helpers.PostingAccountRule.RuleCode);
+        }
+
+        static List<Guid> Ids(Guid? head, IEnumerable<Guid?> perLine)
+            => perLine.Append(head).Where(g => g.HasValue && g.Value != Guid.Empty).Select(g => g!.Value).Distinct().ToList();
+
+        var branchIds = Ids(branchId, lines.Select(l => l.BranchId));
+        if (branchIds.Count > 0)
+        {
+            var ok = await _db.Branches.AsNoTracking().CountAsync(b => b.CompanyId == companyId && branchIds.Contains(b.Id));
+            if (ok != branchIds.Count)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ไม่พบสาขาที่เลือกในบริษัทนี้ (อาจถูกลบหรือมาจากบริษัทอื่น) — เลือกสาขาใหม่จากรายการ", "GL-JOURNAL-BRANCH");
+        }
+        var dimIds = Ids(dimensionId, lines.Select(l => l.DimensionId));
+        if (dimIds.Count > 0)
+        {
+            var ok = await _db.AccountingDimensions.AsNoTracking().CountAsync(d => d.CompanyId == companyId && dimIds.Contains(d.Id));
+            if (ok != dimIds.Count)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ไม่พบศูนย์ต้นทุน/มิติบัญชีที่เลือกในบริษัทนี้ (อาจถูกลบหรือมาจากบริษัทอื่น) — เลือกใหม่จากรายการ", "GL-JOURNAL-DIMENSION");
+        }
+        var projIds = Ids(projectId, lines.Select(l => l.ProjectId));
+        if (projIds.Count > 0)
+        {
+            var ok = await _db.Projects.AsNoTracking().CountAsync(p => p.CompanyId == companyId && projIds.Contains(p.Id));
+            if (ok != projIds.Count)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ไม่พบโครงการที่เลือกในบริษัทนี้ (อาจถูกลบหรือมาจากบริษัทอื่น) — เลือกโครงการใหม่จากรายการ", "GL-JOURNAL-PROJECT");
+        }
+    }
+
     public async Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy)
     {
         // Validate at least 2 lines (double-entry)
@@ -302,17 +347,13 @@ public partial class AccountingService : IAccountingService
         if (request.EntryDate > DateTime.UtcNow.Date.AddDays(1))
             throw new InvalidOperationException("วันที่ลงบัญชีต้องไม่เป็นวันที่ในอนาคต");
 
-        // Validate each line
-        var companyAccountIds = await _db.ChartOfAccounts
-            .Where(a => a.CompanyId == companyId)
-            .Select(a => a.Id)
-            .ToListAsync();
+        // Validate each line — ผัง/สาขา/มิติ/โครงการต้องเป็นของบริษัทนี้ (2026-10-14 · ID#18/#24: เดิมข้อความโชว์ GUID ดิบ
+        // และสาขา/มิติ/โครงการรายบรรทัดไม่ถูกตรวจ tenant) · ทางอัตโนมัติไม่ตรวจ "เปิดใช้/บัญชีคุม" (ปิดงวดสิ้นปีต้องล้างผังที่ปิดใช้แล้วได้)
+        // — ด่านเข้มของการบันทึกด้วยมือคือ ValidateManualJournalAsync ที่ endpoint เรียกก่อน
+        await ValidateJournalReferencesAsync(companyId, request.Lines, request.BranchId, request.DimensionId, request.ProjectId, strictAccounts: false);
 
         foreach (var line in request.Lines)
         {
-            if (!companyAccountIds.Contains(line.AccountId))
-                throw new InvalidOperationException($"ไม่พบบัญชี {line.AccountId} ในผังบัญชีของบริษัท");
-
             if (line.DebitAmount < 0 || line.CreditAmount < 0)
                 throw new InvalidOperationException("ยอดเดบิตและเครดิตต้องไม่ติดลบ");
 
@@ -714,6 +755,9 @@ public partial class AccountingService : IAccountingService
         if (request.Description != null) entry.Description = request.Description;
         if (request.Reference != null) entry.Reference = request.Reference;
         if (request.JournalType.HasValue) entry.JournalType = request.JournalType.Value;
+        // สาขา/มิติ/โครงการระดับหัวต้องเป็นของบริษัทนี้ (ID#24 · เดิมไม่ตรวจ — ไม่มี FK ⇒ id บริษัทอื่นเก็บได้)
+        await ValidateJournalReferencesAsync(companyId, Array.Empty<JournalLineRequest>(),
+            request.BranchId, request.DimensionId, request.ProjectId, strictAccounts: false);
         if (request.ProjectId.HasValue) entry.ProjectId = request.ProjectId;
         if (request.BranchId.HasValue) entry.BranchId = request.BranchId;
         if (request.DimensionId.HasValue) entry.DimensionId = request.DimensionId;
@@ -728,15 +772,13 @@ public partial class AccountingService : IAccountingService
             if (request.Lines.Count < 2)
                 throw new InvalidOperationException("ต้องมีรายการอย่างน้อย 2 รายการ (ระบบบัญชีคู่)");
 
-            var companyAccountIds = await _db.ChartOfAccounts
-                .Where(a => a.CompanyId == companyId)
-                .Select(a => a.Id)
-                .ToListAsync();
+            // แก้ใบสำคัญได้เฉพาะทางมือ (ใบที่ผูกเอกสารถูกปฏิเสธข้างบน) ⇒ ด่านเข้ม: ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม (ID#24)
+            await ValidateJournalReferencesAsync(companyId, request.Lines,
+                request.BranchId ?? entry.BranchId, request.DimensionId ?? entry.DimensionId, request.ProjectId ?? entry.ProjectId,
+                strictAccounts: true);
 
             foreach (var l in request.Lines)
             {
-                if (!companyAccountIds.Contains(l.AccountId))
-                    throw new InvalidOperationException($"ไม่พบบัญชี {l.AccountId} ในผังบัญชีของบริษัท");
                 if (l.DebitAmount < 0 || l.CreditAmount < 0)
                     throw new InvalidOperationException("ยอดเดบิตและเครดิตต้องไม่ติดลบ");
                 if (l.DebitAmount > 0 && l.CreditAmount > 0)

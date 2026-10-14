@@ -294,7 +294,16 @@ public class WarehouseService : IWarehouseService
                     && s.WarehouseId == transfer.FromWarehouseId && s.ProductId == line.ProductId);
 
             if (stock == null || stock.AvailableQuantity < line.Quantity)
-                throw new InvalidOperationException($"สินค้า {line.ProductId} มีจำนวนไม่เพียงพอในคลังต้นทาง");
+            {
+                // ID#18: ข้อความถึงผู้ใช้ต้องเป็นชื่อ/รหัสสินค้า ไม่ใช่ GUID — พร้อมยอดที่มี/ที่ต้องการ และทางไปต่อ
+                var prod = await _db.Products.AsNoTracking()
+                    .Where(p => p.Id == line.ProductId && p.CompanyId == companyId)
+                    .Select(p => new { p.Code, p.Name }).FirstOrDefaultAsync();
+                var prodLabel = prod == null ? "สินค้าในรายการโอน" : $"{prod.Code} {prod.Name}".Trim();
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"สินค้า \"{prodLabel}\" มีจำนวนไม่เพียงพอในคลังต้นทาง (คงเหลือพร้อมใช้ {(stock?.AvailableQuantity ?? 0m):N2} · ต้องการโอน {line.Quantity:N2}) "
+                    + "— ลดจำนวนในใบโอน หรือรับสินค้าเข้าคลังต้นทางก่อน", "WH-TRANSFER-SHORT");
+            }
 
             await _stock.MoveAsync(new StockMoveRequest(
                 CompanyId: companyId,

@@ -34,11 +34,13 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<List<AccountResponse>>(true, result));
     }
 
+    /// <summary>ช่องทางเงิน — <c>includeBank=true</c> คืนผังที่ผูกบัญชีธนาคารด้วย (แถวมีป้าย channelGroup = "bank"/"other")</summary>
     [HttpGet("accounts/payment-channels")]
-    public async Task<ActionResult<ApiResponse<List<AccountResponse>>>> GetPaymentChannelAccounts(Guid companyId)
+    public async Task<ActionResult<ApiResponse<List<PaymentChannelAccountResponse>>>> GetPaymentChannelAccounts(
+        Guid companyId, [FromQuery] bool includeBank = false)
     {
-        var result = await _accountingService.GetPaymentChannelAccountsAsync(companyId);
-        return Ok(new ApiResponse<List<AccountResponse>>(true, result));
+        var result = await _accountingService.GetPaymentChannelAccountsAsync(companyId, includeBank);
+        return Ok(new ApiResponse<List<PaymentChannelAccountResponse>>(true, result));
     }
 
     [HttpPost("accounts")]
@@ -114,6 +116,8 @@ public class AccountingController : ControllerBase
     public async Task<ActionResult<ApiResponse<JournalEntryResponse>>> CreateJournalEntry(Guid companyId, [FromBody] CreateJournalEntryRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        // ด่านเข้มของการบันทึกด้วยมือ (ID#24): ผังเปิดใช้/ไม่ใช่บัญชีคุม + สาขา/มิติ/โครงการของบริษัทนี้ — ก่อนสร้าง
+        await _accountingService.ValidateManualJournalAsync(companyId, request);
         var result = await _accountingService.CreateJournalEntryAsync(companyId, request, userId);
         return StatusCode(201, new ApiResponse<JournalEntryResponse>(true, result, "สร้างใบสำคัญสำเร็จ"));
     }

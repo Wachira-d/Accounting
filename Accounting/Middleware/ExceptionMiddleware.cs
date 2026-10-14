@@ -156,10 +156,14 @@ public class ExceptionMiddleware
                 when dbe.InnerException is Npgsql.PostgresException { SqlState: "23505" }
                 => (HttpStatusCode.Conflict,
                     $"ข้อมูลนี้ซ้ำกับรายการที่มีอยู่แล้ว — รหัส ชื่อ หรือ URL ที่กรอกถูกใช้ไปแล้ว กรุณาเปลี่ยนแล้วลองใหม่ (รหัสอ้างอิง {refCode})"),
+            // 2026-10-14 (ID#17): แยกทิศ — INSERT/UPDATE ที่อ้างถึงสิ่งที่ไม่มี (id ค้าง/ผิดตาราง) ≠ ลบสิ่งที่ยังถูกอ้างอิง ·
+            // เดิมตอบ "ยังถูกอ้างอิง… ปิดการใช้งานแทน" ทุกกรณี ⇒ พาผู้ใช้ไปผิดทาง (ตัวตัดสิน Helpers/ForeignKeyViolation)
             Microsoft.EntityFrameworkCore.DbUpdateException dbe
-                when dbe.InnerException is Npgsql.PostgresException { SqlState: "23503" }
+                when dbe.InnerException is Npgsql.PostgresException { SqlState: "23503" } fk
                 => (HttpStatusCode.Conflict,
-                    $"รายการนี้ยังถูกอ้างอิงโดยข้อมูลอื่น (เช่น เอกสาร/รายการบัญชี) — ลบหรือเปลี่ยนไม่ได้ · ปิดการใช้งานแทน หรือจัดการรายการที่อ้างอิงก่อน (รหัสอ้างอิง {refCode})"),
+                    Accounting.Helpers.ForeignKeyViolation.Message(
+                        Accounting.Helpers.ForeignKeyViolation.Classify(fk.MessageText, context.Request.Method),
+                        fk.ConstraintName, refCode)),
             Accounting.Services.Implementations.DocumentApprovalWarningsException awe
                 => (HttpStatusCode.Conflict,
                     $"{awe.Message}: {string.Join(" · ", awe.Warnings)} — เปิดเอกสารที่หน้าเอกสาร ตรวจแล้วกด “อนุมัติ” (รับทราบคำเตือน)"),

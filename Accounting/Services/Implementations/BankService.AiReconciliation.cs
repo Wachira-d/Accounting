@@ -788,7 +788,8 @@ public partial class BankService
             {
                 var txn = await _db.Set<BankTransaction>()
                     .FirstOrDefaultAsync(t => t.Id == item.BankTransactionId && t.CompanyId == companyId)
-                    ?? throw new KeyNotFoundException($"ไม่พบรายการธนาคาร {item.BankTransactionId}");
+                    ?? throw new KeyNotFoundException(
+                        "ไม่พบรายการเดินบัญชีธนาคารบางรายการในชุดที่เลือก (อาจถูกลบหรือถูกนำเข้าใหม่) — โหลดหน้ากระทบยอดใหม่แล้วเลือกรายการอีกครั้ง");
 
                 // Fiscal-period guard per item — a batch can span months and
                 // we don't want a single closed-period txn to silently corrupt.

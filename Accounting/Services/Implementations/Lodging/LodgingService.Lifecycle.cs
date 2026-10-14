@@ -475,6 +475,8 @@ public partial class LodgingService
 
     private async Task<LodgingReservationResponse> ConfirmCoreAsync(Guid companyId, Guid reservationId, LodgingConfirmRequest request, string userId, Guid? moneyInAccountId, bool fromOnlinePayment)
     {
+        // บัญชีธนาคารที่รับเงิน (PC#8): ตรวจก่อนทำอะไร — ของบริษัทนี้ · เปิดใช้ · ผูกผังแล้ว (ตัวหาตัวเดียว MoneyAccountDirectory)
+        if (request.BankAccountId is Guid confirmBankId) await _db.ResolveBankGlAsync(companyId, confirmBankId);
         var r = await RequireReservationAsync(companyId, reservationId);
         await _db.Entry(r).ReloadAsync();   // P2-1: ค่าหลังได้ล็อก (ผู้เรียกอาจถือแถวที่อ่านไว้ก่อน)
         if (Terminal.Contains(r.Status)) throw new BusinessRuleException($"การจองอยู่ในสถานะ {StatusTh(r.Status)} — ยืนยันไม่ได้");
@@ -1094,6 +1096,9 @@ public partial class LodgingService
 
     private async Task<LodgingReservationResponse> CheckOutCoreAsync(Guid companyId, Guid reservationId, LodgingCheckOutRequest request, string userId)
     {
+        // บัญชีธนาคารที่รับเงินส่วนที่เหลือ (PC#8): ตรวจก่อนออกใบ — ล้มหลังออกใบแล้วผู้ใช้ต้องตามแก้สองขั้น
+        if (request.CollectBalanceNow && request.BankAccountId is Guid checkoutBankId)
+            await _db.ResolveBankGlAsync(companyId, checkoutBankId);
         var r = await RequireReservationAsync(companyId, reservationId);
         // รอบ 202 (O-P0-2): แถวที่ night audit รุ่นก่อนประทับ "เช็คเอาต์แล้ว" เองโดยไม่ได้ออกบิล ⇒ ออกใบเช็คเอาต์ย้อนหลังผ่านเส้นนี้ได้หนึ่งครั้ง
         // (ใบออกแล้วประทับ FinalDocumentId ⇒ ไม่ตรงเงื่อนไขอีก) · ตัวตัดสินเดียว LodgingOverdueRule.IsLegacyAutoCheckout
@@ -1872,11 +1877,9 @@ public partial class LodgingService
     {
         if (bankAccountId is Guid b)
         {
-            var linked = await _db.BankAccounts.AsNoTracking()
-                .Where(x => x.Id == b && x.CompanyId == companyId)
-                .Select(x => x.LinkedAccountId).FirstOrDefaultAsync();
-            return linked ?? throw new BusinessRuleException(
-                "บัญชีธนาคารที่เลือกยังไม่ได้ผูกผังบัญชี — ผูกผังที่หน้า “บัญชีธนาคาร” ก่อน หรือเลือกบัญชีอื่น", "LODGING-REFUND-ACCOUNT");
+            // ตัวหาตัวเดียว (MoneyAccountDirectory · ID#19): แยก ไม่พบ / ปิดใช้ / ยังไม่ผูกผัง / ผังที่ผูกใช้ไม่ได้ — เดิมรายงานทุกกรณีว่า "ยังไม่ผูก"
+            var bank = await _db.TryResolveBankGlAsync(companyId, b);
+            return bank.GlAccountId ?? throw new BusinessRuleException(bank.Message!, "LODGING-REFUND-ACCOUNT");
         }
         var depIds = deposits.Select(d => d.Id).ToList();
         var moneyIn = await (from l in _db.JournalEntryLines.AsNoTracking()

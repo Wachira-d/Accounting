@@ -587,14 +587,11 @@ public class GatewaySettlementService : IGatewaySettlementService
     {
         var map = new Dictionary<SettlementLineRole, Guid>();
 
-        var bankGl = await _db.Set<BankAccount>().AsNoTracking()
-            .Where(b => b.Id == bankAccountId && b.CompanyId == companyId && !b.IsDeleted)
-            .Select(b => b.LinkedAccountId)
-            .FirstOrDefaultAsync(ct);
-        if (bankGl is not Guid bankGlId)
-            return new AccountResolution(map,
-                "บัญชีธนาคารที่เลือกยังไม่ได้ผูกกับผังบัญชี — ไปที่ ตั้งค่า → บัญชีธนาคาร "
-                + "แล้วเลือกผังบัญชีของธนาคารนี้ก่อน (ไม่งั้นเงินเข้าจะลงผังผิด)");
+        // ตัวหาตัวเดียว (MoneyAccountDirectory · ID#19): แยก ไม่พบ / ปิดใช้ / ยังไม่ผูกผัง / ผังที่ผูกใช้ไม่ได้ พร้อมทางไปต่อ
+        // — เดิมรายงานทุกกรณีว่า "ยังไม่ได้ผูก" และรับบัญชีธนาคารที่ปิดใช้แล้ว
+        var bankGl = await Accounting.Services.Implementations.MoneyAccountDirectory.TryResolveBankGlAsync(_db, companyId, bankAccountId, ct);
+        if (bankGl.GlAccountId is not Guid bankGlId)
+            return new AccountResolution(map, bankGl.Message);
         map[SettlementLineRole.Bank] = bankGlId;
 
         // บัญชีพัก: ตัวตัดสินเดียวกับขา "เงินเข้า" และ JE คืนเงิน — ล้างผังเดียวกับที่ลงไว้เสมอ

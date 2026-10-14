@@ -13523,6 +13523,14 @@ public partial class DocumentService : IDocumentService
         var titleTh = NormalizeContactTitle(request.TitleTh)
             ?? Accounting.Helpers.ThaiTitleHelper.Split(request.Name).Title;
 
+        // บัญชีลูกหนี้/เจ้าหนี้/รอเรียกเก็บของผู้ติดต่อ (2026-10-14 · ID#23): ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม — ตัวตัดสินเดียว
+        // PostingAccountGuard · เดิมเก็บดิบ ๆ แล้วทุกเอกสารของผู้ติดต่อนี้ลงผังนั้น (ผังบริษัทอื่นผ่าน API ได้)
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.DefaultArAccountId, "บัญชีลูกหนี้ของผู้ติดต่อ"), (request.DefaultApAccountId, "บัญชีเจ้าหนี้ของผู้ติดต่อ"),
+            (request.DefaultIrGrAccountId, "บัญชีรอเรียกเก็บ/รอจ่ายของผู้ติดต่อ"),
+        });
+
         var contact = new Contact
         {
             CompanyId = companyId,
@@ -13547,9 +13555,9 @@ public partial class DocumentService : IDocumentService
             Email = request.Email,
             ContactPerson = request.ContactPerson,
             // Per-contact GL overrides — null = use system default.
-            DefaultArAccountId = request.DefaultArAccountId,
-            DefaultApAccountId = request.DefaultApAccountId,
-            DefaultIrGrAccountId = request.DefaultIrGrAccountId,
+            DefaultArAccountId = request.DefaultArAccountId == Guid.Empty ? null : request.DefaultArAccountId,
+            DefaultApAccountId = request.DefaultApAccountId == Guid.Empty ? null : request.DefaultApAccountId,
+            DefaultIrGrAccountId = request.DefaultIrGrAccountId == Guid.Empty ? null : request.DefaultIrGrAccountId,
             CreditLimit = request.CreditLimit,
             DefaultIssueTaxInvoice = request.DefaultIssueTaxInvoice,
             PaymentDueDays = request.PaymentDueDays,
@@ -13761,6 +13769,13 @@ public partial class DocumentService : IDocumentService
         // "unset" from "explicitly clear to default", so we treat null
         // as "no change". To clear an override the UI POSTs
         // Guid.Empty which we map back to null below.
+        // ตรวจเฉพาะค่าที่เปลี่ยน (ID#23) — ค่าเดิมที่ส่งกลับมาเหมือนเดิมไม่ทำให้การบันทึกเรื่องอื่น (เบอร์/ที่อยู่) ล้ม
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.DefaultArAccountId != contact.DefaultArAccountId ? request.DefaultArAccountId : null, "บัญชีลูกหนี้ของผู้ติดต่อ"),
+            (request.DefaultApAccountId != contact.DefaultApAccountId ? request.DefaultApAccountId : null, "บัญชีเจ้าหนี้ของผู้ติดต่อ"),
+            (request.DefaultIrGrAccountId != contact.DefaultIrGrAccountId ? request.DefaultIrGrAccountId : null, "บัญชีรอเรียกเก็บ/รอจ่ายของผู้ติดต่อ"),
+        });
         if (request.DefaultArAccountId.HasValue)
             contact.DefaultArAccountId = request.DefaultArAccountId == Guid.Empty ? null : request.DefaultArAccountId;
         if (request.DefaultApAccountId.HasValue)
@@ -15526,11 +15541,7 @@ public partial class DocumentService : IDocumentService
         {
             // Pinned per-contact AP override wins (same rule as FindAccountAsync).
             if (contact?.DefaultApAccountId is Guid pinnedId)
-            {
-                var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.Id == pinnedId && a.CompanyId == companyId && a.IsActive);
-                if (pinned != null) return pinned;
-            }
+                return await PinnedContactAccountAsync(companyId, contact, pinnedId, "บัญชีเจ้าหนี้");
             var other = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == "21220" && a.IsActive);
             if (other != null) return other;
@@ -15545,6 +15556,21 @@ public partial class DocumentService : IDocumentService
     /// Key เป็น (codePrefix, contactDefaultId) — pinned contact overrides
     /// ใช้ key ต่าง ให้ cache แยก hit.</summary>
     private readonly Dictionary<(string CodePrefix, Guid? ContactDefault), ChartOfAccount?> _findAccountCache = new();
+
+    /// <summary>ผังที่ผู้ติดต่อปักไว้ (ลูกหนี้/เจ้าหนี้/รอเรียกเก็บ) — ต้องลงรายการได้ (ตัวตัดสินเดียว <see cref="Accounting.Helpers.PostingAccountRule"/>) ·
+    /// ใช้ไม่ได้ = BusinessRuleException บอกผู้ติดต่อ + ช่อง + ที่แก้ (ID#23 · ไม่สลับไปผังมาตรฐานเงียบ ๆ)</summary>
+    private async Task<ChartOfAccount> PinnedContactAccountAsync(Guid companyId, Contact contact, Guid pinnedId, string label)
+    {
+        var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.Id == pinnedId && a.CompanyId == companyId && a.IsActive && !a.IsDeleted);
+        var problem = await _db.PostingAccountProblemAsync(companyId, pinnedId,
+            $"{label}ที่ปักไว้ของผู้ติดต่อ \"{contact.Name}\"");
+        if (pinned != null && problem == null) return pinned;
+        throw new Accounting.Helpers.BusinessRuleException(
+            (problem ?? $"{label}ที่ปักไว้ของผู้ติดต่อ \"{contact.Name}\" ใช้ไม่ได้แล้ว")
+            + $" · หรือเปิดหน้า ผู้ติดต่อ → \"{contact.Name}\" แล้วตั้ง{label}เป็น \"ใช้ค่าเริ่มต้น\" (ระบบไม่สลับไปผังอื่นให้เอง)",
+            Accounting.Helpers.PostingAccountRule.RuleCode);
+    }
 
     private async Task<ChartOfAccount?> FindAccountAsync(
         Guid companyId, string codePrefix, Contact? contactOverride = null)
@@ -15561,11 +15587,12 @@ public partial class DocumentService : IDocumentService
 
         if (overrideId.HasValue)
         {
-            var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.Id == overrideId.Value && a.CompanyId == companyId && a.IsActive);
-            if (pinned != null) { _findAccountCache[cacheKey] = pinned; return pinned; }
-            // The override points at a deleted/inactive account —
-            // fall through to the system default rather than throw.
+            // 2026-10-14 (ID#23): ผังที่ปักไว้ใช้ไม่ได้แล้ว (ปิดใช้/ถูกลบ/บัญชีคุม) = ล้มดังพร้อมทางไปต่อ — เดิมตกไปผังมาตรฐานเงียบ ๆ
+            // ⇒ ยอดลูกหนี้/เจ้าหนี้ของผู้ติดต่อนี้แตกไปสองผังโดยไม่มีใครรู้ (บัญชีคุมรายตัวไม่ตรงทะเบียน)
+            var label = codePrefix switch { "113" => "บัญชีลูกหนี้", "212" => "บัญชีเจ้าหนี้", _ => "บัญชีรอเรียกเก็บ/รอจ่าย" };
+            var pinned = await PinnedContactAccountAsync(companyId, contactOverride!, overrideId.Value, label);
+            _findAccountCache[cacheKey] = pinned;
+            return pinned;
         }
         // exact-match ต้องเป็นบัญชี postable (Level >= 4) เท่านั้น — chart มาตรฐาน
         // มี header ระดับ 3 ชื่อรหัสสั้น ("116", "212") ถ้า exact จับ header จะ

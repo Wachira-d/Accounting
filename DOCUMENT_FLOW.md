@@ -477,7 +477,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   + `ResolvePaymentSourceOverrideAsync`): สำหรับ PV/Receipt/Expense จ่ายสด —
   (1) partner metadata top-level `paymentAccountCode`/`bankCode`/`bankAccountCode`
   (match CoA code → เลขบัญชีธนาคาร→LinkedAccountId) → (2)
-  `CompanySettings.DefaultPaymentAccountId` (admin ตั้งใน Settings) → (3)
+  `CompanySettings.DefaultPaymentAccountId` (admin ตั้งใน Settings · 2026-10-14 PC#6: ตรวจตอนบันทึก — ของบริษัทนี้/เปิดใช้/ลงรายการได้ ·
+  รายการตัวเลือกรวมผังธนาคาร (`payment-channels?includeBank=true`) · ไม่แตะช่อง = ไม่ส่ง (เดิมส่ง Guid.Empty ล้างทุกครั้งที่บันทึกหน้าตั้งค่า) ·
+  ค่าที่ใช้ไม่ได้แล้วแสดงป้าย + คำเตือนจากเซิร์ฟเวอร์) → (3)
   lowest-code fallback เดิม. เดิมมีแต่ชั้น 3 → หยิบบัญชีรหัสต่ำสุดมั่ว
   (กรุงไทย 11110 ชนะ กสิกร 11120). A/P-A/R ไม่มีแหล่งเงิน → ใช้ prefix เดิม.
 - **แก้แหล่งเงินหลัง approve** — `DocumentService.ReclassifyPaymentSourceAsync`
@@ -2969,6 +2971,13 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   **ใหม่** ที่ผู้ใช้ยังไม่แตะช่อง · เซิร์ฟเวอร์ไม่ใส่ให้เองตอนสร้าง · แถวเดิมที่ null ไม่แตะ (คงคำเตือนตอนคำนวณ)
 - **audit ของเงินเดือน (รอบ 201 PR2 · A-PR3)**: `NormalizeRunSsoAsync` · `ReopenPaidRunAsync` · `ReverseSsoSettlementAsync` เขียนผ่าน `AddChainedAuditLog` แล้ว ⇒
   `AuditLogs.Add` ตรงใน `PayrollService` = 0 จุด
+- **แหล่งจ่ายเงินสุทธิ (2026-10-14 ทีม F3 · PC#11/#12/#22 · ID#15)** — ตัวตัดสินเดียว `ResolvePayrollPaymentSourcesAsync` ใช้ทั้งหน้ารอบ
+  (`GetPayrollRunAsync` → `DefaultPaymentSourceLabel/Warning` + ต่อแถว `NetPaymentAccountWarning/Label`) และตอนจ่าย (`ProcessPaymentAsync`):
+  รายคน → ระดับรอบ (นำเข้า) → **แหล่งเงินเริ่มต้นของบริษัท** → ผังเงินสด/ธนาคารรหัสต่ำสุดที่ลงรายการได้ (`MoneyAccountDirectory.ResolveDefaultMoneySourceAsync`
+  ตัวเดียวกับนำส่ง สปส./ภาษี · เดิม 11122 = บัญชีคุมเมื่อมีบัญชีธนาคารที่สร้างอัตโนมัติ และไม่อ่านค่าตั้งบริษัท) · รหัสรายคน/ระดับรอบที่ใช้ไม่ได้แล้ว
+  (ปิดใช้/ลบ/บัญชีคุม) ⇒ จ่ายไม่ได้ `PAYROLL-PAY-SOURCE` พร้อมชื่อพนักงาน + ทางไปต่อ (**ไม่สลับไปค่าเริ่มต้นเงียบ ๆ**) · ตั้งแหล่งจ่ายรายคน/➕
+  บล็อกเฉพาะลงรายการไม่ได้ (`GL-POSTING-ACCOUNT`) · ผังที่ไม่ใช่เงินตาม `Helpers/MoneyAccountRule` = บันทึก + `Notice` (เดิมบล็อกด้วย prefix 111/1133/2123) ·
+  นำเข้ารอบ: รหัสที่ใช้ไม่ได้ = คำเตือนในผลนำเข้า · นำส่ง สปส. (`SettleSocialSecurityAsync`) ใช้ `MoneyAccountDirectory.ResolveSourceGlAsync`
 - **จ่าย (รอบ 201 PR2 · X2)** — `ProcessPaymentAsync` อ่านก่อนล็อกแบบไม่ติดตาม (สถานะ/งวดบัญชี/จ่ายซ้ำเดือน) แล้ว**อ่านรอบ + แถวรายคนใหม่ใต้ `FOR UPDATE`** ·
   `RecomputeRunTotals(run)` หลัง `NormalizeRunSsoAsync` ก่อนสร้าง JE ⇒ ➕/🗑/✏️ ที่ commit ระหว่างนั้นอยู่ใน JE เสมอ (เดิม Details โหลดก่อนล็อก = EF ไม่ refresh)
 - **➕/🗑 พนักงานในรอบ (รอบ 200 ทีม PR1)** — ทางเข้าใหม่สำหรับรอบที่คำนวณ/**นำเข้าจากระบบนอก** (คำนวณใหม่ไม่ได้) และรอบในระบบ (ทางเลือกนอกจากคำนวณใหม่ทั้งรอบ):
@@ -4990,6 +4999,9 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 | §85/1 VAT threshold 1.8M | annual revenue check | warning "ต้องจด VAT ภายใน 30 วัน" |
 | WHT 50 ทวิ ≤ threshold 1,000 | `Helpers/WhtCumulativeScope.SumDistinct` (ขอบเขตด่าน = `Helpers/WhtGateScope`) | ไม่หักถ้ายอดสะสมทั้งสัญญา < 1,000 · `CheckWhtThresholdAsync` ถูกลบรอบ 183 (ด่านซ้อน) |
 | จ่ายต่างประเทศ ม.70 / DTA | `Helpers/ForeignWhtRateResolver` + `Helpers/DtaTreatyRates` (ตารางว่าง — ยังไม่มีแถวที่ยืนยัน) | ม.70 15%/10% เสมอจนกว่าจะมีแถวอนุสัญญา + CoR · เตือนตอนอนุมัติ/ไฟล์ ภ.ง.ด.54 เมื่ออัตราไม่ตรง (แก้ doc รอบ 200 — เดิมเขียนว่า "WHT cert PDF ใช้ bilateral rate" ซึ่งไม่มีในโค้ด) |
+| ผังที่ลงรายการได้ (2026-10-14 ทีม F3 · ID#13/#14/#23/#24) | `Helpers/PostingAccountRule` + `PostingAccountGuard` (DB) | id ผังจากผู้ใช้/API ที่จะลงสมุด/เก็บเป็นค่าตั้ง: ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม (ตัดสินจาก "มีบัญชีย่อย" ไม่ใช่ Level) ⇒ `GL-POSTING-ACCOUNT` บอกช่อง + ที่แก้ · ต่อสาย: FinancialManagement (ค่าใช้จ่ายล่วงหน้า/มัดจำ/ค้างจ่าย/เงินลงทุน/จ่ายค้างจ่าย) · FixedAsset (สร้าง/แก้) · Integration mapping (+ integration ของบริษัทนี้) · ใบขาย integration `paymentAccountId` (ปฏิเสธใน sync log) · สรุปรายวัน (หมวดไม่จับคู่ = ปฏิเสธทั้งชุด ไม่ลงบางส่วน) · ตั้งค่า gateway (ผังพัก/ค่าธรรมเนียม) · บัญชีลูกหนี้/เจ้าหนี้ของผู้ติดต่อ (บันทึก — ตรวจเฉพาะค่าที่เปลี่ยน · ตอนลงบัญชี ผังที่ปักใช้ไม่ได้ = ล้มดัง ไม่ตกผังมาตรฐาน) · ใบสำคัญด้วยมือ (`ValidateManualJournalAsync` ก่อนสร้าง · แก้ = ด่านเข้ม) — ทางอัตโนมัติ (`CreateJournalEntryAsync`) ตรวจแค่ไม่พบ/tenant (ปิดงวดสิ้นปีต้องล้างผังที่ปิดใช้ได้) · สาขา/มิติ/โครงการทั้งหัวและรายบรรทัดต้องเป็นของบริษัทนี้ทุกทาง |
+| ผังเงิน/แหล่งเงิน (2026-10-14 ทีม F3 · PC#6/#8/#11/#12/#17 · ID#19) | `Helpers/MoneyAccountRule` + `MoneyAccountDirectory` (DB) | "ผังนี้คือที่อยู่ของเงินไหม" ตัวเดียว: ผูกบัญชีธนาคารที่เปิดใช้ (ทุกรหัส) หรือรหัสขึ้นต้น 111/1133/2123 (ผังมาตรฐาน) / `CompanySettings.MoneyAccountCodePrefixes` (ผังของบริษัทเอง) · `GET accounts/payment-channels` คืนแถวพร้อมป้าย `channelGroup` (ค่าเดิม = เฉพาะ "other" · `includeBank=true` = ทุกแถว) · ตัวหาแหล่งเงินตัวเดียว `ResolveSourceGlAsync` (ผังที่เลือก → บัญชีธนาคาร → ค่าเริ่มต้นบริษัท (ตรวจแล้ว) → ผังเงินรหัสต่ำสุด) ใช้โดยนำส่งภาษี/สปส./จ่ายค้างจ่าย · บัญชีธนาคาร → ผัง (`TryResolveBankGlAsync`) แยก ไม่พบ/ปิดใช้/ยังไม่ผูก/ผังใช้ไม่ได้ พร้อมทางไปต่อ — ใช้โดยที่พัก (ยืนยันมัดจำ · เช็คเอาต์ · คืนเงิน) และรอบโอน gateway · ไม่ใช่ผังเงิน = เตือน ไม่บล็อก (คำตัดสินข้อ 150) |
+| ชน foreign key (23503) | `Helpers/ForeignKeyViolation` ← `ExceptionMiddleware` | แยก "อ้างถึงสิ่งที่ไม่มี/ผิดชนิด" (เลือกค่าในช่องใหม่ + ชื่อช่องจากชื่อ constraint) ออกจาก "ยังถูกอ้างอิง" (ปิดการใช้งานแทน) · ไม่รู้ทิศ = ข้อความกลาง (ID#17) |
 | OCR auto-fill ครบ (กฎเหล็ก #3) | `OcrService.CreateDocumentFromScanAsync` | ทุก §86/4 field ต้อง pre-filled ก่อนเปิดฟอร์ม |
 
 ---
@@ -5397,3 +5409,4 @@ _Last verified against codebase: 2026-10-12 (ผลตรวจฝ่ายค�
 _Last verified against codebase: 2026-10-14 (ทีม F2 แหล่งเงินของเอกสาร/การชำระ — §2.x "แหล่งเงิน → ผังบัญชี": ตัวตัดสินเดียว `Helpers/DocumentMoneyChannel` ·
 ด่านหัวเอกสารตอนบันทึก · ลงบัญชีไม่ตกเงินสดเงียบเมื่อธนาคารยังไม่ผูกผัง · ไม่มีผังเงินสด = ล้มดัง (เดิมไม่มี JE) · การชำระสืบทอดผังตรงของเอกสาร · จ่ายจากผังอื่นไม่ขยับยอดธนาคาร ·
 reclassify อ่านผังเดิมจาก JE · เทมเพลต `defaultPaymentChannel` · BankService สร้างตรวจผังที่ผูก + `activeOnly` — commit 1b39ec9f)_
+_Last verified against codebase: 2026-10-14 (ทีม F3 — แก้ผลตรวจช่องทางรับ/จ่ายเงิน + รหัสผิดตาราง (`erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md` PC#6/#8/#11/#12/#16/#17/#22 · ID#13/#14/#15/#17/#18/#19/#22/#23/#24): กติกาผังเงินตัวเดียว `Helpers/MoneyAccountRule` + `MoneyAccountDirectory` · ผังลงรายการได้ `Helpers/PostingAccountRule` + `PostingAccountGuard` · §3.8 แหล่งจ่ายเงินเดือน · §2 แหล่งเงิน default · §7 สามแถวใหม่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง))_

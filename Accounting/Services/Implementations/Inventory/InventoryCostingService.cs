@@ -63,12 +63,16 @@ public class InventoryCostingService : IInventoryCostingService
     public InventoryCostingService(AccountingDbContext db, ILogger<InventoryCostingService> logger)
     { _db = db; _logger = logger; }
 
+    /// <summary>ID#18: เดิม "Product {guid} not found." (อังกฤษ + GUID ⇒ ผู้ใช้เห็นแค่ข้อความกลาง) — ไทยพร้อมทางไปต่อ</summary>
+    internal const string ProductNotFoundMessage =
+        "ไม่พบสินค้าที่ต้องคิดต้นทุน (อาจถูกลบไปแล้ว) — ตรวจรายการสินค้าในเอกสาร/การเคลื่อนไหวสต็อก แล้วเลือกสินค้าใหม่";
+
     public async Task<decimal> RegisterReceiptAsync(Guid productId, decimal quantity,
         decimal receiptUnitCost, CancellationToken ct = default)
     {
         if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity), "Must be positive for IN movement.");
         var product = await _db.Products.FirstOrDefaultAsync(p => p.Id == productId, ct);
-        if (product == null) throw new InvalidOperationException($"Product {productId} not found.");
+        if (product == null) throw new InvalidOperationException(ProductNotFoundMessage);
 
         switch (product.CostingMethod)
         {
@@ -112,7 +116,7 @@ public class InventoryCostingService : IInventoryCostingService
     {
         if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity), "Must be positive for OUT movement.");
         var product = await _db.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == productId, ct);
-        if (product == null) throw new InvalidOperationException($"Product {productId} not found.");
+        if (product == null) throw new InvalidOperationException(ProductNotFoundMessage);
 
         // ⚠️ ด่านสต็อกติดลบ **ไม่ได้อยู่ที่นี่แล้ว** — ย้ายไป
         // `Helpers/NegativeStockGuard` ที่ `StockLedger.MoveAsync` เรียกกับทุก
@@ -156,7 +160,7 @@ public class InventoryCostingService : IInventoryCostingService
     public async Task<decimal> RebuildAverageCostAsync(Guid productId, CancellationToken ct = default)
     {
         var product = await _db.Products.FirstOrDefaultAsync(p => p.Id == productId, ct);
-        if (product == null) throw new InvalidOperationException($"Product {productId} not found.");
+        if (product == null) throw new InvalidOperationException(ProductNotFoundMessage);
         if (product.CostingMethod != CostingMethod.WeightedAverage)
         {
             // FIFO/Standard don't have a single AverageUnitCost to rebuild.

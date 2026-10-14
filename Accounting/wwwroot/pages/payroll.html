@@ -1371,10 +1371,12 @@ const Page = {
   async openSettleSso(runId) {
     const api = Layout.api(); if (!api) return;
     try {
+      // รายการแหล่งเงินโหลดไม่ได้ = บอกผู้ใช้ (เดิม .catch เป็นรายการว่างเงียบ ๆ เหลือแค่ "ค่าเริ่มต้น" — PC#16)
+      const listFail = (what) => (e) => { Layout.toast(`โหลดรายการ${what}ไม่สำเร็จ — ตัวเลือกอาจไม่ครบ ลองเปิดหน้าต่างนี้ใหม่`, 'warning', 7000); return { data: [] }; };
       const [runRes, banksRes, chRes] = await Promise.all([
         api.getPayrollRun(runId),
-        api.getBankAccounts().catch(() => ({ data: [] })),
-        api.getPaymentChannels().catch(() => ({ data: [] }))
+        api.getBankAccounts().catch(listFail('บัญชีธนาคาร')),
+        api.getPaymentChannels().catch(listFail('แหล่งเงินสด/ช่องจ่าย'))
       ]);
       const r = runRes.data;
       const banks = banksRes?.data || [];
@@ -1418,12 +1420,14 @@ const Page = {
       // แหล่งจ่ายครบ: ธนาคาร (value bank:<id>) + เงินสด/เงินทดรองกรรมการ/ช่องจ่ายอื่น
       // (getPaymentChannels, value account:<id> = ChartOfAccount.Id)
       let opts = '<option value="">— ใช้บัญชีเริ่มต้นของบริษัท —</option>';
-      if (banks.length) {
+      const activeBanks = banks.filter(b => b.isActive !== false);
+      if (activeBanks.length) {
         opts += '<optgroup label="บัญชีธนาคาร">'
-          + banks.map(b => `<option value="bank:${b.id}">${Layout.esc(b.accountName)} (${Layout.esc(b.bankName)} ${Layout.esc(b.accountNumber)})</option>`).join('')
+          + activeBanks.map(b => `<option value="bank:${b.id}" ${b.linkedAccountId ? '' : 'disabled'}>${Layout.esc(b.accountName)} (${Layout.esc(b.bankName)} ${Layout.esc(b.accountNumber)})${b.linkedAccountId ? '' : ' — ยังไม่ผูกผังบัญชี'}</option>`).join('')
           + '</optgroup>';
       }
-      const glCh = channels.filter(a => !(a.accountCode || '').startsWith('1112'));
+      // เซิร์ฟเวอร์คืนเฉพาะกลุ่ม "เงินสด/อื่น ๆ" อยู่แล้ว (Helpers/MoneyAccountRule — PC#11) ⇒ ไม่กรองรหัสเองอีก
+      const glCh = channels.filter(a => (a.channelGroup || 'other') === 'other');
       if (glCh.length) {
         opts += '<optgroup label="เงินสด / เงินทดรองกรรมการ / ช่องจ่ายอื่น">'
           + glCh.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('')
@@ -1672,9 +1676,10 @@ const Page = {
       // + เงินสด/ช่องทางอื่น (getPaymentChannels ซึ่ง "ตัด 1112x ออก" จึงต้องใช้
       // bank accounts มาเติมบัญชีธนาคารเอง)
       if (!this._payChannels) {
+        const listFail = (what) => (e) => { Layout.toast(`โหลดรายการ${what}ไม่สำเร็จ — ช่อง "แหล่งจ่าย" อาจไม่ครบ ลองเปิดรอบนี้ใหม่`, 'warning', 7000); return { data: [] }; };
         const [pc, ba] = await Promise.all([
-          api.getPaymentChannels().catch(() => ({ data: [] })),
-          api.getBankAccounts().catch(() => ({ data: [] })),
+          api.getPaymentChannels().catch(listFail('แหล่งเงินสด/ช่องจ่าย')),
+          api.getBankAccounts().catch(listFail('บัญชีธนาคาร')),
         ]);
         this._payChannels = (pc && pc.data) || [];
         this._bankAccts = (ba && ba.data) || [];
@@ -1695,17 +1700,24 @@ const Page = {
       const lockReason = r.editLockReason || '';
       // แหล่งจ่ายไม่อยู่ในแบบยื่น ⇒ เซิร์ฟเวอร์ตัดสินแยกจาก ✏️ แก้ยอด (รอบ 193 หลังฝ่ายค้าน C3)
       const payAccountEditable = (r.canSetPaymentAccount === undefined) ? payEditable : !!r.canSetPaymentAccount;
-      const payOpts = (cur) => {
-        let h = '<option value="">— ค่าเริ่มต้น (บัญชีบริษัท) —</option>';
-        const banks = (this._bankAccts || []).filter(b => b.linkedAccountCode);
+      // ป้ายค่าเริ่มต้นมาจากเซิร์ฟเวอร์ (ตัวตัดสินเดียวกับตอนจ่าย — PC#12) · ค่าที่บันทึกไว้แต่ไม่อยู่ในรายการแล้ว
+      // = เติมกลับพร้อม ⚠️ (เดิมแสดง "ค่าเริ่มต้น" ทั้งที่ตอนจ่ายจะใช้ไม่ได้ — PC#22/ID#15)
+      const defLabel = r.defaultPaymentSourceLabel ? `ค่าเริ่มต้น: ${r.defaultPaymentSourceLabel}` : 'ค่าเริ่มต้น (บัญชีบริษัท)';
+      const payOpts = (cur, curLabel) => {
+        let h = `<option value="">— ${Layout.esc(defLabel)} —</option>`;
+        const banks = (this._bankAccts || []).filter(b => b.linkedAccountCode && b.isActive !== false);
         if (banks.length) {
           h += '<optgroup label="บัญชีธนาคาร">' + banks.map(b =>
             `<option value="${Layout.esc(b.linkedAccountCode)}" ${cur === b.linkedAccountCode ? 'selected' : ''}>${Layout.esc(b.bankName || b.accountName || 'ธนาคาร')} ${Layout.esc(b.accountNumber || '')} (${Layout.esc(b.linkedAccountCode)})</option>`).join('') + '</optgroup>';
         }
-        const ch = this._payChannels || [];
+        const ch = (this._payChannels || []).filter(a => (a.channelGroup || 'other') === 'other');
         if (ch.length) {
           h += '<optgroup label="เงินสด / ช่องทางอื่น">' + ch.map(a =>
             `<option value="${Layout.esc(a.accountCode)}" ${cur === a.accountCode ? 'selected' : ''}>${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') + '</optgroup>';
+        }
+        const listed = banks.some(b => b.linkedAccountCode === cur) || ch.some(a => a.accountCode === cur);
+        if (cur && !listed) {
+          h += `<optgroup label="ค่าที่บันทึกไว้ (ไม่อยู่ในรายการแล้ว)"><option value="${Layout.esc(cur)}" selected>⚠️ ${Layout.esc(curLabel || cur)}</option></optgroup>`;
         }
         return h;
       };
@@ -1749,6 +1761,11 @@ const Page = {
               <span style="font-size:12px">วิธีแก้: กด "✏️ แก้ยอด" ที่แถวที่มีป้ายเตือน แล้วปรับตัวเลขให้เงินได้สุทธิในหน้าต่างแก้ยอดตรงกับยอดที่จ่ายจริง (ระบบคำนวณสุทธิให้สด ๆ ระหว่างพิมพ์) — มักเกิดจากข้อมูล import ที่ส่ง "สุทธิ" มาไม่ตรงส่วนประกอบ เช่น มียอดหักที่ไม่ได้ส่งรายละเอียดมา ให้ใส่ยอดนั้นในช่อง "หักอื่น ๆ"</span>
             </div>` : '';
         })()}
+        ${(r.defaultPaymentSourceWarning && r.status !== 'Paid' && r.status !== 'Voided') ? `
+          <div style="margin-bottom:12px;padding:10px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:13px;color:#92400e">
+            ⚠️ <b>แหล่งจ่ายเริ่มต้นใช้ไม่ได้</b> — ${Layout.esc(r.defaultPaymentSourceWarning)}<br>
+            <span style="font-size:12px">แถวที่ช่อง "แหล่งจ่าย" เป็นค่าเริ่มต้นจะกด "จ่าย" ไม่ได้จนกว่าจะแก้</span>
+          </div>` : ''}
         <div style="display:flex;justify-content:flex-end;margin-bottom:8px">${addEmpBtn}</div>
         <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right" title="กองทุนสำรองฯ + เงินกู้ + หักอื่น ๆ">หักอื่น</th><th class="text-right">สุทธิ</th><th>แหล่งจ่าย</th><th></th><th>สลิป</th></tr></thead>
         <tbody>${details.length ? details.map(d => {
@@ -1759,10 +1776,12 @@ const Page = {
             - otherDed - (d.netPay||0)) * 100) / 100;
           const rowBroken = Math.abs(rowDiff) > 0.01;
           const payCell = payAccountEditable
-            ? `<select class="form-input" style="font-size:12px;padding:4px 6px;min-width:170px" data-prev="${Layout.esc(cur)}" onchange="Page.setPayAccount('${id}','${empId}',this)">${payOpts(cur)}</select>`
+            ? `<select class="form-input" style="font-size:12px;padding:4px 6px;min-width:170px" data-prev="${Layout.esc(cur)}" onchange="Page.setPayAccount('${id}','${empId}',this)">${payOpts(cur, d.netPaymentAccountLabel)}</select>`
             : (cur
-                ? `<span class="text-xs">${Layout.esc(cur)}</span>`
-                : `<span class="text-xs text-gray-400">ค่าเริ่มต้น</span>`);
+                ? `<span class="text-xs">${Layout.esc(d.netPaymentAccountLabel || cur)}</span>`
+                : `<span class="text-xs text-gray-400">${Layout.esc(defLabel)}</span>`);
+          const payWarn = d.netPaymentAccountWarning
+            ? `<div style="font-size:11px;color:#b45309;max-width:260px" title="${Layout.esc(d.netPaymentAccountWarning)}">⚠️ ${Layout.esc(d.netPaymentAccountWarning)}</div>` : '';
           return `<tr${rowBroken ? ' style="background:#fef2f2"' : ''}>
           <td>${Layout.esc(d.employeeName || (d.firstName+' '+d.lastName) || '-')}${d.ssoFlagWarning ? `<div style="font-size:11px;color:#b45309" title="${Layout.esc(d.ssoFlagWarning)}">⚠️ ธง ปกส. ไม่ตรงกับฐาน</div>` : ''}</td>
           <td class="text-right">${Layout.money(d.baseSalary||d.salary||0)}</td>
@@ -1771,7 +1790,7 @@ const Page = {
           <td class="text-right">${Layout.money(d.socialSecurityEmployee||d.socialSecurity||d.sso||0)}</td>
           <td class="text-right">${Layout.money(otherDed)}</td>
           <td class="text-right font-medium">${Layout.money(d.netPay||d.netSalary||0)}${rowBroken ? `<div style="font-size:11px;color:#dc2626;white-space:nowrap" title="รายได้รวม − รายการหัก ≠ สุทธิ — กดแก้ยอดเพื่อปรับ">⚠️ ไม่ลงตัว ${rowDiff > 0 ? '+' : ''}${Layout.money(rowDiff)}</div>` : ''}</td>
-          <td>${payCell}</td>
+          <td>${payCell}${payWarn}</td>
           <td style="white-space:nowrap">${payEditable ? `<button class="btn btn-sm ${rowBroken ? 'btn-primary' : 'btn-secondary'}" onclick="Page.openEditDetail('${empId}')" title="แก้ยอดรายคน">✏️ แก้ยอด</button>
             <button class="btn btn-sm btn-secondary" onclick="Page.removeDetail('${Layout.jsArg(empId)}')" title="เอาพนักงานคนนี้ออกจากรอบ (ต้องระบุเหตุผล)">🗑 เอาออก</button>` : ''}</td>
           <td style="white-space:nowrap">
@@ -1886,9 +1905,13 @@ const Page = {
     const prev = sel.getAttribute('data-prev') || '';
     sel.disabled = true;
     try {
-      await api.setPayrollPaymentAccount(runId, empId, code);
+      const res = await api.setPayrollPaymentAccount(runId, empId, code);
       sel.setAttribute('data-prev', sel.value);
-      Layout.toast('อัปเดตแหล่งจ่ายแล้ว', 'success');
+      // คำเตือนจากเซิร์ฟเวอร์ (เช่น ผังที่เลือกไม่ใช่เงินสด/ธนาคาร) — บันทึกแล้วแต่ต้องบอก (ไม่บล็อก — คำตัดสินข้อ 150)
+      if (res?.data?.notice) Layout.toast(res.data.notice, 'warning', 12000);
+      else Layout.toast('อัปเดตแหล่งจ่ายแล้ว', 'success');
+      // ป้าย ⚠️ แหล่งจ่ายที่ใช้ไม่ได้ของแถวนี้มาจากเซิร์ฟเวอร์ ⇒ โหลดรอบใหม่ให้ป้ายตรงกับค่าที่เพิ่งบันทึก
+      if (this._curRun?.id === runId) await this.viewRun(runId);
     } catch (e) {
       sel.value = prev;                 // revert ถ้าไม่ผ่าน validate
       Layout.toast(e.message || 'อัปเดตแหล่งจ่ายไม่สำเร็จ', 'error');

@@ -39,6 +39,23 @@ public record AccountResponse(
     bool InputVatClaimable = true,
     string? CostBehavior = null);
 
+/// <summary>แถว "ช่องทางเงิน" (GET accounts/payment-channels) — ฟิลด์ id/accountCode/accountName เท่ากับ <see cref="AccountResponse"/>
+/// (หน้าเดิมอ่านได้เหมือนเดิม) + ป้ายที่เซิร์ฟเวอร์ตัดสินแล้ว (2026-10-14 · PC#11): <c>ChannelGroup</c> = "bank" | "other" ·
+/// แถว bank ที่ผูกทะเบียนธนาคารมี <c>BankAccountId</c>/<c>BankAccountLabel</c> · หน้าเว็บห้ามกรองรหัส (startsWith '1112') เอง</summary>
+public record PaymentChannelAccountResponse(
+    Guid Id,
+    string AccountCode,
+    string AccountName,
+    string? AccountNameEn,
+    AccountType AccountType,
+    int AccountTypeValue,
+    Guid? ParentAccountId,
+    int Level,
+    bool IsActive,
+    string ChannelGroup,
+    Guid? BankAccountId = null,
+    string? BankAccountLabel = null);
+
 // ===== Journal Entry =====
 public record CreateJournalEntryRequest(
     DateTime EntryDate,
