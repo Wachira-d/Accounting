@@ -204,6 +204,26 @@ public class ImportAccountingHelpersTests
         Assert.Contains(v.Errors, e => e.Code == OpeningTrialBalanceRules.PeriodClosed);
     }
 
+    [Fact]
+    public void บัญชีคุม_บล็อก_บัญชีย่อย_ไม่บล็อก()
+    {
+        var group = OpeningTrialBalanceRules.Evaluate(new[]
+        {
+            new OpeningTbLine("1100", "เงินสดรวม", 500m, 0m, Chart[0]),       // 111 มีบัญชีย่อย
+            new OpeningTbLine("3110", "ทุน", 0m, 500m, Chart[5]),
+        }, OpenPeriod);
+        var e = Assert.Single(group.Errors);
+        Assert.Equal(OpeningTrialBalanceRules.HeaderAccount, e.Code);
+        Assert.Contains("บัญชีย่อย", e.WayForward);
+
+        var leaf = OpeningTrialBalanceRules.Evaluate(new[]
+        {
+            new OpeningTbLine("1100", "เงินสด", 500m, 0m, Chart[1]),
+            new OpeningTbLine("3110", "ทุน", 0m, 500m, Chart[5]),
+        }, OpenPeriod);
+        Assert.True(leaf.CanCommit);
+    }
+
     // ═══ โปรแกรมอื่น: ตัดสินด้วยหัวตาราง ═══
 
     [Fact]

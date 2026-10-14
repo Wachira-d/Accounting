@@ -246,9 +246,9 @@ public class ImportAccountingTargetsDbTests
         var rows = new List<ImportTargetRow>
         {
             Row(1, ("DocumentType", "ใบแจ้งหนี้"), ("DocumentNumber", "IV6801-0099"), ("DocumentDate", date), ("ContactName", "บริษัท ลูกค้าเก่า จำกัด"),
-                ("ContactTaxId", "0105556000017"), ("Description", "ค่าบริการทำบัญชี"), ("Quantity", "2"), ("UnitPrice", "1000.00"), ("VatRate", "7")),
+                ("ContactTaxId", "0105556000017"), ("LineDescription", "ค่าบริการทำบัญชี"), ("LineQuantity", "2"), ("LineUnitPrice", "1000.00"), ("LineVatRate", "7")),
             Row(2, ("DocumentType", "ใบแจ้งหนี้"), ("DocumentNumber", "IV6801-0099"), ("DocumentDate", date), ("ContactName", "บริษัท ลูกค้าเก่า จำกัด"),
-                ("ContactTaxId", "0105556000017"), ("Description", "ค่าที่ปรึกษา"), ("UnitPrice", "500.00"), ("VatRate", "7"),
+                ("ContactTaxId", "0105556000017"), ("LineDescription", "ค่าที่ปรึกษา"), ("LineUnitPrice", "500.00"), ("LineVatRate", "7"),
                 // ยอดรวมในไฟล์ (ผิด) ต้องไม่ถูกใช้ — DocumentService คำนวณเอง
                 ("TotalAmount", "99999")),
         };
@@ -287,7 +287,7 @@ public class ImportAccountingTargetsDbTests
         var target = new DocumentImportTarget(db, new DocumentImportBuilder(db, new FakeResolver(db), new ImportAccountMatcher(db)), DocService(db));
         var ctx = Ctx(s, DocumentImportTarget.Key);
         var pv = Row(1, ("DocumentType", "ใบสำคัญจ่าย"), ("DocumentNumber", "PV-1"), ("DocumentDate", "2026-01-10"), ("ContactName", "ร้านไม่มีในระบบ"),
-            ("Description", "ค่าน้ำ"), ("UnitPrice", "100"));
+            ("LineDescription", "ค่าน้ำ"), ("LineUnitPrice", "100"));
         var v = await target.ValidateAsync(ctx, new[] { pv }, CancellationToken.None);
         Assert.Contains(v[0].Issues, i => i.Code == "doc-type-unsupported" && i.Message.Contains("รับ/จ่ายชำระ"));
 

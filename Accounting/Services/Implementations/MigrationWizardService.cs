@@ -29,15 +29,15 @@ public class MigrationWizardService : IMigrationWizardService
     private readonly AccountingDbContext _db;
     private readonly ILogger<MigrationWizardService> _logger;
     private readonly ImportAccountMatcher _accounts;
-    private readonly Accounting.Services.Ai.IAiFeedbackRecorder? _feedback;
+    private readonly Accounting.Services.Ai.IImportAiAugmenter? _importAi;
 
     public MigrationWizardService(AccountingDbContext db, ILogger<MigrationWizardService> logger,
-        ImportAccountMatcher? accounts = null, Accounting.Services.Ai.IAiFeedbackRecorder? feedback = null)
+        ImportAccountMatcher? accounts = null, Accounting.Services.Ai.IImportAiAugmenter? importAi = null)
     {
         _db = db;
         _logger = logger;
-        _accounts = accounts ?? new ImportAccountMatcher(db);
-        _feedback = feedback;
+        _accounts = accounts ?? new ImportAccountMatcher(db, importAi);
+        _importAi = importAi;
     }
 
     public async Task<MigrationSession> CreateSessionAsync(Guid companyId, string name, MigrationType type, Guid? targetPeriodId, string userId)
@@ -112,15 +112,15 @@ public class MigrationWizardService : IMigrationWizardService
         // ด่านข้ามบริษัท (คำตัดสินข้อ 150 (3)) — เดิมรับ id ใด ๆ ⇒ ผูกยอดยกมาเข้าบัญชีของบริษัทอื่นได้
         var ids = codeToAccountId.Values.Where(v => v != Guid.Empty).Distinct().ToList();
         var valid = await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && !a.IsDeleted && ids.Contains(a.Id))
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive && ids.Contains(a.Id))
             .Select(a => new { a.Id, a.AccountCode })
             .ToDictionaryAsync(a => a.Id, a => a.AccountCode);
         var bad = ids.Where(i => !valid.ContainsKey(i)).ToList();
         if (bad.Count > 0)
-            throw new BusinessRuleException("บัญชีที่เลือกไม่อยู่ในผังบัญชีของบริษัทนี้ (หรือถูกลบแล้ว) — เลือกบัญชีใหม่", "MIGRATION-ACCOUNT");
+            throw new BusinessRuleException("บัญชีที่เลือกไม่อยู่ในผังบัญชีของบริษัทนี้ (ถูกลบ/ปิดใช้งาน) — เลือกบัญชีใหม่ หรือเปิดใช้งานที่หน้าผังบัญชี", "MIGRATION-ACCOUNT");
 
         var rows = await _db.AccountMappings.Where(a => a.MigrationSessionId == sessionId).ToListAsync();
-        var learned = new List<(Guid FeedbackId, string Chosen, bool Accepted)>();
+        var learned = new List<(Guid FeedbackId, string Chosen, Guid? SuggestedId)>();
         foreach (var r in rows)
         {
             if (!codeToAccountId.TryGetValue(r.LegacyCode, out var newAccount)) continue;
@@ -129,14 +129,22 @@ public class MigrationWizardService : IMigrationWizardService
             r.UpdatedAt = DateTime.UtcNow;
             // กฎเหล็ก #1: ปิดลูปของคำแนะนำ AI ImportAccountMap — คำตอบที่ผู้ใช้เลือก (ตรง = ยอมรับ · ต่าง = แก้)
             if (r.AccountMapAiFeedbackId is { } fid && r.MappedAccountId is { } chosen)
-                learned.Add((fid, valid[chosen], r.SuggestedAccountId == chosen));
+                learned.Add((fid, valid[chosen], r.SuggestedAccountId));
         }
         if (session.Status == MigrationStatus.ReadyToCommit) session.Status = MigrationStatus.Mapping;   // ต้องตรวจใหม่
         await _db.SaveChangesAsync();
 
-        if (_feedback != null)
-            foreach (var (fid, chosen, accepted) in learned)
-                await _feedback.RecordUserChoiceAsync(fid, chosen, accepted, CancellationToken.None, UserChoiceSource.Explicit);
+        if (_importAi != null && learned.Count > 0)
+        {
+            // คำตอบที่ชั้นโมเดลแนะนำ (รหัส) — เทียบกับที่ผู้ใช้เลือก ⇒ ยอมรับ/แก้ · feedback ต้องเป็นของบริษัทนี้ (ตรวจใน augmenter)
+            var suggestedIds = learned.Where(x => x.SuggestedId.HasValue).Select(x => x.SuggestedId!.Value).Distinct().ToList();
+            var suggestedCodes = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && suggestedIds.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, a => a.AccountCode);
+            foreach (var (fid, chosen, sid) in learned)
+                await _importAi.RecordPickChoiceAsync(companyId, fid, chosen,
+                    sid is { } x && suggestedCodes.TryGetValue(x, out var code) ? code : null, CancellationToken.None);
+        }
     }
 
     public async Task<IReadOnlyList<MigrationMappingSuggestion>> SuggestMappingsAsync(Guid companyId, Guid sessionId, string userId,

@@ -41,28 +41,8 @@ public class DocumentImportTarget : IImportTarget
     public ImportCommitStyle CommitStyle => ImportCommitStyle.OwnTransactionPerGroup;
     public bool SupportsUpdate => false;
 
-    public IReadOnlyList<ImportFieldDto> Schema { get; } = new List<ImportFieldDto>
-    {
-        new("DocumentType", "ชนิดเอกสาร", ImportFieldType.Enum, false, "เว้นว่างได้ถ้าเลือกชนิดตั้งต้นของชุด",
-            DocumentImportTypes.Allowed.Select(t => DocumentTypeNames.Title(t, "th")).ToList(), "ใบแจ้งหนี้ซื้อ"),
-        new("DocumentNumber", "เลขที่เอกสารเดิม", ImportFieldType.Reference, true, "เลขจากโปรแกรมเดิม — เก็บเป็นอ้างอิง (เลขใหม่ออกตอนอนุมัติ) · แถวเลขเดียวกัน = เอกสารเดียว", null, "IV6701-0012"),
-        new("DocumentDate", "วันที่เอกสาร", ImportFieldType.Date, true, null, null, "15/01/2567"),
-        new("DueDate", "วันครบกำหนด", ImportFieldType.Date, false),
-        new("ContactName", "ชื่อลูกค้า/ผู้ขาย", ImportFieldType.Text, false, "ต้องมีชื่อหรือเลขผู้เสียภาษี", null, "บริษัท ตัวอย่าง จำกัด", 200),
-        new("ContactTaxId", "เลขผู้เสียภาษีคู่ค้า", ImportFieldType.TaxId, false, "จับคู่ผู้ติดต่อได้แม่นที่สุด"),
-        new("ContactBranchCode", "สาขาคู่ค้า", ImportFieldType.BranchCode, false, "00000 = สำนักงานใหญ่"),
-        new("Description", "รายการ", ImportFieldType.Text, true, null, null, "ค่าบริการทำบัญชี", 500),
-        new("Quantity", "จำนวน", ImportFieldType.Decimal, false, "เว้นว่าง = 1"),
-        new("Unit", "หน่วย", ImportFieldType.Text, false, null, null, "ครั้ง", 50),
-        new("UnitPrice", "ราคาต่อหน่วย", ImportFieldType.Amount, true, null, null, "1,500.00"),
-        new("DiscountPercent", "ส่วนลด %", ImportFieldType.Decimal, false),
-        new("VatRate", "อัตรา VAT", ImportFieldType.VatRate, false, "เว้นว่าง = 7% (กิจการจด VAT) · 0 = อัตราศูนย์"),
-        new("WithholdingTaxRate", "หัก ณ ที่จ่าย %", ImportFieldType.Decimal, false, null, null, "3"),
-        new("AccountCode", "ผังบัญชี", ImportFieldType.AccountCode, false, "ฝั่งซื้อเว้นว่างได้ — ระบบแนะนำผังให้"),
-        new("ProductCode", "รหัสสินค้า", ImportFieldType.Text, false, null, null, null, 50),
-        new("PricesIncludeVat", "ราคารวม VAT", ImportFieldType.Flag, false),
-        new("Notes", "หมายเหตุ", ImportFieldType.Text, false, null, null, null, 1000),
-    };
+    /// <summary>field ปลายทาง — ตัวเดียวที่ <see cref="ImportSchemas"/> (ทีม A · owner เดียวของแคตตาล็อก) · ทีม D ปรับรายการของชนิดนี้ที่นั่น</summary>
+    public IReadOnlyList<ImportFieldDto> Schema => ImportSchemas.For(Key)!;
 
     /// <summary>คีย์กลุ่ม = ชนิด + เลขเดิม (ไม่มีเลข = แถวละเอกสาร)</summary>
     public static string GroupKeyOf(ImportTargetRow row, string? defaultType)
@@ -126,19 +106,19 @@ public class DocumentImportTarget : IImportTarget
             foreach (var r in g)
             {
                 var issues = new List<ImportIssueDto>(groupIssues);
-                var qty = Number(r, "Quantity");
-                var price = Amount(r, "UnitPrice");
+                var qty = Number(r, "LineQuantity");
+                var price = Amount(r, "LineUnitPrice");
                 IReadOnlyDictionary<string, string?>? filled = null;
-                if (Text(r, "Description") == null)
-                    issues.Add(Error("Description", "line-description-missing", "บรรทัดต้องมีรายการ (§86/4)", null, "RD-86/4", "ป.รัษฎากร ม.86/4"));
+                if (Text(r, "LineDescription") == null)
+                    issues.Add(Error("LineDescription", "line-description-missing", "บรรทัดต้องมีรายการ (§86/4)", null, "RD-86/4", "ป.รัษฎากร ม.86/4"));
                 if (qty is <= 0m)
-                    issues.Add(Error("Quantity", "line-negative", "จำนวนต้องมากกว่า 0 — ยอดลด/คืนให้ออกใบลดหนี้อ้างใบเดิม", null, "RD-86/4"));
+                    issues.Add(Error("LineQuantity", "line-negative", "จำนวนต้องมากกว่า 0 — ยอดลด/คืนให้ออกใบลดหนี้อ้างใบเดิม", null, "RD-86/4"));
                 if (price is < 0m)
-                    issues.Add(Error("UnitPrice", "line-negative", "ราคาต่อหน่วยติดลบ — ยอดลด/คืนให้ออกใบลดหนี้อ้างใบเดิม", null, "RD-86/4"));
+                    issues.Add(Error("LineUnitPrice", "line-negative", "ราคาต่อหน่วยติดลบ — ยอดลด/คืนให้ออกใบลดหนี้อ้างใบเดิม", null, "RD-86/4"));
                 if (qty == null)
-                    filled = new Dictionary<string, string?> { ["Quantity"] = "1" };   // ฟ้า "ระบบเติม" — ไม่มีจำนวน = 1 หน่วย
+                    filled = new Dictionary<string, string?> { ["LineQuantity"] = "1" };   // ฟ้า "ระบบเติม" — ไม่มีจำนวน = 1 หน่วย
                 result.Add(new ImportRowValidation(r.RowId, issues, Action: action,
-                    DisplayKey: original == null ? Text(r, "Description") : $"{original} · {Text(r, "Description")}",
+                    DisplayKey: original == null ? Text(r, "LineDescription") : $"{original} · {Text(r, "LineDescription")}",
                     GroupKey: GroupKeyOf(r, defaultType), FilledValues: filled));
             }
         }

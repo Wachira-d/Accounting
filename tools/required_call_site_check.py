@@ -7486,7 +7486,7 @@ RULES += [
          why=_ETL_D + "ลงยอดยกมาตรวจใหม่ก่อนเขียน (ไม่เชื่อสถานะเดิม) · คำเตือนต้องรับทราบ · เก็บยอดเดิมที่ถูกทับไว้ย้อน"),
     dict(file=_MW, method="RollbackAsync", must=["ob.OpeningDebit = o.PriorDebit"],
          why=_ETL_D + "ย้อนคืนยอดเดิมที่ชุดนี้ทับ (เดิมลบเฉพาะแถวที่สร้างใหม่)"),
-    dict(file=_MW, method="ApplyMappingsAsync", must=["a.CompanyId == companyId", "RecordUserChoiceAsync("],
+    dict(file=_MW, method="ApplyMappingsAsync", must=["a.CompanyId == companyId", "_importAi.RecordPickChoiceAsync("],
          why=_ETL_D + "บัญชีปลายทางต้องอยู่ในผังของบริษัท (ข้อ 150 (3)) · ปิดลูป AI ImportAccountMap (กฎเหล็ก #1)"),
     dict(file="Services/Import/Targets/OpeningTrialBalanceImportTarget.cs", method="EvaluateAsync", must=["OpeningTrialBalanceRules.Evaluate("],
          why=_ETL_D + "ศูนย์นำเข้าตรวจงบทดลองด้วยตัวตัดสินเดียวกับหน้า wizard"),
@@ -7506,6 +7506,13 @@ RULES += [
          forbid=["FixedAssets.Add("], why=_ETL_D + "ทะเบียนสินทรัพย์ผ่าน FixedAssetService.ImportAsync (FixedAssetImportMethod — ที่ดินไม่คิดค่าเสื่อม)"),
     dict(file="Services/Import/Targets/FixedAssetImportTarget.cs", method="ValidateAsync", must=["FixedAssetImportMethod.Resolve("],
          why=_ETL_D + "หน้าตรวจใช้ตัวตัดสินวิธีคิดค่าเสื่อมเดียวกับตอนลง"),
+    dict(file="Services/Import/ImportEntityResolver.Accounts.cs", method="AskAccountMapAiAsync",
+         must=["_importAi.SuggestAccountMapAsync(", "allowed"],
+         why=_ETL_D + "ชั้นโมเดลของ ImportAccountMap ผ่าน augmenter ของทีม A (orchestrator · ด่านรหัส ∈ ผังบริษัท) เท่านั้น"),
+    dict(file="Services/Import/ImportEntityResolver.Accounts.cs", method="ResolveAsync",
+         must=["ImportAccountCodeResolver.Resolve(", "answer.Confidence >= AiMinConfidence", "a.IsPostable"],
+         before=[("ImportAccountCodeResolver.Resolve(", "AskAccountMapAiAsync(")],
+         why=_ETL_D + "local ก่อนเสมอ · คำตอบโมเดลผ่านด่านผังบริษัท + ความมั่นใจ (กฎเหล็ก #1 anti-hallucination)"),
 ] + [
     dict(file=_MWC, method=m, must=["await DenyAsync(companyId)"], why=_ETL_D + "ด่านสิทธิ์ migration wizard (เดิมมีแค่ [Authorize])")
     for m in ("Create", "List", "Get", "Upload", "UploadText", "Suggest", "ApplyMappings", "Validate", "PostDifference", "Commit",
