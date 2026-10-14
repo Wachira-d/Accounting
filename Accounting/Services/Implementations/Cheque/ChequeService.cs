@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -56,7 +57,14 @@ public interface IChequeService
 
     Task<IReadOnlyList<ChequeEntity>> ListOutstandingAsync(Guid companyId,
         Guid? bankAccountId, CancellationToken ct = default);
+
+    /// <summary>เล่มเช็คของบริษัท (ล่าสุดก่อน) — หน้า “ออกเช็คใหม่” เลือกเล่มจากรายการนี้ · เดิมไม่มี endpoint ⇒ รีเฟรชหน้าแล้วเล่มที่เปิดไว้หายจากตัวเลือก</summary>
+    Task<IReadOnlyList<ChequeBookResponse>> ListBooksAsync(Guid companyId, bool includeExhausted = false, CancellationToken ct = default);
 }
+
+/// <summary>เล่มเช็คสำหรับหน้าจอ — ป้ายบัญชีธนาคารมาจากเซิร์ฟเวอร์ (หน้าไม่ต้องจับคู่รหัสเอง)</summary>
+public sealed record ChequeBookResponse(Guid Id, string BookNumber, Guid BankAccountId, string BankLabel,
+    long StartChequeNumber, long EndChequeNumber, long NextNumber, bool IsExhausted);
 
 public class ChequeService : IChequeService
 {
@@ -83,13 +91,20 @@ public class ChequeService : IChequeService
     public async Task<ChequeBook> OpenChequeBookAsync(Guid companyId, Guid bankAccountId,
         string bookNumber, long startNumber, long endNumber, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(bookNumber))
+            throw new BusinessRuleException("กรอก “เลขเล่ม” ของเล่มเช็ค", "CHEQUE-BOOK-NUMBER");
+        if (startNumber <= 0)
+            throw new BusinessRuleException("“เลขเริ่มต้น” ต้องมากกว่า 0", "CHEQUE-BOOK-RANGE");
         if (endNumber < startNumber)
-            throw new ArgumentException("EndChequeNumber must be ≥ StartChequeNumber.");
+            throw new BusinessRuleException("“เลขสุดท้าย” ต้องไม่น้อยกว่า “เลขเริ่มต้น”", "CHEQUE-BOOK-RANGE");
+        // บัญชีธนาคารต้องเป็นของบริษัทนี้และเปิดใช้งาน — เดิมไม่ตรวจ (รหัสบัญชีของบริษัทอื่น/ที่ถูกลบผ่านได้ ·
+        // PAYMENT_CHANNEL_AUDIT ส่วนที่ 1 ข้อ 2) · สมุดเช็คขยับแค่ยอดธนาคาร ไม่ลง JE ⇒ ไม่บังคับการผูกผัง
+        await PickedAccountGuard.RequireActiveBankAsync(_db, companyId, bankAccountId, "บัญชีธนาคาร", ct);
         var book = new ChequeBook
         {
             CompanyId = companyId,
             BankAccountId = bankAccountId,
-            BookNumber = bookNumber,
+            BookNumber = bookNumber.Trim(),
             StartChequeNumber = startNumber,
             EndChequeNumber = endNumber,
             NextNumber = startNumber,
@@ -104,13 +119,15 @@ public class ChequeService : IChequeService
         Guid? contactId, DateTime chequeDate, decimal amount, Guid? paymentId,
         string? notes, Guid? projectId = null, CancellationToken ct = default)
     {
-        if (amount <= 0) throw new ArgumentException("Amount must be positive.");
+        if (amount <= 0) throw new BusinessRuleException("“จำนวนเงิน” ต้องมากกว่า 0", "CHEQUE-AMOUNT");
         // Take the book under tracking so NextNumber updates atomically.
         var book = await _db.ChequeBooks.FirstOrDefaultAsync(b => b.Id == chequeBookId
-            && b.CompanyId == companyId, ct);
-        if (book == null) throw new InvalidOperationException("ChequeBook not found.");
+            && b.CompanyId == companyId && !b.IsDeleted, ct);
+        if (book == null)
+            throw new BusinessRuleException("ไม่พบเล่มเช็คที่เลือก — เลือก “เล่มเช็ค” ใหม่ หรือเปิดเล่มที่แท็บ “เล่มเช็ค”", "CHEQUE-BOOK-NOT-FOUND");
         if (book.NextNumber > book.EndChequeNumber)
-            throw new InvalidOperationException("ChequeBook exhausted — open a new book first.");
+            throw new BusinessRuleException($"เล่มเช็ค {book.BookNumber} ใช้ครบทุกใบแล้ว — เปิดเล่มใหม่ที่แท็บ “เล่มเช็ค”", "CHEQUE-BOOK-EXHAUSTED");
+        await RequireContactAsync(companyId, contactId, ct);
 
         var cheque = new ChequeEntity
         {
@@ -140,7 +157,11 @@ public class ChequeService : IChequeService
         Guid? projectId = null,
         Guid? depositBankAccountId = null, CancellationToken ct = default)
     {
-        if (amount <= 0) throw new ArgumentException("Amount must be positive.");
+        if (amount <= 0) throw new BusinessRuleException("“จำนวนเงิน” ต้องมากกว่า 0", "CHEQUE-AMOUNT");
+        await RequireContactAsync(companyId, contactId, ct);
+        if (PickedAccountGuard.IsSet(depositBankAccountId))
+            await PickedAccountGuard.RequireActiveBankAsync(_db, companyId, depositBankAccountId!.Value, "บัญชีที่นำฝาก", ct);
+        else depositBankAccountId = null;
         var cheque = new ChequeEntity
         {
             CompanyId = companyId,
@@ -169,9 +190,10 @@ public class ChequeService : IChequeService
             .Include(c => c.ChequeBook).ThenInclude(b => b!.BankAccount)
             .Include(c => c.DepositBankAccount)
             .FirstOrDefaultAsync(c => c.Id == chequeId && c.CompanyId == companyId, ct);
-        if (cheque == null) throw new InvalidOperationException("Cheque not found.");
+        if (cheque == null) throw new KeyNotFoundException(ChequeNotFoundMessage);
         if (cheque.Status != ChequeStatus.Issued && cheque.Status != ChequeStatus.DepositedPending)
-            throw new InvalidOperationException($"Cheque {cheque.Status} cannot be cleared.");
+            throw new BusinessRuleException(
+                $"เช็คเลขที่ {cheque.ChequeNumber} อยู่ในสถานะ{StatusLabel(cheque.Status)} — กด “ขึ้นเงินแล้ว” ได้เฉพาะเช็คที่ยังคงค้าง", "CHEQUE-NOT-OUTSTANDING");
         cheque.Status = ChequeStatus.Cleared;
         cheque.ClearedAt = clearedAt;
 
@@ -257,7 +279,7 @@ public class ChequeService : IChequeService
             .Include(c => c.ChequeBook).ThenInclude(b => b!.BankAccount)
             .Include(c => c.DepositBankAccount)
             .FirstOrDefaultAsync(c => c.Id == chequeId && c.CompanyId == companyId, ct);
-        if (cheque == null) throw new InvalidOperationException("Cheque not found.");
+        if (cheque == null) throw new KeyNotFoundException(ChequeNotFoundMessage);
         if (cheque.Status == ChequeStatus.Bounced)
             return cheque;                       // idempotent — กดซ้ำไม่ถอยซ้ำ
         if (cheque.Status == ChequeStatus.Voided)
@@ -330,9 +352,10 @@ public class ChequeService : IChequeService
     {
         var cheque = await _db.Cheques.FirstOrDefaultAsync(c => c.Id == chequeId
             && c.CompanyId == companyId, ct);
-        if (cheque == null) throw new InvalidOperationException("Cheque not found.");
+        if (cheque == null) throw new KeyNotFoundException(ChequeNotFoundMessage);
         if (cheque.Status == ChequeStatus.Cleared)
-            throw new InvalidOperationException("Cleared cheque cannot be voided.");
+            throw new BusinessRuleException(
+                $"เช็คเลขที่ {cheque.ChequeNumber} ขึ้นเงินแล้ว ยกเลิกไม่ได้ — ถ้าธนาคารคืนเช็คให้บันทึก “เช็คคืน” แทน", "CHEQUE-VOID-CLEARED");
         cheque.Status = ChequeStatus.Voided;
         if (!string.IsNullOrWhiteSpace(notes))
             cheque.Notes = (cheque.Notes ?? "") + "\nVOID: " + notes;
@@ -350,5 +373,40 @@ public class ChequeService : IChequeService
         if (bankAccountId.HasValue)
             q = q.Where(c => c.ChequeBook != null && c.ChequeBook.BankAccountId == bankAccountId.Value);
         return await q.OrderBy(c => c.ChequeDate).ToListAsync(ct);
+    }
+
+    private const string ChequeNotFoundMessage = "ไม่พบเช็คใบนี้ (อาจถูกลบหรือหน้าจอค้างข้อมูลเก่า) — กด “รีเฟรช” ที่แท็บเช็คคงค้าง";
+
+    /// <summary>ป้ายสถานะเช็คภาษาไทย — ตัวเดียวของข้อความในไฟล์นี้</summary>
+    private static string StatusLabel(ChequeStatus st) => st switch
+    {
+        ChequeStatus.Issued => "ออกแล้ว",
+        ChequeStatus.DepositedPending => "รอเรียกเก็บ",
+        ChequeStatus.Cleared => "ขึ้นเงินแล้ว",
+        ChequeStatus.Bounced => "เช็คคืน",
+        ChequeStatus.Voided => "ยกเลิกแล้ว",
+        _ => st.ToString(),
+    };
+
+    /// <summary>ผู้ติดต่อ (ถ้าส่งมา) ต้องเป็นของบริษัทนี้ — กันรหัสข้ามบริษัทติดไปกับเช็ค</summary>
+    private async Task RequireContactAsync(Guid companyId, Guid? contactId, CancellationToken ct)
+    {
+        if (contactId is not Guid cid || cid == Guid.Empty) return;
+        if (!await _db.Contacts.AnyAsync(c => c.Id == cid && c.CompanyId == companyId && !c.IsDeleted, ct))
+            throw new BusinessRuleException("ไม่พบ “ผู้รับ/ผู้ออกเช็ค” ที่เลือกในบริษัทนี้ — เลือกผู้ติดต่อใหม่หรือเว้นว่าง", "CHEQUE-CONTACT");
+    }
+
+    public async Task<IReadOnlyList<ChequeBookResponse>> ListBooksAsync(Guid companyId, bool includeExhausted = false,
+        CancellationToken ct = default)
+    {
+        var q = _db.ChequeBooks.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted);
+        if (!includeExhausted) q = q.Where(b => b.NextNumber <= b.EndChequeNumber);
+        return await q.OrderByDescending(b => b.ReceivedFromBankAt)
+            .Select(b => new ChequeBookResponse(b.Id, b.BookNumber, b.BankAccountId,
+                b.BankAccount.BankName + " " + b.BankAccount.AccountNumber + " (" + b.BankAccount.AccountName + ")",
+                b.StartChequeNumber, b.EndChequeNumber, b.NextNumber, b.NextNumber > b.EndChequeNumber))
+            .Take(200)
+            .ToListAsync(ct);
     }
 }

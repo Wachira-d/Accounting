@@ -10,7 +10,7 @@
 
 ### P0 — blocks normal flow
 
-**1. Petty cash: the bank id is used as a GL id, and funds can never be linked to a GL account**
+**1. Petty cash: the bank id is used as a GL id, and funds can never be linked to a GL account** ✅ (c424fb57 · ทีม F1)
 - Scenario: user clicks "เติมเงิน" on a fund.
   - The page loads `getBankAccounts()` and sends `sourceAccountId = accounts[idx].id` (or `accounts[0].id` when there is one bank). See `petty-cash.html:213-230`.
   - The server uses that value directly as the ChartOfAccount credit account. See `PettyCashService.cs:162-172` → `PettyCashJePlan.ForReplenishment` (`Helpers/PettyCashJePlan.cs:90-106`) → `JournalEntryLine.AccountId` (`PettyCashService.cs:208-214`).
@@ -23,7 +23,7 @@
   - Add a fund GL picker (default 11112) on create and edit.
   - Remove the "ไม่โพสต์ JE" option.
 
-**2. `cheques.html`: the bank dropdown is never filled, so a cheque book can never be opened**
+**2. `cheques.html`: the bank dropdown is never filled, so a cheque book can never be opened** ✅ (c424fb57 · ทีม F1)
 - `loadBanks()` calls `api.get('/bank/accounts')` (`cheques.html:137`). `Layout.api()` returns `API.c(cid)` (`layout.js:2223-2226`), which has no `get` method. `get` exists only on the root `API` object (`api.js:550`).
 - The resulting TypeError is swallowed by `catch { /* ignore */ }`, so `#bookBank` stays empty.
 - `openBook` then sends `bankAccountId: ""`, which fails model binding for `Guid` with a 400.
@@ -133,7 +133,7 @@
 
 18. Inactive bank accounts are offered everywhere except POS. `GetBankAccountsAsync` returns `IsActive=false` rows (`BankService.cs:163-168`). — ◐ ทีม F2 แก้ส่วน documents.html/payments.html/BankService ✅ (1b39ec9f) · หน้าอื่นอยู่ในขอบเขตทีมอื่น (`GET bank/accounts?activeOnly=true`)
 
-19. These flows have no channel picker and always use cash:
+19. These flows have no channel picker and always use cash: — ✅ salary-advance + cash-advance (c424fb57 · ทีม F1: เงินทดรองมีตัวเลือก · เงินยืมทดรองตัดช่องที่ถูกทิ้ง + บอกว่ายังไม่ลงบัญชี) · bulk vendor pay = ทีม F2
    - Salary-advance disburse sends `bankAccountId: null` (`salary-advance.html:409`).
    - Bulk vendor pay sends no `bankAccountId`/`paymentAccountId` (`cash-management.html:501-503` → `VendorConsolidatedPaymentController.cs:130-131`).
    - Cash-advance disburse accepts `BankAccountId` and ignores it (`CashAdvanceController.cs:134-158`).
@@ -168,7 +168,7 @@ This was a read-only audit. Every item below was confirmed by opening the code. 
 
 ### P0 — a normal user flow is blocked
 
-**1. Petty cash: same defect class as the recurring bug, plus a dead end**
+**1. Petty cash: same defect class as the recurring bug, plus a dead end** ✅ (c424fb57 · ทีม F1)
 - **Wrong table.** `wwwroot/pages/petty-cash.html:211-223` (replenish) fills `sourceAccountId` with `accounts[idx].id` from `getBankAccounts()`, which is a **BankAccount.Id**.
   - `Services/Implementations/PettyCash/PettyCashService.cs:162-175` treats that value as a **ChartOfAccount id**. It writes it straight into `JournalEntryLine.AccountId` (lines ~205-215), bypassing AccountingService validation.
   - The server's own fallback at line 165 correctly uses `b.LinkedAccountId`, so page and server disagree.
@@ -184,7 +184,7 @@ This was a read-only audit. Every item below was confirmed by opening the code. 
   - Add a fund-account picker on create.
   - Validate all three ids against the company's CoA (tenant + active + Level ≥ 4).
 
-**2. Loans: the page payload does not match the DTO**
+**2. Loans: the page payload does not match the DTO** ✅ (c424fb57 · ทีม F1)
 - `wwwroot/pages/loans.html:173-184` sends `loanNumber, lenderName, startDate, maturityDate`.
 - `Models/DTOs/Loan/LoanDtos.cs:3-10` (`CreateLoanRequest`) expects `Name, Lender, DisbursementDate, FirstPaymentDate, LoanAccountId, InterestExpenseAccountId, BankAccountId`.
 - `[ApiController]` with nullable enabled makes `Name` required, so creating a loan from the page fails with 400. If it got past that, the dates would default to 0001-01-01 and no accounts would be set.
@@ -235,32 +235,33 @@ This was a read-only audit. Every item below was confirmed by opening the code. 
 - POS already fails loudly in the same situation (`PosService.Orders.cs:2272-2290`).
 - **Fix:** validate on save (tenant, kind, active, bank linked) with a Thai message that names the field. Throw at post instead of falling back.
 
-**8. No money-channel picker, so bank transfers are booked as Cash 111**
+**8. No money-channel picker, so bank transfers are booked as Cash 111** — ✅ ใบเบิก/เงินทดรอง/เงินยืมทดรอง (c424fb57 · ทีม F1) · ที่พัก = ทีม F3
 - Lodging confirm/checkout: `lodging.html:344,392` never send `bankAccountId`, although the DTO supports it.
 - Expense claim pay: `PayExpenseClaimRequest` has no account field, and `ExpenseClaimService.cs:512-527` builds the PV without one.
 - Salary advance: `salary-advance.html:409` hard-codes `bankAccountId: null`.
 - Cash advance disburse: `CashAdvanceController.cs:134-158` accepts `BankAccountId` and ignores it, and posts no JE.
 
-**9. Mobile approve does not check who the assigned approver is**
+**9. Mobile approve does not check who the assigned approver is** — ✅ (2f3e7f4f) ทีม F4: มือถือเรียก `ApprovalService.SubmitActionAsync` ตัวเดียว (ผู้อนุมัติของขั้น · สิทธิ์ขั้นสุดท้าย · แก้แถวที่รอ · 403/404 ไทย)
 - `MobileApiService.cs:345-450` never checks that the caller is the current step's assigned approver; the web flow does this at `ApprovalService.cs:351`.
 - Non-final steps advance and Reject works with no permission check at all. The permission check only runs on the final approval.
 - It inserts a new `ApprovalAction` instead of updating the pending one.
 - Failures come back as HTTP 200 with English + GUID text ("No pending approval request found for {entityType} {entityId}.").
 
-**10. Cross-tenant workflow signatures**
+**10. Cross-tenant workflow signatures** — ✅ (2f3e7f4f) ทีม F4: `Helpers/CrossTenantSignerResolver` + `CompanyMembership` · ผู้อนุมัติเริ่มต้นออกแล้วไม่ลงนามอัตโนมัติ + หมายเหตุ/คำเตือนบนค่าตั้ง
 - `CrossTenantWorkflowController.cs:146-147,235-249` and `CrossTenantWorkflowService.cs:214-220` accept `SignatureUserId`, `DefaultApproverUserId` and `DefaultSignatureId` without checking membership of the approving company.
 - Any user's signature, including another tenant's, can be stamped on the approval.
 - A stale default approver who has left the company keeps auto-signing (`TryAutoApproveAsync` 316-347).
 
-**11. Stale approvers in approval rules**
+**11. Stale approvers in approval rules** — ✅ (2f3e7f4f) ทีม F4: ส่งไม่ได้ 409 + ทางไปต่อ · คำขอค้าง ⇒ แท็บ "ค้างเพราะผู้อนุมัติออก" + โอนผู้อนุมัติ
 - `ApprovalService.cs:226-286` routes to rule steps without re-checking that approvers are still company members.
 - The document sticks in WaitingApproval forever, because only that user can act (line 351).
 
-**12. Scheduled emails do not re-check the document at send time**
+**12. Scheduled emails do not re-check the document at send time** — ✅ (2f3e7f4f) ทีม F4: `Helpers/ScheduledEmailSendCheck` (Skipped + เหตุผล · ยอด ณ เวลาส่ง) · PDF แนบล้มไม่ประทับ Sent
 - `EmailScheduleService.cs:438-485` sends queued `Document` emails (with `OffsetDays`) without re-checking the document. Voided or paid invoices are still emailed, with the `BalanceDue` captured at enqueue.
 - `BuildAttachmentAsync` (490-512) swallows failures with `LogWarning`, and the item is marked `Sent` without the PDF.
 
 **13. Account ids written straight into JE lines with no tenant/active check** ✅ ยกเว้น LoanService (ทีม F1) (6b406e09 — ทีม F3)
+**13. Account ids written straight into JE lines with no tenant/active check** — ✅ ส่วน `LoanService` (c424fb57 · ทีม F1)
 These all accept request ids and write `JournalEntryLine.AccountId` directly, bypassing `AccountingService` validation:
 - `FinancialManagementService.cs:68, 191-212, 604-623`; `.Part2.cs:373-397`
 - `LoanService.cs:64-103`
@@ -288,10 +289,12 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 - `WarehouseService.cs:297` "สินค้า {ProductId} มีจำนวนไม่เพียงพอ…"
 - `BankService.AiReconciliation.cs:791` "ไม่พบรายการธนาคาร {guid}"
 - `IntegrationService.cs:4544`
-- `MobileApiService.cs:358,513` (English + GUID)
+- `MobileApiService.cs:358,513` (English + GUID) — ✅ (2f3e7f4f) ทีม F4
 - `documents.html:9576`: the restored option is labelled `bank:<guid>` when no name comes back.
 - PettyCash English messages passed through by `SmeOperationsController.cs:55,74` ("Fund not found.", "Insufficient petty cash…").
-- English that gets masked to a generic message with no next step: ChequeService `ArgumentException` (`ChequeService.cs:83-84,143`); `InventoryCostingService.cs:71,115,159` "Product {id} not found."; WebhookService 83-195.
+- English that gets masked to a generic message with no next step: ChequeService `ArgumentException` (`ChequeService.cs:83-84,143`); `InventoryCostingService.cs:71,115,159` "Product {id} not found."; WebhookService 83-195 (✅ (2f3e7f4f) ทีม F4 — 404 ไทยพร้อมทางไปต่อ).
+- PettyCash English messages passed through by `SmeOperationsController.cs:55,74` ("Fund not found.", "Insufficient petty cash…"). ✅ (c424fb57 · ทีม F1)
+- English that gets masked to a generic message with no next step: ChequeService `ArgumentException` (`ChequeService.cs:83-84,143`) ✅ (c424fb57 · ทีม F1); `InventoryCostingService.cs:71,115,159` "Product {id} not found."; WebhookService 83-195.
 
 **19. "Not found" reported as "not linked".** ✅ StatutoryRemittance/Payroll/GatewaySettlement/Lodging (6b406e09 — ทีม F3 · DocumentService = ทีม F2) `.Select(b=>b.LinkedAccountId).FirstOrDefault()` returns null for both, and none of these check `IsActive`:
 - `StatutoryRemittanceService.cs:1871-1877`
@@ -313,9 +316,9 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 
 **24. Manual JE checks are thin.** ✅ ใบสำคัญ (6b406e09 — ทีม F3 · Document `DimensionId` = ทีม F2) JE create/update (`AccountingService.cs:305-314, 413-455, 717-719`) doesn't check account `IsActive` / Level ≥ 4, and doesn't validate `BranchId`, `DimensionId` or line `ProjectId`. Document `DimensionId` (`DocumentService.cs:2963`) is also unvalidated.
 
-**25. Scheduled reports report false success.** `ScheduledReportDispatcher.cs:146-150` swallows per-recipient send failures, and `LastResult` stays "OK".
+**25. Scheduled reports report false success.** — ✅ (2f3e7f4f) ทีม F4: `Helpers/ScheduledReportOutcome` OK/PARTIAL/ERROR/SKIPPED + "ส่งทันที" ส่งจริง (เดิมประทับ OK โดยไม่ส่ง) `ScheduledReportDispatcher.cs:146-150` swallows per-recipient send failures, and `LastResult` stays "OK".
 
-**26. Fields named `BankAccountId` that hold CoA ids.** `PosTerminal.BankAccountId` (the page sends `linkedAccountId`, the server validates against CoA — consistent today but easy to break) and `Loan.BankAccountId`.
+**26. Fields named `BankAccountId` that hold CoA ids.** — ✅ ส่วน `Loan` (c424fb57 · ทีม F1: property → `MoneyAccountId` บนคอลัมน์เดิม · คำขอ `bankAccountId` = BankAccounts.Id จริง) `PosTerminal.BankAccountId` (the page sends `linkedAccountId`, the server validates against CoA — consistent today but easy to break) and `Loan.BankAccountId`.
 
 ### Checked and fine (no need to recheck)
 - tax-remittance.html / payroll.html SSO `bank:`/`account:` parsing, and the server resolvers (StatutoryRemittance, Payroll SSO): kinds are correct; only the #19 nits apply.

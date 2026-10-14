@@ -18,11 +18,13 @@ public record ApproveSalaryAdvanceRequest(string? Notes);
 
 public record RejectSalaryAdvanceRequest(string Reason);
 
+/// <summary>จ่ายเงินทดรอง — จ่ายจากบัญชีไหน: <paramref name="BankAccountId"/> (BankAccounts.Id → ผังที่ผูก) <b>หรือ</b>
+/// <paramref name="PaymentAccountId"/> (ผังเงินสด/ช่องทางอื่นตรง) อย่างใดอย่างหนึ่ง · ไม่ส่งทั้งคู่ = ใบสำคัญจ่ายลงเงินสด (ค่าตั้งต้นเดิมของเอกสาร) ·
+/// ทีม F1 2026-10-14: เดิมหน้าเว็บส่ง <c>bankAccountId: null</c> ตายตัว ⇒ เงินโอนถูกลงเป็นเงินสดทุกครั้ง (PAYMENT_CHANNEL_AUDIT ส่วนที่ 1 ข้อ 19)</summary>
 public record DisburseSalaryAdvanceRequest(
     DateTime? DisbursementDate,
-    // Optional bank/cash account the advance is paid from; null → the
-    // PaymentVoucher posting falls back to the default cash account.
-    Guid? BankAccountId);
+    Guid? BankAccountId,
+    Guid? PaymentAccountId = null);
 
 public record SalaryAdvanceResponse(
     Guid Id,

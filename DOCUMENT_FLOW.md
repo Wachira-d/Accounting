@@ -1642,6 +1642,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - WHT tip §50 ทวิ (เกิน 1,000/รอบ — niche)
 
 ### 2.7 Recurring
+
+- **งวดค้างหลายงวด (ฝ่ายค้าน 2026-10-14 P0)** — เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน · แก้ใน f696f418) ⇒ `NextRunDate` ค้างงวดแรก · รอบอัตโนมัติ/ปุ่มสร้างทันทีเรียก `SkipOverduePeriodsAsync` → `RecurringSchedule.CatchUp` เลื่อนไปงวดล่าสุดที่ถึงกำหนดแล้วออก **งวดเดียว** + `LastRunNotice` "ข้าม N งวด … กด สร้างทันที" (ไม่ไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที) · สมุดรายวันไม่แตะ (ไม่เคยค้าง)
 - **Service**: `RecurringTransactionService.cs:41`
 - ความถี่: `Daily / Weekly / BiWeekly / Monthly / Quarterly / SemiAnnual / Annual`
 - template เก็บใน `RecurringTransaction.TemplateData` (JSON)
@@ -1991,9 +1993,18 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 > ApprovalRequest — **เดิมตั้ง `Status = Approved` ตรง ๆ เหมือน ③ ก่อนแก้ ⇒ เอกสาร
 > "อนุมัติแล้ว" เลขยัง DRAFT-{guid} ไม่มี JE/สต๊อก แล้วรับชำระต่อได้ — แก้แล้ว รอบ 135
 > (ERP_REVIEW B-02); ตีกลับผ่านมือถือเด้งกลับ Draft เหมือน ApprovalService ไม่ใช่ Rejected**)
+> **② กับ ④ มีเจ้าของกติกาเดียว (2026-10-14 ทีม F4 · ID#9)**: มือถือเรียก `ApprovalService.SubmitActionAsync` ตัวเดียวกับเว็บ —
+> ผู้กดต้องเป็นผู้อนุมัติของขั้นปัจจุบัน (ทุกขั้น รวมปฏิเสธ · 403 `APPROVAL-NOT-ASSIGNED`) · ผู้ขอห้ามอนุมัติ/ปฏิเสธเอง (403) · ขั้นสุดท้ายของเอกสาร
+> ต้องมีสิทธิ์อนุมัติเอกสาร (403 `PERM-DOC-APPROVE` ก่อนบันทึก — เดิมมีเฉพาะมือถือ) · แก้แถว `ApprovalAction` ที่รออยู่ (เดิมมือถือเพิ่มแถวใหม่) ·
+> ขั้นสุดท้ายอนุมัติเอกสารไม่สำเร็จ ⇒ คำขอเป็น Approved + `FinalizeError` (มือถือตอบ `Success=false` + ข้อความเดียวกัน) แล้วอนุมัติเอกสารตรงได้หลังแก้
+> **ผู้อนุมัติที่ออกจากบริษัทแล้ว (ID#11 · `Helpers/CompanyMembership` + `Helpers/ApprovalApproverCheck`)**: ส่งขออนุมัติด้วยกฎที่ชี้คนออกแล้ว ⇒ 409
+> `APPROVAL-APPROVER-DEPARTED` (บอกขั้น+ชื่อ ไปแก้กฎ — ไม่ข้ามขั้น) · คำขอที่ค้างอยู่แล้ว ⇒ `staleApproverNotice` บนคำขอ + แท็บ "ค้างเพราะผู้อนุมัติออก"
+> (`GET approval/requests/stalled`) + `POST approval/requests/{id}/reassign` (สิทธิ์ตั้งค่าบริษัท · เฉพาะขั้นที่คนเดิมออกแล้ว · ห้ามโอนให้ผู้ขอ ·
+> แก้แถวเดิม + หมายเหตุ + audit · ห้ามโอนให้คนที่อนุมัติขั้นอื่นของคำขอเดียวกันแล้ว) · งานเตือนคำขอค้าง 48 ชม. แจ้ง**ผู้ขอ**แทน (วันละครั้ง) เมื่อผู้อนุมัติออกไปแล้ว ·
+> หน้ากฎเตือน (ไม่บล็อก) เมื่อผู้อนุมัติขั้นสุดท้ายไม่มีสิทธิ์อนุมัติเอกสาร · ③ `SignatureApprovalService.SetupApprovalAsync` ปฏิเสธผู้อนุมัติภายในที่ไม่ใช่สมาชิก (400) ก่อนพลิก WaitingApproval
 > **ด่านสิทธิ์**: ทุกทางเข้าต้องผ่าน `DocumentPermissionHelper.CanApproveAsync` ก่อนถึง ApproveDocumentAsync —
-> ① DenyDocAsync ② ApprovalService (ตามกฎ) ③ `SignatureApprovalService.RequireApproveAsync` (รอบ 135 · G-01)
-> ④ `MobileApiService` (G-05) · LINE text/postback (G-03/G-04) — เดิม ③④+LINE มีแค่ [Authorize]
+> ① DenyDocAsync ②④ `ApprovalService.EnsureMayApproveDocumentAsync` (ขั้นสุดท้าย · เว็บ+มือถือ) ③ `SignatureApprovalService.RequireApproveAsync` (รอบ 135 · G-01)
+> · LINE text/postback (G-03/G-04) — เดิม ③④+LINE มีแค่ [Authorize]
 > กติกา: ห้ามเขียน `Document.Status` นอก `IDocumentService` — ทางเข้าใหม่ทุกทางต้องเรียก
 > `ApproveDocumentAsync` (checker `document_status_writer_check` อยู่ในลิสต์ที่ควรมี §8 ของ ERP_REVIEW)
 > RequireApprovalForDocuments (เกินวงเงิน) ยกเว้นให้เอกสารที่เซ็นครบแล้ว
@@ -2015,7 +2026,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 > **การรับทราบคำเตือน — แหล่ง 4 แบบ (รอบ 193 · คำตัดสิน #12 · `Helpers/ApprovalAcknowledgement` + enum
 > `ApprovalAckSource {None, User, SystemWorkflow, ApiClient, Unattended}` · overload ใหม่ของ `ApproveDocumentAsync`)**:
 > - **User** (เว็บ/มือถือ — คนกด "รับทราบ"): `DocumentApprovalWarningsException` (422) → ส่งซ้ำพร้อม `acknowledgeWarnings=true` →
->   `[APPROVE-ACK]` บน `InternalNotes` + `AuditLog` `APPROVE-ACK-WARNINGS` · มือถือ `QuickApproveAsync` พรีวิวคำเตือน**ทุกชุด**
+>   `[APPROVE-ACK]` บน `InternalNotes` + `AuditLog` `APPROVE-ACK-WARNINGS` · มือถือ `QuickApproveAsync` (ผ่าน `SubmitActionAsync` ตั้งแต่ 2026-10-14) พรีวิวคำเตือน**ทุกชุด**
 >   (`Warnings` + `RequiresAcknowledgement` · `MobileController ?acknowledgeWarnings=true`) และประทับผู้อนุมัติเป็น userId จริง
 > - **workflow เว็บขั้นสุดท้าย** (`ApprovalService`) หยุด 422 ให้คนกดรับทราบ (`approval.html` ถามแล้วส่งซ้ำ · อนุมัติหลายรายการข้ามใบที่มีคำเตือน)
 > - **ลายเซ็นขั้นสุดท้าย / ลายเซ็นลูกค้า** (`SignatureApprovalService`): ถามคำเตือน**ก่อนบันทึกลายเซ็น** → 422 + รายการ (ยังไม่มีอะไรถูกบันทึก)
@@ -4021,6 +4032,26 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   บวกกลับเอง) — เลือกทิศที่ความเสียหายถูก**นับ** เพราะเงินออกจากลิ้นชักไปแล้วจริง
   ถ้าห้ามบันทึก ยอดในระบบจะไม่ตรงกับเงินในลิ้นชัก **ถาวรและมองไม่เห็น**
   ⚠️ ข้อนี้**ต่างจากตัวอักษรใน `CLAUDE.md` §L(9)** ที่เขียนว่า hard block — รอเจ้าของชี้ขาด
+- **ช่องทางเงินของเงินสดย่อย/สินเชื่อ/เช็ค/ใบเบิก/เงินทดรอง (ทีม F1 · 2026-10-14 · `Helpers/PickedAccountGuard` + `wwwroot/js/money-channel.js` ·
+  PAYMENT_CHANNEL_AUDIT ส่วนที่ 1 ข้อ 1/2/19 · ส่วนที่ 2 ข้อ 1/2/8/13/26)** — รหัสจากหน้าจอแยกชนิดเสมอ: `bank:<BankAccounts.Id>` →
+  เซิร์ฟเวอร์แปลงเป็น `LinkedAccountId` · `account:<ChartOfAccounts.Id>` = ผังเงินตรง · ผังทุกตัวที่ลงบรรทัด JE ต้องเป็นของบริษัทนี้ · เปิดใช้ ·
+  ระดับรายการ · ชนิดตรงช่อง (ไม่ผ่าน ⇒ `BusinessRuleException` `PICKED-*` ข้อความไทยบอกช่อง + ที่แก้ · "ไม่พบ" ≠ "ปิดใช้" ≠ "ยังไม่ผูกผัง") ·
+  ส่งทั้งธนาคารและผังพร้อมกัน = ปฏิเสธ
+  - **เงินสดย่อย**: เปิดกองทุนไม่เลือกผัง = ผังมาตรฐาน 11112 (`PettyCashJePlan.DefaultFundAccountCode`) · ไม่มีในผังบริษัท = บล็อกให้เลือก ·
+    `PUT …/sme/petty-cash/funds/{id}` (สิทธิ์ `Journal.Manage`) แก้ชื่อ/วงเงิน/**ผูกผังของกองทุน** (ทางออกของกองทุนเก่า — ข้อความ "ยังไม่ผูกผัง" ชี้ปุ่ม “แก้ไข / ผูกผังบัญชี”) ·
+    เปลี่ยนผังเมื่อมีรายการลงบัญชีแล้ว = บล็อก (ยอดเดิมอยู่ผังเก่า) · เติมเงิน `sourceBankAccountId` (ธนาคาร) หรือ `sourceAccountId` (ผังเงินสด) ·
+    เบิก: ผังค่าใช้จ่ายตรวจ tenant/ระดับ · ห้ามผังเดียวกับกองทุน · โครงการต้องเป็นของบริษัท · เงินไม่พอ/ไม่พบกองทุน = ไทย (เดิม "Insufficient…"/"Fund not found.")
+  - **สินเชื่อ**: `Loan.MoneyAccountId` = **ผังบัญชี** (คอลัมน์เดิม `"BankAccountId"` map ด้วย `HasColumnName` ไม่ migrate) · คำขอส่ง `bankAccountId`
+    (BankAccounts.Id) หรือ `moneyAccountId` · JE รับเงินกู้ตัดสินที่ `Helpers/LoanPostingPlan.ForDisbursement` (`postDisbursementEntry`: true ต้องมีผังเงินกู้ +
+    ช่องทางเงิน · false = ยอดยกมาแล้วไม่ลง · null (API เดิม) มีครึ่งเดียว = ปฏิเสธ ไม่ข้ามเงียบ) · ความถี่รับเฉพาะรายเดือน (ตารางผ่อนรายเดือนเท่านั้น) ·
+    `PUT loans/{id}` แก้ผัง 3 ช่องได้ (เปลี่ยนผังเงินกู้หลังมีการชำระ = คำเตือน `Notice`) · ชำระ: ช่องทางที่ส่งมา > `Loan.MoneyAccountId` > ปฏิเสธ
+    (เดิมจ่ายจาก 11122/111x ตัวแรกเสมอ) · `GET loans/account-defaults` เสนอ 21100/21300/22100 + 55110
+  - **เช็ค**: เปิดเล่มตรวจบัญชีธนาคาร tenant+เปิดใช้ (ไม่บังคับผูกผัง — สมุดเช็คขยับแค่ยอดธนาคาร) · เช็ครับตรวจบัญชีที่นำฝาก · `GET cheques/books`
+    (เดิมไม่มี ⇒ รีเฟรชแล้วเล่มหาย) · ข้อความอังกฤษทั้งหมด → ไทย
+  - **ใบเบิก/เงินทดรอง**: `PayExpenseClaimRequest` ทุกช่องไม่บังคับ + `BankAccountId`/`PaymentAccountId` ส่งต่อถึงใบสำคัญจ่าย (เดิมหน้าเว็บส่งไม่มี body ⇒ 400 ·
+    และลงเงินสดเสมอ) · `DisburseSalaryAdvanceRequest.PaymentAccountId` เพิ่ม · ตรวจช่องทางก่อนสร้าง PV
+  - **เงินยืมทดรอง (`CashAdvanceController`)**: ยัง**ไม่ลงบัญชีอัตโนมัติ** (ไม่มีแบบ JE ของขั้นเคลียร์) — ตัดช่อง `BankAccountId` ที่เคยรับแล้วทิ้งเงียบ ·
+    คำตอบตอนจ่ายบอกให้บันทึกใบสำคัญจ่ายเอง (งานค้าง: ออกแบบ JE จ่าย/เคลียร์ — ดูรายงานทีม F1)
 - **พยากรณ์เงินสด (`Helpers/CashForecastTiming`)** — เดิมใช้ `DueDate` ล้วน ⇒ ลูกค้าที่จ่าย
   ช้าประจำถูกนับว่าจ่ายตรงวัน · ตอนนี้เลื่อนตาม**มัธยฐาน**ความช้าจริง (ต้องมี ≥3 ใบ) ·
   ไม่มีประวัติ/จ่ายตรง/เคยจ่ายก่อนกำหนด = **ไม่ขยับเลย** (ห้ามมองโลกในแง่ดีโดยไม่มีสิทธิ์)
@@ -5361,6 +5392,8 @@ _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้า�
 
 _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้างชุดสาม — รอบเงินเดือนนับเข้าการนำส่งด้วย PaidAt · integration ใบกำกับล้มสะอาด — commit 075af3d7)_
 
+_Last verified against codebase: 2026-10-14 (ทีม F1 รอบแก้ช่องทางเงิน — §6 "ช่องทางเงินของเงินสดย่อย/สินเชื่อ/เช็ค/ใบเบิก/เงินทดรอง": `Helpers/PickedAccountGuard` (ผังจากหน้าจอ = บริษัท/เปิดใช้/ระดับรายการ/ชนิด · บัญชีธนาคาร → LinkedAccountId) · เงินสดย่อยผูกผังกองทุน (11112 ตั้งต้น + `PUT funds/{id}`) · สินเชื่อ `Loan.MoneyAccountId` (คอลัมน์เดิม) + `LoanPostingPlan` + หน้า loans.html ตรงสัญญา · เช็ค `GET books` + ตรวจบัญชีธนาคาร · ใบเบิก/เงินทดรองเลือกบัญชีที่จ่าย · เงินยืมทดรองตัดช่องที่ถูกทิ้งเงียบ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c424fb57)_
+
 _Last verified against codebase: 2026-10-14 (รอบ 204 ทีม B — §5.4 บริการต่างประเทศ + ผู้จ่ายออกแทนบันทึกได้ · VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน (`ForeignServiceVat.VatWithBorne`) · รายงาน ภ.พ.36 ไม่บวกซ้ำ · คำเตือน `[PP36-BASE]` · ผู้จ่ายรับภาระตามสัญญา §65 ตรี (3) + แก้หลังอนุมัติ · e-Withholding round-trip — commits a8b3ecc3 · dc7aabeb)_
 
 _Last verified against codebase: 2026-10-13 (รอบ 204 — แก้ผลฝ่ายค้านรอบสองงานหลายผู้ถูกหัก (หลัง 0f428969): §5.4 (1) ผู้ถูกหักที่สืบทอดถูกตัดทิ้ง = ป้าย `[WHT-CERT-REVIEW]` ที่ `WhtCertIssuePlan.Decide`/คำเตือนอนุมัติอ่าน (ไม่ออกอัตโนมัติจนกว่าจะรับทราบ) · (2) เปลี่ยนผู้ถูกหักแล้วใบแทนของใบร่างเป็นร่าง · (3) ทางไปต่อใบลดหนี้ไม่อ้างบรรทัดทำได้จริง · (4) หัวเอกสารที่ระบุเองขัดกับรายบรรทัด = 400 · (5) รายการประจำไม่อนุมัติอัตโนมัติผ่าน `RecordAutoApproveFailureAsync` — commit 7b88c053)_
@@ -5430,3 +5463,4 @@ _Last verified against codebase: 2026-10-14 (ทีม F2 แหล่งเง�
 ด่านหัวเอกสารตอนบันทึก · ลงบัญชีไม่ตกเงินสดเงียบเมื่อธนาคารยังไม่ผูกผัง · ไม่มีผังเงินสด = ล้มดัง (เดิมไม่มี JE) · การชำระสืบทอดผังตรงของเอกสาร · จ่ายจากผังอื่นไม่ขยับยอดธนาคาร ·
 reclassify อ่านผังเดิมจาก JE · เทมเพลต `defaultPaymentChannel` · BankService สร้างตรวจผังที่ผูก + `activeOnly` — commit 1b39ec9f)_
 _Last verified against codebase: 2026-10-14 (ทีม F3 — แก้ผลตรวจช่องทางรับ/จ่ายเงิน + รหัสผิดตาราง (`erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md` PC#6/#8/#11/#12/#16/#17/#22 · ID#13/#14/#15/#17/#18/#19/#22/#23/#24): กติกาผังเงินตัวเดียว `Helpers/MoneyAccountRule` + `MoneyAccountDirectory` · ผังลงรายการได้ `Helpers/PostingAccountRule` + `PostingAccountGuard` · §3.8 แหล่งจ่ายเงินเดือน · §2 แหล่งเงิน default · §7 สามแถวใหม่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 6b406e09)_
+_Last verified against codebase: 2026-10-14 (ทีม F4 · PAYMENT_CHANNEL_AUDIT ส่วนที่ 2 ID#9/10/11/12/18/25 — §3.2: มือถืออนุมัติผ่าน `ApprovalService.SubmitActionAsync` ตัวเดียว (ผู้อนุมัติของขั้น · สิทธิ์ขั้นสุดท้าย · แก้แถวที่รอ) · ผู้อนุมัติที่ออกจากบริษัท: ส่งไม่ได้ 409 + โอนผู้อนุมัติ · workflow ข้ามบริษัทตรวจสมาชิกผู้ลงนาม/ผู้อนุมัติเริ่มต้น · อีเมลตั้งเวลาตรวจเอกสารซ้ำตอนส่ง + ไฟล์แนบล้มไม่ประทับ Sent · รายงานตั้งเวลา PARTIAL/ERROR — sha เติมในคอมมิตตามหลัง)_

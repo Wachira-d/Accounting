@@ -265,7 +265,7 @@ public class BankStatementImportTarget : IImportTarget
                     results[rowId] = lr.Outcome switch
                     {
                         BankStatementLineOutcome.Created or BankStatementLineOutcome.Updated
-                            => new(rowId, true, CommittedEntityType, lr.TransactionId),
+                            => new(rowId, true, CommittedEntityType, lr.BankTransactionId),
                         BankStatementLineOutcome.Duplicate or BankStatementLineOutcome.Conflict
                             => new(rowId, true, Skipped: true),
                         _ => new(rowId, false, Error: lr.Message ?? "ลงรายการไม่สำเร็จ"),

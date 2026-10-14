@@ -1144,7 +1144,8 @@ const API = {
       submitExpenseClaim: (id) => API.post(`${base}/expense-claims/${id}/submit`),
       approveExpenseClaim: (id, d) => API.post(`${base}/expense-claims/${id}/approve`, d),
       rejectExpenseClaim: (id, d) => API.post(`${base}/expense-claims/${id}/reject`, d),
-      payExpenseClaim: (id) => API.post(`${base}/expense-claims/${id}/pay`),
+      // ส่ง body เสมอ (บัญชีที่จ่าย/เลขอ้างอิง) — เดิมไม่มี body ⇒ [FromBody] ตอบ 400 (ทีม F1 · 2026-10-14)
+      payExpenseClaim: (id, d = {}) => API.post(`${base}/expense-claims/${id}/pay`, d),
       voidExpenseClaim: (id) => API.post(`${base}/expense-claims/${id}/void`),
       // Projects
       getProjects: (q = '') => API.get(`${base}/projects${q}`),
@@ -1574,6 +1575,9 @@ const API = {
       getApprovalRequest: (id) => API.get(`${base}/approval/requests/${id}`),
       getPendingApprovals: () => API.get(`${base}/approval/pending`),
       submitAction: (id, d) => API.post(`${base}/approval/requests/${id}/action`, d),
+      // ID#11: คำขอที่ค้างเพราะผู้อนุมัติออกจากบริษัทแล้ว + โอนผู้อนุมัติ (สิทธิ์ตั้งค่าบริษัท)
+      getStalledApprovals: () => API.get(`${base}/approval/requests/stalled`),
+      reassignApprover: (id, d) => API.post(`${base}/approval/requests/${id}/reassign`, d),
       // Settings
       getSettings: () => API.get(`${base}/settings`),
       updateSettings: (d) => API.put(`${base}/settings`, d),

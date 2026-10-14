@@ -41,6 +41,25 @@ public static class RecurringSchedule
     public static bool IsFinished(DateTime nextRunDate, DateTime? endDate, int totalRuns, int? maxRuns)
         => (maxRuns.HasValue && totalRuns >= maxRuns.Value) || !WithinEnd(nextRunDate, endDate);
 
+    /// <summary>งวดค้างหลายงวด (ระบบหยุด/ล้มหลายรอบ) ⇒ คืน "งวดล่าสุดที่ถึงกำหนดแล้ว" + จำนวนงวดเก่ากว่าที่ข้าม — รอบอัตโนมัติออกใบ
+    /// <b>งวดเดียว</b> ไม่ไล่ออกย้อนหลังทีละงวดทุก 15 นาที (ใบกำกับภาษีเลขจริงลงวันที่วันนี้ + ส่งอีเมลลูกค้า ⇒ ซ้ำกับที่ผู้ใช้ออกมือไปแล้ว)
+    /// · ฝ่ายค้าน 2026-10-14 P0: เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน) ⇒ NextRunDate ค้างงวดแรกทุกแถว
+    /// · ไม่ค้าง ⇒ (nextRunDate, 0) เดิม · <paramref name="maxSteps"/> กันลูปไม่จบ</summary>
+    public static (DateTime LatestDue, int Skipped) CatchUp(RecurringFrequency frequency, DateTime nextRunDate, int? preferredDay,
+        DateTime startDate, DateTime nowUtc, int maxSteps = 5000)
+    {
+        var latest = nextRunDate;
+        var skipped = 0;
+        for (var i = 0; i < maxSteps; i++)
+        {
+            var next = Next(frequency, latest, preferredDay, startDate);
+            if (next > nowUtc || next <= latest) break;
+            latest = next;
+            skipped++;
+        }
+        return (latest, skipped);
+    }
+
     /// <summary>วันฐานของตัวแปร &lt;&lt;month&gt;&gt;/&lt;&lt;year&gt;&gt; — รอบที่ "ใช้งวด" (cron · สร้างทันทีเมื่อถึงกำหนด) ใช้วันของงวดนั้น
     /// (ใบตามหลังได้เดือนของงวดตัวเอง) · รอบพิเศษก่อนกำหนด (ไม่เลื่อนงวด) ใช้วันนี้ตามเดิม · คืนวันตามปฏิทินไทย</summary>
     public static DateTime PlaceholderBaseDate(DateTime nextRunDate, DateTime nowUtc, bool consumesPeriod)

@@ -100,7 +100,13 @@ public record ApproveExpenseClaimRequest(
 public record RejectExpenseClaimRequest(
     string Reason);
 
+/// <summary>จ่ายใบเบิก — ทุกช่องไม่บังคับ (ทีม F1 · 2026-10-14): เดิม <c>PaymentMethod</c> บังคับแต่หน้า <c>expense.html</c> ส่งคำขอ<b>ไม่มี body</b> ⇒ 400 ·
+/// และไม่มีช่องบัญชีที่จ่าย ⇒ ใบสำคัญจ่ายลงเงินสดเสมอแม้โอนจริง (PAYMENT_CHANNEL_AUDIT ส่วนที่ 2 ข้อ 8) ·
+/// จ่ายจากบัญชีไหน: <paramref name="BankAccountId"/> (BankAccounts.Id → ผังที่ผูก) <b>หรือ</b> <paramref name="PaymentAccountId"/> (ผังเงินสดตรง) ·
+/// ไม่ส่ง = เงินสด (ค่าตั้งต้นเดิมของใบสำคัญจ่าย) · <paramref name="PaymentMethod"/> ไม่ส่ง = เซิร์ฟเวอร์ตั้งจากช่องทาง (ธนาคาร = โอน · อื่น ๆ = เงินสด)</summary>
 public record PayExpenseClaimRequest(
-    PaymentMethod PaymentMethod,
-    string? Reference,
-    string? Notes);
+    PaymentMethod? PaymentMethod = null,
+    string? Reference = null,
+    string? Notes = null,
+    Guid? BankAccountId = null,
+    Guid? PaymentAccountId = null);

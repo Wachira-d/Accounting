@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **524 ไฟล์ · 5,229 `[Fact]` + 821 `[Theory]` (3,639 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **531 ไฟล์ · 5,263 `[Fact]` + 828 `[Theory]` (3,661 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -2119,6 +2119,7 @@
 | RCX-10 | ใบตามหลัง (ระบบหยุด/ล้มหลายงวด) | `<<month>>` ของแต่ละใบ = เดือนของงวดตัวเอง · รอบพิเศษก่อนกำหนด = วันนี้ | `RecurringTemplateTests.วันฐานตัวแปรเดือน_*` |
 | RCX-11 | ข้อความล้มถึงผู้ใช้ | กฎธุรกิจภาษาไทยผ่านตรง · ข้อความเทคนิค (EF/JSON) ถูกแทนด้วยข้อความกลาง + ทางไปต่อ · ErrorLog/แจ้งเตือนเฉพาะครั้งแรก/สาเหตุเปลี่ยน (ไม่ทุก 15 นาที) | `RecurringTemplateTests.ข้อความล้ม_*` |
 | RCX-12 | เทมเพลตหลายบรรทัด (ตั้งผ่าน API) → เปิดแก้ในหน้า → บันทึก | ช่องยอด/รายละเอียด/ภาษีถูกล็อกพร้อมเหตุผล · บรรทัดเดิมไม่ถูกยุบเหลือบรรทัดเดียว | (ต้องทดสอบด้วยมือบน UI) |
+| RCX-13 | งวดค้างหลายงวด (เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 ⇒ NextRunDate ค้างงวดแรก) | cron หลายรอบ ⇒ ออก **1 ใบ** (งวดล่าสุดที่ถึงกำหนด) · แถวบอก "ข้าม N งวด … กด สร้างทันที" · ทิศตรงข้าม: สร้างทันทีออกเพิ่มได้ทีละใบ · งวดเดียวปกติไม่ข้าม (`RecurringSchedule.CatchUp`) | `Db/RecurringTransactionDbTests.งวดค้างหลายงวด_*` · `RecurringTemplateTests.CatchUp_*` |
 
 ### หน้านำส่งภาษี/ประกันสังคม — ตัวกรอง + UX ใหม่ (RMU)
 | รหัส | เคส | คาดหวัง |
@@ -5985,3 +5986,72 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | MF3-14 | ใบสำคัญด้วยมือ vs ทางอัตโนมัติ | ด้วยมือ: ปิดใช้/บัญชีคุม บล็อก (บรรทัดที่ N · ไม่มี GUID) · อัตโนมัติ: ผังปิดใช้ลงได้ (ปิดงวด) · ผัง/สาขาบริษัทอื่น บล็อกทั้งสองทาง | ✅ `MoneyAccountDbTests` (Db) |
 | MF3-15 | จุดเรียกด่าน (จ่ายเงินเดือน · หน้ารอบ · ตั้งแหล่งจ่าย · สปส. · นำส่ง · ตั้งค่า · payment-channels · ใบสำคัญ · สินทรัพย์ · สรุปรายวัน · mapping · gateway · ที่พัก · ผู้ติดต่อ) | ถอดการเรียกแล้ว checker ฟ้อง | ✅ `tools/required_call_site_check.py` |
 | MF3-16 | จ่ายเงินเดือนจริงที่มีรหัสรายคนปิดใช้ / ที่พักยืนยันมัดจำด้วยบัญชีธนาคารที่ปิดใช้ / สรุปรายวันหมวดไม่จับคู่ | ล้มดังพร้อมทางไปต่อ ไม่มี JE บางส่วน | ⏳ เส้นเต็ม (ต้อง seed ผังเงินเดือน/ที่พักครบ) — ล็อกจุดเรียกด้วย MF3-15 |
+## WF-F4 — ผู้อนุมัติ · มือถือ · ผู้ลงนามข้ามบริษัท · อีเมล/รายงานตั้งเวลา (2026-10-14 ทีม F4 · `erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md` ส่วนที่ 2 ID#9/10/11/12/18/25)
+
+> เทสต์ DB (`Category=Db`) รันจริงใน job `db-test` เท่านั้น — env ของ agent ไม่มี SDK/ฐาน ⇒ **ยังไม่ได้คอมไพล์/รันในเครื่องนี้**
+
+| ID | สถานการณ์ | คาดหวัง | เทสต์ |
+| --- | --- | --- | --- |
+| WF4-01 | (ID#9) มือถือ: สมาชิกที่ไม่ใช่ผู้อนุมัติของขั้นกด approve / reject | 403 `APPROVAL-NOT-ASSIGNED` ข้อความไทยไม่มี GUID · คำขอยัง Pending · ApprovalAction ยัง 1 แถว (เดิมเพิ่มแถวใหม่) | ✅ `ApprovalWorkflowMembershipDbTests` |
+| WF4-02 | (ID#9) มือถือ: ผู้อนุมัติตัวจริงกด approve | สำเร็จ · แถว ApprovalAction เดิมถูกแก้เป็น Approved (ไม่เพิ่มแถว) · ข้อความไทย | ✅ `ApprovalWorkflowMembershipDbTests` |
+| WF4-03 | (ID#9/18) มือถือ: ไม่มีคำขอที่รออยู่ · คำสั่งไม่รู้จัก | 404 ไทย (เดิม 200 + อังกฤษ + GUID) · 400 | ✅ `ApprovalWorkflowMembershipDbTests` · `ApprovalApproverCheckTests` |
+| WF4-04 | (ID#9) ขั้นสุดท้ายของเอกสาร (เว็บ+มือถือ — เจ้าของเดียว `SubmitActionAsync`) ผู้อนุมัติไม่มีสิทธิ์อนุมัติเอกสาร | 403 `PERM-DOC-APPROVE` ก่อนบันทึก · ทิศตรงข้าม: มีสิทธิ์ = อนุมัติ · การปฏิเสธไม่ต้องใช้สิทธิ์อนุมัติ | ✅ `ApprovalWorkflowMembershipDbTests` (Theory) |
+| WF4-05 | (ID#11) ส่งขออนุมัติ — กฎชี้ผู้อนุมัติที่ออกจากบริษัทแล้ว | 409 `APPROVAL-APPROVER-DEPARTED` บอกขั้น+ชื่อ+ไปแก้กฎ · ไม่สร้างคำขอ · ทิศตรงข้าม: สมาชิกครบ = ส่งได้ | ✅ `ApprovalWorkflowMembershipDbTests` · `ApprovalApproverCheckTests` |
+| WF4-06 | (ID#11) คำขอค้างเพราะผู้อนุมัติถูกถอดออกหลังส่ง | `GET approval/requests/stalled` เห็น + ป้าย `staleApproverNotice` · โอนให้ผู้ขอ = 409 · โอนให้สมาชิก = แก้แถวเดิม + หมายเหตุ + audit · คนใหม่อนุมัติได้ | ✅ `ApprovalWorkflowMembershipDbTests` |
+| WF4-07 | (ID#11) โอนขั้นที่ผู้อนุมัติเดิมยังเป็นสมาชิก | 409 ไม่แตะแถว (ไม่ใช่ช่องเปลี่ยนคนตามใจ) | ✅ `ApprovalWorkflowMembershipDbTests` |
+| WF4-08 | (ID#10) ผู้อนุมัติเริ่มต้นของ workflow ข้ามบริษัทออกจากบริษัทแล้ว + เปิดอนุมัติอัตโนมัติ | ไม่อนุมัติ/ไม่ลงนามอัตโนมัติ · เอกสารเข้ายัง PendingApproval + หมายเหตุบอกเหตุ/ทางไปต่อ · หน้าตั้งค่าได้ `defaultApproverNotice` · ทิศตรงข้าม: ยังเป็นสมาชิก = อนุมัติอัตโนมัติในชื่อคนนั้น | ✅ `CrossTenantSignerDbTests` (Theory) |
+| WF4-09 | (ID#10) อนุมัติด้วยมือโดยระบุ `signatureUserId` เป็นผู้ใช้ของบริษัทอื่น | 400 `XTENANT-SIGNER` ไม่มี DocumentApproval/ลายเซ็นถูกประทับ | ✅ `CrossTenantSignerDbTests` · `CrossTenantSignerResolverTests` |
+| WF4-10 | (ID#10) ตั้งผู้อนุมัติเริ่มต้นเป็นคนนอก · ลายเซ็นเริ่มต้นของคนอื่น | ปฏิเสธ ค่าเดิมไม่ถูกแตะ · ลายเซ็นของผู้อนุมัติเอง = ตั้งได้ · PUT ต้องมีสิทธิ์ตั้งค่าบริษัท | ✅ `CrossTenantSignerDbTests` · `CrossTenantSignerResolverTests` |
+| WF4-11 | (ID#12) คิวอีเมลของใบที่ถูกยกเลิกหลังเข้าคิว (รอบเดียวกับใบปกติ) | ใบยกเลิก = `Skipped` + เหตุผล ไม่ส่ง · ใบปกติ = `Sent` | ✅ `ScheduledEmailRecheckDbTests` |
+| WF4-12 | (ID#12) คำเตือนชำระ: ใบชำระครบแล้ว · ใบที่ชำระบางส่วนหลังเข้าคิว | ชำระครบ = ข้าม · ค้าง = ส่งด้วยยอดค้างชำระ ณ เวลาส่ง (400.00 ไม่ใช่ 1,000.00) | ✅ `ScheduledEmailRecheckDbTests` · `ScheduledEmailSendCheckTests` |
+| WF4-13 | (ID#12) สร้าง PDF แนบไม่สำเร็จ | ไม่ส่งอีเมลเปล่า · ไม่ประทับ Sent · Pending + RetryCount 1 + เลื่อน 15 นาที + เหตุผลไทย | ✅ `ScheduledEmailRecheckDbTests` |
+| WF4-14 | (ID#25) รายงานตั้งเวลา: ล้มบางราย / ทุกราย / ไม่มีผู้รับ | `PARTIAL` (ประทับส่งแล้ว) · `ERROR` (ไม่ประทับ LastSentAt) · `SKIPPED` · ข้อความยาวตัดที่รายละเอียดไม่ใช่ทางไปต่อ · ปุ่ม "ส่งทันที" ส่งจริงแล้วตอบผลจริง (เดิมประทับ OK โดยไม่ส่ง) | ✅ `ScheduledEmailSendCheckTests` · `required_call_site_check` SendNow |
+| WF4-15 | (ID#18) WebhookService ไม่พบ webhook/ประวัติการส่ง | 404 ไทยพร้อมทางไปต่อ (เดิม 400 อังกฤษ + GUID) | — (ข้อความ · `required_call_site_check` ไม่ล็อก) |
+| WF4-16 | (ฝ่ายค้าน F4) อนุมัติข้ามบริษัทด้วยมือ ระบุ `signatureUserId` เป็นเพื่อนร่วมบริษัทที่ไม่ใช่ผู้อนุมัติเริ่มต้น | 400 — ลงนามได้เฉพาะในชื่อตัวเอง/ผู้อนุมัติเริ่มต้น · Guid ว่าง = ไม่ระบุ (ตัวเดียวกับ controller) | ✅ `CrossTenantSignerResolverTests` |
+| WF4-17 | (ฝ่ายค้าน F4) โอนผู้อนุมัติให้คนที่อนุมัติขั้นอื่นของคำขอเดียวกันแล้ว | 409 (คนเดียวผ่านสองขั้นไม่ได้) | ✅ `ApprovalApproverCheckTests` |
+| WF4-18 | (ฝ่ายค้าน F4) ตั้งขั้นอนุมัติแบบลายเซ็น (`SetupApprovalAsync`) ด้วยผู้ใช้ที่ไม่ใช่สมาชิก | 400 บอกขั้น + ทางไปต่อ ก่อนพลิกสถานะ | — (`required_call_site_check` SetupApprovalAsync) |
+| WF4-19 | (ฝ่ายค้าน F4) คิวอีเมล 50 ทวิ ที่ถูกยกเลิกหลังเข้าคิว | `Skipped` + เหตุผล | ✅ `ScheduledEmailSendCheckTests` |
+| WF4-20 | (ฝ่ายค้าน F4) ตัวนับ quick-actions ของแอป · กฎที่ผู้อนุมัติขั้นสุดท้ายไม่มีสิทธิ์อนุมัติเอกสาร · "ส่งทันที" ระหว่างรอบอัตโนมัติ | นับเฉพาะ "รอคุณ" · หน้ากฎแสดงคำเตือน (ไม่บล็อก) · 409 ให้ลองใหม่ (ล็อกเดียวกับรอบตามเวลา) + ต้องมีสิทธิ์ส่งออกรายงาน | — (`required_call_site_check`) |
+---
+
+## ETL-A — ศูนย์นำเข้าข้อมูล: จับคู่คอลัมน์หลายชั้น + AI distillation 26/27/58/59 (รอบ 205 ทีม A · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.3/§2.6)
+
+> เทสต์ pure ของชุดนี้ติด `Category=Db` โดยตั้งใจ (CI รันเฉพาะกลุ่ม Db) — ไม่แตะฐานก็รันครบ · ชุด store/นักเรียน-เรียนรู้รันบน PostgreSQL ของ job db-test
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| ETLA-01 | ไฟล์ผู้ติดต่อหัว PEAK (camelCase) · สินค้าหัว FlowAccount · ผังบัญชี/ลูกค้าหัวไทย Express (เลขไทย) · statement ธนาคารไทย · ลูกหนี้ยกมาหัวไทยทั่วไป — **AI ปิด** | ช่องบังคับครบทุกไฟล์ · โปรไฟล์โปรแกรมต้นทางถูกตัว · คอลัมน์ "รหัสของระบบเดิม" = ไม่ใช้ (ไม่ถูกลากไป "เป็นลูกค้า") และไม่ถูกส่งถาม AI · ไม่มีคอลัมน์ติดป้าย AI | ✅ `ImportColumnMappingDbTests` |
+| ETLA-02 | ลำดับชั้น: แม่แบบ vs คำพ้อง · ผู้ใช้ vs แม่แบบ · ผู้ใช้เลือก "ไม่ใช้" | แม่แบบชนะ (ป้าย 📌) · ไม่มีแม่แบบ = คำพ้องตัดสิน (ทิศตรงข้าม) · ผู้ใช้ชนะทุกชั้น · ช่องบังคับที่ขาดแสดงใน MissingRequired | ✅ `ImportColumnMappingDbTests` |
+| ETLA-03 | สองคอลัมน์ชิง field เดียว (ทุกชนิดข้อมูล: หัว = ป้ายไทย + ชื่อ field) | field ละหนึ่งคอลัมน์เสมอ · คอลัมน์ที่แพ้ยังเห็น field นั้นในตัวเลือก | ✅ `ImportColumnMappingDbTests` |
+| ETLA-04 | ค่าในคอลัมน์ตัดสินคำพ้องกำกวม · รูปข้อมูล | "ลูกค้า" ที่มีแต่ Y/N = เป็นลูกค้า ไม่ใช่ชื่อ · หัวไม่บอกอะไร + เลข 13 หลักผ่าน checksum = เลขภาษี (ป้ายรูปข้อมูล · < 0.85 เหลือง) · ตัวเลขทั่วไปไม่ถูกเดาเป็นเลขภาษี | ✅ `ImportColumnMappingDbTests` |
+| ETLA-05 | ด่านคำตอบ AI (กฎเหล็ก #1): field นอก schema · มั่นใจ < 0.70 · ทับคอลัมน์ที่ชั้นสูงกว่าตัดสินแล้ว · คอลัมน์ที่ไม่มีจริง · สองคำตอบชิง field เดียว | ปัดตกทั้งหมด (นับ RejectedAiAnswers) · ที่ผ่านติด 🤖 เฉพาะ UsedAi · คำตอบนักเรียน (UsedAi=false) ไม่ติดป้าย AI | ✅ `ImportColumnMappingDbTests` |
+| ETLA-06 | `ImportHeaderSignature` | ไม่ขึ้นกับลำดับ/ช่องว่าง/ตัวพิมพ์/`*`/เลขไทย · ชุดหัวต่าง = ค่าต่าง · 64 hex | ✅ `ImportColumnMappingDbTests` |
+| ETLA-07 | `ImportSchemas` · `ImportSourceSeed` | หาได้ทุกสะกดของชนิด · ทุก field มีป้ายไทย · ชนิดจาก prompt (ชื่อ enum/ชนิดเดิม/ชื่อ field) · **ทุกโปรไฟล์ Confirmed=false** (ยังไม่มีไฟล์จริง — ห้ามติดว่ายืนยัน) และชี้เฉพาะ field ที่มีจริง · หัว < 3 = ไม่เดาโปรแกรม | ✅ `ImportColumnMappingDbTests` |
+| ETLA-08 | เดาชนิดข้อมูลจากหัวตาราง · คำตอบรูปมาตรฐาน | หัว PEAK สินค้า ⇒ สินค้า + peak · CanonicalAnswer เรียงตามคอลัมน์ไม่ขึ้นกับลำดับที่ส่ง | ✅ `ImportColumnMappingDbTests` |
+| ETLA-09 | นักเรียน ImportColumnMatch cold start | ตอบรูปเดียวกับครู (`{"mappings":[…]}`) จากคำพ้อง · คอลัมน์ที่ไม่รู้ = null และดึงความมั่นใจต่ำกว่า 0.85 (ครูยังได้ตอบ) · ไม่รู้สักคอลัมน์ = ไม่ตอบ (ไม่แต่ง) | ✅ `ImportColumnMappingDbTests` |
+| ETLA-10 | นักเรียน ImportColumnMatch มีคู่ที่เรียนไว้ | ตอบด้วยมั่นใจ ≥ 0.85 (Hybrid ไม่จ่าย AI) · คู่ของชนิดข้อมูลอื่นไม่รั่วมา | ✅ `ImportColumnMappingDbTests` |
+| ETLA-11 | kill-switch ผ่าน orchestrator จริง (provider ปิดทุกตัว) → augmenter | ได้คำตอบนักเรียน · FromLocalModel · UsedAi=false · คอลัมน์ที่ไม่รู้ไม่ถูกแต่ง | ✅ `ImportColumnMappingDbTests` |
+| ETLA-12 | augmenter: ครูตอบ field นอก schema · ForceProviderCall | ปัดตก (Rejected=1) · คืน FeedbackId (เดิมทิ้ง) · ForceProviderCall=false (นักเรียน/routing/งบ ได้ทำงาน) | ✅ `ImportColumnMappingDbTests` |
+| ETLA-13 | ImportAccountMap (58) · ImportEntityMatch (59): AI ตอบรหัสผังที่ไม่มี/ id ที่ไม่ได้ส่งให้ | ปัดตก ใช้คำตอบ local ("NEW"/รหัสเดิม) · UsedAi=false · คำตอบในชุด = ใช้ได้ (คืนสะกดของชุด) | ✅ `ImportColumnMappingDbTests` |
+| ETLA-14 | นักเรียน ImportDataReview cold start | รูปเดียวกับครู (field_validation · normalizations · code) · เลขภาษี checksum ผิด = `taxid-invalid` · เลขภาษีมีขีด = แนะนำตัดขีด · มั่นใจ < 0.85 · ForceProviderCall=false | ✅ `ImportColumnMappingDbTests` |
+| ETLA-15 | นักเรียน ImportDataReview เรียนการปฏิเสธ | ปฏิเสธการจัดรูปแบบ ≥ 3 และ ≥ 80% = เลิกเสนอ · ปฏิเสธ 3 รับ 1 = ยังเสนอ · `taxid-invalid` ปฏิเสธกี่ครั้งก็ยังเตือน (มีผลทางกฎหมาย) | ✅ `ImportColumnMappingDbTests` |
+| ETLA-16 | `ImportReviewHeuristics` บน `ImportValueNormalizer` | "ใช่" → true (`flag-format`) · "สำนักงานใหญ่" → 00000 · ข้อความถูกต้องไม่ถูกแตะ · เทสต์เดิม `ImportReviewHeuristicsTests` ไม่แก้สักบรรทัด | ✅ `ImportColumnMappingDbTests` · `ImportReviewHeuristicsTests` |
+| ETLA-17 | แม่แบบ: บันทึก · หาเจอเมื่อสลับคอลัมน์ · upsert ซ้ำ · บริษัทอื่น | แถวเดียว UseCount 2 · ยืนยันติด · transform เดิมไม่หายเมื่อบันทึกซ้ำโดยไม่ส่ง transform · บริษัทอื่น Find/Get/Update/Delete ไม่ได้ · field นอก schema = ล้มดัง + ทางไปต่อ · AutoCommitWhenClean เริ่ม false | ✅ `ImportMappingTemplateStoreDbTests` (PostgreSQL) |
+| ETLA-18 | แก้แม่แบบ | เปิดลงอัตโนมัติได้ (opt-in) · ส่งบางคอลัมน์ = ที่เหลือคงเดิม · หัวนอกแม่แบบ = ปฏิเสธ · ลบแล้วหา/รายการไม่เจอ | ✅ `ImportMappingTemplateStoreDbTests` |
+| ETLA-19 | ปิดลูป ImportColumnMatch → เรียนรู้ → นักเรียนตอบเอง | `RecordColumnMatchChoiceAsync` เขียนคำตอบรูปมาตรฐานเฉพาะคอลัมน์ที่ถูกถาม · acceptedAi ถูก · Explicit · บริษัทอื่นปิดแทนไม่ได้ · `GetLearnedHeadersAsync` เห็นคู่ใหม่ · นักเรียนก่อนเรียน = ไม่ตอบ · หลัง `LoadFromFeedbackAsync` = ตอบ ≥ 0.85 · บริษัทอื่นไม่ได้ความรู้ | ✅ `ImportMappingTemplateStoreDbTests` |
+| ETLA-20 | ปิดลูป ImportDataReview จาก feedback จริง | บริษัทที่ปฏิเสธเลิกได้ข้อเสนอนั้น · บริษัทอื่นยังได้ | ✅ `ImportMappingTemplateStoreDbTests` |
+---
+
+## F1 — ช่องทางเงินของเงินสดย่อย/สินเชื่อ/เช็ค/ใบเบิก/เงินทดรอง (ทีม F1 · 2026-10-14 · `erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md`)
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| F1-01 | ตรวจผังที่ผู้ใช้เลือก: ปกติ / ไม่พบ / ปิดใช้ / บัญชีคุม / ชนิดไม่ตรง · บัญชีธนาคาร ไม่พบ / ปิดใช้ / ยังไม่ผูก / ผังที่ผูกใช้ไม่ได้ · ส่งธนาคาร+ผังพร้อมกัน | ผ่านเฉพาะกรณีปกติ · ข้อความไทยบอกช่อง + ที่แก้ · "ไม่พบ" ≠ "ยังไม่ผูก" · ส่งพร้อมกัน = ปฏิเสธ · Guid ว่าง = ไม่ได้เลือก | ✅ `PickedAccountGuardTests` |
+| F1-02 | เงินสดย่อย: เปิดกองทุนจาก JSON ของหน้าเว็บ (ไม่เลือกผัง) → เติมจากบัญชีธนาคาร (`sourceBankAccountId`) → เบิก | กองทุนได้ผัง 11112 · JE เติม Dr 11112 / Cr **ผังที่ผูกของธนาคาร** (ไม่ใช่รหัสบัญชีธนาคาร) · JE เบิก Dr ค่าใช้จ่าย / Cr 11112 · คงเหลือ 4,650 | ✅ `Db/MoneyChannelPostingDbTests` (job db-test) |
+| F1-03 | เงินสดย่อย: รหัสธนาคารในช่องผัง (หน้าเว็บรุ่นเก่า) · ธนาคารไม่ผูกผัง · ผังค่าใช้จ่ายบริษัทอื่น/บัญชีคุม · เงินไม่พอ · กองทุนไม่พบ | ไทยทุกข้อ (ไม่ใช่ FK 409 / "Insufficient…" / "Fund not found.") · ไม่มีรายการ/JE ถูกบันทึก · ยอดคงเหลือเดิม | ✅ `Db/MoneyChannelPostingDbTests` |
+| F1-04 | เงินสดย่อย: กองทุนเก่าที่ไม่มีผัง → เติมเงิน → ผูกผังผ่านแก้กองทุน → เติมเงิน · เปลี่ยนผังหลังมีรายการ · แก้ชื่อ/วงเงิน | ครั้งแรกปฏิเสธชี้ปุ่ม “แก้ไข / ผูกผังบัญชี” · ผังค่าใช้จ่ายเป็นผังกองทุนไม่ได้ · ผูกแล้วเติมได้ · เปลี่ยนผังหลังลงบัญชี = บล็อกพร้อมทางไปต่อ · ทิศตรงข้าม: แก้ชื่อได้ | ✅ `Db/MoneyChannelPostingDbTests` · `ChequeBounceAndPettyCashTests` |
+| F1-05 | สินเชื่อ: สร้างจาก JSON เดียวกับ `loans.html` (บัญชีธนาคาร + ผังเงินกู้ + ดอกเบี้ย + ลงบัญชีรับเงินกู้) → ชำระโดยไม่เลือกบัญชี | `MoneyAccountId` = ผังที่ผูกของธนาคาร · ครบกำหนด = งวดแรก + 11 เดือน · JE Dr ผังธนาคาร / Cr เงินกู้ · ชำระ Cr ผังของสินเชื่อ (ไม่ใช่ 11122) | ✅ `Db/MoneyChannelPostingDbTests` |
+| F1-06 | สินเชื่อ: JSON รูปเก่า (loanNumber/lenderName/startDate) · ผังเงินกู้เป็นค่าใช้จ่าย · ผังบัญชีในช่องบัญชีธนาคาร · ขอลงบัญชีแต่ไม่มีช่องทางเงิน · ยอดยกมา (ไม่ลงบัญชี) · ชำระโดยไม่มีบัญชีเงิน | ปฏิเสธเป็นไทยบอกช่อง · ไม่สร้างสินเชื่อ · ยอดยกมาสร้างได้ไม่มี JE · ชำระ = `LOAN-NO-MONEY-ACCOUNT` จนเลือก “จ่ายจากบัญชี” แล้วผ่าน | ✅ `Db/MoneyChannelPostingDbTests` · `LoanPostingPlanTests` |
+| F1-07 | เช็ค: เปิดหน้า `cheques.html` · เปิดเล่มด้วยบัญชีของบริษัทอื่น/ปิดใช้ · รีเฟรชหน้าแล้วออกเช็ค | รายการบัญชีธนาคารขึ้น (เดิมว่างเพราะ `api.get` ไม่มี) · โหลดไม่ได้ = แจ้งดัง · บัญชีผิด = ไทย · เล่มที่เปิดไว้ยังอยู่ในตัวเลือก (`GET cheques/books`) | ⬜ manual |
+| F1-08 | ใบเบิก: กด “จ่ายเงิน” ที่ `expense.html` เลือกบัญชีธนาคาร · เงินทดรอง: เลือกบัญชีที่จ่าย · เงินยืมทดรอง: กดจ่าย | ใบเบิกไม่ 400 อีก (ส่ง body) · ใบสำคัญจ่ายลงผังของธนาคาร · ธนาคารไม่ผูกผัง = ไทยก่อนสร้างใบ · เงินยืมทดรองบอกว่ายังไม่ลงบัญชีอัตโนมัติ + ทางไปต่อ | ⬜ manual |
+| F1-09 | defect class เดียวกับเช็ค (`api.get` บน `Layout.api()` ที่ไม่มีอยู่): ยื่นแบบที่ `tax.html` · `risk.html` ลูกค้า/ผู้ขาย · รายงานจุดสั่งซื้อ `inventory-reports.html` | ตรวจก่อนยื่น (precheck) รันจริง — ไม่ขึ้น "Pre-check ไม่สำเร็จ (api.get is not a function)" · ตารางความเสี่ยง/จุดสั่งซื้อโหลดได้ (เส้นทาง `product/reorder-forecast`) | ⬜ manual |

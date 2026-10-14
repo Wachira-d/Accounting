@@ -1789,6 +1789,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<Loan>(e =>
         {
             e.HasIndex(l => new { l.CompanyId, l.LoanNumber }).IsUnique();
+            // ผังเงินของสินเชื่อ — property ชื่อใหม่ (MoneyAccountId) บนคอลัมน์เดิม "BankAccountId" (เก็บรหัสผังบัญชีมาตั้งแต่แรก · ไม่ต้อง migrate)
+            e.Property(l => l.MoneyAccountId).HasColumnName("BankAccountId");
             e.Property(l => l.LoanNumber).HasMaxLength(50);
             e.Property(l => l.Name).HasMaxLength(500);
             e.Property(l => l.PrincipalAmount).HasPrecision(18, 2);

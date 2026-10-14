@@ -92,7 +92,7 @@ public enum BankStatementLineOutcome
 public sealed record BankStatementLineResult(
     int Index,
     BankStatementLineOutcome Outcome,
-    Guid? TransactionId,
+    Guid? BankTransactionId,
     Guid? ExistingTransactionId,
     string? Message);
 

@@ -936,7 +936,8 @@
         // Pre-check first — rule-based RD compliance scan. Errors
         // block submission; warnings allow override.
         try {
-          const r = await api.get(`/tax/${id}/precheck`);
+          // เดิม api.get(...) ซึ่งไม่มีบน Layout.api() ⇒ TypeError ทุกครั้ง = ด่านตรวจก่อนยื่นไม่เคยรันจริง (ทีม F1 · 2026-10-14)
+          const r = await API.get(`/api/companies/${Layout.getCompanyId()}/tax/${id}/precheck`);
           const rep = r.data || {};
           const errs = (rep.findings || []).filter(f => f.severity === 'Error');
           const warns = (rep.findings || []).filter(f => f.severity === 'Warning');

@@ -120,3 +120,9 @@
   "connection is already in a transaction" ทุกครั้ง · cron กลืน error ลง ErrorLog ทุก 15 นาที · ไม่มีเทสต์ที่รันเส้นนี้จริงสักตัว
   → กติกา: กันรันซ้ำข้ามเครื่องรอบเส้นที่เปิดธุรกรรมเองให้ใช้ **session lock** (`JobLock.RunExclusiveAsync` + `AdvisoryLockKey`) ไม่ใช่ธุรกรรมห่อ ·
   งาน cron ที่ล้มต้องเขียนเหตุผลลง "แถวที่ผู้ใช้เปิดดู" (F2-7) · กลไก: Db test ที่รันเส้นจริง + `required_call_site_check` ห้าม `BeginTransactionAsync(`/`FOR UPDATE` ใน RunNow/ProcessDue
+- **งานตั้งเวลาใช้ "ภาพตอนเข้าคิว" และประทับสถานะปลายทางเองเมื่อขั้นย่อยล้ม** (2026-10-14 ทีม F4 · ID#12/25) — อีเมลตั้งเวลาส่งใบที่ถูก Void/ชำระครบแล้ว
+  พร้อมยอดค้างตอนเข้าคิว · สร้าง PDF แนบล้ม (กลืนเป็น LogWarning คืน null) แล้วยังส่งอีเมลเปล่าและประทับ `Sent` · รายงานตั้งเวลากลืน error รายผู้รับแล้ว
+  `LastResult="OK"` · ปุ่ม "ส่งทันที" ประทับ OK + LastSentAt โดยไม่ส่ง (และทำให้รอบจริงถูกข้าม) → กติกา: งานที่ทำ "ภายหลัง" ต้องตรวจสถานะต้นทางซ้ำ
+  ตอนลงมือ (`Helpers/ScheduledEmailSendCheck`) · ขั้นย่อยล้ม = ไม่ถึงสถานะปลายทาง (ลองใหม่/ล้มพร้อมเหตุผลไทย) · สรุปผลจากผลจริงรายชิ้น
+  (`Helpers/ScheduledReportOutcome` OK/PARTIAL/ERROR/SKIPPED) · กลไก: `required_call_site_check` (BuildAttachmentAsync ห้าม catch · SendNow ห้ามประทับเอง) +
+  Db test `ScheduledEmailRecheckDbTests`

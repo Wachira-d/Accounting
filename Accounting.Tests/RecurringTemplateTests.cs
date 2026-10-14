@@ -180,4 +180,17 @@ public class RecurringTemplateTests
         Assert.DoesNotContain("Format", RecurringRunFailure.UserMessage(new FormatException("Guid should contain 32 digits")));
         Assert.True(RecurringRunFailure.UserMessage(new BusinessRuleException(new string('ก', 5000))).Length <= 1001);
     }
+
+    [Fact]
+    public void CatchUp_งวดค้าง3งวด_ข้ามไปงวดล่าสุดที่ถึงกำหนด_ไม่ค้าง_คงเดิม()
+    {
+        var now = new DateTime(2026, 10, 14, 5, 0, 0, DateTimeKind.Utc);
+        var (latest, skipped) = RecurringSchedule.CatchUp(RecurringFrequency.Monthly,
+            new DateTime(2026, 7, 10, 0, 0, 0, DateTimeKind.Utc), 10, new DateTime(2026, 7, 10, 0, 0, 0, DateTimeKind.Utc), now);
+        Assert.Equal(new DateTime(2026, 10, 10, 0, 0, 0, DateTimeKind.Utc), latest);
+        Assert.Equal(3, skipped);
+        // ทิศตรงข้าม: งวดเดียวที่ถึงกำหนด (ปกติ) — ไม่ข้ามอะไร
+        var one = new DateTime(2026, 10, 10, 0, 0, 0, DateTimeKind.Utc);
+        Assert.Equal((one, 0), RecurringSchedule.CatchUp(RecurringFrequency.Monthly, one, 10, one, now));
+    }
 }

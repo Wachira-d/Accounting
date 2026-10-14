@@ -266,11 +266,14 @@ public class RecurringTransactionService : IRecurringTransactionService
         {
             await _db.Entry(recurring).ReloadAsync();
             EnsureRunnableNow(recurring);
+            // งวดค้างหลายงวด ⇒ ข้ามไปงวดล่าสุดที่ถึงกำหนด (ปุ่มนี้ออกงวดเดียว — ไม่ใช่งวดเก่าสุด) · ตัวตัดสินเดียวกับ cron
+            var skipNote = await SkipOverduePeriodsAsync(recurring, DateTime.UtcNow);
             // ถึงกำหนดแล้ว = รอบนี้คืองวดนั้น (เลื่อนกำหนดถัดไป) · ก่อนกำหนด = รอบพิเศษ ไม่กินงวด
             var consumesPeriod = recurring.NextRunDate <= DateTime.UtcNow;
             try
             {
                 await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod);
+                if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -324,6 +327,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                         .FirstOrDefaultAsync(r => r.Id == item.Id && r.CompanyId == item.CompanyId);
                     // อ่านใหม่ภายใต้ล็อก: อีกเครื่องเพิ่งรันเสร็จ (NextRunDate เลื่อนแล้ว) / ถูกหยุด / ถูกลบ ⇒ ข้าม
                     if (recurring == null || recurring.Status != RecurringStatus.Active || recurring.NextRunDate > now) return;
+                    var skipNote = await SkipOverduePeriodsAsync(recurring, now);
                     if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
                     {
                         recurring.Status = RecurringStatus.Completed;
@@ -331,6 +335,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                         return;
                     }
                     await ExecuteRecurringAsync(recurring, "System", consumesPeriod: true);
+                    if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
                 }, _logger, item.CompanyId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -347,6 +352,35 @@ public class RecurringTransactionService : IRecurringTransactionService
                 }
             }
         }
+    }
+
+    /// <summary>ฝ่ายค้าน 2026-10-14 P0: รายการประจำชนิด<b>เอกสาร</b>ล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน) ⇒ NextRunDate ค้างงวดแรก ·
+    /// พอแก้ให้รันได้ รอบอัตโนมัติจะไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที (เลขจริง · ลงวันที่วันนี้ · ส่งอีเมลลูกค้า) ซ้ำกับที่ผู้ใช้ออกมือไปแล้ว ⇒
+    /// เลื่อนไปงวดล่าสุดที่ถึงกำหนด ออกงวดเดียว + บอกบนแถวว่าข้ามกี่งวด (ผู้ใช้ตัดสินเองว่าจะกด "สร้างทันที" เพิ่มไหม — คำตัดสินข้อ 150) ·
+    /// สมุดรายวันไม่แตะ (ไม่เคยค้าง — CreateJournalEntryAsync ใช้ธุรกรรมเดิม · พฤติกรรมเดิมเป๊ะ) · คืนข้อความแจ้ง หรือ null เมื่อไม่ค้าง</summary>
+    private async Task<string?> SkipOverduePeriodsAsync(RecurringTransaction recurring, DateTime nowUtc)
+    {
+        if (IsJournalTemplate(recurring.TemplateType) || recurring.NextRunDate > nowUtc) return null;
+        var (latest, skipped) = RecurringSchedule.CatchUp(recurring.Frequency, recurring.NextRunDate, recurring.PreferredDay,
+            recurring.StartDate, nowUtc);
+        if (skipped == 0) return null;
+        var from = ThaiDate.CalendarDateUtc(recurring.NextRunDate);
+        recurring.NextRunDate = latest;
+        await _db.SaveChangesAsync();
+        var note = $"ข้าม {skipped} งวดที่ค้าง (ตั้งแต่งวด {from:dd/MM}/{from.Year + 543}) ระหว่างที่ระบบสร้างเอกสารไม่ได้ — ออกเฉพาะงวดล่าสุด · "
+                   + "ถ้างวดที่ข้ามยังไม่ได้ออกเอง กด \"สร้างทันที\" เพื่อออกเพิ่มทีละใบ";
+        await AppendRunNoticeAsync(recurring, note);
+        return note;
+    }
+
+    /// <summary>ต่อท้ายข้อความแจ้งบนแถว (ไม่ทับข้อความของรอบ) — เขียนตรงแบบ SetRunNoticeAsync</summary>
+    private async Task AppendRunNoticeAsync(RecurringTransaction recurring, string note)
+    {
+        var current = await _db.RecurringTransactions.AsNoTracking()
+            .Where(r => r.Id == recurring.Id && r.CompanyId == recurring.CompanyId)
+            .Select(r => r.LastRunNotice).FirstOrDefaultAsync();
+        if (current != null && current.Contains(note)) return;
+        await SetRunNoticeAsync(recurring, new List<string> { string.IsNullOrEmpty(current) ? note : current + " · " + note });
     }
 
     /// <summary>หนึ่งรอบของรายการประจำ: ตรวจเทมเพลตด้วยตัวตรวจเดียวกับตอนบันทึก → สร้างเอกสาร/สมุดรายวัน → ประทับรอบ (ทันทีหลังสร้าง)

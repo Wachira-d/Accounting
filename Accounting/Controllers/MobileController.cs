@@ -36,7 +36,8 @@ public class MobileController : ControllerBase
 
     [HttpGet("companies/{companyId:guid}/quick-actions")]
     public async Task<ActionResult<ApiResponse<MobileQuickActionsResponse>>> GetQuickActions(Guid companyId)
-        => Ok(new ApiResponse<MobileQuickActionsResponse>(true, await _service.GetQuickActionsAsync(companyId)));
+        => Ok(new ApiResponse<MobileQuickActionsResponse>(true,
+            await _service.GetQuickActionsAsync(companyId, JwtHelper.GetUserIdFromClaims(User))));
 
     [HttpPost("companies/{companyId:guid}/approve")]
     public async Task<ActionResult<ApiResponse<MobileApprovalResponse>>> QuickApprove(Guid companyId, [FromQuery] Guid entityId, [FromQuery] string entityType, [FromQuery] string action,

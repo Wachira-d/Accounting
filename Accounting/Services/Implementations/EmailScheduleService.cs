@@ -440,6 +440,20 @@ public class EmailScheduleService : IEmailScheduleService
         {
             try
             {
+                // ID#12: เอกสารเปลี่ยนไปหลังเข้าคิว (ยกเลิก · กลับเป็นร่าง · ชำระครบ) ⇒ ข้ามพร้อมเหตุผลบนคิว — ไม่ส่งใบที่ไม่มีผลแล้วถึงลูกค้า
+                // ฝ่ายค้าน F4: 50 ทวิ ที่ถูกยกเลิกหลังเข้าคิวก็ต้องไม่ถูกส่ง (ไฟล์แนบเป็นใบที่ไม่มีผลแล้ว) — คลาสเดียวกัน
+                var skipReason = item.EntityType == "Document" ? await RecheckDocumentAtSendAsync(item, ct)
+                    : item.EntityType == "WithholdingTaxCert" ? await RecheckWhtCertAtSendAsync(item, ct)
+                    : null;
+                if (skipReason != null)
+                {
+                    item.Status = ScheduledEmailSendCheck.SkippedStatus;
+                    item.ErrorMessage = skipReason;
+                    item.UpdatedAt = DateTime.UtcNow;
+                    await _db.SaveChangesAsync(ct);
+                    continue;
+                }
+
                 var sender = await _senderFactory.GetSenderAsync(item.CompanyId, ct);
                 var msg = new EmailMessage
                 {
@@ -454,7 +468,16 @@ public class EmailScheduleService : IEmailScheduleService
 
                 if (item.AttachPdf)
                 {
-                    var att = await BuildAttachmentAsync(item, ct);
+                    // ID#12: สร้างไฟล์แนบไม่สำเร็จ ⇒ ไม่ส่งอีเมลเปล่าแล้วประทับ "Sent" (เดิมกลืน error เป็น LogWarning) — ลองใหม่/ล้มพร้อมเหตุผล
+                    EmailAttachment? att;
+                    try { att = await BuildAttachmentAsync(item, ct); }
+                    catch (Exception attEx) when (attEx is not OperationCanceledException)
+                    {
+                        DeferOrFail(item, ScheduledEmailSendCheck.AttachmentFailure(attEx.Message, willRetry: item.RetryCount < 3));
+                        _logger.LogWarning(attEx, "EmailQueue attachment build failed Id={Id}", item.Id);
+                        await _db.SaveChangesAsync(ct);
+                        continue;
+                    }
                     if (att != null) msg.Attachments.Add(att);
                 }
 
@@ -468,18 +491,12 @@ public class EmailScheduleService : IEmailScheduleService
                 }
                 else
                 {
-                    item.Status = item.RetryCount >= 3 ? "Failed" : "Pending";
-                    item.RetryCount++;
-                    item.ErrorMessage = result.ErrorMessage;
-                    item.ScheduledFor = DateTime.UtcNow.AddMinutes(15);
+                    DeferOrFail(item, result.ErrorMessage);
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                item.Status = item.RetryCount >= 3 ? "Failed" : "Pending";
-                item.RetryCount++;
-                item.ErrorMessage = ex.Message;
-                item.ScheduledFor = DateTime.UtcNow.AddMinutes(15);
+                DeferOrFail(item, ex.Message);
                 _logger.LogWarning(ex, "EmailQueue send failed Id={Id}", item.Id);
             }
             await _db.SaveChangesAsync(ct);
@@ -487,30 +504,28 @@ public class EmailScheduleService : IEmailScheduleService
         return sent;
     }
 
+    /// <summary>ไฟล์แนบของคิว — <b>โยน</b>เมื่อสร้างไม่สำเร็จ (ผู้เรียกเลื่อนไปลองใหม่ ไม่ส่งอีเมลเปล่า · ID#12) ·
+    /// คืน null เฉพาะชนิดที่ยังไม่มีตัวสร้างไฟล์ (สลิป/50 ทวิรายปี — ตั้งใจส่งเนื้ออีเมลอย่างเดียว)</summary>
     private async Task<EmailAttachment?> BuildAttachmentAsync(EmailQueue item, CancellationToken ct)
     {
-        try
+        if (item.EntityType == "Document")
         {
-            if (item.EntityType == "Document")
-            {
-                var resp = await _pdf.GenerateDocumentPdfAsync(item.CompanyId,
-                    new Models.DTOs.DocumentTemplate.GeneratePdfRequest(item.EntityId, null, null, null, null));
-                return new EmailAttachment { FileName = resp.FileName, ContentType = "application/pdf", Content = resp.PdfData };
-            }
-            if (item.EntityType == "WithholdingTaxCert")
-            {
-                var resp = await _pdf.GenerateWithholdingTaxCertPdfAsync(item.CompanyId, item.EntityId);
-                return new EmailAttachment { FileName = resp.FileName, ContentType = "application/pdf", Content = resp.PdfData };
-            }
-            // Payslip / annual WHT cert ผ่าน payroll service — ทำใน
-            // path future expansion. ส่งไม่มีไฟล์แนบดีกว่า fail ทั้งฉบับ.
-            return null;
+            var resp = await _pdf.GenerateDocumentPdfAsync(item.CompanyId,
+                new Models.DTOs.DocumentTemplate.GeneratePdfRequest(item.EntityId, null, null, null, null));
+            if (resp?.PdfData is not { Length: > 0 })
+                throw new InvalidOperationException("ไฟล์ PDF ที่สร้างได้ว่างเปล่า");
+            return new EmailAttachment { FileName = resp.FileName, ContentType = "application/pdf", Content = resp.PdfData };
         }
-        catch (Exception ex)
+        if (item.EntityType == "WithholdingTaxCert")
         {
-            _logger.LogWarning(ex, "Build attachment failed Item={Id}", item.Id);
-            return null;
+            var resp = await _pdf.GenerateWithholdingTaxCertPdfAsync(item.CompanyId, item.EntityId);
+            if (resp?.PdfData is not { Length: > 0 })
+                throw new InvalidOperationException("ไฟล์ PDF ที่สร้างได้ว่างเปล่า");
+            return new EmailAttachment { FileName = resp.FileName, ContentType = "application/pdf", Content = resp.PdfData };
         }
+        // Payslip / annual WHT cert ผ่าน payroll service — ทำใน
+        // path future expansion. ส่งไม่มีไฟล์แนบดีกว่า fail ทั้งฉบับ.
+        return null;
     }
 
     private async Task<bool> EnqueueDocumentAsync(EmailScheduleRule rule, Document doc,
@@ -531,19 +546,7 @@ public class EmailScheduleService : IEmailScheduleService
         // (หลาย rule ของใบเดียว = เดิมคำนวณซ้ำทุก rule) — ตัวตัดสินหัวยังเป็น ResolveDocumentHeadingAsync ตัวเดียว
         var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
         var isEn = heading.IsEnglish;
-        var companyRow = _headingCompanies[doc.CompanyId].Company;
-        var company = (isEn && !string.IsNullOrWhiteSpace(companyRow.NameEn)
-            ? companyRow.NameEn : companyRow.Name) ?? "";
-        var ctx = new Dictionary<string, string?>
-        {
-            ["DocNumber"] = doc.DocumentNumber,
-            ["DocTitle"] = heading.Title,
-            ["ContactName"] = doc.Contact?.Name ?? "",
-            ["DueDate"] = doc.DueDate?.ToString("dd/MM/yyyy") ?? "",
-            ["Amount"] = doc.TotalAmount.ToString("N2"),
-            ["BalanceDue"] = doc.BalanceDue.ToString("N2"),
-            ["CompanyName"] = company,
-        };
+        var ctx = DocumentEmailContext(doc, heading, _headingCompanies[doc.CompanyId].Company);
 
         _db.EmailQueues.Add(new EmailQueue
         {
@@ -579,6 +582,69 @@ public class EmailScheduleService : IEmailScheduleService
         var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, documentId, shared);
         _headings[documentId] = heading;
         return heading;
+    }
+
+    /// <summary>ค่าที่แทนลงหัวเรื่อง/เนื้ออีเมลของเอกสาร — ตัวเดียวของตอนเข้าคิวและตอนส่ง (ID#12: ยอดค้างชำระ ณ เวลาส่ง)</summary>
+    private static Dictionary<string, string?> DocumentEmailContext(Document doc,
+        Models.DTOs.DocumentTemplate.DocumentHeading heading, Company companyRow)
+    {
+        var company = (heading.IsEnglish && !string.IsNullOrWhiteSpace(companyRow.NameEn)
+            ? companyRow.NameEn : companyRow.Name) ?? "";
+        return new Dictionary<string, string?>
+        {
+            ["DocNumber"] = doc.DocumentNumber,
+            ["DocTitle"] = heading.Title,
+            ["ContactName"] = doc.Contact?.Name ?? "",
+            ["DueDate"] = doc.DueDate?.ToString("dd/MM/yyyy") ?? "",
+            ["Amount"] = doc.TotalAmount.ToString("N2"),
+            ["BalanceDue"] = doc.BalanceDue.ToString("N2"),
+            ["CompanyName"] = company,
+        };
+    }
+
+    /// <summary>ID#12 (รอบ 2026-10-14 ทีม F4): ตรวจเอกสารซ้ำตอนส่ง — ยกเลิก/กลับเป็นร่าง/ลบ ⇒ ข้าม · ชำระครบ ⇒ ไม่ทวง ·
+    /// ส่งได้ + มีกฎจริง ⇒ เขียนหัวเรื่อง/เนื้อใหม่ด้วยค่า ณ เวลาส่ง (ยอดค้างชำระปัจจุบัน ไม่ใช่ยอดตอนเข้าคิว) · คืนเหตุผลที่ข้าม หรือ null</summary>
+    private async Task<string?> RecheckDocumentAtSendAsync(EmailQueue item, CancellationToken ct)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == item.EntityId && d.CompanyId == item.CompanyId && !d.IsDeleted, ct);
+        var rule = item.RuleId is { } ruleId
+            ? await _db.EmailScheduleRules.AsNoTracking()
+                .FirstOrDefaultAsync(r => r.Id == ruleId && r.CompanyId == item.CompanyId && !r.IsDeleted, ct)
+            : null;
+        var trigger = rule?.Trigger ?? ScheduledEmailSendCheck.TriggerFromIdempotencyKey(item.IdempotencyKey);
+        var skip = ScheduledEmailSendCheck.SkipReason(trigger, doc != null,
+            doc?.Status ?? DocumentStatus.Draft, doc?.BalanceDue ?? 0m);
+        if (skip != null || doc == null) return skip;
+        if (rule != null)
+        {
+            await _db.HydrateContactAsync(item.CompanyId, doc);
+            var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
+            var ctx = DocumentEmailContext(doc, heading, _headingCompanies[doc.CompanyId].Company);
+            item.Subject = Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger, heading.IsEnglish), ctx);
+            item.Body = Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, heading.IsEnglish), ctx, htmlEncodeValues: true);
+        }
+        return null;
+    }
+
+    /// <summary>50 ทวิ ตอนส่ง — ถูกลบ/ยกเลิกหลังเข้าคิว ⇒ ข้ามพร้อมเหตุผล (ตัวตัดสินเดียว ScheduledEmailSendCheck.WhtCertSkipReason)</summary>
+    private async Task<string?> RecheckWhtCertAtSendAsync(EmailQueue item, CancellationToken ct)
+    {
+        var status = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(c => c.Id == item.EntityId && c.CompanyId == item.CompanyId && !c.IsDeleted)
+            .Select(c => (Models.DTOs.Tax.WithholdingTaxCertStatus?)c.Status)
+            .FirstOrDefaultAsync(ct);
+        return ScheduledEmailSendCheck.WhtCertSkipReason(status != null,
+            status == Models.DTOs.Tax.WithholdingTaxCertStatus.Voided);
+    }
+
+    /// <summary>ส่งไม่สำเร็จ ⇒ ลองใหม่ใน 15 นาที (ครบ 3 ครั้ง = Failed) พร้อมเหตุผลที่ผู้ใช้เห็นบนคิว</summary>
+    private static void DeferOrFail(EmailQueue item, string? reason)
+    {
+        item.Status = item.RetryCount >= 3 ? "Failed" : "Pending";
+        item.RetryCount++;
+        item.ErrorMessage = reason;
+        item.ScheduledFor = DateTime.UtcNow.AddMinutes(15);
     }
 
     private static string ResolveEmployeeEmail(Employee e) => e.Email ?? "";

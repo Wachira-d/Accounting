@@ -314,7 +314,7 @@
                 <td>${r.reportCode}</td>
                 <td>${r.frequency} ${r.hourBangkok}:00</td>
                 <td style="font-size:11px">${r.recipients}</td>
-                <td>${r.lastSentAt ? new Date(r.lastSentAt).toLocaleString('th-TH') : '-'}</td>
+                <td>${r.lastSentAt ? new Date(r.lastSentAt).toLocaleString('th-TH') : '-'}${r.lastResult ? `<div style="font-size:11px;color:${/^OK/.test(r.lastResult) ? '#16a34a' : '#dc2626'}">${Layout.esc(r.lastResult)}</div>` : ''}</td>
                 <td><button class="btn btn-sm btn-secondary" onclick="Page.sendNow('${r.id}')">ส่งทันที</button>
                     <button class="btn btn-sm btn-danger" onclick="Page.deleteSchedule('${r.id}')">ลบ</button></td>
               </tr>`).join('')
@@ -351,11 +351,15 @@
       },
       async sendNow(id) {
         const cid = Layout.getCompanyId();
-        await fetch(`/api/companies/${cid}/scheduled-reports/${id}/send-now`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-        });
-        Layout.toast('Queue ส่งแล้ว');
+        // ID#25: เซิร์ฟเวอร์ส่งจริงแล้วตอบผลจริง (ส่งครบ / บางราย / ไม่สำเร็จ พร้อมทางไปต่อ) — เดิมขึ้น "Queue ส่งแล้ว" ทั้งที่ไม่ได้ส่ง
+        try {
+          const r = await fetch(`/api/companies/${cid}/scheduled-reports/${id}/send-now`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+          });
+          const j = await r.json().catch(() => ({}));
+          Layout.toast(j.message || (r.ok ? 'ส่งแล้ว' : 'ส่งไม่สำเร็จ'), j.success ? 'success' : 'error', j.success ? undefined : 12000);
+        } catch (e) { Layout.toast(e.message, 'error'); }
         this.loadSchedule();
       },
       async deleteSchedule(id) {

@@ -1,3 +1,5 @@
+using Accounting.Filters;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.Entities;
 using Accounting.Services.Implementations.Forex;
@@ -19,6 +21,9 @@ namespace Accounting.Controllers;
 public class SmeOperationsController : ControllerBase
 {
     // ── Petty cash ───────────────────────────────────────────────────
+    // ข้อผิดพลาดทางธุรกิจโยน BusinessRuleException (ข้อความไทย + ทางไปต่อ + รหัสกฎ) ผ่าน ExceptionMiddleware ·
+    // ไม่พบกองทุน = KeyNotFoundException (404) — เดิม "Fund not found." / "Insufficient petty cash…" ภาษาอังกฤษถึงผู้ใช้
+    /// <param name="LinkedAccountId">ผังบัญชีของกองทุน (ChartOfAccounts.Id) · null = ใช้ผังมาตรฐาน 11112 ถ้ามี</param>
     public sealed record CreateFundRequest(string Name, Guid? CustodianUserId,
         decimal ImprestAmount, Guid? LinkedAccountId);
 
@@ -32,10 +37,31 @@ public class SmeOperationsController : ControllerBase
         return Ok(new ApiResponse<PettyCashFund>(true, fund, $"เปิดเงินสดย่อย {fund.Name}"));
     }
 
+    /// <summary>แก้กองทุน / ผูกผังบัญชีของกองทุน — ทางออกของกองทุนที่เปิดไว้โดยไม่มีผัง (ข้อความ "ยังไม่ได้ผูกผัง" ชี้มาที่ปุ่มนี้) ·
+    /// ช่องที่เป็น null = ไม่เปลี่ยน</summary>
+    public sealed record UpdateFundRequest(string? Name, decimal? ImprestAmount, Guid? LinkedAccountId);
+
+    // เปลี่ยนผังที่เบิก/เติมเงินลง = ตั้งค่าการลงบัญชี ⇒ ต้องมีสิทธิ์จัดการใบสำคัญ (endpoint ใหม่ — ไม่ปล่อยเป็น [Authorize] อย่างเดียว)
+    [HttpPut("petty-cash/funds/{fundId:guid}")]
+    [RequirePermission(PermissionKeys.JournalManage)]
+    public async Task<ActionResult<ApiResponse<PettyCashFund>>> UpdateFund(
+        Guid companyId, Guid fundId, [FromBody] UpdateFundRequest req,
+        [FromServices] IPettyCashService svc, CancellationToken ct)
+    {
+        var fund = await svc.UpdateFundAsync(companyId, fundId, req.Name, req.ImprestAmount, req.LinkedAccountId, ct);
+        return Ok(new ApiResponse<PettyCashFund>(true, fund, $"บันทึกกองทุน {fund.Name} แล้ว"));
+    }
+
     [HttpGet("petty-cash/funds")]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<PettyCashFund>>>> ListFunds(
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<PettyCashFundResponse>>>> ListFunds(
         Guid companyId, [FromServices] IPettyCashService svc, CancellationToken ct) =>
-        Ok(new ApiResponse<IReadOnlyList<PettyCashFund>>(true, await svc.ListAsync(companyId, ct)));
+        Ok(new ApiResponse<IReadOnlyList<PettyCashFundResponse>>(true, await svc.ListAsync(companyId, ct)));
+
+    /// <summary>ผังที่เสนอเป็นค่าตั้งต้นของ “ผังบัญชีของกองทุน” (เซิร์ฟเวอร์ตัดสิน — หน้าไม่มีรหัส 11112 ของตัวเอง) · data = null เมื่อผังบริษัทไม่มี</summary>
+    [HttpGet("petty-cash/fund-account-default")]
+    public async Task<ActionResult<ApiResponse<PettyCashFundAccountOption?>>> DefaultFundAccount(
+        Guid companyId, [FromServices] IPettyCashService svc, CancellationToken ct) =>
+        Ok(new ApiResponse<PettyCashFundAccountOption?>(true, await svc.GetDefaultFundAccountAsync(companyId, ct)));
 
     public sealed record DisburseRequest(decimal Amount, string Description,
         Guid? ExpenseAccountId, string? ReceiptReference, DateTime TxnDate,
@@ -46,32 +72,25 @@ public class SmeOperationsController : ControllerBase
         Guid companyId, Guid fundId, [FromBody] DisburseRequest req,
         [FromServices] IPettyCashService svc, CancellationToken ct)
     {
-        try
-        {
-            var t = await svc.DisburseAsync(companyId, fundId, req.Amount, req.Description,
-                req.ExpenseAccountId, req.ReceiptReference, req.TxnDate, req.ProjectId, ct);
-            return Ok(new ApiResponse<PettyCashTransaction>(true, t, $"จ่ายเงินสดย่อย {req.Amount:N2}"));
-        }
-        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+        var t = await svc.DisburseAsync(companyId, fundId, req.Amount, req.Description,
+            req.ExpenseAccountId, req.ReceiptReference, req.TxnDate, req.ProjectId, ct);
+        return Ok(new ApiResponse<PettyCashTransaction>(true, t, $"จ่ายเงินสดย่อย {req.Amount:N2}"));
     }
 
-    /// <param name="SourceAccountId">ผังบัญชีต้นทางของเงินที่เติม (บัญชีธนาคาร/
-    /// เงินสด) — จำเป็นเมื่อบริษัทมีบัญชีธนาคารที่ผูกผังมากกว่า 1 ใบ</param>
+    /// <param name="SourceAccountId">ผังบัญชีต้นทางของเงินที่เติม <b>โดยตรง</b> (เงินสด/กระเป๋าเงิน — ChartOfAccounts.Id)</param>
+    /// <param name="SourceBankAccountId">บัญชีธนาคารต้นทาง (BankAccounts.Id — เซิร์ฟเวอร์แปลงเป็นผังที่ผูก) · ส่งอย่างใดอย่างหนึ่ง ·
+    /// จำเป็นเมื่อบริษัทมีบัญชีธนาคารที่ผูกผังมากกว่า 1 ใบ</param>
     public sealed record ReplenishRequest(decimal Amount, string? Notes, DateTime TxnDate,
-        Guid? SourceAccountId = null);
+        Guid? SourceAccountId = null, Guid? SourceBankAccountId = null);
 
     [HttpPost("petty-cash/funds/{fundId:guid}/replenish")]
     public async Task<ActionResult<ApiResponse<PettyCashTransaction>>> Replenish(
         Guid companyId, Guid fundId, [FromBody] ReplenishRequest req,
         [FromServices] IPettyCashService svc, CancellationToken ct)
     {
-        try
-        {
-            var t = await svc.ReplenishAsync(companyId, fundId, req.Amount, req.Notes, req.TxnDate,
-                req.SourceAccountId, ct);
-            return Ok(new ApiResponse<PettyCashTransaction>(true, t, "เติมเงินสดย่อยแล้ว"));
-        }
-        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+        var t = await svc.ReplenishAsync(companyId, fundId, req.Amount, req.Notes, req.TxnDate,
+            req.SourceAccountId, req.SourceBankAccountId, ct);
+        return Ok(new ApiResponse<PettyCashTransaction>(true, t, "เติมเงินสดย่อยแล้ว"));
     }
 
     [HttpGet("petty-cash/funds/{fundId:guid}/transactions")]

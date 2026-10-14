@@ -269,7 +269,8 @@
           const h = +document.getElementById('reorderHistoryDays').value;
           const lt = +document.getElementById('reorderLeadDays').value;
           const sl = +document.getElementById('reorderServiceLevel').value;
-          const r = await api.get(`/products/reorder-forecast?historyDays=${h}&leadTimeDays=${lt}&serviceLevelZ=${sl}`);
+          // เดิม api.get(`/products/…`) — ไม่มี get บน Layout.api() และเส้นทางจริงคือ `product` (ProductController) ⇒ error ทุกครั้ง (ทีม F1 · 2026-10-14)
+          const r = await API.get(`/api/companies/${Layout.getCompanyId()}/product/reorder-forecast?historyDays=${h}&leadTimeDays=${lt}&serviceLevelZ=${sl}`);
           const rows = r.data || [];
           this._lastReorderRows = rows;
           const counts = { Critical: 0, Warning: 0, OK: 0, Idle: 0 };

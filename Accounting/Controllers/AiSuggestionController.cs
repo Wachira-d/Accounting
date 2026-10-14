@@ -2379,6 +2379,9 @@ public class AiSuggestionController : ControllerBase
                && a.ApprovedAt != null && a.ApprovedAt > since
             select a.ApproverUserId!.Value
         ).ToListAsync(ct);
+        // 2026-10-14 ทีม F4 (ID#11): ไม่แนะนำคนที่ออกจากบริษัทแล้ว — กดใช้แล้วกฎบันทึกไม่ได้ (ValidateRuleAsync) · ตัวตัดสินสมาชิกตัวเดียว
+        var activeApprovers = await Accounting.Helpers.CompanyMembership.ActiveMemberIdsAsync(_db, companyId, approvers, ct);
+        approvers = approvers.Where(activeApprovers.Contains).ToList();
 
         Guid? pickedUserId = null; string? pickedName = null; int supporting = 0;
         if (approvers.Count >= 2)

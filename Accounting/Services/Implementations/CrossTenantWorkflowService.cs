@@ -209,10 +209,24 @@ public class CrossTenantWorkflowService
 
         var config = await GetOrCreateConfigAsync(approvingCompanyId);
 
-        // Resolve signature: prefer signatureUserId arg, else config default,
-        // else any active signature of the acting user.
-        var signerUserId = signatureUserId ?? config.DefaultApproverUserId ?? actingUserId;
-        var signature = await _db.UserSignatures
+        // รอบ 2026-10-14 ทีม F4 (ID#10): ผู้ลงนามต้องเป็นสมาชิกที่ยังใช้งานของบริษัทผู้อนุมัติ — เดิมรับ SignatureUserId อะไรก็ได้ (รวมผู้ใช้
+        // ของบริษัทอื่น) และผู้อนุมัติเริ่มต้นที่ลาออกแล้วยังลงนามต่อ · ตัวตัดสินเดียว Helpers/CrossTenantSignerResolver + Helpers/CompanyMembership
+        var signerMembers = await Accounting.Helpers.CompanyMembership.ActiveMemberIdsAsync(_db, approvingCompanyId,
+            new[] { signatureUserId ?? Guid.Empty, config.DefaultApproverUserId ?? Guid.Empty, actingUserId });
+        var resolution = Accounting.Helpers.CrossTenantSignerResolver.Resolve(
+            signatureUserId, config.DefaultApproverUserId, actingUserId, signerMembers);
+        if (resolution.Problem != null)
+            throw new Accounting.Helpers.BusinessRuleException(resolution.Problem, Accounting.Helpers.CrossTenantSignerResolver.RuleCode, 400);
+        if (resolution.Notice != null)
+            _logger.LogWarning("Cross-tenant approve {Link}: ผู้อนุมัติเริ่มต้นไม่ได้เป็นสมาชิกแล้ว — ลงนามในชื่อผู้กดแทน", link.Id);
+        var signerUserId = resolution.SignerUserId;
+        // ลายเซ็นเริ่มต้นที่ตั้งไว้ใช้ได้เฉพาะเมื่อผู้ลงนามคือผู้อนุมัติเริ่มต้นและลายเซ็นเป็นของคนนั้น (เดิมค่าตั้งนี้ไม่มีผู้อ่าน) ·
+        // อื่น ๆ = ลายเซ็นที่ใช้งานอยู่ของผู้ลงนามเอง
+        UserSignature? signature = null;
+        if (config.DefaultSignatureId is { } defaultSigId && signerUserId == config.DefaultApproverUserId)
+            signature = await _db.UserSignatures
+                .FirstOrDefaultAsync(s => s.Id == defaultSigId && !s.IsDeleted && s.IsActive && s.UserId == signerUserId);
+        signature ??= await _db.UserSignatures
             .Where(s => !s.IsDeleted && s.IsActive && s.UserId == signerUserId)
             .OrderByDescending(s => s.IsDefault)
             .FirstOrDefaultAsync();
@@ -314,13 +328,25 @@ public class CrossTenantWorkflowService
     // AUTO-APPROVAL + DOWNSTREAM CHAIN
     // ═══════════════════════════════════════════════════════════════════
 
-    private async Task TryAutoApproveAsync(CrossTenantDocumentLink link)
+    internal async Task TryAutoApproveAsync(CrossTenantDocumentLink link)
     {
         if (link.LinkType != CrossTenantLinkType.QuotationFlow) return;
         var cfg = await _db.WorkflowAutomationConfigs.AsNoTracking()
             .FirstOrDefaultAsync(c => c.CompanyId == link.TargetCompanyId);
         if (cfg == null || !cfg.AutoApproveIncomingQuotations) return;
         if (cfg.DefaultApproverUserId == null) return;  // need a signer
+
+        // ID#10: ผู้อนุมัติเริ่มต้นที่ออกจากบริษัทแล้วห้าม "อนุมัติอัตโนมัติ + ลงนาม" ในนามบริษัทต่อ — ไม่อนุมัติ แต่ไม่เงียบ:
+        // หมายเหตุบนเอกสารเข้า (กล่องเอกสารเข้าเห็น) + หน้าตั้งค่าแสดงคำเตือน (GetDefaultApproverNoticeAsync) · ทางไปต่อ = ตั้งผู้อนุมัติเริ่มต้นใหม่
+        if (!await Accounting.Helpers.CompanyMembership.IsActiveMemberAsync(_db, link.TargetCompanyId, cfg.DefaultApproverUserId.Value))
+        {
+            link.Comment = "ไม่ได้อนุมัติอัตโนมัติ: " + Accounting.Helpers.CrossTenantSignerResolver.DepartedDefaultApproverNotice;
+            link.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            _logger.LogWarning("Auto-approve skipped for link {Id}: default approver is no longer an active member of {Company}",
+                link.Id, link.TargetCompanyId);
+            return;
+        }
 
         // Amount gating: respect min/max bounds + partnership credit limit
         var doc = await _db.Documents.AsNoTracking()
@@ -339,7 +365,7 @@ public class CrossTenantWorkflowService
                 approvingCompanyId: link.TargetCompanyId,
                 linkId: link.Id,
                 actingUserId: cfg.DefaultApproverUserId.Value,
-                comment: "Auto-approved by workflow config");
+                comment: "อนุมัติอัตโนมัติตามการตั้งค่า workflow ข้ามบริษัท");
         }
         catch (Exception ex)
         {
@@ -632,6 +658,47 @@ public class CrossTenantWorkflowService
         _db.WorkflowAutomationConfigs.Add(cfg);
         await _db.SaveChangesAsync();
         return cfg;
+    }
+
+    /// <summary>ID#10 — คำเตือนบนหน้าตั้งค่า/คำตอบการอนุมัติ: ผู้อนุมัติเริ่มต้นไม่ได้เป็นสมาชิกบริษัทแล้ว · null = ปกติ/ไม่ได้ตั้ง</summary>
+    public async Task<string?> GetDefaultApproverNoticeAsync(WorkflowAutomationConfig cfg)
+        => cfg.DefaultApproverUserId is { } approver && approver != Guid.Empty
+           && !await Accounting.Helpers.CompanyMembership.IsActiveMemberAsync(_db, cfg.CompanyId, approver)
+            ? Accounting.Helpers.CrossTenantSignerResolver.DepartedDefaultApproverNotice
+            : null;
+
+    /// <summary>ID#10 — ตั้งผู้อนุมัติเริ่มต้น/ลายเซ็นเริ่มต้น (ยังไม่บันทึก — ผู้เรียก SaveChanges) · ส่ง <see cref="Guid.Empty"/> = ล้างค่า ·
+    /// ผู้อนุมัติต้องเป็นสมาชิกที่ใช้งานอยู่ของบริษัทนี้ · ลายเซ็นต้องเป็นของผู้อนุมัติเริ่มต้นคนนั้น · เปลี่ยนผู้อนุมัติแล้วลายเซ็นเดิมที่ไม่ใช่ของคนใหม่ถูกล้าง</summary>
+    public async Task ApplyDefaultSignerAsync(WorkflowAutomationConfig cfg, Guid? defaultApproverUserId, Guid? defaultSignatureId)
+    {
+        var effectiveApprover = defaultApproverUserId.HasValue
+            ? (defaultApproverUserId.Value == Guid.Empty ? (Guid?)null : defaultApproverUserId.Value)
+            : cfg.DefaultApproverUserId;
+        var approverIsMember = effectiveApprover is { } ea
+            && await Accounting.Helpers.CompanyMembership.IsActiveMemberAsync(_db, cfg.CompanyId, ea);
+        var sig = defaultSignatureId is { } sid && sid != Guid.Empty
+            ? await _db.UserSignatures.AsNoTracking()
+                .Where(s => s.Id == sid && !s.IsDeleted && s.IsActive)
+                .Select(s => new { s.UserId }).FirstOrDefaultAsync()
+            : null;
+        var problem = Accounting.Helpers.CrossTenantSignerResolver.ConfigProblem(
+            defaultApproverUserId.HasValue ? effectiveApprover : null, approverIsMember,
+            defaultSignatureId, sig != null, sig?.UserId, effectiveApprover);
+        if (problem != null)
+            throw new Accounting.Helpers.BusinessRuleException(problem, Accounting.Helpers.CrossTenantSignerResolver.RuleCode, 400);
+
+        if (defaultApproverUserId.HasValue) cfg.DefaultApproverUserId = effectiveApprover;
+        if (defaultSignatureId.HasValue)
+            cfg.DefaultSignatureId = defaultSignatureId.Value == Guid.Empty ? null : defaultSignatureId.Value;
+        else if (defaultApproverUserId.HasValue && cfg.DefaultSignatureId is { } keptSig)
+        {
+            // เปลี่ยนผู้อนุมัติโดยไม่ส่งลายเซ็นมา ⇒ ลายเซ็นเดิมที่ไม่ใช่ของคนใหม่ต้องไม่ติดไปประทับในชื่อคนใหม่
+            var owner = await _db.UserSignatures.AsNoTracking().Where(s => s.Id == keptSig)
+                .Select(s => (Guid?)s.UserId).FirstOrDefaultAsync();
+            if (effectiveApprover is not { } newApprover
+                || !Accounting.Helpers.CrossTenantSignerResolver.SignatureBelongsTo(owner, newApprover))
+                cfg.DefaultSignatureId = null;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════

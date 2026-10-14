@@ -286,6 +286,13 @@ public class SalaryAdvanceService : ISalaryAdvanceService
         var employeeName = $"{employee.TitleTh}{employee.FirstNameTh} {employee.LastNameTh}".Trim();
         var disbursementDate = request.DisbursementDate ?? DateTime.UtcNow.Date;
 
+        // จ่ายจากบัญชีไหน — ตรวจก่อนสร้างใบสำคัญจ่าย (บริษัท · เปิดใช้ · ผูกผัง) ไม่ให้ใบไปลงเงินสดเงียบ ๆ เพราะบัญชีธนาคารยังไม่ผูกผัง
+        // (การลงบัญชีของ PV เลือก PaymentAccountId > ผังที่ผูกของ BankAccountId > เงินสด — ส่งต่อทั้งสองช่องตามที่ผู้ใช้เลือก)
+        await Accounting.Helpers.PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
+            request.BankAccountId, request.PaymentAccountId, "จ่ายจากบัญชี");
+        Guid? payBank = Accounting.Helpers.PickedAccountGuard.IsSet(request.BankAccountId) ? request.BankAccountId : null;
+        Guid? payAccount = Accounting.Helpers.PickedAccountGuard.IsSet(request.PaymentAccountId) ? request.PaymentAccountId : null;
+
         // The PaymentVoucher's single line points at the Advance Receivable
         // account; DocumentService.AutoPostToJournalAsync debits each line's
         // account and credits cash → Dr Advance Receivable / Cr Cash, exactly
@@ -305,7 +312,8 @@ public class SalaryAdvanceService : ISalaryAdvanceService
                     1m, null, advance.Amount, 0m, 0m, 0m,
                     advanceAccount.Id)
             },
-            BankAccountId: request.BankAccountId);
+            BankAccountId: payBank,
+            PaymentAccountId: payAccount);
 
         // ฝ่ายค้านรอบ 201 รอบสาม P2-3 (คลาสเดียวกับ RTX-5 ของใบเบิก): เดิมสร้าง PV ทุกครั้งแล้วค่อยอนุมัติ — อนุมัติหยุดด้วยคำเตือน ⇒ ใบร่างค้างไม่ผูกกับรายการ
         // + exception ไม่ถูกแปลง (500) + กดใหม่ได้ใบร่างเพิ่มอีกใบ · ตอนนี้ผูกใบร่างทันทีหลังสร้าง · กดซ้ำใช้ใบเดิม · ตัวตัดสินตัวเดียวกับใบเบิก (Helpers/LinkedPayVoucher)

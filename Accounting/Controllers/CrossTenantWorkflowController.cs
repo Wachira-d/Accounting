@@ -103,8 +103,11 @@ public class CrossTenantWorkflowController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> GetConfig(Guid companyId)
     {
         var c = await _service.GetOrCreateConfigAsync(companyId);
+        // ID#10 (รอบ 2026-10-14 ทีม F4): ผู้อนุมัติเริ่มต้นออกจากบริษัทแล้ว ⇒ ระบบหยุดอนุมัติ/ลงนามอัตโนมัติ — หน้าจอต้องเห็นเหตุและทางไปต่อ
+        var defaultApproverNotice = await _service.GetDefaultApproverNoticeAsync(c);
         return Ok(new ApiResponse<object>(true, new
         {
+            DefaultApproverNotice = defaultApproverNotice,
             c.AutoApproveIncomingQuotations,
             c.AutoApproveMinAmount,
             c.AutoApproveMaxAmount,
@@ -127,12 +130,17 @@ public class CrossTenantWorkflowController : ControllerBase
         bool? AutoCreateInvoiceFromIncomingPo,
         bool? AutoCreateReceiptFromIncomingPayment,
         bool? AutoStampSignature,
+        // ID#10: ต้องเป็นสมาชิกที่ใช้งานอยู่ของบริษัทนี้ · Guid ว่าง (000…) = ล้างค่า
         Guid? DefaultApproverUserId,
+        // ID#10: ต้องเป็นลายเซ็นของผู้อนุมัติเริ่มต้นคนนั้น · Guid ว่าง = ล้างค่า
         Guid? DefaultSignatureId,
         bool? NotifyOnIncomingDocument,
         string? NotifyEmail);
 
+    // ID#10: ค่าตั้งนี้คุมการอนุมัติอัตโนมัติ + ผู้ลงนามในนามบริษัท = ด่านควบคุมภายในชุดเดียวกับกฎการอนุมัติ (สิทธิ์ตั้งค่าบริษัท · ไม่รับ API key)
     [HttpPut("workflow-automation")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ตั้งค่า workflow ข้ามบริษัท")]
     public async Task<ActionResult<ApiResponse<object>>> UpdateConfig(Guid companyId, [FromBody] WorkflowConfigUpdate req)
     {
         var c = await _service.GetOrCreateConfigAsync(companyId);
@@ -143,8 +151,9 @@ public class CrossTenantWorkflowController : ControllerBase
         if (req.AutoCreateInvoiceFromIncomingPo.HasValue) c.AutoCreateInvoiceFromIncomingPo = req.AutoCreateInvoiceFromIncomingPo.Value;
         if (req.AutoCreateReceiptFromIncomingPayment.HasValue) c.AutoCreateReceiptFromIncomingPayment = req.AutoCreateReceiptFromIncomingPayment.Value;
         if (req.AutoStampSignature.HasValue) c.AutoStampSignature = req.AutoStampSignature.Value;
-        if (req.DefaultApproverUserId.HasValue) c.DefaultApproverUserId = req.DefaultApproverUserId.Value;
-        if (req.DefaultSignatureId.HasValue) c.DefaultSignatureId = req.DefaultSignatureId.Value;
+        // ID#10: เดิมเขียน Guid ที่ส่งมาตรง ๆ (ผู้ใช้ของบริษัทอื่น/ที่ลาออกแล้ว · ลายเซ็นของคนอื่น) — ตรวจผ่านตัวตัดสินเดียวก่อนตั้ง
+        if (req.DefaultApproverUserId.HasValue || req.DefaultSignatureId.HasValue)
+            await _service.ApplyDefaultSignerAsync(c, req.DefaultApproverUserId, req.DefaultSignatureId);
         if (req.NotifyOnIncomingDocument.HasValue) c.NotifyOnIncomingDocument = req.NotifyOnIncomingDocument.Value;
         if (req.NotifyEmail != null) c.NotifyEmail = req.NotifyEmail;
         c.UpdatedAt = DateTime.UtcNow;
@@ -247,13 +256,18 @@ public class CrossTenantWorkflowController : ControllerBase
             signatureUserId: req.SignatureUserId,
             overrideAutoCreatePo: req.AutoCreatePo,
             comment: req.Comment);
+        // ID#10: ผู้อนุมัติเริ่มต้นออกไปแล้ว ⇒ ลงนามในชื่อผู้กดแทน — บอกผู้กดพร้อมทางไปต่อ (ไม่เงียบ)
+        var notice = !Accounting.Helpers.CrossTenantSignerResolver.IsSignerRequested(req.SignatureUserId)
+            ? await _service.GetDefaultApproverNoticeAsync(await _service.GetOrCreateConfigAsync(companyId))
+            : null;
         return Ok(new ApiResponse<object>(true, new
         {
             link.Id,
             Status = link.Status.ToString(),
             link.ApprovedAt,
             link.TargetDocumentId,
-        }, "อนุมัติเอกสารเรียบร้อย"));
+            SignerNotice = notice,
+        }, notice == null ? "อนุมัติเอกสารเรียบร้อย" : "อนุมัติเอกสารเรียบร้อย (ลงนามในชื่อคุณ) — " + notice));
     }
 
     public record RejectIncomingRequest(string Reason);

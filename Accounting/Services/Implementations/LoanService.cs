@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Loan;
 using Accounting.Models.Entities;
@@ -17,8 +18,33 @@ public class LoanService : ILoanService
         _db = db;
     }
 
+    private const string LoanAccountField = "ผังบัญชีเงินกู้";
+    private const string InterestAccountField = "ผังบัญชีดอกเบี้ยจ่าย";
+    private const string MoneyAccountField = "บัญชีรับ/จ่ายเงินกู้";
+
     public async Task<LoanResponse> CreateAsync(Guid companyId, CreateLoanRequest request)
     {
+        // ── ตรวจคำขอ (ตัวตัดสินเดียว Helpers/LoanPostingPlan) — เดิมไม่ตรวจอะไรเลย: วันที่ 0001-01-01 · เงินต้น 0 ผ่าน ──
+        var invalid = LoanPostingPlan.ValidateCreate(request.Name, request.PrincipalAmount, request.InterestRate,
+            request.TermMonths, request.InterestType, request.RepaymentFrequency,
+            request.DisbursementDate, request.FirstPaymentDate);
+        if (invalid != null) throw new BusinessRuleException(invalid, LoanPostingPlan.RuleInvalidRequest);
+        if (string.IsNullOrWhiteSpace(request.LoanType))
+            throw new BusinessRuleException("เลือก “ประเภทสินเชื่อ”", LoanPostingPlan.RuleInvalidRequest);
+        if (request.ContactId is Guid contactId && contactId != Guid.Empty
+            && !await _db.Contacts.AnyAsync(c => c.Id == contactId && c.CompanyId == companyId && !c.IsDeleted))
+            throw new BusinessRuleException("ไม่พบ “ผู้ให้กู้ (ผู้ติดต่อ)” ที่เลือกในบริษัทนี้ — เลือกใหม่หรือเว้นว่าง", LoanPostingPlan.RuleInvalidRequest);
+
+        // ── ผังบัญชีจากคำขอ: ของบริษัทนี้ · เปิดใช้ · ระดับรายการ · ชนิดตรงช่อง (เดิมเขียนตรงลง JE — ข้ามบริษัท/ผังคุมได้) ──
+        // ช่องทางเงิน: BankAccounts.Id → ผังที่ผูก หรือผังเงินสดตรง (เดิม Loan.BankAccountId รับผังบัญชีในช่องชื่อ "บัญชีธนาคาร")
+        var loanAccountId = await RequireOptionalAccountAsync(companyId, request.LoanAccountId, LoanAccountField, AccountType.Liability);
+        var interestAccountId = await RequireOptionalAccountAsync(companyId, request.InterestExpenseAccountId, InterestAccountField, AccountType.Expense);
+        var moneyAccountId = await PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
+            request.BankAccountId, request.MoneyAccountId, MoneyAccountField);
+        var disbursement = LoanPostingPlan.ForDisbursement(request.PostDisbursementEntry,
+            loanAccountId.HasValue, moneyAccountId.HasValue);
+        if (disbursement.Error != null) throw new BusinessRuleException(disbursement.Error, disbursement.RuleCode);
+
         var loanPrefix = "LOAN-";
         var maxLoanNum = await _db.Loans
             .IgnoreQueryFilters()
@@ -41,36 +67,38 @@ public class LoanService : ILoanService
             request.TermMonths,
             request.InterestType);
 
-        var maturityDate = request.FirstPaymentDate.AddMonths(request.TermMonths - 1);
+        var firstPaymentDate = request.FirstPaymentDate ?? request.DisbursementDate.AddMonths(1);
+        var maturityDate = firstPaymentDate.AddMonths(request.TermMonths - 1);
 
         var loan = new Loan
         {
             CompanyId = companyId,
             LoanNumber = loanNumber,
             LoanType = request.LoanType,
-            Name = request.Name,
-            Lender = request.Lender,
-            ContactId = request.ContactId,
+            Name = request.Name.Trim(),
+            Lender = string.IsNullOrWhiteSpace(request.Lender) ? null : request.Lender.Trim(),
+            ContactId = request.ContactId == Guid.Empty ? null : request.ContactId,
             PrincipalAmount = request.PrincipalAmount,
             InterestRate = request.InterestRate,
             InterestType = request.InterestType,
             TermMonths = request.TermMonths,
             DisbursementDate = request.DisbursementDate,
-            FirstPaymentDate = request.FirstPaymentDate,
+            FirstPaymentDate = firstPaymentDate,
             MaturityDate = maturityDate,
-            RepaymentFrequency = request.RepaymentFrequency,
+            RepaymentFrequency = LoanPostingPlan.MonthlyFrequency,
             MonthlyPayment = monthlyPayment,
             OutstandingPrincipal = request.PrincipalAmount,
-            LoanAccountId = request.LoanAccountId,
-            InterestExpenseAccountId = request.InterestExpenseAccountId,
-            BankAccountId = request.BankAccountId,
+            LoanAccountId = loanAccountId,
+            InterestExpenseAccountId = interestAccountId,
+            MoneyAccountId = moneyAccountId,
             Status = "Active"
         };
 
         _db.Loans.Add(loan);
 
         // Create journal entry for loan disbursement: Dr Cash/Bank, Cr Loan Payable
-        if (loan.LoanAccountId.HasValue && loan.BankAccountId.HasValue)
+        // ลงหรือไม่ลงตัดสินที่ LoanPostingPlan.ForDisbursement แล้ว (มีครึ่งเดียว = ปฏิเสธข้างบน ไม่ข้ามเงียบแบบเดิม)
+        if (disbursement.Post)
         {
             // เลข JE ผ่านตัวกลาง (advisory lock deterministic) — เดิมคำนวณเอง
             // ด้วย string MAX โดยไม่มีล็อก (ผู้ออกเลข JE เถื่อนอีกตัวในตระกูล
@@ -92,15 +120,15 @@ public class LoanService : ILoanService
 
             disbEntry.Lines.Add(new JournalEntryLine
             {
-                AccountId = loan.BankAccountId.Value,
+                AccountId = loan.MoneyAccountId!.Value,
                 DebitAmount = request.PrincipalAmount,
                 CreditAmount = 0,
-                Description = "รับเงินกู้เข้าธนาคาร",
+                Description = "รับเงินกู้เข้าบัญชี",
                 LineOrder = 1
             });
             disbEntry.Lines.Add(new JournalEntryLine
             {
-                AccountId = loan.LoanAccountId.Value,
+                AccountId = loan.LoanAccountId!.Value,
                 DebitAmount = 0,
                 CreditAmount = request.PrincipalAmount,
                 Description = "เจ้าหนี้เงินกู้",
@@ -113,6 +141,28 @@ public class LoanService : ILoanService
         await _db.SaveChangesAsync();
 
         return MapToResponse(loan);
+    }
+
+    /// <summary>ผังบัญชีที่ส่งมา (ถ้ามี) ต้องลงรายการได้และชนิดตรงช่อง — คืนรหัสที่ผ่านแล้ว · ไม่ส่ง/Guid.Empty = null</summary>
+    private async Task<Guid?> RequireOptionalAccountAsync(Guid companyId, Guid? accountId, string field, AccountType type)
+    {
+        if (!PickedAccountGuard.IsSet(accountId)) return null;
+        await PickedAccountGuard.RequirePostingAccountAsync(_db, companyId, accountId!.Value, field, new[] { type });
+        return accountId;
+    }
+
+    /// <summary>ผังที่เสนอเป็นค่าตั้งต้นของฟอร์มสินเชื่อ (เซิร์ฟเวอร์ตัดสินจากผังมาตรฐาน — หน้าไม่มีรหัสผังของตัวเอง) · ผังที่บริษัทไม่มี = null</summary>
+    public async Task<LoanAccountDefaultsResponse> GetAccountDefaultsAsync(Guid companyId, string? loanType, int termMonths)
+    {
+        var loanCode = LoanPostingPlan.SuggestLoanAccountCode(loanType, termMonths);
+        var codes = new[] { loanCode, LoanPostingPlan.DefaultInterestExpenseCode };
+        var rows = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive && a.Level >= 4 && codes.Contains(a.AccountCode))
+            .Select(a => new { a.Id, a.AccountCode, a.AccountType })
+            .ToListAsync();
+        var loanAcc = rows.FirstOrDefault(r => r.AccountCode == loanCode && r.AccountType == AccountType.Liability);
+        var intAcc = rows.FirstOrDefault(r => r.AccountCode == LoanPostingPlan.DefaultInterestExpenseCode && r.AccountType == AccountType.Expense);
+        return new LoanAccountDefaultsResponse(loanAcc?.Id, intAcc?.Id);
     }
 
     public async Task<LoanResponse> GetByIdAsync(Guid companyId, Guid loanId)
@@ -160,8 +210,36 @@ public class LoanService : ILoanService
             .FirstOrDefaultAsync(l => l.Id == loanId && l.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบข้อมูลสินเชื่อ");
 
-        if (request.Name != null) loan.Name = request.Name;
+        if (request.Name != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Name))
+                throw new BusinessRuleException("“ชื่อสินเชื่อ” ว่างไม่ได้", LoanPostingPlan.RuleInvalidRequest);
+            loan.Name = request.Name.Trim();
+        }
         if (request.Status != null) loan.Status = request.Status;
+
+        // ── ผังบัญชี (ทีม F1 · 2026-10-14) — เดิม UpdateLoanRequest ไม่มีช่องผังเลย ขณะที่ข้อความตอนบันทึกชำระบอกให้ไปตั้งค่าที่นี่ = ทางตัน ──
+        string? notice = null;
+        if (PickedAccountGuard.IsSet(request.LoanAccountId) && request.LoanAccountId != loan.LoanAccountId)
+        {
+            await PickedAccountGuard.RequirePostingAccountAsync(_db, companyId, request.LoanAccountId!.Value,
+                LoanAccountField, new[] { AccountType.Liability });
+            // ไม่บล็อก (JE แต่ละใบยังสมดุล) แต่บอกให้รู้ว่ายอดที่ลงไปแล้วยังอยู่ผังเก่า — คำตัดสินข้อ 150: นอกเหนือ GL integrity = คำเตือน
+            if (loan.LoanAccountId.HasValue
+                && await _db.LoanPayments.AnyAsync(p => p.CompanyId == companyId && p.LoanId == loanId && !p.IsDeleted))
+                notice = "เปลี่ยนผังบัญชีเงินกู้แล้ว — ยอดหนี้และการชำระที่ลงบัญชีไปก่อนหน้ายังอยู่ในผังเดิม "
+                         + "ถ้าต้องย้ายยอด ให้บันทึกโอนที่หน้า “สมุดรายวันทั่วไป”";
+            loan.LoanAccountId = request.LoanAccountId;
+        }
+        if (PickedAccountGuard.IsSet(request.InterestExpenseAccountId))
+        {
+            await PickedAccountGuard.RequirePostingAccountAsync(_db, companyId, request.InterestExpenseAccountId!.Value,
+                InterestAccountField, new[] { AccountType.Expense });
+            loan.InterestExpenseAccountId = request.InterestExpenseAccountId;
+        }
+        var newMoney = await PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
+            request.BankAccountId, request.MoneyAccountId, MoneyAccountField);
+        if (newMoney.HasValue) loan.MoneyAccountId = newMoney;
 
         if (request.InterestRate.HasValue)
         {
@@ -192,7 +270,7 @@ public class LoanService : ILoanService
         }
 
         await _db.SaveChangesAsync();
-        return MapToResponse(loan);
+        return MapToResponse(loan) with { Notice = notice };
     }
 
     public async Task<List<LoanScheduleResponse>> GenerateScheduleAsync(Guid companyId, Guid loanId)
@@ -363,17 +441,30 @@ public class LoanService : ILoanService
         // เส้นเงิน: JE ต้องสมดุลหรือไม่โพสต์เลยพร้อมบอกเหตุ (ห้ามโพสต์ JE
         // ขาข้างเดียวแบบเดิมที่ข้ามบรรทัดเงียบ ๆ เมื่อผังบัญชีไม่ครบ)
         if (principal > 0 && !loan.LoanAccountId.HasValue)
-            throw new InvalidOperationException(
-                "สินเชื่อนี้ยังไม่ผูกผังบัญชีเงินกู้ — ตั้งค่าในรายละเอียดสินเชื่อก่อนบันทึกชำระ (ไม่งั้นรายการบัญชีจะไม่สมดุล)");
+            throw new BusinessRuleException(LoanPostingPlan.NoLoanAccountMessage, LoanPostingPlan.RuleNoLoanAccount);
         if (interest + lateFee > 0 && !loan.InterestExpenseAccountId.HasValue)
-            throw new InvalidOperationException(
-                "สินเชื่อนี้ยังไม่ผูกผังบัญชีดอกเบี้ยจ่าย — ตั้งค่าในรายละเอียดสินเชื่อก่อนบันทึกชำระ");
+            throw new BusinessRuleException(LoanPostingPlan.NoInterestAccountMessage, LoanPostingPlan.RuleNoInterestAccount);
+        // ผังที่ผูกไว้อาจถูกปิดใช้งาน/ลบหลังผูก — ตรวจซ้ำก่อนเขียนลง JE
+        if (principal > 0)
+            await PickedAccountGuard.RequirePostingAccountAsync(_db, companyId, loan.LoanAccountId!.Value,
+                LoanAccountField, new[] { AccountType.Liability });
+        if (interest + lateFee > 0)
+            await PickedAccountGuard.RequirePostingAccountAsync(_db, companyId, loan.InterestExpenseAccountId!.Value,
+                InterestAccountField, new[] { AccountType.Expense });
 
-        var cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode == "11122" && a.Level >= 4)
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4)
-            ?? throw new InvalidOperationException("ไม่พบผังบัญชีเงินสด/ธนาคาร (111xx) สำหรับลงรายการจ่าย");
+        // จ่ายจากบัญชีไหน: ที่ส่งมากับการชำระ > ผังเงินของสินเชื่อ > ปฏิเสธพร้อมบอกให้เลือก ·
+        // เดิมไม่สนผังของสินเชื่อเลย แล้วจ่ายจาก 11122 / 111x ตัวแรกเสมอ (PAYMENT_CHANNEL_AUDIT ส่วนที่ 2 ข้อ 2)
+        const string payFromField = "จ่ายจากบัญชี";
+        var cashAccountId = await PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
+            request.BankAccountId, request.MoneyAccountId, payFromField);
+        if (!cashAccountId.HasValue && loan.MoneyAccountId.HasValue)
+        {
+            await PickedAccountGuard.RequirePostingAccountAsync(_db, companyId, loan.MoneyAccountId.Value,
+                MoneyAccountField, PickedAccountGuard.MoneyTypes);
+            cashAccountId = loan.MoneyAccountId;
+        }
+        if (!cashAccountId.HasValue)
+            throw new BusinessRuleException(LoanPostingPlan.NoMoneyAccountMessage, LoanPostingPlan.RuleNoMoneyAccount);
 
         // เลข JE ผ่านตัวกลาง (advisory lock deterministic) — เดิมที่นี่คำนวณเอง
         // ด้วย string MAX โดยไม่มีล็อกเลย = ผู้ออกเลข JE เถื่อนอีกตัว
@@ -418,7 +509,7 @@ public class LoanService : ILoanService
         lines.Add(new JournalEntryLine
         {
             JournalEntryId = journalEntry.Id,
-            AccountId = cashAccount.Id,
+            AccountId = cashAccountId.Value,
             DebitAmount = 0,
             CreditAmount = totalPaid,
             Description = $"จ่ายชำระสินเชื่อ {loan.LoanNumber}",
@@ -434,7 +525,7 @@ public class LoanService : ILoanService
         return new LoanPaymentResponse(
             payment.Id, payment.InstallmentNumber, payment.PaymentDate,
             payment.PrincipalPaid, payment.InterestPaid, payment.TotalPaid,
-            payment.LateFee, payment.PaymentMethod);
+            payment.LateFee, payment.PaymentMethod, payment.Reference);
     }
 
     public async Task<List<LoanPaymentResponse>> GetPaymentsAsync(Guid companyId, Guid loanId)
@@ -447,7 +538,7 @@ public class LoanService : ILoanService
         return payments.Select(p => new LoanPaymentResponse(
             p.Id, p.InstallmentNumber, p.PaymentDate,
             p.PrincipalPaid, p.InterestPaid, p.TotalPaid,
-            p.LateFee, p.PaymentMethod)).ToList();
+            p.LateFee, p.PaymentMethod, p.Reference)).ToList();
     }
 
     public async Task<LoanSummaryResponse> GetSummaryAsync(Guid companyId)
@@ -510,7 +601,13 @@ public class LoanService : ILoanService
         l.Id, l.LoanNumber, l.LoanType, l.Name, l.Lender,
         l.PrincipalAmount, l.InterestRate, l.InterestType, l.TermMonths,
         l.DisbursementDate, l.MaturityDate, l.MonthlyPayment,
-        l.OutstandingPrincipal, l.TotalInterestPaid, l.Status, l.CreatedAt);
+        l.OutstandingPrincipal, l.TotalInterestPaid, l.Status, l.CreatedAt,
+        FirstPaymentDate: l.FirstPaymentDate,
+        RepaymentFrequency: l.RepaymentFrequency,
+        ContactId: l.ContactId,
+        LoanAccountId: l.LoanAccountId,
+        InterestExpenseAccountId: l.InterestExpenseAccountId,
+        MoneyAccountId: l.MoneyAccountId);
 
     private static LoanScheduleResponse MapScheduleToResponse(LoanSchedule s) => new(
         s.InstallmentNumber, s.DueDate, s.PaymentAmount,

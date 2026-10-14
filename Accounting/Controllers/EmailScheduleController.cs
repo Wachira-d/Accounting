@@ -68,6 +68,8 @@ public class EmailScheduleController : ControllerBase
             {
                 q.Id, q.EntityType, q.EntityId, q.ToEmail, q.Subject,
                 q.Status, q.RetryCount, q.ScheduledFor, q.SentAt,
+                // ID#12: ป้ายไทยจากเซิร์ฟเวอร์ (รวม "ข้าม (ไม่ส่ง)" ของใบที่ถูกยกเลิก/ชำระครบหลังเข้าคิว) — หน้าเว็บแสดงอย่างเดียว
+                StatusLabel = Accounting.Helpers.ScheduledEmailSendCheck.StatusLabel(q.Status),
                 q.ErrorMessage, q.CreatedAt,
             }),
         }));

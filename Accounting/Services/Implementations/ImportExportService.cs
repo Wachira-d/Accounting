@@ -1047,7 +1047,7 @@ public class ImportExportService : IImportExportService
         return r.Outcome switch
         {
             Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Created or Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Updated
-                => new RowWrite("BankTransaction", r.TransactionId),
+                => new RowWrite("BankTransaction", r.BankTransactionId),
             Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Duplicate or Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Conflict
                 => new RowWrite("BankTransaction", r.ExistingTransactionId, Skipped: true),
             _ => throw new BusinessRuleException(r.Message ??"บันทึกรายการธนาคารไม่สำเร็จ — ตรวจวันที่และจำนวนเงินของแถวนี้"),

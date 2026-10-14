@@ -415,7 +415,7 @@
           return this._caRejectQs(id, reason);
         } else if (action === 'disburse') {
           const days = parseInt(prompt('ระยะเวลาให้ clear (วัน):', '14')) || 14;
-          body = { disburseDate: new Date().toISOString(), clearanceDays: days, bankAccountId: null };
+          body = { disburseDate: new Date().toISOString(), clearanceDays: days };  // ไม่มีช่องบัญชี — เส้นนี้ยังไม่ลงบัญชีอัตโนมัติ (ข้อความตอบกลับบอกทางไปต่อ)
         } else if (action === 'clear') {
           const cleared = parseFloat(prompt('ยอดที่ใช้จ่ายจริง (บาท):'));
           if (isNaN(cleared)) return;
@@ -430,7 +430,8 @@
           });
           const j = await r.json();
           if (!j.success) throw new Error(j.message);
-          Layout.toast(j.message);
+          // จ่ายเงินยืมทดรอง: ข้อความจากเซิร์ฟเวอร์บอกว่ายังไม่ลงบัญชีอัตโนมัติ + ทางไปต่อ ⇒ แสดงเป็นคำเตือนนานพอให้อ่าน
+          if (action === 'disburse') Layout.toast(j.message, 'warning', 12000); else Layout.toast(j.message);
           this.loadCa();
         } catch(e) { Layout.toast(e.message, 'error'); }
       },

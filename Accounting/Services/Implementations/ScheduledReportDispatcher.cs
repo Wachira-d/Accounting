@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -74,7 +75,6 @@ public class ScheduledReportDispatcher : BackgroundService
     {
         using var scope = _scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-        var email = scope.ServiceProvider.GetService<IEmailService>();
 
         var nowBkk = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BkkTz);
         var schedules = await db.ScheduledReports
@@ -86,17 +86,29 @@ public class ScheduledReportDispatcher : BackgroundService
             if (!IsDue(s, nowBkk)) continue;
             try
             {
-                var ok = await DispatchOneAsync(scope.ServiceProvider, db, email, s, nowBkk, ct);
-                s.LastSentAt = DateTime.UtcNow;
-                s.LastResult = ok ? "OK" : "SKIPPED (email service unavailable)";
+                await DispatchAndRecordAsync(scope.ServiceProvider, db, s, _logger, ct);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogWarning(ex, "Failed to dispatch ScheduledReport {Id} ({Name})", s.Id, s.Name);
-                s.LastResult = $"ERROR: {ex.Message.Substring(0, Math.Min(180, ex.Message.Length))}";
+                s.LastResult = $"ERROR · ส่งไม่สำเร็จ: {ex.Message.Substring(0, Math.Min(180, ex.Message.Length))} — ตรวจการตั้งค่ารายงานนี้แล้วกด “ส่งทันที”";
             }
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    /// <summary>ส่งรายงาน 1 รายการ<b>จริง</b> แล้วบันทึกผลลง <c>LastResult</c>/<c>LastSentAt</c> (ผู้เรียก SaveChanges) — ใช้ทั้งรอบตามเวลาและปุ่ม "ส่งทันที"
+    /// · รอบ 2026-10-14 ทีม F4 (ID#25): ผลต่อผู้รับมาจากผลจริงของช่องส่งอีเมล (สำเร็จ/ล้มรายคน) ⇒ ล้มบางราย = PARTIAL · ทุกราย = ERROR ·
+    /// ประทับ LastSentAt เฉพาะเมื่อมีผู้รับได้รับอย่างน้อย 1 ราย (ตัวตัดสินเดียว Helpers/ScheduledReportOutcome)</summary>
+    public static async Task<ScheduledReportOutcome.Result> DispatchAndRecordAsync(IServiceProvider sp, AccountingDbContext db,
+        ScheduledReport s, ILogger logger, CancellationToken ct)
+    {
+        var nowBkk = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BkkTz);
+        var outcome = await DispatchOneAsync(sp, db, s, nowBkk, logger, ct);
+        s.LastResult = outcome.LastResult;
+        if (outcome.AnyDelivered) s.LastSentAt = DateTime.UtcNow;
+        s.UpdatedAt = DateTime.UtcNow;
+        return outcome;
     }
 
     /// <summary>Check schedule due NOW. Match by HourBangkok (current hour)
@@ -122,42 +134,70 @@ public class ScheduledReportDispatcher : BackgroundService
         };
     }
 
-    private async Task<bool> DispatchOneAsync(IServiceProvider sp, AccountingDbContext db,
-        IEmailService? email, ScheduledReport s, DateTime nowBkk, CancellationToken ct)
+    private static async Task<ScheduledReportOutcome.Result> DispatchOneAsync(IServiceProvider sp, AccountingDbContext db,
+        ScheduledReport s, DateTime nowBkk, ILogger logger, CancellationToken ct)
     {
-        if (email == null)
-        {
-            _logger.LogWarning("IEmailService not registered — cannot send ScheduledReport {Name}", s.Name);
-            return false;
-        }
-
-        List<string> recipients = new();
+        List<string> recipients;
         try { recipients = System.Text.Json.JsonSerializer.Deserialize<List<string>>(s.RecipientsJson) ?? new(); }
-        catch { }
-        if (recipients.Count == 0) return false;
+        catch (System.Text.Json.JsonException)
+        {
+            return ScheduledReportOutcome.Summarize(0, Array.Empty<(string, string?)>(),
+                "รายชื่อผู้รับอ่านไม่ได้ — เปิดแก้รายงานนี้แล้วบันทึกรายชื่ออีเมลผู้รับใหม่");
+        }
+        recipients = recipients.Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r.Trim()).Distinct().ToList();
+        if (recipients.Count == 0)
+            return ScheduledReportOutcome.Summarize(0, Array.Empty<(string, string?)>(),
+                "ยังไม่มีอีเมลผู้รับ — เปิดแก้รายงานนี้แล้วเพิ่มอีเมลผู้รับ");
+
+        // ช่องส่งอีเมลของบริษัท (ตั้งค่าเองหรือ SMTP กลาง) — คืนผลสำเร็จ/ล้มรายคน (เดิมใช้ IEmailService.SendAsync ที่กลืน error และ
+        // "ข้ามเงียบ" เมื่อไม่ได้ตั้ง SMTP ⇒ ตัวส่งไม่มีทางรู้ว่าส่งไม่ถึง)
+        var senders = sp.GetService<IEmailSenderFactory>();
+        if (senders == null)
+        {
+            logger.LogWarning("IEmailSenderFactory not registered — cannot send ScheduledReport {Name}", s.Name);
+            return ScheduledReportOutcome.Summarize(recipients.Count, Array.Empty<(string, string?)>(),
+                "ระบบยังไม่มีช่องส่งอีเมล — แจ้งผู้ดูแลระบบให้ตั้งค่าอีเมล");
+        }
+        var sender = await senders.GetSenderAsync(s.CompanyId, ct);
 
         // Generate report inline body (PDF/Excel attachment ต่อไปทำเพิ่ม)
         var company = await db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == s.CompanyId, ct);
         var subject = $"[{company?.Name ?? "Next Acc"}] {s.Name} — {nowBkk:dd/MM/yyyy}";
-        var body = await BuildReportBodyAsync(sp, db, s, nowBkk, ct);
+        string body;
+        try { body = await BuildReportBodyAsync(sp, db, s, nowBkk, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Build ScheduledReport {Name} body failed", s.Name);
+            return ScheduledReportOutcome.Summarize(recipients.Count, Array.Empty<(string, string?)>(),
+                $"สร้างตัวเลขรายงานไม่สำเร็จ ({ex.Message}) — เปิดรายงานนี้บนหน้าจอเพื่อดูสาเหตุ แล้วกด “ส่งทันที” อีกครั้ง");
+        }
 
+        var failures = new List<(string To, string? Error)>();
         foreach (var to in recipients)
         {
-            try { await email.SendAsync(to, subject, body); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Send to {To} failed", to); }
+            try
+            {
+                var result = await sender.SendAsync(new EmailMessage { To = { to }, Subject = subject, HtmlBody = body }, ct);
+                if (!result.Success) failures.Add((to, result.ErrorMessage));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Send ScheduledReport {Name} to {To} failed", s.Name, to);
+                failures.Add((to, ex.Message));
+            }
         }
-        return true;
+        return ScheduledReportOutcome.Summarize(recipients.Count, failures, null);
     }
 
-    private async Task<string> BuildReportBodyAsync(IServiceProvider sp, AccountingDbContext db,
+    private static async Task<string> BuildReportBodyAsync(IServiceProvider sp, AccountingDbContext db,
         ScheduledReport s, DateTime nowBkk, CancellationToken ct)
     {
         // Render concise inline HTML based on ReportCode. แต่ละ report code
         // ดึงตัวเลขสรุปจาก service ที่มีอยู่ — ไม่ใช่ทำ PDF เต็ม.
         var acc = sp.GetService<IAccountingService>();
-        var html = $"<h2>{s.Name}</h2><p>ส่งอัตโนมัติเวลา {nowBkk:dd/MM/yyyy HH:mm} ({s.Frequency})</p>";
+        var html = $"<h2>{System.Net.WebUtility.HtmlEncode(s.Name)}</h2><p>ส่งอัตโนมัติเวลา {nowBkk:dd/MM/yyyy HH:mm} ({System.Net.WebUtility.HtmlEncode(s.Frequency)})</p>";  // กฎ #4 C: ชื่อที่ผู้ใช้ตั้งต้องหนีก่อนต่อ HTML
 
-        try
+        // ID#25: สร้างตัวเลขรายงานไม่สำเร็จ ⇒ โยนให้ผู้เรียกบันทึกเป็น "ไม่ได้ส่ง" (เดิมส่งอีเมลที่มีแต่ข้อความ error ถึงผู้รับ แล้วผลยังเป็น OK)
         {
             switch (s.ReportCode)
             {
@@ -183,10 +223,6 @@ public class ScheduledReportDispatcher : BackgroundService
                     html += "<p>ดูรายงานเต็มใน Next Acc dashboard.</p>";
                     break;
             }
-        }
-        catch (Exception ex)
-        {
-            html += $"<p style='color:red'>❌ ไม่สามารถสร้างรายงาน: {ex.Message}</p>";
         }
         return html;
     }
