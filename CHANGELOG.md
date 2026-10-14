@@ -4824,4 +4824,4 @@ RecordColumnMatchChoice) · `ImportColumnMatchService` ทางเข้าเ�
 รูปเดียวกับครู) และ ImportDataReview (ImportReviewHeuristics ที่ย้ายมาอยู่บน ImportValueNormalizer + เลิกเสนอการจัดรูปแบบที่บริษัทปฏิเสธประจำ — ปัญหาทางกฎหมาย
 ปิดไม่ได้) · augmenter ไม่ทิ้ง FeedbackId/UsedAi + SuggestAccountMapAsync (58 · ด่าน ∈ ผังบริษัท) + ResolveEntityAsync (59 · ด่าน ∈ candidate ∪ NEW) +
 RecordPick/RecordReviewChoice · ImportPrompts ForceProviderCall=false (เดิมข้าม routing+งบทุกครั้ง) + BuildAccountMap/BuildEntityMatch ·
-AiSuggestionController.SuggestImportMapping มอบให้ตัวจับคู่กลาง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
+AiSuggestionController.SuggestImportMapping มอบให้ตัวจับคู่กลาง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit eafc6bd3_
