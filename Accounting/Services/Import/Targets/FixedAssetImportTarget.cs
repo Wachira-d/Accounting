@@ -38,21 +38,8 @@ public class FixedAssetImportTarget : IImportTarget
     public ImportCommitStyle CommitStyle => ImportCommitStyle.SharedTransaction;
     public bool SupportsUpdate => false;
 
-    public IReadOnlyList<ImportFieldDto> Schema { get; } = new List<ImportFieldDto>
-    {
-        new("AssetCode", "รหัสสินทรัพย์", ImportFieldType.Reference, true, null, null, "FA-0001", 50),
-        new("Name", "ชื่อสินทรัพย์", ImportFieldType.Text, true, null, null, "คอมพิวเตอร์โน้ตบุ๊ก", 200),
-        new("Category", "หมวด", ImportFieldType.Text, false, "ที่ดิน/งานระหว่างก่อสร้าง = ไม่คิดค่าเสื่อม", null, "คอมพิวเตอร์", 100),
-        new("PurchaseDate", "วันที่ได้มา", ImportFieldType.Date, true, null, null, "01/03/2566"),
-        new("PurchaseCost", "ราคาทุน", ImportFieldType.Amount, true, null, null, "35,000.00"),
-        new("SalvageValue", "มูลค่าซาก", ImportFieldType.Amount, false, "เว้นว่าง = 0"),
-        new("UsefulLifeMonths", "อายุการใช้งาน (เดือน)", ImportFieldType.Integer, false, "เว้นว่าง = 60 เดือน (ไม่คิดค่าเสื่อม = 0)"),
-        new("DepreciationMethod", "วิธีคิดค่าเสื่อม", ImportFieldType.Text, false,
-            "StraightLine / DecliningBalance / DoubleDecliningBalance / None — เว้นว่าง = เส้นตรง (ที่ดิน = ไม่คิด)", null, "เส้นตรง", 50),
-        new("Location", "สถานที่", ImportFieldType.Text, false, null, null, null, 200),
-        new("SerialNumber", "หมายเลขเครื่อง", ImportFieldType.Text, false, null, null, null, 100),
-        new("AccumulatedDepreciation", "ค่าเสื่อมสะสมยกมา", ImportFieldType.Amount, false, "ยังไม่รองรับ — ลงผ่านงบทดลองยกมา"),
-    };
+    /// <summary>field ปลายทาง — ตัวเดียวที่ <see cref="ImportSchemas"/> (ทีม A · owner เดียวของแคตตาล็อก) · ทีม D ปรับรายการของชนิดนี้ที่นั่น</summary>
+    public IReadOnlyList<ImportFieldDto> Schema => ImportSchemas.For(Key)!;
 
     public async Task<IReadOnlyList<ImportRowValidation>> ValidateAsync(ImportTargetContext ctx, IReadOnlyList<ImportTargetRow> rows, CancellationToken ct)
     {

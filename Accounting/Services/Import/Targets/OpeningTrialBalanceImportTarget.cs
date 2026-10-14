@@ -45,15 +45,8 @@ public class OpeningTrialBalanceImportTarget : IImportTarget
     public ImportCommitStyle CommitStyle => ImportCommitStyle.OwnTransactionPerGroup;
     public bool SupportsUpdate => false;
 
-    public IReadOnlyList<ImportFieldDto> Schema { get; } = new List<ImportFieldDto>
-    {
-        new("AccountCode", "รหัสบัญชี (ระบบเดิม)", ImportFieldType.AccountCode, true, "รหัสบัญชีตามโปรแกรมเดิม — ระบบจับคู่กับผังบัญชีให้", null, "1110"),
-        new("AccountName", "ชื่อบัญชี", ImportFieldType.Text, false, "ช่วยจับคู่เมื่อรหัสไม่ตรงผัง", null, "เงินสด", 200),
-        new("Debit", "เดบิต", ImportFieldType.Amount, false, null, null, "10,000.00"),
-        new("Credit", "เครดิต", ImportFieldType.Amount, false, null, null, "0"),
-        new("Balance", "ยอดคงเหลือ (บวก = เดบิต · ลบ = เครดิต)", ImportFieldType.Amount, false,
-            "ใช้แทนคอลัมน์เดบิต/เครดิตเมื่อไฟล์มียอดคงเหลือคอลัมน์เดียว", null, "(30,000.00)"),
-    };
+    /// <summary>field ปลายทาง — ตัวเดียวที่ <see cref="ImportSchemas"/> (ทีม A · owner เดียวของแคตตาล็อก) · ทีม D ปรับรายการของชนิดนี้ที่นั่น</summary>
+    public IReadOnlyList<ImportFieldDto> Schema => ImportSchemas.For(Key)!;
 
     /// <summary>เดบิต/เครดิตของแถว (ยอดบวกเสมอ) — คอลัมน์ยอดคงเหลือเดียวก็ได้ · เดบิตติดลบ = เครดิต</summary>
     public static (decimal Debit, decimal Credit) Amounts(ImportTargetRow row)

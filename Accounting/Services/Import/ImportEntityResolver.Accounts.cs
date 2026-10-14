@@ -99,10 +99,12 @@ public class ImportAccountMatcher
                 var hit = answer.AccountCode == null ? null
                     : chart.Accounts.FirstOrDefault(a => a.IsPostable
                         && ImportAccountCodeResolver.NormalizeCode(a.Code) == ImportAccountCodeResolver.NormalizeCode(answer.AccountCode));
-                if (hit != null && answer.Confidence >= AiMinConfidence)
+                if (hit != null && answer.Confidence >= AiMinConfidence && (answer.UsedAi || answer.FromStudent))
                 {
-                    candidates.Insert(0, new ImportMatchCandidateDto(hit.AccountId, $"{hit.Code} {hit.Name}", answer.Confidence, "Ai"));
-                    results.Add(new ImportAccountMatchResult(q.Key, hit.AccountId, hit.Code, hit.Name, "Ai",
+                    // ป้ายซื่อสัตย์: AI ตอบจริง = "Ai" (🤖) · นักเรียนตอบแทน = "Learned" (🧠 ระบบเรียนรู้แล้ว)
+                    var kind = answer.UsedAi ? "Ai" : "Learned";
+                    candidates.Insert(0, new ImportMatchCandidateDto(hit.AccountId, $"{hit.Code} {hit.Name}", answer.Confidence, kind));
+                    results.Add(new ImportAccountMatchResult(q.Key, hit.AccountId, hit.Code, hit.Name, kind,
                         Math.Round(answer.Confidence, 4, MidpointRounding.AwayFromZero), answer.UsedAi, answer.FeedbackId,
                         candidates.GroupBy(c => c.EntityId).Select(g => g.First()).ToList()));
                     continue;
@@ -116,22 +118,40 @@ public class ImportAccountMatcher
         return results;
     }
 
-    /// <summary>คำตอบ AI ต่อแถว (ยังไม่ผ่านด่าน — ผู้เรียกตรวจกับผังเอง)</summary>
-    private sealed record AccountMapAiAnswer(string? AccountCode, decimal Confidence, bool UsedAi, Guid? FeedbackId);
+    /// <summary>คำตอบชั้นโมเดลต่อแถว (ยังไม่ผ่านด่านผัง — ผู้เรียกตรวจกับผังเอง) · <see cref="UsedAi"/> = AI ตอบจริง · <see cref="FromStudent"/> = นักเรียนตอบแทน</summary>
+    private sealed record AccountMapAiAnswer(string? AccountCode, decimal Confidence, bool UsedAi, bool FromStudent, Guid? FeedbackId);
+
+    /// <summary>แถวสูงสุดต่อรอบที่ถามชั้นโมเดล (ไฟล์งบทดลองใหญ่ — แถวที่เกินใช้ผล local + ผู้ใช้เลือก · งบ token ไม่บานตามขนาดไฟล์)</summary>
+    public const int MaxModelRowsPerCall = 50;
 
     /// <summary>
-    /// <b>ช่องเดียวที่ถาม AI</b> ของการจับคู่บัญชี (<c>AiFeatureKey.ImportAccountMap</c>) — ทีม A เพิ่ม <c>IImportAiAugmenter.SuggestAccountMapAsync</c>
-    /// (orchestrator · prompt · student <c>GenericFeedbackDistillationModel</c>) ขนานกับทีมนี้ · ในฐานของทีม D ยังไม่มีเมธอดนั้น ⇒ คืน "ไม่มีคำแนะนำ"
-    /// (ผลเท่ากับ kill-switch — ทุกชั้น local ยังทำงานครบ) · <b>ต่อสายหนึ่งบรรทัดเมื่อรวมทีม A</b>: แทน <c>return Empty</c> ด้วยการเรียก
-    /// <c>_importAi.SuggestAccountMapAsync(companyId, leftovers, chart, ct)</c> แล้วแปลงผลเป็น <see cref="AccountMapAiAnswer"/> ต่อ <c>Key</c> ·
-    /// ล้ม/timeout ⇒ คืนว่าง (กฎเหล็ก #1 ข้อ 4 — ไม่ล้มดังถึงผู้ใช้ เพราะชั้น local ตอบแล้ว)
+    /// <b>ช่องเดียวที่ถามชั้นโมเดล</b> ของการจับคู่บัญชี (<c>AiFeatureKey.ImportAccountMap</c> · 58) — ผ่าน <c>IImportAiAugmenter.SuggestAccountMapAsync</c>
+    /// (ทีม A: orchestrator student-first · ด่าน ∈ <c>allowedCodes</c> = รหัสบัญชีลงยอดได้ของบริษัท) · ส่งคำตอบ local อันดับหนึ่งเป็น hint ·
+    /// คำตอบที่เป็นแค่ "local สะท้อนกลับ" (ไม่ใช่ AI/นักเรียน) ไม่นับ — ชั้น local ตัดสินไปแล้วว่าไม่ถึงเกณฑ์ · augmenter ล้ม/ปิด AI ⇒ คืน local ⇒
+    /// ไม่มีคำแนะนำเพิ่ม (kill-switch: ทุกชั้น local ยังทำงานครบ) · ปิดลูปที่ <c>MigrationWizardService.ApplyMappingsAsync</c> (<c>RecordPickChoiceAsync</c>)
     /// </summary>
-    private Task<IReadOnlyDictionary<string, AccountMapAiAnswer>> AskAccountMapAiAsync(Guid companyId,
+    private async Task<IReadOnlyDictionary<string, AccountMapAiAnswer>> AskAccountMapAiAsync(Guid companyId,
         IReadOnlyList<(ImportAccountQuery Query, ImportAccountResolution Local)> leftovers, ImportAccountChart chart, CancellationToken ct)
     {
-        IReadOnlyDictionary<string, AccountMapAiAnswer> empty = new Dictionary<string, AccountMapAiAnswer>();
-        if (_importAi == null || leftovers.Count == 0 || chart.Accounts.Count == 0) return Task.FromResult(empty);
-        _logger?.LogDebug("ImportAccountMap: {Count} แถวรอ AI (ยังไม่ต่อสาย SuggestAccountMapAsync) บริษัท {Company}", leftovers.Count, companyId);
-        return Task.FromResult(empty);
+        var result = new Dictionary<string, AccountMapAiAnswer>();
+        var postable = chart.Accounts.Where(a => a.IsPostable).ToList();
+        if (_importAi == null || leftovers.Count == 0 || postable.Count == 0) return result;
+        var allowed = postable.Select(a => a.Code).ToList();
+        foreach (var (q, local) in leftovers.Take(MaxModelRowsPerCall))
+        {
+            var cls = ImportAccountCodeResolver.ClassFromCode(q.Code);
+            var fromLocal = local.Candidates.Select(c => postable.FirstOrDefault(a => a.AccountId == c.AccountId)).OfType<ImportChartAccount>();
+            var candidates = fromLocal.Concat(postable.Where(a => cls == null || a.Type == cls)).Distinct().Take(40)
+                .Select(a => new Accounting.Services.Ai.Prompts.ImportPrompts.AccountCandidate(a.Code, a.Name, a.Type.ToString())).ToList();
+            var top = local.Candidates.FirstOrDefault();
+            var pick = await _importAi.SuggestAccountMapAsync(companyId, null, q.Code, q.Name, q.Hint, candidates, allowed,
+                top?.Code, top?.Score, ct);
+            if (!pick.UsedAi && !pick.FromLocalModel && pick.FeedbackId == null) continue;   // แค่ local สะท้อนกลับ / AI ดับ
+            result[q.Key] = new AccountMapAiAnswer(pick.Rejected ? null : pick.Answer, pick.Confidence, pick.UsedAi, pick.FromLocalModel,
+                pick.FeedbackId);
+        }
+        _logger?.LogDebug("ImportAccountMap: ถามชั้นโมเดล {Asked}/{Total} แถว ได้คำตอบ {Answered} บริษัท {Company}",
+            Math.Min(leftovers.Count, MaxModelRowsPerCall), leftovers.Count, result.Count, companyId);
+        return result;
     }
 }

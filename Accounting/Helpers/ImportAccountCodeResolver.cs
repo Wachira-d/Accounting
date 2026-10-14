@@ -18,7 +18,7 @@ public sealed record ImportAccountCandidate(Guid AccountId, string Code, string 
 /// ผลหาบัญชี · <see cref="AccountId"/> มีค่า = <b>ระบบเลือกให้เอง</b> (คะแนนถึงเกณฑ์ <see cref="ImportAccountCodeResolver.AutoApplyThreshold"/>) ·
 /// null = แนะนำเท่านั้น (ผู้ใช้เลือกจาก <see cref="Candidates"/>) — <b>ห้ามเลือกให้ต่ำกว่าเกณฑ์</b>
 /// </summary>
-/// <param name="Kind">ชั้นที่ตัดสิน: "Code" · "Mapping" · "Ngram" · "Category" · "None"</param>
+/// <param name="Kind">ชั้นที่ตัดสิน: "Code" · "Mapping" · "Ngram" · "Category" · "None" (ชั้นโมเดลของผู้ห่อ: "Ai" · "Learned")</param>
 /// <param name="Score">ความมั่นใจของผู้สมัครอันดับหนึ่ง (0–1) — แม้ไม่ได้เลือกให้ ก็บอกผู้ใช้ว่าใกล้แค่ไหน</param>
 /// <param name="Reason">เหตุผลภาษาไทย (tooltip)</param>
 public sealed record ImportAccountResolution(
@@ -196,6 +196,7 @@ public static class ImportAccountCodeResolver
         "Ngram" => "📚 ชื่อคล้าย",
         "Category" => "⚙️ หมวดบัญชี",
         "Ai" => "🤖 AI แนะนำ",
+        "Learned" => "🧠 ระบบเรียนรู้แล้ว",
         "User" => "✋ ผู้ใช้เลือก",
         _ => "—",
     };

@@ -38,8 +38,8 @@ public sealed record OpeningTbVerdict(
 ///
 /// <para><b>บล็อก (Error)</b> เฉพาะกรณีของข้อ 150 — ทุกข้อมีทางไปต่อ: ไม่มีบรรทัด · บรรทัดที่ยังไม่มีบัญชีปลายทางหลังทุกชั้นจับคู่ ·
 /// บัญชีปลายทางไม่อยู่ในผังของบริษัท (ข้ามบริษัท/ถูกลบ) · <b>เดบิต ≠ เครดิต</b> (ทางไปต่อ: ลงส่วนต่างเข้าบัญชีผลต่างยกมาที่ผู้ใช้เลือก) ·
-/// ไม่มีงวด/งวดปิด · <b>นอกนั้นเป็นคำเตือน</b>ที่รับทราบตอน commit: หลายรหัสรวมเข้าบัญชีเดียว · ทับยอดยกมาเดิม · หมวดเลขหน้าไม่ตรงชนิดบัญชี ·
-/// ลงบัญชีคุม · บรรทัดมีทั้งเดบิตและเครดิต · บรรทัดยอดศูนย์</para>
+/// ไม่มีงวด/งวดปิด · บัญชีปลายทางเป็นบัญชีคุม (กติกาเดียวกับ <c>PostingAccountRule</c>) · <b>นอกนั้นเป็นคำเตือน</b>ที่รับทราบตอน commit:
+/// หลายรหัสรวมเข้าบัญชีเดียว · ทับยอดยกมาเดิม · หมวดเลขหน้าไม่ตรงชนิดบัญชี · บรรทัดมีทั้งเดบิตและเครดิต · บรรทัดยอดศูนย์</para>
 /// <para>G6: pure · ไม่มี I/O</para>
 /// </summary>
 public static class OpeningTrialBalanceRules
@@ -130,9 +130,10 @@ public static class OpeningTrialBalanceRules
 
         var header = lines.Where(l => l.Account is { IsPostable: false }).Select(l => l.Key).ToList();
         if (header.Count > 0)
-            warnings.Add(new(HeaderAccount, false,
-                $"ลงยอดที่บัญชีคุม (มีบัญชีย่อย) {header.Count} บรรทัด: {Preview(header)}",
-                "แนะนำให้เลือกบัญชีย่อยที่ลงยอดได้ เพื่อให้รายงานแยกยอดถูก", header));
+            // บัญชีคุม = บล็อก (กติกาเดียวกับ PostingAccountRule ของเส้นหลัก 2026-10-14: ยอดคุมต้องมาจากผลรวมบัญชีย่อย — คำตัดสินข้อ 150 (2))
+            errors.Add(new(HeaderAccount, true,
+                $"บัญชีปลายทางเป็นบัญชีคุม (มีบัญชีย่อย) {header.Count} บรรทัด: {Preview(header)} — ลงยอดตรงไม่ได้",
+                "เลือกบัญชีย่อยใต้บัญชีนั้นแทน", header));
 
         var both = lines.Where(l => l.Debit > 0 && l.Credit > 0).Select(l => l.Key).ToList();
         if (both.Count > 0)

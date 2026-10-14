@@ -131,26 +131,26 @@ public class DocumentImportBuilder : IDocumentImportBuilder
         // ── บรรทัด ──
         var vatDefault = await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct) ? 7m : 0m;
         var chart = await _accounts.LoadChartAsync(companyId, ct);
-        var acctQueries = rows.Where(r => Text(r, "AccountCode") != null)
-            .Select(r => new ImportAccountQuery(r.RowId.ToString("N"), Text(r, "AccountCode"), null)).ToList();
+        var acctQueries = rows.Where(r => Text(r, "LineAccountCode") != null)
+            .Select(r => new ImportAccountQuery(r.RowId.ToString("N"), Text(r, "LineAccountCode"), null)).ToList();
         var acctMatches = (await _accounts.ResolveAsync(companyId, acctQueries, new ImportResolveOptions(AllowAi: true), ct, chart))
             .ToDictionary(m => m.Key);
 
         var lines = new List<DocumentLineRequest>(rows.Count);
         foreach (var r in rows)
         {
-            var desc = Text(r, "Description");
-            var qty = Number(r, "Quantity") ?? 1m;
-            var price = Amount(r, "UnitPrice");
+            var desc = Text(r, "LineDescription");
+            var qty = Number(r, "LineQuantity") ?? 1m;
+            var price = Amount(r, "LineUnitPrice");
             if (desc == null || price == null)
             {
-                issues.Add(Error(desc == null ? "Description" : "UnitPrice", "line-incomplete",
+                issues.Add(Error(desc == null ? "LineDescription" : "LineUnitPrice", "line-incomplete",
                     $"แถว {r.RowNo}: ต้องมีรายการและราคาต่อหน่วย (§86/4 — ทุกบรรทัดต้องมีรายการ)", null, "RD-86/4", "ป.รัษฎากร ม.86/4"));
                 continue;
             }
             if (qty <= 0 || price < 0)
             {
-                issues.Add(Error(qty <= 0 ? "Quantity" : "UnitPrice", "line-negative",
+                issues.Add(Error(qty <= 0 ? "LineQuantity" : "LineUnitPrice", "line-negative",
                     $"แถว {r.RowNo}: จำนวนต้องมากกว่า 0 และราคาไม่ติดลบ — ยอดลด/คืนให้ออกใบลดหนี้อ้างใบเดิม", null, "RD-86/4", "ป.รัษฎากร ม.86/4"));
                 continue;
             }
@@ -161,8 +161,8 @@ public class DocumentImportBuilder : IDocumentImportBuilder
             if (acctMatches.TryGetValue(r.RowId.ToString("N"), out var am))
             {
                 if (am.AccountId.HasValue) accountId = am.AccountId;
-                else issues.Add(Warning("AccountCode", "line-account-unresolved",
-                    $"แถว {r.RowNo}: ไม่พบผังบัญชี \"{Text(r, "AccountCode")}\" ที่ตรงแน่นอน — ระบบใช้ผังตั้งต้นตอนอนุมัติ (แก้ได้ในเอกสารร่าง)",
+                else issues.Add(Warning("LineAccountCode", "line-account-unresolved",
+                    $"แถว {r.RowNo}: ไม่พบผังบัญชี \"{Text(r, "LineAccountCode")}\" ที่ตรงแน่นอน — ระบบใช้ผังตั้งต้นตอนอนุมัติ (แก้ได้ในเอกสารร่าง)",
                     am.Candidates.FirstOrDefault()?.Label.Split(' ')[0]));
             }
             else if (DocumentImportTypes.IsPurchase(type.Value) && _ocrAi != null)
@@ -170,7 +170,7 @@ public class DocumentImportBuilder : IDocumentImportBuilder
                 // ฝั่งซื้อไม่มีผัง ⇒ ทางเดียวกับ OCR (นักเรียนก่อน · AI เมื่อไม่มั่นใจ · FeedbackId ไปปิดลูปที่ DocumentService)
                 var gl = await _ocrAi.SuggestGlAccountAsync(companyId, r.RowId, contactName, contactTax, null, desc,
                     Math.Round(qty * price.Value, 2, MidpointRounding.AwayFromZero), "THB", null, 0m,
-                    new Accounting.Services.Ai.GlLineContext(Text(r, "Unit"), qty, price, date, "Buyer"), ct);
+                    new Accounting.Services.Ai.GlLineContext(Text(r, "LineUnit"), qty, price, date, "Buyer"), ct);
                 var hit = gl.HasModelAnswer
                     ? chart.Accounts.FirstOrDefault(a => a.IsPostable && a.Code == gl.Answer!.Trim())
                     : null;
@@ -180,11 +180,11 @@ public class DocumentImportBuilder : IDocumentImportBuilder
                     glFeedback = gl.FeedbackId;
                 }
                 else
-                    issues.Add(Info("AccountCode", "line-account-default",
+                    issues.Add(Info("LineAccountCode", "line-account-default",
                         $"แถว {r.RowNo}: ไม่ได้ระบุผังบัญชี — ระบบใช้ผังตั้งต้นตอนอนุมัติ (แก้ได้ในเอกสารร่าง)"));
             }
 
-            var productCode = Text(r, "ProductCode");
+            var productCode = Text(r, "LineProductCode");
             if (productCode != null)
             {
                 var probe = new ImportTargetRow(r.RowId, r.RowNo,
@@ -197,7 +197,7 @@ public class DocumentImportBuilder : IDocumentImportBuilder
                         .Select(p => p.Code).FirstOrDefaultAsync(ct) ?? productCode;
                 else
                 {
-                    issues.Add(Warning("ProductCode", "line-product-unresolved",
+                    issues.Add(Warning("LineProductCode", "line-product-unresolved",
                         $"แถว {r.RowNo}: ไม่พบสินค้ารหัส \"{productCode}\" — บันทึกเป็นบรรทัดข้อความ (ไม่ตัดสต็อก)"));
                     productCode = null;
                 }
@@ -206,11 +206,11 @@ public class DocumentImportBuilder : IDocumentImportBuilder
             lines.Add(new DocumentLineRequest(
                 Description: desc,
                 Quantity: qty,
-                Unit: Text(r, "Unit"),
+                Unit: Text(r, "LineUnit"),
                 UnitPrice: price.Value,
-                DiscountPercent: Number(r, "DiscountPercent") ?? 0m,
-                VatRate: Number(r, "VatRate") ?? vatDefault,
-                WithholdingTaxRate: Number(r, "WithholdingTaxRate") ?? 0m,
+                DiscountPercent: Number(r, "LineDiscountPercent") ?? 0m,
+                VatRate: Number(r, "LineVatRate") ?? vatDefault,
+                WithholdingTaxRate: Number(r, "LineWhtRate") ?? 0m,
                 AccountId: accountId,
                 AccountCode: accountCode,
                 GlAccountAiFeedbackId: glFeedback,
@@ -232,7 +232,10 @@ public class DocumentImportBuilder : IDocumentImportBuilder
             ContactId: contactId!.Value,
             // เลขเดิมจากไฟล์ = อ้างอิง (เลขของเราออกตอนอนุมัติ — §86/4 gap-free) · คำตัดสินข้อ 151 (1)
             Reference: original,
-            Notes: Text(head, "Notes"),
+            // อ้างอิงเพิ่มเติมของไฟล์ (ไม่ใช่เลขเดิม) ต่อท้ายหมายเหตุ — ช่อง Reference ของเอกสารเก็บเลขเดิมไว้แล้ว (ไม่ทิ้งข้อมูลเงียบ)
+            Notes: Text(head, "Reference") is { } extraRef && extraRef != original
+                ? string.Join(" · ", new[] { Text(head, "Notes"), $"อ้างอิงเพิ่มเติม: {extraRef}" }.Where(x => x != null))
+                : Text(head, "Notes"),
             Lines: lines,
             SupplierInvoiceNumber: isPurchase && type.Value != DocumentType.PurchaseOrder && type.Value != DocumentType.PurchaseRequisition
                 ? original : null,

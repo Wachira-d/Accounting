@@ -48,20 +48,8 @@ public class PaymentImportTarget : IImportTarget
         ["อื่น ๆ"] = PaymentMethod.Other, ["อื่นๆ"] = PaymentMethod.Other,
     };
 
-    public IReadOnlyList<ImportFieldDto> Schema { get; } = new List<ImportFieldDto>
-    {
-        new("DocumentNumber", "เลขที่เอกสารที่ตัดชำระ", ImportFieldType.Reference, true,
-            "เลขเอกสารในระบบ หรือเลขเดิมที่นำเข้าไว้เป็นอ้างอิง (เอกสารต้องอนุมัติแล้ว)", null, "INV2567-0001"),
-        new("PaymentDate", "วันที่ชำระ", ImportFieldType.Date, true, null, null, "31/01/2567"),
-        new("Amount", "จำนวนเงินที่รับ/จ่าย", ImportFieldType.Amount, true, "เงินที่เข้า/ออกจริง (หลังหัก ณ ที่จ่าย)", null, "9,700.00"),
-        new("PaymentMethod", "วิธีชำระ", ImportFieldType.Enum, false, "เว้นว่าง = โอนเงิน",
-            Enum.GetNames<PaymentMethod>().ToList(), "โอน"),
-        new("WithholdingTaxAmount", "ภาษีหัก ณ ที่จ่าย", ImportFieldType.Amount, false, "เว้นว่าง = ระบบคิดตามสัดส่วนของเอกสาร"),
-        new("FeeAmount", "ค่าธรรมเนียมที่ถูกหัก", ImportFieldType.Amount, false),
-        new("Reference", "เลขอ้างอิงการโอน/เช็ค", ImportFieldType.Reference, false),
-        new("BankAccount", "บัญชีธนาคาร (ข้อความ)", ImportFieldType.Text, false, null, null, null, 200),
-        new("Notes", "หมายเหตุ", ImportFieldType.Text, false, null, null, null, 1000),
-    };
+    /// <summary>field ปลายทาง — ตัวเดียวที่ <see cref="ImportSchemas"/> (ทีม A · owner เดียวของแคตตาล็อก) · ทีม D ปรับรายการของชนิดนี้ที่นั่น</summary>
+    public IReadOnlyList<ImportFieldDto> Schema => ImportSchemas.For(Key)!;
 
     private sealed record DocRef(Guid Id, string DocumentNumber, string? Reference, DocumentStatus Status, decimal BalanceDue);
 

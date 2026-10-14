@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **514 ไฟล์ · 5,124 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **516 ไฟล์ · 5,155 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6061,7 +6061,7 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | --- | --- | --- | --- |
 | ETLD-01 | จับคู่รหัสบัญชีเดิม → ผังบริษัท (`ImportAccountCodeResolver`) | รหัสตรง (ตัดขีด/เลขไทย) = เลือกให้ 1.0 · ความจำบริษัททางเดียว = เลือกให้ · หลายทาง = แนะนำ · ชื่อเหมือน ≥ 0.90 = เลือกให้ · ชื่อแค่คล้าย = แนะนำ **ไม่เลือก** · ไม่มีอะไรตรง = แนะนำในหมวดเลขหน้าเท่านั้น · รหัสตรงบัญชีคุม = เสนอบัญชีย่อย | ✅ `ImportAccountingHelpersTests` |
 | ETLD-02 | วางงบทดลองจาก Excel/โปรแกรมเดิม (`TrialBalancePasteParser`) | แท็บ · ขีดตั้ง · CSV มีคำพูด · CSV ไม่มีคำพูดแต่ "1,234.50" (เดิม parseFloat ได้ 1) · วงเล็บ/ลบ = เครดิต · เลขไทย · หัวตาราง/ยอดรวมข้ามพร้อมเหตุผล · "รวมมิตร" ไม่ถูกตัด · ยอดอ่านไม่ได้ = รายงานบรรทัด | ✅ `ImportAccountingHelpersTests` |
-| ETLD-03 | กติกางบทดลองยกมา (`OpeningTrialBalanceRules`) — คำตัดสินข้อ 150 | ไม่ลงตัว/ยังไม่จับคู่/งวดปิด = บล็อก + ทางไปต่อ · หลายรหัสรวมบัญชีเดียว/ทับยอดเดิม/หมวดไม่ตรง = **คำเตือนไม่บล็อก** แต่ต้องรับทราบ | ✅ `ImportAccountingHelpersTests` |
+| ETLD-03 | กติกางบทดลองยกมา (`OpeningTrialBalanceRules`) — คำตัดสินข้อ 150 | ไม่ลงตัว/ยังไม่จับคู่/งวดปิด/บัญชีคุม = บล็อก + ทางไปต่อ · หลายรหัสรวมบัญชีเดียว/ทับยอดเดิม/หมวดไม่ตรง = **คำเตือนไม่บล็อก** แต่ต้องรับทราบ | ✅ `ImportAccountingHelpersTests` |
 | ETLD-04 | ศูนย์นำเข้า: งบทดลองลงตัว | ระบบจับคู่บัญชีให้ (ชื่อตรงผัง) · ลงผ่าน `MigrationWizardService` · OpeningBalances ครบ 4 บัญชี Dr = Cr | ✅ `ImportAccountingTargetsDbTests` (Db) |
 | ETLD-05 | ศูนย์นำเข้า: งบทดลองไม่ลงตัว → ทางไปต่อ | ทุกแถวมี `tb-unbalanced` + "บัญชีผลต่างยกมา" · ลงไม่ได้ (ไม่มียอดยกมาถูกเขียน) · เลือก `differenceAccountId` แล้ว = คำเตือน `tb-difference-posted` → รับทราบแล้วลงได้ + บรรทัดผลต่าง Cr 1,000 | ✅ `ImportAccountingTargetsDbTests` (Db) |
 | ETLD-06 | wizard: คำเตือนรับทราบ / ไม่รับทราบ / ย้อน | วาง (หัวตาราง + ยอดรวม) อ่านได้ 2 บรรทัด + เลือกบัญชีให้ · ตรวจผ่าน (คำเตือนไม่บล็อก) · ไม่รับทราบ = `MIGRATION-TB-ACK` · รับทราบแล้วลง + audit `MIGRATION-TB-COMMIT` · **ย้อนคืนยอดเดิม 999 + หมายเหตุเดิม** (เดิมคืนไม่ได้) · แถวที่ชุดสร้างถูกลบ | ✅ `ImportAccountingTargetsDbTests` (Db) |
@@ -6074,5 +6074,5 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | ETLD-13 | Express ผู้ติดต่อ TIS-620 | encoding = windows-874 · ชื่อไทยถูก · ชนิดจากเลขภาษี (นิติบุคคล/บุคคลธรรมดา — เดิมฮาร์ดโค้ดนิติบุคคล) · หัว "ลูกค้า" = ลูกค้าเท่านั้น (เดิม IsCustomer=IsSupplier=true) · เลขผิด checksum = ปฏิเสธพร้อมเหตุผล | ✅ `ImportAccountingTargetsDbTests` (Db) |
 | ETLD-14 | กระทบยอดหลังย้ายระบบ (`OpeningBalanceReconciliation`) | ลูกหนี้ 40,000 vs บัญชี 45,000 = ไม่ลงตัว + Hint · สต็อก 100×120 = 12,000 ลงตัว · ราคาทุน 36,000 ลงตัว · ค่าเสื่อมสะสม 10,000 (กลับเครื่องหมาย) ลงตัว | ✅ `ImportAccountingTargetsDbTests` (Db) |
 | ETLD-15 | DI ทีม D + ไม่ชนชนิด | `ImportAccountMatcher` scoped · target 4 ตัวถูก scan · คีย์ normalize ไม่ซ้ำ | ✅ `ImportAccountingHelpersTests` |
-| ETLD-16 | AI `ImportAccountMap` (58) | ช่องเดียว `ImportAccountMatcher.AskAccountMapAiAsync` · ด่าน: รหัสต้องเป็นบัญชีลงยอดได้ของบริษัท + ≥ 0.70 · ปิดลูปที่ `ApplyMappingsAsync` | ⏳ ต่อสาย `SuggestAccountMapAsync` เมื่อรวมทีม A (ตอนนี้ = kill-switch: local ครบ) |
+| ETLD-16 | AI `ImportAccountMap` (58) | ช่องเดียว `ImportAccountMatcher.AskAccountMapAiAsync` → `IImportAiAugmenter.SuggestAccountMapAsync` (ทีม A · allowedCodes = รหัสบัญชีลงยอดได้ของบริษัท) · เฉพาะแถวที่ local ไม่ถึงเกณฑ์ (≤ 50 แถว/รอบ) · local สะท้อนกลับไม่นับ · AI = "Ai" 🤖 · นักเรียน = "Learned" 🧠 · ด่าน ≥ 0.70 + บัญชีลงยอดได้ · ปิดลูป `RecordPickChoiceAsync` ที่ `ApplyMappingsAsync` | ✅ ต่อสาย (ล็อก `required_call_site_check`) · kill-switch = ETLD-04/06 (ไม่มี AI) · ⏳ เทสต์ที่มี AI ตอบจริง |
 
