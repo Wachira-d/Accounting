@@ -11,7 +11,8 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="tabs" style="margin-bottom:20px">
       <button class="tab active" onclick="Page.switchTab('import')">นำเข้าตามเทมเพลต</button>
-      <button class="tab" onclick="Page.switchTab('smart')">🔄 จับคู่คอลัมน์ (ไฟล์จากระบบอื่น)</button>
+      <!-- รอบ 205 ทีม E: จับคู่คอลัมน์/ไฟล์จากระบบอื่น ย้ายไปศูนย์นำเข้าข้อมูล (เซิร์ฟเวอร์อ่านไฟล์ · ตรวจทีละแถว · ย้อนได้) — คง .tab ไว้ให้ลำดับ switchTab เดิมไม่เลื่อน -->
+      <a class="tab" href="/pages/import-hub.html">📥 ศูนย์นำเข้าข้อมูล (ไฟล์จากระบบอื่น) →</a>
       <button class="tab" onclick="Page.switchTab('export')">ส่งออกข้อมูล</button>
     </div>
 
@@ -44,9 +45,9 @@
             💡 "ตรวจสอบข้อมูลซ้ำ" จะเทียบทุกแถวกับฐานข้อมูล หาแถวที่ key (TaxId/Code/AccountCode) ตรงกันแต่ข้อมูลต่าง — เลือกได้ว่าจะ Skip/Merge/Overwrite ก่อนนำเข้า
           </div>
           <div style="margin-top:12px;padding:10px 12px;background:#fef3c7;border-radius:8px;font-size:12px;color:#92400e">
-            ⚠️ ถ้าคอลัมน์ในไฟล์ของคุณชื่อไม่ตรงกับเทมเพลต (เช่น export มาจาก Express/PEAK/FlowAccount) ให้
-            <a href="#" onclick="Page.switchTab('smart');return false;" style="color:#92400e;text-decoration:underline;font-weight:600">ไปที่ "จับคู่คอลัมน์"</a>
-            แทน — ระบบจะให้คุณเลือกได้ว่าคอลัมน์ในไฟล์ตรงกับฟิลด์ไหนในระบบ
+            ⚠️ ถ้าคอลัมน์ในไฟล์ของคุณชื่อไม่ตรงกับเทมเพลต (เช่น export มาจาก Express/PEAK/FlowAccount) ให้ใช้
+            <a href="/pages/import-hub.html" style="color:#92400e;text-decoration:underline;font-weight:600">ศูนย์นำเข้าข้อมูล</a>
+            แทน — ระบบอ่านไฟล์ จับคู่คอลัมน์ แปลงค่า และตรวจทีละแถวให้ คุณแค่ตรวจทานแล้วยืนยัน
           </div>
         </div>
 
@@ -167,7 +168,11 @@ const Page = {
     const params = new URLSearchParams(location.search);
     const entity = params.get('entity');
     const mode = params.get('mode'); // "smart" | "import"
-    if (mode === 'smart') this.switchTab('smart');
+    // รอบ 205 ทีม E: ลิงก์เก่า ?mode=smart (เช่นจากหน้าอื่นที่ยังไม่แก้) ⇒ ศูนย์นำเข้าข้อมูล ชนิดเดียวกัน
+    if (mode === 'smart') {
+      window.location.replace('/pages/import-hub.html' + (entity ? '?entity=' + encodeURIComponent(entity) : ''));
+      return;
+    }
     if (entity) {
       const sel = document.getElementById(mode === 'smart' ? 'smartEntity' : 'importEntity');
       if (sel) sel.value = entity;
@@ -572,7 +577,7 @@ const Page = {
       document.getElementById('smartResultCard').style.display = '';
       document.getElementById('smartResult').innerHTML = `
         <div style="margin-bottom:12px"><span class="badge badge-success">บันทึกการจับคู่สำเร็จ</span></div>
-        <div class="text-sm" style="margin-bottom:12px">🤖 AI กำลังตรวจคุณภาพข้อมูล (ปกติใช้เวลา 10-30 วินาที)...</div>`;
+        <div class="text-sm" style="margin-bottom:12px">⏳ กำลังตรวจคุณภาพข้อมูล (ถ้าเปิดใช้ AI อาจใช้เวลา 10-30 วินาที)...</div>`;
       // Chain: mapping saved → AI review → exact-key conflict preview → confirm.
       // AI review is best-effort; even if it fails the flow continues into
       // the existing conflict step.
@@ -597,14 +602,18 @@ const Page = {
       // AI failure is silent — show a one-liner so the operator knows
       // the AI step ran but couldn't help.
       const result = document.getElementById('smartResult');
-      result.innerHTML += `<div class="text-sm text-gray-500" style="margin-top:8px">🤖 AI ตรวจสอบไม่สำเร็จ (${Layout.esc(e.message)}) — ดำเนินการต่อด้วย heuristic</div>`;
+      result.innerHTML += `<div class="text-sm text-gray-500" style="margin-top:8px">ตรวจคุณภาพข้อมูลไม่สำเร็จ (${Layout.esc(e.message)}) — ไปต่อที่ขั้นตรวจข้อมูลซ้ำได้</div>`;
     }
   },
 
   _renderAiReview(d) {
     const result = document.getElementById('smartResult');
-    if (!d.usedAi) {
-      result.innerHTML += `<div class="alert alert-info" style="margin-top:8px">🤖 AI ปิดอยู่หรือไม่พร้อมใช้งาน — ใช้ heuristic อย่างเดียว</div>`;
+    // รอบ 205 ทีม E (IMPORT_ETL_REVIEW §1 ข้อ 2 · กฎเหล็ก #1 kill-switch): เดิม usedAi=false ⇒ ทิ้งผลตรวจของระบบ (heuristic) ทั้งก้อน
+    // ทั้งที่เซิร์ฟเวอร์ส่งมา ⇒ ปิด AI แล้วผู้ใช้ไม่เห็นคำแนะนำอะไรเลย · ตอนนี้แสดงผลเสมอ ป้ายตามจริง: "🤖 AI ตรวจ" เฉพาะ usedAi · ไม่งั้น "⚙️ ระบบตรวจ"
+    const count = ['normalizations', 'fuzzyDuplicates', 'qualityFlags', 'fieldValidations', 'batchPatterns']
+      .reduce((n, k) => n + ((d[k] || []).length), 0);
+    if (!d.usedAi && count === 0) {
+      result.innerHTML += `<div class="alert alert-info" style="margin-top:8px">⚙️ ระบบตรวจตามกติกาแล้ว ไม่มีคำแนะนำเพิ่ม (AI ไม่ได้ถูกใช้ในรอบนี้)</div>`;
       return;
     }
     const score = d.overallQualityScore != null ? Math.round(d.overallQualityScore * 100) : null;
@@ -642,7 +651,7 @@ const Page = {
     result.innerHTML += `
       <div class="card" style="margin-top:12px;padding:16px;border-left:4px solid ${scoreColor}">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <h4 style="margin:0">🤖 AI Review</h4>
+          <h4 style="margin:0">${d.usedAi ? '🤖 AI ตรวจคุณภาพข้อมูล' : '⚙️ ระบบตรวจคุณภาพข้อมูล (กติกา · ไม่ได้ใช้ AI)'}</h4>
           ${score != null ? `<span class="badge" style="background:${scoreColor};color:#fff">คุณภาพ ${score}/100</span>` : ''}
         </div>
         ${d.summary ? `<p class="text-sm" style="margin:0 0 12px 0">${Layout.esc(d.summary)}</p>` : ''}
@@ -659,10 +668,10 @@ const Page = {
           `<ul style="margin:0;padding-left:18px">${flagRows}</ul>`)}
         ${sectionRow('🚫', 'ฟิลด์ที่ format ไม่ถูก', (d.fieldValidations || []).length,
           `<ul style="margin:0;padding-left:18px">${valRows}</ul>`)}
-        ${sectionRow('🔍', 'รูปแบบที่ AI สังเกตเห็นทั้งไฟล์', (d.batchPatterns || []).length,
+        ${sectionRow('🔍', d.usedAi ? 'รูปแบบที่ AI สังเกตเห็นทั้งไฟล์' : 'รูปแบบที่ระบบสังเกตเห็นทั้งไฟล์', (d.batchPatterns || []).length,
           `<ul style="margin:0;padding-left:18px">${patternsHtml}</ul>`)}
         <div class="text-sm text-gray-500" style="margin-top:12px">
-          💡 AI Review เป็นแค่คำแนะนำ — ดูแล้วตัดสินใจเอง คุณยังต้องกดยืนยันก่อนข้อมูลจะเข้าระบบ
+          💡 ผลตรวจนี้เป็นแค่คำแนะนำ — ดูแล้วตัดสินใจเอง คุณยังต้องกดยืนยันก่อนข้อมูลจะเข้าระบบ
         </div>
       </div>`;
   },

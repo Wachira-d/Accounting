@@ -7575,6 +7575,49 @@ RULES += [
               "Rollback", "Reconciliation")
 ]
 
+# รอบ 205 ทีม E — ศูนย์นำเข้าข้อมูล (IMPORT_ETL_REVIEW §2.7): service ทีม A/B ไม่ตรวจสิทธิ์โดยสัญญา ⇒ ทุก action ต้องเรียกด่านก่อน service และใช้ผล
+_HUB = "Controllers/ImportHubController.cs"
+_HUB_WHY = "รอบ 205 ทีม E: ด่านสิทธิ์นำเข้าของชนิดของ batch (ForImport) ต้องมาก่อน service และใช้ผล (ไม่ใช่เรียกแล้วทิ้ง) — batch บริษัทอื่น = 404"
+_HUB_USE = r"if\s*\(\s*deny\s*!=\s*null\s*\)\s*return\s+deny\s*;"
+RULES += [
+    dict(file=_HUB, method=m, must=["DenyBatchAsync(companyId, batchId, ct)"], must_re=[_HUB_USE],
+         before=[("DenyBatchAsync(", sink)], why=_HUB_WHY)
+    for m, sink in [
+        ("GetBatch", "_pipeline.GetAsync("), ("GetRows", "_pipeline.GetRowsAsync("), ("Analyze", "_pipeline.AnalyzeAsync("),
+        ("Remap", "_pipeline.RemapAsync("), ("EditRow", "_pipeline.EditRowAsync("), ("Bulk", "_pipeline.BulkActionAsync("),
+        ("Commit", "_pipeline.CommitAsync("), ("UndoPreview", "_pipeline.PreviewUndoAsync("), ("Undo", "_pipeline.UndoAsync("),
+        ("Cancel", "_pipeline.CancelAsync("), ("ErrorsCsv", "_pipeline.ExportErrorRowsCsvAsync("), ("SourceFile", "_pipeline.GetSourceFileAsync("),
+    ]
+] + [
+    dict(file=_HUB, method="DenyBatchAsync", must=["BatchEntityTypeAsync(companyId, batchId, ct)", "BatchNotFound()", "DenyAsync(companyId, entityType)"],
+         why=_HUB_WHY),
+    dict(file=_HUB, method="BatchEntityTypeAsync", must_lit=["s.CompanyId == companyId"], why="tenant isolation: batch ของบริษัทอื่น = ไม่พบ (404)"),
+    dict(file=_HUB, method="DenyAsync", must=["ImportExportPermissionScope.ForImport(entityType)", "CanAsync(companyId, key, cache)",
+                                              "ImportExportPermissionScope.DeniedMessage("],
+         why="ตารางชนิด→คีย์ตัวเดียว (ห้ามคีย์คงที่ตัวเดียวคลุมทุกชนิด) · ปฏิเสธพร้อมทางไปต่อ"),
+    dict(file=_HUB, method="Analyze", must=["DenyAsync(companyId, req.EntityType)"], must_re=[r"if\s*\(\s*denyNew\s*!=\s*null\s*\)\s*return\s+denyNew\s*;"],
+         before=[("DenyAsync(companyId, req.EntityType)", "_pipeline.AnalyzeAsync(")],
+         why="เปลี่ยนชนิดข้อมูลของ batch ต้องผ่านด่านของชนิดใหม่ด้วย (กันเปลี่ยนเป็นพนักงานเพื่อเลี่ยงสิทธิ์ HR)"),
+    dict(file=_HUB, method="CreateBatch", must=["DenyAsync(companyId, chosen)", "CanImportAnythingAsync(companyId)",
+                                                "ImportExportPermissionScope.ForImport(detected)", "_pipeline.CancelAsync("],
+         before=[("DenyAsync(companyId, chosen)", "_pipeline.CreateAsync("), ("CanImportAnythingAsync(companyId)", "_pipeline.CreateAsync("),
+                 ("_pipeline.CreateAsync(", "ImportExportPermissionScope.ForImport(detected)")],
+         why="ระบุชนิด = ด่านก่อนอ่านไฟล์ · ให้ระบบเดา = ด่านของชนิดที่เดาได้ (ไม่ผ่าน ⇒ ยกเลิกชุด + 403)"),
+    dict(file=_HUB, method="UpdateTemplate", must=["DenyAsync(companyId, existing.EntityType)"],
+         before=[("DenyAsync(companyId, existing.EntityType)", "_templates.UpdateAsync(")], why=_HUB_WHY),
+    dict(file=_HUB, method="DeleteTemplate", must=["DenyAsync(companyId, existing.EntityType)"],
+         before=[("DenyAsync(companyId, existing.EntityType)", "_templates.DeleteAsync(")], why=_HUB_WHY),
+    dict(file=_HUB, method="Entities", must=["ImportExportPermissionScope.ForImport(e.EntityType)", "UserCanImport = await CanAsync("],
+         why="ปุ่มล็อก/เปิดบนหน้าเว็บใช้ด่านเดียวกับ action (ไม่เชื่อค่าที่ service ส่งมา) ⇒ ปุ่มเปิดแต่กดแล้ว 403 เกิดไม่ได้"),
+]
+_IC = "Controllers/ImportConflictController.cs"
+RULES += [
+    dict(file=_IC, method=m, must=["DenyAsync(companyId,"], must_re=[_HUB_USE], before=[("DenyAsync(companyId,", sink)],
+         why="รอบ 205 ทีม E: แถว staged มีข้อมูลจากไฟล์ (PII ได้) · ผลตัดสินเขียนฐาน ⇒ ด่านนำเข้าของชนิดของแถวก่อนอ่าน/เขียน")
+    for m, sink in [("GetBySession", "Ok("), ("GetBySessionRef", "Ok("), ("Resolve", "SaveChangesAsync("),
+                    ("ResolveAll", "SaveChangesAsync("), ("Detect", "_detector.DetectBatchAsync(")]
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

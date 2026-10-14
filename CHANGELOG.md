@@ -4863,4 +4863,13 @@ DRAFT · เลขเดิม → Reference · ยอดโดย DocumentServi
 (ลด baseline 6 แถว) · คอลัมน์คำแนะนำบน `AccountMappings` (ADD COLUMN IF NOT EXISTS) · โปรแกรมอื่น: `ImportTabularReader` (TIS-620/xlsx) · เลือก adapter ด้วยคะแนนหัวตาราง
 (express_products → สินค้า) · ชนิดผู้ติดต่อ/สาขา/เลขภาษีผ่านตัวตัดสินกลาง · ลูกค้า/ผู้ขายจากหัวตาราง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 68fb68eb_
 (express_products → สินค้า) · ชนิดผู้ติดต่อ/สาขา/เลขภาษีผ่านตัวตัดสินกลาง · ลูกค้า/ผู้ขายจากหัวตาราง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 68fb68eb_
-
+_รอบ 205 ทีม E — ศูนย์นำเข้าข้อมูล: ทางเข้า HTTP + หน้า + ด่าน (`erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.7/§2.8):
+`Controllers/ImportHubController.cs` (`api/companies/{cid}/import` — ทุก endpoint ของ §2.7 + `GET migration/reconciliation`) · ด่าน `DenyBatchAsync` หาชุดด้วย
+CompanyId ก่อน (บริษัทอื่น = 404 ไม่แตะ service) แล้ว `ImportExportPermissionScope.ForImport(ชนิดของชุด)` · เปลี่ยนชนิด/ให้ระบบเดาชนิดต้องผ่านด่านของชนิดใหม่
+(เดาได้ชนิดที่ไม่มีสิทธิ์ ⇒ ยกเลิกชุด + 403) · ประวัติ/แม่แบบรวมทุกชนิดซ่อนชนิดที่ไม่มีสิทธิ์แล้วบอก `HiddenCount` · สัญญาเพิ่มท้าย record: `ImportBatchListDto.HiddenCount` ·
+`ImportCreateBatchRequest.Options` (เช่น bankAccountId จากหน้าธนาคาร) · หน้า `pages/import-hub.html` 4 ขั้น (วางไฟล์ → ตรวจทาน server-paged 100 แถว สีเซลล์/ป้ายแหล่ง
+จาก DTO → ยืนยัน (โหมด · รับทราบคำเตือน · จำรูปแบบไฟล์) → ผล/ย้อน/ดาวน์โหลดแถวผิด) + ประวัติ/แม่แบบ + ลำดับย้ายระบบ · `API.download` (ไฟล์ที่ต้องใช้ JWT) ·
+เมนู "ศูนย์นำเข้าข้อมูล" · modal นำเข้า 415 ของ contacts/products/journals (FormData → `[FromBody]`) + หน้าวาง CSV สินทรัพย์ → ลิงก์ hub · import-export:
+แท็บไฟล์ระบบอื่น → hub + ผลตรวจกติกาแสดงเมื่อ AI ปิด (เดิมทิ้งทั้งก้อน) · `ImportConflictController` มีด่าน + ถอด 3 แถวจาก baseline + เข้า WATCHED ·
+checker ใหม่ `tools/formdata_json_endpoint_check.py` · เทสต์ `Db/ImportHubControllerGateDbTests` (403 ทุก endpoint · 404 ข้ามบริษัท · ทิศตรงข้าม) —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_

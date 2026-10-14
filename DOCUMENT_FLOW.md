@@ -1999,6 +1999,18 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 **โปรแกรมอื่น** (`migrate-competitor.html` → `CompetitorImportController`): ไฟล์อ่านด้วย `ImportTabularReader` (TIS-620 · xlsx) · เลือก adapter ด้วย**คะแนนหัวตาราง**
 (`CompetitorHeaderScore` — ไม่ใช่ชื่อไฟล์: `express_products.csv` ไปสินค้า) · ผู้ติดต่อ: ชนิด+สาขาผ่าน `ContactTypeResolver.ResolveWithBranch` · เลขภาษีผ่าน
 `ThaiTaxIdValidator` (ผิด = ปฏิเสธแถวพร้อมเหตุผล) · ลูกค้า/ผู้ขายจากคอลัมน์/หัวตาราง (ไม่รู้ = ทั้งสอง + คำเตือน — เดิมฮาร์ดโค้ด JuristicPerson + ทั้งสอง)
+### 2.11e ศูนย์นำเข้าข้อมูล — ทางเข้า HTTP + ด่าน (รอบ 205 ทีม E · IMPORT_ETL_REVIEW §2.7/§2.8)
+
+- **ทางเข้า**: `Controllers/ImportHubController.cs` (`api/companies/{cid}/import`) → `IImportPipelineService` (ทีม B) / `IImportMappingTemplateStore` (ทีม A) /
+  `IOpeningBalanceReconciliation` (ทีม D) · หน้า `pages/import-hub.html` (4 ขั้น: วางไฟล์ → ตรวจทาน → ยืนยัน → ผล · ประวัติ/แม่แบบ · ลำดับย้ายระบบ §2.10)
+- **ด่าน** (service ไม่ตรวจสิทธิ์โดยสัญญา): ทุก action ที่ระบุชุด = `DenyBatchAsync` — หา `SmartImportSessions` ด้วย `CompanyId` (ของบริษัทอื่น/ไม่มี ⇒ **404 ไม่แตะ service**)
+  แล้ว `ImportExportPermissionScope.ForImport(ชนิดของชุด)` (⇒ 403 + `requiredPermission` + ข้อความไทยบอกทางไปต่อ) · เปลี่ยนชนิดตอนวิเคราะห์ใหม่ = ด่านของชนิดใหม่ด้วย ·
+  อัปโหลดให้ระบบเดาชนิด = ต้องมีสิทธิ์นำเข้าอย่างน้อยหนึ่งชนิดก่อนอ่านไฟล์ แล้วด่านของชนิดที่เดาได้ (ไม่ผ่าน ⇒ ยกเลิกชุด + 403) · ประวัติ/แม่แบบรวมทุกชนิด
+  ซ่อนชนิดที่ไม่มีสิทธิ์แล้วบอกจำนวน (`HiddenCount`) · `GET entities` ไม่ปิดด้วยคีย์โดยตั้งใจ (บอกว่าล็อกเพราะอะไร — `UserCanImport` คิดด้วยด่านเดียวกัน) ·
+  ไฟล์ต้นทาง: คีย์ = `AttachmentPermissionScope.ImportBatchKey` (= `ForImport`) · รายงานกระทบยอด = `Journal.Manage`
+- **ตัวเลือกของชุดที่ไม่อยู่ในไฟล์** (เช่น `bankAccountId` จากหน้าบัญชีธนาคาร) = `ImportCreateBatchRequest.Options` (ฟิลด์ multipart `options` JSON) → pipeline เก็บ `OptionsJson` → `ImportTargetContext.BatchOptions`
+- modal นำเข้าเดิมของ contacts/products/journals (FormData → endpoint `[FromBody]` = 415) และหน้าวาง CSV ของสินทรัพย์ ลิงก์ไป `import-hub.html?entity=…` ·
+  `tools/formdata_json_endpoint_check.py` กันรูปแบบเดิม · `ImportConflictController` (legacy) มีด่าน `ForImport` ต่อชนิดของแถวแล้ว
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 

@@ -117,6 +117,13 @@ WATCHED = [
     # เพิ่มรอบ 201 ทีม PL (คำสั่ง main agent หลังทีม OC · A-OC2) — ลบ (soft) แถวสาขาที่ OCR สร้างแล้วไม่มีอะไรอ้าง เป็น endpoint เขียนตัวแรกของไฟล์นี้ ·
     # ใส่ตอนเขียว (ratchet) · ด่าน = HasPermissionAsync(Contact.Edit) ชุดเดียวกับลบผู้ติดต่อ · negative test ฉีด POST ไม่มีด่านลงไฟล์จริงใน ratchet_self_test
     "Accounting/Controllers/ContactHygieneController.cs",
+    # เพิ่มรอบ 205 ทีม E (IMPORT_ETL_REVIEW §2.7) — ศูนย์นำเข้าข้อมูล: อัปโหลด/แก้แถว/ลงข้อมูลจริง/ย้อน/แม่แบบ ของทุกชนิด (รวมทะเบียนพนักงาน ·
+    # งบทดลองยกมา) · service ทีม A/B ไม่ตรวจสิทธิ์โดยสัญญา ⇒ ด่านทั้งหมดอยู่ที่ DenyAsync (ImportExportPermissionScope.ForImport ของชนิดของ batch) ·
+    # ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet)
+    "Accounting/Controllers/ImportHubController.cs",
+    # เพิ่มรอบ 205 ทีม E (IMPORT_ETL_REVIEW §1 ข้อ 13) — เดิมอยู่ใน baseline 3 แถว (Detect · Resolve · ResolveAll ไม่มีด่าน) ·
+    # ปิดด่านแล้ว (DenyAsync ต่อชนิดของแถว) ⇒ ถอดจาก baseline + ย้ายเข้า WATCHED ตอนเขียว
+    "Accounting/Controllers/ImportConflictController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -172,6 +179,9 @@ GATE_MARKERS = (
     "ScanGateAsync(",
     "DocGateAsync(",
     "DenyScanSourceAsync(",
+    # รอบ 205 ทีม E — ด่านของ action ที่ระบุ batch ใน ImportHubController: หา batch ด้วย CompanyId (ไม่พบ = 404) แล้วเรียก DenyAsync ของชนิดข้อมูล
+    # ของ batch (ImportExportPermissionScope.ForImport) · เทสต์ 403/404 ต่อ endpoint อยู่ใน Accounting.Tests/Db/ImportHubControllerGateDbTests
+    "DenyBatchAsync(",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก

@@ -16,7 +16,7 @@
       </div>
       <div class="flex gap-2">
         <button class="btn btn-secondary" onclick="Page.showReport()">รายงาน</button>
-        <button class="btn btn-secondary" onclick="Page.openImport()">นำเข้า CSV</button>
+        <a class="btn btn-secondary" href="/pages/import-hub.html?entity=fixed-assets" title="นำเข้าทะเบียนสินทรัพย์จาก CSV/Excel ผ่านศูนย์นำเข้าข้อมูล — ตรวจก่อนลง · ที่ดินไม่คิดค่าเสื่อม">นำเข้า CSV/Excel</a>
         <button class="btn btn-secondary" onclick="Page.runDepreciation()"
                 data-tour-step="2"
                 data-tour-text="ขั้นที่ 2 — สิ้นเดือนกดคำนวณค่าเสื่อม ระบบสร้าง JE Dr ค่าเสื่อม / Cr ค่าเสื่อมสะสม ให้อัตโนมัติทุกตัว">คำนวณค่าเสื่อม</button>
@@ -270,22 +270,6 @@
           <div id="reportTable" style="max-height:400px;overflow-y:auto"></div>
         </div>
         <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('reportModal')" data-i18n="common.close">ปิด</button></div>
-      </div>
-    </div>
-
-    <!-- Import Modal -->
-    <div class="modal-overlay" id="importModal">
-      <div class="modal" style="max-width:600px">
-        <div class="modal-header"><h3 class="modal-title">นำเข้าสินทรัพย์จาก CSV</h3><button class="modal-close" onclick="Layout.closeModal('importModal')">&times;</button></div>
-        <div class="modal-body">
-          <p style="margin-bottom:8px;color:var(--gray-500)">รูปแบบ CSV: AssetCode, Name, Category, Location, SerialNumber, PurchaseDate(YYYY-MM-DD), PurchaseCost, SalvageValue, UsefulLifeMonths, DepreciationMethod</p>
-          <textarea class="form-input" id="importCsv" rows="8" placeholder="FA001,คอมพิวเตอร์,อุปกรณ์สำนักงาน,ชั้น 2,,2024-01-15,35000,1000,60,StraightLine"></textarea>
-          <div id="importResult" style="margin-top:12px"></div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('importModal')" data-i18n="common.close">ปิด</button>
-          <button class="btn btn-primary" onclick="Page.doImport()" data-i18n="common.import">นำเข้า</button>
-        </div>
       </div>
     </div>
   </div>
@@ -867,27 +851,7 @@
           Layout.openModal('reportModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      openImport() { document.getElementById('importCsv').value = ''; document.getElementById('importResult').innerHTML = ''; Layout.openModal('importModal'); },
-      async doImport() {
-        const api = Layout.api(); if (!api) return;
-        const csv = document.getElementById('importCsv').value.trim();
-        if (!csv) { Layout.toast('กรุณาใส่ข้อมูล CSV', 'error'); return; }
-        const rows = csv.split('\n').filter(r => r.trim()).map(line => {
-          const c = line.split(',').map(s => s.trim());
-          return { assetCode:c[0], name:c[1], category:c[2]||null, location:c[3]||null, serialNumber:c[4]||null,
-            purchaseDate:c[5], purchaseCost:parseFloat(c[6])||0, salvageValue:parseFloat(c[7])||0,
-            usefulLifeMonths:parseInt(c[8])||60, depreciationMethod:c[9]||'StraightLine' };
-        });
-        try {
-          const res = await api.importAssets(rows);
-          const d = res.data;
-          let html = `<div style="padding:8px;border-radius:6px;background:var(--gray-100)">สำเร็จ ${d.successCount}/${d.totalRows} รายการ`;
-          if (d.errors?.length) html += `<ul style="margin-top:8px;color:var(--danger)">${d.errors.map(e => `<li>${e}</li>`).join('')}</ul>`;
-          html += '</div>';
-          document.getElementById('importResult').innerHTML = html;
-          if (d.successCount > 0) this.load();
-        } catch (e) { Layout.toast(e.message, 'error'); }
-      }
+      // รอบ 205 ทีม E: นำเข้าแบบวาง CSV เดิม (split(',') + parseFloat — "1,234.50" แตก · ไม่มีขั้นตรวจ) ย้ายไปศูนย์นำเข้าข้อมูล (ปุ่มด้านบน)
     };
     Page.init();
     Layout.enableTour('fixed-assets');

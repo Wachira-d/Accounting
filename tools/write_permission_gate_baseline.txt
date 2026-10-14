@@ -293,9 +293,6 @@ Accounting/Controllers/HrAllocationController.cs	Sync	1
 Accounting/Controllers/HrAllocationController.cs	Update	1
 Accounting/Controllers/HrAllocationController.cs	UpdateCompDefaults	1
 Accounting/Controllers/HrAllocationController.cs	UpsertCompProfile	1
-Accounting/Controllers/ImportConflictController.cs	Detect	1
-Accounting/Controllers/ImportConflictController.cs	Resolve	1
-Accounting/Controllers/ImportConflictController.cs	ResolveAll	1
 Accounting/Controllers/InputVatScreenController.cs	Screen	1
 Accounting/Controllers/IntercompanyController.cs	Confirm	1
 Accounting/Controllers/IntercompanyController.cs	Create	1

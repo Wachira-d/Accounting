@@ -220,11 +220,15 @@ public sealed record ImportBatchDetailDto(
 
 public sealed record ImportBatchListQuery(int Page = 1, int PageSize = 20, string? EntityType = null, ImportSessionStatus? Status = null);
 
+/// <param name="HiddenCount">จำนวนชุดในหน้านี้ที่ถูกซ่อนเพราะผู้ใช้ไม่มีสิทธิ์นำเข้าชนิดนั้น (controller ตัดออก · รอบ 205 ทีม E — เพิ่มท้าย record) ·
+/// หน้าเว็บบอก "ซ่อน n ชุด" แทนการทำเหมือนไม่มี</param>
 public sealed record ImportBatchListDto(int Page, int PageSize, int Total, IReadOnlyList<ImportBatchSummaryDto> Items, int HiddenCount = 0);
 
 // ───────────────────────── คำขอ ─────────────────────────
 
 /// <summary><c>POST batches</c> (multipart: ไฟล์ + ฟิลด์เหล่านี้) — ทุกช่องเว้นได้: เซิร์ฟเวอร์เดาชนิดข้อมูล/โปรแกรมต้นทาง/ชีต/แถวหัวตารางเอง</summary>
+/// <param name="Options">ตัวเลือกของชุดที่ target ต้องใช้แต่ไม่อยู่ในไฟล์ (เช่น <c>bankAccountId</c> ของ statement ธนาคาร) — เพิ่มท้าย record รอบ 205 ทีม E ·
+/// pipeline เก็บลง <c>SmartImportSession.OptionsJson</c> แล้วส่งต่อเป็น <c>ImportTargetContext.BatchOptions</c> · multipart ส่งเป็นฟิลด์ <c>options</c> (JSON object)</param>
 public sealed record ImportCreateBatchRequest(
     string? EntityType = null,
     string? SheetName = null,

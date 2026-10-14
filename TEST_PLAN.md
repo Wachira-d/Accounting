@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **535 ไฟล์ · 5,312 `[Fact]` + 831 `[Theory]` (3,676 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **536 ไฟล์ · 5,321 `[Fact]` + 831 `[Theory]` (3,676 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -1353,6 +1353,15 @@
 | IMP-U-01 | U | parse ตัวเลขไทย "1,234.50", วันที่ พ.ศ./ค.ศ. ปนกัน | แปลงถูก; พ.ศ. detect จากปี > 2400 |
 | IMP-I-01 | I | import ไฟล์เดิมซ้ำ (opening balance) | idempotent — ไม่ duplicate (refresh in place) |
 | IMP-I-02 | I | ไฟล์ header สลับคอลัมน์/มีแถวขยะ | ColumnMatch (AI+local) จับได้ หรือ reject พร้อมบอกแถว |
+| IMP-E-01 | I | **รอบ 205 ทีม E** ศูนย์นำเข้าข้อมูล: ทุก endpoint ที่ระบุชุด (12) โดยไม่มีคีย์ของชนิดของชุด | 403 + ข้อความไทยบอกคีย์ที่ต้องขอ · service ไม่ถูกเรียกเลย ✅ `Db/ImportHubControllerGateDbTests` (job db-test) |
+| IMP-E-02 | I | ชุดของบริษัทอื่น / id ที่ไม่มีอยู่ แม้ถือทุกคีย์ | 404 ไม่แตะ service · **ทิศตรงข้าม**: ถือคีย์ ⇒ 200 และ service ได้ companyId/batchId ของตัวเอง ✅ `Db/ImportHubControllerGateDbTests` |
+| IMP-E-03 | I | วิเคราะห์ใหม่เปลี่ยนชนิดเป็นพนักงานโดยถือแค่ Contact.Edit · อัปโหลดให้ระบบเดาแล้วเดาได้พนักงาน | 403 (ไม่เรียก AnalyzeAsync) · ยกเลิกชุด + 403 ข้อความ "ทะเบียนพนักงาน … เลือกชนิดข้อมูลเอง" · **ทิศตรงข้าม**: ถือ HR.Admin ⇒ ผ่าน · เดาได้ผู้ติดต่อ ⇒ 200 + ตัวเลือกชุด (bankAccountId) ถึง service · ลำดับวันที่ไม่รู้จัก ⇒ 400 ✅ `Db/ImportHubControllerGateDbTests` |
+| IMP-E-04 | I | ประวัติ/แม่แบบรวมทุกชนิด ผู้ใช้ถือแค่ Contact.Edit | เห็นเฉพาะผู้ติดต่อ + `HiddenCount` บอกจำนวนที่ซ่อน · ระบุชนิดพนักงาน ⇒ 403 · แก้/ลบแม่แบบพนักงาน ⇒ 403 · กระทบยอด ⇒ ต้อง Journal.Manage ✅ `Db/ImportHubControllerGateDbTests` |
+| IMP-E-05 | I | แคตตาล็อกชนิดข้อมูล (`GET entities`) | `UserCanImport`/`PermissionKey` คิดด้วยด่านเดียวกับ action (ไม่เชื่อค่าของ service) · คีย์ไฟล์ต้นทาง = คีย์นำเข้าทุกชนิด ✅ `Db/ImportHubControllerGateDbTests` |
+| IMP-E-06 | S | หน้า contacts/products/journals กด "นำเข้า CSV/Excel" · สินทรัพย์ "นำเข้า CSV/Excel" · import-export แท็บไฟล์จากระบบอื่น | ไป `import-hub.html?entity=…` (ไม่มี modal ที่ส่ง FormData ไป endpoint JSON = 415 อีก) · `tools/formdata_json_endpoint_check.py` (negative test: contacts.html ก่อนแก้ ฟ้อง 2 จุด) |
+| IMP-E-07 | S | import-hub: แม่แบบที่ยืนยันแล้ว + ทุกแถวผ่าน | เปิดที่ขั้นยืนยันเลย (1 คลิก) · ป้ายแหล่งคอลัมน์/สถานะ/สีเซลล์จาก DTO · "🤖" เฉพาะ `UsedAi` · ไฟล์ใหญ่ (Queued) แสดงความคืบหน้าและ poll เงียบ |
+| IMP-E-08 | S | import-export แท็บจับคู่คอลัมน์แบบเดิม ปิด AI ทุกตัว | ผลตรวจของระบบ (กติกา) ยังแสดง ป้าย "⚙️ ระบบตรวจ … ไม่ได้ใช้ AI" (เดิมทิ้งผลทั้งก้อนเมื่อ `usedAi=false`) |
+| IMP-E-09 | I | `ImportConflictController` (legacy) ไม่มีคีย์ของชนิดของแถว | 403 ทุก action (อ่าน session/แก้ผล/ตรวจซ้ำ) · ล็อกจุดเรียกด้วย `tools/required_call_site_check.py` + ถอดจาก baseline ของ `write_permission_gate_check` |
 
 ---
 

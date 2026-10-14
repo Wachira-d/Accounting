@@ -1,8 +1,10 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations.Import;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +26,12 @@ namespace Accounting.Controllers;
 ///   4. User resolve ทีละแถว / bulk
 ///   5. UI call POST /import-conflicts/session/{id}/apply
 ///   6. Import service iterate ImportConflicts ตาม Resolution + perform
+///
+/// <para>═══ LEGACY (รอบ 205 ทีม E · IMPORT_ETL_REVIEW §1 ข้อ 13) ═══ ไม่มีหน้าใดเรียก detect · ผลตัดสินไม่ถูก service ใดอ่าน ⇒ ทางใหม่คือ
+/// ศูนย์นำเข้าข้อมูล (<see cref="ImportHubController"/> · คอลัมน์ "จับคู่ข้อมูลเดิม" ในตาราง review) · คงไว้เพื่อแถวเก่าในฐาน/หน้า import-conflicts.html ·
+/// <b>ด่านสิทธิ์</b>: เดิมมีแค่ <c>[Authorize]</c> ⇒ สมาชิกคนไหนก็อ่านแถวที่ staged (ข้อมูลพนักงาน/ผู้ติดต่อ) และเขียนผลตัดสินได้ ·
+/// ตอนนี้ทุก action ถาม <see cref="ImportExportPermissionScope.ForImport"/> ของชนิดข้อมูลของแถว (ตารางเดียวกับเส้นนำเข้า) — ออกจาก baseline ของ
+/// <c>tools/write_permission_gate_check.py</c> แล้ว</para>
 /// </summary>
 [ApiController]
 [Route("api/companies/{companyId:guid}/import-conflicts")]
@@ -32,10 +40,27 @@ public class ImportConflictController : ControllerBase
 {
     private readonly AccountingDbContext _db;
     private readonly IDuplicateDetector _detector;
-    public ImportConflictController(AccountingDbContext db, IDuplicateDetector detector)
+    private readonly IPermissionService _permissions;
+    public ImportConflictController(AccountingDbContext db, IDuplicateDetector detector, IPermissionService permissions)
     {
         _db = db;
         _detector = detector;
+        _permissions = permissions;
+    }
+
+    /// <summary>ด่านสิทธิ์นำเข้าของทุกชนิดข้อมูลที่ action นี้แตะ — คืน null เมื่อผ่านครบ (ชนิดเดียวไม่ผ่าน = 403 ทั้งคำขอ ·
+    /// แถวของหลายชนิดใน session เดียวต้องมีสิทธิ์ทุกชนิด ไม่ใช่ "ผ่านบางส่วน")</summary>
+    private async Task<ActionResult?> DenyAsync(Guid companyId, IEnumerable<string?> entityTypes)
+    {
+        var userId = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User);
+        foreach (var type in entityTypes.Distinct())
+        {
+            var key = ImportExportPermissionScope.ForImport(type);
+            if (await _permissions.HasPermissionAsync(companyId, userId, key)) continue;
+            return StatusCode(403, new ApiResponse<object>(false, new { requiredPermission = key },
+                ImportExportPermissionScope.DeniedMessage(type, key, isExport: false)));
+        }
+        return null;
     }
 
     /// <summary>List conflicts pending สำหรับ session (SessionId หรือ SessionRef).</summary>
@@ -46,6 +71,9 @@ public class ImportConflictController : ControllerBase
             .Where(c => c.CompanyId == companyId && c.SessionId == sessionId && !c.IsDeleted)
             .OrderBy(c => c.RowNumber)
             .ToListAsync();
+        // แถว staged มีค่าจากไฟล์ (เลขบัตร/เงินเดือนของพนักงานได้) ⇒ อ่านได้เฉพาะคนที่นำเข้าชนิดนั้นได้
+        var deny = await DenyAsync(companyId, rows.Select(r => (string?)r.EntityType));
+        if (deny != null) return deny;
         return Ok(new ApiResponse<object>(true, new
         {
             sessionId,
@@ -69,6 +97,8 @@ public class ImportConflictController : ControllerBase
             .Where(c => c.CompanyId == companyId && c.SessionRef == sessionRef && !c.IsDeleted)
             .OrderBy(c => c.RowNumber)
             .ToListAsync();
+        var deny = await DenyAsync(companyId, rows.Select(r => (string?)r.EntityType));
+        if (deny != null) return deny;
         return Ok(new ApiResponse<object>(true, new
         {
             sessionRef,
@@ -97,6 +127,8 @@ public class ImportConflictController : ControllerBase
         var c = await _db.ImportConflicts
             .FirstOrDefaultAsync(x => x.Id == conflictId && x.CompanyId == companyId);
         if (c == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ conflict"));
+        var deny = await DenyAsync(companyId, new[] { (string?)c.EntityType });
+        if (deny != null) return deny;
         c.Resolution = req.Resolution;
         c.MergeChoicesJson = req.MergeChoices != null ? System.Text.Json.JsonSerializer.Serialize(req.MergeChoices) : null;
         c.UserNote = req.UserNote;
@@ -120,6 +152,8 @@ public class ImportConflictController : ControllerBase
             .Where(c => c.CompanyId == companyId && c.SessionId == sessionId
                 && c.Resolution == ImportConflictResolution.Pending && !c.IsDeleted)
             .ToListAsync();
+        var deny = await DenyAsync(companyId, pending.Select(c => (string?)c.EntityType));
+        if (deny != null) return deny;
         var who = User.Identity?.Name ?? "user";
         foreach (var c in pending)
         {
@@ -144,7 +178,9 @@ public class ImportConflictController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> Detect(
         Guid companyId, [FromBody] DetectRequest req, CancellationToken ct)
     {
-        if (req.Rows == null || req.Rows.Count == 0)
+        var deny = await DenyAsync(companyId, new[] { req?.EntityType });
+        if (deny != null) return deny;
+        if (req!.Rows == null || req.Rows.Count == 0)
             return BadRequest(new ApiResponse<object>(false, null, "ไม่มี row"));
 
         var conflicts = await _detector.DetectBatchAsync(companyId, req.EntityType,

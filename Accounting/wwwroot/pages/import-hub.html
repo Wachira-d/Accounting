@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ศูนย์นำเข้าข้อมูล - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    /* ศูนย์นำเข้าข้อมูล (รอบ 205 ทีม E · IMPORT_ETL_REVIEW §2.8) — สีเซลล์ตาม ImportCellState ที่เซิร์ฟเวอร์ตัดสิน (หน้าไม่คิดเอง) */
+    .ih-steps { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+    .ih-step { padding:6px 12px; border-radius:999px; background:var(--gray-100,#f1f5f9); color:#64748b; font-size:13px; }
+    .ih-step.active { background:var(--primary); color:#fff; font-weight:600; }
+    .ih-step.done { background:#dcfce7; color:#166534; }
+    .ih-drop { border:2px dashed #cbd5e1; border-radius:12px; padding:32px 16px; text-align:center; cursor:pointer; transition:all .15s; }
+    .ih-drop.over { border-color:var(--primary); background:#eff6ff; }
+    .ih-chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; border:1px solid #e2e8f0; background:#fff; font-size:12px; margin:2px 4px 2px 0; }
+    .ih-chip select, .ih-chip input { border:none; background:transparent; font-size:12px; padding:0; max-width:200px; }
+    .ih-chip.sel { border-color:var(--primary); background:#eef2ff; }
+    .ih-chip.sev-Error { border-color:#fca5a5; background:#fef2f2; color:#991b1b; }
+    .ih-chip.sev-Warning { border-color:#fcd34d; background:#fffbeb; color:#92400e; }
+    .ih-chip.sev-Info { border-color:#bfdbfe; background:#eff6ff; color:#1e40af; }
+    .ih-grid { font-size:12px; }
+    .ih-grid th { vertical-align:top; white-space:nowrap; }
+    .ih-grid td { vertical-align:top; }
+    .ih-cell { cursor:text; min-width:80px; }
+    .ih-cell.st-Normalized { background:#ecfdf5; }
+    .ih-cell.st-AutoFilled { background:#eff6ff; }
+    .ih-cell.st-LowConfidence { background:#fef9c3; }
+    .ih-cell.st-Error { background:#fee2e2; }
+    .ih-cell.st-UserEdited { background:#f5f3ff; }
+    .ih-cell input { width:100%; min-width:80px; font-size:12px; padding:2px 4px; }
+    .ih-src { display:inline-block; font-size:10px; padding:1px 6px; border-radius:999px; background:#f1f5f9; color:#475569; margin-top:2px; }
+    .ih-src.ai { background:#ede9fe; color:#5b21b6; }
+    .ih-legend span { display:inline-block; padding:2px 8px; border-radius:4px; margin:2px 4px 2px 0; font-size:11px; }
+    .ih-issue { display:block; font-size:11px; margin-bottom:2px; }
+    .ih-issue.sev-Error { color:#b91c1c; }
+    .ih-issue.sev-Warning { color:#a16207; }
+    .ih-issue.sev-Info { color:#1d4ed8; }
+    .ih-muted { color:#64748b; font-size:12px; }
+    .ih-progress { height:10px; border-radius:999px; background:#e2e8f0; overflow:hidden; }
+    .ih-progress > div { height:100%; background:var(--primary); transition:width .3s; }
+    .ih-check li { margin-bottom:6px; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">ศูนย์นำเข้าข้อมูล</h2>
+        <p class="page-subtitle">วางไฟล์ CSV/Excel จากโปรแกรมใดก็ได้ — ระบบอ่าน จับคู่คอลัมน์ แปลงค่า และตรวจให้ คุณแค่ตรวจทานแล้วกดยืนยัน</p>
+      </div>
+    </div>
+
+    <div class="tabs" style="margin-bottom:16px">
+      <button class="tab active" data-tab="flow">นำเข้าไฟล์</button>
+      <button class="tab" data-tab="history">ประวัติการนำเข้า · แม่แบบ</button>
+      <button class="tab" data-tab="migration">ลำดับย้ายระบบ</button>
+    </div>
+
+    <!-- ═══ แท็บนำเข้าไฟล์ (4 ขั้น) ═══ -->
+    <div id="tab-flow">
+      <div class="ih-steps" id="ihSteps"></div>
+
+      <!-- ขั้น 1: วางไฟล์ -->
+      <div class="card" id="stepUpload" style="padding:20px;margin-bottom:16px">
+        <h3 style="margin:0 0 12px">1 · วางไฟล์</h3>
+        <div class="form-row" style="margin-bottom:12px">
+          <div class="form-group" style="margin:0">
+            <label class="form-label" for="ihEntity">ชนิดข้อมูล</label>
+            <select class="form-select" id="ihEntity"><option value="">ให้ระบบดูจากไฟล์เอง</option></select>
+            <div class="ih-muted" id="ihEntityNote" style="margin-top:4px"></div>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label" for="ihDateOrder">วันที่ในไฟล์เป็นแบบ</label>
+            <select class="form-select" id="ihDateOrder">
+              <option value="Auto">ให้ระบบดูเอง (ไทย = วัน/เดือน/ปี)</option>
+              <option value="DayMonthYear">วัน/เดือน/ปี</option>
+              <option value="MonthDayYear">เดือน/วัน/ปี</option>
+            </select>
+          </div>
+        </div>
+        <div class="ih-drop" id="ihDrop">
+          <div style="font-size:32px">📂</div>
+          <div style="font-weight:600;margin-top:6px">ลากไฟล์มาวาง หรือคลิกเพื่อเลือก</div>
+          <div class="ih-muted" style="margin-top:4px">CSV · Excel (.xlsx) · ไฟล์ส่งออกจาก Express / PEAK / FlowAccount / ธนาคาร — ภาษาไทย TIS-620 · ปี พ.ศ. · ตัวเลขไทย ระบบแปลงให้</div>
+          <input type="file" id="ihFile" accept=".csv,.tsv,.txt,.xlsx,.xls" style="display:none">
+        </div>
+        <div id="ihUploadMsg" style="margin-top:10px"></div>
+      </div>
+
+      <!-- ขั้น 2: ตรวจทาน -->
+      <div class="card" id="stepReview" style="padding:20px;margin-bottom:16px;display:none">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <h3 style="margin:0">2 · ตรวจทานข้อมูล</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-secondary" id="ihBtnCancelBatch">ยกเลิกชุดนี้</button>
+            <button class="btn btn-sm btn-primary" id="ihBtnToSummary">ไปขั้นยืนยัน →</button>
+          </div>
+        </div>
+        <div id="ihSourceChips" style="margin:10px 0"></div>
+        <div id="ihNotes"></div>
+        <div id="ihProgress" style="display:none;margin:12px 0"></div>
+        <div id="ihIssueChips" style="margin:8px 0"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
+          <input class="form-input" id="ihSearch" placeholder="ค้นหาในแถว…" style="max-width:240px">
+          <select class="form-select" id="ihStatusFilter" style="max-width:200px">
+            <option value="">ทุกแถว</option>
+            <option value="Error">ต้องแก้ก่อนลง</option>
+            <option value="Warning">มีคำเตือน</option>
+            <option value="Valid">ผ่าน</option>
+            <option value="Excluded">ตัดออกแล้ว</option>
+            <option value="Committed">ลงข้อมูลแล้ว</option>
+            <option value="Failed">ลงไม่สำเร็จ</option>
+          </select>
+          <span class="ih-legend ih-muted">
+            <span class="st-AutoFilled" style="background:#eff6ff">ระบบเติม</span>
+            <span style="background:#ecfdf5">แปลงรูปแล้ว (ชี้ดูค่าเดิม)</span>
+            <span style="background:#fef9c3">ไม่มั่นใจ — ช่วยตรวจ</span>
+            <span style="background:#fee2e2">ต้องแก้</span>
+            <span style="background:#f5f3ff">คุณแก้แล้ว</span>
+          </span>
+        </div>
+        <div class="table-container" id="ihGridWrap"></div>
+        <div id="ihPager" style="display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:8px"></div>
+      </div>
+
+      <!-- ขั้น 3: สรุปก่อนลงข้อมูล -->
+      <div class="card" id="stepSummary" style="padding:20px;margin-bottom:16px;display:none">
+        <h3 style="margin:0 0 12px">3 · ยืนยันนำเข้า</h3>
+        <div id="ihSummaryBody"></div>
+      </div>
+
+      <!-- ขั้น 4: ผล -->
+      <div class="card" id="stepResult" style="padding:20px;margin-bottom:16px;display:none">
+        <h3 style="margin:0 0 12px">4 · ผลการนำเข้า</h3>
+        <div id="ihResultBody"></div>
+      </div>
+    </div>
+
+    <!-- ═══ แท็บประวัติ + แม่แบบ ═══ -->
+    <div id="tab-history" style="display:none">
+      <div class="card" style="padding:20px;margin-bottom:16px">
+        <h3 style="margin:0 0 12px">ประวัติการนำเข้า</h3>
+        <div id="ihHistory"></div>
+      </div>
+      <div class="card" style="padding:20px">
+        <h3 style="margin:0 0 4px">แม่แบบที่ระบบจำไว้</h3>
+        <p class="ih-muted" style="margin:0 0 12px">ไฟล์ที่หัวตารางชุดเดียวกันครั้งหน้า ระบบจับคู่คอลัมน์ตามแม่แบบทันที · "ลงอัตโนมัติเมื่อไม่มีปัญหา" เปิดได้เฉพาะเมื่อคุณเลือกเอง</p>
+        <div id="ihTemplates"></div>
+      </div>
+    </div>
+
+    <!-- ═══ แท็บลำดับย้ายระบบ (§2.10) ═══ -->
+    <div id="tab-migration" style="display:none">
+      <div class="card" style="padding:20px">
+        <h3 style="margin:0 0 4px">ย้ายจากโปรแกรมบัญชีเดิม — ทำตามลำดับนี้</h3>
+        <p class="ih-muted" style="margin:0 0 12px">แต่ละขั้นอาศัยข้อมูลของขั้นก่อน (เช่น ยอดยกมาลูกหนี้ต้องมีผู้ติดต่อก่อน) · เอกสารที่นำเข้าเป็นร่างเสมอ เลขเดิมไปอยู่ที่ "อ้างอิง"</p>
+        <ol class="ih-check" id="ihMigration" style="padding-left:20px"></ol>
+        <div id="ihRecon" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- ย้อนการนำเข้า -->
+    <div class="modal-overlay" id="ihUndoModal">
+      <div class="modal" style="max-width:720px">
+        <div class="modal-header"><h3 class="modal-title">ย้อนการนำเข้า</h3><button class="modal-close" data-close="ihUndoModal">&times;</button></div>
+        <div class="modal-body">
+          <div id="ihUndoPreview"></div>
+          <div class="form-group" style="margin-top:12px">
+            <label class="form-label" for="ihUndoReason">เหตุผลที่ย้อน <span class="req">*</span></label>
+            <textarea class="form-input" id="ihUndoReason" rows="2" placeholder="เช่น นำเข้าไฟล์ผิดเดือน"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-close="ihUndoModal">ปิด</button>
+          <button class="btn btn-danger" id="ihBtnUndoConfirm">ย้อนรายการที่ย้อนได้</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//  ศูนย์นำเข้าข้อมูล (รอบ 205 ทีม E · IMPORT_ETL_REVIEW §2.8) — หน้านี้ "แสดง" อย่างเดียว (F2 ข้อ 5):
+//  ชนิดไฟล์ · encoding · ชีต · แถวหัวตาราง · การจับคู่คอลัมน์ · สีเซลล์ · ป้ายแหล่ง (📌/📚/🧠/🤖/✋) · สถานะ · คำเตือน · ทางไปต่อ
+//  มาจาก DTO ของเซิร์ฟเวอร์ทั้งหมด · ทุกค่าผ่าน Layout.esc · ไฟล์ส่งดิบให้เซิร์ฟเวอร์อ่านเอง (ไม่ split(',') ในเบราว์เซอร์)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+const Page = {
+  catalogue: null,
+  batch: null,          // ImportBatchDetailDto ล่าสุด
+  rows: null,           // ImportRowPageDto ล่าสุด
+  query: { page: 1, pageSize: 100, issueCode: '', status: '', search: '' },
+  pollTimer: null,
+  historyPage: 1,
+  step: 1,
+  batchOptions: null,   // ตัวเลือกที่ไม่อยู่ในไฟล์ (เช่น บัญชีธนาคารของ statement) — ส่งให้เซิร์ฟเวอร์ตอนอัปโหลด
+
+  init() {
+    if (!Layout.init('import-hub')) return;
+    Layout.setTitle('ศูนย์นำเข้าข้อมูล');
+    this.wire();
+    this.renderSteps();
+    this.loadCatalogue().then(() => this.applyDeeplink());
+  },
+
+  api() { return Layout.api(); },
+  esc(v) { return Layout.esc(v); },
+
+  // ─── ลิงก์จากหน้าอื่น: ?entity=contacts · ?batch=<id> · ?view=history|migration ───
+  applyDeeplink() {
+    const params = new URLSearchParams(location.search);
+    const entity = params.get('entity');
+    const batchId = params.get('batch');
+    const view = params.get('view');
+    const bankAccountId = params.get('bankAccountId');
+    if (bankAccountId && /^[0-9a-f-]{36}$/i.test(bankAccountId)) {
+      this.batchOptions = { bankAccountId };
+      document.getElementById('ihUploadMsg').innerHTML = '<span class="ih-muted">🏦 ลงรายการเข้าบัญชีธนาคารที่เลือกไว้จากหน้าบัญชีธนาคาร</span>';
+    }
+    if (entity) this.selectEntity(entity);
+    if (view === 'history' || view === 'migration') this.switchTab(view);
+    if (batchId && /^[0-9a-f-]{36}$/i.test(batchId)) this.openBatch(batchId);
+  },
+
+  /** เลือกชนิดใน dropdown จากคีย์ที่หน้าอื่นส่งมา (เช่น "fixed-assets" กับ "fixedassets") — เซิร์ฟเวอร์ normalize ซ้ำเองตอนรับคำขอ
+   *  (ImportExportPermissionScope.NormalizeEntityType) · ที่นี่แค่หาตัวเลือกที่ตรงเพื่อแสดง */
+  selectEntity(key) {
+    const k = String(key || '').toLowerCase().replace(/[-_\s]/g, '');
+    const sel = document.getElementById('ihEntity');
+    const opt = Array.from(sel.options).find(o => o.value && o.value.toLowerCase().replace(/[-_\s]/g, '') === k);
+    if (opt && !opt.disabled) { sel.value = opt.value; this.renderEntityNote(); }
+    else if (opt && opt.disabled) { sel.value = ''; this.renderEntityNote(opt.value); }
+  },
+
+  wire() {
+    document.querySelectorAll('.tabs .tab').forEach(b => b.addEventListener('click', () => this.switchTab(b.dataset.tab)));
+    const drop = document.getElementById('ihDrop');
+    const file = document.getElementById('ihFile');
+    drop.addEventListener('click', () => file.click());
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', (e) => {
+      e.preventDefault(); drop.classList.remove('over');
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) this.upload(f);
+    });
+    file.addEventListener('change', () => { if (file.files[0]) this.upload(file.files[0]); file.value = ''; });
+    document.getElementById('ihEntity').addEventListener('change', () => this.renderEntityNote());
+    document.getElementById('ihBtnToSummary').addEventListener('click', () => this.showSummary());
+    document.getElementById('ihBtnCancelBatch').addEventListener('click', () => this.cancelBatch());
+    let t = null;
+    document.getElementById('ihSearch').addEventListener('input', (e) => {
+      clearTimeout(t);
+      t = setTimeout(() => { this.query.search = e.target.value.trim(); this.query.page = 1; this.loadRows(); }, 350);
+    });
+    document.getElementById('ihStatusFilter').addEventListener('change', (e) => {
+      this.query.status = e.target.value; this.query.page = 1; this.loadRows();
+    });
+    document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => Layout.closeModal(b.dataset.close)));
+    document.getElementById('ihBtnUndoConfirm').addEventListener('click', () => this.doUndo());
+    // ตาราง review — event delegation (ไม่มีค่าจากไฟล์ใน onclick)
+    const grid = document.getElementById('ihGridWrap');
+    grid.addEventListener('change', (e) => this.onGridChange(e));
+    grid.addEventListener('click', (e) => this.onGridClick(e));
+    document.getElementById('ihIssueChips').addEventListener('click', (e) => this.onChipClick(e));
+    document.getElementById('ihSourceChips').addEventListener('change', (e) => this.onSourceChipChange(e));
+    document.getElementById('ihPager').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-page]');
+      if (!b) return;
+      this.query.page = Number(b.dataset.page); this.loadRows();
+    });
+    document.getElementById('ihSummaryBody').addEventListener('click', (e) => this.onSummaryClick(e));
+    document.getElementById('ihResultBody').addEventListener('click', (e) => this.onResultClick(e));
+    document.getElementById('ihHistory').addEventListener('click', (e) => this.onHistoryClick(e));
+    document.getElementById('ihTemplates').addEventListener('click', (e) => this.onTemplateClick(e));
+    document.getElementById('ihTemplates').addEventListener('change', (e) => this.onTemplateChange(e));
+    document.getElementById('ihMigration').addEventListener('click', (e) => this.onMigrationClick(e));
+  },
+
+  switchTab(tab) {
+    ['flow', 'history', 'migration'].forEach(t => {
+      document.getElementById('tab-' + t).style.display = t === tab ? '' : 'none';
+    });
+    document.querySelectorAll('.tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    if (tab === 'history') { this.loadHistory(); this.loadTemplates(); }
+    if (tab === 'migration') this.renderMigration();
+  },
+
+  renderSteps() {
+    const names = ['วางไฟล์', 'ตรวจทาน', 'ยืนยัน', 'ผล'];
+    document.getElementById('ihSteps').innerHTML = names.map((n, i) => {
+      const cls = i + 1 === this.step ? 'active' : (i + 1 < this.step ? 'done' : '');
+      return `<span class="ih-step ${cls}">${i + 1}. ${this.esc(n)}</span>`;
+    }).join('');
+  },
+
+  showStep(n) {
+    this.step = n;
+    document.getElementById('stepReview').style.display = n >= 2 && n <= 3 ? '' : 'none';
+    document.getElementById('stepSummary').style.display = n === 3 ? '' : 'none';
+    document.getElementById('stepResult').style.display = n === 4 ? '' : 'none';
+    this.renderSteps();
+  },
+
+  // ═══ แคตตาล็อก ═══
+  async loadCatalogue() {
+    const api = this.api(); if (!api) return;
+    try {
+      const res = await api.importHubEntities();
+      this.catalogue = res.data || { entities: [], migrationOrder: [] };
+    } catch (e) {
+      this.catalogue = { entities: [], migrationOrder: [] };
+      document.getElementById('ihEntityNote').innerHTML = `<span class="text-danger">${this.esc(e.message)}</span>`;
+    }
+    const sel = document.getElementById('ihEntity');
+    sel.innerHTML = '<option value="">ให้ระบบดูจากไฟล์เอง</option>' + (this.catalogue.entities || []).map(e =>
+      `<option value="${this.esc(e.entityType)}"${e.userCanImport ? '' : ' disabled'}>${this.esc(e.label)}${e.userCanImport ? '' : ' 🔒 ไม่มีสิทธิ์'}</option>`).join('');
+    this.renderEntityNote();
+  },
+
+  entityInfo(key) {
+    return ((this.catalogue && this.catalogue.entities) || []).find(e => e.entityType === key) || null;
+  },
+
+  /** บอกเหตุผลเมื่อชนิดถูกล็อก (ห้าม silent no-op) + คำอธิบายของชนิด (จากเซิร์ฟเวอร์) */
+  renderEntityNote(lockedKey) {
+    const box = document.getElementById('ihEntityNote');
+    const key = lockedKey || document.getElementById('ihEntity').value;
+    const info = key ? this.entityInfo(key) : null;
+    if (!info) { box.textContent = 'ระบบจะดูหัวตารางแล้วเดาชนิดข้อมูลให้ — แก้ได้ในขั้นถัดไป'; return; }
+    if (!info.userCanImport) {
+      box.innerHTML = `<span class="text-danger">🔒 บัญชีของคุณไม่มีสิทธิ์นำเข้า "${this.esc(info.label)}" — ให้เจ้าของบริษัทเพิ่มสิทธิ์ "${this.esc(info.permissionKey)}" ที่หน้าบทบาท/สิทธิ์</span>`;
+      return;
+    }
+    box.textContent = info.description || '';
+  },
+
+  // ═══ ขั้น 1: อัปโหลด ═══
+  async upload(file) {
+    const api = this.api(); if (!api) return;
+    const msg = document.getElementById('ihUploadMsg');
+    const fd = new FormData();
+    fd.append('file', file);
+    const entity = document.getElementById('ihEntity').value;
+    if (entity) fd.append('entityType', entity);
+    fd.append('dateOrder', document.getElementById('ihDateOrder').value);
+    if (this.batchOptions) fd.append('options', JSON.stringify(this.batchOptions));
+    msg.innerHTML = `<span class="ih-muted">⏳ กำลังอ่าน "${this.esc(file.name)}" …</span>`;
+    try {
+      const res = await api.importHubCreate(fd);
+      msg.innerHTML = '';
+      this.setBatch(res.data);
+      history.replaceState(null, '', `${location.pathname}?batch=${encodeURIComponent(res.data.summary.id)}`);
+      this.afterBatchLoaded();
+    } catch (e) {
+      msg.innerHTML = `<div class="text-danger">${this.esc(e.message)}</div>`;
+    }
+  },
+
+  async openBatch(id) {
+    const api = this.api(); if (!api) return;
+    this.switchTab('flow');
+    try {
+      const res = await api.importHubBatch(id);
+      this.setBatch(res.data);
+      this.afterBatchLoaded();
+    } catch (e) {
+      document.getElementById('ihUploadMsg').innerHTML = `<div class="text-danger">${this.esc(e.message)}</div>`;
+    }
+  },
+
+  setBatch(detail) {
+    this.batch = detail;
+    this.query = { page: 1, pageSize: 100, issueCode: '', status: '', search: '' };
+    document.getElementById('ihSearch').value = '';
+    document.getElementById('ihStatusFilter').value = '';
+  },
+
+  /** ตัดสินว่าจะเปิดขั้นไหน — ทุกเงื่อนไขอ่านจาก DTO (สถานะ/ปุ่มที่เซิร์ฟเวอร์อนุญาต) */
+  afterBatchLoaded() {
+    const d = this.batch; if (!d) return;
+    const s = d.summary;
+    if (d.progress && d.progress.isQueued) { this.showStep(2); this.renderReviewHeader(); this.startPolling(); return; }
+    if (['Completed', 'PartiallyCompleted', 'Undone'].includes(s.status)) { this.showStep(4); this.renderResult(null); return; }
+    if (s.status === 'Cancelled') { this.showStep(2); this.renderReviewHeader(); this.loadRows(); return; }
+    this.showStep(2);
+    this.renderReviewHeader();
+    this.loadRows();
+    // แม่แบบที่ผู้ใช้ยืนยันแล้ว + ทุกแถวผ่าน (ไม่มีคำเตือน/ข้อผิด) ⇒ เปิดที่สรุปเลย — เหลือ 1 คลิก
+    if (d.template && d.template.confirmedByUser && s.canCommit && s.errorCount === 0 && s.warningCount === 0) this.showSummary();
+  },
+
+  // ═══ ขั้น 2: หัวของ review (chip แหล่งไฟล์ · หมายเหตุ · ความคืบหน้า · issue chip) ═══
+  renderReviewHeader() {
+    const d = this.batch; const s = d.summary; const src = d.source || {};
+    const entities = (this.catalogue && this.catalogue.entities) || [];
+    const entityOpts = entities.map(e =>
+      `<option value="${this.esc(e.entityType)}"${e.entityType === s.entityType ? ' selected' : ''}${e.userCanImport ? '' : ' disabled'}>${this.esc(e.label)}</option>`).join('');
+    const hasEntity = entities.some(e => e.entityType === s.entityType);
+    const sheets = src.sheetNames || [];
+    const chips = [];
+    chips.push(`<span class="ih-chip">📄 ${this.esc(src.fileName || s.fileName)}${src.kind ? ' · ' + this.esc(src.kind) : ''}${src.encoding ? ' · ' + this.esc(src.encoding) : ''}</span>`);
+    chips.push(`<span class="ih-chip sel">ชนิด: <select data-src="entityType">${hasEntity ? '' : `<option value="${this.esc(s.entityType)}" selected>${this.esc(s.entityLabel)}</option>`}${entityOpts}</select></span>`);
+    if (sheets.length > 1) {
+      chips.push(`<span class="ih-chip">ชีต: <select data-src="sheetName">${sheets.map(n => `<option value="${this.esc(n)}"${n === src.sheetName ? ' selected' : ''}>${this.esc(n)}</option>`).join('')}</select></span>`);
+    }
+    chips.push(`<span class="ih-chip">แถวหัวตาราง: <input type="number" min="1" data-src="headerRowIndex" value="${this.esc((Number(src.headerRowIndex) || 0) + 1)}" style="width:48px"></span>`);
+    if (src.sourceSystemLabel || s.sourceSystem) chips.push(`<span class="ih-chip">โปรแกรมต้นทาง: ${this.esc(src.sourceSystemLabel || s.sourceSystem)}</span>`);
+    if (d.template) chips.push(`<span class="ih-chip">📌 แม่แบบ: ${this.esc(d.template.name)} (ใช้แล้ว ${this.esc(d.template.useCount)} ครั้ง)</span>`);
+    chips.push(`<span class="ih-chip">สถานะ: <b>${this.esc(s.statusLabel)}</b></span>`);
+    chips.push(`<span class="ih-chip">${this.esc(s.totalRows)} แถว · ผ่าน ${this.esc(s.validCount)} · เตือน ${this.esc(s.warningCount)} · ต้องแก้ ${this.esc(s.errorCount)} · ตัดออก ${this.esc(s.excludedCount)}</span>`);
+    if (src.sourceFileAttachmentId) chips.push(`<button class="btn btn-sm btn-ghost" data-act="source-file">⬇ ไฟล์ต้นทาง</button>`);
+    document.getElementById('ihSourceChips').innerHTML = chips.join('');
+    const sf = document.querySelector('#ihSourceChips [data-act="source-file"]');
+    if (sf) sf.addEventListener('click', () => this.downloadSource());
+
+    const notes = [];
+    (d.duplicateFiles || []).forEach(f => notes.push(`⚠️ ไฟล์นี้ (เนื้อหาเดียวกันทุกไบต์) เคยนำเข้าแล้วเมื่อ ${this.esc(Layout.dateTime(f.createdAt))} — ลงไปแล้ว ${this.esc(f.committedCount)} แถว · <a href="?batch=${this.esc(f.batchId)}">เปิดชุดเดิม</a>`));
+    (d.notes || []).forEach(n => notes.push(this.esc(n)));
+    document.getElementById('ihNotes').innerHTML = notes.length
+      ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:8px">${notes.map(n => `<div>${n}</div>`).join('')}</div>` : '';
+    document.getElementById('ihBtnCancelBatch').style.display = s.canCancel ? '' : 'none';
+    document.getElementById('ihBtnToSummary').disabled = !s.canCommit;
+    document.getElementById('ihBtnToSummary').title = s.canCommit ? '' : `ยังลงข้อมูลไม่ได้ในสถานะ "${s.statusLabel}"`;
+    this.renderProgress();
+    this.renderIssueChips(d.issueCounts || []);
+  },
+
+  renderProgress() {
+    const p = this.batch && this.batch.progress;
+    const box = document.getElementById('ihProgress');
+    if (!p || !(p.isQueued || this.batch.summary.status === 'Committing')) { box.style.display = 'none'; return; }
+    const pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
+    box.style.display = '';
+    box.innerHTML = `<div style="font-size:13px;margin-bottom:4px">${this.esc(p.phaseLabel)} · ${this.esc(p.processedRows)}/${this.esc(p.totalRows)} แถว${p.isQueued ? ' · ไฟล์ใหญ่ ระบบทำต่อเบื้องหลัง (ปิดหน้านี้ได้ กลับมาดูที่ประวัติ)' : ''}</div>
+      <div class="ih-progress"><div style="width:${pct}%"></div></div>`;
+  },
+
+  startPolling() {
+    this.stopPolling();
+    const id = this.batch.summary.id;
+    this.pollTimer = setInterval(async () => {
+      try {
+        const res = await API.quietly(() => this.api().importHubBatch(id));
+        this.batch = res.data;
+        const busy = this.batch.progress && (this.batch.progress.isQueued || this.batch.summary.status === 'Committing');
+        this.renderReviewHeader();
+        if (!busy) { this.stopPolling(); this.afterBatchLoaded(); }
+      } catch (e) { this.stopPolling(); Layout.toast(e.message, 'error'); }
+    }, 2500);
+  },
+
+  stopPolling() { if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; } },
+
+  renderIssueChips(counts) {
+    const box = document.getElementById('ihIssueChips');
+    if (!counts.length) { box.innerHTML = '<span class="ih-muted">ไม่พบปัญหาในไฟล์นี้</span>'; return; }
+    const withSuggestion = counts.filter(c => c.hasSuggestion);
+    box.innerHTML = counts.map(c => `<span class="ih-chip sev-${this.esc(c.severity)}${this.query.issueCode === c.code ? ' sel' : ''}" data-issue="${this.esc(c.code)}" style="cursor:pointer" title="กดเพื่อดูเฉพาะแถวนี้">${this.esc(c.label)} <b>${this.esc(c.count)}</b>${c.hasSuggestion ? ` <button class="btn btn-sm btn-ghost" data-apply-issue="${this.esc(c.code)}" title="ใช้ค่าที่ระบบแนะนำกับทุกแถวที่มีปัญหานี้">ใช้คำแนะนำ</button>` : ''}</span>`).join('')
+      + (this.query.issueCode ? ' <button class="btn btn-sm btn-ghost" data-issue="">ล้างตัวกรอง</button>' : '')
+      + (withSuggestion.length ? ` <button class="btn btn-sm btn-secondary" data-apply-all="1">✔ ใช้คำแนะนำทั้งหมด (${this.esc(withSuggestion.length)} เรื่อง)</button>` : '');
+  },
+
+  async onChipClick(e) {
+    const applyOne = e.target.closest('[data-apply-issue]');
+    const applyAll = e.target.closest('[data-apply-all]');
+    const chip = e.target.closest('[data-issue]');
+    if (applyOne) { e.stopPropagation(); await this.applySuggestions([applyOne.dataset.applyIssue]); return; }
+    if (applyAll) {
+      const codes = ((this.batch && this.batch.issueCounts) || []).filter(c => c.hasSuggestion).map(c => c.code);
+      await this.applySuggestions(codes); return;
+    }
+    if (chip) { this.query.issueCode = chip.dataset.issue || ''; this.query.page = 1; this.renderIssueChips((this.rows && this.rows.issueCounts) || this.batch.issueCounts || []); this.loadRows(); }
+  },
+
+  /** "ใช้คำแนะนำ" — ส่งรหัสปัญหาทีละเรื่อง (เงื่อนไขชัดเจน ไม่ใช่ "ทุกแถว" ลอย ๆ) · ผู้ใช้กดเอง ระบบไม่ใส่ให้เอง */
+  async applySuggestions(codes) {
+    const api = this.api(); if (!api || !codes.length) return;
+    let affected = 0;
+    try {
+      for (const code of codes) {
+        const res = await api.importHubBulk(this.batch.summary.id, { op: 'ApplySuggestions', whereIssueCode: code });
+        affected += (res.data && res.data.affected) || 0;
+      }
+      Layout.toast(`ใช้คำแนะนำแล้ว ${affected} แถว`);
+      await this.refreshBatch();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async onSourceChipChange(e) {
+    const el = e.target.closest('[data-src]'); if (!el) return;
+    const req = {};
+    if (el.dataset.src === 'entityType') req.entityType = el.value;
+    if (el.dataset.src === 'sheetName') req.sheetName = el.value;
+    if (el.dataset.src === 'headerRowIndex') {
+      const n = parseInt(el.value, 10);
+      if (!(n >= 1)) { Layout.toast('แถวหัวตารางต้องเป็นเลขแถวตั้งแต่ 1 ขึ้นไป', 'error'); return; }
+      req.headerRowIndex = n - 1;
+    }
+    try {
+      const res = await this.api().importHubAnalyze(this.batch.summary.id, req);
+      this.batch = res.data;
+      this.query.page = 1;
+      this.afterBatchLoaded();
+    } catch (err) { Layout.toast(err.message, 'error'); this.renderReviewHeader(); }
+  },
+
+  async refreshBatch() {
+    const res = await this.api().importHubBatch(this.batch.summary.id);
+    this.batch = res.data;
+    this.renderReviewHeader();
+    await this.loadRows();
+  },
+
+  // ═══ ตาราง review (server-paged) ═══
+  async loadRows() {
+    const api = this.api(); if (!api || !this.batch) return;
+    const q = this.query;
+    const qs = new URLSearchParams({ page: q.page, pageSize: q.pageSize });
+    if (q.issueCode) qs.set('issueCode', q.issueCode);
+    if (q.status) qs.set('status', q.status);
+    if (q.search) qs.set('search', q.search);
+    try {
+      const res = await api.importHubRows(this.batch.summary.id, '?' + qs.toString());
+      this.rows = res.data;
+      this.renderGrid();
+    } catch (e) {
+      document.getElementById('ihGridWrap').innerHTML = `<p class="text-danger" style="padding:12px">${this.esc(e.message)}</p>`;
+    }
+  },
+
+  /** คอลัมน์ของตาราง: คอลัมน์ในไฟล์ (หัว = ชื่อในไฟล์ + dropdown ช่องปลายทาง + ป้ายแหล่ง) แล้วตามด้วยช่องที่ระบบเติมโดยไม่มีคอลัมน์ในไฟล์ */
+  gridColumns() {
+    const d = this.batch;
+    const cols = (d.columns || []).slice().sort((a, b) => a.sourceIndex - b.sourceIndex).map(c => ({ kind: 'source', col: c, field: c.targetField }));
+    const mapped = new Set(cols.map(c => c.field).filter(Boolean));
+    const extra = new Set();
+    ((this.rows && this.rows.rows) || []).forEach(r => (r.cells || []).forEach(cell => { if (!mapped.has(cell.field)) extra.add(cell.field); }));
+    extra.forEach(f => cols.push({ kind: 'filled', field: f }));
+    return cols;
+  },
+
+  fieldLabel(field) {
+    const f = ((this.batch && this.batch.targetFields) || []).find(x => x.field === field);
+    return f ? f.label : field;
+  },
+
+  renderColumnHeader(c) {
+    if (c.kind === 'filled') return `<th>${this.esc(this.fieldLabel(c.field))}<br><span class="ih-src">⚙️ ระบบเติม</span></th>`;
+    const col = c.col;
+    const used = new Set((this.batch.columns || []).filter(x => x.sourceIndex !== col.sourceIndex).map(x => x.targetField).filter(Boolean));
+    const fields = this.batch.targetFields || [];
+    const opts = [`<option value="">— ไม่ใช้คอลัมน์นี้ —</option>`].concat(fields.map(f =>
+      `<option value="${this.esc(f.field)}"${f.field === col.targetField ? ' selected' : ''}>${this.esc(f.label)}${f.required ? ' *' : ''}${used.has(f.field) ? ' (ใช้แล้ว)' : ''}</option>`));
+    const conf = col.targetField && col.confidence != null ? ` ${Math.round(Number(col.confidence) * 100)}%` : '';
+    const samples = (col.sampleValues || []).slice(0, 3).join(' · ');
+    return `<th title="ตัวอย่างในไฟล์: ${this.esc(samples)}">${this.esc(col.sourceHeader)}<br>
+      <select class="form-select" data-map="${this.esc(col.sourceIndex)}" style="font-size:11px;padding:2px 4px;min-width:120px">${opts.join('')}</select><br>
+      ${col.targetField ? `<span class="ih-src${col.usedAi ? ' ai' : ''}">${this.esc(col.sourceLabel)}${this.esc(conf)}</span>` : ''}</th>`;
+  },
+
+  renderCell(row, field) {
+    const cell = (row.cells || []).find(x => x.field === field);
+    if (!field) return '<td class="ih-muted">—</td>';
+    if (!cell) return `<td class="ih-cell" data-row="${this.esc(row.id)}" data-field="${this.esc(field)}"></td>`;
+    const tips = [];
+    if (cell.raw != null && cell.raw !== cell.value) tips.push(`ค่าเดิมในไฟล์: ${cell.raw}`);
+    if (cell.sourceLabel) tips.push(cell.sourceLabel);
+    if (cell.confidence != null) tips.push(`ความมั่นใจ ${Math.round(Number(cell.confidence) * 100)}%`);
+    const editable = this.batch.summary.canCommit && row.status !== 'Committed';
+    return `<td class="ih-cell st-${this.esc(cell.state)}" title="${this.esc(tips.join(' · '))}"${editable ? ` data-row="${this.esc(row.id)}" data-field="${this.esc(field)}"` : ''}>${this.esc(cell.value == null ? '' : cell.value)}${cell.usedAi ? ' <span class="ih-src ai">🤖</span>' : ''}</td>`;
+  },
+
+  renderMatch(row) {
+    const m = row.match;
+    const editable = this.batch.summary.canCommit && row.status !== 'Committed';
+    const current = m && m.entityId && row.action !== 'Create' && row.action !== 'Skip' ? m.entityId : (row.action === 'Skip' ? '__skip' : '__new');
+    const opts = [`<option value="__new"${current === '__new' ? ' selected' : ''}>สร้างใหม่</option>`];
+    const cands = (m && m.candidates) || [];
+    const seen = new Set();
+    cands.forEach(c => {
+      seen.add(c.entityId);
+      opts.push(`<option value="${this.esc(c.entityId)}"${current === c.entityId ? ' selected' : ''}>อัปเดต "${this.esc(c.label)}" ${this.esc(Number(c.score).toFixed(2))}</option>`);
+    });
+    if (m && m.entityId && !seen.has(m.entityId)) {
+      opts.push(`<option value="${this.esc(m.entityId)}"${current === m.entityId ? ' selected' : ''}>อัปเดต "${this.esc(m.label)}" ${this.esc(Number(m.score).toFixed(2))}</option>`);
+    }
+    opts.push(`<option value="__skip"${current === '__skip' ? ' selected' : ''}>ข้าม</option>`);
+    const badge = m ? `<br><span class="ih-src${m.usedAi ? ' ai' : ''}">${this.esc(m.sourceLabel)}${m.autoApplied ? '' : ' · แนะนำ'}</span>` : '';
+    if (!editable) return `<td>${this.esc(row.actionLabel)}${m && m.label ? ` "${this.esc(m.label)}"` : ''}${badge}</td>`;
+    return `<td><select class="form-select" data-match="${this.esc(row.id)}" style="font-size:11px;padding:2px 4px;min-width:140px">${opts.join('')}</select>${badge}</td>`;
+  },
+
+  renderIssues(row) {
+    const parts = (row.issues || []).map(i => {
+      const sug = i.suggested != null && i.field
+        ? ` <button class="btn btn-sm btn-ghost" data-accept="${this.esc(row.id)}" data-field="${this.esc(i.field)}" title="แทนด้วย: ${this.esc(i.suggested)}">ใช้ "${this.esc(i.suggested)}"</button><button class="btn btn-sm btn-ghost" data-reject="${this.esc(row.id)}" data-field="${this.esc(i.field)}">ไม่ใช้</button>` : '';
+      const ai = i.source === 'Ai' ? ' 🤖 AI แนะนำ' : '';
+      return `<span class="ih-issue sev-${this.esc(i.severity)}" title="${this.esc([i.ruleCode, i.legalRef].filter(Boolean).join(' · '))}">• ${this.esc(i.message)}${this.esc(ai)}${sug}</span>`;
+    });
+    if (row.commitError) parts.push(`<span class="ih-issue sev-Error">• ${this.esc(row.commitError)}</span>`);
+    return `<td style="min-width:200px">${parts.join('')}</td>`;
+  },
+
+  renderGrid() {
+    const page = this.rows || { rows: [], total: 0, page: 1, pageSize: 100 };
+    const cols = this.gridColumns();
+    const editable = this.batch.summary.canCommit;
+    const head = `<tr><th>แถว</th><th>สถานะ</th><th>จับคู่ข้อมูลเดิม</th>${cols.map(c => this.renderColumnHeader(c)).join('')}<th>ปัญหา / คำแนะนำ</th>${editable ? '<th>ตัดออก</th>' : ''}</tr>`;
+    const body = (page.rows || []).map(r => `<tr data-rowid="${this.esc(r.id)}">
+        <td>${this.esc(r.rowNo)}${r.userEdited ? ' <span title="คุณแก้แถวนี้แล้ว">✋</span>' : ''}</td>
+        <td><span class="badge ${this.statusClass(r.status)}">${this.esc(r.statusLabel)}</span>${r.confidence != null ? `<br><span class="ih-muted">${Math.round(Number(r.confidence) * 100)}%</span>` : ''}</td>
+        ${this.renderMatch(r)}
+        ${cols.map(c => this.renderCell(r, c.field)).join('')}
+        ${this.renderIssues(r)}
+        ${editable ? `<td><input type="checkbox" data-exclude="${this.esc(r.id)}"${r.status === 'Excluded' ? ' checked' : ''}${r.status === 'Committed' ? ' disabled' : ''}></td>` : ''}
+      </tr>`).join('');
+    document.getElementById('ihGridWrap').innerHTML = (page.rows || []).length
+      ? `<table class="table ih-grid"><thead>${head}</thead><tbody>${body}</tbody></table>`
+      : `<p class="ih-muted" style="padding:12px">ไม่มีแถวตามตัวกรองนี้</p>`;
+    if (page.issueCounts) this.renderIssueChips(page.issueCounts.length ? page.issueCounts : (this.batch.issueCounts || []));
+    this.renderPager(page);
+  },
+
+  /** สีป้ายตามชื่อสถานะ (ป้ายข้อความมาจากเซิร์ฟเวอร์ — ที่นี่แค่เลือกสีกรอบ) */
+  statusClass(status) {
+    return ({ Valid: 'badge-success', Committed: 'badge-success', Warning: 'badge-warning', Error: 'badge-danger', Failed: 'badge-danger',
+      Excluded: 'badge-gray', Undone: 'badge-gray', Pending: 'badge-info' })[status] || 'badge-gray';
+  },
+
+  renderPager(page) {
+    const pages = Math.max(1, Math.ceil((page.total || 0) / (page.pageSize || 100)));
+    const p = page.page || 1;
+    document.getElementById('ihPager').innerHTML = `<span class="ih-muted">${this.esc(page.total || 0)} แถว · หน้า ${this.esc(p)}/${this.esc(pages)}</span>
+      <button class="btn btn-sm btn-secondary" data-page="${p - 1}"${p <= 1 ? ' disabled' : ''}>‹ ก่อนหน้า</button>
+      <button class="btn btn-sm btn-secondary" data-page="${p + 1}"${p >= pages ? ' disabled' : ''}>ถัดไป ›</button>`;
+  },
+
+  async onGridChange(e) {
+    const map = e.target.closest('[data-map]');
+    const match = e.target.closest('[data-match]');
+    const exclude = e.target.closest('[data-exclude]');
+    try {
+      if (map) {
+        // ✋ ผู้ใช้เลือกเอง ⇒ ส่งการจับคู่ทุกคอลัมน์ (คอลัมน์ที่ผู้ใช้ไม่แตะคงค่าเดิมของเซิร์ฟเวอร์) · เซิร์ฟเวอร์แปลงแถวใหม่แต่ไม่ทับเซลล์ที่ผู้ใช้แก้
+        const idx = Number(map.dataset.map);
+        const columns = (this.batch.columns || []).map(c => ({
+          sourceIndex: c.sourceIndex,
+          targetField: c.sourceIndex === idx ? (map.value || null) : (c.targetField || null),
+          transform: c.transform || null,
+        }));
+        const res = await this.api().importHubRemap(this.batch.summary.id, { columns });
+        this.batch = res.data;
+        this.renderReviewHeader();
+        await this.loadRows();
+        return;
+      }
+      if (match) {
+        const v = match.value;
+        const req = v === '__new' ? { action: 'Create' } : v === '__skip' ? { action: 'Skip' } : { action: 'Update', matchedEntityId: v };
+        await this.patchRow(match.dataset.match, req);
+        return;
+      }
+      if (exclude) await this.patchRow(exclude.dataset.exclude, { excluded: exclude.checked });
+    } catch (err) { Layout.toast(err.message, 'error'); await this.loadRows(); }
+  },
+
+  async onGridClick(e) {
+    const acc = e.target.closest('[data-accept]');
+    const rej = e.target.closest('[data-reject]');
+    if (acc) { await this.patchRow(acc.dataset.accept, { acceptSuggestionFields: [acc.dataset.field] }); return; }
+    if (rej) { await this.patchRow(rej.dataset.reject, { rejectSuggestionFields: [rej.dataset.field] }); return; }
+    const td = e.target.closest('td.ih-cell[data-row]');
+    if (!td || td.querySelector('input')) return;
+    this.editCell(td);
+  },
+
+  /** แก้เซลล์ในที่ — Enter/ออกจากช่อง = บันทึก · Esc = ยกเลิก · ค่าว่าง = ล้างค่า ("" ตามสัญญา) */
+  editCell(td) {
+    const rowId = td.dataset.row; const field = td.dataset.field;
+    const row = ((this.rows && this.rows.rows) || []).find(r => r.id === rowId);
+    const cell = row && (row.cells || []).find(c => c.field === field);
+    const old = cell && cell.value != null ? String(cell.value) : '';
+    td.innerHTML = '';
+    const input = document.createElement('input');
+    input.className = 'form-input';
+    input.value = old;
+    td.appendChild(input);
+    input.focus();
+    let done = false;
+    const finish = async (save) => {
+      if (done) return; done = true;
+      if (!save || input.value === old) { this.renderGrid(); return; }
+      const cells = {}; cells[field] = input.value;
+      await this.patchRow(rowId, { cells });
+    };
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+      if (ev.key === 'Escape') { ev.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+  },
+
+  async patchRow(rowId, req) {
+    try {
+      const res = await this.api().importHubEditRow(this.batch.summary.id, rowId, req);
+      const updated = res.data;
+      const list = (this.rows && this.rows.rows) || [];
+      const i = list.findIndex(r => r.id === rowId);
+      if (i >= 0 && updated) list[i] = updated;
+      this.renderGrid();
+      // ตัวนับ/ปุ่มของชุดเปลี่ยนตาม — ดึงหัวใหม่แบบเงียบ
+      const b = await API.quietly(() => this.api().importHubBatch(this.batch.summary.id));
+      this.batch = b.data;
+      this.renderReviewHeader();
+    } catch (err) { Layout.toast(err.message, 'error'); this.renderGrid(); }
+  },
+
+  async cancelBatch() {
+    if (!confirm('ยกเลิกชุดนำเข้านี้? (ยังไม่มีข้อมูลใดถูกลง — อัปโหลดใหม่ได้ภายหลัง)')) return;
+    try {
+      await this.api().importHubCancel(this.batch.summary.id);
+      Layout.toast('ยกเลิกชุดนำเข้าแล้ว');
+      this.stopPolling();
+      this.batch = null; this.rows = null;
+      history.replaceState(null, '', location.pathname);
+      this.showStep(1);
+      document.getElementById('stepReview').style.display = 'none';
+    } catch (e) { Layout.toast(e.message, 'error'); }
+  },
+
+  async downloadSource() {
+    try { await this.api().importHubSourceFile(this.batch.summary.id, this.batch.source && this.batch.source.fileName); }
+    catch (e) { Layout.toast(e.message, 'error'); }
+  },
+
+  // ═══ ขั้น 3: สรุป + ยืนยัน ═══
+  showSummary() {
+    const d = this.batch; const s = d.summary;
+    if (!s.canCommit) { Layout.toast(`ยังลงข้อมูลไม่ได้ในสถานะ "${s.statusLabel}"`, 'error'); return; }
+    this.showStep(3);
+    const warns = d.warningsToAcknowledge || [];
+    const warnHtml = warns.length ? `
+      <div style="margin:12px 0">
+        <div style="font-weight:600;margin-bottom:6px">คำเตือนที่ต้องรับทราบ — แถวที่มีคำเตือนซึ่งไม่ได้ติ๊กจะยังไม่ถูกลง</div>
+        ${warns.map(w => `<label style="display:block;font-size:13px;margin-bottom:4px"><input type="checkbox" class="ih-ack" value="${this.esc(w.code)}">
+          ${this.esc(w.label)} (${this.esc(w.rowCount)} แถว)${w.legalRef ? ` <span class="ih-muted">· ${this.esc(w.legalRef)}</span>` : ''}</label>`).join('')}
+        <button class="btn btn-sm btn-ghost" data-ack-all="1">รับทราบทั้งหมด</button>
+      </div>` : '';
+    const willCommit = (Number(s.validCount) || 0) + (Number(s.warningCount) || 0);
+    const defaultName = (d.source && d.source.fileName) || s.fileName || '';
+    document.getElementById('ihSummaryBody').innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,160px),1fr));gap:8px;margin-bottom:12px">
+        <div class="kpi-card" style="padding:10px"><div class="kpi-label">ชนิดข้อมูล</div><div style="font-weight:600">${this.esc(s.entityLabel)}</div></div>
+        <div class="kpi-card" style="padding:10px"><div class="kpi-label">ผ่าน</div><div class="kpi-value" style="font-size:20px">${this.esc(s.validCount)}</div></div>
+        <div class="kpi-card" style="padding:10px"><div class="kpi-label">มีคำเตือน</div><div class="kpi-value" style="font-size:20px">${this.esc(s.warningCount)}</div></div>
+        <div class="kpi-card" style="padding:10px"><div class="kpi-label">ต้องแก้ (ไม่ลง)</div><div class="kpi-value" style="font-size:20px">${this.esc(s.errorCount)}</div></div>
+        <div class="kpi-card" style="padding:10px"><div class="kpi-label">ตัดออก</div><div class="kpi-value" style="font-size:20px">${this.esc(s.excludedCount)}</div></div>
+      </div>
+      <div style="margin-bottom:8px;font-weight:600">วิธีลงข้อมูล</div>
+      <label style="display:block;font-size:13px;margin-bottom:4px"><input type="radio" name="ihMode" value="GoodRowsOnly" checked> ลงเฉพาะแถวที่พร้อม — แถวที่ต้องแก้ข้ามไว้ แก้แล้วกดลงซ้ำได้</label>
+      <label style="display:block;font-size:13px;margin-bottom:8px"><input type="radio" name="ihMode" value="AllOrNothing"> ผิดแถวเดียว = ไม่ลงเลยทั้งชุด</label>
+      ${warnHtml}
+      <label style="display:block;font-size:13px;margin:12px 0 4px"><input type="checkbox" id="ihSaveTemplate" checked> จำรูปแบบไฟล์นี้ — ครั้งหน้าระบบจับคู่คอลัมน์ให้ทันที</label>
+      <input class="form-input" id="ihTemplateName" value="${this.esc(defaultName)}" placeholder="ชื่อแม่แบบ" style="max-width:320px;margin-bottom:12px">
+      <div class="ih-muted" style="margin-bottom:12px">เอกสารที่นำเข้าถูกบันทึกเป็น "ร่าง" + เลข DRAFT เสมอ (เลขเดิมจากไฟล์ไปอยู่ที่ "อ้างอิง") — อนุมัติเองภายหลัง</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary" data-back="1">← กลับไปตรวจทาน</button>
+        <button class="btn btn-primary btn-lg" data-commit="1">✔ ยืนยันนำเข้า (${this.esc(willCommit)} แถว)</button>
+      </div>`;
+    document.getElementById('stepSummary').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+
+  async onSummaryClick(e) {
+    if (e.target.closest('[data-back]')) { this.showStep(2); return; }
+    if (e.target.closest('[data-ack-all]')) { document.querySelectorAll('.ih-ack').forEach(c => { c.checked = true; }); return; }
+    if (!e.target.closest('[data-commit]')) return;
+    const mode = (document.querySelector('input[name="ihMode"]:checked') || {}).value || 'GoodRowsOnly';
+    const acks = Array.from(document.querySelectorAll('.ih-ack:checked')).map(c => c.value);
+    const saveTemplate = document.getElementById('ihSaveTemplate').checked;
+    const templateName = document.getElementById('ihTemplateName').value.trim() || null;
+    try {
+      const res = await this.api().importHubCommit(this.batch.summary.id,
+        { mode, acknowledgedWarningCodes: acks, saveTemplate, approveAfterCreate: false, templateName });
+      const r = res.data;
+      if (r.queued) {
+        Layout.toast(res.message || 'ระบบลงข้อมูลต่อเบื้องหลัง', 'info');
+        const b = await this.api().importHubBatch(this.batch.summary.id);
+        this.batch = b.data;
+        this.showStep(2);
+        this.renderReviewHeader();
+        this.startPolling();
+        return;
+      }
+      Layout.toast(res.message || 'ลงข้อมูลแล้ว');
+      const b = await this.api().importHubBatch(this.batch.summary.id);
+      this.batch = b.data;
+      this.showStep(4);
+      this.renderResult(r);
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ═══ ขั้น 4: ผล ═══
+  renderResult(r) {
+    const s = this.batch.summary;
+    const failures = (r && r.failures) || [];
+    const committed = r ? r.committed : s.committedCount;
+    const failed = r ? r.failed : s.failedCount;
+    const skipped = r ? r.skipped : s.skippedCount;
+    document.getElementById('ihResultBody').innerHTML = `
+      <div style="font-size:15px;margin-bottom:8px">สถานะ: <b>${this.esc(r ? r.statusLabel : s.statusLabel)}</b></div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+        <span class="badge badge-success">ลงแล้ว ${this.esc(committed)}</span>
+        <span class="badge ${failed ? 'badge-danger' : 'badge-gray'}">ไม่สำเร็จ ${this.esc(failed)}</span>
+        <span class="badge badge-gray">ข้าม ${this.esc(skipped)}</span>
+        ${s.undoneAt ? `<span class="badge badge-warning">ย้อนแล้วเมื่อ ${this.esc(Layout.dateTime(s.undoneAt))}</span>` : ''}
+      </div>
+      ${failures.length ? `<div class="table-container" style="margin-bottom:12px"><table class="table" style="font-size:12px"><thead><tr><th>แถว</th><th>รายการ</th><th>สาเหตุ</th></tr></thead><tbody>
+        ${failures.map(f => `<tr><td>${this.esc(f.rowNo)}</td><td>${this.esc(f.displayKey || '')}</td><td>${this.esc(f.error)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary" data-res="rows">ดูทุกแถว</button>
+        ${(failed || s.errorCount) ? '<button class="btn btn-secondary" data-res="errors">⬇ ดาวน์โหลดแถวที่ผิด (CSV)</button>' : ''}
+        ${s.canCommit ? '<button class="btn btn-primary" data-res="retry">แก้แถวที่ผิดแล้วลงซ้ำ</button>' : ''}
+        ${s.canUndo ? '<button class="btn btn-danger" data-res="undo">↩ ย้อนการนำเข้า</button>' : ''}
+        <button class="btn btn-ghost" data-res="new">นำเข้าไฟล์ใหม่</button>
+      </div>`;
+  },
+
+  async onResultClick(e) {
+    const b = e.target.closest('[data-res]'); if (!b) return;
+    const act = b.dataset.res;
+    if (act === 'rows' || act === 'retry') {
+      this.showStep(2); this.renderReviewHeader();
+      if (act === 'retry') { this.query.status = 'Failed'; document.getElementById('ihStatusFilter').value = 'Failed'; }
+      await this.loadRows(); return;
+    }
+    if (act === 'errors') { try { await this.api().importHubErrorsCsv(this.batch.summary.id); } catch (err) { Layout.toast(err.message, 'error'); } return; }
+    if (act === 'undo') { await this.openUndo(); return; }
+    if (act === 'new') { this.batch = null; this.rows = null; history.replaceState(null, '', location.pathname); this.showStep(1); }
+  },
+
+  async openUndo() {
+    const box = document.getElementById('ihUndoPreview');
+    box.innerHTML = '<p class="ih-muted">⏳ กำลังตรวจว่ารายการไหนย้อนได้…</p>';
+    document.getElementById('ihUndoReason').value = '';
+    Layout.openModal('ihUndoModal');
+    try {
+      const res = await this.api().importHubUndoPreview(this.batch.summary.id);
+      const p = res.data;
+      document.getElementById('ihBtnUndoConfirm').disabled = !p.canUndo || !p.reversibleCount;
+      box.innerHTML = `<p>ย้อนได้ <b>${this.esc(p.reversibleCount)}</b> รายการ · ย้อนไม่ได้ <b>${this.esc(p.blockedCount)}</b> รายการ</p>
+        ${(p.notes || []).map(n => `<p class="ih-muted">${this.esc(n)}</p>`).join('')}
+        <div class="table-container" style="max-height:320px;overflow:auto"><table class="table" style="font-size:12px"><thead><tr><th>แถว</th><th>รายการ</th><th>วิธีย้อน</th><th>หมายเหตุ</th></tr></thead><tbody>
+        ${(p.items || []).map(i => `<tr><td>${this.esc(i.rowNo)}</td><td>${this.esc(i.displayKey || '')}</td><td>${this.esc(i.kindLabel)}</td>
+          <td>${i.blocked ? `<span class="text-danger">${this.esc(i.blockReason || '')}</span>${i.wayForward ? `<br><span class="ih-muted">ทางไปต่อ: ${this.esc(i.wayForward)}</span>` : ''}` : ''}</td></tr>`).join('')}
+        </tbody></table></div>`;
+    } catch (e) { box.innerHTML = `<p class="text-danger">${this.esc(e.message)}</p>`; }
+  },
+
+  async doUndo() {
+    const reason = document.getElementById('ihUndoReason').value.trim();
+    if (!reason) { Layout.toast('กรุณาระบุเหตุผลที่ย้อน (บันทึกในประวัติการแก้ไข)', 'error'); return; }
+    try {
+      const res = await this.api().importHubUndo(this.batch.summary.id, { reason });
+      Layout.closeModal('ihUndoModal');
+      Layout.toast(res.message || 'ย้อนการนำเข้าแล้ว');
+      const b = await this.api().importHubBatch(this.batch.summary.id);
+      this.batch = b.data;
+      this.renderResult(null);
+    } catch (e) { Layout.toast(e.message, 'error'); }
+  },
+
+  // ═══ ประวัติ ═══
+  async loadHistory() {
+    const box = document.getElementById('ihHistory');
+    try {
+      const res = await this.api().importHubBatches(`?page=${this.historyPage}&pageSize=20`);
+      const d = res.data || { items: [], total: 0, page: 1, pageSize: 20 };
+      const pages = Math.max(1, Math.ceil((d.total || 0) / (d.pageSize || 20)));
+      box.innerHTML = ((d.items || []).length ? `<div class="table-container"><table class="table" style="font-size:13px"><thead><tr>
+          <th>วันที่</th><th>ชนิด</th><th>ไฟล์</th><th>สถานะ</th><th>แถว</th><th>ลงแล้ว</th><th>ผู้นำเข้า</th><th></th></tr></thead><tbody>
+          ${d.items.map(b => `<tr><td>${this.esc(Layout.dateTime(b.createdAt))}</td><td>${this.esc(b.entityLabel)}</td><td>${this.esc(b.fileName)}</td>
+            <td>${this.esc(b.statusLabel)}</td><td>${this.esc(b.totalRows)}</td><td>${this.esc(b.committedCount)}</td><td>${this.esc(b.createdBy || '')}</td>
+            <td><button class="btn btn-sm btn-secondary" data-open="${this.esc(b.id)}">เปิด</button></td></tr>`).join('')}
+          </tbody></table></div>` : '<p class="ih-muted">ยังไม่มีประวัติการนำเข้า</p>')
+        + (d.hiddenCount ? `<p class="ih-muted">ซ่อน ${this.esc(d.hiddenCount)} ชุดที่เป็นข้อมูลชนิดที่บัญชีของคุณไม่มีสิทธิ์นำเข้า</p>` : '')
+        + `<div style="display:flex;gap:8px;justify-content:flex-end;align-items:center"><span class="ih-muted">หน้า ${this.esc(d.page)}/${this.esc(pages)}</span>
+            <button class="btn btn-sm btn-secondary" data-hpage="${this.historyPage - 1}"${this.historyPage <= 1 ? ' disabled' : ''}>‹</button>
+            <button class="btn btn-sm btn-secondary" data-hpage="${this.historyPage + 1}"${this.historyPage >= pages ? ' disabled' : ''}>›</button></div>`;
+    } catch (e) { box.innerHTML = `<p class="text-danger">${this.esc(e.message)}</p>`; }
+  },
+
+  onHistoryClick(e) {
+    const o = e.target.closest('[data-open]');
+    const p = e.target.closest('[data-hpage]');
+    if (o) { history.replaceState(null, '', `${location.pathname}?batch=${encodeURIComponent(o.dataset.open)}`); this.openBatch(o.dataset.open); }
+    if (p) { this.historyPage = Math.max(1, Number(p.dataset.hpage)); this.loadHistory(); }
+  },
+
+  // ═══ แม่แบบ ═══
+  async loadTemplates() {
+    const box = document.getElementById('ihTemplates');
+    try {
+      const res = await this.api().importHubTemplates();
+      const list = res.data || [];
+      this.templates = list;
+      box.innerHTML = list.length ? `<div class="table-container"><table class="table" style="font-size:13px"><thead><tr>
+          <th>ชื่อ</th><th>ชนิด</th><th>ใช้แล้ว</th><th>ใช้ล่าสุด</th><th>ลงอัตโนมัติเมื่อไม่มีปัญหา</th><th></th></tr></thead><tbody>
+          ${list.map(t => `<tr><td>${this.esc(t.name)}${t.confirmedByUser ? '' : ' <span class="ih-muted">(ระบบจำเอง)</span>'}</td>
+            <td>${this.esc((this.entityInfo(t.entityType) || {}).label || t.entityType)}</td><td>${this.esc(t.useCount)}</td>
+            <td>${t.lastUsedAt ? this.esc(Layout.dateTime(t.lastUsedAt)) : '-'}</td>
+            <td><input type="checkbox" data-auto="${this.esc(t.id)}"${t.autoCommitWhenClean ? ' checked' : ''}></td>
+            <td><button class="btn btn-sm btn-ghost text-danger" data-del="${this.esc(t.id)}">ลบ</button></td></tr>`).join('')}
+          </tbody></table></div>` : '<p class="ih-muted">ยังไม่มีแม่แบบ — ติ๊ก "จำรูปแบบไฟล์นี้" ตอนยืนยันนำเข้า</p>';
+    } catch (e) { box.innerHTML = `<p class="text-danger">${this.esc(e.message)}</p>`; }
+  },
+
+  async onTemplateChange(e) {
+    const cb = e.target.closest('[data-auto]'); if (!cb) return;
+    const t = (this.templates || []).find(x => x.id === cb.dataset.auto); if (!t) return;
+    try {
+      await this.api().importHubUpdateTemplate(t.id, { name: t.name, autoCommitWhenClean: cb.checked });
+      Layout.toast(cb.checked ? 'เปิด: ไฟล์รูปแบบนี้ที่ไม่มีปัญหาจะลงให้อัตโนมัติ' : 'ปิดการลงอัตโนมัติแล้ว');
+      this.loadTemplates();
+    } catch (err) { cb.checked = !cb.checked; Layout.toast(err.message, 'error'); }
+  },
+
+  async onTemplateClick(e) {
+    const d = e.target.closest('[data-del]'); if (!d) return;
+    if (!confirm('ลบแม่แบบนี้? ไฟล์รูปแบบนี้ครั้งหน้าระบบจะจับคู่คอลัมน์ใหม่ตั้งแต่ต้น')) return;
+    try { await this.api().importHubDeleteTemplate(d.dataset.del); Layout.toast('ลบแม่แบบแล้ว'); this.loadTemplates(); }
+    catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // ═══ ลำดับย้ายระบบ (§2.10) — ขั้น/สถานะ/คำแนะนำจากเซิร์ฟเวอร์ ═══
+  renderMigration() {
+    const steps = ((this.catalogue && this.catalogue.migrationOrder) || []).slice().sort((a, b) => a.order - b.order);
+    const box = document.getElementById('ihMigration');
+    if (!steps.length) { box.innerHTML = '<li class="ih-muted">ยังไม่มีลำดับย้ายระบบจากเซิร์ฟเวอร์</li>'; return; }
+    box.innerHTML = steps.map(s => {
+      const info = this.entityInfo(s.entityType);
+      const action = info
+        ? (info.userCanImport ? `<button class="btn btn-sm btn-secondary" data-mig-entity="${this.esc(s.entityType)}">นำเข้า →</button>`
+                              : `<span class="ih-muted">🔒 ต้องมีสิทธิ์ "${this.esc(info.permissionKey)}"</span>`)
+        : `<button class="btn btn-sm btn-secondary" data-mig-recon="1">ตรวจกระทบยอด</button>`;
+      return `<li>${s.done ? '✅' : '⬜'} <b>${this.esc(s.label)}</b> ${action}${s.hint ? `<div class="ih-muted">${this.esc(s.hint)}</div>` : ''}</li>`;
+    }).join('');
+  },
+
+  async onMigrationClick(e) {
+    const ent = e.target.closest('[data-mig-entity]');
+    if (ent) { this.switchTab('flow'); this.showStep(1); this.selectEntity(ent.dataset.migEntity); document.getElementById('stepUpload').scrollIntoView({ behavior: 'smooth' }); return; }
+    if (!e.target.closest('[data-mig-recon]')) return;
+    const box = document.getElementById('ihRecon');
+    box.innerHTML = '<p class="ih-muted">⏳ กำลังกระทบยอด…</p>';
+    try {
+      const res = await this.api().importHubReconciliation();
+      const r = res.data;
+      box.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${r.allBalanced ? '✅ ยอดย่อยตรงกับบัญชีแยกประเภททุกเรื่อง' : '⚠️ ยังมีเรื่องที่ยอดไม่ตรง — ดูคำแนะนำในแต่ละบรรทัด'} <span class="ih-muted">ณ ${this.esc(Layout.date(r.asOf))}</span></div>
+        <div class="table-container"><table class="table" style="font-size:13px"><thead><tr><th>เรื่อง</th><th class="text-right">ทะเบียนย่อย</th><th class="text-right">บัญชีแยกประเภท</th><th class="text-right">ผลต่าง</th><th>คำแนะนำ</th></tr></thead><tbody>
+        ${(r.lines || []).map(l => `<tr><td>${l.balanced ? '✅' : '⚠️'} ${this.esc(l.label)}</td><td class="text-right">${this.esc(Layout.money(l.subledgerTotal))}</td>
+          <td class="text-right">${this.esc(Layout.money(l.ledgerTotal))}</td><td class="text-right">${this.esc(Layout.money(l.difference))}</td><td>${this.esc(l.hint || '')}</td></tr>`).join('')}
+        </tbody></table></div>`;
+    } catch (err) { box.innerHTML = `<p class="text-danger">${this.esc(err.message)}</p>`; }
+  },
+};
+window.Page = Page;
+Page.init();
+  </script>
+</body>
+</html>

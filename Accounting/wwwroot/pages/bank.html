@@ -413,6 +413,11 @@
       <div class="modal">
         <div class="modal-header"><h3 class="modal-title">นำเข้า Bank Statement</h3><button class="modal-close" onclick="Layout.closeModal('importModal')">&times;</button></div>
         <div class="modal-body">
+          <!-- รอบ 205 ทีม E (IMPORT_ETL_REVIEW §2.8): ทางเลือกตรวจทีละแถวก่อนลง — ศูนย์นำเข้าข้อมูลรับบัญชีที่เลือกไว้ (bankAccountId) -->
+          <div style="margin-bottom:12px;padding:8px 12px;background:var(--blue-50);border-radius:8px;font-size:13px">
+            ไฟล์จากธนาคารที่หน้านี้อ่านไม่ได้ หรืออยากตรวจทีละแถวก่อนลง?
+            <a href="#" id="impHubLink" style="font-weight:600" onclick="Page.openImportHub();return false;">เปิดในศูนย์นำเข้าข้อมูล →</a>
+          </div>
           <div class="form-group"><label class="form-label">บัญชีธนาคาร *</label>
             <select class="form-select" id="impAccount"></select>
           </div>
@@ -2791,6 +2796,11 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // === IMPORT STATEMENT ===
+      /** รอบ 205 ทีม E: ส่งบัญชีที่เลือกในฟอร์มนี้ไปศูนย์นำเข้าข้อมูล (ไม่มีบัญชี = ให้ศูนย์ถามเอง) */
+      openImportHub() {
+        const acc = document.getElementById('impAccount').value;
+        window.location.href = '/pages/import-hub.html?entity=banktransactions' + (acc ? '&bankAccountId=' + encodeURIComponent(acc) : '');
+      },
       openImport() {
         const sel = document.getElementById('impAccount');
         sel.innerHTML = '<option value="">เลือกบัญชี</option>' + this.accounts.map(a => `<option value="${a.id}">${Layout.esc(a.accountName)} - ${Layout.esc(a.accountNumber || '')}</option>`).join('');

@@ -559,6 +559,46 @@ const API = {
     this.showStorageWarning(res);
     return res;
   },
+  /** ดาวน์โหลดไฟล์จาก endpoint ที่ต้องใช้ JWT (เช่น CSV แถวที่ผิด/ไฟล์ต้นทางของศูนย์นำเข้าข้อมูล) — หน้าไม่ต้องยิง fetch ดิบเอง ·
+   *  ชื่อไฟล์จาก Content-Disposition ของเซิร์ฟเวอร์ (ไม่มี = fallbackName) · ล้ม = throw Error ข้อความของเซิร์ฟเวอร์ (403 บอกวิธีขอสิทธิ์) */
+  async download(url, fallbackName) {
+    const busyTok = ApiBusy.begin('GET', url);
+    try {
+      this.token = localStorage.getItem('token');
+      const headers = {};
+      if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+      const res = await fetch(`${this.baseUrl}${url}`, { method: 'GET', headers, cache: 'no-store' });
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login.html';
+        return false;
+      }
+      if (!res.ok) {
+        let msg = this._t('api.downloadFailed', 'ดาวน์โหลดไม่สำเร็จ') + ` (HTTP ${res.status})`;
+        try { const j = await res.json(); if (j && j.message) msg = j.message; } catch (_) { /* ไม่ใช่ JSON — ใช้ข้อความกลาง */ }
+        const err = new Error(msg);
+        err.status = res.status;
+        throw err;
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get('content-disposition') || '';
+      const m = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(cd);
+      let name = fallbackName || 'download';
+      if (m) { try { name = decodeURIComponent(m[1] || m[2]); } catch (_) { name = m[1] || m[2]; } }
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 1000);
+      return true;
+    } finally {
+      ApiBusy.end(busyTok);
+    }
+  },
   /** เพดานพื้นที่ของไฟล์แนบ = เตือน ไม่บล็อก (รอบ 193 ข้อ 30) — เซิร์ฟเวอร์บันทึกไฟล์แล้วและส่ง
    *  `data.storageWarning` มาเมื่อเกิน/ใกล้เต็มแพ็กเกจ · ข้อความมาจากเซิร์ฟเวอร์ (หน้าไม่คำนวณเอง)
    *  · หน้าที่ใช้ fetch ดิบเรียกตัวนี้กับ json ที่ได้เอง */
@@ -1372,6 +1412,27 @@ const API = {
       // quality flags + semantic validation + batch patterns. Called between
       // mapping save and confirm.
       smartImportAiReview: (sid) => API.post(`${base}/import-export/smart-import/sessions/${sid}/ai-review`),
+      // ── ศูนย์นำเข้าข้อมูล (Import Hub · รอบ 205 ทีม E · Controllers/ImportHubController.cs · หน้า import-hub.html) ──
+      // ไฟล์ส่งเป็น multipart (เซิร์ฟเวอร์อ่าน/ถอดรหัสเอง) · ที่เหลือ JSON · ด่านสิทธิ์ต่อชนิดข้อมูลของชุดอยู่ที่เซิร์ฟเวอร์ (403 มีข้อความบอกวิธีขอสิทธิ์)
+      importHubEntities: () => API.get(`${base}/import/entities`),
+      importHubBatches: (q = '') => API.get(`${base}/import/batches${q}`),
+      importHubCreate: (formData) => API.upload(`${base}/import/batches`, formData),
+      importHubBatch: (id) => API.get(`${base}/import/batches/${id}`),
+      importHubRows: (id, q = '') => API.get(`${base}/import/batches/${id}/rows${q}`),
+      importHubAnalyze: (id, d) => API.post(`${base}/import/batches/${id}/analyze`, d),
+      importHubRemap: (id, d) => API.put(`${base}/import/batches/${id}/mapping`, d),
+      importHubEditRow: (id, rowId, d) => API.request('PATCH', `${base}/import/batches/${id}/rows/${rowId}`, d),
+      importHubBulk: (id, d) => API.post(`${base}/import/batches/${id}/bulk`, d),
+      importHubCommit: (id, d) => API.post(`${base}/import/batches/${id}/commit`, d),
+      importHubUndoPreview: (id) => API.get(`${base}/import/batches/${id}/undo-preview`),
+      importHubUndo: (id, d) => API.post(`${base}/import/batches/${id}/undo`, d),
+      importHubCancel: (id) => API.post(`${base}/import/batches/${id}/cancel`),
+      importHubErrorsCsv: (id) => API.download(`${base}/import/batches/${id}/errors.csv`, 'import-errors.csv'),
+      importHubSourceFile: (id, fileName) => API.download(`${base}/import/batches/${id}/source-file`, fileName || 'import-source'),
+      importHubTemplates: (q = '') => API.get(`${base}/import/templates${q}`),
+      importHubUpdateTemplate: (templateId, d) => API.put(`${base}/import/templates/${templateId}`, d),
+      importHubDeleteTemplate: (templateId) => API.del(`${base}/import/templates/${templateId}`),
+      importHubReconciliation: (q = '') => API.get(`${base}/import/migration/reconciliation${q}`),
       // Currency
       getCurrencies: () => API.get(`${base}/currency`),
       addCurrency: (d) => API.post(`${base}/currency`, d),
