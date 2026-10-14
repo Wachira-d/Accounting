@@ -220,7 +220,7 @@ public sealed record ImportBatchDetailDto(
 
 public sealed record ImportBatchListQuery(int Page = 1, int PageSize = 20, string? EntityType = null, ImportSessionStatus? Status = null);
 
-public sealed record ImportBatchListDto(int Page, int PageSize, int Total, IReadOnlyList<ImportBatchSummaryDto> Items);
+public sealed record ImportBatchListDto(int Page, int PageSize, int Total, IReadOnlyList<ImportBatchSummaryDto> Items, int HiddenCount = 0);
 
 // ───────────────────────── คำขอ ─────────────────────────
 
@@ -231,7 +231,8 @@ public sealed record ImportCreateBatchRequest(
     string? SourceSystem = null,
     Guid? TemplateId = null,
     int? HeaderRowIndex = null,
-    ImportDateOrder DateOrder = ImportDateOrder.Auto);
+    ImportDateOrder DateOrder = ImportDateOrder.Auto,
+    IReadOnlyDictionary<string, string?>? Options = null);
 
 /// <summary><c>POST batches/{id}/analyze</c> — วิเคราะห์ใหม่ด้วยค่าที่ผู้ใช้แก้ (null = คงค่าเดิม) · แถวที่ผู้ใช้แก้แล้วไม่ถูกทับ</summary>
 public sealed record ImportAnalyzeRequest(

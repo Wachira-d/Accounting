@@ -171,6 +171,9 @@ public class AuditTrailService : IAuditTrailService
 
             // Skip audit log entities to prevent infinite recursion
             if (entityType == "AuditLog" || entityType == "Notification") continue;
+            // รอบ 205 ทีม B: แถวพักของศูนย์นำเข้า — ค่าในตัวเป็น PII ที่เข้ารหัสในฐาน (PDPA ม.26) แต่ ChangeTracker ถือค่าเปล่า ⇒ ห้ามไหลเข้า audit
+            // (append-only · ลบไม่ได้) · แถวละหลายครั้งต่อไฟล์แสนแถว = audit ท่วม · ร่องรอยระดับชุดอยู่ที่ IMPORT-COMMIT/IMPORT-UNDO ของ pipeline
+            if (entityType == nameof(ImportStagedRow)) continue;
 
             Guid? companyId = null;
             if (entry.Entity is TenantEntity tenantEntity)

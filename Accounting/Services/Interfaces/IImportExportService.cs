@@ -1,4 +1,5 @@
 using Accounting.Models.DTOs.Import;
+using Accounting.Services.Import;
 
 namespace Accounting.Services.Interfaces;
 
@@ -36,4 +37,9 @@ public interface IImportExportService
     // Template Downloads
     Task<ImportTemplateDownloadResponse> DownloadTemplateAsync(string entityType, string format);
     Task<List<ImportableEntityInfo>> GetImportableEntitiesAsync();
+
+    /// <summary>รอบ 205 ทีม B: <b>ตัวเขียนแถวเดียว</b>ของ writer เดิม (switch เดียวที่เส้นไฟล์เดิม · Smart Import · ศูนย์นำเข้าใช้ร่วม) —
+    /// <c>IImportRowWriter</c> ของศูนย์นำเข้าเรียกผ่านนี้ · ค่าเป็นรูปมาตรฐาน (yyyy-MM-dd · invariant) · กฎธุรกิจล้ม = <c>Success = false</c> + ข้อความไทย</summary>
+    Task<ImportRowCommitResult> WriteRowAsync(Guid companyId, string entityType, ImportTargetRow row, ImportRowWriteOptions options,
+        string performedBy, CancellationToken ct = default);
 }

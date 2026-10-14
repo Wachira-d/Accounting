@@ -77,6 +77,10 @@ public sealed record ImportTargetRow(
 
 /// <summary>ผลตรวจของแถวหนึ่งจาก target — null = ไม่เปลี่ยนค่าที่ pipeline ตัดสินไว้</summary>
 /// <param name="FilledValues">ค่าที่ target เติมให้ (เซลล์ฟ้า "ระบบเติม") — ห้ามทับค่าที่ผู้ใช้แก้ (pipeline กันอีกชั้น)</param>
+/// <param name="MatchCandidates">(รอบ 205 ทีม B · เพิ่มท้าย) ผู้สมัครจับคู่ข้อมูลเดิม (dropdown "อัปเดต X") — จาก <c>IImportEntityResolver</c></param>
+/// <param name="MatchAutoApplied">(เพิ่มท้าย) ระบบเลือกคู่ให้เอง (กุญแจตรง: เลขภาษี+สาขา / รหัส) · false = แนะนำเท่านั้น</param>
+/// <param name="MatchUsedAi">(เพิ่มท้าย) คำแนะนำคู่มาจาก AI จริง (ป้ายซื่อสัตย์)</param>
+/// <param name="MatchAiFeedbackId">(เพิ่มท้าย) feedback ของ <c>ImportEntityMatch</c> — pipeline ปิดลูปตอน commit (กฎเหล็ก #1)</param>
 public sealed record ImportRowValidation(
     Guid RowId,
     IReadOnlyList<ImportIssueDto> Issues,
@@ -86,7 +90,11 @@ public sealed record ImportRowValidation(
     decimal? MatchScore = null,
     string? DisplayKey = null,
     string? GroupKey = null,
-    IReadOnlyDictionary<string, string?>? FilledValues = null);
+    IReadOnlyDictionary<string, string?>? FilledValues = null,
+    IReadOnlyList<ImportMatchCandidateDto>? MatchCandidates = null,
+    bool MatchAutoApplied = false,
+    bool MatchUsedAi = false,
+    Guid? MatchAiFeedbackId = null);
 
 /// <summary>ผลลงข้อมูลของแถวหนึ่ง — สำเร็จต้องมี <see cref="EntityType"/>+<see cref="EntityId"/> (idempotent + ย้อนได้)</summary>
 /// <param name="BeforeJson">ค่าเดิมก่อนทับ (Update/Merge) — เก็บลง ImportStagedRow.BeforeJson (เข้ารหัส) ใช้ย้อน</param>
