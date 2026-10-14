@@ -11456,12 +11456,19 @@ public partial class DocumentService : IDocumentService
                     .Where(p => p.DocumentId == source.Id && !p.IsDeleted)
                     .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
                 var whtTotal = whtDocs + whtPays + doc.WithholdingTaxAmount;
-                var missing = source.WithholdingTaxAmount - whtTotal;
+                // กระดานตัดสิน 2026-10-13 (ส่งต่อจากทีม A): เกณฑ์ Cash ใบลดหนี้ซื้อลดเจ้าหนี้แบบ gross (Total + WHT ของใบลดหนี้) โดยไม่แตะ 2191x
+                // ⇒ ภาษีหักที่ต้องครบเพื่อปิดหนี้ = WHT ใบต้นทาง − WHT ใบลดหนี้ (ตัวนับเดียวกับยอดแนะนำตอนจ่าย PurchaseCreditNoteWhtAsync) ·
+                // เดิมเทียบกับ WHT เต็ม ⇒ PV ที่หักยอดสุทธิถูกต้องหลังใบลดหนี้ถูกปฏิเสธ ทั้งที่คำเตือน [WHT-CN-NET] บอกให้ทำแบบนั้น · ฝั่งขายคงเดิม
+                var (srcCnWhts, _) = await PurchaseCreditNoteWhtAsync(companyId, source);
+                var requiredWht = Math.Max(0m, source.WithholdingTaxAmount - srcCnWhts.Sum());
+                var missing = requiredWht - whtTotal;
                 if (missing > 0.01m)
                     throw new InvalidOperationException(
                         $"ใบนี้จะปิดยอด {source.DocumentNumber} จนหมด แต่ภาษีหัก ณ ที่จ่ายที่บันทึกไว้รวม "
                         + $"{whtTotal:N2} บาท ขาดไป {missing:N2} บาท จากที่เอกสารต้นทางระบุ "
-                        + $"({source.WithholdingTaxAmount:N2} บาท) — อนุมัติแบบนี้จะเหลือ**ลูกหนี้ค้างใน GL "
+                        + $"({source.WithholdingTaxAmount:N2} บาท"
+                        + (srcCnWhts.Count > 0 ? $" − ใบลดหนี้ {srcCnWhts.Sum():N2} = {requiredWht:N2} บาท" : "")
+                        + ") — อนุมัติแบบนี้จะเหลือ**ลูกหนี้ค้างใน GL "
                         + $"{missing:N2} บาท** ทั้งที่เอกสารขึ้นว่าชำระครบ และเสียเครดิตภาษีใน ภ.ง.ด.50 ไปด้วย"
                         + "\n👉 ต้องทำ: แก้ช่อง \"หัก ณ ที่จ่าย %\" ในบรรทัดของใบนี้ให้ได้ยอด "
                         + $"{missing:N2} บาท (ยอดบรรทัดต้องเป็นยอดก่อนหักภาษี ไม่ใช่ยอดเงินที่รับจริง)"

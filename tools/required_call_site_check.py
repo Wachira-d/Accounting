@@ -6860,6 +6860,14 @@ RULES += [
          why=_TEAM_A_2A + "endpoint แนะนำยอดต้องผ่านด่านสิทธิ์ดูเอกสารก่อน"),
 ]
 
+# กระดานตัดสิน 2026-10-13 (ส่งต่อจากทีม A): ด่าน "ปิดยอดแต่ WHT ขาด" เกณฑ์ Cash หักยอดใบลดหนี้ซื้อ — ตัวนับเดียวกับยอดแนะนำตอนจ่าย
+RULES += [
+    dict(file=DOC, method="ApplySourceDocumentAdjustmentsAsync",
+         must=["PurchaseCreditNoteWhtAsync(companyId, source)", "var missing = requiredWht - whtTotal"],
+         forbid=["var missing = source.WithholdingTaxAmount - whtTotal"],
+         why="กระดาน 2026-10-13: PV ที่หักภาษีสุทธิหลังใบลดหนี้ (ตามคำเตือน [WHT-CN-NET]) ต้องไม่ถูกปฏิเสธด้วยยอด WHT เต็มของใบต้นทาง"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 
