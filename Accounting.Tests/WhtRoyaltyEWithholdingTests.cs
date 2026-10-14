@@ -26,6 +26,8 @@ public class WhtRoyaltyEWithholdingTests
         => WhtPayeeKind.ResolveForm(false, c.CountryCode, c.TaxId, c.ContactType, c.Name, codes, royalty);
 
     private static readonly DateTime Oct1 = new(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+    /// <summary>ค่าตั้งต้นของระบบ (ภ.ง.ด.3 · ผู้ใช้ยังไม่ตัดสิน)</summary>
+    private static readonly WhtRoyaltySetting Undecided3 = default;
 
     // ══════════ c2 — ตัวจำแนก ══════════
 
@@ -111,11 +113,11 @@ public class WhtRoyaltyEWithholdingTests
     [Fact]
     public void AppliesTo_ภงด3_ไม่มีผลเสมอ_ภงด2_ตามวันเริ่ม()
     {
-        Assert.False(WhtRoyaltyPolicy.AppliesTo(WhtRoyaltyIndividualForm.Pnd3, null, Oct1));
-        Assert.False(WhtRoyaltyPolicy.AppliesTo(WhtRoyaltyIndividualForm.Pnd3, Oct1, Oct1.AddDays(5)));
-        Assert.True(WhtRoyaltyPolicy.AppliesTo(WhtRoyaltyIndividualForm.Pnd2, null, Oct1));
-        Assert.True(WhtRoyaltyPolicy.AppliesTo(WhtRoyaltyIndividualForm.Pnd2, Oct1, Oct1));               // วันเริ่ม = มีผล
-        Assert.False(WhtRoyaltyPolicy.AppliesTo(WhtRoyaltyIndividualForm.Pnd2, Oct1, Oct1.AddDays(-1)));  // ก่อนวันเริ่ม = เดิม
+        Assert.False(new WhtRoyaltySetting(WhtRoyaltyIndividualForm.Pnd3, null).AppliesTo(Oct1));
+        Assert.False(new WhtRoyaltySetting(WhtRoyaltyIndividualForm.Pnd3, Oct1).AppliesTo(Oct1.AddDays(5)));
+        Assert.True(new WhtRoyaltySetting(WhtRoyaltyIndividualForm.Pnd2, null).AppliesTo(Oct1));
+        Assert.True(new WhtRoyaltySetting(WhtRoyaltyIndividualForm.Pnd2, Oct1).AppliesTo(Oct1));               // วันเริ่ม = มีผล
+        Assert.False(new WhtRoyaltySetting(WhtRoyaltyIndividualForm.Pnd2, Oct1).AppliesTo(Oct1.AddDays(-1)));  // ก่อนวันเริ่ม = เดิม
         Assert.False(default(WhtRoyaltySetting).AppliesTo(Oct1));                                          // ไม่พบบริษัท = เดิม
     }
 
@@ -134,28 +136,29 @@ public class WhtRoyaltyEWithholdingTests
         Assert.Equal(edited.Pnd2From, WhtRoyaltyPolicy.ApplyUpdate(edited, WhtRoyaltyIndividualForm.Pnd2, null, now.AddMonths(2)).Pnd2From);
         // ไม่ส่งอะไรเลย = ไม่แตะ
         Assert.Equal(legacy, WhtRoyaltyPolicy.ApplyUpdate(legacy, null, null, now));
-        // ปิดกลับเป็น ภ.ง.ด.3 ⇒ ไม่มีผล (วันเก็บไว้เป็นประวัติ)
+        // ปิดกลับเป็น ภ.ง.ด.3 ⇒ ไม่มีผลตั้งแต่วันปิด (ช่วงก่อนหน้าเก็บเป็นประวัติ — ฝ่ายค้าน M2)
         var off = WhtRoyaltyPolicy.ApplyUpdate(edited, WhtRoyaltyIndividualForm.Pnd3, null, now);
         Assert.False(off.AppliesTo(now));
+        Assert.True(off.AppliesTo(new DateTime(2026, 9, 20, 0, 0, 0, DateTimeKind.Utc)));
     }
 
     [Fact]
     public void คำแนะนำก่อนอนุมัติ_เฉพาะค่าตั้ง_ภงด3_และบุคคล_ค่าสิทธิทั้งใบ()
     {
         var p = Person();
-        var w = WhtRoyaltyPolicy.ApprovalWarning(WhtRoyaltyIndividualForm.Pnd3, false, null, p.TaxId, p.ContactType, p.Name, new[] { "3" });
+        var w = WhtRoyaltyPolicy.ApprovalWarning(Undecided3, false, null, p.TaxId, p.ContactType, p.Name, new[] { "3" });
         Assert.NotNull(w);
         Assert.True(WhtRoyaltyPolicy.IsApprovalWarning(w!));
         Assert.Contains("ฉบับที่ 58", w);
         Assert.Contains("ตั้งค่า > ภาษี", w);
         // ทิศตรงข้าม — เงียบ
-        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(WhtRoyaltyIndividualForm.Pnd2, false, null, p.TaxId, p.ContactType, p.Name, new[] { "3" }));
-        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(WhtRoyaltyIndividualForm.Pnd3, false, null, p.TaxId, p.ContactType, p.Name, new[] { "3", "8" }));
-        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(WhtRoyaltyIndividualForm.Pnd3, false, null, p.TaxId, p.ContactType, p.Name, new[] { "8" }));
-        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(WhtRoyaltyIndividualForm.Pnd3, false, null, p.TaxId, p.ContactType, p.Name, Array.Empty<string>()));
+        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(new WhtRoyaltySetting(WhtRoyaltyIndividualForm.Pnd2, Oct1), false, null, p.TaxId, p.ContactType, p.Name, new[] { "3" }));
+        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(Undecided3, false, null, p.TaxId, p.ContactType, p.Name, new[] { "3", "8" }));
+        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(Undecided3, false, null, p.TaxId, p.ContactType, p.Name, new[] { "8" }));
+        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(Undecided3, false, null, p.TaxId, p.ContactType, p.Name, Array.Empty<string>()));
         var f = Firm();
-        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(WhtRoyaltyIndividualForm.Pnd3, false, null, f.TaxId, f.ContactType, f.Name, new[] { "3" }));
-        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(WhtRoyaltyIndividualForm.Pnd3, true, null, p.TaxId, p.ContactType, p.Name, new[] { "3" }));
+        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(Undecided3, false, null, f.TaxId, f.ContactType, f.Name, new[] { "3" }));
+        Assert.Null(WhtRoyaltyPolicy.ApprovalWarning(Undecided3, true, null, p.TaxId, p.ContactType, p.Name, new[] { "3" }));
     }
 
     // ══════════ c2 — 50 ทวิ (ResolveWhtFormType) ══════════

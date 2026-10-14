@@ -8074,7 +8074,18 @@ public partial class DocumentService : IDocumentService
         var payeeContacts = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.CompanyId == companyId && payeeIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
         // ผู้รวมงานกระดาน 2026-10-13: ค่าตั้งค่าสิทธิ ม.40(3) ⇒ ภ.ง.ด.2 (ทีม C) — ตัวโหลดเดียวกับ JE (ResolveWhtPayableSplitAsync)
-        var chgRoyaltyAsPnd2 = await ResolveRoyaltyPolicyAsync(companyId, doc.PaymentDate ?? doc.DocumentDate);
+        // ฝ่ายค้านรอบ 204 M2: ค่าตั้ง "ณ วันที่ลงบัญชีไว้" (ประวัติ — ไม่ใช่ค่าตั้งวันนี้) ⇒ ผู้ถูกหักที่แบบต่างเพราะค่าตั้งอย่างเดียว ไม่ถูกย้ายผัง ·
+        // เกณฑ์เงินสด: หนี้ WHT ลงตอนจ่ายรายงวด (CreatePaymentJournalAsync · วันที่จ่ายของงวด) ⇒ วันของงวดเหล่านั้น · อื่น ๆ = วันของเอกสาร
+        var chgRoyaltySetting = await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId);
+        var chgWhtBasis = (await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId))?.WhtRecognitionBasis
+            ?? Models.Enums.WhtRecognitionBasis.Cash;
+        var chgInstalmentDates = chgWhtBasis == Models.Enums.WhtRecognitionBasis.Cash
+            ? await _db.Payments.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.DocumentId == doc.Id && p.WithholdingTaxAmount > 0m)
+                .Select(p => p.PaymentDate).ToListAsync()
+            : new List<DateTime>();
+        var (chgRoyaltyAsPnd2, chgRoyaltyMixed) = Accounting.Helpers.WhtRoyaltyPolicy.PostedFlag(chgRoyaltySetting,
+            Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, doc.PaymentDate, doc.DocumentDate), chgInstalmentDates);
         // แบบของผู้ถูกหักตัดสินด้วยรหัสเงินได้ของ "บรรทัดของรายนั้น" (ภ.ง.ด.2 ต่อราย · รอบ 204 ทีม T3) — ส่วนเดิม/ส่วนใหม่สร้างจาก `lines` ลำดับเดียวกัน
         TaxType FormOf(WhtPayeePortion portion)
         {
@@ -8160,6 +8171,8 @@ public partial class DocumentService : IDocumentService
         var deltas = postedTotal == 0m ? Array.Empty<(string AccountCode, decimal Delta)>() : WhtPayeeChangePlan.PayableDeltas(current, target);
 
         var notices = new List<string>();
+        if (chgRoyaltyMixed && deltas.Count > 0)
+            notices.Add("ค่าตั้งค่าสิทธิ ม.40(3) (ภ.ง.ด.2/3) ต่างกันระหว่างงวดจ่ายของใบนี้ — ระบบย้ายหนี้ตามค่าตั้ง ณ งวดจ่ายล่าสุด · ตรวจยอดผัง 21915/21916 ของใบนี้");
         if (postedTotal == 0m)
             notices.Add(doc.RelatedDocumentId.HasValue
                 ? "หนี้ภาษีหัก ณ ที่จ่ายของใบนี้ตั้งไว้ที่เอกสารต้นทาง (หรือยังไม่ลงบัญชี) — ไม่ได้ย้ายผัง ตรวจผัง 2191x ของเอกสารต้นทางเองถ้าแบบเปลี่ยน"
@@ -15258,11 +15271,18 @@ public partial class DocumentService : IDocumentService
         var ids = srcPortions.Select(p => p.PayeeContactId).Append(srcHeaderPayee).Distinct().ToList();
         var contacts = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.CompanyId == companyId && ids.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+        // ฝ่ายค้านรอบ 204 L1: ลำดับผังต้องเท่ากับ JE ของใบลด/เพิ่มหนี้ (ResolveWhtPayableSplitAsync) — e-Withholding ⇒ 21923 ทั้งก้อน ·
+        // ค่าสิทธิ ม.40(3) ตามค่าตั้ง ณ วันของใบนี้ (ประวัติ · PolicyDate ตัวเดียวกัน) · เดิมไม่ส่งทั้งสอง ⇒ "ผังเดียวกัน" ตัดสินคนละชุดกับ JE
+        var eWhtChain = await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, note)
+            && await FindAccountAsync(companyId, Accounting.Helpers.WhtPayableAccount.EWithholdingCode) != null;
+        var royaltyAsPnd2 = await ResolveRoyaltyPolicyAsync(companyId,
+            Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, note.PaymentDate, note.DocumentDate));
         IReadOnlyList<string> ChainOf(Guid payeeId, IEnumerable<string?> codes)
         {
+            if (eWhtChain) return new[] { Accounting.Helpers.WhtPayableAccount.EWithholdingCode };
             var c = contacts.GetValueOrDefault(payeeId);
             return Accounting.Helpers.WhtPayableAccount.CodeChain(note.IsForeignService, c?.CountryCode, c?.TaxId,
-                c?.ContactType ?? ContactType.Individual, c?.Name, codes);
+                c?.ContactType ?? ContactType.Individual, c?.Name, codes, royaltyAsPnd2);
         }
         var chains = srcPortions
             .Select(p => ChainOf(p.PayeeContactId, Accounting.Helpers.WhtIncomeCodes.WithheldAt(srcLines, p.LineIndexes)))
@@ -15274,7 +15294,10 @@ public partial class DocumentService : IDocumentService
     /// Σ = ยอดที่ขอเป๊ะ · ผู้ถูกหักที่ลงผังเดียวกันรวมเป็นบรรทัดเดียว) — ทุกจุดที่ JE ลง/กลับหนี้ WHT ฝั่งผู้จ่ายอ่านที่นี่ ·
     /// ใบผู้ถูกหักรายเดียว = ผู้ถูกหักตัวเดิม (<c>LoadWhtPayeeAsync</c>) ผังเดียว ยอดเดียว — <b>JE เดิมทุกประการ</b> ·
     /// ผังไม่พบ = ข้ามส่วนนั้น (พฤติกรรมเดิมของผังเดี่ยว — ด่านสมดุล JE ล้มดังเอง)</summary>
-    private async Task<List<(ChartOfAccount Account, decimal Amount)>> ResolveWhtPayableSplitAsync(Guid companyId, Document doc, decimal amount)
+    /// <param name="instalmentPaymentDate">ฝ่ายค้านรอบ 204 M2: วันที่จ่ายของงวด (JE ตอนบันทึกจ่าย — เกณฑ์เงินสด) ⇒ ค่าตั้งค่าสิทธิ ณ วันนั้น
+    /// ตรงกับ 50 ทวิ ของงวด · null (JE ตอนอนุมัติ/ใบสำคัญจ่าย) ⇒ วันของเอกสาร — ตัวตัดสินวันเดียว <see cref="Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate"/></param>
+    private async Task<List<(ChartOfAccount Account, decimal Amount)>> ResolveWhtPayableSplitAsync(Guid companyId, Document doc, decimal amount,
+        DateTime? instalmentPaymentDate = null)
     {
         var result = new List<(ChartOfAccount Account, decimal Amount)>();
         if (amount == 0m) return result;
@@ -15289,7 +15312,8 @@ public partial class DocumentService : IDocumentService
             return result;
         }
         // c2: ค่าสิทธิ ม.40(3) บุคคลธรรมดา ⇒ 21915 ตามค่าตั้งบริษัท ณ วันจ่าย (วันเดียวกับเดือนภาษีของ 50 ทวิ/หน้านำส่ง)
-        var royaltyAsPnd2 = await ResolveRoyaltyPolicyAsync(companyId, doc.PaymentDate ?? doc.DocumentDate);
+        var royaltyAsPnd2 = await ResolveRoyaltyPolicyAsync(companyId,
+            Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(instalmentPaymentDate, doc.PaymentDate, doc.DocumentDate));
         var (portions, portionLines) = await WhtPayeePortionsWithLinesAsync(companyId, doc);
         if (portions.Count <= 1)
         {
@@ -19610,7 +19634,7 @@ public partial class DocumentService : IDocumentService
             if (postPerPaymentWht)
             {
                 // รอบ 204 (ข้อ 143): แบ่งผังตามผู้ถูกหักตามสัดส่วน (ใบรายเดียว = บรรทัดเดียวเหมือนเดิม)
-                foreach (var (whtAccount, whtThbPart) in await ResolveWhtPayableSplitAsync(companyId, doc, thbWht))
+                foreach (var (whtAccount, whtThbPart) in await ResolveWhtPayableSplitAsync(companyId, doc, thbWht, payment.PaymentDate))
                     pendingLines.Add((whtAccount.Id, 0, whtThbPart, $"WHT (ค้างจ่าย) งวด {payment.PaymentNumber}"));
             }
             // Realized FX ฝั่งจ่าย: จ่าย THB มากกว่าที่ AP ตั้งไว้ = ขาดทุน (Dr),
@@ -21294,7 +21318,7 @@ public partial class DocumentService : IDocumentService
             // — แนะนำเท่านั้น ผู้ใช้เลือกแบบเองที่ตั้งค่า (ไม่ล็อค) · ป้าย [WHT-FORM] ผ่านทางเข้าไม่มีคน
             if (whtPayeeForWarn != null
                 && Accounting.Helpers.WhtRoyaltyPolicy.ApprovalWarning(
-                    (await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).Form,
+                    await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId),   // ฝ่ายค้าน L6: ผู้ใช้ตัดสินแล้ว (DecidedAt) ⇒ เงียบ
                     doc.IsForeignService, whtPayeeForWarn.CountryCode, whtPayeeForWarn.TaxId, whtPayeeForWarn.ContactType, whtPayeeForWarn.Name,
                     Accounting.Helpers.WhtIncomeCodes.WithheldForPayee(doc.Lines, doc.ContactId, doc.WhtPayeeContactId,
                         Accounting.Helpers.WhtPayeeSplit.EffectiveSinglePayee(doc))) is string royaltyFormWarn)

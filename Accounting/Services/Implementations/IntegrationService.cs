@@ -2517,7 +2517,7 @@ public class IntegrationService : IIntegrationService
                             document.IsForeignService, expenseContact?.CountryCode, expenseContact?.TaxId,
                             expenseContact?.ContactType ?? Models.Enums.ContactType.Individual,
                             expenseContact?.Name, await _db.LoadWithheldAsync(companyId, document),
-                            Accounting.Helpers.WhtRoyaltyPolicy.AppliesTo(intRoyalty.Form, intRoyalty.Pnd2From, document.PaymentDate ?? document.DocumentDate)))
+                            intRoyalty.AppliesTo(Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, document.PaymentDate, document.DocumentDate))))
                         .ToList();
                     ChartOfAccount? whtAcc = intEWhtAcc;
                     foreach (var code in intEWhtAcc != null ? new List<string>() : whtChain)
@@ -4176,7 +4176,7 @@ public class IntegrationService : IIntegrationService
                     document.IsForeignService, supplier?.CountryCode, supplier?.TaxId,
                     supplier?.ContactType ?? Models.Enums.ContactType.Individual, supplier?.Name,
                     await _db.LoadWithheldAsync(companyId, document),   // รอบ 204 ข้อ 148
-                    Accounting.Helpers.WhtRoyaltyPolicy.AppliesTo(payRoyalty.Form, payRoyalty.Pnd2From, document.PaymentDate ?? document.DocumentDate)))
+                    payRoyalty.AppliesTo(Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, document.PaymentDate, document.DocumentDate))))
                 .ToList();
             var whtCode = payChain[0];
             var whtAccount = payEWhtAcc

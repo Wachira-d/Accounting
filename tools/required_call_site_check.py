@@ -6226,7 +6226,7 @@ RULES += [
                "ResolveWhtPayableAccountAsync("],
          why="รอบ 204 (ข้อ 143): ตัวแบ่งผังหนี้ WHT ต่อผู้ถูกหัก — ใบรายเดียวใช้ผู้ถูกหักตัวเดิม · หลายรายเฉลี่ยด้วย Allocate (Σ = ยอดเป๊ะ)"),
     dict(file=DOCSVC, method="CreatePaymentJournalAsync",
-         must=["ResolveWhtPayableSplitAsync(companyId, doc, thbWht)"],
+         must=["ResolveWhtPayableSplitAsync(companyId, doc, thbWht, payment.PaymentDate)"],
          forbid=["ResolveWhtPayableAccountAsync(companyId, await _db.LoadWhtPayeeAsync(companyId, doc)"],
          why="รอบ 204 (ข้อ 143): WHT รายงวดแบ่งผังตามผู้ถูกหัก (ตัวเดียวกับตอนอนุมัติ)"),
     dict(file=DOCSVC, method="WhtPayeePortionsWithLinesAsync",
@@ -6578,7 +6578,7 @@ RULES += [
          must=["ResolveWhtPayableSplitAsync(companyId, doc,"], forbid=["ResolveWhtPayableAccountAsync("],
          why=_PND2 + "JE ตอนอนุมัติ — ผัง 21915 ของดอกเบี้ย/ปันผลบุคคล ต้องได้จากชุดรหัสเดียวกับ 50 ทวิ (ผ่านตัวแบ่งต่อผู้ถูกหัก)"),
     dict(file=DOCSVC, method="CreatePaymentJournalAsync",
-         must=["ResolveWhtPayableSplitAsync(companyId, doc, thbWht)"], forbid=["ResolveWhtPayableAccountAsync("],
+         must=["ResolveWhtPayableSplitAsync(companyId, doc, thbWht, payment.PaymentDate)"], forbid=["ResolveWhtPayableAccountAsync("],
          why=_PND2 + "JE รายงวด (เกณฑ์เงินสด) — ทางจ่ายไม่ Include บรรทัด ⇒ ตัวแบ่งอ่านบรรทัด/รหัสจากฐานเอง ไม่ใช่ doc.Lines ว่าง"),
     dict(file=DOCSVC, method="ResolveWhtPayableSplitAsync",
          must=["LoadWithheldAsync(companyId, doc)", "WhtIncomeCodes.WithheldAt(portionLines, p.LineIndexes)"],
@@ -7004,8 +7004,8 @@ RULES += [
          must=["requested != TaxType.WithholdingTax3", "IndividualForm(withheldIncomeTypeCodes, royaltyAsPnd2: true)"],
          why=_TEAMC + "ใบคีย์มือเลือก 2/3 เองได้สำหรับค่าสิทธิ (ไม่ล็อกแข็ง) · บังคับ ภ.ง.ด.2 เฉพาะ ม.40(4) ทั้งใบ"),
     dict(file=_CERTSVC, method="AutoGenerateFromDocumentAsync",
-         must=["royaltyAsPnd2: (await WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(paymentDate ?? doc.PaymentDate ?? doc.DocumentDate)"],
-         why=_TEAMC + "50 ทวิ อัตโนมัติลงแบบเดียวกับ JE (ค่าตั้ง ณ วันจ่าย)"),
+         must=["royaltyAsPnd2: (await WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(WhtRoyaltyPolicy.PolicyDate(paymentDate, doc.PaymentDate, doc.DocumentDate))"],
+         why=_TEAMC + "50 ทวิ อัตโนมัติลงแบบเดียวกับ JE (ค่าตั้ง ณ วันจ่ายของงวด — ตัวตัดสินวันเดียว PolicyDate)"),
     dict(file=_CERTSVC, method="CreateAsync",
          must=["WhtRoyaltyPolicy.LoadAsync(_db, companyId)", "CertRequestTaxDate(request)"],
          why=_TEAMC + "ใบคีย์มือ: ค่าตั้งค่าสิทธิ ณ วันจ่ายของบรรทัด"),
@@ -7045,18 +7045,60 @@ RULES += [
     dict(file=_TAXCAL, method="UpdateEventAsync", must=["EWithholdingClearing.ReminderEventId", "EWithholdingClearing.ReminderNotEditable"],
          why=_TEAMC + "แก้สถานะแถวคำนวณ = บอกทางไปต่อ (ห้าม silent no-op)"),
     dict(file="Services/Implementations/CompanyService.cs", method="UpdateAsync",
-         must=["WhtRoyaltyPolicy.ApplyUpdate("],
+         must=["ApplyRoyaltyPolicyAsync(company, userId, request)"],
          why=_TEAMC + "ค่าตั้งค่าสิทธิ + วันเริ่ม คำนวณที่ตัวตัดสินเดียว (เปิดครั้งแรก = วันที่ 1 ของเดือน)"),
 ]
 
 # กระดานตัดสิน 2026-10-13 ผู้รวมงาน: ทางเข้าซิงค์ระบบภายนอก + ตัวกระทบยอด GL ใช้ตัวตัดสินค่าสิทธิ/e-Withholding ตัวเดียวกับ DocumentService
 RULES += [
     dict(file="Services/Implementations/IntegrationService.cs", method="CreatePaymentVoucherJournalAsync",
-         must=["EWithholdingScope.IsViaAsync(_db, companyId, document)", "WhtRoyaltyPolicy.AppliesTo(payRoyalty.Form"],
+         must=["EWithholdingScope.IsViaAsync(_db, companyId, document)",
+               "payRoyalty.AppliesTo(Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, document.PaymentDate, document.DocumentDate))"],
+         forbid=["WhtRoyaltyPolicy.AppliesTo(payRoyalty.Form"],
          why="ใบสำคัญจ่ายจากระบบภายนอก: ค่าสิทธิ ม.40(3) ตามค่าตั้ง (21915) + e-Withholding (21923) — มิฉะนั้นลง 21916 ผิดผัง"),
     dict(file="Services/Implementations/TaxGlReconciliationService.cs", method="BuildWhtLineAsync",
          must=["EWithholdingScope.LoadDocIdsAsync(_db, companyId)", "!eWhtDocIds.Contains(d.Id)"],
          why="ใบหักผ่าน e-Withholding ไม่ต้องออก 50 ทวิ — ตัวกระทบยอดต้องไม่ฟ้องว่า \"ยังไม่มีใบ\""),
+]
+
+# ── ฝ่ายค้านรอบ 204 (ค่าตั้งค่าสิทธิ ม.40(3) — M2 ประวัติ · L1 ผังร่วม · L6 คำเตือน · L7b รายงาน) ──
+# ค่าตั้งมีประวัติ (WhtRoyaltyPolicy.AppliesTo อ่านช่วงที่ปิดแล้ว) ⇒ ทุกทางต้องผ่าน PolicyDate ตัวเดียว · บันทึกค่าตั้งที่แตะงวดยื่นแล้ว = รับทราบ + audit
+_ROYH = "ฝ่ายค้านรอบ 204 ค่าตั้งค่าสิทธิ: "
+RULES += [
+    dict(file=DOCSVC, method="ResolveWhtPayableSplitAsync",
+         must=["WhtRoyaltyPolicy.PolicyDate(instalmentPaymentDate, doc.PaymentDate, doc.DocumentDate)"],
+         forbid=["ResolveRoyaltyPolicyAsync(companyId, doc.PaymentDate ?? doc.DocumentDate)"],
+         why=_ROYH + "JE รายงวด (เกณฑ์เงินสด) ใช้วันที่จ่ายของงวด = วันเดียวกับ 50 ทวิ ของงวด"),
+    dict(file=DOCSVC, method="CreatePaymentJournalAsync",
+         must=["ResolveWhtPayableSplitAsync(companyId, doc, thbWht, payment.PaymentDate)"],
+         why=_ROYH + "หนี้ WHT ตอนบันทึกจ่ายรายงวดตัดสินค่าตั้งค่าสิทธิ ณ วันจ่ายของงวด (เดิมใช้วันเอกสาร — GL ≠ 50 ทวิ ของงวด)"),
+    dict(file=DOCSVC, method="SharedUnmappedPayableCodeAsync",
+         must=["EWithholdingScope.IsViaAsync(_db, companyId, note)", "WhtPayableAccount.EWithholdingCode",
+               "c?.ContactType ?? ContactType.Individual, c?.Name, codes, royaltyAsPnd2)",
+               "WhtRoyaltyPolicy.PolicyDate(null, note.PaymentDate, note.DocumentDate)"],
+         why=_ROYH + "L1 — \"ผังเดียวกัน\" ของใบลด/เพิ่มหนี้ตัดสินด้วยลำดับผังชุดเดียวกับ JE (e-Withholding 21923 + ค่าสิทธิตามค่าตั้ง)"),
+    dict(file=DOCSVC, method="ChangeWhtPayeeAsync",
+         must=["WhtRoyaltyPolicy.PostedFlag(", "WhtRoyaltyPolicy.PolicyDate(null, doc.PaymentDate, doc.DocumentDate)"],
+         forbid=["ResolveRoyaltyPolicyAsync(companyId, doc.PaymentDate ?? doc.DocumentDate)"],
+         why=_ROYH + "M2 — ย้ายหนี้ตามค่าตั้ง ณ วันที่ลงบัญชีไว้ (ประวัติ) ไม่ใช่ค่าตั้งวันนี้ ⇒ ผู้ถูกหักที่แบบต่างเพราะค่าตั้งอย่างเดียวไม่ถูกย้ายผัง"),
+    dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
+         must=["WhtRoyaltyPolicy.ApprovalWarning( await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId),"],
+         why=_ROYH + "L6 — คำเตือน [WHT-FORM] อ่านค่าตั้งทั้งชุด (ผู้ใช้ตัดสินแล้ว = เงียบ) ไม่ใช่แค่แบบ"),
+    dict(file="Services/Implementations/CompanyService.cs", method="ApplyRoyaltyPolicyAsync",
+         must=["WhtRoyaltyPolicy.ApplyUpdate(", "WhtPayeeChangePlan.FiledPeriodsFromAsync(", "WhtRoyaltyPolicy.TouchedFiledPeriods(",
+               "request.AcknowledgeWhtRoyaltyFiledPeriods != true", "WhtRoyaltyPolicy.FiledPeriodRuleCode, 409",
+               "company.WhtRoyaltyPnd2History = after.Pnd2History", "company.WhtRoyaltyFormDecidedAt = after.DecidedAt",
+               "_db.AddChainedAuditLog("],
+         before=[("WhtRoyaltyPolicy.TouchedFiledPeriods(", "company.WhtRoyaltyIndividualForm = after.Form")],
+         why=_ROYH + "M2 — บันทึกค่าตั้งที่แตะงวด ภ.ง.ด.2/3 ที่ยื่นแล้ว ⇒ 409 ให้รับทราบก่อนเขียน (ไม่เงียบ · ไม่ล็อก) + audit"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadPnd2SuspectsAsync",
+         must=["royaltySetting.AppliesTo(Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, d.PaymentDate, d.DocumentDate))"],
+         forbid=["(await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(d.DocumentDate)"],
+         before=[("WhtRoyaltyPolicy.LoadAsync(_db, companyId)", "foreach (var d in docs)")],
+         why=_ROYH + "L7b — โหลดค่าตั้งครั้งเดียวนอกลูป · วันตัดสินเดียวกับ JE (PolicyDate ไม่ใช่ DocumentDate)"),
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
+         must=["royalty.AppliesTo(Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, d.PaymentDate, d.DocumentDate))"],
+         why=_ROYH + "รายงาน ภ.ง.ด. จัดแบบค่าสิทธิด้วยวันตัดสินเดียวกับ JE"),
 ]
 
 # ── รอบ 204 ทีม D (คำสั่งเจ้าของ 2026-10-13 "ระบบห้ามล็อกตาย · ผู้ใช้ตัดสิน"): ล็อกเปลี่ยนเป็นทางเลือก แต่ด่านยังถูกคำนวณก่อนแยกทางเสมอ ·
@@ -7107,7 +7149,7 @@ RULES += [
 
 RULES += [
     dict(file=DOC, method="ChangeWhtPayeeAsync",
-         must=["ResolveRoyaltyPolicyAsync(companyId, doc.PaymentDate ?? doc.DocumentDate)",
+         must=["WhtRoyaltyPolicy.PostedFlag(chgRoyaltySetting,",
                "WhtIncomeCodes.WithheldAt(lines, portion.LineIndexes), chgRoyaltyAsPnd2)",
                "WhtIncomeCodes.WithheldAt(lines, newPortion.LineIndexes), chgRoyaltyAsPnd2)"],
          why="ผู้รวมงานกระดาน 2026-10-13: เปลี่ยนผู้ถูกหักใช้ค่าตั้งค่าสิทธิ ม.40(3) เดียวกับ JE — มิฉะนั้นย้ายผังไป 21916 ทั้งที่ JE เดิมลง 21915"),

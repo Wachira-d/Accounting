@@ -229,7 +229,7 @@
       <div class="form-row">
         <div class="form-group" style="flex:1">
           <label class="form-label" for="cWhtRoyaltyForm">ค่าสิทธิ/ค่าลิขสิทธิ์ ม.40(3) ที่จ่ายบุคคลธรรมดา — ยื่นแบบ</label>
-          <select class="form-select" id="cWhtRoyaltyForm">
+          <select class="form-select" id="cWhtRoyaltyForm" onchange="Page.onRoyaltyFormChange()">
             <option value="Pnd3">ภ.ง.ด.3 (แบบเดิมของระบบ)</option>
             <option value="Pnd2">ภ.ง.ด.2 — แนะนำ</option>
           </select>
@@ -240,6 +240,21 @@
           <label class="form-label" for="cWhtRoyaltyPnd2From">เริ่มใช้ ภ.ง.ด.2 ตั้งแต่วันที่จ่าย</label>
           <input type="date" class="form-input" id="cWhtRoyaltyPnd2From">
           <div class="form-hint">ว่าง = วันที่ 1 ของเดือนนี้ (ระบบตั้งให้ตอนบันทึก · แก้ได้)</div>
+        </div>
+      </div>
+      <!-- ฝ่ายค้านรอบ 204 M2/L6: ค่าตั้งมีประวัติ (ปิด ภ.ง.ด.2 = ปิดช่วง ไม่ทิ้ง) · ยืนยันแบบที่เลือก = หยุดคำเตือน [WHT-FORM] ตอนอนุมัติ ·
+           สรุปช่วง/สถานะยืนยันมาจากเซิร์ฟเวอร์ (whtRoyaltyPolicySummary · whtRoyaltyFormDecidedAt) -->
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <div class="form-hint" id="cWhtRoyaltySummary"></div>
+          <label class="form-label" id="cWhtRoyaltyConfirmWrap" style="display:none;font-weight:400">
+            <input type="checkbox" id="cWhtRoyaltyConfirm"> ยืนยันใช้แบบที่เลือก — ระบบจะหยุดคำเตือน "แนะนำ ภ.ง.ด.2" ตอนอนุมัติเอกสาร (คำแนะนำยังอยู่ที่หน้านี้)
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cWhtRoyaltyPnd3From">กลับไปใช้ ภ.ง.ด.3 ตั้งแต่วันที่จ่าย</label>
+          <input type="date" class="form-input" id="cWhtRoyaltyPnd3From">
+          <div class="form-hint">ใช้เมื่อเปลี่ยนจาก ภ.ง.ด.2 เป็น ภ.ง.ด.3 · ว่าง = วันนี้ · ใบที่จ่ายในช่วงที่ใช้ ภ.ง.ด.2 ไปแล้วยังเป็น ภ.ง.ด.2</div>
         </div>
       </div>
       <div class="form-group" id="cSocialSecurityGroup" style="display:none">
@@ -2182,8 +2197,7 @@
           document.getElementById('cVatRate').value = c.vatRate ?? 7;   // 0 ต้องโชว์ 0 ไม่ใช่ 7
           document.getElementById('cWhtRegistered').checked = c.isWhtRegistered !== false;
           // รอบ 204 (c2): เก็บแล้วต้อง echo กลับ — ค่าจากเซิร์ฟเวอร์ (undefined = เซิร์ฟเวอร์ยังไม่ส่ง ⇒ ค่าตั้งต้นเดิม ภ.ง.ด.3)
-          document.getElementById('cWhtRoyaltyForm').value = c.whtRoyaltyIndividualForm || 'Pnd3';
-          document.getElementById('cWhtRoyaltyPnd2From').value = c.whtRoyaltyPnd2From ? String(c.whtRoyaltyPnd2From).slice(0, 10) : '';
+          this._renderRoyalty(c);
           this._companyRoyaltyLoaded = true;
           document.getElementById('cSocialSecurity').checked = c.isSocialSecurityRegistered || false;
           document.getElementById('cSocialSecurityAccountNo').value = c.socialSecurityAccountNo || '';
@@ -2400,12 +2414,28 @@
           Layout.toast('แยกที่อยู่สำเร็จ — ตรวจและปรับแก้ก่อนบันทึก');
         } catch (e) { Layout.toast(e.message || 'แยกที่อยู่ไม่สำเร็จ', 'error'); }
       },
+      /** ฝ่ายค้านรอบ 204: ค่าตั้งค่าสิทธิ ม.40(3) จากเซิร์ฟเวอร์ (ค่าที่เก็บจริง) — แบบ · วันเริ่ม · สรุปช่วง (server computes) ·
+       *  ช่องยืนยันแสดงเฉพาะเมื่อยังไม่เคยตัดสิน (whtRoyaltyFormDecidedAt ว่าง) · ล้างช่องวันกลับ/ติ๊กยืนยันทุกครั้ง (ห้ามค้างค่าก่อน) */
+      _renderRoyalty(c) {
+        document.getElementById('cWhtRoyaltyForm').value = c.whtRoyaltyIndividualForm || 'Pnd3';
+        document.getElementById('cWhtRoyaltyPnd2From').value = c.whtRoyaltyPnd2From ? String(c.whtRoyaltyPnd2From).slice(0, 10) : '';
+        document.getElementById('cWhtRoyaltyPnd3From').value = '';
+        document.getElementById('cWhtRoyaltyConfirm').checked = false;
+        document.getElementById('cWhtRoyaltyConfirmWrap').style.display = c.whtRoyaltyFormDecidedAt ? 'none' : '';
+        document.getElementById('cWhtRoyaltySummary').textContent = c.whtRoyaltyPolicySummary
+          ? 'ประวัติ: ' + c.whtRoyaltyPolicySummary
+          : (c.whtRoyaltyFormDecidedAt ? '' : 'ยังไม่ได้ยืนยันแบบ — ระบบเตือน "แนะนำ ภ.ง.ด.2" ตอนอนุมัติค่าสิทธิที่จ่ายบุคคลจนกว่าจะเลือกและบันทึก');
+      },
+      /** เปลี่ยนแบบ = ผู้ใช้ตัดสินแล้ว (เซิร์ฟเวอร์ประทับเองเมื่อแบบเปลี่ยน — ติ๊กให้เห็นตรงกัน) */
+      onRoyaltyFormChange() {
+        document.getElementById('cWhtRoyaltyConfirm').checked = true;
+      },
       async saveCompany() {
         const cid = Layout.getCompanyId(); if (!cid) return;
         const name = document.getElementById('cName').value.trim();
         if (!name) { Layout.toast('กรุณากรอกชื่อบริษัท', 'error'); return; }
         try {
-          const res = await API.updateCompany(cid, {
+          const payload = {
             name,
             nameEn: document.getElementById('cNameEn').value || null,
             taxId: document.getElementById('cTaxId').value || '-',
@@ -2431,6 +2461,9 @@
             ...(this._companyRoyaltyLoaded ? {
               whtRoyaltyIndividualForm: document.getElementById('cWhtRoyaltyForm').value,
               whtRoyaltyPnd2From: document.getElementById('cWhtRoyaltyPnd2From').value || null,
+              // ฝ่ายค้านรอบ 204: วันกลับไปใช้ ภ.ง.ด.3 (ว่าง = วันนี้ — เซิร์ฟเวอร์ตัดสิน) · ยืนยันแบบ = ส่งเฉพาะเมื่อผู้ใช้ติ๊ก/เปลี่ยนแบบจริง
+              whtRoyaltyPnd3From: document.getElementById('cWhtRoyaltyPnd3From').value || null,
+              ...(document.getElementById('cWhtRoyaltyConfirm').checked ? { confirmWhtRoyaltyForm: true } : {}),
             } : {}),
             isSocialSecurityRegistered: document.getElementById('cSocialSecurity').checked,
             socialSecurityAccountNo: document.getElementById('cSocialSecurityAccountNo').value || null,
@@ -2451,7 +2484,18 @@
             website: document.getElementById('cWebsite').value || null,
             fiscalYearStartMonth: parseInt(document.getElementById('cFiscalMonth').value) || 1,
             isSetupComplete: true,
-          });
+          };
+          let res;
+          try {
+            res = await API.updateCompany(cid, payload);
+          } catch (e) {
+            // ฝ่ายค้านรอบ 204 M2: ค่าตั้งค่าสิทธิแตะงวด ภ.ง.ด.2/3 ที่ยื่น/นำส่งแล้ว ⇒ เซิร์ฟเวอร์ตอบ 409 พร้อมเหตุผล — ไม่ใช่ทางตัน:
+            // ผู้ใช้รับทราบแล้วบันทึกอีกครั้ง (เซิร์ฟเวอร์บันทึกประวัติการรับทราบ) หรือยกเลิกแล้วเลือกวันหลังงวดนั้น
+            if (!(e && e.status === 409 && e.body?.data?.ruleCode === 'RD-50(2)-ROYALTY-FILED')) throw e;
+            const ok = await Layout.confirmDanger({ title: 'งวดที่ยื่น/นำส่งแล้ว', message: Layout.esc(e.message || ''), mode: 'math' });
+            if (!ok) return;
+            res = await API.updateCompany(cid, { ...payload, acknowledgeWhtRoyaltyFiledPeriods: true });
+          }
           if (!res || !res.success) throw new Error(res?.message || 'บันทึกไม่สำเร็จ');
           if (this._companyVatLoaded && this._vatTouched) this._vatConfirmedSaved();
           // Update localStorage and Layout with the server response (authoritative)
@@ -2466,10 +2510,7 @@
           const select = document.getElementById('companySelect');
           if (select) { const opt = select.querySelector(`option[value="${cid}"]`); if (opt) opt.textContent = name; }
           // รอบ 204 (c2): วันเริ่มใช้ ภ.ง.ด.2 ที่เซิร์ฟเวอร์ตั้งให้ (เปิดครั้งแรกโดยไม่ระบุวัน) — แสดงค่าที่เก็บจริง
-          if (res.data && this._companyRoyaltyLoaded) {
-            document.getElementById('cWhtRoyaltyForm').value = res.data.whtRoyaltyIndividualForm || 'Pnd3';
-            document.getElementById('cWhtRoyaltyPnd2From').value = res.data.whtRoyaltyPnd2From ? String(res.data.whtRoyaltyPnd2From).slice(0, 10) : '';
-          }
+          if (res.data && this._companyRoyaltyLoaded) this._renderRoyalty(res.data);
           Layout.toast('บันทึกข้อมูลบริษัทสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

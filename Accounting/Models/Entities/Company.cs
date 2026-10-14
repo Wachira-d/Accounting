@@ -70,6 +70,11 @@ public class Company : BaseEntity
     public WhtRoyaltyIndividualForm WhtRoyaltyIndividualForm { get; set; } = WhtRoyaltyIndividualForm.Pnd3;
     /// <summary>รอบ 204 (schema only) — วันที่เริ่มใช้ ภ.ง.ด.2 กับค่าสิทธิบุคคลธรรมดา · null = ไม่กำหนด</summary>
     public DateTime? WhtRoyaltyPnd2From { get; set; }
+    /// <summary>รอบ 204 ฝ่ายค้าน M2 — ช่วง ภ.ง.ด.2 ที่ปิดกลับเป็น ภ.ง.ด.3 แล้ว (<c>yyyy-MM-dd..yyyy-MM-dd;…</c> · ปลายไม่รวม) ·
+    /// ตัวอ่าน/เขียนเดียว <c>Helpers/WhtRoyaltyPolicy</c> (ParseHistory/FormatHistory) · null = ไม่มีประวัติ</summary>
+    public string? WhtRoyaltyPnd2History { get; set; }
+    /// <summary>รอบ 204 ฝ่ายค้าน L6 — ผู้ใช้ตัดสินแบบยื่นค่าสิทธิเองแล้ว (เปลี่ยนแบบ หรือยืนยันที่หน้าตั้งค่า) ⇒ หยุดคำเตือน [WHT-FORM] · null = ค่าตั้งต้นของระบบ</summary>
+    public DateTime? WhtRoyaltyFormDecidedAt { get; set; }
     public bool IsSocialSecurityRegistered { get; set; } // จดทะเบียนประกันสังคม
     public string? SocialSecurityAccountNo { get; set; } // เลขที่บัญชีประกันสังคม
 

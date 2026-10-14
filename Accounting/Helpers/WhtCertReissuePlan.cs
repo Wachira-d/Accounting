@@ -206,18 +206,43 @@ public static class WhtPayeeChangePlan
     private static async Task<(List<TaxType> Reported, List<TaxType> Remitted)> FiledFormsAsync(AccountingDbContext db, Guid companyId,
         IReadOnlyCollection<TaxType> forms, int year, int month, CancellationToken ct)
     {
-        if (forms.Count == 0) return (new List<TaxType>(), new List<TaxType>());
+        var rows = await FiledRowsAsync(db, companyId, forms, year * 12 + month, year * 12 + month, ct);
+        return (rows.Where(r => r.Reported).Select(r => r.Form).Distinct().ToList(),
+                rows.Where(r => !r.Reported).Select(r => r.Form).Distinct().ToList());
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 204 M2: (แบบ, ปี, เดือน) ที่ยื่น/นำส่งแล้ว ตั้งแต่เดือน <paramref name="fromYear"/>/<paramref name="fromMonth"/> เป็นต้นไป —
+    /// หลักฐานชุดเดียวกับ <c>PeriodFiledReasonAsync</c>
+    /// (ตัวอ่านเดียว <c>FiledRowsAsync</c>) · ผู้เรียก: บันทึกค่าตั้งค่าสิทธิ ม.40(3) (<c>CompanyService</c>) — เตือนเมื่อผลของงวดที่ยื่นแล้วเปลี่ยน</summary>
+    public static async Task<IReadOnlyList<(TaxType Form, int Year, int Month)>> FiledPeriodsFromAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyCollection<TaxType> forms, int fromYear, int fromMonth, CancellationToken ct = default)
+        => (await FiledRowsAsync(db, companyId, forms, fromYear * 12 + fromMonth, null, ct))
+            .Select(r => (r.Form, r.Year, r.Month)).Distinct()
+            .OrderBy(p => p.Year).ThenBy(p => p.Month).ThenBy(p => (int)p.Form).ToList();
+
+    /// <summary>แถวหลักฐาน "ยื่น/นำส่งแล้ว" ของช่วงเดือน (กุญแจ ปี×12+เดือน · ปลาย null = ไม่จำกัด) — รายงานภาษีสถานะ
+    /// <see cref="TaxFilingLockPolicy.DeclaredOrFiledStatuses"/> (Reported = true) · บันทึกนำส่งแปลงชนิดด้วย <see cref="WhtCertVoidGuard.RemittanceForm"/></summary>
+    private static async Task<List<(TaxType Form, int Year, int Month, bool Reported)>> FiledRowsAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyCollection<TaxType> forms, int fromKey, int? toKey, CancellationToken ct)
+    {
+        var result = new List<(TaxType Form, int Year, int Month, bool Reported)>();
+        if (forms.Count == 0) return result;
         var formList = forms.Distinct().ToList();
+        var upper = toKey ?? int.MaxValue;
         var reported = await db.TaxReports.AsNoTracking()
-            .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.Year == year && t.Month == month
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted
+                && t.Year * 12 + t.Month >= fromKey && t.Year * 12 + t.Month <= upper
                 && formList.Contains(t.TaxType) && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
-            .Select(t => t.TaxType).ToListAsync(ct);
-        var remitTypes = await db.StatutoryRemittances.AsNoTracking()
-            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.PeriodYear == year && r.PeriodMonth == month)
-            .Select(r => r.RemittanceType).ToListAsync(ct);
-        var remitted = remitTypes.Select(WhtCertVoidGuard.RemittanceForm)
-            .Where(f => f is TaxType ft && formList.Contains(ft)).Select(f => f!.Value).ToList();
-        return (reported.Distinct().ToList(), remitted.Distinct().ToList());
+            .Select(t => new { t.TaxType, t.Year, t.Month }).ToListAsync(ct);
+        result.AddRange(reported.Select(t => (t.TaxType, t.Year, t.Month, true)));
+        var remits = await db.StatutoryRemittances.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted
+                && r.PeriodYear * 12 + r.PeriodMonth >= fromKey && r.PeriodYear * 12 + r.PeriodMonth <= upper)
+            .Select(r => new { r.RemittanceType, r.PeriodYear, r.PeriodMonth }).ToListAsync(ct);
+        foreach (var r in remits)
+            if (WhtCertVoidGuard.RemittanceForm(r.RemittanceType) is TaxType f && formList.Contains(f))
+                result.Add((f, r.PeriodYear, r.PeriodMonth, false));
+        return result;
     }
 
     /// <summary>ผลต่างยอดหนี้ WHT ต่อผัง (ปัจจุบัน → ปลายทาง) — บวก = ต้องเพิ่มเครดิต (Cr) · ลบ = ต้องลด (Dr) · ผังที่ไม่ขยับไม่อยู่ในผล ·

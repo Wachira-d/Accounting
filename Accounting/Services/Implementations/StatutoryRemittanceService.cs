@@ -275,7 +275,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 var portions = Accounting.Helpers.WhtPayeeSplit.Portions(d.ContactId, d.WhtPayeeContactId,
                     d.LinePayees.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
                     d.WithholdingTaxAmount);
-                var date = d.PaymentDate ?? d.DocumentDate;
+                var date = Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, d.PaymentDate, d.DocumentDate);   // วันเดือนภาษี + ค่าตั้งค่าสิทธิ (ประวัติ)
                 if (!Accounting.Helpers.WhtPayeeSplit.IsMultiPayee(portions))
                 {
                     if (coveredDocIds.Contains(d.Id)) continue;
@@ -755,7 +755,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 if (d.DocumentType != DocumentType.PaymentVoucher && settledByPv.Contains(d.Id))
                     continue;
                 if (calEWhtDocIds.Contains(d.Id)) continue;   // c3: ธนาคารนำส่งแทน — ไม่ใช่ช่องโหว่ 50 ทวิ
-                var dt = d.PaymentDate ?? d.DocumentDate;
+                var dt = Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, d.PaymentDate, d.DocumentDate);   // วันเดือนภาษี + ค่าตั้งค่าสิทธิ (ประวัติ)
                 // ยอดจริงมาจาก certs (ข้างบน) — เอกสารที่ยังไม่มีใบออกจริงเก็บเป็น "ช่องโหว่" ให้ช่องปฏิทินเตือน
                 var calPortions = Accounting.Helpers.WhtPayeeSplit.Portions(d.ContactId, d.WhtPayeeContactId,
                     d.LinePayees.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),

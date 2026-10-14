@@ -720,7 +720,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             return await ByCodeChain(chain.ToArray(), label);
         }
         async Task<bool> PreviewRoyaltyAsPnd2Async()
-            => (await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(doc.PaymentDate ?? doc.DocumentDate);
+            => (await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, doc.PaymentDate, doc.DocumentDate));
         // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — พรีวิวแบ่งผังต่อผู้ถูกหักเหมือน JE จริง (DocumentService.ResolveWhtPayableSplitAsync ·
         // ตัวแบ่งเดียว WhtPayeeSplit) · ใบรายเดียว = WhtPayableAsync() บรรทัดเดียวเหมือนเดิม
         async Task<List<(string Code, string Name, decimal Amount)>> WhtPayableSplitAsync(decimal amount)

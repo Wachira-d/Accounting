@@ -77,7 +77,13 @@ public record UpdateCompanyRequest(
     // รอบ 204 (c2): ค่าสิทธิ ม.40(3) จ่ายบุคคลธรรมดา ยื่น ภ.ง.ด.3 (เดิม) / ภ.ง.ด.2 (แนะนำ · ประกาศอธิบดีฯ ฉบับที่ 58) · null = ไม่แตะ ·
     // วันเริ่มใช้ ภ.ง.ด.2: null = คงเดิม (เปิดครั้งแรกโดยไม่ระบุ ⇒ วันที่ 1 ของเดือนปัจจุบัน — WhtRoyaltyPolicy.ApplyUpdate)
     WhtRoyaltyIndividualForm? WhtRoyaltyIndividualForm = null,
-    DateTime? WhtRoyaltyPnd2From = null);
+    DateTime? WhtRoyaltyPnd2From = null,
+    // ฝ่ายค้านรอบ 204 M2: ปิด ภ.ง.ด.2 กลับเป็น ภ.ง.ด.3 — วันที่จ่ายแรกที่กลับไปใช้ ภ.ง.ด.3 (null = วันนี้) · ช่วงก่อนหน้าเก็บเป็นประวัติ ไม่ทิ้ง
+    DateTime? WhtRoyaltyPnd3From = null,
+    // ฝ่ายค้านรอบ 204 L6: ผู้ใช้ยืนยันแบบที่เลือก (แตะช่องจริง) ⇒ ประทับ WhtRoyaltyFormDecidedAt — หยุดคำเตือน [WHT-FORM] · null/false = ไม่แตะ
+    bool? ConfirmWhtRoyaltyForm = null,
+    // ฝ่ายค้านรอบ 204 M2: รับทราบว่าการเปลี่ยนแตะงวด ภ.ง.ด.2/3 ที่ยื่น/นำส่งแล้ว (ตอบ 409 RD-50(2)-ROYALTY-FILED) — audit
+    bool? AcknowledgeWhtRoyaltyFiledPeriods = null);
 
 public record CompanyResponse(
     Guid Id,
@@ -121,7 +127,10 @@ public record CompanyResponse(
     decimal PaidUpCapital = 0m,
     // รอบ 204 (c2): เก็บแล้วต้อง echo กลับ — แบบยื่นค่าสิทธิบุคคลธรรมดา + วันเริ่มใช้ ภ.ง.ด.2
     WhtRoyaltyIndividualForm WhtRoyaltyIndividualForm = default,   // default = Pnd3 (0) = พฤติกรรมเดิม
-    DateTime? WhtRoyaltyPnd2From = null);
+    DateTime? WhtRoyaltyPnd2From = null,
+    // ฝ่ายค้านรอบ 204 M2/L6: ประวัติช่วง ภ.ง.ด.2 (สรุปที่เซิร์ฟเวอร์คำนวณ — WhtRoyaltyPolicy.Summary) + วันที่ผู้ใช้ตัดสินแบบเอง (null = ยังเป็นค่าตั้งต้น ⇒ ยังเตือน)
+    string? WhtRoyaltyPolicySummary = null,
+    DateTime? WhtRoyaltyFormDecidedAt = null);
 
 public record SubscriptionSummary(
     SubscriptionPlan Plan,

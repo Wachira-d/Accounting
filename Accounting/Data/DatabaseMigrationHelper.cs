@@ -208,6 +208,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round202LodgingWebStatements());   // รอบ 202 ทีม LW (บล็อกท้ายไฟล์)
         list.AddRange(Round204Pnd2Statements());   // รอบ 204 ภ.ง.ด.2 (บล็อกท้ายไฟล์)
         list.AddRange(Round204DirectiveStatements());   // รอบ 204 คอลัมน์ WHT (schema only · บล็อกท้ายไฟล์)
+        list.AddRange(Round204RoyaltyHistoryStatements());   // รอบ 204 ฝ่ายค้าน M2/L6 — ประวัติค่าตั้งค่าสิทธิ (ก่อน Round204Pnd2Statements)
         return list;
     }
 
@@ -7477,6 +7478,17 @@ public static class DatabaseMigrationHelper
     /// <summary>ผัง 21915 "ภาษีหัก ณ ที่จ่าย - ภ.ง.ด. 2" ให้บริษัทเดิมที่มีกลุ่ม 219 แต่ไม่มีแถวนี้ (บริษัทใหม่ได้จากผังมาตรฐานอยู่แล้ว) ·
     /// ตัวสร้าง SQL เดียว <see cref="Accounting.Helpers.WhtPayableAccount.MigrationSeedSql"/> · <c>ON CONFLICT DO NOTHING</c> ⇒ รันทุกบูตได้ ·
     /// ไม่ย้ายยอดเดิม (ใบดอกเบี้ย/ปันผลที่เคยลง 21916 ⇒ หน้าตรวจข้อมูลรายการให้ผู้ทำบัญชีตัดสินรายใบ — ห้ามย้าย GL ที่ยื่นแล้วเงียบ ๆ)</summary>
+    /// <summary>รอบ 204 ฝ่ายค้าน M2/L6 — ค่าตั้งค่าสิทธิ ม.40(3) มีประวัติ: <c>WhtRoyaltyPnd2History</c> (ช่วง ภ.ง.ด.2 ที่ปิดแล้ว — ตัวเขียนเดียว
+    /// <c>WhtRoyaltyPolicy.FormatHistory</c> · NULL = ไม่มีประวัติ = ผลเดิมทุกวัน) + <c>WhtRoyaltyFormDecidedAt</c> (ผู้ใช้ตัดสินแบบเองแล้ว ⇒
+    /// หยุดคำเตือน [WHT-FORM]) · ข้อมูลเดิม (F2#9): บริษัทที่เคยเปิด ภ.ง.ด.2 (แบบ = 2 หรือมีวันเริ่ม) = ตัดสินเองแล้ว ⇒ ประทับเวลา ·
+    /// ช่วงที่ปิดไปก่อนมีประวัติกู้ไม่ได้ (ระบบเดิมไม่เก็บวันปิด) ⇒ ผลคงเดิมทุกวัน · รันทุกบูตได้ (IF NOT EXISTS / IS NULL)</summary>
+    internal static IReadOnlyList<string> Round204RoyaltyHistoryStatements() => new[]
+    {
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "WhtRoyaltyPnd2History" text NULL;""",
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "WhtRoyaltyFormDecidedAt" timestamp with time zone NULL;""",
+        """UPDATE "Companies" SET "WhtRoyaltyFormDecidedAt" = now() WHERE "WhtRoyaltyFormDecidedAt" IS NULL AND ("WhtRoyaltyIndividualForm" = 1 OR "WhtRoyaltyPnd2From" IS NOT NULL);""",
+    };
+
     internal static IReadOnlyList<string> Round204Pnd2Statements()
     {
         return new[]

@@ -662,7 +662,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             payeeOnly is Guid formPayee
                 ? WhtIncomeCodes.WithheldForPayee(doc.Lines, doc.ContactId, doc.WhtPayeeContactId, formPayee)
                 : await _db.LoadWithheldAsync(companyId, doc),
-            royaltyAsPnd2: (await WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(paymentDate ?? doc.PaymentDate ?? doc.DocumentDate));
+            royaltyAsPnd2: (await WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(WhtRoyaltyPolicy.PolicyDate(paymentDate, doc.PaymentDate, doc.DocumentDate)));
 
         // เลขเดือน = เดือน "เงินได้ที่จ่าย" (tax month) ไม่ใช่เดือนที่ generate (UtcNow)
         // → ตรงกับ TaxMonth ที่ลงในใบ + สอดคล้องกับ CreateAsync (WHT-YYYYMM-####)

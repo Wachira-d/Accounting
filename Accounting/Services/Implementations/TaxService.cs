@@ -1721,7 +1721,7 @@ public partial class TaxService : ITaxService
         var royalty = await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId);
         var eWhtDocIds = await Accounting.Helpers.EWithholdingScope.LoadDocIdsAsync(_db, companyId);
         docs = docs.Where(d => !eWhtDocIds.Contains(d.Id)).ToList();
-        bool RoyaltyOf(Document d) => royalty.AppliesTo(d.PaymentDate ?? d.DocumentDate);
+        bool RoyaltyOf(Document d) => royalty.AppliesTo(Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, d.PaymentDate, d.DocumentDate));
 
         // แยกผู้ถูกหักตามแบบ (ท.ป.4/2528): ภ.ง.ด.3 = บุคคลธรรมดาไทย,
         // ภ.ง.ด.53 = นิติบุคคลไทย, ภ.ง.ด.54 = ผู้รับต่างประเทศ (ม.70) —

@@ -293,14 +293,11 @@ public class CompanyService : ICompanyService
         if (request.VatRate.HasValue) company.VatRate = request.VatRate.Value;
         if (request.IsWhtRegistered.HasValue) company.IsWhtRegistered = request.IsWhtRegistered.Value;
         // รอบ 204 (c2): แบบยื่นค่าสิทธิ ม.40(3) บุคคลธรรมดา — ผู้ใช้ตัดสิน (ระบบแนะนำ ภ.ง.ด.2) · วันเริ่มคำนวณที่ตัวตัดสินเดียว
-        if (request.WhtRoyaltyIndividualForm.HasValue || request.WhtRoyaltyPnd2From.HasValue)
-        {
-            var royalty = Accounting.Helpers.WhtRoyaltyPolicy.ApplyUpdate(
-                new Accounting.Helpers.WhtRoyaltySetting(company.WhtRoyaltyIndividualForm, company.WhtRoyaltyPnd2From),
-                request.WhtRoyaltyIndividualForm, request.WhtRoyaltyPnd2From, DateTime.UtcNow);
-            company.WhtRoyaltyIndividualForm = royalty.Form;
-            company.WhtRoyaltyPnd2From = royalty.Pnd2From;
-        }
+        // ฝ่ายค้านรอบ 204 M2: ค่าตั้งมีประวัติ (ปิด ภ.ง.ด.2 = ปิดช่วง ไม่ทิ้ง) · ผลของวันใดในงวด ภ.ง.ด.2/3 ที่ยื่น/นำส่งแล้วเปลี่ยน ⇒ 409 ให้รับทราบ
+        // (ไม่บล็อก — คำตัดสินข้อ 150 ห้ามแก้งวดที่ยื่นแล้วแบบเงียบ) · รับทราบแล้ว/เปลี่ยนจริง ⇒ audit RuleCode + LegalReference
+        if (request.WhtRoyaltyIndividualForm.HasValue || request.WhtRoyaltyPnd2From.HasValue || request.WhtRoyaltyPnd3From.HasValue
+            || request.ConfirmWhtRoyaltyForm == true)
+            await ApplyRoyaltyPolicyAsync(company, userId, request);
         if (request.IsSocialSecurityRegistered.HasValue) company.IsSocialSecurityRegistered = request.IsSocialSecurityRegistered.Value;
         if (request.SocialSecurityAccountNo != null) company.SocialSecurityAccountNo = request.SocialSecurityAccountNo;
         if (request.BuildingNumber != null) company.BuildingNumber = request.BuildingNumber;
@@ -746,8 +743,65 @@ public class CompanyService : ICompanyService
             PhoR06ApprovedDate: c.PhoR06ApprovedDate,
             PaidUpCapital: c.PaidUpCapital,
             WhtRoyaltyIndividualForm: c.WhtRoyaltyIndividualForm,
-            WhtRoyaltyPnd2From: c.WhtRoyaltyPnd2From);
+            WhtRoyaltyPnd2From: c.WhtRoyaltyPnd2From,
+            WhtRoyaltyPolicySummary: Accounting.Helpers.WhtRoyaltyPolicy.Summary(RoyaltySettingOf(c)),
+            WhtRoyaltyFormDecidedAt: c.WhtRoyaltyFormDecidedAt);
     }
+
+    /// <summary>ฝ่ายค้านรอบ 204 M2/L6: บันทึกค่าตั้งค่าสิทธิ ม.40(3) — ค่าใหม่จากตัวตัดสินเดียว <c>WhtRoyaltyPolicy.ApplyUpdate</c> ·
+    /// ผลของวันใดในงวด ภ.ง.ด.2/3 ที่ยื่น/นำส่งแล้วเปลี่ยน (ตัวอ่านงวดยื่นแล้วตัวเดียวกับเปลี่ยนผู้ถูกหัก <c>WhtPayeeChangePlan.FiledPeriodsFromAsync</c>)
+    /// ⇒ ยังไม่รับทราบ = 409 <c>RD-50(2)-ROYALTY-FILED</c> (ไม่บันทึก · ทางไปต่อ = รับทราบแล้วบันทึกอีกครั้ง หรือเลือกวันหลังงวดนั้น) ·
+    /// ผลเปลี่ยน ⇒ audit (ค่าก่อน/หลัง · วันแรกที่ผลเปลี่ยน · งวดยื่นแล้วที่รับทราบ)</summary>
+    private async Task ApplyRoyaltyPolicyAsync(Company company, Guid userId, UpdateCompanyRequest request)
+    {
+        var before = RoyaltySettingOf(company);
+        var after = Accounting.Helpers.WhtRoyaltyPolicy.ApplyUpdate(before, request.WhtRoyaltyIndividualForm,
+            request.WhtRoyaltyPnd2From, DateTime.UtcNow, request.WhtRoyaltyPnd3From, request.ConfirmWhtRoyaltyForm == true);
+        IReadOnlyList<(TaxType Form, int Year, int Month)> touched = Array.Empty<(TaxType Form, int Year, int Month)>();
+        var firstChanged = Accounting.Helpers.WhtRoyaltyPolicy.FirstChangedDate(before, after);
+        if (firstChanged is DateTime fc)
+        {
+            var filed = await Accounting.Helpers.WhtPayeeChangePlan.FiledPeriodsFromAsync(_db, company.Id,
+                new[] { TaxType.WithholdingTax2, TaxType.WithholdingTax3 }, fc.Year, fc.Month);
+            touched = Accounting.Helpers.WhtRoyaltyPolicy.TouchedFiledPeriods(before, after, filed);
+            if (touched.Count > 0 && request.AcknowledgeWhtRoyaltyFiledPeriods != true)
+                throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.WhtRoyaltyPolicy.FiledPeriodWarning(touched),
+                    Accounting.Helpers.WhtRoyaltyPolicy.FiledPeriodRuleCode, 409);
+        }
+        company.WhtRoyaltyIndividualForm = after.Form;
+        company.WhtRoyaltyPnd2From = after.Pnd2From;
+        company.WhtRoyaltyPnd2History = after.Pnd2History;
+        company.WhtRoyaltyFormDecidedAt = after.DecidedAt;
+        if (before == after) return;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = company.Id,
+            UserId = userId,
+            Action = AuditAction.Update,
+            EntityType = "Company",
+            EntityId = company.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                whtRoyaltyIndividualForm = before.Form.ToString(), whtRoyaltyPnd2From = before.Pnd2From,
+                whtRoyaltyPnd2History = before.Pnd2History, whtRoyaltyFormDecidedAt = before.DecidedAt,
+            }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "WhtRoyaltyPolicy",
+                whtRoyaltyIndividualForm = after.Form.ToString(), whtRoyaltyPnd2From = after.Pnd2From,
+                whtRoyaltyPnd2History = after.Pnd2History, whtRoyaltyFormDecidedAt = after.DecidedAt,
+                firstChangedDate = firstChanged,
+                acknowledgedFiledPeriods = Accounting.Helpers.WhtFiledPeriodAck.SupplementaryFilingLabels(touched),
+                ruleCode = touched.Count > 0 ? Accounting.Helpers.WhtRoyaltyPolicy.FiledPeriodRuleCode : Accounting.Helpers.WhtRoyaltyPolicy.RuleCode,
+                legalReference = Accounting.Helpers.WhtRoyaltyPolicy.LegalReference,
+            }),
+            IpAddress = _http?.HttpContext?.Connection.RemoteIpAddress?.ToString(),
+        });
+    }
+
+    /// <summary>ค่าตั้งค่าสิทธิ ม.40(3) ของบริษัท (entity ที่โหลดแล้ว) — ชุดคอลัมน์เดียวกับ <c>WhtRoyaltyPolicy.LoadAsync</c></summary>
+    private static Accounting.Helpers.WhtRoyaltySetting RoyaltySettingOf(Company c)
+        => new(c.WhtRoyaltyIndividualForm, c.WhtRoyaltyPnd2From, c.WhtRoyaltyPnd2History, c.WhtRoyaltyFormDecidedAt);
 
     /// <summary>ประกอบ Company.Address (free-text) จาก structured fields — ที่อยู่
     /// บริษัทคือ "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย" บน 50 ทวิ และผู้ขายบนใบกำกับ §86/4

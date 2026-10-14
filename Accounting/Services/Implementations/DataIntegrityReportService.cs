@@ -292,7 +292,7 @@ public class DataIntegrityReportService
                 && d.Lines.Any(l => !l.IsDeleted && l.WithholdingTaxAmount > 0 && l.IncomeTypeCode != null && l.IncomeTypeCode.StartsWith("4")))
             .Select(d => new
             {
-                d.Id, d.DocumentNumber, d.DocumentDate, d.WithholdingTaxAmount, d.IsForeignService, d.ContactId, d.WhtPayeeContactId,
+                d.Id, d.DocumentNumber, d.DocumentDate, d.PaymentDate, d.WithholdingTaxAmount, d.IsForeignService, d.ContactId, d.WhtPayeeContactId,
                 Codes = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).Select(l => l.IncomeTypeCode).ToList(),
                 // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — ใบหลายผู้ถูกหักตรวจ "ปน" ต่อราย (ลำดับ/เกณฑ์เดียวกับ Codes)
                 WhtLines = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).OrderBy(l => l.LineOrder)
@@ -316,10 +316,12 @@ public class DataIntegrityReportService
             : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
                 .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
                 .ToDictionaryAsync(c => c.Id);
+        // ฝ่ายค้านรอบ 204 L7b: ค่าตั้งค่าสิทธิโหลดครั้งเดียว (เดิมโหลดต่อใบในลูป) · วันตัดสินจากตัวเดียวกับ JE (PolicyDate — เดิมใช้ DocumentDate)
+        var royaltySetting = await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId);
         foreach (var d in docs)
         {
             contacts.TryGetValue(EffectivePayee(d.ContactId, d.WhtPayeeContactId, d.WhtLines.Select(l => (l.WhtPayeeContactId, l.WithholdingTaxAmount))), out var payee);
-            var mix = Accounting.Helpers.ThaiWhtRateTable.ClassifySection40_4(d.Codes, (await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(d.DocumentDate));   // รอบ 204 c2 (ทีม C): ค่าสิทธิตามค่าตั้ง
+            var mix = Accounting.Helpers.ThaiWhtRateTable.ClassifySection40_4(d.Codes, royaltySetting.AppliesTo(Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, d.PaymentDate, d.DocumentDate)));   // รอบ 204 c2 (ทีม C): ค่าสิทธิตามค่าตั้ง
             if (mix == Accounting.Helpers.ThaiWhtRateTable.Section40_4Mix.AllSection40_4 && d.PostedTo21916)
             {
                 result.Add(new DataIntegritySuspect("Pnd2DocPostedToPnd3Account", d.Id, d.DocumentNumber, d.DocumentDate,
