@@ -538,6 +538,8 @@
       printOfficialForm() {
         const d = this._currentReport;
         if (!d) return;
+        // มือถือ: หน้าต่างพิมพ์ไม่ให้ไฟล์ — ใช้ไฟล์ PDF ของเซิร์ฟเวอร์ (ฟอร์มเดียวกัน) แทน
+        if (Layout.isMobileDevice()) { Layout.toast('บนมือถือ กดปุ่ม ⬇️ PDF ภ.ขาย / ⬇️ PDF ภ.ซื้อ เพื่อได้ไฟล์', 'info', 6000); return; }
         const periodTH = `${this.monthNames[d.month]} ${d.year + 543}`;
         const esc = s => Layout.esc(s);
         const branch = b => { const x = String(b || '').replace(/\D/g, ''); return (!x || x === '00000' || x === '0') ? 'สำนักงานใหญ่' : 'สาขาที่ ' + x; };
@@ -576,7 +578,10 @@
           table.grid th{text-align:center;background:#f0f0f0;font-weight:600}.c{text-align:center}.r{text-align:right}tfoot td{font-weight:700;background:#f7f7f7}
           .print-btn{margin:10px 0;padding:8px 18px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px}
           @media print{.noprint{display:none}}</style></head><body>
-          <div class="noprint"><button class="print-btn" onclick="window.print()">🖨 พิมพ์ / บันทึกเป็น PDF</button></div>
+          <div class="noprint"><button class="print-btn" onclick="window.print()">🖨 พิมพ์</button>
+            <button class="print-btn" style="background:#16a34a" onclick="(function(){var o=null;try{o=window.opener;}catch(e){}if(o&&!o.closed&&o.Page&&typeof o.Page.exportPdf==='function'){o.Page.exportPdf('${d.id}','sales');}else{document.getElementById('dlNote').textContent='หน้าหลักถูกปิดแล้ว — กลับไปหน้ารายงานภาษีแล้วกด ⬇️ PDF';}})()">⬇️ ไฟล์ PDF ภาษีขาย</button>
+            <button class="print-btn" style="background:#16a34a" onclick="(function(){var o=null;try{o=window.opener;}catch(e){}if(o&&!o.closed&&o.Page&&typeof o.Page.exportPdf==='function'){o.Page.exportPdf('${d.id}','purchase');}else{document.getElementById('dlNote').textContent='หน้าหลักถูกปิดแล้ว — กลับไปหน้ารายงานภาษีแล้วกด ⬇️ PDF';}})()">⬇️ ไฟล์ PDF ภาษีซื้อ</button>
+            <div id="dlNote" style="font-size:12px;color:#475569">ไฟล์ PDF = ฟอร์มเดียวกันจากเซิร์ฟเวอร์ (ดาวน์โหลดผ่านหน้าหลัก)</div></div>
           ${formTable('รายงานภาษีขาย', byDate(lines.filter(l => sideOf(l) === 'output')), 'ชื่อผู้ซื้อสินค้า/ผู้รับบริการ')}
           ${formTable('รายงานภาษีซื้อ', byDate(lines.filter(l => sideOf(l) === 'input')), 'ชื่อผู้ขายสินค้า/ผู้ให้บริการ')}
           <scr` + `ipt>window.onload=function(){setTimeout(function(){try{window.print()}catch(e){}},400)}</scr` + `ipt></body></html>`;
@@ -758,7 +763,10 @@
           document.getElementById('detailContent').innerHTML = html;
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (d.taxType === 'VAT')
-            footer = `<button class="btn btn-secondary" style="margin-right:8px" onclick="Page.printOfficialForm()" title="พิมพ์/บันทึก PDF ตามฟอร์มราชการ §87 (ฉบับที่ 104)">🖨️ พิมพ์ฟอร์มราชการ</button>` + footer;
+            // ⬇️ ไฟล์ PDF จากเซิร์ฟเวอร์ (§87 ฉบับที่ 104 · มือถือได้ไฟล์ผ่าน Layout.savePdf) · 🖨️ หน้าพิมพ์ = เดสก์ท็อป (มือถือไม่ให้ไฟล์ — 2026-10-14)
+            footer = `<button class="btn btn-secondary" style="margin-right:8px" onclick="Page.exportPdf('${d.id}','sales')" title="ไฟล์ PDF รายงานภาษีขาย (§87 ฉบับที่ 104)">⬇️ PDF ภ.ขาย</button>`
+              + `<button class="btn btn-secondary" style="margin-right:8px" onclick="Page.exportPdf('${d.id}','purchase')" title="ไฟล์ PDF รายงานภาษีซื้อ (§87 ฉบับที่ 104)">⬇️ PDF ภ.ซื้อ</button>`
+              + (Layout.isMobileDevice() ? '' : `<button class="btn btn-secondary" style="margin-right:8px" onclick="Page.printOfficialForm()" title="พิมพ์ตามฟอร์มราชการ §87 (ฉบับที่ 104)">🖨️ พิมพ์ฟอร์มราชการ</button>`) + footer;
           if (editable) {
             const pullBtn = d.taxType === 'VAT' ? `<button class="btn btn-secondary" onclick="Page.openPullDoc('${d.id}')" style="margin-right:8px">➕ ดึงเอกสาร</button>` : '';
             footer = `<button class="btn btn-danger" onclick="Page.deleteReport('${d.id}')" style="margin-right:8px" data-i18n="common.delete">ลบ</button>${pullBtn}<button class="btn btn-warning" onclick="Page.regenerateReport('${d.id}')" style="margin-right:8px">สร้างใหม่</button><button class="btn btn-primary" onclick="Page.saveReport('${d.id}')" style="margin-right:8px" data-i18n="common.save">บันทึก</button><button class="btn btn-success" onclick="Page.fileReport('${d.id}')">ยื่นภาษี</button>` + footer;
@@ -1152,24 +1160,12 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
-      // PDF รายงานภาษีซื้อ/ขาย/ภ.พ.30 — fetch เป็น blob (แนบ token) แล้วเปิดแท็บใหม่
-      async exportPdf(reportId, kind) {
+      // PDF รายงานภาษีซื้อ/ขาย/ภ.พ.30 — ไฟล์จากเซิร์ฟเวอร์ผ่าน Layout.savePdf ตัวเดียว (มือถือ: แผ่นแชร์/บันทึกลงไฟล์ · เดสก์ท็อป: ดาวน์โหลด)
+      // เดิม fetch ดิบ + window.open(blob) หลัง await ⇒ มือถือถูกบล็อกป๊อปอัป/ไม่ได้ไฟล์ (2026-10-14)
+      exportPdf(reportId, kind) {
         const cid = Layout.getCompanyId();
-        const token = localStorage.getItem('token');
-        try {
-          Layout.toast('กำลังสร้าง PDF ...', 'info');
-          const res = await fetch(`/api/companies/${cid}/tax/${reportId}/export-pdf?kind=${kind}`,
-            { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-          if (!res.ok) {
-            let detail = '';
-            try { const j = await res.clone().json(); detail = j?.message || ''; } catch {}
-            throw new Error(detail || `สร้าง PDF ล้มเหลว (${res.status})`);
-          }
-          const blob = await res.blob();
-          const url = URL.createObjectURL(blob);
-          window.open(url, '_blank');
-          setTimeout(() => URL.revokeObjectURL(url), 60000);
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        const k = ['sales', 'purchase', 'pp30'].includes(kind) ? kind : 'purchase';
+        return Layout.savePdf(`/api/companies/${cid}/tax/${reportId}/export-pdf?kind=${k}&download=true`, `TaxReport_${k}.pdf`);
       },
 
       async unlockFiling(reportId) {

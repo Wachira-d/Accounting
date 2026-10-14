@@ -7691,6 +7691,22 @@ RULES += [
                     ("ResolveAll", "SaveChangesAsync("), ("Detect", "_detector.DetectBatchAsync(")]
 ]
 
+# 2026-10-14 (ผู้ใช้มือถือ "กดบันทึก pdf ขึ้นแต่หน้าปริ้น"): มือถือได้ไฟล์ QuestPDF แทนหน้าพิมพ์ ⇒ บรรทัด "ชื่อ" ของ 50 ทวิ
+# ต้องเล่าเหมือนกันทั้ง 3 renderer — ประกอบผ่าน WhtCertFormText.PartyName ตัวเดียว (เดิม QuestPDF ต่อคำนำหน้า+สาขา · HTML ต่อแต่สาขา · หน้าพิมพ์ไม่ต่อ)
+# ฝั่ง DTO (MapToResponse เป็น expression-bodied — checker อ่านไม่ได้) ล็อกใน WhtCertFormTextTests.PartyName_IsTheOnlyNameComposer_InAllThreeRenderers
+RULES += [
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildWhtCertPdf",
+         must=["WhtCertFormText.PartyName(null, company.Name,", "WhtCertFormText.PartyName(cert.PayeeContact.TitleTh,"],
+         forbid=["CertBranchSuffix(", "ThaiTitleHelper.WithTitle("],
+         why="50 ทวิ QuestPDF: ชื่อผู้หัก/ผู้ถูกหักจากตัวตัดสินเดียวกับ HTML + หน้าพิมพ์ (2026-10-14)"),
+    # การเรียกอยู่ใน interpolated string ⇒ must_lit/forbid_lit (checker ตัด string ออกจาก must/forbid)
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
+         must_lit=["{WebUtility.HtmlEncode(WhtCertFormText.PartyName(null, company.Name,",
+                   "{WebUtility.HtmlEncode(WhtCertFormText.PartyName(cert.PayeeContact.TitleTh,"],
+         forbid_lit=["CertBranchSuffix(", "cert.PayeeContact.Name +"],
+         why="50 ทวิ HTML: ชื่อผู้ถูกหักมีคำนำหน้าเหมือน QuestPDF (เดิมขาด) — ตัวตัดสินเดียว WhtCertFormText.PartyName (2026-10-14)"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

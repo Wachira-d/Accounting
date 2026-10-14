@@ -4883,3 +4883,15 @@ statement ไม่มียอดคงเหลือ: `BankTransaction.Balanc
 หนึ่งรอบ + ใบเบิก/เงินทดรองผังตรงชนะ · บัญชีคุมในสมุดรายวันประจำ/ระบบเชื่อมต่อ/สร้าง JE จากรายการธนาคาร + ทางอัตโนมัติตรวจ tenant ข้าม soft-delete · ตรวจเฉพาะค่าที่เปลี่ยน (สินทรัพย์ ·
 ตั้งค่ารับชำระ · สรุปรายวัน) · โอนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์ · ที่พักโอน/พร้อมเพย์ต้องมีบัญชีธนาคาร (`Helpers/LodgingPaymentBank`) · เปิดกองทุนเงินสดย่อยต้องมีสิทธิ์จัดการใบสำคัญ ·
 FK "ยังถูกอ้างอิงโดย<ตารางที่อ้าง>" — เทสต์ `AdversarialRound1DbTests` · `AdversarialRound1Tests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง_
+_2026-10-14 — "บันทึก PDF" บนมือถือต้องได้ไฟล์ (ผู้ใช้ + ภาพจากมือถือ: "กดบันทึก pdf ขึ้นแต่หน้าปริ้น บนมือถือกดมาเป็นไฟล์ไม่ได้"):
+หน้า 50 ทวิ มีทางเดียวคือหน้าต่าง about:blank + `window.print()` (+ คำแนะนำ "เลือก Save as PDF") ⇒ Android Chrome / iOS Safari ไม่ได้ไฟล์ ·
+ทั้งที่เซิร์ฟเวอร์มี endpoint PDF จริงอยู่แล้ว และหน้ามี `downloadPdf` ที่ไม่มีปุ่มใดเรียก (มี ≠ ถูกเรียก).
+แก้: ตัวดึงไฟล์ตัวเดียว `API.fetchFile` (JWT · POST+body · ข้อความเซิร์ฟเวอร์ · `API.download` เรียกตัวนี้) + ตัวส่งมอบตัวเดียว `Layout.savePdf`/`deliverFile`
+(มือถือ = `navigator.share({files})` · ปิดแผ่นแชร์ = เงียบ · การแตะหมดอายุ = แถบ "แตะเพื่อบันทึก" · iOS = เปิดไฟล์ในแท็บเดิม · เดสก์ท็อป = `<a download>`) ·
+wht.html ปุ่มหลัก ⬇️ PDF (แถว + รายละเอียด) · มือถือกด 🖨 พิมพ์ = ไปทางไฟล์ · หน้าต่างพิมพ์ถูกบล็อก = ส่งไฟล์แทน (เดิม TypeError เงียบ) · ปุ่มดาวน์โหลดในหน้าต่างพิมพ์ ·
+ถอด modal `pdfModal` ที่ไม่มีใครเปิด · ทางเดียวกันใน documents.html (ดาวน์โหลด PDF · e-Tax PDF/A-3 ×2 · มือถือกดพิมพ์ = ไฟล์) · tax.html (§87/ภ.พ.30 —
+เดิม `window.open(blob)` หลัง await · ฟอร์มราชการบนมือถือชี้ปุ่มไฟล์) · etax.html (เดิม `credentials:'include'` ไม่แนบ JWT ⇒ 401 ทุกครั้ง + alert) ·
+ชื่อไฟล์ไทยจาก `filename*` ชนะ `filename=` (เดิม regex เดียวจับชื่อสำรอง ASCII ก่อน — sim จับได้).
+renderer parity: บรรทัด "ชื่อ" ของ 50 ทวิ ผ่าน `WhtCertFormText.PartyName` ทั้ง 3 ตัว (DTO `PayerNameLine`/`PayeeNameLine`) — เดิม QuestPDF ต่อคำนำหน้า+สาขา ·
+HTML ต่อแต่สาขา · หน้าพิมพ์ไม่ต่อ · `CertBranchSuffix` ถูกยุบเข้า helper. เทสต์ `WhtCertFormTextTests` (+3) · sim `tools/save_pdf_mobile_sim.js`
+(ทุกทาง + negative 10 ตัว) · กติกาจุดเรียกใน `required_call_site_check.py` (+2) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>_

@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **538 ไฟล์ · 5,338 `[Fact]` + 833 `[Theory]` (3,687 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **538 ไฟล์ · 5,341 `[Fact]` + 833 `[Theory]` (3,687 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -1021,6 +1021,11 @@
 | WHTFORM-03 | ใบออกให้ครั้งเดียว (`PayOnce`) | ติ๊ก **(3) ออกให้ครั้งเดียว** ช่องเดียว (หน้าเว็บอ่าน `payerConditionIndex`) |
 | WHTFORM-04 | ทิศตรงข้าม: ใบ ภ.ง.ด.54 · ใบ ภ.ง.ด.53 หัก ณ ที่จ่าย เดิม | 54 = ไม่ติ๊กช่องแบบยื่นใด (ไม่เดา) · 53 = ติ๊ก (7) + (1) เหมือนเดิม |
 | WHTFORM-05 | เทียบภาพแบบทางการ | ช่องเลขเดิม 10 หลักบรรทัด "ชื่อ" · "ลำดับที่ … ในแบบ" ในกรอบผู้ถูกหัก · หัวคอลัมน์ "ประเภทเงินได้พึงประเมินจ่าย" · 4(ข) (1)/(2.2)/(2.3) ข้อความ+ตัดบรรทัดตามแบบ · "เงินที่จ่ายเข้า" ตัวหนา · คำเตือนหัวข้อซ้าย · หมายเหตุข้อ 1 บรรทัด "หมายถึง" · วันที่ออก วัน / เดือน / ปี พ.ศ. · ยังพอดี A4 ฉบับละหน้า (3 หน้า) |
+| WHTFORM-06 | (2026-10-14 · ผู้ใช้มือถือ) Android Chrome: หน้า 50 ทวิ กด ⬇️ PDF (แถว/รายละเอียด) หรือ 🖨 พิมพ์ | ได้**ไฟล์** WHT-….pdf ผ่านแผ่นแชร์ของระบบ (บันทึกลงไฟล์/ไดรฟ์/LINE) — ไม่ใช่หน้าพิมพ์ · ปิดแผ่นแชร์ = ไม่มีข้อความผิดพลาด · ✅ sim `tools/save_pdf_mobile_sim.js` (ทางแชร์/ยกเลิก/แตะใหม่) |
+| WHTFORM-07 | iPhone Safari: เดียวกัน (เซิร์ฟเวอร์ช้า > 5 วิ) | แชร์ได้ทันที หรือแถบ "📤 แตะเพื่อบันทึก" → แตะ = แผ่นแชร์ · แชร์ไม่ได้เลย = เปิดไฟล์ในแท็บเดิม + ข้อความ "บันทึกไปยังไฟล์" · ✅ sim |
+| WHTFORM-08 | ทิศตรงข้าม: เดสก์ท็อป Chrome (Windows มี `navigator.share`) | ⬇️ PDF = ดาวน์โหลดตรง (ไม่เด้งแผ่นแชร์ Windows) · 🖨 พิมพ์ = หน้าต่างพิมพ์เดิม + ปุ่ม "⬇️ ดาวน์โหลดไฟล์ PDF" · ป๊อปอัปถูกบล็อก = ดาวน์โหลดแทน (ไม่ TypeError เงียบ) · ✅ sim |
+| WHTFORM-09 | ผู้ถูกหักบุคคลธรรมดา คำนำหน้า "นาย" + ผู้หักนิติบุคคลสำนักงานใหญ่ | บรรทัด "ชื่อ" = "นาย สมชาย ใจดี" / "… (สำนักงานใหญ่)" **เหมือนกันทั้งไฟล์ PDF · HTML · หน้าพิมพ์** (`WhtCertFormText.PartyName`) · ชื่อที่มีคำนำหน้าแล้วไม่ซ้ำ · บุคคลธรรมดาไม่ติดสาขา · ✅ `WhtCertFormTextTests.PartyName_*` / `Html_PayeeName_HasTitle_LikeQuestPdf` |
+| WHTFORM-10 | documents (ดาวน์โหลด PDF · e-Tax PDF/A-3) · tax (📄 ภ.ซื้อ/ภ.ขาย/ภ.พ.30 · ⬇️ PDF ในหน้ารายละเอียด) · etax (PDF/A-3) บนมือถือ | ได้ไฟล์ผ่าน `Layout.savePdf` เดียวกัน · etax ไม่ได้ 401 อีก (เดิมไม่แนบ JWT) · ชื่อไฟล์ไทยจาก `filename*` · ✅ sim (สายไฟ) |
 ### ผู้จ่ายออกภาษีแทน — รอบ 204 (`WhtGrossUpTests` · `ForeignServicePayerBorneVatTests` · `WhtBorneByContractTests` + `tools/required_call_site_check.py` กลุ่ม `_WHTBORNE`/`_FSBORNE`)
 | รหัส | เคส | คาดหวัง |
 | --- | --- | --- |

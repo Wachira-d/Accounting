@@ -99,15 +99,16 @@ public partial class PdfGenerationService
                         col.Item().Border(2f).BorderColor(Colors.Black).Column(form =>
                         {
                             BuildTitleBar(form, cert.CertificateNumber);
+                            // ชื่อผู้หัก/ผู้ถูกหักผ่านตัวตัดสินเดียว WhtCertFormText.PartyName (ตัวเดียวกับ HTML + หน้าพิมพ์ wht.html · 2026-10-14)
                             BuildPartyBlock(form, WhtCertFormText.PayerHeading, company.TaxId,
-                                company.Name + CertBranchSuffix(company.TaxId, company.BranchCode, company.BranchName), fullAddress);
+                                WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName), fullAddress);
                             // ชื่อผู้ถูกหัก = คำนำหน้า (Contact.TitleTh) + ชื่อ — หน้าผู้ติดต่อบอกให้กรอกชื่อ
                             // "ไม่ต้องใส่คำนำหน้า" ⇒ ถ้าไม่ต่อตรงนี้ ใบรับรองพิมพ์ "สมชาย ใจดี" ขณะไฟล์
                             // ภ.ง.ด.3 ประกาศ "นาย" = สอง renderer ของผู้ถูกหักคนเดียวเล่าคนละชื่อ
                             // "ลำดับที่ … ในแบบ" + ช่องแบบยื่นอยู่ในกรอบผู้ถูกหัก ตามแบบทางการ (รอบ 204 · เดิมกรอบแยก)
                             BuildPartyBlock(form, WhtCertFormText.PayeeHeading, cert.PayeeContact.TaxId,
-                                Accounting.Helpers.ThaiTitleHelper.WithTitle(cert.PayeeContact.TitleTh, cert.PayeeContact.Name)
-                                + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName), payeeAddr,
+                                WhtCertFormText.PartyName(cert.PayeeContact.TitleTh, cert.PayeeContact.Name, cert.PayeeContact.TaxId,
+                                    cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName), payeeAddr,
                                 formTypeOf: cert);
                             BuildIncomeTable(form, lines, cert.TotalIncomeAmount, cert.TotalTaxAmount);
                             BuildTotalInWords(form, cert.TotalTaxAmount);

@@ -3006,6 +3006,117 @@ const Layout = {
     }
   },
 
+  // ===== บันทึกไฟล์ PDF จากเซิร์ฟเวอร์ — มือถือต้องได้ "ไฟล์" ไม่ใช่หน้าพิมพ์ (2026-10-14) =====
+  /**
+   * ที่มา: ผู้ใช้รายงาน (2026-10-14 · ภาพจากมือถือ) "กดบันทึก pdf ขึ้นแต่หน้าปริ้น บนมือถือกดมาเป็นไฟล์ไม่ได้" — หน้า 50 ทวิ
+   * เปิดหน้าต่าง about:blank แล้วให้กด window.print() เป็นทางเดียว ⇒ Android Chrome / iOS Safari ไม่ได้ไฟล์ PDF
+   *
+   * ตัวนี้ = **ทางเดียว** ของทุกหน้าที่ "บันทึก PDF" จาก endpoint ของเซิร์ฟเวอร์ (หน้าไม่ยิง fetch + a.download เอง):
+   *   ดึงไฟล์ผ่าน `API.fetchFile` (แนบ JWT · POST + body ได้ · ข้อความเซิร์ฟเวอร์เมื่อล้ม) → ส่งมอบผ่าน `deliverFile`
+   * คืนชื่อทางที่ใช้ ('shared'|'cancelled'|'tap'|'opened'|'downloaded'|'error'|'auth') — `tools/save_pdf_mobile_sim.js` ตรวจทุกทาง
+   * @param opts { method: 'POST', body: {...} }
+   */
+  async savePdf(url, fallbackName, opts = {}) {
+    this.toast(this._t('common.pdfPreparing', 'กำลังสร้างไฟล์ PDF …'), 'info');
+    let f;
+    try {
+      f = await API.fetchFile(url, fallbackName, { method: opts.method, body: opts.body });
+    } catch (e) {
+      this.toast((e && e.message) || 'ดาวน์โหลด PDF ไม่สำเร็จ', 'error');
+      return 'error';
+    }
+    if (!f) return 'auth';   // 401 — API.fetchFile พาไปหน้า login แล้ว
+    let name = String(f.name || fallbackName || 'document').replace(/[\\/:*?"<>|]/g, '_');
+    if (!/\.pdf$/i.test(name)) name += '.pdf';
+    return this.deliverFile(f.blob, name, 'application/pdf');
+  },
+
+  /**
+   * ส่งไฟล์ (Blob) ให้ผู้ใช้ "ได้ไฟล์จริง" ตามอุปกรณ์ — ลำดับ:
+   *   1) มือถือ + `navigator.share` รับไฟล์ได้ (`canShare({files})`) → แผ่นแชร์ของระบบ (บันทึกลงไฟล์ · ไดรฟ์ · LINE · พิมพ์)
+   *   2) ผู้ใช้ปิดแผ่นแชร์เอง (AbortError) → จบเงียบ — ไม่ใช่ข้อผิดพลาด
+   *   3) แชร์ไม่ได้เพราะ "การแตะหมดอายุ" ระหว่างรอเซิร์ฟเวอร์สร้างไฟล์ (NotAllowedError — iOS Safari เข้มเรื่องนี้)
+   *      → แถบ "แตะเพื่อบันทึก" ให้แตะใหม่หนึ่งครั้ง (แตะแล้วยังไม่ได้ ⇒ ไปข้อ 4/5)
+   *   4) iOS (แอตทริบิวต์ download ถูกเมินในบางเบราว์เซอร์) → เปิดไฟล์ในแท็บเดิม + บอกวิธี แชร์ → "บันทึกไปยังไฟล์"
+   *   5) อื่น ๆ (เดสก์ท็อป · Android ที่แชร์ไฟล์ไม่ได้ · แชร์ล้มด้วยเหตุอื่น) → `<a download>`
+   * opts.env = สภาพแวดล้อมสำหรับ sim (ค่าตั้งต้น = ของจริงจาก `_fileEnv`) · opts.fromTap = เรียกจากแถบแตะ (กันวนแถบซ้ำ)
+   */
+  async deliverFile(blob, name, type, opts = {}) {
+    const env = opts.env || this._fileEnv();
+    const nav = env.navigator || {};
+    if (this.isMobileDevice(env) && typeof nav.share === 'function' && typeof env.File === 'function') {
+      let file = null;
+      try { file = new env.File([blob], name, { type }); } catch (_) { file = null; /* ไม่มี File constructor — ไปทางดาวน์โหลด */ }
+      let can = false;
+      try { can = !!file && (typeof nav.canShare !== 'function' || nav.canShare({ files: [file] }) === true); } catch (_) { can = false; }
+      if (can) {
+        try {
+          await nav.share({ files: [file], title: name });
+          return 'shared';
+        } catch (e) {
+          const n = e && e.name;
+          if (n === 'AbortError') return 'cancelled';   // ผู้ใช้ปิดแผ่นแชร์เอง
+          if (n === 'NotAllowedError' && !opts.fromTap) {
+            this._offerFileTap(blob, name, type, env);
+            return 'tap';
+          }
+          // แชร์ล้มด้วยเหตุอื่น → ทางดาวน์โหลดข้างล่าง (ผู้ใช้ยังได้ไฟล์ + เห็นข้อความของทางนั้น — ไม่เงียบ)
+        }
+      }
+    }
+    const href = env.URL.createObjectURL(blob);
+    env.setTimeout(() => { try { env.URL.revokeObjectURL(href); } catch (_) { /* revoke ซ้ำไม่เป็นไร */ } }, 60000);
+    if (this.isIosDevice(env)) {
+      this.toast('เปิดไฟล์ PDF แล้ว — กดปุ่มแชร์ แล้วเลือก "บันทึกไปยังไฟล์" (Save to Files)', 'info', 9000);
+      env.location.href = href;
+      return 'opened';
+    }
+    const a = env.document.createElement('a');
+    a.href = href; a.download = name; a.rel = 'noopener';
+    env.document.body.appendChild(a); a.click(); a.remove();
+    this.toast(`ดาวน์โหลด ${name} แล้ว`, 'success');
+    return 'downloaded';
+  },
+
+  /** แถบ "ไฟล์พร้อมแล้ว — แตะเพื่อบันทึก": การแตะครั้งใหม่ = user activation ใหม่ให้ `navigator.share` (ข้อ 3 ของ deliverFile) */
+  _offerFileTap(blob, name, type, env) {
+    const doc = env.document;
+    const old = doc.getElementById('fileTapBar');
+    if (old) old.remove();
+    const bar = doc.createElement('div');
+    bar.id = 'fileTapBar';
+    bar.setAttribute('role', 'alertdialog');
+    bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:16px;z-index:10050;background:#1e3a8a;color:#fff;border-radius:12px;'
+      + 'padding:12px 14px;box-shadow:0 8px 24px rgba(0,0,0,.3);display:flex;gap:10px;align-items:center;font-size:14px';
+    bar.innerHTML = `<span style="flex:1;min-width:0;overflow-wrap:anywhere">ไฟล์ ${this.esc(name)} พร้อมแล้ว</span>`
+      + '<button type="button" data-act="save" style="background:#fff;color:#1e3a8a;border:none;border-radius:8px;padding:8px 12px;font-weight:600;white-space:nowrap">📤 แตะเพื่อบันทึก</button>'
+      + '<button type="button" data-act="close" aria-label="ปิด" style="background:transparent;color:#fff;border:none;font-size:18px;padding:4px 6px">✕</button>';
+    bar.querySelector('[data-act="save"]').onclick = () => { bar.remove(); this.deliverFile(blob, name, type, { env, fromTap: true }); };
+    bar.querySelector('[data-act="close"]').onclick = () => bar.remove();
+    doc.body.appendChild(bar);
+  },
+
+  /** มือถือ/แท็บเล็ต (รวม iPadOS ที่แสดงตัวเป็น Mac) — ใช้ตัดสิน "หน้าพิมพ์ใช้ไม่ได้ ต้องส่งไฟล์" ทุกหน้า (ห้ามเขียน regex UA เอง) */
+  isMobileDevice(env) {
+    const nav = (env || this._fileEnv()).navigator || {};
+    const ua = String(nav.userAgent || '');
+    if (/Android|iPhone|iPad|iPod|Mobi/i.test(ua)) return true;
+    return nav.platform === 'MacIntel' && Number(nav.maxTouchPoints) > 1;
+  },
+  isIosDevice(env) {
+    const nav = (env || this._fileEnv()).navigator || {};
+    const ua = String(nav.userAgent || '');
+    return /iPhone|iPad|iPod/i.test(ua) || (nav.platform === 'MacIntel' && Number(nav.maxTouchPoints) > 1);
+  },
+  _fileEnv() {
+    return {
+      navigator: typeof navigator !== 'undefined' ? navigator : {},
+      document, location: window.location, URL,
+      File: typeof File === 'function' ? File : undefined,
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+    };
+  },
+
   // Export table to Excel (simple HTML table format)
   exportTableExcel(tableEl, filename = 'export.xlsx') {
     if (typeof tableEl === 'string') tableEl = document.querySelector(tableEl);

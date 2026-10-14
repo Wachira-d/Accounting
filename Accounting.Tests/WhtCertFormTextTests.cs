@@ -397,6 +397,54 @@ public class WhtCertFormTextTests
         Assert.Contains("WhtCertFormText.FundAmountText(amount)", src);
     }
 
+    // ───────── 2026-10-14: บรรทัด "ชื่อ" ตัวตัดสินเดียวของ 3 renderer (มือถือได้ไฟล์ QuestPDF แทนหน้าพิมพ์ ⇒ ต้องเล่าชื่อเดียวกัน) ─────────
+
+    [Fact]
+    public void PartyName_AddsTitleForIndividuals_AndBranchForJuristicOnly()
+    {
+        // บุคคลธรรมดา: คำนำหน้า + ชื่อ · ไม่มีสาขา (เลขไม่ขึ้นต้น 0)
+        Assert.Equal("นาย สมชาย ใจดี", WhtCertFormText.PartyName("นาย", "สมชาย ใจดี", "1101700203451", "00000", null));
+        // นิติบุคคล: ชื่อ + (สำนักงานใหญ่/สาขาที่ …)
+        Assert.Equal("หจก.แอม แฮปปี้เนส  (สำนักงานใหญ่)", WhtCertFormText.PartyName(null, "หจก.แอม แฮปปี้เนส", "0203562005871", "00000", null));
+        Assert.Equal("บริษัท ก จำกัด  (สาขาที่ 00003)", WhtCertFormText.PartyName(null, "บริษัท ก จำกัด", "0105556000001", "3", null));
+        // ทิศตรงข้าม (ใบที่ถูกอยู่แล้วต้องไม่ถูกแตะ): ชื่อที่มีคำนำหน้าแล้วไม่ต่อซ้ำ · ไม่มีคำนำหน้า = ชื่อเดิม · เลขไม่ครบ 13 หลักไม่ติดสาขา
+        Assert.Equal("นาย สมชาย ใจดี", WhtCertFormText.PartyName("นาย", "นาย สมชาย ใจดี", "1101700203451", null, null));
+        Assert.Equal("สมชาย ใจดี", WhtCertFormText.PartyName(null, "สมชาย ใจดี", "1101700203451", null, null));
+        Assert.Equal("บริษัท ข จำกัด", WhtCertFormText.PartyName(null, "บริษัท ข จำกัด", "0105556", "00000", null));
+    }
+
+    [Fact]
+    public void Html_PayeeName_HasTitle_LikeQuestPdf()
+    {
+        var c = Cert(TaxType.WithholdingTax3, WithholdingTaxCertType.Withhold, Line("8"));
+        c.PayeeContact = new Contact { TitleTh = "นาย", Name = "สมชาย ใจดี", TaxId = "1101700203451", Address = "1 ถนนสุขุมวิท" };
+        var html = PdfGenerationService.BuildWithholdingTaxCertHtml(c, Payer());
+        // เดิม HTML ฝั่งเซิร์ฟเวอร์พิมพ์ "สมชาย ใจดี" ขณะ QuestPDF พิมพ์ "นาย สมชาย ใจดี"
+        Assert.Equal(3, Regex.Matches(html, Regex.Escape("<u class='ul'>&nbsp;นาย สมชาย ใจดี&nbsp;</u>")).Count);
+        Assert.Equal(3, Regex.Matches(html, Regex.Escape("<u class='ul'>&nbsp;หจก.แอม แฮปปี้เนส  (สำนักงานใหญ่)&nbsp;</u>")).Count);
+        Assert.DoesNotContain("สมชาย ใจดี  (", html);   // บุคคลธรรมดาไม่ติดป้ายสาขา
+    }
+
+    [Fact]
+    public void PartyName_IsTheOnlyNameComposer_InAllThreeRenderers()
+    {
+        var qp = StripComments(File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/Services/Implementations/PdfGenerationService.WhtCert.cs")));
+        Assert.Equal(2, Regex.Matches(qp, Regex.Escape("WhtCertFormText.PartyName(")).Count);
+        Assert.DoesNotContain("ThaiTitleHelper.WithTitle", qp);
+        var html = StripComments(File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/Services/Implementations/PdfGenerationService.cs")));
+        Assert.Equal(2, Regex.Matches(html, Regex.Escape("WebUtility.HtmlEncode(WhtCertFormText.PartyName(")).Count);
+        Assert.DoesNotContain("CertBranchSuffix", html);
+        var svc = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/Services/Implementations/WithholdingTaxCertService.cs"));
+        Assert.Contains("PayerNameLine: Accounting.Helpers.WhtCertFormText.PartyName(null, company.Name", svc);
+        Assert.Contains("PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(w.PayeeContact.TitleTh", svc);
+        Assert.NotNull(typeof(WithholdingTaxCertResponse).GetProperty("PayerNameLine"));
+        Assert.NotNull(typeof(WithholdingTaxCertResponse).GetProperty("PayeeNameLine"));
+        // หน้าพิมพ์แสดงค่าจากเซิร์ฟเวอร์ (ไม่ประกอบชื่อเอง)
+        var seg = PrintSegment();
+        Assert.Contains("Layout.esc(d.payerNameLine || d.payerName || '')", seg);
+        Assert.Contains("Layout.esc(d.payeeNameLine || d.payeeName || '')", seg);
+    }
+
     private static string PrintSegment()
     {
         var page = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/wwwroot/pages/wht.html"));

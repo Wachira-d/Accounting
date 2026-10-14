@@ -560,19 +560,50 @@ const API = {
     return res;
   },
   /** ดาวน์โหลดไฟล์จาก endpoint ที่ต้องใช้ JWT (เช่น CSV แถวที่ผิด/ไฟล์ต้นทางของศูนย์นำเข้าข้อมูล) — หน้าไม่ต้องยิง fetch ดิบเอง ·
-   *  ชื่อไฟล์จาก Content-Disposition ของเซิร์ฟเวอร์ (ไม่มี = fallbackName) · ล้ม = throw Error ข้อความของเซิร์ฟเวอร์ (403 บอกวิธีขอสิทธิ์) */
+   *  ชื่อไฟล์จาก Content-Disposition ของเซิร์ฟเวอร์ (ไม่มี = fallbackName) · ล้ม = throw Error ข้อความของเซิร์ฟเวอร์ (403 บอกวิธีขอสิทธิ์)
+   *  · ไฟล์ PDF ที่ผู้ใช้ "บันทึก" (มือถือต้องได้ไฟล์ ไม่ใช่หน้าพิมพ์) ใช้ `Layout.savePdf` แทน — ตัวนั้นเรียก fetchFile ตัวเดียวกัน */
   async download(url, fallbackName) {
-    const busyTok = ApiBusy.begin('GET', url);
+    const f = await this.fetchFile(url, fallbackName);
+    if (!f) return false;
+    const href = URL.createObjectURL(f.blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = f.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 1000);
+    return true;
+  },
+  /** ดึงไฟล์จาก endpoint ที่ต้องใช้ JWT → `{ blob, name }` — ตัวดึงไฟล์ตัวเดียวของ `download` + `Layout.savePdf`
+   *  (2026-10-14 · เดิมหน้า wht/documents/tax/etax ยิง fetch ดิบเองคนละแบบ — etax.html ไม่แนบ token เลย ⇒ 401 ทุกครั้ง)
+   *  · opts.method (ค่าตั้งต้น GET) · opts.body = object ⇒ ส่งเป็น JSON · 401 = กลับหน้า login (คืน null) ·
+   *  ล้ม = throw Error ข้อความของเซิร์ฟเวอร์ (หรือข้อความเครือข่ายภาษาไทย) — ไม่กลืน */
+  async fetchFile(url, fallbackName, opts = {}) {
+    const method = String(opts.method || 'GET').toUpperCase();
+    const busyTok = ApiBusy.begin(method, url);
     try {
       this.token = localStorage.getItem('token');
       const headers = {};
       if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
-      const res = await fetch(`${this.baseUrl}${url}`, { method: 'GET', headers, cache: 'no-store' });
+      const init = { method, headers, cache: 'no-store' };
+      if (opts.body !== undefined && opts.body !== null) {
+        headers['Content-Type'] = 'application/json';
+        init.body = JSON.stringify(opts.body);
+      }
+      let res;
+      try {
+        res = await fetch(`${this.baseUrl}${url}`, init);
+      } catch (netErr) {
+        const e = new Error(this._t('api.networkError', 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ — กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและลองใหม่'));
+        e.cause = netErr;
+        throw e;
+      }
       if (res.status === 401) {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         window.location.href = '/login.html';
-        return false;
+        return null;
       }
       if (!res.ok) {
         let msg = this._t('api.downloadFailed', 'ดาวน์โหลดไม่สำเร็จ') + ` (HTTP ${res.status})`;
@@ -583,18 +614,14 @@ const API = {
       }
       const blob = await res.blob();
       const cd = res.headers.get('content-disposition') || '';
-      const m = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(cd);
+      // filename* (UTF-8 — ชื่อไทย) ก่อน filename= เสมอ: ASP.NET File() ส่งทั้งคู่ และ filename= มาก่อน ⇒ เดิม regex เดียวจับ
+      // ชื่อสำรองแบบ ASCII ได้ก่อน ชื่อไฟล์ไทย (เช่น "รายงานภาษีขาย_10-2569.pdf") หายเป็นขีดล่าง (2026-10-14 · sim จับได้)
+      const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+      const plain = /filename="?([^";]+)"?/i.exec(cd);
       let name = fallbackName || 'download';
-      if (m) { try { name = decodeURIComponent(m[1] || m[2]); } catch (_) { name = m[1] || m[2]; } }
-      const href = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = href;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(href), 1000);
-      return true;
+      if (star) { try { name = decodeURIComponent(star[1]); } catch (_) { name = star[1]; } }
+      else if (plain) name = plain[1];
+      return { blob, name };
     } finally {
       ApiBusy.end(busyTok);
     }

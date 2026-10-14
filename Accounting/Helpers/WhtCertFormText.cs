@@ -207,6 +207,22 @@ public static class WhtCertFormText
         _ => null,
     };
 
+    /// <summary>
+    /// ชื่อคู่สัญญาบนบรรทัด "ชื่อ" ของแบบ 50 ทวิ (ผู้หัก/ผู้ถูกหัก) — <b>ตัวตัดสินเดียวของทั้ง 3 renderer</b>
+    /// (HTML · QuestPDF · หน้าพิมพ์ <c>wht.html</c> ผ่าน <c>WithholdingTaxCertResponse.PayerNameLine/PayeeNameLine</c>)
+    /// <para>= คำนำหน้า (<see cref="ThaiTitleHelper.WithTitle"/> — ไม่ต่อซ้ำ · ไม่ต่อให้นิติบุคคล) + ชื่อ + "(สำนักงานใหญ่/สาขาที่ …)"
+    /// เฉพาะนิติบุคคล (เลข 13 หลักขึ้นต้น 0 — บุคคลธรรมดาไม่มีสาขา กันติดป้าย "สำนักงานใหญ่" ผิด)</para>
+    /// <para>ที่มา (2026-10-14 · ผู้ใช้มือถือได้ไฟล์ QuestPDF แทนหน้าพิมพ์): เดิม QuestPDF ต่อคำนำหน้า + สาขา · HTML ฝั่งเซิร์ฟเวอร์ต่อแต่สาขา ·
+    /// หน้าพิมพ์ไม่ต่ออะไรเลย ⇒ ผู้ถูกหักคนเดียวสามชื่อในสาม renderer (ไฟล์ ภ.ง.ด.3 ประกาศ "นาย" แต่ใบหน้าเว็บพิมพ์ "สมชาย ใจดี")</para>
+    /// </summary>
+    public static string PartyName(string? titleTh, string? name, string? taxId, string? branchCode, string? branchName)
+    {
+        var n = ThaiTitleHelper.WithTitle(titleTh, name);
+        var tid = new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        if (tid.Length != 13 || !tid.StartsWith("0", StringComparison.Ordinal)) return n;
+        return n + "  (" + TaxBranchCode.LabelWithName(branchCode, branchName, false) + ")";
+    }
+
     // ───────── รอบ 204 ทีม D (2f): แถวย่อยเงินปันผล 4(ข) — ผู้ใช้เลือกแถวย่อยได้ (ไม่บังคับ) · ตัวตั้งเดียวของ 3 renderer ─────────
 
     /// <summary>แถวย่อยของ 4(ข) ตามแบบทางการ — (1.1)–(1.4) ได้รับเครดิตภาษี · (2.1)–(2.5) ไม่ได้รับเครดิตภาษี</summary>

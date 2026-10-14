@@ -2719,7 +2719,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("<tr><td class='sec-cell'>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayerHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(company.TaxId)}</td></tr></table>");
             // ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ)
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(company.Name + CertBranchSuffix(company.TaxId, company.BranchCode, company.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.NameHint}</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Address}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(fullAddress)}&nbsp;</u></td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.AddressHint}</div>");
@@ -2729,7 +2729,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("<tr><td class='sec-cell'>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='sec-hdr' style='width:210px;vertical-align:top'>{WhtCertFormText.PayeeHeading}</td><td style='white-space:nowrap;text-align:right'>{WhtCertFormText.TaxId13}<span style='color:#900'>*</span> {TaxIdBoxes(cert.PayeeContact.TaxId)}</td></tr></table>");
             // ช่องเลขเดิม 10 หลักอยู่บรรทัดเดียวกับ "ชื่อ" (ชิดขวา) ตามแบบทางการ — รอบ 204 (เดิมแยกบรรทัดเหนือชื่อ)
-            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(cert.PayeeContact.Name + CertBranchSuffix(cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
+            sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Name}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(WhtCertFormText.PartyName(cert.PayeeContact.TitleTh, cert.PayeeContact.Name, cert.PayeeContact.TaxId, cert.PayeeContact.BranchCode, cert.PayeeContact.BranchName))}&nbsp;</u></td><td style='white-space:nowrap;text-align:right;font-size:12px;padding-left:8px'>{WhtCertFormText.TaxId10} {OldTaxIdBoxes()}</td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.NameHint}</div>");
             sb.AppendLine($"<table class='inner' cellspacing='0'><tr><td class='f-lbl'>{WhtCertFormText.Address}</td><td><u class='ul'>&nbsp;{WebUtility.HtmlEncode(payeeAddr)}&nbsp;</u></td></tr></table>");
             sb.AppendLine($"<div class='hint-text'>{WhtCertFormText.AddressHint}</div>");
@@ -3343,18 +3343,8 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     internal static string FormatBranch(string? branchCode, string? branchName, string lang)
         => TaxBranchCode.LabelWithName(branchCode, branchName, lang == "en");
 
-    /// <summary>ส่วนต่อท้าย "สาขา" สำหรับหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ต่อ
-    /// ท้ายชื่อคู่สัญญาแบบ inline (ไม่เพิ่มบรรทัด/ไม่กระทบ layout ฟอร์มราชการ).
-    /// แสดงเฉพาะ "นิติบุคคล" (เลขภาษี 13 หลักขึ้นต้น 0) — บุคคลธรรมดา (ภ.ง.ด.3,
-    /// เลขขึ้นต้น 1-8) ไม่มีสาขา จึงคืนค่าว่าง กันติดป้าย "สำนักงานใหญ่" ผิด. 50 ทวิ
-    /// ไม่ได้บังคับช่องสาขาตามกฎหมาย (คนละกรณีกับใบกำกับ §86/4) — เพิ่มเพื่อความ
-    /// ครบถ้วนในการระบุตัวผู้จ่าย/ผู้รับ (ช่วย ภ.ง.ด.53).</summary>
-    private static string CertBranchSuffix(string? taxId, string? branchCode, string? branchName)
-    {
-        var tid = new string((taxId ?? "").Where(char.IsDigit).ToArray());
-        if (tid.Length != 13 || !tid.StartsWith("0", StringComparison.Ordinal)) return "";
-        return "  (" + FormatBranch(branchCode, branchName, "th") + ")";
-    }
+    // CertBranchSuffix (ส่วนต่อท้ายสาขาบน 50 ทวิ) ย้ายไป WhtCertFormText.PartyName (2026-10-14) — รวมคำนำหน้าชื่อ ·
+    // ตัวตัดสินเดียวของ HTML + QuestPDF + หน้าพิมพ์ wht.html (เดิม HTML ไม่ต่อคำนำหน้า · หน้าพิมพ์ไม่ต่อทั้งคู่)
 
     /// <summary>
     /// Assemble the full branding for a document PDF — colours, font, logo +

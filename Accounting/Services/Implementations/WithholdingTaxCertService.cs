@@ -1557,5 +1557,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     && !w.DocumentId.HasValue && !w.SourcePayrollRunId.HasValue,
         FormBoxIndex: Accounting.Helpers.WhtCertFormText.FormBoxIndex(w.TaxFormType),
         PayerConditionIndex: Accounting.Helpers.WhtCertFormText.PayerConditionIndex(w.CertificateType),
-        DividendBlock: Accounting.Helpers.WhtCertFormText.DividendBlock(w.Lines));
+        DividendBlock: Accounting.Helpers.WhtCertFormText.DividendBlock(w.Lines),
+        PayerNameLine: Accounting.Helpers.WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName),
+        PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(w.PayeeContact.TitleTh, w.PayeeContact.Name, w.PayeeContact.TaxId,
+            w.PayeeContact.BranchCode, w.PayeeContact.BranchName));
 }

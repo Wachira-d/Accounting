@@ -69,7 +69,11 @@ public record WithholdingTaxCertResponse(
     // null = ไม่ได้แก้ / ไม่ได้ตรวจ (ตอบจาก GET) · เดิมแก้เงียบแล้ว LogWarning อย่างเดียว
     string? FormCorrectionNotice = null,
     // รอบ 204 ทีม D (2f): บล็อก 4(ข) แบบแยกแถวย่อย (WhtCertFormText.DividendBlock — ตัวเดียวกับ PDF) · null = ไม่มีบรรทัดใดระบุแถวย่อย ⇒ หน้าพิมพ์บล็อกเดิม
-    IReadOnlyList<WhtCertFormText.DividendBlockRow>? DividendBlock = null);
+    IReadOnlyList<WhtCertFormText.DividendBlockRow>? DividendBlock = null,
+    // 2026-10-14: บรรทัด "ชื่อ" บนแบบ 50 ทวิ (คำนำหน้า + ชื่อ + สาขาของนิติบุคคล) จากตัวตัดสินเดียว WhtCertFormText.PartyName —
+    // ตัวเดียวกับ PDF ทั้งสอง · หน้าพิมพ์ wht.html แสดงอย่างเดียว (เดิมพิมพ์ PayerName/PayeeName ดิบ ⇒ ต่างจากไฟล์ PDF ที่ดาวน์โหลด)
+    string? PayerNameLine = null,
+    string? PayeeNameLine = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,

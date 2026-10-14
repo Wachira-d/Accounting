@@ -472,19 +472,10 @@
       a.click();
     },
 
-    async downloadPdfA3(etaxId) {
-      try {
-        Layout.toast?.('กำลังสร้าง PDF/A-3 พร้อมฝัง XML...', 'info');
-        const url = `/api/companies/${this.companyId}/etax/${etaxId}/pdf`;
-        const resp = await fetch(url, { credentials: 'include' });
-        if (!resp.ok) throw new Error('Failed: ' + resp.status);
-        const blob = await resp.blob();
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `etax-${etaxId}.pdf`;
-        a.click();
-        Layout.toast?.('ดาวน์โหลด PDF/A-3 สำเร็จ', 'success');
-      } catch(e) { alert(e.message || 'ดาวน์โหลด PDF ล้มเหลว'); }
+    // ไฟล์ PDF/A-3 (ฝัง XML) ผ่าน Layout.savePdf ตัวเดียว (2026-10-14) — เดิม fetch แบบ credentials:'include' ไม่แนบ JWT
+    // (ระบบใช้ Bearer ไม่ใช่ cookie) ⇒ 401 ทุกครั้ง + alert "Failed: 401" · มือถือได้ไฟล์ผ่านแผ่นแชร์ ไม่ใช่หน้าพิมพ์
+    downloadPdfA3(etaxId) {
+      return Layout.savePdf(`/api/companies/${this.companyId}/etax/${etaxId}/pdf`, `etax-${etaxId}.pdf`);
     },
 
     async void(id) {
