@@ -182,14 +182,11 @@ public static class BankCsvParser
 
     /// <summary>
     /// แถวสรุป/ยอดยกมา/ยอดรวมท้ายตาราง — ไม่ใช่รายการ (ตัดออก) · "รวมมิตร" (ชื่อร้าน) ต้องไม่ถูกตัด: จับเฉพาะคำสรุปเต็มคำ
-    /// <para>ตัวตัดสินของ statement ธนาคาร · เมื่อ <c>Helpers/ImportHeaderDetector.IsSummaryRow</c> (ทีม B รอบ 205) รวมเข้ามา เมธอดนี้ส่งต่อไปที่นั่นแทน regex ข้างล่าง (owner เดียว)</para>
+    /// <para>รอบ 205 ทีม B: ส่งต่อไป <see cref="Accounting.Helpers.ImportHeaderDetector.IsSummaryRow"/> — owner เดียวของกติกาแถวยอดรวมทุกเส้นนำเข้า
+    /// (ตัดสินจากป้ายทั้งเซลล์ ไม่ใช่คำที่ปนในข้อความ)</para>
     /// </summary>
     internal static bool IsSummaryRow(IReadOnlyList<string> cells)
-        => SummaryRowPattern.IsMatch(string.Join("|", cells));
-
-    private static readonly Regex SummaryRowPattern = new(
-        @"(รวมยอด|รวมเงิน|รวมรายการ|ยอดยกมา|ยอดยกไป|รวมทั้งสิ้น|ยอดถอน|ยอดฝาก|^total|^subtotal|grand total|brought forward|carried forward)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        => Accounting.Helpers.ImportHeaderDetector.IsSummaryRow(cells);
 
     /// <summary>
     /// Parse CSV/TSV content into rows of cells — ตัวแยกกลาง <see cref="ImportTabularReader.ReadCsv"/> (ตัวคั่น , ; tab · คำพูดข้ามบรรทัด) ·

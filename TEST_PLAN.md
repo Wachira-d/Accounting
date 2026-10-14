@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **520 ไฟล์ · 5,181 `[Fact]` + 818 `[Theory]` (3,624 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **524 ไฟล์ · 5,229 `[Fact]` + 821 `[Theory]` (3,639 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5919,6 +5919,31 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | ETLC-12 | API v1 `POST /api/v1/bank/statements` | กันซ้ำด้วย ExternalId อย่างเดียวเหมือนเดิม · บรรทัดไม่มี ExternalId ลงทุกครั้ง · ExternalId อยู่ใน Reference · CreatedBy "api:v1" · ไม่แตะยอดตามธนาคาร · คิดเงินตามบรรทัดที่สร้างจริง | ✅ `Db/BankStatementImportDbTests` (ใช้ `BankV1Controller.StatementWriteOptions` ตัวเดียวกับ action) |
 | ETLC-13 | ศูนย์นำเข้า `banktransactions` (`BankStatementImportTarget`) | ซ้ำของเดิม = คำเตือน + ตั้ง "ข้าม" · DR ช่องเดียว = เงินออก · ลงผ่านตัวเขียน · ย้อน = ลบที่ยังไม่จับคู่ · จับคู่แล้ว = บล็อก + ทางไปต่อ · บัญชีที่เลือก (`BatchOptions["bankAccountId"]`) ไม่ใช่ของบริษัท = บล็อก (§2.5) · ปิดใช้/ยังไม่ผูกผัง = คำเตือนครั้งเดียวต่อบัญชี | ✅ `Db/BankStatementImportDbTests` |
 | ETLC-14 | xlsx หลายชีต (ชีตปกนำหน้า) | ไม่ระบุชีต = ชีตแรกที่มีหัวตาราง statement + ข้อความบอกชีต · ระบุชีตผิด = รายชื่อชีต | ✅ `BankStatementParsingTests` (สมุดงานสร้างด้วย MiniExcel) · ไฟล์ xlsx จริงของแต่ละธนาคารรอ §4 ข้อ 2 |
+
+## ETL-B — ศูนย์นำเข้า: engine (stage/commit/undo/worker) + writer เดิม P0 (รอบ 205 ทีม B · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.1–§2.5)
+
+engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker` · ตัวจับคู่ข้อมูลเดิม `ImportEntityResolver.MatchAsync` · ปลายทางข้อมูลหลัก
+`Targets/MasterDataImportTargets.cs` · writer เดิม `ImportExportService.WriteRowAsync` (switch ตัวเดียว) · ตัวช่วย pure `ImportHeaderDetector` / `ImportRowConfidence` / `ThaiLegalNameKey`
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| ETLB-01 | สมุดรายวัน 2 ใบ (แถวชื่อรายงาน · วันที่ พ.ศ. · "1,234.50" · แถว "รวม" ท้าย) ใบ B มีบัญชี 9999 ที่ไม่มีในผัง · ลง "เฉพาะแถวที่ผ่าน" | ใบ A ลงครบ · ใบ B ไม่ลงสักบรรทัด (savepoint ต่อ chunk + ลงซ้ำทีละกลุ่ม — ไม่มีใบครึ่งใบ) · แถว "รวม" ไม่ถูกลง · สถานะ PartiallyCompleted | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-02 | commit ชุดเดิมซ้ำ (กดสองครั้ง/ลองใหม่) | แถวที่ลงแล้วไม่ลงซ้ำ (idempotent) · JE ไม่เพิ่ม | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-03 | โหมด "ลงทั้งหมดหรือไม่ลงเลย" มีแถวล้ม | ไม่ลงสักแถว · audit ของสิ่งที่ถูก rollback ไม่ถูกประทับ (`RollbackDeferredAuditTo`) | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-04 | ไฟล์ 2,005 แถว (> 2,000 = เข้าคิว) · worker สองเครื่องรับ batch เดียวกันพร้อมกัน | ทำได้เครื่องเดียว (`JobLock` ต่อ batch + claim `FOR UPDATE SKIP LOCKED`) · อีกเครื่องไม่ทำอะไร | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-05 | **kill-switch** — provider ล่มทุกคำขอ (จับคู่คอลัมน์ + ชื่อกำกวม) | ผู้ติดต่อยังพัก + ลงครบ · `ColumnMatchUsedAi` = false · ทุกแถว `UsedAi` = false (ป้าย "⚙️ ระบบแนะนำ") · ถามครูจริงแต่ไม่มีอะไรขึ้นหาผู้ใช้ | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-06 | สินทรัพย์ถาวรผ่านไฟล์นำเข้าทั่วไป: ที่ดิน + อาคาร | ลงผ่าน `FixedAssetService.ImportAsync` · ที่ดินไม่คิดค่าเสื่อม · อาคารยังคิด (ทิศตรงข้าม) | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-07 | รับ/จ่ายชำระจากไฟล์ | ลงผ่าน `DocumentService.CreatePaymentAsync` ⇒ มี JE (เจ้าหนี้ถูกตัดใน GL — เดิมแก้ PaidAmount ตรง) · ยอดเกินค้างชำระ = แถวล้มพร้อมเหตุผล ไม่มีอะไรลง | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-08 | รายการธนาคารจากไฟล์เดิม (Smart Import/นำเข้าเดิม `banktransactions`) | ลงผ่านตัวเขียน statement ตัวเดียว (ทีม C) · ค่าธรรมเนียม = เงินออก · ไฟล์ไม่มียอดคงเหลือ ⇒ ยอดการ์ดไม่ขยับ (เดิม `CurrentBalance +=`) · ไฟล์ซ้ำ = ข้ามทุกแถว · บัญชีธนาคารของบริษัทอื่น = แถวล้ม | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-09 | เครื่องตั้ง culture en-US: "05/08/2569" · "1,234.50" | 5 ส.ค. 2026 · 1234.50 (เดิม `DateTime.TryParse`/`decimal.TryParse` ตาม culture เครื่อง) | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-10 | แถวยอดรวม "รวม"/"รวมทั้งสิ้น"/"Grand Total:"/"ยอดยกมา"/"Sub-total"/"รวม 15 รายการ" vs ชื่อ "ขนมรวมมิตร"/"Total care shampoo"/"รวมเงินสดย่อย" | ตัวแรกถูกตัด (พักเป็น "ไม่ลง" + Info) · ชื่อจริงไม่ถูกตัด · ตัวตั้งเดียว `ImportHeaderDetector.IsSummaryRow` (`BankCsvParser.IsSummaryRow` ส่งต่อมาที่นี่) | ✅ `ImportEngineHelpersTests` + `BankStatementParsingTests` |
+| ETLB-11 | หัวตาราง: แถวชื่อรายงานนำหน้า · หัวสองชั้นเซลล์ผสาน ("ยอดเงิน" / "เดบิต" "เครดิต") · ไม่มีชื่อที่รู้จัก | ข้ามแถวชื่อรายงาน · รวมเป็น "ยอดเงิน เดบิต" · เดาแถวข้อความแรกแบบมั่นใจต่ำ · ไฟล์ที่หัวอยู่แถวแรกไม่ถูกเลื่อน (ทิศตรงข้าม) | ✅ `ImportEngineHelpersTests` |
+| ETLB-12 | ชื่อนิติบุคคล "บริษัท เอบีซี จำกัด" vs "บจก.เอบีซี" vs "ห้างหุ้นส่วนจำกัด เอบีซี" | สองตัวแรกรายเดียวกัน · คนละรูปนิติบุคคล ≠ · ชื่อจับคู่อย่างเดียว = แนะนำ (คำเตือน match-name-only) ไม่เลือกให้เอง | ✅ `ImportEngineHelpersTests` |
+| ETLB-13 | คะแนนแถว | ไม่มีปัญหา = ความมั่นใจของคอลัมน์ · Error ≤ 0.3 · คำเตือนละ −0.1 · จับคู่ไม่เต็มไม่เกินคะแนนจับคู่ · < 0.85 = เหลือง | ✅ `ImportEngineHelpersTests` |
+| ETLB-14 | Smart Import ผู้ใช้เลือก "MM/dd/yyyy" / "dd/MM/yyyy" / ทศนิยมจุลภาค | มีผลจริง (เดิมรับแล้วไม่ใช้ — silent no-op) | ✅ `ImportEngineHelpersTests` (ตัวแปลงรูปแบบ) · ⏳ manual หน้าเว็บ |
+| ETLB-15 | Smart Import ลงได้บางแถว แล้วกดลองใหม่ | สถานะ PartiallyCompleted (เดิม Failed) · ลองใหม่ลงเฉพาะแถวที่ล้ม · ข้อมูลดิบล้างเมื่อลงครบเท่านั้น | ⏳ manual |
+| ETLB-16 | Smart Import จับคู่คอลัมน์ | ผ่านตัวจับคู่ของทีม A (`ImportColumnMatchService`) · ป้าย AiMatched เฉพาะ AI ตอบจริง (กฎ = HeuristicMatched) · FeedbackId เก็บลง session · แก้/ยืนยัน ⇒ `RecordConfirmedAsync` | ⏳ manual (จุดเรียกล็อกด้วย `required_call_site_check`) |
+| ETLB-17 | ศูนย์นำเข้า: ย้อนชุดที่ลงแล้ว (ผู้ติดต่อที่ยังไม่ถูกอ้าง / ถูกอ้างแล้ว / อัปเดตรายเดิม) | ลบแบบ soft · ถูกอ้าง = บล็อกพร้อมทางไปต่อ · อัปเดตรายเดิม = คืนค่าเดิมจาก snapshot · ต้องระบุเหตุผล · audit IMPORT-UNDO | ⏳ manual |
 ---
 
 ## MONEY-CH — แหล่งเงินของเอกสาร/การชำระ → ผังบัญชี (2026-10-14 ทีม F2 · `erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md` PC#3/#4/#5/#9/#13/#14/#15/#16/#18/#21 · ID#3–#7/#16/#20/#21)

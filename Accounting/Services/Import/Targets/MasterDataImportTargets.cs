@@ -16,49 +16,6 @@ namespace Accounting.Services.Import.Targets;
 //  บล็อก (Error) เฉพาะ §2.5 (JE ไม่ลงตัว) · นอกนั้นคำเตือนที่รับทราบได้ (คำตัดสินข้อ 150) · ชื่อคล้ายอย่างเดียว = แนะนำ ไม่เลือกให้เอง (ข้อ 151 (5))
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
-/// <summary>
-/// schema ของ target ข้อมูลหลัก — <b>ตัวแปลงชั่วคราว</b>จาก <c>ImportExportService.GetTemplateFields</c> (แม่แบบเดิม · ชื่อ field ตรงกับที่ writer เดิมอ่าน) ·
-/// แทนที่ด้วย <c>ImportSchemas</c> เมื่อรวมทีม A (ทีม A ย้าย GetTemplateFields ไปที่นั่น — ที่นี่เหลือบรรทัดเดียว)
-/// </summary>
-internal static class MasterDataSchemas
-{
-    public static IReadOnlyList<ImportFieldDto> For(string entityType)
-        => (ImportExportService.GetTemplateFields(entityType) ?? new List<ImportField>())
-            .Select(f => new ImportFieldDto(f.FieldName, f.DisplayName, TypeOf(f), f.IsRequired, f.Description,
-                f.DataType == "enum" ? f.AllowedValues : null))
-            .ToList();
-
-    private static readonly HashSet<string> ReferenceFields = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Code", "AccountCode", "ProductCode", "AssetCode", "EmployeeCode", "DocumentNumber", "InvoiceNumber", "Reference",
-        "SerialNumber", "CitizenId", "BankAccountNumber", "SocialSecurityNumber", "LineProductCode", "LineAccountCode",
-    };
-
-    private static ImportFieldType TypeOf(ImportField f)
-    {
-        var n = f.FieldName;
-        switch (f.DataType)
-        {
-            case "date": return ImportFieldType.Date;
-            case "bool": return ImportFieldType.Flag;
-            case "enum": return ImportFieldType.Enum;
-            case "decimal":
-                if (n.EndsWith("VatRate", StringComparison.OrdinalIgnoreCase)) return ImportFieldType.VatRate;
-                if (n is "UsefulLifeMonths" or "FiscalYear") return ImportFieldType.Integer;
-                if (n.Contains("Quantity", StringComparison.OrdinalIgnoreCase) || n.EndsWith("Percent", StringComparison.OrdinalIgnoreCase)
-                    || n.EndsWith("Rate", StringComparison.OrdinalIgnoreCase)) return ImportFieldType.Decimal;
-                return ImportFieldType.Amount;
-            default:
-                if (n.EndsWith("TaxId", StringComparison.OrdinalIgnoreCase)) return ImportFieldType.TaxId;
-                if (n == "BranchCode") return ImportFieldType.BranchCode;
-                if (n == "Email") return ImportFieldType.Email;
-                if (n == "Phone") return ImportFieldType.Phone;
-                if (ReferenceFields.Contains(n)) return ImportFieldType.Reference;
-                return ImportFieldType.Text;
-        }
-    }
-}
-
 /// <summary>ฐานของ target ข้อมูลหลัก — จับคู่ข้อมูลเดิม · แถวซ้ำในไฟล์ · ลงผ่าน writer เดิม · ย้อน (ลบแบบ soft ถ้าไม่มีการอ้าง / คืนค่าเดิม)</summary>
 public abstract class MasterDataImportTarget : IImportTarget
 {
@@ -76,7 +33,12 @@ public abstract class MasterDataImportTarget : IImportTarget
     public abstract string EntityType { get; }
     public abstract string Label { get; }
     private IReadOnlyList<ImportFieldDto>? _schema;
-    public IReadOnlyList<ImportFieldDto> Schema => _schema ??= MasterDataSchemas.For(EntityType);
+    /// <summary>field ของปลายทาง = แคตตาล็อกตัวเดียว <see cref="ImportSchemas.For"/> (ทีม A) · ปรับชนิดได้เฉพาะที่ target ประกาศใน <see cref="TypeOverrides"/></summary>
+    public IReadOnlyList<ImportFieldDto> Schema => _schema ??= (ImportSchemas.For(EntityType) ?? Array.Empty<ImportFieldDto>())
+        .Select(f => TypeOverrides != null && TypeOverrides.TryGetValue(f.Field, out var t) ? f with { Type = t } : f).ToList();
+
+    /// <summary>ชนิด field ที่ปลายทางนี้ตั้งใจต่างจากแคตตาล็อก (null = ไม่มี) — ใช้เมื่อกติกาของปลายทางผ่อนกว่าตัวแปลงกลาง (เช่น เลขบัตรที่ checksum ไม่ผ่านยังเก็บได้)</summary>
+    protected virtual IReadOnlyDictionary<string, ImportFieldType>? TypeOverrides => null;
     public ImportCommitStyle CommitStyle => ImportCommitStyle.SharedTransaction;
     public abstract bool SupportsUpdate { get; }
 
@@ -453,6 +415,9 @@ public sealed class EmployeesImportTarget : MasterDataImportTarget
     public override string Label => "พนักงาน";
     public override bool SupportsUpdate => false;
     protected override string? InFileKey(ImportTargetRow row) => V(row, "EmployeeCode");
+    // เลขบัตรประชาชน: แคตตาล็อกเป็น TaxId (checksum ไม่ผ่าน = ทิ้งค่า) — พนักงานต่างด้าว/เลขชั่วคราวมีจริง ⇒ เก็บเป็นเลขอ้างอิง + คำเตือนที่ Check (ไม่บล็อก ไม่ทิ้ง)
+    protected override IReadOnlyDictionary<string, ImportFieldType>? TypeOverrides { get; } =
+        new Dictionary<string, ImportFieldType>(StringComparer.OrdinalIgnoreCase) { ["CitizenId"] = ImportFieldType.Reference };
     // ป้ายแถวห้ามมีเลขบัตร/เลขบัญชี (DisplayKey ไม่เข้ารหัส — PDPA ม.26)
     protected override string? DisplayKeyOf(ImportTargetRow row)
         => string.Join(" ", new[] { V(row, "EmployeeCode"), V(row, "FirstNameTh"), V(row, "LastNameTh") }.Where(x => x != null));

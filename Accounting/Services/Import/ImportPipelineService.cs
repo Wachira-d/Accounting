@@ -36,19 +36,23 @@ public partial class ImportPipelineService : IImportPipelineService
     private readonly IFileAttachmentService _files;
     private readonly IImportTargetRegistry _targets;
     private readonly IImportMappingTemplateStore _templates;
-    private readonly IAiFeedbackRecorder? _recorder;
+    /// <summary>จับคู่คอลัมน์ (ทีม A) — null = ชั้น local ล้วนของตัวจับคู่ตัวเดียวกัน (เทสต์/ไม่ได้ลงทะเบียน)</summary>
+    private readonly IImportColumnMatchService? _columnMatch;
+    /// <summary>ปิดลูปคำตอบเดี่ยว ImportEntityMatch (ทีม A) — null = ไม่มีแถว feedback ให้ปิด</summary>
+    private readonly IImportAiAugmenter? _ai;
     private readonly IPermissionService? _permissions;
     private readonly ILogger<ImportPipelineService>? _logger;
 
     public ImportPipelineService(AccountingDbContext db, IFileAttachmentService files, IImportTargetRegistry targets,
-        IImportMappingTemplateStore templates, IAiFeedbackRecorder? recorder = null, IPermissionService? permissions = null,
-        ILogger<ImportPipelineService>? logger = null)
+        IImportMappingTemplateStore templates, IImportColumnMatchService? columnMatch = null, IImportAiAugmenter? ai = null,
+        IPermissionService? permissions = null, ILogger<ImportPipelineService>? logger = null)
     {
         _db = db;
         _files = files;
         _targets = targets;
         _templates = templates;
-        _recorder = recorder;
+        _columnMatch = columnMatch;
+        _ai = ai;
         _permissions = permissions;
         _logger = logger;
     }
@@ -529,7 +533,9 @@ public partial class ImportPipelineService : IImportPipelineService
             // ด่านจริงอยู่ที่ controller — ที่นี่บอกหน้าเว็บให้ล็อกปุ่ม + บอกเหตุผล (ห้าม silent no-op) · ไม่มีบริการสิทธิ์ (เทสต์) = ไม่ล็อก
             var can = _permissions == null || await _permissions.HasPermissionAsync(companyId, userId, key);
             entities.Add(new ImportEntityInfoDto(t.EntityType, t.Label, null, key, can, t.Schema, t.CommitStyle, t.SupportsUpdate,
-                SupportsUndo: true, SourceSystems: Array.Empty<string>()));
+                SupportsUndo: true, SourceSystems: ImportSourceSeed.All
+                    .Where(sp => ImportExportPermissionScope.NormalizeEntityType(sp.EntityType) == ImportExportPermissionScope.NormalizeEntityType(t.EntityType))
+                    .Select(sp => sp.SourceSystem).Distinct(StringComparer.OrdinalIgnoreCase).ToList()));
         }
         var doneTypes = await _db.SmartImportSessions.AsNoTracking()
             .Where(s => s.CompanyId == companyId && (s.Status == ImportSessionStatus.Completed || s.Status == ImportSessionStatus.PartiallyCompleted))
@@ -551,7 +557,7 @@ public partial class ImportPipelineService : IImportPipelineService
     /// <summary>ลำดับย้ายระบบ (§2.10) — คีย์ที่ไม่มี target ลงทะเบียน (ทีมอื่นยังไม่รวม) ถูกข้าม</summary>
     private static readonly string[] MigrationOrder =
     {
-        "chart-of-accounts", "contacts", "products", "opening-balance", "opening-ar", "opening-ap", "stock-opening", "fixed-assets",
+        "chart-of-accounts", "contacts", "products", "opening-balances", "opening-ar", "opening-ap", "stock-opening", "fixed-assets",
     };
 
     private IEnumerable<IImportTarget> OrderedTargets()

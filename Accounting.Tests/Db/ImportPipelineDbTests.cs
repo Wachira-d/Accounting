@@ -85,6 +85,13 @@ public class ImportPipelineDbTests
             CancellationToken ct = default) => Task.FromResult<ImportTemplateDto?>(null);
         public Task<bool> DeleteAsync(Guid companyId, Guid templateId, ImportActor actor, CancellationToken ct = default) => Task.FromResult(false);
         public Task MarkUsedAsync(Guid companyId, Guid templateId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<ImportTemplateDto> SaveColumnsAsync(Guid companyId, string entityType, IReadOnlyList<string> headers,
+            IReadOnlyList<ImportTemplateColumnDto> columns, string? sourceSystem, string? name, bool confirmedByUser, ImportActor actor,
+            CancellationToken ct = default) => throw new NotImplementedException("ไม่ได้ทดสอบแม่แบบในชุดนี้");
+        public Task<IReadOnlyList<ImportLearnedHeader>> GetLearnedHeadersAsync(Guid companyId, string? entityType, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<ImportLearnedHeader>>(Array.Empty<ImportLearnedHeader>());
+        public Task<bool> RecordColumnMatchChoiceAsync(Guid companyId, Guid feedbackId, IReadOnlyList<ImportColumnPlanDto> finalColumns,
+            CancellationToken ct = default) => Task.FromResult(false);
     }
 
     /// <summary>kill-switch: provider ล่ม — ทุกคำขอโยน (ระบบต้องใช้ชั้น local ต่อเงียบ ๆ)</summary>
@@ -105,14 +112,19 @@ public class ImportPipelineDbTests
     {
         var legacy = new ImportExportService(db, new NullErrorLog());
         var writer = new ImportRowWriter(legacy);
-        var resolver = new ImportEntityResolver(db, new DuplicateDetector(db), ai);
+        // ชั้น AI จริงของทีม A (augmenter → orchestrator) — ai = DeadAi ⇒ provider ล่มทุกคำขอ (kill-switch) · null = ไม่มี AI เลย
+        var augmenter = ai == null ? null : new ImportAiAugmenter(db, ai, NullLogger<ImportAiAugmenter>.Instance);
+        var templates = new NoTemplates();
+        var resolver = new ImportEntityResolver(db, new DuplicateDetector(db), augmenter);
         var registry = new ImportTargetRegistry(new IImportTarget[]
         {
             new ContactsImportTarget(db, writer, resolver),
             new ChartOfAccountsImportTarget(db, writer, resolver),
             new JournalEntriesImportTarget(db, writer, resolver),
         });
-        return new ImportPipelineService(db, files, registry, new NoTemplates());
+        var columnMatch = augmenter == null ? null
+            : new ImportColumnMatchService(templates, augmenter, Array.Empty<Accounting.Services.Ai.Distillation.ILocalDistillationModel>());
+        return new ImportPipelineService(db, files, registry, templates, columnMatch, augmenter);
     }
 
     private static readonly ImportActor Actor = new(Guid.NewGuid(), "ผู้ทดสอบนำเข้า", "127.0.0.1");
@@ -392,6 +404,55 @@ public class ImportPipelineDbTests
         Assert.Equal(1070m, apDebit);                                         // เจ้าหนี้ถูกตัดใน GL (เดิมแก้ PaidAmount ตรง · GL ไม่ขยับ)
         var doc = await check.Documents.AsNoTracking().SingleAsync(d => d.Id == bill.Id && d.CompanyId == cid);
         Assert.Equal(1070m, doc.PaidAmount);
+    }
+
+    [Fact]
+    public async Task รายการธนาคารจากไฟล์เดิม_ลงผ่านตัวเขียน_statement_ไม่เดินยอดการ์ดเอง_และไม่ลงซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var cid = await SeedCompanyAsync(db, "1120");
+        var account = new BankAccount
+        {
+            CompanyId = cid, AccountName = "กสิกร ออมทรัพย์", BankName = "กสิกรไทย", AccountNumber = "123-4-56789-0", CurrentBalance = 5000m,
+        };
+        db.BankAccounts.Add(account);
+        await db.SaveChangesAsync();
+        List<Dictionary<string, string>> Rows() => new()
+        {
+            new() { ["BankAccountId"] = account.Id.ToString(), ["TransactionDate"] = "05/08/2569", ["TransactionType"] = "Deposit",
+                ["Amount"] = "1,500.00", ["Description"] = "รับโอน", ["Reference"] = "TRF-1" },
+            new() { ["BankAccountId"] = account.Id.ToString(), ["TransactionDate"] = "06/08/2569", ["TransactionType"] = "Fee",
+                ["Amount"] = "25.00", ["Description"] = "ค่าธรรมเนียม", ["Reference"] = "FEE-1" },
+        };
+
+        var first = await new ImportExportService(db, new NullErrorLog(), bank: new BankService(db))
+            .ImportAsync(cid, new ImportRequest("banktransactions", "csv", true, null, Rows()), "tester");
+        Assert.Equal(2, first.SuccessCount);
+        Assert.Empty(first.Errors);
+
+        using var db2 = DbTestDatabase.TryCreateContext()!;
+        var again = await new ImportExportService(db2, new NullErrorLog(), bank: new BankService(db2))
+            .ImportAsync(cid, new ImportRequest("banktransactions", "csv", true, null, Rows()), "tester");
+        Assert.Equal(0, again.SuccessCount);                                  // ไฟล์เดิมซ้ำ = ข้ามทุกแถว (กันซ้ำของตัวเขียน statement)
+        Assert.Equal(2, again.SkippedCount);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var txns = await check.BankTransactions.AsNoTracking().Where(t => t.CompanyId == cid && t.BankAccountId == account.Id)
+            .OrderBy(t => t.TransactionDate).ToListAsync();
+        Assert.Equal(2, txns.Count);
+        Assert.Equal(new DateTime(2026, 8, 5), txns[0].TransactionDate.Date);
+        Assert.Equal(1500m, txns[0].Amount);
+        Assert.Equal(BankTransactionType.Withdrawal, txns[1].TransactionType);  // ค่าธรรมเนียม = เงินออก
+        var card = await check.BankAccounts.AsNoTracking().SingleAsync(a => a.Id == account.Id && a.CompanyId == cid);
+        Assert.Equal(5000m, card.CurrentBalance);                             // ไฟล์ไม่มียอดคงเหลือ ⇒ ไม่แต่งยอดเอง (เดิม CurrentBalance += ตามไฟล์)
+
+        // ทิศตรงข้าม: บัญชีธนาคารของบริษัทอื่น ⇒ แถวล้มพร้อมเหตุผล ไม่มีอะไรลง
+        var otherCid = await SeedCompanyAsync(check);
+        var foreign = await new ImportExportService(check, new NullErrorLog(), bank: new BankService(check))
+            .ImportAsync(otherCid, new ImportRequest("banktransactions", "csv", true, null, Rows()), "tester");
+        Assert.Equal(0, foreign.SuccessCount);
+        Assert.Equal(2, foreign.Errors.Count);
     }
 
     [Fact]

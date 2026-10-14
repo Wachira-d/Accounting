@@ -4795,6 +4795,18 @@ open-banking **OFX บันทึกจริง** (เดิมนับบร
 CSV TIS-620 ผ่าน `ImportTabularReader.Decode` (คอมเมนต์เดิมอ้างว่ามีแต่โค้ดไม่มี) · statement ไม่มียอดคงเหลือนำเข้าได้ + คำเตือน · Excel เลือกชีต/หาชีตที่มีหัวตาราง ·
 ยอด "DR" = เงินออก (เดิมตัด DR ทิ้ง) · ช่องถอนติดลบไม่หายเงียบ · ขัดแย้งโหมดถามไม่ค้างใน tracker · "เก็บข้อมูลเดิม" ลงรายการที่ไม่ขัดแย้งจริง (เดิมหน้าเว็บบอกสำเร็จทั้งที่ย้อนทั้งไฟล์) ·
 statement เก่าไม่ย้อนยอดตามธนาคาร · เก็บไฟล์ต้นทาง (ไฟล์แนบชนิด `BankStatement`) · `BankStatementImportTarget` (ตรวจซ้ำ/ลง/ย้อน) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a56239bd_
+_รอบ 205 ทีม B — ศูนย์นำเข้าข้อมูล: engine + writer เดิม (`erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.1–§2.5): `ImportPipelineService` ครบสัญญา
+(สร้างจากไฟล์ → เก็บไฟล์ต้นทางเป็นไฟล์แนบ "ImportBatch" · ไฟล์ซ้ำเตือน · ≤ 2,000 แถวทำในคำขอ มากกว่านั้นเข้าคิว · วิเคราะห์ใหม่/จับคู่คอลัมน์/แก้แถว/สั่งทีละหลายแถว ·
+commit แบบธุรกรรมเดียว savepoint ต่อ 200 แถว + ลงซ้ำทีละกลุ่มเมื่อมีแถวล้ม (ไม่มีใบครึ่งใบ) · ลงทั้งหมดหรือไม่ลงเลย · OwnTransactionPerGroup ทำซ้ำได้/ทำต่อได้ ·
+ย้อน/พรีวิวย้อน (ต้องมีเหตุผล) · ยกเลิก · errors.csv · audit IMPORT-COMMIT/IMPORT-UNDO ผ่าน hash chain · ปิดลูปจับคู่คอลัมน์/จับคู่ข้อมูลเดิมกับทีม A) ·
+`ImportBatchWorker` (claim `FOR UPDATE SKIP LOCKED` + heartbeat + JobLock ต่อ batch · ล้างแถวพักของชุดที่ปิดแล้วเกิน 90 วัน) · `ImportEntityResolver.MatchAsync`
+(เลขภาษี+สาขา = เลือกให้ · ชื่อ/ชื่อคล้าย = แนะนำเท่านั้น · AI 59 เฉพาะกำกวมไม่มีเลขภาษี) + `DuplicateDetector.MatchBatchAsync` · ปลายทางข้อมูลหลัก 7 ชนิด ·
+helper `ImportHeaderDetector` (แถวหัวตาราง + แถวยอดรวม ตัวตั้งเดียว — `BankCsvParser.IsSummaryRow` ส่งต่อมา) / `ImportRowConfidence` / `ThaiLegalNameKey` ·
+writer เดิม P0: switch สองชุดยุบเป็น `WriteRowAsync` ตัวเดียว · วันที่/ยอดไม่ขึ้นกับ culture เครื่อง · DateFormat/DecimalSeparator มีผลจริง · ป้าย AiMatched เฉพาะ AI ตอบจริง ·
+ตัวตรวจข้อมูลทำงานเมื่อไม่มี AI · สินค้า "ข้าม" นับเป็นข้าม · สถานะลงบางแถว = PartiallyCompleted + ลองใหม่เฉพาะแถวที่ล้ม · JE ไม่รับผังที่ลบแล้ว/ผู้ติดต่อชื่อกำกวม ·
+เลขบัตรประชาชน checksum ไม่ผ่าน = คำเตือน · สินทรัพย์ผ่าน `FixedAssetService.ImportAsync` (ที่ดินไม่คิดค่าเสื่อม) · รับ/จ่ายชำระผ่าน `DocumentService.CreatePaymentAsync` (มี JE —
+เดิมแก้ PaidAmount ตรง) · เอกสารผ่าน `DocumentImportBuilder` + `CreateDocumentAsync` (ร่าง · DRAFT) · รายการธนาคารผ่านตัวเขียน statement ของทีม C (เดิม `CurrentBalance +=`) ·
+Smart Import จับคู่คอลัมน์ผ่าน `ImportColumnMatchService` (เดิมตัวจับคู่ชุดที่สอง + ทิ้ง FeedbackId) · `GetTemplateFields` มอบให้ `ImportSchemas` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
 _2026-10-14 ทีม F2 — ช่องทางรับ/จ่ายเงินของเอกสาร (PAYMENT_CHANNEL_AUDIT PC#3/#4/#5/#9/#13/#14/#15/#16/#18/#21 · ID#3–#7/#16/#20/#21 · ต้นเรื่อง: รหัสบัญชีธนาคารถูกตรวจเป็นผังบัญชี):
 ตัวตัดสินเดียว `Helpers/DocumentMoneyChannel` แทนลำดับที่เขียนไว้ 4 ที่ (ลงบัญชีตอนอนุมัติ · JE การชำระ · ขาเงินส่วนเกิน · พรีวิว — ตัวหลังสลับลำดับ) ·
 แหล่งเงินที่เลือกแล้วใช้ไม่ได้ (ธนาคารยังไม่ผูกผัง/รหัสผิดตาราง/บริษัทอื่น) ⇒ ข้อความไทยบอกช่อง + ที่แก้ แทนการตกเงินสดเงียบ · ไม่มีผังเงินสด ⇒ ล้มดัง (เดิมบันทึกการชำระไม่มี JE) ·

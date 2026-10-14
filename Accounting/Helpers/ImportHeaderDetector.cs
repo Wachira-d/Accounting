@@ -33,7 +33,9 @@ public static class ImportHeaderDetector
 
     /// <summary>คำที่ตามหลังป้ายยอดรวมได้โดยยังเป็นแถวยอดรวม ("รวม 15 รายการ" · "รวมทั้งสิ้น (บาท)")</summary>
     private static readonly HashSet<string> SummaryTailWords = new(StringComparer.OrdinalIgnoreCase)
-        { "", "รายการ", "บาท", "ทั้งสิ้น", "items", "item", "rows", "baht", "thb" };
+        { "", "รายการ", "บาท", "ทั้งสิ้น", "items", "item", "rows", "baht", "thb",
+          // statement ธนาคาร ("Total Debit" · "รวม ถอน/ฝาก") — เดิม regex ของ BankCsvParser
+          "debit", "credit", "เดบิต", "เครดิต", "ถอน", "ฝาก", "withdrawal", "withdrawals", "deposit", "deposits", "amount" };
 
     /// <summary>
     /// แถวนี้เป็นแถวยอดรวม/ยกมา/ยกไปของรายงาน (ไม่ใช่ข้อมูล) — มีเซลล์ที่<b>ทั้งเซลล์</b>เป็นป้ายยอดรวม (เช่น "รวม" · "รวมทั้งสิ้น" · "Grand Total:" ·

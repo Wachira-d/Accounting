@@ -30,11 +30,15 @@ public class ImportExportService : IImportExportService
     private readonly IFixedAssetService? _fixedAssets;
     /// <summary>รอบ 205 ทีม B: ประกอบคำขอสร้างเอกสารจากแถว (ทีม D) → <c>DocumentService.CreateDocumentAsync</c> (ร่าง + เลข DRAFT · คำตัดสินข้อ 151)</summary>
     private readonly IDocumentImportBuilder? _documentBuilder;
+    /// <summary>รอบ 205 ทีม B: รายการธนาคารจากไฟล์ผ่านตัวเขียน statement ตัวเดียว (ทีม C) — เดิมเดินยอด <c>CurrentBalance +=</c> เอง</summary>
+    private readonly IBankService? _bank;
+    /// <summary>รอบ 205 ทีม B: จับคู่คอลัมน์ของ Smart Import ผ่านทางเข้าเดียวของทีม A (แม่แบบ/คำพ้อง/เรียนรู้/AI + FeedbackId) — null = ชั้น local ล้วน</summary>
+    private readonly IImportColumnMatchService? _columnMatch;
 
     public ImportExportService(AccountingDbContext db, IErrorLogService errorLogService,
         IImportAiAugmenter? ai = null, IStockLedger? stock = null,
         IDocumentService? documents = null, IFixedAssetService? fixedAssets = null,
-        IDocumentImportBuilder? documentBuilder = null)
+        IDocumentImportBuilder? documentBuilder = null, IBankService? bank = null, IImportColumnMatchService? columnMatch = null)
     {
         _db = db;
         _errorLogService = errorLogService;
@@ -43,6 +47,8 @@ public class ImportExportService : IImportExportService
         _documents = documents;
         _fixedAssets = fixedAssets;
         _documentBuilder = documentBuilder;
+        _bank = bank;
+        _columnMatch = columnMatch;
     }
 
     /// <summary>ชนิดข้อมูลที่ writer เดิมเขียนได้ (คีย์ <see cref="ImportExportPermissionScope.NormalizeEntityType"/>) — ชุดเดียวกับ switch ใน
@@ -238,7 +244,7 @@ public class ImportExportService : IImportExportService
                     "contacts" => await ImportContactAsync(companyId, row, action, matched),
                     "products" => await ImportProductAsync(companyId, row, action, matched),
                     "chartofaccounts" => await ImportAccountAsync(companyId, row, action, matched),
-                    "banktransactions" => await ImportBankTransactionAsync(companyId, row),
+                    "banktransactions" => await ImportBankTransactionAsync(companyId, row, performedBy),
                     "journalentries" => await ImportJournalEntryAsync(companyId, row, performedBy),
                     "stockopening" => await ImportStockOpeningAsync(companyId, row, performedBy),
                     "openingar" => await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: true),
@@ -1010,52 +1016,42 @@ public class ImportExportService : IImportExportService
         };
     }
 
-    private async Task<RowWrite> ImportBankTransactionAsync(Guid companyId, Dictionary<string, string> row)
+    /// <summary>รายการธนาคารจากไฟล์ (Smart Import/นำเข้าเดิม) — รอบ 205 ทีม B: ลงผ่านตัวเขียนตัวเดียว
+    /// <see cref="IBankService.ImportParsedStatementRowsAsync"/> (ทีม C) · เดิม <c>CurrentBalance +=</c> เอง (ยอดการ์ดบัญชีเดินตามไฟล์ ไม่ใช่ตามธนาคาร ·
+    /// ความหมายยอดคงเหลือคนละแบบกับหน้า "ธนาคาร") · กันซ้ำแบบ statement ของตัวเขียน (วัน+ยอด+ทิศ+คำอธิบายตรง = ข้าม) ·
+    /// คำอธิบายต่าง = ลงเป็นรายการใหม่ + คำเตือน (ความหมายเดิมของทางนี้: ซ้ำเฉพาะเมื่อทุกช่องตรง)</summary>
+    private async Task<RowWrite> ImportBankTransactionAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
     {
+        if (_bank == null)
+            throw new BusinessRuleException("ระบบธนาคารไม่พร้อม — นำเข้าที่หน้า \"ธนาคาร → นำเข้า statement\" แทน");
         if (!Guid.TryParse(row.GetValueOrDefault("BankAccountId"), out var bankAccountId))
-            throw new BusinessRuleException("BankAccountId ไม่ถูกต้อง");
-
-        var account = await _db.BankAccounts.FirstOrDefaultAsync(a => a.Id == bankAccountId && a.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
+            throw new BusinessRuleException("BankAccountId ไม่ถูกต้อง — เลือกบัญชีธนาคารปลายทางก่อนนำเข้า");
+        if (!await _db.BankAccounts.AsNoTracking().AnyAsync(a => a.Id == bankAccountId && a.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
 
         if (!Enum.TryParse<BankTransactionType>(row.GetValueOrDefault("TransactionType"), true, out var txnType))
-            throw new BusinessRuleException("TransactionType ไม่ถูกต้อง");
+            throw new BusinessRuleException("TransactionType ไม่ถูกต้อง (Deposit/Withdrawal/Transfer/Fee/Interest)");
 
-        var amount = OptAmount(row, "Amount", "จำนวนเงิน") ?? throw new BusinessRuleException("ต้องระบุจำนวนเงิน (Amount)");
+        var amount = Math.Abs(OptAmount(row, "Amount", "จำนวนเงิน") ?? throw new BusinessRuleException("ต้องระบุจำนวนเงิน (Amount)"));
         var txnDate = OptDate(row, "TransactionDate", "วันที่ทำรายการ") ?? Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow);
-        var reference = row.GetValueOrDefault("Reference");
-        var descr = row.GetValueOrDefault("Description");
+        var outgoing = txnType == BankTransactionType.Withdrawal || txnType == BankTransactionType.Fee;
+        var line = new Accounting.Models.DTOs.Bank.BankStatementLineInput(txnDate, Val(row, "Description"),
+            Withdrawal: outgoing ? amount : 0m, Deposit: outgoing ? 0m : amount, Reference: Val(row, "Reference"));
 
-        // Idempotent: รันไฟล์เดิมซ้ำต้องไม่สร้างรายการซ้ำและห้ามเดินยอดบัญชีซ้ำ
-        // (เดิมไม่มี dedup เลย — import ซ้ำ = CurrentBalance วิ่งเพิ่มอีกเต็มไฟล์)
-        var dupInDb = await _db.BankTransactions.AsNoTracking().Where(t =>
-            t.CompanyId == companyId && t.BankAccountId == bankAccountId
-            && t.TransactionDate == txnDate && t.TransactionType == txnType
-            && t.Amount == amount && t.Reference == reference && t.Description == descr)
-            .Select(t => (Guid?)t.Id).FirstOrDefaultAsync();
-        var dupInTracker = _db.ChangeTracker.Entries<BankTransaction>().Select(e => e.Entity).FirstOrDefault(t =>
-            t.CompanyId == companyId && t.BankAccountId == bankAccountId
-            && t.TransactionDate == txnDate && t.TransactionType == txnType
-            && t.Amount == amount && t.Reference == reference && t.Description == descr);
-        if (dupInDb != null) return new RowWrite("BankTransaction", dupInDb, Skipped: true);
-        if (dupInTracker != null) return new RowWrite("BankTransaction", dupInTracker.Id, Skipped: true);
-
-        var balanceChange = txnType == BankTransactionType.Withdrawal || txnType == BankTransactionType.Fee ? -Math.Abs(amount) : Math.Abs(amount);
-        account.CurrentBalance += balanceChange;
-
-        var txn = new BankTransaction
+        var written = await _bank.ImportParsedStatementRowsAsync(companyId, bankAccountId, new[] { line },
+            new Accounting.Models.DTOs.Bank.BankStatementWriteOptions(
+                OnConflict: Accounting.Models.DTOs.Bank.BankStatementConflictPolicy.InsertAsNew,
+                CreatedBy: performedBy));
+        var r = written.Lines.Count > 0 ? written.Lines[0]
+            : throw new BusinessRuleException("บันทึกรายการธนาคารไม่สำเร็จ — ตรวจวันที่และจำนวนเงินของแถวนี้");
+        return r.Outcome switch
         {
-            CompanyId = companyId,
-            BankAccountId = bankAccountId,
-            TransactionDate = txnDate,
-            TransactionType = txnType,
-            Amount = amount,
-            BalanceAfter = account.CurrentBalance,
-            Description = row.GetValueOrDefault("Description"),
-            Reference = row.GetValueOrDefault("Reference")
+            Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Created or Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Updated
+                => new RowWrite("BankTransaction", r.TransactionId),
+            Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Duplicate or Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Conflict
+                => new RowWrite("BankTransaction", r.ExistingTransactionId, Skipped: true),
+            _ => throw new BusinessRuleException(r.Message ??"บันทึกรายการธนาคารไม่สำเร็จ — ตรวจวันที่และจำนวนเงินของแถวนี้"),
         };
-        _db.BankTransactions.Add(txn);
-        return new RowWrite("BankTransaction", txn.Id);
     }
 
     private async Task<RowWrite> ImportJournalEntryAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
@@ -2110,77 +2106,29 @@ public class ImportExportService : IImportExportService
         var dataRows = request.HasHeaderRow ? request.RawData.Skip(1).ToList() : request.RawData;
         var sampleRows = dataRows.Take(5).ToList();
 
-        // AI Column Matching
-        var mappings = new List<SmartImportColumnMapping>();
-        var unmappedCount = 0;
-
-        for (int i = 0; i < headers.Count; i++)
+        // รอบ 205 ทีม B: จับคู่คอลัมน์ผ่านตัวจับคู่ตัวเดียวของระบบ (ทีม A · ImportColumnMatchService) — เดิมมีตัวจับคู่ชุดที่สองที่นี่
+        // (AnalyzeColumnMatch + AI ที่ทิ้ง FeedbackId — ไม่เคยเรียนจากผู้ใช้ · ป้าย "AiMatched" บนการจับคู่ด้วยกฎ)
+        var columns = headers.Select((h, i) => new ImportColumnInput(i, h ?? "", sampleRows
+                .Where(r => i < r.Count).Select(r => r[i]).Where(v => !string.IsNullOrWhiteSpace(v)).Take(5).ToList()))
+            .ToList();
+        ImportColumnPlan plan;
+        if (_columnMatch != null)
         {
-            var sourceHeader = headers[i];
-            var sampleValues = sampleRows
-                .Where(r => i < r.Count)
-                .Select(r => r[i])
-                .Where(v => !string.IsNullOrWhiteSpace(v))
-                .Take(5)
-                .ToList();
-
-            var matchResult = AnalyzeColumnMatch(sourceHeader, sampleValues, templateFields);
-
-            var mapping = new SmartImportColumnMapping
-            {
-                SessionId = session.Id,
-                SourceIndex = i,
-                SourceHeader = sourceHeader,
-                TargetField = matchResult.TargetField,
-                MatchType = matchResult.MatchType,
-                Confidence = matchResult.Confidence,
-                ConfidenceScore = matchResult.ConfidenceScore,
-                SampleValuesJson = JsonSerializer.Serialize(sampleValues),
-                SuggestionsJson = JsonSerializer.Serialize(matchResult.Suggestions)
-            };
-            mappings.Add(mapping);
-
-            if (matchResult.MatchType == ColumnMatchType.Unmapped ||
-                matchResult.Confidence == ColumnMatchConfidence.Low ||
-                matchResult.Confidence == ColumnMatchConfidence.None)
-            {
-                unmappedCount++;
-            }
+            var outcome = await _columnMatch.MapAsync(companyId, request.EntityType, columns,
+                new ImportColumnMatchOptions(BatchId: session.Id, AllowAi: true));
+            plan = outcome.Plan;
+            session.ColumnMatchAiFeedbackId = outcome.AiFeedbackId;
+            session.ColumnMatchUsedAi = outcome.UsedAi;
+            session.HeaderSignature = outcome.HeaderSignature;
+            session.MappingTemplateId = outcome.TemplateId;
         }
+        else
+            plan = ImportColumnMapper.Resolve(new ImportColumnMapRequest(request.EntityType, ImportSchemas.For(request.EntityType)!, columns));
+        session.SourceSystem ??= plan.SourceProfile?.Profile.SourceSystem;
 
-        // AI fallback for uncertain columns. Fires ONLY for columns the
-        // heuristic couldn't confidently match — the 90% case where
-        // headers are obvious stays AI-free. AI re-rank tightens the
-        // mapping for renamed columns ("ลูกค้า/ผู้ขาย" → Name) the
-        // alias table doesn't cover. Failure is silent: empty result
-        // leaves the heuristic mappings in place.
-        if (_ai != null)
-        {
-            var uncertain = mappings
-                .Where(m => m.MatchType == ColumnMatchType.Unmapped
-                    || m.Confidence == ColumnMatchConfidence.Low
-                    || m.Confidence == ColumnMatchConfidence.Medium)
-                .Select(m =>
-                {
-                    var samples = JsonSerializer.Deserialize<List<string>>(m.SampleValuesJson ?? "[]") ?? new();
-                    return new ImportPrompts.ColumnMatchInput(
-                        m.SourceIndex, m.SourceHeader, samples, m.TargetField, (double)m.ConfidenceScore);
-                })
-                .ToList();
-
-            if (uncertain.Count > 0)
-            {
-                var targets = templateFields.Select(f => new ImportPrompts.TargetField(
-                    f.FieldName, f.DisplayName, f.DataType, f.IsRequired, f.Description)).ToList();
-                var suggestions = await _ai.SuggestColumnMappingsAsync(
-                    companyId, session.Id, request.EntityType, targets, uncertain);
-                ApplyAiColumnSuggestions(mappings, suggestions, templateFields);
-                unmappedCount = mappings.Count(m =>
-                    m.MatchType == ColumnMatchType.Unmapped ||
-                    m.Confidence == ColumnMatchConfidence.Low ||
-                    m.Confidence == ColumnMatchConfidence.None);
-            }
-        }
+        var mappings = plan.Columns.Select(c => ToColumnMappingRow(session.Id, c)).ToList();
+        var unmappedCount = mappings.Count(m => m.MatchType == ColumnMatchType.Unmapped
+            || m.Confidence == ColumnMatchConfidence.Low || m.Confidence == ColumnMatchConfidence.None);
 
         _db.SmartImportColumnMappings.AddRange(mappings);
 
@@ -2191,33 +2139,40 @@ public class ImportExportService : IImportExportService
         return MapToSessionResponse(session, mappings, sampleRows);
     }
 
-    /// <summary>Apply AI's column suggestions on top of the heuristic
-    /// mappings. AI wins only when (a) it picks a valid target field
-    /// and (b) its confidence beats whatever the heuristic produced.
-    /// Marks accepted picks as AiMatched so the UI can label them.</summary>
-    private static void ApplyAiColumnSuggestions(
-        List<SmartImportColumnMapping> mappings,
-        List<ImportColumnAiSuggestion> suggestions,
-        List<ImportField> templateFields)
+    /// <summary>
+    /// แถวตารางจับคู่ของ Smart Import (SmartImportColumnMappings) จากแผนของตัวจับคู่ — <b>ตัวเดียว</b>ที่ทั้ง Smart Import และ pipeline ศูนย์นำเข้าใช้ ·
+    /// ป้าย MatchType ซื่อสัตย์: <c>AiMatched</c> เฉพาะคำตอบที่ AI ตอบจริง · ผู้ใช้เลือก = Manual · ชื่อตรง/แม่แบบ = Exact · คำพ้อง/เรียนรู้/รูปข้อมูล/นักเรียน = Heuristic
+    /// </summary>
+    internal static SmartImportColumnMapping ToColumnMappingRow(Guid sessionId, ImportColumnPlanDto c) => new()
     {
-        var validFieldNames = templateFields.Select(f => f.FieldName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var s in suggestions)
-        {
-            var m = mappings.FirstOrDefault(x => x.SourceIndex == s.SourceIndex);
-            if (m == null) continue;
-            if (string.IsNullOrWhiteSpace(s.TargetField) || !validFieldNames.Contains(s.TargetField)) continue;
-            // s.Confidence is decimal (AI contract), ConfidenceScore is double
-            // (entity) — cast for the comparison + assignment.
-            var aiScore = (double)s.Confidence;
-            if (aiScore <= m.ConfidenceScore) continue;       // heuristic was already as good or better
+        SessionId = sessionId,
+        SourceIndex = c.SourceIndex,
+        SourceHeader = c.SourceHeader.Length <= 255 ? c.SourceHeader : c.SourceHeader[..255],
+        TargetField = c.TargetField == null ? null : c.TargetField.Length <= 100 ? c.TargetField : c.TargetField[..100],
+        MatchType = c.TargetField == null ? ColumnMatchType.Unmapped
+            : c.Source == ImportMapSource.User ? ColumnMatchType.ManualMatch
+            : c.Source == ImportMapSource.Ai && c.UsedAi ? ColumnMatchType.AiMatched
+            : c.Source is ImportMapSource.Exact or ImportMapSource.Template ? ColumnMatchType.ExactMatch
+            : ColumnMatchType.HeuristicMatched,
+        Confidence = c.TargetField == null ? ColumnMatchConfidence.None
+            : c.Confidence >= 0.9m ? ColumnMatchConfidence.High : c.Confidence >= 0.7m ? ColumnMatchConfidence.Medium
+            : c.Confidence >= 0.5m ? ColumnMatchConfidence.Low : ColumnMatchConfidence.None,
+        ConfidenceScore = (double)c.Confidence,
+        SampleValuesJson = JsonSerializer.Serialize(c.SampleValues),
+        SuggestionsJson = JsonSerializer.Serialize(c.Alternatives.Select(a =>
+            new SuggestedMappingDto(a.TargetField, a.TargetLabel, (double)a.Score, a.Reason)).ToList()),
+    };
 
-            m.TargetField = s.TargetField;
-            m.MatchType = ColumnMatchType.AiMatched;
-            m.ConfidenceScore = aiScore;
-            m.Confidence = s.Confidence >= 0.9m ? ColumnMatchConfidence.High
-                : s.Confidence >= 0.6m ? ColumnMatchConfidence.Medium
-                : ColumnMatchConfidence.Low;
-        }
+    /// <summary>ปิดลูป ImportColumnMatch ของ Smart Import (กฎเหล็ก #1) — ผู้ใช้แก้ (SubmitManualMapping) / ยืนยัน (ConfirmAndImport) การจับคู่ ⇒
+    /// <see cref="IImportColumnMatchService.RecordConfirmedAsync"/> ด้วยการจับคู่สุดท้าย · ไม่มีแถว feedback = ไม่มีอะไรต้องปิด</summary>
+    private async Task RecordSmartColumnChoiceAsync(Guid companyId, SmartImportSession session)
+    {
+        if (_columnMatch == null || session.ColumnMatchAiFeedbackId is not Guid fb) return;
+        var final = session.ColumnMappings.OrderBy(m => m.SourceIndex).Select(m => new ImportColumnPlanDto(m.SourceIndex, m.SourceHeader,
+            string.IsNullOrWhiteSpace(m.TargetField) ? null : m.TargetField, null,
+            m.MatchType == ColumnMatchType.ManualMatch ? ImportMapSource.User : ImportMapSource.None, "", (decimal)m.ConfidenceScore, false,
+            Array.Empty<string>(), Array.Empty<ImportColumnCandidateDto>())).ToList();
+        await _columnMatch.RecordConfirmedAsync(companyId, fb, final);
     }
 
     /// <summary>One-shot review of the staged data BEFORE commit.
@@ -2432,6 +2387,7 @@ public class ImportExportService : IImportExportService
         session.UpdatedBy = performedBy;
 
         await _db.SaveChangesAsync();
+        await RecordSmartColumnChoiceAsync(companyId, session);
 
         var rawData = !string.IsNullOrEmpty(session.RawDataJson)
             ? JsonSerializer.Deserialize<List<List<string>>>(session.RawDataJson) ?? new()
@@ -2461,6 +2417,7 @@ public class ImportExportService : IImportExportService
 
         session.Status = ImportSessionStatus.Importing;
         await _db.SaveChangesAsync();
+        if (!retry) await RecordSmartColumnChoiceAsync(companyId, session);
 
         var rawData = !string.IsNullOrEmpty(session.RawDataJson)
             ? JsonSerializer.Deserialize<List<List<string>>>(session.RawDataJson) ?? new()
@@ -2537,7 +2494,7 @@ public class ImportExportService : IImportExportService
         csv.AppendLine(string.Join(",", fields.Select(f => Accounting.Helpers.CsvFieldSafety.Escape(f.FieldName))));
 
         // Sample data row
-        var sampleRow = fields.Select(f => Accounting.Helpers.CsvFieldSafety.Escape(GetSampleValue(f))).ToList();
+        var sampleRow = fields.Select(f => Accounting.Helpers.CsvFieldSafety.Escape(GetSampleValue(entityType, f))).ToList();
         csv.AppendLine(string.Join(",", sampleRow));
 
         // ส่ง description row (comment)
@@ -2602,524 +2559,27 @@ public class ImportExportService : IImportExportService
         return Task.FromResult(entities);
     }
 
-    // ===== AI Column Matching Logic =====
-
-    private static ColumnAnalysisResult AnalyzeColumnMatch(
-        string sourceHeader, List<string> sampleValues, List<ImportField> templateFields)
-    {
-        var suggestions = new List<SuggestedMappingDto>();
-        string? bestTarget = null;
-        double bestScore = 0;
-
-        foreach (var field in templateFields)
-        {
-            double score = 0;
-            var reasons = new List<string>();
-
-            // 1. Exact match (header name)
-            if (sourceHeader.Equals(field.FieldName, StringComparison.OrdinalIgnoreCase))
-            {
-                score = 1.0;
-                reasons.Add("ชื่อ column ตรงกัน");
-            }
-            else
-            {
-                // 2. ชื่อภาษาไทยตรงกัน
-                if (sourceHeader.Equals(field.DisplayName, StringComparison.OrdinalIgnoreCase))
-                {
-                    score = 0.95;
-                    reasons.Add("ชื่อภาษาไทยตรงกัน");
-                }
-
-                // 3. Contains / partial match
-                var normalizedSource = NormalizeHeader(sourceHeader);
-                var normalizedField = NormalizeHeader(field.FieldName);
-                var normalizedDisplay = NormalizeHeader(field.DisplayName);
-
-                if (score < 0.9)
-                {
-                    if (normalizedSource.Contains(normalizedField) || normalizedField.Contains(normalizedSource))
-                    {
-                        score = Math.Max(score, 0.8);
-                        reasons.Add("ชื่อคล้ายกัน (EN)");
-                    }
-                    if (normalizedSource.Contains(normalizedDisplay) || normalizedDisplay.Contains(normalizedSource))
-                    {
-                        score = Math.Max(score, 0.8);
-                        reasons.Add("ชื่อคล้ายกัน (TH)");
-                    }
-                }
-
-                // 4. Alias matching (ชื่อที่มักใช้กันทั่วไป)
-                var aliases = GetFieldAliases(field.FieldName);
-                foreach (var alias in aliases)
-                {
-                    if (normalizedSource.Contains(NormalizeHeader(alias)) ||
-                        NormalizeHeader(alias).Contains(normalizedSource))
-                    {
-                        score = Math.Max(score, 0.85);
-                        reasons.Add($"ตรงกับชื่อที่ใช้ทั่วไป: {alias}");
-                        break;
-                    }
-                }
-
-                // 5. Data pattern matching (วิเคราะห์ข้อมูลตัวอย่าง)
-                if (sampleValues.Count > 0 && score < 0.7)
-                {
-                    var patternScore = AnalyzeDataPattern(sampleValues, field);
-                    if (patternScore > 0.5)
-                    {
-                        score = Math.Max(score, patternScore * 0.75);
-                        reasons.Add("รูปแบบข้อมูลตรงกัน");
-                    }
-                }
-            }
-
-            if (score > 0.3)
-            {
-                suggestions.Add(new SuggestedMappingDto(
-                    field.FieldName, field.DisplayName, score,
-                    string.Join(", ", reasons)));
-            }
-
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestTarget = field.FieldName;
-            }
-        }
-
-        // จัดเรียง suggestions ตาม score
-        suggestions = suggestions.OrderByDescending(s => s.Score).Take(3).ToList();
-
-        // กำหนด confidence
-        // รอบ 205 ทีม B (P0 · ป้ายซื่อสัตย์ กฎเหล็ก #1): ชื่อคล้าย/คำพ้อง/รูปข้อมูล = ระบบจับคู่เอง ไม่ใช่ AI — เดิม 0.6–0.9 ติด AiMatched
-        // ทั้งที่ไม่ได้เรียก AI · AiMatched ตั้งได้เฉพาะ ApplyAiColumnSuggestions (คำตอบจาก AI จริง)
-        var matchType = bestScore >= 0.9 ? ColumnMatchType.ExactMatch
-            : bestScore >= 0.6 ? ColumnMatchType.HeuristicMatched
-            : ColumnMatchType.Unmapped;
-
-        var confidence = bestScore >= 0.9 ? ColumnMatchConfidence.High
-            : bestScore >= 0.7 ? ColumnMatchConfidence.Medium
-            : bestScore >= 0.5 ? ColumnMatchConfidence.Low
-            : ColumnMatchConfidence.None;
-
-        // ถ้า confidence ต่ำเกินไป ไม่ auto-assign
-        if (confidence == ColumnMatchConfidence.None || confidence == ColumnMatchConfidence.Low)
-        {
-            bestTarget = null;
-            matchType = ColumnMatchType.Unmapped;
-        }
-
-        return new ColumnAnalysisResult(bestTarget, matchType, confidence, bestScore, suggestions);
-    }
-
-    private static double AnalyzeDataPattern(List<string> values, ImportField field)
-    {
-        if (values.Count == 0) return 0;
-
-        switch (field.DataType.ToLower())
-        {
-            case "decimal":
-                var decimalCount = values.Count(v => ImportValueNormalizer.Number(v) is { Ok: true, Value: not null }
-                    || ImportValueNormalizer.Amount(v) is { Ok: true, Value: not null });
-                return (double)decimalCount / values.Count;
-
-            case "date":
-                var dateCount = values.Count(v => ImportValueNormalizer.Date(v) is { Ok: true, Value: not null });
-                return (double)dateCount / values.Count;
-
-            case "bool":
-                var boolPatterns = new[] { "true", "false", "yes", "no", "1", "0", "ใช่", "ไม่ใช่", "y", "n" };
-                var boolCount = values.Count(v => boolPatterns.Contains(v.Trim().ToLower()));
-                return (double)boolCount / values.Count;
-
-            case "guid":
-                var guidCount = values.Count(v => Guid.TryParse(v, out _));
-                return (double)guidCount / values.Count;
-
-            case "enum":
-                if (field.AllowedValues != null)
-                {
-                    var enumCount = values.Count(v =>
-                        field.AllowedValues.Any(a => a.Equals(v.Trim(), StringComparison.OrdinalIgnoreCase)));
-                    return (double)enumCount / values.Count;
-                }
-                return 0;
-
-            case "string":
-                // ตรวจสอบ pattern ของข้อมูลที่เป็นข้อมูลเฉพาะ
-                if (field.FieldName.Contains("Email", StringComparison.OrdinalIgnoreCase))
-                {
-                    var emailCount = values.Count(v => v.Contains('@'));
-                    return (double)emailCount / values.Count;
-                }
-                if (field.FieldName.Contains("Phone", StringComparison.OrdinalIgnoreCase))
-                {
-                    var phoneCount = values.Count(v => v.Any(char.IsDigit) && v.Length >= 9);
-                    return (double)phoneCount / values.Count;
-                }
-                if (field.FieldName.Contains("TaxId", StringComparison.OrdinalIgnoreCase))
-                {
-                    var taxCount = values.Count(v => v.All(char.IsDigit) && v.Length == 13);
-                    return (double)taxCount / values.Count;
-                }
-                return 0;
-
-            default:
-                return 0;
-        }
-    }
-
-    /// <summary>คำพ้องของ field (เดิมของ Smart Import) — ศูนย์นำเข้าใช้เป็นชั้นคำพ้องสำรองจนกว่าทีม A รวม <c>ImportFieldSynonymSeed</c></summary>
-    internal static List<string> GetFieldAliases(string fieldName)
-    {
-        return fieldName.ToLower() switch
-        {
-            "name" => new List<string> { "ชื่อ", "customer_name", "supplier_name", "company_name",
-                "contact_name", "ชื่อบริษัท", "ชื่อลูกค้า", "ชื่อผู้ขาย", "customer", "supplier", "vendor" },
-            "taxid" => new List<string> { "tax_id", "tin", "เลขผู้เสียภาษี", "เลขประจำตัว",
-                "tax_number", "vat_id", "tax_identification", "เลขที่ผู้เสียภาษี" },
-            "email" => new List<string> { "e_mail", "mail", "อีเมล", "email_address", "e-mail" },
-            "phone" => new List<string> { "tel", "telephone", "โทรศัพท์", "เบอร์โทร", "phone_number",
-                "mobile", "มือถือ", "contact_number" },
-            "address" => new List<string> { "ที่อยู่", "addr", "street", "location", "ที่ตั้ง" },
-            "contactperson" => new List<string> { "contact_person", "ผู้ติดต่อ", "person", "contact_name", "representative" },
-            "iscustomer" => new List<string> { "is_customer", "customer_flag", "เป็นลูกค้า", "customer_type", "ลูกค้า" },
-            "issupplier" => new List<string> { "is_supplier", "supplier_flag", "เป็นผู้ขาย", "vendor_flag", "ผู้ขาย" },
-            "code" => new List<string> { "รหัส", "product_code", "item_code", "sku", "รหัสสินค้า",
-                "barcode", "item_no", "part_number" },
-            "producttype" => new List<string> { "product_type", "type", "ประเภท", "item_type", "ชนิด" },
-            "unit" => new List<string> { "หน่วย", "uom", "unit_of_measure", "หน่วยนับ", "measure" },
-            "sellingprice" => new List<string> { "selling_price", "sell_price", "price", "ราคาขาย",
-                "unit_price", "retail_price", "ราคา" },
-            "costprice" => new List<string> { "cost_price", "cost", "ราคาทุน", "purchase_price",
-                "buy_price", "ต้นทุน" },
-            "vatrate" => new List<string> { "vat_rate", "tax_rate", "vat", "อัตราภาษี", "tax_percent", "ภาษี" },
-            "category" => new List<string> { "หมวดหมู่", "group", "กลุ่ม", "product_group", "item_group" },
-            "accountcode" => new List<string> { "account_code", "acc_code", "gl_code", "รหัสบัญชี",
-                "account_no", "account_number", "เลขที่บัญชี" },
-            "accountname" => new List<string> { "account_name", "acc_name", "gl_name", "ชื่อบัญชี",
-                "account_description" },
-            "accountnameen" => new List<string> { "account_name_en", "english_name", "ชื่อบัญชีอังกฤษ",
-                "name_en", "eng_name" },
-            "accounttype" => new List<string> { "account_type", "acc_type", "type", "ประเภทบัญชี",
-                "gl_type", "account_category" },
-            "description" => new List<string> { "desc", "รายละเอียด", "คำอธิบาย", "note", "remark",
-                "หมายเหตุ", "memo" },
-            "bankaccountid" => new List<string> { "bank_account_id", "bank_account", "บัญชีธนาคาร",
-                "account_id" },
-            "transactiondate" => new List<string> { "transaction_date", "date", "txn_date", "วันที่",
-                "วันที่ทำรายการ", "posting_date", "value_date" },
-            "transactiontype" => new List<string> { "transaction_type", "txn_type", "type", "ประเภทรายการ",
-                "ประเภท" },
-            "amount" => new List<string> { "จำนวนเงิน", "total", "value", "sum", "ยอดเงิน",
-                "จำนวน", "money" },
-            "reference" => new List<string> { "ref", "ref_no", "reference_no", "อ้างอิง",
-                "เลขที่อ้างอิง", "ref_number" },
-            _ => new List<string>()
-        };
-    }
-
-    private static string NormalizeHeader(string header)
-    {
-        return header.ToLower()
-            .Replace(" ", "").Replace("_", "").Replace("-", "")
-            .Replace(".", "").Replace("(", "").Replace(")", "");
-    }
-
-    /// <summary>field ของแม่แบบนำเข้าต่อชนิด (เดิม) — ศูนย์นำเข้าแปลงเป็น schema จนกว่าทีม A ย้ายเป็น <c>ImportSchemas</c></summary>
+    /// <summary>
+    /// field ของชนิดข้อมูล (รูปเดิม <see cref="ImportField"/>) — รอบ 205 ทีม B: มอบให้แคตตาล็อกตัวเดียว <see cref="ImportSchemas.For"/> (ทีม A ย้ายเนื้อจากที่นี่ไปครบ
+    /// ทุกชนิด · ชื่อ field สะกดเดิม) แล้วแปลงชนิดกลับเป็น <c>DataType</c> เดิม · เดิมเป็นสำเนาที่สอง (journal-entries ไม่มี ⇒ null แล้ว <c>!</c> ทับ)
+    /// </summary>
     internal static List<ImportField>? GetTemplateFields(string entityType)
-    {
-        return entityType.ToLower() switch
-        {
-            "contacts" => new List<ImportField>
-            {
-                new("Name", "ชื่อ", "string", true, "ชื่อลูกค้า/ผู้ขาย", null),
-                new("TaxId", "เลขผู้เสียภาษี", "string", false, "เลขประจำตัวผู้เสียภาษี 13 หลัก (ตรวจ checksum — เลขผิดจะถูกปฏิเสธทั้งแถว)", null),
-                // ช่องนี้ตัดสิน ภ.ง.ด.3 vs ภ.ง.ด.53 และ scheme ของ e-Tax (NIDN/TXID)
-                // — เดิมไม่มีในแม่แบบเลย ⇒ ผู้ใช้ไม่มีทางระบุได้ แล้วทุกแถวตกค่า default
-                new("ContactType", "ประเภทผู้ติดต่อ", "enum", false,
-                    "Individual (บุคคลธรรมดา → ภ.ง.ด.3) · JuristicPerson (นิติบุคคล → ภ.ง.ด.53) · GovernmentAgency — เว้นว่างได้ถ้ามีเลขผู้เสียภาษีที่ถูกต้อง ระบบจะอ่านจากเลขให้",
-                    new List<string> { "Individual", "JuristicPerson", "GovernmentAgency" }),
-                new("BranchCode", "รหัสสาขา", "string", false,
-                    "5 หลักตามประกาศอธิบดีฯ 199 — 00000 = สำนักงานใหญ่ (เก็บเฉพาะนิติบุคคล/ราชการ)", null),
-                new("IsCustomer", "เป็นลูกค้า", "bool", false, "true/false", new List<string> { "true", "false" }),
-                new("IsSupplier", "เป็นผู้ขาย", "bool", false, "true/false", new List<string> { "true", "false" }),
-                new("Email", "อีเมล", "string", false, null, null),
-                new("Phone", "โทรศัพท์", "string", false, null, null),
-                new("Address", "ที่อยู่", "string", false, null, null),
-                new("ContactPerson", "ผู้ติดต่อ", "string", false, null, null),
-            },
-            "products" => new List<ImportField>
-            {
-                new("Code", "รหัสสินค้า", "string", true, null, null),
-                new("Name", "ชื่อสินค้า", "string", true, null, null),
-                new("ProductType", "ประเภท", "enum", false, null, new List<string> { "Product", "Service", "NonStock" }),
-                new("Unit", "หน่วยนับ", "string", true, null, null),
-                new("SellingPrice", "ราคาขาย", "decimal", false, null, null),
-                new("CostPrice", "ราคาทุน", "decimal", false, null, null),
-                new("VatRate", "อัตราภาษี", "decimal", false, null, null),
-                new("Category", "หมวดหมู่", "string", false, null, null),
-            },
-            "chartofaccounts" or "chart-of-accounts" => new List<ImportField>
-            {
-                new("AccountCode", "รหัสบัญชี", "string", true, null, null),
-                new("AccountName", "ชื่อบัญชี", "string", true, null, null),
-                new("AccountNameEn", "ชื่อบัญชี (อังกฤษ)", "string", false, null, null),
-                new("AccountType", "ประเภทบัญชี", "enum", true, null, new List<string> { "Asset", "Liability", "Equity", "Revenue", "Expense" }),
-                new("Description", "คำอธิบาย", "string", false, null, null),
-            },
-            // รอบ 205 ทีม B: เดิมไม่มีชนิดนี้ใน GetTemplateFields ⇒ GetImportableEntitiesAsync ส่ง Fields = null และ Smart Import/ศูนย์นำเข้าไม่มี schema
-            // ของสมุดรายวัน · ชุดเดียวกับแม่แบบดาวน์โหลด (GetImportTemplateAsync)
-            "journalentries" or "journal-entries" => new List<ImportField>
-            {
-                new("Date", "วันที่", "date", true, "yyyy-MM-dd หรือ วัน/เดือน/ปี (พ.ศ. ได้)", null),
-                new("Description", "คำอธิบาย", "string", true, "บรรทัดที่วันที่ + คำอธิบาย + อ้างอิงเดียวกัน = ใบสำคัญเดียวกัน", null),
-                new("AccountCode", "รหัสบัญชี", "string", true, "ต้องมีในผังบัญชีแล้ว", null),
-                new("DebitAmount", "เดบิต", "decimal", false, null, null),
-                new("CreditAmount", "เครดิต", "decimal", false, null, null),
-                new("Reference", "อ้างอิง", "string", false, null, null),
-                new("ContactName", "ผู้ติดต่อ", "string", false, "ชื่อตรงตัวเท่านั้น", null),
-            },
-            "banktransactions" => new List<ImportField>
-            {
-                new("BankAccountId", "รหัสบัญชีธนาคาร", "guid", true, null, null),
-                new("TransactionDate", "วันที่", "date", true, "yyyy-MM-dd", null),
-                new("TransactionType", "ประเภท", "enum", true, null, new List<string> { "Deposit", "Withdrawal", "Transfer", "Fee", "Interest" }),
-                new("Amount", "จำนวนเงิน", "decimal", true, null, null),
-                new("Description", "คำอธิบาย", "string", false, null, null),
-                new("Reference", "อ้างอิง", "string", false, null, null),
-            },
-            "stock-opening" => new List<ImportField>
-            {
-                new("ProductCode", "รหัสสินค้า", "string", true, "ต้องมีอยู่ในระบบแล้ว", null),
-                new("Quantity", "ยอดยกมา", "decimal", true, "สต็อกตั้งต้น (จำนวน)", null),
-                new("UnitCost", "ต้นทุน/หน่วย", "decimal", false, "ใช้เป็นต้นทุนของสต็อกยกมา (default = CostPrice ของ Product)", null),
-                new("OpeningDate", "วันยกมา", "date", false, "default = วันนี้", null),
-                new("Notes", "หมายเหตุ", "string", false, null, null),
-            },
-            "opening-ar" or "opening-ap" => new List<ImportField>
-            {
-                new("ContactName", "ชื่อลูกค้า/ผู้ขาย", "string", true, "จับคู่ผู้ติดต่อเดิม — ถ้าไม่พบจะสร้างใหม่ให้", null),
-                new("ContactTaxId", "เลขผู้เสียภาษี", "string", false, "ใช้จับคู่ผู้ติดต่อ (แม่นกว่าชื่อ)", null),
-                new("InvoiceNumber", "เลขที่เอกสารเดิม", "string", true, "เลขใบแจ้งหนี้จากระบบเก่า — ใช้กันการนำเข้าซ้ำ", null),
-                new("InvoiceDate", "วันที่เอกสาร", "date", true, "yyyy-MM-dd — ใช้คำนวณอายุหนี้", null),
-                new("DueDate", "วันครบกำหนด", "date", false, "yyyy-MM-dd", null),
-                new("Amount", "ยอดคงค้าง", "decimal", true, "ยอดที่ยังค้างชำระ ณ วันยกมา", null),
-                new("Description", "รายละเอียด", "string", false, null, null),
-            },
-            "stock-adjustments" => new List<ImportField>
-            {
-                new("ProductCode", "รหัสสินค้า", "string", true, null, null),
-                new("AdjustmentDate", "วันที่ปรับ", "date", true, "yyyy-MM-dd", null),
-                new("MovementType", "ประเภท", "enum", true, "IN=เพิ่ม, OUT=ลด, ADJUST=ปรับนับ", new List<string> { "IN", "OUT", "ADJUST" }),
-                new("Quantity", "จำนวน", "decimal", true, "บวกสำหรับ IN/ADJUST+, ลบสำหรับ OUT/ADJUST-", null),
-                new("UnitCost", "ต้นทุน/หน่วย", "decimal", false, "default = CostPrice ของ Product", null),
-                new("Reference", "เลขเอกสารอ้างอิง", "string", false, null, null),
-                new("Notes", "หมายเหตุ", "string", false, "เช่น เสียหาย, ปรับนับสิ้นเดือน", null),
-            },
-            "fixed-assets" => new List<ImportField>
-            {
-                new("AssetCode", "รหัสสินทรัพย์", "string", true, null, null),
-                new("Name", "ชื่อสินทรัพย์", "string", true, null, null),
-                new("Category", "หมวดหมู่", "string", false, "เช่น เครื่องใช้สำนักงาน, ยานพาหนะ", null),
-                new("PurchaseDate", "วันที่ซื้อ", "date", true, "yyyy-MM-dd", null),
-                new("PurchaseCost", "ราคาซื้อ", "decimal", true, null, null),
-                new("SalvageValue", "มูลค่าซาก", "decimal", false, "default = 0", null),
-                new("UsefulLifeMonths", "อายุการใช้งาน (เดือน)", "decimal", true, "เช่น 60 = 5 ปี", null),
-                new("DepreciationMethod", "วิธีคิดค่าเสื่อม", "enum", false, "default = StraightLine",
-                    new List<string> { "StraightLine", "DecliningBalance", "UnitsOfProduction" }),
-                new("AccumulatedDepreciation", "ค่าเสื่อมสะสมยกมา", "decimal", false, "ใช้ตอน migrate ระหว่างปี", null),
-                new("Location", "ตำแหน่ง", "string", false, null, null),
-                new("SerialNumber", "หมายเลขเครื่อง", "string", false, null, null),
-            },
-            "payments" => new List<ImportField>
-            {
-                new("DocumentNumber", "เลขเอกสาร", "string", true, "เลขเอกสารที่จะตัดชำระ (Invoice / Bill)", null),
-                new("PaymentDate", "วันที่ชำระ", "date", true, "yyyy-MM-dd", null),
-                new("Amount", "จำนวนเงิน", "decimal", true, null, null),
-                new("PaymentMethod", "วิธีชำระ", "enum", true, null,
-                    new List<string> { "Cash", "BankTransfer", "CreditCard", "Cheque", "PromptPay", "DirectDebit", "EWallet", "Other" }),
-                new("Reference", "อ้างอิง", "string", false, "เลขที่อ้างอิงการโอน/เช็ค", null),
-                new("BankAccount", "บัญชีธนาคาร", "string", false, "ชื่อ/เลขบัญชี — เก็บเป็น text", null),
-                new("Notes", "หมายเหตุ", "string", false, null, null),
-            },
-            "projects" => new List<ImportField>
-            {
-                new("Code", "รหัสโปรเจกต์", "string", true, null, null),
-                new("Name", "ชื่อโปรเจกต์", "string", true, null, null),
-                new("NameEn", "ชื่อ (อังกฤษ)", "string", false, null, null),
-                new("Description", "รายละเอียด", "string", false, null, null),
-                new("CustomerName", "ลูกค้า", "string", false, "ชื่อลูกค้า/นายจ้าง", null),
-                new("ProjectManagerName", "ผู้จัดการโปรเจกต์", "string", false, null, null),
-                new("StartDate", "วันเริ่มต้น", "date", true, "yyyy-MM-dd", null),
-                new("EndDate", "วันสิ้นสุด (แผน)", "date", false, null, null),
-                new("Status", "สถานะ", "enum", false, "default = Active",
-                    new List<string> { "Active", "OnHold", "Completed", "Cancelled" }),
-                new("BudgetAmount", "งบประมาณ", "decimal", false, null, null),
-                new("ContractAmount", "มูลค่าสัญญา", "decimal", false, null, null),
-                // ชุดค่ามาจากตัวตั้งเดียวกับฟอร์ม/API — ห้ามพิมพ์สำเนาที่สอง (F2 ข้อ 4)
-                new("BillingMethod", "วิธีเรียกเก็บ", "enum", false,
-                    "default = " + Accounting.Helpers.ProjectContractMethods.DefaultBilling,
-                    Accounting.Helpers.ProjectContractMethods.Billing.Select(x => x.Value).ToList()),
-            },
-            "employees" => new List<ImportField>
-            {
-                new("EmployeeCode", "รหัสพนักงาน", "string", true, null, null),
-                new("TitleTh", "คำนำหน้า", "string", false, "นาย / นาง / นางสาว", null),
-                new("FirstNameTh", "ชื่อ", "string", true, null, null),
-                new("LastNameTh", "นามสกุล", "string", true, null, null),
-                new("FirstNameEn", "ชื่อ (อังกฤษ)", "string", false, null, null),
-                new("LastNameEn", "นามสกุล (อังกฤษ)", "string", false, null, null),
-                new("CitizenId", "เลขบัตร ปชช.", "string", false, "13 หลัก", null),
-                new("DateOfBirth", "วันเกิด", "date", false, "yyyy-MM-dd", null),
-                new("Phone", "โทรศัพท์", "string", false, null, null),
-                new("Email", "อีเมล", "string", false, null, null),
-                new("Department", "แผนก", "string", false, null, null),
-                new("Position", "ตำแหน่ง", "string", false, null, null),
-                new("StartDate", "วันเริ่มงาน", "date", true, "yyyy-MM-dd", null),
-                new("BaseSalary", "เงินเดือนพื้นฐาน", "decimal", true, null, null),
-                new("SalaryType", "ประเภทเงินเดือน", "enum", false, "default = Monthly",
-                    new List<string> { "Monthly", "Daily", "Hourly" }),
-                new("BankName", "ธนาคาร", "string", false, null, null),
-                new("BankAccountNumber", "เลขที่บัญชีธนาคาร", "string", false, null, null),
-                new("SocialSecurityNumber", "เลขประกันสังคม", "string", false, null, null),
-            },
-            "budgets" => new List<ImportField>
-            {
-                new("BudgetName", "ชื่องบประมาณ", "string", true, "เช่น 'งบ 2026' — ใช้ group บรรทัดเข้าด้วยกัน", null),
-                new("FiscalYear", "ปีงบประมาณ", "decimal", true, "เช่น 2026", null),
-                new("AccountCode", "รหัสบัญชี", "string", true, "ต้องมีในผังบัญชีแล้ว", null),
-                new("Month1", "ม.ค.", "decimal", false, null, null),
-                new("Month2", "ก.พ.", "decimal", false, null, null),
-                new("Month3", "มี.ค.", "decimal", false, null, null),
-                new("Month4", "เม.ย.", "decimal", false, null, null),
-                new("Month5", "พ.ค.", "decimal", false, null, null),
-                new("Month6", "มิ.ย.", "decimal", false, null, null),
-                new("Month7", "ก.ค.", "decimal", false, null, null),
-                new("Month8", "ส.ค.", "decimal", false, null, null),
-                new("Month9", "ก.ย.", "decimal", false, null, null),
-                new("Month10", "ต.ค.", "decimal", false, null, null),
-                new("Month11", "พ.ย.", "decimal", false, null, null),
-                new("Month12", "ธ.ค.", "decimal", false, null, null),
-            },
-            "documents" => new List<ImportField>
-            {
-                new("DocumentNumber", "เลขเอกสาร", "string", true, "ใช้ group line ต่อเอกสารเดียวกัน", null),
-                new("DocumentType", "ประเภทเอกสาร", "enum", true, null,
-                    new List<string> { "Quotation", "Invoice", "TaxInvoice", "Receipt", "PurchaseInvoice", "PaymentVoucher", "ReceiptVoucher", "Expense" }),
-                new("DocumentDate", "วันที่เอกสาร", "date", true, "yyyy-MM-dd", null),
-                new("DueDate", "วันครบกำหนด", "date", false, null, null),
-                new("ContactName", "ชื่อผู้ติดต่อ", "string", true, "ต้องมีในระบบแล้ว — match ด้วย Contains", null),
-                new("ContactTaxId", "เลขผู้เสียภาษีผู้ติดต่อ", "string", false, "ถ้ามี ใช้จับคู่แม่นกว่าชื่อ", null),
-                new("Reference", "อ้างอิง", "string", false, null, null),
-                new("Notes", "หมายเหตุ", "string", false, null, null),
-                new("LineDescription", "รายละเอียด (line)", "string", true, null, null),
-                new("LineQuantity", "จำนวน", "decimal", true, null, null),
-                new("LineUnitPrice", "ราคา/หน่วย", "decimal", true, null, null),
-                new("LineDiscountPercent", "ส่วนลด %", "decimal", false, "default = 0", null),
-                new("LineVatRate", "VAT %", "decimal", false, "default = 7", null),
-                new("LineWhtRate", "หัก ณ ที่จ่าย %", "decimal", false, "default = 0", null),
-                new("LineProductCode", "รหัสสินค้า", "string", false, null, null),
-                new("LineAccountCode", "รหัสบัญชี", "string", false, null, null),
-            },
-            _ => null
-        };
-    }
+        => ImportSchemas.For(entityType)?.Select(f => new ImportField(f.Field, f.Label, LegacyDataType(f.Type), f.Required, f.Description,
+            f.AllowedValues?.ToList())).ToList();
 
-    private static string GetSampleValue(ImportField field)
+    /// <summary>ชนิดละเอียด (<see cref="ImportFieldType"/>) → ชนิดเดิมของ <c>ImportField.DataType</c> ("date"/"bool"/"enum"/"decimal"/"string")</summary>
+    internal static string LegacyDataType(ImportFieldType type) => type switch
     {
-        return field.FieldName switch
-        {
-            "Name" => "บริษัท ตัวอย่าง จำกัด",
-            "TaxId" => "0123456789012",
-            "IsCustomer" => "true",
-            "IsSupplier" => "false",
-            "Email" => "info@example.com",
-            "Phone" => "02-123-4567",
-            "Address" => "123 ถ.สุขุมวิท กรุงเทพฯ 10110",
-            "ContactPerson" => "คุณสมชาย",
-            "Code" => "P001",
-            "ProductType" => "Product",
-            "Unit" => "ชิ้น",
-            "SellingPrice" => "100.00",
-            "CostPrice" => "60.00",
-            "VatRate" => "7",
-            "Category" => "สินค้าทั่วไป",
-            "AccountCode" => "1110",
-            "AccountName" => "เงินสด",
-            "AccountNameEn" => "Cash",
-            "AccountType" => "Asset",
-            "Description" => "รายละเอียด",
-            "BankAccountId" => "00000000-0000-0000-0000-000000000000",
-            "TransactionDate" => "2026-01-15",
-            "TransactionType" => "Deposit",
-            "Amount" => "50000.00",
-            "Reference" => "REF001",
-            "ProductCode" => "P001",
-            "Quantity" => "100",
-            "UnitCost" => "60.00",
-            "OpeningDate" => "2026-01-01",
-            "AdjustmentDate" => "2026-01-15",
-            "MovementType" => "ADJUST",
-            "Notes" => "ปรับนับสิ้นเดือน",
-            "AssetCode" => "FA-001",
-            "PurchaseDate" => "2024-03-15",
-            "PurchaseCost" => "85000.00",
-            "SalvageValue" => "0",
-            "UsefulLifeMonths" => "60",
-            "DepreciationMethod" => "StraightLine",
-            "AccumulatedDepreciation" => "0",
-            "Location" => "สำนักงานใหญ่",
-            "SerialNumber" => "SN-12345",
-            "DocumentNumber" => "INV-202601-0001",
-            "PaymentDate" => "2026-01-20",
-            "PaymentMethod" => "BankTransfer",
-            "BankAccount" => "SCB 123-4-56789-0",
-            "CustomerName" => "บริษัท ลูกค้า จำกัด",
-            "ProjectManagerName" => "คุณสมหญิง",
-            "StartDate" => "2026-01-01",
-            "EndDate" => "2026-12-31",
-            "Status" => "Active",
-            "BudgetAmount" => "500000.00",
-            "ContractAmount" => "550000.00",
-            "BillingMethod" => "FixedPrice",
-            "EmployeeCode" => "EMP-001",
-            "TitleTh" => "นาย",
-            "FirstNameTh" => "สมชาย",
-            "LastNameTh" => "ใจดี",
-            "CitizenId" => "1234567890123",
-            "DateOfBirth" => "1990-05-15",
-            "Department" => "ฝ่ายขาย",
-            "Position" => "พนักงานขาย",
-            "BaseSalary" => "25000.00",
-            "SalaryType" => "Monthly",
-            "BankName" => "ธนาคารกสิกรไทย",
-            "BankAccountNumber" => "123-4-56789-0",
-            // รอบ 201 PR2 (ฝ่ายค้าน P2-f): ตัวอย่างต้องผ่านตัวตัดสินเลขประกันสังคม (13 หลัก) — เดิม 10 หลัก ⇒ ผู้ใช้ลอกตัวอย่างแล้วนำเข้าล้ม
-            "SocialSecurityNumber" => "1101700203450",
-            "BudgetName" => "งบ 2026",
-            "FiscalYear" => "2026",
-            "Month1" => "10000", "Month2" => "10000", "Month3" => "10000",
-            "Month4" => "12000", "Month5" => "12000", "Month6" => "12000",
-            "Month7" => "12000", "Month8" => "12000", "Month9" => "12000",
-            "Month10" => "15000", "Month11" => "15000", "Month12" => "15000",
-            "DocumentType" => "Invoice",
-            "DocumentDate" => "2026-01-15",
-            "DueDate" => "2026-02-14",
-            "ContactName" => "บริษัท ลูกค้า จำกัด",
-            "ContactTaxId" => "0123456789012",
-            "LineDescription" => "บริการที่ปรึกษา",
-            "LineQuantity" => "1",
-            "LineUnitPrice" => "10000.00",
-            "LineVatRate" => "7",
-            "LineWhtRate" => "3",
-            "LineProductCode" => "P001",
-            "LineAccountCode" => "4100",
-            _ => ""
-        };
-    }
+        ImportFieldType.Date => "date",
+        ImportFieldType.Flag => "bool",
+        ImportFieldType.Enum => "enum",
+        ImportFieldType.Amount or ImportFieldType.Decimal or ImportFieldType.Integer or ImportFieldType.VatRate => "decimal",
+        _ => "string",
+    };
+
+    /// <summary>ค่าตัวอย่างในไฟล์แม่แบบ — จาก <see cref="ImportFieldDto.Example"/> ของแคตตาล็อกเดียวกัน (เดิมตาราง switch ซ้ำ)</summary>
+    private static string GetSampleValue(string entityType, ImportField field)
+        => ImportSchemas.For(entityType)?.FirstOrDefault(f => string.Equals(f.Field, field.FieldName, StringComparison.OrdinalIgnoreCase))?.Example ?? "";
 
     private static SmartImportSessionResponse MapToSessionResponse(
         SmartImportSession session, IList<SmartImportColumnMapping> mappings, List<List<string>> previewData)
@@ -3169,11 +2629,4 @@ public class ImportExportService : IImportExportService
             unmappedCount > 0,
             previewData);
     }
-
-    private record ColumnAnalysisResult(
-        string? TargetField,
-        ColumnMatchType MatchType,
-        ColumnMatchConfidence Confidence,
-        double ConfidenceScore,
-        List<SuggestedMappingDto> Suggestions);
 }

@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text.Json;
 using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs.Import;
@@ -20,7 +18,7 @@ namespace Accounting.Services.Import;
 /// (<see cref="CharNgramSimilarity.TopK"/> ≥ <see cref="SuggestThreshold"/>) → AI <c>ImportEntityMatch</c> (59) <b>เฉพาะ</b>ไม่มีเลขภาษี + สองอันดับแรกห่างกัน
 /// &lt; <see cref="AmbiguityGap"/> · <b>ชื่ออย่างเดียวห้ามเลือกให้เอง</b> (หลักการ 3 · คำตัดสินข้อ 151 (5)) — ระบบแนะนำ ผู้ใช้กดยืนยัน ·
 /// สินค้า: รหัส/บาร์โค้ด (กุญแจ) → <see cref="ProductMatcher"/> (แนะนำ)</para>
-/// <para>กฎเหล็ก #1: AI ผ่าน <see cref="IAiOrchestrator.AskAsync"/> เท่านั้น (นักเรียน GenericFeedbackDistillationModel ตอบก่อน) · คำตอบต้องอยู่ในชุดผู้สมัคร ∪ {"NEW"} ·
+/// <para>กฎเหล็ก #1: AI ผ่าน <see cref="IImportAiAugmenter.ResolveEntityAsync"/> เท่านั้น (orchestrator · นักเรียนก่อน · ทีม A) · คำตอบต้องอยู่ในชุดผู้สมัคร ∪ {"NEW"} ·
 /// เก็บ <see cref="ImportEntityMatchResult.AiFeedbackId"/> ให้ pipeline ปิดลูปตอนผู้ใช้ยืนยัน · ปิด AI / <see cref="ImportResolveOptions.AllowAi"/> = false ⇒
 /// ทุกชั้นใต้ AI ยังให้ผลเท่าเดิม (kill-switch)</para>
 /// </summary>
@@ -39,11 +37,11 @@ public partial class ImportEntityResolver : IImportEntityResolver
 
     private readonly AccountingDbContext _db;
     private readonly IDuplicateDetector _duplicates;
-    private readonly IAiOrchestrator? _ai;
+    private readonly IImportAiAugmenter? _ai;
     private readonly ProductMatcher? _products;
     private readonly ILogger<ImportEntityResolver>? _logger;
 
-    public ImportEntityResolver(AccountingDbContext db, IDuplicateDetector duplicates, IAiOrchestrator? ai = null,
+    public ImportEntityResolver(AccountingDbContext db, IDuplicateDetector duplicates, IImportAiAugmenter? ai = null,
         ProductMatcher? products = null, ILogger<ImportEntityResolver>? logger = null)
     {
         _db = db;
@@ -168,76 +166,33 @@ public partial class ImportEntityResolver : IImportEntityResolver
 
     private static string Label(PoolContact c) => string.IsNullOrWhiteSpace(c.TaxId) ? c.Name : $"{c.Name} ({c.TaxId})";
 
-    private const string TeacherSystemPrompt = @"You are a Thai bookkeeper de-duplicating a contact list during data migration.
-You receive ONE incoming contact row (name, optional address/email/phone) and a short list of EXISTING contacts that look similar.
-Decide whether the incoming row is the SAME legal entity as one of the candidates, or a NEW contact.
-
-Rules:
-1. ""primary"" must be exactly one candidate ""id"" from the list, or ""NEW"". Never invent an id.
-2. Different legal forms are different entities (บริษัท…จำกัด ≠ ห้างหุ้นส่วนจำกัด ≠ บุคคลธรรมดา). Branch names of the same company are the same entity only if the name says so.
-3. If unsure, answer ""NEW"" with low confidence (< 0.5). ""confidence"" is a number between 0 and 1.
-
-Respond ONLY as JSON:
-{
-  ""primary"": ""<candidate id or NEW>"",
-  ""confidence"": <0.0-1.0>,
-  ""alternatives"": [],
-  ""risks"": [],
-  ""compliance_flags"": [],
-  ""reasoning"": ""<1 short Thai sentence>""
-}";
-
     /// <summary>
-    /// ถามครู (ผ่าน orchestrator — นักเรียนตอบก่อน) เฉพาะเคสกำกวมที่ไม่มีเลขภาษี · ด่าน: คำตอบ ∈ ผู้สมัคร ∪ {"NEW"} · ยัง<b>ไม่เลือกให้เอง</b>
-    /// (AutoApply = false — ชื่ออย่างเดียว) · provider ปิด/ล่ม/ตอบนอกชุด ⇒ null (ผู้เรียกใช้ผลชั้น local ต่อเงียบ ๆ)
+    /// ถามชั้น AI <c>ImportEntityMatch</c> (59) ผ่าน <see cref="IImportAiAugmenter.ResolveEntityAsync"/> (ทีม A — orchestrator · นักเรียนก่อน ·
+    /// ด่านคำตอบ ∈ ผู้สมัคร ∪ {"NEW"}) เฉพาะเคสกำกวมที่ไม่มีเลขภาษี · ยัง<b>ไม่เลือกให้เอง</b> (AutoApply = false — ชื่ออย่างเดียว) ·
+    /// ไม่มีแถว feedback (provider ปิด/ล่ม — augmenter คืนคำตอบ local) หรือคำตอบมั่นใจ &lt; 0.70 ⇒ null (ผู้เรียกใช้ผลชั้น local ต่อเงียบ ๆ)
     /// </summary>
     private async Task<ImportEntityMatchResult?> AskTeacherAsync(Guid companyId, ImportTargetRow row, string name,
         IReadOnlyList<ImportMatchCandidateDto> candidates, CancellationToken ct)
     {
-        var payload = JsonSerializer.Serialize(new
-        {
-            task = "import_entity_match",
-            incoming = new { name, address = Value(row, "Address"), email = Value(row, "Email"), phone = Value(row, "Phone") },
-            candidates = candidates.Select(c => new { id = c.EntityId.ToString(), label = c.Label, score = c.Score }),
-        });
-        AiResponse resp;
-        try
-        {
-            resp = await _ai!.AskAsync(new AiRequest
-            {
-                FeatureKey = AiFeatureKey.ImportEntityMatch,
-                CompanyId = companyId,
-                SystemPrompt = TeacherSystemPrompt,
-                UserPromptJson = payload,
-                LocalPrimaryAnswer = candidates[0].EntityId.ToString(),
-                LocalConfidence = candidates[0].Score,
-                LocalModelVersion = "ImportEntityResolver-v1",
-                LocalAlternatives = candidates.Skip(1).Select(c => c.EntityId.ToString()).Append(NewEntityAnswer).ToList(),
-                SourceEntityType = "ImportStagedRow",
-                SourceEntityId = row.RowId,
-                CacheTtlOverrideDays = 7,
-            }, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // graceful degradation (กฎเหล็ก #1 ข้อ 4): ผลชั้น local ยังใช้ได้ครบ — log ครั้งเดียวต่อแถว ไม่ขึ้นหาผู้ใช้
-            _logger?.LogWarning(ex, "ImportEntityMatch: ถามครูไม่สำเร็จ — ใช้ผลจับคู่ของระบบต่อ (แถว {RowNo})", row.RowNo);
-            return null;
-        }
+        var detail = string.Join(" · ", new[] { Value(row, "Address"), Value(row, "Email"), Value(row, "Phone") }
+            .Where(v => !string.IsNullOrWhiteSpace(v)));
+        var pick = await _ai!.ResolveEntityAsync(companyId, null, "contacts", name, detail.Length == 0 ? null : detail,
+            candidates.Select(c => new Accounting.Services.Ai.Prompts.ImportPrompts.EntityCandidate(c.EntityId.ToString(), c.Label, null, c.Score)).ToList(),
+            candidates[0].EntityId.ToString(), candidates[0].Score, ct);
+        if (pick.FeedbackId == null || string.IsNullOrWhiteSpace(pick.Answer)) return null;
 
-        var answer = resp.PrimaryAnswer?.Trim();
-        var used = resp.UsedAi;
-        if (string.Equals(answer, NewEntityAnswer, StringComparison.OrdinalIgnoreCase))
-            return new ImportEntityMatchResult(row.RowId, null, "Ai", (resp.Confidence ?? 0m), AutoApply: false, UsedAi: used, resp.FeedbackId,
+        var used = pick.UsedAi;
+        if (string.Equals(pick.Answer, NewEntityAnswer, StringComparison.OrdinalIgnoreCase))
+            return new ImportEntityMatchResult(row.RowId, null, "Ai", pick.Confidence, AutoApply: false, UsedAi: used, pick.FeedbackId,
                 candidates, new[] { new ImportIssueDto("Name", "match-ai-new", ImportIssueSeverity.Info,
                     (used ? "🤖 AI แนะนำ" : "⚙️ ระบบแนะนำ") + ": ชื่อคล้ายผู้ติดต่อเดิมหลายราย แต่น่าจะเป็นรายใหม่ — ตรวจแล้วเลือกรายเดิมได้ถ้าเป็นรายเดียวกัน",
                     Source: used ? ImportIssueSource.Ai : ImportIssueSource.Match) });
-        // ด่านกันมั่ว: ต้องเป็น id ในชุดผู้สมัครเท่านั้น
-        var pick = Guid.TryParse(answer, out var id) ? candidates.FirstOrDefault(c => c.EntityId == id) : null;
-        if (pick == null || (resp.Confidence ?? 0m) < 0.70m) return null;
-        return new ImportEntityMatchResult(row.RowId, pick.EntityId, "Ai", resp.Confidence ?? pick.Score, AutoApply: false, UsedAi: used,
-            resp.FeedbackId, candidates, new[] { new ImportIssueDto("Name", "match-name-only", ImportIssueSeverity.Warning,
-                (used ? "🤖 AI แนะนำ" : "⚙️ ระบบแนะนำ") + $": น่าจะเป็นผู้ติดต่อเดิม \"{pick.Label}\" (ไม่มีเลขผู้เสียภาษียืนยัน) — เลือก \"อัปเดตรายเดิม\" ถ้าใช่",
+        // ด่านซ้ำฝั่งผู้เรียก: ต้องเป็น id ในชุดผู้สมัครเท่านั้น + มั่นใจพอ
+        var chosen = Guid.TryParse(pick.Answer, out var id) ? candidates.FirstOrDefault(c => c.EntityId == id) : null;
+        if (chosen == null || pick.Confidence < 0.70m) return null;
+        return new ImportEntityMatchResult(row.RowId, chosen.EntityId, "Ai", pick.Confidence, AutoApply: false, UsedAi: used,
+            pick.FeedbackId, candidates, new[] { new ImportIssueDto("Name", "match-name-only", ImportIssueSeverity.Warning,
+                (used ? "🤖 AI แนะนำ" : "⚙️ ระบบแนะนำ") + $": น่าจะเป็นผู้ติดต่อเดิม \"{chosen.Label}\" (ไม่มีเลขผู้เสียภาษียืนยัน) — เลือก \"อัปเดตรายเดิม\" ถ้าใช่",
                 Source: used ? ImportIssueSource.Ai : ImportIssueSource.Match) });
     }
 

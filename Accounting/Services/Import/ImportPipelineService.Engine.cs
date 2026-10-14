@@ -1,11 +1,10 @@
 using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Accounting.Helpers;
 using Accounting.Models.DTOs.Import;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Ai;
 using Accounting.Services.Implementations;
 using Microsoft.EntityFrameworkCore;
 
@@ -41,8 +40,6 @@ internal sealed class ImportBatchState
     public ImportCommitOptions? PendingCommit { get; set; }
     public ImportActor? PendingActor { get; set; }
     public List<string> Notes { get; set; } = new();
-    /// <summary>หัวคอลัมน์ (normalize) → field ที่ AI ตอบ — ตัดสิน acceptedAi ตอนปิดลูป ImportColumnMatch</summary>
-    public Dictionary<string, string> ColumnMatchAiAnswer { get; set; } = new();
 }
 
 /// <summary>สรุปทั้งชุด (ReviewSummaryJson) — คงไว้แม้แถวพักถูกล้างหลัง 90 วัน</summary>
@@ -59,7 +56,7 @@ public partial class ImportPipelineService
 {
     private sealed record SourceRow(int RowNo, IReadOnlyList<string> Raw, bool Summary);
 
-    private sealed record ColumnMapping(List<ImportColumnPlanDto> Columns, bool UsedAi, Guid? FeedbackId, Guid? TemplateId);
+    private sealed record ColumnMapping(List<ImportColumnPlanDto> Columns, bool UsedAi, Guid? FeedbackId, Guid? TemplateId, string? SourceSystem);
 
     // ══════════════════════════════ โหลด / สถานะ ══════════════════════════════
 
@@ -157,24 +154,38 @@ public partial class ImportPipelineService
         return list;
     }
 
+    /// <summary>คำพ้องของทุก field ของ target — ตัวตั้งเดียว <see cref="ImportFieldSynonymSeed"/> (ทีม A · ใช้หาแถวหัวตาราง)</summary>
     private static Dictionary<string, IReadOnlyList<string>> Synonyms(IImportTarget t)
-        => t.Schema.ToDictionary(f => f.Field, f => (IReadOnlyList<string>)ImportExportService.GetFieldAliases(f.Field), StringComparer.OrdinalIgnoreCase);
+        => t.Schema.ToDictionary(f => f.Field, f => ImportFieldSynonymSeed.For(t.EntityType, f.Field), StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>ไม่ได้เลือกชนิดข้อมูล ⇒ เดาจากหัวตาราง (ชนิดที่ชื่อคอลัมน์ตรงมากที่สุด · ต้องชนะชัดเจน) — เดาไม่ได้ = ให้ผู้ใช้เลือก (ไม่เดาส่ง)</summary>
+    /// <summary>คะแนนเดาชนิดข้อมูลขั้นต่ำ + ระยะห่างจากอันดับสอง — ต่ำกว่านี้ให้ผู้ใช้เลือก (ไม่เดาส่ง)</summary>
+    private const decimal GuessMinScore = 0.6m;
+    private const decimal GuessMinGap = 0.05m;
+
+    /// <summary>ไม่ได้เลือกชนิดข้อมูล ⇒ เดาจากหัวตารางด้วย <see cref="ImportColumnMapper.GuessEntityType"/> (ทีม A · ตัวเดียวกับ chip บนหน้า) เฉพาะชนิดที่
+    /// ศูนย์นำเข้ามีปลายทาง · ต้องชนะชัดเจน — เดาไม่ได้ = ให้ผู้ใช้เลือก (ไม่เดาส่ง)</summary>
     private IImportTarget GuessTarget(IReadOnlyList<IReadOnlyList<string>> rows)
     {
-        var scored = _targets.All
-            .Select(t =>
-            {
-                var det = ImportHeaderDetector.Detect(rows, t.Schema, Synonyms(t));
-                return (Target: t, Score: LocalPlan(t, det.Headers, Array.Empty<SourceRow>(), null)
-                    .Count(c => c.TargetField != null && c.Confidence >= 0.75m));
-            })
-            .OrderByDescending(x => x.Score).ToList();
-        if (scored.Count == 0 || scored[0].Score < 2 || (scored.Count > 1 && scored[1].Score == scored[0].Score))
+        // แถวหัวตาราง: ผลที่มั่นใจสุดข้ามทุกชนิด (เสมอ = แถวบนสุด — ไม่ขึ้นกับลำดับลงทะเบียน target)
+        var det = _targets.All.Select(t => ImportHeaderDetector.Detect(rows, t.Schema, Synonyms(t)))
+            .OrderByDescending(d => d.Confidence).ThenBy(d => d.HeaderRowIndex).FirstOrDefault();
+        var guesses = new List<(ImportEntityGuess Guess, IImportTarget Target)>();
+        if (det != null)
+            foreach (var g in ImportColumnMapper.GuessEntityType(ColumnInputs(det.Headers,
+                         DataRows(rows, new ImportBatchState { DataStartIndex = det.HeaderRowIndex + det.HeaderRowSpan }))))
+                if (_targets.Find(g.EntityType) is { } t)
+                    guesses.Add((g, t));
+        if (guesses.Count == 0 || guesses[0].Guess.Score < GuessMinScore
+            || (guesses.Count > 1 && guesses[0].Guess.Score - guesses[1].Guess.Score < GuessMinGap))
             throw new BusinessRuleException("ระบบเดาชนิดข้อมูลของไฟล์นี้ไม่ได้ — เลือกชนิดข้อมูล (เช่น ผู้ติดต่อ/สินค้า/ผังบัญชี) แล้วอัปโหลดอีกครั้ง");
-        return scored[0].Target;
+        return guesses[0].Target;
     }
+
+    /// <summary>คอลัมน์ของไฟล์ในรูปที่ตัวจับคู่ของทีม A รับ — ตัวอย่างค่า 5 ค่าแรกที่ไม่ว่าง (ไม่นับแถวยอดรวม)</summary>
+    private static List<ImportColumnInput> ColumnInputs(IReadOnlyList<string> headers, IReadOnlyList<SourceRow> data)
+        => headers.Select((h, j) => new ImportColumnInput(j, h, data.Where(d => !d.Summary)
+                .Select(d => j < d.Raw.Count ? d.Raw[j] : "").Where(v => !string.IsNullOrWhiteSpace(v)).Take(5).ToList()))
+            .ToList();
 
     // ══════════════════════════════ Transform + Stage ══════════════════════════════
 
@@ -204,7 +215,7 @@ public partial class ImportPipelineService
         state.SummaryRows = data.Count(d => d.Summary);
         session.HeaderRowIndex = det.HeaderRowIndex;
         session.HeaderRowSpan = det.HeaderRowSpan;
-        session.HeaderSignature = HeaderSignature(state.Headers);
+        session.HeaderSignature = ImportHeaderSignature.Compute(state.Headers);
 
         if (!keepColumns && (structural || !state.ColumnsChosenByUser || state.Columns.Count == 0))
         {
@@ -214,6 +225,8 @@ public partial class ImportPipelineService
             session.ColumnMatchUsedAi = mapped.UsedAi;
             session.ColumnMatchAiFeedbackId = mapped.FeedbackId;
             session.MappingTemplateId = mapped.TemplateId;
+            // โปรแกรมต้นทาง: ผู้ใช้เลือก ชนะ · ไม่เลือก = โปรไฟล์ที่ตัวจับคู่ตรวจพบ (ImportSourceSeed — ป้าย "รูปแบบ X" บนหน้า)
+            session.SourceSystem ??= Trunc(mapped.SourceSystem, 64);
         }
 
         if (structural)
@@ -455,154 +468,42 @@ public partial class ImportPipelineService
     // ══════════════════════════════ จับคู่คอลัมน์ ══════════════════════════════
 
     /// <summary>
-    /// <b>ช่องต่อของทีม A</b> — แทนที่ตัวในด้วย <c>ImportColumnMapper.Resolve(...)</c> เมื่อรวมทีม A (แม่แบบ → ตรงชื่อ → คำพ้อง → เรียนรู้ → รูปข้อมูล → AI
-    /// ImportColumnMatch → ผู้ใช้) · ตอนนี้ใช้ชั้น local ของตัวเอง (<see cref="LocalPlan"/>) — แทนที่ด้วย ImportColumnMapper เมื่อรวมทีม A
+    /// จับคู่คอลัมน์ทั้งไฟล์ — ทางเข้าเดียว <see cref="IImportColumnMatchService.MapAsync"/> (ทีม A: แม่แบบ → ชื่อตรง → คำพ้อง/โปรไฟล์โปรแกรมต้นทาง →
+    /// คู่ที่บริษัทยืนยันแล้ว → รูปข้อมูล → AI <c>ImportColumnMatch</c> ผ่าน orchestrator เฉพาะคอลัมน์ที่ยังไม่มั่นใจ) · schema = ของ target จริง
+    /// (<see cref="ImportColumnMatchOptions.Targets"/> — ปลายทางบางตัวมี field ต่างจากแคตตาล็อกกลาง) · ไม่มีบริการ (เทสต์/ไม่ได้ลงทะเบียน) ⇒
+    /// ชั้น local ล้วนของตัวจับคู่ตัวเดียวกัน (<see cref="ImportColumnMapper.Resolve"/>) — ผลเหมือน AI ปิด (kill-switch)
     /// </summary>
     private async Task<ColumnMapping> MapColumnsAsync(SmartImportSession session, IImportTarget target, ImportBatchState state,
         IReadOnlyList<SourceRow> data, bool allowAi, CancellationToken ct)
     {
-        ImportMappingTemplate? tpl = null;
-        if (state.TemplateId is Guid tid)
-            tpl = await _db.ImportMappingTemplates.AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Id == tid && t.CompanyId == session.CompanyId && !t.IsDeleted, ct);
-        if (tpl == null && session.HeaderSignature != null)
+        var inputs = ColumnInputs(state.Headers, data);
+        if (_columnMatch == null)
         {
-            try
-            {
-                tpl = await _templates.FindAsync(session.CompanyId, target.EntityType, session.HeaderSignature, ct);
-            }
-            catch (NotImplementedException)
-            {
-                // ทีม A ยังไม่ต่อสายคลังแม่แบบ (โครง T0) — ไม่มีแม่แบบ = ใช้ชั้นถัดไป · ลบ catch นี้เมื่อรวมทีม A
-                tpl = null;
-            }
+            var local = ImportColumnMapper.Resolve(new ImportColumnMapRequest(target.EntityType, target.Schema, inputs,
+                SourceSystem: session.SourceSystem));
+            return new ColumnMapping(local.Columns.ToList(), UsedAi: false, FeedbackId: null, TemplateId: null,
+                local.SourceProfile?.Profile.SourceSystem);
         }
-        var tplCols = tpl == null ? null : ImportJson.Deserialize<List<ImportTemplateColumnDto>>(tpl.ColumnMapJson);
-        return new ColumnMapping(LocalPlan(target, state.Headers, data, tplCols), UsedAi: false, FeedbackId: null, TemplateId: tpl?.Id);
+        var outcome = await _columnMatch.MapAsync(session.CompanyId, target.EntityType, inputs,
+            new ImportColumnMatchOptions(session.Id, state.TemplateId, session.SourceSystem, allowAi, Targets: target.Schema), ct);
+        return new ColumnMapping(outcome.Plan.Columns.ToList(), outcome.UsedAi, outcome.AiFeedbackId, outcome.TemplateId,
+            outcome.Plan.SourceProfile?.Profile.SourceSystem);
     }
 
-    /// <summary>แผนจับคู่ชั้น local — แม่แบบ (1.0) → ชื่อตรง field/ป้าย (0.99/0.97) → คำพ้อง (0.9 · คล้าย 0.75) → ชื่อคล้ายป้าย (0.7) → รูปข้อมูล (0.6) ·
-    /// จับคู่แบบโลภไม่ซ้ำ (คะแนนสูงก่อน — คอลัมน์หนึ่งได้ field เดียว field หนึ่งได้คอลัมน์เดียว)</summary>
-    private static List<ImportColumnPlanDto> LocalPlan(IImportTarget target, IReadOnlyList<string> headers, IReadOnlyList<SourceRow> data,
-        IReadOnlyList<ImportTemplateColumnDto>? template)
-    {
-        var fields = target.Schema;
-        var fieldMap = FieldMap(target);
-        var tplByHeader = (template ?? Array.Empty<ImportTemplateColumnDto>())
-            .GroupBy(c => ImportHeaderDetector.NormalizeHeader(c.Header)).ToDictionary(g => g.Key, g => g.First());
-        var aliases = fields.ToDictionary(f => f.Field,
-            f => ImportExportService.GetFieldAliases(f.Field).Select(ImportHeaderDetector.NormalizeHeader).Where(a => a.Length > 0).ToHashSet(),
-            StringComparer.OrdinalIgnoreCase);
-        var cands = new List<(int Col, ImportFieldDto Field, decimal Score, ImportMapSource Source, string Reason, ImportColumnTransformDto? Transform)>();
-        var samples = new List<List<string>>();
-        for (var j = 0; j < headers.Count; j++)
-        {
-            var colSamples = data.Where(d => !d.Summary).Select(d => j < d.Raw.Count ? d.Raw[j] : "")
-                .Where(v => !string.IsNullOrWhiteSpace(v)).Take(5).ToList();
-            samples.Add(colSamples);
-            var h = ImportHeaderDetector.NormalizeHeader(headers[j]);
-            if (h.Length == 0) continue;
-            if (tplByHeader.TryGetValue(h, out var tc) && tc.TargetField != null && fieldMap.TryGetValue(tc.TargetField, out var tf))
-                cands.Add((j, tf, 1m, ImportMapSource.Template, "ตามแม่แบบที่จำไว้ของบริษัท", tc.Transform));
-            foreach (var f in fields)
-            {
-                var nf = ImportHeaderDetector.NormalizeHeader(f.Field);
-                var nl = ImportHeaderDetector.NormalizeHeader(f.Label);
-                var al = aliases[f.Field];
-                if (h == nf) cands.Add((j, f, 0.99m, ImportMapSource.Exact, "ชื่อคอลัมน์ตรงกับช่อง", null));
-                else if (h == nl) cands.Add((j, f, 0.97m, ImportMapSource.Exact, "ชื่อคอลัมน์ตรงกับชื่อไทยของช่อง", null));
-                else if (al.Contains(h)) cands.Add((j, f, 0.9m, ImportMapSource.Synonym, $"คำที่มักใช้เรียก \"{f.Label}\"", null));
-                else if (h.Length >= 3 && al.Any(a => a.Length >= 3 && (h.Contains(a, StringComparison.Ordinal) || a.Contains(h, StringComparison.Ordinal))))
-                    cands.Add((j, f, 0.75m, ImportMapSource.Synonym, $"ชื่อคล้ายคำที่มักใช้เรียก \"{f.Label}\"", null));
-                else if (h.Length >= 3 && nl.Length >= 3 && (h.Contains(nl, StringComparison.Ordinal) || nl.Contains(h, StringComparison.Ordinal)))
-                    cands.Add((j, f, 0.7m, ImportMapSource.Synonym, $"ชื่อคล้าย \"{f.Label}\"", null));
-                if (colSamples.Count > 0 && PatternMatches(f, colSamples, fields))
-                    cands.Add((j, f, 0.6m, ImportMapSource.DataPattern, $"รูปข้อมูลในคอลัมน์ตรงกับ \"{f.Label}\"", null));
-            }
-        }
-        var colTaken = new Dictionary<int, (ImportFieldDto Field, decimal Score, ImportMapSource Source, string Reason, ImportColumnTransformDto? Transform)>();
-        var fieldTaken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var c in cands.OrderByDescending(c => c.Score).ThenBy(c => c.Source).ThenBy(c => c.Col))
-        {
-            if (colTaken.ContainsKey(c.Col) || fieldTaken.Contains(c.Field.Field)) continue;
-            colTaken[c.Col] = (c.Field, c.Score, c.Source, c.Reason, c.Transform);
-            fieldTaken.Add(c.Field.Field);
-        }
-        var plan = new List<ImportColumnPlanDto>(headers.Count);
-        for (var j = 0; j < headers.Count; j++)
-        {
-            var alts = cands.Where(c => c.Col == j && (!colTaken.TryGetValue(j, out var t) || t.Field.Field != c.Field.Field))
-                .GroupBy(c => c.Field.Field).Select(g => g.OrderByDescending(x => x.Score).First())
-                .OrderByDescending(c => c.Score).Take(3)
-                .Select(c => new ImportColumnCandidateDto(c.Field.Field, c.Field.Label, c.Score, c.Source, c.Reason)).ToList();
-            plan.Add(colTaken.TryGetValue(j, out var a)
-                ? new ImportColumnPlanDto(j, headers[j], a.Field.Field, a.Field.Label, a.Source, MapSourceLabel(a.Source, false), a.Score, false,
-                    samples[j], alts, a.Transform)
-                : new ImportColumnPlanDto(j, headers[j], null, null, ImportMapSource.None, MapSourceLabel(ImportMapSource.None, false), 0m, false,
-                    samples[j], alts));
-        }
-        return plan;
-    }
-
-    /// <summary>รูปข้อมูลชัดเจนพอจะเดา field (≥ 80% ของตัวอย่าง): เลขผู้เสียภาษีที่ checksum ผ่าน · อีเมล · วันที่ (เฉพาะชนิดที่มีช่องวันที่ช่องเดียว)</summary>
-    private static bool PatternMatches(ImportFieldDto f, IReadOnlyList<string> samples, IReadOnlyList<ImportFieldDto> all)
-    {
-        bool Mostly(Func<string, bool> ok) => samples.Count(ok) * 5 >= samples.Count * 4;
-        return f.Type switch
-        {
-            ImportFieldType.TaxId => Mostly(s => ImportValueNormalizer.TaxId(s) is { Ok: true, Value: not null }),
-            ImportFieldType.Email => Mostly(s => s.Contains('@') && ImportValueNormalizer.Email(s).Ok),
-            ImportFieldType.Date => all.Count(x => x.Type == ImportFieldType.Date) == 1
-                && Mostly(s => ImportValueNormalizer.Date(s) is { Ok: true, Value: not null }),
-            _ => false,
-        };
-    }
-
-    /// <summary>ลายเซ็นชุดหัวตาราง — SHA-256 ของหัวที่ normalize แล้วเรียง (ไม่ขึ้นกับลำดับ) · แทนที่ด้วย ImportHeaderSignature.Compute เมื่อรวมทีม A</summary>
-    private static string HeaderSignature(IEnumerable<string> headers)
-    {
-        var joined = string.Join("\n", headers.Select(ImportHeaderDetector.NormalizeHeader).Where(h => h.Length > 0)
-            .OrderBy(h => h, StringComparer.Ordinal));
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(joined))).ToLowerInvariant();
-    }
-
-    /// <summary>ตารางจับคู่เดิมของ Smart Import (SmartImportColumnMappings) ตามแผนปัจจุบัน — ป้าย MatchType ซื่อสัตย์ (AiMatched เฉพาะ AI จริง)</summary>
+    /// <summary>ตารางจับคู่เดิมของ Smart Import (SmartImportColumnMappings) ตามแผนปัจจุบัน — แปลงแถวด้วยตัวเดียวกับ Smart Import
+    /// (<see cref="ImportExportService.ToColumnMappingRow"/> · ป้าย MatchType ซื่อสัตย์) · คลังแม่แบบ (<c>SaveFromBatchAsync</c>) อ่านจากตารางนี้</summary>
     private async Task SyncColumnMappingRowsAsync(SmartImportSession session, ImportBatchState state, CancellationToken ct)
     {
         await _db.SmartImportColumnMappings.Where(m => m.SessionId == session.Id).ExecuteDeleteAsync(ct);
-        foreach (var c in state.Columns)
-            _db.SmartImportColumnMappings.Add(new SmartImportColumnMapping
-            {
-                SessionId = session.Id,
-                SourceIndex = c.SourceIndex,
-                SourceHeader = Trunc(c.SourceHeader, 255) ?? "",
-                TargetField = Trunc(c.TargetField, 100),
-                MatchType = c.TargetField == null ? ColumnMatchType.Unmapped
-                    : c.Source == ImportMapSource.User ? ColumnMatchType.ManualMatch
-                    : c.Source == ImportMapSource.Ai && c.UsedAi ? ColumnMatchType.AiMatched
-                    : c.Source is ImportMapSource.Exact or ImportMapSource.Template ? ColumnMatchType.ExactMatch
-                    : ColumnMatchType.HeuristicMatched,
-                Confidence = c.Confidence >= 0.9m ? ColumnMatchConfidence.High : c.Confidence >= 0.7m ? ColumnMatchConfidence.Medium
-                    : c.Confidence >= 0.5m ? ColumnMatchConfidence.Low : ColumnMatchConfidence.None,
-                ConfidenceScore = (double)c.Confidence,
-                SampleValuesJson = JsonSerializer.Serialize(c.SampleValues),
-                SuggestionsJson = JsonSerializer.Serialize(c.Alternatives.Select(a =>
-                    new SuggestedMappingDto(a.TargetField, a.TargetLabel, (double)a.Score, a.Reason)).ToList()),
-            });
+        _db.SmartImportColumnMappings.AddRange(state.Columns.Select(c => ImportExportService.ToColumnMappingRow(session.Id, c)));
     }
 
-    /// <summary>ปิดลูป ImportColumnMatch (กฎเหล็ก #1) — การจับคู่สุดท้ายของผู้ใช้ = label · acceptedAi = ทุกคอลัมน์ที่ AI ตอบยังคงตามที่ AI ตอบ</summary>
+    /// <summary>ปิดลูป ImportColumnMatch (กฎเหล็ก #1) — แผนสุดท้ายของผู้ใช้ (remap/commit) ⇒ <see cref="IImportColumnMatchService.RecordConfirmedAsync"/>
+    /// (ทีม A: บันทึกคำตอบรูปมาตรฐาน + acceptedAi + ให้นักเรียนเรียนทันที) · ไม่มีแถว feedback = ไม่มีอะไรต้องปิด</summary>
     private async Task RecordColumnChoiceAsync(SmartImportSession session, ImportBatchState state, CancellationToken ct)
     {
-        if (session.ColumnMatchAiFeedbackId is not Guid fb || _recorder == null) return;
-        var final = ImportJson.Serialize(new
-        {
-            mappings = state.Columns.Where(c => c.TargetField != null)
-                .Select(c => new { header = c.SourceHeader, field = c.TargetField }).ToList(),
-        });
-        var accepted = state.ColumnMatchAiAnswer.All(kv => state.Columns.Any(c =>
-            ImportHeaderDetector.NormalizeHeader(c.SourceHeader) == kv.Key && string.Equals(c.TargetField, kv.Value, StringComparison.OrdinalIgnoreCase)));
-        await _recorder.RecordUserChoiceAsync(fb, final, accepted, ct, UserChoiceSource.Explicit);
+        if (_columnMatch == null || session.ColumnMatchAiFeedbackId is not Guid fb) return;
+        await _columnMatch.RecordConfirmedAsync(session.CompanyId, fb, state.Columns, ct);
     }
 
     // ══════════════════════════════ ผู้ใช้แก้แถว ══════════════════════════════
@@ -1022,20 +923,21 @@ public partial class ImportPipelineService
         {
             try
             {
-                var tpl = await _templates.SaveFromBatchAsync(companyId, batchId, options.TemplateName, confirmedByUser: true, actor, ct);
+                // คอลัมน์มี transform (กลับเครื่องหมาย ฯลฯ) ⇒ ต้องส่งคอลัมน์ตรง (SmartImportColumnMappings ไม่เก็บ transform) · ไม่มี ⇒ จำจากตารางจับคู่ของชุด
+                var tpl = state.Columns.Any(c => c.Transform != null)
+                    ? await _templates.SaveColumnsAsync(companyId, session.EntityType, state.Headers,
+                        state.Columns.Select(c => new ImportTemplateColumnDto(c.SourceHeader, c.TargetField, c.Transform)).ToList(),
+                        session.SourceSystem, options.TemplateName, confirmedByUser: true, actor, ct)
+                    : await _templates.SaveFromBatchAsync(companyId, batchId, options.TemplateName, confirmedByUser: true, actor, ct);
                 templateId = tpl.Id;
                 session.MappingTemplateId = tpl.Id;
-            }
-            catch (NotImplementedException)
-            {
-                // ทีม A ยังไม่ต่อสายคลังแม่แบบ (โครง T0) — ข้อมูลลงครบแล้ว แม่แบบยังไม่ถูกจำ · ลบ catch นี้เมื่อรวมทีม A
-                _logger?.LogInformation("ImportBatch {BatchId}: คลังแม่แบบยังไม่พร้อม — ข้ามการจำรูปแบบไฟล์", batchId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // ข้อมูลลงแล้ว — แม่แบบพลาดต้องไม่ทำให้ผู้ใช้คิดว่าการลงข้อมูลล้ม · ล้มดังที่หมายเหตุของชุด + log
                 _logger?.LogError(ex, "ImportBatch {BatchId}: จำรูปแบบไฟล์ไม่สำเร็จ", batchId);
-                state.Notes.Add("จำรูปแบบไฟล์ไม่สำเร็จ: " + ex.Message + " — ข้อมูลลงครบแล้ว ครั้งหน้าจับคู่คอลัมน์ใหม่");
+                state.Notes.Add("จำรูปแบบไฟล์ไม่สำเร็จ: " + (ex is BusinessRuleException ? ex.Message : "ระบบขัดข้อง")
+                    + " — ข้อมูลลงครบแล้ว ครั้งหน้าจับคู่คอลัมน์ใหม่");
                 session.OptionsJson = ImportJson.Serialize(state);
             }
         }
@@ -1046,10 +948,11 @@ public partial class ImportPipelineService
         return (session, templateId);
     }
 
-    /// <summary>ปิดลูป ImportEntityMatch ต่อแถวที่ลงแล้ว — คำตอบสุดท้าย = id ที่ผู้ใช้ยืนยัน หรือ "NEW" · acceptedAi = ตรงกับที่ AI ตอบ · ไม่บันทึกซ้ำ</summary>
+    /// <summary>ปิดลูป ImportEntityMatch ต่อแถวที่ลงแล้ว (<see cref="IImportAiAugmenter.RecordPickChoiceAsync"/> — feedback ต้องเป็นของบริษัทนี้) —
+    /// คำตอบสุดท้าย = id ที่ผู้ใช้ยืนยัน หรือ "NEW" · acceptedAi = ตรงกับที่ AI ตอบ · ไม่บันทึกซ้ำ</summary>
     private async Task RecordMatchChoicesAsync(Guid companyId, Guid batchId, CancellationToken ct)
     {
-        if (_recorder == null) return;
+        if (_ai == null) return;
         var rows = await _db.ImportStagedRows
             .Where(r => r.SessionId == batchId && r.CompanyId == companyId && r.Status == ImportRowStatus.Committed
                 && r.AiFeedbackIdsJson != null && r.AiFeedbackIdsJson.Contains(MetaMatchFeedback))
@@ -1060,7 +963,7 @@ public partial class ImportPipelineService
             if (meta.ContainsKey(MetaMatchRecorded) || !Guid.TryParse(meta.GetValueOrDefault(MetaMatchFeedback), out var fb)) continue;
             var chosen = r.Action == ImportRowAction.Create || r.MatchedEntityId == null
                 ? ImportEntityResolver.NewEntityAnswer : r.MatchedEntityId.Value.ToString();
-            await _recorder.RecordUserChoiceAsync(fb, chosen, chosen == meta.GetValueOrDefault(MetaMatchAi), ct, UserChoiceSource.Explicit);
+            await _ai.RecordPickChoiceAsync(companyId, fb, chosen, meta.GetValueOrDefault(MetaMatchAi), ct);
             meta[MetaMatchRecorded] = "1";
             r.AiFeedbackIdsJson = WriteMeta(meta);
         }
