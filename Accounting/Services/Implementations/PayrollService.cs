@@ -1643,7 +1643,8 @@ public class PayrollService : IPayrollService
         }
         else
         {
-            var d = await _db.ResolveDefaultMoneySourceAsync(companyId, ctx);
+            // ฝ่ายค้านรอบ 2 P2(a): เงินเดือนไม่ตกไปเงินสด/เงินสดย่อยเงียบ ๆ — ไม่มีค่าตั้งบริษัทและธนาคารที่ผูกผังไม่ใช่บัญชีเดียว ⇒ ให้ผู้ใช้เลือก
+            var d = await _db.ResolveDefaultMoneySourceAsync(companyId, ctx, requireExplicitChoice: true);
             def = d.Account;
             defProblem = d.Problem;
         }

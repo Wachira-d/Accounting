@@ -27,7 +27,9 @@ public class SmeOperationsController : ControllerBase
     public sealed record CreateFundRequest(string Name, Guid? CustodianUserId,
         decimal ImprestAmount, Guid? LinkedAccountId);
 
+    // ฝ่ายค้านรอบ 2 P2(h): เปิดกองทุน = เลือกผังที่เบิก/เติมเงินลง (ตั้งค่าการลงบัญชี) ⇒ สิทธิ์เดียวกับแก้กองทุน — เดิมสร้างได้ทุกคนแต่แก้ไม่ได้ (ทางตัน)
     [HttpPost("petty-cash/funds")]
+    [RequirePermission(PermissionKeys.JournalManage)]
     public async Task<ActionResult<ApiResponse<PettyCashFund>>> CreateFund(
         Guid companyId, [FromBody] CreateFundRequest req,
         [FromServices] IPettyCashService svc, CancellationToken ct)

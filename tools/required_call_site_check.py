@@ -376,6 +376,79 @@ RULES += [
          why="PC#15 พรีวิวการลงบัญชีต้องใช้ลำดับเดียวกับ JE จริง (เดิมเลือกธนาคารก่อน + เดาเงินสดเมื่อยังไม่ผูกผัง)"),
 ]
 
+# ── ฝ่ายค้านรอบ 1–2 (2026-10-14 · PAYMENT_CHANNEL_AUDIT ส่วนที่ 3) — ด่านที่เพิ่ม/ผ่อน ต้องอยู่ที่จุดเรียกจริง ──
+_ADV1 = "ฝ่ายค้านรอบ 1/2 (PAYMENT_CHANNEL_AUDIT ส่วนที่ 3)"
+RECUR = "Services/Implementations/RecurringTransactionService.cs"
+BANK_DEL = "Services/Implementations/BankService.Delete.cs"
+BANK_IMP = "Services/Implementations/BankService.StatementImport.cs"
+PICKED = "Helpers/PickedAccountGuard.cs"
+RULES += [
+    dict(file=DOC, method="CreateDocumentAsync", call_args=[("ValidateDocumentMoneyHeaderAsync(", "carriedMoneyHeader")],
+         why=_ADV1 + " P1: ค่าที่ยกมาจากต้นทางต้องถึงตัวตรวจหัวเอกสาร (ไม่งั้นแปลง/คัดลอกใบที่ธนาคารปิดใช้ทีหลังไม่ได้)"),
+    dict(file=DOC, method="ValidateDocumentMoneyHeaderAsync",
+         must=["DocumentMoneyChannel.IsCarried(", "ThrowIfCarriedProblemAsync("],
+         why=_ADV1 + " P1: ค่าที่ยกมา ⇒ ตรวจแค่ tenant · ค่าที่เลือกใหม่ ⇒ ตรวจเข้ม"),
+    dict(file=DOC, method="ThrowIfCarriedProblemAsync", must=["DocumentMoneyChannel.CarriedProblemAsync("],
+         must_re=[r"is\s*\{\s*\}\s*problem\s*\)\s*throw\b"],
+         why=_ADV1 + " P1: ค่าที่ยกมาของบริษัทอื่นยังบล็อก (tenant isolation)"),
+    dict(file=DOC, method="ConvertCoreAsync", must=["carriedMoneyHeader:", "CarriedMoneyHeader(source.BankAccountId"],
+         why=_ADV1 + " P1: แปลงเอกสารส่งแหล่งเงินของใบต้นทางเป็นค่าที่ยกมา"),
+    dict(file=CLONE, method="Clone", must=["carriedMoneyHeader:"],
+         why=_ADV1 + " P1: คัดลอกเอกสารส่งแหล่งเงินของต้นแบบเป็นค่าที่ยกมา"),
+    dict(file=LODGING_LIFE, method="ReissueFinalDocumentCoreAsync", must=["CarriedMoneyHeader(old.BankAccountId"],
+         why=_ADV1 + " P1: ออกใบเช็คเอาต์แทนยกบัญชีรับเงินของใบเดิมเป็นค่าที่ยกมา"),
+    dict(file=DOC, method="ReclassifyPaymentSourceAsync", must=["DocumentMoneyChannel.PickReclassifySource("],
+         why=_ADV1 + " P2 (4d): ยอดที่ย้ายมาจากขาเงินใน JE ไม่ใช่ PaidAmount × อัตรา"),
+    dict(file=DOC, method="TryRecognizeSalesWhtOnSettlementAsync", must=["IssuedReceivableAccountAsync("], must_lit=["[WHT-SETTLE]"],
+         forbid=["_logger.LogWarning(ex"],
+         why=_ADV1 + " รอบ 2 P2(b): ตัดลูกหนี้ผังที่ใบตั้งไว้ · ล้มต้องดังบนเอกสาร (ไม่ใช่ LogWarning อย่างเดียว)"),
+    dict(file=RECUR, method="CreateDocumentFromTemplateAsync",
+         must=["carriedMoneyHeader:", "RecurringRunFailure.AfterCreateNotice("],
+         before=[("MarkRunAsync(", "RecurringRunFailure.AfterCreateNotice(")],
+         why=_ADV1 + " P2 (3b): ขั้นหลังสร้างเอกสาร/นับงวดแล้วล้ม = เรื่องที่ต้องทำต่อ ไม่ใช่รอบล้ม (กันใบซ้ำ)"),
+    dict(file=RECUR, method="ProcessDueRecurringTransactionsAsync",
+         before=[("JobLock.RunExclusiveAsync(", "RecordRunFailureAsync(")],
+         why=_ADV1 + " P2 (3a): บันทึกเหตุผลล้มภายใต้ล็อกต่อรายการ (ไม่ทับผลสำเร็จของปุ่ม \"สร้างทันที\")"),
+    dict(file=RECUR, method="ValidateTemplateAsync",
+         must=["DocumentMoneyChannel.EvaluateAsync(", "DocumentMoneyChannel.ExpenseCategoryProblemAsync(", "PostingAccountRule.Check("],
+         why=_ADV1 + " P2 (3c) + รอบ 2 P2(d): แหล่งเงิน/บัญชีคุมของเทมเพลตตรวจด้วยตัวตัดสินเดียวกับหน้าเอกสาร/สมุดรายวัน"),
+    dict(file=BANK_DEL, method="RefreshAccountBalance",
+         must=["BankBalanceAfterDelete.Resolve(", "!t.BalanceAfterUnknown", "t.CompanyId == companyId"],
+         forbid=["?? 0m"],
+         why=_ADV1 + " P1: ลบบรรทัด statement ที่ไม่มียอดคงเหลือแล้วการ์ดบัญชีกลายเป็น 0"),
+    dict(file=BANK_IMP, method="ImportParsedStatementRowsAsync",
+         must=["UndoTracked(", "BalanceAfterUnknown = knownBalance is null"],
+         why=_ADV1 + " P1/P2: ยอดที่ไม่รู้ = ไม่รู้ · ล้มแล้วถอดของออกจาก tracker · ไฟล์ต้นทางเขียนหลัง commit"),
+    dict(file=INTEG, method="ProcessInvoiceAsync",
+         must=["DocumentMoneyChannel.EvaluateAsync(", "MoneyChannelCheck.Post"], must_lit=['log.Status = "PartialSuccess"'],
+         why=_ADV1 + " P2 (4a): ขายเงินสดตรวจบัญชีรับเงินด้วยตัวตัดสินตอนลงบัญชีก่อนออกเลข · ถอยไปตั้งหนี้ต้องล้มดัง"),
+    dict(file=OCR, method="CreateDocumentFromScanCoreAsync", must=["DocumentMoneyChannel.IsPostableGl("],
+         why=_ADV1 + " P2 (4b): OCR เติมเฉพาะผังที่ลงรายการได้ (กฎเหล็ก #3 ห้ามล้มตอนอนุมัติ)"),
+    dict(file=TPLSVC, method="UpdateAsync", must=["previousDefaultPaymentAccountId"],
+         why=_ADV1 + " P2 (4c): ตรวจบัญชีตั้งต้นของเทมเพลตเฉพาะเมื่อเปลี่ยน"),
+    dict(file=PICKED, method="AccountProblem", must=["PostingAccountRule.Check("], forbid=["Level < 4"],
+         why=_ADV1 + " รอบ 2 P1-1: กติกา \"ลงรายการได้\" มีเจ้าของเดียว (PostingAccountRule — มีบัญชีย่อย ไม่ใช่ระดับ)"),
+    dict(file=PICKED, method="ResolveBankGlAsync", must=["TryResolveBankGlAsync("],
+         why=_ADV1 + " รอบ 2 P1-1: บัญชีธนาคาร → ผังที่ผูก ผ่าน MoneyAccountDirectory ตัวเดียว"),
+    dict(file=PICKED, method="ResolveMoneyChannelAsync", must=["SourceProblem("],
+         why=_ADV1 + " รอบ 2 P1-1: ผังเงินตรงตัดสินด้วยตัวเดียวกับรายการช่องทางเงิน"),
+    dict(file="Controllers/ScheduledReportController.cs", method="SendNow", must=["AdvisoryLockKey.ScheduledReportSend"],
+         forbid=["AdvisoryLockKey.BackgroundJob"],
+         why=_ADV1 + " รอบ 2 P1-2: ปุ่มส่งทันทีล็อกต่อรายงาน (เดิมถือล็อกรวม ⇒ รอบรายชั่วโมงข้ามทุกบริษัท)"),
+    dict(file="Services/Implementations/ScheduledReportDispatcher.cs", method="RunOnceAsync", must=["AdvisoryLockKey.ScheduledReportSend", "ReloadAsync("],
+         why=_ADV1 + " รอบ 2 P1-2: รอบตามเวลาล็อกต่อรายงาน + อ่านใหม่ใต้ล็อก (ไม่ส่งซ้ำกับปุ่ม)"),
+    dict(file="Services/Implementations/PayrollService.cs", method="ResolvePayrollPaymentSourcesAsync", must=["requireExplicitChoice: true"],
+         why=_ADV1 + " รอบ 2 P2(a): เงินเดือนไม่ตกไปเงินสด/เงินสดย่อยเงียบ ๆ"),
+    dict(file=LODGING_LIFE, method="ConfirmCoreAsync", must=["LodgingPaymentBank.Problem("],
+         why=_ADV1 + " รอบ 2 P2(g): โอน/พร้อมเพย์ต้องมีบัญชีธนาคาร — เซิร์ฟเวอร์บังคับเอง"),
+    dict(file=LODGING_LIFE, method="CheckOutCoreAsync", must=["LodgingPaymentBank.Problem("],
+         why=_ADV1 + " รอบ 2 P2(g): โอน/พร้อมเพย์ต้องมีบัญชีธนาคาร — เซิร์ฟเวอร์บังคับเอง"),
+    dict(file="Services/Implementations/ApprovalService.cs", method="ReassignApproverAsync", must=["MayApproveRequestDocumentAsync(", "a.Id != action.Id"],
+         why=_ADV1 + " รอบ 2 P2(f): โอนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์ได้ · คนใหม่ห้ามเป็นผู้อนุมัติขั้นอื่น"),
+    dict(file="Services/Implementations/AccountingService.cs", method="ValidateJournalReferencesAsync", must=["IgnoreQueryFilters()"],
+         why=_ADV1 + " รอบ 2 P2(d): ทางอัตโนมัติตรวจแค่ tenant (ของที่ลบทีหลังไม่ทำให้รายการประจำ/แก้ JE ล้ม)"),
+]
+
 RULES += [
     dict(file=EXPENSE, method=m, must=["EnsureClaimActionAsync("],
          before=[("EnsureClaimActionAsync(", "_db.SaveChangesAsync(")], why=_EXPENSE_WHY)
@@ -7477,8 +7550,8 @@ RULES += [
          must=["ScheduledEmailSendCheck.WhtCertSkipReason(", "c.CompanyId == item.CompanyId"],
          why="ฝ่ายค้าน F4 (ID#12 ทางเข้าอื่น): 50 ทวิ ที่ยกเลิกหลังเข้าคิวต้องไม่ถูกส่ง"),
     dict(file="Services/Implementations/ApprovalService.cs", method="ReassignApproverAsync",
-         must=["a.Status == ApprovalStatus.Approved && a.ApproverUserId == req.NewApproverUserId"],
-         why="ฝ่ายค้าน F4 (SoD): โอนให้คนที่อนุมัติขั้นอื่นของคำขอเดียวกันไปแล้วไม่ได้"),
+         must=["a.ApproverUserId == req.NewApproverUserId && (action == null || a.Id != action.Id)"],
+         why="ฝ่ายค้าน F4 (SoD) + ฝ่ายค้านรอบ 2 P2(f): โอนให้คนที่เป็นผู้อนุมัติขั้นอื่นของคำขอเดียวกัน (อนุมัติแล้วหรือยังรอ) ไม่ได้"),
 ]
 
 # ทีม F1 · 2026-10-14 (PAYMENT_CHANNEL_AUDIT ส่วนที่ 1 ข้อ 1/2/19 · ส่วนที่ 2 ข้อ 1/2/8/13): รหัสที่ผู้ใช้เลือกมาต้องผ่าน

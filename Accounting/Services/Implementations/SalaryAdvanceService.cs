@@ -288,10 +288,10 @@ public class SalaryAdvanceService : ISalaryAdvanceService
 
         // จ่ายจากบัญชีไหน — ตรวจก่อนสร้างใบสำคัญจ่าย (บริษัท · เปิดใช้ · ผูกผัง) ไม่ให้ใบไปลงเงินสดเงียบ ๆ เพราะบัญชีธนาคารยังไม่ผูกผัง
         // (การลงบัญชีของ PV เลือก PaymentAccountId > ผังที่ผูกของ BankAccountId > เงินสด — ส่งต่อทั้งสองช่องตามที่ผู้ใช้เลือก)
+        // ฝ่ายค้านรอบ 2 P2(c): ส่งทั้งสองช่อง ⇒ ผังตรงชนะ (ลำดับเดิมก่อนทีม F1 · เข้ากันได้ย้อนหลัง) — ไม่ปฏิเสธ
+        var (payBank, payAccount) = Accounting.Helpers.PickedAccountGuard.PreferDirectAccount(request.BankAccountId, request.PaymentAccountId);
         await Accounting.Helpers.PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
-            request.BankAccountId, request.PaymentAccountId, "จ่ายจากบัญชี");
-        Guid? payBank = Accounting.Helpers.PickedAccountGuard.IsSet(request.BankAccountId) ? request.BankAccountId : null;
-        Guid? payAccount = Accounting.Helpers.PickedAccountGuard.IsSet(request.PaymentAccountId) ? request.PaymentAccountId : null;
+            payBank, payAccount, "จ่ายจากบัญชี");
 
         // The PaymentVoucher's single line points at the Advance Receivable
         // account; DocumentService.AutoPostToJournalAsync debits each line's

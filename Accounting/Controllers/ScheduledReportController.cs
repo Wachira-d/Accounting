@@ -116,16 +116,17 @@ public class ScheduledReportController : ControllerBase
         if (s == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายงานตามกำหนดเวลานี้ (อาจถูกลบแล้ว) — รีเฟรชรายการ"));
 
         Accounting.Helpers.ScheduledReportOutcome.Result? outcome = null;
-        var ran = await Accounting.Helpers.JobLock.RunExclusiveAsync(_db, Accounting.Helpers.AdvisoryLockKey.BackgroundJob,
-            nameof(Accounting.Services.Implementations.ScheduledReportDispatcher), async () =>
+        // ฝ่ายค้านรอบ 2 P1-2: ล็อก<b>ต่อรายงาน</b> (ตัวเดียวกับรอบตามเวลา) — เดิมถือล็อกรวมของตัวส่งระหว่างสร้าง/ส่ง ⇒ รอบรายชั่วโมงข้ามรายงานของทุกบริษัท
+        var ran = await Accounting.Helpers.JobLock.RunExclusiveAsync(_db, Accounting.Helpers.AdvisoryLockKey.ScheduledReportSend,
+            s.Id.ToString(), async () =>
             {
                 outcome = await Accounting.Services.Implementations.ScheduledReportDispatcher.DispatchAndRecordAsync(
                     sp, _db, s, logger, HttpContext.RequestAborted);
                 await _db.SaveChangesAsync();
-            }, logger, ct: HttpContext.RequestAborted);
+            }, logger, s.CompanyId, HttpContext.RequestAborted);
         if (!ran || outcome == null)
             return Conflict(new ApiResponse<object>(false, null,
-                "ระบบกำลังส่งรายงานรอบอัตโนมัติอยู่ — รอสักครู่แล้วกด “ส่งทันที” อีกครั้ง (กันผู้รับได้รายงานซ้ำ)"));
+                "รายงานนี้กำลังถูกส่งอยู่ (รอบอัตโนมัติหรือหน้าต่างอื่น) — รอสักครู่แล้วรีเฟรชดูผล ก่อนกด “ส่งทันที” อีกครั้ง (กันผู้รับได้รายงานซ้ำ)"));
         return Ok(new ApiResponse<object>(outcome.AnyDelivered, new { s.LastSentAt, s.LastResult }, s.LastResult));
     }
 }

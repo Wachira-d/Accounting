@@ -119,8 +119,10 @@ public class LodgingDoubleBookingDbTests
     {
         using var db = DbTestDatabase.TryCreateContext()!;
         var svc = new LodgingService(db, NullLogger<LodgingService>.Instance, null!);
+        // ฝ่ายค้านรอบ 2 P2(g): พนักงานยืนยันด้วยโอน/พร้อมเพย์ต้องระบุบัญชีธนาคาร ⇒ เส้นพนักงานของเทสต์นี้รับเป็นเงินสด (เทสต์นี้ทดสอบการกันซ้ำ ไม่ใช่ช่องทางเงิน)
         await svc.ConfirmAsync(companyId, reservationId, new LodgingConfirmRequest(DepositAmount: amount, PaymentReference: reference,
-            ConfirmReservation: online ? null : false), "db-test", fromOnlinePayment: online);
+            ConfirmReservation: online ? null : false, PaymentMethod: online ? PaymentMethod.BankTransfer : PaymentMethod.Cash),
+            "db-test", fromOnlinePayment: online);
     }
 
     [Fact]

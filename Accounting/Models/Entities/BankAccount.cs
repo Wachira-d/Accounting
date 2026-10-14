@@ -44,6 +44,10 @@ public class BankTransaction : TenantEntity
     public BankTransactionType TransactionType { get; set; }
     public decimal Amount { get; set; }
     public decimal BalanceAfter { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 1 P1 — <c>true</c> = ไฟล์ statement ไม่มียอดคงเหลือของบรรทัดนี้ (<see cref="BalanceAfter"/> เป็น 0 ที่ไม่มีความหมาย) ·
+    /// ห้ามใช้เป็นยอดบัญชี (เดิมลบบรรทัดแล้ว <c>RefreshAccountBalance</c> ตั้งยอดการ์ดเป็น 0) · หน้าเว็บแสดง "—" ·
+    /// ค่าตั้งต้น false = แถวเดิมทุกแถวถือว่ามียอด (พฤติกรรมเดิม)</summary>
+    public bool BalanceAfterUnknown { get; set; }
     public string? Description { get; set; }
     public string? Reference { get; set; }
     public string? Payee { get; set; }

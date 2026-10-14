@@ -758,6 +758,12 @@ public class IntegrationService : IIntegrationService
                 && await _db.PostingAccountProblemAsync(companyId, payAccId, "paymentAccountId (บัญชีรับเงิน)") is string payAccProblem)
                 return await RejectTaxedDrivesAsync(log, integrationId, sw,
                     payAccProblem + " · ระบบต้นทางต้องส่ง id ผังบัญชีเงินสด/ธนาคารของบริษัทนี้ (ไม่ใช่ id บัญชีธนาคาร) หรือไม่ส่งช่องนี้", null, null);
+            // ฝ่ายค้านรอบ 1 P2 (4a): ขายเงินสด — บัญชีรับเงินต้องผ่าน<b>ตัวตัดสินเดียวกับตอนลงบัญชี</b> (DocumentMoneyChannel · Post) ก่อนออกเลข ·
+            // เดิมด่านบนผ่าน (ผังระดับ 3 ที่ไม่มีลูก ฯลฯ) แต่ AutoPost ปฏิเสธ ⇒ ใบถูกถอยไปตั้งหนี้เงียบ ๆ (LogWarning) ทั้งที่คู่ค้าส่งว่าขายเงินสด
+            if (request.IsCashSale && request.PaymentAccountId is Guid cashPayId && cashPayId != Guid.Empty
+                && await Accounting.Helpers.DocumentMoneyChannel.EvaluateAsync(_db, companyId, null, cashPayId,
+                    Accounting.Helpers.MoneyChannelCheck.Post, CashSaleMoneyFixHint) is { Ok: false } cashChannel)
+                return await RejectTaxedDrivesAsync(log, integrationId, sw, "paymentAccountId (บัญชีรับเงิน): " + cashChannel.Problem, null, null);
 
             // Idempotency: if a document with the same ExternalRef already exists,
             // return it instead of creating a duplicate. This makes re-syncs safe.
@@ -1203,13 +1209,20 @@ public class IntegrationService : IIntegrationService
                 }
                 catch (Exception exCash)
                 {
-                    _logger.LogWarning(exCash,
+                    // ฝ่ายค้านรอบ 1 P2 (4a): ใบออกเลข + อนุมัติแล้ว (ถอยไม่ได้) ⇒ ตั้งหนี้แทนได้ แต่ต้อง<b>ล้มดัง 3 ที่</b>: หมายเหตุบนใบ ·
+                    // สถานะ sync = PartialSuccess พร้อมเหตุผล · คำตอบคู่ค้า (เดิม LogWarning + log "Success" ⇒ ไม่มีใครรู้ว่าเงินสดไม่ได้ลง)
+                    _logger.LogError(exCash,
                         "isCashSale AutoPost failed for {Doc} — degrade เป็นตั้งหนี้ (mapping JE) ให้ TakeTime/ผู้ใช้รับชำระ",
                         document.DocumentNumber);
+                    var why = exCash is Accounting.Helpers.BusinessRuleException ? exCash.Message : "ข้อผิดพลาดของระบบ (บันทึกรายละเอียดให้ผู้ดูแลระบบแล้ว)";
+                    var downgrade = $"ลงบัญชีขายเงินสดไม่สำเร็จ — ตั้งเป็นลูกหนี้แทน (ต้องรับชำระในระบบ): {why}";
                     document.IssuedAsCashReceipt = false;   // ไม่ใช่ขายเงินสดแล้ว (ลงตั้งหนี้)
+                    document.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(document.InternalNotes, "⚠ " + downgrade);
                     await _db.SaveChangesAsync();
                     (journalEntryId, jeSkipReason) = await PostMappingJournalAsync(companyId, integrationId, document, "invoice", log);
-                    cashSaleNote = " (⚠ ลง JE ขายเงินสดไม่สำเร็จ — ตั้งหนี้แทน, ให้รับชำระในระบบ)";
+                    log.Status = "PartialSuccess";
+                    log.ErrorMessage = string.IsNullOrEmpty(log.ErrorMessage) ? downgrade : log.ErrorMessage + " · " + downgrade;
+                    cashSaleNote = $" (⚠ {downgrade})";
                 }
             }
             else
@@ -1663,7 +1676,13 @@ public class IntegrationService : IIntegrationService
                     + "(ยอดในสมุดจะขาด) · ไปที่หน้า \"เชื่อมต่อระบบ\" → จับคู่ผังบัญชี แล้วเพิ่มหมวดนี้ (หรือหมวด DEFAULT) แล้วส่งสรุปใหม่",
                     null, null);
             // ผังที่จับคู่ไว้ต้องยังลงรายการได้ (ปิดใช้/ถูกลบ/เป็นบัญชีคุมหลังตั้งการจับคู่) — ตัวตัดสินเดียว PostingAccountGuard
-            var mappedAccountIds = mappings.SelectMany(m => new[] { m.DebitAccountId, m.CreditAccountId })
+            // ฝ่ายค้านรอบ 2 P2(e): ตรวจเฉพาะการจับคู่ที่สรุปนี้<b>ใช้จริง</b> (หมวดในคำขอ → การจับคู่ของหมวดนั้น หรือ DEFAULT) — เดิมตรวจทุกการจับคู่
+            // ⇒ หมวดเก่าที่เลิกขายแล้วซึ่งผังถูกปิดใช้ทำให้สรุปรายวันทุกวันถูกปฏิเสธ
+            var usedMappings = request.Lines
+                .Select(line => mappings.FirstOrDefault(m => m.ExternalCategory.Equals(line.Category, StringComparison.OrdinalIgnoreCase))
+                    ?? mappings.FirstOrDefault(m => m.ExternalCategory == "DEFAULT"))
+                .Where(m => m != null).Distinct().ToList();
+            var mappedAccountIds = usedMappings.SelectMany(m => new[] { m!.DebitAccountId, m.CreditAccountId })
                 .Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
             var mappedFacts = await _db.LoadPostingFactsAsync(companyId, mappedAccountIds);
             foreach (var id in mappedAccountIds)
@@ -3641,6 +3660,10 @@ public class IntegrationService : IIntegrationService
     private const string TaxedDrivesVoidFailedMarker = "ลงบัญชีไม่ได้และยกเลิกอัตโนมัติไม่สำเร็จ";
 
     /// <summary>ล้มดัง 3 ที่ของใบที่ถูกปฏิเสธ: log Failed · คำตอบ success=false · (ถ้ามีใบ) ธงบนใบถูกเขียนโดยผู้เรียกแล้ว</summary>
+    /// <summary>ที่แก้บัญชีรับเงินของการขายเงินสดผ่านระบบเชื่อมต่อ (ข้อความของ DocumentMoneyChannel)</summary>
+    private const string CashSaleMoneyFixHint =
+        "ระบบต้นทางต้องส่ง paymentAccountId เป็นผังเงินสด/เงินฝากระดับย่อยที่เปิดใช้ของบริษัทนี้ (หรือไม่ส่ง = เงินสดตั้งต้น) — แก้การจับคู่บัญชีรับเงินที่ระบบต้นทางแล้วส่งใหม่";
+
     private async Task<InboundSyncResponse> RejectTaxedDrivesAsync(
         IntegrationSyncLog log, Guid integrationId, Stopwatch sw, string message, Guid? documentId, string? documentNumber)
     {
@@ -4493,10 +4516,16 @@ public class IntegrationService : IIntegrationService
             var journalLines = new List<JournalEntryLine>();
             int lineOrder = 1;
 
+            // ฝ่ายค้านรอบ 2 P2(d): ผังที่คู่ค้าส่งมาต้องลงรายการได้ตามตัวตัดสินเดียว (PostingAccountRule — ไม่ใช่บัญชีคุม) · เดิมตรวจแค่มี+เปิดใช้
+            var journalPostingFacts = await _db.LoadPostingFactsAsync(companyId, accountLookup.Values.Select(a => a.Id));
             foreach (var line in request.Lines)
             {
                 if (!accountLookup.TryGetValue(line.AccountCode, out var account))
                     throw new KeyNotFoundException($"ไม่พบผังบัญชี: {line.AccountCode}");
+                journalPostingFacts.TryGetValue(account.Id, out var lineFacts);
+                if (Accounting.Helpers.PostingAccountRule.Problem(lineFacts, $"ผังบัญชี {line.AccountCode}") is string lineProblem)
+                    throw new Accounting.Helpers.BusinessRuleException(lineProblem + " · แก้การจับคู่ผังที่ระบบต้นทางแล้วส่งใหม่",
+                        Accounting.Helpers.PostingAccountRule.RuleCode);
 
                 journalLines.Add(new JournalEntryLine
                 {

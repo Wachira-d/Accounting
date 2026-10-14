@@ -311,10 +311,15 @@ public partial class AccountingService : IAccountingService
         static List<Guid> Ids(Guid? head, IEnumerable<Guid?> perLine)
             => perLine.Append(head).Where(g => g.HasValue && g.Value != Guid.Empty).Select(g => g!.Value).Distinct().ToList();
 
+        // ฝ่ายค้านรอบ 2 P2(d): ทางอัตโนมัติ/ทางที่ยกค่าเดิม (strictAccounts=false — รายการประจำ · แก้ JE · ปิดงวด) ตรวจแค่ "เป็นของบริษัทนี้"
+        // รวมแถวที่ถูกลบแบบ soft (สาขา/โครงการ/มิติที่บันทึกไว้แล้วถูกลบทีหลังเคยทำให้รายการประจำ/แก้ JE ล้ม) · ทางบันทึกมือ = เลือกใหม่ต้องยังไม่ถูกลบ
+        var branches = strictAccounts ? _db.Branches.AsNoTracking() : _db.Branches.IgnoreQueryFilters().AsNoTracking();
+        var dimensions = strictAccounts ? _db.AccountingDimensions.AsNoTracking() : _db.AccountingDimensions.IgnoreQueryFilters().AsNoTracking();
+        var projects = strictAccounts ? _db.Projects.AsNoTracking() : _db.Projects.IgnoreQueryFilters().AsNoTracking();
         var branchIds = Ids(branchId, lines.Select(l => l.BranchId));
         if (branchIds.Count > 0)
         {
-            var ok = await _db.Branches.AsNoTracking().CountAsync(b => b.CompanyId == companyId && branchIds.Contains(b.Id));
+            var ok = await branches.CountAsync(b => b.CompanyId == companyId && branchIds.Contains(b.Id));
             if (ok != branchIds.Count)
                 throw new Accounting.Helpers.BusinessRuleException(
                     "ไม่พบสาขาที่เลือกในบริษัทนี้ (อาจถูกลบหรือมาจากบริษัทอื่น) — เลือกสาขาใหม่จากรายการ", "GL-JOURNAL-BRANCH");
@@ -322,7 +327,7 @@ public partial class AccountingService : IAccountingService
         var dimIds = Ids(dimensionId, lines.Select(l => l.DimensionId));
         if (dimIds.Count > 0)
         {
-            var ok = await _db.AccountingDimensions.AsNoTracking().CountAsync(d => d.CompanyId == companyId && dimIds.Contains(d.Id));
+            var ok = await dimensions.CountAsync(d => d.CompanyId == companyId && dimIds.Contains(d.Id));
             if (ok != dimIds.Count)
                 throw new Accounting.Helpers.BusinessRuleException(
                     "ไม่พบศูนย์ต้นทุน/มิติบัญชีที่เลือกในบริษัทนี้ (อาจถูกลบหรือมาจากบริษัทอื่น) — เลือกใหม่จากรายการ", "GL-JOURNAL-DIMENSION");
@@ -330,7 +335,7 @@ public partial class AccountingService : IAccountingService
         var projIds = Ids(projectId, lines.Select(l => l.ProjectId));
         if (projIds.Count > 0)
         {
-            var ok = await _db.Projects.AsNoTracking().CountAsync(p => p.CompanyId == companyId && projIds.Contains(p.Id));
+            var ok = await projects.CountAsync(p => p.CompanyId == companyId && projIds.Contains(p.Id));
             if (ok != projIds.Count)
                 throw new Accounting.Helpers.BusinessRuleException(
                     "ไม่พบโครงการที่เลือกในบริษัทนี้ (อาจถูกลบหรือมาจากบริษัทอื่น) — เลือกโครงการใหม่จากรายการ", "GL-JOURNAL-PROJECT");
@@ -773,8 +778,9 @@ public partial class AccountingService : IAccountingService
                 throw new InvalidOperationException("ต้องมีรายการอย่างน้อย 2 รายการ (ระบบบัญชีคู่)");
 
             // แก้ใบสำคัญได้เฉพาะทางมือ (ใบที่ผูกเอกสารถูกปฏิเสธข้างบน) ⇒ ด่านเข้ม: ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม (ID#24)
+            // ฝ่ายค้านรอบ 2 P2(d): สาขา/มิติ/โครงการระดับหัวที่<b>ไม่ได้เปลี่ยน</b>ไม่ตรวจซ้ำแบบเข้ม (ตรวจ tenant แล้วข้างบน) — ของที่ถูกลบทีหลังเคยทำให้แก้บรรทัดไม่ได้
             await ValidateJournalReferencesAsync(companyId, request.Lines,
-                request.BranchId ?? entry.BranchId, request.DimensionId ?? entry.DimensionId, request.ProjectId ?? entry.ProjectId,
+                request.BranchId, request.DimensionId, request.ProjectId,
                 strictAccounts: true);
 
             foreach (var l in request.Lines)

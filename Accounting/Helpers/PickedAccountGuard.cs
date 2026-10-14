@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Helpers;
@@ -13,9 +14,12 @@ namespace Accounting.Helpers;
 /// สินเชื่อ/เงินสดย่อยรับรหัสผังจาก request โดยไม่ตรวจบริษัท/สถานะ/ระดับ ⇒ ลงบรรทัด JE ข้ามบริษัทหรือผังคุมได้ ·
 /// "ไม่พบบัญชีธนาคาร" กับ "ยังไม่ผูกผัง" ถูกรายงานเป็นข้อความเดียวกัน (<c>.Select(b =&gt; b.LinkedAccountId)</c> คืน null ทั้งสองกรณี)</para>
 ///
-/// <para>═══ กติกา ═══ ผังบัญชีที่ลงรายการได้ = ของบริษัทนี้ · ไม่ถูกลบ · เปิดใช้งาน · ระดับรายการ (Level ≥ 4) · ชนิดตรงกับช่อง (ถ้าช่องกำหนด) ·
-/// บัญชีธนาคาร = ของบริษัทนี้ · ไม่ถูกลบ · เปิดใช้งาน · ผูกผังแล้ว · ผังที่ผูกผ่านกติกาเดียวกัน · ทุกข้อความบอก "ช่องไหน · แก้ที่ไหน" เป็นไทย
+/// <para>═══ กติกา ═══ ผังบัญชีที่ลงรายการได้ = <b>ตัวตัดสินเดียว <see cref="PostingAccountRule.Check"/></b> (ของบริษัทนี้ · ไม่ถูกลบ · เปิดใช้งาน ·
+/// ไม่มีบัญชีย่อย) + ชนิดตรงกับช่อง (ถ้าช่องกำหนด — ตัวกรองเพิ่มเติมเดียวของที่นี่) · บัญชีธนาคาร → ผังที่ผูก = <see cref="MoneyAccountDirectory.TryResolveBankGlAsync"/> ·
+/// ผังเงินตรง = <see cref="MoneyAccountDirectory.SourceProblem"/> · ทุกข้อความบอก "ช่องไหน · แก้ที่ไหน" เป็นไทย
 /// (คำตัดสินข้อ 150 — บล็อกเพราะความถูกต้องของ GL/การแยกบริษัท ต้องมีทางไปต่อ)</para>
+/// <para>ฝ่ายค้านรอบ 2 P1-1: เดิมตัดสิน "บัญชีคุม" จาก Level &lt; 4 ขณะที่ PostingAccountRule ใช้ "มีบัญชีย่อย" ⇒ ผังเงินสด 1010 ระดับ 2 ของผังที่บริษัทตั้งเอง
+/// ถูกเสนอในรายการช่องทางเงินแต่เงินสดย่อย/สินเชื่อ/ใบเบิก/เงินทดรองปฏิเสธ · 11122 ที่มีบัญชีย่อยธนาคารผ่านที่นี่แต่ถูกบล็อกที่อื่น ⇒ สองเจ้าของ</para>
 ///
 /// <para>ตัวตัดสินข้อความเป็น pure (<see cref="AccountProblem"/> · <see cref="BankProblem"/> · <see cref="LinkedGlProblem"/>) มีเทสต์ ·
 /// ตัวอ่านฐาน (<see cref="RequirePostingAccountAsync"/> · <see cref="ResolveBankGlAsync"/> · <see cref="ResolveMoneyChannelAsync"/>)
@@ -28,7 +32,8 @@ public static class PickedAccountGuard
     public const string RuleChannelAmbiguous = "PICKED-CHANNEL-AMBIGUOUS";
 
     /// <summary>ข้อเท็จจริงของผังบัญชีที่ค้นเจอ (null = ไม่พบในบริษัทนี้/ถูกลบ)</summary>
-    public sealed record AccountFacts(string Code, string Name, bool IsActive, int Level, AccountType Type);
+    /// <param name="IsGroup">มีบัญชีย่อย (บัญชีคุม) — ตัวตัดสิน <see cref="PostingAccountRule"/> ไม่ดู Level</param>
+    public sealed record AccountFacts(string Code, string Name, bool IsActive, int Level, AccountType Type, bool IsGroup = false);
 
     /// <summary>ข้อเท็จจริงของบัญชีธนาคารที่ค้นเจอ (null = ไม่พบในบริษัทนี้/ถูกลบ)</summary>
     public sealed record BankFacts(string Label, bool IsActive, Guid? LinkedAccountId);
@@ -50,12 +55,22 @@ public static class PickedAccountGuard
     /// <summary>ผังบัญชีนี้ลงบรรทัด JE ในช่อง <paramref name="fieldLabel"/> ได้ไหม — null = ได้ · ข้อความ = เหตุที่ไม่ได้ + ทางไปต่อ</summary>
     internal static string? AccountProblem(AccountFacts? a, string fieldLabel, IReadOnlyCollection<AccountType>? allowedTypes = null)
     {
-        if (a == null)
+        return AccountProblemMessage(a, PostingAccountRule.Check(ToPostingFacts(a)), fieldLabel, allowedTypes);
+    }
+
+    /// <summary>แปลงเป็นข้อเท็จจริงของตัวตัดสินกลาง (<see cref="PostingAccountRule"/>)</summary>
+    private static PostingAccountFacts? ToPostingFacts(AccountFacts? a)
+        => a == null ? null : new PostingAccountFacts(Guid.Empty, a.Code, a.Name, a.IsActive, a.IsGroup);
+
+    /// <summary>ข้อความของผลตัดสิน <paramref name="problem"/> (ตัดสินที่ <see cref="PostingAccountRule"/>/<see cref="MoneyAccountDirectory.SourceProblem"/>) + ตัวกรองชนิด</summary>
+    private static string? AccountProblemMessage(AccountFacts? a, PostingAccountProblem problem, string fieldLabel, IReadOnlyCollection<AccountType>? allowedTypes)
+    {
+        if (problem == PostingAccountProblem.NotFound || a == null)
             return $"ช่อง “{fieldLabel}”: ไม่พบผังบัญชีที่เลือกในบริษัทนี้ (อาจถูกลบไปแล้ว หรือหน้าจอค้างข้อมูลเก่า) — รีเฟรชหน้าแล้วเลือกผังบัญชีใหม่";
-        if (!a.IsActive)
+        if (problem == PostingAccountProblem.Inactive)
             return $"ช่อง “{fieldLabel}”: ผังบัญชี {a.Code} {a.Name} ถูกปิดการใช้งาน — เลือกผังอื่น หรือเปิดใช้งานผังนี้ที่หน้า “ผังบัญชี”";
-        if (a.Level < 4)
-            return $"ช่อง “{fieldLabel}”: {a.Code} {a.Name} เป็นบัญชีคุม (หมวด) ลงรายการไม่ได้ — เลือกบัญชีย่อยระดับรายการในหมวดนี้แทน";
+        if (problem == PostingAccountProblem.Group)
+            return $"ช่อง “{fieldLabel}”: {a.Code} {a.Name} เป็นบัญชีคุม (มีบัญชีย่อย) ลงรายการไม่ได้ — เลือกบัญชีย่อยใต้บัญชีนี้แทน";
         if (allowedTypes is { Count: > 0 } && !allowedTypes.Contains(a.Type))
             return $"ช่อง “{fieldLabel}”: ผังบัญชี {a.Code} {a.Name} เป็นบัญชีประเภท{TypeLabel(a.Type)} — ช่องนี้ต้องเป็นบัญชีประเภท"
                    + string.Join("หรือ", allowedTypes.Select(TypeLabel)) + " เลือกผังบัญชีใหม่";
@@ -83,7 +98,7 @@ public static class PickedAccountGuard
         if (inner == null) return null;
         var why = gl == null ? "ผังที่ผูกไว้ถูกลบแล้ว"
             : !gl.IsActive ? $"ผัง {gl.Code} ที่ผูกไว้ถูกปิดการใช้งาน"
-            : gl.Level < 4 ? $"ผัง {gl.Code} ที่ผูกไว้เป็นบัญชีคุม"
+            : gl.IsGroup ? $"ผัง {gl.Code} ที่ผูกไว้เป็นบัญชีคุม"
             : $"ผัง {gl.Code} ที่ผูกไว้เป็นบัญชีประเภท{TypeLabel(gl.Type)}";
         return $"ช่อง “{fieldLabel}”: บัญชีธนาคาร {b.Label} ผูกกับผังบัญชีที่ลงรายการไม่ได้ ({why}) — แก้ “ผังบัญชีที่เชื่อมโยง” ที่หน้า “บัญชีธนาคาร” "
                + "หรือเลือกบัญชีอื่น";
@@ -97,13 +112,43 @@ public static class PickedAccountGuard
 
     public static bool IsSet(Guid? id) => id is Guid g && g != Guid.Empty;
 
+    /// <summary>
+    /// ฝ่ายค้านรอบ 2 P2(c) — คำขอรูปเดิมของใบเบิก/เงินทดรอง ที่ส่ง<b>ทั้ง</b> BankAccountId และ PaymentAccountId: ก่อนทีม F1 ผังตรงชนะ
+    /// (ลำดับเดียวกับ <see cref="DocumentMoneyChannel"/>.Pick) — F1 เปลี่ยนเป็นปฏิเสธ ⇒ ระบบเชื่อมต่อที่ส่งสองช่องล้มทันที ·
+    /// คืนลำดับเดิม (ผังตรงชนะ · ไม่ขยับยอดบัญชีธนาคาร) แทนการปฏิเสธ (เข้ากันได้ย้อนหลัง)
+    /// </summary>
+    public static (Guid? BankAccountId, Guid? MoneyAccountId) PreferDirectAccount(Guid? bankAccountId, Guid? moneyAccountId)
+        => IsSet(moneyAccountId) ? ((Guid?)null, moneyAccountId) : (IsSet(bankAccountId) ? bankAccountId : (Guid?)null, (Guid?)null);
+
+    /// <summary>ข้อความเลิกใช้ของรูปคำขอเดิมของสินเชื่อ (ผังบัญชีในช่อง bankAccountId)</summary>
+    public const string LegacyLoanBankFieldNotice =
+        "รับรหัสผังบัญชีในช่อง “bankAccountId” ไว้ให้ชั่วคราว (รูปคำขอเดิม — จะเลิกรับในรอบถัดไป) — ระบบเชื่อมต่อควรส่งรหัสผังเงินสด/ธนาคารในช่อง “moneyAccountId” "
+        + "หรือรหัสบัญชีธนาคาร (หน้า “บัญชีธนาคาร”) ในช่อง “bankAccountId”";
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ 2 P2(c) — สินเชื่อ: สัญญาเดิมของ <c>Loan.BankAccountId</c> รับ<b>รหัสผังบัญชี</b> · ทีม F1 เปลี่ยนเป็นรหัสบัญชีธนาคาร ⇒ ผู้เรียกเดิมล้ม ·
+    /// ช่วงเลิกใช้หนึ่งรอบ: รหัสในช่อง bankAccountId ที่ไม่ใช่บัญชีธนาคารแต่เป็นผังบัญชีของบริษัทนี้ (และไม่ได้ส่ง moneyAccountId) ⇒ ถือเป็นผังเงินตรง +
+    /// คืนข้อความเลิกใช้ · นอกนั้นคืนค่าเดิม (ตัวตรวจปกติตัดสิน)
+    /// </summary>
+    public static async Task<(Guid? BankAccountId, Guid? MoneyAccountId, string? Notice)> NormalizeLegacyLoanBankFieldAsync(
+        AccountingDbContext db, Guid companyId, Guid? bankAccountId, Guid? moneyAccountId, CancellationToken ct = default)
+    {
+        if (!IsSet(bankAccountId) || IsSet(moneyAccountId)) return (bankAccountId, moneyAccountId, (string?)null);
+        var id = bankAccountId!.Value;
+        if (await db.BankAccounts.AsNoTracking().AnyAsync(b => b.Id == id && b.CompanyId == companyId && !b.IsDeleted, ct))
+            return (bankAccountId, moneyAccountId, (string?)null);
+        var isGl = await db.ChartOfAccounts.AsNoTracking().AnyAsync(a => a.Id == id && a.CompanyId == companyId && !a.IsDeleted, ct);
+        return isGl ? ((Guid?)null, (Guid?)id, (string?)LegacyLoanBankFieldNotice) : (bankAccountId, moneyAccountId, (string?)null);
+    }
+
     // ─────────────────────────── ตัวอ่านฐาน ───────────────────────────
 
     /// <summary>อ่านข้อเท็จจริงของผังบัญชี (ของบริษัทนี้ · ไม่ถูกลบ) — null = ไม่พบ</summary>
     private static Task<AccountFacts?> LoadAccountAsync(AccountingDbContext db, Guid companyId, Guid accountId, CancellationToken ct = default)
         => db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.Id == accountId && a.CompanyId == companyId && !a.IsDeleted)
-            .Select(a => new AccountFacts(a.AccountCode, a.AccountName, a.IsActive, a.Level, a.AccountType))
+            .Select(a => new AccountFacts(a.AccountCode, a.AccountName, a.IsActive, a.Level, a.AccountType,
+                db.ChartOfAccounts.Any(c => c.CompanyId == companyId && !c.IsDeleted && c.ParentAccountId == a.Id)))
             .FirstOrDefaultAsync(ct);
 
     /// <summary>ผังบัญชีที่ผู้ใช้เลือกต้องลงรายการได้ — ไม่ได้ ⇒ <see cref="BusinessRuleException"/> ข้อความไทยพร้อมทางไปต่อ</summary>
@@ -117,20 +162,19 @@ public static class PickedAccountGuard
     }
 
     /// <summary>บัญชีธนาคาร (<c>BankAccounts.Id</c>) → ผังที่ผูก (<c>LinkedAccountId</c>) ที่ลงรายการได้ · แยก "ไม่พบ" / "ปิดใช้งาน" /
-    /// "ยังไม่ผูก" / "ผังที่ผูกใช้ไม่ได้" เป็นคนละข้อความ</summary>
+    /// "ยังไม่ผูก" / "ผังที่ผูกใช้ไม่ได้" เป็นคนละข้อความ
+    /// <para>ฝ่ายค้านรอบ 2 P1-1: ตัดสินที่ <see cref="MoneyAccountDirectory.TryResolveBankGlAsync"/> ตัวเดียว (ผังที่ธนาคารผูกยอมเป็นบัญชีคุมได้ ·
+    /// การเชื่อมเดิมของผู้ใช้) + ตัวกรองชนิด "ที่อยู่ของเงิน" ของที่นี่</para></summary>
     public static async Task<Guid> ResolveBankGlAsync(AccountingDbContext db, Guid companyId, Guid bankAccountId,
         string fieldLabel, CancellationToken ct = default)
     {
-        var bank = await db.BankAccounts.AsNoTracking()
-            .Where(b => b.Id == bankAccountId && b.CompanyId == companyId && !b.IsDeleted)
-            .Select(b => new BankFacts(b.BankName + " " + b.AccountNumber + " (" + b.AccountName + ")", b.IsActive, b.LinkedAccountId))
-            .FirstOrDefaultAsync(ct);
-        var problem = BankProblem(bank, fieldLabel);
-        if (problem != null) throw new BusinessRuleException(problem, RuleBankInvalid);
-        var glId = bank!.LinkedAccountId!.Value;
+        var r = await db.TryResolveBankGlAsync(companyId, bankAccountId, ct);
+        if (r.GlAccountId is not Guid glId)
+            throw new BusinessRuleException($"ช่อง “{fieldLabel}”: {r.Message}", RuleBankInvalid);
         var gl = await LoadAccountAsync(db, companyId, glId, ct);
-        var glProblem = LinkedGlProblem(bank, gl, fieldLabel);
-        if (glProblem != null) throw new BusinessRuleException(glProblem, RuleBankInvalid);
+        if (gl != null && !MoneyTypes.Contains(gl.Type))
+            throw new BusinessRuleException(LinkedGlProblem(new BankFacts(r.BankLabel ?? "ที่เลือก", true, glId), gl with { IsGroup = false }, fieldLabel)!,
+                RuleBankInvalid);
         return glId;
     }
 
@@ -145,8 +189,16 @@ public static class PickedAccountGuard
             return await ResolveBankGlAsync(db, companyId, bankAccountId!.Value, fieldLabel, ct);
         if (IsSet(moneyAccountId))
         {
-            await RequirePostingAccountAsync(db, companyId, moneyAccountId!.Value, fieldLabel, MoneyTypes, ct);
-            return moneyAccountId!.Value;
+            // ฝ่ายค้านรอบ 2 P1-1: ผังเงินตรงตัดสินด้วย MoneyAccountDirectory.SourceProblem (= PostingAccountRule + ผังที่ธนาคารผูกยอมเป็นบัญชีคุม)
+            // ตัวเดียวกับรายการช่องทางเงินที่หน้าเว็บเสนอ — ผังที่เสนอแล้วต้องเลือกได้
+            var id = moneyAccountId!.Value;
+            var ctx = await db.LoadMoneyContextAsync(companyId, ct);
+            var facts = await LoadAccountAsync(db, companyId, id, ct);
+            var problem = ctx.SourceProblem(facts == null ? null
+                : new PostingAccountFacts(id, facts.Code, facts.Name, facts.IsActive, facts.IsGroup));
+            var message = AccountProblemMessage(facts, problem, fieldLabel, MoneyTypes);
+            if (message != null) throw new BusinessRuleException(message, RuleAccountInvalid);
+            return id;
         }
         return null;
     }

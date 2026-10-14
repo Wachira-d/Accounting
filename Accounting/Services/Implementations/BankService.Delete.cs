@@ -22,8 +22,12 @@ public partial class BankService
         txn.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
-        await RefreshAccountBalance(txn.BankAccountId);
-        await _db.SaveChangesAsync();
+        // ฝ่ายค้านรอบ 1 P1: บรรทัดที่ไม่มียอดคงเหลือ (statement ไม่มีคอลัมน์ยอด) ไม่เคยกำหนดยอดการ์ด ⇒ ลบแล้วไม่แตะยอด
+        if (!txn.BalanceAfterUnknown)
+        {
+            await RefreshAccountBalance(companyId, txn.BankAccountId);
+            await _db.SaveChangesAsync();
+        }
 
         return 1;
     }
@@ -69,7 +73,8 @@ public partial class BankService
         var transactions = await query.ToListAsync();
         if (transactions.Count == 0) return 0;
 
-        var affectedAccountIds = transactions.Select(t => t.BankAccountId).Distinct().ToList();
+        // บัญชีที่ต้องคำนวณยอดใหม่ = บัญชีที่มีบรรทัด "มียอดคงเหลือจริง" ถูกลบ (บรรทัดที่ไม่รู้ยอดไม่เคยกำหนดยอดการ์ด · ฝ่ายค้านรอบ 1 P1)
+        var affectedAccountIds = transactions.Where(t => !t.BalanceAfterUnknown).Select(t => t.BankAccountId).Distinct().ToList();
 
         foreach (var t in transactions)
         {
@@ -81,27 +86,31 @@ public partial class BankService
         await _db.SaveChangesAsync();
 
         foreach (var accountId in affectedAccountIds)
-            await RefreshAccountBalance(accountId);
+            await RefreshAccountBalance(companyId, accountId);
 
         await _db.SaveChangesAsync();
         return transactions.Count;
     }
 
     /// <summary>
-    /// Recalculate BankAccount.CurrentBalance from the latest non-deleted transaction's BalanceAfter.
+    /// คำนวณยอดการ์ดบัญชีใหม่หลังลบบรรทัด — ตัวตัดสิน <see cref="Accounting.Helpers.BankBalanceAfterDelete.Resolve"/>:
+    /// บรรทัดล่าสุดที่<b>รู้ยอดจริง</b> → ยอดตามธนาคารที่นำเข้าไว้ (StatementBalance) → คงยอดเดิม
+    /// <para>ฝ่ายค้านรอบ 1 P1: เดิม <c>latest.BalanceAfter ?? 0</c> — statement ที่ไม่มีคอลัมน์ยอดเก็บ 0 ⇒ ลบบรรทัดเดียว (หรือย้อนการนำเข้าจากศูนย์นำเข้า)
+    /// แล้วการ์ดบัญชีกลายเป็น 0 · ลบหมดทุกบรรทัดก็กลายเป็น 0 ทั้งที่มียอดยกมา · query กรอง CompanyId (กฎ M)</para>
     /// </summary>
-    private async Task RefreshAccountBalance(Guid bankAccountId)
+    private async Task RefreshAccountBalance(Guid companyId, Guid bankAccountId)
     {
-        var account = await _db.Set<BankAccount>().FirstOrDefaultAsync(a => a.Id == bankAccountId);
+        var account = await _db.Set<BankAccount>().FirstOrDefaultAsync(a => a.Id == bankAccountId && a.CompanyId == companyId);
         if (account == null) return;
 
-        var latest = await _db.Set<BankTransaction>()
-            .Where(t => t.BankAccountId == bankAccountId)
+        var latestKnown = await _db.Set<BankTransaction>()
+            .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId && !t.BalanceAfterUnknown)
             .OrderByDescending(t => t.TransactionDate)
             .ThenByDescending(t => t.CreatedAt)
+            .Select(t => (decimal?)t.BalanceAfter)
             .FirstOrDefaultAsync();
 
-        account.CurrentBalance = latest?.BalanceAfter ?? 0m;
+        account.CurrentBalance = Accounting.Helpers.BankBalanceAfterDelete.Resolve(latestKnown, account.StatementBalance, account.CurrentBalance);
         account.UpdatedAt = DateTime.UtcNow;
     }
 

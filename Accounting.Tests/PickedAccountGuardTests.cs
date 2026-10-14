@@ -12,8 +12,8 @@ namespace Accounting.Tests;
 /// </summary>
 public class PickedAccountGuardTests
 {
-    private static PickedAccountGuard.AccountFacts Acc(bool active = true, int level = 4, AccountType type = AccountType.Asset)
-        => new("11112", "เงินสดย่อย", active, level, type);
+    private static PickedAccountGuard.AccountFacts Acc(bool active = true, int level = 4, AccountType type = AccountType.Asset, bool isGroup = false)
+        => new("11112", "เงินสดย่อย", active, level, type, isGroup);
 
     [Fact]
     public void ผังของบริษัทที่เปิดใช้ระดับรายการ_ผ่าน()
@@ -41,10 +41,19 @@ public class PickedAccountGuardTests
     }
 
     [Fact]
-    public void บัญชีคุมระดับหมวด_ลงรายการไม่ได้()
+    public void บัญชีคุม_มีบัญชีย่อย_ลงรายการไม่ได้()
     {
-        var m = PickedAccountGuard.AccountProblem(Acc(level: 3), "ผังบัญชีเงินกู้");
+        var m = PickedAccountGuard.AccountProblem(Acc(isGroup: true), "ผังบัญชีเงินกู้");
         Assert.Contains("บัญชีคุม", m);
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 2 P1-1 (ทิศตรงข้าม): ผังที่บริษัทตั้งเอง — เงินสด 1010 ระดับ 2 ที่ไม่มีบัญชีย่อย ลงรายการได้ (ตัวตัดสินเดียวกับ
+    /// PostingAccountRule/รายการช่องทางเงิน) · 11122 ระดับ 4 ที่มีบัญชีย่อยธนาคาร = บัญชีคุม (เดิมผ่านที่นี่แต่ถูกบล็อกที่อื่น)</summary>
+    [Fact]
+    public void ระดับไม่ใช่ตัวตัดสิน_ใช้การมีบัญชีย่อยตามPostingAccountRule()
+    {
+        Assert.Null(PickedAccountGuard.AccountProblem(Acc(level: 2), "ผังบัญชีของกองทุน"));
+        Assert.Contains("บัญชีคุม", PickedAccountGuard.AccountProblem(Acc(level: 4, isGroup: true), "ผังบัญชีของกองทุน"));
     }
 
     [Fact]

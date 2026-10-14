@@ -39,8 +39,11 @@ public class LoanService : ILoanService
         // ช่องทางเงิน: BankAccounts.Id → ผังที่ผูก หรือผังเงินสดตรง (เดิม Loan.BankAccountId รับผังบัญชีในช่องชื่อ "บัญชีธนาคาร")
         var loanAccountId = await RequireOptionalAccountAsync(companyId, request.LoanAccountId, LoanAccountField, AccountType.Liability);
         var interestAccountId = await RequireOptionalAccountAsync(companyId, request.InterestExpenseAccountId, InterestAccountField, AccountType.Expense);
+        // ฝ่ายค้านรอบ 2 P2(c): รูปคำขอเดิม (ผังบัญชีในช่อง bankAccountId) รับต่ออีกหนึ่งรอบ + ข้อความเลิกใช้
+        var (reqBank, reqMoney, legacyNotice) = await PickedAccountGuard.NormalizeLegacyLoanBankFieldAsync(_db, companyId,
+            request.BankAccountId, request.MoneyAccountId);
         var moneyAccountId = await PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
-            request.BankAccountId, request.MoneyAccountId, MoneyAccountField);
+            reqBank, reqMoney, MoneyAccountField);
         var disbursement = LoanPostingPlan.ForDisbursement(request.PostDisbursementEntry,
             loanAccountId.HasValue, moneyAccountId.HasValue);
         if (disbursement.Error != null) throw new BusinessRuleException(disbursement.Error, disbursement.RuleCode);
@@ -140,7 +143,7 @@ public class LoanService : ILoanService
 
         await _db.SaveChangesAsync();
 
-        return MapToResponse(loan);
+        return MapToResponse(loan) with { Notice = legacyNotice };
     }
 
     /// <summary>ผังบัญชีที่ส่งมา (ถ้ามี) ต้องลงรายการได้และชนิดตรงช่อง — คืนรหัสที่ผ่านแล้ว · ไม่ส่ง/Guid.Empty = null</summary>
@@ -237,9 +240,12 @@ public class LoanService : ILoanService
                 InterestAccountField, new[] { AccountType.Expense });
             loan.InterestExpenseAccountId = request.InterestExpenseAccountId;
         }
+        var (updBank, updMoney, updLegacy) = await PickedAccountGuard.NormalizeLegacyLoanBankFieldAsync(_db, companyId,
+            request.BankAccountId, request.MoneyAccountId);
         var newMoney = await PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
-            request.BankAccountId, request.MoneyAccountId, MoneyAccountField);
+            updBank, updMoney, MoneyAccountField);
         if (newMoney.HasValue) loan.MoneyAccountId = newMoney;
+        if (updLegacy != null) notice = notice == null ? updLegacy : notice + " · " + updLegacy;
 
         if (request.InterestRate.HasValue)
         {
@@ -455,14 +461,13 @@ public class LoanService : ILoanService
         // จ่ายจากบัญชีไหน: ที่ส่งมากับการชำระ > ผังเงินของสินเชื่อ > ปฏิเสธพร้อมบอกให้เลือก ·
         // เดิมไม่สนผังของสินเชื่อเลย แล้วจ่ายจาก 11122 / 111x ตัวแรกเสมอ (PAYMENT_CHANNEL_AUDIT ส่วนที่ 2 ข้อ 2)
         const string payFromField = "จ่ายจากบัญชี";
+        var (payBank, payMoney, _) = await PickedAccountGuard.NormalizeLegacyLoanBankFieldAsync(_db, companyId,
+            request.BankAccountId, request.MoneyAccountId);
         var cashAccountId = await PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
-            request.BankAccountId, request.MoneyAccountId, payFromField);
+            payBank, payMoney, payFromField);
+        // ผังเงินของสินเชื่อ (อาจมาจากบัญชีธนาคาร → ผังที่ผูก) — ตัวตัดสินเดียวกับตอนเลือก (ฝ่ายค้านรอบ 2 P1-1: ไม่ใช่กติกาที่เข้มกว่าตอนเลือก)
         if (!cashAccountId.HasValue && loan.MoneyAccountId.HasValue)
-        {
-            await PickedAccountGuard.RequirePostingAccountAsync(_db, companyId, loan.MoneyAccountId.Value,
-                MoneyAccountField, PickedAccountGuard.MoneyTypes);
-            cashAccountId = loan.MoneyAccountId;
-        }
+            cashAccountId = await PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId, null, loan.MoneyAccountId, MoneyAccountField);
         if (!cashAccountId.HasValue)
             throw new BusinessRuleException(LoanPostingPlan.NoMoneyAccountMessage, LoanPostingPlan.RuleNoMoneyAccount);
 

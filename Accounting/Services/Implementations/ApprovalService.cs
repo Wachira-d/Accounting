@@ -391,11 +391,17 @@ public class ApprovalService : IApprovalService
             && a.Status == ApprovalStatus.Pending && a.StepOrder >= request.CurrentStep);
         var members = await Accounting.Helpers.CompanyMembership.ActiveMemberIdsAsync(_db, companyId,
             new[] { req.NewApproverUserId, action?.ApproverUserId ?? Guid.Empty });
+        // ฝ่ายค้านรอบ 2 P2(f): ขั้นสุดท้ายของเอกสาร — ผู้อนุมัติเดิมที่ไม่มีสิทธิ์อนุมัติเอกสารโอนได้ (ทางไปต่อของคำขอที่ส่งไปแล้ว) · คนใหม่ต้องมีสิทธิ์
+        var isFinalStep = action != null && request.Actions.Count > 0 && action.StepOrder >= request.Actions.Max(a => a.StepOrder);
+        var currentLacks = isFinalStep && !await MayApproveRequestDocumentAsync(companyId, action!.ApproverUserId, request);
+        var newLacks = isFinalStep && !await MayApproveRequestDocumentAsync(companyId, req.NewApproverUserId, request);
         var problem = Accounting.Helpers.ApprovalApproverCheck.ReassignProblem(
             request.OverallStatus == ApprovalStatus.Pending, action != null,
             action != null && members.Contains(action.ApproverUserId),
             req.NewApproverUserId, members.Contains(req.NewApproverUserId), request.RequestedByUserId,
-            request.Actions.Any(a => a.Status == ApprovalStatus.Approved && a.ApproverUserId == req.NewApproverUserId));
+            // คนใหม่เป็นผู้อนุมัติของขั้นอื่นของคำขอนี้ (อนุมัติแล้วหรือยังรอ) = คนเดียวผ่านสองขั้น
+            request.Actions.Any(a => a.ApproverUserId == req.NewApproverUserId && (action == null || a.Id != action.Id)),
+            currentApproverLacksFinalPermission: currentLacks, newApproverLacksFinalPermission: newLacks);
         if (problem != null)
             throw new Accounting.Helpers.BusinessRuleException(problem, Accounting.Helpers.ApprovalApproverCheck.ReassignRuleCode, 409);
 
@@ -579,9 +585,21 @@ public class ApprovalService : IApprovalService
             ?? throw new KeyNotFoundException("ไม่พบเอกสารของคำขอนี้ (อาจถูกลบแล้ว) — ให้ผู้ขอส่งขออนุมัติใหม่");
         if (!await Accounting.Helpers.DocumentPermissionHelper.CanApproveAsync(perms, companyId, userId, docType))
             throw new Accounting.Helpers.BusinessRuleException(
-                $"คุณเป็นผู้อนุมัติขั้นสุดท้าย แต่ยังไม่มีสิทธิ์อนุมัติ{Accounting.Helpers.DocumentTypeNames.Title(docType, "th")} — "
-                + "ขอให้ผู้ดูแลเพิ่มสิทธิ์ “อนุมัติเอกสาร” ให้บทบาทของคุณที่หน้าตั้งค่าบทบาทและสิทธิ์ หรือแก้กฎการอนุมัติให้ขั้นสุดท้ายเป็นผู้ที่มีสิทธิ์",
+                Accounting.Helpers.ApprovalApproverCheck.FinalStepNoPermissionMessage(Accounting.Helpers.DocumentTypeNames.Title(docType, "th")),
                 "PERM-DOC-APPROVE", 403);
+    }
+
+    /// <summary>ผู้ใช้คนนี้อนุมัติขั้นสุดท้ายของเอกสารของคำขอนี้ได้ไหม (ตัวตัดสินเดียวกับด่าน <see cref="EnsureMayApproveDocumentAsync"/>) ·
+    /// คำขอที่ไม่ใช่เอกสาร/หาเอกสารไม่เจอ/ไม่มีบริการสิทธิ์ ⇒ true (ไม่ใช่ด่านนี้)</summary>
+    private async Task<bool> MayApproveRequestDocumentAsync(Guid companyId, Guid userId, ApprovalRequest request)
+    {
+        if (request.EntityType != "Document" || userId == Guid.Empty) return true;
+        if (_services.GetService(typeof(IPermissionService)) is not IPermissionService perms) return true;
+        var docType = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == request.EntityId && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => (DocumentType?)d.DocumentType)
+            .FirstOrDefaultAsync();
+        return docType is not { } t || await Accounting.Helpers.DocumentPermissionHelper.CanApproveAsync(perms, companyId, userId, t);
     }
 
     /// <summary>Dispatch to the entity-specific approval gateway when an

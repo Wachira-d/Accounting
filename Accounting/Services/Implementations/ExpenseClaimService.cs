@@ -495,10 +495,10 @@ public class ExpenseClaimService : IExpenseClaimService
             throw new InvalidOperationException("สามารถจ่ายเงินได้เฉพาะใบเบิกที่ Approved");
 
         // จ่ายจากบัญชีไหน (ทีม F1 · 2026-10-14) — ตรวจก่อนสร้างใบสำคัญจ่าย: บริษัท · เปิดใช้ · ผูกผัง (ไม่ให้ใบลงเงินสดเงียบ ๆ)
+        // ฝ่ายค้านรอบ 2 P2(c): ส่งทั้งสองช่อง ⇒ ผังตรงชนะ (ลำดับเดิมก่อนทีม F1 · เข้ากันได้ย้อนหลัง) — ไม่ปฏิเสธ
+        var (payBank, payAccount) = Accounting.Helpers.PickedAccountGuard.PreferDirectAccount(request.BankAccountId, request.PaymentAccountId);
         await Accounting.Helpers.PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
-            request.BankAccountId, request.PaymentAccountId, "จ่ายจากบัญชี");
-        Guid? payBank = Accounting.Helpers.PickedAccountGuard.IsSet(request.BankAccountId) ? request.BankAccountId : null;
-        Guid? payAccount = Accounting.Helpers.PickedAccountGuard.IsSet(request.PaymentAccountId) ? request.PaymentAccountId : null;
+            payBank, payAccount, "จ่ายจากบัญชี");
         var paidMethod = request.PaymentMethod ?? (payBank.HasValue ? PaymentMethod.BankTransfer : PaymentMethod.Cash);
 
         // Preferred path: generate a standard PaymentVoucher Document via

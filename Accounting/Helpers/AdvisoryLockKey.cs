@@ -183,4 +183,9 @@ public static class AdvisoryLockKey
     /// <summary>resync เอกสารจากระบบภายนอก — part = id เอกสาร (ฝ่ายค้าน GWO-4 รอบ 201 ทีม GW): dry-run → กลับ JE เดิม → ลง JE ใหม่ ต้องเป็นธุรกรรมเดียวและ
     /// คำขอ resync ซ้อนของเอกสารเดียวกันต้องรอกัน (ไม่งั้นสองคำขอเห็น JE เดิมชุดเดียวกัน ⇒ กลับซ้ำ/ลงซ้ำ)</summary>
     public const string IntegrationResync = "int-resync";
+
+    /// <summary>ส่งรายงานตามกำหนดเวลา <b>หนึ่งรายการ</b> — part = id รายงาน · ผูก companyId (ฝ่ายค้านรอบ 2 P1-2): ปุ่ม "ส่งทันที" เคยถือล็อกรวมของ
+    /// ตัวส่งตามรอบ (<see cref="BackgroundJob"/>) ระหว่างสร้าง/ส่ง ⇒ รอบรายชั่วโมงได้ล็อกไม่ได้แล้วข้ามรายงาน<b>ของทุกบริษัท</b>ในชั่วโมงนั้น
+    /// (IsDue ต้องตรงชั่วโมง = หายทั้งงวด) · ล็อกรวมเหลือไว้กันสองเครื่องเดินรอบพร้อมกันเท่านั้น</summary>
+    public const string ScheduledReportSend = "sched-report";
 }

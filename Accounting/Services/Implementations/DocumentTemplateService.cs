@@ -95,8 +95,11 @@ public class DocumentTemplateService : IDocumentTemplateService
             template.IsDefault = true;
         }
 
+        var previousDefaultPaymentAccountId = template.DefaultPaymentAccountId;
         ApplyUpdateToTemplate(template, request);
-        if (request.DefaultPaymentAccountId.HasValue)
+        // ฝ่ายค้านรอบ 1 P2 (4c): ตรวจเฉพาะเมื่อ "เปลี่ยน" — หน้าเว็บส่งค่าเดิมกลับมาทุกครั้งที่บันทึก ⇒ ผังที่ถูกปิดใช้ทีหลังเคยทำให้แก้ช่องอื่น
+        // ของเทมเพลต (โลโก้/สี/หมายเหตุ) ไม่ได้เลย · ค่าเดิมที่ใช้ไม่ได้แล้ว: ฟอร์มเอกสารไม่เติมให้อยู่แล้ว (ChannelValueForGlAsync คืน null)
+        if (request.DefaultPaymentAccountId.HasValue && template.DefaultPaymentAccountId != previousDefaultPaymentAccountId)
             template.DefaultPaymentAccountId = await ValidateDefaultPaymentAccountAsync(companyId, template.DefaultPaymentAccountId);
 
         await _db.SaveChangesAsync();

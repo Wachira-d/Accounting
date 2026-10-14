@@ -204,9 +204,11 @@ public class PaymentSettingsController : ControllerBase
         if (req.IsActive.HasValue) cfg.IsActive = req.IsActive.Value;
         // 2026-10-14 (ID#13): ผังพักเงิน/ค่าธรรมเนียมต้องเป็นของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม (ตัวตัดสินเดียว PostingAccountGuard) —
         // เดิมเก็บดิบ ๆ แล้ว GatewayAccountResolver ใช้ลงสมุดตรง ๆ (ผังบริษัทอื่นผ่าน API ได้) · Guid.Empty = ล้าง (ไม่ตรวจ)
+        // ฝ่ายค้านรอบ 2 P2(e): ตรวจเฉพาะช่องที่ "เปลี่ยน" (หน้าเว็บส่งค่าเดิมกลับทุกครั้ง — ผังที่ปิดใช้ทีหลังเคยทำให้แก้คีย์/ช่องทางไม่ได้)
         await Accounting.Services.Implementations.PostingAccountGuard.EnsurePostingAccountsAsync(_db, companyId, new (Guid?, string)[]
         {
-            (req.ClearingAccountId, "บัญชีพักเงินผู้ให้บริการรับชำระเงิน"), (req.FeeExpenseAccountId, "บัญชีค่าธรรมเนียมรับชำระเงิน"),
+            (req.ClearingAccountId != cfg.ClearingAccountId ? req.ClearingAccountId : null, "บัญชีพักเงินผู้ให้บริการรับชำระเงิน"),
+            (req.FeeExpenseAccountId != cfg.FeeExpenseAccountId ? req.FeeExpenseAccountId : null, "บัญชีค่าธรรมเนียมรับชำระเงิน"),
         }, ct);
         if (req.ClearingAccountId.HasValue)
             cfg.ClearingAccountId = req.ClearingAccountId == Guid.Empty ? null : req.ClearingAccountId;

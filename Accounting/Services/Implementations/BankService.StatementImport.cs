@@ -121,6 +121,7 @@ public partial class BankService
         var results = new BankStatementLineResult?[lines.Count];
         var conflicts = new List<ImportConflict>();
         var added = new List<BankTransaction>();
+        var overwritten = new List<BankTransaction>();   // แถวเดิมที่โหมด Overwrite แก้ — ล้มแล้วต้องคืนค่าใน tracker (ฝ่ายค้านรอบ 1 P2)
         int imported = 0, skipped = 0, insertedDespiteConflict = 0;
         var usedExisting = new HashSet<Guid>();
         var seenExternal = new HashSet<string>(StringComparer.Ordinal);
@@ -193,9 +194,14 @@ public partial class BankService
                                     .FirstAsync(t => t.Id == duplicate.Id && t.CompanyId == companyId, ct);
                                 existingEntity.Description = p.Description;
                                 existingEntity.Reference = p.StoredReference;
-                                existingEntity.BalanceAfter = r.Balance ?? existingEntity.BalanceAfter;
+                                if (r.Balance is decimal newBal)
+                                {
+                                    existingEntity.BalanceAfter = newBal;
+                                    existingEntity.BalanceAfterUnknown = false;
+                                }
                                 if (!string.IsNullOrWhiteSpace(r.Payee)) existingEntity.Payee = r.Payee;
                                 existingEntity.UpdatedAt = DateTime.UtcNow;
+                                overwritten.Add(existingEntity);
                                 imported++;
                                 results[p.Index] = new(p.Index, BankStatementLineOutcome.Updated, duplicate.Id, duplicate.Id, null);
                                 continue;
@@ -207,6 +213,8 @@ public partial class BankService
                     }
                 }
 
+                // ฝ่ายค้านรอบ 1 P1: ยอดคงเหลือที่ไฟล์ไม่ให้ (และถอยจากยอดปิดไม่ได้) = "ไม่รู้" — ไม่ใช่ 0 (เดิมลบบรรทัดแล้วการ์ดบัญชีกลายเป็น 0)
+                decimal? knownBalance = r.Balance ?? (derivedBalance.TryGetValue(p.Index, out var derived) ? derived : (decimal?)null);
                 var entity = new BankTransaction
                 {
                     CompanyId = companyId,
@@ -214,7 +222,8 @@ public partial class BankService
                     TransactionDate = r.Date,
                     TransactionType = txnType,
                     Amount = p.Amount,
-                    BalanceAfter = r.Balance ?? (derivedBalance.TryGetValue(p.Index, out var derived) ? derived : 0m),
+                    BalanceAfter = knownBalance ?? 0m,
+                    BalanceAfterUnknown = knownBalance is null,
                     Description = p.Description,
                     Reference = p.StoredReference,
                     Payee = string.IsNullOrWhiteSpace(r.Payee) ? null : r.Payee.Trim(),
@@ -245,12 +254,28 @@ public partial class BankService
 
             await _db.SaveChangesAsync(ct);
 
-            // ไฟล์ต้นทาง = หลักฐานประกอบรายการ (พ.ร.บ.การบัญชี ม.10 · 5 ปี) — ในธุรกรรมเดียวกับแถว: ล้ม = ย้อนทั้งชุด (ล้มดัง)
+            // ไฟล์ต้นทาง = หลักฐานประกอบรายการ (พ.ร.บ.การบัญชี ม.10 · 5 ปี) · ฝ่ายค้านรอบ 1 P2: เขียนไฟล์<b>หลัง commit</b> เมื่อธุรกรรมเป็นของเรา —
+            // เดิมเขียนก่อน commit ⇒ ย้อนธุรกรรมแล้วไฟล์จริงค้างในที่เก็บโดยไม่มีแถวอ้าง (orphan) · ธุรกรรมของผู้เรียก ⇒ อยู่ในธุรกรรมนั้น (ผู้เรียกคุมความเป็นชุด)
             Guid? attachmentId = null;
-            if (options.SourceFile is { } file && imported > 0)
-                attachmentId = await KeepStatementSourceFileAsync(companyId, bankAccountId, file, options.UploadedByUserId, warnings);
+            if (!ownTx && options.SourceFile is { } callerFile && imported > 0)
+                attachmentId = await KeepStatementSourceFileAsync(companyId, bankAccountId, callerFile, options.UploadedByUserId, warnings);
 
             if (dbTransaction != null) await dbTransaction.CommitAsync(ct);
+
+            if (ownTx && options.SourceFile is { } file && imported > 0)
+            {
+                try
+                {
+                    attachmentId = await KeepStatementSourceFileAsync(companyId, bankAccountId, file, options.UploadedByUserId, warnings);
+                }
+                catch (Exception fex) when (fex is not OperationCanceledException)
+                {
+                    // รายการธนาคารบันทึกแล้ว (commit แล้ว) — เก็บไฟล์ไม่ได้ = คำเตือนถึงผู้ใช้ + log (ล้มดังที่คำตอบ ไม่ย้อนรายการที่ถูกต้อง)
+                    _logger?.LogError(fex, "Bank statement import: keeping source file failed for account {Account}", bankAccountId);
+                    DetachAddedAttachments();
+                    warnings.Add("⚠ นำเข้ารายการแล้ว แต่เก็บไฟล์ statement ต้นทางไม่สำเร็จ — แนบไฟล์เองที่หน้าบัญชีธนาคาร (หลักฐานตาม พ.ร.บ.การบัญชี ม.10)");
+                }
+            }
 
             _logger?.LogInformation("Bank statement import: {Imported} imported, {Skipped} duplicates skipped, {Conflicts} conflicts",
                 imported, skipped, conflicts.Count);
@@ -274,12 +299,36 @@ public partial class BankService
         catch
         {
             if (dbTransaction != null) await dbTransaction.RollbackAsync(CancellationToken.None);
+            // ฝ่ายค้านรอบ 1 P2: ถอดของที่เมธอดนี้ทิ้งไว้ใน tracker (แถวใหม่ · แถวเดิมที่ Overwrite แก้ · ยอดการ์ดบัญชี · ไฟล์แนบที่ยังไม่บันทึก) —
+            // เดิมค้างอยู่แล้ว SaveChanges ครั้งถัดไปใน scope เดียวกัน (เช่นกลุ่มถัดไปของ BankStatementImportTarget) บันทึกแถวที่ "ล้มแล้ว" ให้
+            UndoTracked(added, overwritten, account);
             throw;
         }
         finally
         {
             if (dbTransaction != null) await dbTransaction.DisposeAsync();
         }
+    }
+
+    /// <summary>คืน tracker หลังการเขียนล้ม — แถวที่เพิ่ม = ถอด · แถว/บัญชีที่แก้ = คืนค่าเดิม (ไม่ query ซ้ำ — ธุรกรรมของผู้เรียกอาจอยู่ในสถานะล้มแล้ว)</summary>
+    private void UndoTracked(List<BankTransaction> added, List<BankTransaction> overwritten, BankAccount account)
+    {
+        foreach (var e in added) _db.Entry(e).State = EntityState.Detached;
+        foreach (var e in overwritten.Cast<object>().Append(account))
+        {
+            var entry = _db.Entry(e);
+            if (entry.State != EntityState.Modified) continue;
+            entry.CurrentValues.SetValues(entry.OriginalValues);
+            entry.State = EntityState.Unchanged;
+        }
+        DetachAddedAttachments();
+    }
+
+    /// <summary>ไฟล์แนบที่ถูก Add แต่บันทึกไม่ผ่าน — ถอดออกจาก tracker (ไม่งั้น SaveChanges ถัดไปบันทึกแถวที่อ้างไฟล์ซึ่งไม่ได้เก็บ)</summary>
+    private void DetachAddedAttachments()
+    {
+        foreach (var a in _db.ChangeTracker.Entries<FileAttachment>().Where(x => x.State == EntityState.Added).ToList())
+            a.State = EntityState.Detached;
     }
 
     /// <summary>ยอดตามธนาคารบนการ์ดบัญชี — จากบรรทัดล่าสุดที่มียอดจริง หรือยอดปิดของไฟล์ (OFX) · ไม่มียอด ⇒ คงเดิม + คำเตือน ·

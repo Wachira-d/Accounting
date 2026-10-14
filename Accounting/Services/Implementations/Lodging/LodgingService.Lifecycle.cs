@@ -489,6 +489,10 @@ public partial class LodgingService
         if (!fromOnlinePayment && r.PaymentProblemIntentId is Guid problemIntentId)
             (moneyInAccountId, request) = await ProblemIntentMoneyInAsync(companyId, r, problemIntentId, moneyInAccountId, request);
         var amount = request.DepositAmount ?? Math.Max(0, r.DepositRequired - r.DepositPaid);
+        // ฝ่ายค้านรอบ 2 P2(g): โอน/พร้อมเพย์ต้องระบุบัญชีธนาคารที่รับ — เซิร์ฟเวอร์บังคับเอง (เดิมหน้าเว็บอย่างเดียว) · เงินออนไลน์/บัญชีที่เซิร์ฟเวอร์ตัดสินแล้วไม่ต้อง
+        if (!fromOnlinePayment && moneyInAccountId is null
+            && LodgingPaymentBank.Problem(request.PaymentMethod, amount, request.BankAccountId) is { } confirmBankProblem)
+            throw new BusinessRuleException(confirmBankProblem, LodgingPaymentBank.RuleCode);
         if (amount < 0) throw new BusinessRuleException("ยอดมัดจำต้องไม่ติดลบ");
         var outstanding = r.TotalAmount + r.FolioTotal - r.PaidAmount;
         if (amount > outstanding + 0.005m) throw new BusinessRuleException($"ยอดรับเกินยอดคงค้าง ({outstanding:N2})");
@@ -1187,6 +1191,13 @@ public partial class LodgingService
             var full = DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m);
             var depositPlan = LodgingDepositSettlement.PlanCheckout(deposits, full.Net,
                 deducted => DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m, deducted).Total);
+            // ฝ่ายค้านรอบ 2 P2(g): เก็บยอดคงเหลือตอนนี้ด้วยโอน/พร้อมเพย์ ⇒ ต้องระบุบัญชีธนาคาร (ตรวจก่อนออกเลขใบ · §86/4 gap-free)
+            if (request.CollectBalanceNow)
+            {
+                var balanceNow = DocumentService.PreviewTotals(lines, prop.PricesIncludeVat, 0m, depositPlan.BaseDeducted).Total - depositPlan.GrossApplied;
+                if (LodgingPaymentBank.Problem(request.PaymentMethod, balanceNow, request.BankAccountId) is { } checkoutBankProblem)
+                    throw new BusinessRuleException(checkoutBankProblem, LodgingPaymentBank.RuleCode);
+            }
 
             var create = new CreateDocumentRequest(
                 DocumentType: docType, DocumentDate: DateTime.UtcNow, DueDate: request.CollectBalanceNow ? null : DateTime.UtcNow.AddDays(30),
@@ -1269,7 +1280,7 @@ public partial class LodgingService
 
     /// <summary>ใบร่างของใบสุดท้าย — ใช้ใบร่างที่ค้างของการจองนี้ (idempotent) หรือสร้างใหม่ · ตัวเดียวของเส้นเช็คเอาต์และเส้นออกใบใหม่ (A-IN5)</summary>
     private async Task<Guid> UpsertFinalDraftAsync(Guid companyId, LodgingReservation r, CreateDocumentRequest create,
-        DocumentType docType, string userId)
+        DocumentType docType, string userId, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null)
     {
         // รอบ 194 R3 (P-1) — กดซ้ำหลังอนุมัติล้ม (ยังไม่ประทับ FinalDocumentId) ⇒ ใช้ใบร่างเดิม (idempotent) โดยเขียนเนื้อหาของรอบนี้ทับ
         // (ยอด/แผนมัดจำของรอบนี้คือความจริงล่าสุด) · เดิมสร้างใบร่างใหม่ทุกครั้ง ใบเก่าค้างเป็นขยะที่อนุมัติผิดใบได้
@@ -1300,7 +1311,8 @@ public partial class LodgingService
         }
         else
         {
-            var created = await _docService.CreateDocumentAsync(companyId, create, userId, LodgingOrigin);
+            var created = await _docService.CreateDocumentAsync(companyId, create, userId, LodgingOrigin,
+                carriedMoneyHeader: carriedMoneyHeader);
             return created.Id;
         }
     }
@@ -1399,7 +1411,9 @@ public partial class LodgingService
             BranchId: prop.BranchId,
             BookingNumber: r.ReservationNumber,
             ServiceUsedDate: r.CheckOutDate);
-        var draftId = await UpsertFinalDraftAsync(companyId, r, create, docType, userId);
+        // ฝ่ายค้านรอบ 1 P1: บัญชีรับเงินยกจากใบเดิมที่ยกเลิกแล้ว (แก้ไม่ได้) — บัญชีธนาคารที่ปิดใช้ทีหลังไม่ทำให้ออกใบแทนไม่ได้
+        var draftId = await UpsertFinalDraftAsync(companyId, r, create, docType, userId,
+            new Accounting.Helpers.CarriedMoneyHeader(old.BankAccountId, null, null));
         // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
         var approved = await _docService.ApproveDocumentAsync(companyId, draftId, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
         r.FinalDocumentId = approved.Id;

@@ -4873,3 +4873,13 @@ CompanyId ก่อน (บริษัทอื่น = 404 ไม่แตะ 
 แท็บไฟล์ระบบอื่น → hub + ผลตรวจกติกาแสดงเมื่อ AI ปิด (เดิมทิ้งทั้งก้อน) · `ImportConflictController` มีด่าน + ถอด 3 แถวจาก baseline + เข้า WATCHED ·
 checker ใหม่ `tools/formdata_json_endpoint_check.py` · เทสต์ `Db/ImportHubControllerGateDbTests` (403 ทุก endpoint · 404 ข้ามบริษัท · ทิศตรงข้าม) —
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a4df3bdd_
+_2026-10-14 — ฝ่ายค้านรอบ 1–2 (PAYMENT_CHANNEL_AUDIT ส่วนที่ 3 · ทีมแก้ fix-adv1): **P1** แหล่งเงินที่ยกจากใบแม่ (แปลง/คัดลอก/ออกใบเช็คเอาต์แทน/รายการประจำ)
+ตรวจแค่ tenant ผ่าน `CreateDocumentAsync(carriedMoneyHeader:)` + `DocumentMoneyChannel.IsCarried/CarriedProblemAsync` (เดิมธนาคารที่ปิดใช้ทีหลัง = แปลงไม่ได้ · ธนาคารยังไม่ผูกผังบล็อกใบตั้งหนี้) ·
+statement ไม่มียอดคงเหลือ: `BankTransaction.BalanceAfterUnknown` + `Helpers/BankBalanceAfterDelete` (ลบบรรทัดแล้วการ์ดไม่เป็น 0) · **P2** รายการประจำ: เหตุผลล้มของ cron บันทึกใต้ล็อก ·
+ขั้นหลังสร้างเอกสารล้ม = notice (`RecurringRunFailure.AfterCreateNotice` — กันใบซ้ำ) · เทมเพลตตรวจแหล่งเงินด้วย `DocumentMoneyChannel` ตอนบันทึก + บัญชีคุม · ระบบเชื่อมต่อขายเงินสดตรวจ
+บัญชีรับเงินก่อนออกเลข + ถอยไปตั้งหนี้ล้มดัง · OCR เติมเฉพาะผังที่ลงรายการได้ · เทมเพลตเอกสารตรวจบัญชีตั้งต้นเมื่อเปลี่ยน · reclassify ใช้ยอดขาเงินตาม JE (`PickReclassifySource`) ·
+ตัวเขียน statement ล้มแล้วคืน tracker + ไฟล์ต้นทางหลัง commit · **รอบ 2** `PickedAccountGuard` ใช้ `PostingAccountRule` + `MoneyAccountDirectory` (เจ้าของเดียว) · รายงานตั้งเวลาล็อกต่อรายงาน
+(`AdvisoryLockKey.ScheduledReportSend`) · เงินเดือนไม่ตกเงินสดเงียบ (`requireExplicitChoice`) · WHT ตอนปิดยอดด้วยมัดจำตัดลูกหนี้ตาม JE ของใบ + ล้มดัง `[WHT-SETTLE]` · สินเชื่อรับรหัสผังในช่องเดิม
+หนึ่งรอบ + ใบเบิก/เงินทดรองผังตรงชนะ · บัญชีคุมในสมุดรายวันประจำ/ระบบเชื่อมต่อ/สร้าง JE จากรายการธนาคาร + ทางอัตโนมัติตรวจ tenant ข้าม soft-delete · ตรวจเฉพาะค่าที่เปลี่ยน (สินทรัพย์ ·
+ตั้งค่ารับชำระ · สรุปรายวัน) · โอนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์ · ที่พักโอน/พร้อมเพย์ต้องมีบัญชีธนาคาร (`Helpers/LodgingPaymentBank`) · เปิดกองทุนเงินสดย่อยต้องมีสิทธิ์จัดการใบสำคัญ ·
+FK "ยังถูกอ้างอิงโดย<ตารางที่อ้าง>" — เทสต์ `AdversarialRound1DbTests` · `AdversarialRound1Tests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง_

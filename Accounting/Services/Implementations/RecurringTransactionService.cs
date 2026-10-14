@@ -46,6 +46,10 @@ public class RecurringTransactionService : IRecurringTransactionService
     /// <summary>ทางไปต่อของช่องที่หน้ารายการประจำไม่มีให้แก้ (บัญชีรายบรรทัด · โครงการ · สาขา — ตั้งผ่าน API/ระบบเชื่อมต่อ) — ข้อ 150 ทุกบล็อกต้องมีทางไปต่อ</summary>
     private const string ApiOnlyHint = " (ถ้าช่องนี้ไม่มีในฟอร์ม — ตั้งผ่านระบบเชื่อมต่อ — แก้ผ่านระบบนั้น หรือลบรายการประจำนี้แล้วสร้างใหม่)";
 
+    /// <summary>ที่แก้แหล่งเงินของรายการประจำ (ข้อความของ DocumentMoneyChannel) — ข้อ 150 ทุกบล็อกบอกช่อง + ที่แก้</summary>
+    private const string RecurringMoneyFixHint = "เปิดแก้ไขรายการประจำ → ช่อง “ช่องทางรับ/จ่ายเงิน” → เลือกช่องทางรับ/จ่ายใหม่ แล้วบันทึกอีกครั้ง";
+    private const string RecurringExpenseFixHint = "เปิดแก้ไขรายการประจำ → ช่อง “หมวดหมู่ค่าใช้จ่าย” แล้วเลือกใหม่";
+
     private static bool IsJournalTemplate(string? templateType)
         => string.Equals(templateType, "journal", StringComparison.OrdinalIgnoreCase);
 
@@ -327,28 +331,35 @@ public class RecurringTransactionService : IRecurringTransactionService
                         .FirstOrDefaultAsync(r => r.Id == item.Id && r.CompanyId == item.CompanyId);
                     // อ่านใหม่ภายใต้ล็อก: อีกเครื่องเพิ่งรันเสร็จ (NextRunDate เลื่อนแล้ว) / ถูกหยุด / ถูกลบ ⇒ ข้าม
                     if (recurring == null || recurring.Status != RecurringStatus.Active || recurring.NextRunDate > now) return;
-                    var skipNote = await SkipOverduePeriodsAsync(recurring, now);
-                    if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
+                    try
                     {
-                        recurring.Status = RecurringStatus.Completed;
-                        await _db.SaveChangesAsync();
-                        return;
+                        var skipNote = await SkipOverduePeriodsAsync(recurring, now);
+                        if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
+                        {
+                            recurring.Status = RecurringStatus.Completed;
+                            await _db.SaveChangesAsync();
+                            return;
+                        }
+                        await ExecuteRecurringAsync(recurring, "System", consumesPeriod: true);
+                        if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
                     }
-                    await ExecuteRecurringAsync(recurring, "System", consumesPeriod: true);
-                    if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // ฝ่ายค้านรอบ 1 P2 (3a): บันทึกเหตุผล<b>ภายใต้ล็อก</b>แบบเดียวกับ RunNowAsync — เดิมบันทึกหลังปล่อยล็อก ⇒ ปุ่ม "สร้างทันที"
+                        // ที่ได้ล็อกต่อแล้วรันสำเร็จ (ล้าง LastRunError) ถูกเหตุผลเก่าของรอบนี้เขียนทับ = แถวบอกว่าล้มทั้งที่ออกใบแล้ว
+                        await RecordRunFailureAsync(item.CompanyId, item.Id, item.Name, item.CreatedBy, ex, fromSchedule: true);
+                    }
                 }, _logger, item.CompanyId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                try
+                // ได้ล็อกไม่ได้ (ฐานข้อมูลมีปัญหา) หรือบันทึกเหตุผลลงแถวไม่ได้ — ห้ามเขียนแถวนอกล็อก (ทับผลของคนที่ถือล็อกอยู่) ·
+                // ลง log + ErrorLog แล้วไปรายการถัดไป (รายการอื่นต้องได้รันต่อ)
+                _logger.LogError(ex, "Failed to process recurring transaction {Id} ({Name})", item.Id, item.Name);
+                try { await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.Process/{item.Id}"); }
+                catch (Exception lex) when (lex is not OperationCanceledException)
                 {
-                    await RecordRunFailureAsync(item.CompanyId, item.Id, item.Name, item.CreatedBy, ex, fromSchedule: true);
-                }
-                catch (Exception rex) when (rex is not OperationCanceledException)
-                {
-                    // บันทึกเหตุผลลงแถวไม่ได้ (ฐานข้อมูลมีปัญหา) — ลง log ทั้งสองตัวแล้วไปรายการถัดไป (รายการอื่นต้องได้รันต่อ)
-                    _logger.LogError(ex, "Failed to process recurring transaction {Id} ({Name})", item.Id, item.Name);
-                    _logger.LogError(rex, "Failed to record recurring failure {Id}", item.Id);
+                    _logger.LogError(lex, "Failed to record recurring failure {Id}", item.Id);
                 }
             }
         }
@@ -687,108 +698,132 @@ public class RecurringTransactionService : IRecurringTransactionService
                     : null
             );
 
-            var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy);
+            // ฝ่ายค้านรอบ 1 P1: แหล่งเงิน/หมวดค่าใช้จ่ายของเทมเพลต = ค่าที่ยกมา (ValidateTemplateAsync ตรวจไว้แล้วด้วยข้อความของหน้ารายการประจำ) —
+            // CreateDocumentAsync ไม่ตรวจซ้ำแบบ "เพิ่งเลือก" (ธนาคารยังไม่ผูกผังบนใบแจ้งหนี้รายเดือนไม่ใช่เหตุให้ล้มทุกงวด — ตอนลงบัญชีตัดสินเฉพาะใบที่ขยับเงิน)
+            var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy,
+                carriedMoneyHeader: new Accounting.Helpers.CarriedMoneyHeader(bankAccountId, paymentAccountId, expenseCategoryId));
             // ประทับรอบทันทีหลังเอกสารถูกบันทึก (ก่อนอนุมัติ/ส่งอีเมล) — ขั้นหลังล้มต้องไม่ทำให้รอบถัดไปออกใบงวดเดิมซ้ำ
             await MarkRunAsync(recurring, consumesPeriod, result.Id);
             // เรื่องที่ต้องทำต่อของรอบนี้ ⇒ LastRunNotice บนแถว (หน้ารายการประจำ) — นอกเหนือจากหมายเหตุบนตัวเอกสาร
             var notices = new List<string>();
             var approved = false;
-
-            // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้าย "50 ทวิ ต้องตรวจ" บนใบ (ตัวเดียวกับแปลง/คัดลอก — Decide/คำเตือนอนุมัติอ่าน) + ไม่อนุมัติอัตโนมัติ
-            // (50 ทวิ จะออกผิดคน) · ฝ่ายค้านรอบ 204 (หลัง 0f428969): การไม่อนุมัติอัตโนมัติเดินเส้นรายงานเดียวกับการอนุมัติอัตโนมัติล้ม
-            // (RecordAutoApproveFailureAsync — หมายเหตุบนเอกสาร + log) ไม่ใช่ LogWarning ที่ไม่มีใครเห็น · ใบอื่นเดินทางเดิม
-            if (result != null && droppedPayees > 0)
+            // ฝ่ายค้านรอบ 1 P2 (3b): หลัง MarkRunAsync เอกสารถูกสร้าง + งวดถูกนับแล้ว — ขั้นตามหลังที่ล้ม (บันทึกหมายเหตุบนใบ · บันทึกผลอนุมัติล้ม ·
+            // ErrorLog · คิวอีเมล) ต้องเป็น "เรื่องที่ต้องทำต่อ" บนแถวเท่านั้น · เดิมโยนต่อ ⇒ แถวขึ้น "ล้ม" ทั้งที่ออกใบแล้ว ผู้ใช้กด "สร้างทันที" = ใบซ้ำ
+            try
             {
-                var droppedDoc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == result.Id && d.CompanyId == recurring.CompanyId);
-                if (droppedDoc != null)
-                {
-                    droppedDoc.InternalNotes = Accounting.Helpers.WhtPayeeSplit.MarkDroppedInheritedPayees(droppedDoc.InternalNotes,
-                        $"รายการประจำ \"{recurring.Name}\"", droppedPayees);
-                    await _db.SaveChangesAsync();
-                }
-                if (recurring.AutoApprove)
-                    await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)",
-                        new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.WhtPayeeSplit.DroppedPayeeAutoApproveSkipReason(droppedPayees),
-                            Accounting.Helpers.WhtPayeeSplit.RuleCode));
-                notices.Add(Accounting.Helpers.WhtPayeeSplit.DroppedPayeeAutoApproveSkipReason(droppedPayees));
-            }
 
-            // Auto-approve if configured (ผู้ถูกหักถูกตัดทิ้ง = ไม่อนุมัติอัตโนมัติ — ข้างบน)
-            if (recurring.AutoApprove && result != null && droppedPayees == 0)
-            {
-                try
+                // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้าย "50 ทวิ ต้องตรวจ" บนใบ (ตัวเดียวกับแปลง/คัดลอก — Decide/คำเตือนอนุมัติอ่าน) + ไม่อนุมัติอัตโนมัติ
+                // (50 ทวิ จะออกผิดคน) · ฝ่ายค้านรอบ 204 (หลัง 0f428969): การไม่อนุมัติอัตโนมัติเดินเส้นรายงานเดียวกับการอนุมัติอัตโนมัติล้ม
+                // (RecordAutoApproveFailureAsync — หมายเหตุบนเอกสาร + log) ไม่ใช่ LogWarning ที่ไม่มีใครเห็น · ใบอื่นเดินทางเดิม
+                if (result != null && droppedPayees > 0)
                 {
-                    // คำตัดสินข้อ 114 Q1: ข้อสังเกต §65 ตรีที่การอนุมัติอัตโนมัติผ่านไป (ไม่บล็อก — ข้อ 110) ต้องถึงคน — เก็บรายการที่ผ่านแล้วแจ้งผู้ตั้งรายการประจำ
-                    var passed = new List<string>();
-                    var approvedDoc = await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
-                        Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passed);
-                    approved = true;
-                    if (Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed) is { } notice && _notify != null)
+                    var droppedDoc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == result.Id && d.CompanyId == recurring.CompanyId);
+                    if (droppedDoc != null)
                     {
-                        try
+                        droppedDoc.InternalNotes = Accounting.Helpers.WhtPayeeSplit.MarkDroppedInheritedPayees(droppedDoc.InternalNotes,
+                            $"รายการประจำ \"{recurring.Name}\"", droppedPayees);
+                        await _db.SaveChangesAsync();
+                    }
+                    if (recurring.AutoApprove)
+                        await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)",
+                            new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.WhtPayeeSplit.DroppedPayeeAutoApproveSkipReason(droppedPayees),
+                                Accounting.Helpers.WhtPayeeSplit.RuleCode));
+                    notices.Add(Accounting.Helpers.WhtPayeeSplit.DroppedPayeeAutoApproveSkipReason(droppedPayees));
+                }
+
+                // Auto-approve if configured (ผู้ถูกหักถูกตัดทิ้ง = ไม่อนุมัติอัตโนมัติ — ข้างบน)
+                if (recurring.AutoApprove && result != null && droppedPayees == 0)
+                {
+                    try
+                    {
+                        // คำตัดสินข้อ 114 Q1: ข้อสังเกต §65 ตรีที่การอนุมัติอัตโนมัติผ่านไป (ไม่บล็อก — ข้อ 110) ต้องถึงคน — เก็บรายการที่ผ่านแล้วแจ้งผู้ตั้งรายการประจำ
+                        var passed = new List<string>();
+                        var approvedDoc = await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
+                            Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passed);
+                        approved = true;
+                        if (Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed) is { } notice && _notify != null)
                         {
-                            await _notify.DispatchAsync(recurring.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringApprovedWithNotes, new NotificationContext
+                            try
                             {
-                                Title = $"รายการประจำอนุมัติ {approvedDoc.DocumentNumber} พร้อมข้อสังเกต §65 ตรี",   // เลขจริงหลังอนุมัติ (ไม่ใช่ DRAFT-…)
-                                Message = notice,
-                                ActionUrl = "/pages/documents.html#doc=" + result.Id,
-                                EntityType = "Document",
-                                EntityId = result.Id,
-                                RecipientUserId = Guid.TryParse(recurring.CreatedBy, out var ownerId) ? ownerId : null,
-                            });
-                        }
-                        catch (Exception nex) when (nex is not OperationCanceledException)
-                        {
-                            // การแจ้งเตือนล้มไม่ย้อนการอนุมัติ — ข้อสังเกตอยู่บนเอกสาร (หมายเหตุ + audit) แล้ว · ลง log ให้ผู้ดูแลเห็น
-                            _logger.LogWarning(nex, "Recurring {Id}: §65 notice dispatch failed for {Doc}", recurring.Id, result.Id);
+                                await _notify.DispatchAsync(recurring.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringApprovedWithNotes, new NotificationContext
+                                {
+                                    Title = $"รายการประจำอนุมัติ {approvedDoc.DocumentNumber} พร้อมข้อสังเกต §65 ตรี",   // เลขจริงหลังอนุมัติ (ไม่ใช่ DRAFT-…)
+                                    Message = notice,
+                                    ActionUrl = "/pages/documents.html#doc=" + result.Id,
+                                    EntityType = "Document",
+                                    EntityId = result.Id,
+                                    RecipientUserId = Guid.TryParse(recurring.CreatedBy, out var ownerId) ? ownerId : null,
+                                });
+                            }
+                            catch (Exception nex) when (nex is not OperationCanceledException)
+                            {
+                                // การแจ้งเตือนล้มไม่ย้อนการอนุมัติ — ข้อสังเกตอยู่บนเอกสาร (หมายเหตุ + audit) แล้ว · ลง log ให้ผู้ดูแลเห็น
+                                _logger.LogWarning(nex, "Recurring {Id}: §65 notice dispatch failed for {Doc}", recurring.Id, result.Id);
+                            }
                         }
                     }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // PP36_REVIEW P0-2: ApproveDocumentAsync ถอยค่าค้างแล้ว (ใบค้างเป็นร่างจริง) · ล้มดังบนตัวเอกสาร (หมายเหตุภายในพร้อมเหตุผล) —
+                        // เดิม log อย่างเดียว ⇒ ผู้ใช้เห็นใบร่างโผล่โดยไม่รู้ว่าทำไมไม่อนุมัติตามที่ตั้งไว้
+                        var outcome = await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)", ex);
+                        approved = outcome.Committed;
+                        notices.Add(outcome.Message);
+                        await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
+                    }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+
+                // ── 50 ทวิ ของใบที่ generate (ฝ่ายค้าน M5 · 2026-10-12) ──
+                // ไม่ออกใบเองที่นี่อีกแล้ว: เดิมเรียก _whtService.CreateAsync ตรง (รหัส "40(8)" ฝัง · ผู้ถูกหัก = ผู้ติดต่อเสมอ · ไม่ดูติ๊กบนใบ ·
+                // ออกให้ทั้งใบร่าง/ใบเครดิตที่ยังไม่จ่าย) ⇒ ข้าม WhtCertIssuePlan ทั้งตัว · ตอนนี้ 50 ทวิ ออกทางเดียวกับใบคีย์มือ:
+                // อนุมัติอัตโนมัติข้างบน (ApproveDocumentAsync → TryAutoIssueForDocumentAsync · Approve) หรืออนุมัติ/บันทึกจ่ายทีหลัง (Payment)
+                // — เคารพติ๊ก WhtCertAutoIssue · ผู้ถูกหัก WhtPayeeContactId · ประเภทเงินได้รายบรรทัด · ล้ม = ป้ายบนเอกสาร + ลิสต์รอออกใบ
+
+                _logger.LogInformation("Created document {DocNumber} from recurring {RecurringId}", result?.DocumentNumber, recurring.Id);
+
+                // Auto-email hook: enqueue ตามกฎ RecurringInvoiceCreated ถ้ามี;
+                // ถ้าไม่มีกฎเลย EmailScheduleService จะดูธง AutoSendEmail บนตัว
+                // recurring แทน (ผู้ใช้ติ๊กในฟอร์มเดียวจบ ไม่ต้องไปสร้างกฎอีกหน้า)
+                // ใช้ trigger แยกจาก DocumentApproved เพราะเงื่อนไข/เวลาส่งต่างกัน.
+                // ส่งเฉพาะใบที่อนุมัติแล้ว — Draft ยังไม่มีเลขจริง §86/4. fail-safe.
+                if (result != null && _emailSchedule != null)
                 {
-                    // PP36_REVIEW P0-2: ApproveDocumentAsync ถอยค่าค้างแล้ว (ใบค้างเป็นร่างจริง) · ล้มดังบนตัวเอกสาร (หมายเหตุภายในพร้อมเหตุผล) —
-                    // เดิม log อย่างเดียว ⇒ ผู้ใช้เห็นใบร่างโผล่โดยไม่รู้ว่าทำไมไม่อนุมัติตามที่ตั้งไว้
-                    var outcome = await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)", ex);
-                    approved = outcome.Committed;
-                    notices.Add(outcome.Message);
-                    await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
+                    try { await _emailSchedule.OnRecurringDocumentCreatedAsync(recurring.CompanyId, result.Id, recurring.Id); }
+                    catch (Exception ex2) when (ex2 is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id);
+                        if (recurring.AutoSendEmail)
+                            notices.Add($"เข้าคิวส่งอีเมลเอกสาร {result.DocumentNumber} ไม่สำเร็จ — ส่งเองจากหน้าเอกสาร");
+                    }
                 }
-            }
-
-            // ── 50 ทวิ ของใบที่ generate (ฝ่ายค้าน M5 · 2026-10-12) ──
-            // ไม่ออกใบเองที่นี่อีกแล้ว: เดิมเรียก _whtService.CreateAsync ตรง (รหัส "40(8)" ฝัง · ผู้ถูกหัก = ผู้ติดต่อเสมอ · ไม่ดูติ๊กบนใบ ·
-            // ออกให้ทั้งใบร่าง/ใบเครดิตที่ยังไม่จ่าย) ⇒ ข้าม WhtCertIssuePlan ทั้งตัว · ตอนนี้ 50 ทวิ ออกทางเดียวกับใบคีย์มือ:
-            // อนุมัติอัตโนมัติข้างบน (ApproveDocumentAsync → TryAutoIssueForDocumentAsync · Approve) หรืออนุมัติ/บันทึกจ่ายทีหลัง (Payment)
-            // — เคารพติ๊ก WhtCertAutoIssue · ผู้ถูกหัก WhtPayeeContactId · ประเภทเงินได้รายบรรทัด · ล้ม = ป้ายบนเอกสาร + ลิสต์รอออกใบ
-
-            _logger.LogInformation("Created document {DocNumber} from recurring {RecurringId}", result?.DocumentNumber, recurring.Id);
-
-            // Auto-email hook: enqueue ตามกฎ RecurringInvoiceCreated ถ้ามี;
-            // ถ้าไม่มีกฎเลย EmailScheduleService จะดูธง AutoSendEmail บนตัว
-            // recurring แทน (ผู้ใช้ติ๊กในฟอร์มเดียวจบ ไม่ต้องไปสร้างกฎอีกหน้า)
-            // ใช้ trigger แยกจาก DocumentApproved เพราะเงื่อนไข/เวลาส่งต่างกัน.
-            // ส่งเฉพาะใบที่อนุมัติแล้ว — Draft ยังไม่มีเลขจริง §86/4. fail-safe.
-            if (result != null && _emailSchedule != null)
-            {
-                try { await _emailSchedule.OnRecurringDocumentCreatedAsync(recurring.CompanyId, result.Id, recurring.Id); }
-                catch (Exception ex2) when (ex2 is not OperationCanceledException)
+                // ส่งอีเมลอัตโนมัติที่ "ไม่มีอะไรออก" ต้องบอกผู้ใช้ที่หน้ารายการประจำ (เดิม log warning อย่างเดียว · RCE-07)
+                if (recurring.AutoSendEmail && result != null)
                 {
-                    _logger.LogWarning(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id);
-                    if (recurring.AutoSendEmail)
-                        notices.Add($"เข้าคิวส่งอีเมลเอกสาร {result.DocumentNumber} ไม่สำเร็จ — ส่งเองจากหน้าเอกสาร");
+                    if (!approved)
+                        notices.Add("ยังไม่ได้ส่งอีเมล — เอกสารไม่ได้ถูกอนุมัติ (ใบร่างยังไม่มีเลขที่จริงตาม §86/4) อนุมัติที่หน้าเอกสารแล้วส่งจากที่นั่น");
+                    else if (string.IsNullOrWhiteSpace(await _db.Contacts.AsNoTracking()
+                                 .Where(c => c.Id == contactId && c.CompanyId == recurring.CompanyId)
+                                 .Select(c => c.Email).FirstOrDefaultAsync()))
+                        notices.Add("ไม่ได้ส่งอีเมล — ผู้ติดต่อไม่มีอีเมล: เพิ่มอีเมลที่หน้าผู้ติดต่อ แล้วส่งเอกสารนี้จากหน้าเอกสาร");
                 }
             }
-            // ส่งอีเมลอัตโนมัติที่ "ไม่มีอะไรออก" ต้องบอกผู้ใช้ที่หน้ารายการประจำ (เดิม log warning อย่างเดียว · RCE-07)
-            if (recurring.AutoSendEmail && result != null)
+            catch (Exception postEx) when (postEx is not OperationCanceledException)
             {
-                if (!approved)
-                    notices.Add("ยังไม่ได้ส่งอีเมล — เอกสารไม่ได้ถูกอนุมัติ (ใบร่างยังไม่มีเลขที่จริงตาม §86/4) อนุมัติที่หน้าเอกสารแล้วส่งจากที่นั่น");
-                else if (string.IsNullOrWhiteSpace(await _db.Contacts.AsNoTracking()
-                             .Where(c => c.Id == contactId && c.CompanyId == recurring.CompanyId)
-                             .Select(c => c.Email).FirstOrDefaultAsync()))
-                    notices.Add("ไม่ได้ส่งอีเมล — ผู้ติดต่อไม่มีอีเมล: เพิ่มอีเมลที่หน้าผู้ติดต่อ แล้วส่งเอกสารนี้จากหน้าเอกสาร");
+                // ค่าค้างใน context จากขั้นที่ล้ม (เช่นหมายเหตุบนใบที่บันทึกไม่ผ่าน) ห้ามถูกบันทึกตามไปกับคำสั่งถัดไป
+                _db.ChangeTracker.Clear();
+                _logger.LogError(postEx, "Recurring {Id}: document {Doc} created but a follow-up step failed", recurring.Id, result.Id);
+                notices.Add(RecurringRunFailure.AfterCreateNotice(result.DocumentNumber, postEx));
             }
-            await SetRunNoticeAsync(recurring, notices);
+            try
+            {
+                await SetRunNoticeAsync(recurring, notices);
+            }
+            catch (Exception noticeEx) when (noticeEx is not OperationCanceledException)
+            {
+                // เอกสารออกแล้ว + งวดนับแล้ว — ห้ามโยนต่อ (แถวจะขึ้น "ล้ม" แล้วผู้ใช้กดออกซ้ำ) · เขียนเรื่องที่ต้องทำต่อไม่ได้ = ลง log ระดับ error
+                _logger.LogError(noticeEx, "Recurring {Id}: could not save run notice for {Doc}: {Notices}",
+                    recurring.Id, result.Id, string.Join(" · ", notices));
+            }
         }
         catch (Exception ex)
         {
@@ -845,12 +880,20 @@ public class RecurringTransactionService : IRecurringTransactionService
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     // สมุดรายวันค้างเป็นร่าง — เดิม log อย่างเดียว ผู้ใช้ไม่รู้ว่าไม่ได้ลงบัญชี ⇒ บอกที่แถวรายการประจำ (ข้อความไทยหรือข้อความกลาง)
+                    // ฝ่ายค้านรอบ 1 P2 (3b): สมุดรายวันถูกสร้าง + งวดนับแล้ว ⇒ ขั้นแจ้ง/บันทึกที่ล้มต่อจากนี้ห้ามโยนต่อ (แถวจะขึ้นล้มแล้วผู้ใช้กดซ้ำ)
                     _logger.LogWarning(ex, "Auto-post failed for recurring journal {JournalId}", result.Id);
-                    await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoPost/{result.Id}");
-                    await SetRunNoticeAsync(recurring, new List<string>
+                    try
                     {
-                        $"ลงบัญชีสมุดรายวัน {result.EntryNumber} อัตโนมัติไม่สำเร็จ (ค้างเป็นร่าง): {RecurringRunFailure.UserMessage(ex)} — เปิดสมุดรายวันแล้วกดลงบัญชีเอง",
-                    });
+                        await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoPost/{result.Id}");
+                        await SetRunNoticeAsync(recurring, new List<string>
+                        {
+                            $"ลงบัญชีสมุดรายวัน {result.EntryNumber} อัตโนมัติไม่สำเร็จ (ค้างเป็นร่าง): {RecurringRunFailure.UserMessage(ex)} — เปิดสมุดรายวันแล้วกดลงบัญชีเอง",
+                        });
+                    }
+                    catch (Exception nex) when (nex is not OperationCanceledException)
+                    {
+                        _logger.LogError(nex, "Recurring {Id}: could not record auto-post failure for journal {JournalId}", recurring.Id, result.Id);
+                    }
                 }
             }
 
@@ -959,10 +1002,44 @@ public class RecurringTransactionService : IRecurringTransactionService
                 throw new BusinessRuleException(
                     $"บัญชีถูกปิดใช้งาน: {string.Join(", ", inactiveRefs.Take(3).Select(r => $"{r.Field} = {inactive[r.Id].AccountCode} {inactive[r.Id].AccountName}"))}" +
                     " — เปิดใช้งานที่ผังบัญชี หรือเลือกบัญชีอื่นในรายการประจำ", RecurringTemplate.RuleCode);
+            // ฝ่ายค้านรอบ 2 P2(d): ตอนบันทึก — บัญชีคุม (มีบัญชีย่อย) ลงรายการไม่ได้ ตัวตัดสินเดียวกับสมุดรายวันที่บันทึกมือ (PostingAccountRule) ·
+            // เดิมผ่านตอนบันทึกแล้วสมุดรายวันประจำลงบัญชีคุมได้ทุกงวด · ตอนถึงรอบไม่บล็อกเพิ่ม (ค่าที่บันทึกไว้แล้ว — คำตัดสินข้อ 150)
+            if (atSave)
+            {
+                var postingFacts = await _db.LoadPostingFactsAsync(companyId, ids);
+                var groupRef = coaRefs.FirstOrDefault(r => postingFacts.TryGetValue(r.Id, out var pf)
+                    && PostingAccountRule.Check(pf) == PostingAccountProblem.Group);
+                if (groupRef != null)
+                    throw new BusinessRuleException(PostingAccountRule.Message(PostingAccountProblem.Group, postingFacts[groupRef.Id], groupRef.Field)
+                        + " · เปิดแก้ไขรายการประจำแล้วเลือกบัญชีใหม่" + ApiOnlyHint, RecurringTemplate.RuleCode);
+            }
         }
 
-        // ── ทะเบียนบัญชีธนาคาร (bankAccountId — ไม่ใช่ผังบัญชี · บั๊ก 2026-10-14) ──
-        foreach (var bankRef in Of(RecurringTemplate.RefKind.BankAccount))
+        // ── แหล่งเงิน/หมวดค่าใช้จ่ายระดับเอกสาร ตอนบันทึก — ตัวตัดสินเดียวกับหน้าเอกสาร (Helpers/DocumentMoneyChannel · Save) ──
+        // ฝ่ายค้านรอบ 1 P2 (3c): เดิมตรวจเองแค่ "มีอยู่ + เปิดใช้" ⇒ บัญชีธนาคารที่ยังไม่ผูกผัง / ผังกลุ่ม ผ่านตอนบันทึก แล้วล้มทุกงวดที่ลงขาเงิน ·
+        // ตอนถึงรอบ (atSave=false) คงด่านเดิมด้านล่าง (มีอยู่ + เปิดใช้ — ทางไปต่อ = แก้รายการประจำ) · การผูกผังตัดสินตอนลงบัญชีของใบที่ขยับเงินจริง
+        if (!isJournal && atSave)
+        {
+            var root = doc.RootElement;
+            var tplBank = RecurringTemplate.ReadGuid(root, "bankAccountId", 0);
+            var tplPay = RecurringTemplate.ReadGuid(root, "paymentAccountId", 0);
+            if (tplPay.HasValue)
+            {
+                var d = await DocumentMoneyChannel.EvaluateAsync(_db, companyId, null, tplPay, MoneyChannelCheck.Save, RecurringMoneyFixHint);
+                if (!d.Ok) throw new BusinessRuleException(d.Problem!, RecurringTemplate.RuleCode);
+            }
+            if (tplBank.HasValue)
+            {
+                var d = await DocumentMoneyChannel.EvaluateAsync(_db, companyId, tplBank, null, MoneyChannelCheck.Save, RecurringMoneyFixHint);
+                if (!d.Ok) throw new BusinessRuleException(d.Problem!, RecurringTemplate.RuleCode);
+            }
+            if (await DocumentMoneyChannel.ExpenseCategoryProblemAsync(_db, companyId, RecurringTemplate.ReadGuid(root, "expenseCategoryId", 0),
+                    fixHint: RecurringExpenseFixHint) is { } ecProblem)
+                throw new BusinessRuleException(ecProblem, RecurringTemplate.RuleCode);
+        }
+
+        // ── ทะเบียนบัญชีธนาคาร ตอนถึงรอบ (bankAccountId — ไม่ใช่ผังบัญชี · บั๊ก 2026-10-14) ──
+        foreach (var bankRef in atSave ? new List<RecurringTemplate.Ref>() : Of(RecurringTemplate.RefKind.BankAccount))
         {
             var bank = await _db.BankAccounts.AsNoTracking()
                 .Where(b => b.CompanyId == companyId && b.Id == bankRef.Id)

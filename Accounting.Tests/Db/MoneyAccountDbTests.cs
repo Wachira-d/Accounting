@@ -268,7 +268,8 @@ public class MoneyAccountDbTests
         using (var r0 = DbTestDatabase.TryCreateContext()!)
         {
             var view0 = await new PayrollService(r0).GetPayrollRunAsync(s.CompanyId, runId);
-            Assert.StartsWith("11111", view0.DefaultPaymentSourceLabel);   // ไม่มีค่าตั้ง ⇒ เงินสดรหัสต่ำสุด — ไม่ใช่ 11122 (บัญชีคุม)
+            // ฝ่ายค้านรอบ 2 P2(a): ไม่มีค่าตั้ง + ธนาคารที่ผูกผังบัญชีเดียว ⇒ ผังของธนาคารนั้น (เดิม 11111 เงินสดรหัสต่ำสุดเงียบ ๆ) — ไม่ใช่ 11122 (บัญชีคุม)
+            Assert.StartsWith("11122-001", view0.DefaultPaymentSourceLabel);
             Assert.Null(view0.DefaultPaymentSourceWarning);
         }
         using (var r1 = DbTestDatabase.TryCreateContext()!)
@@ -276,6 +277,27 @@ public class MoneyAccountDbTests
         using var r2 = DbTestDatabase.TryCreateContext()!;
         var view = await new PayrollService(r2).GetPayrollRunAsync(s.CompanyId, runId);
         Assert.StartsWith("11122-001", view.DefaultPaymentSourceLabel);   // ตัวเดียวกับนำส่ง สปส./ภาษี
+    }
+
+    [Fact]
+    public async Task เงินเดือน_ไม่มีค่าตั้งและธนาคารไม่ใช่บัญชีเดียว_ไม่ตกไปเงินสด_เตือนให้เลือก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedStandardAsync(db);
+        // บัญชีธนาคารที่ผูกผังบัญชีที่สอง ⇒ ระบบเดาไม่ได้ว่าจ่ายจากบัญชีไหน
+        db.BankAccounts.Add(new BankAccount { CompanyId = s.CompanyId, AccountName = "บัญชีที่สอง", BankName = "กรุงเทพ", AccountNumber = "2223334445",
+            LinkedAccountId = s.Acc["11111"] });
+        await db.SaveChangesAsync();
+        var (runId, _) = await SeedPayrollRunAsync(db, s.CompanyId, null);
+
+        using var r0 = DbTestDatabase.TryCreateContext()!;
+        var view = await new PayrollService(r0).GetPayrollRunAsync(s.CompanyId, runId);
+        Assert.Null(view.DefaultPaymentSourceLabel);
+        Assert.Contains("แหล่งเงินเริ่มต้น", view.DefaultPaymentSourceWarning);
+        Assert.Contains("ไม่เดา", view.DefaultPaymentSourceWarning);
+        // ทิศตรงข้าม: เส้นอื่น (นำส่ง สปส./ภาษี) ยังใช้ผังเงินสดรหัสต่ำสุดตามเดิม แต่ไม่ใช่เงินสดย่อย
+        Assert.Equal(s.Acc["11111"], await r0.ResolveSourceGlAsync(s.CompanyId, null, null));
     }
 
     [Fact]

@@ -316,10 +316,12 @@ public class BankController : ControllerBase
             return BadRequest(new ApiResponse<object>(false, null,
                 "บัญชีธนาคารยังไม่ได้ผูกกับผังบัญชี (GL) — ตั้งค่าบัญชีธนาคารก่อน"));
 
+        // ฝ่ายค้านรอบ 2 P2(d): บัญชีคู่ที่ผู้ใช้เลือก = ตัวตัดสินเดียว PostingAccountRule (เดิมตรวจแค่เปิดใช้ ⇒ บัญชีคุมลงรายการได้)
+        if (await Accounting.Services.Implementations.PostingAccountGuard.PostingAccountProblemAsync(_db, companyId,
+                req.CounterpartAccountId, "บัญชีคู่") is string counterProblem)
+            return BadRequest(new ApiResponse<object>(false, null, counterProblem));
         var counter = await _db.ChartOfAccounts.AsNoTracking()
-            .FirstOrDefaultAsync(a => a.Id == req.CounterpartAccountId && a.CompanyId == companyId && a.IsActive);
-        if (counter == null)
-            return BadRequest(new ApiResponse<object>(false, null, "ไม่พบบัญชีคู่ที่เลือก หรือถูกปิดใช้งาน"));
+            .FirstAsync(a => a.Id == req.CounterpartAccountId && a.CompanyId == companyId);
 
         var amount = Math.Abs(txn.Amount);
         if (amount <= 0)

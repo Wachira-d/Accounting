@@ -124,8 +124,11 @@ public static class MoneyAccountDirectory
         return await db.ResolveDefaultMoneySourceAsync(companyId, ctx, ct);
     }
 
+    /// <param name="requireExplicitChoice">ฝ่ายค้านรอบ 2 P2(a) — เงินเดือน: ไม่มีค่าตั้งบริษัท ⇒ ใช้ได้เฉพาะเมื่อมีบัญชีธนาคารที่ผูกผัง<b>บัญชีเดียว</b>
+    /// (ไม่งั้น Problem ให้ผู้ใช้เลือกเอง) — เดิมตกไป "ผังเงินสดรหัสต่ำสุด" = 11111 เงินสด / 11112 เงินสดย่อย เงียบ ๆ</param>
     public static async Task<DefaultMoneySource> ResolveDefaultMoneySourceAsync(
-        this AccountingDbContext db, Guid companyId, MoneyAccountContext ctx, CancellationToken ct = default)
+        this AccountingDbContext db, Guid companyId, MoneyAccountContext ctx, CancellationToken ct = default,
+        bool requireExplicitChoice = false)
     {
         if (ctx.CompanyDefaultAccountId is Guid defId && defId != Guid.Empty)
         {
@@ -137,6 +140,31 @@ public static class MoneyAccountDirectory
                 $"\"แหล่งเงินเริ่มต้น\" ที่บริษัทตั้งไว้ใช้ไม่ได้ ({PostingAccountRule.ShortReason(problem, f)}) — "
                 + "เลือกใหม่ที่หน้า ตั้งค่า → แหล่งเงินเริ่มต้น หรือเลือกแหล่งเงินในหน้าต่างนี้");
         }
+        if (requireExplicitChoice)
+        {
+            var linkedGls = ctx.LinkedBankGls.Keys.ToList();
+            if (linkedGls.Count == 1)
+            {
+                var only = await db.LoadPostingFactsAsync(companyId, linkedGls, ct);
+                only.TryGetValue(linkedGls[0], out var bf);
+                if (ctx.SourceProblem(bf) == PostingAccountProblem.None) return new DefaultMoneySource(bf, false, null);
+            }
+            return new DefaultMoneySource(null, false, linkedGls.Count == 0
+                ? "ยังไม่ได้ตั้ง \"แหล่งเงินเริ่มต้น\" และยังไม่มีบัญชีธนาคารที่ผูกผังบัญชี — ระบบไม่เลือกเงินสด/เงินสดย่อยให้เอง · "
+                  + "ตั้ง \"แหล่งเงินเริ่มต้น\" ที่หน้า ตั้งค่า หรือเลือกแหล่งจ่ายที่ช่อง \"แหล่งจ่าย\""
+                : $"ยังไม่ได้ตั้ง \"แหล่งเงินเริ่มต้น\" และมีบัญชีธนาคารที่ผูกผัง {linkedGls.Count} บัญชี — ระบบไม่เดาว่าจ่ายจากบัญชีไหน · "
+                  + "ตั้ง \"แหล่งเงินเริ่มต้น\" ที่หน้า ตั้งค่า หรือเลือกแหล่งจ่ายที่ช่อง \"แหล่งจ่าย\"");
+        }
+        // ฝ่ายค้านรอบ 2 P2(a): ผังของกองทุนเงินสดย่อย / ผังพักของช่องทาง wallet-แพลตฟอร์ม ไม่ใช่ "แหล่งเงินเริ่มต้น" (เงินจริงไม่ได้จ่ายจากที่นั่น)
+        var pettyGls = await db.PettyCashFunds.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted && f.LinkedAccountId != null)
+            .Select(f => f.LinkedAccountId!.Value).ToListAsync(ct);
+        var walletGls = await db.SettlementChannels.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => new { c.ClearingAccountId, c.ReserveAccountId }).ToListAsync(ct);
+        var excluded = pettyGls
+            .Concat(walletGls.SelectMany(w => new[] { w.ClearingAccountId, w.ReserveAccountId }).Where(g => g.HasValue).Select(g => g!.Value))
+            .ToHashSet();
         var candidates = await db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive)
             .Select(a => new
@@ -147,7 +175,9 @@ public static class MoneyAccountDirectory
             .OrderBy(a => a.AccountCode)
             .ToListAsync(ct);
         var pick = candidates.FirstOrDefault(a =>
-            (!a.IsGroup || ctx.LinkedBankGls.ContainsKey(a.Id))
+            !excluded.Contains(a.Id)
+            && !(ctx.StandardChart && a.AccountCode == PettyCashJePlan.DefaultFundAccountCode)
+            && (!a.IsGroup || ctx.LinkedBankGls.ContainsKey(a.Id))
             && MoneyAccountRule.IsMoneyAccount(a.AccountCode, ctx.LinkedBankGls.ContainsKey(a.Id), ctx.Prefixes));
         if (pick != null)
             return new DefaultMoneySource(new PostingAccountFacts(pick.Id, pick.AccountCode, pick.AccountName, true, pick.IsGroup), false, null);

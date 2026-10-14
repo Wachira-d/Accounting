@@ -80,7 +80,9 @@ public record BankTransactionResponse(
     // ป้ายพร้อมแสดง เช่น "⚙️ ระบบ (จับคู่อัตโนมัติ)" · null = ไม่มีข้อมูล
     string? ReconciledByLabel = null,
     string? MatchRuleCode = null,
-    string? MatchReason = null);
+    string? MatchReason = null,
+    // ฝ่ายค้านรอบ 1 P1: statement ไม่มียอดคงเหลือของบรรทัดนี้ ⇒ หน้าเว็บแสดง "—" (ไม่ใช่ 0.00 ที่แต่งขึ้น)
+    bool BalanceAfterUnknown = false);
 
 public record ReconcileRequest(
     Guid BankTransactionId,

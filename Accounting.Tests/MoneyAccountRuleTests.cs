@@ -140,6 +140,9 @@ public class MoneyAccountRuleTests
         var msg = ForeignKeyViolation.Message(ForeignKeyViolationKind.StillReferenced, "FK_Documents_Contacts_ContactId", "R1");
         Assert.Contains("ยังถูกอ้างอิง", msg);
         Assert.Contains("ปิดการใช้งานแทน", msg);
+        // ฝ่ายค้านรอบ 2 P2(i): บอกตารางที่อ้าง (เอกสาร) ไม่ใช่ตารางที่กำลังลบ (ผู้ติดต่อ)
+        Assert.Contains("ยังถูกอ้างอิงโดยเอกสาร", msg);
+        Assert.DoesNotContain("(ผู้ติดต่อ)", msg);
         // ไม่รู้ทิศ = ข้อความกลาง ไม่วินิจฉัยเกิน
         var neutral = ForeignKeyViolation.Message(ForeignKeyViolationKind.Unknown, null, "R2");
         Assert.DoesNotContain("ปิดการใช้งานแทน", neutral);
@@ -154,4 +157,12 @@ public class MoneyAccountRuleTests
     [InlineData(null, null)]
     public void ชื่อตารางปลายทางจากชื่อconstraint(string? constraint, string? expected)
         => Assert.Equal(expected, ForeignKeyViolation.TargetLabel(constraint));
+
+    [Theory]
+    [InlineData("FK_Documents_Contacts_ContactId", "ยังถูกอ้างอิงโดยเอกสาร")]
+    [InlineData("FK_JournalEntryLines_ChartOfAccounts_AccountId", "ยังถูกอ้างอิงโดยบรรทัดรายการบัญชี")]
+    [InlineData("FK_UnknownTable_Contacts_Col", "ยังถูกอ้างอิงโดยข้อมูลอื่น")]
+    [InlineData(null, "ยังถูกอ้างอิงโดยข้อมูลอื่น")]
+    public void ชื่อตารางที่อ้างอิงจากชื่อconstraint(string? constraint, string expected)
+        => Assert.Contains(expected, ForeignKeyViolation.Message(ForeignKeyViolationKind.StillReferenced, constraint, "R"));
 }

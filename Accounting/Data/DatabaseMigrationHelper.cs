@@ -211,6 +211,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round204RoyaltyHistoryStatements());   // รอบ 204 ฝ่ายค้าน M2/L6 — ประวัติค่าตั้งค่าสิทธิ (ก่อน Round204Pnd2Statements)
         list.AddRange(Round205ImportHubStatements());   // รอบ 205 T0 ศูนย์นำเข้าข้อมูล (บล็อกท้ายไฟล์)
         list.AddRange(Round205TeamDMigrationStatements());   // รอบ 205 ทีม D คำแนะนำบัญชีของ migration wizard (บล็อกท้ายไฟล์)
+        list.AddRange(Adversarial1BankStatements());   // ฝ่ายค้านรอบ 1 — ยอดคงเหลือ statement ที่ไม่รู้ (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7570,5 +7571,12 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "AccountMappings" ADD COLUMN IF NOT EXISTS "SuggestionScore" numeric(5,4) NULL;""",
         """ALTER TABLE "AccountMappings" ADD COLUMN IF NOT EXISTS "AccountMapAiFeedbackId" uuid NULL;""",
         """ALTER TABLE "AccountMappings" ADD COLUMN IF NOT EXISTS "AccountMapUsedAi" boolean NOT NULL DEFAULT false;""",
+    };
+
+    /// <summary>ฝ่ายค้านรอบ 1 (2026-10-14 · PAYMENT_CHANNEL_AUDIT ส่วนที่ 3) — <c>BankTransactions.BalanceAfterUnknown</c>: บรรทัด statement ที่ไฟล์ไม่มียอดคงเหลือ ·
+    /// DEFAULT false = แถวเดิมถือว่ามียอด (พฤติกรรมเดิม · แยกแถวเก่าที่เก็บ 0 แทน "ไม่รู้" ไม่ได้ — ไม่แต่งค่า) · รันทุกบูตได้</summary>
+    internal static IReadOnlyList<string> Adversarial1BankStatements() => new List<string>
+    {
+        """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "BalanceAfterUnknown" boolean NOT NULL DEFAULT false;""",
     };
 }

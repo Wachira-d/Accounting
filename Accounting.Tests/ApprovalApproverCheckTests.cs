@@ -44,6 +44,13 @@ public class ApprovalApproverCheckTests
         Assert.NotNull(ApprovalApproverCheck.ReassignProblem(true, true, false, B, false, Req, false));     // คนใหม่ไม่ใช่สมาชิก
         Assert.Contains("ผู้ขอ", ApprovalApproverCheck.ReassignProblem(true, true, false, Req, true, Req, false)); // SoD
         Assert.Contains("สองขั้น", ApprovalApproverCheck.ReassignProblem(true, true, false, B, true, Req, true)); // SoD: คนเดียวผ่านสองขั้น
+        // ฝ่ายค้านรอบ 2 P2(f): ผู้อนุมัติขั้นสุดท้ายยังเป็นสมาชิกแต่ไม่มีสิทธิ์อนุมัติเอกสาร ⇒ โอนได้ (คำขอที่ส่งแล้วไม่ตามการแก้กฎ)
+        Assert.Null(ApprovalApproverCheck.ReassignProblem(true, true, true, B, true, Req, false, currentApproverLacksFinalPermission: true));
+        // ทิศตรงข้าม: คนใหม่ของขั้นสุดท้ายไม่มีสิทธิ์ ⇒ ไม่ให้โอน (โอนแล้วค้างเหมือนเดิม)
+        Assert.Contains("อนุมัติเอกสาร", ApprovalApproverCheck.ReassignProblem(true, true, true, B, true, Req, false,
+            currentApproverLacksFinalPermission: true, newApproverLacksFinalPermission: true));
+        // ข้อความ 403 ของขั้นสุดท้ายชี้ทางที่มีผลกับคำขอที่ส่งแล้ว (โอน) ไม่ใช่แก้กฎ
+        Assert.Contains("โอนผู้อนุมัติ", ApprovalApproverCheck.FinalStepNoPermissionMessage("ใบแจ้งหนี้"));
     }
 
     [Theory]

@@ -43,23 +43,35 @@ public static class ApprovalApproverCheck
 
     /// <summary>การโอนผู้อนุมัติของขั้นที่ยังไม่ได้ทำ — null = โอนได้ · ข้อความ = ปฏิเสธพร้อมช่องที่ต้องแก้</summary>
     /// <param name="currentApproverIsMember">ผู้อนุมัติเดิมยังเป็นสมาชิกอยู่ ⇒ ไม่ให้โอน (เส้นนี้มีไว้ปลดคำขอที่ค้างเพราะคนออก ไม่ใช่ช่องเปลี่ยนคนตามใจ)</param>
-    /// <param name="newApproverApprovedAnotherStep">คนใหม่อนุมัติขั้นอื่นของคำขอเดียวกันไปแล้ว ⇒ ไม่ให้โอน (ฝ่ายค้าน F4: คนเดียวผ่านสองขั้น = ลดการแบ่งแยกหน้าที่)</param>
+    /// <param name="newApproverApprovedAnotherStep">คนใหม่เป็นผู้อนุมัติของขั้นอื่นของคำขอเดียวกัน (อนุมัติไปแล้ว <b>หรือ</b> ยังรออยู่) ⇒ ไม่ให้โอน
+    /// (ฝ่ายค้าน F4 + ฝ่ายค้านรอบ 2 P2(f): คนเดียวผ่านสองขั้น = ลดการแบ่งแยกหน้าที่ — เดิมดูแค่ขั้นที่อนุมัติแล้ว ⇒ โอนให้ผู้อนุมัติขั้นถัดไปได้)</param>
+    /// <param name="currentApproverLacksFinalPermission">ฝ่ายค้านรอบ 2 P2(f): ผู้อนุมัติเดิมยังเป็นสมาชิกแต่<b>ไม่มีสิทธิ์อนุมัติเอกสาร</b>ของขั้นสุดท้าย ⇒ โอนได้
+    /// (คำขอที่ส่งไปแล้วไม่เปลี่ยนตามการแก้กฎ — ทางไปต่อทางเดียวของคำขอที่ค้างอยู่)</param>
+    /// <param name="newApproverLacksFinalPermission">คนใหม่ของขั้นสุดท้ายไม่มีสิทธิ์อนุมัติเอกสาร ⇒ ไม่ให้โอน (โอนแล้วก็ค้างเหมือนเดิม)</param>
     public static string? ReassignProblem(bool requestPending, bool actionPendingAtOrAfterCurrentStep,
         bool currentApproverIsMember, Guid newApproverUserId, bool newApproverIsMember, Guid requesterUserId,
-        bool newApproverApprovedAnotherStep)
+        bool newApproverApprovedAnotherStep, bool currentApproverLacksFinalPermission = false, bool newApproverLacksFinalPermission = false)
     {
         if (!requestPending) return "คำขอนี้ไม่อยู่ในสถานะรออนุมัติแล้ว — รีเฟรชรายการ";
         if (!actionPendingAtOrAfterCurrentStep) return "ขั้นที่เลือกอนุมัติ/ปฏิเสธไปแล้ว หรือไม่มีในคำขอนี้ — เลือกขั้นที่ยังรออนุมัติ";
-        if (currentApproverIsMember)
+        if (currentApproverIsMember && !currentApproverLacksFinalPermission)
             return "ผู้อนุมัติของขั้นนี้ยังเป็นสมาชิกบริษัทอยู่ — ให้ผู้อนุมัติดำเนินการเอง · ถ้าต้องการเปลี่ยนคนถาวร ให้แก้กฎการอนุมัติแล้วให้ผู้ขอส่งใหม่";
         if (newApproverUserId == Guid.Empty) return "กรุณาเลือกผู้อนุมัติคนใหม่";
         if (!newApproverIsMember) return "ผู้อนุมัติคนใหม่ต้องเป็นสมาชิกของบริษัทนี้ที่ยังใช้งานอยู่ — เลือกจากรายชื่อสมาชิก";
         if (newApproverUserId == requesterUserId)
             return "โอนให้ผู้ขออนุมัติเองไม่ได้ (ผู้ขออนุมัติคำขอของตนเองไม่ได้) — เลือกสมาชิกคนอื่น";
         if (newApproverApprovedAnotherStep)
-            return "คนนี้อนุมัติขั้นอื่นของคำขอนี้ไปแล้ว — คนเดียวผ่านสองขั้นไม่ได้ เลือกสมาชิกคนอื่น";
+            return "คนนี้เป็นผู้อนุมัติขั้นอื่นของคำขอนี้อยู่แล้ว — คนเดียวผ่านสองขั้นไม่ได้ เลือกสมาชิกคนอื่น";
+        if (newApproverLacksFinalPermission)
+            return "ขั้นนี้เป็นขั้นสุดท้าย (อนุมัติเอกสารจริง) แต่คนที่เลือกยังไม่มีสิทธิ์ “อนุมัติเอกสาร” — เลือกสมาชิกที่มีสิทธิ์ หรือเพิ่มสิทธิ์ให้บทบาทของคนนั้นก่อน";
         return null;
     }
+
+    /// <summary>ฝ่ายค้านรอบ 2 P2(f): ผู้อนุมัติขั้นสุดท้ายของคำขอที่<b>ส่งไปแล้ว</b>ไม่มีสิทธิ์อนุมัติเอกสาร — การแก้กฎไม่มีผลกับคำขอนี้ (ขั้นถูกคัดลอกตอนส่ง)
+    /// ⇒ ทางไปต่อ = เพิ่มสิทธิ์ หรือผู้ดูแลโอนผู้อนุมัติของขั้นนี้</summary>
+    public static string FinalStepNoPermissionMessage(string documentTitle)
+        => $"คุณเป็นผู้อนุมัติขั้นสุดท้าย แต่ยังไม่มีสิทธิ์อนุมัติ{documentTitle} — ขอให้ผู้ดูแลเพิ่มสิทธิ์ “อนุมัติเอกสาร” ให้บทบาทของคุณที่หน้าตั้งค่าบทบาทและสิทธิ์ "
+           + "หรือให้ผู้ดูแลกด “โอนผู้อนุมัติ” ของคำขอนี้ไปยังผู้ที่มีสิทธิ์ (การแก้กฎการอนุมัติมีผลกับคำขอที่ส่งใหม่เท่านั้น)";
 
     /// <summary>คำสั่งจากช่องมือถือ "approve"/"reject" ⇒ สถานะของ workflow · null = คำสั่งไม่รู้จัก</summary>
     public static ApprovalStatus? ParseMobileAction(string? action)

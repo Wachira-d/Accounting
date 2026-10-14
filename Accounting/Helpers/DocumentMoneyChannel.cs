@@ -38,6 +38,13 @@ public sealed record MoneyChannelDecision(MoneyChannelKind Kind, Guid? GlAccount
 /// <summary>ช่องทางเงินของการชำระหนึ่งรายการ — <c>BankAccountId</c> = บัญชีธนาคารที่ยอดคงเหลือขยับ · <c>PaymentAccountId</c> = ผังตรง</summary>
 public sealed record PaymentMoneyChannel(Guid? BankAccountId, Guid? PaymentAccountId);
 
+/// <summary>แหล่งเงิน/หมวดค่าใช้จ่ายของ<b>ต้นทาง</b>ที่เอกสารใหม่ยกมาตรงตัว (แปลง · คัดลอก · ออกใบแทนที่พัก · รายการประจำ) —
+/// ส่งเป็น<b>พารามิเตอร์ของเมธอด</b> ไม่ใช่ช่องในคำขอ (ค่าที่ client คุมได้ห้ามปลดด่าน) · ดู <see cref="DocumentMoneyChannel.IsCarried"/></summary>
+public sealed record CarriedMoneyHeader(Guid? BankAccountId, Guid? PaymentAccountId, Guid? ExpenseCategoryId);
+
+/// <summary>ผลเลือก "ขาเงินเดิม" ของการเปลี่ยนแหล่งเงิน — <c>AccountId</c> null = หาไม่เจอ/กำกวม · <c>Amount</c> = ยอดที่ไหลผ่านผังนั้นจริงตาม JE</summary>
+public sealed record ReclassifySourceLeg(Guid? AccountId, decimal Amount);
+
 /// <summary>
 /// **แหล่งเงินของเอกสาร/การชำระ → ผังบัญชี — ตัวตัดสินตัวเดียว** (ผลตรวจ 2026-10-14 PAYMENT_CHANNEL_AUDIT PC#4/PC#5/PC#15/PC#21 · ID#7)
 ///
@@ -68,6 +75,61 @@ public static class DocumentMoneyChannel
     public const string PaymentFixHint = "เลือก “บัญชีรับ-จ่ายเงิน” ในหน้าบันทึกรับ/จ่ายชำระใหม่ (หรือแก้ช่อง “แหล่งเงิน” ที่เอกสาร)";
 
     private static Guid? Norm(Guid? id) => id is { } g && g != Guid.Empty ? g : null;
+
+    /// <summary>ระดับผังต่ำสุดที่ลงรายการได้ (ต่ำกว่านี้ = บัญชีกลุ่ม) — ตัวเดียวของ <see cref="Decide"/>/<see cref="IsPostableGl"/></summary>
+    public const int MinPostingLevel = 4;
+
+    /// <summary>ผังนี้ใช้เป็นแหล่งเงิน/หมวดค่าใช้จ่ายได้ไหม (เปิดใช้ + ไม่ใช่บัญชีกลุ่ม) — กติกาเดียวกับ <see cref="Decide"/> ·
+    /// ใช้กรองตอน<b>เติมค่าให้</b> (OCR · ค่าตั้งต้นของเทมเพลต) ให้ไม่เติมผังที่จะทำให้อนุมัติล้ม (กฎเหล็ก #3)</summary>
+    public static bool IsPostableGl(bool isActive, int level) => isActive && level >= MinPostingLevel;
+
+    /// <summary>ค่าในช่องนี้ยกมาจากต้นทางตรงตัว (ผู้ใช้ไม่ได้เลือกใหม่) — ต้นทางที่ออกแล้วแก้ไม่ได้ ⇒ ห้ามตรวจแบบ "เพิ่งเลือก"
+    /// (ธนาคาร/ผังที่ปิดใช้ทีหลังเคยทำให้แปลง/คัดลอก/ออกใบแทนไปต่อไม่ได้เลย · ฝ่ายค้านรอบ 1 P1)</summary>
+    public static bool IsCarried(Guid? value, Guid? carriedFrom) => Norm(value) is Guid v && Norm(carriedFrom) == v;
+
+    /// <summary>
+    /// ตัวตรวจค่าที่<b>ยกมาจากต้นทาง</b> (pure) — บล็อกเฉพาะรหัสที่<b>ไม่ใช่ของบริษัทนี้</b>ในตารางใดเลย (tenant isolation · คำตัดสินข้อ 150) ·
+    /// ปิดใช้ · ยังไม่ผูกผัง · บัญชีกลุ่ม · สลับตาราง ⇒ <b>ผ่าน</b>: ใบใหม่เป็นร่างที่แก้ได้ และตอนลงบัญชี <c>UseMoneyAccount()</c> ตัดสินเฉพาะใบที่ขยับเงินจริง
+    /// (ใบตั้งหนี้ เช่น ใบเสนอราคา → ใบแจ้งหนี้ ไม่เคยลงขาเงิน ⇒ ห้ามบล็อกเพราะธนาคารยังไม่ผูกผัง)
+    /// </summary>
+    internal static string? CarriedProblem(bool ownedByCompany, string fieldLabel) => ownedByCompany ? null
+        : $"ช่อง “{fieldLabel}” ของเอกสารต้นทางอ้างรหัสที่ไม่ใช่ของบริษัทนี้ ระบบจึงไม่ยกค่านี้ไปยังเอกสารใหม่ — "
+          + "สร้างเอกสารใหม่จากหน้าเอกสาร (ปุ่ม “สร้าง”) แล้วเลือกช่องนี้ใหม่ หรือแจ้งผู้ดูแลระบบให้ตรวจเอกสารต้นทาง";
+
+    /// <summary>โหลดข้อเท็จจริงของ <see cref="CarriedProblem"/> — รหัสอยู่ในผังบัญชีหรือทะเบียนบัญชีธนาคารของบริษัทนี้ไหม
+    /// (นับแถวที่ถูกลบด้วย: ลบทีหลังไม่ใช่ข้ามบริษัท) · null = ผ่าน</summary>
+    public static async Task<string?> CarriedProblemAsync(AccountingDbContext db, Guid companyId, Guid? id, string fieldLabel,
+        CancellationToken ct = default)
+    {
+        if (Norm(id) is not Guid g) return null;
+        var owned = await db.ChartOfAccounts.IgnoreQueryFilters().AsNoTracking().AnyAsync(a => a.Id == g && a.CompanyId == companyId, ct)
+            || await db.BankAccounts.IgnoreQueryFilters().AsNoTracking().AnyAsync(b => b.Id == g && b.CompanyId == companyId, ct);
+        return CarriedProblem(owned, fieldLabel);
+    }
+
+    /// <summary>
+    /// ขาเงินเดิมของการเปลี่ยนแหล่งเงินบนเอกสารที่อนุมัติแล้ว (pure · ฝ่ายค้านรอบ 1 P2) — <paramref name="moneySideByAccount"/> = ยอดสุทธิฝั่งเงินต่อผัง
+    /// จาก JE ที่ยังมีผลของเอกสาร (เงินออก = เครดิต · เข้า = เดบิต):
+    /// <list type="number">
+    /// <item>ผังตามหัวเอกสาร (<paramref name="headerGlId"/>) มีเงินไหลผ่านจริง ⇒ ใช้ผังนั้น <b>ยอดตาม JE</b> (ใบที่หักมัดจำ · ผลต่างรับชำระ ·
+    /// อัตราแลกเปลี่ยนต่องวด ยอดขาเงิน ≠ PaidAmount × อัตรา — เดิมบล็อกใบเหล่านี้ทั้งที่ JE บอกชัด)</item>
+    /// <item>ไม่งั้น ผังเดียวที่ยอดตรง <paramref name="expectedAmount"/> (± 0.01 · ใบเก่าที่ตกเงินสดเงียบ ๆ ก่อนรอบนี้)</item>
+    /// <item>นอกนั้น ⇒ ไม่เดา (AccountId null)</item>
+    /// </list>
+    /// </summary>
+    public static ReclassifySourceLeg PickReclassifySource(Guid? headerGlId,
+        IReadOnlyList<(Guid AccountId, decimal MoneySide)> moneySideByAccount, decimal expectedAmount)
+    {
+        if (headerGlId is Guid hg)
+        {
+            var onHeader = moneySideByAccount.Where(m => m.AccountId == hg).Sum(m => m.MoneySide);
+            if (onHeader > 0.005m) return new ReclassifySourceLeg(hg, Math.Round(onHeader, 2, MidpointRounding.AwayFromZero));
+        }
+        var candidates = moneySideByAccount.Where(m => Math.Abs(m.MoneySide - expectedAmount) <= 0.01m).ToList();
+        return candidates.Count == 1
+            ? new ReclassifySourceLeg(candidates[0].AccountId, Math.Round(candidates[0].MoneySide, 2, MidpointRounding.AwayFromZero))
+            : new ReclassifySourceLeg(null, 0m);
+    }
 
     /// <summary>ลำดับเดียวของระบบ: ผังตรง &gt; บัญชีธนาคาร &gt; ไม่ได้เลือก</summary>
     internal static MoneyChannelKind Pick(Guid? bankAccountId, Guid? paymentAccountId)
@@ -134,7 +196,7 @@ public static class DocumentMoneyChannel
                 if (!gl.IsActive)
                     return Fail(kind, $"ผังบัญชี {gl.Code} {gl.Name} ที่เลือกเป็นแหล่งเงินถูกปิดใช้งาน — "
                         + "เปิดใช้ที่หน้า “ผังบัญชี” หรือ " + fixHint);
-                if (gl.Level < 4)
+                if (gl.Level < MinPostingLevel)
                     return Fail(kind, $"ผังบัญชี {gl.Code} {gl.Name} เป็นบัญชีกลุ่ม ลงรายการไม่ได้ — เลือกบัญชีย่อยแทน · " + fixHint);
                 return new MoneyChannelDecision(kind, gl.Id, null);
             case MoneyChannelKind.BankAccount:
@@ -154,7 +216,7 @@ public static class DocumentMoneyChannel
                 if (!bank.Linked.IsActive)
                     return Fail(kind, $"ผังบัญชี {bank.Linked.Code} {bank.Linked.Name} ที่บัญชีธนาคาร “{bank.DisplayName}” ผูกไว้ถูกปิดใช้งาน — "
                         + "เปิดใช้ที่หน้า “ผังบัญชี” หรือผูกผังใหม่ที่หน้า “บัญชีธนาคาร”");
-                if (bank.Linked.Level < 4)
+                if (bank.Linked.Level < MinPostingLevel)
                     return Fail(kind, $"บัญชีธนาคาร “{bank.DisplayName}” ผูกกับผังกลุ่ม {bank.Linked.Code} ซึ่งลงรายการไม่ได้ — "
                         + "ไปที่หน้า “บัญชีธนาคาร” → แก้ไขบัญชีนี้ → ผูกผังเงินฝากระดับย่อย");
                 return new MoneyChannelDecision(kind, bank.Linked.Id, null);
@@ -215,25 +277,28 @@ public static class DocumentMoneyChannel
     /// <summary>ตรวจหมวดค่าใช้จ่ายระดับเอกสาร (<c>ExpenseCategoryId</c>) — ผังของบริษัทนี้ · เปิดใช้ · ลงรายการได้ · ไม่ใช่รหัสบัญชีธนาคาร ·
     /// null = ผ่าน (ไม่ได้เลือก)</summary>
     public static async Task<string?> ExpenseCategoryProblemAsync(AccountingDbContext db, Guid companyId, Guid? expenseCategoryId,
-        CancellationToken ct = default)
+        CancellationToken ct = default, string? fixHint = null)
     {
         if (Norm(expenseCategoryId) is not Guid id) return null;
         var gl = await LoadGlAsync(db, companyId, id, ct);
         return ExpenseCategoryProblem(gl,
-            gl is null && await db.BankAccounts.AsNoTracking().AnyAsync(b => b.Id == id && b.CompanyId == companyId, ct));
+            gl is null && await db.BankAccounts.AsNoTracking().AnyAsync(b => b.Id == id && b.CompanyId == companyId, ct), fixHint);
     }
 
-    /// <summary>ตัวตัดสิน (pure) ของหมวดค่าใช้จ่าย</summary>
-    internal static string? ExpenseCategoryProblem(MoneyGlFacts? gl, bool idIsBank)
+    /// <summary>ที่แก้หมวดค่าใช้จ่ายบนเอกสาร (ค่าตั้งต้นของ <see cref="ExpenseCategoryProblem"/>)</summary>
+    public const string ExpenseCategoryFixHint = "เปิดเอกสาร → ช่อง “หมวดค่าใช้จ่าย” แล้วเลือกใหม่";
+
+    /// <summary>ตัวตัดสิน (pure) ของหมวดค่าใช้จ่าย · <paramref name="fixHint"/> = ที่แก้ของผู้เรียก (null = บนเอกสาร)</summary>
+    internal static string? ExpenseCategoryProblem(MoneyGlFacts? gl, bool idIsBank, string? fixHint = null)
     {
-        const string fix = "เปิดเอกสาร → ช่อง “หมวดค่าใช้จ่าย” แล้วเลือกใหม่";
+        var fix = fixHint ?? ExpenseCategoryFixHint;
         if (gl is null)
             return idIsBank
                 ? "ช่อง “หมวดค่าใช้จ่าย” ได้รหัสบัญชีธนาคารมาแทนรหัสผังบัญชี — " + fix
                 : "ช่อง “หมวดค่าใช้จ่าย” อ้างผังบัญชีที่ไม่มีในบริษัทนี้ — " + fix;
         if (!gl.IsActive)
             return $"หมวดค่าใช้จ่าย {gl.Code} {gl.Name} ถูกปิดใช้งาน — เปิดใช้ที่หน้า “ผังบัญชี” หรือ " + fix;
-        if (gl.Level < 4)
+        if (gl.Level < MinPostingLevel)
             return $"หมวดค่าใช้จ่าย {gl.Code} {gl.Name} เป็นบัญชีกลุ่ม ลงรายการไม่ได้ — " + fix;
         return null;
     }
@@ -248,7 +313,7 @@ public static class DocumentMoneyChannel
     {
         if (Norm(glAccountId) is not Guid id) return null;
         var gl = await LoadGlAsync(db, companyId, id, ct);
-        if (gl is null || !gl.IsActive || gl.Level < 4) return null;
+        if (gl is null || !IsPostableGl(gl.IsActive, gl.Level)) return null;
         var banks = await db.BankAccounts.AsNoTracking()
             .Where(b => b.CompanyId == companyId && !b.IsDeleted && b.IsActive && b.LinkedAccountId == id)
             .Select(b => b.Id).Take(2).ToListAsync(ct);

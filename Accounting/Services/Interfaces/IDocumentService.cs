@@ -20,9 +20,12 @@ public interface IDocumentService
     /// <param name="autoApproveBy">ผู้อนุมัติของใบที่ระบบอนุมัติให้ทันทีตอนสร้าง (ใบสำคัญจ่ายเงินสด) — null = <paramref name="createdBy"/> (พฤติกรรมเดิม) ·
     /// รอบ 198 คำตัดสินเจ้าของข้อ 7: ใบค่าธรรมเนียมที่การลงบัญชีรอบโอนออกให้ ต้องบันทึก "คนที่กดลงบัญชี" เป็นผู้อนุมัติ ไม่ใช่ป้ายของระบบ
     /// (ป้าย <paramref name="createdBy"/> ยังเป็นกุญแจทำต่อจากที่ค้าง) · <b>พารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request</b></param>
+    /// <param name="carriedMoneyHeader">ฝ่ายค้านรอบ 1 P1 — แหล่งเงิน/หมวดค่าใช้จ่ายที่<b>ยกมาจากต้นทางตรงตัว</b> (แปลง · คัดลอก · ออกใบแทน · รายการประจำ) ·
+    /// ช่องที่ค่าเท่ากับต้นทางตรวจแค่ "เป็นของบริษัทนี้" (ต้นทางที่อนุมัติแล้วแก้ไม่ได้ — ธนาคารที่ปิดใช้ทีหลังเคยทำให้แปลงไม่ได้เลย) ·
+    /// <b>พารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request</b> (ค่าที่ client คุมได้ห้ามปลดด่าน) · null = ทุกช่องตรวจแบบเพิ่งเลือก</param>
     Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
         string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null,
-        string? autoApproveBy = null);
+        string? autoApproveBy = null, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null);
     Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>Same as GetDocumentAsync but honors per-user sensitivity rules — when the
     /// caller cannot see the doc, returns a redacted stub instead of throwing.</summary>

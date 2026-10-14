@@ -42,6 +42,8 @@ public class MoneyChannelPostingDbTests
         await db.SaveChangesAsync();
         var group = Coa(company.Id, "111", "เงินสดและรายการเทียบเท่าเงินสด", AccountType.Asset, level: 3);
         var petty = Coa(company.Id, PettyCashJePlan.DefaultFundAccountCode, "เงินสดย่อย", AccountType.Asset);
+        // ฝ่ายค้านรอบ 2 P1-1: "บัญชีคุม" = มีบัญชีย่อย (PostingAccountRule) ไม่ใช่ระดับ — 111 เป็นบัญชีคุมเพราะเงินสดย่อยอยู่ใต้มัน
+        petty.ParentAccountId = group.Id;
         var bankGl = Coa(company.Id, "11121", "เงินฝากกระแสรายวัน", AccountType.Asset);
         var expense = Coa(company.Id, "53110", "ค่าเครื่องเขียน", AccountType.Expense);
         var loanGl = Coa(company.Id, "22100", "เงินกู้ยืมระยะยาว", AccountType.Liability);
@@ -274,12 +276,27 @@ public class MoneyChannelPostingDbTests
             loanGl, s.InterestGl, bankId, moneyGl, post);
         // ผังเงินกู้เป็นผังค่าใช้จ่าย ⇒ ชนิดไม่ตรงช่อง
         Assert.Contains("ผังบัญชีเงินกู้", (await Fails(Good(s.ExpenseGl, s.BankId))).Message);
-        // ส่งผังบัญชีมาในช่องบัญชีธนาคาร (สัญญาเดิมของ Loan.BankAccountId) ⇒ "ไม่พบบัญชีธนาคาร" ไม่ใช่ FK
-        Assert.Contains("ไม่พบบัญชีธนาคาร", (await Fails(Good(s.LoanGl, s.BankGl))).Message);
+        // รหัสที่ไม่ใช่ทั้งบัญชีธนาคารและผังของบริษัทนี้ในช่องบัญชีธนาคาร ⇒ "ไม่พบบัญชีธนาคาร" ไม่ใช่ FK
+        Assert.Contains("ไม่พบบัญชีธนาคาร", (await Fails(Good(s.LoanGl, Guid.NewGuid()))).Message);
         // ขอลงบัญชีแต่ไม่มีช่องทางเงิน ⇒ ปฏิเสธ (เดิมข้าม JE เงียบ ๆ)
         Assert.Contains("บัญชีรับ/จ่ายเงินกู้", (await Fails(Good(s.LoanGl, null))).Message);
         using (var check = DbTestDatabase.TryCreateContext()!)
             Assert.False(await check.Loans.AnyAsync(l => l.CompanyId == s.CompanyId));
+
+        // ฝ่ายค้านรอบ 2 P2(c): สัญญาเดิมของ Loan.BankAccountId (ผังบัญชีในช่องบัญชีธนาคาร) รับต่ออีกหนึ่งรอบ — ลงผังนั้น + ข้อความเลิกใช้
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var legacy = await new LoanService(req).CreateAsync(s.CompanyId, Good(s.LoanGl, s.BankGl, post: false));
+            Assert.Contains("moneyAccountId", legacy.Notice);
+        }
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var legacyLoan = await check.Loans.AsNoTracking().SingleAsync(l => l.CompanyId == s.CompanyId);
+            Assert.Equal(s.BankGl, legacyLoan.MoneyAccountId);
+            // ถอดออกจากเส้นทดสอบที่เหลือ (ลบแบบ soft — ตัวกรองของสินเชื่อไม่เห็นแล้ว)
+            (await check.Loans.SingleAsync(l => l.Id == legacyLoan.Id && l.CompanyId == s.CompanyId)).IsDeleted = true;
+            await check.SaveChangesAsync();
+        }
 
         // ทิศตรงข้าม: สินเชื่อเดิมที่ยอดยกมาแล้ว — ไม่ลงบัญชี ไม่ต้องมีผัง สร้างได้ ไม่มี JE
         LoanResponse opening;

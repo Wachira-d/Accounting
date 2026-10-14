@@ -985,7 +985,8 @@ public partial class BankService : IBankService
             ReconciledByLabel: who.Kind == Accounting.Helpers.BankMatchActorKind.Unknown
                 ? null : who.Label,
             MatchRuleCode: t.MatchRuleCode,
-            MatchReason: t.MatchReason);
+            MatchReason: t.MatchReason,
+            BalanceAfterUnknown: t.BalanceAfterUnknown);
     }
 
     /// <summary>

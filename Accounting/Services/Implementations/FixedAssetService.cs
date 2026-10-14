@@ -326,11 +326,13 @@ public class FixedAssetService : IFixedAssetService
         // เข้าโครงการที่ปิดไปแล้วต่อ)
         static Guid? G(Guid? v) => v == Guid.Empty ? null : v;
         // ผังที่เปลี่ยน: ตัวตัดสินเดียวกับตอนสร้าง (ID#13) — Guid.Empty (ปลดค่า) ข้ามโดย EnsurePostingAccountsAsync
+        // ฝ่ายค้านรอบ 2 P2(e): ตรวจเฉพาะช่องที่ "เปลี่ยน" — หน้าเว็บส่งค่าเดิมกลับทุกครั้ง ⇒ ผังที่ถูกปิดใช้ทีหลังเคยทำให้แก้ชื่อ/ที่ตั้งไม่ได้
+        static Guid? Changed(Guid? requested, Guid? current) => requested.HasValue && requested != current ? requested : null;
         await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
         {
-            (request.AssetAccountId, "บัญชีสินทรัพย์"),
-            (request.DepreciationExpenseAccountId, "บัญชีค่าเสื่อมราคา"),
-            (request.AccumulatedDepreciationAccountId, "บัญชีค่าเสื่อมราคาสะสม"),
+            (Changed(request.AssetAccountId, asset.AssetAccountId), "บัญชีสินทรัพย์"),
+            (Changed(request.DepreciationExpenseAccountId, asset.DepreciationExpenseAccountId), "บัญชีค่าเสื่อมราคา"),
+            (Changed(request.AccumulatedDepreciationAccountId, asset.AccumulatedDepreciationAccountId), "บัญชีค่าเสื่อมราคาสะสม"),
         });
         if (request.AssetAccountId.HasValue) asset.AssetAccountId = G(request.AssetAccountId);
         if (request.DepreciationExpenseAccountId.HasValue) asset.DepreciationExpenseAccountId = G(request.DepreciationExpenseAccountId);

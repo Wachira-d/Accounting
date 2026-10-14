@@ -7100,10 +7100,17 @@ public class OcrService : IOcrService
         //   ก่อนแก้ (Dr 21230 เจ้าหนี้กรรมการ / Cr 51530 ต้นทุนซ่อมบำรุง) ถูกสลับกลับตอนอ่าน ไม่ต้องรอ migration
         var scanAccounts = await ResolveScanAccountCodesAsync(companyId, result, docType);
         var scanDebitCode = scanAccounts.DebitCode;
-        var scanDebitAccountId = scanDebitCode == null ? null
+        // ฝ่ายค้านรอบ 1 P2 (4b · กฎเหล็ก #3 ห้ามล้มตอนอนุมัติ): เติมเฉพาะผังที่ลงรายการได้ (เปิดใช้ · ไม่ใช่บัญชีกลุ่ม — กติกาเดียวกับด่านตอนลงบัญชี
+        // DocumentMoneyChannel.IsPostableGl) · เดิมค้นแค่รหัส ⇒ ผังที่ปิดใช้/บัญชีกลุ่มถูกเติมเป็นหมวดค่าใช้จ่าย/แหล่งเงิน แล้วกดอนุมัติล้ม
+        var scanDebitGl = scanDebitCode == null ? null
             : await _db.ChartOfAccounts.AsNoTracking()
                 .Where(a => a.CompanyId == companyId && a.AccountCode == scanDebitCode && !a.IsDeleted)
-                .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
+                .Select(a => new { a.Id, a.IsActive, a.Level }).FirstOrDefaultAsync();
+        var scanDebitAccountId = scanDebitGl != null && Accounting.Helpers.DocumentMoneyChannel.IsPostableGl(scanDebitGl.IsActive, scanDebitGl.Level)
+            ? scanDebitGl.Id : (Guid?)null;
+        if (scanDebitGl != null && scanDebitAccountId == null)
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrAccountPlacement.Tag
+                + $" ผังเดบิต {scanDebitCode} ที่จำไว้ถูกปิดใช้/เป็นบัญชีกลุ่ม — ระบบใช้หมวดค่าใช้จ่ายตั้งต้นแทน ตรวจช่อง “หมวดค่าใช้จ่าย” ก่อนอนุมัติ";
 
         // ── Pre-fill: แหล่งเงิน/ช่องทางชำระ (Credit account ที่ผู้ใช้เลือกใน review) ──
         // CreditAccountCode = ผังที่จะลง Cr (เช่น 11110 เงินสด, 11120 ธนาคาร,
@@ -7114,16 +7121,28 @@ public class OcrService : IOcrService
         if (!string.IsNullOrWhiteSpace(scanAccounts.CreditCode))
         {
             var creditCode = scanAccounts.CreditCode;
-            scanCreditAccountId = await _db.ChartOfAccounts.AsNoTracking()
+            var creditGl = await _db.ChartOfAccounts.AsNoTracking()
                 .Where(a => a.CompanyId == companyId && a.AccountCode == creditCode && !a.IsDeleted)
-                .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
-            // ถ้าเป็นบัญชีธนาคาร (มี BankAccount ผูกอยู่) → ใช้ BankAccountId
-            if (scanCreditAccountId.HasValue)
-            {
-                scanCreditBankAccountId = await _db.BankAccounts.AsNoTracking()
-                    .Where(b => b.CompanyId == companyId && b.LinkedAccountId == scanCreditAccountId.Value)
+                .Select(a => new { a.Id, a.IsActive, a.Level }).FirstOrDefaultAsync();
+            // ถ้าเป็นบัญชีธนาคาร (มี BankAccount ผูกอยู่) → ใช้ BankAccountId · เลือกบัญชีที่เปิดใช้ก่อน (เดิมได้บัญชีที่ปิดใช้แล้วได้)
+            var creditBankId = creditGl == null ? null
+                : await _db.BankAccounts.AsNoTracking()
+                    .Where(b => b.CompanyId == companyId && b.LinkedAccountId == creditGl.Id)
+                    .OrderByDescending(b => b.IsActive).ThenBy(b => b.AccountName)
                     .Select(b => (Guid?)b.Id).FirstOrDefaultAsync();
+            // ผังตรงต้องลงรายการได้ · ธนาคารตัดสินด้วยตัวเดียวกับตอนลงบัญชี (DocumentMoneyChannel · Post) — ใช้ไม่ได้ ⇒ ไม่เติม + บอกบนใบ
+            var creditUsable = creditGl != null && (creditBankId.HasValue
+                ? (await Accounting.Helpers.DocumentMoneyChannel.EvaluateAsync(_db, companyId, creditBankId, null,
+                    Accounting.Helpers.MoneyChannelCheck.Post, Accounting.Helpers.DocumentMoneyChannel.DocumentFixHint)).Ok
+                : Accounting.Helpers.DocumentMoneyChannel.IsPostableGl(creditGl.IsActive, creditGl.Level));
+            if (creditUsable)
+            {
+                scanCreditAccountId = creditGl!.Id;
+                scanCreditBankAccountId = creditBankId;
             }
+            else if (creditGl != null)
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrAccountPlacement.Tag
+                    + $" ผังแหล่งเงิน {creditCode} ที่จำไว้ใช้ลงรายการไม่ได้ (ปิดใช้/บัญชีกลุ่ม/บัญชีธนาคารยังไม่ผูกผัง) — ตรวจช่อง “แหล่งเงิน” ก่อนอนุมัติ";
         }
         if (scanAccounts.Reason != null
             && !(result.ProcessingNotes ?? "").Contains(scanAccounts.Reason, StringComparison.Ordinal))

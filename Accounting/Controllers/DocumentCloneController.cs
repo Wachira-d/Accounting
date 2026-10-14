@@ -257,7 +257,10 @@ public class DocumentCloneController : ControllerBase
         // ResolveSignersAsync (PDF ผู้จัดทำ) parse CreatedBy เป็น user GUID —
         // Identity.Name เป็นชื่อ/อีเมล ทำให้เอกสารโคลนไม่มีลายเซ็นผู้จัดทำ
         var createdBy = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
-        var newDoc = await _docs.CreateDocumentAsync(companyId, req, createdBy);
+        // ฝ่ายค้านรอบ 1 P1: แหล่งเงินที่ยกจากต้นแบบตรงตัว — ธนาคาร/ผังที่ปิดใช้ทีหลังไม่ทำให้คัดลอกไม่ได้ (ใบโคลนเป็นร่างที่แก้ได้ ·
+        // ตอนลงบัญชีตัดสินเฉพาะใบที่ขยับเงินจริง) · ข้ามบริษัท = ยังบล็อก
+        var newDoc = await _docs.CreateDocumentAsync(companyId, req, createdBy,
+            carriedMoneyHeader: new Accounting.Helpers.CarriedMoneyHeader(src.BankAccountId, src.PaymentAccountId, null));
         // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้าย "50 ทวิ ต้องตรวจ" บนใบใหม่ + บอกในคำตอบ — ไม่เปลี่ยนผู้ถูกหักเงียบ ๆ ·
         // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ป้ายเดียวกับที่ WhtCertIssuePlan.Decide/คำเตือนอนุมัติอ่าน (เดิมหมายเหตุธรรมดา ⇒ 50 ทวิ ออกผิดคนเงียบ)
         var droppedNote = Accounting.Helpers.WhtPayeeSplit.DroppedInheritedPayeeNote(src.DocumentNumber, cloneDroppedPayees);

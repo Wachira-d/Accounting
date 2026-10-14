@@ -84,16 +84,24 @@ public class ScheduledReportDispatcher : BackgroundService
         foreach (var s in schedules)
         {
             if (!IsDue(s, nowBkk)) continue;
-            try
-            {
-                await DispatchAndRecordAsync(scope.ServiceProvider, db, s, _logger, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogWarning(ex, "Failed to dispatch ScheduledReport {Id} ({Name})", s.Id, s.Name);
-                s.LastResult = $"ERROR · ส่งไม่สำเร็จ: {ex.Message.Substring(0, Math.Min(180, ex.Message.Length))} — ตรวจการตั้งค่ารายงานนี้แล้วกด “ส่งทันที”";
-            }
-            await db.SaveChangesAsync(ct);
+            // ฝ่ายค้านรอบ 2 P1-2: ล็อกต่อรายงาน (ตัวเดียวกับปุ่ม "ส่งทันที") — ปุ่มที่ส่งรายงานนี้อยู่ ⇒ ข้ามเฉพาะรายงานนี้ (ปุ่มส่งให้แล้ว) ไม่ใช่ทั้งรอบ ·
+            // อ่านแถวใหม่ใต้ล็อก (ปุ่มเพิ่งส่งเสร็จ ⇒ LastSentAt ใหม่ ⇒ ไม่ถึงกำหนดแล้ว ไม่ส่งซ้ำ)
+            await Accounting.Helpers.JobLock.RunExclusiveAsync(db, Accounting.Helpers.AdvisoryLockKey.ScheduledReportSend,
+                s.Id.ToString(), async () =>
+                {
+                    await db.Entry(s).ReloadAsync(ct);
+                    if (s.IsDeleted || !s.IsActive || !IsDue(s, nowBkk)) return;
+                    try
+                    {
+                        await DispatchAndRecordAsync(scope.ServiceProvider, db, s, _logger, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(ex, "Failed to dispatch ScheduledReport {Id} ({Name})", s.Id, s.Name);
+                        s.LastResult = $"ERROR · ส่งไม่สำเร็จ: {ex.Message.Substring(0, Math.Min(180, ex.Message.Length))} — ตรวจการตั้งค่ารายงานนี้แล้วกด “ส่งทันที”";
+                    }
+                    await db.SaveChangesAsync(ct);
+                }, _logger, s.CompanyId, ct);
         }
     }
 

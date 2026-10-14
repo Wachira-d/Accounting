@@ -950,7 +950,7 @@
           <td>${Layout.date(t.transactionDate)}</td>
           <td><span class="badge ${isCredit(t.transactionType) ? 'badge-success' : 'badge-danger'}">${typeMap[t.transactionType] || t.transactionType}</span></td>
           <td class="text-right ${isCredit(t.transactionType) ? 'text-success' : 'text-danger'} font-medium">${isCredit(t.transactionType) ? '+' : '-'}${Layout.money(t.amount)}</td>
-          <td class="text-right">${Layout.money(t.balanceAfter)}</td>
+          <td class="text-right">${t.balanceAfterUnknown ? '<span class="text-gray-400" title="ไฟล์ statement ไม่มียอดคงเหลือของบรรทัดนี้">—</span>' : Layout.money(t.balanceAfter)}</td>
           <td>${Layout.esc(t.description || t.payee || '-')}${t.reference ? ' <span class="text-xs text-gray-400">('+Layout.esc(t.reference)+')</span>' : ''}</td>
           <td>${this.statusCell(t)}</td>
           <td>

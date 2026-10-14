@@ -48,13 +48,20 @@ public class RecurringTransactionDbTests
         public static T Create() => DispatchProxy.Create<T, AllowAll<T>>();
     }
 
-    private static RecurringTransactionService Svc(AccountingDbContext db)
+    private static RecurringTransactionService Svc(AccountingDbContext db, IErrorLogService? errorLog = null)
     {
         var acc = new AccountingService(db);
         var docs = new DocumentService(db, acc, AllowAll<ISubscriptionService>.Create(), null!, null!,
             NullLogger<DocumentService>.Instance, null!, null!, null!);
         return new RecurringTransactionService(db, docs, acc, NullLogger<RecurringTransactionService>.Instance,
-            new ErrorLogService(db, NullLogger<ErrorLogService>.Instance));
+            errorLog ?? new ErrorLogService(db, NullLogger<ErrorLogService>.Instance));
+    }
+
+    /// <summary>ที่เก็บ ErrorLog ที่ล้มเสมอ — จำลองขั้น "หลังสร้างเอกสาร" ที่ล้ม (ฝ่ายค้านรอบ 1 P2 · 3b)</summary>
+    private sealed class ThrowingErrorLog : IErrorLogService
+    {
+        public Task LogErrorAsync(Exception exception, string source, string? userId = null)
+            => throw new InvalidOperationException("error log store down (test)");
     }
 
     private sealed record Seed(Guid CompanyId, Guid OtherCompanyId, Guid ContactId, Guid BankId, Guid InactiveBankId,
@@ -334,5 +341,68 @@ public class RecurringTransactionDbTests
         var ok = await svc.CreateAsync(s.CompanyId,
             Req(s, DocumentType.Invoice, """{"lines":[{"description":"x","quantity":"1","unitPrice":"1,200"}]}"""), "tester");
         Assert.Equal(1200m, ok.Amount);
+    }
+
+    [Fact]
+    public async Task ขั้นหลังสร้างเอกสารล้ม_แถวไม่ขึ้นล้ม_นับรอบแล้ว_บอกว่าไม่ต้องกดซ้ำ_ไม่ออกใบซ้ำ()
+    {
+        // ฝ่ายค้านรอบ 1 P2 (3b): เดิมข้อผิดพลาดหลัง MarkRunAsync (บันทึกผลอนุมัติล้ม/ErrorLog) โยนต่อ ⇒ แถวขึ้น "ล้ม" ทั้งที่ออกใบ + นับงวดแล้ว ⇒ ผู้ใช้กดซ้ำ = ใบซ้ำ
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid id;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            // ใบแจ้งหนี้ + อนุมัติอัตโนมัติ — ผังรายได้ไม่มีใน seed ⇒ อนุมัติล้ม ⇒ เดินเส้นบันทึกผลล้ม + ErrorLog (ที่ล้มอีกชั้น)
+            id = (await Svc(req).CreateAsync(s.CompanyId, Req(s, DocumentType.Invoice, Template()) with { AutoApprove = true }, "tester")).Id;
+
+        RecurringTransactionResponse after;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            after = await Svc(req, new ThrowingErrorLog()).RunNowAsync(s.CompanyId, id, "tester");   // ไม่โยน
+
+        Assert.Null(after.LastRunError);
+        Assert.Equal(1, after.TotalRuns);
+        Assert.Contains("ไม่ต้องกด", after.LastRunNotice ?? "");
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var doc = Assert.Single(await check.Documents.AsNoTracking().Where(d => d.CompanyId == s.CompanyId).ToListAsync());
+        Assert.Equal(doc.Id, after.LastDocumentId);
+    }
+
+    [Fact]
+    public async Task ธนาคารยังไม่ผูกผัง_บันทึกรายการใหม่ไม่ได้_แต่รายการเดิมของใบแจ้งหนี้ยังออกได้ทุกงวด()
+    {
+        // ฝ่ายค้านรอบ 1 P1 + P2 (3c): ตอนบันทึกตรวจด้วยตัวตัดสินเดียวกับหน้าเอกสาร (ธนาคารยังไม่ผูกผัง = ปฏิเสธพร้อมทางไปต่อ) ·
+        // รายการที่บันทึกไว้ก่อน (ข้อมูลเดิม) ถึงรอบแล้ว CreateDocumentAsync ไม่ตรวจแบบ "เพิ่งเลือก" ⇒ ใบแจ้งหนี้ (ไม่ลงขาเงิน) ออกได้
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var unlinked = new BankAccount { CompanyId = s.CompanyId, AccountName = "บัญชียังไม่ผูก", BankName = "กรุงไทย", AccountNumber = "9876543210" };
+        db.BankAccounts.Add(unlinked);
+        await db.SaveChangesAsync();
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Svc(req).CreateAsync(s.CompanyId, Req(s, DocumentType.Invoice, Template(bankAccountId: unlinked.Id)), "tester"));
+            Assert.Contains("ยังไม่ได้ผูกผังบัญชี", ex.Message);
+            Assert.Contains("รายการประจำ", ex.Message);   // ทางไปต่อชี้หน้ารายการประจำ (ไม่ใช่ "เปิดเอกสาร")
+        }
+
+        // ข้อมูลเดิม: รายการที่บันทึกไว้ก่อนด่านนี้
+        var legacy = new RecurringTransaction
+        {
+            CompanyId = s.CompanyId, Name = "ค่าเช่ารายเดือน (เดิม)", Frequency = RecurringFrequency.Monthly, Status = RecurringStatus.Active,
+            StartDate = Today, NextRunDate = Today, PreferredDay = Today.Day, TemplateType = "Document", DocumentType = DocumentType.Invoice,
+            ContactId = s.ContactId, TemplateData = Template(bankAccountId: unlinked.Id), CreatedBy = "tester",
+        };
+        db.RecurringTransactions.Add(legacy);
+        await db.SaveChangesAsync();
+        RecurringTransactionResponse after;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            after = await Svc(req).RunNowAsync(s.CompanyId, legacy.Id, "tester");
+        Assert.Null(after.LastRunError);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var doc = Assert.Single(await check.Documents.AsNoTracking().Where(d => d.CompanyId == s.CompanyId).ToListAsync());
+        Assert.Equal(unlinked.Id, doc.BankAccountId);
+        Assert.Equal(DocumentType.Invoice, doc.DocumentType);
     }
 }
