@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Bank;
 using Accounting.Models.DTOs.OpenBanking;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -15,10 +16,14 @@ public class OpenBankingService : IOpenBankingService
     private readonly AccountingDbContext _db;
     private readonly string _encryptionKey;
     private readonly IErrorLogService _errorLogService;
+    /// <summary>ตัวเขียน statement ตัวเดียว (รอบ 205 ทีม C) — null (เทสต์ที่ไม่ผ่าน DI) ⇒ สร้างจาก context เดียวกัน</summary>
+    private readonly IBankService _bank;
 
-    public OpenBankingService(AccountingDbContext db, IConfiguration configuration, IErrorLogService errorLogService)
+    public OpenBankingService(AccountingDbContext db, IConfiguration configuration, IErrorLogService errorLogService,
+        IBankService? bank = null)
     {
         _db = db;
+        _bank = bank ?? new BankService(db);
         // ★ H-A6: เดิมตกไปใช้คีย์ที่เขียนไว้ใน source **เงียบ ๆ** ⇒ credential
         // ของธนาคาร (ClientId/ClientSecret/token) ถูกเข้ารหัสด้วยกุญแจสาธารณะ
         // = เท่ากับ plaintext ถ้าฐานข้อมูลรั่ว · JWT_SECRET / ENCRYPTION_KEY
@@ -209,234 +214,54 @@ public class OpenBankingService : IOpenBankingService
 
     // ===== File Import =====
 
+    /// <summary>
+    /// นำเข้าไฟล์ statement (CSV/TSV · Excel · OFX) — แยกไฟล์ด้วย <c>BankStatementFileReader</c> แล้วลงผ่านตัวเขียนตัวเดียว
+    /// <see cref="IBankService.ImportParsedStatementRowsAsync"/> (รอบ 205 ทีม C)
+    ///
+    /// <para>═══ ที่มา ═══ เดิมทางนี้เป็นตัวเขียนที่สอง: กันซ้ำด้วยกติกาของตัวเอง · ยอดคงเหลือคำนวณเดินเอง (คนละความหมายกับหน้า "ธนาคาร") ·
+    /// <b>OFX/QIF นับบรรทัดแล้วตอบว่า "ใหม่" N รายการโดยไม่บันทึกอะไรเลย</b> (HTTP 200 โกหก) · ตัวจับคู่ของตัวเองอีกชุด ⇒ ตอนนี้ OFX ลงจริง ·
+    /// QIF ล้มดัง "ยังไม่รองรับ" (คำตัดสินข้อ 151) · จับคู่ด้วย <c>AutoMatchAsync</c> ตัวเดียวกับทุกทางเข้า (ผ่านตัวเขียน)</para>
+    /// <para>รายการที่วัน+ยอดตรงของเดิมแต่คำอธิบายต่าง = ลงเป็นรายการใหม่ + คำเตือน (ความหมายเดิมของทางนี้ — ไม่มีหน้าจอให้เลือก)</para>
+    /// </summary>
     public async Task<BankFeedImportResponse> ImportFileAsync(Guid companyId, Guid bankAccountId, string fileFormat, string base64Content)
     {
-        var bankAccount = await _db.BankAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.Id == bankAccountId)
-            ?? throw new InvalidOperationException("Bank account not found.");
+        if (!await _db.BankAccounts.AnyAsync(a => a.CompanyId == companyId && a.Id == bankAccountId))
+            throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
+        if (string.IsNullOrWhiteSpace(base64Content))
+            throw new ArgumentException("กรุณาแนบไฟล์ statement");
 
-        // Decode the file content
         var fileBytes = Convert.FromBase64String(base64Content);
-
-        int totalTransactions = 0;
-        int newTransactions = 0;
-        int duplicateSkipped = 0;
-        int autoMatched = 0;
-        var periodStart = DateTime.UtcNow;
-        var periodEnd = DateTime.UtcNow;
-        var fileContent = ""; // for non-CSV formats
-
-        if (fileFormat.Equals("CSV", StringComparison.OrdinalIgnoreCase))
+        var fileName = "statement." + (fileFormat ?? "csv").Trim().ToLowerInvariant() switch
         {
-            // Use the robust BankCsvParser shared with BankService.ImportBankStatement
-            var (parsedRows, _) = Helpers.BankCsvParser.ParseStatement(fileBytes);
-            totalTransactions = parsedRows.Count;
+            "excel" or "xlsx" => "xlsx",
+            "ofx" => "ofx",
+            _ => "csv",
+        };
+        var parsed = Helpers.BankStatementFileReader.Read(fileFormat, fileName, fileBytes);
 
-            if (parsedRows.Count > 0)
-            {
-                periodStart = parsedRows.Min(r => r.Date);
-                periodEnd = parsedRows.Max(r => r.Date);
-            }
-
-            // Get current running balance once (rather than re-querying for each row)
-            // tenant isolation (กฎเหล็ก #2 M) — คิวรีเดิมไม่มี CompanyId
-            var runningBalance = await _db.BankTransactions
-                .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId)
-                .OrderByDescending(t => t.TransactionDate)
-                .ThenByDescending(t => t.CreatedAt)
-                .Select(t => t.BalanceAfter)
-                .FirstOrDefaultAsync();
-
-            foreach (var r in parsedRows)
-            {
-                var isDeposit = r.Deposit > 0;
-                var amount = isDeposit ? r.Deposit : r.Withdrawal;
-                if (amount <= 0) continue;
-
-                var signedAmount = isDeposit ? amount : -amount;
-
-                // Duplicate detection: same reference + same date, OR same date + amount + description
-                var txDayStart = r.Date.Date;
-                var txDayEnd = txDayStart.AddDays(1);
-                bool isDuplicate;
-                if (!string.IsNullOrEmpty(r.Reference))
-                {
-                    isDuplicate = await _db.BankTransactions
-                        .AnyAsync(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId
-                                    && t.Reference == r.Reference
-                                    && t.TransactionDate >= txDayStart && t.TransactionDate < txDayEnd);
-                }
-                else
-                {
-                    isDuplicate = await _db.BankTransactions
-                        .AnyAsync(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId
-                                    && t.Amount == amount
-                                    && t.TransactionType == (isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal)
-                                    && t.TransactionDate >= txDayStart && t.TransactionDate < txDayEnd
-                                    && t.Description == r.Description);
-                }
-
-                if (isDuplicate) { duplicateSkipped++; continue; }
-
-                // Use balance from CSV if available (null = ช่องว่าง), else compute running
-                var balanceAfter = r.Balance ?? (runningBalance + signedAmount);
-                runningBalance = balanceAfter;
-
-                var desc = r.Description;
-                if (!string.IsNullOrWhiteSpace(r.Channel)) desc = $"{desc} | {r.Channel}";
-                if (desc.Length > 500) desc = desc[..500];
-
-                _db.BankTransactions.Add(new BankTransaction
-                {
-                    CompanyId = companyId,
-                    BankAccountId = bankAccountId,
-                    TransactionDate = r.Date,
-                    TransactionType = isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal,
-                    Amount = amount,
-                    BalanceAfter = balanceAfter,
-                    Description = desc,
-                    Reference = r.Reference,
-                    ReconciliationStatus = ReconciliationStatus.Unmatched
-                });
-
-                newTransactions++;
-            }
-        }
-        else if (fileFormat.Equals("OFX", StringComparison.OrdinalIgnoreCase) || fileFormat.Equals("QIF", StringComparison.OrdinalIgnoreCase))
-        {
-            fileContent = System.Text.Encoding.UTF8.GetString(fileBytes);
-            var ofxLines = fileContent.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            // Simplified OFX/QIF parsing: count transactions from content structure
-            totalTransactions = ofxLines.Count(l => l.Contains("<STMTTRN>") || l.StartsWith("D", StringComparison.OrdinalIgnoreCase));
-            newTransactions = totalTransactions; // Simplified: treat all as new
-        }
-        else
-        {
-            throw new InvalidOperationException($"รูปแบบไฟล์ '{fileFormat}' ยังไม่รองรับ");
-        }
-
-        // ═══ จับคู่อัตโนมัติ — เดินด่านเดียวกับทุกทางเข้า ═══
-        // ของเดิม (`DECISION_AUDIT_2026-09-18.md` §3 D4-1, P0) มี 3 บั๊ก:
-        //  1. คิวรี `BankTransactions` **ไม่มี `CompanyId`** ⇒ ละเมิด tenant
-        //     isolation (กฎเหล็ก #2 M) — ไฟล์ statement ของบริษัทหนึ่งไป
-        //     ประทับสถานะให้บรรทัดของอีกบริษัทที่บังเอิญใช้ bankAccountId เดียวกัน
-        //  2. โหลด `Payments` **ทั้งบริษัทโดยไม่กันตัวที่ถูกจับไปแล้ว** ⇒
-        //     รายการชำระใบเดียวถูกจับคู่กับหลายบรรทัดธนาคาร (double-match)
-        //  3. `FirstOrDefault(ยอดตรง + ≤3 วัน)` = **ใครมาก่อนชนะ** ไม่ดูชื่อ
-        //     ผู้โอน แล้วประทับ `Matched` เอง
-        var alreadyPairedPaymentIds = await _db.BankTransactions
-            .Where(t => t.CompanyId == companyId && t.MatchedPaymentId != null)
-            .Select(t => t.MatchedPaymentId!.Value)
-            .ToListAsync();
-        var takenPaymentIds = new HashSet<Guid>(alreadyPairedPaymentIds);
-
-        var candidatePayments = await _db.Payments
-            .Include(p => p.Document)
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted
-                && p.Document.Status != DocumentStatus.Voided)
-            .ToListAsync();
-        await Accounting.Helpers.ContactHydration.HydratePaymentContactsAsync(
-            _db, companyId, candidatePayments);
-
-        var newUnmatched = await _db.BankTransactions
-            .Where(t => t.CompanyId == companyId
-                      && t.BankAccountId == bankAccountId
-                      && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
-            .ToListAsync();
-
-        // FX — ยอดของ Payment อยู่ในสกุลเอกสาร ต้องแปลงเป็นสกุลบัญชีธนาคารก่อนเทียบ
-        var obBankCurrency = await _db.BankAccounts.AsNoTracking()
-            .Where(a => a.Id == bankAccountId && a.CompanyId == companyId)
-            .Select(a => a.Currency).FirstOrDefaultAsync();
-        var obHomeCurrency = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == companyId).Select(c => c.BaseCurrency).FirstOrDefaultAsync();
-
-        foreach (var tx in newUnmatched)
-        {
-            var options = new List<Accounting.Helpers.BankMatchArbiter.Option>();
-            foreach (var p in candidatePayments)
-            {
-                if (takenPaymentIds.Contains(p.Id)) continue;
-                if (Math.Abs((p.PaymentDate.Date - tx.TransactionDate.Date).TotalDays) > 3) continue;
-
-                var obFx = Accounting.Helpers.BankMatchCurrency.Convert(
-                    obBankCurrency, p.Document?.Currency, p.Amount,
-                    p.ExchangeRate, p.Document?.ExchangeRate, obHomeCurrency);
-                if (!obFx.Comparable) continue;
-
-                var sc = Accounting.Helpers.BankMatchScorer.Score(
-                    new Accounting.Helpers.BankMatchScorer.Input(
-                        CandidateAmount: obFx.BankCurrencyAmount,
-                        BankAmount: Math.Abs(tx.Amount),
-                        CandidateDate: p.PaymentDate,
-                        BankDate: tx.TransactionDate,
-                        CandidateRef: p.Reference,
-                        CandidateNotes: p.Notes,
-                        CandidateDocNumber: p.Document?.DocumentNumber,
-                        CandidateName: p.Document?.Contact?.Name,
-                        BankDescription: tx.Description,
-                        BankReference: tx.Reference,
-                        BankPayee: tx.Payee));
-                options.Add(new Accounting.Helpers.BankMatchArbiter.Option(
-                    p.Id, "Payment", sc.Score, sc.HasIdentitySignal, sc.Reason));
-            }
-
-            var decision = Accounting.Helpers.BankMatchArbiter.Decide(options);
-            if (decision.Verdict == Accounting.Helpers.BankMatchVerdict.None) continue;
-
-            // ทุกสถานะที่เขียนต้องมี id ของคู่เสมอ — ห้ามประทับกับความว่าง
-            tx.MatchedPaymentId = decision.Chosen!.Id;
-            takenPaymentIds.Add(decision.Chosen.Id);
-
-            if (decision.Verdict == Accounting.Helpers.BankMatchVerdict.Apply)
-            {
-                tx.ReconciliationStatus = ReconciliationStatus.Matched;
-                tx.ReconciledAt = DateTime.UtcNow;
-                tx.ReconciledBy = Accounting.Helpers.BankMatchAttribution.OpenBanking;
-                tx.MatchRuleCode = decision.RuleCode;
-                tx.MatchReason = decision.Reason;
-                autoMatched++;
-            }
-            else
-            {
-                tx.ReconciliationStatus = ReconciliationStatus.Suggested;
-                tx.ReconciledBy = Accounting.Helpers.BankMatchAttribution.OpenBankingSuggested;
-                tx.MatchRuleCode = decision.RuleCode;
-                tx.MatchReason = decision.Reason;
-            }
-        }
+        var result = await _bank.ImportParsedStatementRowsAsync(companyId, bankAccountId,
+            Helpers.BankStatementFileReader.ToLines(parsed),
+            Helpers.BankStatementFileReader.WriteOptions(parsed, BankStatementConflictPolicy.InsertAsNew,
+                Helpers.BankStatementFileReader.SourceFile(parsed, fileName, fileBytes)));
 
         var import = new BankFeedImport
         {
             CompanyId = companyId,
             BankConnectionId = null, // File import — no connection (FK is nullable)
             ImportDate = DateTime.UtcNow,
-            PeriodStart = periodStart,
-            PeriodEnd = periodEnd,
-            TotalTransactions = totalTransactions,
-            NewTransactions = newTransactions,
-            DuplicateSkipped = duplicateSkipped,
-            AutoMatched = autoMatched,
-            Status = "Completed"
+            PeriodStart = parsed.Rows.Count > 0 ? parsed.Rows.Min(r => r.Date) : DateTime.UtcNow,
+            PeriodEnd = parsed.Rows.Count > 0 ? parsed.Rows.Max(r => r.Date) : DateTime.UtcNow,
+            TotalTransactions = parsed.Rows.Count,
+            NewTransactions = result.Lines.Count(l => l.Outcome == BankStatementLineOutcome.Created),
+            DuplicateSkipped = result.Skipped,
+            AutoMatched = result.AutoMatched,
+            Status = "Completed",
+            ErrorMessage = result.Warnings.Count > 0 ? string.Join("\n", result.Warnings) : null,
         };
-
         _db.Set<BankFeedImport>().Add(import);
-
-        // Update bank account balance
-        var latestTransaction = await _db.BankTransactions
-            .Where(t => t.CompanyId == companyId && t.BankAccountId == bankAccountId)
-            .OrderByDescending(t => t.TransactionDate)
-            .ThenByDescending(t => t.CreatedAt)
-            .FirstOrDefaultAsync();
-
-        if (latestTransaction != null)
-        {
-            bankAccount.CurrentBalance = latestTransaction.BalanceAfter;
-        }
-
         await _db.SaveChangesAsync();
 
-        return MapToImportResponse(import);
+        return MapToImportResponse(import) with { Warnings = result.Warnings };
     }
 
     // ===== Mapping =====

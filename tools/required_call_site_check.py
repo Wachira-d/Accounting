@@ -7166,6 +7166,33 @@ RULES += [
          why="เปลี่ยนผู้ถูกหัก: วันลงหนี้ WHT จริงรวมการจ่ายหลายใบ + ตัวตัดสินเกณฑ์เดียว"),
 ]
 
+# รอบ 205 ทีม C (IMPORT_ETL_REVIEW §1 แถว 6–9): ตัวเขียน statement ธนาคารตัวเดียว — ทุกทางเข้าต้องลงผ่าน
+# BankService.ImportParsedStatementRowsAsync (เดิม 4 ตัวเขียน · ยอดคงเหลือ 2 ความหมาย · open-banking OFX ตอบ "ใหม่" โดยไม่บันทึก)
+BANK_SVC = "Services/Implementations/BankService.cs"
+BANK_WRITER = "Services/Implementations/BankService.StatementImport.cs"
+RULES += [
+    dict(file=BANK_SVC, method="ImportBankStatementAsync",
+         must=["BankStatementFileReader.Read(", "ImportParsedStatementRowsAsync("],
+         forbid=["BankTransaction>().Add(", "BankTransactions.Add(", "BankCsvParser.ParseStatement(", "CurrentBalance ="],
+         why="หน้า \"ธนาคาร → นำเข้า statement\" แยกไฟล์ด้วยตัวเลือกตัวแยกเดียวแล้วลงผ่านตัวเขียนเดียว — ห้ามกลับไปเขียนแถว/ยอดเอง"),
+    dict(file="Services/Implementations/OpenBankingService.cs", method="ImportFileAsync",
+         must=["BankStatementFileReader.Read(", "_bank.ImportParsedStatementRowsAsync("],
+         forbid=["BankTransactions.Add(", "CurrentBalance =", "newTransactions = totalTransactions"],
+         why="open-banking file = ทางเดียวกับหน้า \"ธนาคาร\" · OFX ต้องบันทึกจริง (เดิมนับบรรทัดแล้วตอบว่าใหม่ = HTTP 200 โกหก)"),
+    dict(file="Controllers/V1/BankV1Controller.cs", method="ImportStatement",
+         must=["_bank.ImportParsedStatementRowsAsync(", "StatementWriteOptions()"],
+         forbid=["AddRange(created)", "BankTransaction>().Add("],
+         why="API v1 ลงผ่านตัวเขียนเดียวด้วยความหมาย v1 ที่เทสต์ล็อกไว้ (ExternalId อย่างเดียว · ไม่แตะยอด)"),
+    dict(file=BANK_WRITER, method="ImportParsedStatementRowsAsync",
+         must=["ApplyStatementSnapshot(", "AutoMatchAsync(", "KeepStatementSourceFileAsync("],
+         forbid=["CurrentBalance +=", "CurrentBalance -="],
+         why="ตัวเขียนเดียว: ยอดคงเหลือ = ยอดตามธนาคาร (ห้ามบวกยอดเดินเอง) · จับคู่อัตโนมัติหลังบันทึก · เก็บไฟล์ต้นทาง"),
+    dict(file="Services/Import/Targets/BankStatementImportTarget.cs", method="CommitGroupAsync",
+         must=["_bank.ImportParsedStatementRowsAsync("],
+         forbid=["BankTransactions.Add(", "BankTransaction>().Add("],
+         why="ศูนย์นำเข้า banktransactions ลงผ่านตัวเขียนเดียวกับทุกทางเข้า"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

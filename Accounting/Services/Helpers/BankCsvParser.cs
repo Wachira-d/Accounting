@@ -1,6 +1,7 @@
 using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
+using Accounting.Helpers;
+using Accounting.Services.Settlement.Adapters;
 
 namespace Accounting.Services.Helpers;
 
@@ -8,6 +9,10 @@ namespace Accounting.Services.Helpers;
 /// Robust Thai bank CSV statement parser.
 /// Handles formats from BBL, KBank, SCB, KTB, BAY, TTB, etc.
 /// Auto-detects delimiter, header row, column layout, date format, and amount format.
+///
+/// <para>รอบ 205 ทีม C: ถอดรหัส + แยก CSV ผ่านตัวอ่านกลาง <see cref="ImportTabularReader"/> (UTF-8 เข้มงวด → UTF-16 BOM → Windows-874/TIS-620 ·
+/// เดิม <c>TryDecode</c> คอมเมนต์อ้างว่ามี Windows-874 แต่โค้ดถอด UTF-8 แบบหลวม ⇒ ไฟล์ Express/KBank รุ่นเก่ากลายเป็น U+FFFD ทั้งหัวตาราง) ·
+/// คอลัมน์ยอดคงเหลือไม่บังคับ (ไม่มี = นำเข้าได้ + คำเตือนจากตัวเขียน) · ยอดเงินผ่าน <see cref="SignedAmount"/> (วงเล็บ/ลบท้าย/CR-DR)</para>
 /// </summary>
 public static class BankCsvParser
 {
@@ -26,6 +31,9 @@ public static class BankCsvParser
 
     /// <summary>A parsed transaction row. Balance เป็น null เมื่อช่องว่าง/อ่านไม่ได้
     /// — แยกจาก 0.00 จริง เพื่อไม่ให้ snapshot ยอดธนาคารโดนเขียนทับด้วยศูนย์ปลอม</summary>
+    /// <param name="ExternalId">รหัสรายการของธนาคาร (OFX FITID) — กันนำเข้าซ้ำตรงตัว</param>
+    /// <param name="Payee">ชื่อผู้โอน/ผู้รับ (OFX NAME)</param>
+    /// <param name="RowNumber">เลขแถวในไฟล์ (1-based)</param>
     public record Row(
         DateTime Date,
         string Description,
@@ -33,15 +41,18 @@ public static class BankCsvParser
         decimal Deposit,
         decimal? Balance,
         string? Reference,
-        string? Channel);
+        string? Channel,
+        string? ExternalId = null,
+        string? Payee = null,
+        int RowNumber = 0);
 
     /// <summary>
     /// Parse the entire CSV. Returns the parsed rows and any skipped row diagnostics.
     /// </summary>
     public static (List<Row> rows, List<string> skipped) ParseStatement(byte[] fileBytes)
     {
-        // Try UTF-8 first (with BOM detection); fallback to Windows-874 (TIS-620)
-        string content = TryDecode(fileBytes);
+        // ตัวถอดรหัสกลาง: UTF-8 เข้มงวด (มี/ไม่มี BOM) · UTF-16 BOM · Windows-874 (TIS-620) · ถอดไม่ได้ ⇒ ImportFormatException ข้อความไทย
+        string content = ImportTabularReader.Decode(fileBytes);
         var rawRows = ParseCsvCells(content);
         return ParseRows(rawRows, "CSV");
     }
@@ -71,7 +82,7 @@ public static class BankCsvParser
                 $"   แถว {idx + 1}: " + string.Join(" | ", r.Take(8).Select(c => string.IsNullOrWhiteSpace(c) ? "(ว่าง)" : c.Trim()))));
             throw new ArgumentException(
                 $"ไม่พบหัวคอลัมน์ที่รองรับใน{sourceLabel} — ต้องมีคอลัมน์ที่มีคำว่า: " +
-                "วันที่/Date, ฝาก/Deposit หรือ ถอน/Withdrawal, ยอดคงเหลือ/Balance.\n" +
+                "วันที่/Date และ ฝาก/Deposit หรือ ถอน/Withdrawal หรือ จำนวนเงิน/Amount (ยอดคงเหลือ/Balance ไม่บังคับ).\n" +
                 $"สิ่งที่ระบบเห็น (3 แถวแรก):\n{preview}\n" +
                 "💡 ลองลบแถวบนๆ ที่เป็นคำอธิบายธนาคารทิ้ง หรือ ตัด merged cells ออกก่อนนำเข้า");
         }
@@ -99,11 +110,7 @@ public static class BankCsvParser
             if (cols.Count == 0 || cols.All(string.IsNullOrWhiteSpace)) continue;
 
             // Skip footer/summary rows
-            var rawLine = string.Join("|", cols);
-            if (Regex.IsMatch(rawLine,
-                @"(รวมยอด|รวมเงิน|รวมรายการ|ยอดยกมา|ยอดยกไป|รวมทั้งสิ้น|ยอดถอน|ยอดฝาก|^total|^subtotal|grand total|brought forward|carried forward)",
-                RegexOptions.IgnoreCase))
-                continue;
+            if (IsSummaryRow(cols)) continue;
 
             string Get(int idx) => idx >= 0 && idx < cols.Count ? cols[idx].Trim().Trim('"') : "";
 
@@ -116,29 +123,42 @@ public static class BankCsvParser
                 continue;
             }
 
-            // Optional time column
+            // Optional time column (invariant — ไม่ขึ้นกับ culture ของเครื่อง)
             if (map.TimeCol >= 0)
             {
                 var timeStr = Get(map.TimeCol);
-                if (TimeSpan.TryParse(timeStr, out var t))
+                if (TimeSpan.TryParse(SettlementValueParser.ThaiDigitsToAscii(timeStr), CultureInfo.InvariantCulture, out var t))
                     date = date.Date + t;
             }
 
-            var deposit = ParseAmount(Get(map.DepositCol));
-            var withdrawal = ParseAmount(Get(map.WithdrawalCol));
-            var balance = ParseAmountOrNull(Get(map.BalanceCol));
+            // ยอดเงินที่อ่านไม่ได้ ≠ ศูนย์ — บอกผู้ใช้ว่าแถวไหน ค่าอะไร (เดิมกลายเป็น 0 แล้วถูกตัดเงียบ ๆ ว่า "ไม่มีจำนวนเงิน")
+            string? badAmount = null;
+            decimal Amt(int col)
+            {
+                var raw = Get(col);
+                var v = SignedAmount(raw);
+                if (!v.Ok) badAmount ??= raw;
+                return v.Value ?? 0m;
+            }
+            // ช่องถอนเป็นเงินออกเสมอ (บางธนาคารใส่เครื่องหมายลบในช่องถอน) — ตัวเขียนตัดสินทิศจาก ฝาก − |ถอน|
+            var deposit = Amt(map.DepositCol);
+            var withdrawal = Math.Abs(Amt(map.WithdrawalCol));
+            var balanceCell = SignedAmount(Get(map.BalanceCol));
+            var balance = balanceCell.Ok ? balanceCell.Value : null;
 
-            // Single signed-amount column (some banks)
+            // Single signed-amount column (some banks) — "1,000.00 CR" = เงินเข้า · "1,000.00 DR" = เงินออก
             if (deposit == 0 && withdrawal == 0 && map.AmountCol >= 0)
             {
-                var amt = ParseAmount(Get(map.AmountCol));
+                var amt = Amt(map.AmountCol);
                 if (amt > 0) deposit = amt;
                 else if (amt < 0) withdrawal = -amt;
             }
 
             if (deposit == 0 && withdrawal == 0)
             {
-                skipped.Add($"แถว {i + 1}: ไม่มีจำนวนเงิน");
+                skipped.Add(badAmount != null
+                    ? $"แถว {i + 1}: อ่านจำนวนเงิน '{badAmount}' ไม่ได้"
+                    : $"แถว {i + 1}: ไม่มีจำนวนเงิน");
                 continue;
             }
 
@@ -153,85 +173,36 @@ public static class BankCsvParser
 
             rows.Add(new Row(date, description, withdrawal, deposit, balance,
                 string.IsNullOrWhiteSpace(reference) ? null : reference,
-                string.IsNullOrWhiteSpace(channel) ? null : channel));
+                string.IsNullOrWhiteSpace(channel) ? null : channel,
+                RowNumber: i + 1));
         }
 
         return (rows, skipped);
     }
 
-    private static string TryDecode(byte[] bytes)
-    {
-        // Detect UTF-8 BOM
-        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
-            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+    /// <summary>
+    /// แถวสรุป/ยอดยกมา/ยอดรวมท้ายตาราง — ไม่ใช่รายการ (ตัดออก) · "รวมมิตร" (ชื่อร้าน) ต้องไม่ถูกตัด: จับเฉพาะคำสรุปเต็มคำ
+    /// <para>ตัวตัดสินของ statement ธนาคาร · เมื่อ <c>Helpers/ImportHeaderDetector.IsSummaryRow</c> (ทีม B รอบ 205) รวมเข้ามา เมธอดนี้ส่งต่อไปที่นั่นแทน regex ข้างล่าง (owner เดียว)</para>
+    /// </summary>
+    internal static bool IsSummaryRow(IReadOnlyList<string> cells)
+        => SummaryRowPattern.IsMatch(string.Join("|", cells));
 
-        // Detect UTF-16 LE BOM
-        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
-            return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
-
-        // Detect UTF-16 BE BOM
-        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
-            return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
-
-        // Default UTF-8 (lenient — invalid bytes become replacement chars)
-        return Encoding.UTF8.GetString(bytes);
-    }
+    private static readonly Regex SummaryRowPattern = new(
+        @"(รวมยอด|รวมเงิน|รวมรายการ|ยอดยกมา|ยอดยกไป|รวมทั้งสิ้น|ยอดถอน|ยอดฝาก|^total|^subtotal|grand total|brought forward|carried forward)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
-    /// Parse CSV/TSV content into rows of cells.
-    /// Auto-detects delimiter (comma/tab/semicolon) and properly handles quoted values.
+    /// Parse CSV/TSV content into rows of cells — ตัวแยกกลาง <see cref="ImportTabularReader.ReadCsv"/> (ตัวคั่น , ; tab · คำพูดข้ามบรรทัด) ·
+    /// ตัดบรรทัดว่างนำหน้า (ให้ตัวหาตัวคั่นเห็นบรรทัดจริง) และแถวว่างทั้งแถวออก
     /// </summary>
     public static List<List<string>> ParseCsvCells(string content)
     {
-        if (content.Length > 0 && content[0] == '﻿') content = content[1..];
-
-        var firstLine = content.Split('\n').FirstOrDefault(l => !string.IsNullOrWhiteSpace(l)) ?? "";
-        var delimiter = ',';
-        if (firstLine.Count(c => c == '\t') > firstLine.Count(c => c == ','))
-            delimiter = '\t';
-        else if (firstLine.Count(c => c == ';') > firstLine.Count(c => c == ','))
-            delimiter = ';';
-
-        var rows = new List<List<string>>();
-        var current = new List<string>();
-        var cell = new StringBuilder();
-        var inQuotes = false;
-
-        for (int i = 0; i < content.Length; i++)
-        {
-            var c = content[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < content.Length && content[i + 1] == '"') { cell.Append('"'); i++; }
-                    else inQuotes = false;
-                }
-                else cell.Append(c);
-            }
-            else
-            {
-                if (c == '"') inQuotes = true;
-                else if (c == delimiter) { current.Add(cell.ToString()); cell.Clear(); }
-                else if (c == '\r') { /* ignore */ }
-                else if (c == '\n')
-                {
-                    current.Add(cell.ToString());
-                    cell.Clear();
-                    if (current.Any(s => !string.IsNullOrWhiteSpace(s))) rows.Add(current);
-                    current = new List<string>();
-                }
-                else cell.Append(c);
-            }
-        }
-
-        if (cell.Length > 0 || current.Count > 0)
-        {
-            current.Add(cell.ToString());
-            if (current.Any(s => !string.IsNullOrWhiteSpace(s))) rows.Add(current);
-        }
-
-        return rows;
+        if (content.Length > 0 && content[0] == '\uFEFF') content = content[1..];
+        content = content.TrimStart('\r', '\n');
+        return ImportTabularReader.ReadCsv(content)
+            .Where(r => r.Any(c => !string.IsNullOrWhiteSpace(c)))
+            .Select(r => r.ToList())
+            .ToList();
     }
 
     public static (int headerIdx, ColumnMap map) DetectHeader(List<List<string>> rows)
@@ -253,6 +224,9 @@ public static class BankCsvParser
             return patterns.Any(p => c.Contains(p.ToLowerInvariant()));
         }
 
+        // แถวหัวตาราง = แถวแรกที่มี วันที่ + คอลัมน์เงิน · ชอบแถวที่มียอดคงเหลือด้วยก่อน (กันแถวคำอธิบายด้านบนที่บังเอิญมีคำว่า
+        // "วันที่ … จำนวนเงิน" ถูกเลือก) · ไม่มีแถวไหนมียอดคงเหลือ ⇒ ใช้แถวแรกที่มีวันที่ + คอลัมน์เงิน (statement แบบไม่มียอด — รอบ 205 ทีม C)
+        (int, ColumnMap)? withoutBalance = null;
         for (int r = 0; r < rows.Count; r++)
         {
             var cols = rows[r];
@@ -280,9 +254,11 @@ public static class BankCsvParser
                 return (r, new ColumnMap(
                     dateCol, timeCol, descCol, wdCol, depCol, balCol, amtCol, chCol, detCol, refCol));
             }
+            if (dateCol >= 0 && hasFlowCol && withoutBalance == null)
+                withoutBalance = (r, new ColumnMap(dateCol, timeCol, descCol, wdCol, depCol, -1, amtCol, chCol, detCol, refCol));
         }
 
-        return (-1, new ColumnMap(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1));
+        return withoutBalance ?? (-1, new ColumnMap(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1));
     }
 
     /// <summary>Day-first vs month-first orientation for slash/dash-separated dates.</summary>
@@ -359,7 +335,7 @@ public static class BankCsvParser
         date = default;
         if (string.IsNullOrWhiteSpace(s)) return false;
 
-        s = s.Trim();
+        s = SettlementValueParser.ThaiDigitsToAscii(s).Trim();
 
         // ISO formats are unambiguous — try them first regardless of order.
         var isoFormats = new[] { "yyyy-MM-dd", "yyyy/MM/dd", "yyyyMMdd" };
@@ -423,37 +399,30 @@ public static class BankCsvParser
         return false;
     }
 
-    public static decimal ParseAmount(string s) => ParseAmountOrNull(s) ?? 0;
-
-    /// <summary>เหมือน ParseAmount แต่คืน null เมื่อช่องว่าง/ขีด/อ่านไม่ได้ —
-    /// ให้ผู้เรียกแยก "ไม่มีข้อมูล" ออกจาก "ศูนย์บาทจริง" ได้ (สำคัญกับคอลัมน์
-    /// ยอดคงเหลือที่ใช้เป็น snapshot ยอดธนาคาร)</summary>
-    public static decimal? ParseAmountOrNull(string s)
+    /// <summary>
+    /// **ยอดเงินในไฟล์ statement — ตัวเดียวของงานธนาคาร** (ไฟล์ CSV/Excel · ศูนย์นำเข้า <c>BankStatementImportTarget</c>) — แกนกลางมอบให้
+    /// <see cref="ImportValueNormalizer.Amount"/> (คั่นหลักพัน · วงเล็บ/ลบท้าย = ติดลบ · ฿/บาท · เลขไทย) แล้วเติมเฉพาะเรื่องของธนาคาร:
+    /// "CR"/"DR" ท้าย/หน้าค่า = เงินเข้า/เงินออก (เดิมตัด CR/DR ทิ้งเฉย ๆ ⇒ "500.00 DR" กลายเป็นเงินเข้า) · เครื่องหมายสองชั้นที่ขัดกัน
+    /// ("(500.00) CR") = อ่านไม่ได้ (ไม่เดาว่าชั้นไหนชนะ)
+    /// </summary>
+    public static ImportValue<decimal?> SignedAmount(string? raw)
     {
-        if (string.IsNullOrWhiteSpace(s)) return null;
-        s = s.Trim();
-        if (s == "-" || s == "–" || s == "—") return null;
-
-        var clean = Regex.Replace(s, @"[฿$€£¥\s,]", "");
-
-        var negative = false;
-        if (clean.StartsWith('(') && clean.EndsWith(')'))
-        {
-            negative = true;
-            clean = clean[1..^1];
-        }
-
-        if (clean.EndsWith('-'))
-        {
-            negative = true;
-            clean = clean[..^1];
-        }
-
-        clean = Regex.Replace(clean, @"(CR|DR|cr|dr)$", "");
-
-        if (decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out var v))
-            return negative ? -v : v;
-
-        return null;
+        if (string.IsNullOrWhiteSpace(raw)) return new(null, true);
+        var s = raw.Trim();
+        if (s is "-" or "–" or "—") return new(null, true);
+        var m = CrDrPattern.Match(s);
+        if (!m.Success) return ImportValueNormalizer.Amount(s);
+        var core = m.Groups["v1"].Success ? m.Groups["v1"].Value : m.Groups["v2"].Value;
+        var marker = (m.Groups["m1"].Success ? m.Groups["m1"].Value : m.Groups["m2"].Value).ToUpperInvariant();
+        var inner = ImportValueNormalizer.Amount(core);
+        if (!inner.Ok) return inner;
+        if (inner.Value == null) return new(null, false, "amount-invalid", $"อ่านจำนวนเงิน \"{s}\" ไม่ได้");
+        if (inner.Value < 0)
+            return new(null, false, "amount-sign-conflict",
+                $"จำนวนเงิน \"{s}\" มีทั้งเครื่องหมายลบและ {marker} — แก้ให้เหลือแบบเดียว");
+        return new(marker == "DR" ? -inner.Value : inner.Value, true);
     }
+
+    private static readonly Regex CrDrPattern = new(
+        @"^(?:(?<v1>.*?[0-9).])\s*(?<m1>CR|DR)\.?|(?<m2>CR|DR)\.?\s*(?<v2>[0-9(+\-.].*))$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 }

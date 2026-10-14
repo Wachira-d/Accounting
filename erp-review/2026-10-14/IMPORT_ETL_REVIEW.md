@@ -117,6 +117,6 @@ master ที่สร้าง = soft-delete ถ้าไม่มีการ�
 | ETL-T0 | schema + สัญญา + reader/normalizer | ✅ 95c3031b — สัญญา: `Models/DTOs/Import/ImportHubDtos.cs` · `Services/Import/I*.cs` · `Helpers/ImportTabularReader.cs` · `Helpers/ImportValueNormalizer.cs` |
 | ETL-A | mapping + AI distillation 26/27/58/59 | ⏳ |
 | ETL-B | engine + writer เดิม (culture parse · payment/asset/document bypass) | ⏳ |
-| ETL-C | ธนาคาร writer เดียว + OFX จริง + TIS-620 | ⏳ |
+| ETL-C | ธนาคาร writer เดียว + OFX จริง + TIS-620 | ✅ (sha เติมภายหลัง) — ตัวเขียน `BankService.ImportParsedStatementRowsAsync` (`BankService.StatementImport.cs`) · `BankStatementFileReader` · `BankOfxParser` · `Services/Import/Targets/BankStatementImportTarget.cs` · ทางนำเข้าทั่วไป `banktransactions` (ทีม B) ยังต้องต่อสาย |
 | ETL-D | งบทดลอง/เอกสาร/รับชำระ/สินทรัพย์ + migration wizard | ⏳ |
 | ETL-E | ImportHub UI + modal 415 + gate | ⏳ |

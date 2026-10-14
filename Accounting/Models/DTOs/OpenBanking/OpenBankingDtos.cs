@@ -18,6 +18,8 @@ public record BankConnectionResponse(
 public record BankFeedImportResponse(
     Guid Id, DateTime ImportDate, DateTime? PeriodStart, DateTime? PeriodEnd,
     int TotalTransactions, int NewTransactions, int DuplicateSkipped, int AutoMatched,
-    string Status, string? ErrorMessage);
+    string Status, string? ErrorMessage,
+    // รอบ 205 ทีม C: คำเตือนของการนำเข้าไฟล์ (ยอดไม่ต่อเนื่อง · ไม่มียอดคงเหลือ · เลขบัญชีในไฟล์ไม่ตรง · แถวที่ข้าม) — ผู้ใช้ต้องเห็น
+    List<string>? Warnings = null);
 
 public record SyncBankFeedRequest(DateTime? FromDate, DateTime? ToDate);

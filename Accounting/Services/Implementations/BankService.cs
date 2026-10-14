@@ -20,14 +20,18 @@ public partial class BankService : IBankService
     private readonly AccountingDbContext _db;
     private readonly ILogger<BankService>? _logger;
     private readonly IHttpContextAccessor? _httpContext;
+    /// <summary>เก็บไฟล์ statement ต้นทาง (รอบ 205 ทีม C · <c>ImportParsedStatementRowsAsync</c>) · null = ทางเข้าที่ไม่มี DI (เทสต์) ⇒ คำเตือน</summary>
+    private readonly IFileAttachmentService? _files;
 
     public BankService(AccountingDbContext db,
         ILogger<BankService>? logger = null,
-        IHttpContextAccessor? httpContext = null)
+        IHttpContextAccessor? httpContext = null,
+        IFileAttachmentService? files = null)
     {
         _db = db;
         _logger = logger;
         _httpContext = httpContext;
+        _files = files;
     }
 
     /// <summary>Resolve the current request's authenticated user id from the
@@ -906,187 +910,34 @@ public partial class BankService : IBankService
         }
     }
 
+    /// <summary>หน้า "ธนาคาร → นำเข้า statement" — แยกไฟล์ (CSV/TSV/Excel/OFX · เลือกชนิดจากเนื้อไฟล์) แล้วลงผ่านตัวเขียนตัวเดียว
+    /// <see cref="ImportParsedStatementRowsAsync"/> (รอบ 205 ทีม C) · QIF/.xls/PDF ⇒ ล้มดังพร้อมทางไปต่อ (คำตัดสินข้อ 151)</summary>
     public async Task<ImportBankStatementResponse> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Base64Content))
             throw new ArgumentException("กรุณาระบุเนื้อหาไฟล์");
 
-        var fmt = (request.FileFormat ?? "").Trim().ToUpperInvariant();
-        if (fmt != "CSV" && fmt != "EXCEL" && fmt != "XLSX")
-            throw new ArgumentException("รองรับเฉพาะรูปแบบ CSV และ Excel (.xlsx) เท่านั้น");
-
-        var account = await _db.Set<BankAccount>()
-            .FirstOrDefaultAsync(a => a.Id == request.BankAccountId && a.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
+        // บัญชีก่อนแยกไฟล์ — บัญชีของบริษัทอื่น/ไม่มี ⇒ 404 ไม่ใช่ข้อความเรื่องไฟล์
+        if (!await _db.Set<BankAccount>().AnyAsync(a => a.Id == request.BankAccountId && a.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
 
         var fileBytes = Convert.FromBase64String(request.Base64Content);
-        var (parsedRows, skippedRows) = (fmt == "EXCEL" || fmt == "XLSX")
-            ? BankExcelParser.ParseStatement(fileBytes)
-            : BankCsvParser.ParseStatement(fileBytes);
-
-        if (parsedRows.Count == 0)
+        var parsed = BankStatementFileReader.Read(request.FileFormat, request.FileName, fileBytes, request.SheetName);
+        if (parsed.Rows.Count == 0)
         {
-            var hint = skippedRows.Count > 0
-                ? $" (ตัวอย่างปัญหา: {string.Join("; ", skippedRows.Take(3))})"
+            var hint = parsed.Skipped.Count > 0
+                ? $" (ตัวอย่างปัญหา: {string.Join("; ", parsed.Skipped.Take(3))})"
                 : "";
             throw new ArgumentException($"ไม่พบรายการที่นำเข้าได้จากไฟล์{hint}");
         }
 
-        // Load existing transactions for duplicate detection
-        var existingTxns = await _db.Set<BankTransaction>()
-            .Where(t => t.CompanyId == companyId && t.BankAccountId == request.BankAccountId)
-            .Select(t => new { t.Id, t.TransactionDate, t.Amount, t.TransactionType, t.Description, t.Reference })
-            .ToListAsync();
-
-        var conflicts = new List<ImportConflict>();
-        int imported = 0, skipped = 0;
-
-        // ยอดคงเหลือ "ล่าสุดจริง" ของ statement — ห้ามใช้แถวสุดท้ายของไฟล์ตรง ๆ
-        // เพราะธนาคารไทยหลายแห่ง export แบบใหม่→เก่า (ยอดแถวสุดท้าย = ยอดเก่าสุด)
-        // ใช้แถวที่วันที่มากสุด "ที่มียอดคงเหลือจริง" (Balance=null คือช่องว่าง);
-        // หลายแถววันเดียวกันเคารพลำดับในไฟล์ (เก่า→ใหม่เอาแถวท้าย, ใหม่→เก่าเอาแถวแรก)
-        var newestFirst = parsedRows.Count > 1 && parsedRows[0].Date > parsedRows[^1].Date;
-        BankCsvParser.Row? latestRow = null;
-        var balanceRows = parsedRows.Where(r => r.Balance.HasValue).ToList();
-        if (balanceRows.Count > 0)
-        {
-            var maxDate = balanceRows.Max(r => r.Date);
-            latestRow = newestFirst
-                ? balanceRows.First(r => r.Date == maxDate)
-                : balanceRows.Last(r => r.Date == maxDate);
-        }
-
-        // ตรวจความต่อเนื่องของยอด: balance แถวถัดไปต้อง = แถวก่อน + ฝาก − ถอน
-        // จุดที่ไม่ต่อเนื่อง = ไฟล์ขาดรายการ (ตัดหน้า/กรองบางประเภทออกตอน export)
-        // → เตือน เพราะนำเข้าต่อไปเฉย ๆ จะได้ยอดบัญชีที่ไม่มีวันตรงกับธนาคาร
-        var chronological = newestFirst ? Enumerable.Reverse(parsedRows).ToList() : parsedRows;
-        var continuityBreaks = 0;
-        for (var ci = 1; ci < chronological.Count; ci++)
-        {
-            var prevBal = chronological[ci - 1].Balance;
-            var curBal = chronological[ci].Balance;
-            if (!prevBal.HasValue || !curBal.HasValue) continue;
-            var expected = prevBal.Value + chronological[ci].Deposit - chronological[ci].Withdrawal;
-            if (Math.Abs(expected - curBal.Value) > 0.01m) continuityBreaks++;
-        }
-        var warnings = new List<string>();
-        if (continuityBreaks > 0)
-            warnings.Add($"⚠ ยอดคงเหลือในไฟล์ไม่ต่อเนื่อง {continuityBreaks} จุด — ไฟล์อาจขาดรายการ " +
-                "(ถูกตัดหน้า/กรองบางประเภทออกตอน export) ยอดบัญชีอาจไม่ตรงธนาคารจนกว่าจะนำเข้าครบ");
-
-        await using var dbTransaction = await _db.Database.BeginTransactionAsync();
-        try
-        {
-            var rowNum = 0;
-            var usedExisting = new HashSet<Guid>();
-            foreach (var r in parsedRows)
-            {
-                rowNum++;
-                var isDeposit = r.Deposit > 0;
-                var amount = isDeposit ? r.Deposit : r.Withdrawal;
-                if (amount <= 0) continue;
-
-                var desc = r.Description;
-                if (!string.IsNullOrWhiteSpace(r.Channel)) desc = $"{desc} | {r.Channel}";
-                if (desc.Length > 500) desc = desc[..500];
-
-                var txnType = isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal;
-
-                // Check for duplicates: same date + amount + type
-                // จับคู่แบบใช้ครั้งเดียว — statement มี 2 รายการยอดเท่ากันวันเดียวกัน
-                // ได้จริง (เช่น PromptPay 55 บาท 2 ครั้ง) ห้ามให้ทั้งคู่ชนแถวเดิม
-                // แถวเดียวแล้วหายไป 1 รายการ
-                var duplicate = existingTxns.FirstOrDefault(t =>
-                    !usedExisting.Contains(t.Id)
-                    && t.TransactionDate.Date == r.Date.Date
-                    && t.Amount == amount
-                    && t.TransactionType == txnType);
-
-                if (duplicate != null)
-                {
-                    usedExisting.Add(duplicate.Id);
-                    var isSameContent = string.Equals(
-                        (duplicate.Description ?? "").Trim(),
-                        desc.Trim(),
-                        StringComparison.OrdinalIgnoreCase);
-
-                    if (isSameContent)
-                    {
-                        skipped++;
-                        continue;
-                    }
-
-                    if (!request.ForceOverwrite)
-                    {
-                        conflicts.Add(new ImportConflict(
-                            rowNum, r.Date, amount,
-                            desc, duplicate.Description, duplicate.Id));
-                        continue;
-                    }
-
-                    // ForceOverwrite: update existing record
-                    var existingEntity = await _db.Set<BankTransaction>()
-                        .FirstAsync(t => t.Id == duplicate.Id);
-                    existingEntity.Description = desc;
-                    existingEntity.Reference = r.Reference;
-                    existingEntity.BalanceAfter = r.Balance ?? existingEntity.BalanceAfter;
-                    imported++;
-                    continue;
-                }
-
-                _db.Set<BankTransaction>().Add(new BankTransaction
-                {
-                    CompanyId = companyId,
-                    BankAccountId = request.BankAccountId,
-                    TransactionDate = r.Date,
-                    TransactionType = txnType,
-                    Amount = amount,
-                    BalanceAfter = r.Balance ?? 0,
-                    Description = desc,
-                    Reference = r.Reference
-                });
-                imported++;
-            }
-
-            if (conflicts.Count > 0 && !request.ForceOverwrite)
-            {
-                await dbTransaction.RollbackAsync();
-                return new ImportBankStatementResponse(imported, skipped, conflicts.Count, conflicts, warnings);
-            }
-
-            // อัปเดต snapshot ยอดจริงทุกครั้งที่ไฟล์ผ่าน (แม้รายการซ้ำถูกข้ามหมด —
-            // การอัพ statement ช่วงทับซ้อนก็ยังยืนยันยอด ณ วันล่าสุดได้)
-            // ไม่มีแถวไหนมียอดเลย → คง snapshot เดิมไว้ ดีกว่าเขียนทับด้วยศูนย์ปลอม
-            if (latestRow != null)
-            {
-                account.StatementBalance = latestRow.Balance;
-                account.StatementBalanceDate = latestRow.Date;
-                account.StatementImportedAt = DateTime.UtcNow;
-                account.CurrentBalance = latestRow.Balance!.Value;
-            }
-            else
-                warnings.Add("⚠ ไฟล์ไม่มีคอลัมน์ยอดคงเหลือที่อ่านได้ — ยอดตามธนาคารบนการ์ดบัญชีไม่ถูกอัปเดต");
-
-            await _db.SaveChangesAsync();
-            await dbTransaction.CommitAsync();
-
-            _logger?.LogInformation("Bank CSV import: {Imported} imported, {Skipped} duplicates skipped, {Conflicts} conflicts",
-                imported, skipped, conflicts.Count);
-
-            // Auto-match imported transactions with existing payments
-            if (imported > 0)
-            {
-                try { await AutoMatchAsync(companyId, request.BankAccountId); }
-                catch (Exception ex) { _logger?.LogWarning(ex, "Auto-match after import failed (non-critical)"); }
-            }
-
-            return new ImportBankStatementResponse(imported, skipped, 0, null, warnings);
-        }
-        catch
-        {
-            await dbTransaction.RollbackAsync();
-            throw;
-        }
+        var policy = request.ForceOverwrite ? BankStatementConflictPolicy.Overwrite
+            : request.SkipConflicts ? BankStatementConflictPolicy.KeepExisting
+            : BankStatementConflictPolicy.Report;
+        var result = await ImportParsedStatementRowsAsync(companyId, request.BankAccountId,
+            BankStatementFileReader.ToLines(parsed), BankStatementFileReader.WriteOptions(parsed, policy,
+                BankStatementFileReader.SourceFile(parsed, request.FileName, fileBytes)));
+        return result.ToResponse();
     }
 
     private static BankAccountResponse MapToResponse(BankAccount a) => new(

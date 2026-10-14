@@ -1,4 +1,5 @@
 using System.Globalization;
+using Accounting.Helpers;
 using MiniExcelLibs;
 
 namespace Accounting.Services.Helpers;
@@ -23,11 +24,50 @@ namespace Accounting.Services.Helpers;
 /// </summary>
 public static class BankExcelParser
 {
-    public static (List<BankCsvParser.Row> rows, List<string> skipped) ParseStatement(byte[] fileBytes)
+    /// <summary>ผลอ่าน workbook — ชีตที่ใช้ + ชีตทั้งหมด (หน้าจอ/ข้อความบอกผู้ใช้ว่าอ่านจากชีตไหน)</summary>
+    public sealed record Result(List<BankCsvParser.Row> Rows, List<string> Skipped, string? SheetName, IReadOnlyList<string> SheetNames);
+
+    /// <summary>
+    /// อ่าน statement จาก .xlsx — <paramref name="sheetName"/> ระบุ = ชีตนั้น (ไม่มีในไฟล์ ⇒ ล้มดังพร้อมรายชื่อชีต · ตัวอ่านกลาง) ·
+    /// ไม่ระบุ = <b>ชีตแรกที่หาหัวตาราง statement เจอ</b> (ไฟล์ธนาคารหลายแห่งมีชีตปก/สรุปนำหน้า — เดิมอ่านชีตแรกอย่างเดียวแล้วล้มว่า
+    /// "ไม่พบหัวคอลัมน์") · รายชื่อชีตจาก <see cref="ImportTabularReader.ListSheets"/> (ตัวเดียวกับศูนย์นำเข้า)
+    /// </summary>
+    public static Result ParseWorkbook(byte[] fileBytes, string? sheetName = null)
     {
         if (fileBytes == null || fileBytes.Length == 0)
             throw new ArgumentException("ไฟล์ Excel ว่างเปล่า");
 
+        var sheets = ImportTabularReader.ListSheets(fileBytes);
+        if (!string.IsNullOrWhiteSpace(sheetName))
+        {
+            var chosen = sheets.FirstOrDefault(sh => string.Equals(sh, sheetName.Trim(), StringComparison.OrdinalIgnoreCase))
+                ?? throw new ImportFormatException("sheet-not-found",
+                    $"ไม่พบชีต \"{sheetName}\" ในไฟล์ — ชีตที่มี: {string.Join(", ", sheets)} · เลือกชีตใหม่แล้วนำเข้าอีกครั้ง");
+            var (rows, skipped) = BankCsvParser.ParseRows(ReadGrid(fileBytes, chosen), $"ชีต \"{chosen}\"");
+            return new Result(rows, skipped, chosen, sheets);
+        }
+
+        // ไม่ระบุชีต: ชีตแรกที่มีหัวตาราง statement — ชีตที่ไม่มีหัวตารางข้ามไป · ไม่มีชีตไหนเลย ⇒ ข้อความของชีตแรก (เห็นสิ่งที่ระบบเห็น)
+        ArgumentException? firstError = null;
+        foreach (var sh in sheets.Count > 0 ? sheets : new List<string> { "" })
+        {
+            var grid = ReadGrid(fileBytes, sh.Length == 0 ? null : sh);
+            if (grid.Count == 0) continue;
+            if (BankCsvParser.DetectHeader(grid).headerIdx < 0)
+            {
+                try { BankCsvParser.ParseRows(grid, sheets.Count > 1 ? $"ชีต \"{sh}\"" : "ไฟล์ Excel"); }
+                catch (ArgumentException ex) { firstError ??= ex; }
+                continue;
+            }
+            var (rows, skipped) = BankCsvParser.ParseRows(grid, sheets.Count > 1 ? $"ชีต \"{sh}\"" : "ไฟล์ Excel");
+            return new Result(rows, skipped, sh.Length == 0 ? null : sh, sheets);
+        }
+        throw firstError ?? new ArgumentException("ไฟล์ Excel ไม่มีข้อมูล");
+    }
+
+    /// <summary>ชีตเดียวเป็นตารางข้อความ (เรียงคอลัมน์ A, B, C … สี่เหลี่ยมผืนผ้า) — วันที่ในเซลล์วันที่แสดงแบบ M/d/yyyy (ดูคำอธิบายคลาส)</summary>
+    private static List<List<string>> ReadGrid(byte[] fileBytes, string? sheetName)
+    {
         List<IDictionary<string, object>> raw;
         try
         {
@@ -37,8 +77,9 @@ public static class BankExcelParser
             // Each row is an ExpandoObject which implements
             // IDictionary<string, object> (non-nullable value) — match that
             // exact generic shape or Cast throws InvalidCastException.
-            raw = MiniExcel.Query(stream, useHeaderRow: false)
+            raw = MiniExcel.Query(stream, useHeaderRow: false, sheetName: sheetName)
                 .Cast<IDictionary<string, object>>()
+                .Take(ImportTabularReader.MaxRows + 1)
                 .ToList();
         }
         catch (Exception ex)
@@ -46,9 +87,9 @@ public static class BankExcelParser
             throw new ArgumentException(
                 $"อ่านไฟล์ Excel ไม่สำเร็จ — ตรวจสอบว่าเป็น .xlsx ที่ไม่ถูกตั้งรหัสผ่าน ({ex.Message})", ex);
         }
-
-        if (raw.Count == 0)
-            throw new ArgumentException("ไฟล์ Excel ไม่มีข้อมูล");
+        if (raw.Count > ImportTabularReader.MaxRows)
+            throw new ImportFormatException("too-many-rows",
+                $"ไฟล์มีมากกว่า {ImportTabularReader.MaxRows:N0} แถว — แบ่งไฟล์ (ช่วงวันที่สั้นลง) แล้วนำเข้าทีละไฟล์");
 
         // Find the maximum column letter actually used across all rows so the
         // grid is rectangular for the downstream parser. MiniExcel keys are
@@ -62,7 +103,7 @@ public static class BankExcelParser
                 if (idx > maxColIndex) maxColIndex = idx;
             }
         }
-        int colCount = Math.Max(maxColIndex + 1, 1);
+        int colCount = Math.Min(Math.Max(maxColIndex + 1, 1), ImportTabularReader.MaxColumns);
 
         var cells = new List<List<string>>(raw.Count);
         foreach (var row in raw)
@@ -76,8 +117,7 @@ public static class BankExcelParser
             }
             cells.Add(line);
         }
-
-        return BankCsvParser.ParseRows(cells, "ไฟล์ Excel");
+        return cells;
     }
 
     private static string StringifyValue(object? v)

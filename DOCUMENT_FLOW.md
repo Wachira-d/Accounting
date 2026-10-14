@@ -3861,6 +3861,27 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ผิดสองเดือนพร้อมกันโดยยอดรวมทั้งปียังตรง (X-7 · บทเรียนเดียวกับ X-1).
   ทุกวันยังผ่าน `ResolveReversalDateAsync` เพื่อ fallback เมื่องวดปลายทางปิด
 
+### 6.0b-bank นำเข้า statement ธนาคาร — ตัวเขียนตัวเดียว (รอบ 205 ทีม C · IMPORT_ETL_REVIEW §1 แถว 6–9)
+
+- **ตัวเขียนเดียว** `IBankService.ImportParsedStatementRowsAsync(cid, bankAccountId, lines, options)` (`BankService.StatementImport.cs`) — ทุกทางเข้าที่สร้าง
+  `BankTransaction` จาก statement เดินที่นี่: หน้า "ธนาคาร → นำเข้า statement" (`ImportBankStatementAsync`) · open-banking file (`OpenBankingService.ImportFileAsync`) ·
+  API v1 (`BankV1Controller.ImportStatement` — ความหมาย v1 คงเดิมผ่าน `StatementWriteOptions()`) · ศูนย์นำเข้า `banktransactions` (`BankStatementImportTarget`) ·
+  นำเข้าทั่วไป `ImportExportService.ImportBankTransactionAsync` (**ทีม B ต่อสาย** — จนกว่าจะต่อ ทางนั้นยังบวก `CurrentBalance` เอง)
+- **แยกไฟล์** `Services/Helpers/BankStatementFileReader.Read` ตัดสินชนิดจากเนื้อไฟล์: CSV/TSV (`BankCsvParser` — ถอดรหัสผ่าน `ImportTabularReader.Decode`:
+  UTF-8 เข้มงวด → UTF-16 → TIS-620) · .xlsx (`BankExcelParser.ParseWorkbook` — ไม่ระบุชีต = ชีตแรกที่มีหัวตาราง statement) · OFX 1.x/2.x (`BankOfxParser`) ·
+  QIF = ล้มดัง "ยังไม่รองรับ QIF — ส่งออกเป็น CSV/OFX" (คำตัดสินข้อ 151) · .xls/HTML/PDF = ข้อความของตัวอ่านกลาง · คอลัมน์ยอดคงเหลือไม่บังคับ
+- **กันซ้ำ** (`Statement`): รหัสต้นทาง (OFX FITID/ExternalId เก็บใน `Reference`) ตรง ⇒ ซ้ำ · เลขอ้างอิง+วัน+ยอด+ทิศ ⇒ ซ้ำ · วัน+ยอด+ทิศแบบใช้ครั้งเดียว:
+  คำอธิบายตรง ⇒ ซ้ำ · ต่าง ⇒ ขัดแย้งตาม `BankStatementConflictPolicy` (หน้า "ธนาคาร": ถาม → ใช้ใหม่ `ForceOverwrite` / เก็บเดิม `SkipConflicts` ·
+  open-banking/ศูนย์นำเข้า: ลงใหม่ + คำเตือน) · โหมดถาม = ไม่บันทึกอะไรเลยและถอดแถวออกจาก tracker · API v1 = `ExternalIdOnly`
+- **ยอด**: `CurrentBalance`/`StatementBalance` = ยอดคงเหลือตามธนาคารของบรรทัดล่าสุดที่มียอดจริง หรือ OFX LEDGERBAL (ยอดรายบรรทัด OFX ถอยจากยอดปิด) ·
+  ไม่มียอด ⇒ ไม่แตะ + คำเตือน (ไม่บวกยอดเอง) · statement เก่ากว่ายอดที่มี ⇒ คงยอดเดิม + คำเตือน · เตือนยอดไม่ต่อเนื่อง · เลขบัญชี/สกุลในไฟล์ไม่ตรง ⇒ คำเตือน
+- ธุรกรรมเดียว · **ไฟล์ต้นทาง** เก็บเป็นไฟล์แนบชนิด `BankStatement` ของบัญชีธนาคาร (อ่าน = Bank.View · ลบ = Bank.Reconcile) เมื่อมีรายการลง ·
+  **จับคู่อัตโนมัติ** `AutoMatchAsync` หลังบันทึก (ล้ม = คำเตือนถึงผู้ใช้) — open-banking ไม่มีตัวจับคู่ของตัวเองแล้ว
+- ศูนย์นำเข้า: บัญชีจาก `BatchOptions["bankAccountId"]` (หน้า import-hub) → คอลัมน์ "บัญชีธนาคาร" → บริษัทมีบัญชีเดียว · ไม่พบ/ข้ามบริษัท = บล็อก (§2.5) ·
+  ปิดใช้/ยังไม่ผูกผังบัญชี = คำเตือน ·
+  ซ้ำของเดิม = คำเตือน + ตั้ง "ข้าม" · ย้อน = ลบรายการที่ยังไม่จับคู่ (`DeleteTransactionsAsync`) · จับคู่/กระทบยอดแล้ว = บล็อก + "ยกเลิกการจับคู่ก่อน"
+- Last verified 2026-10-14 (sha เติมภายหลัง)
+
 ### 6.0c-bis การจับคู่ธนาคาร — ให้คะแนน 1 ตัว · ตัดสิน 1 ตัว (รอบ 183 · D4-1/D4-2)
 
 ก่อนรอบนี้สูตรให้คะแนนมี **5 สำเนาที่ให้อันดับต่างกัน** ⇒ อันดับที่ "คนเห็นบนจอ"

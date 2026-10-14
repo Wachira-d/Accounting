@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **512 ไฟล์ · 5,094 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **514 ไฟล์ · 5,120 `[Fact]` + 814 `[Theory]` (3,607 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5854,3 +5854,23 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | CP-10 | ยกเลิกและออกใบแทน — ผู้ซื้อของใบใหม่ | ค้นทั้งทะเบียน (เดิม `<select>` 200 รายแรก) · ค่าตั้งต้น = ผู้ซื้อเดิม · ว่าง = ผู้ซื้อเดิม · พิมพ์ค้างไม่เลือก = เตือน | 📋 E2E |
 | CP-11 | เช็คจ่าย · เช็คล่วงหน้า · statement · จ่ายรวมผู้ขาย · ฝากขาย · พอร์ทัลลูกค้า · alias สินค้า · vendor portal · เงินมัดจำ | ทุกช่องเป็นตัวเลือกกลาง (statement/จ่ายรวม/ใบแจ้งหนี้จากเวลา = ไม่มีปุ่มสร้าง) · เงินมัดจำส่ง `contactId` เมื่อเลือกจากทะเบียน + พิมพ์ชื่ออิสระได้ | ✅ `tools/contact_picker_check.py` R2–R4 · 📋 E2E |
 | CP-12 | เงินมัดจำส่ง `contactId` ของบริษัทอื่น | 404 "ไม่พบผู้ติดต่อนี้ในบริษัท" (`FinancialManagementService.CreateDepositAsync`) | 📋 (ยังไม่มีเทสต์ DB) |
+---
+
+## ETL-C — statement ธนาคาร: ตัวเขียนตัวเดียว + OFX จริง + TIS-620 (รอบ 205 ทีม C · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §1 แถว 6–9)
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| ETLC-01 | CSV แบบ KBank หัวไทย วันที่ พ.ศ. เข้ารหัส **TIS-620** มีแถว "ยอดยกมา"/"รวมรายการ" + ร้าน "รวมมิตร" | ถอดได้ (เดิม U+FFFD) · 3 รายการ · 01/08/2569 → 2026-08-01 08:15 · แถวสรุปถูกตัด · "ร้านรวมมิตร" ไม่ถูกตัด · ยอดตามธนาคาร = 9,485 ณ 15/08 | ✅ `BankStatementParsingTests` + `Db/BankStatementImportDbTests` |
+| ETLC-02 | ไฟล์เดียวกันเป็น UTF-8 | ไม่ถูกอ่านเป็น TIS-620 · ผลเท่ากัน | ✅ ทั้งสองชุด |
+| ETLC-03 | statement **ไม่มีคอลัมน์ยอดคงเหลือ** | นำเข้าได้ (เดิม "ไม่พบหัวคอลัมน์") + คำเตือน · ยอดบนการ์ดไม่ขยับ (ไม่บวกเอง ไม่ทับด้วย 0) · แถวหัวที่มียอดคงเหลือยังชนะแถวคำอธิบายด้านบน | ✅ ทั้งสองชุด |
+| ETLC-04 | ยอด "500.00 DR" · "30,000.00 CR" · "(1,250.00)" · "1,250.00-" · เลขไทย · "(500.00) CR" | DR = เงินออก (เดิมตัด DR ทิ้ง = เงินเข้า) · CR = เงินเข้า · เครื่องหมายสองชั้นขัดกัน = อ่านไม่ได้ (ไม่เดา) · ยอดอ่านไม่ได้แจ้งแถว+ค่า (เดิม "ไม่มีจำนวนเงิน") | ✅ `BankStatementParsingTests` + ศูนย์นำเข้าใน Db |
+| ETLC-05 | OFX 1.x (SGML ไม่มีแท็กปิดใบ) · OFX 2.x (XML · ไทย UTF-8 · ทศนิยมจุลภาค) | DTPOSTED + เขตเวลา → เวลาไทย · TRNAMT บวก = เข้า · FITID · NAME/MEMO · `&amp;` · ACCTID · LEDGERBAL · หลายบัญชีในไฟล์ = ล้มดัง "ส่งออกทีละบัญชี" | ✅ `BankStatementParsingTests` |
+| ETLC-06 | open-banking ไฟล์ OFX | **บันทึกจริง** 3 แถว (เดิม 0 แถวแต่ตอบ "ใหม่ 3") · ยอดรายบรรทัดถอยจาก LEDGERBAL · ยอดตามธนาคาร = ยอดปิด · ไฟล์ซ้ำ = FITID ข้ามทั้งหมด | ✅ `Db/BankStatementImportDbTests` |
+| ETLC-07 | QIF (หน้า "ธนาคาร" · open-banking · ผู้ใช้เลือก CSV แต่เนื้อเป็น QIF) · `.xls` BIFF8 · ไบต์ไม่ใช่ UTF-8/874 | "ยังไม่รองรับไฟล์ QIF — ส่งออก … CSV หรือ OFX" (คำตัดสินข้อ 151) ไม่บันทึกอะไร · `.xls` = "บันทึกเป็น .xlsx" · encoding ล้มดัง | ✅ ทั้งสองชุด |
+| ETLC-08 | นำเข้าไฟล์เดิมซ้ำ | 0 ลง · ข้ามครบ · ยอดไม่เดินซ้ำ | ✅ `Db/BankStatementImportDbTests` |
+| ETLC-09 | วัน+ยอด+ทิศตรงของเดิมแต่คำอธิบายต่าง: ถาม / เก็บเดิม / ใช้ใหม่ | ถาม = ไม่บันทึกอะไรเลย **รวม tracker** (เดิมแถวค้าง) · เก็บเดิม = ลงเฉพาะรายการใหม่ (เดิมหน้าเว็บบอก "สำเร็จ" ทั้งที่ย้อนทั้งไฟล์) · ใช้ใหม่ = ทับคำอธิบาย | ✅ `Db/BankStatementImportDbTests` |
+| ETLC-10 | statement เก่ากว่ายอดตามธนาคารที่มีอยู่ | ลงรายการได้ · ยอดตามธนาคารไม่ถอยหลัง + คำเตือน | ✅ `Db/BankStatementImportDbTests` |
+| ETLC-11 | เก็บไฟล์ต้นทาง | ไฟล์แนบชนิด `BankStatement` ผูกบัญชีธนาคาร · ผู้อัปโหลดที่ถูก · ไฟล์ซ้ำทั้งไฟล์ไม่เก็บซ้ำ · ไม่ทราบผู้นำเข้า = คำเตือน | ✅ `Db/BankStatementImportDbTests` |
+| ETLC-12 | API v1 `POST /api/v1/bank/statements` | กันซ้ำด้วย ExternalId อย่างเดียวเหมือนเดิม · บรรทัดไม่มี ExternalId ลงทุกครั้ง · ExternalId อยู่ใน Reference · CreatedBy "api:v1" · ไม่แตะยอดตามธนาคาร · คิดเงินตามบรรทัดที่สร้างจริง | ✅ `Db/BankStatementImportDbTests` (ใช้ `BankV1Controller.StatementWriteOptions` ตัวเดียวกับ action) |
+| ETLC-13 | ศูนย์นำเข้า `banktransactions` (`BankStatementImportTarget`) | ซ้ำของเดิม = คำเตือน + ตั้ง "ข้าม" · DR ช่องเดียว = เงินออก · ลงผ่านตัวเขียน · ย้อน = ลบที่ยังไม่จับคู่ · จับคู่แล้ว = บล็อก + ทางไปต่อ · บัญชีที่เลือก (`BatchOptions["bankAccountId"]`) ไม่ใช่ของบริษัท = บล็อก (§2.5) · ปิดใช้/ยังไม่ผูกผัง = คำเตือนครั้งเดียวต่อบัญชี | ✅ `Db/BankStatementImportDbTests` |
+| ETLC-14 | xlsx หลายชีต (ชีตปกนำหน้า) | ไม่ระบุชีต = ชีตแรกที่มีหัวตาราง statement + ข้อความบอกชีต · ระบุชีตผิด = รายชื่อชีต | ✅ `BankStatementParsingTests` (สมุดงานสร้างด้วย MiniExcel) · ไฟล์ xlsx จริงของแต่ละธนาคารรอ §4 ข้อ 2 |
