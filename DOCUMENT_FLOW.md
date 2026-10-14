@@ -3862,7 +3862,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
     `payerNameLine`/`payeeNameLine` จาก `WithholdingTaxCertResponse` · เดิม QuestPDF ต่อคำนำหน้า+สาขา · HTML ต่อแต่สาขา · หน้าพิมพ์ไม่ต่อ ⇒ ผู้ถูกหักคนเดียวสามชื่อ ·
     **ส่วนที่ยังต่างระหว่างไฟล์ PDF กับหน้าพิมพ์ (ตั้งใจ/รอคำตัดสิน)**: ลายเซ็น — หน้าพิมพ์ใช้ลายเซ็นของ "ผู้กดพิมพ์" (โปรไฟล์ตัวเอง · ไม่พิมพ์ชื่อ) ·
     PDF ใช้ "ผู้สร้างใบ → เจ้าของบริษัท" + พิมพ์ชื่อ · ตราประทับ QuestPDF เป็นกรอบสี่เหลี่ยม (ไม่มีวงกลม) · ขนาดตัวอักษร/ขอบกระดาษต่างกันตามเครื่องมือ ·
-    เทสต์ `WhtCertFormTextTests.PartyName_*` + `Html_PayeeName_HasTitle_LikeQuestPdf` · sim `tools/save_pdf_mobile_sim.js` · Last verified 2026-10-14 `commit <pending>`
+    เทสต์ `WhtCertFormTextTests.PartyName_*` + `Html_PayeeName_HasTitle_LikeQuestPdf` · sim `tools/save_pdf_mobile_sim.js` · Last verified 2026-10-14 `commit ef59bf1f`
 - **ประเภทแบบ guard (ภ.ง.ด.3 ↔ 53)**: `ResolveWhtFormType` + `DetectJuristic`
   บังคับที่ **ทุก create path** (`CreateAsync`, `AutoGenerateFromDocumentAsync`,
   `UpdateAsync`) — ประเภทแบบขึ้นกับ **ผู้ถูกหักภาษี**: นิติบุคคล → 53,
@@ -5541,4 +5541,4 @@ _Last verified against codebase: 2026-10-14 (ฝ่ายค้านรอบ 1
 reclassify ใช้ยอดขาเงินตาม JE · OCR/เทมเพลต/ระบบเชื่อมต่อขายเงินสด · §6.0b-bank ยอดที่ไม่รู้ + ล้มแล้วถอดจาก tracker + ไฟล์หลัง commit · รายการประจำ ขั้นหลังสร้างล้ม = notice ·
 `PickedAccountGuard` ใช้ `PostingAccountRule`/`MoneyAccountDirectory` · เงินเดือนไม่ตกเงินสดเงียบ · ที่พักโอน/พร้อมเพย์ต้องมีบัญชีธนาคาร (เซิร์ฟเวอร์) · รายงานตั้งเวลาล็อกต่อรายงาน ·
 โอนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
-_Last verified against codebase: 2026-10-14 (50 ทวิ บนมือถือ — ผู้ใช้ "กดบันทึก pdf ขึ้นแต่หน้าปริ้น บนมือถือกดมาเป็นไฟล์ไม่ได้" · §5.4: ปุ่ม ⬇️ PDF → `Layout.savePdf` (ไฟล์เซิร์ฟเวอร์ · มือถือ = แผ่นแชร์/บันทึกลงไฟล์ · iOS = เปิดไฟล์ · เดสก์ท็อป = ดาวน์โหลด) · มือถือกด 🖨 พิมพ์ = ไปทางไฟล์ · ชื่อคู่สัญญาทั้ง 3 renderer ผ่าน `WhtCertFormText.PartyName` · ทางเดียวกันใน documents (PDF/e-Tax) · tax (§87/ภ.พ.30) · etax (เดิมไม่แนบ JWT ⇒ 401) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+_Last verified against codebase: 2026-10-14 (50 ทวิ บนมือถือ — ผู้ใช้ "กดบันทึก pdf ขึ้นแต่หน้าปริ้น บนมือถือกดมาเป็นไฟล์ไม่ได้" · §5.4: ปุ่ม ⬇️ PDF → `Layout.savePdf` (ไฟล์เซิร์ฟเวอร์ · มือถือ = แผ่นแชร์/บันทึกลงไฟล์ · iOS = เปิดไฟล์ · เดสก์ท็อป = ดาวน์โหลด) · มือถือกด 🖨 พิมพ์ = ไปทางไฟล์ · ชื่อคู่สัญญาทั้ง 3 renderer ผ่าน `WhtCertFormText.PartyName` · ทางเดียวกันใน documents (PDF/e-Tax) · tax (§87/ภ.พ.30) · etax (เดิมไม่แนบ JWT ⇒ 401) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ef59bf1f)_

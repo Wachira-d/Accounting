@@ -4894,4 +4894,4 @@ wht.html ปุ่มหลัก ⬇️ PDF (แถว + รายละเอ�
 ชื่อไฟล์ไทยจาก `filename*` ชนะ `filename=` (เดิม regex เดียวจับชื่อสำรอง ASCII ก่อน — sim จับได้).
 renderer parity: บรรทัด "ชื่อ" ของ 50 ทวิ ผ่าน `WhtCertFormText.PartyName` ทั้ง 3 ตัว (DTO `PayerNameLine`/`PayeeNameLine`) — เดิม QuestPDF ต่อคำนำหน้า+สาขา ·
 HTML ต่อแต่สาขา · หน้าพิมพ์ไม่ต่อ · `CertBranchSuffix` ถูกยุบเข้า helper. เทสต์ `WhtCertFormTextTests` (+3) · sim `tools/save_pdf_mobile_sim.js`
-(ทุกทาง + negative 10 ตัว) · กติกาจุดเรียกใน `required_call_site_check.py` (+2) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>_
+(ทุกทาง + negative 10 ตัว) · กติกาจุดเรียกใน `required_call_site_check.py` (+2) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ef59bf1f_
