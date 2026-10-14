@@ -4766,5 +4766,5 @@ schema (ขยาย `SmartImportSessions` 23 คอลัมน์ + ตาร�
 wrapper · ตัดสินชนิดจากเนื้อไฟล์ · หลายชีต · .xls/XML/PDF/QIF/OFX ล้มดังพร้อมทางไปต่อ) · ตัวแปลงค่า `ImportValueNormalizer` (มอบให้ owner เดิม:
 ThaiDate · SettlementValueParser · ThaiTaxIdValidator · TaxBranchCode — "ใช่"/"Y" ไม่เป็น false อีก · วันที่ไม่สลับเงียบ) · plumbing: ล็อก `import-batch` ·
 ไฟล์แนบชนิด `ImportBatch` (สิทธิ์ = นำเข้าชนิดของ batch) · `IFileAttachmentService.ReadBytesAsync` · สิทธิ์นำเข้า "stock-adjustments" = Inventory.Adjust
-(เดิมหลุดไป Journal.Manage) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>_
+(เดิมหลุดไป Journal.Manage) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 95c3031b_
 

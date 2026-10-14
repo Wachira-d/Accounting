@@ -114,7 +114,7 @@ master ที่สร้าง = soft-delete ถ้าไม่มีการ�
 ## 5. สถานะการแก้
 | รหัส | เรื่อง | สถานะ |
 |---|---|---|
-| ETL-T0 | schema + สัญญา + reader/normalizer | ✅ (sha เติมภายหลัง) — สัญญา: `Models/DTOs/Import/ImportHubDtos.cs` · `Services/Import/I*.cs` · `Helpers/ImportTabularReader.cs` · `Helpers/ImportValueNormalizer.cs` |
+| ETL-T0 | schema + สัญญา + reader/normalizer | ✅ 95c3031b — สัญญา: `Models/DTOs/Import/ImportHubDtos.cs` · `Services/Import/I*.cs` · `Helpers/ImportTabularReader.cs` · `Helpers/ImportValueNormalizer.cs` |
 | ETL-A | mapping + AI distillation 26/27/58/59 | ⏳ |
 | ETL-B | engine + writer เดิม (culture parse · payment/asset/document bypass) | ⏳ |
 | ETL-C | ธนาคาร writer เดียว + OFX จริง + TIS-620 | ⏳ |
