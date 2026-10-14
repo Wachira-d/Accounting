@@ -4924,5 +4924,5 @@ _2026-10-14 — ส่งออก CSV/Excel รายงานบัญชี (
 เดิม 30 แถว) · ทะเบียนสินทรัพย์ + ตารางค่าเสื่อม · ใบแจ้งยอดผู้ติดต่อเขียนใหม่ (เดิม 401 เพราะ `window.location.href` + ยอด "1,234.00" ไม่ครอบ ⇒ คอลัมน์เลื่อน)
 · **GL service**: ยอดยกมากรองสาขา/โครงการ/มิติชุดเดียวกับรายการ (`ApplyLedgerLineFilters`) + อ่านยอดยกมานำเข้าแบบงบทดลองเมื่อไม่กรอง + บัญชียกมาอย่างเดียวไม่หาย
 · `AuditTrailService` "ถึงวันที่" วันล้วนรวมทั้งวัน + เรียง Id · `ExportUtil.downloadServer`/`renderServerButtons` + `exportCsv` กันสูตรข้อความ · เช็คคงค้างมีปุ่มส่งออก
-· เทสต์ `TabularExportTests` · `AccountingReportSheetsTests` · `Db/AccountingReportExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 0f19b45b (ตัวเขียนกลาง) + 6b27612c_
+· เทสต์ `TabularExportTests` · `AccountingReportSheetsTests` · `Db/AccountingReportExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit efeda848 (ตัวเขียนกลาง) + 6b27612c_
 
