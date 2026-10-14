@@ -34,6 +34,16 @@ public static class PettyCashJePlan
     public const string RuleBadAmount = "PETTY-BAD-AMOUNT";
     public const string RuleOk = "PETTY-JE-OK";
 
+    /// <summary>ผังมาตรฐานของกองทุนเงินสดย่อย (<c>ChartOfAccountTemplates</c>: 11112 เงินสดย่อย) — เซิร์ฟเวอร์เสนอเป็นค่าตั้งต้นตอนเปิด/แก้กองทุน
+    /// (ผู้ใช้เปลี่ยนได้) · ตัวตั้งตัวเดียว ห้ามเขียนรหัสนี้ซ้ำในหน้าเว็บ</summary>
+    public const string DefaultFundAccountCode = "11112";
+
+    /// <summary>กองทุนยังไม่ผูกผัง — ชี้ไปปุ่มที่มีจริงบนหน้า “เงินสดย่อย” (เดิมชี้ "ตั้งค่าเงินสดย่อย" ที่ไม่มีอยู่จริง = ทางตัน ·
+    /// PAYMENT_CHANNEL_AUDIT ส่วนที่ 1 ข้อ 1)</summary>
+    public const string NoFundAccountMessage =
+        "กองทุนเงินสดย่อยนี้ยังไม่ได้ผูกกับผังบัญชี — ที่หน้า “เงินสดย่อย” กด “แก้ไข / ผูกผังบัญชี” ที่การ์ดของกองทุนนี้ "
+        + "แล้วเลือก “ผังบัญชีของกองทุน” (ปกติคือ 11112 เงินสดย่อย) ก่อนบันทึกรายการ";
+
     /// <summary>รหัสกฎของ §65 ตรี(9) "รายจ่ายที่ไม่มีหลักฐานผู้รับ" —
     /// ใช้ตัวเดียวกันทั้งตอนติดธงและตอนทำ worksheet บวกกลับ</summary>
     public const string RuleNoReceipt = "RD-65TER-9";
@@ -70,9 +80,10 @@ public static class PettyCashJePlan
                 "ยังไม่ได้เลือกผังบัญชีค่าใช้จ่ายของรายการนี้ — เลือกบัญชีค่าใช้จ่ายก่อนบันทึก "
                 + "(ถ้าบันทึกโดยไม่เลือก เงินจะออกจากลิ้นชักโดยบัญชีไม่รู้)");
         if (!fundAccountId.HasValue || fundAccountId.Value == Guid.Empty)
-            return Fail(RuleNoFundAccount,
-                "กองทุนเงินสดย่อยนี้ยังไม่ได้ผูกกับผังบัญชี — ไปที่ตั้งค่าเงินสดย่อย "
-                + "แล้วเลือกผังบัญชี \"เงินสดย่อย\" ของกองทุนก่อน");
+            return Fail(RuleNoFundAccount, NoFundAccountMessage);
+        if (expenseAccountId.Value == fundAccountId.Value)
+            return Fail(RuleNoExpenseAccount,
+                "“บัญชีค่าใช้จ่าย” เป็นผังเดียวกับผังของกองทุนเงินสดย่อย — เลือกผังค่าใช้จ่ายที่จ่ายจริง");
 
         var noReceipt = string.IsNullOrWhiteSpace(receiptReference);
         return new Plan(true, expenseAccountId.Value, fundAccountId.Value,
@@ -85,23 +96,22 @@ public static class PettyCashJePlan
     /// เติมเงินสดย่อย — Dr ผังของกองทุน / Cr ผังแหล่งเงิน (ธนาคาร/เงินสด).
     /// </summary>
     /// <param name="fundAccountId">`PettyCashFund.LinkedAccountId`</param>
-    /// <param name="sourceAccountId">ผังของบัญชีที่โอนเงินออกมา</param>
+    /// <param name="sourceAccountId">ผังของบัญชีที่โอนเงินออกมา (บัญชีธนาคาร → <c>LinkedAccountId</c> แล้ว ·
+    /// ตรวจบริษัท/สถานะ/ระดับที่ <see cref="PickedAccountGuard"/> ก่อนเรียกตัวนี้)</param>
     /// <param name="amount">ยอดเติม</param>
     public static Plan ForReplenishment(Guid? fundAccountId, Guid? sourceAccountId, decimal amount)
     {
         if (amount <= 0m)
             return Fail(RuleBadAmount, "ยอดเติมต้องมากกว่า 0");
         if (!fundAccountId.HasValue || fundAccountId.Value == Guid.Empty)
-            return Fail(RuleNoFundAccount,
-                "กองทุนเงินสดย่อยนี้ยังไม่ได้ผูกกับผังบัญชี — ไปที่ตั้งค่าเงินสดย่อย "
-                + "แล้วเลือกผังบัญชี \"เงินสดย่อย\" ของกองทุนก่อน");
+            return Fail(RuleNoFundAccount, NoFundAccountMessage);
         if (!sourceAccountId.HasValue || sourceAccountId.Value == Guid.Empty)
             return Fail(RuleNoSourceAccount,
-                "ยังไม่รู้ว่าเงินที่เติมมาจากบัญชีไหน — เลือกบัญชีธนาคาร/เงินสดต้นทาง "
+                "ยังไม่รู้ว่าเงินที่เติมมาจากบัญชีไหน — เลือก “เติมจากบัญชี” (บัญชีธนาคาร/เงินสด) "
                 + "ก่อนบันทึก (ไม่งั้นยอดธนาคารในงบจะไม่ลดตามเงินที่โอนออกจริง)");
         if (fundAccountId.Value == sourceAccountId.Value)
             return Fail(RuleNoSourceAccount,
-                "บัญชีต้นทางกับผังของกองทุนเป็นบัญชีเดียวกัน — เลือกบัญชีต้นทางใหม่");
+                "บัญชีต้นทางกับผังของกองทุนเป็นบัญชีเดียวกัน — เลือก “เติมจากบัญชี” ใหม่");
 
         return new Plan(true, fundAccountId.Value, sourceAccountId.Value, false, RuleOk, null);
     }

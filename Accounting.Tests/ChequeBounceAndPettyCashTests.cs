@@ -103,7 +103,18 @@ public class ChequeBounceAndPettyCashTests
         var p = PettyCashJePlan.ForDisbursement(Expense, null, "RC-1", 100m);
         Assert.False(p.Ok);
         Assert.Equal(PettyCashJePlan.RuleNoFundAccount, p.RuleCode);
-        Assert.Contains("ตั้งค่าเงินสดย่อย", p.Error);
+        // 2026-10-14 (ทีม F1): เดิมชี้ "ตั้งค่าเงินสดย่อย" ที่ไม่มีอยู่จริง (ทางตัน) — ต้องชี้ปุ่มที่มีบนหน้า “เงินสดย่อย”
+        Assert.Contains("แก้ไข / ผูกผังบัญชี", p.Error);
+        Assert.DoesNotContain("ไปที่ตั้งค่าเงินสดย่อย", p.Error);
+    }
+
+    [Fact]
+    public void บัญชีค่าใช้จ่ายเป็นผังเดียวกับกองทุน_ต้องล้ม_ไม่ลงJEที่หักล้างตัวเอง()
+    {
+        var p = PettyCashJePlan.ForDisbursement(Fund, Fund, "RC-1", 100m);
+        Assert.False(p.Ok);
+        Assert.Equal(PettyCashJePlan.RuleNoExpenseAccount, p.RuleCode);
+        Assert.True(PettyCashJePlan.ForDisbursement(Expense, Fund, "RC-1", 100m).Ok);   // ทิศตรงข้าม: ผังต่างกัน = ผ่าน
     }
 
     [Fact]

@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **529 ไฟล์ · 5,239 `[Fact]` + 826 `[Theory]` (3,652 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **531 ไฟล์ · 5,261 `[Fact]` + 828 `[Theory]` (3,661 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5985,3 +5985,18 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | ETLA-18 | แก้แม่แบบ | เปิดลงอัตโนมัติได้ (opt-in) · ส่งบางคอลัมน์ = ที่เหลือคงเดิม · หัวนอกแม่แบบ = ปฏิเสธ · ลบแล้วหา/รายการไม่เจอ | ✅ `ImportMappingTemplateStoreDbTests` |
 | ETLA-19 | ปิดลูป ImportColumnMatch → เรียนรู้ → นักเรียนตอบเอง | `RecordColumnMatchChoiceAsync` เขียนคำตอบรูปมาตรฐานเฉพาะคอลัมน์ที่ถูกถาม · acceptedAi ถูก · Explicit · บริษัทอื่นปิดแทนไม่ได้ · `GetLearnedHeadersAsync` เห็นคู่ใหม่ · นักเรียนก่อนเรียน = ไม่ตอบ · หลัง `LoadFromFeedbackAsync` = ตอบ ≥ 0.85 · บริษัทอื่นไม่ได้ความรู้ | ✅ `ImportMappingTemplateStoreDbTests` |
 | ETLA-20 | ปิดลูป ImportDataReview จาก feedback จริง | บริษัทที่ปฏิเสธเลิกได้ข้อเสนอนั้น · บริษัทอื่นยังได้ | ✅ `ImportMappingTemplateStoreDbTests` |
+---
+
+## F1 — ช่องทางเงินของเงินสดย่อย/สินเชื่อ/เช็ค/ใบเบิก/เงินทดรอง (ทีม F1 · 2026-10-14 · `erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md`)
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| F1-01 | ตรวจผังที่ผู้ใช้เลือก: ปกติ / ไม่พบ / ปิดใช้ / บัญชีคุม / ชนิดไม่ตรง · บัญชีธนาคาร ไม่พบ / ปิดใช้ / ยังไม่ผูก / ผังที่ผูกใช้ไม่ได้ · ส่งธนาคาร+ผังพร้อมกัน | ผ่านเฉพาะกรณีปกติ · ข้อความไทยบอกช่อง + ที่แก้ · "ไม่พบ" ≠ "ยังไม่ผูก" · ส่งพร้อมกัน = ปฏิเสธ · Guid ว่าง = ไม่ได้เลือก | ✅ `PickedAccountGuardTests` |
+| F1-02 | เงินสดย่อย: เปิดกองทุนจาก JSON ของหน้าเว็บ (ไม่เลือกผัง) → เติมจากบัญชีธนาคาร (`sourceBankAccountId`) → เบิก | กองทุนได้ผัง 11112 · JE เติม Dr 11112 / Cr **ผังที่ผูกของธนาคาร** (ไม่ใช่รหัสบัญชีธนาคาร) · JE เบิก Dr ค่าใช้จ่าย / Cr 11112 · คงเหลือ 4,650 | ✅ `Db/MoneyChannelPostingDbTests` (job db-test) |
+| F1-03 | เงินสดย่อย: รหัสธนาคารในช่องผัง (หน้าเว็บรุ่นเก่า) · ธนาคารไม่ผูกผัง · ผังค่าใช้จ่ายบริษัทอื่น/บัญชีคุม · เงินไม่พอ · กองทุนไม่พบ | ไทยทุกข้อ (ไม่ใช่ FK 409 / "Insufficient…" / "Fund not found.") · ไม่มีรายการ/JE ถูกบันทึก · ยอดคงเหลือเดิม | ✅ `Db/MoneyChannelPostingDbTests` |
+| F1-04 | เงินสดย่อย: กองทุนเก่าที่ไม่มีผัง → เติมเงิน → ผูกผังผ่านแก้กองทุน → เติมเงิน · เปลี่ยนผังหลังมีรายการ · แก้ชื่อ/วงเงิน | ครั้งแรกปฏิเสธชี้ปุ่ม “แก้ไข / ผูกผังบัญชี” · ผังค่าใช้จ่ายเป็นผังกองทุนไม่ได้ · ผูกแล้วเติมได้ · เปลี่ยนผังหลังลงบัญชี = บล็อกพร้อมทางไปต่อ · ทิศตรงข้าม: แก้ชื่อได้ | ✅ `Db/MoneyChannelPostingDbTests` · `ChequeBounceAndPettyCashTests` |
+| F1-05 | สินเชื่อ: สร้างจาก JSON เดียวกับ `loans.html` (บัญชีธนาคาร + ผังเงินกู้ + ดอกเบี้ย + ลงบัญชีรับเงินกู้) → ชำระโดยไม่เลือกบัญชี | `MoneyAccountId` = ผังที่ผูกของธนาคาร · ครบกำหนด = งวดแรก + 11 เดือน · JE Dr ผังธนาคาร / Cr เงินกู้ · ชำระ Cr ผังของสินเชื่อ (ไม่ใช่ 11122) | ✅ `Db/MoneyChannelPostingDbTests` |
+| F1-06 | สินเชื่อ: JSON รูปเก่า (loanNumber/lenderName/startDate) · ผังเงินกู้เป็นค่าใช้จ่าย · ผังบัญชีในช่องบัญชีธนาคาร · ขอลงบัญชีแต่ไม่มีช่องทางเงิน · ยอดยกมา (ไม่ลงบัญชี) · ชำระโดยไม่มีบัญชีเงิน | ปฏิเสธเป็นไทยบอกช่อง · ไม่สร้างสินเชื่อ · ยอดยกมาสร้างได้ไม่มี JE · ชำระ = `LOAN-NO-MONEY-ACCOUNT` จนเลือก “จ่ายจากบัญชี” แล้วผ่าน | ✅ `Db/MoneyChannelPostingDbTests` · `LoanPostingPlanTests` |
+| F1-07 | เช็ค: เปิดหน้า `cheques.html` · เปิดเล่มด้วยบัญชีของบริษัทอื่น/ปิดใช้ · รีเฟรชหน้าแล้วออกเช็ค | รายการบัญชีธนาคารขึ้น (เดิมว่างเพราะ `api.get` ไม่มี) · โหลดไม่ได้ = แจ้งดัง · บัญชีผิด = ไทย · เล่มที่เปิดไว้ยังอยู่ในตัวเลือก (`GET cheques/books`) | ⬜ manual |
+| F1-08 | ใบเบิก: กด “จ่ายเงิน” ที่ `expense.html` เลือกบัญชีธนาคาร · เงินทดรอง: เลือกบัญชีที่จ่าย · เงินยืมทดรอง: กดจ่าย | ใบเบิกไม่ 400 อีก (ส่ง body) · ใบสำคัญจ่ายลงผังของธนาคาร · ธนาคารไม่ผูกผัง = ไทยก่อนสร้างใบ · เงินยืมทดรองบอกว่ายังไม่ลงบัญชีอัตโนมัติ + ทางไปต่อ | ⬜ manual |
+| F1-09 | defect class เดียวกับเช็ค (`api.get` บน `Layout.api()` ที่ไม่มีอยู่): ยื่นแบบที่ `tax.html` · `risk.html` ลูกค้า/ผู้ขาย · รายงานจุดสั่งซื้อ `inventory-reports.html` | ตรวจก่อนยื่น (precheck) รันจริง — ไม่ขึ้น "Pre-check ไม่สำเร็จ (api.get is not a function)" · ตารางความเสี่ยง/จุดสั่งซื้อโหลดได้ (เส้นทาง `product/reorder-forecast`) | ⬜ manual |

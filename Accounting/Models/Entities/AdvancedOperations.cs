@@ -416,7 +416,12 @@ public class Loan : TenantEntity
     // GL accounts
     public Guid? LoanAccountId { get; set; }               // บัญชีเงินกู้ (Liability)
     public Guid? InterestExpenseAccountId { get; set; }     // บัญชีดอกเบี้ยจ่าย
-    public Guid? BankAccountId { get; set; }
+
+    /// <summary><b>ผังบัญชี (ChartOfAccounts.Id)</b> ที่เงินกู้รับเข้า/ค่างวดจ่ายออก — เงินฝากธนาคาร (ผังที่ <c>BankAccount.LinkedAccountId</c>
+    /// ชี้) หรือเงินสด · <b>ไม่ใช่ BankAccounts.Id</b> · คอลัมน์ในฐานยังชื่อ <c>"BankAccountId"</c> (map ด้วย HasColumnName ไม่ต้อง migrate) —
+    /// ชื่อเดิมของ property ทำให้ผู้เรียก API ส่งรหัสบัญชีธนาคารมาแล้วชน FK ตอนลง JE (PAYMENT_CHANNEL_AUDIT ส่วนที่ 2 ข้อ 2/26 · ทีม F1 2026-10-14) ·
+    /// หน้าจอ/คำขอส่งบัญชีธนาคารมาใน <c>CreateLoanRequest.BankAccountId</c> แล้วเซิร์ฟเวอร์แปลงเป็นผังที่ผูกก่อนเก็บที่นี่</summary>
+    public Guid? MoneyAccountId { get; set; }
 
     public ICollection<LoanSchedule> Schedules { get; set; } = new List<LoanSchedule>();
     public ICollection<LoanPayment> Payments { get; set; } = new List<LoanPayment>();

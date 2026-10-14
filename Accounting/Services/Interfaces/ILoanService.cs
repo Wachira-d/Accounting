@@ -14,4 +14,5 @@ public interface ILoanService
     Task<LoanPaymentResponse> MakePaymentAsync(Guid companyId, Guid loanId, MakeLoanPaymentRequest request, string performedBy);
     Task<List<LoanPaymentResponse>> GetPaymentsAsync(Guid companyId, Guid loanId);
     Task<LoanSummaryResponse> GetSummaryAsync(Guid companyId);
+    Task<LoanAccountDefaultsResponse> GetAccountDefaultsAsync(Guid companyId, string? loanType, int termMonths);
 }

@@ -12,23 +12,29 @@
     <div class="page-header">
       <div>
         <h2 class="page-title">เงินสดย่อย</h2>
-        <p class="page-subtitle">imprest system — เปิดเงินสดย่อย → จ่าย → top-up กลับ imprest</p>
+        <p class="page-subtitle">imprest system — เปิดเงินสดย่อย → จ่าย → เติมเงินกลับวงเงิน</p>
       </div>
       <button class="btn btn-primary" onclick="Page.openCreate()">+ เปิดกองทุนใหม่</button>
     </div>
 
     <div id="funds"></div>
 
-    <div id="createModal" class="modal-overlay">
+    <!-- เปิด / แก้ไขกองทุน (ผูกผังบัญชีของกองทุน — ทางออกของกองทุนเก่าที่ไม่มีผัง) -->
+    <div id="fundModal" class="modal-overlay">
       <div class="modal" style="max-width:560px;width:90%">
-        <h3 style="margin-top:0">เปิดเงินสดย่อยใหม่</h3>
+        <h3 style="margin-top:0" id="fundModalTitle">เปิดเงินสดย่อยใหม่</h3>
         <label>ชื่อกองทุน</label>
         <input id="fName" class="form-input" placeholder="เช่น Office Bangkok">
-        <label>Imprest amount</label>
-        <input id="fImprest" type="number" class="form-input" placeholder="5000">
+        <label>วงเงินกองทุน (imprest)</label>
+        <input id="fImprest" type="number" step="0.01" min="0" class="form-input" placeholder="5000">
+        <label>ผังบัญชีของกองทุน</label>
+        <select id="fAccount" class="form-input"><option value="">— เลือกผังบัญชีของกองทุน —</option></select>
+        <div id="fAccountHint" style="font-size:11px;color:#64748b;margin-top:4px">
+          ผังที่เงินสดย่อยของกองทุนนี้อยู่ (ปกติคือผังเงินสดย่อยในหมวดเงินสด) — การเบิก/เติมเงินลงบัญชีที่ผังนี้
+        </div>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
-          <button class="btn btn-secondary" onclick="Page.closeCreate()">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.createFund()">บันทึก</button>
+          <button class="btn btn-secondary" onclick="Page.closeFund()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveFund()">บันทึก</button>
         </div>
       </div>
     </div>
@@ -46,16 +52,34 @@
           ไม่กรอก = รายจ่ายนี้จะถูกติดธง <b>บวกกลับตอนคำนวณภาษี</b> (§65 ตรี(9) —
           รายจ่ายที่พิสูจน์ผู้รับไม่ได้) · ยังบันทึกได้ตามปกติเพราะเงินออกจากลิ้นชักไปแล้วจริง
         </div>
-        <label>บัญชีค่าใช้จ่าย (ใส่เพื่อโพสต์ JE อัตโนมัติ)
+        <label>บัญชีค่าใช้จ่าย
           <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('PettyExpense','dExpense','dExpenseHint')">🤖</button>
         </label>
-        <select id="dExpense" class="form-input"><option value="">— ไม่โพสต์ JE —</option></select>
-        <div id="dExpenseHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
-        <label>โครงการ (optional)</label>
+        <select id="dExpense" class="form-input"><option value="">— เลือกบัญชีค่าใช้จ่าย —</option></select>
+        <div id="dExpenseHint" style="font-size:11px;color:#64748b;margin-top:4px">ทุกการเบิกลงบัญชีอัตโนมัติ: เดบิตบัญชีค่าใช้จ่ายนี้ / เครดิตผังของกองทุน</div>
+        <label>โครงการ (ไม่บังคับ)</label>
         <select id="dProject" class="form-input"><option value="">— ไม่ระบุ —</option></select>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
           <button class="btn btn-secondary" onclick="Page.closeDisburse()">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.submitDisburse()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- เติมเงิน — ส่ง "ชนิดของรหัส" แยกช่องเสมอ (bank → sourceBankAccountId · ผังเงินสด → sourceAccountId) -->
+    <div id="replenishModal" class="modal-overlay">
+      <div class="modal" style="max-width:560px;width:90%">
+        <h3 style="margin-top:0">เติมเงินสดย่อย</h3>
+        <label>จำนวนเติม</label>
+        <input id="rAmount" type="number" step="0.01" min="0" class="form-input">
+        <label>เติมจากบัญชี</label>
+        <select id="rSource" class="form-input"><option value="">— เลือกบัญชีที่โอนเงินออก —</option></select>
+        <div style="font-size:11px;color:#64748b;margin-top:4px">ลงบัญชีอัตโนมัติ: เดบิตผังของกองทุน / เครดิตบัญชีที่เลือก</div>
+        <label>หมายเหตุ</label>
+        <input id="rNotes" class="form-input">
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="Page.closeReplenish()">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitReplenish()">บันทึก</button>
         </div>
       </div>
     </div>
@@ -65,14 +89,19 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/money-channel.js"></script>
   <script>
     const Page = {
       _activeFundId: null,
+      _editFundId: null,
+      _funds: [],
+      _accounts: [],
+      _defaultFundAccount: null,
       async init() {
         if (!Layout.init('petty-cash')) return;
         Layout.setTitle('เงินสดย่อย');
         await this.loadProjects();
-        await this.loadExpenseAccounts();
+        await this.loadAccounts();
         await this.load();
       },
       async aiSuggestAccount(slot, selectId, hintId) {
@@ -107,17 +136,31 @@
           }
         } catch { /* best-effort */ }
       },
-      async loadExpenseAccounts() {
+      // ผังบัญชีทั้งชุดโหลดครั้งเดียว — ค่าใช้จ่าย (ช่องเบิก) + สินทรัพย์ระดับรายการ (ผังของกองทุน)
+      async loadAccounts() {
+        const api = Layout.api(); if (!api) return;
         try {
-          const api = Layout.api(); if (!api) return;
           const res = await api.getAccounts('?pageSize=1000');
-          const list = res.data?.items || res.data || [];
-          const expenses = list.filter(a => a.accountType === 'Expense' && a.isActive !== false);
-          const opts = expenses.map(a =>
-            `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
-          document.getElementById('dExpense').innerHTML =
-            '<option value="">— ไม่โพสต์ JE —</option>' + opts;
-        } catch (e) { /* ignore */ }
+          this._accounts = res.data?.items || res.data || [];
+        } catch (e) {
+          this._accounts = [];
+          Layout.toast('โหลดผังบัญชีไม่สำเร็จ — รีเฟรชหน้าแล้วลองใหม่ (' + e.message + ')', 'error');
+        }
+        const expenses = this._accounts.filter(a => a.accountType === 'Expense' && a.isActive !== false && (a.level || 0) >= 4);
+        document.getElementById('dExpense').innerHTML = '<option value="">— เลือกบัญชีค่าใช้จ่าย —</option>'
+          + expenses.map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/sme/petty-cash/fund-account-default`);
+          this._defaultFundAccount = r.data || null;
+        } catch (e) { this._defaultFundAccount = null; }
+      },
+      _fillFundAccountSelect(selectedId) {
+        const assets = this._accounts.filter(a => a.accountType === 'Asset' && (a.level || 0) >= 4
+          && (a.isActive !== false || a.id === selectedId));
+        document.getElementById('fAccount').innerHTML = '<option value="">— เลือกผังบัญชีของกองทุน —</option>'
+          + assets.map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+        document.getElementById('fAccount').value = selectedId || '';
       },
       async loadProjects() {
         try {
@@ -127,9 +170,9 @@
           const items = r.data?.items || r.data || [];
           const sel = document.getElementById('dProject');
           const opts = items.map(p =>
-            `<option value="${p.id}">${(p.code || p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+            `<option value="${Layout.esc(p.id)}">${Layout.esc((p.code || p.projectNumber || '') + ' ' + (p.name || ''))}</option>`).join('');
           sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
-        } catch (e) { /* ignore */ }
+        } catch (e) { /* โครงการไม่บังคับ — ไม่มีรายการก็บันทึกได้ */ }
       },
       _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
       async load() {
@@ -139,38 +182,81 @@
           const cid = Layout.getCompanyId();
           const r = await API.get(`/api/companies/${cid}/sme/petty-cash/funds`);
           const funds = r.data || [];
+          this._funds = funds;
           if (funds.length === 0) {
             el.innerHTML = '<div class="card" style="padding:40px;text-align:center;color:#94a3b8">ยังไม่มีเงินสดย่อย — กด "เปิดกองทุนใหม่"</div>';
             return;
           }
-          el.innerHTML = funds.map(f => `
+          el.innerHTML = funds.map(f => {
+            const acct = f.linkedAccountId
+              ? `ผังบัญชี: ${Layout.esc(f.linkedAccountCode || '')} ${Layout.esc(f.linkedAccountName || '')}`
+              : '<span style="color:#dc2626">⚠ ยังไม่ผูกผังบัญชี — เบิก/เติมเงินไม่ได้จนกว่าจะกด “แก้ไข / ผูกผังบัญชี”</span>';
+            return `
             <div class="card" style="margin-bottom:14px">
-              <div style="display:flex;justify-content:space-between;align-items:start">
+              <div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">
                 <div>
-                  <h3 style="margin:0 0 4px">${f.name}</h3>
-                  <div style="font-size:12px;color:#64748b">Imprest ${this._fmt(f.imprestAmount)} · คงเหลือ <b style="color:${f.currentBalance < f.imprestAmount * 0.2 ? '#dc2626' : '#1e293b'}">${this._fmt(f.currentBalance)}</b></div>
+                  <h3 style="margin:0 0 4px">${Layout.esc(f.name)}</h3>
+                  <div style="font-size:12px;color:#64748b">วงเงิน ${this._fmt(f.imprestAmount)} · คงเหลือ <b style="color:${f.currentBalance < f.imprestAmount * 0.2 ? '#dc2626' : '#1e293b'}">${this._fmt(f.currentBalance)}</b></div>
+                  <div style="font-size:12px;color:#64748b;margin-top:2px">${acct}</div>
                 </div>
-                <div style="display:flex;gap:6px">
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
                   <button class="btn btn-sm btn-warning" onclick="Page.disburse('${f.id}')">เบิก</button>
-                  <button class="btn btn-sm btn-success" onclick="Page.replenish('${f.id}', ${f.imprestAmount - f.currentBalance})">Top-up</button>
+                  <button class="btn btn-sm btn-success" onclick="Page.replenish('${f.id}')">เติมเงิน</button>
+                  <button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${f.id}')">แก้ไข / ผูกผังบัญชี</button>
                 </div>
               </div>
-            </div>`).join('');
+            </div>`;
+          }).join('');
         } catch (e) {
-          el.innerHTML = `<div class="card" style="padding:40px;text-align:center;color:#dc2626">${e.message}</div>`;
+          el.innerHTML = `<div class="card" style="padding:40px;text-align:center;color:#dc2626">${Layout.esc(e.message)}</div>`;
         }
       },
-      openCreate() { document.getElementById('createModal').classList.add('active'); },
-      closeCreate() { document.getElementById('createModal').classList.remove('active'); },
-      async createFund() {
+      openCreate() {
+        this._editFundId = null;
+        document.getElementById('fundModalTitle').textContent = 'เปิดเงินสดย่อยใหม่';
+        document.getElementById('fName').value = '';
+        document.getElementById('fImprest').value = '';
+        // ค่าตั้งต้นมาจากเซิร์ฟเวอร์ (ผังมาตรฐานเงินสดย่อย) — หน้าไม่มีรหัสผังของตัวเอง
+        this._fillFundAccountSelect(this._defaultFundAccount ? this._defaultFundAccount.accountId : '');
+        document.getElementById('fAccount').disabled = false;
+        document.getElementById('fAccountHint').textContent = 'ผังที่เงินสดย่อยของกองทุนนี้อยู่ — การเบิก/เติมเงินลงบัญชีที่ผังนี้';
+        document.getElementById('fundModal').classList.add('active');
+      },
+      openEdit(fundId) {
+        const f = this._funds.find(x => x.id === fundId);
+        if (!f) { Layout.toast('ไม่พบกองทุนนี้ — รีเฟรชหน้า', 'error'); return; }
+        this._editFundId = fundId;
+        document.getElementById('fundModalTitle').textContent = 'แก้ไขกองทุน ' + f.name;
+        document.getElementById('fName').value = f.name || '';
+        document.getElementById('fImprest').value = f.imprestAmount || '';
+        this._fillFundAccountSelect(f.linkedAccountId || (this._defaultFundAccount ? this._defaultFundAccount.accountId : ''));
+        // เปลี่ยนผังไม่ได้เมื่อมีรายการลงบัญชีแล้ว (ยอดเดิมอยู่ในผังเก่า) — ล็อกช่อง + บอกเหตุผล (ห้าม silent no-op)
+        const locked = !!(f.linkedAccountId && f.hasPostedTransactions);
+        document.getElementById('fAccount').disabled = locked;
+        document.getElementById('fAccountHint').textContent = locked
+          ? 'กองทุนนี้มีรายการที่ลงบัญชีไปแล้ว — เปลี่ยนผังไม่ได้ (ยอดเดิมอยู่ในผังนี้) · ถ้าผังผิด: โอนยอดที่หน้า “สมุดรายวันทั่วไป” แล้วเปิดกองทุนใหม่'
+          : 'ผังที่เงินสดย่อยของกองทุนนี้อยู่ — การเบิก/เติมเงินลงบัญชีที่ผังนี้';
+        document.getElementById('fundModal').classList.add('active');
+      },
+      closeFund() { document.getElementById('fundModal').classList.remove('active'); },
+      async saveFund() {
         const name = document.getElementById('fName').value.trim();
         const imprest = +document.getElementById('fImprest').value;
-        if (!name || !imprest) { Layout.toast('กรอกข้อมูลให้ครบ', 'error'); return; }
+        const accSel = document.getElementById('fAccount');
+        const linkedAccountId = accSel.value || null;
+        if (!name) { Layout.toast('กรอก “ชื่อกองทุน”', 'error'); return; }
+        if (!(imprest > 0)) { Layout.toast('“วงเงินกองทุน” ต้องมากกว่า 0', 'error'); return; }
         try {
           const cid = Layout.getCompanyId();
-          await API.post(`/api/companies/${cid}/sme/petty-cash/funds`,
-            { name, custodianUserId: null, imprestAmount: imprest, linkedAccountId: null });
-          this.closeCreate();
+          if (this._editFundId) {
+            await API.put(`/api/companies/${cid}/sme/petty-cash/funds/${this._editFundId}`,
+              { name, imprestAmount: imprest, linkedAccountId: accSel.disabled ? null : linkedAccountId });
+          } else {
+            await API.post(`/api/companies/${cid}/sme/petty-cash/funds`,
+              { name, custodianUserId: null, imprestAmount: imprest, linkedAccountId });
+          }
+          this.closeFund();
+          Layout.toast('บันทึกกองทุนแล้ว');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -190,7 +276,8 @@
         const receipt = document.getElementById('dReceipt').value.trim() || null;
         const projectId = document.getElementById('dProject').value || null;
         const expenseAccountId = document.getElementById('dExpense').value || null;
-        if (!amount || !desc) { Layout.toast('กรอกข้อมูลให้ครบ', 'error'); return; }
+        if (!amount || !desc) { Layout.toast('กรอก “จำนวนเงิน” และ “คำอธิบาย”', 'error'); return; }
+        if (!expenseAccountId) { Layout.toast('เลือก “บัญชีค่าใช้จ่าย”', 'error'); return; }
         try {
           const cid = Layout.getCompanyId();
           await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/disburse`,
@@ -200,34 +287,33 @@
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      // ★ รอบ 184 (D4-7) — การเติมเงินลง JE จริงแล้ว (Dr กองทุน / Cr บัญชีต้นทาง)
-      // ⇒ ต้องรู้ว่าเงินมาจากบัญชีไหน · เซิร์ฟเวอร์เดาให้เฉพาะตอนบริษัทมีบัญชีธนาคาร
-      // ที่ผูกผังบัญชีไว้ "ใบเดียว" (ไม่ใช่การเดา — เป็นคำตอบเดียวที่เป็นไปได้)
-      // มีหลายใบ = ต้องเลือก · หน้านี้จึงถามก่อนส่ง แทนที่จะให้ผู้ใช้ไปชน error
-      async replenish(fundId, suggested) {
-        const amount = +(prompt('จำนวนเติม', suggested.toFixed(2)) || 0);
-        if (!amount) return;
-        const cid = Layout.getCompanyId();
-        let sourceAccountId = null;
+      // ★ การเติมเงินลง JE จริง (Dr กองทุน / Cr บัญชีต้นทาง) ⇒ ต้องรู้ว่าเงินมาจากบัญชีไหน ·
+      // 2026-10-14 (ทีม F1): เดิมส่ง BankAccount.Id ในช่องผังบัญชี ⇒ FK ล้ม · ตอนนี้ตัวเลือกกลาง MoneyChannel แยกชนิดรหัสให้
+      async replenish(fundId) {
+        const f = this._funds.find(x => x.id === fundId);
+        this._activeFundId = fundId;
+        const suggested = f ? Math.max(0, (f.imprestAmount || 0) - (f.currentBalance || 0)) : 0;
+        document.getElementById('rAmount').value = suggested ? suggested.toFixed(2) : '';
+        document.getElementById('rNotes').value = '';
+        document.getElementById('replenishModal').classList.add('active');
+        const r = await MoneyChannel.fill(document.getElementById('rSource'), { placeholder: '— เลือกบัญชีที่โอนเงินออก —' });
+        // มีบัญชีธนาคารที่ผูกผังใบเดียว = คำตอบเดียวที่เป็นไปได้ (เซิร์ฟเวอร์ใช้กติกาเดียวกันเมื่อไม่ส่ง)
+        const linked = (r.banks || []).filter(b => b.linkedAccountId);
+        if (linked.length === 1) document.getElementById('rSource').value = 'bank:' + linked[0].id;
+      },
+      closeReplenish() { document.getElementById('replenishModal').classList.remove('active'); },
+      async submitReplenish() {
+        const amount = +document.getElementById('rAmount').value;
+        if (!(amount > 0)) { Layout.toast('“จำนวนเติม” ต้องมากกว่า 0', 'error'); return; }
+        const ch = MoneyChannel.read(document.getElementById('rSource'));
+        if (!ch.bankAccountId && !ch.accountId) { Layout.toast('เลือก “เติมจากบัญชี”', 'error'); return; }
         try {
-          const res = await Layout.api().getBankAccounts();
-          const accounts = (res && res.data) || [];
-          if (accounts.length > 1) {
-            const menu = accounts.map((a, i) => `${i + 1}. ${a.accountName || a.bankName || a.id}`).join('\n');
-            const pick = prompt(`เงินที่เติมมาจากบัญชีไหน\n${menu}\n\nใส่หมายเลข`, '1');
-            if (pick === null) return;
-            const idx = parseInt(pick, 10) - 1;
-            if (!(idx >= 0 && idx < accounts.length)) { Layout.toast('เลือกบัญชีไม่ถูกต้อง', 'error'); return; }
-            sourceAccountId = accounts[idx].id;
-          } else if (accounts.length === 1) {
-            sourceAccountId = accounts[0].id;
-          }
-          // ไม่มีบัญชีเลย → ปล่อย null ให้เซิร์ฟเวอร์เป็นคนบอกว่าต้องตั้งค่าอะไร
-          // (ห้ามแต่งค่าขึ้นมาเอง — ฝั่งเซิร์ฟเวอร์มีข้อความที่บอกทางไปต่ออยู่แล้ว)
-        } catch (e) { /* ดึงรายชื่อบัญชีไม่ได้ = ให้เซิร์ฟเวอร์ตัดสิน ไม่ใช่บล็อกที่นี่ */ }
-        try {
-          await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${fundId}/replenish`,
-            { amount, notes: null, txnDate: new Date().toISOString(), sourceAccountId });
+          const cid = Layout.getCompanyId();
+          await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/replenish`,
+            { amount, notes: document.getElementById('rNotes').value.trim() || null, txnDate: new Date().toISOString(),
+              sourceBankAccountId: ch.bankAccountId, sourceAccountId: ch.accountId });
+          this.closeReplenish();
+          Layout.toast('เติมเงินสดย่อยแล้ว');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

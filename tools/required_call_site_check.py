@@ -7425,6 +7425,41 @@ RULES += [
          why="ฝ่ายค้าน F4 (SoD): โอนให้คนที่อนุมัติขั้นอื่นของคำขอเดียวกันไปแล้วไม่ได้"),
 ]
 
+# ทีม F1 · 2026-10-14 (PAYMENT_CHANNEL_AUDIT ส่วนที่ 1 ข้อ 1/2/19 · ส่วนที่ 2 ข้อ 1/2/8/13): รหัสที่ผู้ใช้เลือกมาต้องผ่าน
+# Helpers/PickedAccountGuard ก่อนเขียนลงบรรทัด JE/ใบสำคัญจ่าย — บั๊กต้นเรื่อง: BankAccount.Id ถูกใช้เป็นผังบัญชีตรง ๆ
+PETTY = "Services/Implementations/PettyCash/PettyCashService.cs"
+LOAN = "Services/Implementations/LoanService.cs"
+RULES += [
+    dict(file=PETTY, method="DisburseAsync",
+         must=["PickedAccountGuard.RequirePostingAccountAsync(", "RequireFundAccountUsableAsync("],
+         before=[("PickedAccountGuard.RequirePostingAccountAsync(", "_db.JournalEntries.Add(")],
+         why="ผังค่าใช้จ่ายจาก request ต้องเป็นผังของบริษัทนี้ที่ลงรายการได้ก่อนเขียนลง JE (เดิมเขียนตรง — ข้ามบริษัท/ผังคุมได้)"),
+    dict(file=PETTY, method="ReplenishAsync",
+         must=["PickedAccountGuard.ResolveMoneyChannelAsync(", "RequireFundAccountUsableAsync("],
+         before=[("PickedAccountGuard.ResolveMoneyChannelAsync(", "_db.JournalEntries.Add(")],
+         why="บัญชีธนาคารต้นทางต้องแปลงผ่าน LinkedAccountId (เดิมใช้ BankAccount.Id เป็นผังบัญชี ⇒ FK ล้ม)"),
+    dict(file=LOAN, method="CreateAsync",
+         must=["PickedAccountGuard.ResolveMoneyChannelAsync(", "RequireOptionalAccountAsync(", "LoanPostingPlan.ForDisbursement("],
+         before=[("LoanPostingPlan.ForDisbursement(", "_db.Loans.Add(")],
+         why="ผังของสินเชื่อตรวจบริษัท/สถานะ/ชนิด · ช่องทางเงินแปลงจากบัญชีธนาคาร · มีผังครึ่งเดียว = ปฏิเสธ ไม่ข้าม JE เงียบ"),
+    dict(file=LOAN, method="MakePaymentAsync",
+         must=["PickedAccountGuard.ResolveMoneyChannelAsync(", "loan.MoneyAccountId", "LoanPostingPlan.NoMoneyAccountMessage"],
+         forbid_lit=['a.AccountCode == "11122"'],
+         why="ค่างวดจ่ายจากบัญชีที่เลือก/ของสินเชื่อ — เดิมไม่สนผังของสินเชื่อแล้วจ่ายจาก 11122/111x ตัวแรกเสมอ"),
+    dict(file="Services/Implementations/ExpenseClaimService.cs", method="MarkAsPaidAsync",
+         must=["PickedAccountGuard.ResolveMoneyChannelAsync(", "BankAccountId: payBank", "PaymentAccountId: payAccount"],
+         before=[("PickedAccountGuard.ResolveMoneyChannelAsync(", "CreateDocumentAsync(")],
+         why="จ่ายใบเบิก: บัญชีที่จ่ายตรวจก่อนสร้างใบสำคัญจ่าย และส่งต่อถึงใบ (เดิมไม่มีช่อง ⇒ ลงเงินสดเสมอ)"),
+    dict(file="Services/Implementations/SalaryAdvanceService.cs", method="DisburseAsync",
+         must=["PickedAccountGuard.ResolveMoneyChannelAsync(", "BankAccountId: payBank", "PaymentAccountId: payAccount"],
+         before=[("PickedAccountGuard.ResolveMoneyChannelAsync(", "CreateDocumentAsync(")],
+         why="จ่ายเงินทดรอง: บัญชีธนาคารที่ไม่ผูกผัง/ของบริษัทอื่นต้องถูกปฏิเสธก่อนสร้าง PV (ไม่ตกไปเงินสดเงียบ ๆ)"),
+    dict(file="Services/Implementations/Cheque/ChequeService.cs", method="OpenChequeBookAsync",
+         must=["PickedAccountGuard.RequireActiveBankAsync("],
+         before=[("PickedAccountGuard.RequireActiveBankAsync(", "_db.ChequeBooks.Add(")],
+         why="เล่มเช็คต้องผูกกับบัญชีธนาคารของบริษัทนี้ที่เปิดใช้งาน (เดิมไม่ตรวจ)"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

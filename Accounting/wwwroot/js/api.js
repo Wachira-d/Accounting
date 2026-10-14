@@ -1144,7 +1144,8 @@ const API = {
       submitExpenseClaim: (id) => API.post(`${base}/expense-claims/${id}/submit`),
       approveExpenseClaim: (id, d) => API.post(`${base}/expense-claims/${id}/approve`, d),
       rejectExpenseClaim: (id, d) => API.post(`${base}/expense-claims/${id}/reject`, d),
-      payExpenseClaim: (id) => API.post(`${base}/expense-claims/${id}/pay`),
+      // ส่ง body เสมอ (บัญชีที่จ่าย/เลขอ้างอิง) — เดิมไม่มี body ⇒ [FromBody] ตอบ 400 (ทีม F1 · 2026-10-14)
+      payExpenseClaim: (id, d = {}) => API.post(`${base}/expense-claims/${id}/pay`, d),
       voidExpenseClaim: (id) => API.post(`${base}/expense-claims/${id}/void`),
       // Projects
       getProjects: (q = '') => API.get(`${base}/projects${q}`),

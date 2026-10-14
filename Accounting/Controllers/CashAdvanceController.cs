@@ -131,11 +131,15 @@ public class CashAdvanceController : ControllerBase
         return Ok(new ApiResponse<object>(true, null, "ปฏิเสธแล้ว"));
     }
 
-    public sealed record DisburseRequest(DateTime DisburseDate, int ClearanceDays, Guid? BankAccountId);
+    /// <summary>จ่ายเงินยืมทดรอง — <b>ไม่มีช่องบัญชีที่จ่าย</b> เพราะเส้นนี้ยังไม่ลงบัญชีอัตโนมัติ (ทีม F1 · 2026-10-14 · PAYMENT_CHANNEL_AUDIT
+    /// ส่วนที่ 1 ข้อ 19 · ส่วนที่ 2 ข้อ 8): เดิมรับ <c>BankAccountId</c> แล้วทิ้งเงียบ ๆ (silent no-op — ผู้เรียกเข้าใจว่าบันทึกบัญชีที่จ่ายแล้ว) ·
+    /// ช่องเดิมที่ผู้เรียกเก่ายังส่งมาจะถูกละเว้นโดย JSON binder (ไม่ใช่ข้อผิดพลาด) · ข้อความตอบกลับบอกตรง ๆ ว่าต้องลงใบสำคัญจ่ายเอง</summary>
+    public sealed record DisburseRequest(DateTime DisburseDate, int ClearanceDays);
 
     /// <summary>Disburse — บันทึก Disbursement + ตั้ง ClearanceDueDate. JE
     /// posting ให้ admin ทำเองผ่าน manual journal entry หรือ PaymentVoucher
-    /// ตามสภาพการใช้งานจริง (เลือกบัญชี 115xx ลูกหนี้พนง.-เงินยืม).</summary>
+    /// ตามสภาพการใช้งานจริง (เลือกบัญชี 115xx ลูกหนี้พนง.-เงินยืม) — ระบบยังไม่ลงบัญชีให้ (ดู DOCUMENT_FLOW §6 "เงินยืมทดรอง")
+    /// และคำตอบบอกผู้ใช้ทุกครั้ง (ไม่ปล่อยให้เข้าใจว่าลงบัญชีแล้ว)</summary>
     [HttpPost("{caId:guid}/disburse")]
     public async Task<ActionResult<ApiResponse<object>>> Disburse(
         Guid companyId, Guid caId, [FromBody] DisburseRequest req)
@@ -155,7 +159,8 @@ public class CashAdvanceController : ControllerBase
         return Ok(new ApiResponse<object>(true, new
         {
             ca.Id, ca.Status, ca.DisbursedAmount, ca.ClearanceDueDate
-        }, $"จ่ายเงินสดแล้ว — ต้องเคลียร์ภายใน {ca.ClearanceDueDate:dd/MM/yyyy}"));
+        }, $"บันทึกการจ่ายเงินยืมทดรองแล้ว — ต้องเคลียร์ภายใน {ca.ClearanceDueDate:dd/MM/yyyy} · "
+           + "ระบบยังไม่ลงบัญชีให้อัตโนมัติ: บันทึกใบสำคัญจ่ายที่หน้า “เอกสาร” (เดบิตลูกหนี้เงินยืมทดรอง / เครดิตบัญชีที่จ่ายจริง)"));
     }
 
     public sealed record ClearRequest(decimal ClearedAmount, decimal RefundAmount, List<Guid>? DocumentIds);

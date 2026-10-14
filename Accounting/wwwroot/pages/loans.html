@@ -27,46 +27,85 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>เลขที่</th><th data-i18n="common.type">ประเภท</th><th>ผู้ให้กู้</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย%</th><th class="text-right">ยอดคงเหลือ</th><th>ครบกำหนด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>เลขที่</th><th>ชื่อ</th><th data-i18n="common.type">ประเภท</th><th>ผู้ให้กู้</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย%</th><th class="text-right">ยอดคงเหลือ</th><th>ครบกำหนด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="10" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
-    <!-- Create Modal -->
+    <!-- Create Modal — ชื่อช่องตรงกับ CreateLoanRequest (เดิมส่ง loanNumber/lenderName/startDate/maturityDate ⇒ 400 ทุกครั้ง) -->
     <div class="modal-overlay" id="formModal">
-      <div class="modal" style="max-width:700px">
+      <div class="modal" style="max-width:720px">
         <div class="modal-header"><h3 class="modal-title">เพิ่มสินเชื่อ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <div class="form-row">
-            <div class="form-group"><label class="form-label">เลขที่สินเชื่อ *</label><input type="text" class="form-input" id="fNum"></div>
+            <div class="form-group"><label class="form-label">ชื่อสินเชื่อ *</label><input type="text" class="form-input" id="fName" name="name" placeholder="เช่น เงินกู้ซื้อเครื่องจักร"></div>
             <div class="form-group"><label class="form-label" data-i18n="common.type">ประเภท</label>
-              <select class="form-select" id="fType"><option value="BankLoan">สินเชื่อธนาคาร</option><option value="Mortgage">จำนอง</option><option value="LineOfCredit">วงเงินเบิกเกินบัญชี</option></select>
+              <select class="form-select" id="fType" name="loanType" onchange="Page.refreshDefaults()"><option value="BankLoan">สินเชื่อธนาคาร</option><option value="Mortgage">จำนอง</option><option value="LineOfCredit">วงเงินเบิกเกินบัญชี</option></select>
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ผู้ให้กู้ *</label><input type="text" class="form-input" id="fLender"></div>
-            <div class="form-group"><label class="form-label">เงินต้น *</label><input type="number" class="form-input" id="fPrincipal" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ผู้ให้กู้</label><input type="text" class="form-input" id="fLender" name="lender"></div>
+            <div class="form-group"><label class="form-label">เงินต้น *</label><input type="number" class="form-input" id="fPrincipal" name="principalAmount" step="0.01"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">อัตราดอกเบี้ย (%) *</label><input type="number" class="form-input" id="fRate" step="0.01"></div>
-            <div class="form-group"><label class="form-label">ระยะเวลา (เดือน) *</label><input type="number" class="form-input" id="fTerm"></div>
+            <div class="form-group"><label class="form-label">อัตราดอกเบี้ย (% ต่อปี) *</label><input type="number" class="form-input" id="fRate" name="interestRate" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ระยะเวลา (เดือน) *</label><input type="number" class="form-input" id="fTerm" name="termMonths" onchange="Page.refreshDefaults()"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">วันเริ่ม *</label><input type="date" class="form-input" id="fStart"></div>
-            <div class="form-group"><label class="form-label">วันครบกำหนด *</label><input type="date" class="form-input" id="fMaturity"></div>
+            <div class="form-group"><label class="form-label">วันรับเงินกู้ *</label><input type="date" class="form-input" id="fStart" name="disbursementDate"></div>
+            <div class="form-group"><label class="form-label">วันชำระงวดแรก</label><input type="date" class="form-input" id="fFirst" name="firstPaymentDate">
+              <div class="text-xs text-gray-500" style="margin-top:2px">ผ่อนรายเดือน · วันครบกำหนดระบบคำนวณจากงวดแรก + ระยะเวลา</div></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ความถี่ชำระ</label>
-              <select class="form-select" id="fFreq"><option value="Monthly">รายเดือน</option><option value="Quarterly">รายไตรมาส</option></select>
-            </div>
             <div class="form-group"><label class="form-label">ประเภทดอกเบี้ย</label>
-              <select class="form-select" id="fIntType"><option value="Fixed">คงที่</option><option value="Floating">ลอยตัว</option></select>
+              <select class="form-select" id="fIntType" name="interestType"><option value="Fixed">คงที่</option><option value="Floating">ลอยตัว</option><option value="FlatRate">flat rate</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">บัญชีรับ/จ่ายเงินกู้</label>
+              <select class="form-select" id="fMoney" name="bankAccountId"><option value="">— เลือกบัญชี —</option></select>
             </div>
           </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ผังบัญชีเงินกู้</label>
+              <select class="form-select" id="fLoanAcct" name="loanAccountId" onchange="this.dataset.userTouched='1'"></select>
+            </div>
+            <div class="form-group"><label class="form-label">ผังบัญชีดอกเบี้ยจ่าย</label>
+              <select class="form-select" id="fIntAcct" name="interestExpenseAccountId" onchange="this.dataset.userTouched='1'"></select>
+            </div>
+          </div>
+          <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-top:6px">
+            <input type="checkbox" id="fPostDisb" checked style="margin-top:3px">
+            <span>ลงบัญชีรับเงินกู้ (เดบิตบัญชีรับเงิน / เครดิตผังเงินกู้) — เอาเครื่องหมายออกถ้ายอดเงินกู้นี้อยู่ในงบยกมาแล้ว</span>
+          </label>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit Modal — ชื่อ · ดอกเบี้ย · ผังบัญชี (ทางออกของข้อความ "ยังไม่ผูกผัง…" ตอนบันทึกชำระ) -->
+    <div class="modal-overlay" id="editModal">
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header"><h3 class="modal-title" id="editTitle">แก้ไขสินเชื่อ / ผังบัญชี</h3><button class="modal-close" onclick="Layout.closeModal('editModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="eId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อสินเชื่อ</label><input type="text" class="form-input" id="eName" name="name"></div>
+            <div class="form-group"><label class="form-label">อัตราดอกเบี้ย (% ต่อปี)</label><input type="number" class="form-input" id="eRate" name="interestRate" step="0.01"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ผังบัญชีเงินกู้</label><select class="form-select" id="eLoanAcct" name="loanAccountId"></select></div>
+            <div class="form-group"><label class="form-label">ผังบัญชีดอกเบี้ยจ่าย</label><select class="form-select" id="eIntAcct" name="interestExpenseAccountId"></select></div>
+          </div>
+          <div class="form-group"><label class="form-label">บัญชีรับ/จ่ายเงินกู้</label>
+            <select class="form-select" id="eMoney" name="bankAccountId"><option value="">— ไม่เปลี่ยน —</option></select>
+            <div class="text-xs text-gray-500" id="eMoneyHint" style="margin-top:2px"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('editModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveEdit()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -90,7 +129,7 @@
 
     <!-- Payment Modal -->
     <div class="modal-overlay" id="payModal">
-      <div class="modal" style="max-width:450px">
+      <div class="modal" style="max-width:480px">
         <div class="modal-header"><h3 class="modal-title">บันทึกการชำระ</h3><button class="modal-close" onclick="Layout.closeModal('payModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="payLoanId">
@@ -101,6 +140,10 @@
           <div class="form-row">
             <div class="form-group"><label class="form-label">เงินต้น</label><input type="number" class="form-input" id="payPrincipal" step="0.01"></div>
             <div class="form-group"><label class="form-label">ดอกเบี้ย</label><input type="number" class="form-input" id="payInterest" step="0.01"></div>
+          </div>
+          <div class="form-group"><label class="form-label">จ่ายจากบัญชี</label>
+            <select class="form-select" id="payFrom"><option value="">— ใช้บัญชีของสินเชื่อ —</option></select>
+            <div class="text-xs text-gray-500" id="payFromHint" style="margin-top:2px"></div>
           </div>
           <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><input type="text" class="form-input" id="payNotes"></div>
         </div>
@@ -116,14 +159,41 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/money-channel.js"></script>
   <script>
     const typeMap = { BankLoan:'สินเชื่อธนาคาร', Mortgage:'จำนอง', LineOfCredit:'วงเงิน OD', PersonalLoan:'สินเชื่อส่วนบุคคล' };
+    const intTypeMap = { Fixed:'คงที่', Floating:'ลอยตัว', FlatRate:'flat rate' };
     const Page = {
       currentLoanId: null,
+      _accounts: [],
+      _loans: {},
       async init() {
         if (!Layout.init('loans')) return;
         Layout.setTitle('สินเชื่อ');
+        await this.loadAccounts();
         await Promise.all([this.loadSummary(), this.load()]);
+      },
+      _base() { return `/api/companies/${Layout.getCompanyId()}/loans`; },
+      async loadAccounts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getAccounts('?pageSize=1000');
+          this._accounts = res.data?.items || res.data || [];
+        } catch (e) {
+          this._accounts = [];
+          Layout.toast('โหลดผังบัญชีไม่สำเร็จ — รีเฟรชหน้าแล้วลองใหม่ (' + e.message + ')', 'error');
+        }
+      },
+      _acctLabel(id) {
+        const a = this._accounts.find(x => x.id === id);
+        return a ? `${a.accountCode} ${a.accountName}` : (id ? '(ผังที่ไม่อยู่ในรายการ)' : '— ยังไม่ผูก —');
+      },
+      _fillAcctSelect(sel, type, selectedId, placeholder) {
+        const list = this._accounts.filter(a => a.accountType === type && (a.level || 0) >= 4
+          && (a.isActive !== false || a.id === selectedId));
+        sel.innerHTML = `<option value="">${Layout.esc(placeholder)}</option>`
+          + list.map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+        sel.value = selectedId || '';
       },
       async loadSummary() {
         const api = Layout.api(); if (!api) return;
@@ -134,26 +204,28 @@
           document.getElementById('summaryCards').innerHTML = `
             <div class="kpi-card"><div class="kpi-label">สินเชื่อทั้งหมด</div><div class="kpi-value">${s.totalLoans || 0}</div></div>
             <div class="kpi-card"><div class="kpi-label">ยอดคงเหลือรวม</div><div class="kpi-value text-danger">${Layout.money(s.totalOutstandingPrincipal)}</div></div>
-            <div class="kpi-card"><div class="kpi-label">ชำระเดือนนี้</div><div class="kpi-value text-warning">${Layout.money(s.totalMonthlyPayment)}</div></div>`;
-        } catch (e) { /* ignore */ }
+            <div class="kpi-card"><div class="kpi-label">ค่างวดต่อเดือน</div><div class="kpi-value text-warning">${Layout.money(s.totalMonthlyPayment)}</div></div>`;
+        } catch (e) { Layout.toast('โหลดสรุปสินเชื่อไม่สำเร็จ: ' + e.message, 'error'); }
       },
       async load() {
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
         let q = '?page=1&pageSize=30';
-        if (status) q += `&status=${status}`;
+        if (status) q += `&status=${encodeURIComponent(status)}`;
         try {
           const res = await api.getLoans(q);
           const items = res.data?.items || res.data || [];
+          items.forEach(l => { this._loans[l.id] = l; });
           const tbody = document.getElementById('tableBody');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่มีสินเชื่อ</td></tr>'; return; }
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่มีสินเชื่อ</td></tr>'; return; }
           tbody.innerHTML = items.map(l => `<tr>
-            <td class="font-medium">${l.loanNumber}</td>
-            <td>${typeMap[l.loanType] || l.loanType}</td>
-            <td>${l.lenderName}</td>
+            <td class="font-medium">${Layout.esc(l.loanNumber)}</td>
+            <td>${Layout.esc(l.name)}</td>
+            <td>${Layout.esc(typeMap[l.loanType] || l.loanType)}</td>
+            <td>${Layout.esc(l.lender || '-')}</td>
             <td class="text-right">${Layout.money(l.principalAmount)}</td>
             <td class="text-right">${l.interestRate}%</td>
-            <td class="text-right font-semibold">${Layout.money(l.outstandingBalance)}</td>
+            <td class="text-right font-semibold">${Layout.money(l.outstandingPrincipal)}</td>
             <td>${Layout.date(l.maturityDate)}</td>
             <td>${Layout.statusBadge(l.status)}</td>
             <td>
@@ -163,24 +235,65 @@
           </tr>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      openCreate() {
-        document.getElementById('fStart').value = Layout.toDateInput(new Date());
+      _addMonths(dateStr, n) {
+        const d = new Date(dateStr + 'T00:00:00');
+        if (isNaN(d)) return '';
+        d.setMonth(d.getMonth() + n);
+        return Layout.toDateInput(d);
+      },
+      async openCreate() {
+        ['fName', 'fLender', 'fPrincipal', 'fRate', 'fTerm'].forEach(id => { document.getElementById(id).value = ''; });
+        document.getElementById('fType').value = 'BankLoan';
+        document.getElementById('fIntType').value = 'Fixed';
+        const today = Layout.toDateInput(new Date());
+        document.getElementById('fStart').value = today;
+        document.getElementById('fFirst').value = this._addMonths(today, 1);
+        document.getElementById('fPostDisb').checked = true;
+        const la = document.getElementById('fLoanAcct'), ia = document.getElementById('fIntAcct');
+        delete la.dataset.userTouched; delete ia.dataset.userTouched;
+        this._fillAcctSelect(la, 'Liability', '', '— เลือกผังบัญชีเงินกู้ —');
+        this._fillAcctSelect(ia, 'Expense', '', '— เลือกผังบัญชีดอกเบี้ยจ่าย —');
         Layout.openModal('formModal');
+        await MoneyChannel.fill(document.getElementById('fMoney'), { placeholder: '— เลือกบัญชีที่รับเงินกู้เข้า —' });
+        await this.refreshDefaults();
+      },
+      // ค่าตั้งต้นของผังมาจากเซิร์ฟเวอร์ (ตามชนิด/ระยะ) — เติมเฉพาะช่องที่ผู้ใช้ยังไม่แตะ (ค่าผู้ใช้ชนะเสมอ)
+      async refreshDefaults() {
+        const loanType = document.getElementById('fType').value;
+        const term = parseInt(document.getElementById('fTerm').value, 10) || 0;
+        try {
+          const r = await API.get(`${this._base()}/account-defaults?loanType=${encodeURIComponent(loanType)}&termMonths=${term}`);
+          const d = r.data || {};
+          const la = document.getElementById('fLoanAcct'), ia = document.getElementById('fIntAcct');
+          if (!la.dataset.userTouched && d.loanAccountId) { la.value = d.loanAccountId; la.dataset.autoSrc = 'server-default'; }
+          if (!ia.dataset.userTouched && d.interestExpenseAccountId) { ia.value = d.interestExpenseAccountId; ia.dataset.autoSrc = 'server-default'; }
+        } catch (e) { /* ค่าตั้งต้นเป็นตัวช่วย — ไม่มีก็เลือกเองได้ (เซิร์ฟเวอร์ตรวจตอนบันทึก) */ }
       },
       async save() {
         const api = Layout.api(); if (!api) return;
+        const num = (id) => { const v = document.getElementById(id).value.trim(); return v === '' ? NaN : parseFloat(v); };
+        const name = document.getElementById('fName').value.trim();
+        const principal = num('fPrincipal'), rate = num('fRate'), term = parseInt(document.getElementById('fTerm').value, 10);
+        if (!name) { Layout.toast('กรอก “ชื่อสินเชื่อ”', 'error'); return; }
+        if (!(principal > 0) || !(rate >= 0) || !(term > 0)) { Layout.toast('กรอก “เงินต้น” “อัตราดอกเบี้ย” และ “ระยะเวลา” ให้ครบ', 'error'); return; }
+        const ch = MoneyChannel.read(document.getElementById('fMoney'));
         try {
           await api.createLoan({
-            loanNumber: document.getElementById('fNum').value,
+            name,
             loanType: document.getElementById('fType').value,
-            lenderName: document.getElementById('fLender').value,
-            principalAmount: parseFloat(document.getElementById('fPrincipal').value),
-            interestRate: parseFloat(document.getElementById('fRate').value),
+            lender: document.getElementById('fLender').value.trim() || null,
+            principalAmount: principal,
+            interestRate: rate,
             interestType: document.getElementById('fIntType').value,
-            termMonths: parseInt(document.getElementById('fTerm').value),
-            startDate: document.getElementById('fStart').value,
-            maturityDate: document.getElementById('fMaturity').value,
-            repaymentFrequency: document.getElementById('fFreq').value,
+            termMonths: term,
+            disbursementDate: document.getElementById('fStart').value || null,
+            firstPaymentDate: document.getElementById('fFirst').value || null,
+            repaymentFrequency: 'Monthly',
+            loanAccountId: document.getElementById('fLoanAcct').value || null,
+            interestExpenseAccountId: document.getElementById('fIntAcct').value || null,
+            bankAccountId: ch.bankAccountId,
+            moneyAccountId: ch.accountId,
+            postDisbursementEntry: document.getElementById('fPostDisb').checked,
           });
           Layout.closeModal('formModal'); Layout.toast('เพิ่มสินเชื่อสำเร็จ'); await this.load(); this.loadSummary();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -191,26 +304,77 @@
         try {
           const res = await api.getLoan(id);
           const l = res.data;
-          document.getElementById('detailTitle').textContent = `สินเชื่อ ${l.loanNumber}`;
+          this._loans[id] = l;
+          document.getElementById('detailTitle').textContent = `สินเชื่อ ${l.loanNumber} — ${l.name}`;
           document.getElementById('detailInfo').innerHTML = `
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-              <div><div class="text-xs text-gray-500">ผู้ให้กู้</div><div class="font-medium">${l.lenderName}</div></div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
+              <div><div class="text-xs text-gray-500">ผู้ให้กู้</div><div class="font-medium">${Layout.esc(l.lender || '-')}</div></div>
               <div><div class="text-xs text-gray-500">เงินต้น</div><div class="font-semibold">${Layout.money(l.principalAmount)}</div></div>
-              <div><div class="text-xs text-gray-500">ยอดคงเหลือ</div><div class="font-semibold text-danger">${Layout.money(l.outstandingBalance)}</div></div>
-              <div><div class="text-xs text-gray-500">อัตราดอกเบี้ย</div><div>${l.interestRate}% (${l.interestType === 'Fixed' ? 'คงที่' : 'ลอยตัว'})</div></div>
-              <div><div class="text-xs text-gray-500">วันเริ่ม - ครบกำหนด</div><div>${Layout.date(l.startDate)} - ${Layout.date(l.maturityDate)}</div></div>
+              <div><div class="text-xs text-gray-500">ยอดคงเหลือ</div><div class="font-semibold text-danger">${Layout.money(l.outstandingPrincipal)}</div></div>
+              <div><div class="text-xs text-gray-500">อัตราดอกเบี้ย</div><div>${l.interestRate}% (${Layout.esc(intTypeMap[l.interestType] || l.interestType)})</div></div>
+              <div><div class="text-xs text-gray-500">วันรับเงิน - ครบกำหนด</div><div>${Layout.date(l.disbursementDate)} - ${Layout.date(l.maturityDate)}</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(l.status)}</div></div>
+              <div><div class="text-xs text-gray-500">ผังบัญชีเงินกู้</div><div>${Layout.esc(this._acctLabel(l.loanAccountId))}</div></div>
+              <div><div class="text-xs text-gray-500">ผังบัญชีดอกเบี้ยจ่าย</div><div>${Layout.esc(this._acctLabel(l.interestExpenseAccountId))}</div></div>
+              <div><div class="text-xs text-gray-500">บัญชีรับ/จ่ายเงินกู้</div><div>${Layout.esc(this._acctLabel(l.moneyAccountId))}</div></div>
             </div>`;
 
-          // Load schedule
           await this.loadSchedule(id);
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
+          footer += ` <button class="btn btn-secondary" onclick="Page.openEdit('${id}')">แก้ไขสินเชื่อ / ผังบัญชี</button>`;
           if (l.status === 'Active') {
             footer += ` <button class="btn btn-info" onclick="Page.generateSchedule('${id}')">สร้างตารางผ่อน</button>`;
             footer += ` <button class="btn btn-primary" onclick="Page.openPayment('${id}')">บันทึกชำระ</button>`;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async openEdit(id) {
+        const l = this._loans[id];
+        if (!l) { Layout.toast('ไม่พบสินเชื่อนี้ — รีเฟรชหน้า', 'error'); return; }
+        document.getElementById('eId').value = id;
+        document.getElementById('editTitle').textContent = `แก้ไขสินเชื่อ ${l.loanNumber} / ผังบัญชี`;
+        document.getElementById('eName').value = l.name || '';
+        document.getElementById('eRate').value = l.interestRate ?? '';
+        this._fillAcctSelect(document.getElementById('eLoanAcct'), 'Liability', l.loanAccountId || '', '— เลือกผังบัญชีเงินกู้ —');
+        this._fillAcctSelect(document.getElementById('eIntAcct'), 'Expense', l.interestExpenseAccountId || '', '— เลือกผังบัญชีดอกเบี้ยจ่าย —');
+        Layout.openModal('editModal');
+        const sel = document.getElementById('eMoney');
+        await MoneyChannel.fill(sel, { placeholder: '— ไม่เปลี่ยน —' });
+        const hint = document.getElementById('eMoneyHint');
+        if (l.moneyAccountId && !MoneyChannel.selectByGl(sel, l.moneyAccountId)) {
+          hint.textContent = 'บัญชีที่ตั้งไว้ (' + this._acctLabel(l.moneyAccountId) + ') ไม่อยู่ในรายการที่เลือกได้แล้ว — เลือกบัญชีใหม่';
+        } else {
+          hint.textContent = l.moneyAccountId ? '' : 'ยังไม่ได้กำหนด — การบันทึกชำระต้องเลือกบัญชีที่จ่ายทุกครั้งจนกว่าจะกำหนดที่นี่';
+        }
+      },
+      async saveEdit() {
+        const id = document.getElementById('eId').value;
+        const l = this._loans[id] || {};
+        const rateRaw = document.getElementById('eRate').value.trim();
+        const rate = rateRaw === '' ? null : parseFloat(rateRaw);
+        const ch = MoneyChannel.read(document.getElementById('eMoney'));
+        const loanAcct = document.getElementById('eLoanAcct').value || null;
+        const intAcct = document.getElementById('eIntAcct').value || null;
+        // ส่งเฉพาะช่องที่เปลี่ยน (null = ไม่เปลี่ยน ตามสัญญา UpdateLoanRequest)
+        const sameGl = ch.accountId ? ch.accountId === l.moneyAccountId
+          : (ch.bankAccountId && document.getElementById('eMoney').selectedOptions[0]?.dataset.gl === l.moneyAccountId);
+        const body = {
+          name: document.getElementById('eName').value.trim() || null,
+          interestRate: rate != null && rate !== l.interestRate ? rate : null,
+          loanAccountId: loanAcct && loanAcct !== l.loanAccountId ? loanAcct : null,
+          interestExpenseAccountId: intAcct && intAcct !== l.interestExpenseAccountId ? intAcct : null,
+          bankAccountId: sameGl ? null : ch.bankAccountId,
+          moneyAccountId: sameGl ? null : ch.accountId,
+        };
+        try {
+          const r = await API.put(`${this._base()}/${id}`, body);
+          if (r.data) this._loans[id] = r.data;
+          Layout.closeModal('editModal');
+          Layout.toast(r.message || 'บันทึกสินเชื่อแล้ว', r.data && r.data.notice ? 'warning' : 'success');
+          await this.load();
+          if (this.currentLoanId === id) await this.viewDetail(id);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       detailTab(tab, el) {
@@ -227,16 +391,16 @@
           const items = res.data?.items || res.data || [];
           document.getElementById('scheduleTab').innerHTML = items.length ?
             `<div class="table-container"><table class="table"><thead><tr><th>งวดที่</th><th>วันครบกำหนด</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th class="text-right" data-i18n="common.total">รวม</th><th class="text-right">คงเหลือ</th><th data-i18n="common.status">สถานะ</th></tr></thead><tbody>${items.map(s => `<tr>
-              <td>${s.installmentNumber || s.periodNumber}</td>
+              <td>${s.installmentNumber}</td>
               <td>${Layout.date(s.dueDate)}</td>
-              <td class="text-right">${Layout.money(s.principalAmount)}</td>
-              <td class="text-right">${Layout.money(s.interestAmount)}</td>
-              <td class="text-right font-semibold">${Layout.money(s.totalAmount || (s.principalAmount + s.interestAmount))}</td>
+              <td class="text-right">${Layout.money(s.principalPortion)}</td>
+              <td class="text-right">${Layout.money(s.interestPortion)}</td>
+              <td class="text-right font-semibold">${Layout.money(s.paymentAmount)}</td>
               <td class="text-right">${Layout.money(s.remainingBalance)}</td>
               <td>${s.isPaid ? '<span class="badge badge-success">ชำระแล้ว</span>' : '<span class="badge badge-warning">รอชำระ</span>'}</td>
             </tr>`).join('')}</tbody></table></div>`
             : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีตารางผ่อนชำระ — กด "สร้างตารางผ่อน" เพื่อสร้าง</div>';
-        } catch (e) { document.getElementById('scheduleTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีตารางผ่อนชำระ</div>'; }
+        } catch (e) { document.getElementById('scheduleTab').innerHTML = `<div class="text-center" style="padding:24px;color:#dc2626">โหลดตารางผ่อนไม่สำเร็จ: ${Layout.esc(e.message)}</div>`; }
       },
       async loadPayments(id) {
         const api = Layout.api(); if (!api) return;
@@ -246,20 +410,20 @@
           document.getElementById('paymentsTab').innerHTML = items.length ?
             `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.date">วันที่</th><th class="text-right">จำนวน</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย</th><th data-i18n="common.note">หมายเหตุ</th></tr></thead><tbody>${items.map(p => `<tr>
               <td>${Layout.date(p.paymentDate)}</td>
-              <td class="text-right font-semibold">${Layout.money(p.amount)}</td>
-              <td class="text-right">${Layout.money(p.principalPortion)}</td>
-              <td class="text-right">${Layout.money(p.interestPortion)}</td>
-              <td class="text-gray-500">${p.notes || '-'}</td>
+              <td class="text-right font-semibold">${Layout.money(p.totalPaid)}</td>
+              <td class="text-right">${Layout.money(p.principalPaid)}</td>
+              <td class="text-right">${Layout.money(p.interestPaid)}</td>
+              <td class="text-gray-500">${Layout.esc(p.reference || '-')}</td>
             </tr>`).join('')}</tbody></table></div>`
             : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีประวัติการชำระ</div>';
-        } catch (e) { document.getElementById('paymentsTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
+        } catch (e) { document.getElementById('paymentsTab').innerHTML = `<div class="text-center" style="padding:24px;color:#dc2626">โหลดประวัติชำระไม่สำเร็จ: ${Layout.esc(e.message)}</div>`; }
       },
       async generateSchedule(id) {
         const api = Layout.api(); if (!api) return;
         try { await api.generateSchedule(id); Layout.toast('สร้างตารางผ่อนสำเร็จ'); this.loadSchedule(id); }
         catch (e) { Layout.toast(e.message, 'error'); }
       },
-      openPayment(id) {
+      async openPayment(id) {
         document.getElementById('payLoanId').value = id;
         document.getElementById('payDate').value = Layout.toDateInput(new Date());
         document.getElementById('payAmount').value = '';
@@ -267,6 +431,16 @@
         document.getElementById('payInterest').value = '';
         document.getElementById('payNotes').value = '';
         Layout.openModal('payModal');
+        const l = this._loans[id] || {};
+        const sel = document.getElementById('payFrom');
+        await MoneyChannel.fill(sel, { placeholder: l.moneyAccountId ? '— ใช้บัญชีของสินเชื่อ —' : '— เลือกบัญชีที่จ่าย —' });
+        const hint = document.getElementById('payFromHint');
+        if (l.moneyAccountId) {
+          MoneyChannel.selectByGl(sel, l.moneyAccountId);
+          hint.textContent = 'บัญชีของสินเชื่อ: ' + this._acctLabel(l.moneyAccountId);
+        } else {
+          hint.textContent = 'สินเชื่อนี้ยังไม่กำหนดบัญชีรับ/จ่ายเงินกู้ — เลือกบัญชีที่จ่ายค่างวดนี้';
+        }
       },
       async savePayment() {
         const api = Layout.api(); if (!api) return;
@@ -283,12 +457,15 @@
           };
           const _amt = _num('payAmount');
           if (_amt == null || _amt <= 0) { Layout.toast('กรุณากรอกยอดที่จ่าย', 'error'); return; }
+          const ch = MoneyChannel.read(document.getElementById('payFrom'));
           await api.makeLoanPayment(id, {
             paymentDate: document.getElementById('payDate').value,
             amount: _amt,
             principalPortion: _num('payPrincipal'),
             interestPortion: _num('payInterest'),
             notes: document.getElementById('payNotes').value || null,
+            bankAccountId: ch.bankAccountId,
+            moneyAccountId: ch.accountId,
           });
           Layout.closeModal('payModal'); Layout.toast('บันทึกการชำระสำเร็จ');
           this.load(); this.loadSummary();

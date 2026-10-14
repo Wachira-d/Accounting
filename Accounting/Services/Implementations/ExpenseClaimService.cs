@@ -494,6 +494,13 @@ public class ExpenseClaimService : IExpenseClaimService
         if (claim.Status != ExpenseClaimStatus.Approved)
             throw new InvalidOperationException("สามารถจ่ายเงินได้เฉพาะใบเบิกที่ Approved");
 
+        // จ่ายจากบัญชีไหน (ทีม F1 · 2026-10-14) — ตรวจก่อนสร้างใบสำคัญจ่าย: บริษัท · เปิดใช้ · ผูกผัง (ไม่ให้ใบลงเงินสดเงียบ ๆ)
+        await Accounting.Helpers.PickedAccountGuard.ResolveMoneyChannelAsync(_db, companyId,
+            request.BankAccountId, request.PaymentAccountId, "จ่ายจากบัญชี");
+        Guid? payBank = Accounting.Helpers.PickedAccountGuard.IsSet(request.BankAccountId) ? request.BankAccountId : null;
+        Guid? payAccount = Accounting.Helpers.PickedAccountGuard.IsSet(request.PaymentAccountId) ? request.PaymentAccountId : null;
+        var paidMethod = request.PaymentMethod ?? (payBank.HasValue ? PaymentMethod.BankTransfer : PaymentMethod.Cash);
+
         // Preferred path: generate a standard PaymentVoucher Document via
         // the central DocumentService, which auto-posts Dr Expense +
         // Dr VAT input / Cr Cash + Cr WHT payable through the same flow
@@ -523,7 +530,9 @@ public class ExpenseClaimService : IExpenseClaimService
                 claim.ClaimNumber,
                 $"เบิกค่าใช้จ่ายพนักงาน — {claim.Title}",
                 docLines,
-                ProjectId: claim.ProjectId);
+                ProjectId: claim.ProjectId,
+                BankAccountId: payBank,
+                PaymentAccountId: payAccount);
 
             // ผู้สร้าง = ระบบ (ใบเกิดจากใบเบิก) · ผู้อนุมัติ = <b>ผู้กดจ่าย</b> — เดิมอนุมัติในนาม "system:expense-claim" ⇒ ใบสำคัญจ่าย
             // + JE เงินสดออกข้าม DocumentPermissionHelper.CanApproveAsync (ฝ่ายค้านรอบสอง R2-C2) · สิทธิ์อนุมัติ PV ตรวจแล้วที่
@@ -573,7 +582,7 @@ public class ExpenseClaimService : IExpenseClaimService
             claim.PaymentVoucherDocumentId = doc.Id;
             claim.Status = ExpenseClaimStatus.Paid;
             claim.PaidAt = DateTime.UtcNow;
-            claim.PaidMethod = request.PaymentMethod;
+            claim.PaidMethod = paidMethod;
             claim.PaidReference = request.Reference;
             await _db.SaveChangesAsync();
 
@@ -593,7 +602,7 @@ public class ExpenseClaimService : IExpenseClaimService
         {
             claim.Status = ExpenseClaimStatus.Paid;
             claim.PaidAt = DateTime.UtcNow;
-            claim.PaidMethod = request.PaymentMethod;
+            claim.PaidMethod = paidMethod;
             claim.PaidReference = request.Reference;
             if (_accountingService != null)
                 await CreateExpenseClaimJournalAsync(companyId, claim);

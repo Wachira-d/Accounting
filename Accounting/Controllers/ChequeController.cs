@@ -32,6 +32,12 @@ public class ChequeController : ControllerBase
         catch (ArgumentException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
+    /// <summary>เล่มเช็คที่ยังมีใบเหลือ (หรือทั้งหมดเมื่อ includeExhausted=true) — ตัวเลือก “เล่มเช็ค” ของหน้าออกเช็ค</summary>
+    [HttpGet("books")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<ChequeBookResponse>>>> ListBooks(
+        Guid companyId, [FromQuery] bool includeExhausted = false, CancellationToken ct = default)
+        => Ok(new ApiResponse<IReadOnlyList<ChequeBookResponse>>(true, await _svc.ListBooksAsync(companyId, includeExhausted, ct)));
+
     public sealed record IssueOutboundRequest(Guid ChequeBookId, Guid? ContactId,
         DateTime ChequeDate, decimal Amount, Guid? PaymentId, string? Notes,
         Guid? ProjectId = null);
@@ -54,10 +60,8 @@ public class ChequeController : ControllerBase
     public sealed record RecordInboundRequest(Guid? ContactId, long ChequeNumber,
         string IssuingBank, DateTime ChequeDate, decimal Amount, Guid? PaymentId, string? Notes,
         Guid? ProjectId = null,
-        /// <summary>Our bank account that the customer cheque is deposited into.
-        /// Drives the bank-balance credit when MarkCleared fires. Strongly
-        /// recommended; when omitted, the cleared event logs a warning and
-        /// skips the balance side (operator must reconcile manually).</summary>
+        /// <summary>บัญชีธนาคารของเรา (BankAccounts.Id) ที่นำเช็คลูกค้าเข้า — ต้องเป็นของบริษัทนี้และเปิดใช้งาน ·
+        /// ใช้ขยับยอดธนาคารตอน “ขึ้นเงินแล้ว” · ไม่ระบุ = กด “ขึ้นเงินแล้ว” ไม่ได้จนกว่าจะระบุ (ไม่ข้ามเงียบ)</summary>
         Guid? DepositBankAccountId = null);
 
     [HttpPost("inbound")]

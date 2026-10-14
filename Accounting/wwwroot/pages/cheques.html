@@ -113,6 +113,7 @@
           Layout.toast('โหลดชื่อผู้รับสำหรับตารางเช็คไม่สำเร็จ: ' + (e.message || '') + ' — ตารางจะแสดงรหัสแทนชื่อ', 'warning', 7000);
         }
       },
+      _statusLabel(st) { return ({ Issued: 'ออกแล้ว', DepositedPending: 'รอเรียกเก็บ', Cleared: 'ขึ้นเงินแล้ว', Bounced: 'เช็คคืน', Voided: 'ยกเลิกแล้ว' })[st] || st; },
       _contactName(id) { const c = this._contacts.find(x => x.id === id); return c ? c.name : (id ? id.toString().slice(0,8)+'…' : '-'); },
 
       async loadProjects() {
@@ -137,28 +138,50 @@
 
       _fmt(n) { return (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
 
+      // 2026-10-14 (ทีม F1 · PAYMENT_CHANNEL_AUDIT ส่วนที่ 1 ข้อ 2): เดิมเรียก `api.get(...)` ซึ่งไม่มีบน Layout.api() แล้วกลืน error ⇒
+      // รายการบัญชีว่างตลอด → ส่ง bankAccountId "" → 400 เปิดเล่มเช็คไม่ได้เลย · ตอนนี้ใช้ getBankAccounts() + แจ้งดังเมื่อโหลดไม่ได้
       async loadBanks() {
+        const sel = document.getElementById('bookBank');
         try {
           const api = Layout.api(); if (!api) return;
-          const r = await api.get('/bank/accounts');
-          const banks = r.data || [];
+          const r = await api.getBankAccounts();
+          const banks = (r.data || []).filter(b => b.isActive !== false);
           // เช็คออกได้เฉพาะบัญชีกระแสรายวัน — เรียงขึ้นก่อนและติดป้ายประเภทให้เห็นชัด
           const typeLabel = t => t === 'Current' ? 'กระแสรายวัน' : t === 'Savings' ? 'ออมทรัพย์' : t === 'Fixed' ? 'ฝากประจำ' : (t || '');
           banks.sort((a, b) => (a.accountType === 'Current' ? 0 : 1) - (b.accountType === 'Current' ? 0 : 1));
-          const opt = banks.map(b => `<option value="${b.id}">${b.accountName} (${b.bankName}${b.accountType ? ' · ' + typeLabel(b.accountType) : ''})</option>`).join('');
-          document.getElementById('bookBank').innerHTML = opt || '<option>--</option>';
-        } catch (e) { /* ignore */ }
+          const opt = banks.map(b => `<option value="${Layout.esc(b.id)}">${Layout.esc(b.accountName)} (${Layout.esc(b.bankName)}${b.accountType ? ' · ' + Layout.esc(typeLabel(b.accountType)) : ''})</option>`).join('');
+          sel.innerHTML = opt
+            ? '<option value="">— เลือกบัญชีธนาคาร —</option>' + opt
+            : '<option value="">ยังไม่มีบัญชีธนาคาร — เพิ่มที่หน้า “บัญชีธนาคาร” ก่อน</option>';
+        } catch (e) {
+          sel.innerHTML = '<option value="">โหลดบัญชีธนาคารไม่สำเร็จ — รีเฟรชหน้า</option>';
+          Layout.toast('โหลดรายการบัญชีธนาคารไม่สำเร็จ: ' + e.message, 'error');
+        }
       },
 
+      // เล่มเช็คที่ยังมีใบเหลือ — เดิมไม่มี endpoint ⇒ รีเฟรชหน้าแล้วเล่มที่เปิดไว้หายจากตัวเลือก “เล่มเช็ค”
       async loadBooks() {
-        // For now just leave the select empty — backend has no list-books endpoint yet.
-        // User picks book at outstanding/issue time via the dropdown that's populated after openBook.
+        const sel = document.getElementById('issueBook');
+        try {
+          const cid = Layout.getCompanyId(); if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/cheques/books`);
+          const books = r.data || [];
+          sel.innerHTML = books.length
+            ? '<option value="">— เลือกเล่มเช็ค —</option>' + books.map(b =>
+                `<option value="${Layout.esc(b.id)}">${Layout.esc(b.bookNumber)} (${b.nextNumber}-${b.endChequeNumber}) · ${Layout.esc(b.bankLabel)}</option>`).join('')
+            : '<option value="">ยังไม่มีเล่มเช็คที่ใช้ได้ — เปิดเล่มที่แท็บ “เล่มเช็ค”</option>';
+        } catch (e) {
+          sel.innerHTML = '<option value="">โหลดเล่มเช็คไม่สำเร็จ — รีเฟรชหน้า</option>';
+          Layout.toast('โหลดเล่มเช็คไม่สำเร็จ: ' + e.message, 'error');
+        }
       },
 
       async openBook() {
         const api = Layout.api(); if (!api) return;
+        const bankAccountId = document.getElementById('bookBank').value;
+        if (!bankAccountId) { Layout.toast('เลือก “บัญชีธนาคาร” ของเล่มเช็ค', 'error'); return; }
         const body = {
-          bankAccountId: document.getElementById('bookBank').value,
+          bankAccountId,
           bookNumber: document.getElementById('bookNumber').value,
           startNumber: +document.getElementById('bookStart').value,
           endNumber: +document.getElementById('bookEnd').value,
@@ -167,18 +190,17 @@
           const cid = Layout.getCompanyId();
           const r = await API.post(`/api/companies/${cid}/cheques/books`, body);
           Layout.toast(r.message || 'เปิดเล่มเช็คแล้ว');
-          // Add option to issue tab
-          const sel = document.getElementById('issueBook');
-          const o = document.createElement('option');
-          o.value = r.data.id; o.textContent = body.bookNumber + ` (${body.startNumber}-${body.endNumber})`;
-          sel.appendChild(o); sel.value = o.value;
+          await this.loadBooks();
+          document.getElementById('issueBook').value = r.data.id;
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async issueOutbound() {
         const cid = Layout.getCompanyId();
+        const chequeBookId = document.getElementById('issueBook').value;
+        if (!chequeBookId) { Layout.toast('เลือก “เล่มเช็ค” (หรือเปิดเล่มที่แท็บ “เล่มเช็ค”)', 'error'); return; }
         const body = {
-          chequeBookId: document.getElementById('issueBook').value,
+          chequeBookId,
           contactId: document.getElementById('issueContactId').value || null,
           chequeDate: document.getElementById('issueDate').value,
           amount: +document.getElementById('issueAmount').value,
@@ -189,6 +211,7 @@
         try {
           const r = await API.post(`/api/companies/${cid}/cheques/outbound`, body);
           Layout.toast(r.message);
+          await this.loadBooks();
           await this.loadOutstanding();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -210,14 +233,14 @@
             <td style="text-align:right">${this._fmt(c.amount)}</td>
             <td>${Layout.esc(this._contactName(c.contactId))}</td>
             <td>${c.isInbound ? '⬇️ รับ' : '⬆️ จ่าย'}</td>
-            <td><span class="badge b-${c.status}">${c.status}</span></td>
+            <td><span class="badge b-${Layout.esc(c.status)}">${Layout.esc(this._statusLabel(c.status))}</span></td>
             <td>
               <button class="btn btn-sm btn-success" onclick="Page.clearCheque('${c.id}')">ผ่านแล้ว</button>
               <button class="btn btn-sm btn-danger" onclick="Page.bounceCheque('${c.id}')">คืน</button>
             </td>
           </tr>`).join('');
         } catch (e) {
-          tbody.innerHTML = `<tr><td colspan="7" style="color:#dc2626;text-align:center;padding:30px">${e.message}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="7" style="color:#dc2626;text-align:center;padding:30px">${Layout.esc(e.message)}</td></tr>`;
         }
       },
 

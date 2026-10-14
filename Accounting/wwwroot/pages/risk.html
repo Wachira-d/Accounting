@@ -191,7 +191,8 @@
         tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px">กำลังวิเคราะห์...</td></tr>';
         try {
           const m = +document.getElementById('custMonths').value;
-          const r = await api.get(`/risk/customer-payment?lookbackMonths=${m}`);
+          // เดิม api.get(...) ซึ่งไม่มีบน Layout.api() ⇒ หน้านี้ขึ้น error ทุกครั้ง (ทีม F1 · 2026-10-14)
+          const r = await API.get(`/api/companies/${Layout.getCompanyId()}/risk/customer-payment?lookbackMonths=${m}`);
           const rows = r.data || [];
           if (rows.length === 0) {
             tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#94a3b8">ไม่พบข้อมูล invoice ในช่วงนี้</td></tr>';
@@ -219,7 +220,7 @@
         tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px">กำลังวิเคราะห์...</td></tr>';
         try {
           const m = +document.getElementById('venMonths').value;
-          const r = await api.get(`/risk/vendor?lookbackMonths=${m}`);
+          const r = await API.get(`/api/companies/${Layout.getCompanyId()}/risk/vendor?lookbackMonths=${m}`);
           const rows = r.data || [];
           if (rows.length === 0) {
             tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#94a3b8">ไม่พบข้อมูลบิลในช่วงนี้</td></tr>';

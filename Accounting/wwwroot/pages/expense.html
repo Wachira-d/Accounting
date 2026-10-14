@@ -146,12 +146,34 @@
         <div class="modal-footer" id="detailFooter"></div>
       </div>
     </div>
+
+    <!-- จ่ายใบเบิก — เลือกบัญชีที่จ่าย (เดิมไม่มี: ใบสำคัญจ่ายลงเงินสดเสมอ และคำขอไม่มี body ⇒ 400) -->
+    <div class="modal-overlay" id="payClaimModal">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-header"><h3 class="modal-title">จ่ายเงินใบเบิก</h3><button class="modal-close" onclick="Layout.closeModal('payClaimModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="pcId">
+          <p style="background:#fffbeb;border-left:3px solid #f59e0b;padding:8px 12px;font-size:12px;color:#78350f;border-radius:4px">
+            ระบบจะสร้างใบสำคัญจ่าย (PV) อัตโนมัติ พร้อมลงบัญชี <strong>เดบิต ค่าใช้จ่ายตามใบเบิก</strong> / <strong>เครดิต บัญชีที่จ่าย</strong>
+          </p>
+          <div class="form-group"><label class="form-label">จ่ายจากบัญชี</label>
+            <select class="form-select" id="pcFrom"><option value="">— เงินสด (ค่าตั้งต้น) —</option></select>
+          </div>
+          <div class="form-group"><label class="form-label">เลขอ้างอิงการโอน (ถ้ามี)</label><input type="text" class="form-input" id="pcRef"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('payClaimModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-success" onclick="Page.confirmPayClaim()">จ่ายเงิน + สร้างใบสำคัญจ่าย</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/money-channel.js"></script>
   <script>
     const Page = {
       page: 1,
@@ -524,10 +546,22 @@
         catch (e) { Layout.toast(e.message, 'error'); }
       },
       async payClaim(id) {
-        if (!confirm('ยืนยันจ่ายเงิน?')) return;
+        document.getElementById('pcId').value = id;
+        document.getElementById('pcRef').value = '';
+        Layout.openModal('payClaimModal');
+        await MoneyChannel.fill(document.getElementById('pcFrom'), { placeholder: '— เงินสด (ค่าตั้งต้น) —' });
+      },
+      async confirmPayClaim() {
+        const id = document.getElementById('pcId').value;
         const api = Layout.api(); if (!api) return;
+        const ch = MoneyChannel.read(document.getElementById('pcFrom'));
         try {
-          const res = await api.payExpenseClaim(id);
+          const res = await api.payExpenseClaim(id, {
+            bankAccountId: ch.bankAccountId,
+            paymentAccountId: ch.accountId,
+            reference: document.getElementById('pcRef').value.trim() || null,
+          });
+          Layout.closeModal('payClaimModal');
           // ฝ่ายค้านรอบ 201 รอบสาม P2-2 — ข้อสังเกตรายจ่ายต้องห้าม §65 ตรีที่ผ่านตอนอนุมัติใบสำคัญจ่าย (ไม่บล็อก · ข้อความจากเซิร์ฟเวอร์)
           const notes = (res && res.data && res.data.passedApprovalNotes) || [];
           if (notes.length) Layout.toast('จ่ายเงินสำเร็จ — ข้อสังเกต §65 ตรี (ไม่บล็อก · ตรวจก่อนปิดรอบ): ' + notes.join(' · '), 'warning', 15000);
