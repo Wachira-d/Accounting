@@ -2382,7 +2382,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   - `DocumentResponse.WhtNetOfAdjustments` (แสดงผล · null = ไม่มีใบลดหนี้) · ข้อจำกัดที่รู้: ใบเสร็จ/PV ที่ "แปลง" จากใบซื้อคัดลอกภาษีหักเต็มของใบเดิม ⇒ คำเตือนก่อนอนุมัติ
     `[WHT-CN-NET]` (`CollectApprovalWarningsAsync` · PV/CIL ที่อ้างใบซื้อ หักรวมกับที่หักแล้วเกิน NetWht · เตือน+รับทราบ ไม่บล็อก · ทางเข้าไม่มีคนผ่านได้ ·
     `ApprovalAcknowledgement` ลงทะเบียน `[PP36-BASE]`/`[WHT-FORM]` ของทีมคู่ขนานล่วงหน้า) — ด่านเกณฑ์เงินสด "ปิดยอดแต่ภาษีหักขาด" ใน `ApplySourceDocumentAdjustmentsAsync` ~~เทียบกับภาษีหักของใบเดิมเต็ม~~ ✅ หักยอดใบลดหนี้ซื้อแล้ว
-    (ตัวนับเดียว `PurchaseCreditNoteWhtAsync` — ใบลดหนี้เกณฑ์เงินสดลดเจ้าหนี้แบบ gross ไม่แตะ 2191x ⇒ ภาษีที่ต้องครบ = WHT ใบเดิม − WHT ใบลดหนี้ · ฝั่งขายคงเดิม · commit <pending-g>) · Last verified 2026-10-13 `commit 0f862cfe`
+    (ตัวนับเดียว `PurchaseCreditNoteWhtAsync` — ใบลดหนี้เกณฑ์เงินสดลดเจ้าหนี้แบบ gross ไม่แตะ 2191x ⇒ ภาษีที่ต้องครบ = WHT ใบเดิม − WHT ใบลดหนี้ · ฝั่งขายคงเดิม · commit 9f9ac08f) · Last verified 2026-10-13 `commit 0f862cfe`
 
 ### 3.5 Void / Cancel
 - **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:
