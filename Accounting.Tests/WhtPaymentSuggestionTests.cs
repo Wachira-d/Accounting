@@ -93,6 +93,20 @@ public class WhtPaymentSuggestionTests
         Assert.StartsWith("PI-001: ", WhtPaymentSuggestion.AboveNetWarning(r, 300m, "PI-001"));
     }
 
+    [Fact]
+    public void เกณฑ์เงินสด_คำเตือนบอกยอดเดบิตที่ค้างในเจ้าหนี้_เกณฑ์สิทธิไม่บอก()
+    {
+        // ฝ่ายค้านรอบ 204 L4: Dr เจ้าหนี้ = เงิน + ภาษีหัก ⇒ หัก 300 ทั้งที่เหลือ 270 ⇒ เจ้าหนี้ติดเดบิต 30 หลังปิดยอด (ยังรับตามผู้ใช้)
+        var r = WhtPaymentSuggestion.Compute(300m, new[] { 30m }, 0m, 9_700m, new[] { 970m }, 8_730m, 0m, isFinal: true);
+        var cash = WhtPaymentSuggestion.AboveNetWarning(r, 300m, cashBasis: true);
+        Assert.NotNull(cash);
+        Assert.Contains("เจ้าหนี้ของใบนี้จะค้างยอดเดบิต 30.00", cash);
+        Assert.Contains("ระบบแนะนำ 270.00", cash);
+        // ทิศตรงข้าม: เกณฑ์สิทธิ (ภาษีหักลงตอนตั้งหนี้ — งวดจ่ายไม่แตะเจ้าหนี้ด้วยภาษี) ⇒ ไม่มีข้อความนี้ · ไม่เกินยอดที่เหลือ ⇒ ไม่เตือนเลย
+        Assert.DoesNotContain("ค้างยอดเดบิต", WhtPaymentSuggestion.AboveNetWarning(r, 300m)!);
+        Assert.Null(WhtPaymentSuggestion.AboveNetWarning(r, 270m, cashBasis: true));
+    }
+
     [Theory]
     [InlineData(270.0)]      // เท่ายอดแนะนำ
     [InlineData(270.01)]   // ปัดเศษในเกณฑ์ 1 สตางค์

@@ -14210,7 +14210,9 @@ public partial class DocumentService : IDocumentService
                     throw new InvalidOperationException(
                         $"WHT งวดนี้ ({paymentWht:N2}) + ที่หักไปแล้ว ({whtSuggestion.AlreadyWithheld:N2}) " +
                         $"เกินยอด WHT ทั้งหมดของเอกสาร ({doc.WithholdingTaxAmount:N2})");
-                whtAboveNetWarning = Accounting.Helpers.WhtPaymentSuggestion.AboveNetWarning(whtSuggestion, paymentWht);
+                // ฝ่ายค้านรอบ 204 L4: เกณฑ์เงินสด ⇒ คำเตือนบอกยอดเดบิตที่จะค้างในเจ้าหนี้ (ยังรับตามผู้ใช้)
+                whtAboveNetWarning = Accounting.Helpers.WhtPaymentSuggestion.AboveNetWarning(whtSuggestion, paymentWht,
+                    cashBasis: await IsWhtCashBasisAsync(companyId));
             }
             else
             {
@@ -14595,7 +14597,7 @@ public partial class DocumentService : IDocumentService
             else if (en > r.GrossCap + 0.01m)
                 aboveGross = $"WHT งวดนี้ ({en:N2}) + ที่หักไปแล้ว ({r.AlreadyWithheld:N2}) เกินยอด WHT ทั้งหมดของเอกสาร ({doc.WithholdingTaxAmount:N2}) — บันทึกไม่ได้";
             else
-                aboveNet = Accounting.Helpers.WhtPaymentSuggestion.AboveNetWarning(r, en);
+                aboveNet = Accounting.Helpers.WhtPaymentSuggestion.AboveNetWarning(r, en, cashBasis: await IsWhtCashBasisAsync(companyId));
         }
         return new PaymentWhtSuggestionResponse(doc.WithholdingTaxAmount, r.Figures.CreditNoteTax, r.Figures.CreditNoteCount, r.NetWht,
             r.AlreadyWithheld, r.NetCap, r.GrossCap, r.Suggested, r.IsFinal, r.ReasonText, aboveNet, aboveGross);
@@ -14753,7 +14755,8 @@ public partial class DocumentService : IDocumentService
                         {
                             whtSlice = Math.Round(alloc.WithholdingTaxAmount.Value, 2, MidpointRounding.AwayFromZero);
                             // ผู้ใช้ระบุเกินยอดที่เหลือ (หลังใบลดหนี้) — รับตามผู้ใช้ (เส้นนี้ไม่เคยบล็อก) แต่เตือนในคำตอบ + audit
-                            if (Accounting.Helpers.WhtPaymentSuggestion.AboveNetWarning(allocWht, whtSlice, d.DocumentNumber) is string allocWarn)
+                            if (Accounting.Helpers.WhtPaymentSuggestion.AboveNetWarning(allocWht, whtSlice, d.DocumentNumber,
+                                    cashBasis: await IsWhtCashBasisAsync(companyId)) is string allocWarn)
                             {
                                 multiWhtWarnings.Add(allocWarn);
                                 _db.AddChainedAuditLog(new AuditLog

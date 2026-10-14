@@ -99,7 +99,9 @@ public static class WhtPaymentSuggestion
     /// <param name="r">ผลจาก <see cref="Compute"/></param>
     /// <param name="entered">ยอดที่ผู้ใช้ระบุ (ปัด 2 ตำแหน่งแล้ว)</param>
     /// <param name="documentNumber">เลขเอกสาร (ข้อความของการชำระหลายใบ) — null = ใบเดียว</param>
-    public static string? AboveNetWarning(WhtPaymentSuggestionResult r, decimal entered, string? documentNumber = null)
+    /// <param name="cashBasis">ฝ่ายค้านรอบ 204 L4: บริษัทรับรู้ภาษีหักตอนจ่าย (<c>WhtRecognitionBasis.Cash</c>) — JE งวดจ่าย Dr เจ้าหนี้ = เงิน + ภาษีหัก ⇒
+    /// ส่วนที่เกินยอดที่เหลือหลังใบลดหนี้ตัดเจ้าหนี้เกิน (ใบลดหนี้ลดเจ้าหนี้แบบรวมภาษีไปแล้ว) ⇒ บอกยอดเดบิตค้างในคำเตือน (ยังรับตามผู้ใช้ — คำสั่งเจ้าของ ข้อ 150)</param>
+    public static string? AboveNetWarning(WhtPaymentSuggestionResult r, decimal entered, string? documentNumber = null, bool cashBasis = false)
     {
         if (entered <= r.NetCap + Tolerance) return null;
         var basis = r.HasCreditNotes
@@ -108,8 +110,14 @@ public static class WhtPaymentSuggestion
         if (r.AlreadyWithheld > 0m) basis += $" · หักไปแล้ว {r.AlreadyWithheld:N2} ⇒ เหลือหักได้ {r.NetCap:N2}";
         var who = documentNumber is null ? "" : documentNumber + ": ";
         return $"{who}ภาษีหัก ณ ที่จ่ายงวดนี้สูงกว่ายอดที่เหลือ — ระบบแนะนำ {r.Suggested:N2} ({basis}) — บันทึก {entered:N2} ตามที่ผู้ใช้ระบุ"
-            + " · ตรวจกับหนังสือรับรอง 50 ทวิ ที่จะออก (ยอดบนใบ = ยอดที่หักจริง)";
+            + " · ตรวจกับหนังสือรับรอง 50 ทวิ ที่จะออก (ยอดบนใบ = ยอดที่หักจริง)"
+            + (cashBasis ? CashBasisResidueNote(R(entered - r.NetCap)) : "");
     }
+
+    /// <summary>ส่วนต่อท้ายคำเตือนเมื่อบริษัทรับรู้ภาษีหักตอนจ่าย — เจ้าหนี้ค้างยอดเดบิตเท่าส่วนที่เกิน (ฝ่ายค้านรอบ 204 L4)</summary>
+    public static string CashBasisResidueNote(decimal excess)
+        => $" · บริษัทรับรู้ภาษีหัก ณ ที่จ่ายตอนจ่าย (เกณฑ์เงินสด): ส่วนที่เกิน {excess:N2} ตัดเจ้าหนี้เกินยอดที่เหลือ ⇒ เจ้าหนี้ของใบนี้จะค้างยอดเดบิต {excess:N2} "
+           + "หลังปิดยอด — ถ้ายอดนี้ถูกจริง ให้ปรับปรุงเจ้าหนี้ด้วยใบสำคัญทั่วไป · ถ้าไม่ตั้งใจ ให้แก้ยอดภาษีงวดนี้เป็นยอดที่ระบบแนะนำ";
 
     /// <summary>
     /// คำเตือนก่อนอนุมัติ <see cref="ApprovalWarningPrefix"/> — ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จที่อ้างใบซื้อ (แปลงมา = คัดลอกภาษีหักของใบเดิมเต็ม

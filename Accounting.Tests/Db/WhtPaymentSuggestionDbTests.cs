@@ -131,6 +131,8 @@ public class WhtPaymentSuggestionDbTests
             // หน้าเว็บถามล่วงหน้าด้วยยอดที่ผู้ใช้กรอก — ข้อความมาจากตัวเดียวกับตอนบันทึก
             var asked = await Svc(req).GetPaymentWhtSuggestionAsync(s.CompanyId, s.PiId, 8_730m, entered: 300m);
             Assert.Contains("ระบบแนะนำ 270.00", asked.AboveNetWarning);
+            // ฝ่ายค้านรอบ 204 L4: ไม่มีแถวค่าตั้ง ⇒ เกณฑ์เงินสด (ค่าตั้งต้นของระบบ) ⇒ คำเตือนบอกยอดเดบิตที่จะค้างในเจ้าหนี้
+            Assert.Contains("ค้างยอดเดบิต 30.00", asked.AboveNetWarning);
             Assert.Null(asked.AboveGrossError);
             Assert.NotNull((await Svc(req).GetPaymentWhtSuggestionAsync(s.CompanyId, s.PiId, 8_730m, entered: 300.02m)).AboveGrossError);
         }
