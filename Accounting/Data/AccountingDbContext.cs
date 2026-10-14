@@ -820,6 +820,8 @@ public class AccountingDbContext : DbContext
             e.Property(a => a.LegacyName).HasMaxLength(200);
             e.Property(a => a.LegacyDebit).HasPrecision(18, 2);
             e.Property(a => a.LegacyCredit).HasPrecision(18, 2);
+            e.Property(a => a.SuggestionKind).HasMaxLength(32);          // รอบ 205 ทีม D
+            e.Property(a => a.SuggestionScore).HasPrecision(5, 4);
             e.HasOne(a => a.MigrationSession).WithMany().HasForeignKey(a => a.MigrationSessionId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(a => a.MappedAccount).WithMany().HasForeignKey(a => a.MappedAccountId).OnDelete(DeleteBehavior.SetNull);
             e.HasIndex(a => new { a.MigrationSessionId, a.LegacyCode });

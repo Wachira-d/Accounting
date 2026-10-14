@@ -1,4 +1,3 @@
-using System.Text;
 using Accounting.Data;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -18,24 +17,18 @@ public sealed record IncomingAccount(
     AccountType? AccountType,
     string? Description);
 
-public abstract class AccountImportAdapterBase : ICompetitorImportAdapter
+public abstract class AccountImportAdapterBase : CompetitorAdapterBase
 {
     protected readonly AccountingDbContext _db;
     protected AccountImportAdapterBase(AccountingDbContext db) { _db = db; }
 
-    public abstract string SourceSystem { get; }
-    public string EntityKind => "ChartOfAccounts";
-    public abstract bool CanHandle(string fileContent, string filename);
+    public override string EntityKind => "ChartOfAccounts";
 
-    protected abstract List<IncomingAccount> ParseRows(
-        string content,
-        out List<string> columns,
-        out List<Dictionary<string, string>> rawSample,
-        out List<string> warnings);
+    protected abstract List<IncomingAccount> ParseRows(CompetitorTable table, out List<string> warnings);
 
-    public async Task<ImportPreview> PreviewAsync(Guid companyId, string fileContent, CancellationToken ct)
+    public override async Task<ImportPreview> PreviewAsync(Guid companyId, CompetitorTable table, CancellationToken ct)
     {
-        var rows = ParseRows(fileContent, out var cols, out var rawSample, out var warnings);
+        var rows = ParseRows(table, out var warnings);
         var codes = rows.Select(r => r.AccountCode).Where(c => !string.IsNullOrEmpty(c)).Distinct().ToList();
         var existing = await _db.ChartOfAccounts
             .Where(a => a.CompanyId == companyId && !a.IsDeleted && codes.Contains(a.AccountCode))
@@ -79,15 +72,14 @@ public abstract class AccountImportAdapterBase : ICompetitorImportAdapter
                 DiffFields: diff));
         }
 
-        var sample = rawSample.Take(50).Select(r => (IReadOnlyDictionary<string, string>)r).ToList();
-        return new ImportPreview(SourceSystem, EntityKind, cols, sample,
+        return new ImportPreview(SourceSystem, EntityKind, table.Headers, Sample(table),
             rows.Count, warnings, conflicts, newCount, exactDupCount);
     }
 
-    public async Task<ImportResult> ImportAsync(Guid companyId, string fileContent,
+    public override async Task<ImportResult> ImportAsync(Guid companyId, CompetitorTable table,
         ImportOptions options, CancellationToken ct)
     {
-        var rows = ParseRows(fileContent, out _, out _, out var warnings);
+        var rows = ParseRows(table, out var warnings);
         int imported = 0, updated = 0, skipped = 0, failed = 0;
         var errors = new List<string>(warnings);
         var resolutions = options.Resolutions ?? new Dictionary<string, ConflictAction>();
@@ -150,7 +142,7 @@ public abstract class AccountImportAdapterBase : ICompetitorImportAdapter
                         updated++; break;
                 }
             }
-            catch (Exception e) { failed++; errors.Add($"Row {rowIdx} ({row.AccountCode}): {e.Message}"); }
+            catch (InvalidOperationException e) { failed++; errors.Add($"แถว {rowIdx} ({row.AccountCode}): {e.Message}"); }
         }
 
         if (!options.DryRun && (imported > 0 || updated > 0))
@@ -195,29 +187,6 @@ public abstract class AccountImportAdapterBase : ICompetitorImportAdapter
 
     // ─────────── shared helpers ───────────
 
-    protected static List<string> SplitCsvLine(string line)
-    {
-        var cells = new List<string>();
-        var sb = new StringBuilder();
-        bool inQuotes = false;
-        foreach (var ch in line)
-        {
-            if (ch == '"') inQuotes = !inQuotes;
-            else if (ch == ',' && !inQuotes) { cells.Add(sb.ToString()); sb.Clear(); }
-            else sb.Append(ch);
-        }
-        cells.Add(sb.ToString());
-        return cells;
-    }
-
-    protected static string? FirstNonEmpty(IDictionary<string, string> row, params string[] keys)
-    {
-        foreach (var k in keys)
-            if (row.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v))
-                return v;
-        return null;
-    }
-
     protected static AccountType? ParseType(string? s)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
@@ -240,34 +209,15 @@ public class ExpressAccountsAdapter : AccountImportAdapterBase
     public ExpressAccountsAdapter(AccountingDbContext db) : base(db) { }
     public override string SourceSystem => "Express";
 
-    public override bool CanHandle(string fileContent, string filename)
-    {
-        if (filename.Contains("express", StringComparison.OrdinalIgnoreCase)
-            && (filename.Contains("account", StringComparison.OrdinalIgnoreCase)
-                || filename.Contains("coa", StringComparison.OrdinalIgnoreCase)
-                || filename.Contains("ผังบัญชี", StringComparison.OrdinalIgnoreCase))) return true;
-        var head = fileContent.Length > 1500 ? fileContent[..1500] : fileContent;
-        return head.Contains("รหัสบัญชี") && head.Contains("ชื่อบัญชี");
-    }
+    protected override IReadOnlyCollection<string> KeyHeaders { get; } = new[] { "รหัสบัญชี", "ชื่อบัญชี" };
+    protected override IReadOnlyCollection<string> OtherHeaders { get; } = new[] { "ชื่ออังกฤษ", "ประเภทบัญชี", "หมายเหตุ", "AccountCode", "AccountName", "Code", "Name", "Type" };
 
-    protected override List<IncomingAccount> ParseRows(string content,
-        out List<string> columns, out List<Dictionary<string, string>> rawSample, out List<string> warnings)
+    protected override List<IncomingAccount> ParseRows(CompetitorTable table, out List<string> warnings)
     {
-        warnings = new(); rawSample = new(); columns = new();
-        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0) return new();
-        var sep = lines[0].Contains('\t') ? '\t' : ',';
-        columns = lines[0].TrimEnd('\r').Split(sep).Select(c => c.Trim()).ToList();
+        warnings = new();
         var rows = new List<IncomingAccount>();
-        for (int i = 1; i < lines.Length; i++)
+        foreach (var d in table.Rows)
         {
-            var raw = lines[i].TrimEnd('\r');
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            var cells = raw.Split(sep);
-            var d = new Dictionary<string, string>(columns.Count);
-            for (int c = 0; c < columns.Count && c < cells.Length; c++) d[columns[c]] = cells[c].Trim();
-            if (rawSample.Count < 50) rawSample.Add(d);
-
             var code = FirstNonEmpty(d, "รหัสบัญชี", "AccountCode", "Code");
             var name = FirstNonEmpty(d, "ชื่อบัญชี", "AccountName", "Name");
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(name)) continue;
@@ -286,32 +236,15 @@ public class PeakAccountsAdapter : AccountImportAdapterBase
     public PeakAccountsAdapter(AccountingDbContext db) : base(db) { }
     public override string SourceSystem => "PEAK";
 
-    public override bool CanHandle(string fileContent, string filename)
-    {
-        if (filename.Contains("peak", StringComparison.OrdinalIgnoreCase)
-            && (filename.Contains("account", StringComparison.OrdinalIgnoreCase)
-                || filename.Contains("coa", StringComparison.OrdinalIgnoreCase))) return true;
-        var head = fileContent.Length > 1500 ? fileContent[..1500] : fileContent;
-        return head.Contains("accountCode") && head.Contains("accountName");
-    }
+    protected override IReadOnlyCollection<string> KeyHeaders { get; } = new[] { "accountCode", "accountName" };
+    protected override IReadOnlyCollection<string> OtherHeaders { get; } = new[] { "accountNameEn", "accountType", "description", "code", "name", "type" };
 
-    protected override List<IncomingAccount> ParseRows(string content,
-        out List<string> columns, out List<Dictionary<string, string>> rawSample, out List<string> warnings)
+    protected override List<IncomingAccount> ParseRows(CompetitorTable table, out List<string> warnings)
     {
-        warnings = new(); rawSample = new(); columns = new();
-        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0) return new();
-        columns = lines[0].TrimEnd('\r').Split(',').Select(c => c.Trim('"').Trim()).ToList();
+        warnings = new();
         var rows = new List<IncomingAccount>();
-        for (int i = 1; i < lines.Length; i++)
+        foreach (var d in table.Rows)
         {
-            var raw = lines[i].TrimEnd('\r');
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            var cells = SplitCsvLine(raw);
-            var d = new Dictionary<string, string>(columns.Count);
-            for (int c = 0; c < columns.Count && c < cells.Count; c++) d[columns[c]] = cells[c].Trim('"').Trim();
-            if (rawSample.Count < 50) rawSample.Add(d);
-
             var code = FirstNonEmpty(d, "accountCode", "AccountCode", "code");
             var name = FirstNonEmpty(d, "accountName", "AccountName", "name");
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(name)) continue;
@@ -330,32 +263,15 @@ public class FlowAccountAccountsAdapter : AccountImportAdapterBase
     public FlowAccountAccountsAdapter(AccountingDbContext db) : base(db) { }
     public override string SourceSystem => "FlowAccount";
 
-    public override bool CanHandle(string fileContent, string filename)
-    {
-        if (filename.Contains("flow", StringComparison.OrdinalIgnoreCase)
-            && (filename.Contains("account", StringComparison.OrdinalIgnoreCase)
-                || filename.Contains("coa", StringComparison.OrdinalIgnoreCase))) return true;
-        var head = fileContent.Length > 1500 ? fileContent[..1500] : fileContent;
-        return head.Contains("account code") && head.Contains("account name");
-    }
+    protected override IReadOnlyCollection<string> KeyHeaders { get; } = new[] { "account code", "account name" };
+    protected override IReadOnlyCollection<string> OtherHeaders { get; } = new[] { "account name en", "account type", "description", "code", "name", "type" };
 
-    protected override List<IncomingAccount> ParseRows(string content,
-        out List<string> columns, out List<Dictionary<string, string>> rawSample, out List<string> warnings)
+    protected override List<IncomingAccount> ParseRows(CompetitorTable table, out List<string> warnings)
     {
-        warnings = new(); rawSample = new(); columns = new();
-        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0) return new();
-        columns = lines[0].TrimEnd('\r').Split(',').Select(c => c.Trim('"').Trim()).ToList();
+        warnings = new();
         var rows = new List<IncomingAccount>();
-        for (int i = 1; i < lines.Length; i++)
+        foreach (var d in table.Rows)
         {
-            var raw = lines[i].TrimEnd('\r');
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            var cells = SplitCsvLine(raw);
-            var d = new Dictionary<string, string>(columns.Count);
-            for (int c = 0; c < columns.Count && c < cells.Count; c++) d[columns[c]] = cells[c].Trim('"').Trim();
-            if (rawSample.Count < 50) rawSample.Add(d);
-
             var code = FirstNonEmpty(d, "account code", "accountCode", "code");
             var name = FirstNonEmpty(d, "account name", "accountName", "name");
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(name)) continue;

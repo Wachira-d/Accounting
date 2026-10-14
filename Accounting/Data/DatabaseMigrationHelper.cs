@@ -210,6 +210,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round204DirectiveStatements());   // รอบ 204 คอลัมน์ WHT (schema only · บล็อกท้ายไฟล์)
         list.AddRange(Round204RoyaltyHistoryStatements());   // รอบ 204 ฝ่ายค้าน M2/L6 — ประวัติค่าตั้งค่าสิทธิ (ก่อน Round204Pnd2Statements)
         list.AddRange(Round205ImportHubStatements());   // รอบ 205 T0 ศูนย์นำเข้าข้อมูล (บล็อกท้ายไฟล์)
+        list.AddRange(Round205TeamDMigrationStatements());   // รอบ 205 ทีม D คำแนะนำบัญชีของ migration wizard (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7558,5 +7559,16 @@ public static class DatabaseMigrationHelper
         """CREATE INDEX IF NOT EXISTS "IX_ImportStagedRows_Company_Committed" ON "ImportStagedRows" ("CompanyId", "CommittedEntityType", "CommittedEntityId");""",
         """CREATE TABLE IF NOT EXISTS "ImportMappingTemplates" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "EntityType" varchar(50) NOT NULL, "HeaderSignature" varchar(64) NOT NULL, "SourceSystem" varchar(64) NULL, "Name" varchar(200) NOT NULL, "HeadersJson" text NULL, "ColumnMapJson" text NOT NULL DEFAULT '[]', "OptionsJson" text NULL, "UseCount" integer NOT NULL DEFAULT 0, "LastUsedAt" timestamp without time zone NULL, "ConfirmedByUser" boolean NOT NULL DEFAULT false, "AutoCommitWhenClean" boolean NOT NULL DEFAULT false, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_ImportMappingTemplates_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE);""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_ImportMappingTemplates_Company_Entity_Signature" ON "ImportMappingTemplates" ("CompanyId", "EntityType", "HeaderSignature") WHERE "IsDeleted" = false;""",
+    };
+
+    /// <summary>รอบ 205 ทีม D — คำแนะนำบัญชีปลายทางของ migration wizard (<c>AccountMapping</c>) · ค่าตั้งต้น = ไม่มีคำแนะนำ (NULL/false) ⇒ แถวเดิมไม่เปลี่ยนความหมาย ·
+    /// รันทุกบูตได้ (IF NOT EXISTS) · ไม่มี UPDATE ข้อมูลเดิม (คำแนะนำคำนวณใหม่ได้เมื่อกด "แนะนำบัญชี")</summary>
+    internal static IReadOnlyList<string> Round205TeamDMigrationStatements() => new List<string>
+    {
+        """ALTER TABLE "AccountMappings" ADD COLUMN IF NOT EXISTS "SuggestedAccountId" uuid NULL;""",
+        """ALTER TABLE "AccountMappings" ADD COLUMN IF NOT EXISTS "SuggestionKind" varchar(32) NULL;""",
+        """ALTER TABLE "AccountMappings" ADD COLUMN IF NOT EXISTS "SuggestionScore" numeric(5,4) NULL;""",
+        """ALTER TABLE "AccountMappings" ADD COLUMN IF NOT EXISTS "AccountMapAiFeedbackId" uuid NULL;""",
+        """ALTER TABLE "AccountMappings" ADD COLUMN IF NOT EXISTS "AccountMapUsedAi" boolean NOT NULL DEFAULT false;""",
     };
 }

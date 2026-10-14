@@ -41,11 +41,14 @@ public partial class ImportEntityResolver : IImportEntityResolver
     private readonly ProductMatcher? _products;
     private readonly ILogger<ImportEntityResolver>? _logger;
 
-    public ImportEntityResolver(AccountingDbContext db, IDuplicateDetector duplicates, IImportAiAugmenter? ai = null,
-        ProductMatcher? products = null, ILogger<ImportEntityResolver>? logger = null)
+    /// <summary>constructor ตัวเดียวของทั้งสองไฟล์ (ห้ามแยก — DI เลือกตัวยาวสุดแล้วอีกฝั่งได้ null): <paramref name="accountMatcher"/> = ตัวหาบัญชีของ
+    /// <c>ResolveAccountsAsync</c> (ทีม D · ImportEntityResolver.Accounts.cs) · ที่เหลือ = <see cref="MatchAsync"/> (ทีม B)</summary>
+    public ImportEntityResolver(AccountingDbContext db, IDuplicateDetector duplicates, ImportAccountMatcher? accountMatcher = null,
+        IImportAiAugmenter? ai = null, ProductMatcher? products = null, ILogger<ImportEntityResolver>? logger = null)
     {
         _db = db;
         _duplicates = duplicates;
+        _accountMatcher = accountMatcher;
         _ai = ai;
         _products = products;
         _logger = logger;

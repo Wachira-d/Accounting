@@ -4854,3 +4854,13 @@ _Last verified against codebase: 2026-10-14 (ทีม F1 · คำสั่ง�
 
 _2026-10-14 — ฝ่ายค้านรอบหลัง f696f418 (P0): รายการประจำงวดค้างหลายงวด ⇒ ออกงวดเดียว + บอกบนแถวว่าข้ามกี่งวด (`RecurringSchedule.CatchUp` ·
 `SkipOverduePeriodsAsync` ในรอบอัตโนมัติ + สร้างทันที) — กันใบกำกับภาษีย้อนหลังรวดเดียวหลัง deploy การแก้ธุรกรรมซ้อน · เทสต์ RCX-13 — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_รอบ 205 ทีม D — ศูนย์นำเข้าข้อมูล: ปลายทางบัญชี + ย้ายระบบ (`erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.4/§2.5/§2.9/§2.10 · คำตัดสินข้อ 150/151):
+`Helpers/ImportAccountCodeResolver` (รหัสตรง → ความจำ AccountMappings → ชื่อ n-gram → หมวดเลขหน้า · ไม่เลือกให้ต่ำกว่า 0.85) + `ImportAccountMatcher`
+(ช่อง AI `ImportAccountMap` 58 เดียว — รอทีม A ต่อ `SuggestAccountMapAsync` · ตอนนี้ = kill-switch) · `ImportEntityResolver.ResolveAccountsAsync` ·
+target 4 ตัว: งบทดลองยกมา (ผ่าน `MigrationWizardService` · ไม่ลงตัว = บล็อก + ทางเลือกบัญชีผลต่าง) · เอกสาร (`DocumentImportBuilder` → `CreateDocumentAsync` ร่าง +
+DRAFT · เลขเดิม → Reference · ยอดโดย DocumentService · ผังฝั่งซื้อจาก `SuggestGlAccountAsync`) · รับ/จ่ายชำระ (`CreatePaymentAsync` ⇒ JE) · สินทรัพย์
+(`FixedAssetService.ImportAsync` · ที่ดินไม่คิดค่าเสื่อม) · ย้อนต่อ target (§2.9) · `OpeningBalanceReconciliation` · MigrationWizard: errors/warnings แยก (คำเตือนไม่บล็อก
+แต่ต้องรับทราบ) · ย้อนคืนยอดเดิมที่ถูกทับ · จับคู่ข้ามบริษัทถูกปฏิเสธ · แนะนำบัญชี + ป้ายแหล่ง/ความมั่นใจ · วางข้อความอ่านที่เซิร์ฟเวอร์ ("1,234.50") · ด่านสิทธิ์ทุก action
+(ลด baseline 6 แถว) · คอลัมน์คำแนะนำบน `AccountMappings` (ADD COLUMN IF NOT EXISTS) · โปรแกรมอื่น: `ImportTabularReader` (TIS-620/xlsx) · เลือก adapter ด้วยคะแนนหัวตาราง
+(express_products → สินค้า) · ชนิดผู้ติดต่อ/สาขา/เลขภาษีผ่านตัวตัดสินกลาง · ลูกค้า/ผู้ขายจากหัวตาราง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>_
+

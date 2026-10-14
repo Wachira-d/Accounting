@@ -115,7 +115,7 @@ public class ImportPipelineDbTests
         // ชั้น AI จริงของทีม A (augmenter → orchestrator) — ai = DeadAi ⇒ provider ล่มทุกคำขอ (kill-switch) · null = ไม่มี AI เลย
         var augmenter = ai == null ? null : new ImportAiAugmenter(db, ai, NullLogger<ImportAiAugmenter>.Instance);
         var templates = new NoTemplates();
-        var resolver = new ImportEntityResolver(db, new DuplicateDetector(db), augmenter);
+        var resolver = new ImportEntityResolver(db, new DuplicateDetector(db), ai: augmenter);
         var registry = new ImportTargetRegistry(new IImportTarget[]
         {
             new ContactsImportTarget(db, writer, resolver),

@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
@@ -38,9 +37,9 @@ public class CompetitorImportController : ControllerBase
             ImportExportPermissionScope.DeniedMessage(entityKind, key, isExport: false)));
     }
 
-    /// <summary>Sniff which competitor format the file belongs to,
-    /// return sample rows AND a list of TaxId-conflict rows so the
-    /// admin can pick Skip/Overwrite/Merge per row before commit.</summary>
+    /// <summary>Sniff which competitor format the file belongs to (คะแนนหัวตาราง — ไม่ใช่ชื่อไฟล์),
+    /// return sample rows AND a list of key-conflict rows so the admin can pick Skip/Overwrite/Merge per row before commit ·
+    /// คำตอบมี <c>HubEntityType</c> + ป้ายไทยให้หน้าเว็บลิงก์ไปศูนย์นำเข้าข้อมูล</summary>
     [HttpPost("preview")]
     [RequestSizeLimit(20_000_000)]
     public async Task<ActionResult<ApiResponse<object>>> Preview(
@@ -48,18 +47,16 @@ public class CompetitorImportController : ControllerBase
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "ไฟล์ว่าง"));
-        var content = await ReadAsync(file);
-        var detected = _coordinator.Detect(content, file.FileName);
-        if (detected == null)
-            return BadRequest(new ApiResponse<object>(false, null,
-                "ไม่สามารถระบุประเภทไฟล์ — รองรับ Express / PEAK / FlowAccount"));
-        var deny = await DenyAsync(companyId, detected.EntityKind);
+        var table = await ReadAsync(file);
+        var detected = _coordinator.Detect(table);
+        if (detected.Adapter == null)
+            return BadRequest(new ApiResponse<object>(false, null, detected.Reason));
+        var deny = await DenyAsync(companyId, detected.Adapter.EntityKind);
         if (deny != null) return deny;
-        var (adapter, preview) = await _coordinator.PreviewAsync(companyId, content, file.FileName, ct);
+        var (adapter, preview) = await _coordinator.PreviewAsync(companyId, table, ct);
         if (adapter == null)
-            return BadRequest(new ApiResponse<object>(false, null,
-                "ไม่สามารถระบุประเภทไฟล์ — รองรับ Express / PEAK / FlowAccount"));
-        var msg = $"พบ {preview!.TotalRows} แถว — ระบบ {adapter.SourceSystem} · " +
+            return BadRequest(new ApiResponse<object>(false, null, detected.Reason));
+        var msg = $"พบ {preview!.TotalRows} แถว — {preview.EntityLabel}ของ {adapter.SourceSystem} · " +
                   $"ใหม่ {preview.NewRowCount} · ซ้ำเหมือนกัน {preview.DuplicateExactCount} · " +
                   $"ขัดแย้ง (ต้องเลือก) {preview.Conflicts.Count}";
         return Ok(new ApiResponse<object>(true, preview, msg));
@@ -81,12 +78,12 @@ public class CompetitorImportController : ControllerBase
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "ไฟล์ว่าง"));
-        var content = await ReadAsync(file);
-        var detected = _coordinator.Detect(content, file.FileName);
-        if (detected == null)
-            return BadRequest(new ApiResponse<object>(false, null, "ไม่พบ adapter ที่รองรับไฟล์นี้"));
+        var table = await ReadAsync(file);
+        var detected = _coordinator.Detect(table);
+        if (detected.Adapter == null)
+            return BadRequest(new ApiResponse<object>(false, null, detected.Reason));
         // ทดสอบ (dryRun) ก็ต้องเดินด่านเดียวกัน — ไม่งั้นผู้ใช้เห็น "ผ่าน" แล้วไปเจอ 403 ตอนนำเข้าจริง
-        var deny = await DenyAsync(companyId, detected.EntityKind);
+        var deny = await DenyAsync(companyId, detected.Adapter.EntityKind);
         if (deny != null) return deny;
 
         Dictionary<string, ConflictAction>? resolutions = null;
@@ -116,19 +113,20 @@ public class CompetitorImportController : ControllerBase
             defaultAction = parsed;
 
         var options = new ImportOptions(dryRun, skipDuplicates, sourceTag, resolutions, defaultAction);
-        var result = await _coordinator.ImportAsync(companyId, content, file.FileName, options, ct);
+        var result = await _coordinator.ImportAsync(companyId, table, options, ct);
         if (result == null)
-            return BadRequest(new ApiResponse<object>(false, null,
-                "ไม่พบ adapter ที่รองรับไฟล์นี้"));
+            return BadRequest(new ApiResponse<object>(false, null, detected.Reason));
         var verb = dryRun ? "ทดสอบ" : "import";
         return Ok(new ApiResponse<ImportResult>(true, result,
             $"{verb}สำเร็จ — เพิ่มใหม่ {result.RowsImported} · อัพเดต {result.RowsUpdated} · ข้าม {result.RowsSkipped} · ผิดพลาด {result.RowsFailed} (จาก {result.RowsRead} แถว)"));
     }
 
-    private static async Task<string> ReadAsync(IFormFile file)
+    /// <summary>รอบ 205 ทีม D — อ่านด้วยตัวอ่านกลาง <see cref="ImportTabularReader"/> (UTF-8/UTF-16/TIS-620 · xlsx) · เดิม StreamReader(UTF8)
+    /// ⇒ ไฟล์ Express ที่เป็น TIS-620 กลายเป็นอักขระเสีย · ไฟล์ที่ไม่ใช่ตาราง ⇒ <see cref="ImportFormatException"/> (400 ข้อความไทยพร้อมทางไปต่อ)</summary>
+    private static async Task<CompetitorTable> ReadAsync(IFormFile file)
     {
-        using var stream = file.OpenReadStream();
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        return await reader.ReadToEndAsync();
+        using var ms = new MemoryStream();
+        await file.CopyToAsync(ms);
+        return CompetitorTable.Open(file.FileName, ms.ToArray());
     }
 }

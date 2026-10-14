@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **531 ไฟล์ · 5,263 `[Fact]` + 828 `[Theory]` (3,661 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **514 ไฟล์ · 5,124 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6055,3 +6055,24 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | F1-07 | เช็ค: เปิดหน้า `cheques.html` · เปิดเล่มด้วยบัญชีของบริษัทอื่น/ปิดใช้ · รีเฟรชหน้าแล้วออกเช็ค | รายการบัญชีธนาคารขึ้น (เดิมว่างเพราะ `api.get` ไม่มี) · โหลดไม่ได้ = แจ้งดัง · บัญชีผิด = ไทย · เล่มที่เปิดไว้ยังอยู่ในตัวเลือก (`GET cheques/books`) | ⬜ manual |
 | F1-08 | ใบเบิก: กด “จ่ายเงิน” ที่ `expense.html` เลือกบัญชีธนาคาร · เงินทดรอง: เลือกบัญชีที่จ่าย · เงินยืมทดรอง: กดจ่าย | ใบเบิกไม่ 400 อีก (ส่ง body) · ใบสำคัญจ่ายลงผังของธนาคาร · ธนาคารไม่ผูกผัง = ไทยก่อนสร้างใบ · เงินยืมทดรองบอกว่ายังไม่ลงบัญชีอัตโนมัติ + ทางไปต่อ | ⬜ manual |
 | F1-09 | defect class เดียวกับเช็ค (`api.get` บน `Layout.api()` ที่ไม่มีอยู่): ยื่นแบบที่ `tax.html` · `risk.html` ลูกค้า/ผู้ขาย · รายงานจุดสั่งซื้อ `inventory-reports.html` | ตรวจก่อนยื่น (precheck) รันจริง — ไม่ขึ้น "Pre-check ไม่สำเร็จ (api.get is not a function)" · ตารางความเสี่ยง/จุดสั่งซื้อโหลดได้ (เส้นทาง `product/reorder-forecast`) | ⬜ manual |
+## ETL-D — ศูนย์นำเข้า: งบทดลองยกมา · เอกสาร · รับ/จ่ายชำระ · สินทรัพย์ · migration wizard · โปรแกรมอื่น (รอบ 205 ทีม D · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.4/§2.5/§2.9/§2.10)
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| ETLD-01 | จับคู่รหัสบัญชีเดิม → ผังบริษัท (`ImportAccountCodeResolver`) | รหัสตรง (ตัดขีด/เลขไทย) = เลือกให้ 1.0 · ความจำบริษัททางเดียว = เลือกให้ · หลายทาง = แนะนำ · ชื่อเหมือน ≥ 0.90 = เลือกให้ · ชื่อแค่คล้าย = แนะนำ **ไม่เลือก** · ไม่มีอะไรตรง = แนะนำในหมวดเลขหน้าเท่านั้น · รหัสตรงบัญชีคุม = เสนอบัญชีย่อย | ✅ `ImportAccountingHelpersTests` |
+| ETLD-02 | วางงบทดลองจาก Excel/โปรแกรมเดิม (`TrialBalancePasteParser`) | แท็บ · ขีดตั้ง · CSV มีคำพูด · CSV ไม่มีคำพูดแต่ "1,234.50" (เดิม parseFloat ได้ 1) · วงเล็บ/ลบ = เครดิต · เลขไทย · หัวตาราง/ยอดรวมข้ามพร้อมเหตุผล · "รวมมิตร" ไม่ถูกตัด · ยอดอ่านไม่ได้ = รายงานบรรทัด | ✅ `ImportAccountingHelpersTests` |
+| ETLD-03 | กติกางบทดลองยกมา (`OpeningTrialBalanceRules`) — คำตัดสินข้อ 150 | ไม่ลงตัว/ยังไม่จับคู่/งวดปิด = บล็อก + ทางไปต่อ · หลายรหัสรวมบัญชีเดียว/ทับยอดเดิม/หมวดไม่ตรง = **คำเตือนไม่บล็อก** แต่ต้องรับทราบ | ✅ `ImportAccountingHelpersTests` |
+| ETLD-04 | ศูนย์นำเข้า: งบทดลองลงตัว | ระบบจับคู่บัญชีให้ (ชื่อตรงผัง) · ลงผ่าน `MigrationWizardService` · OpeningBalances ครบ 4 บัญชี Dr = Cr | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-05 | ศูนย์นำเข้า: งบทดลองไม่ลงตัว → ทางไปต่อ | ทุกแถวมี `tb-unbalanced` + "บัญชีผลต่างยกมา" · ลงไม่ได้ (ไม่มียอดยกมาถูกเขียน) · เลือก `differenceAccountId` แล้ว = คำเตือน `tb-difference-posted` → รับทราบแล้วลงได้ + บรรทัดผลต่าง Cr 1,000 | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-06 | wizard: คำเตือนรับทราบ / ไม่รับทราบ / ย้อน | วาง (หัวตาราง + ยอดรวม) อ่านได้ 2 บรรทัด + เลือกบัญชีให้ · ตรวจผ่าน (คำเตือนไม่บล็อก) · ไม่รับทราบ = `MIGRATION-TB-ACK` · รับทราบแล้วลง + audit `MIGRATION-TB-COMMIT` · **ย้อนคืนยอดเดิม 999 + หมายเหตุเดิม** (เดิมคืนไม่ได้) · แถวที่ชุดสร้างถูกลบ | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-07 | wizard: จับคู่กับบัญชีของบริษัทอื่น | ปฏิเสธ (BusinessRuleException) — คำตัดสินข้อ 150 (3) | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-08 | นำเข้าเอกสาร (สองแถวเลขเดิมเดียวกัน) | เอกสารเดียว · **ร่าง + DRAFT-** · Reference = เลขเดิม · ยอด 2,500/175/2,675 คำนวณโดย DocumentService (ยอดในไฟล์ไม่ถูกใช้) · OriginModule = Import · นำเข้าซ้ำ = "ข้าม" + คำเตือน · ย้อนได้ (ยังร่าง) | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-09 | เอกสารชนิดที่ร่างไม่ได้ · ผู้ติดต่อไม่พบ | ใบสำคัญจ่าย = `doc-type-unsupported` + ทาง "รับ/จ่ายชำระ" · ผู้ติดต่อไม่ตรงแน่นอน = ล้มพร้อม "นำเข้าผู้ติดต่อก่อน" · ไม่มีเอกสารถูกสร้าง | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-10 | นำเข้าการจ่ายชำระ | หาเอกสารด้วยเลขเดิม (Reference) ได้ · ผ่าน `CreatePaymentAsync` ⇒ **มี JE** Dr = Cr (Cr เงินสด 2,000) · ยอดค้าง 5,000 → 3,000 · เกินยอดค้าง = บล็อกตั้งแต่หน้าตรวจ | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-11 | นำเข้าทะเบียนสินทรัพย์ | ที่ดิน = `DepreciationMethod.None` ไม่มีตารางค่าเสื่อม · คอมพิวเตอร์ = เส้นตรง + ตาราง · ที่ดิน + วิธีเส้นตรง = บล็อกพร้อมทางแก้ (พ.ร.ฎ.145) | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-12 | โปรแกรมอื่น: ตัดสินด้วยหัวตาราง | `express_products.csv` (ลำดับลงทะเบียนเดิม ผู้ติดต่อก่อน) ⇒ adapter สินค้า · สร้าง Product ไม่ใช่ Contact · ราคา "1,250.00" ในคำพูดอ่านถูก | ✅ `ImportAccountingTargetsDbTests` (Db) · `ImportAccountingHelpersTests` |
+| ETLD-13 | Express ผู้ติดต่อ TIS-620 | encoding = windows-874 · ชื่อไทยถูก · ชนิดจากเลขภาษี (นิติบุคคล/บุคคลธรรมดา — เดิมฮาร์ดโค้ดนิติบุคคล) · หัว "ลูกค้า" = ลูกค้าเท่านั้น (เดิม IsCustomer=IsSupplier=true) · เลขผิด checksum = ปฏิเสธพร้อมเหตุผล | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-14 | กระทบยอดหลังย้ายระบบ (`OpeningBalanceReconciliation`) | ลูกหนี้ 40,000 vs บัญชี 45,000 = ไม่ลงตัว + Hint · สต็อก 100×120 = 12,000 ลงตัว · ราคาทุน 36,000 ลงตัว · ค่าเสื่อมสะสม 10,000 (กลับเครื่องหมาย) ลงตัว | ✅ `ImportAccountingTargetsDbTests` (Db) |
+| ETLD-15 | DI ทีม D + ไม่ชนชนิด | `ImportAccountMatcher` scoped · target 4 ตัวถูก scan · คีย์ normalize ไม่ซ้ำ | ✅ `ImportAccountingHelpersTests` |
+| ETLD-16 | AI `ImportAccountMap` (58) | ช่องเดียว `ImportAccountMatcher.AskAccountMapAiAsync` · ด่าน: รหัสต้องเป็นบัญชีลงยอดได้ของบริษัท + ≥ 0.70 · ปิดลูปที่ `ApplyMappingsAsync` | ⏳ ต่อสาย `SuggestAccountMapAsync` เมื่อรวมทีม A (ตอนนี้ = kill-switch: local ครบ) |
+
