@@ -65,19 +65,8 @@ public static class ApprovalAcknowledgement
             || WhtCertIssuePlan.IsApprovalWarning(warning) || WhtLineRateWarning.IsApprovalWarning(warning)
             || WhtPaymentSuggestion.IsApprovalWarning(warning)
             || ForeignServiceVat.IsPp36BaseApprovalWarning(warning)
-            || PreRegisteredPassPrefixes.Any(p => warning.StartsWith(p, StringComparison.Ordinal));
+            || WhtRoyaltyPolicy.IsApprovalWarning(warning);
     }
-
-    /// <summary>
-    /// ป้ายคำเตือนที่ทีมคู่ขนานรอบ 2026-10-13 จะส่งเข้าชุดคำเตือนก่อนอนุมัติ — ลงทะเบียนล่วงหน้าที่นี่ (ทีม A เป็นเจ้าของไฟล์นี้ในรอบนั้น)
-    /// เพื่อให้ทางเข้าที่ไม่มีคน (ใบประจำ · LINE · OCR อนุมัติอัตโนมัติ · API) ไม่ถูกหยุดเพราะคำเตือนแบบ "เตือน ไม่บล็อก" ชุดใหม่ ·
-    /// <c>[PP36-BASE]</c> = ฐาน ภ.พ.36 (ม.83/6) · <c>[WHT-FORM]</c> = แบบยื่น/ประเภทเงินได้ของหัก ณ ที่จ่าย ·
-    /// เมื่อ helper ของทีมนั้นเข้ามาแล้ว ให้เปลี่ยนเป็นเรียก <c>IsApprovalWarning</c> ของ helper นั้น (ตัวตั้งตัวเดียว) แล้วลบสตริงจากที่นี่
-    /// </summary>
-    internal static readonly string[] PreRegisteredPassPrefixes = { WhtFormWarningPrefix };
-
-    /// <summary>ป้ายคำเตือนแบบยื่น/ประเภทเงินได้ของหัก ณ ที่จ่าย (ทีมคู่ขนาน — ลงทะเบียนล่วงหน้า)</summary>
-    internal const string WhtFormWarningPrefix = "[WHT-FORM]";
 
     /// <summary>คำเตือนที่ยังไม่มีใครรับทราบตามแหล่ง — ว่าง = อนุมัติต่อได้ · ไม่ว่าง = ต้องหยุด (throw คำเตือนชุดนี้)</summary>
     public static IReadOnlyList<string> Unacknowledged(ApprovalAckSource source, IReadOnlyList<string> warnings)
@@ -223,7 +212,7 @@ public static class ApprovalAcknowledgement
                 ? Section65TerApprovalWarnings.RuleCodeOf(w) ?? Section65TerApprovalWarnings.LegalReferenceFallback
                 : ReceiptFormRule.IsApprovalWarning(w) ? ReceiptFormRule.WarningLegalReference
                 : WhtCertIssuePlan.IsApprovalWarning(w) || WhtLineRateWarning.IsApprovalWarning(w)
-                  || WhtPaymentSuggestion.IsApprovalWarning(w) || w.StartsWith(WhtFormWarningPrefix, StringComparison.Ordinal) ? WhtWarningsLegalReference
+                  || WhtPaymentSuggestion.IsApprovalWarning(w) || WhtRoyaltyPolicy.IsApprovalWarning(w) ? WhtWarningsLegalReference
                 : ForeignServiceVat.IsPp36BaseApprovalWarning(w) ? Pp36WarningsLegalReference
                 : GeneralWarningsLegalReference;
             if (!refs.Contains(r)) refs.Add(r);

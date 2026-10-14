@@ -409,7 +409,9 @@ public class TaxGlReconciliationService
                     && c.Status != Models.DTOs.Tax.WithholdingTaxCertStatus.Voided)
                 .Select(c => c.DocumentId!.Value)
                 .ToListAsync()).ToHashSet();
-            var noCert = withheldDocs.Where(d => !coveredDocIds.Contains(d.Id)).ToList();
+            // กระดานตัดสิน 2026-10-13 (ส่งต่อจากทีม C): ใบหักผ่าน e-Withholding ไม่ต้องออก 50 ทวิ (ธนาคารนำส่ง) ⇒ ไม่นับเป็น "ยังไม่มีใบ"
+            var eWhtDocIds = await Accounting.Helpers.EWithholdingScope.LoadDocIdsAsync(_db, companyId);
+            var noCert = withheldDocs.Where(d => !coveredDocIds.Contains(d.Id) && !eWhtDocIds.Contains(d.Id)).ToList();
             if (noCert.Count > 0)
                 causes.Add(new ReconCause("NO_CERT",
                     $"มีเอกสารที่หักภาษี ณ ที่จ่ายแล้ว {noCert.Count} ใบ รวม {noCert.Sum(d => d.WithholdingTaxAmount):N2} บาท "

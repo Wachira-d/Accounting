@@ -88,19 +88,19 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **บรรทัดจากสแกนที่ไม่มีราคาต่อหน่วย (เคส C · รอบ 204 ทีม D)**: ราคาต่อหน่วย = ยอดหลังกระจายส่วนลดท้ายบิล ⇒ ส่วนลด % = 0 (ตัวตัดสินเดียว `OcrLineReconciler.LineDiscount` — เดิมติด % ทั้งบิลไว้ ⇒ เปิดแก้แล้วบันทึก `ComputeLineAmounts` หักซ้ำ 950 ลด 5% ⇒ 902.50) · ยอด/VAT/ยอดรวมตอนสร้างไม่ขยับ · golden เดิมเปลี่ยน 0 แถว · เอกสารเก่าก่อนแก้ยังติด % (ไม่มี migration อัตโนมัติ) ⇒ หน้าตรวจข้อมูลแถว `OcrLineDiscountWouldChangeOnResave` + ปุ่ม "แก้" รายใบ (ทีม E 2026-10-13 · ดูข้อถัดไป) · Last verified `commit 1c46ebcd`
 - **จำนวน < 1 ไม่มีราคาต่อหน่วย (ทีม E 2026-10-13)**: `OcrLineReconciler.LineDiscount` คืน `(Percent, Amount, UnitPrice?)` — ราคา = ปัดขึ้น 2 ตำแหน่งของ ยอด ÷ จำนวน ·
   ส่วนลดบาท = round(จำนวน × ราคา) − ยอด (0–0.01) · % = 0 (เดิมส่วนลดบาทติดลบ ⇒ บันทึกซ้ำได้ 0.35 × 100 = 35.00) · จำนวน ≥ 1 / มีราคา = สูตรเดิมทุกตัวอักษร ·
-  `BuildScanLinesAsync` + replay harness ใช้ราคาที่คืน (rcs) · golden เดิมเปลี่ยน 0 แถว · Last verified `commit 27153d42`
+  `BuildScanLinesAsync` + replay harness ใช้ราคาที่คืน (rcs) · golden เดิมเปลี่ยน 0 แถว · Last verified `commit 1ff7073c`
 - **แก้ผลสแกน: แหล่งเงินเป็นค่าใช้จ่าย/รายได้ = เตือน + ยืนยัน (ทีม E 2026-10-13 · คำสั่งเจ้าของ "ไม่ล็อกตาย")**: `POST {scanId}/correct` ⇒ 409 `OCR-ACCT-PLACEMENT`
   พร้อมเหตุผล · หน้า `document-scan.html` confirm() แล้วส่งซ้ำพร้อม `acknowledgeAccountPlacement: true` ⇒ เก็บคู่ตามผู้ใช้ (`SuggestedAccountsJson.CreditPlacementAckCode` ผูกกับรหัสเครดิตที่ยืนยัน —
   `OcrAccountPlacement.ResolveStored` ของจอ/สร้างเอกสาร/JE สินทรัพย์ไม่ตัดทิ้ง) + audit `OCR-ACCT-PLACEMENT-OVERRIDE` · **ไม่สอนตัวเรียนรู้** (VendorIntel/หมวด/feedback GL) ด้วยคู่ที่ยืนยันทับคำเตือน ·
-  คู่สลับ (ส่งทั้งคู่กลับด้าน) ยังสลับให้เหมือนเดิม · Last verified `commit 14d0977f`
+  คู่สลับ (ส่งทั้งคู่กลับด้าน) ยังสลับให้เหมือนเดิม · Last verified `commit 24c266e9`
 - **หน้าตรวจข้อมูล: เอกสารจากสแกนที่ "เปิดแก้แล้วบันทึก ยอดขยับ" (ทีม E 2026-10-13)**: `DataIntegrityReport.OcrLineDiscountWouldChangeOnResave` = เอกสารที่สร้างจากสแกน
   (`OcrScanResult.CreatedDocumentId` · ไม่ยกเลิก) ที่บรรทัด `DiscountPercent > 0` + `DiscountAmount = 0` และการบันทึกซ้ำ (`DocumentService.ResaveLineNets` = AllocateBillDeductions →
   ComputeLineAmounts → ReconcileTaxRounding ตัวจริง) ได้ยอดต่างจากที่เก็บ > 0.01 · ปุ่ม "แก้" รายใบ → `POST data-integrity/ocr-line-discount/{documentId}/fix` →
   `DocumentService.FixOcrLineDiscountAsync` (partial `DocumentService.OcrLineFix.cs`): % = 0 + ส่วนลดบาท/ราคาใหม่ (`OcrLineDiscountRepair`) · **จำลองก่อนเขียน** — เงินบรรทัดใดจะขยับ ⇒
   ปฏิเสธ (ไม่บันทึก) · ไม่แตะยอด/VAT/ยอดรวม/JE/เลขที่ ⇒ ทุกสถานะที่ไม่ใช่ยกเลิก · audit `OCR-LINE-DISC-FIX` ก่อน/หลัง · สิทธิ์ ReportsFinancial + สร้าง (ร่าง)/อนุมัติ (ออกแล้ว) ของทิศเอกสาร ·
-  ไม่มี migration อัตโนมัติ · ตัวตรวจกับตัวแก้ใช้ `FindOcrLineDiscountIssues` ตัวเดียว · Last verified `commit 9c31f573`
+  ไม่มี migration อัตโนมัติ · ตัวตรวจกับตัวแก้ใช้ `FindOcrLineDiscountIssues` ตัวเดียว · Last verified `commit d8c6bc96`
 - **ช่องติ๊ก "กรอกราคาไม่รวม VAT" ที่ไม่มีอะไรต้องแปลง (ทีม E 2026-10-13)**: แถวราคาก่อน VAT อยู่แล้ว / คำขอไม่มีราคาใหม่ ⇒ ไม่แปลง + หมายเหตุ (ไม่ปฏิเสธทั้งคำขอ) ·
-  ราคาที่บันทึกไว้ไม่ถูกแปลงซ้ำ · ไม่รู้อัตรา VAT ยังปฏิเสธ (`OcrEtaxLineNormalizer.ApplyReviewPriceEntry`) · Last verified `commit b1053f69`
+  ราคาที่บันทึกไว้ไม่ถูกแปลงซ้ำ · ไม่รู้อัตรา VAT ยังปฏิเสธ (`OcrEtaxLineNormalizer.ApplyReviewPriceEntry`) · Last verified `commit 7e4cecb3`
 - **ผูกใบต้นทางทุกชนิด (2026-09-10 · `Helpers/OcrPredecessorMatcher`)** — ตอนสแกนเสร็จ
   `SuggestPredecessorLinkAsync` หา "เอกสารเปิดอยู่ของคู่ค้าเดียวกัน" ที่มีชนิดอยู่ใน
   `DocumentService.GetPredecessorTypes(target)` (ด้านกลับของ `ValidConversions` — PO/GRN → ใบซื้อ ·
@@ -2903,7 +2903,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ค่าผู้ใช้ชนะ · ปุ่ม "ใช้ค่าที่ระบบเสนอ" ให้เลือกเอง) · ผู้ใช้ต้องกดบันทึกเอง · golden: `PayrollWithholdingTaxTests` เทียบสูตร inline เดิมจาก `9c9580e6` ทุกช่อง
 - **รอบที่ยกเลิกก่อนมีการยกเลิก 50 ทวิ ตามรอบ (DECISIONS ข้อ 111 · ทีม E 2026-10-13)**: หน้าตรวจข้อมูล (`data-integrity.html`) แถว
   `VoidedPayrollRunsWithIssuedWhtCerts` = รอบ `Status == "Voided"` ที่ 50 ทวิ (`SourcePayrollRunId`) ยังสถานะ Issued/Printed · **อ่านอย่างเดียว** (ระบบไม่ยกเลิกให้ —
-  ใบอาจยื่นแล้ว = ประทับสถานะปลายทางเอง R1) · ลิงก์ไปหน้า 50 ทวิ พร้อมเลขใบ (หน้า `wht.html` ยังไม่มีพารามิเตอร์เปิดใบตามรหัส — ค้นด้วยเลข) · `OcrLineDiscountFixDbTests` · Last verified `commit 9c31f573`
+  ใบอาจยื่นแล้ว = ประทับสถานะปลายทางเอง R1) · ลิงก์ไปหน้า 50 ทวิ พร้อมเลขใบ (หน้า `wht.html` ยังไม่มีพารามิเตอร์เปิดใบตามรหัส — ค้นด้วยเลข) · `OcrLineDiscountFixDbTests` · Last verified `commit d8c6bc96`
 - **🚫 ยกเลิกรอบ (รอบ 201 PR2 · ข้อ 70)** — ปุ่มบนหน้ารายละเอียดรอบ (`payroll.html` `voidRun`) → `POST runs/{id}/void` body `VoidPayrollRunRequest { reason }` ·
   `PayrollRunResponse.CanVoid/VoidBlockReason` จาก `PayrollRunEditPolicy.CanVoid` (ตัวเดียวกับ `VoidPayrollAsync`) · กดไม่ได้ ⇒ disabled + เหตุผล · **เหตุผลบังคับ ≥ 5 ตัวอักษร**
   (service) + `AddChainedAuditLog` (`void-run` · สถานะก่อน · กลับ JE ไหม) · อ่านก่อนล็อกแบบไม่ติดตาม (แถวใต้ `FromSqlRaw … FOR UPDATE` เป็นค่าจริง) ·
@@ -3679,6 +3679,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     หน้าเว็บ: แผง 50 ทวิ ช่อง "ผู้จ่ายรับภาระภาษีตามสัญญา" (แสดงเมื่อเลือกออกแทน · ใบใหม่ไม่แตะ = ไม่ส่ง) + "หักผ่าน e-Withholding" · หน้ารายละเอียดมีปุ่มแก้สัญญาหลังอนุมัติ ·
     `contacts.html` ช่อง "มีสัญญาให้เรารับภาระภาษีหัก ณ ที่จ่าย" · เทสต์ `ForeignServicePayerBorneVatTests` · `WhtBorneByContractTests` · `WhtGrossUpTests`
 - **คอลัมน์ WHT รอบ 204 (schema only — wired by later commits · `DatabaseMigrationHelper.Round204DirectiveStatements`)**: `Document.WhtBorneByContract`/`WhtViaEWithholding` (bool, false — **ต่อสายแล้วโดยทีม B ข้างบน**) · `Contact.WhtBorneByContractDefault` (bool, false — ต่อสายแล้ว) · `Company.WhtRoyaltyIndividualForm` (enum `WhtRoyaltyIndividualForm` int, 0 = ภ.ง.ด.3 เดิม) / `WhtRoyaltyPnd2From` (timestamptz NULL) · `WithholdingTaxCertLine.DividendSubRow` (varchar(8) NULL) / `DividendCreditRate` (numeric(5,2) NULL) — ยังไม่มีผู้อ่าน/ผู้เขียน ค่าตั้งต้น = พฤติกรรมเดิม
+- **คำสั่งเจ้าของ 2026-10-13 "ไม่ล็อคตายตัว ผู้ใช้ตัดสินใจ ระบบแนะนำ" (DECISIONS ข้อ 150)** — คอลัมน์ข้างบนต่อสายแล้ว: **ค่าสิทธิ ม.40(3) บุคคลธรรมดา** ยื่นตามค่าตั้งบริษัท `Company.WhtRoyaltyIndividualForm` (ภ.ง.ด.3 เดิม · ภ.ง.ด.2 "แนะนำ" ประกาศอธิบดีฯ ฉบับที่ 58 ตั้งแต่ `WhtRoyaltyPnd2From`) — ตัวตัดสินเดียว `Helpers/WhtRoyaltyPolicy` ผ่านทุกทาง (JE 21915 · 50 ทวิ · รายงาน · นำส่ง · ปฏิทิน · ซิงค์ระบบภายนอก) · ค่าตั้งยังเป็น ภ.ง.ด.3 ⇒ คำเตือนอนุมัติ `[WHT-FORM]` แนะนำ ภ.ง.ด.2 (ไม่บล็อก) · **หักผ่าน e-Withholding** `Document.WhtViaEWithholding` (ตัวตัดสินเดียว `EWithholdingScope` — ธงของใบเอง/ใบต้นทาง) ⇒ JE ลง **21923** "ภาษีหัก ณ ที่จ่ายรอธนาคารนำส่ง" (ไม่อยู่ใน `DocumentPayableCodes`) · ไม่ออก 50 ทวิ อัตโนมัติ (ออกเองได้ + คำเตือน) · ไม่อยู่ในภาระนำส่ง/ไฟล์ยื่น ภ.ง.ด. · ตัวกระทบยอด GL ไม่ฟ้อง "ยังไม่มีใบ" · ปฏิทินเตือนเมื่อ 21923 ค้างเกิน 30 วัน · แก้ธงได้เฉพาะใบร่าง · **บริการต่างประเทศ + ผู้จ่ายออกภาษีแทน** บันทึกได้ — VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน (`ForeignServiceVat.VatWithBorne`) · ตัวเลขต่างจากที่ระบบแนะนำ ⇒ คำเตือน `[PP36-BASE]` · **มีสัญญาให้ผู้จ่ายรับภาระภาษี** `Document.WhtBorneByContract` (ค่าตั้งต้นจากผู้ติดต่อ) ⇒ ไม่บวกกลับ §65 ตรี (3) + audit · **ภาษีหักตอนจ่าย** = ยอดแนะนำหลังหักใบลดหนี้ซื้อ (`Helpers/WhtPaymentSuggestion`) ผู้ใช้แก้ได้ · ป้าย `[PP36-BASE]`/`[WHT-FORM]`/`[WHT-CN-NET]` ผ่านทางเข้าไม่มีคน (`ApprovalAcknowledgement.PassesWithoutPerson` อ่านตัวตรวจป้ายของเจ้าของแต่ละตัว) · Last verified `commit <pending-int>`
 - **PDF**: `PdfGenerationService.WhtCert.cs` (QuestPDF) **และ**
   `PdfGenerationService.cs:2237` (HTML) — **ทั้งสองตัวจัดบรรทัดลงแถว 1–6 ของแบบ
   ผ่าน `ThaiWhtRateTable.CertificateRow` ตัวเดียว** ห้ามเขียน allow-list ของรหัสเอง

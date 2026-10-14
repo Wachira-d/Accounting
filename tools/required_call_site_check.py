@@ -6992,6 +6992,16 @@ RULES += [
          why=_TEAMC + "ค่าตั้งค่าสิทธิ + วันเริ่ม คำนวณที่ตัวตัดสินเดียว (เปิดครั้งแรก = วันที่ 1 ของเดือน)"),
 ]
 
+# กระดานตัดสิน 2026-10-13 ผู้รวมงาน: ทางเข้าซิงค์ระบบภายนอก + ตัวกระทบยอด GL ใช้ตัวตัดสินค่าสิทธิ/e-Withholding ตัวเดียวกับ DocumentService
+RULES += [
+    dict(file="Services/Implementations/IntegrationService.cs", method="CreatePaymentVoucherJournalAsync",
+         must=["EWithholdingScope.IsViaAsync(_db, companyId, document)", "WhtRoyaltyPolicy.AppliesTo(payRoyalty.Form"],
+         why="ใบสำคัญจ่ายจากระบบภายนอก: ค่าสิทธิ ม.40(3) ตามค่าตั้ง (21915) + e-Withholding (21923) — มิฉะนั้นลง 21916 ผิดผัง"),
+    dict(file="Services/Implementations/TaxGlReconciliationService.cs", method="BuildWhtLineAsync",
+         must=["EWithholdingScope.LoadDocIdsAsync(_db, companyId)", "!eWhtDocIds.Contains(d.Id)"],
+         why="ใบหักผ่าน e-Withholding ไม่ต้องออก 50 ทวิ — ตัวกระทบยอดต้องไม่ฟ้องว่า \"ยังไม่มีใบ\""),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

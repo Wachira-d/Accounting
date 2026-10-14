@@ -21199,6 +21199,15 @@ public partial class DocumentService : IDocumentService
                     Accounting.Helpers.WhtIncomeCodes.WithheldForPayee(doc.Lines, doc.ContactId, doc.WhtPayeeContactId,
                         Accounting.Helpers.WhtPayeeSplit.EffectiveSinglePayee(doc))) is string pnd2Mix)
                 warnings.Add(Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix + " " + pnd2Mix);
+            // กระดานตัดสิน 2026-10-13 (ทีม C c2): ค่าตั้งบริษัทยังยื่นค่าสิทธิ ม.40(3) ของบุคคลเป็น ภ.ง.ด.3 ⇒ ระบบแนะนำ ภ.ง.ด.2 (ประกาศอธิบดีฯ ฉบับที่ 58)
+            // — แนะนำเท่านั้น ผู้ใช้เลือกแบบเองที่ตั้งค่า (ไม่ล็อค) · ป้าย [WHT-FORM] ผ่านทางเข้าไม่มีคน
+            if (whtPayeeForWarn != null
+                && Accounting.Helpers.WhtRoyaltyPolicy.ApprovalWarning(
+                    (await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).Form,
+                    doc.IsForeignService, whtPayeeForWarn.CountryCode, whtPayeeForWarn.TaxId, whtPayeeForWarn.ContactType, whtPayeeForWarn.Name,
+                    Accounting.Helpers.WhtIncomeCodes.WithheldForPayee(doc.Lines, doc.ContactId, doc.WhtPayeeContactId,
+                        Accounting.Helpers.WhtPayeeSplit.EffectiveSinglePayee(doc))) is string royaltyFormWarn)
+                warnings.Add(royaltyFormWarn);
             var ownTaxId = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.TaxId).FirstOrDefaultAsync();
             if (whtPayeeForWarn != null && Accounting.Helpers.ThaiTaxId.IsValid(ownTaxId)
                 && Accounting.Helpers.ThaiTaxId.Same(ownTaxId, whtPayeeForWarn.TaxId))
