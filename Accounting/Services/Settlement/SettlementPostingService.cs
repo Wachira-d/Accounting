@@ -689,7 +689,10 @@ public class SettlementPostingService : ISettlementPostingService
         var saleType = vatRegistered ? DocumentType.TaxInvoice : DocumentType.Receipt;
         var facts = new SettlementPostingFacts(
             batch.Status, payoutDay, today, payoutClosed, summaryClosed, filedVat, filedWht, accounts.Errors,
-            counterparty != null, !string.IsNullOrWhiteSpace(counterparty?.TaxId), channel.ClearingAccountId,
+            // ฝ่ายค้านรอบสาม (L-b): ด่านเดียวกับตอนออก 50 ทวิ (13 หลัก + checksum · ผู้รับต่างประเทศยกเว้น) — เดิมดูแค่ "มีค่า"
+            // ⇒ เลขผิดรูปผ่านด่านแผน แล้วไปล้มกลางทางตอนออกใบหลังอนุมัติค่าธรรมเนียมไปแล้ว (SETTLEMENT-POST-PARTIAL)
+            counterparty != null, counterparty != null && WhtCertIssuePlan.PayeeTaxIdProblem(counterparty.Name, counterparty.TaxId,
+                WhtPayeeKind.IsForeignPayee(false, counterparty.CountryCode)) is null, channel.ClearingAccountId,
             receiptDocs, clearingSources, duplicates,
             await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.PaymentVoucher),
             await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, saleType),

@@ -141,7 +141,9 @@ public static class WhtRoyaltyPolicy
             var start = current.Pnd2From is DateTime cf ? ThaiDate.CalendarDateUtc(cf) : OpenStart;
             var until = ThaiDate.CalendarDateUtc(requestedPnd3From ?? utcNow);
             history = FormatHistory(ParseHistory(current.Pnd2History).Append(new WhtRoyaltyWindow(start, until)));
-            from = current.Pnd2From;   // คงไว้ให้อ่านย้อน (ไม่มีผล — ช่วงอยู่ในประวัติแล้ว)
+            // ฝ่ายค้านรอบสาม (L-a): ล้างวันเริ่มของช่วงที่ปิดแล้ว (ช่วงอยู่ในประวัติครบ) — เดิมคงไว้ ⇒ หน้าตั้งค่าแสดงวันเดิมกลับมา
+            // แล้วเปิด ภ.ง.ด.2 ใหม่ทีหลังส่งวันนั้นกลับ ⇒ ช่วงที่เป็น ภ.ง.ด.3 ระหว่างกลางพลิกเป็น ภ.ง.ด.2 เงียบ ๆ (GL อยู่ 21916 แต่รายงานอ่าน 21915)
+            from = null;
         }
         var decidedAt = confirm || form != current.Form ? utcNow : current.DecidedAt;
         return new WhtRoyaltySetting(form, from, history, decidedAt);

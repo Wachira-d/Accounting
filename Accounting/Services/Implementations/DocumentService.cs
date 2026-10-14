@@ -8077,13 +8077,19 @@ public partial class DocumentService : IDocumentService
         // ฝ่ายค้านรอบ 204 M2: ค่าตั้ง "ณ วันที่ลงบัญชีไว้" (ประวัติ — ไม่ใช่ค่าตั้งวันนี้) ⇒ ผู้ถูกหักที่แบบต่างเพราะค่าตั้งอย่างเดียว ไม่ถูกย้ายผัง ·
         // เกณฑ์เงินสด: หนี้ WHT ลงตอนจ่ายรายงวด (CreatePaymentJournalAsync · วันที่จ่ายของงวด) ⇒ วันของงวดเหล่านั้น · อื่น ๆ = วันของเอกสาร
         var chgRoyaltySetting = await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId);
-        var chgWhtBasis = (await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId))?.WhtRecognitionBasis
-            ?? Models.Enums.WhtRecognitionBasis.Cash;
-        var chgInstalmentDates = chgWhtBasis == Models.Enums.WhtRecognitionBasis.Cash
-            ? await _db.Payments.AsNoTracking()
+        // ฝ่ายค้านรอบสาม (L-c): ตัวตัดสินเกณฑ์เดียว IsWhtCashBasisAsync (กรอง !IsDeleted) + วันจ่ายของการจ่ายหลายใบ (PaymentAllocations ที่หักภาษี)
+        // — เดิมอ่านแค่ Payments.DocumentId ⇒ ใบที่จ่ายผ่าน "จ่ายหลายใบ" ไม่มีวันจ่ายจริง ⇒ ค่าตั้ง ณ วันผิด ⇒ ย้ายหนี้จากผัง 2191x ผิดตัว
+        var chgInstalmentDates = new List<DateTime>();
+        if (await IsWhtCashBasisAsync(companyId))
+        {
+            chgInstalmentDates.AddRange(await _db.Payments.AsNoTracking()
                 .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.DocumentId == doc.Id && p.WithholdingTaxAmount > 0m)
-                .Select(p => p.PaymentDate).ToListAsync()
-            : new List<DateTime>();
+                .Select(p => p.PaymentDate).ToListAsync());
+            chgInstalmentDates.AddRange(await _db.PaymentAllocations.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.DocumentId == doc.Id && !a.Payment.IsDeleted
+                    && a.WithholdingTaxAmount > 0m)
+                .Select(a => a.Payment.PaymentDate).ToListAsync());
+        }
         var (chgRoyaltyAsPnd2, chgRoyaltyMixed) = Accounting.Helpers.WhtRoyaltyPolicy.PostedFlag(chgRoyaltySetting,
             Accounting.Helpers.WhtRoyaltyPolicy.PolicyDate(null, doc.PaymentDate, doc.DocumentDate), chgInstalmentDates);
         // แบบของผู้ถูกหักตัดสินด้วยรหัสเงินได้ของ "บรรทัดของรายนั้น" (ภ.ง.ด.2 ต่อราย · รอบ 204 ทีม T3) — ส่วนเดิม/ส่วนใหม่สร้างจาก `lines` ลำดับเดียวกัน

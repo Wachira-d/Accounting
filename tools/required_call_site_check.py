@@ -7155,6 +7155,17 @@ RULES += [
          why="ผู้รวมงานกระดาน 2026-10-13: เปลี่ยนผู้ถูกหักใช้ค่าตั้งค่าสิทธิ ม.40(3) เดียวกับ JE — มิฉะนั้นย้ายผังไป 21916 ทั้งที่ JE เดิมลง 21915"),
 ]
 
+# ฝ่ายค้านรอบสามของคำสั่งไม่ล็อคตายตัว (L-a/L-b/L-c)
+RULES += [
+    dict(file="Services/Settlement/SettlementPostingService.cs", method="BuildGateAsync",
+         must=["WhtCertIssuePlan.PayeeTaxIdProblem(counterparty.Name, counterparty.TaxId"],
+         forbid=["!string.IsNullOrWhiteSpace(counterparty?.TaxId)"],
+         why="ด่านแผนรอบโอนใช้ตัวตรวจเลขผู้เสียภาษีเดียวกับตอนออก 50 ทวิ — เลขผิดรูปต้องหยุดก่อนลงบัญชี ไม่ใช่ล้มกลางทาง"),
+    dict(file=DOC, method="ChangeWhtPayeeAsync",
+         must=["await IsWhtCashBasisAsync(companyId)", "a.WithholdingTaxAmount > 0m"],
+         why="เปลี่ยนผู้ถูกหัก: วันลงหนี้ WHT จริงรวมการจ่ายหลายใบ + ตัวตัดสินเกณฑ์เดียว"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

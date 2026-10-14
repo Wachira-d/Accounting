@@ -220,4 +220,19 @@ public class WhtRoyaltyPolicyHistoryTests
         var stamp = Assert.Single(stmts, s => s.StartsWith("UPDATE \"Companies\" SET \"WhtRoyaltyFormDecidedAt\"", StringComparison.Ordinal));
         Assert.Contains("\"WhtRoyaltyFormDecidedAt\" IS NULL", stamp);   // รันซ้ำทุกบูตได้ ไม่ทับเวลาที่ผู้ใช้ตัดสิน
     }
+
+    [Fact]
+    public void ปิดภงด2แล้วเปิดใหม่_ไม่ระบุวัน_ไม่พลิกช่วงภงด3ระหว่างกลาง()
+    {
+        var now0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var on = WhtRoyaltyPolicy.ApplyUpdate(default, WhtRoyaltyIndividualForm.Pnd2, now0, now0);
+        var closed = WhtRoyaltyPolicy.ApplyUpdate(on, WhtRoyaltyIndividualForm.Pnd3, null, new DateTime(2026, 4, 1, 0, 0, 0, DateTimeKind.Utc));
+        Assert.Null(closed.Pnd2From);   // ช่วงเดิมอยู่ในประวัติ — ไม่ค้างวันเริ่มให้ส่งกลับ
+        Assert.True(WhtRoyaltyPolicy.AppliesTo(closed, new DateTime(2026, 2, 10, 0, 0, 0, DateTimeKind.Utc)));
+        // เปิดใหม่ ต.ค. โดยไม่ระบุวัน ⇒ เริ่มวันที่ 1 ของเดือนนั้น · ช่วง เม.ย.–ก.ย. ยังเป็น ภ.ง.ด.3
+        var reopened = WhtRoyaltyPolicy.ApplyUpdate(closed, WhtRoyaltyIndividualForm.Pnd2, null, new DateTime(2026, 10, 5, 0, 0, 0, DateTimeKind.Utc));
+        Assert.False(WhtRoyaltyPolicy.AppliesTo(reopened, new DateTime(2026, 6, 15, 0, 0, 0, DateTimeKind.Utc)));
+        Assert.True(WhtRoyaltyPolicy.AppliesTo(reopened, new DateTime(2026, 2, 10, 0, 0, 0, DateTimeKind.Utc)));
+        Assert.True(WhtRoyaltyPolicy.AppliesTo(reopened, new DateTime(2026, 10, 20, 0, 0, 0, DateTimeKind.Utc)));
+    }
 }
