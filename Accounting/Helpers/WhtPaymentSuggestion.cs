@@ -115,7 +115,7 @@ public static class WhtPaymentSuggestion
     }
 
     /// <summary>ส่วนต่อท้ายคำเตือนเมื่อบริษัทรับรู้ภาษีหักตอนจ่าย — เจ้าหนี้ค้างยอดเดบิตเท่าส่วนที่เกิน (ฝ่ายค้านรอบ 204 L4)</summary>
-    public static string CashBasisResidueNote(decimal excess)
+    private static string CashBasisResidueNote(decimal excess)
         => $" · บริษัทรับรู้ภาษีหัก ณ ที่จ่ายตอนจ่าย (เกณฑ์เงินสด): ส่วนที่เกิน {excess:N2} ตัดเจ้าหนี้เกินยอดที่เหลือ ⇒ เจ้าหนี้ของใบนี้จะค้างยอดเดบิต {excess:N2} "
            + "หลังปิดยอด — ถ้ายอดนี้ถูกจริง ให้ปรับปรุงเจ้าหนี้ด้วยใบสำคัญทั่วไป · ถ้าไม่ตั้งใจ ให้แก้ยอดภาษีงวดนี้เป็นยอดที่ระบบแนะนำ";
 

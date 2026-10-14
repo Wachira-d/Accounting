@@ -163,7 +163,7 @@ public static class EWithholdingScope
     public const string MissingAccountRuleCode = "WHT-EWHT-NO-21923";
 
     /// <summary>ข้อความล้มดัง + ทางไปต่อ เมื่อใบ e-Withholding ไม่มีผัง 21923</summary>
-    public static string MissingAccountMessage(string? documentNumber)
+    private static string MissingAccountMessage(string? documentNumber)
         => $"{(string.IsNullOrWhiteSpace(documentNumber) ? "เอกสารนี้" : documentNumber)} หักภาษีผ่าน e-Withholding (ธนาคารนำส่งแทน) แต่บริษัทไม่มีผัง "
            + $"{WhtPayableAccount.EWithholdingCode} \"ภาษีหัก ณ ที่จ่ายรอธนาคารนำส่ง (e-Withholding)\" — ลงบัญชีไม่ได้ (ถ้าลงผังภาษีหัก ณ ที่จ่ายค้างจ่ายปกติ "
            + "ยอดจะค้างในผังที่หน้านำส่ง/รายงาน ภ.ง.ด. ไม่นับ) · ทางไปต่อ: สร้างผัง 21923 ภายใต้กลุ่ม 219 ในผังบัญชีแล้วทำรายการอีกครั้ง "
