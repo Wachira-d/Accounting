@@ -1,5 +1,8 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Accounting.Helpers;
+using Accounting.Models.Enums;
+using Accounting.Services.Settlement.Adapters;
 using Accounting.Services.Ai.Prompts;
 using Accounting.Services.Implementations.Ocr;
 
@@ -24,10 +27,9 @@ public static class ImportReviewHeuristics
 {
     private const decimal DuplicateThreshold = 0.88m;
 
-    private static readonly Regex EmailRe =
-        new(@"^[^@\s]+@[^@\s.]+\.[^@\s]+$", RegexOptions.Compiled);
     private static readonly Regex ThaiDigitsRe =
         new(@"[๐-๙]", RegexOptions.Compiled);
+    private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
     public static ImportAiReviewResult Review(
         string entityType,
@@ -71,26 +73,29 @@ public static class ImportReviewHeuristics
                     {
                         validations.Add(new ImportFieldValidation(
                             rowIndex, col, null, "ค่าว่างในคอลัมน์ที่จำเป็นต้องมี",
-                            "กรอกค่าก่อนนำเข้า หรือลบแถวนี้ออก"));
+                            "กรอกค่าก่อนนำเข้า หรือลบแถวนี้ออก", "required-missing"));
                         issueCells++;
                     }
                     continue;
                 }
 
                 // ── Normalization ที่เดาผลได้แน่นอน ────────────────────────
-                var normalized = NormalizeValue(value, field?.DataType, col, out var reason);
+                // ชนิดของ field: ตัวแปลชนิดตัวเดียว (ImportSchemas.ParseFieldType) — ชื่อ ImportFieldType ("Amount") หรือชนิดเดิม ("decimal")
+                // + ชื่อคอลัมน์ช่วยตัดสิน (TaxId/Email/Phone) — เดิมเทียบสตริงชนิดเองในไฟล์นี้
+                var type = ImportSchemas.ParseFieldType(field?.DataType, col);
+                var normalized = NormalizeValue(value, type, out var reason, out var normCode);
                 if (normalized != null && !string.Equals(normalized, value, StringComparison.Ordinal))
                 {
-                    normalizations.Add(new ImportNormalization(rowIndex, col, value, normalized, reason));
+                    normalizations.Add(new ImportNormalization(rowIndex, col, value, normalized, reason, normCode));
                     value = normalized;   // ตรวจ validation ต่อด้วยค่าที่ normalise แล้ว
                 }
 
                 // ── Validation ───────────────────────────────────────────
-                var issue = ValidateValue(value, field?.DataType, col);
+                var issue = ValidateValue(value, type, col);
                 if (issue != null)
                 {
                     validations.Add(new ImportFieldValidation(
-                        rowIndex, col, value, issue.Value.Issue, issue.Value.Fix));
+                        rowIndex, col, value, issue.Value.Issue, issue.Value.Fix, issue.Value.Code));
                     issueCells++;
                 }
             }
@@ -176,91 +181,140 @@ public static class ImportReviewHeuristics
             BatchPatterns: patterns);
     }
 
-    /// <summary>คืนค่าที่จัดรูปแบบแล้วเมื่อมั่นใจ; null = ไม่ต้องแก้</summary>
-    private static string? NormalizeValue(string value, string? dataType, string column, out string? reason)
+    /// <summary>
+    /// คืนค่าที่จัดรูปแบบแล้วเมื่อมั่นใจ; null = ไม่ต้องแก้ — <b>รอบ 205 ทีม A: มอบให้ <see cref="ImportValueNormalizer"/> ตัวเดียว</b>
+    /// (เดิม <c>DateTime.TryParse</c>/<c>decimal.TryParse</c> แบบ culture-free ของไฟล์นี้เอง ⇒ ผลตรวจกับค่าที่ลงจริงคนละสูตร) ·
+    /// <paramref name="code"/> = รหัสคงที่ของการแปลง (นักเรียน ImportDataReview เรียนการรับ/ปฏิเสธต่อ field+code)
+    /// </summary>
+    private static string? NormalizeValue(string value, ImportFieldType type, out string? reason, out string? code)
     {
         reason = null;
-        var v = value;
-
-        // เลขไทย ๐-๙ → 0-9 (ใช้ได้กับทุกชนิด — ค่าที่ตั้งใจเป็นตัวอักษรไทยจะไม่มีเลขไทยปน)
-        if (ThaiDigitsRe.IsMatch(v))
+        code = null;
+        var hadThaiDigits = ThaiDigitsRe.IsMatch(value);
+        string? canonical = null;
+        switch (type)
         {
-            v = new string(v.Select(c => c >= '๐' && c <= '๙' ? (char)('0' + (c - '๐')) : c).ToArray());
-            reason = "แปลงเลขไทยเป็นเลขอารบิก";
-        }
-
-        var isNumeric = dataType is "decimal" or "number" or "int" or "integer";
-        var isDate = dataType is "date" or "datetime";
-        var looksTaxId = column.Contains("TaxId", StringComparison.OrdinalIgnoreCase);
-
-        if (isNumeric && v.Contains(','))
-        {
-            var stripped = v.Replace(",", "");
-            if (decimal.TryParse(stripped, NumberStyles.Any, CultureInfo.InvariantCulture, out _))
+            case ImportFieldType.Amount or ImportFieldType.VatRate:
             {
-                v = stripped;
-                reason = "ตัดเครื่องหมายคั่นหลักพันออกจากจำนวนเงิน";
+                var a = ImportValueNormalizer.Amount(value);
+                if (a.Ok && a.Value is { } amt) canonical = ImportValueNormalizer.CanonicalAmount(amt);
+                break;
             }
-        }
-
-        if (looksTaxId && (v.Contains('-') || v.Contains(' ')))
-        {
-            var digits = new string(v.Where(char.IsDigit).ToArray());
-            if (digits.Length == 13)
+            case ImportFieldType.Decimal or ImportFieldType.Integer:
             {
-                v = digits;
-                reason = "ตัดขีด/ช่องว่างออกจากเลขประจำตัวผู้เสียภาษี";
+                var n = ImportValueNormalizer.Number(value);
+                if (n.Ok && n.Value is { } num) canonical = num.ToString(Inv);
+                break;
             }
+            case ImportFieldType.Date:
+            {
+                var d = ImportValueNormalizer.Date(value);
+                if (d.Ok && d.Value is { } dt) canonical = ImportValueNormalizer.CanonicalDate(dt);
+                if (canonical != null && canonical != value)
+                {
+                    var beYear = Regex.IsMatch(SettlementValueParser.ThaiDigitsToAscii(value), @"(^|[^0-9])2[4-6][0-9]{2}([^0-9]|$)");
+                    reason = beYear ? "แปลงปี พ.ศ. เป็น ค.ศ." : "จัดรูปแบบวันที่เป็น ปี-เดือน-วัน";
+                    code = beYear ? "date-buddhist-year" : "date-format";
+                }
+                break;
+            }
+            case ImportFieldType.TaxId:
+            {
+                var t = ImportValueNormalizer.TaxId(value);
+                if (t.Ok && t.Value != null) canonical = t.Value;
+                if (canonical != null && canonical != value && !hadThaiDigits)
+                {
+                    reason = "ตัดขีด/ช่องว่างออกจากเลขประจำตัวผู้เสียภาษี";
+                    code = "taxid-format";
+                }
+                break;
+            }
+            case ImportFieldType.Flag:
+            {
+                var f = ImportValueNormalizer.Flag(value);
+                if (f.Ok && f.Value is { } b) canonical = b ? "true" : "false";
+                if (canonical != null && canonical != value) { reason = "แปลงค่าใช่/ไม่ใช่เป็น true/false"; code = "flag-format"; }
+                break;
+            }
+            case ImportFieldType.BranchCode:
+            {
+                var br = ImportValueNormalizer.BranchCode(value);
+                if (br.Ok && br.Value != null) canonical = br.Value;
+                if (canonical != null && canonical != value) { reason = "แปลงเป็นรหัสสาขา 5 หลัก (สำนักงานใหญ่ = 00000)"; code = "branch-format"; }
+                break;
+            }
+            default:
+                // ข้อความ: เลขไทย ๐-๙ → 0-9 (ค่าที่ตั้งใจเป็นตัวอักษรไทยจะไม่มีเลขไทยปน)
+                if (hadThaiDigits) canonical = SettlementValueParser.ThaiDigitsToAscii(value);
+                break;
         }
 
-        if (isDate && DateTime.TryParse(v, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt)
-            && dt.Year > 2400)
+        if (canonical == null || string.Equals(canonical, value, StringComparison.Ordinal)) return null;
+        if (reason == null)
         {
-            // ปี พ.ศ. → ค.ศ. (ThaiDate.CalendarDateUtc ใช้เกณฑ์เดียวกัน)
-            v = dt.AddYears(-543).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            reason = "แปลงปี พ.ศ. เป็น ค.ศ.";
+            if (hadThaiDigits) { reason = "แปลงเลขไทยเป็นเลขอารบิก"; code = "thai-digits"; }
+            else if (value.Contains(',')) { reason = "ตัดเครื่องหมายคั่นหลักพันออกจากจำนวนเงิน"; code = "thousand-separator"; }
+            else { reason = "จัดรูปแบบตัวเลข"; code = "number-format"; }
         }
-
-        return reason == null ? null : v;
+        return canonical;
     }
 
-    private static (string Issue, string? Fix)? ValidateValue(string value, string? dataType, string column)
+    private static (string Issue, string? Fix, string Code)? ValidateValue(string value, ImportFieldType type, string column)
     {
-        if (column.Contains("TaxId", StringComparison.OrdinalIgnoreCase))
+        switch (type)
         {
-            var digits = new string(value.Where(char.IsDigit).ToArray());
-            if (digits.Length != 13)
-                return ($"เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก (พบ {digits.Length} หลัก)",
-                    "แก้ให้ครบ 13 หลัก หรือเว้นว่างถ้าไม่ทราบ");
-            if (!IsValidThaiTaxIdChecksum(digits))
-                return ("เลขประจำตัวผู้เสียภาษีไม่ผ่านการตรวจหลักตรวจสอบ (mod-11)",
-                    "ตรวจสอบเลขกับเอกสารต้นฉบับอีกครั้ง");
-            return null;
-        }
-
-        if (column.Contains("Email", StringComparison.OrdinalIgnoreCase) && !EmailRe.IsMatch(value))
-            return ("รูปแบบอีเมลไม่ถูกต้อง", "ตรวจสอบว่ามี @ และโดเมนครบถ้วน");
-
-        switch (dataType)
-        {
-            case "decimal" or "number" or "int" or "integer":
-                if (!decimal.TryParse(value.Replace(",", ""), NumberStyles.Any,
-                        CultureInfo.InvariantCulture, out var num))
-                    return ("ค่าไม่ใช่ตัวเลข", "ลบตัวอักษร/สัญลักษณ์ที่ไม่ใช่ตัวเลขออก");
+            case ImportFieldType.TaxId:
+            {
+                var t = ImportValueNormalizer.TaxId(value);
+                if (t.Ok) return null;
+                var digits = new string(SettlementValueParser.ThaiDigitsToAscii(value).Where(char.IsDigit).ToArray());
+                return t.IssueCode switch
+                {
+                    "taxid-leading-zero" => (t.Message ?? "เลขผู้เสียภาษีขาดศูนย์นำหน้า", t.Suggested, t.IssueCode),
+                    "taxid-lost-precision" => (t.Message ?? "เลขผู้เสียภาษีเสียหลัก", "จัดคอลัมน์เป็นข้อความในไฟล์ต้นทางแล้วส่งออกใหม่", t.IssueCode),
+                    _ when digits.Length != 13 => ($"เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก (พบ {digits.Length} หลัก)",
+                        "แก้ให้ครบ 13 หลัก หรือเว้นว่างถ้าไม่ทราบ", "taxid-length"),
+                    _ => ("เลขประจำตัวผู้เสียภาษีไม่ผ่านการตรวจหลักตรวจสอบ (mod-11)", "ตรวจสอบเลขกับเอกสารต้นฉบับอีกครั้ง", t.IssueCode ?? "taxid-invalid"),
+                };
+            }
+            case ImportFieldType.Email:
+                return ImportValueNormalizer.Email(value).Ok ? null
+                    : ("รูปแบบอีเมลไม่ถูกต้อง", "ตรวจสอบว่ามี @ และโดเมนครบถ้วน", "email-invalid");
+            case ImportFieldType.Amount or ImportFieldType.Decimal or ImportFieldType.Integer:
+            {
+                var a = ImportValueNormalizer.Amount(value);
+                var n = a.Ok ? a : ImportValueNormalizer.Number(value);
+                if (!n.Ok || n.Value is not { } num)
+                    return ("ค่าไม่ใช่ตัวเลข", "ลบตัวอักษร/สัญลักษณ์ที่ไม่ใช่ตัวเลขออก", "number-invalid");
                 if (num < 0 && (column.Contains("Quantity", StringComparison.OrdinalIgnoreCase)
                         || column.Contains("Price", StringComparison.OrdinalIgnoreCase)))
-                    return ("ค่าติดลบในคอลัมน์ที่ควรเป็นบวก", "ตรวจสอบเครื่องหมายของตัวเลข");
+                    return ("ค่าติดลบในคอลัมน์ที่ควรเป็นบวก", "ตรวจสอบเครื่องหมายของตัวเลข", "number-negative");
                 return null;
-
-            case "date" or "datetime":
-                if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
-                    return ("รูปแบบวันที่ไม่ถูกต้อง", "ใช้รูปแบบ yyyy-MM-dd หรือ dd/MM/yyyy");
-                if (dt.Year > 2400)
-                    return ("วันที่ยังเป็นปี พ.ศ.", "แปลงเป็น ค.ศ. (ลบ 543) ก่อนนำเข้า");
+            }
+            case ImportFieldType.Date:
+            {
+                var d = ImportValueNormalizer.Date(value);
+                if (!d.Ok || d.Value is not { } dt)
+                    return ("รูปแบบวันที่ไม่ถูกต้อง", "ใช้รูปแบบ yyyy-MM-dd หรือ dd/MM/yyyy", "date-invalid");
                 if (dt > DateTime.UtcNow.AddYears(1))
-                    return ("วันที่อยู่ในอนาคตเกิน 1 ปี", "ตรวจสอบว่าพิมพ์ปีถูกต้อง");
+                    return ("วันที่อยู่ในอนาคตเกิน 1 ปี", "ตรวจสอบว่าพิมพ์ปีถูกต้อง", "date-far-future");
                 return null;
-
+            }
+            case ImportFieldType.Flag:
+            {
+                var f = ImportValueNormalizer.Flag(value);
+                return f.Ok ? null : (f.Message ?? "ค่าใช่/ไม่ใช่ไม่ถูกต้อง", "ใช้ ใช่/ไม่ใช่ · Y/N · 1/0", f.IssueCode ?? "flag-invalid");
+            }
+            case ImportFieldType.BranchCode:
+            {
+                var b = ImportValueNormalizer.BranchCode(value);
+                return b.Ok ? null : (b.Message ?? "รหัสสาขาไม่ถูกต้อง", "ตัวเลข 5 หลัก (สำนักงานใหญ่ = 00000)", b.IssueCode ?? "branch-invalid");
+            }
+            case ImportFieldType.VatRate:
+            {
+                var v = ImportValueNormalizer.VatRate(value);
+                return v.Ok ? null : (v.Message ?? "อัตราภาษีไม่ถูกต้อง", "ใช้ 7 หรือ 0 (\"ยกเว้น\" = ยกเว้นภาษี)", v.IssueCode ?? "vat-rate-invalid");
+            }
             default:
                 return null;
         }

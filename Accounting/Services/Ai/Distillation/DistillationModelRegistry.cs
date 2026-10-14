@@ -36,7 +36,7 @@ public static class DistillationModelRegistry
         // ทั้งใบ = {"lines":[…]}) ⇒ generic ตอบรูปทั้งใบไม่ได้ (bulk PV ขึ้น "AI ตอบ JSON ไม่ valid" ทั้งที่ไม่ได้เรียก AI)
         typeof(PaymentVoucherAccountingDistillationModel),
         // รอบ 205 T0 (IMPORT_ETL_REVIEW §2.6): นักเรียนของศูนย์นำเข้าข้อมูล — คำตอบเป็นโครงสร้าง ({"mappings":[…]} / ผลตรวจทั้งชุด)
-        // ⇒ bespoke · T0 วางโครง (PredictAsync = ไม่มีคำตอบ) · ทีม A เติมสมองจากชั้น local (คำพ้อง/แม่แบบ/ImportReviewHeuristics)
+        // ⇒ bespoke · ทีม A เติมสมองแล้ว: ImportColumnMapper (คำพ้อง/โปรไฟล์/คู่ที่เรียนไว้) · ImportReviewHeuristics (+ เลิกเตือนที่บริษัทปฏิเสธประจำ)
         typeof(ImportColumnMatchDistillationModel),
         typeof(ImportDataReviewDistillationModel),
     };

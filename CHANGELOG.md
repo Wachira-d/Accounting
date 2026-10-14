@@ -4814,3 +4814,14 @@ _Last verified against codebase: 2026-10-14 (ทีม F4 · `erp-review/2026-10
 **หลังฝ่ายค้าน**: ลงนามข้ามบริษัทได้เฉพาะตัวเอง/ผู้อนุมัติเริ่มต้น · โอนผู้อนุมัติห้ามให้คนที่อนุมัติขั้นอื่นแล้ว · ตั้งขั้นอนุมัติแบบลายเซ็นตรวจสมาชิก ·
 50 ทวิ ที่ยกเลิกหลังเข้าคิวไม่ถูกส่ง · ตัวนับแอปนับเฉพาะ "รอคุณ" · หน้ากฎเตือนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์อนุมัติเอกสาร · นิยามสมาชิกของการบันทึกกฎ = ตอนส่ง ·
 มือถือกดซ้ำหลังลำดับครบแต่อนุมัติเอกสารล้ม ⇒ 409 พร้อมทางไปต่อ · เตือนผู้ขอ "ผู้อนุมัติออก" วันละครั้ง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+_รอบ 205 ทีม A — ศูนย์นำเข้าข้อมูล: จับคู่คอลัมน์หลายชั้น + AI distillation (กฎเหล็ก #1 · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.3/§2.6):
+helper owner เดียว — `ImportFieldSynonymSeed` (รวม 4 สำเนา: GetFieldAliases · schema ส่วนตัวของ AiSuggestionController · หัว adapter Express/PEAK/FlowAccount ·
+BankCsvParser) · `ImportHeaderSignature` (normalize หัว + SHA-256 ไม่ขึ้นกับลำดับ) · `ImportSchemas` (แคตตาล็อก field ทุกชนิด ย้ายจาก GetTemplateFields + ตัวอย่าง +
+journal-entries ที่เดิมคืน null + งบทดลองยกมา + บรรทัด statement ธนาคาร) · `ImportSourceSeed` (โปรไฟล์ cold-start ในโค้ด — **ทุกตัวเป็นการเดา** รอไฟล์จริง §4) ·
+`ImportColumnMapper` (ผู้ใช้ → แม่แบบ → ชื่อตรง → คำพ้อง/โปรไฟล์ → คู่ที่ยืนยันแล้ว → รูปข้อมูล → AI · greedy unique · ค่าในคอลัมน์ตัดสินคำพ้องกำกวม · ด่าน AI
+field ∈ schema / ≥ 0.70 / ไม่ทับชั้นสูง · ป้ายแหล่งไทยจากเซิร์ฟเวอร์) · `ImportMappingTemplateStore` ครบสัญญา (+ SaveColumns · GetLearnedHeaders ·
+RecordColumnMatchChoice) · `ImportColumnMatchService` ทางเข้าเดียวของการจับคู่ (DI บล็อกทีม A) · นักเรียน ImportColumnMatch (คำพ้อง+โปรไฟล์+คู่ที่เรียน ·
+รูปเดียวกับครู) และ ImportDataReview (ImportReviewHeuristics ที่ย้ายมาอยู่บน ImportValueNormalizer + เลิกเสนอการจัดรูปแบบที่บริษัทปฏิเสธประจำ — ปัญหาทางกฎหมาย
+ปิดไม่ได้) · augmenter ไม่ทิ้ง FeedbackId/UsedAi + SuggestAccountMapAsync (58 · ด่าน ∈ ผังบริษัท) + ResolveEntityAsync (59 · ด่าน ∈ candidate ∪ NEW) +
+RecordPick/RecordReviewChoice · ImportPrompts ForceProviderCall=false (เดิมข้าม routing+งบทุกครั้ง) + BuildAccountMap/BuildEntityMatch ·
+AiSuggestionController.SuggestImportMapping มอบให้ตัวจับคู่กลาง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_

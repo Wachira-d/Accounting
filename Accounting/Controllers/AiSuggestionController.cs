@@ -1765,122 +1765,68 @@ public class AiSuggestionController : ControllerBase
         List<string> Headers,
         List<List<string>>? SampleRows);
 
+    /// <summary>
+    /// แนะนำการจับคู่หัวคอลัมน์ → field — รอบ 205 ทีม A: <b>มอบให้ <c>IImportColumnMatchService</c> (owner เดียว)</b> แทน schema คำพ้องส่วนตัว
+    /// + bigram ของ endpoint นี้ (สำเนาที่สองของกติกาเดียวกับศูนย์นำเข้า) · ชั้น: แม่แบบบริษัท → ชื่อตรง → คำพ้อง/โปรไฟล์โปรแกรมต้นทาง → คู่ที่เรียนไว้ →
+    /// รูปข้อมูล → AI ผ่าน orchestrator (นักเรียนก่อน · ด่าน field ∈ schema) · ชื่อ field ในคำตอบ = ชื่อของ <c>ImportSchemas</c>
+    /// (เดิม camelCase ของ schema ส่วนตัว — ไม่มีหน้าใดเรียก endpoint นี้ ณ รอบ 205) · EntityType ไม่รู้จัก/ว่าง ⇒ ระบบเดาจากหัวตาราง
+    /// </summary>
     [HttpPost("import/suggest-mapping")]
     public async Task<ActionResult<ApiResponse<object>>> SuggestImportMapping(
-        Guid companyId, [FromBody] SmartImportRequest req, CancellationToken ct)
+        Guid companyId, [FromBody] SmartImportRequest req,
+        [FromServices] Accounting.Services.Import.IImportColumnMatchService matcher, CancellationToken ct)
     {
         if (req.Headers == null || req.Headers.Count == 0)
             return BadRequest(new ApiResponse<object>(false, null, "Headers ห้ามว่าง"));
 
-        // Schema dictionary — target field → keyword set
-        var contactSchema = new Dictionary<string, string[]>
-        {
-            ["name"] = new[] { "ชื่อ", "ลูกค้า", "ผู้ขาย", "name", "customer", "vendor", "supplier" },
-            ["taxId"] = new[] { "เลขผู้เสียภาษี", "เลขประจำ", "taxid", "tax_id", "tax id", "vat number" },
-            ["address"] = new[] { "ที่อยู่", "address" },
-            ["phone"] = new[] { "โทร", "เบอร์", "phone", "tel", "mobile" },
-            ["email"] = new[] { "อีเมล", "email", "e-mail" },
-            ["isCustomer"] = new[] { "ลูกค้า", "customer" },
-            ["isSupplier"] = new[] { "ผู้จำหน่าย", "ผู้ขาย", "supplier", "vendor" },
-        };
-        var productSchema = new Dictionary<string, string[]>
-        {
-            ["code"] = new[] { "รหัส", "รหัสสินค้า", "code", "sku", "product code" },
-            ["name"] = new[] { "ชื่อ", "ชื่อสินค้า", "name", "product" },
-            ["sellingPrice"] = new[] { "ราคาขาย", "ราคา", "price", "selling" },
-            ["costPrice"] = new[] { "ต้นทุน", "cost" },
-            ["currentStock"] = new[] { "คงคลัง", "stock", "qty", "quantity" },
-            ["vatRate"] = new[] { "vat", "ภาษีมูลค่า" },
-            ["unit"] = new[] { "หน่วย", "unit" },
-            ["category"] = new[] { "หมวด", "category" },
-        };
-        var jeSchema = new Dictionary<string, string[]>
-        {
-            ["entryDate"] = new[] { "วันที่", "date", "entry date" },
-            ["description"] = new[] { "คำอธิบาย", "description", "memo", "narrative" },
-            ["accountCode"] = new[] { "รหัสบัญชี", "account code", "account" },
-            ["debitAmount"] = new[] { "เดบิต", "debit", "dr" },
-            ["creditAmount"] = new[] { "เครดิต", "credit", "cr" },
-        };
-        var schema = req.EntityType?.ToLowerInvariant() switch
-        {
-            "contact" => contactSchema,
-            "product" => productSchema,
-            "journalentry" or "je" => jeSchema,
-            _ => contactSchema,
-        };
+        var columns = req.Headers.Select((h, i) => new ImportColumnInput(i, h ?? "",
+            (req.SampleRows ?? new List<List<string>>()).Where(r => r != null && i < r.Count).Select(r => r[i] ?? "").Take(20).ToList())).ToList();
 
-        decimal Bigram(string a, string b)
+        // ชื่อชนิดแบบเดิมของ endpoint ("Contact"/"Product"/"JournalEntry"/"je"/"Invoice") → คีย์ของ ImportSchemas · ไม่รู้จัก ⇒ เดาจากหัวตาราง
+        var entityType = (req.EntityType ?? "").Trim().ToLowerInvariant() switch
         {
-            var al = a.ToLowerInvariant(); var bl = b.ToLowerInvariant();
-            if (al == bl) return 1m;
-            if (string.IsNullOrEmpty(al) || string.IsNullOrEmpty(bl)) return 0m;
-            var aSet = new HashSet<string>(); for (int i = 0; i + 1 < al.Length; i++) aSet.Add(al.Substring(i, 2));
-            var bSet = new HashSet<string>(); for (int i = 0; i + 1 < bl.Length; i++) bSet.Add(bl.Substring(i, 2));
-            if (aSet.Count == 0 || bSet.Count == 0) return 0m;
-            var overlap = aSet.Intersect(bSet).Count();
-            return (decimal)(2.0 * overlap) / (aSet.Count + bSet.Count);
-        }
+            "contact" => "contacts",
+            "product" => "products",
+            "journalentry" or "je" => "journal-entries",
+            "invoice" or "document" => "documents",
+            var other => ImportSchemas.CanonicalEntityType(other),
+        };
+        var guessed = entityType == null;
+        entityType ??= ImportColumnMapper.GuessEntityType(columns).First().EntityType;
 
-        var mappings = new List<object>();
-        foreach (var header in req.Headers)
+        var outcome = await matcher.MapAsync(companyId, entityType, columns, new Accounting.Services.Import.ImportColumnMatchOptions(), ct);
+        var plan = outcome.Plan;
+        var mappings = plan.Columns.Select(p => new
         {
-            var hLower = header.Trim().ToLowerInvariant();
-            string? best = null; decimal bestScore = 0m;
-            foreach (var (target, keywords) in schema)
-            {
-                // Exact keyword contains → high score
-                if (keywords.Any(k => hLower.Contains(k.ToLowerInvariant())))
-                {
-                    if (1m > bestScore) { best = target; bestScore = 1m; }
-                    continue;
-                }
-                // Otherwise rank by bigram similarity max
-                var maxSim = keywords.Max(k => Bigram(hLower, k));
-                if (maxSim > bestScore && maxSim >= 0.40m)
-                {
-                    best = target; bestScore = maxSim;
-                }
-            }
-            mappings.Add(new
-            {
-                header,
-                suggestedField = best,
-                confidence = bestScore,
-                isMapped = best != null,
-            });
-        }
-
-        var mappedCount = mappings.Count(m => ((dynamic)m).isMapped);
-        var inputJson = JsonSerializer.Serialize(new
-        {
-            req.EntityType, headerCount = req.Headers.Count, mappedCount,
-        });
-        Guid? feedbackId = null;
-        try
-        {
-            feedbackId = await _feedback.RecordCallAsync(new AiFeedbackRecord(
-                CompanyId: companyId, FeatureKey: AiFeatureKey.ImportColumnMatch,
-                PromptHash: "", PromptJson: inputJson, ResponseJson: null,
-                AiPrimaryAnswer: mappedCount.ToString(),
-                AiConfidence: 0.80m, LocalModelAnswer: mappedCount.ToString(),
-                LocalModelConfidence: 0.80m, LocalModelVersion: "bigram-keyword-v1",
-                SourceEntityType: req.EntityType, SourceEntityId: null,
-                Status: AiCallStatus.LocalServed, ProviderUsed: AiProviderType.None,
-                ModelVersion: "bigram-keyword", LatencyMs: 0, InputTokens: 0, OutputTokens: 0,
-                CostUsd: 0m, CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
-        }
-        catch { /* best-effort */ }
+            header = p.SourceHeader,
+            suggestedField = p.TargetField,
+            targetLabel = p.TargetLabel,
+            confidence = p.Confidence,
+            isMapped = p.TargetField != null,
+            source = p.Source.ToString(),
+            sourceLabel = p.SourceLabel,
+            usedAi = p.UsedAi,
+            alternatives = p.Alternatives,
+        }).ToList();
+        var mappedCount = mappings.Count(m => m.isMapped);
 
         return Ok(new ApiResponse<object>(true, new
         {
-            entityType = req.EntityType,
+            entityType,
+            entityLabel = ImportSchemas.EntityLabel(entityType),
+            entityGuessed = guessed,
+            sourceSystem = plan.SourceProfile?.Profile.SourceSystem,
+            sourceSystemLabel = plan.SourceProfile?.Label,
             mappings,
             mappedCount,
             unmappedCount = req.Headers.Count - mappedCount,
-            reasoning = $"ตอบ {mappedCount}/{req.Headers.Count} columns. " +
-                "ที่ตอบไม่ได้ user เลือก mapping เอง — feedback บันทึกเพื่อปรับ schema ครั้งถัดไป.",
-            feedbackId,
+            missingRequired = plan.MissingRequired.Select(f => new { field = f.Field, label = f.Label }),
+            reasoning = $"จับคู่ได้ {mappedCount}/{req.Headers.Count} คอลัมน์" +
+                (plan.MissingRequired.Count > 0 ? $" · ยังขาดช่องบังคับ {string.Join(", ", plan.MissingRequired.Select(f => f.Label))}" : "") +
+                " · ที่ยังไม่จับคู่ ผู้ใช้เลือกเองได้ — การยืนยันถูกเรียนไว้ใช้ครั้งถัดไป",
+            usedAi = outcome.UsedAi,
+            badge = outcome.UsedAi ? "🤖 AI แนะนำ" : "⚙️ ระบบแนะนำ",
+            feedbackId = outcome.AiFeedbackId,
         }));
     }
 
