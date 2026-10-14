@@ -12197,7 +12197,7 @@
                 </div>
                 <div id="rpWhtRow" style="display:none;background:#fef9c3;border:1px solid #fde047;border-radius:6px;padding:10px 12px">
                   <div class="form-group" style="margin-bottom:0">
-                    <label class="form-label" style="color:#854d0e">หัก ณ ที่จ่าย ที่ลูกค้าหักงวดนี้ <span style="color:#854d0e;font-weight:normal;font-size:11px">(บังคับเฉพาะ Cash basis — เริ่มต้นจาก proportional auto)</span></label>
+                    <label class="form-label" style="color:#854d0e">หัก ณ ที่จ่าย ที่ลูกค้าหักงวดนี้ <span style="color:#854d0e;font-weight:normal;font-size:11px">(ระบบเติมยอดแนะนำให้ — หักใบลดหนี้แล้ว · แก้ได้ถ้าหนังสือรับรองระบุยอดอื่น)</span></label>
                     <input id="rpWht" class="form-input" type="number" step="0.01" min="0" style="border-color:#fbbf24">
                     <div id="rpWhtHint" class="form-help" style="color:#854d0e"></div>
                     <div id="rpWhtReview" class="text-sm" style="display:none;margin-top:6px;padding:6px 10px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;color:#92400E"></div>
@@ -12266,7 +12266,11 @@
         const rpSettleLines = document.getElementById('rpSettleLines');
         if (rpSettleLines) rpSettleLines.innerHTML = '';
         if (rpSettleRow) rpSettleRow.style.display = _settleAllowed ? 'block' : 'none';
-        const _settleRefresh = () => this._rpSettleRefreshHint(amountEl, balanceDue);
+        // ทีม A (2a): บรรทัดปรับเปลี่ยน ⇒ ยอดที่ปิดหนี้เปลี่ยน ⇒ ยอดภาษีหักที่แนะนำเปลี่ยน (ตัวโหลดผูกไว้ที่ wrap._rpRecalcWht ข้างล่าง)
+        const _settleRefresh = () => {
+          this._rpSettleRefreshHint(amountEl, balanceDue);
+          if (typeof wrap._rpRecalcWht === 'function') wrap._rpRecalcWht();
+        };
         const rpSettleAdd = document.getElementById('rpSettleAdd');
         if (rpSettleAdd) rpSettleAdd.onclick = () => { this._rpSettleAddRow('', '', '', _settleRefresh); _settleRefresh(); };
         if (_settleAllowed && this._currentDoc?.actualPaidAmount != null) {
@@ -12404,11 +12408,10 @@
             }).catch(() => fill([]));
           }
         }
-        // Per-installment WHT — only show when the source actually carries
-        // WHT. Proportional default = amount × (sourceWht / sourceTotal),
-        // recomputed live as the operator edits the cash amount. Operator
-        // can override (e.g. customer's WHT cert says different than split).
-        // Cumulative cap is enforced by the backend.
+        // Per-installment WHT — only show when the source actually carries WHT.
+        // ทีม A (2a · 2026-10-13): ยอดแนะนำมาจากเซิร์ฟเวอร์ (GET document/{id}/payment-wht-suggestion — ตัวคิดเดียวกับตอนบันทึก
+        // WhtPaymentSuggestion: หักใบลดหนี้ซื้อที่มีผลแล้ว · งวดสุดท้าย = ที่เหลือทั้งหมด) — หน้านี้ไม่มีสูตรเอง (server computes · page displays) ·
+        // ผู้ใช้แก้ช่องเอง ⇒ ค่าผู้ใช้ชนะ (dataset.userTouched) · ไม่แตะช่อง ⇒ ส่ง null ให้เซิร์ฟเวอร์ใช้ยอดแนะนำ (กันผลโหลดช้ากว่าการกดบันทึก)
         const rpWhtRow = document.getElementById('rpWhtRow');
         const rpWht = document.getElementById('rpWht');
         const rpWhtHint = document.getElementById('rpWhtHint');
@@ -12416,17 +12419,57 @@
         // rpWhtRow ใช้ block layout แล้ว (เดิม flex) — ปรับให้สอดคล้องกับ
         // โครงสร้าง form-group ที่ใช้ class กลาง
         rpWhtRow.style.display = hasWht ? 'block' : 'none';
+        rpWht.value = '';
+        rpWht.dataset.userTouched = '';
+        rpWht.dataset.autoSrc = '';
+        // ระหว่างรอยอดแนะนำ: ภาษีหักหลังใบลดหนี้ที่เซิร์ฟเวอร์คิดไว้แล้ว (DocumentResponse.whtNetOfAdjustments · null = ไม่มีใบลดหนี้)
+        const _curWhtNet = (this._currentDoc && String(this._currentDoc.id) === String(docId)) ? this._currentDoc.whtNetOfAdjustments : null;
+        rpWhtHint.textContent = !hasWht ? ''
+          : (_curWhtNet != null
+            ? `ภาษีหักหลังใบลดหนี้ ${Layout.money(_curWhtNet)} (ใบเดิม ${Layout.money(sourceWht)}) — กำลังคำนวณยอดแนะนำงวดนี้…`
+            : 'กำลังคำนวณยอดแนะนำ…');
+        rpWht.oninput = () => { rpWht.dataset.userTouched = '1'; };
+        // หนี้ที่ปิดด้วยบรรทัดปรับ ตามความหมายของเซิร์ฟเวอร์ (ยอดที่ปิดหนี้ − เงินที่จ่าย = −Σ บรรทัดปรับ)
+        const _rpSettleNet = () => {
+          const adj = (rpSettleRow && rpSettleRow.style.display !== 'none') ? this._rpSettleRead() : [];
+          return -adj.reduce((s2, a) => s2 + a.amount, 0);
+        };
+        const _rpWhtSuggestion = (entered) => {
+          const qs = new URLSearchParams({
+            amount: String(parseFloat(amountEl.value || '0') || 0),
+            settleNet: String(_rpSettleNet()),
+            fee: String(parseFloat(document.getElementById('rpFee').value || '0') || 0),
+          });
+          if (entered != null) qs.set('entered', String(entered));
+          return API.get(`/api/companies/${Layout.getCompanyId()}/document/${encodeURIComponent(docId)}/payment-wht-suggestion?${qs.toString()}`)
+            .then(r => r?.data || null);
+        };
+        let _rpWhtTimer = null;
         const recalcWht = () => {
           if (!hasWht) return;
-          const amt = parseFloat(amountEl.value || '0');
-          const prop = Math.round(amt * sourceWht / sourceTotal * 100) / 100;
-          rpWht.value = prop.toFixed(2);
-          rpWhtHint.textContent =
-            `WHT ทั้งหมดของเอกสาร: ${sourceWht.toFixed(2)} · proportional งวดนี้: ${prop.toFixed(2)} (= ${amt.toFixed(2)} × ${sourceWht.toFixed(2)} ÷ ${sourceTotal.toFixed(2)}) · แก้ตัวเลขข้างบนได้ถ้าใบ WHT ระบุยอดอื่น`;
+          clearTimeout(_rpWhtTimer);
+          _rpWhtTimer = setTimeout(() => {
+            _rpWhtSuggestion(null).then(sg => {
+              if (wrap.dataset.docId !== String(docId) || !sg) return;   // ผลของใบก่อนหน้า ห้ามทับใบที่เปิดอยู่
+              if (rpWht.dataset.userTouched !== '1') {
+                rpWht.value = Number(sg.suggested || 0).toFixed(2);
+                rpWht.dataset.autoSrc = 'server-suggestion';
+              }
+              rpWhtHint.textContent = sg.reasonText || '';
+            }).catch(e => {
+              if (wrap.dataset.docId !== String(docId)) return;
+              rpWhtHint.textContent = 'โหลดยอดแนะนำภาษีหัก ณ ที่จ่ายไม่สำเร็จ — เว้นว่างได้ (ระบบคิดยอดแนะนำตอนบันทึก) หรือกรอกตามหนังสือรับรอง: '
+                + (e.message || '');
+            });
+          }, 250);
         };
+        wrap._rpRecalcWht = recalcWht;
         recalcWht();
-        amountEl.removeEventListener('input', recalcWht);
+        // ตัวฟังเดิมต้องถอดด้วย reference เดิม (ฟังก์ชันใหม่ทุกครั้งที่เปิด — removeEventListener ด้วยตัวใหม่ไม่มีผล ⇒ ตัวฟังซ้อนข้ามใบ)
+        if (wrap._rpWhtListener) amountEl.removeEventListener('input', wrap._rpWhtListener);
+        wrap._rpWhtListener = recalcWht;
         amountEl.addEventListener('input', recalcWht);
+        document.getElementById('rpFee').oninput = recalcWht;
         // ทีม A (A3-UI): ป้าย "50 ทวิ ต้องตรวจ" ของเอกสาร (เช่น ใบลดหนี้ลดภาษีหักแล้ว — ยอดหักงวดนี้/50 ทวิ ต้องตามยอดที่ลด) แสดงข้างช่องหัก ณ ที่จ่าย ·
         // ข้อความมาจากเซิร์ฟเวอร์ (DocumentResponse.whtCertReviewReason) ทั้งก้อน — หน้านี้ไม่ตัดสินเอง
         const rpWhtReview = document.getElementById('rpWhtReview');
@@ -12494,6 +12537,17 @@
             }
             return;
           }
+          // ทีม A (2a): ผู้ใช้แก้ยอดภาษีหักเอง ⇒ ถามเซิร์ฟเวอร์ว่ายอดนี้เกินยอดที่เหลือหลังใบลดหนี้ไหม (ข้อความจากเซิร์ฟเวอร์ — ไม่ตัดสินที่หน้านี้) ·
+          // เกินเพดานใบเดิม = เซิร์ฟเวอร์ปฏิเสธอยู่แล้ว (แจ้งก่อนส่ง) · เกินยอดที่เหลือ = ถามยืนยัน แล้วบันทึกตามที่ผู้ใช้ระบุได้
+          const _whtTouched = hasWht && rpWht.dataset.userTouched === '1' && rpWht.value !== '';
+          const _whtEntered = _whtTouched ? (parseFloat(rpWht.value) || 0) : null;
+          if (_whtTouched) {
+            let chk = null;
+            try { chk = await _rpWhtSuggestion(_whtEntered); }
+            catch (e) { chk = null; /* ตรวจไม่ได้ ⇒ ให้เซิร์ฟเวอร์ตัดสินตอนบันทึก (ด่านเพดานอยู่ที่ CreatePaymentAsync) */ }
+            if (chk?.aboveGrossError) { Layout.toast(chk.aboveGrossError, 'error', 9000); return; }
+            if (chk?.aboveNetWarning && !confirm(chk.aboveNetWarning + '\n\nกด OK = บันทึกตามยอดที่กรอก · Cancel = กลับไปแก้')) return;
+          }
           submit.disabled = true; submit.textContent = 'กำลังบันทึก...';
           try {
             const payRes = await api.createPayment({
@@ -12505,9 +12559,8 @@
               notes,
               overrideBankAccountId: (document.getElementById('rpBankOverride').value) || null,
               overridePaymentAccountId: (document.getElementById('rpFundAccount')?.value) || null,
-              withholdingTaxAmount: (sourceWht > 0)
-                ? (parseFloat(document.getElementById('rpWht').value || '0') || 0)
-                : null,
+              // ไม่แตะช่อง = null ⇒ เซิร์ฟเวอร์ใช้ยอดแนะนำ (ตัวเดียวกับที่แสดง) · แก้เอง = ยอดของผู้ใช้
+              withholdingTaxAmount: (sourceWht > 0) ? _whtEntered : null,
               exchangeRate: ((currency || 'THB') !== 'THB')
                 ? (parseFloat(document.getElementById('rpFxRate').value || '0') || null)
                 : null,
@@ -12526,6 +12579,8 @@
               ? 'บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ + ออกใบเสร็จรับเงินให้แล้ว'
               : 'บันทึกชำระเงินสำเร็จ — ลง JE รับเงิน/ล้างลูกหนี้ให้แล้ว', 'success', 6000);
             this._toastWhtCertNotice(payRes?.data?.whtCertNotice);
+            // ทีม A (2a): คำเตือนที่เซิร์ฟเวอร์รับตามผู้ใช้ (เช่น ภาษีหักเกินยอดที่เหลือหลังใบลดหนี้) — แสดงให้เห็น ไม่กลืน
+            (payRes?.data?.warnings || []).forEach(w => Layout.toast(w, 'warning', 12000));
             wrap.classList.remove('active');
             Layout.closeModal('detailModal');
             await this.load();

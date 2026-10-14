@@ -57,11 +57,29 @@ public static class ApprovalAcknowledgement
     /// ล้มดังอยู่แล้วที่ตัวเอกสาร (ป้าย + ลิสต์รอออกใบ) · ห้ามหยุดใบประจำ/API ที่เคยอนุมัติผ่าน
     /// ฝ่ายค้าน M3 (2026-10-12): ชุดอัตรา WHT ไม่ตรงประเภทเงินได้ <c>[WHT-RATE]</c> (<see cref="WhtLineRateWarning.IsApprovalWarning"/>) ก็ผ่าน —
     /// นโยบายเจ้าของ "เตือน ไม่บล็อก" · เดิมไม่มีป้าย ⇒ ใบประจำ/LINE/OCR อนุมัติอัตโนมัติ/API ถูกหยุดเพราะคำเตือนนี้ · เว็บ/มือถือยังแสดงให้กดรับทราบ
+    /// ทีม A (2a · 2026-10-13 คำสั่งเจ้าของ "ไม่ล็อคตายตัว แนะนำให้ได้มากที่สุด"): ชุดภาษีหักเกินยอดที่เหลือหลังใบลดหนี้ <c>[WHT-CN-NET]</c>
+    /// (<see cref="WhtPaymentSuggestion.IsApprovalWarning"/>) ก็ผ่าน — เตือน ไม่บล็อก · ทางเข้าอัตโนมัติไม่ถูกหยุด · เว็บ/มือถือยังแสดงให้กดรับทราบ
     private static bool PassesWithoutPerson(string warning)
     {
         return Section65TerApprovalWarnings.IsWarning(warning) || ReceiptFormRule.IsApprovalWarning(warning)
-            || WhtCertIssuePlan.IsApprovalWarning(warning) || WhtLineRateWarning.IsApprovalWarning(warning);
+            || WhtCertIssuePlan.IsApprovalWarning(warning) || WhtLineRateWarning.IsApprovalWarning(warning)
+            || WhtPaymentSuggestion.IsApprovalWarning(warning)
+            || PreRegisteredPassPrefixes.Any(p => warning.StartsWith(p, StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// ป้ายคำเตือนที่ทีมคู่ขนานรอบ 2026-10-13 จะส่งเข้าชุดคำเตือนก่อนอนุมัติ — ลงทะเบียนล่วงหน้าที่นี่ (ทีม A เป็นเจ้าของไฟล์นี้ในรอบนั้น)
+    /// เพื่อให้ทางเข้าที่ไม่มีคน (ใบประจำ · LINE · OCR อนุมัติอัตโนมัติ · API) ไม่ถูกหยุดเพราะคำเตือนแบบ "เตือน ไม่บล็อก" ชุดใหม่ ·
+    /// <c>[PP36-BASE]</c> = ฐาน ภ.พ.36 (ม.83/6) · <c>[WHT-FORM]</c> = แบบยื่น/ประเภทเงินได้ของหัก ณ ที่จ่าย ·
+    /// เมื่อ helper ของทีมนั้นเข้ามาแล้ว ให้เปลี่ยนเป็นเรียก <c>IsApprovalWarning</c> ของ helper นั้น (ตัวตั้งตัวเดียว) แล้วลบสตริงจากที่นี่
+    /// </summary>
+    internal static readonly string[] PreRegisteredPassPrefixes = { Pp36BaseWarningPrefix, WhtFormWarningPrefix };
+
+    /// <summary>ป้ายคำเตือนฐาน ภ.พ.36 (ทีมคู่ขนาน — ลงทะเบียนล่วงหน้า)</summary>
+    internal const string Pp36BaseWarningPrefix = "[PP36-BASE]";
+
+    /// <summary>ป้ายคำเตือนแบบยื่น/ประเภทเงินได้ของหัก ณ ที่จ่าย (ทีมคู่ขนาน — ลงทะเบียนล่วงหน้า)</summary>
+    internal const string WhtFormWarningPrefix = "[WHT-FORM]";
 
     /// <summary>คำเตือนที่ยังไม่มีใครรับทราบตามแหล่ง — ว่าง = อนุมัติต่อได้ · ไม่ว่าง = ต้องหยุด (throw คำเตือนชุดนี้)</summary>
     public static IReadOnlyList<string> Unacknowledged(ApprovalAckSource source, IReadOnlyList<string> warnings)
@@ -190,6 +208,9 @@ public static class ApprovalAcknowledgement
     /// <summary>มาตราของคำเตือนหัก ณ ที่จ่าย <c>[WHT-PAYEE]</c>/<c>[WHT-RATE]</c> — ม.50/ม.54 + ท.ป.4/2528 (ฝ่ายค้านรอบสอง 2026-10-12: เดิมตกไปอ้าง §86/§82/5(1))</summary>
     public const string WhtWarningsLegalReference = "RD-50 / RD-54 / ท.ป.4/2528";
 
+    /// <summary>มาตราของคำเตือนฐาน ภ.พ.36 <c>[PP36-BASE]</c> — VAT ที่ผู้จ่ายนำส่งแทนผู้ประกอบการต่างประเทศ ม.83/6</summary>
+    public const string Pp36WarningsLegalReference = "RD-83/6";
+
     /// <summary>
     /// **มาตราอ้างอิงของร่องรอย "อนุมัติทั้งที่มีคำเตือน" ตามชุดคำเตือนที่ผ่านจริง** (ฝ่ายค้านรอบ 201 รอบสาม P2-4 · กฎ M Legal reference logging) —
     /// เดิมประทับ <see cref="GeneralWarningsLegalReference"/> ตายตัวทุกแถว ⇒ ทางเข้าอัตโนมัติ/API ที่ผ่านได้แค่ชุด §65 ตรี กลับอ้าง §86/§82/5(1)
@@ -203,7 +224,9 @@ public static class ApprovalAcknowledgement
             var r = Section65TerApprovalWarnings.IsWarning(w)
                 ? Section65TerApprovalWarnings.RuleCodeOf(w) ?? Section65TerApprovalWarnings.LegalReferenceFallback
                 : ReceiptFormRule.IsApprovalWarning(w) ? ReceiptFormRule.WarningLegalReference
-                : WhtCertIssuePlan.IsApprovalWarning(w) || WhtLineRateWarning.IsApprovalWarning(w) ? WhtWarningsLegalReference
+                : WhtCertIssuePlan.IsApprovalWarning(w) || WhtLineRateWarning.IsApprovalWarning(w)
+                  || WhtPaymentSuggestion.IsApprovalWarning(w) || w.StartsWith(WhtFormWarningPrefix, StringComparison.Ordinal) ? WhtWarningsLegalReference
+                : w.StartsWith(Pp36BaseWarningPrefix, StringComparison.Ordinal) ? Pp36WarningsLegalReference
                 : GeneralWarningsLegalReference;
             if (!refs.Contains(r)) refs.Add(r);
         }

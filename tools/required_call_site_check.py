@@ -6813,6 +6813,53 @@ RULES += [
          why=_BOARD1013_B + "A5b คำเตือน \"VAT ขาด\" ตอนออก/แก้ 50 ทวิ \"ครั้งเดียว\" ใช้ตัวตัดสินเดียวกับรายงาน"),
 ]
 
+# ทีม A (2a · 2026-10-13): ภาษีหัก ณ ที่จ่ายตอนบันทึกจ่าย = ยอดแนะนำหลังหักใบลดหนี้ซื้อ (Helpers/WhtPaymentSuggestion ตัวเดียว) ·
+# ผู้ใช้ระบุเกินยอดที่เหลือ = รับ + คำเตือน + audit · เกินเพดานใบเดิม = บล็อก (ใบเดี่ยว) — ล็อกจุดเรียกทุกทางเข้าการจ่าย + endpoint + คำเตือนก่อนอนุมัติ
+_TEAM_A_2A = "ทีม A 2a 2026-10-13: "
+RULES += [
+    dict(file=DOC, method="CreatePaymentAsync",
+         must=["SuggestPaymentWhtAsync(", "WhtAlreadyWithheldAsync(companyId, doc.Id)",
+               "WhtPaymentSuggestion.AboveNetWarning(whtSuggestion, paymentWht)", "WhtPaymentSuggestion.AboveNetRuleCode",
+               "WhtPaymentSuggestion.LegalReference", "AddChainedAuditLog("],
+         must_re=[r"paymentWht\s*=\s*whtSuggestion\s*\.\s*Suggested\s*;",
+                  r"paymentWht\s*>\s*whtSuggestion\s*\.\s*GrossCap\s*\+\s*0\.01m\s*\)\s*throw\b",
+                  r"Warnings\s*:\s*whtAboveNetWarning\b"],
+         before=[("SuggestPaymentWhtAsync(", "_db.Payments.Add(payment)")],
+         forbid=["(request.Amount + settleNet) * doc.WithholdingTaxAmount", "paymentWht = remainingCap"],
+         why=_TEAM_A_2A + "ไม่ส่งยอด = ยอดแนะนำหลังใบลดหนี้ (ห้ามกลับไปสูตรใบเดิมเต็ม) · ระบุเกินยอดที่เหลือ = คำเตือนในคำตอบ + audit · เกินเพดานใบเดิม = บล็อก"),
+    dict(file=DOC, method="CreateMultiDocPaymentAsync",
+         must=["SuggestPaymentWhtAsync(companyId, d, alreadyWht", "WhtPaymentSuggestion.AboveNetWarning(allocWht, whtSlice, d.DocumentNumber)",
+               "WhtPaymentSuggestion.AboveNetRuleCode"],
+         must_re=[r"whtSlice\s*=\s*allocWht\s*\.\s*Suggested\s*;", r"Warnings\s*:\s*multiWhtWarnings\b"],
+         forbid=["alloc.AllocatedAmount * d.WithholdingTaxAmount"],
+         why=_TEAM_A_2A + "ชำระหลายใบใช้ตัวแนะนำเดียวกับใบเดี่ยว (ใบลดหนี้ซื้อถูกหักออก) · คำเตือนต่อใบในคำตอบ"),
+    dict(file=DOC, method="SuggestPaymentWhtAsync",
+         must=["PurchaseCreditNoteWhtAsync(companyId, doc)", "WhtPaymentSuggestion.Compute(", "ForeignServiceVat.PayeeAmount(doc)"],
+         why=_TEAM_A_2A + "ชุดใบลดหนี้ + ตัวคิด + ตัวหาร (ยอดจ่ายผู้รับ) ตัวเดียวของทุกผู้เรียก"),
+    dict(file=DOC, method="PurchaseCreditNoteWhtAsync",
+         must=["n.CompanyId == companyId", "n.RelatedDocumentId == doc.Id", "DocumentType.CreditNote", "n.CnDnPurchaseSideOverride != false",
+               "DocumentStatus.Voided", "DocumentStatusRules.NotIssued", "WhtCertIssuePlan.AppliesTo(doc.DocumentType)", "ForeignServiceVat.PayeeAmount("],
+         why=_TEAM_A_2A + "ชุดใบลดหนี้เดียวกับป้าย \"50 ทวิ ต้องตรวจ\" (ออกเลขแล้ว · ไม่ยกเลิก · ฝั่งซื้อ · บริษัทเดียวกัน)"),
+    dict(file=DOC, method="WhtAlreadyWithheldAsync",
+         must=["p.CompanyId == companyId", "r.CompanyId == companyId", "DocumentStatus.Draft", "DocumentStatus.Voided", "DocumentStatus.Rejected"],
+         why=_TEAM_A_2A + "ที่หักไปแล้ว = Payments + ใบเสร็จ/ใบสำคัญที่อ้างใบ (กติกาเดิมของใบเดี่ยว) · กรองบริษัท"),
+    dict(file=DOC, method="GetPaymentWhtSuggestionAsync",
+         must=["SuggestPaymentWhtAsync(", "WhtAlreadyWithheldAsync(companyId, doc.Id)", "WhtPaymentSuggestion.AboveNetWarning(r, en)"],
+         must_re=[r"d\s*\.\s*CompanyId\s*==\s*companyId"],
+         why=_TEAM_A_2A + "endpoint หน้าบันทึกจ่ายคิดด้วยตัวเดียวกับตอนบันทึก (server computes · page displays)"),
+    dict(file=DOC, method="CollectApprovalWarningsAsync",
+         must=["WhtPaymentSuggestion.ApprovalWarning(", "PurchaseCreditNoteWhtAsync(companyId, whtNetSrc)", "excludeDocumentId: doc.Id"],
+         must_re=[r"x\s*\.\s*CompanyId\s*==\s*companyId"],
+         why=_TEAM_A_2A + "[WHT-CN-NET] ใบสำคัญจ่ายที่อ้างใบซื้อหักเกินยอดที่เหลือหลังใบลดหนี้ — เตือน ไม่บล็อก"),
+    dict(file=DOC, method="GetDocumentAsync",
+         must=["PurchaseCreditNoteWhtAsync(companyId, doc)", "WhtNetOfAdjustments"],
+         why=_TEAM_A_2A + "ค่าแสดงผลภาษีหักหลังใบลดหนี้มาจากชุดใบลดหนี้เดียวกับยอดแนะนำ"),
+    dict(file="Controllers/DocumentController.cs", method="GetPaymentWhtSuggestion",
+         must=["DenySensitiveAsync(", "GetPaymentWhtSuggestionAsync("],
+         before=[("DenySensitiveAsync(", "GetPaymentWhtSuggestionAsync(")],
+         why=_TEAM_A_2A + "endpoint แนะนำยอดต้องผ่านด่านสิทธิ์ดูเอกสารก่อน"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

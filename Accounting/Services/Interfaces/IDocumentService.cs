@@ -313,6 +313,11 @@ public interface IDocumentService
     /// Request.Allocations must be non-empty; SUM(AllocatedAmount) ≤
     /// Amount; remainder lands as UnappliedCredit on the response.</summary>
     Task<PaymentResponse> CreateMultiDocPaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy);
+    /// <summary>ทีม A (2a · 2026-10-13): ภาษีหัก ณ ที่จ่ายที่ระบบแนะนำสำหรับการจ่ายงวดนี้ (หักใบลดหนี้ซื้อที่มีผลแล้ว) — ตัวคิดเดียวกับ
+    /// <see cref="CreatePaymentAsync"/> · <paramref name="settleNet"/> = หนี้ที่ปิดด้วยบรรทัดปรับ (ยอดที่ปิดหนี้ − เงินที่จ่าย) ·
+    /// <paramref name="entered"/> = ยอดที่ผู้ใช้กรอก (คืนข้อความเตือน/ปฏิเสธที่เซิร์ฟเวอร์จะใช้ตอนบันทึก) · อ่านอย่างเดียว ไม่บันทึกอะไร</summary>
+    Task<PaymentWhtSuggestionResponse> GetPaymentWhtSuggestionAsync(Guid companyId, Guid documentId,
+        decimal amount, decimal settleNet = 0m, decimal fee = 0m, decimal? entered = null);
     Task<List<PaymentResponse>> GetPaymentsAsync(Guid companyId, Guid? documentId = null);
     /// <summary>ยกเลิกการชำระเงิน: reverse JE + คืนยอดเอกสาร · รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ใบเสร็จอัตโนมัติที่ e-Tax ถึงกรมสรรพากรแล้ว ⇒
     /// ผู้ใช้/ยกเลิกการลงบัญชี = ปฏิเสธพร้อมทางไปต่อ · เช็คเด้ง = กลับรายการเงินเสมอ + ติดธง "ต้องยกเลิกทาง e-Tax" บนใบเสร็จ (ตัวตัดสิน

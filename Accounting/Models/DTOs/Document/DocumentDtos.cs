@@ -1026,7 +1026,10 @@ public record DocumentResponse(
     /// จากป้าย <c>WhtCertReviewNote</c> · null = ไม่มี</summary>
     string? WhtCertReviewReason = null,
     /// <summary>รอบ 204 (ข้อ 143): จำนวนผู้ถูกหักของใบ (เซิร์ฟเวอร์นับด้วย <c>WhtPayeeSplit</c>) — มากกว่า 1 ⇒ 50 ทวิ แยกใบต่อผู้ถูกหัก</summary>
-    int WhtPayeeCount = 0);
+    int WhtPayeeCount = 0,
+    /// <summary>ทีม A (2a · 2026-10-13): ภาษีหัก ณ ที่จ่ายของใบซื้อหลังหักใบลดหนี้ที่มีผล (ใบเดิม − Σ ใบลดหนี้ · <c>WhtPaymentSuggestion</c>) —
+    /// null = ไม่มีใบลดหนี้ที่ลดภาษีหักของใบนี้ (ใช้ <c>WithholdingTaxAmount</c> ตามเดิม) · ค่าแสดงผล ไม่ใช่ค่าที่เก็บ</summary>
+    decimal? WhtNetOfAdjustments = null);
 
 /// <summary>คำตัดสินข้อ 139: ผูกใบลูกเข้าใบต้นทาง — จับคู่บรรทัดลูก → บรรทัดต้นทาง (บรรทัดที่ไม่ส่งมา = ไม่นับในความคืบหน้า)</summary>
 public record LinkSourceRequest(
@@ -1705,7 +1708,31 @@ public record PaymentResponse(
     string? SettlementAdjustmentsJson = null,
     /// <summary>คำขอเจ้าของ 2026-10-12 — ผล 50 ทวิ อัตโนมัติของการจ่ายนี้ที่ผู้ใช้ต้องรู้ (ออกไม่สำเร็จ + เหตุผล · ตั้งไว้ให้ออกเอง) ·
     /// null = ออกสำเร็จ/ไม่เกี่ยว · มีเฉพาะในคำตอบของการบันทึกจ่าย (ล้มดัง — เดิมกลืนด้วย LogWarning)</summary>
-    string? WhtCertNotice = null);
+    string? WhtCertNotice = null,
+    /// <summary>ทีม A (2a · 2026-10-13): คำเตือนของการบันทึกจ่ายที่รับตามที่ผู้ใช้ระบุ (เช่น ภาษีหักงวดนี้สูงกว่ายอดที่เหลือหลังใบลดหนี้ —
+    /// <c>WhtPaymentSuggestion.AboveNetWarning</c> + audit) · null = ไม่มี · มีเฉพาะในคำตอบของการบันทึกจ่าย</summary>
+    IReadOnlyList<string>? Warnings = null);
+
+/// <summary>
+/// ทีม A (2a · 2026-10-13): ภาษีหัก ณ ที่จ่ายที่ระบบแนะนำสำหรับการจ่ายงวดนี้ (<c>GET document/{id}/payment-wht-suggestion</c>) —
+/// เซิร์ฟเวอร์คิดด้วยตัวเดียวกับ <c>CreatePaymentAsync</c> (<c>WhtPaymentSuggestion.Compute</c>) · หน้าเว็บแสดงตรง ๆ ไม่คิดสูตรเอง
+/// </summary>
+/// <param name="DocumentWht">ภาษีหักของใบเดิม</param>
+/// <param name="CreditNoteWht">ภาษีหักที่ใบลดหนี้ที่มีผลลดไป (รวม)</param>
+/// <param name="CreditNoteCount">จำนวนใบลดหนี้ที่นับ</param>
+/// <param name="NetWht">ภาษีหักทั้งใบหลังใบลดหนี้</param>
+/// <param name="AlreadyWithheld">ภาษีที่หักไปแล้วของใบนี้</param>
+/// <param name="NetCap">ยอดที่ยังหักได้หลังใบลดหนี้ — ผู้ใช้ระบุเกินนี้ = รับได้แต่เตือน</param>
+/// <param name="GrossCap">เพดานของใบเดิม — ผู้ใช้ระบุเกินนี้ = บันทึกไม่ได้</param>
+/// <param name="Suggested">ยอดที่ระบบเติมให้งวดนี้</param>
+/// <param name="IsFinal">งวดนี้ปิดยอดค้าง</param>
+/// <param name="ReasonText">ที่มาของยอดแนะนำ (ข้อความไทย)</param>
+/// <param name="AboveNetWarning">ข้อความเตือนเมื่อ <c>entered</c> สูงกว่า NetCap (ให้หน้าเว็บถามยืนยัน) · null = ไม่ต้องถาม</param>
+/// <param name="AboveGrossError">ข้อความเมื่อ <c>entered</c> เกินเพดานใบเดิม (เซิร์ฟเวอร์จะปฏิเสธ) · null = ไม่เกิน</param>
+public record PaymentWhtSuggestionResponse(
+    decimal DocumentWht, decimal CreditNoteWht, int CreditNoteCount, decimal NetWht, decimal AlreadyWithheld,
+    decimal NetCap, decimal GrossCap, decimal Suggested, bool IsFinal, string ReasonText,
+    string? AboveNetWarning = null, string? AboveGrossError = null);
 
 
 /// <summary>ผลของการ "ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว"

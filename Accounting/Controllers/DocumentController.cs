@@ -1512,6 +1512,21 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<List<PaymentResponse>>(true, result));
     }
 
+    /// <summary>
+    /// ทีม A (2a · 2026-10-13): ภาษีหัก ณ ที่จ่ายที่ระบบแนะนำสำหรับการจ่ายงวดนี้ (หักใบลดหนี้ซื้อที่มีผลแล้ว) — หน้าบันทึกจ่ายเรียกแทนการคิดสูตรเอง
+    /// (server computes · page displays) · <c>settleNet</c> = หนี้ที่ปิดด้วยบรรทัดปรับ (ยอดที่ปิดหนี้ − เงินที่จ่าย) · <c>entered</c> = ยอดที่ผู้ใช้กรอก
+    /// ⇒ คืนข้อความเตือน/ปฏิเสธที่การบันทึกจะใช้ · อ่านอย่างเดียว · สิทธิ์ = ดูเอกสารนั้นได้
+    /// </summary>
+    [HttpGet("{documentId:guid}/payment-wht-suggestion")]
+    public async Task<ActionResult<ApiResponse<PaymentWhtSuggestionResponse>>> GetPaymentWhtSuggestion(Guid companyId, Guid documentId,
+        [FromQuery] decimal amount, [FromQuery] decimal settleNet = 0m, [FromQuery] decimal fee = 0m, [FromQuery] decimal? entered = null)
+    {
+        if (await DenySensitiveAsync(companyId, documentId, "ดูภาษีหัก ณ ที่จ่ายของ") is { } hidden)
+            return Forbid403<PaymentWhtSuggestionResponse>(hidden);
+        var result = await _documentService.GetPaymentWhtSuggestionAsync(companyId, documentId, amount, settleNet, fee, entered);
+        return Ok(new ApiResponse<PaymentWhtSuggestionResponse>(true, result));
+    }
+
     [HttpPost("payments")]
     public async Task<ActionResult<ApiResponse<PaymentResponse>>> CreatePayment(Guid companyId, [FromBody] CreatePaymentRequest request)
     {

@@ -1993,6 +1993,14 @@ public partial class DocumentService : IDocumentService
                         && repl.ReplacementCarriesPostings),
             };
         }
+        // ทีม A (2a): ภาษีหักหลังใบลดหนี้ซื้อที่มีผล (แสดงผล) — ชุดใบลดหนี้/ตัวคิดเดียวกับยอดแนะนำตอนบันทึกจ่าย · ไม่มีใบลดหนี้ = null (ใช้ยอดเดิม)
+        if (doc.WithholdingTaxAmount > 0m)
+        {
+            var (cnWhts, _) = await PurchaseCreditNoteWhtAsync(companyId, doc);
+            var whtNet = Accounting.Helpers.WhtCreditNoteRemainder.Compute(doc.WithholdingTaxAmount, cnWhts);
+            if (whtNet.CreditNoteCount > 0)
+                resp = resp with { WhtNetOfAdjustments = whtNet.Remaining };
+        }
         return resp;
     }
 
@@ -13987,65 +13995,37 @@ public partial class DocumentService : IDocumentService
                 "การปิดยอดด้วยบรรทัดปรับอย่างเดียว (จำนวนเงิน 0) หัก ณ ที่จ่ายไม่ได้ — ภาษีหัก ณ ที่จ่ายต้องหักจากเงินที่จ่ายจริง · "
                 + "ถ้าต้องออก 50 ทวิ ให้บันทึกการชำระที่มีเงินออกจริง",
                 Accounting.Helpers.PaymentSettlementAdjustment.RuleCode);
+        // ทีม A (2a · 2026-10-13): ยอดแนะนำหักใบลดหนี้ซื้อที่มีผลแล้ว (Helpers/WhtPaymentSuggestion — ตัวเดียวกับ endpoint แนะนำยอดของหน้าบันทึกจ่าย) ·
+        // ไม่ส่งยอด (ทางเข้า integration/LINE/ที่พัก/ร้านค้าออนไลน์/นำเข้า) = ใช้ยอดแนะนำ · ไม่มีใบลดหนี้ = ตัวเลขเดิมทุกสตางค์ ·
+        // ผู้ใช้ระบุเอง: เกินเพดานใบเดิม = บล็อก (เดิม) · เกินยอดที่เหลือหลังใบลดหนี้ = รับตามผู้ใช้ + คำเตือนในคำตอบ + audit (คำสั่งเจ้าของ "ไม่ล็อคตายตัว")
+        string? whtAboveNetWarning = null;
+        Accounting.Helpers.WhtPaymentSuggestionResult? whtSuggestion = null;
         if (doc.WithholdingTaxAmount > 0m && !closesByAdjustmentOnly)
         {
-            // Sum WHT from BOTH Payment rows AND Receipt-document children
-            // referencing this Invoice via RelatedDocumentId — operators can
-            // mix the modal flow with the manual Receipt-conversion flow,
-            // and only counting one path lets cumulative exceed the cap
-            // when both are used. Excludes Draft/Voided/Rejected on both
-            // sides so in-flight or cancelled rows don't reserve slots.
-            var withheldViaPayments = await _db.Payments.AsNoTracking()
-                .Where(p => p.DocumentId == doc.Id && !p.IsDeleted)
-                .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
-            var settlementTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.PaymentVoucher };
-            var withheldViaReceipts = await _db.Documents.AsNoTracking()
-                .Where(r => r.RelatedDocumentId == doc.Id
-                    && settlementTypes.Contains(r.DocumentType)
-                    && r.Status != DocumentStatus.Voided
-                    && r.Status != DocumentStatus.Draft
-                    && r.Status != DocumentStatus.Rejected
-                    && !r.IsDeleted)
-                .SumAsync(r => (decimal?)r.WithholdingTaxAmount) ?? 0m;
-            var alreadyWithheld = withheldViaPayments + withheldViaReceipts;
-            var remainingCap = Math.Max(0m, doc.WithholdingTaxAmount - alreadyWithheld);
-
-            // Final-installment detection — if this payment closes the
-            // outstanding balance, assign whatever WHT slice is still
-            // unspent so cumulative lands exactly on doc.WithholdingTaxAmount.
-            // Without this, proportional rounding leaves a satang-level gap
-            // (115.38 + 115.38 + 69.23 = 299.99 ≠ 300.00) and the WHT cert
-            // numbers don't reconcile with ภ.ง.ด.3/53 filings.
-            // settleNet (รอบ 193) = หนี้ที่ปิดด้วยบรรทัดปรับ — นับเป็นการปิดหนี้ของงวดนี้ด้วย
-            var isFinalPayment = request.Amount + paymentFee + settleNet + 0.01m >= doc.BalanceDue;
+            // Final-installment detection — if this payment closes the outstanding balance, assign whatever WHT slice is
+            // still unspent so cumulative lands exactly on the net WHT (rounding 115.38 + 115.38 + 69.23 = 299.99 ≠ 300.00
+            // otherwise). settleNet (รอบ 193) = หนี้ที่ปิดด้วยบรรทัดปรับ — นับเป็นการปิดหนี้ของงวดนี้ด้วย
+            whtSuggestion = await SuggestPaymentWhtAsync(companyId, doc,
+                await WhtAlreadyWithheldAsync(companyId, doc.Id), request.Amount, settleNet,
+                isFinal: request.Amount + paymentFee + settleNet + 0.01m >= doc.BalanceDue);
 
             if (request.WithholdingTaxAmount.HasValue)
             {
                 paymentWht = Math.Round(request.WithholdingTaxAmount.Value, 2, MidpointRounding.AwayFromZero);
                 if (paymentWht < 0m)
                     throw new InvalidOperationException("WHT ของงวดนี้ต้องไม่ติดลบ");
-                if (paymentWht > remainingCap + 0.01m)
+                // เพดานตามกฎหมายของใบเดิม (ภาษีที่ตั้งไว้ใน GL ของใบ) — เกิน = บล็อกเหมือนเดิม
+                if (paymentWht > whtSuggestion.GrossCap + 0.01m)
                     throw new InvalidOperationException(
-                        $"WHT งวดนี้ ({paymentWht:N2}) + ที่หักไปแล้ว ({alreadyWithheld:N2}) " +
+                        $"WHT งวดนี้ ({paymentWht:N2}) + ที่หักไปแล้ว ({whtSuggestion.AlreadyWithheld:N2}) " +
                         $"เกินยอด WHT ทั้งหมดของเอกสาร ({doc.WithholdingTaxAmount:N2})");
-            }
-            else if (isFinalPayment)
-            {
-                // Closing payment: consume the remaining slice exactly so
-                // rounding can't drift below the legal total.
-                paymentWht = remainingCap;
+                whtAboveNetWarning = Accounting.Helpers.WhtPaymentSuggestion.AboveNetWarning(whtSuggestion, paymentWht);
             }
             else
             {
-                // Proportional default: this installment's share of the
-                // total WHT. Capped at the remaining slice so rounding can't
-                // overshoot on the last payment.
-                // ตัวหาร = ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2) — ใบบริการต่างประเทศ TotalAmount รวม VAT ประเมินเองที่ไม่ได้จ่าย ⇒ สัดส่วนเพี้ยน
-                var payeeTotalForWht = ForeignServiceVat.PayeeAmount(doc);
-                var proportional = payeeTotalForWht > 0m
-                    ? Math.Round((request.Amount + settleNet) * doc.WithholdingTaxAmount / payeeTotalForWht, 2, MidpointRounding.AwayFromZero)
-                    : 0m;
-                paymentWht = Math.Min(proportional, remainingCap);
+                // ไม่ระบุ = ยอดแนะนำ (งวดสุดท้าย = ที่เหลือหลังใบลดหนี้ · งวดกลาง = สัดส่วนยอดจ่ายต่อยอดจ่ายผู้รับสุทธิ — รอบ PP36 ทีม F2:
+                // ตัวหาร = ยอดจ่ายผู้รับเงิน ใบบริการต่างประเทศ TotalAmount รวม VAT ประเมินเองที่ไม่ได้จ่าย)
+                paymentWht = whtSuggestion.Suggested;
             }
         }
 
@@ -14108,6 +14088,32 @@ public partial class DocumentService : IDocumentService
             };
 
             _db.Payments.Add(payment);
+
+            // ทีม A (2a): ผู้ใช้บันทึกภาษีหักสูงกว่ายอดที่เหลือหลังใบลดหนี้ — รับตามผู้ใช้ แต่ทิ้งร่องรอย (กฎ M: RuleCode + LegalReference)
+            if (whtAboveNetWarning != null && whtSuggestion != null)
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId,
+                    UserId = Guid.TryParse(createdBy, out var whtActor) ? whtActor : null,
+                    Action = AuditAction.Create,
+                    EntityType = "Payment",
+                    EntityId = payment.Id.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        RuleCode = Accounting.Helpers.WhtPaymentSuggestion.AboveNetRuleCode,
+                        LegalReference = Accounting.Helpers.WhtPaymentSuggestion.LegalReference,
+                        DocumentNumber = doc.DocumentNumber,
+                        payment.PaymentNumber,
+                        EnteredWht = paymentWht,
+                        whtSuggestion.Suggested,
+                        whtSuggestion.NetCap,
+                        whtSuggestion.GrossCap,
+                        OriginalWht = whtSuggestion.Figures.OriginalTax,
+                        CreditNoteWht = whtSuggestion.Figures.CreditNoteTax,
+                        whtSuggestion.AlreadyWithheld,
+                        Message = whtAboveNetWarning,
+                    }),
+                });
 
             doc.PaidAmount += request.Amount + paymentFee + settleNet;
             // คำตัดสินข้อ 137: งวด ภ.พ.36 ของใบเจ้าของ = เดือนที่จ่ายครั้งแรก (ไม่ย้ายใบที่นำส่งแล้ว)
@@ -14307,7 +14313,8 @@ public partial class DocumentService : IDocumentService
                 payment.Notes, payment.CreatedAt,
                 HasPayerSignature: !string.IsNullOrWhiteSpace(payment.PayerSignatureBase64),
                 PayerSignatureName: payment.PayerSignatureName,
-                WhtCertNotice: whtCertNotice);
+                WhtCertNotice: whtCertNotice,
+                Warnings: whtAboveNetWarning != null ? new[] { whtAboveNetWarning } : null);
         }
         catch
         {
@@ -14315,6 +14322,92 @@ public partial class DocumentService : IDocumentService
             throw;
         }
         }); // end ExecutionStrategy
+    }
+
+    /// <summary>
+    /// ทีม A (2a): ภาษีที่หักไปแล้วของใบ — ทางบันทึกชำระ (Payments) + ทางแปลงเป็นใบเสร็จ/ใบสำคัญรับ-จ่ายที่อ้างใบนี้ (ไม่นับร่าง/ยกเลิก/ปฏิเสธ) ·
+    /// กติกาเดิมของ <see cref="CreatePaymentAsync"/> ย้ายมาเป็นตัวเดียวให้ endpoint แนะนำยอด/คำเตือนก่อนอนุมัติใช้ร่วม (ผสมสองทางแล้วต้องไม่เกินเพดาน)
+    /// </summary>
+    /// <param name="excludeDocumentId">ใบที่ไม่นับ (ใบสำคัญจ่ายที่กำลังตรวจก่อนอนุมัติ)</param>
+    private async Task<decimal> WhtAlreadyWithheldAsync(Guid companyId, Guid documentId, Guid? excludeDocumentId = null)
+    {
+        var withheldViaPayments = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted)
+            .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
+        var settlementTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.PaymentVoucher };
+        var withheldViaReceipts = await _db.Documents.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.RelatedDocumentId == documentId
+                && (excludeDocumentId == null || r.Id != excludeDocumentId)
+                && settlementTypes.Contains(r.DocumentType)
+                && r.Status != DocumentStatus.Voided
+                && r.Status != DocumentStatus.Draft
+                && r.Status != DocumentStatus.Rejected
+                && !r.IsDeleted)
+            .SumAsync(r => (decimal?)r.WithholdingTaxAmount) ?? 0m;
+        return withheldViaPayments + withheldViaReceipts;
+    }
+
+    /// <summary>
+    /// ทีม A (2a): ภาษีหักของใบลดหนี้ฝั่งซื้อที่มีผลของใบ <paramref name="doc"/> + ยอดที่แต่ละใบลดหนี้ของผู้รับเงิน — ชุดเดียวกับที่
+    /// <c>WithholdingTaxCertService.AdjustCertsForCreditNoteAsync</c> นับลงป้าย "50 ทวิ ต้องตรวจ" (ออกเลขแล้ว · ไม่ถูกยกเลิก · ไม่ใช่ฝั่งขาย · หักภาษี &gt; 0) ·
+    /// ใบที่ไม่ใช่ฝั่งผู้จ่าย (<see cref="Accounting.Helpers.WhtCertIssuePlan.AppliesTo"/>) = ว่าง (ฝั่งขายยังเป็นพฤติกรรมเดิม) ·
+    /// ใบเพิ่มหนี้ไม่นับ — ตั้งหนี้แยกและหักภาษีตอนจ่ายใบของมันเอง (ดู <see cref="Accounting.Helpers.WhtPaymentSuggestion"/>)
+    /// </summary>
+    private async Task<(List<decimal> Whts, List<decimal> Payees)> PurchaseCreditNoteWhtAsync(Guid companyId, Document doc)
+    {
+        if (!Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType)) return (new List<decimal>(), new List<decimal>());
+        var notIssued = DocumentStatusRules.NotIssued;
+        var cns = await _db.Documents.AsNoTracking()
+            .Where(n => n.CompanyId == companyId && !n.IsDeleted
+                && n.DocumentType == DocumentType.CreditNote && n.RelatedDocumentId == doc.Id
+                && n.CnDnPurchaseSideOverride != false
+                && !notIssued.Contains(n.Status) && n.Status != DocumentStatus.Voided
+                && n.WithholdingTaxAmount > 0m)
+            .Select(n => new { n.DocumentType, n.IsForeignService, n.TotalAmount, n.VatAmount, n.WithholdingTaxAmount })
+            .ToListAsync();
+        // ยอดที่ใบลดหนี้ลดหนี้ผู้รับเงิน — ตัวตั้งเดียวกับ ApplySourceDocumentAdjustmentsAsync (ใบต้นทางเจ้าของ ภ.พ.36 ⇒ ไม่นับ VAT ประเมินเอง)
+        var srcOwnsPp36 = ForeignServiceVat.OwnsPp36(doc);
+        return (cns.Select(n => n.WithholdingTaxAmount).ToList(),
+            cns.Select(n => ForeignServiceVat.PayeeAmount(n.DocumentType, n.IsForeignService, n.TotalAmount, n.VatAmount, srcOwnsPp36)).ToList());
+    }
+
+    /// <summary>ทีม A (2a): ยอดภาษีหักที่แนะนำสำหรับการจ่ายงวดนี้ของใบ — ตัวเดียวของ <see cref="CreatePaymentAsync"/> ·
+    /// <see cref="CreateMultiDocPaymentAsync"/> · <see cref="GetPaymentWhtSuggestionAsync"/> (ผู้เรียกส่ง "ที่หักไปแล้ว" ตามกติกาของเส้นตัวเอง)</summary>
+    private async Task<Accounting.Helpers.WhtPaymentSuggestionResult> SuggestPaymentWhtAsync(Guid companyId, Document doc,
+        decimal alreadyWithheld, decimal amount, decimal settleNet, bool isFinal)
+    {
+        var (cnWhts, cnPayees) = await PurchaseCreditNoteWhtAsync(companyId, doc);
+        return Accounting.Helpers.WhtPaymentSuggestion.Compute(doc.WithholdingTaxAmount, cnWhts, alreadyWithheld,
+            ForeignServiceVat.PayeeAmount(doc), cnPayees, amount, settleNet, isFinal);
+    }
+
+    /// <inheritdoc />
+    public async Task<PaymentWhtSuggestionResponse> GetPaymentWhtSuggestionAsync(Guid companyId, Guid documentId,
+        decimal amount, decimal settleNet = 0m, decimal fee = 0m, decimal? entered = null)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        if (doc.WithholdingTaxAmount <= 0m)
+            return new PaymentWhtSuggestionResponse(0m, 0m, 0, 0m, 0m, 0m, 0m, 0m, false, "เอกสารนี้ไม่มีภาษีหัก ณ ที่จ่าย");
+        // ปิดยอดด้วยบรรทัดปรับอย่างเดียว (เงิน 0) หักภาษีไม่ได้ — กติกาเดียวกับ CreatePaymentAsync (ฝ่ายค้านรอบสอง P-c)
+        var closesByAdjustmentOnly = amount == 0m && settleNet != 0m;
+        var r = await SuggestPaymentWhtAsync(companyId, doc, await WhtAlreadyWithheldAsync(companyId, doc.Id),
+            amount, settleNet, isFinal: amount + fee + settleNet + 0.01m >= doc.BalanceDue);
+        if (closesByAdjustmentOnly) r = r with { Suggested = 0m, ReasonText = "ปิดยอดด้วยบรรทัดปรับอย่างเดียว (จำนวนเงิน 0) หัก ณ ที่จ่ายไม่ได้ — ภาษีต้องหักจากเงินที่จ่ายจริง" };
+        string? aboveNet = null, aboveGross = null;
+        if (entered is decimal e)
+        {
+            var en = Math.Round(e, 2, MidpointRounding.AwayFromZero);
+            if (closesByAdjustmentOnly && en > 0m)
+                aboveGross = r.ReasonText;
+            else if (en > r.GrossCap + 0.01m)
+                aboveGross = $"WHT งวดนี้ ({en:N2}) + ที่หักไปแล้ว ({r.AlreadyWithheld:N2}) เกินยอด WHT ทั้งหมดของเอกสาร ({doc.WithholdingTaxAmount:N2}) — บันทึกไม่ได้";
+            else
+                aboveNet = Accounting.Helpers.WhtPaymentSuggestion.AboveNetWarning(r, en);
+        }
+        return new PaymentWhtSuggestionResponse(doc.WithholdingTaxAmount, r.Figures.CreditNoteTax, r.Figures.CreditNoteCount, r.NetWht,
+            r.AlreadyWithheld, r.NetCap, r.GrossCap, r.Suggested, r.IsFinal, r.ReasonText, aboveNet, aboveGross);
     }
 
     /// <summary>Multi-document payment — one Payment row settles many
@@ -14447,35 +14540,59 @@ public partial class DocumentService : IDocumentService
                 // รายงวดหลัง commit (ก่อนหน้านี้เส้น multi-doc ออกใบด้วยยอดเต็ม
                 // ทั้งเอกสารตั้งแต่งวดแรก → นำส่งเกินเดือนแรก/ขาดเดือนหลัง)
                 var whtByDoc = new Dictionary<Guid, decimal>();
+                // ทีม A (2a): คำเตือนภาษีหักเกินยอดที่เหลือหลังใบลดหนี้ (รับตามผู้ใช้) — คืนใน PaymentResponse.Warnings
+                var multiWhtWarnings = new List<string>();
                 foreach (var alloc in request.Allocations)
                 {
                     allocIndex++;
                     var d = docMap[alloc.DocumentId];
 
-                    // WHT slice — explicit override per allocation OR
-                    // proportional to AllocatedAmount / d.TotalAmount.
+                    // WHT slice — explicit override per allocation OR ยอดแนะนำ (ทีม A 2a: ตัวเดียวกับใบเดี่ยว WhtPaymentSuggestion —
+                    // หักใบลดหนี้ซื้อที่มีผลแล้ว · ไม่มีใบลดหนี้ = สัดส่วน AllocatedAmount / ยอดจ่ายผู้รับ เดิมทุกสตางค์ · งวดสุดท้าย = ที่เหลือ)
                     decimal whtSlice = 0;
                     if (d.WithholdingTaxAmount > 0)
                     {
+                        // "ที่หักไปแล้ว" ของเส้นนี้คงกติกาเดิม (นับ Payments ของใบ ไม่รวมแถวแม่ที่เพิ่งสร้าง)
+                        var alreadyWht = await _db.Payments.AsNoTracking()
+                            .Where(p => p.CompanyId == companyId && p.DocumentId == d.Id && !p.IsDeleted && p.Id != payment.Id)
+                            .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
+                        var allocWht = await SuggestPaymentWhtAsync(companyId, d, alreadyWht, alloc.AllocatedAmount, 0m,
+                            isFinal: alloc.AllocatedAmount + 0.01m >= d.BalanceDue);
                         if (alloc.WithholdingTaxAmount.HasValue)
                         {
                             whtSlice = Math.Round(alloc.WithholdingTaxAmount.Value, 2, MidpointRounding.AwayFromZero);
+                            // ผู้ใช้ระบุเกินยอดที่เหลือ (หลังใบลดหนี้) — รับตามผู้ใช้ (เส้นนี้ไม่เคยบล็อก) แต่เตือนในคำตอบ + audit
+                            if (Accounting.Helpers.WhtPaymentSuggestion.AboveNetWarning(allocWht, whtSlice, d.DocumentNumber) is string allocWarn)
+                            {
+                                multiWhtWarnings.Add(allocWarn);
+                                _db.AddChainedAuditLog(new AuditLog
+                                {
+                                    CompanyId = companyId,
+                                    UserId = Guid.TryParse(createdBy, out var allocActor) ? allocActor : null,
+                                    Action = AuditAction.Create,
+                                    EntityType = "Payment",
+                                    EntityId = payment.Id.ToString(),
+                                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                                    {
+                                        RuleCode = Accounting.Helpers.WhtPaymentSuggestion.AboveNetRuleCode,
+                                        LegalReference = Accounting.Helpers.WhtPaymentSuggestion.LegalReference,
+                                        DocumentNumber = d.DocumentNumber,
+                                        payment.PaymentNumber,
+                                        EnteredWht = whtSlice,
+                                        allocWht.Suggested,
+                                        allocWht.NetCap,
+                                        allocWht.GrossCap,
+                                        OriginalWht = allocWht.Figures.OriginalTax,
+                                        CreditNoteWht = allocWht.Figures.CreditNoteTax,
+                                        allocWht.AlreadyWithheld,
+                                        Message = allocWarn,
+                                    }),
+                                });
+                            }
                         }
                         else
                         {
-                            var alreadyWht = await _db.Payments.AsNoTracking()
-                                .Where(p => p.DocumentId == d.Id && !p.IsDeleted && p.Id != payment.Id)
-                                .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
-                            var remainingCap = Math.Max(0m, d.WithholdingTaxAmount - alreadyWht);
-                            var isFinal = alloc.AllocatedAmount + 0.01m >= d.BalanceDue;
-                            var allocPayee = ForeignServiceVat.PayeeAmount(d);   // ตัวหาร = ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2)
-                            whtSlice = isFinal
-                                ? remainingCap
-                                : Math.Min(remainingCap,
-                                    allocPayee > 0
-                                        ? Math.Round(alloc.AllocatedAmount * d.WithholdingTaxAmount / allocPayee,
-                                            2, MidpointRounding.AwayFromZero)
-                                        : 0);
+                            whtSlice = allocWht.Suggested;
                         }
                     }
 
@@ -14679,7 +14796,8 @@ public partial class DocumentService : IDocumentService
                     persistedAllocs, request.Amount - allocSum,
                     HasPayerSignature: !string.IsNullOrWhiteSpace(payment.PayerSignatureBase64),
                     PayerSignatureName: payment.PayerSignatureName,
-                    WhtCertNotice: multiWhtNotices.Count > 0 ? string.Join(" · ", multiWhtNotices) : null);
+                    WhtCertNotice: multiWhtNotices.Count > 0 ? string.Join(" · ", multiWhtNotices) : null,
+                    Warnings: multiWhtWarnings.Count > 0 ? multiWhtWarnings : null);
             }
             catch
             {
@@ -20957,6 +21075,26 @@ public partial class DocumentService : IDocumentService
                             Accounting.Helpers.WhtIncomeCodes.WithheldForPayee(doc.Lines, doc.ContactId, doc.WhtPayeeContactId, lpId)) is string lpPnd2Mix)
                         warnings.Add($"{Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix} {lp.Name}: {lpPnd2Mix}");
                 }
+            }
+        }
+
+        // ── ทีม A (2a · 2026-10-13): ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จที่อ้างใบซื้อ หักภาษีเกินยอดที่เหลือหลังใบลดหนี้ ──
+        // แปลงใบซื้อเป็นใบสำคัญจ่าย = คัดลอกทุกบรรทัดตรงตัว (ConvertDocumentAsync แกน None) ⇒ ภาษีหักของใบเดิม "เต็ม" ไม่รู้จักใบลดหนี้ที่อนุมัติแล้ว ·
+        // ยอดเงินถูกด่านยอดค้าง (ApplySourceDocumentAdjustmentsAsync) บังคับให้แก้ แต่ภาษีหักไม่ — ถ้าผู้ใช้ลดยอดแล้วลืมภาษี 50 ทวิ จะออกเกินที่หักจริง ·
+        // เตือน + รับทราบ ไม่บล็อก (คำสั่งเจ้าของ "ไม่ล็อคตายตัว") · ป้าย [WHT-CN-NET] ⇒ ทางเข้าที่ไม่มีคนผ่านได้ (ApprovalAcknowledgement)
+        if (doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.CertificateInLieu
+            && doc.RelatedDocumentId is Guid whtNetSrcId && doc.WithholdingTaxAmount > 0m)
+        {
+            var whtNetSrc = await _db.Documents.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Id == whtNetSrcId && x.CompanyId == companyId && !x.IsDeleted);
+            if (whtNetSrc != null && whtNetSrc.WithholdingTaxAmount > 0m
+                && Accounting.Helpers.WhtCertIssuePlan.AppliesTo(whtNetSrc.DocumentType))
+            {
+                var (srcCnWhts, _) = await PurchaseCreditNoteWhtAsync(companyId, whtNetSrc);
+                if (srcCnWhts.Count > 0
+                    && Accounting.Helpers.WhtPaymentSuggestion.ApprovalWarning(whtNetSrc.DocumentNumber, whtNetSrc.WithholdingTaxAmount, srcCnWhts,
+                        await WhtAlreadyWithheldAsync(companyId, whtNetSrc.Id, excludeDocumentId: doc.Id), doc.WithholdingTaxAmount) is string whtNetWarn)
+                    warnings.Add(whtNetWarn);
             }
         }
 
