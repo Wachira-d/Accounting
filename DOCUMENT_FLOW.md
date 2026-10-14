@@ -1973,6 +1973,33 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 
 **AI**: `AiFeatureKey.SettlementLineClassify = 57` (§6.4) — จัดประเภทบรรทัดเท่านั้น · ห้าม AI สร้างยอด/จับคู่ยอด
 
+
+### 2.11 นำเข้าไฟล์ — ปลายทางบัญชีของศูนย์นำเข้า + ย้ายระบบ (รอบ 205 ทีม D · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.4/§2.5/§2.9/§2.10)
+
+> **สถานะ**: target 4 ตัว + migration wizard ✅ (โค้ด) · ทางเข้าหน้าศูนย์นำเข้า (pipeline/controller/หน้า) = ทีม B/E · AI `ImportAccountMap` (58) ต่อสายเมื่อรวมทีม A
+
+| ชนิด (`IImportTarget.EntityType`) | ลงผ่าน (domain service เดิมเท่านั้น) | บล็อก (ข้อ 150 — มีทางไปต่อ) | คำเตือน (รับทราบตอน commit) | ย้อน (§2.9) |
+| --- | --- | --- | --- | --- |
+| `opening-balances` — `Targets/OpeningTrialBalanceImportTarget` | `IMigrationWizardService` (สร้างชุด → อัปโหลด → จับคู่ → `CommitAsync`) — ไม่เขียน `OpeningBalances` ตรง · ทั้งไฟล์ = กลุ่มเดียว | เดบิต ≠ เครดิต (ทาง: ผู้ใช้เลือก `differenceAccountId` ⇒ wizard เพิ่มบรรทัด "ผลต่างยกมา") · ยังไม่มีบัญชีหลังทุกชั้น · บัญชีนอกผังบริษัท · ไม่มีงวด/งวดปิด | หลายรหัสรวมบัญชีเดียว · ทับยอดยกมาเดิม · หมวดเลขหน้าไม่ตรง · ลงบัญชีคุม · มีทั้ง Dr/Cr · ยอดศูนย์ · มีบรรทัดผลต่าง | `RollbackAsync` — ลบแถวที่สร้าง + **คืนยอดเดิมที่ถูกทับ** (ภาพยอดเดิมใน `ImportSummaryJson`) · แถวที่ถูกแก้มือหลัง commit ไม่แตะ |
+| `documents` — `Targets/DocumentImportTarget` + `DocumentImportBuilder` | `IDocumentService.CreateDocumentAsync(originModule: "Import")` ⇒ **ร่าง + DRAFT-** · เลขเดิม → `Reference` (ฝั่งซื้อ → `SupplierInvoiceNumber` ด้วย) · ยอด/VAT คิดโดย DocumentService · กลุ่ม = ชนิด + เลขเดิม | ชนิดที่ร่างไม่ได้ (ใบสำคัญจ่าย/ใบเสร็จ = อนุมัติ/ตัดเงินตอนสร้าง · ใบลด/เพิ่มหนี้ต้องอ้างใบเดิม) · งวดปิด · ผู้ติดต่อไม่ตรงแน่นอน ("นำเข้าผู้ติดต่อก่อน") · บรรทัดไม่ครบ §86/4 / ติดลบ | นำเข้าซ้ำ (Reference เดิม) ⇒ ตั้ง "ข้าม" · หัวเอกสารในกลุ่มไม่ตรงกัน · ผังบัญชี/สินค้าไม่พบ (ใช้ผังตั้งต้นตอนอนุมัติ) | `DeleteDocumentAsync` เฉพาะที่ยังร่าง · อนุมัติแล้ว = บล็อก + ทาง void/ใบลดหนี้ |
+| `payments` — `Targets/PaymentImportTarget` | `IDocumentService.CreatePaymentAsync` ⇒ JE รับ/จ่าย · ยอดค้าง · หัก ณ ที่จ่าย (เดิม `ImportPaymentAsync` แก้ `PaidAmount` ตรง GL ไม่ขยับ) · แถวละการชำระ | ไม่พบ/กำกวม/ยังไม่อนุมัติ · เกินยอดค้าง · วันที่อนาคต · งวดปิด | ซ้ำ (เอกสาร+วัน+ยอด) ⇒ "ข้าม" · วิธีชำระไม่รู้จัก (= โอน) | `VoidPaymentAsync` (กลับ JE + คืนยอด) |
+| `fixed-assets` — `Targets/FixedAssetImportTarget` | `IFixedAssetService.ImportAsync` (ทีละแถว · `FixedAssetImportMethod` — ที่ดิน/CIP ไม่คิดค่าเสื่อม) | วิธีคิดขัดหมวด (ที่ดิน + เส้นตรง — พ.ร.ฎ.145) · ราคาทุน ≤ 0 | รหัสซ้ำของเดิม/ในไฟล์ ⇒ "ข้าม" · ค่าเสื่อมสะสมยกมา (ยังไม่รองรับ — ลงผ่านงบทดลอง) | `DeleteAsync` เฉพาะที่ยังไม่ลงค่าเสื่อม · ลงแล้ว = จำหน่าย/ตัดจำหน่าย |
+
+**จับคู่บัญชี**: `Helpers/ImportAccountCodeResolver` (รหัสตรง → ความจำ `AccountMappings` ของ session ที่ commit แล้ว → ชื่อ n-gram ≥ 0.90 → หมวดเลขหน้า 1–5 แนะนำเท่านั้น ·
+**ต่ำกว่า 0.85 ไม่เลือกให้**) ห่อด้วย `Services/Import/ImportAccountMatcher` (ช่อง AI เดียว `AskAccountMapAiAsync` · ด่าน ∈ ผังบริษัท + ≥ 0.70) · ใช้ร่วม: wizard ·
+target งบทดลอง · บรรทัดเอกสาร · `ImportEntityResolver.ResolveAccountsAsync`
+
+**Migration wizard** (`migration-wizard.html` → `MigrationWizardController` — **ด่านสิทธิ์ทุก action** = `ImportExportPermissionScope.ForImport("opening-balances")` = Journal.Manage):
+วางข้อความ → `upload-text` (เซิร์ฟเวอร์อ่าน `TrialBalancePasteParser`: แท็บ/ขีดตั้ง/คำพูด/"1,234.50"/วงเล็บ/เลขไทย · ข้ามหัวตาราง/ยอดรวมพร้อมเหตุผล) → แนะนำบัญชีให้ทันที
+(ถึงเกณฑ์ = เลือกให้ · ป้ายแหล่ง + ความมั่นใจจากเซิร์ฟเวอร์) → `mappings` (บัญชีต้องอยู่ในผังบริษัท · คำแนะนำ AI ⇒ `RecordUserChoiceAsync`) → `validate`
+(`OpeningTrialBalanceRules` ตัวเดียวกับศูนย์นำเข้า — errors/warnings แยก · เดิมคำเตือน "⚠️" บล็อก commit) → `post-difference` (ทางไปต่อของงบไม่ลงตัว) →
+`commit {acknowledgedWarningCodes}` (ตรวจใหม่ในตัว · audit `MIGRATION-TB-COMMIT`) → `rollback` (คืนยอดเดิม · audit `MIGRATION-TB-ROLLBACK`) ·
+`GET reconciliation` = `OpeningBalanceReconciliation` (ลูกหนี้/เจ้าหนี้จาก `SubLedgerReconciliationService` · สต็อก vs 115xx · ราคาทุน/ค่าเสื่อมสะสมของทะเบียน vs งบทดลอง — อ่านอย่างเดียว ไม่บล็อก)
+
+**โปรแกรมอื่น** (`migrate-competitor.html` → `CompetitorImportController`): ไฟล์อ่านด้วย `ImportTabularReader` (TIS-620 · xlsx) · เลือก adapter ด้วย**คะแนนหัวตาราง**
+(`CompetitorHeaderScore` — ไม่ใช่ชื่อไฟล์: `express_products.csv` ไปสินค้า) · ผู้ติดต่อ: ชนิด+สาขาผ่าน `ContactTypeResolver.ResolveWithBranch` · เลขภาษีผ่าน
+`ThaiTaxIdValidator` (ผิด = ปฏิเสธแถวพร้อมเหตุผล) · ลูกค้า/ผู้ขายจากคอลัมน์/หัวตาราง (ไม่รู้ = ทั้งสอง + คำเตือน — เดิมฮาร์ดโค้ด JuristicPerson + ทั้งสอง)
+
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
 ### 3.1 Create / Update (Draft → Draft)
@@ -5444,3 +5471,4 @@ _Last verified against codebase: 2026-10-14 (ทีม F2 แหล่งเง�
 reclassify อ่านผังเดิมจาก JE · เทมเพลต `defaultPaymentChannel` · BankService สร้างตรวจผังที่ผูก + `activeOnly` — commit 1b39ec9f)_
 _Last verified against codebase: 2026-10-14 (ทีม F3 — แก้ผลตรวจช่องทางรับ/จ่ายเงิน + รหัสผิดตาราง (`erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md` PC#6/#8/#11/#12/#16/#17/#22 · ID#13/#14/#15/#17/#18/#19/#22/#23/#24): กติกาผังเงินตัวเดียว `Helpers/MoneyAccountRule` + `MoneyAccountDirectory` · ผังลงรายการได้ `Helpers/PostingAccountRule` + `PostingAccountGuard` · §3.8 แหล่งจ่ายเงินเดือน · §2 แหล่งเงิน default · §7 สามแถวใหม่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 6b406e09)_
 _Last verified against codebase: 2026-10-14 (ทีม F4 · PAYMENT_CHANNEL_AUDIT ส่วนที่ 2 ID#9/10/11/12/18/25 — §3.2: มือถืออนุมัติผ่าน `ApprovalService.SubmitActionAsync` ตัวเดียว (ผู้อนุมัติของขั้น · สิทธิ์ขั้นสุดท้าย · แก้แถวที่รอ) · ผู้อนุมัติที่ออกจากบริษัท: ส่งไม่ได้ 409 + โอนผู้อนุมัติ · workflow ข้ามบริษัทตรวจสมาชิกผู้ลงนาม/ผู้อนุมัติเริ่มต้น · อีเมลตั้งเวลาตรวจเอกสารซ้ำตอนส่ง + ไฟล์แนบล้มไม่ประทับ Sent · รายงานตั้งเวลา PARTIAL/ERROR — sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-10-14 (รอบ 205 ทีม D — ศูนย์นำเข้า ปลายทางบัญชี + migration wizard (§2.11): target งบทดลองยกมา/เอกสาร(ร่าง+DRAFT · เลขเดิม→Reference)/รับ-จ่ายชำระ(CreatePaymentAsync ⇒ JE)/สินทรัพย์(ที่ดินไม่คิดค่าเสื่อม) · wizard แยกบล็อก/คำเตือน (ข้อ 150) + ทางไปต่องบไม่ลงตัว + ย้อนคืนยอดเดิม + ด่านสิทธิ์ทุก action · กระทบยอดหลังย้ายระบบ · adapter โปรแกรมอื่นเลือกด้วยหัวตาราง + TIS-620 + ชนิดผู้ติดต่อ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_

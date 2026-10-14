@@ -34,6 +34,9 @@ public static class ImportHubServiceRegistration
         // ── ทีม C (ธนาคาร) ──
 
         // ── ทีม D (บัญชี + migration) ──
+        // ตัวหาบัญชีของรหัสจากไฟล์ (ImportAccountCodeResolver → AI ImportAccountMap) — ใช้ร่วม: ImportEntityResolver.ResolveAccountsAsync ·
+        // MigrationWizardService (แนะนำบัญชี/ตรวจ) · OpeningTrialBalanceImportTarget · DocumentImportBuilder
+        services.AddScoped<ImportAccountMatcher>();
 
         // ── ทีม E (UX + gate) ──
 

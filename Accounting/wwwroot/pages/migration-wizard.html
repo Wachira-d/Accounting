@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Migration Wizard - Next Acc</title>
+  <title>ย้ายระบบ — งบทดลองยกมา - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <style>
@@ -11,115 +11,124 @@
     .wizard-step .num{width:36px;height:36px;border-radius:50%;background:var(--gray-200);color:var(--gray-700);font-weight:700;display:flex;align-items:center;justify-content:center}
     .wizard-step.active .num{background:var(--primary);color:#fff}
     .wizard-step.done .num{background:var(--success);color:#fff}
-    .mapping-row{display:grid;grid-template-columns:80px 1fr 130px 130px 1.5fr;gap:8px;padding:6px 8px;border-bottom:1px solid var(--gray-100);align-items:center;font-size:13px}
+    .mapping-row{display:grid;grid-template-columns:90px 1fr 110px 110px 1.6fr 1.2fr;gap:8px;padding:6px 8px;border-bottom:1px solid var(--gray-100);align-items:center;font-size:13px}
     .mapping-row.unmapped{background:#fef3c7}
     .legacy-textarea{width:100%;min-height:160px;font-family:'Inter',monospace;font-size:12px}
+    .src-badge{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;background:#e0f2fe;color:#075985;margin-right:4px}
+    .src-badge.low{background:#fef3c7;color:#92400e}
+    .issue-err{background:#fee2e2;border-left:3px solid #dc2626;padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:13px}
+    .issue-warn{background:#fffbeb;border-left:3px solid #f59e0b;padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:13px}
+    .recon-row{display:grid;grid-template-columns:1.6fr 120px 120px 120px;gap:8px;padding:6px 8px;border-bottom:1px solid var(--gray-100);font-size:13px}
+    .recon-row.off{background:#fef2f2}
   </style>
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div>
-        <h2 class="page-title">🔄 Migration Wizard</h2>
-        <p class="page-subtitle">นำเข้าข้อมูลจากระบบ ERP เดิม — Chart of Accounts, Trial Balance, Opening Balances</p>
+        <h2 class="page-title">🔄 ย้ายระบบ — งบทดลองยกมา</h2>
+        <p class="page-subtitle">วางงบทดลองจากโปรแกรมเดิม → ระบบจับคู่ผังบัญชีให้ → ตรวจ → ลงยอดยกมา (ย้อนได้)</p>
       </div>
-      <button class="btn btn-primary" onclick="Page.openCreate()"
-              data-tour-step="1"
-              data-tour-text="ขั้นที่ 1 — สร้าง Session ใหม่ เลือกประเภท (ผังบัญชี / ยอดยกมา / งบทดลอง / Sub-Ledger AR/AP/สต๊อก/สินทรัพย์)">+ สร้าง Session ใหม่</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="Page.reconcile()">⚖️ กระทบยอดหลังย้ายระบบ</button>
+        <button class="btn btn-primary" onclick="Page.openCreate()"
+                data-tour-step="1"
+                data-tour-text="ขั้นที่ 1 — สร้างชุดใหม่ เลือกประเภทและงวดบัญชีที่จะเก็บยอดยกมา">+ สร้างชุดใหม่</button>
+      </div>
     </div>
+
+    <div id="reconArea" style="margin-bottom:16px"></div>
 
     <div id="sessionsList" style="margin-bottom:24px"
          data-tour-step="2"
-         data-tour-text="ขั้นที่ 2 — รายการ Session ที่สร้างไว้ คลิกเข้าเพื่อเปิด Wizard 3 ขั้น: อัพโหลด → mapping → preview/commit">
-      <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด sessions...</div>
+         data-tour-text="ขั้นที่ 2 — รายการชุดที่สร้างไว้ คลิกเพื่อเปิด: วางข้อมูล → จับคู่บัญชี → ตรวจ/ลงยอด">
+      <div class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</div>
     </div>
 
     <!-- Create Session Modal -->
     <div class="modal-overlay" id="createModal">
       <div class="modal" style="max-width:560px">
-        <div class="modal-header"><h3 class="modal-title">สร้าง Migration Session ใหม่</h3><button class="modal-close" onclick="Layout.closeModal('createModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title">สร้างชุดย้ายระบบใหม่</h3><button class="modal-close" onclick="Layout.closeModal('createModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">ชื่อ Session *</label><input type="text" class="form-input" id="cName" placeholder="เช่น Trial Balance 31 ธ.ค. 2025"></div>
-          <div class="form-group"><label class="form-label">ประเภทการ Migrate *</label>
+          <div class="form-group"><label class="form-label">ชื่อชุด *</label><input type="text" class="form-input" id="cName" placeholder="เช่น งบทดลอง 31 ธ.ค. 2568"></div>
+          <div class="form-group"><label class="form-label">ประเภท *</label>
             <select class="form-select" id="cType">
-              <option value="OpeningBalances">Opening Balances (ยอดยกมา)</option>
-              <option value="TrialBalance">Trial Balance (งบทดลอง)</option>
-              <option value="ChartOfAccounts">Chart of Accounts (ผังบัญชี)</option>
-              <option value="SubLedgerAR">Sub-Ledger: AR</option>
-              <option value="SubLedgerAP">Sub-Ledger: AP</option>
-              <option value="SubLedgerFixedAssets">Sub-Ledger: Fixed Assets</option>
-              <option value="SubLedgerInventory">Sub-Ledger: Inventory</option>
+              <option value="OpeningBalances">ยอดยกมา</option>
+              <option value="TrialBalance">งบทดลอง</option>
             </select>
           </div>
-          <div class="form-group"><label class="form-label">งวดบัญชีปลายทาง</label>
+          <div class="form-group"><label class="form-label">งวดบัญชีปลายทาง *</label>
             <select class="form-select" id="cFiscalPeriod">
               <option value="">-- เลือกงวด --</option>
             </select>
-            <small style="color:#64748b;font-size:11px">งวดที่จะเก็บ Opening Balance หลัง commit (ปกติคือมกราคมของปีที่เริ่มใช้ระบบ)</small>
+            <small style="color:#64748b;font-size:11px">งวดที่จะเก็บยอดยกมา (ปกติคือเดือนแรกที่เริ่มใช้ระบบ)</small>
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('createModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.createSession()">สร้าง Session</button>
+          <button class="btn btn-primary" onclick="Page.createSession()">สร้าง</button>
         </div>
       </div>
     </div>
 
     <!-- Session Detail / Wizard Modal -->
     <div class="modal-overlay" id="wizardModal">
-      <div class="modal" style="max-width:1100px">
+      <div class="modal" style="max-width:1200px">
         <div class="modal-header">
-          <h3 class="modal-title" id="wTitle">Session</h3>
+          <h3 class="modal-title" id="wTitle">ชุดย้ายระบบ</h3>
           <button class="modal-close" onclick="Layout.closeModal('wizardModal')">&times;</button>
         </div>
         <div class="modal-body" style="padding:18px">
-          <!-- 3 Steps -->
           <div class="wizard-step" id="step1">
             <div class="num">1</div>
             <div style="flex:1">
-              <strong>อัพโหลด Legacy Accounts</strong>
-              <div style="font-size:12px;color:var(--gray-500)">วาง CSV หรือ TAB-separated data ที่มี: Code, Name, Debit, Credit</div>
+              <strong>วางงบทดลอง</strong>
+              <div style="font-size:12px;color:var(--gray-500)">คัดลอกจาก Excel ได้เลย (รหัส · ชื่อ · เดบิต · เครดิต หรือ รหัส · ชื่อ · ยอดคงเหลือ) — "1,234.50" · (500.00) = ติดลบ · เลขไทย อ่านได้ · แถวหัวตาราง/ยอดรวมระบบข้ามให้</div>
             </div>
           </div>
           <div id="step1Body" style="margin-bottom:14px">
-            <textarea id="legacyInput" class="form-input legacy-textarea" placeholder="เช่น
-1110|เงินสด|10000|0
-1120|ลูกหนี้การค้า|45000|0
-2110|เจ้าหนี้การค้า|0|30000
-3110|ทุนจดทะเบียน|0|25000"></textarea>
-            <div style="display:flex;gap:8px;margin-top:6px">
-              <button class="btn btn-sm btn-primary" onclick="Page.parseAndUpload()">⬆️ Upload legacy accounts</button>
-              <span id="step1Status" style="font-size:13px;color:var(--gray-600);align-self:center"></span>
+            <textarea id="legacyInput" class="form-input legacy-textarea" placeholder="เช่น (คัดลอกจาก Excel)
+รหัส	ชื่อบัญชี	เดบิต	เครดิต
+1110	เงินสด	10,000.00	0
+1130	ลูกหนี้การค้า	45,000.00
+2110	เจ้าหนี้การค้า		30,000.00
+3110	ทุนจดทะเบียน		25,000.00"></textarea>
+            <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+              <button class="btn btn-sm btn-primary" id="btnUpload" onclick="Page.uploadText()">⬆️ อ่านข้อมูล + แนะนำบัญชี</button>
+              <span id="step1Status" style="font-size:13px;color:var(--gray-600)"></span>
             </div>
+            <div id="skippedArea" style="margin-top:6px"></div>
           </div>
 
           <div class="wizard-step" id="step2">
             <div class="num">2</div>
             <div style="flex:1">
-              <strong>Map ไปยังผังบัญชีปัจจุบัน</strong>
-              <div style="font-size:12px;color:var(--gray-500)">คลิกบัญชีในคอลัมน์ขวาเพื่อจับคู่กับ Chart of Accounts ของระบบ</div>
+              <strong>จับคู่กับผังบัญชี</strong>
+              <div style="font-size:12px;color:var(--gray-500)">ระบบเลือกให้เมื่อมั่นใจ ≥ 0.85 (รหัสตรง/เคยจับคู่/ชื่อเหมือน) · ต่ำกว่านั้นเป็นคำแนะนำ (สีเหลือง) — เปลี่ยนได้ทุกแถว</div>
             </div>
+            <button class="btn btn-sm btn-secondary" id="btnAcceptAll" onclick="Page.acceptAllSuggestions()">✓ ใช้คำแนะนำทั้งหมด</button>
+            <button class="btn btn-sm btn-ghost" id="btnSuggest" onclick="Page.suggest()">↻ แนะนำใหม่</button>
           </div>
-          <div id="mappingArea" style="border:1px solid var(--gray-200);border-radius:8px;max-height:340px;overflow-y:auto;margin-bottom:14px">
-            <div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">อัพโหลด legacy accounts ก่อนเพื่อเริ่ม mapping</div>
+          <div id="mappingArea" style="border:1px solid var(--gray-200);border-radius:8px;max-height:360px;overflow-y:auto;margin-bottom:14px">
+            <div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">วางข้อมูลก่อนเพื่อเริ่มจับคู่</div>
           </div>
 
           <div class="wizard-step" id="step3">
             <div class="num">3</div>
             <div style="flex:1">
-              <strong>Validate &amp; Commit</strong>
-              <div style="font-size:12px;color:var(--gray-500)">ตรวจสอบความถูกต้อง (Dr = Cr, ทุก row มี mapping) ก่อน commit</div>
+              <strong>ตรวจ แล้วลงยอดยกมา</strong>
+              <div style="font-size:12px;color:var(--gray-500)">สีแดง = ต้องแก้ก่อน (มีทางไปต่อทุกข้อ) · สีเหลือง = คำเตือน ติ๊กรับทราบแล้วลงยอดได้</div>
             </div>
           </div>
           <div id="validationArea" style="background:#f8fafc;padding:12px;border-radius:8px;margin-bottom:14px;min-height:60px">
-            <div style="color:#94a3b8;font-size:13px">กด "Validate" เมื่อ map ครบ</div>
+            <div style="color:#94a3b8;font-size:13px">กด "ตรวจ" เมื่อจับคู่ครบ</div>
           </div>
         </div>
         <div class="modal-footer" style="justify-content:space-between">
           <button class="btn btn-secondary" onclick="Layout.closeModal('wizardModal')">ปิด</button>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-secondary" onclick="Page.validateSession()" id="btnValidate">✓ Validate</button>
-            <button class="btn btn-primary" onclick="Page.commitSession()" id="btnCommit" disabled style="background:linear-gradient(135deg,#10b981,#059669);border:none">🚀 Commit Migration</button>
+            <button class="btn btn-secondary" onclick="Page.validateSession()" id="btnValidate">✓ ตรวจ</button>
+            <button class="btn btn-primary" onclick="Page.commitSession()" id="btnCommit" disabled style="background:linear-gradient(135deg,#10b981,#059669);border:none">🚀 ลงยอดยกมา</button>
           </div>
         </div>
       </div>
@@ -131,10 +140,15 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
+    // รอบ 205 ทีม D — หน้าแสดงอย่างเดียว: อ่านข้อความที่วาง · ป้ายสถานะ · ป้ายแหล่งคำแนะนำ · บล็อก/คำเตือน มาจากเซิร์ฟเวอร์ทั้งหมด (F2 ข้อ 5)
     const Page = {
       currentSessionId: null,
+      session: null,
       coa: [],
       mappings: [],
+      validation: null,
+
+      base() { return `/api/companies/${Layout.getCompanyId()}/migration`; },
 
       async init() {
         if (!Layout.init('migration-wizard')) return;
@@ -142,57 +156,44 @@
       },
 
       async loadSessions() {
-        const cid = Layout.getCompanyId();
         try {
-          const res = await API.get(`/api/companies/${cid}/migration/sessions`);
+          const res = await API.get(`${this.base()}/sessions`);
           const sessions = res?.data || [];
           const el = document.getElementById('sessionsList');
-          if (!sessions.length) { el.innerHTML = '<div class="card text-center text-gray-400" style="padding:40px">ยังไม่มี migration session</div>'; return; }
+          if (!sessions.length) { el.innerHTML = '<div class="card text-center text-gray-400" style="padding:40px">ยังไม่มีชุดย้ายระบบ — กด "สร้างชุดใหม่"</div>'; return; }
           el.innerHTML = `<div class="table-container"><table class="table">
-            <thead><tr><th>ชื่อ Session</th><th>ประเภท</th><th>สถานะ</th><th>สร้างเมื่อ</th><th>Commit เมื่อ</th><th></th></tr></thead>
+            <thead><tr><th>ชื่อชุด</th><th>ประเภท</th><th>สถานะ</th><th>สร้างเมื่อ</th><th>ลงยอดเมื่อ</th><th></th></tr></thead>
             <tbody>${sessions.map(s => `<tr>
               <td class="font-medium">${Layout.esc(s.sessionName)}</td>
-              <td><span class="badge">${s.migrationType}</span></td>
-              <td>${this._statusBadge(s.status)}</td>
+              <td><span class="badge">${Layout.esc(s.typeLabel)}</span></td>
+              <td><span class="badge">${Layout.esc(s.statusLabel)}</span></td>
               <td>${Layout.date(s.createdAt)}</td>
               <td>${s.completedAt ? Layout.date(s.completedAt) : '-'}</td>
               <td>
-                <button class="btn btn-sm btn-ghost" onclick="Page.openSession('${s.id}')">${s.status === 'Committed' ? 'ดู' : 'แก้ไข →'}</button>
-                ${s.status === 'Committed' ? `<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.rollback('${s.id}','${Layout.jsArg(s.sessionName||'')}')" title="ย้อนการ commit — ลบ Opening Balance ที่ session นี้สร้าง">↶ Rollback</button>` : ''}
+                <button class="btn btn-sm btn-ghost" onclick="Page.openSession('${Layout.jsArg(s.id)}')">${s.canEdit ? 'เปิด →' : 'ดู'}</button>
+                ${s.canRollback ? `<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.rollback('${Layout.jsArg(s.id)}','${Layout.jsArg(s.sessionName || '')}')" title="ลบยอดยกมาที่ชุดนี้สร้าง และคืนยอดเดิมที่ถูกทับ">↶ ย้อน</button>` : ''}
               </td>
             </tr>`).join('')}</tbody></table></div>`;
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      _statusBadge(s) {
-        const colors = { 0:'#94a3b8', 1:'#3b82f6', 2:'#f59e0b', 3:'#10b981', 4:'#22c55e', 5:'#ef4444', 6:'#94a3b8', 7:'#a855f7',
-          'Draft':'#94a3b8','Mapping':'#3b82f6','Validating':'#f59e0b','ReadyToCommit':'#10b981','Committed':'#22c55e','Failed':'#ef4444','Cancelled':'#94a3b8','RolledBack':'#a855f7' };
-        const label = typeof s === 'number' ? ['Draft','Mapping','Validating','ReadyToCommit','Committed','Failed','Cancelled','RolledBack'][s] || s : s;
-        return `<span style="background:${colors[s]||'#e5e7eb'}20;color:${colors[s]||'#475569'};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">${label}</span>`;
-      },
 
       async rollback(sessionId, name) {
-        if (!confirm(`ย้อนการ commit ของ "${name}"?\n\nระบบจะลบ Opening Balance ที่ session นี้สร้างใน fiscal period เป้าหมาย\nงวดบัญชีต้องยังไม่ปิด/ล็อก จึงจะ rollback ได้`)) return;
+        if (!confirm(`ย้อนการลงยอดของ "${name}"?\n\nระบบจะลบยอดยกมาที่ชุดนี้สร้าง และคืนยอดเดิมที่ชุดนี้ทับไว้\nงวดบัญชีต้องยังเปิดอยู่`)) return;
         try {
-          const cid = Layout.getCompanyId();
-          const r = await fetch(`/api/companies/${cid}/migration/sessions/${sessionId}/rollback`, {
-            method: 'POST', headers: { 'Authorization': 'Bearer ' + API.token }
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message || 'rollback failed');
-          Layout.toast('ย้อนการ commit สำเร็จ');
+          const res = await API.post(`${this.base()}/sessions/${sessionId}/rollback`, {});
+          Layout.toast(res?.message || 'ย้อนแล้ว');
           await this.loadSessions();
-        } catch(e) { Layout.toast(e.message, 'error'); }
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async openCreate() {
-        const cid = Layout.getCompanyId();
         try {
-          const res = await API.get(`/api/companies/${cid}/accounting/fiscal-periods`);
-          const periods = (res?.data?.items || res?.data || []).slice().sort((a,b)=>(b.year*100+b.month)-(a.year*100+a.month));
+          const res = await API.get(`/api/companies/${Layout.getCompanyId()}/accounting/fiscal-periods`);
+          const periods = (res?.data?.items || res?.data || []).slice().sort((a, b) => (b.year * 100 + b.month) - (a.year * 100 + a.month));
           const sel = document.getElementById('cFiscalPeriod');
           sel.innerHTML = '<option value="">-- เลือกงวด --</option>' +
-            periods.map(p => `<option value="${p.id}">${p.year}/${String(p.month).padStart(2,'0')} (${Layout.date(p.startDate)} - ${Layout.date(p.endDate)})</option>`).join('');
-        } catch (e) {}
+            periods.map(p => `<option value="${Layout.esc(p.id)}">${p.year}/${String(p.month).padStart(2, '0')} (${Layout.date(p.startDate)} - ${Layout.date(p.endDate)})</option>`).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
         document.getElementById('cName').value = '';
         Layout.openModal('createModal');
       },
@@ -201,11 +202,10 @@
         const name = document.getElementById('cName').value.trim();
         const type = document.getElementById('cType').value;
         const targetFiscalPeriodId = document.getElementById('cFiscalPeriod').value || null;
-        if (!name) { Layout.toast('ระบุชื่อ session', 'error'); return; }
-        const cid = Layout.getCompanyId();
+        if (!name) { Layout.toast('ระบุชื่อชุด', 'error'); return; }
         try {
-          const res = await API.post(`/api/companies/${cid}/migration/sessions`, { name, type, targetFiscalPeriodId });
-          Layout.toast(res?.message || 'สร้าง session สำเร็จ');
+          const res = await API.post(`${this.base()}/sessions`, { name, type, targetFiscalPeriodId });
+          Layout.toast(res?.message || 'สร้างแล้ว');
           Layout.closeModal('createModal');
           await this.loadSessions();
           await this.openSession(res.data.id);
@@ -214,52 +214,62 @@
 
       async openSession(id) {
         this.currentSessionId = id;
-        // Load chart of accounts for the mapping dropdowns.
+        this.validation = null;
+        document.getElementById('validationArea').innerHTML = '<div style="color:#94a3b8;font-size:13px">กด "ตรวจ" เมื่อจับคู่ครบ</div>';
+        document.getElementById('skippedArea').innerHTML = '';
+        document.getElementById('step1Status').textContent = '';
+        document.getElementById('legacyInput').value = '';
+        document.getElementById('btnCommit').disabled = true;
         try {
           const r = await Layout.api().getAccounts();
           this.coa = (r?.data?.items || r?.data || []);
-        } catch (_) { this.coa = []; }
+        } catch (e) { this.coa = []; Layout.toast(e.message, 'error'); }
         await this.refreshSession();
         Layout.openModal('wizardModal');
       },
 
       async refreshSession() {
-        const cid = Layout.getCompanyId();
         try {
-          const res = await API.get(`/api/companies/${cid}/migration/sessions/${this.currentSessionId}`);
+          const res = await API.get(`${this.base()}/sessions/${this.currentSessionId}`);
           const s = res?.data?.session;
+          this.session = s;
           this.mappings = res?.data?.mappings || [];
-          document.getElementById('wTitle').textContent = `${s.sessionName} — ${s.migrationType} — ${s.status}`;
-          this._markSteps(s.status);
+          document.getElementById('wTitle').textContent = `${s.sessionName} — ${s.typeLabel} — ${s.statusLabel}`;
+          this._markSteps(s.step);
+          ['btnUpload', 'btnAcceptAll', 'btnSuggest', 'btnValidate'].forEach(b => { document.getElementById(b).disabled = !s.canEdit; });
           this.renderMappings();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
-      _markSteps(status) {
-        const stepStatus = { 'Draft':0, 'Mapping':1, 'Validating':2, 'ReadyToCommit':3, 'Committed':3, 'Failed':2, 'Cancelled':0 };
-        const idx = stepStatus[status] ?? 0;
-        ['step1','step2','step3'].forEach((id, i) => {
+      _markSteps(idx) {
+        ['step1', 'step2', 'step3'].forEach((id, i) => {
           const el = document.getElementById(id);
-          el.classList.remove('active','done');
+          el.classList.remove('active', 'done');
           if (i < idx) el.classList.add('done');
           if (i === idx) el.classList.add('active');
         });
       },
 
-      async parseAndUpload() {
-        const text = document.getElementById('legacyInput').value.trim();
-        if (!text) return;
-        const lines = text.split('\n').filter(l => l.trim());
-        const rows = lines.map(line => {
-          const parts = line.split(/[\t|,]/).map(p => p.trim());
-          return { code: parts[0] || '', name: parts[1] || null, debit: parseFloat(parts[2]) || 0, credit: parseFloat(parts[3]) || 0 };
-        }).filter(r => r.code);
-        if (!rows.length) { Layout.toast('ไม่พบข้อมูลที่ถูกต้อง', 'error'); return; }
-        const cid = Layout.getCompanyId();
+      async uploadText() {
+        const text = document.getElementById('legacyInput').value;
+        if (!text.trim()) { Layout.toast('วางข้อมูลก่อน', 'error'); return; }
         try {
-          const res = await API.post(`/api/companies/${cid}/migration/sessions/${this.currentSessionId}/upload`, { rows });
-          document.getElementById('step1Status').textContent = `อัพโหลด ${rows.length} accounts สำเร็จ`;
-          document.getElementById('step1Status').style.color = '#059669';
+          const res = await API.post(`${this.base()}/sessions/${this.currentSessionId}/upload-text`, { text });
+          const st = document.getElementById('step1Status');
+          st.textContent = res?.message || '';
+          st.style.color = '#059669';
+          const skipped = res?.data?.skipped || [];
+          document.getElementById('skippedArea').innerHTML = skipped.length
+            ? `<details><summary style="cursor:pointer;font-size:12px;color:#92400e">บรรทัดที่ข้าม ${skipped.length} บรรทัด</summary><ul style="font-size:12px;margin:4px 0 0 18px">${skipped.map(x => `<li>บรรทัด ${x.lineNo}: ${Layout.esc(x.reason)} — <code>${Layout.esc(x.text)}</code></li>`).join('')}</ul></details>`
+            : '';
+          await this.refreshSession();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async suggest() {
+        try {
+          const res = await API.post(`${this.base()}/sessions/${this.currentSessionId}/suggest`, {});
+          Layout.toast(res?.message || 'แนะนำแล้ว');
           await this.refreshSession();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -267,71 +277,132 @@
       renderMappings() {
         const area = document.getElementById('mappingArea');
         if (!this.mappings.length) {
-          area.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">อัพโหลด legacy accounts ก่อนเพื่อเริ่ม mapping</div>';
+          area.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">วางข้อมูลก่อนเพื่อเริ่มจับคู่</div>';
           return;
         }
-        const coaOptions = this.coa.map(a => `<option value="${a.id}">${a.accountCode} — ${a.accountName}</option>`).join('');
+        const coaOptions = this.coa.map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} — ${Layout.esc(a.accountName)}</option>`).join('');
+        const name = id => { const a = this.coa.find(x => x.id === id); return a ? `${a.accountCode} ${a.accountName}` : ''; };
         area.innerHTML = `<div class="mapping-row" style="font-weight:600;background:#f8fafc;position:sticky;top:0">
-          <div>Code</div><div>Name</div><div class="text-right">Debit</div><div class="text-right">Credit</div><div>→ Map ไปยัง</div>
-        </div>` + this.mappings.map(m => `
+          <div>รหัสเดิม</div><div>ชื่อ</div><div class="text-right">เดบิต</div><div class="text-right">เครดิต</div><div>→ บัญชีในระบบ</div><div>คำแนะนำ</div>
+        </div>` + this.mappings.map((m, i) => {
+          const hasSugg = m.suggestedAccountId && m.suggestedAccountId !== m.mappedAccountId;
+          const badge = m.sourceLabel && m.sourceLabel !== '—'
+            ? `<span class="src-badge${m.lowConfidence ? ' low' : ''}" title="ความมั่นใจ ${m.suggestionScore ?? ''}">${Layout.esc(m.sourceLabel)} ${m.suggestionScore != null ? Number(m.suggestionScore).toFixed(2) : ''}</span>` : '';
+          return `
           <div class="mapping-row${m.mappedAccountId ? '' : ' unmapped'}">
             <div class="font-medium">${Layout.esc(m.legacyCode)}</div>
             <div>${Layout.esc(m.legacyName || '-')}</div>
             <div class="text-right">${Layout.money(m.legacyDebit)}</div>
             <div class="text-right">${Layout.money(m.legacyCredit)}</div>
-            <div><select class="form-select" data-code="${m.legacyCode}" onchange="Page.applyMapping('${m.legacyCode}',this.value)" style="font-size:12px;padding:4px 8px">
+            <div><select class="form-select" data-idx="${i}" onchange="Page.applyMapping(${i}, this.value)" style="font-size:12px;padding:4px 8px" ${this.session?.canEdit ? '' : 'disabled'}>
               <option value="">-- เลือกบัญชี --</option>${coaOptions}
             </select></div>
-          </div>`).join('');
-        // Pre-select existing mappings
-        this.mappings.forEach(m => {
-          if (m.mappedAccountId) {
-            const sel = area.querySelector(`select[data-code="${CSS.escape(m.legacyCode)}"]`);
-            if (sel) sel.value = m.mappedAccountId;
-          }
+            <div style="font-size:12px">${badge}${hasSugg ? `${Layout.esc(name(m.suggestedAccountId))} <button class="btn btn-sm btn-ghost" onclick="Page.applyMapping(${i}, '${Layout.jsArg(m.suggestedAccountId)}')" ${this.session?.canEdit ? '' : 'disabled'}>ใช้คำแนะนำ</button>` : ''}</div>
+          </div>`;
+        }).join('');
+        this.mappings.forEach((m, i) => {
+          if (!m.mappedAccountId) return;
+          const sel = area.querySelector(`select[data-idx="${i}"]`);
+          if (sel) sel.value = m.mappedAccountId;
         });
       },
 
-      async applyMapping(code, accountId) {
-        if (!accountId) return;
-        const cid = Layout.getCompanyId();
-        const payload = { codeToAccountId: { [code]: accountId } };
+      async applyMapping(idx, accountId) {
+        const m = this.mappings[idx];
+        if (!m) return;
         try {
-          await API.post(`/api/companies/${cid}/migration/sessions/${this.currentSessionId}/mappings`, payload);
-          // Don't await full refresh — just toggle the row's unmapped style.
-          const row = document.querySelector(`select[data-code="${CSS.escape(code)}"]`)?.closest('.mapping-row');
-          if (row) row.classList.remove('unmapped');
+          await API.post(`${this.base()}/sessions/${this.currentSessionId}/mappings`, { codeToAccountId: { [m.legacyCode]: accountId || '00000000-0000-0000-0000-000000000000' } });
+          await this.refreshSession();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async acceptAllSuggestions() {
+        const map = {};
+        this.mappings.filter(m => m.suggestedAccountId && !m.mappedAccountId).forEach(m => { map[m.legacyCode] = m.suggestedAccountId; });
+        if (!Object.keys(map).length) { Layout.toast('ไม่มีคำแนะนำที่ยังไม่ได้ใช้'); return; }
+        try {
+          const res = await API.post(`${this.base()}/sessions/${this.currentSessionId}/mappings`, { codeToAccountId: map });
+          Layout.toast(res?.message || 'ใช้คำแนะนำแล้ว');
+          await this.refreshSession();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async validateSession() {
-        const cid = Layout.getCompanyId();
         const area = document.getElementById('validationArea');
-        area.innerHTML = '<div style="color:#94a3b8;font-size:13px">กำลังตรวจสอบ...</div>';
+        area.innerHTML = '<div style="color:#94a3b8;font-size:13px">กำลังตรวจ...</div>';
         try {
-          const res = await API.post(`/api/companies/${cid}/migration/sessions/${this.currentSessionId}/validate`);
-          const ok = res?.data?.isReady;
-          const issues = res?.data?.issues || [];
-          if (ok) {
-            area.innerHTML = '<div style="color:#059669;font-weight:600">✓ ผ่านการตรวจสอบ — พร้อม commit</div>';
-            document.getElementById('btnCommit').disabled = false;
-          } else {
-            area.innerHTML = '<div style="color:#dc2626;font-weight:600;margin-bottom:8px">✗ พบปัญหา ' + issues.length + ' รายการ:</div>' +
-              '<ul style="margin:0 0 0 20px;font-size:13px;color:#7f1d1d">' + issues.map(i => `<li>${Layout.esc(i)}</li>`).join('') + '</ul>';
-            document.getElementById('btnCommit').disabled = true;
-          }
-        } catch (e) { area.innerHTML = `<div style="color:#dc2626">${e.message}</div>`; }
+          const res = await API.post(`${this.base()}/sessions/${this.currentSessionId}/validate`, {});
+          this.renderValidation(res?.data);
+          await this.refreshSession();
+        } catch (e) { area.innerHTML = `<div style="color:#dc2626">${Layout.esc(e.message)}</div>`; }
+      },
+
+      renderValidation(v) {
+        this.validation = v;
+        const area = document.getElementById('validationArea');
+        if (!v) { area.innerHTML = ''; return; }
+        const errs = v.errors || [], warns = v.warnings || [];
+        const diffPicker = v.canPostDifference ? `
+          <div style="margin-top:6px;display:flex;gap:6px;align-items:center">
+            <select id="diffAccount" class="form-select" style="font-size:12px;padding:4px 8px;max-width:360px">
+              <option value="">-- เลือกบัญชีผลต่างยกมา --</option>
+              ${this.coa.map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} — ${Layout.esc(a.accountName)}</option>`).join('')}
+            </select>
+            <button class="btn btn-sm btn-secondary" onclick="Page.postDifference()">ลงส่วนต่างเข้าบัญชีนี้</button>
+          </div>` : '';
+        area.innerHTML = `
+          <div style="font-size:13px;margin-bottom:8px">เดบิตรวม <b>${Layout.money(v.totalDebit)}</b> · เครดิตรวม <b>${Layout.money(v.totalCredit)}</b>${v.difference ? ` · ต่างกัน <b style="color:#dc2626">${Layout.money(Math.abs(v.difference))}</b>` : ''}</div>
+          ${errs.map(e => `<div class="issue-err"><b>${Layout.esc(e.label)}</b> — ${Layout.esc(e.message)}${e.wayForward ? `<div style="color:#7f1d1d;margin-top:2px">→ ${Layout.esc(e.wayForward)}</div>` : ''}</div>`).join('')}
+          ${diffPicker}
+          ${warns.map(w => `<label class="issue-warn" style="display:block;cursor:pointer"><input type="checkbox" class="ack" value="${Layout.esc(w.code)}" onchange="Page.updateCommitButton()"> <b>${Layout.esc(w.label)}</b> — ${Layout.esc(w.message)}${w.wayForward ? ` <span style="color:#92400e">(${Layout.esc(w.wayForward)})</span>` : ''}</label>`).join('')}
+          ${!errs.length && !warns.length ? '<div style="color:#059669;font-weight:600">✓ ผ่านการตรวจ — พร้อมลงยอดยกมา</div>' : ''}
+          ${!errs.length && warns.length ? '<div style="color:#92400e;font-size:12px">ติ๊กรับทราบคำเตือนทุกข้อแล้วกด "ลงยอดยกมา"</div>' : ''}`;
+        this.updateCommitButton();
+      },
+
+      updateCommitButton() {
+        const v = this.validation;
+        const acked = Array.from(document.querySelectorAll('#validationArea input.ack')).filter(c => c.checked).length;
+        const ok = v && v.isReady && acked === (v.warnings || []).length && this.session?.canEdit;
+        document.getElementById('btnCommit').disabled = !ok;
+      },
+
+      async postDifference() {
+        const accountId = document.getElementById('diffAccount')?.value;
+        if (!accountId) { Layout.toast('เลือกบัญชีผลต่างยกมาก่อน', 'error'); return; }
+        try {
+          const res = await API.post(`${this.base()}/sessions/${this.currentSessionId}/post-difference`, { accountId });
+          Layout.toast(res?.message || 'เพิ่มบรรทัดผลต่างแล้ว');
+          await this.refreshSession();
+          this.renderValidation(res?.data);
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async commitSession() {
-        if (!confirm('ยืนยัน commit migration?\nระบบจะเขียน Opening Balance rows ลงงวดบัญชีปลายทาง — ย้อนกลับไม่ได้')) return;
-        const cid = Layout.getCompanyId();
+        const acknowledgedWarningCodes = Array.from(document.querySelectorAll('#validationArea input.ack')).filter(c => c.checked).map(c => c.value);
+        if (!confirm('ยืนยันลงยอดยกมา?\nระบบจะบันทึกยอดยกมาลงงวดปลายทาง — ย้อนได้ตราบที่งวดยังเปิด (คืนยอดเดิมที่ถูกทับให้)')) return;
         try {
-          const res = await API.post(`/api/companies/${cid}/migration/sessions/${this.currentSessionId}/commit`);
-          Layout.toast(res?.message || 'Commit สำเร็จ');
+          const res = await API.post(`${this.base()}/sessions/${this.currentSessionId}/commit`, { acknowledgedWarningCodes });
+          Layout.toast(res?.message || 'ลงยอดแล้ว');
           Layout.closeModal('wizardModal');
           await this.loadSessions();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async reconcile() {
+        const area = document.getElementById('reconArea');
+        area.innerHTML = '<div class="card" style="font-size:13px">กำลังกระทบยอด...</div>';
+        try {
+          const res = await API.get(`${this.base()}/reconciliation`);
+          const r = res?.data;
+          const lines = r?.lines || [];
+          area.innerHTML = `<div class="card">
+            <h3 style="margin:0 0 8px">⚖️ กระทบยอดหลังย้ายระบบ ณ ${Layout.date(r.asOf)} — ${Layout.esc(res?.message || '')}</h3>
+            <div class="recon-row" style="font-weight:600;background:#f8fafc"><div>รายการ</div><div class="text-right">ทะเบียนย่อย</div><div class="text-right">บัญชี</div><div class="text-right">ต่าง</div></div>
+            ${lines.map(l => `<div class="recon-row${l.balanced ? '' : ' off'}"><div>${Layout.esc(l.label)}${l.hint ? `<div style="font-size:11px;color:#7f1d1d">${Layout.esc(l.hint)}</div>` : ''}</div><div class="text-right">${Layout.money(l.subledgerTotal)}</div><div class="text-right">${Layout.money(l.ledgerTotal)}</div><div class="text-right">${l.balanced ? '✓' : Layout.money(l.difference)}</div></div>`).join('')}
+            ${!lines.length ? '<div style="font-size:13px;color:#64748b">ยังไม่มีข้อมูลให้กระทบยอด</div>' : ''}
+          </div>`;
+        } catch (e) { area.innerHTML = ''; Layout.toast(e.message, 'error'); }
       },
     };
     Page.init();

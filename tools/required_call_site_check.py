@@ -7472,6 +7472,46 @@ RULES += [
          why="ปุ่มสร้างทันทีบนแถวที่ค้างหลายงวดออกงวดล่าสุด ไม่ใช่งวดเก่าสุด — ตัวตัดสินเดียวกับ cron"),
 ]
 
+# รอบ 205 ทีม D (IMPORT_ETL_REVIEW §2.4/§2.5/§2.9) — ปลายทางบัญชีของศูนย์นำเข้า + migration wizard: ลงผ่าน domain service เดิมเท่านั้น ·
+# งบทดลองยกมาตรวจด้วยตัวตัดสินเดียว (บล็อก/คำเตือน ข้อ 150) ทั้งสองทางเข้า · ด่านสิทธิ์ทุก action ของ wizard
+_ETL_D = "รอบ 205 ทีม D: "
+_MW = "Services/Implementations/MigrationWizardService.cs"
+_MWC = "Controllers/MigrationWizardController.cs"
+RULES += [
+    dict(file=_MW, method="EvaluateAsync", must=["OpeningTrialBalanceRules.Evaluate("],
+         why=_ETL_D + "หน้า wizard ตรวจด้วยตัวตัดสินเดียวกับศูนย์นำเข้า (รหัสคำเตือนชุดเดียว)"),
+    dict(file=_MW, method="CommitAsync",
+         must=["await EvaluateAsync(session)", "OpeningTrialBalanceRules.Unacknowledged(", "existing.OpeningDebit, existing.OpeningCredit"],
+         before=[("await EvaluateAsync(session)", "BeginTransactionAsync("), ("OpeningTrialBalanceRules.Unacknowledged(", "BeginTransactionAsync(")],
+         why=_ETL_D + "ลงยอดยกมาตรวจใหม่ก่อนเขียน (ไม่เชื่อสถานะเดิม) · คำเตือนต้องรับทราบ · เก็บยอดเดิมที่ถูกทับไว้ย้อน"),
+    dict(file=_MW, method="RollbackAsync", must=["ob.OpeningDebit = o.PriorDebit"],
+         why=_ETL_D + "ย้อนคืนยอดเดิมที่ชุดนี้ทับ (เดิมลบเฉพาะแถวที่สร้างใหม่)"),
+    dict(file=_MW, method="ApplyMappingsAsync", must=["a.CompanyId == companyId", "RecordUserChoiceAsync("],
+         why=_ETL_D + "บัญชีปลายทางต้องอยู่ในผังของบริษัท (ข้อ 150 (3)) · ปิดลูป AI ImportAccountMap (กฎเหล็ก #1)"),
+    dict(file="Services/Import/Targets/OpeningTrialBalanceImportTarget.cs", method="EvaluateAsync", must=["OpeningTrialBalanceRules.Evaluate("],
+         why=_ETL_D + "ศูนย์นำเข้าตรวจงบทดลองด้วยตัวตัดสินเดียวกับหน้า wizard"),
+    dict(file="Services/Import/Targets/OpeningTrialBalanceImportTarget.cs", method="CommitGroupAsync", must=["_wizard.CommitAsync("],
+         forbid=["OpeningBalances.Add(", "OpeningBalances.Update("],
+         why=_ETL_D + "ลงยอดยกมาผ่าน MigrationWizardService เท่านั้น"),
+    dict(file="Services/Import/Targets/DocumentImportTarget.cs", method="CommitGroupAsync",
+         must=["_builder.BuildAsync(", "_documents.CreateDocumentAsync("], forbid=["Documents.Add(", "DocumentNumber ="],
+         why=_ETL_D + "เอกสารนำเข้าผ่าน DocumentService (ร่าง + เลข DRAFT · ด่านงวด) — ห้ามเขียนตาราง Documents ตรง (คำตัดสินข้อ 151)"),
+    dict(file="Services/Import/Targets/DocumentImportBuilder.cs", method="BuildAsync", must=["Reference: original"],
+         forbid=["SubTotal", "TotalAmount", "VatAmount ="],
+         why=_ETL_D + "เลขเดิมไป Reference · ยอดรวม/VAT คำนวณโดย DocumentService ไม่ใช่ตัวประกอบ"),
+    dict(file="Services/Import/Targets/PaymentImportTarget.cs", method="CommitGroupAsync", must=["_documents.CreatePaymentAsync("],
+         forbid=["PaidAmount", "Payments.Add(", "BalanceDue ="],
+         why=_ETL_D + "รับ/จ่ายชำระผ่าน CreatePaymentAsync ⇒ JE/ยอดค้าง/หัก ณ ที่จ่าย (เดิมแก้ PaidAmount ตรง GL ไม่ขยับ)"),
+    dict(file="Services/Import/Targets/FixedAssetImportTarget.cs", method="CommitGroupAsync", must=["_assets.ImportAsync("],
+         forbid=["FixedAssets.Add("], why=_ETL_D + "ทะเบียนสินทรัพย์ผ่าน FixedAssetService.ImportAsync (FixedAssetImportMethod — ที่ดินไม่คิดค่าเสื่อม)"),
+    dict(file="Services/Import/Targets/FixedAssetImportTarget.cs", method="ValidateAsync", must=["FixedAssetImportMethod.Resolve("],
+         why=_ETL_D + "หน้าตรวจใช้ตัวตัดสินวิธีคิดค่าเสื่อมเดียวกับตอนลง"),
+] + [
+    dict(file=_MWC, method=m, must=["await DenyAsync(companyId)"], why=_ETL_D + "ด่านสิทธิ์ migration wizard (เดิมมีแค่ [Authorize])")
+    for m in ("Create", "List", "Get", "Upload", "UploadText", "Suggest", "ApplyMappings", "Validate", "PostDifference", "Commit",
+              "Rollback", "Reconciliation")
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

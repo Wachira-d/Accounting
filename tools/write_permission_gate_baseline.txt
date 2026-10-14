@@ -314,12 +314,6 @@ Accounting/Controllers/LodgingPublicController.cs	GuestRequest	1
 Accounting/Controllers/LodgingPublicController.cs	Quote	1
 Accounting/Controllers/LodgingPublicController.cs	Search	1
 Accounting/Controllers/LodgingPublicController.cs	UploadSlip	1
-Accounting/Controllers/MigrationWizardController.cs	ApplyMappings	1
-Accounting/Controllers/MigrationWizardController.cs	Commit	1
-Accounting/Controllers/MigrationWizardController.cs	Create	1
-Accounting/Controllers/MigrationWizardController.cs	Rollback	1
-Accounting/Controllers/MigrationWizardController.cs	Upload	1
-Accounting/Controllers/MigrationWizardController.cs	Validate	1
 Accounting/Controllers/MobileController.cs	QuickApprove	1
 Accounting/Controllers/MobileController.cs	RegisterDevice	1
 Accounting/Controllers/MobileController.cs	Sync	1

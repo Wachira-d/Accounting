@@ -106,6 +106,23 @@ public class AccountMapping : BaseEntity
     /// against sub-ledger details at commit time.</summary>
     public decimal LegacyDebit { get; set; }
     public decimal LegacyCredit { get; set; }
+
+    // ── รอบ 205 ทีม D: คำแนะนำบัญชีปลายทาง (ImportAccountCodeResolver → AI ImportAccountMap) — หน้า wizard แสดงป้ายแหล่ง + ความมั่นใจ ──
+
+    /// <summary>บัญชีที่ระบบแนะนำ (null = ไม่มีคำแนะนำ) · ต่างจาก <see cref="MappedAccountId"/> ซึ่งเป็นคำตัดสินที่ใช้จริง</summary>
+    public Guid? SuggestedAccountId { get; set; }
+
+    /// <summary>ชั้นที่แนะนำ: "Code" · "Mapping" · "Ngram" · "Category" · "Ai" (ป้ายจาก <c>ImportAccountCodeResolver.KindLabel</c>)</summary>
+    public string? SuggestionKind { get; set; }
+
+    /// <summary>ความมั่นใจของคำแนะนำ 0–1 (&lt; 0.85 = เหลือง · ระบบไม่เลือกให้)</summary>
+    public decimal? SuggestionScore { get; set; }
+
+    /// <summary>FeedbackId ของ AI <c>ImportAccountMap</c> (58) — ปิดลูปด้วย <c>RecordUserChoiceAsync</c> ตอนผู้ใช้ยืนยัน/แก้ (กฎเหล็ก #1)</summary>
+    public Guid? AccountMapAiFeedbackId { get; set; }
+
+    /// <summary>true เฉพาะเมื่อคำแนะนำมาจาก AI ที่เรียกจริง (ป้าย "🤖 AI แนะนำ") · ไม่งั้น "⚙️ ระบบแนะนำ"</summary>
+    public bool AccountMapUsedAi { get; set; }
 }
 
 // ============================================================

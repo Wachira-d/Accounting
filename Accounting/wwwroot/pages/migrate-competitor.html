@@ -31,12 +31,12 @@
     <div class="card">
       <h3>1. เลือกไฟล์ + Preview</h3>
       <div style="margin-top:14px">
-        <input type="file" id="fileInput" accept=".csv,.tsv,.txt" class="form-input">
+        <input type="file" id="fileInput" accept=".csv,.tsv,.txt,.xlsx" class="form-input">
       </div>
       <div style="margin-top:14px">
         <button class="btn btn-primary" onclick="Page.preview()">Preview ก่อน</button>
         <span style="font-size:12px;color:#64748b;margin-left:10px">
-          จะ scan ทั้งไฟล์เทียบกับฐานข้อมูล หา record ที่ TaxId ตรงกันแต่ข้อมูลต่างกัน
+          ระบบดูหัวตารางเพื่อรู้ว่าเป็นไฟล์อะไร (ไม่ดูชื่อไฟล์) · อ่านภาษาไทย TIS-620 ของ Express ได้ · เทียบกับข้อมูลเดิมก่อนบันทึก
         </span>
       </div>
     </div>
@@ -60,13 +60,8 @@
         Layout.setTitle('ย้ายจาก Express/PEAK/FlowAccount');
       },
       _esc(s) { return Layout.esc(s); },
-      _keyLabel(kind) {
-        return ({
-          Contacts: 'TaxId',
-          Products: 'รหัสสินค้า',
-          ChartOfAccounts: 'รหัสบัญชี',
-        })[kind] || 'Key';
-      },
+      // ป้าย/ชนิด/เหตุผลมาจากเซิร์ฟเวอร์ (keyLabel · entityLabel · detectionReason) — หน้าไม่ถือตาราง (F2 ข้อ 5)
+      // ลิงก์ "เปิดในศูนย์นำเข้าข้อมูล" ใช้ d.hubEntityType + d.sourceSystem จากเซิร์ฟเวอร์ — ทีม E ต่อเมื่อหน้าศูนย์นำเข้ามีแล้ว (IMPORT_ETL_REVIEW §2.8)
 
       async preview() {
         const f = document.getElementById('fileInput').files[0];
@@ -99,16 +94,19 @@
       _renderSummary(d, msg) {
         document.getElementById('previewSummary').innerHTML = `
           <div class="card" style="background:#f0f9ff;border:1px solid #bae6fd">
-            <h3 style="margin:0 0 10px">📋 Preview: ${this._esc(d.sourceSystem)} (${this._esc(d.entityKind)})</h3>
+            <h3 style="margin:0 0 10px">📋 ${this._esc(d.entityLabel || d.entityKind)} จาก ${this._esc(d.sourceSystem)}</h3>
+            <div style="font-size:12px;color:#475569;margin-bottom:8px">${this._esc(d.detectionReason || '')}${d.encoding ? ' · อักขระ ' + this._esc(d.encoding) : ''}</div>
             <div>
               <span class="stat-pill" style="background:#e0f2fe">รวม ${d.totalRows} แถว</span>
               <span class="stat-pill" style="background:#dcfce7">ใหม่ ${d.newRowCount} แถว</span>
               <span class="stat-pill" style="background:#fef3c7">ซ้ำเหมือนกัน ${d.duplicateExactCount} แถว (จะข้ามอัตโนมัติ)</span>
+              ${(d.warnings || []).length ? `<span class="stat-pill" style="background:#fee2e2">ข้อสังเกต ${d.warnings.length}</span>` : ''}
               <span class="stat-pill" style="background:${d.conflicts.length ? '#fee2e2' : '#dcfce7'}">
                 ขัดแย้ง ${d.conflicts.length} แถว ${d.conflicts.length ? '⚠️ ต้องตัดสินใจ' : '✓'}
               </span>
             </div>
             <div style="font-size:12px;color:#475569;margin-top:8px">${this._esc(msg || '')}</div>
+            ${(d.warnings || []).length ? `<ul style="font-size:12px;color:#92400e;margin:8px 0 0 18px">${d.warnings.slice(0, 20).map(w => `<li>${this._esc(w)}</li>`).join('')}</ul>` : ''}
           </div>`;
       },
 
@@ -137,7 +135,7 @@
               <table class="data-table" style="font-size:12px;width:100%">
                 <thead>
                   <tr>
-                    <th style="width:140px">${this._keyLabel(d.entityKind)}</th>
+                    <th style="width:140px">${this._esc(d.keyLabel || '')}</th>
                     <th>ฟิลด์</th>
                     <th>ในระบบ (เดิม)</th>
                     <th>ในไฟล์ (ใหม่)</th>

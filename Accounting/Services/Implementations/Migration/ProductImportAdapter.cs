@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using Accounting.Data;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -22,24 +21,18 @@ public sealed record IncomingProduct(
     string? Category,
     string? Barcode);
 
-public abstract class ProductImportAdapterBase : ICompetitorImportAdapter
+public abstract class ProductImportAdapterBase : CompetitorAdapterBase
 {
     protected readonly AccountingDbContext _db;
     protected ProductImportAdapterBase(AccountingDbContext db) { _db = db; }
 
-    public abstract string SourceSystem { get; }
-    public string EntityKind => "Products";
-    public abstract bool CanHandle(string fileContent, string filename);
+    public override string EntityKind => "Products";
 
-    protected abstract List<IncomingProduct> ParseRows(
-        string content,
-        out List<string> columns,
-        out List<Dictionary<string, string>> rawSample,
-        out List<string> warnings);
+    protected abstract List<IncomingProduct> ParseRows(CompetitorTable table, out List<string> warnings);
 
-    public async Task<ImportPreview> PreviewAsync(Guid companyId, string fileContent, CancellationToken ct)
+    public override async Task<ImportPreview> PreviewAsync(Guid companyId, CompetitorTable table, CancellationToken ct)
     {
-        var rows = ParseRows(fileContent, out var cols, out var rawSample, out var warnings);
+        var rows = ParseRows(table, out var warnings);
         var codes = rows.Select(r => r.Code).Where(c => !string.IsNullOrEmpty(c)).Distinct().ToList();
         var existing = await _db.Products
             .Where(p => p.CompanyId == companyId && !p.IsDeleted && codes.Contains(p.Code))
@@ -85,15 +78,14 @@ public abstract class ProductImportAdapterBase : ICompetitorImportAdapter
                 DiffFields: diff));
         }
 
-        var sample = rawSample.Take(50).Select(r => (IReadOnlyDictionary<string, string>)r).ToList();
-        return new ImportPreview(SourceSystem, EntityKind, cols, sample,
+        return new ImportPreview(SourceSystem, EntityKind, table.Headers, Sample(table),
             rows.Count, warnings, conflicts, newCount, exactDupCount);
     }
 
-    public async Task<ImportResult> ImportAsync(Guid companyId, string fileContent,
+    public override async Task<ImportResult> ImportAsync(Guid companyId, CompetitorTable table,
         ImportOptions options, CancellationToken ct)
     {
-        var rows = ParseRows(fileContent, out _, out _, out var warnings);
+        var rows = ParseRows(table, out var warnings);
         int imported = 0, updated = 0, skipped = 0, failed = 0;
         var errors = new List<string>(warnings);
         var resolutions = options.Resolutions ?? new Dictionary<string, ConflictAction>();
@@ -152,7 +144,7 @@ public abstract class ProductImportAdapterBase : ICompetitorImportAdapter
                         updated++; break;
                 }
             }
-            catch (Exception e) { failed++; errors.Add($"Row {rowIdx} ({row.Code}): {e.Message}"); }
+            catch (InvalidOperationException e) { failed++; errors.Add($"แถว {rowIdx} ({row.Code}): {e.Message}"); }
         }
 
         if (!options.DryRun && (imported > 0 || updated > 0))
@@ -212,38 +204,6 @@ public abstract class ProductImportAdapterBase : ICompetitorImportAdapter
         ex.UpdatedAt = DateTime.UtcNow;
         ex.UpdatedBy = $"Migrate:{SourceSystem}:{tag ?? "manual"}:merge";
     }
-
-    // ─────────── shared CSV helpers ───────────
-
-    protected static List<string> SplitCsvLine(string line)
-    {
-        var cells = new List<string>();
-        var sb = new StringBuilder();
-        bool inQuotes = false;
-        foreach (var ch in line)
-        {
-            if (ch == '"') inQuotes = !inQuotes;
-            else if (ch == ',' && !inQuotes) { cells.Add(sb.ToString()); sb.Clear(); }
-            else sb.Append(ch);
-        }
-        cells.Add(sb.ToString());
-        return cells;
-    }
-
-    protected static string? FirstNonEmpty(IDictionary<string, string> row, params string[] keys)
-    {
-        foreach (var k in keys)
-            if (row.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v))
-                return v;
-        return null;
-    }
-
-    protected static decimal? ParseDec(string? s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return null;
-        var clean = s.Replace(",", "").Trim();
-        return decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) ? d : null;
-    }
 }
 
 public class ExpressProductsAdapter : ProductImportAdapterBase
@@ -251,32 +211,15 @@ public class ExpressProductsAdapter : ProductImportAdapterBase
     public ExpressProductsAdapter(AccountingDbContext db) : base(db) { }
     public override string SourceSystem => "Express";
 
-    public override bool CanHandle(string fileContent, string filename)
-    {
-        if (filename.Contains("express", StringComparison.OrdinalIgnoreCase)
-            && filename.Contains("product", StringComparison.OrdinalIgnoreCase)) return true;
-        var head = fileContent.Length > 1500 ? fileContent[..1500] : fileContent;
-        return head.Contains("รหัสสินค้า") && (head.Contains("ราคาขาย") || head.Contains("หน่วย"));
-    }
+    protected override IReadOnlyCollection<string> KeyHeaders { get; } = new[] { "รหัสสินค้า", "ชื่อสินค้า" };
+    protected override IReadOnlyCollection<string> OtherHeaders { get; } = new[] { "หน่วย", "ราคาขาย", "ราคาทุน", "VAT", "ภาษี", "หมวด", "บาร์โค้ด", "Code", "ItemCode", "Name", "Unit", "Price" };
 
-    protected override List<IncomingProduct> ParseRows(string content,
-        out List<string> columns, out List<Dictionary<string, string>> rawSample, out List<string> warnings)
+    protected override List<IncomingProduct> ParseRows(CompetitorTable table, out List<string> warnings)
     {
-        warnings = new(); rawSample = new(); columns = new();
-        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0) return new();
-        var sep = lines[0].Contains('\t') ? '\t' : ',';
-        columns = lines[0].TrimEnd('\r').Split(sep).Select(c => c.Trim()).ToList();
+        warnings = new();
         var rows = new List<IncomingProduct>();
-        for (int i = 1; i < lines.Length; i++)
+        foreach (var d in table.Rows)
         {
-            var raw = lines[i].TrimEnd('\r');
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            var cells = raw.Split(sep);
-            var d = new Dictionary<string, string>(columns.Count);
-            for (int c = 0; c < columns.Count && c < cells.Length; c++) d[columns[c]] = cells[c].Trim();
-            if (rawSample.Count < 50) rawSample.Add(d);
-
             var code = FirstNonEmpty(d, "รหัสสินค้า", "Code", "ItemCode");
             var name = FirstNonEmpty(d, "ชื่อสินค้า", "ชื่อ", "Name");
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(name)) continue;
@@ -285,7 +228,7 @@ public class ExpressProductsAdapter : ProductImportAdapterBase
                 Unit: FirstNonEmpty(d, "หน่วย", "Unit"),
                 SellingPrice: ParseDec(FirstNonEmpty(d, "ราคาขาย", "SellingPrice", "Price")),
                 CostPrice: ParseDec(FirstNonEmpty(d, "ราคาทุน", "CostPrice", "Cost")),
-                VatRate: ParseDec(FirstNonEmpty(d, "VAT", "VatRate", "ภาษี")),
+                VatRate: ParseRate(FirstNonEmpty(d, "VAT", "VatRate", "ภาษี")),
                 Category: FirstNonEmpty(d, "หมวด", "Category"),
                 Barcode: FirstNonEmpty(d, "บาร์โค้ด", "Barcode")));
         }
@@ -298,31 +241,15 @@ public class PeakProductsAdapter : ProductImportAdapterBase
     public PeakProductsAdapter(AccountingDbContext db) : base(db) { }
     public override string SourceSystem => "PEAK";
 
-    public override bool CanHandle(string fileContent, string filename)
-    {
-        if (filename.Contains("peak", StringComparison.OrdinalIgnoreCase)
-            && filename.Contains("product", StringComparison.OrdinalIgnoreCase)) return true;
-        var head = fileContent.Length > 1500 ? fileContent[..1500] : fileContent;
-        return head.Contains("productCode") || head.Contains("productName");
-    }
+    protected override IReadOnlyCollection<string> KeyHeaders { get; } = new[] { "productCode", "productName" };
+    protected override IReadOnlyCollection<string> OtherHeaders { get; } = new[] { "unit", "sellingPrice", "costPrice", "vatRate", "category", "barcode", "code", "name", "price" };
 
-    protected override List<IncomingProduct> ParseRows(string content,
-        out List<string> columns, out List<Dictionary<string, string>> rawSample, out List<string> warnings)
+    protected override List<IncomingProduct> ParseRows(CompetitorTable table, out List<string> warnings)
     {
-        warnings = new(); rawSample = new(); columns = new();
-        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0) return new();
-        columns = lines[0].TrimEnd('\r').Split(',').Select(c => c.Trim('"').Trim()).ToList();
+        warnings = new();
         var rows = new List<IncomingProduct>();
-        for (int i = 1; i < lines.Length; i++)
+        foreach (var d in table.Rows)
         {
-            var raw = lines[i].TrimEnd('\r');
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            var cells = SplitCsvLine(raw);
-            var d = new Dictionary<string, string>(columns.Count);
-            for (int c = 0; c < columns.Count && c < cells.Count; c++) d[columns[c]] = cells[c].Trim('"').Trim();
-            if (rawSample.Count < 50) rawSample.Add(d);
-
             var code = FirstNonEmpty(d, "productCode", "ProductCode", "code");
             var name = FirstNonEmpty(d, "productName", "ProductName", "name");
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(name)) continue;
@@ -331,7 +258,7 @@ public class PeakProductsAdapter : ProductImportAdapterBase
                 Unit: FirstNonEmpty(d, "unit", "Unit"),
                 SellingPrice: ParseDec(FirstNonEmpty(d, "sellingPrice", "SellingPrice", "price")),
                 CostPrice: ParseDec(FirstNonEmpty(d, "costPrice", "CostPrice", "cost")),
-                VatRate: ParseDec(FirstNonEmpty(d, "vatRate", "VatRate")),
+                VatRate: ParseRate(FirstNonEmpty(d, "vatRate", "VatRate")),
                 Category: FirstNonEmpty(d, "category", "Category"),
                 Barcode: FirstNonEmpty(d, "barcode", "Barcode")));
         }
@@ -344,32 +271,15 @@ public class FlowAccountProductsAdapter : ProductImportAdapterBase
     public FlowAccountProductsAdapter(AccountingDbContext db) : base(db) { }
     public override string SourceSystem => "FlowAccount";
 
-    public override bool CanHandle(string fileContent, string filename)
-    {
-        if (filename.Contains("flow", StringComparison.OrdinalIgnoreCase)
-            && filename.Contains("product", StringComparison.OrdinalIgnoreCase)) return true;
-        var head = fileContent.Length > 1500 ? fileContent[..1500] : fileContent;
-        return (head.Contains("product code") && head.Contains("selling price"))
-            || head.Contains("FlowAccount-Products");
-    }
+    protected override IReadOnlyCollection<string> KeyHeaders { get; } = new[] { "product code", "product name", "selling price" };
+    protected override IReadOnlyCollection<string> OtherHeaders { get; } = new[] { "unit", "cost price", "vat rate", "category", "barcode", "code", "name", "price", "FlowAccount-Products" };
 
-    protected override List<IncomingProduct> ParseRows(string content,
-        out List<string> columns, out List<Dictionary<string, string>> rawSample, out List<string> warnings)
+    protected override List<IncomingProduct> ParseRows(CompetitorTable table, out List<string> warnings)
     {
-        warnings = new(); rawSample = new(); columns = new();
-        var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0) return new();
-        columns = lines[0].TrimEnd('\r').Split(',').Select(c => c.Trim('"').Trim()).ToList();
+        warnings = new();
         var rows = new List<IncomingProduct>();
-        for (int i = 1; i < lines.Length; i++)
+        foreach (var d in table.Rows)
         {
-            var raw = lines[i].TrimEnd('\r');
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            var cells = SplitCsvLine(raw);
-            var d = new Dictionary<string, string>(columns.Count);
-            for (int c = 0; c < columns.Count && c < cells.Count; c++) d[columns[c]] = cells[c].Trim('"').Trim();
-            if (rawSample.Count < 50) rawSample.Add(d);
-
             var code = FirstNonEmpty(d, "product code", "code", "Code");
             var name = FirstNonEmpty(d, "product name", "name", "Name");
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(name)) continue;
@@ -378,7 +288,7 @@ public class FlowAccountProductsAdapter : ProductImportAdapterBase
                 Unit: FirstNonEmpty(d, "unit", "Unit"),
                 SellingPrice: ParseDec(FirstNonEmpty(d, "selling price", "sellingPrice", "price")),
                 CostPrice: ParseDec(FirstNonEmpty(d, "cost price", "costPrice", "cost")),
-                VatRate: ParseDec(FirstNonEmpty(d, "vat rate", "vatRate", "vat")),
+                VatRate: ParseRate(FirstNonEmpty(d, "vat rate", "vatRate", "vat")),
                 Category: FirstNonEmpty(d, "category", "Category"),
                 Barcode: FirstNonEmpty(d, "barcode", "Barcode")));
         }
