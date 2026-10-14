@@ -371,6 +371,7 @@ public static class SettlementPaidReissue
         nameof(Document.RoundingAdjustment), nameof(Document.ActualPaidAmount), nameof(Document.Notes), nameof(Document.OriginModule),
         nameof(Document.WhtCertSkipped), nameof(Document.WhtCertAutoIssue), nameof(Document.WhtPayeeContactId),
         nameof(Document.WhtCertType), nameof(Document.WhtPayerBorneAmount),   // รอบ 204 — ยอดสุทธิของใบแทนรวมส่วนที่ออกแทน ⇒ ต้องตามไปคู่กับ TotalAmount
+        nameof(Document.WhtBorneByContract), nameof(Document.WhtViaEWithholding),   // รอบ 204 ทีม B — ตามไปคู่กับ NonDeductibleAmount/วิธีหักนำส่ง (เอกสารลูกสืบทอด)
         nameof(Document.Sensitivity), nameof(Document.CustomAppendix), nameof(Document.CustomFooterNotes),
         nameof(Document.CustomTermsAndConditions), nameof(Document.RevenueContractId), nameof(Document.PerformanceObligationId),
         nameof(Document.CertificateReason), nameof(Document.CertifierName), nameof(Document.CertifierPosition), nameof(Document.WitnessName),

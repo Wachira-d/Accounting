@@ -145,33 +145,49 @@ public class WhtGrossUpTests
             Assert.Null(WhtGrossUp.TypeError(t, WithholdingTaxCertType.PayAlways, false, false));
     }
 
-    // ── ฝ่ายค้าน P1-1: บริการต่างประเทศ (ภ.พ.36) + ผู้จ่ายออกแทน ⇒ ปฏิเสธ (VAT ประเมินขาด) ──
+    // ── รอบ 204 ทีม B (คำสั่งเจ้าของ 2026-10-13): บริการต่างประเทศ (ภ.พ.36) + ผู้จ่ายออกแทน ⇒ ใช้ได้ (เดิม 400 · VAT คิดบนฐานรวมตอนบันทึก) ──
 
     [Fact]
-    public void TypeError_rejects_payer_borne_on_foreign_service_with_way_forward()
+    public void TypeError_allows_payer_borne_on_foreign_service()
     {
-        foreach (var t in new[] { DocumentType.PaymentVoucher, DocumentType.Expense, DocumentType.PurchaseInvoice })
+        foreach (var t in new[] { DocumentType.PaymentVoucher, DocumentType.Expense, DocumentType.PurchaseInvoice, DocumentType.CertificateInLieu })
         foreach (var ct in new[] { WithholdingTaxCertType.PayAlways, WithholdingTaxCertType.PayOnce })
-        {
-            var err = WhtGrossUp.TypeError(t, ct, isForeignService: true, hasPayerSideSource: false);
-            Assert.NotNull(err);
-            Assert.Contains("ภ.พ.36", err);
-            Assert.Contains("ทางไปต่อ", err);
-        }
-        // ตัวเลขในทางไปต่อ: ยอดบรรทัดรวมภาษีที่ออกแทน = ตกลงจ่ายสุทธิ / (1 − 15%) ⇒ หัก ณ ที่จ่ายแล้วผู้รับได้สุทธิเท่าเดิม · ฐาน ภ.พ.36 = Pp36Base
-        var grossBase = 11_764.71m;
-        var withhold = WhtGrossUp.OnBase(grossBase, 15m, WithholdingTaxCertType.Withhold);
-        Assert.Equal(10_000m, grossBase - withhold.Tax);
-        var alwaysOnNet = WhtGrossUp.OnBase(10_000m, 15m, WithholdingTaxCertType.PayAlways);
-        Assert.Equal(grossBase, ForeignServiceVat.Pp36Base(10_000m, alwaysOnNet.PayerBorne));
+            Assert.Null(WhtGrossUp.TypeError(t, ct, isForeignService: true, hasPayerSideSource: false));
     }
 
     [Fact]
-    public void TypeError_foreign_service_withhold_untouched_opposite_direction()
+    public void TypeError_receiving_side_still_refused_with_gross_up_way_forward_opposite_direction()
     {
-        // ใบต่างประเทศแบบหัก ณ ที่จ่าย (พฤติกรรมเดิมทุกใบ) ⇒ ผ่าน · ใบในประเทศ "ออกแทน" ⇒ ผ่าน
+        // ทิศตรงข้าม: ธงต่างประเทศไม่ได้เปิดทางให้ใบฝั่งรับเงิน · ทางไปต่อ = ลงยอด gross-up แล้วใช้แบบหัก ณ ที่จ่ายปกติ (ตัวเลขจากตัวตั้งเดียว OnBase)
+        foreach (var fs in new[] { false, true })
+        {
+            var err = WhtGrossUp.TypeError(DocumentType.Invoice, WithholdingTaxCertType.PayAlways, isForeignService: fs, hasPayerSideSource: false);
+            Assert.NotNull(err);
+            Assert.Contains("10,309.28", err);
+            Assert.Contains("หัก ณ ที่จ่ายปกติ", err);
+        }
+        Assert.Equal(10_309.28m, WhtGrossUp.OnBase(10_000m, 3m, WithholdingTaxCertType.PayAlways).CertIncome);
+        // ใบต่างประเทศแบบหัก ณ ที่จ่าย (พฤติกรรมเดิมทุกใบ) ⇒ ผ่าน
         Assert.Null(WhtGrossUp.TypeError(DocumentType.PaymentVoucher, WithholdingTaxCertType.Withhold, isForeignService: true, hasPayerSideSource: false));
-        Assert.Null(WhtGrossUp.TypeError(DocumentType.PaymentVoucher, WithholdingTaxCertType.PayAlways, isForeignService: false, hasPayerSideSource: false));
+    }
+
+    [Fact]
+    public void PayerSideFlags_default_keep_inherit_payer_to_payer_only()
+    {
+        // สร้าง: ไม่ส่ง ⇒ ค่าตั้งต้น (ผู้ติดต่อ) · ส่ง ⇒ ค่านั้น · ใบฝั่งรับเงิน ⇒ false เสมอ
+        Assert.True(WhtGrossUp.PayerSideFlagOnCreate(null, true, DocumentType.PaymentVoucher));
+        Assert.False(WhtGrossUp.PayerSideFlagOnCreate(false, true, DocumentType.PaymentVoucher));
+        Assert.True(WhtGrossUp.PayerSideFlagOnCreate(true, false, DocumentType.Expense));
+        Assert.False(WhtGrossUp.PayerSideFlagOnCreate(true, true, DocumentType.Invoice));
+        // แก้: ไม่ส่ง ⇒ คงค่าเดิม
+        Assert.True(WhtGrossUp.PayerSideFlagOnUpdate(null, true, DocumentType.PurchaseInvoice));
+        Assert.False(WhtGrossUp.PayerSideFlagOnUpdate(false, true, DocumentType.PurchaseInvoice));
+        Assert.False(WhtGrossUp.PayerSideFlagOnUpdate(null, true, DocumentType.Receipt));
+        // สืบทอด: ฝั่งผู้จ่าย → ฝั่งผู้จ่าย ถือค่าของต้นทาง (false ก็ false) · ข้ามฝั่ง ⇒ null
+        Assert.True(WhtGrossUp.InheritPayerSideFlag(true, DocumentType.PurchaseInvoice, DocumentType.PaymentVoucher));
+        Assert.False(WhtGrossUp.InheritPayerSideFlag(false, DocumentType.Expense, DocumentType.PaymentVoucher));
+        Assert.Null(WhtGrossUp.InheritPayerSideFlag(true, DocumentType.PurchaseOrder, DocumentType.PurchaseInvoice));
+        Assert.Null(WhtGrossUp.InheritPayerSideFlag(true, DocumentType.PaymentVoucher, DocumentType.Invoice));
     }
 
     // ── ฝ่ายค้าน P1-2: ใบลด/เพิ่มหนี้สืบทอดเงื่อนไขจากใบต้นทางฝั่งผู้จ่าย ──

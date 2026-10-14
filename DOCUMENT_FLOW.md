@@ -3619,7 +3619,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   `POST withholding-tax-certs/gross-up-preview` (เซิร์ฟเวอร์คิด) · `wht.html` ฟอร์มออกใบเองมี "ออกให้ครั้งเดียว" + ตัวช่วยคิดเงินได้จากยอดที่ตกลงจ่าย ·
   `recurring.html` ช่องเงื่อนไข (แสดงเฉพาะชนิดฝั่งผู้จ่าย) · `WhtGrossUpTests` · Last verified `commit 80b45484` (ด่านยอดออกแทนตรวจภาษีนำส่งด้วย: d74ffeae)
   - **แก้ผลฝ่ายค้าน (รอบ 204)** — Last verified `commit c3f47b4d`:
-    **P1-1 บริการต่างประเทศ (ภ.พ.36 §83/6) + ออกแทน ⇒ ปฏิเสธ 400** (`WhtGrossUp.TypeError(…, isForeignService, …)` · ฐาน ภ.พ.36 ต้องรวมภาษีที่ออกแทน
+    ~~**P1-1 บริการต่างประเทศ (ภ.พ.36 §83/6) + ออกแทน ⇒ ปฏิเสธ 400**~~ (**แทนที่แล้ว** โดยรอบ 204 ทีม B ข้างล่าง — ข้อความเดิมเก็บไว้เป็นประวัติ) (`WhtGrossUp.TypeError(…, isForeignService, …)` · ฐาน ภ.พ.36 ต้องรวมภาษีที่ออกแทน
     (`ForeignServiceVat.Pp36Base` · คำตัดสินข้อ 40) แต่ VAT ของเอกสารคิดจากยอดบรรทัด ⇒ ประเมินขาดเงียบ) — ครบ 3 ทางเข้าของธง: สร้าง · แก้ไข (ตัดสินทุกครั้ง
     ไม่ใช่เฉพาะเมื่อส่งเงื่อนไข) · `ReclassifyForeignServiceAsync` · ข้อมูลเดิมที่ผ่านมาแล้ว ⇒ JE ล้มดังที่ `AddPayerBorneWhtExpense` · ทางไปต่อในข้อความ:
     เลือกหัก ณ ที่จ่าย แล้วกรอกยอดบรรทัดรวมภาษีที่ออกแทน (สุทธิ 10,000 @15% ⇒ 11,764.71 = `Pp36Base`) ·
@@ -3634,9 +3634,32 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
     **P3-1** แถวเตือนเอกสารที่ยังไม่ออก 50 ทวิ ในรายงาน ภ.ง.ด. — เงินได้ = ฐาน + ส่วนที่ออกแทน · Col11 = `WhtGrossUp.FilingCondition(doc.WhtCertType)` ·
     **P3-2** ซิงค์ภายนอกแก้ค่าใช้จ่าย (`ResyncUpdateExpenseCoreAsync`) — ระบบต้นทางคิดแบบหัก ณ ที่จ่าย ⇒ ตั้งเงื่อนไขกลับเป็นหัก ณ ที่จ่าย + ส่วนที่ออกแทน 0
     พร้อมหมายเหตุบนใบ (เดิมค้าง `WhtCertType` ⇒ อนุมัติ/50 ทวิ ล้มด้วย `MismatchReason` โดยไม่รู้สาเหตุ) · **P3-3** `recurring.html` ช่องเงื่อนไขแสดงเฉพาะชนิดฝั่งผู้จ่าย
-    (ชนิดอื่นส่ง `Withhold`) · **ยังไม่ทำ**: VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทนตอนบันทึก (ทางเลือกที่ปฏิเสธไว้แทน) · ~~รายงาน ภ.พ.36 นับภาษีออกแทนเฉพาะ 50 ทวิ "ตลอดไป"~~
+    (ชนิดอื่นส่ง `Withhold`) · ~~**ยังไม่ทำ**: VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทนตอนบันทึก~~ → **ทำแล้ว** (รอบ 204 ทีม B ข้างล่าง) · ~~รายงาน ภ.พ.36 นับภาษีออกแทนเฉพาะ 50 ทวิ "ตลอดไป"~~
     → **ทำแล้ว (บอร์ด 2026-10-13 ทีม B · A5b)**: รายงาน ภ.พ.36 + คำเตือนตอนออก/แก้ 50 ทวิ นับ "ออกให้ครั้งเดียว" ด้วย (ดู §5.4 จ่ายต่างประเทศ ด้านล่าง)
-- **คอลัมน์ WHT รอบ 204 (schema only — wired by later commits · `DatabaseMigrationHelper.Round204DirectiveStatements`)**: `Document.WhtBorneByContract`/`WhtViaEWithholding` (bool, false) · `Contact.WhtBorneByContractDefault` (bool, false) · `Company.WhtRoyaltyIndividualForm` (enum `WhtRoyaltyIndividualForm` int, 0 = ภ.ง.ด.3 เดิม) / `WhtRoyaltyPnd2From` (timestamptz NULL) · `WithholdingTaxCertLine.DividendSubRow` (varchar(8) NULL) / `DividendCreditRate` (numeric(5,2) NULL) — ยังไม่มีผู้อ่าน/ผู้เขียน ค่าตั้งต้น = พฤติกรรมเดิม
+  - **รอบ 204 ทีม B (คำสั่งเจ้าของ 2026-10-13 "ระบบไม่ล็อกตาย")** — Last verified `commit 707fbb41`:
+    **บริการต่างประเทศ + ผู้จ่ายออกแทน บันทึกได้** (`WhtGrossUp.TypeError` ไม่ดูธงต่างประเทศแล้ว — เหลือกันใบฝั่งรับเงิน (ทางไปต่อ: ลงยอด gross-up 10,000 @3% ⇒ 10,309.28
+    แบบหัก ณ ที่จ่ายปกติ) และใบลด/เพิ่มหนี้ที่ไม่มีใบต้นทางฝั่งผู้จ่าย) · **VAT ภ.พ.36 คิดบนฐานรวมภาษีที่ออกแทนตั้งแต่บันทึก**: `ApplyForeignServiceBorneVat` หลัง
+    `ApplyWhtGrossUp` (สร้าง/แก้ไข · เฉพาะ `IsForeignService` และส่วนที่ออกแทน ≠ 0) → `ForeignServiceVat.VatWithBorne` (VAT บรรทัด = round((ฐาน + ออกแทน) × อัตรา) ·
+    กระทบยอดต่อกลุ่มอัตรา ⇒ Σ = `SelfAssessedVatOn(Pp36Base(Σ ฐาน, Σ ออกแทน))`) — 450 @15% ตลอดไป ⇒ ออกแทน 79.41 · ภ.พ.36 37.06 บนฐาน 529.41 · บรรทัด `Amount` ยังเป็นมูลค่าที่ตกลง ·
+    `TotalAmount = PayeeTotal(ฐาน, VAT ใหม่, ภาษี, ออกแทน)` ⇒ ยอดจ่ายผู้รับ (`PayeeAmount`) = ฐาน − ส่วนที่หักจากผู้รับ · **JE สมดุล**: Dr ฐาน + VAT (11640) + ออกแทน =
+    Cr 21912 VAT + เจ้าหนี้ (ฐาน − ภาษี + ออกแทน) + 2191x ภาษี (`AddPayerBorneWhtExpense` ไม่ล้มเพราะธงต่างประเทศแล้ว · `MismatchReason` คงเดิม) ·
+    แก้ไขโดยไม่ส่งบรรทัดแต่เปลี่ยนเงื่อนไข/ธงต่างประเทศ ⇒ VAT คิดใหม่จากบรรทัดที่บันทึก (ปลดธง/กลับหัก ณ ที่จ่าย ⇒ ฐานปกติ) · `ReclassifyForeignServiceAsync` บนใบออกแทน
+    (ส่วนที่ออกแทน > 0) ⇒ 400 พร้อมทางไปต่อ "ยกเลิกแล้วออกใหม่โดยติ๊กบริการต่างประเทศตั้งแต่สร้าง" (`ForeignServiceVat.ReclassifyPayerBorneRefusal` — สองทิศ) ·
+    **รายงาน ภ.พ.36** (`GeneratePp36Report`): ใบที่มี `WhtPayerBorneAmount` > 0 ใช้ยอดของเอกสารตัวเดียว (`ForeignServiceVat.Pp36ReportBorne` — ไม่บวกจาก 50 ทวิ ของใบเดียวกันซ้ำ) ·
+    ใบเก่า (ออกแทน 0) ⇒ ตัวตัดสินเดิม `BorneTaxOutsideLines` · VAT ในรายงาน = ยอด GL เหมือนเดิม · **คำเตือนตอนอนุมัติ `[PP36-BASE]`** (`ForeignServiceVat.Pp36BaseApprovalWarning(Document)`
+    — internal · ผู้เรียก = `CollectApprovalWarningsAsync` ของทีม A): |VAT ที่บันทึก − ที่คาด| > 0.01 ⇒ "ระบบแนะนำ ภ.พ.36 = X บนฐาน Y … บันทึกไว้ Z" ไม่บล็อก ·
+    **พรีวิว** `gross-up-preview` รับ `isForeignService` + `vatRate` รายบรรทัด คืน `pp36Vat`/`pp36Base` (หน้าเว็บแทนช่อง VAT · ยอดจ่ายผู้รับใช้ VAT นี้) ·
+    **§65 ตรี (3) ผู้จ่ายรับภาระตามสัญญา**: `Document.WhtBorneByContract` (สร้าง: ไม่ส่ง ⇒ `Contact.WhtBorneByContractDefault` ของผู้ถูกหัก `WhtCertIssuePlan.PayeeOf` ·
+    แก้ไข: ไม่ส่ง ⇒ คงเดิม · ใบที่ไม่ใช่ฝั่งผู้จ่าย = false · ตัวตัดสินเดียว `WhtGrossUp.PayerSideFlagOnCreate/OnUpdate`) · ติ๊ก ⇒ ไม่บวกกลับ + ร่องรอย
+    `RD-65ter(3)-WHT-BORNE-CONTRACT` (ยอด 0 · "§65 ตรี (3) · ม.39 — ผู้จ่ายรับภาระตามสัญญา (เก็บสัญญาเป็นหลักฐาน)") · ไม่มีไฟล์แนบ ⇒ ข้อสังเกต "แนบสัญญา" ตอนอนุมัติ (ไม่บล็อก) ·
+    ตัวตัดสินเดียว `Section65TerValidator.PayerBorneFindings` · **หลังอนุมัติ** `POST document/{id}/wht-borne-contract` (`SetWhtBorneByContractAsync` · สิทธิ์อนุมัติ · เหตุผลบังคับ):
+    ไม่แตะ JE · แทนที่เฉพาะผลข้อนี้ใน `NonDeductibleRuleJson` (`ReplacePayerBorneFindings` — ข้ออื่นคงเดิม) แล้วตั้ง `NonDeductibleAmount` ที่กระดาษทำการ ภ.ง.ด.50 อ่าน · audit
+    `SetWhtBorneByContract` · ภ.ง.ด.50 ของรอบยื่นแล้ว ⇒ ไม่บล็อก แต่ข้อความให้ยื่นแบบเพิ่มเติม · **`Document.WhtViaEWithholding`** (หักผ่าน e-Withholding — ทีม B ทำ round-trip
+    อย่างเดียว · พฤติกรรม = ทีม C): รับ/echo/hydrate/reset · แก้ได้เฉพาะร่าง/ถูกตีกลับ (หน้าเว็บล็อกช่องหลังอนุมัติ + "ยกเลิกแล้วออกใหม่") · เอกสารลูกสืบทอดทั้งสองธง
+    ฝั่งผู้จ่าย → ฝั่งผู้จ่าย (`WhtGrossUp.InheritPayerSideFlag` — แปลง · คัดลอก · รายการประจำ key `whtBorneByContract`/`whtViaEWithholding`) ·
+    หน้าเว็บ: แผง 50 ทวิ ช่อง "ผู้จ่ายรับภาระภาษีตามสัญญา" (แสดงเมื่อเลือกออกแทน · ใบใหม่ไม่แตะ = ไม่ส่ง) + "หักผ่าน e-Withholding" · หน้ารายละเอียดมีปุ่มแก้สัญญาหลังอนุมัติ ·
+    `contacts.html` ช่อง "มีสัญญาให้เรารับภาระภาษีหัก ณ ที่จ่าย" · เทสต์ `ForeignServicePayerBorneVatTests` · `WhtBorneByContractTests` · `WhtGrossUpTests`
+- **คอลัมน์ WHT รอบ 204 (schema only — wired by later commits · `DatabaseMigrationHelper.Round204DirectiveStatements`)**: `Document.WhtBorneByContract`/`WhtViaEWithholding` (bool, false — **ต่อสายแล้วโดยทีม B ข้างบน**) · `Contact.WhtBorneByContractDefault` (bool, false — ต่อสายแล้ว) · `Company.WhtRoyaltyIndividualForm` (enum `WhtRoyaltyIndividualForm` int, 0 = ภ.ง.ด.3 เดิม) / `WhtRoyaltyPnd2From` (timestamptz NULL) · `WithholdingTaxCertLine.DividendSubRow` (varchar(8) NULL) / `DividendCreditRate` (numeric(5,2) NULL) — ยังไม่มีผู้อ่าน/ผู้เขียน ค่าตั้งต้น = พฤติกรรมเดิม
 - **PDF**: `PdfGenerationService.WhtCert.cs` (QuestPDF) **และ**
   `PdfGenerationService.cs:2237` (HTML) — **ทั้งสองตัวจัดบรรทัดลงแถว 1–6 ของแบบ
   ผ่าน `ThaiWhtRateTable.CertificateRow` ตัวเดียว** ห้ามเขียน allow-list ของรหัสเอง
@@ -5182,6 +5205,8 @@ _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้า�
 _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้างชุดสอง — §2.7b ใบวางบิลรวมแปลง/รับชำระตรงไม่ได้ · E-05 ตอนอนุมัติ · ชั้นความลับในการแปลง — commit 47a7a78e)_
 
 _ก่อนหน้า: 2026-10-08 (ทีมตรวจงานค้างชุดสาม — รอบเงินเดือนนับเข้าการนำส่งด้วย PaidAt · integration ใบกำกับล้มสะอาด — commit 075af3d7)_
+
+_Last verified against codebase: 2026-10-14 (รอบ 204 ทีม B — §5.4 บริการต่างประเทศ + ผู้จ่ายออกแทนบันทึกได้ · VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน (`ForeignServiceVat.VatWithBorne`) · รายงาน ภ.พ.36 ไม่บวกซ้ำ · คำเตือน `[PP36-BASE]` · ผู้จ่ายรับภาระตามสัญญา §65 ตรี (3) + แก้หลังอนุมัติ · e-Withholding round-trip — commit 707fbb41)_
 
 _Last verified against codebase: 2026-10-13 (รอบ 204 — แก้ผลฝ่ายค้านรอบสองงานหลายผู้ถูกหัก (หลัง 0f428969): §5.4 (1) ผู้ถูกหักที่สืบทอดถูกตัดทิ้ง = ป้าย `[WHT-CERT-REVIEW]` ที่ `WhtCertIssuePlan.Decide`/คำเตือนอนุมัติอ่าน (ไม่ออกอัตโนมัติจนกว่าจะรับทราบ) · (2) เปลี่ยนผู้ถูกหักแล้วใบแทนของใบร่างเป็นร่าง · (3) ทางไปต่อใบลดหนี้ไม่อ้างบรรทัดทำได้จริง · (4) หัวเอกสารที่ระบุเองขัดกับรายบรรทัด = 400 · (5) รายการประจำไม่อนุมัติอัตโนมัติผ่าน `RecordAutoApproveFailureAsync` — commit 7b88c053)_
 
