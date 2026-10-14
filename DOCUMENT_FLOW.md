@@ -503,7 +503,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ใบเสร็จหลักฐานของการชำระสืบทอด `PaymentAccountId` ด้วย. ชื่อบัญชีใน `DocumentResponse` แสดงเฉพาะเมื่อเป็นของบริษัทเดียวกับเอกสาร (ID#7 กันรั่วข้ามบริษัท).
   เทมเพลต: `DefaultPaymentAccountId` ตรวจตอนบันทึก (Guid.Empty = ล้าง) · `GET document-templates/default/{type}` คืน `defaultPaymentChannel` (`bank:`/`account:`) ให้ฟอร์มเติมได้จริง (PC#14).
   บัญชีธนาคาร: สร้างตรวจผังที่ผูกด้วยตัวเดียวกับแก้ไข (PC#9) · `GET bank/accounts?activeOnly=true` สำหรับตัวเลือก (หน้าจัดการยังเห็นทุกบัญชี · PC#18).
-  Last verified `commit (sha เติมภายหลัง)`
+  Last verified `commit 1b39ec9f`
 - **Phantom split-VAT sanitizer**: `OcrService.SanitizeVatSplitArtifacts`
   ตัด suffix "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)/(VATable)/(non-VAT)/(VAT included)…"
   ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
@@ -5374,4 +5374,4 @@ _Last verified against codebase: 2026-10-12 (ผลตรวจฝ่ายค�
 
 _Last verified against codebase: 2026-10-14 (ทีม F2 แหล่งเงินของเอกสาร/การชำระ — §2.x "แหล่งเงิน → ผังบัญชี": ตัวตัดสินเดียว `Helpers/DocumentMoneyChannel` ·
 ด่านหัวเอกสารตอนบันทึก · ลงบัญชีไม่ตกเงินสดเงียบเมื่อธนาคารยังไม่ผูกผัง · ไม่มีผังเงินสด = ล้มดัง (เดิมไม่มี JE) · การชำระสืบทอดผังตรงของเอกสาร · จ่ายจากผังอื่นไม่ขยับยอดธนาคาร ·
-reclassify อ่านผังเดิมจาก JE · เทมเพลต `defaultPaymentChannel` · BankService สร้างตรวจผังที่ผูก + `activeOnly` — commit (sha เติมภายหลัง))_
+reclassify อ่านผังเดิมจาก JE · เทมเพลต `defaultPaymentChannel` · BankService สร้างตรวจผังที่ผูก + `activeOnly` — commit 1b39ec9f)_

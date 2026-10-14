@@ -32,12 +32,12 @@
 
 ### P1 — wrong posting or wrong data
 
-**3. `payments.html`: the bank the user picks is ignored** — ✅ (sha เติมภายหลัง · ทีม F2)
+**3. `payments.html`: the bank the user picks is ignored** — ✅ (1b39ec9f · ทีม F2)
 - The payload sends `bankAccountId` (`payments.html:204`), but `CreatePaymentRequest` has no such field. It only has `OverrideBankAccountId` / `OverridePaymentAccountId` (`DocumentDtos.cs:1588-1605`).
 - So the payment posts to `doc.BankAccountId`, or to cash 111 when the document has none (`DocumentService.cs:14277`). The page is in the nav (`layout.js:1282`).
 - Fix: rename the field to `overrideBankAccountId`.
 
-**4. A bank with no GL link (or a stale or wrong id) is posted silently to cash, or not posted at all** — ✅ (sha เติมภายหลัง · ทีม F2)
+**4. A bank with no GL link (or a stale or wrong id) is posted silently to cash, or not posted at all** — ✅ (1b39ec9f · ทีม F2)
 - Document auto-post (`DocumentService.cs:17168-17180`): `PaymentAccountId` → `bank.LinkedAccount` → `FindAccountAsync("111")`.
   - If the bank's `LinkedAccountId` is null, or the id is from another company or simply wrong, the entry goes to 11111 Cash with no message.
 - Payment JE (`:19527-19541`, duplicated in `ResolvePaymentCashAccountAsync` at `:19435-19450`) has the same fallback.
@@ -47,7 +47,7 @@
   - Make one shared resolver that throws a business error naming the bank and pointing to "บัญชีธนาคาร → ผูกผังบัญชี" when the link is missing, instead of falling back.
   - Throw instead of `return` when no cash account is found.
 
-**5. The document's own "แหล่งเงิน" (`PaymentAccountId`) is not carried into a later payment** — ✅ (sha เติมภายหลัง · ทีม F2)
+**5. The document's own "แหล่งเงิน" (`PaymentAccountId`) is not carried into a later payment** — ✅ (1b39ec9f · ทีม F2)
 - `Payment` copies only `BankAccountId = request.OverrideBankAccountId ?? doc.BankAccountId`. `OverridePaymentAccountId` comes only from the request (`DocumentService.cs:14277-14279`).
 - Scenario: a document whose channel is `account:` (petty cash 11112, director advance 21230) is paid later through the record-payment modal, whose label says "— ใช้บัญชีตามที่ผูกในเอกสาร (default) —" (`documents.html:12366-12368`). The payment posts to cash 111.
 - The multi-document path also ignores `OverridePaymentAccountId` (`:14736-14737`). That path is API-only.
@@ -75,12 +75,12 @@
 - The server supports it (`LodgingService.Lifecycle.cs:723, 1538`), but receives null, so bank transfers land in 11111 Cash.
 - Fix: add a bank select, required when the method is not cash.
 
-**9. Creating a bank account does not validate `LinkedAccountId`** — ✅ (sha เติมภายหลัง · ทีม F2)
+**9. Creating a bank account does not validate `LinkedAccountId`** — ✅ (1b39ec9f · ทีม F2)
 - The update path checks company, active and 111x (`BankService.cs:225-238`). The create path uses `request.LinkedAccountId` with no check (`:71-90`).
 - A cross-tenant or non-cash GL id is accepted.
 - Fix: run the same validation on create.
 
-**10. Document create/update stores `BankAccountId` / `PaymentAccountId` with no validation** — ✅ (sha เติมภายหลัง · ทีม F2) (ด่านเดียวกับ ID#7)
+**10. Document create/update stores `BankAccountId` / `PaymentAccountId` with no validation** — ✅ (1b39ec9f · ทีม F2) (ด่านเดียวกับ ID#7)
 - See `DocumentService.cs:1242-1243, 2967-2970`.
 - A swapped id (bank id in `PaymentAccountId`) gives an FK 500 (`AccountingDbContext.cs:868-870`).
 - A cross-tenant id passes the FK check and then silently posts to cash (see #4).
@@ -108,13 +108,13 @@
 
 ### P2 — UX, messages, small mismatches
 
-13. `documents.html:2264` matches an OCR channel code with `b.accountCode`, which does not exist on `BankAccountResponse` (`BankDtos.cs:26-38` has `linkedAccountCode`). A bank's GL code therefore falls through to `coaByCode` and becomes `account:<bank GL>`. The document has no `BankAccountId`, so later payments go to cash and the bank balance does not sync. Fix: match `b.linkedAccountCode`. — ✅ (sha เติมภายหลัง · ทีม F2)
+13. `documents.html:2264` matches an OCR channel code with `b.accountCode`, which does not exist on `BankAccountResponse` (`BankDtos.cs:26-38` has `linkedAccountCode`). A bank's GL code therefore falls through to `coaByCode` and becomes `account:<bank GL>`. The document has no `BankAccountId`, so later payments go to cash and the bank balance does not sync. Fix: match `b.linkedAccountCode`. — ✅ (1b39ec9f · ทีม F2)
 
-14. The document-template default never applies. `document-templates.html:540-543` stores a raw CoA id (and includes 1112x). `documents.html:6290-6293` compares that raw GUID with `bank:…`/`account:…` option values, so it never matches. — ✅ (sha เติมภายหลัง · ทีม F2) (เซิร์ฟเวอร์คืน `defaultPaymentChannel`)
+14. The document-template default never applies. `document-templates.html:540-543` stores a raw CoA id (and includes 1112x). `documents.html:6290-6293` compares that raw GUID with `bank:…`/`account:…` option values, so it never matches. — ✅ (1b39ec9f · ทีม F2) (เซิร์ฟเวอร์คืน `defaultPaymentChannel`)
 
-15. Hydration precedence is inconsistent. The edit form prefers bank over `PaymentAccountId` (`documents.html:9569-9570`), while posting and the credit-note prefill prefer `PaymentAccountId` (`DocumentService.cs:17166-17180`, `documents.html:7606`). A document with both set (API/clone) switches its posting account on re-save. — ✅ (sha เติมภายหลัง · ทีม F2) (`DocumentResponse.PaymentChannel`)
+15. Hydration precedence is inconsistent. The edit form prefers bank over `PaymentAccountId` (`documents.html:9569-9570`), while posting and the credit-note prefill prefer `PaymentAccountId` (`DocumentService.cs:17166-17180`, `documents.html:7606`). A document with both set (API/clone) switches its posting account on re-save. — ✅ (1b39ec9f · ทีม F2) (`DocumentResponse.PaymentChannel`)
 
-16. Silent empty dropdowns from `.catch(() => ({data: []}))` or an ignored catch: — ◐ ทีม F2 แก้ส่วน documents.html/payments.html/BankService ✅ (sha เติมภายหลัง) · หน้าอื่นอยู่ในขอบเขตทีมอื่น
+16. Silent empty dropdowns from `.catch(() => ({data: []}))` or an ignored catch: — ◐ ทีม F2 แก้ส่วน documents.html/payments.html/BankService ✅ (1b39ec9f) · หน้าอื่นอยู่ในขอบเขตทีมอื่น
    - `documents.html:1876-1877, 2648-2649`
    - `recurring.html:446-447`
    - `payroll.html:1375-1376, 1676-1677`
@@ -131,7 +131,7 @@
 
    Follow the wording in `GatewaySettlementService.cs:595-597` or `LodgingService.Lifecycle.cs:1878-1879`.
 
-18. Inactive bank accounts are offered everywhere except POS. `GetBankAccountsAsync` returns `IsActive=false` rows (`BankService.cs:163-168`). — ◐ ทีม F2 แก้ส่วน documents.html/payments.html/BankService ✅ (sha เติมภายหลัง) · หน้าอื่นอยู่ในขอบเขตทีมอื่น (`GET bank/accounts?activeOnly=true`)
+18. Inactive bank accounts are offered everywhere except POS. `GetBankAccountsAsync` returns `IsActive=false` rows (`BankService.cs:163-168`). — ◐ ทีม F2 แก้ส่วน documents.html/payments.html/BankService ✅ (1b39ec9f) · หน้าอื่นอยู่ในขอบเขตทีมอื่น (`GET bank/accounts?activeOnly=true`)
 
 19. These flows have no channel picker and always use cash:
    - Salary-advance disburse sends `bankAccountId: null` (`salary-advance.html:409`).
@@ -140,7 +140,7 @@
 
 20. `_deriveMethodFromChannel` derives the payment method from code prefixes on the client (`documents.html:4630-4637`). Seeded e-wallet 11113 becomes Cash, and 1133x becomes Other. — ⏳ ทีม F2 ยังไม่แก้: ต้องให้เซิร์ฟเวอร์คืนวิธีชำระต่อแถว payment-channels (`AccountingService.GetPaymentChannelAccountsAsync`) ซึ่งผูกกับกติกา "ผังเงิน" ของทีม F3 (PC#11)
 
-21. Paying from a fund account (`rpFundAccount`) still sets `BankAccountId` to the document's bank, so that bank's `CurrentBalance` moves although no money went through it (`DocumentService.cs:14277, 14449`). `rpFundAccount` also lists header-level accounts and 1112x bank GL accounts, which bypasses the bank link (`documents.html:12579-12586`). — ✅ (sha เติมภายหลัง · ทีม F2)
+21. Paying from a fund account (`rpFundAccount`) still sets `BankAccountId` to the document's bank, so that bank's `CurrentBalance` moves although no money went through it (`DocumentService.cs:14277, 14449`). `rpFundAccount` also lists header-level accounts and 1112x bank GL accounts, which bypasses the bank link (`documents.html:12579-12586`). — ✅ (1b39ec9f · ทีม F2)
 
 22. Payroll rows whose saved source code is no longer listed show "ค่าเริ่มต้น" (`payroll.html:1697-1707`). Nothing is saved, because saving happens only on change, but the display is wrong. At posting time an inactive code silently falls back to the default (`PayrollService.cs:3052-3054`).
 
@@ -196,21 +196,21 @@ This was a read-only audit. Every item below was confirmed by opening the code. 
 
 ### P1 — wrong data, silent no-op, or security
 
-**3. The Payments page drops the chosen bank** — ✅ (sha เติมภายหลัง · ทีม F2)
+**3. The Payments page drops the chosen bank** — ✅ (1b39ec9f · ทีม F2)
 - `wwwroot/pages/payments.html:204` sends `bankAccountId`.
 - `CreatePaymentRequest` (`DocumentDtos.cs:1588`) has no such property; it has `OverrideBankAccountId`, and `BankAccount` as a string.
 - The value is silently ignored, so the payment posts to the document's bank or to Cash 111.
 - This page is in the nav ("ชำระเงิน / รวมจ่าย").
 - **Fix:** rename the field to `overrideBankAccountId`.
 
-**4. The template default payment account is never applied** — ✅ (sha เติมภายหลัง · ทีม F2)
+**4. The template default payment account is never applied** — ✅ (1b39ec9f · ทีม F2)
 - `documents.html:6290-6293` compares the raw `t.defaultPaymentAccountId` (a CoA id) against option values `bank:<BankAccount.id>` / `account:<CoA id>`. It never matches, so the setting is a silent no-op.
 - Two compounding problems:
   - `document-templates.html:539-543` lists every 111x account, including 1112 bank GLs.
   - The form only exposes banks as `bank:` options (1112 GLs are excluded from `account:` options).
 - **Fix:** map a 1112 GL to `bank:${bankAccounts.find(b=>b.linkedAccountId===id).id}`, otherwise use `account:${id}`. Validate in `DocumentTemplateService.cs:362,457`.
 
-**5. The OCR → document-form handoff resolves banks by a field that does not exist** — ✅ (sha เติมภายหลัง · ทีม F2)
+**5. The OCR → document-form handoff resolves banks by a field that does not exist** — ✅ (1b39ec9f · ทีม F2)
 - `documents.html:2264` uses `this.bankAccounts.find(b => b.accountCode === code)`, but `BankAccountResponse` has `linkedAccountCode`, not `accountCode`. It never matches.
 - The fallback at 2268-2281 then adds `account:<bank GL id>`. The document is saved with:
   - `PaymentAccountId` = the bank GL and `BankAccountId` = null;
@@ -219,13 +219,13 @@ This was a read-only audit. Every item below was confirmed by opening the code. 
 - The server-side OCR path (`OcrService.cs:7110-7125`) does this correctly.
 - **Fix:** use `b.linkedAccountCode`.
 
-**6. Reclassify payment source recomputes the old GL from current settings** — ✅ (sha เติมภายหลัง · ทีม F2)
+**6. Reclassify payment source recomputes the old GL from current settings** — ✅ (1b39ec9f · ทีม F2)
 - `DocumentService.cs:8839-8865` takes the "old" credit GL from the bank account's *current* `LinkedAccountId`, not from the posted JE.
 - If the original post fell back to 111 (see #7), or `LinkedAccountId` was changed since (`BankService.cs:227-238` allows that), the correcting JE reverses the wrong GL.
 - If the old bank is still unlinked, it throws "บัญชีธนาคาร (เดิม) ยังไม่ได้ผูกผังบัญชี" and the user has no way forward.
 - **Fix:** read the money line from the document's posted JE.
 
-**7. Document header money ids are never validated, and posting silently falls back to cash** — ✅ (sha เติมภายหลัง · ทีม F2)
+**7. Document header money ids are never validated, and posting silently falls back to cash** — ✅ (1b39ec9f · ทีม F2)
 - Create/update store `BankAccountId`, `PaymentAccountId` and `ExpenseCategoryId` unchecked (`DocumentService.cs:1242-1244, 2967-2972`). Line `AccountId` *is* validated at line 530.
 - At post time, an unresolved id (other tenant, wrong kind, or a bank with no `LinkedAccountId`) silently becomes Cash 111 or 51110:
   - `AutoPost` at 17153-17180;
@@ -276,7 +276,7 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 **15. Payroll net pay uses a stale account code**
 - `PayrollService.cs:3016-3055`: an employee's `NetPaymentAccountCode` is validated when set (1450). If that account is deactivated later, posting silently pays from the run default, 11122 or the first 111x.
 
-**16. Create and update of bank accounts don't match** — ✅ (sha เติมภายหลัง · ทีม F2)
+**16. Create and update of bank accounts don't match** — ✅ (1b39ec9f · ทีม F2)
 - `BankService.cs:71-90` (create) does not validate `LinkedAccountId`, while update (227-240) checks tenant, active and 111x.
 
 ### P2 — bad messages and smaller gaps
@@ -300,12 +300,12 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 - `GatewaySettlementService.cs:590-597`
 - `LodgingService.Lifecycle.cs:1875-1879`
 
-**20. Inactive banks are offered everywhere.** — ◐ ทีม F2 แก้ส่วน documents.html/payments.html/BankService ✅ (sha เติมภายหลัง) · หน้าอื่นอยู่ในขอบเขตทีมอื่น
+**20. Inactive banks are offered everywhere.** — ◐ ทีม F2 แก้ส่วน documents.html/payments.html/BankService ✅ (1b39ec9f) · หน้าอื่นอยู่ในขอบเขตทีมอื่น
 - `GetBankAccountsAsync` (`BankService.cs:163-168`) returns inactive banks.
 - documents.html (1886 / 2663 / 12540), payments.html, petty-cash, lodging and payment-settlements don't filter them out.
 - Recurring now rejects inactive banks, and settlement import (`SettlementImportService.cs:192`) lacks the `IsActive` check that its update path has.
 
-**21. Field priority disagrees.** — ✅ (sha เติมภายหลัง · ทีม F2) `documents.html:9568` hydrates bank first, while the server (17166) and `documents.html:7606` treat `PaymentAccountId` first.
+**21. Field priority disagrees.** — ✅ (1b39ec9f · ทีม F2) `documents.html:9568` hydrates bank first, while the server (17166) and `documents.html:7606` treat `PaymentAccountId` first.
 
 **22. Settings default payment account.** `settings.html:2517-2528` loads `payment-channels`, which excludes 1112, so a bank can't be chosen as the company default (the comment says otherwise). `SettingsService.cs:244` doesn't validate.
 

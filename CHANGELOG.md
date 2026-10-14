@@ -4789,5 +4789,5 @@ _2026-10-14 ทีม F2 — ช่องทางรับ/จ่ายเง�
 reclassify อ่านผังเดิมจาก JE จริง + ทิศของใบรับเงิน · ชื่อบัญชีข้ามบริษัทไม่รั่วใน `DocumentResponse` · `DocumentResponse.PaymentChannel` (hydrate ตามลำดับเดียว) ·
 เทมเพลต: ตรวจ `DefaultPaymentAccountId` + ล้างค่าได้ + `defaultPaymentChannel` ให้ฟอร์มเติมได้จริง · BankService: สร้างตรวจผังที่ผูก (ตัวเดียวกับแก้ไข) + `activeOnly` ·
 หน้าเว็บ: payments.html ส่ง `overrideBankAccountId` (เดิมถูกทิ้ง) · OCR handoff ใช้ `linkedAccountCode` · dropdown โหลดไม่ได้ = แจ้งผู้ใช้ · ตัวเลือกไม่เสนอบัญชีที่ปิด ·
-"จ่าย/รับจากบัญชีอื่น" ไม่เสนอบัญชีกลุ่ม/ผังที่ธนาคารผูก + เลือกได้ทางเดียว · เทสต์ `DocumentMoneyChannelTests` + `Db/DocumentMoneyChannelDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
+"จ่าย/รับจากบัญชีอื่น" ไม่เสนอบัญชีกลุ่ม/ผังที่ธนาคารผูก + เลือกได้ทางเดียว · เทสต์ `DocumentMoneyChannelTests` + `Db/DocumentMoneyChannelDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1b39ec9f_
 
