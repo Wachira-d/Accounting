@@ -384,7 +384,7 @@ public class ImportPipelineDbTests
             new() { ["DocumentNumber"] = "PI-IMP-001", ["PaymentDate"] = "20/01/2569", ["Amount"] = "2,000.00", ["PaymentMethod"] = "Cash" },
         }), "tester");
         Assert.Equal(0, over.SuccessCount);
-        Assert.Contains("เกินยอดค้างชำระ", over.Errors.Single().ErrorMessage);
+        Assert.Contains("เกินยอดค้าง", over.Errors.Single().ErrorMessage);
 
         var ok = await svc.ImportAsync(cid, new ImportRequest("payments", "csv", true, null, new List<Dictionary<string, string>>
         {

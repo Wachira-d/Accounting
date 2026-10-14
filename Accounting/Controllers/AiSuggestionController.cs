@@ -1823,11 +1823,39 @@ public class AiSuggestionController : ControllerBase
             missingRequired = plan.MissingRequired.Select(f => new { field = f.Field, label = f.Label }),
             reasoning = $"จับคู่ได้ {mappedCount}/{req.Headers.Count} คอลัมน์" +
                 (plan.MissingRequired.Count > 0 ? $" · ยังขาดช่องบังคับ {string.Join(", ", plan.MissingRequired.Select(f => f.Label))}" : "") +
-                " · ที่ยังไม่จับคู่ ผู้ใช้เลือกเองได้ — การยืนยันถูกเรียนไว้ใช้ครั้งถัดไป",
+                " · ที่ยังไม่จับคู่ ผู้ใช้เลือกเองได้ — ส่งการจับคู่สุดท้ายที่ import/suggest-mapping/confirm แล้วระบบจำไว้ใช้ครั้งถัดไป",
             usedAi = outcome.UsedAi,
             badge = outcome.UsedAi ? "🤖 AI แนะนำ" : "⚙️ ระบบแนะนำ",
             feedbackId = outcome.AiFeedbackId,
         }));
+    }
+
+    public sealed record SmartImportConfirmedColumn(int SourceIndex, string? Field);
+    public sealed record SmartImportConfirmMappingRequest(Guid FeedbackId, string EntityType, List<SmartImportConfirmedColumn> Mappings);
+
+    /// <summary>
+    /// ปิดลูปของ <see cref="SuggestImportMapping"/> (กฎเหล็ก #1 · รอบ 205 ทีม B — เดิมคืน feedbackId แต่ไม่มีทางบันทึกการยืนยัน ทั้งที่ข้อความบอกว่า "เรียนไว้") ·
+    /// การจับคู่สุดท้ายของผู้ใช้ (field null = ไม่ใช้คอลัมน์) ⇒ <c>IImportColumnMatchService.RecordConfirmedAsync</c> · feedback ต้องเป็นของบริษัทนี้และเป็น
+    /// ImportColumnMatch (ไม่ใช่ ⇒ recorded = false ไม่บันทึก)
+    /// </summary>
+    [HttpPost("import/suggest-mapping/confirm")]
+    public async Task<ActionResult<ApiResponse<object>>> ConfirmImportMapping(
+        Guid companyId, [FromBody] SmartImportConfirmMappingRequest req,
+        [FromServices] Accounting.Services.Import.IImportColumnMatchService matcher,
+        [FromServices] Accounting.Services.Interfaces.IPermissionService permissions, CancellationToken ct)
+    {
+        if (req.FeedbackId == Guid.Empty || req.Mappings == null || req.Mappings.Count == 0)
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องส่ง feedbackId จากคำแนะนำ และการจับคู่สุดท้ายอย่างน้อยหนึ่งคอลัมน์"));
+        // ด่านสิทธิ์เดียวกับการนำเข้าชนิดนั้น (Helpers/ImportExportPermissionScope) — การยืนยันสอนนักเรียนของทั้งบริษัท
+        var key = ImportExportPermissionScope.ForImport(req.EntityType);
+        if (!await permissions.HasPermissionAsync(companyId, JwtHelper.GetUserIdFromClaims(User), key))
+            return StatusCode(403, new ApiResponse<object>(false, null, ImportExportPermissionScope.DeniedMessage(req.EntityType, key, false)));
+        var final = req.Mappings.Select(m => new Accounting.Models.DTOs.Import.ImportColumnPlanDto(m.SourceIndex, "",
+            string.IsNullOrWhiteSpace(m.Field) ? null : m.Field.Trim(), null, ImportMapSource.User, "", 1m, false,
+            Array.Empty<string>(), Array.Empty<Accounting.Models.DTOs.Import.ImportColumnCandidateDto>())).ToList();
+        var recorded = await matcher.RecordConfirmedAsync(companyId, req.FeedbackId, final, ct);
+        return Ok(new ApiResponse<object>(true, new { recorded },
+            recorded ? "บันทึกการจับคู่แล้ว — ครั้งถัดไประบบจับคู่ตามนี้" : "ไม่พบคำแนะนำนี้ของบริษัท — ไม่ได้บันทึก"));
     }
 
     // ────────────────────────────────────────────────────────────────

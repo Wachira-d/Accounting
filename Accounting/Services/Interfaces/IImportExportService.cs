@@ -34,6 +34,9 @@ public interface IImportExportService
     // Caller invokes after mapping is saved, before commit.
     Task<ImportAiReviewResponse> AiReviewSessionAsync(Guid companyId, Guid sessionId);
 
+    /// <summary>รอบ 205 ทีม B: ผู้ใช้รับ/ปฏิเสธคำแนะนำของผลตรวจข้อมูล ⇒ ปิดลูป ImportDataReview (feedback ต้องเป็นของบริษัทนี้) · false = ไม่ได้บันทึก</summary>
+    Task<bool> RecordAiReviewChoiceAsync(Guid companyId, Guid sessionId, ImportAiReviewChoiceRequest request);
+
     // Template Downloads
     Task<ImportTemplateDownloadResponse> DownloadTemplateAsync(string entityType, string format);
     Task<List<ImportableEntityInfo>> GetImportableEntitiesAsync();

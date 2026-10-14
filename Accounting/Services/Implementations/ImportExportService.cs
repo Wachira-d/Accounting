@@ -8,6 +8,7 @@ using Accounting.Models.Enums;
 using Accounting.Services.Ai;
 using Accounting.Services.Ai.Prompts;
 using Accounting.Services.Import;
+using Accounting.Services.Import.Targets;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -221,6 +222,8 @@ public class ImportExportService : IImportExportService
     {
         if (rows.All(r => r.Action == ImportRowAction.Skip))
             return rows.Select(r => new ImportRowCommitResult(r.RowId, true, Skipped: true)).ToList();
+        if (AccountingTargetKeys.Contains(key))
+            return await WriteViaAccountingTargetAsync(companyId, key, rows, options, performedBy, ct);
 
         var first = rows[0];
         var action = ResolveAction(null, "", options.ConflictAction ?? first.Action switch
@@ -231,38 +234,115 @@ public class ImportExportService : IImportExportService
         });
         try
         {
-            RowWrite w;
-            if (key == "documents")
-                w = await WriteDocumentGroupAsync(companyId, rows, performedBy, ct);
-            else
+            var row = ToLegacyRow(first.Values);
+            // คู่ที่ผู้ใช้เลือกมีผลเฉพาะ "อัปเดต/เติม" — "สร้างใหม่" ห้ามไปแตะแถวที่ระบบแค่แนะนำ (ชื่อคล้าย ≠ รายเดียวกัน)
+            var matched = first.Action is ImportRowAction.Update or ImportRowAction.Merge ? first.MatchedEntityId : null;
+            RowWrite w = key switch
             {
-                var row = ToLegacyRow(first.Values);
-                // คู่ที่ผู้ใช้เลือกมีผลเฉพาะ "อัปเดต/เติม" — "สร้างใหม่" ห้ามไปแตะแถวที่ระบบแค่แนะนำ (ชื่อคล้าย ≠ รายเดียวกัน)
-                var matched = first.Action is ImportRowAction.Update or ImportRowAction.Merge ? first.MatchedEntityId : null;
-                w = key switch
-                {
-                    "contacts" => await ImportContactAsync(companyId, row, action, matched),
-                    "products" => await ImportProductAsync(companyId, row, action, matched),
-                    "chartofaccounts" => await ImportAccountAsync(companyId, row, action, matched),
-                    "banktransactions" => await ImportBankTransactionAsync(companyId, row, performedBy),
-                    "journalentries" => await ImportJournalEntryAsync(companyId, row, performedBy),
-                    "stockopening" => await ImportStockOpeningAsync(companyId, row, performedBy),
-                    "openingar" => await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: true),
-                    "openingap" => await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: false),
-                    "stockadjustments" => await ImportStockAdjustmentAsync(companyId, row, performedBy),
-                    "fixedassets" => await ImportFixedAssetAsync(companyId, row, performedBy),
-                    "payments" => await ImportPaymentAsync(companyId, row, performedBy),
-                    "projects" => await ImportProjectAsync(companyId, row, performedBy),
-                    "employees" => await ImportEmployeeAsync(companyId, row, performedBy),
-                    "budgets" => await ImportBudgetAsync(companyId, row, performedBy),
-                    _ => throw new BusinessRuleException($"ไม่รองรับการนำเข้า {key}"),
-                };
-            }
+                "contacts" => await ImportContactAsync(companyId, row, action, matched),
+                "products" => await ImportProductAsync(companyId, row, action, matched),
+                "chartofaccounts" => await ImportAccountAsync(companyId, row, action, matched),
+                "banktransactions" => await ImportBankTransactionAsync(companyId, row, performedBy),
+                "journalentries" => await ImportJournalEntryAsync(companyId, row, performedBy),
+                "stockopening" => await ImportStockOpeningAsync(companyId, row, performedBy),
+                "openingar" => await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: true),
+                "openingap" => await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: false),
+                "stockadjustments" => await ImportStockAdjustmentAsync(companyId, row, performedBy),
+                "projects" => await ImportProjectAsync(companyId, row, performedBy),
+                "employees" => await ImportEmployeeAsync(companyId, row, performedBy),
+                "budgets" => await ImportBudgetAsync(companyId, row, performedBy),
+                _ => throw new BusinessRuleException($"ไม่รองรับการนำเข้า {key}"),
+            };
             if (options.SaveChanges && !w.Skipped) await _db.SaveChangesAsync(ct);
             return rows.Select(r => w.Skipped
                     ? new ImportRowCommitResult(r.RowId, true, w.EntityType, w.EntityId, Skipped: true)
                     : new ImportRowCommitResult(r.RowId, true, w.EntityType, w.EntityId, BeforeJson: w.BeforeJson))
                 .ToList();
+        }
+        catch (Exception ex) when (IsRowError(ex))
+        {
+            if (options.SaveChanges) DiscardPendingChanges();
+            var msg = RowErrorMessage(ex);
+            return rows.Select(r => new ImportRowCommitResult(r.RowId, false, Error: msg)).ToList();
+        }
+    }
+
+    /// <summary>ชนิดที่ทางเดิมส่งต่อปลายทางบัญชีของศูนย์นำเข้า (ทีม D) — ไม่มีตัวเขียนของตัวเองที่นี่แล้ว</summary>
+    private static readonly IReadOnlySet<string> AccountingTargetKeys = new HashSet<string>(StringComparer.Ordinal) { "documents", "payments", "fixedassets" };
+
+    /// <summary>ปลายทางของทีม D ตัวเดียวกับศูนย์นำเข้า (สร้างจาก dependency ที่มีอยู่ — ไม่ผ่าน registry เพราะ registry มีปลายทางข้อมูลหลักที่อ้างกลับมาที่ service นี้)</summary>
+    private IImportTarget AccountingTarget(string key)
+    {
+        BusinessRuleException NotReady(string what) => new($"ระบบ{what}ไม่พร้อมสำหรับการนำเข้า — นำเข้าที่หน้า \"ศูนย์นำเข้าข้อมูล\" แทน");
+        return key switch
+        {
+            "documents" => new DocumentImportTarget(_db, _documentBuilder ?? throw NotReady("เอกสาร"), _documents ?? throw NotReady("เอกสาร")),
+            "payments" => new PaymentImportTarget(_db, _documents ?? throw NotReady("รับ/จ่ายชำระ")),
+            "fixedassets" => new FixedAssetImportTarget(_db, _fixedAssets ?? throw NotReady("ทะเบียนสินทรัพย์")),
+            _ => throw new BusinessRuleException($"ไม่รองรับการนำเข้า {key}"),
+        };
+    }
+
+    /// <summary>
+    /// เอกสาร · รับ/จ่ายชำระ · สินทรัพย์ถาวร จากทางเดิม (นำเข้าไฟล์ · Smart Import) — ส่งต่อปลายทางของทีม D (<c>DocumentImportTarget</c> ·
+    /// <c>PaymentImportTarget</c> · <c>FixedAssetImportTarget</c>) ⇒ <b>ตรวจและลงด้วยกติกาเดียวกับศูนย์นำเข้า</b> (เดิมทีม B มีตัวเขียนชุดที่สองที่นี่ —
+    /// สองคำตัดสินของเรื่องเดียว) · ค่าแปลงด้วย <see cref="ImportCellNormalizer"/> ตาม schema ของปลายทาง · ข้อผิด (Error) ของบรรทัดใด = ทั้งหน่วยไม่ลง
+    /// (เอกสารหลายบรรทัดไม่ลงครึ่งใบ) · คำเตือนไม่บล็อก (ทางเดิมไม่มีขั้นรับทราบ — ปลายทางตั้ง "ข้าม" ให้แถวซ้ำเอง)
+    /// </summary>
+    private async Task<IReadOnlyList<ImportRowCommitResult>> WriteViaAccountingTargetAsync(Guid companyId, string key,
+        IReadOnlyList<ImportTargetRow> rows, ImportRowWriteOptions options, string performedBy, CancellationToken ct)
+    {
+        try
+        {
+            var target = AccountingTarget(key);
+            var fields = target.Schema.ToDictionary(f => f.Field, StringComparer.OrdinalIgnoreCase);
+            var errors = new Dictionary<Guid, string>();
+            var canonical = new List<ImportTargetRow>(rows.Count);
+            foreach (var r in rows)
+            {
+                var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var kv in r.Values)
+                {
+                    if (!fields.TryGetValue(kv.Key, out var f)) { values[kv.Key] = kv.Value; continue; }
+                    var n = ImportCellNormalizer.Normalize(f, kv.Value);
+                    if (n.Issue is { Severity: ImportIssueSeverity.Error } bad && !errors.ContainsKey(r.RowId))
+                        errors[r.RowId] = $"{f.Label}: {bad.Message}";
+                    values[kv.Key] = n.Cell.Value;
+                }
+                canonical.Add(r with { Values = values });
+            }
+
+            var ctx = new ImportTargetContext(companyId, Guid.NewGuid(), target.EntityType,
+                new ImportActor(Guid.TryParse(performedBy, out var uid) ? uid : Guid.Empty, performedBy), new ImportCommitOptions());
+            var validations = (await target.ValidateAsync(ctx, canonical, ct)).ToDictionary(v => v.RowId);
+            foreach (var v in validations.Values)
+                if (!errors.ContainsKey(v.RowId) && v.Issues.FirstOrDefault(i => i.Severity == ImportIssueSeverity.Error) is { } e)
+                    errors[v.RowId] = e.Message;
+            if (errors.Count > 0)
+            {
+                var firstError = errors.Values.First();
+                return rows.Select(r => new ImportRowCommitResult(r.RowId, false,
+                    Error: errors.GetValueOrDefault(r.RowId) ?? "บรรทัดอื่นของเอกสารเดียวกันผิด — " + firstError)).ToList();
+            }
+
+            var ready = canonical.Select(r =>
+            {
+                if (!validations.TryGetValue(r.RowId, out var v)) return r;
+                var merged = new Dictionary<string, string?>(r.Values, StringComparer.OrdinalIgnoreCase);
+                foreach (var kv in v.FilledValues ?? new Dictionary<string, string?>())
+                    if (string.IsNullOrWhiteSpace(merged.GetValueOrDefault(kv.Key))) merged[kv.Key] = kv.Value;
+                return r with
+                {
+                    Values = merged, Action = v.Action ?? r.Action, MatchedEntityId = v.MatchedEntityId ?? r.MatchedEntityId,
+                    GroupKey = v.GroupKey ?? r.GroupKey,
+                };
+            }).ToList();
+            var results = new List<ImportRowCommitResult>(rows.Count);
+            foreach (var g in ready.GroupBy(r => r.GroupKey ?? r.RowId.ToString(), StringComparer.Ordinal))
+                results.AddRange(await target.CommitGroupAsync(ctx, g.ToList(), ct));
+            if (options.SaveChanges && target.CommitStyle == ImportCommitStyle.SharedTransaction) await _db.SaveChangesAsync(ct);
+            return rows.Select(r => results.FirstOrDefault(x => x.RowId == r.RowId)
+                ?? new ImportRowCommitResult(r.RowId, false, Error: "ปลายทางไม่คืนผลของแถวนี้ — ลองนำเข้าแถวนี้อีกครั้ง")).ToList();
         }
         catch (Exception ex) when (IsRowError(ex))
         {
@@ -1483,46 +1563,6 @@ public class ImportExportService : IImportExportService
 
     // ===== Fixed Asset import =====
 
-    /// <summary>
-    /// รอบ 205 ทีม B: ผ่าน <c>IFixedAssetService.ImportAsync</c> (owner เดียวของการนำเข้าสินทรัพย์ — ตัวตัดสิน <c>FixedAssetImportMethod</c>: ที่ดิน/งานระหว่าง
-    /// ก่อสร้างไม่คิดค่าเสื่อม · วิธีคิดที่ไม่รู้จัก = ปฏิเสธพร้อมทางแก้ · ตารางค่าเสื่อมเหมือนสร้างด้วยมือ) — เดิมเส้นนี้สร้าง FixedAsset เองแล้วตั้งวิธีเป็น
-    /// "เส้นตรง" ⇒ ที่ดินที่นำเข้าทางนี้ถูกคิดค่าเสื่อม (ถดถอย E-03 รอบ 200)
-    /// </summary>
-    private async Task<RowWrite> ImportFixedAssetAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
-    {
-        if (_fixedAssets == null)
-            throw new BusinessRuleException("ระบบทะเบียนสินทรัพย์ไม่พร้อม — นำเข้าที่หน้า \"สินทรัพย์ถาวร → นำเข้า\" แทน");
-        var code = Val(row, "AssetCode") ?? throw new BusinessRuleException("ต้องระบุรหัสสินทรัพย์ (AssetCode)");
-        var purchaseDate = ReqDate(row, "PurchaseDate", "วันที่ซื้อ");
-        var purchaseCost = OptAmount(row, "PurchaseCost", "ราคาซื้อ") ?? throw new BusinessRuleException("ต้องระบุราคาซื้อ (PurchaseCost)");
-        var salvage = OptAmount(row, "SalvageValue", "มูลค่าซาก") ?? 0m;
-        var life = OptInt(row, "UsefulLifeMonths", "อายุการใช้งาน (เดือน)") ?? 0;
-        var accDep = OptAmount(row, "AccumulatedDepreciation", "ค่าเสื่อมสะสมยกมา") ?? 0m;
-        if (accDep < 0m || accDep > purchaseCost)
-            throw new BusinessRuleException($"ค่าเสื่อมสะสมยกมา ({accDep:N2}) ต้องอยู่ระหว่าง 0 ถึงราคาซื้อ ({purchaseCost:N2}) ของ {code}");
-
-        var result = await _fixedAssets.ImportAsync(companyId, new List<Accounting.Models.DTOs.FixedAsset.ImportFixedAssetRow>
-        {
-            new(code, Val(row, "Name") ?? "", Val(row, "Category"), Val(row, "Location"), Val(row, "SerialNumber"),
-                purchaseDate, purchaseCost, salvage, life, Val(row, "DepreciationMethod") ?? ""),
-        }, performedBy);
-        if (result.SuccessCount == 0)
-            throw new BusinessRuleException(result.Errors.FirstOrDefault()?.Replace("แถวที่ 1: ", "", StringComparison.Ordinal)
-                ?? "นำเข้าสินทรัพย์ไม่สำเร็จ");
-
-        var asset = await _db.FixedAssets.FirstAsync(a => a.CompanyId == companyId && a.AssetCode == code && !a.IsDeleted);
-        if (accDep > 0m)
-        {
-            // ค่าเสื่อมสะสมยกมา (ย้ายระบบกลางปี) — พฤติกรรมเดิมของไฟล์นำเข้า: เก็บยอดสะสม + มูลค่าตามบัญชีสุทธิ ·
-            // ตารางค่าเสื่อมช่วงที่เหลือ = รอตัวอย่างไฟล์จริง (IMPORT_ETL_REVIEW §4 ข้อ 7)
-            asset.AccumulatedDepreciation = accDep;
-            asset.NetBookValue = asset.PurchaseCost - accDep;
-        }
-        return new RowWrite("FixedAsset", asset.Id);
-    }
-
-    // ===== Stock + Asset + Bank exports =====
-
     private async Task<List<Dictionary<string, string>>> ExportStockMovementsAsync(Guid companyId, ExportRequest request)
     {
         var query = _db.StockMovements
@@ -1613,51 +1653,6 @@ public class ImportExportService : IImportExportService
     }
 
     // ===== Payments =====
-
-    /// <summary>
-    /// รอบ 205 ทีม B (P0 · IMPORT_ETL_REVIEW §1): รับ/จ่ายชำระจากไฟล์ผ่าน <c>IDocumentService.CreatePaymentAsync</c> — ทางเดียวกับหน้าเว็บ
-    /// (JE ตัดลูกหนี้/เจ้าหนี้ · ยอดธนาคาร · หัก ณ ที่จ่าย · งวด ภ.พ.36 · ด่านจ่ายเกิน · ธุรกรรมของตัวเอง) · เดิมแก้ <c>PaidAmount</c> ตรง ⇒ AR ลดใน
-    /// subledger แต่ GL ไม่ขยับ · ไฟล์นำเข้า = ประวัติจากระบบเดิม ⇒ ไม่ออกใบเสร็จแยกอัตโนมัติ (ใบเสร็จออกไปแล้วในระบบเดิม)
-    /// </summary>
-    private async Task<RowWrite> ImportPaymentAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
-    {
-        if (_documents == null)
-            throw new BusinessRuleException("ระบบเอกสารไม่พร้อม — บันทึกรับ/จ่ายชำระที่หน้าเอกสารแทน");
-        var docNum = Val(row, "DocumentNumber") ?? throw new BusinessRuleException("ต้องระบุเลขเอกสาร (DocumentNumber)");
-        var doc = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.DocumentNumber == docNum)
-            .Select(d => new { d.Id, d.BalanceDue })
-            .FirstOrDefaultAsync()
-            ?? throw new KeyNotFoundException($"ไม่พบเอกสาร {docNum}");
-
-        var amount = OptAmount(row, "Amount", "จำนวนเงิน") ?? throw new BusinessRuleException("ต้องระบุจำนวนเงิน (Amount)");
-        var date = ReqDate(row, "PaymentDate", "วันที่ชำระ");
-        var method = PaymentMethod.Cash;
-        if (Val(row, "PaymentMethod") is { } pmRaw)
-        {
-            var pm = ImportValueNormalizer.Enum<PaymentMethod>(pmRaw);
-            if (!pm.Ok || pm.Value is not PaymentMethod pmv) throw new BusinessRuleException($"วิธีชำระ: {pm.Message}");
-            method = pmv;
-        }
-
-        // ── ด่านจ่ายเกิน: ทางเข้า "นำเข้าไฟล์" ต้องเดินด่านเดียวกับเว็บ (D4-3) — ข้อความบอกทางไปต่อของไฟล์นำเข้า (ยอดผิด/แถวซ้ำ) ──
-        if (Accounting.Helpers.DocumentSettlementState.WouldOverpay(doc.BalanceDue, amount))
-            throw new BusinessRuleException(
-                $"ยอดชำระ ({amount:N2}) เกินยอดค้างชำระ ({doc.BalanceDue:N2}) ของเอกสาร {docNum} — "
-                + "ตรวจไฟล์นำเข้า (ยอดผิด หรือแถวนี้ถูกนำเข้าไปแล้ว) ก่อนนำเข้าใหม่");
-
-        // domain service เปิดธุรกรรมเอง ⇒ ต้องไม่มีของค้างใน tracker ของผู้เรียก (เส้นเดิมบันทึกทีละหน่วยแล้ว)
-        var payment = await _documents.CreatePaymentAsync(companyId, new Accounting.Models.DTOs.Document.CreatePaymentRequest(
-            DocumentId: doc.Id,
-            PaymentDate: date,
-            Amount: amount,
-            PaymentMethod: method,
-            Reference: Val(row, "Reference"),
-            BankAccount: Val(row, "BankAccount"),
-            Notes: Val(row, "Notes"),
-            IssueReceiptDocument: false), performedBy);
-        return new RowWrite("Payment", payment.Id);
-    }
 
     private async Task<List<Dictionary<string, string>>> ExportPaymentsAsync(Guid companyId, ExportRequest request)
     {
@@ -1867,41 +1862,6 @@ public class ImportExportService : IImportExportService
     // 1 row = 1 line in a document. Rows with the same DocumentNumber form one
     // document (grouped by RunLegacyRowsAsync before reaching here).
 
-    /// <summary>
-    /// รอบ 205 ทีม B (P0 · คำตัดสินข้อ 151 (1)): หนึ่งใบ = แถวที่เลขเอกสารเดียวกัน → <see cref="IDocumentImportBuilder"/> (ทีม D: จับคู่ผู้ติดต่อ + ประกอบหัว/บรรทัด)
-    /// → <c>IDocumentService.CreateDocumentAsync</c> — <b>ร่าง + เลข DRAFT</b> · เลขเดิมจากไฟล์ไป <c>Reference</c> · ยอด/VAT/WHT คำนวณโดย DocumentService ·
-    /// ด่านงวดปิด/§86/4 ของ service เดินครบ · เดิมเขียน <c>Document</c> ตรง ใส่เลขจากไฟล์บนร่าง และคำนวณยอดเอง (ข้ามกฎเลข DRAFT + period lock) ·
-    /// นำเข้าไฟล์เดิมซ้ำ: ใบชนิดเดียวกัน ผู้ติดต่อเดียวกัน และเลขเดิมเดียวกันใน Reference ที่ยังไม่ถูกลบ ⇒ ข้าม (idempotent)
-    /// </summary>
-    private async Task<RowWrite> WriteDocumentGroupAsync(Guid companyId, IReadOnlyList<ImportTargetRow> rows, string performedBy,
-        CancellationToken ct)
-    {
-        if (_documentBuilder == null || _documents == null)
-            throw new BusinessRuleException("ระบบเอกสารไม่พร้อม — สร้างเอกสารที่หน้าเอกสารแทน");
-        var build = await _documentBuilder.BuildAsync(companyId, "documents", rows, new ImportCommitOptions(), ct);
-        if (build.Request is not { } request)
-        {
-            var why = build.Issues.Where(i => i.Severity == ImportIssueSeverity.Error).Select(i => i.Message).FirstOrDefault()
-                ?? build.Issues.Select(i => i.Message).FirstOrDefault()
-                ?? "ประกอบเอกสารจากแถวนี้ไม่ได้ — ตรวจเลขเอกสาร/ประเภท/วันที่/ผู้ติดต่อในไฟล์";
-            throw new BusinessRuleException(why);
-        }
-        var original = string.IsNullOrWhiteSpace(build.OriginalNumber) ? request.Reference : build.OriginalNumber;
-        if (!string.IsNullOrWhiteSpace(original))
-        {
-            var dup = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.DocumentType == request.DocumentType
-                    && d.ContactId == request.ContactId && d.Reference == original)
-                .Select(d => (Guid?)d.Id).FirstOrDefaultAsync(ct);
-            if (dup != null) return new RowWrite("Document", dup, Skipped: true);
-        }
-        var created = await _documents.CreateDocumentAsync(companyId, request, performedBy, originModule: "Import");
-        return new RowWrite("Document", created.Id);
-    }
-
-    // ===== Validation =====
-
-    // ตัวตรวจรูปค่า (รอบ 205 ทีม B · P0) — ตัวแปลงเดียวกับตอนเขียนจริง (ImportValueNormalizer) ⇒ "ตรวจผ่าน" กับ "ลงได้" ตรงกัน ไม่ขึ้นกับ culture
     private static bool IsDate(string? v) => ImportValueNormalizer.Date(v) is { Ok: true, Value: not null };
     private static bool IsAmount(string? v) => ImportValueNormalizer.Amount(v) is { Ok: true, Value: not null };
     private static bool IsNumber(string? v) => ImportValueNormalizer.Number(v) is { Ok: true, Value: not null };
@@ -2230,11 +2190,28 @@ public class ImportExportService : IImportExportService
             : ImportReviewHeuristics.Review(session.EntityType, targets, mappedOrder, sampleRows, existingSlice);
 
         return new ImportAiReviewResponse(sessionId, review.UsedAi, review.Summary, review.OverallQualityScore,
-            review.Normalizations.Select(n => new ImportAiNormalizationDto(n.RowIndex, n.Field, n.Original, n.Normalized, n.Reason)).ToList(),
+            review.Normalizations.Select(n => new ImportAiNormalizationDto(n.RowIndex, n.Field, n.Original, n.Normalized, n.Reason, n.Code)).ToList(),
             review.FuzzyDuplicates.Select(d => new ImportAiFuzzyDuplicateDto(d.RowIndex, d.IncomingKey, d.ExistingId, d.ExistingLabel, d.Similarity, d.Reasoning)).ToList(),
             review.QualityFlags.Select(q => new ImportAiQualityFlagDto(q.RowIndex, q.Severity, q.Message)).ToList(),
-            review.FieldValidations.Select(v => new ImportAiFieldValidationDto(v.RowIndex, v.Field, v.Value, v.Issue, v.SuggestedFix)).ToList(),
-            review.BatchPatterns.ToList());
+            review.FieldValidations.Select(v => new ImportAiFieldValidationDto(v.RowIndex, v.Field, v.Value, v.Issue, v.SuggestedFix, v.Code)).ToList(),
+            review.BatchPatterns.ToList(),
+            review.FeedbackId);
+    }
+
+    /// <summary>ปิดลูป ImportDataReview (กฎเหล็ก #1 · รอบ 205 ทีม B — เดิมผลตรวจคืนไปแล้วไม่มีทางบันทึกว่าผู้ใช้รับ/ปฏิเสธคำแนะนำไหน) ·
+    /// ชุดต้องเป็นของบริษัทนี้ · feedback ตรวจความเป็นเจ้าของซ้ำที่ <see cref="IImportAiAugmenter.RecordReviewChoiceAsync"/> · ไม่มี AI ลงทะเบียน = ไม่มีอะไรให้ปิด</summary>
+    public async Task<bool> RecordAiReviewChoiceAsync(Guid companyId, Guid sessionId, ImportAiReviewChoiceRequest request)
+    {
+        if (!await _db.SmartImportSessions.AsNoTracking().AnyAsync(s => s.Id == sessionId && s.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบ Import Session");
+        if (_ai == null || request.FeedbackId == Guid.Empty) return false;
+        static List<ImportReviewChoice> Map(List<ImportAiReviewChoiceItem>? items) => (items ?? new())
+            .Where(i => !string.IsNullOrWhiteSpace(i.Field) && !string.IsNullOrWhiteSpace(i.Code))
+            .Select(i => new ImportReviewChoice(i.Field.Trim(), i.Code.Trim())).ToList();
+        var accepted = Map(request.Accepted);
+        var rejected = Map(request.Rejected);
+        if (accepted.Count == 0 && rejected.Count == 0) return false;
+        return await _ai.RecordReviewChoiceAsync(companyId, request.FeedbackId, accepted, rejected);
     }
 
     /// <summary>Load a representative slice of existing entities for

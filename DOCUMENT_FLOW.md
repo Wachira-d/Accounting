@@ -3980,10 +3980,14 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   commit ซ้ำไม่ลงซ้ำ (แถวที่ลงแล้วข้าม) · ซ้อนกันไม่ได้ (`JobLock` ต่อ batch) · ทุก commit/undo = audit `IMPORT-COMMIT`/`IMPORT-UNDO` (hash chain)
 - **จับคู่ข้อมูลเดิม**: เลขภาษี+สาขา / รหัสสินค้า-บาร์โค้ด / รหัสผัง/โครงการ = ระบบเลือกให้ · ชื่อ (นิติบุคคลเดียวกัน · ชื่อคล้าย) = **แนะนำเท่านั้น** + คำเตือน ·
   AI 59 (`ResolveEntityAsync`) เฉพาะกำกวมที่ไม่มีเลขภาษี — แนะนำ ไม่เลือกให้
-- **writer เดิม** (`ImportExportService.WriteRowAsync` — ตัวเดียวของ Smart Import · นำเข้าเดิม · ปลายทางข้อมูลหลัก): รับ/จ่ายชำระ → `DocumentService.CreatePaymentAsync`
-  (มี JE · ไม่ออกใบเสร็จ · จ่ายเกิน = แถวล้ม — เดิมแก้ `PaidAmount` ตรง GL ไม่ขยับ) · สินทรัพย์ → `FixedAssetService.ImportAsync` (ที่ดินไม่คิดค่าเสื่อม) · เอกสาร →
-  `DocumentImportBuilder` + `CreateDocumentAsync` (ร่าง · `DRAFT-` · กันซ้ำตามเลขอ้างอิง) · รายการธนาคาร → ตัวเขียน statement (§6.0b-bank) · JE ไม่รับผังที่ลบ/ผู้ติดต่อชื่อกำกวม ·
-  ใบสำคัญที่ลงแล้วไม่ถูกต่อบรรทัด
+- **writer เดิม** (`ImportExportService.WriteRowAsync` — ตัวเดียวของ Smart Import · นำเข้าเดิม · ปลายทางข้อมูลหลัก): เอกสาร/รับ-จ่ายชำระ/สินทรัพย์ →
+  **ส่งต่อปลายทางของทีม D ตัวเดียวกับศูนย์นำเข้า** (`WriteViaAccountingTargetAsync` → `DocumentImportTarget`/`PaymentImportTarget`/`FixedAssetImportTarget`:
+  แปลงค่าตาม schema → `ValidateAsync` (ข้อผิดของบรรทัดใด = ทั้งหน่วยไม่ลง · คำเตือนไม่บล็อก — ซ้ำ = ข้าม) → `CommitGroupAsync` ⇒ `CreatePaymentAsync` มี JE ·
+  `FixedAssetService.ImportAsync` ที่ดินไม่คิดค่าเสื่อม · `CreateDocumentAsync` ร่าง `DRAFT-`) — เดิมแก้ `PaidAmount` ตรง GL ไม่ขยับ · รายการธนาคาร → ตัวเขียน statement
+  (§6.0b-bank) · JE ไม่รับผังที่ลบ/ผู้ติดต่อชื่อกำกวม · ใบสำคัญที่ลงแล้วไม่ถูกต่อบรรทัด
+- **ปิดลูป AI** (กฎเหล็ก #1): จับคู่คอลัมน์ — FeedbackId/UsedAi ลง session ตอนวิเคราะห์ · `RecordConfirmedAsync` ตอน remap + commit (ศูนย์นำเข้า) /
+  SubmitManualMapping + ConfirmAndImport (Smart Import) / `POST ai/import/suggest-mapping/confirm` · จับคู่ข้อมูลเดิม (59) — `RecordPickChoiceAsync` ตอน commit ต่อแถวที่ลง ·
+  ผลตรวจข้อมูล — `POST smart-import/sessions/{id}/ai-review/choice` ⇒ `RecordReviewChoiceAsync`
 - **Smart Import**: ลงบางแถว = `PartiallyCompleted` (เดิม Failed) · ลองใหม่ลงเฉพาะแถวที่ล้ม (ข้อมูลดิบล้างเมื่อลงครบ) · DateFormat/DecimalSeparator มีผล ·
   จับคู่คอลัมน์ผ่านตัวเดียวกับศูนย์นำเข้า
 - Last verified 2026-10-14 (sha เติมภายหลัง)

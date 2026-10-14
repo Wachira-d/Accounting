@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **516 ไฟล์ · 5,155 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **535 ไฟล์ · 5,312 `[Fact]` + 831 `[Theory]` (3,676 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5933,8 +5933,8 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | ETLB-03 | โหมด "ลงทั้งหมดหรือไม่ลงเลย" มีแถวล้ม | ไม่ลงสักแถว · audit ของสิ่งที่ถูก rollback ไม่ถูกประทับ (`RollbackDeferredAuditTo`) | ✅ `Db/ImportPipelineDbTests` |
 | ETLB-04 | ไฟล์ 2,005 แถว (> 2,000 = เข้าคิว) · worker สองเครื่องรับ batch เดียวกันพร้อมกัน | ทำได้เครื่องเดียว (`JobLock` ต่อ batch + claim `FOR UPDATE SKIP LOCKED`) · อีกเครื่องไม่ทำอะไร | ✅ `Db/ImportPipelineDbTests` |
 | ETLB-05 | **kill-switch** — provider ล่มทุกคำขอ (จับคู่คอลัมน์ + ชื่อกำกวม) | ผู้ติดต่อยังพัก + ลงครบ · `ColumnMatchUsedAi` = false · ทุกแถว `UsedAi` = false (ป้าย "⚙️ ระบบแนะนำ") · ถามครูจริงแต่ไม่มีอะไรขึ้นหาผู้ใช้ | ✅ `Db/ImportPipelineDbTests` |
-| ETLB-06 | สินทรัพย์ถาวรผ่านไฟล์นำเข้าทั่วไป: ที่ดิน + อาคาร | ลงผ่าน `FixedAssetService.ImportAsync` · ที่ดินไม่คิดค่าเสื่อม · อาคารยังคิด (ทิศตรงข้าม) | ✅ `Db/ImportPipelineDbTests` |
-| ETLB-07 | รับ/จ่ายชำระจากไฟล์ | ลงผ่าน `DocumentService.CreatePaymentAsync` ⇒ มี JE (เจ้าหนี้ถูกตัดใน GL — เดิมแก้ PaidAmount ตรง) · ยอดเกินค้างชำระ = แถวล้มพร้อมเหตุผล ไม่มีอะไรลง | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-06 | สินทรัพย์ถาวรผ่านไฟล์นำเข้าทั่วไป: ที่ดิน + อาคาร | ส่งต่อ `FixedAssetImportTarget` (ทีม D) → `FixedAssetService.ImportAsync` · ที่ดินไม่คิดค่าเสื่อม · อาคารยังคิด (ทิศตรงข้าม) | ✅ `Db/ImportPipelineDbTests` |
+| ETLB-07 | รับ/จ่ายชำระจากไฟล์ | ส่งต่อ `PaymentImportTarget` (ทีม D) → `DocumentService.CreatePaymentAsync` ⇒ มี JE (เจ้าหนี้ถูกตัดใน GL — เดิมแก้ PaidAmount ตรง) · ยอดเกินค้าง = แถวล้มพร้อมเหตุผล ไม่มีอะไรลง | ✅ `Db/ImportPipelineDbTests` |
 | ETLB-08 | รายการธนาคารจากไฟล์เดิม (Smart Import/นำเข้าเดิม `banktransactions`) | ลงผ่านตัวเขียน statement ตัวเดียว (ทีม C) · ค่าธรรมเนียม = เงินออก · ไฟล์ไม่มียอดคงเหลือ ⇒ ยอดการ์ดไม่ขยับ (เดิม `CurrentBalance +=`) · ไฟล์ซ้ำ = ข้ามทุกแถว · บัญชีธนาคารของบริษัทอื่น = แถวล้ม | ✅ `Db/ImportPipelineDbTests` |
 | ETLB-09 | เครื่องตั้ง culture en-US: "05/08/2569" · "1,234.50" | 5 ส.ค. 2026 · 1234.50 (เดิม `DateTime.TryParse`/`decimal.TryParse` ตาม culture เครื่อง) | ✅ `Db/ImportPipelineDbTests` |
 | ETLB-10 | แถวยอดรวม "รวม"/"รวมทั้งสิ้น"/"Grand Total:"/"ยอดยกมา"/"Sub-total"/"รวม 15 รายการ" vs ชื่อ "ขนมรวมมิตร"/"Total care shampoo"/"รวมเงินสดย่อย" | ตัวแรกถูกตัด (พักเป็น "ไม่ลง" + Info) · ชื่อจริงไม่ถูกตัด · ตัวตั้งเดียว `ImportHeaderDetector.IsSummaryRow` (`BankCsvParser.IsSummaryRow` ส่งต่อมาที่นี่) | ✅ `ImportEngineHelpersTests` + `BankStatementParsingTests` |
@@ -5944,6 +5944,7 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | ETLB-14 | Smart Import ผู้ใช้เลือก "MM/dd/yyyy" / "dd/MM/yyyy" / ทศนิยมจุลภาค | มีผลจริง (เดิมรับแล้วไม่ใช้ — silent no-op) | ✅ `ImportEngineHelpersTests` (ตัวแปลงรูปแบบ) · ⏳ manual หน้าเว็บ |
 | ETLB-15 | Smart Import ลงได้บางแถว แล้วกดลองใหม่ | สถานะ PartiallyCompleted (เดิม Failed) · ลองใหม่ลงเฉพาะแถวที่ล้ม · ข้อมูลดิบล้างเมื่อลงครบเท่านั้น | ⏳ manual |
 | ETLB-16 | Smart Import จับคู่คอลัมน์ | ผ่านตัวจับคู่ของทีม A (`ImportColumnMatchService`) · ป้าย AiMatched เฉพาะ AI ตอบจริง (กฎ = HeuristicMatched) · FeedbackId เก็บลง session · แก้/ยืนยัน ⇒ `RecordConfirmedAsync` | ⏳ manual (จุดเรียกล็อกด้วย `required_call_site_check`) |
+| ETLB-18 | `POST ai/import/suggest-mapping/confirm` · `POST smart-import/sessions/{id}/ai-review/choice` | feedback ของบริษัทนี้ = บันทึก (recorded true) · ของบริษัทอื่น/ไม่ใช่ชนิดนั้น = ไม่บันทึก · ไม่มีสิทธิ์นำเข้าชนิดนั้น = 403 | ⏳ manual (จุดเรียกล็อกด้วย `required_call_site_check`) |
 | ETLB-17 | ศูนย์นำเข้า: ย้อนชุดที่ลงแล้ว (ผู้ติดต่อที่ยังไม่ถูกอ้าง / ถูกอ้างแล้ว / อัปเดตรายเดิม) | ลบแบบ soft · ถูกอ้าง = บล็อกพร้อมทางไปต่อ · อัปเดตรายเดิม = คืนค่าเดิมจาก snapshot · ต้องระบุเหตุผล · audit IMPORT-UNDO | ⏳ manual |
 ---
 

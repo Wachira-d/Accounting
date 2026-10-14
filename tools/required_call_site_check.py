@@ -526,11 +526,8 @@ TUPLE_RULES = [
     (IMPORT, "ImportOpeningSubledgerAsync",
      ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope(", "ContactTaxBranchKey.AdoptTaxId(", "ContactAdoptOutcome.Reject"], [], [],
      "ยอดยกมา: ชื่อบน SoftScope · แถวที่จับได้รับเลขจากไฟล์ (R2-C5)"),
-    # รอบ 205 ทีม B: เอกสารจากไฟล์ไม่เขียนตาราง Documents เองแล้ว — ประกอบผ่าน IDocumentImportBuilder (ทีม D เป็นเจ้าของการจับคู่ผู้ติดต่อ ·
-    # ล็อกกติกา ContactTaxBranchKey ย้ายไปที่ builder) แล้วสร้างผ่าน DocumentService (ร่าง + เลข DRAFT · คำตัดสินข้อ 151)
-    (IMPORT, "WriteDocumentGroupAsync",
-     ["_documentBuilder.BuildAsync(", "_documents.CreateDocumentAsync("], [], ["_db.Documents.Add(", "DocumentNumber = "],
-     "นำเข้าเอกสาร: ผ่าน domain service เท่านั้น (เลข DRAFT · ยอดคำนวณโดย DocumentService · period lock)"),
+    # รอบ 205 ทีม B: เอกสาร/รับ-จ่ายชำระ/สินทรัพย์จากทางเดิมส่งต่อปลายทางของทีม D (กติกาของ DocumentImportTarget/PaymentImportTarget/
+    # FixedAssetImportTarget อยู่ในชุด _ETL_D) — ImportExportService ไม่มีตัวเขียนของสามชนิดนี้แล้ว
     (DUPDET, "DetectContactAsync",
      ["ContactTaxBranchKey.FindAsync(", "ContactTaxBranchKey.SoftScope("], [], [],
      "ตัวตรวจซ้ำตอนนำเข้า: สาขาอื่นของเลขเดียวกันไม่ใช่ 'ซ้ำ' · ชื่อบนชุด SoftScope"),
@@ -5903,15 +5900,46 @@ RULES += [
     dict(file="Services/Implementations/IntegrationService.cs", method="ProcessPaymentAsync",
          must=["Pp36Ledger.StampFirstPaymentAsync("],
          why=_PP36_WHY + "P2-6 คำตัดสินข้อ 137 จ่ายผ่าน integration"),
-    # รอบ 205 ทีม B: นำเข้ารายการจ่ายจากไฟล์ผ่าน DocumentService.CreatePaymentAsync (ประทับงวด ภ.พ.36 ในตัว — กติกา DOC ข้างบน) ·
-    # ห้ามกลับไปแก้ PaidAmount/เพิ่ม Payment เอง (AR ลดแต่ GL ไม่ขยับ)
-    dict(file="Services/Implementations/ImportExportService.cs", method="ImportPaymentAsync",
-         must=["_documents.CreatePaymentAsync(", "DocumentSettlementState.WouldOverpay("],
-         forbid=["PaidAmount +=", "_db.Payments.Add("],
-         why=_PP36_WHY + "P2-6 คำตัดสินข้อ 137 นำเข้ารายการจ่ายจากไฟล์ — ทางเดียวกับหน้าเว็บ"),
-    dict(file="Services/Implementations/ImportExportService.cs", method="ImportFixedAssetAsync",
-         must=["_fixedAssets.ImportAsync("], forbid=["_db.FixedAssets.Add("],
-         why="รอบ 205 ทีม B: สินทรัพย์จากไฟล์ผ่าน FixedAssetService.ImportAsync (FixedAssetImportMethod — ที่ดินไม่คิดค่าเสื่อม · ถดถอย E-03)"),
+    # รอบ 205 ทีม B: เอกสาร/รับ-จ่ายชำระ/สินทรัพย์จากทางเดิม (นำเข้าไฟล์ · Smart Import) ส่งต่อปลายทางของทีม D ตัวเดียวกับศูนย์นำเข้า ·
+    # ห้ามกลับไปเขียนเอง (PaidAmount ตรง = AR ลดแต่ GL ไม่ขยับ · ที่ดินถูกคิดค่าเสื่อม · เอกสารไม่ผ่าน DocumentService)
+    dict(file="Services/Implementations/ImportExportService.cs", method="WriteUnitAsync",
+         must=["WriteViaAccountingTargetAsync("],
+         forbid=["PaidAmount +=", "_db.Payments.Add(", "_db.FixedAssets.Add(", "_db.Documents.Add("],
+         why=_PP36_WHY + "P2-6 คำตัดสินข้อ 137 · รอบ 205 ทีม B/D: ทางเดิมของเอกสาร/การชำระ/สินทรัพย์ = ปลายทางเดียวกับศูนย์นำเข้า"),
+    dict(file="Services/Implementations/ImportExportService.cs", method="WriteViaAccountingTargetAsync",
+         must=["target.ValidateAsync(", "target.CommitGroupAsync(", "ImportCellNormalizer.Normalize("],
+         before=[("target.ValidateAsync(", "target.CommitGroupAsync(")],
+         why="รอบ 205 ทีม B: ตรวจด้วยกติกาของปลายทางก่อนลงเสมอ (ข้อผิดของบรรทัดใด = ทั้งหน่วยไม่ลง)"),
+    dict(file="Services/Implementations/ImportExportService.cs", method="AccountingTarget",
+         must=["new DocumentImportTarget(", "new PaymentImportTarget(", "new FixedAssetImportTarget("],
+         why="รอบ 205 ทีม B/D: สามชนิดนี้มีปลายทางตัวเดียว (ทีม D)"),
+    # ปิดลูป AI ของการนำเข้า (กฎเหล็ก #1 · ฝ่ายค้านรอบ 205: RecordConfirmed/RecordPick ไม่มีผู้เรียก)
+    dict(file="Services/Import/ImportPipelineService.cs", method="RemapAsync", must=["RecordColumnChoiceAsync("],
+         why="รอบ 205 ทีม B: ผู้ใช้แก้การจับคู่คอลัมน์ = คำตอบสุดท้ายของ ImportColumnMatch"),
+    dict(file="Services/Import/ImportPipelineService.Engine.cs", method="FinishCommitAsync",
+         must=["RecordColumnChoiceAsync(", "RecordMatchChoicesAsync("],
+         why="รอบ 205 ทีม B: commit = ผู้ใช้ยืนยันการจับคู่คอลัมน์ + คู่ข้อมูลเดิมของทุกแถวที่ลง"),
+    dict(file="Services/Import/ImportPipelineService.Engine.cs", method="RecordMatchChoicesAsync",
+         must=["_ai.RecordPickChoiceAsync("],
+         why="รอบ 205 ทีม B: ปิดลูป ImportEntityMatch (59) ผ่าน augmenter (ตรวจว่า feedback เป็นของบริษัทนี้)"),
+    dict(file="Services/Implementations/ImportExportService.cs", method="RecordSmartColumnChoiceAsync",
+         must=["_columnMatch.RecordConfirmedAsync("],
+         why="รอบ 205 ทีม B: ปิดลูป ImportColumnMatch ของ Smart Import"),
+    dict(file="Controllers/AiSuggestionController.cs", method="ConfirmImportMapping",
+         must=["permissions.HasPermissionAsync(", "ImportExportPermissionScope.ForImport(", "matcher.RecordConfirmedAsync("],
+         before=[("permissions.HasPermissionAsync(", "matcher.RecordConfirmedAsync(")],
+         why="รอบ 205 ทีม B: suggest-mapping คืน feedbackId — ต้องมีทางบันทึกการยืนยัน (เดิมข้อความอ้างว่าเรียนแต่ไม่มีผู้เรียก)"),
+    dict(file="Services/Implementations/ImportExportService.cs", method="RecordAiReviewChoiceAsync",
+         must=["_ai.RecordReviewChoiceAsync(", "s.CompanyId == companyId"],
+         why="รอบ 205 ทีม B: ปิดลูป ImportDataReview — รับ/ปฏิเสธคำแนะนำของผลตรวจ"),
+    dict(file="Controllers/ImportExportController.cs", method="AiReviewChoice",
+         must=["await DenyAsync(", "RecordAiReviewChoiceAsync("],
+         before=[("await DenyAsync(", "RecordAiReviewChoiceAsync(")],
+         why="รอบ 205 ทีม B: สิทธิ์นำเข้าชนิดนั้นก่อนบันทึกการรับ/ปฏิเสธ"),
+    dict(file="Services/Implementations/ImportExportService.cs", method="SubmitManualMappingAsync",
+         must=["RecordSmartColumnChoiceAsync("], why="รอบ 205 ทีม B: ผู้ใช้แก้การจับคู่ = คำตอบสุดท้าย"),
+    dict(file="Services/Implementations/ImportExportService.cs", method="ConfirmAndImportAsync",
+         must=["RecordSmartColumnChoiceAsync("], why="รอบ 205 ทีม B: ยืนยันนำเข้า = ยืนยันการจับคู่คอลัมน์"),
     dict(file="Services/Import/ImportPipelineService.Engine.cs", method="MapColumnsAsync",
          must=["_columnMatch.MapAsync(", "ImportColumnMapper.Resolve("], forbid=["SuggestColumnMappingsAsync("],
          why="รอบ 205 ทีม B: จับคู่คอลัมน์ผ่านทางเข้าเดียวของทีม A (FeedbackId/UsedAi เก็บลง session · กฎเหล็ก #1) · ไม่มีบริการ = ชั้น local ของตัวจับคู่ตัวเดียวกัน"),
@@ -7498,6 +7526,8 @@ RULES += [
          must=["SkipOverduePeriodsAsync(recurring, DateTime.UtcNow)"],
          before=[("SkipOverduePeriodsAsync(", "ExecuteRecurringAsync(")],
          why="ปุ่มสร้างทันทีบนแถวที่ค้างหลายงวดออกงวดล่าสุด ไม่ใช่งวดเก่าสุด — ตัวตัดสินเดียวกับ cron"),
+]
+
 # รอบ 205 ทีม D (IMPORT_ETL_REVIEW §2.4/§2.5/§2.9) — ปลายทางบัญชีของศูนย์นำเข้า + migration wizard: ลงผ่าน domain service เดิมเท่านั้น ·
 # งบทดลองยกมาตรวจด้วยตัวตัดสินเดียว (บล็อก/คำเตือน ข้อ 150) ทั้งสองทางเข้า · ด่านสิทธิ์ทุก action ของ wizard
 _ETL_D = "รอบ 205 ทีม D: "

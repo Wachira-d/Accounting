@@ -4804,9 +4804,11 @@ commit แบบธุรกรรมเดียว savepoint ต่อ 200 แ
 helper `ImportHeaderDetector` (แถวหัวตาราง + แถวยอดรวม ตัวตั้งเดียว — `BankCsvParser.IsSummaryRow` ส่งต่อมา) / `ImportRowConfidence` / `ThaiLegalNameKey` ·
 writer เดิม P0: switch สองชุดยุบเป็น `WriteRowAsync` ตัวเดียว · วันที่/ยอดไม่ขึ้นกับ culture เครื่อง · DateFormat/DecimalSeparator มีผลจริง · ป้าย AiMatched เฉพาะ AI ตอบจริง ·
 ตัวตรวจข้อมูลทำงานเมื่อไม่มี AI · สินค้า "ข้าม" นับเป็นข้าม · สถานะลงบางแถว = PartiallyCompleted + ลองใหม่เฉพาะแถวที่ล้ม · JE ไม่รับผังที่ลบแล้ว/ผู้ติดต่อชื่อกำกวม ·
-เลขบัตรประชาชน checksum ไม่ผ่าน = คำเตือน · สินทรัพย์ผ่าน `FixedAssetService.ImportAsync` (ที่ดินไม่คิดค่าเสื่อม) · รับ/จ่ายชำระผ่าน `DocumentService.CreatePaymentAsync` (มี JE —
-เดิมแก้ PaidAmount ตรง) · เอกสารผ่าน `DocumentImportBuilder` + `CreateDocumentAsync` (ร่าง · DRAFT) · รายการธนาคารผ่านตัวเขียน statement ของทีม C (เดิม `CurrentBalance +=`) ·
-Smart Import จับคู่คอลัมน์ผ่าน `ImportColumnMatchService` (เดิมตัวจับคู่ชุดที่สอง + ทิ้ง FeedbackId) · `GetTemplateFields` มอบให้ `ImportSchemas` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
+เลขบัตรประชาชน checksum ไม่ผ่าน = คำเตือน · เอกสาร/รับ-จ่ายชำระ/สินทรัพย์ส่งต่อปลายทางของทีม D ตัวเดียวกับศูนย์นำเข้า (ชำระมี JE — เดิมแก้ PaidAmount ตรง ·
+ที่ดินไม่คิดค่าเสื่อม · เอกสารเป็นร่าง DRAFT) · รายการธนาคารผ่านตัวเขียน statement ของทีม C (เดิม `CurrentBalance +=`) ·
+Smart Import จับคู่คอลัมน์ผ่าน `ImportColumnMatchService` (เดิมตัวจับคู่ชุดที่สอง + ทิ้ง FeedbackId) · `GetTemplateFields` มอบให้ `ImportSchemas` ·
+ปิดลูป AI ทุกตัวของการนำเข้า (RecordConfirmed ตอน remap/commit · RecordPick ตอน commit · RecordReviewChoice + ยืนยัน suggest-mapping ผ่าน endpoint ใหม่ —
+ข้อความเดิม "การยืนยันถูกเรียนไว้" ไม่มีผู้เรียกจริง) · constructor `ImportEntityResolver` ตัวเดียวรวมของทีม D — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
 _2026-10-14 ทีม F2 — ช่องทางรับ/จ่ายเงินของเอกสาร (PAYMENT_CHANNEL_AUDIT PC#3/#4/#5/#9/#13/#14/#15/#16/#18/#21 · ID#3–#7/#16/#20/#21 · ต้นเรื่อง: รหัสบัญชีธนาคารถูกตรวจเป็นผังบัญชี):
 ตัวตัดสินเดียว `Helpers/DocumentMoneyChannel` แทนลำดับที่เขียนไว้ 4 ที่ (ลงบัญชีตอนอนุมัติ · JE การชำระ · ขาเงินส่วนเกิน · พรีวิว — ตัวหลังสลับลำดับ) ·
 แหล่งเงินที่เลือกแล้วใช้ไม่ได้ (ธนาคารยังไม่ผูกผัง/รหัสผิดตาราง/บริษัทอื่น) ⇒ ข้อความไทยบอกช่อง + ที่แก้ แทนการตกเงินสดเงียบ · ไม่มีผังเงินสด ⇒ ล้มดัง (เดิมบันทึกการชำระไม่มี JE) ·
