@@ -64,6 +64,7 @@ public static class ApprovalAcknowledgement
         return Section65TerApprovalWarnings.IsWarning(warning) || ReceiptFormRule.IsApprovalWarning(warning)
             || WhtCertIssuePlan.IsApprovalWarning(warning) || WhtLineRateWarning.IsApprovalWarning(warning)
             || WhtPaymentSuggestion.IsApprovalWarning(warning)
+            || ForeignServiceVat.IsPp36BaseApprovalWarning(warning)
             || PreRegisteredPassPrefixes.Any(p => warning.StartsWith(p, StringComparison.Ordinal));
     }
 
@@ -73,10 +74,7 @@ public static class ApprovalAcknowledgement
     /// <c>[PP36-BASE]</c> = ฐาน ภ.พ.36 (ม.83/6) · <c>[WHT-FORM]</c> = แบบยื่น/ประเภทเงินได้ของหัก ณ ที่จ่าย ·
     /// เมื่อ helper ของทีมนั้นเข้ามาแล้ว ให้เปลี่ยนเป็นเรียก <c>IsApprovalWarning</c> ของ helper นั้น (ตัวตั้งตัวเดียว) แล้วลบสตริงจากที่นี่
     /// </summary>
-    internal static readonly string[] PreRegisteredPassPrefixes = { Pp36BaseWarningPrefix, WhtFormWarningPrefix };
-
-    /// <summary>ป้ายคำเตือนฐาน ภ.พ.36 (ทีมคู่ขนาน — ลงทะเบียนล่วงหน้า)</summary>
-    internal const string Pp36BaseWarningPrefix = "[PP36-BASE]";
+    internal static readonly string[] PreRegisteredPassPrefixes = { WhtFormWarningPrefix };
 
     /// <summary>ป้ายคำเตือนแบบยื่น/ประเภทเงินได้ของหัก ณ ที่จ่าย (ทีมคู่ขนาน — ลงทะเบียนล่วงหน้า)</summary>
     internal const string WhtFormWarningPrefix = "[WHT-FORM]";
@@ -226,7 +224,7 @@ public static class ApprovalAcknowledgement
                 : ReceiptFormRule.IsApprovalWarning(w) ? ReceiptFormRule.WarningLegalReference
                 : WhtCertIssuePlan.IsApprovalWarning(w) || WhtLineRateWarning.IsApprovalWarning(w)
                   || WhtPaymentSuggestion.IsApprovalWarning(w) || w.StartsWith(WhtFormWarningPrefix, StringComparison.Ordinal) ? WhtWarningsLegalReference
-                : w.StartsWith(Pp36BaseWarningPrefix, StringComparison.Ordinal) ? Pp36WarningsLegalReference
+                : ForeignServiceVat.IsPp36BaseApprovalWarning(w) ? Pp36WarningsLegalReference
                 : GeneralWarningsLegalReference;
             if (!refs.Contains(r)) refs.Add(r);
         }
