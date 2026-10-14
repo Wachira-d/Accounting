@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **531 ไฟล์ · 5,261 `[Fact]` + 828 `[Theory]` (3,661 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **531 ไฟล์ · 5,263 `[Fact]` + 828 `[Theory]` (3,661 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -2119,6 +2119,7 @@
 | RCX-10 | ใบตามหลัง (ระบบหยุด/ล้มหลายงวด) | `<<month>>` ของแต่ละใบ = เดือนของงวดตัวเอง · รอบพิเศษก่อนกำหนด = วันนี้ | `RecurringTemplateTests.วันฐานตัวแปรเดือน_*` |
 | RCX-11 | ข้อความล้มถึงผู้ใช้ | กฎธุรกิจภาษาไทยผ่านตรง · ข้อความเทคนิค (EF/JSON) ถูกแทนด้วยข้อความกลาง + ทางไปต่อ · ErrorLog/แจ้งเตือนเฉพาะครั้งแรก/สาเหตุเปลี่ยน (ไม่ทุก 15 นาที) | `RecurringTemplateTests.ข้อความล้ม_*` |
 | RCX-12 | เทมเพลตหลายบรรทัด (ตั้งผ่าน API) → เปิดแก้ในหน้า → บันทึก | ช่องยอด/รายละเอียด/ภาษีถูกล็อกพร้อมเหตุผล · บรรทัดเดิมไม่ถูกยุบเหลือบรรทัดเดียว | (ต้องทดสอบด้วยมือบน UI) |
+| RCX-13 | งวดค้างหลายงวด (เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 ⇒ NextRunDate ค้างงวดแรก) | cron หลายรอบ ⇒ ออก **1 ใบ** (งวดล่าสุดที่ถึงกำหนด) · แถวบอก "ข้าม N งวด … กด สร้างทันที" · ทิศตรงข้าม: สร้างทันทีออกเพิ่มได้ทีละใบ · งวดเดียวปกติไม่ข้าม (`RecurringSchedule.CatchUp`) | `Db/RecurringTransactionDbTests.งวดค้างหลายงวด_*` · `RecurringTemplateTests.CatchUp_*` |
 
 ### หน้านำส่งภาษี/ประกันสังคม — ตัวกรอง + UX ใหม่ (RMU)
 | รหัส | เคส | คาดหวัง |

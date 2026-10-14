@@ -7460,6 +7460,18 @@ RULES += [
          why="เล่มเช็คต้องผูกกับบัญชีธนาคารของบริษัทนี้ที่เปิดใช้งาน (เดิมไม่ตรวจ)"),
 ]
 
+# ฝ่ายค้าน 2026-10-14 P0 (หลัง f696f418): งวดค้างหลายงวด ⇒ รอบอัตโนมัติ/สร้างทันทีออกงวดเดียว (ไม่ไล่ออกใบกำกับย้อนหลังทุก 15 นาที)
+RULES += [
+    dict(file=RECURRING, method="ProcessDueRecurringTransactionsAsync",
+         must=["SkipOverduePeriodsAsync(recurring, now)"],
+         before=[("SkipOverduePeriodsAsync(", "ExecuteRecurringAsync(")],
+         why="งวดค้าง (เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03) ต้องเลื่อนไปงวดล่าสุดก่อนออกใบ — ไม่งั้น cron ออกใบกำกับภาษีย้อนหลังทีละงวด (เลขจริง ลงวันที่วันนี้ ส่งอีเมลลูกค้า)"),
+    dict(file=RECURRING, method="RunNowAsync",
+         must=["SkipOverduePeriodsAsync(recurring, DateTime.UtcNow)"],
+         before=[("SkipOverduePeriodsAsync(", "ExecuteRecurringAsync(")],
+         why="ปุ่มสร้างทันทีบนแถวที่ค้างหลายงวดออกงวดล่าสุด ไม่ใช่งวดเก่าสุด — ตัวตัดสินเดียวกับ cron"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

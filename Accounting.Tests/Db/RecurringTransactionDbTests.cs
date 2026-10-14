@@ -246,6 +246,41 @@ public class RecurringTransactionDbTests
     }
 
     [Fact]
+    public async Task งวดค้างหลายงวด_รอบอัตโนมัติออกงวดเดียว_ข้ามงวดเก่าพร้อมบอกบนแถว_ไม่ไล่ออกใบย้อนหลัง()
+    {
+        // ฝ่ายค้าน 2026-10-14 P0: เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 ⇒ NextRunDate ค้างงวดแรก — พอแก้ให้รันได้ cron จะออก
+        // ใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที (ลงวันที่วันนี้ · ซ้ำกับที่ผู้ใช้ออกมือไปแล้ว)
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid id;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            id = (await Svc(req).CreateAsync(s.CompanyId, Req(s, DocumentType.Invoice, Template(bankAccountId: s.BankId)), "tester")).Id;
+        var stuck = Today.AddMonths(-3);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await req.RecurringTransactions.Where(r => r.Id == id && r.CompanyId == s.CompanyId)
+                .ExecuteUpdateAsync(u => u.SetProperty(r => r.NextRunDate, stuck));
+
+        for (var tick = 0; tick < 4; tick++)   // หลายรอบ cron ติดกัน (เดิม = ใบละงวดต่อรอบ)
+            using (var req = DbTestDatabase.TryCreateContext()!)
+                await Svc(req).ProcessDueRecurringTransactionsAsync();
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1, await check.Documents.CountAsync(d => d.CompanyId == s.CompanyId));
+        var row = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id && r.CompanyId == s.CompanyId);
+        Assert.True(row.NextRunDate > DateTime.UtcNow);
+        Assert.Equal(1, row.TotalRuns);
+        Assert.Contains("ข้าม", row.LastRunNotice ?? "");
+        Assert.Contains("สร้างทันที", row.LastRunNotice ?? "");
+
+        // ทิศตรงข้าม: ทางไปต่อของผู้ใช้ — กด "สร้างทันที" ออกเพิ่มได้ทีละใบ (รอบพิเศษ ไม่กินงวด)
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).RunNowAsync(s.CompanyId, id, "tester");
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(2, await check2.Documents.CountAsync(d => d.CompanyId == s.CompanyId));
+    }
+
+    [Fact]
     public async Task วันสิ้นสุดวันนี้_ยังออกงวดสุดท้าย_แล้วเสร็จสิ้น_ขยายวันสิ้นสุดแล้วกลับมาใช้งาน()
     {
         using var db = DbTestDatabase.TryCreateContext();
