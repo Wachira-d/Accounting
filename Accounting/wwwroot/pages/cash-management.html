@@ -109,7 +109,8 @@
         <label class="text-sm">ถึง:</label>
         <input type="date" class="form-input" id="stmtTo" style="width:160px">
         <button class="btn btn-primary" onclick="Page.loadStatement()">แสดง</button>
-        <button class="btn btn-secondary" onclick="Page.exportStatement()">📥 Export CSV</button>
+        <button class="btn btn-secondary" onclick="Page.exportStatement('xlsx')">📊 Excel</button>
+        <button class="btn btn-secondary" onclick="Page.exportStatement('csv')">📄 CSV</button>
       </div>
       <div class="card">
         <div id="statementView" style="padding:16px"><p class="text-center text-gray-400">เลือกผู้ติดต่อแล้วกด "แสดง"</p></div>
@@ -171,6 +172,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     // สีของ pill ต่อสถานะ — **ข้อความ**อยู่ที่ Layout.ENUM_LABELS ที่เดียว
     // (เดิมทั้งป้ายและปุ่มเทียบด้วยตัวเลข แต่ API ส่งชื่อ enum ⇒ ป้ายขึ้น undefined
@@ -542,14 +544,15 @@
             </div>`;
         } catch(e) { Layout.toast(e.message, 'error'); }
       },
-      async exportStatement() {
-        const cid = Layout.getCompanyId();
+      // 2026-10-14 ทีม X3: เดิม window.location.href ไม่แนบ JWT ⇒ 401 ทุกครั้ง — ใช้ตัวดึงไฟล์กลาง (API.download ผ่าน ExportUtil)
+      async exportStatement(format) {
         const ctc = document.getElementById('stmtContact').value;
-        const side = document.getElementById('stmtSide').value;
-        const from = document.getElementById('stmtFrom').value;
-        const to = document.getElementById('stmtTo').value;
         if (!ctc) { Layout.toast('เลือกผู้ติดต่อ', 'error'); return; }
-        window.location.href = `/api/companies/${cid}/statements/contact/${ctc}/export?fromDate=${from}&toDate=${to}&side=${side}`;
+        await ExportUtil.downloadServer(`statements/contact/${ctc}/export`, {
+          fromDate: document.getElementById('stmtFrom').value,
+          toDate: document.getElementById('stmtTo').value,
+          side: document.getElementById('stmtSide').value,
+        }, format || 'csv', 'ใบแจ้งยอด');
       }
     };
     Page.init();

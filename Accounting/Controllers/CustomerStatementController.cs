@@ -141,46 +141,64 @@ public class CustomerStatementController : ControllerBase
         return Ok(new ApiResponse<ContactStatement>(true, statement));
     }
 
-    /// <summary>Export CSV ของใบแจ้งยอด — เปิดใน Excel ได้เลย (UTF-8 BOM).</summary>
+    private sealed record StatementExportRow(DateTime? Date, string? DocNo, string? Type, string Description, DateTime? Due,
+        decimal? Debit, decimal? Credit, decimal? Balance);
+
+    /// <summary>ส่งออกใบแจ้งยอด CSV / Excel (<c>format=csv|xlsx</c> · ไม่ส่ง = csv ตามเดิม) — ผ่านตัวเขียนกลาง <see cref="TabularExport"/>
+    ///
+    /// <para>2026-10-14 ทีม X3 · erp-review/2026-10-14/EXPORT_AUDIT.md §X3 — ของเดิมเขียน CSV เอง: ยอดเงิน <c>{x:N2}</c> =
+    /// "1,234.00" <b>ไม่ใส่อัญประกาศ ⇒ คอลัมน์เลื่อนทุกแถวที่ยอด ≥ 1,000</b> · วันที่ยอดยกมาเป็นตัวอักษร "01/01" ตายตัว ·
+    /// ไม่กันสูตร · และหน้าเรียกด้วย <c>window.location.href</c> ซึ่งไม่แนบ JWT ⇒ 401 ทุกครั้ง (หน้าแก้เป็น API.download แล้ว)</para></summary>
     [HttpGet("contact/{contactId:guid}/export")]
     public async Task<ActionResult> ExportContactStatement(
         Guid companyId, Guid contactId,
         [FromQuery] DateTime fromDate,
         [FromQuery] DateTime toDate,
-        [FromQuery] string side = "AR")
+        [FromQuery] string side = "AR",
+        [FromQuery] string? format = null)
     {
+        var fmt = TabularFormat.Csv;
+        if (!string.IsNullOrWhiteSpace(format) && !TabularExport.TryParseFormat(format, out fmt))
+            return BadRequest(new ApiResponse<object>(false, null, "รูปแบบไฟล์ต้องเป็น csv หรือ xlsx"));
         var r = await GetContactStatement(companyId, contactId, fromDate, toDate, side);
         var stmt = (r.Result as OkObjectResult)?.Value as ApiResponse<ContactStatement>;
-        if (stmt?.Data == null) return NotFound();
+        if (stmt?.Data == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบผู้ติดต่อ"));
+        var d = stmt.Data;
 
-        var sb = new System.Text.StringBuilder();
-        sb.Append('﻿');  // UTF-8 BOM
-        sb.AppendLine($"ใบแจ้งยอด — {(side == "AP" ? "เจ้าหนี้" : "ลูกหนี้")}");
-        sb.AppendLine($"ผู้ติดต่อ,{Esc(stmt.Data.ContactName)}");
-        if (!string.IsNullOrWhiteSpace(stmt.Data.TaxId))
-            sb.AppendLine($"เลขผู้เสียภาษี,{stmt.Data.TaxId}");
-        sb.AppendLine($"ช่วงเวลา,{fromDate:yyyy-MM-dd} → {toDate:yyyy-MM-dd}");
-        sb.AppendLine();
-        sb.AppendLine("วันที่,เลขที่,ประเภท,รายละเอียด,ครบกำหนด,เดบิต,เครดิต,ยอดคงค้าง");
-        sb.AppendLine($"01/01,—,—,ยอดยกมา,—,—,—,{stmt.Data.OpeningBalance:N2}");
-        foreach (var l in stmt.Data.Lines)
-            sb.AppendLine($"{l.Date:yyyy-MM-dd},{Esc(l.DocumentNumber)},{l.Type},{Esc(l.Description)},{l.DueDate:yyyy-MM-dd},{l.Debit:N2},{l.Credit:N2},{l.RunningBalance:N2}");
-        sb.AppendLine($",,,,รวม,{stmt.Data.TotalDebit:N2},{stmt.Data.TotalCredit:N2},{stmt.Data.ClosingBalance:N2}");
-        sb.AppendLine();
-        sb.AppendLine("Aging Snapshot,Amount");
-        sb.AppendLine($"ปัจจุบัน,{stmt.Data.Current:N2}");
-        sb.AppendLine($"1-30 วัน,{stmt.Data.D1to30:N2}");
-        sb.AppendLine($"31-60 วัน,{stmt.Data.D31to60:N2}");
-        sb.AppendLine($"61-90 วัน,{stmt.Data.D61to90:N2}");
-        sb.AppendLine($">90 วัน,{stmt.Data.Over90:N2}");
-
-        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
-        var fileName = $"Statement_{stmt.Data.ContactName}_{toDate:yyyyMMdd}.csv";
-        return File(bytes, "text/csv; charset=utf-8", fileName);
+        var cols = new[]
+        {
+            new TabularColumn<StatementExportRow>("วันที่", x => x.Date, TabularCellKind.Date),
+            new TabularColumn<StatementExportRow>("เลขที่", x => x.DocNo),
+            new TabularColumn<StatementExportRow>("ประเภท", x => x.Type),
+            new TabularColumn<StatementExportRow>("รายละเอียด", x => x.Description),
+            new TabularColumn<StatementExportRow>("ครบกำหนด", x => x.Due, TabularCellKind.Date),
+            new TabularColumn<StatementExportRow>("เดบิต", x => x.Debit, TabularCellKind.Money),
+            new TabularColumn<StatementExportRow>("เครดิต", x => x.Credit, TabularCellKind.Money),
+            new TabularColumn<StatementExportRow>("ยอดคงค้าง", x => x.Balance, TabularCellKind.Money),
+        };
+        var rows = new List<StatementExportRow> { new(d.FromDate, null, null, "ยอดยกมา", null, null, null, d.OpeningBalance) };
+        rows.AddRange(d.Lines.Select(l => new StatementExportRow(l.Date, l.DocumentNumber, DescribeDoc(l.Type), l.Description, l.DueDate,
+            l.Debit, l.Credit, l.RunningBalance)));
+        var footer = new List<StatementExportRow>
+        {
+            new(d.ToDate, null, null, "รวม / ยอดยกไป", null, d.TotalDebit, d.TotalCredit, d.ClosingBalance),
+            new(null, null, null, "อายุหนี้: ยังไม่ถึงกำหนด", null, null, null, d.Current),
+            new(null, null, null, "อายุหนี้: 1-30 วัน", null, null, null, d.D1to30),
+            new(null, null, null, "อายุหนี้: 31-60 วัน", null, null, null, d.D31to60),
+            new(null, null, null, "อายุหนี้: 61-90 วัน", null, null, null, d.D61to90),
+            new(null, null, null, "อายุหนี้: เกิน 90 วัน", null, null, null, d.Over90),
+        };
+        var sideTh = side == "AP" ? "เจ้าหนี้" : "ลูกหนี้";
+        var title = new List<string>
+        {
+            $"ใบแจ้งยอด — {sideTh}",
+            $"ผู้ติดต่อ: {d.ContactName}" + (string.IsNullOrWhiteSpace(d.TaxId) ? "" : $" (เลขประจำตัวผู้เสียภาษี {d.TaxId})"),
+            $"ช่วง {ThaiDate.ToThaiDisplayString(d.FromDate)} – {ThaiDate.ToThaiDisplayString(d.ToDate)}",
+        };
+        var sheet = TabularExport.Sheet("ใบแจ้งยอด", cols, rows, footer, title);
+        var f = TabularExport.Render(fmt, $"ใบแจ้งยอด{sideTh}_{d.ContactName}", d.FromDate, d.ToDate, sheet);
+        return File(f.Content, f.ContentType, f.FileName);
     }
-
-    private static string Esc(string? s) => s == null ? "" : (s.Contains(',') || s.Contains('"') || s.Contains('\n')
-        ? "\"" + s.Replace("\"", "\"\"") + "\"" : s);
 
     private static string DescribeDoc(DocumentType t) => t switch
     {

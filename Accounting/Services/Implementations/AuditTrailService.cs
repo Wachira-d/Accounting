@@ -26,7 +26,18 @@ public class AuditTrailService : IAuditTrailService
         if (request.FromDate.HasValue)
             query = query.Where(a => a.Timestamp >= request.FromDate.Value);
         if (request.ToDate.HasValue)
-            query = query.Where(a => a.Timestamp <= request.ToDate.Value);
+        {
+            // หน้าเว็บส่งวันที่ล้วน ("2026-10-14" = เที่ยงคืน) ⇒ เดิม `<= เที่ยงคืน` ตัดทั้งวันสุดท้ายทิ้ง (เลือก "ถึงวันนี้" แล้วไม่เห็นรายการของวันนี้) ·
+            // วันที่ล้วน = รวมทั้งวัน · มีเวลากำกับ = ตามเวลานั้น (ผู้เรียกแบบ API เดิมไม่เปลี่ยน) — 2026-10-14 ทีม X3
+            var to = request.ToDate.Value;
+            if (to.TimeOfDay == TimeSpan.Zero)
+            {
+                var end = to.AddDays(1);
+                query = query.Where(a => a.Timestamp < end);
+            }
+            else
+                query = query.Where(a => a.Timestamp <= to);
+        }
         if (request.UserId.HasValue)
             query = query.Where(a => a.UserId == request.UserId.Value);
         if (request.Action.HasValue)
@@ -37,7 +48,7 @@ public class AuditTrailService : IAuditTrailService
             query = query.Where(a => a.EntityId == request.EntityId);
 
         var total = await query.CountAsync();
-        var items = await query.OrderByDescending(a => a.Timestamp)
+        var items = await query.OrderByDescending(a => a.Timestamp).ThenByDescending(a => a.Id)   // Id กันลำดับสลับระหว่างหน้า (ส่งออกวนทุกหน้า)
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();

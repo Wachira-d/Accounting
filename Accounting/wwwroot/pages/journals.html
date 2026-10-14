@@ -289,33 +289,50 @@
           { key: 'status', label: 'สถานะ' }
         ];
       },
+      // ตัวกรองชุดเดียวกับ load() — ไฟล์ต้องตรงกับที่หน้าแสดง (รวมช่องค้นหา ซึ่งเดิม export ไม่ส่ง)
+      _filterParams() {
+        return {
+          search: document.getElementById('searchInput').value.trim(),
+          journalType: this.currentType || '',
+          status: document.getElementById('statusFilter').value,
+          fromDate: document.getElementById('fromDate').value,
+          toDate: document.getElementById('toDate').value,
+          projectId: document.getElementById('projectFilter')?.value,
+          branchId: document.getElementById('dimBranchFilter')?.value,
+          tag: document.getElementById('tagFilter')?.value?.trim(),
+        };
+      },
       async exportAll(format) {
+        // Excel/CSV = เซิร์ฟเวอร์เขียนไฟล์ "ทุกหน้า" หนึ่งแถวต่อบรรทัดบัญชี (เดิม pageSize=10000 ถูกเซิร์ฟเวอร์ตัดเหลือ 200 ใบเงียบ ๆ
+        // และไม่มีบรรทัดบัญชี/เอกสารต้นทาง) — 2026-10-14 ทีม X3
+        if (format !== 'pdf') {
+          await ExportUtil.downloadServer('accounting/exports/journals', this._filterParams(), format, 'สมุดรายวัน');
+          return;
+        }
         const api = Layout.api(); if (!api) return;
         try {
-          Layout.toast('กำลังโหลดข้อมูลทั้งหมด...', 'info');
-          let q = `?page=1&pageSize=10000`;
-          if (this.currentType) q += `&journalType=${this.currentType}`;
-          const statusF = document.getElementById('statusFilter').value;
-          const fromD = document.getElementById('fromDate').value;
-          const toD = document.getElementById('toDate').value;
-          const proj = document.getElementById('projectFilter')?.value;
-          const branch = document.getElementById('dimBranchFilter')?.value;
-          const tag = document.getElementById('tagFilter')?.value?.trim();
-          if (statusF) q += `&status=${statusF}`;
-          if (fromD) q += `&fromDate=${fromD}`;
-          if (toD) q += `&toDate=${toD}`;
-          if (proj) q += `&projectId=${proj}`;
-          if (branch) q += `&branchId=${branch}`;
-          if (tag) q += `&tag=${encodeURIComponent(tag)}`;
+          const f = this._filterParams();
+          let q = `?page=1&pageSize=200`;
+          if (f.search) q += `&search=${encodeURIComponent(f.search)}`;
+          if (f.journalType) q += `&journalType=${f.journalType}`;
+          if (f.status) q += `&status=${f.status}`;
+          if (f.fromDate) q += `&fromDate=${f.fromDate}`;
+          if (f.toDate) q += `&toDate=${f.toDate}`;
+          if (f.projectId) q += `&projectId=${f.projectId}`;
+          if (f.branchId) q += `&branchId=${f.branchId}`;
+          if (f.tag) q += `&tag=${encodeURIComponent(f.tag)}`;
           const res = await api.getJournals(q);
           const rows = res.data?.items || res.data || [];
+          const total = res.data?.totalCount ?? rows.length;
+          // PDF = หน้าพิมพ์ของสิ่งที่โหลดมา (สูงสุด 200 ใบ) — เกินแล้วบอกตรง ๆ ไม่ใช่ตัดเงียบ
+          if (total > rows.length) Layout.toast(`PDF แสดง ${rows.length} จาก ${total} ใบ — ใช้ Excel/CSV เพื่อได้ครบทุกใบ`, 'warning', 8000);
           const totalD = rows.reduce((a,r)=>a+Number(r.totalDebit||0),0);
           const totalC = rows.reduce((a,r)=>a+Number(r.totalCredit||0),0);
           ExportUtil.exportData(format, {
             rows, columns: this._exportColumns(),
             filename: `สมุดรายวัน${this.currentType ? '_'+this.journalTypeLabels[this.currentType] : ''}`,
             title: `สมุดรายวัน${this.currentType ? ' - '+this.journalTypeLabels[this.currentType] : ''}`,
-            subtitle: `ช่วงวันที่: ${fromD||'ทั้งหมด'} ถึง ${toD||'ทั้งหมด'} | จำนวน ${rows.length} รายการ`,
+            subtitle: `ช่วงวันที่: ${f.fromDate||'ทั้งหมด'} ถึง ${f.toDate||'ทั้งหมด'} | ${rows.length} จาก ${total} รายการ`,
             landscape: true,
             totals: { 'รวมเดบิต': totalD.toLocaleString('en-US',{minimumFractionDigits:2}), 'รวมเครดิต': totalC.toLocaleString('en-US',{minimumFractionDigits:2}) }
           });
@@ -324,6 +341,7 @@
       exportSelected(format) {
         const ids = [...this.selected];
         if (!ids.length) { Layout.toast('กรุณาเลือกรายการก่อน', 'error'); return; }
+        if (format !== 'pdf') { ExportUtil.downloadServer('accounting/exports/journals', { entryIds: ids }, format, 'สมุดรายวัน_ที่เลือก'); return; }
         const rows = this.currentItems.filter(j => ids.includes(j.id));
         const totalD = rows.reduce((a,r)=>a+Number(r.totalDebit||0),0);
         const totalC = rows.reduce((a,r)=>a+Number(r.totalCredit||0),0);

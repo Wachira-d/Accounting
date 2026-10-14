@@ -4916,3 +4916,13 @@ _2026-10-14 — ฝ่ายค้านรอบ ETL (ศูนย์นำเ�
 ล้างชุดค้าง 30 วัน · errors.csv ยอดติดลบนำเข้ากลับได้ · AI ของเอกสารย้ายไปขั้นตรวจ · กันสร้างเอกสาร/รับชำระซ้ำเมื่อทำต่อ · ย้อนงบทดลองบอกแถวที่ไม่ถูกย้อน ·
 feedback ของ resolver ที่มั่นใจต่ำยังปิดลูป · ข้อความทางไปต่อของใบเสร็จ/ใบสำคัญ — รับชำระวันอนาคต/เกินยอดค้าง **คงเป็นด่าน** (domain ปฏิเสธ) ·
 เทสต์ `Db/ImportAdversarialEtlDbTests` · `ImportAdversarialEtlHelpersTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e8955484_
+_2026-10-14 — ส่งออก CSV/Excel รายงานบัญชี (ทีม X3 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X3): ตัวเขียนกลาง `Helpers/TabularExport`
+(CSV BOM+CRLF+`CsvFieldSafety` เฉพาะข้อความ — ตัวเลขติดลบคงเป็นตัวเลข · Excel ผ่าน MiniExcel ช่องเงิน/วันที่เป็นชนิดจริง) · ปลายทาง
+`accounting/exports/*` (`AccountingExportController` + `AccountingReportExportService` + คอลัมน์ `AccountingReportSheets` · สิทธิ์ `Reports.Export`):
+สมุดรายวัน (ทุกหน้า หนึ่งแถวต่อบรรทัด — เดิมตัดที่ 200 ใบเงียบ ๆ) · บัญชีแยกประเภท (อ้างอิง/เอกสารต้นทาง/คู่ค้า/สาขา/โครงการ/มิติ) · งบทดลอง
+(ยกมา/เคลื่อนไหว/ยกไป + ผลต่างความต่อเนื่อง — เดิมไม่มีปุ่ม) · งบฐานะ/กำไรขาดทุน/กระแสเงินสด · อายุลูกหนี้/เจ้าหนี้ (2 แผ่น) · audit log (ทุกหน้า —
+เดิม 30 แถว) · ทะเบียนสินทรัพย์ + ตารางค่าเสื่อม · ใบแจ้งยอดผู้ติดต่อเขียนใหม่ (เดิม 401 เพราะ `window.location.href` + ยอด "1,234.00" ไม่ครอบ ⇒ คอลัมน์เลื่อน)
+· **GL service**: ยอดยกมากรองสาขา/โครงการ/มิติชุดเดียวกับรายการ (`ApplyLedgerLineFilters`) + อ่านยอดยกมานำเข้าแบบงบทดลองเมื่อไม่กรอง + บัญชียกมาอย่างเดียวไม่หาย
+· `AuditTrailService` "ถึงวันที่" วันล้วนรวมทั้งวัน + เรียง Id · `ExportUtil.downloadServer`/`renderServerButtons` + `exportCsv` กันสูตรข้อความ · เช็คคงค้างมีปุ่มส่งออก
+· เทสต์ `TabularExportTests` · `AccountingReportSheetsTests` · `Db/AccountingReportExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 0f19b45b (ตัวเขียนกลาง)_
+

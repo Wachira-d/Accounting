@@ -40,7 +40,10 @@ window.ExportUtil = (function () {
     const matrix = rowsToMatrix(rows, columns);
     const csv = matrix.map(row =>
       row.map(cell => {
-        const s = String(cell ?? '');
+        // กันสูตร (CSV injection) แบบเดียวกับ Helpers/CsvFieldSafety ฝั่งเซิร์ฟเวอร์ — เฉพาะ "ข้อความ" ·
+        // ค่าที่เป็น number จริงไม่ถูกแตะ (ยอดติดลบต้องเปิดใน Excel เป็นตัวเลข ไม่ใช่ '-1500)
+        let s = String(cell ?? '');
+        if (typeof cell !== 'number' && /^[\s]*[=+\-@]/.test(s)) s = "'" + s;
         return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
       }).join(',')
     ).join('\r\n');
@@ -178,6 +181,43 @@ window.ExportUtil = (function () {
     }
   }
 
+  // ========== ไฟล์จากเซิร์ฟเวอร์ (2026-10-14 ทีม X3) ==========
+  // รายงานที่ต้อง "ครบทุกแถว + ตัวเลขเท่ารายงาน" ให้เซิร์ฟเวอร์เขียนไฟล์ (Helpers/TabularExport.cs) — หน้าส่งแค่ตัวกรอง
+  // ชุดเดียวกับที่ใช้โหลดข้อมูล · path = ส่วนหลัง /api/companies/{id}/ · ค่าว่าง/null ไม่ถูกส่ง · array = คั่นด้วยจุลภาค
+  async function downloadServer(path, params, format, fallbackName) {
+    const toast = (m, t) => (window.Layout?.toast ? Layout.toast(m, t) : alert(m));
+    const cid = window.Layout?.getCompanyId?.();
+    if (!cid) { toast('ไม่พบบริษัทที่เลือก', 'error'); return false; }
+    const q = new URLSearchParams();
+    q.set('format', format);
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)) return;
+      q.set(k, Array.isArray(v) ? v.join(',') : String(v));
+    });
+    try {
+      const ok = await API.download(`/api/companies/${cid}/${path}?${q.toString()}`, (fallbackName || 'export') + '.' + format);
+      if (ok) toast('ส่งออกไฟล์แล้ว');
+      return ok;
+    } catch (e) {
+      toast('ส่งออกไม่สำเร็จ: ' + (e.message || e), 'error');
+      return false;
+    }
+  }
+
+  // ปุ่ม Excel / CSV สำหรับไฟล์จากเซิร์ฟเวอร์ (ไม่มี PDF — PDF ใช้หน้าพิมพ์ของรายงาน)
+  function renderServerButtons(handler, size = 'sm') {
+    const s = size === 'sm' ? 'btn-sm' : '';
+    const item = 'display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;cursor:pointer';
+    return `
+      <div class="dropdown" style="display:inline-block;position:relative">
+        <button class="btn btn-secondary ${s}" onclick="ExportUtil._toggleMenu(this)">📥 Export ▾</button>
+        <div class="export-menu" style="display:none;position:absolute;right:0;top:100%;background:var(--bg-primary,#fff);border:1px solid var(--border,#ddd);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:100;min-width:160px">
+          <button class="export-item" onclick="(${handler})('xlsx');ExportUtil._closeMenus()" style="${item}">📊 Excel (.xlsx)</button>
+          <button class="export-item" onclick="(${handler})('csv');ExportUtil._closeMenus()" style="${item}">📄 CSV</button>
+        </div>
+      </div>`;
+  }
+
   // Render an export button group (CSV / Excel / PDF)
   // targetEl = element to attach, handler = (format) => void
   function renderButtons(handler, size = 'sm') {
@@ -213,5 +253,5 @@ window.ExportUtil = (function () {
   style.textContent = `.export-item:hover { background: var(--bg-secondary, #f5f5f5) !important; }`;
   document.head.appendChild(style);
 
-  return { exportData, exportCsv, exportExcel, exportPdf, renderButtons, _toggleMenu, _closeMenus };
+  return { exportData, exportCsv, exportExcel, exportPdf, renderButtons, downloadServer, renderServerButtons, _toggleMenu, _closeMenus };
 })();

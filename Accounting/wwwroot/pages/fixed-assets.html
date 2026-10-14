@@ -177,6 +177,7 @@
           <div style="display:flex;gap:8px;margin-bottom:12px">
             <button class="btn btn-sm btn-secondary" onclick="Page.showDepHistory()" id="btnDepHist" style="font-weight:600">ประวัติค่าเสื่อม</button>
             <button class="btn btn-sm btn-ghost" onclick="Page.showDepSchedule()" id="btnDepSched">ตารางค่าเสื่อม (Forecast)</button>
+            <button class="btn btn-sm btn-ghost" onclick="Page.exportDepSchedule('xlsx')" title="ตารางค่าเสื่อมของสินทรัพย์นี้ทั้งอายุ — Excel">📊 Excel ตารางค่าเสื่อม</button>
           </div>
           <div id="depreciationContent" style="max-height:300px;overflow-y:auto"></div>
         </div>
@@ -269,7 +270,11 @@
           <div id="reportKpis" style="margin-bottom:16px"></div>
           <div id="reportTable" style="max-height:400px;overflow-y:auto"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('reportModal')" data-i18n="common.close">ปิด</button></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="ExportUtil.downloadServer('accounting/exports/fixed-assets/register', {}, 'xlsx', 'ทะเบียนสินทรัพย์')" title="ทุกสินทรัพย์ (ไม่ใช่แค่หน้าที่เห็น) — ตัวเลขจากรายงานตัวเดียวกับหน้าจอนี้">📊 Excel</button>
+          <button class="btn btn-secondary" onclick="ExportUtil.downloadServer('accounting/exports/fixed-assets/register', {}, 'csv', 'ทะเบียนสินทรัพย์')">📄 CSV</button>
+          <button class="btn btn-secondary" onclick="Layout.closeModal('reportModal')" data-i18n="common.close">ปิด</button>
+        </div>
       </div>
     </div>
   </div>
@@ -278,6 +283,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const methodMap = { StraightLine:'เส้นตรง', DecliningBalance:'ยอดลดลง', DoubleDecliningBalance:'ยอดลดลงทวีคูณ', None:'ไม่คิดค่าเสื่อม' };
     const statusMap = { Active:'ใช้งาน', Disposed:'จำหน่าย', FullyDepreciated:'หมดค่าเสื่อม', WrittenOff:'ตัดจำหน่าย' };
@@ -720,6 +726,10 @@
             <td class="text-right font-semibold">${Layout.money(d.netBookValue)}</td>
           </tr>`).join('')}</tbody></table></div>`
           : '<div class="text-center text-gray-400" style="padding:16px">ยังไม่มีรายการค่าเสื่อม</div>';
+      },
+      exportDepSchedule(format) {
+        if (!this._currentAsset) return;
+        ExportUtil.downloadServer(`accounting/exports/fixed-assets/${this._currentAsset.id}/depreciation-schedule`, {}, format, 'ตารางค่าเสื่อม');
       },
       async showDepSchedule() {
         document.getElementById('btnDepHist').className = 'btn btn-sm btn-ghost';

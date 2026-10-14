@@ -34,6 +34,7 @@
       <div class="card-header" style="display:flex;align-items:center;gap:12px">
         <h3 class="card-title" style="margin:0;flex:1">เช็คคงค้าง</h3>
         <button class="btn btn-primary" onclick="Page.loadOutstanding()">รีเฟรช</button>
+        <span id="chequeExportSlot"></span>
       </div>
       <div class="table-container">
         <table class="data-table">
@@ -83,6 +84,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       async init() {
@@ -93,6 +95,8 @@
         await this.loadBooks();
         await this.loadProjects();
         await this.loadContacts();
+        const slot = document.getElementById('chequeExportSlot');
+        if (slot) slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportOutstanding(f)');
         await this.loadOutstanding();
       },
 
@@ -216,6 +220,21 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
+      // ส่งออกเช็คคงค้าง (2026-10-14 ทีม X3 — เดิมไม่มีปุ่มส่งออก) · ยอดเป็นตัวเลขจริง · วันที่ ISO (ค.ศ.) เรียงได้ใน Excel
+      exportOutstanding(format) {
+        ExportUtil.exportData(format, {
+          rows: this._outRows || [],
+          columns: [
+            { key: 'chequeNumber', label: 'เลขที่เช็ค' },
+            { key: 'chequeDate', label: 'วันที่เช็ค', format: v => v ? Layout.toDateInput(new Date(v)) : '' },
+            { key: 'amount', label: 'จำนวนเงิน', align: 'right', format: v => Number(v || 0) },
+            { key: 'contactId', label: 'ผู้ติดต่อ', format: v => this._contactName(v) },
+            { key: 'isInbound', label: 'ทิศทาง', format: v => v ? 'รับ' : 'จ่าย' },
+            { key: 'status', label: 'สถานะ', format: v => this._statusLabel(v) },
+          ],
+          filename: 'เช็คคงค้าง', title: 'เช็คคงค้าง', landscape: false,
+        });
+      },
       async loadOutstanding() {
         const tbody = document.getElementById('outstandingBody');
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px">กำลังโหลด...</td></tr>';
@@ -223,6 +242,7 @@
           const cid = Layout.getCompanyId();
           const r = await API.get(`/api/companies/${cid}/cheques/outstanding`);
           const rows = r.data || [];
+          this._outRows = rows;   // ทั้งรายการจาก /cheques/outstanding (ไม่แบ่งหน้า) — ไฟล์ส่งออกใช้ชุดเดียวกับที่ตารางแสดง
           if (rows.length === 0) {
             tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#94a3b8">ไม่มีเช็คคงค้าง</td></tr>';
             return;

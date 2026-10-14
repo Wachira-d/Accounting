@@ -37,6 +37,7 @@
       <label class="text-sm font-medium" style="margin-left:12px">โครงการ:</label>
       <select class="form-select" id="projectFilter" style="min-width:160px"><option value="">ทุกโครงการ</option></select>
       <button class="btn btn-primary" onclick="Page.loadReport()">แสดงรายงาน</button>
+      <span id="reportExportSlot" style="margin-left:auto" title="Excel/CSV จากเซิร์ฟเวอร์ — ตัวเลขเท่ารายงาน · งบทดลองในไฟล์มี ยอดยกมา (ณ วันที่ &quot;จาก&quot;) · เคลื่อนไหว · ยอดยกไป (ณ วันที่)"></span>
     </div>
 
     <div class="card" id="reportContent">
@@ -101,6 +102,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       currentReport: 'trial',
@@ -115,6 +117,8 @@
         document.getElementById('asOfDate').value = today;
         document.getElementById('fromDate').value = firstDay;
         document.getElementById('toDate').value = today;
+        const slot = document.getElementById('reportExportSlot');
+        if (slot) slot.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportReport(f)');
         // Load active projects
         const api = Layout.api();
         if (api) {
@@ -149,6 +153,26 @@
           rows.forEach(r => r.style.display = collapse ? 'none' : '');
           c.textContent = collapse ? '▶' : '▼';
         });
+      },
+      // ส่งออก Excel/CSV ของรายงานที่เปิดอยู่ — เซิร์ฟเวอร์เรียก service ตัวเดียวกับหน้าด้วยตัวกรองเดียวกัน (2026-10-14 ทีม X3 ·
+      // เดิมหน้านี้ไม่มีปุ่มส่งออกเลยทั้งที่ tour บอกว่ามี)
+      exportReport(format) {
+        const asOfDate = document.getElementById('asOfDate').value;
+        const fromDate = document.getElementById('fromDate').value;
+        const toDate = document.getElementById('toDate').value;
+        const projectId = document.getElementById('projectFilter')?.value;
+        const map = {
+          trial: ['trial-balance', { fromDate, asOfDate, projectId }, 'งบทดลอง'],
+          balance: ['balance-sheet', { asOfDate, projectId }, 'งบแสดงฐานะการเงิน'],
+          pnl: ['profit-loss', { fromDate, toDate, projectId }, 'งบกำไรขาดทุน'],
+          cashflow: ['cash-flow', { fromDate, toDate, projectId }, 'งบกระแสเงินสด'],
+        };
+        const m = map[this.currentReport];
+        if (!m) { Layout.toast('รายงานนี้ยังไม่มีไฟล์ส่งออก', 'error'); return; }
+        if (this.currentReport === 'trial' && fromDate && asOfDate && fromDate > asOfDate) {
+          Layout.toast('งบทดลองในไฟล์: วันที่ "จาก" ต้องไม่หลัง "ณ วันที่" (ใช้เป็นจุดเริ่มของยอดยกมา/เคลื่อนไหว)', 'error'); return;
+        }
+        ExportUtil.downloadServer('accounting/exports/' + m[0], m[1], format, m[2]);
       },
       showReport(type, el) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));

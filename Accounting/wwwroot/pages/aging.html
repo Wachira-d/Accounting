@@ -26,7 +26,8 @@
       <label class="text-sm font-medium">โครงการ:</label>
       <select class="form-input" id="filterProject" style="width:240px"><option value="">— ทุกโครงการ —</option></select>
       <button class="btn btn-primary" onclick="Page.load()">แสดงรายงาน</button>
-      <button class="btn btn-secondary" onclick="Page.exportCsv()">Export CSV</button>
+      <span id="agingExportSlot" title="Excel = 2 แผ่น (รายผู้ติดต่อ + รายเอกสาร) · CSV = รายผู้ติดต่อ — ตัวเลขจากเซิร์ฟเวอร์ตัวเดียวกับหน้า"></span>
+      <button class="btn btn-secondary btn-sm" onclick="Page.exportServer('csv', 'document')" title="หนึ่งแถวต่อเอกสารค้าง — ใช้ตามทวง/กระทบยอดรายใบ">📄 CSV รายเอกสาร</button>
     </div>
 
     <!-- Buckets -->
@@ -42,6 +43,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       reportType: 'AccountsReceivable',
@@ -49,6 +51,7 @@
         if (!Layout.init('aging')) return;
         Layout.setTitle('รายงานอายุลูกหนี้/เจ้าหนี้');
         document.getElementById('asOfDate').value = Layout.toDateInput(new Date());
+        document.getElementById('agingExportSlot').innerHTML = ExportUtil.renderServerButtons("(f)=>Page.exportServer(f, 'contact')");
         await this.loadProjects();
       },
       async loadProjects() {
@@ -156,25 +159,14 @@
         if (caret) { caret.textContent = open ? '▸' : '▾'; caret.style.color = open ? 'var(--gray-400)' : 'var(--primary)'; }
       },
 
-      // Quick CSV export of the rendered aging snapshot. Excel opens .csv
-      // with UTF-8 BOM correctly — Thai column names + names stay intact.
-      exportCsv() {
-        if (!this._lastData) { Layout.toast('โหลดรายงานก่อนแล้วค่อย export', 'error'); return; }
-        const d = this._lastData;
-        const title = (this.reportType === 'AccountsReceivable' ? 'ลูกหนี้' : 'เจ้าหนี้') + '-aging';
-        const esc = s => `"${String(s ?? '').replace(/"/g, '""')}"`;
-        const head = ['ผู้ติดต่อ','TaxId','Current','1-30','31-60','61-90','>90','รวม'];
-        const lines = [head.join(',')];
-        (d.details||[]).forEach(c => lines.push([
-          esc(c.contactName), esc(c.taxId || ''),
-          c.current, c.days1To30, c.days31To60, c.days61To90, c.over90Days, c.totalBalance
-        ].join(',')));
-        const t = d.totals || {};
-        lines.push(['"รวมทั้งสิ้น"','""', t.current, t.days1To30, t.days31To60, t.days61To90, t.over90Days, t.grandTotal].join(','));
-        const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = Object.assign(document.createElement('a'), { href: url, download: `${title}_${new Date().toISOString().slice(0,10)}.csv` });
-        a.click(); URL.revokeObjectURL(url);
+      // ส่งออกจากเซิร์ฟเวอร์ (2026-10-14 ทีม X3) — เดิม CSV ทำใน JS: ไม่กันสูตร · LF · หัวคอลัมน์อังกฤษปน · ไม่มีรายเอกสาร · ไม่มี Excel
+      exportServer(format, level) {
+        const side = this.reportType === 'AccountsReceivable' ? 'receivables' : 'payables';
+        ExportUtil.downloadServer('accounting/exports/aging', {
+          side, level,
+          asOfDate: document.getElementById('asOfDate').value,
+          projectId: document.getElementById('filterProject').value,
+        }, format, side === 'receivables' ? 'อายุลูกหนี้' : 'อายุเจ้าหนี้');
       },
     };
     Page.init();

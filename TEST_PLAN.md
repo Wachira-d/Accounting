@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **541 ไฟล์ · 5,357 `[Fact]` + 834 `[Theory]` (3,728 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **544 ไฟล์ · 5,375 `[Fact]` + 835 `[Theory]` (3,733 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6111,4 +6111,19 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | ETLD-14 | กระทบยอดหลังย้ายระบบ (`OpeningBalanceReconciliation`) | ลูกหนี้ 40,000 vs บัญชี 45,000 = ไม่ลงตัว + Hint · สต็อก 100×120 = 12,000 ลงตัว · ราคาทุน 36,000 ลงตัว · ค่าเสื่อมสะสม 10,000 (กลับเครื่องหมาย) ลงตัว | ✅ `ImportAccountingTargetsDbTests` (Db) |
 | ETLD-15 | DI ทีม D + ไม่ชนชนิด | `ImportAccountMatcher` scoped · target 4 ตัวถูก scan · คีย์ normalize ไม่ซ้ำ | ✅ `ImportAccountingHelpersTests` |
 | ETLD-16 | AI `ImportAccountMap` (58) | ช่องเดียว `ImportAccountMatcher.AskAccountMapAiAsync` → `IImportAiAugmenter.SuggestAccountMapAsync` (ทีม A · allowedCodes = รหัสบัญชีลงยอดได้ของบริษัท) · เฉพาะแถวที่ local ไม่ถึงเกณฑ์ (≤ 50 แถว/รอบ) · local สะท้อนกลับไม่นับ · AI = "Ai" 🤖 · นักเรียน = "Learned" 🧠 · ด่าน ≥ 0.70 + บัญชีลงยอดได้ · ปิดลูป `RecordPickChoiceAsync` ที่ `ApplyMappingsAsync` | ✅ ต่อสาย (ล็อก `required_call_site_check`) · kill-switch = ETLD-04/06 (ไม่มี AI) · ⏳ เทสต์ที่มี AI ตอบจริง |
+
+### ส่งออก CSV/Excel รายงานบัญชี (ทีม X3 · 2026-10-14 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X3)
+
+| ID | สิ่งที่ล็อก | เกณฑ์ | เทสต์ |
+| --- | --- | --- | --- |
+| EXP3-01 | ตัวเขียนกลาง `TabularExport` — CSV | BOM · CRLF · หัวไทย · ยอดติดลบ `-1500.00` ไม่ถูกเติม `'` · ข้อความ `=…`/`-…` ยังถูกกัน · จุลภาค/อัญประกาศถูกครอบ · ปัด AwayFromZero | ✅ `TabularExportTests` |
+| EXP3-02 | ตัวเขียนกลาง — Excel | หัวรายงานเหนือหัวตาราง · ช่องเงินเป็นตัวเลข · วันที่ไม่ใช่ข้อความ · ข้อความไม่ถูกเติม `'` · CSV หลายแผ่น = โยน · ชื่อไฟล์มีช่วงวันที่ | ✅ `TabularExportTests` |
+| EXP3-03 | งบทดลองแบบช่วงเวลา (ยกมา/เคลื่อนไหว/ยกไป) | ต่อเนื่อง ⇒ ผลต่าง 0 + รวมสมดุลทุกคู่ · ไม่ต่อ ⇒ ผลต่างในแถวนั้น (ตัวเลขติดลบเป็นตัวเลข) · บัญชีศูนย์ทุกช่องไม่มีแถว | ✅ `AccountingReportSheetsTests` |
+| EXP3-04 | สมุดรายวัน — ใบที่ไม่มีสิทธิ์เห็น | ยังมีแถว "ปิดบัง — เหตุ" · ไม่มีตัวเลข · ยอดรวมไม่นับ | ✅ `AccountingReportSheetsTests` |
+| EXP3-05 | บัญชีแยกประเภท — ไฟล์ = service | ทุกบัญชี: ยกมา + ทุกรายการ + ยกไป · เดบิต/เครดิต/ยอดคงเหลือ/อ้างอิงตรงทีละแถว · สาขาเป็นชื่อ | ✅ `Db/AccountingReportExportDbTests` (Db) |
+| EXP3-06 | บัญชีแยกประเภท — ยอดยกมาตามตัวกรอง | กรองสาขา ⇒ ยกมาเฉพาะสาขา (เดิมทั้งบริษัท) + ไม่บวกยอดนำเข้า · ทิศตรงข้าม ไม่กรอง ⇒ ทั้งบริษัท + ยอดนำเข้า + บัญชียกมาอย่างเดียวแสดง | ✅ `Db/AccountingReportExportDbTests` (Db) |
+| EXP3-07 | งบทดลอง — ไฟล์ = หน้า | คอลัมน์ "ตามหน้างบทดลอง" = TotalDebit/TotalCredit · ยกมา/เคลื่อนไหว/ยกไปสมดุล · GL ยกไป = งบทดลองสุทธิทุกบัญชี · ไม่มีผลต่างความต่อเนื่อง | ✅ `Db/AccountingReportExportDbTests` (Db) |
+| EXP3-08 | สมุดรายวัน — ไม่ถูกตัดที่เพดานหน้า | 208 ใบ (> 200) ⇒ 416 บรรทัด + ยอดรวมสมดุล · ทิศตรงข้าม `entryIds` 1 ใบ ⇒ ใบเดียว | ✅ `Db/AccountingReportExportDbTests` (Db) |
+| EXP3-09 | บันทึกการใช้งาน — "ถึงวันที่" | วันที่ล้วน ⇒ รวมทั้งวันสุดท้าย (เดิมตัดทิ้ง) · มีเวลา ⇒ ตามเวลา · ไฟล์ 1,006 แถว (เกินหน้า 1,000) ไม่ซ้ำ/ไม่หาย | ✅ `Db/AccountingReportExportDbTests` (Db) |
+| EXP3-10 | หน้าเรียกไฟล์จากเซิร์ฟเวอร์ | reports/general-ledger/journals/aging/audit/fixed-assets/cash-management ใช้ `ExportUtil.downloadServer` (แนบ JWT) · ใบแจ้งยอดไม่ใช้ `window.location.href` | ⏳ ทดสอบมือ: กดทุกปุ่มบนหน้าจริง เทียบยอดรวมกับหน้า |
 

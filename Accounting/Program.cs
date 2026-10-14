@@ -231,6 +231,8 @@ builder.Services.AddMemoryCache();
 // Core
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAccountingService, AccountingService>();
+// ส่งออกรายงานบัญชี CSV/Excel (2026-10-14 ทีม X3) — ตัวเลขผ่าน IAccountingService ตัวเดียวกับหน้า
+builder.Services.AddScoped<AccountingReportExportService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.IDbdXbrlExportService,
     Accounting.Services.Implementations.DbdXbrlExportService>();
 builder.Services.AddScoped<IMigrationWizardService, MigrationWizardService>();

@@ -116,8 +116,26 @@
           slot._rendered = true;
         }
       },
+      // ตัวกรองชุดเดียวกับ load() — ไฟล์ Excel/CSV ให้เซิร์ฟเวอร์เขียน (2026-10-14 ทีม X3): ตัวเลขเป็นตัวเลข · วันที่เป็นวันที่ ·
+      // มีอ้างอิง/เอกสารต้นทาง/คู่ค้า/สาขา/โครงการ/มิติ · แท็บประเภทบัญชีที่เลือกอยู่ถูกส่งไปด้วย (เดิม export ทุกประเภทเสมอ)
+      _filterParams() {
+        return {
+          fromDate: document.getElementById('fromDate').value,
+          toDate: document.getElementById('toDate').value,
+          accountId: document.getElementById('accountFilter').value,
+          projectId: document.getElementById('projectFilter')?.value,
+          branchId: document.getElementById('dimBranchFilter')?.value,
+          dimensionId: document.getElementById('dimCcFilter')?.value,
+          accountType: this.currentTypeFilter || '',
+        };
+      },
       exportSelectedAccounts(format) {
         if (!this.selectedAccounts.size) { Layout.toast('กรุณาเลือกบัญชีก่อน', 'error'); return; }
+        if (format !== 'pdf') {
+          ExportUtil.downloadServer('accounting/exports/general-ledger',
+            { ...this._filterParams(), accountType: '', accountIds: [...this.selectedAccounts] }, format, 'บัญชีแยกประเภท_ที่เลือก');
+          return;
+        }
         const selected = (this.data?.accounts || []).filter(a => this.selectedAccounts.has(a.accountId));
         if (!selected.length) { Layout.toast('ไม่พบบัญชีที่เลือกในข้อมูลปัจจุบัน', 'error'); return; }
         const rows = [];
@@ -203,6 +221,12 @@
         await this.load();
       },
       exportData(format) {
+        if (format !== 'pdf') {
+          const f = this._filterParams();
+          if (!f.fromDate || !f.toDate) { Layout.toast('กรุณาเลือกช่วงวันที่', 'error'); return; }
+          ExportUtil.downloadServer('accounting/exports/general-ledger', f, format, 'บัญชีแยกประเภท');
+          return;
+        }
         if (!this.data?.accounts?.length) { Layout.toast('ไม่มีข้อมูลให้ Export', 'error'); return; }
         const rows = [];
         (this.data.accounts || []).forEach(acc => {

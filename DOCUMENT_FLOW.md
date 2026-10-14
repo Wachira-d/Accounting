@@ -3968,6 +3968,24 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 | ภ.พ.36 | `ExportPp36Async` → `TaxService.ComputePp36ReportAsync` | ใช้ **ตัวคำนวณเดียวกับรายงานบนจอ** (เดิม export คัดเอกสารเองคนละเงื่อนไข) |
 | ภ.ง.ด.50 (สรุป xlsx) | `TaxService.Export.BuildSummarySheet` | `report.CitAmount` คือภาษี **ก่อน** หักเครดิต (`citPayable` ไม่ได้ถูกเก็บลง report) ⇒ ต้องแยก 3 บรรทัด: ก่อนเครดิต · หักเครดิต (อ่านจากบรรทัด `WHT_CREDIT` ของรายงานเอง ไม่คำนวณซ้ำ) · ต้องชำระเพิ่ม/ชำระเกิน. ป้ายเดิมเขียน "หลังเครดิต" บนยอดก่อนเครดิต ⇒ สรุปสูงเกินจริงเท่าเครดิตทั้งก้อน (T-6) |
 
+### 6.0a-x ไฟล์ส่งออกรายงานบัญชี = ตัวเลขของหน้า (2026-10-14 ทีม X3 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X3)
+
+| รายงาน | ปลายทางไฟล์ (`?format=csv\|xlsx`) | เจ้าของตัวเลข (ตัวเดียวกับหน้า) | หมายเหตุ |
+| --- | --- | --- | --- |
+| สมุดรายวัน | `accounting/exports/journals` | `GetJournalEntriesForUserAsync` วนทุกหน้า / `GetJournalEntryForUserAsync` (`entryIds`) | หนึ่งแถวต่อบรรทัดบัญชี · ใบปิดบัง = แถว "ปิดบัง" · เพดาน 50,000 ใบ = ล้มดัง |
+| บัญชีแยกประเภท | `accounting/exports/general-ledger` | `GetGeneralLedgerAsync` | `accountIds`/`accountType` กรองหลังคำนวณ (ตัวเลขต่อบัญชีไม่เปลี่ยน) |
+| งบทดลอง | `accounting/exports/trial-balance` | ยกไป = `GetTrialBalanceAsync(asOf)` · ยกมา+เคลื่อนไหว = `GetGeneralLedgerAsync(from, asOf)` | ผลต่างความต่อเนื่อง ≠ 0 แสดงในไฟล์ (ไม่กลบ) |
+| งบฐานะ / กำไรขาดทุน / กระแสเงินสด | `accounting/exports/balance-sheet` · `profit-loss` · `cash-flow` | `GetBalanceSheetAsync` · `GetProfitAndLossAsync` · `GetCashFlowStatementAsync` | |
+| อายุลูกหนี้/เจ้าหนี้ | `accounting/exports/aging?side=` | `IAgingReportService` | Excel 2 แผ่น · CSV `level=contact\|document` |
+| บันทึกการใช้งาน | `accounting/exports/audit-logs` | `IAuditTrailService.GetLogsAsync` วนทุกหน้า | เพดาน 100,000 แถว |
+| ทะเบียนสินทรัพย์ / ตารางค่าเสื่อม | `accounting/exports/fixed-assets/register` · `/{id}/depreciation-schedule` | `IFixedAssetService` | |
+| ใบแจ้งยอดผู้ติดต่อ | `statements/contact/{id}/export` | `GetContactStatement` | `format` ไม่ส่ง = csv (เดิม) |
+
+**บัญชีแยกประเภท — ยอดยกมา (เปลี่ยนพฤติกรรม):** ตัวกรองบรรทัดชุดเดียว (`ApplyLedgerLineFilters`) ใช้ทั้งยอดยกมาและรายการ ·
+ไม่กรองสาขา/โครงการ/มิติ ⇒ ฐานยอดยกมาแบบงบทดลอง (งวดล่าสุดที่มี `OpeningBalances` และเริ่มไม่หลังวันเริ่มช่วง + รายการตั้งแต่วันเริ่มงวดนั้น) ·
+กรองมิติ ⇒ ไม่บวกยอดนำเข้า (ไม่มีสาขา) · บัญชีที่ยอดยกมา ≠ 0 แต่ไม่เคลื่อนไหวในช่วงแสดงด้วย ·
+ข้อที่ยังต่าง: งบทดลองที่กรองมิติยังบวกยอดนำเข้าทั้งบริษัท (คำถามเจ้าของ — EXPORT_AUDIT §X3 ข้อค้นพบ 1)
+
 ### 6.0a-bis ปรับปรุงผังบัญชีของ JE (Adjust) — ข้อจำกัดที่ต้องรู้
 
 `AdjustDocumentJournalEntryAsync` **ไม่แก้บรรทัดเอกสารเลย** — เจตนาผู้ใช้อยู่ใน
@@ -5576,3 +5594,7 @@ reclassify ใช้ยอดขาเงินตาม JE · OCR/เทมเ�
 โอนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
 _Last verified against codebase: 2026-10-14 (50 ทวิ บนมือถือ — ผู้ใช้ "กดบันทึก pdf ขึ้นแต่หน้าปริ้น บนมือถือกดมาเป็นไฟล์ไม่ได้" · §5.4: ปุ่ม ⬇️ PDF → `Layout.savePdf` (ไฟล์เซิร์ฟเวอร์ · มือถือ = แผ่นแชร์/บันทึกลงไฟล์ · iOS = เปิดไฟล์ · เดสก์ท็อป = ดาวน์โหลด) · มือถือกด 🖨 พิมพ์ = ไปทางไฟล์ · ชื่อคู่สัญญาทั้ง 3 renderer ผ่าน `WhtCertFormText.PartyName` · ทางเดียวกันใน documents (PDF/e-Tax) · tax (§87/ภ.พ.30) · etax (เดิมไม่แนบ JWT ⇒ 401) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ef59bf1f)_
 _Last verified against codebase: 2026-10-14 (ทีม PDF fix-bahttext — §5.1/§5.4: จำนวนเงินตัวอักษร ≥ 10 ล้านพิมพ์ผิด (`units[pos % 7]`) ⇒ ตัวตั้งเดียว `Helpers/ThaiBahtText.Format` · renderer 4 จุด + DTO 50 ทวิ `TotalTaxAmountInWords` · ถอดสูตรเขียนเอง C# 2 ชุด (`ThaiNumberToText` · `ConvertToThaiWords`/`ConvertThaiNumber`) + JS ใน wht.html · พรีวิว `UxHelpers.AmountInWords` ตรง C# ด้วย sim — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 05267e80)_
+_Last verified against codebase: 2026-10-14 (ทีม X3 ส่งออกรายงานบัญชี — §6.0a-x ปลายทางไฟล์ `accounting/exports/*` เจ้าของตัวเลขเดียวกับหน้า ·
+บัญชีแยกประเภทยอดยกมากรองชุดเดียวกับรายการ + ฐานยอดนำเข้าแบบงบทดลอง + บัญชียกมาอย่างเดียว · ใบแจ้งยอด CSV/Excel ผ่านตัวเขียนกลาง ·
+audit "ถึงวันที่" รวมทั้งวัน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 0f19b45b)_
+

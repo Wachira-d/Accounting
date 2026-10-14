@@ -226,7 +226,15 @@ public record GeneralLedgerTransaction(
     string? Description,
     decimal DebitAmount,
     decimal CreditAmount,
-    decimal RunningBalance);
+    decimal RunningBalance,
+    // ส่งออกบัญชีแยกประเภท (2026-10-14 ทีม X3) — ฟิลด์ที่ผู้ตรวจต้องใช้ตามรอยกลับถึงเอกสาร:
+    // บรรทัด · อ้างอิง · เอกสารต้นทาง · มิติ (บรรทัดก่อน แล้วหัวใบ — กติกาเดียวกับตัวกรอง GL)
+    Guid? JournalLineId = null,
+    string? EntryReference = null,
+    Guid? SourceDocumentId = null,
+    Guid? ProjectId = null,
+    Guid? BranchId = null,
+    Guid? DimensionId = null);
 
 // ===== Fiscal Period =====
 public record CreateFiscalPeriodRequest(
