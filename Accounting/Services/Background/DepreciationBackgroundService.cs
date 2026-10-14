@@ -77,6 +77,12 @@ public class DepreciationBackgroundService : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
         var assetService = scope.ServiceProvider.GetRequiredService<IFixedAssetService>();
         var notify = scope.ServiceProvider.GetService<INotificationEngine>();
+        // ผลรอบลงสถานะงาน (JobRunLog) — 2026-10-14 (ID#13): เดิมบริษัทที่ลงค่าเสื่อมไม่สำเร็จมีแค่ LogError
+        // ⇒ ผู้ดูแลไม่เห็นในหน้าสถานะงาน และเจ้าของบริษัทไม่รู้จนปิดงบ (ล้มดัง 3 ที่ — CLAUDE.md F2 ข้อ 7)
+        var recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
+        var startedAt = DateTime.UtcNow;
+        var postedCompanies = 0;
+        var failures = new List<string>();
 
         // Companies with at least one Active asset linked to expense + accumulated GL accounts.
         var companyIds = await db.FixedAssets.AsNoTracking()
@@ -87,9 +93,19 @@ public class DepreciationBackgroundService : BackgroundService
             .Distinct()
             .ToListAsync(ct);
 
-        if (companyIds.Count == 0) return;
+        if (companyIds.Count == 0)
+        {
+            if (recorder != null)
+                await recorder.RecordAsync(nameof(DepreciationBackgroundService), true,
+                    $"งวด {month:D2}/{year}: ไม่มีสินทรัพย์ที่ต้องลงค่าเสื่อม", 0, startedAt);
+            return;
+        }
 
         var request = new CalculateDepreciationRequest(year, month);
+        // ชื่อบริษัทสำหรับข้อความสถานะงาน — โหลดก่อนวน (ถ้าบริษัทหนึ่งล้มกลางคัน context อาจอยู่ในสภาพที่ query ต่อไม่ได้)
+        var companyNames = await db.Companies.AsNoTracking()
+            .Where(c => companyIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, c => c.Name, ct);
 
         foreach (var companyId in companyIds)
         {
@@ -114,6 +130,7 @@ public class DepreciationBackgroundService : BackgroundService
                 var rows = await assetService.CalculateDepreciationAsync(companyId, request, "system:cron");
                 var postedCount = rows.Count(r => r.IsPosted);
                 if (postedCount == 0) continue;
+                postedCompanies++;
 
                 _logger.LogInformation(
                     "Auto-depreciation posted for company {CompanyId} {Year}/{Month}: {Count} assets",
@@ -135,12 +152,36 @@ public class DepreciationBackgroundService : BackgroundService
                     catch (Exception nex) { _logger.LogWarning(nex, "DepreciationPosted notification failed for {CompanyId}", companyId); }
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex,
                     "Auto-depreciation failed for company {CompanyId} {Year}/{Month}",
                     companyId, year, month);
+                var companyName = companyNames.TryGetValue(companyId, out var nm) ? nm : companyId.ToString();
+                failures.Add($"{companyName}: {ex.Message}");
+                // แจ้งบริษัทนั้นเอง (ผู้ที่ตั้งรับแจ้งเตือนเหตุการณ์นี้) — ข้อความบอกสาเหตุ + ทางไปต่อ
+                if (notify != null)
+                {
+                    try
+                    {
+                        await notify.DispatchAsync(companyId, NotificationEvents.DepreciationFailed, new NotificationContext
+                        {
+                            Title = $"ลงค่าเสื่อมราคา {month:D2}/{year} อัตโนมัติไม่สำเร็จ",
+                            Message = $"{ex.Message} — แก้สาเหตุ (เช่น เปิดใช้ผังค่าเสื่อม/เลือกผังใหม่ที่หน้าสินทรัพย์ถาวร) "
+                                + "แล้วกด \"คำนวณค่าเสื่อมราคา\" ของงวดนี้ที่หน้าสินทรัพย์ถาวร",
+                            ActionUrl = "/pages/fixed-assets.html",
+                            EntityType = "FixedAsset", EntityId = companyId,
+                        });
+                    }
+                    catch (Exception nex) { _logger.LogWarning(nex, "DepreciationFailed notification failed for {CompanyId}", companyId); }
+                }
             }
         }
+
+        if (recorder != null)
+            await recorder.RecordAsync(nameof(DepreciationBackgroundService), failures.Count == 0,
+                $"งวด {month:D2}/{year}: ลงสำเร็จ {postedCompanies} บริษัท"
+                + (failures.Count > 0 ? $" · ล้ม {failures.Count} บริษัท — {string.Join(" | ", failures.Take(10))}" : ""),
+                postedCompanies, startedAt);
     }
 }

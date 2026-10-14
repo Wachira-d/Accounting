@@ -156,6 +156,8 @@ public static class AttachmentPermissionScope
             // รอบ 205 T0: ไฟล์ต้นทางของศูนย์นำเข้าข้อมูล (ระบบแนบตอนสร้าง batch · ไม่รับอัปโหลดผ่านหน้าไฟล์แนบ) — คีย์ไม่คงที่ต่อชนิด
             // (ขึ้นกับชนิดข้อมูลของ batch) ⇒ WriteAnyOf/ReadAnyOf ว่าง แล้วด่าน (AttachmentAccessGate) ถาม ImportBatchKey(ชนิดของ batch)
             ["ImportBatch"] = Rule("ImportBatch", AttachmentOwnerKind.ImportBatch, None, None, false, "ไฟล์นำเข้าข้อมูล"),
+            // รอบ 205 ทีม C: ไฟล์ statement ต้นทาง (ระบบแนบตอนนำเข้า · ผูกกับบัญชีธนาคาร) — หลักฐาน 5 ปี · มีชื่อ/บัญชีคู่โอน ⇒ อ่าน = ดูธนาคาร · ลบ = กระทบยอด
+            ["BankStatement"] = Rule("BankStatement", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.BankReconcile }, new[] { PermissionKeys.BankView }, false, "statement ธนาคาร (ไฟล์ต้นทาง)"),
         };
         return t;
     }

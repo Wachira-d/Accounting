@@ -682,13 +682,22 @@
       </div>
       <div class="form-group">
         <label class="form-label">แหล่งเงินเริ่มต้น (บัญชี Cr) เมื่อ OCR สร้างใบสำคัญจ่าย/ใบเสร็จแบบจ่ายสด</label>
-        <select class="form-select" id="sDefaultPaymentAccount">
+        <select class="form-select" id="sDefaultPaymentAccount" onchange="Page._defaultPaymentTouched = true">
           <option value="">— ให้ระบบเลือกอัตโนมัติ (บัญชีเงินสด/ธนาคารแรก) —</option>
         </select>
+        <div id="sDefaultPaymentAccountWarn" style="display:none;margin-top:6px;padding:8px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:12px;color:#92400e;line-height:1.5"></div>
         <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
           💡 เดิมระบบหยิบบัญชีธนาคารรหัสต่ำสุดมาเป็นค่าเริ่มต้น (มักได้บัญชีผิด).
-          ตั้งค่านี้ = บัญชีที่บริษัทใช้จ่ายเป็นหลัก → OCR จะลง Cr บัญชีนี้ให้ทุกครั้ง.
+          ตั้งค่านี้ = บัญชีที่บริษัทใช้จ่ายเป็นหลัก → OCR จะลง Cr บัญชีนี้ให้ทุกครั้ง และเงินเดือน/นำส่ง สปส./ภาษีที่ไม่ได้เลือกแหล่งเงินจะใช้บัญชีนี้.
           (Partner ที่ส่ง paymentAccountCode/bankCode ผ่าน API จะใช้ค่าที่ส่งมาแทน)
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">รหัสผังบัญชีเงินสด/ธนาคาร (เฉพาะบริษัทที่ใช้ผังบัญชีของตัวเอง)</label>
+        <input class="form-input" id="sMoneyAccountPrefixes" maxlength="200" placeholder="เว้นว่าง = ผังมาตรฐาน (111, 1133, 2123)">
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          💡 รหัสขึ้นต้นของบัญชีเงินสด/ธนาคาร/ช่องจ่าย คั่นด้วยจุลภาค เช่น <code>101, 102</code> — ระบบใช้เลือกรายการ "แหล่งเงิน" ทุกหน้า
+          (บัญชีที่ผูกกับบัญชีธนาคารแสดงเสมอไม่ว่ารหัสอะไร) · ที่ใช้อยู่ตอนนี้: <b id="sMoneyAccountPrefixesEffective">-</b>
         </div>
       </div>
 
@@ -2514,19 +2523,44 @@
           Layout.toast('บันทึกข้อมูลบริษัทสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
-      /** เติม dropdown แหล่งเงิน default จาก ChartOfAccount เงินสด/ธนาคาร
-       * (getPaymentChannels คืน GL เงินสด/ธนาคารทั้งหมด, value = ChartOfAccount.Id
-       * ตรงกับ DefaultPaymentAccountId). */
-      async populateDefaultPaymentAccount(api, currentId) {
+      /** เติม dropdown แหล่งเงิน default (value = ChartOfAccount.Id ตรงกับ DefaultPaymentAccountId)
+       * 2026-10-14 (PC#6 · ID#22): เดิมรายการตัดผังเงินฝากธนาคาร (1112x) ⇒ ค่าที่บันทึกเป็นบัญชีธนาคาร/ผังที่ปิดใช้ไม่อยู่ในรายการ
+       * ⇒ ช่องโชว์ "อัตโนมัติ" แล้วการบันทึกเรื่องอื่นส่ง Guid.Empty ล้างค่าทิ้งเงียบ ๆ · ตอนนี้: ① ขอรายการรวมผังธนาคาร (includeBank)
+       * แยก optgroup ตามป้ายจากเซิร์ฟเวอร์ ② ค่าที่บันทึกไว้แต่ไม่อยู่ในรายการ = เติมกลับพร้อมป้ายจากเซิร์ฟเวอร์ + คำเตือน
+       * ③ ไม่แตะช่องนี้ = ไม่ส่ง (null = เซิร์ฟเวอร์ไม่แตะ) · โหลดรายการล้ม = แจ้ง และไม่ส่งช่องนี้ */
+      async populateDefaultPaymentAccount(api, currentId, s) {
         const sel = document.getElementById('sDefaultPaymentAccount');
         if (!sel) return;
+        this._defaultPaymentTouched = false;
+        this._defaultPaymentLoaded = false;
+        const warnBox = document.getElementById('sDefaultPaymentAccountWarn');
+        const showWarn = (msg) => { if (warnBox) { warnBox.style.display = msg ? '' : 'none'; warnBox.textContent = msg ? ('⚠️ ' + msg) : ''; } };
+        const hasCur = currentId && currentId !== '00000000-0000-0000-0000-000000000000';
         try {
-          const res = await api.getPaymentChannels();
+          const res = await api.getPaymentChannels({ includeBank: true });
           const accts = res?.data || [];
-          sel.innerHTML = '<option value="">— ให้ระบบเลือกอัตโนมัติ (บัญชีเงินสด/ธนาคารแรก) —</option>' +
-            accts.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
-          if (currentId && currentId !== '00000000-0000-0000-0000-000000000000') sel.value = currentId;
-        } catch (e) { /* non-critical — dropdown เหลือแค่ตัวเลือก auto */ }
+          const opt = (a) => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}${a.bankAccountLabel ? ' (' + Layout.esc(a.bankAccountLabel) + ')' : ''}</option>`;
+          const bank = accts.filter(a => a.channelGroup === 'bank');
+          const other = accts.filter(a => a.channelGroup !== 'bank');
+          let html = '<option value="">— ให้ระบบเลือกอัตโนมัติ (บัญชีเงินสด/ธนาคารแรก) —</option>';
+          if (other.length) html += '<optgroup label="เงินสด / อื่น ๆ">' + other.map(opt).join('') + '</optgroup>';
+          if (bank.length) html += '<optgroup label="บัญชีธนาคาร">' + bank.map(opt).join('') + '</optgroup>';
+          if (hasCur && !accts.some(a => a.id === currentId)) {
+            // ค่าที่บันทึกไว้ไม่อยู่ในรายการแล้ว — เติมกลับ (ห้ามสลับเป็น "อัตโนมัติ" เงียบ ๆ แล้วบันทึกทับ)
+            html += `<optgroup label="ค่าที่บันทึกไว้ (ไม่อยู่ในรายการแล้ว)"><option value="${Layout.esc(currentId)}">⚠️ ${Layout.esc(s?.defaultPaymentAccountLabel || 'บัญชีที่ไม่พบในผังบัญชีแล้ว')}</option></optgroup>`;
+          }
+          sel.innerHTML = html;
+          sel.value = hasCur ? currentId : '';
+          this._defaultPaymentLoaded = true;
+        } catch (e) {
+          // โหลดรายการไม่ได้ ⇒ ไม่ส่งช่องนี้ตอนบันทึก (ค่าเดิมคงอยู่) และบอกผู้ใช้
+          Layout.toast('โหลดรายการแหล่งเงินไม่สำเร็จ — ค่าแหล่งเงินเริ่มต้นเดิมยังอยู่ (ไม่ถูกเปลี่ยน) · ลองโหลดหน้าใหม่', 'error', 7000);
+        }
+        showWarn(s?.defaultPaymentAccountWarning || '');
+        const pre = document.getElementById('sMoneyAccountPrefixes');
+        if (pre) { pre.value = s?.moneyAccountCodePrefixes || ''; this._moneyPrefixesLoaded = !!s; }
+        const eff = document.getElementById('sMoneyAccountPrefixesEffective');
+        if (eff) eff.textContent = s?.moneyAccountCodePrefixesEffective || '-';
       },
       /** canEdit มาจาก server (สิทธิ์ CompanySettings.Edit / คำขอจากคีย์) · undefined/null = ไม่ได้ตรวจ ⇒ ไม่ล็อก
        *  (ไม่เดาแทน server) · false = บอกเหตุผล+ทางไปต่อ และปิดปุ่มบันทึกของฟอร์มหลัก */
@@ -2651,7 +2685,7 @@
           // OCR preference — default 13 (PaymentVoucher)
           document.getElementById('sOcrBuyerTarget').value = String(s.ocrBuyerInvoiceDefaultTarget ?? 13);
           // OCR แหล่งเงิน default — populate dropdown (bank + cash GL) แล้ว set ค่า
-          await this.populateDefaultPaymentAccount(api, s.defaultPaymentAccountId);
+          await this.populateDefaultPaymentAccount(api, s.defaultPaymentAccountId, s);
           // กองทุนเงินทดแทน (กท.20ก)
           if (document.getElementById('sWorkersCompEnabled'))
             document.getElementById('sWorkersCompEnabled').checked = !!s.workersCompensationEnabled;
@@ -2878,8 +2912,13 @@
             ...(this._vehicleDealerLoaded ? { isVehicleDealer: document.getElementById('sIsVehicleDealer').checked } : {}),
             // OCR preference (DocumentType enum int — 13=PaymentVoucher, 11=PurchaseInvoice, 14=Expense)
             ocrBuyerInvoiceDefaultTarget: parseInt(document.getElementById('sOcrBuyerTarget').value),
-            // OCR แหล่งเงิน default — ว่าง = Guid.Empty (service แปลงเป็น null = auto-pick)
-            defaultPaymentAccountId: document.getElementById('sDefaultPaymentAccount').value || '00000000-0000-0000-0000-000000000000',
+            // แหล่งเงิน default — ส่งเฉพาะเมื่อผู้ใช้แตะช่อง (PC#6): ไม่แตะ = ไม่ส่ง (เซิร์ฟเวอร์ไม่แตะค่าเดิม) ·
+            // เลือก "อัตโนมัติ" = Guid.Empty (ล้างค่า) · รายการโหลดไม่สำเร็จ = ไม่ส่ง
+            ...((this._defaultPaymentLoaded && this._defaultPaymentTouched) ? {
+              defaultPaymentAccountId: document.getElementById('sDefaultPaymentAccount').value || '00000000-0000-0000-0000-000000000000',
+            } : {}),
+            // รหัสผังเงินสด/ธนาคารของบริษัท — "" = ล้าง (ผังมาตรฐาน) · โหลดค่าเดิมไม่สำเร็จ = ไม่ส่ง
+            ...(this._moneyPrefixesLoaded ? { moneyAccountCodePrefixes: (document.getElementById('sMoneyAccountPrefixes')?.value || '').trim() } : {}),
             // กองทุนเงินทดแทน (กท.20ก)
             workersCompensationEnabled: document.getElementById('sWorkersCompEnabled')?.checked || false,
             workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),

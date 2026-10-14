@@ -466,17 +466,9 @@
             </div>
             <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
               <input type="hidden" id="fContactId">
-              <!-- ช่องค้นหา + ปุ่ม "+ สร้างใหม่" ติดกัน — เมื่อหาในรายการแล้วไม่เจอ
-                   ผู้ใช้คลิกเปิดหน้าสร้างผู้ติดต่อใหม่ในแท็บใหม่ได้ทันที
-                   โดยไม่ต้องทิ้งเอกสารที่กำลังกรอก. ค่าที่พิมพ์ค้างไว้ใน
-                   ช่องค้นหาจะถูก pass ผ่าน query string `name=...` ให้หน้า
-                   contacts ช่วยตั้งค่าเริ่มต้นได้. -->
-              <div style="display:flex;gap:6px">
-                <input type="text" class="form-input" id="fContact" placeholder="พิมพ์ชื่อหรือเลขผู้เสียภาษี..." style="flex:1">
-                <button type="button" class="btn btn-secondary btn-sm" id="btnCreateContact"
-                  title="เพิ่มผู้ติดต่อใหม่ (เปิดแท็บใหม่)"
-                  onclick="Page.openCreateContact()" style="white-space:nowrap">+ สร้างใหม่</button>
-              </div>
+              <!-- ตัวเลือกผู้ติดต่อกลาง Layout.contactPicker ใส่ปุ่ม "+ สร้างใหม่" (หน้าต่างเพิ่มด่วนในหน้าเดิม ·
+                   ฟอร์มเอกสารที่กรอกค้างไม่หาย) ให้เอง — ห้ามเขียนปุ่มซ้ำที่นี่ (คำสั่งเจ้าของ 2026-10-14) -->
+              <input type="text" class="form-input" id="fContact" placeholder="พิมพ์ชื่อหรือเลขผู้เสียภาษี...">
               <!-- สาขาของผู้ติดต่อที่เลือก (ประกาศอธิบดีฯ 199) + สาขาอื่นของเลขผู้เสียภาษีเดียวกันให้สลับได้
                    — ผู้ติดต่อ 1 แถว = 1 สาขา ⇒ เลือกแถว = เลือกสาขา · ป้ายมาจากเซิร์ฟเวอร์ (รอบ 190 ทีม C ข้อ 6) -->
               <div id="fContactBranchHint" class="form-help" style="display:none;margin-top:4px;line-height:1.9"></div>
@@ -1385,7 +1377,7 @@
           <div id="rsInfo" style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px;line-height:1.7"></div>
           <div class="form-group">
             <label class="form-label">ผู้ซื้อของใบใหม่</label>
-            <select class="form-input" id="rsContact"></select>
+            <input type="hidden" id="rsContactId"><input type="text" class="form-input" id="rsContact">
             <div class="text-xs text-gray-500" style="margin-top:4px">ถ้าชื่อ/ที่อยู่ในทะเบียนผู้ติดต่อผิด ให้แก้ที่ผู้ติดต่อก่อน แล้วเลือกผู้ซื้อเดิม — ใบกำกับภาษีต้องมีข้อมูลผู้ซื้อครบตาม §86/4</div>
           </div>
           <div class="form-group">
@@ -1727,22 +1719,6 @@
     const Page = {
       page: 1, docType: '', side: '', contacts: [], projects: [], selectedDocs: new Set(),
 
-      // Open the contact-create page in a new tab pre-seeded with whatever
-      // the user already typed in the search box. The new tab can postMessage
-      // its created-contact id back, which we capture below to auto-pick.
-      openCreateContact() {
-        const typed = (document.getElementById('fContact')?.value || '').trim();
-        const params = new URLSearchParams();
-        if (typed) params.set('name', typed);
-        params.set('autoopen', '1');
-        params.set('returnto', 'opener');
-        const url = '/pages/contacts.html' + (params.toString() ? '?' + params.toString() : '');
-        const win = window.open(url, '_blank');
-        if (!win) {
-          Layout.toast('เบราว์เซอร์บล็อก popup — เปิด /pages/contacts.html เองครับ', 'error');
-        }
-      },
-
       onDocCheck(cb) {
         if (cb.checked) this.selectedDocs.add(cb.dataset.id);
         else this.selectedDocs.delete(cb.dataset.id);
@@ -1802,20 +1778,7 @@
         this._depositKindsReady = this._loadDepositKinds();
         // รอบ 203 — ตารางประเภทเงินได้ ม.40 จากเซิร์ฟเวอร์ (ไม่ await — ล้ม = ช่องเหลือ "ไม่ระบุ" + ค่าที่เก็บไว้ไม่หาย)
         this._loadWhtIncomeTypes();
-        // Listen for the "+ สร้างใหม่" cross-tab hand-off — contacts.html
-        // posts the new contact id back via postMessage; we auto-pick it
-        // here so the user doesn't have to retype/search after creating.
-        window.addEventListener('message', (ev) => {
-          if (ev.origin !== window.location.origin) return;
-          const d = ev.data;
-          if (!d || d.type !== 'contact-created' || !d.contactId) return;
-          if (this._contactAC) {
-            this._contactAC.setValue(d.contactId, d.name || '');
-            this._selectedContact = { id: d.contactId, name: d.name, taxId: d.taxId };
-            Layout.toast(`เลือกผู้ติดต่อใหม่: ${d.name || d.contactId}`);
-            this._refreshContactBranchHint();
-          }
-        });
+        // "เปิดฟอร์มเต็ม" (แท็บผู้ติดต่อส่ง contact-created กลับ) — ตัวรับกลางอยู่ใน Layout.contactPicker (เลือกให้ + เรียก onSelect)
 
         // Detect page context: sidebar links use ?side= param, also support expense-docs nav id
         const params = new URLSearchParams(window.location.search);
@@ -1858,7 +1821,10 @@
         this.applyReceiptIssueMode();
         this.applyVatRegistrationLock();
         this.applyAnalysisAxisVisibility();
-        try { const r = await api.getContacts('?pageSize=500'); this.contacts = r.data?.items || r.data || []; this.populateContacts(); } catch(e){}
+        // this.contacts = แคชสำรองสำหรับหาข้อมูลจาก id เท่านั้น (เซิร์ฟเวอร์ตัดที่ 200 แถว) — ช่องเลือกผู้ติดต่อค้นฝั่งเซิร์ฟเวอร์เอง
+        // ⚠️ ตัวเลือกต้องถูกต่อสายแม้โหลดแคชล้ม (เดิมอยู่ใน try เดียวกัน ⇒ โหลดล้ม = ช่องผู้ติดต่อเป็นช่องพิมพ์เปล่าที่เลือกอะไรไม่ได้)
+        try { const r = await api.getContacts('?pageSize=200'); this.contacts = r.data?.items || r.data || []; } catch (e) { this.contacts = []; }
+        this.populateContacts();
         this.loadEtaxCancelNotice();
         this.loadEtaxReissueReview();
         // Load active projects (for the document → project tagging dropdown).
@@ -1872,12 +1838,7 @@
         } catch(e) { this.projects = []; }
         // Load payment channels (cash, bank accounts, director advance, etc.)
         try {
-          const [baRes, pcRes] = await Promise.all([
-            api.getBankAccounts().catch(() => ({ data: [] })),
-            api.getPaymentChannels().catch(() => ({ data: [] }))
-          ]);
-          this.bankAccounts = baRes?.data || [];
-          this.paymentChannels = pcRes?.data || [];
+          await this._loadMoneyChannels();
           const sel = document.getElementById('fPaymentChannel');
           sel.innerHTML = '<option value="">— เงินสด (ค่าเริ่มต้น) —</option>';
           // Group: Bank accounts
@@ -2261,7 +2222,9 @@
           if (fpc) {
             const code = payload.paymentChannelCode;
             // ลอง bank:<id> ก่อน (ถ้า code ตรง bank accounts) ไม่งั้น account:<id>
-            const bank = (this.bankAccounts || []).find(b => b.accountCode === code);
+            // ผังของธนาคารอยู่ที่ linkedAccountCode (BankAccountResponse ไม่มี accountCode — PC#13/ID#5: เดิมไม่เคยตรง ⇒ ใบได้
+            // account:<ผังธนาคาร> ไม่มี BankAccountId ⇒ ยอดธนาคารไม่ขยับ + วิธีชำระกลายเป็นเงินสด)
+            const bank = (this.bankAccounts || []).find(b => b.linkedAccountCode && b.linkedAccountCode === code);
             let acc = !bank ? (this.paymentChannels || []).find(a => a.accountCode === code) : null;
             // Fallback: code ที่ผู้ใช้เลือกใน OCR อาจเป็นบัญชีนอก dropdown
             // (เช่น 21230 เจ้าหนี้กรรมการ — หนี้สิน ที่ไม่อยู่ใน payment channel
@@ -2440,12 +2403,11 @@
         const inp = document.getElementById('wpcPayee');
         if (differs) differs.checked = !!d.whtPayeeContactId;
         document.getElementById('wpcPayeeWrap').style.display = d.whtPayeeContactId ? '' : 'none';
-        if (hid) hid.value = d.whtPayeeContactId || '';
-        if (inp) inp.value = '';
-        if (!this._wpcAC) {
-          Layout.contactAutocomplete('wpcPayee', 'wpcPayeeId', { placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ถูกหัก...' });
-          this._wpcAC = true;
-        }
+        if (!this._wpcAC)
+          this._wpcAC = Layout.contactPicker('wpcPayee', 'wpcPayeeId', { side: 'supplier', placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ถูกหัก...' });
+        // ค่าที่บันทึกไว้ต้องโชว์ชื่อ (เดิมตั้ง id แต่ล้างช่องชื่อ ⇒ ผู้ถูกหักที่เลือกไว้ดูเหมือนว่าง) — picker ดึงชื่อจาก id ให้
+        if (this._wpcAC) this._wpcAC.setValue(d.whtPayeeContactId || '', '');
+        else { if (hid) hid.value = d.whtPayeeContactId || ''; if (inp) inp.value = ''; }
         const whtLines = (d.lines || []).filter(l => Number(l.withholdingTaxAmount || 0) > 0);
         const box = document.getElementById('wpcLines');
         box.innerHTML = whtLines.length < 2 ? '' : '<div class="form-label" style="margin-bottom:4px">ผู้ถูกหักรายบรรทัด (เว้นว่าง = ตามผู้ถูกหักของเอกสาร)</div>'
@@ -2455,13 +2417,8 @@
             </div>`).join('');
         whtLines.forEach((l, i) => {
           if (whtLines.length < 2) return;
-          Layout.contactAutocomplete('wpcL' + i, 'wpcLId' + i, { placeholder: 'ตามผู้ถูกหักของเอกสาร' });
-          if (l.whtPayeeContactId) {
-            api.getContact(l.whtPayeeContactId).then(r => {
-              const el = document.getElementById('wpcL' + i);
-              if (el && r && r.data) el.value = r.data.name || '';
-            }).catch(e => Layout.toast('โหลดชื่อผู้ถูกหักรายบรรทัดไม่สำเร็จ: ' + (e.message || ''), 'warning', 7000));
-          }
+          const lp = Layout.contactPicker('wpcL' + i, 'wpcLId' + i, { side: 'supplier', compact: true, placeholder: 'ตามผู้ถูกหักของเอกสาร' });
+          if (l.whtPayeeContactId && lp) lp.setValue(l.whtPayeeContactId, '');   // ดึงชื่อจาก id ให้ · ล้ม = เตือน + คง id
         });
         if (d.whtPayeeContactId) {
           try { const r = await api.getContact(d.whtPayeeContactId); if (inp && r && r.data) inp.value = r.data.name || ''; }
@@ -2644,12 +2601,7 @@
         const api = Layout.api();
         // โหลด bank/payment channels ถ้ายังไม่มี (เผื่อเปิด detail ก่อน init form)
         if (api && (!this.bankAccounts?.length && !this.paymentChannels?.length)) {
-          const [baRes, pcRes] = await Promise.all([
-            api.getBankAccounts().catch(() => ({ data: [] })),
-            api.getPaymentChannels().catch(() => ({ data: [] }))
-          ]);
-          this.bankAccounts = baRes?.data || [];
-          this.paymentChannels = pcRes?.data || [];
+          await this._loadMoneyChannels();
         }
         const cur = d.bankAccountName || d.paymentAccountName || '(ไม่ระบุ)';
         document.getElementById('rpsInfo').innerHTML =
@@ -3477,7 +3429,8 @@
         const hid = row.querySelector('[data-f="whtPayeeId"]');
         if (!inp || !hid || inp.dataset.acReady === '1') return;
         inp.dataset.acReady = '1';
-        Layout.contactAutocomplete(inp.id, hid.id, {
+        Layout.contactPicker(inp.id, hid.id, {
+          side: 'supplier', compact: true,
           placeholder: 'ตามผู้ถูกหักของเอกสาร (พิมพ์เพื่อเลือกรายอื่น)',
           onSelect: () => { hid.dataset.userTouched = '1'; },
         });
@@ -3523,7 +3476,8 @@
       },
       _ensureWhtPayeeAutocomplete() {
         if (this._whtPayeeAC) return;
-        this._whtPayeeAC = Layout.contactAutocomplete('fWhtPayee', 'fWhtPayeeContactId', {
+        this._whtPayeeAC = Layout.contactPicker('fWhtPayee', 'fWhtPayeeContactId', {
+          side: 'supplier',
           placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ถูกหัก...',
           onSelect: (c) => { this._whtPayeeContact = c; this._renderWhtPayeeInfo(); },
         }) || true;
@@ -4596,6 +4550,21 @@
               hint.textContent = this._aiHint(j.data);
           }
         } catch (e) { /* suggestion is best-effort */ }
+      },
+      /** โหลดรายการแหล่งเงิน (บัญชีธนาคารที่เปิดใช้ + ผังเงินสด/อื่น ๆ) ตัวเดียวของหน้านี้ — PC#16/PC#18 (ผลตรวจ 2026-10-14):
+       *  เดิม `.catch(() => ({ data: [] }))` ⇒ โหลดไม่สำเร็จแล้วเห็นแค่ "เงินสด (ค่าเริ่มต้น)" บันทึกไปโดยไม่รู้ตัว ·
+       *  ตอนนี้แจ้งผู้ใช้ว่ารายการไหนโหลดไม่ได้ · บัญชีธนาคารที่ปิดใช้ไม่ถูกเสนอ (ค่าที่บันทึกไว้ยังแสดงผ่าน _hydratePaymentAndCategory) */
+      async _loadMoneyChannels() {
+        const api = Layout.api(); if (!api) return;
+        const failed = [];
+        const [baRes, pcRes] = await Promise.all([
+          api.getBankAccounts({ activeOnly: true }).catch(() => { failed.push('บัญชีธนาคาร'); return null; }),
+          api.getPaymentChannels().catch(() => { failed.push('ผังเงินสด/อื่น ๆ'); return null; }),
+        ]);
+        this.bankAccounts = baRes?.data || [];
+        this.paymentChannels = pcRes?.data || [];
+        if (failed.length)
+          Layout.toast(`โหลดรายการ${failed.join(' และ ')}ไม่สำเร็จ — ช่อง “แหล่งเงิน” จะมีตัวเลือกไม่ครบ · รีเฟรชหน้าก่อนเลือกแหล่งเงิน (ถ้าบันทึกตอนนี้ระบบจะใช้เงินสด)`, 'error', 9000);
       },
       /**
        * Derive a PaymentMethod enum value from the selected paymentChannel.
@@ -6287,10 +6256,12 @@
           // เข้า payload ตอนบันทึก)
           const prof = this._docFieldProfile(docType);
           const pay = document.getElementById('fPaymentChannel');
-          if (prof.pay && t.defaultPaymentAccountId && pay && !pay.value) {
-            // เลือกได้เฉพาะเมื่อ option มีจริง (ผังอาจถูกปิดใช้งานไปแล้ว)
-            const opt = [...pay.options].find(o => o.value === t.defaultPaymentAccountId);
-            if (opt) { pay.value = t.defaultPaymentAccountId; pay.dispatchEvent(new Event('change')); }
+          // ค่าช่องแหล่งเงินมาจากเซิร์ฟเวอร์ (defaultPaymentChannel = bank:/account: — PC#14) · เดิมเทียบรหัสผังดิบกับค่า bank:/account: ⇒ ไม่เคยเติม
+          if (prof.pay && t.defaultPaymentChannel && pay && !pay.value && pay.dataset.userTouched !== '1') {
+            // เลือกได้เฉพาะเมื่อ option มีจริง (บัญชีอาจถูกปิดใช้งานไปแล้ว — บอกผู้ใช้ ไม่เงียบ)
+            const opt = [...pay.options].find(o => o.value === t.defaultPaymentChannel);
+            if (opt) { pay.value = t.defaultPaymentChannel; pay.dispatchEvent(new Event('change')); }
+            else Layout.toast('แหล่งเงินตั้งต้นของเทมเพลตไม่อยู่ในรายการ (อาจถูกปิดใช้งาน) — เลือกแหล่งเงินเอง หรือแก้ที่หน้าเทมเพลตเอกสาร', 'warning', 7000);
           }
           if (!prof.credit) return;
           const terms = document.getElementById('fPaymentTerms');
@@ -7603,8 +7574,8 @@
         // จ่ายไป) ผู้ใช้เปลี่ยนเองได้ เติมเฉพาะตอนช่องยังว่าง
         const payEl = document.getElementById('fPaymentChannel');
         if (payEl && !payEl.value) {
-          const want = d.paymentAccountId ? `account:${d.paymentAccountId}`
-            : d.bankAccountId ? `bank:${d.bankAccountId}` : '';
+          // ลำดับเดียวกับการลงบัญชี — เซิร์ฟเวอร์ส่งค่าช่องมาแล้ว (paymentChannel · PC#15)
+          const want = d.paymentChannel || '';
           const opt = want ? [...payEl.options].find(o => o.value === want) : null;
           if (opt) {
             payEl.value = want;
@@ -7856,7 +7827,9 @@
         if (!this._contactAC) {
           const inp = document.getElementById('fContact');
           const originalPlaceholder = inp?.placeholder || '';
-          this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId', {
+          this._contactAC = Layout.contactPicker('fContact', 'fContactId', {
+            // ฝั่งของผู้ติดต่อใหม่ตามเอกสาร — อ่านจากตัวตั้งฝั่งของฟอร์ม (linesTable.dataset.docSide · ใบลด/เพิ่มหนี้ตามใบต้นทาง)
+            side: () => (document.getElementById('linesTable')?.dataset.docSide === 'expense' ? 'supplier' : 'customer'),
             onSelect: (c) => {
               // Restore the default placeholder — the scan-handoff path
               // overrides it with a "please pick" hint that would otherwise
@@ -7865,76 +7838,7 @@
               this._selectedContact = c;
               this.onContactChange();
             },
-            // Inline create — no need to leave the form. A 13-digit query is
-            // treated as a Tax ID and auto-filled from DBD before saving.
-            onCreateNew: (q) => this.quickCreateContact(q),
           });
-        }
-      },
-      // Create a contact straight from the document form's picker. If the
-      // typed text is a 13-digit Tax ID, look it up on DBD first to fill the
-      // company name + address; otherwise create by the typed name. The new
-      // contact is selected into the form and the user is told what happened.
-      async quickCreateContact(query) {
-        const api = Layout.api(); if (!api) return;
-        const q = (query || '').trim();
-        if (!q) { Layout.toast('พิมพ์ชื่อหรือเลขผู้เสียภาษีก่อน', 'error'); return; }
-        // Sales-side docs → customer; purchase-side → supplier.
-        const expenseTypes = new Set(['PurchaseRequisition','PurchaseOrder','GoodsReceiptNote','PurchaseInvoice','PaymentVoucher','Expense','CertificateInLieu','DebitNote','CreditNote']);
-        const docType = document.getElementById('fDocType')?.value || '';
-        const isSupplier = expenseTypes.has(docType);
-        const isTaxId = /^\d{13}$/.test(q);
-
-        const payload = {
-          name: q, taxId: null,
-          isCustomer: !isSupplier, isSupplier: isSupplier,
-          address: null, phone: null, email: null,
-        };
-
-        if (isTaxId) {
-          // Dedup: if a contact with this Tax ID already exists, select it
-          // instead of creating a duplicate.
-          try {
-            const ex = await api.getContacts('?pageSize=20&search=' + encodeURIComponent(q));
-            const items = ex.data?.items || ex.data || [];
-            const hit = items.find(c => (c.taxId || '') === q);
-            if (hit) {
-              this._contactAC.setValue(hit.id, hit.name);
-              this._selectedContact = hit;
-              this.onContactChange();
-              Layout.toast('เลือกผู้ติดต่อที่มีเลขภาษีนี้อยู่แล้ว: ' + hit.name, 'info');
-              return;
-            }
-          } catch {}
-          payload.taxId = q;
-          payload.name = `นิติบุคคล ${q}`;   // fallback until DBD answers
-          try {
-            const res = await API.get(`/api/dbd/juristic/${encodeURIComponent(q)}`);
-            const d = res?.data;
-            if (d && (d.nameTh || d.nameEn)) {
-              payload.name = d.nameTh || d.nameEn;
-              if (d.address) payload.address = d.address;
-            } else {
-              Layout.toast('ไม่พบชื่อจาก DBD — สร้างด้วยเลขภาษีไปก่อน แก้ชื่อได้ภายหลัง', 'info');
-            }
-          } catch {
-            Layout.toast('เชื่อมต่อ DBD ไม่ได้ — สร้างด้วยเลขภาษีไปก่อน แก้ชื่อได้ภายหลัง', 'info');
-          }
-        }
-
-        try {
-          const res = await api.createContact(payload);
-          const c = res.data;
-          if (!c?.id) throw new Error('สร้างผู้ติดต่อไม่สำเร็จ');
-          this._contactAC.setValue(c.id, c.name);
-          this._selectedContact = c;
-          this.onContactChange();
-          Layout.toast(isTaxId
-            ? `✅ สร้างผู้ติดต่อจากเลขภาษีให้แล้ว: ${c.name}`
-            : `✅ สร้างผู้ติดต่อใหม่ให้แล้ว: ${c.name} (${isSupplier ? 'ผู้ขาย' : 'ลูกค้า'})`,
-            'success');
-        } catch (e) {
-          Layout.toast('สร้างผู้ติดต่อไม่สำเร็จ: ' + e.message, 'error');
         }
       },
       // ── ตัวกรอง "ออกเอกสารต่อแล้วหรือยัง" (รอบ 196) ──────────────────────────────
@@ -9565,15 +9469,16 @@
       _hydratePaymentAndCategory(d) {
         const fpc = document.getElementById('fPaymentChannel');
         if (fpc) {
-          let want = '';
-          if (d.bankAccountId) want = 'bank:' + d.bankAccountId;
-          else if (d.paymentAccountId) want = 'account:' + d.paymentAccountId;
+          // ลำดับ (ผังตรง > ธนาคาร) ตัดสินที่เซิร์ฟเวอร์ตัวเดียวกับการลงบัญชี — PC#15/ID#21: เดิมหน้านี้เลือกธนาคารก่อน
+          // ขณะที่ JE เลือกผังตรงก่อน ⇒ ใบที่มีทั้งสองค่า บันทึกซ้ำแล้วเปลี่ยนผังเงินเงียบ ๆ
+          const want = d.paymentChannel || '';
           if (want) {
             if (!Array.from(fpc.options).some(o => o.value === want)) {
-              // option หาย (บัญชีถูกซ่อน) → เพิ่มกลับเพื่อให้ค่าที่บันทึกแสดง
+              // option หาย (บัญชีถูกปิดใช้งาน/ซ่อน) → เพิ่มกลับเพื่อให้ค่าที่บันทึกแสดง + บอกว่าไม่อยู่ในรายการ (ห้ามโชว์รหัสดิบ)
               const o = document.createElement('option');
               o.value = want;
-              o.textContent = (d.bankAccountName || d.paymentAccountName || want);
+              const nm = want.startsWith('bank:') ? d.bankAccountName : d.paymentAccountName;
+              o.textContent = (nm ? nm + ' ' : 'บัญชีที่บันทึกไว้ ') + '(ไม่อยู่ในรายการ — อาจถูกปิดใช้งาน)';
               fpc.appendChild(o);
             }
             fpc.value = want;
@@ -12536,9 +12441,13 @@
         // Populate the bank-override dropdown with the company's bank
         // accounts. Default option (empty value) keeps the doc's channel.
         const rpBank = document.getElementById('rpBankOverride');
-        rpBank.innerHTML = '<option value="">— ใช้บัญชีตามที่ผูกในเอกสาร (default) —</option>' +
+        // ค่าว่าง = เซิร์ฟเวอร์ใช้แหล่งเงินของเอกสาร (ธนาคาร หรือผังตรง — PC#5) · ป้ายบอกชื่อแหล่งเงินจริงของใบ
+        const _docCh = (this._currentDoc && this._currentDoc.id === docId) ? this._currentDoc : null;
+        const _docChName = _docCh?.paymentChannel
+          ? (_docCh.paymentChannel.startsWith('bank:') ? _docCh.bankAccountName : _docCh.paymentAccountName) : null;
+        rpBank.innerHTML = `<option value="">— ใช้แหล่งเงินของเอกสาร${_docChName ? ': ' + Layout.esc(_docChName) : (_docCh && !_docCh.paymentChannel ? ': เงินสด' : '')} (default) —</option>` +
           (this.bankAccounts || []).map(a =>
-            `<option value="${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`
+            `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`
           ).join('');
         rpBank.value = '';
         // Populate the "fund from another GL account" dropdown — Asset +
@@ -12565,11 +12474,18 @@
         }
         const rpFund = document.getElementById('rpFundAccount');
         if (rpFund) {
+          // PC#21: ไม่เสนอบัญชีกลุ่ม/ผังที่ปิดใช้ และผังที่บัญชีธนาคารผูกไว้ (จ่ายผ่านธนาคารต้องเลือกที่ "บัญชีรับ-จ่ายเงิน"
+          // เพื่อให้ยอดธนาคารขยับด้วย — เลือกผังธนาคารตรงที่นี่ = GL ขยับแต่สมุดธนาคารไม่ขยับ)
+          const bankGl = new Set((this.bankAccounts || []).map(b => b.linkedAccountId).filter(Boolean));
           const fill = (accts) => {
+            const usable = (accts || []).filter(a => a.isActive !== false && Number(a.level || 0) >= 4 && !bankGl.has(a.id));
             rpFund.innerHTML = '<option value="">— ไม่ใช้ (ใช้เงินสด/ธนาคารปกติ) —</option>' +
-              (accts || []).map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+              usable.map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
             rpFund.value = '';
           };
+          // เลือกได้ทางเดียว (เซิร์ฟเวอร์ปฏิเสธเมื่อส่งทั้งสองช่อง) — เลือกช่องหนึ่งแล้วล้างอีกช่องให้เห็นทันที
+          rpBank.onchange = () => { if (rpBank.value) rpFund.value = ''; };
+          rpFund.onchange = () => { if (rpFund.value) rpBank.value = ''; };
           if (this._fundAccounts) fill(this._fundAccounts);
           else {
             const api2 = Layout.api();
@@ -12584,7 +12500,10 @@
                 .filter(a => a.accountCode)
                 .sort((x, y) => (x.accountCode || '').localeCompare(y.accountCode || ''));
               fill(this._fundAccounts);
-            }).catch(() => fill([]));
+            }).catch(() => {
+              fill([]);
+              Layout.toast('โหลดรายการ “จ่าย/รับจากบัญชีอื่น” ไม่สำเร็จ — ช่องนี้จะว่าง · รีเฟรชหน้าถ้าต้องการใช้', 'error', 7000);
+            });
           }
         }
         // Per-installment WHT — only show when the source actually carries WHT.
@@ -12907,12 +12826,12 @@
           + 'ยอด/รายการ/อัตรา VAT เท่าเดิมทุกตัว แล้วย้ายการรับชำระ รายการบัญชี และคู่จับของรอบโอนไปใบใหม่ (ไม่กลับรายการเงิน) · '
           + 'ใบเสร็จอัตโนมัติของการรับชำระจะถูกออกใหม่อ้างใบใหม่ · <b style="color:#b91c1c">ต้องเรียกคืนใบเดิมจากลูกค้า</b> · '
           + 'ถ้ายอดหรือรายการผิด ให้ออกใบลดหนี้/ใบเพิ่มหนี้แทน';
-        const list = this.contacts || [];
+        // ผู้ซื้อของใบใหม่ — ตัวเลือกกลาง (ค้นทั้งทะเบียน ไม่ติดเพดาน 200 รายของ <select> เดิม · เพิ่มผู้ซื้อใหม่ได้ในหน้าเดิม)
+        // ค่าตั้งต้น = ผู้ซื้อของใบเดิม
+        if (!this._rsContactAC)
+          this._rsContactAC = Layout.contactPicker('rsContact', 'rsContactId', { side: 'customer', placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ซื้อ...' });
         const cur = d.contact || {};
-        let opts = list.map(c => `<option value="${Layout.esc(c.id)}"${c.id === cur.id ? ' selected' : ''}>${Layout.esc(c.name || '')}${c.taxId ? ' · ' + Layout.esc(c.taxId) : ''}</option>`).join('');
-        if (cur.id && !list.some(c => c.id === cur.id))
-          opts = `<option value="${Layout.esc(cur.id)}" selected>${Layout.esc(cur.name || 'ผู้ซื้อเดิม')}</option>` + opts;
-        document.getElementById('rsContact').innerHTML = opts;
+        if (this._rsContactAC) this._rsContactAC.setValue(cur.id || d.contactId || '', cur.name || '');
         document.getElementById('rsNotes').value = d.notes || '';
         document.getElementById('rsReason').value = '';
         document.getElementById('rsLines').innerHTML = (d.lines || []).map((l, i) => `<tr>
@@ -12928,7 +12847,11 @@
         if (!id) return;
         const reason = (document.getElementById('rsReason').value || '').trim();
         if (!reason) { Layout.toast('กรุณาระบุเหตุผลที่ยกเลิกและออกใบแทน', 'error'); return; }
-        const contactId = document.getElementById('rsContact').value || null;
+        // ว่าง = ผู้ซื้อเดิม (สัญญาของ ReissueSettlementPaidRequest.ContactId = null) · พิมพ์ชื่อค้างแต่ไม่ได้เลือก = ถามก่อน (ห้ามส่ง null เงียบ ๆ)
+        const contactId = document.getElementById('rsContactId').value || null;
+        if (!contactId && (document.getElementById('rsContact').value || '').trim()) {
+          Layout.toast('พิมพ์ชื่อผู้ซื้อแล้วต้องเลือกจากรายการ — หรือเว้นว่างเพื่อใช้ผู้ซื้อเดิม', 'error'); return;
+        }
         const notes = document.getElementById('rsNotes').value;
         const lines = [...document.querySelectorAll('#rsLines .rs-desc')]
           .map(el => ({ lineId: el.dataset.lineId, description: el.value }));

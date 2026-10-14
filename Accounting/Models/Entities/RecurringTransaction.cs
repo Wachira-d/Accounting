@@ -46,6 +46,21 @@ public class RecurringTransaction : TenantEntity
     /// response ให้ UI เห็น (ห้าม silent no-op).</summary>
     public bool AutoSendEmail { get; set; } = false;
 
+    // ── ผลรอบล่าสุด (ทีมตรวจรายการประจำ 2026-10-14 · F2-7 ล้มดัง 3 ที่) ──
+    // เดิม cron ล้ม = LogError + ErrorLog ทุก 15 นาที ผู้ใช้เห็นแค่ "ครั้งถัดไป" ค้างวันเดิมโดยไม่รู้สาเหตุ ·
+    // ตอนนี้: ข้อความ (ไทย · บอกช่อง + ทางแก้ — Helpers/RecurringRunFailure) เก็บบนแถว แสดงในหน้ารายการประจำ ·
+    // รอบถัดไปที่สำเร็จล้างเอง · ระบบยังลองใหม่ทุกรอบ (ไม่ล็อกตาย — คำตัดสินข้อ 150)
+
+    /// <summary>เหตุผลที่รอบล่าสุดสร้างเอกสารไม่สำเร็จ (null = รอบล่าสุดสำเร็จ/ยังไม่เคยล้ม)</summary>
+    public string? LastRunError { get; set; }
+    /// <summary>เวลาที่ล้มล่าสุด (UTC)</summary>
+    public DateTime? LastRunErrorAt { get; set; }
+    /// <summary>สร้างเอกสารสำเร็จแต่มีเรื่องต้องทำต่อ (อนุมัติอัตโนมัติไม่สำเร็จ · ส่งอีเมลไม่ได้เพราะผู้ติดต่อไม่มีอีเมล ·
+    /// post สมุดรายวันไม่สำเร็จ · ผู้ถูกหักถูกตัดทิ้ง) — null = ไม่มี</summary>
+    public string? LastRunNotice { get; set; }
+    /// <summary>เอกสารที่รอบล่าสุดสร้าง (ลิงก์ "เปิดเอกสารล่าสุด" ในหน้ารายการประจำ) — null = ยังไม่เคยสร้าง/เป็นสมุดรายวัน</summary>
+    public Guid? LastDocumentId { get; set; }
+
     /// <summary>Late-fee accrual policy — เปิดเมื่อสร้าง invoice แล้วเกิน due
     /// date จะ accrue ค่าปรับ. Off (default) = recurring เก่าไม่กระทบ.</summary>
     public bool LateFeeEnabled { get; set; } = false;

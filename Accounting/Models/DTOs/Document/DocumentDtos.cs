@@ -1042,7 +1042,10 @@ public record DocumentResponse(
     /// <summary>รอบ 204 (ทีม B) — ผู้จ่ายรับภาระภาษีตามสัญญา (§65 ตรี (3)) · echo กลับให้ฟอร์มแก้ไข (กฎ #4 A)</summary>
     bool WhtBorneByContract = false,
     /// <summary>รอบ 204 — หักผ่าน e-Withholding ของธนาคาร · echo กลับให้ฟอร์มแก้ไข (กฎ #4 A)</summary>
-    bool WhtViaEWithholding = false);
+    bool WhtViaEWithholding = false,
+    /// <summary>ค่าช่อง "แหล่งเงิน" ของฟอร์ม (<c>account:&lt;id&gt;</c> / <c>bank:&lt;id&gt;</c> / null) ตามลำดับเดียวกับการลงบัญชี —
+    /// <c>Helpers/DocumentMoneyChannel.ChannelValue</c> (PC#15 · ผลตรวจ 2026-10-14) · หน้าเว็บไม่ตัดสินลำดับเอง</summary>
+    string? PaymentChannel = null);
 
 /// <summary>คำตัดสินข้อ 139: ผูกใบลูกเข้าใบต้นทาง — จับคู่บรรทัดลูก → บรรทัดต้นทาง (บรรทัดที่ไม่ส่งมา = ไม่นับในความคืบหน้า)</summary>
 public record LinkSourceRequest(

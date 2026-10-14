@@ -3034,68 +3034,108 @@ const Layout = {
     win.onload = () => { win.print(); win.close(); };
   },
 
-  contactAutocomplete(inputId, hiddenId, { placeholder = 'พิมพ์ชื่อหรือเลขผู้เสียภาษี...', onSelect, onCreateNew } = {}) {
+  // ===== ตัวเลือกผู้ติดต่อ — มาตรฐานเดียวทั้งระบบ (คำสั่งเจ้าของ 2026-10-14) =====
+  // ทุกช่องที่ผู้ใช้เลือก/ระบุผู้ติดต่อ (ลูกค้า · ผู้ขาย · ผู้ถูกหักภาษี · ผู้รับเงิน · คู่ค้า ฯลฯ) เรียกบรรทัดเดียว:
+  //   const picker = Layout.contactPicker('fContact', 'fContactId', { side: 'supplier', onSelect: c => … });
+  // markup ที่หน้าต้องมี = <input type="hidden" id="…Id"> + <input type="text" id="…"> เท่านั้น — ตัวนี้ใส่ปุ่ม "+ สร้างใหม่"
+  // ให้เอง (หน้าไม่ต้องเขียน markup ปุ่ม) และปุ่มเปิดหน้าต่าง "เพิ่มผู้ติดต่อด่วน" ในหน้าเดิม (ฟอร์มที่กรอกค้างไม่หาย)
+  //
+  // options:
+  //   placeholder   ข้อความในช่อง
+  //   onSelect(c)   เรียกเมื่อผู้ใช้เลือกจากรายการ · สร้างใหม่สำเร็จ · กลับมาจากฟอร์มเต็ม — c = ContactResponse ของเซิร์ฟเวอร์
+  //   onClear()     เรียกเมื่อผู้ใช้พิมพ์ทับจนค่าที่เลือกไว้หลุด
+  //   side          'customer' | 'supplier' | 'both' | () => หนึ่งในนั้น — ค่าตั้งต้นของช่อง ลูกค้า/ผู้ขาย ในหน้าต่างสร้างด่วน
+  //                 (ไม่กรองผลค้นหา — ผู้ติดต่อเดียวเป็นได้ทั้งสองฝั่ง)
+  //   allowCreate   false = ไม่มีปุ่ม/ทางสร้าง (ตัวกรองรายงาน · ช่องที่ผู้ติดต่อใหม่ไม่มีข้อมูลให้เลือกอยู่แล้ว)
+  //   compact       true = ปุ่มเป็น "+" (ช่องแคบ เช่น ผู้ถูกหักรายบรรทัด)
+  // คืน { setValue(id, name) · getValue() · getText() · clear() · select(c) · openCreate(text) · input · hidden }
+  //   setValue(id, '') ⇒ ดึงชื่อจากเซิร์ฟเวอร์ให้เอง (ค่าที่บันทึกแล้วต้องโชว์ชื่อ — "เก็บแล้วต้อง echo กลับ")
+  // กติกาทั้งหมด (เลขภาษี/สาขา/ชนิด/กันซ้ำ) อยู่ที่ POST document/contacts ฝั่งเซิร์ฟเวอร์ตัวเดียว — ตัวนี้แค่ส่งค่าและแสดงผล
+  contactPicker(inputId, hiddenId, opts = {}) {
+    const { placeholder = 'พิมพ์ชื่อหรือเลขผู้เสียภาษี...', onSelect, onClear, side = 'both',
+            allowCreate = true, compact = false } = opts;
     const input = document.getElementById(inputId);
     const hidden = document.getElementById(hiddenId);
-    if (!input || !hidden) return;
+    if (!input || !hidden) return null;
+    if (input._contactPicker) return input._contactPicker;
     input.setAttribute('autocomplete', 'off');
     input.setAttribute('placeholder', placeholder);
-    let dropdown = input.parentElement.querySelector('.ac-dropdown');
-    if (!dropdown) {
-      dropdown = document.createElement('div');
-      dropdown.className = 'ac-dropdown';
-      dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;z-index:999;background:#fff;border:1px solid var(--gray-200);border-radius:8px;max-height:220px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12);display:none';
-      input.parentElement.style.position = 'relative';
-      input.parentElement.appendChild(dropdown);
+    // ห่อช่องค้นหา + ปุ่มสร้างใหม่ไว้ด้วยกัน (dropdown ยึดกล่องนี้)
+    let wrap = input.parentElement;
+    if (!wrap || !wrap.classList || !wrap.classList.contains('cp-wrap')) {
+      wrap = document.createElement('div');
+      wrap.className = 'cp-wrap';
+      wrap.style.cssText = 'position:relative;display:flex;gap:6px;align-items:stretch;flex:1 1 auto;min-width:0';
+      if (input.style.width) { wrap.style.width = input.style.width; input.style.width = ''; }
+      input.parentNode.insertBefore(wrap, input);
+      wrap.appendChild(input);
     }
-    let contacts = [], debounce = null, autoFiredFor = null;
+    input.style.flex = '1 1 auto';
+    input.style.minWidth = '0';
+    const dropdown = document.createElement('div');
+    dropdown.className = 'ac-dropdown';
+    dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;z-index:999;background:#fff;border:1px solid var(--gray-200);border-radius:8px;max-height:260px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12);display:none';
+    wrap.appendChild(dropdown);
+    const canCreate = () => allowCreate && Layout._canCreateContact(Layout.myPermissions);
+    let btn = null;
+    if (allowCreate) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-secondary btn-sm cp-create-btn';
+      btn.style.whiteSpace = 'nowrap';
+      btn.textContent = compact ? '+' : '+ สร้างใหม่';
+      btn.title = 'เพิ่มผู้ติดต่อใหม่โดยไม่ออกจากหน้านี้ (ข้อมูลที่กรอกค้างไว้ไม่หาย)';
+      if (!canCreate()) btn.style.display = 'none';
+      btn.onclick = () => picker.openCreate(input.value);
+      wrap.appendChild(btn);
+    }
+
+    let contacts = [], debounce = null, autoFiredFor = null, seq = 0;
     const search = async (q) => {
       const api = Layout.api(); if (!api) return;
+      const my = ++seq;
+      let failed = false;
       try {
         const res = await api.getContacts('?pageSize=20&search=' + encodeURIComponent(q));
-        // ตัดผู้ติดต่อที่ปิดใช้งานแล้ว (IsActive=false) ออกจากตัวเลือก —
-        // ยังโชว์ในหน้ารายชื่อผู้ติดต่อ (badge "ปิด") แต่ห้ามเลือกมาออกเอกสารใหม่
+        // ผู้ติดต่อที่ปิดใช้งาน (IsActive=false) ยังโชว์ในทะเบียน (badge "ปิด") แต่ห้ามเลือกมาใช้ใหม่
         contacts = (res.data?.items || res.data || []).filter(c => c.isActive !== false);
-      } catch { contacts = []; }
-      // Auto-create on a COMPLETE Tax ID with no existing match — the user
-      // asked for "type the full tax id and it just creates it". Fires once
-      // per distinct id; quickCreateContact dedups + notifies.
-      if (onCreateNew && /^\d{13}$/.test(q)
-          && !contacts.some(c => (c.taxId || '') === q)
-          && autoFiredFor !== q) {
-        autoFiredFor = q;
+      } catch (e) { contacts = []; failed = true; }
+      if (my !== seq) return;   // คำตอบเก่ามาช้ากว่าคำค้นใหม่ — ทิ้ง (ห้าม "ใครมาก่อนชนะ")
+      const seed = Layout._contactSeed(q);
+      // พิมพ์เลขผู้เสียภาษีครบ 13 หลักแต่ไม่มีในทะเบียน ⇒ เปิดหน้าต่างสร้างด่วนพร้อมดึงชื่อจากทะเบียนให้ (ครั้งเดียวต่อเลข)
+      // — ไม่สร้างเงียบด้วยชื่อที่แต่งขึ้น ("นิติบุคคล 0105…") แบบเดิม: ผู้ใช้เห็นชื่อจริงก่อนกดบันทึก
+      if (!failed && seed.taxId && Layout.taxIdCheck(seed.taxId).valid && canCreate()
+          && !contacts.some(c => (c.taxId || '').replace(/\D/g, '') === seed.taxId)
+          && autoFiredFor !== seed.taxId) {
+        autoFiredFor = seed.taxId;
         dropdown.style.display = 'none';
-        onCreateNew(q);
+        picker.openCreate(q);
         return;
       }
-      // When a create-new handler is supplied, always keep the dropdown open
-      // (even with zero matches) so the user can add the contact inline.
-      if (!contacts.length && !onCreateNew) { dropdown.style.display = 'none'; return; }
-      const itemsHtml = contacts.map(c => `<div class="ac-item" data-id="${c.id}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--gray-100);font-size:13px">
+      if (!contacts.length && !canCreate() && !failed) { dropdown.style.display = 'none'; return; }
+      const itemsHtml = contacts.map((c, i) => `<div class="ac-item" data-idx="${i}" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--gray-100);font-size:13px">
         <div class="font-medium">${Layout.esc(c.name)}</div>
-        <div class="text-xs text-gray-500">${Layout.esc(c.taxId || '')}${c.branchLabel ? ` · <b style="color:#0f766e">${Layout.esc(c.branchLabel)}</b>` : ''} ${c.isCustomer ? '(ลูกค้า)' : ''} ${c.isSupplier ? '(ผู้ขาย)' : ''}</div>
+        <div class="text-xs text-gray-500">${Layout.esc(c.taxId || 'ไม่มีเลขผู้เสียภาษี')}${c.branchLabel ? ` · <b style="color:#0f766e">${Layout.esc(c.branchLabel)}</b>` : ''} ${c.isCustomer ? '(ลูกค้า)' : ''} ${c.isSupplier ? '(ผู้ขาย)' : ''}</div>
       </div>`).join('');
-      // Footer "create new" affordance. A 13-digit query is treated as a Tax
-      // ID → offer DBD-assisted auto-create; otherwise create by name.
+      const failHtml = failed
+        ? '<div style="padding:8px 12px;font-size:12px;color:#b91c1c">ค้นหาผู้ติดต่อไม่สำเร็จ — ลองพิมพ์ใหม่อีกครั้ง</div>' : '';
+      const emptyHtml = (!failed && !contacts.length)
+        ? '<div style="padding:8px 12px;font-size:12px;color:#64748b">ไม่พบผู้ติดต่อที่ตรงกับคำค้น</div>' : '';
       let createHtml = '';
-      if (onCreateNew) {
-        const isTaxId = /^\d{13}$/.test(q);
-        const label = isTaxId
-          ? `➕ สร้างผู้ติดต่อจากเลขภาษี <b>${Layout.esc(q)}</b> (ดึงชื่อจาก DBD)`
-          : `➕ สร้างผู้ติดต่อใหม่ “${Layout.esc(q)}”`;
+      if (canCreate()) {
+        const label = seed.taxId
+          ? `➕ เพิ่มผู้ติดต่อจากเลขผู้เสียภาษี <b>${Layout.esc(seed.taxId)}</b> (ดึงชื่อจากทะเบียน)`
+          : `➕ เพิ่มผู้ติดต่อใหม่ “${Layout.esc(q)}”`;
         createHtml = `<div class="ac-create" style="padding:9px 12px;cursor:pointer;font-size:13px;color:var(--primary);background:#f8fafc;border-top:1px solid var(--gray-200);font-weight:500">${label}</div>`;
       }
-      dropdown.innerHTML = itemsHtml + createHtml;
+      dropdown.innerHTML = failHtml + itemsHtml + emptyHtml + createHtml;
       dropdown.style.display = 'block';
       dropdown.querySelectorAll('.ac-item').forEach(item => {
         item.onmousedown = (e) => {
           e.preventDefault();
-          const id = item.dataset.id;
-          const c = contacts.find(x => x.id === id);
-          hidden.value = id;
-          input.value = c ? c.name : '';
+          const c = contacts[Number(item.dataset.idx)];
           dropdown.style.display = 'none';
-          if (onSelect) onSelect(c);
+          if (c) picker.select(c);
         };
         item.onmouseenter = () => item.style.background = 'var(--gray-50)';
         item.onmouseleave = () => item.style.background = '';
@@ -3104,23 +3144,407 @@ const Layout = {
       if (createEl) createEl.onmousedown = (e) => {
         e.preventDefault();
         dropdown.style.display = 'none';
-        onCreateNew(q);
+        picker.openCreate(q);
       };
     };
     input.addEventListener('input', () => {
+      const had = !!hidden.value;
       hidden.value = '';
+      if (had && onClear) onClear();
       clearTimeout(debounce);
       const q = input.value.trim();
       if (q.length < 1) { dropdown.style.display = 'none'; return; }
       debounce = setTimeout(() => search(q), 250);
     });
-    input.addEventListener('focus', () => { if (input.value.trim().length >= 1) search(input.value.trim()); });
+    input.addEventListener('focus', () => { if (input.value.trim().length >= 1 && !hidden.value) search(input.value.trim()); });
     input.addEventListener('blur', () => { setTimeout(() => dropdown.style.display = 'none', 200); });
-    return {
-      setValue(id, name) { hidden.value = id || ''; input.value = name || ''; },
+
+    const picker = {
+      input, hidden,
+      side: () => (typeof side === 'function' ? side() : side) || 'both',
+      setValue(id, name) {
+        hidden.value = id || '';
+        input.value = name || '';
+        // ค่าที่บันทึกไว้มีแต่ id ⇒ ดึงชื่อมาแสดง · ดึงไม่ได้ = คง id ไว้และบอกผู้ใช้ (ห้ามหายเงียบ)
+        if (id && !name) {
+          const api = Layout.api();
+          if (api) api.getContact(id).then(r => {
+            if (hidden.value === id && !input.value) input.value = (r && r.data && r.data.name) || '';
+          }).catch(e => Layout.toast('โหลดชื่อผู้ติดต่อที่บันทึกไว้ไม่สำเร็จ: ' + (e.message || '') + ' — ค่าที่บันทึกไว้ยังอยู่', 'warning', 7000));
+        }
+      },
       getValue() { return hidden.value; },
-      clear() { hidden.value = ''; input.value = ''; }
+      getText() { return input.value.trim(); },
+      clear() { hidden.value = ''; input.value = ''; },
+      select(c) {
+        if (!c || !c.id) return;
+        hidden.value = c.id;
+        input.value = c.name || '';
+        if (onSelect) onSelect(c);
+      },
+      openCreate(text) {
+        if (!canCreate()) {
+          Layout.toast('ไม่มีสิทธิ์เพิ่มผู้ติดต่อ (ต้องการสิทธิ์ Contact.Edit) — ให้ผู้ดูแลเพิ่มสิทธิ์ หรือเลือกจากรายชื่อที่มีอยู่', 'error', 7000);
+          return;
+        }
+        Layout._openContactQuickCreate(picker, text);
+      },
     };
+    input._contactPicker = picker;
+    Layout._ensureContactCreatedListener();
+    return picker;
+  },
+
+  /** ผู้ใช้สร้างผู้ติดต่อได้ไหม — ตัดสินจากสิทธิ์ที่เซิร์ฟเวอร์ส่งมา (my-permissions) · ยังไม่รู้ = แสดงปุ่ม
+   *  (ด่านจริงคือ POST document/contacts ที่ตรวจ perm:Contact.Edit — ถ้าเซิร์ฟเวอร์ปฏิเสธ ข้อความของเซิร์ฟเวอร์แสดงในหน้าต่าง) */
+  _canCreateContact(perms) {
+    if (!perms) return true;
+    if (perms.isOwnerOrAdmin) return true;
+    const a = perms.allowedMenuIds || [];
+    return a.includes('*') || a.includes('perm:Contact.Edit');
+  },
+
+  /** ค่าที่พิมพ์ค้างในช่องค้นหา → ค่าตั้งต้นของหน้าต่างสร้างด่วน: ตัวเลข 13 หลัก (เว้นวรรค/ขีดได้) = เลขผู้เสียภาษี · อื่น = ชื่อ */
+  _contactSeed(text) {
+    const t = String(text || '').trim();
+    const digits = t.replace(/[\s-]/g, '');
+    return /^\d{13}$/.test(digits) ? { name: '', taxId: digits } : { name: t, taxId: '' };
+  },
+
+  /** ฝั่งตั้งต้นของผู้ติดต่อใหม่จากบริบทหน้า */
+  _contactSideFlags(side) {
+    if (side === 'customer') return { isCustomer: true, isSupplier: false };
+    if (side === 'supplier') return { isCustomer: false, isSupplier: true };
+    return { isCustomer: true, isSupplier: true };
+  },
+
+  /** ประกอบ payload ของ POST document/contacts จากค่าที่กรอกในหน้าต่างสร้างด่วน — คืน { payload } หรือ { error, field }
+   *  ตรวจเฉพาะที่ผู้ใช้ต้องรู้ก่อนกด (ช่องว่าง · เลขภาษีผิด checksum ด้วยตัวตรวจ JS ตัวเดียว Layout.taxIdCheck) —
+   *  กติกาที่เหลือ (รูปแบบ/กันซ้ำ/ชนิดเมื่อ "ให้ระบบตัดสิน") อยู่ที่เซิร์ฟเวอร์ */
+  _contactQuickPayload(v) {
+    const name = String(v.name || '').trim();
+    const taxId = String(v.taxId || '').replace(/[\s-]/g, '');
+    const type = v.type || '';
+    if (!name) return { error: 'กรุณากรอกชื่อผู้ติดต่อ', field: 'cpqName' };
+    if (taxId) {
+      const chk = Layout.taxIdCheck(taxId);
+      if (!chk.valid) return { error: `เลขผู้เสียภาษีไม่ถูกต้อง (${chk.reason})`, field: 'cpqTaxId' };
+    }
+    if (!type) return { error: 'กรุณาเลือกประเภทผู้ติดต่อ (มีผลกับแบบ ภ.ง.ด.3 / ภ.ง.ด.53)', field: 'cpqType' };
+    if (type === 'auto' && !taxId)
+      return { error: 'ให้ระบบตัดสินประเภทได้เมื่อมีเลขผู้เสียภาษี 13 หลัก — กรอกเลข หรือเลือกประเภทเอง', field: 'cpqType' };
+    let branchCode = null;
+    if (taxId && type !== 'Individual') {
+      if (v.branchMode === 'sub') {
+        const b = String(v.branchCode || '').replace(/\D/g, '');
+        if (!b || b.length > 5 || /^0+$/.test(b)) return { error: 'กรุณากรอกเลขสาขา (1–5 หลัก ไม่ใช่ 00000)', field: 'cpqBranchCode' };
+        branchCode = b.padStart(5, '0');
+      } else if (type !== 'auto') {
+        branchCode = '00000';
+      }
+    }
+    if (!v.isCustomer && !v.isSupplier) return { error: 'เลือกอย่างน้อยหนึ่งฝั่ง: ลูกค้า หรือ ผู้ขาย', field: 'cpqIsCustomer' };
+    const opt = (s) => { const t = String(s || '').trim(); return t || null; };
+    return { payload: {
+      name, taxId: taxId || null, branchCode,
+      branchName: branchCode ? opt(v.branchName) : null,
+      contactType: type === 'auto' ? null : type,
+      isCustomer: !!v.isCustomer, isSupplier: !!v.isSupplier,
+      address: opt(v.address), phone: opt(v.phone), email: opt(v.email), contactPerson: null,
+    } };
+  },
+
+  /** ผลที่เซิร์ฟเวอร์ตอบหลังสร้าง: ตัวใหม่ · ตัวเดิมที่เซิร์ฟเวอร์คืนแทน (เลขภาษี+สาขาซ้ำ) · ตัวเดิมที่ปิดใช้งาน (ห้ามเลือก) */
+  _contactCreateOutcome(created, knownIds) {
+    if (!created || !created.id) return { kind: 'error', message: 'เซิร์ฟเวอร์ไม่ส่งผู้ติดต่อกลับมา — ลองใหม่อีกครั้ง' };
+    if (created.isActive === false)
+      return { kind: 'inactive', message: `มีผู้ติดต่อเลขผู้เสียภาษี/สาขานี้อยู่แล้ว (“${created.name || ''}”) แต่ถูกปิดใช้งาน — เปิดใช้งานที่หน้าผู้ติดต่อก่อน แล้วค่อยเลือก` };
+    if ((knownIds || []).includes(created.id)) return { kind: 'existing' };
+    return { kind: 'created' };
+  },
+
+  _ensureContactQuickModal() {
+    let ov = document.getElementById('cpQuickModal');
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.id = 'cpQuickModal';
+    ov.className = 'modal-overlay';
+    ov.style.zIndex = '1100';   // ซ้อนบนหน้าต่างของหน้า (ฟอร์มเอกสาร ฯลฯ) ได้เสมอ
+    ov.innerHTML = `
+      <div class="cp-quick-box" role="dialog" aria-modal="true" aria-labelledby="cpqTitle" style="background:#fff;border-radius:12px;width:92%;max-width:560px;max-height:88vh;overflow-y:auto;box-shadow:0 20px 40px rgba(0,0,0,.25)">
+        <div class="modal-header"><h3 class="modal-title" id="cpqTitle">เพิ่มผู้ติดต่อด่วน</h3>
+          <button type="button" class="modal-close" id="cpqClose" aria-label="ปิด">&times;</button></div>
+        <div class="modal-body" style="padding:16px 20px">
+          <div id="cpqError" role="alert" style="display:none;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:10px"></div>
+          <div class="form-group"><label class="form-label" for="cpqTaxId">เลขประจำตัวผู้เสียภาษี (13 หลัก)</label>
+            <div style="display:flex;gap:6px"><input type="text" class="form-input" id="cpqTaxId" inputmode="numeric" maxlength="17" placeholder="ถ้ามี — ระบบดึงชื่อ/ที่อยู่จากทะเบียนให้" style="flex:1;min-width:0">
+              <button type="button" class="btn btn-secondary btn-sm" id="cpqDbdBtn" style="white-space:nowrap">ดึงจากทะเบียน</button></div>
+            <div id="cpqTaxHint" class="form-help" style="font-size:12px;margin-top:3px;color:#64748b"></div>
+          </div>
+          <div id="cpqDup" style="display:none;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:10px"></div>
+          <div class="form-group"><label class="form-label" for="cpqName">ชื่อ *</label>
+            <input type="text" class="form-input" id="cpqName" maxlength="200" placeholder="ชื่อบริษัท/ร้าน หรือ ชื่อ-นามสกุล"></div>
+          <div class="form-group"><label class="form-label" for="cpqType">ประเภท *</label>
+            <select class="form-select" id="cpqType">
+              <option value="">— เลือกประเภท —</option>
+              <option value="auto">ให้ระบบตัดสินจากเลขผู้เสียภาษี</option>
+              <option value="JuristicPerson">นิติบุคคล (บริษัท/ห้างหุ้นส่วน) — ภ.ง.ด.53</option>
+              <option value="Individual">บุคคลธรรมดา — ภ.ง.ด.3</option>
+              <option value="GovernmentAgency">หน่วยงานราชการ</option>
+            </select></div>
+          <div class="form-group" id="cpqBranchGroup"><label class="form-label">สาขา (ประกาศอธิบดีฯ ฉบับที่ 199)</label>
+            <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:13px">
+              <label style="display:flex;gap:4px;align-items:center"><input type="radio" name="cpqBranchMode" id="cpqBranchHq" value="hq" checked> สำนักงานใหญ่</label>
+              <label style="display:flex;gap:4px;align-items:center"><input type="radio" name="cpqBranchMode" id="cpqBranchSub" value="sub"> สาขาที่</label>
+              <input type="text" class="form-input" id="cpqBranchCode" inputmode="numeric" maxlength="5" placeholder="00001" style="width:90px">
+              <input type="text" class="form-input" id="cpqBranchName" maxlength="200" placeholder="ชื่อสาขา (ถ้ามี)" style="flex:1;min-width:120px">
+            </div></div>
+          <div class="form-group"><label class="form-label">ใช้เป็น *</label>
+            <div style="display:flex;gap:16px;font-size:13px">
+              <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="cpqIsCustomer"> ลูกค้า</label>
+              <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="cpqIsSupplier"> ผู้ขาย / ผู้รับเงิน</label>
+            </div></div>
+          <div class="form-group"><label class="form-label" for="cpqAddress">ที่อยู่</label>
+            <textarea class="form-input" id="cpqAddress" rows="2" placeholder="บ้านเลขที่ ถนน ตำบล อำเภอ จังหวัด รหัสไปรษณีย์ — ระบบแยกส่วนให้"></textarea></div>
+          <div class="form-row" style="display:flex;gap:10px;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:150px"><label class="form-label" for="cpqPhone">โทรศัพท์</label><input type="tel" class="form-input" id="cpqPhone"></div>
+            <div class="form-group" style="flex:1;min-width:150px"><label class="form-label" for="cpqEmail">อีเมล</label><input type="email" class="form-input" id="cpqEmail"></div>
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 20px;border-top:1px solid var(--gray-200)">
+          <a href="#" id="cpqFullForm" style="font-size:13px;margin-right:auto" title="เปิดหน้าผู้ติดต่อแบบเต็มในแท็บใหม่ — บันทึกแล้วระบบเลือกให้ในช่องนี้">เปิดฟอร์มเต็ม (แท็บใหม่) ↗</a>
+          <button type="button" class="btn btn-secondary" id="cpqCancel">ยกเลิก</button>
+          <button type="button" class="btn btn-primary" id="cpqSave">บันทึกและเลือก</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    const $ = (id) => document.getElementById(id);
+    const close = () => { ov.classList.remove('active'); };
+    $('cpqClose').onclick = close;
+    $('cpqCancel').onclick = close;
+    $('cpqSave').onclick = () => Layout._saveContactQuickCreate();
+    $('cpqDbdBtn').onclick = () => Layout._contactQuickDbd(true);
+    $('cpqFullForm').onclick = (e) => { e.preventDefault(); Layout._openContactFullForm(); };
+    // ค่าที่ผู้ใช้แตะเองชนะเสมอ — ตัวเติมจากทะเบียนเขียนทับได้เฉพาะช่องที่ยังไม่ถูกแตะ (dataset.userTouched)
+    ['cpqName', 'cpqAddress', 'cpqType', 'cpqBranchName', 'cpqPhone', 'cpqEmail'].forEach(id => {
+      $(id).addEventListener('input', () => { $(id).dataset.userTouched = '1'; delete $(id).dataset.autoSrc; });
+      $(id).addEventListener('change', () => { $(id).dataset.userTouched = '1'; delete $(id).dataset.autoSrc; });
+    });
+    let t = null;
+    $('cpqTaxId').addEventListener('input', () => {
+      clearTimeout(t);
+      t = setTimeout(() => Layout._contactQuickTaxChanged(), 350);
+    });
+    // พิมพ์เลขสาขา = เลือก "สาขาที่" ให้เอง (ไม่ต้องคลิกวิทยุก่อน)
+    $('cpqBranchCode').addEventListener('input', () => { $('cpqBranchSub').checked = true; });
+    ['cpqType', 'cpqBranchHq', 'cpqBranchSub'].forEach(id => $(id).addEventListener('change', () => Layout._contactQuickSyncBranch()));
+    return ov;
+  },
+
+  _openContactQuickCreate(picker, text) {
+    const ov = this._ensureContactQuickModal();
+    const $ = (id) => document.getElementById(id);
+    this._cpqPicker = picker;
+    this._cpqKnownIds = [];
+    this._cpqDbdFor = null;
+    const seed = this._contactSeed(text);
+    const flags = this._contactSideFlags(picker.side());
+    ['cpqName', 'cpqTaxId', 'cpqAddress', 'cpqBranchCode', 'cpqBranchName', 'cpqPhone', 'cpqEmail'].forEach(id => {
+      $(id).value = ''; delete $(id).dataset.userTouched; delete $(id).dataset.autoSrc;
+    });
+    $('cpqType').value = seed.taxId ? 'auto' : '';
+    delete $('cpqType').dataset.userTouched; delete $('cpqType').dataset.autoSrc;
+    $('cpqName').value = seed.name;
+    if (seed.name) $('cpqName').dataset.userTouched = '1';   // ชื่อที่ผู้ใช้พิมพ์มาเอง — ทะเบียนห้ามทับ
+    $('cpqTaxId').value = seed.taxId;
+    $('cpqBranchHq').checked = true;
+    $('cpqIsCustomer').checked = flags.isCustomer;
+    $('cpqIsSupplier').checked = flags.isSupplier;
+    $('cpqError').style.display = 'none';
+    $('cpqDup').style.display = 'none';
+    $('cpqTaxHint').textContent = '';
+    $('cpqSave').disabled = false;
+    this._contactQuickSyncBranch();
+    this.openModal('cpQuickModal');
+    setTimeout(() => (seed.taxId ? $('cpqName') : (seed.name ? $('cpqTaxId') : $('cpqName'))).focus(), 50);
+    if (seed.taxId) this._contactQuickTaxChanged();
+  },
+
+  _contactQuickSyncBranch() {
+    const $ = (id) => document.getElementById(id);
+    const type = $('cpqType').value;
+    // บุคคลธรรมดาไม่มีสาขา (payload ส่ง branchCode = null) — ซ่อนกลุ่มนี้
+    $('cpqBranchGroup').style.display = type === 'Individual' ? 'none' : '';
+  },
+
+  /** เลขภาษีเปลี่ยน → ตรวจรูปแบบ (ตัวตรวจ JS ตัวเดียว) · หาผู้ติดต่อเลขเดียวกันที่มีอยู่ (เสนอให้เลือกแทนสร้างซ้ำ) · ดึงทะเบียน */
+  async _contactQuickTaxChanged() {
+    const $ = (id) => document.getElementById(id);
+    const tax = ($('cpqTaxId').value || '').replace(/[\s-]/g, '');
+    const hint = $('cpqTaxHint');
+    const dup = $('cpqDup');
+    if (!tax) { hint.textContent = ''; dup.style.display = 'none'; return; }
+    const chk = this.taxIdCheck(tax);
+    if (!chk.valid) {
+      hint.style.color = tax.length >= 13 ? '#b91c1c' : '#64748b';
+      hint.textContent = tax.length >= 13 ? `เลขไม่ถูกต้อง (${chk.reason})` : `${tax.replace(/\D/g, '').length}/13 หลัก`;
+      dup.style.display = 'none';
+      return;
+    }
+    hint.style.color = '#15803d';
+    hint.textContent = '✓ รูปแบบเลขถูกต้อง';
+    if (!$('cpqType').value) { $('cpqType').value = 'auto'; $('cpqType').dataset.autoSrc = 'taxId'; this._contactQuickSyncBranch(); }
+    await this._contactQuickFindExisting(tax);
+    if ($('cpqType').value !== 'Individual') this._contactQuickDbd(false);
+  },
+
+  async _contactQuickFindExisting(tax) {
+    const $ = (id) => document.getElementById(id);
+    const dup = $('cpqDup');
+    const api = this.api(); if (!api) return;
+    try {
+      const res = await api.getContacts('?pageSize=50&search=' + encodeURIComponent(tax));
+      if ((($('cpqTaxId').value || '').replace(/[\s-]/g, '')) !== tax) return;   // ผู้ใช้แก้เลขไปแล้ว
+      const hits = (res.data?.items || res.data || []).filter(c => (c.taxId || '').replace(/\D/g, '') === tax);
+      this._cpqKnownIds = hits.map(c => c.id);
+      this._cpqExisting = hits;
+      if (!hits.length) { dup.style.display = 'none'; return; }
+      dup.innerHTML = `<div style="font-weight:600;margin-bottom:4px">มีผู้ติดต่อเลขนี้ในทะเบียนแล้ว ${hits.length} ราย — เลือกใช้แทนการสร้างซ้ำ (สร้างใหม่ได้เฉพาะสาขาอื่น)</div>`
+        + hits.map((c, i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0;border-top:1px solid #fde68a">
+            <span>${this.esc(c.name)}${c.branchLabel ? ' · ' + this.esc(c.branchLabel) : ''}${c.isActive === false ? ' <b style="color:#b91c1c">(ปิดใช้งาน)</b>' : ''}</span>
+            ${c.isActive === false
+              ? `<a href="/pages/contacts.html?id=${encodeURIComponent(c.id)}" target="_blank" rel="noopener" style="font-size:12px;white-space:nowrap">เปิดดู ↗</a>`
+              : `<button type="button" class="btn btn-sm btn-secondary cpq-use" data-idx="${i}" style="white-space:nowrap">ใช้รายนี้</button>`}
+          </div>`).join('');
+      dup.style.display = 'block';
+      dup.querySelectorAll('.cpq-use').forEach(b => {
+        b.onclick = () => {
+          const c = hits[Number(b.dataset.idx)];
+          const picker = this._cpqPicker;
+          this.closeModal('cpQuickModal');
+          if (picker && c) { picker.select(c); this.toast(`เลือกผู้ติดต่อที่มีอยู่แล้ว: ${c.name}`, 'info'); }
+        };
+      });
+    } catch (e) {
+      // ตรวจซ้ำไม่ได้ ≠ ไม่ซ้ำ — บอกผู้ใช้ · เซิร์ฟเวอร์ยังกันซ้ำ (เลขภาษี+สาขา) ตอนบันทึกอยู่
+      dup.innerHTML = 'ตรวจผู้ติดต่อซ้ำไม่สำเร็จ — ถ้าเลขนี้มีอยู่แล้ว ระบบจะเลือกรายเดิมให้แทนการสร้างซ้ำ';
+      dup.style.display = 'block';
+    }
+  },
+
+  /** ดึงชื่อ/ที่อยู่จากทะเบียน (GET /api/dbd/juristic/{เลข}?branch=) — เติมเฉพาะช่องที่ผู้ใช้ยังไม่แตะ · ไม่พบ = บอก ไม่เดา */
+  async _contactQuickDbd(manual) {
+    const $ = (id) => document.getElementById(id);
+    const tax = ($('cpqTaxId').value || '').replace(/[\s-]/g, '');
+    const hint = $('cpqTaxHint');
+    if (!this.taxIdCheck(tax).valid) {
+      if (manual) { hint.style.color = '#b91c1c'; hint.textContent = 'กรอกเลขผู้เสียภาษี 13 หลักที่ถูกต้องก่อน'; }
+      return;
+    }
+    const branch = $('cpqBranchSub').checked ? ($('cpqBranchCode').value || '').replace(/\D/g, '').padStart(5, '0') : '';
+    const key = tax + '|' + branch;
+    if (!manual && this._cpqDbdFor === key) return;
+    this._cpqDbdFor = key;
+    hint.style.color = '#64748b';
+    hint.textContent = 'กำลังดึงข้อมูลจากทะเบียน…';
+    try {
+      const res = await API.get(`/api/dbd/juristic/${encodeURIComponent(tax)}${branch ? '?branch=' + encodeURIComponent(branch) : ''}`);
+      if ((($('cpqTaxId').value || '').replace(/[\s-]/g, '')) !== tax) return;
+      const d = res && res.data;
+      if (!d || !(d.nameTh || d.nameEn)) throw new Error('ไม่พบข้อมูล');
+      const fill = (id, val) => {
+        const el = $(id);
+        if (!val || el.dataset.userTouched === '1') return;
+        el.value = val; el.dataset.autoSrc = 'dbd';
+      };
+      fill('cpqName', d.nameTh || d.nameEn);
+      fill('cpqAddress', d.address);
+      if (d.branchName) fill('cpqBranchName', d.branchName);
+      if ($('cpqType').dataset.userTouched !== '1') { $('cpqType').value = 'JuristicPerson'; $('cpqType').dataset.autoSrc = 'dbd'; this._contactQuickSyncBranch(); }
+      hint.style.color = '#15803d';
+      hint.textContent = `✓ พบในทะเบียน${d.status ? ' · สถานะ ' + d.status : ''} — ตรวจชื่อ/ที่อยู่แล้วกดบันทึก`;
+    } catch (e) {
+      hint.style.color = '#b45309';
+      hint.textContent = 'ไม่พบชื่อในทะเบียนนิติบุคคล (หรือเชื่อมต่อไม่ได้) — กรอกชื่อเอง · ถ้าเป็นบุคคลธรรมดาเลือกประเภท "บุคคลธรรมดา"';
+    }
+  },
+
+  async _saveContactQuickCreate() {
+    const $ = (id) => document.getElementById(id);
+    const errBox = $('cpqError');
+    const showErr = (msg, field) => {
+      errBox.textContent = msg; errBox.style.display = 'block';
+      if (field && $(field)) $(field).focus();
+    };
+    errBox.style.display = 'none';
+    const r = this._contactQuickPayload({
+      name: $('cpqName').value, taxId: $('cpqTaxId').value, type: $('cpqType').value,
+      branchMode: $('cpqBranchSub').checked ? 'sub' : 'hq', branchCode: $('cpqBranchCode').value, branchName: $('cpqBranchName').value,
+      isCustomer: $('cpqIsCustomer').checked, isSupplier: $('cpqIsSupplier').checked,
+      address: $('cpqAddress').value, phone: $('cpqPhone').value, email: $('cpqEmail').value,
+    });
+    if (r.error) { showErr(r.error, r.field); return; }
+    const api = this.api(); if (!api) { showErr('ยังไม่ได้เลือกบริษัท'); return; }
+    const btn = $('cpqSave');
+    btn.disabled = true;
+    try {
+      const res = await api.createContact(r.payload);
+      const c = res && res.data;
+      const out = this._contactCreateOutcome(c, this._cpqKnownIds);
+      if (out.kind === 'error' || out.kind === 'inactive') { showErr(out.message); return; }
+      const picker = this._cpqPicker;
+      this.closeModal('cpQuickModal');
+      if (picker) picker.select(c);
+      this.toast(out.kind === 'existing'
+        ? `เลขผู้เสียภาษี/สาขานี้มีในทะเบียนแล้ว — เลือก “${c.name}” ให้แทนการสร้างซ้ำ`
+        : `เพิ่มผู้ติดต่อ “${c.name}” แล้ว และเลือกให้ในช่องนี้`, out.kind === 'existing' ? 'info' : 'success', 6000);
+    } catch (e) {
+      // ข้อความของเซิร์ฟเวอร์ (สิทธิ์ · รูปแบบเลข/สาขา · ช่องบังคับ) แสดงในหน้าต่าง — ค่าที่กรอกไม่หาย
+      showErr('บันทึกไม่สำเร็จ: ' + (e.message || 'ไม่ทราบสาเหตุ'));
+    } finally {
+      btn.disabled = false;
+    }
+  },
+
+  /** "เปิดฟอร์มเต็ม" — หน้าผู้ติดต่อในแท็บใหม่ (contacts.html?autoopen=1&returnto=opener) · บันทึกแล้วแท็บนั้น postMessage กลับ
+   *  แล้วตัวรับกลางเลือกให้ในช่องที่เปิดมา */
+  _openContactFullForm() {
+    const $ = (id) => document.getElementById(id);
+    const params = new URLSearchParams();
+    const name = ($('cpqName').value || '').trim();
+    const tax = ($('cpqTaxId').value || '').replace(/[\s-]/g, '');
+    if (name) params.set('name', name);
+    if (tax) params.set('taxId', tax);
+    params.set('autoopen', '1');
+    params.set('returnto', 'opener');
+    const win = window.open('/pages/contacts.html?' + params.toString(), '_blank');
+    if (!win) { this.toast('เบราว์เซอร์บล็อกหน้าต่างใหม่ — อนุญาต popup หรือเปิดหน้าผู้ติดต่อเอง', 'error'); return; }
+    this._cpqAwaitingFullForm = this._cpqPicker;
+    this.closeModal('cpQuickModal');
+  },
+
+  /** ตัวรับกลาง (ติดตั้งครั้งเดียวต่อหน้า): แท็บฟอร์มเต็มส่ง {type:'contact-created', contactId} กลับมา → ดึงผู้ติดต่อตัวเต็มแล้วเลือกให้ */
+  _ensureContactCreatedListener() {
+    if (this._cpListenerWired) return;
+    this._cpListenerWired = true;
+    window.addEventListener('message', async (ev) => {
+      if (ev.origin !== window.location.origin) return;
+      const d = ev.data;
+      if (!d || d.type !== 'contact-created' || !d.contactId) return;
+      const picker = this._cpqAwaitingFullForm;
+      if (!picker) return;
+      this._cpqAwaitingFullForm = null;
+      try {
+        const api = this.api();
+        const r = api ? await api.getContact(d.contactId) : null;
+        const c = (r && r.data) || { id: d.contactId, name: d.name || '' };
+        if (c.isActive === false) { this.toast(`“${c.name}” ถูกปิดใช้งาน — เปิดใช้งานก่อนเลือก`, 'error', 7000); return; }
+        picker.select(c);
+        this.toast(`เลือกผู้ติดต่อ: ${c.name || d.contactId}`, 'success');
+      } catch (e) {
+        this.toast('ดึงผู้ติดต่อที่เพิ่งสร้างไม่สำเร็จ: ' + (e.message || '') + ' — พิมพ์ชื่อเพื่อเลือกอีกครั้ง', 'error', 7000);
+      }
+    });
   },
 
   // ===== Form Validation Utilities =====

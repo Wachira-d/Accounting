@@ -602,7 +602,9 @@ const API = {
       dashboard: (q = '') => API.get(`${base}/dashboard${q}`),
       // Accounting
       getAccounts: (q = '') => API.get(`${base}/accounting/accounts${q}`),
-      getPaymentChannels: () => API.get(`${base}/accounting/accounts/payment-channels`),
+      // ช่องทางเงิน (ผังเงินสด/ธนาคาร/ช่องจ่าย) — แถวมีป้าย channelGroup "bank"/"other" จากเซิร์ฟเวอร์ (หน้าเว็บห้ามกรองรหัสเอง) ·
+      // ค่าเดิมคืนเฉพาะกลุ่ม "other" · { includeBank: true } = รวมผังที่ผูกบัญชีธนาคาร (หน้า ตั้งค่า)
+      getPaymentChannels: (opts) => API.get(`${base}/accounting/accounts/payment-channels${opts && opts.includeBank ? '?includeBank=true' : ''}`),
       createAccount: (d) => API.post(`${base}/accounting/accounts`, d),
       updateAccount: (id, d) => API.put(`${base}/accounting/accounts/${id}`, d),
       seedAccounts: (businessType, industryType) => {
@@ -825,7 +827,8 @@ const API = {
       getInvestments: () => API.get(`${base}/financial/investments`),
       sellInvestment: (id, d) => API.post(`${base}/financial/investments/${id}/sell`, d),
       // Bank
-      getBankAccounts: () => API.get(`${base}/bank/accounts`),
+      // { activeOnly: true } = เฉพาะบัญชีที่เปิดใช้ (ตัวเลือกในฟอร์มเอกสาร/รับ-จ่ายเงิน · PC#18) · ไม่ส่ง = ทุกบัญชี (หน้าจัดการบัญชีธนาคาร)
+      getBankAccounts: (opts) => API.get(`${base}/bank/accounts${opts && opts.activeOnly ? '?activeOnly=true' : ''}`),
       createBankAccount: (d) => API.post(`${base}/bank/accounts`, d),
       updateBankAccount: (id, d) => API.put(`${base}/bank/accounts/${id}`, d),
       getTransactions: (id, q = '') => API.get(`${base}/bank/accounts/${id}/transactions${q}`),

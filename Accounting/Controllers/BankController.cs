@@ -29,9 +29,10 @@ public class BankController : ControllerBase
     }
 
     [HttpGet("accounts")]
-    public async Task<ActionResult<ApiResponse<List<BankAccountResponse>>>> GetAccounts(Guid companyId)
+    public async Task<ActionResult<ApiResponse<List<BankAccountResponse>>>> GetAccounts(Guid companyId, [FromQuery] bool activeOnly = false)
     {
-        var result = await _bankService.GetBankAccountsAsync(companyId);
+        // activeOnly=true ⇒ รายการสำหรับเลือก (ไม่เสนอบัญชีที่ปิดใช้ — PC#18) · ไม่ส่ง ⇒ ทุกบัญชี (หน้าจัดการบัญชีธนาคาร)
+        var result = await _bankService.GetBankAccountsAsync(companyId, activeOnly);
         return Ok(new ApiResponse<List<BankAccountResponse>>(true, result));
     }
 

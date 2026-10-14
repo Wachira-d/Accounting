@@ -562,6 +562,31 @@ public partial class DocumentService : IDocumentService
         return brandId.Value;
     }
 
+    /// <summary>ตรวจแหล่งเงิน (<c>BankAccountId</c>/<c>PaymentAccountId</c>) + หมวดค่าใช้จ่าย (<c>ExpenseCategoryId</c>) ระดับเอกสารตอนบันทึก —
+    /// ตัวตัดสิน <see cref="Accounting.Helpers.DocumentMoneyChannel"/> ตัวเดียว (PC#4 · ID#7 · ผลตรวจ 2026-10-14) ·
+    /// แต่ละช่องตรวจกับ<b>ตารางของมันเอง</b> + CompanyId (รหัสสลับช่อง/ข้ามบริษัท/ปิดใช้/ธนาคารยังไม่ผูกผัง ⇒ ปฏิเสธพร้อมบอกช่องและที่แก้) ·
+    /// ใบที่มีทั้งสองช่อง (เช่นมัดจำที่พักรับผ่าน gateway) ตรวจทั้งสองค่า — ลำดับการลงบัญชีอยู่ที่ <c>DocumentMoneyChannel.Pick</c></summary>
+    private async Task ValidateDocumentMoneyHeaderAsync(Guid companyId, Guid? bankAccountId, Guid? paymentAccountId,
+        Guid? expenseCategoryId, bool checkBank, bool checkPaymentAccount, bool checkExpenseCategory)
+    {
+        const string fix = Accounting.Helpers.DocumentMoneyChannel.DocumentFixHint;
+        if (checkPaymentAccount && paymentAccountId.HasValue)
+        {
+            var d = await Accounting.Helpers.DocumentMoneyChannel.EvaluateAsync(_db, companyId, null, paymentAccountId,
+                Accounting.Helpers.MoneyChannelCheck.Save, fix);
+            if (!d.Ok) throw new BusinessRuleException(d.Problem!, Accounting.Helpers.DocumentMoneyChannel.RuleCode);
+        }
+        if (checkBank && bankAccountId.HasValue)
+        {
+            var d = await Accounting.Helpers.DocumentMoneyChannel.EvaluateAsync(_db, companyId, bankAccountId, null,
+                Accounting.Helpers.MoneyChannelCheck.Save, fix);
+            if (!d.Ok) throw new BusinessRuleException(d.Problem!, Accounting.Helpers.DocumentMoneyChannel.RuleCode);
+        }
+        if (checkExpenseCategory
+            && await Accounting.Helpers.DocumentMoneyChannel.ExpenseCategoryProblemAsync(_db, companyId, expenseCategoryId) is { } ecProblem)
+            throw new BusinessRuleException(ecProblem, Accounting.Helpers.DocumentMoneyChannel.RuleCode);
+    }
+
     /// <summary>ตรวจว่า BranchId ที่ส่งมาเป็นสาขาของบริษัทนี้จริง (invariant M)
     /// — สาขาผิดบริษัท = ใบกำกับพิมพ์ที่อยู่/รหัสสาขาของคนอื่น §86/4
     ///
@@ -1239,9 +1264,10 @@ public partial class DocumentService : IDocumentService
                 Sensitivity = request.Sensitivity,
                 ProjectId = request.ProjectId,
                 DimensionId = request.DimensionId,
-                BankAccountId = request.BankAccountId,
-                PaymentAccountId = request.PaymentAccountId,
-                ExpenseCategoryId = request.ExpenseCategoryId,
+                // Guid.Empty = ไม่เลือก · ตรวจตาราง/บริษัท/สถานะที่ ValidateDocumentMoneyHeaderAsync ข้างล่าง (PC#4 · ID#7)
+                BankAccountId = request.BankAccountId == Guid.Empty ? null : request.BankAccountId,
+                PaymentAccountId = request.PaymentAccountId == Guid.Empty ? null : request.PaymentAccountId,
+                ExpenseCategoryId = request.ExpenseCategoryId == Guid.Empty ? null : request.ExpenseCategoryId,
                 CustomAppendix = request.CustomAppendix,
                 CustomFooterNotes = request.CustomFooterNotes,
                 CustomTermsAndConditions = request.CustomTermsAndConditions,
@@ -1589,6 +1615,9 @@ public partial class DocumentService : IDocumentService
             // สาขาผู้ออกใบ — null/Empty = ใช้ค่าบริษัทตามเดิม (กิจการสาขาเดียว)
             doc.BranchId = await ResolveOwnedBranchIdAsync(companyId, request.BranchId);
             doc.DocumentTemplateId = await ResolveOwnedTemplateIdAsync(companyId, request.DocumentTemplateId);
+            // แหล่งเงิน/หมวดค่าใช้จ่ายระดับเอกสาร — ตารางถูก · บริษัทนี้ · เปิดใช้ · ธนาคารผูกผังแล้ว (เดิมเก็บดิบ ⇒ ลงเงินสดเงียบ ๆ ตอนอนุมัติ)
+            await ValidateDocumentMoneyHeaderAsync(companyId, doc.BankAccountId, doc.PaymentAccountId, doc.ExpenseCategoryId,
+                checkBank: true, checkPaymentAccount: true, checkExpenseCategory: true);
             // รอบ 203 ทีม F3 (E-8): ธง "บริการต่างประเทศ" มีความหมายเฉพาะชุดชนิดเดียว (ForeignServiceVat.IsSelfAssessingType · PI/Expense/PV) —
             // ใบขายที่ติ๊กธงเคยถูกนับเป็นหนี้ ภ.พ.36 บนหน้านำส่ง ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่ล้างธงเงียบ)
             if (Accounting.Helpers.Pp36Lifecycle.FlagTypeError(doc.DocumentType, request.IsForeignService) is string fsTypeErr)
@@ -2964,12 +2993,20 @@ public partial class DocumentService : IDocumentService
 
         // Guid.Empty = ปลดค่า (กติกาเดียวกับ DimensionId/BrandId ข้างบน —
         // ทุก dropdown ที่มี option "— ไม่ระบุ —" ต้องปลดได้จริง ไม่ใช่ silent no-op)
+        // ตรวจเฉพาะค่าที่ "เปลี่ยน" (PC#4 · ID#7) — ใบเก่าที่ธนาคารถูกปิดใช้ภายหลัง ยังแก้ช่องอื่นได้ (ตอนลงบัญชีตรวจอีกชั้น)
+        var oldBankAccountId = doc.BankAccountId;
+        var oldPaymentAccountId = doc.PaymentAccountId;
+        var oldExpenseCategoryId = doc.ExpenseCategoryId;
         if (request.BankAccountId.HasValue)
             doc.BankAccountId = request.BankAccountId.Value == Guid.Empty ? null : request.BankAccountId.Value;
         if (request.PaymentAccountId.HasValue)
             doc.PaymentAccountId = request.PaymentAccountId.Value == Guid.Empty ? null : request.PaymentAccountId.Value;
         if (request.ExpenseCategoryId.HasValue)
             doc.ExpenseCategoryId = request.ExpenseCategoryId.Value == Guid.Empty ? null : request.ExpenseCategoryId.Value;
+        await ValidateDocumentMoneyHeaderAsync(companyId, doc.BankAccountId, doc.PaymentAccountId, doc.ExpenseCategoryId,
+            checkBank: doc.BankAccountId != oldBankAccountId,
+            checkPaymentAccount: doc.PaymentAccountId != oldPaymentAccountId,
+            checkExpenseCategory: doc.ExpenseCategoryId != oldExpenseCategoryId);
 
         // CertificateInLieu fields
         if (request.CertificateReason != null) doc.CertificateReason = request.CertificateReason;
@@ -8835,34 +8872,72 @@ public partial class DocumentService : IDocumentService
         if (hasSubmittedEtax)
             throw new InvalidOperationException("เอกสารนี้ส่ง e-Tax XML ไปสรรพากรแล้ว — แก้ไม่ได้");
 
-        // ── Resolve Cr GL เดิม + ใหม่ ──
-        // BankAccount → LinkedAccountId เป็น GL; PaymentAccountId เป็น GL ตรง.
-        async Task<(Guid Id, string Code, string Name)> ResolveCreditGlAsync(
-            Guid? bankAccountId, Guid? paymentAccountId, string side)
+        // ── ผังแหล่งเงินเดิม + ใหม่ (ID#6 · ผลตรวจ 2026-10-14) ──
+        // ใหม่: ตัวตัดสินเดียว Helpers/DocumentMoneyChannel (ตารางถูก · บริษัทนี้ · เปิดใช้ · ธนาคารผูกผังแล้ว) — ใช้ไม่ได้ = บอกช่อง + ที่แก้
+        // เดิม: อ่านจาก **JE ที่ลงไว้จริง** ของเอกสารนี้ — เดิมคำนวณจาก LinkedAccountId "ปัจจุบัน" ของธนาคาร ⇒ ใบที่ลงเงินสดไว้ (ตกเงินสดเงียบ ๆ
+        // ก่อนรอบนี้) หรือธนาคารที่เปลี่ยนผังที่ผูกทีหลัง ได้ JE แก้ที่กลับผังผิดตัว · ธนาคารเดิมยังไม่ผูกผัง = เคยไปต่อไม่ได้เลย
+        var newDecision = await Accounting.Helpers.DocumentMoneyChannel.EvaluateAsync(_db, companyId,
+            newBankAccountId, newPaymentAccountId, Accounting.Helpers.MoneyChannelCheck.Save,
+            "เลือกแหล่งเงินใหม่ในหน้าต่าง “เปลี่ยนแหล่งเงิน”");
+        if (!newDecision.Ok)
+            throw new BusinessRuleException("แหล่งเงินใหม่: " + newDecision.Problem, Accounting.Helpers.DocumentMoneyChannel.RuleCode);
+        var newAcct = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.Id == newDecision.GlAccountId!.Value && a.CompanyId == companyId)
+            .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+            .FirstAsync();
+        var newGl = (Id: newAcct.Id, Code: newAcct.AccountCode, Name: newAcct.AccountName);
+
+        // เงินที่ไหลผ่านแหล่งเงินเดิม = ยอดที่จ่าย/รับจริง (บาท — JE เก็บเป็นบาทเสมอ)
+        var amount = doc.ExchangeRate == 1m
+            ? doc.PaidAmount
+            : Math.Round(doc.PaidAmount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
+        var isInflow = await IsCashInflowDocAsync(companyId, doc);
+
+        // ยังไม่ได้จ่าย/รับจริง (ไม่กระทบ GL แหล่งเงิน) → แค่อัปเดต field (ไม่ต้องหาผังเดิม)
+        if (amount <= 0.005m)
         {
-            Guid? glId = paymentAccountId;
-            if (!glId.HasValue && bankAccountId.HasValue)
-            {
-                glId = await _db.BankAccounts.AsNoTracking()
-                    .Where(b => b.Id == bankAccountId.Value && b.CompanyId == companyId)
-                    .Select(b => b.LinkedAccountId)
-                    .FirstOrDefaultAsync();
-                if (!glId.HasValue)
-                    throw new InvalidOperationException(
-                        $"บัญชีธนาคาร ({side}) ยังไม่ได้ผูกผังบัญชี (LinkedAccountId) — ตั้งค่าก่อน");
-            }
-            if (!glId.HasValue)
-                throw new InvalidOperationException($"หาแหล่งเงิน ({side}) ไม่เจอ");
-            var acct = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.Id == glId.Value && a.CompanyId == companyId)
-                .Select(a => new { a.Id, a.AccountCode, a.AccountName })
-                .FirstOrDefaultAsync()
-                ?? throw new InvalidOperationException($"ไม่พบผังบัญชีแหล่งเงิน ({side})");
-            return (acct.Id, acct.AccountCode, acct.AccountName);
+            doc.BankAccountId = newBankAccountId;
+            doc.PaymentAccountId = newPaymentAccountId;
+            doc.UpdatedAt = DateTime.UtcNow;
+            doc.UpdatedBy = actor;
+            await _db.SaveChangesAsync();
+            return await GetDocumentAsync(companyId, documentId);
         }
 
-        var oldGl = await ResolveCreditGlAsync(doc.BankAccountId, doc.PaymentAccountId, "เดิม");
-        var newGl = await ResolveCreditGlAsync(newBankAccountId, newPaymentAccountId, "ใหม่");
+        // ขาเงินในสมุดรายวันที่ยังมีผลของเอกสารนี้ (รวม JE แก้แหล่งเงินครั้งก่อน) — ยอดสุทธิฝั่งเงิน (ออก = เครดิต · เข้า = เดบิต) ต่อผัง
+        var moneyNet = await (from l in _db.JournalEntryLines.AsNoTracking()
+                              join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                              where j.CompanyId == companyId && j.SourceDocumentId == documentId
+                                    && j.Status == JournalEntryStatus.Posted
+                                    && j.ReversedByEntryId == null && j.OriginalEntryId == null
+                                    && !j.IsDeleted && !l.IsDeleted
+                              group l by l.AccountId into g
+                              select new { AccountId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
+                             .ToListAsync();
+        decimal MoneySide(decimal net) => isInflow ? -net : net;
+        // ผังตามแหล่งเงินที่บันทึกบนหัวเอกสาร — ใช้เมื่อ JE ยืนยันว่าเงินผ่านผังนั้นจริงเท่านั้น
+        var headerDecision = await Accounting.Helpers.DocumentMoneyChannel.EvaluateAsync(_db, companyId,
+            doc.BankAccountId, doc.PaymentAccountId, Accounting.Helpers.MoneyChannelCheck.Post,
+            Accounting.Helpers.DocumentMoneyChannel.DocumentFixHint);
+        Guid? oldGlId = headerDecision.GlAccountId is Guid hg
+                        && moneyNet.Any(m => m.AccountId == hg && MoneySide(m.Net) >= amount - 0.01m)
+            ? hg : null;
+        if (!oldGlId.HasValue)
+        {
+            var candidates = moneyNet.Where(m => Math.Abs(MoneySide(m.Net) - amount) <= 0.01m).Select(m => m.AccountId).ToList();
+            if (candidates.Count == 1) oldGlId = candidates[0];
+        }
+        if (!oldGlId.HasValue)
+            throw new BusinessRuleException(
+                $"หาขาเงิน {amount:N2} บาทของเอกสาร {doc.DocumentNumber} ในสมุดรายวันที่ลงไว้ไม่พบ (หรือพบมากกว่าหนึ่งผัง) — "
+                + "ระบบจึงไม่เดาผังเดิมให้ (กลับผังผิดตัว = ยอดเงินสด/ธนาคารเพี้ยนสองบัญชี) · ทางไปต่อ: บันทึกสมุดรายวันทั่วไปย้ายเงินจากผังเดิม"
+                + "ไปผังใหม่เองที่หน้า “สมุดรายวัน” แล้วแก้ช่องแหล่งเงินของเอกสาร หรือยกเลิกเอกสารแล้วออกใหม่",
+                Accounting.Helpers.DocumentMoneyChannel.RuleCode);
+        var oldAcct = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.Id == oldGlId.Value && a.CompanyId == companyId)
+            .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+            .FirstAsync();
+        var oldGl = (Id: oldAcct.Id, Code: oldAcct.AccountCode, Name: oldAcct.AccountName);
 
         if (oldGl.Id == newGl.Id)
         {
@@ -8876,36 +8951,26 @@ public partial class DocumentService : IDocumentService
             return await GetDocumentAsync(companyId, documentId);
         }
 
-        // เงินที่ลง Cr บัญชีแหล่งเงินเดิม = เงินสดจ่ายจริง = PaidAmount.
-        var amount = doc.PaidAmount;
-        if (amount <= 0.005m)
-        {
-            // ยังไม่ได้จ่ายจริง (ไม่กระทบ GL แหล่งเงิน) → แค่อัปเดต field.
-            doc.BankAccountId = newBankAccountId;
-            doc.PaymentAccountId = newPaymentAccountId;
-            doc.UpdatedAt = DateTime.UtcNow;
-            doc.UpdatedBy = actor;
-            await _db.SaveChangesAsync();
-            return await GetDocumentAsync(companyId, documentId);
-        }
-
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
-            // Correcting JE: Dr {old} / Cr {new} — เงินกลับเข้าบัญชีเก่า +
-            // ออกจากบัญชีใหม่. (กลับทิศกับ reclassify-line เพราะแก้ฝั่ง Cr).
+            // Correcting JE — เงินออก: Dr {old} / Cr {new} (เงินกลับเข้าบัญชีเก่า + ออกจากบัญชีใหม่) ·
+            // เงินเข้า: Dr {new} / Cr {old} (ทิศกลับกัน — เดิมใช้ทิศเงินออกเสมอ ⇒ ใบรับเงินได้ JE แก้ที่ทำยอดเพี้ยนสองเท่า)
             var desc = $"เปลี่ยนแหล่งเงิน — {doc.DocumentNumber} " +
                        $"({oldGl.Code} → {newGl.Code})" +
                        (string.IsNullOrWhiteSpace(reason) ? "" : $" • {reason}");
-            await Journal.JournalEntryBuilder
+            var fixJe = Journal.JournalEntryBuilder
                 .For(_db, companyId, doc.DocumentDate)
                 .Description(desc)
                 .Reference(doc.DocumentNumber)
                 .SourceDocument(doc.Id)
-                .Project(doc.ProjectId)
-                .Debit(oldGl.Id, amount, $"Dr {oldGl.Code} — {oldGl.Name} (คืนแหล่งเงินเดิม)")
-                .Credit(newGl.Id, amount, $"Cr {newGl.Code} — {newGl.Name} (แหล่งเงินใหม่)")
-                .PostAsync(actor);
+                .Project(doc.ProjectId);
+            fixJe = isInflow
+                ? fixJe.Debit(newGl.Id, amount, $"Dr {newGl.Code} — {newGl.Name} (แหล่งเงินใหม่)")
+                    .Credit(oldGl.Id, amount, $"Cr {oldGl.Code} — {oldGl.Name} (ย้ายออกจากแหล่งเงินเดิม)")
+                : fixJe.Debit(oldGl.Id, amount, $"Dr {oldGl.Code} — {oldGl.Name} (คืนแหล่งเงินเดิม)")
+                    .Credit(newGl.Id, amount, $"Cr {newGl.Code} — {newGl.Name} (แหล่งเงินใหม่)");
+            await fixJe.PostAsync(actor);
 
             doc.BankAccountId = newBankAccountId;
             doc.PaymentAccountId = newPaymentAccountId;
@@ -13458,6 +13523,14 @@ public partial class DocumentService : IDocumentService
         var titleTh = NormalizeContactTitle(request.TitleTh)
             ?? Accounting.Helpers.ThaiTitleHelper.Split(request.Name).Title;
 
+        // บัญชีลูกหนี้/เจ้าหนี้/รอเรียกเก็บของผู้ติดต่อ (2026-10-14 · ID#23): ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม — ตัวตัดสินเดียว
+        // PostingAccountGuard · เดิมเก็บดิบ ๆ แล้วทุกเอกสารของผู้ติดต่อนี้ลงผังนั้น (ผังบริษัทอื่นผ่าน API ได้)
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.DefaultArAccountId, "บัญชีลูกหนี้ของผู้ติดต่อ"), (request.DefaultApAccountId, "บัญชีเจ้าหนี้ของผู้ติดต่อ"),
+            (request.DefaultIrGrAccountId, "บัญชีรอเรียกเก็บ/รอจ่ายของผู้ติดต่อ"),
+        });
+
         var contact = new Contact
         {
             CompanyId = companyId,
@@ -13482,9 +13555,9 @@ public partial class DocumentService : IDocumentService
             Email = request.Email,
             ContactPerson = request.ContactPerson,
             // Per-contact GL overrides — null = use system default.
-            DefaultArAccountId = request.DefaultArAccountId,
-            DefaultApAccountId = request.DefaultApAccountId,
-            DefaultIrGrAccountId = request.DefaultIrGrAccountId,
+            DefaultArAccountId = request.DefaultArAccountId == Guid.Empty ? null : request.DefaultArAccountId,
+            DefaultApAccountId = request.DefaultApAccountId == Guid.Empty ? null : request.DefaultApAccountId,
+            DefaultIrGrAccountId = request.DefaultIrGrAccountId == Guid.Empty ? null : request.DefaultIrGrAccountId,
             CreditLimit = request.CreditLimit,
             DefaultIssueTaxInvoice = request.DefaultIssueTaxInvoice,
             PaymentDueDays = request.PaymentDueDays,
@@ -13696,6 +13769,13 @@ public partial class DocumentService : IDocumentService
         // "unset" from "explicitly clear to default", so we treat null
         // as "no change". To clear an override the UI POSTs
         // Guid.Empty which we map back to null below.
+        // ตรวจเฉพาะค่าที่เปลี่ยน (ID#23) — ค่าเดิมที่ส่งกลับมาเหมือนเดิมไม่ทำให้การบันทึกเรื่องอื่น (เบอร์/ที่อยู่) ล้ม
+        await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
+        {
+            (request.DefaultArAccountId != contact.DefaultArAccountId ? request.DefaultArAccountId : null, "บัญชีลูกหนี้ของผู้ติดต่อ"),
+            (request.DefaultApAccountId != contact.DefaultApAccountId ? request.DefaultApAccountId : null, "บัญชีเจ้าหนี้ของผู้ติดต่อ"),
+            (request.DefaultIrGrAccountId != contact.DefaultIrGrAccountId ? request.DefaultIrGrAccountId : null, "บัญชีรอเรียกเก็บ/รอจ่ายของผู้ติดต่อ"),
+        });
         if (request.DefaultArAccountId.HasValue)
             contact.DefaultArAccountId = request.DefaultArAccountId == Guid.Empty ? null : request.DefaultArAccountId;
         if (request.DefaultApAccountId.HasValue)
@@ -13906,7 +13986,9 @@ public partial class DocumentService : IDocumentService
             TotalAmount = carryVatFromSource ? invoice.TotalAmount : payment.Amount,
             PaidAmount = carryVatFromSource ? invoice.TotalAmount : payment.Amount,
             BalanceDue = 0m,
+            // ช่องทางเงินของใบเสร็จ = ของการชำระ (ธนาคาร หรือผังตรงที่เลือก/สืบทอด — PC#5 · เอกสารลูกสืบทอด กฎ #4 A)
             BankAccountId = payment.BankAccountId,
+            PaymentAccountId = payment.OverridePaymentAccountId,
             Notes = $"รับชำระเงินตาม{srcLabel}เลขที่ {invoice.DocumentNumber} " +
                     $"(วันที่รับ {payment.PaymentDate:dd/MM/yyyy}, {payment.PaymentMethod})" +
                     (carryVatFromSource ? " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (§78/1)" : ""),
@@ -14259,6 +14341,19 @@ public partial class DocumentService : IDocumentService
                 var lastPart = maxPayNum.Substring(payPrefix.Length);
                 if (int.TryParse(lastPart, out var parsed)) paySeq = parsed + 1;
             }
+            // ช่องทางเงินของการชำระ — ตัวตัดสินเดียว Helpers/DocumentMoneyChannel.ForPayment (PC#5 · PC#21 · ผลตรวจ 2026-10-14):
+            // ไม่เลือกในหน้าบันทึกชำระ = สืบทอดแหล่งเงินของเอกสาร "ทั้งสองแบบ" (เดิมสืบทอดแต่ธนาคาร ⇒ ใบที่ตั้งแหล่งเงินเป็นเงินทดรองกรรมการ/
+            // เงินสดย่อย ไปลงเงินสด 111) · เลือก "จ่าย/รับจากบัญชีอื่น" = ไม่ขยับยอดธนาคารของเอกสาร (เงินไม่ได้ผ่านธนาคารนั้น) ·
+            // เลือกสองทางพร้อมกัน = ไม่รู้ว่าเงินผ่านทางไหน ⇒ ปฏิเสธ · ตรวจผังก่อนบันทึก (ใช้ไม่ได้ = ล้มดัง ไม่ตกเงินสด)
+            if (Accounting.Helpers.DocumentMoneyChannel.HasBothOverrides(request.OverrideBankAccountId, request.OverridePaymentAccountId))
+                throw new BusinessRuleException(Accounting.Helpers.DocumentMoneyChannel.BothOverridesMessage,
+                    Accounting.Helpers.DocumentMoneyChannel.RuleCode);
+            var payChannel = Accounting.Helpers.DocumentMoneyChannel.ForPayment(
+                request.OverrideBankAccountId, request.OverridePaymentAccountId, doc.BankAccountId, doc.PaymentAccountId);
+            await ResolvePaymentCashAccountAsync(companyId, new Payment
+            {
+                CompanyId = companyId, BankAccountId = payChannel.BankAccountId, OverridePaymentAccountId = payChannel.PaymentAccountId,
+            });
             var payment = new Payment
             {
                 CompanyId = companyId,
@@ -14273,10 +14368,11 @@ public partial class DocumentService : IDocumentService
                 // "ลูกค้าจ่ายเข้าบัญชี Kasikorn แทน Bangkok Bank" case —
                 // operator records the actual landing bank so the GL +
                 // bank-balance adjustment hit the right place. Falls back
-                // to doc.BankAccountId when not provided.
-                BankAccountId = request.OverrideBankAccountId ?? doc.BankAccountId,
+                // to the document's channel when not provided (payChannel ข้างบน).
+                BankAccountId = payChannel.BankAccountId,
                 OverrideBankAccountId = request.OverrideBankAccountId,
-                OverridePaymentAccountId = request.OverridePaymentAccountId,
+                // ผังขาเงินของการชำระนี้ — ผู้ใช้เลือก หรือสืบทอดจากแหล่งเงิน (ผังตรง) ของเอกสาร
+                OverridePaymentAccountId = payChannel.PaymentAccountId,
                 WithholdingTaxAmount = paymentWht,
                 // Per-payment ProjectId override — when null, the JE
                 // posting still falls back to doc.ProjectId so the
@@ -14722,6 +14818,16 @@ public partial class DocumentService : IDocumentService
                     paySeq = parsed + 1;
 
                 var firstDoc = docMap[request.Allocations[0].DocumentId];
+                // ช่องทางเงิน — ตัวตัดสินเดียวกับใบเดี่ยว (PC#5: เดิมเส้นนี้ทิ้ง OverridePaymentAccountId ทั้งของคำขอและของเอกสาร)
+                if (Accounting.Helpers.DocumentMoneyChannel.HasBothOverrides(request.OverrideBankAccountId, request.OverridePaymentAccountId))
+                    throw new BusinessRuleException(Accounting.Helpers.DocumentMoneyChannel.BothOverridesMessage,
+                        Accounting.Helpers.DocumentMoneyChannel.RuleCode);
+                var payChannel = Accounting.Helpers.DocumentMoneyChannel.ForPayment(
+                    request.OverrideBankAccountId, request.OverridePaymentAccountId, firstDoc.BankAccountId, firstDoc.PaymentAccountId);
+                await ResolvePaymentCashAccountAsync(companyId, new Payment
+                {
+                    CompanyId = companyId, BankAccountId = payChannel.BankAccountId, OverridePaymentAccountId = payChannel.PaymentAccountId,
+                });
                 var payment = new Payment
                 {
                     CompanyId = companyId,
@@ -14733,8 +14839,9 @@ public partial class DocumentService : IDocumentService
                     PaymentMethod = request.PaymentMethod,
                     Reference = request.Reference,
                     BankAccount = request.BankAccount,
-                    BankAccountId = request.OverrideBankAccountId ?? firstDoc.BankAccountId,
+                    BankAccountId = payChannel.BankAccountId,
                     OverrideBankAccountId = request.OverrideBankAccountId,
+                    OverridePaymentAccountId = payChannel.PaymentAccountId,
                     WithholdingTaxAmount = 0,  // accumulated below from allocations
                     ProjectId = request.ProjectId,
                     Notes = request.Notes,
@@ -14856,6 +14963,7 @@ public partial class DocumentService : IDocumentService
                         BankAccount = payment.BankAccount,
                         BankAccountId = payment.BankAccountId,
                         OverrideBankAccountId = payment.OverrideBankAccountId,
+                        OverridePaymentAccountId = payment.OverridePaymentAccountId,
                         WithholdingTaxAmount = whtSlice,
                         ProjectId = payment.ProjectId,
                         Notes = payment.Notes,
@@ -14891,7 +14999,13 @@ public partial class DocumentService : IDocumentService
                     var suspenseAcc = isInflowDoc
                         ? (await FindAccountAsync(companyId, "21710") ?? await FindAccountAsync(companyId, "217"))
                         : (await FindAccountAsync(companyId, "11470") ?? await FindAccountAsync(companyId, "114"));
-                    if (cashAcc != null && suspenseAcc != null)
+                    // ไม่มีผังพักเงินส่วนเกิน = เงินส่วนเกินไม่มี JE (เงินสด GL น้อยกว่ายอดธนาคารถาวร) ⇒ ล้มดังพร้อมทางไปต่อ (PC#4 คลาสเดียวกัน)
+                    if (suspenseAcc == null)
+                        throw new BusinessRuleException(
+                            $"ยอดรับ/จ่าย {request.Amount:N2} มากกว่ายอดที่จัดสรรให้เอกสาร {allocSum:N2} แต่ไม่พบผัง"
+                            + (isInflowDoc ? "เงินรับล่วงหน้าจากลูกค้า (217xx)" : "เงินจ่ายล่วงหน้า (114xx)")
+                            + " สำหรับพักเงินส่วนเกิน — เพิ่มผังนี้ที่หน้า “ผังบัญชี” หรือจัดสรรยอดให้ครบเท่ายอดรับ/จ่าย",
+                            Accounting.Helpers.DocumentMoneyChannel.RuleCode);
                     {
                         var upPeriod = await RequireOpenFiscalPeriodAsync(companyId, payment.PaymentDate, "รายการรับ-จ่ายเงิน");
                         var upNumber = await GetNextJournalEntryNumberAsync(companyId, isInflowDoc ? "RV" : "PV");
@@ -15427,11 +15541,7 @@ public partial class DocumentService : IDocumentService
         {
             // Pinned per-contact AP override wins (same rule as FindAccountAsync).
             if (contact?.DefaultApAccountId is Guid pinnedId)
-            {
-                var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.Id == pinnedId && a.CompanyId == companyId && a.IsActive);
-                if (pinned != null) return pinned;
-            }
+                return await PinnedContactAccountAsync(companyId, contact, pinnedId, "บัญชีเจ้าหนี้");
             var other = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == "21220" && a.IsActive);
             if (other != null) return other;
@@ -15446,6 +15556,21 @@ public partial class DocumentService : IDocumentService
     /// Key เป็น (codePrefix, contactDefaultId) — pinned contact overrides
     /// ใช้ key ต่าง ให้ cache แยก hit.</summary>
     private readonly Dictionary<(string CodePrefix, Guid? ContactDefault), ChartOfAccount?> _findAccountCache = new();
+
+    /// <summary>ผังที่ผู้ติดต่อปักไว้ (ลูกหนี้/เจ้าหนี้/รอเรียกเก็บ) — ต้องลงรายการได้ (ตัวตัดสินเดียว <see cref="Accounting.Helpers.PostingAccountRule"/>) ·
+    /// ใช้ไม่ได้ = BusinessRuleException บอกผู้ติดต่อ + ช่อง + ที่แก้ (ID#23 · ไม่สลับไปผังมาตรฐานเงียบ ๆ)</summary>
+    private async Task<ChartOfAccount> PinnedContactAccountAsync(Guid companyId, Contact contact, Guid pinnedId, string label)
+    {
+        var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+            a.Id == pinnedId && a.CompanyId == companyId && a.IsActive && !a.IsDeleted);
+        var problem = await _db.PostingAccountProblemAsync(companyId, pinnedId,
+            $"{label}ที่ปักไว้ของผู้ติดต่อ \"{contact.Name}\"");
+        if (pinned != null && problem == null) return pinned;
+        throw new Accounting.Helpers.BusinessRuleException(
+            (problem ?? $"{label}ที่ปักไว้ของผู้ติดต่อ \"{contact.Name}\" ใช้ไม่ได้แล้ว")
+            + $" · หรือเปิดหน้า ผู้ติดต่อ → \"{contact.Name}\" แล้วตั้ง{label}เป็น \"ใช้ค่าเริ่มต้น\" (ระบบไม่สลับไปผังอื่นให้เอง)",
+            Accounting.Helpers.PostingAccountRule.RuleCode);
+    }
 
     private async Task<ChartOfAccount?> FindAccountAsync(
         Guid companyId, string codePrefix, Contact? contactOverride = null)
@@ -15462,11 +15587,12 @@ public partial class DocumentService : IDocumentService
 
         if (overrideId.HasValue)
         {
-            var pinned = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.Id == overrideId.Value && a.CompanyId == companyId && a.IsActive);
-            if (pinned != null) { _findAccountCache[cacheKey] = pinned; return pinned; }
-            // The override points at a deleted/inactive account —
-            // fall through to the system default rather than throw.
+            // 2026-10-14 (ID#23): ผังที่ปักไว้ใช้ไม่ได้แล้ว (ปิดใช้/ถูกลบ/บัญชีคุม) = ล้มดังพร้อมทางไปต่อ — เดิมตกไปผังมาตรฐานเงียบ ๆ
+            // ⇒ ยอดลูกหนี้/เจ้าหนี้ของผู้ติดต่อนี้แตกไปสองผังโดยไม่มีใครรู้ (บัญชีคุมรายตัวไม่ตรงทะเบียน)
+            var label = codePrefix switch { "113" => "บัญชีลูกหนี้", "212" => "บัญชีเจ้าหนี้", _ => "บัญชีรอเรียกเก็บ/รอจ่าย" };
+            var pinned = await PinnedContactAccountAsync(companyId, contactOverride!, overrideId.Value, label);
+            _findAccountCache[cacheKey] = pinned;
+            return pinned;
         }
         // exact-match ต้องเป็นบัญชี postable (Level >= 4) เท่านั้น — chart มาตรฐาน
         // มี header ระดับ 3 ชื่อรหัสสั้น ("116", "212") ถ้า exact จับ header จะ
@@ -17149,9 +17275,13 @@ public partial class DocumentService : IDocumentService
         }
 
         // Use document-level expense category if specified, otherwise fallback to default
+        // หมวดที่ผู้ใช้เลือกแล้วใช้ไม่ได้ (บริษัทอื่น/ปิดใช้/บัญชีกลุ่ม/รหัสผิดตาราง) ⇒ ปฏิเสธพร้อมทางไปต่อ
+        // ไม่ตกไป 51110 เงียบ ๆ (ID#7 · ผลตรวจ 2026-10-14)
         ChartOfAccount? defaultExpense = null;
         if (doc.ExpenseCategoryId.HasValue)
         {
+            if (await Accounting.Helpers.DocumentMoneyChannel.ExpenseCategoryProblemAsync(_db, companyId, doc.ExpenseCategoryId) is { } ecProblem)
+                throw new BusinessRuleException($"เอกสาร {doc.DocumentNumber}: {ecProblem}", Accounting.Helpers.DocumentMoneyChannel.RuleCode);
             defaultExpense = await _db.ChartOfAccounts
                 .FirstOrDefaultAsync(a => a.Id == doc.ExpenseCategoryId.Value && a.CompanyId == companyId);
         }
@@ -17162,22 +17292,23 @@ public partial class DocumentService : IDocumentService
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
 
-        // Resolve money account for cash/bank movement entries.
-        // Priority: PaymentAccountId (direct GL) > BankAccountId (bank's linked GL) > Cash 111
-        ChartOfAccount? moneyAccount = null;
-        if (doc.PaymentAccountId.HasValue)
-        {
-            moneyAccount = await _db.ChartOfAccounts
-                .FirstOrDefaultAsync(a => a.Id == doc.PaymentAccountId.Value && a.CompanyId == companyId);
-        }
-        if (moneyAccount == null && doc.BankAccountId.HasValue)
-        {
-            var bankAcc = await _db.BankAccounts
-                .Include(b => b.LinkedAccount)
-                .FirstOrDefaultAsync(b => b.Id == doc.BankAccountId.Value && b.CompanyId == companyId);
-            moneyAccount = bankAcc?.LinkedAccount;
-        }
-        moneyAccount ??= await FindAccountAsync(companyId, "111");
+        // Resolve money account for cash/bank movement entries — ตัวตัดสินเดียว Helpers/DocumentMoneyChannel
+        // (PaymentAccountId > ธนาคาร→ผังที่ผูก > เงินสดตั้งต้น 111). PC#4 · ID#7 (ผลตรวจ 2026-10-14): แหล่งเงินที่เลือกแล้วใช้ไม่ได้
+        // (ธนาคารยังไม่ผูกผัง/รหัสผิดตาราง/บริษัทอื่น) เดิมตกไปเงินสดเงียบ ๆ ⇒ ตอนนี้ **ล้มดังเฉพาะตอนเอกสารนี้ขยับเงินจริง**
+        // (ใบตั้งหนี้ที่มีธนาคารไว้ใช้ตอนรับ/จ่ายภายหลังยังอนุมัติได้ — ผู้ใช้ทุกขาเงินผ่าน UseMoneyAccount())
+        var moneyChannel = await Accounting.Helpers.DocumentMoneyChannel.EvaluateAsync(_db, companyId,
+            doc.BankAccountId, doc.PaymentAccountId, Accounting.Helpers.MoneyChannelCheck.Post,
+            Accounting.Helpers.DocumentMoneyChannel.DocumentFixHint);
+        ChartOfAccount? moneyAccount = moneyChannel.Kind == Accounting.Helpers.MoneyChannelKind.None
+            ? await FindAccountAsync(companyId, "111")
+            : moneyChannel.GlAccountId is Guid moneyGlId
+                ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == moneyGlId && a.CompanyId == companyId)
+                : null;
+        ChartOfAccount UseMoneyAccount() => moneyAccount
+            ?? throw new BusinessRuleException(
+                $"เอกสาร {doc.DocumentNumber}: " + (moneyChannel.Problem
+                    ?? Accounting.Helpers.DocumentMoneyChannel.NoDefaultCashMessage(Accounting.Helpers.DocumentMoneyChannel.DocumentFixHint)),
+                Accounting.Helpers.DocumentMoneyChannel.RuleCode);
 
         // Validate critical accounts exist — fail fast with clear error
         var isSalesDoc = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
@@ -17821,8 +17952,7 @@ public partial class DocumentService : IDocumentService
                     var thisWht = doc.WithholdingTaxAmount;
                     if (apAccount != null)
                         AddLine(apAccount.Id, doc.TotalAmount + thisWht, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
-                    if (moneyAccount != null)
-                        AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                    AddLine(UseMoneyAccount().Id, 0, doc.TotalAmount,
                             $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
                     if (thisWht > 0)
                     {
@@ -17836,8 +17966,7 @@ public partial class DocumentService : IDocumentService
                     // Accrual: AP ต้นทาง net of WHT แล้ว — แค่ย้ายเงินสุทธิ
                     if (apAccount != null)
                         AddLine(apAccount.Id, doc.TotalAmount, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}");
-                    if (moneyAccount != null)
-                        AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+                    AddLine(UseMoneyAccount().Id, 0, doc.TotalAmount,
                             $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
                 }
             }
@@ -17870,8 +17999,7 @@ public partial class DocumentService : IDocumentService
                     "ภาษีซื้อที่เคลมไม่ได้ (รวมเป็นต้นทุน) - ใบรับรองแทนใบเสร็จ");
             AddPayerBorneWhtExpense();   // รอบ 204 — ภาษีที่ออกแทน (เงินสดจ่าย = TotalAmount รวมส่วนนี้แล้ว)
 
-            if (moneyAccount != null)
-                AddLine(moneyAccount.Id, 0, doc.TotalAmount,
+            AddLine(UseMoneyAccount().Id, 0, doc.TotalAmount,
                     $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}");
 
             if (doc.WithholdingTaxAmount > 0)
@@ -18103,9 +18231,8 @@ public partial class DocumentService : IDocumentService
                     // ปีกกา ⇒ ตอน moneyAccount เป็น null จะได้ lineProjects เกินมา
                     // หนึ่งช่อง แล้ว **ป้ายโครงการของทุกบรรทัดที่เหลือเลื่อนไปหมด**
                     // (ผลตรวจทีม C · C-08)
-                    if (moneyAccount != null)
                     {
-                        pendingLines.Add((moneyAccount.Id, cashThb, 0m, $"รับชำระ - {doc.DocumentNumber}"));
+                        pendingLines.Add((UseMoneyAccount().Id, cashThb, 0m, $"รับชำระ - {doc.DocumentNumber}"));
                         lineProjects.Add(doc.ProjectId);
                     }
                     if (thisWht > 0)
@@ -18134,9 +18261,8 @@ public partial class DocumentService : IDocumentService
                     // ปีกกา ⇒ ตอน moneyAccount เป็น null จะได้ lineProjects เกินมา
                     // หนึ่งช่อง แล้ว **ป้ายโครงการของทุกบรรทัดที่เหลือเลื่อนไปหมด**
                     // (ผลตรวจทีม C · C-08)
-                    if (moneyAccount != null)
                     {
-                        pendingLines.Add((moneyAccount.Id, cashThb, 0m, $"รับชำระ - {doc.DocumentNumber}"));
+                        pendingLines.Add((UseMoneyAccount().Id, cashThb, 0m, $"รับชำระ - {doc.DocumentNumber}"));
                         lineProjects.Add(doc.ProjectId);
                     }
                     arThb = SrcThb(doc.TotalAmount);
@@ -18170,8 +18296,8 @@ public partial class DocumentService : IDocumentService
                     && !doc.IsDeposit && !string.IsNullOrWhiteSpace(doc.DepositAppliedRef);
                 var cashAmt = driveDeposit ? doc.TotalAmount - doc.DepositAppliedAmount : doc.TotalAmount;
 
-                if (moneyAccount != null && cashAmt != 0m)
-                    AddLine(moneyAccount.Id, cashAmt, 0,
+                if (cashAmt != 0m)
+                    AddLine(UseMoneyAccount().Id, cashAmt, 0,
                         $"{(doc.BankAccountId.HasValue ? "รับเงินเข้าบัญชี" : "รับเงินสด")}{(driveDeposit ? " (สุทธิหลังหักมัดจำ)" : "")} - {doc.DocumentNumber}");
 
                 // COGS perpetual สำหรับใบเสร็จ standalone ที่ขายสินค้าคงคลัง — ตามนโยบาย
@@ -18656,9 +18782,8 @@ public partial class DocumentService : IDocumentService
                         pendingLines.Add((apAccount.Id, apThb, 0m, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
                         lineProjects.Add(doc.ProjectId);
                     }
-                    if (moneyAccount != null)
                     {
-                        pendingLines.Add((moneyAccount.Id, 0m, pvCashThb,
+                        pendingLines.Add((UseMoneyAccount().Id, 0m, pvCashThb,
                             $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}"));
                         lineProjects.Add(doc.ProjectId);
                     }
@@ -18687,9 +18812,8 @@ public partial class DocumentService : IDocumentService
                         pendingLines.Add((apAccount.Id, apThb, 0m, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
                         lineProjects.Add(doc.ProjectId);
                     }
-                    if (moneyAccount != null)
                     {
-                        pendingLines.Add((moneyAccount.Id, 0m, pvCashThb,
+                        pendingLines.Add((UseMoneyAccount().Id, 0m, pvCashThb,
                             $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงิน")} - {doc.DocumentNumber}"));
                         lineProjects.Add(doc.ProjectId);
                     }
@@ -18781,9 +18905,9 @@ public partial class DocumentService : IDocumentService
                         AddLine(apAccount.Id, 0, pp36SplitPv.PayeeCredit,
                             $"เจ้าหนี้ - {doc.DocumentNumber}");
                 }
-                else if (moneyAccount != null)
+                else
                 {
-                    AddLine(moneyAccount.Id, 0, pp36SplitPv.PayeeCredit,
+                    AddLine(UseMoneyAccount().Id, 0, pp36SplitPv.PayeeCredit,
                         $"{(doc.BankAccountId.HasValue ? "จ่ายจากบัญชี" : "จ่ายเงินสด")} - {doc.DocumentNumber}"
                         + (pp36VatPv > 0 ? " (ฐาน — VAT ตั้งหนี้ ภ.พ.36)" : ""));
                 }
@@ -18900,11 +19024,8 @@ public partial class DocumentService : IDocumentService
         if (settlementCashDelta != 0m)
         {
             // ขาเงินสดตามยอดชำระจริง: เงินสดที่ลงไว้ตามยอดเอกสาร ปรับด้วยส่วนต่าง (ผังเดียวกับขาเงินสดข้างบน — moneyAccount)
-            if (moneyAccount == null)
-                throw new InvalidOperationException(
-                    "ไม่พบบัญชีเงินสด/ธนาคารของเอกสาร — ลงส่วนต่างยอดชำระจริงไม่ได้ (เลือกแหล่งเงินก่อนอนุมัติ)");
             var (deltaDr, deltaCr) = Accounting.Helpers.PaymentSettlementAdjustment.JournalSide(settlementCashDelta);
-            AddLine(moneyAccount.Id, deltaDr, deltaCr,
+            AddLine(UseMoneyAccount().Id, deltaDr, deltaCr,
                 $"ส่วนต่างยอดชำระจริง {doc.ActualPaidAmount:N2} (ยอดเอกสาร {doc.TotalAmount:N2}) - {doc.DocumentNumber}");
         }
 
@@ -19429,25 +19550,30 @@ public partial class DocumentService : IDocumentService
     /// รับเงิน (ฝั่งขาย): Dr Cash, Cr AR → สมุดรายวันรับ (RV)
     /// จ่ายเงิน (ฝั่งซื้อ): Dr AP, Cr Cash → สมุดรายวันจ่าย (PV)
     /// </summary>
-    /// <summary>Resolve ผัง GL ฝั่งเงินสด/ธนาคารของ payment — ลำดับเดียวกับ
-    /// CreatePaymentJournalAsync: override → LinkedAccount ของธนาคาร → 111.</summary>
-    private async Task<ChartOfAccount?> ResolvePaymentCashAccountAsync(Guid companyId, Payment payment)
+    /// <summary>ผัง GL ขาเงินสด/ธนาคารของการชำระ — ตัวตัดสินเดียว <see cref="Accounting.Helpers.DocumentMoneyChannel"/>
+    /// (ผังตรง <c>OverridePaymentAccountId</c> &gt; ธนาคาร→ผังที่ผูก &gt; เงินสดตั้งต้น 111) · ใช้ทั้ง JE การชำระ ขาเงินส่วนเกิน และด่านก่อนบันทึก
+    /// · PC#4 (ผลตรวจ 2026-10-14): เดิมธนาคารยังไม่ผูกผัง/รหัสผิดตาราง ⇒ ตกไปเงินสดเงียบ ๆ ขณะที่ยอดธนาคารยังขยับ ·
+    /// ไม่มีผังเงินสดเลย ⇒ บันทึกการชำระ<b>โดยไม่มี JE</b> — ตอนนี้ล้มดังพร้อมทางไปต่อทั้งสองกรณี (ไม่คืน null)</summary>
+    /// <exception cref="BusinessRuleException">แหล่งเงินที่เลือก/สืบทอดใช้ลงบัญชีไม่ได้ หรือไม่มีผังเงินสดตั้งต้น</exception>
+    private async Task<ChartOfAccount> ResolvePaymentCashAccountAsync(Guid companyId, Payment payment)
     {
-        ChartOfAccount? cashAccount = null;
-        if (payment.OverridePaymentAccountId.HasValue)
-            cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.Id == payment.OverridePaymentAccountId.Value && a.CompanyId == companyId && !a.IsDeleted);
-        if (cashAccount == null && payment.BankAccountId.HasValue)
+        var where = string.IsNullOrWhiteSpace(payment.PaymentNumber) ? "การรับ/จ่ายชำระ" : $"การรับ/จ่ายชำระ {payment.PaymentNumber}";
+        Guid? glId;
+        try
         {
-            var linkedAcctId = await _db.Set<BankAccount>().AsNoTracking()
-                .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
-                .Select(b => b.LinkedAccountId)
-                .FirstOrDefaultAsync();
-            if (linkedAcctId.HasValue)
-                cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.Id == linkedAcctId.Value && a.CompanyId == companyId && !a.IsDeleted);
+            glId = await Accounting.Helpers.DocumentMoneyChannel.ResolvePostingAccountAsync(_db, companyId,
+                payment.BankAccountId, payment.OverridePaymentAccountId, Accounting.Helpers.DocumentMoneyChannel.PaymentFixHint);
         }
-        return cashAccount ?? await FindAccountAsync(companyId, "111");
+        catch (BusinessRuleException ex)
+        {
+            throw new BusinessRuleException($"{where}: {ex.Message}", ex, Accounting.Helpers.DocumentMoneyChannel.RuleCode);
+        }
+        var account = glId is Guid id
+            ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == id && a.CompanyId == companyId && !a.IsDeleted)
+            : await FindAccountAsync(companyId, "111");
+        return account ?? throw new BusinessRuleException(
+            $"{where}: " + Accounting.Helpers.DocumentMoneyChannel.NoDefaultCashMessage(Accounting.Helpers.DocumentMoneyChannel.PaymentFixHint),
+            Accounting.Helpers.DocumentMoneyChannel.RuleCode);
     }
 
     private async Task CreatePaymentJournalAsync(Guid companyId, Document doc, Payment payment, string createdBy,
@@ -19523,22 +19649,8 @@ public partial class DocumentService : IDocumentService
         //      line previously ALWAYS posted to 111 regardless of how the
         //      payment was made, so every bank transfer landed in Cash on Hand.)
         //   3. fall back to the default cash account "111".
-        ChartOfAccount? cashAccount = null;
-        if (payment.OverridePaymentAccountId.HasValue)
-            cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.Id == payment.OverridePaymentAccountId.Value && a.CompanyId == companyId && !a.IsDeleted);
-        if (cashAccount == null && payment.BankAccountId.HasValue)
-        {
-            var linkedAcctId = await _db.Set<BankAccount>().AsNoTracking()
-                .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
-                .Select(b => b.LinkedAccountId)
-                .FirstOrDefaultAsync();
-            if (linkedAcctId.HasValue)
-                cashAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.Id == linkedAcctId.Value && a.CompanyId == companyId && !a.IsDeleted);
-        }
-        cashAccount ??= await FindAccountAsync(companyId, "111");
-        if (cashAccount == null) return;
+        //   (ตัวตัดสินเดียว ResolvePaymentCashAccountAsync → Helpers/DocumentMoneyChannel — ใช้ไม่ได้ = ล้มดัง ไม่ตกเงินสด/ไม่ข้าม JE)
+        var cashAccount = await ResolvePaymentCashAccountAsync(companyId, payment);
 
         // WHT basis decides whether THIS installment's WHT gets a GL line
         // (cash basis = yes, recognised at payment time) or was already
@@ -19918,11 +20030,13 @@ public partial class DocumentService : IDocumentService
         ProjectCode: d.Project?.Code,
         ProjectName: d.Project?.Name,
         BankAccountId: d.BankAccountId,
-        BankAccountName: d.BankAccount?.AccountName,
+        // ชื่อแสดงเฉพาะเมื่อเป็นของบริษัทเดียวกับเอกสาร (ID#7: id ข้ามบริษัทที่ผ่าน FK เคยรั่วชื่อบัญชีของบริษัทอื่นออกมาที่นี่)
+        BankAccountName: d.BankAccount != null && d.BankAccount.CompanyId == d.CompanyId ? d.BankAccount.AccountName : null,
         PaymentAccountId: d.PaymentAccountId,
-        PaymentAccountName: d.PaymentAccount != null ? $"{d.PaymentAccount.AccountCode} - {d.PaymentAccount.AccountName}" : null,
+        PaymentAccountName: d.PaymentAccount != null && d.PaymentAccount.CompanyId == d.CompanyId
+            ? $"{d.PaymentAccount.AccountCode} - {d.PaymentAccount.AccountName}" : null,
         ExpenseCategoryId: d.ExpenseCategoryId,
-        ExpenseCategoryName: d.ExpenseCategory?.AccountName,
+        ExpenseCategoryName: d.ExpenseCategory != null && d.ExpenseCategory.CompanyId == d.CompanyId ? d.ExpenseCategory.AccountName : null,
         CustomAppendix: d.CustomAppendix,
         CustomFooterNotes: d.CustomFooterNotes,
         CustomTermsAndConditions: d.CustomTermsAndConditions,
@@ -20087,7 +20201,9 @@ public partial class DocumentService : IDocumentService
             : 0,
         // รอบ 204 (ทีม B) — เก็บแล้วต้อง echo กลับ (กฎ #4 A)
         WhtBorneByContract: d.WhtBorneByContract,
-        WhtViaEWithholding: d.WhtViaEWithholding);
+        WhtViaEWithholding: d.WhtViaEWithholding,
+        // ค่าช่อง "แหล่งเงิน" ตามลำดับเดียวกับการลงบัญชี (PC#15 — หน้าเว็บ hydrate จากค่านี้ ไม่ตัดสินลำดับเอง)
+        PaymentChannel: Accounting.Helpers.DocumentMoneyChannel.ChannelValue(d.BankAccountId, d.PaymentAccountId));
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

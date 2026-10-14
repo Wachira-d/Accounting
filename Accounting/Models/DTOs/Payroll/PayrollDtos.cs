@@ -363,7 +363,11 @@ public record PayrollRunResponse(
     string? VoidBlockReason = null,
     // รอบ 201 (PR2): ข้อความผลข้างเคียงของคำสั่งล่าสุดที่ผู้ใช้ต้องรู้ (เช่น รอบกลับเป็น "คำนวณแล้ว" ต้องอนุมัติใหม่ ·
     // รอบนำเข้าไม่คิดกองทุนเงินทดแทนให้แถวที่เพิ่ม) — เติมเฉพาะคำตอบของ ➕/🗑/✏️ · null = ไม่มีอะไรต้องบอก
-    string? Notice = null);
+    string? Notice = null,
+    // 2026-10-14 (PC#12): แหล่งจ่ายเริ่มต้นที่ระบบจะใช้กับแถวที่ไม่ได้เลือกเอง ("รหัส ชื่อผัง") + ปัญหาถ้าใช้ไม่ได้ (ตอนจ่ายจะล้มด้วยข้อความเดียวกัน)
+    // — เติมเฉพาะตอนดึง run เดี่ยว · หน้าเว็บแสดงอย่างเดียว
+    string? DefaultPaymentSourceLabel = null,
+    string? DefaultPaymentSourceWarning = null);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/
@@ -395,7 +399,11 @@ public record PayrollRunLineDto(
     string? NetPaymentAccountCode = null,
     // รอบ 201 PR2 (คำตอบฝ่ายค้าน Q3): ธงประกันสังคมของพนักงานขัดกับฐาน ปกส. ของแถวนี้ — <b>คำเตือน</b> (ไม่บล็อก) จากตัวตัดสินเดียวกับ ➕/✏️
     // (PayrollSsoFlagGuard) · null = สอดคล้อง/ไม่มีข้อมูลพนักงาน
-    string? SsoFlagWarning = null);
+    string? SsoFlagWarning = null,
+    // 2026-10-14 (ID#15/PC#22): แหล่งจ่ายรายคนที่ใช้ไม่ได้แล้ว (ปิดใช้/ลบ/บัญชีคุม) — ตัวตัดสินเดียวกับตอนจ่าย · null = ใช้ได้/ใช้ค่าเริ่มต้น
+    string? NetPaymentAccountWarning = null,
+    // ป้าย "รหัส ชื่อผัง" ของแหล่งจ่ายรายคน (หน้าเว็บแสดงแทนรหัสดิบ แม้ผังจะไม่อยู่ในรายการเลือกแล้ว)
+    string? NetPaymentAccountLabel = null);
 
 /// <summary>นำส่งประกันสังคมให้ สปส. — เลือกวันที่จ่าย + บัญชีธนาคาร +
 /// เลขรับใบ สปส.1-10 (optional). ระบบ post JE Dr 21815 / Cr Bank

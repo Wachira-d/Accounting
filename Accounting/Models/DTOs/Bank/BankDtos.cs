@@ -93,9 +93,14 @@ public record ReconcileRequest(
 
 public record ImportBankStatementRequest(
     Guid BankAccountId,
-    string FileFormat,  // "CSV", "EXCEL"/"XLSX"
+    string FileFormat,  // "CSV", "EXCEL"/"XLSX", "OFX" — คำใบ้เท่านั้น: ระบบตัดสินชนิดจากเนื้อไฟล์ (รอบ 205 ทีม C)
     string Base64Content,
-    bool ForceOverwrite = false);
+    bool ForceOverwrite = false,
+    // รอบ 205 ทีม C: ชื่อไฟล์ (เก็บไฟล์ต้นทาง + ดูนามสกุล) · ชีตที่ต้องการ (ว่าง = ชีตแรกที่มีหัวตาราง statement) ·
+    // SkipConflicts = ผู้ใช้เลือก "เก็บข้อมูลเดิม" ⇒ ลงเฉพาะรายการที่ไม่ขัดแย้ง (เดิมไม่มีทางนี้: หน้าเว็บบอก "นำเข้าสำเร็จ" ทั้งที่ย้อนทั้งไฟล์)
+    string? FileName = null,
+    string? SheetName = null,
+    bool SkipConflicts = false);
 
 public record ImportBankStatementResponse(
     int Imported,

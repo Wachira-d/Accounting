@@ -8,7 +8,8 @@ public interface IBankService
 {
     // Bank Accounts
     Task<BankAccountResponse> CreateBankAccountAsync(Guid companyId, CreateBankAccountRequest request);
-    Task<List<BankAccountResponse>> GetBankAccountsAsync(Guid companyId);
+    /// <param name="activeOnly">true = เฉพาะบัญชีที่เปิดใช้ (ตัวเลือกของฟอร์มเอกสาร/รับ-จ่ายเงิน — PC#18) · false = ทุกบัญชี (หน้าจัดการบัญชีธนาคาร)</param>
+    Task<List<BankAccountResponse>> GetBankAccountsAsync(Guid companyId, bool activeOnly = false);
     Task<BankAccountResponse> UpdateBankAccountAsync(Guid companyId, Guid accountId, UpdateBankAccountRequest request);
 
     // Transactions
@@ -32,6 +33,14 @@ public interface IBankService
 
     // Bank Statement Import
     Task<ImportBankStatementResponse> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request);
+
+    /// <summary>
+    /// **ตัวเขียน statement ตัวเดียว** (รอบ 205 ทีม C) — ทุกทางเข้าที่สร้างรายการธนาคารจาก statement (หน้า "ธนาคาร" · open-banking file ·
+    /// ศูนย์นำเข้าข้อมูล · นำเข้าทั่วไป "banktransactions" · API v1) เรียกที่นี่: กันซ้ำ · ยอดคงเหลือ = ยอดตามธนาคาร · ธุรกรรมเดียว ·
+    /// เตือนยอดไม่ต่อเนื่อง · เก็บไฟล์ต้นทาง · จับคู่อัตโนมัติหลังบันทึก · ผลต่อบรรทัดในลำดับเดียวกับ <paramref name="lines"/>
+    /// </summary>
+    Task<BankStatementWriteResult> ImportParsedStatementRowsAsync(Guid companyId, Guid bankAccountId,
+        IReadOnlyList<BankStatementLineInput> lines, BankStatementWriteOptions? options = null, CancellationToken ct = default);
 
     // Delete Transactions (soft-delete via TenantEntity.IsDeleted)
     Task<int> DeleteTransactionAsync(Guid companyId, Guid transactionId);

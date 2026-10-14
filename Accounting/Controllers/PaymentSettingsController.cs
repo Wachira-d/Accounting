@@ -202,6 +202,12 @@ public class PaymentSettingsController : ControllerBase
         if (req.EnabledMethods != null)
             cfg.EnabledMethodsJson = System.Text.Json.JsonSerializer.Serialize(req.EnabledMethods);
         if (req.IsActive.HasValue) cfg.IsActive = req.IsActive.Value;
+        // 2026-10-14 (ID#13): ผังพักเงิน/ค่าธรรมเนียมต้องเป็นของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม (ตัวตัดสินเดียว PostingAccountGuard) —
+        // เดิมเก็บดิบ ๆ แล้ว GatewayAccountResolver ใช้ลงสมุดตรง ๆ (ผังบริษัทอื่นผ่าน API ได้) · Guid.Empty = ล้าง (ไม่ตรวจ)
+        await Accounting.Services.Implementations.PostingAccountGuard.EnsurePostingAccountsAsync(_db, companyId, new (Guid?, string)[]
+        {
+            (req.ClearingAccountId, "บัญชีพักเงินผู้ให้บริการรับชำระเงิน"), (req.FeeExpenseAccountId, "บัญชีค่าธรรมเนียมรับชำระเงิน"),
+        }, ct);
         if (req.ClearingAccountId.HasValue)
             cfg.ClearingAccountId = req.ClearingAccountId == Guid.Empty ? null : req.ClearingAccountId;
         if (req.FeeExpenseAccountId.HasValue)

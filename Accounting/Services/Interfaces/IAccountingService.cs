@@ -9,7 +9,7 @@ public interface IAccountingService
     // Chart of Accounts
     Task<AccountResponse> CreateAccountAsync(Guid companyId, CreateAccountRequest request);
     Task<List<AccountResponse>> GetAccountsAsync(Guid companyId, AccountType? type = null);
-    Task<List<AccountResponse>> GetPaymentChannelAccountsAsync(Guid companyId);
+    Task<List<PaymentChannelAccountResponse>> GetPaymentChannelAccountsAsync(Guid companyId, bool includeBank = false);
     Task<AccountResponse> UpdateAccountAsync(Guid companyId, Guid accountId, UpdateAccountRequest request);
     Task SeedDefaultAccountsAsync(Guid companyId);
     Task SeedDefaultAccountsAsync(Guid companyId, BusinessType businessType);
@@ -21,6 +21,8 @@ public interface IAccountingService
 
     // Journal Entries
     Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy);
+    /// <summary>ด่านเข้มของใบสำคัญที่ผู้ใช้บันทึกเอง (ผังเปิดใช้/ไม่ใช่บัญชีคุม + สาขา/มิติ/โครงการของบริษัทนี้) — endpoint เรียกก่อน Create</summary>
+    Task ValidateManualJournalAsync(Guid companyId, CreateJournalEntryRequest request);
     Task<JournalEntryResponse> GetJournalEntryAsync(Guid companyId, Guid entryId);
     /// <summary>Sensitivity-aware GET — redacts the payload when the user can't see the JE.</summary>
     Task<JournalEntryResponse> GetJournalEntryForUserAsync(Guid companyId, Guid entryId, Guid userId);

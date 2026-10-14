@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Recurring;
 using Accounting.Models.Entities;
@@ -42,12 +43,19 @@ public class RecurringTransactionService : IRecurringTransactionService
     /// ห้ามคำนวณเองซ้ำที่อื่น (ExecuteRecurringAsync/ValidateTemplateAsync/
     /// invariant ส่งอีเมล ใช้ตัวเดียวกันทั้งหมด). "journal" ไม่สนตัวพิมพ์ =
     /// สมุดรายวัน, ค่าว่าง/อื่น ๆ = เอกสาร (พฤติกรรมเดิมเป๊ะ).</summary>
+    /// <summary>ทางไปต่อของช่องที่หน้ารายการประจำไม่มีให้แก้ (บัญชีรายบรรทัด · โครงการ · สาขา — ตั้งผ่าน API/ระบบเชื่อมต่อ) — ข้อ 150 ทุกบล็อกต้องมีทางไปต่อ</summary>
+    private const string ApiOnlyHint = " (ถ้าช่องนี้ไม่มีในฟอร์ม — ตั้งผ่านระบบเชื่อมต่อ — แก้ผ่านระบบนั้น หรือลบรายการประจำนี้แล้วสร้างใหม่)";
+
     private static bool IsJournalTemplate(string? templateType)
         => string.Equals(templateType, "journal", StringComparison.OrdinalIgnoreCase);
 
     public async Task<RecurringTransactionResponse> CreateAsync(Guid companyId, CreateRecurringTransactionRequest request, string createdBy)
     {
-        await ValidateTemplateAsync(companyId, request.TemplateType, request.TemplateData, request.ContactId);
+        await ValidateTemplateAsync(companyId, request.TemplateType, request.TemplateData, request.ContactId, atSave: true);
+        // วันสิ้นสุดก่อนวันเริ่ม = รายการที่ไม่มีวันรันเลย (เดิมบันทึกได้แล้วค้าง "ใช้งาน" เงียบ ๆ ตลอดไป)
+        if (request.EndDate.HasValue && !RecurringSchedule.WithinEnd(request.StartDate, request.EndDate))
+            throw new BusinessRuleException("วันสิ้นสุดอยู่ก่อนวันเริ่มต้น — แก้วันสิ้นสุด (หรือเว้นว่างถ้าไม่มีกำหนด) แล้วบันทึกอีกครั้ง",
+                RecurringTemplate.RuleCode);
 
         var recurring = new RecurringTransaction
         {
@@ -162,13 +170,12 @@ public class RecurringTransactionService : IRecurringTransactionService
             recurring.EndDate = request.EndDate.Value == DateTime.MinValue ? null : request.EndDate.Value;
         if (request.MaxRuns.HasValue) recurring.MaxRuns = request.MaxRuns.Value;
         if (request.DocumentType.HasValue) recurring.DocumentType = request.DocumentType.Value;
+        // ตรวจทั้งเมื่อแก้เทมเพลต และเมื่อเปลี่ยนผู้ติดต่ออย่างเดียว (เดิมเปลี่ยนผู้ติดต่อผ่าน API ไม่ถูกตรวจเลย ⇒ cron ล้มแทน)
+        if (request.TemplateData != null || request.ContactId.HasValue)
+            await ValidateTemplateAsync(companyId, recurring.TemplateType, request.TemplateData ?? recurring.TemplateData,
+                request.ContactId ?? recurring.ContactId, atSave: true);
         if (request.ContactId.HasValue) recurring.ContactId = request.ContactId.Value;
-        if (request.TemplateData != null)
-        {
-            await ValidateTemplateAsync(companyId, recurring.TemplateType, request.TemplateData,
-                request.ContactId ?? recurring.ContactId);
-            recurring.TemplateData = request.TemplateData;
-        }
+        if (request.TemplateData != null) recurring.TemplateData = request.TemplateData;
         if (request.NotifyBeforeRun.HasValue) recurring.NotifyBeforeRun = request.NotifyBeforeRun.Value;
         if (request.NotifyDaysBefore.HasValue) recurring.NotifyDaysBefore = request.NotifyDaysBefore.Value;
         if (request.AutoApprove.HasValue) recurring.AutoApprove = request.AutoApprove.Value;
@@ -181,6 +188,21 @@ public class RecurringTransactionService : IRecurringTransactionService
         // (ตั้งหลังทั้งสองฟิลด์ ไม่ว่าผู้ใช้ส่งมาลำดับไหน)
         if (recurring.AutoSendEmail) recurring.AutoApprove = true;
         if (request.Status.HasValue) recurring.Status = request.Status.Value;
+        if (recurring.EndDate.HasValue && !RecurringSchedule.WithinEnd(recurring.StartDate, recurring.EndDate))
+            throw new BusinessRuleException("วันสิ้นสุดอยู่ก่อนวันเริ่มต้น — แก้วันสิ้นสุด (หรือเว้นว่างถ้าไม่มีกำหนด) แล้วบันทึกอีกครั้ง",
+                RecurringTemplate.RuleCode);
+        // "เสร็จสิ้น" เพราะเลยวันสิ้นสุด/ครบจำนวนครั้ง แล้วผู้ใช้แก้ให้ไปต่อได้ (ขยาย/ล้างวันสิ้นสุด) ⇒ กลับมาใช้งาน — ไม่งั้นแก้แล้วไม่มีผลเงียบ ๆ
+        // (กฎ #4 A) · กำหนดที่ผ่านไปแล้วเริ่มวันนี้ (แบบ Resume — ไม่ออกใบตามหลังรวดเดียว)
+        if (!request.Status.HasValue && recurring.Status == RecurringStatus.Completed)
+        {
+            var today = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+            var resumeAt = recurring.NextRunDate < today ? today : recurring.NextRunDate;
+            if (!RecurringSchedule.IsFinished(resumeAt, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
+            {
+                recurring.Status = RecurringStatus.Active;
+                recurring.NextRunDate = resumeAt;
+            }
+        }
 
         await _db.SaveChangesAsync();
         return MapToResponse(recurring);
@@ -235,138 +257,187 @@ public class RecurringTransactionService : IRecurringTransactionService
             .Include(r => r.Contact)
             .FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
+        EnsureRunnableNow(recurring);
 
+        // ล็อกต่อรายการ (session lock ข้ามเครื่อง) กันชนกับ cron/ดับเบิลคลิก + เลื่อน NextRunDate เหมือน cron (audit D3) ·
+        // ทีมตรวจรายการประจำ 2026-10-14: เดิมห่อด้วยธุรกรรม + FOR UPDATE แต่ CreateDocumentAsync/ApproveDocumentAsync เปิดธุรกรรมของตัวเอง
+        // ⇒ EF โยน "connection is already in a transaction" ทุกครั้ง (ปุ่มนี้กับ cron ไม่เคยออกเอกสารได้) — ใช้แบบเดียวกับเส้นเช็คเอาต์ที่พัก
+        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.RecurringRun, recurring.Id.ToString(), async () =>
+        {
+            await _db.Entry(recurring).ReloadAsync();
+            EnsureRunnableNow(recurring);
+            // ถึงกำหนดแล้ว = รอบนี้คืองวดนั้น (เลื่อนกำหนดถัดไป) · ก่อนกำหนด = รอบพิเศษ ไม่กินงวด
+            var consumesPeriod = recurring.NextRunDate <= DateTime.UtcNow;
+            try
+            {
+                await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // ล้มดังทั้งในคำตอบ (โยนต่อ) และบนแถว (เหตุผลในหน้ารายการประจำ) — ไม่แจ้งเตือนซ้ำเพราะผู้ใช้อยู่ตรงนั้น
+                await RecordRunFailureAsync(companyId, recurring.Id, recurring.Name, recurring.CreatedBy, ex, fromSchedule: false);
+                throw;
+            }
+        }, _logger, companyId);
+        if (!ran)
+            throw new BusinessRuleException("รายการนี้กำลังสร้างเอกสารอยู่ (รอบอัตโนมัติหรือหน้าต่างอื่น) — รอสักครู่แล้วรีเฟรชหน้าเพื่อดูผล",
+                RecurringRunFailure.RuleCode, 409);
+
+        var fresh = await _db.RecurringTransactions.AsNoTracking()
+            .Include(r => r.Contact)
+            .FirstAsync(r => r.Id == id && r.CompanyId == companyId);
+        return MapToResponse(fresh);
+    }
+
+    /// <summary>ด่าน "กดสร้างทันทีได้ไหม" — ตัวเดียวทั้งก่อนและหลังได้ล็อก (สถานะอาจเปลี่ยนระหว่างรอ)</summary>
+    private static void EnsureRunnableNow(RecurringTransaction recurring)
+    {
         if (recurring.Status != RecurringStatus.Active)
             throw new InvalidOperationException("รายการนี้ไม่อยู่ในสถานะ Active");
         if (recurring.MaxRuns.HasValue && recurring.TotalRuns >= recurring.MaxRuns.Value)
             throw new InvalidOperationException("รายการนี้ถึงจำนวนครั้งสูงสุดแล้ว");
-        if (recurring.EndDate.HasValue && DateTime.UtcNow > recurring.EndDate.Value)
-            throw new InvalidOperationException("รายการนี้เลยวันสิ้นสุดแล้ว");
-
-        // audit D3: lock แถวกันชนกับ cron/ดับเบิลคลิก + เลื่อน NextRunDate เหมือน
-        // cron path — เดิม RunNow ไม่เลื่อน → cron รอบถัดไปเห็น NextRunDate เดิม
-        // ยัง due → สร้างเอกสารซ้ำ (เลขจริง อนุมัติแล้ว) จากงวดเดียวกัน
-        await using var tx = await _db.Database.BeginTransactionAsync();
-        _ = await _db.RecurringTransactions
-            .FromSqlRaw("SELECT * FROM \"RecurringTransactions\" WHERE \"Id\" = {0} FOR UPDATE", recurring.Id)
-            .AsNoTracking()
-            .FirstOrDefaultAsync();
-        await _db.Entry(recurring).ReloadAsync();
-        if (recurring.Status != RecurringStatus.Active)
-            throw new InvalidOperationException("รายการนี้ไม่อยู่ในสถานะ Active");
-
-        await ExecuteRecurringAsync(recurring, performedBy);
-        if (recurring.NextRunDate <= DateTime.UtcNow)
-            recurring.NextRunDate = GetNextRunDate(recurring);
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
-        return MapToResponse(recurring);
+        // วันสิ้นสุดนับรวมวันนั้น (ตามปฏิทินไทย) — เดิมเทียบกับ 00:00 UTC ⇒ กดในวันสิ้นสุดหลัง 07:00 น. ไม่ได้
+        if (!RecurringSchedule.WithinEnd(DateTime.UtcNow, recurring.EndDate))
+            throw new InvalidOperationException("รายการนี้เลยวันสิ้นสุดแล้ว — ขยายวันสิ้นสุดในหน้าแก้ไขก่อน ถ้าต้องการสร้างต่อ");
     }
 
     public async Task ProcessDueRecurringTransactionsAsync()
     {
         var now = DateTime.UtcNow;
-        var dueItems = await _db.RecurringTransactions
+        // อ่านแค่รหัส — แต่ละรายการโหลดใหม่ภายใต้ล็อก (ไม่ถือ entity ข้ามรอบ: ของค้างจากรายการที่ล้มห้ามไหลไปกับการบันทึกของรายการถัดไป) ·
+        // ไม่กรองวันสิ้นสุดที่นี่ — รายการที่เลยวันสิ้นสุดถูกปิดเป็น "เสร็จสิ้น" ในลูป (เดิมค้าง "ใช้งาน" ตลอดไป และงวดที่ตรงวันสิ้นสุดถูกตัดทิ้ง)
+        var due = await _db.RecurringTransactions.AsNoTracking()
             .Where(r => r.Status == RecurringStatus.Active && r.NextRunDate <= now)
-            .Where(r => r.EndDate == null || r.EndDate >= now)
+            .OrderBy(r => r.NextRunDate)
+            .Select(r => new { r.Id, r.CompanyId, r.Name, r.CreatedBy })
             .ToListAsync();
 
-        foreach (var recurring in dueItems)
+        foreach (var item in due)
         {
-            await using var transaction = await _db.Database.BeginTransactionAsync();
+            _db.ChangeTracker.Clear();
             try
             {
-                // Lock the row to prevent concurrent scheduler instances from processing
-                // the same item. ⚠️ ต้อง "เช็คผล" ของ SKIP LOCKED — ถ้าอีก instance ถือ
-                // lock อยู่ query จะคืน 0 แถว (ถูก skip) → ต้องข้าม. เดิมใช้
-                // ExecuteSqlRawAsync แล้วทิ้งผล → instance ที่ถูก skip ยังทำต่อ (ReloadAsync
-                // อ่าน committed state ที่ NextRunDate ยังไม่ถูก advance) → สร้างเอกสารซ้ำ
-                // ตอน scale หลาย instance / job รันซ้อน.
-                var lockRow = await _db.RecurringTransactions
-                    .FromSqlRaw("SELECT * FROM \"RecurringTransactions\" WHERE \"Id\" = {0} FOR UPDATE SKIP LOCKED", recurring.Id)
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync();
-                if (lockRow == null)
+                // ล็อกต่อรายการแบบ try: อีกเครื่อง/ปุ่ม "สร้างทันที" ถืออยู่ = ข้าม (รอบหน้าค่อยว่ากัน) — กันออกใบงวดเดียวกันซ้ำตอน scale หลายเครื่อง
+                await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.RecurringRun, item.Id.ToString(), async () =>
                 {
-                    // instance อื่นถือ lock/กำลังประมวลผลรายการนี้อยู่ → ข้าม กันสร้างซ้ำ
-                    await transaction.CommitAsync();
-                    continue;
-                }
-
-                // Re-read inside transaction to get the latest state (ตอนนี้ถือ lock แล้ว)
-                await _db.Entry(recurring).ReloadAsync();
-
-                if (recurring.Status != RecurringStatus.Active || recurring.NextRunDate > now)
-                {
-                    await transaction.CommitAsync();
-                    continue;
-                }
-
-                if (recurring.MaxRuns.HasValue && recurring.TotalRuns >= recurring.MaxRuns.Value)
-                {
-                    recurring.Status = RecurringStatus.Completed;
-                    await _db.SaveChangesAsync();
-                    await transaction.CommitAsync();
-                    continue;
-                }
-
-                await ExecuteRecurringAsync(recurring, "System");
-                recurring.NextRunDate = GetNextRunDate(recurring);
-                await _db.SaveChangesAsync();
-                await transaction.CommitAsync();
+                    var recurring = await _db.RecurringTransactions
+                        .FirstOrDefaultAsync(r => r.Id == item.Id && r.CompanyId == item.CompanyId);
+                    // อ่านใหม่ภายใต้ล็อก: อีกเครื่องเพิ่งรันเสร็จ (NextRunDate เลื่อนแล้ว) / ถูกหยุด / ถูกลบ ⇒ ข้าม
+                    if (recurring == null || recurring.Status != RecurringStatus.Active || recurring.NextRunDate > now) return;
+                    if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
+                    {
+                        recurring.Status = RecurringStatus.Completed;
+                        await _db.SaveChangesAsync();
+                        return;
+                    }
+                    await ExecuteRecurringAsync(recurring, "System", consumesPeriod: true);
+                }, _logger, item.CompanyId);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogError(ex, "Failed to process recurring transaction {Id} ({Name})", recurring.Id, recurring.Name);
-                await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.Execute/{recurring.Id}");
+                try
+                {
+                    await RecordRunFailureAsync(item.CompanyId, item.Id, item.Name, item.CreatedBy, ex, fromSchedule: true);
+                }
+                catch (Exception rex) when (rex is not OperationCanceledException)
+                {
+                    // บันทึกเหตุผลลงแถวไม่ได้ (ฐานข้อมูลมีปัญหา) — ลง log ทั้งสองตัวแล้วไปรายการถัดไป (รายการอื่นต้องได้รันต่อ)
+                    _logger.LogError(ex, "Failed to process recurring transaction {Id} ({Name})", item.Id, item.Name);
+                    _logger.LogError(rex, "Failed to record recurring failure {Id}", item.Id);
+                }
             }
         }
     }
 
-    private async Task ExecuteRecurringAsync(RecurringTransaction recurring, string performedBy)
+    /// <summary>หนึ่งรอบของรายการประจำ: ตรวจเทมเพลตด้วยตัวตรวจเดียวกับตอนบันทึก → สร้างเอกสาร/สมุดรายวัน → ประทับรอบ (ทันทีหลังสร้าง)
+    /// → อนุมัติ/ส่งอีเมล · <paramref name="consumesPeriod"/> = รอบนี้คืองวดตามกำหนด (เลื่อนกำหนดถัดไป)</summary>
+    private async Task ExecuteRecurringAsync(RecurringTransaction recurring, string performedBy, bool consumesPeriod)
     {
-        // Create actual document or journal entry from template
-        if (!string.IsNullOrEmpty(recurring.TemplateData))
-        {
-            var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        // เทมเพลตว่าง = เดิม "รัน" สำเร็จ (นับครั้ง + เลื่อนงวด) โดยไม่มีเอกสารสักใบ (silent no-op) ⇒ ตอนนี้ล้มพร้อมทางไปต่อ ·
+        // ของที่อ้างไว้ถูกลบ/ปิดหลังบันทึก ⇒ ข้อความบอกช่อง (เดิมไปล้มลึกใน CreateDocumentAsync เป็นข้อความเทคนิค —
+        // หรือแย่กว่า: บัญชีธนาคารที่ถูกลบ ⇒ AutoPost ตกไปลงเงินสด 111 เงียบ ๆ)
+        await ValidateTemplateAsync(recurring.CompanyId, recurring.TemplateType, recurring.TemplateData, recurring.ContactId, atSave: false);
+        var baseDate = RecurringSchedule.PlaceholderBaseDate(recurring.NextRunDate, DateTime.UtcNow, consumesPeriod);
+        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
-            if (IsJournalTemplate(recurring.TemplateType))
-            {
-                await CreateJournalFromTemplateAsync(recurring, performedBy, jsonOptions);
-            }
-            else
-            {
-                await CreateDocumentFromTemplateAsync(recurring, performedBy, jsonOptions);
-            }
-        }
+        if (IsJournalTemplate(recurring.TemplateType))
+            await CreateJournalFromTemplateAsync(recurring, performedBy, jsonOptions, baseDate, consumesPeriod);
+        else
+            await CreateDocumentFromTemplateAsync(recurring, performedBy, jsonOptions, baseDate, consumesPeriod);
+    }
 
+    /// <summary>ประทับ "รอบนี้สร้างแล้ว" ทันทีหลังเอกสาร/สมุดรายวันถูกบันทึก (ก่อนอนุมัติ/ส่งอีเมล) — ช่องว่างที่ระบบล่มแล้วออกใบงวดเดิมซ้ำ
+    /// เหลือแค่ระหว่างสองคำสั่งนี้ · ล้างผลล้มของรอบก่อน · ครบจำนวนครั้ง/เลยวันสิ้นสุด ⇒ เสร็จสิ้น</summary>
+    private async Task MarkRunAsync(RecurringTransaction recurring, bool consumesPeriod, Guid? documentId)
+    {
         recurring.LastRunDate = DateTime.UtcNow;
         recurring.TotalRuns++;
-
-        if (recurring.MaxRuns.HasValue && recurring.TotalRuns >= recurring.MaxRuns.Value)
+        if (consumesPeriod) recurring.NextRunDate = GetNextRunDate(recurring);
+        recurring.LastRunError = null;
+        recurring.LastRunErrorAt = null;
+        recurring.LastRunNotice = null;
+        if (documentId.HasValue) recurring.LastDocumentId = documentId;
+        if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
             recurring.Status = RecurringStatus.Completed;
+        await _db.SaveChangesAsync();
     }
 
-    private static DateTime GetNextRunDate(RecurringTransaction r) => r.Frequency switch
+    /// <summary>เรื่องที่ต้องทำต่อของรอบที่สร้างเอกสารสำเร็จ (อนุมัติอัตโนมัติไม่สำเร็จ · ส่งอีเมลไม่ได้ ฯลฯ) — เขียนตรงที่แถว
+    /// (ไม่ผ่าน SaveChanges: การอนุมัติ/post ที่ล้มอาจทิ้งค่าค้างใน context ซึ่งห้ามถูกบันทึกตาม)</summary>
+    private async Task SetRunNoticeAsync(RecurringTransaction recurring, List<string> notices)
     {
-        RecurringFrequency.Daily => r.NextRunDate.AddDays(1),
-        RecurringFrequency.Weekly => r.NextRunDate.AddDays(7),
-        RecurringFrequency.BiWeekly => r.NextRunDate.AddDays(14),
-        RecurringFrequency.Monthly => AdvanceMonths(r, 1),
-        RecurringFrequency.Quarterly => AdvanceMonths(r, 3),
-        RecurringFrequency.SemiAnnual => AdvanceMonths(r, 6),
-        RecurringFrequency.Annual => AdvanceMonths(r, 12),
-        _ => AdvanceMonths(r, 1)
-    };
-
-    private static DateTime AdvanceMonths(RecurringTransaction r, int months)
-    {
-        var preferredDay = r.PreferredDay ?? r.StartDate.Day;
-        var next = r.NextRunDate.AddMonths(months);
-        var daysInMonth = DateTime.DaysInMonth(next.Year, next.Month);
-        var day = Math.Min(preferredDay, daysInMonth);
-        return new DateTime(next.Year, next.Month, day, 0, 0, 0, DateTimeKind.Utc);
+        if (notices.Count == 0) return;
+        var text = string.Join(" · ", notices);
+        if (text.Length > 2000) text = text[..2000] + "…";
+        await _db.RecurringTransactions
+            .Where(r => r.Id == recurring.Id && r.CompanyId == recurring.CompanyId)
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.LastRunNotice, text));
     }
+
+    /// <summary>รอบล้ม ⇒ เหตุผล (ไทย · บอกช่อง + ทางแก้) ลงแถว + ErrorLog/แจ้งผู้ตั้งรายการ <b>เฉพาะครั้งแรก/เมื่อสาเหตุเปลี่ยน</b>
+    /// (เดิม ErrorLog ทุก 15 นาทีตลอดไป และผู้ใช้ไม่เห็นอะไรเลย) · ระบบยังลองใหม่ทุกรอบ — แก้แล้วรอบถัดไปเดินเอง (คำตัดสินข้อ 150)</summary>
+    private async Task RecordRunFailureAsync(Guid companyId, Guid recurringId, string name, string? createdBy, Exception ex, bool fromSchedule)
+    {
+        var reason = RecurringRunFailure.UserMessage(ex);
+        _db.ChangeTracker.Clear();   // เอกสารครึ่งทางของรอบที่ล้มต้องไม่ถูกบันทึกตามไปกับคำสั่งถัดไป
+        var previous = await _db.RecurringTransactions.AsNoTracking()
+            .Where(r => r.Id == recurringId && r.CompanyId == companyId)
+            .Select(r => r.LastRunError)
+            .FirstOrDefaultAsync();
+        var at = DateTime.UtcNow;
+        await _db.RecurringTransactions
+            .Where(r => r.Id == recurringId && r.CompanyId == companyId)
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.LastRunError, reason).SetProperty(r => r.LastRunErrorAt, (DateTime?)at));
+        if (previous == reason)
+        {
+            _logger.LogInformation("Recurring {Id} still failing (same reason) — skip duplicate error log/notification", recurringId);
+            return;
+        }
+
+        _logger.LogError(ex, "Failed to process recurring transaction {Id} ({Name})", recurringId, name);
+        await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.Execute/{recurringId}");
+        if (!fromSchedule || _notify == null) return;
+        try
+        {
+            await _notify.DispatchAsync(companyId, global::Accounting.Models.Constants.NotificationEvents.RecurringRunFailed, new NotificationContext
+            {
+                Title = $"รายการประจำ \"{name}\" สร้างเอกสารไม่สำเร็จ",
+                Message = reason + " — แก้ไขที่หน้ารายการประจำ แล้วกด \"สร้างทันที\" หรือรอรอบอัตโนมัติถัดไป (ระบบลองใหม่ให้เอง)",
+                ActionUrl = "/pages/recurring.html",
+                EntityType = "RecurringTransaction",
+                EntityId = recurringId,
+                RecipientUserId = Guid.TryParse(createdBy, out var ownerId) ? ownerId : null,
+            });
+        }
+        catch (Exception nex) when (nex is not OperationCanceledException)
+        {
+            // เหตุผลอยู่บนแถวแล้ว (หน้ารายการประจำ) — การแจ้งเตือนล้มไม่ทำให้รอบอื่นหยุด
+            _logger.LogWarning(nex, "Recurring {Id}: failure notification dispatch failed", recurringId);
+        }
+    }
+
+    private static DateTime GetNextRunDate(RecurringTransaction r)
+        => RecurringSchedule.Next(r.Frequency, r.NextRunDate, r.PreferredDay, r.StartDate);
 
     private static readonly string[] _thMonthsFull =
         { "", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -410,7 +481,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             m => map.TryGetValue(m.Groups[1].Value, out var v) ? v : m.Value);
     }
 
-    private async Task CreateDocumentFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions)
+    private async Task CreateDocumentFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions,
+        DateTime baseDate, bool consumesPeriod)
     {
         try
         {
@@ -421,13 +493,13 @@ public class RecurringTransactionService : IRecurringTransactionService
             var contactId = recurring.ContactId
                 ?? throw new InvalidOperationException($"รายการที่เกิดซ้ำ '{recurring.Name}' ไม่มีผู้ติดต่อ (ContactId) กรุณาตั้งค่าผู้ติดต่อก่อนดำเนินการ");
 
-            Guid? projectId = root.TryGetProperty("projectId", out var pjEl) && pjEl.ValueKind == JsonValueKind.String && Guid.TryParse(pjEl.GetString(), out var pjId) ? pjId : null;
+            // ตัวอ่านเดียวกับตัวตรวจตอนบันทึก (RecurringTemplate) — ค่าที่อ่านไม่ได้ ⇒ ข้อความบอกช่อง (เดิม Guid.Parse/GetDecimal โยนข้อความเทคนิค)
+            Guid? projectId = RecurringTemplate.ReadGuid(root, "projectId", 0);
 
             // ── Placeholder ในเทมเพลต — แทนค่าวันที่/เดือน/ปี ตอนสร้างเอกสารจริง
             // เช่น "ค่าบริการทำบัญชีเดือน <<month>>" → "...เดือน กรกฎาคม".
-            // ฐานคือ "วันที่ออกเอกสาร" (วันนี้ ตามปฏิทินไทย). ดู PlaceholderHelp
-            // สำหรับ token ทั้งหมด. ใช้กับ description + notes + reference.
-            var baseDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+            // ฐาน = วันของงวด (รอบตามกำหนด) หรือวันนี้ (รอบพิเศษก่อนกำหนด) ตามปฏิทินไทย — RecurringSchedule.PlaceholderBaseDate
+            // (เดิมวันนี้เสมอ ⇒ ใบตามหลังหลายงวดเขียนเดือนเดียวกันทุกใบ) · ใช้กับ description + notes + reference
             string? Sub(string? s) => ApplyRecurringPlaceholders(s, baseDate);
 
             // ฝ่ายค้าน P3-6 (รอบ 204): ผู้ถูกหัก (หัวเอกสาร + รายบรรทัด) ของเทมเพลตที่ผู้ติดต่อถูกลบไปแล้ว ⇒ สืบทอดเป็น null + หมายเหตุบนใบ +
@@ -439,13 +511,14 @@ public class RecurringTransactionService : IRecurringTransactionService
             // เดิมดูแค่อัตรา ⇒ บรรทัดราคา 0 ที่ตั้งอัตราไว้ทำให้ไม่ยกผู้ถูกหัก แล้วตอนสร้างโดนด่านหัวเอกสารขัดกับบรรทัด 400 ทุกรอบ
             static bool TplCarriesWht(JsonElement el)
             {
-                if (!(el.TryGetProperty("withholdingTaxRate", out var twEl) && twEl.ValueKind == JsonValueKind.Number && twEl.GetDecimal() > 0m))
+                // ตัวอ่านเดียวกับบรรทัดที่สร้างจริง (RecurringTemplate.TryNumber — สตริงตัวเลขอ่านเหมือนกัน · ค่าอ่านไม่ได้ ⇒ ตัวตรวจปฏิเสธก่อนถึงตรงนี้)
+                if (!(RecurringTemplate.TryNumber(el, "withholdingTaxRate", 0m) is decimal tw && tw > 0m))
                     return false;
-                var tq = el.TryGetProperty("quantity", out var tqEl) && tqEl.ValueKind == JsonValueKind.Number ? tqEl.GetDecimal() : 1m;
-                var tp = el.TryGetProperty("unitPrice", out var tpEl) && tpEl.ValueKind == JsonValueKind.Number ? tpEl.GetDecimal() : 0m;
+                var tq = RecurringTemplate.TryNumber(el, "quantity", 1m) ?? 1m;
+                var tp = RecurringTemplate.TryNumber(el, "unitPrice", 0m) ?? 0m;
                 // ส่วนลด % และส่วนลดบาทของบรรทัด (ตรงกับตอนสร้าง) — ลด 100% ⇒ ไม่มีภาษีหัก ⇒ ไม่นับ
-                var tdp = el.TryGetProperty("discountPercent", out var tdpEl) && tdpEl.ValueKind == JsonValueKind.Number ? tdpEl.GetDecimal() : 0m;
-                var tda = el.TryGetProperty("discountAmount", out var tdaEl) && tdaEl.ValueKind == JsonValueKind.Number ? tdaEl.GetDecimal() : 0m;
+                var tdp = RecurringTemplate.TryNumber(el, "discountPercent", 0m) ?? 0m;
+                var tda = RecurringTemplate.TryNumber(el, "discountAmount", 0m) ?? 0m;
                 return tq * tp * (1m - tdp / 100m) - tda > 0m;
             }
             var tplLineWht = new List<(Guid? Payee, bool CarriesWht)>();
@@ -470,26 +543,31 @@ public class RecurringTransactionService : IRecurringTransactionService
             var lines = new List<Models.DTOs.Document.DocumentLineRequest>();
             if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
             {
+                var lineNo = 0;
                 foreach (var line in linesEl.EnumerateArray())
                 {
-                    Guid? lineProjectId = line.TryGetProperty("projectId", out var lpEl) && lpEl.ValueKind == JsonValueKind.String && Guid.TryParse(lpEl.GetString(), out var lpId) ? lpId : null;
+                    lineNo++;
+                    Guid? lineProjectId = RecurringTemplate.ReadGuid(line, "projectId", lineNo);
 
+                    // ตัวอ่านเดียวกับตัวตรวจ (RecurringTemplate): ตัวเลขที่เป็นสตริง ("1,200") อ่านได้เหมือนยอดบนหน้าจอ · รหัสบัญชีที่อ่านไม่ได้
+                    // ⇒ ข้อความบอกบรรทัด/ช่อง (เดิม Guid.Parse ⇒ FormatException · GetDecimal ⇒ InvalidOperationException ตอนเที่ยงคืน)
                     lines.Add(new Models.DTOs.Document.DocumentLineRequest(
-                        Description: Sub(line.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "") ?? "",
-                        Quantity: line.TryGetProperty("quantity", out var qty) ? qty.GetDecimal() : 1,
-                        UnitPrice: line.TryGetProperty("unitPrice", out var up) ? up.GetDecimal() : 0,
-                        Unit: line.TryGetProperty("unit", out var unit) ? unit.GetString() : null,
-                        DiscountPercent: line.TryGetProperty("discountPercent", out var dp) ? dp.GetDecimal() : 0,
-                        VatRate: line.TryGetProperty("vatRate", out var vr) ? vr.GetDecimal() : 7,
-                        WithholdingTaxRate: line.TryGetProperty("withholdingTaxRate", out var wt) ? wt.GetDecimal() : 0,
-                        AccountId: line.TryGetProperty("accountId", out var aid) && aid.ValueKind == JsonValueKind.String ? Guid.Parse(aid.GetString()!) : null,
+                        Description: Sub(RecurringTemplate.Text(line, "description") ?? "") ?? "",
+                        Quantity: RecurringTemplate.Number(line, "quantity", 1m, lineNo),
+                        UnitPrice: RecurringTemplate.Number(line, "unitPrice", 0m, lineNo),
+                        Unit: RecurringTemplate.Text(line, "unit"),
+                        DiscountPercent: RecurringTemplate.Number(line, "discountPercent", 0m, lineNo),
+                        VatRate: RecurringTemplate.Number(line, "vatRate", 7m, lineNo),
+                        WithholdingTaxRate: RecurringTemplate.Number(line, "withholdingTaxRate", 0m, lineNo),
+                        AccountId: RecurringTemplate.ReadGuid(line, "accountId", lineNo),
                         ProjectId: lineProjectId,
                         // audit D1: template ที่ใช้ส่วนลดบาท/ธง VAT ต้องห้าม/สินค้า
                         // เดิมหาย → ใบที่ generate แพงกว่า template + VAT ต้องห้าม
                         // กลับเคลมได้
                         ProductCode: line.TryGetProperty("productCode", out var pc) && pc.ValueKind == JsonValueKind.String ? pc.GetString() : null,
                         IsVatClaimable: !line.TryGetProperty("isVatClaimable", out var ivc) || ivc.ValueKind != JsonValueKind.False,
-                        DiscountAmount: line.TryGetProperty("discountAmount", out var da) && da.ValueKind == JsonValueKind.Number ? da.GetDecimal() : null,
+                        DiscountAmount: line.TryGetProperty("discountAmount", out var da) && da.ValueKind is JsonValueKind.Number or JsonValueKind.String
+                            ? RecurringTemplate.Number(line, "discountAmount", 0m, lineNo) : null,
                         // ฝ่ายค้าน M4 (2026-10-12): ประเภทเงินได้รายบรรทัดของเทมเพลต (ช่อง fIncomeType ของหน้ารายการประจำ) — เดิมไม่อ่าน ⇒
                         // ใบที่ generate ไม่มีประเภท ⇒ 50 ทวิ ได้ "8" เสมอ · ค่าที่ตารางกลางชี้ขาดไม่ได้ (เทมเพลตเก่า) = ไม่ระบุ (ไม่ทำให้ทั้งรอบล้ม)
                         IncomeTypeCode: Accounting.Helpers.DocumentLineIncomeType.Inherit(
@@ -501,9 +579,10 @@ public class RecurringTransactionService : IRecurringTransactionService
                 }
             }
 
-            Guid? bankAccountId = root.TryGetProperty("bankAccountId", out var baEl) && baEl.ValueKind == JsonValueKind.String && Guid.TryParse(baEl.GetString(), out var baId) ? baId : null;
-            Guid? paymentAccountId = root.TryGetProperty("paymentAccountId", out var paEl) && paEl.ValueKind == JsonValueKind.String && Guid.TryParse(paEl.GetString(), out var paId) ? paId : null;
-            Guid? expenseCategoryId = root.TryGetProperty("expenseCategoryId", out var ecEl) && ecEl.ValueKind == JsonValueKind.String && Guid.TryParse(ecEl.GetString(), out var ecId) ? ecId : null;
+            // bankAccountId = ทะเบียนบัญชีธนาคาร (BankAccounts) · paymentAccountId/expenseCategoryId = ผังบัญชี — ตัวตรวจค้นแต่ละตัวในตารางของมันแล้ว
+            Guid? bankAccountId = RecurringTemplate.ReadGuid(root, "bankAccountId", 0);
+            Guid? paymentAccountId = RecurringTemplate.ReadGuid(root, "paymentAccountId", 0);
+            Guid? expenseCategoryId = RecurringTemplate.ReadGuid(root, "expenseCategoryId", 0);
 
             var request = new Models.DTOs.Document.CreateDocumentRequest(
                 DocumentType: docType,
@@ -514,13 +593,13 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // CreditDays ถูกเติมจาก contact (เช่น 45) ⇒ ใบที่ generate
                 // ทุกเดือนพิมพ์ "เครดิต 45 วัน" คู่กับครบกำหนด +30 วัน =
                 // เอกสารขัดกันเอง + ระบบทวงหนี้เร็วไป 15 วันทุกรอบ
-                DueDate: root.TryGetProperty("dueDays", out var dd) && dd.ValueKind == JsonValueKind.Number
-                    ? DateTime.UtcNow.AddDays(dd.GetInt32()) : null,
-                CreditDays: root.TryGetProperty("dueDays", out var dd2) && dd2.ValueKind == JsonValueKind.Number
-                    ? dd2.GetInt32() : null,
+                DueDate: root.TryGetProperty("dueDays", out var dd) && dd.ValueKind == JsonValueKind.Number && dd.TryGetInt32(out var ddDays)
+                    ? DateTime.UtcNow.AddDays(ddDays) : null,
+                CreditDays: root.TryGetProperty("dueDays", out var dd2) && dd2.ValueKind == JsonValueKind.Number && dd2.TryGetInt32(out var ddCredit)
+                    ? ddCredit : null,
                 ContactId: contactId,
                 Reference: Sub($"AUTO-{recurring.Name}"),
-                Notes: Sub(root.TryGetProperty("notes", out var notes) ? notes.GetString() : null),
+                Notes: Sub(RecurringTemplate.Text(root, "notes")),
                 Lines: lines,
                 ProjectId: projectId,
                 BankAccountId: bankAccountId,
@@ -538,9 +617,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                     && dl.ValueKind == JsonValueKind.String ? dl.GetString() : null,
                 // สาขาผู้ออกใบ — template เก่าไม่มี key นี้ → null = ใช้ค่าบริษัท
                 // ตามเดิมเป๊ะ. CreateDocumentAsync ตรวจว่าเป็นสาขาของบริษัทนี้อีกชั้น
-                BranchId: root.TryGetProperty("branchId", out var brEl)
-                    && brEl.ValueKind == JsonValueKind.String
-                    && Guid.TryParse(brEl.GetString(), out var brGuid) ? brGuid : null,
+                BranchId: RecurringTemplate.ReadGuid(root, "branchId", 0),
                 // flag หัวเอกสาร (policy "ทำงานตามหัวกระดาษ") — บิลรายเดือนแบบ
                 // "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" คือเคสหลักของ recurring ใน
                 // ไทย. template เก่าไม่มี key = false/null (พฤติกรรมเดิม).
@@ -577,6 +654,11 @@ public class RecurringTransactionService : IRecurringTransactionService
             );
 
             var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy);
+            // ประทับรอบทันทีหลังเอกสารถูกบันทึก (ก่อนอนุมัติ/ส่งอีเมล) — ขั้นหลังล้มต้องไม่ทำให้รอบถัดไปออกใบงวดเดิมซ้ำ
+            await MarkRunAsync(recurring, consumesPeriod, result.Id);
+            // เรื่องที่ต้องทำต่อของรอบนี้ ⇒ LastRunNotice บนแถว (หน้ารายการประจำ) — นอกเหนือจากหมายเหตุบนตัวเอกสาร
+            var notices = new List<string>();
+            var approved = false;
 
             // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้าย "50 ทวิ ต้องตรวจ" บนใบ (ตัวเดียวกับแปลง/คัดลอก — Decide/คำเตือนอนุมัติอ่าน) + ไม่อนุมัติอัตโนมัติ
             // (50 ทวิ จะออกผิดคน) · ฝ่ายค้านรอบ 204 (หลัง 0f428969): การไม่อนุมัติอัตโนมัติเดินเส้นรายงานเดียวกับการอนุมัติอัตโนมัติล้ม
@@ -594,6 +676,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                     await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)",
                         new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.WhtPayeeSplit.DroppedPayeeAutoApproveSkipReason(droppedPayees),
                             Accounting.Helpers.WhtPayeeSplit.RuleCode));
+                notices.Add(Accounting.Helpers.WhtPayeeSplit.DroppedPayeeAutoApproveSkipReason(droppedPayees));
             }
 
             // Auto-approve if configured (ผู้ถูกหักถูกตัดทิ้ง = ไม่อนุมัติอัตโนมัติ — ข้างบน)
@@ -605,6 +688,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                     var passed = new List<string>();
                     var approvedDoc = await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
                         Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passed);
+                    approved = true;
                     if (Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed) is { } notice && _notify != null)
                     {
                         try
@@ -630,7 +714,9 @@ public class RecurringTransactionService : IRecurringTransactionService
                 {
                     // PP36_REVIEW P0-2: ApproveDocumentAsync ถอยค่าค้างแล้ว (ใบค้างเป็นร่างจริง) · ล้มดังบนตัวเอกสาร (หมายเหตุภายในพร้อมเหตุผล) —
                     // เดิม log อย่างเดียว ⇒ ผู้ใช้เห็นใบร่างโผล่โดยไม่รู้ว่าทำไมไม่อนุมัติตามที่ตั้งไว้
-                    await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)", ex);
+                    var outcome = await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)", ex);
+                    approved = outcome.Committed;
+                    notices.Add(outcome.Message);
                     await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
                 }
             }
@@ -651,8 +737,24 @@ public class RecurringTransactionService : IRecurringTransactionService
             if (result != null && _emailSchedule != null)
             {
                 try { await _emailSchedule.OnRecurringDocumentCreatedAsync(recurring.CompanyId, result.Id, recurring.Id); }
-                catch (Exception ex2) { _logger.LogWarning(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id); }
+                catch (Exception ex2) when (ex2 is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id);
+                    if (recurring.AutoSendEmail)
+                        notices.Add($"เข้าคิวส่งอีเมลเอกสาร {result.DocumentNumber} ไม่สำเร็จ — ส่งเองจากหน้าเอกสาร");
+                }
             }
+            // ส่งอีเมลอัตโนมัติที่ "ไม่มีอะไรออก" ต้องบอกผู้ใช้ที่หน้ารายการประจำ (เดิม log warning อย่างเดียว · RCE-07)
+            if (recurring.AutoSendEmail && result != null)
+            {
+                if (!approved)
+                    notices.Add("ยังไม่ได้ส่งอีเมล — เอกสารไม่ได้ถูกอนุมัติ (ใบร่างยังไม่มีเลขที่จริงตาม §86/4) อนุมัติที่หน้าเอกสารแล้วส่งจากที่นั่น");
+                else if (string.IsNullOrWhiteSpace(await _db.Contacts.AsNoTracking()
+                             .Where(c => c.Id == contactId && c.CompanyId == recurring.CompanyId)
+                             .Select(c => c.Email).FirstOrDefaultAsync()))
+                    notices.Add("ไม่ได้ส่งอีเมล — ผู้ติดต่อไม่มีอีเมล: เพิ่มอีเมลที่หน้าผู้ติดต่อ แล้วส่งเอกสารนี้จากหน้าเอกสาร");
+            }
+            await SetRunNoticeAsync(recurring, notices);
         }
         catch (Exception ex)
         {
@@ -661,39 +763,43 @@ public class RecurringTransactionService : IRecurringTransactionService
         }
     }
 
-    private async Task CreateJournalFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions)
+    private async Task CreateJournalFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions,
+        DateTime baseDate, bool consumesPeriod)
     {
         try
         {
             using var doc = JsonDocument.Parse(recurring.TemplateData!);
             var root = doc.RootElement;
 
-            // แทนค่า placeholder (&lt;&lt;month&gt;&gt; ฯลฯ) เหมือนฝั่งเอกสาร
-            var baseDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+            // แทนค่า placeholder (&lt;&lt;month&gt;&gt; ฯลฯ) เหมือนฝั่งเอกสาร — วันฐานตามงวด (RecurringSchedule.PlaceholderBaseDate)
             string? Sub(string? s) => ApplyRecurringPlaceholders(s, baseDate);
 
             var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
             if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
             {
+                var lineNo = 0;
                 foreach (var line in linesEl.EnumerateArray())
                 {
+                    lineNo++;
+                    // ตัวอ่านเดียวกับตัวตรวจ — ตัวตรวจบังคับบัญชีทุกบรรทัดแล้ว (เดิมไม่มีบัญชี ⇒ Guid.Empty ⇒ ล้มลึกใน CreateJournalEntryAsync)
                     lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                        AccountId: line.TryGetProperty("accountId", out var aid) ? Guid.Parse(aid.GetString()!) : Guid.Empty,
-                        DebitAmount: line.TryGetProperty("debitAmount", out var da) ? da.GetDecimal() : 0,
-                        CreditAmount: line.TryGetProperty("creditAmount", out var ca) ? ca.GetDecimal() : 0,
-                        Description: Sub(line.TryGetProperty("description", out var desc) ? desc.GetString() : null)
+                        AccountId: RecurringTemplate.ReadGuid(line, "accountId", lineNo) ?? Guid.Empty,
+                        DebitAmount: RecurringTemplate.Number(line, "debitAmount", 0m, lineNo),
+                        CreditAmount: RecurringTemplate.Number(line, "creditAmount", 0m, lineNo),
+                        Description: Sub(RecurringTemplate.Text(line, "description"))
                     ));
                 }
             }
 
             var request = new Models.DTOs.Accounting.CreateJournalEntryRequest(
                 EntryDate: DateTime.UtcNow,
-                Description: Sub(root.TryGetProperty("description", out var d) ? d.GetString() ?? recurring.Name : recurring.Name) ?? recurring.Name,
+                Description: Sub(RecurringTemplate.Text(root, "description") ?? recurring.Name) ?? recurring.Name,
                 Reference: $"AUTO-{recurring.Name}",
                 Lines: lines
             );
 
             var result = await _accountingService.CreateJournalEntryAsync(recurring.CompanyId, request, performedBy);
+            await MarkRunAsync(recurring, consumesPeriod, documentId: null);
 
             // Auto-post if configured
             if (recurring.AutoApprove && result != null)
@@ -702,10 +808,15 @@ public class RecurringTransactionService : IRecurringTransactionService
                 {
                     await _accountingService.PostJournalEntryAsync(recurring.CompanyId, result.Id);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    // สมุดรายวันค้างเป็นร่าง — เดิม log อย่างเดียว ผู้ใช้ไม่รู้ว่าไม่ได้ลงบัญชี ⇒ บอกที่แถวรายการประจำ (ข้อความไทยหรือข้อความกลาง)
                     _logger.LogWarning(ex, "Auto-post failed for recurring journal {JournalId}", result.Id);
                     await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoPost/{result.Id}");
+                    await SetRunNoticeAsync(recurring, new List<string>
+                    {
+                        $"ลงบัญชีสมุดรายวัน {result.EntryNumber} อัตโนมัติไม่สำเร็จ (ค้างเป็นร่าง): {RecurringRunFailure.UserMessage(ex)} — เปิดสมุดรายวันแล้วกดลงบัญชีเอง",
+                    });
                 }
             }
 
@@ -724,104 +835,61 @@ public class RecurringTransactionService : IRecurringTransactionService
             r.TotalRuns, r.MaxRuns, r.TemplateType, r.DocumentType,
             r.ContactId, r.Contact?.Name,
             r.TemplateData, ExtractAmount(r.TemplateData), r.NotifyBeforeRun,
-            r.NotifyDaysBefore, r.AutoApprove, r.CreatedAt, r.AutoSendEmail);
+            r.NotifyDaysBefore, r.AutoApprove, r.CreatedAt, r.AutoSendEmail,
+            r.LastRunError, r.LastRunErrorAt, r.LastRunNotice, r.LastDocumentId);
 
-    /// <summary>ตรวจ template ตอน Create/Update — fail fast ก่อนรอ
-    /// midnight cron แล้วเจอ Guid.Empty / GL ผิด tenant. ตรวจ:
-    /// (1) JSON parse ได้, (2) journal template → debit = credit + ทุก
-    /// accountId อยู่ใน company + GL active, (3) document template →
-    /// ContactId required + ทุก line.accountId (ถ้ามี) อยู่ใน company,
-    /// (4) bankAccountId/paymentAccountId อยู่ใน company.</summary>
-    private async Task ValidateTemplateAsync(Guid companyId, string? templateType, string? templateData, Guid? contactId)
+    /// <summary>ตัวตรวจเทมเพลต <b>ตัวเดียว</b> — ตอนบันทึก (Create/Update · <paramref name="atSave"/>=true) และ <b>ตอนถึงรอบทุกครั้ง</b>
+    /// (<c>ExecuteRecurringAsync</c> · false) · รหัสทุกตัวค้นใน "ตารางที่ถูก" ของมัน + บริษัทนี้ + ไม่ถูกลบ (<see cref="RecurringTemplate.Read"/>
+    /// แยกชนิดให้): บรรทัด/ช่องทางรับจ่าย(ผัง)/หมวดค่าใช้จ่าย → ผังบัญชี · บัญชีธนาคาร → ทะเบียนบัญชีธนาคาร · โครงการ · สาขา · ผู้ติดต่อ ·
+    /// ผู้ถูกหัก (เฉพาะตอนบันทึก — ตอนถึงรอบ ผู้ถูกหักที่ถูกลบสืบทอดเป็น null + ป้าย P3-6 ไม่ล้มทั้งรอบ)
+    /// <para>ที่มา 2026-10-14: เดิมรวม <c>bankAccountId</c> เข้าชุดผังบัญชี ⇒ "Template มี accountId ที่ไม่พบในผังบัญชี" ทุกใบที่เลือกบัญชีธนาคาร ·
+    /// โครงการ/สาขา/ผู้ถูกหักไม่ถูกตรวจเลย ⇒ cron ล้มแทน · ตอนถึงรอบไม่ตรวจซ้ำ ⇒ บัญชีธนาคารที่ถูกลบหลังบันทึกทำให้ JE ตกไปลงเงินสดเงียบ ๆ</para>
+    /// <para>ทุกข้อความบอกช่อง + ทางไปต่อ (ห้าม GUID) · บล็อกเฉพาะ GL/tenant/ข้อมูลที่สร้างเอกสารไม่ได้จริง (คำตัดสินข้อ 150)</para></summary>
+    private async Task ValidateTemplateAsync(Guid companyId, string? templateType, string? templateData, Guid? contactId, bool atSave)
     {
-        if (string.IsNullOrWhiteSpace(templateData)) return;
+        var isJournal = IsJournalTemplate(templateType);
+        if (string.IsNullOrWhiteSpace(templateData))
+            throw new BusinessRuleException(isJournal
+                ? "รายการประจำแบบสมุดรายวันยังไม่มีบรรทัดรายการ — เพิ่มบรรทัดเดบิต/เครดิตแล้วบันทึกอีกครั้ง"
+                : "รายการประจำยังไม่มีรายละเอียดรายการ (ยอดเงิน/บรรทัด) — เปิดแก้ไข กรอกยอดเงิน แล้วบันทึกอีกครั้ง", RecurringTemplate.RuleCode);
 
         JsonDocument doc;
         try { doc = JsonDocument.Parse(templateData); }
-        catch (JsonException ex)
-        { throw new InvalidOperationException($"TemplateData ไม่ใช่ JSON ที่ถูกต้อง: {ex.Message}"); }
+        catch (JsonException)
+        {
+            throw new BusinessRuleException("รายละเอียดรายการประจำอ่านไม่ได้ (รูปแบบข้อมูลเสีย) — เปิดแก้ไขรายการแล้วบันทึกใหม่จากฟอร์ม",
+                RecurringTemplate.RuleCode);
+        }
 
         using var _ = doc;
-        var root = doc.RootElement;
-        var type = templateType?.ToLowerInvariant() ?? "document";
-        var accountIds = new HashSet<Guid>();
+        var scan = RecurringTemplate.Read(doc.RootElement, isJournal);
+        if (scan.Problems.Count > 0)
+            throw new BusinessRuleException($"รายการประจำมีช่องที่อ่านไม่ได้: {string.Join(" · ", scan.Problems.Take(5))}" +
+                $"{(scan.Problems.Count > 5 ? $" … +{scan.Problems.Count - 5}" : "")} — เปิดแก้ไขแล้วกรอกใหม่", RecurringTemplate.RuleCode);
 
-        if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
+        if (isJournal)
         {
-            decimal totalDebit = 0, totalCredit = 0;
-            int idx = 0;
-            foreach (var line in linesEl.EnumerateArray())
+            if (scan.LineCount < 2)
+                throw new BusinessRuleException("รายการประจำแบบสมุดรายวันต้องมีอย่างน้อย 2 บรรทัด (เดบิต + เครดิต)", RecurringTemplate.RuleCode);
+            decimal totalDebit = 0m, totalCredit = 0m;
+            foreach (var line in doc.RootElement.GetProperty("lines").EnumerateArray())
             {
-                idx++;
-                if (line.TryGetProperty("accountId", out var aid)
-                    && aid.ValueKind == JsonValueKind.String
-                    && Guid.TryParse(aid.GetString(), out var gid)
-                    && gid != Guid.Empty)
-                {
-                    accountIds.Add(gid);
-                }
-                if (type == "journal")
-                {
-                    totalDebit  += line.TryGetProperty("debitAmount", out var da) ? da.GetDecimal() : 0m;
-                    totalCredit += line.TryGetProperty("creditAmount", out var ca) ? ca.GetDecimal() : 0m;
-                }
+                totalDebit += RecurringTemplate.TryNumber(line, "debitAmount", 0m) ?? 0m;
+                totalCredit += RecurringTemplate.TryNumber(line, "creditAmount", 0m) ?? 0m;
             }
-
-            if (type == "journal")
-            {
-                if (idx < 2)
-                    throw new InvalidOperationException("Template ประเภท journal ต้องมีอย่างน้อย 2 บรรทัด (debit + credit)");
-                if (Math.Round(totalDebit, 2) != Math.Round(totalCredit, 2))
-                    throw new InvalidOperationException(
-                        $"Template journal ไม่สมดุล: Dr {totalDebit:N2} ≠ Cr {totalCredit:N2} — debit ต้องเท่า credit");
-            }
+            if (Math.Round(totalDebit, 2, MidpointRounding.AwayFromZero) != Math.Round(totalCredit, 2, MidpointRounding.AwayFromZero))
+                throw new BusinessRuleException(
+                    $"รายการประจำแบบสมุดรายวันไม่สมดุล: เดบิต {totalDebit:N2} ≠ เครดิต {totalCredit:N2} — แก้ยอดให้เท่ากันแล้วบันทึกอีกครั้ง",
+                    RecurringTemplate.RuleCode);
         }
-        else if (type == "journal")
+        else
         {
-            throw new InvalidOperationException("Template ประเภท journal ต้องมี field 'lines' เป็น array");
-        }
-
-        if (type == "document" && contactId == null)
-            throw new InvalidOperationException("Template ประเภท document ต้องมี ContactId (ลูกค้า/ผู้ขาย)");
-
-        // ช่องทางรับ/จ่าย: "bankAccountId" = รหัสทะเบียนบัญชีธนาคาร (ตาราง BankAccounts — ExecuteRecurringAsync
-        // ส่งเข้า CreateDocumentRequest.BankAccountId) · "paymentAccountId"/"expenseCategoryId" = รหัสผังบัญชี
-        // (2026-10-14: เดิมรวม bankAccountId เข้าชุดผังบัญชี ⇒ เลือกบัญชีธนาคารแล้วบันทึกไม่ได้ทุกใบ
-        // "Template มี accountId ที่ไม่พบในผังบัญชี")
-        Guid? bankId = ParseGuidProperty(root, "bankAccountId");
-        Guid? paymentId = ParseGuidProperty(root, "paymentAccountId");
-        Guid? expenseCategoryId = ParseGuidProperty(root, "expenseCategoryId");
-        if (paymentId.HasValue) accountIds.Add(paymentId.Value);
-        if (expenseCategoryId.HasValue) accountIds.Add(expenseCategoryId.Value);
-
-        if (bankId.HasValue)
-        {
-            var bank = await _db.BankAccounts.AsNoTracking()
-                .Where(b => b.CompanyId == companyId && b.Id == bankId.Value)
-                .Select(b => new { b.AccountName, b.IsActive })
-                .FirstOrDefaultAsync();
-            if (bank == null)
-                throw new InvalidOperationException(
-                    "บัญชีธนาคารที่เลือกในช่องทางรับ/จ่ายเงินไม่พบในบริษัทนี้ (อาจถูกลบไปแล้ว) — เลือกช่องทางรับ/จ่ายใหม่แล้วบันทึกอีกครั้ง");
-            if (!bank.IsActive)
-                throw new InvalidOperationException(
-                    $"บัญชีธนาคาร \"{bank.AccountName}\" ถูกปิดใช้งาน — เปิดใช้งานที่หน้าบัญชีธนาคาร หรือเลือกช่องทางรับ/จ่ายอื่น");
-        }
-
-        if (accountIds.Count > 0)
-        {
-            var found = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
-                .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.IsActive })
-                .ToListAsync();
-            var missing = accountIds.Except(found.Select(a => a.Id)).ToList();
-            if (missing.Count > 0)
-                throw new InvalidOperationException(
-                    $"รายการประจำอ้างบัญชีที่ไม่พบในผังบัญชีของบริษัทนี้ {missing.Count} บัญชี (อาจถูกลบไปแล้ว) — เลือกบัญชีในบรรทัดรายการ/ช่องทางรับจ่ายใหม่แล้วบันทึกอีกครั้ง");
-            var inactive = found.Where(a => !a.IsActive).ToList();
-            if (inactive.Count > 0)
-                throw new InvalidOperationException(
-                    $"บัญชีถูกปิดใช้งาน: {string.Join(", ", inactive.Take(3).Select(a => $"{a.AccountCode} {a.AccountName}"))}{(inactive.Count > 3 ? $" … +{inactive.Count - 3}" : "")} — เปิดใช้งานที่ผังบัญชี หรือเลือกบัญชีอื่น");
+            if (contactId == null)
+                throw new BusinessRuleException("รายการประจำชนิดเอกสารต้องเลือกผู้ติดต่อ (ลูกค้า/ผู้ขาย) — เลือกผู้ติดต่อแล้วบันทึกอีกครั้ง",
+                    RecurringTemplate.RuleCode);
+            if (scan.LineCount == 0)
+                throw new BusinessRuleException("รายการประจำยังไม่มีบรรทัดรายการ (§86/4 เอกสารต้องมีรายการอย่างน้อย 1 บรรทัด) — กรอกยอดเงิน/รายละเอียดแล้วบันทึกอีกครั้ง",
+                    RecurringTemplate.RuleCode);
         }
 
         if (contactId.HasValue)
@@ -829,18 +897,97 @@ public class RecurringTransactionService : IRecurringTransactionService
             var contactExists = await _db.Contacts.AsNoTracking()
                 .AnyAsync(c => c.Id == contactId.Value && c.CompanyId == companyId && !c.IsDeleted);
             if (!contactExists)
-                throw new InvalidOperationException("ContactId ที่ระบุไม่พบในบริษัทนี้ (หรือถูกลบไปแล้ว)");
+                throw new BusinessRuleException("ผู้ติดต่อของรายการประจำไม่พบในบริษัทนี้ (อาจถูกลบไปแล้ว) — เปิดแก้ไขรายการแล้วเลือกผู้ติดต่อใหม่",
+                    RecurringTemplate.RuleCode);
         }
-    }
 
-    private static Guid? ParseGuidProperty(JsonElement root, string name)
-    {
-        if (root.TryGetProperty(name, out var el)
-            && el.ValueKind == JsonValueKind.String
-            && Guid.TryParse(el.GetString(), out var g)
-            && g != Guid.Empty)
-            return g;
-        return null;
+        List<RecurringTemplate.Ref> Of(RecurringTemplate.RefKind kind) => scan.Refs.Where(r => r.Kind == kind).ToList();
+        static string Fields(IEnumerable<RecurringTemplate.Ref> refs) => string.Join(", ", refs.Select(r => r.Field).Distinct().Take(5));
+
+        // ── ผังบัญชี: บัญชีรายบรรทัด · ช่องทางรับ/จ่าย (paymentAccountId) · หมวดค่าใช้จ่าย ──
+        var coaRefs = Of(RecurringTemplate.RefKind.ChartOfAccount);
+        if (coaRefs.Count > 0)
+        {
+            var ids = coaRefs.Select(r => r.Id).Distinct().ToList();
+            var found = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && ids.Contains(a.Id))
+                .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.IsActive })
+                .ToListAsync();
+            var foundIds = found.Select(a => a.Id).ToHashSet();
+            var missing = coaRefs.Where(r => !foundIds.Contains(r.Id)).ToList();
+            if (missing.Count > 0)
+                throw new BusinessRuleException(
+                    $"บัญชีที่เลือกไว้ไม่พบในผังบัญชีของบริษัทนี้ (อาจถูกลบไปแล้ว): {Fields(missing)} — เปิดแก้ไขรายการประจำ เลือกบัญชีใหม่ แล้วบันทึกอีกครั้ง{ApiOnlyHint}",
+                    RecurringTemplate.RuleCode);
+            var inactive = found.Where(a => !a.IsActive).ToDictionary(a => a.Id);
+            var inactiveRefs = coaRefs.Where(r => inactive.ContainsKey(r.Id)).ToList();
+            if (inactiveRefs.Count > 0)
+                throw new BusinessRuleException(
+                    $"บัญชีถูกปิดใช้งาน: {string.Join(", ", inactiveRefs.Take(3).Select(r => $"{r.Field} = {inactive[r.Id].AccountCode} {inactive[r.Id].AccountName}"))}" +
+                    " — เปิดใช้งานที่ผังบัญชี หรือเลือกบัญชีอื่นในรายการประจำ", RecurringTemplate.RuleCode);
+        }
+
+        // ── ทะเบียนบัญชีธนาคาร (bankAccountId — ไม่ใช่ผังบัญชี · บั๊ก 2026-10-14) ──
+        foreach (var bankRef in Of(RecurringTemplate.RefKind.BankAccount))
+        {
+            var bank = await _db.BankAccounts.AsNoTracking()
+                .Where(b => b.CompanyId == companyId && b.Id == bankRef.Id)
+                .Select(b => new { b.AccountName, b.IsActive })
+                .FirstOrDefaultAsync();
+            if (bank == null)
+                throw new BusinessRuleException(
+                    "บัญชีธนาคารที่เลือกในช่องทางรับ/จ่ายเงินไม่พบในบริษัทนี้ (อาจถูกลบไปแล้ว) — เปิดแก้ไขรายการประจำ เลือกช่องทางรับ/จ่ายใหม่ แล้วบันทึกอีกครั้ง",
+                    RecurringTemplate.RuleCode);
+            if (!bank.IsActive)
+                throw new BusinessRuleException(
+                    $"บัญชีธนาคาร \"{bank.AccountName}\" ถูกปิดใช้งาน — เปิดใช้งานที่หน้าบัญชีธนาคาร หรือเลือกช่องทางรับ/จ่ายอื่นในรายการประจำ",
+                    RecurringTemplate.RuleCode);
+        }
+
+        // ── โครงการ (หัวเอกสาร + รายบรรทัด) ──
+        var projectRefs = Of(RecurringTemplate.RefKind.Project);
+        if (projectRefs.Count > 0)
+        {
+            var ids = projectRefs.Select(r => r.Id).Distinct().ToList();
+            var okIds = (await _db.Set<Project>().AsNoTracking()
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted && ids.Contains(p.Id))
+                .Select(p => p.Id).ToListAsync()).ToHashSet();
+            var missing = projectRefs.Where(r => !okIds.Contains(r.Id)).ToList();
+            if (missing.Count > 0)
+                throw new BusinessRuleException(
+                    $"โครงการที่เลือกไม่พบในบริษัทนี้ (อาจถูกลบไปแล้ว): {Fields(missing)} — เลือกโครงการใหม่หรือเอาออก แล้วบันทึกอีกครั้ง{ApiOnlyHint}",
+                    RecurringTemplate.RuleCode);
+        }
+
+        // ── สาขาผู้ออกใบ ──
+        var branchRefs = Of(RecurringTemplate.RefKind.Branch);
+        if (branchRefs.Count > 0)
+        {
+            var ids = branchRefs.Select(r => r.Id).Distinct().ToList();
+            var okCount = await _db.Set<Branch>().AsNoTracking()
+                .CountAsync(b => b.CompanyId == companyId && !b.IsDeleted && ids.Contains(b.Id));
+            if (okCount != ids.Count)
+                throw new BusinessRuleException(
+                    $"สาขาผู้ออกใบที่เลือกไว้ไม่พบในบริษัทนี้ (อาจถูกลบไปแล้ว) — เลือกสาขาใหม่ (หรือเว้นว่าง = ใช้ข้อมูลบริษัท) แล้วบันทึกอีกครั้ง{ApiOnlyHint}",
+                    RecurringTemplate.RuleCode);
+        }
+
+        // ── ผู้ถูกหักภาษี — ตอนบันทึก: ต้องเป็นผู้ติดต่อของบริษัทนี้ (ข้ามบริษัท/ไม่มีอยู่จริง = บล็อก · ข้อ 150 (3)) ·
+        // ผู้ติดต่อที่ "ถูกลบ" ไม่บล็อก — ผู้ถูกหักรายบรรทัดตั้งได้ทาง API เท่านั้น หน้าเว็บเอาออกไม่ได้ ⇒ บล็อกแล้วผู้ใช้แก้รายการไม่ได้เลย ·
+        // ตอนถึงรอบสืบทอดเป็น null + ป้าย "50 ทวิ ต้องตรวจ" + ไม่อนุมัติอัตโนมัติ (P3-6) ──
+        var payeeRefs = Of(RecurringTemplate.RefKind.WhtPayeeContact);
+        if (atSave && payeeRefs.Count > 0)
+        {
+            var ids = payeeRefs.Select(r => r.Id).Distinct().ToList();
+            var known = (await _db.Contacts.IgnoreQueryFilters().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && ids.Contains(c.Id))
+                .Select(c => c.Id).ToListAsync()).ToHashSet();
+            var missing = payeeRefs.Where(r => !known.Contains(r.Id)).ToList();
+            if (missing.Count > 0)
+                throw new BusinessRuleException(
+                    $"ผู้ถูกหักภาษีที่เลือกไม่ใช่ผู้ติดต่อของบริษัทนี้: {Fields(missing)} — เลือกผู้ถูกหักใหม่ หรือเอาเครื่องหมาย \"ผู้ถูกหักคนละรายกับผู้ติดต่อ\" ออก",
+                    RecurringTemplate.RuleCode);
+        }
     }
 
     private static decimal ExtractAmount(string? templateData)
@@ -849,34 +996,23 @@ public class RecurringTransactionService : IRecurringTransactionService
         try
         {
             using var doc = JsonDocument.Parse(templateData);
-            if (doc.RootElement.TryGetProperty("lines", out var lines) && lines.GetArrayLength() > 0)
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("lines", out var lines) && lines.ValueKind == JsonValueKind.Array)
             {
                 decimal total = 0;
                 foreach (var line in lines.EnumerateArray())
                 {
-                    // ⚠️ เดิมเรียก GetDecimal() ตรง ๆ — ค่าที่เป็นสตริง ("1,200")
-                    // หรือ null โยน InvalidOperationException ⇒ catch {} ข้างล่าง
-                    // กลืนแล้วคืน 0 ⇒ รายการประจำโชว์ยอด ฿0 บนหน้าจอโดยไม่มี
-                    // อะไรบอกว่าอ่านไม่ออก (CLAUDE.md 4.E "ห้าม catch {} กลืน error")
-                    var qty = line.TryGetProperty("quantity", out var q) ? ReadDecimal(q, 1m) : 1m;
-                    var price = line.TryGetProperty("unitPrice", out var p) ? ReadDecimal(p, 0m) : 0m;
+                    // ⚠️ เดิมเรียก GetDecimal() ตรง ๆ — ค่าที่เป็นสตริง ("1,200") หรือ null โยน ⇒ ยอด ฿0 บนหน้าจอ ·
+                    // ตอนนี้ตัวอ่านเดียวกับตอนสร้างเอกสาร (RecurringTemplate.TryNumber) — ยอดบนจอ = ยอดที่จะออกใบจริง
+                    var qty = RecurringTemplate.TryNumber(line, "quantity", 1m) ?? 1m;
+                    var price = RecurringTemplate.TryNumber(line, "unitPrice", 0m) ?? 0m;
                     total += qty * price;
                 }
                 return total;
             }
         }
-        catch (JsonException) { /* template JSON เสีย — คืน 0 ให้ list ยังโหลดได้ */ }
+        catch (JsonException) { /* template JSON เสีย — คืน 0 ให้ list ยังโหลดได้ (ตัวตรวจตอนถึงรอบบอกผู้ใช้เองบนแถว) */ }
         return 0;
-
-        static decimal ReadDecimal(JsonElement el, decimal fallback) => el.ValueKind switch
-        {
-            JsonValueKind.Number => el.TryGetDecimal(out var d) ? d : fallback,
-            JsonValueKind.String => decimal.TryParse(
-                (el.GetString() ?? "").Replace(",", ""),
-                System.Globalization.NumberStyles.Any,
-                System.Globalization.CultureInfo.InvariantCulture, out var s) ? s : fallback,
-            _ => fallback,
-        };
     }
 
     /// <summary>รอบ 204 — อ่าน "whtCertType" จาก template (ชื่อ enum หรือเลข 1/2/3) · ไม่มี/อ่านไม่ออก ⇒ null (= หัก ณ ที่จ่าย)</summary>

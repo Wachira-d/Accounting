@@ -420,22 +420,24 @@
             <select class="form-select" id="impFormat">
               <option value="CSV">CSV (.csv)</option>
               <option value="EXCEL">Excel (.xlsx)</option>
+              <option value="OFX">OFX (.ofx)</option>
             </select>
           </div>
           <div class="form-group"><label class="form-label">ไฟล์ Statement *</label>
-            <input type="file" class="form-input" id="impFile" accept=".csv,.xlsx,.xls,.txt">
+            <input type="file" class="form-input" id="impFile" accept=".csv,.xlsx,.xls,.txt,.ofx,.qif">
           </div>
           <div style="background:#f1f5f9;padding:10px;border-radius:6px;font-size:12px;color:#475569;line-height:1.5">
             <strong>📌 รูปแบบที่รองรับ:</strong><br>
             ระบบจะตรวจหาคอลัมน์อัตโนมัติ — ไฟล์ต้องมีหัวคอลัมน์ที่มีคำว่า:<br>
             • <strong data-i18n="common.date">วันที่</strong> หรือ Date (รองรับ dd/MM/yyyy, MM/dd/yyyy, yyyy-MM-dd, ปี พ.ศ.)<br>
             • <strong>ฝากเงิน/ถอนเงิน</strong> หรือ Deposit/Withdrawal (หรือคอลัมน์ Amount เดียวที่มีเครื่องหมาย +/-)<br>
-            • <strong>ยอดคงเหลือ</strong> หรือ Balance<br>
+            • (ไม่บังคับ) <strong>ยอดคงเหลือ</strong> หรือ Balance — มี = อัปเดตยอดตามธนาคาร + ตรวจความต่อเนื่อง<br>
             • (option) เวลา, รายการ, ช่องทาง, รายละเอียด, เลขอ้างอิง<br>
-            ✅ รองรับ Statement จาก KBank, SCB, BBL, KTB, BAY, TTB และอื่นๆ (CSV / Excel .xlsx)<br>
+            ✅ รองรับ Statement จาก KBank, SCB, BBL, KTB, BAY, TTB และอื่นๆ (CSV / Excel .xlsx หลายชีต / OFX)<br>
             ✅ รองรับตัวเลขที่มี comma (5,998.50) และยอดติดลบในวงเล็บ<br>
             ✅ ตรวจจับรูปแบบวันที่อัตโนมัติ — ป้องกันการสลับ วัน↔เดือน เมื่อใช้ statement แบบ US (MM/DD)<br>
-            ⚠️ CSV ต้องบันทึกเป็น <strong>UTF-8</strong> เพื่อให้แสดงภาษาไทยถูกต้อง
+            ✅ CSV ภาษาไทยได้ทั้ง <strong>UTF-8</strong> และ <strong>TIS-620</strong> (ไฟล์จาก Excel ไทยรุ่นเก่า) · ไฟล์ต้นทางถูกเก็บเป็นหลักฐานของบัญชี<br>
+            ⚠️ QIF ยังไม่รองรับ — ส่งออกเป็น CSV หรือ OFX แทน
           </div>
         </div>
         <div class="modal-footer">
@@ -2815,7 +2817,7 @@
           reader.onload = async (e) => {
             const base64 = e.target.result.split(',')[1];
             try {
-              const res = await api.importBankFile(accountId, format, base64);
+              const res = await api.importBankStatement({ bankAccountId: accountId, fileFormat: format, base64Content: base64, fileName: file.name });
               const stats = res?.data;
 
               // Handle conflicts: ask user to choose old or new
@@ -2835,12 +2837,18 @@
                 });
                 if (choice) {
                   // Re-import with forceOverwrite
-                  const res2 = await api.importBankFile(accountId, format, base64, true);
+                  const res2 = await api.importBankStatement({ bankAccountId: accountId, fileFormat: format, base64Content: base64,
+                    fileName: file.name, forceOverwrite: true });
+                  (res2?.data?.warnings || []).forEach(w => Layout.toast(w, 'warning', 10000));
                   Layout.closeModal('importModal');
                   Layout.toast(`นำเข้าสำเร็จ ${res2?.data?.imported || 0} รายการ (อัพเดตรายการซ้ำ)`, 'success');
                 } else {
+                  // "เก็บข้อมูลเดิม" = ลงเฉพาะรายการที่ไม่ขัดแย้ง (เดิมไม่เรียกเซิร์ฟเวอร์อีก ⇒ บอก "นำเข้าสำเร็จ" ทั้งที่เซิร์ฟเวอร์ย้อนทั้งไฟล์)
+                  const res3 = await api.importBankStatement({ bankAccountId: accountId, fileFormat: format, base64Content: base64,
+                    fileName: file.name, skipConflicts: true });
                   Layout.closeModal('importModal');
-                  Layout.toast(`นำเข้าสำเร็จ ${stats.imported || 0} รายการ (ข้าม ${stats.conflicts} รายการซ้ำ)`, 'info');
+                  Layout.toast(`นำเข้าสำเร็จ ${res3?.data?.imported || 0} รายการ (ข้าม ${res3?.data?.skipped || 0} รายการซ้ำ/ขัดแย้ง — เก็บข้อมูลเดิม)`, 'info');
+                  (res3?.data?.warnings || []).forEach(w => Layout.toast(w, 'warning', 10000));
                 }
               } else {
                 Layout.closeModal('importModal');

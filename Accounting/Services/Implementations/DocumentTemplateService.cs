@@ -31,6 +31,7 @@ public class DocumentTemplateService : IDocumentTemplateService
         };
 
         ApplyRequestToTemplate(template, request);
+        template.DefaultPaymentAccountId = await ValidateDefaultPaymentAccountAsync(companyId, template.DefaultPaymentAccountId);
 
         // If set as default, unset other defaults for this document type
         if (request.IsDefault)
@@ -95,6 +96,8 @@ public class DocumentTemplateService : IDocumentTemplateService
         }
 
         ApplyUpdateToTemplate(template, request);
+        if (request.DefaultPaymentAccountId.HasValue)
+            template.DefaultPaymentAccountId = await ValidateDefaultPaymentAccountAsync(companyId, template.DefaultPaymentAccountId);
 
         await _db.SaveChangesAsync();
         return MapToResponse(template);
@@ -118,7 +121,13 @@ public class DocumentTemplateService : IDocumentTemplateService
         // รอบ 201 ทีม PL (A-PL8 · ข้อ 58): GET ไม่เขียน — ไม่มีแถว ⇒ ค่าเริ่มต้นที่ยังไม่บันทึก (Id ว่าง = หน้าเว็บรู้ว่าต้องสร้างก่อนแก้)
         var template = await _db.DocumentTemplates.AsNoTracking()
             .FirstOrDefaultAsync(t => t.CompanyId == companyId && t.DocumentType == documentType && t.IsDefault && t.IsActive);
-        if (template != null) return MapToResponse(template);
+        // ฟอร์มเอกสารเติมแหล่งเงินจากค่าที่เซิร์ฟเวอร์แปลงให้ (PC#14) — หน้าเว็บไม่เทียบรหัสผังเอง
+        if (template != null)
+            return MapToResponse(template) with
+            {
+                DefaultPaymentChannel = await Accounting.Helpers.DocumentMoneyChannel.ChannelValueForGlAsync(
+                    _db, companyId, template.DefaultPaymentAccountId),
+            };
         var unsaved = CreateDefaultTemplate(companyId, documentType);
         unsaved.Id = Guid.Empty;
         return MapToResponse(unsaved);
@@ -489,6 +498,19 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.QrCodeCustomData != null) t.QrCodeCustomData = r.QrCodeCustomData;
         if (r.DefaultCopies.HasValue) t.DefaultCopies = r.DefaultCopies.Value;
         if (r.CopyLabels != null) t.CopyLabels = r.CopyLabels;
+    }
+
+    /// <summary>บัญชีรับ/จ่ายเงินตั้งต้นของเทมเพลต (PC#14 · ID#4) — ผังของบริษัทนี้ · เปิดใช้ · ลงรายการได้ · ไม่ใช่รหัสบัญชีธนาคาร ·
+    /// ตัวตัดสินเดียวกับช่องแหล่งเงินของเอกสาร (Helpers/DocumentMoneyChannel) · Guid.Empty/null = ไม่กำหนด</summary>
+    private async Task<Guid?> ValidateDefaultPaymentAccountAsync(Guid companyId, Guid? id)
+    {
+        if (id is not Guid g || g == Guid.Empty) return null;
+        var d = await Accounting.Helpers.DocumentMoneyChannel.EvaluateAsync(_db, companyId, null, g,
+            Accounting.Helpers.MoneyChannelCheck.Save, "เลือกใหม่ที่ช่อง “บัญชีรับ/จ่ายเงิน (แหล่งเงิน) ที่เลือกให้อัตโนมัติ” ของเทมเพลต");
+        if (!d.Ok)
+            throw new Accounting.Helpers.BusinessRuleException("บัญชีรับ/จ่ายเงินตั้งต้นของเทมเพลต: " + d.Problem,
+                Accounting.Helpers.DocumentMoneyChannel.RuleCode);
+        return g;
     }
 
     private static DocumentTemplateResponse MapToResponse(DocumentTemplate t) => new(

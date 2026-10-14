@@ -182,8 +182,10 @@
         // โหลดแหล่งเงินแยก (ไม่บล็อก dashboard — กัน hang ทำหน้าค้าง):
         //   • bank accounts → ผูก LinkedAccountId
         //   • payment channels → GL เงินสด/ธนาคาร/ช่องจ่ายอื่นทั้งหมด (แหล่งเงินครบ)
-        api.getBankAccounts().then(r => { this._banks = (r && r.data) || []; }).catch(() => { this._banks = []; });
-        api.getPaymentChannels().then(r => { this._channels = (r && r.data) || []; }).catch(() => { this._channels = []; });
+        //   โหลดไม่สำเร็จ = บอกผู้ใช้ (เดิมกลืนเงียบ ⇒ หน้าต่างนำส่งเหลือแค่ "บัญชีเริ่มต้น" — PC#16)
+        const listFail = (what, set) => (e) => { set(); Layout.toast(`โหลดรายการ${what}ไม่สำเร็จ — ช่องแหล่งเงินอาจไม่ครบ ลองโหลดหน้าใหม่`, 'warning', 7000); };
+        api.getBankAccounts().then(r => { this._banks = (r && r.data) || []; }).catch(listFail('บัญชีธนาคาร', () => { this._banks = []; }));
+        api.getPaymentChannels().then(r => { this._channels = (r && r.data) || []; }).catch(listFail('แหล่งเงินสด/ช่องจ่าย', () => { this._channels = []; }));
         try {
           // timeout 25s กันค้างตลอดถ้าเซิร์ฟเวอร์ตอบช้า → ขึ้นปุ่มลองใหม่
           const timeout = new Promise((_, rej) =>
@@ -774,13 +776,14 @@
         const today = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         // แหล่งเงินครบ: บัญชีธนาคาร (map LinkedAccountId) + GL เงินสด/ช่องจ่ายอื่น
         let bankOpts = '<option value="">— ใช้บัญชีเริ่มต้น —</option>';
-        if (this._banks.length) {
+        const activeBanks = (this._banks || []).filter(b => b.isActive !== false);
+        if (activeBanks.length) {
           bankOpts += '<optgroup label="บัญชีธนาคาร">'
-            + this._banks.map(b => `<option value="bank:${b.id}">${Layout.esc(b.bankName || b.accountName || 'ธนาคาร')} ${Layout.esc(b.accountNumber || '')}</option>`).join('')
+            + activeBanks.map(b => `<option value="bank:${b.id}" ${b.linkedAccountId ? '' : 'disabled'}>${Layout.esc(b.bankName || b.accountName || 'ธนาคาร')} ${Layout.esc(b.accountNumber || '')}${b.linkedAccountId ? '' : ' — ยังไม่ผูกผังบัญชี'}</option>`).join('')
             + '</optgroup>';
         }
-        // GL เงินสด/ธนาคาร/ช่องจ่ายอื่น (ตัด 1112 ที่ซ้ำกับ bank accounts ออก)
-        const glChannels = (this._channels || []).filter(a => !(a.accountCode || '').startsWith('1112'));
+        // GL เงินสด/ช่องจ่ายอื่น — เซิร์ฟเวอร์คืนเฉพาะกลุ่ม "other" พร้อมป้าย (Helpers/MoneyAccountRule — PC#11) ⇒ ไม่กรองรหัสเอง
+        const glChannels = (this._channels || []).filter(a => (a.channelGroup || 'other') === 'other');
         if (glChannels.length) {
           bankOpts += '<optgroup label="เงินสด / ช่องทางจ่ายอื่น">'
             + glChannels.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('')

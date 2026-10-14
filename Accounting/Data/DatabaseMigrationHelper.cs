@@ -551,6 +551,11 @@ public static class DatabaseMigrationHelper
 
             // ===== Recurring: ส่งอีเมลเอกสารให้ผู้ติดต่ออัตโนมัติเมื่อสร้าง =====
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "AutoSendEmail" boolean NOT NULL DEFAULT false;""",
+            // ===== Recurring: ผลรอบล่าสุดบนแถว (ล้มดังในหน้ารายการประจำ · ทีมตรวจรายการประจำ 2026-10-14) =====
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunError" text NULL;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunErrorAt" timestamptz NULL;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunNotice" text NULL;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastDocumentId" uuid NULL;""",
 
             // ===== ใบวางบิลรวมใบแจ้งหนี้: บรรทัด "แทนทั้งใบ" ชี้เอกสารต้นทาง =====
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "SourceDocumentId" uuid NULL;""",
@@ -4941,6 +4946,9 @@ public static class DatabaseMigrationHelper
             // null = พฤติกรรมเดิม (auto-pick bank รหัสต่ำสุด). ตั้งเป็น
             // ChartOfAccount.Id ของบัญชีเงินสด/ธนาคารหลัก → OCR ใช้เป็น default.
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DefaultPaymentAccountId" uuid NULL;""",
+            // 2026-10-14 (PC#11): รหัสขึ้นต้นของผังเงินสด/ธนาคารสำหรับบริษัทที่ใช้ผังบัญชีของตัวเอง
+            // (null = ผังมาตรฐาน 111/1133/2123 — Helpers/MoneyAccountRule ตัวเดียว)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "MoneyAccountCodePrefixes" varchar(200) NULL;""",
 
             // ===== CompanySettings: กองทุนเงินทดแทน (กท.20ก) =====
             // อัตราสมทบนายจ้างฝ่ายเดียว 0.2–1.0% ตามประเภทกิจการ. default 0.2%

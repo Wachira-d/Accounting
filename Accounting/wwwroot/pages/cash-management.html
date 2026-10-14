@@ -86,10 +86,9 @@
     <!-- TAB: Bulk Vendor Payment -->
     <div id="tab-bulkpay" class="tab-pane" style="display:none">
       <div class="toolbar">
-        <select id="vendorSelect" class="form-input" style="width:320px" onchange="Page.loadVendorOutstanding()">
-          <option value="">— เลือก vendor —</option>
-        </select>
-        <button class="btn btn-outline" onclick="Page.loadVendorList()">↻ โหลด vendor</button>
+        <!-- ตัวเลือกผู้ติดต่อกลาง (ไม่มีปุ่มสร้าง — ผู้ขายใหม่ยังไม่มีบิลค้างจ่าย) · เลือกแล้วโหลดบิลค้าง -->
+        <input type="hidden" id="vendorSelect">
+        <input type="text" class="form-input" id="vendorSelectName" style="width:320px">
       </div>
       <div class="card">
         <div id="vendorOutstandingTable" style="padding:16px"><p class="text-center text-gray-400">เลือก vendor เพื่อดูบิลค้าง</p></div>
@@ -103,9 +102,8 @@
           <option value="AR">ลูกหนี้ (AR)</option>
           <option value="AP">เจ้าหนี้ (AP)</option>
         </select>
-        <select id="stmtContact" class="form-input" style="width:320px">
-          <option value="">— เลือกผู้ติดต่อ —</option>
-        </select>
+        <input type="hidden" id="stmtContact">
+        <input type="text" class="form-input" id="stmtContactName" style="width:320px">
         <label class="text-sm">จาก:</label>
         <input type="date" class="form-input" id="stmtFrom" style="width:160px">
         <label class="text-sm">ถึง:</label>
@@ -139,7 +137,7 @@
             <div class="form-group"><label class="form-label">วันที่จะฝาก</label><input type="date" class="form-input" id="mDepDate"></div>
           </div>
           <div class="form-group"><label class="form-label">ผู้ติดต่อ (ลูกค้า/vendor)</label>
-            <select class="form-select" id="mContact"><option value="">— เลือก —</option></select>
+            <input type="hidden" id="mContact"><input type="text" class="form-input" id="mContactName">
           </div>
           <div class="form-group"><label class="form-label">หมายเหตุ</label><textarea class="form-input" id="mNotes" rows="2"></textarea></div>
         </div>
@@ -191,7 +189,7 @@
         const first = new Date(today.getFullYear(), today.getMonth(), 1);
         document.getElementById('stmtFrom').value = Layout.toDateInput(first);
         document.getElementById('stmtTo').value = Layout.toDateInput(today);
-        await this.loadContacts();
+        this.initContactPickers();
         await this.loadForecast();
       },
       switchTab(tab, el) {
@@ -204,20 +202,21 @@
         });
         if (tab === 'pdc') this.loadPdcs();
         else if (tab === 'advance') this.loadCa();
-        else if (tab === 'bulkpay') this.loadVendorList();
       },
-      async loadContacts() {
-        try {
-          const cid = Layout.getCompanyId();
-          const r = await fetch(`/api/companies/${cid}/document/contacts?pageSize=500`, { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
-          const j = await r.json();
-          const items = j.data?.items || j.data || [];
-          const opts = items.map(c => `<option value="${c.id}">${Layout.esc(c.name)} ${c.taxId ? `(${c.taxId})` : ''}</option>`).join('');
-          ['mContact','stmtContact'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.innerHTML = '<option value="">— เลือก —</option>' + opts;
-          });
-        } catch(e) {}
+      // ตัวเลือกผู้ติดต่อกลาง (Layout.contactPicker) — ค้นทั้งทะเบียนฝั่งเซิร์ฟเวอร์ · เช็คล่วงหน้าเพิ่มผู้ติดต่อใหม่ได้ในหน้าเดิม ·
+      // statement / จ่ายรวมผู้ขาย = ช่องเลือกเพื่อดูข้อมูลที่มีอยู่แล้ว จึงไม่มีปุ่มสร้าง
+      initContactPickers() {
+        Layout.contactPicker('mContactName', 'mContact', {
+          side: () => (document.getElementById('mPdcDir')?.value === '2' ? 'supplier' : 'customer'),
+        });
+        Layout.contactPicker('stmtContactName', 'stmtContact', {
+          allowCreate: false,
+          side: () => (document.getElementById('stmtSide')?.value === 'AP' ? 'supplier' : 'customer'),
+        });
+        Layout.contactPicker('vendorSelectName', 'vendorSelect', {
+          allowCreate: false, side: 'supplier', placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้ขาย...',
+          onSelect: () => this.loadVendorOutstanding(),
+        });
       },
 
       // ===== Cash Forecast =====
@@ -453,16 +452,7 @@
         alert(`พบรายการเลยกำหนดเคลียร์ ${j.data.count} รายการ รวม ${Layout.money(j.data.totalAmount)} บาท`);
       },
 
-      // ===== Bulk Vendor Pay =====
-      async loadVendorList() {
-        const cid = Layout.getCompanyId();
-        const r = await fetch(`/api/companies/${cid}/document/contacts?isSupplier=true&pageSize=500`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }});
-        const j = await r.json();
-        const items = j.data?.items || j.data || [];
-        document.getElementById('vendorSelect').innerHTML = '<option value="">— เลือก vendor —</option>' +
-          items.map(c => `<option value="${c.id}">${Layout.esc(c.name)}</option>`).join('');
-      },
+      // ===== Bulk Vendor Pay ===== (เลือกผู้ขายผ่านตัวเลือกกลาง — initContactPickers)
       async loadVendorOutstanding() {
         const cid = Layout.getCompanyId();
         const vid = document.getElementById('vendorSelect').value;

@@ -362,6 +362,9 @@ public partial class FinancialManagementService
 
     public async Task<InvestmentResponse> CreateInvestmentAsync(Guid companyId, CreateInvestmentRequest request, string userId)
     {
+        // ผังบัญชีจากคำขอ: ของบริษัทนี้ · เปิดใช้ · ไม่ใช่บัญชีคุม — ตัวตัดสินเดียว PostingAccountGuard (2026-10-14 · ID#13) ·
+        // เดิมเขียนลง JournalEntryLine.AccountId ดิบ ๆ ⇒ ผังบริษัทอื่น/ปิดใช้/บัญชีคุมลงสมุดได้
+        await _db.EnsurePostingAccountAsync(companyId, request.InvestmentAccountId, "บัญชีเงินลงทุน");
         var refNo = $"INV-{DateTime.UtcNow:yyyyMM}-{Guid.NewGuid().ToString()[..4].ToUpper()}";
 
         var entity = new ShortTermInvestment

@@ -661,35 +661,20 @@ public partial class PdfGenerationService : IPdfGenerationService
             }
             return (codes[0], fallbackName);
         }
-        // ธนาคาร → ผัง GL ที่ผูกไว้ (mirror moneyAccount ใน AutoPostToJournalAsync:
-        // PaymentAccountId > BankAccount.LinkedAccount > 111). เดิมพรีวิวคืน
-        // **ชื่อบัญชีธนาคาร** (`AccountName`) พร้อมเลขผังว่าง ⇒ ผู้ใช้เห็น
-        // "Cr หจก.ชื่อบริษัท" แทน "Cr 11122-001 เงินฝากออมทรัพย์" ที่ JE จริงลง
-        async Task<(string Code, string Name)?> BankGlAsync(Guid bankAccountId)
+        // แหล่งเงิน → ผัง GL — ตัวตัดสินเดียวกับการลงบัญชีจริง (Helpers/DocumentMoneyChannel: ผังตรง > ธนาคาร→ผังที่ผูก)
+        // PC#15 (ผลตรวจ 2026-10-14): เดิมพรีวิวเลือก "ธนาคารก่อน" ขณะที่ JE จริงเลือก "ผังตรงก่อน" และเดาเงินสดเมื่อธนาคารยังไม่ผูกผัง
+        // (JE จริงตอนนี้ปฏิเสธพร้อมทางไปต่อ) ⇒ พรีวิวบอกปัญหาเดียวกันแทนการโชว์ผังที่ JE จะไม่ลง · null = ไม่ได้เลือกแหล่งเงิน
+        async Task<(string Code, string Name)?> ChannelGlAsync(Guid? bankAccountId, Guid? paymentAccountId)
         {
-            var b = await _db.BankAccounts.AsNoTracking()
-                .Where(x => x.Id == bankAccountId && x.CompanyId == companyId)
-                .Select(x => new { x.AccountName, x.LinkedAccountId })
-                .FirstOrDefaultAsync();
-            if (b == null) return null;
-            if (b.LinkedAccountId is Guid linkedId)
-            {
-                var la = await _db.ChartOfAccounts.AsNoTracking()
-                    .Where(x => x.Id == linkedId && x.CompanyId == companyId)
-                    .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
-                if (la != null) return (la.AccountCode, la.AccountName);
-            }
-            // ธนาคารที่ยังไม่ผูกผัง — JE จริงตกไป FindAccountAsync("111") ซึ่ง
-            // **ค้นแบบ prefix** (Level >= 4) ไม่ใช่ exact: ผังมาตรฐานไม่มีบัญชี
-            // ลงบัญชีรหัส "111" ตรง ๆ (เป็น header) ⇒ ต้องเลียนแบบให้ตรง ไม่งั้น
-            // พรีวิวโชว์เลข "111" ที่ไม่มีอยู่จริงในผัง
-            var cash = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(x => x.CompanyId == companyId && x.AccountCode.StartsWith("111")
-                            && x.Level >= 4 && x.IsActive)
-                .OrderBy(x => x.AccountCode)
+            var ch = await DocumentMoneyChannel.EvaluateAsync(_db, companyId, bankAccountId, paymentAccountId,
+                MoneyChannelCheck.Post, DocumentMoneyChannel.DocumentFixHint);
+            if (ch.Kind == MoneyChannelKind.None) return null;
+            if (!ch.Ok) return ("", "แหล่งเงินใช้ลงบัญชีไม่ได้ — " + ch.Problem);
+            var gl = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(x => x.Id == ch.GlAccountId!.Value && x.CompanyId == companyId)
                 .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
-            return cash != null ? (cash.AccountCode, cash.AccountName)
-                : ("", b.AccountName ?? "เงินฝากธนาคาร");
+            if (gl == null) return null;
+            return (gl.AccountCode, gl.AccountName);
         }
 
         // WHT payable — mirror DocumentService.ResolveWhtPayableAccountAsync:
@@ -767,21 +752,10 @@ public partial class PdfGenerationService : IPdfGenerationService
             }
             return parts;
         }
-        // ขาเงินออก/เข้า (ธนาคาร > ผังที่เลือก > เงินสด) — ใช้ร่วม PV settlement
+        // ขาเงินออก/เข้า (ลำดับเดียวกับ JE จริง: ผังตรง > ธนาคาร > เงินสด) — ใช้ร่วม PV settlement
         async Task<(string Code, string Name)> MoneyAccountAsync()
         {
-            if (doc.BankAccountId.HasValue)
-            {
-                var bank = await BankGlAsync(doc.BankAccountId.Value);
-                if (bank != null) return bank.Value;
-            }
-            if (doc.PaymentAccountId.HasValue)
-            {
-                var p = await _db.ChartOfAccounts.AsNoTracking()
-                    .Where(x => x.Id == doc.PaymentAccountId.Value)
-                    .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
-                if (p != null) return (p.AccountCode, p.AccountName);
-            }
+            if (await ChannelGlAsync(doc.BankAccountId, doc.PaymentAccountId) is { } chosen) return chosen;
             // ผังมาตรฐานเงินสด = 11111 (11110 ไม่มีในผัง — เดิม fallback แสดง
             // เลขที่ไม่มีอยู่จริง); 11110 คงไว้เผื่อผังเก่า/กำหนดเอง
             return await ByCodeChain(new[] { "11111", "11110" }, "เงินสด");
@@ -955,27 +929,13 @@ public partial class PdfGenerationService : IPdfGenerationService
             settleBank = pay?.OverrideBankAccountId ?? pay?.BankAccountId;
         }
 
-        if (settleGlAcct.HasValue)
-        {
-            var p = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(x => x.Id == settleGlAcct.Value)
-                .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
-            contra = p != null ? (p.AccountCode, p.AccountName) : ("", "เงินสด");
-        }
-        else if (settleBank.HasValue && await BankGlAsync(settleBank.Value) is { } settleGl)
+        if ((settleGlAcct.HasValue || settleBank.HasValue) && await ChannelGlAsync(settleBank, settleGlAcct) is { } settleGl)
         {
             contra = settleGl;
         }
-        else if (doc.BankAccountId.HasValue && await BankGlAsync(doc.BankAccountId.Value) is { } bankGl)
+        else if (await ChannelGlAsync(doc.BankAccountId, doc.PaymentAccountId) is { } docChannelGl)
         {
-            contra = bankGl;
-        }
-        else if (doc.PaymentAccountId.HasValue)
-        {
-            var p = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(x => x.Id == doc.PaymentAccountId.Value)
-                .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
-            contra = p != null ? (p.AccountCode, p.AccountName) : ("", "เงินสด");
+            contra = docChannelGl;
         }
         else if (doc.PaymentType == PaymentType.Credit || (doc.PaymentType == null && isSales))
             // ฝั่งซื้อ: mirror ResolvePayableAccountAsync — ใบบันทึกค่าใช้จ่าย

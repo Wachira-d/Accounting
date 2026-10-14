@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Bank;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -65,62 +66,36 @@ public class BankV1Controller : PublicApiControllerBase
         if (account == null)
             return NotFound(new ApiResponse<string>(false, null, "ไม่พบบัญชีธนาคารในบริษัทนี้"));
 
-        var created = new List<BankTransaction>();
-        var skipped = 0;
-
-        foreach (var l in req.Lines)
-        {
-            // กันนำเข้าซ้ำด้วย ExternalId ของลูกค้า — ยิงไฟล์เดิมซ้ำต้องไม่เกิด
-            // รายการซ้ำและต้องไม่ถูกคิดเงินรอบสอง
-            if (!string.IsNullOrWhiteSpace(l.ExternalId))
-            {
-                var dup = await Db.Set<BankTransaction>().AsNoTracking()
-                    .AnyAsync(t => t.CompanyId == ctx!.CompanyId
-                                && t.BankAccountId == req.BankAccountId
-                                && t.Reference == l.ExternalId, ct);
-                if (dup) { skipped++; continue; }
-            }
-
-            var isDeposit = string.Equals(l.Direction, "In", StringComparison.OrdinalIgnoreCase)
-                         || string.Equals(l.Direction, "Deposit", StringComparison.OrdinalIgnoreCase);
-
-            created.Add(new BankTransaction
-            {
-                CompanyId = ctx!.CompanyId,
-                BankAccountId = req.BankAccountId,
-                TransactionDate = l.TransactionDate,
-                TransactionType = isDeposit ? BankTransactionType.Deposit : BankTransactionType.Withdrawal,
-                Amount = Math.Abs(l.Amount),
-                Description = l.Description,
-                Reference = string.IsNullOrWhiteSpace(l.ExternalId) ? l.Reference : l.ExternalId,
-                Payee = l.Payee,
-                ReconciliationStatus = ReconciliationStatus.Unmatched,
-                CreatedBy = "api:v1",
-            });
-        }
+        // รอบ 205 ทีม C: ลงผ่านตัวเขียน statement ตัวเดียว (เดิมทางนี้เขียน BankTransaction เอง = ตัวเขียนที่สี่) — คงความหมายของ v1 ทุกข้อ:
+        // กันซ้ำด้วย ExternalId อย่างเดียว (บรรทัดที่ไม่มี ExternalId ลงทุกครั้ง) · ExternalId เก็บใน Reference · ไม่แตะยอดตามธนาคาร
+        // (v1 ไม่ส่งยอดคงเหลือ) · ไม่จับคู่อัตโนมัติ (คืนคำแนะนำต่อบรรทัดข้างล่างแทน) · CreatedBy = "api:v1" · คิดเงินตามบรรทัดที่สร้างจริง
+        var lines = ToStatementLines(req.Lines);
+        var written = await _bank.ImportParsedStatementRowsAsync(ctx!.CompanyId, req.BankAccountId, lines, StatementWriteOptions(), ct);
+        var created = written.Lines.Where(r => r.Outcome == BankStatementLineOutcome.Created && r.TransactionId != null).ToList();
+        var skipped = written.Skipped;
 
         if (created.Count == 0)
             return Ok(new ApiResponse<object>(true, new { imported = 0, skipped, matches = Array.Empty<object>() },
                 "ทุกบรรทัดถูกนำเข้าไปแล้วก่อนหน้านี้ — ไม่มีการคิดค่าบริการ"));
 
-        Db.Set<BankTransaction>().AddRange(created);
-        await Db.SaveChangesAsync(ct);
-
         // จับคู่ทีละบรรทัดด้วยเครื่องเดิม (ผ่าน pattern ที่เรียนรู้ไว้แล้วของ tenant นี้)
         var matches = new List<MatchResultDto>();
-        foreach (var txn in created)
+        foreach (var c in created)
         {
+            var txnId = c.TransactionId!.Value;
+            var line = lines[c.Index];
+            var externalRef = line.ExternalId ?? line.Reference;
             try
             {
-                var s = await _bank.SuggestMatchAsync(ctx!.CompanyId, txn.Id);
-                matches.Add(new MatchResultDto(txn.Id, txn.Reference, s.Found, s.Type,
+                var s = await _bank.SuggestMatchAsync(ctx!.CompanyId, txnId);
+                matches.Add(new MatchResultDto(txnId, externalRef, s.Found, s.Type,
                     s.SuggestedIds, s.SuggestedTotal, s.Difference, s.Message));
             }
             catch (Exception ex)
             {
                 // บรรทัดเดียวพังต้องไม่ทำให้ทั้งชุดพัง
-                _logger.LogWarning(ex, "จับคู่ไม่สำเร็จ txn={Txn}", txn.Id);
-                matches.Add(new MatchResultDto(txn.Id, txn.Reference, false, null,
+                _logger.LogWarning(ex, "จับคู่ไม่สำเร็จ txn={Txn}", txnId);
+                matches.Add(new MatchResultDto(txnId, externalRef, false, null,
                     new List<Guid>(), 0, 0, "จับคู่ไม่สำเร็จ"));
             }
         }
@@ -136,6 +111,28 @@ public class BankV1Controller : PublicApiControllerBase
             billing = new { charged = usage.ChargedAmount, coveredByFreeQuota = usage.CoveredByFreeQuota },
         }));
     }
+
+    /// <summary>บรรทัดของ v1 → บรรทัดของตัวเขียน statement (ทิศจาก Direction "In"/"Deposit" · ยอดเป็นค่าสัมบูรณ์ · ExternalId → รหัสต้นทาง)</summary>
+    internal static List<BankStatementLineInput> ToStatementLines(IReadOnlyList<StatementLineRequest> lines)
+        => lines.Select((l, i) =>
+        {
+            var isDeposit = string.Equals(l.Direction, "In", StringComparison.OrdinalIgnoreCase)
+                         || string.Equals(l.Direction, "Deposit", StringComparison.OrdinalIgnoreCase);
+            var amount = Math.Abs(l.Amount);
+            return new BankStatementLineInput(l.TransactionDate, l.Description,
+                Withdrawal: isDeposit ? 0m : amount, Deposit: isDeposit ? amount : 0m,
+                Reference: l.Reference, ExternalId: string.IsNullOrWhiteSpace(l.ExternalId) ? null : l.ExternalId,
+                Payee: l.Payee, RowNumber: i + 1);
+        }).ToList();
+
+    /// <summary>ความหมายของ v1 ต่อตัวเขียน — กันซ้ำด้วย ExternalId อย่างเดียว · ไม่แตะยอดตามธนาคาร · ไม่จับคู่อัตโนมัติ · CreatedBy "api:v1"
+    /// (เทสต์ <c>BankStatementImportDbTests</c> ใช้ตัวนี้ตรง ๆ ⇒ ความหมาย v1 ถูกล็อก)</summary>
+    internal static BankStatementWriteOptions StatementWriteOptions() => new(
+        Dedupe: BankStatementDedupeMode.ExternalIdOnly,
+        OnConflict: BankStatementConflictPolicy.InsertAsNew,
+        UpdateStatementSnapshot: false,
+        AutoMatch: false,
+        CreatedBy: "api:v1");
 
     public record ConfirmMatchRequest(Guid BankTransactionId, List<Guid> EntryIds);
 

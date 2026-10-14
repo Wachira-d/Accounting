@@ -45,7 +45,7 @@
           </div>
           <div class="form-group">
             <label class="form-label">ผู้ขาย (ถ้ามี)</label>
-            <select class="form-select" id="fContactId"><option value="">— ไม่ระบุ (ใช้กับทุกผู้ขาย) —</option></select>
+            <input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContactName">
             <small style="color:#64748b;font-size:11px">ระบุผู้ขายเพื่อกัน "Cola 325ml" จากบริษัท A ไม่ไป match สินค้าของบริษัท B</small>
           </div>
         </div>
@@ -117,22 +117,16 @@
           });
         } catch {}
       },
-      async loadContacts() {
-        const api = Layout.api(); if (!api) return;
-        try {
-          const r = await api.getContacts('?pageSize=500');
-          const sel = document.getElementById('fContactId');
-          (r.data?.items || []).filter(c => c.isSupplier).forEach(c => {
-            const opt = document.createElement('option');
-            opt.value = c.id; opt.textContent = c.name;
-            sel.appendChild(opt);
-          });
-        } catch {}
+      // ผู้ขาย (ไม่บังคับ) — ตัวเลือกกลาง · เว้นว่าง = ใช้กับทุกผู้ขาย
+      loadContacts() {
+        this._contactPicker = this._contactPicker || Layout.contactPicker('fContactName', 'fContactId', {
+          side: 'supplier', placeholder: 'เว้นว่าง = ใช้กับทุกผู้ขาย · พิมพ์ชื่อหรือเลขผู้เสียภาษีเพื่อระบุ',
+        });
       },
       openCreate() {
         document.getElementById('fProductId').value = '';
         document.getElementById('fAliasName').value = '';
-        document.getElementById('fContactId').value = '';
+        if (this._contactPicker) this._contactPicker.clear(); else document.getElementById('fContactId').value = '';
         Layout.openModal('formModal');
       },
       async save() {
@@ -140,6 +134,10 @@
         const aliasName = document.getElementById('fAliasName').value.trim();
         const contactId = document.getElementById('fContactId').value || null;
         if (!productId || !aliasName) { Layout.toast('กรุณาเลือกสินค้าและพิมพ์ alias','warning'); return; }
+        // พิมพ์ชื่อผู้ขายค้างแต่ไม่ได้เลือก ⇒ ถ้าส่ง null จะกลายเป็น "ทุกผู้ขาย" เงียบ ๆ — ถามก่อน
+        if (!contactId && (document.getElementById('fContactName').value || '').trim()) {
+          Layout.toast('พิมพ์ชื่อผู้ขายแล้วต้องเลือกจากรายการ — หรือเว้นว่าง = ใช้กับทุกผู้ขาย', 'warning'); return;
+        }
         try {
           const cid = Layout.getCompanyId();
           const r = await fetch(`/api/companies/${cid}/product-aliases`, {

@@ -265,7 +265,7 @@
             </div>
           </div>`;
 
-        this.contactPicker = Layout.contactAutocomplete('fContactName', 'fContactId', { placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของแพลตฟอร์ม…' });
+        this.contactPicker = Layout.contactPicker('fContactName', 'fContactId', { side: 'supplier', placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของแพลตฟอร์ม…' });
         if (this.contactPicker) this.contactPicker.setValue(ch?.counterpartyContactId || '', ch?.counterpartyName || '');
         this.onKindChange();
         this.showModeHint();

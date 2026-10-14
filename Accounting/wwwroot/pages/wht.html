@@ -238,7 +238,7 @@
       async init() {
         if (!Layout.init('wht')) return;
         Layout.setTitle('หนังสือรับรองหัก ณ ที่จ่าย');
-        this._contactAC = Layout.contactAutocomplete('fContact', 'fContactId');
+        this._contactAC = Layout.contactPicker('fContact', 'fContactId', { side: 'supplier' });
         await this.loadIncomeTypes();
         await this.load();
         // deep-link จากหน้ารายละเอียดเอกสาร (`?documentId=`) — เดิมหน้านี้ไม่มี
@@ -1352,10 +1352,10 @@
           }
           this._editCertId = id;
           document.getElementById('formTitle').textContent = `แก้ไขหนังสือรับรอง ${d.certificateNumber || ''}`;
-          // เลือก contact ใน autocomplete
-          document.getElementById('fContactId').value = d.payeeContactId || '';
-          if (this._contactAC && d.payeeName) this._contactAC.setText?.(d.payeeName);
-          const fci = document.getElementById('fContactInput'); if (fci && d.payeeName) fci.value = d.payeeName;
+          // ผู้ถูกหักที่บันทึกไว้ต้องโชว์ชื่อ — เดิมเรียก setText?.() ที่ไม่มีอยู่จริง + id ช่องผิด (fContactInput)
+          // ⇒ เปิดแก้แล้วช่องผู้ถูกหักว่าง (id ยังอยู่ใน hidden) · ชื่อว่าง ⇒ picker ดึงจาก id ให้
+          if (this._contactAC) this._contactAC.setValue(d.payeeContactId || '', d.payeeName || '');
+          else document.getElementById('fContactId').value = d.payeeContactId || '';
           document.getElementById('fFormType').value = d.taxFormType || 'WithholdingTax3';
           document.getElementById('fCertType').value = d.certificateType || 'Withhold';
           this.onCertTypeChange();

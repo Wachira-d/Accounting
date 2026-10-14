@@ -49,8 +49,14 @@ public static class NotificationEvents
     /// สาเหตุที่พบบ่อยสุดคือยังไม่ได้ตั้ง webhook URL ในแดชบอร์ดผู้ให้บริการ</summary>
     public const string GatewayPaymentStuck     = "gateway.payment_stuck";
     public const string DepreciationPosted      = "depreciation.posted";
+    /// <summary>2026-10-14 (ID#13): งานลงค่าเสื่อมราคาอัตโนมัติรายเดือนล้ม (เช่น ผังค่าเสื่อมถูกปิดใช้/งวดปิด) —
+    /// เดิมลงแค่ log ⇒ เจ้าของไม่รู้จนปิดงบ</summary>
+    public const string DepreciationFailed      = "depreciation.failed";
     /// <summary>คำตัดสินข้อ 114 Q1: รายการประจำอนุมัติอัตโนมัติพร้อมข้อสังเกต §65 ตรี (ไม่บล็อก) — แจ้งผู้ตั้งรายการ</summary>
     public const string RecurringApprovedWithNotes = "recurring.approved_with_notes";
+    /// <summary>ทีมตรวจรายการประจำ 2026-10-14: รอบอัตโนมัติสร้างเอกสารไม่สำเร็จ (อ้างบัญชี/ผู้ติดต่อที่ถูกลบ · งวดปิด ฯลฯ) — แจ้งผู้ตั้งรายการ
+    /// ครั้งแรกที่ล้ม/เมื่อสาเหตุเปลี่ยน (ไม่ใช่ทุก 15 นาที) · เหตุผลอยู่บนแถว (<c>RecurringTransaction.LastRunError</c>) ในหน้ารายการประจำ</summary>
+    public const string RecurringRunFailed = "recurring.run_failed";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
@@ -113,7 +119,9 @@ public static class NotificationEvents
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
         ("Accounting", GatewayPaymentStuck, "รับชำระออนไลน์ค้างนานผิดปกติ (ตรวจ webhook)"),
         ("Accounting", DepreciationPosted, "ลงค่าเสื่อมราคาประจำเดือนอัตโนมัติ"),
+        ("Accounting", DepreciationFailed, "ลงค่าเสื่อมราคาอัตโนมัติไม่สำเร็จ (ต้องแก้แล้วกดคำนวณค่าเสื่อมเอง)"),
         ("Accounting", RecurringApprovedWithNotes, "รายการประจำอนุมัติอัตโนมัติพร้อมข้อสังเกตรายจ่ายต้องห้าม §65 ตรี"),
+        ("Accounting", RecurringRunFailed, "รายการประจำสร้างเอกสารอัตโนมัติไม่สำเร็จ (ต้องแก้ที่หน้ารายการประจำ)"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
         ("Accounting", OverdueDunningFirst, "AR เกิน 60 วัน — ส่งหนังสือทวงหนี้รอบที่ 2"),

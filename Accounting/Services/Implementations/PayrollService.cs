@@ -1347,6 +1347,13 @@ public class PayrollService : IPayrollService
         run.TotalDeductions = resolved.Sum(r => r.Line.TotalDeductions);
         run.EmployeeCount = resolved.Count;
 
+        // แหล่งจ่ายที่ระบบนอกส่งมา — เก็บตามที่ส่ง (ไม่บล็อกการนำเข้า) แต่บอกตั้งแต่ตอนนี้ถ้าใช้ไม่ได้ ตัวตัดสินเดียวกับตอนจ่าย
+        // (2026-10-14 · ID#15) — เดิมไม่ตรวจเลย แล้วตอนจ่ายสลิปไปบัญชีอื่นเงียบ ๆ
+        var importSources = await ResolvePayrollPaymentSourcesAsync(companyId, run.NetPaymentAccountCode,
+            run.Details.Select(d => d.NetPaymentAccountCode));
+        foreach (var code in importSources.Problems.Keys)
+            warnings.Add(importSources.RowProblem(code, $"แหล่งจ่ายรหัส {code} ที่ส่งมา")!);
+
         _db.Set<PayrollRun>().Add(run);
         try
         {
@@ -1390,6 +1397,9 @@ public class PayrollService : IPayrollService
         var details = await _db.Set<PayrollDetail>().AsNoTracking()
             .Where(d => d.PayrollRunId == run.Id)
             .ToListAsync();
+        // แหล่งจ่าย: ตัวตัดสินเดียวกับตอนจ่ายจริง (ProcessPaymentAsync) ⇒ หน้ารอบเห็นป้าย/คำเตือนชุดเดียวกับที่ปุ่ม "จ่าย" จะเจอ
+        var paySources = await ResolvePayrollPaymentSourcesAsync(companyId, run.NetPaymentAccountCode,
+            details.Select(d => d.NetPaymentAccountCode));
         List<PayrollRunLineDto>? lines = null;
         if (details.Count > 0)
         {
@@ -1413,7 +1423,11 @@ public class PayrollService : IPayrollService
                     d.NetPaymentAccountCode,
                     // คำเตือน (ไม่บล็อก) — แถวนำเข้า/แถวเดิมที่ฐาน ปกส. ขัดกับธงของพนักงาน ด่านเดียวกับ ➕/✏️ แต่ที่นี่แค่แสดง
                     SsoFlagWarning: e == null ? null : Accounting.Helpers.PayrollSsoFlagGuard.Check(
-                        e.IsSubjectToSocialSecurity, d.SocialSecurityBase, d.GrossIncome, "พนักงานคนนี้"));
+                        e.IsSubjectToSocialSecurity, d.SocialSecurityBase, d.GrossIncome, "พนักงานคนนี้"),
+                    // แหล่งจ่ายที่ใช้ไม่ได้แล้ว — ตัวตัดสินเดียวกับตอนจ่าย (ID#15/PC#22) · ป้ายชื่อผังให้หน้าเว็บแสดงแทนรหัสดิบ
+                    NetPaymentAccountWarning: paySources.RowProblem(d.NetPaymentAccountCode, "แถวนี้"),
+                    NetPaymentAccountLabel: string.IsNullOrWhiteSpace(d.NetPaymentAccountCode) ? null
+                        : paySources.Labels.GetValueOrDefault(d.NetPaymentAccountCode.Trim(), d.NetPaymentAccountCode.Trim()));
             }).ToList();
         }
 
@@ -1423,6 +1437,8 @@ public class PayrollService : IPayrollService
         return (await ToRunResponseAsync(companyId, run)) with
         {
             Details = lines,
+            DefaultPaymentSourceLabel = paySources.DefaultLabel,
+            DefaultPaymentSourceWarning = paySources.DefaultProblem,
             SsoRatePercent = ssoForUi.Rate * 100m,
             SsoEmployerRatePercent = ssoForUi.EmployerRate * 100m,
             SsoWageCeiling = ssoForUi.MaxBase,
@@ -1447,14 +1463,21 @@ public class PayrollService : IPayrollService
             ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
 
         var code = string.IsNullOrWhiteSpace(accountCode) ? null : accountCode.Trim();
-        if (code != null && !await IsValidNetPaymentAccountAsync(companyId, code))
-            throw new InvalidOperationException($"ผังบัญชีแหล่งจ่าย '{code}' ไม่ถูกต้อง (ต้องเป็นเงินสด/ธนาคาร/ช่องจ่าย)");
+        string? warning = null;
+        if (code != null)
+        {
+            var (problem, warn) = await CheckNetPaymentAccountAsync(companyId, code, "แหล่งจ่ายเงินสุทธิ");
+            if (problem != null)
+                throw new Accounting.Helpers.BusinessRuleException(problem, Accounting.Helpers.PostingAccountRule.RuleCode);
+            warning = warn;
+        }
 
         detail.NetPaymentAccountCode = code;
         detail.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
-        return await GetPayrollRunAsync(companyId, payrollRunId);
+        var resp = await GetPayrollRunAsync(companyId, payrollRunId);
+        return warning == null ? resp : resp with { Notice = warning };
     }
 
     public async Task<PayrollRunResponse> UpdatePayrollDetailAsync(Guid companyId,
@@ -1548,13 +1571,100 @@ public class PayrollService : IPayrollService
         return (await GetPayrollRunAsync(companyId, payrollRunId)) with { Notice = notice };
     }
 
-    /// <summary>ผังแหล่งจ่ายเงินสุทธิรายคนที่รับได้ — เงินสด/ธนาคาร/ช่องจ่าย (111x/1133/2123) ระดับ 4+ ที่ active
-    /// ของบริษัทนี้ · ตัวเดียวของ "แก้แหล่งจ่าย" และ "➕ เพิ่มพนักงานเข้ารอบ" (ช่องเดียวกันบนแถวเดียวกัน)</summary>
-    private Task<bool> IsValidNetPaymentAccountAsync(Guid companyId, string code)
-        => _db.ChartOfAccounts.AnyAsync(a => a.CompanyId == companyId
-            && a.AccountCode == code && a.IsActive && !a.IsDeleted && a.Level >= 4
-            && (a.AccountCode.StartsWith("111") || a.AccountCode.StartsWith("1133")
-                || a.AccountCode.StartsWith("2123")));
+    /// <summary>แหล่งจ่ายเงินสุทธิของพนักงาน 1 รหัส — ตัวเดียวของ "แก้แหล่งจ่าย" · "➕ เพิ่มพนักงานเข้ารอบ" · นำเข้า (2026-10-14 · PC#11)
+    /// <para><c>Problem</c> (บล็อก — สมุดบัญชี/tenant): ไม่พบในบริษัทนี้ · ปิดใช้ · บัญชีคุม (ยกเว้นผังที่บัญชีธนาคารผูกอยู่) ·
+    /// <c>Warning</c> (ไม่บล็อก — คำตัดสินข้อ 150): ไม่ใช่ผังเงินสด/ธนาคาร/ช่องจ่ายตาม <see cref="Accounting.Helpers.MoneyAccountRule"/>
+    /// (เดิมบล็อกด้วย prefix 111/1133/2123 ⇒ บริษัทที่ใช้ผังของตัวเองตั้งแหล่งจ่ายไม่ได้เลย)</para></summary>
+    private async Task<(string? Problem, string? Warning)> CheckNetPaymentAccountAsync(Guid companyId, string code, string fieldLabel)
+    {
+        var ctx = await _db.LoadMoneyContextAsync(companyId);
+        var facts = await LoadPayAccountFactsByCodeAsync(companyId, new[] { code });
+        facts.TryGetValue(code, out var f);
+        var problem = ctx.SourceProblem(f);
+        if (problem != Accounting.Helpers.PostingAccountProblem.None)
+            return (Accounting.Helpers.PostingAccountRule.Message(problem, f, fieldLabel), null);
+        return ctx.IsMoneyAccount(f!.Id, f.Code)
+            ? (null, null)
+            : (null, Accounting.Helpers.MoneyAccountRule.NotMoneyAccountWarning(f.Code, f.Name, fieldLabel));
+    }
+
+    /// <summary>ผังตามรหัส (บริษัทนี้ · ไม่ถูกลบ) พร้อมธง "บัญชีคุม" — key = รหัสแบบไม่สนตัวพิมพ์</summary>
+    private async Task<Dictionary<string, Accounting.Helpers.PostingAccountFacts>> LoadPayAccountFactsByCodeAsync(
+        Guid companyId, IEnumerable<string> codes)
+    {
+        var list = codes.Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var result = new Dictionary<string, Accounting.Helpers.PostingAccountFacts>(StringComparer.OrdinalIgnoreCase);
+        if (list.Count == 0) return result;
+        var ids = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && list.Contains(a.AccountCode))
+            .Select(a => a.Id).ToListAsync();
+        var facts = await _db.LoadPostingFactsAsync(companyId, ids);
+        foreach (var f in facts.Values.OrderBy(v => v.IsActive ? 0 : 1))
+            result.TryAdd(f.Code, f);
+        return result;
+    }
+
+    /// <summary>แผนแหล่งจ่ายเงินสุทธิของรอบ — ตัวตัดสินตัวเดียวของ "หน้ารอบ (ป้าย/คำเตือน)" และ "ตอนจ่ายจริง" (2026-10-14 · PC#12/#22 · ID#15)
+    /// <para>ค่าเริ่มต้น: แหล่งจ่ายระดับรอบ (นำเข้า) → แหล่งเงินเริ่มต้นของบริษัท/ผังเงินสด-ธนาคารรหัสต่ำสุด
+    /// (<c>MoneyAccountDirectory.ResolveDefaultMoneySourceAsync</c> —
+    /// ตัวเดียวกับนำส่ง สปส./ภาษี) · เดิมเครดิต 11122 ซึ่งกลายเป็นบัญชีคุมเมื่อสร้างบัญชีธนาคาร ⇒ กระทบยอดไม่เห็น และไม่อ่านค่าตั้งบริษัท</para>
+    /// <para>รหัสรายคนที่ใช้ไม่ได้แล้ว (ปิดใช้/ลบ) <b>ไม่สลับไปค่าเริ่มต้นเงียบ ๆ</b>: หน้ารอบแสดงคำเตือนต่อแถว และตอนจ่ายล้มดังพร้อมทางไปต่อ</para></summary>
+    private async Task<PayrollPaymentSourcePlan> ResolvePayrollPaymentSourcesAsync(
+        Guid companyId, string? runPaymentAccountCode, IEnumerable<string?> detailPaymentAccountCodes)
+    {
+        var ctx = await _db.LoadMoneyContextAsync(companyId);
+        var codes = detailPaymentAccountCodes
+            .Append(runPaymentAccountCode)
+            .Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => c!.Trim()).ToList();
+        var facts = await LoadPayAccountFactsByCodeAsync(companyId, codes);
+        var codeProblems = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var codeAccounts = new Dictionary<string, Accounting.Helpers.PostingAccountFacts>(StringComparer.OrdinalIgnoreCase);
+        var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var code in codes.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            facts.TryGetValue(code, out var f);
+            labels[code] = f is null ? code : $"{f.Code} {f.Name}";
+            var problem = ctx.SourceProblem(f);
+            if (problem == Accounting.Helpers.PostingAccountProblem.None) codeAccounts[code] = f!;
+            else codeProblems[code] = Accounting.Helpers.PostingAccountRule.ShortReason(problem, f) is { Length: > 0 } r ? r : code;
+        }
+
+        Accounting.Helpers.PostingAccountFacts? def = null;
+        string? defProblem = null;
+        var defFromRun = false;
+        if (!string.IsNullOrWhiteSpace(runPaymentAccountCode))
+        {
+            var rc = runPaymentAccountCode.Trim();
+            defFromRun = true;
+            if (codeAccounts.TryGetValue(rc, out var ra)) def = ra;
+            else defProblem = $"แหล่งจ่ายระดับรอบ (รหัส {rc} ที่มากับข้อมูลนำเข้า) ใช้ไม่ได้แล้ว ({codeProblems.GetValueOrDefault(rc, rc)}) — "
+                + "เปิดใช้งานบัญชีนี้ที่หน้า \"ผังบัญชี\" หรือเลือกแหล่งจ่ายที่ช่อง \"แหล่งจ่าย\" ให้พนักงานทุกคนที่ใช้ค่าเริ่มต้น";
+        }
+        else
+        {
+            var d = await _db.ResolveDefaultMoneySourceAsync(companyId, ctx);
+            def = d.Account;
+            defProblem = d.Problem;
+        }
+        return new PayrollPaymentSourcePlan(def, defProblem, defFromRun, codeAccounts, codeProblems, labels);
+    }
+
+    /// <summary>ผลของ <see cref="ResolvePayrollPaymentSourcesAsync"/></summary>
+    private sealed record PayrollPaymentSourcePlan(
+        Accounting.Helpers.PostingAccountFacts? Default, string? DefaultProblem, bool DefaultFromRun,
+        Dictionary<string, Accounting.Helpers.PostingAccountFacts> Accounts, Dictionary<string, string> Problems,
+        Dictionary<string, string> Labels)
+    {
+        public string? DefaultLabel => Default is null ? null : $"{Default.Code} {Default.Name}";
+
+        /// <summary>ปัญหาของแหล่งจ่ายรายคน (null = ใช้ได้ / ใช้ค่าเริ่มต้น)</summary>
+        public string? RowProblem(string? code, string who)
+            => string.IsNullOrWhiteSpace(code) || !Problems.TryGetValue(code.Trim(), out var reason)
+                ? null
+                : $"{who}: แหล่งจ่าย {code.Trim()} ใช้ไม่ได้แล้ว ({reason}) — เลือกแหล่งจ่ายใหม่ที่ช่อง \"แหล่งจ่าย\" ของแถวนี้ "
+                  + "หรือเปิดใช้งานบัญชีที่หน้า \"ผังบัญชี\" (ระบบไม่สลับไปบัญชีอื่นให้เอง)";
+    }
 
     /// <summary>พนักงานที่ "เพิ่มเข้ารอบนี้ได้" — ผ่าน <see cref="PayrollEmployeeEligibility.InPeriod"/> ของงวด
     /// (ตัวเดียวกับคำนวณ/เพิ่ม) และยังไม่อยู่ในรอบ · ใช้เติม dropdown + ค่าเริ่มต้นบนจอ (ผู้ใช้เห็นและยืนยันก่อนส่ง
@@ -1662,9 +1772,13 @@ public class PayrollService : IPayrollService
                     $"เพิ่ม {empName} ({emp.EmployeeCode}) เข้ารอบนี้ไม่ได้ — {notEligible}",
                     "PAYROLL-EMPLOYEE-NOT-IN-PERIOD");
 
-            if (payCode != null && !await IsValidNetPaymentAccountAsync(companyId, payCode))
-                throw new Accounting.Helpers.BusinessRuleException(
-                    $"ผังบัญชีแหล่งจ่าย '{payCode}' ไม่ถูกต้อง (ต้องเป็นเงินสด/ธนาคาร/ช่องจ่ายที่เปิดใช้ของบริษัทนี้)");
+            if (payCode != null)
+            {
+                var (payProblem, payWarn) = await CheckNetPaymentAccountAsync(companyId, payCode, "แหล่งจ่ายเงินสุทธิ");
+                if (payProblem != null)
+                    throw new Accounting.Helpers.BusinessRuleException(payProblem, Accounting.Helpers.PostingAccountRule.RuleCode);
+                if (payWarn != null) notices.Add(payWarn);
+            }
 
             var d = new PayrollDetail
             {
@@ -3013,58 +3127,50 @@ public class PayrollService : IPayrollService
                 // (fallback → run.NetPaymentAccountCode → default 11122/111x) →
                 // จ่ายแต่ละคนจากบัญชีของตัวเองได้ (ลง Cr หลายบรรทัดตามบัญชี).
                 var cashPaid = run.TotalNetPay - totalAdvanceRecovered;
-                var defaultCashAccount = (!string.IsNullOrWhiteSpace(run.NetPaymentAccountCode)
-                        ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                            a.CompanyId == companyId && a.AccountCode == run.NetPaymentAccountCode
-                            && a.IsActive && !a.IsDeleted)
-                        : null)
-                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.CompanyId == companyId && a.AccountCode == "11122" && a.Level >= 4)
-                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.Level >= 4);
-                if (defaultCashAccount != null)
+                // แหล่งจ่าย: ตัวตัดสินเดียวกับหน้ารอบ (ResolvePayrollPaymentSourcesAsync · 2026-10-14 PC#12/#22 · ID#15) —
+                // รายคน → ระดับรอบ → แหล่งเงินเริ่มต้นของบริษัท/ผังเงินสด-ธนาคารรหัสต่ำสุด (เดิม 11122 = บัญชีคุม และไม่อ่านค่าตั้งบริษัท) ·
+                // รหัสรายคน/ระดับรอบที่ใช้ไม่ได้แล้ว = ล้มดังพร้อมทางไปต่อ ไม่สลับไปบัญชีอื่นเงียบ ๆ (เงินออกจากบัญชีไหน JE ต้องตรงบัญชีนั้น)
+                var paySources = await ResolvePayrollPaymentSourcesAsync(companyId, run.NetPaymentAccountCode,
+                    run.Details.Select(d => d.NetPaymentAccountCode));
+                var payProblems = run.Details
+                    .Where(d => d.NetPay - d.AdvanceRecovered != 0)
+                    .Select(d => paySources.RowProblem(d.NetPaymentAccountCode,
+                        d.Employee != null ? $"{d.Employee.FirstNameTh} {d.Employee.LastNameTh}".Trim() : "พนักงาน"))
+                    .Where(m => m != null).Distinct().Take(5).ToList();
+                if (payProblems.Count > 0)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        "จ่ายเงินเดือนไม่ได้ — " + string.Join(" · ", payProblems), "PAYROLL-PAY-SOURCE");
+                var needsDefault = run.Details.Count == 0
+                    || run.Details.Any(d => d.NetPay - d.AdvanceRecovered != 0 && string.IsNullOrWhiteSpace(d.NetPaymentAccountCode));
+                if (needsDefault && paySources.Default == null)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        "จ่ายเงินเดือนไม่ได้ — " + (paySources.DefaultProblem ?? "ไม่พบแหล่งจ่ายเริ่มต้น"), "PAYROLL-PAY-SOURCE");
                 {
-                    // resolve โค้ดแหล่งจ่ายรายคนทั้งหมด (cache ต่อโค้ด) — เฉพาะผังที่ใช้ได้
-                    // P5 (N+1): เดิม query ผังบัญชี 1 ครั้ง **ต่อโค้ดแหล่งจ่าย** —
-                    // บริษัทที่จ่ายหลายบัญชี (เงินสด/ธนาคารหลายแห่ง) ยิงหลายสิบ
-                    // query ต่อการโพสต์เงินเดือน 1 รอบ. ดึงทีเดียวแล้ว map ใน RAM
-                    var payCodes = run.Details
-                        .Select(d => d.NetPaymentAccountCode)
-                        .Where(c => !string.IsNullOrWhiteSpace(c))
-                        .Select(c => c!)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    var codeToAccount = new Dictionary<string, ChartOfAccount>(StringComparer.OrdinalIgnoreCase);
-                    if (payCodes.Count > 0)
-                    {
-                        var payAccounts = await _db.ChartOfAccounts
-                            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                                && a.Level >= 4 && payCodes.Contains(a.AccountCode))
-                            .ToListAsync();
-                        foreach (var acc in payAccounts) codeToAccount[acc.AccountCode] = acc;
-                    }
                     // จับยอดสุทธิรายคน (หลังหักเงินทดรอง) เข้าบัญชีจ่ายของแต่ละคน
-                    var byPayAccount = new Dictionary<Guid, (ChartOfAccount Acc, decimal Amt)>();
+                    var byPayAccount = new Dictionary<Guid, (Accounting.Helpers.PostingAccountFacts Acc, decimal Amt)>();
                     foreach (var d in run.Details)
                     {
                         var net = d.NetPay - d.AdvanceRecovered;
                         if (net == 0) continue;
-                        var acc = (!string.IsNullOrWhiteSpace(d.NetPaymentAccountCode)
-                                    && codeToAccount.TryGetValue(d.NetPaymentAccountCode!, out var a))
-                            ? a : defaultCashAccount;
+                        var acc = !string.IsNullOrWhiteSpace(d.NetPaymentAccountCode)
+                            ? paySources.Accounts[d.NetPaymentAccountCode!.Trim()]
+                            : paySources.Default!;
                         byPayAccount[acc.Id] = byPayAccount.TryGetValue(acc.Id, out var cur)
                             ? (acc, cur.Amt + net) : (acc, net);
                     }
                     if (byPayAccount.Count == 0)
+                    {
                         // data เก่าไม่มี detail → ลงรวมบรรทัดเดียวเหมือนเดิม
-                        lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                            defaultCashAccount.Id, 0, cashPaid, $"จ่ายเงินเดือน {run.Month}/{run.Year}"));
+                        if (cashPaid != 0 && paySources.Default != null)
+                            lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                                paySources.Default.Id, 0, cashPaid, $"จ่ายเงินเดือน {run.Month}/{run.Year}"));
+                    }
                     else
                         foreach (var kv in byPayAccount.Values)
                             lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                                 kv.Acc.Id, 0, kv.Amt,
                                 $"จ่ายเงินเดือน {run.Month}/{run.Year}"
-                                    + (byPayAccount.Count > 1 ? $" ({kv.Acc.AccountCode})" : "")));
+                                    + (byPayAccount.Count > 1 ? $" ({kv.Acc.Code})" : "")));
                 }
 
                 if (lines.Count >= 2)
@@ -3130,10 +3236,14 @@ public class PayrollService : IPayrollService
                     await _db.SaveChangesAsync();
                 }
             }
+            catch (Accounting.Helpers.BusinessRuleException)
+            {
+                throw;   // ข้อความกฎธุรกิจพร้อมทางไปต่ออยู่แล้ว — ห่อซ้ำทำให้ผู้ใช้เห็นคำนำหน้าภาษาอังกฤษ
+            }
             catch (Exception ex)
             {
                 throw new InvalidOperationException(
-                    $"Payroll journal creation failed: {ex.Message}", ex);
+                    $"ลงบัญชีเงินเดือนไม่สำเร็จ: {ex.Message}", ex);
             }
             }
 
@@ -5045,51 +5155,10 @@ public class PayrollService : IPayrollService
             ?? throw new InvalidOperationException(
                 "ไม่พบบัญชี 'ประกันสังคมค้างจ่าย' (21815) — กรุณาสร้างก่อน");
 
-        // ── หา Bank/Cash ──
-        // (1) ถ้าผู้ใช้ระบุ BankAccountId → ใช้ LinkedAccountId ของบัญชีนั้น
-        // (2) ถ้าไม่ระบุ → ใช้ CompanySettings.DefaultPaymentAccountId
-        // (3) สุดท้าย fallback บัญชี 111x ตัวแรก (auto-pick lowest)
-        Guid? bankGlId = null;
-        // (0) เลือก GL เงินสด/เงินทดรองกรรมการ/ช่องจ่ายอื่นโดยตรง (payment channel)
-        //     — validate ว่าเป็นผังของบริษัทนี้ + active + posting level
-        if (bankGlAccountId.HasValue && bankGlAccountId.Value != Guid.Empty)
-        {
-            bankGlId = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.Id == bankGlAccountId.Value && a.CompanyId == companyId
-                    && a.IsActive && !a.IsDeleted && a.Level >= 4)
-                .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
-            if (!bankGlId.HasValue)
-                throw new InvalidOperationException("บัญชีแหล่งจ่ายที่เลือกไม่ถูกต้อง — เลือกใหม่อีกครั้ง");
-        }
-        if (!bankGlId.HasValue && bankAccountId.HasValue)
-        {
-            bankGlId = await _db.BankAccounts.AsNoTracking()
-                .Where(b => b.Id == bankAccountId.Value && b.CompanyId == companyId)
-                .Select(b => b.LinkedAccountId)
-                .FirstOrDefaultAsync();
-            if (!bankGlId.HasValue)
-                throw new InvalidOperationException(
-                    "บัญชีธนาคารที่เลือกยังไม่ผูกผังบัญชี (LinkedAccountId) — ตั้งค่าก่อน");
-        }
-        if (!bankGlId.HasValue)
-        {
-            var cs = await _db.Set<CompanySettings>().AsNoTracking()
-                .Where(c => c.CompanyId == companyId && !c.IsDeleted)
-                .Select(c => c.DefaultPaymentAccountId)
-                .FirstOrDefaultAsync();
-            if (cs.HasValue) bankGlId = cs;
-        }
-        if (!bankGlId.HasValue)
-        {
-            bankGlId = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                    && a.AccountCode.StartsWith("111") && a.Level >= 4)
-                .OrderBy(a => a.AccountCode)
-                .Select(a => (Guid?)a.Id)
-                .FirstOrDefaultAsync();
-        }
-        if (!bankGlId.HasValue)
-            throw new InvalidOperationException("ไม่พบบัญชีเงินสด/ธนาคาร (111x) — กรุณาสร้างก่อน");
+        // ── หา Bank/Cash ── ตัวหาตัวเดียวของระบบ (MoneyAccountDirectory.ResolveSourceGlAsync · 2026-10-14 PC#17/ID#19):
+        // ผังที่เลือกตรง → บัญชีธนาคาร (แยก ไม่พบ/ปิดใช้/ยังไม่ผูก พร้อมทางไปต่อ) → แหล่งเงินเริ่มต้นของบริษัท (ตรวจแล้ว)
+        // → ผังเงินสด/ธนาคารรหัสต่ำสุด · เดิมเป็นสำเนาที่สองของ StatutoryRemittanceService.ResolveBankGlAsync
+        Guid? bankGlId = await _db.ResolveSourceGlAsync(companyId, bankAccountId, bankGlAccountId, "บัญชีแหล่งจ่ายที่ใช้นำส่งประกันสังคม");
 
         // ── late fee §49 (2%/เดือนของยอดที่นำส่งช้า, เริ่มนับวันที่ 16 ของเดือนถัดไป) ──
         // เพดาน late fee = 100% ของยอดที่นำส่ง (ตามคำพิพากษาสรรพากร — ใช้
