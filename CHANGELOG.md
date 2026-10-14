@@ -4915,4 +4915,4 @@ _2026-10-14 — ฝ่ายค้านรอบ ETL (ศูนย์นำเ�
 สมุดรายวันลงต่อใบ (ปล่อยล็อกเลข JV) · **P2** SkippedCount/Blocked · ProcessedRows · ยกเลิกถือ JobLock · AutoCommitWhenClean "ยังไม่เปิดใช้" + migration ·
 ล้างชุดค้าง 30 วัน · errors.csv ยอดติดลบนำเข้ากลับได้ · AI ของเอกสารย้ายไปขั้นตรวจ · กันสร้างเอกสาร/รับชำระซ้ำเมื่อทำต่อ · ย้อนงบทดลองบอกแถวที่ไม่ถูกย้อน ·
 feedback ของ resolver ที่มั่นใจต่ำยังปิดลูป · ข้อความทางไปต่อของใบเสร็จ/ใบสำคัญ — รับชำระวันอนาคต/เกินยอดค้าง **คงเป็นด่าน** (domain ปฏิเสธ) ·
-เทสต์ `Db/ImportAdversarialEtlDbTests` · `ImportAdversarialEtlHelpersTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
+เทสต์ `Db/ImportAdversarialEtlDbTests` · `ImportAdversarialEtlHelpersTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e8955484_
