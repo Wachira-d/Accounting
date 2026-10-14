@@ -883,7 +883,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-10-14 (rev 43 · รอบ 204 ทีม C — **§3.1e** ค่าตั้งบริษัทค่าสิทธิ ม.40(3) บุคคลธรรมดา ภ.ง.ด.3/2 (`WhtRoyaltyPolicy`) · ผัง 21923 e-Withholding (`EWithholdingScope`) — commit <pending>)_
+_Last verified against codebase: 2026-10-14 (rev 43 · รอบ 204 ทีม C — **§3.1e** ค่าตั้งบริษัทค่าสิทธิ ม.40(3) บุคคลธรรมดา ภ.ง.ด.3/2 (`WhtRoyaltyPolicy`) · ผัง 21923 e-Withholding (`EWithholdingScope`) — commits a1c4205e · 9df51a6c)_
 
 _Last verified against codebase: 2026-10-12 (rev 42 · รอบ 204 — **§3.1e** ผัง 21915 ภ.ง.ด.2 (ตัวตัดสิน `WhtPayableAccount` + migration ผังให้บริษัทเดิม) · ทิปลง 21916 — commits 8a9f2cac · dc5164ee · 661d08b1)_
 
