@@ -883,7 +883,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-10-14 (rev 44 · ฝ่ายค้านรอบ 204 — **§3.1e** ค่าตั้งค่าสิทธิ ม.40(3) มีประวัติ: คอลัมน์ `Companies.WhtRoyaltyPnd2History` (text) + `WhtRoyaltyFormDecidedAt` (timestamptz) ผ่าน `DatabaseMigrationHelper.Round204RoyaltyHistoryStatements` — commit 72f9e883)_
+_Last verified against codebase: 2026-10-14 (rev 44 · ฝ่ายค้านรอบ 204 — **§3.1e** ค่าตั้งค่าสิทธิ ม.40(3) มีประวัติ: คอลัมน์ `Companies.WhtRoyaltyPnd2History` (text) + `WhtRoyaltyFormDecidedAt` (timestamptz) ผ่าน `DatabaseMigrationHelper.Round204RoyaltyHistoryStatements` — commit 7e931322)_
 
 _Last verified against codebase: 2026-10-14 (rev 43 · รอบ 204 ทีม C — **§3.1e** ค่าตั้งบริษัทค่าสิทธิ ม.40(3) บุคคลธรรมดา ภ.ง.ด.3/2 (`WhtRoyaltyPolicy`) · ผัง 21923 e-Withholding (`EWithholdingScope`) — commits bd3991ba · 3bef5f87)_
 
