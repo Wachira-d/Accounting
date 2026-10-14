@@ -6499,6 +6499,22 @@ RULES += [
     dict(file="Controllers/WithholdingTaxCertController.cs", method="GrossUpPreview",
          must=["ForeignServiceVat.VatWithBorne("],
          why=_FSBORNE + "พรีวิวบนฟอร์ม: VAT ภ.พ.36 สูตรเดียวกับตอนบันทึก (หน้าเว็บไม่มีสูตร)"),
+    # ฝ่ายค้านรอบ 204 M1 — ใบลด/เพิ่มหนี้ของใบเจ้าของ ภ.พ.36 ที่ออกแทน: VAT บนฐานรวม (ติ๊กธงไม่ได้ แต่ใบต้นทางเป็นเจ้าของ) · คำเตือน/รายงานครอบด้วย
+    dict(file=DOC, method="CreateDocumentAsync",
+         must=["ForeignServiceVat.BorneVatApplies(doc.IsForeignService, createLinkedSrc?.Owns == true, createWhtBorne)"],
+         forbid=["doc.IsForeignService && createWhtBorne != 0m"],
+         why=_FSBORNE + "M1: ใบลดหนี้ของใบออกแทนคิด VAT บนฐานรวม — เดิมเฉพาะ doc.IsForeignService ⇒ ลดเต็มใบแล้ว 21912/11640 ค้าง 79.41×7%"),
+    dict(file=DOC, method="UpdateDocumentAsync",
+         must=["ForeignServiceVat.BorneVatApplies(doc.IsForeignService, updSrcOwns, updWhtBorne)",
+               "ForeignServiceVat.BorneVatApplies(doc.IsForeignService, updSrcOwns, keptBorne)"],
+         forbid=["doc.IsForeignService && updWhtBorne != 0m", "doc.IsForeignService && keptBorne != 0m"],
+         why=_FSBORNE + "M1: แก้ใบลดหนี้ใช้ตัวตัดสินเดียวกับตอนสร้าง"),
+    dict(file=DOC, method="CollectApprovalWarningsAsync",
+         must=["ForeignServiceVat.Pp36BaseApprovalWarning(doc, pp36NoteSrcOwns)"],
+         why=_FSBORNE + "M1: [PP36-BASE] ครอบใบลด/เพิ่มหนี้ของใบเจ้าของ ภ.พ.36 (ใบร่างเก่าที่คิดบนฐานอย่างเดียว)"),
+    dict(file="Services/Implementations/TaxService.cs", method="GeneratePp36Report",
+         must=["ForeignServiceVat.Pp36NoteBaseDelta(n.DocumentType, n.SubTotal, n.WhtPayerBorneAmount)"],
+         why=_FSBORNE + "M1: ฐานในรายงานหักส่วนที่ออกแทนของใบลดหนี้ด้วย — ลดเต็มใบแล้วฐานต้องเป็น 0"),
 ]
 
 

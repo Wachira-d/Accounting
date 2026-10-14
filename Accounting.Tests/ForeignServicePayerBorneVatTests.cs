@@ -185,4 +185,84 @@ public class ForeignServicePayerBorneVatTests
         Assert.Null(ForeignServiceVat.ReclassifyPayerBorneRefusal(WithholdingTaxCertType.Withhold, 0m, toForeignService: true));
         Assert.Null(ForeignServiceVat.ReclassifyPayerBorneRefusal(WithholdingTaxCertType.PayAlways, 0m, toForeignService: true));
     }
+
+    // ── ฝ่ายค้านรอบ 204 M1: ใบลด/เพิ่มหนี้ของใบเจ้าของ ภ.พ.36 ที่ผู้จ่ายออกแทน ──
+
+    [Fact]
+    public void BorneVatApplies_covers_credit_notes_of_pp36_owner_and_leaves_others_untouched()
+    {
+        Assert.True(ForeignServiceVat.BorneVatApplies(isForeignService: true, sourceOwnsPp36: false, payerBorne: 79.41m));
+        // ใบลดหนี้ติ๊กธงไม่ได้ (Pp36Lifecycle.FlagTypeError) แต่ใบต้นทางเป็นเจ้าของ ภ.พ.36 ⇒ ต้องคิดบนฐานรวม (เดิม false ⇒ VAT 31.50)
+        Assert.True(ForeignServiceVat.BorneVatApplies(isForeignService: false, sourceOwnsPp36: true, payerBorne: 79.41m));
+        // ทิศตรงข้าม: หัก ณ ที่จ่าย (ไม่มีส่วนที่ออกแทน) · ใบในประเทศ ⇒ ไม่แตะ
+        Assert.False(ForeignServiceVat.BorneVatApplies(isForeignService: false, sourceOwnsPp36: true, payerBorne: 0m));
+        Assert.False(ForeignServiceVat.BorneVatApplies(isForeignService: false, sourceOwnsPp36: false, payerBorne: 79.41m));
+    }
+
+    /// <summary>ยอดของใบที่ "เส้นสร้างเอกสาร" คิด (ทรงเดียวกับ ApplyWhtGrossUp → ApplyForeignServiceBorneVat ตามตัวตัดสิน BorneVatApplies)</summary>
+    private static (decimal Vat, decimal Borne, decimal Tax, decimal Total) Booked(decimal baseAmt, WithholdingTaxCertType type,
+        bool isForeignService, bool sourceOwnsPp36)
+    {
+        var a = WhtGrossUp.OnBase(baseAmt, 15m, type);
+        var vat = ForeignServiceVat.BorneVatApplies(isForeignService, sourceOwnsPp36, a.PayerBorne)
+            ? ForeignServiceVat.VatWithBorne(new[] { (baseAmt, a.PayerBorne, 7m) }).Sum()
+            : Vat7(baseAmt);
+        return (vat, a.PayerBorne, a.Tax, WhtGrossUp.PayeeTotal(baseAmt, vat, a.Tax, a.PayerBorne));
+    }
+
+    [Theory]
+    [InlineData(WithholdingTaxCertType.PayAlways)]
+    [InlineData(WithholdingTaxCertType.PayOnce)]
+    [InlineData(WithholdingTaxCertType.Withhold)]
+    public void Full_credit_note_of_borne_owner_nets_21912_and_11640_to_zero(WithholdingTaxCertType type)
+    {
+        // ใบเจ้าของ (PI ต่างประเทศ): Cr 21912 VAT · Dr 11640 VAT
+        var owner = Booked(450m, type, isForeignService: true, sourceOwnsPp36: false);
+        // ใบลดหนี้เต็มใบ (ติ๊กธงไม่ได้ · อ้างใบเจ้าของ) — JE ทรง AutoPost: Dr 21912 = SplitCredit(...).Pp36Credit · Cr 11640 = VAT บรรทัด
+        var cn = Booked(450m, type, isForeignService: false, sourceOwnsPp36: true);
+        var cnSplit = ForeignServiceVat.SplitCredit(true, cn.Total, cn.Vat);
+        Assert.Equal(0m, owner.Vat - cnSplit.Pp36Credit);   // 21912
+        Assert.Equal(0m, owner.Vat - cn.Vat);                // 11640
+        // รายงาน ภ.พ.36: ฐานเจ้าของ + ฐานที่ใบลดหนี้ขยับ = 0
+        Assert.Equal(0m, ForeignServiceVat.Pp36Base(450m, owner.Borne)
+            + ForeignServiceVat.Pp36NoteBaseDelta(DocumentType.CreditNote, 450m, cn.Borne));
+        // ยอดจ่ายผู้รับเงินที่ลดหนี้ = ยอดจ่ายผู้รับของใบเจ้าของ (เจ้าหนี้ปิด 0)
+        Assert.Equal(ForeignServiceVat.PayeeAmount(DocumentType.PurchaseInvoice, true, owner.Total, owner.Vat),
+            ForeignServiceVat.PayeeAmount(DocumentType.CreditNote, false, cn.Total, cn.Vat, sourceOwnsPp36: true));
+    }
+
+    [Fact]
+    public void Old_rule_left_borne_vat_stuck_in_21912_reproduces_finding()
+    {
+        // ก่อนแก้: เส้นสร้างคิดบนฐานรวมเฉพาะ doc.IsForeignService ⇒ ใบลดหนี้ได้ VAT 31.50 ⇒ 21912/11640 ค้าง 5.56 (= 79.41 × 7%)
+        var owner = Booked(450m, WithholdingTaxCertType.PayAlways, true, false);
+        var oldCnVat = Vat7(450m);
+        Assert.Equal(37.06m, owner.Vat);
+        Assert.Equal(5.56m, owner.Vat - oldCnVat);
+    }
+
+    [Fact]
+    public void Pp36NoteBaseDelta_withhold_notes_unchanged_and_debit_note_adds()
+    {
+        // หัก ณ ที่จ่าย (ออกแทน 0) ⇒ เท่า SubTotal เดิมทุกสตางค์ (สูตรเดิมของรายงาน)
+        Assert.Equal(-1_000m, ForeignServiceVat.Pp36NoteBaseDelta(DocumentType.CreditNote, 1_000m, 0m));
+        Assert.Equal(1_000m, ForeignServiceVat.Pp36NoteBaseDelta(DocumentType.DebitNote, 1_000m, 0m));
+        Assert.Equal(529.41m, ForeignServiceVat.Pp36NoteBaseDelta(DocumentType.DebitNote, 450m, 79.41m));
+    }
+
+    [Fact]
+    public void Pp36BaseWarning_covers_credit_note_of_pp36_owner_only_when_source_owns()
+    {
+        var src = Guid.NewGuid();
+        var staleCn = ForeignDoc(WithholdingTaxCertType.PayAlways, 31.50m, DocumentType.CreditNote, foreign: false, related: src);
+        Assert.NotNull(ForeignServiceVat.Pp36BaseApprovalWarning(staleCn, sourceOwnsPp36: true));
+        Assert.Null(ForeignServiceVat.Pp36BaseApprovalWarning(
+            ForeignDoc(WithholdingTaxCertType.PayAlways, 37.06m, DocumentType.CreditNote, foreign: false, related: src), sourceOwnsPp36: true));
+        // ทิศตรงข้าม: ใบต้นทางไม่ใช่เจ้าของ ภ.พ.36 · ใบลดหนี้หัก ณ ที่จ่าย · ใบสำคัญจ่ายที่ปิดหนี้ใบต้นทาง ⇒ เงียบเหมือนเดิม
+        Assert.Null(ForeignServiceVat.Pp36BaseApprovalWarning(staleCn, sourceOwnsPp36: false));
+        Assert.Null(ForeignServiceVat.Pp36BaseApprovalWarning(
+            ForeignDoc(WithholdingTaxCertType.Withhold, 31.50m, DocumentType.CreditNote, foreign: false, related: src), sourceOwnsPp36: true));
+        Assert.Null(ForeignServiceVat.Pp36BaseApprovalWarning(
+            ForeignDoc(WithholdingTaxCertType.PayAlways, 31.50m, DocumentType.PaymentVoucher, related: src), sourceOwnsPp36: true));
+    }
 }

@@ -1623,11 +1623,13 @@ public partial class TaxService : ITaxService
                         && (n.DocumentType == DocumentType.CreditNote || n.DocumentType == DocumentType.DebitNote)
                         && !noteNotIssued.Contains(n.Status) && n.Status != DocumentStatus.Voided
                         && n.RelatedDocumentId != null && pp36DocIds.Contains(n.RelatedDocumentId.Value))
-                    .Select(n => new { Owner = n.RelatedDocumentId!.Value, n.DocumentType, n.SubTotal, n.ExchangeRate })
+                    .Select(n => new { Owner = n.RelatedDocumentId!.Value, n.DocumentType, n.SubTotal, n.WhtPayerBorneAmount, n.ExchangeRate })
                     .ToListAsync())
                 .GroupBy(n => n.Owner)
-                .ToDictionary(g => g.Key, g => g.Sum(n => (n.DocumentType == DocumentType.CreditNote ? -1m : 1m)
-                    * Accounting.Helpers.DocumentFx.ToBaht(n.SubTotal, n.ExchangeRate)));
+                // ฝ่ายค้านรอบ 204 M1: ใบลดหนี้ของใบ "ออกแทน" ลดส่วนที่ออกแทนออกจากฐานด้วย (ตัวตั้งเดียว ForeignServiceVat.Pp36NoteBaseDelta) —
+                // เดิมหักแค่ SubTotal ⇒ ลดหนี้เต็มใบแล้วฐานค้าง 79.41 ขณะ VAT (จาก GL) เป็น 0
+                .ToDictionary(g => g.Key, g => g.Sum(n => Accounting.Helpers.DocumentFx.ToBaht(
+                    Accounting.Helpers.ForeignServiceVat.Pp36NoteBaseDelta(n.DocumentType, n.SubTotal, n.WhtPayerBorneAmount), n.ExchangeRate)));
         var filedCertStatuses = Accounting.Helpers.WhtCertFilingScope.Filed;
         // บอร์ดตัดสิน 2026-10-13 (ทีม B · A5b): นับ 50 ทวิ "ออกให้ครั้งเดียว" ด้วย (ส่วนที่ผู้จ่ายออกแทนรอบแรกเป็นเงินได้ของผู้รับ ม.39 ⇒ มูลค่าบริการ §79) —
         // เดิมกรองเฉพาะ "ตลอดไป" ⇒ ฐาน ภ.พ.36 ของใบ "ครั้งเดียว" ขาดเงียบ · รวมยอดแยกตามเงื่อนไข (สูตรส่วนที่ออกแทนต่างกัน) แล้วให้ตัวตัดสินเดียวคิดต่อเงื่อนไข

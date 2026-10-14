@@ -1635,7 +1635,8 @@ public partial class DocumentService : IDocumentService
             ReconcileTaxRounding(createLines, createAmts, request.PricesIncludeVat);
             var createWhtBorne = ApplyWhtGrossUp(createLines, createAmts, doc.WhtCertType);
             // รอบ 204 (คำสั่งเจ้าของ 2026-10-13): บริการต่างประเทศ + ออกแทน ⇒ VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน (คำตัดสินข้อ 40) ก่อนรวมยอด
-            if (doc.IsForeignService && createWhtBorne != 0m)
+            // ฝ่ายค้านรอบ 204 M1: ใบลด/เพิ่มหนี้ของใบเจ้าของ ภ.พ.36 (ติ๊กธงไม่ได้ แต่สืบทอด "ออกแทน") ⇒ สูตรเดียวกัน — ไม่งั้นลดหนี้เต็มใบแล้ว 21912/11640 ค้าง
+            if (ForeignServiceVat.BorneVatApplies(doc.IsForeignService, createLinkedSrc?.Owns == true, createWhtBorne))
                 ApplyForeignServiceBorneVat(createLines, createAmts, doc.WhtCertType);
             // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — ตรวจ (ผู้ติดต่อของบริษัทนี้ · เอกสารฝั่งผู้จ่าย) แล้วเก็บแบบ normalize (Helpers/WhtPayeeSplit)
             var createLinePayees = await ResolveLineWhtPayeesAsync(companyId, doc,
@@ -3106,7 +3107,8 @@ public partial class DocumentService : IDocumentService
             ReconcileTaxRounding(request.Lines, updAmts, doc.PricesIncludeVat);
             var updWhtBorne = ApplyWhtGrossUp(request.Lines, updAmts, doc.WhtCertType);
             // รอบ 204 (คำสั่งเจ้าของ 2026-10-13): สูตรเดียวกับตอนสร้าง — VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน
-            if (doc.IsForeignService && updWhtBorne != 0m)
+            // ฝ่ายค้านรอบ 204 M1: + ใบลด/เพิ่มหนี้ที่อ้างใบเจ้าของ ภ.พ.36 (ตัวตัดสินเดียวกับตอนสร้าง)
+            if (ForeignServiceVat.BorneVatApplies(doc.IsForeignService, updSrcOwns, updWhtBorne))
                 ApplyForeignServiceBorneVat(request.Lines, updAmts, doc.WhtCertType);
             var updLinePayees = await ResolveLineWhtPayeesAsync(companyId, doc,
                 request.Lines.Select((l, i) => (Accounting.Helpers.WhtPayeeSplit.RequestedOrKept(l.WhtPayeeContactId, prevLinePayees, i, l.Description),
@@ -3246,8 +3248,8 @@ public partial class DocumentService : IDocumentService
             var (keptTax, keptBorne) = WhtGrossUp.Totals(keptWht);
             // รอบ 204 (ทีม B): ใบต่างประเทศ + ออกแทน ⇒ VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน · เดิมเป็นแบบนั้นแต่ตอนนี้ไม่ใช่ (ปลดธง/กลับเป็นหัก ณ ที่จ่าย)
             // ⇒ คิด VAT กลับเป็นฐานปกติ — สูตรเดียว ForeignServiceVat.VatWithBorne (ส่วนที่ออกแทน 0 = ฐานปกติ) · ใบไม่มีบรรทัด (หัวเอกสารล้วน) ไม่แตะ VAT
-            var keptBorneVat = doc.IsForeignService && keptBorne != 0m;
-            if (keptLines.Count > 0 && (keptBorneVat || (updFsBefore && updBorneBefore != 0m)))
+            var keptBorneVat = ForeignServiceVat.BorneVatApplies(doc.IsForeignService, updSrcOwns, keptBorne);
+            if (keptLines.Count > 0 && (keptBorneVat || ForeignServiceVat.BorneVatApplies(updFsBefore, updSrcOwns, updBorneBefore)))
             {
                 var keptVat = ForeignServiceVat.VatWithBorne(keptLines
                     .Select((l, i) => (l.Amount, keptBorneVat ? keptWht[i].PayerBorne : 0m, l.VatRate)).ToList());
@@ -21365,7 +21367,10 @@ public partial class DocumentService : IDocumentService
 
         // กระดานตัดสิน 2026-10-13 (ทีม B 2b): บริการต่างประเทศ + ผู้จ่ายออกภาษีแทน — VAT ภ.พ.36 ที่บันทึกไม่ตรงฐานรวมภาษีที่ออกแทน (ม.83/6 · คำตัดสินข้อ 40)
         // ⇒ ระบบแนะนำตัวเลข ผู้ใช้รับทราบแล้วอนุมัติตามที่บันทึกได้ (ไม่ล็อค) · ป้าย [PP36-BASE] ผ่านทางเข้าไม่มีคน
-        if (ForeignServiceVat.Pp36BaseApprovalWarning(doc) is string pp36BaseWarn)
+        // ฝ่ายค้านรอบ 204 M1: ใบลด/เพิ่มหนี้ของใบเจ้าของ ภ.พ.36 ที่ออกแทน ⇒ เทียบสูตรเดียวกัน (ใบร่างที่บันทึกก่อนแก้คิด VAT บนฐานอย่างเดียว ⇒ เตือน + แนะนำบันทึกซ้ำ)
+        var pp36NoteSrcOwns = doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote && doc.WhtPayerBorneAmount > 0m
+            && (await LinkedSourcePp36Async(companyId, doc))?.Owns == true;
+        if (ForeignServiceVat.Pp36BaseApprovalWarning(doc, pp36NoteSrcOwns) is string pp36BaseWarn)
             warnings.Add(pp36BaseWarn);
 
         // ── จ่ายต่างประเทศ (ม.70 ภ.ง.ด.54) — อัตรารายบรรทัดเทียบกับตัวตัดสินเดียว ForeignWhtRateResolver (รอบ 200 ทีม W · คำตัดสินข้อ 13) ──

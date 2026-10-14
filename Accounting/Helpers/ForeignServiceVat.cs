@@ -191,17 +191,32 @@ public static class ForeignServiceVat
     internal static bool IsPp36BaseApprovalWarning(string warning)
         => warning.StartsWith(Pp36BaseWarningPrefix, StringComparison.Ordinal);
 
-    /// <summary>ใบนี้ประเมิน ภ.พ.36 เองและมีส่วนที่ผู้จ่ายออกแทน (ตรงกับ "JE Cr 21912" — สาย PI/ค่าใช้จ่าย + ใบสำคัญจ่ายที่ไม่ปิดหนี้ใบต้นทาง)</summary>
-    private static bool SelfAssessesWithBorne(Document doc)
-        => doc.IsForeignService && doc.WhtPayerBorneAmount > 0m && WhtGrossUp.IsPayerBorne(doc.WhtCertType)
-           && (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
-               || (doc.DocumentType == DocumentType.PaymentVoucher && !doc.RelatedDocumentId.HasValue));
+    /// <summary>
+    /// **VAT ของใบนี้ต้องคิดบนฐานรวมภาษีที่ออกแทนไหม — ตัวตัดสินเดียวของเส้นสร้าง/แก้เอกสาร** (<c>DocumentService.ApplyForeignServiceBorneVat</c>)
+    /// <para>ใบที่ติ๊กบริการต่างประเทศเอง หรือ<b>ใบลด/เพิ่มหนี้ (และใบสำคัญจ่าย) ที่อ้างใบต้นทางซึ่งเป็นเจ้าของ ภ.พ.36</b> (<paramref name="sourceOwnsPp36"/>) —
+    /// ใบลดหนี้ติ๊กธงบริการต่างประเทศไม่ได้ (<c>Pp36Lifecycle.FlagTypeError</c>) แต่สืบทอดเงื่อนไข "ออกแทน" จากใบต้นทาง ⇒ เดิมได้ VAT บนฐานอย่างเดียว ·
+    /// JE กลับ 21912/11640 น้อยกว่าที่ใบต้นทางตั้ง ⇒ ลดหนี้เต็มใบแล้วยังค้าง ส่วนที่ออกแทน × 7% (ฝ่ายค้านรอบ 204 M1)</para>
+    /// <para>ไม่มีส่วนที่ออกแทน (<paramref name="payerBorne"/> = 0) ⇒ false — ใบเดิมทุกใบไม่ถูกแตะ</para>
+    /// </summary>
+    public static bool BorneVatApplies(bool isForeignService, bool sourceOwnsPp36, decimal payerBorne)
+        => (isForeignService || sourceOwnsPp36) && payerBorne != 0m;
+
+    /// <summary>ใบนี้ประเมิน ภ.พ.36 เองและมีส่วนที่ผู้จ่ายออกแทน (ตรงกับ "JE Cr 21912" — สาย PI/ค่าใช้จ่าย + ใบสำคัญจ่ายที่ไม่ปิดหนี้ใบต้นทาง) ·
+    /// ฝ่ายค้านรอบ 204 M1: + ใบลด/เพิ่มหนี้ฝั่งซื้อที่อ้างใบเจ้าของ ภ.พ.36 (<paramref name="sourceOwnsPp36"/> — JE กลับ 21912/11640 ด้วย VAT ของใบนี้)</summary>
+    private static bool SelfAssessesWithBorne(Document doc, bool sourceOwnsPp36)
+        => doc.WhtPayerBorneAmount > 0m && WhtGrossUp.IsPayerBorne(doc.WhtCertType)
+           && ((doc.IsForeignService
+                && (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+                    || (doc.DocumentType == DocumentType.PaymentVoucher && !doc.RelatedDocumentId.HasValue)))
+               || (sourceOwnsPp36 && doc.RelatedDocumentId.HasValue
+                   && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote));
 
     /// <summary>VAT ภ.พ.36 ที่ระบบคาดของเอกสาร (Σ <see cref="VatWithBorne"/> จากบรรทัดที่บันทึก) + ฐาน (มูลค่าบริการ + ส่วนที่ออกแทน) ·
-    /// null = ไม่ใช่ใบบริการต่างประเทศที่ผู้จ่ายออกแทน (ไม่มีอะไรต้องเทียบ) · ต้องโหลด <c>doc.Lines</c> มาแล้ว</summary>
-    internal static (decimal ExpectedVat, decimal Pp36BaseAmount)? ExpectedPp36WithBorne(Document doc)
+    /// null = ไม่ใช่ใบบริการต่างประเทศที่ผู้จ่ายออกแทน (ไม่มีอะไรต้องเทียบ) · ต้องโหลด <c>doc.Lines</c> มาแล้ว ·
+    /// <paramref name="sourceOwnsPp36"/> = ใบต้นทางของใบลด/เพิ่มหนี้นี้เป็นเจ้าของ ภ.พ.36 (<see cref="OwnsPp36(Document)"/>)</summary>
+    internal static (decimal ExpectedVat, decimal Pp36BaseAmount)? ExpectedPp36WithBorne(Document doc, bool sourceOwnsPp36 = false)
     {
-        if (!SelfAssessesWithBorne(doc)) return null;
+        if (!SelfAssessesWithBorne(doc, sourceOwnsPp36)) return null;
         var lines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
         var borne = WhtGrossUp.ForLines(lines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
         var vat = VatWithBorne(lines.Select((l, i) => (l.Amount, borne[i].PayerBorne, l.VatRate)).ToList());
@@ -215,13 +230,15 @@ public static class ForeignServiceVat
     /// บนฐานรวมภาษีที่ออกแทน (คำตัดสินข้อ 40) เกิน 0.01 (ใบที่ถูกเขียนทับทางอื่น/ยก VAT จากใบต้นทาง) · <b>ไม่บล็อก</b> — ระบบแนะนำ ผู้ใช้ตัดสิน
     /// (เปิดแก้ไขแล้วบันทึกอีกครั้งให้ระบบคิดใหม่ หรือรับทราบถ้าตั้งใจ) · null = ตรง/ไม่เกี่ยว
     /// </summary>
-    internal static string? Pp36BaseApprovalWarning(Document doc)
+    /// <param name="doc">เอกสาร (โหลดบรรทัดแล้ว)</param>
+    /// <param name="sourceOwnsPp36">ฝ่ายค้านรอบ 204 M1: ใบลด/เพิ่มหนี้ที่อ้างใบเจ้าของ ภ.พ.36 — ผู้เรียกส่งผลของ <see cref="OwnsPp36(Document)"/> ของใบต้นทาง</param>
+    internal static string? Pp36BaseApprovalWarning(Document doc, bool sourceOwnsPp36 = false)
     {
-        if (ExpectedPp36WithBorne(doc) is not { } exp) return null;
+        if (ExpectedPp36WithBorne(doc, sourceOwnsPp36) is not { } exp) return null;
         return Pp36BaseApprovalWarning(exp.ExpectedVat, exp.Pp36BaseAmount, doc.VatAmount);
     }
 
-    /// <summary>รูปตัวเลขล้วนของ <see cref="Pp36BaseApprovalWarning(Document)"/> — null เมื่อ |บันทึก − คาด| ≤ 0.01</summary>
+    /// <summary>รูปตัวเลขล้วนของ <see cref="Pp36BaseApprovalWarning(Document, bool)"/> — null เมื่อ |บันทึก − คาด| ≤ 0.01</summary>
     internal static string? Pp36BaseApprovalWarning(decimal expectedVat, decimal pp36BaseAmount, decimal recordedVat)
     {
         if (Math.Abs(recordedVat - expectedVat) <= 0.01m) return null;
@@ -237,6 +254,15 @@ public static class ForeignServiceVat
     /// </summary>
     public static decimal Pp36ReportBorne(decimal documentPayerBorne, decimal certBorneOutsideLines)
         => documentPayerBorne > 0m ? documentPayerBorne : certBorneOutsideLines;
+
+    /// <summary>
+    /// **ฐาน ภ.พ.36 ที่ใบลด/เพิ่มหนี้ขยับให้ใบเจ้าของในรายงาน ภ.พ.36** (สกุลเอกสาร · ผู้เรียกแปลงบาท) — ฝ่ายค้านรอบ 204 M1:
+    /// ใบลดหนี้ของใบ "ออกแทน" ลดทั้งมูลค่าบริการและภาษีที่ออกแทน (ส่วนที่ออกแทนเป็นมูลค่าบริการ §79 · <see cref="Pp36Base"/>) ⇒ ลดหนี้เต็มใบ
+    /// ฐานในรายงานต้องเหลือ 0 (เดิมหักแค่ <c>SubTotal</c> ⇒ ค้างส่วนที่ออกแทน 79.41 บนแถวที่ VAT เป็น 0) · ใบลดหนี้ = ติดลบ · ใบเพิ่มหนี้ = บวก ·
+    /// ใบที่ไม่มีส่วนที่ออกแทน ⇒ = ±<paramref name="subTotal"/> เท่าเดิมทุกสตางค์
+    /// </summary>
+    public static decimal Pp36NoteBaseDelta(DocumentType noteType, decimal subTotal, decimal payerBorne)
+        => (noteType == DocumentType.CreditNote ? -1m : 1m) * Pp36Base(subTotal, payerBorne);
 
     /// <summary>
     /// **ติ๊ก/ปลด "บริการต่างประเทศ" หลังอนุมัติบนใบที่ผู้จ่ายออกภาษีแทน** — ปฏิเสธพร้อมทางไปต่อ (null = ไม่เกี่ยว):

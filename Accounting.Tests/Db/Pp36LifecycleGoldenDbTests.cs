@@ -313,7 +313,7 @@ public class Pp36LifecycleGoldenDbTests
 
     /// <summary>ใบลด/เพิ่มหนี้ของใบเจ้าของ ภ.พ.36 — JE ผูกเลขของใบลด/เพิ่มหนี้เอง (ทีม F2 E-7) ทรงเดียวกับ AutoPost</summary>
     private static async Task SeedNoteAsync(Accounting.Data.AccountingDbContext db, Seed s, Document owner, string number, bool credit,
-        decimal baseAmt, decimal vat)
+        decimal baseAmt, decimal vat, decimal payerBorne = 0m)
     {
         var note = new Document
         {
@@ -321,6 +321,8 @@ public class Pp36LifecycleGoldenDbTests
             DocumentType = credit ? DocumentType.CreditNote : DocumentType.DebitNote, Status = DocumentStatus.Approved,
             DocumentDate = owner.DocumentDate.AddDays(2), RelatedDocumentId = owner.Id, IsForeignService = true,
             SubTotal = baseAmt, VatAmount = vat, TotalAmount = baseAmt + vat,
+            WhtPayerBorneAmount = payerBorne,
+            WhtCertType = payerBorne > 0m ? WithholdingTaxCertType.PayAlways : WithholdingTaxCertType.Withhold,
         };
         db.Documents.Add(note);
         await db.SaveChangesAsync();
@@ -361,6 +363,48 @@ public class Pp36LifecycleGoldenDbTests
         Assert.Equal(0m, await BalanceAsync(check, s.CompanyId, "21912"));
         Assert.Equal(0m, await BalanceAsync(check, s.CompanyId, "11640"));
         Assert.Equal(want, await BalanceAsync(check, s.CompanyId, "11610"));
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 204 M1 — ใบลดหนี้ของใบบริการต่างประเทศที่ผู้จ่ายออกภาษีแทน (450 @15% ตลอดไป ⇒ ออกแทน 79.41 · ภ.พ.36 37.06):
+    /// VAT ของใบลดหนี้คิดบนฐานรวมภาษีที่ออกแทน (สูตรเดียวกับใบเจ้าของ) ⇒ ลดเต็มใบ 21912/11640 = 0 และรายงานไม่มีแถว ·
+    /// ลดครึ่งใบ ⇒ ฐานในรายงานหักส่วนที่ออกแทนของใบลดหนี้ด้วย (อัตราแสดง 7.00% — เดิมหักแค่ SubTotal ⇒ 6.09%)</summary>
+    [Theory]
+    [InlineData(450.0)]
+    [InlineData(225.0)]
+    public async Task ซ_ใบลดหนี้ของใบออกแทน_รายงานภพ36หักฐานรวมส่วนที่ออกแทน_ลดเต็มใบเหลือศูนย์(double cnBaseD)
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var cnBase = (decimal)cnBaseD;
+        (decimal Vat, decimal Borne) Borne(decimal b)
+        {
+            var a = WhtGrossUp.OnBase(b, 15m, WithholdingTaxCertType.PayAlways);
+            return (ForeignServiceVat.VatWithBorne(new[] { (b, a.PayerBorne, 7m) }).Sum(), a.PayerBorne);
+        }
+        var own = Borne(450m);
+        Assert.Equal((37.06m, 79.41m), own);
+        var pi = await SeedPvAsync(db, s, "PI-G-BORNE", Sep.AddDays(3), 450m, own.Vat, withJournal: true, type: DocumentType.PurchaseInvoice);
+        pi.WhtCertType = WithholdingTaxCertType.PayAlways;
+        pi.WhtPayerBorneAmount = own.Borne;
+        await db.SaveChangesAsync();
+        var cn = Borne(cnBase);
+        await SeedNoteAsync(db, s, pi, "CN-G-BORNE", credit: true, cnBase, cn.Vat, payerBorne: cn.Borne);
+
+        var report = await new TaxService(db).ComputePp36ReportAsync(s.CompanyId, Sep.Year, Sep.Month);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        if (cnBase == 450m)
+        {
+            Assert.Equal(0m, report.OutputVat);
+            Assert.Equal(0m, report.TotalIncome);
+            Assert.Equal(0m, await BalanceAsync(check, s.CompanyId, "21912"));
+            Assert.Equal(0m, await BalanceAsync(check, s.CompanyId, "11640"));
+            return;
+        }
+        var line = Assert.Single(report.Lines);
+        Assert.Equal(own.Vat - cn.Vat, line.TaxAmount);
+        Assert.Equal(ForeignServiceVat.Pp36Base(450m, own.Borne) - ForeignServiceVat.Pp36Base(cnBase, cn.Borne), line.IncomeAmount);
+        Assert.Equal(7.00m, line.TaxRate);
     }
 
     [Fact]
