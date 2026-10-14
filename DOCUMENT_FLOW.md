@@ -3195,8 +3195,9 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
 - **ใบกำกับภาษีอย่างย่อ (§86/6) = ETDA T05/T06 — ยังไม่ออก e-Tax** (กระดาน 2026-10-13 B4 · แก้ข้อความ): ใบที่ตรึง `ReceiptTaxInvoiceAbbreviated`
   ⇒ `GenerateAsync` ปฏิเสธพร้อมทางไปต่อ (เปลี่ยนรูปแบบเป็นเต็มรูปก่อนอนุมัติ / ยกเลิกและออกใบแทน) · hook อัตโนมัติข้ามแล้วประทับ `[ETAX-SKIPPED]` ·
   ข้อความเดิมเรียก "ใบกำกับอย่างย่อ T04" ผิด — **T04 คือใบส่งของ/ใบกำกับภาษีเต็มรูป** (ตาราง `EtaxPdfXmlExtractor.MapTypeCodeToInternal`: T05/T06 ⇒ อย่างย่อ ·
-  T02/T03/T04/388 ⇒ เต็มรูป) · กติกา `tools/required_call_site_check.py` ห้ามข้อความกลับไปเป็น "อย่างย่อ T04" · ⚠️ ป้าย `IssuedDocumentHooks.EtaxSkippedAbbreviatedNote`
-  (ข้อความที่ persist ลง `InternalNotes` แล้ว) ยังเขียน "(ยังไม่รองรับ T04)" — แก้ต้องตัดสินเรื่องใบที่ประทับไว้ก่อน (ตัวกันซ้ำเทียบข้อความเต็ม) · Last verified 2026-10-13 `commit 973d4913`
+  T02/T03/T04/388 ⇒ เต็มรูป) · กติกา `tools/required_call_site_check.py` ห้ามข้อความกลับไปเป็น "อย่างย่อ T04" · ป้าย `IssuedDocumentHooks.EtaxSkippedAbbreviatedNote`
+  เขียน "(ระบบยังไม่รองรับ e-Tax ใบกำกับภาษีอย่างย่อ T05/T06)" แล้ว (ทีม E 2026-10-13) · ใบที่ประทับข้อความเดิม "(ยังไม่รองรับ T04)" ไว้ **ไม่แก้ย้อนหลัง** (บันทึกภายในที่ประทับแล้ว)
+  และไม่ได้ป้ายซ้ำ — ตัวกันซ้ำ `NoteAlreadyStamped` จำทั้งข้อความใหม่และ `LegacyEtaxSkippedAbbreviatedNote` · เทสต์ `EtaxSkippedAbbreviatedNoteTests` · Last verified 2026-10-13 `commit 973d4913`
 - **Schema**: UBL 2.1 + ETDA profile (DocumentTypeCode T01–T04,
   ISO 8601 +07:00, CurrencyCode=THB)
 - **Signing**: private key เก็บใน `Company.EtaxPrivateKeyBlobEncrypted`

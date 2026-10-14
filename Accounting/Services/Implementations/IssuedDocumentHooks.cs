@@ -134,10 +134,27 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
     private Task StampFailureAsync(Guid companyId, Document doc, string reason, CancellationToken ct)
         => StampNoteAsync(companyId, doc, null, ct, reason);
 
-    /// <summary>ป้ายเมื่อข้าม e-Tax อัตโนมัติเพราะใบตรึงเป็น "ใบกำกับอย่างย่อ" (รอบ 203 · ฝ่ายค้านข้อ 1a) — ลงครั้งเดียวต่อใบ</summary>
+    /// <summary>ป้ายเมื่อข้าม e-Tax อัตโนมัติเพราะใบตรึงเป็น "ใบกำกับอย่างย่อ" (รอบ 203 · ฝ่ายค้านข้อ 1a) — ลงครั้งเดียวต่อใบ ·
+    /// ทีม E 2026-10-13: รหัส ETDA ของใบกำกับอย่างย่อคือ T05/T06 (T04 = ใบส่งของ/ใบกำกับภาษีเต็มรูป — กระดาน B4)</summary>
     internal const string EtaxSkippedAbbreviatedNote =
+        "[ETAX-SKIPPED] รูปแบบใบ=อย่างย่อ — ใบนี้ตรึงเป็น \"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\" (§86/6) ระบบจึงไม่ออก e-Tax เต็มรูป (ระบบยังไม่รองรับ e-Tax ใบกำกับภาษีอย่างย่อ T05/T06) · "
+        + "ถ้าลูกค้าต้องการ e-Tax ให้เปลี่ยนรูปแบบใบเป็นเต็มรูปก่อนอนุมัติ หรือ \"ยกเลิกและออกใบแทน\" เป็นเต็มรูป";
+
+    /// <summary>ข้อความเดิมของ <see cref="EtaxSkippedAbbreviatedNote"/> ที่ประทับลง <c>InternalNotes</c> ไปแล้ว (ก่อน 2026-10-13 · อ้าง T04 ผิด) —
+    /// ใช้<b>เฉพาะ</b>ตัวกันซ้ำ: ใบที่ประทับข้อความเดิมไว้ ไม่ได้ป้ายใหม่ซ้ำเมื่อ hook ถูกเรียกอีก · ไม่เขียนข้อความนี้ใหม่ และไม่แก้ใบเก่า (บันทึกภายในที่ประทับแล้ว)</summary>
+    internal const string LegacyEtaxSkippedAbbreviatedNote =
         "[ETAX-SKIPPED] รูปแบบใบ=อย่างย่อ — ใบนี้ตรึงเป็น \"ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ\" (§86/6) ระบบจึงไม่ออก e-Tax เต็มรูป (ยังไม่รองรับ T04) · "
         + "ถ้าลูกค้าต้องการ e-Tax ให้เปลี่ยนรูปแบบใบเป็นเต็มรูปก่อนอนุมัติ หรือ \"ยกเลิกและออกใบแทน\" เป็นเต็มรูป";
+
+    /// <summary>ป้าย <paramref name="note"/> อยู่ใน <paramref name="current"/> แล้วไหม — รวมข้อความรุ่นก่อนของป้ายเดียวกัน (ตัวกันซ้ำของ
+    /// <see cref="StampNoteAsync"/> · ป้ายที่เปลี่ยนถ้อยคำต้องไม่ทำให้ใบที่ประทับไว้แล้วได้ป้ายที่สอง)</summary>
+    internal static bool NoteAlreadyStamped(string? current, string note)
+    {
+        if (string.IsNullOrEmpty(current)) return false;
+        if (current.Contains(note, StringComparison.Ordinal)) return true;
+        return note == EtaxSkippedAbbreviatedNote
+               && current.Contains(LegacyEtaxSkippedAbbreviatedNote, StringComparison.Ordinal);
+    }
 
     /// <summary>ประทับข้อความลง <c>InternalNotes</c> แถวเดียว (ExecuteUpdate) — <paramref name="note"/> = ข้อความตรง (ลงครั้งเดียวถ้ามีอยู่แล้ว) ·
     /// <c>null</c> + <paramref name="failureReason"/> = ป้าย <c>[ETAX-AUTO-FAILED]</c> เดิมผ่าน <c>EtaxAutoFailedNote.Append</c></summary>
@@ -154,7 +171,7 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
             string updated;
             if (note != null)
             {
-                if (current != null && current.Contains(note, StringComparison.Ordinal)) return;   // ลงแล้ว — ไม่ซ้ำ (hook ถูกเรียกซ้ำได้)
+                if (NoteAlreadyStamped(current, note)) return;   // ลงแล้ว (รวมถ้อยคำรุ่นก่อน) — ไม่ซ้ำ (hook ถูกเรียกซ้ำได้)
                 updated = string.IsNullOrWhiteSpace(current) ? note : current.TrimEnd() + "\n\n" + note;
             }
             else
