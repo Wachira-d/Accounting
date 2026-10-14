@@ -5596,5 +5596,5 @@ _Last verified against codebase: 2026-10-14 (50 ทวิ บนมือถื�
 _Last verified against codebase: 2026-10-14 (ทีม PDF fix-bahttext — §5.1/§5.4: จำนวนเงินตัวอักษร ≥ 10 ล้านพิมพ์ผิด (`units[pos % 7]`) ⇒ ตัวตั้งเดียว `Helpers/ThaiBahtText.Format` · renderer 4 จุด + DTO 50 ทวิ `TotalTaxAmountInWords` · ถอดสูตรเขียนเอง C# 2 ชุด (`ThaiNumberToText` · `ConvertToThaiWords`/`ConvertThaiNumber`) + JS ใน wht.html · พรีวิว `UxHelpers.AmountInWords` ตรง C# ด้วย sim — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 05267e80)_
 _Last verified against codebase: 2026-10-14 (ทีม X3 ส่งออกรายงานบัญชี — §6.0a-x ปลายทางไฟล์ `accounting/exports/*` เจ้าของตัวเลขเดียวกับหน้า ·
 บัญชีแยกประเภทยอดยกมากรองชุดเดียวกับรายการ + ฐานยอดนำเข้าแบบงบทดลอง + บัญชียกมาอย่างเดียว · ใบแจ้งยอด CSV/Excel ผ่านตัวเขียนกลาง ·
-audit "ถึงวันที่" รวมทั้งวัน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 0f19b45b)_
+audit "ถึงวันที่" รวมทั้งวัน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 0f19b45b + 6b27612c)_
 
