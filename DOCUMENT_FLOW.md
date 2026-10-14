@@ -3990,7 +3990,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ผลตรวจข้อมูล — `POST smart-import/sessions/{id}/ai-review/choice` ⇒ `RecordReviewChoiceAsync`
 - **Smart Import**: ลงบางแถว = `PartiallyCompleted` (เดิม Failed) · ลองใหม่ลงเฉพาะแถวที่ล้ม (ข้อมูลดิบล้างเมื่อลงครบ) · DateFormat/DecimalSeparator มีผล ·
   จับคู่คอลัมน์ผ่านตัวเดียวกับศูนย์นำเข้า
-- Last verified 2026-10-14 (sha เติมภายหลัง)
+- Last verified 2026-10-14 commit 0467f977
 
 ### 6.0c-bis การจับคู่ธนาคาร — ให้คะแนน 1 ตัว · ตัดสิน 1 ตัว (รอบ 183 · D4-1/D4-2)
 
