@@ -4779,7 +4779,7 @@ RecordColumnMatchChoice) · `ImportColumnMatchService` ทางเข้าเ�
 รูปเดียวกับครู) และ ImportDataReview (ImportReviewHeuristics ที่ย้ายมาอยู่บน ImportValueNormalizer + เลิกเสนอการจัดรูปแบบที่บริษัทปฏิเสธประจำ — ปัญหาทางกฎหมาย
 ปิดไม่ได้) · augmenter ไม่ทิ้ง FeedbackId/UsedAi + SuggestAccountMapAsync (58 · ด่าน ∈ ผังบริษัท) + ResolveEntityAsync (59 · ด่าน ∈ candidate ∪ NEW) +
 RecordPick/RecordReviewChoice · ImportPrompts ForceProviderCall=false (เดิมข้าม routing+งบทุกครั้ง) + BuildAccountMap/BuildEntityMatch ·
-AiSuggestionController.SuggestImportMapping มอบให้ตัวจับคู่กลาง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
+AiSuggestionController.SuggestImportMapping มอบให้ตัวจับคู่กลาง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit eafc6bd3_
 _2026-10-14 — ตัวเลือกผู้ติดต่อมาตรฐานเดียวทั้งระบบ (คำสั่งเจ้าของ: "ทำให้มีปุ่มเพิ่มได้แบบหน้าออกเอกสาร … เป็นแนวทางเดียวกันทั้งระบบ"):
 `Layout.contactAutocomplete` ยุบเป็น `Layout.contactPicker(inputId, hiddenId, { side, onSelect, onClear, allowCreate, compact })`
 ที่ใส่ปุ่ม "+ สร้างใหม่" ให้เอง + หน้าต่างเพิ่มผู้ติดต่อด่วนในหน้าเดิม (เลขภาษี/ดึงทะเบียน · สาขา · ประเภท · ฝั่ง · ที่อยู่ · โทร/อีเมล ·
@@ -4808,7 +4808,7 @@ writer เดิม P0: switch สองชุดยุบเป็น `WriteRow
 ที่ดินไม่คิดค่าเสื่อม · เอกสารเป็นร่าง DRAFT) · รายการธนาคารผ่านตัวเขียน statement ของทีม C (เดิม `CurrentBalance +=`) ·
 Smart Import จับคู่คอลัมน์ผ่าน `ImportColumnMatchService` (เดิมตัวจับคู่ชุดที่สอง + ทิ้ง FeedbackId) · `GetTemplateFields` มอบให้ `ImportSchemas` ·
 ปิดลูป AI ทุกตัวของการนำเข้า (RecordConfirmed ตอน remap/commit · RecordPick ตอน commit · RecordReviewChoice + ยืนยัน suggest-mapping ผ่าน endpoint ใหม่ —
-ข้อความเดิม "การยืนยันถูกเรียนไว้" ไม่มีผู้เรียกจริง) · constructor `ImportEntityResolver` ตัวเดียวรวมของทีม D — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
+ข้อความเดิม "การยืนยันถูกเรียนไว้" ไม่มีผู้เรียกจริง) · constructor `ImportEntityResolver` ตัวเดียวรวมของทีม D — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 0467f977_
 _2026-10-14 ทีม F2 — ช่องทางรับ/จ่ายเงินของเอกสาร (PAYMENT_CHANNEL_AUDIT PC#3/#4/#5/#9/#13/#14/#15/#16/#18/#21 · ID#3–#7/#16/#20/#21 · ต้นเรื่อง: รหัสบัญชีธนาคารถูกตรวจเป็นผังบัญชี):
 ตัวตัดสินเดียว `Helpers/DocumentMoneyChannel` แทนลำดับที่เขียนไว้ 4 ที่ (ลงบัญชีตอนอนุมัติ · JE การชำระ · ขาเงินส่วนเกิน · พรีวิว — ตัวหลังสลับลำดับ) ·
 แหล่งเงินที่เลือกแล้วใช้ไม่ได้ (ธนาคารยังไม่ผูกผัง/รหัสผิดตาราง/บริษัทอื่น) ⇒ ข้อความไทยบอกช่อง + ที่แก้ แทนการตกเงินสดเงียบ · ไม่มีผังเงินสด ⇒ ล้มดัง (เดิมบันทึกการชำระไม่มี JE) ·
@@ -4872,4 +4872,4 @@ CompanyId ก่อน (บริษัทอื่น = 404 ไม่แตะ 
 เมนู "ศูนย์นำเข้าข้อมูล" · modal นำเข้า 415 ของ contacts/products/journals (FormData → `[FromBody]`) + หน้าวาง CSV สินทรัพย์ → ลิงก์ hub · import-export:
 แท็บไฟล์ระบบอื่น → hub + ผลตรวจกติกาแสดงเมื่อ AI ปิด (เดิมทิ้งทั้งก้อน) · `ImportConflictController` มีด่าน + ถอด 3 แถวจาก baseline + เข้า WATCHED ·
 checker ใหม่ `tools/formdata_json_endpoint_check.py` · เทสต์ `Db/ImportHubControllerGateDbTests` (403 ทุก endpoint · 404 ข้ามบริษัท · ทิศตรงข้าม) —
-ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a4df3bdd_
