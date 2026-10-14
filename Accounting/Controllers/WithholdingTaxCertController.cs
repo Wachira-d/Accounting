@@ -170,10 +170,17 @@ public class WithholdingTaxCertController : ControllerBase
     public ActionResult<ApiResponse<object>> GrossUpPreview(Guid companyId, [FromBody] WhtGrossUpPreviewRequest request)
     {
         var type = WhtGrossUp.Normalize(request.CertType);
-        var input = (request.Lines ?? new List<WhtGrossUpPreviewLine>()).Take(500)
+        var previewLines = (request.Lines ?? new List<WhtGrossUpPreviewLine>()).Take(500).ToList();
+        var input = previewLines
             .Select(l => (Base: Math.Round(l.Base, 2, MidpointRounding.AwayFromZero), l.RatePercent)).ToList();
         var per = WhtGrossUp.ForLines(input, type);
         var (tax, borne) = WhtGrossUp.Totals(per);
+        // รอบ 204 (ทีม B): บริการต่างประเทศ + ออกแทน ⇒ VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน — สูตรเดียวกับตอนบันทึก (ForeignServiceVat.VatWithBorne) · อื่น ๆ ⇒ null
+        decimal? pp36Vat = request.IsForeignService && borne != 0m
+            ? ForeignServiceVat.VatWithBorne(previewLines
+                .Select((l, i) => (input[i].Base, per[i].PayerBorne, l.VatRate)).ToList()).Sum()
+            : null;
+        var payeeVat = pp36Vat ?? request.Vat ?? 0m;
         return Ok(new ApiResponse<object>(true, new
         {
             CertType = type,
@@ -186,7 +193,12 @@ public class WithholdingTaxCertController : ControllerBase
             Lines = per.Select(p => new { p.Tax, p.PayerBorne, p.CertIncome, p.PayeeBorne }),
             // ยอดจ่ายผู้รับ = สูตรเดียวกับ TotalAmount ตอนบันทึก (WhtGrossUp.PayeeTotal) · ไม่ส่งฐาน/VAT ⇒ null
             PayeeTotal = request.SubTotal is decimal sub
-                ? WhtGrossUp.PayeeTotal(sub, request.Vat ?? 0m, tax, borne)
+                ? WhtGrossUp.PayeeTotal(sub, payeeVat, tax, borne)
+                : (decimal?)null,
+            Pp36Vat = pp36Vat,
+            Pp36Base = pp36Vat.HasValue
+                ? ForeignServiceVat.Pp36Base(input.Where((_, i) => previewLines[i].VatRate > 0m).Sum(x => x.Base),
+                    per.Where((_, i) => previewLines[i].VatRate > 0m).Sum(p => p.PayerBorne))
                 : (decimal?)null,
             LegalReference = WhtGrossUp.LegalReference,
         }));

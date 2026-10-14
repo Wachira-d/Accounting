@@ -1079,7 +1079,20 @@
                 <option value="PayAlways">(2) ผู้จ่ายออกภาษีให้ตลอดไป — ผู้รับได้ยอดเต็ม</option>
               </select>
               <div id="whtGrossUpPreview" class="form-help" style="display:none;margin-top:6px;font-size:12px;line-height:1.7"></div>
+              <!-- รอบ 204 (ทีม B · §65 ตรี (3) · ม.39) — ผู้จ่ายรับภาระภาษีตามสัญญา: แสดงเฉพาะเมื่อเลือก "ผู้จ่ายออกภาษีแทน" (Page._refreshWhtBorneContractRow) ·
+                   ค่าตั้งต้นมาจากผู้ติดต่อ (เซิร์ฟเวอร์ตัดสินตอนสร้าง) · ค่าเก็บบนเอกสาร (WhtBorneByContract) echo กลับตอนแก้ไข · หลังอนุมัติแก้ที่ปุ่มในหน้ารายละเอียด -->
+              <label id="whtBorneContractWrap" style="display:none;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;margin-top:8px">
+                <input type="checkbox" id="fWhtBorneByContract" style="margin-top:3px">
+                <span><b>ผู้จ่ายรับภาระภาษีตามสัญญา</b> <span style="color:#64748b;font-size:12px">(สัญญา/ข้อตกลงกำหนดให้ผู้จ่ายออกภาษีแทน ⇒ หักเป็นรายจ่ายได้ ไม่บวกกลับ ภ.ง.ด.50 §65 ตรี (3) · แนบสัญญาเป็นหลักฐาน)</span></span>
+              </label>
             </div>
+            <!-- รอบ 204 — หักผ่าน e-Withholding ของธนาคาร: เก็บ/echo ค่าบนเอกสาร (WhtViaEWithholding) · แก้ได้เฉพาะใบร่าง/ถูกตีกลับ
+                 (Page._hydrateWhtCertPanel ล็อกช่อง + บอกทางไปต่อ "ยกเลิกแล้วออกใหม่") · พฤติกรรมของธงอยู่ฝั่งเซิร์ฟเวอร์ -->
+            <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer;margin-top:10px">
+              <input type="checkbox" id="fWhtViaEWithholding" style="margin-top:3px">
+              <span><b>หักผ่าน e-Withholding ของธนาคาร</b><br>
+                <span id="whtEWithholdingHint" style="color:#475569;font-size:12px">ธนาคารหักและนำส่งภาษีให้ตอนโอนเงิน (ไม่ต้องออก 50 ทวิ กระดาษ)</span></span>
+            </label>
           </div>
 
           <!-- ── โซน 4: รายละเอียดเพิ่มเติม (หมายเหตุ + ไฟล์แนบ) — ย้ายมาท้าย
@@ -3465,6 +3478,7 @@
       },
       // ข้อมูลที่จะพิมพ์บน 50 ทวิ (ชื่อ · เลขผู้เสียภาษี · สาขา · ที่อยู่) — มาจากผู้ติดต่อที่เลือก ไม่ต้องกรอกซ้ำ
       _renderWhtPayeeInfo() {
+        this._refreshWhtBorneContractRow();   // รอบ 204 ทีม B: ค่าตั้งต้น "รับภาระตามสัญญา" ตามผู้ถูกหัก
         const box = document.getElementById('whtPayeeInfo');
         if (!box) return;
         const differs = document.getElementById('fWhtPayeeDiffers')?.checked;
@@ -3501,6 +3515,8 @@
         const type = document.getElementById('fWhtCertType')?.value || 'Withhold';
         const seq = (this._whtGrossUpSeq = (this._whtGrossUpSeq || 0) + 1);
         clearTimeout(this._whtGrossUpTimer);
+        this._refreshWhtBorneContractRow();
+        const isForeignService = !!document.getElementById('fIsForeignService')?.checked;
         if (!box || !panel || panel.style.display === 'none' || type === 'Withhold') {
           if (box) { box.style.display = 'none'; box.innerHTML = ''; }
           return;
@@ -3510,11 +3526,13 @@
         this._whtGrossUpTimer = setTimeout(async () => {
           try {
             const r = await API.quietly(() => api.whtGrossUpPreview({
-              certType: type, lines: this._whtPreviewRows || [], subTotal, vat }));
+              certType: type, lines: this._whtPreviewRows || [], subTotal, vat, isForeignService }));
             if (seq !== this._whtGrossUpSeq) return;
             const p = (r && r.data) || null;
             if (!p) return;
             document.getElementById('sumWht').textContent = Layout.money(p.tax);
+            // รอบ 204 ทีม B: บริการต่างประเทศ + ออกแทน ⇒ VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน (เซิร์ฟเวอร์คิด · สูตรเดียวกับตอนบันทึก)
+            if (p.pp36Vat != null) document.getElementById('sumVat').textContent = Layout.money(p.pp36Vat);
             if (p.payeeTotal != null) {
               document.getElementById('sumTotal').textContent = Layout.money(p.payeeTotal);
               const wordsEl = document.getElementById('sumTotalWords');
@@ -3526,13 +3544,37 @@
               + ' · ผู้จ่ายออกแทน ' + Layout.money(p.payerBorne)
               + (Number(p.payeeBorne) ? ' · หักจากผู้รับ ' + Layout.money(p.payeeBorne) : ' · ไม่หักจากผู้รับ')
               + '<br>เงินได้ที่ลงบน 50 ทวิ ' + Layout.money(p.certIncome)
-              + ' · ส่วนที่ออกแทนลงเป็นค่าใช้จ่าย (บวกกลับ ภ.ง.ด.50 §65 ตรี (3) ถ้าไม่มีสัญญาให้ผู้จ่ายรับภาระภาษี)';
+              + (p.pp36Vat != null
+                  ? '<br>ภ.พ.36 ' + Layout.money(p.pp36Vat) + ' บนฐาน ' + Layout.money(p.pp36Base)
+                    + ' (มูลค่าบริการ + ภาษีที่ออกแทน — ม.83/6 · คำตัดสินข้อ 40)'
+                  : '')
+              + (document.getElementById('fWhtBorneByContract')?.checked
+                  ? ' · ส่วนที่ออกแทนลงเป็นค่าใช้จ่าย — มีสัญญาให้ผู้จ่ายรับภาระ ⇒ ไม่บวกกลับ ภ.ง.ด.50 (แนบสัญญาเป็นหลักฐาน)'
+                  : ' · ส่วนที่ออกแทนลงเป็นค่าใช้จ่าย (บวกกลับ ภ.ง.ด.50 §65 ตรี (3) ถ้าไม่มีสัญญาให้ผู้จ่ายรับภาระภาษี)');
           } catch (e) {
             if (seq !== this._whtGrossUpSeq) return;
             box.innerHTML = '<span style="color:#b91c1c">คำนวณภาษีที่ผู้จ่ายออกแทนไม่สำเร็จ: ' + Layout.esc(e.message || '')
               + ' — ยอดบนจอยังเป็นแบบหัก ณ ที่จ่าย · ระบบคิดยอดจริงให้ตอนบันทึก</span>';
           }
         }, 250);
+      },
+      // รอบ 204 ทีม B — แถว "ผู้จ่ายรับภาระภาษีตามสัญญา": แสดงเฉพาะเมื่อเลือกผู้จ่ายออกภาษีแทน · ใบใหม่ที่ผู้ใช้ยังไม่แตะ ⇒ ค่าตั้งต้นของผู้ถูกหัก
+      // (ผู้ติดต่อที่ 50 ทวิ ออกในนาม · ค่าจากเซิร์ฟเวอร์ whtBorneByContractDefault — หน้าเว็บแสดงอย่างเดียว เซิร์ฟเวอร์ตัดสินเองอีกชั้นตอนบันทึก)
+      _refreshWhtBorneContractRow() {
+        const wrap = document.getElementById('whtBorneContractWrap');
+        const cb = document.getElementById('fWhtBorneByContract');
+        if (!wrap || !cb) return;
+        const type = document.getElementById('fWhtCertType')?.value || 'Withhold';
+        wrap.style.display = type === 'Withhold' ? 'none' : 'flex';
+        if (this.editingId || cb.dataset.userTouched) return;
+        const differs = document.getElementById('fWhtPayeeDiffers')?.checked;
+        const payeeId = document.getElementById('fWhtPayeeContactId')?.value || '';
+        const cid = document.getElementById('fContactId')?.value;
+        const payee = (differs && payeeId)
+          ? (this._whtPayeeContact && this._whtPayeeContact.id === payeeId ? this._whtPayeeContact : null)
+          : ((this._selectedContact && this._selectedContact.id === cid) ? this._selectedContact
+            : ((this.contacts || []).find(x => x.id === cid) || null));
+        cb.checked = !!(payee && payee.whtBorneByContractDefault);
       },
       // ฟอร์มใหม่ (d = null) = ค่าตั้งต้น · เปิดแก้ = ค่าที่บันทึกไว้ (ผู้ถูกหักดึงชื่อ/เลขจากผู้ติดต่อ)
       async _hydrateWhtCertPanel(d) {
@@ -3542,6 +3584,26 @@
         const certType = document.getElementById('fWhtCertType');
         if (certType) certType.value = (d && ['PayOnce', 'PayAlways'].includes(d.whtCertType)) ? d.whtCertType : 'Withhold';
         if (certType && certType.value !== 'Withhold') setTimeout(() => this.calcSum(), 0);   // ยอดบนจอตามเงื่อนไขที่บันทึกไว้
+        // รอบ 204 ทีม B — ผู้จ่ายรับภาระตามสัญญา: ใบใหม่ = ตามผู้ถูกหัก (ยังไม่แตะ ⇒ ไม่ส่ง · เซิร์ฟเวอร์ตั้งจากผู้ติดต่อ) · เปิดแก้ = ค่าที่บันทึกไว้
+        const borneCb = document.getElementById('fWhtBorneByContract');
+        if (borneCb) {
+          borneCb.checked = !!(d && d.whtBorneByContract);
+          delete borneCb.dataset.userTouched;
+          borneCb.onchange = () => { borneCb.dataset.userTouched = '1'; this.calcSum(); };
+        }
+        // รอบ 204 — หักผ่าน e-Withholding: echo กลับ · แก้ได้เฉพาะใบร่าง/ถูกตีกลับ (หลังอนุมัติล็อก + บอกทางไปต่อ — ไม่ใช่กดแล้วไม่มีผลเงียบ ๆ)
+        const ewCb = document.getElementById('fWhtViaEWithholding');
+        const ewHint = document.getElementById('whtEWithholdingHint');
+        if (ewCb) {
+          ewCb.checked = !!(d && d.whtViaEWithholding);
+          const locked = !!(d && d.status && !['Draft', 'Rejected'].includes(d.status));
+          ewCb.disabled = locked;
+          ewCb.dataset.locked = locked ? '1' : '';
+          if (ewHint) ewHint.textContent = locked
+            ? 'อนุมัติแล้วเปลี่ยนไม่ได้ — ยกเลิกแล้วออกใหม่ ถ้าต้องการเปลี่ยนวิธีหัก/นำส่ง'
+            : 'ธนาคารหักและนำส่งภาษีให้ตอนโอนเงิน (ไม่ต้องออก 50 ทวิ กระดาษ)';
+        }
+        this._refreshWhtBorneContractRow();
         const differs = document.getElementById('fWhtPayeeDiffers');
         const hid = document.getElementById('fWhtPayeeContactId');
         const inp = document.getElementById('fWhtPayee');
@@ -3576,6 +3638,12 @@
         return {
           whtCertAutoIssue: !!document.getElementById('fWhtCertAutoIssue')?.checked,
           whtCertType: document.getElementById('fWhtCertType')?.value || 'Withhold',
+          // รอบ 204 ทีม B — สร้าง: ยังไม่แตะ ⇒ ไม่ส่ง (เซิร์ฟเวอร์ใช้ค่าตั้งต้นของผู้ถูกหัก) · แก้ไข: ส่งค่าบนจอเสมอ
+          whtBorneByContract: (this.editingId || document.getElementById('fWhtBorneByContract')?.dataset.userTouched)
+            ? !!document.getElementById('fWhtBorneByContract')?.checked : undefined,
+          // ล็อก (อนุมัติแล้ว) ⇒ ไม่ส่ง (= คงค่าเดิม)
+          whtViaEWithholding: document.getElementById('fWhtViaEWithholding')?.dataset.locked
+            ? undefined : !!document.getElementById('fWhtViaEWithholding')?.checked,
           whtPayeeContactId: (differs && payeeId) ? payeeId
             : (this.editingId ? '00000000-0000-0000-0000-000000000000' : null),
         };
@@ -3626,6 +3694,7 @@
             ? 'ใช้กับบริการต่างประเทศไม่ได้ — ยอดจ่ายจริงคือฐานภาษี (ไม่มี VAT ไทยปน) VAT 7% บวกเพิ่มจากยอดจ่าย'
             : '';
         }
+        this.calcSum();   // รอบ 204 ทีม B: พรีวิว VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน (ใบออกแทน) ต้องตามธงทันที
         if (!on) return;
         let touched = 0;
         document.querySelectorAll('#linesBody .line-card [data-f="vat"]').forEach(sel => {
@@ -8542,7 +8611,7 @@
         document.getElementById('sumVat').textContent = Layout.money(vat);
         document.getElementById('sumWht').textContent = Layout.money(wht);
         // รอบ 204 — ฐาน/อัตรารายบรรทัดสุดท้ายสำหรับพรีวิวผู้จ่ายออกภาษีแทน (เซิร์ฟเวอร์คิด)
-        this._whtPreviewRows = rows.map(r => ({ base: r.net, ratePercent: r.whtR }));
+        this._whtPreviewRows = rows.map(r => ({ base: r.net, ratePercent: r.whtR, vatRate: r.vatR }));   // vatRate: ภ.พ.36 บนฐานรวมออกแทน (ทีม B)
         this.refreshWhtCertPanel(wht);
         // บอกตรง ๆ เมื่อยอด VAT ที่แสดง = "ค่าที่บันทึกไว้" และต่างจากการคิดจาก
         // ฐานรวม — ผู้ใช้จะได้ไม่งงว่าดีดเครื่องคิดเลขแล้วไม่ตรง และรู้ว่าต้องทำ
@@ -10510,6 +10579,24 @@
               <span style="color:#64748b;font-size:11px">${isFs
                 ? 'ระบบตั้งหนี้ ภ.พ.36 (Cr 21912) และเครดิตผู้รับเงินเป็นฐานเท่านั้น — ผู้ขายต่างประเทศไม่เก็บ VAT ไทย'
                 : 'ถ้าผู้รับเงินเป็นผู้ขายต่างประเทศ ต้องประเมิน VAT 7% เองแล้วนำส่งด้วย ภ.พ.36 — กดปุ่มเพื่อแก้การลงบัญชี'}</span>
+            </div>`;
+          }
+          // ── รอบ 204 ทีม B: ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน — §65 ตรี (3) "รับภาระตามสัญญา" + ปุ่มแก้หลังอนุมัติ · e-Withholding (อ่านอย่างเดียวหลังอนุมัติ) ──
+          if (['PaymentVoucher', 'Expense', 'PurchaseInvoice', 'CertificateInLieu'].includes(d.documentType)
+              && !['Draft', 'Rejected', 'Voided'].includes(d.status)
+              && (Number(d.whtPayerBorneAmount) > 0.005 || d.whtViaEWithholding === true)) {
+            const byContract = d.whtBorneByContract === true;
+            const borneTxt = Number(d.whtPayerBorneAmount) > 0.005
+              ? `<span>🧾 ภาษีที่ผู้จ่ายออกแทน ${Layout.money(d.whtPayerBorneAmount)}: <b>${byContract
+                  ? 'รับภาระตามสัญญา — ไม่บวกกลับ ภ.ง.ด.50' : 'ไม่มีสัญญา — บวกกลับ ภ.ง.ด.50 (§65 ตรี (3))'}</b></span>
+                <button class="btn btn-sm btn-secondary" style="padding:3px 10px;font-size:11.5px"
+                  onclick="Page.openWhtBorneContractFix('${d.id}', ${byContract})">↔ ${byContract ? 'ยกเลิก "มีสัญญา"' : 'มีสัญญาให้ผู้จ่ายรับภาระ'}</button>`
+              : '';
+            const ewTxt = d.whtViaEWithholding === true
+              ? '<span style="color:#64748b;font-size:11px">หักผ่าน e-Withholding ของธนาคาร — เปลี่ยนหลังอนุมัติไม่ได้: ยกเลิกแล้วออกใหม่</span>'
+              : '';
+            banners += `<div style="background:#f8fafc;border:1px solid #cbd5e1;color:#334155;padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              ${borneTxt}${ewTxt}
             </div>`;
           }
           // ── ใบแทน/ใบที่ถูกแทน (§86/6 → §86/4) ──
@@ -13299,6 +13386,28 @@
           Layout.toast(r?.message || 'แก้การลงบัญชีสำเร็จ', 'success', 9000);
           await this.detail(docId);
           await this.load();
+        } catch (e) {
+          Layout.toast('แก้ไม่สำเร็จ: ' + (e.message || ''), 'error', 9000);
+        }
+      },
+
+      /**
+       * รอบ 204 ทีม B — ติ๊ก/ปลด "ผู้จ่ายรับภาระภาษีหัก ณ ที่จ่ายตามสัญญา" หลังอนุมัติ (§65 ตรี (3)) · ไม่แตะรายการบัญชี —
+       * เซิร์ฟเวอร์แทนที่ยอดบวกกลับ ภ.ง.ด.50 ของภาษีที่ออกแทน + audit (POST wht-borne-contract)
+       */
+      async openWhtBorneContractFix(docId, currentlyByContract) {
+        const target = !currentlyByContract;
+        if (!confirm(target
+          ? 'ตั้งใบนี้เป็น "ผู้จ่ายรับภาระภาษีตามสัญญา" ?\n\nภาษีที่ผู้จ่ายออกแทนจะหักเป็นรายจ่ายได้ (ไม่บวกกลับ ภ.ง.ด.50) — เก็บ/แนบสัญญาเป็นหลักฐาน\n(ไม่แตะรายการบัญชี)'
+          : 'ยกเลิก "ผู้จ่ายรับภาระภาษีตามสัญญา" ?\n\nภาษีที่ผู้จ่ายออกแทนจะบวกกลับ ภ.ง.ด.50 (§65 ตรี (3) — ให้โดยเสน่หา)\n(ไม่แตะรายการบัญชี)')) return;
+        const reason = prompt('เหตุผล / เลขที่สัญญา (บันทึกลง audit log):', target ? 'สัญญาเลขที่ ' : 'ไม่มีสัญญา');
+        if (reason === null) return;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/document/${docId}/wht-borne-contract`,
+            { borneByContract: target, reason: reason.trim() || null });
+          Layout.toast(r?.message || 'บันทึกแล้ว', 'success', 10000);
+          await this.detail(docId);
         } catch (e) {
           Layout.toast('แก้ไม่สำเร็จ: ' + (e.message || ''), 'error', 9000);
         }

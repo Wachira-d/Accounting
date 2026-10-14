@@ -797,11 +797,25 @@ public partial class DocumentService : IDocumentService
         return WhtGrossUp.Totals(per).PayerBorne;
     }
 
+    /// <summary>รอบ 204 (คำสั่งเจ้าของ 2026-10-13 · ทีม B) — ใบบริการต่างประเทศ (ภ.พ.36 §83/6) ที่ผู้จ่ายออกภาษีแทน: VAT รายบรรทัดคิดบนฐานรวมภาษีที่ออกแทน
+    /// (<see cref="ForeignServiceVat.VatWithBorne"/> · คำตัดสินข้อ 40) — เรียกหลัง <see cref="ApplyWhtGrossUp"/> ก่อนรวมยอด · ส่วนที่ออกแทนรายบรรทัดจากสูตรเดียว
+    /// (<see cref="WhtGrossUp.ForLines"/> — ค่าเดียวกับที่ ApplyWhtGrossUp ใช้) · บรรทัดที่ยก VAT มา (VatAmountOverride) ก็คิดใหม่ เพราะฐาน ภ.พ.36 ตามกฎหมาย
+    /// ต้องรวมภาษีที่ออกแทน (ใบต้นทางฝั่งผู้จ่ายเดียวกันได้ค่าเดียวกันทุกสตางค์) · ไม่ใช่ใบต่างประเทศ/ไม่มีส่วนที่ออกแทน ⇒ ไม่แตะ (ใบเดิมทุกใบ)</summary>
+    private static void ApplyForeignServiceBorneVat(IReadOnlyList<DocumentLineRequest> lines, LineAmounts[] amts, WithholdingTaxCertType type)
+    {
+        var per = WhtGrossUp.ForLines(
+            Enumerable.Range(0, lines.Count).Select(i => (amts[i].NetAmount, lines[i].WithholdingTaxRate)).ToList(), type);
+        var vat = ForeignServiceVat.VatWithBorne(
+            Enumerable.Range(0, lines.Count).Select(i => (amts[i].NetAmount, per[i].PayerBorne, lines[i].VatRate)).ToList());
+        for (var i = 0; i < amts.Length; i++)
+            amts[i] = amts[i] with { VatAmount = vat[i] };
+    }
+
     /// <summary>รอบ 204 — ค่าที่เก็บลง <c>Document.WhtCertType</c> ของใบ + ใบที่ปิดหนี้/ลดหนี้ใบต้นทางฝั่งผู้จ่าย (ตัวตัดสินเดียวของ create/update):
     /// <list type="bullet">
     /// <item>ส่งค่า ⇒ ค่านั้น · ไม่ส่ง ⇒ ใบต้นทางฝั่งผู้จ่าย (สืบทอด — กฎ #4 A) ไม่มี ⇒ <paramref name="keepIfUnspecified"/> (แก้ไข = ค่าเดิม · สร้าง = หัก ณ ที่จ่าย)</item>
-    /// <item>ตรวจ <see cref="WhtGrossUp.TypeError"/> กับค่าสุดท้าย <b>ทุกครั้ง</b> — รวมเคสติ๊ก "บริการต่างประเทศ" ทีหลังโดยไม่ส่งเงื่อนไข (ฝ่ายค้าน P1-1)
-    /// และใบลด/เพิ่มหนี้ที่ไม่มีใบต้นทางฝั่งผู้จ่าย (P1-2)</item>
+    /// <item>ตรวจ <see cref="WhtGrossUp.TypeError"/> กับค่าสุดท้าย <b>ทุกครั้ง</b> — ใบฝั่งรับเงิน และใบลด/เพิ่มหนี้ที่ไม่มีใบต้นทางฝั่งผู้จ่าย (P1-2) ·
+    /// บริการต่างประเทศ + ออกแทน ใช้ได้แล้ว (รอบ 204 ทีม B — VAT ภ.พ.36 คิดบนฐานรวมภาษีที่ออกแทนด้วย <see cref="ApplyForeignServiceBorneVat"/>)</item>
     /// <item>ต่างจากใบต้นทาง ⇒ ล้มดัง (<see cref="WhtGrossUp.SourceMismatchReason"/> — ยอดจ่าย/ยอดลดต้องตรงเจ้าหนี้ที่ใบต้นทางตั้ง)</item>
     /// </list></summary>
     private async Task<WithholdingTaxCertType> ResolveWhtCertTypeAsync(Guid companyId, Document doc, WithholdingTaxCertType? requested,
@@ -831,6 +845,12 @@ public partial class DocumentService : IDocumentService
             throw new BusinessRuleException(mismatch, WhtGrossUp.RuleCode);
         return type;
     }
+
+    /// <summary>รอบ 204 (ทีม B) — ค่าตั้งต้น "ผู้จ่ายรับภาระภาษีตามสัญญา" ของผู้ถูกหัก (<c>Contact.WhtBorneByContractDefault</c>) · ไม่พบ/คนละบริษัท ⇒ false</summary>
+    private async Task<bool> ContactWhtBorneByContractDefaultAsync(Guid companyId, Guid payeeContactId)
+        => payeeContactId != Guid.Empty
+           && await _db.Contacts.AsNoTracking()
+               .AnyAsync(c => c.Id == payeeContactId && c.CompanyId == companyId && c.WhtBorneByContractDefault);
 
     /// <summary>ยุบ VAT-split phantom lines — choke point สุดท้ายครอบคลุมทุก
     /// path (frontend form / integration / OCR handoff ที่เข้าทาง POST /documents).
@@ -1595,6 +1615,13 @@ public partial class DocumentService : IDocumentService
             doc.WhtPayeeContactId = await ResolveWhtPayeeContactIdAsync(companyId, doc, request.WhtPayeeContactId);
             // รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: ไม่ส่ง = หัก ณ ที่จ่าย (พฤติกรรมเดิม) · ใบฝั่งรับเงินตั้งไม่ได้ (ล้มดัง)
             doc.WhtCertType = await ResolveWhtCertTypeAsync(companyId, doc, request.WhtCertType);
+            // รอบ 204 (ทีม B · §65 ตรี (3)) — ผู้จ่ายรับภาระภาษีตามสัญญา: ไม่ส่ง ⇒ ค่าตั้งต้นของผู้ถูกหัก (ผู้ติดต่อที่ 50 ทวิ ออกในนาม — WhtCertIssuePlan.PayeeOf) ·
+            // หักผ่าน e-Withholding: ไม่ส่ง ⇒ false · ใบที่ไม่ใช่ฝั่งผู้จ่าย ⇒ false ทั้งคู่ (ตัวตัดสินเดียว WhtGrossUp.PayerSideFlagOnCreate)
+            doc.WhtBorneByContract = WhtGrossUp.PayerSideFlagOnCreate(request.WhtBorneByContract,
+                request.WhtBorneByContract is null && WhtCertIssuePlan.AppliesTo(doc.DocumentType)
+                    && await ContactWhtBorneByContractDefaultAsync(companyId, WhtCertIssuePlan.PayeeOf(doc.ContactId, doc.WhtPayeeContactId)),
+                doc.DocumentType);
+            doc.WhtViaEWithholding = WhtGrossUp.PayerSideFlagOnCreate(request.WhtViaEWithholding, false, doc.DocumentType);
             // ส่วนลด "ท้ายบิล" (จากยอดรวม) — เฉลี่ย pro-rata ลงแต่ละบรรทัด (ex-VAT)
             // ก่อนคิด VAT รายบรรทัด → รวมทั้งบิลถูกต้องแม้ VAT คนละอัตรา (§86/4)
             var createLines = request.Lines ?? [];
@@ -1607,6 +1634,9 @@ public partial class DocumentService : IDocumentService
                 createAmts[i] = ComputeLineAmounts(createLines[i], request.PricesIncludeVat, billAlloc[i]);
             ReconcileTaxRounding(createLines, createAmts, request.PricesIncludeVat);
             var createWhtBorne = ApplyWhtGrossUp(createLines, createAmts, doc.WhtCertType);
+            // รอบ 204 (คำสั่งเจ้าของ 2026-10-13): บริการต่างประเทศ + ออกแทน ⇒ VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน (คำตัดสินข้อ 40) ก่อนรวมยอด
+            if (doc.IsForeignService && createWhtBorne != 0m)
+                ApplyForeignServiceBorneVat(createLines, createAmts, doc.WhtCertType);
             // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัด — ตรวจ (ผู้ติดต่อของบริษัทนี้ · เอกสารฝั่งผู้จ่าย) แล้วเก็บแบบ normalize (Helpers/WhtPayeeSplit)
             var createLinePayees = await ResolveLineWhtPayeesAsync(companyId, doc,
                 createLines.Select((l, i) => (l.WhtPayeeContactId, true, l.WithholdingTaxRate, createAmts[i].WhtAmount)).ToList(),
@@ -2782,6 +2812,9 @@ public partial class DocumentService : IDocumentService
             && doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
             && doc.Status == DocumentStatus.Draft)
             doc.CnDnPurchaseSideOverride = request.CnDnPurchaseSideOverride;
+        // รอบ 204 (ทีม B): ธง/ส่วนที่ออกแทน "ก่อนแก้" — เปลี่ยนธงบริการต่างประเทศโดยไม่ส่งบรรทัดบนใบออกแทน ⇒ VAT ต้องคิดใหม่ (ฐาน ภ.พ.36 รวม/ไม่รวมภาษีที่ออกแทน)
+        var updFsBefore = doc.IsForeignService;
+        var updBorneBefore = doc.WhtPayerBorneAmount;
         if (request.IsForeignService.HasValue)
         {
             if (Accounting.Helpers.Pp36Lifecycle.FlagTypeError(doc.DocumentType, request.IsForeignService.Value) is string fsTypeErrUpd)
@@ -2813,7 +2846,7 @@ public partial class DocumentService : IDocumentService
         // ฝ่ายค้าน P1: ไม่ส่งบรรทัด ⇒ บรรทัดเดิมคงอยู่ — ยกผู้ถูกหักรายเดียวของทุกบรรทัดที่หักขึ้นหัวเอกสาร (ส่งบรรทัด ⇒ ResolveLineWhtPayeesAsync ทำให้)
         if (request.Lines == null) LiftStoredLineWhtPayees(doc, updHeaderChanged);
         // รอบ 204 — ผู้จ่ายออกภาษีแทน: null = คงค่าเดิม · เปลี่ยนโดยไม่ส่งบรรทัด ⇒ คิดภาษีใหม่จากบรรทัดที่บันทึกไว้ (ห้าม silent no-op — ดูท้ายบล็อกบรรทัด)
-        // ฝ่ายค้าน P1-1/P1-2: ตัดสินทุกครั้ง (ไม่ใช่เฉพาะเมื่อส่งค่า) — ติ๊ก "บริการต่างประเทศ" ทีหลังบนใบ "ออกแทน" ต้องล้มดัง ·
+        // ฝ่ายค้าน P1-2: ตัดสินทุกครั้ง (ไม่ใช่เฉพาะเมื่อส่งค่า) — (รอบ 204 ทีม B: ติ๊ก "บริการต่างประเทศ" บนใบ "ออกแทน" ได้แล้ว · VAT คิดใหม่) ·
         // ใบลด/เพิ่มหนี้ตามเงื่อนไขของใบต้นทางฝั่งผู้จ่ายเสมอ (ใบร่างที่บันทึกก่อนแก้นี้ได้ค่าถูกเมื่อเปิดแก้แล้วบันทึก)
         var updWhtCertTypeChanged = false;
         {
@@ -2821,6 +2854,10 @@ public partial class DocumentService : IDocumentService
             updWhtCertTypeChanged = requestedWhtType != WhtGrossUp.Normalize(doc.WhtCertType);
             doc.WhtCertType = requestedWhtType;
         }
+        // รอบ 204 (ทีม B): ผู้จ่ายรับภาระตามสัญญา / หักผ่าน e-Withholding — null = คงค่าเดิม (ตัวตัดสินเดียว WhtGrossUp.PayerSideFlagOnUpdate) ·
+        // ใบนี้แก้ได้เฉพาะร่าง/ถูกตีกลับอยู่แล้ว (ด่านต้นเมธอด) — หลังอนุมัติ "สัญญา" แก้ผ่าน POST wht-borne-contract · e-Withholding ยกเลิกแล้วออกใหม่
+        doc.WhtBorneByContract = WhtGrossUp.PayerSideFlagOnUpdate(request.WhtBorneByContract, doc.WhtBorneByContract, doc.DocumentType);
+        doc.WhtViaEWithholding = WhtGrossUp.PayerSideFlagOnUpdate(request.WhtViaEWithholding, doc.WhtViaEWithholding, doc.DocumentType);
         if (request.IsDeposit.HasValue) doc.IsDeposit = request.IsDeposit.Value;
         if (request.DepositDeferredAccountCode != null) doc.DepositDeferredAccountCode = string.IsNullOrWhiteSpace(request.DepositDeferredAccountCode) ? null : request.DepositDeferredAccountCode.Trim();
         if (request.DepositOutputVatDeferred.HasValue) doc.DepositOutputVatDeferred = request.DepositOutputVatDeferred.Value;
@@ -3068,6 +3105,9 @@ public partial class DocumentService : IDocumentService
                 updAmts[i] = ComputeLineAmounts(request.Lines[i], doc.PricesIncludeVat, updBillAlloc[i]);
             ReconcileTaxRounding(request.Lines, updAmts, doc.PricesIncludeVat);
             var updWhtBorne = ApplyWhtGrossUp(request.Lines, updAmts, doc.WhtCertType);
+            // รอบ 204 (คำสั่งเจ้าของ 2026-10-13): สูตรเดียวกับตอนสร้าง — VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน
+            if (doc.IsForeignService && updWhtBorne != 0m)
+                ApplyForeignServiceBorneVat(request.Lines, updAmts, doc.WhtCertType);
             var updLinePayees = await ResolveLineWhtPayeesAsync(companyId, doc,
                 request.Lines.Select((l, i) => (Accounting.Helpers.WhtPayeeSplit.RequestedOrKept(l.WhtPayeeContactId, prevLinePayees, i, l.Description),
                     l.WhtPayeeContactId.HasValue, l.WithholdingTaxRate, updAmts[i].WhtAmount)).ToList(),
@@ -3194,7 +3234,8 @@ public partial class DocumentService : IDocumentService
                 doc.BalanceDue = updPayee - doc.PaidAmount;
             }
         }
-        else if (updWhtCertTypeChanged)
+        else if (updWhtCertTypeChanged
+                 || (updFsBefore != doc.IsForeignService && (updBorneBefore != 0m || WhtGrossUp.IsPayerBorne(doc.WhtCertType))))
         {
             // รอบ 204: เปลี่ยน "ผู้จ่ายออกภาษีแทน" โดยไม่ส่งบรรทัด — คิดภาษีใหม่จากบรรทัดที่บันทึกไว้ด้วยสูตรเดียว (WhtGrossUp.ForLines)
             // ไม่ใช่ silent no-op (กฎ #4 A) · ยอดจ่าย/ค้างตามตัวตั้งเดียวกับบล็อกบรรทัดข้างบน
@@ -3203,6 +3244,17 @@ public partial class DocumentService : IDocumentService
             for (var i = 0; i < keptLines.Count; i++)
                 keptLines[i].WithholdingTaxAmount = keptWht[i].Tax;
             var (keptTax, keptBorne) = WhtGrossUp.Totals(keptWht);
+            // รอบ 204 (ทีม B): ใบต่างประเทศ + ออกแทน ⇒ VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน · เดิมเป็นแบบนั้นแต่ตอนนี้ไม่ใช่ (ปลดธง/กลับเป็นหัก ณ ที่จ่าย)
+            // ⇒ คิด VAT กลับเป็นฐานปกติ — สูตรเดียว ForeignServiceVat.VatWithBorne (ส่วนที่ออกแทน 0 = ฐานปกติ) · ใบไม่มีบรรทัด (หัวเอกสารล้วน) ไม่แตะ VAT
+            var keptBorneVat = doc.IsForeignService && keptBorne != 0m;
+            if (keptLines.Count > 0 && (keptBorneVat || (updFsBefore && updBorneBefore != 0m)))
+            {
+                var keptVat = ForeignServiceVat.VatWithBorne(keptLines
+                    .Select((l, i) => (l.Amount, keptBorneVat ? keptWht[i].PayerBorne : 0m, l.VatRate)).ToList());
+                for (var i = 0; i < keptLines.Count; i++)
+                    keptLines[i].VatAmount = keptVat[i];
+                doc.VatAmount = keptVat.Sum();
+            }
             doc.WithholdingTaxAmount = keptTax;
             doc.WhtPayerBorneAmount = keptBorne;
             doc.TotalAmount = WhtGrossUp.PayeeTotal(doc.SubTotal, doc.VatAmount, keptTax, keptBorne);
@@ -8300,9 +8352,9 @@ public partial class DocumentService : IDocumentService
                 + "ที่ฟอร์มปกติแล้วค่อยอนุมัติ (ไม่ต้องใช้เมนูนี้)");
 
         // ── เงื่อนไขเฉพาะของ §83/6 (ตรงกับด่านตอนอนุมัติ ไม่ใช่กติกาชุดที่สอง) ──
-        // รอบ 204 ฝ่ายค้าน P1-1: ใบ "ผู้จ่ายออกภาษีแทน" เปลี่ยนเป็นบริการต่างประเทศไม่ได้ (VAT ภ.พ.36 ต้องคิดบนฐานรวมภาษีที่ออกแทน) — ตัวตัดสินเดียวกับตอนบันทึก
-        if (toForeignService
-            && WhtGrossUp.TypeError(doc.DocumentType, doc.WhtCertType, isForeignService: true, hasPayerSideSource: true) is string fsBorneErr)
+        // รอบ 204 (ทีม B): ใบ "ผู้จ่ายออกภาษีแทน" ติ๊ก/ปลดบริการต่างประเทศย้อนหลังไม่ได้ — VAT คิดตอนบันทึก (ต่างประเทศ = ฐานรวมภาษีที่ออกแทน) ⇒ ลง JE ใหม่จากยอดเดิม
+        // ได้ VAT ผิดฐาน · ทางไปต่อ: ยกเลิกแล้วออกใหม่ (ตัวตัดสินเดียว ForeignServiceVat.ReclassifyPayerBorneRefusal)
+        if (ForeignServiceVat.ReclassifyPayerBorneRefusal(doc.WhtCertType, doc.WhtPayerBorneAmount, toForeignService) is string fsBorneErr)
             throw new BusinessRuleException(fsBorneErr, WhtGrossUp.RuleCode);
         if (toForeignService && doc.VatAmount <= 0)
             throw new InvalidOperationException(
@@ -8441,6 +8493,83 @@ public partial class DocumentService : IDocumentService
         _logger.LogInformation("เอกสาร {Doc} เปลี่ยนเป็น {Label} โดย {Actor}",
             doc.DocumentNumber, label, actor);
         return await GetDocumentAsync(companyId, documentId);
+    }
+
+    /// <summary>
+    /// **รอบ 204 (ทีม B · §65 ตรี (3) · ม.39) — ติ๊ก/ปลด "ผู้จ่ายรับภาระภาษีหัก ณ ที่จ่ายตามสัญญา" หลังอนุมัติ** (<c>POST document/{id}/wht-borne-contract</c>)
+    /// <para>ไม่แตะ JE (ส่วนที่ออกแทนลงค่าใช้จ่ายเหมือนกันทั้งสองแบบ — ต่างกันแค่ "บวกกลับ ภ.ง.ด.50 ไหม") ⇒ ไม่ต้องกลับรายการบัญชี · ใบที่ออกแล้ว: แทนที่เฉพาะผล
+    /// §65 ตรี (3) ของภาษีที่ออกแทนในผลที่บันทึก (<see cref="Section65TerValidator.ReplacePayerBorneFindings"/> — ข้ออื่นคงเดิมทุกตัวอักษร) แล้วตั้ง
+    /// <c>NonDeductibleAmount</c>/<c>NonDeductibleRuleJson</c> ที่กระดาษทำการ ภ.ง.ด.50 อ่าน (<c>TaxService.ComputeSection65TerAddBackAsync</c>) · ใบร่าง/ตีกลับ: ตั้งธงอย่างเดียว
+    /// (ประเมินตอนอนุมัติ) · ทุกครั้งลง audit (เหตุผล · ยอดบวกกลับก่อน/หลัง · รหัสกฎ) · ใบที่ยื่น ภ.ง.ด.50 ของรอบนั้นแล้ว ⇒ <b>ไม่บล็อก</b> แต่คืนข้อความให้ยื่นแบบเพิ่มเติม</para>
+    /// </summary>
+    public async Task<(DocumentResponse Document, string? Notice)> SetWhtBorneByContractAsync(
+        Guid companyId, Guid documentId, bool borneByContract, string? reason, string actor)
+    {
+        var doc = await _db.Documents
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        if (!WhtCertIssuePlan.AppliesTo(doc.DocumentType))
+            throw new BusinessRuleException(
+                "\"ผู้จ่ายรับภาระภาษีตามสัญญา\" ใช้ได้เฉพาะใบสำคัญจ่าย/บันทึกค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ/ใบรับรองแทนใบเสร็จ (ใบที่เราเป็นผู้หัก)",
+                Section65TerValidator.PayerBorneContractRuleCode);
+        if (doc.Status == DocumentStatus.Voided)
+            throw new BusinessRuleException("เอกสารถูกยกเลิกแล้ว — ไม่มีรายจ่ายให้ตัดสินบวกกลับ", Section65TerValidator.PayerBorneContractRuleCode);
+        if (doc.WhtBorneByContract == borneByContract)
+            throw new BusinessRuleException(
+                $"เอกสารนี้{(borneByContract ? "ตั้งเป็น \"ผู้จ่ายรับภาระภาษีตามสัญญา\"" : "ไม่ได้ตั้ง \"ผู้จ่ายรับภาระภาษีตามสัญญา\"")}อยู่แล้ว — ไม่มีอะไรเปลี่ยน",
+                Section65TerValidator.PayerBorneContractRuleCode, 409);
+        var issued = !DocumentStatusRules.NotIssued.Contains(doc.Status);
+        if (issued && string.IsNullOrWhiteSpace(reason))
+            throw new BusinessRuleException(
+                "ระบุเหตุผล (เช่น เลขที่/วันที่สัญญาที่กำหนดให้ผู้จ่ายรับภาระภาษี) — การเปลี่ยนนี้ขยับยอดบวกกลับ ภ.ง.ด.50 ของเอกสารที่อนุมัติแล้ว",
+                Section65TerValidator.PayerBorneContractRuleCode);
+
+        var addBackBefore = doc.NonDeductibleAmount;
+        doc.WhtBorneByContract = borneByContract;
+        string? notice = null;
+        if (issued)
+        {
+            var hasAttachment = await _db.FileAttachments.AsNoTracking()
+                .AnyAsync(a => a.CompanyId == companyId && a.EntityType == "Document" && a.EntityId == doc.Id && !a.IsDeleted);
+            var (total, json) = Section65TerValidator.ReplacePayerBorneFindings(doc.NonDeductibleRuleJson,
+                Section65TerValidator.PayerBorneFindings(doc, hasAttachment));
+            doc.NonDeductibleAmount = total;
+            doc.NonDeductibleRuleJson = json;
+            if (borneByContract && !hasAttachment)
+                notice = "ยังไม่มีไฟล์แนบบนเอกสาร — แนบสัญญา/ข้อตกลงที่กำหนดให้ผู้จ่ายรับภาระภาษีเป็นหลักฐาน";
+            var startMonth = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+                .Select(c => (int?)c.FiscalYearStartMonth).FirstOrDefaultAsync() ?? 1;
+            var fy = Accounting.Helpers.FiscalYear.FiscalYearOf(doc.DocumentDate.Date, Accounting.Helpers.FiscalYear.NormalizeStartMonth(startMonth));
+            var citFiled = await _db.TaxReports.AsNoTracking().AnyAsync(r => r.CompanyId == companyId
+                && r.TaxType == TaxType.CorporateIncomeTax && r.Year == fy
+                && (r.Status == TaxReportStatus.Submitted || r.Status == TaxReportStatus.Filed));
+            if (citFiled && total != addBackBefore)
+                notice = (notice == null ? "" : notice + " · ")
+                    + $"ภ.ง.ด.50 ของรอบบัญชี {fy} ยื่นแล้ว — ยอดบวกกลับเปลี่ยนจาก {addBackBefore:N2} เป็น {total:N2} ต้องยื่นแบบเพิ่มเติม (ระบบไม่แก้แบบที่ยื่นไปแล้ว)";
+        }
+
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            Action = AuditAction.Update,
+            EntityType = "Document",
+            EntityId = documentId.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "SetWhtBorneByContract",
+                documentNumber = doc.DocumentNumber,
+                whtBorneByContract = borneByContract,
+                ruleCode = borneByContract ? Section65TerValidator.PayerBorneContractRuleCode : Section65TerValidator.PayerBorneWhtRuleCode,
+                legalReference = Section65TerValidator.PayerBorneContractLegalReference,
+                nonDeductibleBefore = addBackBefore,
+                nonDeductibleAfter = doc.NonDeductibleAmount,
+                reason,
+                actor,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+        return (await GetDocumentAsync(companyId, documentId), notice);
     }
 
     public async Task<DocumentResponse> ReclassifyCnDnSideAsync(
@@ -12392,7 +12521,10 @@ public partial class DocumentService : IDocumentService
             WhtCertType: Accounting.Helpers.WhtGrossUp.Inherit(source.WhtCertType, source.DocumentType, targetType),
             // ฝ่ายค้าน P1/P3-6 (รอบ 204): ผู้ถูกหักหัวเอกสารส่งตั้งแต่ create (เดิมตั้งทีหลัง ⇒ ตัวยกผู้ถูกหักรายบรรทัดขึ้นหัวเอกสารตอนบันทึก
             // ตัดสินเทียบผู้ติดต่อ แล้วถูกทับด้วยผู้ถูกหักหัวเอกสารของต้นทาง = แปลงบางบรรทัดแล้วผู้ถูกหักผิดคน)
-            WhtPayeeContactId: inheritedHeaderPayee), createdBy,
+            WhtPayeeContactId: inheritedHeaderPayee,
+            // รอบ 204 (ทีม B · เอกสารลูกสืบทอด): สัญญาให้ผู้จ่ายรับภาระ / หักผ่าน e-Withholding ตามไปฝั่งผู้จ่าย → ฝั่งผู้จ่ายเท่านั้น (ข้ามฝั่ง ⇒ null = ค่าตั้งต้นของใบใหม่)
+            WhtBorneByContract: Accounting.Helpers.WhtGrossUp.InheritPayerSideFlag(source.WhtBorneByContract, source.DocumentType, targetType),
+            WhtViaEWithholding: Accounting.Helpers.WhtGrossUp.InheritPayerSideFlag(source.WhtViaEWithholding, source.DocumentType, targetType)), createdBy,
             isFullTaxInvoiceReplacement: isFullTaxInvoiceReplacement);
 
         // Link new document to source + propagate appendix/contract metadata
@@ -13236,6 +13368,8 @@ public partial class DocumentService : IDocumentService
             Fill(() => dup.TitleTh, v => dup.TitleTh = v, NormalizeContactTitle(request.TitleTh));
             if (request.IsCustomer && !dup.IsCustomer) { dup.IsCustomer = true; enriched = true; }
             if (request.IsSupplier && !dup.IsSupplier) { dup.IsSupplier = true; enriched = true; }
+            // รอบ 204 (ทีม B): เติมเฉพาะ "เปิด" (เหมือนธงลูกค้า/ผู้ขาย — ไม่ปิดค่าที่ตั้งไว้แล้ว)
+            if (request.WhtBorneByContractDefault && !dup.WhtBorneByContractDefault) { dup.WhtBorneByContractDefault = true; enriched = true; }
             if (enriched) { dup.UpdatedAt = DateTime.UtcNow; await _db.SaveChangesAsync(); }
             _logger.LogInformation("CreateContact dedup: reuse {Id} ({Name}) for TaxId {Tax}",
                 dup.Id, dup.Name, NormalizeTaxDigits(request.TaxId));
@@ -13294,6 +13428,8 @@ public partial class DocumentService : IDocumentService
             // ข้อมูลภาษาอังกฤษ — ว่าง = null (ให้ระบบใช้ไทย/ถอดอักษรให้)
             NameEn = string.IsNullOrWhiteSpace(request.NameEn) ? null : request.NameEn.Trim(),
             AddressEn = string.IsNullOrWhiteSpace(request.AddressEn) ? null : request.AddressEn.Trim(),
+            // รอบ 204 (ทีม B · §65 ตรี (3)) — ค่าตั้งต้นของ "ผู้จ่ายรับภาระภาษีตามสัญญา" บนเอกสารที่หักผู้รับรายนี้
+            WhtBorneByContractDefault = request.WhtBorneByContractDefault,
         };
 
         contact.Address = request.Address ?? ComposeAddress(contact);
@@ -13463,6 +13599,8 @@ public partial class DocumentService : IDocumentService
             contact.ContactType = InferContactType(request.TaxId ?? contact.TaxId, request.BranchCode ?? contact.BranchCode);
         if (request.IsCustomer.HasValue) contact.IsCustomer = request.IsCustomer.Value;
         if (request.IsSupplier.HasValue) contact.IsSupplier = request.IsSupplier.Value;
+        // รอบ 204 (ทีม B): null = ไม่เปลี่ยน · มีผลกับเอกสารที่สร้างใหม่เท่านั้น (ใบเดิมถือค่าของตัวเอง)
+        if (request.WhtBorneByContractDefault.HasValue) contact.WhtBorneByContractDefault = request.WhtBorneByContractDefault.Value;
         if (request.BuildingNumber != null) contact.BuildingNumber = request.BuildingNumber;
         if (request.BuildingName != null) contact.BuildingName = request.BuildingName;
         if (request.Moo != null) contact.Moo = request.Moo;
@@ -15820,7 +15958,9 @@ public partial class DocumentService : IDocumentService
             CompanyTaxId: company?.TaxId,
             HasSourceDocument: hasSourceDoc,
             // รอบ PP36 ทีม F2 (E-12): ผู้รับต่างประเทศ — สองสัญญาณเดียวกับทะเบียน 50 ทวิ/ผัง 21918 (WhtPayeeKind.IsForeignPayee)
-            PayeeIsForeign: Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, doc.Contact?.CountryCode));
+            PayeeIsForeign: Accounting.Helpers.WhtPayeeKind.IsForeignPayee(doc.IsForeignService, doc.Contact?.CountryCode),
+            // รอบ 204 (ทีม B): ผู้จ่ายรับภาระภาษีตามสัญญา — ไม่มีไฟล์แนบ ⇒ ข้อสังเกต "แนบสัญญา" (ไม่บล็อก)
+            HasAttachment: hasAttachment);
         var payeeName = doc.Contact?.Name;
         var payeeTaxId = doc.Contact?.TaxId;
 
@@ -16928,7 +17068,9 @@ public partial class DocumentService : IDocumentService
         // เป็นค่าใช้จ่ายของผู้จ่าย · Dr ผังของบรรทัด (ทางเดียวกับรอบโอน settlement W3) ตามยอดรายบรรทัดจากสูตรเดียว WhtGrossUp.ForLines ·
         // ยอดรวมไม่ตรงหัวเอกสาร (บรรทัดถูกแก้ทางอื่นหลังบันทึก) ⇒ ล้มดัง ไม่ลง JE ที่ไม่สมดุล/ผิดเงียบ ๆ · หัก ณ ที่จ่าย ⇒ ไม่มีขานี้
         // ฝ่ายค้าน P1-2: ใบลดหนี้ซื้อของใบ "ออกแทน" กลับขานี้ (reverse = Cr) · ใบเพิ่มหนี้ซื้อ = Dr เหมือนใบตั้งหนี้ — ผังเดียวกับที่ใบต้นทางลง (AccountId ?? defaultExpense)
-        // ฝ่ายค้าน P1-1: ใบบริการต่างประเทศ (ภ.พ.36) ที่ "ออกแทน" (ข้อมูลก่อนด่านตอนบันทึก) ⇒ ล้มดังด้วยเหตุผลเดียวกับด่านบันทึก (VAT ประเมินขาด)
+        // รอบ 204 (ทีม B · คำสั่งเจ้าของ 2026-10-13): ใบบริการต่างประเทศ (ภ.พ.36) ที่ "ออกแทน" ลงได้แล้ว — VAT บนเอกสารคิดบนฐานรวมภาษีที่ออกแทนตอนบันทึก
+        // (ForeignServiceVat.VatWithBorne) ⇒ JE สมดุล: Dr ฐาน + VAT + ออกแทน = Cr 21912 VAT + เจ้าหนี้ (ฐาน − ภาษี + ออกแทน) + 2191x ภาษี ·
+        // TypeError ที่เหลือกันเฉพาะใบฝั่งรับเงินที่มีส่วนที่ออกแทน (ข้อมูลเสีย) · ยอดไม่ตรงหัวเอกสาร ⇒ MismatchReason ล้มดังเหมือนเดิม
         void AddPayerBorneWhtExpense(bool reverse = false)
         {
             if (doc.WhtPayerBorneAmount == 0m) return;
@@ -19800,7 +19942,10 @@ public partial class DocumentService : IDocumentService
                 d.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
                     .Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
                 d.WithholdingTaxAmount).Count
-            : 0);
+            : 0,
+        // รอบ 204 (ทีม B) — เก็บแล้วต้อง echo กลับ (กฎ #4 A)
+        WhtBorneByContract: d.WhtBorneByContract,
+        WhtViaEWithholding: d.WhtViaEWithholding);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
@@ -19973,7 +20118,9 @@ public partial class DocumentService : IDocumentService
         AddressEn: c.AddressEn,
         BranchLabel: TaxInvoiceCompletenessChecker.IsJuristicBuyer(c)
             ? Accounting.Helpers.TaxBranchCode.LabelWithName(c.BranchCode, c.BranchName)
-            : null);
+            : null,
+        // รอบ 204 (ทีม B) — สัญญาให้ผู้จ่ายรับภาระภาษีหัก ณ ที่จ่าย (ค่าตั้งต้นของเอกสาร) · echo กลับ (กฎ #4 A)
+        WhtBorneByContractDefault: c.WhtBorneByContractDefault);
 
     // ==================== Smart Defaults ====================
 

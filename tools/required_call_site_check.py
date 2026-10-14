@@ -6450,8 +6450,43 @@ RULES += [
          must=["WhtGrossUp.FilingCondition("], forbid=["is 2 ? 2 : 1"],
          why=_WHTBORNE + "รายงาน ภ.ง.ด. (ต้นทางของปุ่ม e-Filing) เงื่อนไข 1/2/3"),
     dict(file="Services/Implementations/Tax/Section65TerValidator.cs", method="Evaluate",
-         must=["PayerBorneWhtRuleCode", "doc.WhtPayerBorneAmount"],
-         why=_WHTBORNE + "§65 ตรี (3) บวกกลับส่วนที่ออกแทน (ไม่มีสัญญา = เสน่หา)"),
+         must=["PayerBorneFindings(doc, ctx.HasAttachment)"],
+         why=_WHTBORNE + "§65 ตรี (3) บวกกลับส่วนที่ออกแทน (ไม่มีสัญญา = เสน่หา) — ผ่านตัวตัดสินเดียว PayerBorneFindings"),
+    dict(file="Services/Implementations/Tax/Section65TerValidator.cs", method="PayerBorneFindings",
+         must=["PayerBorneWhtRuleCode", "doc.WhtPayerBorneAmount", "doc.WhtBorneByContract", "PayerBorneContractRuleCode"],
+         why=_WHTBORNE + "§65 ตรี (3): ไม่มีสัญญา ⇒ บวกกลับ · มีสัญญา (ทีม B) ⇒ ไม่บวกกลับ + ร่องรอย RD-65ter(3)-WHT-BORNE-CONTRACT"),
+]
+
+# ── รอบ 204 ทีม B (คำสั่งเจ้าของ 2026-10-13) — บริการต่างประเทศ + ผู้จ่ายออกภาษีแทน · ผู้จ่ายรับภาระตามสัญญา ──
+# ForeignServiceVatTests/WhtGrossUpTests ล็อก helper · กติกาข้างล่างล็อกจุดเรียก (ถอดแล้ว VAT ภ.พ.36 กลับไปคิดจากฐานที่ไม่รวมภาษีออกแทน = ประเมินขาด)
+_FSBORNE = "รอบ 204 ทีม B บริการต่างประเทศ+ออกแทน: "
+RULES += [
+    dict(file=DOC, method="CreateDocumentAsync",
+         must=["ApplyForeignServiceBorneVat(", "WhtGrossUp.PayerSideFlagOnCreate("],
+         before=[("ApplyWhtGrossUp(", "ApplyForeignServiceBorneVat("), ("ApplyForeignServiceBorneVat(", "WhtGrossUp.PayeeTotal(")],
+         why=_FSBORNE + "สร้าง: VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน (คำตัดสินข้อ 40) ก่อนรวมยอด · ธงสัญญา/e-Withholding ผ่านตัวตัดสินเดียว"),
+    dict(file=DOC, method="UpdateDocumentAsync",
+         must=["ApplyForeignServiceBorneVat(", "ForeignServiceVat.VatWithBorne(", "WhtGrossUp.PayerSideFlagOnUpdate("],
+         before=[("ApplyWhtGrossUp(", "ApplyForeignServiceBorneVat(")],
+         why=_FSBORNE + "แก้: สูตรเดียวกับตอนสร้าง · เปลี่ยนธง/เงื่อนไขโดยไม่ส่งบรรทัดคิด VAT ใหม่ด้วย (ห้าม silent no-op)"),
+    dict(file=DOC, method="ApplyForeignServiceBorneVat",
+         must=["WhtGrossUp.ForLines(", "ForeignServiceVat.VatWithBorne("],
+         why=_FSBORNE + "VAT รายบรรทัดจากตัวตั้งเดียว (ห้ามประกอบสูตรเอง)"),
+    dict(file=DOC, method="ReclassifyForeignServiceAsync",
+         must=["ForeignServiceVat.ReclassifyPayerBorneRefusal("],
+         why=_FSBORNE + "ติ๊ก/ปลดบริการต่างประเทศย้อนหลังบนใบออกแทน ⇒ ปฏิเสธพร้อมทางไปต่อ (ยกเลิกแล้วออกใหม่) — VAT คิดตอนบันทึก"),
+    dict(file=DOC, method="SetWhtBorneByContractAsync",
+         must=["Section65TerValidator.PayerBorneFindings(", "Section65TerValidator.ReplacePayerBorneFindings(", "AddChainedAuditLog("],
+         why=_FSBORNE + "แก้ \"มีสัญญา\" หลังอนุมัติ: ประเมินบวกกลับใหม่ด้วยตัวตัดสินเดียว + audit"),
+    dict(file=DOC, method="EvaluateSection65TerAsync",
+         must=["HasAttachment: hasAttachment"],
+         why=_FSBORNE + "มีสัญญาแต่ไม่มีไฟล์แนบ ⇒ ข้อสังเกตแนบสัญญา (ไม่บล็อก)"),
+    dict(file="Services/Implementations/TaxService.cs", method="GeneratePp36Report",
+         must=["ForeignServiceVat.Pp36ReportBorne(doc.WhtPayerBorneAmount"],
+         why=_FSBORNE + "รายงาน ภ.พ.36: ใบที่คิดออกแทนบนเอกสารใช้ยอดของเอกสาร ไม่บวกจาก 50 ทวิ ซ้ำ"),
+    dict(file="Controllers/WithholdingTaxCertController.cs", method="GrossUpPreview",
+         must=["ForeignServiceVat.VatWithBorne("],
+         why=_FSBORNE + "พรีวิวบนฟอร์ม: VAT ภ.พ.36 สูตรเดียวกับตอนบันทึก (หน้าเว็บไม่มีสูตร)"),
 ]
 
 
@@ -6532,9 +6567,6 @@ RULES += [
                "WhtGrossUp.TypeError(doc.DocumentType, doc.WhtCertType, doc.IsForeignService, hasPayerSideSource: true)"],
          must_re=[r"WhtGrossUp\.Normalize\(source\.WhtCertType\)\s*!=\s*WhtGrossUp\.Normalize\(doc\.WhtCertType\)"],
          why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ซื้อกลับขาส่วนที่ออกแทน (ใบเพิ่มหนี้ Dr) + เงื่อนไขไม่ตรงใบต้นทาง = ล้มดัง · P1-1: ใบต่างประเทศ+ออกแทน (ข้อมูลเก่า) ไม่ลง JE"),
-    dict(file=DOC, method="ReclassifyForeignServiceAsync",
-         must=["WhtGrossUp.TypeError(doc.DocumentType, doc.WhtCertType, isForeignService: true"],
-         why=_WHTBORNE_ADV + "P1-1: เปลี่ยนใบออกแทนเป็นบริการต่างประเทศย้อนหลังไม่ได้ (ทางเข้าที่สามของธง)"),
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AdjustCertsForCreditNoteAsync",
          must=["WhtGrossUp.ForLines(", "cnBorneByLine.GetValueOrDefault(l.Id)", "cn.SubTotal + cn.WhtPayerBorneAmount"],
          why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ลดเงินได้บน 50 ทวิ = ฐาน + ส่วนที่ออกแทน (ม.39) — ตรงกับเงินได้ของใบเดิม"),

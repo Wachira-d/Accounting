@@ -87,6 +87,9 @@ public class DocumentCloneController : ControllerBase
             whtPayeeContactId = Accounting.Helpers.WhtPayeeSplit.InheritPayee(src.WhtPayeeContactId, previewPayerSide, previewActivePayees),
             // รอบ 204 — ผู้จ่ายออกภาษีแทนตามต้นแบบ (ตัวสืบทอดเดียว WhtGrossUp.Inherit · ให้ตรงกับที่ POST สร้างจริง)
             whtCertType = Accounting.Helpers.WhtGrossUp.Inherit(src.WhtCertType, src.DocumentType, src.DocumentType),
+            // รอบ 204 (ทีม B) — ให้ตรงกับที่ POST สร้างจริง (ตัวสืบทอดเดียว WhtGrossUp.InheritPayerSideFlag)
+            whtBorneByContract = Accounting.Helpers.WhtGrossUp.InheritPayerSideFlag(src.WhtBorneByContract, src.DocumentType, src.DocumentType),
+            whtViaEWithholding = Accounting.Helpers.WhtGrossUp.InheritPayerSideFlag(src.WhtViaEWithholding, src.DocumentType, src.DocumentType),
             depositDeferredAccountCode = src.IsDeposit ? src.DepositDeferredAccountCode : null,
             reference = $"คัดลอกจาก {src.DocumentNumber}",
             projectId = src.ProjectId,
@@ -228,7 +231,10 @@ public class DocumentCloneController : ControllerBase
             WhtCertAutoIssue: src.WhtCertAutoIssue,
             WhtPayeeContactId: cloneHeaderPayee,
             // รอบ 204 — ผู้จ่ายออกภาษีแทนตามต้นแบบเมื่อปลายทางเป็นฝั่งผู้จ่าย (ค่าธรรมเนียมต่างประเทศรายเดือนที่ออกภาษีแทน = เคสโคลน)
-            WhtCertType: Accounting.Helpers.WhtGrossUp.Inherit(src.WhtCertType, src.DocumentType, options?.OverrideType ?? src.DocumentType)
+            WhtCertType: Accounting.Helpers.WhtGrossUp.Inherit(src.WhtCertType, src.DocumentType, options?.OverrideType ?? src.DocumentType),
+            // รอบ 204 (ทีม B · เอกสารลูกสืบทอด) — สัญญาให้ผู้จ่ายรับภาระ / หักผ่าน e-Withholding ตามต้นแบบฝั่งผู้จ่าย → ฝั่งผู้จ่าย
+            WhtBorneByContract: Accounting.Helpers.WhtGrossUp.InheritPayerSideFlag(src.WhtBorneByContract, src.DocumentType, options?.OverrideType ?? src.DocumentType),
+            WhtViaEWithholding: Accounting.Helpers.WhtGrossUp.InheritPayerSideFlag(src.WhtViaEWithholding, src.DocumentType, options?.OverrideType ?? src.DocumentType)
         );
 
         // ── รอบ 194 — โคลนใบมัดจำ (ช่องโหว่เดิม: ไม่พา IsDeposit ⇒ ใบโคลนลงรายได้แทนหนี้สินมัดจำ) ──

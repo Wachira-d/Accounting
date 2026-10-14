@@ -799,6 +799,26 @@ public class DocumentController : ControllerBase
                 : "ยกเลิกสถานะบริการต่างประเทศแล้ว — กลับ JE เดิมและลงใหม่ตามการซื้อในประเทศ"));
     }
 
+    /// <summary>รอบ 204 (ทีม B · §65 ตรี (3) · ม.39) — ติ๊ก/ปลด "ผู้จ่ายรับภาระภาษีหัก ณ ที่จ่ายตามสัญญา" หลังอนุมัติ: ไม่แตะ JE ·
+    /// แทนที่ยอดบวกกลับ ภ.ง.ด.50 ของภาษีที่ออกแทน + audit (ดู DocumentService.SetWhtBorneByContractAsync) · สิทธิ์ระดับเดียวกับอนุมัติ (ขยับยอดภาษีเงินได้นิติบุคคล)</summary>
+    [HttpPost("{documentId:guid}/wht-borne-contract")]
+    public async Task<ActionResult<ApiResponse<DocumentResponse>>> SetWhtBorneByContract(
+        Guid companyId, Guid documentId, [FromBody] SetWhtBorneByContractRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<DocumentResponse>(
+                $"ไม่มีสิทธิ์แก้การบวกกลับ §65 ตรีของเอกสาร {docType} (ต้องการ Document.Approve)");
+        var (result, notice) = await _documentService.SetWhtBorneByContractAsync(
+            companyId, documentId, request.BorneByContract, request.Reason, userIdGuid.ToString());
+        var msg = request.BorneByContract
+            ? "ตั้งเป็น \"ผู้จ่ายรับภาระภาษีตามสัญญา\" แล้ว — ภาษีที่ออกแทนไม่บวกกลับ ภ.ง.ด.50 (เก็บสัญญาเป็นหลักฐาน)"
+            : "ยกเลิก \"ผู้จ่ายรับภาระภาษีตามสัญญา\" แล้ว — ภาษีที่ออกแทนบวกกลับ ภ.ง.ด.50 (§65 ตรี (3))";
+        return Ok(new ApiResponse<DocumentResponse>(true, result, notice == null ? msg : msg + " · " + notice));
+    }
+
     // ===== Adjusting Journal Lines (Option 1: 3 Dr/1 Cr, 1 Dr/3 Cr, ฯลฯ) =====
     public sealed record AdjustingLineDto(Guid AccountId, decimal DebitAmount,
         decimal CreditAmount, string? Description, Guid? ProjectId, string? Reason);

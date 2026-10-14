@@ -81,7 +81,10 @@ public static class Section65TerValidator
         /// <summary>รอบ PP36 ทีม F2 (E-12): ผู้รับเงินเป็นผู้รับต่างประเทศ (ประเทศคู่ค้าไม่ใช่ไทย หรือเอกสารติ๊กบริการต่างประเทศ §83/6) —
         /// ผู้รับต่างประเทศไม่มีเลขผู้เสียภาษีไทย · เลขประจำตัวผู้เสียภาษี/VAT number ของประเทศผู้รับ (ช่องเลขผู้เสียภาษีรูปแบบใดก็ได้) ใช้ระบุผู้รับได้
         /// ⇒ (11)(18) ไม่ฟ้อง "ไม่มีเลขผู้เสียภาษี" กับเลขต่างประเทศ และข้อความกรณีไม่มีเลขเลยบอกให้เก็บเลขของประเทศผู้รับ (ไม่ใช่เลขไทย)</summary>
-        bool PayeeIsForeign = false);
+        bool PayeeIsForeign = false,
+        /// <summary>รอบ 204 (ทีม B): เอกสารมีไฟล์แนบไหม — ใช้กับ "ผู้จ่ายรับภาระภาษีตามสัญญา" (ติ๊กแล้วไม่มีไฟล์แนบ ⇒ ข้อสังเกตให้แนบสัญญา · ไม่บล็อก) ·
+        /// null = ไม่ทราบ (ไม่ฟ้อง)</summary>
+        bool? HasAttachment = null);
 
     /// <summary>accountInfo: map AccountId → (code, name) สำหรับตรวจชนิดบัญชี.
     /// payeeName/payeeTaxId: ชื่อ+เลขผู้รับเงิน (จาก Contact ของเอกสารซื้อ).
@@ -332,21 +335,8 @@ public static class Section65TerValidator
             }
         }
 
-        // รอบ 204 (คำตัดสินข้อ 148 (4)) — ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน (ออกให้ตลอดไป/ครั้งเดียว): เป็นรายจ่ายได้เฉพาะเมื่อสัญญา/ข้อตกลงกำหนดให้
-        // ผู้จ่ายรับภาระภาษี (เป็นส่วนหนึ่งของค่าตอบแทน) · ไม่มีสัญญา ⇒ ให้โดยเสน่หา §65 ตรี (3) · ระบบไม่รู้ว่ามีสัญญาไหม ⇒ บวกกลับไว้ก่อน
-        // ตามกฎ L(3) (default nonDeductible + เตือน) แล้วให้นักบัญชียืนยัน — ยอด = ส่วนที่ออกแทนบนเอกสาร (ตัวตั้งเดียว Helpers/WhtGrossUp)
-        // ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จที่ปิดหนี้ใบต้นทาง (RelatedDocumentId) ไม่ลงค่าใช้จ่ายซ้ำ (JE สาย settlement) ⇒ ไม่บวกกลับซ้ำ
-        var postsBorneExpense = !(doc.RelatedDocumentId.HasValue
-            && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.CertificateInLieu);
-        if (postsBorneExpense && doc.WhtPayerBorneAmount > 0m && Accounting.Helpers.WhtGrossUp.IsPayerBorne(doc.WhtCertType))
-        {
-            findings.Add(new(PayerBorneWhtRuleCode, "ป.รัษฎากร §65 ตรี (3) · ม.39 (ภาษีที่ออกแทนเป็นเงินได้ของผู้รับ)",
-                doc.WhtPayerBorneAmount,
-                $"ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน ({Accounting.Helpers.WhtGrossUp.Label(doc.WhtCertType)}) {doc.WhtPayerBorneAmount:N2} — "
-                + "หักเป็นรายจ่ายได้เฉพาะเมื่อสัญญา/ข้อตกลงกำหนดให้ผู้จ่ายรับภาระภาษี มิฉะนั้นเป็นการให้โดยเสน่หา · ระบบบวกกลับไว้ก่อน "
-                + "(มีสัญญา ⇒ นักบัญชีตัดรายการบวกกลับในกระดาษทำการ ภ.ง.ด.50 พร้อมเก็บสัญญาไว้)",
-                HardBlock: false, NeedsConfirmation: true));
-        }
+        // รอบ 204 (คำตัดสินข้อ 148 (4)) — ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน: ตัวตัดสินเดียว PayerBorneFindings (ใช้ร่วมกับการแก้ "มีสัญญา" หลังอนุมัติ)
+        findings.AddRange(PayerBorneFindings(doc, ctx.HasAttachment));
 
         var total = findings.Sum(f => f.AddBackAmount);
         return new Result(total, findings);
@@ -354,6 +344,82 @@ public static class Section65TerValidator
 
     /// <summary>รหัสกฎของภาษีที่ผู้จ่ายออกแทน (รอบ 204) — ขึ้นต้น "RD-65ter" ให้ชุดคำเตือนตอนอนุมัติอ่านรหัสได้ (<c>Section65TerApprovalWarnings.RuleCodeOf</c>)</summary>
     public const string PayerBorneWhtRuleCode = "RD-65ter(3)-WHT-BORNE";
+
+    /// <summary>รอบ 204 (ทีม B · §65 ตรี (3) · ม.39) — ผู้จ่ายรับภาระภาษีตามสัญญา (<c>Document.WhtBorneByContract</c>): ไม่บวกกลับ · บันทึกร่องรอยรหัสนี้แทน</summary>
+    public const string PayerBorneContractRuleCode = "RD-65ter(3)-WHT-BORNE-CONTRACT";
+
+    /// <summary>มาตราอ้างอิงของ <see cref="PayerBorneContractRuleCode"/></summary>
+    public const string PayerBorneContractLegalReference = "§65 ตรี (3) · ม.39 — ผู้จ่ายรับภาระตามสัญญา (เก็บสัญญาเป็นหลักฐาน)";
+
+    /// <summary>
+    /// **§65 ตรี (3) ของภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน — ตัวตัดสินเดียว** (ตอนอนุมัติผ่าน <see cref="Evaluate"/> และตอนแก้ "มีสัญญา" หลังอนุมัติ)
+    /// <list type="bullet">
+    /// <item>ไม่มีสัญญา (<c>WhtBorneByContract=false</c>) ⇒ <see cref="PayerBorneWhtRuleCode"/> บวกกลับส่วนที่ออกแทน (ให้โดยเสน่หา · กฎ L(3) default nonDeductible + เตือน)</item>
+    /// <item>มีสัญญา ⇒ <see cref="PayerBorneContractRuleCode"/> ยอดบวกกลับ 0 (ร่องรอย audit) · ไม่มีไฟล์แนบ (<paramref name="hasAttachment"/> = false) ⇒ ข้อสังเกต "แนบสัญญา"
+    /// (NeedsConfirmation — ยกขึ้นตอนอนุมัติ ไม่บล็อก) · มีไฟล์แนบ/ไม่ทราบ ⇒ บันทึกอย่างเดียว</item>
+    /// <item>ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จที่ปิดหนี้ใบต้นทาง ไม่ลงค่าใช้จ่ายซ้ำ (JE สาย settlement) ⇒ ไม่มีผล</item>
+    /// </list>
+    /// </summary>
+    public static IReadOnlyList<Finding> PayerBorneFindings(Document doc, bool? hasAttachment)
+    {
+        var postsBorneExpense = !(doc.RelatedDocumentId.HasValue
+            && doc.DocumentType is DocumentType.PaymentVoucher or DocumentType.CertificateInLieu);
+        if (!postsBorneExpense || doc.WhtPayerBorneAmount <= 0m || !Accounting.Helpers.WhtGrossUp.IsPayerBorne(doc.WhtCertType))
+            return Array.Empty<Finding>();
+        var label = Accounting.Helpers.WhtGrossUp.Label(doc.WhtCertType);
+        if (doc.WhtBorneByContract)
+        {
+            var noAttachment = hasAttachment == false;
+            return new[]
+            {
+                new Finding(PayerBorneContractRuleCode, PayerBorneContractLegalReference, 0m,
+                    $"ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน ({label}) {doc.WhtPayerBorneAmount:N2} — ผู้ใช้ระบุว่าสัญญากำหนดให้ผู้จ่ายรับภาระภาษี "
+                    + "⇒ หักเป็นรายจ่ายได้ ไม่บวกกลับ ภ.ง.ด.50"
+                    + (noAttachment
+                        ? " · ยังไม่มีไฟล์แนบบนเอกสาร — แนบสัญญา/ข้อตกลงเป็นหลักฐาน (ไม่บล็อก)"
+                        : " · เก็บสัญญาไว้เป็นหลักฐาน"),
+                    HardBlock: false, NeedsConfirmation: noAttachment),
+            };
+        }
+        return new[]
+        {
+            new Finding(PayerBorneWhtRuleCode, "ป.รัษฎากร §65 ตรี (3) · ม.39 (ภาษีที่ออกแทนเป็นเงินได้ของผู้รับ)",
+                doc.WhtPayerBorneAmount,
+                $"ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน ({label}) {doc.WhtPayerBorneAmount:N2} — "
+                + "หักเป็นรายจ่ายได้เฉพาะเมื่อสัญญา/ข้อตกลงกำหนดให้ผู้จ่ายรับภาระภาษี มิฉะนั้นเป็นการให้โดยเสน่หา · ระบบบวกกลับไว้ก่อน "
+                + "(มีสัญญา ⇒ ติ๊ก \"ผู้จ่ายรับภาระภาษีตามสัญญา\" บนเอกสาร — หลังอนุมัติแก้ได้ที่ปุ่มเดียวกัน — พร้อมแนบสัญญา)",
+                HardBlock: false, NeedsConfirmation: true),
+        };
+    }
+
+    /// <summary>
+    /// **แทนที่ผล §65 ตรี (3) ของภาษีที่ออกแทนในผลที่บันทึกไว้แล้ว** (<c>Document.NonDeductibleRuleJson</c>) — ใช้ตอนแก้ "มีสัญญา" หลังอนุมัติ:
+    /// ข้ออื่นคงเดิมทุกตัวอักษร (ไม่ประเมินใหม่ทั้งใบ — เพดานค่ารับรอง YTD ฯลฯ ต้องไม่ขยับตามวันที่กด) · คืนยอดบวกกลับรวมใหม่ + JSON (ว่าง ⇒ null)
+    /// · JSON เดิมอ่านไม่ได้ ⇒ ล้มดัง (ไม่เขียนทับข้อมูลที่ไม่รู้จัก)
+    /// </summary>
+    public static (decimal TotalAddBack, string? Json) ReplacePayerBorneFindings(string? existingJson, IReadOnlyList<Finding> borneFindings)
+    {
+        var kept = new List<(string RuleCode, string LegalReference, decimal AddBackAmount, string Message)>();
+        if (!string.IsNullOrWhiteSpace(existingJson))
+        {
+            using var jdoc = JsonDocument.Parse(existingJson);
+            if (jdoc.RootElement.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException("ผล §65 ตรีที่บันทึกบนเอกสารไม่ใช่รายการ — แก้ไม่ได้อัตโนมัติ ติดต่อผู้ดูแลระบบ");
+            foreach (var el in jdoc.RootElement.EnumerateArray())
+            {
+                var code = el.TryGetProperty("RuleCode", out var rc) ? rc.GetString() ?? "" : "";
+                if (code == PayerBorneWhtRuleCode || code == PayerBorneContractRuleCode) continue;
+                kept.Add((code,
+                    el.TryGetProperty("LegalReference", out var lr) ? lr.GetString() ?? "" : "",
+                    el.TryGetProperty("AddBackAmount", out var ab) && ab.TryGetDecimal(out var amt) ? amt : 0m,
+                    el.TryGetProperty("Message", out var m) ? m.GetString() ?? "" : ""));
+            }
+        }
+        kept.AddRange(borneFindings.Select(f => (f.RuleCode, f.LegalReference, f.AddBackAmount, f.Message)));
+        if (kept.Count == 0) return (0m, null);
+        var json = JsonSerializer.Serialize(kept.Select(f => new { f.RuleCode, f.LegalReference, f.AddBackAmount, f.Message }));
+        return (kept.Sum(f => f.AddBackAmount), json);
+    }
 
     /// <summary>ฝ่ายค้านรอบ 201 RTX-4: ค่าปรับภาษาอังกฤษทั้งคำ (penalty/penalties · fine/fines/fined · surcharge/surcharges) ·
     /// "fuel surcharge" (ค่าน้ำมันส่วนเพิ่มของขนส่ง) ไม่ใช่ค่าปรับ</summary>

@@ -565,6 +565,14 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // = หัก ณ ที่จ่าย (พฤติกรรมเดิม) · ใบปลายทางฝั่งรับเงิน ⇒ ไม่ส่ง (ตัวสืบทอดเดียว WhtGrossUp.Inherit — ไม่ให้รายการประจำล้มทุกงวด)
                 WhtCertType: ParseTemplateWhtCertType(root) is { } tplWhtType
                     ? Accounting.Helpers.WhtGrossUp.Inherit(tplWhtType, docType, docType)
+                    : null,
+                // รอบ 204 (ทีม B · เอกสารลูกสืบทอด) — "whtBorneByContract" / "whtViaEWithholding" (true/false) · template เก่าไม่มี key ⇒ null
+                // (สัญญา = ค่าตั้งต้นของผู้ถูกหัก · e-Withholding = false) · ใบฝั่งรับเงิน ⇒ ไม่ส่ง (ตัวสืบทอดเดียว WhtGrossUp.InheritPayerSideFlag)
+                WhtBorneByContract: root.TryGetProperty("whtBorneByContract", out var wbcEl) && wbcEl.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? Accounting.Helpers.WhtGrossUp.InheritPayerSideFlag(wbcEl.GetBoolean(), docType, docType)
+                    : null,
+                WhtViaEWithholding: root.TryGetProperty("whtViaEWithholding", out var wewEl) && wewEl.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? Accounting.Helpers.WhtGrossUp.InheritPayerSideFlag(wewEl.GetBoolean(), docType, docType)
                     : null
             );
 

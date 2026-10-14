@@ -148,6 +148,110 @@ public static class ForeignServiceVat
         return gap > 0.005m ? gap : 0m;
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // รอบ 204 (คำสั่งเจ้าของ 2026-10-13 · ทีม B) — บริการต่างประเทศ + ผู้จ่ายออกภาษีแทน: VAT ภ.พ.36 ของเอกสารคิดบนฐานรวมภาษีที่ออกแทนตั้งแต่บันทึก
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>
+    /// **VAT รายบรรทัดของใบบริการต่างประเทศที่ผู้จ่ายออกภาษีหัก ณ ที่จ่ายแทน** — ตัวตั้งเดียวของสร้าง/แก้เอกสาร คำเตือนตอนอนุมัติ และพรีวิวบนฟอร์ม
+    /// <para>═══ หลัก ═══ ฐาน ภ.พ.36 = มูลค่าบริการ + ภาษีเงินได้ที่ผู้จ่ายออกแทน (<see cref="Pp36Base"/> · §79 · คำตัดสินข้อ 40) ⇒ VAT บรรทัด =
+    /// round((ฐานบรรทัด + ส่วนที่ออกแทนของบรรทัด) × อัตรา/100) · ยอดบรรทัด (<c>DocumentLine.Amount</c>) ยังเป็นมูลค่าบริการที่ตกลง (ไม่รวมภาษีออกแทน) ·
+    /// ตัวอย่าง 450 @15% ออกให้ตลอดไป ⇒ ออกแทน 79.41 ⇒ ฐาน 529.41 ⇒ VAT 37.06 (ไม่ใช่ 31.50)</para>
+    /// <para>═══ ปัดเศษ ═══ ต่อกลุ่มอัตรา VAT จากฐานรวมของกลุ่ม แล้วเกลี่ยเศษเข้าบรรทัดฐานใหญ่สุด (วิธีเดียวกับ <c>ReconcileTaxRounding</c>) ⇒
+    /// Σ VAT กลุ่มอัตราตามกฎหมาย = <see cref="SelfAssessedVatOn"/>(<see cref="Pp36Base"/>(Σ ฐาน, Σ ออกแทน)) ทุกสตางค์ · บรรทัดอัตรา ≤ 0 (ยกเว้น/0%) ⇒ 0</para>
+    /// <para>ผู้ออกแทน 0 ทุกบรรทัด ⇒ ผลเท่าการคิด VAT จากฐานปกติ (ผู้เรียกในเส้นบันทึกเรียกเฉพาะเมื่อมีส่วนที่ออกแทน — ใบเดิมไม่ถูกแตะ)</para>
+    /// </summary>
+    /// <param name="lines">ต่อบรรทัด: ฐาน (ยอดก่อน VAT หลังส่วนลด) · ส่วนที่ผู้จ่ายออกแทน (<see cref="WhtGrossUp.ForLines"/>) · อัตรา VAT (%)</param>
+    public static IReadOnlyList<decimal> VatWithBorne(IReadOnlyList<(decimal Base, decimal Borne, decimal VatRate)> lines)
+    {
+        var result = new decimal[lines.Count];
+        for (var i = 0; i < lines.Count; i++)
+            result[i] = lines[i].VatRate > 0m ? R2((lines[i].Base + Math.Max(0m, lines[i].Borne)) * lines[i].VatRate / 100m) : 0m;
+        foreach (var g in Enumerable.Range(0, lines.Count)
+                     .Where(i => lines[i].VatRate > 0m && lines[i].Base + Math.Max(0m, lines[i].Borne) != 0m)
+                     .GroupBy(i => lines[i].VatRate))
+        {
+            var idx = g.ToList();
+            if (idx.Count < 2) continue;
+            var target = R2(idx.Sum(i => lines[i].Base + Math.Max(0m, lines[i].Borne)) * g.Key / 100m);
+            var diff = target - idx.Sum(i => result[i]);
+            if (diff == 0m) continue;
+            var j = idx.OrderByDescending(i => Math.Abs(lines[i].Base + Math.Max(0m, lines[i].Borne))).ThenBy(i => i).First();
+            result[j] += diff;
+        }
+        return result;
+    }
+
+    /// <summary>ป้ายคำเตือนตอนอนุมัติ "ภ.พ.36 ไม่ตรงฐานรวมภาษีที่ออกแทน" — ห้ามเปลี่ยนค่า (ตัวกรองทางเข้าที่ไม่มีคนเห็นอ่านป้ายนี้)</summary>
+    public const string Pp36BaseWarningPrefix = "[PP36-BASE]";
+
+    /// <summary>เป็นคำเตือนชุด <see cref="Pp36BaseWarningPrefix"/> ไหม</summary>
+    internal static bool IsPp36BaseApprovalWarning(string warning)
+        => warning.StartsWith(Pp36BaseWarningPrefix, StringComparison.Ordinal);
+
+    /// <summary>ใบนี้ประเมิน ภ.พ.36 เองและมีส่วนที่ผู้จ่ายออกแทน (ตรงกับ "JE Cr 21912" — สาย PI/ค่าใช้จ่าย + ใบสำคัญจ่ายที่ไม่ปิดหนี้ใบต้นทาง)</summary>
+    private static bool SelfAssessesWithBorne(Document doc)
+        => doc.IsForeignService && doc.WhtPayerBorneAmount > 0m && WhtGrossUp.IsPayerBorne(doc.WhtCertType)
+           && (doc.DocumentType is DocumentType.PurchaseInvoice or DocumentType.Expense
+               || (doc.DocumentType == DocumentType.PaymentVoucher && !doc.RelatedDocumentId.HasValue));
+
+    /// <summary>VAT ภ.พ.36 ที่ระบบคาดของเอกสาร (Σ <see cref="VatWithBorne"/> จากบรรทัดที่บันทึก) + ฐาน (มูลค่าบริการ + ส่วนที่ออกแทน) ·
+    /// null = ไม่ใช่ใบบริการต่างประเทศที่ผู้จ่ายออกแทน (ไม่มีอะไรต้องเทียบ) · ต้องโหลด <c>doc.Lines</c> มาแล้ว</summary>
+    internal static (decimal ExpectedVat, decimal Pp36BaseAmount)? ExpectedPp36WithBorne(Document doc)
+    {
+        if (!SelfAssessesWithBorne(doc)) return null;
+        var lines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
+        var borne = WhtGrossUp.ForLines(lines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType);
+        var vat = VatWithBorne(lines.Select((l, i) => (l.Amount, borne[i].PayerBorne, l.VatRate)).ToList());
+        var taxedBase = lines.Where((l, i) => l.VatRate > 0m).Sum(l => l.Amount);
+        var taxedBorne = Enumerable.Range(0, lines.Count).Where(i => lines[i].VatRate > 0m).Sum(i => borne[i].PayerBorne);
+        return (vat.Sum(), Pp36Base(taxedBase, taxedBorne));
+    }
+
+    /// <summary>
+    /// **คำเตือนตอนอนุมัติ <c>[PP36-BASE]</c>** (<c>internal</c> — ผู้เรียกคือตัวรวบรวมคำเตือนก่อนอนุมัติ <c>DocumentService.CollectApprovalWarningsAsync</c> ในแอสเซมบลีเดียวกัน) — ใบบริการต่างประเทศที่ผู้จ่ายออกภาษีแทน แต่ VAT ที่บันทึก (<c>Document.VatAmount</c>) ห่างจากที่ระบบคิด
+    /// บนฐานรวมภาษีที่ออกแทน (คำตัดสินข้อ 40) เกิน 0.01 (ใบที่ถูกเขียนทับทางอื่น/ยก VAT จากใบต้นทาง) · <b>ไม่บล็อก</b> — ระบบแนะนำ ผู้ใช้ตัดสิน
+    /// (เปิดแก้ไขแล้วบันทึกอีกครั้งให้ระบบคิดใหม่ หรือรับทราบถ้าตั้งใจ) · null = ตรง/ไม่เกี่ยว
+    /// </summary>
+    internal static string? Pp36BaseApprovalWarning(Document doc)
+    {
+        if (ExpectedPp36WithBorne(doc) is not { } exp) return null;
+        return Pp36BaseApprovalWarning(exp.ExpectedVat, exp.Pp36BaseAmount, doc.VatAmount);
+    }
+
+    /// <summary>รูปตัวเลขล้วนของ <see cref="Pp36BaseApprovalWarning(Document)"/> — null เมื่อ |บันทึก − คาด| ≤ 0.01</summary>
+    internal static string? Pp36BaseApprovalWarning(decimal expectedVat, decimal pp36BaseAmount, decimal recordedVat)
+    {
+        if (Math.Abs(recordedVat - expectedVat) <= 0.01m) return null;
+        return $"{Pp36BaseWarningPrefix} ระบบแนะนำ ภ.พ.36 = {expectedVat:N2} บนฐาน {pp36BaseAmount:N2} "
+             + $"(รวมภาษีที่ออกแทน ม.83/6 · คำตัดสินข้อ 40) บันทึกไว้ {recordedVat:N2} — "
+             + "ถ้าต้องการให้ระบบคิดใหม่ เปิดแก้ไขเอกสารแล้วบันทึกอีกครั้ง · ตั้งใจใช้ยอดที่บันทึก ⇒ รับทราบแล้วอนุมัติต่อได้";
+    }
+
+    /// <summary>
+    /// **ภาษีที่ออกแทนที่บวกเข้าฐานในรายงาน ภ.พ.36** (<c>TaxService.GeneratePp36Report</c>) — ใบที่ระบบคิดออกแทนเองบนเอกสาร (<c>WhtPayerBorneAmount</c> &gt; 0 ·
+    /// บรรทัดคือมูลค่าที่ตกลง ไม่รวมภาษีออกแทน · VAT คิดบนฐานรวมแล้ว) ⇒ ใช้ยอดของเอกสารตัวเดียว <b>ไม่บวกจาก 50 ทวิ ซ้ำ</b> (50 ทวิ ของใบนี้คือก้อนเดียวกัน) ·
+    /// ใบเก่า (ออกแทน 0 — หัก ณ ที่จ่ายแต่ผู้ใช้ออก 50 ทวิ "ออกแทน" เอง / คีย์ยอด gross-up ในบรรทัด) ⇒ ตัวตัดสินเดิม <see cref="BorneTaxOutsideLines"/> (ผู้เรียกส่งผลมา)
+    /// </summary>
+    public static decimal Pp36ReportBorne(decimal documentPayerBorne, decimal certBorneOutsideLines)
+        => documentPayerBorne > 0m ? documentPayerBorne : certBorneOutsideLines;
+
+    /// <summary>
+    /// **ติ๊ก/ปลด "บริการต่างประเทศ" หลังอนุมัติบนใบที่ผู้จ่ายออกภาษีแทน** — ปฏิเสธพร้อมทางไปต่อ (null = ไม่เกี่ยว):
+    /// VAT ของใบออกแทนคิดตอนบันทึก (ต่างประเทศ = ฐานรวมภาษีที่ออกแทน · ในประเทศ = VAT ที่ผู้ขายเรียกเก็บ) — เปลี่ยนธงโดยลง JE ใหม่จากยอดเดิมได้ VAT ผิดฐาน
+    /// </summary>
+    public static string? ReclassifyPayerBorneRefusal(WithholdingTaxCertType certType, decimal payerBorne, bool toForeignService)
+    {
+        if (!WhtGrossUp.IsPayerBorne(certType) || payerBorne <= 0m) return null;
+        return toForeignService
+            ? $"ใบนี้ผู้จ่ายออกภาษีหัก ณ ที่จ่ายแทน ({WhtGrossUp.Label(certType)}) — ทางไปต่อ: ยกเลิกแล้วออกใหม่โดยติ๊กบริการต่างประเทศตั้งแต่สร้าง "
+              + "— ระบบคิด ภ.พ.36 บนฐานรวมภาษีที่ออกแทนให้ (ม.83/6 · คำตัดสินข้อ 40)"
+            : $"ใบนี้ผู้จ่ายออกภาษีหัก ณ ที่จ่ายแทน ({WhtGrossUp.Label(certType)}) และ VAT ถูกคิดบนฐานรวมภาษีที่ออกแทน (ภ.พ.36) — "
+              + "ทางไปต่อ: ยกเลิกแล้วออกใหม่โดยไม่ติ๊กบริการต่างประเทศ (VAT ในประเทศ = ที่ผู้ขายเรียกเก็บบนใบกำกับ)";
+    }
+
     /// <summary>
     /// แยกขาเครดิตหนึ่งก้อน (<paramref name="creditTotal"/> = ยอดที่ "จะเครดิต
     /// ให้ผู้รับเงิน" ถ้าไม่ใช่บริการต่างประเทศ) ออกเป็น ผู้รับเงิน + ภ.พ.36

@@ -285,6 +285,14 @@
                 <span style="display:block;color:#64748b;font-size:11px;margin-top:2px">เหมาะกับลูกค้าจด VAT ที่ต้องใช้ใบกำกับเคลมภาษีซื้อ</span>
               </span>
             </label>
+            <!-- รอบ 204 (ทีม B · §65 ตรี (3)) — ค่าตั้งต้นของ "ผู้จ่ายรับภาระภาษีตามสัญญา" บนเอกสารฝั่งผู้จ่ายที่หักผู้รับรายนี้ (เปลี่ยนรายใบได้) · echo กลับตอนแก้ไข -->
+            <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:12px;cursor:pointer">
+              <input type="checkbox" id="fWhtBorneByContractDefault" style="margin-top:3px">
+              <span style="font-size:13px;line-height:1.4">
+                <b>มีสัญญาให้เรารับภาระภาษีหัก ณ ที่จ่าย</b> — เมื่อจ่ายเงินให้ผู้รับรายนี้แบบ "ผู้จ่ายออกภาษีแทน" ภาษีที่ออกแทนหักเป็นรายจ่ายได้ (ไม่บวกกลับ ภ.ง.ด.50 §65 ตรี (3))
+                <span style="display:block;color:#64748b;font-size:11px;margin-top:2px">ไม่มีสัญญา = ระบบบวกกลับไว้ก่อน (ให้โดยเสน่หา) · แนบสัญญาไว้กับเอกสารเป็นหลักฐาน</span>
+              </span>
+            </label>
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี
@@ -848,6 +856,7 @@
           const el = document.getElementById(id); if (el) el.value = '';
         });
         const taxInvChk = document.getElementById('fDefaultIssueTaxInvoice'); if (taxInvChk) taxInvChk.checked = false;
+        const borneChk = document.getElementById('fWhtBorneByContractDefault'); if (borneChk) borneChk.checked = false;   // รอบ 204 ทีม B — ห้ามค้างค่ารายก่อน
         const dueDaysEl = document.getElementById('fPaymentDueDays'); if (dueDaysEl) dueDaysEl.value = '';
         const docLangEl = document.getElementById('fDocLang'); if (docLangEl) docLangEl.value = '';
         // ล้างข้อมูลภาษาอังกฤษ + พับกล่องกลับ — ไม่งั้นค่าของผู้ติดต่อรายก่อน
@@ -974,6 +983,8 @@
         if (grirSel) grirSel.value = c.defaultIrGrAccountId || '';
         const taxInvChk = document.getElementById('fDefaultIssueTaxInvoice');
         if (taxInvChk) taxInvChk.checked = !!c.defaultIssueTaxInvoice;
+        const borneChk2 = document.getElementById('fWhtBorneByContractDefault');
+        if (borneChk2) borneChk2.checked = !!c.whtBorneByContractDefault;   // รอบ 204 ทีม B — echo กลับ (กฎ #4 A)
         const dueDaysEl = document.getElementById('fPaymentDueDays');
         if (dueDaysEl) dueDaysEl.value = (c.paymentDueDays ?? '') === '' ? '' : c.paymentDueDays;
         const docLangEl2 = document.getElementById('fDocLang');
@@ -1124,6 +1135,7 @@
           defaultApAccountId: document.getElementById('fDefaultApAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
           defaultIrGrAccountId: document.getElementById('fDefaultIrGrAccount').value || (id ? '00000000-0000-0000-0000-000000000000' : null),
           defaultIssueTaxInvoice: !!document.getElementById('fDefaultIssueTaxInvoice')?.checked,
+          whtBorneByContractDefault: !!document.getElementById('fWhtBorneByContractDefault')?.checked,
           paymentDueDays: document.getElementById('fPaymentDueDays')?.value !== '' ? parseInt(document.getElementById('fPaymentDueDays').value) : null,
           // ส่งค่าตรง ๆ เสมอ: "" = ล้างกลับ "ตามค่าบริษัท" (update จับ != null),
           // th/en = ตั้งค่า — ต่างจาก field อื่นที่ null = ไม่เปลี่ยน

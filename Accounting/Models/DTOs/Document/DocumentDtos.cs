@@ -171,7 +171,12 @@ public record CreateDocumentRequest(
     Guid? WhtPayeeContactId = null,
     // รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: null = หัก ณ ที่จ่าย (พฤติกรรมเดิม) · PayAlways ออกให้ตลอดไป · PayOnce ออกให้ครั้งเดียว ·
     // เฉพาะใบฝั่งผู้จ่าย (WhtCertIssuePlan.AppliesTo) — ใบชนิดอื่นส่งค่าที่ไม่ใช่หัก ณ ที่จ่าย = 400 ข้อความไทย
-    WithholdingTaxCertType? WhtCertType = null);
+    WithholdingTaxCertType? WhtCertType = null,
+    // รอบ 204 (ทีม B · §65 ตรี (3)) — ผู้จ่ายรับภาระภาษีหัก ณ ที่จ่ายตามสัญญา (ไม่บวกกลับ ภ.ง.ด.50) · null = ค่าตั้งต้นของผู้ถูกหัก
+    // (Contact.WhtBorneByContractDefault) · ใบที่ไม่ใช่ฝั่งผู้จ่าย = false เสมอ
+    bool? WhtBorneByContract = null,
+    // รอบ 204 — หักผ่าน e-Withholding ของธนาคาร (ฝั่งผู้จ่าย) · null = false · พฤติกรรมของธงนี้อยู่ที่ทีม e-Withholding
+    bool? WhtViaEWithholding = null);
 
 // ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
 // เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
@@ -351,7 +356,11 @@ public record UpdateDocumentRequest(
     bool? WhtCertAutoIssue = null,
     Guid? WhtPayeeContactId = null,
     // รอบ 204 — ผู้จ่ายออกภาษีแทน: null = คงค่าเดิม · ค่าใหม่ ⇒ คิดภาษี/ยอดสุทธิใหม่จากบรรทัด (ส่งบรรทัดมาด้วยหรือไม่ก็ได้)
-    WithholdingTaxCertType? WhtCertType = null);
+    WithholdingTaxCertType? WhtCertType = null,
+    // รอบ 204 (ทีม B) — ผู้จ่ายรับภาระตามสัญญา: null = คงค่าเดิม (หลังอนุมัติแก้ผ่าน POST document/{id}/wht-borne-contract)
+    bool? WhtBorneByContract = null,
+    // รอบ 204 — หักผ่าน e-Withholding: null = คงค่าเดิม (แก้ได้เฉพาะใบร่าง/ถูกตีกลับ — หลังอนุมัติ ยกเลิกแล้วออกใหม่)
+    bool? WhtViaEWithholding = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -1029,7 +1038,11 @@ public record DocumentResponse(
     int WhtPayeeCount = 0,
     /// <summary>ทีม A (2a · 2026-10-13): ภาษีหัก ณ ที่จ่ายของใบซื้อหลังหักใบลดหนี้ที่มีผล (ใบเดิม − Σ ใบลดหนี้ · <c>WhtPaymentSuggestion</c>) —
     /// null = ไม่มีใบลดหนี้ที่ลดภาษีหักของใบนี้ (ใช้ <c>WithholdingTaxAmount</c> ตามเดิม) · ค่าแสดงผล ไม่ใช่ค่าที่เก็บ</summary>
-    decimal? WhtNetOfAdjustments = null);
+    decimal? WhtNetOfAdjustments = null,
+    /// <summary>รอบ 204 (ทีม B) — ผู้จ่ายรับภาระภาษีตามสัญญา (§65 ตรี (3)) · echo กลับให้ฟอร์มแก้ไข (กฎ #4 A)</summary>
+    bool WhtBorneByContract = false,
+    /// <summary>รอบ 204 — หักผ่าน e-Withholding ของธนาคาร · echo กลับให้ฟอร์มแก้ไข (กฎ #4 A)</summary>
+    bool WhtViaEWithholding = false);
 
 /// <summary>คำตัดสินข้อ 139: ผูกใบลูกเข้าใบต้นทาง — จับคู่บรรทัดลูก → บรรทัดต้นทาง (บรรทัดที่ไม่ส่งมา = ไม่นับในความคืบหน้า)</summary>
 public record LinkSourceRequest(
@@ -1256,6 +1269,9 @@ public record ReclassifyCnDnSideRequest(bool ToPurchaseSide, string? Reason);
 /// อนุมัติไปแล้ว — ระบบกลับ JE เดิมแล้วลงใหม่ ไม่ใช่ปะตัวเลขในรายงาน</summary>
 public record ReclassifyForeignServiceRequest(bool ToForeignService, string? Reason);
 
+/// <summary>รอบ 204 (ทีม B) — ติ๊ก/ปลด "ผู้จ่ายรับภาระภาษีตามสัญญา" หลังอนุมัติ (§65 ตรี (3)) · Reason บังคับเมื่อใบออกแล้ว (เช่น เลขที่/วันที่สัญญา)</summary>
+public record SetWhtBorneByContractRequest(bool BorneByContract, string? Reason);
+
 /// <summary>รายการ "ตัวกลับ" 1 ใบที่เครื่องมือแก้วันที่กลับบัญชีจะย้าย —
 /// ใช้โชว์ให้ผู้ใช้เห็นก่อนกดยืนยันว่า **ใบไหนบ้าง** จะถูกย้ายจากวันไหนไปวันไหน
 /// (เอกสารหนึ่งใบมักมีตัวกลับหลายใบ: ใบซื้อ/ใบขาย + การรับ-จ่ายชำระ + มัดจำ)</summary>
@@ -1408,7 +1424,9 @@ public record CreateContactRequest(
     [property: StringLength(300)] string? NameEn = null,
     [property: StringLength(500)] string? AddressEn = null,
     // คำนำหน้าชื่อ (บุคคลธรรมดา) — แยกช่องเพื่อลงไฟล์ ภ.ง.ด.3 Col12 · "" = ไม่มีคำนำหน้า
-    [property: StringLength(50)] string? TitleTh = null);
+    [property: StringLength(50)] string? TitleTh = null,
+    // รอบ 204 (ทีม B · §65 ตรี (3)) — ผู้รับรายนี้มีสัญญาให้ผู้จ่ายรับภาระภาษีหัก ณ ที่จ่าย ⇒ ค่าตั้งต้นของ Document.WhtBorneByContract
+    bool WhtBorneByContractDefault = false);
 
 public record UpdateContactRequest(
     [property: StringLength(200)] string? Name,
@@ -1445,7 +1463,9 @@ public record UpdateContactRequest(
     [property: StringLength(300)] string? NameEn = null,
     [property: StringLength(500)] string? AddressEn = null,
     // คำนำหน้าชื่อ (บุคคลธรรมดา) — แยกช่องเพื่อลงไฟล์ ภ.ง.ด.3 Col12 · "" = ไม่มีคำนำหน้า
-    [property: StringLength(50)] string? TitleTh = null);
+    [property: StringLength(50)] string? TitleTh = null,
+    // รอบ 204 (ทีม B) — null = ไม่เปลี่ยน
+    bool? WhtBorneByContractDefault = null);
 
 /// <summary>
 /// Result of attempting to delete a contact. May be a hard delete or
@@ -1510,7 +1530,9 @@ public record ContactResponse(
     // จาก Helpers/TaxBranchCode ตัวเดียว ให้ตัวเลือกผู้ติดต่อบนหน้าสร้างเอกสารแสดงว่า
     // "เลือกสาขาไหน" (เลขภาษีเดียวกันมีได้หลายแถว = หลายสาขา) · null = ไม่ใช่ผู้ประกอบการ
     // จดทะเบียน (บุคคลธรรมดาไม่มีสาขา) — ห้าม JS เดาป้ายเอง (รอบ 190 ทีม C ข้อ 6)
-    string? BranchLabel = null);
+    string? BranchLabel = null,
+    // รอบ 204 (ทีม B) — echo กลับให้ฟอร์มผู้ติดต่อ (กฎ #4 A)
+    bool WhtBorneByContractDefault = false);
 
 /// <summary>
 /// ผลตรวจ "ใบกำกับภาษีซื้อบนฟอร์มนี้ ครบ §86/4 พอจะเคลม ภ.พ.30 ไหม" — ตัวตรวจ**ตัวเดียวกับ

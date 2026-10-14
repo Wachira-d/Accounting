@@ -194,12 +194,16 @@ public record PendingWhtLineInfo(
     decimal WithholdingTaxAmount);
 
 // ===== รอบ 204 (คำตัดสินข้อ 148 (4)) — พรีวิวผู้จ่ายออกภาษีแทน: หน้าเว็บส่งฐาน/อัตรา เซิร์ฟเวอร์คิดด้วย Helpers/WhtGrossUp ตัวเดียว (หน้าเว็บไม่มีสูตร) =====
-public record WhtGrossUpPreviewLine(decimal Base, decimal RatePercent);
+/// <param name="VatRate">อัตรา VAT ของบรรทัด (%) — ใช้เมื่อ <see cref="WhtGrossUpPreviewRequest.IsForeignService"/> (ภ.พ.36 บนฐานรวมภาษีที่ออกแทน) · 0 = ไม่มี VAT</param>
+public record WhtGrossUpPreviewLine(decimal Base, decimal RatePercent, decimal VatRate = 0m);
 
 /// <param name="SubTotal">ฐานรวมของเอกสาร (หลังส่วนลด + ผลต่างปัดเศษ) — ส่งมาเมื่อต้องการ "ยอดจ่ายผู้รับ" · null = ไม่คิด</param>
 /// <param name="Vat">VAT รวมของเอกสาร (คู่กับ SubTotal)</param>
+/// <param name="IsForeignService">รอบ 204 (ทีม B): ใบบริการต่างประเทศ (ภ.พ.36 §83/6) — เซิร์ฟเวอร์คิด VAT บนฐานรวมภาษีที่ออกแทน (<c>ForeignServiceVat.VatWithBorne</c>)
+/// คืนเป็น Pp36Vat และใช้แทน <see cref="Vat"/> ในยอดจ่ายผู้รับ</param>
 public record WhtGrossUpPreviewRequest(
     WithholdingTaxCertType CertType,
     List<WhtGrossUpPreviewLine>? Lines,
     decimal? SubTotal = null,
-    decimal? Vat = null);
+    decimal? Vat = null,
+    bool IsForeignService = false);

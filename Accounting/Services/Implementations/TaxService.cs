@@ -1654,9 +1654,12 @@ public partial class TaxService : ITaxService
             // ไว้เสมอ (ไม่มีวัน null) ⇒ fallback เป็น dead code, ใบ header-only
             // ได้ฐาน 0 ทั้งที่มี VAT นำส่ง (จอ+ไฟล์ยื่นโชว์ฐาน 0.00)
             var serviceValue = Accounting.Helpers.DocumentVatFallback.TaxBase(doc.Lines, doc.SubTotal, doc.TotalAmount, doc.VatAmount);
-            var borneOutside = borneByDoc.TryGetValue(doc.Id, out var borne)
-                ? borne.Sum(b => Accounting.Helpers.ForeignServiceVat.BorneTaxOutsideLines(b.Type, serviceValue, doc.WithholdingTaxAmount, b.Income, b.Tax))
-                : 0m;
+            // รอบ 204 (ทีม B): ใบที่ระบบคิดส่วนที่ออกแทนบนเอกสารเอง (WhtPayerBorneAmount > 0 · VAT คิดบนฐานรวมแล้วตอนบันทึก) ⇒ ใช้ยอดของเอกสารตัวเดียว
+            // ไม่บวกจาก 50 ทวิ ของใบเดียวกันซ้ำ (ForeignServiceVat.Pp36ReportBorne) · ใบเก่า ⇒ ตัวตัดสินเดิมจาก 50 ทวิ
+            var borneOutside = Accounting.Helpers.ForeignServiceVat.Pp36ReportBorne(doc.WhtPayerBorneAmount,
+                borneByDoc.TryGetValue(doc.Id, out var borne)
+                    ? borne.Sum(b => Accounting.Helpers.ForeignServiceVat.BorneTaxOutsideLines(b.Type, serviceValue, doc.WithholdingTaxAmount, b.Income, b.Tax))
+                    : 0m);
             // E-4: ฐานแปลงบาทด้วยตัวแปลงเดียวกับ JE (DocumentFx) · ภาษี = ยอดที่ GL/รายการนำส่งถือ (บาทอยู่แล้ว)
             var baseAmount = Accounting.Helpers.DocumentFx.ToBaht(
                 Accounting.Helpers.ForeignServiceVat.Pp36Base(serviceValue, borneOutside), doc.ExchangeRate)

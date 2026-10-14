@@ -66,29 +66,44 @@ public static class WhtGrossUp
 
     /// <summary>ใบชนิดนี้ตั้ง "ผู้จ่ายออกภาษีแทน" ได้ไหม — null = ได้/เป็นค่าตั้งต้น · ข้อความ = เหตุผลภาษาไทย + ทางไปต่อให้ผู้เรียกโยน (400)
     /// <list type="bullet">
-    /// <item>ใบฝั่งผู้จ่าย (<see cref="WhtCertIssuePlan.AppliesTo"/>) — ได้ · <b>ยกเว้นบริการต่างประเทศ</b> (<paramref name="isForeignService"/> · ภ.พ.36 §83/6):
-    /// ฐาน ภ.พ.36 ต้องรวมภาษีที่ออกแทน (<see cref="ForeignServiceVat.Pp36Base"/> · คำตัดสินข้อ 40) แต่ VAT ของเอกสารคิดจากยอดบรรทัดตอนบันทึก ⇒
-    /// ใบ "ออกแทน" ประเมิน VAT ขาดเงียบ ๆ (ฝ่ายค้าน P1-1) ⇒ ปฏิเสธพร้อมทางไปต่อ (กรอกยอดบรรทัดรวมภาษีที่ออกแทนเอง)</item>
+    /// <item>ใบฝั่งผู้จ่าย (<see cref="WhtCertIssuePlan.AppliesTo"/>) — ได้ <b>รวมบริการต่างประเทศ</b> (รอบ 204 คำสั่งเจ้าของ 2026-10-13 ·
+    /// เดิมปฏิเสธเพราะ VAT ประเมินขาด — ตอนนี้ตอนบันทึกคิด VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทนด้วย <see cref="ForeignServiceVat.VatWithBorne"/>) ·
+    /// <paramref name="isForeignService"/> คงไว้ให้จุดเรียกเดิม (ไม่มีผลกับคำตัดสินแล้ว)</item>
     /// <item>ใบลด/เพิ่มหนี้ (<see cref="IsAdjustmentNote"/>) — ได้เฉพาะเมื่อมีใบต้นทางฝั่งผู้จ่าย (<paramref name="hasPayerSideSource"/> · ค่าต้องตรงใบต้นทาง —
     /// <see cref="SourceMismatchReason"/>)</item>
-    /// <item>ใบฝั่งรับเงิน — ไม่ได้ (ผู้จ่ายของเราเป็นคนตัดสินว่าจะออกภาษีแทนไหม ไม่ใช่เรา)</item>
+    /// <item>ใบฝั่งรับเงิน — ไม่ได้ (ผู้จ่ายของเราเป็นคนตัดสินว่าจะออกภาษีแทนไหม ไม่ใช่เรา) · ทางไปต่อ: ลงยอดที่ gross-up แล้วด้วยแบบหัก ณ ที่จ่ายปกติ</item>
     /// </list></summary>
     public static string? TypeError(Accounting.Models.Enums.DocumentType documentType, WithholdingTaxCertType requested,
         bool isForeignService, bool hasPayerSideSource)
     {
+        _ = isForeignService;   // รอบ 204: บริการต่างประเทศ + ออกแทนใช้ได้แล้ว (VAT ภ.พ.36 คิดบนฐานรวมภาษีที่ออกแทนตอนบันทึก)
         if (!IsPayerBorne(requested)) return null;
-        if (isForeignService)
-            return $"\"ผู้จ่ายออกภาษีแทน ({Label(requested)})\" ใช้กับบริการจากต่างประเทศ (ภ.พ.36 §83/6) ยังไม่ได้ — ฐาน ภ.พ.36 ต้องรวมภาษีที่ออกแทน "
-                + "(คำตัดสินข้อ 40) แต่ VAT ของเอกสารคิดจากยอดบรรทัด ⇒ VAT จะประเมินขาด · ทางไปต่อ: เลือก \"หัก ณ ที่จ่าย\" แล้วกรอกยอดบรรทัดเป็นยอดรวมภาษีที่ออกแทน "
-                + "(ตกลงจ่ายสุทธิ 10,000 หัก 15% ⇒ ยอดบรรทัด 11,764.71 · VAT ภ.พ.36 คิดบนฐานนี้) หรือเอาเครื่องหมาย \"บริการต่างประเทศ\" ออกถ้าไม่ใช่";
         if (WhtCertIssuePlan.AppliesTo(documentType)) return null;
         if (IsAdjustmentNote(documentType))
             return hasPayerSideSource ? null
                 : $"ใบลดหนี้/ใบเพิ่มหนี้ตั้ง \"ผู้จ่ายออกภาษีแทน ({Label(requested)})\" เองไม่ได้ — เงื่อนไขสืบทอดจากใบต้นทางฝั่งผู้จ่าย "
                   + "(ใบแจ้งหนี้ซื้อ/บันทึกค่าใช้จ่าย/ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จ) เท่านั้น · อ้างใบต้นทาง หรือเลือก \"หัก ณ ที่จ่าย\"";
+        var example = OnBase(10_000m, 3m, WithholdingTaxCertType.PayAlways);
         return $"\"ผู้จ่ายออกภาษีแทน ({Label(requested)})\" ใช้ได้เฉพาะใบสำคัญจ่าย/บันทึกค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ/ใบรับรองแทนใบเสร็จ — "
-              + "เอกสารฝั่งรับเงินให้เลือก \"หัก ณ ที่จ่าย\" (ผู้จ่ายเป็นผู้ออก 50 ทวิ ให้เรา)";
+              + "เอกสารฝั่งรับเงิน (ผู้จ่ายของเราเป็นผู้ออก 50 ทวิ ให้เรา) · ทางไปต่อ: ลงรายการด้วยยอดที่ gross-up แล้ว "
+              + $"(10,000 @3% ⇒ {example.CertIncome:N2}) และใช้แบบหัก ณ ที่จ่ายปกติ";
     }
+
+    /// <summary>**ธงระดับเอกสารที่มีความหมายเฉพาะใบฝั่งผู้จ่าย** (รอบ 204 — "ผู้จ่ายรับภาระตามสัญญา" <c>Document.WhtBorneByContract</c> ·
+    /// "หักผ่าน e-Withholding ของธนาคาร" <c>Document.WhtViaEWithholding</c>) — ค่าที่เก็บตอนสร้าง: ไม่ใช่ใบฝั่งผู้จ่าย ⇒ false เสมอ (ไม่มีผล ·
+    /// หน้าเว็บซ่อนช่อง) · ส่งค่า ⇒ ค่านั้น · ไม่ส่ง ⇒ <paramref name="fallback"/> (สัญญา = ค่าตั้งต้นของผู้ถูกหัก · e-Withholding = false)</summary>
+    public static bool PayerSideFlagOnCreate(bool? requested, bool fallback, Accounting.Models.Enums.DocumentType documentType)
+        => WhtCertIssuePlan.AppliesTo(documentType) && (requested ?? fallback);
+
+    /// <summary>ค่าที่เก็บตอนแก้ไขใบ — ไม่ส่ง (null) ⇒ คงค่าเดิม · ไม่ใช่ใบฝั่งผู้จ่าย ⇒ false</summary>
+    public static bool PayerSideFlagOnUpdate(bool? requested, bool current, Accounting.Models.Enums.DocumentType documentType)
+        => WhtCertIssuePlan.AppliesTo(documentType) && (requested ?? current);
+
+    /// <summary>**เอกสารลูกสืบทอดธงฝั่งผู้จ่าย** (แปลง · คัดลอก · รายการประจำ — กฎ #4 A) แบบเดียวกับ <see cref="Inherit"/>: ฝั่งผู้จ่าย → ฝั่งผู้จ่าย
+    /// ถือค่าของต้นทาง (true/false ตามจริง) · ข้ามฝั่ง ⇒ null (ใบปลายทางตัดสินเอง — สัญญา = ค่าตั้งต้นของผู้ถูกหัก)</summary>
+    public static bool? InheritPayerSideFlag(bool sourceFlag,
+        Accounting.Models.Enums.DocumentType sourceDocumentType, Accounting.Models.Enums.DocumentType targetDocumentType)
+        => WhtCertIssuePlan.AppliesTo(sourceDocumentType) && WhtCertIssuePlan.AppliesTo(targetDocumentType) ? sourceFlag : null;
 
     /// <summary>**เอกสารลูกสืบทอด** (แปลง · คัดลอก · รายการประจำ — กฎ #4 A): ใบฝั่งผู้จ่าย → ใบฝั่งผู้จ่าย (PI/ค่าใช้จ่าย → ใบสำคัญจ่าย) ถือเงื่อนไขเดียวกับต้นทาง
     /// (ใบที่จ่ายจริง/ออก 50 ทวิ ต้องคิดภาษีแบบเดียวกับที่ตั้งหนี้ไว้ ไม่งั้นยอดจ่ายไม่ตรงเจ้าหนี้) · ข้ามฝั่ง/ใบปลายทางฝั่งรับเงิน ⇒ null (= หัก ณ ที่จ่าย)</summary>

@@ -231,6 +231,11 @@ public interface IDocumentService
     Task<DocumentResponse> ReclassifyForeignServiceAsync(Guid companyId, Guid documentId,
         bool toForeignService, string? reason, string actor);
 
+    /// <summary>รอบ 204 (ทีม B · §65 ตรี (3)) — ติ๊ก/ปลด "ผู้จ่ายรับภาระภาษีหัก ณ ที่จ่ายตามสัญญา" หลังอนุมัติ: ไม่แตะ JE · แทนที่ผลบวกกลับ ภ.ง.ด.50
+    /// ของภาษีที่ออกแทน + audit · Notice = ข้อความให้ผู้ใช้ทำต่อ (แนบสัญญา / ยื่นแบบเพิ่มเติมเมื่อ ภ.ง.ด.50 ยื่นแล้ว) หรือ null</summary>
+    Task<(DocumentResponse Document, string? Notice)> SetWhtBorneByContractAsync(Guid companyId, Guid documentId,
+        bool borneByContract, string? reason, string actor);
+
     // ===== Adjusting Journal Lines (Option 1: 3 Dr / 1 Cr และอื่น ๆ) =====
     /// <summary>List adjusting JE lines ที่ผูกกับเอกสาร (sorted by LineOrder)</summary>
     Task<List<Models.Entities.DocumentAdjustingJournalLine>> ListAdjustingJournalLinesAsync(
