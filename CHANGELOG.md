@@ -4895,3 +4895,15 @@ wht.html ปุ่มหลัก ⬇️ PDF (แถว + รายละเอ�
 renderer parity: บรรทัด "ชื่อ" ของ 50 ทวิ ผ่าน `WhtCertFormText.PartyName` ทั้ง 3 ตัว (DTO `PayerNameLine`/`PayeeNameLine`) — เดิม QuestPDF ต่อคำนำหน้า+สาขา ·
 HTML ต่อแต่สาขา · หน้าพิมพ์ไม่ต่อ · `CertBranchSuffix` ถูกยุบเข้า helper. เทสต์ `WhtCertFormTextTests` (+3) · sim `tools/save_pdf_mobile_sim.js`
 (ทุกทาง + negative 10 ตัว) · กติกาจุดเรียกใน `required_call_site_check.py` (+2) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ef59bf1f_
+_2026-10-14 — จำนวนเงินเป็นตัวอักษร ≥ 10 ล้านพิมพ์ผิด (ทีม PDF · fix-bahttext): สูตรเขียนเอง 4 ชุด — `PdfGenerationService.ThaiNumberToText` (50 ทวิ HTML+QuestPDF) ·
+`ConvertToThaiWords`/`ConvertThaiNumber` (เอกสาร HTML+QuestPDF) · `thaiBahtText` ใน wht.html · `UxHelpers.AmountInWords` (พรีวิว) — ฝั่งพิมพ์ทั้งสามใช้ `units[pos % 7]`
+ไม่วน "ล้าน" ⇒ 10,000,000 → "หนึ่งบาทถ้วน" · 12,345,678 → "หนึ่งสองล้าน…" · 1,000,000,000,000 → "หนึ่งแสนบาทถ้วน" บนใบกำกับ/50 ทวิจริง.
+แก้: ตัวตั้งเดียว `Helpers/ThaiBahtText.Format` (วนกลุ่มล้าน · เอ็ดเมื่อมีหลักสูงกว่า · ยี่สิบ · ปัดสตางค์ AwayFromZero ก่อนแยก · ศูนย์บาท/ถ้วน/ติดลบตามสูตร 50 ทวิเดิม) ·
+renderer 4 จุดเรียกตัวตั้ง + ลบสูตรเดิม · DTO `WithholdingTaxCertResponse.TotalTaxAmountInWords` ⇒ wht.html แสดงอย่างเดียว (ถอดสำเนา JS) ·
+พรีวิว `ux-helpers.js` เขียนใหม่ให้ตรง C# ทุกตัวอักษร. **ผลที่เปลี่ยนใต้ 10 ล้าน**: สูตร 50 ทวิ — ไม่เปลี่ยนสำหรับยอด 2 ตำแหน่ง (ไล่ทดสอบเทียบสูตรเดิม) ·
+ยอด > 2 ตำแหน่งที่ปัดขึ้นถึงบาท (1.995 เดิม "หนึ่งบาทหนึ่งร้อยสตางค์" → "สองบาทถ้วน") · สูตรเอกสาร — 0.01–0.99 เดิม "ศูนย์บาทถ้วน" → "ศูนย์บาทXสตางค์" ·
+ยอดติดลบเดิมโยน exception → อ่านขนาด · ยอด > 2 ตำแหน่งเดิมตัดสตางค์ทิ้ง → ปัด · พรีวิว JS — 101/1,001/1,000,001 เดิม "…หนึ่ง" → "…เอ็ด" (ตรงกระดาษ) ·
+ติดลบเดิม "ลบ…" → อ่านขนาด (ผู้เรียกทุกตัวกรอง > 0 อยู่แล้ว ยกเว้นช่องเงินเดือน) · 1.005 เดิม "หนึ่งบาทถ้วน" → "หนึ่งบาทหนึ่งสตางค์".
+เทสต์ `ThaiBahtTextTests` (ตาราง 40 เคส + ทิศตรงข้ามเทียบสูตรเดิมของ b3f9855f ใต้ 10 ล้าน + round-trip กับ `ThaiAmountInWords.Parse` + จุดเรียก/DTO/หน้าพิมพ์) ·
+`ThaiAmountInWordsTests` round-trip เรียกตัวตั้งจริงแทนสำเนาสูตร · sim `tools/thai_baht_text_sim.js` (อ่านตารางจากเทสต์ C# · negative 5 แบบ + ratchet ห้ามสูตร
+"…ถ้วน" ชุดที่สามใน .cs/.js/.html) · กติกาจุดเรียก `required_call_site_check.py` (+2 · แก้ 2) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_

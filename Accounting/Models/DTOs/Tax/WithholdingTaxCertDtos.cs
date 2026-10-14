@@ -73,7 +73,10 @@ public record WithholdingTaxCertResponse(
     // 2026-10-14: บรรทัด "ชื่อ" บนแบบ 50 ทวิ (คำนำหน้า + ชื่อ + สาขาของนิติบุคคล) จากตัวตัดสินเดียว WhtCertFormText.PartyName —
     // ตัวเดียวกับ PDF ทั้งสอง · หน้าพิมพ์ wht.html แสดงอย่างเดียว (เดิมพิมพ์ PayerName/PayeeName ดิบ ⇒ ต่างจากไฟล์ PDF ที่ดาวน์โหลด)
     string? PayerNameLine = null,
-    string? PayeeNameLine = null);
+    string? PayeeNameLine = null,
+    // 2026-10-14: "รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)" จากตัวตั้งเดียว ThaiBahtText.Format — ตัวเดียวกับ PDF ทั้งสอง ·
+    // หน้าพิมพ์ wht.html แสดงอย่างเดียว (เดิมมีสำเนาสูตร JS ที่ใช้ units[pos % 7] ⇒ ยอด ≥ 10 ล้านพิมพ์ผิด)
+    string? TotalTaxAmountInWords = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,

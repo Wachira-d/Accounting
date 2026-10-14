@@ -413,7 +413,7 @@ public partial class PdfGenerationService
             {
                 t.Span(WhtCertFormText.TotalWords + " ").Bold();
                 t.Span(WhtCertFormText.TotalWordsHint + " ").Italic();
-                t.Span(" " + ThaiNumberToText(totalTax) + " ").Bold();
+                t.Span(" " + ThaiBahtText.Format(totalTax) + " ").Bold();
             });
     }
 

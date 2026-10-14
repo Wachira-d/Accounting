@@ -120,18 +120,21 @@
   // ============================================================
   // #10 — Amount-in-words inline display (Thai baht)
   // ============================================================
+  // ⚠️ สำเนาของตัวตั้ง C# `Helpers/ThaiBahtText.Format` — คงไว้เพราะเป็นพรีวิวสดทุกครั้งที่กดแป้น (ยอดฟอร์มก่อนบันทึก ·
+  // ใบเสร็จมือถือ · ช่อง data-amount-words) · ตัวพิมพ์จริง (PDF/HTML/50 ทวิ) มาจากเซิร์ฟเวอร์เสมอ ·
+  // ต้องตรงกับ C# ทุกตัวอักษร — ล็อกด้วย tools/thai_baht_text_sim.js ซึ่งอ่านตารางเคสจาก Accounting.Tests/ThaiBahtTextTests.cs
+  // (แก้ที่นี่ = แก้ C# + ตารางเทสต์ในคอมมิตเดียวกัน) · 2026-10-14: เดิม 101 → "หนึ่งร้อยหนึ่ง" · 1,000,001 → "หนึ่งล้านหนึ่ง"
+  // ไม่ตรงกระดาษ ("…เอ็ด") และยอดติดลบขึ้น "ลบ…" ขณะที่เซิร์ฟเวอร์อ่านขนาด
   UX.AmountInWords = {
     convert(amount) {
       if (amount === null || amount === undefined || isNaN(amount)) return '';
-      amount = Math.round(amount * 100) / 100;
-      const negative = amount < 0;
-      amount = Math.abs(amount);
-      const baht = Math.floor(amount);
-      const satang = Math.round((amount - baht) * 100);
-      let result = baht > 0 ? this._n2w(baht) + 'บาท' : 'ศูนย์บาท';
-      if (satang > 0) result += this._n2w(satang) + 'สตางค์';
-      else result += 'ถ้วน';
-      return (negative ? 'ลบ' : '') + result;
+      // ปัดเป็นสตางค์แบบ AwayFromZero (ขนาดก่อน แล้วค่อยปัด) — toPrecision(15) ตัดเศษทศนิยมฐานสองทิ้ง (1.005×100 = 100.4999…)
+      const cents = Math.round(Number((Math.abs(Number(amount)) * 100).toPrecision(15)));
+      const baht = Math.floor(cents / 100);
+      const satang = cents % 100;
+      if (baht === 0 && satang === 0) return 'ศูนย์บาทถ้วน';
+      const text = (baht === 0 ? 'ศูนย์' : this._int(baht, false)) + 'บาท';
+      return text + (satang === 0 ? 'ถ้วน' : this._int(satang, false) + 'สตางค์');
     },
     attach(inputEl, displayEl) {
       const update = () => {
@@ -142,25 +145,24 @@
       update();
     },
     _digits: ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'],
-    _places: ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน', 'ล้าน'],
-    _n2w(num) {
-      if (num === 0) return '';
-      if (num >= 1000000) {
-        return this._n2w(Math.floor(num / 1000000)) + 'ล้าน' + this._n2w(num % 1000000);
+    _places: ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'],
+    // จำนวนเต็มบวก — วนกลุ่ม "ล้าน" ซ้ำ (hasHigher = มีหลักสูงกว่าที่ไม่เป็นศูนย์ ⇒ หน่วย 1 อ่าน "เอ็ด")
+    _int(n, hasHigher) {
+      if (n >= 1000000) {
+        const high = Math.floor(n / 1000000), low = n % 1000000;
+        return this._int(high, hasHigher) + 'ล้าน' + (low === 0 ? '' : this._group(low, true));
       }
-      const s = num.toString();
+      return this._group(n, hasHigher);
+    },
+    // กลุ่มเดียว 0..999,999
+    _group(v, hasHigher) {
       let result = '';
-      for (let i = 0; i < s.length; i++) {
-        const d = parseInt(s[i]);
-        const place = s.length - 1 - i;
+      for (let pos = 5, div = 100000; pos >= 0; pos--, div /= 10) {
+        const d = Math.floor(v / div) % 10;
         if (d === 0) continue;
-        let digitWord = this._digits[d];
-        // ภาษาไทย: หลักสิบ "หนึ่ง"→"" (เอ็ด), "สอง"→"ยี่"
-        if (place === 1 && d === 1) digitWord = '';     // สิบ ไม่ใช่ หนึ่งสิบ
-        if (place === 1 && d === 2) digitWord = 'ยี่';  // ยี่สิบ
-        // หน่วยที่ 1 หลังหลักสิบ "หนึ่ง"→"เอ็ด"
-        if (place === 0 && d === 1 && s.length > 1 && parseInt(s[i - 1]) > 0) digitWord = 'เอ็ด';
-        result += digitWord + this._places[place];
+        if (pos === 1) result += (d === 1 ? '' : d === 2 ? 'ยี่' : this._digits[d]) + 'สิบ';
+        else if (pos === 0 && d === 1 && (hasHigher || v > 9)) result += 'เอ็ด';
+        else result += this._digits[d] + this._places[pos];
       }
       return result;
     }

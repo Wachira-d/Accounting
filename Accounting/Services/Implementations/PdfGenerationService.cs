@@ -2342,7 +2342,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             // จำนวนเงินตัวอักษรตามยอดแถวสุดท้าย (ใบบริการต่างประเทศ = ยอดจ่ายผู้รับเงิน)
             var words = template.AmountInWordsLanguage == "en"
                 ? ConvertToEnglishWords(printTotals.Grand)
-                : ConvertToThaiWords(printTotals.Grand);
+                : ThaiBahtText.Format(printTotals.Grand);
             sb.AppendLine($"<div class='amount-words'>({words})</div>");
         }
         if (hideVatBreakdown)
@@ -2761,7 +2761,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             sb.AppendLine("</tbody></table></td></tr>");
 
             // Total text
-            sb.AppendLine($"<tr><td class='totxt-cell'><b>{WhtCertFormText.TotalWords}</b> <i>{WhtCertFormText.TotalWordsHint}</i> <u class='ul' style='display:inline-block;min-width:480px'>&nbsp;<b>{ThaiNumberToText(cert.TotalTaxAmount)}</b>&nbsp;</u></td></tr>");
+            sb.AppendLine($"<tr><td class='totxt-cell'><b>{WhtCertFormText.TotalWords}</b> <i>{WhtCertFormText.TotalWordsHint}</i> <u class='ul' style='display:inline-block;min-width:480px'>&nbsp;<b>{ThaiBahtText.Format(cert.TotalTaxAmount)}</b>&nbsp;</u></td></tr>");
 
             // Fund
             // A9 (2026-10-13): ใบรายปีของพนักงานพิมพ์ยอดจริง (ตัวจัดรูปแบบเดียว WhtCertFormText.FundAmountText) · ไม่มีค่า = เส้นว่างเดิม
@@ -2816,41 +2816,6 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         9 => "ก.ย.", 10 => "ต.ค.", 11 => "พ.ย.", 12 => "ธ.ค.",
         _ => ""
     };
-
-    private static string ThaiNumberToText(decimal amount)
-    {
-        if (amount == 0) return "ศูนย์บาทถ้วน";
-        string[] units = { "", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน", "ล้าน" };
-        string[] digits = { "", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า" };
-
-        static string ConvertGroup(long val, string[] digits, string[] units)
-        {
-            if (val == 0) return "ศูนย์";
-            var s = val.ToString();
-            var result = new StringBuilder();
-            for (int i = 0; i < s.Length; i++)
-            {
-                int d = s[i] - '0';
-                int pos = s.Length - i - 1;
-                if (d == 0) continue;
-                if (pos == 1 && d == 1) { result.Append("สิบ"); continue; }
-                if (pos == 1 && d == 2) { result.Append("ยี่สิบ"); continue; }
-                if (pos == 0 && d == 1 && s.Length > 1) { result.Append("เอ็ด"); continue; }
-                result.Append(digits[d]);
-                result.Append(units[pos % 7]);
-            }
-            return result.ToString();
-        }
-
-        long baht = (long)Math.Floor(Math.Abs(amount));
-        // AwayFromZero so the printed "baht-text" on tax invoices never under-
-        // states the satang on half-boundaries (banker's rounding default would
-        // turn 0.005 → 0 satang instead of 1 satang).
-        int satang = (int)Math.Round((Math.Abs(amount) - baht) * 100, MidpointRounding.AwayFromZero);
-        var text = ConvertGroup(baht, digits, units) + "บาท";
-        text += satang > 0 ? ConvertGroup(satang, digits, units) + "สตางค์" : "ถ้วน";
-        return text;
-    }
 
     private string BuildReceiptHtml(Payment payment, Company company)
     {
@@ -3834,52 +3799,6 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         TaxType.WithholdingTax53 => "ภ.ง.ด.53",
         _ => type.ToString()
     };
-
-    private static string ConvertToThaiWords(decimal amount)
-    {
-        var baht = (long)Math.Floor(amount);
-        var satang = (int)((amount - baht) * 100);
-
-        var ones = new[] { "", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า" };
-        var positions = new[] { "", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน", "ล้าน" };
-
-        if (baht == 0) return "ศูนย์บาทถ้วน";
-
-        var result = ConvertThaiNumber(baht, ones, positions);
-        result += "บาท";
-
-        if (satang == 0)
-            result += "ถ้วน";
-        else
-            result += ConvertThaiNumber(satang, ones, positions) + "สตางค์";
-
-        return result;
-    }
-
-    private static string ConvertThaiNumber(long number, string[] ones, string[] positions)
-    {
-        if (number == 0) return "";
-
-        var result = "";
-        var digits = number.ToString().ToCharArray();
-        var len = digits.Length;
-
-        for (int i = 0; i < len; i++)
-        {
-            var d = digits[i] - '0';
-            var pos = len - i - 1;
-
-            if (d == 0) continue;
-            if (pos == 1 && d == 2) result += "ยี่";
-            else if (pos == 1 && d == 1) { /* skip, just "สิบ" */ }
-            else if (pos == 0 && d == 1 && len > 1) result += "เอ็ด";
-            else result += ones[d];
-
-            result += positions[pos % 7];
-        }
-
-        return result;
-    }
 
     private static string ConvertToEnglishWords(decimal amount)
     {

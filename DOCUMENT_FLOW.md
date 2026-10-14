@@ -3130,6 +3130,12 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ผ่านก่อนสร้างไฟล์ (ด่านเดียวกับหน้าเอกสาร/ส่งอีเมล · ข้อความ `SensitivityAccess.DeniedMessage`) · เดิมผู้ที่รู้ documentId พิมพ์ใบลับได้
 - รองรับ template per `DocumentType + IsDefault` flag
 - ลายเซ็น/ลายน้ำ/QR/รหัส GL footer (toggle ต่อบริษัท)
+- **จำนวนเงินเป็นตัวอักษร (ไทย) — ตัวตั้งเดียว `Helpers/ThaiBahtText.Format`** (2026-10-14): HTML (`BuildDocumentHtml`) + QuestPDF (`ComposeSummary`)
+  ของเอกสาร และ 50 ทวิ ทั้งสอง renderer + หน้าพิมพ์ `wht.html` (DTO `TotalTaxAmountInWords`) เรียกตัวเดียว · "ล้าน" วนซ้ำ (12,345,678 = สิบสองล้าน… ·
+  1,000,000,000,000 = หนึ่งล้านล้าน) · หน่วย 1 = "เอ็ด" เมื่อมีหลักสูงกว่า (101 = หนึ่งร้อยเอ็ด · 1,000,001 = หนึ่งล้านเอ็ด) · ปัดสตางค์ AwayFromZero ก่อนแยก ·
+  0.50 = "ศูนย์บาทห้าสิบสตางค์" · ยอดติดลบอ่านขนาด · เดิมสูตรเขียนเอง 4 ชุดใช้ `units[pos % 7]` ⇒ ≥ 10 ล้านพิมพ์ผิด (10,000,000 → "หนึ่งบาทถ้วน") ·
+  สำเนา JS เดียวที่เหลือคือพรีวิวสด `UxHelpers.AmountInWords` (ไม่ใช่กระดาษ) ล็อกด้วย `tools/thai_baht_text_sim.js` (ตารางเดียวกับ `ThaiBahtTextTests`)
+  · อังกฤษ (`ConvertToEnglishWords`) ยังเป็นสูตรใน `PdfGenerationService` — ไม่อยู่ในรอบนี้
 - **ภาษาเอกสาร — resolver กลาง `ResolveDocumentLanguage`** (`PdfGenerationService.cs`)
   ลำดับ: `request.Language` → `Document.DocumentLanguage` → `template.Language`
   → `CompanySettings.DocumentLanguage` → `"th"`. ข้อความทั้งหมดมาจาก
@@ -3502,6 +3508,8 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 
 ### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
 - **Service**: `WithholdingTaxCertService`
+- **รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)** (2026-10-14): `ThaiBahtText.Format(TotalTaxAmount)` ทั้ง HTML (`BuildWithholdingTaxCertHtml`) · QuestPDF
+  (`BuildTotalInWords`) · หน้าพิมพ์ `wht.html` แสดง `TotalTaxAmountInWords` จาก DTO อย่างเดียว (เดิมมีสำเนาสูตร JS ของตัวเอง) — ดู §5.1
 - **Trigger (แก้ doc 2026-10-12 — บรรทัดเดิม "ตอน PV/Expense ถูก approve" ไม่ครบ)**: ทุกทางเข้าอัตโนมัติเดินทางเดียว
   `TryAutoIssueForDocumentAsync` → ตัวตัดสินเดียว `Helpers/WhtCertIssuePlan.Decide` (คำขอเจ้าของ 2026-10-12):
   | ทางเข้า | จุดเรียก | `WhtCertIssueTrigger` |
@@ -5542,3 +5550,4 @@ reclassify ใช้ยอดขาเงินตาม JE · OCR/เทมเ�
 `PickedAccountGuard` ใช้ `PostingAccountRule`/`MoneyAccountDirectory` · เงินเดือนไม่ตกเงินสดเงียบ · ที่พักโอน/พร้อมเพย์ต้องมีบัญชีธนาคาร (เซิร์ฟเวอร์) · รายงานตั้งเวลาล็อกต่อรายงาน ·
 โอนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
 _Last verified against codebase: 2026-10-14 (50 ทวิ บนมือถือ — ผู้ใช้ "กดบันทึก pdf ขึ้นแต่หน้าปริ้น บนมือถือกดมาเป็นไฟล์ไม่ได้" · §5.4: ปุ่ม ⬇️ PDF → `Layout.savePdf` (ไฟล์เซิร์ฟเวอร์ · มือถือ = แผ่นแชร์/บันทึกลงไฟล์ · iOS = เปิดไฟล์ · เดสก์ท็อป = ดาวน์โหลด) · มือถือกด 🖨 พิมพ์ = ไปทางไฟล์ · ชื่อคู่สัญญาทั้ง 3 renderer ผ่าน `WhtCertFormText.PartyName` · ทางเดียวกันใน documents (PDF/e-Tax) · tax (§87/ภ.พ.30) · etax (เดิมไม่แนบ JWT ⇒ 401) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ef59bf1f)_
+_Last verified against codebase: 2026-10-14 (ทีม PDF fix-bahttext — §5.1/§5.4: จำนวนเงินตัวอักษร ≥ 10 ล้านพิมพ์ผิด (`units[pos % 7]`) ⇒ ตัวตั้งเดียว `Helpers/ThaiBahtText.Format` · renderer 4 จุด + DTO 50 ทวิ `TotalTaxAmountInWords` · ถอดสูตรเขียนเอง C# 2 ชุด (`ThaiNumberToText` · `ConvertToThaiWords`/`ConvertThaiNumber`) + JS ใน wht.html · พรีวิว `UxHelpers.AmountInWords` ตรง C# ด้วย sim — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_

@@ -960,7 +960,7 @@ public partial class PdfGenerationService
             var wordsAmount = ResolvePrintTotals(doc, L).Grand;
             var words = t.AmountInWordsLanguage == "en"
                 ? ConvertToEnglishWords(wordsAmount)
-                : ConvertToThaiWords(wordsAmount);
+                : Accounting.Helpers.ThaiBahtText.Format(wordsAmount);
             col.Item().PaddingTop(8).AlignCenter().Text($"({words})").FontSize(10).Italic().FontColor("#444");
         }
     }

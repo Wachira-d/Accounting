@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **538 ไฟล์ · 5,341 `[Fact]` + 833 `[Theory]` (3,687 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **539 ไฟล์ · 5,344 `[Fact]` + 834 `[Theory]` (3,728 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -811,11 +811,22 @@
 | AMW-U-03 | "ยี่สิบเอ็ดบาทถ้วน" · "สิบบาทถ้วน" | 21.00 · 10.00 (กับดัก ยี่/เอ็ด/สิบเดี่ยว) |
 | AMW-U-04 | ช่องว่างที่ Tesseract แทรกกลางคำ | อ่านได้เหมือนเดิม |
 | AMW-U-05 | อ่านไม่ออก (ไม่มีคำว่า "บาท" · คำที่ไม่รู้จัก · สตางค์ > 99) | คืน **null ไม่เดา** |
-| AMW-U-06 | round-trip: แปลงเลข→ตัวอักษรด้วยสูตรฝั่งพิมพ์ แล้วอ่านกลับ | ได้เลขเดิมทุกค่า (ล็อกความเข้ากันได้กับ `PdfGenerationService`) |
+| AMW-U-06 | round-trip: แปลงเลข→ตัวอักษรด้วยตัวตั้งขาพิมพ์ `ThaiBahtText.Format` แล้วอ่านกลับ (รวม ≥ 10 ล้าน · ล้านล้าน) | ได้เลขเดิมทุกค่า (2026-10-14: เดิมเทียบกับสำเนาสูตรในไฟล์เทสต์) |
 | AMW-U-07 | ค้นจากข้อความทั้งหน้า | เจอค่าในกรอบ "(ตัวอักษร)" · กระดาษที่ไม่มี → null (≠ 0) |
 | AMW-U-08 | `Matches` | ตรงกัน/เทียบไม่ได้ = ผ่าน · **ลูกน้ำหาย (642000 vs 6420) = ตก** ← เคสที่ตั้งใจจับ |
 | AMW-I-01 | OCR อ่านตัวเลขไม่ได้เลย แต่กระดาษมีตัวอักษร | เติม TotalAmount จากตัวอักษร (conf 0.90) |
 | AMW-I-02 | ตัวเลขกับตัวอักษรขัดกัน | ลด confidence เป็น 0.35 + กฎ `AMOUNT_IN_WORDS_MATCH` = Warning · **ไม่ทับค่าเงียบ ๆ** |
+
+### จำนวนเงินเป็นตัวอักษร (ขาพิมพ์) — `ThaiBahtText` (2026-10-14)
+> ไฟล์เทสต์: `Accounting.Tests/ThaiBahtTextTests.cs` · sim: `tools/thai_baht_text_sim.js` (พรีวิว JS อ่านตารางเดียวกัน)
+
+| รหัส | เคส | คาดหวัง |
+| --- | --- | --- |
+| BTX-U-01 | ตาราง 40 เคส: 0 · 0.5 · 1 · 11 · 21 · 101 · 1,000,001 · 9,999,999.99 · 10,000,000 · 12,345,678.90 · 21,000,021.21 · 100,000,000 · 1,000,000,000,000 · ปัดสตางค์ · ติดลบ | ตรงทุกตัวอักษร (≥ 10 ล้าน = "สิบล้าน" / "ล้านล้าน" ไม่ใช่ "หนึ่งบาท" แบบ `units[pos % 7]`) |
+| BTX-U-02 | ทิศตรงข้าม: 0..1,200 บาท + สตางค์ 0.00–0.99 + ยอดกระจายถึง 9,999,999.99 | เหมือนสูตร 50 ทวิเดิม (คัดจาก b3f9855f) ทุกตัวอักษร |
+| BTX-U-03 | round-trip กับ `ThaiAmountInWords.Parse` (รวมล้านล้าน) | ได้ยอดเดิม |
+| BTX-U-04 | renderer 4 จุด + DTO 50 ทวิ `TotalTaxAmountInWords` + หน้าพิมพ์ wht.html | เรียกตัวตั้งเดียว · สูตรเดิมไม่มีเหลือ · หน้าแสดงค่าจาก DTO |
+| BTX-S-01 | sim: `UxHelpers.AmountInWords` เทียบตาราง BTX-U-01 + กลายพันธุ์ 5 แบบ + ratchet สตริง "ถ้วน" นอกตัวตั้ง | ตรงทุกเคส · กลายพันธุ์ถูกจับทุกแบบ · ไม่มีสูตรชุดที่สาม |
 
 ### รหัสสาขา §86/4 ทุกเส้นทาง engine + ความมั่นใจรายช่อง
 | รหัส | เคส | คาดหวัง |

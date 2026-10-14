@@ -6126,14 +6126,14 @@ RULES += [
          must=["PayeeAmount: ForeignServiceVat.PayeeAmount(d)"],
          why=_F2_WHY + "หน้าเว็บอ่านยอดจ่ายผู้รับเงินที่เซิร์ฟเวอร์คำนวณ (ตัวหารสัดส่วน WHT)"),
     dict(file=PDF_HTML, method="BuildDocumentHtml",
-         must=["ResolvePrintTotals(doc, L)", "ConvertToThaiWords(printTotals.Grand)"],
+         must=["ResolvePrintTotals(doc, L)", "ThaiBahtText.Format(printTotals.Grand)"],
          must_lit=["{printTotals.VatLabel}", "{printTotals.NetLabel}"],
-         forbid=["ConvertToThaiWords(doc.TotalAmount)"],
+         forbid=["ThaiBahtText.Format(doc.TotalAmount)", "ConvertToThaiWords("],
          forbid_lit=["<span>{L.TotalNet}</span><span>{doc.TotalAmount:N2}</span>"],
          why=_F2_WHY + "HTML renderer: แถว VAT ประเมินเอง + ยอดจ่ายผู้รับเงิน + ตัวอักษร จากตัวตัดสินเดียวกับ QuestPDF"),
     dict(file=PDF_QUEST, method="ComposeSummary",
-         must=["ResolvePrintTotals(doc, L)", "printTotals.VatLabel", "printTotals.NetLabel"],
-         forbid=["ConvertToThaiWords(doc.TotalAmount)", "Row(L.TotalNet, doc.TotalAmount"],
+         must=["ResolvePrintTotals(doc, L)", "printTotals.VatLabel", "printTotals.NetLabel", "ThaiBahtText.Format(wordsAmount)"],
+         forbid=["ThaiBahtText.Format(doc.TotalAmount)", "ConvertToThaiWords(", "Row(L.TotalNet, doc.TotalAmount"],
          forbid_lit=["\"ภาษีมูลค่าเพิ่ม 7%\""],
          why=_F2_WHY + "QuestPDF renderer: ห้ามฝังข้อความไทยตรง ๆ (โหมดอังกฤษพิมพ์ไทย) · ตัวตัดสินแถวยอดเดียวกับ HTML"),
     dict(file=PDF_HTML, method="BuildProjectedGlAsync",
@@ -7705,6 +7705,21 @@ RULES += [
                    "{WebUtility.HtmlEncode(WhtCertFormText.PartyName(cert.PayeeContact.TitleTh,"],
          forbid_lit=["CertBranchSuffix(", "cert.PayeeContact.Name +"],
          why="50 ทวิ HTML: ชื่อผู้ถูกหักมีคำนำหน้าเหมือน QuestPDF (เดิมขาด) — ตัวตัดสินเดียว WhtCertFormText.PartyName (2026-10-14)"),
+]
+
+# 2026-10-14 (ทีม PDF): จำนวนเงินตัวอักษร ≥ 10 ล้านพิมพ์ผิด (units[pos % 7] ไม่วน "ล้าน") ในสูตรเขียนเอง 4 ชุด ⇒ ตัวตั้งเดียว
+# Helpers/ThaiBahtText.Format · renderer ทั้ง 4 จุดต้องเรียกตัวตั้ง (เอกสาร HTML/QuestPDF ล็อกในกติกา BuildDocumentHtml/ComposeSummary ข้างบน)
+# ฝั่ง DTO wht.html (MapToResponse expression-bodied) ล็อกใน ThaiBahtTextTests · สำเนา JS พรีวิวล็อกใน tools/thai_baht_text_sim.js
+RULES += [
+    # การเรียกอยู่ใน interpolated string ⇒ must_lit/forbid_lit
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
+         must_lit=["<b>{ThaiBahtText.Format(cert.TotalTaxAmount)}</b>"],
+         forbid_lit=["ThaiNumberToText("],
+         why="50 ทวิ HTML: จำนวนเงินตัวอักษรจากตัวตั้งเดียว ThaiBahtText (2026-10-14 · ≥ 10 ล้านเคยพิมพ์ผิด)"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildTotalInWords",
+         must=["ThaiBahtText.Format(totalTax)"],
+         forbid=["ThaiNumberToText("],
+         why="50 ทวิ QuestPDF: จำนวนเงินตัวอักษรจากตัวตั้งเดียวกับ HTML + หน้าพิมพ์ (2026-10-14)"),
 ]
 
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}

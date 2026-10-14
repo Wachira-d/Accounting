@@ -1560,5 +1560,6 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         DividendBlock: Accounting.Helpers.WhtCertFormText.DividendBlock(w.Lines),
         PayerNameLine: Accounting.Helpers.WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName),
         PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(w.PayeeContact.TitleTh, w.PayeeContact.Name, w.PayeeContact.TaxId,
-            w.PayeeContact.BranchCode, w.PayeeContact.BranchName));
+            w.PayeeContact.BranchCode, w.PayeeContact.BranchName),
+        TotalTaxAmountInWords: Accounting.Helpers.ThaiBahtText.Format(w.TotalTaxAmount));
 }

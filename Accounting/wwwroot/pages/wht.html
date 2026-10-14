@@ -542,27 +542,8 @@
             ? `<td class="dtc">${Layout.date(r.paymentDate)}</td><td class="amt">${Layout.money(r.incomeAmount)}</td><td class="amt">${Layout.money(r.taxAmount)}</td>`
             : blank) + '</tr>').join('') : null;
 
-        const thaiBahtText = (n) => {
-          if (!n || n === 0) return 'ศูนย์บาทถ้วน';
-          const u = ['','หนึ่ง','สอง','สาม','สี่','ห้า','หก','เจ็ด','แปด','เก้า'];
-          const p = ['','สิบ','ร้อย','พัน','หมื่น','แสน','ล้าน'];
-          const baht = Math.floor(Math.abs(n));
-          const satang = Math.round((Math.abs(n) - baht) * 100);
-          const cv = (v) => {
-            if (v === 0) return 'ศูนย์';
-            let s = v.toString(), r = '', len = s.length;
-            for (let i = 0; i < len; i++) {
-              const d = parseInt(s[i]), pos = len - i - 1;
-              if (d === 0) continue;
-              if (pos === 1 && d === 1) { r += 'สิบ'; continue; }
-              if (pos === 1 && d === 2) { r += 'ยี่สิบ'; continue; }
-              if (pos === 0 && d === 1 && len > 1) { r += 'เอ็ด'; continue; }
-              r += u[d] + p[pos % 7];
-            }
-            return r;
-          };
-          return cv(baht) + 'บาท' + (satang > 0 ? cv(satang) + 'สตางค์' : 'ถ้วน');
-        };
+        // 2026-10-14: จำนวนเงินตัวอักษรมาจากเซิร์ฟเวอร์ (`totalTaxAmountInWords` ← Helpers/ThaiBahtText.Format ตัวเดียวกับ PDF ทั้งสอง) ·
+        // หน้าแสดงอย่างเดียว — เดิมมีสำเนาสูตรที่นี่ (units[pos % 7] ไม่วน "ล้าน" ⇒ ยอด ≥ 10 ล้านพิมพ์ผิด)
 
         const dot = (text, width) => `<span style="display:inline-block;min-width:${width||'auto'};border-bottom:1px dotted #555;padding:0 6px;min-height:1em">${text||''}</span>`;
         const isHQ = !d.payerBranchCode || d.payerBranchCode === '00000' || d.payerBranchCode === '';
@@ -758,7 +739,7 @@
               <tr><td class="totxt-cell">
                 <table class="inner" cellspacing="0"><tr>
                   <td style="white-space:nowrap;width:1%;padding-right:6px"><b>รวมเงินภาษีที่หักนำส่ง</b> <i>(ตัวอักษร)</i></td>
-                  <td style="background:#d9d9d9;padding:1px 8px"><b>${thaiBahtText(d.totalTaxAmount)}</b></td>
+                  <td style="background:#d9d9d9;padding:1px 8px"><b>${Layout.esc(d.totalTaxAmountInWords || '')}</b></td>
                 </tr></table>
               </td></tr>
 

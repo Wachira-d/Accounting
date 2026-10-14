@@ -61,17 +61,18 @@ public class ThaiAmountInWordsTests
     [Fact]
     public void แปลงเลขเป็นตัวอักษรแล้วอ่านกลับต้องได้เลขเดิม()
     {
-        // ล็อกความเข้ากันได้กับ PdfGenerationService.ThaiNumberToText — ถ้าใคร
-        // แก้ฝั่งพิมพ์แล้วรูปแบบเปลี่ยน เทสต์นี้จะพังทันที
+        // ล็อกความเข้ากันได้กับตัวตั้งขาพิมพ์ ThaiBahtText.Format (2026-10-14: เดิมเทียบกับสำเนาสูตรในไฟล์นี้
+        // ซึ่งไม่ใช่โค้ดจริง) — ถ้าใครแก้ฝั่งพิมพ์แล้วรูปแบบเปลี่ยน เทสต์นี้จะพังทันที
         decimal[] samples =
         {
             0.01m, 1m, 10m, 11m, 20m, 21m, 100m, 101m, 999.99m,
             1053.95m, 6420m, 12345.67m, 100000m, 999999.99m,
             1000000m, 1000001m, 2530000m, 9999999.99m,
+            10000000m, 12345678.90m, 21000021.21m, 1000000000000m,
         };
         foreach (var v in samples)
         {
-            var text = ToThaiWords(v);
+            var text = ThaiBahtText.Format(v);
             var back = ThaiAmountInWords.Parse(text);
             Assert.True(back.HasValue, $"อ่านกลับไม่ได้: {v} → \"{text}\"");
             Assert.Equal(v, back!.Value);
@@ -112,50 +113,5 @@ public class ThaiAmountInWordsTests
         Assert.True(ThaiAmountInWords.Matches(null, 6420.00m));
         Assert.False(ThaiAmountInWords.Matches(642000.00m, 6420.00m)); // ลูกน้ำหาย — เคสที่ตั้งใจจับ
         Assert.False(ThaiAmountInWords.Matches(6420.00m, 6425.00m));
-    }
-
-    /// <summary>สำเนาสูตร PdfGenerationService.ThaiNumberToText ไว้ทดสอบ round-trip
-    /// (ตัวจริงเป็น private ในคลาสที่ต้องมี DI ครบ)</summary>
-    private static string ToThaiWords(decimal amount)
-    {
-        string[] units = { "", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน" };
-        string[] digits = { "", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า" };
-
-        static string Group(long val, string[] d, string[] u)
-        {
-            if (val == 0) return "";
-            var s = val.ToString();
-            var sb = new System.Text.StringBuilder();
-            for (var i = 0; i < s.Length; i++)
-            {
-                var dg = s[i] - '0';
-                var pos = s.Length - i - 1;
-                if (dg == 0) continue;
-                if (pos == 1 && dg == 1) sb.Append("สิบ");
-                else if (pos == 1 && dg == 2) sb.Append("ยี่สิบ");
-                else if (pos == 1) sb.Append(d[dg]).Append("สิบ");
-                else if (pos == 0 && dg == 1 && s.Length > 1) sb.Append("เอ็ด");
-                else sb.Append(d[dg]).Append(u[pos]);
-            }
-            return sb.ToString();
-        }
-
-        amount = Math.Round(amount, 2, MidpointRounding.AwayFromZero);
-        var baht = (long)amount;
-        var satang = (int)Math.Round((amount - baht) * 100, MidpointRounding.AwayFromZero);
-        if (baht == 0 && satang == 0) return "ศูนย์บาทถ้วน";
-
-        string txt;
-        if (baht >= 1_000_000)
-        {
-            txt = Group(baht / 1_000_000, digits, units) + "ล้าน";
-            var rem = baht % 1_000_000;
-            if (rem > 0) txt += Group(rem, digits, units);
-        }
-        else txt = baht > 0 ? Group(baht, digits, units) : "ศูนย์";
-
-        txt += "บาท";
-        txt += satang > 0 ? Group(satang, digits, units) + "สตางค์" : "ถ้วน";
-        return txt;
     }
 }
