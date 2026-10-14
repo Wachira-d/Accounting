@@ -98,7 +98,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ComputeLineAmounts → ReconcileTaxRounding ตัวจริง) ได้ยอดต่างจากที่เก็บ > 0.01 · ปุ่ม "แก้" รายใบ → `POST data-integrity/ocr-line-discount/{documentId}/fix` →
   `DocumentService.FixOcrLineDiscountAsync` (partial `DocumentService.OcrLineFix.cs`): % = 0 + ส่วนลดบาท/ราคาใหม่ (`OcrLineDiscountRepair`) · **จำลองก่อนเขียน** — เงินบรรทัดใดจะขยับ ⇒
   ปฏิเสธ (ไม่บันทึก) · ไม่แตะยอด/VAT/ยอดรวม/JE/เลขที่ ⇒ ทุกสถานะที่ไม่ใช่ยกเลิก · audit `OCR-LINE-DISC-FIX` ก่อน/หลัง · สิทธิ์ ReportsFinancial + สร้าง (ร่าง)/อนุมัติ (ออกแล้ว) ของทิศเอกสาร ·
-  ไม่มี migration อัตโนมัติ · ตัวตรวจกับตัวแก้ใช้ `FindOcrLineDiscountIssues` ตัวเดียว
+  ไม่มี migration อัตโนมัติ · ตัวตรวจกับตัวแก้ใช้ `FindOcrLineDiscountIssues` ตัวเดียว · Last verified `commit 9c31f573`
 - **ช่องติ๊ก "กรอกราคาไม่รวม VAT" ที่ไม่มีอะไรต้องแปลง (ทีม E 2026-10-13)**: แถวราคาก่อน VAT อยู่แล้ว / คำขอไม่มีราคาใหม่ ⇒ ไม่แปลง + หมายเหตุ (ไม่ปฏิเสธทั้งคำขอ) ·
   ราคาที่บันทึกไว้ไม่ถูกแปลงซ้ำ · ไม่รู้อัตรา VAT ยังปฏิเสธ (`OcrEtaxLineNormalizer.ApplyReviewPriceEntry`) · Last verified `commit b1053f69`
 - **ผูกใบต้นทางทุกชนิด (2026-09-10 · `Helpers/OcrPredecessorMatcher`)** — ตอนสแกนเสร็จ
@@ -2903,7 +2903,7 @@ service ไม่ตรวจสิทธิ์โดยสัญญา ⇒ **�
   ค่าผู้ใช้ชนะ · ปุ่ม "ใช้ค่าที่ระบบเสนอ" ให้เลือกเอง) · ผู้ใช้ต้องกดบันทึกเอง · golden: `PayrollWithholdingTaxTests` เทียบสูตร inline เดิมจาก `9c9580e6` ทุกช่อง
 - **รอบที่ยกเลิกก่อนมีการยกเลิก 50 ทวิ ตามรอบ (DECISIONS ข้อ 111 · ทีม E 2026-10-13)**: หน้าตรวจข้อมูล (`data-integrity.html`) แถว
   `VoidedPayrollRunsWithIssuedWhtCerts` = รอบ `Status == "Voided"` ที่ 50 ทวิ (`SourcePayrollRunId`) ยังสถานะ Issued/Printed · **อ่านอย่างเดียว** (ระบบไม่ยกเลิกให้ —
-  ใบอาจยื่นแล้ว = ประทับสถานะปลายทางเอง R1) · ลิงก์ไปหน้า 50 ทวิ พร้อมเลขใบ (หน้า `wht.html` ยังไม่มีพารามิเตอร์เปิดใบตามรหัส — ค้นด้วยเลข) · `OcrLineDiscountFixDbTests`
+  ใบอาจยื่นแล้ว = ประทับสถานะปลายทางเอง R1) · ลิงก์ไปหน้า 50 ทวิ พร้อมเลขใบ (หน้า `wht.html` ยังไม่มีพารามิเตอร์เปิดใบตามรหัส — ค้นด้วยเลข) · `OcrLineDiscountFixDbTests` · Last verified `commit 9c31f573`
 - **🚫 ยกเลิกรอบ (รอบ 201 PR2 · ข้อ 70)** — ปุ่มบนหน้ารายละเอียดรอบ (`payroll.html` `voidRun`) → `POST runs/{id}/void` body `VoidPayrollRunRequest { reason }` ·
   `PayrollRunResponse.CanVoid/VoidBlockReason` จาก `PayrollRunEditPolicy.CanVoid` (ตัวเดียวกับ `VoidPayrollAsync`) · กดไม่ได้ ⇒ disabled + เหตุผล · **เหตุผลบังคับ ≥ 5 ตัวอักษร**
   (service) + `AddChainedAuditLog` (`void-run` · สถานะก่อน · กลับ JE ไหม) · อ่านก่อนล็อกแบบไม่ติดตาม (แถวใต้ `FromSqlRaw … FOR UPDATE` เป็นค่าจริง) ·
