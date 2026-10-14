@@ -72,7 +72,12 @@ public partial class BankService : IBankService
         if (!string.IsNullOrWhiteSpace(request.AccountType) && !ValidBankAccountTypes.Contains(request.AccountType))
             throw new ArgumentException("ประเภทบัญชีต้องเป็น Savings (ออมทรัพย์), Current (กระแสรายวัน) หรือ Fixed (ฝากประจำ)");
 
-        var linkedAccountId = request.LinkedAccountId;
+        var linkedAccountId = request.LinkedAccountId == Guid.Empty ? null : request.LinkedAccountId;
+
+        // PC#9 · ID#16 (ผลตรวจ 2026-10-14): เส้นสร้างรับผังจาก client ดิบ ๆ ขณะที่เส้นแก้ไขตรวจ ⇒ ผูกผังบริษัทอื่น/ผังที่ไม่ใช่เงินฝากได้
+        // ตอนสร้าง · ตอนนี้ตรวจด้วยตัวเดียวกับเส้นแก้ไข
+        if (linkedAccountId.HasValue)
+            await ValidateLinkedAccountAsync(companyId, linkedAccountId.Value);
 
         if (!linkedAccountId.HasValue)
         {
@@ -103,6 +108,32 @@ public partial class BankService : IBankService
         }
 
         return MapToResponse(account);
+    }
+
+    /// <summary>ผังที่บัญชีธนาคารผูก — ตัวตรวจเดียวของเส้นสร้างและเส้นแก้ไข (PC#9 · ID#16)
+    /// <para>⚠ เดิมรับ id จาก client **ดิบ ๆ** ⇒ ผูกบัญชีธนาคารกับผังของบริษัทอื่นได้ (ละเมิด tenant isolation — กฎเหล็ก #2 M) และผูกกับ
+    /// ผังที่ไม่ใช่เงินสด/เงินฝากได้ ⇒ ตัวกระทบยอดอ่าน "ขาที่วิ่งผ่านบัญชีนี้" ผิดใบทุกใบ · บัญชีกลุ่ม (ระดับ &lt; 4) ลงรายการไม่ได้ ⇒
+    /// การรับ/จ่ายผ่านบัญชีนี้จะถูกปฏิเสธตอนลงบัญชี (Helpers/DocumentMoneyChannel) — ตรวจตั้งแต่ตอนผูก</para></summary>
+    private async Task ValidateLinkedAccountAsync(Guid companyId, Guid linkedAccountId)
+    {
+        var coa = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.Id == linkedAccountId && a.CompanyId == companyId && !a.IsDeleted)
+            .Select(a => new { a.AccountCode, a.AccountName, a.IsActive, a.Level })
+            .FirstOrDefaultAsync()
+            ?? throw new Accounting.Helpers.BusinessRuleException(
+                "ไม่พบผังบัญชีที่เลือกในบริษัทนี้ — เลือก “ผังบัญชีที่ผูก” ใหม่จากรายการ (หรือเว้นว่างให้ระบบสร้างผังเงินฝากย่อยให้)", "BANK-LINKED-ACCOUNT");
+        if (!coa.IsActive)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ผังบัญชี {coa.AccountCode} {coa.AccountName} ถูกปิดใช้งานอยู่ — เปิดใช้ที่หน้า “ผังบัญชี” หรือเลือกผังอื่น", "BANK-LINKED-ACCOUNT");
+        if (!coa.AccountCode.StartsWith("111"))
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ผังบัญชี {coa.AccountCode} ไม่ใช่กลุ่มเงินสด/เงินฝากธนาคาร (111x) — "
+                + "การกระทบยอดอ่านยอดจาก \"ขาที่วิ่งผ่านบัญชีนี้\" จึงต้องผูกกับผังเงินฝากเท่านั้น · เลือกผังเงินฝาก หรือเว้นว่างให้ระบบสร้างให้",
+                "BANK-LINKED-ACCOUNT");
+        if (coa.Level < 4)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ผังบัญชี {coa.AccountCode} {coa.AccountName} เป็นบัญชีกลุ่ม ลงรายการไม่ได้ — เลือกผังเงินฝากระดับย่อย หรือเว้นว่างให้ระบบสร้างผังย่อยให้",
+                "BANK-LINKED-ACCOUNT");
     }
 
     private static readonly string[] ValidBankAccountTypes = { "Savings", "Current", "Fixed" };
@@ -164,11 +195,11 @@ public partial class BankService : IBankService
         return subAccount;
     }
 
-    public async Task<List<BankAccountResponse>> GetBankAccountsAsync(Guid companyId)
+    public async Task<List<BankAccountResponse>> GetBankAccountsAsync(Guid companyId, bool activeOnly = false)
     {
         var accounts = await _db.Set<BankAccount>()
             .Include(a => a.LinkedAccount)
-            .Where(a => a.CompanyId == companyId && !a.IsDeleted)
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && (!activeOnly || a.IsActive))
             .OrderBy(a => a.AccountName)
             .ToListAsync();
 
@@ -224,21 +255,7 @@ public partial class BankService : IBankService
         if (request.IsActive.HasValue) account.IsActive = request.IsActive.Value;
         if (request.LinkedAccountId.HasValue)
         {
-            // ⚠ เดิมรับ id จาก client **ดิบ ๆ** ⇒ ผูกบัญชีธนาคารกับผังของ
-            // บริษัทอื่นได้ (ละเมิด tenant isolation — กฎเหล็ก #2 M) และผูกกับ
-            // ผังที่ไม่ใช่เงินสด/เงินฝากได้ ⇒ ตัวกระทบยอดอ่าน "ขาที่วิ่งผ่าน
-            // บัญชีนี้" ผิดใบทุกใบ
-            var coa = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.Id == request.LinkedAccountId.Value && a.CompanyId == companyId && !a.IsDeleted)
-                .Select(a => new { a.AccountCode, a.IsActive })
-                .FirstOrDefaultAsync()
-                ?? throw new KeyNotFoundException("ไม่พบผังบัญชีที่เลือกในบริษัทนี้");
-            if (!coa.IsActive)
-                throw new InvalidOperationException("ผังบัญชีที่เลือกถูกปิดใช้งานอยู่ — เลือกบัญชีอื่น");
-            if (!coa.AccountCode.StartsWith("111"))
-                throw new InvalidOperationException(
-                    $"ผังบัญชี {coa.AccountCode} ไม่ใช่กลุ่มเงินสด/เงินฝากธนาคาร (111x) — "
-                    + "การกระทบยอดอ่านยอดจาก \"ขาที่วิ่งผ่านบัญชีนี้\" จึงต้องผูกกับผังเงินฝากเท่านั้น");
+            await ValidateLinkedAccountAsync(companyId, request.LinkedAccountId.Value);
             account.LinkedAccountId = request.LinkedAccountId.Value;
         }
 

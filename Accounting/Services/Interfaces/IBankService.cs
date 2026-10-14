@@ -8,7 +8,8 @@ public interface IBankService
 {
     // Bank Accounts
     Task<BankAccountResponse> CreateBankAccountAsync(Guid companyId, CreateBankAccountRequest request);
-    Task<List<BankAccountResponse>> GetBankAccountsAsync(Guid companyId);
+    /// <param name="activeOnly">true = เฉพาะบัญชีที่เปิดใช้ (ตัวเลือกของฟอร์มเอกสาร/รับ-จ่ายเงิน — PC#18) · false = ทุกบัญชี (หน้าจัดการบัญชีธนาคาร)</param>
+    Task<List<BankAccountResponse>> GetBankAccountsAsync(Guid companyId, bool activeOnly = false);
     Task<BankAccountResponse> UpdateBankAccountAsync(Guid companyId, Guid accountId, UpdateBankAccountRequest request);
 
     // Transactions

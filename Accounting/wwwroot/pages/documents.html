@@ -1838,12 +1838,7 @@
         } catch(e) { this.projects = []; }
         // Load payment channels (cash, bank accounts, director advance, etc.)
         try {
-          const [baRes, pcRes] = await Promise.all([
-            api.getBankAccounts().catch(() => ({ data: [] })),
-            api.getPaymentChannels().catch(() => ({ data: [] }))
-          ]);
-          this.bankAccounts = baRes?.data || [];
-          this.paymentChannels = pcRes?.data || [];
+          await this._loadMoneyChannels();
           const sel = document.getElementById('fPaymentChannel');
           sel.innerHTML = '<option value="">— เงินสด (ค่าเริ่มต้น) —</option>';
           // Group: Bank accounts
@@ -2227,7 +2222,9 @@
           if (fpc) {
             const code = payload.paymentChannelCode;
             // ลอง bank:<id> ก่อน (ถ้า code ตรง bank accounts) ไม่งั้น account:<id>
-            const bank = (this.bankAccounts || []).find(b => b.accountCode === code);
+            // ผังของธนาคารอยู่ที่ linkedAccountCode (BankAccountResponse ไม่มี accountCode — PC#13/ID#5: เดิมไม่เคยตรง ⇒ ใบได้
+            // account:<ผังธนาคาร> ไม่มี BankAccountId ⇒ ยอดธนาคารไม่ขยับ + วิธีชำระกลายเป็นเงินสด)
+            const bank = (this.bankAccounts || []).find(b => b.linkedAccountCode && b.linkedAccountCode === code);
             let acc = !bank ? (this.paymentChannels || []).find(a => a.accountCode === code) : null;
             // Fallback: code ที่ผู้ใช้เลือกใน OCR อาจเป็นบัญชีนอก dropdown
             // (เช่น 21230 เจ้าหนี้กรรมการ — หนี้สิน ที่ไม่อยู่ใน payment channel
@@ -2604,12 +2601,7 @@
         const api = Layout.api();
         // โหลด bank/payment channels ถ้ายังไม่มี (เผื่อเปิด detail ก่อน init form)
         if (api && (!this.bankAccounts?.length && !this.paymentChannels?.length)) {
-          const [baRes, pcRes] = await Promise.all([
-            api.getBankAccounts().catch(() => ({ data: [] })),
-            api.getPaymentChannels().catch(() => ({ data: [] }))
-          ]);
-          this.bankAccounts = baRes?.data || [];
-          this.paymentChannels = pcRes?.data || [];
+          await this._loadMoneyChannels();
         }
         const cur = d.bankAccountName || d.paymentAccountName || '(ไม่ระบุ)';
         document.getElementById('rpsInfo').innerHTML =
@@ -4559,6 +4551,21 @@
           }
         } catch (e) { /* suggestion is best-effort */ }
       },
+      /** โหลดรายการแหล่งเงิน (บัญชีธนาคารที่เปิดใช้ + ผังเงินสด/อื่น ๆ) ตัวเดียวของหน้านี้ — PC#16/PC#18 (ผลตรวจ 2026-10-14):
+       *  เดิม `.catch(() => ({ data: [] }))` ⇒ โหลดไม่สำเร็จแล้วเห็นแค่ "เงินสด (ค่าเริ่มต้น)" บันทึกไปโดยไม่รู้ตัว ·
+       *  ตอนนี้แจ้งผู้ใช้ว่ารายการไหนโหลดไม่ได้ · บัญชีธนาคารที่ปิดใช้ไม่ถูกเสนอ (ค่าที่บันทึกไว้ยังแสดงผ่าน _hydratePaymentAndCategory) */
+      async _loadMoneyChannels() {
+        const api = Layout.api(); if (!api) return;
+        const failed = [];
+        const [baRes, pcRes] = await Promise.all([
+          api.getBankAccounts({ activeOnly: true }).catch(() => { failed.push('บัญชีธนาคาร'); return null; }),
+          api.getPaymentChannels().catch(() => { failed.push('ผังเงินสด/อื่น ๆ'); return null; }),
+        ]);
+        this.bankAccounts = baRes?.data || [];
+        this.paymentChannels = pcRes?.data || [];
+        if (failed.length)
+          Layout.toast(`โหลดรายการ${failed.join(' และ ')}ไม่สำเร็จ — ช่อง “แหล่งเงิน” จะมีตัวเลือกไม่ครบ · รีเฟรชหน้าก่อนเลือกแหล่งเงิน (ถ้าบันทึกตอนนี้ระบบจะใช้เงินสด)`, 'error', 9000);
+      },
       /**
        * Derive a PaymentMethod enum value from the selected paymentChannel.
        * fPaymentChannel encodes:
@@ -6249,10 +6256,12 @@
           // เข้า payload ตอนบันทึก)
           const prof = this._docFieldProfile(docType);
           const pay = document.getElementById('fPaymentChannel');
-          if (prof.pay && t.defaultPaymentAccountId && pay && !pay.value) {
-            // เลือกได้เฉพาะเมื่อ option มีจริง (ผังอาจถูกปิดใช้งานไปแล้ว)
-            const opt = [...pay.options].find(o => o.value === t.defaultPaymentAccountId);
-            if (opt) { pay.value = t.defaultPaymentAccountId; pay.dispatchEvent(new Event('change')); }
+          // ค่าช่องแหล่งเงินมาจากเซิร์ฟเวอร์ (defaultPaymentChannel = bank:/account: — PC#14) · เดิมเทียบรหัสผังดิบกับค่า bank:/account: ⇒ ไม่เคยเติม
+          if (prof.pay && t.defaultPaymentChannel && pay && !pay.value && pay.dataset.userTouched !== '1') {
+            // เลือกได้เฉพาะเมื่อ option มีจริง (บัญชีอาจถูกปิดใช้งานไปแล้ว — บอกผู้ใช้ ไม่เงียบ)
+            const opt = [...pay.options].find(o => o.value === t.defaultPaymentChannel);
+            if (opt) { pay.value = t.defaultPaymentChannel; pay.dispatchEvent(new Event('change')); }
+            else Layout.toast('แหล่งเงินตั้งต้นของเทมเพลตไม่อยู่ในรายการ (อาจถูกปิดใช้งาน) — เลือกแหล่งเงินเอง หรือแก้ที่หน้าเทมเพลตเอกสาร', 'warning', 7000);
           }
           if (!prof.credit) return;
           const terms = document.getElementById('fPaymentTerms');
@@ -7565,8 +7574,8 @@
         // จ่ายไป) ผู้ใช้เปลี่ยนเองได้ เติมเฉพาะตอนช่องยังว่าง
         const payEl = document.getElementById('fPaymentChannel');
         if (payEl && !payEl.value) {
-          const want = d.paymentAccountId ? `account:${d.paymentAccountId}`
-            : d.bankAccountId ? `bank:${d.bankAccountId}` : '';
+          // ลำดับเดียวกับการลงบัญชี — เซิร์ฟเวอร์ส่งค่าช่องมาแล้ว (paymentChannel · PC#15)
+          const want = d.paymentChannel || '';
           const opt = want ? [...payEl.options].find(o => o.value === want) : null;
           if (opt) {
             payEl.value = want;
@@ -9460,15 +9469,16 @@
       _hydratePaymentAndCategory(d) {
         const fpc = document.getElementById('fPaymentChannel');
         if (fpc) {
-          let want = '';
-          if (d.bankAccountId) want = 'bank:' + d.bankAccountId;
-          else if (d.paymentAccountId) want = 'account:' + d.paymentAccountId;
+          // ลำดับ (ผังตรง > ธนาคาร) ตัดสินที่เซิร์ฟเวอร์ตัวเดียวกับการลงบัญชี — PC#15/ID#21: เดิมหน้านี้เลือกธนาคารก่อน
+          // ขณะที่ JE เลือกผังตรงก่อน ⇒ ใบที่มีทั้งสองค่า บันทึกซ้ำแล้วเปลี่ยนผังเงินเงียบ ๆ
+          const want = d.paymentChannel || '';
           if (want) {
             if (!Array.from(fpc.options).some(o => o.value === want)) {
-              // option หาย (บัญชีถูกซ่อน) → เพิ่มกลับเพื่อให้ค่าที่บันทึกแสดง
+              // option หาย (บัญชีถูกปิดใช้งาน/ซ่อน) → เพิ่มกลับเพื่อให้ค่าที่บันทึกแสดง + บอกว่าไม่อยู่ในรายการ (ห้ามโชว์รหัสดิบ)
               const o = document.createElement('option');
               o.value = want;
-              o.textContent = (d.bankAccountName || d.paymentAccountName || want);
+              const nm = want.startsWith('bank:') ? d.bankAccountName : d.paymentAccountName;
+              o.textContent = (nm ? nm + ' ' : 'บัญชีที่บันทึกไว้ ') + '(ไม่อยู่ในรายการ — อาจถูกปิดใช้งาน)';
               fpc.appendChild(o);
             }
             fpc.value = want;
@@ -12431,9 +12441,13 @@
         // Populate the bank-override dropdown with the company's bank
         // accounts. Default option (empty value) keeps the doc's channel.
         const rpBank = document.getElementById('rpBankOverride');
-        rpBank.innerHTML = '<option value="">— ใช้บัญชีตามที่ผูกในเอกสาร (default) —</option>' +
+        // ค่าว่าง = เซิร์ฟเวอร์ใช้แหล่งเงินของเอกสาร (ธนาคาร หรือผังตรง — PC#5) · ป้ายบอกชื่อแหล่งเงินจริงของใบ
+        const _docCh = (this._currentDoc && this._currentDoc.id === docId) ? this._currentDoc : null;
+        const _docChName = _docCh?.paymentChannel
+          ? (_docCh.paymentChannel.startsWith('bank:') ? _docCh.bankAccountName : _docCh.paymentAccountName) : null;
+        rpBank.innerHTML = `<option value="">— ใช้แหล่งเงินของเอกสาร${_docChName ? ': ' + Layout.esc(_docChName) : (_docCh && !_docCh.paymentChannel ? ': เงินสด' : '')} (default) —</option>` +
           (this.bankAccounts || []).map(a =>
-            `<option value="${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`
+            `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`
           ).join('');
         rpBank.value = '';
         // Populate the "fund from another GL account" dropdown — Asset +
@@ -12460,11 +12474,18 @@
         }
         const rpFund = document.getElementById('rpFundAccount');
         if (rpFund) {
+          // PC#21: ไม่เสนอบัญชีกลุ่ม/ผังที่ปิดใช้ และผังที่บัญชีธนาคารผูกไว้ (จ่ายผ่านธนาคารต้องเลือกที่ "บัญชีรับ-จ่ายเงิน"
+          // เพื่อให้ยอดธนาคารขยับด้วย — เลือกผังธนาคารตรงที่นี่ = GL ขยับแต่สมุดธนาคารไม่ขยับ)
+          const bankGl = new Set((this.bankAccounts || []).map(b => b.linkedAccountId).filter(Boolean));
           const fill = (accts) => {
+            const usable = (accts || []).filter(a => a.isActive !== false && Number(a.level || 0) >= 4 && !bankGl.has(a.id));
             rpFund.innerHTML = '<option value="">— ไม่ใช้ (ใช้เงินสด/ธนาคารปกติ) —</option>' +
-              (accts || []).map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+              usable.map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
             rpFund.value = '';
           };
+          // เลือกได้ทางเดียว (เซิร์ฟเวอร์ปฏิเสธเมื่อส่งทั้งสองช่อง) — เลือกช่องหนึ่งแล้วล้างอีกช่องให้เห็นทันที
+          rpBank.onchange = () => { if (rpBank.value) rpFund.value = ''; };
+          rpFund.onchange = () => { if (rpFund.value) rpBank.value = ''; };
           if (this._fundAccounts) fill(this._fundAccounts);
           else {
             const api2 = Layout.api();
@@ -12479,7 +12500,10 @@
                 .filter(a => a.accountCode)
                 .sort((x, y) => (x.accountCode || '').localeCompare(y.accountCode || ''));
               fill(this._fundAccounts);
-            }).catch(() => fill([]));
+            }).catch(() => {
+              fill([]);
+              Layout.toast('โหลดรายการ “จ่าย/รับจากบัญชีอื่น” ไม่สำเร็จ — ช่องนี้จะว่าง · รีเฟรชหน้าถ้าต้องการใช้', 'error', 7000);
+            });
           }
         }
         // Per-installment WHT — only show when the source actually carries WHT.

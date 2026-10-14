@@ -14,7 +14,8 @@ namespace Accounting.Tests.Db;
 /// ทีม A (2a · 2026-10-13) — ภาษีหัก ณ ที่จ่ายตอนบันทึกจ่ายผ่านเมธอดจริง (<c>CreatePaymentAsync</c> · endpoint แนะนำยอด · คำเตือนก่อนอนุมัติ)
 /// บน PostgreSQL: ไม่มีใบลดหนี้ = ยอดเดิมทุกสตางค์ · ใบลดหนี้ซื้ออนุมัติแล้ว = แนะนำยอดสุทธิ (300 − 30 = 270) · ผู้ใช้ระบุ 300 = รับ + คำเตือน + audit ·
 /// เกินเพดานใบเดิม = บล็อกเหมือนเดิม · ใบสำคัญจ่ายหักเต็มใบเดิมหลังใบลดหนี้ = คำเตือน [WHT-CN-NET]
-/// <para>บริษัททดสอบไม่มีผังบัญชี ⇒ <c>CreatePaymentJournalAsync</c> ไม่ลง JE (คืนก่อนเมื่อไม่พบผังเงินสด) — เทสต์นี้ล็อก "ยอดภาษีหักของการจ่าย" ไม่ใช่ JE</para>
+/// <para>บริษัททดสอบมีผังขั้นต่ำ (เงินสด · เจ้าหนี้ · หนี้ภาษีหัก) เพราะตั้งแต่ 2026-10-14 ไม่มีผังเงินสด = การจ่ายล้มดัง (PC#4) —
+/// เทสต์นี้ล็อก "ยอดภาษีหักของการจ่าย" ไม่ใช่ JE</para>
 /// </summary>
 [Trait("Category", "Db")]
 public class WhtPaymentSuggestionDbTests
@@ -29,6 +30,16 @@ public class WhtPaymentSuggestionDbTests
     {
         var company = new Company { Name = "บริษัททดสอบภาษีหักตอนจ่าย " + tag, TaxId = "0105556000025", IsVatRegistered = true };
         db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        // ผังขั้นต่ำของ JE การจ่าย (เงินสด · เจ้าหนี้ · หนี้ภาษีหัก) — 2026-10-14 ทีม F2 (PC#4): ไม่มีผังเงินสด = การจ่ายล้มดัง
+        // (เดิม CreatePaymentJournalAsync คืนก่อนลง JE เงียบ ๆ ซึ่งเทสต์นี้เคยอาศัย)
+        foreach (var (code, name, type) in new[]
+                 {
+                     ("11111", "เงินสด", AccountType.Asset), ("21210", "เจ้าหนี้การค้า", AccountType.Liability),
+                     ("21915", "ภ.ง.ด.2 ค้างจ่าย", AccountType.Liability), ("21916", "ภ.ง.ด.3 ค้างจ่าย", AccountType.Liability),
+                     ("21917", "ภ.ง.ด.53 ค้างจ่าย", AccountType.Liability), ("21918", "ภ.ง.ด.54 ค้างจ่าย", AccountType.Liability),
+                 })
+            db.ChartOfAccounts.Add(new ChartOfAccount { CompanyId = company.Id, AccountCode = code, AccountName = name, AccountType = type, Level = 4, IsActive = true });
         await db.SaveChangesAsync();
         var supplier = new Contact
         {

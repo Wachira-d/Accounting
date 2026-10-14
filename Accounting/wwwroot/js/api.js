@@ -825,7 +825,8 @@ const API = {
       getInvestments: () => API.get(`${base}/financial/investments`),
       sellInvestment: (id, d) => API.post(`${base}/financial/investments/${id}/sell`, d),
       // Bank
-      getBankAccounts: () => API.get(`${base}/bank/accounts`),
+      // { activeOnly: true } = เฉพาะบัญชีที่เปิดใช้ (ตัวเลือกในฟอร์มเอกสาร/รับ-จ่ายเงิน · PC#18) · ไม่ส่ง = ทุกบัญชี (หน้าจัดการบัญชีธนาคาร)
+      getBankAccounts: (opts) => API.get(`${base}/bank/accounts${opts && opts.activeOnly ? '?activeOnly=true' : ''}`),
       createBankAccount: (d) => API.post(`${base}/bank/accounts`, d),
       updateBankAccount: (id, d) => API.put(`${base}/bank/accounts/${id}`, d),
       getTransactions: (id, q = '') => API.get(`${base}/bank/accounts/${id}/transactions${q}`),

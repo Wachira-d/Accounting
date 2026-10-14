@@ -314,6 +314,68 @@ RULES += [
          why="ถูกปฏิเสธ ⇒ ถอนเครดิตที่ยกไปงวดถัดไป"),
 ]
 
+# ── 2026-10-14 ทีม F2 (PAYMENT_CHANNEL_AUDIT PC#3/#4/#5/#9/#14/#21 · ID#4/#6/#7): แหล่งเงินของเอกสาร/การชำระ → ผังบัญชี
+#    ตัวตัดสินเดียว Helpers/DocumentMoneyChannel — เดิมลำดับเดียวกันถูกเขียน 4 ที่ และทุกที่ตกไปเงินสดเงียบ ๆ เมื่อธนาคารยังไม่ผูกผัง ──
+_MONEY_WHY = ("PC#4 แหล่งเงินที่เลือกแล้วใช้ไม่ได้ต้องล้มดังพร้อมทางไปต่อผ่าน DocumentMoneyChannel — "
+              "ห้ามกลับไปหา BankAccounts.LinkedAccountId เอง/ตกเงินสด 111 เงียบ ๆ/คืนก่อนลง JE")
+BANKSVC = "Services/Implementations/BankService.cs"
+TPLSVC = "Services/Implementations/DocumentTemplateService.cs"
+PDFSVC = "Services/Implementations/PdfGenerationService.cs"
+RULES += [
+    dict(file=DOC, method="AutoPostToJournalAsync",
+         must=["DocumentMoneyChannel.EvaluateAsync(", "UseMoneyAccount()", "DocumentMoneyChannel.ExpenseCategoryProblemAsync("],
+         forbid=["moneyAccount != null", "bankAcc?.LinkedAccount"],
+         why=_MONEY_WHY + " · ขาเงินทุกขาเรียก UseMoneyAccount() (ใบตั้งหนี้ที่ไม่ขยับเงินยังอนุมัติได้)"),
+    dict(file=DOC, method="ResolvePaymentCashAccountAsync",
+         must=["DocumentMoneyChannel.ResolvePostingAccountAsync(", "DocumentMoneyChannel.NoDefaultCashMessage("],
+         forbid=["LinkedAccountId"],
+         why=_MONEY_WHY),
+    dict(file=DOC, method="CreatePaymentJournalAsync",
+         must=["ResolvePaymentCashAccountAsync("],
+         forbid=["if (cashAccount == null) return", "LinkedAccountId"],
+         why=_MONEY_WHY + " · เดิม if (cashAccount == null) return; บันทึกการชำระโดยไม่มี JE"),
+    dict(file=DOC, method="CreatePaymentAsync",
+         must=["DocumentMoneyChannel.ForPayment(", "DocumentMoneyChannel.HasBothOverrides(", "ResolvePaymentCashAccountAsync("],
+         must_re=[r"BankAccountId\s*=\s*payChannel\.BankAccountId", r"OverridePaymentAccountId\s*=\s*payChannel\.PaymentAccountId"],
+         before=[("ResolvePaymentCashAccountAsync(", "_db.Payments.Add(")],
+         forbid=["request.OverrideBankAccountId ?? doc.BankAccountId"],
+         why="PC#5/#21 การชำระสืบทอดแหล่งเงินของเอกสารทั้งสองแบบ · เลือกผังตรง = ไม่ขยับยอดธนาคาร · ตรวจผังก่อนบันทึก"),
+    dict(file=DOC, method="CreateMultiDocPaymentAsync",
+         must=["DocumentMoneyChannel.ForPayment(", "DocumentMoneyChannel.HasBothOverrides(", "ResolvePaymentCashAccountAsync("],
+         must_re=[r"OverridePaymentAccountId\s*=\s*payChannel\.PaymentAccountId",
+                  r"OverridePaymentAccountId\s*=\s*payment\.OverridePaymentAccountId"],
+         forbid=["request.OverrideBankAccountId ?? firstDoc.BankAccountId"],
+         why="PC#5 เส้นจ่ายหลายใบเคยทิ้ง OverridePaymentAccountId ทั้งของคำขอและของเอกสาร (รวมการชำระย่อยต่อใบ)"),
+    dict(file=DOC, method="CreateDocumentAsync",
+         must=["ValidateDocumentMoneyHeaderAsync("],
+         why="PC#4/ID#7 หัวเอกสาร BankAccountId/PaymentAccountId/ExpenseCategoryId ต้องตรวจตาราง+บริษัท+สถานะตอนบันทึก"),
+    dict(file=DOC, method="UpdateDocumentAsync",
+         must=["ValidateDocumentMoneyHeaderAsync("],
+         why="PC#4/ID#7 แก้แหล่งเงิน/หมวดค่าใช้จ่ายต้องผ่านด่านเดียวกับตอนสร้าง"),
+    dict(file=DOC, method="ValidateDocumentMoneyHeaderAsync",
+         must=["DocumentMoneyChannel.EvaluateAsync(", "DocumentMoneyChannel.ExpenseCategoryProblemAsync("],
+         must_re=[r"if\s*\(\s*!\s*d\.Ok\s*\)\s*throw\b"],
+         why="PC#4/ID#7 ด่านหัวเอกสารต้องโยนเมื่อตัวตัดสินบอกว่าใช้ไม่ได้"),
+    dict(file=DOC, method="ReclassifyPaymentSourceAsync",
+         must=["DocumentMoneyChannel.EvaluateAsync(", "JournalEntryLines", "IsCashInflowDocAsync("],
+         forbid=["Select(b => b.LinkedAccountId)"],
+         why="ID#6 ผังแหล่งเงินเดิมต้องอ่านจาก JE ที่ลงไว้จริง ไม่ใช่ LinkedAccountId ปัจจุบันของธนาคาร"),
+    dict(file=BANKSVC, method="CreateBankAccountAsync", must=["ValidateLinkedAccountAsync("],
+         before=[("ValidateLinkedAccountAsync(", "_db.Set<BankAccount>().Add(")],
+         why="PC#9/ID#16 เส้นสร้างบัญชีธนาคารต้องตรวจผังที่ผูกด้วยตัวเดียวกับเส้นแก้ไข"),
+    dict(file=BANKSVC, method="UpdateBankAccountAsync", must=["ValidateLinkedAccountAsync("],
+         why="PC#9/ID#16 เส้นแก้ไขบัญชีธนาคารใช้ตัวตรวจผังที่ผูกตัวเดียว"),
+    dict(file=TPLSVC, method="CreateAsync", must=["ValidateDefaultPaymentAccountAsync("],
+         why="PC#14/ID#4 บัญชีรับ/จ่ายเงินตั้งต้นของเทมเพลตต้องตรวจตาราง+บริษัท+สถานะ"),
+    dict(file=TPLSVC, method="UpdateAsync", must=["ValidateDefaultPaymentAccountAsync("],
+         why="PC#14/ID#4 บัญชีรับ/จ่ายเงินตั้งต้นของเทมเพลตต้องตรวจตาราง+บริษัท+สถานะ"),
+    dict(file=TPLSVC, method="GetDefaultTemplateAsync", must=["DocumentMoneyChannel.ChannelValueForGlAsync("],
+         why="PC#14 ฟอร์มเอกสารเติมแหล่งเงินจากค่าที่เซิร์ฟเวอร์แปลง (เดิมเทียบรหัสผังดิบกับ bank:/account: ⇒ ไม่เคยเติม)"),
+    dict(file=PDFSVC, method="BuildProjectedGlAsync", must=["DocumentMoneyChannel.EvaluateAsync("],
+         forbid=["BankGlAsync("],
+         why="PC#15 พรีวิวการลงบัญชีต้องใช้ลำดับเดียวกับ JE จริง (เดิมเลือกธนาคารก่อน + เดาเงินสดเมื่อยังไม่ผูกผัง)"),
+]
+
 RULES += [
     dict(file=EXPENSE, method=m, must=["EnsureClaimActionAsync("],
          before=[("EnsureClaimActionAsync(", "_db.SaveChangesAsync(")], why=_EXPENSE_WHY)

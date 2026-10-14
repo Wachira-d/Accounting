@@ -59,8 +59,9 @@
             </div>
             <div class="form-group"><label class="form-label">หมายเลขอ้างอิง</label><input type="text" class="form-input" id="fRef" placeholder="เช่น เลขที่เช็ค, หมายเลขโอน"></div>
           </div>
-          <div class="form-group"><label class="form-label">บัญชีธนาคาร</label>
-            <select class="form-select" id="fBankAcc"><option value="">-- ไม่ระบุ --</option></select>
+          <div class="form-group"><label class="form-label">บัญชีธนาคารที่รับ/จ่ายเงิน</label>
+            <select class="form-select" id="fBankAcc"><option value="">— ใช้แหล่งเงินของเอกสาร (default) —</option></select>
+            <div class="form-help" id="fBankAccHelp">ไม่เลือก = ลงบัญชีตามแหล่งเงินที่ตั้งไว้ในเอกสาร (ธนาคาร หรือผังเงินสด/อื่น ๆ)</div>
           </div>
           <div class="form-group"><label class="form-label" data-i18n="common.note">หมายเหตุ</label><textarea class="form-textarea" id="fNotes" rows="2"></textarea></div>
         </div>
@@ -142,17 +143,19 @@
         document.getElementById('fNotes').value = '';
         // Load documents for dropdown
         const api = Layout.api(); if (!api) return;
+        // PC#16 (ผลตรวจ 2026-10-14): เดิม catch กลืนเงียบ ⇒ dropdown ว่างแล้วผู้ใช้บันทึกโดยไม่รู้ว่ารายการโหลดไม่ขึ้น — แจ้งทุกครั้ง
+        // บัญชีธนาคารที่ปิดใช้ไม่ถูกเสนอ (activeOnly · PC#18)
         try {
           const [docsRes, bankRes] = await Promise.all([
             api.getDocuments('?page=1&pageSize=100&status=Approved'),
-            api.getBankAccounts()
+            api.getBankAccounts({ activeOnly: true })
           ]);
           const docs = docsRes.data?.items || docsRes.data || [];
           this._docsMap = {};
           docs.forEach(d => this._docsMap[d.id] = d);
           const docSelect = document.getElementById('fDocId');
           docSelect.innerHTML = '<option value="">-- เลือกเอกสาร --</option>' +
-            docs.map(d => `<option value="${d.id}">${d.documentNumber} - ${d.contactName || ''} (${Layout.money(d.balanceDue || d.totalAmount)})</option>`).join('');
+            docs.map(d => `<option value="${Layout.esc(d.id)}">${Layout.esc(d.documentNumber)} - ${Layout.esc(d.contactName || '')} (${Layout.money(d.balanceDue || d.totalAmount)})</option>`).join('');
           docSelect.onchange = () => {
             const doc = this._docsMap[docSelect.value];
             if (doc) {
@@ -163,9 +166,11 @@
           };
           const banks = bankRes.data?.items || bankRes.data || [];
           const bankSelect = document.getElementById('fBankAcc');
-          bankSelect.innerHTML = '<option value="">-- ไม่ระบุ --</option>' +
-            banks.map(b => `<option value="${b.id}">${b.accountName} - ${b.bankName}</option>`).join('');
-        } catch (e) { /* ignore */ }
+          bankSelect.innerHTML = '<option value="">— ใช้แหล่งเงินของเอกสาร (default) —</option>' +
+            banks.map(b => `<option value="${Layout.esc(b.id)}">${Layout.esc(b.accountName)} - ${Layout.esc(b.bankName)} ${Layout.esc(b.accountNumber || '')}</option>`).join('');
+        } catch (e) {
+          Layout.toast('โหลดรายการเอกสาร/บัญชีธนาคารไม่สำเร็จ: ' + (e.message || '') + ' — ปิดหน้าต่างแล้วลองใหม่ (ถ้าบันทึกตอนนี้จะเลือกบัญชีธนาคารไม่ได้)', 'error', 9000);
+        }
         Layout.openModal('formModal');
       },
       async save() {
@@ -201,7 +206,8 @@
             amount,
             paymentMethod: document.getElementById('fMethod').value,
             reference: document.getElementById('fRef').value || null,
-            bankAccountId: document.getElementById('fBankAcc').value || null,
+            // PC#3/ID#3: ชื่อฟิลด์ต้องตรง CreatePaymentRequest.OverrideBankAccountId — เดิมส่ง bankAccountId ⇒ เซิร์ฟเวอร์ทิ้งค่าเงียบ ๆ
+            overrideBankAccountId: document.getElementById('fBankAcc').value || null,
             notes: document.getElementById('fNotes').value || null,
           });
           Layout.closeModal('formModal'); Layout.toast('บันทึกการชำระเงินสำเร็จ');

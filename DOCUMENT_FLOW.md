@@ -482,11 +482,28 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (กรุงไทย 11110 ชนะ กสิกร 11120). A/P-A/R ไม่มีแหล่งเงิน → ใช้ prefix เดิม.
 - **แก้แหล่งเงินหลัง approve** — `DocumentService.ReclassifyPaymentSourceAsync`
   (`POST /documents/{id}/reclassify-payment-source`): คู่กับ reclassify-line
-  (ฝั่ง Dr). post correcting-JE **Dr ผังเก่า / Cr ผังใหม่** ขนาด PaidAmount →
-  เงินกลับเข้าบัญชีเก่า + ออกจากบัญชีใหม่. gate เดียวกับ reclassify-line
+  (ฝั่ง Dr). post correcting-JE ขนาด PaidAmount (บาท) — เงินออก **Dr ผังเก่า / Cr ผังใหม่** ·
+  เงินเข้า **Dr ผังใหม่ / Cr ผังเก่า** (2026-10-14 ID#6 — เดิมใช้ทิศเงินออกเสมอ). **ผังเก่าอ่านจาก JE ที่ลงไว้จริง**
+  (ขาเงินสุทธิของ JE ที่ยังมีผลของใบ — ผังตามหัวเอกสารใช้เมื่อ JE ยืนยันเท่านั้น) ไม่ใช่ `LinkedAccountId` ปัจจุบันของธนาคาร ·
+  หาขาเงินไม่เจอ/เจอหลายผัง = ปฏิเสธพร้อมทางไปต่อ (สมุดรายวันทั่วไป/ยกเลิกออกใหม่) · ผังใหม่ผ่าน `DocumentMoneyChannel` (ธนาคารต้องผูกผัง + เปิดใช้).
+  gate เดียวกับ reclassify-line
   (period open, ไม่มี downstream/Payment แยก/TaxReport submitted/e-Tax).
   UI: ปุ่ม ✏️ ข้าง "แหล่งเงิน (Cr)" ในหน้า detail (PV/Receipt/Expense ที่
   Approved/Paid).
+- **แหล่งเงิน → ผังบัญชี: ตัวตัดสินเดียว `Helpers/DocumentMoneyChannel`** (2026-10-14 ทีม F2 · PAYMENT_CHANNEL_AUDIT PC#3/#4/#5/#9/#14/#15/#21 · ID#3–#7/#16):
+  ลำดับ **ผังตรง (`PaymentAccountId`/`OverridePaymentAccountId`) > ธนาคาร → `LinkedAccountId` > เงินสดตั้งต้น 111** ใช้ร่วมทุกจุด —
+  ลงบัญชีตอนอนุมัติ (`AutoPostToJournalAsync` · ขาเงินทุกขาเรียก `UseMoneyAccount()`) · JE การชำระ + ขาเงินส่วนเกิน (`ResolvePaymentCashAccountAsync`) ·
+  พรีวิวการลงบัญชี (`PdfGenerationService.BuildProjectedGlAsync` — เดิมเลือกธนาคารก่อน) · ค่าช่องฟอร์ม `DocumentResponse.PaymentChannel` (ฟอร์มแก้ไข/ใบลดหนี้ hydrate จากค่านี้).
+  **ด่านใหม่ (throw พร้อมทางไปต่อ — คำตัดสินข้อ 150: GL integrity)**: (1) บันทึกเอกสาร (สร้าง/แก้ — แก้ตรวจเฉพาะช่องที่เปลี่ยน) ตรวจ `BankAccountId`/`PaymentAccountId`/
+  `ExpenseCategoryId` กับตารางของตัวเอง + CompanyId + เปิดใช้ + ธนาคารผูกผังแล้ว · (2) ลงบัญชีขาเงินเมื่อแหล่งเงินที่เลือกใช้ไม่ได้ (ธนาคารยังไม่ผูกผัง/รหัสผิดตาราง/บริษัทอื่น)
+  — **เดิมลงเงินสดเงียบ ๆ** · ใบตั้งหนี้ที่ไม่ขยับเงินยังอนุมัติได้ · หมวดค่าใช้จ่ายที่ใช้ไม่ได้ — เดิมตก 51110 เงียบ · (3) ไม่มีผังเงินสดเลย — **เดิมบันทึกการชำระโดยไม่มี JE** ·
+  (4) เลือก "บัญชีรับ-จ่ายเงิน" กับ "จ่าย/รับจากบัญชีอื่น" พร้อมกัน · (5) เงินส่วนเกินของการจ่ายหลายใบไม่มีผังพัก — เดิมข้าม JE.
+  **การชำระสืบทอดแหล่งเงินของเอกสารทั้งสองแบบ** (`DocumentMoneyChannel.ForPayment` · ใบเดี่ยว + หลายใบ) — เดิมสืบทอดแต่ธนาคาร ⇒ ใบที่ตั้งเงินทดรองกรรมการ/เงินสดย่อยไปลงเงินสด ·
+  เลือกผังตรงตอนชำระ ⇒ `Payment.BankAccountId = null` (ยอดธนาคารของใบไม่ขยับ — เงินไม่ได้ผ่านธนาคารนั้น) · `OverridePaymentAccountId` เก็บผังขาเงินของการชำระ (เลือกหรือสืบทอด) ·
+  ใบเสร็จหลักฐานของการชำระสืบทอด `PaymentAccountId` ด้วย. ชื่อบัญชีใน `DocumentResponse` แสดงเฉพาะเมื่อเป็นของบริษัทเดียวกับเอกสาร (ID#7 กันรั่วข้ามบริษัท).
+  เทมเพลต: `DefaultPaymentAccountId` ตรวจตอนบันทึก (Guid.Empty = ล้าง) · `GET document-templates/default/{type}` คืน `defaultPaymentChannel` (`bank:`/`account:`) ให้ฟอร์มเติมได้จริง (PC#14).
+  บัญชีธนาคาร: สร้างตรวจผังที่ผูกด้วยตัวเดียวกับแก้ไข (PC#9) · `GET bank/accounts?activeOnly=true` สำหรับตัวเลือก (หน้าจัดการยังเห็นทุกบัญชี · PC#18).
+  Last verified `commit (sha เติมภายหลัง)`
 - **Phantom split-VAT sanitizer**: `OcrService.SanitizeVatSplitArtifacts`
   ตัด suffix "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)/(VATable)/(non-VAT)/(VAT included)…"
   ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
@@ -5354,3 +5371,7 @@ _Last verified against codebase: 2026-10-12 (รอบ 203 — ประเภ�
 _Last verified against codebase: 2026-10-12 (รอบ 203 — ค่าเบี้ยประกันวินาศภัยเป็น "เหตุให้สงสัย" ใน `WhtServiceHints` + prompt `WhtCategoryPrompt` อ่านรหัส/อัตราจาก `ThaiWhtRateTable` (`CodeList`) · §5.4 — commit cf624327)_
 
 _Last verified against codebase: 2026-10-12 (ผลตรวจฝ่ายค้านงาน WHT/50 ทวิ cbc0f705..56ff4998 — §5.4: M1 พรีวิว GL ตามผู้ถูกหัก · M2/M3 ด่านอัตรา-ประเภทใช้ผู้ถูกหัก + ป้าย `[WHT-RATE]` (`Helpers/WhtLineRateWarning`) ผ่านทางเข้าไม่มีคน · M4 `DocumentLineIncomeType.Inherit` ในแปลง/คัดลอก/รายการประจำ · M5 รายการประจำออก 50 ทวิ ทางเดียวกับใบคีย์มือ (`WhtCertIssuePlan.RecurringTemplateAutoIssue`) · M6 `CertificateRow` ต่อบรรทัดจากเซิร์ฟเวอร์ · L1 ตรวจผู้ถูกหักก่อนยกเลิกใบร่าง · L3 `PayerSideProblem` · L4/L6 หน้าเว็บ · `WhtAdversarialFixTests` — commit 2e038dde)_
+
+_Last verified against codebase: 2026-10-14 (ทีม F2 แหล่งเงินของเอกสาร/การชำระ — §2.x "แหล่งเงิน → ผังบัญชี": ตัวตัดสินเดียว `Helpers/DocumentMoneyChannel` ·
+ด่านหัวเอกสารตอนบันทึก · ลงบัญชีไม่ตกเงินสดเงียบเมื่อธนาคารยังไม่ผูกผัง · ไม่มีผังเงินสด = ล้มดัง (เดิมไม่มี JE) · การชำระสืบทอดผังตรงของเอกสาร · จ่ายจากผังอื่นไม่ขยับยอดธนาคาร ·
+reclassify อ่านผังเดิมจาก JE · เทมเพลต `defaultPaymentChannel` · BankService สร้างตรวจผังที่ผูก + `activeOnly` — commit (sha เติมภายหลัง))_

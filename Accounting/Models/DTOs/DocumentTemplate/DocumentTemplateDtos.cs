@@ -341,7 +341,10 @@ public record DocumentTemplateResponse(
     bool ShowDocumentNumber = true,
     bool ShowDocumentDate = true,
     bool ShowDueDate = true,
-    bool ShowReference = true);
+    bool ShowReference = true,
+    /// <summary>ค่าช่อง "แหล่งเงิน" ของฟอร์มเอกสารที่ได้จาก <c>DefaultPaymentAccountId</c> (<c>bank:&lt;id&gt;</c> / <c>account:&lt;id&gt;</c> / null) —
+    /// เซิร์ฟเวอร์แปลงด้วย <c>Helpers/DocumentMoneyChannel.ChannelValueForGlAsync</c> (PC#14: เดิมหน้าเว็บเทียบรหัสผังดิบกับค่า bank:/account: ⇒ ไม่เคยเติม)</summary>
+    string? DefaultPaymentChannel = null);
 
 public record DocumentTemplateListResponse(
     Guid Id,
