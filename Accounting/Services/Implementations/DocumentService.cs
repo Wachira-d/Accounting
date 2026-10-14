@@ -15123,7 +15123,10 @@ public partial class DocumentService : IDocumentService
     /// ตัวโหลดเดียวของ DocumentService (ตัวตัดสิน <see cref="Accounting.Helpers.WhtRoyaltyPolicy.AppliesTo"/>) · ผลส่งเข้า <c>royaltyAsPnd2</c> ของ
     /// <see cref="ResolveWhtPayableAccountAsync"/> / <c>WhtPayeeKind.ResolveForm</c> · ค่าตั้ง ภ.ง.ด.3 (ค่าตั้งต้น) ⇒ false = พฤติกรรมเดิม</summary>
     private async Task<bool> ResolveRoyaltyPolicyAsync(Guid companyId, DateTime taxDate)
-        => (await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(taxDate);
+    {
+        var setting = await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId);
+        return setting.AppliesTo(taxDate);
+    }
 
 
     /// <summary>รอบ 204 (ข้อ 143): ส่วนของผู้ถูกหักของเอกสาร (ตัวแบ่งเดียว <see cref="Accounting.Helpers.WhtPayeeSplit"/>) —
