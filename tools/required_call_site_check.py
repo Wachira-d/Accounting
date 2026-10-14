@@ -7255,6 +7255,35 @@ RULES += [
          why="ศูนย์นำเข้า banktransactions ลงผ่านตัวเขียนเดียวกับทุกทางเข้า"),
 ]
 
+# ทีมตรวจรายการประจำ 2026-10-14 (ผู้ใช้: เลือกบัญชีธนาคารแล้วบันทึกไม่ได้ "Template มี accountId ที่ไม่พบในผังบัญชี") —
+# เทสต์ RecurringTemplateTests ล็อก helper · กติกาข้างล่างล็อกจุดเรียกที่เทสต์ helper มองไม่เห็น
+_RECUR_1014 = "ทีมตรวจรายการประจำ 2026-10-14: "
+RULES += [
+    dict(file=RECURRING, method="ValidateTemplateAsync",
+         must=["RecurringTemplate.Read(", "_db.BankAccounts", "RecurringTemplate.RefKind.BankAccount", "RecurringTemplate.RefKind.ChartOfAccount",
+               "RecurringTemplate.RefKind.Project", "RecurringTemplate.RefKind.Branch"],
+         forbid=["accountIds.Add(bankId"],
+         why=_RECUR_1014 + "รหัสแต่ละชนิดค้นในตารางของมัน (บัญชีธนาคาร → ทะเบียนบัญชีธนาคาร ไม่ใช่ผังบัญชี) ผ่านตัวอ่านเดียวกับตอนสร้าง"),
+    dict(file=RECURRING, method="ExecuteRecurringAsync",
+         must=["ValidateTemplateAsync(recurring.CompanyId", "atSave: false", "RecurringSchedule.PlaceholderBaseDate("],
+         why=_RECUR_1014 + "ตรวจซ้ำตอนถึงรอบ — ของที่ถูกลบ/ปิดหลังบันทึกต้องล้มดังพร้อมช่อง (ไม่ใช่ AutoPost ตกไปลงเงินสด 111 เงียบ ๆ)"),
+    dict(file=RECURRING, method="RunNowAsync",
+         must=["JobLock.RunExclusiveAsync(", "AdvisoryLockKey.RecurringRun", "RecordRunFailureAsync("],
+         forbid=["BeginTransactionAsync("], forbid_lit=["FOR UPDATE"],
+         why=_RECUR_1014 + "CreateDocumentAsync/ApproveDocumentAsync เปิดธุรกรรมเอง — ห่อด้วยธุรกรรมอีกชั้น = 'connection is already in a transaction' ทุกครั้ง"),
+    dict(file=RECURRING, method="ProcessDueRecurringTransactionsAsync",
+         must=["JobLock.RunExclusiveAsync(", "AdvisoryLockKey.RecurringRun", "RecordRunFailureAsync(", "_db.ChangeTracker.Clear()",
+               "RecurringSchedule.IsFinished("],
+         forbid=["BeginTransactionAsync(", "r.EndDate >= now"], forbid_lit=["FOR UPDATE"],
+         why=_RECUR_1014 + "cron: ล็อกต่อรายการแบบ session · ล้ม = เหตุผลบนแถว · วันสิ้นสุดนับรวมวันนั้น (เดิม EndDate >= now ตัดงวดสุดท้าย)"),
+    dict(file=RECURRING, method="CreateDocumentFromTemplateAsync",
+         must=["MarkRunAsync(recurring, consumesPeriod, result.Id)", "SetRunNoticeAsync(recurring, notices)",
+               "RecurringTemplate.ReadGuid(root,", "RecurringTemplate.Number(line,"],
+         forbid=["Guid.Parse(aid.GetString()", "up.GetDecimal()"],
+         before=[("CreateDocumentAsync(recurring.CompanyId", "MarkRunAsync("), ("MarkRunAsync(", "ApproveDocumentAsync(")],
+         why=_RECUR_1014 + "ประทับรอบทันทีหลังสร้าง (ขั้นอนุมัติ/อีเมลล้มไม่ทำให้ออกใบซ้ำ) · เรื่องต้องทำต่อขึ้นแถว · ตัวอ่านเดียวกับตัวตรวจ"),
+]
+
 _RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

@@ -142,6 +142,11 @@ public static class AdvisoryLockKey
     /// <summary>รับรู้/ริบใบมัดจำ — part = id ใบมัดจำ (รอบ 194 ฝ่ายค้าน P-a: สองคำขอพร้อมกันผ่านด่านยอดคงค้างทั้งคู่
     /// ⇒ ใบกำกับของยอดที่ริบสองใบ · ต้องเป็น session lock เพราะเส้นออกใบกำกับเปิดธุรกรรมของตัวเองหลายขั้น)</summary>
     public const string DepositRealize = "deposit-realize";
+    /// <summary>สร้างเอกสาร/สมุดรายวันจากรายการประจำหนึ่งรอบ — part = id รายการประจำ (ทีมตรวจรายการประจำ 2026-10-14):
+    /// cron หลายเครื่อง + ปุ่ม "สร้างทันที" ต้องไม่ออกใบงวดเดียวกันสองใบ · <b>session lock</b> (<c>JobLock.RunExclusiveAsync</c>) เพราะ
+    /// <c>CreateDocumentAsync</c>/<c>ApproveDocumentAsync</c> เปิดธุรกรรมของตัวเอง — เดิมห่อด้วยธุรกรรม + <c>FOR UPDATE</c> ⇒ EF โยน
+    /// "connection is already in a transaction" ทุกรอบ (รายการประจำชนิดเอกสารไม่เคยออกใบได้ทั้งทาง cron และ "สร้างทันที")</summary>
+    public const string RecurringRun = "recurring-run";
 
     /// <summary>คีย์ล็อก "ยอดคงค้างของใบมัดจำ" ตัวเดียวของทุกทางเข้าที่อ่าน-แล้ว-เขียนยอดรับรู้/ตัดชำระ (รอบ 194 R2 · P-a):
     /// ปุ่มรับรู้/ริบ · ที่พัก · CMS (<c>RealizeDepositAsync</c> — session lock ผ่าน <c>JobLock</c> เพราะเส้นริบเปิดธุรกรรมของตัวเองหลายขั้น) ·

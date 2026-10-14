@@ -1668,6 +1668,28 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (`EmailSenderFactory.GetGlobalFallbackSender`)
   - ฟอร์ม `pages/recurring.html` แสดงสถานะอีเมลบริษัทจริงจาก
     `GET /email-config` + ลิงก์ deep link `settings.html?tab=email`
+- **ตัวตรวจเทมเพลตตัวเดียว** `ValidateTemplateAsync` (ทีมตรวจรายการประจำ 2026-10-14) — เรียกทั้งตอนบันทึก (Create/Update ·
+  รวมเปลี่ยนผู้ติดต่ออย่างเดียว) **และตอนถึงรอบทุกครั้ง** (`ExecuteRecurringAsync`) · ตัวอ่าน JSON เดียว `Helpers/RecurringTemplate`
+  (ตัวเลขสตริง "1,200" อ่านได้ · รหัส/ตัวเลขที่อ่านไม่ได้ = ข้อความบอกบรรทัด/ช่อง) · รหัสแต่ละชนิดค้นใน**ตารางของมัน** + บริษัทนี้ + ไม่ถูกลบ:
+  บัญชีรายบรรทัด/`paymentAccountId`/`expenseCategoryId` → ผังบัญชี (ปิดใช้งาน = บอกรหัส/ชื่อ) · `bankAccountId` → **ทะเบียนบัญชีธนาคาร**
+  (เดิมค้นในผังบัญชี ⇒ เลือกบัญชีธนาคารแล้วบันทึกไม่ได้ทุกใบ) · โครงการ (หัว+บรรทัด) · สาขา · ผู้ติดต่อ · ผู้ถูกหัก (เฉพาะตอนบันทึก —
+  ตอนถึงรอบสืบทอดเป็น null + ป้ายตาม P3-6) · บล็อก (BusinessRuleException `RECURRING-TEMPLATE`): เทมเพลตว่าง/ไม่มีบรรทัด · ไม่มีผู้ติดต่อ ·
+  วันสิ้นสุดก่อนวันเริ่ม · สมุดรายวันไม่ครบ 2 บรรทัด/ไม่สมดุล/บรรทัดไม่มีบัญชี — ทุกข้อความบอกช่อง + ทางแก้ ไม่มี GUID
+- **การรัน** (cron `ProcessDueRecurringTransactionsAsync` ทุก 15 นาที · ปุ่ม "สร้างทันที" `RunNowAsync`): ล็อกต่อรายการแบบ session
+  (`JobLock.RunExclusiveAsync` + `AdvisoryLockKey.RecurringRun`) — **ไม่ห่อธุรกรรม** เพราะ `CreateDocumentAsync`/`ApproveDocumentAsync`
+  เปิดธุรกรรมเอง (เดิมห่อ + `FOR UPDATE` ⇒ "connection is already in a transaction" ทุกครั้ง) · อีกเครื่องถือล็อก: cron ข้าม / ปุ่มตอบ 409 ·
+  ลำดับ: ตรวจเทมเพลต → สร้าง → **ประทับรอบทันที** (`MarkRunAsync`: TotalRuns · NextRunDate เมื่อรอบนี้กินงวด · ล้างผลล้ม · `LastDocumentId`) →
+  อนุมัติอัตโนมัติ → ส่งอีเมล · ตัวแปร `<<month>>` ฯลฯ ใช้วันของงวด (`RecurringSchedule.PlaceholderBaseDate` — ใบตามหลังได้เดือนของตัวเอง)
+- **ล้มดัง 3 ที่**: เหตุผล (ไทย · `Helpers/RecurringRunFailure` — ข้อความเทคนิคถูกแทนด้วยข้อความกลาง) ลง `LastRunError/LastRunErrorAt` บนแถว
+  (ป้ายแดงในตาราง + กล่องในรายละเอียด) · ErrorLog + แจ้งผู้ตั้ง (`recurring.run_failed`) **เฉพาะครั้งแรก/เมื่อสาเหตุเปลี่ยน** · "สร้างทันที"
+  ตอบ error ตรง ๆ · ระบบยังลองใหม่ทุกรอบ (ไม่ล็อกตาย — ข้อ 150) · สร้างได้แต่มีเรื่องต้องทำต่อ (อนุมัติอัตโนมัติไม่สำเร็จ · ผู้ถูกหักถูกตัดทิ้ง ·
+  ส่งอีเมลไม่ได้เพราะไม่ได้อนุมัติ/ผู้ติดต่อไม่มีอีเมล · post สมุดรายวันไม่สำเร็จ) ⇒ `LastRunNotice` (ป้ายเหลือง)
+- **วันสิ้นสุดนับรวมวันนั้น** (`RecurringSchedule.WithinEnd` — ปฏิทินไทย · เดิม cron กรอง `EndDate >= now` ⇒ งวดที่ตรงวันสิ้นสุดไม่เคยออก) ·
+  ครบจำนวนครั้ง/กำหนดถัดไปเลยวันสิ้นสุด ⇒ "เสร็จสิ้น" (เดิมค้าง "ใช้งาน") · แก้ไขให้ไปต่อได้ (ขยาย/ล้างวันสิ้นสุด) ⇒ กลับมาใช้งาน
+  (กำหนดที่ผ่านไปแล้วเริ่มวันนี้)
+- **ฟอร์ม** `recurring.html`: ค่าที่บันทึกไว้ (ช่องทางรับ/จ่าย · หมวดค่าใช้จ่าย) ที่ไม่อยู่ในดรอปดาวน์แล้ว (ปิด/ลบ) ⇒ ใส่กลับเป็นตัวเลือก "⚠️ ชื่อ"
+  + ข้อความใต้ช่อง (เดิมตกเป็น "เงินสด" เงียบ ๆ แล้วบันทึกทับ ⇒ ใบทุกงวดลงเงินสด) · โหลดตัวเลือกไม่สำเร็จ = toast + ห้ามบันทึก ·
+  เทมเพลตหลายบรรทัด (API) ล็อกช่องรายบรรทัด ไม่บันทึกทับ · ล้างวันสิ้นสุดตอนแก้ไขได้จริง (เดิมอ่าน `this.editingId` ที่ไม่มีใครตั้ง)
 
 ### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)
 - **ทางเข้า**: ฟอร์มสร้างเอกสาร → ประเภท "ใบวางบิล" + เลือกลูกค้า → กล่อง
@@ -4961,7 +4983,7 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 | §82/5(6) นโยบาย "ดุลพินิจผู้กรอก" | keyword auto-cut ถูกถอดออกทั้งหมด | ระบบ**ไม่เดา**จากข้อความไปตัดสิทธิ (เดิม "ค่าน้ำมัน" คำเดียวโดนตัด = น้ำมันรถกระบะผู้รับเหมาหายจาก ภ.พ.30). การตัดใช้เฉพาะ (a) flag รายบรรทัด IsVatClaimable (b) ผังบัญชีต้องห้ามที่บริษัทตั้งเอง; คำเตือนกฎรถยนต์นั่ง (ประกาศ 42: กระบะตอนเดียว/แค็บ/บรรทุก/ตู้>10 เคลมได้; เก๋ง/กระบะ 4 ประตูไม่ได้) มี 2 จุด — approve warning + confirm ตอนติ๊กเคลมในหน้าเอกสาร · **รอบ 193: ทั้งสองจุดอ่านลิสต์คำชุดเดียว `InputVatVehicleRule`** (หน้าเอกสารถามเซิร์ฟเวอร์ — ลิสต์คำใน JS = 0) |
 | ติ๊กเคลมภาษีซื้อเข้า/ออกหลังอนุมัติ | `CompleteSupplierTaxInvoiceAsync` + `ClaimInputVat` (Unclaim/ReclaimInputVatAsync) | แผงในหน้า detail ของ PV/Expense/PI (approved, VAT>0): เลิกเคลม → JE Dr ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้"/Cr 11610 หรือ 11640 + set override=ผังค่าใช้จ่าย (marker ที่ ภ.พ.30 exclude อยู่แล้ว) + ติ๊กบรรทัดงวด Draft ออก; block เมื่อเคลมในงวด Filed แล้ว (ต้องยื่นเพิ่มเติม). กลับมาเคลม → require §86/4 ครบ + กรอบ 6 เดือน §82/3 → JE ย้อน + BecameClaimableAt=now (เข้า ภ.พ.30 งวดปัจจุบัน) + PV เปิด HasTaxInvoiceReference. แก้เลขที่/วันที่/สาขาใบกำกับได้ทุกใบจากแผงเดียวกัน |
 | F14 audit hash chain | `AuditTrailService.VerifyHashChainAsync` + `AuditChainVerifyJob` → **`Helpers/AuditHashChain`** (รอบ 193 · §6.1) | cron 7 วัน · สูตร v2 `Seal` ฝั่งเขียนตัวเดียว · `Analyze` แยก ถูกแก้/ขาดตอน/แตกกิ่ง · notify ตามสาเหตุจริง (พ.ร.บ.บัญชี ม.11 ทวิ) |
-| Recurring template validate | `RecurringTransactionService.ValidateTemplateAsync` | fail-fast ตอน Create/Update ก่อนรอ midnight cron — accountId ต้องอยู่ใน CoA, journal balance |
+| Recurring template validate | `RecurringTransactionService.ValidateTemplateAsync` + `Helpers/RecurringTemplate` | ตอน Create/Update **และตอนถึงรอบ** — รหัสแต่ละชนิดค้นในตารางของมัน (บัญชีธนาคาร → BankAccounts · ผัง → CoA · โครงการ · สาขา · ผู้ติดต่อ) + journal balance · §2.7 |
 | Reclassify line GL (post-approve) | `DocumentService.ReclassifyLineAccountAsync` | เปิดทั้งฝั่งซื้อและฝั่งขาย (Invoice/TaxInvoice/Receipt/CN/DN ด้วย — §86/4 บังคับ**สิ่งที่พิมพ์บนใบกำกับ** ซึ่งไม่มีรหัสผังบัญชีอยู่เลย); post JE คู่ใหม่ลงงวดเดิม โดย**อ่านขาที่ลงจริงใน GL** (`oldWasCredited`) แล้วกลับตามนั้น + update line.AccountId. **ยอดที่ย้าย = `ResolveLinePostedGlAmountAsync`** ไม่ใช่ `line.Amount` เสมอ: ภาษีซื้อต้องห้าม §82/5 (`IsVatClaimable=false`) → `Amount + VatAmount` เพราะ AutoPost รวม VAT เป็นต้นทุนบรรทัด (ย้ายแค่ฐาน = VAT ค้างผังเก่าถาวร โดย Dr=Cr ยังสมดุล) · ใบที่อ้างใบรับของ GRN → ฐานตัด GR-NI ไปแล้ว บรรทัดเหลือแค่ VAT ต้องห้าม · PV ที่แปลงจากใบตั้งหนี้ (settlement) → 0 (แค่เปลี่ยน AccountId ไม่ลง JE) · ต่างสกุล → คูณ `ExchangeRate` ผ่าน `ToGlAmount`. gate: period Open + no downstream (ไม่นับใบเสร็จ settlement) + not Draft/WaitingApproval/Voided/Rejected + ไม่ใช่ใบมัดจำ + ไม่ใช่บัญชีคุม + no submitted ภพ.30 + no e-Tax submitted |
 | §87(3) chronological | ExportPp30Async summary | นับ doc ที่ tax point ย้อนกลับ → surface ใน Summary.csv |
 | §87/3 retention 5 ปี | `RetentionUntil` | ห้าม hard delete; soft + legal_hold |

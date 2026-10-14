@@ -72,17 +72,21 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact"></div>
-            <div class="form-group"><label class="form-label">ยอดเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01"></div>
+            <div class="form-group"><label class="form-label">ยอดเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01" min="0"></div>
           </div>
+          <!-- เทมเพลตหลายบรรทัด (ตั้งผ่าน API) — ฟอร์มนี้แก้ได้แค่บรรทัดเดียว: ล็อกช่องยอด/รายละเอียด/ภาษีพร้อมเหตุผล และไม่บันทึกทับบรรทัด -->
+          <div id="fMultiLineHint" style="display:none;margin:-4px 0 10px;padding:8px 10px;border-radius:8px;font-size:12px;background:#fffbeb;border:1px solid #fde68a;color:#92400e"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
               <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
+              <div id="fPaymentChannelHint" style="display:none;font-size:11px;margin-top:4px;color:#b45309"></div>
             </div>
             <div class="form-group" id="fExpenseCategoryGroup"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span>
               <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('RecurringExpense','fExpenseCategory','fExpenseCatHint')">🤖</button>
             </label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
               <div id="fExpenseCatHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+              <div id="fExpenseCatWarn" style="display:none;font-size:11px;margin-top:4px;color:#b45309"></div>
             </div>
           </div>
           <div class="form-row">
@@ -251,13 +255,15 @@ const Page = {
       const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',BiWeekly:'ราย 2 สัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',SemiAnnual:'ราย 6 เดือน',Annual:'รายปี'}; // ชื่อ = สมาชิก enum RecurringFrequency จริง (เดิม 'Yearly' ⇒ 400 ทุกครั้ง · ERP_REVIEW I-01)
       if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
       tbody.innerHTML = items.map(r => `<tr>
-        <td><span class="font-medium">${r.name || '-'}</span></td>
+        <td><span class="font-medium">${Layout.esc(r.name || '-')}</span></td>
         <td>${Layout.docTypeLabel(r.documentType || '-')}</td>
-        <td>${freqMap[r.frequency] || r.frequency || '-'}</td>
-        <td>${r.contactName || '-'}</td>
+        <td>${freqMap[r.frequency] || Layout.esc(r.frequency || '-')}</td>
+        <td>${Layout.esc(r.contactName || '-')}</td>
         <td class="text-right">${Layout.money(r.amount)}</td>
         <td>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</td>
-        <td>${Layout.statusBadge(r.status || 'Active')}</td>
+        <td>${Layout.statusBadge(r.status || 'Active')}${r.lastRunError
+          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunError)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${r.id}')">⚠️ สร้างเอกสารไม่สำเร็จ</span></div>`
+          : (r.lastRunNotice ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunNotice)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;cursor:pointer" onclick="Page.view('${r.id}')">ℹ️ มีเรื่องต้องทำต่อ</span></div>` : '')}</td>
         <td>
           <button class="btn btn-sm btn-secondary" onclick="Page.view('${r.id}')" data-i18n="common.view">ดู</button>
           ${r.status === 'Active' ? `<button class="btn btn-sm btn-warning" onclick="Page.pause('${r.id}')">หยุด</button>` : ''}
@@ -341,6 +347,9 @@ const Page = {
     document.getElementById('fWhtCertType').value = 'Withhold';
     document.getElementById('fAutoSendEmail').checked = false;
     this._editingTd = null;
+    this._setMultiLineLock(0);
+    this._setSavedRefWarning('fPaymentChannelHint', '');
+    this._setSavedRefWarning('fExpenseCatWarn', '');
     await this._hydrateWhtPayee(null);
     this.onAutoFlagChange();
     this.loadEmailStatus();
@@ -441,33 +450,88 @@ const Page = {
     if (!this._contactAC) {
       this._contactAC = Layout.contactPicker('fContact', 'fContactId');
     }
-    try {
-      const [baRes, pcRes] = await Promise.all([
-        api.getBankAccounts().catch(() => ({ data: [] })),
-        api.getPaymentChannels().catch(() => ({ data: [] }))
-      ]);
+    // ทีมตรวจรายการประจำ 2026-10-14: เดิม .catch(() => ({data:[]})) ⇒ โหลดไม่สำเร็จแล้วดรอปดาวน์เหลือแค่ "เงินสด" เงียบ ๆ
+    // ผู้ใช้กดบันทึก = ช่องทางรับ/จ่ายกลายเป็นเงินสดโดยไม่รู้ตัว ⇒ ล้มดัง (toast + ข้อความใต้ช่อง) แทน
+    const loadErrors = [];
+    const [baRes, pcRes] = await Promise.all([
+      api.getBankAccounts().catch(e => { loadErrors.push('บัญชีธนาคาร: ' + (e.message || 'โหลดไม่สำเร็จ')); return null; }),
+      api.getPaymentChannels().catch(e => { loadErrors.push('ช่องทางรับ/จ่าย: ' + (e.message || 'โหลดไม่สำเร็จ')); return null; })
+    ]);
+    {
+      // ทะเบียนเต็ม (รวมที่ปิดใช้งาน) เก็บไว้ตั้งชื่อค่าที่บันทึกไว้ · ดรอปดาวน์เสนอเฉพาะที่ใช้งานอยู่ (เซิร์ฟเวอร์ปฏิเสธบัญชีที่ปิดอยู่แล้ว)
       this.bankAccounts = baRes?.data || [];
       this.paymentChannels = pcRes?.data || [];
       const sel = document.getElementById('fPaymentChannel');
       sel.innerHTML = '<option value="">— เงินสด (ค่าเริ่มต้น) —</option>';
-      if (this.bankAccounts.length) {
+      const activeBanks = this.bankAccounts.filter(a => a.isActive !== false);
+      if (activeBanks.length) {
         sel.innerHTML += '<optgroup label="บัญชีธนาคาร">' +
-          this.bankAccounts.map(a => `<option value="bank:${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
+          activeBanks.map(a => `<option value="bank:${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
           '</optgroup>';
       }
-      const nonBankAccounts = this.paymentChannels.filter(a => !a.accountCode.startsWith('1112'));
+      const nonBankAccounts = this.paymentChannels.filter(a => !(a.accountCode || '').startsWith('1112'));
       if (nonBankAccounts.length) {
         sel.innerHTML += '<optgroup label="เงินสด / อื่นๆ">' +
           nonBankAccounts.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +
           '</optgroup>';
       }
-    } catch (e) { this.bankAccounts = []; this.paymentChannels = []; }
+    }
     try {
       const ac = await api.getAccounts('?type=Expense&pageSize=200');
       this.expenseCategories = ac?.data?.items || ac?.data || [];
       const sel = document.getElementById('fExpenseCategory');
-      sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + this.expenseCategories.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
-    } catch (e) { this.expenseCategories = []; }
+      sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + this.expenseCategories.filter(a => a.isActive !== false)
+        .map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+    } catch (e) {
+      this.expenseCategories = [];
+      loadErrors.push('หมวดหมู่ค่าใช้จ่าย: ' + (e.message || 'โหลดไม่สำเร็จ'));
+    }
+    this._formDataErrors = loadErrors;
+    if (loadErrors.length) {
+      Layout.toast('โหลดตัวเลือกในฟอร์มไม่ครบ — ' + loadErrors.join(' · ') + ' — รีเฟรชหน้าก่อนบันทึก (ไม่งั้นช่องทางรับ/จ่ายอาจกลายเป็นเงินสด)', 'error', 9000);
+      this._setSavedRefWarning('fPaymentChannelHint', '⚠️ โหลดรายการบัญชีไม่สำเร็จ — รีเฟรชหน้าก่อนบันทึก');
+    }
+  },
+
+  /** ข้อความใต้ช่อง (ค่าที่บันทึกไว้ใช้ไม่ได้แล้ว / โหลดไม่สำเร็จ) — ว่าง = ซ่อน */
+  _setSavedRefWarning(id, text) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.display = text ? '' : 'none';
+  },
+
+  /** เปิดแก้แล้วค่าที่บันทึกไว้ไม่อยู่ในดรอปดาวน์ (บัญชีถูกปิด/ลบ) — เดิม select ตกไปที่ "เงินสด" เงียบ ๆ แล้วบันทึกทับเป็น null
+   *  (ใบทุกงวดลงเงินสด) ⇒ ใส่ค่าเดิมกลับเป็นตัวเลือกพร้อมชื่อ + ข้อความใต้ช่อง ให้ผู้ใช้ตัดสินเอง (แบบ documents.html _hydratePaymentAndCategory)
+   *  · บันทึกโดยไม่เปลี่ยน = เซิร์ฟเวอร์ปฏิเสธพร้อมบอกทางแก้ (ไม่มีอะไรเปลี่ยนเงียบ ๆ) */
+  _restoreSavedOption(selectId, value, label, hintId) {
+    const sel = document.getElementById(selectId);
+    if (!sel || !value) return;
+    if (!Array.from(sel.options).some(o => o.value === value)) {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = '⚠️ ' + label;
+      sel.appendChild(o);
+      this._setSavedRefWarning(hintId, `ค่าที่บันทึกไว้ (${label}) ใช้ไม่ได้แล้ว — เลือกใหม่ หรือเปิดใช้งานบัญชีนั้นก่อนบันทึก`);
+    }
+    sel.value = value;
+  },
+
+  /** เทมเพลตหลายบรรทัด (ตั้งผ่าน API) — ฟอร์มนี้แก้ได้บรรทัดเดียว ⇒ ล็อกช่องรายบรรทัดพร้อมเหตุผล และ save() ไม่บันทึกทับบรรทัด
+   *  (เดิมบันทึกแล้วบรรทัดที่ 2..n หายเงียบ ๆ · ยอดรวมถูกยัดลงบรรทัดเดียว) */
+  _setMultiLineLock(lineCount) {
+    this._multiLine = lineCount > 1;
+    ['fAmount', 'fDescription', 'fVatRate', 'fWhtRate', 'fIncomeType'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = this._multiLine;
+    });
+    const hint = document.getElementById('fMultiLineHint');
+    if (hint) {
+      hint.style.display = this._multiLine ? '' : 'none';
+      hint.textContent = this._multiLine
+        ? `รายการนี้มี ${lineCount} บรรทัด (ตั้งผ่านระบบเชื่อมต่อ/API) — หน้านี้แก้ยอด/รายละเอียด/ภาษีรายบรรทัดไม่ได้ ช่องเหล่านี้จึงถูกล็อก และบรรทัดเดิมจะไม่ถูกบันทึกทับ (ช่องอื่นแก้ได้ตามปกติ)`
+        : '';
+    }
   },
 
   WHT_PAYER_TYPES: ['PaymentVoucher', 'Expense', 'PurchaseInvoice', 'CertificateInLieu'],
@@ -523,7 +587,12 @@ const Page = {
     const startDate = document.getElementById('fStartDate').value;
     const amount = parseFloat(document.getElementById('fAmount').value) || 0;
     const description = document.getElementById('fDescription').value.trim();
-    if (!name || !startDate || !amount) { Layout.toast('กรุณากรอกชื่อ, วันเริ่มต้น และยอดเงิน', 'error'); return; }
+    if (!name || !startDate || (!this._multiLine && !amount)) { Layout.toast('กรุณากรอกชื่อ, วันเริ่มต้น และยอดเงิน', 'error'); return; }
+    if (!this._multiLine && amount < 0) { Layout.toast('ยอดเงินต้องไม่ติดลบ — ถ้าต้องการลดหนี้ ให้ออกใบลดหนี้แยก', 'error'); return; }
+    if ((this._formDataErrors || []).length) {
+      Layout.toast('ตัวเลือกในฟอร์มโหลดไม่ครบ — รีเฟรชหน้าแล้วลองใหม่ (กันช่องทางรับ/จ่ายถูกบันทึกเป็นเงินสดโดยไม่ตั้งใจ)', 'error', 7000);
+      return;
+    }
 
     const vatRate = parseFloat(document.getElementById('fVatRate').value) || 0;
     const whtRate = parseFloat(document.getElementById('fWhtRate').value) || 0;
@@ -548,7 +617,8 @@ const Page = {
     if (payeeDiffers && !payeeId) { Layout.toast('เลือกผู้ถูกหักภาษีจากรายชื่อผู้ติดต่อ (หรือเอาเครื่องหมายถูกออก)', 'error'); return; }
     const autoWht = document.getElementById('fAutoWht').checked;
     const templateData = JSON.stringify(Object.assign(prevTd, {
-      lines: [Object.assign({}, prevLine, {
+      // หลายบรรทัด (ช่องถูกล็อก) ⇒ คงบรรทัดเดิมทั้งชุด · บรรทัดเดียว ⇒ ทับเฉพาะช่องของหน้านี้
+      lines: this._multiLine ? prevTd.lines : [Object.assign({}, prevLine, {
         description: description || name,
         quantity: 1,
         unitPrice: amount,
@@ -585,8 +655,9 @@ const Page = {
       frequency: document.getElementById('fFrequency').value,
       startDate,
       // แก้ไข: ว่าง = **ล้างวันสิ้นสุด** (รันไม่มีกำหนด — sentinel 0001-01-01)
+      // (เดิมอ่าน this.editingId ซึ่งไม่เคยถูกตั้ง ⇒ ล้างวันสิ้นสุดตอนแก้ไขไม่ได้เลย — ส่ง null = "ไม่แก้")
       endDate: document.getElementById('fEndDate').value
-        || (this.editingId ? '0001-01-01' : null),
+        || (id ? '0001-01-01' : null),
       contactId: document.getElementById('fContactId').value || null,
       templateData,
       autoApprove: document.getElementById('fAutoApprove').checked,
@@ -634,14 +705,14 @@ const Page = {
         tdCombined = !!td.combinedInvoiceTaxInvoice;
         if (td.paymentAccountId && this.paymentChannels) {
           const pa = this.paymentChannels.find(a => a.id === td.paymentAccountId);
-          if (pa) tdPaymentName = `${pa.accountCode} - ${pa.accountName}`;
+          tdPaymentName = pa ? `${pa.accountCode} - ${pa.accountName}` : '⚠️ บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ) — เปิดแก้ไขเพื่อเลือกใหม่';
         } else if (td.bankAccountId && this.bankAccounts) {
           const ba = this.bankAccounts.find(a => a.id === td.bankAccountId);
-          if (ba) tdPaymentName = `${ba.accountName} (${ba.bankName} ${ba.accountNumber})`;
+          tdPaymentName = ba ? `${ba.accountName} (${ba.bankName} ${ba.accountNumber})${ba.isActive === false ? ' — ⚠️ ปิดใช้งาน' : ''}` : '⚠️ บัญชีธนาคารที่บันทึกไว้ (ไม่พบ) — เปิดแก้ไขเพื่อเลือกใหม่';
         }
         if (td.expenseCategoryId && this.expenseCategories) {
           const ec = this.expenseCategories.find(a => a.id === td.expenseCategoryId);
-          if (ec) tdExpenseName = `${ec.accountCode} - ${ec.accountName}`;
+          tdExpenseName = ec ? `${ec.accountCode} - ${ec.accountName}${ec.isActive === false ? ' — ⚠️ ปิดใช้งาน' : ''}` : '⚠️ บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ)';
         }
       } catch {}
       document.getElementById('detailContent').innerHTML = `
@@ -650,17 +721,22 @@ const Page = {
           <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${freqMap[r.frequency]||r.frequency}</strong></div>
           <div><span class="text-gray-500 text-sm">วันเริ่มต้น:</span><br><strong>${Layout.date(r.startDate)}</strong></div>
           <div><span class="text-gray-500 text-sm">วันสิ้นสุด:</span><br><strong>${r.endDate ? Layout.date(r.endDate) : 'ไม่กำหนด'}</strong></div>
-          <div><span class="text-gray-500 text-sm">ผู้ติดต่อ:</span><br><strong>${r.contactName||'-'}</strong></div>
+          <div><span class="text-gray-500 text-sm">ผู้ติดต่อ:</span><br><strong>${Layout.esc(r.contactName||'-')}</strong></div>
           <div><span class="text-gray-500 text-sm">ยอดเงิน:</span><br><strong>${Layout.money(r.amount)}</strong></div>
-          <div><span class="text-gray-500 text-sm">แหล่งเงิน / ช่องทางชำระ:</span><br><strong>${tdPaymentName}</strong></div>
-          <div><span class="text-gray-500 text-sm">หมวดหมู่ค่าใช้จ่าย:</span><br><strong>${tdExpenseName}</strong></div>
+          <div><span class="text-gray-500 text-sm">แหล่งเงิน / ช่องทางชำระ:</span><br><strong>${Layout.esc(tdPaymentName)}</strong></div>
+          <div><span class="text-gray-500 text-sm">หมวดหมู่ค่าใช้จ่าย:</span><br><strong>${Layout.esc(tdExpenseName)}</strong></div>
           <div><span class="text-gray-500 text-sm">สถานะ:</span><br>${Layout.statusBadge(r.status)}</div>
           <div><span class="text-gray-500 text-sm">ครั้งถัดไป:</span><br><strong>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</strong></div>
-          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.executionCount || r.runCount || 0} ครั้ง</strong></div>
+          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.totalRuns || 0} ครั้ง${r.maxRuns ? ' จาก ' + r.maxRuns : ''}</strong>${r.lastRunDate ? `<div style="font-size:11px;color:#64748b">ล่าสุด ${Layout.date(r.lastRunDate)}${r.lastDocumentId ? ` · <a href="/pages/documents.html#doc=${encodeURIComponent(r.lastDocumentId)}" style="color:#2563eb">เปิดเอกสารล่าสุด</a>` : ''}</div>` : ''}</div>
           <div><span class="text-gray-500 text-sm">อนุมัติอัตโนมัติ:</span><br><strong>${r.autoApprove ? 'ใช่' : 'ไม่'}</strong></div>
           <div><span class="text-gray-500 text-sm">ส่งอีเมลอัตโนมัติ:</span><br><strong>${r.autoSendEmail ? '📧 ส่งให้ผู้ติดต่อทันที (แนบ PDF)' : 'ไม่'}</strong></div>
         </div>
-        ${r.description ? `<div style="margin-top:16px"><span class="text-gray-500 text-sm">รายละเอียด:</span><br>${r.description}</div>` : ''}`;
+        ${r.description ? `<div style="margin-top:16px"><span class="text-gray-500 text-sm">รายละเอียด:</span><br>${Layout.esc(r.description)}</div>` : ''}
+        ${r.lastRunError ? `<div style="margin-top:16px;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:13px">
+          <strong>⚠️ รอบล่าสุดสร้างเอกสารไม่สำเร็จ</strong>${r.lastRunErrorAt ? ` (${Layout.date(r.lastRunErrorAt)})` : ''}<br>${Layout.esc(r.lastRunError)}
+          <div style="margin-top:6px;font-size:12px;color:#7f1d1d">แก้ตามข้อความข้างบน (ปุ่ม "แก้ไข") แล้วกด "สร้างทันที" ในตาราง — หรือรอรอบอัตโนมัติถัดไป ระบบลองใหม่ให้เองทุกรอบ</div></div>` : ''}
+        ${r.lastRunNotice ? `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px">
+          <strong>ℹ️ รอบล่าสุดสร้างเอกสารแล้ว แต่มีเรื่องต้องทำต่อ</strong><br>${Layout.esc(r.lastRunNotice)}</div>` : ''}`;
       document.getElementById('detailFooter').innerHTML = `
         <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
         <button class="btn btn-danger" onclick="Page.del('${r.id}')" data-i18n="common.delete">ลบ</button>
@@ -693,11 +769,13 @@ const Page = {
       let savedExpenseCategoryId = '';
       let savedWhtPayeeId = null;
       this._editingTd = null;
+      this._setMultiLineLock(0);
       try {
         const td = JSON.parse(r.templateData || '{}');
         this._editingTd = td;
         savedWhtPayeeId = td.whtPayeeContactId || null;
         const line = td.lines && td.lines[0];
+        this._setMultiLineLock(Array.isArray(td.lines) ? td.lines.length : 0);
         if (line) {
           document.getElementById('fVatRate').value = line.vatRate ?? 7;
           document.getElementById('fWhtRate').value = line.withholdingTaxRate ?? 0;
@@ -722,8 +800,23 @@ const Page = {
 
       await this.loadFormData();
       if (r.contactId && this._contactAC) this._contactAC.setValue(r.contactId, r.contactName || '');
-      if (savedPaymentChannelVal) document.getElementById('fPaymentChannel').value = savedPaymentChannelVal;
-      if (savedExpenseCategoryId) document.getElementById('fExpenseCategory').value = savedExpenseCategoryId;
+      this._setSavedRefWarning('fPaymentChannelHint', (this._formDataErrors || []).length ? '⚠️ โหลดรายการบัญชีไม่สำเร็จ — รีเฟรชหน้าก่อนบันทึก' : '');
+      this._setSavedRefWarning('fExpenseCatWarn', '');
+      if (savedPaymentChannelVal) {
+        // ค่าที่บันทึกไว้ต้องกลับมาให้เห็นเสมอ (ห้ามตกเป็น "เงินสด" เงียบ ๆ) — ชื่อจากทะเบียนเต็ม (รวมที่ปิดใช้งาน) ถ้ามี
+        const savedId = savedPaymentChannelVal.replace(/^(bank|account):/, '');
+        const ba = savedPaymentChannelVal.startsWith('bank:') ? (this.bankAccounts || []).find(a => a.id === savedId) : null;
+        const pa = savedPaymentChannelVal.startsWith('account:') ? (this.paymentChannels || []).find(a => a.id === savedId) : null;
+        const label = ba ? `${ba.accountName} (${ba.bankName} ${ba.accountNumber})${ba.isActive === false ? ' — ปิดใช้งาน' : ''}`
+          : pa ? `${pa.accountCode} - ${pa.accountName}`
+          : 'บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ)';
+        this._restoreSavedOption('fPaymentChannel', savedPaymentChannelVal, label, 'fPaymentChannelHint');
+      }
+      if (savedExpenseCategoryId) {
+        const ec = (this.expenseCategories || []).find(a => a.id === savedExpenseCategoryId);
+        const label = ec ? `${ec.accountCode} - ${ec.accountName}${ec.isActive === false ? ' — ปิดใช้งาน' : ''}` : 'บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ)';
+        this._restoreSavedOption('fExpenseCategory', savedExpenseCategoryId, label, 'fExpenseCatWarn');
+      }
       await this._hydrateWhtPayee(savedWhtPayeeId);
       this.onDocTypeChange();
       Layout.openModal('formModal');

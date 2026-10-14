@@ -60,4 +60,9 @@ public record RecurringTransactionResponse(
     bool AutoApprove,
     DateTime CreatedAt,
     // echo กลับให้ฟอร์ม hydrate ได้ (defect class "เก็บแล้วต้อง echo กลับ")
-    bool AutoSendEmail = false);
+    bool AutoSendEmail = false,
+    // ผลรอบล่าสุด (ทีมตรวจรายการประจำ 2026-10-14) — หน้ารายการประจำแสดงเหตุผลที่ล้ม/เรื่องที่ต้องทำต่อ + ลิงก์เอกสารล่าสุด
+    string? LastRunError = null,
+    DateTime? LastRunErrorAt = null,
+    string? LastRunNotice = null,
+    Guid? LastDocumentId = null);

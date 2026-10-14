@@ -106,3 +106,17 @@
   · **รอบแก้แรกผิดซ้ำ (ฝ่ายค้านจับ)**: `_db.Set<T>().Add(x)` แล้ว `parent.Coll.Add(x)` ⇒ ถ้า x ตั้ง FK ไว้ relationship fixup ของ EF ใส่ลงคอลเลกชันให้แล้ว
   ⇒ `List` มีแถวเดียวกันสองครั้ง ⇒ ยอดที่ Sum จากคอลเลกชัน (ยอดรอบเงินเดือน · folio · ใบเบิก · 50 ทวิ · ภ.พ.30) **เบิ้ล** · CI เขียวเพราะเทสต์ตรวจแค่ "บันทึกได้"
   → ใช้ `Helpers/EfNewChild.AddNewChild` ตัวเดียว (Add เข้า DbSet แล้วใส่คอลเลกชันเฉพาะเมื่อยังไม่อยู่) · Db test ต้องตรวจ**ยอดรวมของ parent = ผลรวมแถวจริง** ไม่ใช่แค่จำนวนแถว
+
+- **รหัสของตารางหนึ่งถูกตรวจกับอีกตาราง + ตัวตรวจกับตัวใช้อ่านคนละแบบ** (2026-10-14 · ผู้ใช้รายงาน "Template มี accountId ที่ไม่พบในผังบัญชี" ตอนบันทึก
+  รายการประจำที่เลือกบัญชีธนาคาร) — `ValidateTemplateAsync` รวม `bankAccountId` (รหัสตาราง BankAccounts จาก option `bank:{id}`) เข้าชุดผังบัญชี ·
+  ทีมตรวจพบคลาสเดียวกันอีก: ตัวตรวจข้ามรหัสที่อ่านไม่ออก (`TryParse`) แต่ตัวสร้างใช้ `Guid.Parse` · ตัวสร้างใช้ `GetDecimal()` กับตัวเลขสตริงที่ยอดบนจอ
+  อ่านได้ · โครงการ/สาขา/ผู้ถูกหักไม่ถูกตรวจ · ตอนถึงรอบไม่ตรวจซ้ำ ⇒ บัญชีธนาคารที่ถูกลบหลังบันทึกทำให้ AutoPost ตกไปเงินสด 111 เงียบ ๆ
+  → กติกา: (1) JSON/payload ที่มีรหัสหลายชนิดต้องผ่าน**ตัวอ่านเดียว**ที่แยกชนิดรหัส (`Helpers/RecurringTemplate.Read` คืน `RefKind`) แล้วตัวตรวจค้นแต่ละชนิด
+  ในตารางของมัน · (2) ตัวตรวจตอนบันทึกต้องถูกเรียกซ้ำ**ตอนใช้งาน** (ของที่อ้างเปลี่ยนได้ระหว่างนั้น) · (3) ข้อความบอก "ช่อง" ไม่ใช่ GUID ·
+  กลไก: `RecurringTemplateTests` + `RecurringTransactionDbTests` + `required_call_site_check` (ValidateTemplateAsync ต้องแยก RefKind · ห้าม `accountIds.Add(bankId`)
+
+- **ห่อธุรกรรมรอบเมธอดที่เปิดธุรกรรมเอง = ล้มทุกครั้ง แต่ไม่มีใครเห็น** (2026-10-14 · ทีมตรวจรายการประจำ) — `RunNowAsync`/cron ของรายการประจำ
+  `BeginTransactionAsync` + `FOR UPDATE` แล้วเรียก `CreateDocumentAsync` ซึ่ง `BeginTransactionAsync` เองโดยไม่ดู `CurrentTransaction` ⇒ EF โยน
+  "connection is already in a transaction" ทุกครั้ง · cron กลืน error ลง ErrorLog ทุก 15 นาที · ไม่มีเทสต์ที่รันเส้นนี้จริงสักตัว
+  → กติกา: กันรันซ้ำข้ามเครื่องรอบเส้นที่เปิดธุรกรรมเองให้ใช้ **session lock** (`JobLock.RunExclusiveAsync` + `AdvisoryLockKey`) ไม่ใช่ธุรกรรมห่อ ·
+  งาน cron ที่ล้มต้องเขียนเหตุผลลง "แถวที่ผู้ใช้เปิดดู" (F2-7) · กลไก: Db test ที่รันเส้นจริง + `required_call_site_check` ห้าม `BeginTransactionAsync(`/`FOR UPDATE` ใน RunNow/ProcessDue

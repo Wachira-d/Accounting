@@ -551,6 +551,11 @@ public static class DatabaseMigrationHelper
 
             // ===== Recurring: ส่งอีเมลเอกสารให้ผู้ติดต่ออัตโนมัติเมื่อสร้าง =====
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "AutoSendEmail" boolean NOT NULL DEFAULT false;""",
+            // ===== Recurring: ผลรอบล่าสุดบนแถว (ล้มดังในหน้ารายการประจำ · ทีมตรวจรายการประจำ 2026-10-14) =====
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunError" text NULL;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunErrorAt" timestamptz NULL;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunNotice" text NULL;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastDocumentId" uuid NULL;""",
 
             // ===== ใบวางบิลรวมใบแจ้งหนี้: บรรทัด "แทนทั้งใบ" ชี้เอกสารต้นทาง =====
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "SourceDocumentId" uuid NULL;""",

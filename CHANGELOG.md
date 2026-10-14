@@ -4790,4 +4790,10 @@ reclassify อ่านผังเดิมจาก JE จริง + ทิ�
 เทมเพลต: ตรวจ `DefaultPaymentAccountId` + ล้างค่าได้ + `defaultPaymentChannel` ให้ฟอร์มเติมได้จริง · BankService: สร้างตรวจผังที่ผูก (ตัวเดียวกับแก้ไข) + `activeOnly` ·
 หน้าเว็บ: payments.html ส่ง `overrideBankAccountId` (เดิมถูกทิ้ง) · OCR handoff ใช้ `linkedAccountCode` · dropdown โหลดไม่ได้ = แจ้งผู้ใช้ · ตัวเลือกไม่เสนอบัญชีที่ปิด ·
 "จ่าย/รับจากบัญชีอื่น" ไม่เสนอบัญชีกลุ่ม/ผังที่ธนาคารผูก + เลือกได้ทางเดียว · เทสต์ `DocumentMoneyChannelTests` + `Db/DocumentMoneyChannelDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1b39ec9f_
-
+_2026-10-14 — ทีมตรวจ+แก้รายการประจำ (ผู้ใช้: เลือกช่องทางรับ/จ่ายเป็นบัญชีธนาคารแล้วบันทึกไม่ได้ "Template มี accountId ที่ไม่พบในผังบัญชี"):
+ตัวตรวจเทมเพลตตัวเดียว (`Helpers/RecurringTemplate` แยกชนิดรหัส — บัญชีธนาคาร → ทะเบียนบัญชีธนาคาร · ผัง · โครงการ · สาขา · ผู้ถูกหัก) เรียกทั้งตอนบันทึกและ
+ตอนถึงรอบ · cron/"สร้างทันที" เลิกห่อธุรกรรมซ้อน (เดิม "connection is already in a transaction" ทุกครั้ง) ใช้ session lock `AdvisoryLockKey.RecurringRun` ·
+ล้มดังบนแถว (`LastRunError`/`LastRunNotice`/`LastDocumentId` + migration · แจ้ง `recurring.run_failed` ครั้งแรก/สาเหตุเปลี่ยน) · วันสิ้นสุดนับรวมวันนั้น +
+เสร็จสิ้นอัตโนมัติ + แก้ไขแล้วกลับมาใช้งาน (`Helpers/RecurringSchedule`) · `<<month>>` ตามงวด · ฟอร์ม: ค่าที่บันทึกไว้ที่ถูกปิด/ลบไม่ตกเป็นเงินสดเงียบ ๆ ·
+โหลดตัวเลือกล้มไม่เงียบ · ล้างวันสิ้นสุดได้ (`editingId` ไม่เคยถูกตั้ง) · XSS ชื่อ/รายละเอียด · "สร้างแล้ว N ครั้ง" อ่าน `totalRuns` · เทมเพลตหลายบรรทัดไม่ถูกยุบ ·
+`RecurringTemplateTests` + `RecurringTransactionDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — ต่อจาก commit e00896d7_
