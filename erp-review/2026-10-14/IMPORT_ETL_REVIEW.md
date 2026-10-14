@@ -115,7 +115,7 @@ master ที่สร้าง = soft-delete ถ้าไม่มีการ�
 | รหัส | เรื่อง | สถานะ |
 |---|---|---|
 | ETL-T0 | schema + สัญญา + reader/normalizer | ✅ 95c3031b — สัญญา: `Models/DTOs/Import/ImportHubDtos.cs` · `Services/Import/I*.cs` · `Helpers/ImportTabularReader.cs` · `Helpers/ImportValueNormalizer.cs` |
-| ETL-A | mapping + AI distillation 26/27/58/59 | ⏳ |
+| ETL-A | mapping + AI distillation 26/27/58/59 | ✅ (sha เติมภายหลัง) — `Helpers/ImportColumnMapper.cs` · `ImportFieldSynonymSeed` · `ImportHeaderSignature` · `ImportSchemas` · `ImportSourceSeed` (โปรไฟล์เดาทั้งหมด) · `Services/Import/ImportMappingTemplateStore.cs` · `ImportColumnMatchService.cs` · นักเรียน 26/27 · augmenter 58/59 · ทีม B: มอบ `GetTemplateFields`/`AnalyzeColumnMatch` มาที่ `ImportSchemas`/`IImportColumnMatchService` + ปิดลูปตอน commit/remap |
 | ETL-B | engine + writer เดิม (culture parse · payment/asset/document bypass) | ⏳ |
 | ETL-C | ธนาคาร writer เดียว + OFX จริง + TIS-620 | ⏳ |
 | ETL-D | งบทดลอง/เอกสาร/รับชำระ/สินทรัพย์ + migration wizard | ⏳ |

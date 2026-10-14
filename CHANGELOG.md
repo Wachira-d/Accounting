@@ -4768,3 +4768,15 @@ ThaiDate · SettlementValueParser · ThaiTaxIdValidator · TaxBranchCode — "�
 ไฟล์แนบชนิด `ImportBatch` (สิทธิ์ = นำเข้าชนิดของ batch) · `IFileAttachmentService.ReadBytesAsync` · สิทธิ์นำเข้า "stock-adjustments" = Inventory.Adjust
 (เดิมหลุดไป Journal.Manage) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 95c3031b_
 
+
+_รอบ 205 ทีม A — ศูนย์นำเข้าข้อมูล: จับคู่คอลัมน์หลายชั้น + AI distillation (กฎเหล็ก #1 · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.3/§2.6):
+helper owner เดียว — `ImportFieldSynonymSeed` (รวม 4 สำเนา: GetFieldAliases · schema ส่วนตัวของ AiSuggestionController · หัว adapter Express/PEAK/FlowAccount ·
+BankCsvParser) · `ImportHeaderSignature` (normalize หัว + SHA-256 ไม่ขึ้นกับลำดับ) · `ImportSchemas` (แคตตาล็อก field ทุกชนิด ย้ายจาก GetTemplateFields + ตัวอย่าง +
+journal-entries ที่เดิมคืน null + งบทดลองยกมา + บรรทัด statement ธนาคาร) · `ImportSourceSeed` (โปรไฟล์ cold-start ในโค้ด — **ทุกตัวเป็นการเดา** รอไฟล์จริง §4) ·
+`ImportColumnMapper` (ผู้ใช้ → แม่แบบ → ชื่อตรง → คำพ้อง/โปรไฟล์ → คู่ที่ยืนยันแล้ว → รูปข้อมูล → AI · greedy unique · ค่าในคอลัมน์ตัดสินคำพ้องกำกวม · ด่าน AI
+field ∈ schema / ≥ 0.70 / ไม่ทับชั้นสูง · ป้ายแหล่งไทยจากเซิร์ฟเวอร์) · `ImportMappingTemplateStore` ครบสัญญา (+ SaveColumns · GetLearnedHeaders ·
+RecordColumnMatchChoice) · `ImportColumnMatchService` ทางเข้าเดียวของการจับคู่ (DI บล็อกทีม A) · นักเรียน ImportColumnMatch (คำพ้อง+โปรไฟล์+คู่ที่เรียน ·
+รูปเดียวกับครู) และ ImportDataReview (ImportReviewHeuristics ที่ย้ายมาอยู่บน ImportValueNormalizer + เลิกเสนอการจัดรูปแบบที่บริษัทปฏิเสธประจำ — ปัญหาทางกฎหมาย
+ปิดไม่ได้) · augmenter ไม่ทิ้ง FeedbackId/UsedAi + SuggestAccountMapAsync (58 · ด่าน ∈ ผังบริษัท) + ResolveEntityAsync (59 · ด่าน ∈ candidate ∪ NEW) +
+RecordPick/RecordReviewChoice · ImportPrompts ForceProviderCall=false (เดิมข้าม routing+งบทุกครั้ง) + BuildAccountMap/BuildEntityMatch ·
+AiSuggestionController.SuggestImportMapping มอบให้ตัวจับคู่กลาง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_

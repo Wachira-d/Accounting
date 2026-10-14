@@ -32,4 +32,32 @@ public interface IImportMappingTemplateStore
 
     /// <summary>UseCount + 1 · LastUsedAt = ตอนนี้</summary>
     Task MarkUsedAsync(Guid companyId, Guid templateId, CancellationToken ct = default);
+
+    // ── เพิ่มโดยทีม A (รอบ 205 · additive) ──
+
+    /// <summary>
+    /// จำการจับคู่เป็นแม่แบบจากคอลัมน์ที่ผู้เรียกส่งมาตรง ๆ (มี transform ต่อคอลัมน์ได้) — upsert ตาม signature ของชุดหัว ·
+    /// <see cref="SaveFromBatchAsync"/> มอบมาที่นี่ · ทีม B เรียกตัวนี้ได้เมื่อ transform ของคอลัมน์ไม่ได้อยู่ใน <c>SmartImportColumnMappings</c>
+    /// </summary>
+    /// <param name="headers">หัวคอลัมน์ตามไฟล์ (ทุกคอลัมน์ · ใช้คิด signature + แสดงผล)</param>
+    /// <param name="columns">header (ตามไฟล์หรือ normalize แล้วก็ได้) → field + transform · field null = "ไม่ใช้คอลัมน์นี้"</param>
+    Task<ImportTemplateDto> SaveColumnsAsync(Guid companyId, string entityType, IReadOnlyList<string> headers,
+        IReadOnlyList<ImportTemplateColumnDto> columns, string? sourceSystem, string? name, bool confirmedByUser, ImportActor actor,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// คู่ "หัวคอลัมน์ → field" ที่บริษัทนี้ยืนยันแล้ว — จากแม่แบบ (ยืนยัน = น้ำหนักมากกว่า) + การยืนยันการจับคู่คอลัมน์
+    /// (<c>AiSuggestionFeedback</c> ของ ImportColumnMatch ที่มี UserChosenAnswer) · ชั้น 🧠 ของ <c>ImportColumnMapper</c> และสมองของ
+    /// <c>ImportColumnMatchDistillationModel</c> (ที่มาเดียว) · คู่ที่ขัดกันน้ำหนักเท่ากัน = ไม่เรียน · <paramref name="entityType"/> null = ทุกชนิด
+    /// </summary>
+    Task<IReadOnlyList<Accounting.Helpers.ImportLearnedHeader>> GetLearnedHeadersAsync(Guid companyId, string? entityType, CancellationToken ct = default);
+
+    /// <summary>
+    /// <b>ปิดลูปกฎเหล็ก #1 ของการจับคู่คอลัมน์</b> — เรียกตอนผู้ใช้ยืนยัน (commit) หรือแก้ (remap) ด้วยแผนสุดท้าย:
+    /// <c>RecordUserChoiceAsync(feedbackId, คำตอบรูปมาตรฐานของคอลัมน์ที่ถูกถาม, acceptedAi)</c> · acceptedAi = แผนสุดท้ายตรงกับที่ระบบ/AI เสนอ ·
+    /// feedback ต้องเป็นของบริษัทนี้และเป็น ImportColumnMatch (ไม่ตรง ⇒ false ไม่บันทึก) · ผู้เรียก: pipeline ทีม B
+    /// (<c>SmartImportSession.ColumnMatchAiFeedbackId</c>)
+    /// </summary>
+    Task<bool> RecordColumnMatchChoiceAsync(Guid companyId, Guid feedbackId, IReadOnlyList<ImportColumnPlanDto> finalColumns,
+        CancellationToken ct = default);
 }
