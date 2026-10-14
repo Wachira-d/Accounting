@@ -15043,12 +15043,6 @@ public partial class DocumentService : IDocumentService
                         });
                         await _db.SaveChangesAsync();
                     }
-                    else
-                    {
-                        _logger.LogWarning(
-                            "Multi-doc payment {PayNo}: unapplied {Amt:N2} ไม่ถูก book GL (ไม่พบผัง 217xx/114xx) — GL เงินสดจะต่างจากยอดธนาคาร",
-                            payment.PaymentNumber, thbUnapplied);
-                    }
                     thbCashMoved += thbUnapplied;
                 }
 

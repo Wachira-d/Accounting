@@ -71,7 +71,7 @@ public class BankV1Controller : PublicApiControllerBase
         // (v1 ไม่ส่งยอดคงเหลือ) · ไม่จับคู่อัตโนมัติ (คืนคำแนะนำต่อบรรทัดข้างล่างแทน) · CreatedBy = "api:v1" · คิดเงินตามบรรทัดที่สร้างจริง
         var lines = ToStatementLines(req.Lines);
         var written = await _bank.ImportParsedStatementRowsAsync(ctx!.CompanyId, req.BankAccountId, lines, StatementWriteOptions(), ct);
-        var created = written.Lines.Where(r => r.Outcome == BankStatementLineOutcome.Created && r.TransactionId != null).ToList();
+        var created = written.Lines.Where(r => r.Outcome == BankStatementLineOutcome.Created && r.BankTransactionId != null).ToList();
         var skipped = written.Skipped;
 
         if (created.Count == 0)
@@ -82,7 +82,7 @@ public class BankV1Controller : PublicApiControllerBase
         var matches = new List<MatchResultDto>();
         foreach (var c in created)
         {
-            var txnId = c.TransactionId!.Value;
+            var txnId = c.BankTransactionId!.Value;
             var line = lines[c.Index];
             var externalRef = line.ExternalId ?? line.Reference;
             try
