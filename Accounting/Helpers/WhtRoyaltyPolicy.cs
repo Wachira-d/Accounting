@@ -42,7 +42,7 @@ public static class WhtRoyaltyPolicy
            && (from is not DateTime f || ThaiDate.CalendarDateUtc(taxDate) >= ThaiDate.CalendarDateUtc(f));
 
     /// <summary>วันเริ่มใช้ตั้งต้นเมื่อผู้ใช้เปิด ภ.ง.ด.2 — วันที่ 1 ของเดือนปัจจุบัน (ปฏิทินไทย) · ผู้ใช้แก้ได้</summary>
-    public static DateTime DefaultFromDate(DateTime utcNow)
+    private static DateTime DefaultFromDate(DateTime utcNow)
     {
         var today = ThaiDate.CalendarDateUtc(utcNow);
         return new DateTime(today.Year, today.Month, 1, 0, 0, 0, DateTimeKind.Utc);

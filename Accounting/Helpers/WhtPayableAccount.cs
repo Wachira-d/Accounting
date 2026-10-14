@@ -160,7 +160,7 @@ public static class EWithholdingScope
     public const string ReportMarker = "ℹ️ หักผ่าน e-Withholding (ธนาคารนำส่งแล้ว — ไม่ยื่นซ้ำ)";
 
     /// <summary>กติกา pure — ธงของใบเอง หรือใบต้นทางฝั่งผู้จ่ายที่ติ๊ก</summary>
-    public static bool IsVia(bool ownFlag, DocumentType? sourceType, bool sourceFlag)
+    internal static bool IsVia(bool ownFlag, DocumentType? sourceType, bool sourceFlag)
         => ownFlag || (sourceType is DocumentType st && WhtCertIssuePlan.AppliesTo(st) && sourceFlag);
 
     /// <summary>เอกสารเดียว (โหลดใบต้นทางเมื่อจำเป็น · กรอง <c>CompanyId</c>)</summary>

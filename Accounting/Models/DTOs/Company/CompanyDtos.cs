@@ -120,7 +120,7 @@ public record CompanyResponse(
     // แต่ไม่เคยมีทั้งช่องกรอกและช่อง echo ⇒ เป็น 0 ทุกบริษัท (รอบ 182)
     decimal PaidUpCapital = 0m,
     // รอบ 204 (c2): เก็บแล้วต้อง echo กลับ — แบบยื่นค่าสิทธิบุคคลธรรมดา + วันเริ่มใช้ ภ.ง.ด.2
-    WhtRoyaltyIndividualForm WhtRoyaltyIndividualForm = global::Accounting.Models.Enums.WhtRoyaltyIndividualForm.Pnd3,
+    WhtRoyaltyIndividualForm WhtRoyaltyIndividualForm = default,   // default = Pnd3 (0) = พฤติกรรมเดิม
     DateTime? WhtRoyaltyPnd2From = null);
 
 public record SubscriptionSummary(
