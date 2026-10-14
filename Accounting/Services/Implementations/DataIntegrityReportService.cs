@@ -189,10 +189,13 @@ public class DataIntegrityReportService
             if (issues.Count == 0) continue;
             var detail = string.Join(" · ", issues.Select(i =>
                 $"บรรทัดที่ {i.LineOrder} \"{i.Description}\" ส่วนลด {i.DiscountPercent:0.##}% ซ้อนบนราคาที่ลดแล้ว: เก็บ {i.Stored:N2} ⇒ บันทึกซ้ำได้ {i.AfterResave:N2}"));
+            // ฝ่ายค้านรอบ 204 L2: ใบขายที่ออกแล้ว ⇒ ไม่มีปุ่ม "แก้" (FixPath null = แถวอ่านอย่างเดียว) + เหตุผล/ทางไปต่อ — ตัวตัดสินเดียวกับตัวแก้
+            var fixRefusal = await DocumentService.OcrLineDiscountFixRefusalAsync(_db, companyId, d);
             result.Add(new DataIntegritySuspect("OcrLineDiscountWouldChangeOnResave", d.Id, d.DocumentNumber, d.DocumentDate,
-                $"สถานะ {d.Status} · {detail} — ยอดที่เก็บไว้ถูกตามกระดาษ · กด \"แก้\" เพื่อตั้งส่วนลด % = 0 (ยอด/VAT/ยอดรวมไม่เปลี่ยน)",
+                $"สถานะ {d.Status} · {detail} — ยอดที่เก็บไว้ถูกตามกระดาษ · "
+                    + (fixRefusal ?? "กด \"แก้\" เพื่อตั้งส่วนลด % = 0 (ยอด/VAT/ยอดรวมไม่เปลี่ยน)"),
                 issues.Sum(i => i.Stored), issues.Sum(i => i.AfterResave),
-                $"/pages/documents.html?openDoc={d.Id}", "เปิดเอกสาร", OcrLineDiscountFixPath(d.Id)));
+                $"/pages/documents.html?openDoc={d.Id}", "เปิดเอกสาร", fixRefusal == null ? OcrLineDiscountFixPath(d.Id) : null));
         }
         return result;
     }

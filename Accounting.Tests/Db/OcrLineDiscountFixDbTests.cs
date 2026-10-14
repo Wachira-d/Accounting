@@ -32,11 +32,12 @@ public class OcrLineDiscountFixDbTests
 
     /// <summary>ใบซื้อที่ตัวสร้างจากสแกนรุ่นเก่าเขียน: ราคา = ยอดหลังลด 950 + ส่วนลด 5% + บาท 0 · ยอด/VAT ตามกระดาษ</summary>
     private static async Task<Document> BuggyDocAsync(Accounting.Data.AccountingDbContext db, Guid companyId, Guid contactId, string no,
-        DocumentStatus status, bool fromScan)
+        DocumentStatus status, bool fromScan, DocumentType type = DocumentType.PurchaseInvoice, bool? cnDnPurchaseSide = null)
     {
         var d = new Document
         {
-            CompanyId = companyId, ContactId = contactId, DocumentType = DocumentType.PurchaseInvoice, DocumentNumber = no, Status = status,
+            CompanyId = companyId, ContactId = contactId, DocumentType = type, DocumentNumber = no, Status = status,
+            CnDnPurchaseSideOverride = cnDnPurchaseSide,
             DocumentDate = DateTime.UtcNow.Date, SubTotal = 950m, VatAmount = 66.50m, TotalAmount = 1016.50m, BalanceDue = 1016.50m,
             Currency = "THB",
         };
@@ -117,6 +118,43 @@ public class OcrLineDiscountFixDbTests
             await Assert.ThrowsAsync<BusinessRuleException>(() => svc.FixOcrLineDiscountAsync(a, voided.Id, null));
             await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.FixOcrLineDiscountAsync(a, otherCo.Id, null));
         }
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 204 L2 — ใบขายที่ออกแล้ว (§86/4): รายงานไม่มีปุ่ม "แก้" + เหตุผล/ทางไปต่อ · ตัวแก้ปฏิเสธ (ไม่เขียนอะไร) ·
+    /// ทิศตรงข้าม: ใบขายร่าง และใบลดหนี้ฝั่งซื้อที่อนุมัติแล้ว ยังแก้ได้</summary>
+    [Fact]
+    public async Task ใบขายออกแล้ว_ไม่มีปุ่มแก้และตัวแก้ปฏิเสธ_ใบขายร่างและใบลดหนี้ฝั่งซื้อยังแก้ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var (a, contactA) = await SeedCompanyAsync(db, "บริษัทแก้ส่วนลด ขาย", "0105556000111");
+        var issuedSale = await BuggyDocAsync(db, a, contactA, "TI-OCR-ISSUED", DocumentStatus.Approved, fromScan: true, type: DocumentType.TaxInvoice);
+        var draftSale = await BuggyDocAsync(db, a, contactA, "TI-OCR-DRAFT", DocumentStatus.Draft, fromScan: true, type: DocumentType.TaxInvoice);
+        var purchaseCn = await BuggyDocAsync(db, a, contactA, "CN-OCR-BUY", DocumentStatus.Approved, fromScan: true,
+            type: DocumentType.CreditNote, cnDnPurchaseSide: true);
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var report = await new DataIntegrityReportService(req).GetAsync(a);
+            var issuedRow = Assert.Single(report.OcrLineDiscountWouldChangeOnResave, x => x.Id == issuedSale.Id);
+            Assert.Null(issuedRow.FixPath);
+            Assert.Contains("ยกเลิกใบนี้แล้วออกใบแทน", issuedRow.Detail);
+            Assert.Equal(DataIntegrityReportService.OcrLineDiscountFixPath(draftSale.Id),
+                Assert.Single(report.OcrLineDiscountWouldChangeOnResave, x => x.Id == draftSale.Id).FixPath);
+            Assert.Equal(DataIntegrityReportService.OcrLineDiscountFixPath(purchaseCn.Id),
+                Assert.Single(report.OcrLineDiscountWouldChangeOnResave, x => x.Id == purchaseCn.Id).FixPath);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var svc = new DataIntegrityReportService(req);
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.FixOcrLineDiscountAsync(a, issuedSale.Id, null));
+            Assert.Equal(DocumentService.OcrLineDiscountFixRuleCode, ex.RuleCode);
+            Assert.Equal(1, (await svc.FixOcrLineDiscountAsync(a, draftSale.Id, null)).LinesFixed);
+            Assert.Equal(1, (await svc.FixOcrLineDiscountAsync(a, purchaseCn.Id, null)).LinesFixed);
+        }
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var untouched = await check.Documents.AsNoTracking().Include(x => x.Lines).SingleAsync(x => x.Id == issuedSale.Id && x.CompanyId == a);
+        Assert.Equal((5m, 0m, 950m), (untouched.Lines.Single().DiscountPercent, untouched.Lines.Single().DiscountAmount, untouched.Lines.Single().UnitPrice));
     }
 
     [Fact]

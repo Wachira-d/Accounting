@@ -99,6 +99,28 @@ public partial class DocumentService
     }
 
     /// <summary>
+    /// ฝ่ายค้านรอบ 204 L2 — เหตุที่ปุ่ม "แก้" ใช้กับใบนี้ไม่ได้ (null = แก้ได้) · ตัวเดียวของหน้าตรวจข้อมูล (ซ่อนปุ่ม) และ <see cref="FixOcrLineDiscountAsync"/> (ปฏิเสธ) ·
+    /// ใบลด/เพิ่มหนี้: ฝั่งจากตัวตัดสินกลาง <see cref="AdjustmentNoteAccount.ResolvePostedSide"/> (ผู้ใช้ย้ายฝั่ง → ใบต้นทาง → ผู้ติดต่อเป็นผู้ขายอย่างเดียว) ·
+    /// กติกาอยู่ที่ <see cref="OcrLineDiscountFixScope"/> · tenant: อ่านใบต้นทาง/ผู้ติดต่อเฉพาะ <c>CompanyId</c> นี้
+    /// </summary>
+    internal static async Task<string?> OcrLineDiscountFixRefusalAsync(AccountingDbContext db, Guid companyId, Document doc, CancellationToken ct = default)
+    {
+        (bool IsPurchase, bool Unknown)? cnDnSide = null;
+        if (doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote)
+        {
+            DocumentType? srcType = doc.RelatedDocumentId is Guid srcId
+                ? await db.Documents.AsNoTracking().Where(x => x.Id == srcId && x.CompanyId == companyId)
+                    .Select(x => (DocumentType?)x.DocumentType).FirstOrDefaultAsync(ct)
+                : null;
+            var supplierOnly = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .AnyAsync(c => c.Id == doc.ContactId && c.CompanyId == companyId && c.IsSupplier && !c.IsCustomer, ct);
+            cnDnSide = AdjustmentNoteAccount.ResolvePostedSide(doc.CnDnPurchaseSideOverride, srcType, null, supplierOnly);
+        }
+        return OcrLineDiscountFixScope.Refusal(doc.DocumentNumber, doc.Status,
+            OcrLineDiscountFixScope.IsOurSalesDocument(doc.DocumentType, cnDnSide));
+    }
+
+    /// <summary>
     /// ปุ่ม "แก้" ของแถว <c>OcrLineDiscountWouldChangeOnResave</c> — ตั้ง <c>DiscountPercent = 0</c> และคิดส่วนลดบาท/ราคาใหม่ให้บันทึกซ้ำได้
     /// ยอดเดิมทุกบรรทัด · <b>ไม่แตะ</b> ยอด/VAT/ยอดรวม/JE/เลขที่ (metadata อย่างเดียว ⇒ ทำได้ทุกสถานะที่ไม่ใช่ยกเลิก) ·
     /// จำลองผลก่อนเขียน — เงินบรรทัดใดจะขยับ ⇒ ปฏิเสธพร้อมเหตุผล (ไม่บันทึกอะไร) · audit <see cref="OcrLineDiscountFixRuleCode"/> ก่อน/หลัง
@@ -117,6 +139,9 @@ public partial class DocumentService
             .AnyAsync(s => s.CompanyId == companyId && s.CreatedDocumentId == documentId, ct);
         if (!fromScan)
             throw new BusinessRuleException("เอกสารนี้ไม่ได้สร้างจากสแกน — ปุ่มนี้แก้เฉพาะบรรทัดที่ตัวสร้างจากสแกนเขียนไว้", OcrLineDiscountFixRuleCode, 409);
+        // ฝ่ายค้านรอบ 204 L2: ใบขายที่เราออกแล้ว (§86/4) ⇒ ไม่แก้รายการที่พิมพ์ — ทางไปต่อ "ยกเลิกแล้วออกใบแทน" (ใบฝั่งซื้อ/ใบขายร่าง แก้ได้เหมือนเดิม)
+        if (await OcrLineDiscountFixRefusalAsync(db, companyId, doc, ct) is string issuedSales)
+            throw new BusinessRuleException(issuedSales, OcrLineDiscountFixRuleCode, 409);
 
         var lines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
         var issues = FindOcrLineDiscountIssues(doc, lines);

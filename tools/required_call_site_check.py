@@ -6518,6 +6518,21 @@ RULES += [
 ]
 
 
+# ── ฝ่ายค้านรอบ 204 (L2–L7a) — ทุกจุดคงหลัก "ไม่ล็อกตาย" (DECISIONS ข้อ 150): บล็อกเฉพาะที่กฎหมาย/GL บังคับ พร้อมทางไปต่อ ──
+_R204ADV = "ฝ่ายค้านรอบ 204: "
+RULES += [
+    dict(file="Services/Implementations/DocumentService.OcrLineFix.cs", method="FixOcrLineDiscountAsync",
+         must=["OcrLineDiscountFixRefusalAsync(db, companyId, doc, ct)"],
+         before=[("OcrLineDiscountFixRefusalAsync(db, companyId, doc, ct)", "db.AddChainedAuditLog(")],
+         why=_R204ADV + "L2: ใบขายที่ออกแล้ว (§86/4) ⇒ ปฏิเสธพร้อมทางไปต่อ ก่อนแตะบรรทัด"),
+    dict(file="Services/Implementations/DocumentService.OcrLineFix.cs", method="OcrLineDiscountFixRefusalAsync",
+         must=["OcrLineDiscountFixScope.Refusal(", "OcrLineDiscountFixScope.IsOurSalesDocument(", "AdjustmentNoteAccount.ResolvePostedSide("],
+         why=_R204ADV + "L2: กติกา/ฝั่งใบลดหนี้จากตัวตัดสินกลางเท่านั้น"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadOcrLineDiscountSuspectsAsync",
+         must=["DocumentService.OcrLineDiscountFixRefusalAsync(_db, companyId, d)", "fixRefusal == null ? OcrLineDiscountFixPath(d.Id) : null"],
+         why=_R204ADV + "L2: แถวรายงานซ่อนปุ่ม \"แก้\" ด้วยตัวตัดสินเดียวกับตัวแก้ (server-computed)"),
+]
+
 # ── รอบ 204 — แบบ ภ.ง.ด.2 (คำตัดสินเจ้าของ DECISIONS ข้อ 148 · Pnd2FormTests ล็อก helper · กติกาข้างล่างล็อกจุดเรียก) ──
 # ตัวตัดสินแบบ/ผังรับ "ประเภทเงินได้ของบรรทัดที่หัก" — ทางที่ไม่ส่ง = ดอกเบี้ย/ปันผลบุคคลตกกลับ ภ.ง.ด.3 เงียบ ๆ (GL 21915 ≠ ทะเบียน/นำส่ง)
 _PND2 = "รอบ 204 ภ.ง.ด.2 (ข้อ 148): "

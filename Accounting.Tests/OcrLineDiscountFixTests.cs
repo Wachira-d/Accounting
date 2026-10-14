@@ -90,4 +90,37 @@ public class OcrLineDiscountFixTests
         Assert.Null(DocumentService.OcrLineDiscountRepair(0m, 950m, 7m, false, 950m, 0m));
         Assert.Null(DocumentService.OcrLineDiscountRepair(-1m, 950m, 7m, false, 950m, 0m));
     }
+
+    // ── ฝ่ายค้านรอบ 204 L2: ใบขายที่ออกแล้ว (§86/4) ห้ามแก้รายการที่พิมพ์ ──
+
+    [Theory]
+    [InlineData(Accounting.Models.Enums.DocumentType.TaxInvoice)]
+    [InlineData(Accounting.Models.Enums.DocumentType.Invoice)]
+    [InlineData(Accounting.Models.Enums.DocumentType.Receipt)]
+    public void Issued_sales_document_is_refused_with_reissue_way_forward(Accounting.Models.Enums.DocumentType type)
+    {
+        Assert.True(Accounting.Helpers.OcrLineDiscountFixScope.IsOurSalesDocument(type, null));
+        var why = Accounting.Helpers.OcrLineDiscountFixScope.Refusal("TI-1", Accounting.Models.Enums.DocumentStatus.Approved, true);
+        Assert.NotNull(why);
+        Assert.Contains("§86/4", why);
+        Assert.Contains("ยกเลิกใบนี้แล้วออกใบแทน", why);
+        // ทิศตรงข้าม: ใบขายร่าง (ยังไม่มีเลขที่) ⇒ แก้ได้
+        Assert.Null(Accounting.Helpers.OcrLineDiscountFixScope.Refusal("DRAFT-x", Accounting.Models.Enums.DocumentStatus.Draft, true));
+    }
+
+    [Fact]
+    public void Purchase_documents_any_status_and_purchase_side_notes_stay_fixable()
+    {
+        foreach (var t in new[] { Accounting.Models.Enums.DocumentType.PurchaseInvoice, Accounting.Models.Enums.DocumentType.Expense,
+                     Accounting.Models.Enums.DocumentType.PaymentVoucher })
+        {
+            Assert.False(Accounting.Helpers.OcrLineDiscountFixScope.IsOurSalesDocument(t, null));
+            Assert.Null(Accounting.Helpers.OcrLineDiscountFixScope.Refusal("PI-1", Accounting.Models.Enums.DocumentStatus.Paid, false));
+        }
+        Assert.False(Accounting.Helpers.OcrLineDiscountFixScope.IsOurSalesDocument(Accounting.Models.Enums.DocumentType.CreditNote, (true, false)));
+        // ใบลดหนี้ฝั่งขาย / ระบุฝั่งไม่ได้ ⇒ ถือเป็นใบขาย (ใบที่ออกแล้วต้องไม่ถูกแก้เงียบ)
+        Assert.True(Accounting.Helpers.OcrLineDiscountFixScope.IsOurSalesDocument(Accounting.Models.Enums.DocumentType.CreditNote, (false, false)));
+        Assert.True(Accounting.Helpers.OcrLineDiscountFixScope.IsOurSalesDocument(Accounting.Models.Enums.DocumentType.DebitNote, (false, true)));
+        Assert.True(Accounting.Helpers.OcrLineDiscountFixScope.IsOurSalesDocument(Accounting.Models.Enums.DocumentType.CreditNote, null));
+    }
 }
