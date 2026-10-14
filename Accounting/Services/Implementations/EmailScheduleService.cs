@@ -431,6 +431,11 @@ public class EmailScheduleService : IEmailScheduleService
               RETURNING q.""Id""").ToListAsync(ct);
         if (claimedIds.Count == 0) return 0;
 
+        // แถวที่ context นี้ติดตามอยู่ก่อนแล้ว (สถานะในหน่วยความจำยังเป็น "Pending") ต้องปล่อยก่อนโหลด — ไม่งั้น EF คืนตัวเก่า (identity resolution)
+        // แล้ว DeferOrFail ตั้ง "Pending" = ค่าเดิมในหน่วยความจำ ⇒ ไม่เขียนลงฐาน ⇒ แถวค้าง "Sending" ตลอดไป (ไม่ถูกส่งอีก) · CI 2026-10-14
+        foreach (var tracked in _db.ChangeTracker.Entries<EmailQueue>().Where(e => claimedIds.Contains(e.Entity.Id)).ToList())
+            tracked.State = EntityState.Detached;
+
         var batch = await _db.EmailQueues
             .Where(q => claimedIds.Contains(q.Id))
             .ToListAsync(ct);
