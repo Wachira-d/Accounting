@@ -290,6 +290,8 @@ public sealed record ImportCommitOptions(
 public sealed record ImportRowFailureDto(Guid RowId, int RowNo, string? DisplayKey, string Error);
 
 /// <summary>ผล commit (Queued = ไฟล์ใหญ่ worker ทำต่อ — poll GET batches/{id})</summary>
+/// <param name="Skipped">แถวที่ "ข้าม" (ผู้ใช้/ระบบตั้งข้าม · มีอยู่แล้ว) — ไม่รวมแถวที่ยังไม่พร้อม</param>
+/// <param name="Blocked">(ฝ่ายค้านรอบ ETL · เพิ่มท้าย) แถวที่ยังไม่ลงเพราะต้องแก้/รับทราบคำเตือน/แถวอื่นในใบเดียวกันยังไม่พร้อม — ≠ ข้าม</param>
 public sealed record ImportCommitResultDto(
     Guid BatchId,
     ImportSessionStatus Status,
@@ -299,7 +301,8 @@ public sealed record ImportCommitResultDto(
     int Skipped,
     bool Queued,
     IReadOnlyList<ImportRowFailureDto> Failures,
-    Guid? TemplateId);
+    Guid? TemplateId,
+    int Blocked = 0);
 
 /// <summary><c>POST batches/{id}/undo</c> — เหตุผลบังคับ (audit IMPORT-UNDO) · <c>string?</c> โดยตั้งใจ: service ตรวจเองแล้วตอบภาษาไทย
 /// (non-nullable = ASP.NET ตีกลับเป็นอังกฤษก่อน · tools/dto_nullable_contract_check)</summary>

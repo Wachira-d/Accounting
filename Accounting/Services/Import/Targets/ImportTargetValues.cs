@@ -71,6 +71,10 @@ public static class ImportTargetValues
         return string.IsNullOrWhiteSpace(hit) ? null : hit.Trim();
     }
 
+    /// <summary>pipeline อนุญาตให้ถาม AI ในรอบนี้ไหม (<see cref="ImportBatchOptionKeys.AllowAi"/> = "false" ⇒ ไม่ — worker · ตอนลงข้อมูล · ตรวจทั้งกลุ่มหลังแก้แถว) ·
+    /// ไม่ระบุ (ทางเข้าเดิม) = ได้ · ทุกชั้นใต้ AI ต้องให้ผลครบเหมือนกัน (kill-switch)</summary>
+    public static bool AllowAi(ImportTargetContext ctx) => Option(ctx, ImportBatchOptionKeys.AllowAi) != "false";
+
     public static Guid? OptionGuid(ImportTargetContext ctx, string key)
         => System.Guid.TryParse(Option(ctx, key), out var g) && g != System.Guid.Empty ? g : null;
 

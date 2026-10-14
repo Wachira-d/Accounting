@@ -49,6 +49,24 @@ public interface IImportTarget
     Task<IReadOnlyList<ImportRowUndoResult>> UndoAsync(ImportTargetContext ctx, IReadOnlyList<ImportCommittedRow> rows, string reason, CancellationToken ct);
 }
 
+/// <summary>
+/// ป้ายของ target แบบ <see cref="ImportCommitStyle.SharedTransaction"/> ที่การลงแต่ละหน่วย<b>ถือล็อกเลขรันของทั้งบริษัท</b> (สมุดรายวัน:
+/// <c>JournalEntryBuilder.NextJournalNumberAsync</c> → <c>pg_advisory_xact_lock</c> ของเลข JV) — ฝ่ายค้านรอบ ETL (P1-6): pipeline โหมด "ลงเฉพาะแถวที่ผ่าน"
+/// commit ธุรกรรม<b>ต่อหน่วย</b> ⇒ ล็อกถูกปล่อยทุกใบ (เดิมถือจนจบทั้งไฟล์ ⇒ อนุมัติ/ลงบัญชีทั้งบริษัทค้าง + เสี่ยง deadlock) · ไม่มีสมาชิก (ป้ายล้วน)
+/// </summary>
+public interface IImportSequenceNumberingTarget
+{
+}
+
+/// <summary>
+/// ป้ายของ target ที่ <see cref="ImportTargetRow.GroupKey"/> = <b>หน่วยความถูกต้อง</b> (ใบสำคัญต้องลงตัวทั้งใบ · เอกสารหลายบรรทัด · งบทดลองทั้งชุด) ไม่ใช่แค่หน่วยรวบลง —
+/// ฝ่ายค้านรอบ ETL (P0-2): pipeline ตรวจใหม่ทั้งกลุ่มเมื่อแก้แถว/เมื่อกลุ่มคร่อมขอบ chunk และไม่ลงหน่วยที่สมาชิกบางแถวยังไม่พร้อม (ไม่ลงครึ่งใบ) ·
+/// target ที่กลุ่มเป็นแค่การรวบลง (statement ธนาคาร = กลุ่มต่อบัญชี) ไม่ติดป้ายนี้ — แถวที่ผิดไม่ลากทั้งไฟล์ · ไม่มีสมาชิก (ป้ายล้วน)
+/// </summary>
+public interface IImportGroupIntegrityTarget
+{
+}
+
 /// <summary>บริบทของงานหนึ่งรอบ (ตรวจ/ลง/ย้อน)</summary>
 /// <param name="EntityType">คีย์ชนิดข้อมูลของ batch (ตามที่เก็บใน SmartImportSession)</param>
 /// <param name="Options">ตัวเลือกตอน commit (ขั้นตรวจใช้ค่าเริ่ม <c>new ImportCommitOptions()</c>)</param>
@@ -66,6 +84,10 @@ public sealed record ImportTargetContext(
 /// <param name="Values">field → ค่า (ถอดจาก MappedJson · คีย์ไม่สนตัวพิมพ์)</param>
 /// <param name="MatchedEntityId">ข้อมูลเดิมที่จับคู่/ผู้ใช้เลือก — Update/Merge ใช้ตัวนี้</param>
 /// <param name="GroupKey">คีย์กลุ่ม (เอกสารหลายบรรทัด/JE) — target แบบ OwnTransactionPerGroup ได้ทั้งกลุ่มในครั้งเดียว</param>
+/// <param name="MatchChosenByUser">(ฝ่ายค้านรอบ ETL · เพิ่มท้าย) <see cref="MatchedEntityId"/> มาจากผู้ใช้เลือกเอง — false = ระบบเลือกไว้รอบก่อน
+/// (target ตัดสินใหม่/คงไว้ได้ แต่ห้ามถือเป็นการยืนยันของผู้ใช้)</param>
+/// <param name="Hints">(เพิ่มท้าย) ค่าที่ target ฝากไว้รอบตรวจก่อน (<see cref="ImportRowValidation.Hints"/>) — เช่น ผังที่แนะนำ + feedback ของ AI ·
+/// ใช้ซ้ำตอนตรวจใหม่/ตอนลงข้อมูลแทนการถาม AI ซ้ำ · ไม่แสดงต่อผู้ใช้</param>
 public sealed record ImportTargetRow(
     Guid RowId,
     int RowNo,
@@ -73,14 +95,22 @@ public sealed record ImportTargetRow(
     ImportRowAction Action,
     Guid? MatchedEntityId = null,
     string? GroupKey = null,
-    string? DisplayKey = null);
+    string? DisplayKey = null,
+    bool MatchChosenByUser = false,
+    IReadOnlyDictionary<string, string?>? Hints = null);
 
 /// <summary>ผลตรวจของแถวหนึ่งจาก target — null = ไม่เปลี่ยนค่าที่ pipeline ตัดสินไว้</summary>
 /// <param name="FilledValues">ค่าที่ target เติมให้ (เซลล์ฟ้า "ระบบเติม") — ห้ามทับค่าที่ผู้ใช้แก้ (pipeline กันอีกชั้น)</param>
 /// <param name="MatchCandidates">(รอบ 205 ทีม B · เพิ่มท้าย) ผู้สมัครจับคู่ข้อมูลเดิม (dropdown "อัปเดต X") — จาก <c>IImportEntityResolver</c></param>
 /// <param name="MatchAutoApplied">(เพิ่มท้าย) ระบบเลือกคู่ให้เอง (กุญแจตรง: เลขภาษี+สาขา / รหัส) · false = แนะนำเท่านั้น</param>
 /// <param name="MatchUsedAi">(เพิ่มท้าย) คำแนะนำคู่มาจาก AI จริง (ป้ายซื่อสัตย์)</param>
-/// <param name="MatchAiFeedbackId">(เพิ่มท้าย) feedback ของ <c>ImportEntityMatch</c> — pipeline ปิดลูปตอน commit (กฎเหล็ก #1)</param>
+/// <param name="MatchAiFeedbackId">(เพิ่มท้าย) feedback ของ <c>ImportEntityMatch</c>/<c>ImportAccountMap</c> — pipeline ปิดลูปตอน commit (กฎเหล็ก #1)</param>
+/// <param name="MatchAiAnswer">(ฝ่ายค้านรอบ ETL · เพิ่มท้าย) คำตอบของชั้นโมเดลในรูปคำตอบของ feedback นั้น (id · "NEW" · รหัสบัญชี) — null = ไม่มีคำตอบที่ผ่านด่าน
+/// (ปิดลูปด้วย acceptedAi=false) · ไม่ส่ง = ใช้ <see cref="MatchedEntityId"/>/"NEW" ตามเดิม</param>
+/// <param name="MatchAnswerSpace">(เพิ่มท้าย) ความหมายของคู่ที่จับ: <see cref="ImportMatchAnswerSpace.Entity"/> (ค่าเริ่ม — สร้างใหม่ = "NEW") ·
+/// <see cref="ImportMatchAnswerSpace.Link"/> (คู่ = ข้อมูลที่แถวอ้างถึง เช่น ผู้ติดต่อของเอกสาร) · <see cref="ImportMatchAnswerSpace.AccountCode"/>
+/// (คำตอบ = รหัสบัญชี) — ใช้ตอนปิดลูปและนับคะแนนจับคู่เข้าความมั่นใจของแถว</param>
+/// <param name="Hints">(เพิ่มท้าย) ค่าที่ target ฝากไว้ใช้รอบหน้า (ดู <see cref="ImportTargetRow.Hints"/>) · null = ไม่เปลี่ยนของเดิม</param>
 public sealed record ImportRowValidation(
     Guid RowId,
     IReadOnlyList<ImportIssueDto> Issues,
@@ -94,7 +124,21 @@ public sealed record ImportRowValidation(
     IReadOnlyList<ImportMatchCandidateDto>? MatchCandidates = null,
     bool MatchAutoApplied = false,
     bool MatchUsedAi = false,
-    Guid? MatchAiFeedbackId = null);
+    Guid? MatchAiFeedbackId = null,
+    string? MatchAiAnswer = null,
+    string? MatchAnswerSpace = null,
+    IReadOnlyDictionary<string, string?>? Hints = null);
+
+/// <summary>ความหมายของคู่ที่จับใน <see cref="ImportRowValidation.MatchAnswerSpace"/> (ฝ่ายค้านรอบ ETL 2026-10-14)</summary>
+public static class ImportMatchAnswerSpace
+{
+    /// <summary>คู่ = ข้อมูลเดิมที่แถวจะอัปเดต/เติม · แถวสร้างใหม่ = "NEW" (ข้อมูลหลัก)</summary>
+    public const string Entity = "entity";
+    /// <summary>คู่ = ข้อมูลที่แถวอ้างถึง (ผู้ติดต่อของเอกสาร) — คำตอบ = id ที่เลือก · ไม่มีคู่ = "NEW"</summary>
+    public const string Link = "link";
+    /// <summary>คู่ = บัญชีในผัง — คำตอบ = รหัสบัญชี (คำตอบของ <c>ImportAccountMap</c>)</summary>
+    public const string AccountCode = "account-code";
+}
 
 /// <summary>ผลลงข้อมูลของแถวหนึ่ง — สำเร็จต้องมี <see cref="EntityType"/>+<see cref="EntityId"/> (idempotent + ย้อนได้)</summary>
 /// <param name="BeforeJson">ค่าเดิมก่อนทับ (Update/Merge) — เก็บลง ImportStagedRow.BeforeJson (เข้ารหัส) ใช้ย้อน</param>

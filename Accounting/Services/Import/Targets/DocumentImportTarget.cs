@@ -18,7 +18,7 @@ namespace Accounting.Services.Import.Targets;
 /// บรรทัดไม่ครบ §86/4 · หัวเอกสารในกลุ่มไม่ตรงกัน = คำเตือน (ใช้แถวแรก)</para>
 /// <para>ย้อน: ร่างที่ยังเป็นร่าง ⇒ ลบผ่าน <see cref="IDocumentService.DeleteDocumentAsync"/> · อนุมัติแล้ว ⇒ บล็อก + ทาง void/ใบลดหนี้</para>
 /// </summary>
-public class DocumentImportTarget : IImportTarget
+public class DocumentImportTarget : IImportTarget, IImportGroupIntegrityTarget
 {
     public const string Key = "documents";
     /// <summary>ตัวเลือกของชุด: ชนิดเอกสารตั้งต้นเมื่อไฟล์ไม่มีคอลัมน์ชนิด</summary>
@@ -65,10 +65,17 @@ public class DocumentImportTarget : IImportTarget
             .Select(d => new { d.Reference, d.DocumentType, d.DocumentNumber })
             .ToListAsync(ct);
 
+        var allowAi = AllowAi(ctx);
         var result = new List<ImportRowValidation>(rows.Count);
         foreach (var g in rows.GroupBy(r => GroupKeyOf(r, defaultType)))
         {
             var head = g.OrderBy(r => r.RowNo).First();
+            // ฝ่ายค้านรอบ ETL (P1-2): ตัดสินผู้ติดต่อ + ผังแนะนำตั้งแต่ขั้นตรวจ (เดิมตอนลงข้อมูล ⇒ หน้าตรวจขึ้น "พร้อมลง" แล้วลงไม่สำเร็จ · ถาม AI ตอนลง)
+            var prep = await _builder.PrepareAsync(ctx.CompanyId, g.Select(r => defaultType == null || Text(r, "DocumentType") != null ? r
+                : r with { Values = new Dictionary<string, string?>(r.Values, StringComparer.OrdinalIgnoreCase) { ["DocumentType"] = defaultType } })
+                .ToList(), allowAi, ct);
+            var contact = prep.Contact;
+            var lineHints = prep.LineHints.ToDictionary(h => h.RowId);
             var typeText = Text(head, "DocumentType") ?? defaultType;
             var type = DocumentImportTypes.Parse(typeText);
             var date = Date(head, "DocumentDate");
@@ -100,8 +107,7 @@ public class DocumentImportTarget : IImportTarget
             if (contactKeys > 1 || dates > 1)
                 groupIssues.Add(Warning(null, "doc-header-mismatch",
                     $"แถวของเอกสาร {original} มีผู้ติดต่อ/วันที่ไม่ตรงกัน — ระบบใช้ค่าของแถวแรก (แถว {head.RowNo})"));
-            if (Text(head, "ContactName") == null && Text(head, "ContactTaxId") == null && GuidValue(head, "ContactId") == null)
-                groupIssues.Add(Error("ContactName", "contact-missing", "ไม่มีชื่อหรือเลขผู้เสียภาษีของคู่ค้า — เติมคอลัมน์ผู้ติดต่อ"));
+            groupIssues.AddRange(contact.Issues);
 
             foreach (var r in g)
             {
@@ -115,11 +121,37 @@ public class DocumentImportTarget : IImportTarget
                     issues.Add(Error("LineQuantity", "line-negative", "จำนวนต้องมากกว่า 0 — ยอดลด/คืนให้ออกใบลดหนี้อ้างใบเดิม", null, "RD-86/4"));
                 if (price is < 0m)
                     issues.Add(Error("LineUnitPrice", "line-negative", "ราคาต่อหน่วยติดลบ — ยอดลด/คืนให้ออกใบลดหนี้อ้างใบเดิม", null, "RD-86/4"));
-                if (qty == null)
-                    filled = new Dictionary<string, string?> { ["LineQuantity"] = "1" };   // ฟ้า "ระบบเติม" — ไม่มีจำนวน = 1 หน่วย
+                var fill = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                if (qty == null) fill["LineQuantity"] = "1";   // ฟ้า "ระบบเติม" — ไม่มีจำนวน = 1 หน่วย
+                Dictionary<string, string?>? hints = null;
+                if (lineHints.TryGetValue(r.RowId, out var gl) && gl.SuggestedCode != null)
+                {
+                    // ผังที่ระบบแนะนำ (นักเรียน/AI) เติมเป็นค่า "ระบบเติม" ให้ผู้ใช้เห็น/เปลี่ยนได้ + ฝาก feedback ไว้ให้บรรทัดเอกสารปิดลูปตอนอนุมัติ
+                    fill["LineAccountCode"] = gl.SuggestedCode;
+                    hints = new Dictionary<string, string?>
+                    {
+                        [DocumentImportBuilder.HintGlCode] = gl.SuggestedCode,
+                        [DocumentImportBuilder.HintGlFeedback] = gl.GlFeedbackId?.ToString(),
+                        [DocumentImportBuilder.HintGlUsedAi] = gl.UsedAi ? "1" : "0",
+                    };
+                    issues.Add(Info("LineAccountCode", "line-account-suggested",
+                        (gl.UsedAi ? "🤖 AI แนะนำ" : "⚙️ ระบบแนะนำ") + $" ผังบัญชี {gl.SuggestedCode} — ตรวจแล้วเปลี่ยนได้ในแถวนี้"));
+                }
+                filled = fill.Count > 0 ? fill : null;
                 result.Add(new ImportRowValidation(r.RowId, issues, Action: action,
+                    MatchedEntityId: contact.PickedContactId,
+                    MatchKind: contact.MatchKind,
+                    MatchScore: contact.MatchScore,
                     DisplayKey: original == null ? Text(r, "LineDescription") : $"{original} · {Text(r, "LineDescription")}",
-                    GroupKey: GroupKeyOf(r, defaultType), FilledValues: filled));
+                    GroupKey: GroupKeyOf(r, defaultType), FilledValues: filled,
+                    MatchCandidates: contact.Candidates.Count > 0 ? contact.Candidates : null,
+                    MatchAutoApplied: contact.AutoApplied,
+                    MatchUsedAi: contact.UsedAi,
+                    MatchAiFeedbackId: contact.AiFeedbackId,
+                    MatchAiAnswer: contact.AiAnswer,
+                    MatchAnswerSpace: ImportMatchAnswerSpace.Link,
+                    // null = คงค่าที่ฝากไว้เดิม (feedback ของผังที่แนะนำไว้ยังต้องไปปิดลูปแม้ผู้ใช้พิมพ์ผังเอง)
+                    Hints: hints));
             }
         }
         return result;
@@ -143,6 +175,9 @@ public class DocumentImportTarget : IImportTarget
         if (build.Request == null)
             return FailAll(rows, string.Join(" · ", build.Issues.Where(i => i.Severity == ImportIssueSeverity.Error).Select(i => i.Message)))
                 .Concat(skipped).ToList();
+        // ฝ่ายค้านรอบ ETL (P2): DocumentService commit ธุรกรรมของตัวเอง — ถ้าเครื่องล่มหลังสร้างใบแต่ก่อนประทับผลแถว ทำต่อแล้วต้องไม่สร้างใบซ้ำ
+        if (await CreatedEarlierInBatchAsync(ctx, build.Request, ct) is Guid already)
+            return rows.Select(r => new ImportRowCommitResult(r.RowId, true, CommittedEntity, already)).Concat(skipped).ToList();
         try
         {
             var doc = await _documents.CreateDocumentAsync(ctx.CompanyId, build.Request, CreatedBy(ctx), originModule: "Import");
@@ -153,6 +188,26 @@ public class DocumentImportTarget : IImportTarget
             // DocumentService ตอบเหตุเป็นภาษาไทย (งวดปิด · ผู้ติดต่อ · โควตา) — ล้มดังที่ผลของทุกแถวในเอกสารนี้
             return FailAll(rows, ex.Message).Concat(skipped).ToList();
         }
+    }
+
+    /// <summary>
+    /// ใบที่ชุดนี้สร้างไปแล้วแต่แถวยังไม่ถูกประทับผล (เครื่องล่มระหว่าง domain commit กับการประทับ) — ร่างจากศูนย์นำเข้า (<c>OriginModule = "Import"</c>) ·
+    /// ผู้สร้างคนเดียวกัน · หลังเวลาสร้างชุด · ชนิด/ผู้ติดต่อ/เลขเดิมตรงกัน · <b>ยังไม่มีแถวใดของชุดนี้อ้างถึง</b> · ทางเดิม (ไม่มีชุดจริง) = ไม่ตรวจ
+    /// </summary>
+    private async Task<Guid?> CreatedEarlierInBatchAsync(ImportTargetContext ctx, Accounting.Models.DTOs.Document.CreateDocumentRequest request,
+        CancellationToken ct)
+    {
+        var since = await _db.SmartImportSessions.AsNoTracking()
+            .Where(s => s.Id == ctx.BatchId && s.CompanyId == ctx.CompanyId).Select(s => (DateTime?)s.CreatedAt).FirstOrDefaultAsync(ct);
+        if (since is not DateTime from) return null;
+        var by = CreatedBy(ctx);
+        var claimed = _db.ImportStagedRows.Where(r => r.SessionId == ctx.BatchId && r.CompanyId == ctx.CompanyId && r.CommittedEntityId != null)
+            .Select(r => r.CommittedEntityId!.Value);
+        return await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == ctx.CompanyId && !d.IsDeleted && d.OriginModule == "Import" && d.CreatedBy == by && d.CreatedAt >= from
+                && d.DocumentType == request.DocumentType && d.ContactId == request.ContactId && d.Reference == request.Reference
+                && !claimed.Contains(d.Id))
+            .OrderBy(d => d.CreatedAt).Select(d => (Guid?)d.Id).FirstOrDefaultAsync(ct);
     }
 
     public async Task<IReadOnlyList<ImportUndoCheck>> CanUndoAsync(ImportTargetContext ctx, IReadOnlyList<ImportCommittedRow> rows, CancellationToken ct)

@@ -27,6 +27,8 @@ public sealed record ImportResolveOptions(bool AllowAi = true);
 /// <summary>ผลจับคู่ของแถว · <see cref="EntityId"/> null = สร้างใหม่</summary>
 /// <param name="Kind">"TaxBranch" · "Code" · "LegalName" · "Ngram" · "Ai" · "None"</param>
 /// <param name="AutoApply">ระบบตั้ง MatchedEntityId ให้เลย (มีเลขภาษี/รหัสตรง) · false = แนะนำ ให้ผู้ใช้เลือก</param>
+/// <param name="AiAnswer">(ฝ่ายค้านรอบ ETL · เพิ่มท้าย) คำตอบของชั้นโมเดล (id/"NEW") เมื่อ <see cref="AiFeedbackId"/> มีค่าแต่ผลไม่ได้ใช้คำตอบนั้น
+/// (มั่นใจต่ำ/นอกชุด) — ผู้ปิดลูปเทียบกับคำตอบนี้ ไม่ใช่กับ <see cref="EntityId"/></param>
 public sealed record ImportEntityMatchResult(
     Guid RowId,
     Guid? EntityId,
@@ -36,7 +38,8 @@ public sealed record ImportEntityMatchResult(
     bool UsedAi,
     Guid? AiFeedbackId,
     IReadOnlyList<ImportMatchCandidateDto> Candidates,
-    IReadOnlyList<ImportIssueDto> Issues);
+    IReadOnlyList<ImportIssueDto> Issues,
+    string? AiAnswer = null);
 
 /// <summary>บัญชีที่ต้องหา — <see cref="Key"/> = คีย์ของผู้เรียก (เช่น รหัส+ชื่อในไฟล์) ใช้จับคืน</summary>
 public sealed record ImportAccountQuery(string Key, string? Code, string? Name, string? Hint = null);

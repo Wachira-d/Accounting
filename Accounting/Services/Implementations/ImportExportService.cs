@@ -79,6 +79,13 @@ public class ImportExportService : IImportExportService
     /// <summary>ผลเขียนของ writer เดิมหนึ่งหน่วย — <see cref="EntityId"/> ใช้ทำ idempotent/ย้อน · <see cref="BeforeJson"/> = ค่าเดิมก่อนทับ (ย้อนแบบ RestoreBefore)</summary>
     private sealed record RowWrite(string EntityType, Guid? EntityId, bool Skipped = false, string? BeforeJson = null);
 
+    /// <summary>คีย์ใน BeforeJson ของแถวสมุดรายวันที่ต่อบรรทัดเข้าใบที่มีอยู่<b>ก่อน</b>การนำเข้ารอบนี้ (ฝ่ายค้านรอบ ETL P1-1) — ค่า = id ของบรรทัดที่เพิ่ม ·
+    /// ย้อน (<c>JournalEntriesImportTarget.RestoreAsync</c>) ลบเฉพาะบรรทัดนี้ ไม่ลบใบของผู้ใช้</summary>
+    public const string JournalAppendedLineKey = "appendedLineId";
+
+    /// <summary>ใบสมุดรายวันที่ writer นี้สร้างในขอบเขตงานนี้ (scoped ต่อคำขอ/รอบ worker — ไม่ใช่ static) · ใบที่ไม่อยู่ในชุดนี้ = ของเดิมก่อนการนำเข้า</summary>
+    private readonly HashSet<Guid> _journalsCreatedHere = new();
+
     private sealed record LegacyRun(int Success, int Skipped, List<ImportError> Errors);
 
     /// <summary>
@@ -335,6 +342,8 @@ public class ImportExportService : IImportExportService
                 {
                     Values = merged, Action = v.Action ?? r.Action, MatchedEntityId = v.MatchedEntityId ?? r.MatchedEntityId,
                     GroupKey = v.GroupKey ?? r.GroupKey,
+                    // ฝ่ายค้านรอบ ETL: ผังที่ขั้นตรวจแนะนำ (feedback ของ AI/นักเรียน) ต้องไปถึงบรรทัดเอกสาร — ไม่งั้นลูปการเรียนรู้ไม่ปิด
+                    Hints = v.Hints ?? r.Hints,
                 };
             }).ToList();
             var results = new List<ImportRowCommitResult>(rows.Count);
@@ -1187,16 +1196,22 @@ public class ImportExportService : IImportExportService
                 && l.DebitAmount == debitAmount && l.CreditAmount == creditAmount);
             if (dupLine) return new RowWrite("JournalEntry", existing.Id, Skipped: true);
             // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
-            _db.AddNewChild(existing.Lines, new JournalEntryLine
+            var appended = new JournalEntryLine
             {
+                Id = Guid.NewGuid(),
                 AccountId = account.Id,
                 DebitAmount = debitAmount,
                 CreditAmount = creditAmount,
                 Description = description
-            });
+            };
+            _db.AddNewChild(existing.Lines, appended);
             existing.TotalDebit = existing.Lines.Sum(l => l.DebitAmount);
             existing.TotalCredit = existing.Lines.Sum(l => l.CreditAmount);
-            return new RowWrite("JournalEntry", existing.Id);
+            // ฝ่ายค้านรอบ ETL (P1-1): ใบที่มีอยู่ก่อนงานนี้ (ผู้ใช้ทำเอง/ชุดก่อน) — จดบรรทัดที่เพิ่มไว้ ⇒ ย้อน = ลบเฉพาะบรรทัดนี้ (ไม่ลบทั้งใบของผู้ใช้)
+            return _journalsCreatedHere.Contains(existing.Id)
+                ? new RowWrite("JournalEntry", existing.Id)
+                : new RowWrite("JournalEntry", existing.Id, BeforeJson: ImportJson.Serialize(
+                    new Dictionary<string, string?> { [JournalAppendedLineKey] = appended.Id.ToString() }));
         }
 
         // ⚠️ เดิมอ่านเลขรันจากแถว NumberSeries ที่ Prefix == "JV" ซึ่ง
@@ -1231,6 +1246,7 @@ public class ImportExportService : IImportExportService
             }
         };
         _db.JournalEntries.Add(entry);
+        _journalsCreatedHere.Add(entry.Id);
         return new RowWrite("JournalEntry", entry.Id);
     }
 

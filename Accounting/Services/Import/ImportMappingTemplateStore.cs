@@ -167,7 +167,11 @@ public class ImportMappingTemplateStore : IImportMappingTemplateStore
             if (string.IsNullOrWhiteSpace(request.Name)) throw new BusinessRuleException("ชื่อแม่แบบว่างไม่ได้ — ตั้งชื่อที่จำได้ เช่น \"ผู้ติดต่อจาก PEAK\"");
             t.Name = Trunc(request.Name.Trim(), 200);
         }
-        t.AutoCommitWhenClean = request.AutoCommitWhenClean;
+        // ฝ่ายค้านรอบ ETL (F2 ข้อ 2 "เก็บได้ ≠ มีผล"): ยังไม่มีผู้อ่านค่านี้ (worker ยังไม่ลงให้อัตโนมัติ) ⇒ ห้ามรับ "เปิด" แล้วเงียบ —
+        // ปฏิเสธพร้อมเหตุผล · หน้าเว็บล็อกช่องนี้ "ยังไม่เปิดใช้" · ค่าเดิมที่เคยเปิดไว้ถูกปิดเมื่อบันทึกแม่แบบครั้งถัดไป
+        if (request.AutoCommitWhenClean)
+            throw new BusinessRuleException("การลงข้อมูลอัตโนมัติเมื่อไฟล์ไม่มีปัญหายังไม่เปิดใช้ — ตอนนี้ทุกชุดต้องกด \"ยืนยันนำเข้า\" เอง (แม่แบบยังจำการจับคู่คอลัมน์ให้ตามเดิม)");
+        t.AutoCommitWhenClean = false;
         if (request.SourceSystem != null) t.SourceSystem = string.IsNullOrWhiteSpace(request.SourceSystem) ? null : Trunc(request.SourceSystem.Trim(), 64);
         if (request.Columns != null)
         {

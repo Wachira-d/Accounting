@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **539 ไฟล์ · 5,344 `[Fact]` + 834 `[Theory]` (3,728 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **541 ไฟล์ · 5,357 `[Fact]` + 834 `[Theory]` (3,728 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5971,6 +5971,21 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | ETLB-16 | Smart Import จับคู่คอลัมน์ | ผ่านตัวจับคู่ของทีม A (`ImportColumnMatchService`) · ป้าย AiMatched เฉพาะ AI ตอบจริง (กฎ = HeuristicMatched) · FeedbackId เก็บลง session · แก้/ยืนยัน ⇒ `RecordConfirmedAsync` | ⏳ manual (จุดเรียกล็อกด้วย `required_call_site_check`) |
 | ETLB-18 | `POST ai/import/suggest-mapping/confirm` · `POST smart-import/sessions/{id}/ai-review/choice` | feedback ของบริษัทนี้ = บันทึก (recorded true) · ของบริษัทอื่น/ไม่ใช่ชนิดนั้น = ไม่บันทึก · ไม่มีสิทธิ์นำเข้าชนิดนั้น = 403 | ⏳ manual (จุดเรียกล็อกด้วย `required_call_site_check`) |
 | ETLB-17 | ศูนย์นำเข้า: ย้อนชุดที่ลงแล้ว (ผู้ติดต่อที่ยังไม่ถูกอ้าง / ถูกอ้างแล้ว / อัปเดตรายเดิม) | ลบแบบ soft · ถูกอ้าง = บล็อกพร้อมทางไปต่อ · อัปเดตรายเดิม = คืนค่าเดิมจาก snapshot · ต้องระบุเหตุผล · audit IMPORT-UNDO | ⏳ manual |
+
+## ETL-ADV — ฝ่ายค้านรอบ ETL (2026-10-14 · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §6)
+
+| รหัส | สถานการณ์ | ผลที่ต้องได้ | ล็อกด้วย |
+|---|---|---|---|
+| ETLADV-01 | worker ลงสมุดรายวัน 510 แถวที่ทุกแถวล้ม (บัญชี 9999 ไม่มีในผัง) | จบใน 2 รอบ (เดิมวนหยิบแถว Failed ไม่สิ้นสุด) · ทุกแถว Failed + เหตุผล · ชุด "ลงไม่สำเร็จ" · `SkippedCount` = 0 · audit IMPORT-COMMIT 1 แถว · แก้ผังแล้วกดลงใหม่ ⇒ แถวที่ล้มลงครบ 255 ใบ (audit ครั้งที่ 2) | ✅ `Db/ImportAdversarialEtlDbTests` |
+| ETLADV-02 | สมุดรายวัน 504 แถว ใบหนึ่ง 4 บรรทัดคร่อมขอบ chunk 500 (แถว 499–502) + ใบไม่ลงตัวจริง 1 ใบ | ใบที่คร่อมขอบไม่ถูกตีว่าไม่ลงตัว · ใบไม่ลงตัวจริงยังเป็น Error · ใบอื่นไม่ถูกแตะ | ✅ `Db/ImportAdversarialEtlDbTests` |
+| ETLADV-03 | แก้เดบิตบรรทัดเดียวของใบที่ลงตัว · ใบที่มีบรรทัดคำเตือน (มีทั้ง Dr/Cr) ยังไม่รับทราบ | ทั้งใบที่แก้เป็น Error (บรรทัดที่ไม่ได้แก้ด้วย) · ใบอื่นไม่ถูกแตะ · ลง "เฉพาะแถวที่ผ่าน" ⇒ ใบที่สมาชิกยังไม่พร้อมไม่ลงครึ่งใบ (เหตุผล "ไม่ลงใบครึ่งใบ" + ทางไปต่อ) · `Blocked` ≠ `Skipped` · แก้กลับ + รับทราบ ⇒ ลงครบทุกใบ ลงตัว | ✅ `Db/ImportAdversarialEtlDbTests` |
+| ETLADV-04 | นำเข้าสมุดรายวันที่วันที่/คำอธิบาย/อ้างอิงตรงกับใบร่างที่ผู้ใช้คีย์เอง แล้วย้อน | ตอนลงต่อบรรทัดเข้าใบเดิม (พฤติกรรมเดิม) · ตัวอย่างการย้อน = คืนค่าเดิม · ย้อน ⇒ ใบของผู้ใช้อยู่ครบ 2 บรรทัด ยอด 300 (เดิมถูกลบทั้งใบ) · ใบที่ชุดสร้างเองถูกลบทั้งใบ | ✅ `Db/ImportAdversarialEtlDbTests` |
+| ETLADV-05 | เอกสารที่มีแต่ชื่อผู้ติดต่อ: ชื่อตรงตัวไม่ซ้ำ · ชื่อคล้าย ("ลูกค้าเก่าแก่" vs "บริษัท ลูกค้าเก่าแก่ จำกัด") · ชื่อซ้ำสองราย · ทางไฟล์เดิม | ตรงตัวไม่ซ้ำ = ผูกตั้งแต่ขั้นตรวจ + คำเตือน + ลงได้ · คล้าย = Error พร้อม "เลือกผู้ติดต่อ" → ผู้ใช้เลือกแล้วผ่าน + ลงได้ · ซ้ำ = ไม่ผูกเอง · ทางไฟล์เดิมลงได้ (ร่าง · ผู้ติดต่อถูกราย) | ✅ `Db/ImportAdversarialEtlDbTests` |
+| ETLADV-06 | ย้อนผังบัญชี 5 บัญชี: ถูกอ้างจากบัญชีธนาคาร · ยอดยกมา · บัญชีย่อยที่ผู้ใช้สร้าง · คู่แม่-ลูกที่มาจากชุดเดียวกัน | สามบัญชีแรกบล็อกพร้อมเหตุผลไทย + ทางไปต่อ · คู่แม่-ลูกในชุดย้อนได้ (ไม่บล็อกกันเอง) · ชุด "ลงได้บางแถว" | ✅ `Db/ImportAdversarialEtlDbTests` |
+| ETLADV-07 | ทะเบียนพนักงาน (เลขบัตร · เงินเดือน "25,000.00" · เลขบัญชี) — service/controller ไม่มีและมี `Pii.View` | ไม่มี = ค่า/ค่าดิบ/errors.csv ปิดบัง (`1-XXXX-XXXXX-XX-x` · เงินเดือนซ่อน · บัญชีเปิด 5 ท้าย) + ไฟล์ต้นทาง 403 · มี = ค่าเต็ม + ดาวน์โหลดได้ · ช่องไม่อ่อนไหว/ชนิดอื่นไม่ถูกแตะ | ✅ `Db/ImportAdversarialEtlDbTests` |
+| ETLADV-08 | ตัวช่วย pure: ปิดบัง/รูปค่าสำหรับ AI · ยอดติดลบที่ errors.csv เติม `'` · บัญชีที่ wizard ไม่ย้อนเพราะแก้มือ | ปิดบังตามชนิด · ข้อความธุรกิจ/เลขนิติบุคคลคงเดิม · `'-1500.00` อ่านกลับ −1500 · `'=SUM` ยังอ่านไม่ได้ · JSON เสีย/ไม่มี = ว่าง | ✅ `ImportAdversarialEtlHelpersTests` |
+| ETLADV-09 | งบทดลอง: feedback ImportAccountMap ปิดตอนลงด้วยรหัสที่ยืนยัน · ไม่ถาม AI ตอนลง · ย้อนเมื่อมียอดที่แก้มือ | ปิดลูปครั้งเดียวต่อ feedback · แถวของบัญชีที่แก้มือ = ย้อนไม่สำเร็จ + เหตุผล | ⏳ manual (ล็อกจุดเรียกใน `required_call_site_check`) |
+| ETLADV-10 | ชุดค้างไม่มีการใช้งาน 30 วัน · ยกเลิกระหว่าง worker ทำงาน · เปิด "ลงอัตโนมัติ" ของแม่แบบ | ยกเลิกอัตโนมัติ + ล้างแถวพัก คงสรุป · ยกเลิกรอ/ปฏิเสธพร้อมเหตุผล (ไม่แข่ง) · ปฏิเสธพร้อม "ยังไม่เปิดใช้" | ⏳ manual · แม่แบบ ✅ `Db/ImportMappingTemplateStoreDbTests` |
 ---
 
 ## MONEY-CH — แหล่งเงินของเอกสาร/การชำระ → ผังบัญชี (2026-10-14 ทีม F2 · `erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md` PC#3/#4/#5/#9/#13/#14/#15/#16/#18/#21 · ID#3–#7/#16/#20/#21)

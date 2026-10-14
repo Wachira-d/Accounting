@@ -286,6 +286,9 @@ public partial class ImportPipelineService
 
     private async Task FinishStagingAsync(SmartImportSession session, CancellationToken ct)
     {
+        // ฝ่ายค้านรอบ ETL (P0-2): ตรวจทีละ 500 แถว ⇒ กติการะดับกลุ่ม (ใบสำคัญลงตัว · งบทดลองทั้งชุด) เห็นกลุ่มที่คร่อมขอบ chunk แค่ครึ่งเดียว ·
+        // หลังพักครบ ตรวจกลุ่มที่คร่อมขอบใหม่ทั้งกลุ่มในครั้งเดียว (ก่อนเปิดให้ผู้ใช้ตรวจ)
+        await RevalidateSplitGroupsAsync(session, ct);
         session.Status = ImportSessionStatus.Staged;
         session.Phase = ImportBatchPhase.Review;
         session.ProcessedRows = session.TotalRows;
@@ -324,12 +327,91 @@ public partial class ImportPipelineService
         await TransformValidateAsync(session, target, state, items, allowAi, actor, ct);
     }
 
-    /// <summary>ตรวจแถวที่พักแล้วใหม่ (หลังผู้ใช้แก้) — อ่านค่าดิบจาก RawJson แล้วเดินเส้นเดียวกับตอนพัก (ค่าที่ผู้ใช้แก้ชนะ)</summary>
-    private Task RevalidateAsync(SmartImportSession session, IImportTarget target, ImportBatchState state, IReadOnlyList<ImportStagedRow> rows,
+    /// <summary>
+    /// ตรวจแถวที่พักแล้วใหม่ (หลังผู้ใช้แก้) — อ่านค่าดิบจาก RawJson แล้วเดินเส้นเดียวกับตอนพัก (ค่าที่ผู้ใช้แก้ชนะ) ·
+    /// <b>ฝ่ายค้านรอบ ETL (P0-2)</b>: กติการะดับกลุ่ม (ใบสำคัญลงตัว · งบทดลองทั้งชุด · หัวเอกสาร) ต้องเห็นทั้งกลุ่ม ⇒ ขยายชุดเป็นทุกแถวที่ยังไม่ลงซึ่งมี
+    /// GroupKey เดียวกัน (ก่อนและหลังแก้ — แก้วันที่ของบรรทัดย้ายใบ ⇒ ใบเดิมและใบใหม่ถูกตรวจใหม่ทั้งคู่) · เดิมแก้หนึ่งบรรทัดของใบที่ลงตัว ⇒ ใบนั้น
+    /// "ไม่ลงตัว" แล้วโหมดลงเฉพาะแถวที่ผ่านลงบรรทัดที่เหลือเป็นใบไม่ลงตัว · ชุดที่ขยายเกินแถวที่แก้ ⇒ ไม่ถาม AI (แถวที่ไม่ได้แก้ตัดสินไว้แล้ว)
+    /// </summary>
+    private async Task RevalidateAsync(SmartImportSession session, IImportTarget target, ImportBatchState state, IReadOnlyList<ImportStagedRow> rows,
         ImportActor actor, CancellationToken ct)
-        => TransformValidateAsync(session, target, state,
-            rows.Select(r => (new SourceRow(r.RowNo, RawCells(r), ReadMeta(r.AiFeedbackIdsJson).ContainsKey(MetaSummary)), r)).ToList(),
-            allowAi: true, actor, ct);
+    {
+        if (rows.Count == 0) return;
+        if (target is not IImportGroupIntegrityTarget)
+        {
+            // กลุ่มเป็นแค่หน่วยรวบลง (เช่น statement ธนาคาร) — ตรวจเฉพาะแถวที่แก้ (พฤติกรรมเดิม)
+            await TransformValidateAsync(session, target, state, Sources(rows), allowAi: true, actor, ct);
+            return;
+        }
+        var keysBefore = rows.Select(r => r.GroupKey).Where(k => k != null).Select(k => k!).ToHashSet(StringComparer.Ordinal);
+        var set = await ExpandToGroupsAsync(session, rows, ct);
+        await ValidateByGroupsAsync(session, target, state, set, allowAi: set.Count == rows.Count, actor, ct);
+        // แถวที่แก้ย้ายไปกลุ่มใหม่ (คีย์เปลี่ยนหลังตรวจ) — สมาชิกเดิมของกลุ่มใหม่ต้องเห็นแถวที่ย้ายเข้ามา
+        if (rows.Any(r => r.GroupKey != null && !keysBefore.Contains(r.GroupKey)))
+        {
+            var again = await ExpandToGroupsAsync(session, rows, ct);
+            if (again.Count > rows.Count) await ValidateByGroupsAsync(session, target, state, again, allowAi: false, actor, ct);
+        }
+    }
+
+    /// <summary>แถวที่ส่งมา + ทุกแถวที่ยังไม่ลง/ไม่ถูกย้อนที่มี GroupKey เดียวกัน (กรอง CompanyId) — แถวที่ส่งมาใช้ instance เดิม (ค่าที่เพิ่งแก้)</summary>
+    private async Task<List<ImportStagedRow>> ExpandToGroupsAsync(SmartImportSession session, IReadOnlyList<ImportStagedRow> rows, CancellationToken ct)
+    {
+        var set = rows.ToList();
+        var keys = rows.Select(r => r.GroupKey).Where(k => k != null).Select(k => k!).Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count == 0) return set;
+        var ids = rows.Select(r => r.Id).ToList();
+        set.AddRange(await _db.ImportStagedRows
+            .Where(r => r.SessionId == session.Id && r.CompanyId == session.CompanyId && r.GroupKey != null && keys.Contains(r.GroupKey)
+                && !ids.Contains(r.Id) && r.Status != ImportRowStatus.Committed && r.Status != ImportRowStatus.Undone)
+            .ToListAsync(ct));
+        return set;
+    }
+
+    /// <summary>ตรวจชุดแถวเป็นก้อน ≥ 500 แถวโดย<b>ไม่ตัดกลางกลุ่ม</b> (งบทดลองทั้งชุด = ก้อนเดียว)</summary>
+    private async Task ValidateByGroupsAsync(SmartImportSession session, IImportTarget target, ImportBatchState state, List<ImportStagedRow> rows,
+        bool allowAi, ImportActor actor, CancellationToken ct)
+    {
+        var units = rows.OrderBy(r => r.RowNo).GroupBy(r => r.GroupKey ?? ("#" + r.Id), StringComparer.Ordinal).Select(g => g.ToList()).ToList();
+        var chunk = new List<ImportStagedRow>();
+        foreach (var u in units)
+        {
+            chunk.AddRange(u);
+            if (chunk.Count < WorkerChunkRows) continue;
+            await TransformValidateAsync(session, target, state, Sources(chunk), allowAi, actor, ct);
+            chunk = new List<ImportStagedRow>();
+        }
+        if (chunk.Count > 0) await TransformValidateAsync(session, target, state, Sources(chunk), allowAi, actor, ct);
+    }
+
+    private static List<(SourceRow Src, ImportStagedRow Row)> Sources(IEnumerable<ImportStagedRow> rows)
+        => rows.Select(r => (new SourceRow(r.RowNo, RawCells(r), ReadMeta(r.AiFeedbackIdsJson).ContainsKey(MetaSummary)), r)).ToList();
+
+    /// <summary>หลังพักครบทุก chunk: กลุ่มที่สมาชิกอยู่คนละ chunk ของการพัก (ตำแหน่งแถว / 500) ถูกตรวจใหม่ทั้งกลุ่ม — งบทดลองเกิน 500 บรรทัด ·
+    /// ใบสำคัญที่คร่อมขอบ chunk (ฝ่ายค้านรอบ ETL P0-2)</summary>
+    private async Task RevalidateSplitGroupsAsync(SmartImportSession session, CancellationToken ct)
+    {
+        var positions = await _db.ImportStagedRows.AsNoTracking()
+            .Where(r => r.SessionId == session.Id && r.CompanyId == session.CompanyId)
+            .OrderBy(r => r.RowNo)
+            .Select(r => new { r.Id, r.GroupKey, r.Status })
+            .ToListAsync(ct);
+        if (positions.Count <= WorkerChunkRows || Target(session) is not IImportGroupIntegrityTarget) return;
+        var split = positions.Select((r, i) => (r.GroupKey, Chunk: i / WorkerChunkRows))
+            .Where(x => x.GroupKey != null)
+            .GroupBy(x => x.GroupKey!, StringComparer.Ordinal)
+            .Where(g => g.Select(x => x.Chunk).Distinct().Count() > 1)
+            .Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
+        if (split.Count == 0) return;
+        var target = Target(session);
+        var state = State(session);
+        var ids = positions.Where(p => p.GroupKey != null && split.Contains(p.GroupKey)
+            && p.Status != ImportRowStatus.Committed && p.Status != ImportRowStatus.Undone).Select(p => p.Id).ToList();
+        var rows = await _db.ImportStagedRows.Where(r => r.SessionId == session.Id && r.CompanyId == session.CompanyId && ids.Contains(r.Id))
+            .ToListAsync(ct);
+        // กลุ่มที่ตัดสินแล้วตอนพักไม่ถาม AI ซ้ำ (คำตอบ/คู่ที่เลือกอยู่ในแถวแล้ว)
+        await ValidateByGroupsAsync(session, target, state, rows, allowAi: false, SystemActor(session), ct);
+    }
 
     /// <summary>หัวใจของขั้น Transform: แปลงค่า (ImportCellNormalizer) → ค่าที่ผู้ใช้แก้ทับ → target ตรวจกฎธุรกิจ + จับคู่ข้อมูลเดิม → คะแนน/สถานะ</summary>
     private async Task TransformValidateAsync(SmartImportSession session, IImportTarget target, ImportBatchState state,
@@ -356,10 +438,14 @@ public partial class ImportPipelineService
             work.Add((row, values, issues, meta, src.Summary));
         }
 
-        var targetRows = work.Select(w => new ImportTargetRow(w.Row.Id, w.Row.RowNo, w.Values, w.Row.Action, w.Row.MatchedEntityId,
-            w.Row.GroupKey, w.Row.DisplayKey)).ToList();
-        var validations = (await target.ValidateAsync(Context(session, actor, allowAi), targetRows, ct))
-            .GroupBy(v => v.RowId).ToDictionary(g => g.Key, g => g.First());
+        // ฝ่ายค้านรอบ ETL: target ที่กลุ่มเป็นหน่วยความถูกต้อง (ใบสำคัญ · เอกสาร · งบทดลอง) — แถวที่ตัดออก (ผู้ใช้ตัด/แถวยอดรวม) ไม่ถูกลง ⇒ ไม่ส่งให้ตรวจ
+        // (กติการะดับกลุ่มต้องเห็นชุดเดียวกับที่จะลงจริง · เดิมแถว "รวม" ที่ผู้ใช้ตัดออกยังถูกนับ ⇒ งบทดลองไม่ลงตัวตลอดกาล) · แถวที่นำกลับถูกตรวจตอนแก้แถว
+        var groupIntegrity = target is IImportGroupIntegrityTarget;
+        var targetRows = work.Where(w => !groupIntegrity || !IsExcluded(w.Meta, w.Summary))
+            .Select(w => BuildTargetRow(w.Row, w.Values, w.Meta)).ToList();
+        var validations = targetRows.Count == 0 ? new Dictionary<Guid, ImportRowValidation>()
+            : (await target.ValidateAsync(Context(session, actor, allowAi), targetRows, ct))
+                .GroupBy(v => v.RowId).ToDictionary(g => g.Key, g => g.First());
 
         foreach (var w in work)
         {
@@ -380,22 +466,38 @@ public partial class ImportPipelineService
                         issues.RemoveAll(i => i.Source == ImportIssueSource.Normalizer && string.Equals(i.Field, kv.Key, StringComparison.OrdinalIgnoreCase));
                     }
                 issues.AddRange(v.Issues);
+                // target คืนคู่เดิมโดยไม่ตัดสินใหม่ (MatchKind = null · id เดิม — เช่น งบทดลองคงบัญชีที่เลือกไว้รอบก่อนแทนการถาม AI ซ้ำ) ⇒ คงวิธี/คะแนน/ป้าย AI เดิม
+                var keptMatch = v.MatchKind == null && v.MatchedEntityId != null && v.MatchedEntityId == w.Row.MatchedEntityId;
                 if (!userAction)
                 {
                     w.Row.Action = v.Action ?? ImportRowAction.Create;
                     w.Row.MatchedEntityId = v.MatchedEntityId;
-                    w.Row.MatchKind = Trunc(v.MatchKind, 32);
-                    w.Row.MatchScore = v.MatchScore is decimal ms ? Math.Round(Math.Clamp(ms, 0m, 1m), 4, MidpointRounding.AwayFromZero) : null;
-                    if (v.MatchAutoApplied) meta[MetaMatchAuto] = "1"; else meta.Remove(MetaMatchAuto);
+                    if (!keptMatch)
+                    {
+                        w.Row.MatchKind = Trunc(v.MatchKind, 32);
+                        w.Row.MatchScore = v.MatchScore is decimal ms ? Math.Round(Math.Clamp(ms, 0m, 1m), 4, MidpointRounding.AwayFromZero) : null;
+                        if (v.MatchAutoApplied) meta[MetaMatchAuto] = "1"; else meta.Remove(MetaMatchAuto);
+                    }
                 }
-                if (v.MatchUsedAi) meta[MetaMatchUsedAi] = "1"; else meta.Remove(MetaMatchUsedAi);
+                if (!keptMatch)
+                {
+                    if (v.MatchUsedAi) meta[MetaMatchUsedAi] = "1"; else meta.Remove(MetaMatchUsedAi);
+                }
                 if (v.MatchAiFeedbackId is Guid fb && !meta.ContainsKey(MetaMatchFeedback))
                 {
                     meta[MetaMatchFeedback] = fb.ToString();
-                    meta[MetaMatchAi] = v.MatchedEntityId?.ToString() ?? ImportEntityResolver.NewEntityAnswer;
+                    // คำตอบของชั้นโมเดลในรูปคำตอบของ feedback (ฝ่ายค้านรอบ ETL: รหัสบัญชี · id · "NEW" · null = ถูกปัดตก) — ไม่ใช่คู่ที่ระบบเลือกแทน
+                    var aiAnswer = v.MatchAiAnswer ?? (v.MatchAnswerSpace == ImportMatchAnswerSpace.AccountCode ? null
+                        : v.MatchedEntityId?.ToString() ?? ImportEntityResolver.NewEntityAnswer);
+                    if (aiAnswer == null) meta.Remove(MetaMatchAi); else meta[MetaMatchAi] = aiAnswer;
                 }
+                if (v.MatchAnswerSpace is { Length: > 0 } space) meta[MetaMatchSpace] = space;
                 if (v.MatchCandidates is { Count: > 0 } cands) meta[MetaCandidates] = ImportJson.Serialize(cands);
-                else meta.Remove(MetaCandidates);
+                else if (!keptMatch) meta.Remove(MetaCandidates);
+                if (v.Hints != null)
+                {
+                    if (v.Hints.Count == 0) meta.Remove(MetaHints); else meta[MetaHints] = ImportJson.Serialize(v.Hints);
+                }
                 w.Row.DisplayKey = Trunc(v.DisplayKey, 300);
                 w.Row.GroupKey = Trunc(v.GroupKey, 200);
             }
@@ -412,7 +514,11 @@ public partial class ImportPipelineService
             w.Row.MappedJson = ImportJson.Serialize(w.Values);
             if (!w.Row.UserEdited) w.Row.OriginalMappedJson = w.Row.MappedJson;
             w.Row.IssuesJson = ImportJson.Serialize(issues);
-            var matchForScore = meta.ContainsKey(MetaMatchAuto) ? null : (w.Row.Action is ImportRowAction.Update or ImportRowAction.Merge ? w.Row.MatchScore : null);
+            // คะแนนจับคู่นับเข้าความมั่นใจของแถวเมื่อคู่ "คือเนื้อของแถว" (อัปเดตรายเดิม · ผู้ติดต่อของเอกสาร · บัญชีของงบทดลอง — ฝ่ายค้านรอบ ETL:
+            // บัญชีที่ AI เลือกมั่นใจ < 0.85 ต้องเป็นแถบเหลือง ไม่ใช่เขียว)
+            var matchIsContent = w.Row.Action is ImportRowAction.Update or ImportRowAction.Merge
+                || meta.GetValueOrDefault(MetaMatchSpace) is ImportMatchAnswerSpace.Link or ImportMatchAnswerSpace.AccountCode;
+            var matchForScore = meta.ContainsKey(MetaMatchAuto) ? null : matchIsContent ? w.Row.MatchScore : null;
             w.Row.Confidence = ImportRowConfidence.Compute(MappingConfidence(state, w.Values), issues, matchForScore, filled.Count);
             w.Row.Status = DeriveStatus(issues, meta, w.Summary);
             w.Row.AiFeedbackIdsJson = WriteMeta(meta);
@@ -456,10 +562,12 @@ public partial class ImportPipelineService
         return used.Count == 0 ? 1m : used.Average(c => c.Confidence);
     }
 
+    private static bool IsExcluded(IReadOnlyDictionary<string, string?> meta, bool summary)
+        => meta.ContainsKey(MetaExcluded) || (summary && !meta.ContainsKey(MetaIncluded));
+
     private static ImportRowStatus DeriveStatus(IReadOnlyList<ImportIssueDto> issues, IReadOnlyDictionary<string, string?> meta, bool summary)
     {
-        if (meta.ContainsKey(MetaExcluded)) return ImportRowStatus.Excluded;
-        if (summary && !meta.ContainsKey(MetaIncluded)) return ImportRowStatus.Excluded;
+        if (IsExcluded(meta, summary)) return ImportRowStatus.Excluded;
         if (issues.Any(i => i.Severity == ImportIssueSeverity.Error)) return ImportRowStatus.Error;
         if (issues.Any(i => i.Severity == ImportIssueSeverity.Warning)) return ImportRowStatus.Warning;
         return ImportRowStatus.Valid;
@@ -509,7 +617,7 @@ public partial class ImportPipelineService
     // ══════════════════════════════ ผู้ใช้แก้แถว ══════════════════════════════
 
     private static void ApplyRowEdit(ImportStagedRow row, ImportEditRowRequest request, IReadOnlyDictionary<string, ImportFieldDto> fields,
-        ImportBatchState state)
+        ImportBatchState state, bool supportsUpdate = true)
     {
         var values = ImportJson.ReadValues(row.MappedJson);
         var issues = Issues(row);
@@ -568,8 +676,18 @@ public partial class ImportPipelineService
                 row.MatchedEntityId = m;
                 row.MatchKind = "User";
                 row.MatchScore = 1m;
-                if (request.Action == null && row.Action == ImportRowAction.Create) row.Action = ImportRowAction.Merge;
+                // ปลายทางที่ไม่รองรับการอัปเดต (เอกสาร · งบทดลอง) — คู่ที่เลือกคือ "ข้อมูลที่แถวอ้างถึง" ไม่ใช่รายเดิมที่จะเติม (ป้าย action ต้องไม่โกหก)
+                if (supportsUpdate && request.Action == null && row.Action == ImportRowAction.Create) row.Action = ImportRowAction.Merge;
             }
+        }
+        else if ((request.Cells?.Count ?? 0) + (request.AcceptSuggestionFields?.Count ?? 0) > 0 && !meta.ContainsKey(MetaUserAction))
+        {
+            // ฝ่ายค้านรอบ ETL: ผู้ใช้แก้ค่าในแถว ⇒ คู่ที่ "ระบบ" เลือกจากค่าเดิมหมดความหมาย (เช่น บัญชีของรหัสเดิมในงบทดลอง) — ตัดสินใหม่ตอนตรวจ ·
+            // feedback ของ AI คงไว้ปิดลูปด้วยคำตอบสุดท้าย
+            row.MatchedEntityId = null;
+            row.MatchKind = null;
+            row.MatchScore = null;
+            meta.Remove(MetaMatchAuto);
         }
         if (request.Excluded == true) { meta[MetaExcluded] = "1"; meta.Remove(MetaIncluded); }
         else if (request.Excluded == false) { meta.Remove(MetaExcluded); meta[MetaIncluded] = "1"; }
@@ -587,11 +705,22 @@ public partial class ImportPipelineService
             && issues.Where(i => i.Severity == ImportIssueSeverity.Warning).All(i => ack.Contains(i.Code));
 
     private static ImportTargetRow ToTargetRow(ImportStagedRow r)
-        => new(r.Id, r.RowNo, ImportJson.ReadValues(r.MappedJson), r.Action, r.MatchedEntityId, r.GroupKey, r.DisplayKey);
+        => BuildTargetRow(r, ImportJson.ReadValues(r.MappedJson), ReadMeta(r.AiFeedbackIdsJson));
+
+    /// <summary>แถวที่ส่งให้ target (ตรวจ/ลง) — บอกว่าคู่ที่จับเป็นของผู้ใช้หรือระบบ + ค่าที่ target ฝากไว้ (ฝ่ายค้านรอบ ETL)</summary>
+    private static ImportTargetRow BuildTargetRow(ImportStagedRow r, IReadOnlyDictionary<string, string?> values, IReadOnlyDictionary<string, string?> meta)
+        => new(r.Id, r.RowNo, values, r.Action, r.MatchedEntityId, r.GroupKey, r.DisplayKey,
+            MatchChosenByUser: meta.ContainsKey(MetaUserAction) && r.MatchKind == "User",
+            Hints: ImportJson.Deserialize<Dictionary<string, string?>>(meta.GetValueOrDefault(MetaHints)));
 
     /// <summary>
     /// ลงแถวที่พร้อม (ผ่าน + รับทราบคำเตือน) ไม่เกิน <paramref name="limit"/> แถว (ปัดขึ้นให้ครบกลุ่ม) — แถวที่ Committed แล้วไม่ถูกส่งซ้ำ (idempotent ·
     /// resume ได้) · หมดงาน ⇒ สรุปผล + เรียนรู้ · ยังเหลือ ⇒ คืน Queued ให้ worker ทำต่อ · ผู้เรียกถือ JobLock ของ batch แล้ว
+    /// <para><b>ฝ่ายค้านรอบ ETL (P0-1)</b>: แถวที่ล้มในรอบลงนี้ (Failed) <b>ไม่ถูกหยิบซ้ำ</b> — เดิมถูกนับเป็น "ยังพร้อมลง" ทุกรอบ ⇒ worker วนหยิบแถวเดิม
+    /// ไม่สิ้นสุด (เรียก domain service + เขียน audit ซ้ำทุกรอบ) · ผู้ใช้สั่งลงใหม่เอง ⇒ <see cref="CommitAsync"/> คืนสถานะตรวจให้ก่อน ·
+    /// รอบที่ไม่มีแถวใดเปลี่ยนสถานะห้ามคืน Queued (ประกันความคืบหน้า) · audit IMPORT-COMMIT เขียนครั้งเดียวที่ <see cref="FinishCommitAsync"/></para>
+    /// <para><b>(P0-2)</b>: หน่วยที่มีสมาชิกกลุ่มเดียวกันยังไม่พร้อม (ต้องแก้/ยังไม่รับทราบ) ⇒ ไม่ลงครึ่งใบ — ประทับ "ลงไม่สำเร็จ" พร้อมเหตุผลและทางไปต่อ
+    /// (คำตัดสินข้อ 150 (2): JE ไม่ลงตัวห้ามเกิด)</para>
     /// </summary>
     private async Task<ImportCommitResultDto> CommitPendingAsync(Guid companyId, Guid batchId, IImportTarget target, int limit, CancellationToken ct)
     {
@@ -605,18 +734,35 @@ public partial class ImportPipelineService
         session.HeartbeatAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         var ctx = Context(session, actor, allowAi: false);
-        var fileName = session.FileName;
-        var sha = session.FileSha256;
 
-        var open = await _db.ImportStagedRows.AsNoTracking()
+        var live = await _db.ImportStagedRows.AsNoTracking()
             .Where(r => r.SessionId == batchId && r.CompanyId == companyId
-                && r.Status != ImportRowStatus.Committed && r.Status != ImportRowStatus.Undone && r.Status != ImportRowStatus.Excluded)
+                && r.Status != ImportRowStatus.Committed && r.Status != ImportRowStatus.Undone)
             .OrderBy(r => r.RowNo).ToListAsync(ct);
-        var skipped = open.Count(r => r.Action == ImportRowAction.Skip);
+        var open = live.Where(r => r.Status != ImportRowStatus.Excluded && r.Status != ImportRowStatus.Failed).ToList();
+        var skipAction = open.Count(r => r.Action == ImportRowAction.Skip);
         var eligible = open.Where(r => r.Action != ImportRowAction.Skip && Eligible(Issues(r), ack)).ToList();
-        skipped += open.Count - skipped - eligible.Count;
-        // กลุ่ม (ใบสำคัญ/เอกสารหลายบรรทัด) ห้ามแยก — ตัด chunk ที่ขอบกลุ่ม
-        var units = eligible.GroupBy(r => r.GroupKey ?? ("#" + r.Id)).Select(g => g.ToList()).ToList();
+        var blocked = open.Count - skipAction - eligible.Count;
+
+        // กลุ่ม (ใบสำคัญ/เอกสารหลายบรรทัด/งบทดลอง) ห้ามแยก — หน่วยที่สมาชิกบางแถวยังไม่พร้อมไม่ถูกลง
+        var eligibleIds = eligible.Select(r => r.Id).ToHashSet();
+        var members = live.Where(r => r.GroupKey != null && r.Status != ImportRowStatus.Excluded && r.Action != ImportRowAction.Skip)
+            .GroupBy(r => r.GroupKey!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+        var units = new List<List<ImportStagedRow>>();
+        var refused = new List<ImportRowCommitResult>();
+        var integrity = target is IImportGroupIntegrityTarget;
+        foreach (var g in eligible.GroupBy(r => r.GroupKey ?? ("#" + r.Id), StringComparer.Ordinal))
+        {
+            var unit = g.ToList();
+            var missing = integrity && unit[0].GroupKey is { } key && members.TryGetValue(key, out var all)
+                ? all.Where(m => !eligibleIds.Contains(m.Id)).OrderBy(m => m.RowNo).ToList()
+                : new List<ImportStagedRow>();
+            if (missing.Count == 0) { units.Add(unit); continue; }
+            var msg = IncompleteGroupMessage(missing);
+            refused.AddRange(unit.Select(r => new ImportRowCommitResult(r.Id, false, Error: msg)));
+        }
+        if (refused.Count > 0) await PersistResultsAsync(companyId, batchId, refused, ct);
+
         var batch = new List<List<ImportStagedRow>>();
         var taken = 0;
         foreach (var u in units)
@@ -625,10 +771,14 @@ public partial class ImportPipelineService
             batch.Add(u);
             taken += u.Count;
         }
+        var pendingRows = units.Sum(u => u.Count);
 
-        var (results, rolledBack) = target.CommitStyle == ImportCommitStyle.SharedTransaction
-            ? await CommitSharedAsync(companyId, batchId, target, ctx, batch, options, actor, fileName, sha, ct)
-            : await CommitOwnAsync(companyId, batchId, target, ctx, batch, options, actor, fileName, sha, ct);
+        var (results, rolledBack) = batch.Count == 0
+            ? (new List<ImportRowCommitResult>(), false)
+            : target.CommitStyle == ImportCommitStyle.SharedTransaction
+                ? await CommitSharedAsync(companyId, batchId, target, ctx, batch, options, ct)
+                : await CommitOwnAsync(companyId, batchId, target, ctx, batch, options, ct);
+        var allResults = refused.Concat(results).ToList();
 
         if (rolledBack)
         {
@@ -647,25 +797,34 @@ public partial class ImportPipelineService
             await _db.SaveChangesAsync(ct);
             await RefreshSnapshotAsync(s2, persist: true, ct);
             await _db.SaveChangesAsync(ct);
-            return new ImportCommitResultDto(batchId, s2.Status, SessionStatusLabel(s2.Status), 0, results.Count(r => !r.Success), skipped,
-                false, Failures(results, eligible), null);
+            return new ImportCommitResultDto(batchId, s2.Status, SessionStatusLabel(s2.Status), 0, allResults.Count(r => !r.Success), skipAction,
+                false, Failures(allResults, live), null, blocked);
         }
 
         var committed = results.Count(r => r.Success && !r.Skipped);
         var writerSkipped = results.Count(r => r.Success && r.Skipped);
-        if (taken < eligible.Count)
+        // ประกันความคืบหน้า: ยังเหลือหน่วยที่พร้อม และรอบนี้มีแถวเปลี่ยนสถานะจริง ⇒ คืนคิว · ไม่งั้นสรุปผล (ไม่วนรอบเปล่า)
+        if (taken < pendingRows && results.Count > 0)
         {
             var s3 = await ReloadAsync(companyId, batchId, ct);
             s3.Status = ImportSessionStatus.Queued;
             s3.Phase = ImportBatchPhase.Commit;
-            s3.SkippedCount += writerSkipped;
             await _db.SaveChangesAsync(ct);
-            return new ImportCommitResultDto(batchId, s3.Status, SessionStatusLabel(s3.Status), committed, results.Count(r => !r.Success),
-                skipped + writerSkipped, true, Failures(results, eligible), null);
+            return new ImportCommitResultDto(batchId, s3.Status, SessionStatusLabel(s3.Status), committed, allResults.Count(r => !r.Success),
+                skipAction + writerSkipped, true, Failures(allResults, live), null, blocked);
         }
-        var (final, templateId) = await FinishCommitAsync(companyId, batchId, target, ct, writerSkipped + skipped);
-        return new ImportCommitResultDto(batchId, final.Status, SessionStatusLabel(final.Status), committed, results.Count(r => !r.Success),
-            skipped + writerSkipped, false, Failures(results, eligible), templateId);
+        var (final, templateId) = await FinishCommitAsync(companyId, batchId, target, ct);
+        return new ImportCommitResultDto(batchId, final.Status, SessionStatusLabel(final.Status), committed, allResults.Count(r => !r.Success),
+            skipAction + writerSkipped, false, Failures(allResults, live), templateId, blocked);
+    }
+
+    /// <summary>เหตุผล + ทางไปต่อของหน่วยที่ไม่ถูกลงเพราะแถวอื่นในกลุ่มเดียวกันยังไม่พร้อม (ไม่ลงใบครึ่งใบ)</summary>
+    private static string IncompleteGroupMessage(IReadOnlyList<ImportStagedRow> missing)
+    {
+        var nos = string.Join(", ", missing.Take(5).Select(m => m.RowNo.ToString(CultureInfo.InvariantCulture)))
+            + (missing.Count > 5 ? $" และอีก {missing.Count - 5} แถว" : "");
+        return $"ไม่ลงแถวนี้เพราะแถว {nos} ในใบ/ชุดเดียวกันยังไม่พร้อม (ต้องแก้ หรือยังไม่ได้รับทราบคำเตือน) — ระบบไม่ลงใบครึ่งใบ " +
+               "(สมุดรายวันจะไม่ลงตัว · เอกสารจะขาดบรรทัด) · แก้/รับทราบแถวนั้น หรือตัดออกทั้งใบ แล้วยืนยันอีกครั้ง";
     }
 
     private static IReadOnlyList<ImportRowFailureDto> Failures(IEnumerable<ImportRowCommitResult> results, IReadOnlyList<ImportStagedRow> rows)
@@ -697,60 +856,72 @@ public partial class ImportPipelineService
     }
 
     /// <summary>
-    /// SharedTransaction (§2.4): ธุรกรรมเดียว · savepoint ต่อ chunk ~200 แถว (ไม่ตัดกลางกลุ่ม) · chunk ล้ม ⇒ rollback savepoint + ล้าง tracker + ลงซ้ำทีละกลุ่ม
-    /// (savepoint ต่อกลุ่ม — แถวที่ผิดไม่ทิ้งของครึ่ง ๆ) · ผลต่อแถวประทับในธุรกรรมเดียวกัน (commit แล้วผลกับข้อมูลไปด้วยกัน — resume ไม่ลงซ้ำ) ·
-    /// AllOrNothing + มีแถวล้ม ⇒ rollback ทั้งธุรกรรม
+    /// SharedTransaction (§2.4): savepoint ต่อ chunk ~200 แถว (ไม่ตัดกลางกลุ่ม) · chunk ล้ม ⇒ rollback savepoint + ล้าง tracker + ลงซ้ำทีละกลุ่ม
+    /// (savepoint ต่อกลุ่ม — แถวที่ผิดไม่ทิ้งของครึ่ง ๆ) · ผลต่อแถวประทับในธุรกรรมเดียวกัน (commit แล้วผลกับข้อมูลไปด้วยกัน — resume ไม่ลงซ้ำ)
+    /// <para><b>ฝ่ายค้านรอบ ETL (P1-6)</b>: โหมด "ลงเฉพาะแถวที่ผ่าน" commit ธุรกรรม<b>ต่อ chunk</b> (ไม่ถือธุรกรรมเดียวทั้งไฟล์) · ปลายทางที่ถือล็อกเลขรัน
+    /// ของทั้งบริษัท (<see cref="IImportSequenceNumberingTarget"/> — สมุดรายวัน: <c>pg_advisory_xact_lock</c> ของเลข JV) commit <b>ต่อหน่วย</b> ⇒ ล็อกถูกปล่อยทุกใบ
+    /// (เดิมถือจนจบทั้งไฟล์ ⇒ อนุมัติ/ลงบัญชีทั้งบริษัทค้าง + เสี่ยง deadlock) · โหมด "ทั้งหมดหรือไม่ลงเลย" ยังเป็นธุรกรรมเดียว (ความหมายของโหมด) ⇒
+    /// มีแถวล้ม ⇒ rollback ทั้งธุรกรรม</para>
     /// </summary>
     private async Task<(List<ImportRowCommitResult> Results, bool RolledBack)> CommitSharedAsync(Guid companyId, Guid batchId, IImportTarget target,
-        ImportTargetContext ctx, IReadOnlyList<List<ImportStagedRow>> units, ImportCommitOptions options, ImportActor actor,
-        string fileName, string? sha, CancellationToken ct)
+        ImportTargetContext ctx, IReadOnlyList<List<ImportStagedRow>> units, ImportCommitOptions options, CancellationToken ct)
     {
         var all = new List<ImportRowCommitResult>();
-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         var chunkNo = 0;
-        foreach (var chunk in ChunkUnits(units, SharedChunkRows))
+        if (options.Mode == ImportCommitMode.AllOrNothing)
         {
-            var sp = "imp_chunk_" + (chunkNo++).ToString(CultureInfo.InvariantCulture);
-            await tx.CreateSavepointAsync(sp, ct);
-            var mark = _db.DeferredAuditMark;
-            var rows = chunk.SelectMany(u => u).Select(ToTargetRow).ToList();
-            IReadOnlyList<ImportRowCommitResult>? res;
-            try
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            foreach (var chunk in ChunkUnits(units, SharedChunkRows))
+                all.AddRange(await CommitChunkAsync(tx, companyId, batchId, target, ctx, chunk, chunkNo++, ct));
+            if (all.Any(r => !r.Success))
             {
-                res = await target.CommitGroupAsync(ctx, rows, ct);
-                if (res.Count != rows.Count || res.Any(r => !r.Success)) res = null;
-                else await _db.SaveChangesAsync(ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger?.LogInformation(ex, "ImportBatch {BatchId}: chunk {Chunk} ล้ม — ลงทีละกลุ่มเพื่อแยกแถวที่ผิด", batchId, chunkNo);
-                res = null;
-            }
-            if (res == null)
-            {
-                await tx.RollbackToSavepointAsync(sp, ct);
-                _db.RollbackDeferredAuditTo(mark);
+                await tx.RollbackAsync(ct);
                 _db.ChangeTracker.Clear();
-                res = await ReplayUnitsAsync(tx, target, ctx, chunk, batchId, ct);
+                return (all, true);
             }
-            all.AddRange(res);
-            await PersistResultsAsync(companyId, batchId, res, ct);
-            await HeartbeatAsync(companyId, batchId, rows.Count, ct);
+            await tx.CommitAsync(ct);
+            return (all, false);
         }
-        if (options.Mode == ImportCommitMode.AllOrNothing && all.Any(r => !r.Success))
+        var rowsPerTx = target is IImportSequenceNumberingTarget ? 1 : SharedChunkRows;
+        foreach (var chunk in ChunkUnits(units, rowsPerTx))
         {
-            await tx.RollbackAsync(ct);
-            _db.ChangeTracker.Clear();
-            return (all, true);
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            all.AddRange(await CommitChunkAsync(tx, companyId, batchId, target, ctx, chunk, chunkNo++, ct));
+            await tx.CommitAsync(ct);
         }
-        AddAudit(companyId, batchId, actor, "IMPORT-COMMIT", AuditAction.Create, new
-        {
-            ruleCode = "IMPORT-COMMIT", entityType = ctx.EntityType, fileName, fileSha256 = sha, mode = options.Mode.ToString(),
-            committed = all.Count(r => r.Success && !r.Skipped), skipped = all.Count(r => r.Success && r.Skipped), failed = all.Count(r => !r.Success),
-        });
-        await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
         return (all, false);
+    }
+
+    /// <summary>หนึ่ง chunk ในธุรกรรมที่ผู้เรียกเปิด — savepoint · ล้ม ⇒ ลงซ้ำทีละกลุ่ม · ประทับผลต่อแถว + heartbeat ในธุรกรรมเดียวกัน</summary>
+    private async Task<IReadOnlyList<ImportRowCommitResult>> CommitChunkAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction tx,
+        Guid companyId, Guid batchId, IImportTarget target, ImportTargetContext ctx, List<List<ImportStagedRow>> chunk, int chunkNo, CancellationToken ct)
+    {
+        var sp = "imp_chunk_" + chunkNo.ToString(CultureInfo.InvariantCulture);
+        await tx.CreateSavepointAsync(sp, ct);
+        var mark = _db.DeferredAuditMark;
+        var rows = chunk.SelectMany(u => u).Select(ToTargetRow).ToList();
+        IReadOnlyList<ImportRowCommitResult>? res;
+        try
+        {
+            res = await target.CommitGroupAsync(ctx, rows, ct);
+            if (res.Count != rows.Count || res.Any(r => !r.Success)) res = null;
+            else await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogInformation(ex, "ImportBatch {BatchId}: chunk {Chunk} ล้ม — ลงทีละกลุ่มเพื่อแยกแถวที่ผิด", batchId, chunkNo);
+            res = null;
+        }
+        if (res == null)
+        {
+            await tx.RollbackToSavepointAsync(sp, ct);
+            _db.RollbackDeferredAuditTo(mark);
+            _db.ChangeTracker.Clear();
+            res = await ReplayUnitsAsync(tx, target, ctx, chunk, batchId, ct);
+        }
+        await PersistResultsAsync(companyId, batchId, res, ct);
+        await HeartbeatAsync(companyId, batchId, rows.Count, ct);
+        return res;
     }
 
     private async Task<List<ImportRowCommitResult>> ReplayUnitsAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction tx, IImportTarget target,
@@ -797,8 +968,7 @@ public partial class ImportPipelineService
     /// <summary>OwnTransactionPerGroup (§2.4): domain service เปิดธุรกรรมเอง ⇒ pipeline ไม่ห่อ · ลงทีละกลุ่ม · ผลต่อแถวประทับทันที (resume/ลงซ้ำไม่ซ้ำ) ·
     /// AllOrNothing ย้อนกลุ่มที่ลงแล้วไม่ได้ ⇒ หยุดที่กลุ่มแรกที่ล้ม (ผู้ใช้ "ย้อนการนำเข้า" ส่วนที่ลงแล้วได้)</summary>
     private async Task<(List<ImportRowCommitResult> Results, bool RolledBack)> CommitOwnAsync(Guid companyId, Guid batchId, IImportTarget target,
-        ImportTargetContext ctx, IReadOnlyList<List<ImportStagedRow>> units, ImportCommitOptions options, ImportActor actor,
-        string fileName, string? sha, CancellationToken ct)
+        ImportTargetContext ctx, IReadOnlyList<List<ImportStagedRow>> units, ImportCommitOptions options, CancellationToken ct)
     {
         var all = new List<ImportRowCommitResult>();
         foreach (var unit in units)
@@ -823,12 +993,6 @@ public partial class ImportPipelineService
             await HeartbeatAsync(companyId, batchId, rows.Count, ct);
             if (options.Mode == ImportCommitMode.AllOrNothing && res.Any(r => !r.Success)) break;
         }
-        AddAudit(companyId, batchId, actor, "IMPORT-COMMIT", AuditAction.Create, new
-        {
-            ruleCode = "IMPORT-COMMIT", entityType = ctx.EntityType, fileName, fileSha256 = sha, mode = options.Mode.ToString(),
-            committed = all.Count(r => r.Success && !r.Skipped), skipped = all.Count(r => r.Success && r.Skipped), failed = all.Count(r => !r.Success),
-        });
-        await _db.SaveChangesAsync(ct);
         return (all, false);
     }
 
@@ -886,7 +1050,7 @@ public partial class ImportPipelineService
 
     /// <summary>สรุปผลหลังลงครบ: สถานะซื่อสัตย์ (ลงบางแถว = PartiallyCompleted) · เรียนรู้ (แม่แบบ · ปิดลูป AI) · สรุปทั้งชุด</summary>
     private async Task<(SmartImportSession Session, Guid? TemplateId)> FinishCommitAsync(Guid companyId, Guid batchId, IImportTarget target,
-        CancellationToken ct, int skippedThisRound = 0)
+        CancellationToken ct)
     {
         var session = await ReloadAsync(companyId, batchId, ct);
         var state = State(session);
@@ -902,7 +1066,10 @@ public partial class ImportPipelineService
                 || r.Status == ImportRowStatus.Pending), ct);
         session.SuccessCount = committed;
         session.ErrorCount = failed;
-        session.SkippedCount += skippedThisRound;
+        // ฝ่ายค้านรอบ ETL: นับจากแถวจริงครั้งเดียว (เดิม += ทุกรอบ worker/ทุกครั้งที่ผู้ใช้สั่งลงซ้ำ และนับแถว "ยังไม่พร้อม" เป็น "ข้าม")
+        session.SkippedCount = await _db.ImportStagedRows.CountAsync(r => r.SessionId == batchId && r.CompanyId == companyId
+            && r.Action == ImportRowAction.Skip && r.Status != ImportRowStatus.Excluded
+            && r.Status != ImportRowStatus.Committed && r.Status != ImportRowStatus.Undone, ct);
         session.Status = committed == 0
             ? (failed > 0 ? ImportSessionStatus.Failed : open > 0 ? ImportSessionStatus.Staged : ImportSessionStatus.Completed)
             : (failed == 0 && open == 0 ? ImportSessionStatus.Completed : ImportSessionStatus.PartiallyCompleted);
@@ -918,6 +1085,12 @@ public partial class ImportPipelineService
         state.PendingCommit = null;
         state.PendingActor = null;
         session.OptionsJson = ImportJson.Serialize(state);
+        // audit การลงข้อมูล <b>ครั้งเดียวต่อการสั่งลง</b> (ฝ่ายค้านรอบ ETL P0-1 — เดิมเขียนทุก chunk/ทุกรอบ worker)
+        AddAudit(companyId, batchId, actor, "IMPORT-COMMIT", AuditAction.Create, new
+        {
+            ruleCode = "IMPORT-COMMIT", entityType = session.EntityType, fileName = session.FileName, fileSha256 = session.FileSha256,
+            mode = (options?.Mode ?? session.CommitMode).ToString(), committed, failed, skipped = session.SkippedCount, open,
+        });
         await _db.SaveChangesAsync(ct);
         if (committed > 0 && options is { SaveTemplate: true })
         {
@@ -950,6 +1123,9 @@ public partial class ImportPipelineService
 
     /// <summary>ปิดลูป ImportEntityMatch ต่อแถวที่ลงแล้ว (<see cref="IImportAiAugmenter.RecordPickChoiceAsync"/> — feedback ต้องเป็นของบริษัทนี้) —
     /// คำตอบสุดท้าย = id ที่ผู้ใช้ยืนยัน หรือ "NEW" · acceptedAi = ตรงกับที่ AI ตอบ · ไม่บันทึกซ้ำ</summary>
+    /// <remarks>ฝ่ายค้านรอบ ETL: คำตอบสุดท้ายตามความหมายของคู่ (<see cref="ImportMatchAnswerSpace"/>) — ข้อมูลหลัก: สร้างใหม่ = "NEW" · เอกสาร: ผู้ติดต่อที่เลือก ·
+    /// งบทดลอง: <b>รหัสบัญชี</b> (คำตอบของ ImportAccountMap — เดิมไม่มีใครปิดลูปเพราะลงยอดสร้างชุด wizard ใหม่ที่ไม่มี feedback) · feedback เดียวกันหลายแถว
+    /// (บรรทัดของเอกสารเดียว) บันทึกครั้งเดียว</remarks>
     private async Task RecordMatchChoicesAsync(Guid companyId, Guid batchId, CancellationToken ct)
     {
         if (_ai == null) return;
@@ -957,13 +1133,24 @@ public partial class ImportPipelineService
             .Where(r => r.SessionId == batchId && r.CompanyId == companyId && r.Status == ImportRowStatus.Committed
                 && r.AiFeedbackIdsJson != null && r.AiFeedbackIdsJson.Contains(MetaMatchFeedback))
             .ToListAsync(ct);
+        var accountIds = rows.Where(r => r.MatchedEntityId != null).Select(r => r.MatchedEntityId!.Value).Distinct().ToList();
+        var codes = accountIds.Count == 0 ? new Dictionary<Guid, string>()
+            : await _db.ChartOfAccounts.AsNoTracking().Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, a => a.AccountCode, ct);
+        var recorded = new HashSet<Guid>();
         foreach (var r in rows)
         {
             var meta = ReadMeta(r.AiFeedbackIdsJson);
             if (meta.ContainsKey(MetaMatchRecorded) || !Guid.TryParse(meta.GetValueOrDefault(MetaMatchFeedback), out var fb)) continue;
-            var chosen = r.Action == ImportRowAction.Create || r.MatchedEntityId == null
-                ? ImportEntityResolver.NewEntityAnswer : r.MatchedEntityId.Value.ToString();
-            await _ai.RecordPickChoiceAsync(companyId, fb, chosen, meta.GetValueOrDefault(MetaMatchAi), ct);
+            string? chosen = meta.GetValueOrDefault(MetaMatchSpace) switch
+            {
+                ImportMatchAnswerSpace.AccountCode => r.MatchedEntityId is Guid aid ? codes.GetValueOrDefault(aid) : null,
+                ImportMatchAnswerSpace.Link => r.MatchedEntityId?.ToString() ?? ImportEntityResolver.NewEntityAnswer,
+                _ => r.Action == ImportRowAction.Create || r.MatchedEntityId == null
+                    ? ImportEntityResolver.NewEntityAnswer : r.MatchedEntityId.Value.ToString(),
+            };
+            if (chosen != null && recorded.Add(fb))
+                await _ai.RecordPickChoiceAsync(companyId, fb, chosen, meta.GetValueOrDefault(MetaMatchAi), ct);
             meta[MetaMatchRecorded] = "1";
             r.AiFeedbackIdsJson = WriteMeta(meta);
         }
@@ -1166,11 +1353,22 @@ public partial class ImportPipelineService
             s.ColumnMatchUsedAi, snap.IssueCounts, snap.Warnings, dups, notes);
     }
 
-    private static ImportRowDto ToRowDto(ImportStagedRow row, ImportBatchState state, IReadOnlyDictionary<string, ImportFieldDto> fields)
+    /// <param name="entityType">ชนิดของ batch — ตัดสินว่ามีช่องอ่อนไหวไหม (<see cref="ImportPiiFields"/>)</param>
+    /// <param name="revealPii">ผู้ใช้มี <c>Pii.View</c> (controller ตัดสิน) — false ⇒ ปิดบังเลขบัตร/เลขบัญชี/เงินเดือน ทั้งค่า · ค่าดิบ · ข้อความปัญหา (ฝ่ายค้านรอบ ETL P1-5)</param>
+    private static ImportRowDto ToRowDto(ImportStagedRow row, ImportBatchState state, IReadOnlyDictionary<string, ImportFieldDto> fields,
+        string entityType, bool revealPii)
     {
         var values = ImportJson.ReadValues(row.MappedJson);
         var raw = RawCells(row);
         var issues = Issues(row);
+        var mask = !revealPii && ImportPiiFields.HasPii(entityType);
+        if (mask)
+        {
+            var colField = state.Columns.Where(c => c.SourceIndex >= 0).GroupBy(c => c.SourceIndex).ToDictionary(g => g.Key, g => g.First().TargetField);
+            issues = issues.Select(i => MaskIssue(i, entityType, values, raw, colField)).ToList();
+            raw = raw.Select((v, j) => ImportPiiFields.Mask(entityType, colField.GetValueOrDefault(j), v) ?? "").ToList();
+            foreach (var k in values.Keys.ToList()) values[k] = ImportPiiFields.Mask(entityType, k, values[k]);
+        }
         var meta = ReadMeta(row.AiFeedbackIdsJson);
         var edited = MetaSet(meta, MetaEdited);
         var filled = MetaSet(meta, MetaFilled);
@@ -1221,6 +1419,19 @@ public partial class ImportPipelineService
             row.Confidence, cells, issues, match, row.UserEdited, usedAi, row.GroupKey, row.CommittedEntityType, row.CommittedEntityId, row.CommitError);
     }
 
+    /// <summary>ข้อความ/ค่าแนะนำของปัญหาบนช่องอ่อนไหว — แทนค่าจริง (ทั้งค่ารูปมาตรฐานและค่าดิบ) ด้วยค่าที่ปิดบังแล้ว (PDPA ม.26)</summary>
+    private static ImportIssueDto MaskIssue(ImportIssueDto issue, string entityType, IReadOnlyDictionary<string, string?> values,
+        IReadOnlyList<string> raw, IReadOnlyDictionary<int, string?> colField)
+    {
+        if (issue.Field == null || !ImportPiiFields.IsPii(entityType, issue.Field)) return issue;
+        var message = issue.Message;
+        var secrets = colField.Where(kv => string.Equals(kv.Value, issue.Field, StringComparison.OrdinalIgnoreCase) && kv.Key < raw.Count)
+            .Select(kv => raw[kv.Key]).Append(values.GetValueOrDefault(issue.Field));
+        foreach (var secret in secrets.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v!.Trim()).Distinct())
+            message = message.Replace(secret, ImportPiiFields.Mask(entityType, issue.Field, secret) ?? "", StringComparison.Ordinal);
+        return issue with { Message = message, Suggested = ImportPiiFields.Mask(entityType, issue.Field, issue.Suggested) };
+    }
+
     // ══════════════════════════════ JSON ของแถว ══════════════════════════════
 
     private const string MetaMatchFeedback = "match";
@@ -1236,6 +1447,10 @@ public partial class ImportPipelineService
     private const string MetaExcluded = "$excluded";
     private const string MetaIncluded = "$included";
     private const string MetaSummary = "$summary";
+    /// <summary>ความหมายของคู่ที่จับ (<see cref="ImportMatchAnswerSpace"/>) — ใช้ตอนปิดลูป + นับคะแนนจับคู่</summary>
+    private const string MetaMatchSpace = "$matchSpace";
+    /// <summary>ค่าที่ target ฝากไว้ (<see cref="ImportRowValidation.Hints"/>) — ไม่แสดงต่อผู้ใช้</summary>
+    private const string MetaHints = "$hints";
 
     /// <summary><c>AiFeedbackIdsJson</c> — คีย์ "match" = feedback ของ ImportEntityMatch (สัญญา T0) · คีย์ขึ้นต้น "$" = ข้อมูลประกอบของแถวที่ pipeline เป็นเจ้าของ</summary>
     private static Dictionary<string, string?> ReadMeta(string? json)

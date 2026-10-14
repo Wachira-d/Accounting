@@ -168,8 +168,12 @@ public class AttachmentAccessGate : IAttachmentAccessGate
                     .Select(s => s.EntityType)
                     .FirstOrDefaultAsync();
                 if (batchType == null && access == AttachmentAccess.Write) return new(404, "ไม่พบชุดนำเข้าข้อมูลนี้ในบริษัท");
-                return await DenyKeysAsync(companyId, userId, rule,
+                var importDenied = await DenyKeysAsync(companyId, userId, rule,
                     new[] { AttachmentPermissionScope.ImportBatchKey(batchType) }, verb);
+                // ฝ่ายค้านรอบ ETL (P1-5 · PDPA ม.26): ไฟล์ต้นทางของชนิดที่มีข้อมูลอ่อนไหว (ทะเบียนพนักงาน) เปิดอ่านต้องมี Pii.View เพิ่ม — ด่านเดียวกับ
+                // GET import/batches/{id}/source-file (ปิดบังรายช่องในไฟล์ไม่ได้) · ไม่งั้นทางไฟล์แนบเป็นทางอ้อมของด่านเดียวกัน
+                if (importDenied != null || access != AttachmentAccess.Read || !ImportPiiFields.HasPii(batchType)) return importDenied;
+                return await DenyKeysAsync(companyId, userId, rule, new[] { PermissionKeys.PiiView }, verb);
             }
 
             default: // AttachmentOwnerKind.KeyGated

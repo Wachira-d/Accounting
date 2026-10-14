@@ -89,7 +89,7 @@ public class ImportMappingTemplateStoreDbTests
     }
 
     [Fact]
-    public async Task แก้แม่แบบ_เปิดลงอัตโนมัติ_แก้ช่อง_หัวนอกแม่แบบถูกปฏิเสธ_ลบแล้วหาไม่เจอ()
+    public async Task แก้แม่แบบ_ลงอัตโนมัติยังเปิดไม่ได้_แก้ช่อง_หัวนอกแม่แบบถูกปฏิเสธ_ลบแล้วหาไม่เจอ()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
@@ -102,10 +102,14 @@ public class ImportMappingTemplateStoreDbTests
             new ImportTemplateColumnDto("ราคา", "SellingPrice"),
         }, null, "สินค้าจากร้านเดิม", false, Actor);
 
-        var upd = await store.UpdateAsync(cid, t.Id, new ImportTemplateUpsertRequest(null, true,
+        // ฝ่ายค้านรอบ ETL: "ลงอัตโนมัติเมื่อไม่มีปัญหา" ยังไม่มีผู้อ่าน ⇒ เปิดไม่ได้ (ปฏิเสธพร้อมเหตุผล ไม่ใช่รับแล้วเงียบ — F2 ข้อ 2)
+        var refused = await Assert.ThrowsAsync<BusinessRuleException>(() => store.UpdateAsync(cid, t.Id, new ImportTemplateUpsertRequest(null, true,
+            new[] { new ImportTemplateColumnDto("ราคา", "CostPrice") }), Actor));
+        Assert.Contains("ยังไม่เปิดใช้", refused.Message);
+        var upd = await store.UpdateAsync(cid, t.Id, new ImportTemplateUpsertRequest(null, false,
             new[] { new ImportTemplateColumnDto("ราคา", "CostPrice") }), Actor);
         Assert.NotNull(upd);
-        Assert.True(upd!.AutoCommitWhenClean);
+        Assert.False(upd!.AutoCommitWhenClean);
         Assert.True(upd.ConfirmedByUser);
         Assert.Equal("CostPrice", upd.Columns.Single(c => c.Header == "ราคา").TargetField);
         Assert.Equal(3, upd.Columns.Count);                             // ส่งคอลัมน์เดียว — อีกสองคอลัมน์ต้องไม่หาย

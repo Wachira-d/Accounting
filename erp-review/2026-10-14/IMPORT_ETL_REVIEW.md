@@ -120,3 +120,33 @@ master ที่สร้าง = soft-delete ถ้าไม่มีการ�
 | ETL-C | ธนาคาร writer เดียว + OFX จริง + TIS-620 | ✅ a56239bd — ตัวเขียน `BankService.ImportParsedStatementRowsAsync` (`BankService.StatementImport.cs`) · `BankStatementFileReader` · `BankOfxParser` · `Services/Import/Targets/BankStatementImportTarget.cs` · ทางนำเข้าทั่วไป `banktransactions` (ทีม B) ยังต้องต่อสาย |
 | ETL-D | งบทดลอง/เอกสาร/รับชำระ/สินทรัพย์ + migration wizard | ✅ 68fb68eb — target 4 ตัว (`Services/Import/Targets/`) · `ImportAccountCodeResolver`/`ImportAccountMatcher` · `OpeningBalanceReconciliation` · wizard errors/warnings + ย้อนคืนยอดเดิม + ด่านสิทธิ์ · adapter โปรแกรมอื่น (หัวตาราง · TIS-620 · ContactTypeResolver) · AI 58 ต่อ `SuggestAccountMapAsync`/`RecordPickChoiceAsync` ของทีม A แล้ว · ค้าง: target `opening-ar/ap` + `stock*` ยังไม่ทำ · ลิงก์หน้า import-hub (ทีม E) |
 | ETL-E | ImportHub UI + modal 415 + gate | ✅ a4df3bdd — `Controllers/ImportHubController.cs` · `pages/import-hub.html` · `tools/formdata_json_endpoint_check.py` · `Db/ImportHubControllerGateDbTests` |
+
+## 6. ฝ่ายค้านรอบ ETL (2026-10-14)
+ทุกข้อเปิดโค้ดยืนยันแล้วว่าเป็นจริงก่อนแก้ · เทสต์ `Db/ImportAdversarialEtlDbTests` (P0-1 · P0-2 ×2 · P1-1 · P1-2 · P1-3 · P1-5) + `ImportAdversarialEtlHelpersTests` · ด่านล็อกใน `tools/required_call_site_check.py`
+
+| รหัส | เรื่อง | แก้ | สถานะ |
+|---|---|---|---|
+| P0-1 | worker ลงข้อมูลวนไม่สิ้นสุด (แถว Failed ถูกหยิบซ้ำทุกรอบ · audit ทุกรอบ) | รอบลงเดียวกันไม่หยิบแถว Failed · `CommitAsync` (ผู้ใช้สั่งลงใหม่) คืนสถานะตามผลตรวจ · รอบที่ไม่มีแถวเปลี่ยนสถานะไม่คืนคิว · audit `IMPORT-COMMIT` ครั้งเดียวที่ `FinishCommitAsync` | ✅ (sha เติมภายหลัง) |
+| P0-2 | กติการะดับกลุ่มเห็นครึ่งกลุ่ม (chunk 500 · แก้แถวเดียว) ⇒ ใบสำคัญไม่ลงตัวถูกลง | พักครบแล้วตรวจกลุ่มที่คร่อมขอบใหม่ทั้งกลุ่ม · แก้แถว ⇒ ตรวจทุกแถวที่ GroupKey เดียวกัน · แถวที่ตัดออกไม่นับ · ตอนลงหน่วยที่สมาชิกยังไม่พร้อมไม่ถูกลง (เหตุผล + ทางไปต่อ) | ✅ (sha เติมภายหลัง) |
+| P1-1 | ย้อนการนำเข้าสมุดรายวันลบใบที่ผู้ใช้ทำเอง | writer จด id บรรทัดที่ต่อเข้าใบที่มีก่อนการนำเข้า (BeforeJson) ⇒ ย้อนลบเฉพาะบรรทัด · ใบที่ชุดสร้างเองลบทั้งใบ | ✅ (sha เติมภายหลัง) |
+| P1-2 | เอกสารที่มีแต่ชื่อผู้ติดต่อ "พร้อมลง" แล้วล้มทุกใบ · ทางไฟล์เดิมถดถอย | ตัดสินผู้ติดต่อที่ขั้นตรวจ (`DocumentImportBuilder.PrepareAsync`): ผู้ใช้เลือก → ContactId → เลขภาษี+สาขา → ชื่อตรงตัวไม่ซ้ำใน SoftScope (คำเตือน) → ไม่พบ = บล็อก + ผู้สมัคร · ชื่อคล้ายไม่เลือกให้ · ตอนลงใช้คู่ในแถว | ✅ (sha เติมภายหลัง) |
+| P1-3 | ย้อนผังบัญชีไม่ดูการอ้างอื่นนอก JE/เอกสาร | ไล่ทุก FK ที่ชี้ผังในโมเดล + บัญชีย่อย (ยกเว้นที่ย้อนพร้อมกัน) + แหล่งเงินตั้งต้น | ✅ (sha เติมภายหลัง) |
+| P1-4 | ลูป AI จับคู่บัญชีของงบทดลองไม่เคยปิด · ถาม AI ทุกครั้งที่ตรวจและตอนลง | feedback 58 เก็บที่แถวพัก ⇒ ปิดด้วยรหัสบัญชีที่ยืนยันตอนลง · คงบัญชีที่เลือกไว้ (ไม่ถามซ้ำ) · ตอนลง/ตรวจทั้งชุดหลังแก้แถวไม่ถาม AI · AI มั่นใจ < 0.85 = แถบเหลือง (คะแนนจับคู่นับเข้าความมั่นใจ) | ✅ (sha เติมภายหลัง) |
+| P1-5 | ทะเบียนพนักงาน: แถว/errors.csv/ไฟล์ต้นทางเปิดเลขบัตร/บัญชี/เงินเดือนด้วยสิทธิ์ HrAdmin อย่างเดียว · ค่าตัวอย่างไป AI | `Helpers/ImportPiiFields` (owner) + `PiiMask` · ไม่มี `Pii.View` = ปิดบัง · ไฟล์ต้นทาง (ศูนย์นำเข้า + ไฟล์แนบ `ImportBatch`) ต้องมี `Pii.View` · `PiiAccessLog` เมื่อเปิดเต็ม · prompt ส่งแค่รูปค่า | ✅ (sha เติมภายหลัง) |
+| P1-6 | ลงสมุดรายวันถือล็อกเลข JV ทั้งไฟล์ | "ลงเฉพาะแถวที่ผ่าน" commit ต่อ chunk · สมุดรายวัน (`IImportSequenceNumberingTarget`) commit ต่อใบ · AllOrNothing คงธุรกรรมเดียว (ความหมายของโหมด) | ✅ (sha เติมภายหลัง) |
+| P2-a | `SkippedCount` นับซ้ำข้ามรอบ · ยังไม่พร้อมนับเป็นข้าม | นับจากแถวจริงครั้งเดียว · ผลตอบ `Blocked` แยก (หน้าเว็บป้าย "ยังไม่พร้อม") | ✅ (sha เติมภายหลัง) |
+| P2-b | ความคืบหน้าทางลงในคำขอไม่เริ่ม 0 | `ProcessedRows = 0` ทั้งสองทาง | ✅ (sha เติมภายหลัง) |
+| P2-c | ยกเลิกแข่งกับ worker | `CancelAsync` ถือ `JobLock` ของ batch + อ่านสถานะใหม่ใต้ล็อก | ✅ (sha เติมภายหลัง) |
+| P2-d | `AutoCommitWhenClean` เก็บได้แต่ไม่มีผู้อ่าน (F2 ข้อ 2) | หน้าเว็บ "ยังไม่เปิดใช้" · API ปฏิเสธการเปิดพร้อมเหตุผล · migration ปิดค่าที่เปิดค้าง | ✅ (sha เติมภายหลัง) |
+| P2-e | ชุดค้าง (Staged/Failed/Analyzing) ไม่ถูกล้าง PII ตลอดไป | worker ยกเลิกอัตโนมัติเมื่อไม่มีการใช้งาน 30 วัน (ยังไม่ลงสักแถว) + หมายเหตุ + ล้างแถวพัก คงสรุป | ✅ (sha เติมภายหลัง) |
+| P2-f | errors.csv เติม `'` หน้ายอดติดลบ ⇒ นำเข้ากลับอ่านไม่ได้ | `ImportValueNormalizer.Amount/Number` ตัด `'` นำหน้าของช่องตัวเลข (ไม่แตะ `CsvFieldSafety`) | ✅ (sha เติมภายหลัง) |
+| P2-g | ตัวประกอบเอกสารถาม AI ตอนลง/worker | AI (ผู้ติดต่อกำกวม · ผังแนะนำ) ย้ายไปขั้นตรวจ · ผังแนะนำฝากในแถว (`Hints`) ⇒ feedback ไปบรรทัดเอกสาร | ✅ (sha เติมภายหลัง) |
+| P2-h | เอกสาร/รับชำระสร้างซ้ำเมื่อเครื่องล่มระหว่าง domain commit กับการประทับผล | ตรวจก่อนสร้าง: ของที่ชุดนี้สร้างไปแล้ว (ผู้สร้าง · หลังเวลาสร้างชุด · ยังไม่มีแถวใดอ้าง) ⇒ ใช้ตัวนั้น | ✅ (sha เติมภายหลัง) |
+| P2-i | ย้อนงบทดลองประทับ "ย้อนแล้ว" ทั้งที่ wizard ไม่แตะยอดที่แก้มือ | wizard จดบัญชีที่ไม่แตะ · แถวของบัญชีนั้น = ย้อนไม่สำเร็จ + เหตุผล · ชุด "ลงได้บางแถว" | ✅ (sha เติมภายหลัง) |
+| P2-j | รับชำระวันที่อนาคต/เกินยอดค้างเป็น Error | **คงเป็นด่าน** — `CreatePaymentAsync` ปฏิเสธเสมอ (คำเตือนจะ "พร้อมลง" แล้วล้มตอนลง) · เกณฑ์เกินยอดใช้ `WouldOverpay` รวมค่าธรรมเนียม + ข้อความทางไปต่อชัดขึ้น | ✅ (sha เติมภายหลัง) |
+| P2-k | feedback ของ resolver ถูกทิ้งเมื่อ < 0.70/นอกชุด | ส่งต่อ FeedbackId + คำตอบ (ถูกปัดตก = null) ⇒ ปิดลูปด้วยคำตอบสุดท้าย acceptedAi=false | ✅ (sha เติมภายหลัง) |
+| P2-l | ไฟล์เดิมชนิด Receipt/PaymentVoucher/ReceiptVoucher ถูกปฏิเสธโดยไม่บอกทางที่ทำได้ทันที | คงปฏิเสธ · ข้อความบอกขั้นตอน: นำเข้าใบแจ้งหนี้/ใบแจ้งหนี้ซื้อ → อนุมัติ → นำเข้า "รับ/จ่ายชำระ" (คอลัมน์ที่ต้องมี) | ✅ (sha เติมภายหลัง) |
+
+สัญญาที่ขยาย (เพิ่มท้าย ไม่ลบ/ไม่เปลี่ยนชื่อ): `ImportTargetRow.MatchChosenByUser/Hints` · `ImportRowValidation.MatchAiAnswer/MatchAnswerSpace/Hints` · `ImportEntityMatchResult.AiAnswer` ·
+`ImportCommitResultDto.Blocked` · `IImportPipelineService.GetRowsAsync/EditRowAsync/ExportErrorRowsCsvAsync(…, revealPii = false)` · `IDocumentImportBuilder.PrepareAsync` ·
+`IImportSequenceNumberingTarget` · `IImportGroupIntegrityTarget` (ป้าย — สมุดรายวัน/เอกสาร/งบทดลอง · statement ธนาคารไม่ติด: กลุ่ม = หน่วยรวบลง)

@@ -278,7 +278,6 @@ const Page = {
     document.getElementById('ihResultBody').addEventListener('click', (e) => this.onResultClick(e));
     document.getElementById('ihHistory').addEventListener('click', (e) => this.onHistoryClick(e));
     document.getElementById('ihTemplates').addEventListener('click', (e) => this.onTemplateClick(e));
-    document.getElementById('ihTemplates').addEventListener('change', (e) => this.onTemplateChange(e));
     document.getElementById('ihMigration').addEventListener('click', (e) => this.onMigrationClick(e));
   },
 
@@ -818,6 +817,7 @@ const Page = {
         <span class="badge badge-success">ลงแล้ว ${this.esc(committed)}</span>
         <span class="badge ${failed ? 'badge-danger' : 'badge-gray'}">ไม่สำเร็จ ${this.esc(failed)}</span>
         <span class="badge badge-gray">ข้าม ${this.esc(skipped)}</span>
+        ${r && r.blocked ? `<span class="badge badge-warning" title="ต้องแก้ หรือยังไม่ได้รับทราบคำเตือน — ไม่ใช่การข้าม">ยังไม่พร้อม ${this.esc(r.blocked)}</span>` : ''}
         ${s.undoneAt ? `<span class="badge badge-warning">ย้อนแล้วเมื่อ ${this.esc(Layout.dateTime(s.undoneAt))}</span>` : ''}
       </div>
       ${failures.length ? `<div class="table-container" style="margin-bottom:12px"><table class="table" style="font-size:12px"><thead><tr><th>แถว</th><th>รายการ</th><th>สาเหตุ</th></tr></thead><tbody>
@@ -914,20 +914,10 @@ const Page = {
           ${list.map(t => `<tr><td>${this.esc(t.name)}${t.confirmedByUser ? '' : ' <span class="ih-muted">(ระบบจำเอง)</span>'}</td>
             <td>${this.esc((this.entityInfo(t.entityType) || {}).label || t.entityType)}</td><td>${this.esc(t.useCount)}</td>
             <td>${t.lastUsedAt ? this.esc(Layout.dateTime(t.lastUsedAt)) : '-'}</td>
-            <td><input type="checkbox" data-auto="${this.esc(t.id)}"${t.autoCommitWhenClean ? ' checked' : ''}></td>
+            <td><span class="ih-muted" title="ฟีเจอร์นี้ยังไม่ทำงาน — ทุกชุดต้องกด ยืนยันนำเข้า เอง (แม่แบบยังจำการจับคู่คอลัมน์ให้)">ยังไม่เปิดใช้</span></td>
             <td><button class="btn btn-sm btn-ghost text-danger" data-del="${this.esc(t.id)}">ลบ</button></td></tr>`).join('')}
           </tbody></table></div>` : '<p class="ih-muted">ยังไม่มีแม่แบบ — ติ๊ก "จำรูปแบบไฟล์นี้" ตอนยืนยันนำเข้า</p>';
     } catch (e) { box.innerHTML = `<p class="text-danger">${this.esc(e.message)}</p>`; }
-  },
-
-  async onTemplateChange(e) {
-    const cb = e.target.closest('[data-auto]'); if (!cb) return;
-    const t = (this.templates || []).find(x => x.id === cb.dataset.auto); if (!t) return;
-    try {
-      await this.api().importHubUpdateTemplate(t.id, { name: t.name, autoCommitWhenClean: cb.checked });
-      Layout.toast(cb.checked ? 'เปิด: ไฟล์รูปแบบนี้ที่ไม่มีปัญหาจะลงให้อัตโนมัติ' : 'ปิดการลงอัตโนมัติแล้ว');
-      this.loadTemplates();
-    } catch (err) { cb.checked = !cb.checked; Layout.toast(err.message, 'error'); }
   },
 
   async onTemplateClick(e) {

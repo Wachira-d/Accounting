@@ -192,7 +192,8 @@ public partial class ImportPipelineService : IImportPipelineService
         return await DetailAsync(session, ct);
     }
 
-    public async Task<ImportRowPageDto> GetRowsAsync(Guid companyId, Guid batchId, ImportRowQuery query, CancellationToken ct = default)
+    public async Task<ImportRowPageDto> GetRowsAsync(Guid companyId, Guid batchId, ImportRowQuery query, CancellationToken ct = default,
+        bool revealPii = false)
     {
         var session = await LoadAsync(companyId, batchId, ct, tracked: false);
         var state = State(session);
@@ -216,7 +217,8 @@ public partial class ImportPipelineService : IImportPipelineService
         var rows = await q.OrderBy(r => r.RowNo).Skip((page - 1) * size).Take(size).ToListAsync(ct);
         var fields = target == null ? new Dictionary<string, ImportFieldDto>(StringComparer.OrdinalIgnoreCase) : FieldMap(target);
         var snapshot = await RefreshSnapshotAsync(session, persist: false, ct);
-        return new ImportRowPageDto(page, size, total, rows.Select(r => ToRowDto(r, state, fields)).ToList(), snapshot.IssueCounts);
+        return new ImportRowPageDto(page, size, total, rows.Select(r => ToRowDto(r, state, fields, session.EntityType, revealPii)).ToList(),
+            snapshot.IssueCounts);
     }
 
     // ══════════════════════════════ ผู้ใช้ตรวจ/แก้ ══════════════════════════════
@@ -277,7 +279,7 @@ public partial class ImportPipelineService : IImportPipelineService
     }
 
     public async Task<ImportRowDto> EditRowAsync(Guid companyId, Guid batchId, Guid rowId, ImportEditRowRequest request, ImportActor actor,
-        CancellationToken ct = default)
+        CancellationToken ct = default, bool revealPii = false)
     {
         var session = await LoadAsync(companyId, batchId, ct);
         EnsureEditable(session, "แก้แถว");
@@ -288,13 +290,13 @@ public partial class ImportPipelineService : IImportPipelineService
             ?? throw new KeyNotFoundException("ไม่พบแถวนี้ในชุดนำเข้า");
         if (row.Status is ImportRowStatus.Committed or ImportRowStatus.Undone)
             throw new BusinessRuleException("แถวนี้ลงข้อมูลแล้ว — ย้อนการนำเข้าก่อนถ้าต้องการแก้");
-        ApplyRowEdit(row, request, fields, state);
+        ApplyRowEdit(row, request, fields, state, target.SupportsUpdate);
         row.UserEdited = true;
         row.UpdatedBy = actor.UserId.ToString();
         await RevalidateAsync(session, target, state, new[] { row }, actor, ct);
         await RefreshSnapshotAsync(session, persist: true, ct);
         await _db.SaveChangesAsync(ct);
-        return ToRowDto(row, state, fields);
+        return ToRowDto(row, state, fields, session.EntityType, revealPii);
     }
 
     public async Task<ImportBulkResultDto> BulkActionAsync(Guid companyId, Guid batchId, ImportBulkActionRequest request, ImportActor actor,
@@ -340,7 +342,7 @@ public partial class ImportPipelineService : IImportPipelineService
             if (edit == null) continue;
             if (request.Op is ImportBulkOp.ApplySuggestions or ImportBulkOp.RejectSuggestions
                 && (edit.AcceptSuggestionFields?.Count ?? 0) + (edit.RejectSuggestionFields?.Count ?? 0) == 0) continue;
-            ApplyRowEdit(r, edit, fields, state);
+            ApplyRowEdit(r, edit, fields, state, target.SupportsUpdate);
             r.UserEdited = true;
             r.UpdatedBy = actor.UserId.ToString();
             affected.Add(r);
@@ -390,17 +392,29 @@ public partial class ImportPipelineService : IImportPipelineService
                 ? $"ยังไม่มีแถวที่พร้อมลง — {blocked.Count} แถวต้องแก้ หรือต้องติ๊กรับทราบคำเตือนก่อน"
                 : "ไม่มีแถวที่ต้องลงข้อมูล (ทุกแถวถูกตัดออก/ข้าม/ลงไปแล้ว)");
 
+        // ฝ่ายค้านรอบ ETL (P0-1): ผู้ใช้สั่งลงใหม่ = ลองแถวที่ล้มรอบก่อนอีกครั้ง — คืนสถานะตามผลตรวจ (ระหว่างรอบลงเดียวกัน แถว Failed ไม่ถูกหยิบซ้ำ)
+        var failedBefore = await _db.ImportStagedRows
+            .Where(r => r.SessionId == batchId && r.CompanyId == companyId && r.Status == ImportRowStatus.Failed).ToListAsync(ct);
+        foreach (var r in failedBefore)
+        {
+            var meta = ReadMeta(r.AiFeedbackIdsJson);
+            r.Status = DeriveStatus(Issues(r), meta, meta.ContainsKey(MetaSummary));
+            r.CommitError = null;
+            r.UpdatedAt = DateTime.UtcNow;
+        }
+
         var state = State(session);
         state.PendingCommit = options;
         state.PendingActor = actor;
         session.CommitMode = options.Mode;
         session.OptionsJson = ImportJson.Serialize(state);
+        // ความคืบหน้าของขั้นลงข้อมูลเริ่มที่ 0 ทั้งทางในคำขอและทาง worker (เดิมทางในคำขอค้างค่าจากขั้นพัก ⇒ เกิน 100%)
+        session.ProcessedRows = 0;
         if (eligible > InlineRowLimit)
         {
             // ไฟล์ใหญ่: worker ลงต่อ (claim + JobLock + heartbeat) — ผลดูได้จาก GET batches/{id}
             session.Status = ImportSessionStatus.Queued;
             session.Phase = ImportBatchPhase.Commit;
-            session.ProcessedRows = 0;
             session.HeartbeatAt = null;
             session.ClaimedBy = null;
             await _db.SaveChangesAsync(ct);
@@ -466,7 +480,22 @@ public partial class ImportPipelineService : IImportPipelineService
 
     public async Task<ImportBatchSummaryDto> CancelAsync(Guid companyId, Guid batchId, ImportActor actor, CancellationToken ct = default)
     {
-        var session = await LoadAsync(companyId, batchId, ct);
+        await LoadAsync(companyId, batchId, ct, tracked: false);
+        // ฝ่ายค้านรอบ ETL: ยกเลิกต้องถือล็อกของ batch ตัวเดียวกับ worker/ลงข้อมูล/ย้อน แล้วอ่านสถานะใหม่ใต้ล็อก — เดิมยกเลิกแข่งกับ worker ที่กำลังลงข้อมูล
+        // (ผู้ใช้เห็น "ยกเลิกแล้ว" ทั้งที่แถวยังลงต่อ)
+        ImportBatchSummaryDto? result = null;
+        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.ImportBatch, batchId.ToString(), async () =>
+        {
+            result = await CancelCoreAsync(companyId, batchId, actor, ct);
+        }, _logger, companyId, ct);
+        if (!ran)
+            throw new BusinessRuleException("ชุดนี้กำลังถูกประมวลผล/ลงข้อมูลโดยอีกงานหนึ่ง — รอสักครู่ แล้วกดยกเลิกอีกครั้ง (ถ้าลงไปแล้วให้ใช้ \"ย้อนการนำเข้า\")");
+        return result!;
+    }
+
+    private async Task<ImportBatchSummaryDto> CancelCoreAsync(Guid companyId, Guid batchId, ImportActor actor, CancellationToken ct)
+    {
+        var session = await ReloadAsync(companyId, batchId, ct);
         if (session.Status is ImportSessionStatus.Committing)
             throw new BusinessRuleException("ชุดนี้กำลังลงข้อมูลอยู่ — รอให้เสร็จ แล้วใช้ \"ย้อนการนำเข้า\" ถ้าไม่ต้องการ");
         var committed = await CommittedCountAsync(session, ct);
@@ -483,10 +512,13 @@ public partial class ImportPipelineService : IImportPipelineService
 
     // ══════════════════════════════ ไฟล์ ══════════════════════════════
 
-    public async Task<byte[]> ExportErrorRowsCsvAsync(Guid companyId, Guid batchId, CancellationToken ct = default)
+    public async Task<byte[]> ExportErrorRowsCsvAsync(Guid companyId, Guid batchId, CancellationToken ct = default, bool revealPii = false)
     {
         var session = await LoadAsync(companyId, batchId, ct, tracked: false);
         var state = State(session);
+        // PDPA ม.26 (ฝ่ายค้านรอบ ETL P1-5): ไม่มี Pii.View ⇒ ค่าดิบ/ข้อความปัญหาของช่องอ่อนไหวถูกปิดบัง (แก้ช่องอื่นแล้วนำเข้าได้ — ช่องที่ปิดไว้กรอกใหม่จากต้นฉบับ)
+        var mask = !revealPii && ImportPiiFields.HasPii(session.EntityType);
+        var colField = state.Columns.Where(c => c.SourceIndex >= 0).GroupBy(c => c.SourceIndex).ToDictionary(g => g.Key, g => g.First().TargetField);
         var rows = await _db.ImportStagedRows.AsNoTracking()
             .Where(r => r.SessionId == batchId && r.CompanyId == companyId
                 && (r.Status == ImportRowStatus.Error || r.Status == ImportRowStatus.Failed))
@@ -498,7 +530,14 @@ public partial class ImportPipelineService : IImportPipelineService
         foreach (var r in rows)
         {
             var raw = RawCells(r);
-            var problems = Issues(r).Where(i => i.Severity != ImportIssueSeverity.Info).Select(i => i.Message).ToList();
+            var rowIssues = Issues(r);
+            if (mask)
+            {
+                var values = ImportJson.ReadValues(r.MappedJson);
+                rowIssues = rowIssues.Select(i => MaskIssue(i, session.EntityType, values, raw, colField)).ToList();
+                raw = raw.Select((v, j) => ImportPiiFields.Mask(session.EntityType, colField.GetValueOrDefault(j), v) ?? "").ToList();
+            }
+            var problems = rowIssues.Where(i => i.Severity != ImportIssueSeverity.Info).Select(i => i.Message).ToList();
             if (!string.IsNullOrWhiteSpace(r.CommitError)) problems.Add(r.CommitError!);
             sb.AppendLine(CsvFieldSafety.Row(
                 Enumerable.Range(0, width).Select(i => i < raw.Count ? raw[i] : "")

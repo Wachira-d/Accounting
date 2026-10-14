@@ -212,6 +212,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round205ImportHubStatements());   // รอบ 205 T0 ศูนย์นำเข้าข้อมูล (บล็อกท้ายไฟล์)
         list.AddRange(Round205TeamDMigrationStatements());   // รอบ 205 ทีม D คำแนะนำบัญชีของ migration wizard (บล็อกท้ายไฟล์)
         list.AddRange(Adversarial1BankStatements());   // ฝ่ายค้านรอบ 1 — ยอดคงเหลือ statement ที่ไม่รู้ (บล็อกท้ายไฟล์)
+        list.AddRange(AdversarialEtlStatements());   // ฝ่ายค้านรอบ ETL — ปิดค่า "ลงอัตโนมัติ" ที่ยังไม่มีผล (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7578,5 +7579,13 @@ public static class DatabaseMigrationHelper
     internal static IReadOnlyList<string> Adversarial1BankStatements() => new List<string>
     {
         """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "BalanceAfterUnknown" boolean NOT NULL DEFAULT false;""",
+    };
+
+    /// <summary>ฝ่ายค้านรอบ ETL (2026-10-14 · F2 ข้อ 9 "persist แล้วต้องมี migration") — <c>ImportMappingTemplates.AutoCommitWhenClean</c> เคยเปิดได้ทั้งที่
+    /// ไม่มีผู้อ่าน (ไม่เคยลงให้อัตโนมัติจริง) · ตอนนี้ปฏิเสธการเปิด ⇒ ค่าที่เปิดค้างไว้ต้องถูกปิด มิฉะนั้นวันที่เปิดใช้ฟีเจอร์ แม่แบบเก่าจะเริ่มลงข้อมูลเองโดยที่
+    /// ผู้ใช้ไม่ได้ยืนยันใหม่ · รันซ้ำได้ (เงื่อนไข = true เท่านั้น)</summary>
+    internal static IReadOnlyList<string> AdversarialEtlStatements() => new List<string>
+    {
+        """UPDATE "ImportMappingTemplates" SET "AutoCommitWhenClean" = false WHERE "AutoCommitWhenClean" = true;""",
     };
 }

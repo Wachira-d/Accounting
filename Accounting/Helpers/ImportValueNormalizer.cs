@@ -86,6 +86,7 @@ public static class ImportValueNormalizer
     /// <summary>ยอดเงิน (2 ตำแหน่ง · AwayFromZero) — คั่นหลักพัน · วงเล็บ/ลบท้าย = ติดลบ · ฿/THB/บาท · เลขไทย (owner = <see cref="SettlementValueParser.TryParseAmount"/>)</summary>
     public static ImportValue<decimal?> Amount(string? raw)
     {
+        raw = StripTextMarker(raw);
         if (string.IsNullOrWhiteSpace(raw)) return Empty<decimal?>();
         if (SettlementValueParser.TryParseAmount(raw, out var v)) return new(v, true);
         return Bad<decimal?>("amount-invalid", $"อ่านจำนวนเงิน \"{raw.Trim()}\" ไม่ได้ — ใช้ตัวเลข เช่น 1,234.50 หรือ (1,234.50) สำหรับค่าติดลบ");
@@ -97,7 +98,7 @@ public static class ImportValueNormalizer
     /// <summary>จำนวน/อัตราที่ไม่ใช่เงิน (ไม่ปัดเศษ) — คั่นหลักพัน · เลขไทย · เครื่องหมายลบนำหน้า</summary>
     public static ImportValue<decimal?> Number(string? raw)
     {
-        var s = Clean(raw).Replace(" ", "", StringComparison.Ordinal);
+        var s = Clean(StripTextMarker(raw)).Replace(" ", "", StringComparison.Ordinal);
         if (s.Length == 0 || s == "-") return Empty<decimal?>();
         if (Regex.IsMatch(s, @"^[+\-]?([0-9]{1,3}(,[0-9]{3})+|[0-9]+)(\.[0-9]+)?$")
             && decimal.TryParse(s.Replace(",", "", StringComparison.Ordinal),
@@ -254,6 +255,18 @@ public static class ImportValueNormalizer
     }
 
     // ═══════════════════════ ภายใน ═══════════════════════
+
+    /// <summary>
+    /// ตัดอัญประกาศเดี่ยวนำหน้า (เครื่องหมาย "บังคับเป็นข้อความ" ของ Excel) ของ<b>ตัวเลข/ยอด</b> — ฝ่ายค้านรอบ ETL: ไฟล์แถวผิด (errors.csv) ผ่าน
+    /// <see cref="CsvFieldSafety"/> ซึ่งเติม <c>'</c> หน้าค่าที่ขึ้นต้นด้วย <c>-</c> (กันสูตร) ⇒ ยอดติดลบ "-1500.00" กลายเป็น "'-1500.00" แล้วนำเข้ากลับ
+    /// อ่านไม่ได้ · ตัดเฉพาะตัวนำหน้าตัวเดียวของช่องตัวเลข (ข้อความทั่วไปไม่แตะ — ความปลอดภัยของ CSV ยังเป็นของ CsvFieldSafety ตัวเดียว)
+    /// </summary>
+    private static string? StripTextMarker(string? raw)
+    {
+        if (raw == null) return null;
+        var t = raw.TrimStart();
+        return t.Length > 0 && t[0] == '\'' ? t[1..] : raw;
+    }
 
     /// <summary>ตัดช่องว่าง · เลขไทย → อารบิก · ขีดลบยูนิโค้ด → "-" ไม่แตะ (ตัวแปลงของ owner จัดการเอง)</summary>
     private static string Clean(string? raw)

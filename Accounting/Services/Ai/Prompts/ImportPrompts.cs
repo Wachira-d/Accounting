@@ -132,7 +132,8 @@ Strict JSON output (NO prose outside JSON). Empty arrays are valid:
             {
                 source_index = c.SourceIndex,
                 source_header = c.SourceHeader,
-                sample_values = c.SampleValues,
+                // ฝ่ายค้านรอบ ETL (PDPA ม.26): ค่าตัวอย่างส่งแค่ "รูป" ของเลขบัตร/บัญชี/เงินเดือน — ตัวตั้งเดียว Helpers/ImportPiiFields
+                sample_values = c.SampleValues.Select(v => Accounting.Helpers.ImportPiiFields.RedactForPrompt(entityType, null, v)).ToList(),
                 heuristic_guess = c.HeuristicGuess,
                 heuristic_score = c.HeuristicScore,
             }),
@@ -187,7 +188,12 @@ Strict JSON output (NO prose outside JSON). Empty arrays are valid:
             // แถวมาจาก supplier เดียวกัน" ต้องอ้างจำนวนจริง ไม่ใช่ 50 ที่เห็น
             total_row_count = totalRowCount ?? sampleRows.Count,
             sample_row_count = sampleRows.Count,
-            rows = sampleRows.Select((r, i) => new { row_index = i, fields = r }),
+            rows = sampleRows.Select((r, i) => new
+            {
+                row_index = i,
+                // ฝ่ายค้านรอบ ETL (PDPA ม.26): ช่องอ่อนไหวส่งแค่รูปค่า (Helpers/ImportPiiFields)
+                fields = r.ToDictionary(kv => kv.Key, kv => Accounting.Helpers.ImportPiiFields.RedactForPrompt(entityType, kv.Key, kv.Value)),
+            }),
             existing_entities_sample = existingSlice.Select(e => new
             {
                 id = e.Id,

@@ -112,9 +112,12 @@ public class PaymentImportTarget : IImportTarget
                         DocumentStatus.Voided or DocumentStatus.Rejected => $"เอกสาร {d.DocumentNumber} ถูกยกเลิก/ปฏิเสธแล้ว — รับ/จ่ายชำระไม่ได้ ข้ามแถวนี้",
                         _ => $"เอกสาร {d.DocumentNumber} ยังไม่อนุมัติ (ร่าง/รออนุมัติ) — อนุมัติเอกสารที่หน้าเอกสารก่อน แล้วนำเข้าการชำระอีกครั้ง",
                     }));
-                else if (amount is { } a && a > d.BalanceDue + 0.005m)
+                // ฝ่ายค้านรอบ ETL (ข้อ 150): คงเป็นด่าน — CreatePaymentAsync ปฏิเสธการจ่ายเกินเสมอ (ยอดลูกหนี้/เจ้าหนี้ใน GL จะติดลบ) ⇒ เกณฑ์เดียวกับ domain
+                // (DocumentSettlementState.WouldOverpay · รวมค่าธรรมเนียม) ไม่ใช่คำเตือนที่รับทราบแล้วไปล้มตอนลง
+                else if (amount is { } a && DocumentSettlementState.WouldOverpay(d.BalanceDue, a + (Amount(r, "FeeAmount") ?? 0m)))
                     issues.Add(Error("Amount", "payment-exceeds-balance",
-                        $"ยอด {a:N2} เกินยอดค้างของ {d.DocumentNumber} ({d.BalanceDue:N2}) — แก้ยอด หรือแยกส่วนเกินเป็นเงินรับล่วงหน้า"));
+                        $"ยอด {a:N2} (รวมค่าธรรมเนียม) เกินยอดค้างของ {d.DocumentNumber} ({d.BalanceDue:N2}) — แก้ยอดเป็นไม่เกินยอดค้าง แล้วบันทึกส่วนเกินเป็น"
+                        + "เงินรับล่วงหน้า/ใบรับมัดจำที่หน้าเอกสาร · หรือตรวจว่าแถวนี้ซ้ำกับการชำระที่บันทึกแล้ว"));
                 if (amount is { } a2 && date is { } dt
                     && existing.FirstOrDefault(p => p.DocumentId == d.Id && p.PaymentDate.Date == dt.Date && p.Amount == a2) is { } dup)
                 {
@@ -127,8 +130,10 @@ public class PaymentImportTarget : IImportTarget
                 issues.Add(Error("Amount", "payment-amount-invalid", "จำนวนเงินต้องมากกว่า 0"));
             if (date is { } pd)
             {
+                // คงเป็นด่าน (ข้อ 150): CreatePaymentAsync ปฏิเสธวันที่อนาคตเสมอ — คำเตือนที่รับทราบได้จะกลายเป็น "พร้อมลง" แล้วล้มตอนลง
                 if (pd.Date > today)
-                    issues.Add(Error("PaymentDate", "payment-future-date", "วันที่ชำระอยู่ในอนาคต — แก้วันที่"));
+                    issues.Add(Error("PaymentDate", "payment-future-date",
+                        "วันที่ชำระอยู่ในอนาคต — แก้เป็นวันที่รับ/จ่ายเงินจริง (ปี พ.ศ./ค.ศ. สลับกันหรือไม่) · ถ้าเป็นเงินที่จะรับในอนาคต ไม่ต้องนำเข้าตอนนี้"));
                 else if (closed.FirstOrDefault(p => p.StartDate <= pd && p.EndDate >= pd) is { } cp)
                     issues.Add(Error("PaymentDate", "period-closed", $"วันที่ชำระอยู่ในงวด {cp.Name} ที่ปิดแล้ว — เปิดงวดก่อน หรือแก้วันที่", null, "PERIOD-LOCK"));
             }
@@ -163,6 +168,12 @@ public class PaymentImportTarget : IImportTarget
                 results.Add(new ImportRowCommitResult(r.RowId, false, Error: "ต้องมีวันที่ชำระและจำนวนเงินมากกว่า 0"));
                 continue;
             }
+            // ฝ่ายค้านรอบ ETL (P2): CreatePaymentAsync commit ธุรกรรมของตัวเอง — เครื่องล่มหลังบันทึกแต่ก่อนประทับผลแถว ⇒ ทำต่อแล้วต้องไม่บันทึกซ้ำ
+            if (await CreatedEarlierInBatchAsync(ctx, docs[0].Id, amount.Value, ct) is Guid already)
+            {
+                results.Add(new ImportRowCommitResult(r.RowId, true, CommittedEntity, already));
+                continue;
+            }
             var method = ImportValueNormalizer.Enum(Text(r, "PaymentMethod"), MethodAliases) is { Ok: true, Value: { } m } ? m : PaymentMethod.BankTransfer;
             var req = new CreatePaymentRequest(docs[0].Id, date.Value, amount.Value, method,
                 Text(r, "Reference"), Text(r, "BankAccount"), Text(r, "Notes"),
@@ -180,6 +191,22 @@ public class PaymentImportTarget : IImportTarget
             }
         }
         return results;
+    }
+
+    /// <summary>การชำระที่ชุดนี้บันทึกไปแล้วแต่แถวยังไม่ถูกประทับผล — ผู้บันทึกคนเดียวกัน · หลังเวลาสร้างชุด · เอกสาร/ยอดเดียวกัน ·
+    /// <b>ยังไม่มีแถวใดของชุดนี้อ้างถึง</b> (สองแถวยอดเท่ากันในไฟล์ยังได้สองการชำระ) · ทางเดิม (ไม่มีชุดจริง) = ไม่ตรวจ</summary>
+    private async Task<Guid?> CreatedEarlierInBatchAsync(ImportTargetContext ctx, Guid documentId, decimal amount, CancellationToken ct)
+    {
+        var since = await _db.SmartImportSessions.AsNoTracking()
+            .Where(s => s.Id == ctx.BatchId && s.CompanyId == ctx.CompanyId).Select(s => (DateTime?)s.CreatedAt).FirstOrDefaultAsync(ct);
+        if (since is not DateTime from) return null;
+        var by = CreatedBy(ctx);
+        var claimed = _db.ImportStagedRows.Where(x => x.SessionId == ctx.BatchId && x.CompanyId == ctx.CompanyId && x.CommittedEntityId != null)
+            .Select(x => x.CommittedEntityId!.Value);
+        return await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == ctx.CompanyId && !p.IsDeleted && p.DocumentId == documentId && p.Amount == amount
+                && p.CreatedBy == by && p.CreatedAt >= from && !claimed.Contains(p.Id))
+            .OrderBy(p => p.CreatedAt).Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct);
     }
 
     public async Task<IReadOnlyList<ImportUndoCheck>> CanUndoAsync(ImportTargetContext ctx, IReadOnlyList<ImportCommittedRow> rows, CancellationToken ct)

@@ -102,7 +102,8 @@ public abstract class MasterDataImportTarget : IImportTarget
                 else action = ImportRowAction.Create;
             }
             result.Add(new ImportRowValidation(row.RowId, issues, action, matched, m?.Kind, m?.Score, DisplayKeyOf(row), GroupKeyOf(row),
-                filled.Count > 0 ? filled : null, m?.Candidates, auto, m?.UsedAi ?? false, m?.AiFeedbackId));
+                filled.Count > 0 ? filled : null, m?.Candidates, auto, m?.UsedAi ?? false, m?.AiFeedbackId,
+                MatchAiAnswer: m?.AiAnswer, MatchAnswerSpace: m?.AiFeedbackId != null ? ImportMatchAnswerSpace.Entity : null));
         }
         return result;
     }
@@ -120,6 +121,15 @@ public abstract class MasterDataImportTarget : IImportTarget
 
     /// <summary>ลบแบบ soft ได้ไหม (ไม่มีการอ้างจากข้อมูลอื่น) — null = ได้ · ข้อความ = เหตุผล + ทางไปต่อ</summary>
     protected abstract Task<(string Reason, string WayForward)?> DeleteBlockAsync(Guid companyId, Guid entityId, CancellationToken ct);
+
+    /// <summary>ตัวเดียวกับ <see cref="DeleteBlockAsync(Guid, Guid, CancellationToken)"/> แต่รู้ว่าย้อน entity ไหนพร้อมกันในรอบนี้ (<paramref name="undoing"/>) —
+    /// ชนิดที่อ้างกันเอง (บัญชีลูกในไฟล์เดียวกันกับบัญชีแม่) ไม่ต้องบล็อกกันเอง · ค่าเริ่ม = ไม่สนชุดนี้</summary>
+    protected virtual Task<(string Reason, string WayForward)?> DeleteBlockAsync(Guid companyId, Guid entityId, IReadOnlySet<Guid> undoing,
+        CancellationToken ct) => DeleteBlockAsync(companyId, entityId, ct);
+
+    /// <summary>คืนค่าเดิม (RestoreBefore) ได้ไหม — null = ได้ · ค่าเริ่ม = ได้เสมอ (ชนิดที่มีสถานะ เช่น สมุดรายวันที่ลงบัญชีแล้ว override)</summary>
+    protected virtual Task<(string Reason, string WayForward)?> RestoreBlockAsync(Guid companyId, Guid entityId, CancellationToken ct)
+        => Task.FromResult<(string Reason, string WayForward)?>(null);
     /// <summary>ลบแบบ soft · false = ไม่พบ (ถูกลบไปแล้ว)</summary>
     protected abstract Task<bool> SoftDeleteAsync(Guid companyId, Guid entityId, CancellationToken ct);
     /// <summary>คืนค่าเดิมจาก BeforeJson · false = ชนิดนี้คืนค่าไม่ได้/ไม่พบ</summary>
@@ -132,19 +142,23 @@ public abstract class MasterDataImportTarget : IImportTarget
         var checks = new List<ImportUndoCheck>(rows.Count);
         // แถวที่ "สร้าง" entity เดียวกันหลายแถว (JE หลายบรรทัด/แถวซ้ำที่รวมเข้าแถวแรก) — ตัดสินครั้งเดียวต่อ entity
         var decided = new Dictionary<Guid, (string Reason, string WayForward)?>();
+        var undoing = rows.Where(r => r.BeforeJson == null).Select(r => r.EntityId).ToHashSet();
         foreach (var r in rows)
         {
             if (r.BeforeJson != null)
             {
-                checks.Add(CanRestore
-                    ? new ImportUndoCheck(r.RowId, true, ImportUndoKind.RestoreBefore)
-                    : new ImportUndoCheck(r.RowId, false, ImportUndoKind.None, $"{Label}ที่ถูกอัปเดตย้อนค่าเดิมอัตโนมัติไม่ได้",
-                        $"แก้ค่ากลับที่หน้า{Label}"));
+                var restoreBlock = CanRestore ? await RestoreBlockAsync(ctx.CompanyId, r.EntityId, ct) : null;
+                checks.Add(!CanRestore
+                    ? new ImportUndoCheck(r.RowId, false, ImportUndoKind.None, $"{Label}ที่ถูกอัปเดตย้อนค่าเดิมอัตโนมัติไม่ได้",
+                        $"แก้ค่ากลับที่หน้า{Label}")
+                    : restoreBlock is { } rb
+                        ? new ImportUndoCheck(r.RowId, false, ImportUndoKind.None, rb.Reason, rb.WayForward)
+                        : new ImportUndoCheck(r.RowId, true, ImportUndoKind.RestoreBefore));
                 continue;
             }
             if (!decided.TryGetValue(r.EntityId, out var block))
             {
-                block = await DeleteBlockAsync(ctx.CompanyId, r.EntityId, ct);
+                block = await DeleteBlockAsync(ctx.CompanyId, r.EntityId, undoing, ct);
                 decided[r.EntityId] = block;
             }
             checks.Add(block is { } b
@@ -158,18 +172,21 @@ public abstract class MasterDataImportTarget : IImportTarget
     {
         var results = new List<ImportRowUndoResult>(rows.Count);
         var deleted = new HashSet<Guid>();
+        var undoing = rows.Where(r => r.BeforeJson == null).Select(r => r.EntityId).ToHashSet();
         // ย้อนจากแถวท้ายไปแถวแรก — แถวที่อัปเดตทับแถวที่สร้างในไฟล์เดียวกันคืนค่าก่อน แล้วค่อยลบแถวที่สร้าง
         foreach (var r in rows.OrderByDescending(x => x.RowNo))
         {
             if (r.BeforeJson != null)
             {
                 var before = ImportJson.Deserialize<Dictionary<string, string?>>(r.BeforeJson) ?? new Dictionary<string, string?>();
+                var restoreBlock = CanRestore ? await RestoreBlockAsync(ctx.CompanyId, r.EntityId, ct) : null;
+                if (restoreBlock is { } rb) { results.Add(new ImportRowUndoResult(r.RowId, false, $"{rb.Reason} — {rb.WayForward}")); continue; }
                 var ok = CanRestore && await RestoreAsync(ctx.CompanyId, r.EntityId, before, ct);
                 results.Add(new ImportRowUndoResult(r.RowId, ok, ok ? null : $"คืนค่าเดิมของ{Label}ไม่ได้ — แก้ที่หน้า{Label}"));
                 continue;
             }
             if (deleted.Contains(r.EntityId)) { results.Add(new ImportRowUndoResult(r.RowId, true)); continue; }
-            var block = await DeleteBlockAsync(ctx.CompanyId, r.EntityId, ct);
+            var block = await DeleteBlockAsync(ctx.CompanyId, r.EntityId, undoing, ct);
             if (block is { } b) { results.Add(new ImportRowUndoResult(r.RowId, false, $"{b.Reason} — {b.WayForward}")); continue; }
             var done = await SoftDeleteAsync(ctx.CompanyId, r.EntityId, ct);
             if (done) deleted.Add(r.EntityId);
@@ -350,13 +367,69 @@ public sealed class ChartOfAccountsImportTarget : MasterDataImportTarget
         }
     }
 
-    protected override async Task<(string Reason, string WayForward)?> DeleteBlockAsync(Guid companyId, Guid entityId, CancellationToken ct)
+    protected override Task<(string Reason, string WayForward)?> DeleteBlockAsync(Guid companyId, Guid entityId, CancellationToken ct)
+        => DeleteBlockAsync(companyId, entityId, new HashSet<Guid>(), ct);
+
+    /// <summary>ป้ายไทยของตารางที่อ้างบัญชี (ข้อความปฏิเสธ — ไม่โชว์ชื่อคลาสอังกฤษ) · ไม่อยู่ในตาราง = "ข้อมูลอื่นในระบบ"</summary>
+    private static readonly IReadOnlyDictionary<string, string> ReferrerLabels = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        var posted = await Db.JournalEntryLines.AnyAsync(l => l.AccountId == entityId
-            && Db.JournalEntries.IgnoreQueryFilters().Any(j => j.Id == l.JournalEntryId && j.CompanyId == companyId), ct);
-        var onDoc = await Db.DocumentLines.AnyAsync(l => l.AccountId == entityId
-            && Db.Documents.IgnoreQueryFilters().Any(d => d.Id == l.DocumentId && d.CompanyId == companyId), ct);
-        return posted || onDoc ? ("บัญชีนี้มีรายการบันทึกบัญชีหรือเอกสารอ้างถึงแล้ว", "ปิดใช้งานบัญชีที่หน้าผังบัญชีแทนการลบ") : null;
+        [nameof(JournalEntryLine)] = "รายการบันทึกบัญชี",
+        [nameof(DocumentLine)] = "บรรทัดเอกสาร",
+        [nameof(OpeningBalance)] = "ยอดยกมา",
+        [nameof(AccountMapping)] = "การจับคู่บัญชีของชุดยอดยกมา",
+        [nameof(BankAccount)] = "บัญชีธนาคาร",
+        [nameof(Product)] = "สินค้า/บริการ (บัญชีตั้งต้น)",
+        [nameof(FixedAsset)] = "ทะเบียนสินทรัพย์",
+        [nameof(Budget)] = "งบประมาณ",
+    };
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ ETL (P1-3): เดิมดูแค่บรรทัด JE/เอกสาร ⇒ ย้อนผังที่ถูกอ้างจากยอดยกมา · บัญชีลูก · บัญชีธนาคาร (LinkedAccountId) ·
+    /// บัญชีตั้งต้นของสินค้า/สินทรัพย์ · AccountMappings ฯลฯ ได้ แล้วข้อมูลเหล่านั้นชี้บัญชีที่ถูกลบ · ตอนนี้ไล่ <b>ทุก foreign key ที่ชี้ผังบัญชีในโมเดล</b>
+    /// (ไม่ใช่รายการที่เขียนมือ — ตารางใหม่ที่อ้างผังพรุ่งนี้ถูกนับอัตโนมัติ) + ค่าตั้งที่ไม่มี FK (<c>CompanySettings.DefaultPaymentAccountId</c>) ·
+    /// บัญชีลูกที่ถูกย้อนพร้อมกันในรอบนี้ไม่นับ (<paramref name="undoing"/>) · กรอง CompanyId เมื่อตารางมีคอลัมน์นั้น (กฎ M) · แถวที่ลบแบบ soft แล้วไม่นับ
+    /// </summary>
+    protected override Task<(string Reason, string WayForward)?> DeleteBlockAsync(Guid companyId, Guid entityId, IReadOnlySet<Guid> undoing,
+        CancellationToken ct) => AccountReferencesAsync(companyId, entityId, undoing, ct);
+
+    private async Task<(string Reason, string WayForward)?> AccountReferencesAsync(Guid companyId, Guid entityId, IReadOnlySet<Guid> undoing,
+        CancellationToken ct)
+    {
+        const string way = "ปิดใช้งานบัญชีที่หน้าผังบัญชีแทนการลบ (หรือย้ายข้อมูลที่อ้างไปบัญชีอื่นก่อน แล้วย้อนอีกครั้ง)";
+        var undoingIds = undoing.ToList();
+        if (await Db.ChartOfAccounts.AnyAsync(a => a.CompanyId == companyId && a.ParentAccountId == entityId && !undoingIds.Contains(a.Id), ct))
+            return ("บัญชีนี้มีบัญชีย่อยอยู่ใต้", way);
+        if (await Db.CompanySettings.AnyAsync(x => x.CompanyId == companyId && x.DefaultPaymentAccountId == entityId, ct))
+            return ("บัญชีนี้ถูกตั้งเป็นแหล่งเงินตั้งต้นของบริษัท (หน้าตั้งค่า)", "เปลี่ยนแหล่งเงินตั้งต้นที่หน้าตั้งค่าก่อน แล้วย้อนอีกครั้ง");
+
+        var coa = Db.Model.FindEntityType(typeof(ChartOfAccount));
+        if (coa == null) return ("ตรวจการอ้างถึงบัญชีไม่ได้", way);   // ล้มฝั่งปลอดภัย (ไม่ลบ)
+        foreach (var fk in coa.GetReferencingForeignKeys())
+        {
+            var dep = fk.DeclaringEntityType;
+            if (dep.ClrType == typeof(ChartOfAccount) || fk.Properties.Count != 1) continue;   // บัญชีลูกตรวจด้านบน
+            var table = dep.GetTableName();
+            if (table == null) continue;
+            var store = Microsoft.EntityFrameworkCore.Metadata.StoreObjectIdentifier.Table(table, dep.GetSchema());
+            var col = fk.Properties[0].GetColumnName(store);
+            if (col == null) continue;
+            var where = $"\"{col}\" = {{0}}";
+            var args = new List<object> { entityId };
+            if (dep.FindProperty("CompanyId")?.GetColumnName(store) is { } companyCol)
+            {
+                where += $" AND \"{companyCol}\" = {{1}}";
+                args.Add(companyId);
+            }
+            if (dep.FindProperty("IsDeleted")?.GetColumnName(store) is { } deletedCol)
+                where += $" AND NOT \"{deletedCol}\"";
+            var from = dep.GetSchema() is { Length: > 0 } schema ? $"\"{schema}\".\"{table}\"" : $"\"{table}\"";
+            // ชื่อตาราง/คอลัมน์มาจาก metadata ของโมเดล (ไม่ใช่ค่าจากผู้ใช้) · ค่าเป็นพารามิเตอร์ {0}/{1}
+            var sql = "SELECT EXISTS (SELECT 1 FROM " + from + " WHERE " + where + ") AS \"Value\"";
+            var used = await Db.Database.SqlQueryRaw<bool>(sql, args.ToArray()).SingleAsync(ct);
+            if (used)
+                return ($"บัญชีนี้ถูกอ้างถึงโดย{ReferrerLabels.GetValueOrDefault(dep.ClrType.Name, "ข้อมูลอื่นในระบบ")}แล้ว", way);
+        }
+        return null;
     }
 
     protected override async Task<bool> SoftDeleteAsync(Guid companyId, Guid entityId, CancellationToken ct)
@@ -473,7 +546,7 @@ public sealed class BudgetsImportTarget : MasterDataImportTarget
 /// สมุดรายวัน — แถว = บรรทัด · ใบเดียวกัน = วันที่ + คำอธิบาย + อ้างอิงเดียวกัน (คีย์เดียวกับ writer เดิม) · ใบที่เดบิต ≠ เครดิต = <b>บล็อก</b>
 /// (§2.5 · ทางไปต่อ: แก้ยอด/เพิ่มบรรทัดผลต่างในไฟล์) · ลงเป็นร่าง · ย้อนได้เฉพาะใบที่ยังเป็นร่าง
 /// </summary>
-public sealed class JournalEntriesImportTarget : MasterDataImportTarget
+public sealed class JournalEntriesImportTarget : MasterDataImportTarget, IImportSequenceNumberingTarget, IImportGroupIntegrityTarget
 {
     public JournalEntriesImportTarget(AccountingDbContext db, IImportRowWriter writer, IImportEntityResolver resolver) : base(db, writer, resolver) { }
 
@@ -488,7 +561,8 @@ public sealed class JournalEntriesImportTarget : MasterDataImportTarget
 
     protected override void CheckBatch(IReadOnlyList<ImportTargetRow> rows, IReadOnlyDictionary<Guid, List<ImportIssueDto>> issues)
     {
-        foreach (var g in rows.GroupBy(GroupKeyOf))
+        // แถวที่ตั้ง "ข้าม" ไม่ถูกลง ⇒ ไม่นับในยอดของใบ (ฝ่ายค้านรอบ ETL — ตรวจชุดเดียวกับที่จะลงจริง)
+        foreach (var g in rows.Where(r => r.Action != ImportRowAction.Skip).GroupBy(GroupKeyOf))
         {
             var dr = g.Sum(r => Amount(r, "DebitAmount") ?? 0m);
             var cr = g.Sum(r => Amount(r, "CreditAmount") ?? 0m);
@@ -525,6 +599,30 @@ public sealed class JournalEntriesImportTarget : MasterDataImportTarget
         var je = await Db.JournalEntries.FirstOrDefaultAsync(x => x.Id == entityId && x.CompanyId == companyId, ct);
         if (je == null || je.Status != JournalEntryStatus.Draft) return false;
         SoftDelete(je);
+        return true;
+    }
+
+    // ── ฝ่ายค้านรอบ ETL (P1-1): บรรทัดที่ writer ต่อเข้าใบเดิมที่มีอยู่ก่อนชุดนี้ (ใบที่ผู้ใช้ทำเอง/ชุดก่อน) เก็บ id บรรทัดไว้ใน BeforeJson
+    //    (<c>ImportExportService.JournalAppendedLineKey</c>) ⇒ ย้อน = ลบเฉพาะบรรทัดนั้น ไม่ลบทั้งใบของผู้ใช้ (เดิมคืน existing.Id แบบไม่มี BeforeJson
+    //    ⇒ ย้อนการนำเข้า = ลบใบทั้งใบรวมบรรทัดที่ผู้ใช้คีย์เอง) ──
+
+    protected override bool CanRestore => true;
+
+    protected override Task<(string Reason, string WayForward)?> RestoreBlockAsync(Guid companyId, Guid entityId, CancellationToken ct)
+        => DeleteBlockAsync(companyId, entityId, ct);
+
+    protected override async Task<bool> RestoreAsync(Guid companyId, Guid entityId, Dictionary<string, string?> before, CancellationToken ct)
+    {
+        if (!Guid.TryParse(before.GetValueOrDefault(ImportExportService.JournalAppendedLineKey), out var lineId)) return false;
+        var je = await Db.JournalEntries.Include(j => j.Lines).FirstOrDefaultAsync(x => x.Id == entityId && x.CompanyId == companyId, ct);
+        if (je == null || je.Status != JournalEntryStatus.Draft) return false;
+        var line = je.Lines.FirstOrDefault(l => l.Id == lineId);
+        if (line == null) return true;   // ถูกลบไปแล้ว — ผลเหมือนกัน
+        je.Lines.Remove(line);
+        Db.JournalEntryLines.Remove(line);
+        je.TotalDebit = je.Lines.Sum(l => l.DebitAmount);
+        je.TotalCredit = je.Lines.Sum(l => l.CreditAmount);
+        je.UpdatedAt = DateTime.UtcNow;
         return true;
     }
 }

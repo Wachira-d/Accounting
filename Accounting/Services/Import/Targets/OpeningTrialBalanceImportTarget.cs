@@ -18,7 +18,7 @@ namespace Accounting.Services.Import.Targets;
 /// ไม่มีบัญชีหลังทุกชั้น · ไม่มีงวด/งวดปิด · นอกนั้นคำเตือน · งบทดลองทั้งชุด = กลุ่มเดียว (ลงบางบรรทัดไม่ได้ — ยอดจะไม่ลงตัว)</para>
 /// <para>ย้อน = <see cref="IMigrationWizardService.RollbackAsync"/> (ลบยอดที่สร้าง + คืนยอดเดิมที่ถูกทับ)</para>
 /// </summary>
-public class OpeningTrialBalanceImportTarget : IImportTarget
+public class OpeningTrialBalanceImportTarget : IImportTarget, IImportGroupIntegrityTarget
 {
     public const string Key = "opening-balances";
     /// <summary>ตัวเลือกของชุด: งวดบัญชีปลายทาง (Guid) — บังคับ</summary>
@@ -84,12 +84,21 @@ public class OpeningTrialBalanceImportTarget : IImportTarget
                 var suggested = e.Code == OpeningTrialBalanceRules.Unmapped ? pick.Match?.Candidates.FirstOrDefault()?.Label.Split(' ')[0] : null;
                 issues.Add(e.IsError ? Error(field, e.Code, msg, suggested, "IMPORT-TB") : Warning(field, e.Code, msg, suggested, "IMPORT-TB"));
             }
+            // ฝ่ายค้านรอบ ETL (P1-4): คู่ที่ผู้ใช้เลือก = "User" · คู่ที่ระบบเลือกไว้รอบก่อน = คงไว้ (MatchKind null ⇒ pipeline คงวิธี/คะแนน/ป้ายเดิม ·
+            // ไม่ถาม AI ซ้ำทุกครั้งที่ตรวจ) · คู่ที่เพิ่งหา = วิธี/คะแนนของตัวหาบัญชี (AI มั่นใจ < 0.85 ⇒ แถบเหลือง) · feedback ของ ImportAccountMap
+            // เก็บที่แถวพักแล้ว pipeline ปิดลูปตอนลงยอดด้วย "รหัสบัญชี" ที่ผู้ใช้ยืนยัน
+            var m = pick.Match;
             result.Add(new ImportRowValidation(row.RowId, issues,
                 MatchedEntityId: pick.AccountId,
-                MatchKind: pick.Match?.Kind ?? (pick.AccountId.HasValue ? "User" : null),
-                MatchScore: pick.Match?.Score,
+                MatchKind: pick.ChosenByUser ? "User" : m?.Kind,
+                MatchScore: pick.ChosenByUser ? 1m : m?.Score,
                 DisplayKey: $"{code} {Text(row, "AccountName")}".Trim(),
-                GroupKey: Group));
+                GroupKey: Group,
+                MatchCandidates: m?.Candidates,
+                MatchUsedAi: m?.UsedAi ?? false,
+                MatchAiFeedbackId: m?.AiFeedbackId,
+                MatchAiAnswer: m is { AiFeedbackId: not null } && m.Kind is "Ai" or "Learned" ? m.AccountCode : null,
+                MatchAnswerSpace: ImportMatchAnswerSpace.AccountCode));
         }
         return result;
     }
@@ -167,8 +176,14 @@ public class OpeningTrialBalanceImportTarget : IImportTarget
         {
             try
             {
-                await _wizard.RollbackAsync(ctx.CompanyId, g.Key, CreatedBy(ctx));
-                results.AddRange(g.Select(r => new ImportRowUndoResult(r.RowId, true)));
+                var rolled = await _wizard.RollbackAsync(ctx.CompanyId, g.Key, CreatedBy(ctx));
+                // ฝ่ายค้านรอบ ETL: wizard ไม่แตะยอดที่ถูกแก้ด้วยมือหลังลงยอด — แถวของบัญชีนั้นต้องไม่ถูกประทับ "ย้อนแล้ว" (บอกเหตุผล + ทางไปต่อรายแถว)
+                var kept = Accounting.Services.Implementations.MigrationWizardService.RollbackSkippedAccountIds(rolled.ImportSummaryJson);
+                var accountOf = kept.Count == 0 ? new Dictionary<Guid, Guid?>() : await RowAccountsAsync(ctx, g.Select(r => r.RowId).ToList(), ct);
+                results.AddRange(g.Select(r => accountOf.GetValueOrDefault(r.RowId) is Guid acc && kept.Contains(acc)
+                    ? new ImportRowUndoResult(r.RowId, false,
+                        "ยอดยกมาของบัญชีนี้ถูกแก้ด้วยมือหลังนำเข้า ระบบจึงไม่ย้อนแถวนี้ (ไม่ทับงานของผู้ใช้) — ตรวจ/ลบยอดของบัญชีนี้ที่หน้ายอดยกมาเอง")
+                    : new ImportRowUndoResult(r.RowId, true)));
             }
             catch (Exception ex) when (ex is BusinessRuleException or KeyNotFoundException)
             {
@@ -180,17 +195,25 @@ public class OpeningTrialBalanceImportTarget : IImportTarget
 
     // ───────────────────────── ภายใน ─────────────────────────
 
-    private sealed record Pick(Guid? AccountId, ImportAccountMatchResult? Match);
+    /// <summary>บัญชีที่แถวพักของชุดนี้เลือกไว้ (กรอง CompanyId + batch)</summary>
+    private async Task<Dictionary<Guid, Guid?>> RowAccountsAsync(ImportTargetContext ctx, IReadOnlyList<Guid> rowIds, CancellationToken ct)
+        => await _db.ImportStagedRows.AsNoTracking()
+            .Where(r => r.CompanyId == ctx.CompanyId && r.SessionId == ctx.BatchId && rowIds.Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, r => r.MatchedEntityId, ct);
+
+    private sealed record Pick(Guid? AccountId, ImportAccountMatchResult? Match, bool ChosenByUser = false);
 
     /// <summary>บรรทัดสำหรับตัวตัดสิน + บัญชีที่เลือกต่อแถว (ผู้ใช้เลือก MatchedEntityId ชนะ · ไม่งั้นตัวหาบัญชีเลือกให้ถ้าถึงเกณฑ์)</summary>
     private async Task<(List<OpeningTbLine> Lines, Dictionary<Guid, Pick> Picks)> BuildLinesAsync(
         ImportTargetContext ctx, IReadOnlyList<ImportTargetRow> rows, CancellationToken ct)
     {
         var chart = await _accounts.LoadChartAsync(ctx.CompanyId, ct);
-        var toResolve = rows.Where(r => r.MatchedEntityId == null).ToList();
+        // คู่ที่ผู้ใช้เลือก/ระบบเลือกไว้รอบก่อนคงไว้ (บัญชียังอยู่) · ที่เหลือหาใหม่ — ถาม AI ตามที่ pipeline อนุญาต (ตอนลงยอด/worker/ตรวจทั้งชุดหลังแก้แถว = ไม่ถาม ·
+        // ฝ่ายค้านรอบ ETL P1-4: เดิมถาม AI ทุกครั้งที่ตรวจและตอนลงยอด)
+        var toResolve = rows.Where(r => r.MatchedEntityId is not Guid id || (!r.MatchChosenByUser && chart.Find(id) == null)).ToList();
         var resolved = await _accounts.ResolveAsync(ctx.CompanyId,
             toResolve.Select(r => new ImportAccountQuery(r.RowId.ToString("N"), Text(r, "AccountCode"), Text(r, "AccountName"))).ToList(),
-            new ImportResolveOptions(AllowAi: true), ct, chart);
+            new ImportResolveOptions(AllowAi: AllowAi(ctx)), ct, chart);
         var byKey = resolved.ToDictionary(x => x.Key);
 
         var lines = new List<OpeningTbLine>(rows.Count + 1);
@@ -201,11 +224,11 @@ public class OpeningTrialBalanceImportTarget : IImportTarget
             var code = Text(r, "AccountCode") ?? "";
             ImportChartAccount? acc;
             bool missing;
-            if (r.MatchedEntityId is { } chosen)
+            if (!byKey.ContainsKey(r.RowId.ToString("N")) && r.MatchedEntityId is { } chosen)
             {
                 acc = chart.Find(chosen);
                 missing = acc == null;
-                picks[r.RowId] = new Pick(acc?.AccountId, null);
+                picks[r.RowId] = new Pick(acc?.AccountId, null, r.MatchChosenByUser);
             }
             else
             {

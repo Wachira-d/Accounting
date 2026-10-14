@@ -31,7 +31,9 @@ public interface IImportPipelineService
     /// <summary>batch ของบริษัทนี้ · ไม่พบ ⇒ null (controller ตอบ 404)</summary>
     Task<ImportBatchDetailDto?> GetAsync(Guid companyId, Guid batchId, CancellationToken ct = default);
 
-    Task<ImportRowPageDto> GetRowsAsync(Guid companyId, Guid batchId, ImportRowQuery query, CancellationToken ct = default);
+    /// <param name="revealPii">(ฝ่ายค้านรอบ ETL · เพิ่มท้าย) true เฉพาะผู้มี <c>Pii.View</c> (controller ตัดสิน + บันทึก PiiAccessLog) — false = ช่องอ่อนไหวของ
+    /// ชนิดที่มี PII (ทะเบียนพนักงาน: เลขบัตร · เลขบัญชี · เงินเดือน) ถูกปิดบัง (<c>Helpers/ImportPiiFields</c>) · ค่าเริ่ม = ปิดบัง</param>
+    Task<ImportRowPageDto> GetRowsAsync(Guid companyId, Guid batchId, ImportRowQuery query, CancellationToken ct = default, bool revealPii = false);
 
     /// <summary>ผู้ใช้จับคู่คอลัมน์เอง (MapSource = User) ⇒ แปลงแถวใหม่ · ปิดลูป ImportColumnMatch ถ้ามี feedback</summary>
     Task<ImportBatchDetailDto> RemapAsync(Guid companyId, Guid batchId, ImportRemapRequest request, ImportActor actor,
@@ -39,7 +41,7 @@ public interface IImportPipelineService
 
     /// <summary>แก้แถวเดียว (เซลล์ · action · คู่ที่จับ · ตัดออก · รับ/ปฏิเสธคำแนะนำ) ⇒ ตรวจแถวนั้นใหม่ · UserEdited = true</summary>
     Task<ImportRowDto> EditRowAsync(Guid companyId, Guid batchId, Guid rowId, ImportEditRowRequest request, ImportActor actor,
-        CancellationToken ct = default);
+        CancellationToken ct = default, bool revealPii = false);
 
     Task<ImportBulkResultDto> BulkActionAsync(Guid companyId, Guid batchId, ImportBulkActionRequest request, ImportActor actor,
         CancellationToken ct = default);
@@ -58,7 +60,7 @@ public interface IImportPipelineService
     Task<ImportBatchSummaryDto> CancelAsync(Guid companyId, Guid batchId, ImportActor actor, CancellationToken ct = default);
 
     /// <summary>CSV ของแถวที่ผิด/ล้ม (ค่าดิบ + คอลัมน์ "ปัญหา") ให้แก้ในโปรแกรมต้นทางแล้วนำเข้าใหม่ — UTF-8 BOM</summary>
-    Task<byte[]> ExportErrorRowsCsvAsync(Guid companyId, Guid batchId, CancellationToken ct = default);
+    Task<byte[]> ExportErrorRowsCsvAsync(Guid companyId, Guid batchId, CancellationToken ct = default, bool revealPii = false);
 
     /// <summary>ไฟล์ต้นทางของ batch · ไม่พบ batch/ไม่มีไฟล์ ⇒ null (ด่านอ่านไฟล์ = <c>IAttachmentAccessGate</c> ชนิด "ImportBatch" ที่ controller)</summary>
     Task<ImportSourceFileDto?> GetSourceFileAsync(Guid companyId, Guid batchId, CancellationToken ct = default);

@@ -129,14 +129,20 @@ public partial class ImportEntityResolver : IImportEntityResolver
             var top = candidates[0];
             var suggested = top.Score >= SuggestThreshold ? top : null;
             var ambiguous = !hasTax && candidates.Count >= 2 && top.Score - candidates[1].Score < AmbiguityGap && candidates[1].Score >= CandidateFloorDecimal;
+            Guid? unusedFeedback = null;
+            string? unusedAnswer = null;
             if (ambiguous && options.AllowAi && _ai != null)
             {
                 var ai = await AskTeacherAsync(companyId, row, name!, candidates, ct);
-                if (ai != null)
+                if (ai.Result != null)
                 {
-                    results.Add(ai);
+                    results.Add(ai.Result);
                     continue;
                 }
+                // ฝ่ายค้านรอบ ETL: คำตอบไม่ผ่านด่าน (มั่นใจต่ำ/นอกชุด) ก็ยังมีแถว feedback — ส่งต่อให้ pipeline ปิดลูปด้วยคำตอบสุดท้ายของผู้ใช้
+                // (acceptedAi=false เมื่อผู้ใช้ไม่ได้เลือกตามคำตอบนั้น) · เดิมทิ้ง FeedbackId ⇒ จ่าย token แล้วนักเรียนไม่ได้เรียน (กฎเหล็ก #1 CAPTURE)
+                unusedFeedback = ai.FeedbackId;
+                unusedAnswer = ai.Answer;
             }
             var issues = new List<ImportIssueDto>();
             if (suggested != null)
@@ -144,7 +150,7 @@ public partial class ImportEntityResolver : IImportEntityResolver
                     $"ชื่อตรง/คล้ายผู้ติดต่อเดิม \"{suggested.Label}\" แต่ไม่มีเลขผู้เสียภาษียืนยัน — เลือก \"อัปเดตรายเดิม\" ถ้าเป็นรายเดียวกัน (ระบบไม่รวมให้เอง)",
                     Source: ImportIssueSource.Match));
             results.Add(new ImportEntityMatchResult(row.RowId, suggested?.EntityId, suggested?.Kind ?? "None", suggested?.Score ?? 0m,
-                AutoApply: false, UsedAi: false, null, candidates, issues));
+                AutoApply: false, UsedAi: false, unusedFeedback, candidates, issues, AiAnswer: unusedFeedback == null ? null : unusedAnswer));
         }
         return results;
     }
@@ -172,31 +178,34 @@ public partial class ImportEntityResolver : IImportEntityResolver
     /// <summary>
     /// ถามชั้น AI <c>ImportEntityMatch</c> (59) ผ่าน <see cref="IImportAiAugmenter.ResolveEntityAsync"/> (ทีม A — orchestrator · นักเรียนก่อน ·
     /// ด่านคำตอบ ∈ ผู้สมัคร ∪ {"NEW"}) เฉพาะเคสกำกวมที่ไม่มีเลขภาษี · ยัง<b>ไม่เลือกให้เอง</b> (AutoApply = false — ชื่ออย่างเดียว) ·
-    /// ไม่มีแถว feedback (provider ปิด/ล่ม — augmenter คืนคำตอบ local) หรือคำตอบมั่นใจ &lt; 0.70 ⇒ null (ผู้เรียกใช้ผลชั้น local ต่อเงียบ ๆ)
+    /// ไม่มีแถว feedback (provider ปิด/ล่ม — augmenter คืนคำตอบ local) หรือคำตอบมั่นใจ &lt; 0.70 ⇒ <c>Result</c> null (ผู้เรียกใช้ผลชั้น local ต่อเงียบ ๆ)
+    /// แต่คืน <c>FeedbackId</c> + คำตอบที่ไม่ได้ใช้ (ถูกปัดตก = null) ให้ผู้เรียกส่งต่อไปปิดลูป (ฝ่ายค้านรอบ ETL)
     /// </summary>
-    private async Task<ImportEntityMatchResult?> AskTeacherAsync(Guid companyId, ImportTargetRow row, string name,
-        IReadOnlyList<ImportMatchCandidateDto> candidates, CancellationToken ct)
+    private async Task<(ImportEntityMatchResult? Result, Guid? FeedbackId, string? Answer)> AskTeacherAsync(Guid companyId, ImportTargetRow row,
+        string name, IReadOnlyList<ImportMatchCandidateDto> candidates, CancellationToken ct)
     {
         var detail = string.Join(" · ", new[] { Value(row, "Address"), Value(row, "Email"), Value(row, "Phone") }
             .Where(v => !string.IsNullOrWhiteSpace(v)));
         var pick = await _ai!.ResolveEntityAsync(companyId, null, "contacts", name, detail.Length == 0 ? null : detail,
             candidates.Select(c => new Accounting.Services.Ai.Prompts.ImportPrompts.EntityCandidate(c.EntityId.ToString(), c.Label, null, c.Score)).ToList(),
             candidates[0].EntityId.ToString(), candidates[0].Score, ct);
-        if (pick.FeedbackId == null || string.IsNullOrWhiteSpace(pick.Answer)) return null;
+        if (pick.FeedbackId == null || string.IsNullOrWhiteSpace(pick.Answer)) return (null, pick.FeedbackId, null);
+        // คำตอบที่ถูกด่านปัดตก (นอกชุด) ไม่ใช่ "คำตอบของ AI" ที่ผู้ใช้จะเห็นด้วยได้ ⇒ ปิดลูปด้วย acceptedAi=false เสมอ
+        var aiAnswer = pick.Rejected ? null : pick.Answer;
 
         var used = pick.UsedAi;
         if (string.Equals(pick.Answer, NewEntityAnswer, StringComparison.OrdinalIgnoreCase))
-            return new ImportEntityMatchResult(row.RowId, null, "Ai", pick.Confidence, AutoApply: false, UsedAi: used, pick.FeedbackId,
+            return (new ImportEntityMatchResult(row.RowId, null, "Ai", pick.Confidence, AutoApply: false, UsedAi: used, pick.FeedbackId,
                 candidates, new[] { new ImportIssueDto("Name", "match-ai-new", ImportIssueSeverity.Info,
                     (used ? "🤖 AI แนะนำ" : "⚙️ ระบบแนะนำ") + ": ชื่อคล้ายผู้ติดต่อเดิมหลายราย แต่น่าจะเป็นรายใหม่ — ตรวจแล้วเลือกรายเดิมได้ถ้าเป็นรายเดียวกัน",
-                    Source: used ? ImportIssueSource.Ai : ImportIssueSource.Match) });
+                    Source: used ? ImportIssueSource.Ai : ImportIssueSource.Match) }, AiAnswer: aiAnswer), pick.FeedbackId, aiAnswer);
         // ด่านซ้ำฝั่งผู้เรียก: ต้องเป็น id ในชุดผู้สมัครเท่านั้น + มั่นใจพอ
         var chosen = Guid.TryParse(pick.Answer, out var id) ? candidates.FirstOrDefault(c => c.EntityId == id) : null;
-        if (chosen == null || pick.Confidence < 0.70m) return null;
-        return new ImportEntityMatchResult(row.RowId, chosen.EntityId, "Ai", pick.Confidence, AutoApply: false, UsedAi: used,
+        if (chosen == null || pick.Confidence < 0.70m) return (null, pick.FeedbackId, aiAnswer);
+        return (new ImportEntityMatchResult(row.RowId, chosen.EntityId, "Ai", pick.Confidence, AutoApply: false, UsedAi: used,
             pick.FeedbackId, candidates, new[] { new ImportIssueDto("Name", "match-name-only", ImportIssueSeverity.Warning,
                 (used ? "🤖 AI แนะนำ" : "⚙️ ระบบแนะนำ") + $": น่าจะเป็นผู้ติดต่อเดิม \"{chosen.Label}\" (ไม่มีเลขผู้เสียภาษียืนยัน) — เลือก \"อัปเดตรายเดิม\" ถ้าใช่",
-                Source: used ? ImportIssueSource.Ai : ImportIssueSource.Match) });
+                Source: used ? ImportIssueSource.Ai : ImportIssueSource.Match) }, AiAnswer: aiAnswer), pick.FeedbackId, aiAnswer);
     }
 
     // ───────────────────────── สินค้า ─────────────────────────

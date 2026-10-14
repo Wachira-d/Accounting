@@ -42,9 +42,12 @@ public class ImportHubController : ControllerBase
     private readonly IOpeningBalanceReconciliation _reconciliation;
     private readonly IPermissionService _permissions;
     private readonly AccountingDbContext _db;
+    /// <summary>บันทึกการเปิดดูข้อมูลส่วนบุคคลแบบไม่ปิดบัง (PDPA ม.37 PiiAccessLog) — null = ไม่บันทึก (เทสต์)</summary>
+    private readonly Services.Implementations.Pdpa.IPdpaService? _pdpa;
 
     public ImportHubController(IImportPipelineService pipeline, IImportMappingTemplateStore templates, IImportTargetRegistry targets,
-        IOpeningBalanceReconciliation reconciliation, IPermissionService permissions, AccountingDbContext db)
+        IOpeningBalanceReconciliation reconciliation, IPermissionService permissions, AccountingDbContext db,
+        Services.Implementations.Pdpa.IPdpaService? pdpa = null)
     {
         _pipeline = pipeline;
         _templates = templates;
@@ -52,6 +55,23 @@ public class ImportHubController : ControllerBase
         _reconciliation = reconciliation;
         _permissions = permissions;
         _db = db;
+        _pdpa = pdpa;
+    }
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ ETL (P1-5 · PDPA ม.26): ชุดชนิดที่มีข้อมูลอ่อนไหว (ทะเบียนพนักงาน — เลขบัตร · เลขบัญชี · เงินเดือน) เปิดค่าเต็มได้เฉพาะผู้มี
+    /// <c>Pii.View</c> (คีย์เดียวกับด่านส่งออกทะเบียนพนักงาน <see cref="ImportExportPermissionScope.ForExport"/>) — สิทธิ์นำเข้า (HrAdmin) อย่างเดียวได้ค่าที่ปิดบัง ·
+    /// เปิดเต็ม ⇒ บันทึก PiiAccessLog (ม.37) · ชนิดที่ไม่มี PII = true (ไม่มีอะไรต้องปิด)
+    /// </summary>
+    private async Task<bool> RevealPiiAsync(Guid companyId, Guid batchId, string? entityType, string purpose, CancellationToken ct)
+    {
+        if (!ImportPiiFields.HasPii(entityType)) return true;
+        var can = await _permissions.HasPermissionAsync(companyId, UserId, Models.Constants.PermissionKeys.PiiView);
+        if (can && _pdpa != null)
+            await _pdpa.LogPiiAccessAsync(companyId, UserId, User.FindFirst(ClaimTypes.Email)?.Value ?? "",
+                subjectType: "ImportBatch", subjectId: batchId, fieldName: "* (แถวนำเข้าทะเบียนพนักงาน)", operation: "Read", purpose: purpose,
+                ipAddress: HttpContext?.Connection?.RemoteIpAddress?.ToString(), userAgent: HttpContext?.Request?.Headers.UserAgent.ToString(), ct: ct);
+        return can;
     }
 
     // ═════════════════════════════ ด่าน ═════════════════════════════
@@ -270,8 +290,9 @@ public class ImportHubController : ControllerBase
     {
         var deny = await DenyBatchAsync(companyId, batchId, ct);
         if (deny != null) return deny;
+        var reveal = await RevealPiiAsync(companyId, batchId, await BatchEntityTypeAsync(companyId, batchId, ct), "ตรวจแถวชุดนำเข้า", ct);
         var rows = await _pipeline.GetRowsAsync(companyId, batchId,
-            new ImportRowQuery(Math.Max(1, page), Math.Clamp(pageSize, 1, 500), status, Blank(issueCode), Blank(search)), ct);
+            new ImportRowQuery(Math.Max(1, page), Math.Clamp(pageSize, 1, 500), status, Blank(issueCode), Blank(search)), ct, reveal);
         return Ok(new ApiResponse<ImportRowPageDto>(true, rows));
     }
 
@@ -313,7 +334,8 @@ public class ImportHubController : ControllerBase
     {
         var deny = await DenyBatchAsync(companyId, batchId, ct);
         if (deny != null) return deny;
-        var row = await _pipeline.EditRowAsync(companyId, batchId, rowId, request ?? new ImportEditRowRequest(), Actor(), ct);
+        var reveal = await RevealPiiAsync(companyId, batchId, await BatchEntityTypeAsync(companyId, batchId, ct), "แก้แถวชุดนำเข้า", ct);
+        var row = await _pipeline.EditRowAsync(companyId, batchId, rowId, request ?? new ImportEditRowRequest(), Actor(), ct, reveal);
         return Ok(new ApiResponse<ImportRowDto>(true, row));
     }
 
@@ -340,7 +362,8 @@ public class ImportHubController : ControllerBase
         var result = await _pipeline.CommitAsync(companyId, batchId, options ?? new ImportCommitOptions(), Actor(), ct);
         var msg = result.Queued
             ? "รับคำสั่งแล้ว — ไฟล์ใหญ่ ระบบลงข้อมูลต่อเบื้องหลัง (ดูความคืบหน้าในหน้านี้ได้)"
-            : $"ลงข้อมูลแล้ว {result.Committed} แถว · ไม่สำเร็จ {result.Failed} · ข้าม {result.Skipped}";
+            : $"ลงข้อมูลแล้ว {result.Committed} แถว · ไม่สำเร็จ {result.Failed} · ข้าม {result.Skipped}"
+              + (result.Blocked > 0 ? $" · ยังไม่พร้อม {result.Blocked} (ต้องแก้/รับทราบคำเตือน)" : "");
         return Ok(new ApiResponse<ImportCommitResultDto>(true, result, msg));
     }
 
@@ -380,7 +403,8 @@ public class ImportHubController : ControllerBase
     {
         var deny = await DenyBatchAsync(companyId, batchId, ct);
         if (deny != null) return deny;
-        var bytes = await _pipeline.ExportErrorRowsCsvAsync(companyId, batchId, ct);
+        var reveal = await RevealPiiAsync(companyId, batchId, await BatchEntityTypeAsync(companyId, batchId, ct), "ดาวน์โหลดแถวที่ผิดของชุดนำเข้า", ct);
+        var bytes = await _pipeline.ExportErrorRowsCsvAsync(companyId, batchId, ct, reveal);
         return File(bytes, "text/csv; charset=utf-8", $"import-errors-{batchId.ToString("N")[..8]}.csv");
     }
 
@@ -390,6 +414,11 @@ public class ImportHubController : ControllerBase
     {
         var deny = await DenyBatchAsync(companyId, batchId, ct);
         if (deny != null) return deny;
+        // ไฟล์ต้นทางปิดบังรายช่องไม่ได้ ⇒ ชนิดที่มี PII ต้องมี Pii.View (ฝ่ายค้านรอบ ETL P1-5 — เดิมสิทธิ์นำเข้าอย่างเดียวดาวน์โหลดเลขบัตร/บัญชี/เงินเดือนได้ทั้งไฟล์)
+        var entityType = await BatchEntityTypeAsync(companyId, batchId, ct);
+        if (!await RevealPiiAsync(companyId, batchId, entityType, "ดาวน์โหลดไฟล์ต้นทางของชุดนำเข้า", ct))
+            return StatusCode(403, new ApiResponse<object>(false, new { requiredPermission = Models.Constants.PermissionKeys.PiiView },
+                ImportExportPermissionScope.DeniedMessage(EntityLabel(entityType), Models.Constants.PermissionKeys.PiiView, isExport: true)));
         var file = await _pipeline.GetSourceFileAsync(companyId, batchId, ct);
         if (file == null)
             return StatusCode(404, new ApiResponse<object>(false, null,

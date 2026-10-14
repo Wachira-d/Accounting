@@ -307,6 +307,8 @@ public class MigrationWizardService : IMigrationWizardService
         try
         {
             int removed = 0, restored = 0, skipped = 0;
+            // บัญชีของแถวที่ถูกแก้ด้วยมือหลังลงยอด (ไม่แตะ) — ศูนย์นำเข้าใช้บอกผู้ใช้รายบรรทัดว่าแถวไหนไม่ถูกย้อน (ฝ่ายค้านรอบ ETL)
+            var skippedAccounts = new List<Guid>();
             if (summary is { } sum && (sum.Created != null || sum.Overwritten != null))
             {
                 var ids = (sum.Created ?? Array.Empty<CreatedOpening>()).Select(c => c.Id)
@@ -317,14 +319,14 @@ public class MigrationWizardService : IMigrationWizardService
                 foreach (var c in sum.Created ?? Array.Empty<CreatedOpening>())
                 {
                     if (!current.TryGetValue(c.Id, out var ob)) continue;
-                    if (ob.OpeningDebit != c.Debit || ob.OpeningCredit != c.Credit) { skipped++; continue; }   // แก้มือหลัง commit — ไม่แตะ
+                    if (ob.OpeningDebit != c.Debit || ob.OpeningCredit != c.Credit) { skipped++; skippedAccounts.Add(c.AccountId); continue; }   // แก้มือหลัง commit — ไม่แตะ
                     _db.OpeningBalances.Remove(ob);
                     removed++;
                 }
                 foreach (var o in sum.Overwritten ?? Array.Empty<OverwrittenOpening>())
                 {
-                    if (!current.TryGetValue(o.Id, out var ob)) { skipped++; continue; }
-                    if (ob.OpeningDebit != o.Debit || ob.OpeningCredit != o.Credit) { skipped++; continue; }
+                    if (!current.TryGetValue(o.Id, out var ob)) { skipped++; skippedAccounts.Add(o.AccountId); continue; }
+                    if (ob.OpeningDebit != o.Debit || ob.OpeningCredit != o.Credit) { skipped++; skippedAccounts.Add(o.AccountId); continue; }
                     ob.OpeningDebit = o.PriorDebit;
                     ob.OpeningCredit = o.PriorCredit;
                     ob.Notes = o.PriorNotes;
@@ -346,13 +348,18 @@ public class MigrationWizardService : IMigrationWizardService
                 _db.OpeningBalances.RemoveRange(ours);
                 removed = ours.Count;
                 skipped = toRemove.Count - ours.Count;
+                skippedAccounts.AddRange(toRemove.Except(ours).Select(o => o.AccountId));
             }
 
             session.Status = MigrationStatus.RolledBack;
             session.ImportSummaryJson = JsonSerializer.Serialize(new
             {
                 originalCommit = session.ImportSummaryJson,
-                rollback = new { rolledBackAt = DateTime.UtcNow, rolledBackBy = userId, rowsRemoved = removed, rowsRestored = restored, rowsSkipped = skipped },
+                rollback = new
+                {
+                    rolledBackAt = DateTime.UtcNow, rolledBackBy = userId, rowsRemoved = removed, rowsRestored = restored, rowsSkipped = skipped,
+                    skippedAccountIds = skippedAccounts.Distinct().ToList(),
+                },
             });
             _db.AddChainedAuditLog(new AuditLog
             {
@@ -491,6 +498,21 @@ public class MigrationWizardService : IMigrationWizardService
             await _db.SaveChangesAsync();
             throw;
         }
+    }
+
+    /// <summary>บัญชีที่ <see cref="RollbackAsync"/> ไม่ได้ย้อนเพราะยอดถูกแก้ด้วยมือหลังลงยอด — อ่านจาก <c>ImportSummaryJson</c> ของชุดที่ย้อนแล้ว
+    /// (รูป JSON เป็นของบริการนี้ตัวเดียว · ผู้อ่าน: <c>OpeningTrialBalanceImportTarget.UndoAsync</c>) · ไม่มี/อ่านไม่ได้ ⇒ ว่าง</summary>
+    public static IReadOnlyCollection<Guid> RollbackSkippedAccountIds(string? importSummaryJson)
+    {
+        if (string.IsNullOrWhiteSpace(importSummaryJson)) return Array.Empty<Guid>();
+        try
+        {
+            using var doc = JsonDocument.Parse(importSummaryJson);
+            if (!doc.RootElement.TryGetProperty("rollback", out var rb) || !rb.TryGetProperty("skippedAccountIds", out var ids)
+                || ids.ValueKind != JsonValueKind.Array) return Array.Empty<Guid>();
+            return ids.EnumerateArray().Select(e => e.TryGetGuid(out var g) ? g : Guid.Empty).Where(g => g != Guid.Empty).ToHashSet();
+        }
+        catch (JsonException) { return Array.Empty<Guid>(); }
     }
 
     private static CommitSummary? ReadSummary(string? json)

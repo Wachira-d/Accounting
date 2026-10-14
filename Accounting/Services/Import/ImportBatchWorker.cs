@@ -22,6 +22,8 @@ public class ImportBatchWorker : BackgroundService
     /// <summary>heartbeat เก่ากว่านี้ = เครื่องที่ถืออยู่ตาย/ค้าง ⇒ เครื่องอื่นหยิบต่อได้ (งาน idempotent — แถวที่ลงแล้วไม่ถูกส่งซ้ำ)</summary>
     public static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(2);
     public const int RetainDays = 90;
+    /// <summary>ชุดที่ค้างไม่ได้ลง (รอตรวจ/ล้ม/วิเคราะห์ค้าง) ไม่มีการใช้งานเกินนี้ ⇒ ยกเลิกอัตโนมัติ + ล้างแถวพัก (ฝ่ายค้านรอบ ETL — เดิมค้างตลอดไปพร้อม PII)</summary>
+    public const int AbandonedDays = 30;
 
     private readonly IServiceProvider _services;
     private readonly ILogger<ImportBatchWorker> _logger;
@@ -136,6 +138,60 @@ public class ImportBatchWorker : BackgroundService
             }
             if (purged > 0)
                 _logger.LogInformation("ImportBatchWorker: ล้างแถวพักที่เกิน {Days} วันแล้ว {Rows} แถว ({Batches} ชุด)", RetainDays, purged, sessions.Count);
+            await PurgeAbandonedAsync(db, ct);
         }, _logger, Guid.Empty, ct);
+    }
+
+    /// <summary>
+    /// ชุดที่ถูกทิ้งไว้ (รอตรวจ · ลงไม่สำเร็จ · วิเคราะห์ค้าง) และไม่มีการใช้งานเกิน <see cref="AbandonedDays"/> วัน ⇒ ยกเลิกอัตโนมัติพร้อมหมายเหตุที่ผู้ใช้เห็น ·
+    /// เก็บสรุปของชุด (ReviewSummaryJson — สร้างจากแถวถ้ายังไม่มี) แล้วล้างแถวพัก (ค่าดิบที่เป็น PII · PDPA ม.37 เก็บไม่เกินจำเป็น) ·
+    /// ชุดที่ลงไปแล้วบางแถวไม่แตะ (ต้องย้อนได้) · ทีละไม่เกิน 200 ชุดต่อรอบ · ไฟล์ต้นทางคงไว้ (ดาวน์โหลด/นำเข้าใหม่ได้)
+    /// </summary>
+    internal static async Task<int> PurgeAbandonedAsync(AccountingDbContext db, CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-AbandonedDays);
+        var stale = new[]
+        {
+            ImportSessionStatus.Staged, ImportSessionStatus.Failed, ImportSessionStatus.Analyzing, ImportSessionStatus.MappingRequired,
+            ImportSessionStatus.Uploading,
+        };
+        var sessions = await db.SmartImportSessions.IgnoreQueryFilters()
+            // ชุดของศูนย์นำเข้าเท่านั้น (OptionsJson + ไฟล์ต้นทาง — เกณฑ์เดียวกับรายการประวัติ) · Smart Import เดิมมีวงจรของตัวเอง
+            .Where(s => !s.IsDeleted && stale.Contains(s.Status) && (s.UpdatedAt ?? s.CreatedAt) < cutoff
+                && s.OptionsJson != null && s.SourceFileAttachmentId != null
+                && !db.ImportStagedRows.IgnoreQueryFilters().Any(r => r.SessionId == s.Id && r.CompanyId == s.CompanyId
+                    && (r.Status == ImportRowStatus.Committed || r.Status == ImportRowStatus.Undone)))
+            .OrderBy(s => s.CompanyId).ThenBy(s => s.CreatedAt)
+            .Take(200)
+            .ToListAsync(ct);
+        var purged = 0;
+        foreach (var s in sessions)
+        {
+            if (string.IsNullOrWhiteSpace(s.ReviewSummaryJson))
+            {
+                var counts = await db.ImportStagedRows.IgnoreQueryFilters().AsNoTracking()
+                    .Where(r => r.SessionId == s.Id && r.CompanyId == s.CompanyId)
+                    .GroupBy(r => r.Status).Select(g => new { g.Key, C = g.Count() }).ToListAsync(ct);
+                var snap = new ImportReviewSnapshot();
+                foreach (var c in counts) snap.StatusCounts[c.Key.ToString()] = c.C;
+                s.ReviewSummaryJson = ImportJson.Serialize(snap);
+            }
+            var state = ImportJson.Deserialize<ImportBatchState>(s.OptionsJson) ?? new ImportBatchState();
+            state.Notes.Add($"ยกเลิกอัตโนมัติ: ไม่มีการใช้งานเกิน {AbandonedDays} วัน — ล้างแถวที่พักไว้แล้ว (ข้อมูลส่วนบุคคลไม่เก็บเกินจำเป็น) · "
+                + "ไฟล์ต้นทางยังดาวน์โหลดได้ ถ้าต้องการนำเข้าให้อัปโหลดเป็นชุดใหม่");
+            state.PendingCommit = null;
+            state.PendingActor = null;
+            s.OptionsJson = ImportJson.Serialize(state);
+            s.Status = ImportSessionStatus.Cancelled;
+            s.Phase = ImportBatchPhase.Review;
+            s.CompletedAt = DateTime.UtcNow;
+            s.ClaimedBy = null;
+            s.HeartbeatAt = null;
+            await db.SaveChangesAsync(ct);
+            purged += await db.ImportStagedRows.IgnoreQueryFilters()
+                .Where(r => r.SessionId == s.Id && r.CompanyId == s.CompanyId)
+                .ExecuteDeleteAsync(ct);
+        }
+        return purged;
     }
 }
