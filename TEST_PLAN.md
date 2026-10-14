@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **512 ไฟล์ · 5,094 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **514 ไฟล์ · 5,124 `[Fact]` + 812 `[Theory]` (3,597 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5835,3 +5835,32 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | ETL0-18 | นักเรียน ImportColumnMatch/ImportDataReview (โครง) + 58/59 generic | ทะเบียนนักเรียนครบ · รายการค้าง 34 → 32 · kill-switch ผ่าน orchestrator จริง | ✅ `AiKillSwitchOrchestratorTests` (ทีม A เติมสมอง) |
 | ETL0-19 | สิทธิ์นำเข้า "stock-adjustments" (สะกดจริงของหน้าเว็บ) | Inventory.Adjust ทุกสะกด · สะกดใกล้เคียงที่ไม่ใช่ชนิดจริง = คีย์สำรองที่เข้มที่สุด | ✅ `ImportExportPermissionScopeTests` |
 | ETL0-20 | ไฟล์ต้นทางของ batch (`FileAttachments` ชนิด `ImportBatch`) | รู้จักชนิด · ระบบแนบเอง · คีย์ = สิทธิ์นำเข้าชนิดของ batch (พนักงาน = HR.Admin) · ไม่พบ batch = คีย์ที่เข้มที่สุด | ✅ `AttachmentPermissionScopeTests` · ⏳ ด่านจริงใน `AttachmentAccessGate` (Testcontainers) |
+
+---
+
+## ETL-A — ศูนย์นำเข้าข้อมูล: จับคู่คอลัมน์หลายชั้น + AI distillation 26/27/58/59 (รอบ 205 ทีม A · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.3/§2.6)
+
+> เทสต์ pure ของชุดนี้ติด `Category=Db` โดยตั้งใจ (CI รันเฉพาะกลุ่ม Db) — ไม่แตะฐานก็รันครบ · ชุด store/นักเรียน-เรียนรู้รันบน PostgreSQL ของ job db-test
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| ETLA-01 | ไฟล์ผู้ติดต่อหัว PEAK (camelCase) · สินค้าหัว FlowAccount · ผังบัญชี/ลูกค้าหัวไทย Express (เลขไทย) · statement ธนาคารไทย · ลูกหนี้ยกมาหัวไทยทั่วไป — **AI ปิด** | ช่องบังคับครบทุกไฟล์ · โปรไฟล์โปรแกรมต้นทางถูกตัว · คอลัมน์ "รหัสของระบบเดิม" = ไม่ใช้ (ไม่ถูกลากไป "เป็นลูกค้า") และไม่ถูกส่งถาม AI · ไม่มีคอลัมน์ติดป้าย AI | ✅ `ImportColumnMappingDbTests` |
+| ETLA-02 | ลำดับชั้น: แม่แบบ vs คำพ้อง · ผู้ใช้ vs แม่แบบ · ผู้ใช้เลือก "ไม่ใช้" | แม่แบบชนะ (ป้าย 📌) · ไม่มีแม่แบบ = คำพ้องตัดสิน (ทิศตรงข้าม) · ผู้ใช้ชนะทุกชั้น · ช่องบังคับที่ขาดแสดงใน MissingRequired | ✅ `ImportColumnMappingDbTests` |
+| ETLA-03 | สองคอลัมน์ชิง field เดียว (ทุกชนิดข้อมูล: หัว = ป้ายไทย + ชื่อ field) | field ละหนึ่งคอลัมน์เสมอ · คอลัมน์ที่แพ้ยังเห็น field นั้นในตัวเลือก | ✅ `ImportColumnMappingDbTests` |
+| ETLA-04 | ค่าในคอลัมน์ตัดสินคำพ้องกำกวม · รูปข้อมูล | "ลูกค้า" ที่มีแต่ Y/N = เป็นลูกค้า ไม่ใช่ชื่อ · หัวไม่บอกอะไร + เลข 13 หลักผ่าน checksum = เลขภาษี (ป้ายรูปข้อมูล · < 0.85 เหลือง) · ตัวเลขทั่วไปไม่ถูกเดาเป็นเลขภาษี | ✅ `ImportColumnMappingDbTests` |
+| ETLA-05 | ด่านคำตอบ AI (กฎเหล็ก #1): field นอก schema · มั่นใจ < 0.70 · ทับคอลัมน์ที่ชั้นสูงกว่าตัดสินแล้ว · คอลัมน์ที่ไม่มีจริง · สองคำตอบชิง field เดียว | ปัดตกทั้งหมด (นับ RejectedAiAnswers) · ที่ผ่านติด 🤖 เฉพาะ UsedAi · คำตอบนักเรียน (UsedAi=false) ไม่ติดป้าย AI | ✅ `ImportColumnMappingDbTests` |
+| ETLA-06 | `ImportHeaderSignature` | ไม่ขึ้นกับลำดับ/ช่องว่าง/ตัวพิมพ์/`*`/เลขไทย · ชุดหัวต่าง = ค่าต่าง · 64 hex | ✅ `ImportColumnMappingDbTests` |
+| ETLA-07 | `ImportSchemas` · `ImportSourceSeed` | หาได้ทุกสะกดของชนิด · ทุก field มีป้ายไทย · ชนิดจาก prompt (ชื่อ enum/ชนิดเดิม/ชื่อ field) · **ทุกโปรไฟล์ Confirmed=false** (ยังไม่มีไฟล์จริง — ห้ามติดว่ายืนยัน) และชี้เฉพาะ field ที่มีจริง · หัว < 3 = ไม่เดาโปรแกรม | ✅ `ImportColumnMappingDbTests` |
+| ETLA-08 | เดาชนิดข้อมูลจากหัวตาราง · คำตอบรูปมาตรฐาน | หัว PEAK สินค้า ⇒ สินค้า + peak · CanonicalAnswer เรียงตามคอลัมน์ไม่ขึ้นกับลำดับที่ส่ง | ✅ `ImportColumnMappingDbTests` |
+| ETLA-09 | นักเรียน ImportColumnMatch cold start | ตอบรูปเดียวกับครู (`{"mappings":[…]}`) จากคำพ้อง · คอลัมน์ที่ไม่รู้ = null และดึงความมั่นใจต่ำกว่า 0.85 (ครูยังได้ตอบ) · ไม่รู้สักคอลัมน์ = ไม่ตอบ (ไม่แต่ง) | ✅ `ImportColumnMappingDbTests` |
+| ETLA-10 | นักเรียน ImportColumnMatch มีคู่ที่เรียนไว้ | ตอบด้วยมั่นใจ ≥ 0.85 (Hybrid ไม่จ่าย AI) · คู่ของชนิดข้อมูลอื่นไม่รั่วมา | ✅ `ImportColumnMappingDbTests` |
+| ETLA-11 | kill-switch ผ่าน orchestrator จริง (provider ปิดทุกตัว) → augmenter | ได้คำตอบนักเรียน · FromLocalModel · UsedAi=false · คอลัมน์ที่ไม่รู้ไม่ถูกแต่ง | ✅ `ImportColumnMappingDbTests` |
+| ETLA-12 | augmenter: ครูตอบ field นอก schema · ForceProviderCall | ปัดตก (Rejected=1) · คืน FeedbackId (เดิมทิ้ง) · ForceProviderCall=false (นักเรียน/routing/งบ ได้ทำงาน) | ✅ `ImportColumnMappingDbTests` |
+| ETLA-13 | ImportAccountMap (58) · ImportEntityMatch (59): AI ตอบรหัสผังที่ไม่มี/ id ที่ไม่ได้ส่งให้ | ปัดตก ใช้คำตอบ local ("NEW"/รหัสเดิม) · UsedAi=false · คำตอบในชุด = ใช้ได้ (คืนสะกดของชุด) | ✅ `ImportColumnMappingDbTests` |
+| ETLA-14 | นักเรียน ImportDataReview cold start | รูปเดียวกับครู (field_validation · normalizations · code) · เลขภาษี checksum ผิด = `taxid-invalid` · เลขภาษีมีขีด = แนะนำตัดขีด · มั่นใจ < 0.85 · ForceProviderCall=false | ✅ `ImportColumnMappingDbTests` |
+| ETLA-15 | นักเรียน ImportDataReview เรียนการปฏิเสธ | ปฏิเสธการจัดรูปแบบ ≥ 3 และ ≥ 80% = เลิกเสนอ · ปฏิเสธ 3 รับ 1 = ยังเสนอ · `taxid-invalid` ปฏิเสธกี่ครั้งก็ยังเตือน (มีผลทางกฎหมาย) | ✅ `ImportColumnMappingDbTests` |
+| ETLA-16 | `ImportReviewHeuristics` บน `ImportValueNormalizer` | "ใช่" → true (`flag-format`) · "สำนักงานใหญ่" → 00000 · ข้อความถูกต้องไม่ถูกแตะ · เทสต์เดิม `ImportReviewHeuristicsTests` ไม่แก้สักบรรทัด | ✅ `ImportColumnMappingDbTests` · `ImportReviewHeuristicsTests` |
+| ETLA-17 | แม่แบบ: บันทึก · หาเจอเมื่อสลับคอลัมน์ · upsert ซ้ำ · บริษัทอื่น | แถวเดียว UseCount 2 · ยืนยันติด · transform เดิมไม่หายเมื่อบันทึกซ้ำโดยไม่ส่ง transform · บริษัทอื่น Find/Get/Update/Delete ไม่ได้ · field นอก schema = ล้มดัง + ทางไปต่อ · AutoCommitWhenClean เริ่ม false | ✅ `ImportMappingTemplateStoreDbTests` (PostgreSQL) |
+| ETLA-18 | แก้แม่แบบ | เปิดลงอัตโนมัติได้ (opt-in) · ส่งบางคอลัมน์ = ที่เหลือคงเดิม · หัวนอกแม่แบบ = ปฏิเสธ · ลบแล้วหา/รายการไม่เจอ | ✅ `ImportMappingTemplateStoreDbTests` |
+| ETLA-19 | ปิดลูป ImportColumnMatch → เรียนรู้ → นักเรียนตอบเอง | `RecordColumnMatchChoiceAsync` เขียนคำตอบรูปมาตรฐานเฉพาะคอลัมน์ที่ถูกถาม · acceptedAi ถูก · Explicit · บริษัทอื่นปิดแทนไม่ได้ · `GetLearnedHeadersAsync` เห็นคู่ใหม่ · นักเรียนก่อนเรียน = ไม่ตอบ · หลัง `LoadFromFeedbackAsync` = ตอบ ≥ 0.85 · บริษัทอื่นไม่ได้ความรู้ | ✅ `ImportMappingTemplateStoreDbTests` |
+| ETLA-20 | ปิดลูป ImportDataReview จาก feedback จริง | บริษัทที่ปฏิเสธเลิกได้ข้อเสนอนั้น · บริษัทอื่นยังได้ | ✅ `ImportMappingTemplateStoreDbTests` |

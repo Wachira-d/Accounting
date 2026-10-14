@@ -26,6 +26,8 @@ public static class ImportHubServiceRegistration
         services.AddHostedService<ImportBatchWorker>();
 
         // ── ทีม A (mapping + AI) ──
+        // ทางเข้าเดียวของการจับคู่คอลัมน์ (แม่แบบ → คำพ้อง → เรียนรู้ → รูปข้อมูล → AI ผ่าน orchestrator) + ปิดลูป feedback ตอนยืนยัน
+        services.AddScoped<IImportColumnMatchService, ImportColumnMatchService>();
 
         // ── ทีม B (engine + writer เดิม) ──
 

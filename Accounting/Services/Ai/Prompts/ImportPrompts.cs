@@ -104,9 +104,14 @@ Strict JSON output (NO prose outside JSON). Empty arrays are valid:
         bool IsRequired,
         string? Description);
 
+    /// <summary>
+    /// คำขอจับคู่คอลัมน์ (ImportColumnMatch · 26) — รอบ 205 ทีม A: <c>ForceProviderCall = false</c> (เดิม true = ข้าม routing + ด่านงบทุกครั้ง
+    /// และนักเรียนไม่มีวันได้ตอบ) ⇒ orchestrator ถามนักเรียน <c>ImportColumnMatchDistillationModel</c> ก่อน (Hybrid ≥ 0.85 ไม่เรียก AI) ·
+    /// <paramref name="sessionId"/> null = ไม่มี batch (endpoint แนะนำการจับคู่)
+    /// </summary>
     public static AiRequest BuildColumnMatch(
         Guid companyId,
-        Guid sessionId,
+        Guid? sessionId,
         string entityType,
         IReadOnlyList<TargetField> targets,
         IReadOnlyList<ColumnMatchInput> uncertainColumns)
@@ -140,11 +145,11 @@ Strict JSON output (NO prose outside JSON). Empty arrays are valid:
             UserPromptJson = JsonSerializer.Serialize(payload),
             LocalPrimaryAnswer = null,
             LocalConfidence = null,
-            LocalModelVersion = "ImportHeuristic-v1",
-            SourceEntityType = "SmartImportSession",
+            LocalModelVersion = "ImportColumnMapper-v1",
+            SourceEntityType = sessionId == null ? null : "SmartImportSession",
             SourceEntityId = sessionId,
             CacheTtlOverrideDays = 7,   // mappings stable across similar files; safe to cache
-            ForceProviderCall = true,
+            ForceProviderCall = false,
             RawPlanResponse = true,
             MaxTokensOverride = 2000,
             TimeoutSecondsOverride = 30,
@@ -203,10 +208,129 @@ Strict JSON output (NO prose outside JSON). Empty arrays are valid:
             SourceEntityId = sessionId,
             BypassCache = true,            // every import is unique data
             CacheTtlOverrideDays = 0,
-            ForceProviderCall = true,
+            // รอบ 205 ทีม A: false — ให้ routing/ด่านงบทำงาน + นักเรียน ImportDataReviewDistillationModel ตอบเมื่อ AI ปิด (กฎเหล็ก #1)
+            ForceProviderCall = false,
             RawPlanResponse = true,
             MaxTokensOverride = 6000,      // five concerns × up to 200 rows = long
             TimeoutSecondsOverride = 60,
         };
     }
+
+    /// <summary>schema ของศูนย์นำเข้า (<see cref="Models.DTOs.Import.ImportFieldDto"/>) → รูป target ของ prompt — ชนิดส่งเป็นชื่อ
+    /// <see cref="ImportFieldType"/> (นักเรียนอ่านกลับด้วย <c>ImportSchemas.ParseFieldType</c> ตัวเดียว)</summary>
+    public static IReadOnlyList<TargetField> ToTargetFields(IEnumerable<Models.DTOs.Import.ImportFieldDto> fields)
+        => fields.Select(f => new TargetField(f.Field, f.Label, f.Type.ToString(), f.Required, f.Description)).ToList();
+
+    // ═══════════════════════ รอบ 205 ทีม A — คำตอบเดี่ยว (นักเรียน = GenericFeedbackDistillationModel) ═══════════════════════
+
+    private const string AccountMapSystem = @"You map ONE account from a Thai company's legacy chart of accounts / trial balance (exported from another accounting program)
+to the matching account in the company's current chart of accounts.
+
+Rules:
+1. Answer with exactly one ""code"" from candidate_accounts. Never invent a code.
+2. Use the legacy code's leading digit as the account class hint (Thai convention: 1 asset, 2 liability, 3 equity, 4 revenue, 5 expense)
+   but the account NAME meaning wins (e.g. ""เงินฝากธนาคาร กสิกร"" → a bank deposit asset account).
+3. If nothing fits, return the closest candidate with confidence below 0.5.
+
+Respond ONLY as JSON:
+{
+  ""primary"": ""<code>"",
+  ""confidence"": <0.0-1.0>,
+  ""alternatives"": [""<code>""],
+  ""risks"": [],
+  ""compliance_flags"": [],
+  ""reasoning"": ""<1 short Thai sentence>"",
+  ""suggested_actions"": []
+}";
+
+    /// <summary>ผังบัญชีหนึ่งตัวที่ส่งให้ AI เลือก (ผู้เรียกส่ง top-K ที่ชั้น local คัดมา — ไม่ส่งผังทั้งบริษัท)</summary>
+    public sealed record AccountCandidate(string Code, string Name, string? Type);
+
+    /// <summary>
+    /// คำขอจับคู่ผังบัญชีของแถวนำเข้า (<see cref="AiFeatureKey.ImportAccountMap"/> · 58) — ผู้เรียก: <c>ImportAiAugmenter.SuggestAccountMapAsync</c>
+    /// (ด่าน: คำตอบ ∈ รหัสผังบริษัท) · <paramref name="localCode"/> = คำตอบของ <c>ImportAccountCodeResolver</c> (ทีม D) ⇒ AI ล่ม/ปิด ยังมีคำตอบ
+    /// </summary>
+    public static AiRequest BuildAccountMap(Guid companyId, Guid? batchId, string? sourceCode, string? sourceName, string? hint,
+        IReadOnlyList<AccountCandidate> candidates, string? localCode, decimal? localConfidence)
+    {
+        var payload = new
+        {
+            task = "import_account_map",
+            legacy = new { code = sourceCode?.Trim(), name = sourceName?.Trim(), hint = hint?.Trim() },
+            candidate_accounts = candidates.Select(c => new { code = c.Code, name = c.Name, type = c.Type }),
+        };
+        return new AiRequest
+        {
+            FeatureKey = AiFeatureKey.ImportAccountMap,
+            CompanyId = companyId,
+            SystemPrompt = AccountMapSystem,
+            UserPromptJson = JsonSerializer.Serialize(payload),
+            LocalPrimaryAnswer = localCode,
+            LocalConfidence = localConfidence,
+            LocalModelVersion = "ImportAccountCodeResolver",
+            LocalAlternatives = candidates.Select(c => c.Code).ToList(),
+            SourceEntityType = batchId == null ? null : "SmartImportSession",
+            SourceEntityId = batchId,
+            CacheTtlOverrideDays = 30,
+            TemperatureOverride = 0m,
+        };
+    }
+
+    private const string EntityMatchSystem = @"You decide whether ONE row from an import file (contacts / products from another Thai accounting program) refers to an
+EXISTING record of the company, or is NEW.
+
+Rules:
+1. Answer with exactly one ""id"" from candidates, or the literal ""NEW"" when none of them is the same real-world party/product.
+2. Thai company names: ""บจก."" = ""บริษัท … จำกัด"", ""หจก."" = ""ห้างหุ้นส่วนจำกัด"", ""บมจ."" = ""บริษัท … จำกัด (มหาชน)"" — legal-form prefixes alone do not make two names different,
+   but a different branch, different person name or different product size/model DOES.
+3. Similar-sounding but different businesses must be ""NEW"". When unsure, answer ""NEW"" with confidence below 0.6 — a wrong merge is worse than a duplicate.
+
+Respond ONLY as JSON:
+{
+  ""primary"": ""<id or NEW>"",
+  ""confidence"": <0.0-1.0>,
+  ""alternatives"": [""<id or NEW>""],
+  ""risks"": [],
+  ""compliance_flags"": [],
+  ""reasoning"": ""<1 short Thai sentence>"",
+  ""suggested_actions"": []
+}";
+
+    /// <summary>ข้อมูลเดิมหนึ่งตัวที่อาจเป็นตัวเดียวกับแถว (ผู้เรียกคัดด้วยชั้น local — เลขภาษี/ชื่อตามกฎหมาย/n-gram — เหลือ ≤ 5)</summary>
+    public sealed record EntityCandidate(string Id, string Label, string? Key, decimal LocalScore);
+
+    /// <summary>
+    /// คำขอจับคู่แถวนำเข้ากับข้อมูลเดิม (<see cref="AiFeatureKey.ImportEntityMatch"/> · 59) — ใช้เฉพาะแถวกำกวม (top-2 ห่าง &lt; 0.05 และไม่มีเลขภาษี ·
+    /// IMPORT_ETL_REVIEW §2.4) · ผู้เรียก: <c>ImportAiAugmenter.ResolveEntityAsync</c> (ด่าน: ∈ candidate ids ∪ {"NEW"}) ·
+    /// <paramref name="localAnswer"/> = id ที่ชั้น local เลือก หรือ "NEW"
+    /// </summary>
+    public static AiRequest BuildEntityMatch(Guid companyId, Guid? batchId, string entityType, string rowLabel, string? rowDetail,
+        IReadOnlyList<EntityCandidate> candidates, string? localAnswer, decimal? localConfidence)
+    {
+        var payload = new
+        {
+            task = "import_entity_match",
+            entity_type = entityType,
+            row = new { label = rowLabel.Trim(), detail = rowDetail?.Trim() },
+            candidates = candidates.Select(c => new { id = c.Id, label = c.Label, key = c.Key, local_score = c.LocalScore }),
+        };
+        return new AiRequest
+        {
+            FeatureKey = AiFeatureKey.ImportEntityMatch,
+            CompanyId = companyId,
+            SystemPrompt = EntityMatchSystem,
+            UserPromptJson = JsonSerializer.Serialize(payload),
+            LocalPrimaryAnswer = localAnswer,
+            LocalConfidence = localConfidence,
+            LocalModelVersion = "ImportEntityResolver",
+            LocalAlternatives = candidates.Select(c => c.Id).Append(EntityMatchNew).ToList(),
+            SourceEntityType = batchId == null ? null : "SmartImportSession",
+            SourceEntityId = batchId,
+            CacheTtlOverrideDays = 7,
+            TemperatureOverride = 0m,
+        };
+    }
+
+    /// <summary>คำตอบ "เป็นรายการใหม่" ของ ImportEntityMatch</summary>
+    public const string EntityMatchNew = "NEW";
 }
