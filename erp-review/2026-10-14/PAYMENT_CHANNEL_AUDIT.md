@@ -241,22 +241,22 @@ This was a read-only audit. Every item below was confirmed by opening the code. 
 - Salary advance: `salary-advance.html:409` hard-codes `bankAccountId: null`.
 - Cash advance disburse: `CashAdvanceController.cs:134-158` accepts `BankAccountId` and ignores it, and posts no JE.
 
-**9. Mobile approve does not check who the assigned approver is** — ✅ (sha เติมภายหลัง) ทีม F4: มือถือเรียก `ApprovalService.SubmitActionAsync` ตัวเดียว (ผู้อนุมัติของขั้น · สิทธิ์ขั้นสุดท้าย · แก้แถวที่รอ · 403/404 ไทย)
+**9. Mobile approve does not check who the assigned approver is** — ✅ (2f3e7f4f) ทีม F4: มือถือเรียก `ApprovalService.SubmitActionAsync` ตัวเดียว (ผู้อนุมัติของขั้น · สิทธิ์ขั้นสุดท้าย · แก้แถวที่รอ · 403/404 ไทย)
 - `MobileApiService.cs:345-450` never checks that the caller is the current step's assigned approver; the web flow does this at `ApprovalService.cs:351`.
 - Non-final steps advance and Reject works with no permission check at all. The permission check only runs on the final approval.
 - It inserts a new `ApprovalAction` instead of updating the pending one.
 - Failures come back as HTTP 200 with English + GUID text ("No pending approval request found for {entityType} {entityId}.").
 
-**10. Cross-tenant workflow signatures** — ✅ (sha เติมภายหลัง) ทีม F4: `Helpers/CrossTenantSignerResolver` + `CompanyMembership` · ผู้อนุมัติเริ่มต้นออกแล้วไม่ลงนามอัตโนมัติ + หมายเหตุ/คำเตือนบนค่าตั้ง
+**10. Cross-tenant workflow signatures** — ✅ (2f3e7f4f) ทีม F4: `Helpers/CrossTenantSignerResolver` + `CompanyMembership` · ผู้อนุมัติเริ่มต้นออกแล้วไม่ลงนามอัตโนมัติ + หมายเหตุ/คำเตือนบนค่าตั้ง
 - `CrossTenantWorkflowController.cs:146-147,235-249` and `CrossTenantWorkflowService.cs:214-220` accept `SignatureUserId`, `DefaultApproverUserId` and `DefaultSignatureId` without checking membership of the approving company.
 - Any user's signature, including another tenant's, can be stamped on the approval.
 - A stale default approver who has left the company keeps auto-signing (`TryAutoApproveAsync` 316-347).
 
-**11. Stale approvers in approval rules** — ✅ (sha เติมภายหลัง) ทีม F4: ส่งไม่ได้ 409 + ทางไปต่อ · คำขอค้าง ⇒ แท็บ "ค้างเพราะผู้อนุมัติออก" + โอนผู้อนุมัติ
+**11. Stale approvers in approval rules** — ✅ (2f3e7f4f) ทีม F4: ส่งไม่ได้ 409 + ทางไปต่อ · คำขอค้าง ⇒ แท็บ "ค้างเพราะผู้อนุมัติออก" + โอนผู้อนุมัติ
 - `ApprovalService.cs:226-286` routes to rule steps without re-checking that approvers are still company members.
 - The document sticks in WaitingApproval forever, because only that user can act (line 351).
 
-**12. Scheduled emails do not re-check the document at send time** — ✅ (sha เติมภายหลัง) ทีม F4: `Helpers/ScheduledEmailSendCheck` (Skipped + เหตุผล · ยอด ณ เวลาส่ง) · PDF แนบล้มไม่ประทับ Sent
+**12. Scheduled emails do not re-check the document at send time** — ✅ (2f3e7f4f) ทีม F4: `Helpers/ScheduledEmailSendCheck` (Skipped + เหตุผล · ยอด ณ เวลาส่ง) · PDF แนบล้มไม่ประทับ Sent
 - `EmailScheduleService.cs:438-485` sends queued `Document` emails (with `OffsetDays`) without re-checking the document. Voided or paid invoices are still emailed, with the `BalanceDue` captured at enqueue.
 - `BuildAttachmentAsync` (490-512) swallows failures with `LogWarning`, and the item is marked `Sent` without the PDF.
 
@@ -288,10 +288,10 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 - `WarehouseService.cs:297` "สินค้า {ProductId} มีจำนวนไม่เพียงพอ…"
 - `BankService.AiReconciliation.cs:791` "ไม่พบรายการธนาคาร {guid}"
 - `IntegrationService.cs:4544`
-- `MobileApiService.cs:358,513` (English + GUID) — ✅ (sha เติมภายหลัง) ทีม F4
+- `MobileApiService.cs:358,513` (English + GUID) — ✅ (2f3e7f4f) ทีม F4
 - `documents.html:9576`: the restored option is labelled `bank:<guid>` when no name comes back.
 - PettyCash English messages passed through by `SmeOperationsController.cs:55,74` ("Fund not found.", "Insufficient petty cash…").
-- English that gets masked to a generic message with no next step: ChequeService `ArgumentException` (`ChequeService.cs:83-84,143`); `InventoryCostingService.cs:71,115,159` "Product {id} not found."; WebhookService 83-195 (✅ (sha เติมภายหลัง) ทีม F4 — 404 ไทยพร้อมทางไปต่อ).
+- English that gets masked to a generic message with no next step: ChequeService `ArgumentException` (`ChequeService.cs:83-84,143`); `InventoryCostingService.cs:71,115,159` "Product {id} not found."; WebhookService 83-195 (✅ (2f3e7f4f) ทีม F4 — 404 ไทยพร้อมทางไปต่อ).
 
 **19. "Not found" reported as "not linked".** ✅ StatutoryRemittance/Payroll/GatewaySettlement/Lodging (6b406e09 — ทีม F3 · DocumentService = ทีม F2) `.Select(b=>b.LinkedAccountId).FirstOrDefault()` returns null for both, and none of these check `IsActive`:
 - `StatutoryRemittanceService.cs:1871-1877`
@@ -313,7 +313,7 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 
 **24. Manual JE checks are thin.** ✅ ใบสำคัญ (6b406e09 — ทีม F3 · Document `DimensionId` = ทีม F2) JE create/update (`AccountingService.cs:305-314, 413-455, 717-719`) doesn't check account `IsActive` / Level ≥ 4, and doesn't validate `BranchId`, `DimensionId` or line `ProjectId`. Document `DimensionId` (`DocumentService.cs:2963`) is also unvalidated.
 
-**25. Scheduled reports report false success.** — ✅ (sha เติมภายหลัง) ทีม F4: `Helpers/ScheduledReportOutcome` OK/PARTIAL/ERROR/SKIPPED + "ส่งทันที" ส่งจริง (เดิมประทับ OK โดยไม่ส่ง) `ScheduledReportDispatcher.cs:146-150` swallows per-recipient send failures, and `LastResult` stays "OK".
+**25. Scheduled reports report false success.** — ✅ (2f3e7f4f) ทีม F4: `Helpers/ScheduledReportOutcome` OK/PARTIAL/ERROR/SKIPPED + "ส่งทันที" ส่งจริง (เดิมประทับ OK โดยไม่ส่ง) `ScheduledReportDispatcher.cs:146-150` swallows per-recipient send failures, and `LastResult` stays "OK".
 
 **26. Fields named `BankAccountId` that hold CoA ids.** `PosTerminal.BankAccountId` (the page sends `linkedAccountId`, the server validates against CoA — consistent today but easy to break) and `Loan.BankAccountId`.
 
