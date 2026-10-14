@@ -148,9 +148,11 @@ public class ProductService : IProductService
         return WithCostingLock(MapToResponse(product), await HasStockMovementsAsync(companyId, productId));
     }
 
-    public async Task<PagedResponse<ProductResponse>> GetAllAsync(Guid companyId, PagedRequest request)
+    public async Task<PagedResponse<ProductResponse>> GetAllAsync(Guid companyId, PagedRequest request, ProductType? productType = null)
     {
         var query = _db.Products.Where(p => p.CompanyId == companyId && !p.IsDeleted);
+        if (productType.HasValue)
+            query = query.Where(p => p.ProductType == productType.Value);
         if (!string.IsNullOrEmpty(request.Search))
         {
             var search = $"%{request.Search}%";

@@ -1746,29 +1746,23 @@
         bar.style.display = count > 0 ? 'flex' : 'none';
         const slot = document.getElementById('docSelExportSlot');
         if (slot && !slot._rendered && window.ExportUtil) {
-          slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportSelectedDocs(f)');
+          slot.innerHTML = this._exportMenu('exportSelectedDocs');
           slot._rendered = true;
         }
       },
-      exportSelectedDocs(format) {
+      /** ส่งออกเฉพาะใบที่เลือก — ผ่านเซิร์ฟเวอร์เหมือนส่งออกทั้งหมด (ids + ตัวกรองเดิม) ⇒ คอลัมน์/ตัวเลขชุดเดียวกัน · PDF = ใบที่เลือกในหน้านี้ */
+      async exportSelectedDocs(format, level = 'documents') {
         const ids = [...this.selectedDocs];
         if (!ids.length) { Layout.toast('กรุณาเลือกเอกสารก่อน', 'error'); return; }
-        const rows = (this._currentItems || []).filter(d => ids.includes(d.id));
-        if (!rows.length) { Layout.toast('ไม่พบเอกสารที่เลือกในหน้าปัจจุบัน', 'error'); return; }
-        const cols = [
-          { key: 'documentNumber', label: 'เลขที่' },
-          { key: 'documentType', label: 'ประเภท', format: v => Layout.docTypeLabel(v) },
-          { key: 'documentDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
-          { key: 'contact.name', label: 'ผู้ติดต่อ' },
-          { key: 'subTotal', label: 'ก่อนภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-          { key: 'vatAmount', label: 'ภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-          { key: 'totalAmount', label: 'รวม', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-          { key: 'status', label: 'สถานะ' }
-        ];
-        ExportUtil.exportData(format, {
-          rows, columns: cols, filename: `เอกสาร_เลือก${rows.length}รายการ`,
-          title: 'เอกสารที่เลือก', subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
-        });
+        if (format === 'pdf')
+          return this._exportVisiblePdf((this._currentItems || []).filter(d => ids.includes(d.id)), 'เอกสารที่เลือก');
+        const api = Layout.api(); if (!api) return;
+        try {
+          let q = `?format=${format}&level=${level}` + this._listFilterQuery() + ids.map(id => `&ids=${encodeURIComponent(id)}`).join('');
+          if (!this.docType && this.side) q += `&side=${this.side}`;
+          const ok = await api.exportDocumentsFile(q, `${this._exportBaseName()}_เลือก${ids.length}.${format}`);
+          if (ok) Layout.toast('ส่งออกสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async init() {
         this._loadBrands();   // ไม่ await — ล้มก็แค่ไม่โชว์ช่องแบรนด์ ฟอร์มยังใช้ได้
@@ -1790,7 +1784,7 @@
         // Inject Export button into header actions
         const pa = document.getElementById('pageActions');
         if (pa && window.ExportUtil) {
-          pa.insertAdjacentHTML('afterbegin', ExportUtil.renderButtons('(f)=>Page.exportAll(f)'));
+          pa.insertAdjacentHTML('afterbegin', this._exportMenu('exportAll'));
         }
         const api = Layout.api(); if (!api) return;
         // โหลดสถานะจด VAT — บริษัทไม่จด VAT ห้ามออกใบกำกับภาษี/เก็บ VAT ขาย (§90/2)
@@ -7790,38 +7784,52 @@
         if (subjEl && !asEtax) subjEl.placeholder = 'เว้นว่าง = ระบบตั้งหัวข้อตามหัวเอกสารบน PDF (ภาษาเดียวกับ PDF)';
         if (bodyEl) bodyEl.placeholder = 'เว้นว่าง = ระบบเติมข้อความตามภาษาของเอกสาร';
       },
-      async exportAll(format) {
+      /** เมนูส่งออก — ไฟล์มาจากเซิร์ฟเวอร์ (query เดียวกับรายการ · วนทุกหน้า · ไม่ตัดที่ 200 แถว) ทั้งระดับใบและระดับบรรทัด ·
+       *  PDF = พิมพ์เฉพาะแถวที่แสดงอยู่ในหน้านี้ (ป้ายบอกตรง ๆ) */
+      _exportMenu(handler) {
+        return ExportUtil.renderMenu([
+          { label: '📊 Excel — รายการเอกสาร', onclick: `Page.${handler}('xlsx','documents')` },
+          { label: '📄 CSV — รายการเอกสาร', onclick: `Page.${handler}('csv','documents')` },
+          { label: '📊 Excel — รายบรรทัด (สินค้า/บัญชี/VAT)', onclick: `Page.${handler}('xlsx','lines')` },
+          { label: '📄 CSV — รายบรรทัด', onclick: `Page.${handler}('csv','lines')` },
+          { label: '📑 PDF — เฉพาะหน้าที่แสดง', onclick: `Page.${handler}('pdf','documents')` },
+        ]);
+      },
+      _exportBaseName() {
+        return `เอกสาร${this.side === 'revenue' ? '_รายรับ' : this.side === 'expense' ? '_รายจ่าย' : ''}`;
+      },
+      /** PDF ของแถวที่แสดงอยู่ (พิมพ์จากเบราว์เซอร์) — ค่าจากเซิร์ฟเวอร์ตรง ๆ ไม่คำนวณใหม่ */
+      _exportVisiblePdf(rows, title) {
+        if (!rows.length) { Layout.toast('ไม่มีเอกสารในหน้านี้', 'error'); return; }
+        const money = v => Layout.money(v);
+        ExportUtil.exportData('pdf', {
+          rows, title, subtitle: `จำนวน ${rows.length} รายการ (เฉพาะที่แสดงในหน้านี้ — ไฟล์ทั้งหมดใช้ Excel/CSV)`, landscape: true,
+          filename: this._exportBaseName(),
+          columns: [
+            { key: 'documentNumber', label: 'เลขที่' },
+            { key: 'documentTitle', label: 'ประเภท', format: (v, r) => v || Layout.docTypeLabel(r.documentType) },
+            { key: 'documentDate', label: 'วันที่', format: v => Layout.date(v) },
+            { key: 'contact.name', label: 'ผู้ติดต่อ' },
+            { key: 'subTotal', label: 'ก่อน VAT', align: 'right', format: money },
+            { key: 'vatAmount', label: 'VAT', align: 'right', format: money },
+            { key: 'withholdingTaxAmount', label: 'หัก ณ ที่จ่าย', align: 'right', format: money },
+            { key: 'totalAmount', label: 'ยอดรวม', align: 'right', format: money },
+            { key: 'balanceDue', label: 'ยอดค้าง', align: 'right', format: (v, r) => r.balanceDueApplies === false ? '—' : money(v) },
+            { key: 'status', label: 'สถานะ', format: v => Layout._t ? Layout._t('status.' + v, v) : v },
+          ]
+        });
+      },
+      /** ส่งออกทั้งหมดตามตัวกรองบนจอ — `level` = 'documents' (1 แถว/ใบ) | 'lines' (1 แถว/บรรทัด) */
+      async exportAll(format, level = 'documents') {
+        if (format === 'pdf') return this._exportVisiblePdf(this._currentItems || [], document.title || 'เอกสาร');
         const api = Layout.api(); if (!api) return;
         try {
-          Layout.toast('กำลังโหลดข้อมูลทั้งหมด...', 'info');
-          let q = '?page=1&pageSize=10000';
-          if (this.docType) q += `&documentType=${this.docType}`;
-          const status = document.getElementById('statusFilter')?.value;
-          if (status) q += `&status=${status}`;
-          const res = await api.getDocuments(q);
-          let rows = res.data?.items || res.data || [];
-          if (!this.docType && this.side) {
-            // ใบลดหนี้/เพิ่มหนี้/ใบส่งของอยู่ได้ทั้งสองฝั่ง — ตัดสินรายใบด้วย
-            // `Layout.docSide` (mirror ของ Helpers/DocumentSide) ไม่ใช่ลิสต์ชนิด
-            rows = rows.filter(d => Layout.docSide(d) === this.side);
-          }
-          const cols = [
-            { key: 'documentNumber', label: 'เลขที่' },
-            { key: 'documentType', label: 'ประเภท', format: v => Layout.docTypeLabel(v) },
-            { key: 'documentDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
-            { key: 'contact.name', label: 'ผู้ติดต่อ' },
-            { key: 'subTotal', label: 'ก่อนภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-            { key: 'vatAmount', label: 'ภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-            { key: 'totalAmount', label: 'รวม', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-            { key: 'status', label: 'สถานะ' }
-          ];
-          ExportUtil.exportData(format, {
-            rows, columns: cols,
-            filename: `เอกสาร${this.side === 'revenue' ? '_รายรับ' : this.side === 'expense' ? '_รายจ่าย' : ''}`,
-            title: `เอกสาร${this.side === 'revenue' ? ' (รายรับ)' : this.side === 'expense' ? ' (รายจ่าย)' : ''}`,
-            subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
-          });
-        } catch(e) { Layout.toast(e.message, 'error'); }
+          Layout.toast('กำลังสร้างไฟล์จากข้อมูลทั้งหมดตามตัวกรอง...', 'info');
+          let q = `?format=${format}&level=${level}` + this._listFilterQuery();
+          if (!this.docType && this.side) q += `&side=${this.side}`;
+          const ok = await api.exportDocumentsFile(q, `${this._exportBaseName()}.${format}`);
+          if (ok) Layout.toast('ส่งออกสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       populateContacts() {
         if (!this._contactAC) {
@@ -7969,15 +7977,16 @@
           if (el) el.textContent = (this.sortBy === k) ? (this.sortDesc ? '▼' : '▲') : '';
         });
       },
-      async load() {
-        const api = Layout.api(); if (!api) return;
+      /** ตัวกรองของรายการ (ไม่รวม page/pageSize) — ตัวเดียวที่ทั้ง load() และปุ่มส่งออกใช้ ⇒ ไฟล์ = แถวบนจอเสมอ (EXPORT_AUDIT §X2:
+       *  เดิมปุ่ม Export ประกอบตัวกรองเองแค่ชนิด+สถานะ ไม่ส่งคำค้น/ช่วงวันที่/โครงการ/ผู้ติดต่อ) */
+      _listFilterQuery() {
         const status = document.getElementById('statusFilter').value;
         const search = document.getElementById('searchInput').value;
         const projectId = document.getElementById('projectFilter')?.value || '';
         const urlParams = new URLSearchParams(window.location.search);
         const contactIdFilter = this._contactIdFilter || urlParams.get('contactId') || '';
         if (contactIdFilter) this._contactIdFilter = contactIdFilter;
-        let q = `?page=${this.page}&pageSize=20`;
+        let q = '';
         if (this.docType) q += `&type=${this.docType}`;
         if (!this.docType && this.side) {
           // ขอชนิดกำกวม (CN/DN/ใบส่งของ) มาด้วยเสมอ — เซิร์ฟเวอร์กรองได้แค่ตาม
@@ -7997,6 +8006,11 @@
         if (dateFrom) q += `&fromDate=${dateFrom}`;
         if (dateTo) q += `&toDate=${dateTo}`;
         if (this.sortBy) q += `&sortBy=${this.sortBy}&sortDesc=${this.sortDesc ? 'true' : 'false'}`;
+        return q;
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const q = `?page=${this.page}&pageSize=20` + this._listFilterQuery();
         try {
           const res = await api.getDocuments(q);
           const data = res.data;

@@ -235,6 +235,19 @@ window.ExportUtil = (function () {
       </div>`;
   }
 
+  // เมนูส่งออกแบบกำหนดรายการเอง (เช่น "Excel หัวเอกสาร" / "Excel รายบรรทัด") — ใช้ class เดียวกับ renderButtons
+  // ให้ปิดเมนูเมื่อคลิกนอกได้เหมือนกัน · items = [{ label, onclick }] (onclick เป็นสตริงโค้ดที่หน้าเป็นผู้กำหนดเอง ไม่ใช่ข้อมูลผู้ใช้)
+  function renderMenu(items, buttonLabel = '📥 Export ▾', size = 'sm') {
+    const s = size === 'sm' ? 'btn-sm' : '';
+    const esc = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const btns = (items || []).map(it => `<button class="export-item" onclick="${esc(it.onclick)};ExportUtil._closeMenus()" style="display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;cursor:pointer;white-space:nowrap">${esc(it.label)}</button>`).join('');
+    return `
+      <div class="dropdown" style="display:inline-block;position:relative">
+        <button class="btn btn-secondary ${s}" onclick="ExportUtil._toggleMenu(this)">${esc(buttonLabel)}</button>
+        <div class="export-menu" style="display:none;position:absolute;right:0;top:100%;background:var(--bg-primary,#fff);border:1px solid var(--border,#ddd);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:100;min-width:200px">${btns}</div>
+      </div>`;
+  }
+
   function _toggleMenu(btn) {
     const menu = btn.nextElementSibling;
     const isOpen = menu.style.display === 'block';
@@ -253,5 +266,5 @@ window.ExportUtil = (function () {
   style.textContent = `.export-item:hover { background: var(--bg-secondary, #f5f5f5) !important; }`;
   document.head.appendChild(style);
 
-  return { exportData, exportCsv, exportExcel, exportPdf, renderButtons, downloadServer, renderServerButtons, _toggleMenu, _closeMenus };
+  return { exportData, exportCsv, exportExcel, exportPdf, renderButtons, renderMenu, downloadServer, renderServerButtons, _toggleMenu, _closeMenus };
 })();

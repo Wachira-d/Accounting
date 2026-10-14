@@ -12,6 +12,7 @@
     <div class="page-header">
       <div><h2 class="page-title">สินค้า/บริการ</h2><p class="page-subtitle">จัดการรายการสินค้า บริการ และสต็อก</p></div>
       <div class="flex gap-2">
+        <span id="productExportSlot"></span>
         <button class="btn btn-secondary" onclick="Page.showValuation()">มูลค่าสินค้าคงเหลือ</button>
         <button class="btn btn-secondary" onclick="Page.showStockCount()">ตรวจนับสต็อก</button>
         <button class="btn btn-secondary" onclick="Page.showCategories()">หมวดหมู่</button>
@@ -289,6 +290,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     // วัตถุดิบ = ของที่ถูก "กิน" ตอนขาย/ผลิตตามสูตร และเป็น **ต้นทุนขาย**
     // (ต่างจากวัสดุสิ้นเปลืองที่ลงค่าใช้จ่ายทันที)
@@ -360,6 +362,8 @@
 
       async init() {
         if (!Layout.init('products')) return;
+        const exSlot = document.getElementById('productExportSlot');
+        if (exSlot && window.ExportUtil) exSlot.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportProducts(f)', '');
         Layout.setTitle('สินค้า/บริการ');
         await this.load();
         // Dead-stock alert ขึ้นด้านบนทันทีถ้ามีสินค้าจม > 30 รายการ
@@ -372,13 +376,24 @@
         const deepId = new URLSearchParams(location.search).get('id');
         if (deepId) await this.viewDetail(deepId);
       },
-      async load() {
-        const api = Layout.api(); if (!api) return;
+      /** ตัวกรองของรายการ (ไม่รวม page/pageSize) — ตัวเดียวที่ทั้ง load() และปุ่มส่งออกใช้ · productType เซิร์ฟเวอร์อ่านแล้ว
+       *  (เดิมส่งไปแต่ GET product ไม่มีพารามิเตอร์นี้ ⇒ เลือกประเภทแล้วรายการไม่เปลี่ยน — ตัวกรองเงียบ · EXPORT_AUDIT §X2) */
+      _listFilterQuery() {
         const search = document.getElementById('searchInput').value;
         const type = document.getElementById('typeFilter').value;
-        let q = `?page=${this.page}&pageSize=20`;
+        let q = '';
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (type) q += `&productType=${type}`;
+        return q;
+      },
+      /** ส่งออกรายการสินค้า/บริการ (ทุกหน้า ตามคำค้น+ประเภท) — ไฟล์จากเซิร์ฟเวอร์ (เดิมไม่มีปุ่มส่งออก) */
+      exportProducts(format) {
+        const p = Object.fromEntries(new URLSearchParams(this._listFilterQuery()));
+        return ExportUtil.downloadServer('product/export', p, format, 'สินค้าและบริการ');
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const q = `?page=${this.page}&pageSize=20` + this._listFilterQuery();
         try {
           const res = await api.getProducts(q);
           const data = res.data; const items = data?.items || data || [];

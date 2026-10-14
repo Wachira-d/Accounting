@@ -7,7 +7,8 @@ public interface IProductService
 {
     Task<ProductResponse> CreateAsync(Guid companyId, CreateProductRequest request);
     Task<ProductResponse> GetByIdAsync(Guid companyId, Guid productId);
-    Task<PagedResponse<ProductResponse>> GetAllAsync(Guid companyId, PagedRequest request);
+    /// <param name="productType">ตัวกรองประเภทบนหน้าสินค้า (null = ทุกประเภท) — เดิมหน้าเว็บส่ง productType แต่ไม่มีใครอ่าน (ตัวกรองเงียบ · EXPORT_AUDIT §X2)</param>
+    Task<PagedResponse<ProductResponse>> GetAllAsync(Guid companyId, PagedRequest request, Accounting.Models.Enums.ProductType? productType = null);
     Task<ProductResponse> UpdateAsync(Guid companyId, Guid productId, UpdateProductRequest request);
     Task DeleteAsync(Guid companyId, Guid productId);
 

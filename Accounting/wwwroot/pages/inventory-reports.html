@@ -38,6 +38,7 @@
             <input type="checkbox" id="balanceIncludeZero"> รวมหมด
           </label>
           <button class="btn btn-primary" onclick="Page.loadBalance()">ดูรายงาน</button>
+          <span class="x2-export" data-tab="balance"></span>
         </div>
       </div>
 
@@ -70,6 +71,7 @@
           <span>ถึง</span>
           <input type="date" class="form-input" id="mvToDate" style="width:160px">
           <button class="btn btn-primary" onclick="Page.loadMovement()">ดูรายงาน</button>
+          <span class="x2-export" data-tab="movement"></span>
         </div>
       </div>
 
@@ -98,6 +100,7 @@
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
         <h3 class="card-title" style="margin:0">อายุสินค้าคงเหลือ (Stock Aging)</h3>
         <button class="btn btn-primary" onclick="Page.loadAging()">โหลดรายงาน</button>
+          <span class="x2-export" data-tab="aging"></span>
       </div>
 
       <div id="agingBuckets" style="display:none;padding:16px;gap:12px;flex-wrap:wrap;margin:16px 0"></div>
@@ -157,6 +160,7 @@
     <div id="snapshotDetailModal" class="modal hidden">
       <div class="modal-content" style="max-width:800px">
         <h3 class="modal-title" id="snapDetailTitle">รายละเอียด Snapshot</h3>
+        <span class="x2-export" data-tab="snapshot"></span>
         <div class="table-container">
           <table class="data-table">
             <thead>
@@ -191,6 +195,7 @@
             <option value="2.326">99%</option>
           </select>
           <button class="btn btn-primary" onclick="Page.loadReorder()">โหลดรายงาน</button>
+          <span class="x2-export" data-tab="reorder"></span>
           <button class="btn" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff"
             onclick="Page.requestReorderNarrative()" id="btnReorderAi"
             title="สรุปลำดับความสำคัญ + เหตุผลภาษาไทยจากตัวเลขในตาราง (ระบบคำนวณเอง ไม่เรียก AI)">⚙️ สรุปให้อ่าน</button>
@@ -234,6 +239,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       _today: Layout.toDateInput(new Date()),
@@ -246,6 +252,48 @@
         document.getElementById('mvFromDate').value = this._firstOfYear;
         document.getElementById('mvToDate').value = this._today;
         await this.loadSnapshots();
+        document.querySelectorAll('.x2-export').forEach(el => {
+          const t = el.dataset.tab;
+          el.innerHTML = ExportUtil.renderMenu([
+            { label: '📊 Excel', onclick: `Page.exportTab('${t}','xlsx')` },
+            { label: '📄 CSV', onclick: `Page.exportTab('${t}','csv')` },
+          ]);
+        });
+      },
+
+      // ===== ส่งออก (EXPORT_AUDIT §X2 · เดิมหน้านี้ไม่มีปุ่มส่งออกเลย) =====
+      // ข้อมูล = payload ล่าสุดที่เซิร์ฟเวอร์ส่งมาแสดงในตาราง (รายงานพวกนี้ไม่แบ่งหน้า — ได้ครบทุกแถว) · ตัวเลขส่งเป็นตัวเลขจริง ไม่จัดรูปแบบ
+      _last: {},
+      exportTab(tab, format) {
+        const L = this._last;
+        const spec = {
+          balance: () => ({ rows: L.balance?.items || [], filename: `สินค้าคงเหลือ_ณ_${L.balanceDate || ''}`, columns: [
+            { key: 'productCode', label: 'รหัส' }, { key: 'productName', label: 'ชื่อสินค้า' }, { key: 'unit', label: 'หน่วย' },
+            { key: 'category', label: 'หมวด' }, { key: 'quantityAsOfDate', label: 'จำนวนคงเหลือ' },
+            { key: 'averageCost', label: 'ต้นทุนเฉลี่ย' }, { key: 'totalValue', label: 'มูลค่ารวม' }] }),
+          movement: () => ({ rows: L.movement?.items || [], filename: `สรุปเคลื่อนไหวสินค้า_${L.movementRange || ''}`, columns: [
+            { key: 'productCode', label: 'รหัส' }, { key: 'productName', label: 'ชื่อสินค้า' }, { key: 'unit', label: 'หน่วย' },
+            { key: 'openingStock', label: 'ยอดต้นงวด' }, { key: 'totalIn', label: 'รับเข้า' }, { key: 'totalOut', label: 'จ่ายออก' },
+            { key: 'totalAdjust', label: 'ปรับปรุง' }, { key: 'closingStock', label: 'ยอดปลายงวด' }] }),
+          aging: () => ({ rows: L.aging?.items || [], filename: 'อายุสินค้าคงเหลือ', columns: [
+            { key: 'productCode', label: 'รหัส' }, { key: 'productName', label: 'ชื่อสินค้า' }, { key: 'category', label: 'หมวด' },
+            { key: 'currentStock', label: 'จำนวน' }, { key: 'totalValue', label: 'มูลค่า' }, { key: 'daysInStock', label: 'วันที่อยู่ในสต็อก' },
+            { key: 'agingBucket', label: 'ช่วงอายุ' }, { key: 'lastMovementDate', label: 'เคลื่อนไหวล่าสุด', format: v => v ? Layout.toDateInput(new Date(v)) : '' }] }),
+          snapshot: () => ({ rows: L.snapshot?.lines || [], filename: `ปิดงวดสินค้า_${L.snapshot ? Layout.toDateInput(new Date(L.snapshot.snapshotDate)) : ''}`, columns: [
+            { key: 'productCode', label: 'รหัส' }, { key: 'productName', label: 'ชื่อสินค้า' }, { key: 'unit', label: 'หน่วย' },
+            { key: 'category', label: 'หมวด' }, { key: 'quantity', label: 'จำนวน' }, { key: 'unitCost', label: 'ต้นทุน/หน่วย' },
+            { key: 'totalValue', label: 'มูลค่า' }] }),
+          reorder: () => ({ rows: this._lastReorderRows || [], filename: 'พยากรณ์สต็อก_สั่งซื้อ', columns: [
+            { key: 'sku', label: 'SKU' }, { key: 'name', label: 'ชื่อสินค้า' }, { key: 'currentStock', label: 'คงเหลือ' },
+            { key: 'avgDailyDemand', label: 'ขาย/วัน เฉลี่ย' },
+            { key: 'daysOfStockRemaining', label: 'หมดใน (วัน)', format: v => (v == null || v < 0) ? 'ไม่หมด' : v },
+            { key: 'reorderPoint', label: 'ROP (จุดสั่งซ้ำ)' }, { key: 'suggestedOrderQuantity', label: 'แนะนำสั่ง' },
+            { key: 'urgency', label: 'สถานะ' }, { key: 'forecastMethod', label: 'วิธี' }] }),
+        }[tab];
+        if (!spec) return;
+        const o = spec();
+        if (!o.rows.length) { Layout.toast('โหลดรายงานก่อน แล้วจึงส่งออก', 'error'); return; }
+        ExportUtil.exportData(format, { rows: o.rows, columns: o.columns, filename: o.filename, sheetName: tab });
       },
 
       _fmt(n) { return (n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
@@ -294,8 +342,8 @@
             return `<span style="${colors[u]||''};padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600">${u}</span>`;
           };
           tbody.innerHTML = rows.map(x => `<tr>
-            <td style="font-family:monospace;font-size:12px">${x.sku || '-'}</td>
-            <td>${x.name}</td>
+            <td style="font-family:monospace;font-size:12px">${Layout.esc(x.sku || '-')}</td>
+            <td>${Layout.esc(x.name)}</td>
             <td style="text-align:right">${this._fmt(x.currentStock)}</td>
             <td style="text-align:right">${this._fmt(x.avgDailyDemand)}</td>
             <td style="text-align:right;color:${x.daysOfStockRemaining >= 0 && x.daysOfStockRemaining < 7 ? '#dc2626' : '#1e293b'}">
@@ -353,6 +401,7 @@
           const q = `?asOfDate=${date}&includeZero=${zero}${cat ? '&category=' + encodeURIComponent(cat) : ''}`;
           const res = await api.getStockBalance(q);
           const d = res.data;
+          this._last.balance = d; this._last.balanceDate = date;
           document.getElementById('balanceSummary').style.display = '';
           document.getElementById('balTotalProducts').textContent = d.totalProducts;
           document.getElementById('balTotalValue').textContent = this._fmt(d.totalValue);
@@ -364,7 +413,7 @@
             return;
           }
           tbody.innerHTML = d.items.map(i => `<tr>
-            <td><code>${i.productCode}</code></td><td>${i.productName}</td><td>${i.unit}</td><td>${i.category || '-'}</td>
+            <td><code>${Layout.esc(i.productCode)}</code></td><td>${Layout.esc(i.productName)}</td><td>${Layout.esc(i.unit)}</td><td>${Layout.esc(i.category || '-')}</td>
             <td style="text-align:right">${this._fmt(i.quantityAsOfDate)}</td><td style="text-align:right">${this._fmt(i.averageCost)}</td>
             <td style="text-align:right;font-weight:600">${this._fmt(i.totalValue)}</td></tr>`).join('');
         } catch (e) {
@@ -383,6 +432,7 @@
           const q = `?fromDate=${from}&toDate=${to}`;
           const res = await api.getMovementSummary(q);
           const d = res.data;
+          this._last.movement = d; this._last.movementRange = `${from}_${to}`;
           document.getElementById('mvSummary').style.display = '';
           document.getElementById('mvOpenValue').textContent = this._fmt(d.totalOpeningValue);
           document.getElementById('mvCloseValue').textContent = this._fmt(d.totalClosingValue);
@@ -392,7 +442,7 @@
             return;
           }
           tbody.innerHTML = d.items.map(i => `<tr>
-            <td><code>${i.productCode}</code></td><td>${i.productName}</td><td>${i.unit}</td>
+            <td><code>${Layout.esc(i.productCode)}</code></td><td>${Layout.esc(i.productName)}</td><td>${Layout.esc(i.unit)}</td>
             <td style="text-align:right">${this._fmt(i.openingStock)}</td>
             <td style="text-align:right;color:#059669">${i.totalIn > 0 ? '+' + this._fmt(i.totalIn) : '-'}</td>
             <td style="text-align:right;color:#ef4444">${i.totalOut > 0 ? '-' + this._fmt(i.totalOut) : '-'}</td>
@@ -411,6 +461,7 @@
         try {
           const res = await api.getStockAging();
           const d = res.data;
+          this._last.aging = d;
           const bucketColors = { '0-30': '#059669', '31-60': '#0284c7', '61-90': '#f59e0b', '91-180': '#ea580c', '180+': '#dc2626' };
           const bucketsEl = document.getElementById('agingBuckets');
           bucketsEl.style.display = 'flex';
@@ -428,7 +479,7 @@
           tbody.innerHTML = d.items.map(i => {
             const color = bucketColors[i.agingBucket] || '#334155';
             return `<tr>
-              <td><code>${i.productCode}</code></td><td>${i.productName}</td><td>${i.category || '-'}</td>
+              <td><code>${Layout.esc(i.productCode)}</code></td><td>${Layout.esc(i.productName)}</td><td>${Layout.esc(i.category || '-')}</td>
               <td style="text-align:right">${this._fmt(i.currentStock)}</td><td style="text-align:right">${this._fmt(i.totalValue)}</td>
               <td style="text-align:right">${i.daysInStock} วัน</td>
               <td><span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px">${i.agingBucket}</span></td>
@@ -490,9 +541,10 @@
         try {
           const res = await api.getInventorySnapshotDetail(id);
           const d = res.data;
+          this._last.snapshot = d;
           document.getElementById('snapDetailTitle').textContent = `Snapshot: ${this._fmtDate(d.snapshotDate)} — ${this._fmt(d.totalValue)} บาท (${d.totalProducts} รายการ)`;
           document.getElementById('snapDetailBody').innerHTML = (d.lines || []).map(l => `<tr>
-            <td><code>${l.productCode}</code></td><td>${l.productName}</td><td>${l.unit}</td><td>${l.category || '-'}</td>
+            <td><code>${Layout.esc(l.productCode)}</code></td><td>${Layout.esc(l.productName)}</td><td>${Layout.esc(l.unit)}</td><td>${Layout.esc(l.category || '-')}</td>
             <td style="text-align:right">${this._fmt(l.quantity)}</td><td style="text-align:right">${this._fmt(l.unitCost)}</td>
             <td style="text-align:right;font-weight:600">${this._fmt(l.totalValue)}</td></tr>`).join('');
           document.getElementById('snapshotDetailModal').classList.remove('hidden');

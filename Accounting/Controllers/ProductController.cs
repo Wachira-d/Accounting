@@ -2,6 +2,7 @@ using Accounting.Helpers;
 using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Product;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -62,9 +63,10 @@ public class ProductController : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<ProductResponse>>>> GetAll(
-        Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
+        Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
+        [FromQuery] ProductType? productType = null)
     {
-        var result = await _productService.GetAllAsync(companyId, new PagedRequest(page, pageSize, search));
+        var result = await _productService.GetAllAsync(companyId, new PagedRequest(page, pageSize, search), productType);
         return Ok(new ApiResponse<PagedResponse<ProductResponse>>(true, result));
     }
 

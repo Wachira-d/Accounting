@@ -821,6 +821,9 @@ const API = {
       createPayment: (d) => API.post(`${base}/document/payments`, d),
       // Products
       getProducts: (q = '') => API.get(`${base}/product${q}`),
+      // ส่งออกรายการเอกสาร (ทีม X2 · 2026-10-14 · Controllers/TradeListExportController) — q = ตัวกรองชุดเดียวกับ list + format · ใช้ API.download ตรง
+      // (ไม่ใช่ ExportUtil.downloadServer) เพราะ types[]/ids[] ต้องเป็นคีย์ซ้ำแบบเดียวกับ GET document — downloadServer รวม array ด้วยจุลภาค
+      exportDocumentsFile: (q, name) => API.download(`${base}/document/export${q}`, name),
       getProduct: (id) => API.get(`${base}/product/${id}`),
       createProduct: (d) => API.post(`${base}/product`, d),
       updateProduct: (id, d) => API.put(`${base}/product/${id}`, d),
@@ -1430,7 +1433,8 @@ const API = {
       getImportTemplate: (entity) => `${base}/import-export/templates/${entity}/download`,
       // Field metadata for the smart-import column-mapping dropdown
       getImportTemplateMeta: (entity) => API.get(`${base}/import-export/templates/${entity}`),
-      exportData: (d) => API.post(`${base}/import-export/export`, d),
+      // ศูนย์นำเข้า/ส่งออก: เซิร์ฟเวอร์ตอบเป็นไฟล์ (ไม่ใช่ JSON) — เดิมเรียก API.post ⇒ "Server returned non-JSON" ทุกครั้ง ไม่เคยได้ไฟล์ (EXPORT_AUDIT §X2)
+      exportData: (d) => API.fetchFile(`${base}/import-export/export`, `export.${d && d.fileFormat === 'xlsx' ? 'xlsx' : 'csv'}`, { method: 'POST', body: d }),
       getExportableEntities: () => API.get(`${base}/import-export/exportable-entities`),
       getImportableEntities: () => API.get(`${base}/import-export/importable-entities`),
       smartImportUpload: (d) => API.post(`${base}/import-export/smart-import/upload`, d),

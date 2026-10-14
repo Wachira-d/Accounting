@@ -19,6 +19,7 @@
             <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Import.downloadTemplate()">ดาวน์โหลด Template</a>
           </div>
         </div>
+        <span id="contactExportSlot"></span>
         <a class="btn btn-secondary" href="/pages/contact-hygiene.html" title="รายงานผู้ติดต่อที่ที่อยู่อาจเสีย (อ่านอย่างเดียว)">ตรวจข้อมูลผู้ติดต่อ</a>
         <button class="btn btn-primary" onclick="Page.openCreate()"
                 data-tour-step="1"
@@ -340,6 +341,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       page: 1, filterType: 'all', _cache: {},
@@ -436,6 +438,8 @@
 
       async init() {
         if (!Layout.init('contacts')) return;
+        const exSlot = document.getElementById('contactExportSlot');
+        if (exSlot && window.ExportUtil) exSlot.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportContacts(f)', '');
         Layout.setTitle('ผู้ติดต่อ');
         this._attachDbd();
         this._attachFuzzyMatch();
@@ -512,13 +516,23 @@
         el.classList.add('active');
         this.load();
       },
-      async load() {
-        const api = Layout.api(); if (!api) return;
+      /** ตัวกรองของรายการ (ไม่รวม page/pageSize) — ตัวเดียวที่ทั้ง load() และปุ่มส่งออกใช้ ⇒ ไฟล์ = รายการตามแท็บ/คำค้นบนจอ */
+      _listFilterQuery() {
         const search = document.getElementById('searchInput').value;
-        let q = `?page=${this.page}&pageSize=20`;
+        let q = '';
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (this.filterType === 'customer') q += '&isCustomer=true';
         if (this.filterType === 'supplier') q += '&isSupplier=true';
+        return q;
+      },
+      /** ส่งออกทะเบียนผู้ติดต่อ (ทุกหน้า ตามแท็บ+คำค้น) — ไฟล์จากเซิร์ฟเวอร์ Controllers/TradeListExportController (EXPORT_AUDIT §X2: เดิมไม่มีปุ่มส่งออก) */
+      exportContacts(format) {
+        const p = Object.fromEntries(new URLSearchParams(this._listFilterQuery()));
+        return ExportUtil.downloadServer('document/contacts/export', p, format, 'ผู้ติดต่อ');
+      },
+      async load() {
+        const api = Layout.api(); if (!api) return;
+        const q = `?page=${this.page}&pageSize=20` + this._listFilterQuery();
         try {
           const res = await api.getContacts(q);
           const data = res.data;

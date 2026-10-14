@@ -405,19 +405,22 @@ const Page = {
     const entity = document.getElementById('exportEntity').value;
     if (!entity) { Layout.toast('กรุณาเลือกประเภทข้อมูล', 'error'); return; }
     try {
+      // ชื่อช่องต้องตรง ExportRequest (FileFormat) — เดิมส่ง `format` ⇒ ช่องบังคับว่าง 400 · และเซิร์ฟเวอร์ตอบเป็นไฟล์ (ไม่ใช่ JSON)
+      // จึงต้องรับเป็น blob แล้วบันทึกเอง (EXPORT_AUDIT §X2 — เดิมกดส่งออกแล้วไม่เคยได้ไฟล์)
       const data = {
         entityType: entity,
-        format: document.getElementById('exportFormat').value,
+        fileFormat: document.getElementById('exportFormat').value,
         fromDate: document.getElementById('exportFrom').value || null,
         toDate: document.getElementById('exportTo').value || null,
       };
-      const res = await api.exportData(data);
-      if (res.data?.downloadUrl || res.data?.url) {
-        window.open(res.data.downloadUrl || res.data.url, '_blank');
-        Layout.toast('ส่งออกสำเร็จ');
-      } else {
-        Layout.toast('กำลังเตรียมไฟล์...', 'info');
-      }
+      const f = await api.exportData(data);
+      if (!f) return;
+      const href = URL.createObjectURL(f.blob);
+      const a = document.createElement('a');
+      a.href = href; a.download = f.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 1000);
+      Layout.toast('ส่งออกสำเร็จ');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 

@@ -114,25 +114,33 @@
         if (!Layout.init('purchases')) return;
         Layout.setTitle('ซื้อสินค้า');
         const pa = document.getElementById('pageActions');
-        if (pa && window.ExportUtil) pa.insertAdjacentHTML('afterbegin', ExportUtil.renderButtons('(f)=>Page.exportAll(f)'));
+        if (pa && window.ExportUtil) pa.insertAdjacentHTML('afterbegin', this._exportMenu('exportAll'));
         await this.load();
         this.loadStats();
+      },
+
+      /** ตัวกรองของรายการ (ไม่รวม page/pageSize) — ตัวเดียวที่ทั้ง load() และปุ่มส่งออกใช้ (EXPORT_AUDIT §X2)
+       *  แท็บ "ทั้งหมด" ส่ง types[] ให้เซิร์ฟเวอร์กรองก่อนแบ่งหน้า — เดิมดึงทุกชนิด 20 ใบแล้วตัดฝั่งขายทิ้งที่หน้าเว็บ ⇒ หน้าหนึ่งเหลือไม่กี่แถว
+       *  และใบซื้อที่เก่ากว่า 20 ใบล่าสุด (รวมทุกชนิด) ไม่ขึ้นเลย (defect class เดียวกับหน้าเอกสาร) */
+      _listFilterQuery() {
+        const status = document.getElementById('statusFilter').value;
+        const search = document.getElementById('searchInput').value;
+        let q = '';
+        if (this.docType) q += `&type=${this.docType}`;
+        else this._expenseTypes.forEach(t => q += `&types=${t}`);
+        if (status) q += `&status=${status}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        return q;
       },
 
       // ─── List view ───────────────────────────────────────────────
       async load() {
         const api = Layout.api(); if (!api) return;
-        const status = document.getElementById('statusFilter').value;
-        const search = document.getElementById('searchInput').value;
-        let q = `?page=${this.page}&pageSize=20`;
-        if (this.docType) q += `&type=${this.docType}`;
-        if (status) q += `&status=${status}`;
-        if (search) q += `&search=${encodeURIComponent(search)}`;
+        const q = `?page=${this.page}&pageSize=20` + this._listFilterQuery();
         try {
           const res = await api.getDocuments(q);
           const data = res.data;
           let items = data?.items || data || [];
-          if (!this.docType) items = items.filter(d => this._expenseTypes.includes(d.documentType));
           this._currentItems = items;
           const tbody = document.getElementById('tableBody');
           if (!items.length) {
@@ -148,7 +156,7 @@
             <td class="font-medium"><a href="/pages/documents.html?editDoc=${d.id}" style="color:var(--primary);text-decoration:none">${d.documentNumber}</a></td>
             <td>${Layout.docTypeLabel(d.documentType)}</td>
             <td>${Layout.date(d.documentDate)}</td>
-            <td>${d.contact?.name || '-'}</td>
+            <td>${Layout.esc(d.contact?.name || '-')}</td>
             <td class="text-right">${Layout.money(d.totalAmount)}</td>
             ${d.balanceDueApplies === false
               ? `<td class="text-right text-gray-400" title="เอกสารชนิดนี้ไม่ใช่การตั้งหนี้ — ไม่มียอดค้างจ่าย (หนี้อยู่ที่ใบแจ้งหนี้ซื้อ/ใบบันทึกค่าใช้จ่าย)">—</td>`
@@ -219,56 +227,37 @@
         bar.style.display = count > 0 ? 'flex' : 'none';
         const slot = document.getElementById('purSelExportSlot');
         if (slot && !slot._rendered && window.ExportUtil) {
-          slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportSelectedPur(f)');
+          slot.innerHTML = this._exportMenu('exportSelectedPur');
           slot._rendered = true;
         }
       },
-      exportSelectedPur(format) {
+      /** เมนูส่งออก — ไฟล์จากเซิร์ฟเวอร์ (Controllers/TradeListExportController · query เดียวกับรายการ · วนทุกหน้า)
+       *  เดิมขอ pageSize=10000 แต่เซิร์ฟเวอร์ให้ 200 ⇒ ไฟล์ขาดเงียบ · ยอดเป็นข้อความคั่นหลักพัน · ไม่ส่งคำค้น */
+      _exportMenu(handler) {
+        return ExportUtil.renderMenu([
+          { label: '📊 Excel — รายการเอกสาร', onclick: `Page.${handler}('xlsx','documents')` },
+          { label: '📄 CSV — รายการเอกสาร', onclick: `Page.${handler}('csv','documents')` },
+          { label: '📊 Excel — รายบรรทัด (สินค้า/บัญชี/VAT)', onclick: `Page.${handler}('xlsx','lines')` },
+          { label: '📄 CSV — รายบรรทัด', onclick: `Page.${handler}('csv','lines')` },
+        ]);
+      },
+      async exportSelectedPur(format, level = 'documents') {
         const ids = [...this.selectedPur];
         if (!ids.length) { Layout.toast('กรุณาเลือกเอกสารก่อน', 'error'); return; }
-        const rows = (this._currentItems || []).filter(d => ids.includes(d.id));
-        if (!rows.length) { Layout.toast('ไม่พบเอกสารที่เลือกในหน้าปัจจุบัน', 'error'); return; }
-        const cols = [
-          { key: 'documentNumber', label: 'เลขที่' },
-          { key: 'documentType', label: 'ประเภท', format: v => Layout.docTypeLabel(v) },
-          { key: 'documentDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
-          { key: 'contact.name', label: 'ผู้จำหน่าย' },
-          { key: 'subTotal', label: 'ก่อนภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-          { key: 'vatAmount', label: 'ภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-          { key: 'totalAmount', label: 'รวม', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-          { key: 'status', label: 'สถานะ' }
-        ];
-        ExportUtil.exportData(format, {
-          rows, columns: cols, filename: `ซื้อสินค้า_เลือก${rows.length}รายการ`,
-          title: 'เอกสารซื้อที่เลือก', subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
-        });
-      },
-      async exportAll(format) {
         const api = Layout.api(); if (!api) return;
         try {
-          Layout.toast('กำลังโหลดข้อมูลทั้งหมด...', 'info');
-          let q = '?page=1&pageSize=10000';
-          if (this.docType) q += `&type=${this.docType}`;
-          const status = document.getElementById('statusFilter')?.value;
-          if (status) q += `&status=${status}`;
-          const res = await api.getDocuments(q);
-          let rows = res.data?.items || res.data || [];
-          if (!this.docType) rows = rows.filter(d => this._expenseTypes.includes(d.documentType));
-          const cols = [
-            { key: 'documentNumber', label: 'เลขที่' },
-            { key: 'documentType', label: 'ประเภท', format: v => Layout.docTypeLabel(v) },
-            { key: 'documentDate', label: 'วันที่', format: v => v ? new Date(v).toLocaleDateString('th-TH') : '' },
-            { key: 'contact.name', label: 'ผู้จำหน่าย' },
-            { key: 'subTotal', label: 'ก่อนภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-            { key: 'vatAmount', label: 'ภาษี', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-            { key: 'totalAmount', label: 'รวม', align: 'right', format: v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2}) },
-            { key: 'status', label: 'สถานะ' }
-          ];
-          ExportUtil.exportData(format, {
-            rows, columns: cols, filename: 'ซื้อสินค้า', title: 'ซื้อสินค้า',
-            subtitle: `จำนวน ${rows.length} รายการ`, landscape: true
-          });
-        } catch(e) { Layout.toast(e.message, 'error'); }
+          const q = `?format=${format}&level=${level}` + this._listFilterQuery() + ids.map(id => `&ids=${encodeURIComponent(id)}`).join('');
+          const ok = await api.exportDocumentsFile(q, `ซื้อสินค้า_เลือก${ids.length}.${format}`);
+          if (ok) Layout.toast('ส่งออกสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async exportAll(format, level = 'documents') {
+        const api = Layout.api(); if (!api) return;
+        try {
+          Layout.toast('กำลังสร้างไฟล์จากข้อมูลทั้งหมดตามตัวกรอง...', 'info');
+          const ok = await api.exportDocumentsFile(`?format=${format}&level=${level}` + this._listFilterQuery(), `ซื้อสินค้า.${format}`);
+          if (ok) Layout.toast('ส่งออกสำเร็จ');
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
     };
     Page.init();

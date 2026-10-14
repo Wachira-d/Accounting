@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **549 ไฟล์ · 5,416 `[Fact]` + 840 `[Theory]` (3,758 `InlineData`)** ณ 2026-10-15 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **551 ไฟล์ · 5,434 `[Fact]` + 842 `[Theory]` (3,767 `InlineData`)** ณ 2026-10-15 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6166,3 +6166,18 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | EXP4-08 | ด่านสิทธิ์ endpoint ส่งออก | ทุกตัวใช้ด่านเดียวกับ endpoint รายการของหน้านั้น · ไฟล์โอนเงินเดือน = Payroll.View + **Pii.View** + PiiAccessLog · ส่งออกทะเบียนพนักงานจากหน้านำเข้า/ส่งออกบันทึก PiiAccessLog | ⏳ ทดสอบมือ (ยังไม่มี controller test harness ของ PayrollController) |
 | EXP4-09 | หน้าเว็บ: ปุ่ม Excel/CSV ส่งตัวกรองชุดเดียวกับตาราง | payroll (พนักงาน/รอบ/ลา/ทะเบียน/โอน) · employees · salary-advance · expense · lodging · settlements (รอบ/บรรทัด) · pos-reports ออเดอร์ — ผ่าน `ExportUtil.downloadServer` | ⏳ ทดสอบมือ · `node --check` ผ่านใน check_all |
 | EXP4-10 | บั๊กข้างเคียงที่แก้ | `employees.html` ค้นหาคนที่ 21+ เจอ · `expense.html` ค้นหามีผล · `lodging.html` บอก "แสดง 100 จาก N" · `pos-reports` ตัวกรองวันที่ของออเดอร์มีผล | ⏳ ทดสอบมือ · ตัวกรอง Active = EXP4-07 |
+## EXP-X2 — ส่งออก CSV/Excel ของรายการเอกสาร · บรรทัดเอกสาร · ผู้ติดต่อ · สินค้า · คลัง (ทีม X2 · 2026-10-14 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X2)
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| EXP2-01 | หน้าเอกสาร/ซื้อสินค้า มีเกิน 200 ใบ → Export Excel/CSV | ไฟล์ครบทุกใบตามตัวกรองบนจอ (ชนิด · ฝั่ง · สถานะ · คำค้น · ช่วงวันที่ · โครงการ · ผู้ติดต่อ · ออกเอกสารต่อ) — ไม่ใช่ 200 แถว (ทิศตรงข้าม: หน้าเดียว pageSize=10000 = 200) | ✅ `Db/TradeListExportDbTests` · `TradeListExportTests` |
+| EXP2-02 | ไฟล์ CSV เปิดใน Excel | UTF-8 BOM + CRLF · ภาษาไทยไม่เพี้ยน · ยอดเป็นตัวเลขไม่มีตัวคั่นหลักพัน (ปัด AwayFromZero) · ยอดติดลบไม่มี `'` · ข้อความขึ้นต้น = + - @ ถูกกันสูตร | ✅ `TradeListExportTests` |
+| EXP2-03 | ไฟล์ Excel | เงิน/จำนวนเป็นเซลล์ตัวเลข · เลขภาษี 13 หลัก/ขึ้นต้น 0 คงเป็นข้อความ · ไม่มีแถว = หัวคอลัมน์ + "(ไม่มีข้อมูลตามตัวกรอง)" | ✅ `TradeListExportTests` |
+| EXP2-04 | คอลัมน์รายการเอกสาร | เลขที่ · ชนิด · หัวเอกสารที่พิมพ์จริง · วันที่/ครบกำหนด (yyyy-MM-dd ปฏิทินไทย) · ผู้ติดต่อ + เลขภาษี + สาขา · สาขาผู้ออก · ใบกำกับผู้ขาย · อ้างอิง · ใบต้นทาง · สกุลเงิน/อัตรา · ก่อน VAT/ส่วนลด/VAT/WHT/รวม/หักมัดจำ/สุทธิ/ชำระแล้ว/ค้าง (ชนิดที่ไม่ใช่หนี้ = ว่าง เหมือน "—" บนจอ) · สถานะ · ผู้สร้าง · รหัสระบบ | ✅ `TradeListExportTests` |
+| EXP2-05 | ส่งออกรายบรรทัด | 1 แถว/บรรทัด เรียงตามลำดับ · สินค้า/รายการ/จำนวน/ราคา/ส่วนลด/ยอด/VAT/WHT/ประเภทเงินได้/รหัส+ชื่อบัญชี (เติมจากผังเมื่อ list ไม่ include) · ใบที่ถูกซ่อน = 1 แถวบอกเหตุผล | ✅ `TradeListExportTests` |
+| EXP2-06 | ฝั่งรายรับ/รายจ่าย | ใบลดหนี้ซื้อ (`CnDnPurchaseSideOverride=true`) อยู่ฝั่งจ่ายเท่านั้น · ไม่รู้ = ฝั่งซื้อ (กติกาเดียวกับ `Layout.docSide`) | ✅ `TradeListExportTests` · `Db/TradeListExportDbTests` |
+| EXP2-07 | เกินเพดาน (เอกสาร 50,000 · บรรทัด 200,000 · ทะเบียน 100,000) | 400 ข้อความไทยให้กรองแคบลง (`EXPORT-TOO-LARGE`) — ไม่ตัดไฟล์เงียบ | ✅ `TradeListExportTests` |
+| EXP2-08 | สิทธิ์ | ไม่มี `Document.Export` = 403 พร้อมชื่อสิทธิ์ · Sales (ดูได้แค่รายรับ) ส่งออก `type=PaymentVoucher` = 403 · ไฟล์ "documents" ของศูนย์นำเข้า/ส่งออก = 403 สำหรับผู้ดูได้บางฝั่ง | ⬜ manual |
+| EXP2-09 | หน้าสินค้า: เลือกประเภท | รายการเปลี่ยนตามประเภทจริง (เดิมพารามิเตอร์ `productType` ไม่มีผู้อ่าน) · ไฟล์ตามประเภทเดียวกัน | ✅ `Db/TradeListExportDbTests` |
+| EXP2-10 | ศูนย์นำเข้า/ส่งออก กด "ส่งออก" | ได้ไฟล์จริง (เดิม API.post กับไฟล์ ⇒ "non-JSON" · ส่ง `format` แทน `fileFormat` ⇒ 400) · เลือก Excel ได้ .xlsx · CSV มี BOM | ⬜ manual |
+| EXP2-11 | หน้าคลัง/รายงานสินค้าคงเหลือ/มัดจำ/e-Tax/รายการประจำ | ปุ่ม Export ทุกแท็บ · ตัวเลขเป็นตัวเลข · e-Tax/รายการประจำ/การโอนย้ายวนทุกหน้า (เกินเพดาน 100,000 แถว = เตือนแดง) | ⬜ manual |

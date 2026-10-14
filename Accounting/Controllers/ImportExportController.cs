@@ -98,6 +98,16 @@ public class ImportExportController : ControllerBase
     {
         var deny = await DenyAsync(companyId, request?.EntityType, isExport: true);
         if (deny != null) return deny;
+        // ไฟล์ "documents" ของศูนย์นี้รวมทุกฝั่ง — ผู้ที่ดูได้แค่ฝั่งเดียว (เช่น Sales ที่มี Document.Export แต่ไม่มี Purchase.View)
+        // เดิมดึงใบสำคัญจ่าย/ใบแจ้งหนี้ซื้อออกไปได้ทั้งที่หน้าเอกสารซ่อนไว้ (EXPORT_AUDIT §X2) ⇒ ให้ใช้ปุ่มส่งออกบนหน้าเอกสาร
+        // ซึ่งเดินด่านทิศทางรายใบ (TradeListExportController)
+        if (ImportExportPermissionScope.NormalizeEntityType(request?.EntityType) == "documents")
+        {
+            var vis = await DocumentPermissionHelper.VisibleDirectionsAsync(_permissions, companyId, JwtHelper.GetUserIdFromClaims(User));
+            if (!vis.ShowsEverything)
+                return StatusCode(403, new ApiResponse<string>(false, null,
+                    "บัญชีของคุณดูเอกสารได้บางฝั่ง — ส่งออกจากปุ่ม \"Export\" บนหน้าเอกสาร (ระบบกรองตามสิทธิ์ให้) แทนไฟล์รวมทุกฝั่งของหน้านี้"));
+        }
         var result = await _importExportService.ExportAsync(companyId, request!);
         // X4 2026-10-14: ชนิดที่ด่านส่งออกต้องใช้ Pii.View (ทะเบียนพนักงาน = เลขบัตร/เลขบัญชี/เงินเดือนเต็ม) ⇒ บันทึก PiiAccessLog (PDPA ม.37) —
         // เดิมด่านสิทธิ์ครบแต่ไม่มีร่องรอยว่าใครส่งออกทะเบียนพนักงานทั้งบริษัทเมื่อไร (ตัวตัดสิน "ชนิดนี้เป็น PII" = ImportExportPermissionScope ตัวเดียว)

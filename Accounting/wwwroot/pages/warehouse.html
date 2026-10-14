@@ -26,6 +26,7 @@
     <div class="tabs" style="margin-bottom:0">
       <div class="tab active" onclick="Page.showTab('stock',this)">สต็อกสินค้า</div>
       <div class="tab" onclick="Page.showTab('transfers',this)">การโอนย้าย</div>
+      <span id="whExportSlot" style="margin-left:auto"></span>
     </div>
 
     <!-- Stock Table -->
@@ -102,12 +103,20 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       warehouses: [],
       products: [],
       async init() {
         if (!Layout.init('warehouse')) return;
+        const whEx = document.getElementById('whExportSlot');
+        if (whEx && window.ExportUtil) whEx.innerHTML = ExportUtil.renderMenu([
+          { label: '📊 Excel — สต็อกคลังที่เลือก', onclick: "Page.exportData('stock','xlsx')" },
+          { label: '📄 CSV — สต็อกคลังที่เลือก', onclick: "Page.exportData('stock','csv')" },
+          { label: '📊 Excel — การโอนย้ายทั้งหมด', onclick: "Page.exportData('transfers','xlsx')" },
+          { label: '📄 CSV — การโอนย้ายทั้งหมด', onclick: "Page.exportData('transfers','csv')" },
+        ]);
         Layout.setTitle('คลังสินค้า');
         await this.load();
       },
@@ -151,14 +160,51 @@
           const res = await api.getWarehouseStock(warehouseId);
           const items = res.data?.items || res.data || [];
           const w = this.warehouses.find(x => x.id === warehouseId);
+          this._lastStock = { warehouse: w, items };
           document.getElementById('stockBody').innerHTML = items.length ? items.map(s => `<tr>
-            <td>${w?.name || '-'}</td>
-            <td class="font-medium">${s.productName || s.sku || '-'}</td>
+            <td>${Layout.esc(w?.name || '-')}</td>
+            <td class="font-medium">${Layout.esc(s.productName || s.sku || '-')}</td>
             <td class="text-right">${s.quantity}</td>
             <td class="text-right">${s.reservedQuantity || 0}</td>
             <td class="text-right font-semibold">${s.availableQuantity ?? (s.quantity - (s.reservedQuantity || 0))}</td>
-            <td class="text-gray-500">${s.location || '-'}</td>
+            <td class="text-gray-500">${Layout.esc(s.location || '-')}</td>
           </tr>`).join('') : '<tr><td colspan="6" class="text-center text-gray-400">ไม่มีสต็อกในคลังนี้</td></tr>';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ===== ส่งออก (EXPORT_AUDIT §X2 · เดิมหน้านี้ไม่มีปุ่มส่งออก) =====
+      /** สต็อกของคลังที่เปิดอยู่ (เซิร์ฟเวอร์ส่งครบทุกแถว ไม่แบ่งหน้า) · การโอนย้าย = วนดึงทุกหน้า (ตารางบนจอแสดงแค่ 20 รายการล่าสุด) */
+      async exportData(kind, format) {
+        if (kind === 'stock') {
+          const st = this._lastStock;
+          if (!st || !st.items.length) { Layout.toast('เลือกคลังที่มีสต็อกก่อน', 'error'); return; }
+          return ExportUtil.exportData(format, {
+            rows: st.items.map(x => Object.assign({ warehouseName: st.warehouse?.name || '' }, x)),
+            filename: `สต็อกคลัง_${st.warehouse?.code || st.warehouse?.name || ''}`, sheetName: 'stock',
+            columns: [
+              { key: 'warehouseName', label: 'คลัง' }, { key: 'productCode', label: 'รหัสสินค้า' }, { key: 'productName', label: 'สินค้า' },
+              { key: 'quantity', label: 'จำนวน' }, { key: 'reservedQuantity', label: 'จอง' }, { key: 'availableQuantity', label: 'คงเหลือพร้อมใช้' },
+              { key: 'location', label: 'ตำแหน่ง' }, { key: 'lotNumber', label: 'Lot' },
+              { key: 'expiryDate', label: 'วันหมดอายุ', format: v => v ? Layout.toDateInput(new Date(v)) : '' },
+            ] });
+        }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const all = [];
+          for (let page = 1; page <= 500; page++) {
+            const res = await api.getTransfers(`?page=${page}&pageSize=200`);
+            const d = res.data || {};
+            all.push(...(d.items || []));
+            if (page >= (d.totalPages || 1)) break;
+            if (page === 500) Layout.toast(`ข้อมูลมี ${d.totalCount} รายการ — ไฟล์นี้มีเพียง ${all.length} รายการแรก (เพดาน)`, 'error');
+          }
+          ExportUtil.exportData(format, {
+            rows: all, filename: 'การโอนย้ายสต็อก', sheetName: 'transfers',
+            columns: [
+              { key: 'transferNumber', label: 'เลขที่' }, { key: 'fromWarehouseName', label: 'จากคลัง' }, { key: 'toWarehouseName', label: 'ไปคลัง' },
+              { key: 'transferDate', label: 'วันที่โอน', format: v => v ? Layout.toDateInput(new Date(v)) : '' },
+              { key: 'status', label: 'สถานะ (รหัส)' }, { key: 'lineCount', label: 'จำนวนรายการ' },
+              { key: 'createdAt', label: 'สร้างเมื่อ', format: v => v ? Layout.toDateInput(new Date(v)) : '' },
+            ] });
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async loadTransfers() {
@@ -169,8 +215,8 @@
           const statusMap = { Pending:'รอดำเนินการ', Shipped:'จัดส่งแล้ว', Received:'รับแล้ว', Cancelled:'ยกเลิก' };
           document.getElementById('transferBody').innerHTML = items.length ? items.map(t => `<tr>
             <td class="font-medium">${t.transferNumber || t.id?.substring(0,8)}</td>
-            <td>${t.fromWarehouseName || '-'}</td>
-            <td>${t.toWarehouseName || '-'}</td>
+            <td>${Layout.esc(t.fromWarehouseName || '-')}</td>
+            <td>${Layout.esc(t.toWarehouseName || '-')}</td>
             <td>${Layout.date(t.createdAt || t.transferDate)}</td>
             <td>${Layout.statusBadge(t.status)}</td>
             <td>

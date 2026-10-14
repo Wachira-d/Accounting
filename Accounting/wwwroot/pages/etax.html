@@ -12,6 +12,7 @@
     <div class="page-header">
       <div><h2 class="page-title">e-Tax Invoice / e-Receipt</h2><p class="page-subtitle">ใบกำกับภาษีอิเล็กทรอนิกส์ ตามมาตรฐาน ETDA / กรมสรรพากร</p></div>
       <div style="display:flex;gap:8px">
+        <span id="etaxExportSlot"></span>
         <button class="btn btn-outline" onclick="Page.showConfig()"
                 data-tour-step="1"
                 data-tour-text="ขั้นที่ 1 — ตั้งค่าครั้งแรก: เลข PID ผู้เสียภาษี / Certificate / URL ETDA · ต้องตั้งให้ครบก่อนสร้าง e-Tax ใบแรก">ตั้งค่า</button>
@@ -226,6 +227,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
   const Page = {
     companyId: null,
@@ -234,7 +236,42 @@
     currentXmlId: null,
     page: 1,
 
+    /** ส่งออกทะเบียน e-Tax ตามแท็บสถานะ — วนดึงทุกหน้า (ตารางบนจอแบ่งหน้าละ 20) · EXPORT_AUDIT §X2 (เดิมไม่มีปุ่มส่งออก)
+     *  ใช้กระทบยอด "ส่งกรมสรรพากรครบทุกใบของเดือนก่อนวันที่ 15 ไหม" (กฎเหล็ก #2 F) — ไม่รวม XML (ดาวน์โหลดรายใบ) */
+    async exportList(format) {
+      try {
+        const statusParam = this.currentStatus ? `&status=${this.currentStatus}` : '';
+        const all = [];
+        for (let page = 1; page <= 500; page++) {
+          const res = await API.get(`/api/companies/${this.companyId}/etax?page=${page}&pageSize=200${statusParam}`);
+          const d = res.data || {};
+          all.push(...(d.items || []));
+          if (page >= (d.totalPages || 1)) break;
+          if (page === 500) Layout.toast(`ข้อมูลมี ${d.totalCount} รายการ — ไฟล์นี้มีเพียง ${all.length} รายการแรก (เพดาน)`, 'error');
+        }
+        const dt = v => v ? Layout.toDateInput(new Date(v)) : '';
+        ExportUtil.exportData(format, {
+          rows: all, filename: `eTax${this.currentStatus ? '_' + this.currentStatus : ''}`, sheetName: 'etax',
+          columns: [
+            { key: 'etaxRefNumber', label: 'เลขอ้างอิง e-Tax' }, { key: 'documentNumber', label: 'เลขที่เอกสาร' },
+            { key: 'sellerName', label: 'ผู้ขาย' }, { key: 'sellerTaxId', label: 'เลขภาษีผู้ขาย' },
+            { key: 'buyerName', label: 'ผู้ซื้อ' }, { key: 'buyerTaxId', label: 'เลขภาษีผู้ซื้อ' },
+            { key: 'status', label: 'สถานะ (รหัส)' }, { key: 'createdAt', label: 'สร้างเมื่อ', format: dt },
+            { key: 'signedAt', label: 'ลงนามเมื่อ', format: dt }, { key: 'certificateSerialNumber', label: 'Serial ใบรับรอง' },
+            { key: 'submittedAt', label: 'ส่งกรมฯ เมื่อ', format: dt }, { key: 'submissionId', label: 'เลขส่ง' },
+            { key: 'acceptanceNumber', label: 'เลขตอบรับ' }, { key: 'acceptedAt', label: 'ตอบรับเมื่อ', format: dt },
+            { key: 'errorCode', label: 'รหัสข้อผิดพลาด' }, { key: 'errorMessage', label: 'ข้อผิดพลาด' },
+            { key: 'voidedAt', label: 'ยกเลิกเมื่อ', format: dt }, { key: 'voidReason', label: 'เหตุผลยกเลิก' },
+          ] });
+      } catch (e) { Layout.toast(e.message, 'error'); }
+    },
+
     async init() {
+      const exSlot = document.getElementById('etaxExportSlot');
+      if (exSlot && window.ExportUtil) exSlot.innerHTML = ExportUtil.renderMenu([
+        { label: '📊 Excel — ตามแท็บสถานะ', onclick: "Page.exportList('xlsx')" },
+        { label: '📄 CSV — ตามแท็บสถานะ', onclick: "Page.exportList('csv')" },
+      ], '📥 Export ▾', '');
       if (!Layout.init('etax')) return;
       Layout.setTitle('e-Tax Invoice');
       // ⚠️ เดิมอ่าน localStorage.getItem('companyId') ซึ่ง **ไม่มีใครเขียนใน

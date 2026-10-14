@@ -792,11 +792,16 @@ public class ImportExportService : IImportExportService
             _ => throw new InvalidOperationException($"ไม่รองรับการส่งออก {request.EntityType}")
         };
 
-        var csv = BuildCsv(data);
-        var fileName = $"{request.EntityType}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv";
+        // ไฟล์เขียนผ่านตัวเขียนกลาง (Helpers/TabularExport ทีม X3 · ผ่าน TradeListExport.Write ทีม X2 · 2026-10-14) แทน BuildCsv เดิมที่
+        // (1) ไม่มี BOM ⇒ เปิดใน Excel ภาษาไทยเพี้ยนทั้งไฟล์ (2) ไม่สน FileFormat — เลือก Excel ก็ได้ CSV
+        // (3) ยอดติดลบถูกเติม ' จากตัวกันสูตร · หัวคอลัมน์ = ชื่อช่องเทมเพลตนำเข้า (นำเข้ากลับได้) · คอลัมน์ทศนิยมเป็นตัวเลขจริงใน Excel
+        var format = Accounting.Helpers.TradeListExport.NormalizeFormat(request.FileFormat);
+        var (columns, rows) = Accounting.Helpers.TradeListExport.FromStringTable(data);
+        if (columns.Count == 0) columns = new List<Accounting.Helpers.TradeListExport.Column> { new("ไม่มีข้อมูล") };
+        var file = Accounting.Helpers.TradeListExport.Write(format, columns, rows, request.EntityType, request.EntityType);
 
-        return new ExportResult(request.EntityType, "csv", data.Count,
-            fileName, "text/csv", Encoding.UTF8.GetBytes(csv));
+        return new ExportResult(request.EntityType, format == Accounting.Helpers.TabularFormat.Csv ? "csv" : "xlsx", data.Count,
+            file.FileName, file.ContentType, file.Content);
     }
 
     public Task<List<string>> GetExportableEntitiesAsync()
@@ -2030,24 +2035,6 @@ public class ImportExportService : IImportExportService
         return errors;
     }
 
-    /// <summary>ไฟล์ CSV ที่ส่งออก — ทุกช่องผ่าน <see cref="Accounting.Helpers.CsvFieldSafety"/>
-    /// ตัวเดียว (เดิมตัวหนีในไฟล์นี้ดูแค่ <c>,</c> <c>"</c> <c>\n</c> ⇒ ชื่อคู่ค้า/
-    /// คำอธิบายที่ขึ้นต้นด้วย <c>=</c> <c>+</c> <c>-</c> <c>@</c> กลายเป็น**สูตร**
-    /// บนเครื่องนักบัญชีที่เปิดไฟล์ และ <c>\r</c> เดี่ยวทำให้แถวแตกกลางคัน)</summary>
-    private static string BuildCsv(List<Dictionary<string, string>> data)
-    {
-        if (data.Count == 0) return "";
-
-        var sb = new StringBuilder();
-        var headers = data[0].Keys.ToList();
-        sb.AppendLine(Accounting.Helpers.CsvFieldSafety.Row(headers));
-
-        foreach (var row in data)
-            sb.AppendLine(Accounting.Helpers.CsvFieldSafety.Row(
-                headers.Select(h => row.GetValueOrDefault(h) ?? "")));
-
-        return sb.ToString();
-    }
 
     // ===== Smart Import - AI Column Matching =====
 

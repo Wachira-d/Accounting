@@ -22,6 +22,7 @@
           รับรู้รายได้เมื่อส่งมอบจริง
         </p>
       </div>
+      <span id="depExportSlot"></span>
     </div>
 
     <div class="tabs">
@@ -122,6 +123,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       status: '',
@@ -129,6 +131,11 @@
       _realizeId: null,
       async init() {
         if (!Layout.init('deposits')) return;
+        const depEx = document.getElementById('depExportSlot');
+        if (depEx && window.ExportUtil) depEx.innerHTML = ExportUtil.renderMenu([
+          { label: '📊 Excel — มัดจำตามตัวกรอง', onclick: "Page.exportRows('xlsx')" },
+          { label: '📄 CSV — มัดจำตามตัวกรอง', onclick: "Page.exportRows('csv')" },
+        ], '📥 Export ▾', '');
         Layout.setTitle('เงินมัดจำ / รับล่วงหน้า');
         await this.load();
       },
@@ -151,6 +158,22 @@
         } catch (e) {
           content.innerHTML = `<div class="text-center text-danger" style="padding:40px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
         }
+      },
+      /** ส่งออกแถวที่แสดง (เซิร์ฟเวอร์ส่งครบตามสถานะที่เลือก ไม่แบ่งหน้า) — ยอดเป็นตัวเลขจริง · สถานะภาษีขายส่งเป็นธง/วันที่ดิบจากเซิร์ฟเวอร์
+       *  (EXPORT_AUDIT §X2 · เดิมหน้านี้ไม่มีปุ่มส่งออก) */
+      exportRows(format) {
+        const d = v => v ? Layout.toDateInput(new Date(v)) : '';
+        ExportUtil.exportData(format, {
+          rows: this._rows || [], filename: 'เงินมัดจำ', sheetName: 'deposits',
+          columns: [
+            { key: 'documentNumber', label: 'เลขที่' }, { key: 'documentDate', label: 'วันที่', format: d },
+            { key: 'contactName', label: 'ลูกค้า' }, { key: 'reference', label: 'อ้างอิง' }, { key: 'depositKindName', label: 'ประเภทมัดจำ' },
+            { key: 'baseAmount', label: 'ฐาน' }, { key: 'vatAmount', label: 'VAT' },
+            { key: 'outputVatDeferred', label: 'ภาษีขายพักรอ (21913)', format: v => v ? 'ใช่' : 'ไม่ใช่' },
+            { key: 'outputVatRecognizedAt', label: 'ภาษีขายรับรู้เมื่อ', format: d },
+            { key: 'realizedAmount', label: 'รับรู้แล้ว' }, { key: 'outstandingAmount', label: 'คงค้าง' },
+            { key: 'ageDays', label: 'อายุ (วัน)' }, { key: 'status', label: 'สถานะ (รหัส)' },
+          ] });
       },
       renderKpis(rows) {
         const outstanding = rows.reduce((s, r) => s + (r.outstandingAmount || 0), 0);
