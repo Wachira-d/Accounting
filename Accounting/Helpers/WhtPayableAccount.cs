@@ -110,6 +110,19 @@ public static class EWithholdingClearing
 {
     public const int ReminderAgeDays = 30;
     public const string ReminderFormCode = "e-Withholding";
+    /// <summary>id คงที่ของแถวเตือนบนปฏิทินภาษี (แถวคำนวณสด ไม่ได้เก็บในตาราง — แก้สถานะที่แถวนี้ไม่ได้ · ล้างยอด 21923 แล้วแถวหายเอง)</summary>
+    public static readonly Guid ReminderEventId = new("6e5f0c1a-2192-4a00-9e00-000000021923");
+
+    /// <summary>ชื่อแถวเตือน (server computes · page displays)</summary>
+    public static string ReminderTitle(DateTime oldestOpenDate)
+        => $"ภาษีหัก ณ ที่จ่ายรอธนาคารนำส่ง (e-Withholding · ผัง {WhtPayableAccount.EWithholdingCode}) ค้างตั้งแต่ "
+           + ThaiDate.CalendarDateUtc(oldestOpenDate).ToString("dd/MM/", System.Globalization.CultureInfo.InvariantCulture)
+           + (ThaiDate.CalendarDateUtc(oldestOpenDate).Year + 543)
+           + $" เกิน {ReminderAgeDays} วัน — ตรวจว่าธนาคารนำส่งแล้ว แล้วบันทึกรายการล้างยอด (Dr {WhtPayableAccount.EWithholdingCode})";
+
+    /// <summary>ข้อความเมื่อผู้ใช้พยายามแก้สถานะแถวเตือน — แถวนี้คำนวณจากยอดผัง ไม่ใช่รายการที่เก็บไว้</summary>
+    public const string ReminderNotEditable =
+        "แถวนี้คำนวณจากยอดคงค้างผัง 21923 (e-Withholding) — แก้สถานะไม่ได้ · เมื่อธนาคารนำส่งแล้ว บันทึกรายการบัญชี Dr 21923 / Cr เงินฝากธนาคาร แถวนี้จะหายเอง";
 
     /// <summary>(วันที่ของ Cr ที่ค้างเก่าสุด, ยอดค้างรวม) · ยอดคงเหลือ ≤ 0 ⇒ (null, ยอด)</summary>
     public static (DateTime? OldestOpenDate, decimal Outstanding) Oldest(IEnumerable<(DateTime Date, decimal Debit, decimal Credit)> lines)
@@ -142,6 +155,10 @@ public static class EWithholdingClearing
 /// </summary>
 public static class EWithholdingScope
 {
+    /// <summary>คำนำหน้าแถวข้อมูลบนรายงาน ภ.ง.ด. ของ 50 ทวิ ที่ออกเองให้ใบ e-Withholding (ติ๊กออก · ไม่นับยอด) — ไม่ใช่ป้าย "ยังไม่ออกใบ"
+    /// (<c>WhtUnissuedCertGate</c> ไม่บล็อกไฟล์ยื่นด้วยแถวนี้)</summary>
+    public const string ReportMarker = "ℹ️ หักผ่าน e-Withholding (ธนาคารนำส่งแล้ว — ไม่ยื่นซ้ำ)";
+
     /// <summary>กติกา pure — ธงของใบเอง หรือใบต้นทางฝั่งผู้จ่ายที่ติ๊ก</summary>
     public static bool IsVia(bool ownFlag, DocumentType? sourceType, bool sourceFlag)
         => ownFlag || (sourceType is DocumentType st && WhtCertIssuePlan.AppliesTo(st) && sourceFlag);

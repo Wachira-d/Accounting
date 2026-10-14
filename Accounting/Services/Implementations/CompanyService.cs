@@ -292,6 +292,15 @@ public class CompanyService : ICompanyService
         }
         if (request.VatRate.HasValue) company.VatRate = request.VatRate.Value;
         if (request.IsWhtRegistered.HasValue) company.IsWhtRegistered = request.IsWhtRegistered.Value;
+        // รอบ 204 (c2): แบบยื่นค่าสิทธิ ม.40(3) บุคคลธรรมดา — ผู้ใช้ตัดสิน (ระบบแนะนำ ภ.ง.ด.2) · วันเริ่มคำนวณที่ตัวตัดสินเดียว
+        if (request.WhtRoyaltyIndividualForm.HasValue || request.WhtRoyaltyPnd2From.HasValue)
+        {
+            var royalty = Accounting.Helpers.WhtRoyaltyPolicy.ApplyUpdate(
+                new Accounting.Helpers.WhtRoyaltySetting(company.WhtRoyaltyIndividualForm, company.WhtRoyaltyPnd2From),
+                request.WhtRoyaltyIndividualForm, request.WhtRoyaltyPnd2From, DateTime.UtcNow);
+            company.WhtRoyaltyIndividualForm = royalty.Form;
+            company.WhtRoyaltyPnd2From = royalty.Pnd2From;
+        }
         if (request.IsSocialSecurityRegistered.HasValue) company.IsSocialSecurityRegistered = request.IsSocialSecurityRegistered.Value;
         if (request.SocialSecurityAccountNo != null) company.SocialSecurityAccountNo = request.SocialSecurityAccountNo;
         if (request.BuildingNumber != null) company.BuildingNumber = request.BuildingNumber;
@@ -735,7 +744,9 @@ public class CompanyService : ICompanyService
             AddressEn: c.AddressEn,
             IsRetailApproved: c.IsRetailApproved,
             PhoR06ApprovedDate: c.PhoR06ApprovedDate,
-            PaidUpCapital: c.PaidUpCapital);
+            PaidUpCapital: c.PaidUpCapital,
+            WhtRoyaltyIndividualForm: c.WhtRoyaltyIndividualForm,
+            WhtRoyaltyPnd2From: c.WhtRoyaltyPnd2From);
     }
 
     /// <summary>ประกอบ Company.Address (free-text) จาก structured fields — ที่อยู่

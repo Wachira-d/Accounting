@@ -225,6 +225,23 @@
           </label>
         </div>
       </div>
+      <!-- รอบ 204 (c2): ค่าสิทธิ ม.40(3) จ่ายบุคคลธรรมดา — ผู้ใช้เลือกแบบเอง (ระบบแนะนำ ภ.ง.ด.2) · วันเริ่มใช้: ว่าง = เซิร์ฟเวอร์ตั้งวันที่ 1 ของเดือนนี้ตอนบันทึก -->
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label class="form-label" for="cWhtRoyaltyForm">ค่าสิทธิ/ค่าลิขสิทธิ์ ม.40(3) ที่จ่ายบุคคลธรรมดา — ยื่นแบบ</label>
+          <select class="form-select" id="cWhtRoyaltyForm">
+            <option value="Pnd3">ภ.ง.ด.3 (แบบเดิมของระบบ)</option>
+            <option value="Pnd2">ภ.ง.ด.2 — แนะนำ</option>
+          </select>
+          <div class="form-hint">ระบบแนะนำ <b>ภ.ง.ด.2</b> (ม.50(2) · ประกาศอธิบดีฯ ฉบับที่ 58 — แบบ ภ.ง.ด.2 ใช้กับเงินได้ ม.40(3)(4) ที่จ่ายบุคคลธรรมดา)
+            · ใช้กับผัง 21915 · 50 ทวิ · หน้านำส่ง · ใบที่จ่ายก่อนวันเริ่มยังเป็น ภ.ง.ด.3 · 50 ทวิ ที่ออกเองเลือก 2 หรือ 3 ได้ทุกกรณี</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cWhtRoyaltyPnd2From">เริ่มใช้ ภ.ง.ด.2 ตั้งแต่วันที่จ่าย</label>
+          <input type="date" class="form-input" id="cWhtRoyaltyPnd2From">
+          <div class="form-hint">ว่าง = วันที่ 1 ของเดือนนี้ (ระบบตั้งให้ตอนบันทึก · แก้ได้)</div>
+        </div>
+      </div>
       <div class="form-group" id="cSocialSecurityGroup" style="display:none">
         <label class="form-label">เลขที่บัญชีประกันสังคม</label>
         <input type="text" id="cSocialSecurityAccountNo" class="form-input" placeholder="เลขที่บัญชีนายจ้าง">
@@ -2164,6 +2181,10 @@
             ? String(c.phoR06ApprovedDate).slice(0, 10) : '';
           document.getElementById('cVatRate').value = c.vatRate ?? 7;   // 0 ต้องโชว์ 0 ไม่ใช่ 7
           document.getElementById('cWhtRegistered').checked = c.isWhtRegistered !== false;
+          // รอบ 204 (c2): เก็บแล้วต้อง echo กลับ — ค่าจากเซิร์ฟเวอร์ (undefined = เซิร์ฟเวอร์ยังไม่ส่ง ⇒ ค่าตั้งต้นเดิม ภ.ง.ด.3)
+          document.getElementById('cWhtRoyaltyForm').value = c.whtRoyaltyIndividualForm || 'Pnd3';
+          document.getElementById('cWhtRoyaltyPnd2From').value = c.whtRoyaltyPnd2From ? String(c.whtRoyaltyPnd2From).slice(0, 10) : '';
+          this._companyRoyaltyLoaded = true;
           document.getElementById('cSocialSecurity').checked = c.isSocialSecurityRegistered || false;
           document.getElementById('cSocialSecurityAccountNo').value = c.socialSecurityAccountNo || '';
           if (c.isSocialSecurityRegistered) document.getElementById('cSocialSecurityGroup').style.display = 'block';
@@ -2406,6 +2427,11 @@
             // 0% เป็นค่าที่ตั้งใจได้ (ยังไม่จด VAT / zero-rated) — ว่างเท่านั้นที่ = 7
             ...(this._companyLoaded ? { vatRate: Layout.numOrNull('cVatRate') ?? 7 } : {}),
             isWhtRegistered: document.getElementById('cWhtRegistered').checked,
+            // ส่งเฉพาะเมื่อโหลดค่าเดิมสำเร็จ (กันบันทึกทับเป็นค่าตั้งต้นตอนโหลดล้ม) · วันว่าง = null (เซิร์ฟเวอร์คงเดิม/ตั้งวันที่ 1 ของเดือน)
+            ...(this._companyRoyaltyLoaded ? {
+              whtRoyaltyIndividualForm: document.getElementById('cWhtRoyaltyForm').value,
+              whtRoyaltyPnd2From: document.getElementById('cWhtRoyaltyPnd2From').value || null,
+            } : {}),
             isSocialSecurityRegistered: document.getElementById('cSocialSecurity').checked,
             socialSecurityAccountNo: document.getElementById('cSocialSecurityAccountNo').value || null,
             address: Page.composeAddress(),
@@ -2439,6 +2465,11 @@
           }
           const select = document.getElementById('companySelect');
           if (select) { const opt = select.querySelector(`option[value="${cid}"]`); if (opt) opt.textContent = name; }
+          // รอบ 204 (c2): วันเริ่มใช้ ภ.ง.ด.2 ที่เซิร์ฟเวอร์ตั้งให้ (เปิดครั้งแรกโดยไม่ระบุวัน) — แสดงค่าที่เก็บจริง
+          if (res.data && this._companyRoyaltyLoaded) {
+            document.getElementById('cWhtRoyaltyForm').value = res.data.whtRoyaltyIndividualForm || 'Pnd3';
+            document.getElementById('cWhtRoyaltyPnd2From').value = res.data.whtRoyaltyPnd2From ? String(res.data.whtRoyaltyPnd2From).slice(0, 10) : '';
+          }
           Layout.toast('บันทึกข้อมูลบริษัทสำเร็จ');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

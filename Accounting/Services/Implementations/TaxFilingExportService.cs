@@ -149,6 +149,9 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(w.Status))
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
+        // รอบ 204 (c3): ใบ e-Withholding (ธนาคารนำส่งแล้ว) ไม่เข้าไฟล์ยื่น — บอกในสรุป (ไม่หายเงียบ)
+        var (certsToFile, eWhtNote) = await ExcludeEWithholdingAsync(companyId, certs);
+        certs = certsToFile;
 
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
@@ -172,6 +175,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             $"ภ.ง.ด.3 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท "
             + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
             + reviewNote
+            + eWhtNote
             + WhtRateNote(rows));
     }
 
@@ -192,6 +196,9 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(w.Status))
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
+        // รอบ 204 (c3): ใบ e-Withholding (ธนาคารนำส่งแล้ว) ไม่เข้าไฟล์ยื่น — บอกในสรุป (ไม่หายเงียบ)
+        var (certsToFile, eWhtNote) = await ExcludeEWithholdingAsync(companyId, certs);
+        certs = certsToFile;
 
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
@@ -203,6 +210,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             certs.Count, totalIncome, totalTax,
             $"ภ.ง.ด.53 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท "
             + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
+            + eWhtNote
             + WhtRateNote(rows));
     }
 
@@ -768,6 +776,20 @@ public class TaxFilingExportService : ITaxFilingExportService
         return rows;
     }
 
+    /// <summary>รอบ 204 (c3): ตัด 50 ทวิ ของใบ e-Withholding ออกจากไฟล์ยื่น ภ.ง.ด. (ธนาคารนำส่ง/กรมสรรพากรมีข้อมูลแล้ว — ยื่นซ้ำ = นำส่งซ้ำ) ·
+    /// ตัวตัดสินเดียว <see cref="EWithholdingScope"/> · คืนข้อความแจ้งในสรุป (ใบที่ข้าม + ยอด) — ห้ามหายเงียบ · ไม่มีใบ e-Withholding = ชุดเดิม ข้อความว่าง</summary>
+    private async Task<(List<WithholdingTaxCert> Kept, string Note)> ExcludeEWithholdingAsync(Guid companyId, List<WithholdingTaxCert> certs)
+    {
+        if (certs.Count == 0) return (certs, "");
+        var eWhtDocIds = await EWithholdingScope.LoadDocIdsAsync(_db, companyId);
+        if (eWhtDocIds.Count == 0) return (certs, "");
+        var skipped = certs.Where(c => c.DocumentId is Guid d && eWhtDocIds.Contains(d)).ToList();
+        if (skipped.Count == 0) return (certs, "");
+        var kept = certs.Where(c => !(c.DocumentId is Guid d && eWhtDocIds.Contains(d))).ToList();
+        return (kept, $" · ℹ️ ไม่รวม {skipped.Count} ใบที่หักผ่าน e-Withholding (ธนาคารนำส่งแล้ว — ภาษี {skipped.Sum(c => c.TotalTaxAmount):N2} บาท): "
+            + string.Join(", ", skipped.Take(3).Select(c => c.CertificateNumber)) + (skipped.Count > 3 ? ", …" : ""));
+    }
+
     /// <summary>ย้ายไป <see cref="PndIncomeTypeCode"/> แล้ว เพื่อให้ปุ่ม e-Filing
     /// ในหน้ารายงานใช้ตารางเดียวกัน (เดิมเป็น private ที่นี่ อีกทางจึงส่งรหัสดิบ)</summary>
     private static string MapIncomeTypeCode(string? code) => PndIncomeTypeCode.ForFile(code);
@@ -881,6 +903,9 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(w.Status))
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
+        // รอบ 204 (c3): ใบ e-Withholding (ธนาคารนำส่งแล้ว) ไม่เข้าไฟล์ยื่น — บอกในสรุป (ไม่หายเงียบ)
+        var (certsToFile, eWhtNote) = await ExcludeEWithholdingAsync(companyId, certs);
+        certs = certsToFile;
 
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
@@ -922,6 +947,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
             + reviewNote
             + journalNote
+            + eWhtNote
             + WhtRateNote(rows));
     }
 
@@ -999,6 +1025,9 @@ public class TaxFilingExportService : ITaxFilingExportService
                 && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(w.Status))
             .ToListAsync();
         await _db.HydratePayeeContactsAsync(companyId, certs);
+        // รอบ 204 (c3): ใบ e-Withholding (ธนาคารนำส่งแล้ว) ไม่เข้าไฟล์ยื่น — บอกในสรุป (ไม่หายเงียบ)
+        var (certsToFile, eWhtNote) = await ExcludeEWithholdingAsync(companyId, certs);
+        certs = certsToFile;
 
         var totalIncome = certs.Sum(c => c.TotalIncomeAmount);
         var totalWht = certs.Sum(c => c.TotalTaxAmount);
@@ -1011,6 +1040,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             certs.Count, totalIncome, totalWht,
             $"ภ.ง.ด.54 เดือน {month}/{year} จ่ายต่างประเทศ {certs.Count} ราย WHT {totalWht:N2} บาท "
             + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
+            + eWhtNote
             + Pnd54RateNote(certs));
         // ⚠️ **ไม่เรียก `WhtRateNote` ที่ ภ.ง.ด.54 โดยตั้งใจ** — ตารางอัตราของ
         // `ThaiWhtRateTable` คือ ท.ป.4/2528 (ในประเทศ) ส่วน ภ.ง.ด.54 เดินตาม ม.70

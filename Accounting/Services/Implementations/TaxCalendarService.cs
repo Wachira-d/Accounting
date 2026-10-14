@@ -30,11 +30,41 @@ public class TaxCalendarService : ITaxCalendarService
             .OrderBy(e => e.DueDate)
             .ToListAsync();
 
-        return events.Select(MapToResponse).ToList();
+        var result = events.Select(MapToResponse).ToList();
+        // รอบ 204 (c3): แถวเตือนยอด e-Withholding ค้าง — โชว์ในมุมมองปี/เดือนปัจจุบัน (แถวคำนวณสด)
+        var today = DateTime.UtcNow;
+        if (year == today.Year && (month == null || month == today.Month)
+            && await EWithholdingReminderAsync(companyId) is { } eWht)
+            result.Add(eWht);
+        return result;
+    }
+
+    /// <summary>รอบ 204 (c3): แถวเตือน "ภาษีหัก ณ ที่จ่ายรอธนาคารนำส่ง (21923) ค้างเกิน 30 วัน" — คำนวณสดจาก GL ของบริษัทนี้ (ตัดยอดแบบ FIFO ·
+    /// <see cref="EWithholdingClearing"/>) · ไม่มียอดค้างเก่า ⇒ null · ระบบไม่ประทับว่า "ธนาคารนำส่งแล้ว" เอง — ผู้ใช้ตรวจแล้วลงรายการล้างยอด</summary>
+    private async Task<TaxCalendarEventResponse?> EWithholdingReminderAsync(Guid companyId)
+    {
+        var code = WhtPayableAccount.EWithholdingCode;
+        var lines = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && l.Account != null && l.Account.AccountCode == code)
+            .Select(l => new { l.JournalEntry.EntryDate, l.DebitAmount, l.CreditAmount })
+            .ToListAsync();
+        if (lines.Count == 0) return null;
+        var (oldest, outstanding) = EWithholdingClearing.Oldest(lines.Select(l => (l.EntryDate, l.DebitAmount, l.CreditAmount)));
+        if (oldest is not DateTime open || !EWithholdingClearing.NeedsReminder(open, DateTime.UtcNow)) return null;
+        var due = ThaiDate.CalendarDateUtc(open).AddDays(EWithholdingClearing.ReminderAgeDays);
+        var now = DateTime.UtcNow;
+        return new TaxCalendarEventResponse(
+            EWithholdingClearing.ReminderEventId, EWithholdingClearing.ReminderFormCode, EWithholdingClearing.ReminderTitle(open),
+            now.Year, now.Month, due, null, "Overdue", null, null, outstanding, 0, false,
+            (int)(due.Date - now.Date).TotalDays);
     }
 
     public async Task<TaxCalendarEventResponse> GetEventAsync(Guid companyId, Guid eventId)
     {
+        if (eventId == EWithholdingClearing.ReminderEventId)
+            return await EWithholdingReminderAsync(companyId) ?? throw new KeyNotFoundException("ไม่พบรายการปฏิทินภาษี");
         var evt = await _db.Set<TaxCalendarEvent>()
             .FirstOrDefaultAsync(e => e.Id == eventId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบรายการปฏิทินภาษี");
@@ -265,6 +295,9 @@ public class TaxCalendarService : ITaxCalendarService
 
     public async Task<TaxCalendarEventResponse> UpdateEventAsync(Guid companyId, Guid eventId, UpdateTaxCalendarEventRequest request)
     {
+        // c3: แถวเตือน e-Withholding คำนวณจาก GL — แก้สถานะที่นี่ไม่มีผล ⇒ บอกทางไปต่อ (ห้าม silent no-op)
+        if (eventId == EWithholdingClearing.ReminderEventId)
+            throw new BusinessRuleException(EWithholdingClearing.ReminderNotEditable, EWithholdingClearing.ReminderFormCode);
         var evt = await _db.Set<TaxCalendarEvent>()
             .FirstOrDefaultAsync(e => e.Id == eventId && e.CompanyId == companyId && !e.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบรายการปฏิทินภาษี");
@@ -322,7 +355,9 @@ public class TaxCalendarService : ITaxCalendarService
         if (events.Any(e => e.Status == "Overdue"))
             await _db.SaveChangesAsync();
 
-        return events.Select(MapToResponse).ToList();
+        var result = events.Select(MapToResponse).ToList();
+        if (await EWithholdingReminderAsync(companyId) is { } eWht) result.Add(eWht);   // รอบ 204 (c3)
+        return result;
     }
 
     public async Task ProcessRemindersAsync()

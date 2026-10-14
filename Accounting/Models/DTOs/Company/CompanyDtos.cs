@@ -73,7 +73,11 @@ public record UpdateCompanyRequest(
     decimal? PaidUpCapital = null,
     // ผู้ใช้ "แตะ/ยืนยัน" ช่องจด VAT จริง (ฝ่ายค้านรอบสอง R2-C8) — ประทับ CompanySettings.VatStatusConfirmedAt
     // เฉพาะเมื่อ true **และ** ส่ง IsVatRegistered มาด้วย · ไม่ส่ง = บันทึกข้อมูลบริษัทเรื่องอื่น
-    bool? ConfirmVatStatus = null);
+    bool? ConfirmVatStatus = null,
+    // รอบ 204 (c2): ค่าสิทธิ ม.40(3) จ่ายบุคคลธรรมดา ยื่น ภ.ง.ด.3 (เดิม) / ภ.ง.ด.2 (แนะนำ · ประกาศอธิบดีฯ ฉบับที่ 58) · null = ไม่แตะ ·
+    // วันเริ่มใช้ ภ.ง.ด.2: null = คงเดิม (เปิดครั้งแรกโดยไม่ระบุ ⇒ วันที่ 1 ของเดือนปัจจุบัน — WhtRoyaltyPolicy.ApplyUpdate)
+    WhtRoyaltyIndividualForm? WhtRoyaltyIndividualForm = null,
+    DateTime? WhtRoyaltyPnd2From = null);
 
 public record CompanyResponse(
     Guid Id,
@@ -114,7 +118,10 @@ public record CompanyResponse(
     DateTime? PhoR06ApprovedDate = null,
     // เก็บแล้วต้อง echo กลับ — ฟิลด์นี้ถูก "อ่าน" โดยสูตรภาษี 4 จุดมาตลอด
     // แต่ไม่เคยมีทั้งช่องกรอกและช่อง echo ⇒ เป็น 0 ทุกบริษัท (รอบ 182)
-    decimal PaidUpCapital = 0m);
+    decimal PaidUpCapital = 0m,
+    // รอบ 204 (c2): เก็บแล้วต้อง echo กลับ — แบบยื่นค่าสิทธิบุคคลธรรมดา + วันเริ่มใช้ ภ.ง.ด.2
+    WhtRoyaltyIndividualForm WhtRoyaltyIndividualForm = global::Accounting.Models.Enums.WhtRoyaltyIndividualForm.Pnd3,
+    DateTime? WhtRoyaltyPnd2From = null);
 
 public record SubscriptionSummary(
     SubscriptionPlan Plan,

@@ -1714,12 +1714,18 @@ public partial class TaxService : ITaxService
                 && d.WithholdingTaxAmount != 0)
             .ToListAsync();
         await _db.HydrateContactsAsync(companyId, docs);
+        // รอบ 204 (c2): ค่าสิทธิ ม.40(3) บุคคลธรรมดา ⇒ ภ.ง.ด.2 ตามค่าตั้งบริษัท ณ วันจ่าย (ตัวเดียวกับ 50 ทวิ/JE) ·
+        // (c3): ใบ e-Withholding — ธนาคารนำส่งแทน ⇒ ไม่ขึ้นแถวเตือน "ยังไม่ออก 50 ทวิ" · 50 ทวิ ที่ออกเองให้ใบนั้นเป็นแถวข้อมูล (ไม่นับยอด)
+        var royalty = await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId);
+        var eWhtDocIds = await Accounting.Helpers.EWithholdingScope.LoadDocIdsAsync(_db, companyId);
+        docs = docs.Where(d => !eWhtDocIds.Contains(d.Id)).ToList();
+        bool RoyaltyOf(Document d) => royalty.AppliesTo(d.PaymentDate ?? d.DocumentDate);
 
         // แยกผู้ถูกหักตามแบบ (ท.ป.4/2528): ภ.ง.ด.3 = บุคคลธรรมดาไทย,
         // ภ.ง.ด.53 = นิติบุคคลไทย, ภ.ง.ด.54 = ผู้รับต่างประเทศ (ม.70) —
         // เดิมไม่กรองเลย ทำให้ 3 กับ 53 ของงวดเดียวกันเป็นรายงานฝาแฝด
         // ยอดนำส่งรวมเป็น 2 เท่าของที่หักจริง
-        bool PayeeInScope(Contact? c, bool docIsForeignService, IReadOnlyList<string?> withheldIncomeCodes)
+        bool PayeeInScope(Contact? c, bool docIsForeignService, IReadOnlyList<string?> withheldIncomeCodes, bool royaltyAsPnd2)
         {
             // สัญญาณ "ต่างประเทศ" มี 2 ทาง: CountryCode ของ contact (มักไม่ได้กรอก)
             // และธง IsForeignService บนเอกสาร (ผู้ใช้ติ๊กเองตอนสร้าง PV — เชื่อถือได้
@@ -1742,7 +1748,7 @@ public partial class TaxService : ITaxService
             //     ตรง ๆ ผู้รับกลุ่มนี้จะหายจากทั้ง ภ.ง.ด.3 และ 53 (ไม่ถูกนำส่งเลย)
             //     ส่วน resolver มี fallback DetermineTaxFormType ให้ลงแบบใดแบบหนึ่งเสมอ
             // รอบ 204 (ข้อ 148): ส่งประเภทเงินได้ของบรรทัดที่หักด้วย — ดอกเบี้ย/ปันผลจ่ายบุคคลธรรมดา = ภ.ง.ด.2 (ตัวเดียวกับ 50 ทวิ/ผัง 21915)
-            var (form, _, _) = WithholdingTaxCertService.ResolveWhtFormType(c, null, docIsForeignService, withheldIncomeCodes);
+            var (form, _, _) = WithholdingTaxCertService.ResolveWhtFormType(c, null, docIsForeignService, withheldIncomeCodes, royaltyAsPnd2);
             return report.TaxType == form;
         }
         // ผู้ถูกหัก ≠ ผู้รับเงินได้ (คำขอเจ้าของ 2026-10-12 · ประกันผ่านโบรกเกอร์) — แบ่งแบบ + ชื่อ/เลขในแถวเตือนจาก "ผู้ถูกหัก" ตัวเดียวกับ 50 ทวิ
@@ -1754,9 +1760,9 @@ public partial class TaxService : ITaxService
         // รอบ 204 (ภ.ง.ด.2 × ข้อ 143): แบบของผู้ถูกหักแต่ละรายตัดสินด้วยรหัสเงินได้ของ "บรรทัดของรายนั้น" — ใบรายเดียว = ทุกบรรทัดที่หัก (เดิม)
         IReadOnlyList<string?> LinePayeeCodes(Document d, DocumentLine l) => Accounting.Helpers.WhtIncomeCodes.WithheldForPayee(d.Lines,
             d.ContactId, d.WhtPayeeContactId, Accounting.Helpers.WhtPayeeSplit.LinePayeeOf(d.ContactId, d.WhtPayeeContactId, l.WhtPayeeContactId));
-        docs = docs.Where(d => (!HasLinePayees(d) && PayeeInScope(PayeeOf(d), d.IsForeignService, Accounting.Helpers.WhtIncomeCodes.Withheld(d.Lines)))
+        docs = docs.Where(d => (!HasLinePayees(d) && PayeeInScope(PayeeOf(d), d.IsForeignService, Accounting.Helpers.WhtIncomeCodes.Withheld(d.Lines), RoyaltyOf(d)))
             || (HasLinePayees(d) && d.Lines.Any(l => !l.IsDeleted && l.WithholdingTaxAmount > 0
-                && PayeeInScope(LinePayeeOf(d, l), d.IsForeignService, LinePayeeCodes(d, l))))).ToList();
+                && PayeeInScope(LinePayeeOf(d, l), d.IsForeignService, LinePayeeCodes(d, l), RoyaltyOf(d))))).ToList();
 
         // ── กันนับซ้ำสาย "ตั้งหนี้ → ใบสำคัญจ่าย" — ทั้ง PI/Expense และ PV ที่
         // แปลง/ผูกกัน ถือ WithholdingTaxAmount บนเอกสารทั้งคู่ ⇒ เดิมเข้ารายงาน
@@ -1812,6 +1818,9 @@ public partial class TaxService : ITaxService
             await _db.HydratePayeeContactsAsync(companyId, monthCerts);
             foreach (var cert in monthCerts.OrderBy(c => c.CertificateNumber))
             {
+                // c3: 50 ทวิ ที่ผู้ใช้ออกเองให้ใบ e-Withholding — ธนาคารนำส่งแล้ว ⇒ แถวข้อมูล (ติ๊กออก · ไม่นับยอด · ไม่บล็อกไฟล์) ตรงกับไฟล์ยื่นที่ข้ามใบนี้
+                var eWhtCert = cert.DocumentId is Guid certDocId && eWhtDocIds.Contains(certDocId);
+                var eWhtPrefix = eWhtCert ? Accounting.Helpers.EWithholdingScope.ReportMarker + " — " : "";
                 if (cert.Lines != null && cert.Lines.Count > 0)
                 {
                     foreach (var cl in cert.Lines.OrderBy(l => l.LineOrder))
@@ -1821,7 +1830,8 @@ public partial class TaxService : ITaxService
                             TaxPayerId = cert.PayeeContact?.TaxId,
                             TaxPayerName = cert.PayeeContact?.Name ?? "",
                             TransactionDate = cl.PaymentDate,
-                            Description = $"{cert.CertificateNumber} — {cl.IncomeDescription}",
+                            Description = $"{eWhtPrefix}{cert.CertificateNumber} — {cl.IncomeDescription}",
+                            IsExcluded = eWhtCert,
                             IncomeAmount = cl.IncomeAmount, TaxRate = cl.TaxRate,
                             TaxAmount = cl.TaxAmount, DocumentId = cert.DocumentId,
                             IncomeTypeCode = cl.IncomeTypeCode,
@@ -1840,7 +1850,8 @@ public partial class TaxService : ITaxService
                         TaxPayerId = cert.PayeeContact?.TaxId,
                         TaxPayerName = cert.PayeeContact?.Name ?? "",
                         TransactionDate = cert.IssuedDate ?? new DateTime(cert.TaxYear, cert.TaxMonth, 1),
-                        Description = cert.CertificateNumber,
+                        Description = eWhtPrefix + cert.CertificateNumber,
+                        IsExcluded = eWhtCert,
                         IncomeAmount = cert.TotalIncomeAmount,
                         TaxRate = cert.TotalIncomeAmount > 0
                             ? Math.Round(cert.TotalTaxAmount / cert.TotalIncomeAmount * 100m, 2, MidpointRounding.AwayFromZero)
@@ -1864,7 +1875,8 @@ public partial class TaxService : ITaxService
                     && c.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Draft)
                 .ToListAsync();
             await _db.HydratePayeeContactsAsync(companyId, draftCerts);
-            foreach (var cert in draftCerts.OrderBy(c => c.CertificateNumber))
+            // c3: ร่างของใบ e-Withholding ไม่ใช่ "ใบค้างออก" (ธนาคารนำส่งแล้ว) — ไม่ขึ้นแถวเตือน/ไม่บล็อกไฟล์ยื่น
+            foreach (var cert in draftCerts.Where(c => c.DocumentId is not Guid dd || !eWhtDocIds.Contains(dd)).OrderBy(c => c.CertificateNumber))
             {
                 report.Lines.Add(new TaxReportLine
                 {
@@ -1912,7 +1924,7 @@ public partial class TaxService : ITaxService
             var docMultiPayee = HasLinePayees(doc);
             var docWhtLines = doc.Lines.Where(l => l.WithholdingTaxAmount > 0
                 && (!docMultiPayee
-                    || (PayeeInScope(LinePayeeOf(doc, l), doc.IsForeignService, LinePayeeCodes(doc, l))
+                    || (PayeeInScope(LinePayeeOf(doc, l), doc.IsForeignService, LinePayeeCodes(doc, l), RoyaltyOf(doc))
                         && !certCoveredPairs.Contains((doc.Id, Accounting.Helpers.WhtPayeeSplit.LinePayeeOf(
                             doc.ContactId, doc.WhtPayeeContactId, l.WhtPayeeContactId)))))).ToList();
             if (docMultiPayee && docWhtLines.Count == 0) continue;

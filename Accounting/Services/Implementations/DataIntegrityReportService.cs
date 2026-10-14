@@ -217,7 +217,7 @@ public class DataIntegrityReportService
         foreach (var d in docs)
         {
             contacts.TryGetValue(EffectivePayee(d.ContactId, d.WhtPayeeContactId, d.WhtLines.Select(l => (l.WhtPayeeContactId, l.WithholdingTaxAmount))), out var payee);
-            var mix = Accounting.Helpers.ThaiWhtRateTable.ClassifySection40_4(d.Codes);
+            var mix = Accounting.Helpers.ThaiWhtRateTable.ClassifySection40_4(d.Codes, (await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(d.DocumentDate));   // รอบ 204 c2 (ทีม C): ค่าสิทธิตามค่าตั้ง
             if (mix == Accounting.Helpers.ThaiWhtRateTable.Section40_4Mix.AllSection40_4 && d.PostedTo21916)
             {
                 result.Add(new DataIntegritySuspect("Pnd2DocPostedToPnd3Account", d.Id, d.DocumentNumber, d.DocumentDate,
