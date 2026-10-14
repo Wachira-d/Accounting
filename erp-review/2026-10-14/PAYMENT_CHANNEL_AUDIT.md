@@ -53,7 +53,7 @@
 - The multi-document path also ignores `OverridePaymentAccountId` (`:14736-14737`). That path is API-only.
 - Fix: `OverridePaymentAccountId = request.OverridePaymentAccountId ?? (request.OverrideBankAccountId == null ? doc.PaymentAccountId : null)`.
 
-**6. Settings: saving any setting wipes the default payment account** ✅ (sha เติมภายหลัง — ทีม F3)
+**6. Settings: saving any setting wipes the default payment account** ✅ (6b406e09 — ทีม F3)
 - The dropdown is filled from `getPaymentChannels` (`settings.html:2524-2527`). The comment says it returns "all cash/bank", but the server excludes 1112x (`AccountingService.cs:96`).
 - So a saved bank GL, or a deactivated account, is missing from the options and the select shows "auto".
 - Save then sends `Guid.Empty` (`settings.html:2882`), which clears the setting (`SettingsService.cs:244-246`). This affects OCR, payroll SSO and tax remittance defaults.
@@ -70,7 +70,7 @@
 - Save then sends null for both fields (`:532-536`), and every generated document posts to cash.
 - Fix: same add-back-and-notice pattern as `documents.html:_hydratePaymentAndCategory` (`:9565-9581`).
 
-**8. Lodging: deposits and checkout collection have no bank picker** ✅ (sha เติมภายหลัง — ทีม F3: บังคับเมื่อโอน/พร้อมเพย์ · บัตร/e-Wallet ไม่บังคับ เพราะลงบัญชีพักของช่องทางนั้น)
+**8. Lodging: deposits and checkout collection have no bank picker** ✅ (6b406e09 — ทีม F3: บังคับเมื่อโอน/พร้อมเพย์ · บัตร/e-Wallet ไม่บังคับ เพราะลงบัญชีพักของช่องทางนั้น)
 - `lodgingConfirm` (`lodging.html:344`) and `lodgingCheckOut` with `collectBalanceNow` (`:392`) send a payment method (often a transfer) but no `bankAccountId`.
 - The server supports it (`LodgingService.Lifecycle.cs:723, 1538`), but receives null, so bank transfers land in 11111 Cash.
 - Fix: add a bank select, required when the method is not cash.
@@ -86,7 +86,7 @@
 - A cross-tenant id passes the FK check and then silently posts to cash (see #4).
 - Fix: validate both fields against their own tables with `CompanyId`, at save time.
 
-**11. Hard-coded code prefixes break tenants with a custom chart of accounts** ✅ (sha เติมภายหลัง — ทีม F3: server + payroll/tax-remittance · ค้าง: BankService:234/104-124 + bank.html ของทีม F2 · ตัวกรอง documents.html/recurring.html ของทีมอื่น — endpoint ค่าเดิมคืนเฉพาะกลุ่ม other แล้ว ลบตัวกรองได้)
+**11. Hard-coded code prefixes break tenants with a custom chart of accounts** ✅ (6b406e09 — ทีม F3: server + payroll/tax-remittance · ค้าง: BankService:234/104-124 + bank.html ของทีม F2 · ตัวกรอง documents.html/recurring.html ของทีมอื่น — endpoint ค่าเดิมคืนเฉพาะกลุ่ม other แล้ว ลบตัวกรองได้)
 - `GetPaymentChannelAccountsAsync` only returns codes starting 111 / 1133 / 2123 and drops 1112 (`AccountingService.cs:91-96`). A tenant whose cash is coded, say, 1010 sees only the "cash default", which then resolves to nothing (#4).
 - Payroll per-employee source:
   - The page offers every linked bank's `linkedAccountCode` (`payroll.html:1697-1701`).
@@ -101,7 +101,7 @@
   A bank linked to a non-1112 111x account (for example 11131) shows up twice, as `bank:` and as `account:`.
 - Fix: decide "money account" by a flag or account type in one helper, not by code prefix. Have the server return channel rows already tagged bank or GL, and drop the client filters.
 
-**12. Payroll's default source posts to a group account** ✅ (sha เติมภายหลัง — ทีม F3)
+**12. Payroll's default source posts to a group account** ✅ (6b406e09 — ทีม F3)
 - When no source is chosen, net pay is credited to `11122` (`PayrollService.cs:3016-3023`). That is the parent of the auto-created bank accounts `11122-001` and so on, so bank reconciliation never sees it.
 - This also ignores `CompanySettings.DefaultPaymentAccountId`, which SSO settlement and tax remittance do use.
 - Fix: use the same default resolver as `ResolveBankGlAsync`.
@@ -124,7 +124,7 @@
 
    The user sees only "cash (default)" and saves, with no warning.
 
-17. Unlinked-bank errors give no way forward: ✅ StatutoryRemittance/Payroll (sha เติมภายหลัง — ทีม F3 · DocumentService:8852 = ทีม F2)
+17. Unlinked-bank errors give no way forward: ✅ StatutoryRemittance/Payroll (6b406e09 — ทีม F3 · DocumentService:8852 = ทีม F2)
    - `StatutoryRemittanceService.cs:1877`
    - `PayrollService.cs:5072`
    - `DocumentService.cs:8852` ("— ตั้งค่าก่อน")
@@ -142,7 +142,7 @@
 
 21. Paying from a fund account (`rpFundAccount`) still sets `BankAccountId` to the document's bank, so that bank's `CurrentBalance` moves although no money went through it (`DocumentService.cs:14277, 14449`). `rpFundAccount` also lists header-level accounts and 1112x bank GL accounts, which bypasses the bank link (`documents.html:12579-12586`). — ✅ (1b39ec9f · ทีม F2)
 
-22. ✅ (sha เติมภายหลัง — ทีม F3) Payroll rows whose saved source code is no longer listed show "ค่าเริ่มต้น" (`payroll.html:1697-1707`). Nothing is saved, because saving happens only on change, but the display is wrong. At posting time an inactive code silently falls back to the default (`PayrollService.cs:3052-3054`).
+22. ✅ (6b406e09 — ทีม F3) Payroll rows whose saved source code is no longer listed show "ค่าเริ่มต้น" (`payroll.html:1697-1707`). Nothing is saved, because saving happens only on change, but the display is wrong. At posting time an inactive code silently falls back to the default (`PayrollService.cs:3052-3054`).
 
 ### Checked and fine
 - `tax-remittance.html` ↔ `StatutoryRemittanceService.ResolveBankGlAsync` (`:1856-1889`): the `bank:` and `account:` fields are split correctly, each is validated against its own table with `CompanyId`, and posting uses `LinkedAccountId`.
@@ -260,7 +260,7 @@ This was a read-only audit. Every item below was confirmed by opening the code. 
 - `EmailScheduleService.cs:438-485` sends queued `Document` emails (with `OffsetDays`) without re-checking the document. Voided or paid invoices are still emailed, with the `BalanceDue` captured at enqueue.
 - `BuildAttachmentAsync` (490-512) swallows failures with `LogWarning`, and the item is marked `Sent` without the PDF.
 
-**13. Account ids written straight into JE lines with no tenant/active check** ✅ ยกเว้น LoanService (ทีม F1) (sha เติมภายหลัง — ทีม F3)
+**13. Account ids written straight into JE lines with no tenant/active check** ✅ ยกเว้น LoanService (ทีม F1) (6b406e09 — ทีม F3)
 These all accept request ids and write `JournalEntryLine.AccountId` directly, bypassing `AccountingService` validation:
 - `FinancialManagementService.cs:68, 191-212, 604-623`; `.Part2.cs:373-397`
 - `LoanService.cs:64-103`
@@ -269,11 +269,11 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 - `PaymentSettingsController.cs:205-208` (`ClearingAccountId` / `FeeExpenseAccountId`), used unchecked by `GatewayAccountResolver.cs:104`.
 - Cross-tenant GL lines are possible through the API.
 
-**14. Partner integration problems** ✅ (sha เติมภายหลัง — ทีม F3)
+**14. Partner integration problems** ✅ (6b406e09 — ทีม F3)
 - `IntegrationService.cs:1091`: `PaymentAccountId` is unvalidated. A wrong kind gives a misleading 23503; another tenant's id makes the JE silently use 111.
 - `ProcessDailySummaryAsync` (1633-1637) skips unmapped categories with only `LogWarning`, posts a partial JE and reports success.
 
-**15. Payroll net pay uses a stale account code** ✅ (sha เติมภายหลัง — ทีม F3: หน้ารอบเตือน + จ่ายไม่ได้พร้อมทางไปต่อ)
+**15. Payroll net pay uses a stale account code** ✅ (6b406e09 — ทีม F3: หน้ารอบเตือน + จ่ายไม่ได้พร้อมทางไปต่อ)
 - `PayrollService.cs:3016-3055`: an employee's `NetPaymentAccountCode` is validated when set (1450). If that account is deactivated later, posting silently pays from the run default, 11122 or the first 111x.
 
 **16. Create and update of bank accounts don't match** — ✅ (1b39ec9f · ทีม F2)
@@ -281,9 +281,9 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 
 ### P2 — bad messages and smaller gaps
 
-**17. The FK error message assumes a delete.** ✅ (sha เติมภายหลัง — ทีม F3) `Middleware/ExceptionMiddleware.cs:160-163` maps every 23503 to "ยังถูกอ้างอิง… ลบหรือเปลี่ยนไม่ได้ · ปิดการใช้งานแทน". For inserts with a dangling or wrong-kind FK, this sends the user the wrong way.
+**17. The FK error message assumes a delete.** ✅ (6b406e09 — ทีม F3) `Middleware/ExceptionMiddleware.cs:160-163` maps every 23503 to "ยังถูกอ้างอิง… ลบหรือเปลี่ยนไม่ได้ · ปิดการใช้งานแทน". For inserts with a dangling or wrong-kind FK, this sends the user the wrong way.
 
-**18. Raw GUIDs or English shown to users (worst first)** ✅ บางส่วน (sha เติมภายหลัง — ทีม F3: AccountingService · WarehouseService · BankService.AiReconciliation · IntegrationService · InventoryCostingService · ค้าง: Mobile/PettyCash/Cheque/Webhook/documents.html ของทีมอื่น)
+**18. Raw GUIDs or English shown to users (worst first)** ✅ บางส่วน (6b406e09 — ทีม F3: AccountingService · WarehouseService · BankService.AiReconciliation · IntegrationService · InventoryCostingService · ค้าง: Mobile/PettyCash/Cheque/Webhook/documents.html ของทีมอื่น)
 - `AccountingService.cs:314,739` "ไม่พบบัญชี {guid} ในผังบัญชีของบริษัท" — reached from manual JE, the expense-claim legacy path and other auto-post callers.
 - `WarehouseService.cs:297` "สินค้า {ProductId} มีจำนวนไม่เพียงพอ…"
 - `BankService.AiReconciliation.cs:791` "ไม่พบรายการธนาคาร {guid}"
@@ -293,7 +293,7 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 - PettyCash English messages passed through by `SmeOperationsController.cs:55,74` ("Fund not found.", "Insufficient petty cash…").
 - English that gets masked to a generic message with no next step: ChequeService `ArgumentException` (`ChequeService.cs:83-84,143`); `InventoryCostingService.cs:71,115,159` "Product {id} not found."; WebhookService 83-195.
 
-**19. "Not found" reported as "not linked".** ✅ StatutoryRemittance/Payroll/GatewaySettlement/Lodging (sha เติมภายหลัง — ทีม F3 · DocumentService = ทีม F2) `.Select(b=>b.LinkedAccountId).FirstOrDefault()` returns null for both, and none of these check `IsActive`:
+**19. "Not found" reported as "not linked".** ✅ StatutoryRemittance/Payroll/GatewaySettlement/Lodging (6b406e09 — ทีม F3 · DocumentService = ทีม F2) `.Select(b=>b.LinkedAccountId).FirstOrDefault()` returns null for both, and none of these check `IsActive`:
 - `StatutoryRemittanceService.cs:1871-1877`
 - `PayrollService.cs:5064-5072`
 - `DocumentService.cs:8843-8850`
@@ -307,11 +307,11 @@ These all accept request ids and write `JournalEntryLine.AccountId` directly, by
 
 **21. Field priority disagrees.** — ✅ (1b39ec9f · ทีม F2) `documents.html:9568` hydrates bank first, while the server (17166) and `documents.html:7606` treat `PaymentAccountId` first.
 
-**22. Settings default payment account.** ✅ (sha เติมภายหลัง — ทีม F3) `settings.html:2517-2528` loads `payment-channels`, which excludes 1112, so a bank can't be chosen as the company default (the comment says otherwise). `SettingsService.cs:244` doesn't validate.
+**22. Settings default payment account.** ✅ (6b406e09 — ทีม F3) `settings.html:2517-2528` loads `payment-channels`, which excludes 1112, so a bank can't be chosen as the company default (the comment says otherwise). `SettingsService.cs:244` doesn't validate.
 
-**23. Contact default AR/AP accounts.** ✅ (sha เติมภายหลัง — ทีม F3: ตรวจตอนบันทึก · ผังที่ปักใช้ไม่ได้ตอนลงบัญชี = ล้มดังพร้อมทางไปต่อ) `Contact.DefaultAr/Ap/IrGrAccountId` are unvalidated (`DocumentService.cs:13485, 13699-13704`). `FindAccountAsync` (15463-15470) silently falls back when the pinned account is inactive.
+**23. Contact default AR/AP accounts.** ✅ (6b406e09 — ทีม F3: ตรวจตอนบันทึก · ผังที่ปักใช้ไม่ได้ตอนลงบัญชี = ล้มดังพร้อมทางไปต่อ) `Contact.DefaultAr/Ap/IrGrAccountId` are unvalidated (`DocumentService.cs:13485, 13699-13704`). `FindAccountAsync` (15463-15470) silently falls back when the pinned account is inactive.
 
-**24. Manual JE checks are thin.** ✅ ใบสำคัญ (sha เติมภายหลัง — ทีม F3 · Document `DimensionId` = ทีม F2) JE create/update (`AccountingService.cs:305-314, 413-455, 717-719`) doesn't check account `IsActive` / Level ≥ 4, and doesn't validate `BranchId`, `DimensionId` or line `ProjectId`. Document `DimensionId` (`DocumentService.cs:2963`) is also unvalidated.
+**24. Manual JE checks are thin.** ✅ ใบสำคัญ (6b406e09 — ทีม F3 · Document `DimensionId` = ทีม F2) JE create/update (`AccountingService.cs:305-314, 413-455, 717-719`) doesn't check account `IsActive` / Level ≥ 4, and doesn't validate `BranchId`, `DimensionId` or line `ProjectId`. Document `DimensionId` (`DocumentService.cs:2963`) is also unvalidated.
 
 **25. Scheduled reports report false success.** `ScheduledReportDispatcher.cs:146-150` swallows per-recipient send failures, and `LastResult` stays "OK".
 
