@@ -106,6 +106,12 @@ billing, quota resolution) → อัปเดตไฟล์ + ป้ายส�
   `IAttachmentAccessGate` (ด่านไฟล์แนบ/สแกนตัวเดียว) · `Helpers/DocumentSignedContent` (ลายเซ็นลูกค้าผูก hash เนื้อหา) ·
   `AuditHashChain.Seal/Analyze` (hash chain canonical ตัวเดียว)
 
+## 📥 IMPORT_ETL_REVIEW (รอบ 205 · 2026-10-14) — ศูนย์นำเข้าข้อมูล
+
+`erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` — inventory ทางนำเข้าเดิม 14 เส้น + แบบ pipeline เดียว (Extract→Transform→Stage→Review→Commit→Learn→Undo) ·
+helper owner: `Helpers/ImportTabularReader` · `ImportValueNormalizer` · `ImportHeaderDetector` · `ImportColumnMapper` · คำตัดสินข้อ 151 ·
+ก่อนแตะการนำเข้าใด ๆ อ่าน §2 ของไฟล์นั้น — ห้ามเขียนตัวแยกไฟล์/ตัวแปลงวันที่-ตัวเลข/ตัวจับคู่คอลัมน์สำเนาที่สอง
+
 ## 📕 SYSTEM_REVIEW_2026-09.md — ลิสต์งานจากการตรวจทั้งระบบ (8 ทีม)
 
 `SYSTEM_REVIEW_2026-09.md` (root) คือผลตรวจทั้งระบบโดยทีมผู้เชี่ยวชาญ 8 ด้าน
