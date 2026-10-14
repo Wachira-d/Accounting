@@ -161,6 +161,8 @@ public static class ChartOfAccountTemplates
             new("21920", "ภาษีเงินได้นิติบุคคลค้างจ่าย", "Corporate Income Tax Payable", AccountType.Liability, 4),
             new("21921", "ภาษีอื่นๆ ค้างจ่าย", "Other Taxes Payable", AccountType.Liability, 4),
             new("21922", "เจ้าหนี้สรรพากร", "Revenue Department Payable", AccountType.Liability, 4),
+            // รอบ 204 (c3): หนี้ WHT ของเอกสารที่หักผ่าน e-Withholding — ธนาคารนำส่งแทน (ไม่อยู่ในยอดนำส่ง ภ.ง.ด. ของเรา · WhtPayableAccount.EWithholdingCode)
+            new("21923", "ภาษีหัก ณ ที่จ่ายรอธนาคารนำส่ง (e-Withholding)", "Withholding Tax Pending Bank Remittance (e-Withholding)", AccountType.Liability, 4),
 
             new("22", "หนี้สินไม่หมุนเวียน", "Non-Current Liabilities", AccountType.Liability, 2),
             new("221", "เงินกู้ยืมระยะยาว", "Long-term Borrowings / Long-term Loans", AccountType.Liability, 3),

@@ -104,8 +104,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var payee = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.PayeeContactId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
         // รอบ 204: ส่งประเภทเงินได้ของบรรทัดที่มีภาษีด้วย — ดอกเบี้ย/ปันผลจ่ายบุคคลธรรมดา ⇒ ภ.ง.ด.2 (ข้อ 148)
+        // c2: ค่าสิทธิ ม.40(3) ตามค่าตั้งบริษัท (ผู้ใช้เลือก 2/3 เองได้ทั้งสองค่าตั้ง — ตัวตัดสิน ResolveWhtFormType)
         var (resolvedForm, corrected, reason) = ResolveWhtFormType(payee, request.TaxFormType,
-            withheldIncomeTypeCodes: CertRequestIncomeCodes(request));
+            withheldIncomeTypeCodes: CertRequestIncomeCodes(request),
+            royaltyAsPnd2: (await WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(CertRequestTaxDate(request)));
         if (corrected)
             _logger.LogWarning(
                 "WHT cert: แก้ประเภทแบบจาก {From} → {To} ({Reason}) payee={Payee} taxId={TaxId} — ค่าที่ส่งมาไม่ตรงกับสถานะผู้ถูกหัก",
@@ -253,7 +255,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // (ภ.ง.ด.3↔53 ขึ้นกับผู้ถูกหัก ไม่ใช่สิ่งที่ user เลือกได้ตามใจ)
         var updPayee = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.PayeeContactId && c.CompanyId == companyId);
         var (updForm, updCorrected, updReason) = ResolveWhtFormType(updPayee, request.TaxFormType ?? cert.TaxFormType,
-            withheldIncomeTypeCodes: CertRequestIncomeCodes(request));
+            withheldIncomeTypeCodes: CertRequestIncomeCodes(request),
+            royaltyAsPnd2: (await WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(CertRequestTaxDate(request)));
         if (updCorrected)
             _logger.LogWarning("WHT cert update: แก้ประเภทแบบ → {To} ({Reason}) payee={Payee}", updForm, updReason, updPayee?.Name);
         cert.TaxFormType = updForm;
@@ -566,10 +569,12 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // Individual (เคสบริษัทที่ contact สร้างจาก integration แล้วไม่ตั้ง type) · ตัดสินจาก "ผู้ถูกหัก" ไม่ใช่ผู้รับเงิน
         // รอบ 204 (ข้อ 148): ประเภทเงินได้ของบรรทัดที่หัก — ชุดเดียวกับ JE (WhtIncomeCodes) ⇒ ดอกเบี้ย/ปันผลบุคคลธรรมดา = ภ.ง.ด.2 ตรงผัง 21915
         // ใบหลายผู้ถูกหัก (ข้อ 143): รหัสของ "บรรทัดของผู้ถูกหักรายนี้" เท่านั้น — ตัวเดียวกับ JE ต่อราย (ResolveWhtPayableSplitAsync)
+        // c2: ค่าสิทธิ ม.40(3) บุคคลธรรมดา ⇒ ภ.ง.ด.2 ตามค่าตั้งบริษัท ณ วันจ่าย (ตัวเดียวกับ JE 21915 — DocumentService.ResolveRoyaltyPolicyAsync)
         var (taxFormType, _, _) = ResolveWhtFormType(payee, null, doc.IsForeignService,
             payeeOnly is Guid formPayee
                 ? WhtIncomeCodes.WithheldForPayee(doc.Lines, doc.ContactId, doc.WhtPayeeContactId, formPayee)
-                : await _db.LoadWithheldAsync(companyId, doc));
+                : await _db.LoadWithheldAsync(companyId, doc),
+            royaltyAsPnd2: (await WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(paymentDate ?? doc.PaymentDate ?? doc.DocumentDate));
 
         // เลขเดือน = เดือน "เงินได้ที่จ่าย" (tax month) ไม่ใช่เดือนที่ generate (UtcNow)
         // → ตรงกับ TaxMonth ที่ลงในใบ + สอดคล้องกับ CreateAsync (WHT-YYYYMM-####)
@@ -790,7 +795,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             ActiveFullDocCertsNotDraft: active.Count(a => a.SourcePaymentId == null && a.Status != WithholdingTaxCertStatus.Draft),
             ActiveCertsAny: active.Count,
             // ฝ่ายค้านรอบ 204 (หลัง 0f428969): ป้ายผู้ถูกหักที่สืบทอดถูกตัดทิ้ง (ยังไม่รับทราบ) ⇒ ไม่ออกอัตโนมัติ (รอในลิสต์ "ต้องตรวจ")
-            PayeeReviewPending: WhtPayeeSplit.PendingDroppedPayeeReview(doc.InternalNotes) != null));
+            PayeeReviewPending: WhtPayeeSplit.PendingDroppedPayeeReview(doc.InternalNotes) != null,
+            // รอบ 204 (c3): หักผ่าน e-Withholding ⇒ ธนาคารนำส่ง/กรมสรรพากรออกหลักฐาน — ทางอัตโนมัติไม่ออกใบ (กดทีละใบยังออกได้ + คำเตือน)
+            ViaEWithholding: await EWithholdingScope.IsViaAsync(_db, companyId, doc)));
         if (decision.Action != WhtCertIssueAction.IssueNow)
             return new WhtAutoIssueOutcome(decision.Action, null, null, null, decision.Reason);
 
@@ -910,6 +917,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         docs = docs.OrderByDescending(d => d.DocumentDate).ToList();
 
         await _db.HydrateContactsAsync(companyId, docs);
+        // รอบ 204 (c3): ใบ e-Withholding — ยังโชว์ (ผู้ใช้ออกเองได้) แต่ป้ายบอกว่าไม่ต้องออก 50 ทวิ (ไม่ใช่ "ขาด") · ตัวตัดสินเดียว EWithholdingScope
+        var eWhtDocIds = await EWithholdingScope.LoadDocIdsAsync(_db, companyId);
         // ผู้ถูกหักที่ไม่ใช่ผู้ติดต่อของเอกสาร (ประกันผ่านโบรกเกอร์) — ลิสต์ต้องบอกว่า 50 ทวิ จะออกในนามใคร
         // (รวมผู้ถูกหักรายบรรทัด — LoadWhtPayeeContactsAsync อ่านบรรทัดที่โหลดมาด้วย)
         var payees = await _db.LoadWhtPayeeContactsAsync(companyId, docs);
@@ -934,7 +943,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 }).ToList();
             }
             var label = review != null ? "50 ทวิ ต้องตรวจ: " + review
-                : WhtCertIssuePlan.PendingLabel(d.WhtCertAutoIssue, failed, paid)
+                : WhtCertIssuePlan.PendingLabel(d.WhtCertAutoIssue, failed, paid, viaEWithholding: eWhtDocIds.Contains(d.Id))
                   + (payeeRows != null ? $" · ผู้ถูกหัก {payeeRows.Count} ราย ออกใบแล้ว {payeeRows.Count(r => r.HasCertificate)} ราย" : "");
             return new PendingWhtDocumentResponse(
                 d.Id, d.DocumentNumber, d.DocumentType.ToString(), d.DocumentDate,
@@ -1281,6 +1290,17 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         => (request.Lines ?? new List<WithholdingTaxCertLineRequest>())
             .Where(l => l.TaxAmount > 0m).Select(l => (string?)l.IncomeTypeCode).ToList();
 
+    /// <summary>วันที่จ่ายของใบที่คีย์เอง (ตัดสินค่าตั้ง ภ.ง.ด.2 ของค่าสิทธิ — <see cref="WhtRoyaltyPolicy.AppliesTo"/>) — วันจ่ายล่าสุดของบรรทัด ·
+    /// ไม่มีบรรทัด ⇒ วันที่ 1 ของเดือนภาษี</summary>
+    private static DateTime CertRequestTaxDate(CreateWithholdingTaxCertRequest request)
+    {
+        var lines = request.Lines ?? new List<WithholdingTaxCertLineRequest>();
+        if (lines.Count > 0) return lines.Max(l => l.PaymentDate);
+        var month = request.TaxMonth is >= 1 and <= 12 ? request.TaxMonth : 1;
+        var year = request.TaxYear is >= 1900 and <= 2400 ? request.TaxYear : DateTime.UtcNow.Year;
+        return new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
+    }
+
     private static TaxType DetermineTaxFormType(Contact contact)
     {
         return contact.ContactType switch
@@ -1320,9 +1340,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
     /// ขณะที่ GL ตั้งหนี้ไว้ที่ 21918 ⇒ ยื่นผิดแบบ + 21918 ไม่มีวันถูกล้าง</param>
     /// <param name="withheldIncomeTypeCodes">รอบ 204 (คำตัดสินข้อ 148): รหัสเงินได้ของบรรทัดที่หัก — ผู้รับบุคคลธรรมดาที่ทุกบรรทัดเป็น ม.40(4)
     /// ⇒ ภ.ง.ด.2 (ตัวตัดสินเดียว <see cref="Accounting.Helpers.WhtPayeeKind.IndividualForm"/>) · null = ไม่รู้ประเภท (พฤติกรรมเดิม)</param>
+    /// <param name="royaltyAsPnd2">รอบ 204 (c2): ค่าตั้งบริษัท "ค่าสิทธิ ม.40(3) บุคคลธรรมดา ⇒ ภ.ง.ด.2" มีผล ณ วันจ่าย (<see cref="Accounting.Helpers.WhtRoyaltyPolicy.AppliesTo"/>) ·
+    /// ผู้ใช้ขอ ภ.ง.ด.3 เอง ⇒ เคารพ (ไม่ล็อกแข็ง) · บังคับ ภ.ง.ด.2 เฉพาะ ม.40(4) ทั้งใบ (เดิม) · false = พฤติกรรมเดิมทุกประการ</param>
     internal static (TaxType formType, bool corrected, string reason) ResolveWhtFormType(
         Contact? contact, TaxType? requested, bool documentIsForeignService = false,
-        IEnumerable<string?>? withheldIncomeTypeCodes = null)
+        IEnumerable<string?>? withheldIncomeTypeCodes = null, bool royaltyAsPnd2 = false)
     {
         // แบบที่ไม่ใช่แกน 2/3/53 → ปล่อยตามที่ขอ (ภ.ง.ด.1 เงินเดือน · ภ.ง.ด.54 ที่ผู้เรียกระบุเอง)
         // รอบ 204: ภ.ง.ด.2 เข้าแกนแล้ว — เดิมปล่อยผ่านเฉย ๆ ⇒ ขอ ภ.ง.ด.2 ให้บริษัทก็ได้ (ผิดแบบ: นิติบุคคลอยู่ ภ.ง.ด.53)
@@ -1358,6 +1380,10 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 return (TaxType.WithholdingTax2, false, "ผู้ใช้เลือก ภ.ง.ด.2 · payee บุคคลธรรมดา");
             if (Accounting.Helpers.WhtPayeeKind.IndividualForm(withheldIncomeTypeCodes) == TaxType.WithholdingTax2)
             { correct = TaxType.WithholdingTax2; reason += " · เงินได้ ม.40(4) ทั้งใบ (ภ.ง.ด.2)"; }
+            // c2: ค่าสิทธิ ม.40(3) ตามค่าตั้งบริษัท — เฉพาะเมื่อผู้ใช้ไม่ได้ขอ ภ.ง.ด.3 เอง (ใบคีย์มือเลือก 2 หรือ 3 ได้ทั้งสองค่าตั้ง)
+            else if (royaltyAsPnd2 && requested != TaxType.WithholdingTax3
+                && Accounting.Helpers.WhtPayeeKind.IndividualForm(withheldIncomeTypeCodes, royaltyAsPnd2: true) == TaxType.WithholdingTax2)
+            { correct = TaxType.WithholdingTax2; reason += " · ค่าสิทธิ ม.40(3) ตามค่าตั้งบริษัท (ภ.ง.ด.2)"; }
         }
 
         var corrected = requested.HasValue && requested.Value != correct;

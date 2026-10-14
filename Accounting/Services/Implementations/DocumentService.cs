@@ -15089,8 +15089,10 @@ public partial class DocumentService : IDocumentService
     /// missing (so a half-configured chart still posts).</summary>
     /// <param name="withheldIncomeTypeCodes">รอบ 204 (คำตัดสินข้อ 148): รหัสเงินได้ของบรรทัดที่หัก (<see cref="Accounting.Helpers.WhtIncomeCodes"/>) —
     /// ดอกเบี้ย/ปันผล ม.40(4) จ่ายบุคคลธรรมดา ⇒ 21915 (ภ.ง.ด.2) · <b>ทุกจุดเรียกต้องส่ง</b> (JE ตอนอนุมัติกับ JE รายงวดต้องลงผังเดียวกัน)</param>
+    /// <param name="royaltyAsPnd2">รอบ 204 (c2): ค่าสิทธิ ม.40(3) บุคคลธรรมดา ⇒ 21915 ตามค่าตั้งบริษัท ณ วันจ่าย (<see cref="ResolveRoyaltyPolicyAsync"/>) ·
+    /// false = เดิม · <b>ทุกจุดเรียกต้องส่ง</b> (JE กับ 50 ทวิ/หน้านำส่งต้องลงแบบเดียวกัน)</param>
     private async Task<ChartOfAccount?> ResolveWhtPayableAccountAsync(Guid companyId, Contact? contact,
-        bool isForeignService, IReadOnlyList<string?> withheldIncomeTypeCodes)
+        bool isForeignService, IReadOnlyList<string?> withheldIncomeTypeCodes, bool royaltyAsPnd2 = false)
     {
         // จ่ายต่างประเทศ (ม.70) → หนี้ WHT เข้า 21918 (ภ.ง.ด.54) — คนละแบบ/คนละ
         // กำหนดยื่นกับ ภงด.3/53. เดิมไม่มีทางเลือกนี้เลย: WHT ของ PV ต่างประเทศ
@@ -15109,13 +15111,20 @@ public partial class DocumentService : IDocumentService
         // ที่ตัดสินด้วยกติกาคนละแบบและ **ไม่รู้จัก 21918 เลย** (ผลตรวจรอบ 180)
         foreach (var code in Accounting.Helpers.WhtPayableAccount.CodeChain(
                      isForeignService, contact?.CountryCode, contact?.TaxId,
-                     contact?.ContactType ?? ContactType.Individual, contact?.Name, withheldIncomeTypeCodes))
+                     contact?.ContactType ?? ContactType.Individual, contact?.Name, withheldIncomeTypeCodes, royaltyAsPnd2))
         {
             var acct = await FindAccountAsync(companyId, code);
             if (acct != null) return acct;
         }
         return null;
     }
+
+    /// <summary>รอบ 204 (c2): ค่าตั้งบริษัท "ค่าสิทธิ ม.40(3) บุคคลธรรมดา ยื่น ภ.ง.ด.2" มีผลกับการจ่าย ณ <paramref name="taxDate"/> ไหม —
+    /// ตัวโหลดเดียวของ DocumentService (ตัวตัดสิน <see cref="Accounting.Helpers.WhtRoyaltyPolicy.AppliesTo"/>) · ผลส่งเข้า <c>royaltyAsPnd2</c> ของ
+    /// <see cref="ResolveWhtPayableAccountAsync"/> / <c>WhtPayeeKind.ResolveForm</c> · ค่าตั้ง ภ.ง.ด.3 (ค่าตั้งต้น) ⇒ false = พฤติกรรมเดิม</summary>
+    private async Task<bool> ResolveRoyaltyPolicyAsync(Guid companyId, DateTime taxDate)
+        => (await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(taxDate);
+
 
     /// <summary>รอบ 204 (ข้อ 143): ส่วนของผู้ถูกหักของเอกสาร (ตัวแบ่งเดียว <see cref="Accounting.Helpers.WhtPayeeSplit"/>) —
     /// ใบลดหนี้/เพิ่มหนี้ที่อ้างใบฝั่งผู้จ่าย: ผู้ถูกหักมาจาก<b>ใบต้นทาง</b> (บรรทัดที่อ้าง SourceLineId → ผู้ถูกหักของบรรทัดต้นทาง ·
@@ -15178,6 +15187,15 @@ public partial class DocumentService : IDocumentService
     {
         var result = new List<(ChartOfAccount Account, decimal Amount)>();
         if (amount == 0m) return result;
+        // รอบ 204 (c3): e-Withholding — ธนาคารหัก/นำส่งแทน ⇒ ทั้งยอดลง 21923 (ไม่ใช่หนี้ ภ.ง.ด. ที่เรานำส่งเอง) · ผังไม่มี ⇒ ตกเส้นเดิม (ยังลงบัญชีได้)
+        if (await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, doc)
+            && await FindAccountAsync(companyId, Accounting.Helpers.WhtPayableAccount.EWithholdingCode) is { } eWht)
+        {
+            result.Add((eWht, amount));
+            return result;
+        }
+        // c2: ค่าสิทธิ ม.40(3) บุคคลธรรมดา ⇒ 21915 ตามค่าตั้งบริษัท ณ วันจ่าย (วันเดียวกับเดือนภาษีของ 50 ทวิ/หน้านำส่ง)
+        var royaltyAsPnd2 = await ResolveRoyaltyPolicyAsync(companyId, doc.PaymentDate ?? doc.DocumentDate);
         var (portions, portionLines) = await WhtPayeePortionsWithLinesAsync(companyId, doc);
         if (portions.Count <= 1)
         {
@@ -15189,7 +15207,7 @@ public partial class DocumentService : IDocumentService
                     .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == onlyPayee);
             // ใบรายเดียว: รหัสเงินได้ของทุกบรรทัดที่หัก (ภ.ง.ด.2 ⇒ 21915) — ตัวโหลดเดียวกับเส้นเดิม (รอบ 204 ทีม T3)
             if (await ResolveWhtPayableAccountAsync(companyId, payeeContact, doc.IsForeignService,
-                    await _db.LoadWithheldAsync(companyId, doc)) is { } single)
+                    await _db.LoadWithheldAsync(companyId, doc), royaltyAsPnd2) is { } single)
                 result.Add((single, amount));
             return result;
         }
@@ -15204,7 +15222,7 @@ public partial class DocumentService : IDocumentService
             if (part == 0m) continue;
             // ใบหลายผู้ถูกหัก: แบบ/ผังตัดสินต่อราย ด้วยรหัสเงินได้ของ "บรรทัดของรายนั้น" เท่านั้น (ดอกเบี้ยของบุคคล ก ⇒ 21915 แม้ใบมีค่าบริการของบุคคล ข)
             var acct = await ResolveWhtPayableAccountAsync(companyId, contacts.GetValueOrDefault(payeeId), doc.IsForeignService,
-                codesOf.GetValueOrDefault(payeeId) ?? Array.Empty<string?>());
+                codesOf.GetValueOrDefault(payeeId) ?? Array.Empty<string?>(), royaltyAsPnd2);
             if (acct == null) continue;
             var at = result.FindIndex(r => r.Account.Id == acct.Id);
             if (at >= 0) result[at] = (result[at].Account, result[at].Amount + part);

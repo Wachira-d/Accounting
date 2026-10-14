@@ -463,7 +463,9 @@ public static class ThaiWhtRateTable
     /// <para>รับ <c>"40(4)"</c> เปล่า ๆ (ไม่ระบุ (ก)/(ข)) ด้วย — ชี้ขาดไม่ได้ว่าดอกเบี้ยหรือปันผล (คนละอัตรา) แต่<b>แบบ</b>ชี้ขาดได้แล้วว่าเป็น ม.40(4) ·
     /// null/ว่าง/ไม่รู้จัก ⇒ false (ไม่รู้ ≠ ดอกเบี้ย — ใบเดิมไม่ถูกย้ายแบบเพราะเดา · หลักการ #3)</para>
     /// <para>⚠️ ม.40(3) ค่าสิทธิจ่ายบุคคลธรรมดา: แบบ ภ.ง.ด.2 ของกรมสรรพากรมีแถว ม.40(3) ด้วย (ม.50(2) อัตราก้าวหน้า) แต่คำตัดสินข้อ 148
-    /// ครอบเฉพาะ ม.40(4) ⇒ ตารางยังให้ ม.40(3) อยู่ ภ.ง.ด.3 อัตรา 3% ตามเดิม (คำถามค้างใน DOCUMENT_FLOW §5.4 — รอเจ้าของ/นักบัญชี) — ห้ามขยายที่นี่เงียบ ๆ</para>
+    /// ครอบเฉพาะ ม.40(4) ⇒ ตัวนี้ยังไม่นับ ม.40(3) · รอบ 204 (c2 · คำสั่งเจ้าของ 2026-10-13): ค่าสิทธิบุคคลธรรมดาเลือกแบบได้ที่<b>ค่าตั้งบริษัท</b>
+    /// (<c>Company.WhtRoyaltyIndividualForm</c> · ภ.ง.ด.3 เดิม / ภ.ง.ด.2 แนะนำ) ผ่าน <c>WhtRoyaltyPolicy</c> → พารามิเตอร์ <c>royaltyAsPnd2</c> ของ
+    /// <see cref="ClassifySection40_4"/> — ห้ามขยายตัวนี้เงียบ ๆ (ค่าตั้ง ภ.ง.ด.3 ต้องได้พฤติกรรมเดิมทุกประการ)</para>
     /// </summary>
     public static bool IsSection40_4(string? stored)
     {
@@ -497,13 +499,26 @@ public static class ThaiWhtRateTable
         Mixed = 3,
     }
 
+    /// <summary>เงินได้ที่เก็บไว้เป็น<b>ค่าสิทธิ ม.40(3)</b> (ค่าแห่งลิขสิทธิ์/ค่าสิทธิ) ไหม — รับทุกรูปที่ <see cref="Resolve"/> รับ ·
+    /// null/ว่าง/ไม่รู้จัก ⇒ false (ไม่รู้ ≠ ค่าสิทธิ — หลักการ #3) · ผู้อ่าน: <see cref="ClassifySection40_4"/> เมื่อบริษัทตั้งค่าสิทธิบุคคลธรรมดาเป็น
+    /// ภ.ง.ด.2 (<c>WhtRoyaltyPolicy</c> · รอบ 204)</summary>
+    public static bool IsSection40_3(string? stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored)) return false;
+        var t = Resolve(stored);
+        var section = (t?.TaxSection ?? stored).Replace(" ", "");
+        return section.StartsWith("40(3)", StringComparison.Ordinal);
+    }
+
     /// <summary>จำแนกรหัสเงินได้ของบรรทัดที่หักภาษี — ตัวตัดสินเดียวของ "ใบนี้เป็น ภ.ง.ด.2 ทั้งใบไหม"</summary>
     /// <param name="withheldIncomeTypeCodes">รหัสของบรรทัดที่ <c>WithholdingTaxAmount &gt; 0</c> เท่านั้น (null ในลิสต์ = บรรทัดหักแต่ไม่ระบุประเภท)</param>
-    public static Section40_4Mix ClassifySection40_4(IEnumerable<string?>? withheldIncomeTypeCodes)
+    /// <param name="royaltyAsPnd2">รอบ 204 (c2): บริษัทตั้งค่าสิทธิ ม.40(3) ที่จ่ายบุคคลธรรมดาเป็น ภ.ง.ด.2 (ประกาศอธิบดีฯ ฉบับที่ 58 · ม.50(2)) และวันที่จ่าย
+    /// อยู่ในช่วงที่ใช้ (<c>WhtRoyaltyPolicy.AppliesTo</c>) ⇒ นับ ม.40(3) เป็น "ตระกูล ภ.ง.ด.2" เหมือน ม.40(4) · false (ค่าตั้งต้น) = พฤติกรรมเดิมทุกประการ</param>
+    public static Section40_4Mix ClassifySection40_4(IEnumerable<string?>? withheldIncomeTypeCodes, bool royaltyAsPnd2 = false)
     {
         var codes = withheldIncomeTypeCodes?.ToList();
         if (codes == null || codes.Count == 0) return Section40_4Mix.Unknown;
-        var hits = codes.Count(IsSection40_4);
+        var hits = codes.Count(c => IsSection40_4(c) || (royaltyAsPnd2 && IsSection40_3(c)));
         if (hits == 0) return Section40_4Mix.NoSection40_4;
         return hits == codes.Count ? Section40_4Mix.AllSection40_4 : Section40_4Mix.Mixed;
     }

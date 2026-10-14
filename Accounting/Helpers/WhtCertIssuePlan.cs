@@ -40,6 +40,8 @@ public enum WhtCertIssueAction
 /// <param name="ActiveCertsAny">ใบที่ยังไม่ยกเลิกของเอกสารนี้ทุกชนิด</param>
 /// <param name="PayeeReviewPending">ผู้ถูกหักต้องตรวจ — ผู้ถูกหักที่สืบทอดจากเอกสารต้นทางถูกตัดทิ้ง (<see cref="WhtPayeeSplit.PendingDroppedPayeeReview"/>)
 /// และยังไม่ได้กด "รับทราบ" · ค่าตั้งต้น false = พฤติกรรมเดิม</param>
+/// <param name="ViaEWithholding">รอบ 204 (c3): เอกสารหักผ่าน e-Withholding ของธนาคาร (<c>Document.WhtViaEWithholding</c>) — ธนาคารนำส่ง/กรมสรรพากรออกหลักฐาน ⇒
+/// ไม่ออก 50 ทวิ อัตโนมัติ (กดทีละใบยังออกได้ พร้อมคำเตือน) · ค่าตั้งต้น false = พฤติกรรมเดิม</param>
 public sealed record WhtCertIssueFacts(
     WhtCertIssueTrigger Trigger,
     DocumentType DocumentType,
@@ -53,7 +55,8 @@ public sealed record WhtCertIssueFacts(
     int ActiveCertsForThisPayment,
     int ActiveFullDocCertsNotDraft,
     int ActiveCertsAny,
-    bool PayeeReviewPending = false);
+    bool PayeeReviewPending = false,
+    bool ViaEWithholding = false);
 
 /// <summary>คำตอบ: ทำอะไร · ออกในนามใคร · เหตุผลภาษาไทย (แสดงผู้ใช้ได้)</summary>
 public sealed record WhtCertIssueDecision(WhtCertIssueAction Action, Guid PayeeContactId, string Reason);
@@ -83,6 +86,13 @@ public static class WhtCertIssuePlan
 
     public static bool IsApprovalWarning(string warning)
         => warning.StartsWith(ApprovalWarningPrefix, StringComparison.Ordinal);
+
+    /// <summary>เหตุผล/ป้ายของใบที่หักผ่าน e-Withholding (รอบ 204 c3) — ทางอัตโนมัติไม่ออกใบ · ลิสต์รอออกใบไม่นับว่า "ขาด"</summary>
+    public const string EWithholdingLabel = "หักผ่าน e-Withholding — ธนาคารนำส่ง/กรมสรรพากรออกหลักฐาน ไม่ต้องออก 50 ทวิ";
+
+    /// <summary>คำเตือนเมื่อผู้ใช้กดออก 50 ทวิ เองให้ใบ e-Withholding — ออกได้ (ผู้ใช้ตัดสิน) แต่ใบนี้ไม่เข้าแบบ ภ.ง.ด./ยอดนำส่งของเรา (กันยื่นซ้ำกับธนาคาร)</summary>
+    public const string EWithholdingManualWarning =
+        "ใบนี้หักผ่าน e-Withholding (ธนาคารนำส่งแล้ว) — ออก 50 ทวิ ให้ตามที่ขอ แต่ใบนี้ไม่นับเข้าแบบ ภ.ง.ด./ยอดนำส่งของบริษัท (กันยื่นซ้ำกับธนาคาร)";
 
     /// <summary>ชนิดเอกสารที่ "เราเป็นผู้หัก" — ชุดเดียวกับ <see cref="WhtRemitScope.PayerSideTypes"/></summary>
     public static bool AppliesTo(DocumentType type) => WhtRemitScope.PayerSideTypes.Contains(type);
@@ -121,6 +131,13 @@ public static class WhtCertIssuePlan
         if (covered)
             return D(WhtCertIssueAction.AlreadyIssued, "มีหนังสือรับรองหัก ณ ที่จ่ายของการจ่ายนี้แล้ว");
 
+        // รอบ 204 (c3): e-Withholding — ธนาคารหัก/นำส่ง + กรมสรรพากรออกหลักฐานเอง ⇒ ทางอัตโนมัติไม่ออก (ไม่ใช่ "รอออกเอง" — ไม่ต้องมีใบ) ·
+        // กดทีละใบ = ผู้ใช้ตั้งใจ ⇒ ออกได้ พร้อมคำเตือน (ไม่ล็อกแข็ง · คำสั่งเจ้าของ 2026-10-13)
+        if (f.ViaEWithholding)
+            return f.Trigger == WhtCertIssueTrigger.Manual
+                ? D(WhtCertIssueAction.IssueNow, EWithholdingManualWarning)
+                : D(WhtCertIssueAction.NotApplicable, EWithholdingLabel);
+
         if (f.Trigger != WhtCertIssueTrigger.Manual)
         {
             // ปุ่ม "ข้าม" ในลิสต์รอออกใบ (WhtCertSkipped) แค่ซ่อนจากลิสต์ — ไม่ปิดการออกตอนจ่าย (พฤติกรรมเดิม · ผู้ใช้กดข้ามใบเครดิต
@@ -158,8 +175,10 @@ public static class WhtCertIssuePlan
     }
 
     /// <summary>คำอธิบายสถานะในลิสต์ "รอออกใบ" (server computes · page displays)</summary>
-    public static string PendingLabel(bool autoIssueEnabled, string? autoIssueFailedReason, bool paid)
+    /// <param name="viaEWithholding">รอบ 204 (c3): หักผ่าน e-Withholding ⇒ ป้าย "ไม่ต้องออก 50 ทวิ" (ไม่ใช่ "ขาด") · false = ป้ายเดิม</param>
+    public static string PendingLabel(bool autoIssueEnabled, string? autoIssueFailedReason, bool paid, bool viaEWithholding = false)
     {
+        if (viaEWithholding) return EWithholdingLabel;
         if (!string.IsNullOrWhiteSpace(autoIssueFailedReason))
             return "ออกอัตโนมัติไม่สำเร็จ: " + autoIssueFailedReason;
         if (!autoIssueEnabled) return "ตั้งไว้ให้ออกใบเอง (ไม่สร้างอัตโนมัติ)";

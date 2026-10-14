@@ -709,18 +709,32 @@ public partial class PdfGenerationService : IPdfGenerationService
             var whtPayee = await _db.LoadWhtPayeeAsync(companyId, doc);
             // รอบ 204 ภ.ง.ด.2: ดอกเบี้ย/ปันผลจ่ายบุคคล ⇒ 21915 — ส่งประเภทเงินได้ของบรรทัดที่หักจริงเหมือน JE (ResolveWhtPayableAccountAsync)
             var withheldCodes = await _db.LoadWithheldAsync(companyId, doc);
+            // c2: ค่าสิทธิ ม.40(3) บุคคลธรรมดา ⇒ 21915 ตามค่าตั้งบริษัท ณ วันจ่าย — ตัวเดียวกับ JE (DocumentService.ResolveRoyaltyPolicyAsync)
+            var royaltyAsPnd2 = await PreviewRoyaltyAsPnd2Async();
             var chain = Accounting.Helpers.WhtPayableAccount.CodeChain(
                 doc.IsForeignService, whtPayee?.CountryCode, whtPayee?.TaxId,
-                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name, withheldCodes);
+                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name, withheldCodes, royaltyAsPnd2);
             var label = Accounting.Helpers.WhtPayableAccount.PreferredLabel(
                 doc.IsForeignService, whtPayee?.CountryCode, whtPayee?.TaxId,
-                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name, withheldCodes);
+                whtPayee?.ContactType ?? ContactType.Individual, whtPayee?.Name, withheldCodes, royaltyAsPnd2);
             return await ByCodeChain(chain.ToArray(), label);
         }
+        async Task<bool> PreviewRoyaltyAsPnd2Async()
+            => (await Accounting.Helpers.WhtRoyaltyPolicy.LoadAsync(_db, companyId)).AppliesTo(doc.PaymentDate ?? doc.DocumentDate);
         // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — พรีวิวแบ่งผังต่อผู้ถูกหักเหมือน JE จริง (DocumentService.ResolveWhtPayableSplitAsync ·
         // ตัวแบ่งเดียว WhtPayeeSplit) · ใบรายเดียว = WhtPayableAsync() บรรทัดเดียวเหมือนเดิม
         async Task<List<(string Code, string Name, decimal Amount)>> WhtPayableSplitAsync(decimal amount)
         {
+            // รอบ 204 (c3): e-Withholding — ทั้งยอดลง 21923 เหมือน JE จริง (DocumentService.ResolveWhtPayableSplitAsync · ผังไม่มี ⇒ ตกเส้นเดิม)
+            // ใบลูกที่อ้างใบต้นทางที่ติ๊ก e-Withholding = ผังของใบต้นทาง (ตัวตัดสินเดียว EWithholdingScope — ตัวเดียวกับ JE)
+            if (await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, doc))
+            {
+                var eWht = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(x => x.CompanyId == companyId && x.AccountCode == Accounting.Helpers.WhtPayableAccount.EWithholdingCode
+                        && x.Level >= 4 && x.IsActive)
+                    .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
+                if (eWht != null) return new() { (eWht.AccountCode, eWht.AccountName, amount) };
+            }
             var orderedLines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
             var portions = Accounting.Helpers.WhtPayeeSplit.Portions(doc.ContactId, doc.WhtPayeeContactId,
                 orderedLines.Select(l => new Accounting.Helpers.WhtPayeeLine(l.WhtPayeeContactId, l.WithholdingTaxAmount)).ToList(),
@@ -733,6 +747,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             var ids = portions.Select(p => p.PayeeContactId).ToList();
             var payees = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
                 .Where(c => c.CompanyId == companyId && ids.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+            var royaltyAsPnd2 = await PreviewRoyaltyAsPnd2Async();
             var parts = new List<(string Code, string Name, decimal Amount)>();
             foreach (var (payeeId, part) in Accounting.Helpers.WhtPayeeSplit.Allocate(portions, amount))
             {
@@ -741,9 +756,9 @@ public partial class PdfGenerationService : IPdfGenerationService
                 var payeeCodes = Accounting.Helpers.WhtIncomeCodes.WithheldAt(orderedLines,
                     portions.First(p => p.PayeeContactId == payeeId).LineIndexes);
                 var chain = Accounting.Helpers.WhtPayableAccount.CodeChain(
-                    doc.IsForeignService, c?.CountryCode, c?.TaxId, c?.ContactType ?? ContactType.Individual, c?.Name, payeeCodes);
+                    doc.IsForeignService, c?.CountryCode, c?.TaxId, c?.ContactType ?? ContactType.Individual, c?.Name, payeeCodes, royaltyAsPnd2);
                 var label = Accounting.Helpers.WhtPayableAccount.PreferredLabel(
-                    doc.IsForeignService, c?.CountryCode, c?.TaxId, c?.ContactType ?? ContactType.Individual, c?.Name, payeeCodes);
+                    doc.IsForeignService, c?.CountryCode, c?.TaxId, c?.ContactType ?? ContactType.Individual, c?.Name, payeeCodes, royaltyAsPnd2);
                 var acc = await ByCodeChain(chain.ToArray(), label);
                 parts.Add((acc.Code, acc.Name, part));
             }
