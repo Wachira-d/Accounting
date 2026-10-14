@@ -180,7 +180,9 @@ public class WhtPaymentSuggestionDbTests
         var audit = await check.AuditLogs.AsNoTracking()
             .Where(a => a.CompanyId == s.CompanyId && a.EntityType == "Payment" && a.EntityId == paid.Id.ToString())
             .Select(a => a.NewValues).ToListAsync();
-        Assert.Contains(audit, v => v != null && v.Contains(WhtPaymentSuggestion.AboveNetRuleCode) && v.Contains("ท.ป.4/2528"));
+        // NewValues เป็น JSON (ตัวอักษรไทยถูก escape เป็น \uXXXX) ⇒ อ่านค่าจริงจาก JSON ไม่เทียบข้อความดิบ
+        Assert.Contains(audit, v => v != null && AuditField(v, "RuleCode") == WhtPaymentSuggestion.AboveNetRuleCode
+            && (AuditField(v, "LegalReference") ?? "").Contains("ท.ป.4/2528"));
     }
 
     [Fact]
@@ -234,5 +236,11 @@ public class WhtPaymentSuggestionDbTests
         var cnNet = Assert.Single(fullWarnings, WhtPaymentSuggestion.IsApprovalWarning);
         Assert.Contains("ระบบแนะนำให้ใบนี้หัก 270.00", cnNet);
         Assert.DoesNotContain(await Svc(req).PreviewApprovalWarningsAsync(s.CompanyId, net), WhtPaymentSuggestion.IsApprovalWarning);
+    }
+
+    private static string? AuditField(string json, string name)
+    {
+        using var d = System.Text.Json.JsonDocument.Parse(json);
+        return d.RootElement.TryGetProperty(name, out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String ? p.GetString() : null;
     }
 }
