@@ -3791,6 +3791,16 @@ public class AccountingDbContext : DbContext
     internal void DropDeferredAudit(Guid transactionId)
         => _deferredAudit.RemoveAll(x => x.TxId == transactionId);
 
+    /// <summary>รอบ 205 ทีม B (ศูนย์นำเข้า): จุดอ้างก่อน savepoint — คู่กับ <see cref="RollbackDeferredAuditTo"/></summary>
+    internal int DeferredAuditMark => _deferredAudit.Count;
+
+    /// <summary>rollback ถึง savepoint ⇒ ทิ้งแถว audit ที่ค้างประทับหลังจุดนั้น (ข้อมูลของมันไม่เกิดแล้ว — ห้ามประทับร่องรอยของสิ่งที่ไม่เกิด) ·
+    /// interceptor เห็นแค่ rollback ทั้งธุรกรรม ไม่เห็น rollback ถึง savepoint</summary>
+    internal void RollbackDeferredAuditTo(int mark)
+    {
+        if (mark >= 0 && mark < _deferredAudit.Count) _deferredAudit.RemoveRange(mark, _deferredAudit.Count - mark);
+    }
+
     /// <summary>แถวของธุรกรรมที่กำลัง commit · แถวของธุรกรรมอื่นที่ค้าง (ถูก dispose โดยไม่ผ่าน rollback ของ EF) ทิ้งไป — ห้ามประทับร่องรอยของสิ่งที่ไม่เกิด</summary>
     private List<Models.Entities.AuditLog> TakeDeferredAudit(Guid transactionId)
     {

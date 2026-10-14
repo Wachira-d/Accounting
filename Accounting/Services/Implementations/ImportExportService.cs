@@ -7,6 +7,8 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Ai;
 using Accounting.Services.Ai.Prompts;
+using Accounting.Services.Import;
+using Accounting.Services.Import.Targets;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,14 +25,40 @@ public class ImportExportService : IImportExportService
     /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0)</summary>
     private readonly IStockLedger? _stock;
 
+    /// <summary>รอบ 205 ทีม B: รับชำระจากไฟล์ผ่าน domain service ตัวเดียว (JE · ธนาคาร · ภ.พ.36 · ใบเสร็จ) — เดิมแก้ PaidAmount ตรง (AR ลดแต่ GL ไม่ขยับ)</summary>
+    private readonly IDocumentService? _documents;
+    /// <summary>รอบ 205 ทีม B: ทะเบียนสินทรัพย์จากไฟล์ผ่าน <c>FixedAssetService.ImportAsync</c> (ตัวตัดสิน FixedAssetImportMethod — ที่ดินไม่คิดค่าเสื่อม)</summary>
+    private readonly IFixedAssetService? _fixedAssets;
+    /// <summary>รอบ 205 ทีม B: ประกอบคำขอสร้างเอกสารจากแถว (ทีม D) → <c>DocumentService.CreateDocumentAsync</c> (ร่าง + เลข DRAFT · คำตัดสินข้อ 151)</summary>
+    private readonly IDocumentImportBuilder? _documentBuilder;
+    /// <summary>รอบ 205 ทีม B: รายการธนาคารจากไฟล์ผ่านตัวเขียน statement ตัวเดียว (ทีม C) — เดิมเดินยอด <c>CurrentBalance +=</c> เอง</summary>
+    private readonly IBankService? _bank;
+    /// <summary>รอบ 205 ทีม B: จับคู่คอลัมน์ของ Smart Import ผ่านทางเข้าเดียวของทีม A (แม่แบบ/คำพ้อง/เรียนรู้/AI + FeedbackId) — null = ชั้น local ล้วน</summary>
+    private readonly IImportColumnMatchService? _columnMatch;
+
     public ImportExportService(AccountingDbContext db, IErrorLogService errorLogService,
-        IImportAiAugmenter? ai = null, IStockLedger? stock = null)
+        IImportAiAugmenter? ai = null, IStockLedger? stock = null,
+        IDocumentService? documents = null, IFixedAssetService? fixedAssets = null,
+        IDocumentImportBuilder? documentBuilder = null, IBankService? bank = null, IImportColumnMatchService? columnMatch = null)
     {
         _db = db;
         _errorLogService = errorLogService;
         _ai = ai;
         _stock = stock;
+        _documents = documents;
+        _fixedAssets = fixedAssets;
+        _documentBuilder = documentBuilder;
+        _bank = bank;
+        _columnMatch = columnMatch;
     }
+
+    /// <summary>ชนิดข้อมูลที่ writer เดิมเขียนได้ (คีย์ <see cref="ImportExportPermissionScope.NormalizeEntityType"/>) — ชุดเดียวกับ switch ใน
+    /// <see cref="WriteUnitAsync"/> (รอบ 205 ทีม B: เดิม switch ซ้ำสองชุดใน ImportAsync + ConfirmAndImportAsync)</summary>
+    internal static readonly IReadOnlySet<string> WritableEntityKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "contacts", "products", "chartofaccounts", "banktransactions", "journalentries", "stockopening", "openingar", "openingap",
+        "stockadjustments", "fixedassets", "payments", "projects", "employees", "budgets", "documents",
+    };
 
     public async Task<ImportResult> ImportAsync(Guid companyId, ImportRequest request, string performedBy)
     {
@@ -38,84 +66,371 @@ public class ImportExportService : IImportExportService
         if (validation.ErrorCount > 0 && validation.SuccessCount == 0)
             return validation;
 
-        var successCount = 0;
-        var errors = new List<ImportError>();
+        var rows = request.Data.Select((r, i) => (RowNo: i + 1, Row: r)).ToList();
+        var run = await RunLegacyRowsAsync(companyId, request.EntityType, rows, request.Resolutions,
+            request.DefaultConflictAction, performedBy, ImportDateOrder.Auto, decimalComma: false);
 
-        for (int i = 0; i < request.Data.Count; i++)
+        return new ImportResult(request.EntityType, request.Data.Count, run.Success,
+            run.Errors.Count, run.Skipped, run.Errors, DateTime.UtcNow);
+    }
+
+    // ══════════════════════ ตัวเขียนแถวตัวเดียว (รอบ 205 ทีม B · IMPORT_ETL_REVIEW §2.4) ══════════════════════
+
+    /// <summary>ผลเขียนของ writer เดิมหนึ่งหน่วย — <see cref="EntityId"/> ใช้ทำ idempotent/ย้อน · <see cref="BeforeJson"/> = ค่าเดิมก่อนทับ (ย้อนแบบ RestoreBefore)</summary>
+    private sealed record RowWrite(string EntityType, Guid? EntityId, bool Skipped = false, string? BeforeJson = null);
+
+    private sealed record LegacyRun(int Success, int Skipped, List<ImportError> Errors);
+
+    /// <summary>
+    /// ทางเดินเดียวของเส้นนำเข้าเดิม (<see cref="ImportAsync"/> · <see cref="ConfirmAndImportAsync"/>) — <b>บันทึกทีละหน่วย</b> (แถว · เอกสารหนึ่งใบ):
+    /// แถวที่ล้มถูกทิ้งจาก change tracker ทั้งแถว (เดิม SaveChanges ครั้งเดียวท้ายไฟล์ ⇒ แถวที่ล้มกลางทางบันทึกครึ่ง ๆ ไปกับแถวอื่น) ·
+    /// ค่าวันที่/ตัวเลขอ่านผ่าน <see cref="ImportValueNormalizer"/> (ไม่ขึ้นกับ culture ของเครื่อง)
+    /// </summary>
+    /// <param name="dateOrder">ลำดับวัน/เดือนของไฟล์ (Smart Import: <c>DateFormat</c> ที่ผู้ใช้เลือก) — แปลงช่องวันที่เป็นรูปมาตรฐานก่อนเข้า writer</param>
+    /// <param name="decimalComma">ไฟล์ใช้จุลภาคเป็นทศนิยม (<c>DecimalSeparator = ","</c>) — แปลงช่องตัวเลขก่อนเข้า writer</param>
+    private async Task<LegacyRun> RunLegacyRowsAsync(Guid companyId, string entityType,
+        IReadOnlyList<(int RowNo, Dictionary<string, string> Row)> rows, Dictionary<string, string>? resolutions, string? defaultAction,
+        string performedBy, ImportDateOrder dateOrder, bool decimalComma)
+    {
+        var key = ImportExportPermissionScope.NormalizeEntityType(entityType);
+        var errors = new List<ImportError>();
+        if (!WritableEntityKeys.Contains(key))
         {
+            foreach (var (rowNo, _) in rows)
+                errors.Add(new ImportError(rowNo, "EntityType", entityType, $"ไม่รองรับการนำเข้า {entityType}"));
+            return new LegacyRun(0, 0, errors);
+        }
+
+        var fields = GetTemplateFields(entityType);
+        var fallbackAction = defaultAction ?? DefaultConflictAction(key);
+        int success = 0, skipped = 0;
+        foreach (var unit in LegacyUnits(key, rows))
+        {
+            var targetRows = unit
+                .Select(u => new ImportTargetRow(Guid.NewGuid(), u.RowNo, ToValues(CanonicalizeLegacyRow(u.Row, fields, dateOrder, decimalComma)),
+                    ImportRowAction.Create))
+                .ToList();
+            var action = ResolveAction(resolutions, LegacyConflictKey(key, unit[0].Row), fallbackAction);
             try
             {
-                var row = request.Data[i];
-                switch (request.EntityType.ToLower())
+                var results = await WriteUnitAsync(companyId, key, targetRows, new ImportRowWriteOptions(action, SaveChanges: true),
+                    performedBy, CancellationToken.None);
+                foreach (var (res, tr) in results.Zip(targetRows))
                 {
-                    case "contacts":
-                        await ImportContactAsync(companyId, row, request.Resolutions,
-                            request.DefaultConflictAction ?? "Merge");
-                        break;
-                    case "products":
-                        await ImportProductAsync(companyId, row, request.Resolutions,
-                            request.DefaultConflictAction ?? "Skip");
-                        break;
-                    case "chartofaccounts":
-                    case "chart-of-accounts":
-                        await ImportAccountAsync(companyId, row, request.Resolutions,
-                            request.DefaultConflictAction ?? "Skip");
-                        break;
-                    case "banktransactions":
-                        await ImportBankTransactionAsync(companyId, row);
-                        break;
-                    case "journalentries":
-                    case "journal-entries":
-                        await ImportJournalEntryAsync(companyId, row, performedBy);
-                        break;
-                    case "stock-opening":
-                        await ImportStockOpeningAsync(companyId, row, performedBy);
-                        break;
-                    case "opening-ar":
-                        await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: true);
-                        break;
-                    case "opening-ap":
-                        await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: false);
-                        break;
-                    case "stock-adjustments":
-                        await ImportStockAdjustmentAsync(companyId, row, performedBy);
-                        break;
-                    case "fixed-assets":
-                        await ImportFixedAssetAsync(companyId, row, performedBy);
-                        break;
-                    case "payments":
-                        await ImportPaymentAsync(companyId, row, performedBy);
-                        break;
-                    case "projects":
-                        await ImportProjectAsync(companyId, row, performedBy);
-                        break;
-                    case "employees":
-                        await ImportEmployeeAsync(companyId, row, performedBy);
-                        break;
-                    case "budgets":
-                        await ImportBudgetAsync(companyId, row, performedBy);
-                        break;
-                    case "documents":
-                        await ImportDocumentAsync(companyId, row, performedBy);
-                        break;
-                    default:
-                        errors.Add(new ImportError(i + 1, "EntityType", request.EntityType, $"ไม่รองรับการนำเข้า {request.EntityType}"));
-                        continue;
+                    if (!res.Success) errors.Add(new ImportError(tr.RowNo, "", "", res.Error ?? "นำเข้าไม่สำเร็จ"));
+                    else if (res.Skipped) skipped++;
+                    else success++;
                 }
-                successCount++;
             }
             catch (Exception ex)
             {
-                errors.Add(new ImportError(i + 1, "", "", ex.Message));
-                await _errorLogService.LogErrorAsync(ex, $"ImportExport.ImportRow/{i + 1}");
+                // ข้อผิดพลาดของระบบ (ไม่ใช่กฎธุรกิจ) — แถวนี้ล้มดัง (ผลลัพธ์ + log) แถวอื่นเดินต่อ · ทิ้งค่าที่ค้างใน tracker ของแถวนี้
+                DiscardPendingChanges();
+                foreach (var tr in targetRows) errors.Add(new ImportError(tr.RowNo, "", "", ex.Message));
+                await _errorLogService.LogErrorAsync(ex, $"ImportExport.ImportRow/{targetRows[0].RowNo}");
             }
         }
-
-        await _db.SaveChangesAsync();
-
-        return new ImportResult(request.EntityType, request.Data.Count, successCount,
-            errors.Count, request.Data.Count - successCount - errors.Count, errors, DateTime.UtcNow);
+        return new LegacyRun(success, skipped, errors);
     }
+
+    /// <summary>หน่วยการเขียนของเส้นเดิม — เอกสาร = แถวที่เลขเอกสารเดียวกัน (หนึ่งใบหลายบรรทัด) · เลขว่าง = แถวละหน่วย · ชนิดอื่น = แถวละหน่วย</summary>
+    private static IEnumerable<List<(int RowNo, Dictionary<string, string> Row)>> LegacyUnits(string key,
+        IReadOnlyList<(int RowNo, Dictionary<string, string> Row)> rows)
+    {
+        if (key != "documents")
+        {
+            foreach (var r in rows) yield return new List<(int RowNo, Dictionary<string, string> Row)> { r };
+            yield break;
+        }
+        foreach (var g in rows.GroupBy(r =>
+                     string.IsNullOrWhiteSpace(r.Row.GetValueOrDefault("DocumentNumber"))
+                         ? "#row-" + r.RowNo.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                         : r.Row.GetValueOrDefault("DocumentNumber")!.Trim(),
+                     StringComparer.Ordinal))
+            yield return g.ToList();
+    }
+
+    /// <summary>คีย์ของ "การตัดสินใจต่อแถว" (Resolutions จากหน้าพรีวิวข้อมูลซ้ำ) — สูตรเดียวกับ PreviewConflictsAsync</summary>
+    private static string LegacyConflictKey(string key, Dictionary<string, string> row) => key switch
+    {
+        "contacts" => ThaiTaxIdValidator.Normalize(row.GetValueOrDefault("TaxId")) ?? row.GetValueOrDefault("Email") ?? "",
+        "products" => row.GetValueOrDefault("Code") ?? "",
+        "chartofaccounts" => row.GetValueOrDefault("AccountCode") ?? "",
+        _ => "",
+    };
+
+    /// <summary>ค่าเริ่มเมื่อชนของเดิม — ผู้ติดต่อ = เติมช่องว่าง (Merge) · สินค้า/ผังบัญชี = ข้าม (ทับราคา/ประเภทบัญชีต้องให้ผู้ใช้เลือกเอง)</summary>
+    private static string DefaultConflictAction(string key) => key == "contacts" ? "Merge" : "Skip";
+
+    private static IReadOnlyDictionary<string, string?> ToValues(Dictionary<string, string> row)
+        => new Dictionary<string, string?>(row.ToDictionary(kv => kv.Key, kv => (string?)kv.Value), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>ค่าใน <see cref="ImportTargetRow.Values"/> → dictionary ของ writer เดิม (คีย์ไม่สนตัวพิมพ์ · null = ไม่มีช่อง)</summary>
+    private static Dictionary<string, string> ToLegacyRow(IReadOnlyDictionary<string, string?> values)
+    {
+        var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in values)
+            if (kv.Value != null) d[kv.Key] = kv.Value;
+        return d;
+    }
+
+    /// <summary>
+    /// ทำให้ <c>DateFormat</c>/<c>DecimalSeparator</c> ของ Smart Import มีผลจริง (เดิมรับแล้วไม่ใช้ = silent no-op) — ช่องวันที่ที่อ่านตามลำดับที่ผู้ใช้เลือกได้
+    /// ถูกแปลงเป็น yyyy-MM-dd · ไฟล์ทศนิยมจุลภาค ("1.234,50") ถูกแปลงเป็น invariant · ค่าที่อ่านไม่ได้คงตามไฟล์ให้ writer ล้มดังพร้อมเหตุผล
+    /// </summary>
+    private static Dictionary<string, string> CanonicalizeLegacyRow(Dictionary<string, string> row, List<ImportField>? fields,
+        ImportDateOrder dateOrder, bool decimalComma)
+    {
+        if (fields == null || (dateOrder == ImportDateOrder.Auto && !decimalComma)) return row;
+        var copy = new Dictionary<string, string>(row, StringComparer.OrdinalIgnoreCase);
+        foreach (var f in fields)
+        {
+            if (!copy.TryGetValue(f.FieldName, out var raw) || string.IsNullOrWhiteSpace(raw)) continue;
+            if (f.DataType == "date" && dateOrder != ImportDateOrder.Auto)
+            {
+                var d = ImportValueNormalizer.Date(raw, dateOrder);
+                if (d.Ok && d.Value is DateTime dv) copy[f.FieldName] = ImportValueNormalizer.CanonicalDate(dv);
+            }
+            else if (f.DataType == "decimal" && decimalComma)
+            {
+                // 1.234,50 → 1234.50 · 1234,5 → 1234.5 (จุด = คั่นหลักพัน · จุลภาค = ทศนิยม)
+                var swapped = raw.Trim().Replace(".", "", StringComparison.Ordinal).Replace(',', '.');
+                var n = ImportValueNormalizer.Number(swapped);
+                if (n.Ok && n.Value is decimal nv) copy[f.FieldName] = ImportValueNormalizer.CanonicalAmount(nv);
+            }
+        }
+        return copy;
+    }
+
+    /// <summary>
+    /// <see cref="IImportRowWriter"/> ของศูนย์นำเข้า (ผ่าน <c>ImportRowWriter</c>) — เขียนหนึ่งแถวด้วย writer เดิม · ค่าใน <paramref name="row"/> เป็นรูปมาตรฐานแล้ว ·
+    /// กฎธุรกิจล้ม ⇒ <c>Success = false</c> + ข้อความไทย (ไม่ throw) · <see cref="ImportRowWriteOptions.SaveChanges"/> = บันทึกแถวนี้เลย (ล้ม = ทิ้งค่าค้างของแถว)
+    /// </summary>
+    public async Task<ImportRowCommitResult> WriteRowAsync(Guid companyId, string entityType, ImportTargetRow row, ImportRowWriteOptions options,
+        string performedBy, CancellationToken ct = default)
+    {
+        var key = ImportExportPermissionScope.NormalizeEntityType(entityType);
+        if (!WritableEntityKeys.Contains(key))
+            return new ImportRowCommitResult(row.RowId, false, Error: $"ไม่รองรับการนำเข้า {entityType}");
+        var results = await WriteUnitAsync(companyId, key, new[] { row }, options, performedBy, ct);
+        return results[0];
+    }
+
+    /// <summary>switch เดียวของ writer เดิม — ทุกทางเข้า (ไฟล์เดิม · Smart Import · ศูนย์นำเข้า) ผ่านที่นี่</summary>
+    private async Task<IReadOnlyList<ImportRowCommitResult>> WriteUnitAsync(Guid companyId, string key, IReadOnlyList<ImportTargetRow> rows,
+        ImportRowWriteOptions options, string performedBy, CancellationToken ct)
+    {
+        if (rows.All(r => r.Action == ImportRowAction.Skip))
+            return rows.Select(r => new ImportRowCommitResult(r.RowId, true, Skipped: true)).ToList();
+        if (AccountingTargetKeys.Contains(key))
+            return await WriteViaAccountingTargetAsync(companyId, key, rows, options, performedBy, ct);
+
+        var first = rows[0];
+        var action = ResolveAction(null, "", options.ConflictAction ?? first.Action switch
+        {
+            ImportRowAction.Update => "Overwrite",
+            ImportRowAction.Merge => "Merge",
+            _ => DefaultConflictAction(key),
+        });
+        try
+        {
+            var row = ToLegacyRow(first.Values);
+            // คู่ที่ผู้ใช้เลือกมีผลเฉพาะ "อัปเดต/เติม" — "สร้างใหม่" ห้ามไปแตะแถวที่ระบบแค่แนะนำ (ชื่อคล้าย ≠ รายเดียวกัน)
+            var matched = first.Action is ImportRowAction.Update or ImportRowAction.Merge ? first.MatchedEntityId : null;
+            RowWrite w = key switch
+            {
+                "contacts" => await ImportContactAsync(companyId, row, action, matched),
+                "products" => await ImportProductAsync(companyId, row, action, matched),
+                "chartofaccounts" => await ImportAccountAsync(companyId, row, action, matched),
+                "banktransactions" => await ImportBankTransactionAsync(companyId, row, performedBy),
+                "journalentries" => await ImportJournalEntryAsync(companyId, row, performedBy),
+                "stockopening" => await ImportStockOpeningAsync(companyId, row, performedBy),
+                "openingar" => await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: true),
+                "openingap" => await ImportOpeningSubledgerAsync(companyId, row, performedBy, isReceivable: false),
+                "stockadjustments" => await ImportStockAdjustmentAsync(companyId, row, performedBy),
+                "projects" => await ImportProjectAsync(companyId, row, performedBy),
+                "employees" => await ImportEmployeeAsync(companyId, row, performedBy),
+                "budgets" => await ImportBudgetAsync(companyId, row, performedBy),
+                _ => throw new BusinessRuleException($"ไม่รองรับการนำเข้า {key}"),
+            };
+            if (options.SaveChanges && !w.Skipped) await _db.SaveChangesAsync(ct);
+            return rows.Select(r => w.Skipped
+                    ? new ImportRowCommitResult(r.RowId, true, w.EntityType, w.EntityId, Skipped: true)
+                    : new ImportRowCommitResult(r.RowId, true, w.EntityType, w.EntityId, BeforeJson: w.BeforeJson))
+                .ToList();
+        }
+        catch (Exception ex) when (IsRowError(ex))
+        {
+            if (options.SaveChanges) DiscardPendingChanges();
+            var msg = RowErrorMessage(ex);
+            return rows.Select(r => new ImportRowCommitResult(r.RowId, false, Error: msg)).ToList();
+        }
+    }
+
+    /// <summary>ชนิดที่ทางเดิมส่งต่อปลายทางบัญชีของศูนย์นำเข้า (ทีม D) — ไม่มีตัวเขียนของตัวเองที่นี่แล้ว</summary>
+    private static readonly IReadOnlySet<string> AccountingTargetKeys = new HashSet<string>(StringComparer.Ordinal) { "documents", "payments", "fixedassets" };
+
+    /// <summary>ปลายทางของทีม D ตัวเดียวกับศูนย์นำเข้า (สร้างจาก dependency ที่มีอยู่ — ไม่ผ่าน registry เพราะ registry มีปลายทางข้อมูลหลักที่อ้างกลับมาที่ service นี้)</summary>
+    private IImportTarget AccountingTarget(string key)
+    {
+        BusinessRuleException NotReady(string what) => new($"ระบบ{what}ไม่พร้อมสำหรับการนำเข้า — นำเข้าที่หน้า \"ศูนย์นำเข้าข้อมูล\" แทน");
+        return key switch
+        {
+            "documents" => new DocumentImportTarget(_db, _documentBuilder ?? throw NotReady("เอกสาร"), _documents ?? throw NotReady("เอกสาร")),
+            "payments" => new PaymentImportTarget(_db, _documents ?? throw NotReady("รับ/จ่ายชำระ")),
+            "fixedassets" => new FixedAssetImportTarget(_db, _fixedAssets ?? throw NotReady("ทะเบียนสินทรัพย์")),
+            _ => throw new BusinessRuleException($"ไม่รองรับการนำเข้า {key}"),
+        };
+    }
+
+    /// <summary>
+    /// เอกสาร · รับ/จ่ายชำระ · สินทรัพย์ถาวร จากทางเดิม (นำเข้าไฟล์ · Smart Import) — ส่งต่อปลายทางของทีม D (<c>DocumentImportTarget</c> ·
+    /// <c>PaymentImportTarget</c> · <c>FixedAssetImportTarget</c>) ⇒ <b>ตรวจและลงด้วยกติกาเดียวกับศูนย์นำเข้า</b> (เดิมทีม B มีตัวเขียนชุดที่สองที่นี่ —
+    /// สองคำตัดสินของเรื่องเดียว) · ค่าแปลงด้วย <see cref="ImportCellNormalizer"/> ตาม schema ของปลายทาง · ข้อผิด (Error) ของบรรทัดใด = ทั้งหน่วยไม่ลง
+    /// (เอกสารหลายบรรทัดไม่ลงครึ่งใบ) · คำเตือนไม่บล็อก (ทางเดิมไม่มีขั้นรับทราบ — ปลายทางตั้ง "ข้าม" ให้แถวซ้ำเอง)
+    /// </summary>
+    private async Task<IReadOnlyList<ImportRowCommitResult>> WriteViaAccountingTargetAsync(Guid companyId, string key,
+        IReadOnlyList<ImportTargetRow> rows, ImportRowWriteOptions options, string performedBy, CancellationToken ct)
+    {
+        try
+        {
+            var target = AccountingTarget(key);
+            var fields = target.Schema.ToDictionary(f => f.Field, StringComparer.OrdinalIgnoreCase);
+            var errors = new Dictionary<Guid, string>();
+            var canonical = new List<ImportTargetRow>(rows.Count);
+            foreach (var r in rows)
+            {
+                var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var kv in r.Values)
+                {
+                    if (!fields.TryGetValue(kv.Key, out var f)) { values[kv.Key] = kv.Value; continue; }
+                    var n = ImportCellNormalizer.Normalize(f, kv.Value);
+                    if (n.Issue is { Severity: ImportIssueSeverity.Error } bad && !errors.ContainsKey(r.RowId))
+                        errors[r.RowId] = $"{f.Label}: {bad.Message}";
+                    values[kv.Key] = n.Cell.Value;
+                }
+                canonical.Add(r with { Values = values });
+            }
+
+            var ctx = new ImportTargetContext(companyId, Guid.NewGuid(), target.EntityType,
+                new ImportActor(Guid.TryParse(performedBy, out var uid) ? uid : Guid.Empty, performedBy), new ImportCommitOptions());
+            var validations = (await target.ValidateAsync(ctx, canonical, ct)).ToDictionary(v => v.RowId);
+            foreach (var v in validations.Values)
+                if (!errors.ContainsKey(v.RowId) && v.Issues.FirstOrDefault(i => i.Severity == ImportIssueSeverity.Error) is { } e)
+                    errors[v.RowId] = e.Message;
+            if (errors.Count > 0)
+            {
+                var firstError = errors.Values.First();
+                return rows.Select(r => new ImportRowCommitResult(r.RowId, false,
+                    Error: errors.GetValueOrDefault(r.RowId) ?? "บรรทัดอื่นของเอกสารเดียวกันผิด — " + firstError)).ToList();
+            }
+
+            var ready = canonical.Select(r =>
+            {
+                if (!validations.TryGetValue(r.RowId, out var v)) return r;
+                var merged = new Dictionary<string, string?>(r.Values, StringComparer.OrdinalIgnoreCase);
+                foreach (var kv in v.FilledValues ?? new Dictionary<string, string?>())
+                    if (string.IsNullOrWhiteSpace(merged.GetValueOrDefault(kv.Key))) merged[kv.Key] = kv.Value;
+                return r with
+                {
+                    Values = merged, Action = v.Action ?? r.Action, MatchedEntityId = v.MatchedEntityId ?? r.MatchedEntityId,
+                    GroupKey = v.GroupKey ?? r.GroupKey,
+                };
+            }).ToList();
+            var results = new List<ImportRowCommitResult>(rows.Count);
+            foreach (var g in ready.GroupBy(r => r.GroupKey ?? r.RowId.ToString(), StringComparer.Ordinal))
+                results.AddRange(await target.CommitGroupAsync(ctx, g.ToList(), ct));
+            if (options.SaveChanges && target.CommitStyle == ImportCommitStyle.SharedTransaction) await _db.SaveChangesAsync(ct);
+            return rows.Select(r => results.FirstOrDefault(x => x.RowId == r.RowId)
+                ?? new ImportRowCommitResult(r.RowId, false, Error: "ปลายทางไม่คืนผลของแถวนี้ — ลองนำเข้าแถวนี้อีกครั้ง")).ToList();
+        }
+        catch (Exception ex) when (IsRowError(ex))
+        {
+            if (options.SaveChanges) DiscardPendingChanges();
+            var msg = RowErrorMessage(ex);
+            return rows.Select(r => new ImportRowCommitResult(r.RowId, false, Error: msg)).ToList();
+        }
+    }
+
+    /// <summary>ข้อผิดพลาดที่เป็น "แถวนี้ลงไม่ได้" (กฎธุรกิจของ writer/domain service · ข้อมูลไม่ผ่านข้อจำกัดของฐาน) — ไม่ใช่ระบบล่ม</summary>
+    private static bool IsRowError(Exception ex) => ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException
+        or ArgumentException or FormatException or DbUpdateException or NotImplementedException;
+
+    private static string RowErrorMessage(Exception ex) => ex is DbUpdateException db
+        ? "บันทึกแถวนี้ไม่ได้ — ข้อมูลไม่ผ่านข้อจำกัดของฐานข้อมูล (เช่น ยาวเกิน/ซ้ำกับที่มีอยู่): " + (db.InnerException?.Message ?? db.Message)
+        : ex.Message;
+
+    /// <summary>ทิ้งค่าที่ค้างใน change tracker ของหน่วยที่ล้ม — หน่วยก่อนหน้าบันทึกไปแล้ว (บันทึกทีละหน่วย) ⇒ ไม่มีอะไรดีหาย</summary>
+    private void DiscardPendingChanges() => _db.ChangeTracker.Clear();
+
+    // ── ตัวอ่านค่า (รอบ 205 ทีม B · P0): แทน DateTime/decimal/bool.TryParse ที่ขึ้นกับ culture — ค่าว่าง = ไม่มีค่า · ค่าที่อ่านไม่ได้ = ล้มดังพร้อมเหตุผล
+    //    (เดิม "อ่านไม่ได้ ⇒ วันนี้/0/false" เงียบ ๆ) · รูปมาตรฐานจากศูนย์นำเข้า (yyyy-MM-dd · invariant) อ่านได้ตรงตัว ──
+
+    private static string? Val(Dictionary<string, string> row, string key)
+        => row.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v) ? v.Trim() : null;
+
+    private static DateTime? OptDate(Dictionary<string, string> row, string key, string label)
+    {
+        var raw = Val(row, key);
+        if (raw == null) return null;
+        var v = ImportValueNormalizer.Date(raw);
+        if (!v.Ok || v.Value is not DateTime d)
+            throw new BusinessRuleException($"{label}: {v.Message ?? $"อ่านวันที่ \"{raw}\" ไม่ได้"}");
+        return d;
+    }
+
+    private static DateTime ReqDate(Dictionary<string, string> row, string key, string label)
+        => OptDate(row, key, label) ?? throw new BusinessRuleException($"ต้องระบุ{label}");
+
+    private static decimal? OptAmount(Dictionary<string, string> row, string key, string label)
+    {
+        var raw = Val(row, key);
+        if (raw == null) return null;
+        var v = ImportValueNormalizer.Amount(raw);
+        if (!v.Ok) throw new BusinessRuleException($"{label}: {v.Message}");
+        return v.Value;
+    }
+
+    private static decimal? OptNumber(Dictionary<string, string> row, string key, string label)
+    {
+        var raw = Val(row, key);
+        if (raw == null) return null;
+        var v = ImportValueNormalizer.Number(raw);
+        if (!v.Ok) throw new BusinessRuleException($"{label}: {v.Message}");
+        return v.Value;
+    }
+
+    private static int? OptInt(Dictionary<string, string> row, string key, string label)
+    {
+        var n = OptNumber(row, key, label);
+        if (n is not decimal x) return null;
+        if (x != decimal.Truncate(x) || x > int.MaxValue || x < int.MinValue)
+            throw new BusinessRuleException($"{label}: \"{x}\" ต้องเป็นจำนวนเต็ม");
+        return (int)x;
+    }
+
+    /// <summary>อัตรา VAT — "7%"/"7"/"0.07" ⇒ 7 · "ยกเว้น" ⇒ 0 (สินค้ายังไม่มีช่องยกเว้นแยก — ศูนย์นำเข้าเตือนให้ตรวจ) · ว่าง = null</summary>
+    private static decimal? OptVatRate(Dictionary<string, string> row, string key, string label)
+    {
+        var raw = Val(row, key);
+        if (raw == null) return null;
+        var v = ImportValueNormalizer.VatRate(raw);
+        if (!v.Ok) throw new BusinessRuleException($"{label}: {v.Message}");
+        return v.Value ?? (v.IssueCode == "vat-exempt" ? 0m : null);
+    }
+
+    /// <summary>ใช่/ไม่ใช่ — "ใช่"/"Y"/"1"/"✓" = true (เดิม bool.TryParse ⇒ "ใช่"/"Y" = false เงียบ ๆ) · ว่าง = false</summary>
+    private static bool OptFlag(Dictionary<string, string> row, string key, string label)
+    {
+        var raw = Val(row, key);
+        if (raw == null) return false;
+        var v = ImportValueNormalizer.Flag(raw);
+        if (!v.Ok) throw new BusinessRuleException($"{label}: {v.Message}");
+        return v.Value ?? false;
+    }
+
+    /// <summary>ค่าเดิมก่อนทับ (ย้อนแบบ RestoreBefore) — serialize ผ่านตัวเดียวของศูนย์นำเข้า</summary>
+    private static string Before(object snapshot) => ImportJson.Serialize(snapshot);
 
     /// <summary>Dry-run dedup check: scan request.Data, return rows whose
     /// natural key already exists in DB with different field values. The
@@ -180,9 +495,10 @@ public class ImportExportService : IImportExportService
                     { newCount++; continue; }
                     var name = row.GetValueOrDefault("Name");
                     var unit = row.GetValueOrDefault("Unit");
-                    decimal.TryParse(row.GetValueOrDefault("SellingPrice"), out var sp);
-                    decimal.TryParse(row.GetValueOrDefault("CostPrice"), out var cp);
-                    decimal.TryParse(row.GetValueOrDefault("VatRate"), out var vr);
+                    // รอบ 205 ทีม B (P0): ตัวแปลงเดียวกับตอนเขียนจริง — ไม่ขึ้นกับ culture ("1,234.50" · เลขไทย)
+                    var sp = ImportValueNormalizer.Amount(row.GetValueOrDefault("SellingPrice")).Value ?? 0m;
+                    var cp = ImportValueNormalizer.Amount(row.GetValueOrDefault("CostPrice")).Value ?? 0m;
+                    var vr = ImportValueNormalizer.VatRate(row.GetValueOrDefault("VatRate")).Value ?? 0m;
                     var category = row.GetValueOrDefault("Category");
                     bool isDup = EqStr(ex.Name, name) && EqStr(ex.Unit, unit)
                         && ex.SellingPrice == sp && ex.CostPrice == cp && ex.VatRate == vr
@@ -486,15 +802,17 @@ public class ImportExportService : IImportExportService
 
     // ===== Import Helpers =====
 
-    private async Task ImportContactAsync(Guid companyId, Dictionary<string, string> row,
-        Dictionary<string, string>? resolutions = null, string defaultAction = "Merge")
+    /// <param name="action">"Skip" · "Overwrite" · "Merge" (ผ่าน <see cref="ResolveAction"/> แล้ว)</param>
+    /// <param name="matchedId">ศูนย์นำเข้า: ผู้ติดต่อเดิมที่ผู้ใช้เลือกจับคู่เอง (ชื่อคล้าย = แนะนำ ผู้ใช้ยืนยัน · คำตัดสินข้อ 151 (5)) — ต้องเป็นของบริษัทนี้</param>
+    private async Task<RowWrite> ImportContactAsync(Guid companyId, Dictionary<string, string> row,
+        string action = "Merge", Guid? matchedId = null)
     {
         // ช่องว่าง/ช่องว่างล้วนต้องถูกปฏิเสธเหมือนไม่มีช่อง — เดิมผ่านแล้ว Overwrite ล้างชื่อผู้ติดต่อเดิมเป็น "" (2026-10-08)
         var name = row.GetValueOrDefault("Name");
         if (string.IsNullOrWhiteSpace(name))
-            throw new InvalidOperationException("ชื่อผู้ติดต่อ (Name) เว้นว่างไม่ได้");
+            throw new BusinessRuleException("ชื่อผู้ติดต่อ (Name) เว้นว่างไม่ได้");
         name = name.Trim();
-        var email = row.GetValueOrDefault("Email");
+        var email = Val(row, "Email");
 
         // ── เลขผู้เสียภาษีจากไฟล์ต้องผ่านด่านเดียวกับ /api/v1 ──
         // เดิมเส้นนำเข้าไฟล์**ไม่ตรวจอะไรเลย** ⇒ "1234", "N/A", เลขที่ checksum ไม่ผ่าน
@@ -506,7 +824,7 @@ public class ImportExportService : IImportExportService
         {
             var check = Accounting.Helpers.ThaiTaxIdValidator.Check(rawTaxId);
             if (!check.IsValid)
-                throw new InvalidOperationException(
+                throw new BusinessRuleException(
                     $"เลขประจำตัวผู้เสียภาษี \"{rawTaxId}\" ของ \"{name}\" ไม่ถูกต้อง ({check.Reason}) — "
                     + "แก้ในไฟล์แล้วนำเข้าใหม่ หรือลบคอลัมน์ TaxId ออกถ้ายังไม่มีเลข "
                     + "(เลขที่ผิดจะทำให้ใบกำกับภาษีที่ออกภายหลังขาดรายการตาม §86/4)");
@@ -519,70 +837,78 @@ public class ImportExportService : IImportExportService
         Contact? existing = null;
         var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
             _db.Contacts, companyId, taxId, row.GetValueOrDefault("BranchCode"));
-        if (taxKey.ContactId is Guid keyId)
+        var matchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
+        if (matchedId is Guid userPick)
+        {
+            // รอบ 205 ทีม B: ผู้ใช้เลือกแถวเดิมเองที่ศูนย์นำเข้า — ต้องเป็นของบริษัทนี้ · เลขในไฟล์ต่างจากเลขของแถวที่เลือก = คนละนิติบุคคล ⇒ ไม่ทับ
+            existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == userPick && c.CompanyId == companyId && !c.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อที่เลือกจับคู่ (อาจถูกลบไปแล้ว) — เลือกใหม่ หรือเปลี่ยนเป็น \"สร้างใหม่\"");
+            if (taxId != null && Accounting.Helpers.ContactTaxBranchKey.HasTaxId(existing.TaxId)
+                && Accounting.Helpers.ThaiTaxIdValidator.Normalize(existing.TaxId) != taxId)
+                throw new BusinessRuleException(
+                    $"ผู้ติดต่อที่เลือก \"{existing.Name}\" มีเลขผู้เสียภาษีอื่นอยู่แล้ว แต่แถวนี้มีเลข {taxId} — เป็นคนละนิติบุคคล: "
+                    + "เปลี่ยนเป็น \"สร้างใหม่\" หรือเลือกผู้ติดต่อที่เลขตรงกัน");
+            matchedBy = Accounting.Helpers.ContactMatchKind.ExternalKey;
+        }
+        else if (taxKey.ContactId is Guid keyId)
             existing = await _db.Contacts.FirstOrDefaultAsync(c =>
                 c.Id == keyId && c.CompanyId == companyId && !c.IsDeleted);
         // ฝ่ายค้าน C-6: อีเมลจับได้เฉพาะชุด SoftScope — เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข (โหมด Overwrite จะทับข้อมูลคนละนิติบุคคล)
         var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, companyId, taxId, taxKey);
-        var matchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
         if (existing == null && softScope != null && !string.IsNullOrWhiteSpace(email))
         {
             existing = await softScope.FirstOrDefaultAsync(c => !c.IsDeleted && c.Email == email);
             matchedBy = Accounting.Helpers.ContactMatchKind.Email;
         }
 
-        var isCustomer = bool.TryParse(row.GetValueOrDefault("IsCustomer"), out var isCust) && isCust;
-        var isSupplier = bool.TryParse(row.GetValueOrDefault("IsSupplier"), out var isSup) && isSup;
+        var isCustomer = OptFlag(row, "IsCustomer", "เป็นลูกค้า");
+        var isSupplier = OptFlag(row, "IsSupplier", "เป็นผู้ขาย");
 
-        var action = "";
         if (existing != null)
         {
-            var key = taxId ?? email ?? "";
-            action = ResolveAction(resolutions, key, defaultAction);
-            if (action == "Skip") return;
+            if (action == "Skip") return new RowWrite("Contact", existing.Id, Skipped: true);
             // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยอีเมล (ยังไม่มีเลข) รับเลข + สาขาจากไฟล์ — เดิมทั้ง Merge/Overwrite ไม่เขียน TaxId
             // แต่ ContactType ถูกคำนวณจากเลขในไฟล์ ⇒ แถวเป็น "นิติบุคคลที่ไม่มีเลข" และนำเข้าซ้ำก็ไม่ติด ·
             // รอบสาม: แถวลูกค้าทั่วไป (walk-in) ไม่รับเลข ⇒ Reject = สร้างแถวใหม่ของรายนี้ (ด้านล่าง)
+            var beforeSnapshot = ContactSnapshot(existing);
             if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, taxId, row.GetValueOrDefault("BranchCode"), matchedBy)
                 == Accounting.Helpers.ContactAdoptOutcome.Reject)
                 existing = null;
-        }
-
-        if (existing != null)
-        {
-
-            // Merge (default): existing wins; new fills blanks + OR-merges flags.
-            // Overwrite: non-empty incoming overrides existing.
-            if (action == "Overwrite")
+            else
             {
-                existing.Name = name;
-                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Phone"))) existing.Phone = row.GetValueOrDefault("Phone");
-                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Address"))) existing.Address = row.GetValueOrDefault("Address");
-                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactPerson"))) existing.ContactPerson = row.GetValueOrDefault("ContactPerson");
-                if (!string.IsNullOrWhiteSpace(email)) existing.Email = email;
+                // Merge (default): existing wins; new fills blanks + OR-merges flags.
+                // Overwrite: non-empty incoming overrides existing.
+                if (action == "Overwrite")
+                {
+                    existing.Name = name;
+                    if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Phone"))) existing.Phone = row.GetValueOrDefault("Phone");
+                    if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Address"))) existing.Address = row.GetValueOrDefault("Address");
+                    if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactPerson"))) existing.ContactPerson = row.GetValueOrDefault("ContactPerson");
+                    if (!string.IsNullOrWhiteSpace(email)) existing.Email = email;
+                }
+                else // Merge
+                {
+                    if (string.IsNullOrWhiteSpace(existing.Phone)) existing.Phone = row.GetValueOrDefault("Phone");
+                    if (string.IsNullOrWhiteSpace(existing.Address)) existing.Address = row.GetValueOrDefault("Address");
+                    if (string.IsNullOrWhiteSpace(existing.ContactPerson)) existing.ContactPerson = row.GetValueOrDefault("ContactPerson");
+                    if (string.IsNullOrWhiteSpace(existing.Email) && !string.IsNullOrWhiteSpace(email)) existing.Email = email;
+                }
+                existing.IsCustomer = existing.IsCustomer || isCustomer;
+                existing.IsSupplier = existing.IsSupplier || isSupplier;
+                // ชนิดผู้ติดต่อ: ตัวตัดสินตัวเดียว + "ค่าเดิมที่คนตั้งไว้ชนะการอนุมาน"
+                // (ApplyToExisting) ⇒ ไฟล์นำเข้าไม่ลดระดับคู่ค้าที่ตั้งไว้ถูกแล้ว
+                existing.ContactType = Accounting.Helpers.ContactTypeResolver.ApplyToExisting(
+                    existing.ContactType, row.GetValueOrDefault("ContactType"),
+                    taxId ?? existing.TaxId, existing.Name).Type;
+                // รอบ 193 ทีม C3: รหัสสาขาในไฟล์เขียนทับได้เฉพาะแถวที่ "ตรงสาขาแล้ว" — รหัสผิดรูป ("8A") ได้แถว สนญ. จากกติกา
+                // "ไม่ระบุ" แต่ BranchCodeFor ดึงเลขเป็น 00008 ⇒ ห้ามเขียน มิฉะนั้นแถว สนญ. กลายเป็นสาขา 8
+                var branchIn = string.IsNullOrWhiteSpace(row.GetValueOrDefault("BranchCode")) || !taxKey.MayOverwriteBranch
+                    ? existing.BranchCode : row.GetValueOrDefault("BranchCode");
+                existing.BranchCode = Accounting.Helpers.ContactTypeResolver.BranchCodeFor(
+                    existing.ContactType, branchIn);
+                existing.UpdatedAt = DateTime.UtcNow;
+                return new RowWrite("Contact", existing.Id, BeforeJson: Before(beforeSnapshot));
             }
-            else // Merge
-            {
-                if (string.IsNullOrWhiteSpace(existing.Phone)) existing.Phone = row.GetValueOrDefault("Phone");
-                if (string.IsNullOrWhiteSpace(existing.Address)) existing.Address = row.GetValueOrDefault("Address");
-                if (string.IsNullOrWhiteSpace(existing.ContactPerson)) existing.ContactPerson = row.GetValueOrDefault("ContactPerson");
-                if (string.IsNullOrWhiteSpace(existing.Email) && !string.IsNullOrWhiteSpace(email)) existing.Email = email;
-            }
-            existing.IsCustomer = existing.IsCustomer || isCustomer;
-            existing.IsSupplier = existing.IsSupplier || isSupplier;
-            // ชนิดผู้ติดต่อ: ตัวตัดสินตัวเดียว + "ค่าเดิมที่คนตั้งไว้ชนะการอนุมาน"
-            // (ApplyToExisting) ⇒ ไฟล์นำเข้าไม่ลดระดับคู่ค้าที่ตั้งไว้ถูกแล้ว
-            existing.ContactType = Accounting.Helpers.ContactTypeResolver.ApplyToExisting(
-                existing.ContactType, row.GetValueOrDefault("ContactType"),
-                taxId ?? existing.TaxId, existing.Name).Type;
-            // รอบ 193 ทีม C3: รหัสสาขาในไฟล์เขียนทับได้เฉพาะแถวที่ "ตรงสาขาแล้ว" — รหัสผิดรูป ("8A") ได้แถว สนญ. จากกติกา
-            // "ไม่ระบุ" แต่ BranchCodeFor ดึงเลขเป็น 00008 ⇒ ห้ามเขียน มิฉะนั้นแถว สนญ. กลายเป็นสาขา 8
-            var branchIn = string.IsNullOrWhiteSpace(row.GetValueOrDefault("BranchCode")) || !taxKey.MayOverwriteBranch
-                ? existing.BranchCode : row.GetValueOrDefault("BranchCode");
-            existing.BranchCode = Accounting.Helpers.ContactTypeResolver.BranchCodeFor(
-                existing.ContactType, branchIn);
-            existing.UpdatedAt = DateTime.UtcNow;
-            return;
         }
 
         // ── ชนิดผู้ติดต่อ + รหัสสาขา จากตัวตัดสินตัวเดียว (Helpers/ContactTypeResolver) ──
@@ -595,7 +921,7 @@ public class ImportExportService : IImportExportService
             branchCode: row.GetValueOrDefault("BranchCode"),
             name: name);
 
-        _db.Contacts.Add(new Contact
+        var contact = new Contact
         {
             CompanyId = companyId,
             Name = name,
@@ -608,107 +934,150 @@ public class ImportExportService : IImportExportService
             Phone = row.GetValueOrDefault("Phone"),
             Address = row.GetValueOrDefault("Address"),
             ContactPerson = row.GetValueOrDefault("ContactPerson")
-        });
+        };
+        _db.Contacts.Add(contact);
+        return new RowWrite("Contact", contact.Id);
     }
 
-    private async Task ImportProductAsync(Guid companyId, Dictionary<string, string> row,
-        Dictionary<string, string>? resolutions = null, string defaultAction = "Skip")
+    /// <summary>ค่าเดิมของผู้ติดต่อก่อนทับ — ชุดเดียวกับที่ writer แตะ (ย้อนแบบ RestoreBefore ที่ศูนย์นำเข้า)</summary>
+    internal static Dictionary<string, string?> ContactSnapshot(Contact c) => new()
     {
-        var code = row.GetValueOrDefault("Code") ?? throw new InvalidOperationException("Code is required");
-        var existing = await _db.Products.FirstOrDefaultAsync(p =>
-            p.CompanyId == companyId && !p.IsDeleted && p.Code == code);
+        ["Name"] = c.Name, ["TaxId"] = c.TaxId, ["BranchCode"] = c.BranchCode, ["ContactType"] = c.ContactType.ToString(),
+        ["Phone"] = c.Phone, ["Address"] = c.Address, ["ContactPerson"] = c.ContactPerson, ["Email"] = c.Email,
+        ["IsCustomer"] = c.IsCustomer ? "true" : "false", ["IsSupplier"] = c.IsSupplier ? "true" : "false",
+    };
+
+    private async Task<RowWrite> ImportProductAsync(Guid companyId, Dictionary<string, string> row,
+        string action = "Skip", Guid? matchedId = null)
+    {
+        var code = Val(row, "Code") ?? throw new BusinessRuleException("ต้องระบุรหัสสินค้า (Code)");
+        var existing = matchedId is Guid userPick
+            ? await _db.Products.FirstOrDefaultAsync(p => p.Id == userPick && p.CompanyId == companyId && !p.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบสินค้าที่เลือกจับคู่ (อาจถูกลบไปแล้ว) — เลือกใหม่ หรือเปลี่ยนเป็น \"สร้างใหม่\"")
+            : await _db.Products.FirstOrDefaultAsync(p =>
+                p.CompanyId == companyId && !p.IsDeleted && p.Code == code);
+        var sellingPrice = OptAmount(row, "SellingPrice", "ราคาขาย");
+        var costPrice = OptAmount(row, "CostPrice", "ราคาทุน");
+        var vatRate = OptVatRate(row, "VatRate", "อัตราภาษี");
 
         if (existing != null)
         {
-            // Previously threw — now respects per-row resolution (default Skip
-            // since price/cost overwrites are risky without explicit consent).
-            var action = ResolveAction(resolutions, code, defaultAction);
-            if (action == "Skip")
-                throw new InvalidOperationException($"รหัสสินค้า {code} ซ้ำ — ต้องเลือก Merge/Overwrite ใน preview-conflicts ก่อน");
+            // รอบ 205 ทีม B (P0): ข้าม = ข้าม (นับเป็น "ข้าม") — เดิม throw ⇒ นับเป็นแถวผิดทั้งที่ผู้ใช้ไม่ได้เลือกทับ
+            if (action == "Skip") return new RowWrite("Product", existing.Id, Skipped: true);
+            var before = new Dictionary<string, string?>
+            {
+                ["Name"] = existing.Name, ["Unit"] = existing.Unit, ["Category"] = existing.Category,
+                ["SellingPrice"] = existing.SellingPrice.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["CostPrice"] = existing.CostPrice.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["VatRate"] = existing.VatRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            };
 
             if (action == "Overwrite")
             {
-                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Name")))
-                    existing.Name = row.GetValueOrDefault("Name")!;
-                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Unit")))
-                    existing.Unit = row.GetValueOrDefault("Unit")!;
-                if (decimal.TryParse(row.GetValueOrDefault("SellingPrice"), out var sp1)) existing.SellingPrice = sp1;
-                if (decimal.TryParse(row.GetValueOrDefault("CostPrice"), out var cp1)) existing.CostPrice = cp1;
-                if (decimal.TryParse(row.GetValueOrDefault("VatRate"), out var vr1)) existing.VatRate = vr1;
-                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Category"))) existing.Category = row.GetValueOrDefault("Category");
+                if (Val(row, "Name") is { } n1) existing.Name = n1;
+                if (Val(row, "Unit") is { } u1) existing.Unit = u1;
+                if (sellingPrice is decimal sp1) existing.SellingPrice = sp1;
+                if (costPrice is decimal cp1) existing.CostPrice = cp1;
+                if (vatRate is decimal vr1) existing.VatRate = vr1;
+                if (Val(row, "Category") is { } c1) existing.Category = c1;
             }
             else if (action == "Merge")
             {
-                if (existing.SellingPrice == 0 && decimal.TryParse(row.GetValueOrDefault("SellingPrice"), out var sp2)) existing.SellingPrice = sp2;
-                if (existing.CostPrice == 0 && decimal.TryParse(row.GetValueOrDefault("CostPrice"), out var cp2)) existing.CostPrice = cp2;
-                if (string.IsNullOrWhiteSpace(existing.Category)) existing.Category = row.GetValueOrDefault("Category");
+                if (existing.SellingPrice == 0 && sellingPrice is decimal sp2) existing.SellingPrice = sp2;
+                if (existing.CostPrice == 0 && costPrice is decimal cp2) existing.CostPrice = cp2;
+                if (string.IsNullOrWhiteSpace(existing.Category)) existing.Category = Val(row, "Category");
             }
             existing.UpdatedAt = DateTime.UtcNow;
-            return;
+            return new RowWrite("Product", existing.Id, BeforeJson: Before(before));
         }
 
-        _db.Products.Add(new Product
+        var productType = ProductType.Product;
+        if (Val(row, "ProductType") is { } ptRaw)
+        {
+            var pt = ImportValueNormalizer.Enum(ptRaw, ProductTypeAliases);
+            if (!pt.Ok || pt.Value is not ProductType ptv) throw new BusinessRuleException($"ประเภทสินค้า: {pt.Message}");
+            productType = ptv;
+        }
+        var product = new Product
         {
             CompanyId = companyId,
             Code = code,
-            Name = row.GetValueOrDefault("Name") ?? throw new InvalidOperationException("Name is required"),
-            Unit = row.GetValueOrDefault("Unit") ?? "ชิ้น",
-            SellingPrice = decimal.TryParse(row.GetValueOrDefault("SellingPrice"), out var sp) ? sp : 0,
-            CostPrice = decimal.TryParse(row.GetValueOrDefault("CostPrice"), out var cp) ? cp : 0,
-            VatRate = decimal.TryParse(row.GetValueOrDefault("VatRate"), out var vr) ? vr : 7,
-            Category = row.GetValueOrDefault("Category"),
-            ProductType = Enum.TryParse<ProductType>(row.GetValueOrDefault("ProductType"), true, out var pt) ? pt : ProductType.Product
-        });
+            Name = Val(row, "Name") ?? throw new BusinessRuleException("ต้องระบุชื่อสินค้า (Name)"),
+            Unit = Val(row, "Unit") ?? "ชิ้น",
+            SellingPrice = sellingPrice ?? 0,
+            CostPrice = costPrice ?? 0,
+            VatRate = vatRate ?? 7,
+            Category = Val(row, "Category"),
+            ProductType = productType
+        };
+        _db.Products.Add(product);
+        return new RowWrite("Product", product.Id);
     }
 
-    private async Task ImportAccountAsync(Guid companyId, Dictionary<string, string> row,
-        Dictionary<string, string>? resolutions = null, string defaultAction = "Skip")
+    /// <summary>คำไทยของประเภทสินค้าที่ไฟล์จากโปรแกรมไทยใช้ — เดิมค่าที่ไม่ใช่ชื่อ enum ตกเป็น "สินค้า" เงียบ ๆ</summary>
+    private static readonly IReadOnlyDictionary<string, ProductType> ProductTypeAliases = new Dictionary<string, ProductType>(StringComparer.OrdinalIgnoreCase)
     {
-        var code = row.GetValueOrDefault("AccountCode") ?? throw new InvalidOperationException("AccountCode is required");
-        var existing = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && !a.IsDeleted && a.AccountCode == code);
+        ["สินค้า"] = ProductType.Product,
+        ["บริการ"] = ProductType.Service,
+        ["ไม่นับสต็อก"] = ProductType.NonStock,
+        ["ไม่ติดตามสต็อก"] = ProductType.NonStock,
+        ["วัสดุสิ้นเปลือง"] = ProductType.Supplies,
+    };
+
+    private async Task<RowWrite> ImportAccountAsync(Guid companyId, Dictionary<string, string> row,
+        string action = "Skip", Guid? matchedId = null)
+    {
+        var code = Val(row, "AccountCode") ?? throw new BusinessRuleException("ต้องระบุรหัสบัญชี (AccountCode)");
+        var existing = matchedId is Guid userPick
+            ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == userPick && a.CompanyId == companyId && !a.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบบัญชีที่เลือกจับคู่ (อาจถูกลบไปแล้ว) — เลือกใหม่ หรือเปลี่ยนเป็น \"สร้างใหม่\"")
+            : await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && !a.IsDeleted && a.AccountCode == code);
 
         if (existing != null)
         {
-            var action = ResolveAction(resolutions, code, defaultAction);
-            if (action == "Skip")
-                throw new InvalidOperationException($"รหัสบัญชี {code} ซ้ำ — ต้องเลือก Merge/Overwrite ใน preview-conflicts ก่อน");
+            // รอบ 205 ทีม B (P0): ข้าม = ข้าม — เดิม throw ⇒ นับเป็นแถวผิด
+            if (action == "Skip") return new RowWrite("ChartOfAccount", existing.Id, Skipped: true);
+            var before = new Dictionary<string, string?>
+            {
+                ["AccountName"] = existing.AccountName, ["AccountNameEn"] = existing.AccountNameEn,
+                ["AccountType"] = existing.AccountType.ToString(), ["Description"] = existing.Description,
+            };
 
             if (action == "Overwrite")
             {
-                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountName")))
-                    existing.AccountName = row.GetValueOrDefault("AccountName")!;
-                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountNameEn")))
-                    existing.AccountNameEn = row.GetValueOrDefault("AccountNameEn");
+                if (Val(row, "AccountName") is { } n1) existing.AccountName = n1;
+                if (Val(row, "AccountNameEn") is { } ne) existing.AccountNameEn = ne;
                 if (Enum.TryParse<AccountType>(row.GetValueOrDefault("AccountType"), true, out var at))
                     existing.AccountType = at;
-                if (!string.IsNullOrWhiteSpace(row.GetValueOrDefault("Description")))
-                    existing.Description = row.GetValueOrDefault("Description");
+                if (Val(row, "Description") is { } d1) existing.Description = d1;
             }
             else if (action == "Merge")
             {
                 if (string.IsNullOrWhiteSpace(existing.AccountNameEn))
-                    existing.AccountNameEn = row.GetValueOrDefault("AccountNameEn");
+                    existing.AccountNameEn = Val(row, "AccountNameEn");
                 if (string.IsNullOrWhiteSpace(existing.Description))
-                    existing.Description = row.GetValueOrDefault("Description");
+                    existing.Description = Val(row, "Description");
             }
             existing.UpdatedAt = DateTime.UtcNow;
-            return;
+            return new RowWrite("ChartOfAccount", existing.Id, BeforeJson: Before(before));
         }
 
         if (!Enum.TryParse<AccountType>(row.GetValueOrDefault("AccountType"), true, out var acctType))
-            throw new InvalidOperationException("AccountType ไม่ถูกต้อง");
+            throw new BusinessRuleException("ประเภทบัญชี (AccountType) ไม่ถูกต้อง — ใช้ Asset / Liability / Equity / Revenue / Expense");
 
-        _db.ChartOfAccounts.Add(new ChartOfAccount
+        var account = new ChartOfAccount
         {
             CompanyId = companyId,
             AccountCode = code,
-            AccountName = row.GetValueOrDefault("AccountName") ?? throw new InvalidOperationException("AccountName is required"),
-            AccountNameEn = row.GetValueOrDefault("AccountNameEn"),
+            AccountName = Val(row, "AccountName") ?? throw new BusinessRuleException("ต้องระบุชื่อบัญชี (AccountName)"),
+            AccountNameEn = Val(row, "AccountNameEn"),
             AccountType = acctType,
-            Description = row.GetValueOrDefault("Description"),
+            Description = Val(row, "Description"),
             Level = code.Length <= 4 ? 1 : 2
-        });
+        };
+        _db.ChartOfAccounts.Add(account);
+        return new RowWrite("ChartOfAccount", account.Id);
     }
 
     /// <summary>Look up the per-row action set by the user in the preview
@@ -727,75 +1096,72 @@ public class ImportExportService : IImportExportService
         };
     }
 
-    private async Task ImportBankTransactionAsync(Guid companyId, Dictionary<string, string> row)
+    /// <summary>รายการธนาคารจากไฟล์ (Smart Import/นำเข้าเดิม) — รอบ 205 ทีม B: ลงผ่านตัวเขียนตัวเดียว
+    /// <see cref="IBankService.ImportParsedStatementRowsAsync"/> (ทีม C) · เดิม <c>CurrentBalance +=</c> เอง (ยอดการ์ดบัญชีเดินตามไฟล์ ไม่ใช่ตามธนาคาร ·
+    /// ความหมายยอดคงเหลือคนละแบบกับหน้า "ธนาคาร") · กันซ้ำแบบ statement ของตัวเขียน (วัน+ยอด+ทิศ+คำอธิบายตรง = ข้าม) ·
+    /// คำอธิบายต่าง = ลงเป็นรายการใหม่ + คำเตือน (ความหมายเดิมของทางนี้: ซ้ำเฉพาะเมื่อทุกช่องตรง)</summary>
+    private async Task<RowWrite> ImportBankTransactionAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
     {
+        if (_bank == null)
+            throw new BusinessRuleException("ระบบธนาคารไม่พร้อม — นำเข้าที่หน้า \"ธนาคาร → นำเข้า statement\" แทน");
         if (!Guid.TryParse(row.GetValueOrDefault("BankAccountId"), out var bankAccountId))
-            throw new InvalidOperationException("BankAccountId ไม่ถูกต้อง");
-
-        var account = await _db.BankAccounts.FirstOrDefaultAsync(a => a.Id == bankAccountId && a.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
+            throw new BusinessRuleException("BankAccountId ไม่ถูกต้อง — เลือกบัญชีธนาคารปลายทางก่อนนำเข้า");
+        if (!await _db.BankAccounts.AsNoTracking().AnyAsync(a => a.Id == bankAccountId && a.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
 
         if (!Enum.TryParse<BankTransactionType>(row.GetValueOrDefault("TransactionType"), true, out var txnType))
-            throw new InvalidOperationException("TransactionType ไม่ถูกต้อง");
+            throw new BusinessRuleException("TransactionType ไม่ถูกต้อง (Deposit/Withdrawal/Transfer/Fee/Interest)");
 
-        var amount = decimal.TryParse(row.GetValueOrDefault("Amount"), out var amt) ? amt : throw new InvalidOperationException("Amount ไม่ถูกต้อง");
-        var txnDate = DateTime.TryParse(row.GetValueOrDefault("TransactionDate"), out var dtParsed)
-            ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dtParsed) : DateTime.UtcNow;
-        var reference = row.GetValueOrDefault("Reference");
-        var descr = row.GetValueOrDefault("Description");
+        var amount = Math.Abs(OptAmount(row, "Amount", "จำนวนเงิน") ?? throw new BusinessRuleException("ต้องระบุจำนวนเงิน (Amount)"));
+        var txnDate = OptDate(row, "TransactionDate", "วันที่ทำรายการ") ?? Accounting.Helpers.ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+        var outgoing = txnType == BankTransactionType.Withdrawal || txnType == BankTransactionType.Fee;
+        var line = new Accounting.Models.DTOs.Bank.BankStatementLineInput(txnDate, Val(row, "Description"),
+            Withdrawal: outgoing ? amount : 0m, Deposit: outgoing ? 0m : amount, Reference: Val(row, "Reference"));
 
-        // Idempotent: รันไฟล์เดิมซ้ำต้องไม่สร้างรายการซ้ำและห้ามเดินยอดบัญชีซ้ำ
-        // (เดิมไม่มี dedup เลย — import ซ้ำ = CurrentBalance วิ่งเพิ่มอีกเต็มไฟล์)
-        var dupInDb = await _db.BankTransactions.AsNoTracking().AnyAsync(t =>
-            t.CompanyId == companyId && t.BankAccountId == bankAccountId
-            && t.TransactionDate == txnDate && t.TransactionType == txnType
-            && t.Amount == amount && t.Reference == reference && t.Description == descr);
-        var dupInTracker = _db.ChangeTracker.Entries<BankTransaction>().Select(e => e.Entity).Any(t =>
-            t.CompanyId == companyId && t.BankAccountId == bankAccountId
-            && t.TransactionDate == txnDate && t.TransactionType == txnType
-            && t.Amount == amount && t.Reference == reference && t.Description == descr);
-        if (dupInDb || dupInTracker) return;
-
-        var balanceChange = txnType == BankTransactionType.Withdrawal || txnType == BankTransactionType.Fee ? -Math.Abs(amount) : Math.Abs(amount);
-        account.CurrentBalance += balanceChange;
-
-        _db.BankTransactions.Add(new BankTransaction
+        var written = await _bank.ImportParsedStatementRowsAsync(companyId, bankAccountId, new[] { line },
+            new Accounting.Models.DTOs.Bank.BankStatementWriteOptions(
+                OnConflict: Accounting.Models.DTOs.Bank.BankStatementConflictPolicy.InsertAsNew,
+                CreatedBy: performedBy));
+        var r = written.Lines.Count > 0 ? written.Lines[0]
+            : throw new BusinessRuleException("บันทึกรายการธนาคารไม่สำเร็จ — ตรวจวันที่และจำนวนเงินของแถวนี้");
+        return r.Outcome switch
         {
-            CompanyId = companyId,
-            BankAccountId = bankAccountId,
-            TransactionDate = txnDate,
-            TransactionType = txnType,
-            Amount = amount,
-            BalanceAfter = account.CurrentBalance,
-            Description = row.GetValueOrDefault("Description"),
-            Reference = row.GetValueOrDefault("Reference")
-        });
+            Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Created or Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Updated
+                => new RowWrite("BankTransaction", r.BankTransactionId),
+            Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Duplicate or Accounting.Models.DTOs.Bank.BankStatementLineOutcome.Conflict
+                => new RowWrite("BankTransaction", r.ExistingTransactionId, Skipped: true),
+            _ => throw new BusinessRuleException(r.Message ??"บันทึกรายการธนาคารไม่สำเร็จ — ตรวจวันที่และจำนวนเงินของแถวนี้"),
+        };
     }
 
-    private async Task ImportJournalEntryAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    private async Task<RowWrite> ImportJournalEntryAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
     {
-        var date = DateTime.TryParse(row.GetValueOrDefault("Date"), out var dt) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dt) : DateTime.UtcNow;
-        var accountCode = row.GetValueOrDefault("AccountCode") ?? throw new InvalidOperationException("AccountCode is required");
-        var debitAmount = decimal.TryParse(row.GetValueOrDefault("DebitAmount"), out var da) ? da : 0;
-        var creditAmount = decimal.TryParse(row.GetValueOrDefault("CreditAmount"), out var ca) ? ca : 0;
+        var date = ReqDate(row, "Date", "วันที่");
+        var accountCode = Val(row, "AccountCode") ?? throw new BusinessRuleException("ต้องระบุรหัสบัญชี (AccountCode)");
+        var debitAmount = OptAmount(row, "DebitAmount", "เดบิต") ?? 0;
+        var creditAmount = OptAmount(row, "CreditAmount", "เครดิต") ?? 0;
         var description = row.GetValueOrDefault("Description") ?? "";
         var reference = row.GetValueOrDefault("Reference");
 
+        // รอบ 205 ทีม B (P0): ผังที่ถูกลบห้ามรับบรรทัด JE ใหม่ (เดิมไม่กรอง IsDeleted)
         var account = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == accountCode)
-            ?? throw new KeyNotFoundException($"ไม่พบบัญชีรหัส {accountCode}");
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && !a.IsDeleted && a.AccountCode == accountCode)
+            ?? throw new KeyNotFoundException($"ไม่พบบัญชีรหัส {accountCode} ในผังบัญชี — เพิ่มผังก่อน หรือแก้รหัสในไฟล์");
 
         Guid? contactId = null;
-        var contactName = row.GetValueOrDefault("ContactName");
-        if (!string.IsNullOrWhiteSpace(contactName))
+        var contactName = Val(row, "ContactName");
+        if (contactName != null)
         {
-            var contact = await _db.Contacts
-                .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Name.Contains(contactName));
-            contactId = contact?.Id;
+            // รอบ 205 ทีม B (P0): ชื่อตรงตัวเท่านั้น — เดิม Name.Contains ไม่เรียง ⇒ "ABC" ได้ "ABC Trading" หรือ "ABC Holdings" แล้วแต่ลำดับจากฐาน
+            // (ชื่อซ้ำหลายแถว = ไม่ผูก · ผู้ใช้ผูกเองที่หน้าใบสำคัญ)
+            var hits = await _db.Contacts
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.Name == contactName)
+                .Select(c => c.Id).Take(2).ToListAsync();
+            contactId = hits.Count == 1 ? hits[0] : null;
         }
 
-        // สแกน ChangeTracker ก่อน DB — SaveChanges เกิดครั้งเดียวท้ายไฟล์ ดังนั้น
-        // แถว Dr/Cr ของ JE เดียวกันในไฟล์เดียวกันยังไม่อยู่ใน DB: ถ้า query DB
+        // สแกน ChangeTracker ก่อน DB — แถว Dr/Cr ของ JE เดียวกันในไฟล์เดียวกันอาจยังไม่อยู่ใน DB
+        // (ศูนย์นำเข้าบันทึกทีละแถว · เส้นเดิมเคยบันทึกครั้งเดียวท้ายไฟล์): ถ้า query DB
         // อย่างเดียวจะหากันไม่เจอ → แตกเป็น JE บรรทัดเดียวหลายใบ (ไม่ balance
         // สักใบ) และรันไฟล์เดิมซ้ำจะ append บรรทัดเงาเข้าใบเดิม (pattern เดียวกับ
         // ImportOpeningSubledgerAsync/ImportDocumentAsync ที่แก้ไว้แล้ว)
@@ -804,65 +1170,68 @@ public class ImportExportService : IImportExportService
                     && j.EntryDate == date && j.Description == description && j.Reference == reference)
             ?? await _db.JournalEntries
                 .Include(j => j.Lines)
-                .FirstOrDefaultAsync(j => j.CompanyId == companyId
+                .FirstOrDefaultAsync(j => j.CompanyId == companyId && !j.IsDeleted
                     && j.EntryDate == date
                     && j.Description == description
                     && j.Reference == reference);
 
         if (existing != null)
         {
+            // ใบที่ลงบัญชีแล้วห้ามเติมบรรทัดจากไฟล์ (ยอดใน GL เปลี่ยนใต้มือผู้อนุมัติ) — ทางไปต่อ: ใช้คำอธิบาย/อ้างอิงใหม่ = ใบใหม่
+            if (existing.Status != JournalEntryStatus.Draft)
+                throw new BusinessRuleException(
+                    $"สมุดรายวัน {existing.EntryNumber} (วันที่/คำอธิบาย/อ้างอิงเดียวกับแถวนี้) ลงบัญชีแล้ว จึงเติมบรรทัดจากไฟล์ไม่ได้ — "
+                    + "แก้คำอธิบายหรือเลขอ้างอิงในไฟล์ให้เป็นใบใหม่ หรือกลับรายการใบเดิมก่อน");
             // กันรันไฟล์เดิมซ้ำ: บรรทัดเดิม (บัญชี+ยอดเดียวกัน) มีแล้ว = ข้าม
             var dupLine = existing.Lines.Any(l => l.AccountId == account.Id
                 && l.DebitAmount == debitAmount && l.CreditAmount == creditAmount);
-            if (!dupLine)
+            if (dupLine) return new RowWrite("JournalEntry", existing.Id, Skipped: true);
+            // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
+            _db.AddNewChild(existing.Lines, new JournalEntryLine
             {
-                // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
-                _db.AddNewChild(existing.Lines, new JournalEntryLine
+                AccountId = account.Id,
+                DebitAmount = debitAmount,
+                CreditAmount = creditAmount,
+                Description = description
+            });
+            existing.TotalDebit = existing.Lines.Sum(l => l.DebitAmount);
+            existing.TotalCredit = existing.Lines.Sum(l => l.CreditAmount);
+            return new RowWrite("JournalEntry", existing.Id);
+        }
+
+        // ⚠️ เดิมอ่านเลขรันจากแถว NumberSeries ที่ Prefix == "JV" ซึ่ง
+        // **ไม่มีใครสร้างเลยทั้งระบบ** (ไม่มี seed + ไม่มี UI สร้าง) ⇒
+        // `series` เป็น null ทุกครั้ง ⇒ nextNum = 1 เสมอ ⇒ ทุก JE ที่ import
+        // ได้เลข "JV-000001" ซ้ำกันหมดตั้งแต่วันแรก. ใช้ผู้ออกเลข JE ตัวเดียว
+        // ของระบบแทน (มี advisory lock ข้าม instance + นับต่อเดือนจริง)
+        var entryNumber = await Journal.JournalEntryBuilder.NextJournalNumberAsync(
+            _db, companyId, "JV", date);
+
+        var entry = new JournalEntry
+        {
+            CompanyId = companyId,
+            EntryNumber = entryNumber,
+            EntryDate = date,
+            Description = description,
+            Reference = reference,
+            Note = contactId.HasValue ? $"ContactId:{contactId}" : null,
+            Status = JournalEntryStatus.Draft,
+            CreatedBy = performedBy,
+            TotalDebit = debitAmount,
+            TotalCredit = creditAmount,
+            Lines = new List<JournalEntryLine>
+            {
+                new()
                 {
                     AccountId = account.Id,
                     DebitAmount = debitAmount,
                     CreditAmount = creditAmount,
                     Description = description
-                });
-            }
-            existing.TotalDebit = existing.Lines.Sum(l => l.DebitAmount);
-            existing.TotalCredit = existing.Lines.Sum(l => l.CreditAmount);
-        }
-        else
-        {
-            // ⚠️ เดิมอ่านเลขรันจากแถว NumberSeries ที่ Prefix == "JV" ซึ่ง
-            // **ไม่มีใครสร้างเลยทั้งระบบ** (ไม่มี seed + ไม่มี UI สร้าง) ⇒
-            // `series` เป็น null ทุกครั้ง ⇒ nextNum = 1 เสมอ ⇒ ทุก JE ที่ import
-            // ได้เลข "JV-000001" ซ้ำกันหมดตั้งแต่วันแรก. ใช้ผู้ออกเลข JE ตัวเดียว
-            // ของระบบแทน (มี advisory lock ข้าม instance + นับต่อเดือนจริง)
-            var entryNumber = await Journal.JournalEntryBuilder.NextJournalNumberAsync(
-                _db, companyId, "JV", date);
-
-            var entry = new JournalEntry
-            {
-                CompanyId = companyId,
-                EntryNumber = entryNumber,
-                EntryDate = date,
-                Description = description,
-                Reference = reference,
-                Note = contactId.HasValue ? $"ContactId:{contactId}" : null,
-                Status = JournalEntryStatus.Draft,
-                CreatedBy = performedBy,
-                TotalDebit = debitAmount,
-                TotalCredit = creditAmount,
-                Lines = new List<JournalEntryLine>
-                {
-                    new()
-                    {
-                        AccountId = account.Id,
-                        DebitAmount = debitAmount,
-                        CreditAmount = creditAmount,
-                        Description = description
-                    }
                 }
-            };
-            _db.JournalEntries.Add(entry);
-        }
+            }
+        };
+        _db.JournalEntries.Add(entry);
+        return new RowWrite("JournalEntry", entry.Id);
     }
 
     // ===== Export Helpers =====
@@ -957,16 +1326,15 @@ public class ImportExportService : IImportExportService
 
     // ===== Stock import =====
 
-    private async Task ImportStockOpeningAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    private async Task<RowWrite> ImportStockOpeningAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
     {
-        var code = row.GetValueOrDefault("ProductCode") ?? throw new InvalidOperationException("ProductCode is required");
-        var product = await _db.Products.FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Code == code)
+        var code = Val(row, "ProductCode") ?? throw new BusinessRuleException("ต้องระบุรหัสสินค้า (ProductCode)");
+        var product = await _db.Products.FirstOrDefaultAsync(p => p.CompanyId == companyId && !p.IsDeleted && p.Code == code)
             ?? throw new KeyNotFoundException($"ไม่พบสินค้ารหัส {code}");
 
-        var qty = decimal.TryParse(row.GetValueOrDefault("Quantity"), out var q) ? q
-            : throw new InvalidOperationException("Quantity ไม่ถูกต้อง");
-        var unitCost = decimal.TryParse(row.GetValueOrDefault("UnitCost"), out var uc) ? uc : product.CostPrice;
-        var openingDate = DateTime.TryParse(row.GetValueOrDefault("OpeningDate"), out var od) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(od) : DateTime.UtcNow;
+        var qty = OptNumber(row, "Quantity", "ยอดยกมา") ?? throw new BusinessRuleException("ต้องระบุจำนวนยอดยกมา (Quantity)");
+        var unitCost = OptAmount(row, "UnitCost", "ต้นทุน/หน่วย") ?? product.CostPrice;
+        var openingDate = OptDate(row, "OpeningDate", "วันยกมา") ?? DateTime.UtcNow;
 
         // Replace any previously imported opening balance so re-running the
         // file twice doesn't double-count. The MovementType OPENING is the
@@ -977,7 +1345,7 @@ public class ImportExportService : IImportExportService
             .Select(m => new { m.WarehouseId, m.Quantity, m.UnitCost })
             .ToListAsync();
         if (_stock == null)
-            throw new InvalidOperationException("ระบบสต็อกไม่พร้อม — ไม่สามารถนำเข้าสต็อกยกมาได้");
+            throw new BusinessRuleException("ระบบสต็อกไม่พร้อม — ไม่สามารถนำเข้าสต็อกยกมาได้");
 
         // ล้างยอดยกมาชุดก่อนผ่าน ledger (ไม่ใช่ `CurrentStock -=` เอง) เพื่อให้ `WarehouseStock` ถูกล้างตามไปพร้อมกัน
         // รอบ 201 ฝ่ายค้าน X4: เดิม (1) ลบแถว OPENING ทิ้งจริง (ประวัติหาย · ยอดจากประวัติไม่ตรงคลัง) และ (2) แถวล้างเป็น OUT/IN ⇒ คิว FIFO
@@ -1007,6 +1375,7 @@ public class ImportExportService : IImportExportService
             UnitCostOverride: unitCost,
             Notes: row.GetValueOrDefault("Notes") ?? "สต็อกยกมา (Import)",
             CreatedBy: performedBy));
+        return new RowWrite("Product", product.Id);
     }
 
     /// <summary>
@@ -1019,23 +1388,24 @@ public class ImportExportService : IImportExportService
     /// balance; posting here too would double-count. Idempotent by a
     /// deterministic DocumentNumber ("OB-AR:"/"OB-AP:" + InvoiceNumber).
     /// </summary>
-    private async Task ImportOpeningSubledgerAsync(
+    private async Task<RowWrite> ImportOpeningSubledgerAsync(
         Guid companyId, Dictionary<string, string> row, string performedBy, bool isReceivable)
     {
         var contactName = (row.GetValueOrDefault("ContactName") ?? "").Trim();
         var contactTaxId = row.GetValueOrDefault("ContactTaxId")?.Trim();
         if (string.IsNullOrWhiteSpace(contactName) && string.IsNullOrWhiteSpace(contactTaxId))
-            throw new InvalidOperationException("ต้องระบุ ContactName หรือ ContactTaxId");
+            throw new BusinessRuleException("ต้องระบุชื่อ (ContactName) หรือเลขผู้เสียภาษี (ContactTaxId) ของคู่ค้า");
 
         var invoiceNumber = (row.GetValueOrDefault("InvoiceNumber") ?? "").Trim();
         if (string.IsNullOrWhiteSpace(invoiceNumber))
-            throw new InvalidOperationException("InvoiceNumber is required");
+            throw new BusinessRuleException("ต้องระบุเลขที่เอกสารเดิม (InvoiceNumber)");
 
-        if (!decimal.TryParse(row.GetValueOrDefault("Amount"), out var amount) || amount <= 0)
-            throw new InvalidOperationException("Amount ต้องเป็นตัวเลขมากกว่า 0");
+        var amount = OptAmount(row, "Amount", "ยอดคงค้าง") ?? 0m;
+        if (amount <= 0)
+            throw new BusinessRuleException("ยอดคงค้าง (Amount) ต้องเป็นตัวเลขมากกว่า 0");
 
-        var invoiceDate = DateTime.TryParse(row.GetValueOrDefault("InvoiceDate"), out var idt) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(idt) : throw new InvalidOperationException("InvoiceDate ไม่ถูกต้อง");
-        DateTime? dueDate = DateTime.TryParse(row.GetValueOrDefault("DueDate"), out var dd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dd) : null;
+        var invoiceDate = ReqDate(row, "InvoiceDate", "วันที่เอกสาร");
+        DateTime? dueDate = OptDate(row, "DueDate", "วันครบกำหนด");
 
         // Resolve or create the contact (migration convenience). The import
         // runs many rows then SaveChanges once at the end — so also scan the
@@ -1149,20 +1519,20 @@ public class ImportExportService : IImportExportService
         doc.TotalAmount = amount;
         doc.PaidAmount = 0;
         doc.BalanceDue = amount;
+        return new RowWrite("Document", doc.Id);
     }
 
-    private async Task ImportStockAdjustmentAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    private async Task<RowWrite> ImportStockAdjustmentAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
     {
-        var code = row.GetValueOrDefault("ProductCode") ?? throw new InvalidOperationException("ProductCode is required");
-        var product = await _db.Products.FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Code == code)
+        var code = Val(row, "ProductCode") ?? throw new BusinessRuleException("ต้องระบุรหัสสินค้า (ProductCode)");
+        var product = await _db.Products.FirstOrDefaultAsync(p => p.CompanyId == companyId && !p.IsDeleted && p.Code == code)
             ?? throw new KeyNotFoundException($"ไม่พบสินค้ารหัส {code}");
 
-        var rawType = (row.GetValueOrDefault("MovementType") ?? "ADJUST").ToUpperInvariant();
+        var rawType = (row.GetValueOrDefault("MovementType") ?? "ADJUST").Trim().ToUpperInvariant();
         if (rawType != "IN" && rawType != "OUT" && rawType != "ADJUST")
-            throw new InvalidOperationException($"MovementType ไม่ถูกต้อง: {rawType}");
+            throw new BusinessRuleException($"ประเภทการปรับ (MovementType) ไม่ถูกต้อง: {rawType} — ใช้ IN / OUT / ADJUST");
 
-        var qty = decimal.TryParse(row.GetValueOrDefault("Quantity"), out var q) ? q
-            : throw new InvalidOperationException("Quantity ไม่ถูกต้อง");
+        var qty = OptNumber(row, "Quantity", "จำนวน") ?? throw new BusinessRuleException("ต้องระบุจำนวน (Quantity)");
         // Normalize sign — IN is always positive, OUT always negative; ADJUST
         // honours the sign the user gave (allowing both +/− variance).
         var signed = rawType switch
@@ -1172,11 +1542,11 @@ public class ImportExportService : IImportExportService
             _ => qty
         };
 
-        var unitCost = decimal.TryParse(row.GetValueOrDefault("UnitCost"), out var uc) ? uc : product.CostPrice;
-        var date = DateTime.TryParse(row.GetValueOrDefault("AdjustmentDate"), out var d) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(d) : DateTime.UtcNow;
+        var unitCost = OptAmount(row, "UnitCost", "ต้นทุน/หน่วย") ?? product.CostPrice;
+        var date = OptDate(row, "AdjustmentDate", "วันที่ปรับ") ?? DateTime.UtcNow;
 
         if (_stock == null)
-            throw new InvalidOperationException("ระบบสต็อกไม่พร้อม — ไม่สามารถนำเข้ารายการปรับสต็อกได้");
+            throw new BusinessRuleException("ระบบสต็อกไม่พร้อม — ไม่สามารถนำเข้ารายการปรับสต็อกได้");
 
         await _stock.MoveAsync(new StockMoveRequest(
             CompanyId: companyId,
@@ -1188,48 +1558,10 @@ public class ImportExportService : IImportExportService
             UnitCostOverride: unitCost,
             Notes: row.GetValueOrDefault("Notes"),
             CreatedBy: performedBy));
+        return new RowWrite("Product", product.Id);
     }
 
     // ===== Fixed Asset import =====
-
-    private async Task ImportFixedAssetAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
-    {
-        var code = row.GetValueOrDefault("AssetCode") ?? throw new InvalidOperationException("AssetCode is required");
-        if (await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId && a.AssetCode == code))
-            throw new InvalidOperationException($"รหัสสินทรัพย์ {code} ซ้ำ");
-
-        var purchaseDate = DateTime.TryParse(row.GetValueOrDefault("PurchaseDate"), out var pd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(pd)
-            : throw new InvalidOperationException("PurchaseDate ไม่ถูกต้อง");
-        var purchaseCost = decimal.TryParse(row.GetValueOrDefault("PurchaseCost"), out var pc) ? pc
-            : throw new InvalidOperationException("PurchaseCost ไม่ถูกต้อง");
-        var salvage = decimal.TryParse(row.GetValueOrDefault("SalvageValue"), out var sv) ? sv : 0m;
-        var life = int.TryParse(row.GetValueOrDefault("UsefulLifeMonths"), out var lm) ? lm
-            : throw new InvalidOperationException("UsefulLifeMonths ไม่ถูกต้อง");
-        var accDep = decimal.TryParse(row.GetValueOrDefault("AccumulatedDepreciation"), out var ad) ? ad : 0m;
-        var method = Enum.TryParse<DepreciationMethod>(row.GetValueOrDefault("DepreciationMethod"), true, out var dm)
-            ? dm : DepreciationMethod.StraightLine;
-
-        _db.FixedAssets.Add(new FixedAsset
-        {
-            CompanyId = companyId,
-            AssetCode = code,
-            Name = row.GetValueOrDefault("Name") ?? throw new InvalidOperationException("Name is required"),
-            Category = row.GetValueOrDefault("Category"),
-            Location = row.GetValueOrDefault("Location"),
-            SerialNumber = row.GetValueOrDefault("SerialNumber"),
-            PurchaseDate = purchaseDate,
-            PurchaseCost = purchaseCost,
-            SalvageValue = salvage,
-            UsefulLifeMonths = life,
-            DepreciationMethod = method,
-            AccumulatedDepreciation = accDep,
-            NetBookValue = purchaseCost - accDep,
-            Status = AssetStatus.Active,
-            CreatedBy = performedBy
-        });
-    }
-
-    // ===== Stock + Asset + Bank exports =====
 
     private async Task<List<Dictionary<string, string>>> ExportStockMovementsAsync(Guid companyId, ExportRequest request)
     {
@@ -1322,68 +1654,6 @@ public class ImportExportService : IImportExportService
 
     // ===== Payments =====
 
-    private async Task ImportPaymentAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
-    {
-        var docNum = row.GetValueOrDefault("DocumentNumber") ?? throw new InvalidOperationException("DocumentNumber is required");
-        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId && d.DocumentNumber == docNum)
-            ?? throw new KeyNotFoundException($"ไม่พบเอกสาร {docNum}");
-
-        var amount = decimal.TryParse(row.GetValueOrDefault("Amount"), out var amt) ? amt
-            : throw new InvalidOperationException("Amount ไม่ถูกต้อง");
-        var date = DateTime.TryParse(row.GetValueOrDefault("PaymentDate"), out var pd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(pd) : DateTime.UtcNow;
-        var method = Enum.TryParse<PaymentMethod>(row.GetValueOrDefault("PaymentMethod"), true, out var pm) ? pm : PaymentMethod.Cash;
-
-        // Reuse the same number-series pattern as the rest of the codebase
-        // (PaymentService uses "PAY" prefix per month). We replicate it here
-        // rather than reach into PaymentService — single tx, avoids a circular
-        // dependency.
-        // เลขใบรับเงิน — ล็อก + integer-max ผ่านตัวกลาง (ผลตรวจ F-08)
-        // เดิมเรียงแบบข้อความและไม่มีล็อก ⇒ นำเข้าไฟล์สองไฟล์พร้อมกันได้เลขซ้ำ
-        var paymentPrefix = $"PAY-{DateTime.UtcNow:yyyyMM}-";
-        var paymentNumber = await Accounting.Helpers.SequenceNumber.NextAsync(
-            _db, companyId, Accounting.Helpers.AdvisoryLockKey.PaymentSequence, paymentPrefix,
-            _db.Payments.IgnoreQueryFilters()
-                .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(paymentPrefix))
-                .OrderByDescending(p => p.CreatedAt)
-                .Select(p => p.PaymentNumber),
-            _db.Payments.Local.Select(p => p.PaymentNumber));
-
-        // ── ด่านจ่ายเกิน: ทางเข้า "นำเข้าไฟล์" ต้องเดินด่านเดียวกับเว็บ (D4-3) ──
-        // เดิมที่นี่ไม่มีด่านเลย ⇒ ไฟล์ที่ยอดผิด/ถูกนำเข้าซ้ำ ดัน PaidAmount เกิน
-        // ยอดใบ แล้ว BalanceDue ติดลบเงียบ ๆ (ลูกหนี้ติดลบไหลเข้ารายงานอายุหนี้)
-        if (Accounting.Helpers.DocumentSettlementState.WouldOverpay(doc.BalanceDue, amount))
-            throw new InvalidOperationException(
-                $"ยอดชำระ ({amount:N2}) เกินยอดค้างชำระ ({doc.BalanceDue:N2}) ของเอกสาร {docNum} — "
-                + "ตรวจไฟล์นำเข้า (ยอดผิด หรือแถวนี้ถูกนำเข้าไปแล้ว) ก่อนนำเข้าใหม่");
-
-        doc.PaidAmount += amount;
-        await Accounting.Helpers.Pp36Ledger.StampFirstPaymentAsync(_db, companyId, doc, date);   // คำตัดสินข้อ 137 — งวด ภ.พ.36 = เดือนที่จ่ายครั้งแรก
-        // ยอดจ่ายผู้รับเงิน (คำตัดสินข้อ 131 · รอบ PP36 ทีม F2) — ตัวตั้งเดียวกับเว็บ
-        var settle = Accounting.Helpers.DocumentSettlementState.Apply(
-            Accounting.Helpers.ForeignServiceVat.PayeeAmount(doc), doc.PaidAmount, doc.Status);
-        doc.BalanceDue = settle.BalanceDue;
-        doc.Status = settle.Status;
-        if (settle.Status == DocumentStatus.Paid)
-        {
-            doc.AgingDays = null;
-            doc.AgingLastEvaluatedAt = DateTime.UtcNow;
-        }
-
-        _db.Payments.Add(new Payment
-        {
-            CompanyId = companyId,
-            PaymentNumber = paymentNumber,
-            DocumentId = doc.Id,
-            PaymentDate = date,
-            Amount = amount,
-            PaymentMethod = method,
-            Reference = row.GetValueOrDefault("Reference"),
-            BankAccount = row.GetValueOrDefault("BankAccount"),
-            Notes = row.GetValueOrDefault("Notes"),
-            CreatedBy = performedBy
-        });
-    }
-
     private async Task<List<Dictionary<string, string>>> ExportPaymentsAsync(Guid companyId, ExportRequest request)
     {
         var query = _db.Payments.Include(p => p.Document).Where(p => p.CompanyId == companyId);
@@ -1406,31 +1676,32 @@ public class ImportExportService : IImportExportService
 
     // ===== Projects =====
 
-    private async Task ImportProjectAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    private async Task<RowWrite> ImportProjectAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
     {
-        var code = row.GetValueOrDefault("Code") ?? throw new InvalidOperationException("Code is required");
-        if (await _db.Projects.AnyAsync(p => p.CompanyId == companyId && p.Code == code))
-            throw new InvalidOperationException($"รหัสโปรเจกต์ {code} ซ้ำ");
+        var code = Val(row, "Code") ?? throw new BusinessRuleException("ต้องระบุรหัสโปรเจกต์ (Code)");
+        if (await _db.Projects.AnyAsync(p => p.CompanyId == companyId && !p.IsDeleted && p.Code == code))
+            throw new BusinessRuleException($"รหัสโปรเจกต์ {code} ซ้ำกับที่มีอยู่ — แก้รหัสในไฟล์ หรือข้ามแถวนี้");
 
-        _db.Projects.Add(new Project
+        var project = new Project
         {
             CompanyId = companyId,
             Code = code,
-            Name = row.GetValueOrDefault("Name") ?? throw new InvalidOperationException("Name is required"),
+            Name = Val(row, "Name") ?? throw new BusinessRuleException("ต้องระบุชื่อโปรเจกต์ (Name)"),
             NameEn = row.GetValueOrDefault("NameEn"),
             Description = row.GetValueOrDefault("Description"),
             CustomerName = row.GetValueOrDefault("CustomerName"),
             ProjectManagerName = row.GetValueOrDefault("ProjectManagerName"),
-            StartDate = DateTime.TryParse(row.GetValueOrDefault("StartDate"), out var sd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(sd)
-                : throw new InvalidOperationException("StartDate ไม่ถูกต้อง"),
-            EndDate = DateTime.TryParse(row.GetValueOrDefault("EndDate"), out var ed) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(ed) : null,
-            Status = row.GetValueOrDefault("Status") ?? "Active",
-            BudgetAmount = decimal.TryParse(row.GetValueOrDefault("BudgetAmount"), out var ba) ? ba : 0,
-            ContractAmount = decimal.TryParse(row.GetValueOrDefault("ContractAmount"), out var ca) ? ca : 0,
+            StartDate = ReqDate(row, "StartDate", "วันเริ่มต้น"),
+            EndDate = OptDate(row, "EndDate", "วันสิ้นสุด"),
+            Status = Val(row, "Status") ?? "Active",
+            BudgetAmount = OptAmount(row, "BudgetAmount", "งบประมาณ") ?? 0,
+            ContractAmount = OptAmount(row, "ContractAmount", "มูลค่าสัญญา") ?? 0,
             // ชุดค่าเดียวกับฟอร์ม/API (ProjectContractMethods) — เดิมเก็บข้อความอะไรก็ได้ที่อยู่ในไฟล์
             BillingMethod = Accounting.Helpers.ProjectContractMethods.NormalizeBilling(row.GetValueOrDefault("BillingMethod")),
             CreatedBy = performedBy
-        });
+        };
+        _db.Projects.Add(project);
+        return new RowWrite("Project", project.Id);
     }
 
     private async Task<List<Dictionary<string, string>>> ExportProjectsAsync(Guid companyId, ExportRequest request)
@@ -1457,41 +1728,46 @@ public class ImportExportService : IImportExportService
 
     // ===== Employees =====
 
-    private async Task ImportEmployeeAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    private async Task<RowWrite> ImportEmployeeAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
     {
-        var code = row.GetValueOrDefault("EmployeeCode") ?? throw new InvalidOperationException("EmployeeCode is required");
+        var code = Val(row, "EmployeeCode") ?? throw new BusinessRuleException("ต้องระบุรหัสพนักงาน (EmployeeCode)");
         if (await _db.Employees.AnyAsync(e => e.CompanyId == companyId && e.EmployeeCode == code))
-            throw new InvalidOperationException($"รหัสพนักงาน {code} ซ้ำ");
+            throw new BusinessRuleException($"รหัสพนักงาน {code} ซ้ำกับที่มีอยู่ — แก้รหัสในไฟล์ หรือข้ามแถวนี้");
         // รอบ 201 ทีม PR2 (ฝ่ายค้าน Q4 · แตะไฟล์ทีมอื่นให้เล็กที่สุด): เลขประกันสังคมผ่านตัวตัดสินเดียวกับหน้าพนักงาน
         // (13 หลัก · เก็บตัวเลขล้วน) — รูปไม่ถูก ⇒ แถวนี้ล้มพร้อมเหตุผล แบบเดียวกับ StartDate/BaseSalary
         var ssoNoEdit = Accounting.Helpers.EmployeeRecordEdit.SsoInsuredNumber(row.GetValueOrDefault("SocialSecurityNumber"), null);
-        if (ssoNoEdit.Error != null) throw new InvalidOperationException(ssoNoEdit.Error);
+        if (ssoNoEdit.Error != null) throw new BusinessRuleException(ssoNoEdit.Error);
 
-        _db.Employees.Add(new Employee
+        // รอบ 205 ทีม B: เลขบัตรประชาชนเก็บเป็นตัวเลขล้วน (ขีด/ช่องว่างจากไฟล์ตัดออก) — checksum ไม่ผ่าน = คำเตือนที่ศูนย์นำเข้า
+        // (EmployeesImportTarget · ไม่บล็อก — บัตรต่างด้าว/เลขชั่วคราวมีจริง · คำตัดสินข้อ 150)
+        var citizenRaw = Val(row, "CitizenId");
+        var citizenDigits = citizenRaw == null ? null : new string(citizenRaw.Where(char.IsDigit).ToArray());
+
+        var employee = new Employee
         {
             CompanyId = companyId,
             EmployeeCode = code,
             TitleTh = Accounting.Helpers.ThaiTitleHelper.Normalize(row.GetValueOrDefault("TitleTh")),
-            FirstNameTh = row.GetValueOrDefault("FirstNameTh") ?? throw new InvalidOperationException("FirstNameTh is required"),
-            LastNameTh = row.GetValueOrDefault("LastNameTh") ?? throw new InvalidOperationException("LastNameTh is required"),
+            FirstNameTh = Val(row, "FirstNameTh") ?? throw new BusinessRuleException("ต้องระบุชื่อ (FirstNameTh)"),
+            LastNameTh = Val(row, "LastNameTh") ?? throw new BusinessRuleException("ต้องระบุนามสกุล (LastNameTh)"),
             FirstNameEn = row.GetValueOrDefault("FirstNameEn"),
             LastNameEn = row.GetValueOrDefault("LastNameEn"),
-            CitizenId = row.GetValueOrDefault("CitizenId"),
-            DateOfBirth = DateTime.TryParse(row.GetValueOrDefault("DateOfBirth"), out var dob) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dob) : null,
+            CitizenId = string.IsNullOrEmpty(citizenDigits) ? citizenRaw : citizenDigits,
+            DateOfBirth = OptDate(row, "DateOfBirth", "วันเกิด"),
             Phone = row.GetValueOrDefault("Phone"),
             Email = row.GetValueOrDefault("Email"),
             Department = row.GetValueOrDefault("Department"),
             Position = row.GetValueOrDefault("Position"),
-            StartDate = DateTime.TryParse(row.GetValueOrDefault("StartDate"), out var sd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(sd)
-                : throw new InvalidOperationException("StartDate ไม่ถูกต้อง"),
-            BaseSalary = decimal.TryParse(row.GetValueOrDefault("BaseSalary"), out var bs) ? bs
-                : throw new InvalidOperationException("BaseSalary ไม่ถูกต้อง"),
-            SalaryType = row.GetValueOrDefault("SalaryType") ?? "Monthly",
+            StartDate = ReqDate(row, "StartDate", "วันเริ่มงาน"),
+            BaseSalary = OptAmount(row, "BaseSalary", "เงินเดือนพื้นฐาน") ?? throw new BusinessRuleException("ต้องระบุเงินเดือนพื้นฐาน (BaseSalary)"),
+            SalaryType = Val(row, "SalaryType") ?? "Monthly",
             BankName = row.GetValueOrDefault("BankName"),
             BankAccountNumber = row.GetValueOrDefault("BankAccountNumber"),
             SocialSecurityNumber = ssoNoEdit.Value,
             CreatedBy = performedBy
-        });
+        };
+        _db.Employees.Add(employee);
+        return new RowWrite("Employee", employee.Id);
     }
 
     private async Task<List<Dictionary<string, string>>> ExportEmployeesAsync(Guid companyId, ExportRequest request)
@@ -1527,14 +1803,15 @@ public class ImportExportService : IImportExportService
     // same BudgetName + FiscalYear adds lines to the existing budget rather
     // than spawning duplicates.
 
-    private async Task ImportBudgetAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
+    private async Task<RowWrite> ImportBudgetAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
     {
-        var name = row.GetValueOrDefault("BudgetName") ?? throw new InvalidOperationException("BudgetName is required");
-        var year = int.TryParse(row.GetValueOrDefault("FiscalYear"), out var fy) ? fy
-            : throw new InvalidOperationException("FiscalYear ไม่ถูกต้อง");
-        var acctCode = row.GetValueOrDefault("AccountCode") ?? throw new InvalidOperationException("AccountCode is required");
-        var account = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == acctCode)
-            ?? throw new KeyNotFoundException($"ไม่พบบัญชี {acctCode}");
+        var name = Val(row, "BudgetName") ?? throw new BusinessRuleException("ต้องระบุชื่องบประมาณ (BudgetName)");
+        var year = OptInt(row, "FiscalYear", "ปีงบประมาณ") ?? throw new BusinessRuleException("ต้องระบุปีงบประมาณ (FiscalYear)");
+        // ปีจากไฟล์ไทยมักเป็น พ.ศ. (2569) — ตัวแปลงปีตัวเดียวของระบบ
+        year = Accounting.Helpers.ThaiDate.NormalizeYear(year);
+        var acctCode = Val(row, "AccountCode") ?? throw new BusinessRuleException("ต้องระบุรหัสบัญชี (AccountCode)");
+        var account = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && !a.IsDeleted && a.AccountCode == acctCode)
+            ?? throw new KeyNotFoundException($"ไม่พบบัญชี {acctCode} ในผังบัญชี");
 
         var budget = await _db.Budgets
             .Include(b => b.Lines)
@@ -1545,7 +1822,7 @@ public class ImportExportService : IImportExportService
             _db.Budgets.Add(budget);
         }
 
-        decimal M(string key) => decimal.TryParse(row.GetValueOrDefault(key), out var v) ? v : 0;
+        decimal M(string key) => OptAmount(row, key, key) ?? 0;
         // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
         _db.AddNewChild(budget.Lines, new BudgetLine
         {
@@ -1554,6 +1831,7 @@ public class ImportExportService : IImportExportService
             Month5 = M("Month5"), Month6 = M("Month6"), Month7 = M("Month7"), Month8 = M("Month8"),
             Month9 = M("Month9"), Month10 = M("Month10"), Month11 = M("Month11"), Month12 = M("Month12"),
         });
+        return new RowWrite("Budget", budget.Id);
     }
 
     private async Task<List<Dictionary<string, string>>> ExportBudgetsAsync(Guid companyId, ExportRequest request)
@@ -1581,139 +1859,20 @@ public class ImportExportService : IImportExportService
     }
 
     // ===== Documents (legacy migration) =====
-    // 1 row = 1 line in a document. Rows with the same DocumentNumber are
-    // appended to the same Document header. The header is created on the
-    // FIRST occurrence of a DocumentNumber within this import session;
-    // subsequent rows reuse the entity from the tracking cache, so re-running
-    // a file with hundreds of rows for one document doesn't issue hundreds
-    // of duplicate-key collisions.
+    // 1 row = 1 line in a document. Rows with the same DocumentNumber form one
+    // document (grouped by RunLegacyRowsAsync before reaching here).
 
-    private async Task ImportDocumentAsync(Guid companyId, Dictionary<string, string> row, string performedBy)
-    {
-        var docNum = row.GetValueOrDefault("DocumentNumber") ?? throw new InvalidOperationException("DocumentNumber is required");
-
-        // Look up first in the change tracker (same session), then in DB.
-        var doc = _db.ChangeTracker.Entries<Document>()
-            .Select(e => e.Entity)
-            .FirstOrDefault(d => d.CompanyId == companyId && d.DocumentNumber == docNum)
-            ?? await _db.Documents.FirstOrDefaultAsync(d => d.CompanyId == companyId && d.DocumentNumber == docNum);
-
-        // ── ด่าน: ห้ามต่อบรรทัดเข้าเอกสารที่ไม่ใช่ฉบับร่าง ──
-        // เส้นนี้ "เจอเลขเดิม = เติมบรรทัด" ซึ่งถูกสำหรับไฟล์หลายแถวต่อใบ แต่ถ้าเลข
-        // ในไฟล์ไปชนใบที่ **อนุมัติ/ออกไปแล้ว** มันจะเติมบรรทัดและ**คำนวณยอดหัวใบใหม่**
-        // ให้ใบกำกับภาษีที่ส่งลูกค้าไปแล้ว ⇒ ตัวเลขบนกระดาษกับในระบบไม่ตรงกัน และ
-        // §86/4 ห้ามแก้ไขย้อนหลัง (ต้องออกใบยกเลิก + ใบใหม่) ⇒ ล้มดังพร้อมทางไปต่อ
-        if (doc != null && doc.Status != DocumentStatus.Draft)
-            throw new InvalidOperationException(
-                $"เอกสาร {docNum} มีสถานะ {doc.Status} แล้ว จึงเติมบรรทัดจากไฟล์นำเข้าไม่ได้ "
-                + "(§86/4 ห้ามแก้ไขเอกสารที่ออกเลขแล้ว — ต้องออกใบลดหนี้/ใบยกเลิกแทน) — "
-                + "แก้เลขที่เอกสารในไฟล์ให้ไม่ซ้ำกับใบที่มีอยู่ แล้วนำเข้าใหม่");
-
-        if (doc == null)
-        {
-            if (!Enum.TryParse<DocumentType>(row.GetValueOrDefault("DocumentType"), true, out var docType))
-                throw new InvalidOperationException("DocumentType ไม่ถูกต้อง");
-            var docDate = DateTime.TryParse(row.GetValueOrDefault("DocumentDate"), out var dd) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(dd)
-                : throw new InvalidOperationException("DocumentDate ไม่ถูกต้อง");
-
-            var contactName = row.GetValueOrDefault("ContactName") ?? "";
-            var contactTaxId = row.GetValueOrDefault("ContactTaxId");
-            // Tax id is a stronger key — try that first.
-            Contact? contact = null;
-            // รอบ 193 ข้อ 20: คีย์เลขภาษี + สาขา (Helpers/ContactTaxBranchKey) — ไฟล์ไม่มีคอลัมน์สาขา ⇒ แถว สนญ. ก่อน
-            var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(_db.Contacts, companyId, contactTaxId, branchCode: null);
-            if (taxKey.ContactId is Guid keyId)
-                contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
-            // ฝ่ายค้าน C-6: ชื่อจับได้เฉพาะชุด SoftScope (เลขในไฟล์เป็นเลขใหม่ ⇒ ห้ามได้แถวที่ถือเลขอื่น)
-            var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(_db.Contacts, companyId, contactTaxId, taxKey);
-            // ฝ่ายค้านรอบสาม R3-2: ชื่อตรงตัวก่อน แล้วค่อย substring ที่เรียงแน่นอน (ชื่อสั้นสุด = ใกล้ที่สุด · แล้ว CreatedAt · Id) —
-            // เดิม `Name.Contains` ไม่มี OrderBy ⇒ "ABC" ได้ "ABC Trading" หรือ "ABC Holdings" แล้วแต่ลำดับจากฐาน
-            var matchedBy = Accounting.Helpers.ContactMatchKind.TaxKey;
-            if (contact == null && softScope != null && !string.IsNullOrWhiteSpace(contactName))
-            {
-                contact = await softScope.FirstOrDefaultAsync(c => c.Name == contactName)
-                    ?? await softScope.Where(c => c.Name.Contains(contactName))
-                        .OrderBy(c => c.Name.Length).ThenBy(c => c.CreatedAt).ThenBy(c => c.Id)
-                        .FirstOrDefaultAsync();
-                matchedBy = Accounting.Helpers.ContactTaxBranchKey.NameMatchKind(contactName, contact?.Name);
-            }
-            // R2-C5: แถวที่จับได้รับเลขจากไฟล์ (บันทึกพร้อมชุดนำเข้า) · R3-2: จับได้แค่บางส่วนของชื่อ + ไฟล์มีเลขจริง ⇒ ห้ามใช้แถวนั้น
-            // (เลขของรายการในไฟล์จะติดแถวบริษัทอื่นถาวร) · แถวลูกค้าทั่วไปไม่รับเลข
-            var adoptOutcome = Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, contactTaxId, branchCode: null, matchedBy);
-            if (adoptOutcome == Accounting.Helpers.ContactAdoptOutcome.Reject)
-                throw new KeyNotFoundException(
-                    $"ชื่อ '{contactName}' ตรงกับผู้ติดต่อ '{contact!.Name}' แค่บางส่วน (หรือเป็นลูกค้าทั่วไป) และเลขผู้เสียภาษี {contactTaxId} ยังไม่มีในระบบ — "
-                    + "ไม่ผูกเอกสารเพื่อไม่ให้เลขนี้ติดผู้ติดต่อผิดราย · สร้าง/นำเข้าผู้ติดต่อรายนี้ก่อน แล้วนำเข้าเอกสารอีกครั้ง");
-            if (contact == null)
-                throw new KeyNotFoundException($"ไม่พบผู้ติดต่อ '{contactName}' (TaxId {contactTaxId ?? "-"})");
-
-            doc = new Document
-            {
-                CompanyId = companyId,
-                DocumentNumber = docNum,
-                DocumentType = docType,
-                DocumentDate = docDate,
-                DueDate = DateTime.TryParse(row.GetValueOrDefault("DueDate"), out var due) ? Accounting.Helpers.ThaiDate.CalendarDateUtc(due) : null,
-                ContactId = contact.Id,
-                Status = DocumentStatus.Draft,
-                Reference = row.GetValueOrDefault("Reference"),
-                Notes = row.GetValueOrDefault("Notes"),
-                CreatedBy = performedBy
-            };
-            _db.Documents.Add(doc);
-        }
-
-        var qty = decimal.TryParse(row.GetValueOrDefault("LineQuantity"), out var q) ? q : 1;
-        var price = decimal.TryParse(row.GetValueOrDefault("LineUnitPrice"), out var pr) ? pr : 0;
-        var disc = decimal.TryParse(row.GetValueOrDefault("LineDiscountPercent"), out var dp) ? dp : 0;
-        var vat = decimal.TryParse(row.GetValueOrDefault("LineVatRate"), out var vr) ? vr : 7;
-        var wht = decimal.TryParse(row.GetValueOrDefault("LineWhtRate"), out var wr) ? wr : 0;
-        var lineAmt = qty * price * (1 - disc / 100m);
-        var vatAmt = Math.Round(lineAmt * vat / 100m, 2, MidpointRounding.AwayFromZero);
-        var whtAmt = Math.Round(lineAmt * wht / 100m, 2, MidpointRounding.AwayFromZero);
-
-        Guid? accountId = null;
-        var acctCode = row.GetValueOrDefault("LineAccountCode");
-        if (!string.IsNullOrWhiteSpace(acctCode))
-        {
-            var acct = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == acctCode);
-            accountId = acct?.Id;
-        }
-
-        // แถวใหม่ใต้ parent ที่ติดตามอยู่ — ผ่าน EfNewChild ตัวเดียว (คอลเลกชันอย่างเดียว ⇒ Modified ⇒ UPDATE 0 แถว · Add สองทาง ⇒ แถวเบิ้ลในคอลเลกชัน ยอดเบิ้ล)
-        _db.AddNewChild(doc.Lines, new DocumentLine
-        {
-            LineOrder = doc.Lines.Count + 1,
-            Description = row.GetValueOrDefault("LineDescription") ?? "",
-            Quantity = qty,
-            Unit = "ชิ้น",
-            UnitPrice = price,
-            DiscountPercent = disc,
-            Amount = lineAmt,
-            VatRate = vat,
-            VatAmount = vatAmt,
-            WithholdingTaxRate = wht,
-            WithholdingTaxAmount = whtAmt,
-            AccountId = accountId,
-            ProductCode = row.GetValueOrDefault("LineProductCode")
-        });
-
-        // Recompute header totals each line so the header stays consistent
-        // even when the run aborts mid-document.
-        doc.SubTotal = doc.Lines.Sum(l => l.Amount);
-        doc.VatAmount = doc.Lines.Sum(l => l.VatAmount);
-        doc.WithholdingTaxAmount = doc.Lines.Sum(l => l.WithholdingTaxAmount);
-        doc.TotalAmount = doc.SubTotal + doc.VatAmount - doc.WithholdingTaxAmount;
-        doc.BalanceDue = Accounting.Helpers.ForeignServiceVat.PayeeAmount(doc) - doc.PaidAmount;   // ยอดจ่ายผู้รับเงิน (รอบ PP36 ทีม F2)
-    }
-
-    // ===== Validation =====
+    private static bool IsDate(string? v) => ImportValueNormalizer.Date(v) is { Ok: true, Value: not null };
+    private static bool IsAmount(string? v) => ImportValueNormalizer.Amount(v) is { Ok: true, Value: not null };
+    private static bool IsNumber(string? v) => ImportValueNormalizer.Number(v) is { Ok: true, Value: not null };
+    private static bool IsInteger(string? v) => ImportValueNormalizer.Number(v) is { Ok: true, Value: decimal n } && n == decimal.Truncate(n);
+    private static decimal AmountOrZero(string? v) => ImportValueNormalizer.Amount(v) is { Ok: true, Value: decimal a } ? a : 0m;
 
     private static List<ImportError> ValidateRow(string entityType, Dictionary<string, string> row, int rowNumber)
     {
         var errors = new List<ImportError>();
 
-        switch (entityType.ToLower())
+        switch (ImportExportPermissionScope.NormalizeEntityType(entityType))
         {
             case "contacts":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("Name")))
@@ -1742,70 +1901,69 @@ public class ImportExportService : IImportExportService
                     errors.Add(new ImportError(rowNumber, "Name", "", "จำเป็นต้องระบุชื่อสินค้า"));
                 break;
             case "chartofaccounts":
-            case "chart-of-accounts":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountCode")))
                     errors.Add(new ImportError(rowNumber, "AccountCode", "", "จำเป็นต้องระบุรหัสบัญชี"));
                 if (!Enum.TryParse<AccountType>(row.GetValueOrDefault("AccountType"), true, out _))
                     errors.Add(new ImportError(rowNumber, "AccountType", row.GetValueOrDefault("AccountType") ?? "", "ประเภทบัญชีไม่ถูกต้อง"));
                 break;
             case "journalentries":
-            case "journal-entries":
-                if (!DateTime.TryParse(row.GetValueOrDefault("Date"), out _))
+                if (!IsDate(row.GetValueOrDefault("Date")))
                     errors.Add(new ImportError(rowNumber, "Date", row.GetValueOrDefault("Date") ?? "", "วันที่ไม่ถูกต้อง"));
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountCode")))
                     errors.Add(new ImportError(rowNumber, "AccountCode", "", "จำเป็นต้องระบุรหัสบัญชี"));
-                var debit = decimal.TryParse(row.GetValueOrDefault("DebitAmount"), out var dv) ? dv : 0;
-                var credit = decimal.TryParse(row.GetValueOrDefault("CreditAmount"), out var cv) ? cv : 0;
-                if (debit == 0 && credit == 0)
+                if (AmountOrZero(row.GetValueOrDefault("DebitAmount")) == 0 && AmountOrZero(row.GetValueOrDefault("CreditAmount")) == 0)
                     errors.Add(new ImportError(rowNumber, "Amount", "", "จำเป็นต้องระบุยอดเดบิตหรือเครดิต"));
                 break;
-            case "stock-opening":
+            case "stockopening":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("ProductCode")))
                     errors.Add(new ImportError(rowNumber, "ProductCode", "", "จำเป็นต้องระบุรหัสสินค้า"));
-                if (!decimal.TryParse(row.GetValueOrDefault("Quantity"), out _))
+                if (!IsNumber(row.GetValueOrDefault("Quantity")))
                     errors.Add(new ImportError(rowNumber, "Quantity", row.GetValueOrDefault("Quantity") ?? "", "จำนวนไม่ถูกต้อง"));
                 break;
-            case "opening-ar":
-            case "opening-ap":
+            case "openingar":
+            case "openingap":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactName"))
                     && string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactTaxId")))
                     errors.Add(new ImportError(rowNumber, "ContactName", "", "ต้องระบุ ContactName หรือ ContactTaxId"));
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("InvoiceNumber")))
                     errors.Add(new ImportError(rowNumber, "InvoiceNumber", "", "จำเป็นต้องระบุเลขที่เอกสาร"));
-                if (!DateTime.TryParse(row.GetValueOrDefault("InvoiceDate"), out _))
+                if (!IsDate(row.GetValueOrDefault("InvoiceDate")))
                     errors.Add(new ImportError(rowNumber, "InvoiceDate", row.GetValueOrDefault("InvoiceDate") ?? "", "วันที่เอกสารไม่ถูกต้อง"));
-                if (!decimal.TryParse(row.GetValueOrDefault("Amount"), out var amt) || amt <= 0)
+                if (AmountOrZero(row.GetValueOrDefault("Amount")) <= 0)
                     errors.Add(new ImportError(rowNumber, "Amount", row.GetValueOrDefault("Amount") ?? "", "ยอดคงค้างต้องมากกว่า 0"));
                 break;
-            case "stock-adjustments":
+            case "stockadjustments":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("ProductCode")))
                     errors.Add(new ImportError(rowNumber, "ProductCode", "", "จำเป็นต้องระบุรหัสสินค้า"));
-                var mt = (row.GetValueOrDefault("MovementType") ?? "").ToUpperInvariant();
+                var mt = (row.GetValueOrDefault("MovementType") ?? "").Trim().ToUpperInvariant();
                 if (mt != "IN" && mt != "OUT" && mt != "ADJUST")
                     errors.Add(new ImportError(rowNumber, "MovementType", mt, "ต้องเป็น IN / OUT / ADJUST"));
-                if (!decimal.TryParse(row.GetValueOrDefault("Quantity"), out _))
+                if (!IsNumber(row.GetValueOrDefault("Quantity")))
                     errors.Add(new ImportError(rowNumber, "Quantity", row.GetValueOrDefault("Quantity") ?? "", "จำนวนไม่ถูกต้อง"));
-                if (!DateTime.TryParse(row.GetValueOrDefault("AdjustmentDate"), out _))
+                if (!IsDate(row.GetValueOrDefault("AdjustmentDate")))
                     errors.Add(new ImportError(rowNumber, "AdjustmentDate", row.GetValueOrDefault("AdjustmentDate") ?? "", "วันที่ไม่ถูกต้อง"));
                 break;
-            case "fixed-assets":
+            case "fixedassets":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("AssetCode")))
                     errors.Add(new ImportError(rowNumber, "AssetCode", "", "จำเป็นต้องระบุรหัสสินทรัพย์"));
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("Name")))
                     errors.Add(new ImportError(rowNumber, "Name", "", "จำเป็นต้องระบุชื่อสินทรัพย์"));
-                if (!DateTime.TryParse(row.GetValueOrDefault("PurchaseDate"), out _))
+                if (!IsDate(row.GetValueOrDefault("PurchaseDate")))
                     errors.Add(new ImportError(rowNumber, "PurchaseDate", row.GetValueOrDefault("PurchaseDate") ?? "", "วันที่ซื้อไม่ถูกต้อง"));
-                if (!decimal.TryParse(row.GetValueOrDefault("PurchaseCost"), out _))
+                if (!IsAmount(row.GetValueOrDefault("PurchaseCost")))
                     errors.Add(new ImportError(rowNumber, "PurchaseCost", row.GetValueOrDefault("PurchaseCost") ?? "", "ราคาซื้อไม่ถูกต้อง"));
-                if (!int.TryParse(row.GetValueOrDefault("UsefulLifeMonths"), out var life) || life <= 0)
-                    errors.Add(new ImportError(rowNumber, "UsefulLifeMonths", row.GetValueOrDefault("UsefulLifeMonths") ?? "", "อายุการใช้งานไม่ถูกต้อง"));
+                // อายุการใช้งานเว้นว่างได้ — ที่ดิน/งานระหว่างก่อสร้างไม่คิดค่าเสื่อม (FixedAssetImportMethod ตัดสิน) · มีค่าต้องเป็นจำนวนเต็มไม่ติดลบ
+                var lifeRaw = row.GetValueOrDefault("UsefulLifeMonths");
+                if (!string.IsNullOrWhiteSpace(lifeRaw)
+                    && !(IsInteger(lifeRaw) && ImportValueNormalizer.Number(lifeRaw).Value >= 0))
+                    errors.Add(new ImportError(rowNumber, "UsefulLifeMonths", lifeRaw, "อายุการใช้งานไม่ถูกต้อง"));
                 break;
             case "payments":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("DocumentNumber")))
                     errors.Add(new ImportError(rowNumber, "DocumentNumber", "", "จำเป็นต้องระบุเลขเอกสาร"));
-                if (!decimal.TryParse(row.GetValueOrDefault("Amount"), out _))
+                if (!IsAmount(row.GetValueOrDefault("Amount")))
                     errors.Add(new ImportError(rowNumber, "Amount", row.GetValueOrDefault("Amount") ?? "", "จำนวนเงินไม่ถูกต้อง"));
-                if (!DateTime.TryParse(row.GetValueOrDefault("PaymentDate"), out _))
+                if (!IsDate(row.GetValueOrDefault("PaymentDate")))
                     errors.Add(new ImportError(rowNumber, "PaymentDate", row.GetValueOrDefault("PaymentDate") ?? "", "วันที่ชำระไม่ถูกต้อง"));
                 if (!Enum.TryParse<PaymentMethod>(row.GetValueOrDefault("PaymentMethod"), true, out _))
                     errors.Add(new ImportError(rowNumber, "PaymentMethod", row.GetValueOrDefault("PaymentMethod") ?? "", "วิธีชำระไม่ถูกต้อง"));
@@ -1815,7 +1973,7 @@ public class ImportExportService : IImportExportService
                     errors.Add(new ImportError(rowNumber, "Code", "", "จำเป็นต้องระบุรหัสโปรเจกต์"));
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("Name")))
                     errors.Add(new ImportError(rowNumber, "Name", "", "จำเป็นต้องระบุชื่อโปรเจกต์"));
-                if (!DateTime.TryParse(row.GetValueOrDefault("StartDate"), out _))
+                if (!IsDate(row.GetValueOrDefault("StartDate")))
                     errors.Add(new ImportError(rowNumber, "StartDate", row.GetValueOrDefault("StartDate") ?? "", "วันเริ่มต้นไม่ถูกต้อง"));
                 break;
             case "employees":
@@ -1825,15 +1983,15 @@ public class ImportExportService : IImportExportService
                     errors.Add(new ImportError(rowNumber, "FirstNameTh", "", "จำเป็นต้องระบุชื่อ"));
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("LastNameTh")))
                     errors.Add(new ImportError(rowNumber, "LastNameTh", "", "จำเป็นต้องระบุนามสกุล"));
-                if (!DateTime.TryParse(row.GetValueOrDefault("StartDate"), out _))
+                if (!IsDate(row.GetValueOrDefault("StartDate")))
                     errors.Add(new ImportError(rowNumber, "StartDate", row.GetValueOrDefault("StartDate") ?? "", "วันเริ่มงานไม่ถูกต้อง"));
-                if (!decimal.TryParse(row.GetValueOrDefault("BaseSalary"), out _))
+                if (!IsAmount(row.GetValueOrDefault("BaseSalary")))
                     errors.Add(new ImportError(rowNumber, "BaseSalary", row.GetValueOrDefault("BaseSalary") ?? "", "เงินเดือนไม่ถูกต้อง"));
                 break;
             case "budgets":
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("BudgetName")))
                     errors.Add(new ImportError(rowNumber, "BudgetName", "", "จำเป็นต้องระบุชื่องบประมาณ"));
-                if (!int.TryParse(row.GetValueOrDefault("FiscalYear"), out _))
+                if (!IsInteger(row.GetValueOrDefault("FiscalYear")))
                     errors.Add(new ImportError(rowNumber, "FiscalYear", row.GetValueOrDefault("FiscalYear") ?? "", "ปีงบประมาณไม่ถูกต้อง"));
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("AccountCode")))
                     errors.Add(new ImportError(rowNumber, "AccountCode", "", "จำเป็นต้องระบุรหัสบัญชี"));
@@ -1843,7 +2001,7 @@ public class ImportExportService : IImportExportService
                     errors.Add(new ImportError(rowNumber, "DocumentNumber", "", "จำเป็นต้องระบุเลขเอกสาร"));
                 if (!Enum.TryParse<DocumentType>(row.GetValueOrDefault("DocumentType"), true, out _))
                     errors.Add(new ImportError(rowNumber, "DocumentType", row.GetValueOrDefault("DocumentType") ?? "", "ประเภทเอกสารไม่ถูกต้อง"));
-                if (!DateTime.TryParse(row.GetValueOrDefault("DocumentDate"), out _))
+                if (!IsDate(row.GetValueOrDefault("DocumentDate")))
                     errors.Add(new ImportError(rowNumber, "DocumentDate", row.GetValueOrDefault("DocumentDate") ?? "", "วันที่เอกสารไม่ถูกต้อง"));
                 if (string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactName"))
                     && string.IsNullOrWhiteSpace(row.GetValueOrDefault("ContactTaxId")))
@@ -1908,77 +2066,29 @@ public class ImportExportService : IImportExportService
         var dataRows = request.HasHeaderRow ? request.RawData.Skip(1).ToList() : request.RawData;
         var sampleRows = dataRows.Take(5).ToList();
 
-        // AI Column Matching
-        var mappings = new List<SmartImportColumnMapping>();
-        var unmappedCount = 0;
-
-        for (int i = 0; i < headers.Count; i++)
+        // รอบ 205 ทีม B: จับคู่คอลัมน์ผ่านตัวจับคู่ตัวเดียวของระบบ (ทีม A · ImportColumnMatchService) — เดิมมีตัวจับคู่ชุดที่สองที่นี่
+        // (AnalyzeColumnMatch + AI ที่ทิ้ง FeedbackId — ไม่เคยเรียนจากผู้ใช้ · ป้าย "AiMatched" บนการจับคู่ด้วยกฎ)
+        var columns = headers.Select((h, i) => new ImportColumnInput(i, h ?? "", sampleRows
+                .Where(r => i < r.Count).Select(r => r[i]).Where(v => !string.IsNullOrWhiteSpace(v)).Take(5).ToList()))
+            .ToList();
+        ImportColumnPlan plan;
+        if (_columnMatch != null)
         {
-            var sourceHeader = headers[i];
-            var sampleValues = sampleRows
-                .Where(r => i < r.Count)
-                .Select(r => r[i])
-                .Where(v => !string.IsNullOrWhiteSpace(v))
-                .Take(5)
-                .ToList();
-
-            var matchResult = AnalyzeColumnMatch(sourceHeader, sampleValues, templateFields);
-
-            var mapping = new SmartImportColumnMapping
-            {
-                SessionId = session.Id,
-                SourceIndex = i,
-                SourceHeader = sourceHeader,
-                TargetField = matchResult.TargetField,
-                MatchType = matchResult.MatchType,
-                Confidence = matchResult.Confidence,
-                ConfidenceScore = matchResult.ConfidenceScore,
-                SampleValuesJson = JsonSerializer.Serialize(sampleValues),
-                SuggestionsJson = JsonSerializer.Serialize(matchResult.Suggestions)
-            };
-            mappings.Add(mapping);
-
-            if (matchResult.MatchType == ColumnMatchType.Unmapped ||
-                matchResult.Confidence == ColumnMatchConfidence.Low ||
-                matchResult.Confidence == ColumnMatchConfidence.None)
-            {
-                unmappedCount++;
-            }
+            var outcome = await _columnMatch.MapAsync(companyId, request.EntityType, columns,
+                new ImportColumnMatchOptions(BatchId: session.Id, AllowAi: true));
+            plan = outcome.Plan;
+            session.ColumnMatchAiFeedbackId = outcome.AiFeedbackId;
+            session.ColumnMatchUsedAi = outcome.UsedAi;
+            session.HeaderSignature = outcome.HeaderSignature;
+            session.MappingTemplateId = outcome.TemplateId;
         }
+        else
+            plan = ImportColumnMapper.Resolve(new ImportColumnMapRequest(request.EntityType, ImportSchemas.For(request.EntityType)!, columns));
+        session.SourceSystem ??= plan.SourceProfile?.Profile.SourceSystem;
 
-        // AI fallback for uncertain columns. Fires ONLY for columns the
-        // heuristic couldn't confidently match — the 90% case where
-        // headers are obvious stays AI-free. AI re-rank tightens the
-        // mapping for renamed columns ("ลูกค้า/ผู้ขาย" → Name) the
-        // alias table doesn't cover. Failure is silent: empty result
-        // leaves the heuristic mappings in place.
-        if (_ai != null)
-        {
-            var uncertain = mappings
-                .Where(m => m.MatchType == ColumnMatchType.Unmapped
-                    || m.Confidence == ColumnMatchConfidence.Low
-                    || m.Confidence == ColumnMatchConfidence.Medium)
-                .Select(m =>
-                {
-                    var samples = JsonSerializer.Deserialize<List<string>>(m.SampleValuesJson ?? "[]") ?? new();
-                    return new ImportPrompts.ColumnMatchInput(
-                        m.SourceIndex, m.SourceHeader, samples, m.TargetField, (double)m.ConfidenceScore);
-                })
-                .ToList();
-
-            if (uncertain.Count > 0)
-            {
-                var targets = templateFields.Select(f => new ImportPrompts.TargetField(
-                    f.FieldName, f.DisplayName, f.DataType, f.IsRequired, f.Description)).ToList();
-                var suggestions = await _ai.SuggestColumnMappingsAsync(
-                    companyId, session.Id, request.EntityType, targets, uncertain);
-                ApplyAiColumnSuggestions(mappings, suggestions, templateFields);
-                unmappedCount = mappings.Count(m =>
-                    m.MatchType == ColumnMatchType.Unmapped ||
-                    m.Confidence == ColumnMatchConfidence.Low ||
-                    m.Confidence == ColumnMatchConfidence.None);
-            }
-        }
+        var mappings = plan.Columns.Select(c => ToColumnMappingRow(session.Id, c)).ToList();
+        var unmappedCount = mappings.Count(m => m.MatchType == ColumnMatchType.Unmapped
+            || m.Confidence == ColumnMatchConfidence.Low || m.Confidence == ColumnMatchConfidence.None);
 
         _db.SmartImportColumnMappings.AddRange(mappings);
 
@@ -1989,46 +2099,54 @@ public class ImportExportService : IImportExportService
         return MapToSessionResponse(session, mappings, sampleRows);
     }
 
-    /// <summary>Apply AI's column suggestions on top of the heuristic
-    /// mappings. AI wins only when (a) it picks a valid target field
-    /// and (b) its confidence beats whatever the heuristic produced.
-    /// Marks accepted picks as AiMatched so the UI can label them.</summary>
-    private static void ApplyAiColumnSuggestions(
-        List<SmartImportColumnMapping> mappings,
-        List<ImportColumnAiSuggestion> suggestions,
-        List<ImportField> templateFields)
+    /// <summary>
+    /// แถวตารางจับคู่ของ Smart Import (SmartImportColumnMappings) จากแผนของตัวจับคู่ — <b>ตัวเดียว</b>ที่ทั้ง Smart Import และ pipeline ศูนย์นำเข้าใช้ ·
+    /// ป้าย MatchType ซื่อสัตย์: <c>AiMatched</c> เฉพาะคำตอบที่ AI ตอบจริง · ผู้ใช้เลือก = Manual · ชื่อตรง/แม่แบบ = Exact · คำพ้อง/เรียนรู้/รูปข้อมูล/นักเรียน = Heuristic
+    /// </summary>
+    internal static SmartImportColumnMapping ToColumnMappingRow(Guid sessionId, ImportColumnPlanDto c) => new()
     {
-        var validFieldNames = templateFields.Select(f => f.FieldName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var s in suggestions)
-        {
-            var m = mappings.FirstOrDefault(x => x.SourceIndex == s.SourceIndex);
-            if (m == null) continue;
-            if (string.IsNullOrWhiteSpace(s.TargetField) || !validFieldNames.Contains(s.TargetField)) continue;
-            // s.Confidence is decimal (AI contract), ConfidenceScore is double
-            // (entity) — cast for the comparison + assignment.
-            var aiScore = (double)s.Confidence;
-            if (aiScore <= m.ConfidenceScore) continue;       // heuristic was already as good or better
+        SessionId = sessionId,
+        SourceIndex = c.SourceIndex,
+        SourceHeader = c.SourceHeader.Length <= 255 ? c.SourceHeader : c.SourceHeader[..255],
+        TargetField = c.TargetField == null ? null : c.TargetField.Length <= 100 ? c.TargetField : c.TargetField[..100],
+        MatchType = c.TargetField == null ? ColumnMatchType.Unmapped
+            : c.Source == ImportMapSource.User ? ColumnMatchType.ManualMatch
+            : c.Source == ImportMapSource.Ai && c.UsedAi ? ColumnMatchType.AiMatched
+            : c.Source is ImportMapSource.Exact or ImportMapSource.Template ? ColumnMatchType.ExactMatch
+            : ColumnMatchType.HeuristicMatched,
+        Confidence = c.TargetField == null ? ColumnMatchConfidence.None
+            : c.Confidence >= 0.9m ? ColumnMatchConfidence.High : c.Confidence >= 0.7m ? ColumnMatchConfidence.Medium
+            : c.Confidence >= 0.5m ? ColumnMatchConfidence.Low : ColumnMatchConfidence.None,
+        ConfidenceScore = (double)c.Confidence,
+        SampleValuesJson = JsonSerializer.Serialize(c.SampleValues),
+        SuggestionsJson = JsonSerializer.Serialize(c.Alternatives.Select(a =>
+            new SuggestedMappingDto(a.TargetField, a.TargetLabel, (double)a.Score, a.Reason)).ToList()),
+    };
 
-            m.TargetField = s.TargetField;
-            m.MatchType = ColumnMatchType.AiMatched;
-            m.ConfidenceScore = aiScore;
-            m.Confidence = s.Confidence >= 0.9m ? ColumnMatchConfidence.High
-                : s.Confidence >= 0.6m ? ColumnMatchConfidence.Medium
-                : ColumnMatchConfidence.Low;
-        }
+    /// <summary>ปิดลูป ImportColumnMatch ของ Smart Import (กฎเหล็ก #1) — ผู้ใช้แก้ (SubmitManualMapping) / ยืนยัน (ConfirmAndImport) การจับคู่ ⇒
+    /// <see cref="IImportColumnMatchService.RecordConfirmedAsync"/> ด้วยการจับคู่สุดท้าย · ไม่มีแถว feedback = ไม่มีอะไรต้องปิด</summary>
+    private async Task RecordSmartColumnChoiceAsync(Guid companyId, SmartImportSession session)
+    {
+        if (_columnMatch == null || session.ColumnMatchAiFeedbackId is not Guid fb) return;
+        var final = session.ColumnMappings.OrderBy(m => m.SourceIndex).Select(m => new ImportColumnPlanDto(m.SourceIndex, m.SourceHeader,
+            string.IsNullOrWhiteSpace(m.TargetField) ? null : m.TargetField, null,
+            m.MatchType == ColumnMatchType.ManualMatch ? ImportMapSource.User : ImportMapSource.None, "", (decimal)m.ConfidenceScore, false,
+            Array.Empty<string>(), Array.Empty<ImportColumnCandidateDto>())).ToList();
+        await _columnMatch.RecordConfirmedAsync(companyId, fb, final);
     }
 
-    /// <summary>One-shot AI review of the staged data BEFORE commit.
+    /// <summary>One-shot review of the staged data BEFORE commit.
     /// Caller (controller) invokes after the operator finishes column
     /// mapping. Returns normalizations + dup suggestions + quality
     /// flags + field validation + batch patterns in a single payload
-    /// the frontend can render as a review screen. Gracefully degrades
-    /// to an empty result when AI is disabled.</summary>
+    /// the frontend can render as a review screen.
+    /// <para>รอบ 205 ทีม B (กฎเหล็ก #1 kill-switch): ไม่มีตัวช่วย AI ลงทะเบียน ⇒ ใช้ตัวตรวจ rule-based ตัวเดียวกับที่ augmenter ใช้ตอน AI ล่ม
+    /// (<see cref="ImportReviewHeuristics"/>) — เดิมคืนผลว่าง ⇒ หน้าเว็บแยก "ไม่มีปัญหา" กับ "ไม่ได้ตรวจ" ไม่ออก · ป้าย UsedAi = false</para></summary>
     public async Task<ImportAiReviewResponse> AiReviewSessionAsync(Guid companyId, Guid sessionId)
     {
         var session = await _db.SmartImportSessions.AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == sessionId && s.CompanyId == companyId)
-            ?? throw new InvalidOperationException("ไม่พบ session");
+            ?? throw new KeyNotFoundException("ไม่พบ Import Session");
 
         var mappings = await _db.SmartImportColumnMappings.AsNoTracking()
             .Where(m => m.SessionId == sessionId && !string.IsNullOrEmpty(m.TargetField))
@@ -2036,19 +2154,10 @@ public class ImportExportService : IImportExportService
             .ToListAsync();
 
         var templateFields = GetTemplateFields(session.EntityType)
-            ?? throw new InvalidOperationException($"ไม่รองรับการนำเข้า {session.EntityType}");
-
-        if (_ai == null)
-        {
-            return new ImportAiReviewResponse(sessionId, UsedAi: false,
-                "AI augmentation not configured", null,
-                new List<ImportAiNormalizationDto>(), new List<ImportAiFuzzyDuplicateDto>(),
-                new List<ImportAiQualityFlagDto>(), new List<ImportAiFieldValidationDto>(),
-                new List<string>());
-        }
+            ?? throw new BusinessRuleException($"ไม่รองรับการนำเข้า {session.EntityType}");
 
         // Materialize the staged file into target-field-keyed rows so
-        // the AI sees domain field names (Name / TaxId / Email …) instead
+        // the reviewer sees domain field names (Name / TaxId / Email …) instead
         // of the raw source headers. 50-row cap keeps token usage bounded
         // for big imports — the AI still spots batch-wide patterns from
         // the sample + sees the totalRows count in the prompt.
@@ -2072,17 +2181,37 @@ public class ImportExportService : IImportExportService
         var existingSlice = await LoadExistingEntitySliceAsync(companyId, session.EntityType);
         var targets = templateFields.Select(f => new ImportPrompts.TargetField(
             f.FieldName, f.DisplayName, f.DataType, f.IsRequired, f.Description)).ToList();
+        var mappedOrder = mappings.Select(m => m.TargetField!).ToList();
 
-        var review = await _ai.ReviewImportAsync(companyId, sessionId, session.EntityType,
-            targets, mappings.Select(m => m.TargetField!).ToList(), sampleRows, existingSlice,
-            totalRowCount: dataRows.Count);   // จำนวนแถวจริงของไฟล์ ไม่ใช่ sample 50
+        var review = _ai != null
+            ? await _ai.ReviewImportAsync(companyId, sessionId, session.EntityType,
+                targets, mappedOrder, sampleRows, existingSlice,
+                totalRowCount: dataRows.Count)   // จำนวนแถวจริงของไฟล์ ไม่ใช่ sample 50
+            : ImportReviewHeuristics.Review(session.EntityType, targets, mappedOrder, sampleRows, existingSlice);
 
         return new ImportAiReviewResponse(sessionId, review.UsedAi, review.Summary, review.OverallQualityScore,
-            review.Normalizations.Select(n => new ImportAiNormalizationDto(n.RowIndex, n.Field, n.Original, n.Normalized, n.Reason)).ToList(),
+            review.Normalizations.Select(n => new ImportAiNormalizationDto(n.RowIndex, n.Field, n.Original, n.Normalized, n.Reason, n.Code)).ToList(),
             review.FuzzyDuplicates.Select(d => new ImportAiFuzzyDuplicateDto(d.RowIndex, d.IncomingKey, d.ExistingId, d.ExistingLabel, d.Similarity, d.Reasoning)).ToList(),
             review.QualityFlags.Select(q => new ImportAiQualityFlagDto(q.RowIndex, q.Severity, q.Message)).ToList(),
-            review.FieldValidations.Select(v => new ImportAiFieldValidationDto(v.RowIndex, v.Field, v.Value, v.Issue, v.SuggestedFix)).ToList(),
-            review.BatchPatterns.ToList());
+            review.FieldValidations.Select(v => new ImportAiFieldValidationDto(v.RowIndex, v.Field, v.Value, v.Issue, v.SuggestedFix, v.Code)).ToList(),
+            review.BatchPatterns.ToList(),
+            review.FeedbackId);
+    }
+
+    /// <summary>ปิดลูป ImportDataReview (กฎเหล็ก #1 · รอบ 205 ทีม B — เดิมผลตรวจคืนไปแล้วไม่มีทางบันทึกว่าผู้ใช้รับ/ปฏิเสธคำแนะนำไหน) ·
+    /// ชุดต้องเป็นของบริษัทนี้ · feedback ตรวจความเป็นเจ้าของซ้ำที่ <see cref="IImportAiAugmenter.RecordReviewChoiceAsync"/> · ไม่มี AI ลงทะเบียน = ไม่มีอะไรให้ปิด</summary>
+    public async Task<bool> RecordAiReviewChoiceAsync(Guid companyId, Guid sessionId, ImportAiReviewChoiceRequest request)
+    {
+        if (!await _db.SmartImportSessions.AsNoTracking().AnyAsync(s => s.Id == sessionId && s.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบ Import Session");
+        if (_ai == null || request.FeedbackId == Guid.Empty) return false;
+        static List<ImportReviewChoice> Map(List<ImportAiReviewChoiceItem>? items) => (items ?? new())
+            .Where(i => !string.IsNullOrWhiteSpace(i.Field) && !string.IsNullOrWhiteSpace(i.Code))
+            .Select(i => new ImportReviewChoice(i.Field.Trim(), i.Code.Trim())).ToList();
+        var accepted = Map(request.Accepted);
+        var rejected = Map(request.Rejected);
+        if (accepted.Count == 0 && rejected.Count == 0) return false;
+        return await _ai.RecordReviewChoiceAsync(companyId, request.FeedbackId, accepted, rejected);
     }
 
     /// <summary>Load a representative slice of existing entities for
@@ -2235,6 +2364,7 @@ public class ImportExportService : IImportExportService
         session.UpdatedBy = performedBy;
 
         await _db.SaveChangesAsync();
+        await RecordSmartColumnChoiceAsync(companyId, session);
 
         var rawData = !string.IsNullOrEmpty(session.RawDataJson)
             ? JsonSerializer.Deserialize<List<List<string>>>(session.RawDataJson) ?? new()
@@ -2251,11 +2381,20 @@ public class ImportExportService : IImportExportService
             .FirstOrDefaultAsync(s => s.Id == request.SessionId && s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ Import Session");
 
-        if (session.Status != ImportSessionStatus.MappingCompleted && session.Status != ImportSessionStatus.Ready)
-            throw new InvalidOperationException("Session ยังไม่พร้อม Import — กรุณาตรวจสอบ Column Mapping");
+        // รอบ 205 ทีม B (P0): ชุดที่ลงได้บางแถว/ล้ม ลงซ้ำได้ — เฉพาะแถวที่ล้มรอบก่อน (ข้อมูลดิบถูกเก็บไว้จนกว่าจะลงครบ · writer idempotent)
+        var retry = session.Status is ImportSessionStatus.PartiallyCompleted or ImportSessionStatus.Failed;
+        if (!retry && session.Status != ImportSessionStatus.MappingCompleted && session.Status != ImportSessionStatus.Ready)
+            throw new BusinessRuleException("Session ยังไม่พร้อม Import — กรุณาตรวจสอบ Column Mapping");
+        if (retry && string.IsNullOrEmpty(session.RawDataJson))
+            throw new BusinessRuleException("ข้อมูลดิบของชุดนี้ถูกล้างแล้ว — อัปโหลดไฟล์ใหม่เพื่อนำเข้าแถวที่ล้ม");
+        HashSet<int>? retryRows = null;
+        if (retry)
+            retryRows = (JsonSerializer.Deserialize<List<ImportError>>(session.ErrorsJson ?? "[]") ?? new())
+                .Select(e => e.RowNumber).ToHashSet();
 
         session.Status = ImportSessionStatus.Importing;
         await _db.SaveChangesAsync();
+        if (!retry) await RecordSmartColumnChoiceAsync(companyId, session);
 
         var rawData = !string.IsNullOrEmpty(session.RawDataJson)
             ? JsonSerializer.Deserialize<List<List<string>>>(session.RawDataJson) ?? new()
@@ -2267,109 +2406,56 @@ public class ImportExportService : IImportExportService
             .OrderBy(m => m.SourceIndex)
             .ToList();
 
-        var successCount = 0;
-        var errors = new List<ImportError>();
-        var dateFormat = request.DateFormat ?? "yyyy-MM-dd";
-
+        var rows = new List<(int RowNo, Dictionary<string, string> Row)>();
         for (int i = 0; i < dataRows.Count; i++)
         {
-            try
+            if (retryRows != null && !retryRows.Contains(i + 1)) continue;
+            var rowData = dataRows[i];
+            var mappedRow = new Dictionary<string, string>();
+            foreach (var mapping in activeMappings)
             {
-                var rowData = dataRows[i];
-                var mappedRow = new Dictionary<string, string>();
-
-                foreach (var mapping in activeMappings)
-                {
-                    if (mapping.SourceIndex < rowData.Count && !string.IsNullOrEmpty(mapping.TargetField))
-                    {
-                        var value = rowData[mapping.SourceIndex];
-                        mappedRow[mapping.TargetField] = value?.Trim() ?? "";
-                    }
-                }
-
-                switch (session.EntityType.ToLower())
-                {
-                    case "contacts":
-                        await ImportContactAsync(companyId, mappedRow, request.Resolutions,
-                            request.DefaultConflictAction ?? "Merge");
-                        break;
-                    case "products":
-                        await ImportProductAsync(companyId, mappedRow, request.Resolutions,
-                            request.DefaultConflictAction ?? "Skip");
-                        break;
-                    case "chartofaccounts":
-                    case "chart-of-accounts":
-                        await ImportAccountAsync(companyId, mappedRow, request.Resolutions,
-                            request.DefaultConflictAction ?? "Skip");
-                        break;
-                    case "banktransactions":
-                        await ImportBankTransactionAsync(companyId, mappedRow);
-                        break;
-                    case "journalentries":
-                    case "journal-entries":
-                        await ImportJournalEntryAsync(companyId, mappedRow, performedBy);
-                        break;
-                    case "stock-opening":
-                        await ImportStockOpeningAsync(companyId, mappedRow, performedBy);
-                        break;
-                    case "stock-adjustments":
-                        await ImportStockAdjustmentAsync(companyId, mappedRow, performedBy);
-                        break;
-                    case "fixed-assets":
-                        await ImportFixedAssetAsync(companyId, mappedRow, performedBy);
-                        break;
-                    case "payments":
-                        await ImportPaymentAsync(companyId, mappedRow, performedBy);
-                        break;
-                    case "projects":
-                        await ImportProjectAsync(companyId, mappedRow, performedBy);
-                        break;
-                    case "employees":
-                        await ImportEmployeeAsync(companyId, mappedRow, performedBy);
-                        break;
-                    case "budgets":
-                        await ImportBudgetAsync(companyId, mappedRow, performedBy);
-                        break;
-                    case "documents":
-                        await ImportDocumentAsync(companyId, mappedRow, performedBy);
-                        break;
-                    case "opening-ar":
-                        await ImportOpeningSubledgerAsync(companyId, mappedRow, performedBy, isReceivable: true);
-                        break;
-                    case "opening-ap":
-                        await ImportOpeningSubledgerAsync(companyId, mappedRow, performedBy, isReceivable: false);
-                        break;
-                    default:
-                        errors.Add(new ImportError(i + 1, "EntityType", session.EntityType,
-                            $"ไม่รองรับการนำเข้า {session.EntityType}"));
-                        continue;
-                }
-                successCount++;
+                if (mapping.SourceIndex < rowData.Count && !string.IsNullOrEmpty(mapping.TargetField))
+                    mappedRow[mapping.TargetField] = rowData[mapping.SourceIndex]?.Trim() ?? "";
             }
-            catch (Exception ex)
-            {
-                errors.Add(new ImportError(i + 1, "", "", ex.Message));
-                await _errorLogService.LogErrorAsync(ex, $"ImportExport.ImportRow/{i + 1}");
-            }
+            rows.Add((i + 1, mappedRow));
         }
 
+        // รอบ 205 ทีม B (P0): DateFormat/DecimalSeparator มีผลจริง (เดิมรับแล้วไม่ใช้ — silent no-op)
+        var run = await RunLegacyRowsAsync(companyId, session.EntityType, rows, request.Resolutions,
+            request.DefaultConflictAction, performedBy, DateOrderFromFormat(request.DateFormat),
+            decimalComma: (request.DecimalSeparator ?? "").Trim() == ",");
+
+        // แถวที่ล้มล้าง change tracker ไปแล้ว ⇒ อ่าน session ใหม่ก่อนประทับผล
+        var done = await _db.SmartImportSessions
+            .FirstAsync(s => s.Id == request.SessionId && s.CompanyId == companyId);
+        done.SuccessCount = (retry ? done.SuccessCount : 0) + run.Success;
+        done.ErrorCount = run.Errors.Count;
+        done.SkippedCount = (retry ? done.SkippedCount : 0) + run.Skipped;
+        // สถานะซื่อสัตย์: ลงได้บางแถว = PartiallyCompleted (เดิม Failed ทั้งที่แถวอื่นลงไปแล้ว)
+        done.Status = run.Errors.Count == 0 ? ImportSessionStatus.Completed
+            : done.SuccessCount > 0 ? ImportSessionStatus.PartiallyCompleted
+            : ImportSessionStatus.Failed;
+        done.CompletedAt = DateTime.UtcNow;
+        done.ErrorsJson = run.Errors.Count > 0 ? JsonSerializer.Serialize(run.Errors) : null;
+        done.UpdatedBy = performedBy;
+
+        // เก็บข้อมูลดิบไว้ให้ลงแถวที่ล้มซ้ำได้ — ล้างเมื่อลงครบแล้วเท่านั้น (PDPA: ไม่เก็บเกินจำเป็น · เดิมล้างเสมอ ⇒ ลองใหม่ไม่ได้)
+        if (run.Errors.Count == 0) done.RawDataJson = null;
+
         await _db.SaveChangesAsync();
 
-        session.SuccessCount = successCount;
-        session.ErrorCount = errors.Count;
-        session.SkippedCount = dataRows.Count - successCount - errors.Count;
-        session.Status = errors.Count == 0 ? ImportSessionStatus.Completed : ImportSessionStatus.Failed;
-        session.CompletedAt = DateTime.UtcNow;
-        session.ErrorsJson = errors.Count > 0 ? JsonSerializer.Serialize(errors) : null;
-        session.UpdatedBy = performedBy;
+        return new SmartImportResult(done.Id, done.EntityType, done.Status.ToString(),
+            rows.Count, run.Success, run.Errors.Count, run.Skipped, run.Errors, DateTime.UtcNow);
+    }
 
-        // ลบ raw data หลัง import เสร็จเพื่อประหยัดพื้นที่
-        session.RawDataJson = null;
-
-        await _db.SaveChangesAsync();
-
-        return new SmartImportResult(session.Id, session.EntityType, session.Status.ToString(),
-            dataRows.Count, successCount, errors.Count, session.SkippedCount, errors, DateTime.UtcNow);
+    /// <summary>รูปแบบวันที่ที่ผู้ใช้เลือก (Smart Import) → ลำดับวัน/เดือน — "MM/dd/yyyy" = เดือนก่อน · "dd/MM/yyyy" = วันก่อน · ISO/ว่าง = อัตโนมัติ (ไทย)</summary>
+    internal static ImportDateOrder DateOrderFromFormat(string? format)
+    {
+        var f = (format ?? "").Trim();
+        if (f.Length == 0 || f.StartsWith("y", StringComparison.OrdinalIgnoreCase)) return ImportDateOrder.Auto;
+        if (f.StartsWith("M", StringComparison.Ordinal)) return ImportDateOrder.MonthDayYear;
+        if (f.StartsWith("d", StringComparison.OrdinalIgnoreCase)) return ImportDateOrder.DayMonthYear;
+        return ImportDateOrder.Auto;
     }
 
     // ===== Template Download =====
@@ -2385,7 +2471,7 @@ public class ImportExportService : IImportExportService
         csv.AppendLine(string.Join(",", fields.Select(f => Accounting.Helpers.CsvFieldSafety.Escape(f.FieldName))));
 
         // Sample data row
-        var sampleRow = fields.Select(f => Accounting.Helpers.CsvFieldSafety.Escape(GetSampleValue(f))).ToList();
+        var sampleRow = fields.Select(f => Accounting.Helpers.CsvFieldSafety.Escape(GetSampleValue(entityType, f))).ToList();
         csv.AppendLine(string.Join(",", sampleRow));
 
         // ส่ง description row (comment)
@@ -2450,507 +2536,27 @@ public class ImportExportService : IImportExportService
         return Task.FromResult(entities);
     }
 
-    // ===== AI Column Matching Logic =====
+    /// <summary>
+    /// field ของชนิดข้อมูล (รูปเดิม <see cref="ImportField"/>) — รอบ 205 ทีม B: มอบให้แคตตาล็อกตัวเดียว <see cref="ImportSchemas.For"/> (ทีม A ย้ายเนื้อจากที่นี่ไปครบ
+    /// ทุกชนิด · ชื่อ field สะกดเดิม) แล้วแปลงชนิดกลับเป็น <c>DataType</c> เดิม · เดิมเป็นสำเนาที่สอง (journal-entries ไม่มี ⇒ null แล้ว <c>!</c> ทับ)
+    /// </summary>
+    internal static List<ImportField>? GetTemplateFields(string entityType)
+        => ImportSchemas.For(entityType)?.Select(f => new ImportField(f.Field, f.Label, LegacyDataType(f.Type), f.Required, f.Description,
+            f.AllowedValues?.ToList())).ToList();
 
-    private static ColumnAnalysisResult AnalyzeColumnMatch(
-        string sourceHeader, List<string> sampleValues, List<ImportField> templateFields)
+    /// <summary>ชนิดละเอียด (<see cref="ImportFieldType"/>) → ชนิดเดิมของ <c>ImportField.DataType</c> ("date"/"bool"/"enum"/"decimal"/"string")</summary>
+    internal static string LegacyDataType(ImportFieldType type) => type switch
     {
-        var suggestions = new List<SuggestedMappingDto>();
-        string? bestTarget = null;
-        double bestScore = 0;
+        ImportFieldType.Date => "date",
+        ImportFieldType.Flag => "bool",
+        ImportFieldType.Enum => "enum",
+        ImportFieldType.Amount or ImportFieldType.Decimal or ImportFieldType.Integer or ImportFieldType.VatRate => "decimal",
+        _ => "string",
+    };
 
-        foreach (var field in templateFields)
-        {
-            double score = 0;
-            var reasons = new List<string>();
-
-            // 1. Exact match (header name)
-            if (sourceHeader.Equals(field.FieldName, StringComparison.OrdinalIgnoreCase))
-            {
-                score = 1.0;
-                reasons.Add("ชื่อ column ตรงกัน");
-            }
-            else
-            {
-                // 2. ชื่อภาษาไทยตรงกัน
-                if (sourceHeader.Equals(field.DisplayName, StringComparison.OrdinalIgnoreCase))
-                {
-                    score = 0.95;
-                    reasons.Add("ชื่อภาษาไทยตรงกัน");
-                }
-
-                // 3. Contains / partial match
-                var normalizedSource = NormalizeHeader(sourceHeader);
-                var normalizedField = NormalizeHeader(field.FieldName);
-                var normalizedDisplay = NormalizeHeader(field.DisplayName);
-
-                if (score < 0.9)
-                {
-                    if (normalizedSource.Contains(normalizedField) || normalizedField.Contains(normalizedSource))
-                    {
-                        score = Math.Max(score, 0.8);
-                        reasons.Add("ชื่อคล้ายกัน (EN)");
-                    }
-                    if (normalizedSource.Contains(normalizedDisplay) || normalizedDisplay.Contains(normalizedSource))
-                    {
-                        score = Math.Max(score, 0.8);
-                        reasons.Add("ชื่อคล้ายกัน (TH)");
-                    }
-                }
-
-                // 4. Alias matching (ชื่อที่มักใช้กันทั่วไป)
-                var aliases = GetFieldAliases(field.FieldName);
-                foreach (var alias in aliases)
-                {
-                    if (normalizedSource.Contains(NormalizeHeader(alias)) ||
-                        NormalizeHeader(alias).Contains(normalizedSource))
-                    {
-                        score = Math.Max(score, 0.85);
-                        reasons.Add($"ตรงกับชื่อที่ใช้ทั่วไป: {alias}");
-                        break;
-                    }
-                }
-
-                // 5. Data pattern matching (วิเคราะห์ข้อมูลตัวอย่าง)
-                if (sampleValues.Count > 0 && score < 0.7)
-                {
-                    var patternScore = AnalyzeDataPattern(sampleValues, field);
-                    if (patternScore > 0.5)
-                    {
-                        score = Math.Max(score, patternScore * 0.75);
-                        reasons.Add("รูปแบบข้อมูลตรงกัน");
-                    }
-                }
-            }
-
-            if (score > 0.3)
-            {
-                suggestions.Add(new SuggestedMappingDto(
-                    field.FieldName, field.DisplayName, score,
-                    string.Join(", ", reasons)));
-            }
-
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestTarget = field.FieldName;
-            }
-        }
-
-        // จัดเรียง suggestions ตาม score
-        suggestions = suggestions.OrderByDescending(s => s.Score).Take(3).ToList();
-
-        // กำหนด confidence
-        var matchType = bestScore >= 0.9 ? ColumnMatchType.ExactMatch
-            : bestScore >= 0.6 ? ColumnMatchType.AiMatched
-            : ColumnMatchType.Unmapped;
-
-        var confidence = bestScore >= 0.9 ? ColumnMatchConfidence.High
-            : bestScore >= 0.7 ? ColumnMatchConfidence.Medium
-            : bestScore >= 0.5 ? ColumnMatchConfidence.Low
-            : ColumnMatchConfidence.None;
-
-        // ถ้า confidence ต่ำเกินไป ไม่ auto-assign
-        if (confidence == ColumnMatchConfidence.None || confidence == ColumnMatchConfidence.Low)
-        {
-            bestTarget = null;
-            matchType = ColumnMatchType.Unmapped;
-        }
-
-        return new ColumnAnalysisResult(bestTarget, matchType, confidence, bestScore, suggestions);
-    }
-
-    private static double AnalyzeDataPattern(List<string> values, ImportField field)
-    {
-        if (values.Count == 0) return 0;
-
-        switch (field.DataType.ToLower())
-        {
-            case "decimal":
-                var decimalCount = values.Count(v => decimal.TryParse(v.Replace(",", ""), out _));
-                return (double)decimalCount / values.Count;
-
-            case "date":
-                var dateCount = values.Count(v => DateTime.TryParse(v, out _));
-                return (double)dateCount / values.Count;
-
-            case "bool":
-                var boolPatterns = new[] { "true", "false", "yes", "no", "1", "0", "ใช่", "ไม่ใช่", "y", "n" };
-                var boolCount = values.Count(v => boolPatterns.Contains(v.Trim().ToLower()));
-                return (double)boolCount / values.Count;
-
-            case "guid":
-                var guidCount = values.Count(v => Guid.TryParse(v, out _));
-                return (double)guidCount / values.Count;
-
-            case "enum":
-                if (field.AllowedValues != null)
-                {
-                    var enumCount = values.Count(v =>
-                        field.AllowedValues.Any(a => a.Equals(v.Trim(), StringComparison.OrdinalIgnoreCase)));
-                    return (double)enumCount / values.Count;
-                }
-                return 0;
-
-            case "string":
-                // ตรวจสอบ pattern ของข้อมูลที่เป็นข้อมูลเฉพาะ
-                if (field.FieldName.Contains("Email", StringComparison.OrdinalIgnoreCase))
-                {
-                    var emailCount = values.Count(v => v.Contains('@'));
-                    return (double)emailCount / values.Count;
-                }
-                if (field.FieldName.Contains("Phone", StringComparison.OrdinalIgnoreCase))
-                {
-                    var phoneCount = values.Count(v => v.Any(char.IsDigit) && v.Length >= 9);
-                    return (double)phoneCount / values.Count;
-                }
-                if (field.FieldName.Contains("TaxId", StringComparison.OrdinalIgnoreCase))
-                {
-                    var taxCount = values.Count(v => v.All(char.IsDigit) && v.Length == 13);
-                    return (double)taxCount / values.Count;
-                }
-                return 0;
-
-            default:
-                return 0;
-        }
-    }
-
-    private static List<string> GetFieldAliases(string fieldName)
-    {
-        return fieldName.ToLower() switch
-        {
-            "name" => new List<string> { "ชื่อ", "customer_name", "supplier_name", "company_name",
-                "contact_name", "ชื่อบริษัท", "ชื่อลูกค้า", "ชื่อผู้ขาย", "customer", "supplier", "vendor" },
-            "taxid" => new List<string> { "tax_id", "tin", "เลขผู้เสียภาษี", "เลขประจำตัว",
-                "tax_number", "vat_id", "tax_identification", "เลขที่ผู้เสียภาษี" },
-            "email" => new List<string> { "e_mail", "mail", "อีเมล", "email_address", "e-mail" },
-            "phone" => new List<string> { "tel", "telephone", "โทรศัพท์", "เบอร์โทร", "phone_number",
-                "mobile", "มือถือ", "contact_number" },
-            "address" => new List<string> { "ที่อยู่", "addr", "street", "location", "ที่ตั้ง" },
-            "contactperson" => new List<string> { "contact_person", "ผู้ติดต่อ", "person", "contact_name", "representative" },
-            "iscustomer" => new List<string> { "is_customer", "customer_flag", "เป็นลูกค้า", "customer_type", "ลูกค้า" },
-            "issupplier" => new List<string> { "is_supplier", "supplier_flag", "เป็นผู้ขาย", "vendor_flag", "ผู้ขาย" },
-            "code" => new List<string> { "รหัส", "product_code", "item_code", "sku", "รหัสสินค้า",
-                "barcode", "item_no", "part_number" },
-            "producttype" => new List<string> { "product_type", "type", "ประเภท", "item_type", "ชนิด" },
-            "unit" => new List<string> { "หน่วย", "uom", "unit_of_measure", "หน่วยนับ", "measure" },
-            "sellingprice" => new List<string> { "selling_price", "sell_price", "price", "ราคาขาย",
-                "unit_price", "retail_price", "ราคา" },
-            "costprice" => new List<string> { "cost_price", "cost", "ราคาทุน", "purchase_price",
-                "buy_price", "ต้นทุน" },
-            "vatrate" => new List<string> { "vat_rate", "tax_rate", "vat", "อัตราภาษี", "tax_percent", "ภาษี" },
-            "category" => new List<string> { "หมวดหมู่", "group", "กลุ่ม", "product_group", "item_group" },
-            "accountcode" => new List<string> { "account_code", "acc_code", "gl_code", "รหัสบัญชี",
-                "account_no", "account_number", "เลขที่บัญชี" },
-            "accountname" => new List<string> { "account_name", "acc_name", "gl_name", "ชื่อบัญชี",
-                "account_description" },
-            "accountnameen" => new List<string> { "account_name_en", "english_name", "ชื่อบัญชีอังกฤษ",
-                "name_en", "eng_name" },
-            "accounttype" => new List<string> { "account_type", "acc_type", "type", "ประเภทบัญชี",
-                "gl_type", "account_category" },
-            "description" => new List<string> { "desc", "รายละเอียด", "คำอธิบาย", "note", "remark",
-                "หมายเหตุ", "memo" },
-            "bankaccountid" => new List<string> { "bank_account_id", "bank_account", "บัญชีธนาคาร",
-                "account_id" },
-            "transactiondate" => new List<string> { "transaction_date", "date", "txn_date", "วันที่",
-                "วันที่ทำรายการ", "posting_date", "value_date" },
-            "transactiontype" => new List<string> { "transaction_type", "txn_type", "type", "ประเภทรายการ",
-                "ประเภท" },
-            "amount" => new List<string> { "จำนวนเงิน", "total", "value", "sum", "ยอดเงิน",
-                "จำนวน", "money" },
-            "reference" => new List<string> { "ref", "ref_no", "reference_no", "อ้างอิง",
-                "เลขที่อ้างอิง", "ref_number" },
-            _ => new List<string>()
-        };
-    }
-
-    private static string NormalizeHeader(string header)
-    {
-        return header.ToLower()
-            .Replace(" ", "").Replace("_", "").Replace("-", "")
-            .Replace(".", "").Replace("(", "").Replace(")", "");
-    }
-
-    private static List<ImportField>? GetTemplateFields(string entityType)
-    {
-        return entityType.ToLower() switch
-        {
-            "contacts" => new List<ImportField>
-            {
-                new("Name", "ชื่อ", "string", true, "ชื่อลูกค้า/ผู้ขาย", null),
-                new("TaxId", "เลขผู้เสียภาษี", "string", false, "เลขประจำตัวผู้เสียภาษี 13 หลัก (ตรวจ checksum — เลขผิดจะถูกปฏิเสธทั้งแถว)", null),
-                // ช่องนี้ตัดสิน ภ.ง.ด.3 vs ภ.ง.ด.53 และ scheme ของ e-Tax (NIDN/TXID)
-                // — เดิมไม่มีในแม่แบบเลย ⇒ ผู้ใช้ไม่มีทางระบุได้ แล้วทุกแถวตกค่า default
-                new("ContactType", "ประเภทผู้ติดต่อ", "enum", false,
-                    "Individual (บุคคลธรรมดา → ภ.ง.ด.3) · JuristicPerson (นิติบุคคล → ภ.ง.ด.53) · GovernmentAgency — เว้นว่างได้ถ้ามีเลขผู้เสียภาษีที่ถูกต้อง ระบบจะอ่านจากเลขให้",
-                    new List<string> { "Individual", "JuristicPerson", "GovernmentAgency" }),
-                new("BranchCode", "รหัสสาขา", "string", false,
-                    "5 หลักตามประกาศอธิบดีฯ 199 — 00000 = สำนักงานใหญ่ (เก็บเฉพาะนิติบุคคล/ราชการ)", null),
-                new("IsCustomer", "เป็นลูกค้า", "bool", false, "true/false", new List<string> { "true", "false" }),
-                new("IsSupplier", "เป็นผู้ขาย", "bool", false, "true/false", new List<string> { "true", "false" }),
-                new("Email", "อีเมล", "string", false, null, null),
-                new("Phone", "โทรศัพท์", "string", false, null, null),
-                new("Address", "ที่อยู่", "string", false, null, null),
-                new("ContactPerson", "ผู้ติดต่อ", "string", false, null, null),
-            },
-            "products" => new List<ImportField>
-            {
-                new("Code", "รหัสสินค้า", "string", true, null, null),
-                new("Name", "ชื่อสินค้า", "string", true, null, null),
-                new("ProductType", "ประเภท", "enum", false, null, new List<string> { "Product", "Service", "NonStock" }),
-                new("Unit", "หน่วยนับ", "string", true, null, null),
-                new("SellingPrice", "ราคาขาย", "decimal", false, null, null),
-                new("CostPrice", "ราคาทุน", "decimal", false, null, null),
-                new("VatRate", "อัตราภาษี", "decimal", false, null, null),
-                new("Category", "หมวดหมู่", "string", false, null, null),
-            },
-            "chartofaccounts" or "chart-of-accounts" => new List<ImportField>
-            {
-                new("AccountCode", "รหัสบัญชี", "string", true, null, null),
-                new("AccountName", "ชื่อบัญชี", "string", true, null, null),
-                new("AccountNameEn", "ชื่อบัญชี (อังกฤษ)", "string", false, null, null),
-                new("AccountType", "ประเภทบัญชี", "enum", true, null, new List<string> { "Asset", "Liability", "Equity", "Revenue", "Expense" }),
-                new("Description", "คำอธิบาย", "string", false, null, null),
-            },
-            "banktransactions" => new List<ImportField>
-            {
-                new("BankAccountId", "รหัสบัญชีธนาคาร", "guid", true, null, null),
-                new("TransactionDate", "วันที่", "date", true, "yyyy-MM-dd", null),
-                new("TransactionType", "ประเภท", "enum", true, null, new List<string> { "Deposit", "Withdrawal", "Transfer", "Fee", "Interest" }),
-                new("Amount", "จำนวนเงิน", "decimal", true, null, null),
-                new("Description", "คำอธิบาย", "string", false, null, null),
-                new("Reference", "อ้างอิง", "string", false, null, null),
-            },
-            "stock-opening" => new List<ImportField>
-            {
-                new("ProductCode", "รหัสสินค้า", "string", true, "ต้องมีอยู่ในระบบแล้ว", null),
-                new("Quantity", "ยอดยกมา", "decimal", true, "สต็อกตั้งต้น (จำนวน)", null),
-                new("UnitCost", "ต้นทุน/หน่วย", "decimal", false, "ใช้เป็นต้นทุนของสต็อกยกมา (default = CostPrice ของ Product)", null),
-                new("OpeningDate", "วันยกมา", "date", false, "default = วันนี้", null),
-                new("Notes", "หมายเหตุ", "string", false, null, null),
-            },
-            "opening-ar" or "opening-ap" => new List<ImportField>
-            {
-                new("ContactName", "ชื่อลูกค้า/ผู้ขาย", "string", true, "จับคู่ผู้ติดต่อเดิม — ถ้าไม่พบจะสร้างใหม่ให้", null),
-                new("ContactTaxId", "เลขผู้เสียภาษี", "string", false, "ใช้จับคู่ผู้ติดต่อ (แม่นกว่าชื่อ)", null),
-                new("InvoiceNumber", "เลขที่เอกสารเดิม", "string", true, "เลขใบแจ้งหนี้จากระบบเก่า — ใช้กันการนำเข้าซ้ำ", null),
-                new("InvoiceDate", "วันที่เอกสาร", "date", true, "yyyy-MM-dd — ใช้คำนวณอายุหนี้", null),
-                new("DueDate", "วันครบกำหนด", "date", false, "yyyy-MM-dd", null),
-                new("Amount", "ยอดคงค้าง", "decimal", true, "ยอดที่ยังค้างชำระ ณ วันยกมา", null),
-                new("Description", "รายละเอียด", "string", false, null, null),
-            },
-            "stock-adjustments" => new List<ImportField>
-            {
-                new("ProductCode", "รหัสสินค้า", "string", true, null, null),
-                new("AdjustmentDate", "วันที่ปรับ", "date", true, "yyyy-MM-dd", null),
-                new("MovementType", "ประเภท", "enum", true, "IN=เพิ่ม, OUT=ลด, ADJUST=ปรับนับ", new List<string> { "IN", "OUT", "ADJUST" }),
-                new("Quantity", "จำนวน", "decimal", true, "บวกสำหรับ IN/ADJUST+, ลบสำหรับ OUT/ADJUST-", null),
-                new("UnitCost", "ต้นทุน/หน่วย", "decimal", false, "default = CostPrice ของ Product", null),
-                new("Reference", "เลขเอกสารอ้างอิง", "string", false, null, null),
-                new("Notes", "หมายเหตุ", "string", false, "เช่น เสียหาย, ปรับนับสิ้นเดือน", null),
-            },
-            "fixed-assets" => new List<ImportField>
-            {
-                new("AssetCode", "รหัสสินทรัพย์", "string", true, null, null),
-                new("Name", "ชื่อสินทรัพย์", "string", true, null, null),
-                new("Category", "หมวดหมู่", "string", false, "เช่น เครื่องใช้สำนักงาน, ยานพาหนะ", null),
-                new("PurchaseDate", "วันที่ซื้อ", "date", true, "yyyy-MM-dd", null),
-                new("PurchaseCost", "ราคาซื้อ", "decimal", true, null, null),
-                new("SalvageValue", "มูลค่าซาก", "decimal", false, "default = 0", null),
-                new("UsefulLifeMonths", "อายุการใช้งาน (เดือน)", "decimal", true, "เช่น 60 = 5 ปี", null),
-                new("DepreciationMethod", "วิธีคิดค่าเสื่อม", "enum", false, "default = StraightLine",
-                    new List<string> { "StraightLine", "DecliningBalance", "UnitsOfProduction" }),
-                new("AccumulatedDepreciation", "ค่าเสื่อมสะสมยกมา", "decimal", false, "ใช้ตอน migrate ระหว่างปี", null),
-                new("Location", "ตำแหน่ง", "string", false, null, null),
-                new("SerialNumber", "หมายเลขเครื่อง", "string", false, null, null),
-            },
-            "payments" => new List<ImportField>
-            {
-                new("DocumentNumber", "เลขเอกสาร", "string", true, "เลขเอกสารที่จะตัดชำระ (Invoice / Bill)", null),
-                new("PaymentDate", "วันที่ชำระ", "date", true, "yyyy-MM-dd", null),
-                new("Amount", "จำนวนเงิน", "decimal", true, null, null),
-                new("PaymentMethod", "วิธีชำระ", "enum", true, null,
-                    new List<string> { "Cash", "BankTransfer", "CreditCard", "Cheque", "PromptPay", "DirectDebit", "EWallet", "Other" }),
-                new("Reference", "อ้างอิง", "string", false, "เลขที่อ้างอิงการโอน/เช็ค", null),
-                new("BankAccount", "บัญชีธนาคาร", "string", false, "ชื่อ/เลขบัญชี — เก็บเป็น text", null),
-                new("Notes", "หมายเหตุ", "string", false, null, null),
-            },
-            "projects" => new List<ImportField>
-            {
-                new("Code", "รหัสโปรเจกต์", "string", true, null, null),
-                new("Name", "ชื่อโปรเจกต์", "string", true, null, null),
-                new("NameEn", "ชื่อ (อังกฤษ)", "string", false, null, null),
-                new("Description", "รายละเอียด", "string", false, null, null),
-                new("CustomerName", "ลูกค้า", "string", false, "ชื่อลูกค้า/นายจ้าง", null),
-                new("ProjectManagerName", "ผู้จัดการโปรเจกต์", "string", false, null, null),
-                new("StartDate", "วันเริ่มต้น", "date", true, "yyyy-MM-dd", null),
-                new("EndDate", "วันสิ้นสุด (แผน)", "date", false, null, null),
-                new("Status", "สถานะ", "enum", false, "default = Active",
-                    new List<string> { "Active", "OnHold", "Completed", "Cancelled" }),
-                new("BudgetAmount", "งบประมาณ", "decimal", false, null, null),
-                new("ContractAmount", "มูลค่าสัญญา", "decimal", false, null, null),
-                // ชุดค่ามาจากตัวตั้งเดียวกับฟอร์ม/API — ห้ามพิมพ์สำเนาที่สอง (F2 ข้อ 4)
-                new("BillingMethod", "วิธีเรียกเก็บ", "enum", false,
-                    "default = " + Accounting.Helpers.ProjectContractMethods.DefaultBilling,
-                    Accounting.Helpers.ProjectContractMethods.Billing.Select(x => x.Value).ToList()),
-            },
-            "employees" => new List<ImportField>
-            {
-                new("EmployeeCode", "รหัสพนักงาน", "string", true, null, null),
-                new("TitleTh", "คำนำหน้า", "string", false, "นาย / นาง / นางสาว", null),
-                new("FirstNameTh", "ชื่อ", "string", true, null, null),
-                new("LastNameTh", "นามสกุล", "string", true, null, null),
-                new("FirstNameEn", "ชื่อ (อังกฤษ)", "string", false, null, null),
-                new("LastNameEn", "นามสกุล (อังกฤษ)", "string", false, null, null),
-                new("CitizenId", "เลขบัตร ปชช.", "string", false, "13 หลัก", null),
-                new("DateOfBirth", "วันเกิด", "date", false, "yyyy-MM-dd", null),
-                new("Phone", "โทรศัพท์", "string", false, null, null),
-                new("Email", "อีเมล", "string", false, null, null),
-                new("Department", "แผนก", "string", false, null, null),
-                new("Position", "ตำแหน่ง", "string", false, null, null),
-                new("StartDate", "วันเริ่มงาน", "date", true, "yyyy-MM-dd", null),
-                new("BaseSalary", "เงินเดือนพื้นฐาน", "decimal", true, null, null),
-                new("SalaryType", "ประเภทเงินเดือน", "enum", false, "default = Monthly",
-                    new List<string> { "Monthly", "Daily", "Hourly" }),
-                new("BankName", "ธนาคาร", "string", false, null, null),
-                new("BankAccountNumber", "เลขที่บัญชีธนาคาร", "string", false, null, null),
-                new("SocialSecurityNumber", "เลขประกันสังคม", "string", false, null, null),
-            },
-            "budgets" => new List<ImportField>
-            {
-                new("BudgetName", "ชื่องบประมาณ", "string", true, "เช่น 'งบ 2026' — ใช้ group บรรทัดเข้าด้วยกัน", null),
-                new("FiscalYear", "ปีงบประมาณ", "decimal", true, "เช่น 2026", null),
-                new("AccountCode", "รหัสบัญชี", "string", true, "ต้องมีในผังบัญชีแล้ว", null),
-                new("Month1", "ม.ค.", "decimal", false, null, null),
-                new("Month2", "ก.พ.", "decimal", false, null, null),
-                new("Month3", "มี.ค.", "decimal", false, null, null),
-                new("Month4", "เม.ย.", "decimal", false, null, null),
-                new("Month5", "พ.ค.", "decimal", false, null, null),
-                new("Month6", "มิ.ย.", "decimal", false, null, null),
-                new("Month7", "ก.ค.", "decimal", false, null, null),
-                new("Month8", "ส.ค.", "decimal", false, null, null),
-                new("Month9", "ก.ย.", "decimal", false, null, null),
-                new("Month10", "ต.ค.", "decimal", false, null, null),
-                new("Month11", "พ.ย.", "decimal", false, null, null),
-                new("Month12", "ธ.ค.", "decimal", false, null, null),
-            },
-            "documents" => new List<ImportField>
-            {
-                new("DocumentNumber", "เลขเอกสาร", "string", true, "ใช้ group line ต่อเอกสารเดียวกัน", null),
-                new("DocumentType", "ประเภทเอกสาร", "enum", true, null,
-                    new List<string> { "Quotation", "Invoice", "TaxInvoice", "Receipt", "PurchaseInvoice", "PaymentVoucher", "ReceiptVoucher", "Expense" }),
-                new("DocumentDate", "วันที่เอกสาร", "date", true, "yyyy-MM-dd", null),
-                new("DueDate", "วันครบกำหนด", "date", false, null, null),
-                new("ContactName", "ชื่อผู้ติดต่อ", "string", true, "ต้องมีในระบบแล้ว — match ด้วย Contains", null),
-                new("ContactTaxId", "เลขผู้เสียภาษีผู้ติดต่อ", "string", false, "ถ้ามี ใช้จับคู่แม่นกว่าชื่อ", null),
-                new("Reference", "อ้างอิง", "string", false, null, null),
-                new("Notes", "หมายเหตุ", "string", false, null, null),
-                new("LineDescription", "รายละเอียด (line)", "string", true, null, null),
-                new("LineQuantity", "จำนวน", "decimal", true, null, null),
-                new("LineUnitPrice", "ราคา/หน่วย", "decimal", true, null, null),
-                new("LineDiscountPercent", "ส่วนลด %", "decimal", false, "default = 0", null),
-                new("LineVatRate", "VAT %", "decimal", false, "default = 7", null),
-                new("LineWhtRate", "หัก ณ ที่จ่าย %", "decimal", false, "default = 0", null),
-                new("LineProductCode", "รหัสสินค้า", "string", false, null, null),
-                new("LineAccountCode", "รหัสบัญชี", "string", false, null, null),
-            },
-            _ => null
-        };
-    }
-
-    private static string GetSampleValue(ImportField field)
-    {
-        return field.FieldName switch
-        {
-            "Name" => "บริษัท ตัวอย่าง จำกัด",
-            "TaxId" => "0123456789012",
-            "IsCustomer" => "true",
-            "IsSupplier" => "false",
-            "Email" => "info@example.com",
-            "Phone" => "02-123-4567",
-            "Address" => "123 ถ.สุขุมวิท กรุงเทพฯ 10110",
-            "ContactPerson" => "คุณสมชาย",
-            "Code" => "P001",
-            "ProductType" => "Product",
-            "Unit" => "ชิ้น",
-            "SellingPrice" => "100.00",
-            "CostPrice" => "60.00",
-            "VatRate" => "7",
-            "Category" => "สินค้าทั่วไป",
-            "AccountCode" => "1110",
-            "AccountName" => "เงินสด",
-            "AccountNameEn" => "Cash",
-            "AccountType" => "Asset",
-            "Description" => "รายละเอียด",
-            "BankAccountId" => "00000000-0000-0000-0000-000000000000",
-            "TransactionDate" => "2026-01-15",
-            "TransactionType" => "Deposit",
-            "Amount" => "50000.00",
-            "Reference" => "REF001",
-            "ProductCode" => "P001",
-            "Quantity" => "100",
-            "UnitCost" => "60.00",
-            "OpeningDate" => "2026-01-01",
-            "AdjustmentDate" => "2026-01-15",
-            "MovementType" => "ADJUST",
-            "Notes" => "ปรับนับสิ้นเดือน",
-            "AssetCode" => "FA-001",
-            "PurchaseDate" => "2024-03-15",
-            "PurchaseCost" => "85000.00",
-            "SalvageValue" => "0",
-            "UsefulLifeMonths" => "60",
-            "DepreciationMethod" => "StraightLine",
-            "AccumulatedDepreciation" => "0",
-            "Location" => "สำนักงานใหญ่",
-            "SerialNumber" => "SN-12345",
-            "DocumentNumber" => "INV-202601-0001",
-            "PaymentDate" => "2026-01-20",
-            "PaymentMethod" => "BankTransfer",
-            "BankAccount" => "SCB 123-4-56789-0",
-            "CustomerName" => "บริษัท ลูกค้า จำกัด",
-            "ProjectManagerName" => "คุณสมหญิง",
-            "StartDate" => "2026-01-01",
-            "EndDate" => "2026-12-31",
-            "Status" => "Active",
-            "BudgetAmount" => "500000.00",
-            "ContractAmount" => "550000.00",
-            "BillingMethod" => "FixedPrice",
-            "EmployeeCode" => "EMP-001",
-            "TitleTh" => "นาย",
-            "FirstNameTh" => "สมชาย",
-            "LastNameTh" => "ใจดี",
-            "CitizenId" => "1234567890123",
-            "DateOfBirth" => "1990-05-15",
-            "Department" => "ฝ่ายขาย",
-            "Position" => "พนักงานขาย",
-            "BaseSalary" => "25000.00",
-            "SalaryType" => "Monthly",
-            "BankName" => "ธนาคารกสิกรไทย",
-            "BankAccountNumber" => "123-4-56789-0",
-            // รอบ 201 PR2 (ฝ่ายค้าน P2-f): ตัวอย่างต้องผ่านตัวตัดสินเลขประกันสังคม (13 หลัก) — เดิม 10 หลัก ⇒ ผู้ใช้ลอกตัวอย่างแล้วนำเข้าล้ม
-            "SocialSecurityNumber" => "1101700203450",
-            "BudgetName" => "งบ 2026",
-            "FiscalYear" => "2026",
-            "Month1" => "10000", "Month2" => "10000", "Month3" => "10000",
-            "Month4" => "12000", "Month5" => "12000", "Month6" => "12000",
-            "Month7" => "12000", "Month8" => "12000", "Month9" => "12000",
-            "Month10" => "15000", "Month11" => "15000", "Month12" => "15000",
-            "DocumentType" => "Invoice",
-            "DocumentDate" => "2026-01-15",
-            "DueDate" => "2026-02-14",
-            "ContactName" => "บริษัท ลูกค้า จำกัด",
-            "ContactTaxId" => "0123456789012",
-            "LineDescription" => "บริการที่ปรึกษา",
-            "LineQuantity" => "1",
-            "LineUnitPrice" => "10000.00",
-            "LineVatRate" => "7",
-            "LineWhtRate" => "3",
-            "LineProductCode" => "P001",
-            "LineAccountCode" => "4100",
-            _ => ""
-        };
-    }
+    /// <summary>ค่าตัวอย่างในไฟล์แม่แบบ — จาก <see cref="ImportFieldDto.Example"/> ของแคตตาล็อกเดียวกัน (เดิมตาราง switch ซ้ำ)</summary>
+    private static string GetSampleValue(string entityType, ImportField field)
+        => ImportSchemas.For(entityType)?.FirstOrDefault(f => string.Equals(f.Field, field.FieldName, StringComparison.OrdinalIgnoreCase))?.Example ?? "";
 
     private static SmartImportSessionResponse MapToSessionResponse(
         SmartImportSession session, IList<SmartImportColumnMapping> mappings, List<List<string>> previewData)
@@ -3000,11 +2606,4 @@ public class ImportExportService : IImportExportService
             unmappedCount > 0,
             previewData);
     }
-
-    private record ColumnAnalysisResult(
-        string? TargetField,
-        ColumnMatchType MatchType,
-        ColumnMatchConfidence Confidence,
-        double ConfidenceScore,
-        List<SuggestedMappingDto> Suggestions);
 }

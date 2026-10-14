@@ -3952,7 +3952,8 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ตัวเขียนเดียว** `IBankService.ImportParsedStatementRowsAsync(cid, bankAccountId, lines, options)` (`BankService.StatementImport.cs`) — ทุกทางเข้าที่สร้าง
   `BankTransaction` จาก statement เดินที่นี่: หน้า "ธนาคาร → นำเข้า statement" (`ImportBankStatementAsync`) · open-banking file (`OpenBankingService.ImportFileAsync`) ·
   API v1 (`BankV1Controller.ImportStatement` — ความหมาย v1 คงเดิมผ่าน `StatementWriteOptions()`) · ศูนย์นำเข้า `banktransactions` (`BankStatementImportTarget`) ·
-  นำเข้าทั่วไป `ImportExportService.ImportBankTransactionAsync` (**ทีม B ต่อสาย** — จนกว่าจะต่อ ทางนั้นยังบวก `CurrentBalance` เอง)
+  นำเข้าทั่วไป `ImportExportService.ImportBankTransactionAsync` (ต่อสายแล้ว รอบ 205 ทีม B — ทีละแถว · ขัดแย้ง = ลงใหม่ + คำเตือน (ความหมายเดิมของทางนี้) ·
+  เดิมบวก `CurrentBalance` เองตามไฟล์)
 - **แยกไฟล์** `Services/Helpers/BankStatementFileReader.Read` ตัดสินชนิดจากเนื้อไฟล์: CSV/TSV (`BankCsvParser` — ถอดรหัสผ่าน `ImportTabularReader.Decode`:
   UTF-8 เข้มงวด → UTF-16 → TIS-620) · .xlsx (`BankExcelParser.ParseWorkbook` — ไม่ระบุชีต = ชีตแรกที่มีหัวตาราง statement) · OFX 1.x/2.x (`BankOfxParser`) ·
   QIF = ล้มดัง "ยังไม่รองรับ QIF — ส่งออกเป็น CSV/OFX" (คำตัดสินข้อ 151) · .xls/HTML/PDF = ข้อความของตัวอ่านกลาง · คอลัมน์ยอดคงเหลือไม่บังคับ
@@ -3967,6 +3968,29 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ปิดใช้/ยังไม่ผูกผังบัญชี = คำเตือน ·
   ซ้ำของเดิม = คำเตือน + ตั้ง "ข้าม" · ย้อน = ลบรายการที่ยังไม่จับคู่ (`DeleteTransactionsAsync`) · จับคู่/กระทบยอดแล้ว = บล็อก + "ยกเลิกการจับคู่ก่อน"
 - Last verified 2026-10-14 commit a56239bd
+
+### 6.0b-import ศูนย์นำเข้าข้อมูล — engine + writer เดิม (รอบ 205 ทีม B · IMPORT_ETL_REVIEW §2.1–§2.5)
+
+- **ขั้น**: ไฟล์ → `ImportPipelineService.CreateAsync` (ตรวจชนิดจากเนื้อไฟล์ · เก็บไฟล์ต้นทางเป็นไฟล์แนบ `ImportBatch` · ไฟล์ SHA-256 ซ้ำ = คำเตือน) → หาแถวหัวตาราง
+  (`ImportHeaderDetector` — แถวยอดรวมพักเป็น "ไม่ลง") → จับคู่คอลัมน์ (`IImportColumnMatchService.MapAsync` ของทีม A · FeedbackId ลง session) → แปลงค่า
+  (`ImportCellNormalizer` · ไม่ขึ้นกับ culture) → ตรวจ (`IImportTarget.ValidateAsync` + `ImportEntityResolver.MatchAsync`) → พัก `ImportStagedRows` → ผู้ใช้แก้/ยืนยัน →
+  commit → เรียนรู้ (แม่แบบ · `RecordConfirmedAsync` · `RecordPickChoiceAsync`) → ย้อนได้ · ≤ 2,000 แถวทำในคำขอ มากกว่านั้น `ImportBatchWorker` ทำต่อ (500 แถวต่อรอบ)
+- **commit**: `SharedTransaction` = ธุรกรรมเดียว savepoint ต่อ 200 แถว (ไม่ตัดกลางกลุ่ม) · แถวล้ม ⇒ ย้อน savepoint แล้วลงซ้ำทีละกลุ่ม (ใบสำคัญ/เอกสารหลายบรรทัด
+  ไม่ลงครึ่งใบ) · `AllOrNothing` มีแถวล้ม = ย้อนทั้งชุด · audit ของสิ่งที่ถูกย้อนไม่ถูกประทับ · `OwnTransactionPerGroup` (ธนาคาร/เอกสาร) ทำซ้ำ/ทำต่อได้ ·
+  commit ซ้ำไม่ลงซ้ำ (แถวที่ลงแล้วข้าม) · ซ้อนกันไม่ได้ (`JobLock` ต่อ batch) · ทุก commit/undo = audit `IMPORT-COMMIT`/`IMPORT-UNDO` (hash chain)
+- **จับคู่ข้อมูลเดิม**: เลขภาษี+สาขา / รหัสสินค้า-บาร์โค้ด / รหัสผัง/โครงการ = ระบบเลือกให้ · ชื่อ (นิติบุคคลเดียวกัน · ชื่อคล้าย) = **แนะนำเท่านั้น** + คำเตือน ·
+  AI 59 (`ResolveEntityAsync`) เฉพาะกำกวมที่ไม่มีเลขภาษี — แนะนำ ไม่เลือกให้
+- **writer เดิม** (`ImportExportService.WriteRowAsync` — ตัวเดียวของ Smart Import · นำเข้าเดิม · ปลายทางข้อมูลหลัก): เอกสาร/รับ-จ่ายชำระ/สินทรัพย์ →
+  **ส่งต่อปลายทางของทีม D ตัวเดียวกับศูนย์นำเข้า** (`WriteViaAccountingTargetAsync` → `DocumentImportTarget`/`PaymentImportTarget`/`FixedAssetImportTarget`:
+  แปลงค่าตาม schema → `ValidateAsync` (ข้อผิดของบรรทัดใด = ทั้งหน่วยไม่ลง · คำเตือนไม่บล็อก — ซ้ำ = ข้าม) → `CommitGroupAsync` ⇒ `CreatePaymentAsync` มี JE ·
+  `FixedAssetService.ImportAsync` ที่ดินไม่คิดค่าเสื่อม · `CreateDocumentAsync` ร่าง `DRAFT-`) — เดิมแก้ `PaidAmount` ตรง GL ไม่ขยับ · รายการธนาคาร → ตัวเขียน statement
+  (§6.0b-bank) · JE ไม่รับผังที่ลบ/ผู้ติดต่อชื่อกำกวม · ใบสำคัญที่ลงแล้วไม่ถูกต่อบรรทัด
+- **ปิดลูป AI** (กฎเหล็ก #1): จับคู่คอลัมน์ — FeedbackId/UsedAi ลง session ตอนวิเคราะห์ · `RecordConfirmedAsync` ตอน remap + commit (ศูนย์นำเข้า) /
+  SubmitManualMapping + ConfirmAndImport (Smart Import) / `POST ai/import/suggest-mapping/confirm` · จับคู่ข้อมูลเดิม (59) — `RecordPickChoiceAsync` ตอน commit ต่อแถวที่ลง ·
+  ผลตรวจข้อมูล — `POST smart-import/sessions/{id}/ai-review/choice` ⇒ `RecordReviewChoiceAsync`
+- **Smart Import**: ลงบางแถว = `PartiallyCompleted` (เดิม Failed) · ลองใหม่ลงเฉพาะแถวที่ล้ม (ข้อมูลดิบล้างเมื่อลงครบ) · DateFormat/DecimalSeparator มีผล ·
+  จับคู่คอลัมน์ผ่านตัวเดียวกับศูนย์นำเข้า
+- Last verified 2026-10-14 (sha เติมภายหลัง)
 
 ### 6.0c-bis การจับคู่ธนาคาร — ให้คะแนน 1 ตัว · ตัดสิน 1 ตัว (รอบ 183 · D4-1/D4-2)
 

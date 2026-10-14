@@ -4767,6 +4767,19 @@ wrapper · ตัดสินชนิดจากเนื้อไฟล์ ·
 ThaiDate · SettlementValueParser · ThaiTaxIdValidator · TaxBranchCode — "ใช่"/"Y" ไม่เป็น false อีก · วันที่ไม่สลับเงียบ) · plumbing: ล็อก `import-batch` ·
 ไฟล์แนบชนิด `ImportBatch` (สิทธิ์ = นำเข้าชนิดของ batch) · `IFileAttachmentService.ReadBytesAsync` · สิทธิ์นำเข้า "stock-adjustments" = Inventory.Adjust
 (เดิมหลุดไป Journal.Manage) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 95c3031b_
+
+
+_รอบ 205 ทีม A — ศูนย์นำเข้าข้อมูล: จับคู่คอลัมน์หลายชั้น + AI distillation (กฎเหล็ก #1 · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.3/§2.6):
+helper owner เดียว — `ImportFieldSynonymSeed` (รวม 4 สำเนา: GetFieldAliases · schema ส่วนตัวของ AiSuggestionController · หัว adapter Express/PEAK/FlowAccount ·
+BankCsvParser) · `ImportHeaderSignature` (normalize หัว + SHA-256 ไม่ขึ้นกับลำดับ) · `ImportSchemas` (แคตตาล็อก field ทุกชนิด ย้ายจาก GetTemplateFields + ตัวอย่าง +
+journal-entries ที่เดิมคืน null + งบทดลองยกมา + บรรทัด statement ธนาคาร) · `ImportSourceSeed` (โปรไฟล์ cold-start ในโค้ด — **ทุกตัวเป็นการเดา** รอไฟล์จริง §4) ·
+`ImportColumnMapper` (ผู้ใช้ → แม่แบบ → ชื่อตรง → คำพ้อง/โปรไฟล์ → คู่ที่ยืนยันแล้ว → รูปข้อมูล → AI · greedy unique · ค่าในคอลัมน์ตัดสินคำพ้องกำกวม · ด่าน AI
+field ∈ schema / ≥ 0.70 / ไม่ทับชั้นสูง · ป้ายแหล่งไทยจากเซิร์ฟเวอร์) · `ImportMappingTemplateStore` ครบสัญญา (+ SaveColumns · GetLearnedHeaders ·
+RecordColumnMatchChoice) · `ImportColumnMatchService` ทางเข้าเดียวของการจับคู่ (DI บล็อกทีม A) · นักเรียน ImportColumnMatch (คำพ้อง+โปรไฟล์+คู่ที่เรียน ·
+รูปเดียวกับครู) และ ImportDataReview (ImportReviewHeuristics ที่ย้ายมาอยู่บน ImportValueNormalizer + เลิกเสนอการจัดรูปแบบที่บริษัทปฏิเสธประจำ — ปัญหาทางกฎหมาย
+ปิดไม่ได้) · augmenter ไม่ทิ้ง FeedbackId/UsedAi + SuggestAccountMapAsync (58 · ด่าน ∈ ผังบริษัท) + ResolveEntityAsync (59 · ด่าน ∈ candidate ∪ NEW) +
+RecordPick/RecordReviewChoice · ImportPrompts ForceProviderCall=false (เดิมข้าม routing+งบทุกครั้ง) + BuildAccountMap/BuildEntityMatch ·
+AiSuggestionController.SuggestImportMapping มอบให้ตัวจับคู่กลาง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
 _2026-10-14 — ตัวเลือกผู้ติดต่อมาตรฐานเดียวทั้งระบบ (คำสั่งเจ้าของ: "ทำให้มีปุ่มเพิ่มได้แบบหน้าออกเอกสาร … เป็นแนวทางเดียวกันทั้งระบบ"):
 `Layout.contactAutocomplete` ยุบเป็น `Layout.contactPicker(inputId, hiddenId, { side, onSelect, onClear, allowCreate, compact })`
 ที่ใส่ปุ่ม "+ สร้างใหม่" ให้เอง + หน้าต่างเพิ่มผู้ติดต่อด่วนในหน้าเดิม (เลขภาษี/ดึงทะเบียน · สาขา · ประเภท · ฝั่ง · ที่อยู่ · โทร/อีเมล ·
@@ -4782,6 +4795,20 @@ open-banking **OFX บันทึกจริง** (เดิมนับบร
 CSV TIS-620 ผ่าน `ImportTabularReader.Decode` (คอมเมนต์เดิมอ้างว่ามีแต่โค้ดไม่มี) · statement ไม่มียอดคงเหลือนำเข้าได้ + คำเตือน · Excel เลือกชีต/หาชีตที่มีหัวตาราง ·
 ยอด "DR" = เงินออก (เดิมตัด DR ทิ้ง) · ช่องถอนติดลบไม่หายเงียบ · ขัดแย้งโหมดถามไม่ค้างใน tracker · "เก็บข้อมูลเดิม" ลงรายการที่ไม่ขัดแย้งจริง (เดิมหน้าเว็บบอกสำเร็จทั้งที่ย้อนทั้งไฟล์) ·
 statement เก่าไม่ย้อนยอดตามธนาคาร · เก็บไฟล์ต้นทาง (ไฟล์แนบชนิด `BankStatement`) · `BankStatementImportTarget` (ตรวจซ้ำ/ลง/ย้อน) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a56239bd_
+_รอบ 205 ทีม B — ศูนย์นำเข้าข้อมูล: engine + writer เดิม (`erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.1–§2.5): `ImportPipelineService` ครบสัญญา
+(สร้างจากไฟล์ → เก็บไฟล์ต้นทางเป็นไฟล์แนบ "ImportBatch" · ไฟล์ซ้ำเตือน · ≤ 2,000 แถวทำในคำขอ มากกว่านั้นเข้าคิว · วิเคราะห์ใหม่/จับคู่คอลัมน์/แก้แถว/สั่งทีละหลายแถว ·
+commit แบบธุรกรรมเดียว savepoint ต่อ 200 แถว + ลงซ้ำทีละกลุ่มเมื่อมีแถวล้ม (ไม่มีใบครึ่งใบ) · ลงทั้งหมดหรือไม่ลงเลย · OwnTransactionPerGroup ทำซ้ำได้/ทำต่อได้ ·
+ย้อน/พรีวิวย้อน (ต้องมีเหตุผล) · ยกเลิก · errors.csv · audit IMPORT-COMMIT/IMPORT-UNDO ผ่าน hash chain · ปิดลูปจับคู่คอลัมน์/จับคู่ข้อมูลเดิมกับทีม A) ·
+`ImportBatchWorker` (claim `FOR UPDATE SKIP LOCKED` + heartbeat + JobLock ต่อ batch · ล้างแถวพักของชุดที่ปิดแล้วเกิน 90 วัน) · `ImportEntityResolver.MatchAsync`
+(เลขภาษี+สาขา = เลือกให้ · ชื่อ/ชื่อคล้าย = แนะนำเท่านั้น · AI 59 เฉพาะกำกวมไม่มีเลขภาษี) + `DuplicateDetector.MatchBatchAsync` · ปลายทางข้อมูลหลัก 7 ชนิด ·
+helper `ImportHeaderDetector` (แถวหัวตาราง + แถวยอดรวม ตัวตั้งเดียว — `BankCsvParser.IsSummaryRow` ส่งต่อมา) / `ImportRowConfidence` / `ThaiLegalNameKey` ·
+writer เดิม P0: switch สองชุดยุบเป็น `WriteRowAsync` ตัวเดียว · วันที่/ยอดไม่ขึ้นกับ culture เครื่อง · DateFormat/DecimalSeparator มีผลจริง · ป้าย AiMatched เฉพาะ AI ตอบจริง ·
+ตัวตรวจข้อมูลทำงานเมื่อไม่มี AI · สินค้า "ข้าม" นับเป็นข้าม · สถานะลงบางแถว = PartiallyCompleted + ลองใหม่เฉพาะแถวที่ล้ม · JE ไม่รับผังที่ลบแล้ว/ผู้ติดต่อชื่อกำกวม ·
+เลขบัตรประชาชน checksum ไม่ผ่าน = คำเตือน · เอกสาร/รับ-จ่ายชำระ/สินทรัพย์ส่งต่อปลายทางของทีม D ตัวเดียวกับศูนย์นำเข้า (ชำระมี JE — เดิมแก้ PaidAmount ตรง ·
+ที่ดินไม่คิดค่าเสื่อม · เอกสารเป็นร่าง DRAFT) · รายการธนาคารผ่านตัวเขียน statement ของทีม C (เดิม `CurrentBalance +=`) ·
+Smart Import จับคู่คอลัมน์ผ่าน `ImportColumnMatchService` (เดิมตัวจับคู่ชุดที่สอง + ทิ้ง FeedbackId) · `GetTemplateFields` มอบให้ `ImportSchemas` ·
+ปิดลูป AI ทุกตัวของการนำเข้า (RecordConfirmed ตอน remap/commit · RecordPick ตอน commit · RecordReviewChoice + ยืนยัน suggest-mapping ผ่าน endpoint ใหม่ —
+ข้อความเดิม "การยืนยันถูกเรียนไว้" ไม่มีผู้เรียกจริง) · constructor `ImportEntityResolver` ตัวเดียวรวมของทีม D — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
 _2026-10-14 ทีม F2 — ช่องทางรับ/จ่ายเงินของเอกสาร (PAYMENT_CHANNEL_AUDIT PC#3/#4/#5/#9/#13/#14/#15/#16/#18/#21 · ID#3–#7/#16/#20/#21 · ต้นเรื่อง: รหัสบัญชีธนาคารถูกตรวจเป็นผังบัญชี):
 ตัวตัดสินเดียว `Helpers/DocumentMoneyChannel` แทนลำดับที่เขียนไว้ 4 ที่ (ลงบัญชีตอนอนุมัติ · JE การชำระ · ขาเงินส่วนเกิน · พรีวิว — ตัวหลังสลับลำดับ) ·
 แหล่งเงินที่เลือกแล้วใช้ไม่ได้ (ธนาคารยังไม่ผูกผัง/รหัสผิดตาราง/บริษัทอื่น) ⇒ ข้อความไทยบอกช่อง + ที่แก้ แทนการตกเงินสดเงียบ · ไม่มีผังเงินสด ⇒ ล้มดัง (เดิมบันทึกการชำระไม่มี JE) ·
@@ -4814,13 +4841,10 @@ _Last verified against codebase: 2026-10-14 (ทีม F4 · `erp-review/2026-10
 **หลังฝ่ายค้าน**: ลงนามข้ามบริษัทได้เฉพาะตัวเอง/ผู้อนุมัติเริ่มต้น · โอนผู้อนุมัติห้ามให้คนที่อนุมัติขั้นอื่นแล้ว · ตั้งขั้นอนุมัติแบบลายเซ็นตรวจสมาชิก ·
 50 ทวิ ที่ยกเลิกหลังเข้าคิวไม่ถูกส่ง · ตัวนับแอปนับเฉพาะ "รอคุณ" · หน้ากฎเตือนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์อนุมัติเอกสาร · นิยามสมาชิกของการบันทึกกฎ = ตอนส่ง ·
 มือถือกดซ้ำหลังลำดับครบแต่อนุมัติเอกสารล้ม ⇒ 409 พร้อมทางไปต่อ · เตือนผู้ขอ "ผู้อนุมัติออก" วันละครั้ง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
-_รอบ 205 ทีม A — ศูนย์นำเข้าข้อมูล: จับคู่คอลัมน์หลายชั้น + AI distillation (กฎเหล็ก #1 · `erp-review/2026-10-14/IMPORT_ETL_REVIEW.md` §2.3/§2.6):
 helper owner เดียว — `ImportFieldSynonymSeed` (รวม 4 สำเนา: GetFieldAliases · schema ส่วนตัวของ AiSuggestionController · หัว adapter Express/PEAK/FlowAccount ·
 BankCsvParser) · `ImportHeaderSignature` (normalize หัว + SHA-256 ไม่ขึ้นกับลำดับ) · `ImportSchemas` (แคตตาล็อก field ทุกชนิด ย้ายจาก GetTemplateFields + ตัวอย่าง +
 journal-entries ที่เดิมคืน null + งบทดลองยกมา + บรรทัด statement ธนาคาร) · `ImportSourceSeed` (โปรไฟล์ cold-start ในโค้ด — **ทุกตัวเป็นการเดา** รอไฟล์จริง §4) ·
-`ImportColumnMapper` (ผู้ใช้ → แม่แบบ → ชื่อตรง → คำพ้อง/โปรไฟล์ → คู่ที่ยืนยันแล้ว → รูปข้อมูล → AI · greedy unique · ค่าในคอลัมน์ตัดสินคำพ้องกำกวม · ด่าน AI
 field ∈ schema / ≥ 0.70 / ไม่ทับชั้นสูง · ป้ายแหล่งไทยจากเซิร์ฟเวอร์) · `ImportMappingTemplateStore` ครบสัญญา (+ SaveColumns · GetLearnedHeaders ·
-RecordColumnMatchChoice) · `ImportColumnMatchService` ทางเข้าเดียวของการจับคู่ (DI บล็อกทีม A) · นักเรียน ImportColumnMatch (คำพ้อง+โปรไฟล์+คู่ที่เรียน ·
 รูปเดียวกับครู) และ ImportDataReview (ImportReviewHeuristics ที่ย้ายมาอยู่บน ImportValueNormalizer + เลิกเสนอการจัดรูปแบบที่บริษัทปฏิเสธประจำ — ปัญหาทางกฎหมาย
 ปิดไม่ได้) · augmenter ไม่ทิ้ง FeedbackId/UsedAi + SuggestAccountMapAsync (58 · ด่าน ∈ ผังบริษัท) + ResolveEntityAsync (59 · ด่าน ∈ candidate ∪ NEW) +
 RecordPick/RecordReviewChoice · ImportPrompts ForceProviderCall=false (เดิมข้าม routing+งบทุกครั้ง) + BuildAccountMap/BuildEntityMatch ·
@@ -4838,4 +4862,5 @@ DRAFT · เลขเดิม → Reference · ยอดโดย DocumentServi
 แต่ต้องรับทราบ) · ย้อนคืนยอดเดิมที่ถูกทับ · จับคู่ข้ามบริษัทถูกปฏิเสธ · แนะนำบัญชี + ป้ายแหล่ง/ความมั่นใจ · วางข้อความอ่านที่เซิร์ฟเวอร์ ("1,234.50") · ด่านสิทธิ์ทุก action
 (ลด baseline 6 แถว) · คอลัมน์คำแนะนำบน `AccountMappings` (ADD COLUMN IF NOT EXISTS) · โปรแกรมอื่น: `ImportTabularReader` (TIS-620/xlsx) · เลือก adapter ด้วยคะแนนหัวตาราง
 (express_products → สินค้า) · ชนิดผู้ติดต่อ/สาขา/เลขภาษีผ่านตัวตัดสินกลาง · ลูกค้า/ผู้ขายจากหัวตาราง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 68fb68eb_
+(express_products → สินค้า) · ชนิดผู้ติดต่อ/สาขา/เลขภาษีผ่านตัวตัดสินกลาง · ลูกค้า/ผู้ขายจากหัวตาราง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>_
 

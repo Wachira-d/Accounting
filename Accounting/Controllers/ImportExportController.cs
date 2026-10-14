@@ -198,6 +198,19 @@ public class ImportExportController : ControllerBase
         return Ok(new ApiResponse<ImportAiReviewResponse>(true, result, msg));
     }
 
+    /// <summary>ผู้ใช้รับ/ปฏิเสธคำแนะนำของผลตรวจ (ai-review) ⇒ ปิดลูป ImportDataReview (กฎเหล็ก #1 · รอบ 205 ทีม B) — สิทธิ์เดียวกับการรีวิว</summary>
+    [HttpPost("smart-import/sessions/{sessionId:guid}/ai-review/choice")]
+    public async Task<ActionResult<ApiResponse<object>>> AiReviewChoice(
+        Guid companyId, Guid sessionId, [FromBody] ImportAiReviewChoiceRequest request)
+    {
+        var reviewSession = await _importExportService.GetSessionAsync(companyId, sessionId);
+        var deny = await DenyAsync(companyId, reviewSession.EntityType, isExport: false);
+        if (deny != null) return deny;
+        var recorded = await _importExportService.RecordAiReviewChoiceAsync(companyId, sessionId, request);
+        return Ok(new ApiResponse<object>(true, new { recorded },
+            recorded ? "บันทึกการรับ/ปฏิเสธคำแนะนำแล้ว — ครั้งถัดไประบบเตือนตามนี้" : "ไม่มีผลตรวจที่ต้องบันทึก"));
+    }
+
     /// <summary>ยืนยันและเริ่ม Import ข้อมูล</summary>
     [HttpPost("smart-import/confirm")]
     public async Task<ActionResult<ApiResponse<SmartImportResult>>> ConfirmImport(

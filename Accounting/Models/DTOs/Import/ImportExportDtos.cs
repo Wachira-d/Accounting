@@ -167,10 +167,18 @@ public record ImportAiReviewResponse(
     List<ImportAiFuzzyDuplicateDto> FuzzyDuplicates,
     List<ImportAiQualityFlagDto> QualityFlags,
     List<ImportAiFieldValidationDto> FieldValidations,
-    List<string> BatchPatterns);
+    List<string> BatchPatterns,
+    // รอบ 205 ทีม B (additive): แถว feedback ของ ImportDataReview — หน้าเว็บส่งกลับพร้อมการรับ/ปฏิเสธคำแนะนำ (ai-review/choice) ให้นักเรียนเรียน
+    Guid? FeedbackId = null);
+
+/// <summary>หนึ่งคำแนะนำของผลตรวจที่ผู้ใช้รับ/ปฏิเสธ — Code = รหัสคงที่ของคำแนะนำ (ImportAiNormalizationDto.Code / ImportAiFieldValidationDto.Code)</summary>
+public record ImportAiReviewChoiceItem(string Field, string Code);
+
+/// <summary><c>POST smart-import/sessions/{id}/ai-review/choice</c> — ปิดลูป ImportDataReview (กฎเหล็ก #1)</summary>
+public record ImportAiReviewChoiceRequest(Guid FeedbackId, List<ImportAiReviewChoiceItem>? Accepted, List<ImportAiReviewChoiceItem>? Rejected);
 
 public record ImportAiNormalizationDto(
-    int RowIndex, string Field, string? Original, string? Normalized, string? Reason);
+    int RowIndex, string Field, string? Original, string? Normalized, string? Reason, string? Code = null);
 
 public record ImportAiFuzzyDuplicateDto(
     int RowIndex, string? IncomingKey, string? ExistingId, string? ExistingLabel,
@@ -180,7 +188,7 @@ public record ImportAiQualityFlagDto(
     int RowIndex, string Severity, string Message);
 
 public record ImportAiFieldValidationDto(
-    int RowIndex, string Field, string? Value, string Issue, string? SuggestedFix);
+    int RowIndex, string Field, string? Value, string Issue, string? SuggestedFix, string? Code = null);
 
 public record ImportableEntityInfo(
     string EntityType,

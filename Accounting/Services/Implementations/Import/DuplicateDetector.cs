@@ -36,7 +36,19 @@ public interface IDuplicateDetector
     Task<List<ImportDuplicateConflict>> DetectBatchAsync(Guid companyId, string entityType,
         List<Dictionary<string, object?>> stagedRows, Guid? sessionId = null,
         string? sessionRef = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// รอบ 205 ทีม B (IMPORT_ETL_REVIEW §2.4): จับคู่ทั้งชุดกับข้อมูลเดิม<b>ไม่สร้างแถว conflict</b> — ผลต่อแถว (ตามลำดับ · null = ไม่พบ) ให้
+    /// <c>ImportEntityResolver</c> ของศูนย์นำเข้า · ผู้ติดต่อ/สินค้าโหลดล่วงหน้าครั้งเดียว (ไม่ N+1) · ชนิดอื่นใช้ตัวตรวจรายแถวเดิม (กติกาเดียวกับ
+    /// <see cref="DetectAsync"/>) · ชื่อตรงกันอย่างเดียว = <c>Kind "ExactName"</c> ผู้เรียกต้องถือเป็น "แนะนำ" เท่านั้น
+    /// </summary>
+    /// <param name="entityType">"Contact" · "Product" · "Document" · "Employee" · "BankTransaction" · "FixedAsset" · "JournalEntry"</param>
+    Task<List<DuplicateMatch?>> MatchBatchAsync(Guid companyId, string entityType,
+        IReadOnlyList<IReadOnlyDictionary<string, string?>> rows, CancellationToken ct = default);
 }
+
+/// <summary>ผลจับคู่หนึ่งแถว — <see cref="Kind"/>: "TaxBranch" · "Code" · "Barcode" · "ExactName" · "Key" (ตัวตรวจรายแถวของชนิดอื่น)</summary>
+public sealed record DuplicateMatch(Guid ExistingId, string Label, double Score, string Reason, string Kind);
 
 public class DuplicateDetector : IDuplicateDetector
 {
@@ -74,6 +86,91 @@ public class DuplicateDetector : IDuplicateDetector
             if (c != null) conflicts.Add(c);
         }
         return conflicts;
+    }
+
+    public async Task<List<DuplicateMatch?>> MatchBatchAsync(Guid companyId, string entityType,
+        IReadOnlyList<IReadOnlyDictionary<string, string?>> rows, CancellationToken ct = default)
+    {
+        switch (entityType)
+        {
+            case "Contact": return await MatchContactsAsync(companyId, rows, ct);
+            case "Product": return await MatchProductsAsync(companyId, rows, ct);
+        }
+        var result = new List<DuplicateMatch?>(rows.Count);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var staged = rows[i].ToDictionary(kv => kv.Key, kv => (object?)kv.Value);
+            var c = await DetectAsync(companyId, entityType, staged, null, null, i + 1, ct);
+            result.Add(c?.ExistingEntityId is Guid id
+                ? new DuplicateMatch(id, c.MatchReason ?? "", c.MatchScore, c.MatchReason ?? "", "Key")
+                : null);
+        }
+        return result;
+    }
+
+    private static string? RowVal(IReadOnlyDictionary<string, string?> d, params string[] keys)
+    {
+        foreach (var k in keys)
+            if (d.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v)) return v.Trim();
+        return null;
+    }
+
+    /// <summary>ผู้ติดต่อทั้งชุด — เลขภาษี + สาขาผ่านตัวจับคู่กลาง (โหลดทุกสาขาของชุดเลขครั้งเดียว) · เลขนี้มีแล้วแต่คนละสาขา = รายใหม่ของสาขานั้น ·
+    /// ชื่อตรงตัว (ไม่สนตัวพิมพ์) บนชุด SoftScope เดียวกับ <see cref="DetectContactAsync"/>: แถวในไฟล์มีเลข ⇒ เทียบเฉพาะผู้ติดต่อที่ยังไม่มีเลข</summary>
+    private async Task<List<DuplicateMatch?>> MatchContactsAsync(Guid cid, IReadOnlyList<IReadOnlyDictionary<string, string?>> rows, CancellationToken ct)
+    {
+        var byTax = await Accounting.Helpers.ContactTaxBranchKey.LoadByTaxIdsAsync(
+            _db.Contacts.AsNoTracking().Where(c => !c.IsDeleted), cid, rows.Select(r => RowVal(r, "TaxId", "taxId")), ct);
+        var names = rows.Select(r => RowVal(r, "Name", "name")?.ToLowerInvariant()).Where(n => n != null).Distinct().ToList();
+        var byName = names.Count == 0 ? new List<Contact>()
+            : await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == cid && !c.IsDeleted && names.Contains(c.Name.ToLower()))
+                .OrderBy(c => c.CreatedAt).ThenBy(c => c.Id)
+                .ToListAsync(ct);
+        var result = new List<DuplicateMatch?>(rows.Count);
+        foreach (var r in rows)
+        {
+            var taxId = RowVal(r, "TaxId", "taxId");
+            var branch = RowVal(r, "BranchCode", "branchCode");
+            var hasTax = Accounting.Helpers.ContactTaxBranchKey.HasTaxId(taxId);
+            if (hasTax)
+            {
+                var key = Accounting.Helpers.ContactTaxBranchKey.Pick(
+                    byTax.Select(c => new Accounting.Helpers.ContactKeyCandidate(c.Id, c.TaxId, c.BranchCode)), taxId, branch);
+                if (key.ContactId is Guid keyId && byTax.FirstOrDefault(c => c.Id == keyId) is { } hit)
+                { result.Add(new DuplicateMatch(hit.Id, hit.Name, 1.0, "เลขผู้เสียภาษี + สาขาตรงกัน", "TaxBranch")); continue; }
+                // เลขนี้มีแล้วแต่คนละสาขา ⇒ รายใหม่ของสาขานั้น — ห้ามถอยไปเทียบชื่อ (กติกาเดียวกับ DetectContactAsync)
+                if (key.TaxIdExists) { result.Add(null); continue; }
+            }
+            var name = RowVal(r, "Name", "name")?.ToLowerInvariant();
+            var nameHit = name == null ? null : byName.FirstOrDefault(c => c.Name.ToLowerInvariant() == name
+                && (!hasTax || !Accounting.Helpers.ContactTaxBranchKey.HasTaxId(c.TaxId)));
+            result.Add(nameHit == null ? null
+                : new DuplicateMatch(nameHit.Id, nameHit.Name, 0.9, hasTax ? "ชื่อตรงกัน (ผู้ติดต่อเดิมยังไม่มีเลขผู้เสียภาษี)" : "ชื่อตรงกัน", "ExactName"));
+        }
+        return result;
+    }
+
+    /// <summary>สินค้าทั้งชุด — รหัสตรง (1.0) แล้วบาร์โค้ดตรง (1.0) · โหลดครั้งเดียว</summary>
+    private async Task<List<DuplicateMatch?>> MatchProductsAsync(Guid cid, IReadOnlyList<IReadOnlyDictionary<string, string?>> rows, CancellationToken ct)
+    {
+        var codes = rows.Select(r => RowVal(r, "Code", "code", "ProductCode")).Where(c => c != null).Distinct().ToList();
+        var barcodes = rows.Select(r => RowVal(r, "Barcode", "barcode")).Where(c => c != null).Distinct().ToList();
+        var products = codes.Count == 0 && barcodes.Count == 0 ? new List<Product>()
+            : await _db.Products.AsNoTracking()
+                .Where(p => p.CompanyId == cid && !p.IsDeleted && (codes.Contains(p.Code) || (p.Barcode != null && barcodes.Contains(p.Barcode))))
+                .ToListAsync(ct);
+        var result = new List<DuplicateMatch?>(rows.Count);
+        foreach (var r in rows)
+        {
+            var code = RowVal(r, "Code", "code", "ProductCode");
+            var barcode = RowVal(r, "Barcode", "barcode");
+            var hit = code == null ? null : products.FirstOrDefault(p => p.Code == code);
+            if (hit != null) { result.Add(new DuplicateMatch(hit.Id, $"{hit.Code} {hit.Name}", 1.0, "รหัสสินค้าตรงกัน", "Code")); continue; }
+            hit = barcode == null ? null : products.FirstOrDefault(p => p.Barcode == barcode);
+            result.Add(hit == null ? null : new DuplicateMatch(hit.Id, $"{hit.Code} {hit.Name}", 1.0, "บาร์โค้ดตรงกัน", "Barcode"));
+        }
+        return result;
     }
 
     private static string Get(Dictionary<string, object?> d, params string[] keys)

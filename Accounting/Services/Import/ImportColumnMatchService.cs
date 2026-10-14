@@ -10,12 +10,15 @@ namespace Accounting.Services.Import;
 /// <param name="TemplateId">แม่แบบที่ผู้ใช้เลือก · null = หาเองจาก signature ของชุดหัว</param>
 /// <param name="AllowAi">false = local ล้วน (worker/ไฟล์ใหญ่/ผู้ใช้ปิด) — ผลทุกชั้นใต้ AI เหมือนเดิม</param>
 /// <param name="UserAssignments">✋ คอลัมน์ที่ผู้ใช้เลือกแล้ว (remap) — ชนะทุกชั้น</param>
+/// <param name="Targets">schema ของปลายทางจริง (รอบ 205 ทีม B · additive) — ปลายทางที่ field ต่างจากแคตตาล็อกกลาง (เช่น statement ธนาคารของทีม C)
+/// · null = <see cref="ImportSchemas.For"/></param>
 public sealed record ImportColumnMatchOptions(
     Guid? BatchId = null,
     Guid? TemplateId = null,
     string? SourceSystem = null,
     bool AllowAi = true,
-    IReadOnlyList<ImportColumnAssignment>? UserAssignments = null);
+    IReadOnlyList<ImportColumnAssignment>? UserAssignments = null,
+    IReadOnlyList<ImportFieldDto>? Targets = null);
 
 /// <summary>ผลจับคู่คอลัมน์ของทั้งไฟล์ — เก็บ <see cref="AiFeedbackId"/>/<see cref="UsedAi"/> ลง <c>SmartImportSession.ColumnMatchAiFeedbackId/ColumnMatchUsedAi</c>
 /// แล้วปิดลูปตอนยืนยันด้วย <see cref="IImportColumnMatchService.RecordConfirmedAsync"/></summary>
@@ -61,7 +64,7 @@ public sealed class ImportColumnMatchService : IImportColumnMatchService
     public async Task<ImportColumnMatchOutcome> MapAsync(Guid companyId, string entityType, IReadOnlyList<ImportColumnInput> columns,
         ImportColumnMatchOptions options, CancellationToken ct = default)
     {
-        var targets = ImportSchemas.For(entityType)
+        var targets = options.Targets ?? ImportSchemas.For(entityType)
             ?? throw new BusinessRuleException($"ยังไม่รองรับการนำเข้าข้อมูลชนิด \"{entityType}\" — เลือกชนิดข้อมูลจากรายการ");
         var signature = ImportHeaderSignature.Compute(columns.Select(c => c.Header));
 

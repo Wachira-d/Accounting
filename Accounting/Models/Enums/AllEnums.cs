@@ -1216,7 +1216,8 @@ public enum ColumnMatchType
     ExactMatch = 1,        // ชื่อตรงกันเป๊ะ
     AiMatched = 2,         // AI วิเคราะห์จับคู่
     ManualMatch = 3,       // User จับคู่เอง
-    Unmapped = 4           // ยังไม่ได้จับคู่
+    Unmapped = 4,          // ยังไม่ได้จับคู่
+    HeuristicMatched = 5   // รอบ 205 ทีม B: ระบบจับคู่จากชื่อคล้าย/คำพ้อง/รูปข้อมูล (ไม่ได้เรียก AI — ป้ายซื่อสัตย์ กฎเหล็ก #1)
 }
 
 public enum ColumnMatchConfidence
