@@ -86,7 +86,7 @@ public class FinanceReportSheetsTests
         static List<DataIntegritySuspect> L(params DataIntegritySuspect[] x) => x.ToList();
         var s1 = new DataIntegritySuspect("PosOrderTotal", Guid.NewGuid(), "POS-1", new DateTime(2026, 3, 1), "ยอดเบิ้ล", 200m, 100m);
         var s2 = new DataIntegritySuspect("PayrollRunTotal", Guid.NewGuid(), "PR-1", new DateTime(2026, 3, 2), "รวมไม่ตรง", 5m, 4m, FixPath: "x/fix");
-        var report = new DataIntegrityReport(L(s1), L(), L(), L(s2), L(), L(), L(), L(), L());
+        var report = new DataIntegrityReport(L(s1), L(), L(), L(s2), L(), L(), L(), L(), L(), L(), L());
         var sheet = FinanceReportSheets.DataIntegrity(report, NoTitle);
         Assert.Equal(2, sheet.Rows.Count);
         Assert.Equal("บิล POS ที่ยอดบิลไม่เท่าผลรวมรายการ", sheet.Rows[0][0]);
@@ -94,7 +94,7 @@ public class FinanceReportSheetsTests
         Assert.Equal("ได้", sheet.Rows[1][7]);
         Assert.Equal("", sheet.Rows[0][7]);
         // ทิศตรงข้าม: รายงานไม่มีอะไร = แผ่นมีแต่หัวตาราง (ไม่ใช่ล้ม/ไม่ใช่แถวปลอม)
-        var empty = new DataIntegrityReport(L(), L(), L(), L(), L(), L(), L(), L(), L());
+        var empty = new DataIntegrityReport(L(), L(), L(), L(), L(), L(), L(), L(), L(), L(), L());
         Assert.Empty(FinanceReportSheets.DataIntegrity(empty, NoTitle).Rows);
         Assert.Equal(report.Sections, DataIntegritySections.All);
     }
