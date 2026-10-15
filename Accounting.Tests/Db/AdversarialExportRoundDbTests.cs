@@ -171,6 +171,7 @@ public class AdversarialExportRoundDbTests
         // ผู้ใช้ลงยอดนำเข้าเองใน ม.ค. 2024 (แทนยอดที่ปิดปีเขียน) — ยอดที่ผู้ใช้ตั้งใจ
         var row = db.OpeningBalances.Single(o => o.CompanyId == s.CompanyId && o.AccountId == s.Cash && o.FiscalPeriod.Year == 2024);
         row.OpeningDebit = 999_999m;
+        row.OpeningCredit = 0m; // ยอดที่ผู้ใช้ตั้ง = เดบิตล้วน (ยอดที่ปิดปีเขียนมีทั้งสองข้าง)
         row.Notes = OpeningRoll.ImportedNotePrefix + " manual";
         await db.SaveChangesAsync();
 
