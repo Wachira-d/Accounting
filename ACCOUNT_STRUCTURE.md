@@ -892,7 +892,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 
 ---
 
-_Last verified against codebase: 2026-10-15 (rev 45 · ฝ่ายค้านรอบส่งออก — **§3.1f** ผังที่นำเข้าผูกบัญชีแม่ (`ChartParentLink`) + ลำดับผังตั้งต้นเจ้าของเดียว (`PostingAccountGuard.DefaultPostingCandidates`) + รายงาน/ซ่อมผังที่นำเข้าไว้ก่อน — ไม่มีคอลัมน์ใหม่ — commit (sha เติมภายหลัง))_
+_Last verified against codebase: 2026-10-15 (rev 45 · ฝ่ายค้านรอบส่งออก — **§3.1f** ผังที่นำเข้าผูกบัญชีแม่ (`ChartParentLink`) + ลำดับผังตั้งต้นเจ้าของเดียว (`PostingAccountGuard.DefaultPostingCandidates`) + รายงาน/ซ่อมผังที่นำเข้าไว้ก่อน — ไม่มีคอลัมน์ใหม่ — commit 825f5c0e)_
 
 _Last verified against codebase: 2026-10-14 (rev 44 · ฝ่ายค้านรอบ 204 — **§3.1e** ค่าตั้งค่าสิทธิ ม.40(3) มีประวัติ: คอลัมน์ `Companies.WhtRoyaltyPnd2History` (text) + `WhtRoyaltyFormDecidedAt` (timestamptz) ผ่าน `DatabaseMigrationHelper.Round204RoyaltyHistoryStatements` — commit 7e931322)_
 

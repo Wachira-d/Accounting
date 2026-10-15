@@ -4987,4 +4987,4 @@ _Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบ�
 (สาขา = สาขาหรือมิติของสาขา · กรองใด ⇒ ไม่บวกยอดนำเข้า) + คำเตือนยอดนำเข้ากลางช่วง (P2-7) บัญชีแยกประเภทปิดบังใบที่ผู้ใช้ไม่มีสิทธิ์เห็น (`LedgerRedaction`)
 (P2-8) audit วันล้วน = วันตามเวลาไทย (P2-9) ลำดับแบ่งหน้ามี Id (P2-10) JE ตอนออกใบเลือกตามสมุด + ไม่นับผังพัก/กันเงิน gateway (P2-11) PiiAccessLog "Export" ·
 เทสต์ `AdversarialExportRoundTests` · `Db/AdversarialExportRoundDbTests` · `Pnd1FileFormatTests` · `OriginalArApAccountTests` · `ModuleExportTests` · `Db/ModuleExportDbTests`
-— ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง))_
+— ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 825f5c0e)_
