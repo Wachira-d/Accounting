@@ -174,7 +174,7 @@ public class TradeListExportTests
     // ═══════════ แถวเอกสาร / บรรทัด ═══════════
 
     private static DocumentResponse Doc(decimal total = 1070m, decimal deposit = 0m, bool? balanceApplies = true,
-        bool redacted = false, List<DocumentLineResponse>? lines = null) => new(
+        bool redacted = false, List<DocumentLineResponse>? lines = null) => new DocumentResponse(
         Guid.NewGuid(), "INV-001", DocumentType.TaxInvoice, DocumentStatus.Approved,
         new DateTime(2026, 9, 30, 17, 0, 0, DateTimeKind.Utc), null,
         new ContactBrief(Guid.NewGuid(), "ลูกค้า ก", "0105556000001", "00000"),
