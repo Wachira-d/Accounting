@@ -57,7 +57,9 @@ public interface IAccountingService
     /// <summary>ย้ายผังที่เลือกไปหัวบัญชีถัดไป + ปรับระดับลูกหลาน + audit chain · เจ้าของบริษัทเท่านั้น (ผู้เรียกตรวจ)</summary>
     Task<Accounting.Services.Implementations.ChartParentLinkRepairResult> RescueTemplateLeafChildrenAsync(Guid companyId, IReadOnlyCollection<Guid> accountIds, string actor);
     /// <summary>กู้คืนผังที่ถูกลบแบบ soft (รอบ 4 P2-b — ทางไปต่อของ "ผังที่ถูกลบยังมียอด") · เจ้าของบริษัทเท่านั้น (ผู้เรียกตรวจสิทธิ์) · audit chain</summary>
-    Task<AccountResponse> RestoreAccountAsync(Guid companyId, Guid accountId, string actor);
+    Task<AccountResponse> RestoreAccountAsync(Guid companyId, Guid accountId, string actor, Guid? newParentId = null);
+    /// <summary>ฝ่ายค้านรอบส่งออก รอบ 5 P2-3 — กู้คืนไว้ใต้ผังแม่เดิมได้ไหม + หัวบัญชีที่เสนอ (อ่านอย่างเดียว · ตัวเดียวกับที่ RestoreAccountAsync ใช้)</summary>
+    Task<AccountRestorePlan> PlanAccountRestoreAsync(Guid companyId, Guid accountId);
 
     // General Ledger
     Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null);

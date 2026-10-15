@@ -86,6 +86,48 @@ public static class OpeningRoll
             + "ทางไปต่อ: ซ่อมยอดยกมารุ่นเก่าก่อน (เจ้าของบริษัท — หน้า \"ตรวจข้อมูลจากบั๊กที่แก้แล้ว\" หมวดยอดยกมาจากการปิดปี กด \"แก้\" ปีที่ระบุ "
             + "⇒ ระบบเขียนยอดยกมางวดแรกของรอบ + ยกเลิกแถวรุ่นเก่า · บันทึกประวัติ) แล้วปิดปี/ยกยอดอีกครั้ง";
 
+    /// <summary>
+    /// เวลาคอมมิตของการแก้ "ยกยอดไปงวดแรกของรอบบัญชี" (de823512 · ฝ่ายค้านรอบส่งออก รอบ 2 · 2026-10-15 17:40:48 UTC) — การยกยอด<b>ก่อน</b>เวลานี้
+    /// ไป 1 ม.ค. เสมอ · หลังจากนี้แถวยกยอดที่อยู่งวด ม.ค. = ตอนยกบริษัทใช้รอบปีปฏิทิน (รอบ 5 P2-2 · ใช้ใน <see cref="IsLegacyCalendarRoll"/>)
+    /// </summary>
+    public static readonly DateTime CalendarRollFixedAtUtc = new(2026, 10, 15, 17, 40, 48, DateTimeKind.Utc);
+
+    /// <summary>action ของ audit เมื่อบริษัทเปลี่ยนเดือนเริ่มรอบบัญชี (<c>CompanyService.UpdateAsync</c> · รอบ 5 P2-2 เป็นต้นไป) — หลักฐานของ <see cref="StartMonthAt"/></summary>
+    public const string FiscalYearStartMonthChangeAction = "fiscal-year-start-month";
+
+    /// <summary>รหัสกฎของด่าน "เปลี่ยนเดือนเริ่มรอบบัญชีหลังปิดปีแล้ว" (<see cref="FiscalYearStartMonthLockedMessage"/>)</summary>
+    public const string FiscalYearStartMonthRuleCode = "ACC-ACT-11-FISCAL-PERIOD";
+
+    /// <summary>
+    /// เดือนเริ่มรอบบัญชี ณ เวลา <paramref name="atUtc"/> (pure · รอบ 5 P2-2): ค่าเดิม (<c>OldMonth</c>) ของการเปลี่ยนครั้งแรก<b>หลัง</b>เวลานั้นจาก audit
+    /// (<see cref="FiscalYearStartMonthChangeAction"/>) · ไม่มีการเปลี่ยนหลังเวลานั้น = ค่าปัจจุบัน
+    /// </summary>
+    private static int StartMonthAt(DateTime atUtc, int currentStartMonth, IEnumerable<(DateTime ChangedAtUtc, int OldMonth)> changes)
+        => changes.Where(c => c.ChangedAtUtc > atUtc).OrderBy(c => c.ChangedAtUtc).Select(c => (int?)c.OldMonth).FirstOrDefault()
+            ?? currentStartMonth;
+
+    /// <summary>
+    /// งวด ม.ค. ที่ยกยอดเมื่อ <paramref name="rolledAtUtc"/> (เวลาที่ใบปิดปีของรอบนั้นถูกสร้าง · ไม่มีใบปิดปี = เวลาที่แถวถูกเขียน) เป็น<b>ของรุ่นเก่าที่ยกผิดที่</b>
+    /// (pure · รอบ 5 P2-2 — คู่กับ <see cref="IsLegacyCalendarRollPeriod"/>): ยกก่อน <see cref="CalendarRollFixedAtUtc"/> <b>และ</b>ตอนยกบริษัทใช้รอบที่ไม่ใช่ปีปฏิทิน
+    /// (<see cref="StartMonthAt"/>) · บั๊กที่มา: บริษัทปีปฏิทินที่ปิดปีแล้วค่อยเปลี่ยนเดือนเริ่มรอบ ถูกรายงาน/บล็อกว่า "ยกยอดรุ่นเก่า" และปุ่มซ่อมจะยกเลิกยอดยกมา
+    /// ม.ค. ที่ถูกต้องของปีนั้น (เขียนประวัติใหม่) · ไม่มี audit การเปลี่ยน (ก่อนรอบ 5 ไม่มีการบันทึก) = ถือว่าใช้ค่าปัจจุบันตอนยก (ข้อจำกัดที่จดใน EXPORT_AUDIT รอบ 5)
+    /// </summary>
+    public static bool IsLegacyCalendarRoll(DateTime rolledAtUtc, int currentStartMonth, IEnumerable<(DateTime ChangedAtUtc, int OldMonth)> changes)
+        => rolledAtUtc < CalendarRollFixedAtUtc && FiscalYear.NormalizeStartMonth(StartMonthAt(rolledAtUtc, currentStartMonth, changes)) != 1;
+
+    /// <summary>
+    /// ข้อความของด่าน "เปลี่ยนเดือนเริ่มรอบบัญชีหลังปิดปีแล้ว" (pure · รอบ 5 P2-2) — ปีที่ปิดแล้ว ยอดยกมา งวดที่ล็อก ถูกคิดด้วยรอบเดิม ·
+    /// เปลี่ยนตอนนี้ = ปีเก่าถูกตีความใหม่ (รายงาน/ยกยอด/ด่านยกยอดรุ่นเก่าอ่านผิดรอบ) · พ.ร.บ.การบัญชี 2543 ม.11: เปลี่ยนรอบปีบัญชีต้องได้รับอนุมัติ
+    /// และมีผลจากรอบใหม่เท่านั้น — ระบบยังไม่รองรับรอบเปลี่ยนผ่าน ⇒ บล็อก + ทางไปต่อ
+    /// </summary>
+    public static string FiscalYearStartMonthLockedMessage(int currentStartMonth, int requestedStartMonth, IEnumerable<int> closedFiscalYears)
+        => $"เปลี่ยนเดือนเริ่มรอบบัญชีจากเดือน {FiscalYear.NormalizeStartMonth(currentStartMonth)} เป็นเดือน {FiscalYear.NormalizeStartMonth(requestedStartMonth)} ไม่ได้: "
+            + $"บริษัทปิดปีบัญชีในระบบแล้ว ({string.Join(", ", closedFiscalYears.OrderBy(y => y).Select(y => (y + 543).ToString(System.Globalization.CultureInfo.InvariantCulture)))}) — "
+            + "ยอดยกมา งวดที่ล็อก และงบของปีเหล่านั้นคิดด้วยรอบเดิม เปลี่ยนตอนนี้จะทำให้ปีเก่าถูกตีความใหม่ · การเปลี่ยนรอบปีบัญชีต้องได้รับอนุมัติจากอธิบดี "
+            + "(พ.ร.บ.การบัญชี 2543 ม.11 · ภาษีเงินได้นิติบุคคล ป.รัษฎากร ม.65) และมีผลตั้งแต่รอบใหม่เท่านั้น ซึ่งระบบยังไม่รองรับรอบเปลี่ยนผ่าน · "
+            + "ยังไม่มีอะไรถูกบันทึก (ข้อมูลอื่นในหน้านี้ก็ยังไม่ถูกบันทึก — เลือกเดือนเดิมแล้วบันทึกอีกครั้ง) · ทางไปต่อ: ถ้าได้รับอนุมัติเปลี่ยนรอบแล้ว "
+            + "ให้เจ้าของบริษัทติดต่อผู้ทำบัญชี/ผู้ดูแลระบบพร้อมหนังสืออนุมัติ เพื่อวางแผนรอบเปลี่ยนผ่าน (ข้อมูลรอบเดิมคงไว้)";
+
     /// <summary>แถวยอดยกมานี้มาจากการนำเข้า (ไม่ใช่จากการปิดปี)</summary>
     public static bool IsImported(string? notes)
         => notes != null && notes.StartsWith(ImportedNotePrefix, StringComparison.Ordinal);

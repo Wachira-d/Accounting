@@ -7601,11 +7601,13 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
+        // ฝ่ายค้านรอบส่งออก รอบ 5 P1: ไม่ ThenInclude ผัง (INNER JOIN ผ่านตัวกรอง soft-delete ทิ้งบรรทัดผังที่ลบ) — เติมผังรวมผังที่ลบ
         var entries = await _db.JournalEntries.AsNoTracking()
-            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Include(j => j.Lines)
             .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId && !j.IsDeleted)
             .OrderBy(j => j.EntryDate).ThenBy(j => j.EntryNumber)
             .ToListAsync();
+        await Accounting.Helpers.JournalLineAccounts.HydrateAsync(_db, companyId, entries);
 
         // เหตุผลที่ปรับปรุงไม่ได้ — คำนวณครั้งเดียวต่อเอกสาร (ทุกใบใช้ร่วมกัน)
         var docBlock = await ResolveJournalAdjustBlockAsync(companyId, doc);
@@ -7627,7 +7629,7 @@ public partial class DocumentService : IDocumentService
                 CanAdjust: block == null,
                 BlockReason: block,
                 Lines: j.Lines.OrderBy(l => l.LineOrder).Select(l => new DocumentJournalLineDto(
-                    l.AccountId, l.Account.AccountCode, l.Account.AccountName,
+                    l.AccountId, l.Account.AccountCode, Accounting.Helpers.JournalLineAccounts.DisplayName(l.Account),
                     l.DebitAmount, l.CreditAmount, l.Description,
                     IsReclassifyProtectedAccount(l.Account.AccountCode))).ToList());
         }).ToList();
@@ -7682,11 +7684,13 @@ public partial class DocumentService : IDocumentService
         var blocked = await ResolveJournalAdjustBlockAsync(companyId, doc);
         if (blocked != null) throw new InvalidOperationException(blocked);
 
+        // รอบ 5 P1: ผลต่างคิดจากบรรทัดทั้งหมดของใบเดิม (รวมผังที่ลบ — เดิมบรรทัดหาย ⇒ ใบปรับปรุงผิด)
         var original = await _db.JournalEntries.AsNoTracking()
-            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Include(j => j.Lines)
             .FirstOrDefaultAsync(j => j.Id == journalEntryId && j.CompanyId == companyId
                 && j.SourceDocumentId == documentId && !j.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญของเอกสารนี้");
+        await Accounting.Helpers.JournalLineAccounts.HydrateAsync(_db, companyId, original);
 
         if (original.Status != JournalEntryStatus.Posted)
             throw new InvalidOperationException("ปรับปรุงได้เฉพาะใบสำคัญที่ผ่านรายการแล้ว");

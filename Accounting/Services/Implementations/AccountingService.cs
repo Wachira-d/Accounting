@@ -582,11 +582,14 @@ public partial class AccountingService : IAccountingService
 
     public async Task<JournalEntryResponse> GetJournalEntryAsync(Guid companyId, Guid entryId)
     {
+        // ฝ่ายค้านรอบส่งออก รอบ 5 P1: ไม่ ThenInclude ผัง (INNER JOIN ผ่านตัวกรอง soft-delete ⇒ บรรทัดผังที่ลบหาย — ใบปิดปีโชว์ Dr 8,000/Cr 7,000)
+        // ⇒ โหลดบรรทัดทั้งหมดแล้วเติมผังรวมผังที่ลบ (Helpers/JournalLineAccounts)
         var entry = await _db.JournalEntries
-            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Include(j => j.Lines)
             .Include(j => j.Project)
             .FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
+        await Accounting.Helpers.JournalLineAccounts.HydrateAsync(_db, companyId, entry);
 
         var srcMap = await LoadSourceDocumentMapAsync(new[] { entry });
         string? srcNumber = null, srcType = null;
@@ -597,8 +600,9 @@ public partial class AccountingService : IAccountingService
 
     public async Task<PagedResponse<JournalEntryResponse>> GetJournalEntriesAsync(Guid companyId, PagedRequest request, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, string? journalType = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null, string? tag = null, Guid? sourceDocumentId = null, string? sourceDocumentNumber = null)
     {
+        // รอบ 5 P1: บรรทัดผังที่ลบต้องอยู่ในรายการด้วย (ไม่ ThenInclude ผัง · เติมหลังแบ่งหน้า)
         var query = _db.JournalEntries
-            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Include(j => j.Lines)
             .Include(j => j.Project)
             .Where(j => j.CompanyId == companyId);
 
@@ -699,6 +703,7 @@ public partial class AccountingService : IAccountingService
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
+        await Accounting.Helpers.JournalLineAccounts.HydrateAsync(_db, companyId, items);
 
         var srcMap = await LoadSourceDocumentMapAsync(items);
         return new PagedResponse<JournalEntryResponse>(
@@ -716,9 +721,10 @@ public partial class AccountingService : IAccountingService
     public async Task<JournalEntryResponse> PostJournalEntryAsync(Guid companyId, Guid entryId)
     {
         var entry = await _db.JournalEntries
-            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Include(j => j.Lines)
             .FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
+        await Accounting.Helpers.JournalLineAccounts.HydrateAsync(_db, companyId, entry);   // รอบ 5 P1: บรรทัดผังที่ลบไม่หายจากคำตอบ
 
         // Idempotent: CreateJournalEntryAsync สร้าง JE เป็น Posted ตั้งแต่แรกแล้ว
         // (ไม่มีขั้น Draft แยก) — ผู้เรียกหลายที่ (payroll pay / settle SSO /
@@ -880,6 +886,9 @@ public partial class AccountingService : IAccountingService
         if (entry.Status == JournalEntryStatus.Voided || entry.Status == JournalEntryStatus.Reversed)
             throw new InvalidOperationException("รายการนี้ถูกยกเลิก/กลับรายการไปแล้ว");
 
+        // ฝ่ายค้านรอบส่งออก รอบ 5 P1: ใบปิดบัญชีสิ้นปียกเลิกไม่ได้ (ข้อความ + ทางไปต่อจากด่านตัวเดียว · ก่อนตรวจงวด — บอกเหตุที่แท้จริง)
+        await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { entry.Id }, "ยกเลิก");
+
         // Mirror the user-direct guards on Reverse — otherwise users could
         // bypass them via Void→Reverse cascade (Void hands systemTriggered=true
         // to Reverse to avoid blocking legitimate internal flows, but the same
@@ -933,6 +942,9 @@ public partial class AccountingService : IAccountingService
 
         if (entry.SourceDocumentId.HasValue)
             throw new InvalidOperationException("ไม่สามารถลบรายการที่สร้างจากเอกสาร ให้ลบที่เอกสารต้นทางแทน");
+
+        // รอบ 5 P1: ลบใบปิดบัญชีสิ้นปี = กำไรไม่ถูกโอนแต่ปียัง "ปิดแล้ว" (YearEndClosing ชี้ใบที่ถูกลบ) — ด่านตัวเดียว
+        await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { entry.Id }, "ลบ");
 
         await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
 
@@ -1006,10 +1018,14 @@ public partial class AccountingService : IAccountingService
     /// </summary>
     public async Task<JournalEntryResponse> ReverseJournalEntryAsync(Guid companyId, Guid entryId, DateTime? reversalDate = null, string? description = null, bool systemTriggered = false)
     {
+        // ฝ่ายค้านรอบส่งออก รอบ 5 P1: โหลดบรรทัด<b>ทั้งหมด</b> (ไม่ ThenInclude ผัง — INNER JOIN ผ่านตัวกรอง soft-delete ทิ้งบรรทัดผังที่ลบ ⇒ ตัวกลับไม่ลงตัว)
         var original = await _db.JournalEntries
-            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Include(j => j.Lines)
             .FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
+
+        // รอบ 5 P1: ใบปิดบัญชีสิ้นปีกลับรายการไม่ได้ทุกทาง (รวม systemTriggered — ยกเลิก/ยกเลิกหลายใบ/แก้ไขด้วยการกลับรายการ) · ด่านตัวเดียว
+        await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { original.Id }, "กลับรายการ");
 
         if (original.Status != JournalEntryStatus.Posted)
             throw new InvalidOperationException("สามารถกลับรายการได้เฉพาะใบสำคัญที่มีสถานะ Posted เท่านั้น");
@@ -1034,6 +1050,20 @@ public partial class AccountingService : IAccountingService
             throw new InvalidOperationException(
                 "รายการนี้สร้างจากเอกสารต้นทาง — กรุณาใช้คำสั่ง 'ยกเลิกเอกสาร' " +
                 "เพื่อกลับทั้งเอกสารและรายการบัญชีพร้อมกัน");
+
+        // รอบ 5 P1 (ด่านป้องกัน): ตัวกลับ = บรรทัดที่บันทึกไว้จริงทุกบรรทัด สลับด้าน และลงตัว — บรรทัดหายระหว่างโหลด (เช่น ตัวกรองผังที่ลบ)
+        // = ล้มก่อนเขียน ไม่ใช่ตัวกลับไม่ลงตัวใน GL · เทียบกับยอดรวมบรรทัดในฐาน (ไม่ join ผัง) — ไม่เทียบหัวใบ เพราะใบเก่าบางทางไม่ได้ปรับหัวใบตามบรรทัด
+        // (บล็อกยกเลิกเอกสารของใบเหล่านั้นโดยไม่มีทางไปต่อ) · ดู EXPORT_AUDIT รอบ 5
+        var persisted = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntryId == original.Id)
+            .GroupBy(l => 1)
+            .Select(g => new { Count = g.Count(), Debit = g.Sum(l => l.DebitAmount), Credit = g.Sum(l => l.CreditAmount) })
+            .FirstOrDefaultAsync();
+        var reversalMismatch = Accounting.Helpers.JournalLineAccounts.ReversalMismatch(original.EntryNumber,
+            original.Lines.Count, original.Lines.Sum(l => l.DebitAmount), original.Lines.Sum(l => l.CreditAmount),
+            persisted?.Count ?? 0, persisted?.Debit ?? 0m, persisted?.Credit ?? 0m);
+        if (reversalMismatch != null)
+            throw new Accounting.Helpers.BusinessRuleException(reversalMismatch, Accounting.Helpers.JournalLineAccounts.ReversalRuleCode);
 
         // FIX #1: ไม่ check งวดของ original — TAS 8 อนุญาตให้กลับรายการของงวด
         // ปิดได้ ถ้าตัวกลับลงในงวดปัจจุบันที่ยังเปิดอยู่ (เจอผิดของปี 2024 ใน
@@ -1203,10 +1233,13 @@ public partial class AccountingService : IAccountingService
 
     public async Task<CorrectJournalEntryResponse> CorrectJournalEntryAsync(Guid companyId, Guid entryId, string createdBy)
     {
+        // ฝ่ายค้านรอบส่งออก รอบ 5 P1: บรรทัดทั้งหมด (รวมผังที่ลบ — เดิม ThenInclude ทิ้ง ⇒ ฉบับร่างที่คัดลอกขาดบรรทัด)
         var original = await _db.JournalEntries
-            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Include(j => j.Lines)
             .FirstOrDefaultAsync(j => j.Id == entryId && j.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
+        await Accounting.Helpers.JournalLineAccounts.HydrateAsync(_db, companyId, original);
+        await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { original.Id }, "แก้ไขด้วยการกลับรายการ");
 
         if (original.Status != JournalEntryStatus.Posted)
             throw new InvalidOperationException("สามารถแก้ไขด้วยการกลับรายการได้เฉพาะใบที่ Posted แล้วเท่านั้น");
@@ -1224,6 +1257,17 @@ public partial class AccountingService : IAccountingService
                 "เพราะบัญชีต้องตรงกับเอกสารเสมอ · ลงผังบัญชีผิด ให้เปิดเอกสารแล้วกด " +
                 "'เปลี่ยนผัง' ท้ายบรรทัดที่ผิด (ระบบลงรายการย้ายบัญชีให้ในงวดเดิม) · " +
                 "ถ้าไม่ควรมีรายการนี้เลย ให้ใช้ 'ยกเลิกเอกสาร'");
+
+        // รอบ 5 P1: ฉบับร่างที่คัดลอกลงผังที่ถูกลบไม่ได้ (ด่านผังล้ม NotFound) — เดิมล้ม<b>หลัง</b>กลับรายการไปแล้ว ⇒ ใบเดิมถูกกลับแต่ไม่มีร่างให้แก้ ·
+        // ล้มก่อนเขียนพร้อมทางไปต่อ
+        var deletedOnLines = original.Lines.Where(l => l.Account.IsDeleted).Select(l => l.Account.AccountCode)
+            .Distinct().OrderBy(c => c, StringComparer.Ordinal).ToList();
+        if (deletedOnLines.Count > 0)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"แก้ไขด้วยการกลับรายการไม่ได้: ใบนี้มีบรรทัดลงผังที่ถูกลบแล้ว ({string.Join(", ", deletedOnLines)}) — ฉบับร่างที่คัดลอกจะลงผังที่ลบไม่ได้ · "
+                + "ยังไม่มีอะไรถูกบันทึก · ทางไปต่อ: กดกลับรายการใบนี้ (ตัวกลับลงผังเดิมได้) แล้วบันทึกใบใหม่เอง หรือให้เจ้าของบริษัทกู้คืนผังนั้นก่อน "
+                + "(หน้า \"ตรวจข้อมูลจากบั๊กที่แก้แล้ว\") แล้วแก้ไขอีกครั้ง",
+                Accounting.Helpers.PostingAccountRule.RuleCode);
 
         // Step 1: Reverse the original entry
         var reversalEntry = await ReverseJournalEntryAsync(companyId, entryId, null,
@@ -1281,6 +1325,8 @@ public partial class AccountingService : IAccountingService
                 "รายการที่สร้างจากเอกสารต้นทางต้องใช้ 'ยกเลิกเอกสาร' แทน: " +
                 string.Join(", ", docSourced.Take(5).Select(j => j.EntryNumber)) +
                 (docSourced.Count > 5 ? $" และอีก {docSourced.Count - 5} รายการ" : ""));
+        // รอบ 5 P1: ตรวจทั้งชุดก่อนเริ่ม — ใบปิดบัญชีในชุด ⇒ ไม่ยกเลิกใบไหนเลย (เดิมจะกลับใบก่อนหน้าไปแล้วค่อยล้มที่ใบปิด)
+        await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, allRequested.Select(j => j.Id).ToList(), "ยกเลิก");
 
         var entries = await _db.JournalEntries
             .Where(j => j.CompanyId == companyId && entryIds.Contains(j.Id) && j.Status != JournalEntryStatus.Voided)
@@ -1309,6 +1355,8 @@ public partial class AccountingService : IAccountingService
     public async Task<int> BatchDeleteJournalEntriesAsync(Guid companyId, List<Guid> entryIds)
     {
         // Mirrors DeleteJournalEntryAsync: any status, but not document-sourced.
+        // รอบ 5 P1: ใบปิดบัญชีสิ้นปีลบไม่ได้ (เดิมทางหลายใบไม่ตรวจงวดเลย ⇒ ลบใบปิดปีทิ้งได้) — ตรวจทั้งชุดก่อนเริ่ม
+        await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, entryIds, "ลบ");
         var entries = await _db.JournalEntries
             .Include(j => j.Lines)
             .Where(j => j.CompanyId == companyId && entryIds.Contains(j.Id)
@@ -2760,7 +2808,7 @@ public partial class AccountingService : IAccountingService
         j.Id, j.EntryNumber, j.EntryDate, j.JournalType, j.Description, j.Reference,
         j.Status, j.IsAutoGenerated, j.TotalDebit, j.TotalCredit,
         j.Lines.OrderBy(l => l.LineOrder).Select(l => new JournalLineResponse(
-            l.Id, l.AccountId, l.Account.AccountCode, l.Account.AccountName,
+            l.Id, l.AccountId, l.Account.AccountCode, Accounting.Helpers.JournalLineAccounts.DisplayName(l.Account),
             l.DebitAmount, l.CreditAmount, l.Description, l.LineOrder,
             l.ProjectId, null, l.BranchId, l.DimensionId, l.Tags)).ToList(),
         j.CreatedAt, j.ReversedByEntryId, j.OriginalEntryId,

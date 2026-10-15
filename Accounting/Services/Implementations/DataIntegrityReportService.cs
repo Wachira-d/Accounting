@@ -175,7 +175,8 @@ public class DataIntegrityReportService
     public static string OpeningRollFixPath(int year) => $"data-integrity/opening-roll/{year}/repair";
 
     /// <summary>เส้นทางปุ่ม "แก้" ของผังที่ถูกลบแต่ยังมียอด (กู้คืน) — ตัวเดียวกับ route ของ <c>AccountingController.RestoreAccount</c> (รอบ 4 P2-b)</summary>
-    public static string AccountRestoreFixPath(Guid accountId) => $"accounting/accounts/{accountId}/restore";
+    public static string AccountRestoreFixPath(Guid accountId, Guid? newParentId = null)
+        => newParentId is Guid p ? $"accounting/accounts/{accountId}/restore?newParentId={p}" : $"accounting/accounts/{accountId}/restore";
 
     /// <summary>เส้นทางปุ่ม "แก้" ของผังที่อยู่ใต้ผังลงรายการของแม่แบบ — ตัวเดียวกับ route ของ <c>DataIntegrityController.RescueTemplateLeafChild</c></summary>
     public static string TemplateLeafRescueFixPath(Guid accountId) => $"data-integrity/account-leaf/{accountId}/rescue";
@@ -223,11 +224,26 @@ public class DataIntegrityReportService
                     y.SkipReason + (y.Note == null ? "" : " · " + y.Note), null, null, "/pages/reports.html", "รายงานบัญชี"));
                 // รอบ 4 P2-b: ทางไปต่อที่มีจริง — ปุ่มกู้คืนรายผัง (เจ้าของ · audit) แล้วปิดปี/ซ่อมอีกครั้ง
                 foreach (var d in y.DeletedAccounts ?? Array.Empty<Accounting.Models.DTOs.Accounting.OpeningRollDeletedAccount>())
+                {
+                    // รอบ 5 P2-3: ผังแม่เดิมกลายเป็นผังลงรายการแล้ว ⇒ ปุ่มกู้คืนไปไว้ใต้หัวบัญชีที่เสนอ (ตัวตัดสินเดียวกับ RestoreAccountAsync) ·
+                    // ไม่มีหัวบัญชีที่เสนอ = ไม่มีปุ่ม + เหตุผล (เลือกหัวบัญชีเอง)
+                    var plan = await _accounting.PlanAccountRestoreAsync(companyId, d.AccountId);
+                    var restoreNote = plan.BlockedReason == null ? ""
+                        : plan.SuggestedParentId != null
+                            ? $" · ผังแม่เดิมรับไม่ได้ ({plan.BlockedReason}) ⇒ ปุ่มนี้กู้คืนไว้ใต้หัวบัญชี {plan.SuggestedParentCode}"
+                            : $" · ผังแม่เดิมรับไม่ได้ ({plan.BlockedReason}) และไม่มีหัวบัญชีที่เสนอ — กู้คืนพร้อมเลือกหัวบัญชีเอง (POST accounting/accounts/{d.AccountId}/restore?newParentId=…)";
+                    var canFix = plan.BlockedReason == null || plan.SuggestedParentId != null;
                     roll.Add(new DataIntegritySuspect("AccountRestore", d.AccountId, $"ผังที่ถูกลบ {d.AccountCode}", jan,
                         $"{d.AccountCode} {d.AccountName} ถูกลบแล้วแต่ยังมียอด{(d.NetDebit >= 0 ? "เดบิต" : "เครดิต")} {Math.Abs(d.NetDebit):N2} ⇒ ปิดปี/ยกยอดปี {y.Year + 543} ไม่ได้ · "
-                            + "กด \"แก้\" เพื่อกู้คืนผัง (เจ้าของบริษัท · บันทึกประวัติ) แล้วปิดปี/ซ่อมอีกครั้ง — ยอดยกไปตามปกติ",
-                        d.NetDebit, null, "/pages/accounts.html", "ผังบัญชี", AccountRestoreFixPath(d.AccountId),
-                        $"กู้คืนผัง {d.AccountCode} {d.AccountName} (ยกเลิกการลบ · บันทึกประวัติ)\n\nดำเนินการต่อหรือไม่?"));
+                            + "กด \"แก้\" เพื่อกู้คืนผัง (เจ้าของบริษัท · บันทึกประวัติ) แล้วปิดปี/ซ่อมอีกครั้ง — ยอดยกไปตามปกติ" + restoreNote,
+                        d.NetDebit, null, "/pages/accounts.html", "ผังบัญชี",
+                        canFix ? AccountRestoreFixPath(d.AccountId, plan.BlockedReason == null ? null : plan.SuggestedParentId) : null,
+                        canFix
+                            ? $"กู้คืนผัง {d.AccountCode} {d.AccountName} (ยกเลิกการลบ · บันทึกประวัติ)"
+                                + (plan.BlockedReason == null ? "" : $" ไว้ใต้หัวบัญชี {plan.SuggestedParentCode} (ผังแม่เดิมรับบัญชีย่อยไม่ได้แล้ว)")
+                                + "\n\nดำเนินการต่อหรือไม่?"
+                            : null));
+                }
                 continue;
             }
             if (y.Mismatches.Count == 0 && y.LegacyRolledRows > 0 && y.SkipReason == null)

@@ -4072,7 +4072,28 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
     ผัง**สินทรัพย์/หนี้สิน/ทุน**ที่ลบแต่มียอด ⇒ ล้มดัง (`DeletedAccountsWithBalanceException`) **ก่อนสร้างใบปิดปี** (`LoadRollTrialBalanceAsync` ก่อนใบ — ข้อความ "ยังไม่มีอะไรถูกบันทึก" เป็นจริง) ·
     ทางไปต่อจริง: หน้าตรวจข้อมูลมีปุ่ม "แก้" รายผัง → `POST accounting/accounts/{id}/restore` (`RestoreAccountAsync` · เจ้าของ · audit `coa-restore` ·
     ล็อกต้นไม้ผัง · ผังแม่ที่ลบ/รหัสซ้ำ = ล้มพร้อมเหตุผล) แล้วปิดปีอีกครั้ง — ยอดยกไปตามปกติ
-- Last verified `commit 825f5c0e` · รอบ 2 `commit de823512` · รอบ 3 `commit 774ea7bc` · รอบ 4 `commit (sha เติมภายหลัง)`
+- **รอบ 5 (ฝ่ายค้านบน eec6947d · `EXPORT_AUDIT.md` §"รอบ 5")**:
+  - **บรรทัดใบสำคัญของผังที่ถูกลบไม่หาย**: `JournalEntryLine.Account` เป็น navigation required + ผังมีตัวกรอง `!IsDeleted` ⇒ `ThenInclude(l => l.Account)` = INNER JOIN
+    ทิ้งบรรทัดผังที่ลบ (ใบปิดปีที่ล้างผังที่ลบโชว์ Dr 8,000/Cr 7,000) · ทางที่แสดง/กลับรายการ/ยกเลิก/แก้ไขด้วยการกลับรายการ/ส่งออก/ปรับปรุงใบเดียว
+    (`GetJournalEntryAsync` · `GetJournalEntriesAsync` · `PostJournalEntryAsync` · `ReverseJournalEntryAsync` · `CorrectJournalEntryAsync` ·
+    `DocumentService.GetDocumentJournalEntriesAsync`/`AdjustDocumentJournalEntryAsync` · `ImportExportService.ExportJournalEntriesAsync`) โหลด `Include(Lines)`
+    แล้วเติมผังรวมผังที่ลบด้วย `Helpers/JournalLineAccounts.HydrateAsync` (กรองบริษัท) · ชื่อผังที่ลบแสดง "(ผังที่ลบแล้ว)" · ตัวกลับรายการต้องมาจากบรรทัดที่บันทึกไว้ครบ
+    (เทียบยอดรวมบรรทัดในฐาน) และลงตัว มิฉะนั้นล้มก่อนเขียน (`JournalLineAccounts.ReversalMismatch` — ไม่เทียบหัวใบ: ใบเก่าบางทางหัวใบไม่ตามบรรทัด) ·
+    แก้ไขด้วยการกลับรายการใบที่มีผังที่ลบ = ล้มก่อนกลับ (ร่างลงผังที่ลบไม่ได้ — ทางไปต่อ: กลับรายการแล้วบันทึกใหม่ / กู้คืนผัง)
+  - **ใบปิดบัญชีสิ้นปี (ธง `IsClosingEntry` หรือถูกอ้างโดย `YearEndClosing`) กลับรายการ/ยกเลิก/ลบไม่ได้ทุกทาง** — ด่านเดียว `Helpers/ClosingEntryLock`
+    (สมุดรายวัน · ทางระบบ systemTriggered · ยกเลิก/ลบหลายใบตรวจทั้งชุดก่อนเริ่ม · API ภายนอก `ProcessJournalReverseAsync`) · เดิมกลับได้ ⇒ ตัวกลับไม่ติดธงใบปิด
+    (งบกำไรขาดทุนนับกลับด้าน) + ปียัง "ปิดแล้ว" · ลบหลายใบไม่ตรวจงวด ⇒ ลบใบปิดปีได้ · ทางไปต่อ: ใบปรับปรุงกำไรสะสม (TAS 8) ในงวดที่เปิด · ยกเลิกการปิดปี = ยังไม่มีคำสั่ง (ผู้ดูแลระบบ)
+  - **เดือนเริ่มรอบบัญชีล็อกหลังปิดปีครั้งแรก** (`CompanyService.ApplyFiscalYearStartMonthAsync` · พ.ร.บ.การบัญชี ม.11 — ดู ACCOUNT_STRUCTURE §3.1f) · ตัวตรวจยกยอดรุ่นเก่า
+    (`FindLegacyCalendarRollPeriodsAsync`) นับงวด ม.ค. เป็นรุ่นเก่าเฉพาะเมื่อยก**ก่อน**การแก้รอบ 2 (`OpeningRoll.CalendarRollFixedAtUtc` — เวลาใบปิดปีของรอบนั้น /
+    ไม่มีใบปิดปี = เวลาที่แถวถูกเขียน) **และ**ตอนยกบริษัทใช้รอบไม่ใช่ปีปฏิทิน (`OpeningRoll.StartMonthAt` จาก audit `fiscal-year-start-month` — ไม่มีประวัติ = ค่าปัจจุบัน) ·
+    เดิมบริษัทปีปฏิทินที่ปิดปีแล้วค่อยเปลี่ยนเดือนเริ่มรอบถูกบล็อกเท็จ และปุ่มซ่อมจะยกเลิกยอดยกมา ม.ค. ที่ถูกต้อง
+  - **กู้คืนผังที่ถูกลบ**: ผังแม่เดิมที่กลายเป็นผังลงรายการ (ไม่มีลูกเหลือ + ผังระบบ/ถูกใช้ — `ChartParentLink.RestoreParentBlockedReason`) ⇒ ล้มก่อนเขียน + เสนอหัวบัญชี
+    (`RestoreAlternativeParent`) · `POST accounting/accounts/{id}/restore?newParentId=` กู้คืนไว้ใต้หัวบัญชีอื่น (ประเภทเดียวกัน · ไม่ใช่ลูกหลานตัวเอง · ลูกหลานปรับระดับ) ·
+    ปุ่มหน้าตรวจข้อมูลใช้แผนเดียวกัน (`PlanAccountRestoreAsync`)
+  - **หมายเหตุ (ไม่ใช่บั๊กที่แก้รอบนี้)**: `YearEndClosing.TransferredAmount` รวมรายได้/ค่าใช้จ่ายของผังที่ถูกลบ (ใบปิดปีล้างให้) แต่**งบกำไรขาดทุน/งบทดลอง/แดชบอร์ด
+    กรองผังที่ลบทั้งชุด** ⇒ กำไรในงบ ≠ ยอดที่โอนเข้ากำไรสะสม เท่ายอดของผังที่ลบ · แก้ที่รายงานเดียวไม่ได้ (รายงานยอดรวมทุกตัวต้องขยับพร้อมกัน) — ทางที่ถูกคือกู้คืนผังนั้น
+    ถ้าผังยังมีรายการในปี
+- Last verified `commit 825f5c0e` · รอบ 2 `commit de823512` · รอบ 3 `commit 774ea7bc` · รอบ 4 `commit eec6947d` · รอบ 5 `commit (sha เติมภายหลัง)`
 
 ### 6.0a-y ไฟล์ส่งออกหน้าการเงินที่เหลือ = ตัวเลขของหน้า (2026-10-15 ทีม X5 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X5)
 
@@ -5740,3 +5761,7 @@ _Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบ�
 ผังสินทรัพย์ที่ลบแต่มียอด = ล้มก่อนสร้างใบ + ปุ่มกู้คืน `POST accounting/accounts/{id}/restore` · (P2-c ดู ACCOUNT_STRUCTURE §3.1f) — ยอดยกมารอบ 3 = `commit 774ea7bc` ·
 เทสต์ `AdversarialExportRound4Tests` · `Db/AdversarialExportRound4DbTests` · `Db/AdversarialExportRound3DbTests` (ปิดปีที่จบแล้ว — ไม่ขึ้นกับนาฬิกา)
 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบส่งออก **รอบ 5** — `EXPORT_AUDIT.md` §"รอบ 5" · §6.0a-y: (P1) บรรทัดผังที่ลบไม่หายจากการแสดง/กลับรายการ/ส่งออก/ปรับปรุง
+(`JournalLineAccounts`) · ใบปิดบัญชีสิ้นปีกลับรายการ/ยกเลิก/ลบไม่ได้ทุกทาง (`ClosingEntryLock`) · ตัวกลับต้องครบและลงตัว · (P2-2) ตัวตรวจยกยอดรุ่นเก่าใช้เวลาใบปิดปี + ประวัติ
+เดือนเริ่มรอบ · เดือนเริ่มรอบล็อกหลังปิดปี · (P2-3) กู้คืนผังใต้ผังแม่ที่เป็นผังลงรายการ = บล็อก + หัวบัญชีที่เสนอ · (P2-4) หมายเหตุ TransferredAmount ≠ งบกำไรขาดทุนเท่าผังที่ลบ —
+รอบ 4 = `commit eec6947d` · เทสต์ `AdversarialExportRound5Tests` · `Db/AdversarialExportRound5DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_

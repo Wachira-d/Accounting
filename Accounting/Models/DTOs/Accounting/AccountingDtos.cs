@@ -285,6 +285,11 @@ public record OpeningRollCheckYear(int Year, Guid? FiscalPeriodId, bool HasImpor
 /// <summary>ผังที่ถูกลบแต่ยังมียอด ณ สิ้นรอบ (หนึ่งผัง · <c>NetDebit</c> = เดบิต − เครดิต)</summary>
 public record OpeningRollDeletedAccount(Guid AccountId, string AccountCode, string AccountName, decimal NetDebit);
 
+/// <summary>แผนกู้คืนผังที่ถูกลบ (ฝ่ายค้านรอบส่งออก รอบ 5 P2-3 · <c>AccountingService.PlanAccountRestoreAsync</c>) — <c>BlockedReason</c> ≠ null =
+/// กู้คืนไว้ใต้ผังแม่เดิมไม่ได้ (ผังแม่จะกลายเป็นบัญชีคุม) · <c>SuggestedParentId</c> = หัวบัญชีที่เสนอให้กู้คืนไปอยู่แทน (ส่งเป็น <c>newParentId</c>) ·
+/// ไม่มีหัวบัญชีที่เสนอ = เลือกหัวบัญชีเองที่หน้าผังบัญชี</summary>
+public record AccountRestorePlan(Guid AccountId, string AccountCode, string? BlockedReason, Guid? SuggestedParentId, string? SuggestedParentCode);
+
 public record OpeningRollRepairRequest(List<int>? Years);
 
 public record OpeningRollRepairResult(int RepairedYears, int RepairedRows, List<string> Skipped);

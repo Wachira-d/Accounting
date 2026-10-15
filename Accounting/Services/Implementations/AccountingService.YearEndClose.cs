@@ -588,12 +588,57 @@ public partial class AccountingService
             from p in _db.FiscalPeriods.AsNoTracking()
             join o in _db.OpeningBalances.AsNoTracking() on p.Id equals o.FiscalPeriodId
             where p.CompanyId == companyId && o.CompanyId == companyId && p.Month == 1
-            select new { PeriodId = p.Id, p.StartDate, p.Month, RowId = o.Id, o.Notes }
+            select new { PeriodId = p.Id, p.StartDate, p.Month, RowId = o.Id, o.Notes, o.CreatedAt }
         ).ToListAsync();
+        if (janRows.Count == 0) return legacy;
+
+        // ═══ รอบ 5 P2-2: ยกตอนที่บริษัทใช้รอบปีปฏิทินอยู่ ≠ ของรุ่นเก่า ═══
+        // บริษัทปีปฏิทินที่ปิดปีแล้วค่อยเปลี่ยนเดือนเริ่มรอบ (ก่อนรอบ 5 เปลี่ยนได้เสมอ) — แถว ม.ค. ของปีนั้นถูกต้อง · เดิมถูกรายงาน/บล็อกว่ารุ่นเก่า และปุ่มซ่อม
+        // จะยกเลิกยอดยกมาที่ถูก (เขียนประวัติใหม่) · หลักฐาน: เวลาที่ยก (ใบปิดปีของรอบที่เขียนงวดนั้น · ไม่มีใบปิดปี = เวลาที่แถวถูกเขียน) + audit การเปลี่ยนเดือนเริ่มรอบ
+        var closedAt = (await _db.YearEndClosings.AsNoTracking()
+                .Where(y => y.CompanyId == companyId)
+                .Select(y => new { y.FiscalYear, y.CreatedAt })
+                .ToListAsync())
+            .GroupBy(y => y.FiscalYear)
+            .ToDictionary(g => g.Key, g => g.Min(x => x.CreatedAt));
+        var changes = await LoadFiscalYearStartMonthChangesAsync(companyId);
+
         foreach (var g in janRows.GroupBy(r => new { r.PeriodId, r.StartDate, r.Month }))
-            if (OpeningRoll.IsLegacyCalendarRollPeriod(g.Key.Month, startMonth, g.Select(r => r.Notes)))
-                legacy.Add(new LegacyRollPeriod(g.Key.PeriodId, g.Key.StartDate, g.Select(r => r.RowId).ToList()));
+        {
+            if (!OpeningRoll.IsLegacyCalendarRollPeriod(g.Key.Month, startMonth, g.Select(r => r.Notes))) continue;
+            // ใบปิดปีที่การยกยอดรุ่นเก่าเขียนงวด ม.ค. นี้ = รอบก่อนปีที่ซ่อม (ตัวตั้งเดียวกับด่าน: OpeningRoll.LegacyRepairYear)
+            var rolledAt = closedAt.TryGetValue(OpeningRoll.LegacyRepairYear(g.Key.StartDate, startMonth) - 1, out var at) ? at : g.Min(r => r.CreatedAt);
+            if (!OpeningRoll.IsLegacyCalendarRoll(rolledAt, startMonth, changes)) continue;
+            legacy.Add(new LegacyRollPeriod(g.Key.PeriodId, g.Key.StartDate, g.Select(r => r.RowId).ToList()));
+        }
         return legacy.OrderBy(l => l.Start).ToList();
+    }
+
+    /// <summary>ประวัติการเปลี่ยนเดือนเริ่มรอบบัญชีของบริษัท (audit <see cref="OpeningRoll.FiscalYearStartMonthChangeAction"/> — มีตั้งแต่รอบ 5) ·
+    /// แถวที่อ่านค่าเดิมไม่ได้ถูกข้าม (ไม่เดา)</summary>
+    private async Task<List<(DateTime ChangedAtUtc, int OldMonth)>> LoadFiscalYearStartMonthChangesAsync(Guid companyId)
+    {
+        var marker = "\"action\":\"" + OpeningRoll.FiscalYearStartMonthChangeAction + "\"";
+        var rows = await _db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.EntityType == "Company" && a.NewValues != null && a.NewValues.Contains(marker))
+            .Select(a => new { a.Timestamp, a.OldValues })
+            .ToListAsync();
+        var result = new List<(DateTime, int)>();
+        foreach (var r in rows)
+        {
+            if (string.IsNullOrEmpty(r.OldValues)) continue;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(r.OldValues);
+                if (doc.RootElement.TryGetProperty("fiscalYearStartMonth", out var m) && m.TryGetInt32(out var month))
+                    result.Add((r.Timestamp, month));
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // แถว audit ที่ไม่ใช่ JSON — ไม่ใช่หลักฐาน (ไม่เดาค่าเดิม)
+            }
+        }
+        return result;
     }
 
     /// <summary>

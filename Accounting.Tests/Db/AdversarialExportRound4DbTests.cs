@@ -84,6 +84,8 @@ public class AdversarialExportRound4DbTests
         await db.SaveChangesAsync();
         using (var c1 = DbTestDatabase.TryCreateContext()!)
             await new AccountingService(c1).YearEndCloseAsync(s.CompanyId, 2023, s.Re, null, Guid.NewGuid().ToString());
+        // รอบ 5 P2-2: การปิดปีรุ่นเก่าเกิดก่อนการแก้รอบ 2 (de823512) — ตัวตรวจใช้เวลาของใบปิดปีเป็นหลักฐาน (ปิดหลังจากนั้น + แถว ม.ค. = บริษัทปีปฏิทินตอนปิด)
+        (await db.YearEndClosings.SingleAsync(y => y.CompanyId == s.CompanyId && y.FiscalYear == 2023)).CreatedAt = D(2024, 4, 5);
         db.OpeningBalances.RemoveRange(db.OpeningBalances.Where(o => o.CompanyId == s.CompanyId));
         await db.SaveChangesAsync();
         var jan = await db.FiscalPeriods.SingleAsync(p => p.CompanyId == s.CompanyId && p.Year == 2024 && p.Month == 1);

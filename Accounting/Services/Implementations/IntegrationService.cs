@@ -4628,6 +4628,9 @@ public class IntegrationService : IIntegrationService
             if (original.ReversedByEntryId.HasValue)
                 throw new InvalidOperationException("รายการนี้ถูกกลับรายการไปแล้ว");
 
+            // ฝ่ายค้านรอบส่งออก รอบ 5 P1: ระบบภายนอกกลับใบปิดบัญชีสิ้นปีไม่ได้ (ด่านตัวเดียวกับสมุดรายวัน)
+            await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { original.Id }, "กลับรายการ");
+
             var effectiveDate = request.ReversalDate.HasValue
                 ? NormalizeDate(request.ReversalDate.Value)
                 : DateTime.UtcNow.Date;

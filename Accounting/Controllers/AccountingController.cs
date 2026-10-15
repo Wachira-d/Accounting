@@ -59,12 +59,13 @@ public class AccountingController : ControllerBase
 
     /// <summary>ฝ่ายค้านรอบส่งออก รอบ 4 P2-b — กู้คืนผังที่ถูกลบแบบ soft (ทางไปต่อของ "ผังที่ถูกลบยังมียอด ⇒ ปิดปี/ยกยอดไม่ได้") ·
     /// เจ้าของบริษัทเท่านั้น (สิทธิ์เดียวกับปิดปี) · audit chain · ปุ่ม "แก้" ของหน้าตรวจข้อมูลชี้มาที่นี่ (<c>DataIntegrityReportService.AccountRestoreFixPath</c>)</summary>
+    /// <remarks>รอบ 5 P2-3: <paramref name="newParentId"/> = กู้คืนไปไว้ใต้หัวบัญชีอื่น (ผังแม่เดิมกลายเป็นผังลงรายการแล้ว — ปุ่มหน้าตรวจข้อมูลส่งหัวบัญชีที่เสนอ)</remarks>
     [HttpPost("accounts/{accountId:guid}/restore")]
-    public async Task<ActionResult<ApiResponse<AccountResponse>>> RestoreAccount(Guid companyId, Guid accountId)
+    public async Task<ActionResult<ApiResponse<AccountResponse>>> RestoreAccount(Guid companyId, Guid accountId, [FromQuery] Guid? newParentId = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         await _companyService.EnsureOwnerAccessAsync(companyId, userId);
-        var result = await _accountingService.RestoreAccountAsync(companyId, accountId, userId.ToString());
+        var result = await _accountingService.RestoreAccountAsync(companyId, accountId, userId.ToString(), newParentId);
         return Ok(new ApiResponse<AccountResponse>(true, result, $"กู้คืนผัง {result.AccountCode} แล้ว — ปิดปี/ยกยอด/ซ่อมอีกครั้งได้"));
     }
 

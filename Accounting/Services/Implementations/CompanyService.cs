@@ -316,7 +316,8 @@ public class CompanyService : ICompanyService
         if (request.Fax != null) company.Fax = request.Fax;
         if (request.Email != null) company.Email = request.Email;
         if (request.Website != null) company.Website = request.Website;
-        if (request.FiscalYearStartMonth.HasValue) company.FiscalYearStartMonth = request.FiscalYearStartMonth.Value;
+        if (request.FiscalYearStartMonth.HasValue)
+            await ApplyFiscalYearStartMonthAsync(company, userId, request.FiscalYearStartMonth.Value);
         if (request.IsSetupComplete.HasValue) company.IsSetupComplete = request.IsSetupComplete.Value;
 
         company.UpdatedBy = userId.ToString();
@@ -752,6 +753,48 @@ public class CompanyService : ICompanyService
     /// ผลของวันใดในงวด ภ.ง.ด.2/3 ที่ยื่น/นำส่งแล้วเปลี่ยน (ตัวอ่านงวดยื่นแล้วตัวเดียวกับเปลี่ยนผู้ถูกหัก <c>WhtPayeeChangePlan.FiledPeriodsFromAsync</c>)
     /// ⇒ ยังไม่รับทราบ = 409 <c>RD-50(2)-ROYALTY-FILED</c> (ไม่บันทึก · ทางไปต่อ = รับทราบแล้วบันทึกอีกครั้ง หรือเลือกวันหลังงวดนั้น) ·
     /// ผลเปลี่ยน ⇒ audit (ค่าก่อน/หลัง · วันแรกที่ผลเปลี่ยน · งวดยื่นแล้วที่รับทราบ)</summary>
+    /// <summary>
+    /// เปลี่ยนเดือนเริ่มรอบบัญชี (ฝ่ายค้านรอบส่งออก รอบ 5 P2-2) — <b>บริษัทที่ปิดปีในระบบแล้วเปลี่ยนไม่ได้</b> (ปีเก่า/ยอดยกมา/งวดที่ล็อกคิดด้วยรอบเดิม ·
+    /// เดิมเปลี่ยนได้เงียบ ๆ ⇒ ด่านยกยอดรุ่นเก่าบล็อกเท็จ + ปุ่มซ่อมเขียนประวัติใหม่ · พ.ร.บ.การบัญชี ม.11 เปลี่ยนรอบต้องได้รับอนุมัติ) ·
+    /// ก่อนปิดปีครั้งแรก = เปลี่ยนได้ + audit (<see cref="Accounting.Helpers.OpeningRoll.FiscalYearStartMonthChangeAction"/> — หลักฐานของตัวตรวจยกยอดรุ่นเก่า) ·
+    /// ค่าเท่าเดิม (หลังปรับช่วง) = ไม่ใช่การเปลี่ยน (หน้าตั้งค่าส่งช่องนี้ทุกครั้ง)
+    /// </summary>
+    internal async Task ApplyFiscalYearStartMonthAsync(Company company, Guid userId, int requested)
+    {
+        var before = company.FiscalYearStartMonth;
+        if (Accounting.Helpers.FiscalYear.NormalizeStartMonth(requested) == Accounting.Helpers.FiscalYear.NormalizeStartMonth(before))
+        {
+            company.FiscalYearStartMonth = requested;
+            return;
+        }
+        var closedYears = await _db.YearEndClosings.AsNoTracking()
+            .Where(y => y.CompanyId == company.Id)
+            .Select(y => y.FiscalYear)
+            .ToListAsync();
+        if (closedYears.Count > 0)
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.OpeningRoll.FiscalYearStartMonthLockedMessage(before, requested, closedYears),
+                Accounting.Helpers.OpeningRoll.FiscalYearStartMonthRuleCode);
+        company.FiscalYearStartMonth = requested;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = company.Id,
+            UserId = userId,
+            Action = AuditAction.Update,
+            EntityType = "Company",
+            EntityId = company.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { fiscalYearStartMonth = before }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = Accounting.Helpers.OpeningRoll.FiscalYearStartMonthChangeAction,
+                fiscalYearStartMonth = requested,
+                ruleCode = Accounting.Helpers.OpeningRoll.FiscalYearStartMonthRuleCode,
+                legalReference = "พ.ร.บ.การบัญชี 2543 ม.11",
+            }),
+            IpAddress = _http?.HttpContext?.Connection.RemoteIpAddress?.ToString(),
+        });
+    }
+
     private async Task ApplyRoyaltyPolicyAsync(Company company, Guid userId, UpdateCompanyRequest request)
     {
         var before = RoyaltySettingOf(company);

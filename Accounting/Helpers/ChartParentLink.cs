@@ -195,6 +195,34 @@ public static class ChartParentLink
     }
 
     /// <summary>
+    /// ผังแม่ <paramref name="parent"/> รับผังที่กู้คืน <paramref name="childCode"/> เป็นลูกได้ไหม (pure · ฝ่ายค้านรอบส่งออก รอบ 5 P2-3) — null = ได้ ·
+    /// กติกาเดียวกับการผูกบัญชีแม่ (<see cref="Plan"/>): ผังที่<b>ยังไม่มีบัญชีย่อย</b>และเป็นผังระบบ (ผังลงรายการของแม่แบบ เช่น 11310) หรือ<b>ถูกใช้อยู่แล้ว</b>
+    /// (รายการบัญชี · ยอดยกมา · ค่าตั้ง — <see cref="ChartAccountReferences"/>) ⇒ กู้คืนลูกแล้วจะกลายเป็นบัญชีคุม (ด่านลงรายการเข้มปฏิเสธ · ยอด/ค่าตั้งค้างในบัญชีคุม) ·
+    /// ผังที่มีบัญชีย่อยอยู่แล้ว (เช่น 11122 ที่มีผังย่อยธนาคาร) = เป็นบัญชีคุมอยู่แล้ว รับได้
+    /// </summary>
+    public static string? RestoreParentBlockedReason(ChartNode parent, bool parentHasActiveChildren, bool parentInUse, string childCode)
+        => parentHasActiveChildren ? null
+            : parent.IsSystem
+                ? $"ผังแม่ {parent.Code} เป็นผังลงรายการของแม่แบบระบบ (ยังไม่มีบัญชีย่อย) — กู้คืน {childCode} ไว้ใต้ผังนี้จะทำให้ {parent.Code} กลายเป็นบัญชีคุม "
+                    + "(ลงรายการตรงไม่ได้ · ผังตั้งต้นพลิกไปผังอื่น)"
+                : parentInUse
+                    ? $"ผังแม่ {parent.Code} ถูกใช้อยู่แล้ว (มีรายการบัญชี/ยอดยกมา หรือถูกตั้งเป็นผังของสินค้า/ผู้ติดต่อ/ค่าตั้ง) และยังไม่มีบัญชีย่อย — กู้คืน {childCode} "
+                        + $"ไว้ใต้ผังนี้จะทำให้ {parent.Code} กลายเป็นบัญชีคุมที่มียอด/ค่าตั้งค้าง (ลงรายการตรงไม่ได้)"
+                    : null;
+
+    /// <summary>
+    /// หัวบัญชีที่เสนอให้กู้คืน <paramref name="child"/> ไปอยู่แทนผังแม่เดิมที่รับลูกไม่ได้ (pure · รอบ 5 P2-3): prefix แท้ที่ยาวที่สุด · ประเภทเดียวกัน ·
+    /// ไม่ใช่ผังลงรายการของแม่แบบ · รับลูกได้ (<see cref="RestoreParentBlockedReason"/>) · ไม่ใช่ <paramref name="excludeParentId"/> · <paramref name="activeChart"/> = ผังที่ยังไม่ถูกลบ ·
+    /// null = ไม่มี (ผู้ใช้เลือกหัวบัญชีเอง)
+    /// </summary>
+    public static ChartNode? RestoreAlternativeParent(ChartNode child, IReadOnlyList<ChartNode> activeChart, IReadOnlySet<Guid> inUseAccountIds, Guid? excludeParentId)
+    {
+        var hasChildren = activeChart.Where(c => c.ParentId != null && c.Id != child.Id).Select(c => c.ParentId!.Value).ToHashSet();
+        return FindParent(child, activeChart, c => c.Id != excludeParentId && !IsTemplateLeaf(c)
+            && RestoreParentBlockedReason(c, hasChildren.Contains(c.Id), inUseAccountIds.Contains(c.Id), child.Code) == null);
+    }
+
+    /// <summary>
     /// ระดับใหม่ของทุกผังหลังใช้ <paramref name="applied"/> (pure · รอบ 2 P2-8): ผังที่ถูกผูก/ย้ายแม่ได้ระดับจากข้อเสนอ แล้ว<b>ลูกหลานทุกชั้น</b>ของมัน
     /// = ระดับแม่ + 1 (เดิมปรับเฉพาะผังที่ย้าย ⇒ ลูกของหัวบัญชีที่ย้ายค้างระดับเก่า) · คืนเฉพาะผังที่ระดับต่างจากใน <paramref name="chart"/> · กันวนซ้ำ
     /// </summary>

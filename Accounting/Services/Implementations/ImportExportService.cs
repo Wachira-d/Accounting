@@ -1303,14 +1303,16 @@ public class ImportExportService : IImportExportService
 
     private async Task<List<Dictionary<string, string>>> ExportJournalEntriesAsync(Guid companyId, ExportRequest request)
     {
+        // ฝ่ายค้านรอบส่งออก รอบ 5 P1: ส่งออกบรรทัดของผังที่ลบด้วย (เดิม ThenInclude ผังตัดทิ้ง ⇒ ไฟล์ส่งออกใบไม่ลงตัว) — เติมผังหลังโหลด
         var query = _db.JournalEntries
-            .Include(j => j.Lines).ThenInclude(l => l.Account)
+            .Include(j => j.Lines)
             .Where(j => j.CompanyId == companyId);
 
         if (request.FromDate.HasValue) query = query.Where(j => j.EntryDate >= request.FromDate);
         if (request.ToDate.HasValue) query = query.Where(j => j.EntryDate <= request.ToDate);
 
         var entries = await query.OrderBy(j => j.EntryDate).ToListAsync();
+        await Accounting.Helpers.JournalLineAccounts.HydrateAsync(_db, companyId, entries);
         var rows = new List<Dictionary<string, string>>();
         foreach (var entry in entries)
         {
@@ -1320,7 +1322,7 @@ public class ImportExportService : IImportExportService
                 {
                     ["EntryNumber"] = entry.EntryNumber, ["EntryDate"] = entry.EntryDate.ToString("yyyy-MM-dd"),
                     ["Status"] = entry.Status.ToString(), ["Description"] = entry.Description ?? "",
-                    ["AccountCode"] = line.Account.AccountCode, ["AccountName"] = line.Account.AccountName,
+                    ["AccountCode"] = line.Account.AccountCode, ["AccountName"] = Accounting.Helpers.JournalLineAccounts.DisplayName(line.Account),
                     ["Debit"] = line.DebitAmount.ToString("F2"), ["Credit"] = line.CreditAmount.ToString("F2"),
                     ["LineDescription"] = line.Description ?? ""
                 });
