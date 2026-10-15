@@ -4960,4 +4960,4 @@ _2026-10-14 — ทีม X2 ส่งออก CSV/Excel ของเอกส�
 ศูนย์นำเข้า/ส่งออกกดแล้วได้ไฟล์จริง (เดิม `format`≠`FileFormat` + API.post กับไฟล์) + xlsx จริง + BOM + "documents" ปิดสำหรับผู้ดูได้บางฝั่ง ·
 `GET product?productType=` มีผลแล้ว (ตัวกรองเงียบ) · หน้าซื้อสินค้าแท็บ "ทั้งหมด" กรองชนิดที่เซิร์ฟเวอร์ก่อนแบ่งหน้า · checker `tools/export_page_cap_check.py` (ปุ่มส่งออกห้ามขอหน้าเดียวเกิน 200) ·
 เพิ่มปุ่มส่งออก: ผู้ติดต่อ · สินค้า · รายงานสินค้าคงเหลือ 5 แท็บ · คลัง (สต็อก/โอนย้าย) · มัดจำ · e-Tax · รายการประจำ · escape ชื่อสินค้า/ผู้จำหน่ายในตาราง ·
-เทสต์ `TradeListExportTests` · `Db/TradeListExportDbTests` · TEST_PLAN §EXP-X2 — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+เทสต์ `TradeListExportTests` · `Db/TradeListExportDbTests` · TEST_PLAN §EXP-X2 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 87d97bab_
