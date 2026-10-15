@@ -109,10 +109,22 @@ public static class MoneyAccountDirectory
     /// <summary>ปัญหาของผังที่ใช้เป็นแหล่งรับ/จ่ายเงิน — เหมือน <see cref="PostingAccountRule"/> แต่ผังที่บัญชีธนาคารผูกอยู่ยอมเป็นบัญชีคุมได้
     /// (การเชื่อมเดิมของผู้ใช้ · ทะเบียนธนาคารอ่านยอดจากผังนี้ตรง ๆ)</summary>
     public static PostingAccountProblem SourceProblem(this MoneyAccountContext ctx, PostingAccountFacts? facts)
+        => SourceProblem(facts, facts != null && ctx.LinkedBankGls.ContainsKey(facts.Id));
+
+    /// <summary>ตัวตัดสิน (pure) ของ <see cref="SourceProblem(MoneyAccountContext, PostingAccountFacts?)"/> —
+    /// <paramref name="linkedByActiveBank"/> = มีบัญชีธนาคารที่เปิดใช้ผูกผังนี้อยู่ · รอบ 206: <c>Helpers/DocumentMoneyChannel</c> เรียกตัวนี้แทนระดับผัง</summary>
+    public static PostingAccountProblem SourceProblem(PostingAccountFacts? facts, bool linkedByActiveBank)
     {
         var p = PostingAccountRule.Check(facts);
-        return p == PostingAccountProblem.Group && facts != null && ctx.LinkedBankGls.ContainsKey(facts.Id)
-            ? PostingAccountProblem.None : p;
+        return p == PostingAccountProblem.Group && linkedByActiveBank ? PostingAccountProblem.None : p;
+    }
+
+    /// <summary>ผังที่บัญชีธนาคารผูกอยู่ใช้ลงรายการได้ไหม (pure) — เหมือน <see cref="PostingAccountRule"/> แต่ยอมเป็นบัญชีคุม
+    /// (การเชื่อมเดิมของผู้ใช้ — ทะเบียนธนาคารอ่านยอดจากผังนี้ตรง ๆ) · ตัวเดียวของ <see cref="TryResolveBankGlAsync"/> และ <c>DocumentMoneyChannel</c></summary>
+    public static PostingAccountProblem BankLinkedGlProblem(PostingAccountFacts? gl)
+    {
+        var p = PostingAccountRule.Check(gl);
+        return p == PostingAccountProblem.Group ? PostingAccountProblem.None : p;
     }
 
     /// <summary>แหล่งเงินเริ่มต้นของบริษัท: ค่าตั้ง "แหล่งเงินเริ่มต้น" (ต้องลงรายการได้ — ใช้ไม่ได้ = Problem ไม่สลับเงียบ) → ผังเงินสด/ธนาคาร
@@ -201,9 +213,8 @@ public static class MoneyAccountDirectory
         {
             var facts = await db.LoadPostingFactsAsync(companyId, new[] { linkedId }, ct);
             facts.TryGetValue(linkedId, out gl);
-            glProblem = PostingAccountRule.Check(gl);
             // ผังที่บัญชีธนาคารผูกอยู่ยอมเป็นบัญชีคุมได้ (การเชื่อมเดิม — ทะเบียนธนาคารอ่านยอดจากผังนี้ตรง ๆ)
-            if (glProblem == PostingAccountProblem.Group) glProblem = PostingAccountProblem.None;
+            glProblem = BankLinkedGlProblem(gl);
         }
         var problem = MoneyAccountRule.CheckBank(bank != null, bank?.IsActive ?? false, bank?.LinkedAccountId, glProblem);
         if (problem == BankLinkProblem.None) return new BankGlResolution(bank!.LinkedAccountId, problem, null, label);

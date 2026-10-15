@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Services.Implementations;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Helpers;
@@ -23,8 +24,14 @@ public enum MoneyChannelCheck
     Post = 2,
 }
 
-/// <summary>ข้อเท็จจริงของผังบัญชีที่ถูกอ้าง (โหลดจากฐานด้วย CompanyId) · <c>null</c> ทั้งก้อน = ไม่มีในบริษัทนี้</summary>
-public sealed record MoneyGlFacts(Guid Id, string Code, string Name, bool IsActive, int Level);
+/// <summary>ข้อเท็จจริงของผังบัญชีที่ถูกอ้าง (โหลดจากฐานด้วย CompanyId) · <c>null</c> ทั้งก้อน = ไม่มีในบริษัทนี้ ·
+/// รอบ 206: <c>IsGroup</c> = <b>มีบัญชีย่อย</b> (กติกาของ <see cref="PostingAccountRule"/> — เดิมเก็บ Level แล้วตัดสิน "ระดับ &lt; 4 = บัญชีกลุ่ม" เอง
+/// = เจ้าของที่สามของกติกาเดียวกัน) · <c>LinkedByActiveBank</c> = มีบัญชีธนาคารที่เปิดใช้ผูกผังนี้ (ผังเงินตรงยอมเป็นบัญชีคุมได้ — MoneyAccountDirectory.SourceProblem)</summary>
+public sealed record MoneyGlFacts(Guid Id, string Code, string Name, bool IsActive, bool IsGroup, bool LinkedByActiveBank = false)
+{
+    /// <summary>รูปที่ส่งให้เจ้าของกติกา "ลงรายการได้"</summary>
+    public PostingAccountFacts Posting => new(Id, Code, Name, IsActive, IsGroup);
+}
 
 /// <summary>ข้อเท็จจริงของบัญชีธนาคารที่ถูกอ้าง · <c>Linked</c> = ผังที่ผูกไว้ (null = ไม่ได้ผูก หรือผังนั้นไม่มีในบริษัทนี้แล้ว)</summary>
 public sealed record MoneyBankFacts(Guid Id, string DisplayName, bool IsActive, Guid? LinkedAccountId, MoneyGlFacts? Linked);
@@ -76,12 +83,10 @@ public static class DocumentMoneyChannel
 
     private static Guid? Norm(Guid? id) => id is { } g && g != Guid.Empty ? g : null;
 
-    /// <summary>ระดับผังต่ำสุดที่ลงรายการได้ (ต่ำกว่านี้ = บัญชีกลุ่ม) — ตัวเดียวของ <see cref="Decide"/>/<see cref="IsPostableGl"/></summary>
-    public const int MinPostingLevel = 4;
-
-    /// <summary>ผังนี้ใช้เป็นแหล่งเงิน/หมวดค่าใช้จ่ายได้ไหม (เปิดใช้ + ไม่ใช่บัญชีกลุ่ม) — กติกาเดียวกับ <see cref="Decide"/> ·
-    /// ใช้กรองตอน<b>เติมค่าให้</b> (OCR · ค่าตั้งต้นของเทมเพลต) ให้ไม่เติมผังที่จะทำให้อนุมัติล้ม (กฎเหล็ก #3)</summary>
-    public static bool IsPostableGl(bool isActive, int level) => isActive && level >= MinPostingLevel;
+    /// <summary>ผังนี้ใช้เป็นแหล่งเงิน/หมวดค่าใช้จ่ายได้ไหม (เปิดใช้ + ไม่ใช่บัญชีคุม) — ส่งต่อ <see cref="PostingAccountRule"/> (เจ้าของเดียว ·
+    /// "บัญชีคุม" = มีบัญชีย่อย ไม่ใช่ระดับ) · ใช้กรองตอน<b>เติมค่าให้</b> (OCR · ค่าตั้งต้นของเทมเพลต) ให้ไม่เติมผังที่จะทำให้อนุมัติล้ม (กฎเหล็ก #3) ·
+    /// <c>null</c> = ไม่มีในบริษัทนี้ ⇒ false</summary>
+    public static bool IsPostableGl(MoneyGlFacts? gl) => gl != null && PostingAccountRule.Check(gl.Posting) == PostingAccountProblem.None;
 
     /// <summary>ค่าในช่องนี้ยกมาจากต้นทางตรงตัว (ผู้ใช้ไม่ได้เลือกใหม่) — ต้นทางที่ออกแล้วแก้ไม่ได้ ⇒ ห้ามตรวจแบบ "เพิ่งเลือก"
     /// (ธนาคาร/ผังที่ปิดใช้ทีหลังเคยทำให้แปลง/คัดลอก/ออกใบแทนไปต่อไม่ได้เลย · ฝ่ายค้านรอบ 1 P1)</summary>
@@ -193,11 +198,15 @@ public static class DocumentMoneyChannel
                     return Fail(kind, glIdIsBank
                         ? "ช่อง “แหล่งเงิน (ผังบัญชี)” ได้รหัสบัญชีธนาคารมาแทนรหัสผังบัญชี — บัญชีธนาคารต้องเลือกจากกลุ่ม “บัญชีธนาคาร” · " + fixHint
                         : "ช่อง “แหล่งเงิน (ผังบัญชี)” อ้างผังบัญชีที่ไม่มีในบริษัทนี้ (อาจถูกลบไปแล้ว) — " + fixHint);
-                if (!gl.IsActive)
-                    return Fail(kind, $"ผังบัญชี {gl.Code} {gl.Name} ที่เลือกเป็นแหล่งเงินถูกปิดใช้งาน — "
-                        + "เปิดใช้ที่หน้า “ผังบัญชี” หรือ " + fixHint);
-                if (gl.Level < MinPostingLevel)
-                    return Fail(kind, $"ผังบัญชี {gl.Code} {gl.Name} เป็นบัญชีกลุ่ม ลงรายการไม่ได้ — เลือกบัญชีย่อยแทน · " + fixHint);
+                // รอบ 206: ส่งต่อเจ้าของกติกา (PostingAccountRule ผ่าน MoneyAccountDirectory.SourceProblem — ผังที่บัญชีธนาคารผูกยอมเป็นบัญชีคุม)
+                switch (MoneyAccountDirectory.SourceProblem(gl.Posting, gl.LinkedByActiveBank))
+                {
+                    case PostingAccountProblem.Inactive:
+                        return Fail(kind, $"ผังบัญชี {gl.Code} {gl.Name} ที่เลือกเป็นแหล่งเงินถูกปิดใช้งาน — "
+                            + "เปิดใช้ที่หน้า “ผังบัญชี” หรือ " + fixHint);
+                    case PostingAccountProblem.Group:
+                        return Fail(kind, $"ผังบัญชี {gl.Code} {gl.Name} เป็นบัญชีคุม (มีบัญชีย่อย) ลงรายการไม่ได้ — เลือกบัญชีย่อยแทน · " + fixHint);
+                }
                 return new MoneyChannelDecision(kind, gl.Id, null);
             case MoneyChannelKind.BankAccount:
                 if (bank is null)
@@ -213,12 +222,11 @@ public static class DocumentMoneyChannel
                 if (bank.Linked is null)
                     return Fail(kind, $"ผังบัญชีที่บัญชีธนาคาร “{bank.DisplayName}” ผูกไว้ไม่มีในบริษัทนี้แล้ว — "
                         + "ไปที่หน้า “บัญชีธนาคาร” → แก้ไขบัญชีนี้ → ผูกผังเงินฝากใหม่ หรือ " + fixHint);
-                if (!bank.Linked.IsActive)
+                // รอบ 206: ผังที่บัญชีธนาคารผูกอยู่ยอมเป็นบัญชีคุมได้ — ตัวเดียวกับ MoneyAccountDirectory.TryResolveBankGlAsync (เดิมที่นี่ปฏิเสธ
+                // "ระดับ < 4" ขณะที่ทางรับ/จ่ายชำระยอม ⇒ ธนาคารเดียวกันลงบัญชีได้ทางหนึ่งแต่ไม่ได้อีกทาง)
+                if (MoneyAccountDirectory.BankLinkedGlProblem(bank.Linked.Posting) == PostingAccountProblem.Inactive)
                     return Fail(kind, $"ผังบัญชี {bank.Linked.Code} {bank.Linked.Name} ที่บัญชีธนาคาร “{bank.DisplayName}” ผูกไว้ถูกปิดใช้งาน — "
                         + "เปิดใช้ที่หน้า “ผังบัญชี” หรือผูกผังใหม่ที่หน้า “บัญชีธนาคาร”");
-                if (bank.Linked.Level < MinPostingLevel)
-                    return Fail(kind, $"บัญชีธนาคาร “{bank.DisplayName}” ผูกกับผังกลุ่ม {bank.Linked.Code} ซึ่งลงรายการไม่ได้ — "
-                        + "ไปที่หน้า “บัญชีธนาคาร” → แก้ไขบัญชีนี้ → ผูกผังเงินฝากระดับย่อย");
                 return new MoneyChannelDecision(kind, bank.Linked.Id, null);
             default:
                 return Fail(kind, "แหล่งเงินไม่ถูกต้อง — " + fixHint);
@@ -242,6 +250,8 @@ public static class DocumentMoneyChannel
             gl = await LoadGlAsync(db, companyId, id, ct);
             if (gl is null)
                 glIdIsBank = await db.BankAccounts.AsNoTracking().AnyAsync(b => b.Id == id && b.CompanyId == companyId, ct);
+            else if (gl.IsGroup)
+                gl = gl with { LinkedByActiveBank = await LinkedByActiveBankAsync(db, companyId, id, ct) };
         }
         else if (kind == MoneyChannelKind.BankAccount)
         {
@@ -296,11 +306,12 @@ public static class DocumentMoneyChannel
             return idIsBank
                 ? "ช่อง “หมวดค่าใช้จ่าย” ได้รหัสบัญชีธนาคารมาแทนรหัสผังบัญชี — " + fix
                 : "ช่อง “หมวดค่าใช้จ่าย” อ้างผังบัญชีที่ไม่มีในบริษัทนี้ — " + fix;
-        if (!gl.IsActive)
-            return $"หมวดค่าใช้จ่าย {gl.Code} {gl.Name} ถูกปิดใช้งาน — เปิดใช้ที่หน้า “ผังบัญชี” หรือ " + fix;
-        if (gl.Level < MinPostingLevel)
-            return $"หมวดค่าใช้จ่าย {gl.Code} {gl.Name} เป็นบัญชีกลุ่ม ลงรายการไม่ได้ — " + fix;
-        return null;
+        return PostingAccountRule.Check(gl.Posting) switch
+        {
+            PostingAccountProblem.Inactive => $"หมวดค่าใช้จ่าย {gl.Code} {gl.Name} ถูกปิดใช้งาน — เปิดใช้ที่หน้า “ผังบัญชี” หรือ " + fix,
+            PostingAccountProblem.Group => $"หมวดค่าใช้จ่าย {gl.Code} {gl.Name} เป็นบัญชีคุม (มีบัญชีย่อย) ลงรายการไม่ได้ — " + fix,
+            _ => null,
+        };
     }
 
     /// <summary>
@@ -313,16 +324,34 @@ public static class DocumentMoneyChannel
     {
         if (Norm(glAccountId) is not Guid id) return null;
         var gl = await LoadGlAsync(db, companyId, id, ct);
-        if (gl is null || !IsPostableGl(gl.IsActive, gl.Level)) return null;
+        if (gl is null || !gl.IsActive) return null;
         var banks = await db.BankAccounts.AsNoTracking()
             .Where(b => b.CompanyId == companyId && !b.IsDeleted && b.IsActive && b.LinkedAccountId == id)
             .Select(b => b.Id).Take(2).ToListAsync(ct);
+        // ตัวเดียวกับตอนลงบัญชี (Decide ทาง GL) — บัญชีคุมใช้ได้เฉพาะผังที่บัญชีธนาคารผูกอยู่
+        if (MoneyAccountDirectory.SourceProblem(gl.Posting, banks.Count > 0) != PostingAccountProblem.None) return null;
         return banks.Count == 1 ? "bank:" + banks[0] : "account:" + id;
     }
 
+    /// <summary>ข้อเท็จจริงของผังตามรหัส (ตัวเติมค่าของ OCR · ไม่ถูกลบ · ของบริษัทนี้) — null = ไม่มี</summary>
+    public static async Task<MoneyGlFacts?> LoadGlByCodeAsync(AccountingDbContext db, Guid companyId, string? accountCode,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(accountCode)) return null;
+        var id = await db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.AccountCode == accountCode && !a.IsDeleted)
+            .Select(a => (Guid?)a.Id).FirstOrDefaultAsync(ct);
+        return id is Guid g ? await LoadGlAsync(db, companyId, g, ct) : null;
+    }
+
+    /// <summary>ข้อเท็จจริงผ่านตัวดึงของเจ้าของกติกา (<see cref="PostingAccountGuard.LoadPostingFactsAsync"/> — "มีบัญชีย่อย" ไม่ใช่ระดับ)</summary>
     private static async Task<MoneyGlFacts?> LoadGlAsync(AccountingDbContext db, Guid companyId, Guid id, CancellationToken ct)
-        => await db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.Id == id && a.CompanyId == companyId && !a.IsDeleted)
-            .Select(a => new MoneyGlFacts(a.Id, a.AccountCode, a.AccountName, a.IsActive, a.Level))
-            .FirstOrDefaultAsync(ct);
+    {
+        var facts = await db.LoadPostingFactsAsync(companyId, new[] { id }, ct);
+        return facts.TryGetValue(id, out var f) ? new MoneyGlFacts(f.Id, f.Code, f.Name, f.IsActive, f.IsGroup) : null;
+    }
+
+    private static Task<bool> LinkedByActiveBankAsync(AccountingDbContext db, Guid companyId, Guid glId, CancellationToken ct)
+        => db.BankAccounts.AsNoTracking()
+            .AnyAsync(b => b.CompanyId == companyId && !b.IsDeleted && b.IsActive && b.LinkedAccountId == glId, ct);
 }

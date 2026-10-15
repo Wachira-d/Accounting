@@ -3546,8 +3546,8 @@ public partial class DocumentService : IDocumentService
             if (acc != null) return acc;
         }
         // (2) ผังเฉพาะ "ภาษีซื้อขอคืนไม่ได้" ถ้าบริษัทตั้งไว้
-        return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+        return await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.IsActive && !a.IsDeleted
             && a.AccountCode.StartsWith("5")
             && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")));
     }
@@ -4376,8 +4376,8 @@ public partial class DocumentService : IDocumentService
         if (revenueAcc == null && accountPlan.FailIfNone)
             throw new Accounting.Helpers.BusinessRuleException(
                 Accounting.Helpers.DepositPolicyResolver.CompensationAccountMissingMessage, "DEPOSIT-FORFEIT-ACCOUNT");
-        revenueAcc ??= await _db.ChartOfAccounts
-                .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.Level >= 4 && a.IsActive)
+        revenueAcc ??= await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+                .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive)
                 .OrderBy(a => a.AccountCode).FirstOrDefaultAsync()
             ?? throw new InvalidOperationException("ไม่พบบัญชีรายได้ในผังบัญชี");
 
@@ -5720,7 +5720,9 @@ public partial class DocumentService : IDocumentService
             // ใบเดิมถูกลบ/ยกเลิกแล้ว → มาร์คโมฆะ → apply ใหม่ได้ (ทับมาร์คด้านล่าง)
         }
 
-        var arAcc = await FindAccountAsync(companyId, "113", invoice.Contact)
+        // รอบ 206: ลูกหนี้ที่ตัด = ผังที่ใบนี้ตั้งไว้จริง (JE ตอนออกใบ) — ผังที่ผู้ติดต่อปักถูกปิด/เปลี่ยนทีหลังต้องไม่ทำให้หักมัดจำไม่ได้/ตัดคนละผัง
+        var arAcc = await OriginalArApAccountAsync(companyId, invoice.Id, Accounting.Helpers.ArApSide.Receivable,
+                invoice, pinContact => FindAccountAsync(companyId, "113", pinContact))
             ?? throw new InvalidOperationException("ไม่พบบัญชีลูกหนี้การค้า (113) ในผังบัญชี");
 
         // ── GL-driven: อ่าน "ขาจริง" จาก JE ของใบมัดจำ (แบบเดียวกับ JV apply) ──
@@ -5938,8 +5940,8 @@ public partial class DocumentService : IDocumentService
             var whtAccount = await FindAccountAsync(companyId, "11910");
             // ฝ่ายค้านรอบ 2 P2(b): ลูกหนี้ที่ตัด = ผังที่<b>ใบนี้ลง Dr ไว้จริง</b> (JE ของใบ) — ผู้ติดต่อที่เปลี่ยน/ปิดผังลูกหนี้ที่ปักไว้ทีหลัง
             // เคยทำให้ตัดคนละผังกับที่ตั้ง (ลูกหนี้สองผังเพี้ยน) หรือโยนแล้วถูกกลืน · ไม่พบใน JE (ใบเก่ามาก) ⇒ ตัวหาเดิม
-            var arAccount = await IssuedReceivableAccountAsync(companyId, invoice.Id)
-                ?? await FindAccountAsync(companyId, "113", invoice.Contact);
+            var arAccount = await OriginalArApAccountAsync(companyId, invoice.Id, Accounting.Helpers.ArApSide.Receivable,
+                invoice, pinContact => FindAccountAsync(companyId, "113", pinContact));
             if (whtAccount == null || arAccount == null)
                 throw new BusinessRuleException(
                     $"ไม่พบผัง {(whtAccount == null ? "11910 ภาษีเงินได้ถูกหัก ณ ที่จ่าย" : "ลูกหนี้ (113)")} ที่ลงรายการได้ — เพิ่ม/เปิดใช้ที่หน้า “ผังบัญชี”",
@@ -5977,24 +5979,24 @@ public partial class DocumentService : IDocumentService
         }
     }
 
-    /// <summary>ผังลูกหนี้ที่เอกสารขายใบนี้ลง Dr ไว้จริง (JE ที่ยังมีผลของใบ · กลุ่ม 113 · ยอดเดบิตสุทธิมากสุด) — null = ไม่พบ</summary>
-    private async Task<ChartOfAccount?> IssuedReceivableAccountAsync(Guid companyId, Guid documentId)
+    /// <summary>
+    /// รอบ 206 (ฝ่ายค้านรอบ 2 P2(b) ส่วนที่ค้าง): ผังลูกหนี้/เจ้าหนี้ของ<b>ใบที่ออกแล้ว</b>สำหรับทุกเส้นที่ปิดหนี้ใบเดิม (รับ/จ่ายชำระ · ตัดหนี้สูญ ·
+    /// หักมัดจำ · ใบเสร็จ/ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จที่ปิดใบต้นทาง · ใบลด/เพิ่มหนี้ · WHT ตอนปิดยอด) — ผังที่ JE ตอนออกใบตั้งไว้จริง
+    /// (ตัวตัดสินเดียว <see cref="Accounting.Helpers.OriginalArApAccount"/> · ใช้ได้แม้ผังนั้นถูกปิดใช้ทีหลัง: ตัดยอดเดิมให้หมด) ·
+    /// ใบไม่มี JE ⇒ <paramref name="fallback"/> (ตัวหาเดิม: ผังที่ผู้ติดต่อปัก/ค่าเริ่มต้น — พฤติกรรมเดิมทุกประการ)
+    /// </summary>
+    /// <param name="contactOf">เอกสารที่ให้ผู้ติดต่อแก่ตัวหาเดิม — <c>Contact</c> ไม่ถูกโหลด (เช่น รับ/จ่ายชำระ · ตัดหนี้สูญ ล็อกแถวด้วย SQL ดิบ)
+    /// ⇒ โหลดให้ (เดิมตัวหาได้ null ⇒ ข้ามผังที่ผู้ติดต่อปักไปผังมาตรฐานเงียบ ๆ)</param>
+    private async Task<ChartOfAccount?> OriginalArApAccountAsync(Guid companyId, Guid? originalDocumentId,
+        Accounting.Helpers.ArApSide side, Document contactOf, Func<Contact?, Task<ChartOfAccount?>> fallback)
     {
-        var arId = await (from l in _db.JournalEntryLines.AsNoTracking()
-                          join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
-                          join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
-                          where j.CompanyId == companyId && j.SourceDocumentId == documentId
-                                && j.Status == JournalEntryStatus.Posted && j.ReversedByEntryId == null && j.OriginalEntryId == null
-                                && !j.IsDeleted && !l.IsDeleted && a.CompanyId == companyId && a.AccountCode.StartsWith("113")
-                          group l by l.AccountId into g
-                          select new { AccountId = g.Key, Net = g.Sum(x => x.DebitAmount - x.CreditAmount) })
-                         .Where(x => x.Net > 0.005m)
-                         .OrderByDescending(x => x.Net)
-                         .Select(x => (Guid?)x.AccountId)
-                         .FirstOrDefaultAsync();
-        return arId is Guid id
-            ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == id && a.CompanyId == companyId && !a.IsDeleted)
-            : null;
+        if (await Accounting.Helpers.OriginalArApAccount.LoadAsync(_db, companyId, originalDocumentId, side) is Guid id
+            && await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == id && a.CompanyId == companyId && !a.IsDeleted) is { } issued)
+            return issued;
+        var contact = contactOf.Contact
+            ?? (contactOf.ContactId == Guid.Empty ? null
+                : await _db.Contacts.AsNoTracking().FirstOrDefaultAsync(c => c.Id == contactOf.ContactId && c.CompanyId == companyId));
+        return await fallback(contact);
     }
 
     /// <summary>ค้น "JV มัดจำที่ไม่มีเอกสาร" — สมุดรายวันที่ integration post ตรง
@@ -6116,7 +6118,8 @@ public partial class DocumentService : IDocumentService
                 $"ยอดมัดจำใน JV ({gross:N2}) มากกว่ายอดคงค้างของใบ ({invoice.BalanceDue:N2}) — " +
                 "รุ่นแรกรองรับหักเต็ม JV เท่านั้น เลือกใบที่ยอดมากพอ หรือหักบางส่วนผ่านมัดจำเอกสาร");
 
-        var arAcc = await FindAccountAsync(companyId, "113", invoice.Contact)
+        var arAcc = await OriginalArApAccountAsync(companyId, invoice.Id, Accounting.Helpers.ArApSide.Receivable,
+                invoice, pinContact => FindAccountAsync(companyId, "113", pinContact))
             ?? throw new InvalidOperationException("ไม่พบบัญชีลูกหนี้การค้า (113)");
 
         // วันที่ลง JE ตัดชำระ — ควรตรงวันที่เอกสารปลายทาง (VAT ตกเดือนภาษีเดียว
@@ -11114,7 +11117,9 @@ public partial class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 "ไม่พบบัญชี 'หนี้สูญ' (64000) ในผังบัญชี กรุณาเพิ่มบัญชีก่อน");
 
-        var arAcc = await FindAccountAsync(companyId, "113", doc.Contact)
+        // รอบ 206: ตัดลูกหนี้ผังที่ใบนี้ตั้งไว้จริง (เดิม doc.Contact ไม่ถูกโหลด ⇒ ผังที่ปักไว้ไม่เคยถูกอ่าน · ตัด 113 ตัวแรกเสมอ)
+        var arAcc = await OriginalArApAccountAsync(companyId, doc.Id, Accounting.Helpers.ArApSide.Receivable,
+                doc, pinContact => FindAccountAsync(companyId, "113", pinContact))
             ?? throw new InvalidOperationException("ไม่พบบัญชี 'ลูกหนี้การค้า' (113) ในผังบัญชี");
 
         var writeOffAmount = doc.BalanceDue;
@@ -15649,14 +15654,14 @@ public partial class DocumentService : IDocumentService
             _findAccountCache[cacheKey] = pinned;
             return pinned;
         }
-        // exact-match ต้องเป็นบัญชี postable (Level >= 4) เท่านั้น — chart มาตรฐาน
+        // exact-match ต้องเป็นบัญชี postable (ไม่มีบัญชีย่อย — WhereNotControlAccount) เท่านั้น — chart มาตรฐาน
         // มี header ระดับ 3 ชื่อรหัสสั้น ("116", "212") ถ้า exact จับ header จะ
         // ลงบัญชีลงกลุ่มแทนบัญชีจริง (audit F2: CN ซื้อเครดิต "116" header →
-        // 11610 ค้างสูงถาวร) → header หลุดไป prefix-search ที่กรอง Level >= 4 อยู่แล้ว
-        var found = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.AccountCode == codePrefix && a.Level >= 4 && a.IsActive)
-            ?? await _db.ChartOfAccounts
-                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.Level >= 4 && a.IsActive)
+        // 11610 ค้างสูงถาวร) → header หลุดไป prefix-search ที่กรองบัญชีคุมอยู่แล้ว
+        var found = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.IsActive)
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
         _findAccountCache[cacheKey] = found;
@@ -15874,12 +15879,12 @@ public partial class DocumentService : IDocumentService
         // fallback ระดับบริษัท เมื่อ resolve ตามก้อนเงินรายใบไม่ได้ — ผังชื่อ
         // "ภาษีซื้อ/ขอคืนไม่ได้" ก่อน แล้วค่อยผังค่าใช้จ่ายใดก็ได้. **ห้าม**
         // fallback ตามเลขนำหน้า 53 (เคยได้ 53120 ค่าโฆษณา — คนละความหมาย)
-        var companyFallbackAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+        var companyFallbackAcc = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                 && a.AccountCode.StartsWith("5")
                 && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")))
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                 && a.AccountType == AccountType.Expense);
 
         var count = 0;
@@ -17297,11 +17302,11 @@ public partial class DocumentService : IDocumentService
         // have no explicit AccountId (the UI doesn't expose per-line account selection yet).
         // The default Thai chart uses 41000 (sales) / 42000 (service) at level 4;
         // industry templates may override (e.g. hospitality uses 411xx). Pick the first
-        // posting-level (Level >= 4) Revenue/Expense account by code as a safe default.
+        // posting (no child accounts — WhereNotControlAccount) Revenue/Expense account by code as a safe default.
         var defaultRevenue = await FindAccountAsync(companyId, "41000")
             ?? await FindAccountAsync(companyId, "42000")
-            ?? await _db.ChartOfAccounts
-                .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.Level >= 4 && a.IsActive)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+                .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive)
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
 
@@ -17342,8 +17347,8 @@ public partial class DocumentService : IDocumentService
         }
         defaultExpense ??= await FindAccountAsync(companyId, "51110")
             ?? await FindAccountAsync(companyId, "52110")
-            ?? await _db.ChartOfAccounts
-                .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.Level >= 4 && a.IsActive)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+                .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive)
                 .OrderBy(a => a.AccountCode)
                 .FirstOrDefaultAsync();
 
@@ -17768,7 +17773,11 @@ public partial class DocumentService : IDocumentService
             // เดิมไม่ส่ง ⇒ คู่ค้าที่ปักผังลูกหนี้/เจ้าหนี้เฉพาะรายไว้ ถูกใบลดหนี้/เพิ่มหนี้
             // ลงเข้าผังกลางแทน ⇒ ผังเฉพาะรายค้างยอดถาวรเพราะใบตั้งหนี้กับใบปรับปรุง
             // อยู่คนละบัญชี (ยอดคงเหลือรายคู่ค้าไม่มีวันเป็นศูนย์)
-            var counterAcc = await FindAccountAsync(companyId, counterAccCode, doc.Contact);
+            // รอบ 206: ลด/เพิ่มหนี้ของใบต้นทาง ⇒ ผังลูกหนี้/เจ้าหนี้ที่ใบต้นทางตั้งไว้จริง (ไม่ใช่ผังที่ผู้ติดต่อปักตอนนี้)
+            var counterAcc = !isCashSettlement && source != null
+                ? await OriginalArApAccountAsync(companyId, source.Id, isPurchaseSide ? Accounting.Helpers.ArApSide.Payable : Accounting.Helpers.ArApSide.Receivable,
+                    doc, pinContact => FindAccountAsync(companyId, counterAccCode, pinContact))
+                : await FindAccountAsync(companyId, counterAccCode, doc.Contact);
             var counterDesc = $"{typeLabel} - {doc.DocumentNumber}" +
                 (isCashSettlement ? " (เงินสด)" : "");
 
@@ -17999,7 +18008,9 @@ public partial class DocumentService : IDocumentService
             if (cilSrcType is DocumentType.Expense or DocumentType.PurchaseInvoice)
             {
                 journalType = JournalType.CashPayments;
-                var apAccount = await ResolvePayableAccountAsync(companyId, cilSrcType.Value, doc.Contact);
+                // รอบ 206: ตัดเจ้าหนี้ผังที่ใบต้นทางตั้งไว้จริง (JE ตอนออกใบ) ก่อนตัวหาตามผู้ติดต่อ
+                var apAccount = await OriginalArApAccountAsync(companyId, doc.RelatedDocumentId, Accounting.Helpers.ArApSide.Payable,
+                    doc, pinContact => ResolvePayableAccountAsync(companyId, cilSrcType.Value, pinContact));
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
                 {
                     // Cash basis: ต้นทางตั้ง AP ที่ gross — ตัด AP gross,
@@ -18275,7 +18286,9 @@ public partial class DocumentService : IDocumentService
                 // สำหรับบรรทัด AR/WHT/FX โดย add ตรงเข้า pendingLines)
                 decimal SrcThb(decimal amt) => srcFx == 1m ? amt
                     : Math.Round(amt * srcFx, 2, MidpointRounding.AwayFromZero);
-                var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
+                // รอบ 206: ตัดลูกหนี้ผังที่ใบต้นทางตั้งไว้จริง (JE ตอนออกใบ)
+                var arAccount = await OriginalArApAccountAsync(companyId, doc.RelatedDocumentId, Accounting.Helpers.ArApSide.Receivable,
+                    doc, pinContact => FindAccountAsync(companyId, "113", pinContact));
                 var cashThb = Conv(doc.TotalAmount);
                 decimal arThb, whtThb = 0m;
                 if (whtBasis == Models.Enums.WhtRecognitionBasis.Cash)
@@ -18814,7 +18827,9 @@ public partial class DocumentService : IDocumentService
                 var pvSrcFx = pvSrc?.ExchangeRate ?? doc.ExchangeRate;
                 decimal PvSrcThb(decimal amt) => pvSrcFx == 1m ? amt
                     : Math.Round(amt * pvSrcFx, 2, MidpointRounding.AwayFromZero);
-                var apAccount = await ResolvePayableAccountAsync(companyId, sourceType, doc.Contact);
+                // รอบ 206: ผังที่ใบต้นทางตั้งไว้จริง (JE ตอนออกใบ) ก่อน — ผู้ติดต่อเปลี่ยน/ปิดผังที่ปักทีหลังต้องไม่ทำให้ตัดคนละผัง
+                var apAccount = await OriginalArApAccountAsync(companyId, doc.RelatedDocumentId, Accounting.Helpers.ArApSide.Payable,
+                    doc, pinContact => ResolvePayableAccountAsync(companyId, sourceType, pinContact));
                 // รอบ PP36 ทีม F2 (E-1b · คำตัดสินข้อ 131): ใบต้นทางเป็นเจ้าของ ภ.พ.36 (ตั้ง Cr 21912 ไว้แล้ว + เจ้าหนี้ = ฐาน) ⇒ ใบนี้
                 // ตัดเจ้าหนี้/จ่ายธนาคารเฉพาะ "ยอดจ่ายผู้รับเงิน" — ไม่ตั้ง 21912 ซ้ำ · เดิม Dr เจ้าหนี้ = TotalAmount รวม VAT ประเมินเอง
                 // ⇒ เจ้าหนี้ติดเดบิต + เงินออกเกิน 7% · ใบอื่นทุกใบ = TotalAmount เท่าเดิม
@@ -19763,7 +19778,9 @@ public partial class DocumentService : IDocumentService
                         + "บันทึกรับเงินแบบหักค่าธรรมเนียม (ผังสำรองต้องเป็นรหัสที่มีจริง ไม่เดาผังอื่น)", "PAY-NO-FEE-ACCOUNT");
                 pendingLines.Add((feeAcc.Id, thbFee, 0m, $"ค่าธรรมเนียม (หักจากยอดโอน) - {payment.PaymentNumber}"));
             }
-            var arAccount = await FindAccountAsync(companyId, "113", doc.Contact);
+            // รอบ 206: ตัดลูกหนี้ผังที่ใบนี้ตั้งไว้จริง (JE ตอนออกใบ) — ไม่มี JE ⇒ ตัวหาเดิม
+            var arAccount = await OriginalArApAccountAsync(companyId, doc.Id, Accounting.Helpers.ArApSide.Receivable,
+                doc, pinContact => FindAccountAsync(companyId, "113", pinContact));
             if (arAccount != null)
             {
                 var arClear = (postPerPaymentWht ? thbAmount + thbWht : thbAmount) + thbFee;
@@ -19786,7 +19803,8 @@ public partial class DocumentService : IDocumentService
         {
             // Clear the payable on the SAME account the source doc credited —
             // Expense → เจ้าหนี้อื่น (21220), PI → เจ้าหนี้การค้า (21210).
-            var apAccount = await ResolvePayableAccountAsync(companyId, doc.DocumentType, doc.Contact);
+            var apAccount = await OriginalArApAccountAsync(companyId, doc.Id, Accounting.Helpers.ArApSide.Payable,
+                doc, pinContact => ResolvePayableAccountAsync(companyId, doc.DocumentType, pinContact));
             if (apAccount != null)
             {
                 // + หนี้ที่ปิดด้วยบรรทัดปรับ (รอบ 193 · เอกสารสกุลบาทเท่านั้น — ตรวจที่ CreatePaymentAsync)

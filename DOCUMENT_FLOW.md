@@ -513,6 +513,21 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (`DocumentMoneyChannel.IsPostableGl` · ใช้ไม่ได้ ⇒ ไม่เติม + หมายเหตุ `[ACCT-PLACEMENT]`) · ระบบเชื่อมต่อขายเงินสด: บัญชีรับเงินตรวจด้วย `DocumentMoneyChannel` (Post) ก่อนออกเลข —
   ถอยไปตั้งหนี้ (AutoPost ล้มทีหลัง) ⇒ sync log `PartialSuccess` + หมายเหตุบนใบ + คำตอบคู่ค้า (เดิม LogWarning).
   Last verified `commit 1b39ec9f` · ฝ่ายค้านรอบ 1–2 2560776c
+  **รอบ 206 — "บัญชีคุม" เจ้าของเดียว**: `DocumentMoneyChannel` ไม่ตัดสินด้วยระดับผัง (`MinPostingLevel`/`Level < 4` ถูกลบ) — ส่งต่อ `PostingAccountRule`
+  (บัญชีคุม = มีบัญชีย่อย · ข้อเท็จจริงจาก `PostingAccountGuard.LoadPostingFactsAsync`) ผ่าน `MoneyAccountDirectory.SourceProblem` (ผังตรงที่บัญชีธนาคารเปิดใช้ผูกอยู่
+  ยอมเป็นบัญชีคุม) / `BankLinkedGlProblem` (ผังที่ธนาคารผูกยอมเป็นบัญชีคุม — ตัวเดียวกับ `TryResolveBankGlAsync`) ⇒ ผังระดับ 2–3 ที่ไม่มีบัญชีย่อยของบริษัท
+  ใช้เป็นแหล่งเงิน/หมวดค่าใช้จ่ายได้ทุกทาง · 11122 ที่มีผังเงินฝากย่อย = บัญชีคุมทุกทาง (เดิมผ่านที่นี่แต่ถูกบล็อกที่ทางรับ/จ่ายชำระ) · ผูกผังของบัญชีธนาคาร
+  (`ValidateLinkedAccountAsync`) ตัดสินบัญชีคุมด้วยเจ้าของเดียวกัน — ส่งผังเดิมกลับตอนแก้ชื่อไม่ถูกบล็อก · ตัวหาผังตั้งต้นตามรหัส/หมวด 46 จุดกรองด้วย
+  `PostingAccountGuard.WhereNotControlAccount` (แทน `Level >= 4`) · หน้าเว็บอ่าน `AccountResponse.HasChildAccounts` (แทน `level >= 4`) ·
+  ห้ามเขียนใหม่: `tools/posting_level_check.py` · Last verified รอบ 206 (sha เติมภายหลัง)
+- **ผังลูกหนี้/เจ้าหนี้ของใบที่ออกแล้ว: ตัวตัดสินเดียว `Helpers/OriginalArApAccount`** (รอบ 206 · ฝ่ายค้านรอบ 2 P2(b) ส่วนที่ค้าง): ทุกเส้นที่ปิด/ปรับหนี้ของใบเดิม —
+  รับ/จ่ายชำระ (`CreatePaymentJournalAsync` · ระบบเชื่อมต่อ `ResolvePaymentJournalAccountsAsync`) · ตัดหนี้สูญ · หักมัดจำ (เอกสาร/JV) · WHT ตอนปิดยอด ·
+  ใบเสร็จ/ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จที่ปิดใบต้นทาง · ใบลด/เพิ่มหนี้ที่อ้างใบต้นทาง (โหมดลูกหนี้/เจ้าหนี้) · พรีวิว GL ของใบสำคัญจ่าย — ตัดผังที่
+  **JE ตอนออกใบ** (JE ที่ลงแล้วตัวแรกของใบ ไม่ถูกกลับ) ตั้งไว้: ฝั่งลูกหนี้ = ขาเดบิตกลุ่ม 113 · ฝั่งเจ้าหนี้ = ขาเครดิตกลุ่ม 212 · หรือผังที่ผู้ติดต่อปักอยู่ ·
+  ไม่นับบัญชีพัก 11340/1134x · **ใช้ได้แม้ผังนั้นถูกปิดใช้ทีหลัง** (ตัดยอดเดิมให้หมด) · ใบไม่มี JE ⇒ ตัวหาเดิม (ผังที่ผู้ติดต่อปัก → ค่าเริ่มต้น — ผู้ติดต่อถูกโหลดให้
+  แล้ว: เดิมรับ/จ่ายชำระ/ตัดหนี้สูญไม่โหลด `Contact` ⇒ ข้ามผังที่ปักไป 11310/21210 เงียบ ๆ · ผังที่ปักปิดใช้ = ล้มดังพร้อมทางไปต่อตามเดิม) ·
+  ยังใช้ผังที่ผู้ติดต่อปักตอนนี้: คืนเงิน gateway (`GatewayRefundService` ตั้งลูกหนี้รอใบลดหนี้) · ใบลด/เพิ่มหนี้ของระบบเชื่อมต่อ ·
+  เทสต์ `OriginalArApAccountTests` · `Db/OriginalArApAccountDbTests` · Last verified รอบ 206 (sha เติมภายหลัง)
 - **Phantom split-VAT sanitizer**: `OcrService.SanitizeVatSplitArtifacts`
   ตัด suffix "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)/(VATable)/(non-VAT)/(VAT included)…"
   ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
@@ -2024,6 +2039,12 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ตัวเลือกของชุดที่ไม่อยู่ในไฟล์** (เช่น `bankAccountId` จากหน้าบัญชีธนาคาร) = `ImportCreateBatchRequest.Options` (ฟิลด์ multipart `options` JSON) → pipeline เก็บ `OptionsJson` → `ImportTargetContext.BatchOptions`
 - modal นำเข้าเดิมของ contacts/products/journals (FormData → endpoint `[FromBody]` = 415) และหน้าวาง CSV ของสินทรัพย์ ลิงก์ไป `import-hub.html?entity=…` ·
   `tools/formdata_json_endpoint_check.py` กันรูปแบบเดิม · `ImportConflictController` (legacy) มีด่าน `ForImport` ต่อชนิดของแถวแล้ว
+- **แพ็กเกจ (รอบ 206 · "จำกัดตามหน้าเดิม")**: `api/companies/{cid}/import/*` ผูก `BulkImport` เหมือน `/import-export` — คีย์ `"/companies/*/import"` ใน
+  `SubscriptionGatePolicy.RouteFeatureMap` (ยึดหลังรหัสบริษัท: คีย์ `/import` เปล่าจะลาก `…/ai/import/…` · `…/migration/import` · `…/fixedasset/import` ไปด้วย)
+  อยู่ใน `NewlyGatedRouteKeys` (หน้าเว็บเดินตามสวิตช์เหมือนหน้าเดิม · partner = เงาจนกว่ากดบังคับ) · เมนู `import-hub` ผูก `feature: 'BulkImport'` แบบเมนูเดิม
+  (ไม่มี `lockOnEnforce` — หน้าเดิมล็อกแบบนี้) · `migration/*` (ย้ายระบบ/งบทดลองยกมา) เดิมไม่อยู่ในตาราง ⇒ **ไม่เพิ่ม** (ห้ามเข้มเกินพฤติกรรมเดิม) ·
+  ทางไปต่อของแพ็กเกจที่ไม่มี: ข้อความอัปเกรดมาตรฐาน (`FEATURE_NOT_AVAILABLE` + `upgradeUrl`) · หน้าบัญชีธนาคารยังนำเข้า statement ทางเดิม (`/bank`) ได้ ·
+  เทสต์ `SubscriptionGateImportHubTests` · `tools/nav_lock_mode_sim.js` (ศูนย์นำเข้า = หน้าเดิมทุกโหมด) · Last verified รอบ 206 (sha เติมภายหลัง)
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -4028,7 +4049,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   หน้าเว็บแสดง "—") · **ลบบรรทัด/ย้อนการนำเข้า** (`RefreshAccountBalance` → `Helpers/BankBalanceAfterDelete`): ยอดการ์ด = บรรทัดล่าสุดที่รู้ยอด → `StatementBalance` → คงเดิม
   (เดิม `latest.BalanceAfter ?? 0` ⇒ การ์ดกลายเป็น 0) · ลบบรรทัดที่ไม่รู้ยอดไม่แตะการ์ด · แถวเดิมก่อนคอลัมน์นี้ถือว่ารู้ยอด (แยก 0 จริงกับ "ไม่รู้" ย้อนหลังไม่ได้ — ไม่แต่งค่า) ·
   **ล้ม** (SaveChanges/ธุรกรรมของผู้เรียก) ⇒ ถอดแถวที่เพิ่ม + คืนค่าแถว Overwrite/ยอดการ์ดใน tracker (กลุ่มถัดไปของศูนย์นำเข้าไม่บันทึกแถวที่ล้มแล้ว) ·
-  **ไฟล์ต้นทาง**เขียนหลัง commit เมื่อธุรกรรมเป็นของตัวเขียน (เดิมก่อน commit ⇒ ไฟล์กำพร้าเมื่อย้อน) — เก็บไม่ได้ = คำเตือน
+  **ไฟล์ต้นทาง**เขียนหลัง commit เมื่อธุรกรรมเป็นของตัวเขียน (เดิมก่อน commit ⇒ ไฟล์กำพร้าเมื่อย้อน · Db test รอบ 206: ตอนเก็บไฟล์การเชื่อมต่ออื่นเห็นรายการแล้ว + ที่เก็บล้ม ⇒ รายการคงอยู่ + คำเตือน + ไม่มีแถวไฟล์แนบกำพร้า) — เก็บไม่ได้ = คำเตือน
 - **ยอด**: `CurrentBalance`/`StatementBalance` = ยอดคงเหลือตามธนาคารของบรรทัดล่าสุดที่มียอดจริง หรือ OFX LEDGERBAL (ยอดรายบรรทัด OFX ถอยจากยอดปิด) ·
   ไม่มียอด ⇒ ไม่แตะ + คำเตือน (ไม่บวกยอดเอง) · statement เก่ากว่ายอดที่มี ⇒ คงยอดเดิม + คำเตือน · เตือนยอดไม่ต่อเนื่อง · เลขบัญชี/สกุลในไฟล์ไม่ตรง ⇒ คำเตือน
 - ธุรกรรมเดียว · **ไฟล์ต้นทาง** เก็บเป็นไฟล์แนบชนิด `BankStatement` ของบัญชีธนาคาร (อ่าน = Bank.View · ลบ = Bank.Reconcile) เมื่อมีรายการลง ·
@@ -5599,3 +5620,6 @@ _Last verified against codebase: 2026-10-14 (ทีม X3 ส่งออกร�
 บัญชีแยกประเภทยอดยกมากรองชุดเดียวกับรายการ + ฐานยอดนำเข้าแบบงบทดลอง + บัญชียกมาอย่างเดียว · ใบแจ้งยอด CSV/Excel ผ่านตัวเขียนกลาง ·
 audit "ถึงวันที่" รวมทั้งวัน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit efeda848 + 6b27612c)_
 _Last verified against codebase: 2026-10-14 (ทีม X1 ไฟล์ยื่นภาษี — §5.3: ภ.ง.ด.1/1ก ออก .txt (detail ล้วน · `ddMMyyyy` ค.ศ. · คำนำหน้าข้อความไทย · แยกไฟล์ต่อประเภทเงินได้ 5 ข้อ) + CSV (BOM) + Excel (ชีตสรุปยอดหน้าแบบ) จากตัวตั้งเดียว `Helpers/Pnd1FileFormat` · รายการจาก `Helpers/Pnd1FilingData` ตัวเดียวกับหน้ารายงาน ภ.ง.ด.1 (เงินได้ = `TaxableGross` · รวม 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือของผู้รับนอกรอบ) · ปุ่ม e-Filing PND.1 ปิดชี้ไปเมนู Export · ภ.พ.36 สองทางออกใช้ `Helpers/Pp36FileFormat` · Excel รายงาน ภ.ง.ด.2/3/53/54 มีชีตใบแนบตรง .txt · ภ.พ.30 CSV มี BOM + `CsvFieldSafety` · ดาวน์โหลดไฟล์ยื่นจากเงินเดือนบันทึก PiiAccessLog — ลำดับคอลัมน์ ภ.ง.ด.1/1ก ยังไม่ได้ยืนยันกับหน้านำเข้าจริง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8d899b1e)_
+_Last verified against codebase: 2026-10-15 (รอบ 206 ทีมงานค้าง — §2.11e แพ็กเกจศูนย์นำเข้า (`/companies/*/import` = BulkImport เหมือนหน้าเดิม · เมนูผูกฟีเจอร์ · migration ไม่เพิ่ม) ·
+§2 แหล่งเงิน "บัญชีคุม" เจ้าของเดียว `PostingAccountRule` (DocumentMoneyChannel/BankService/ตัวหาผังตั้งต้น 46 จุด/หน้าเว็บ · `tools/posting_level_check.py`) ·
+ผังลูกหนี้/เจ้าหนี้ของใบเดิม `Helpers/OriginalArApAccount` ทุกเส้นที่ปิด/ปรับหนี้ · statement เก็บไฟล์หลัง commit มี Db test — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง))_

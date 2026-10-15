@@ -177,8 +177,8 @@ public class SettingsService : ISettingsService
             if (code.Length == 0) settings.PosTipPayableAccountCode = null;
             else
             {
-                var ok = await _db.ChartOfAccounts.AsNoTracking().AnyAsync(a => a.CompanyId == companyId
-                    && a.AccountCode == code && a.IsActive && !a.IsDeleted && a.Level >= 4);
+                var ok = await _db.ChartOfAccounts.WhereNotControlAccount(_db).AsNoTracking().AnyAsync(a => a.CompanyId == companyId
+                    && a.AccountCode == code && a.IsActive && !a.IsDeleted);
                 if (!ok)
                     throw new Accounting.Helpers.BusinessRuleException(
                         $"ไม่พบบัญชี {code} ในผังบัญชี (หรือไม่ใช่บัญชีที่ลงรายการได้) — เลือกบัญชีหนี้สิน \"ค้างจ่ายพนักงาน\" ที่มีอยู่จริง",

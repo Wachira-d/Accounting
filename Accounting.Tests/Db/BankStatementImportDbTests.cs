@@ -234,6 +234,67 @@ public class BankStatementImportDbTests
         Assert.Single(files.Calls);
     }
 
+    // ═══════════════════════ ไฟล์ต้นทางเขียน "หลัง commit" (ฝ่ายค้านรอบ 1 ADV1-5 · รอบ 206 ปิดเทสต์ที่ขาด) ═══════════════════════
+
+    [Fact]
+    public async Task เก็บไฟล์ต้นทาง_หลังcommit_ตอนเก็บไฟล์รายการเห็นจากการเชื่อมต่ออื่นแล้ว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, acc) = await SeedAsync(db);
+        var visibleAtUpload = -1;
+        // ตอนระบบเรียกที่เก็บไฟล์ — การเชื่อมต่ออื่น (READ COMMITTED) ต้องเห็นรายการแล้ว = commit ก่อนเขียนไฟล์
+        // (เดิมเขียนไฟล์ก่อน commit ⇒ ย้อนธุรกรรมแล้วไฟล์จริงค้างในที่เก็บโดยไม่มีแถวอ้าง)
+        var files = new RecordingFiles
+        {
+            BeforeUpload = async () =>
+            {
+                using var other = DbTestDatabase.TryCreateContext()!;
+                visibleAtUpload = await other.BankTransactions.AsNoTracking().CountAsync(t => t.CompanyId == cid && t.BankAccountId == acc);
+            },
+        };
+        var res = await new BankService(db, files: files).ImportParsedStatementRowsAsync(cid, acc,
+            new[] { new BankStatementLineInput(new DateTime(2026, 8, 2), "ฝาก", 0m, 250m, 250m) },
+            new BankStatementWriteOptions(SourceFile: new BankStatementSourceFile("kbank.csv", "text/csv", new byte[] { 9 }),
+                UploadedByUserId: Guid.NewGuid()));
+        Assert.Equal(1, visibleAtUpload);
+        Assert.NotNull(res.SourceFileAttachmentId);
+        Assert.Single(files.Calls);
+    }
+
+    [Fact]
+    public async Task เก็บไฟล์ต้นทางล้ม_รายการคงบันทึก_ได้คำเตือนไม่ใช่error_ไม่มีแถวไฟล์แนบกำพร้า()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, acc) = await SeedAsync(db);
+        // ที่เก็บไฟล์ล้มหลังเพิ่มแถวไฟล์แนบเข้า tracker แล้ว (แบบ FileAttachmentService จริงที่ Add ก่อนเขียนไฟล์)
+        var files = new RecordingFiles { FailAfterAddingRowTo = db };
+        var res = await new BankService(db, files: files).ImportParsedStatementRowsAsync(cid, acc,
+            new[] { new BankStatementLineInput(new DateTime(2026, 8, 3), "ฝาก", 0m, 300m, 300m) },
+            new BankStatementWriteOptions(SourceFile: new BankStatementSourceFile("kbank.csv", "text/csv", new byte[] { 7 }),
+                UploadedByUserId: Guid.NewGuid()));
+
+        Assert.False(res.RolledBack);
+        Assert.Equal(1, res.Imported);
+        Assert.Null(res.SourceFileAttachmentId);
+        Assert.Contains(res.Warnings, w => w.Contains("เก็บไฟล์ statement ต้นทางไม่สำเร็จ"));
+        Assert.Single(files.Calls);
+        // แถวไฟล์แนบที่ยังไม่บันทึกถูกถอดจาก tracker — SaveChanges ถัดไปใน scope เดียวกันต้องไม่บันทึกแถวที่อ้างไฟล์ซึ่งไม่ได้เก็บ
+        await db.SaveChangesAsync();
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1, await check.BankTransactions.AsNoTracking().CountAsync(t => t.CompanyId == cid && t.BankAccountId == acc));
+        Assert.False(await check.FileAttachments.AsNoTracking().AnyAsync(a => a.CompanyId == cid && a.EntityId == acc));
+
+        // ทิศตรงข้าม: ที่เก็บไฟล์ปกติ ⇒ ไม่มีคำเตือนเรื่องไฟล์
+        var ok = await new BankService(db, files: new RecordingFiles()).ImportParsedStatementRowsAsync(cid, acc,
+            new[] { new BankStatementLineInput(new DateTime(2026, 8, 4), "ฝาก", 0m, 50m, 350m) },
+            new BankStatementWriteOptions(SourceFile: new BankStatementSourceFile("kbank.csv", "text/csv", new byte[] { 8 }),
+                UploadedByUserId: Guid.NewGuid()));
+        Assert.NotNull(ok.SourceFileAttachmentId);
+        Assert.DoesNotContain(ok.Warnings, w => w.Contains("เก็บไฟล์ statement ต้นทางไม่สำเร็จ"));
+    }
+
     // ═══════════════════════ open-banking: OFX ลงจริง ═══════════════════════
 
     [Fact]
@@ -421,13 +482,27 @@ public class BankStatementImportDbTests
     private sealed class RecordingFiles : IFileAttachmentService
     {
         public List<(Guid CompanyId, string EntityType, Guid EntityId, Guid UserId)> Calls { get; } = new();
+        /// <summary>รอบ 206: เรียกก่อนตอบ (ใช้ตรวจว่าธุรกรรม commit แล้วตอนเก็บไฟล์)</summary>
+        public Func<Task>? BeforeUpload { get; init; }
+        /// <summary>รอบ 206: จำลองที่เก็บล้ม — เพิ่มแถวไฟล์แนบเข้า context นี้ (ยังไม่บันทึก) แล้วโยน</summary>
+        public AccountingDbContext? FailAfterAddingRowTo { get; init; }
 
-        public Task<FileAttachmentResponse> UploadBytesAsync(Guid companyId, string entityType, Guid entityId,
+        public async Task<FileAttachmentResponse> UploadBytesAsync(Guid companyId, string entityType, Guid entityId,
             string originalFileName, string contentType, byte[] content, Guid uploadedByUserId)
         {
             Calls.Add((companyId, entityType, entityId, uploadedByUserId));
-            return Task.FromResult(new FileAttachmentResponse(Guid.NewGuid(), originalFileName, originalFileName, contentType,
-                content.LongLength, "/dev/null", null, entityType, entityId, "ผู้ทดสอบ", DateTime.UtcNow));
+            if (BeforeUpload != null) await BeforeUpload();
+            if (FailAfterAddingRowTo is { } failDb)
+            {
+                failDb.FileAttachments.Add(new FileAttachment
+                {
+                    CompanyId = companyId, FileName = originalFileName, OriginalFileName = originalFileName, ContentType = contentType,
+                    FileSize = content.LongLength, StoragePath = "/dev/null", EntityType = entityType, EntityId = entityId,
+                });
+                throw new IOException("ที่เก็บไฟล์ไม่ตอบ (จำลอง)");
+            }
+            return new FileAttachmentResponse(Guid.NewGuid(), originalFileName, originalFileName, contentType,
+                content.LongLength, "/dev/null", null, entityType, entityId, "ผู้ทดสอบ", DateTime.UtcNow);
         }
 
         public Task<FileAttachmentResponse> UploadAsync(Guid companyId, string entityType, Guid entityId, string fileName,

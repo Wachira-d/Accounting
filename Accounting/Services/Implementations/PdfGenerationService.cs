@@ -714,9 +714,9 @@ public partial class PdfGenerationService : IPdfGenerationService
             // ใบลูกที่อ้างใบต้นทางที่ติ๊ก e-Withholding = ผังของใบต้นทาง (ตัวตัดสินเดียว EWithholdingScope — ตัวเดียวกับ JE)
             if (await Accounting.Helpers.EWithholdingScope.IsViaAsync(_db, companyId, doc))
             {
-                var eWht = await _db.ChartOfAccounts.AsNoTracking()
+                var eWht = await _db.ChartOfAccounts.WhereNotControlAccount(_db).AsNoTracking()
                     .Where(x => x.CompanyId == companyId && x.AccountCode == Accounting.Helpers.WhtPayableAccount.EWithholdingCode
-                        && x.Level >= 4 && x.IsActive)
+                        && x.IsActive)
                     .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync();
                 if (eWht != null) return new() { (eWht.AccountCode, eWht.AccountName, amount) };
                 // ฝ่ายค้านรอบ 204 L3: JE จริงล้มดังเมื่อไม่มีผัง (EWithholdingScope.RequireAccount) ⇒ พรีวิวต้องไม่ตกไป 2191x เงียบ — แสดงผังที่ขาดพร้อมทางไปต่อ
@@ -804,7 +804,17 @@ public partial class PdfGenerationService : IPdfGenerationService
             // Cash basis: WHT รับรู้ตอนจ่าย (ใบนี้) / Accrual: รับรู้ไปแล้วตอนตั้งหนี้
             var pvWht = whtBasisCash ? doc.WithholdingTaxAmount : 0m;
 
-            var ap = await PayableAsync(pvSrcType);
+            // รอบ 206: mirror ของ AutoPost — เจ้าหนี้ที่ใบต้นทางตั้งไว้จริง (JE ตอนออกใบ · Helpers/OriginalArApAccount) ก่อนตัวหาตามผู้ติดต่อ
+            var issuedApId = await Accounting.Helpers.OriginalArApAccount.LoadAsync(_db, companyId, doc.RelatedDocumentId,
+                Accounting.Helpers.ArApSide.Payable);
+            var issuedAp = issuedApId is Guid iap
+                ? await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(x => x.Id == iap && x.CompanyId == companyId && !x.IsDeleted)
+                    .Select(x => new { x.AccountCode, x.AccountName }).FirstOrDefaultAsync()
+                : null;
+            (string Code, string Name) ap = issuedAp != null
+                ? (Code: issuedAp.AccountCode, Name: issuedAp.AccountName)
+                : await PayableAsync(pvSrcType);
             var payFrom = await MoneyAccountAsync();
             var pvLines = new List<GlPostingLine>
             {

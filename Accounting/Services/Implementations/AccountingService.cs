@@ -82,8 +82,13 @@ public partial class AccountingService : IAccountingService
         var accounts = await query
             .OrderBy(a => a.AccountCode)
             .ToListAsync();
+        // รอบ 206: บัญชีคุม = มีบัญชีย่อย (PostingAccountRule) — ส่งให้หน้าเว็บแทนการกรอง level >= 4 เอง
+        var parents = (await _db.ChartOfAccounts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && !c.IsDeleted && c.ParentAccountId != null)
+                .Select(c => c.ParentAccountId!.Value).Distinct().ToListAsync())
+            .ToHashSet();
 
-        return accounts.Select(MapAccountToResponse).ToList();
+        return accounts.Select(a => MapAccountToResponse(a) with { HasChildAccounts = parents.Contains(a.Id) }).ToList();
     }
 
     /// <summary>ช่องทางเงินสำหรับ dropdown — กติกา "ที่อยู่ของเงิน" ตัวเดียวที่ <see cref="Accounting.Helpers.MoneyAccountRule"/>

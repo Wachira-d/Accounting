@@ -3013,10 +3013,10 @@ public class PayrollService : IPayrollService
                             a.CompanyId == companyId && a.AccountCode == run.SalaryExpenseAccountCode
                             && a.IsActive && !a.IsDeleted)
                         : null)
-                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.CompanyId == companyId && a.AccountCode == "54111" && a.Level >= 4)
-                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                    a.CompanyId == companyId && a.AccountCode.StartsWith("541") && a.Level >= 4);
+                    ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                    a.CompanyId == companyId && a.AccountCode == "54111")
+                    ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                    a.CompanyId == companyId && a.AccountCode.StartsWith("541"));
                 if (salaryAccount != null)
                 {
                     var byDim = run.Details
@@ -3047,10 +3047,10 @@ public class PayrollService : IPayrollService
                 // หนี้สินหาย. ธงอยู่ที่ audit: unbalanced-JE risk ตอนผังไม่มาตรฐาน)
                 async Task<ChartOfAccount> ReqAcct(string exact, string prefix, string nameContains, string purpose)
                 {
-                    var acc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                            a.CompanyId == companyId && a.AccountCode == exact && a.Level >= 4)
-                        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                            a.CompanyId == companyId && a.AccountCode.StartsWith(prefix) && a.Level >= 4
+                    var acc = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode == exact)
+                        ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                            a.CompanyId == companyId && a.AccountCode.StartsWith(prefix)
                             && a.AccountName.Contains(nameContains));
                     return acc ?? throw new InvalidOperationException(
                         $"ลงบัญชีเงินเดือนไม่ได้ — ไม่พบผังบัญชี \"{purpose}\" " +
@@ -3114,8 +3114,8 @@ public class PayrollService : IPayrollService
                 if (loanDeductTotal > 0)
                 {
                     // ตัดลูกหนี้เงินกู้พนักงาน (asset) ถ้ามีผัง — ไม่มีก็รวมเข้าขาหักอื่น
-                    var loanAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+                    var loanAcc = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                        a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                         && (a.AccountName.Contains("เงินกู้พนักงาน")
                             || a.AccountName.Contains("เงินให้กู้ยืมพนักงาน")
                             || a.AccountName.Contains("ลูกหนี้พนักงาน")));
@@ -5224,10 +5224,10 @@ public class PayrollService : IPayrollService
 
         // ── หาผังบัญชี ──
         // 21815 ประกันสังคมค้างจ่าย (Cr ตอนจ่ายเงินเดือน) → ตอนนี้ Dr ล้างหนี้
-        var ssoPayableAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode == "21815" && a.Level >= 4)
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.AccountCode.StartsWith("218") && a.Level >= 4
+        var ssoPayableAccount = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.AccountCode == "21815")
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.AccountCode.StartsWith("218")
                 && a.AccountName.Contains("ประกันสังคม"))
             ?? throw new InvalidOperationException(
                 "ไม่พบบัญชี 'ประกันสังคมค้างจ่าย' (21815) — กรุณาสร้างก่อน");
@@ -5255,13 +5255,13 @@ public class PayrollService : IPayrollService
             };
             if (lateFee > 0)
             {
-                var lateFeeAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                var lateFeeAccount = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                    && a.AccountCode.StartsWith("54") && a.Level >= 4
+                    && a.AccountCode.StartsWith("54")
                     && (a.AccountName.Contains("เงินเพิ่ม") || a.AccountName.Contains("ค่าปรับ")))
-                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
+                    ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
                         a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                        && a.AccountCode.StartsWith("58") && a.Level >= 4);   // ค่าใช้จ่ายอื่น
+                        && a.AccountCode.StartsWith("58"));   // ค่าใช้จ่ายอื่น
                 if (lateFeeAccount != null)
                     jeLines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                         lateFeeAccount.Id, lateFee, 0,

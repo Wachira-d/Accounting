@@ -37,7 +37,10 @@ public record AccountResponse(
     bool IsSystemAccount,
     string? Description,
     bool InputVatClaimable = true,
-    string? CostBehavior = null);
+    string? CostBehavior = null,
+    // รอบ 206: มีบัญชีย่อย = บัญชีคุมตามเจ้าของกติกา <c>PostingAccountRule</c> (คนละความหมายกับ <c>IsControlAccount</c> ของบรรทัด JE ที่หมายถึงลูกหนี้/เจ้าหนี้/ภาษี) · หน้าเว็บกรองตัวเลือก "ลงรายการได้" จากช่องนี้
+    // (ห้ามใช้ level >= 4 เอง) · เติมเฉพาะ GET accounts (สร้าง/แก้ไขคืน false)
+    bool HasChildAccounts = false);
 
 /// <summary>แถว "ช่องทางเงิน" (GET accounts/payment-channels) — ฟิลด์ id/accountCode/accountName เท่ากับ <see cref="AccountResponse"/>
 /// (หน้าเดิมอ่านได้เหมือนเดิม) + ป้ายที่เซิร์ฟเวอร์ตัดสินแล้ว (2026-10-14 · PC#11): <c>ChannelGroup</c> = "bank" | "other" ·

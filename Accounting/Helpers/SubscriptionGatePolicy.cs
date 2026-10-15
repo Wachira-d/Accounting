@@ -192,6 +192,10 @@ public static class SubscriptionGatePolicy
         ("/integrations",             FeatureFlags.APIAccess),
         ("/webhooks",                 FeatureFlags.Webhook),
         ("/import-export",            FeatureFlags.BulkImport),
+        // รอบ 206 (ทีมงานค้าง): ศูนย์นำเข้าข้อมูล ImportHubController (`api/companies/{cid}/import`) แทนหน้า /import-export ⇒ แพ็กเกจเดียวกับหน้าเดิม
+        // ("จำกัดตามหน้าเดิม" ที่ผู้รวมงานแจ้งเจ้าของ) · ยึดหลัง /companies/{id} — คีย์ "/import" เปล่าจะไปตรง …/ai/import/… (เปลี่ยน AI_Features → BulkImport) ·
+        // …/migration/import (เดิมไม่ gate) · …/fixedasset/import ฯลฯ = เข้มขึ้นเกินหน้าเดิม · /migration/* เดิมไม่อยู่ในตาราง ⇒ ไม่เพิ่ม (ห้ามเข้มเกินพฤติกรรมเดิม)
+        ("/companies/*/import",       FeatureFlags.BulkImport),
 
         // AI
         ("/ai-tools",                 FeatureFlags.AI_Features),
@@ -228,6 +232,8 @@ public static class SubscriptionGatePolicy
         "/settlement",
         "/commissions", "/fixedasset", "/currency", "/warehouses", "/approvals", "/ai",
         "/cms/sites/*/commerce", "/cms/sites/*/booking",
+        // รอบ 206: ศูนย์นำเข้า — คีย์ใหม่ ⇒ เงาสำหรับ partner จนกว่ากดบังคับ (หน้าเว็บเดินตามสวิตช์เหมือน /import-export เดิม)
+        "/companies/*/import",
     };
 
     /// <summary>ตัวจับคู่ของแต่ละคีย์ (สร้างครั้งเดียว) — "ยึดท้าย segment": ตรงเมื่อตามด้วย <c>/</c> หรือจบ path · <c>*</c> = 1 segment ใดก็ได้</summary>

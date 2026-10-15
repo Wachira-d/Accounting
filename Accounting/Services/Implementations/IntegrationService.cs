@@ -2936,8 +2936,14 @@ public class IntegrationService : IIntegrationService
 
         var money = await ResolveMoneyAccountAsync(companyId, request);
 
+        // รอบ 206 (ฝ่ายค้านรอบ 2 P2(b) ส่วนที่ค้าง): ผังที่เอกสารตั้งหนี้ไว้จริง (JE ตอนออกใบ — Helpers/OriginalArApAccount ตัวเดียวกับหน้าเว็บ) ก่อน ·
+        // เดิมเจ้าหนี้: ผังที่ปักถูกปิดใช้ ⇒ ตกไป 212 ตัวแรกเงียบ ๆ (ตัดคนละผังกับที่ใบตั้ง) · ไม่มี JE ⇒ ตัวหาเดิมทุกประการ
         ChartOfAccount? counterpart = null;
-        if (isRevenue)
+        if (await Accounting.Helpers.OriginalArApAccount.LoadAsync(_db, companyId, document.Id,
+                isRevenue ? Accounting.Helpers.ArApSide.Receivable : Accounting.Helpers.ArApSide.Payable) is Guid issuedId)
+            counterpart = await _db.ChartOfAccounts
+                .FirstOrDefaultAsync(a => a.Id == issuedId && a.CompanyId == companyId && !a.IsDeleted);
+        if (counterpart == null && isRevenue)
         {
             counterpart = await ResolveReceivableAccountAsync(companyId, document);
             if (counterpart == null)
@@ -2946,7 +2952,7 @@ public class IntegrationService : IIntegrationService
                     + "เพิ่มผังบัญชีนี้ หรือปักผังลูกหนี้ไว้ที่ผู้ติดต่อ แล้วส่งรายการชำระเงินซ้ำ (ยังไม่มีอะไรถูกบันทึก)",
                     "INT-NO-AR-ACCOUNT");
         }
-        else
+        else if (counterpart == null)
         {
             // Clear the SAME payable account the document's journal credited:
             // contact-pinned override > Expense → 21220 > trade 212 family >

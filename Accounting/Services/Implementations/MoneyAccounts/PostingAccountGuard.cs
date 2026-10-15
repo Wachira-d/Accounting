@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -13,6 +14,15 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public static class PostingAccountGuard
 {
+    /// <summary>
+    /// ตัวกรองฝั่ง query ของ <see cref="PostingAccountRule"/> ข้อ "ไม่ใช่บัญชีคุม" — ผังที่<b>ไม่มีบัญชีย่อย</b> (ไม่ดู Level) · รอบ 206:
+    /// ตัวหาผังตั้งต้นตามรหัส/หมวด (ลงบัญชีอัตโนมัติ · ตัวเลือก AI · ค่าแนะนำ) เดิมกรอง <c>Level &gt;= 4</c> เอง ⇒ ผังของบริษัทที่ลงรายการได้ระดับ 2–3
+    /// ถูกข้าม และผังระดับ 4 ที่มีบัญชีย่อย (เช่น 11122 ที่มีผังเงินฝากย่อย) ถูกเลือกทั้งที่ด่านลงรายการปฏิเสธ · ผังมาตรฐานสองกติกาให้ผลเท่ากัน
+    /// (ผังระดับ &lt; 4 ทุกตัวมีบัญชีย่อย) · ผู้เรียกกรอง CompanyId/IsActive เอง · ห้ามเขียน <c>Level &gt;= 4</c> ใหม่ (<c>tools/posting_level_check.py</c>)
+    /// </summary>
+    public static IQueryable<ChartOfAccount> WhereNotControlAccount(this IQueryable<ChartOfAccount> query, AccountingDbContext db)
+        => query.Where(a => !db.ChartOfAccounts.Any(c => c.CompanyId == a.CompanyId && !c.IsDeleted && c.ParentAccountId == a.Id));
+
     /// <summary>ข้อเท็จจริงของผังตาม id (กรอง CompanyId + !IsDeleted) — id ที่ไม่อยู่ในผลลัพธ์ = ไม่พบในบริษัทนี้</summary>
     public static async Task<Dictionary<Guid, PostingAccountFacts>> LoadPostingFactsAsync(
         this AccountingDbContext db, Guid companyId, IEnumerable<Guid> accountIds, CancellationToken ct = default)

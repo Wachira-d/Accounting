@@ -532,9 +532,9 @@ public partial class PosService
         }
         cashAccount ??= await ResolvePaymentAccountAsync(companyId, refundMethod, jeTerminal);
         var salesAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41000")
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.Level >= 4);
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41"));
         var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21911")
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219") && a.Level >= 4);
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219"));
         if (cashAccount == null)
             throw new Accounting.Helpers.BusinessRuleException(
                 $"ไม่พบบัญชีเงินสด/ธนาคารสำหรับจ่ายคืนด้วยวิธี \"{PaymentMethodThaiLabel(refundMethod)}\" — "
@@ -562,9 +562,9 @@ public partial class PosService
         if (refundCogs > 0)
         {
             var cogsAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "51110")
-                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("511") && a.Level >= 4);
+                ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("511"));
             var inventoryAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "11500")
-                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("115") && a.Level >= 4);
+                ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("115"));
             if (cogsAccount != null && inventoryAccount != null)
             {
                 lines.Add(new(inventoryAccount.Id, refundCogs, 0, $"รับคืนสินค้าคงเหลือ POS #{order.OrderNumber}"));
@@ -1642,9 +1642,9 @@ public partial class PosService
 
         // Sales / VAT / COGS / Inventory accounts — single source per company.
         var salesAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41000")
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.Level >= 4);
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41"));
         var vatAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21911")
-            ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219") && a.Level >= 4);
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("219"));
 
         // ★ H-A18: เดิม `return;` เงียบ ๆ ⇒ ออเดอร์ปิดสำเร็จ เงินเข้าลิ้นชัก
         // แต่ **ไม่มีรายการบัญชีเลย** = GL รั่วโดยไม่มีใครเห็น (ต่างจาก catch
@@ -1746,9 +1746,9 @@ public partial class PosService
             if (totalCogs > 0)
             {
                 var cogsAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "51110")
-                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("511") && a.Level >= 4);
+                    ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("511"));
                 var inventoryAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "11500")
-                    ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("115") && a.Level >= 4);
+                    ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("115"));
                 if (cogsAccount != null && inventoryAccount != null)
                 {
                     lines.Add(new(cogsAccount.Id, totalCogs, 0, $"ต้นทุนขาย POS #{order.OrderNumber}"));

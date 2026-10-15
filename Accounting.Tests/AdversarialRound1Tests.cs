@@ -66,10 +66,11 @@ public class AdversarialRound1Tests
     [Fact]
     public void ผังที่เติมให้ได้_เปิดใช้และไม่ใช่บัญชีกลุ่ม()
     {
-        Assert.True(DocumentMoneyChannel.IsPostableGl(true, 4));
-        Assert.True(DocumentMoneyChannel.IsPostableGl(true, 5));
-        Assert.False(DocumentMoneyChannel.IsPostableGl(false, 4));   // ปิดใช้ ⇒ อนุมัติล้ม (กฎเหล็ก #3)
-        Assert.False(DocumentMoneyChannel.IsPostableGl(true, 3));    // บัญชีกลุ่ม
+        // รอบ 206: ตัดสินด้วย PostingAccountRule (มีบัญชีย่อย) — ไม่ใช่ระดับผัง
+        MoneyGlFacts G(bool active, bool group) => new(Guid.NewGuid(), "53110", "ค่าเครื่องเขียน", active, group);
+        Assert.True(DocumentMoneyChannel.IsPostableGl(G(true, false)));
+        Assert.False(DocumentMoneyChannel.IsPostableGl(G(false, false)));   // ปิดใช้ ⇒ อนุมัติล้ม (กฎเหล็ก #3)
+        Assert.False(DocumentMoneyChannel.IsPostableGl(G(true, true)));     // บัญชีคุม (มีบัญชีย่อย)
     }
 
     [Fact]

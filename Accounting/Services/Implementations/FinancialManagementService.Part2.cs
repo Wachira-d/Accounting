@@ -224,10 +224,10 @@ public partial class FinancialManagementService
         // 2. Dividend declaration: Dr กำไรสะสม 32020 / Cr เงินปันผลค้างจ่าย 22xxx (not direct to cash)
         if (entity.DividendAmount > 0 && retainedAcc != null)
         {
-            var divPayableAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.AccountCode == "22010" && a.Level >= 4)
-                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-                a.CompanyId == companyId && a.AccountCode.StartsWith("220") && a.Level >= 4);
+            var divPayableAcc = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.AccountCode == "22010")
+                ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                a.CompanyId == companyId && a.AccountCode.StartsWith("220"));
             var creditAcc = divPayableAcc ?? cashAcc;
             if (creditAcc != null)
             {

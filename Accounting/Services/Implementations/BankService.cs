@@ -112,27 +112,27 @@ public partial class BankService : IBankService
 
     /// <summary>ผังที่บัญชีธนาคารผูก — ตัวตรวจเดียวของเส้นสร้างและเส้นแก้ไข (PC#9 · ID#16)
     /// <para>⚠ เดิมรับ id จาก client **ดิบ ๆ** ⇒ ผูกบัญชีธนาคารกับผังของบริษัทอื่นได้ (ละเมิด tenant isolation — กฎเหล็ก #2 M) และผูกกับ
-    /// ผังที่ไม่ใช่เงินสด/เงินฝากได้ ⇒ ตัวกระทบยอดอ่าน "ขาที่วิ่งผ่านบัญชีนี้" ผิดใบทุกใบ · บัญชีกลุ่ม (ระดับ &lt; 4) ลงรายการไม่ได้ ⇒
-    /// การรับ/จ่ายผ่านบัญชีนี้จะถูกปฏิเสธตอนลงบัญชี (Helpers/DocumentMoneyChannel) — ตรวจตั้งแต่ตอนผูก</para></summary>
-    private async Task ValidateLinkedAccountAsync(Guid companyId, Guid linkedAccountId)
+    /// ผังที่ไม่ใช่เงินสด/เงินฝากได้ ⇒ ตัวกระทบยอดอ่าน "ขาที่วิ่งผ่านบัญชีนี้" ผิดใบทุกใบ · บัญชีคุม (มีบัญชีย่อย) ไม่ควรผูกใหม่ — ตรวจตั้งแต่ตอนผูก</para>
+    /// <para>รอบ 206: "บัญชีคุม" ตัดสินด้วยเจ้าของกติกา <see cref="Accounting.Helpers.PostingAccountRule"/> (มีบัญชีย่อย — เดิม "ระดับ &lt; 4" = เจ้าของที่สี่) ·
+    /// <paramref name="sameAsCurrentLink"/> = ผังเดิมของบัญชีนี้ (ส่งค่าเดิมกลับมาตอนแก้ชื่อ ฯลฯ) ⇒ ไม่ตรวจข้อบัญชีคุม: การเชื่อมเดิมยอมเป็นบัญชีคุมได้
+    /// (MoneyAccountDirectory.BankLinkedGlProblem) — เดิมผ่านเพราะระดับ 4 ห้ามกลายเป็นแก้บัญชีธนาคารไม่ได้</para></summary>
+    private async Task ValidateLinkedAccountAsync(Guid companyId, Guid linkedAccountId, bool sameAsCurrentLink = false)
     {
-        var coa = await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.Id == linkedAccountId && a.CompanyId == companyId && !a.IsDeleted)
-            .Select(a => new { a.AccountCode, a.AccountName, a.IsActive, a.Level })
-            .FirstOrDefaultAsync()
-            ?? throw new Accounting.Helpers.BusinessRuleException(
+        var facts = await _db.LoadPostingFactsAsync(companyId, new[] { linkedAccountId });
+        var coa = facts.TryGetValue(linkedAccountId, out var f) ? f
+            : throw new Accounting.Helpers.BusinessRuleException(
                 "ไม่พบผังบัญชีที่เลือกในบริษัทนี้ — เลือก “ผังบัญชีที่ผูก” ใหม่จากรายการ (หรือเว้นว่างให้ระบบสร้างผังเงินฝากย่อยให้)", "BANK-LINKED-ACCOUNT");
         if (!coa.IsActive)
             throw new Accounting.Helpers.BusinessRuleException(
-                $"ผังบัญชี {coa.AccountCode} {coa.AccountName} ถูกปิดใช้งานอยู่ — เปิดใช้ที่หน้า “ผังบัญชี” หรือเลือกผังอื่น", "BANK-LINKED-ACCOUNT");
-        if (!coa.AccountCode.StartsWith("111"))
+                $"ผังบัญชี {coa.Code} {coa.Name} ถูกปิดใช้งานอยู่ — เปิดใช้ที่หน้า “ผังบัญชี” หรือเลือกผังอื่น", "BANK-LINKED-ACCOUNT");
+        if (!coa.Code.StartsWith("111"))
             throw new Accounting.Helpers.BusinessRuleException(
-                $"ผังบัญชี {coa.AccountCode} ไม่ใช่กลุ่มเงินสด/เงินฝากธนาคาร (111x) — "
+                $"ผังบัญชี {coa.Code} ไม่ใช่กลุ่มเงินสด/เงินฝากธนาคาร (111x) — "
                 + "การกระทบยอดอ่านยอดจาก \"ขาที่วิ่งผ่านบัญชีนี้\" จึงต้องผูกกับผังเงินฝากเท่านั้น · เลือกผังเงินฝาก หรือเว้นว่างให้ระบบสร้างให้",
                 "BANK-LINKED-ACCOUNT");
-        if (coa.Level < 4)
+        if (!sameAsCurrentLink && Accounting.Helpers.PostingAccountRule.Check(coa) == Accounting.Helpers.PostingAccountProblem.Group)
             throw new Accounting.Helpers.BusinessRuleException(
-                $"ผังบัญชี {coa.AccountCode} {coa.AccountName} เป็นบัญชีกลุ่ม ลงรายการไม่ได้ — เลือกผังเงินฝากระดับย่อย หรือเว้นว่างให้ระบบสร้างผังย่อยให้",
+                $"ผังบัญชี {coa.Code} {coa.Name} เป็นบัญชีคุม (มีบัญชีย่อย) ลงรายการไม่ได้ — เลือกผังเงินฝากย่อยใต้บัญชีนี้ หรือเว้นว่างให้ระบบสร้างผังย่อยให้",
                 "BANK-LINKED-ACCOUNT");
     }
 
@@ -255,7 +255,8 @@ public partial class BankService : IBankService
         if (request.IsActive.HasValue) account.IsActive = request.IsActive.Value;
         if (request.LinkedAccountId.HasValue)
         {
-            await ValidateLinkedAccountAsync(companyId, request.LinkedAccountId.Value);
+            await ValidateLinkedAccountAsync(companyId, request.LinkedAccountId.Value,
+                sameAsCurrentLink: account.LinkedAccountId == request.LinkedAccountId.Value);
             account.LinkedAccountId = request.LinkedAccountId.Value;
         }
 

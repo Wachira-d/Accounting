@@ -29,7 +29,7 @@ public class AdversarialRound1DbTests
     public AdversarialRound1DbTests(ITestOutputHelper output) => _out = output;
 
     private sealed record Seed(Guid CompanyId, Guid OtherCompanyId, Guid SupplierId, Guid BankGlId, Guid LinkedBankId,
-        Guid UnlinkedBankId, Guid OtherCompanyBankId, Guid GroupLeafGlId, Guid CashGlId);
+        Guid UnlinkedBankId, Guid OtherCompanyBankId, Guid GroupLeafGlId, Guid CashGlId, Guid ControlGlId);
 
     private static ChartOfAccount Acc(Guid companyId, string code, string name, AccountType type, int level = 4)
         => new() { CompanyId = companyId, AccountCode = code, AccountName = name, AccountType = type, Level = level, IsActive = true };
@@ -42,12 +42,16 @@ public class AdversarialRound1DbTests
         await db.SaveChangesAsync();
         var cash = Acc(company.Id, "11111", "เงินสด", AccountType.Asset);
         var bankGl = Acc(company.Id, "11121", "เงินฝากกระแสรายวัน", AccountType.Asset);
-        // ผังระดับ 3 ที่ไม่มีบัญชีย่อย — ด่านผังบัญชีทั่วไปผ่าน (ไม่ใช่บัญชีคุม) แต่ตัวตัดสินแหล่งเงินของเอกสารถือเป็นบัญชีกลุ่ม
+        // ผังระดับ 3 ที่ไม่มีบัญชีย่อย (ผังของบริษัทเอง) — รอบ 206: ลงรายการได้ทุกทาง (เดิมตัวตัดสินแหล่งเงินถือ "ระดับ < 4" เป็นบัญชีกลุ่ม = เจ้าของที่สาม)
         var level3 = Acc(company.Id, "112", "เงินฝากธนาคาร (หมวด)", AccountType.Asset, level: 3);
+        // บัญชีคุมจริง — ผังระดับ 4 ที่มีบัญชีย่อย (แบบ 11122 + ผังเงินฝากย่อยที่ระบบสร้าง)
+        var control = Acc(company.Id, "11122", "เงินฝากออมทรัพย์", AccountType.Asset);
+        var controlChild = Acc(company.Id, "11122-001", "เงินฝากออมทรัพย์ - กสิกร xxx-7890", AccountType.Asset, level: 5);
+        controlChild.ParentAccountId = control.Id;
         var expense = Acc(company.Id, "52110", "ค่าทำบัญชี", AccountType.Expense);
         var ap = Acc(company.Id, "21210", "เจ้าหนี้การค้า", AccountType.Liability);
         var otherGl = Acc(other.Id, "11121", "เงินฝาก (บริษัทอื่น)", AccountType.Asset);
-        db.ChartOfAccounts.AddRange(cash, bankGl, level3, expense, ap, otherGl);
+        db.ChartOfAccounts.AddRange(cash, bankGl, level3, control, controlChild, expense, ap, otherGl);
         await db.SaveChangesAsync();
         var linked = new BankAccount { CompanyId = company.Id, AccountName = "บัญชีหลัก", BankName = "กสิกรไทย", AccountNumber = "1234567890", LinkedAccountId = bankGl.Id };
         var unlinked = new BankAccount { CompanyId = company.Id, AccountName = "บัญชียังไม่ผูก", BankName = "กรุงไทย", AccountNumber = "9876543210" };
@@ -60,7 +64,7 @@ public class AdversarialRound1DbTests
         };
         db.Contacts.Add(supplier);
         await db.SaveChangesAsync();
-        return new Seed(company.Id, other.Id, supplier.Id, bankGl.Id, linked.Id, unlinked.Id, otherBank.Id, level3.Id, cash.Id);
+        return new Seed(company.Id, other.Id, supplier.Id, bankGl.Id, linked.Id, unlinked.Id, otherBank.Id, level3.Id, cash.Id, control.Id);
     }
 
     private static DocumentService Docs(AccountingDbContext db)
@@ -253,28 +257,31 @@ public class AdversarialRound1DbTests
         InboundSyncResponse rejected;
         using (var req = DbTestDatabase.TryCreateContext()!)
             rejected = await new IntegrationService(req, null!, NullLogger<IntegrationService>.Instance, null!, null!, null!)
-                .ProcessInvoiceAsync(s.CompanyId, integration.Id, Sale(s.GroupLeafGlId));
+                .ProcessInvoiceAsync(s.CompanyId, integration.Id, Sale(s.ControlGlId));
         Assert.False(rejected.Success);
         Assert.Contains("paymentAccountId", rejected.Message);
-        Assert.Contains("บัญชีกลุ่ม", rejected.Message);
+        Assert.Contains("บัญชีคุม", rejected.Message);
         using (var check = DbTestDatabase.TryCreateContext()!)
         {
             Assert.False(await check.Documents.AnyAsync(d => d.CompanyId == s.CompanyId));   // ไม่ออกเลข · ไม่ตั้งหนี้
             var log = await check.Set<IntegrationSyncLog>().AsNoTracking().SingleAsync(l => l.CompanyId == s.CompanyId && l.IntegrationId == integration.Id);
             Assert.Equal("Failed", log.Status);
-            Assert.Contains("บัญชีกลุ่ม", log.ErrorMessage);
+            Assert.Contains("บัญชีคุม", log.ErrorMessage);
         }
 
-        // ทิศตรงข้าม: ผังเงินสดระดับรายการ ผ่านด่านนี้ (เทสต์นี้ไม่ได้ต่อบริการที่เหลือ ⇒ ไปล้มที่อื่น — ต้องไม่ใช่ข้อความของด่าน)
-        using (var req = DbTestDatabase.TryCreateContext()!)
+        // ทิศตรงข้าม: ผังเงินสดระดับรายการ + ผังระดับ 3 ที่ไม่มีบัญชีย่อย (รอบ 206) ผ่านด่านนี้
+        // (เทสต์นี้ไม่ได้ต่อบริการที่เหลือ ⇒ ไปล้มที่อื่น — ต้องไม่ใช่ข้อความของด่าน)
+        foreach (var okAccount in new[] { s.CashGlId, s.GroupLeafGlId })
         {
+            using var req = DbTestDatabase.TryCreateContext()!;
             InboundSyncResponse passed;
             try
             {
                 passed = await new IntegrationService(req, null!, NullLogger<IntegrationService>.Instance, null!, null!, null!)
-                    .ProcessInvoiceAsync(s.CompanyId, integration.Id, Sale(s.CashGlId));
+                    .ProcessInvoiceAsync(s.CompanyId, integration.Id, Sale(okAccount));
             }
             catch (Exception ex) { passed = new InboundSyncResponse(false, ex.Message, null, null, null, null, null); }
+            Assert.DoesNotContain("บัญชีคุม", passed.Message ?? "");
             Assert.DoesNotContain("บัญชีกลุ่ม", passed.Message ?? "");
         }
     }

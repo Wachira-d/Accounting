@@ -337,14 +337,14 @@ public class RevenueRecognitionService : IRevenueRecognitionService
             if (int.TryParse(lastPart, out var parsed)) revSeq = parsed + 1;
         }
 
-        var deferredRevenueAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21810" && a.Level >= 4)
-            ?? await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("218") && a.Level >= 4);
-        var revenueAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41100" && a.Level >= 4)
-            ?? await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("411") && a.Level >= 4);
+        var deferredRevenueAccount = await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21810")
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("218"));
+        var revenueAccount = await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41100")
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("411"));
 
         var entry = new JournalEntry
         {

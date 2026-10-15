@@ -4961,3 +4961,12 @@ _2026-10-14 — ทีม X2 ส่งออก CSV/Excel ของเอกส�
 `GET product?productType=` มีผลแล้ว (ตัวกรองเงียบ) · หน้าซื้อสินค้าแท็บ "ทั้งหมด" กรองชนิดที่เซิร์ฟเวอร์ก่อนแบ่งหน้า · checker `tools/export_page_cap_check.py` (ปุ่มส่งออกห้ามขอหน้าเดียวเกิน 200) ·
 เพิ่มปุ่มส่งออก: ผู้ติดต่อ · สินค้า · รายงานสินค้าคงเหลือ 5 แท็บ · คลัง (สต็อก/โอนย้าย) · มัดจำ · e-Tax · รายการประจำ · escape ชื่อสินค้า/ผู้จำหน่ายในตาราง ·
 เทสต์ `TradeListExportTests` · `Db/TradeListExportDbTests` · TEST_PLAN §EXP-X2 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 87d97bab_
+_รอบ 206 ทีมงานค้าง (2026-10-15 · คำตัดสินข้อ 150): (1) **ศูนย์นำเข้าจำกัดตามแพ็กเกจเหมือนหน้าเดิม** — คีย์ `"/companies/*/import"` (BulkImport · อยู่ใน
+`NewlyGatedRouteKeys`) + เมนู `import-hub` ผูก `BulkImport` · `migration/*` เดิมไม่ gate ⇒ ไม่เพิ่ม · คีย์ `/import` เปล่าจะลาก `/ai/import` (AI→BulkImport) ฯลฯ ⇒ ยึดหลังรหัสบริษัท
+(2) **"บัญชีคุม" เจ้าของเดียว** — `DocumentMoneyChannel.MinPostingLevel`/`Level < 4` ถูกลบ ⇒ `PostingAccountRule` ผ่าน `MoneyAccountDirectory.SourceProblem`/`BankLinkedGlProblem` ·
+`BankService.ValidateLinkedAccountAsync` (ผังเดิมตอนแก้ชื่อไม่ตรวจซ้ำ) · ตัวหาผังตั้งต้น 46 จุด `Level >= 4` → `PostingAccountGuard.WhereNotControlAccount` ·
+`AccountResponse.HasChildAccounts` แทน `level >= 4` ใน financial-mgmt · checker `posting_level_check.py` (3) **ผังลูกหนี้/เจ้าหนี้ของใบเดิม** `Helpers/OriginalArApAccount` —
+รับ/จ่ายชำระ (หน้าเว็บ + ระบบเชื่อมต่อ) · ตัดหนี้สูญ · หักมัดจำ ×2 · WHT ตอนปิดยอด · ใบเสร็จ/PV/ใบรับรองแทนใบเสร็จที่ปิดใบต้นทาง · CN/DN · พรีวิว PV ตัดผังที่ JE ตอนออกใบตั้งไว้
+(ปิดใช้ทีหลังก็ตัดได้) · ไม่มี JE ⇒ ตัวหาเดิม + โหลดผู้ติดต่อให้ (เดิมรับ/จ่ายชำระ/ตัดหนี้สูญไม่โหลด ⇒ ข้ามผังที่ปัก) (4) Db test ไฟล์ statement หลัง commit ·
+เทสต์ `SubscriptionGateImportHubTests` · `OriginalArApAccountTests` · `Db/OriginalArApAccountDbTests` · `Db/BankStatementImportDbTests` (+2) · แก้ `DocumentMoneyChannelTests`/`AdversarialRound1Tests`/`Db/AdversarialRound1DbTests`
+— ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_

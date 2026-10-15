@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Models.Entities;
+using Accounting.Services.Implementations;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Helpers;
@@ -38,9 +39,9 @@ public static class TipAccountResolver
                     && a.IsActive && !a.IsDeleted, ct);
             if (acc != null) return acc;
         }
-        return await db.ChartOfAccounts.AsNoTracking()
+        return await db.ChartOfAccounts.WhereNotControlAccount(db).AsNoTracking()
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                && a.Level >= 4 && a.AccountCode.StartsWith("21") && !a.AccountCode.StartsWith("216")
+                && a.AccountCode.StartsWith("21") && !a.AccountCode.StartsWith("216")
                 && a.AccountName.Contains("ทิป"), ct);
     }
 }

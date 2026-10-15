@@ -7102,12 +7102,10 @@ public class OcrService : IOcrService
         var scanDebitCode = scanAccounts.DebitCode;
         // ฝ่ายค้านรอบ 1 P2 (4b · กฎเหล็ก #3 ห้ามล้มตอนอนุมัติ): เติมเฉพาะผังที่ลงรายการได้ (เปิดใช้ · ไม่ใช่บัญชีกลุ่ม — กติกาเดียวกับด่านตอนลงบัญชี
         // DocumentMoneyChannel.IsPostableGl) · เดิมค้นแค่รหัส ⇒ ผังที่ปิดใช้/บัญชีกลุ่มถูกเติมเป็นหมวดค่าใช้จ่าย/แหล่งเงิน แล้วกดอนุมัติล้ม
-        var scanDebitGl = scanDebitCode == null ? null
-            : await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && a.AccountCode == scanDebitCode && !a.IsDeleted)
-                .Select(a => new { a.Id, a.IsActive, a.Level }).FirstOrDefaultAsync();
-        var scanDebitAccountId = scanDebitGl != null && Accounting.Helpers.DocumentMoneyChannel.IsPostableGl(scanDebitGl.IsActive, scanDebitGl.Level)
-            ? scanDebitGl.Id : (Guid?)null;
+        // รอบ 206: ข้อเท็จจริงผ่านตัวดึงของเจ้าของกติกา (บัญชีคุม = มีบัญชีย่อย ไม่ใช่ระดับ < 4)
+        var scanDebitGl = await Accounting.Helpers.DocumentMoneyChannel.LoadGlByCodeAsync(_db, companyId, scanDebitCode);
+        var scanDebitAccountId = Accounting.Helpers.DocumentMoneyChannel.IsPostableGl(scanDebitGl)
+            ? scanDebitGl!.Id : (Guid?)null;
         if (scanDebitGl != null && scanDebitAccountId == null)
             result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrAccountPlacement.Tag
                 + $" ผังเดบิต {scanDebitCode} ที่จำไว้ถูกปิดใช้/เป็นบัญชีกลุ่ม — ระบบใช้หมวดค่าใช้จ่ายตั้งต้นแทน ตรวจช่อง “หมวดค่าใช้จ่าย” ก่อนอนุมัติ";
@@ -7121,9 +7119,7 @@ public class OcrService : IOcrService
         if (!string.IsNullOrWhiteSpace(scanAccounts.CreditCode))
         {
             var creditCode = scanAccounts.CreditCode;
-            var creditGl = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && a.AccountCode == creditCode && !a.IsDeleted)
-                .Select(a => new { a.Id, a.IsActive, a.Level }).FirstOrDefaultAsync();
+            var creditGl = await Accounting.Helpers.DocumentMoneyChannel.LoadGlByCodeAsync(_db, companyId, creditCode);
             // ถ้าเป็นบัญชีธนาคาร (มี BankAccount ผูกอยู่) → ใช้ BankAccountId · เลือกบัญชีที่เปิดใช้ก่อน (เดิมได้บัญชีที่ปิดใช้แล้วได้)
             var creditBankId = creditGl == null ? null
                 : await _db.BankAccounts.AsNoTracking()
@@ -7134,7 +7130,7 @@ public class OcrService : IOcrService
             var creditUsable = creditGl != null && (creditBankId.HasValue
                 ? (await Accounting.Helpers.DocumentMoneyChannel.EvaluateAsync(_db, companyId, creditBankId, null,
                     Accounting.Helpers.MoneyChannelCheck.Post, Accounting.Helpers.DocumentMoneyChannel.DocumentFixHint)).Ok
-                : Accounting.Helpers.DocumentMoneyChannel.IsPostableGl(creditGl.IsActive, creditGl.Level));
+                : Accounting.Helpers.DocumentMoneyChannel.IsPostableGl(creditGl));
             if (creditUsable)
             {
                 scanCreditAccountId = creditGl!.Id;

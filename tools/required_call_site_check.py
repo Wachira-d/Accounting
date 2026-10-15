@@ -399,7 +399,7 @@ RULES += [
          why=_ADV1 + " P1: ออกใบเช็คเอาต์แทนยกบัญชีรับเงินของใบเดิมเป็นค่าที่ยกมา"),
     dict(file=DOC, method="ReclassifyPaymentSourceAsync", must=["DocumentMoneyChannel.PickReclassifySource("],
          why=_ADV1 + " P2 (4d): ยอดที่ย้ายมาจากขาเงินใน JE ไม่ใช่ PaidAmount × อัตรา"),
-    dict(file=DOC, method="TryRecognizeSalesWhtOnSettlementAsync", must=["IssuedReceivableAccountAsync("], must_lit=["[WHT-SETTLE]"],
+    dict(file=DOC, method="TryRecognizeSalesWhtOnSettlementAsync", must=["OriginalArApAccountAsync("], must_lit=["[WHT-SETTLE]"],
          forbid=["_logger.LogWarning(ex"],
          why=_ADV1 + " รอบ 2 P2(b): ตัดลูกหนี้ผังที่ใบตั้งไว้ · ล้มต้องดังบนเอกสาร (ไม่ใช่ LogWarning อย่างเดียว)"),
     dict(file=RECUR, method="CreateDocumentFromTemplateAsync",
@@ -7803,7 +7803,51 @@ RULES += [
          why="50 ทวิ QuestPDF: จำนวนเงินตัวอักษรจากตัวตั้งเดียวกับ HTML + หน้าพิมพ์ (2026-10-14)"),
 ]
 
-_RULE_KEYS = {"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
+# ── รอบ 206 (ทีมงานค้าง): (2) กติกา "ลงรายการได้" เจ้าของเดียว PostingAccountRule — DocumentMoneyChannel/BankService เดิมใช้ Level < 4 เอง
+# (เจ้าของที่สาม/สี่ · ห้ามเขียนใหม่ทั้งเรพ = tools/posting_level_check.py) · (3) ทุกเส้นที่ปิดหนี้ใบเดิมอ่านผังลูกหนี้/เจ้าหนี้จาก JE ตอนออกใบ
+# ผ่าน Helpers/OriginalArApAccount (เดิมอ่านผังที่ผู้ติดต่อปักตอนนี้ ⇒ ปิดใช้ = ปิดหนี้ไม่ได้ · เปลี่ยน = ตัดคนละผัง) ──
+_R206 = "รอบ 206 ทีมงานค้าง (PAYMENT_CHANNEL_AUDIT ADV2-P1-1 ยังค้าง · ADV2-P2-b)"
+_DMC = "Helpers/DocumentMoneyChannel.cs"
+RULES += [
+    dict(file=_DMC, method="Decide", must=["MoneyAccountDirectory.SourceProblem(", "MoneyAccountDirectory.BankLinkedGlProblem("],
+         forbid=["MinPostingLevel", "Level <"],
+         why=_R206 + ": แหล่งเงินตัดสินบัญชีคุมด้วยเจ้าของกติกา (มีบัญชีย่อย) — ผังตรงที่ธนาคารผูก/ผังที่ธนาคารผูกยอมเป็นบัญชีคุมเหมือนทางรับจ่ายชำระ"),
+    dict(file=_DMC, method="ExpenseCategoryProblem", must=["PostingAccountRule.Check("], forbid=["Level <"],
+         why=_R206 + ": หมวดค่าใช้จ่ายตัดสินด้วย PostingAccountRule"),
+    dict(file=_DMC, method="LoadGlAsync", must=["LoadPostingFactsAsync("],
+         why=_R206 + ": ข้อเท็จจริงของผังมาจากตัวดึงของเจ้าของกติกา (IsGroup = มีบัญชีย่อย) ไม่ใช่ระดับ"),
+    dict(file=_DMC, method="ChannelValueForGlAsync", must=["MoneyAccountDirectory.SourceProblem("],
+         why=_R206 + ": ค่าตั้งต้นของเทมเพลตตัดสินด้วยตัวเดียวกับตอนลงบัญชี"),
+    dict(file="Services/Implementations/BankService.cs", method="ValidateLinkedAccountAsync",
+         must=["LoadPostingFactsAsync(", "PostingAccountRule.Check(", "sameAsCurrentLink"], forbid=["Level <"],
+         why=_R206 + ": ผูกผังของบัญชีธนาคารใหม่ตัดสินบัญชีคุมด้วยเจ้าของ · ส่งค่าเดิมกลับ (แก้ชื่อ) ไม่ถูกบล็อก"),
+    dict(file="Services/Implementations/AccountingService.cs", method="GetAccountsAsync", must=["HasChildAccounts ="],
+         why=_R206 + ": หน้าเว็บกรองผังลงรายการได้จาก hasChildAccounts ที่เซิร์ฟเวอร์ตัดสิน (ห้าม level >= 4 ในหน้า)"),
+    dict(file=DOC, method="OriginalArApAccountAsync", must=["OriginalArApAccount.LoadAsync(", "fallback("],
+         why=_R206 + ": ผังที่ใบตั้งไว้จริงก่อน · ไม่มี JE ⇒ ตัวหาเดิม (โหลดผู้ติดต่อให้ — เดิม Contact ไม่ถูกโหลด ⇒ ข้ามผังที่ปัก)"),
+    dict(file=DOC, method="CreatePaymentJournalAsync", must=["OriginalArApAccountAsync(companyId, doc.Id, Accounting.Helpers.ArApSide.Receivable",
+         "OriginalArApAccountAsync(companyId, doc.Id, Accounting.Helpers.ArApSide.Payable"],
+         why=_R206 + ": รับ/จ่ายชำระตัดผังที่ใบตั้งไว้ (ผังที่ปักถูกปิด/เปลี่ยนทีหลังต้องไม่ทำให้รับชำระไม่ได้/ตัดคนละผัง)"),
+    dict(file=DOC, method="WriteOffBadDebtAsync", must=["OriginalArApAccountAsync("],
+         why=_R206 + ": ตัดหนี้สูญตัดผังลูกหนี้ที่ใบตั้งไว้"),
+    dict(file=DOC, method="ApplyDepositToInvoiceCoreAsync", must=["OriginalArApAccountAsync("],
+         why=_R206 + ": หักมัดจำตัดผังลูกหนี้ที่ใบตั้งไว้"),
+    dict(file=DOC, method="ApplyJournalDepositToInvoiceAsync", must=["OriginalArApAccountAsync("],
+         why=_R206 + ": หักมัดจำจาก JV ตัดผังลูกหนี้ที่ใบตั้งไว้"),
+    dict(file=DOC, method="AutoPostToJournalAsync", must=[
+             "OriginalArApAccountAsync(companyId, source.Id",                                             # ใบลด/เพิ่มหนี้
+             "OriginalArApAccountAsync(companyId, doc.RelatedDocumentId, Accounting.Helpers.ArApSide.Receivable",   # ใบเสร็จปิดใบแจ้งหนี้
+             "OriginalArApAccountAsync(companyId, doc.RelatedDocumentId, Accounting.Helpers.ArApSide.Payable"],     # ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จ
+         why=_R206 + ": ใบที่ปิด/ปรับหนี้ของใบต้นทางตัดผังที่ใบต้นทางตั้งไว้"),
+    dict(file="Services/Implementations/IntegrationService.cs", method="ResolvePaymentJournalAccountsAsync",
+         must=["OriginalArApAccount.LoadAsync("],
+         why=_R206 + ": รับ/จ่ายชำระผ่านระบบเชื่อมต่อตัดผังที่ใบตั้งไว้ (เดิมเจ้าหนี้ที่ปักถูกปิด ⇒ ตก 212 ตัวแรกเงียบ ๆ)"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildProjectedGlAsync",
+         must=["OriginalArApAccount.LoadAsync("],
+         why=_R206 + ": พรีวิว GL ของใบสำคัญจ่ายที่ปิดใบตั้งหนี้ = mirror ของ AutoPost (สอง renderer ห้าม drift)"),
+]
+
+_RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 
 def main() -> int:

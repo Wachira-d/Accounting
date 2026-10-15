@@ -465,8 +465,8 @@ public class WhtCreditService
         if (r.WriteOff > 0)
         {
             var expAcc = await FindAccountAsync(companyId, "53")
-                ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId
-                        && a.AccountType == AccountType.Expense && a.Level >= 4 && a.IsActive)
+                ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a => a.CompanyId == companyId
+                        && a.AccountType == AccountType.Expense && a.IsActive)
                 ?? throw new InvalidOperationException("ไม่พบผังค่าใช้จ่ายสำหรับตัดสูญ");
             lines.Add((expAcc.Id, r.WriteOff, 0, $"ตัดภาษีถูกหักที่เรียกคืนไม่ได้ ปี {r.TaxYear}"));
         }

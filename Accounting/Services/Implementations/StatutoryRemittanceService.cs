@@ -1841,16 +1841,16 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
     // ===== helpers =====
     private async Task<ChartOfAccount?> ResolveAccountAsync(Guid companyId, string code) =>
-        await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode == code && a.Level >= 4 && !a.IsDeleted);
+        await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.AccountCode == code && !a.IsDeleted);
 
     private async Task<ChartOfAccount?> ResolveLateFeeAccountAsync(Guid companyId) =>
-        await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+        await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.IsActive && !a.IsDeleted
             && a.AccountCode.StartsWith("54")
             && (a.AccountName.Contains("เงินเพิ่ม") || a.AccountName.Contains("ค่าปรับ")))
-        ?? await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4
+        ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+            a.CompanyId == companyId && a.IsActive && !a.IsDeleted
             && a.AccountCode.StartsWith("58"));
 
     /// <summary>แหล่งเงินของการนำส่ง — ตัวหาตัวเดียวของระบบ <see cref="MoneyAccountDirectory.ResolveSourceGlAsync"/> (2026-10-14 · PC#6/#17 · ID#19):

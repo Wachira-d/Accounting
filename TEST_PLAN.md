@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **551 ไฟล์ · 5,434 `[Fact]` + 842 `[Theory]` (3,767 `InlineData`)** ณ 2026-10-15 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **554 ไฟล์ · 5,451 `[Fact]` + 847 `[Theory]` (3,787 `InlineData`)** ณ 2026-10-15 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6181,3 +6181,17 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | EXP2-09 | หน้าสินค้า: เลือกประเภท | รายการเปลี่ยนตามประเภทจริง (เดิมพารามิเตอร์ `productType` ไม่มีผู้อ่าน) · ไฟล์ตามประเภทเดียวกัน | ✅ `Db/TradeListExportDbTests` |
 | EXP2-10 | ศูนย์นำเข้า/ส่งออก กด "ส่งออก" | ได้ไฟล์จริง (เดิม API.post กับไฟล์ ⇒ "non-JSON" · ส่ง `format` แทน `fileFormat` ⇒ 400) · เลือก Excel ได้ .xlsx · CSV มี BOM | ⬜ manual |
 | EXP2-11 | หน้าคลัง/รายงานสินค้าคงเหลือ/มัดจำ/e-Tax/รายการประจำ | ปุ่ม Export ทุกแท็บ · ตัวเลขเป็นตัวเลข · e-Tax/รายการประจำ/การโอนย้ายวนทุกหน้า (เกินเพดาน 100,000 แถว = เตือนแดง) | ⬜ manual |
+## R206-RESID — งานค้างที่ยืนยันแล้ว: แพ็กเกจศูนย์นำเข้า · บัญชีคุมเจ้าของเดียว · ผังลูกหนี้/เจ้าหนี้ของใบเดิม · ไฟล์ statement หลัง commit (รอบ 206 ทีมงานค้าง)
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| R206-01 | แพ็กเกจไม่มี `BulkImport` เรียก `api/companies/{cid}/import/*` (กดบังคับแล้ว) | `FeatureNotInPlan` ฟีเจอร์ BulkImport (ข้อความอัปเกรดมาตรฐาน) · มี BulkImport = ผ่าน · หน้าเว็บตัดสินเท่าหน้า `/import-export` ทุกโหมด · partner = เงาจนกว่ากดบังคับ | ✅ `SubscriptionGateImportHubTests` |
+| R206-02 | ทิศตรงข้าม: เส้นอื่นที่มี segment `import` (`/ai/import/…` · `/fixedasset/import` · `/settlement/files/import` · `/payroll/runs/import` · `/migration/*` · `/import-conflicts`) | ฟีเจอร์เดิม/ไม่ gate เหมือนเดิม (ไม่เข้มเกินหน้าเดิม) | ✅ `SubscriptionGateImportHubTests` |
+| R206-03 | เมนู `import-hub` | ล็อกเท่าเมนู `import-export` ทุกโหมด/แพ็กเกจ · negative: ถอด feature แล้ว sim ล้ม | ✅ `tools/nav_lock_mode_sim.js` |
+| R206-04 | ผังระดับ 2–3 ไม่มีบัญชีย่อย (ผังของบริษัทเอง) เป็นแหล่งเงิน/หมวดค่าใช้จ่าย/ผังรับเงินของระบบเชื่อมต่อ | ลงรายการได้ (เดิม `Level < 4` ปฏิเสธ) · ผัง 11122 ที่มีผังย่อย = บัญชีคุม (ปฏิเสธ "บัญชีคุม (มีบัญชีย่อย)") · ผังที่ธนาคารผูกยอมเป็นบัญชีคุม (ตรงกับทางรับ/จ่ายชำระ) | ✅ `DocumentMoneyChannelTests` · `AdversarialRound1Tests` · `Db/AdversarialRound1DbTests` |
+| R206-05 | เขียน `Level < 4`/`Level >= 4`/`MinPostingLevel`/JS `level >= 4` ใหม่ | checker ฟ้อง (negative test ฉีดบรรทัดเก่าลงสำเนา DocumentMoneyChannel ทุกครั้ง) | ✅ `tools/posting_level_check.py` |
+| R206-06 | ใบขายลงลูกหนี้ 11310-X (ผังที่ปัก) แล้วผังถูกปิดใช้ ⇒ รับชำระ / ตัดหนี้สูญ | ตัด 11310-X และสำเร็จ (เดิมโยน "เปิดใช้บัญชีเดิม" หรือตัด 11310) | ✅ `Db/OriginalArApAccountDbTests` |
+| R206-07 | ใบซื้อลงเจ้าหนี้ 21210-X แล้วผู้ติดต่อย้ายไปปัก 21210-Y + ปิดผังเดิม ⇒ จ่ายชำระ | ตัด 21210-X ไม่ใช่ 21210-Y | ✅ `Db/OriginalArApAccountDbTests` |
+| R206-08 | ทิศตรงข้าม: ใบไม่มี JE | ตัวหาเดิม: ผังที่ปักใช้ได้ = ตัดผังที่ปัก (ผู้ติดต่อถูกโหลดให้แล้ว) · ปิดใช้ = ล้มดังพร้อมทางไปต่อ + ไม่มีอะไรบันทึก | ✅ `Db/OriginalArApAccountDbTests` |
+| R206-09 | ตัวเลือก (pure): บัญชีพัก 11340/1134x · ขาเดบิตพักรับสินค้า 21240 · ผังของบริษัทเองที่ไม่ขึ้นด้วย 113 · เท่ากัน | ไม่นับบัญชีพัก/ขาฝั่งตรงข้าม · นับเมื่อเป็นผังที่ปัก · รหัสน้อยสุด | ✅ `OriginalArApAccountTests` |
+| R206-10 | statement: เก็บไฟล์ต้นทางหลัง commit | ตอนเก็บไฟล์ การเชื่อมต่ออื่นเห็นรายการแล้ว · ที่เก็บล้ม ⇒ รายการคงอยู่ + คำเตือน (ไม่ใช่ error) + ไม่มีแถวไฟล์แนบกำพร้าหลัง SaveChanges ถัดไป · ที่เก็บปกติไม่มีคำเตือน | ✅ `Db/BankStatementImportDbTests` |

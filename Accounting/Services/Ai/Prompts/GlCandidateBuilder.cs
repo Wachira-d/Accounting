@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Ai.Prompts;
@@ -14,7 +15,7 @@ namespace Accounting.Services.Ai.Prompts;
 ///   2. ตามด้วยบัญชีที่เหลือในหมวดที่เกี่ยว (Expense+Asset, หรือทุกหมวดสำหรับ PV)
 ///   3. **ส่ง Description (คำอธิบายผัง) ด้วย** — เดิมส่งแค่ code+name
 ///   4. cap สูงพอครอบผังจริง (Thai chart ~150-200 บัญชี) แต่ตัด detail-level
-///      (Level >= 4 = posting accounts เท่านั้น — header ลงไม่ได้อยู่แล้ว)
+///      (ไม่ใช่บัญชีคุม = posting accounts เท่านั้น — WhereNotControlAccount · header ลงไม่ได้อยู่แล้ว)
 /// </summary>
 public static class GlCandidateBuilder
 {
@@ -39,9 +40,9 @@ public static class GlCandidateBuilder
             select new { AccountId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.AccountId, x => x.Count, ct);
 
-        // 2) ผังบัญชีที่ active + posting-level (Level >= 4) ในหมวดที่เกี่ยว
-        var q = db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive && a.Level >= 4);
+        // 2) ผังบัญชีที่ active + ไม่ใช่บัญชีคุม (ไม่มีบัญชีย่อย — PostingAccountRule) ในหมวดที่เกี่ยว
+        var q = db.ChartOfAccounts.WhereNotControlAccount(db).AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive);
         if (expenseAssetOnly)
             q = q.Where(a => a.AccountType == AccountType.Expense || a.AccountType == AccountType.Asset);
         var all = await q

@@ -159,8 +159,8 @@ public class LoanService : ILoanService
     {
         var loanCode = LoanPostingPlan.SuggestLoanAccountCode(loanType, termMonths);
         var codes = new[] { loanCode, LoanPostingPlan.DefaultInterestExpenseCode };
-        var rows = await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive && a.Level >= 4 && codes.Contains(a.AccountCode))
+        var rows = await _db.ChartOfAccounts.WhereNotControlAccount(_db).AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive && codes.Contains(a.AccountCode))
             .Select(a => new { a.Id, a.AccountCode, a.AccountType })
             .ToListAsync();
         var loanAcc = rows.FirstOrDefault(r => r.AccountCode == loanCode && r.AccountType == AccountType.Liability);

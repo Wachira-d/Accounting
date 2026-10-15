@@ -146,8 +146,8 @@ public class PettyCashService : IPettyCashService
     }
 
     public async Task<PettyCashFundAccountOption?> GetDefaultFundAccountAsync(Guid companyId, CancellationToken ct = default)
-        => await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive && a.Level >= 4
+        => await _db.ChartOfAccounts.WhereNotControlAccount(_db).AsNoTracking()
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
                 && a.AccountType == AccountType.Asset && a.AccountCode == PettyCashJePlan.DefaultFundAccountCode)
             .Select(a => new PettyCashFundAccountOption(a.Id, a.AccountCode, a.AccountName))
             .FirstOrDefaultAsync(ct);

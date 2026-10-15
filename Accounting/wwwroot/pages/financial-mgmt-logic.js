@@ -53,7 +53,8 @@ const Page = {
   fillAccountSelect(selId, prefix) {
     const sel = document.getElementById(selId);
     sel.innerHTML = '<option value="">เลือกบัญชี</option>';
-    this.accounts.filter(a => a.accountCode.startsWith(prefix) && a.level >= 4)
+    // รอบ 206: "ลงรายการได้" = ไม่ใช่บัญชีคุม (มีบัญชีย่อย) ตามที่เซิร์ฟเวอร์ตัดสิน (hasChildAccounts) — เดิม level >= 4 ข้ามผังระดับ 2–3 ของบริษัท
+    this.accounts.filter(a => a.accountCode.startsWith(prefix) && !a.hasChildAccounts)
       .forEach(a => { const o = document.createElement('option'); o.value = a.id; o.textContent = `${a.accountCode} ${a.accountName}`; sel.appendChild(o); });
   },
 

@@ -126,8 +126,8 @@ public class KnowledgeBaseService : IKnowledgeBaseService
             "ข้อมูลกิจการ", profile, "Tenant", ct, forceTouch: true);
 
         // ── ผังบัญชี (เฉพาะ posting-level, แบ่งตามหมวด 1-5 กันก้อนโต) ──
-        var accounts = await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted && a.Level >= 4)
+        var accounts = await _db.ChartOfAccounts.WhereNotControlAccount(_db).AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted)
             .OrderBy(a => a.AccountCode)
             .Select(a => new { a.AccountCode, a.AccountName })
             .ToListAsync(ct);

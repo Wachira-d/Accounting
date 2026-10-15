@@ -15,8 +15,9 @@ public class DocumentMoneyChannelTests
     private static readonly Guid BankGl = Guid.Parse("33333333-3333-3333-3333-333333333333");
     private const string Fix = "แก้ที่เอกสาร";
 
-    private static MoneyGlFacts GlFacts(bool active = true, int level = 5, Guid? id = null)
-        => new(id ?? Gl, "21230", "เงินกู้ยืมกรรมการ", active, level);
+    /// <summary>รอบ 206: ข้อเท็จจริงเป็น "มีบัญชีย่อย" (<paramref name="group"/>) ตามเจ้าของกติกา PostingAccountRule — ไม่ใช่ระดับผัง</summary>
+    private static MoneyGlFacts GlFacts(bool active = true, bool group = false, Guid? id = null, bool linkedByBank = false)
+        => new(id ?? Gl, "21230", "เงินกู้ยืมกรรมการ", active, group, linkedByBank);
 
     private static MoneyBankFacts BankFacts(bool active = true, Guid? linked = null, MoneyGlFacts? linkedFacts = null)
         => new(Bank, "บัญชีออมทรัพย์ (กสิกร 123)", active, linked, linkedFacts);
@@ -126,8 +127,19 @@ public class DocumentMoneyChannelTests
             BankFacts(linked: BankGl, linkedFacts: null), false, MoneyChannelCheck.Post, Fix).Problem);
         Assert.Contains("ถูกปิดใช้งาน", DocumentMoneyChannel.Decide(MoneyChannelKind.BankAccount, null, false,
             BankFacts(linked: BankGl, linkedFacts: GlFacts(active: false, id: BankGl)), false, MoneyChannelCheck.Post, Fix).Problem);
-        Assert.Contains("ผังกลุ่ม", DocumentMoneyChannel.Decide(MoneyChannelKind.BankAccount, null, false,
-            BankFacts(linked: BankGl, linkedFacts: GlFacts(level: 3, id: BankGl)), false, MoneyChannelCheck.Post, Fix).Problem);
+    }
+
+    [Fact]
+    public void รอบ206_ผังที่ธนาคารผูกเป็นบัญชีคุม_ยอมได้เหมือนทางรับจ่ายชำระ()
+    {
+        // เดิม "ผูกกับผังกลุ่ม" ปฏิเสธที่นี่ ขณะที่ MoneyAccountDirectory.TryResolveBankGlAsync (ทางรับ/จ่ายชำระ) ยอม ⇒ ธนาคารเดียวกันลงได้ทางหนึ่งไม่ได้อีกทาง
+        var d = DocumentMoneyChannel.Decide(MoneyChannelKind.BankAccount, null, false,
+            BankFacts(linked: BankGl, linkedFacts: GlFacts(group: true, id: BankGl)), false, MoneyChannelCheck.Post, Fix);
+        Assert.True(d.Ok);
+        Assert.Equal(BankGl, d.GlAccountId);
+        // ทิศตรงข้าม: ผังที่ผูกปิดใช้ ยังปฏิเสธ
+        Assert.Contains("ถูกปิดใช้งาน", DocumentMoneyChannel.Decide(MoneyChannelKind.BankAccount, null, false,
+            BankFacts(linked: BankGl, linkedFacts: GlFacts(active: false, group: true, id: BankGl)), false, MoneyChannelCheck.Post, Fix).Problem);
     }
 
     [Fact]
@@ -151,7 +163,26 @@ public class DocumentMoneyChannelTests
         Assert.True(ok.Ok);
         Assert.Equal(Gl, ok.GlAccountId);
         Assert.Contains("ถูกปิดใช้งาน", DocumentMoneyChannel.Decide(MoneyChannelKind.GlAccount, GlFacts(active: false), false, null, false, MoneyChannelCheck.Post, Fix).Problem);
-        Assert.Contains("บัญชีกลุ่ม", DocumentMoneyChannel.Decide(MoneyChannelKind.GlAccount, GlFacts(level: 3), false, null, false, MoneyChannelCheck.Post, Fix).Problem);
+        Assert.Contains("บัญชีคุม (มีบัญชีย่อย)", DocumentMoneyChannel.Decide(MoneyChannelKind.GlAccount, GlFacts(group: true), false, null, false, MoneyChannelCheck.Post, Fix).Problem);
+    }
+
+    [Fact]
+    public void รอบ206_บัญชีคุมตัดสินจากบัญชีย่อย_ไม่ใช่ระดับ_สองทิศ()
+    {
+        // ผังของบริษัทเองระดับ 2–3 ที่ไม่มีบัญชีย่อย = ลงรายการได้ (เดิม Level < 4 ปฏิเสธ) — facts ไม่มีระดับให้ตัดสินอีกแล้ว
+        var leaf = DocumentMoneyChannel.Decide(MoneyChannelKind.GlAccount, GlFacts(group: false), false, null, false, MoneyChannelCheck.Post, Fix);
+        Assert.True(leaf.Ok);
+        Assert.True(DocumentMoneyChannel.IsPostableGl(GlFacts(group: false)));
+        Assert.Null(DocumentMoneyChannel.ExpenseCategoryProblem(GlFacts(group: false), false));
+        // ผังระดับ 4 ที่มีบัญชีย่อย (11122 + ผังเงินฝากย่อย) = บัญชีคุม — ทุกทางปฏิเสธเหมือน PostingAccountRule
+        Assert.False(DocumentMoneyChannel.Decide(MoneyChannelKind.GlAccount, GlFacts(group: true), false, null, false, MoneyChannelCheck.Save, Fix).Ok);
+        Assert.False(DocumentMoneyChannel.IsPostableGl(GlFacts(group: true)));
+        Assert.Equal(PostingAccountProblem.Group, PostingAccountRule.Check(GlFacts(group: true).Posting));
+        // ผังตรงที่บัญชีธนาคารเปิดใช้ผูกอยู่ ยอมเป็นบัญชีคุม (ตัวเดียวกับ MoneyAccountDirectory.SourceProblem)
+        Assert.True(DocumentMoneyChannel.Decide(MoneyChannelKind.GlAccount, GlFacts(group: true, linkedByBank: true), false, null, false,
+            MoneyChannelCheck.Post, Fix).Ok);
+        // ตัวเติมค่า: null = ไม่มีในบริษัท ⇒ ไม่เติม
+        Assert.False(DocumentMoneyChannel.IsPostableGl(null));
     }
 
     [Fact]
@@ -170,6 +201,8 @@ public class DocumentMoneyChannelTests
         Assert.Contains("ได้รหัสบัญชีธนาคาร", DocumentMoneyChannel.ExpenseCategoryProblem(null, idIsBank: true));
         Assert.Contains("ไม่มีในบริษัทนี้", DocumentMoneyChannel.ExpenseCategoryProblem(null, false));
         Assert.Contains("ถูกปิดใช้งาน", DocumentMoneyChannel.ExpenseCategoryProblem(GlFacts(active: false), false));
-        Assert.Contains("บัญชีกลุ่ม", DocumentMoneyChannel.ExpenseCategoryProblem(GlFacts(level: 2), false));
+        Assert.Contains("บัญชีคุม", DocumentMoneyChannel.ExpenseCategoryProblem(GlFacts(group: true), false));
+        // หมวดค่าใช้จ่ายไม่ใช่ที่อยู่ของเงิน — ผูกธนาคารก็ไม่ปลดข้อบัญชีคุม
+        Assert.Contains("บัญชีคุม", DocumentMoneyChannel.ExpenseCategoryProblem(GlFacts(group: true, linkedByBank: true), false));
     }
 }

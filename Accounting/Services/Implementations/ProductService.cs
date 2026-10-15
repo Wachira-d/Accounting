@@ -1048,22 +1048,20 @@ public class ProductService : IProductService
             // ร่วมกัน** (Helpers/InventoryControlAccount) · เดิมฝั่งเบิก Cr 118xx
             // ขณะที่ฝั่งซื้อ (DocumentService) Dr 11500 เพราะเห็นแค่ว่า TrackStock
             // ⇒ สองบัญชีไม่มีวันหักล้าง 11500 บวมถาวร (DECISION_AUDIT D5-2)
-            var suppliesDefaultId = await _db.ChartOfAccounts
+            // บัญชี postable เท่านั้น (ไม่ใช่บัญชีคุม — WhereNotControlAccount · รอบ 206 เดิม Level >= 4) — ผังมาตรฐานมี header ระดับ 3
+            // ชื่อรหัสสั้น ("115") ซึ่ง OrderBy จะหยิบก่อนบัญชีจริง ⇒ ลงบัญชีกลุ่ม
+            // (บั๊กเดียวกับ audit F2 ที่ CN ซื้อเคยลง header "116")
+            var suppliesDefaultId = await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
                     && a.AccountCode.StartsWith(
-                        Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Supplies))
-                    // Level >= 4 = บัญชี postable เท่านั้น — ผังมาตรฐานมี header ระดับ 3
-                    // ชื่อรหัสสั้น ("115") ซึ่ง OrderBy จะหยิบก่อนบัญชีจริง ⇒ ลงบัญชีกลุ่ม
-                    // (บั๊กเดียวกับ audit F2 ที่ CN ซื้อเคยลง header "116")
-                    && a.Level >= 4)
+                        Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Supplies)))
                 .OrderBy(a => a.AccountCode)
                 .Select(a => (Guid?)a.Id)
                 .FirstOrDefaultAsync();
-            var inventoryDefaultId = await _db.ChartOfAccounts
+            var inventoryDefaultId = await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
                     && a.AccountCode.StartsWith(
-                        Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Product))
-                    && a.Level >= 4)
+                        Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Product)))
                 .OrderBy(a => a.AccountCode)
                 .Select(a => (Guid?)a.Id)
                 .FirstOrDefaultAsync();

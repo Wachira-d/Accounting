@@ -1488,8 +1488,9 @@ const Layout = {
     { id: 'admin-addons', label: 'ส่วนเสริมและราคา', icon: '💰', href: '/pages/admin-addons.html', platformAdmin: true,
       description: 'แคตตาล็อกส่วนเสริม: ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย (ราคาเก่าไม่ถูกแก้ย้อนหลัง)' },
     // รอบ 205 ทีม E — ทางนำเข้าหลักทุกชนิด (IMPORT_ETL_REVIEW §2.8): วางไฟล์ → เซิร์ฟเวอร์อ่าน/จับคู่/แปลง/ตรวจ → ผู้ใช้แค่ตรวจและยืนยัน ·
-    // ไม่ผูก feature เพราะ API `/import/` ไม่อยู่ใน RouteFeatureMap (เมนูกับ API ต้องตรงกัน — ถ้าเจ้าของตัดสินให้ผูกแพ็กเกจ ต้องแก้ทั้งสองที่)
-    { id: 'import-hub', label: 'ศูนย์นำเข้าข้อมูล', icon: '📥', href: '/pages/import-hub.html', _i18nKey: 'nav.importHub',
+    // รอบ 206: ผูก BulkImport เหมือนเมนู import-export เดิม ("จำกัดตามหน้าเดิม") — คู่กับ ("/companies/*/import", BulkImport) ใน
+    // SubscriptionGatePolicy.RouteFeatureMap (เมนูกับ API ต้องตรงกัน) · ไม่ใส่ lockOnEnforce เพราะหน้าเดิมล็อกแบบเดิม (ห้ามหลวมกว่าหน้าที่มันแทน)
+    { id: 'import-hub', label: 'ศูนย์นำเข้าข้อมูล', icon: '📥', href: '/pages/import-hub.html', feature: 'BulkImport', _i18nKey: 'nav.importHub',
       description: 'วางไฟล์ CSV/Excel จากโปรแกรมใดก็ได้ — ระบบอ่าน จับคู่คอลัมน์ แปลงค่า ตรวจ แล้วให้คุณยืนยัน · ย้อนการนำเข้าได้ · ลำดับย้ายระบบ' },
     { id: 'import-export', label: 'นำเข้า/ส่งออกข้อมูล', icon: '📤', href: '/pages/import-export.html', feature: 'BulkImport', _i18nKey: 'nav.importExport',
       description: 'ส่งออกข้อมูลเป็น CSV/Excel · ดาวน์โหลดเทมเพลต · นำเข้าตามเทมเพลตแบบเดิม (นำเข้าใหม่แนะนำศูนย์นำเข้าข้อมูล)' },
