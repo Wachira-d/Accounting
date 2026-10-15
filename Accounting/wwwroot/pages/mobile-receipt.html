@@ -48,6 +48,8 @@
 
     .toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); background: #10b981; color: #fff; padding: 12px 20px; border-radius: 10px; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; animation: slide-in 0.2s; }
     .toast.error { background: #ef4444; }
+    .last-receipt { margin: 0 16px 12px; padding: 12px 14px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; display: none; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+    .last-receipt .btn { flex: 0 0 auto; padding: 10px 14px; font-size: 14px; max-width: none; }
     @keyframes slide-in { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
   </style>
 </head>
@@ -106,13 +108,26 @@
     </div>
   </div>
 
-  <div class="submit-bar">
-    <button class="btn btn-secondary" onclick="clearAmt()">ล้าง</button>
-    <button class="btn btn-primary" id="submitBtn" onclick="submit()">บันทึก + พิมพ์ใบเสร็จ</button>
+  <!-- ใบเสร็จที่เพิ่งบันทึก — บันทึก PDF / แชร์ (ทีม X5 2026-10-15): ไฟล์ PDF จากเซิร์ฟเวอร์ (ตัวเดียวกับหน้าเอกสาร)
+       ผ่าน Layout.savePdf → มือถือ = แผ่นแชร์ของระบบ (บันทึกลงไฟล์ · LINE · พิมพ์) · เดสก์ท็อป = ดาวน์โหลด -->
+  <div class="last-receipt" id="lastReceipt">
+    <span id="lastReceiptLabel" style="flex:1;min-width:0"></span>
+    <button class="btn btn-primary" id="pdfBtn" onclick="savePdf()">📄 บันทึก PDF / แชร์</button>
+    <button class="btn btn-secondary" onclick="printLast()">🖨 พิมพ์</button>
   </div>
 
+  <div class="submit-bar">
+    <button class="btn btn-secondary" onclick="clearAmt()">ล้าง</button>
+    <button class="btn btn-primary" id="submitBtn" onclick="submit()">บันทึกใบเสร็จ</button>
+  </div>
+
+  <!-- ตัวดึงไฟล์ + ส่งไฟล์กลาง (API.fetchFile · Layout.savePdf/deliverFile) — ไม่มีสำเนาในหน้านี้ ·
+       หน้านี้ไม่เรียก Layout.init (ไม่มีเมนูข้าง) · ข้อความของ Layout ส่งเข้า toast ของหน้านี้ผ่านตัวแปลงบรรทัดเดียวด้านล่าง -->
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
   <script>
     let amount = 0;
+    let lastDoc = null;   // { id, number } ของใบเสร็จที่เพิ่งบันทึก
     let method = 'cash';
     const display = document.getElementById('display');
 
@@ -146,6 +161,51 @@
       setTimeout(() => t.remove(), 2500);
     }
 
+    // ตัวแปลงข้อความ: Layout.toast ต้องมี #toastContainer + style.css ของหน้าหลัก (หน้านี้ไม่มี) ⇒ ส่งเข้า toast ของหน้านี้แทน
+    if (window.Layout) Layout.toast = (msg, type) => toast(msg, type === 'error' ? 'error' : 'ok');
+
+    function showLast(doc) {
+      lastDoc = doc;
+      const box = document.getElementById('lastReceipt');
+      document.getElementById('lastReceiptLabel').textContent = 'บันทึกแล้ว ' + (doc.number || '');
+      box.style.display = 'flex';
+    }
+    /** PDF จากเซิร์ฟเวอร์ (document-templates/generate-pdf ตัวเดียวกับปุ่ม PDF ในหน้าเอกสาร) → Layout.savePdf ตัวเดียวของระบบ */
+    async function savePdf() {
+      const cid = getCid();
+      if (!lastDoc || !cid) { toast('ยังไม่มีใบเสร็จที่บันทึก', 'error'); return; }
+      const btn = document.getElementById('pdfBtn');
+      btn.disabled = true;
+      try {
+        const safe = String(lastDoc.number || lastDoc.id).replace(/[\\/:*?"<>|]/g, '_');
+        await Layout.savePdf(`/api/companies/${cid}/document-templates/generate-pdf`, `ใบเสร็จรับเงิน_${safe}.pdf`, {
+          method: 'POST',
+          body: { documentId: lastDoc.id, templateId: null, watermarkOverride: null, copyNumber: null, language: null },
+        });
+      } finally { btn.disabled = false; }
+    }
+    /** พิมพ์ผ่านหน้าต่าง HTML (เครื่องพิมพ์สลิป/เดสก์ท็อป) — ทางเดิม */
+    async function printLast() {
+      const cid = getCid();
+      if (!lastDoc || !cid) { toast('ยังไม่มีใบเสร็จที่บันทึก', 'error'); return; }
+      try {
+        const pres = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ documentId: lastDoc.id, templateId: null, watermarkOverride: null, copyNumber: null, language: null })
+        });
+        if (!pres.ok) { toast('สร้างหน้าพิมพ์ไม่สำเร็จ (' + pres.status + ') — ใช้ “บันทึก PDF / แชร์” แทน', 'error'); return; }
+        const html = await pres.text();
+        const w = window.open('', '_blank');
+        if (!w) { toast('เปิดหน้าพิมพ์ไม่ได้ (ป๊อปอัปถูกบล็อก) — ใช้ “บันทึก PDF / แชร์” แทน', 'error'); return; }
+        w.document.open(); w.document.write(html); w.document.close();
+        let printed = false;
+        const doPrint = () => { if (printed) return; printed = true; try { w.focus(); w.print(); } catch (_) {} };
+        w.onload = doPrint;            // ยิงเมื่อ render เสร็จ
+        setTimeout(doPrint, 700);      // fallback ถ้า onload ไม่ยิง
+      } catch (e) { toast('พิมพ์ไม่สำเร็จ: ' + (e.message || e), 'error'); }
+    }
+
     function getCid() {
       try { return JSON.parse(localStorage.getItem('currentCompany'))?.id; } catch { return null; }
     }
@@ -158,7 +218,7 @@
         const j = await r.json();
         const items = j.data?.items || j.data || [];
         document.getElementById('customer').innerHTML = '<option value="">— เงินสดทั่วไป —</option>' +
-          items.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+          items.map(c => `<option value="${Layout.esc(c.id)}">${Layout.esc(c.name)}</option>`).join('');
       } catch {}
     }
     async function submit() {
@@ -199,34 +259,16 @@
         toast('บันทึกใบเสร็จเรียบร้อย ✓');
         amount = 0; refresh();
         document.getElementById('memo').value = '';
-        // พิมพ์ใบเสร็จที่ "เพิ่งสร้าง" — generate-html เป็น POST ต้องส่ง documentId
-        // ใน body (เดิมเรียกแบบ GET ไม่ส่ง id → หน้าพิมพ์ว่าง/ไม่ตรงใบ). ดึง HTML
-        // มาเปิดหน้าต่างใหม่แล้วสั่งพิมพ์ (เหมาะกับเครื่องพิมพ์สลิป / Save as PDF)
+        // ใบที่เพิ่งสร้าง → แถบ "บันทึก PDF / แชร์" + "พิมพ์" (ทีม X5 2026-10-15) · เดสก์ท็อปเปิดหน้าพิมพ์ให้ทันทีเหมือนเดิม ·
+        // มือถือไม่เปิดป๊อปอัปพิมพ์ (ใช้ไม่ได้บนมือถือ — ได้หน้าเปล่า/ถูกบล็อก) ให้กดปุ่ม PDF/แชร์แทน
         const docId = j.data?.id;
         if (docId) {
-          try {
-            const pres = await fetch(`/api/companies/${cid}/document-templates/generate-html`, {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ documentId: docId, templateId: null, watermarkOverride: null, copyNumber: null, language: null })
-            });
-            if (pres.ok) {
-              const html = await pres.text();
-              const w = window.open('', '_blank');
-              if (w) {
-                w.document.open(); w.document.write(html); w.document.close();
-                let printed = false;
-                const doPrint = () => { if (printed) return; printed = true; try { w.focus(); w.print(); } catch (_) {} };
-                w.onload = doPrint;            // ยิงเมื่อ render เสร็จ
-                setTimeout(doPrint, 700);      // fallback ถ้า onload ไม่ยิง
-              } else {
-                toast('เปิดหน้าพิมพ์ไม่ได้ (ป๊อปอัปถูกบล็อก) — เปิดพิมพ์จากรายการเอกสารได้', 'error');
-              }
-            }
-          } catch (_) { /* บันทึกสำเร็จแล้ว พิมพ์ไม่ได้ไม่เป็นไร */ }
+          showLast({ id: docId, number: j.data?.documentNumber });
+          const mobile = Layout.isMobileDevice();   // ตัวตัดสินกลาง (ห้ามเขียน regex UA เอง)
+          if (!mobile) await printLast();
         }
       } catch (e) { toast(e.message, 'error'); }
-      finally { btn.disabled = false; btn.textContent = 'บันทึก + พิมพ์ใบเสร็จ'; }
+      finally { btn.disabled = false; btn.textContent = 'บันทึกใบเสร็จ'; }
     }
 
     loadCustomers();

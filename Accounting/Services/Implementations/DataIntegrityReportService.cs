@@ -28,6 +28,10 @@ public sealed record DataIntegrityReport(
     // DECISIONS ข้อ 111 — รอบเงินเดือนที่ยกเลิกแล้วแต่ 50 ทวิ ยังสถานะออกแล้ว · อ่านอย่างเดียว (ไม่ยกเลิกให้ — อาจยื่นไปแล้ว)
     List<DataIntegritySuspect> VoidedPayrollRunsWithIssuedWhtCerts)
 {
+    /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
+    /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
+    public IReadOnlyList<Accounting.Helpers.DataIntegritySectionInfo> Sections => Accounting.Helpers.DataIntegritySections.All;
+
     public int Total => PosOrderTotals.Count + RollupBillingNoteChildren.Count + PurchaseInvoicesBilledFromPoWithGrn.Count
         + PayrollRunTotals.Count + PlainReceiptsWithVat.Count + Section40_4RecordedAsPnd3.Count + TipWhtPostedToPnd2Account.Count
         + OcrLineDiscountWouldChangeOnResave.Count + VoidedPayrollRunsWithIssuedWhtCerts.Count;

@@ -253,4 +253,11 @@ public record FiscalPeriodResponse(
     int Month,
     DateTime StartDate,
     DateTime EndDate,
-    FiscalPeriodStatus Status);
+    FiscalPeriodStatus Status,
+    // echo กลับ (กฎเหล็ก #4 A · ทีม X5 2026-10-15) — หน้า fiscal.html อ่าน closedAt/lockedAt/yearEndJournalEntryId มาตลอด
+    // แต่ DTO ไม่เคยส่ง ⇒ ป้าย "Soft-closed / Hard-locked / ดู JE ปิดปี" ไม่เคยขึ้น · ไฟล์ส่งออกงวดบัญชีใช้ชุดเดียวกัน
+    DateTime? ClosedAt = null,
+    string? ClosedBy = null,
+    DateTime? LockedAt = null,
+    string? LockedBy = null,
+    Guid? YearEndJournalEntryId = null);

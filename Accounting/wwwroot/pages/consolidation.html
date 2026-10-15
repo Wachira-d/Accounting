@@ -117,7 +117,8 @@ const Page = {
     try {
       const res = await API.getCompanies();
       const companies = res.data?.items || res.data || [];
-      document.getElementById('groupParent').innerHTML = companies.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      // บริษัทแม่ต้องเป็นบริษัทที่เปิดอยู่ (เซิร์ฟเวอร์ตรวจ — ทีม X5 2026-10-15) ⇒ ตั้งต้นเลือกบริษัทปัจจุบัน
+      document.getElementById('groupParent').innerHTML = companies.map(c => `<option value="${Layout.esc(c.id)}" ${c.id === Layout.getCompanyId() ? 'selected' : ''}>${Layout.esc(c.name)}</option>`).join('');
     } catch (err) { /* ignore */ }
     document.getElementById('groupName').value = '';
     Layout.openModal('groupModal');
@@ -135,7 +136,7 @@ const Page = {
     try {
       const res = await API.getCompanies();
       const companies = res.data?.items || res.data || [];
-      document.getElementById('memberCompany').innerHTML = companies.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      document.getElementById('memberCompany').innerHTML = companies.map(c => `<option value="${Layout.esc(c.id)}">${Layout.esc(c.name)}</option>`).join('');
     } catch (err) { /* ignore */ }
     Layout.openModal('memberModal');
   },
@@ -165,7 +166,7 @@ const Page = {
       const items = d.items || d.lines || [];
       content.innerHTML = `<h3 style="margin-bottom:16px">${type === 'bs' ? 'งบดุลรวม' : 'งบกำไรขาดทุนรวม'}</h3>
       <div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th class="text-right">ยอดรวม</th></tr></thead>
-      <tbody>${items.map(i => `<tr style="${i.isHeader?'font-weight:bold;background:var(--gray-50)':''}"><td style="padding-left:${(i.level||0)*20}px">${i.name||i.accountName||'-'}</td><td class="text-right">${Layout.money(i.amount||i.balance)}</td></tr>`).join('')}</tbody></table></div>`;
+      <tbody>${items.map(i => `<tr style="${i.isHeader?'font-weight:bold;background:var(--gray-50)':''}"><td style="padding-left:${(i.level||0)*20}px">${Layout.esc(i.name||i.accountName||'-')}</td><td class="text-right">${Layout.money(i.amount||i.balance)}</td></tr>`).join('')}</tbody></table></div>`;
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },
 
@@ -178,7 +179,7 @@ const Page = {
       const res = await api.getEliminations(gid);
       const items = res.data?.items || res.data || [];
       content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.items">รายการ</th><th>บัญชี</th><th>จาก → ถึง</th><th class="text-right">จำนวนเงิน</th></tr></thead>
-      <tbody>${items.map(e => `<tr><td>${e.description||'-'}</td><td>${e.accountName||e.accountCode||'-'}</td><td>${(e.sourceCompany||'-')+' → '+(e.targetCompany||'-')}</td><td class="text-right">${Layout.money(e.amount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีรายการตัดบัญชี</p>';
+      <tbody>${items.map(e => `<tr><td>${Layout.esc(e.description||'-')}</td><td>${Layout.esc(e.accountName||e.accountCode||'-')}</td><td>${Layout.esc((e.sourceCompany||'-')+' → '+(e.targetCompany||'-'))}</td><td class="text-right">${Layout.money(e.amount)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center">ไม่มีรายการตัดบัญชี</p>';
     } catch (err) { content.innerHTML = `<p class="text-danger text-center">${Layout.esc(err.message)}</p>`; }
   },
 };

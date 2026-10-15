@@ -58,7 +58,10 @@ public record BudgetVsActualLine(
     decimal BudgetAmount,
     decimal ActualAmount,
     decimal Variance,
-    decimal VariancePercent);
+    decimal VariancePercent,
+    // สถานะ + % ใช้ไป จากเซิร์ฟเวอร์ (Helpers/BudgetUsageStatus — ทีม X5 2026-10-15) · หน้าแสดงอย่างเดียว
+    string UsageStatus = "",
+    decimal UsedPercent = 0m);
 
 public record BudgetAlertResponse(
     Guid AccountId,

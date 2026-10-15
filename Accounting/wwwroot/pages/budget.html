@@ -11,8 +11,12 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">งบประมาณ</h2><p class="page-subtitle">จัดการงบประมาณและเปรียบเทียบกับยอดจริง</p></div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงบประมาณ</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="exportSlot"></span>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างงบประมาณ</button>
+      </div>
     </div>
+    <div id="listNote" class="text-xs text-gray-500" style="margin:0 0 8px"></div>
 
     <div class="table-container">
       <table class="table">
@@ -70,12 +74,15 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       accounts: [],
       async init() {
         if (!Layout.init('budget')) return;
         Layout.setTitle('งบประมาณ');
+        const slot = document.getElementById('exportSlot');
+        if (slot) slot.innerHTML = ExportUtil.renderServerButtons('(f)=>ExportUtil.downloadServer(\'finance/exports/budgets\', {}, f, \'งบประมาณ\')');
         await this.loadAccounts();
         await this.loadProjects();
         await this.load();
@@ -102,13 +109,17 @@
       async load() {
         const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.getBudgets();
+          // เดิมไม่ส่ง pageSize ⇒ เซิร์ฟเวอร์ให้ 20 รายการแรก ไม่มีหน้าถัดไป · ตอนนี้ 200 (เพดาน) + บอกเมื่อมีมากกว่า
+          const res = await api.getBudgets('?pageSize=200');
           const items = res.data?.items || res.data || [];
+          const total = res.data?.totalCount ?? items.length;
+          document.getElementById('listNote').textContent = total > items.length
+            ? `แสดง ${items.length.toLocaleString()} จาก ${total.toLocaleString()} รายการ — กด Export เพื่อได้ทุกรายการ` : '';
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400" style="padding:40px">ไม่มีงบประมาณ</td></tr>'; return; }
           tbody.innerHTML = items.map(b => `<tr>
-            <td class="font-medium">${b.name}</td>
-            <td>${b.fiscalYear}</td>
+            <td class="font-medium">${Layout.esc(b.name)}</td>
+            <td>${Layout.esc(b.fiscalYear)}</td>
             <td class="text-right font-semibold">${Layout.money(b.totalBudget)}</td>
             <td>${b.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
             <td>
@@ -124,26 +135,28 @@
         try {
           const res = await api.getBudgetVsActual(id);
           const d = res.data;
-          const totalBudget = (d.lines||[]).reduce((s,l) => s + (l.budgetAmount||0), 0);
-          const totalActual = (d.lines||[]).reduce((s,l) => s + (l.actualAmount||0), 0);
+          // ยอดรวม/สถานะ/% ใช้ไป มาจากเซิร์ฟเวอร์ (BudgetService + Helpers/BudgetUsageStatus) — หน้าไม่รวมเลขหรือตัดสินเกณฑ์เอง (F2 ข้อ 5)
+          const totalBudget = d.totalBudget || 0, totalActual = d.totalActual || 0;
+          const exp = (f, part) => `ExportUtil.downloadServer('finance/exports/budgets/${Layout.esc(id)}/vs-actual', {${part ? `part:'${part}'` : ''}}, '${f}', 'งบเทียบจริง')`;
           document.getElementById('compareContent').innerHTML = `
-            <div class="flex items-center justify-between" style="margin-bottom:16px">
-              <div><span class="font-semibold">${d.budgetName}</span> - ปี ${d.fiscalYear}</div>
+            <div class="flex items-center justify-between" style="margin-bottom:16px;gap:8px;flex-wrap:wrap">
+              <div><span class="font-semibold">${Layout.esc(d.budgetName)}</span> - ปี ${Layout.esc(d.fiscalYear)}</div>
               <div class="text-sm">งบ: <strong>${Layout.money(totalBudget)}</strong> | จริง: <strong>${Layout.money(totalActual)}</strong> | ผลต่าง: <strong class="${totalBudget - totalActual >= 0 ? 'text-success':'text-danger'}">${Layout.money(totalBudget - totalActual)}</strong></div>
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-sm btn-secondary" onclick="${exp('xlsx')}" title="งบเทียบจริง + งบรายเดือน + แจ้งเตือนเกินงบ (3 แผ่น)">📊 Excel</button>
+                <button class="btn btn-sm btn-secondary" onclick="${exp('csv')}">📄 CSV</button>
+              </div>
             </div>
             <div class="table-container"><table class="table">
               <thead><tr><th>รหัส</th><th>ชื่อบัญชี</th><th class="text-right">งบประมาณ</th><th class="text-right">ยอดจริง</th><th class="text-right">ผลต่าง</th><th class="text-right">%</th><th data-i18n="common.status">สถานะ</th></tr></thead>
-              <tbody>${(d.lines||[]).map(l => {
-                const pct = l.budgetAmount > 0 ? (l.actualAmount / l.budgetAmount * 100) : 0;
-                const over = l.actualAmount > l.budgetAmount;
-                return `<tr>
-                <td>${l.accountCode}</td><td>${l.accountName}</td>
+              <tbody>${(d.lines||[]).map(l => `<tr>
+                <td>${Layout.esc(l.accountCode)}</td><td>${Layout.esc(l.accountName)}</td>
                 <td class="text-right">${Layout.money(l.budgetAmount)}</td>
                 <td class="text-right">${Layout.money(l.actualAmount)}</td>
                 <td class="text-right ${l.variance < 0 ? 'text-danger' : 'text-success'}">${Layout.money(l.variance)}</td>
                 <td class="text-right">${(l.variancePercent||0).toFixed(1)}%</td>
-                <td>${over ? '<span class="badge badge-danger">เกินงบ</span>' : pct > 80 ? '<span class="badge badge-warning">ใกล้ถึงงบ</span>' : '<span class="badge badge-success">ปกติ</span>'}</td>
-              </tr>`}).join('')}</tbody>
+                <td><span class="badge ${l.usageStatus === 'เกินงบ' ? 'badge-danger' : l.usageStatus === 'ใกล้ถึงงบ' ? 'badge-warning' : 'badge-success'}" title="ใช้ไป ${(l.usedPercent||0).toFixed(1)}% ของงบ">${Layout.esc(l.usageStatus || '-')}</span></td>
+              </tr>`).join('')}</tbody>
             </table></div>`;
           Layout.openModal('compareModal');
         } catch (e) { Layout.toast(e.message, 'error'); }

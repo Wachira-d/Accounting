@@ -4008,6 +4008,30 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 กรองมิติ ⇒ ไม่บวกยอดนำเข้า (ไม่มีสาขา) · บัญชีที่ยอดยกมา ≠ 0 แต่ไม่เคลื่อนไหวในช่วงแสดงด้วย ·
 ข้อที่ยังต่าง: งบทดลองที่กรองมิติยังบวกยอดนำเข้าทั้งบริษัท (คำถามเจ้าของ — EXPORT_AUDIT §X3 ข้อค้นพบ 1)
 
+### 6.0a-y ไฟล์ส่งออกหน้าการเงินที่เหลือ = ตัวเลขของหน้า (2026-10-15 ทีม X5 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X5)
+
+ตัวเขียน/หัวรายงาน/ปุ่มเดียวกับ §6.0a-x · ด่าน `Reports.Export` (+ ตรวจข้อมูล `Reports.Financial` · บริหารการเงิน `Reports.Dashboard` เท่าหน้า) · CSV ทีละแผ่น `part=`
+
+| รายงาน | ปลายทางไฟล์ (`finance/exports/…?format=csv\|xlsx`) | เจ้าของตัวเลข (ตัวเดียวกับหน้า) | หมายเหตุ |
+| --- | --- | --- | --- |
+| สินเชื่อ + ตารางผ่อน + ประวัติชำระ | `loans` (`status` · `loanId` · `part=list\|schedule\|payments`) | `ILoanService` วนทุกหน้า | หน้าเดิมเห็น 30 สัญญา |
+| งบประมาณ / งบเทียบยอดจริง | `budgets` · `budgets/{id}/vs-actual` (`part=vs-actual\|monthly\|alerts`) | `IBudgetService.GetAllPagedAsync` · `GetBudgetVsActualAsync` | สถานะใช้งบ = `Helpers/BudgetUsageStatus` (DTO `UsageStatus`/`UsedPercent`) |
+| โครงการ / กำไรขาดทุนโครงการ | `projects` · `projects/{id}/pnl` (`part=summary\|breakdown\|entries\|cash-flow`) | `GetAllAsync` · `GetProfitabilityAsync` + `GetCostEntriesAsync` วนทุกหน้า · `GetCashFlowStatementAsync(projectId)` ต้นปีตามเวลาไทย | เส้นทางเดิม `projects/{id}/pnl/export` ส่งต่อตัวเดียวกัน (+ `Reports.Export`) |
+| มิติ/สาขา · งบตามมิติ | `dimensions` (`part=dimensions\|branches`) · `dimensions/{id}/pnl` (`fromDate`/`toDate` บังคับ) | `IDimensionalAccountingService` | หน้าเดิมไม่ส่งวันที่ ⇒ ว่างเสมอ |
+| งวดบัญชี | `fiscal-periods` | `GetFiscalPeriodsAsync` (DTO echo ผู้/เวลาปิดงวด + JE ปิดปี) | |
+| ตรวจข้อมูล | `data-integrity` | `DataIntegrityReportService.GetAsync` | หมวด = `Helpers/DataIntegritySections` (หน้าอ่าน `sections`) |
+| วิเคราะห์ AR/AP | `arap-analysis` (`part=overview\|aging\|trend\|top-ar\|top-ap\|bad-debt\|risk`) | `IArApAnalysisService` | อัตราตั้งสำรองยังตายตัว (คำถามเจ้าของ) |
+| เงินสดย่อย | `petty-cash` · `petty-cash/{fundId}/register` | `IPettyCashService.ListAsync` · `GetRegisterAsync` (ใหม่ — หน้าใช้ตัวเดียวกันผ่าน `sme/petty-cash/funds/{id}/register`) | "ถึงวันที่" วันล้วน = รวมทั้งวัน |
+| ตีราคาอัตราแลกเปลี่ยน | `fx-revaluation?asOf=&rates=USD:36.5,…` | `IFxRevaluationService.ProposeAsync` (ไม่ลงบัญชี) | |
+| บริหารการเงิน 9 แท็บ | `financial?kind=prepaid\|deposits\|accrued\|bad-debt\|obsolescence\|cit\|appropriations\|capital\|investments` (`part=list\|detail`) | `IFinancialManagementService.Get*` | |
+| คาดการณ์เงินสด | `cash-forecast` (`days` · `projectId` · `minimumCashFloor` · `part=`) | `ICashForecastService.ForecastAsync` | ไฟล์มีรายการรับ/จ่ายทั้งหมด (หน้า 50 แรก) |
+| เช็คคงค้าง | `cheques/outstanding` | `ChequeService.ListOutstandingRowsAsync` (ใหม่ — `GET cheques/outstanding` ของหน้าคืนแถวนี้) | ชื่อผู้ติดต่อ/ธนาคาร/ป้ายสถานะจากเซิร์ฟเวอร์ |
+
+**งบรวม (เปลี่ยนพฤติกรรม — ด่านข้ามบริษัท):** กลุ่มต้องเป็นของบริษัทใน route (ไม่ใช่ = 404) · สร้างกลุ่มได้เมื่อบริษัทแม่ = บริษัทที่เปิด (400) ·
+เพิ่มสมาชิก/อ่านงบดุลรวม/กำไรขาดทุนรวม/รายการตัดบัญชี ต้องเป็นผู้ใช้ของทุกบริษัทสมาชิก (`ITenantGuard` · 403) — ไม่มีส่งออกงบรวม (รายงานยังไม่รวมยอดจริง)
+
+**ใบเสร็จมือถือ:** หลังบันทึก = แถบ "บันทึก PDF / แชร์" (`Layout.savePdf` → `document-templates/generate-pdf`) + "พิมพ์" · มือถือไม่เปิดป๊อปอัปพิมพ์อัตโนมัติ (เดสก์ท็อปคงเดิม)
+
 ### 6.0a-bis ปรับปรุงผังบัญชีของ JE (Adjust) — ข้อจำกัดที่ต้องรู้
 
 `AdjustDocumentJournalEntryAsync` **ไม่แก้บรรทัดเอกสารเลย** — เจตนาผู้ใช้อยู่ใน
@@ -5623,3 +5647,6 @@ _Last verified against codebase: 2026-10-14 (ทีม X1 ไฟล์ยื่�
 _Last verified against codebase: 2026-10-15 (รอบ 206 ทีมงานค้าง — §2.11e แพ็กเกจศูนย์นำเข้า (`/companies/*/import` = BulkImport เหมือนหน้าเดิม · เมนูผูกฟีเจอร์ · migration ไม่เพิ่ม) ·
 §2 แหล่งเงิน "บัญชีคุม" เจ้าของเดียว `PostingAccountRule` (DocumentMoneyChannel/BankService/ตัวหาผังตั้งต้น 46 จุด/หน้าเว็บ · `tools/posting_level_check.py`) ·
 ผังลูกหนี้/เจ้าหนี้ของใบเดิม `Helpers/OriginalArApAccount` ทุกเส้นที่ปิด/ปรับหนี้ · statement เก็บไฟล์หลัง commit มี Db test — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c382580d)_
+_Last verified against codebase: 2026-10-15 (ทีม X5 ส่งออกหน้าการเงินที่เหลือ — §6.0a-y ปลายทาง `finance/exports/*` เจ้าของตัวเลขเดียวกับหน้า ·
+ทะเบียนเงินสดย่อยใหม่ · เช็คคงค้างชื่อจากเซิร์ฟเวอร์ · งวดบัญชี echo ผู้/เวลาปิด · สถานะใช้งบ/หมวดตรวจข้อมูลย้ายจาก JS · งบรวมปิดช่องข้ามบริษัท ·
+ใบเสร็จมือถือ PDF/แชร์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_

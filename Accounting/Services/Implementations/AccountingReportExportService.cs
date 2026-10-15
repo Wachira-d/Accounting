@@ -216,7 +216,13 @@ public class AccountingReportExportService
 
     // ── ภายใน ──
 
-    private async Task<List<string>> TitleAsync(Guid companyId, string report, string period, Guid? projectId, Guid? branchId, Guid? dimensionId)
+    private Task<List<string>> TitleAsync(Guid companyId, string report, string period, Guid? projectId, Guid? branchId, Guid? dimensionId)
+        => ReportTitleAsync(_db, companyId, report, period, projectId, branchId, dimensionId);
+
+    /// <summary>หัวรายงานของไฟล์ส่งออก (ชื่อบริษัท + เลขผู้เสียภาษี · ชื่อรายงาน · ช่วง · ตัวกรอง · เวลาที่จัดทำ) —
+    /// ตัวเดียวของไฟล์ส่งออกฝั่งเซิร์ฟเวอร์ (ทีม X5 เรียกจาก <see cref="FinanceReportExportService"/>)</summary>
+    internal static async Task<List<string>> ReportTitleAsync(AccountingDbContext _db, Guid companyId, string report, string period,
+        Guid? projectId, Guid? branchId, Guid? dimensionId)
     {
         var company = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
             .Select(c => new { c.Name, c.TaxId }).FirstOrDefaultAsync();

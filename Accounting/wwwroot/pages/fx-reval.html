@@ -43,6 +43,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       async init() {
@@ -82,6 +83,13 @@
         try { return await API.post(`/api/companies/${cid}/sme/fx-revaluation/${endpoint}`, body); }
         catch (e) { Layout.toast(e.message, 'error'); return null; }
       },
+      // ส่งออก (ทีม X5 2026-10-15) — เซิร์ฟเวอร์คำนวณใหม่ด้วยวันที่ + อัตราปิดชุดเดียวกับที่กรอก (ตัวเดียวกับปุ่ม "คำนวณ" · ไม่ลงบัญชี)
+      exportProposal(format) {
+        const rates = this._collectRates();
+        const list = Object.entries(rates).map(([k, v]) => `${k}:${v}`);
+        if (!list.length) { Layout.toast('ใส่อัตราแลกเปลี่ยนอย่างน้อย 1 สกุล', 'error'); return; }
+        return ExportUtil.downloadServer('finance/exports/fx-revaluation', { asOf: document.getElementById('asOf').value, rates: list.join(',') }, format, 'ตีราคาอัตราแลกเปลี่ยน');
+      },
       async propose() {
         const r = await this._call('propose');
         if (!r) return;
@@ -99,19 +107,20 @@
         const lines = p.lines || [];
         const rows = lines.map(l => `
           <tr>
-            <td>${l.currency}</td>
-            <td><span class="badge" style="background:${l.direction==='AR'?'#dbeafe':'#fef3c7'};color:${l.direction==='AR'?'#1e40af':'#92400e'};padding:2px 8px;border-radius:6px;font-size:11px">${l.direction}</span></td>
+            <td>${Layout.esc(l.currency)}</td>
+            <td><span class="badge" style="background:${l.direction==='AR'?'#dbeafe':'#fef3c7'};color:${l.direction==='AR'?'#1e40af':'#92400e'};padding:2px 8px;border-radius:6px;font-size:11px">${Layout.esc(l.direction)}</span></td>
             <td style="text-align:right">${this._fmt(l.originalFcyAmount)}</td>
             <td style="text-align:right">${this._fmt(l.bookedThbValue)}</td>
             <td style="text-align:right">${this._fmt(l.currentThbValue)}</td>
             <td style="text-align:right;color:${l.variance>=0?'#15803d':'#dc2626'};font-weight:600">${l.variance >= 0 ? '+' : ''}${this._fmt(l.variance)}</td>
           </tr>`).join('');
         const banner = posted
-          ? `<div style="padding:14px;border-radius:10px;background:${postResult.outcome === 'Posted' ? '#dcfce7' : '#fef3c7'};border:1px solid ${postResult.outcome === 'Posted' ? '#86efac' : '#fde047'};margin-bottom:14px"><b>${postResult.outcome === 'Posted' ? '✓ Posted' : postResult.outcome}</b> — ${postResult.message || ''} ${postResult.journalNumber ? `· JE <a href="/pages/journals.html?entryId=${postResult.journalEntryId}" style="color:#1e40af;font-weight:600">${postResult.journalNumber}</a>` : ''}</div>`
+          ? `<div style="padding:14px;border-radius:10px;background:${postResult.outcome === 'Posted' ? '#dcfce7' : '#fef3c7'};border:1px solid ${postResult.outcome === 'Posted' ? '#86efac' : '#fde047'};margin-bottom:14px"><b>${postResult.outcome === 'Posted' ? '✓ Posted' : Layout.esc(postResult.outcome)}</b> — ${Layout.esc(postResult.message || '')} ${postResult.journalNumber ? `· JE <a href="/pages/journals.html?entryId=${Layout.esc(postResult.journalEntryId)}" style="color:#1e40af;font-weight:600">${Layout.esc(postResult.journalNumber)}</a>` : ''}</div>`
           : '<div style="padding:10px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;margin-bottom:14px;color:#1e40af;font-size:13px">📊 ตัวอย่าง — ยังไม่ post · กดปุ่ม "Post JE" เพื่อบันทึก</div>';
         document.getElementById('resultBox').innerHTML = `
           <div class="card">
-            <div class="card-header"><h3 class="card-title">ผลการคำนวณ ณ ${new Date(p.asOf).toLocaleDateString('th-TH')}</h3></div>
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><h3 class="card-title">ผลการคำนวณ ณ ${new Date(p.asOf).toLocaleDateString('th-TH')}</h3>
+              <span>${ExportUtil.renderServerButtons('(f)=>Page.exportProposal(f)')}</span></div>
             <div style="padding:18px">
               ${banner}
               <div class="grid gap-4" style="grid-template-columns:repeat(3,1fr);margin-bottom:14px">
@@ -123,7 +132,7 @@
                 <thead><tr><th>สกุล</th><th>ฝั่ง</th><th style="text-align:right">FCY</th><th style="text-align:right">Booked THB</th><th style="text-align:right">Current THB</th><th style="text-align:right">ส่วนต่าง</th></tr></thead>
                 <tbody>${rows || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:20px">ไม่มี FCY balance ที่ต้อง revalue</td></tr>'}</tbody>
               </table>
-              ${(p.warnings || []).length ? `<div style="margin-top:12px;padding:10px;background:#fef3c7;border:1px solid #fde047;border-radius:8px;font-size:13px"><b>⚠ คำเตือน:</b><ul style="margin:6px 0 0 18px">${p.warnings.map(w => '<li>' + w + '</li>').join('')}</ul></div>` : ''}
+              ${(p.warnings || []).length ? `<div style="margin-top:12px;padding:10px;background:#fef3c7;border:1px solid #fde047;border-radius:8px;font-size:13px"><b>⚠ คำเตือน:</b><ul style="margin:6px 0 0 18px">${p.warnings.map(w => '<li>' + Layout.esc(w) + '</li>').join('')}</ul></div>` : ''}
             </div>
           </div>`;
       },

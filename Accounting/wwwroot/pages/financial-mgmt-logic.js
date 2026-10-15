@@ -14,11 +14,24 @@ const Page = {
       side: () => (document.getElementById('depDir')?.value === 'Received' ? 'customer' : 'supplier'),
       placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษี (ไม่อยู่ในทะเบียน = พิมพ์ชื่อไว้ได้)',
     });
+    const slot = document.getElementById('exportSlot');
+    if (slot) slot.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportTab(f)');
     await this.loadAccounts();
     await this.loadPrepaid();
   },
 
+  _tab: 'prepaid',
+  // แท็บ → kind ของ finance/exports/financial (ตัวเดียวกับ service ที่แท็บโหลด)
+  _exportKinds: { prepaid: 'prepaid', deposits: 'deposits', accrued: 'accrued', baddebt: 'bad-debt', obsolescence: 'obsolescence',
+    cit: 'cit', dividend: 'appropriations', capital: 'capital', investment: 'investments' },
+  exportTab(format) {
+    const kind = this._exportKinds[this._tab];
+    const label = document.querySelector(`[data-tab="${this._tab}"]`)?.textContent?.trim() || 'บริหารการเงิน';
+    return ExportUtil.downloadServer('finance/exports/financial', { kind }, format, label);
+  },
+
   switchTab(tab) {
+    this._tab = tab;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => { t.classList.remove('active'); t.style.display = 'none'; });
     document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
@@ -66,7 +79,7 @@ const Page = {
       document.getElementById('prepaidBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(p => `<tr>
-          <td>${p.referenceNo}</td><td>${p.description}</td><td>${this.fmtDate(p.startDate)}</td><td>${this.fmtDate(p.endDate)}</td>
+          <td>${Layout.esc(p.referenceNo)}</td><td>${Layout.esc(p.description)}</td><td>${this.fmtDate(p.startDate)}</td><td>${this.fmtDate(p.endDate)}</td>
           <td>${p.totalPeriods}</td><td class="text-right">${this.fmt(p.totalAmount)}</td>
           <td class="text-right">${this.fmt(p.amortizedAmount)}</td><td class="text-right">${this.fmt(p.remainingAmount)}</td>
           <td>${this.statusBadge(p.status)}</td></tr>`).join('');
@@ -103,7 +116,7 @@ const Page = {
       document.getElementById('depositBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="10" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(d => `<tr>
-          <td>${d.referenceNo}</td><td>${d.description}</td><td>${d.depositType}</td>
+          <td>${Layout.esc(d.referenceNo)}</td><td>${Layout.esc(d.description)}</td><td>${Layout.esc(d.depositType)}</td>
           <td>${d.direction === 'Paid' ? 'จ่าย' : 'รับ'}</td><td>${this.fmtDate(d.transactionDate)}</td>
           <td class="text-right">${this.fmt(d.amount)}</td><td class="text-right">${this.fmt(d.refundedAmount)}</td>
           <td class="text-right">${this.fmt(d.remainingAmount)}</td><td>${this.statusBadge(d.status)}</td>
@@ -147,7 +160,7 @@ const Page = {
       document.getElementById('accruedBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(a => `<tr>
-          <td>${a.referenceNo}</td><td>${a.description}</td><td>${a.expenseType}</td><td>${this.fmtDate(a.accrualDate)}</td>
+          <td>${Layout.esc(a.referenceNo)}</td><td>${Layout.esc(a.description)}</td><td>${Layout.esc(a.expenseType)}</td><td>${this.fmtDate(a.accrualDate)}</td>
           <td class="text-right">${this.fmt(a.amount)}</td><td class="text-right">${this.fmt(a.paidAmount)}</td>
           <td class="text-right">${this.fmt(a.remainingAmount)}</td><td>${this.statusBadge(a.status)}</td>
           <td>${a.remainingAmount > 0 ? `<button class="btn btn-sm" onclick="Page.showPayAccrued('${a.id}',${a.remainingAmount})">จ่าย</button>` : ''}</td>
@@ -192,7 +205,7 @@ const Page = {
       document.getElementById('baddebtBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="8" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(b => `<tr>
-          <td>${b.referenceNo}</td><td>${this.fmtDate(b.allowanceDate)}</td><td>${b.method}</td>
+          <td>${Layout.esc(b.referenceNo)}</td><td>${this.fmtDate(b.allowanceDate)}</td><td>${Layout.esc(b.method)}</td>
           <td class="text-right">${this.fmt(b.totalReceivable)}</td><td class="text-right">${this.fmt(b.allowanceAmount)}</td>
           <td class="text-right">${this.fmt(b.adjustmentAmount)}</td><td>${this.statusBadge(b.status)}</td>
           <td>${b.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.postBadDebt('${b.id}')">บันทึกบัญชี</button>` : ''}</td>
@@ -220,7 +233,7 @@ const Page = {
       document.getElementById('obsolescenceBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="7" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(i => `<tr>
-          <td>${i.referenceNo}</td><td>${this.fmtDate(i.allowanceDate)}</td>
+          <td>${Layout.esc(i.referenceNo)}</td><td>${this.fmtDate(i.allowanceDate)}</td>
           <td class="text-right">${this.fmt(i.totalInventoryValue)}</td><td class="text-right">${this.fmt(i.allowanceAmount)}</td>
           <td class="text-right">${this.fmt(i.adjustmentAmount)}</td><td>${this.statusBadge(i.status)}</td>
           <td>${i.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.postObsolescence('${i.id}')">บันทึกบัญชี</button>` : ''}</td>
@@ -248,7 +261,7 @@ const Page = {
       document.getElementById('citBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(c => `<tr>
-          <td>${c.taxYear}</td><td>${c.taxPeriod === 'Annual' ? 'ประจำปี' : 'ครึ่งปี'}</td>
+          <td>${Layout.esc(c.taxYear)}</td><td>${c.taxPeriod === 'Annual' ? 'ประจำปี' : 'ครึ่งปี'}</td>
           <td class="text-right">${this.fmt(c.totalRevenue)}</td><td class="text-right">${this.fmt(c.totalExpenses)}</td>
           <td class="text-right">${this.fmt(c.taxableProfit)}</td><td class="text-right">${this.fmt(c.taxAmount)}</td>
           <td class="text-right">${this.fmt(c.netTaxPayable)}</td><td>${this.statusBadge(c.status)}</td>
@@ -284,7 +297,7 @@ const Page = {
       document.getElementById('dividendBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="8" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(p => `<tr>
-          <td>${p.referenceNo}</td><td>${p.fiscalYear}</td>
+          <td>${Layout.esc(p.referenceNo)}</td><td>${Layout.esc(p.fiscalYear)}</td>
           <td class="text-right">${this.fmt(p.netProfit)}</td><td class="text-right">${this.fmt(p.legalReserve)}</td>
           <td class="text-right">${this.fmt(p.dividendAmount)}</td><td class="text-right">${this.fmt(p.retainedAmount)}</td>
           <td>${this.statusBadge(p.status)}</td>
@@ -318,7 +331,7 @@ const Page = {
       document.getElementById('capitalBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(c => `<tr>
-          <td>${c.referenceNo}</td><td>${this.fmtDate(c.transactionDate)}</td>
+          <td>${Layout.esc(c.referenceNo)}</td><td>${this.fmtDate(c.transactionDate)}</td>
           <td>${c.transactionType === 'Increase' ? 'เพิ่มทุน' : 'ลดทุน'}</td>
           <td class="text-right">${this.fmt(c.shareQuantity)}</td><td class="text-right">${this.fmt(c.parValue)}</td>
           <td class="text-right">${this.fmt(c.paidAmount)}</td><td class="text-right">${this.fmt(c.sharePremium)}</td>
@@ -355,7 +368,7 @@ const Page = {
       document.getElementById('investmentBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(i => `<tr>
-          <td>${i.referenceNo}</td><td>${i.investmentType}</td><td>${i.description}</td>
+          <td>${Layout.esc(i.referenceNo)}</td><td>${Layout.esc(i.investmentType)}</td><td>${Layout.esc(i.description)}</td>
           <td>${this.fmtDate(i.purchaseDate)}</td><td>${this.fmtDate(i.maturityDate)}</td>
           <td class="text-right">${this.fmt(i.purchaseCost)}</td><td class="text-right">${i.interestRate}%</td>
           <td>${this.statusBadge(i.status)}</td>

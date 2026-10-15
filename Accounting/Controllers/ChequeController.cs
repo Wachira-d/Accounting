@@ -107,11 +107,12 @@ public class ChequeController : ControllerBase
     }
 
     [HttpGet("outstanding")]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<Cheque>>>> Outstanding(
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<OutstandingChequeRow>>>> Outstanding(
         Guid companyId, [FromQuery] Guid? bankAccountId, CancellationToken ct)
     {
-        var rows = await _svc.ListOutstandingAsync(companyId, bankAccountId, ct);
-        return Ok(new ApiResponse<IReadOnlyList<Cheque>>(true, rows,
+        // แถวพร้อมชื่อผู้ติดต่อ/ธนาคาร/ป้ายสถานะจากเซิร์ฟเวอร์ (ทีม X5 2026-10-15) — ชื่อฟิลด์เดิมของ entity คงอยู่
+        var rows = await _svc.ListOutstandingRowsAsync(companyId, bankAccountId, ct);
+        return Ok(new ApiResponse<IReadOnlyList<OutstandingChequeRow>>(true, rows,
             $"เช็คคงค้าง {rows.Count} ฉบับ"));
     }
 }

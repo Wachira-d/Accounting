@@ -12,6 +12,7 @@
     <div class="page-header">
       <div><h2 class="page-title">งวดบัญชี</h2><p class="page-subtitle">จัดการงวดบัญชี เปิด/ปิดรอบบัญชี + ปิดสิ้นปี (Year-End Close)</p></div>
       <div class="flex gap-2">
+        <span id="exportSlot"></span>
         <button class="btn btn-warning" onclick="Page.openYearEndModal()" title="ปิดงบประจำปี — สร้าง JE โอน P&L ไป Retained Earnings + ล็อกทุกเดือนในปี + roll opening balances"
                 data-tour-step="4"
                 data-tour-text="ปิดสิ้นปี — สิ้นปีกดปุ่มนี้ ระบบจะสร้าง JE ปิดบัญชีรายได้/ค่าใช้จ่ายเข้ากำไรสะสม + ล็อกทุกเดือน + ยกยอดเปิดปีถัดไป">🏛️ ปิดสิ้นปี (Year-End)</button>
@@ -116,11 +117,15 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       async init() {
         if (!Layout.init('fiscal')) return;
         Layout.setTitle('งวดบัญชี');
+        // ส่งออกจากเซิร์ฟเวอร์ (ทีม X5 2026-10-15) — งวด + ผู้/เวลาปิดงวด + ใบสำคัญปิดปี
+        const slot = document.getElementById('exportSlot');
+        if (slot) slot.innerHTML = ExportUtil.renderServerButtons("(f)=>ExportUtil.downloadServer('finance/exports/fiscal-periods', {}, f, 'งวดบัญชี')");
         await this.load();
       },
       _periods: [],

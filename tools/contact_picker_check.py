@@ -34,20 +34,19 @@ LAYOUT = WWW / "js" / "layout.js"
 ALLOW_SELECT = {
     ("arap-analysis.html", "contactSelect"): "รายชื่อเฉพาะผู้ที่มียอดค้างจากผลวิเคราะห์ AR/AP (ไม่ใช่ทะเบียน) — ตัวกรองรายงาน",
     ("intercompany.html", "fPartner"): "บริษัทในกลุ่ม (Company) ไม่ใช่ผู้ติดต่อ",
-    ("mobile-receipt.html", "customer"): "หน้ามือถือแบบ standalone ไม่โหลด layout.js — ตามงานแยก",
+    ("mobile-receipt.html", "customer"): "หน้ามือถือแบบ standalone (โหลด layout.js เพื่อ Layout.savePdf เท่านั้น ไม่เรียก Layout.init) — ช่องเลือกลูกค้ายังเป็น select ตามงานแยก",
 }
 
 # R3 — จำนวนการอ่านรายชื่อผู้ติดต่อตรงที่ยอมให้ต่อไฟล์ : เหตุผล (ratchet — ลดได้ ห้ามเพิ่ม)
 ALLOW_LIST_READ = {
     "contacts.html": (1, "หน้าทะเบียนผู้ติดต่อเอง"),
     "documents.html": (2, "แคชสำรองหาข้อมูลจาก id + หาสาขาอื่นของเลขภาษีเดียวกัน (ไม่ใช่ช่องเลือก)"),
-    "cheques.html": (1, "ตารางชื่อผู้รับในรายการเช็คค้าง (แสดงผล)"),
     "consignment.html": (1, "ตารางชื่อคู่ค้าในรายการฝากขาย (แสดงผล)"),
     "document-scan.html": (1, "จับคู่ผู้ขายจาก OCR (กฎเหล็ก #3 — มีทางสร้างจากข้อมูลสแกนของตัวเอง)"),
     "pos.html": (1, "ค้นสมาชิก POS (ชื่อลูกค้าอิสระ + แต้มสะสม)"),
     "pos-reservations.html": (1, "ค้นลูกค้าจองโต๊ะ (ชื่อ/เบอร์อิสระ)"),
     "quick-sale.html": (1, "หน้าขายด่วน standalone ไม่โหลด layout.js"),
-    "mobile-receipt.html": (1, "หน้ามือถือ standalone ไม่โหลด layout.js"),
+    "mobile-receipt.html": (1, "หน้ามือถือ standalone (ไม่เรียก Layout.init) — รายชื่อลูกค้าของ select"),
 }
 
 CONTACTISH = re.compile(r"contact|customer|supplier|vendor|payee|consign|partner", re.I)

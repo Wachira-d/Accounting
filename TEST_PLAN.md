@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **554 ไฟล์ · 5,451 `[Fact]` + 847 `[Theory]` (3,787 `InlineData`)** ณ 2026-10-15 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **556 ไฟล์ · 5,465 `[Fact]` + 848 `[Theory]` (3,794 `InlineData`)** ณ 2026-10-15 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6195,3 +6195,18 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | R206-08 | ทิศตรงข้าม: ใบไม่มี JE | ตัวหาเดิม: ผังที่ปักใช้ได้ = ตัดผังที่ปัก (ผู้ติดต่อถูกโหลดให้แล้ว) · ปิดใช้ = ล้มดังพร้อมทางไปต่อ + ไม่มีอะไรบันทึก | ✅ `Db/OriginalArApAccountDbTests` |
 | R206-09 | ตัวเลือก (pure): บัญชีพัก 11340/1134x · ขาเดบิตพักรับสินค้า 21240 · ผังของบริษัทเองที่ไม่ขึ้นด้วย 113 · เท่ากัน | ไม่นับบัญชีพัก/ขาฝั่งตรงข้าม · นับเมื่อเป็นผังที่ปัก · รหัสน้อยสุด | ✅ `OriginalArApAccountTests` |
 | R206-10 | statement: เก็บไฟล์ต้นทางหลัง commit | ตอนเก็บไฟล์ การเชื่อมต่ออื่นเห็นรายการแล้ว · ที่เก็บล้ม ⇒ รายการคงอยู่ + คำเตือน (ไม่ใช่ error) + ไม่มีแถวไฟล์แนบกำพร้าหลัง SaveChanges ถัดไป · ที่เก็บปกติไม่มีคำเตือน | ✅ `Db/BankStatementImportDbTests` |
+### ส่งออก CSV/Excel หน้าการเงินที่เหลือ (ทีม X5 · 2026-10-15 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X5)
+
+| ID | สิ่งที่ล็อก | เกณฑ์ | เทสต์ |
+| --- | --- | --- | --- |
+| EXP5-01 | สถานะใช้งบ (ย้ายจาก JS) | เกินแม้สตางค์เดียว = เกินงบ · งบ 0 มีจ่าย = เกิน · > 80% = ใกล้ · = 80% พอดี = ปกติ · ยอดติดลบไม่เกิน · % ใช้ไป AwayFromZero | ✅ `FinanceReportSheetsTests` |
+| EXP5-02 | งบเทียบจริง — ไฟล์ = service | ทุกบรรทัด (งบ/จริง/ผลต่าง/สถานะ) ตรงตามรหัสบัญชี · แถวรวม = `TotalBudget/TotalActual` (ไม่รวมใหม่) · ร่าง/นอกปีไม่นับ · บัญชีรายได้กลับเครื่องหมาย | ✅ `FinanceReportSheetsTests` + `Db/FinanceExportDbTests` (Db) |
+| EXP5-03 | กำไรขาดทุนโครงการ — ไม่ถูกตัด | 205 รายการต้นทุน (> 200) ครบ · ผลรวม = แถวรวม = `TotalCost` · สรุป/หมวด = `GetProfitabilityAsync` · โครงการอื่นไม่ปน · `part` ผิด = ล้มพร้อมรายชื่อ | ✅ `Db/FinanceExportDbTests` (Db) |
+| EXP5-04 | สินเชื่อ — ไม่ถูกตัด + ตัวกรอง | 205 สัญญาครบ ไม่ซ้ำ · ผังบัญชีเป็นรหัส+ชื่อ · ทิศตรงข้าม กรอง PaidOff = 3 | ✅ `Db/FinanceExportDbTests` (Db) |
+| EXP5-05 | เช็คคงค้าง — ชื่อจากเซิร์ฟเวอร์ | ผู้ติดต่อรายที่ 205 มีชื่อ + เลขผู้เสียภาษี (เดิมรหัสย่อ) · ข้อมูลเสียที่ชี้ผู้ติดต่อบริษัทอื่น = ไม่แสดงชื่อ · เช็คขึ้นเงินแล้วไม่อยู่ในไฟล์ | ✅ `Db/FinanceExportDbTests` (Db) |
+| EXP5-06 | ทะเบียนเงินสดย่อย | "ถึงวันที่" วันล้วน = รวมทั้งวัน (15:00 วันสุดท้ายอยู่) · ก่อน/หลังช่วงไม่อยู่ · รวมเข้า/ออกจาก service = แถวรวมไฟล์ · ไม่กรอง = ทุกรายการ · กองทุนบริษัทอื่น = ไม่พบ | ✅ `FinanceReportSheetsTests` + `Db/FinanceExportDbTests` (Db) |
+| EXP5-07 | หมวดรายงานตรวจข้อมูล (ย้ายจาก JS) | ทุก property รายการของ `DataIntegrityReport` มีหมวด + คีย์ = ชื่อ JSON · ไฟล์หนึ่งแถวต่อรายการพร้อมชื่อหมวด · รายงานว่าง = แผ่นว่าง | ✅ `FinanceReportSheetsTests` |
+| EXP5-08 | ตีราคาอัตราแลกเปลี่ยน | อัตรา `USD:36.5` อ่านได้ไม่สนตัวพิมพ์ · อ่านไม่ออก/ติดลบ/ไม่มีสกุล = ล้ม · แถวรวม = กำไร/ขาดทุน/สุทธิของ service | ✅ `FinanceReportSheetsTests` |
+| EXP5-09 | งบรวม — ด่านข้ามบริษัท | กลุ่มของบริษัทอื่น = 404 (อ่าน/งบ/ลบ) · สมาชิกที่ไม่ใช่บริษัทของผู้ใช้ = 403 (งบดุล/กำไรขาดทุน/เพิ่มสมาชิก) · สร้างกลุ่มใต้บริษัทอื่น = 400 · ทิศตรงข้าม สมาชิกครบ = 200 | ✅ `Db/FinanceExportDbTests` (Db) |
+| EXP5-10 | หน้าเรียกไฟล์จากเซิร์ฟเวอร์ | loans/budget/projects/dimensions/fiscal/data-integrity/arap-analysis/petty-cash/fx-reval/financial-mgmt/cash-forecast/cheques ใช้ `ExportUtil.downloadServer` · ตารางที่เคยตัด 20/30 แถวแสดง "แสดง N จาก M" · งบตามมิติส่งช่วงวันที่ · `mobile-receipt` บันทึก PDF/แชร์ผ่าน `Layout.savePdf` | ⏳ ทดสอบมือ: กดทุกปุ่มบนหน้าจริง (มือถือ: แผ่นแชร์ได้ไฟล์ PDF) เทียบยอดรวมกับหน้า |
+

@@ -4970,3 +4970,12 @@ _รอบ 206 ทีมงานค้าง (2026-10-15 · คำตัดส�
 (ปิดใช้ทีหลังก็ตัดได้) · ไม่มี JE ⇒ ตัวหาเดิม + โหลดผู้ติดต่อให้ (เดิมรับ/จ่ายชำระ/ตัดหนี้สูญไม่โหลด ⇒ ข้ามผังที่ปัก) (4) Db test ไฟล์ statement หลัง commit ·
 เทสต์ `SubscriptionGateImportHubTests` · `OriginalArApAccountTests` · `Db/OriginalArApAccountDbTests` · `Db/BankStatementImportDbTests` (+2) · แก้ `DocumentMoneyChannelTests`/`AdversarialRound1Tests`/`Db/AdversarialRound1DbTests`
 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c382580d_
+_2026-10-15 — ส่งออก CSV/Excel หน้าการเงินที่เหลือ (ทีม X5 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X5): ปลายทาง `finance/exports/*`
+(`FinanceExportController` + `FinanceReportExportService` + คอลัมน์ `Helpers/FinanceReportSheets` · ตัวเขียน `TabularExport` ของ X3 · `Reports.Export` + ด่านดูของหน้า)
+— สินเชื่อ (+ตารางผ่อน/ชำระ · เดิมหน้าเห็น 30 สัญญา) · งบประมาณ + งบเทียบจริง (เกณฑ์สถานะย้ายจาก JS → `BudgetUsageStatus` · ยอดรวมจาก service) ·
+โครงการ + กำไรขาดทุนโครงการ (รายการต้นทุนทุกบรรทัด · แท็บต้นทุนเดิมอ่านฟิลด์ที่ไม่มี ⇒ วันที่/หมวดว่าง + 20 แถว · เส้นทางเดิม pnl/export ส่งต่อ) ·
+มิติ/สาขา + งบตามมิติ (หน้าเดิมไม่ส่งวันที่ ⇒ ว่างเสมอ) · งวดบัญชี (DTO echo ผู้/เวลาปิดงวด + JE ปิดปี ที่หน้าอ่านมาตลอด) ·
+ตรวจข้อมูล (หมวดย้ายไป `DataIntegritySections`) · วิเคราะห์ AR/AP · เงินสดย่อย (ทะเบียนใหม่ `GetRegisterAsync` + หน้า "📋 รายการ") ·
+ตีราคา FX · บริหารการเงิน 9 แท็บ · คาดการณ์เงินสด (รายการทั้งหมด) · เช็คคงค้าง (ชื่อจากเซิร์ฟเวอร์ `ListOutstandingRowsAsync` — เดิม 200 รายแรก) ·
+**งบรวม: ปิด IDOR ข้ามบริษัท** (กลุ่ม/สมาชิกต้องเป็นของผู้ใช้) · ใบเสร็จมือถือ บันทึก PDF/แชร์ผ่าน `Layout.savePdf` · escape ข้อความ ~30 จุดในหน้าที่แตะ ·
+เทสต์ `FinanceReportSheetsTests` · `Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง_

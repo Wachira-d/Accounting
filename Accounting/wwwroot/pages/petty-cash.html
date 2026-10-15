@@ -14,10 +14,30 @@
         <h2 class="page-title">เงินสดย่อย</h2>
         <p class="page-subtitle">imprest system — เปิดเงินสดย่อย → จ่าย → เติมเงินกลับวงเงิน</p>
       </div>
-      <button class="btn btn-primary" onclick="Page.openCreate()">+ เปิดกองทุนใหม่</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="exportSlot"></span>
+        <button class="btn btn-primary" onclick="Page.openCreate()">+ เปิดกองทุนใหม่</button>
+      </div>
     </div>
 
     <div id="funds"></div>
+
+    <!-- ทะเบียนเบิกจ่าย/เติมเงินของกองทุน (ทีม X5 2026-10-15 — เดิมหน้านี้ไม่มีรายการให้ตรวจ/ส่งออกเลย มีแต่การ์ดยอดคงเหลือ)
+         แถว + ยอดรวมจากเซิร์ฟเวอร์ (GET sme/petty-cash/funds/{id}/register) · ไฟล์ส่งออกใช้ service ตัวเดียวกัน -->
+    <div id="registerModal" class="modal-overlay">
+      <div class="modal" style="max-width:1100px;width:95%">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <h3 style="margin:0" id="registerTitle">ทะเบียนเงินสดย่อย</h3>
+          <button class="btn btn-sm btn-ghost" onclick="document.getElementById('registerModal').classList.remove('active')">✕</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0">
+          <label style="font-size:12px">ตั้งแต่ <input type="date" id="regFrom" class="form-input" style="max-width:170px" onchange="Page.loadRegister()"></label>
+          <label style="font-size:12px">ถึง <input type="date" id="regTo" class="form-input" style="max-width:170px" onchange="Page.loadRegister()"></label>
+          <span id="regExport" style="margin-left:auto"></span>
+        </div>
+        <div id="registerBody" style="max-height:60vh;overflow:auto"></div>
+      </div>
+    </div>
 
     <!-- เปิด / แก้ไขกองทุน (ผูกผังบัญชีของกองทุน — ทางออกของกองทุนเก่าที่ไม่มีผัง) -->
     <div id="fundModal" class="modal-overlay">
@@ -90,6 +110,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/money-channel.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       _activeFundId: null,
@@ -100,6 +121,10 @@
       async init() {
         if (!Layout.init('petty-cash')) return;
         Layout.setTitle('เงินสดย่อย');
+        const slot = document.getElementById('exportSlot');
+        if (slot) slot.innerHTML = ExportUtil.renderServerButtons("(f)=>ExportUtil.downloadServer('finance/exports/petty-cash', {}, f, 'กองทุนเงินสดย่อย')");
+        const reg = document.getElementById('regExport');
+        if (reg) reg.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportRegister(f)');
         await this.loadProjects();
         await this.loadAccounts();
         await this.load();
@@ -202,6 +227,7 @@
                 <div style="display:flex;gap:6px;flex-wrap:wrap">
                   <button class="btn btn-sm btn-warning" onclick="Page.disburse('${f.id}')">เบิก</button>
                   <button class="btn btn-sm btn-success" onclick="Page.replenish('${f.id}')">เติมเงิน</button>
+                  <button class="btn btn-sm btn-secondary" onclick="Page.openRegister('${f.id}')">📋 รายการ</button>
                   <button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${f.id}')">แก้ไข / ผูกผังบัญชี</button>
                 </div>
               </div>
@@ -210,6 +236,58 @@
         } catch (e) {
           el.innerHTML = `<div class="card" style="padding:40px;text-align:center;color:#dc2626">${Layout.esc(e.message)}</div>`;
         }
+      },
+      _registerFundId: null,
+      openRegister(fundId) {
+        const f = this._funds.find(x => x.id === fundId);
+        this._registerFundId = fundId;
+        document.getElementById('registerTitle').textContent = 'ทะเบียนเงินสดย่อย — ' + (f ? f.name : '');
+        const today = new Date();
+        if (!document.getElementById('regFrom').value) document.getElementById('regFrom').value = Layout.toDateInput(new Date(today.getFullYear(), today.getMonth(), 1));
+        if (!document.getElementById('regTo').value) document.getElementById('regTo').value = Layout.toDateInput(today);
+        document.getElementById('registerModal').classList.add('active');
+        return this.loadRegister();
+      },
+      _registerRange() {
+        return { fromDate: document.getElementById('regFrom').value, toDate: document.getElementById('regTo').value };
+      },
+      async loadRegister() {
+        const box = document.getElementById('registerBody');
+        if (!this._registerFundId) return;
+        box.innerHTML = '<div style="padding:24px;text-align:center;color:#94a3b8">กำลังโหลด...</div>';
+        try {
+          const cid = Layout.getCompanyId();
+          const r = this._registerRange();
+          const q = new URLSearchParams();
+          if (r.fromDate) q.set('fromDate', r.fromDate);
+          if (r.toDate) q.set('toDate', r.toDate);
+          const res = await API.get(`/api/companies/${cid}/sme/petty-cash/funds/${this._registerFundId}/register?${q.toString()}`);
+          const d = res.data;
+          const rows = d.rows || [];
+          if (!rows.length) { box.innerHTML = '<div style="padding:24px;text-align:center;color:#94a3b8">ไม่มีรายการในช่วงนี้</div>'; return; }
+          box.innerHTML = `<table class="table" style="font-size:13px"><thead><tr>
+              <th>วันที่</th><th>ชนิด</th><th>รายละเอียด</th><th>ใบเสร็จ/หลักฐาน</th><th class="text-right">รับเข้า</th><th class="text-right">จ่ายออก</th>
+              <th>บัญชีค่าใช้จ่าย</th><th>โครงการ</th><th>ใบสำคัญ</th></tr></thead>
+            <tbody>${rows.map(x => `<tr>
+              <td style="white-space:nowrap">${Layout.date(x.transactionDate)}</td>
+              <td>${Layout.esc(x.typeLabel)}</td>
+              <td>${Layout.esc(x.description)}${x.isNonDeductible ? ` <span class="badge badge-warning" title="${Layout.esc(x.nonDeductibleRuleCode || '')}">§65 ตรี</span>` : ''}</td>
+              <td>${Layout.esc(x.receiptReference || '-')}</td>
+              <td class="text-right">${x.amountIn ? Layout.money(x.amountIn) : ''}</td>
+              <td class="text-right">${x.amountOut ? Layout.money(x.amountOut) : ''}</td>
+              <td>${Layout.esc(x.expenseAccountCode ? x.expenseAccountCode + ' ' + (x.expenseAccountName || '') : '-')}</td>
+              <td>${Layout.esc(x.projectLabel || '-')}</td>
+              <td>${x.journalEntryId ? `<a href="/pages/journals.html?entryId=${Layout.esc(x.journalEntryId)}">${Layout.esc(x.journalEntryNumber || 'เปิด')}</a>` : '-'}</td>
+            </tr>`).join('')}</tbody>
+            <tfoot><tr style="font-weight:600"><td colspan="4">รวม ${rows.length.toLocaleString()} รายการ</td>
+              <td class="text-right">${Layout.money(d.totalIn)}</td><td class="text-right">${Layout.money(d.totalOut)}</td><td colspan="3"></td></tr></tfoot></table>`;
+        } catch (e) {
+          box.innerHTML = `<div style="padding:24px;text-align:center;color:#dc2626">${Layout.esc(e.message)}</div>`;
+        }
+      },
+      exportRegister(format) {
+        if (!this._registerFundId) return;
+        return ExportUtil.downloadServer(`finance/exports/petty-cash/${this._registerFundId}/register`, this._registerRange(), format, 'เงินสดย่อย');
       },
       openCreate() {
         this._editFundId = null;

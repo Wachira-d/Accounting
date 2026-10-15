@@ -47,6 +47,34 @@ public interface IPettyCashService
     Task<IReadOnlyList<PettyCashFundResponse>> ListAsync(Guid companyId, CancellationToken ct = default);
     Task<IReadOnlyList<PettyCashTransaction>> ListTransactionsAsync(Guid companyId, Guid fundId,
         DateTime? fromDate, DateTime? toDate, CancellationToken ct = default);
+
+    /// <summary>ทะเบียนเบิกจ่าย/เติมเงินของกองทุน (ทุกรายการในช่วง — ไม่ตัดที่ 500 แบบ <see cref="ListTransactionsAsync"/>) ·
+    /// ผัง/โครงการ/เลขใบสำคัญแปลงเป็นชื่อแล้ว · ยอดรวมเข้า/ออกคำนวณที่นี่ที่เดียว — หน้า petty-cash.html และไฟล์ส่งออกใช้ตัวเดียวกัน
+    /// (2026-10-15 ทีม X5 · เดิมหน้าแสดงแค่การ์ดกองทุน ไม่มีรายการให้ตรวจ/ส่งออก)</summary>
+    Task<PettyCashRegister> GetRegisterAsync(Guid companyId, Guid fundId,
+        DateTime? fromDate, DateTime? toDate, CancellationToken ct = default);
+}
+
+/// <summary>หนึ่งรายการในทะเบียนเงินสดย่อย · <c>AmountIn</c> = เติมเงิน · <c>AmountOut</c> = เบิกจ่าย ·
+/// <c>TypeLabel</c> = ป้ายไทยจาก <see cref="PettyCashRegister.TypeLabel"/></summary>
+public sealed record PettyCashRegisterRow(Guid Id, DateTime TransactionDate, string Type, string TypeLabel, string Description,
+    string? ReceiptReference, decimal Amount, decimal AmountIn, decimal AmountOut,
+    string? ExpenseAccountCode, string? ExpenseAccountName, string? ProjectLabel,
+    Guid? JournalEntryId, string? JournalEntryNumber, bool IsNonDeductible, string? NonDeductibleRuleCode, DateTime CreatedAt);
+
+/// <summary>ทะเบียนเงินสดย่อยของกองทุนหนึ่ง (เรียงวันที่เก่า → ใหม่ ตามสมุดเงินสด)</summary>
+public sealed record PettyCashRegister(Guid FundId, string FundName, decimal ImprestAmount, decimal CurrentBalance,
+    string? FundAccountLabel, DateTime? FromDate, DateTime? ToDate, IReadOnlyList<PettyCashRegisterRow> Rows,
+    decimal TotalIn, decimal TotalOut)
+{
+    /// <summary>ป้ายชนิดรายการ — ตัวเดียวของระบบ</summary>
+    public static string TypeLabel(string? type) => type switch
+    {
+        "Disbursement" => "เบิกจ่าย",
+        "Replenishment" => "เติมเงิน",
+        "Adjustment" => "ปรับปรุง",
+        _ => type ?? "",
+    };
 }
 
 /// <summary>กองทุนเงินสดย่อยสำหรับหน้าจอ — ผังของกองทุนออกเป็นรหัส+ชื่อ (หน้าไม่ต้องเดา) · <c>HasPostedTransactions</c> บอกว่าเปลี่ยนผังได้ไหม</summary>
@@ -345,6 +373,60 @@ public class PettyCashService : IPettyCashService
                 _db.PettyCashTransactions.Any(t => t.CompanyId == companyId && t.FundId == f.Id
                     && !t.IsDeleted && t.JournalEntryId != null)))
             .ToListAsync(ct);
+
+    public async Task<PettyCashRegister> GetRegisterAsync(Guid companyId, Guid fundId,
+        DateTime? fromDate, DateTime? toDate, CancellationToken ct = default)
+    {
+        var fund = await _db.PettyCashFunds.AsNoTracking()
+            .Where(f => f.Id == fundId && f.CompanyId == companyId && !f.IsDeleted)
+            .Select(f => new
+            {
+                f.Id, f.Name, f.ImprestAmount, f.CurrentBalance,
+                Account = f.LinkedAccount != null ? f.LinkedAccount.AccountCode + " " + f.LinkedAccount.AccountName : null,
+            })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("ไม่พบกองทุนเงินสดย่อย");
+        var q = _db.PettyCashTransactions.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && t.FundId == fundId && !t.IsDeleted);
+        // วันที่ล้วน = รวมทั้งวัน (ช่วงเดียวกับรายงานอื่น — "ถึงวันที่" ไม่ตัดวันสุดท้าย)
+        if (fromDate.HasValue) q = q.Where(t => t.TransactionDate >= fromDate.Value.Date);
+        if (toDate.HasValue)
+        {
+            var end = toDate.Value.TimeOfDay == TimeSpan.Zero ? toDate.Value.Date.AddDays(1) : toDate.Value.AddTicks(1);
+            q = q.Where(t => t.TransactionDate < end);
+        }
+        var txns = await q
+            .OrderBy(t => t.TransactionDate).ThenBy(t => t.CreatedAt).ThenBy(t => t.Id)
+            .Select(t => new
+            {
+                t.Id, t.TransactionDate, t.Type, t.Description, t.ReceiptReference, t.Amount,
+                AccCode = t.ExpenseAccount != null ? t.ExpenseAccount.AccountCode : null,
+                AccName = t.ExpenseAccount != null ? t.ExpenseAccount.AccountName : null,
+                t.ProjectId, t.JournalEntryId, t.IsNonDeductible, t.NonDeductibleRuleCode, t.CreatedAt,
+            })
+            .ToListAsync(ct);
+        var jeIds = txns.Where(t => t.JournalEntryId.HasValue).Select(t => t.JournalEntryId!.Value).Distinct().ToList();
+        var jeNumbers = jeIds.Count == 0 ? new Dictionary<Guid, string>()
+            : await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.CompanyId == companyId && jeIds.Contains(j.Id))
+                .ToDictionaryAsync(j => j.Id, j => j.EntryNumber, ct);
+        var projectIds = txns.Where(t => t.ProjectId.HasValue).Select(t => t.ProjectId!.Value).Distinct().ToList();
+        var projects = projectIds.Count == 0 ? new Dictionary<Guid, string>()
+            : await _db.Projects.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && projectIds.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => p.Code + " " + p.Name, ct);
+        var rows = txns.Select(t => new PettyCashRegisterRow(
+            t.Id, t.TransactionDate, t.Type, PettyCashRegister.TypeLabel(t.Type), t.Description, t.ReceiptReference, t.Amount,
+            t.Type == "Replenishment" ? t.Amount : 0m,
+            t.Type == "Disbursement" ? t.Amount : 0m,
+            t.AccCode, t.AccName,
+            t.ProjectId.HasValue && projects.TryGetValue(t.ProjectId.Value, out var pl) ? pl : null,
+            t.JournalEntryId,
+            t.JournalEntryId.HasValue && jeNumbers.TryGetValue(t.JournalEntryId.Value, out var jn) ? jn : null,
+            t.IsNonDeductible, t.NonDeductibleRuleCode, t.CreatedAt)).ToList();
+        return new PettyCashRegister(fund.Id, fund.Name, fund.ImprestAmount, fund.CurrentBalance, fund.Account,
+            fromDate, toDate, rows, rows.Sum(r => r.AmountIn), rows.Sum(r => r.AmountOut));
+    }
 
     public Task<IReadOnlyList<PettyCashTransaction>> ListTransactionsAsync(Guid companyId, Guid fundId,
         DateTime? fromDate, DateTime? toDate, CancellationToken ct = default)

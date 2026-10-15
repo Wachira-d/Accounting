@@ -2679,7 +2679,8 @@ public partial class AccountingService : IAccountingService
     }
 
     private static FiscalPeriodResponse MapPeriodToResponse(FiscalPeriod f) => new(
-        f.Id, f.Name, f.Year, f.Month, f.StartDate, f.EndDate, f.Status);
+        f.Id, f.Name, f.Year, f.Month, f.StartDate, f.EndDate, f.Status,
+        f.ClosedAt, f.ClosedBy, f.LockedAt, f.LockedBy, f.YearEndJournalEntryId);
 
     /// <summary>เลขรัน JE — ผ่านตัวออกเลขกลางตัวเดียวของระบบ
     ///

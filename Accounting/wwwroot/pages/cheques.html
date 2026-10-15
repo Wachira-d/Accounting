@@ -96,29 +96,18 @@
         await this.loadProjects();
         await this.loadContacts();
         const slot = document.getElementById('chequeExportSlot');
-        if (slot) slot.innerHTML = ExportUtil.renderButtons('(f)=>Page.exportOutstanding(f)');
+        if (slot) slot.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportOutstanding(f)');
         await this.loadOutstanding();
       },
 
-      // ชื่อผู้รับในตารางเช็คค้าง (แสดงผลอย่างเดียว — ช่องเลือกผู้รับใช้ตัวเลือกกลาง Layout.contactPicker)
-      _contacts: [],
+      // ชื่อผู้ติดต่อ/ป้ายสถานะในตารางเช็คค้างมาจากเซิร์ฟเวอร์แล้ว (OutstandingChequeRow — ทีม X5 2026-10-15) ⇒ ไม่ต้องโหลดรายชื่อ
+      // 200 รายแรกมาจับคู่เอง (เดิมรายที่ 201+ เป็นรหัสย่อ) · ช่องเลือกผู้รับใช้ตัวเลือกกลาง Layout.contactPicker
       async loadContacts() {
         if (!this._issuePicker)
           this._issuePicker = Layout.contactPicker('issueContact', 'issueContactId', {
             side: 'supplier', placeholder: 'พิมพ์ชื่อหรือเลขผู้เสียภาษีของผู้รับเช็ค...',
-            // ผู้รับที่เพิ่งเลือก/สร้าง → ใส่ในตารางชื่อด้วย (ตารางเช็คค้างโชว์ชื่อได้ทันทีหลังออกเช็ค)
-            onSelect: (c) => { if (c && !this._contacts.some(x => x.id === c.id)) this._contacts.push(c); },
           });
-        try {
-          const cid = Layout.getCompanyId(); if (!cid) return;
-          const r = await API.get(`/api/companies/${cid}/document/contacts?pageSize=200`);
-          this._contacts = r.data?.items || r.data || [];
-        } catch (e) {
-          Layout.toast('โหลดชื่อผู้รับสำหรับตารางเช็คไม่สำเร็จ: ' + (e.message || '') + ' — ตารางจะแสดงรหัสแทนชื่อ', 'warning', 7000);
-        }
       },
-      _statusLabel(st) { return ({ Issued: 'ออกแล้ว', DepositedPending: 'รอเรียกเก็บ', Cleared: 'ขึ้นเงินแล้ว', Bounced: 'เช็คคืน', Voided: 'ยกเลิกแล้ว' })[st] || st; },
-      _contactName(id) { const c = this._contacts.find(x => x.id === id); return c ? c.name : (id ? id.toString().slice(0,8)+'…' : '-'); },
 
       async loadProjects() {
         try {
@@ -220,20 +209,10 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
-      // ส่งออกเช็คคงค้าง (2026-10-14 ทีม X3 — เดิมไม่มีปุ่มส่งออก) · ยอดเป็นตัวเลขจริง · วันที่ ISO (ค.ศ.) เรียงได้ใน Excel
+      // ส่งออกเช็คคงค้าง — ไฟล์จากเซิร์ฟเวอร์ (ทีม X5 2026-10-15 · แทนไฟล์ JS ของทีม X3 ที่ชื่อผู้ติดต่อมาจากรายชื่อ 200 รายแรกที่หน้าโหลด
+      // ⇒ รายที่ 201+ เป็นรหัสย่อทั้งบนจอและในไฟล์) · แถวชุดเดียวกับตาราง (ChequeService.ListOutstandingRowsAsync)
       exportOutstanding(format) {
-        ExportUtil.exportData(format, {
-          rows: this._outRows || [],
-          columns: [
-            { key: 'chequeNumber', label: 'เลขที่เช็ค' },
-            { key: 'chequeDate', label: 'วันที่เช็ค', format: v => v ? Layout.toDateInput(new Date(v)) : '' },
-            { key: 'amount', label: 'จำนวนเงิน', align: 'right', format: v => Number(v || 0) },
-            { key: 'contactId', label: 'ผู้ติดต่อ', format: v => this._contactName(v) },
-            { key: 'isInbound', label: 'ทิศทาง', format: v => v ? 'รับ' : 'จ่าย' },
-            { key: 'status', label: 'สถานะ', format: v => this._statusLabel(v) },
-          ],
-          filename: 'เช็คคงค้าง', title: 'เช็คคงค้าง', landscape: false,
-        });
+        return ExportUtil.downloadServer('finance/exports/cheques/outstanding', {}, format, 'เช็คคงค้าง');
       },
       async loadOutstanding() {
         const tbody = document.getElementById('outstandingBody');
@@ -248,12 +227,12 @@
             return;
           }
           tbody.innerHTML = rows.map(c => `<tr>
-            <td><b>${c.chequeNumber}</b></td>
+            <td><b>${Layout.esc(c.chequeNumber)}</b></td>
             <td>${new Date(c.chequeDate).toLocaleDateString('th-TH')}</td>
             <td style="text-align:right">${this._fmt(c.amount)}</td>
-            <td>${Layout.esc(this._contactName(c.contactId))}</td>
+            <td>${Layout.esc(c.contactName || (c.contactId ? '(ผู้ติดต่อถูกลบ)' : '-'))}</td>
             <td>${c.isInbound ? '⬇️ รับ' : '⬆️ จ่าย'}</td>
-            <td><span class="badge b-${Layout.esc(c.status)}">${Layout.esc(this._statusLabel(c.status))}</span></td>
+            <td><span class="badge b-${Layout.esc(c.status)}">${Layout.esc(c.statusLabel || c.status)}</span></td>
             <td>
               <button class="btn btn-sm btn-success" onclick="Page.clearCheque('${c.id}')">ผ่านแล้ว</button>
               <button class="btn btn-sm btn-danger" onclick="Page.bounceCheque('${c.id}')">คืน</button>

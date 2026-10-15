@@ -19,7 +19,10 @@
     <div id="tab-branches">
       <div class="page-header">
         <div><h2 class="page-title">ทะเบียนสาขา / สถานประกอบการ</h2><p class="page-subtitle">ที่อยู่ + รหัสสาขาสรรพากรของแต่ละแห่ง — ใช้พิมพ์บนใบกำกับภาษีและแยกรายงานภาษี</p></div>
-        <button class="btn btn-primary" onclick="Page.openCreateBranch()">+ เพิ่มสาขา</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="exportBranches"></span>
+          <button class="btn btn-primary" onclick="Page.openCreateBranch()">+ เพิ่มสาขา</button>
+        </div>
       </div>
       <!-- กิจการสาขาเดียวไม่ต้องกรอกหน้านี้เลย — ระบบใช้ที่อยู่บริษัทตามเดิม -->
       <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:13px;line-height:1.9;color:#075985">
@@ -41,7 +44,10 @@
     <div id="tab-dimensions" style="display:none">
       <div class="page-header">
         <div><h2 class="page-title">ศูนย์ต้นทุน / แผนก</h2><p class="page-subtitle">หน่วยงาน "ถาวร" ตามโครงสร้างองค์กร — วัดค่าใช้จ่าย/กำไรว่าเกิดที่หน่วยไหน</p></div>
-        <button class="btn btn-primary" onclick="Page.openCreateDimension()">+ สร้างศูนย์ต้นทุน</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="exportDims"></span>
+          <button class="btn btn-primary" onclick="Page.openCreateDimension()">+ สร้างศูนย์ต้นทุน</button>
+        </div>
       </div>
       <!-- 3 แกนวิเคราะห์ของระบบ — กันสับสน "โครงการ vs ศูนย์ต้นทุน vs สาขา"
            (คนละคำถาม ใช้คู่กันได้ ไม่ต้องเลือกอย่างเดียว) -->
@@ -66,6 +72,10 @@
       </div>
       <div class="toolbar">
         <select class="filter-select" id="analysisDim" onchange="Page.loadAnalysis()"></select>
+        <!-- ช่วงวันที่ (เซิร์ฟเวอร์บังคับ) — เดิมไม่มี ⇒ งบตามมิติว่างทุกครั้ง -->
+        <input type="date" class="form-input" id="analysisFrom" style="max-width:170px" onchange="Page.loadAnalysis()" title="ตั้งแต่วันที่">
+        <input type="date" class="form-input" id="analysisTo" style="max-width:170px" onchange="Page.loadAnalysis()" title="ถึงวันที่">
+        <span id="exportAnalysis" style="margin-left:auto"></span>
       </div>
       <div id="analysisContent" class="card" style="padding:24px">
         <p class="text-gray-400 text-center">เลือกมิติเพื่อดูการวิเคราะห์</p>
@@ -163,6 +173,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
 const Page = {
   init() {
@@ -171,7 +182,25 @@ const Page = {
     const tab = new URLSearchParams(location.search).get('tab');
     if (!Layout.init(tab === 'branches' ? 'branches' : 'dimensions')) return;
     Layout.setTitle(tab === 'branches' ? 'ทะเบียนสาขา' : 'หลายสาขาและมิติ');
+    // ส่งออกจากเซิร์ฟเวอร์ (ทีม X5 2026-10-15) — ทะเบียนสาขา / มิติ / งบกำไรขาดทุนตามมิติ
+    const put = (id, h) => { const el = document.getElementById(id); if (el) el.innerHTML = ExportUtil.renderServerButtons(h); };
+    put('exportBranches', "(f)=>ExportUtil.downloadServer('finance/exports/dimensions', {part:'branches'}, f, 'สาขา')");
+    put('exportDims', "(f)=>ExportUtil.downloadServer('finance/exports/dimensions', {part:'dimensions'}, f, 'มิติ')");
+    put('exportAnalysis', '(f)=>Page.exportAnalysis(f)');
+    const today = new Date();
+    document.getElementById('analysisFrom').value = Layout.toDateInput(new Date(today.getFullYear(), 0, 1));
+    document.getElementById('analysisTo').value = Layout.toDateInput(today);
     this.switchTab(tab === 'dimensions' ? 'dimensions' : 'branches');
+  },
+
+  _analysisRange() {
+    return { fromDate: document.getElementById('analysisFrom').value, toDate: document.getElementById('analysisTo').value };
+  },
+
+  exportAnalysis(format) {
+    const dimId = document.getElementById('analysisDim').value;
+    if (!dimId) { Layout.toast('เลือกมิติก่อนส่งออก', 'error'); return; }
+    return ExportUtil.downloadServer(`finance/exports/dimensions/${dimId}/pnl`, this._analysisRange(), format, 'กำไรขาดทุนตามมิติ');
   },
 
   switchTab(tab) {
@@ -442,7 +471,9 @@ const Page = {
     const content = document.getElementById('analysisContent');
     if (!dimId) { content.innerHTML = '<p class="text-gray-400 text-center">เลือกมิติเพื่อดูการวิเคราะห์</p>'; return; }
     try {
-      const res = await api.getDimensionPnl(dimId);
+      const r = this._analysisRange();
+      if (!r.fromDate || !r.toDate) { content.innerHTML = '<p class="text-gray-400 text-center">เลือกช่วงวันที่</p>'; return; }
+      const res = await api.getDimensionPnl(dimId, `?fromDate=${encodeURIComponent(r.fromDate)}&toDate=${encodeURIComponent(r.toDate)}`);
       const d = res.data || {};
       // backend คืน DimensionPnLResponse: totalRevenue/totalExpenses/netIncome + lines[{accountCode, accountName, amount}]
       const lines = d.lines || [];

@@ -58,9 +58,22 @@ public interface IChequeService
     Task<IReadOnlyList<ChequeEntity>> ListOutstandingAsync(Guid companyId,
         Guid? bankAccountId, CancellationToken ct = default);
 
+    /// <summary>เช็คคงค้างพร้อมชื่อที่เซิร์ฟเวอร์แปลงแล้ว (ผู้ติดต่อ · เลขผู้เสียภาษี · บัญชีธนาคาร · โครงการ · ป้ายสถานะ) —
+    /// ตัวเดียวของหน้า cheques.html และไฟล์ส่งออก (2026-10-15 ทีม X5 · เดิมหน้าจับชื่อผู้ติดต่อจากรายชื่อ 200 รายแรก
+    /// ⇒ รายที่ 201+ เห็นเป็นรหัสย่อทั้งบนจอและในไฟล์)</summary>
+    Task<IReadOnlyList<OutstandingChequeRow>> ListOutstandingRowsAsync(Guid companyId,
+        Guid? bankAccountId, CancellationToken ct = default);
+
     /// <summary>เล่มเช็คของบริษัท (ล่าสุดก่อน) — หน้า “ออกเช็คใหม่” เลือกเล่มจากรายการนี้ · เดิมไม่มี endpoint ⇒ รีเฟรชหน้าแล้วเล่มที่เปิดไว้หายจากตัวเลือก</summary>
     Task<IReadOnlyList<ChequeBookResponse>> ListBooksAsync(Guid companyId, bool includeExhausted = false, CancellationToken ct = default);
 }
+
+/// <summary>แถวเช็คคงค้างสำหรับหน้าจอ/ไฟล์ส่งออก — ชื่อฟิลด์เดิมของ entity ที่หน้าใช้ (id · chequeNumber · chequeDate · amount ·
+/// contactId · isInbound · status) คงไว้ + ชื่อที่แปลงแล้ว · <c>ContactName</c> null = เช็คไม่ระบุผู้ติดต่อ</summary>
+public sealed record OutstandingChequeRow(Guid Id, long ChequeNumber, DateTime ChequeDate, decimal Amount, string Currency,
+    Guid? ContactId, string? ContactName, string? ContactTaxId, bool IsInbound, ChequeStatus Status, string StatusLabel,
+    string? BankLabel, string? IssuingBankName, string? ChequeBookNumber, Guid? PaymentId, Guid? ProjectId, string? ProjectName,
+    string? Notes);
 
 /// <summary>เล่มเช็คสำหรับหน้าจอ — ป้ายบัญชีธนาคารมาจากเซิร์ฟเวอร์ (หน้าไม่ต้องจับคู่รหัสเอง)</summary>
 public sealed record ChequeBookResponse(Guid Id, string BookNumber, Guid BankAccountId, string BankLabel,
@@ -375,10 +388,57 @@ public class ChequeService : IChequeService
         return await q.OrderBy(c => c.ChequeDate).ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<OutstandingChequeRow>> ListOutstandingRowsAsync(Guid companyId,
+        Guid? bankAccountId, CancellationToken ct = default)
+    {
+        var cheques = await ListOutstandingAsync(companyId, bankAccountId, ct);
+        if (cheques.Count == 0) return Array.Empty<OutstandingChequeRow>();
+        var ids = cheques.Select(c => c.Id).ToList();
+        // ชื่อบัญชีธนาคาร: เช็คจ่ายจากเล่มเช็ค · เช็ครับจากบัญชีที่นำฝาก — กรองบริษัททุกคิวรี
+        var banks = await _db.Cheques.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && ids.Contains(c.Id))
+            .Select(c => new
+            {
+                c.Id,
+                BookNumber = c.ChequeBook != null ? c.ChequeBook.BookNumber : null,
+                Bank = c.ChequeBook != null
+                    ? c.ChequeBook.BankAccount.BankName + " " + c.ChequeBook.BankAccount.AccountNumber + " (" + c.ChequeBook.BankAccount.AccountName + ")"
+                    : c.DepositBankAccount != null
+                        ? c.DepositBankAccount.BankName + " " + c.DepositBankAccount.AccountNumber + " (" + c.DepositBankAccount.AccountName + ")"
+                        : null,
+            })
+            .ToDictionaryAsync(x => x.Id, ct);
+        var contactIds = cheques.Where(c => c.ContactId.HasValue).Select(c => c.ContactId!.Value).Distinct().ToList();
+        // ผู้ติดต่อที่ถูกลบภายหลังยังต้องเห็นชื่อบนเช็คที่ค้างอยู่ ⇒ ข้าม soft-delete filter แต่กรองบริษัทเอง (§M)
+        var contacts = contactIds.Count == 0
+            ? new Dictionary<Guid, (string Name, string? TaxId)>()
+            : (await _db.Contacts.IgnoreQueryFilters().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+                .Select(c => new { c.Id, c.Name, c.TaxId }).ToListAsync(ct))
+                .ToDictionary(c => c.Id, c => (Name: c.Name, TaxId: (string?)c.TaxId));
+        var projectIds = cheques.Where(c => c.ProjectId.HasValue).Select(c => c.ProjectId!.Value).Distinct().ToList();
+        var projects = projectIds.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.Projects.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && projectIds.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, p => p.Code + " " + p.Name, ct);
+        return cheques.Select(c =>
+        {
+            banks.TryGetValue(c.Id, out var b);
+            (string Name, string? TaxId) ct0 = default;
+            var hasContact = c.ContactId.HasValue && contacts.TryGetValue(c.ContactId.Value, out ct0);
+            return new OutstandingChequeRow(c.Id, c.ChequeNumber, c.ChequeDate, c.Amount, c.Currency,
+                c.ContactId, hasContact ? ct0.Name : null, hasContact ? ct0.TaxId : null, c.IsInbound, c.Status, StatusLabel(c.Status),
+                b?.Bank, c.IssuingBankName, b?.BookNumber, c.PaymentId,
+                c.ProjectId, c.ProjectId.HasValue && projects.TryGetValue(c.ProjectId.Value, out var pn) ? pn : null,
+                c.Notes);
+        }).ToList();
+    }
+
     private const string ChequeNotFoundMessage = "ไม่พบเช็คใบนี้ (อาจถูกลบหรือหน้าจอค้างข้อมูลเก่า) — กด “รีเฟรช” ที่แท็บเช็คคงค้าง";
 
-    /// <summary>ป้ายสถานะเช็คภาษาไทย — ตัวเดียวของข้อความในไฟล์นี้</summary>
-    private static string StatusLabel(ChequeStatus st) => st switch
+    /// <summary>ป้ายสถานะเช็คภาษาไทย — ตัวเดียวของระบบ (ข้อความในไฟล์นี้ · หน้า cheques.html · ไฟล์ส่งออก อ่านจาก <see cref="OutstandingChequeRow.StatusLabel"/>)</summary>
+    public static string StatusLabel(ChequeStatus st) => st switch
     {
         ChequeStatus.Issued => "ออกแล้ว",
         ChequeStatus.DepositedPending => "รอเรียกเก็บ",

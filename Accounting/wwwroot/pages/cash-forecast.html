@@ -49,6 +49,8 @@
       <label>ยอดสำรองขั้นต่ำ:</label>
       <input type="number" id="filterFloor" class="form-input" style="width:140px" placeholder="เช่น 100000" onchange="Page.load()">
       <button class="btn btn-secondary" onclick="Page.load()">รีเฟรช</button>
+      <!-- ส่งออกจากเซิร์ฟเวอร์ (ทีม X5 2026-10-15): รายวัน + รายการรับ/จ่าย "ทั้งหมด" (ตารางบนจอแสดง 50 แรก) + ลูกหนี้/เจ้าหนี้ + ความเสี่ยง -->
+      <span id="exportSlot" style="margin-left:auto"></span>
     </div>
 
     <!-- KPI row -->
@@ -137,11 +139,14 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       async init() {
         if (!Layout.init('cash-forecast')) return;
         Layout.setTitle('คาดการณ์กระแสเงินสด');
+        const slot = document.getElementById('exportSlot');
+        if (slot) slot.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportForecast(f)');
         await this.loadProjects();
         await this.load();
       },
@@ -152,10 +157,19 @@
           const cid = Layout.getCompanyId();
           const r = await API.get(`/api/companies/${cid}/projects?pageSize=200`);
           const items = r.data?.items || r.data || [];
-          const opts = items.map(p => `<option value="${p.id}">${(p.code || p.projectNumber || '')} · ${p.name || ''}</option>`).join('');
+          const opts = items.map(p => `<option value="${Layout.esc(p.id)}">${Layout.esc((p.code || p.projectNumber || '') + ' · ' + (p.name || ''))}</option>`).join('');
           document.getElementById('filterProject').innerHTML =
             '<option value="">— ทุกโครงการ (รวมบริษัท) —</option>' + opts;
         } catch (e) { /* ignore */ }
+      },
+      exportForecast(format) {
+        const floor = parseFloat(document.getElementById('filterFloor').value);
+        return ExportUtil.downloadServer('finance/exports/cash-forecast', {
+          days: +document.getElementById('filterDays').value,
+          projectId: document.getElementById('filterProject').value,
+          minimumCashFloor: floor > 0 ? floor : '',
+          // CSV ได้ทีละแผ่น — รายวัน (Excel มีครบทุกแผ่น)
+        }, format, 'คาดการณ์เงินสด');
       },
       async load() {
         const days = +document.getElementById('filterDays').value;
@@ -220,7 +234,7 @@
 
         document.getElementById('riskBox').innerHTML = (d.risks || []).length === 0
           ? '<div style="padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;color:#15803d;font-size:13px">✓ ไม่พบความเสี่ยงในช่วงนี้</div>'
-          : d.risks.map(r => `<div class="risk risk-${r.level}"><b>${r.title}</b> — ${r.message}${r.relevantDate ? ` (${this._date(r.relevantDate)})` : ''}</div>`).join('');
+          : d.risks.map(r => `<div class="risk risk-${Layout.esc(r.level)}"><b>${Layout.esc(r.title)}</b> — ${Layout.esc(r.message)}${r.relevantDate ? ` (${this._date(r.relevantDate)})` : ''}</div>`).join('');
 
         document.getElementById('dayBody').innerHTML = (d.byDay || []).map(b => `
           <tr class="day-row ${b.runningBalance < 0 ? 'negative' : ''}">
@@ -233,16 +247,16 @@
           </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:20px">ไม่มีรายการ</td></tr>';
 
         document.getElementById('debtorBody').innerHTML = (d.topDebtors || []).slice(0,10).map(c => `
-          <tr><td>${c.contactName}</td><td style="text-align:right">${this._fmt(c.totalOutstanding)}</td><td style="text-align:right;color:${c.over90Days > 0 ? '#dc2626' : '#94a3b8'}">${c.over90Days > 0 ? this._fmt(c.over90Days) : '—'}</td></tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
+          <tr><td>${Layout.esc(c.contactName)}</td><td style="text-align:right">${this._fmt(c.totalOutstanding)}</td><td style="text-align:right;color:${c.over90Days > 0 ? '#dc2626' : '#94a3b8'}">${c.over90Days > 0 ? this._fmt(c.over90Days) : '—'}</td></tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
 
         document.getElementById('creditorBody').innerHTML = (d.topCreditors || []).slice(0,10).map(c => `
-          <tr><td>${c.contactName}</td><td style="text-align:right">${this._fmt(c.totalOutstanding)}</td><td style="text-align:right;color:${c.over90Days > 0 ? '#dc2626' : '#94a3b8'}">${c.over90Days > 0 ? this._fmt(c.over90Days) : '—'}</td></tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
+          <tr><td>${Layout.esc(c.contactName)}</td><td style="text-align:right">${this._fmt(c.totalOutstanding)}</td><td style="text-align:right;color:${c.over90Days > 0 ? '#dc2626' : '#94a3b8'}">${c.over90Days > 0 ? this._fmt(c.over90Days) : '—'}</td></tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
 
         document.getElementById('inBody').innerHTML = (d.upcomingReceipts || []).slice(0,50).map(i => `
-          <tr><td class="timing-${i.timingStatus}">${this._date(i.expectedDate)}</td><td>${i.documentNumber || '—'}</td><td style="font-size:11px">${i.contactName || '—'}</td><td style="text-align:right">${this._fmt(i.amount)}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
+          <tr><td class="timing-${i.timingStatus}">${this._date(i.expectedDate)}</td><td>${Layout.esc(i.documentNumber || '—')}</td><td style="font-size:11px">${Layout.esc(i.contactName || '—')}</td><td style="text-align:right">${this._fmt(i.amount)}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
 
         document.getElementById('outBody').innerHTML = (d.upcomingPayments || []).slice(0,50).map(i => `
-          <tr><td class="timing-${i.timingStatus}">${this._date(i.expectedDate)}</td><td>${i.documentNumber || '—'} ${i.source === 'Payroll' ? '<span style="font-size:10px;background:#ede9fe;padding:1px 5px;border-radius:4px;color:#5b21b6">payroll</span>' : ''}</td><td style="font-size:11px">${i.contactName || (i.source === 'Payroll' ? 'พนักงาน' : '—')}</td><td style="text-align:right">${this._fmt(i.amount)}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
+          <tr><td class="timing-${i.timingStatus}">${this._date(i.expectedDate)}</td><td>${Layout.esc(i.documentNumber || '—')} ${i.source === 'Payroll' ? '<span style="font-size:10px;background:#ede9fe;padding:1px 5px;border-radius:4px;color:#5b21b6">payroll</span>' : ''}</td><td style="font-size:11px">${Layout.esc(i.contactName || (i.source === 'Payroll' ? 'พนักงาน' : '—'))}</td><td style="text-align:right">${this._fmt(i.amount)}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">—</td></tr>';
       },
     };
     Page.init();

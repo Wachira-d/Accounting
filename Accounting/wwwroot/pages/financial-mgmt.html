@@ -26,7 +26,9 @@
 </head>
 <body>
 <div id="pageContent" class="page-content fade-in">
-    <div class="page-header"><h1>บริหารการเงิน</h1></div>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><h1>บริหารการเงิน</h1>
+      <!-- ส่งออกแท็บที่เปิดอยู่จากเซิร์ฟเวอร์ (ทีม X5 2026-10-15) — Excel มีแผ่นรายละเอียดของแท็บนั้นด้วย -->
+      <span id="exportSlot" title="ส่งออกแท็บที่เปิดอยู่"></span></div>
 
     <div class="tabs">
       <button class="tab active" data-tab="prepaid" onclick="Page.switchTab('prepaid')">จ่ายล่วงหน้า</button>
@@ -329,6 +331,7 @@
 <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
 <script src="/pages/financial-mgmt-logic.js"></script>
 </body>
 </html>

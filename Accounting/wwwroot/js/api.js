@@ -1485,7 +1485,8 @@ const API = {
       updateDimension: (id, d) => API.put(`${base}/dimensions/${id}`, d),
       deleteDimension: (id) => API.del(`${base}/dimensions/${id}`),
       getDimensionSummary: () => API.get(`${base}/dimensions/summary`),
-      getDimensionPnl: (id) => API.get(`${base}/dimensions/${id}/pnl`),
+      // ช่วงวันที่บังคับ (fromDate/toDate) — เดิมไม่ส่ง ⇒ เซิร์ฟเวอร์ได้ 0001-01-01 ทั้งคู่ ⇒ งบตามมิติว่างทุกครั้ง (ทีม X5 2026-10-15)
+      getDimensionPnl: (id, q = '') => API.get(`${base}/dimensions/${id}/pnl${q}`),
       // includeInactive = true เฉพาะหน้าตั้งค่า (ต้องเห็นสาขาที่ปิดไว้เพื่อเปิดกลับ);
       // ตัวเลือกสาขาในหน้าอื่นเรียกแบบไม่ส่ง = ได้เฉพาะสาขาที่ใช้งานอยู่เหมือนเดิม
       getBranches: (includeInactive = false) => API.get(`${base}/dimensions/branches${includeInactive ? '?includeInactive=true' : ''}`),

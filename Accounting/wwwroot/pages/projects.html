@@ -21,7 +21,10 @@
         <option value="Completed">เสร็จสิ้น</option>
         <option value="OnHold">ระงับ</option>
       </select>
+      <!-- ส่งออกจากเซิร์ฟเวอร์ (ทีม X5 2026-10-15) — ทุกโครงการตามตัวกรอง/คำค้น ไม่ใช่แค่ 30 แถวแรก -->
+      <span id="exportSlot" style="margin-left:auto"></span>
     </div>
+    <div id="listNote" class="text-xs text-gray-500" style="margin:4px 0 8px"></div>
     <div class="table-container">
       <table class="table">
         <thead><tr><th>รหัส</th><th>ชื่อโครงการ</th><th>ลูกค้า</th><th class="text-right">งบประมาณ</th><th class="text-right">ต้นทุนจริง</th><th>ความคืบหน้า</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
@@ -139,12 +142,15 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       currentProjectId: null,
       async init() {
         if (!Layout.init('projects')) return;
         Layout.setTitle('โครงการ');
+        const slot = document.getElementById('exportSlot');
+        if (slot) slot.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportList(f)');
         await this.load();
         // deep-link จากหน้าเอกสาร (`?id=`) — เดิมหน้านี้ไม่มี URLSearchParams เลย
         // ⇒ กดชิปโครงการในหน้ารายละเอียดเอกสารแล้วได้ลิสต์โครงการเปล่า ๆ
@@ -159,20 +165,24 @@
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
         const search = document.getElementById('searchInput').value;
-        let q = '?page=1&pageSize=30';
-        if (status) q += `&status=${status}`;
+        // เดิม pageSize=30 ไม่มีหน้าถัดไป ⇒ โครงการที่ 31+ ไม่เคยเห็น · ตอนนี้ 200 (เพดานเซิร์ฟเวอร์) + บอกเมื่อมีมากกว่า
+        let q = '?page=1&pageSize=200';
+        if (status) q += `&status=${encodeURIComponent(status)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
           const res = await api.getProjects(q);
           const items = res.data?.items || res.data || [];
+          const total = res.data?.totalCount ?? items.length;
+          document.getElementById('listNote').textContent = total > items.length
+            ? `แสดง ${items.length.toLocaleString()} จาก ${total.toLocaleString()} โครงการ — กด Export เพื่อได้ทุกโครงการ` : '';
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีโครงการ</td></tr>'; return; }
           tbody.innerHTML = items.map(p => {
             const overBudget = p.actualCost > p.budgetAmount;
             return `<tr>
-            <td class="font-medium">${p.code}</td>
-            <td>${p.name}</td>
-            <td>${p.customerName || '-'}</td>
+            <td class="font-medium">${Layout.esc(p.code)}</td>
+            <td>${Layout.esc(p.name)}</td>
+            <td>${Layout.esc(p.customerName || '-')}</td>
             <td class="text-right">${Layout.money(p.budgetAmount)}</td>
             <td class="text-right ${overBudget ? 'text-danger' : ''}">${Layout.money(p.actualCost)}</td>
             <td>
@@ -318,7 +328,7 @@
               <div class="kpi-card"><div class="kpi-label">ต้นทุนจริง</div><div class="kpi-value ${overBudget ? 'text-danger' : ''}">${Layout.money(p.actualCost)}</div></div>
               <div class="kpi-card"><div class="kpi-label">กำไร (ประมาณ)</div><div class="kpi-value ${profit >= 0 ? 'text-success' : 'text-danger'}">${Layout.money(profit)}</div></div>
             </div>
-            ${p.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.description">คำอธิบาย</div><div>${p.description}</div></div>` : ''}`;
+            ${p.description ? `<div style="padding:12px;background:var(--gray-50);border-radius:8px"><div class="text-xs text-gray-500" data-i18n="common.description">คำอธิบาย</div><div>${Layout.esc(p.description)}</div></div>` : ''}`;
 
           await this.loadTasks(id);
 
@@ -328,6 +338,7 @@
             footer += ` <button class="btn btn-primary" onclick="Page.openAddCost('${id}')">+ บันทึกต้นทุน</button>`;
             footer += ` <button class="btn btn-success" onclick="Page.completeProject('${id}')">เสร็จสิ้นโครงการ</button>`;
           }
+          footer += ` <button class="btn btn-secondary" onclick="Page.exportPnl('xlsx')" title="สรุปกำไรขาดทุน + ต้นทุนตามหมวด + รายการต้นทุนทุกบรรทัด + กระแสเงินสดต้นปี (4 แผ่น)">📊 Excel กำไรขาดทุน</button>`;
           footer += ` <button class="btn btn-warning" onclick="Page.openEdit('${id}')" data-i18n="common.edit">แก้ไข</button>`;
           footer += ` <button class="btn btn-danger" onclick="Page.deleteProject('${id}')" data-i18n="common.delete">ลบ</button>`;
           document.getElementById('detailFooter').innerHTML = footer;
@@ -503,18 +514,36 @@
       async loadCosts(id) {
         const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.getProjectCosts(id);
+          // เดิมไม่ส่ง pageSize (= 20 แถวแรก) และอ่าน c.costDate/c.date + c.category ที่ DTO ไม่มี ⇒ วันที่/หมวดว่างทุกแถว
+          // (ProjectCostEntryResponse = entryDate · costType) · ตอนนี้ 200 แถวล่าสุด + ปุ่มส่งออกได้ทุกแถว
+          const res = await api.getProjectCosts(id, '?pageSize=200');
           const items = res.data?.items || res.data || [];
-          const catMap = { Labor:'ค่าแรง', Material:'วัสดุ', Equipment:'อุปกรณ์', Subcontract:'ผู้รับเหมาช่วง', Travel:'ค่าเดินทาง', Other:'อื่นๆ' };
+          const total = res.data?.totalCount ?? items.length;
+          const catMap = { Labor:'ค่าแรง', Material:'วัสดุ', Equipment:'อุปกรณ์', Subcontract:'ผู้รับเหมาช่วง', Travel:'ค่าเดินทาง', Overhead:'โสหุ้ย', Other:'อื่นๆ' };
+          const exp = (f) => `ExportUtil.downloadServer('finance/exports/projects/${Layout.esc(id)}/pnl', {part:'entries'}, '${f}', 'รายการต้นทุนโครงการ')`;
+          const bar = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0">
+              <span class="text-xs text-gray-500">${total > items.length ? `แสดง ${items.length.toLocaleString()} จาก ${total.toLocaleString()} รายการ (ล่าสุดก่อน)` : `${total.toLocaleString()} รายการ`}</span>
+              <span><button class="btn btn-sm btn-secondary" onclick="${exp('xlsx')}">📊 Excel ทุกรายการ</button> <button class="btn btn-sm btn-secondary" onclick="${exp('csv')}">📄 CSV</button></span>
+            </div>`;
           document.getElementById('costsTab').innerHTML = items.length ?
-            `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.date">วันที่</th><th data-i18n="common.detail">รายละเอียด</th><th>หมวด</th><th class="text-right">จำนวน</th></tr></thead><tbody>${items.map(c => `<tr>
-              <td>${Layout.date(c.costDate || c.date)}</td>
-              <td>${c.description}</td>
-              <td><span class="badge badge-info">${catMap[c.category] || c.category}</span></td>
+            bar + `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.date">วันที่</th><th data-i18n="common.detail">รายละเอียด</th><th>หมวด</th><th class="text-right">จำนวน</th></tr></thead><tbody>${items.map(c => `<tr>
+              <td>${Layout.date(c.entryDate)}</td>
+              <td>${Layout.esc(c.description)}</td>
+              <td><span class="badge badge-info">${Layout.esc(catMap[c.costType] || c.costType || '-')}</span></td>
               <td class="text-right font-semibold">${Layout.money(c.amount)}</td>
             </tr>`).join('')}</tbody></table></div>`
             : '<div class="text-center text-gray-400" style="padding:24px">ยังไม่มีรายการต้นทุน</div>';
-        } catch (e) { document.getElementById('costsTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้</div>'; }
+        } catch (e) { document.getElementById('costsTab').innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่สามารถโหลดข้อมูลได้: ' + Layout.esc(e.message || '') + '</div>'; }
+      },
+      exportList(format) {
+        return ExportUtil.downloadServer('finance/exports/projects', {
+          status: document.getElementById('statusFilter').value,
+          search: document.getElementById('searchInput').value.trim(),
+        }, format, 'โครงการ');
+      },
+      exportPnl(format) {
+        if (!this.currentProjectId) return;
+        return ExportUtil.downloadServer(`finance/exports/projects/${this.currentProjectId}/pnl`, {}, format, 'กำไรขาดทุนโครงการ');
       },
       // สีประจำหมวดต้นทุน (แถบสัดส่วน + จุดหน้าชื่อหมวด)
       _costColors: { Labor:'#6366f1', Material:'#f59e0b', Subcontract:'#06b6d4', Overhead:'#94a3b8', Travel:'#ec4899', Other:'#cbd5e1' },

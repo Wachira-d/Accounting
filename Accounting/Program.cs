@@ -233,6 +233,8 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAccountingService, AccountingService>();
 // ส่งออกรายงานบัญชี CSV/Excel (2026-10-14 ทีม X3) — ตัวเลขผ่าน IAccountingService ตัวเดียวกับหน้า
 builder.Services.AddScoped<AccountingReportExportService>();
+// ไฟล์ส่งออกหน้าการเงินที่เหลือ (สินเชื่อ/งบประมาณ/โครงการ/มิติ/งวด/ตรวจข้อมูล/AR-AP/เงินสดย่อย/FX/บริหารการเงิน/คาดการณ์/เช็ค) — ทีม X5
+builder.Services.AddScoped<FinanceReportExportService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.IDbdXbrlExportService,
     Accounting.Services.Implementations.DbdXbrlExportService>();
 builder.Services.AddScoped<IMigrationWizardService, MigrationWizardService>();

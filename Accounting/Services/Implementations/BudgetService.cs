@@ -197,7 +197,9 @@ public class BudgetService : IBudgetService
                 line.AccountId,
                 line.Account?.AccountCode ?? "",
                 line.Account?.AccountName ?? "",
-                budgetAmount, actualAmount, variance, variancePercent);
+                budgetAmount, actualAmount, variance, variancePercent,
+                Accounting.Helpers.BudgetUsageStatus.Label(budgetAmount, actualAmount),
+                Accounting.Helpers.BudgetUsageStatus.UsedPercent(budgetAmount, actualAmount));
         }).ToList();
 
         // Calculate summary with variance alerts

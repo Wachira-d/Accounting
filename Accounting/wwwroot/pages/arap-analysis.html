@@ -11,6 +11,8 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">วิเคราะห์ลูกหนี้/เจ้าหนี้</h2><p class="page-subtitle">ภาพรวม DSO/DPO, Aging, หนี้สูญ, รายตัว</p></div>
+      <!-- ส่งออกจากเซิร์ฟเวอร์ (ทีม X5 2026-10-15): Excel 7 แผ่น (ภาพรวม · อายุหนี้ · แนวโน้ม · ลูกหนี้/เจ้าหนี้สูงสุด · ค่าเผื่อหนี้สงสัยจะสูญ · ลูกค้าเสี่ยง) · CSV = แผ่นค่าเผื่อหนี้ -->
+      <span id="exportSlot"></span>
     </div>
     <div class="tabs" id="mainTabs">
       <div class="tab active" onclick="Page.showTab('overview',this)">ภาพรวม</div>
@@ -67,12 +69,15 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
   const Page = {
     _overview: null, _contacts: [],
     async init() {
       if (!Layout.init('arap-analysis')) return;
       Layout.setTitle('วิเคราะห์ลูกหนี้/เจ้าหนี้');
+      const slot = document.getElementById('exportSlot');
+      if (slot) slot.innerHTML = ExportUtil.renderServerButtons("(f)=>ExportUtil.downloadServer('finance/exports/arap-analysis', f === 'csv' ? {part:'bad-debt'} : {}, f, 'วิเคราะห์ลูกหนี้เจ้าหนี้')");
       await this.loadOverview();
     },
     showTab(tab, el) {
@@ -142,7 +147,7 @@
         <div class="table-container" style="border:none">
           <table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th class="text-right">ยอดค้าง</th><th class="text-right">เกินกำหนด</th><th class="text-right">เอกสาร</th><th></th></tr></thead>
           <tbody>${items.length ? items.map(c => `<tr>
-            <td class="font-medium">${c.contactName}</td>
+            <td class="font-medium">${Layout.esc(c.contactName)}</td>
             <td class="text-right">${Layout.money(c.totalBalance)}</td>
             <td class="text-right ${c.overdueAmount>0?'text-danger':''}">${Layout.money(c.overdueAmount)}</td>
             <td class="text-right">${c.documentCount}</td>
@@ -199,7 +204,7 @@
           <div class="table-container" style="border:none">
             <table class="table"><thead><tr><th>ช่วงอายุหนี้</th><th class="text-right">ยอดค้างชำระ</th><th class="text-right">อัตราตั้งสำรอง</th><th class="text-right">ค่าเผื่อหนี้สูญ</th><th class="text-right">จำนวนเอกสาร</th></tr></thead>
             <tbody>${buckets.map(b => `<tr>
-              <td>${b.label}</td>
+              <td>${Layout.esc(b.label)}</td>
               <td class="text-right">${Layout.money(b.amount)}</td>
               <td class="text-right">${b.provisionRate.toFixed(0)}%</td>
               <td class="text-right font-semibold text-danger">${Layout.money(b.estimatedLoss)}</td>
@@ -221,7 +226,7 @@
           <div class="table-container" style="border:none">
             <table class="table"><thead><tr><th>ลูกค้า</th><th class="text-right">ยอดเกินกำหนด</th><th class="text-right">วันค้างสูงสุด</th><th>ระดับเสี่ยง</th><th class="text-right">ประมาณการสูญเสีย</th><th></th></tr></thead>
             <tbody>${risks.length ? risks.map(c => `<tr>
-              <td class="font-medium">${c.contactName}</td>
+              <td class="font-medium">${Layout.esc(c.contactName)}</td>
               <td class="text-right">${Layout.money(c.totalOverdue)}</td>
               <td class="text-right">${c.maxAgingDays} วัน</td>
               <td><span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;color:#fff;background:${riskColor[c.riskLevel]||'gray'}">${c.riskLevel}</span></td>

@@ -24,7 +24,10 @@
         <option value="PaidOff">ชำระครบ</option>
         <option value="Defaulted">ค้างชำระ</option>
       </select>
+      <!-- ส่งออกจากเซิร์ฟเวอร์ (ทีม X5 2026-10-15): ทุกสัญญาตามสถานะที่เลือก + ตารางผ่อน + ประวัติชำระ (Excel 3 แผ่น) -->
+      <span id="exportSlot" style="margin-left:auto"></span>
     </div>
+    <div id="listNote" class="text-xs text-gray-500" style="margin:4px 0 8px"></div>
     <div class="table-container">
       <table class="table">
         <thead><tr><th>เลขที่</th><th>ชื่อ</th><th data-i18n="common.type">ประเภท</th><th>ผู้ให้กู้</th><th class="text-right">เงินต้น</th><th class="text-right">ดอกเบี้ย%</th><th class="text-right">ยอดคงเหลือ</th><th>ครบกำหนด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
@@ -160,6 +163,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/money-channel.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const typeMap = { BankLoan:'สินเชื่อธนาคาร', Mortgage:'จำนอง', LineOfCredit:'วงเงิน OD', PersonalLoan:'สินเชื่อส่วนบุคคล' };
     const intTypeMap = { Fixed:'คงที่', Floating:'ลอยตัว', FlatRate:'flat rate' };
@@ -170,6 +174,8 @@
       async init() {
         if (!Layout.init('loans')) return;
         Layout.setTitle('สินเชื่อ');
+        const slot = document.getElementById('exportSlot');
+        if (slot) slot.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportList(f)');
         await this.loadAccounts();
         await Promise.all([this.loadSummary(), this.load()]);
       },
@@ -210,11 +216,15 @@
       async load() {
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
-        let q = '?page=1&pageSize=30';
+        // เดิม pageSize=30 ไม่มีหน้าถัดไป ⇒ สัญญาที่ 31+ ไม่เคยเห็น · ตอนนี้ 200 (เพดานเซิร์ฟเวอร์) + บอกเมื่อมีมากกว่า
+        let q = '?page=1&pageSize=200';
         if (status) q += `&status=${encodeURIComponent(status)}`;
         try {
           const res = await api.getLoans(q);
           const items = res.data?.items || res.data || [];
+          const total = res.data?.totalCount ?? items.length;
+          document.getElementById('listNote').textContent = total > items.length
+            ? `แสดง ${items.length.toLocaleString()} จาก ${total.toLocaleString()} สัญญา — กด Export เพื่อได้ทุกสัญญา` : '';
           items.forEach(l => { this._loans[l.id] = l; });
           const tbody = document.getElementById('tableBody');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-400" style="padding:40px">ไม่มีสินเชื่อ</td></tr>'; return; }
@@ -322,6 +332,7 @@
           await this.loadSchedule(id);
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           footer += ` <button class="btn btn-secondary" onclick="Page.openEdit('${id}')">แก้ไขสินเชื่อ / ผังบัญชี</button>`;
+          footer += ` <button class="btn btn-secondary" onclick="Page.exportLoan('${id}','xlsx')" title="ข้อมูลสัญญา + ตารางผ่อน + ประวัติชำระ ของสัญญานี้">📊 Excel</button>`;
           if (l.status === 'Active') {
             footer += ` <button class="btn btn-info" onclick="Page.generateSchedule('${id}')">สร้างตารางผ่อน</button>`;
             footer += ` <button class="btn btn-primary" onclick="Page.openPayment('${id}')">บันทึกชำระ</button>`;
@@ -376,6 +387,14 @@
           await this.load();
           if (this.currentLoanId === id) await this.viewDetail(id);
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ส่งออก — ไฟล์จากเซิร์ฟเวอร์ (FinanceExportController) ตัวกรองเดียวกับตาราง · ไม่ใช้แถวที่หน้าโหลดมา
+      exportList(format) {
+        const status = document.getElementById('statusFilter').value;
+        return ExportUtil.downloadServer('finance/exports/loans', { status }, format, 'สินเชื่อ');
+      },
+      exportLoan(id, format) {
+        return ExportUtil.downloadServer('finance/exports/loans', { loanId: id }, format, 'สินเชื่อ');
       },
       detailTab(tab, el) {
         document.getElementById('scheduleTab').classList.toggle('hidden', tab !== 'schedule');

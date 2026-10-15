@@ -102,6 +102,14 @@ public class SmeOperationsController : ControllerBase
         Ok(new ApiResponse<IReadOnlyList<PettyCashTransaction>>(true,
             await svc.ListTransactionsAsync(companyId, fundId, fromDate, toDate, ct)));
 
+    /// <summary>ทะเบียนเงินสดย่อยของกองทุน (ทุกรายการในช่วง · ชื่อผัง/โครงการ/เลขใบสำคัญแปลงแล้ว · ยอดรวมเข้า/ออกจากเซิร์ฟเวอร์) —
+    /// ตารางรายการบนหน้า petty-cash.html (ทีม X5 2026-10-15) · ไฟล์ส่งออกใช้ <see cref="IPettyCashService.GetRegisterAsync"/> ตัวเดียวกัน</summary>
+    [HttpGet("petty-cash/funds/{fundId:guid}/register")]
+    public async Task<ActionResult<ApiResponse<PettyCashRegister>>> Register(
+        Guid companyId, Guid fundId, [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate,
+        [FromServices] IPettyCashService svc, CancellationToken ct) =>
+        Ok(new ApiResponse<PettyCashRegister>(true, await svc.GetRegisterAsync(companyId, fundId, fromDate, toDate, ct)));
+
     // ── Stock count ─────────────────────────────────────────────────
     public sealed record StartCountRequest(string CountNumber, Guid? WarehouseId,
         string CountType, List<Guid> ProductIds);
