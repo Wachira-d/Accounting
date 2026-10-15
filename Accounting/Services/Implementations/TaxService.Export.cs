@@ -66,6 +66,13 @@ public partial class TaxService
         }
         else
         {
+            // ภ.ง.ด.2/3/53/54: ชีต "ใบแนบ" = คอลัมน์ Col1–Col12 เดียวกับไฟล์ .txt ของปุ่ม e-Filing ทุกช่อง (ตัวคัดบรรทัด +
+            // ตัวแปลงแถว + ตัวจัดคอลัมน์ชุดเดียว — PndDetailLines/PndRowOf/PndTextFileFormat.Cells) ⇒ ผู้ใช้ตรวจใน Excel แล้ว
+            // ยื่นด้วย .txt ได้ข้อมูลเดียวกัน (รอบ 2026-10-14 ทีม X1: เดิม Excel มีแต่ชีตรวมที่หัวคอลัมน์เขียน "ภาษีมูลค่าเพิ่ม"
+            // ไม่มีสาขา/ประเภทเงินได้/เงื่อนไข/คำนำหน้า และรวมบรรทัด [สรุป] ซ้ำ)
+            if (report.TaxType is TaxType.WithholdingTax2 or TaxType.WithholdingTax3
+                    or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)
+                sheets["ใบแนบ (ตรงกับไฟล์ .txt)"] = BuildPndAttachmentSheet(report);
             sheets["รายการ"] = BuildGenericLineSheet(lines);
             sheets["สรุปรายงาน"] = BuildSummarySheet(report, company);
         }
@@ -294,21 +301,40 @@ public partial class TaxService
         return rows;
     }
 
+    /// <summary>ชีต "ใบแนบ" ของรายงาน ภ.ง.ด.2/3/53/54 — หัว + Col1–Col12 จาก <see cref="Accounting.Helpers.PndTextFileFormat.Cells"/>
+    /// ตัวเดียวกับไฟล์ .txt (บรรทัดจาก <see cref="PndDetailLines"/> · แถวจาก <see cref="PndRowOf"/>) · เลขผู้เสียภาษี/สาขา/วันที่เป็นข้อความ
+    /// (คงเลข 0 นำหน้า) · เงินเป็นตัวเลข</summary>
+    private static List<Dictionary<string, object?>> BuildPndAttachmentSheet(TaxReport report)
+    {
+        var headers = Accounting.Helpers.PndTextFileFormat.Headers;
+        var w = headers.Count;
+        var rows = new List<Dictionary<string, object?>> { Row(w, headers.Cast<object?>().ToArray()) };
+        var juristic = IsJuristicPndForm(report.TaxType);
+        var seq = 1;
+        foreach (var l in PndDetailLines(report))
+            rows.Add(Row(w, Accounting.Helpers.PndTextFileFormat.Cells(seq++, PndRowOf(l, juristic))));
+        if (seq == 1) rows.Add(Row(w, "", "(ไม่มีรายการ)"));
+        return rows;
+    }
+
     private static List<Dictionary<string, object?>> BuildGenericLineSheet(IEnumerable<TaxReportLine> lines)
     {
         const int W = 9;
         var rows = new List<Dictionary<string, object?>>
         {
-            Row(W, "ลำดับ", "วันที่", "รายการ / เลขที่เอกสาร", "ชื่อผู้เสียภาษี",
-                   "เลขประจำตัวผู้เสียภาษี", "มูลค่า", "อัตราภาษี (%)",
-                   "ภาษีมูลค่าเพิ่ม", "สถานะ"),
+            // คอลัมน์ "ภาษี" (ไม่ใช่ "ภาษีมูลค่าเพิ่ม") — ชีตนี้ใช้กับรายงานที่ไม่ใช่ ภ.พ.30 ทั้งหมด (ภ.ง.ด./ภ.พ.36/ภ.ง.ด.50) ·
+            // วันที่ พ.ศ. ตามรายงานทางการ (รอบ 2026-10-14 ทีม X1)
+            Row(W, "ลำดับ", "วันที่ (วว/ดด/พ.ศ.)", "รายการ / เลขที่เอกสาร", "ชื่อผู้เสียภาษี",
+                   "เลขประจำตัวผู้เสียภาษี", "มูลค่า/เงินได้", "อัตราภาษี (%)",
+                   "ภาษี", "สถานะ"),
         };
         int i = 1;
         foreach (var l in lines)
         {
             rows.Add(Row(W,
                 i++,
-                l.TransactionDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
+                l.TransactionDate.ToString("dd'/'MM'/'", CultureInfo.InvariantCulture)
+                    + (l.TransactionDate.Year + 543).ToString(CultureInfo.InvariantCulture),
                 l.Description ?? "",
                 l.TaxPayerName ?? "",
                 l.TaxPayerId ?? "",

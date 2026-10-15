@@ -944,11 +944,13 @@ const API = {
       getPullableDocuments: (reportId, q = '') => API.get(`${base}/tax/${reportId}/pullable-documents${q}`),
       pullDocumentIntoReport: (reportId, documentId) => API.post(`${base}/tax/${reportId}/pull-document`, { documentId }),
       // Tax Filing Export
-      exportPnd1: (year, month) => `${base}/tax-filing-export/pnd1?year=${year}&month=${month}`,
+      // format = 'txt' (ค่าตั้งต้น · นำเข้าเว็บสรรพากร) | 'csv' | 'xlsx' — ภ.ง.ด.1/1ก (รอบ 2026-10-14 ทีม X1)
+      exportPnd1: (year, month, format) => `${base}/tax-filing-export/pnd1?year=${year}&month=${month}${format ? `&format=${encodeURIComponent(format)}` : ''}`,
       exportPnd3: (year, month) => `${base}/tax-filing-export/pnd3?year=${year}&month=${month}`,
       exportPnd53: (year, month) => `${base}/tax-filing-export/pnd53?year=${year}&month=${month}`,
       exportPnd2: (year, month) => `${base}/tax-filing-export/pnd2?year=${year}&month=${month}`,
-      exportPnd1k: (year) => `${base}/tax-filing-export/pnd1k?year=${year}`,
+      exportPnd1k: (year, format) => `${base}/tax-filing-export/pnd1k?year=${year}${format ? `&format=${encodeURIComponent(format)}` : ''}`,
+      exportPnd54: (year, month) => `${base}/tax-filing-export/pnd54?year=${year}&month=${month}`,
       exportPp30: (year, month) => `${base}/tax-filing-export/pp30?year=${year}&month=${month}`,
       exportSso110: (year, month) => `${base}/tax-filing-export/sso110?year=${year}&month=${month}`,
       exportSso110Excel: (year, month) => `${base}/tax-filing-export/sso110-excel?year=${year}&month=${month}`,

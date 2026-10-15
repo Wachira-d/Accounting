@@ -72,63 +72,107 @@ public class TaxFilingExportService : ITaxFilingExportService
     private static string TitleCode(string? title) => ThaiTitleHelper.RdCode(title);
 
     // =====================================================================
-    // ภ.ง.ด.1 — Monthly Salary Withholding Tax (e-Filing text format)
-    // Format: H + D… + T (trailer with totals); pipe-delimited
+    // ภ.ง.ด.1 — ภาษีหัก ณ ที่จ่าย เงินเดือน (รายเดือน) · txt / csv / xlsx
+    // รูปแบบไฟล์: Helpers/Pnd1FileFormat (ตัวตั้งเดียว) · รายการ: Helpers/Pnd1FilingData (ตัวโหลดเดียว —
+    // ตัวเดียวกับหน้ารายงาน ภ.ง.ด.1 ในหน้าเงินเดือน ⇒ จอ = ไฟล์)
+    //
+    // เดิม (ก่อนรอบ 2026-10-14) เขียน H|…/D|…/T|… + วันที่ dd/MM/พ.ศ. + รหัสคำนำหน้าตัวเลข = รูปแบบที่ ภ.ง.ด.3/53
+    // พิสูจน์แล้วว่าหน้านำเข้าของสรรพากรใช้ไม่ได้ (บรรทัด H/T เป็นแถวขยะ · วันที่มี slash map ไม่ได้) และ
+    // ไม่แยกประเภทเงินได้ 5 ข้อของหน้าแบบ · ไม่รวม 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือนอกรอบเงินเดือน
     // =====================================================================
-    public async Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month)
+    public async Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month, string? format = null)
     {
-        await EnsureFilableRunsAsync(companyId, year, month, "ภ.ง.ด.1");
+        var fmt = Pnd1FileFormat.ParseFormat(format);
+        var data = await Pnd1FilingData.LoadMonthAsync(_db, companyId, year, month);
+        // ด่าน "ไฟล์ว่าง/ยอดยังไม่อนุมัติ": งวดที่มีรอบเงินเดือนต้องมีรอบที่อนุมัติแล้ว (เดิม) · งวดที่ไม่มีรอบเลยแต่มี
+        // 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือ (เช่น 40(2) นอกรอบ) ยื่นได้ — เดิมโยน "ยังไม่มีรอบเงินเดือน" ทั้งที่มีภาษีต้องยื่น
+        if (data.HasPayrollRuns || data.Rows.Count == 0)
+            await EnsureFilableRunsAsync(companyId, year, month, "ภ.ง.ด.1");
         var company = await GetCompanyAsync(companyId);
-        var payrollRuns = await _db.PayrollRuns
-            .Include(p => p.Details).ThenInclude(d => d.Employee)
-            // ⚠️ ไฟล์ที่อัปโหลดเข้าเว็บราชการแล้วแก้ย้อนหลังไม่ได้ ⇒ ต้องเป็นยอดที่
-            // **ผ่านการอนุมัติ**แล้วเท่านั้น. เดิม `!= Draft && != Voided` รวม
-            // `Calculated` (คำนวณ/นำเข้ามาแล้วแต่ยังไม่มีใครอนุมัติ) เข้าไปด้วย
-            // ⇒ ผู้ใช้ดาวน์โหลดไฟล์ไปยื่นด้วยยอดที่ยังเปลี่ยนได้
-            // ขอบเขตอยู่ที่ Helpers/PayrollRunFilingScope ตัวเดียว
-            .Where(p => p.CompanyId == companyId && p.Year == year && p.Month == month
-                && Accounting.Helpers.PayrollRunFilingScope.FilingStatuses.Contains(p.Status))
-            .ToListAsync();
+        return Pnd1Result(company, data, fmt, year, month);
+    }
 
-        var sb = new StringBuilder();
-        var thaiYear = year + 543;
-        var period = $"{thaiYear:D4}{month:D2}";
+    /// <summary>ประกอบผลส่งออก ภ.ง.ด.1/1ก จากรายการที่โหลดแล้ว — ทั้งสามรูปแบบใช้ <c>data.Rows</c> ชุดเดียว
+    /// <paramref name="month"/> = null ⇒ ภ.ง.ด.1ก (รายปี)</summary>
+    private static TaxFilingExportResult Pnd1Result(
+        Company company, Pnd1FilingData.Result data, string fmt, int year, int? month)
+    {
+        var annual = month == null;
+        var formCode = annual ? "PND1K" : "PND1";
+        var formName = annual ? "ภ.ง.ด.1ก" : "ภ.ง.ด.1";
+        var period = annual ? $"{year}" : $"{year}{month!.Value:D2}";
+        var periodText = annual ? $"ปี {year}" : $"เดือน {month!.Value}/{year}";
+        if (data.Rows.Count == 0)
+            // ไฟล์ว่าง = ไม่มีอะไรให้นำเข้า — ห้ามตอบ 200 กับไฟล์เปล่า (ผู้ใช้จะอัปโหลดไฟล์ว่างเข้าเว็บสรรพากร)
+            throw new BusinessRuleException(
+                $"{formName} {periodText}: รอบเงินเดือนที่อนุมัติแล้วไม่มีผู้มีเงินได้ (เงินได้ 0 ทุกแถว) และไม่มี 50 ทวิ ภ.ง.ด.1 "
+                + "ที่ออกแล้ว — ไม่มีรายการให้สร้างไฟล์ · ตรวจยอดเงินเดือนของรอบนี้",
+                "PND1-NO-ROWS");
 
-        // ใช้ TaxableGross ถ้ามี (รายได้ที่นำมาคำนวณ WHT — Gross −
-        // สวัสดิการยกเว้นภาษี). Fallback GrossIncome สำหรับข้อมูลเก่า
-        // ที่ยังไม่ migrate.
-        decimal IncomeForTax(PayrollDetail d) => d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome;
-        // ภ.ง.ด.1 แสดงพนักงานทุกคนที่ได้รับเงินได้ ม.40(1) ในงวด — รวมคนที่ภาษี
-        // หัก ณ ที่จ่าย = 0 (เงินเดือนต่ำกว่าเกณฑ์) ด้วย. เดิมกรอง WithholdingTax > 0
-        // → บริษัทที่ทุกคนเงินเดือนต่ำกว่าเกณฑ์ได้ไฟล์ว่าง (T|0) ทั้งที่มีพนักงานจริง
-        // และไม่ตรงกับหน้ารายงาน (GeneratePnd1Async แสดงทุกคน). แสดงเงินได้ + ภาษี 0
-        // = เปิดเผยครบถ้วน ปลอดภัยกับสรรพากร (ยอดภาษีนำส่งยังถูก = ผลรวมที่หักจริง)
-        var allDetails = payrollRuns.SelectMany(p => p.Details)
-            .Where(d => IncomeForTax(d) > 0).ToList();
-        var totalIncome = allDetails.Sum(IncomeForTax);
-        var totalTax = allDetails.Sum(d => d.WithholdingTax);
-
-        // Header: H|TaxId|BranchCode|FormCode|Period(YYYYMM)|TotalRecords|TotalIncome|TotalTax
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.1|{period}|{allDetails.Count}|{totalIncome:F2}|{totalTax:F2}");
-
-        int seq = 1;
-        foreach (var detail in allDetails.OrderBy(d => d.Employee.EmployeeCode))
+        byte[] bytes;
+        string fileName, contentType;
+        switch (fmt)
         {
-            var emp = detail.Employee;
-            var payDate = payrollRuns.First(p => p.Details.Contains(detail)).PayDate;
-            var payDateThai = $"{payDate.Day:D2}/{payDate.Month:D2}/{payDate.Year + 543}";
-            // D|Seq|TitleCode|FirstName|LastName|CitizenId|PaymentDate|IncomeType(1=§40(1))|Income|Tax|Condition(1=หักภาษี ณ ที่จ่าย)
-            var income = IncomeForTax(detail);
-            sb.AppendLine($"D|{seq++}|{TitleCode(emp.TitleTh)}|{emp.FirstNameTh}|{emp.LastNameTh}|{EmployeeTaxIdentity.Resolve(emp.TaxId, emp.CitizenId)}|{payDateThai}|1|{income:F2}|{detail.WithholdingTax:F2}|1");
+            case "csv":
+                bytes = Pnd1FileFormat.BuildCsv(data.Rows, annual);
+                fileName = $"{formCode}_{period}.csv";
+                contentType = "text/csv; charset=utf-8";
+                break;
+            case "xlsx":
+                var thaiPeriod = annual
+                    ? $"{year + 543}"
+                    : $"{ThaiMonthName.FullThai[month!.Value]} {year + 543}";
+                bytes = Pnd1FileFormat.BuildXlsx(data.Rows, new Pnd1FileFormat.Header(
+                    company.Name, company.TaxId, company.BranchCode, thaiPeriod, annual));
+                fileName = $"{formCode}_{period}.xlsx";
+                contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                break;
+            default:
+                // .txt นำเข้าเว็บสรรพากร — ใบแนบแยกตามประเภทเงินได้ ⇒ ประเภทเดียว = .txt เดียว ·
+                // หลายประเภท = zip ไฟล์ละประเภท (นำเข้าทีละใบแนบ)
+                var perCategory = Pnd1FileFormat.BuildTextPerCategory(data.Rows, annual);
+                if (perCategory.Count == 1)
+                {
+                    bytes = AsBytes(perCategory[0].Text);
+                    fileName = $"{formCode}_{period}.txt";
+                    contentType = "text/plain; charset=utf-8";
+                }
+                else
+                {
+                    using (var zipStream = new MemoryStream())
+                    {
+                        using (var archive = new System.IO.Compression.ZipArchive(
+                            zipStream, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+                        {
+                            foreach (var (category, text) in perCategory)
+                            {
+                                var entry = archive.CreateEntry($"{formCode}_{period}_type{category}.txt",
+                                    System.IO.Compression.CompressionLevel.Optimal);
+                                using var es = entry.Open();
+                                var eb = AsBytes(text);
+                                es.Write(eb, 0, eb.Length);
+                            }
+                        }
+                        bytes = zipStream.ToArray();
+                    }
+                    fileName = $"{formCode}_{period}.zip";
+                    contentType = "application/zip";
+                }
+                break;
         }
 
-        // Trailer: T|TotalRecords|TotalIncome|TotalTax — required by RD parser
-        sb.AppendLine($"T|{allDetails.Count}|{totalIncome:F2}|{totalTax:F2}");
+        var categories = Pnd1FileFormat.Summarize(data.Rows);
+        var breakdown = string.Join(" · ", categories.Where(c => c.Count > 0)
+            .Select(c => $"ประเภท ({c.Category}) {c.Count} รายการ เงินได้ {c.Income:N2} ภาษี {c.Tax:N2}"));
+        var summary = $"{formName} {periodText} {data.Rows.Count} รายการ "
+            + $"(จากรอบเงินเดือน {data.PayrollRowCount} · จาก 50 ทวิ นอกรอบเงินเดือน {data.CertRowCount}) "
+            + $"เงินได้รวม {data.TotalIncome:N2} ภาษีรวม {data.TotalTax:N2} บาท · {breakdown}"
+            + (data.Notes.Count > 0 ? "\n" + string.Join("\n", data.Notes) : "")
+            + "\nℹ️ " + Pnd1FileFormat.UnverifiedNotice;
 
         return new TaxFilingExportResult(
-            "PND1", "ภ.ง.ด.1", $"PND1_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
-            allDetails.Count, totalIncome, totalTax,
-            $"ภ.ง.ด.1 เดือน {month}/{year} จำนวน {allDetails.Count} คน ภาษีรวม {totalTax:N2} บาท");
+            formCode, formName, fileName, contentType, bytes,
+            data.Rows.Count, data.TotalIncome, data.TotalTax, summary, categories);
     }
 
     // =====================================================================
@@ -157,6 +201,8 @@ public class TaxFilingExportService : ITaxFilingExportService
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
         var rows = BuildPndRows(certs, juristicPayee: false);
         var body = PndTextFileFormat.Build(rows);
+        // ไฟล์นี้อ่าน 50 ทวิ สด · ปุ่ม e-Filing ในหน้ารายงานภาษีอ่านรายงานที่บันทึกไว้ — ต่างกัน = เตือน (รอบ 2026-10-14 ทีม X1)
+        var driftNote = await PersistedReportDriftNoteAsync(companyId, TaxType.WithholdingTax3, year, month, totalTax);
 
         // ⚠️ บุคคลธรรมดาต้องมีทั้งชื่อตัวและชื่อสกุล — แถวที่แยกไม่ได้จะได้ Col5 ว่าง
         // และคำนำหน้าอาจค้างใน Col4. ระบบ **ไม่เดาให้** (คำแรกอาจเป็นคำนำหน้าหรือ
@@ -176,6 +222,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
             + reviewNote
             + eWhtNote
+            + driftNote
             + WhtRateNote(rows));
     }
 
@@ -204,6 +251,8 @@ public class TaxFilingExportService : ITaxFilingExportService
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
         var rows = BuildPndRows(certs, juristicPayee: true);
         var body = PndTextFileFormat.Build(rows);
+        // ไฟล์นี้อ่าน 50 ทวิ สด · ปุ่ม e-Filing ในหน้ารายงานภาษีอ่านรายงานที่บันทึกไว้ — ต่างกัน = เตือน (รอบ 2026-10-14 ทีม X1)
+        var driftNote = await PersistedReportDriftNoteAsync(companyId, TaxType.WithholdingTax53, year, month, totalTax);
 
         return new TaxFilingExportResult(
             "PND53", "ภ.ง.ด.53", $"PND53_{year}{month:D2}.txt", "text/plain", AsBytes(body),
@@ -211,73 +260,23 @@ public class TaxFilingExportService : ITaxFilingExportService
             $"ภ.ง.ด.53 เดือน {month}/{year} จำนวน {certs.Count} ราย ภาษีรวม {totalTax:N2} บาท "
             + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
             + eWhtNote
+            + driftNote
             + WhtRateNote(rows));
     }
 
     // =====================================================================
-    // ภ.ง.ด.1ก — Annual Salary Summary (พร้อมวันเริ่ม/สิ้นสุดงาน)
+    // ภ.ง.ด.1ก — สรุปรายปี · txt / csv / xlsx (ตัวตั้งเดียวกับ ภ.ง.ด.1 — Pnd1FileFormat annual)
+    // เดิมเป็น H|D|T + คอลัมน์ "RD template 2566" ที่ไม่มีบนใบแนบ (วันเริ่ม/ออก · PVD · SSO · ฐานภาษี) แต่ไม่มี
+    // "ที่อยู่ผู้มีเงินได้" ที่ใบแนบ ภ.ง.ด.1ก บังคับ
     // =====================================================================
-    public async Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year)
+    public async Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year, string? format = null)
     {
-        await EnsureFilableRunsAsync(companyId, year, null, "ภ.ง.ด.1ก");
+        var fmt = Pnd1FileFormat.ParseFormat(format);
+        var data = await Pnd1FilingData.LoadYearAsync(_db, companyId, year);
+        if (data.HasPayrollRuns || data.Rows.Count == 0)
+            await EnsureFilableRunsAsync(companyId, year, null, "ภ.ง.ด.1ก");
         var company = await GetCompanyAsync(companyId);
-        var thaiYear = year + 543;
-        var yearStart = new DateTime(year, 1, 1);
-        var yearEnd = new DateTime(year, 12, 31);
-
-        var payrollDetails = await _db.PayrollDetails
-            .Include(d => d.Employee)
-            .Include(d => d.PayrollRun)
-            // ขอบเขตเดียวกับไฟล์ยื่นรายเดือน (Approved/Paid) — ห้ามให้ยอดที่ยัง
-            // ไม่อนุมัติหลุดเข้าแบบสรุปประจำปี ภ.ง.ด.1ก
-            .Where(d => d.CompanyId == companyId && d.PayrollRun.Year == year
-                && Accounting.Helpers.PayrollRunFilingScope.FilingStatuses
-                    .Contains(d.PayrollRun.Status))
-            .ToListAsync();
-
-        // ใช้ TaxableGross ถ้ามี (รายได้ที่ใช้คำนวณ WHT จริง — Gross
-        // หัก สวัสดิการยกเว้นภาษี). Fallback GrossIncome สำหรับข้อมูลเก่า.
-        var empGroups = payrollDetails
-            .GroupBy(d => d.EmployeeId)
-            .Select(g => new
-            {
-                Employee = g.First().Employee,
-                TotalIncome = g.Sum(d => d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome),
-                TotalTax = g.Sum(d => d.WithholdingTax),
-                TotalSSO = g.Sum(d => d.SocialSecurityEmployee),
-                TotalPVD = g.Sum(d => d.ProvidentFundEmployee),
-                MonthCount = g.Select(d => d.PayrollRun.Month).Distinct().Count(),
-            })
-            .Where(e => e.TotalIncome > 0)
-            .OrderBy(e => e.Employee.EmployeeCode)
-            .ToList();
-
-        var sb = new StringBuilder();
-        var totalIncome = empGroups.Sum(e => e.TotalIncome);
-        var totalTax = empGroups.Sum(e => e.TotalTax);
-
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.ง.ด.1ก|{thaiYear:D4}|{empGroups.Count}|{totalIncome:F2}|{totalTax:F2}");
-
-        int seq = 1;
-        foreach (var emp in empGroups)
-        {
-            var e = emp.Employee;
-            // คอลัมน์ครบตาม RD template 2566: TitleCode, FirstName, LastName,
-            // CitizenId, StartDate, EndDate, MonthsEmployed, Income, PVD, SSO,
-            // OtherExempt(ตามมาตรา 42), TaxableBase, Tax, Condition
-            var start = e.StartDate < yearStart ? yearStart : e.StartDate;
-            var end = e.EndDate.HasValue && e.EndDate.Value < yearEnd ? e.EndDate.Value : yearEnd;
-            var startThai = $"{start.Day:D2}/{start.Month:D2}/{start.Year + 543}";
-            var endThai = $"{end.Day:D2}/{end.Month:D2}/{end.Year + 543}";
-            var taxableBase = Math.Max(0, emp.TotalIncome - emp.TotalSSO - emp.TotalPVD);
-            sb.AppendLine($"D|{seq++}|{TitleCode(e.TitleTh)}|{e.FirstNameTh}|{e.LastNameTh}|{EmployeeTaxIdentity.Resolve(e.TaxId, e.CitizenId)}|{startThai}|{endThai}|{emp.MonthCount}|1|{emp.TotalIncome:F2}|{emp.TotalPVD:F2}|{emp.TotalSSO:F2}|0.00|{taxableBase:F2}|{emp.TotalTax:F2}|1");
-        }
-        sb.AppendLine($"T|{empGroups.Count}|{totalIncome:F2}|{totalTax:F2}");
-
-        return new TaxFilingExportResult(
-            "PND1K", "ภ.ง.ด.1ก", $"PND1K_{year}.txt", "text/plain", AsBytes(sb.ToString()),
-            empGroups.Count, totalIncome, totalTax,
-            $"ภ.ง.ด.1ก ปี {year} จำนวน {empGroups.Count} คน รายได้รวม {totalIncome:N2} ภาษีรวม {totalTax:N2} บาท");
+        return Pnd1Result(company, data, fmt, year, null);
     }
 
     // =====================================================================
@@ -318,9 +317,9 @@ public class TaxFilingExportService : ITaxFilingExportService
                         ? x.Pp36RdReceiptNumber : x.SupplierInvoiceNumber),
                     BranchCode: (string?)(x.Snapshot ?? x.ContactBranch)));
 
-        // CSV escape: ห่อ "..." ถ้ามี , หรือ " หรือขึ้นบรรทัด — RD parser ปฏิบัติตาม RFC 4180.
-        static string Csv(string s) => s.Contains(',') || s.Contains('"') || s.Contains('\n')
-            ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
+        // CSV escape: ตัวหนีกลางตัวเดียว (CsvFieldSafety — RFC 4180 + กันสูตร = + - @ ของชื่อคู่ค้าที่ผู้ใช้/OCR คุม ·
+        // รอบ 2026-10-14 ทีม X1: เดิมเป็นสำเนามือที่ไม่กันสูตรและไม่หนี \r · เลขผู้เสียภาษีเดิมไม่ผ่านตัวหนีเลย)
+        static string Csv(string s) => CsvFieldSafety.Escape(s);
         // ใช้ปีของ "วันที่เอกสารจริง" ไม่ใช่ปีของงวด — ใบกำกับยกมาข้ามปี
         // (§82/3 ภายใน 6 เดือน) เช่นใบ ธ.ค. 2568 เคลมงวด ม.ค. 2569 ต้องพิมพ์
         // 15/12/2568 ไม่ใช่ 15/12/2569
@@ -341,7 +340,7 @@ public class TaxFilingExportService : ITaxFilingExportService
         {
             var branch = (l.DocumentId.HasValue && docInfo.TryGetValue(l.DocumentId.Value, out var di) ? di.BranchCode : null) ?? "00000";
             // เลขที่ใบกำกับ = Description (มีเลขเอกสาร + ป้าย CN/DN) เพื่อให้ตรงกับจอ
-            sale.AppendLine($"{s1++},{Date(l.TransactionDate)},{Csv(l.Description ?? "")},{Csv(l.TaxPayerName ?? "")},{l.TaxPayerId ?? ""},{branch},{l.IncomeAmount:F2},{l.TaxAmount:F2}");
+            sale.AppendLine($"{s1++},{Date(l.TransactionDate)},{Csv(l.Description ?? "")},{Csv(l.TaxPayerName ?? "")},{Csv(l.TaxPayerId ?? "")},{branch},{l.IncomeAmount:F2},{l.TaxAmount:F2}");
         }
 
         var purchase = new StringBuilder();
@@ -354,7 +353,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             { supplierNo = di.SupplierInvoiceNo; branch = di.BranchCode; }
             // เลขที่ใบกำกับ = เลขบนใบผู้ขาย (RD ต้องการเลขจริง) — fallback Description
             var invNo = !string.IsNullOrWhiteSpace(supplierNo) ? supplierNo! : (l.Description ?? "");
-            purchase.AppendLine($"{p1++},{Date(l.TransactionDate)},{Csv(invNo)},{Csv(l.TaxPayerName ?? "")},{l.TaxPayerId ?? ""},{branch ?? "00000"},{l.IncomeAmount:F2},{l.TaxAmount:F2}");
+            purchase.AppendLine($"{p1++},{Date(l.TransactionDate)},{Csv(invNo)},{Csv(l.TaxPayerName ?? "")},{Csv(l.TaxPayerId ?? "")},{branch ?? "00000"},{l.IncomeAmount:F2},{l.TaxAmount:F2}");
         }
 
         // ยอดรวม = ค่าจาก report (รวม CN/DN, หัก §82/5, รวมเครดิตยกมา) → ตรงกับจอ.
@@ -390,10 +389,13 @@ public class TaxFilingExportService : ITaxFilingExportService
             $"ภ.พ.30 เดือน {month}/{year} ภาษีขาย {report.OutputVat:N2} ภาษีซื้อ {report.InputVat:N2} สุทธิ {netVat:N2} บาท (Sale.csv + Purchase.csv + Summary.csv)");
     }
 
+    /// <summary>CSV ในไฟล์ zip ของ ภ.พ.30 — UTF-8 <b>มี BOM</b> (รอบ 2026-10-14 ทีม X1: เดิมไม่มี BOM ⇒ เปิดด้วย Excel
+    /// ภาษาไทยเพี้ยนทั้งไฟล์ · ชุดนี้ไม่ใช่ไฟล์นำเข้าเว็บสรรพากร — ภ.พ.30 กรอกยอดบนหน้าแบบ — จึงไม่มีเหตุให้ตัด BOM)</summary>
     private static async Task WriteZipEntryAsync(System.IO.Compression.ZipArchive archive, string name, string content)
     {
         var e = archive.CreateEntry(name, System.IO.Compression.CompressionLevel.Optimal);
         await using var stream = e.Open();
+        await stream.WriteAsync(Encoding.UTF8.GetPreamble());
         await stream.WriteAsync(Encoding.UTF8.GetBytes(content));
     }
 
@@ -790,6 +792,25 @@ public class TaxFilingExportService : ITaxFilingExportService
             + string.Join(", ", skipped.Take(3).Select(c => c.CertificateNumber)) + (skipped.Count > 3 ? ", …" : ""));
     }
 
+    /// <summary>เทียบยอดภาษีของไฟล์ ภ.ง.ด. ที่สร้างจาก 50 ทวิ สด (เมนูนี้) กับรายงานภาษีที่บันทึกไว้ของงวดเดียวกัน
+    /// (ตัวตั้งของปุ่ม e-Filing ในหน้ารายงานภาษี — <see cref="TaxService.PndDetailLines"/> ตัวเดียวกัน) · ต่าง = ข้อความเตือนท้ายสรุป
+    /// (ไม่บล็อก — ผู้ใช้ต้องรู้ว่าสองปุ่มจะได้ยอดต่างกัน แล้วเลือกสร้างรายงานใหม่หรือตรวจบรรทัดที่ติ๊กออก) · ไม่มีรายงาน = ""
+    /// <para>รอบ 2026-10-14 ทีม X1: เดิมสองทางออกของไฟล์ ภ.ง.ด.3/53/2/54 อ่านคนละแหล่งโดยไม่มีใครบอกผู้ใช้</para></summary>
+    private async Task<string> PersistedReportDriftNoteAsync(Guid companyId, TaxType taxType, int year, int month, decimal fileTax)
+    {
+        var report = await _db.TaxReports.AsNoTracking()
+            .Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.TaxType == taxType
+                && r.Year == year && r.Month == month);
+        if (report == null) return "";
+        var detail = TaxService.PndDetailLines(report);
+        var reportTax = detail.Sum(l => l.TaxAmount);
+        if (Math.Abs(reportTax - fileTax) < 0.005m) return "";
+        return $" · ⚠️ ยอดภาษีในไฟล์นี้ ({fileTax:N2} บาท จาก 50 ทวิ ที่ออกแล้ว) ไม่เท่ารายงานภาษีที่บันทึกไว้ของงวดนี้ "
+            + $"({reportTax:N2} บาท · ปุ่ม e-Filing ในหน้ารายงานภาษีใช้ยอดนี้) — สร้างรายงานใหม่หรือตรวจบรรทัดที่ติ๊กออก "
+            + "ให้สองทางตรงกันก่อนยื่น";
+    }
+
     /// <summary>ย้ายไป <see cref="PndIncomeTypeCode"/> แล้ว เพื่อให้ปุ่ม e-Filing
     /// ในหน้ารายงานใช้ตารางเดียวกัน (เดิมเป็น private ที่นี่ อีกทางจึงส่งรหัสดิบ)</summary>
     private static string MapIncomeTypeCode(string? code) => PndIncomeTypeCode.ForFile(code);
@@ -911,6 +932,8 @@ public class TaxFilingExportService : ITaxFilingExportService
         var totalTax = certs.Sum(c => c.TotalTaxAmount);
         var rows = BuildPndRows(certs, juristicPayee: false);
         var body = PndTextFileFormat.Build(rows);
+        // ไฟล์นี้อ่าน 50 ทวิ สด · ปุ่ม e-Filing ในหน้ารายงานภาษีอ่านรายงานที่บันทึกไว้ — ต่างกัน = เตือน (รอบ 2026-10-14 ทีม X1)
+        var driftNote = await PersistedReportDriftNoteAsync(companyId, TaxType.WithholdingTax2, year, month, totalTax);
 
         var needReview = rows.Where(PndTextFileFormat.NeedsNameReview).ToList();
         var reviewNote = needReview.Count == 0 ? "" :
@@ -948,6 +971,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             + reviewNote
             + journalNote
             + eWhtNote
+            + driftNote
             + WhtRateNote(rows));
     }
 
@@ -957,10 +981,6 @@ public class TaxFilingExportService : ITaxFilingExportService
     /// IsForeignService=true. กำหนดยื่นภายในวันที่ 7 ของเดือนถัดไป.</summary>
     public async Task<TaxFilingExportResult> ExportPp36Async(Guid companyId, int year, int month)
     {
-        var company = await GetCompanyAsync(companyId);
-        var thaiYear = year + 543;
-        var period = $"{thaiYear:D4}{month:D2}";
-
         // ⬇️ Single source: ใช้ตัวคำนวณเดียวกับรายงานบนจอ (GeneratePp36Report ผ่าน
         // ComputePp36ReportAsync) — เดิม export คัดเอกสารเองด้วยเงื่อนไขคนละชุด
         // (DocumentDate แทน tax point / ไม่มี PV·CIL / ไม่กัน Rejected / ไม่ dedup
@@ -969,40 +989,19 @@ public class TaxFilingExportService : ITaxFilingExportService
         var report = await _taxService.ComputePp36ReportAsync(companyId, year, month);
         var lines = report.Lines.Where(l => !l.IsExcluded).OrderBy(l => l.LineOrder).ToList();
 
-        // hydrate เลขเอกสาร + ประเทศผู้ขาย สำหรับ D-row (line เก็บ DocumentId)
-        var pp36DocIds = lines.Where(l => l.DocumentId.HasValue)
-            .Select(l => l.DocumentId!.Value).Distinct().ToList();
-        var pp36Docs = pp36DocIds.Count == 0
-            ? new Dictionary<Guid, (string No, string? Country, string? Note)>()
-            : await (from d in _db.Documents.AsNoTracking()
-                     where d.CompanyId == companyId && pp36DocIds.Contains(d.Id)
-                     join c in _db.Contacts.AsNoTracking() on d.ContactId equals c.Id into cj
-                     from c in cj.DefaultIfEmpty()
-                     select new { d.Id, d.DocumentNumber, Country = c != null ? c.Province : null, d.Notes, d.Reference })
-                .ToDictionaryAsync(x => x.Id, x => (
-                    No: x.DocumentNumber, Country: (string?)x.Country,
-                    Note: (string?)(x.Notes ?? x.Reference)));
-
-        var sb = new System.Text.StringBuilder();
-        var totalServiceAmount = report.TotalIncome;
-        var totalSelfVat = report.OutputVat;
-
-        sb.AppendLine($"H|{company.TaxId}|{company.BranchCode ?? "00000"}|ภ.พ.36|{period}|{lines.Count}|{totalServiceAmount:F2}|{totalSelfVat:F2}");
-        int seq = 1;
-        foreach (var l in lines)
-        {
-            var info = l.DocumentId.HasValue && pp36Docs.TryGetValue(l.DocumentId.Value, out var x)
-                ? x : (No: "", Country: null, Note: null);
-            var docDate = $"{l.TransactionDate:dd/MM/}{l.TransactionDate.Year + 543}";
-            // D|Seq|SupplierName|SupplierCountry|InvoiceDate|InvoiceNumber|ServiceAmount|VatAmount|Description
-            sb.AppendLine($"D|{seq++}|{Esc(l.TaxPayerName)}|{Esc(info.Country ?? "Foreign")}|{docDate}|{Esc(info.No)}|{l.IncomeAmount:F2}|{l.TaxAmount:F2}|{Esc(info.Note ?? "")}");
-        }
-        sb.AppendLine($"T|{lines.Count}|{totalServiceAmount:F2}|{totalSelfVat:F2}");
+        // รอบ 2026-10-14 ทีม X1: รูปแบบไฟล์ผ่าน Helpers/Pp36FileFormat ตัวเดียวกับปุ่ม e-Filing (เดิม H|D|T + dd/MM/พ.ศ. +
+        // "ประเทศ" ที่จริงคือจังหวัดของผู้ติดต่อ) · ข้อมูลเอกสาร/ประเทศจากตัวโหลดเดียว TaxService.LoadPp36DocInfoAsync ·
+        // ยอดรวม = ผลรวมบรรทัดที่อยู่ในไฟล์ (เดิมใช้ยอดหัวรายงาน ซึ่งอาจรวมบรรทัดที่ติ๊กออก)
+        var docInfo = await TaxService.LoadPp36DocInfoAsync(_db, companyId, lines);
+        var body = Pp36FileFormat.Build(lines.Select(l => TaxService.Pp36RowOf(l, docInfo)));
+        var totalServiceAmount = lines.Sum(l => l.IncomeAmount);
+        var totalSelfVat = lines.Sum(l => l.TaxAmount);
 
         return new TaxFilingExportResult(
-            "PP36", "ภ.พ.36", $"PP36_{year}{month:D2}.txt", "text/plain", AsBytes(sb.ToString()),
+            "PP36", "ภ.พ.36", $"PP36_{year}{month:D2}.txt", "text/plain; charset=utf-8", AsBytes(body),
             lines.Count, totalServiceAmount, totalSelfVat,
-            $"ภ.พ.36 เดือน {month}/{year} ซื้อบริการต่างประเทศ {lines.Count} รายการ VAT self-assess {totalSelfVat:N2} บาท");
+            $"ภ.พ.36 เดือน {month}/{year} ซื้อบริการต่างประเทศ {lines.Count} รายการ VAT ที่ต้องนำส่ง {totalSelfVat:N2} บาท "
+            + "· ไฟล์รายการสำหรับกรอกหน้าแบบ (ภ.พ.36 ยื่นโดยกรอกทีละรายการ — ไม่ใช่ไฟล์นำเข้า)");
     }
 
     /// <summary>ภ.ง.ด.54 — Foreign-vendor WHT. รวม PI/Expense ที่
@@ -1034,6 +1033,8 @@ public class TaxFilingExportService : ITaxFilingExportService
         // ผู้รับเงินต่างประเทศตาม ม.70 ส่วนใหญ่เป็นนิติบุคคล → ชื่อเต็มช่องเดียว
         var rows = BuildPndRows(certs, juristicPayee: true);
         var body = PndTextFileFormat.Build(rows);
+        // ไฟล์นี้อ่าน 50 ทวิ สด · ปุ่ม e-Filing ในหน้ารายงานภาษีอ่านรายงานที่บันทึกไว้ — ต่างกัน = เตือน (รอบ 2026-10-14 ทีม X1)
+        var driftNote = await PersistedReportDriftNoteAsync(companyId, TaxType.WithholdingTax54, year, month, totalWht);
 
         return new TaxFilingExportResult(
             "PND54", "ภ.ง.ด.54", $"PND54_{year}{month:D2}.txt", "text/plain", AsBytes(body),
@@ -1041,6 +1042,7 @@ public class TaxFilingExportService : ITaxFilingExportService
             $"ภ.ง.ด.54 เดือน {month}/{year} จ่ายต่างประเทศ {certs.Count} ราย WHT {totalWht:N2} บาท "
             + $"· {rows.Count} บรรทัด (ไม่มี header — นำเข้าเว็บสรรพากรได้ทันที)"
             + eWhtNote
+            + driftNote
             + Pnd54RateNote(certs));
         // ⚠️ **ไม่เรียก `WhtRateNote` ที่ ภ.ง.ด.54 โดยตั้งใจ** — ตารางอัตราของ
         // `ThaiWhtRateTable` คือ ท.ป.4/2528 (ในประเทศ) ส่วน ภ.ง.ด.54 เดินตาม ม.70
@@ -1172,6 +1174,4 @@ public class TaxFilingExportService : ITaxFilingExportService
     /// **ไม่ดู SME เลย** — D2-B2a). ห้ามเขียนขั้น/อัตราซ้ำที่นี่อีก</summary>
     private static decimal ComputeCit(decimal netProfit, bool isSme)
         => Accounting.Helpers.CitRateTable.Compute(netProfit, isSme);
-
-    private static string Esc(string? s) => s == null ? "" : s.Replace("|", "/").Replace("\n", " ").Trim();
 }

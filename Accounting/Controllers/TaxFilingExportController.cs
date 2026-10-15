@@ -18,15 +18,37 @@ public class TaxFilingExportController : ControllerBase
     private readonly ISensitivityService _sensitivity;
     private readonly Data.AccountingDbContext _db;
     private readonly Services.Implementations.IDbdXbrlExportService _xbrl;
+    /// <summary>บันทึกการดาวน์โหลดไฟล์ยื่นที่มีเลขประจำตัวเต็ม (PDPA ม.37 PiiAccessLog) — null = ไม่บันทึก (เทสต์)</summary>
+    private readonly Services.Implementations.Pdpa.IPdpaService? _pdpa;
 
     public TaxFilingExportController(ITaxFilingExportService exportService,
         ISensitivityService sensitivity, Data.AccountingDbContext db,
-        Services.Implementations.IDbdXbrlExportService xbrl)
+        Services.Implementations.IDbdXbrlExportService xbrl,
+        Services.Implementations.Pdpa.IPdpaService? pdpa = null)
     {
         _exportService = exportService;
         _sensitivity = sensitivity;
         _db = db;
         _xbrl = xbrl;
+        _pdpa = pdpa;
+    }
+
+    /// <summary>ไฟล์ยื่นแบบที่มาจากเงินเดือน (ภ.ง.ด.1/1ก/91 · สปส.) <b>ต้องมีเลขประจำตัวผู้เสียภาษี/เลขบัตรเต็ม</b> ตามแบบของราชการ
+    /// (ปิดบังไม่ได้ — ไฟล์ปิดบังยื่นไม่ได้) ⇒ ด่านคือสิทธิ์ Payroll.View ตัวเดียวกับหน้ารายงาน ภ.ง.ด.1 + บันทึกร่องรอยทุกครั้งที่
+    /// ดาวน์โหลดไฟล์จริง (PDPA ม.37(4) · รอบ 2026-10-14 ทีม X1 — เดิมดาวน์โหลดได้โดยไม่มีร่องรอย) · พรีวิว (ไม่มีไฟล์) ไม่บันทึก</summary>
+    private async Task LogFilingPiiAsync(Guid companyId, string formName, int year, int? month)
+    {
+        if (_pdpa == null) return;
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var period = month is int m && m > 0 ? $"{m:D2}/{year}" : $"{year}";
+        await _pdpa.LogPiiAccessAsync(companyId, userId,
+            User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "",
+            subjectType: "Employee", subjectId: Guid.Empty,
+            fieldName: "* (เลขประจำตัวผู้เสียภาษี/เลขบัตร + เงินได้ ในไฟล์ยื่นแบบ)",
+            operation: "Export",
+            purpose: $"ดาวน์โหลดไฟล์ยื่น {formName} งวด {period} (แบบของราชการต้องใช้เลขเต็ม)",
+            ipAddress: HttpContext?.Connection?.RemoteIpAddress?.ToString(),
+            userAgent: HttpContext?.Request?.Headers.UserAgent.ToString());
     }
 
     /// <summary>Verify the caller actually belongs to {companyId}. Required
@@ -65,12 +87,15 @@ public class TaxFilingExportController : ControllerBase
         return null;
     }
 
-    /// <summary>Export ภ.ง.ด.1 (Monthly salary WHT) for e-Filing — sensitive (payroll).</summary>
+    /// <summary>Export ภ.ง.ด.1 (รายเดือน) — <c>format</c> = txt (นำเข้าเว็บสรรพากร · ค่าตั้งต้น) · csv · xlsx ·
+    /// sensitive (payroll) + บันทึก PiiAccessLog</summary>
     [HttpGet("pnd1")]
-    public async Task<IActionResult> ExportPnd1(Guid companyId, [FromQuery] int year, [FromQuery] int month)
+    public async Task<IActionResult> ExportPnd1(Guid companyId, [FromQuery] int year, [FromQuery] int month,
+        [FromQuery] string? format = null)
     {
         var block = await CheckPayrollAsync(companyId); if (block != null) return block;
-        var result = await _exportService.ExportPnd1Async(companyId, year, month);
+        var result = await _exportService.ExportPnd1Async(companyId, year, month, format);
+        await LogFilingPiiAsync(companyId, result.FormName, year, month);
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
@@ -94,10 +119,11 @@ public class TaxFilingExportController : ControllerBase
 
     /// <summary>Export ภ.ง.ด.1ก (Annual salary summary) — sensitive (payroll).</summary>
     [HttpGet("pnd1k")]
-    public async Task<IActionResult> ExportPnd1k(Guid companyId, [FromQuery] int year)
+    public async Task<IActionResult> ExportPnd1k(Guid companyId, [FromQuery] int year, [FromQuery] string? format = null)
     {
         var block = await CheckPayrollAsync(companyId); if (block != null) return block;
-        var result = await _exportService.ExportPnd1kAsync(companyId, year);
+        var result = await _exportService.ExportPnd1kAsync(companyId, year, format);
+        await LogFilingPiiAsync(companyId, result.FormName, year, null);
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
@@ -109,6 +135,7 @@ public class TaxFilingExportController : ControllerBase
     {
         var block = await CheckPayrollAsync(companyId); if (block != null) return block;
         var result = await _exportService.ExportPnd91Async(companyId, year);
+        await LogFilingPiiAsync(companyId, result.FormName, year, null);
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
@@ -204,6 +231,7 @@ public class TaxFilingExportController : ControllerBase
     {
         var block = await CheckPayrollAsync(companyId); if (block != null) return block;
         var result = await _exportService.ExportSso110Async(companyId, year, month);
+        await LogFilingPiiAsync(companyId, result.FormName, year, month);
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
@@ -214,6 +242,7 @@ public class TaxFilingExportController : ControllerBase
     {
         var block = await CheckPayrollAsync(companyId); if (block != null) return block;
         var result = await _exportService.ExportSso110ExcelAsync(companyId, year, month);
+        await LogFilingPiiAsync(companyId, result.FormName, year, month);
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
@@ -223,6 +252,7 @@ public class TaxFilingExportController : ControllerBase
     {
         var block = await CheckPayrollAsync(companyId); if (block != null) return block;
         var result = await _exportService.ExportSps103Async(companyId, year, month);
+        await LogFilingPiiAsync(companyId, result.FormName, year, month);
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
@@ -232,6 +262,7 @@ public class TaxFilingExportController : ControllerBase
     {
         var block = await CheckPayrollAsync(companyId); if (block != null) return block;
         var result = await _exportService.ExportSps609Async(companyId, year, month);
+        await LogFilingPiiAsync(companyId, result.FormName, year, month);
         return File(result.FileData, result.ContentType, result.FileName);
     }
 
@@ -244,7 +275,8 @@ public class TaxFilingExportController : ControllerBase
         if (member != null) return (ActionResult<ApiResponse<TaxFilingExportResult>>)member;
         var code = formCode.ToUpper();
         // Block preview of payroll-derived forms behind the same Payroll gate.
-        if (code is "PND1" or "PND1K" or "SSO110" or "SPS103" or "SPS609")
+        // (รอบ 2026-10-14 ทีม X1: เดิมขาด PND91 + SSO110X ⇒ ผู้ไม่มีสิทธิ์เงินเดือนเห็นจำนวนคน/ยอดเงินได้/ยอดสมทบรวมผ่านพรีวิว)
+        if (code is "PND1" or "PND1K" or "PND91" or "SSO110" or "SSO110X" or "SPS103" or "SPS609")
         {
             var block = await CheckPayrollAsync(companyId); if (block != null) return (ActionResult<ApiResponse<TaxFilingExportResult>>)block;
         }

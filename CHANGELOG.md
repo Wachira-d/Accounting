@@ -4939,3 +4939,16 @@ _2026-10-14 (ทีม X4 · ส่งออก CSV/Excel โมดูลเง�
 (`GetEmployeesAsync(..., isActive)`) · expense.html ช่องค้นหาไม่มีผล (controller ไม่รับ `search`) · lodging.html ตัด 100 แถวเงียบ → บอกจำนวนจริง ·
 pos-reports ตัวกรองวันที่ของออเดอร์ไม่มีผล (`GetOrdersAsync(..., fromDate, toDate)` ขอบวันเดียวกับสรุปสาขา) · เปิดไว้: สรุปรายวัน POS แสดงวันเดียว · ขอบวัน POS เป็น UTC ·
 `GET audit/logs` ไม่มีด่าน · เทสต์ `ModuleExportTests` · `PayrollBankTransferTests` · `PayrollExportSheetsTests` · `Db/ModuleExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fbffc7bf_
+_2026-10-14 — ทีม X1 ไฟล์ยื่นภาษี (คำถามเจ้าของ "จะ export csv, excel เพื่อ import ส่ง ภงด 1 ได้ยังไง ตรวจสอบ column ให้ตรงให้ครบ" · ผลตรวจ `erp-review/2026-10-14/EXPORT_AUDIT.md` §ทีม X1):
+**ภ.ง.ด.1** เดิมเขียน `H|`/`D|`/`T|` + วันที่ `dd/MM/พ.ศ.` + รหัสคำนำหน้าตัวเลข = รูปแบบที่ ภ.ง.ด.3/53 พิสูจน์แล้วว่าหน้านำเข้าใช้ไม่ได้ · ไม่แยกประเภทเงินได้ 5 ข้อของหน้าแบบ ·
+ไม่มี CSV/Excel · ใบ 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือให้ผู้รับนอกรอบเงินเดือน (40(2)) หายจากไฟล์ · หน้ารายงานใช้ GrossIncome ขณะไฟล์ใช้ TaxableGross (จอ ≠ ไฟล์) ·
+ปุ่ม e-Filing PND.1 สร้างไฟล์จาก TaxReport ภ.ง.ด.1 ที่สร้างใหม่ไม่ได้แล้ว และกันด้วย Tax.Export (ไม่ใช่ Payroll.View).
+แก้: ตัวตั้งรูปแบบ `Helpers/Pnd1FileFormat` (txt/CSV BOM/xlsx จาก `Cells` ตัวเดียว · zip ไฟล์ละประเภท · ชีตสรุปยอดหน้าแบบครบ 5 ประเภท) + ตัวโหลดรายการ
+`Helpers/Pnd1FilingData` (ไฟล์ + หน้ารายงาน `GeneratePnd1Async` + 50 ทวิ ใช้ `IncomeOf` ตัวเดียว · ใบมือนอกรอบเข้าไฟล์ตามประเภท · ใบมือของพนักงานในรอบให้เงื่อนไขแทน ·
+ไม่เดาประเภท/ไม่แต่งเลขผู้เสียภาษี — เตือนในสรุป) · ภ.ง.ด.1ก รูปแบบเดียวกัน (ช่องที่อยู่) · `?format=txt|csv|xlsx` · ปุ่ม e-Filing PND.1 ปิด (`PND1-USE-PAYROLL-EXPORT`) ·
+ดาวน์โหลดไฟล์ยื่นจากเงินเดือนบันทึก PiiAccessLog (Export) · พรีวิว PND91/SSO110X กันด้วย Payroll.View (เดิมหลุด) · หน้า tax-export + หน้าเงินเดือน (รายงาน ภ.ง.ด.1)
+มีปุ่ม .txt/CSV/Excel ผ่าน `API.download` + วิธียื่น · การ์ด ภ.ง.ด.54 (endpoint มีแต่ไม่มีปุ่ม). แบบอื่น: ภ.พ.36 สองทางออกใช้ `Helpers/Pp36FileFormat` (เดิมคนละหน้าตา +
+"ประเทศ" เป็นจังหวัด) · Excel รายงาน ภ.ง.ด.2/3/53/54 มีชีตใบแนบจาก `PndTextFileFormat.Cells` ตัวเดียวกับ .txt (ชีตรวมเดิมหัว "ภาษีมูลค่าเพิ่ม") · Export ภ.ง.ด.3/53/2/54
+เตือนเมื่อยอดไม่เท่ารายงานที่บันทึกไว้ (สองทางออกอ่านคนละแหล่ง) · ภ.พ.30 CSV มี BOM + `CsvFieldSafety`. เทสต์ `Pnd1FileFormatTests` · `Pp36FileFormatTests` ·
+`PndTextFileFormatTests` (+1) · `Db/Pnd1ExportReconcileDbTests` (ไฟล์ = หน้ารายงาน = หนี้ 21914 = ยอดค้างนำส่ง + ทิศตรงข้าม) — ลำดับคอลัมน์ ภ.ง.ด.1/1ก ยังไม่ได้ยืนยันกับหน้านำเข้าจริง
+(เครื่องนี้เข้า rd.go.th ไม่ได้) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>_

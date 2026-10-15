@@ -17,7 +17,7 @@ public partial class TaxService
     // for audit + re-download.
     //
     // Forms supported:
-    //   * PND.1   — withholding from salary (เงินเดือน)
+    //   * PND.1   — ปิดแล้ว: ชี้ไปเมนู Export ยื่นภาษี (ตัวสร้างไฟล์เดียว TaxFilingExportService.ExportPnd1Async)
     //   * PND.2   — withholding on ม.40(4) interest/dividends paid to individuals (รอบ 204 ข้อ 148)
     //   * PND.3   — withholding from individuals
     //   * PND.53  — withholding from juristic persons
@@ -47,6 +47,16 @@ public partial class TaxService
         switch (formType)
         {
             case "PND.1":
+                // ⚠️ ทางออกที่สองของไฟล์ ภ.ง.ด.1 ถูกปิด (รอบ 2026-10-14 ทีม X1) — เดิมปุ่มนี้สร้างไฟล์จาก TaxReport ชนิด
+                // ภ.ง.ด.1 ซึ่ง (ก) สร้างใหม่ไม่ได้แล้ว (CreateTaxReport ปฏิเสธ — ภ.ง.ด.1 มาจากเงินเดือนโดยตรง) ⇒ ใช้ได้แต่กับ
+                // รายงานเก่าที่ค้างอยู่ = ยอดเก่า/ไม่ตรงรอบเงินเดือนปัจจุบัน (ข) ไม่แยกประเภทเงินได้ 5 ข้อ (ค) ด่านสิทธิ์คือ
+                // Tax.Export ไม่ใช่ Payroll.View ⇒ ไฟล์ที่มีเลขบัตร+เงินเดือนรายคนหลุดถึงผู้ไม่มีสิทธิ์เงินเดือน.
+                // ตัวสร้างไฟล์ ภ.ง.ด.1 มีที่เดียว: เมนู "Export ยื่นภาษี" (TaxFilingExportService.ExportPnd1Async →
+                // Helpers/Pnd1FileFormat + Pnd1FilingData) — สองปุ่มจึงไม่มีทางได้ไฟล์ต่างกัน
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "ไฟล์ ภ.ง.ด.1 สร้างจากรอบเงินเดือนโดยตรง — ไปที่เมนู \"Export ยื่นภาษี / SSO\" (การ์ด ภ.ง.ด.1) "
+                    + "เพื่อดาวน์โหลด .txt (นำเข้าเว็บสรรพากร) / CSV / Excel · ต้องมีสิทธิ์ดูเงินเดือน (Payroll.View)",
+                    "PND1-USE-PAYROLL-EXPORT");
             case "PND.2":
             case "PND.3":
             case "PND.53":
@@ -133,16 +143,13 @@ public partial class TaxService
         // ถูกสรุปเป็น reviewNote แล้วส่งขึ้นหน้าจอผ่าน header ของ endpoint
         // e-Filing (แบบเดียวกับ ExportPnd3Async ที่มี reviewNote อยู่แล้ว) —
         // ตัวสรุปคือ Helpers/WhtUnissuedCertGate ตัวเดียวกับด่านตอนยื่น
-        var detailLines = report.Lines
-            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded)
-            .OrderBy(x => x.LineOrder)
-            .ToList();
+        var detailLines = PndDetailLines(report);
 
         // ⬇️ layout เดียวกับเมนู "ส่งออกไฟล์ยื่นภาษี" (PndTextFileFormat) —
         // detail rows ล้วน ไม่มี header/trailer เพราะหน้า import ของสรรพากร
         // ให้ map คอลัมน์เอง (บรรทัด H|/T| เดิมกลายเป็นแถวขยะที่ผู้ใช้ต้องลบ).
         // สองปุ่ม (ปุ่มนี้ กับเมนูส่งออก) ต้องได้ไฟล์หน้าตาเดียวกันเสมอ
-        var isJuristicForm = taxType is TaxType.WithholdingTax53 or TaxType.WithholdingTax54;
+        var isJuristicForm = IsJuristicPndForm(taxType);
         // ⚠️ สี่ช่องนี้เคยต่างจากเมนู "ส่งออกไฟล์ยื่นภาษี" ทั้งที่เป็นงวดเดียวกัน:
         //   Col3 สาขา     — hardcode null ⇒ "00000" ทุกแถว
         //   Col7 ประเภท   — ส่งรหัสภายในดิบ ("40(8)"/"8ad") แทนรหัสของ RD
@@ -150,24 +157,39 @@ public partial class TaxService
         //   Col12 คำนำหน้า — ไม่มีที่เก็บ
         // ตอนนี้ TaxReportLine พาทั้งสี่มาจาก cert แล้ว (TaxService.GenerateWhtReport)
         // แถวเก่าที่สร้างก่อน migration ยังเป็น null → ตกไปใช้ค่าเดิมอย่างปลอดภัย
-        var body = Accounting.Helpers.PndTextFileFormat.Build(detailLines.Select(l =>
-            new Accounting.Helpers.PndTextFileFormat.Row(
-                PayeeTaxId: l.TaxPayerId,
-                BranchCode: l.TaxPayerBranchCode,
-                PayeeName: l.TaxPayerName,
-                IsJuristic: isJuristicForm,
-                PayDate: l.TransactionDate,
-                IncomeTypeCode: Accounting.Helpers.PndIncomeTypeCode.ForFile(l.IncomeTypeCode),
-                IncomeAmount: l.IncomeAmount,
-                TaxRate: l.TaxRate,
-                TaxAmount: l.TaxAmount,
-                Condition: l.WhtCondition ?? 1,
-                PayeeTitle: l.TaxPayerTitle)));
+        var body = Accounting.Helpers.PndTextFileFormat.Build(detailLines.Select(l => PndRowOf(l, isJuristicForm)));
 
         var totalIncome = detailLines.Sum(l => l.IncomeAmount);
         var totalTax = detailLines.Sum(l => l.TaxAmount);
         return (body, totalIncome, totalTax, detailLines.Count);
     }
+
+    /// <summary>บรรทัดรายงาน ภ.ง.ด. ที่ลงไฟล์ยื่น — ไม่เอาบรรทัด "[สรุป]" (SUMMARY) และบรรทัดที่ผู้ทำบัญชีติ๊กออก ·
+    /// ตัวเดียวของปุ่ม e-Filing (.txt) และชีต "ใบแนบ" ใน Excel ของรายงาน (รอบ 2026-10-14 ทีม X1 — สองไฟล์ห้าม drift)</summary>
+    internal static List<TaxReportLine> PndDetailLines(TaxReport report)
+        => report.Lines
+            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded)
+            .OrderBy(x => x.LineOrder)
+            .ToList();
+
+    /// <summary>บรรทัดรายงาน → แถวไฟล์ ภ.ง.ด. (<see cref="Accounting.Helpers.PndTextFileFormat"/>) — ตัวแปลงเดียวของปุ่ม e-Filing และชีต Excel</summary>
+    internal static Accounting.Helpers.PndTextFileFormat.Row PndRowOf(TaxReportLine l, bool isJuristicForm)
+        => new(
+            PayeeTaxId: l.TaxPayerId,
+            BranchCode: l.TaxPayerBranchCode,
+            PayeeName: l.TaxPayerName,
+            IsJuristic: isJuristicForm,
+            PayDate: l.TransactionDate,
+            IncomeTypeCode: Accounting.Helpers.PndIncomeTypeCode.ForFile(l.IncomeTypeCode),
+            IncomeAmount: l.IncomeAmount,
+            TaxRate: l.TaxRate,
+            TaxAmount: l.TaxAmount,
+            Condition: l.WhtCondition ?? 1,
+            PayeeTitle: l.TaxPayerTitle);
+
+    /// <summary>แบบ ภ.ง.ด. ที่ผู้ถูกหักเป็นนิติบุคคล (ชื่อเต็มช่องเดียว) — ตัวเดียวของ e-Filing และ Excel</summary>
+    internal static bool IsJuristicPndForm(TaxType taxType)
+        => taxType is TaxType.WithholdingTax53 or TaxType.WithholdingTax54;
 
     private async Task<(string body, decimal amount, decimal tax, int lines)> BuildPp30Async(
         Guid companyId, Company company, int year, int month)
@@ -216,37 +238,45 @@ public partial class TaxService
         var pp36Base = pp36Lines.Sum(l => l.IncomeAmount);
         var pp36Vat = pp36Lines.Sum(l => l.TaxAmount);
 
-        var sb = new StringBuilder();
-        // PP.36 (Foreign Service VAT — the buyer is the filer paying the VAT)
-        // Header: TaxId | Branch | Form | Year | Month | LineCount | TotalForeignAmount | TotalVat
-        sb.Append(string.Join("|",
-            company.TaxId ?? "",
-            (company.BranchCode ?? "00000").PadLeft(5, '0'),
-            "PP36",
-            year.ToString(),
-            month.ToString("D2"),
-            pp36Lines.Count.ToString(),
-            F(pp36Base),
-            F(pp36Vat)
-        )).Append("\r\n");
+        // รอบ 2026-10-14 ทีม X1: รูปแบบไฟล์ผ่าน Helpers/Pp36FileFormat ตัวเดียวกับเมนู Export ยื่นภาษี (เดิมสองปุ่มให้ไฟล์
+        // คนละหน้าตา — ที่นี่มีบรรทัดหัวสรุป + รหัสประเภทภายใน · เมนูโน้นเป็น H|D|T + dd/MM/พ.ศ.)
+        var docInfo = await LoadPp36DocInfoAsync(_db, companyId, pp36Lines);
+        var body = Accounting.Helpers.Pp36FileFormat.Build(pp36Lines.Select(l => Pp36RowOf(l, docInfo)));
+        return (body, pp36Base, pp36Vat, pp36Lines.Count);
+    }
 
-        int order = 1;
-        foreach (var l in pp36Lines)
-        {
-            // ลำดับ|ชื่อผู้ให้บริการต่างประเทศ|วันที่จ่าย|ประเภทเงินได้|ยอด|อัตราภาษี|ภาษี
-            sb.Append(string.Join("|",
-                order.ToString(),
-                EscapePipe(l.TaxPayerName ?? ""),
-                l.TransactionDate.ToString("ddMMyyyy", CultureInfo.InvariantCulture),
-                l.IncomeTypeCode ?? "",
-                F(l.IncomeAmount),
-                F(l.TaxRate),
-                F(l.TaxAmount)
-            )).Append("\r\n");
-            order++;
-        }
+    /// <summary>เลขที่เอกสาร + ประเทศผู้ให้บริการ (รหัส ISO ของผู้ติดต่อ) + หมายเหตุ ของบรรทัดรายงาน ภ.พ.36 —
+    /// ตัวโหลดเดียวของสองทางออกไฟล์ (ปุ่ม e-Filing + เมนู Export) · กรอง CompanyId (กฎ M)</summary>
+    internal static async Task<Dictionary<Guid, (string No, string? Country, string? Note)>> LoadPp36DocInfoAsync(
+        Accounting.Data.AccountingDbContext db, Guid companyId, IReadOnlyCollection<TaxReportLine> lines)
+    {
+        var ids = lines.Where(l => l.DocumentId.HasValue).Select(l => l.DocumentId!.Value).Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<Guid, (string No, string? Country, string? Note)>();
+        return await (from d in db.Documents.AsNoTracking()
+                      where d.CompanyId == companyId && ids.Contains(d.Id)
+                      join c in db.Contacts.AsNoTracking().IgnoreQueryFilters() on d.ContactId equals c.Id into cj
+                      from c in cj.DefaultIfEmpty()
+                      select new { d.Id, d.DocumentNumber, Country = c != null ? c.CountryCode : null, d.Notes, d.Reference })
+            .ToDictionaryAsync(x => x.Id, x => (
+                No: x.DocumentNumber, Country: (string?)x.Country,
+                Note: (string?)(x.Notes ?? x.Reference)));
+    }
 
-        return (sb.ToString(), pp36Base, pp36Vat, pp36Lines.Count);
+    /// <summary>บรรทัดรายงาน ภ.พ.36 → แถวไฟล์ (<see cref="Accounting.Helpers.Pp36FileFormat"/>) — ตัวแปลงเดียวของสองทางออก</summary>
+    internal static Accounting.Helpers.Pp36FileFormat.Row Pp36RowOf(
+        TaxReportLine l, IReadOnlyDictionary<Guid, (string No, string? Country, string? Note)> docInfo)
+    {
+        var info = l.DocumentId.HasValue && docInfo.TryGetValue(l.DocumentId.Value, out var x)
+            ? x : (No: "", Country: (string?)null, Note: (string?)null);
+        return new Accounting.Helpers.Pp36FileFormat.Row(
+            SupplierName: l.TaxPayerName,
+            CountryCode: info.Country,
+            PayDate: l.TransactionDate,
+            DocumentNo: info.No,
+            Description: info.Note,
+            BaseAmount: l.IncomeAmount,
+            VatRate: l.TaxRate,
+            VatAmount: l.TaxAmount);
     }
 
     private async Task<(string body, decimal amount, decimal tax, int lines)> BuildCitAsync(

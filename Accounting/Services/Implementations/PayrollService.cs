@@ -3996,7 +3996,7 @@ public class PayrollService : IPayrollService
                 // ★ P1-c: ใบแรกคงรูปเดิม PND1-yyyymm-รหัส · ชน (รอบเดือนเดียวกันที่ถูกยกเลิก/ออกซ้ำ) ⇒ -2, -3 … (ตัวตั้งเดียว)
                 var certNumber = Accounting.Helpers.PayrollPnd1Certs.NextNumber(run.Year, run.Month, emp.EmployeeCode, takenNumbers);
                 takenNumbers.Add(certNumber);
-                var taxableIncome = d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome;
+                var taxableIncome = Accounting.Helpers.Pnd1FilingData.IncomeOf(d.TaxableGross, d.GrossIncome);
 
                 var cert = new WithholdingTaxCert
                 {
@@ -4765,21 +4765,36 @@ public class PayrollService : IPayrollService
         // ผู้ใช้เดาเองว่าแถวไหนจะอยู่ในไฟล์ยื่น: ไฟล์รับเฉพาะรอบ Approved/Paid
         // (Helpers/PayrollRunFilingScope) และเฉพาะแถวที่มีเงินได้ ⇒ ส่งธงรายแถว
         // มาให้หน้าเว็บ **แสดง** ไม่ใช่ให้ JS คิดเกณฑ์เอง (= สำเนามือชุดที่สาม)
-        static decimal IncomeForTax(PayrollDetail d)
-            => d.TaxableGross > 0 ? d.TaxableGross : d.GrossIncome;
+        //
+        // รอบ 2026-10-14 ทีม X1: เงินได้ = Pnd1FilingData.IncomeOf (ฐานภาษี TaxableGross) ตัวเดียวกับไฟล์ — เดิมจอใช้
+        // GrossIncome (รวมสวัสดิการยกเว้น) ⇒ "รายได้รวม" บนจอ ≠ เงินได้ในไฟล์ · ยอดที่ไฟล์จะประกาศ + ยอดต่อประเภท 5 ข้อ
+        // มาจากตัวโหลดเดียวกับไฟล์ (Pnd1FilingData.LoadMonthAsync) ⇒ รวม 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือนอกรอบเงินเดือน
+        var filing = await Accounting.Helpers.Pnd1FilingData.LoadMonthAsync(_db, companyId, year, month);
         var lines = details.Select(d => new
         {
             EmployeeCode = d.Employee.EmployeeCode,
             CitizenId = includePii ? d.Employee.CitizenId : Accounting.Helpers.PiiMask.CitizenId(d.Employee.CitizenId),
             FullName = $"{d.Employee.TitleTh}{d.Employee.FirstNameTh} {d.Employee.LastNameTh}",
-            IncomeType = "เงินเดือน ค่าจ้าง (ม.40(1))",
-            TaxableIncome = d.GrossIncome,
+            IncomeType = Accounting.Helpers.Pnd1FileFormat.CategoryLabel(Accounting.Helpers.Pnd1FileFormat.GeneralSalary),
+            TaxableIncome = Accounting.Helpers.Pnd1FilingData.IncomeOf(d.TaxableGross, d.GrossIncome),
             TaxWithheld = d.WithholdingTax,
             RunStatus = d.PayrollRun.Status,
             InFilingFile = Accounting.Helpers.PayrollRunFilingScope.FilingStatuses
                                .Contains(d.PayrollRun.Status)
-                           && IncomeForTax(d) > 0
+                           && Accounting.Helpers.Pnd1FilingData.IncomeOf(d.TaxableGross, d.GrossIncome) > 0
         }).ToList();
+        // แถวจาก 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือ (ผู้รับนอกรอบเงินเดือน) — อยู่ในไฟล์เสมอ ⇒ ต้องเห็นบนจอด้วย
+        lines.AddRange(filing.CertRows.Select(r => new
+            {
+                EmployeeCode = r.SourceRef ?? "",
+                CitizenId = includePii ? r.PayeeTaxId : Accounting.Helpers.PiiMask.CitizenId(r.PayeeTaxId),
+                FullName = $"{r.Title}{r.FirstName} {r.LastName}".Trim(),
+                IncomeType = Accounting.Helpers.Pnd1FileFormat.CategoryLabel(r.Category),
+                TaxableIncome = r.IncomeAmount,
+                TaxWithheld = r.TaxAmount,
+                RunStatus = "50 ทวิ",
+                InFilingFile = true
+            }));
 
         var excluded = lines.Where(l => !l.InFilingFile).ToList();
         return new
@@ -4790,9 +4805,13 @@ public class PayrollService : IPayrollService
             TotalEmployees = lines.Count,
             TotalTaxableIncome = lines.Sum(l => l.TaxableIncome),
             TotalTaxWithheld = lines.Sum(l => l.TaxWithheld),
-            // ยอดที่ **ไฟล์ยื่นจะประกาศจริง** — เดิมจอกับไฟล์ต่างกันได้เงียบ ๆ
-            FiledEmployees = lines.Count - excluded.Count,
-            FiledTaxWithheld = lines.Where(l => l.InFilingFile).Sum(l => l.TaxWithheld),
+            // ยอดที่ **ไฟล์ยื่นจะประกาศจริง** — ตัวโหลดเดียวกับไฟล์ (Pnd1FilingData)
+            FiledEmployees = filing.Rows.Count,
+            FiledIncome = filing.TotalIncome,
+            FiledTaxWithheld = filing.TotalTax,
+            // ยอดต่อประเภทเงินได้ 5 ข้อของหน้าแบบ ภ.ง.ด.1 (ตัวคำนวณเดียวกับชีตสรุปใน Excel)
+            Categories = Accounting.Helpers.Pnd1FileFormat.Summarize(filing.Rows),
+            FilingNotes = filing.Notes,
             ExcludedEmployees = excluded.Count,
             ExcludedNote = excluded.Count == 0 ? null
                 : $"{excluded.Count} แถวจะไม่อยู่ในไฟล์ ภ.ง.ด.1 — "

@@ -1109,7 +1109,10 @@
           const res = await fetch(url, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {} });
           if (!res.ok) {
             const t = await res.text();
-            throw new Error(`Export ล้มเหลว (${res.status}): ${t.slice(0,200)}`);
+            // ข้อความของเซิร์ฟเวอร์ (ApiResponse.message) ก่อน — เช่น PND.1 ที่ชี้ไปเมนู Export ยื่นภาษี (รอบ 2026-10-14 ทีม X1)
+            let msg = t.slice(0, 200);
+            try { const j = JSON.parse(t); if (j && j.message) msg = j.message; } catch (_) { /* ไม่ใช่ JSON */ }
+            throw new Error(`Export ล้มเหลว (${res.status}): ${msg}`);
           }
           const blob = await res.blob();
           const a = document.createElement('a');

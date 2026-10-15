@@ -4,8 +4,9 @@ namespace Accounting.Services.Interfaces;
 
 public interface ITaxFilingExportService
 {
-    // ภ.ง.ด.1 - Monthly Salary WHT (e-Filing text format)
-    Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month);
+    /// <summary>ภ.ง.ด.1 รายเดือน — <paramref name="format"/> = <c>txt</c> (ค่าตั้งต้น · นำเข้าเว็บสรรพากร · หลายประเภทเงินได้ = zip) ·
+    /// <c>csv</c> · <c>xlsx</c> (ชีตสรุปยอดต่อประเภท + ชีตต่อประเภท) — รูปแบบ <c>Helpers/Pnd1FileFormat</c> · รายการ <c>Helpers/Pnd1FilingData</c></summary>
+    Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month, string? format = null);
 
     // ภ.ง.ด.3 - Service WHT for individuals (e-Filing text format)
     Task<TaxFilingExportResult> ExportPnd3Async(Guid companyId, int year, int month);
@@ -13,8 +14,8 @@ public interface ITaxFilingExportService
     // ภ.ง.ด.53 - Service WHT for companies (e-Filing text format)
     Task<TaxFilingExportResult> ExportPnd53Async(Guid companyId, int year, int month);
 
-    // ภ.ง.ด.1ก - Annual salary summary
-    Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year);
+    /// <summary>ภ.ง.ด.1ก รายปี — รูปแบบเดียวกับ ภ.ง.ด.1 (ช่องวันที่จ่ายเป็น "ที่อยู่ผู้มีเงินได้" · ยอดทั้งปีต่อราย)</summary>
+    Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year, string? format = null);
 
     /// <summary>ภ.ง.ด.91 — Annual personal-income summary per employee.
     /// Aggregates YTD income + WHT + SSO + PF from every payroll

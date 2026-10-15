@@ -223,4 +223,24 @@ public class PndTextFileFormatTests
         Assert.Equal("2", lines[1].Split('|')[0]);
         Assert.Equal("3", lines[2].Split('|')[0]);
     }
+
+    // ───────── รอบ 2026-10-14 ทีม X1: ชีต Excel ของรายงาน ภ.ง.ด. ใช้ Cells ตัวเดียวกับ .txt ─────────
+
+    [Fact]
+    public void Cells_ตรงกับDetailRowทุกช่อง_และหัวมี12ช่อง()
+    {
+        var row = JuristicRow() with { IncomeAmount = 100.005m, TaxAmount = 3.125m, TaxRate = 3m, Condition = 2 };
+        var cells = PndTextFileFormat.Cells(7, row);
+        Assert.Equal(12, cells.Length);
+        Assert.Equal(12, PndTextFileFormat.Headers.Count);
+        var txt = PndTextFileFormat.DetailRow(7, row).Split('|');
+        Assert.Equal("100.01", txt[7]);                 // AwayFromZero (ไม่ใช่ banker's 100.00)
+        Assert.Equal(100.01m, cells[7]);                // Excel ได้ตัวเลขเดียวกัน
+        Assert.Equal("3.13", txt[9]);
+        Assert.Equal(3.13m, cells[9]);
+        Assert.Equal("2", txt[10]);
+        Assert.Equal(2, cells[10]);
+        Assert.Equal(txt[1], cells[1]);                 // เลขผู้เสียภาษี 13 หลักเป็นข้อความ
+        Assert.Equal(txt[5], cells[5]);                 // วันที่ ddMMyyyy เป็นข้อความ
+    }
 }

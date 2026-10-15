@@ -38,11 +38,27 @@
           <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.1</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีหัก ณ ที่จ่าย เงินเดือน (รายเดือน)</p></div>
           <span class="badge badge-info">กรมสรรพากร</span>
         </div>
-        <div class="text-sm text-gray-500" id="previewPND1">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป</div>
-        <div style="margin-top:12px;display:flex;gap:8px">
-          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1')">ดาวน์โหลด .txt</button>
-          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND1')">ดูตัวอย่าง</button>
+        <div class="text-sm text-gray-500" id="previewPND1">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป (e-Filing ขยายถึงวันที่ 15)</div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1','txt')">ดาวน์โหลด .txt (นำเข้าเว็บสรรพากร)</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1','csv')">CSV</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1','xlsx')">Excel</button>
+          <button class="btn btn-outline btn-sm" onclick="Page.preview('PND1')">ดูตัวอย่าง / ยอดหน้าแบบ</button>
         </div>
+        <details class="text-xs" style="margin-top:8px;color:var(--text-secondary)">
+          <summary style="cursor:pointer">วิธียื่น ภ.ง.ด.1 ด้วยไฟล์นี้</summary>
+          <ol style="margin:6px 0 0 18px;padding:0;line-height:1.6">
+            <li>อนุมัติรอบเงินเดือนของเดือนนั้นก่อน (ไฟล์รับเฉพาะรอบที่อนุมัติ/จ่ายแล้ว)</li>
+            <li>กด <b>Excel</b> เพื่อตรวจ: ชีต “สรุปยอดหน้าแบบ” = จำนวนราย · เงินได้ · ภาษี ของประเภทเงินได้ (1)–(5) ที่ต้องตรงกับหน้าแบบ</li>
+            <li>กด <b>.txt</b> → เข้าเว็บ e-Filing กรมสรรพากร → ยื่นแบบ ภ.ง.ด.1 เดือนที่ต้องการ → ส่วนใบแนบ เลือกนำเข้าข้อมูลจากไฟล์ (ในโปรแกรม RD Prep คือเมนู “โอนย้ายข้อมูล”)</li>
+            <li>ตัวคั่น = <b>|</b> (ขีดตั้ง) · จับคู่คอลัมน์: ลำดับที่ · เลขประจำตัวผู้เสียภาษี · คำนำหน้า · ชื่อ · ชื่อสกุล · วันที่จ่าย · เงินได้ · ภาษี · เงื่อนไข (คอลัมน์ที่ 10 = ประเภทเงินได้ ไม่ต้องจับคู่)</li>
+            <li>รูปแบบวันที่เลือก <b>ค.ศ.</b> (ไฟล์เป็น วันเดือนปี 8 หลักติดกัน เช่น 30092026)</li>
+            <li>มีหลายประเภทเงินได้ ⇒ ได้ไฟล์ .zip แยกไฟล์ละประเภท — นำเข้าทีละใบแนบให้ตรงประเภท</li>
+            <li>ตรวจยอดรวมบนเว็บกับชีตสรุป แล้วยื่นและชำระภาษี</li>
+          </ol>
+          <div style="margin-top:6px;color:#b45309">⚠️ ลำดับคอลัมน์ของ ภ.ง.ด.1 ยังไม่ได้ยืนยันกับหน้านำเข้าของกรมสรรพากรจริง — ตอนจับคู่คอลัมน์ให้ดูหัวตารางใน Excel/CSV ประกอบ</div>
+          <div style="margin-top:4px">CSV เปิดตรงใน Excel เลข 13 หลักอาจกลายเป็น 1.1E+12 — ใช้ไฟล์ Excel เพื่อดู/แก้ ส่วน CSV ใช้นำเข้าโปรแกรมอื่น</div>
+        </details>
       </div>
 
       <!-- ภ.ง.ด.3 -->
@@ -84,6 +100,19 @@
         </div>
       </div>
 
+      <!-- ภ.ง.ด.54 (รอบ 2026-10-14 ทีม X1: endpoint มีอยู่แล้วแต่ไม่มีปุ่มบนหน้านี้) -->
+      <div class="card" id="cardPND54">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div><h3 class="text-lg font-bold" style="margin:0">ภ.ง.ด.54</h3><p class="text-gray-500 text-xs" style="margin:0">ภาษีหัก ณ ที่จ่าย จ่ายไปต่างประเทศ (ม.70)</p></div>
+          <span class="badge badge-info">กรมสรรพากร</span>
+        </div>
+        <div class="text-sm text-gray-500" id="previewPND54">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป (e-Filing ขยายถึงวันที่ 15)</div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd54')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND54')">ดูตัวอย่าง</button>
+        </div>
+      </div>
+
       <!-- ภ.พ.30 -->
       <div class="card" id="cardPP30">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -92,7 +121,7 @@
         </div>
         <div class="text-sm text-gray-500" id="previewPP30">กำหนดยื่น: ภายในวันที่ 15 ของเดือนถัดไป</div>
         <div style="margin-top:12px;display:flex;gap:8px">
-          <button class="btn btn-primary btn-sm" onclick="Page.download('pp30')">ดาวน์โหลด .txt</button>
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pp30')">ดาวน์โหลด (zip: CSV ภาษีขาย + ภาษีซื้อ)</button>
           <button class="btn btn-secondary btn-sm" onclick="Page.preview('PP30')">ดูตัวอย่าง</button>
         </div>
       </div>
@@ -121,9 +150,15 @@
           <span class="badge badge-info">กรมสรรพากร</span>
         </div>
         <div class="text-sm text-gray-500" id="previewPND1K">กำหนดยื่น: ภายในเดือนกุมภาพันธ์ของปีถัดไป</div>
-        <div style="margin-top:12px;display:flex;gap:8px">
-          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1k')">ดาวน์โหลด .txt</button>
-          <button class="btn btn-secondary btn-sm" onclick="Page.preview('PND1K')">ดูตัวอย่าง</button>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1k','txt')">ดาวน์โหลด .txt (นำเข้าเว็บสรรพากร)</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1k','csv')">CSV</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1k','xlsx')">Excel</button>
+          <button class="btn btn-outline btn-sm" onclick="Page.preview('PND1K')">ดูตัวอย่าง / ยอดหน้าแบบ</button>
+        </div>
+        <div class="text-xs" style="margin-top:6px;color:var(--text-secondary)">
+          ใบแนบ ภ.ง.ด.1ก: ลำดับ · เลขผู้เสียภาษี · คำนำหน้า · ชื่อ · ชื่อสกุล · <b>ที่อยู่ผู้มีเงินได้</b> · เงินได้ทั้งปี · ภาษีทั้งปี · เงื่อนไข · ประเภทเงินได้
+          — ⚠️ ยังไม่ได้ยืนยันลำดับคอลัมน์กับหน้านำเข้าจริง
         </div>
       </div>
 
@@ -192,7 +227,7 @@
       async loadPreviews() {
         const api = Layout.api(); if (!api) return;
         const { year, month } = this.getYM();
-        const forms = ['PND1','PND3','PND53','PND2','PP30','SSO110'];
+        const forms = ['PND1','PND3','PND53','PND2','PND54','PP30','SSO110'];
         for (const code of forms) {
           try {
             const res = await api.previewTaxExport(code, year, month);
@@ -211,93 +246,78 @@
           document.getElementById('previewPND1K').innerHTML = `<span class="text-danger text-xs">${Layout.esc(e.message || 'ไม่มีข้อมูล')}</span>`;
         }
       },
-      download(formCode) {
-        const api = Layout.api(); if (!api) return;
+      /** URL ไฟล์ของแบบ — ตัวเดียวของทั้งปุ่มดาวน์โหลดและพรีวิว · fmt ใช้กับ ภ.ง.ด.1/1ก (txt|csv|xlsx) */
+      fileUrl(formCode, fmt) {
+        const api = Layout.api(); if (!api) return null;
         const { year, month } = this.getYM();
-        let url;
-        switch(formCode) {
-          case 'pnd1': url = api.exportPnd1(year, month); break;
-          case 'pnd3': url = api.exportPnd3(year, month); break;
-          case 'pnd53': url = api.exportPnd53(year, month); break;
-          case 'pnd2': url = api.exportPnd2(year, month); break;
-          case 'pnd1k': url = api.exportPnd1k(year); break;
-          case 'pp30': url = api.exportPp30(year, month); break;
-          case 'sso110': url = api.exportSso110(year, month); break;
-          case 'sso110excel': url = api.exportSso110Excel(year, month); break;
-          case 'pnd51': {
-            const cid = Layout.getCompanyId();
-            url = `/api/companies/${cid}/tax-filing-export/pnd51?year=${year}`;
-            break;
-          }
+        switch (String(formCode).toLowerCase()) {
+          case 'pnd1': return api.exportPnd1(year, month, fmt);
+          case 'pnd3': return api.exportPnd3(year, month);
+          case 'pnd53': return api.exportPnd53(year, month);
+          case 'pnd2': return api.exportPnd2(year, month);
+          case 'pnd54': return api.exportPnd54(year, month);
+          case 'pnd1k': return api.exportPnd1k(year, fmt);
+          case 'pp30': return api.exportPp30(year, month);
+          case 'sso110': return api.exportSso110(year, month);
+          case 'sso110x':
+          case 'sso110excel': return api.exportSso110Excel(year, month);
+          case 'pnd51': return `/api/companies/${Layout.getCompanyId()}/tax-filing-export/pnd51?year=${year}`;
         }
-        if (url) {
-          const token = localStorage.getItem('token');
-          // Download via fetch with auth header
-          fetch(url, { headers: { 'Authorization': `Bearer ${token}` }})
-            .then(r => {
-              if (!r.ok) throw new Error('Export failed');
-              // ใช้ชื่อไฟล์จาก Content-Disposition ของ server ก่อน (เช่น
-              // SocialSecurity_2569_06.xlsx ตาม convention ที่ e-Service คุ้น)
-              // fallback = <FORM>_<yyyyMM>.<ext ตาม form>
-              const cd = r.headers.get('Content-Disposition') || '';
-              const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
-              this._dlName = m ? decodeURIComponent(m[1])
-                : `${formCode.toUpperCase()}_${year}${month ? String(month).padStart(2,'0') : ''}${formCode === 'sso110excel' ? '.xlsx' : '.txt'}`;
-              return r.blob();
-            })
-            .then(blob => {
-              const a = document.createElement('a');
-              a.href = URL.createObjectURL(blob);
-              a.download = this._dlName;
-              a.click();
-              URL.revokeObjectURL(a.href);
-              Layout.toast('ดาวน์โหลดสำเร็จ');
-            })
-            .catch(e => Layout.toast(e.message, 'error'));
-        }
+        return null;
       },
-      escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); },
+      /** ดาวน์โหลดผ่านตัวดึงไฟล์กลาง API.download (แนบ token · ชื่อไฟล์จากเซิร์ฟเวอร์ · ข้อความผิดพลาดของเซิร์ฟเวอร์ถึงผู้ใช้ ·
+       *  มือถือได้ไฟล์) — เดิมยิง fetch ดิบแล้วโยน 'Export failed' ทิ้งข้อความจริง (เช่น "รอบเงินเดือนยังไม่อนุมัติ") */
+      async download(formCode, fmt) {
+        const url = this.fileUrl(formCode, fmt); if (!url) return;
+        const { year, month } = this.getYM();
+        const ext = fmt === 'csv' ? '.csv' : (fmt === 'xlsx' || formCode === 'sso110excel') ? '.xlsx' : '.txt';
+        const annual = formCode === 'pnd1k' || formCode === 'pnd51';
+        const fallback = `${String(formCode).toUpperCase()}_${year}${annual ? '' : String(month).padStart(2, '0')}${ext}`;
+        try {
+          if (await API.download(url, fallback)) Layout.toast('ดาวน์โหลดสำเร็จ');
+        } catch (e) { Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error', 8000); }
+      },
+      /** ตารางยอดต่อประเภทเงินได้ของหน้าแบบ ภ.ง.ด.1/1ก — ตัวเลขมาจากเซิร์ฟเวอร์ (Pnd1FileFormat.Summarize) หน้าเว็บแสดงอย่างเดียว */
+      categoriesTable(cats) {
+        if (!Array.isArray(cats) || cats.length === 0) return '';
+        const rows = cats.map(c => `<tr><td>${Layout.esc(c.label)}</td><td class="text-right">${Number(c.count) || 0}</td>`
+          + `<td class="text-right">${Layout.money(c.income)}</td><td class="text-right">${Layout.money(c.tax)}</td></tr>`).join('');
+        return `<div class="table-container" style="margin-top:8px"><table class="table" style="font-size:12px">
+          <thead><tr><th>ประเภทเงินได้ (บรรทัดบนหน้าแบบ)</th><th class="text-right">จำนวนราย</th><th class="text-right">เงินได้</th><th class="text-right">ภาษี</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>`;
+      },
       async preview(formCode) {
         const api = Layout.api(); if (!api) return;
         const { year, month } = this.getYM();
-        const formNames = { PND1:'ภ.ง.ด.1', PND3:'ภ.ง.ด.3', PND53:'ภ.ง.ด.53', PND2:'ภ.ง.ด.2', PND1K:'ภ.ง.ด.1ก', PP30:'ภ.พ.30', SSO110:'สปส.1-10', SSO110X:'สปส.1-10 (Excel)' };
+        const formNames = { PND1:'ภ.ง.ด.1', PND3:'ภ.ง.ด.3', PND53:'ภ.ง.ด.53', PND2:'ภ.ง.ด.2', PND54:'ภ.ง.ด.54', PND1K:'ภ.ง.ด.1ก', PP30:'ภ.พ.30', SSO110:'สปส.1-10', SSO110X:'สปส.1-10 (Excel)' };
         document.getElementById('previewTitle').textContent = `ตัวอย่างข้อมูล ${formNames[formCode] || formCode}`;
         try {
-          // Fetch actual file content
           const m = formCode === 'PND1K' ? 0 : month;
-          let url;
-          switch(formCode) {
-            case 'PND1': url = api.exportPnd1(year, month); break;
-            case 'PND3': url = api.exportPnd3(year, month); break;
-            case 'PND53': url = api.exportPnd53(year, month); break;
-            case 'PND2': url = api.exportPnd2(year, month); break;
-            case 'PND1K': url = api.exportPnd1k(year); break;
-            case 'PP30': url = api.exportPp30(year, month); break;
-            case 'SSO110': url = api.exportSso110(year, month); break;
-            // SSO110X = ไฟล์ Excel (binary) — ไม่ดึงเนื้อไฟล์มาแสดง ใช้สรุป/คำเตือนพอ
-          }
-          let text = '(ไฟล์ Excel — ตรวจสรุปและคำเตือนด้านบน แล้วกดดาวน์โหลดเพื่อแนบใน e-Service)';
-          if (url) {
-            const token = localStorage.getItem('token');
-            const r = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` }});
-            text = await r.text();
-          }
-
-          // Summary
+          // สรุปก่อน — ถ้างวดนี้สร้างไฟล์ไม่ได้ ข้อความของเซิร์ฟเวอร์ขึ้นทันที (ไม่ต้องดึงไฟล์)
           const res = await api.previewTaxExport(formCode, year, m);
           const d = res.data;
+          let text = '(ไฟล์ไม่ใช่ข้อความ — ตรวจสรุปด้านบน แล้วกดดาวน์โหลด)';
+          // เนื้อไฟล์ .txt ผ่านตัวดึงไฟล์กลาง — zip/xlsx ไม่แสดงเนื้อ
+          if (formCode !== 'SSO110X' && formCode !== 'PP30') {
+            const f = await API.fetchFile(this.fileUrl(formCode, 'txt'), 'preview.txt');
+            if (f && /\.txt$/i.test(f.name)) text = await f.blob.text();
+            else if (f) text = `(ไฟล์ ${f.name} — มีหลายประเภทเงินได้จึงแยกเป็น zip ไฟล์ละประเภท · กดดาวน์โหลดเพื่อดู)`;
+          }
           document.getElementById('previewSummary').innerHTML = `
             <div class="grid grid-3 gap-4">
-              <div><span class="text-gray-500 text-xs">จำนวนรายการ</span><div class="text-lg font-bold">${d.recordCount}</div></div>
+              <div><span class="text-gray-500 text-xs">จำนวนรายการ</span><div class="text-lg font-bold">${Number(d.recordCount) || 0}</div></div>
               <div><span class="text-gray-500 text-xs">รายได้/ฐานรวม</span><div class="text-lg font-bold">${Layout.money(d.totalIncome)}</div></div>
               <div><span class="text-gray-500 text-xs">ภาษี/สมทบรวม</span><div class="text-lg font-bold text-danger">${Layout.money(d.totalTax)}</div></div>
             </div>
-            <div class="text-sm" style="margin-top:8px;white-space:pre-line;color:${(d.summary || '').includes('⚠') ? '#b45309' : 'var(--text-secondary)'}">${this.escapeHtml(d.summary || '')}</div>`;
+            ${this.categoriesTable(d.categories)}
+            <div class="text-sm" style="margin-top:8px;white-space:pre-line;color:${(d.summary || '').includes('⚠') ? '#b45309' : 'var(--text-secondary)'}">${Layout.esc(d.summary || '')}</div>`;
 
           document.getElementById('previewData').textContent = text;
-          document.getElementById('previewDownloadBtn').onclick = () => this.download(formCode === 'SSO110X' ? 'sso110excel' : formCode.toLowerCase());
+          const dl = formCode === 'SSO110X' ? 'sso110excel' : formCode.toLowerCase();
+          const fmt = (formCode === 'PND1' || formCode === 'PND1K') ? 'txt' : undefined;
+          document.getElementById('previewDownloadBtn').onclick = () => this.download(dl, fmt);
           Layout.openModal('previewModal');
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        } catch (e) { Layout.toast(e.message, 'error', 8000); }
       },
 
       // ===== DBD XBRL — annual financial statements =====

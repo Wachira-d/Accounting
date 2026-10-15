@@ -2627,14 +2627,21 @@ const Page = {
         res = await api.getPnd1(year, month);
         const d = res.data || {};
         content.innerHTML = `
-          <h3 style="margin-bottom:16px">ภงด.1 - ${month}/${parseInt(year)+543}</h3>
+          <h3 style="margin-bottom:8px">ภงด.1 - ${month}/${parseInt(year)+543}</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+            <button class="btn btn-primary btn-sm" onclick="Page.downloadPnd1('txt')">ดาวน์โหลด .txt (นำเข้าเว็บสรรพากร)</button>
+            <button class="btn btn-secondary btn-sm" onclick="Page.downloadPnd1('csv')">CSV</button>
+            <button class="btn btn-secondary btn-sm" onclick="Page.downloadPnd1('xlsx')">Excel</button>
+            <a class="btn btn-outline btn-sm" href="/pages/tax-export.html" style="text-decoration:none">วิธียื่น / ไฟล์อื่น ๆ</a>
+          </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.totalEmployees ?? d.employeeCount ?? 0}</div></div>
-            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">รายได้รวม</div><div class="font-medium text-lg">${Layout.money(d.totalTaxableIncome ?? d.totalIncome)}</div></div>
+            <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">เงินได้รวม (ฐานภาษี)</div><div class="font-medium text-lg">${Layout.money(d.totalTaxableIncome ?? d.totalIncome)}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">ภาษีหัก ณ ที่จ่ายรวม</div><div class="font-medium text-lg text-primary">${Layout.money(d.totalTaxWithheld ?? d.totalTax)}</div></div>
           </div>
           ${Page._filingNote(d)}
-          ${(d.lines || d.employees) ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">รายได้</th><th class="text-right">ภาษี</th><th>ในไฟล์ยื่น</th></tr></thead>
+          ${Page._pnd1Categories(d)}
+          ${(d.lines || d.employees) ? `<div class="table-container"><table class="table"><thead><tr><th data-i18n="common.name">ชื่อ</th><th>เลขประจำตัว</th><th class="text-right">เงินได้</th><th class="text-right">ภาษี</th><th>ในไฟล์ยื่น</th></tr></thead>
           <tbody>${(d.lines || d.employees).map(e => `<tr><td>${Layout.esc(e.fullName||e.name||'-')}</td><td>${Layout.esc(e.citizenId||e.idCard||'-')}</td><td class="text-right">${Layout.money(e.taxableIncome ?? e.income)}</td><td class="text-right">${Layout.money(e.taxWithheld ?? e.tax)}</td><td>${Page._filingCell(e)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
       } else {
         res = await api.getSso(year, month);
@@ -2665,6 +2672,33 @@ const Page = {
       <div style="font-size:13px;margin-top:4px">${Layout.esc(d.excludedNote)}</div>
       <div style="font-size:13px;margin-top:4px">ไฟล์ยื่นจะประกาศ <b>${d.filedEmployees ?? '-'}</b> คน</div>
     </div>`;
+  },
+
+  /** ดาวน์โหลดไฟล์ ภ.ง.ด.1 ของงวดที่ดูอยู่ — ตัวสร้างไฟล์เดียวกับเมนู Export ยื่นภาษี (TaxFilingExportService.ExportPnd1Async)
+   *  ผ่านตัวดึงไฟล์กลาง API.download (ข้อความผิดพลาดของเซิร์ฟเวอร์ถึงผู้ใช้ · มือถือได้ไฟล์) · fmt = txt | csv | xlsx */
+  async downloadPnd1(fmt) {
+    const api = Layout.api(); if (!api) return;
+    const year = document.getElementById('reportYear')?.value || new Date().getFullYear();
+    const month = document.getElementById('reportMonth')?.value || 1;
+    const ext = fmt === 'csv' ? 'csv' : fmt === 'xlsx' ? 'xlsx' : 'txt';
+    try {
+      if (await API.download(api.exportPnd1(year, month, fmt), `PND1_${year}${String(month).padStart(2, '0')}.${ext}`))
+        Layout.toast('ดาวน์โหลดสำเร็จ');
+    } catch (err) { Layout.toast(err.message || 'ดาวน์โหลดไม่สำเร็จ', 'error', 8000); }
+  },
+
+  /** ยอดต่อประเภทเงินได้ 5 ข้อของหน้าแบบ + คำเตือนก่อนยื่น — เซิร์ฟเวอร์คำนวณจากตัวโหลดเดียวกับไฟล์ (Pnd1FilingData)
+   *  undefined = เซิร์ฟเวอร์เก่ายังไม่ส่ง ⇒ ไม่วาด */
+  _pnd1Categories(d) {
+    if (!Array.isArray(d.categories)) return '';
+    const rows = d.categories.map(c => `<tr><td>${Layout.esc(c.label)}</td><td class="text-right">${Number(c.count) || 0}</td>`
+      + `<td class="text-right">${Layout.money(c.income)}</td><td class="text-right">${Layout.money(c.tax)}</td></tr>`).join('');
+    const notes = Array.isArray(d.filingNotes) && d.filingNotes.length
+      ? `<div class="card" style="padding:12px;margin-bottom:12px;border-left:4px solid var(--warning,#f59e0b);font-size:13px;white-space:pre-line">${d.filingNotes.map(n => Layout.esc(n)).join('\n')}</div>`
+      : '';
+    return `${notes}<div class="table-container" style="margin-bottom:16px"><table class="table" style="font-size:13px">
+      <thead><tr><th>ประเภทเงินได้ (บรรทัดบนหน้าแบบ ภ.ง.ด.1 — ยอดที่ไฟล์ยื่นจะประกาศ)</th><th class="text-right">จำนวนราย</th><th class="text-right">เงินได้</th><th class="text-right">ภาษี</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
   },
 
   /** ป้ายรายแถว — ธงมาจากเซิร์ฟเวอร์ (PayrollRunFilingScope + SsoFilingScope) */

@@ -73,32 +73,59 @@ public static class PndTextFileFormat
 
     /// <summary>1 บรรทัด (ไม่มี CRLF ต่อท้าย) — เปิด public เพื่อให้เทสต์ยิงตรงได้</summary>
     public static string DetailRow(int seq, Row r)
+        => string.Join("|", Cells(seq, r).Select(TextValue));
+
+    /// <summary>หัวคอลัมน์ Col1–Col12 ภาษาไทย — ใช้กับชีต Excel ที่ต้องตรงกับไฟล์ .txt (ไฟล์ .txt เองไม่มีแถวหัว)</summary>
+    public static readonly IReadOnlyList<string> Headers = new[]
+    {
+        "ลำดับที่", "เลขประจำตัวผู้เสียภาษีอากร", "เลขที่สาขา", "ชื่อ", "ชื่อสกุล", "วันเดือนปีที่จ่าย (ddMMyyyy ค.ศ.)",
+        "ประเภทเงินได้", "จำนวนเงินได้ที่จ่าย", "อัตราภาษี", "จำนวนภาษีที่หัก", "เงื่อนไขการหักภาษี", "คำนำหน้าชื่อ",
+    };
+
+    /// <summary>ค่าของ Col1–Col12 ตามลำดับ (string / decimal ที่ปัดแล้ว / int) — ตัวตั้งเดียวของทั้ง .txt
+    /// (<see cref="DetailRow"/>) และชีต Excel ของรายงานภาษี (รอบ 2026-10-14 ทีม X1: ไฟล์ .txt กับ Excel ห้าม drift)</summary>
+    public static object[] Cells(int seq, Row r)
     {
         var (first, last) = SplitName(r.PayeeName, r.IsJuristic, r.PayeeTitle);
-        return string.Join("|",
-            seq.ToString(CultureInfo.InvariantCulture),                       // Col1
+        return new object[]
+        {
+            seq,                                                              // Col1
             Digits(r.PayeeTaxId).PadLeft(13, '0'),                            // Col2
             NormalizeBranch(r.BranchCode),                                    // Col3
             Clean(first),                                                     // Col4
             Clean(last),                                                      // Col5
             r.PayDate.ToString("ddMMyyyy", CultureInfo.InvariantCulture),      // Col6
             Clean(r.IncomeTypeCode),                                          // Col7
-            Money(r.IncomeAmount),                                            // Col8
-            Rate(r.TaxRate),                                                  // Col9
-            Money(r.TaxAmount),                                               // Col10
-            (r.Condition is 1 or 2 or 3 ? r.Condition : 1)
-                .ToString(CultureInfo.InvariantCulture),                      // Col11
-            Clean(ResolveTitle(r)));                                          // Col12
+            Round2(r.IncomeAmount),                                           // Col8 (15,2)
+            Round2(r.TaxRate),                                                // Col9 (4,2)
+            Round2(r.TaxAmount),                                              // Col10 (15,2)
+            r.Condition is 1 or 2 or 3 ? r.Condition : 1,                     // Col11
+            Clean(ResolveTitle(r)),                                           // Col12
+        };
     }
+
+    private static decimal Round2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>ค่าหนึ่งช่องในไฟล์ .txt — ทศนิยม 2 ตำแหน่งเสมอ ไม่มี thousand separator</summary>
+    private static string TextValue(object v) => v switch
+    {
+        decimal d => d.ToString("0.00", CultureInfo.InvariantCulture),
+        int i => i.ToString(CultureInfo.InvariantCulture),
+        _ => v?.ToString() ?? "",
+    };
 
     /// <summary>คำนำหน้าที่จะลงไฟล์ — ค่าที่ผู้ใช้ยืนยันไว้ชนะเสมอ ถ้าไม่มี
     /// จึงเดาจากชื่อเต็ม (ข้อมูลเก่ายังพิมพ์คำนำหน้าติดมากับชื่อ). ทั้งสองทาง
     /// ผ่าน <see cref="ThaiTitleHelper"/> ตัวเดียว — ห้าม parse เองซ้ำที่นี่</summary>
-    private static string ResolveTitle(Row r)
+    private static string ResolveTitle(Row r) => TitleOf(r.PayeeName, r.PayeeTitle);
+
+    /// <summary>คำนำหน้า (ข้อความไทย) จากชื่อเต็ม + คำนำหน้าที่ผู้ใช้ยืนยันไว้ — ตัวเดียวกับ Col12 ·
+    /// เปิด public ให้ไฟล์ ภ.ง.ด.1 (<see cref="Pnd1FileFormat"/>) ใช้กับผู้ถูกหักที่มาจาก 50 ทวิ (ห้ามเขียนสำเนา)</summary>
+    public static string TitleOf(string? fullName, string? knownTitle)
     {
-        var explicitTitle = (r.PayeeTitle ?? "").Trim();
+        var explicitTitle = (knownTitle ?? "").Trim();
         if (explicitTitle.Length > 0) return ThaiTitleHelper.Normalize(explicitTitle);
-        return ThaiTitleHelper.Split(r.PayeeName).Title;
+        return ThaiTitleHelper.Split(fullName).Title;
     }
 
     /// <summary>บุคคลธรรมดา → แยก "ชื่อตัว | ชื่อสกุล" ที่ช่องว่างแรก
@@ -168,16 +195,6 @@ public static class PndTextFileFormat
         if (d.Length == 0) return "00000";
         return d.Length >= 5 ? d[^5..] : d.PadLeft(5, '0');
     }
-
-    /// <summary>15,2 — ทศนิยม 2 ตำแหน่งเสมอ ไม่มี thousand separator</summary>
-    private static string Money(decimal v) =>
-        Math.Round(v, 2, MidpointRounding.AwayFromZero)
-            .ToString("0.00", CultureInfo.InvariantCulture);
-
-    /// <summary>4,2 — อัตราภาษี เช่น 3.00</summary>
-    private static string Rate(decimal v) =>
-        Math.Round(v, 2, MidpointRounding.AwayFromZero)
-            .ToString("0.00", CultureInfo.InvariantCulture);
 
     /// <summary>ตัด pipe/บรรทัดใหม่ออก — ไฟล์ pipe-delimited ไม่มี quoting</summary>
     private static string Clean(string? raw) =>
