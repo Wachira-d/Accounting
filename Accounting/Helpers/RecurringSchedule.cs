@@ -37,6 +37,15 @@ public static class RecurringSchedule
     public static bool WithinEnd(DateTime runAt, DateTime? endDate)
         => endDate == null || ThaiDate.CalendarDateUtc(runAt) <= ThaiDate.CalendarDateUtc(endDate.Value);
 
+    /// <summary>ขอบ "ถึงกำหนดแล้ว" แบบ instant (exclusive) = เที่ยงคืนเวลาไทยของ<b>พรุ่งนี้</b> — ใช้ใน query ฐานข้อมูล ·
+    /// กำหนดรัน (NextRunDate) เก็บเป็น "วันตามปฏิทินไทย" 00:00 UTC ⇒ เดิมเทียบกับ <c>DateTime.UtcNow</c> ตรง ๆ ⇒ 00:00–07:00 น. เวลาไทย
+    /// งวดของวันนี้ยัง "ไม่ถึง" — ปุ่ม "สร้างทันที" ช่วงนั้นถูกนับเป็นรอบพิเศษ (ไม่กินงวด) แล้ว cron ออกใบงวดเดิมซ้ำตอน 07:00 น.
+    /// (CI ล้มเมื่อรันหลังเที่ยงคืนเวลาไทย 2026-10-16) · ประเทศไทยไม่มี DST ⇒ −7 ชม. คงที่</summary>
+    public static DateTime DueCutoffUtc(DateTime nowUtc) => ThaiDate.CalendarDateUtc(nowUtc).AddDays(1).AddHours(-7);
+
+    /// <summary>งวดนี้ถึงกำหนดแล้ว (วันตามปฏิทินไทยของกำหนด ≤ วันนี้ตามปฏิทินไทย) — ตัวตัดสินเดียวของ cron · สร้างทันที · ข้ามงวดค้าง · วันฐานตัวแปร</summary>
+    public static bool IsDue(DateTime nextRunDate, DateTime nowUtc) => nextRunDate < DueCutoffUtc(nowUtc);
+
     /// <summary>รายการจบแล้ว (ครบจำนวนครั้ง หรือกำหนดถัดไปเลยวันสิ้นสุด) ⇒ สถานะ "เสร็จสิ้น" · แก้วันสิ้นสุด/จำนวนครั้งให้ไปต่อได้ ⇒ กลับมาใช้งาน</summary>
     public static bool IsFinished(DateTime nextRunDate, DateTime? endDate, int totalRuns, int? maxRuns)
         => (maxRuns.HasValue && totalRuns >= maxRuns.Value) || !WithinEnd(nextRunDate, endDate);
@@ -53,7 +62,7 @@ public static class RecurringSchedule
         for (var i = 0; i < maxSteps; i++)
         {
             var next = Next(frequency, latest, preferredDay, startDate);
-            if (next > nowUtc || next <= latest) break;
+            if (!IsDue(next, nowUtc) || next <= latest) break;
             latest = next;
             skipped++;
         }
@@ -63,5 +72,5 @@ public static class RecurringSchedule
     /// <summary>วันฐานของตัวแปร &lt;&lt;month&gt;&gt;/&lt;&lt;year&gt;&gt; — รอบที่ "ใช้งวด" (cron · สร้างทันทีเมื่อถึงกำหนด) ใช้วันของงวดนั้น
     /// (ใบตามหลังได้เดือนของงวดตัวเอง) · รอบพิเศษก่อนกำหนด (ไม่เลื่อนงวด) ใช้วันนี้ตามเดิม · คืนวันตามปฏิทินไทย</summary>
     public static DateTime PlaceholderBaseDate(DateTime nextRunDate, DateTime nowUtc, bool consumesPeriod)
-        => ThaiDate.CalendarDateUtc(consumesPeriod && nextRunDate <= nowUtc ? nextRunDate : nowUtc);
+        => ThaiDate.CalendarDateUtc(consumesPeriod && IsDue(nextRunDate, nowUtc) ? nextRunDate : nowUtc);
 }

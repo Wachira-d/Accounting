@@ -4988,3 +4988,8 @@ _Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบ�
 (P2-8) audit วันล้วน = วันตามเวลาไทย (P2-9) ลำดับแบ่งหน้ามี Id (P2-10) JE ตอนออกใบเลือกตามสมุด + ไม่นับผังพัก/กันเงิน gateway (P2-11) PiiAccessLog "Export" ·
 เทสต์ `AdversarialExportRoundTests` · `Db/AdversarialExportRoundDbTests` · `Pnd1FileFormatTests` · `OriginalArApAccountTests` · `ModuleExportTests` · `Db/ModuleExportDbTests`
 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 825f5c0e)_
+
+_รายการประจำ "ถึงกำหนด" ตามวันไทย (2026-10-16 · CI ล้มเมื่อรันหลังเที่ยงคืนเวลาไทย): กำหนดรันเก็บเป็นวันตามปฏิทินไทย แต่ cron/สร้างทันที/ข้ามงวดค้าง
+เทียบกับ `DateTime.UtcNow` ตรง ๆ ⇒ 00:00–07:00 น. เวลาไทย งวดวันนี้ "ยังไม่ถึง" — กดสร้างทันทีช่วงนั้นถูกนับเป็นรอบพิเศษ (ไม่กินงวด) แล้ว cron ออกใบงวดเดิมซ้ำตอน 07:00 น. ·
+ตัวตัดสินเดียว `RecurringSchedule.IsDue` / `DueCutoffUtc` (query) ใช้ทั้ง cron · RunNow · CatchUp · PlaceholderBaseDate · Resume ใช้วันนี้ตามปฏิทินไทย ·
+ล็อกจุดเรียกใน required_call_site_check (negative test: คืนรูปเดิมแล้วถูกจับ 2 จุด) · เทสต์ `RecurringTemplateTests.IsDue_หลังเที่ยงคืนเวลาไทย…` + Db เดิม 4 ข้อที่ล้มตอน 17:14 UTC — ยังไม่ได้คอมไพล์ในเครื่องนี้_

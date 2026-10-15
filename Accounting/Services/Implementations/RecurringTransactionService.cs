@@ -248,8 +248,9 @@ public class RecurringTransactionService : IRecurringTransactionService
             throw new InvalidOperationException("สามารถ resume ได้เฉพาะรายการที่ Paused เท่านั้น");
 
         recurring.Status = RecurringStatus.Active;
-        if (recurring.NextRunDate < DateTime.UtcNow)
-            recurring.NextRunDate = DateTime.UtcNow.Date;
+        var today = ThaiDate.CalendarDateUtc(DateTime.UtcNow);   // วันนี้ตามปฏิทินไทย (เดิม UtcNow.Date = เมื่อวานช่วง 00:00–07:00 น.)
+        if (recurring.NextRunDate < today)
+            recurring.NextRunDate = today;
 
         await _db.SaveChangesAsync();
         return MapToResponse(recurring);
@@ -273,7 +274,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             // งวดค้างหลายงวด ⇒ ข้ามไปงวดล่าสุดที่ถึงกำหนด (ปุ่มนี้ออกงวดเดียว — ไม่ใช่งวดเก่าสุด) · ตัวตัดสินเดียวกับ cron
             var skipNote = await SkipOverduePeriodsAsync(recurring, DateTime.UtcNow);
             // ถึงกำหนดแล้ว = รอบนี้คืองวดนั้น (เลื่อนกำหนดถัดไป) · ก่อนกำหนด = รอบพิเศษ ไม่กินงวด
-            var consumesPeriod = recurring.NextRunDate <= DateTime.UtcNow;
+            var consumesPeriod = RecurringSchedule.IsDue(recurring.NextRunDate, DateTime.UtcNow);
             try
             {
                 await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod);
@@ -311,10 +312,11 @@ public class RecurringTransactionService : IRecurringTransactionService
     public async Task ProcessDueRecurringTransactionsAsync()
     {
         var now = DateTime.UtcNow;
+        var dueCutoff = RecurringSchedule.DueCutoffUtc(now);   // งวดของ "วันนี้ตามปฏิทินไทย" ถึงกำหนดตั้งแต่ 00:00 น. เวลาไทย
         // อ่านแค่รหัส — แต่ละรายการโหลดใหม่ภายใต้ล็อก (ไม่ถือ entity ข้ามรอบ: ของค้างจากรายการที่ล้มห้ามไหลไปกับการบันทึกของรายการถัดไป) ·
         // ไม่กรองวันสิ้นสุดที่นี่ — รายการที่เลยวันสิ้นสุดถูกปิดเป็น "เสร็จสิ้น" ในลูป (เดิมค้าง "ใช้งาน" ตลอดไป และงวดที่ตรงวันสิ้นสุดถูกตัดทิ้ง)
         var due = await _db.RecurringTransactions.AsNoTracking()
-            .Where(r => r.Status == RecurringStatus.Active && r.NextRunDate <= now)
+            .Where(r => r.Status == RecurringStatus.Active && r.NextRunDate < dueCutoff)
             .OrderBy(r => r.NextRunDate)
             .Select(r => new { r.Id, r.CompanyId, r.Name, r.CreatedBy })
             .ToListAsync();
@@ -330,7 +332,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                     var recurring = await _db.RecurringTransactions
                         .FirstOrDefaultAsync(r => r.Id == item.Id && r.CompanyId == item.CompanyId);
                     // อ่านใหม่ภายใต้ล็อก: อีกเครื่องเพิ่งรันเสร็จ (NextRunDate เลื่อนแล้ว) / ถูกหยุด / ถูกลบ ⇒ ข้าม
-                    if (recurring == null || recurring.Status != RecurringStatus.Active || recurring.NextRunDate > now) return;
+                    if (recurring == null || recurring.Status != RecurringStatus.Active || !RecurringSchedule.IsDue(recurring.NextRunDate, now)) return;
                     try
                     {
                         var skipNote = await SkipOverduePeriodsAsync(recurring, now);
@@ -371,7 +373,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     /// สมุดรายวันไม่แตะ (ไม่เคยค้าง — CreateJournalEntryAsync ใช้ธุรกรรมเดิม · พฤติกรรมเดิมเป๊ะ) · คืนข้อความแจ้ง หรือ null เมื่อไม่ค้าง</summary>
     private async Task<string?> SkipOverduePeriodsAsync(RecurringTransaction recurring, DateTime nowUtc)
     {
-        if (IsJournalTemplate(recurring.TemplateType) || recurring.NextRunDate > nowUtc) return null;
+        if (IsJournalTemplate(recurring.TemplateType) || !RecurringSchedule.IsDue(recurring.NextRunDate, nowUtc)) return null;
         var (latest, skipped) = RecurringSchedule.CatchUp(recurring.Frequency, recurring.NextRunDate, recurring.PreferredDay,
             recurring.StartDate, nowUtc);
         if (skipped == 0) return null;

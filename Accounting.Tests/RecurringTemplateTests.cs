@@ -193,4 +193,21 @@ public class RecurringTemplateTests
         var one = new DateTime(2026, 10, 10, 0, 0, 0, DateTimeKind.Utc);
         Assert.Equal((one, 0), RecurringSchedule.CatchUp(RecurringFrequency.Monthly, one, 10, one, now));
     }
+
+    [Fact]
+    public void IsDue_หลังเที่ยงคืนเวลาไทย_งวดวันนี้ถึงกำหนดแล้ว_ก่อนเที่ยงคืนยังไม่ถึง()
+    {
+        // CI 2026-10-15 17:14 UTC (= 16 ต.ค. 00:14 น. เวลาไทย): งวด 16 ต.ค. เดิม "ยังไม่ถึง" (เทียบกับ UtcNow) ⇒ สร้างทันทีไม่กินงวด → cron ออกซ้ำ
+        var oct16 = new DateTime(2026, 10, 16, 0, 0, 0, DateTimeKind.Utc);
+        var bkkJustAfterMidnight = new DateTime(2026, 10, 15, 17, 14, 0, DateTimeKind.Utc);
+        Assert.True(RecurringSchedule.IsDue(oct16, bkkJustAfterMidnight));
+        Assert.Equal(new DateTime(2026, 10, 16, 17, 0, 0, DateTimeKind.Utc), RecurringSchedule.DueCutoffUtc(bkkJustAfterMidnight));
+        // ทิศตรงข้าม: 23:59 น. ของวันที่ 15 (เวลาไทย) งวดวันที่ 16 ยังไม่ถึง · งวดพรุ่งนี้ไม่ถึงไม่ว่าเวลาใด
+        Assert.False(RecurringSchedule.IsDue(oct16, new DateTime(2026, 10, 15, 16, 59, 0, DateTimeKind.Utc)));
+        Assert.False(RecurringSchedule.IsDue(oct16.AddDays(1), bkkJustAfterMidnight));
+        Assert.True(RecurringSchedule.IsDue(oct16, new DateTime(2026, 10, 16, 16, 59, 0, DateTimeKind.Utc)));   // 23:59 น. ของวันที่ 16
+        // CatchUp ใช้ตัวตัดสินเดียวกัน: งวดค้างก่อนหน้า + งวดวันนี้ (หลังเที่ยงคืนไทย) ⇒ ข้ามไปงวดวันนี้
+        var (latest, skipped) = RecurringSchedule.CatchUp(RecurringFrequency.Monthly, oct16.AddMonths(-1), 16, oct16.AddMonths(-1), bkkJustAfterMidnight);
+        Assert.Equal((oct16, 1), (latest, skipped));
+    }
 }
