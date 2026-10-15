@@ -5000,3 +5000,11 @@ _Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบ�
 สาขาของบรรทัด = บรรทัด ?? หัวใบ · ส่วนที่ปัน (`LedgerFilterRule.AllocationShare` = รายงานตามมิติ) · TB/GL กรองเริ่ม P&L ต้นรอบ + แถวกำไรขาดทุนก่อนรอบ · รวมยอดในฐาน ·
 (P1-3/P1-4/P2-8/P2-10 ดู ACCOUNT_STRUCTURE §3.1f · งบรวมต้องสิทธิ์งบการเงินทุกบริษัท) — เทสต์ `AdversarialExportRound2Tests` · `Db/AdversarialExportRound2DbTests` ·
 `Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+
+_ฝ่ายค้านรอบส่งออก **รอบ 3** (2026-10-15 · ฝ่ายค้านบน de823512 · `EXPORT_AUDIT.md` §"รอบ 3"): (P1) ผังเฉพาะกิจ = ผังที่ระบบสร้าง (`IsSystemAccount` + รหัสเจ้าของ/รูปผังย่อยธนาคาร)
+ไม่ดูตัวชี้ใน config และ**เลื่อนไปท้ายแทนตัดทิ้ง** (`PostingAccountGuard.OrderByGeneralPurposeFirst` · `WhereGeneralPurpose` ถูกลบ) — ผังพัก gateway = 11310 ไม่ทำให้ลูกหนี้ตั้งต้นพลิก ·
+ธนาคารผูก 11111 ไม่ทำให้เงินสดตั้งต้นพลิก/หาย · 54960 ของลูกค้าไม่ถูกตัด · `RebuildMissingLinesAsync` ใช้ลำดับเดียวกัน (P2-1) ไฟล์งบทดลองกรอง: แถวกำไรขาดทุนก่อนรอบ = ยอดยกมา
+(ไม่มีคำเตือนผลต่างเท็จ) (P2-2) นำเข้าผังไม่ไล่ FK ของผังใหม่ (`ChartParentLink.InUseCheckCandidates`) (P2-3) ฐานตรงต้นรอบ = P&L ปีก่อน แยกบรรทัด ไม่นับในกำไรของปี
+(P2-4) รอบไม่ใช่ปีปฏิทินที่ปิดด้วยโค้ดเก่า: รายงานอธิบาย + ซ่อมยกเลิกแถวยกยอด ม.ค. (audit) (P2-6) ผังที่ถูกลบยังมียอด = ปิดปี/ยกยอดล้มพร้อมชื่อผัง
+(P2-7) หมวดตรวจข้อมูล `templateLeafImportedChildren` + ปุ่มย้ายผังออกจากใต้ผังลงรายการของแม่แบบ (เจ้าของ · audit) — เทสต์ `AdversarialExportRound3Tests` ·
+`Db/AdversarialExportRound3DbTests` · `AccountingReportSheetsTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง_

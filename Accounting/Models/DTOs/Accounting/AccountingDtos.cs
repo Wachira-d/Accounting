@@ -276,8 +276,10 @@ public record OpeningRollMismatch(
     public decimal ExpectedNet => ExpectedDebit - ExpectedCredit;
 }
 
-/// <summary>ผลตรวจของปีเป้าหมายหนึ่งปี (ม.ค. ของปีถัดจากปีที่ปิด) · SkipReason ≠ null = ไม่ซ่อมอัตโนมัติ</summary>
-public record OpeningRollCheckYear(int Year, Guid? FiscalPeriodId, bool HasImportedRows, string? SkipReason, List<OpeningRollMismatch> Mismatches);
+/// <summary>ผลตรวจของปีเป้าหมายหนึ่งปี (งวดแรกของรอบบัญชีถัดจากปีที่ปิด) · SkipReason ≠ null = ไม่ซ่อมอัตโนมัติ ·
+/// <c>Note</c> = คำอธิบายเพิ่ม (รอบ 3 P2-4: พบยอดยกมารุ่นเก่าไป ม.ค. ของรอบที่ไม่ใช่ปีปฏิทิน) · <c>LegacyRolledRows</c> = จำนวนแถวรุ่นเก่าที่การซ่อมจะยกเลิก</summary>
+public record OpeningRollCheckYear(int Year, Guid? FiscalPeriodId, bool HasImportedRows, string? SkipReason, List<OpeningRollMismatch> Mismatches,
+    string? Note = null, int LegacyRolledRows = 0);
 
 public record OpeningRollRepairRequest(List<int>? Years);
 

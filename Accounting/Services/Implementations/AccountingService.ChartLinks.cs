@@ -10,4 +10,12 @@ public partial class AccountingService
 
     public Task<ChartParentLinkRepairResult> RepairAccountParentLinksAsync(Guid companyId, IReadOnlyCollection<Guid> accountIds, string actor)
         => ChartParentLinker.RepairAsync(_db, companyId, accountIds, actor);
+
+    // ═══ รอบ 3 P2-7: ผังที่การผูกรอบแรกวางไว้ใต้ผังลงรายการของแม่แบบ — รายงาน → ย้ายเฉพาะที่เลือก + audit ═══
+
+    public Task<List<TemplateLeafChildSuspect>> FindTemplateLeafChildrenAsync(Guid companyId)
+        => ChartParentLinker.FindTemplateLeafChildrenAsync(_db, companyId);
+
+    public Task<ChartParentLinkRepairResult> RescueTemplateLeafChildrenAsync(Guid companyId, IReadOnlyCollection<Guid> accountIds, string actor)
+        => ChartParentLinker.RescueTemplateLeafChildrenAsync(_db, companyId, accountIds, actor);
 }

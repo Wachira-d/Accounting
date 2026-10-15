@@ -30,6 +30,12 @@ public static class LedgerFilterRule
     /// <summary>ชื่อแถวทุนของกำไร(ขาดทุน)ก่อนรอบบัญชีนี้ในงบทดลองแบบกรอง (ไม่มีรหัสผัง)</summary>
     public const string PriorPnlRowName = "กำไร(ขาดทุน)ก่อนรอบบัญชีนี้ของตัวกรองที่เลือก";
 
+    /// <summary>แถวนี้คือแถวทุน <see cref="PriorPnlRowName"/> ของงบทดลองแบบกรอง (ไม่มีรหัสผัง) — รอบ 3 P2-1: งบทดลองแบบช่วงเวลา
+    /// (<c>AccountingReportSheets.BuildTrialBalanceWorksheet</c>) ถือยอดของแถวนี้เป็น<b>ยอดยกมาทั้งจำนวน</b> (กำไรขาดทุนของรอบก่อน ๆ ไม่เคลื่อนไหวในรอบนี้ ·
+    /// บัญชีแยกประเภทไม่มีแถวคู่) — เดิมยกมา 0 ⇒ ผลต่างความต่อเนื่องเท่ากำไรขาดทุนรอบก่อนทั้งก้อน ⇒ ไฟล์กรองสาขา/โครงการ/มิติทุกไฟล์หลังปิดปีแรกขึ้นคำเตือนเท็จ</summary>
+    public static bool IsPriorPnlRow(string accountCode, string accountName)
+        => accountCode.Length == 0 && accountName == PriorPnlRowName;
+
     /// <summary>ส่วนของบรรทัดที่ปันเข้ามิติหนึ่ง (pure): จำนวนเงินที่ปัน (ฝั่งเดียวกับบรรทัด) → ร้อยละ (ปัด 2 ตำแหน่ง AwayFromZero) → เต็มบรรทัด</summary>
     public static (decimal Debit, decimal Credit) AllocationShare(decimal lineDebit, decimal lineCredit, decimal? allocatedAmount, decimal? allocatedPercent)
     {

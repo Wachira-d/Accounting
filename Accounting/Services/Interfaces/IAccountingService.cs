@@ -52,6 +52,10 @@ public interface IAccountingService
     Task<List<Accounting.Services.Implementations.ChartParentLinkSuspect>> FindUnlinkedAccountsAsync(Guid companyId);
     /// <summary>ผูกบัญชีแม่เฉพาะผังที่เลือก + audit chain</summary>
     Task<Accounting.Services.Implementations.ChartParentLinkRepairResult> RepairAccountParentLinksAsync(Guid companyId, IReadOnlyCollection<Guid> accountIds, string actor);
+    /// <summary>รายงานอ่านอย่างเดียว: ผังของผู้ใช้ที่อยู่ใต้ผังลงรายการของแม่แบบ (ผลของการผูกรอบแรก — Helpers/ChartParentLink.PlanTemplateLeafRescue)</summary>
+    Task<List<Accounting.Services.Implementations.TemplateLeafChildSuspect>> FindTemplateLeafChildrenAsync(Guid companyId);
+    /// <summary>ย้ายผังที่เลือกไปหัวบัญชีถัดไป + ปรับระดับลูกหลาน + audit chain · เจ้าของบริษัทเท่านั้น (ผู้เรียกตรวจ)</summary>
+    Task<Accounting.Services.Implementations.ChartParentLinkRepairResult> RescueTemplateLeafChildrenAsync(Guid companyId, IReadOnlyCollection<Guid> accountIds, string actor);
 
     // General Ledger
     Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null);

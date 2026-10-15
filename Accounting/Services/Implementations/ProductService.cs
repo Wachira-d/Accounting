@@ -1051,18 +1051,18 @@ public class ProductService : IProductService
             // บัญชี postable เท่านั้น (ไม่ใช่บัญชีคุม — WhereNotControlAccount · รอบ 206 เดิม Level >= 4) — ผังมาตรฐานมี header ระดับ 3
             // ชื่อรหัสสั้น ("115") ซึ่ง OrderBy จะหยิบก่อนบัญชีจริง ⇒ ลงบัญชีกลุ่ม
             // (บั๊กเดียวกับ audit F2 ที่ CN ซื้อเคยลง header "116")
-            var suppliesDefaultId = await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
+            var suppliesDefaultId = await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
                     && a.AccountCode.StartsWith(
                         Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Supplies)))
-                .OrderByDefaultPreference()
+                .OrderByGeneralPurposeFirst()
                 .Select(a => (Guid?)a.Id)
                 .FirstOrDefaultAsync();
-            var inventoryDefaultId = await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
+            var inventoryDefaultId = await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
                     && a.AccountCode.StartsWith(
                         Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Product)))
-                .OrderByDefaultPreference()
+                .OrderByGeneralPurposeFirst()
                 .Select(a => (Guid?)a.Id)
                 .FirstOrDefaultAsync();
 

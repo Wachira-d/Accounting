@@ -56,6 +56,18 @@ public class DataIntegrityController : ControllerBase
             result.Linked > 0 ? "ผูกบัญชีแม่แล้ว" : string.Join(" · ", result.Skipped)));
     }
 
+    /// <summary>ฝ่ายค้านรอบส่งออก รอบ 3 P2-7 — ย้ายผังหนึ่งผังออกจากใต้ผังลงรายการของแม่แบบไปหัวบัญชีถัดไป (คิดแผนใหม่ ณ ตอนกด + ปรับระดับลูกหลาน + audit) ·
+    /// เจ้าของบริษัทเท่านั้น (สิทธิ์เดียวกับผูกบัญชีแม่)</summary>
+    [HttpPost("account-leaf/{accountId:guid}/rescue")]
+    public async Task<ActionResult<ApiResponse<ChartParentLinkRepairResult>>> RescueTemplateLeafChild(Guid companyId, Guid accountId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await Need(_companies).EnsureOwnerAccessAsync(companyId, userId);
+        var result = await Need(_accounting).RescueTemplateLeafChildrenAsync(companyId, new[] { accountId }, userId.ToString());
+        return Ok(new ApiResponse<ChartParentLinkRepairResult>(true, result,
+            result.Linked > 0 ? "ย้ายผังไปหัวบัญชีแล้ว" : string.Join(" · ", result.Skipped)));
+    }
+
     private static T Need<T>(T? svc) where T : class
         => svc ?? throw new InvalidOperationException("บริการซ่อมข้อมูลไม่พร้อมใช้งาน");
 

@@ -820,9 +820,9 @@ public class ExpenseClaimService : IExpenseClaimService
     {
         return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == codePrefix)
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix))
-                .OrderByDefaultPreference()
+                .OrderByGeneralPurposeFirst()
                 .FirstOrDefaultAsync();
     }
 

@@ -113,7 +113,8 @@ public partial class AccountingService
         // แล้วการยกยอดพาแถวรายได้/ค่าใช้จ่ายของฐานไปปีถัดไป + รายการก่อนวันฐานในรอบถูกปิดเข้ากำไรสะสมทั้งที่งบทดลองไม่นับ ⇒ ยอดยกมาไม่ลงตัว
         // ใหม่: ฐานเริ่มในรอบนี้ ⇒ ปิดรายได้/ค่าใช้จ่ายของฐาน + รายการตั้งแต่วันเริ่มฐาน (รายการก่อนวันฐาน = ไม่นับ เหมือนงบทดลอง)
         var anchor = await LatestOpeningAnchorAsync(companyId, fy.EndExclusive);
-        var (pnlFrom, includeAnchorPnl) = OpeningRoll.PnlCloseWindow(fy.Start, anchor?.StartDate);
+        // รอบ 3 P2-3: ฐานที่เริ่มตรงต้นรอบ (งบทดลองก่อนปิดบัญชี 31 ธ.ค. ที่นำเข้า 1 ม.ค.) = กำไรขาดทุนของปีก่อน — ปิดเข้ากำไรสะสมแยกบรรทัด ไม่นับในกำไรของปี
+        var (pnlFrom, anchorScope) = OpeningRoll.PnlCloseWindow(fy.Start, anchor?.StartDate);
         var ytdRange = new { From = pnlFrom, To = fy.EndExclusive };
 
         var ytdLines = await (
@@ -134,7 +135,7 @@ public partial class AccountingService
         ).ToListAsync();
 
         var anchorPnl = new List<ClosingPnlRow>();
-        if (includeAnchorPnl && anchor != null)
+        if (anchorScope != AnchorPnlScope.None && anchor != null)
         {
             var anchorId = anchor.Id;
             anchorPnl = await (
@@ -149,47 +150,23 @@ public partial class AccountingService
         }
 
         // Per-account net balance: revenue is naturally Cr-balance, expense Dr-balance.
-        var perAccount = ytdLines.Concat(anchorPnl)
-            .GroupBy(x => new { x.AccountId, x.AccountCode, x.AccountType })
-            .Select(g => new
-            {
-                g.Key.AccountId,
-                g.Key.AccountCode,
-                g.Key.AccountType,
-                NetCredit = g.Sum(x => x.Credit) - g.Sum(x => x.Debit), // Revenue: positive
-                NetDebit = g.Sum(x => x.Debit) - g.Sum(x => x.Credit),  // Expense: positive
-            })
-            .Where(x => x.NetCredit != 0 || x.NetDebit != 0)
-            .OrderBy(x => x.AccountCode, StringComparer.Ordinal)
-            .ToList();
+        // กำไรของปี = รายการในรอบ (+ ฐานที่เริ่มกลางรอบ) · กำไรขาดทุนของปีก่อนที่ค้างในฐาน ณ ต้นรอบ = แยกชุด (รอบ 3 P2-3)
+        var perAccount = NetClosingRows(anchorScope == AnchorPnlScope.CurrentYear ? ytdLines.Concat(anchorPnl) : ytdLines);
+        var priorPerAccount = NetClosingRows(anchorScope == AnchorPnlScope.PriorYears ? anchorPnl : Enumerable.Empty<ClosingPnlRow>());
 
-        if (perAccount.Count == 0)
+        if (perAccount.Count == 0 && priorPerAccount.Count == 0)
             throw new InvalidOperationException(
                 $"ไม่พบรายการบัญชีในปี {fiscalYear} — ไม่มียอดที่ต้องปิด");
 
         decimal totalRevenue = perAccount.Where(x => x.AccountType == AccountType.Revenue).Sum(x => x.NetCredit);
         decimal totalExpense = perAccount.Where(x => x.AccountType == AccountType.Expense).Sum(x => x.NetDebit);
-        decimal netIncome = totalRevenue - totalExpense;   // positive = profit
+        decimal netIncome = totalRevenue - totalExpense;   // positive = profit (ของปีนี้เท่านั้น)
 
         // Build the closing JE lines: zero out each revenue/expense account,
         // post the net to RE. We use the revenue/expense's natural balance
         // direction reversed so the account ends at 0 after this entry.
         var lines = new List<JournalLineRequest>();
-        foreach (var acc in perAccount)
-        {
-            if (acc.AccountType == AccountType.Revenue && acc.NetCredit > 0)
-                lines.Add(new JournalLineRequest(acc.AccountId, acc.NetCredit, 0,
-                    $"ปิดบัญชีรายได้สิ้นปี {fiscalYear} — {acc.AccountCode}"));
-            else if (acc.AccountType == AccountType.Revenue && acc.NetCredit < 0)
-                lines.Add(new JournalLineRequest(acc.AccountId, 0, -acc.NetCredit,
-                    $"ปิดบัญชีรายได้สิ้นปี {fiscalYear} — {acc.AccountCode} (negative)"));
-            else if (acc.AccountType == AccountType.Expense && acc.NetDebit > 0)
-                lines.Add(new JournalLineRequest(acc.AccountId, 0, acc.NetDebit,
-                    $"ปิดบัญชีค่าใช้จ่ายสิ้นปี {fiscalYear} — {acc.AccountCode}"));
-            else if (acc.AccountType == AccountType.Expense && acc.NetDebit < 0)
-                lines.Add(new JournalLineRequest(acc.AccountId, -acc.NetDebit, 0,
-                    $"ปิดบัญชีค่าใช้จ่ายสิ้นปี {fiscalYear} — {acc.AccountCode} (negative)"));
-        }
+        AppendClosingLines(lines, perAccount, (kind, code) => $"ปิดบัญชี{kind}สิ้นปี {fiscalYear} — {code}");
 
         // Balance to Retained Earnings: positive netIncome → Cr RE.
         if (netIncome > 0)
@@ -198,6 +175,22 @@ public partial class AccountingService
         else if (netIncome < 0)
             lines.Add(new JournalLineRequest(reAccount.Id, -netIncome, 0,
                 $"โอนขาดทุนสะสมประจำปี {fiscalYear}"));
+
+        // กำไรขาดทุนของปีก่อนที่ค้างในยอดยกมา ณ ต้นรอบ — ปิดเข้ากำไรสะสม (งบทดลองสิ้นปีต้องไม่มียอดรายได้/ค่าใช้จ่ายค้าง) แต่แยกบรรทัด
+        // และไม่อยู่ใน TransferredAmount (กำไรของปี) · กำไรสะสมรวมถูกเท่าเดิม
+        if (priorPerAccount.Count > 0)
+        {
+            var anchorLabel = ThaiDate.ToThaiDisplayString(fy.Start);
+            AppendClosingLines(lines, priorPerAccount, (kind, code) => $"ปิดยอด{kind}ของปีก่อนที่ค้างในยอดยกมา {anchorLabel} — {code}");
+            var priorNet = priorPerAccount.Where(x => x.AccountType == AccountType.Revenue).Sum(x => x.NetCredit)
+                - priorPerAccount.Where(x => x.AccountType == AccountType.Expense).Sum(x => x.NetDebit);
+            if (priorNet > 0)
+                lines.Add(new JournalLineRequest(reAccount.Id, 0, priorNet,
+                    $"{OpeningRoll.PriorYearsPnlLabel}: โอนกำไรที่ค้างในยอดยกมา {anchorLabel} เข้ากำไรสะสม (ไม่นับในกำไรประจำปี {fiscalYear})"));
+            else if (priorNet < 0)
+                lines.Add(new JournalLineRequest(reAccount.Id, -priorNet, 0,
+                    $"{OpeningRoll.PriorYearsPnlLabel}: โอนขาดทุนที่ค้างในยอดยกมา {anchorLabel} เข้ากำไรสะสม (ไม่นับในกำไรประจำปี {fiscalYear})"));
+        }
 
         if (lines.Count < 2)
             throw new InvalidOperationException("ไม่มีรายการที่ต้องปิดสิ้นปี — ตรวจสอบข้อมูลก่อน");
@@ -271,6 +264,35 @@ public partial class AccountingService
     }
 
     private sealed record ClosingPnlRow(Guid AccountId, string AccountCode, AccountType AccountType, decimal Debit, decimal Credit);
+
+    /// <summary>ยอดสุทธิต่อบัญชีรายได้/ค่าใช้จ่ายที่ใบปิดปีต้องล้าง (ตัดบัญชีที่สุทธิศูนย์ · เรียงรหัส)</summary>
+    private sealed record ClosingNet(Guid AccountId, string AccountCode, AccountType AccountType, decimal NetCredit, decimal NetDebit);
+
+    private static List<ClosingNet> NetClosingRows(IEnumerable<ClosingPnlRow> rows)
+        => rows
+            .GroupBy(x => new { x.AccountId, x.AccountCode, x.AccountType })
+            .Select(g => new ClosingNet(g.Key.AccountId, g.Key.AccountCode, g.Key.AccountType,
+                g.Sum(x => x.Credit) - g.Sum(x => x.Debit),    // Revenue: positive
+                g.Sum(x => x.Debit) - g.Sum(x => x.Credit)))   // Expense: positive
+            .Where(x => x.NetCredit != 0 || x.NetDebit != 0)
+            .OrderBy(x => x.AccountCode, StringComparer.Ordinal)
+            .ToList();
+
+    /// <summary>บรรทัดล้างยอดรายได้/ค่าใช้จ่ายต่อบัญชี (กลับด้านยอดคงเหลือ ⇒ บัญชีเป็นศูนย์หลังใบปิด) · <paramref name="describe"/>(ชนิด, รหัส)</summary>
+    private static void AppendClosingLines(List<JournalLineRequest> lines, IEnumerable<ClosingNet> rows, Func<string, string, string> describe)
+    {
+        foreach (var acc in rows)
+        {
+            if (acc.AccountType == AccountType.Revenue && acc.NetCredit > 0)
+                lines.Add(new JournalLineRequest(acc.AccountId, acc.NetCredit, 0, describe("รายได้", acc.AccountCode)));
+            else if (acc.AccountType == AccountType.Revenue && acc.NetCredit < 0)
+                lines.Add(new JournalLineRequest(acc.AccountId, 0, -acc.NetCredit, describe("รายได้", acc.AccountCode) + " (negative)"));
+            else if (acc.AccountType == AccountType.Expense && acc.NetDebit > 0)
+                lines.Add(new JournalLineRequest(acc.AccountId, 0, acc.NetDebit, describe("ค่าใช้จ่าย", acc.AccountCode)));
+            else if (acc.AccountType == AccountType.Expense && acc.NetDebit < 0)
+                lines.Add(new JournalLineRequest(acc.AccountId, -acc.NetDebit, 0, describe("ค่าใช้จ่าย", acc.AccountCode) + " (negative)"));
+        }
+    }
 
     /// <summary>
     /// ยกยอดด้วยมือ (endpoint <c>roll-opening-balances</c>) — ยอดยกมาของรอบบัญชี <paramref name="year"/> จากงบทดลอง ณ สิ้นรอบ
@@ -412,15 +434,20 @@ public partial class AccountingService
     private sealed record OpeningAnchor(Guid Id, DateTime StartDate);
 
     /// <summary>ฐานยอดยกมาล่าสุดที่เริ่ม<b>ก่อน</b> <paramref name="asOfExclusive"/> (งวดที่มีแถว OpeningBalances) — เกณฑ์เดียวกับงบทดลอง ณ วันก่อนหน้า ·
-    /// ใช้ร่วมกันโดยใบปิดปีและการยกยอด/รายงานตรวจ</summary>
-    private async Task<OpeningAnchor?> LatestOpeningAnchorAsync(Guid companyId, DateTime asOfExclusive)
-        => await (
+    /// ใช้ร่วมกันโดยใบปิดปีและการยกยอด/รายงานตรวจ · <paramref name="ignoredPeriodIds"/> = งวดยกยอดรุ่นเก่าที่รายงานตรวจ/ซ่อมถือว่าไม่ใช่ฐาน
+    /// (<see cref="OpeningRoll.IsLegacyCalendarRollPeriod"/> — ซ่อมแล้วแถวถูกยกเลิก งบทดลองก็ไม่ใช้เป็นฐานเช่นกัน)</summary>
+    private async Task<OpeningAnchor?> LatestOpeningAnchorAsync(Guid companyId, DateTime asOfExclusive, IReadOnlyCollection<Guid>? ignoredPeriodIds = null)
+    {
+        var ignored = ignoredPeriodIds?.ToList() ?? new List<Guid>();
+        return await (
             from p in _db.FiscalPeriods.AsNoTracking()
             join o in _db.OpeningBalances.AsNoTracking() on p.Id equals o.FiscalPeriodId
             where p.CompanyId == companyId && o.CompanyId == companyId && p.StartDate < asOfExclusive
+                && !ignored.Contains(p.Id)
             orderby p.StartDate descending
             select new OpeningAnchor(p.Id, p.StartDate)
         ).FirstOrDefaultAsync();
+    }
 
     /// <summary>
     /// ยอดยกมา ณ <paramref name="asOfExclusive"/> (ต้นรอบบัญชีถัดไป) ที่ควรเป็น (นิยามใน <see cref="OpeningRoll"/>) — ตัวคำนวณตัวเดียวของการปิดปี/ยกยอด
@@ -430,10 +457,11 @@ public partial class AccountingService
     /// </summary>
     private async Task<Dictionary<Guid, (decimal Debit, decimal Credit)>> ComputeRolledOpeningsAsync(
         Guid companyId, DateTime asOfExclusive, Guid? retainedEarningsAccountId,
-        IReadOnlyDictionary<Guid, Dictionary<Guid, (decimal Debit, decimal Credit)>>? correctedAnchors)
+        IReadOnlyDictionary<Guid, Dictionary<Guid, (decimal Debit, decimal Credit)>>? correctedAnchors,
+        IReadOnlyCollection<Guid>? ignoredAnchorPeriodIds = null)
     {
         // ฐาน = งวดล่าสุดที่มียอดยกมาและเริ่มก่อนต้นรอบเป้าหมาย — เกณฑ์เดียวกับงบทดลอง ณ วันสิ้นรอบ
-        var anchor = await LatestOpeningAnchorAsync(companyId, asOfExclusive);
+        var anchor = await LatestOpeningAnchorAsync(companyId, asOfExclusive, ignoredAnchorPeriodIds);
 
         var anchorRows = new Dictionary<Guid, (decimal Debit, decimal Credit)>();
         if (anchor != null)
@@ -451,15 +479,15 @@ public partial class AccountingService
         DateTime? movementStart = anchor?.StartDate;
 
         // ทุกประเภทบัญชี (รวมใบปิดปี) = งบทดลอง ณ สิ้นรอบ · รายได้/ค่าใช้จ่ายที่เหลือ = ยังไม่ถูกปิด ⇒ CarryForward รวมเข้ากำไรสะสม
+        // รอบ 3 P2-6: ไม่ join ผังบัญชี (ตัวกรอง soft-delete ของผังเคยตัดบรรทัดของผังที่ถูกลบทิ้งเงียบ ๆ ⇒ ยอดยกมาไม่ลงตัว) — ผังที่ถูกลบแต่มียอด = ล้มดังข้างล่าง
         var movements = await (
             from line in _db.JournalEntryLines.AsNoTracking()
             join entry in _db.JournalEntries on line.JournalEntryId equals entry.Id
-            join account in _db.ChartOfAccounts on line.AccountId equals account.Id
             where entry.CompanyId == companyId
                 && entry.EntryDate < asOfExclusive
                 && (movementStart == null || entry.EntryDate >= movementStart.Value)
                 && (entry.Status == JournalEntryStatus.Posted || entry.Status == JournalEntryStatus.Reversed)
-            group new { line.DebitAmount, line.CreditAmount } by account.Id into g
+            group new { line.DebitAmount, line.CreditAmount } by line.AccountId into g
             select new { AccountId = g.Key, Debit = g.Sum(x => x.DebitAmount), Credit = g.Sum(x => x.CreditAmount) }
         ).ToDictionaryAsync(x => x.AccountId, x => (x.Debit, x.Credit));
 
@@ -470,6 +498,18 @@ public partial class AccountingService
             : await _db.ChartOfAccounts.AsNoTracking()
                 .Where(a => a.CompanyId == companyId && ids.Contains(a.Id))
                 .ToDictionaryAsync(a => a.Id, a => a.AccountType);
+        // รอบ 3 P2-6: ผังที่ถูกลบแต่ยังมียอด ⇒ ล้มดังพร้อมชื่อผัง + ทางไปต่อ ก่อนเขียนอะไร (เดิม CarryForward ตัดทิ้งเงียบ)
+        var deletedWithBalance = OpeningRoll.UnknownAccountsWithBalance(trialBalance, types);
+        if (deletedWithBalance.Count > 0)
+        {
+            var names = await _db.ChartOfAccounts.IgnoreQueryFilters().AsNoTracking()
+                .Where(a => a.CompanyId == companyId && deletedWithBalance.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, a => new { a.AccountCode, a.AccountName });
+            throw new BusinessRuleException(OpeningRoll.DeletedWithBalanceMessage(asOfExclusive, deletedWithBalance
+                .Select(id => (names.TryGetValue(id, out var n) ? n.AccountCode : "", names.TryGetValue(id, out var m) ? m.AccountName : id.ToString(),
+                    trialBalance[id].Debit - trialBalance[id].Credit))
+                .OrderBy(x => x.Item1, StringComparer.Ordinal)), OpeningRoll.RuleCode);
+        }
         return OpeningRoll.CarryForward(trialBalance, types, retainedEarningsAccountId);
     }
 
@@ -480,8 +520,10 @@ public partial class AccountingService
     public async Task<List<OpeningRollCheckYear>> FindOpeningRollMismatchesAsync(Guid companyId)
         => (await EvaluateOpeningRollChainAsync(companyId)).Select(x => x.Report).ToList();
 
+    /// <summary>ผลตรวจหนึ่งปี + สิ่งที่การซ่อมต้องใช้ · <c>LegacyRowIds</c> = แถวยกยอดรุ่นเก่าไป ม.ค. (รอบไม่ใช่ปีปฏิทิน) ที่ซ่อมแล้วต้องยกเลิก</summary>
     private sealed record OpeningRollEvaluation(
-        OpeningRollCheckYear Report, Guid? PeriodId, Dictionary<Guid, (decimal Debit, decimal Credit)>? Expected);
+        OpeningRollCheckYear Report, Guid? PeriodId, Dictionary<Guid, (decimal Debit, decimal Credit)>? Expected,
+        DateTime TargetStart, IReadOnlyList<Guid> LegacyRowIds);
 
     /// <summary>เดินทุกปีที่ปิดแล้วจากเก่าไปใหม่ · ปีถัดไปคิดบนฐานที่แก้แล้วของปีก่อน (ไม่ใช่ฐานที่เก็บผิด)</summary>
     private async Task<List<OpeningRollEvaluation>> EvaluateOpeningRollChainAsync(Guid companyId)
@@ -500,36 +542,77 @@ public partial class AccountingService
             .Select(c => c.FiscalYearStartMonth)
             .FirstOrDefaultAsync();
 
+        // ═══ รอบ 3 P2-4: งวดยกยอดรุ่นเก่าไป ม.ค. ของบริษัทที่รอบไม่ใช่ปีปฏิทิน ═══ (การปิดปีก่อน de823512 ยกไป 1 ม.ค. เสมอ)
+        // ไม่ใช้เป็นฐานของยอดที่ควรเป็น (ยอดในงวดนั้นคิดแบบปีปฏิทิน) · ซ่อมปีที่งวดนั้นอยู่ในรอบ ⇒ ยกเลิกแถว (soft delete + audit) ⇒ งบทดลองไม่อ่านอีก
+        var legacy = new List<(Guid PeriodId, DateTime Start, List<Guid> RowIds)>();
+        if (Accounting.Helpers.FiscalYear.NormalizeStartMonth(startMonth) != 1)
+        {
+            var janRows = await (
+                from p in _db.FiscalPeriods.AsNoTracking()
+                join o in _db.OpeningBalances.AsNoTracking() on p.Id equals o.FiscalPeriodId
+                where p.CompanyId == companyId && o.CompanyId == companyId && p.Month == 1
+                select new { PeriodId = p.Id, p.StartDate, p.Month, RowId = o.Id, o.Notes }
+            ).ToListAsync();
+            foreach (var g in janRows.GroupBy(r => new { r.PeriodId, r.StartDate, r.Month }))
+                if (OpeningRoll.IsLegacyCalendarRollPeriod(g.Key.Month, startMonth, g.Select(r => r.Notes)))
+                    legacy.Add((g.Key.PeriodId, g.Key.StartDate, g.Select(r => r.RowId).ToList()));
+        }
+        var legacyPeriodIds = legacy.Select(l => l.PeriodId).ToList();
+
         var corrected = new Dictionary<Guid, Dictionary<Guid, (decimal Debit, decimal Credit)>>();
         var result = new List<OpeningRollEvaluation>();
         foreach (var closed in closings)
         {
             var year = closed.FiscalYear + 1;
             // งวดเป้าหมาย = งวดแรกของรอบบัญชีถัดไป (รอบ 2 P2-6 — รอบ เม.ย.–มี.ค. = เม.ย. ไม่ใช่ ม.ค.)
+            var closedStart = Accounting.Helpers.FiscalYear.RangeFor(closed.FiscalYear, startMonth).Start;
             var nextStart = Accounting.Helpers.FiscalYear.RangeFor(year, startMonth).Start;
+            // งวด ม.ค. รุ่นเก่าที่อยู่ในรอบที่ปิด (ระหว่างต้นรอบที่ปิดกับต้นรอบถัดไป) — ซ่อมปีนี้แล้วยกเลิก
+            var legacyHere = legacy.Where(l => l.Start >= closedStart && l.Start < nextStart).ToList();
+            var legacyRowIds = legacyHere.SelectMany(l => l.RowIds).ToList();
+            string? legacyNote = legacyHere.Count == 0 ? null
+                : $"พบยอดยกมารุ่นเก่าที่การปิดปี {closed.FiscalYear} เขียนไว้งวด ม.ค. {legacyHere[0].Start.Year + 543} ({legacyRowIds.Count} แถว) ทั้งที่รอบบัญชีเริ่มเดือน "
+                    + $"{Accounting.Helpers.FiscalYear.NormalizeStartMonth(startMonth)} — งบทดลอง ม.ค.–ก่อนต้นรอบอ่านยอดนี้ (คิดแบบปีปฏิทิน) · ยอดที่ควรเป็นของงวดแรกของรอบ "
+                    + $"({ThaiDate.ToThaiDisplayString(nextStart)}) คิดโดยไม่ใช้งวด ม.ค. นั้นเป็นฐาน · กด \"แก้\" ปีนี้ ⇒ เขียนยอดยกมางวดแรกของรอบ + ยกเลิกแถวยกยอดรุ่นเก่าของงวด ม.ค. "
+                    + "(เฉพาะแถวที่การปิดปีเขียน · แถวนำเข้าไม่ถูกแตะ · บันทึกประวัติทุกแถว)";
             var janId = await _db.FiscalPeriods.AsNoTracking()
                 .Where(p => p.CompanyId == companyId && p.Year == nextStart.Year && p.Month == nextStart.Month)
                 .Select(p => (Guid?)p.Id)
                 .FirstOrDefaultAsync();
-            if (janId == null)
+            if (janId == null && legacyRowIds.Count == 0)
             {
-                result.Add(new(new OpeningRollCheckYear(year, null, false, "ไม่มีงวดแรกของรอบบัญชีนี้ (ยังไม่เคยยกยอด)", new()), null, null));
+                result.Add(new(new OpeningRollCheckYear(year, null, false, "ไม่มีงวดแรกของรอบบัญชีนี้ (ยังไม่เคยยกยอด)", new()), null, null,
+                    nextStart, Array.Empty<Guid>()));
                 continue;
             }
-            var storedRows = await _db.OpeningBalances.AsNoTracking()
-                .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == janId.Value)
-                .Select(o => new { o.AccountId, o.OpeningDebit, o.OpeningCredit, o.Notes })
-                .ToListAsync();
+            var storedRows = janId == null
+                ? new()
+                : await _db.OpeningBalances.AsNoTracking()
+                    .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == janId.Value)
+                    .Select(o => new { o.AccountId, o.OpeningDebit, o.OpeningCredit, o.Notes })
+                    .ToListAsync();
             if (storedRows.Any(o => OpeningRoll.IsImported(o.Notes)))
             {
                 // ผู้ใช้ลงยอดยกมาจากระบบเดิมในงวดนี้เอง — ยอดที่เก็บคือความตั้งใจของผู้ใช้ (ปีถัดไปใช้ยอดที่เก็บเป็นฐาน)
                 result.Add(new(new OpeningRollCheckYear(year, janId, true,
-                    "งวดนี้มียอดยกมาที่นำเข้าจากระบบเดิม — ไม่ซ่อมอัตโนมัติ (ตรวจกับงบทดลองแล้วแก้ที่หน้าย้ายระบบ)", new()), janId, null));
+                    "งวดนี้มียอดยกมาที่นำเข้าจากระบบเดิม — ไม่ซ่อมอัตโนมัติ (ตรวจกับงบทดลองแล้วแก้ที่หน้าย้ายระบบ)", new(), legacyNote, 0), janId, null,
+                    nextStart, Array.Empty<Guid>()));
                 continue;
             }
 
-            var expected = await ComputeRolledOpeningsAsync(companyId, nextStart, closed.RetainedEarningsAccountId, corrected);
-            corrected[janId.Value] = expected;
+            Dictionary<Guid, (decimal Debit, decimal Credit)> expected;
+            try
+            {
+                expected = await ComputeRolledOpeningsAsync(companyId, nextStart, closed.RetainedEarningsAccountId, corrected, legacyPeriodIds);
+            }
+            catch (BusinessRuleException ex)
+            {
+                // ผังที่ถูกลบแต่ยังมียอด / ไม่รู้ผังกำไรสะสม — รายงานบอกเหตุผล + ทางไปต่อ (ซ่อมปีนี้ไม่ได้จนกว่าจะแก้) · ไม่ข้ามเงียบ (F2 ข้อ 7)
+                result.Add(new(new OpeningRollCheckYear(year, janId, false, ex.Message, new(), legacyNote, legacyRowIds.Count), janId, null,
+                    nextStart, Array.Empty<Guid>()));
+                continue;
+            }
+            if (janId != null) corrected[janId.Value] = expected;
             var stored = storedRows.GroupBy(o => o.AccountId)
                 .ToDictionary(g => g.Key, g => (Debit: g.Sum(x => x.OpeningDebit), Credit: g.Sum(x => x.OpeningCredit)));
             var diff = OpeningRoll.Diff(stored, expected);
@@ -537,7 +620,8 @@ public partial class AccountingService
             var ids = diff.Select(d => d.AccountId).ToList();
             var accounts = new Dictionary<Guid, (string Code, string Name)>();
             if (ids.Count > 0)
-                foreach (var acct in await _db.ChartOfAccounts.AsNoTracking()
+                // รวมผังที่ถูกลบ (แถวที่เก็บไว้ของผังที่ลบแล้ว) — รายงานต้องบอกชื่อผัง ไม่ใช่ช่องว่าง (รอบ 3 P2-6)
+                foreach (var acct in await _db.ChartOfAccounts.IgnoreQueryFilters().AsNoTracking()
                              .Where(a => a.CompanyId == companyId && ids.Contains(a.Id))
                              .Select(a => new { a.Id, a.AccountCode, a.AccountName })
                              .ToListAsync())
@@ -551,7 +635,8 @@ public partial class AccountingService
                 })
                 .OrderBy(m => m.AccountCode, StringComparer.Ordinal)
                 .ToList();
-            result.Add(new(new OpeningRollCheckYear(year, janId, false, null, mismatches), janId, expected));
+            result.Add(new(new OpeningRollCheckYear(year, janId, false, null, mismatches, legacyNote, legacyRowIds.Count), janId, expected,
+                nextStart, legacyRowIds));
         }
         return result;
     }
@@ -576,17 +661,52 @@ public partial class AccountingService
 
         foreach (var ev in chain.Where(c => wanted.Contains(c.Report.Year)))
         {
-            if (ev.Expected == null || ev.PeriodId == null)
+            if (ev.Expected == null)
             {
                 skipped.Add($"{ev.Report.Year}: {ev.Report.SkipReason}");
                 continue;
             }
-            if (ev.Report.Mismatches.Count == 0)
+            if (ev.Report.Mismatches.Count == 0 && ev.LegacyRowIds.Count == 0)
             {
                 skipped.Add($"{ev.Report.Year}: ยอดถูกอยู่แล้ว");
                 continue;
             }
-            var periodId = ev.PeriodId.Value;
+            // งวดเป้าหมายยังไม่มี (บริษัทรุ่นเก่าที่ยกยอดไป ม.ค.) ⇒ สร้างงวดแรกของรอบ
+            var periodId = ev.PeriodId ?? (await FindOrCreatePeriodStartingAsync(companyId, ev.TargetStart, actor)).Id;
+            // รอบ 3 P2-4: ยกเลิกแถวยกยอดรุ่นเก่าของงวด ม.ค. (เฉพาะแถวที่การปิดปีเขียน — ตัดสินแล้วใน EvaluateOpeningRollChainAsync) + audit ทุกแถว
+            if (ev.LegacyRowIds.Count > 0)
+            {
+                var legacyIds = ev.LegacyRowIds.ToList();
+                var legacyRows = await _db.OpeningBalances
+                    .Include(o => o.FiscalPeriod)
+                    .Where(o => o.CompanyId == companyId && legacyIds.Contains(o.Id))
+                    .ToListAsync();
+                foreach (var lr in legacyRows.Where(r => OpeningRoll.IsRolled(r.Notes)))
+                {
+                    _db.AddChainedAuditLog(new AuditLog
+                    {
+                        CompanyId = companyId,
+                        UserId = actorId,
+                        EntityType = nameof(OpeningBalance),
+                        EntityId = lr.Id.ToString(),
+                        Action = AuditAction.Delete,
+                        OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            period = lr.FiscalPeriod.Name, accountId = lr.AccountId, debit = lr.OpeningDebit, credit = lr.OpeningCredit, notes = lr.Notes,
+                        }),
+                        NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            action = OpeningRoll.LegacyJanNeutralizedAction, year = ev.Report.Year, isDeleted = true,
+                            ruleCode = OpeningRoll.RuleCode, by = actor,
+                        }),
+                        Timestamp = DateTime.UtcNow,
+                    });
+                    lr.IsDeleted = true;
+                    lr.UpdatedBy = actor;
+                    lr.UpdatedAt = DateTime.UtcNow;
+                    repairedRows++;
+                }
+            }
             var rows = await _db.OpeningBalances
                 .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == periodId)
                 .ToListAsync();

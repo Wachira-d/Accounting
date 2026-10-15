@@ -166,7 +166,7 @@ public partial class BankService : IBankService
         var nextSeq = 1;
         foreach (var child in existingChildren)
         {
-            var suffix = child.AccountCode.Replace(parentCode + "-", "");
+            var suffix = child.AccountCode.Replace(parentCode + Accounting.Helpers.SpecialPurposeAccount.BankSubAccountSeparator, "");
             if (int.TryParse(suffix, out var num) && num >= nextSeq)
                 nextSeq = num + 1;
         }
@@ -178,7 +178,7 @@ public partial class BankService : IBankService
         var subAccount = new ChartOfAccount
         {
             CompanyId = companyId,
-            AccountCode = $"{parentCode}-{nextSeq:D3}",
+            AccountCode = Accounting.Helpers.SpecialPurposeAccount.BankSubAccountCode(parentCode, nextSeq),   // รูปรหัสตัวตั้งเดียว (ผังเฉพาะกิจ — รอบ 3 P1)
             AccountName = $"{parent.AccountName} - {request.BankName} {maskedNumber}",
             AccountNameEn = $"{parent.AccountNameEn ?? parent.AccountName} - {request.BankName} {maskedNumber}",
             AccountType = AccountType.Asset,
@@ -332,14 +332,14 @@ public partial class BankService : IBankService
                 var nextSeq = 1;
                 foreach (var code in siblings)
                 {
-                    var suffix = code.Replace(targetCode + "-", "");
+                    var suffix = code.Replace(targetCode + Accounting.Helpers.SpecialPurposeAccount.BankSubAccountSeparator, "");
                     if (int.TryParse(suffix, out var num) && num >= nextSeq)
                         nextSeq = num + 1;
                 }
 
                 linked.ParentAccountId = targetParent.Id;
                 linked.Level = targetParent.Level + 1;
-                linked.AccountCode = $"{targetCode}-{nextSeq:D3}";
+                linked.AccountCode = Accounting.Helpers.SpecialPurposeAccount.BankSubAccountCode(targetCode, nextSeq);
             }
         }
 

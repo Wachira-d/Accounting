@@ -1930,21 +1930,18 @@ public partial class AccountingService : IAccountingService
 
         if (!entriesWithoutLines.Any()) return 0;
 
-        // Load account mappings by journal type
-        var cashAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.IsActive && !a.IsDeleted);
-        var bankAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("1112") && a.IsActive && !a.IsDeleted);
-        var arAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("113") && a.IsActive && !a.IsDeleted);
-        var apAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive && !a.IsDeleted);
-        var revenueAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("41") && a.IsActive && !a.IsDeleted);
-        var expenseAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("51") && a.IsActive && !a.IsDeleted);
-        var depositAccount = await _db.ChartOfAccounts
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("215") && a.IsActive && !a.IsDeleted);
+        // Load account mappings by journal type — ตัวเลือกผังตั้งต้นตามรหัสต้นตัวเดียวของระบบ (PostingAccountGuard.DefaultFallbackCandidates ·
+        // ฝ่ายค้านรอบส่งออก รอบ 3 P2-7): เดิม FirstOrDefault ไม่เรียง ⇒ ได้ผังตามลำดับที่ฐานข้อมูลคืน (บัญชีคุม/ผังเฉพาะกิจก็ได้)
+        Task<ChartOfAccount?> Pick(string prefix)
+            => _db.ChartOfAccounts.DefaultFallbackCandidates(_db)
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith(prefix) && a.IsActive);
+        var cashAccount = await Pick("111");
+        var bankAccount = await Pick("1112");
+        var arAccount = await Pick("113");
+        var apAccount = await Pick("212");
+        var revenueAccount = await Pick("41");
+        var expenseAccount = await Pick("51");
+        var depositAccount = await Pick("215");
 
         var defaultDebit = cashAccount ?? bankAccount;
         var defaultCredit = revenueAccount ?? arAccount;

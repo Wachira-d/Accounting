@@ -37,8 +37,34 @@ public static class OpeningRoll
     /// <summary>หมายเหตุที่ตัวลงยอดยกมาจากระบบเดิม (<c>MigrationWizardService.CommitAsync</c>) ประทับ — ตัวตั้งเดียว</summary>
     public const string ImportedNotePrefix = "Migrated via session";
 
+    /// <summary>ต้นข้อความหมายเหตุของแถวที่การปิดปีเขียน (<see cref="RolledNote"/>)</summary>
+    private const string RolledNotePrefix = "ยกมาจากการปิดปี ";
+
     /// <summary>หมายเหตุของแถวที่การปิดปีเขียน (แถวรุ่นเก่าเป็น null)</summary>
-    public static string RolledNote(int year) => $"ยกมาจากการปิดปี {year - 1}";
+    public static string RolledNote(int year) => RolledNotePrefix + (year - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>action ของ audit เมื่อการซ่อมยกเลิกแถวยกยอดรุ่นเก่าของงวด ม.ค. (<see cref="IsLegacyCalendarRollPeriod"/> · รอบ 3 P2-4)</summary>
+    public const string LegacyJanNeutralizedAction = "opening-roll-legacy-jan-neutralized";
+
+    /// <summary>ป้ายบรรทัดกำไรสะสมของใบปิดปีที่ปิดกำไรขาดทุน<b>ของปีก่อน</b>ที่ค้างในฐาน ณ ต้นรอบ (<see cref="AnchorPnlScope.PriorYears"/> · รอบ 3 P2-3)</summary>
+    public const string PriorYearsPnlLabel = "กำไร(ขาดทุน)ของปีก่อน";
+
+    /// <summary>
+    /// แถวยอดยกมานี้เขียนโดย<b>การปิดปี/ยกยอด</b> (ไม่ใช่ยอดนำเข้า) — หมายเหตุ <see cref="RolledNote"/> (825f5c0e เป็นต้นไป) หรือ <c>null</c>
+    /// (การยกยอดก่อน 825f5c0e ไม่ประทับหมายเหตุ · ผู้เขียนแถว OpeningBalances มีสองทางเท่านั้น: ตัวย้ายระบบ (ประทับ <see cref="ImportedNotePrefix"/>)
+    /// และการยกยอด — ตรวจ 2026-10-15) · ใช้ตัดสินว่าแถวไหน "ระบบเขียน" จึงซ่อมได้ (รอบ 3 P2-4)
+    /// </summary>
+    public static bool IsRolled(string? notes)
+        => notes == null || notes.StartsWith(RolledNotePrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// งวดนี้คืองวด "ยกยอดรุ่นเก่าไป ม.ค." ของบริษัทที่รอบบัญชีไม่ใช่ปีปฏิทิน (pure · รอบ 3 P2-4): การปิดปีก่อน de823512 ยกยอดไป 1 ม.ค. เสมอ ⇒
+    /// รอบ เม.ย.–มี.ค. มีแถวยกยอดค้างกลางรอบ (งบทดลอง ม.ค.–มี.ค. อ่านฐานนี้) · ตอนนี้ยกไปงวดแรกของรอบ ⇒ งวด ม.ค. ที่ไม่ใช่ต้นรอบ +
+    /// แถวทุกแถวเป็นแถวยกยอด (<see cref="IsRolled"/> — มีแถวนำเข้าปน = ผู้ใช้ลงเอง ไม่แตะ) = ของรุ่นเก่าที่ต้องยกเลิกตอนซ่อม
+    /// </summary>
+    public static bool IsLegacyCalendarRollPeriod(int periodMonth, int fiscalYearStartMonth, IEnumerable<string?> rowNotes)
+        => periodMonth == 1 && FiscalYear.NormalizeStartMonth(fiscalYearStartMonth) != 1
+            && rowNotes.Any() && rowNotes.All(IsRolled);
 
     /// <summary>แถวยอดยกมานี้มาจากการนำเข้า (ไม่ใช่จากการปิดปี)</summary>
     public static bool IsImported(string? notes)
@@ -65,14 +91,39 @@ public static class OpeningRoll
     /// <summary>ล็อกต่อบริษัทของ "ปิดปี · ยกยอดด้วยมือ · ซ่อมยอดยกมา" — ตัวตั้งเดียว (xact lock: ปล่อยเมื่อธุรกรรมจบ)</summary>
     public static long LockKey(Guid companyId) => AdvisoryLockKey.For(companyId, AdvisoryLockKey.OpeningRoll, "ledger");
 
-    /// <summary>ช่วงที่ใบปิดปีต้องปิดรายได้/ค่าใช้จ่าย (pure) — ฐานยอดยกมาที่เริ่มในรอบนี้ ⇒ (วันเริ่มฐาน, รวมแถวรายได้/ค่าใช้จ่ายของฐาน) ·
-    /// ไม่มีฐาน/ฐานเริ่มก่อนรอบ ⇒ (ต้นรอบ, ไม่รวม) · <paramref name="anchorStart"/> = ฐานล่าสุดที่เริ่มก่อนสิ้นรอบ</summary>
-    public static (DateTime From, bool IncludeAnchorPnl) PnlCloseWindow(DateTime fiscalYearStart, DateTime? anchorStart)
-        => anchorStart is DateTime a && a >= fiscalYearStart ? (a, true) : (fiscalYearStart, false);
+    /// <summary>
+    /// ช่วงที่ใบปิดปีต้องปิดรายได้/ค่าใช้จ่าย (pure) · <paramref name="anchorStart"/> = ฐานล่าสุดที่เริ่มก่อนสิ้นรอบ:
+    /// <list type="bullet">
+    /// <item>ฐานเริ่ม<b>หลัง</b>ต้นรอบ (ย้ายระบบกลางปี — ยอดนำเข้า 1 ก.ค. มีกำไรขาดทุน ม.ค.–มิ.ย.) ⇒ (วันเริ่มฐาน, <see cref="AnchorPnlScope.CurrentYear"/>):
+    ///   กำไรขาดทุนของฐานเป็นของปีนี้ — นับในกำไรของปี</item>
+    /// <item>ฐานเริ่ม<b>ตรงต้นรอบ</b> (งบทดลองก่อนปิดบัญชี ณ 31 ธ.ค. ที่นำเข้าวันที่ 1 ม.ค. · แถวกำไรขาดทุนที่การปิดปีรุ่นเก่ายกมา) ⇒
+    ///   (ต้นรอบ, <see cref="AnchorPnlScope.PriorYears"/>): กำไรขาดทุนของฐาน<b>เป็นของปีก่อน</b> — ใบปิดปียังปิดเข้ากำไรสะสม (งบทดลองสิ้นปีต้องเป็นศูนย์)
+    ///   แต่<b>แยกบรรทัด</b>และไม่นับในกำไรของปี (<c>TransferredAmount</c>) · รอบ 3 P2-3: เดิม <c>&gt;=</c> ⇒ นับเป็นกำไรปีนี้ ⇒ กำไรประจำปีเกินจริง</item>
+    /// <item>ไม่มีฐาน/ฐานเริ่มก่อนรอบ ⇒ (ต้นรอบ, <see cref="AnchorPnlScope.None"/>) — ยอดค้างของฐานรวมเข้ากำไรสะสมตอนยกยอด (<see cref="CarryForward"/>)</item>
+    /// </list>
+    /// </summary>
+    public static (DateTime From, AnchorPnlScope AnchorPnl) PnlCloseWindow(DateTime fiscalYearStart, DateTime? anchorStart)
+        => anchorStart is not DateTime a || a < fiscalYearStart ? (fiscalYearStart, AnchorPnlScope.None)
+            : a > fiscalYearStart ? (a, AnchorPnlScope.CurrentYear)
+            : (fiscalYearStart, AnchorPnlScope.PriorYears);
+
+    /// <summary>บัญชีในงบทดลองที่<b>ไม่รู้ประเภท</b> (ผังถูกลบแบบ soft) แต่ยอดสุทธิ ≠ 0 (pure · รอบ 3 P2-6) — ผู้เรียกต้องล้มดังพร้อมชื่อผัง
+    /// (<see cref="DeletedWithBalanceMessage"/>) <b>ก่อน</b>เขียนอะไร · เดิมถูกตัดเงียบ ⇒ ยอดยกมาไม่ลงตัว / รายงานตรวจบอก "ควรเป็น 0"</summary>
+    public static List<Guid> UnknownAccountsWithBalance(
+        IReadOnlyDictionary<Guid, (decimal Debit, decimal Credit)> trialBalance, IReadOnlyDictionary<Guid, AccountType> types)
+        => trialBalance.Where(kv => !types.ContainsKey(kv.Key) && kv.Value.Debit - kv.Value.Credit != 0m).Select(kv => kv.Key).ToList();
+
+    /// <summary>ข้อความ "ผังที่ถูกลบยังมียอด" + ทางไปต่อ (ตัวตั้งเดียว — ปิดปี · ยกยอดด้วยมือ · รายงานตรวจ/ซ่อมใช้ข้อความเดียวกัน)</summary>
+    public static string DeletedWithBalanceMessage(DateTime asOfExclusive, IEnumerable<(string Code, string Name, decimal NetDebit)> accounts)
+        => $"ผังบัญชีที่ถูกลบแล้วยังมียอดคงเหลือ ณ สิ้นวันที่ {ThaiDate.ToThaiDisplayString(asOfExclusive.AddDays(-1))}: "
+            + string.Join(" · ", accounts.Select(a => $"{(a.Code.Length == 0 ? "(ไม่พบรหัส)" : a.Code)} {a.Name} ({(a.NetDebit >= 0 ? "เดบิต" : "เครดิต")} {Math.Abs(a.NetDebit):N2})"))
+            + " — ยกยอดไม่ได้เพราะยอดนี้จะหายจากยอดยกมา (ยอดยกมาไม่ลงตัว) · ทางไปต่อ: กู้คืนผังนั้น (ยกเลิกการลบ) แล้วโอนยอดไปผังอื่นด้วยสมุดรายวัน"
+            + " ลงวันที่ภายในรอบที่ปิด จากนั้นปิดปี/ยกยอด/ซ่อมอีกครั้ง";
 
     /// <summary>
     /// งบทดลอง ณ สิ้นรอบ → ยอดยกมาของรอบถัดไป (pure): ยกเฉพาะสินทรัพย์/หนี้สิน/ทุน <b>สุทธิฝั่งเดียว</b> · ยอดสุทธิรายได้/ค่าใช้จ่ายที่ยังค้างรวมเข้า
-    /// <paramref name="retainedEarningsAccountId"/> · บัญชีที่ไม่รู้ประเภท (ถูกลบ — งบทดลองก็ไม่แสดง) ถูกตัด · ค้างแต่ไม่มีผังกำไรสะสม = ล้มดัง
+    /// <paramref name="retainedEarningsAccountId"/> · บัญชีที่ไม่รู้ประเภทและยอดสุทธิศูนย์ถูกตัด · <b>ไม่รู้ประเภทแต่มียอด = ล้มดัง</b> (รอบ 3 P2-6 —
+    /// ผู้เรียกตรวจ <see cref="UnknownAccountsWithBalance"/> ก่อนเพื่อบอกชื่อผัง) · ค้างแต่ไม่มีผังกำไรสะสม = ล้มดัง
     /// </summary>
     public static Dictionary<Guid, (decimal Debit, decimal Credit)> CarryForward(
         IReadOnlyDictionary<Guid, (decimal Debit, decimal Credit)> trialBalance,
@@ -83,7 +134,13 @@ public static class OpeningRoll
         var pnlNetDebit = 0m;
         foreach (var (id, amount) in trialBalance)
         {
-            if (!types.TryGetValue(id, out var type)) continue;
+            if (!types.TryGetValue(id, out var type))
+            {
+                if (amount.Debit - amount.Credit != 0m)
+                    throw new BusinessRuleException(
+                        "มีผังบัญชีที่ถูกลบแล้วแต่ยังมียอดคงเหลือ — ยกยอดไม่ได้ (ยอดจะหายจากยอดยกมา) · กู้คืนผังแล้วโอนยอดออกก่อน", RuleCode);
+                continue;
+            }
             if (type == AccountType.Revenue || type == AccountType.Expense)
             {
                 pnlNetDebit += amount.Debit - amount.Credit;
@@ -121,4 +178,15 @@ public static class OpeningRoll
         }
         return list;
     }
+}
+
+/// <summary>กำไรขาดทุนในฐานยอดยกมาเป็นของรอบไหน (<see cref="OpeningRoll.PnlCloseWindow"/>)</summary>
+public enum AnchorPnlScope
+{
+    /// <summary>ไม่ปิดในใบปิดปีนี้ (ไม่มีฐาน/ฐานเริ่มก่อนรอบ)</summary>
+    None = 0,
+    /// <summary>ฐานเริ่มกลางรอบ — กำไรขาดทุนของฐานเป็นของปีนี้</summary>
+    CurrentYear = 1,
+    /// <summary>ฐานเริ่มตรงต้นรอบ — กำไรขาดทุนของฐานเป็นของปีก่อน (ปิดเข้ากำไรสะสม แยกบรรทัด ไม่นับในกำไรของปี)</summary>
+    PriorYears = 2,
 }

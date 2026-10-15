@@ -4377,9 +4377,9 @@ public partial class DocumentService : IDocumentService
         if (revenueAcc == null && accountPlan.FailIfNone)
             throw new Accounting.Helpers.BusinessRuleException(
                 Accounting.Helpers.DepositPolicyResolver.CompensationAccountMissingMessage, "DEPOSIT-FORFEIT-ACCOUNT");
-        revenueAcc ??= await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
+        revenueAcc ??= await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive)
-                .OrderByDefaultPreference().FirstOrDefaultAsync()
+                .OrderByGeneralPurposeFirst().FirstOrDefaultAsync()
             ?? throw new InvalidOperationException("ไม่พบบัญชีรายได้ในผังบัญชี");
 
         // เคส Deferred output VAT: การรับรู้รายได้ (ส่งมอบ/ให้บริการ) = tax point
@@ -15661,9 +15661,9 @@ public partial class DocumentService : IDocumentService
         // 11610 ค้างสูงถาวร) → header หลุดไป prefix-search ที่กรองบัญชีคุมอยู่แล้ว
         var found = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.IsActive)
-                .OrderByDefaultPreference()
+                .OrderByGeneralPurposeFirst()
                 .FirstOrDefaultAsync();
         _findAccountCache[cacheKey] = found;
         return found;
@@ -17306,9 +17306,9 @@ public partial class DocumentService : IDocumentService
         // posting (no child accounts — WhereNotControlAccount) Revenue/Expense account by code as a safe default.
         var defaultRevenue = await FindAccountAsync(companyId, "41000")
             ?? await FindAccountAsync(companyId, "42000")
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive)
-                .OrderByDefaultPreference()
+                .OrderByGeneralPurposeFirst()
                 .FirstOrDefaultAsync();
 
         // Safety net ขา Cr รายได้: บรรทัดที่ผูกผังหมวด "ค่าใช้จ่าย" มาแต่เดิม
@@ -17348,9 +17348,9 @@ public partial class DocumentService : IDocumentService
         }
         defaultExpense ??= await FindAccountAsync(companyId, "51110")
             ?? await FindAccountAsync(companyId, "52110")
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive)
-                .OrderByDefaultPreference()
+                .OrderByGeneralPurposeFirst()
                 .FirstOrDefaultAsync();
 
         // Resolve money account for cash/bank movement entries — ตัวตัดสินเดียว Helpers/DocumentMoneyChannel

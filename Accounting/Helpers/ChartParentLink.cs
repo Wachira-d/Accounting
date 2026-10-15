@@ -29,6 +29,9 @@ public static class ChartParentLink
 {
     public const string RuleCode = "COA-PARENT-LINK";
 
+    /// <summary>action ของ audit เมื่อย้ายผังออกจากใต้ผังลงรายการของแม่แบบ (<see cref="PlanTemplateLeafRescue"/> · รอบ 3 P2-7)</summary>
+    public const string LeafRescueAction = "coa-template-leaf-rescue";
+
     /// <summary>บัญชีแม่ที่ควรเป็น (prefix แท้ที่ยาวที่สุด · ประเภทเดียวกัน · <paramref name="canBeParent"/>) — null = ไม่มี</summary>
     private static ChartNode? FindParent(ChartNode account, IEnumerable<ChartNode> chart, Func<ChartNode, bool> canBeParent)
         => chart
@@ -38,6 +41,27 @@ public static class ChartParentLink
             .OrderByDescending(c => c.Code.Length)
             .ThenBy(c => c.Code, StringComparer.Ordinal)
             .FirstOrDefault(canBeParent);
+
+    /// <summary>
+    /// ผังที่ต้องถามว่า "ถูกใช้อยู่ไหม" (<see cref="ChartAccountReferences.ReferencedAccountIdsAsync"/> ไล่ ~40 ตารางต่อครั้ง) ก่อนวางแผน (pure · รอบ 3 P2-2):
+    /// ผังที่<b>อาจถูกทำเป็นบัญชีแม่</b> = รหัสเป็นส่วนต้นของผู้สมัคร · ประเภทเดียวกัน · ยังไม่มีลูก · ไม่ใช่ผังระบบ (ผังระบบที่ไม่มีลูกเป็นแม่ไม่ได้อยู่แล้ว) +
+    /// ผู้สมัครเอง (ซ่อม/รายงาน: ผู้สมัครอาจเป็นแม่ของผู้สมัครอีกตัว) · <b>ตัดผังที่เพิ่งสร้าง</b> (<paramref name="unsavedIds"/> — ยังไม่มีใครอ้างได้) ·
+    /// <para>บั๊กที่มา: นำเข้าผังทีละแถว ผู้สมัคร = ผังใหม่ที่ยังไม่บันทึก อยู่ในรายการเสมอ ⇒ ไล่ทุก FK ทุกแถว (~41 คิวรีต่อแถว) ทั้งที่ไม่มีผังเดิมให้ตรวจ ·
+    /// ตอนนี้ว่าง ⇒ ผู้เรียกไม่ยิงคิวรี</para>
+    /// </summary>
+    public static List<Guid> InUseCheckCandidates(IReadOnlyList<ChartNode> chart, IReadOnlyCollection<Guid> candidateIds,
+        IReadOnlyCollection<Guid> unsavedIds)
+    {
+        var withChildren = chart.Where(c => c.ParentId != null).Select(c => c.ParentId!.Value).ToHashSet();
+        var candidates = chart.Where(c => candidateIds.Contains(c.Id)).ToList();
+        return chart
+            .Where(c => !unsavedIds.Contains(c.Id))
+            .Where(c => candidateIds.Contains(c.Id)
+                || (!c.IsSystem && !withChildren.Contains(c.Id)
+                    && candidates.Any(x => x.Type == c.Type && x.Code.Length > c.Code.Length && x.Code.StartsWith(c.Code, StringComparison.Ordinal))))
+            .Select(c => c.Id)
+            .ToList();
+    }
 
     /// <summary>
     /// วางแผนผูกบัญชีแม่ของ <paramref name="candidateIds"/> (เฉพาะผังที่ยังไม่มีบัญชีแม่) · <paramref name="inUseAccountIds"/> = ผังที่ถูกใช้อยู่แล้ว
@@ -102,6 +126,45 @@ public static class ChartParentLink
                 levelOf[y.Id] = level;
                 hasChildren.Add(x.Id);
             }
+        }
+        return result;
+    }
+
+    /// <summary>รหัสหัวกลุ่มของแม่แบบยาวไม่เกิน 3 หลัก (1 · 11 · 113) — ผังลงรายการของแม่แบบ 5 หลัก (11310)</summary>
+    private const int TemplateGroupCodeMaxLength = 3;
+
+    /// <summary>ผังลงรายการของแม่แบบระบบ = ผังระบบที่รหัสยาวกว่าหัวกลุ่มของแม่แบบ (ตัดสินด้วยรูปรหัสของแม่แบบ ไม่ใช่ระดับ — <c>tools/posting_level_check.py</c>)</summary>
+    private static bool IsTemplateLeaf(ChartNode c) => c.IsSystem && c.Code.Length > TemplateGroupCodeMaxLength;
+
+    /// <summary>
+    /// <b>ผังที่ถูกผูกใต้ผังลงรายการของแม่แบบ</b> (pure · รอบ 3 P2-7) — ผลของการผูกบัญชีแม่รอบแรก (825f5c0e: ผัง PEAK "113101" ใต้ 11310 ⇒ 11310
+    /// กลายเป็นบัญชีคุม ⇒ ลูกหนี้ตั้งต้นพลิกไป 11320) · ลูก = ผังที่ไม่ใช่ผังระบบซึ่งแม่เป็น <see cref="IsTemplateLeaf"/> (ลูกที่ระบบสร้าง เช่น ผังย่อยธนาคาร
+    /// ใต้ 11122 ไม่นับ) · ข้อเสนอ = ย้ายไปหัวบัญชีถัดไปที่ถูกต้อง (prefix ที่ยาวที่สุด · ประเภทเดียวกัน · ไม่ใช่ผังลงรายการของแม่แบบ) ระดับ = แม่ + 1 ·
+    /// หัวบัญชีของผู้ใช้ที่ยังไม่มีลูกแต่ถูกใช้อยู่ (<paramref name="inUseAccountIds"/>) / ไม่มีหัวบัญชีเลย ⇒ ไม่ย้าย บอกเหตุผล ·
+    /// <paramref name="onlyChildIds"/> = เฉพาะผังที่ผู้ใช้เลือก (null = ทุกผัง — รายงาน)
+    /// </summary>
+    public static List<ChartLinkProposal> PlanTemplateLeafRescue(IReadOnlyList<ChartNode> chart, IReadOnlyCollection<Guid>? onlyChildIds,
+        IReadOnlySet<Guid> inUseAccountIds)
+    {
+        var byId = chart.ToDictionary(c => c.Id);
+        var hasChildren = chart.Where(c => c.ParentId != null).Select(c => c.ParentId!.Value).ToHashSet();
+        var result = new List<ChartLinkProposal>();
+        bool CanBeHeader(ChartNode c) => !IsTemplateLeaf(c) && !(c.IsSystem && !hasChildren.Contains(c.Id));
+        foreach (var child in chart
+                     .Where(c => !c.IsSystem && c.ParentId is Guid pid && byId.TryGetValue(pid, out var parent) && IsTemplateLeaf(parent)
+                         && (onlyChildIds == null || onlyChildIds.Contains(c.Id)))
+                     .OrderBy(c => c.Code.Length).ThenBy(c => c.Code, StringComparer.Ordinal))
+        {
+            var leaf = byId[child.ParentId!.Value];
+            var target = FindParent(child, chart, CanBeHeader);
+            string? blocked = target == null
+                ? $"ไม่มีหัวบัญชีอื่นที่รหัสเป็นส่วนต้นของ {child.Code} (นอกจากผังลงรายการ {leaf.Code}) — ย้ายเองที่หน้าผังบัญชี"
+                : !hasChildren.Contains(target.Id) && inUseAccountIds.Contains(target.Id)
+                    ? $"หัวบัญชีที่ควรเป็น ({target.Code}) ถูกใช้อยู่แล้ว (มีรายการบัญชี/ยอดยกมา หรือถูกตั้งเป็นผังของสินค้า/ผู้ติดต่อ/ค่าตั้ง) — "
+                        + "ย้ายแล้วจะกลายเป็นบัญชีคุมที่มียอดค้าง · ย้ายยอด/ค่าตั้งออกก่อน หรือย้ายเองที่หน้าผังบัญชี"
+                    : null;
+            result.Add(new ChartLinkProposal(child.Id, child.Code, blocked == null ? target!.Id : null, target?.Code,
+                blocked == null ? target!.Level + 1 : child.Level, blocked));
         }
         return result;
     }

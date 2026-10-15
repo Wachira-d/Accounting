@@ -235,7 +235,8 @@ public class AdversarialExportRound2DbTests
         A("5100", AccountType.Expense);
         A("11341", AccountType.Asset, system: true);                         // ผังพัก wallet ของช่องทางรอบโอน
         A("11301", AccountType.Asset);
-        var bankLinked = A("11101", AccountType.Asset, system: true);
+        // ผังย่อยธนาคารที่ระบบสร้าง (รูปรหัส BankService — รอบ 3 P1: ตัดสินจากวิธีที่ระบบสร้าง ไม่ใช่จากตัวชี้ LinkedAccountId)
+        var bankLinked = A(SpecialPurposeAccount.BankSubAccountCode("11101", 1), AccountType.Asset, system: true);
         A("11105", AccountType.Asset);
         await db.SaveChangesAsync();
         db.BankAccounts.Add(new BankAccount { CompanyId = company.Id, AccountName = "กระแสรายวัน", BankName = "กสิกร", AccountNumber = "1112223334", LinkedAccountId = bankLinked.Id });
@@ -250,7 +251,7 @@ public class AdversarialExportRound2DbTests
         Assert.Equal("11301", ar!.AccountCode);            // เดิม 11341
         var cash = await req.ChartOfAccounts.DefaultFallbackCandidates(req)
             .FirstOrDefaultAsync(a => a.CompanyId == company.Id && a.AccountCode.StartsWith("111") && a.IsActive);
-        Assert.Equal("11105", cash!.AccountCode);          // ผังที่ผูกบัญชีธนาคารไม่ใช่เงินสดตั้งต้น
+        Assert.Equal("11105", cash!.AccountCode);          // ผังย่อยธนาคารที่ระบบสร้างไม่ใช่เงินสดตั้งต้น
         // ทิศตรงข้าม: หาด้วยรหัสเต็มยังได้ผังเฉพาะกิจ (ขาผลต่างปัดเศษ/ผังพักยังลงได้)
         Assert.NotNull(await req.ChartOfAccounts.DefaultPostingCandidates(req)
             .FirstOrDefaultAsync(a => a.CompanyId == company.Id && a.AccountCode == DocumentRounding.AccountCode));

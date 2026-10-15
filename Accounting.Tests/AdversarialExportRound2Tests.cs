@@ -28,11 +28,11 @@ public class AdversarialExportRound2Tests
     public void ใบปิดปี_ฐานเริ่มในรอบ_ปิดจากวันฐานรวมกำไรขาดทุนของฐาน_ฐานก่อนรอบใช้ต้นรอบ()
     {
         var fyStart = new DateTime(2025, 1, 1);
-        Assert.Equal((new DateTime(2025, 7, 1), true), OpeningRoll.PnlCloseWindow(fyStart, new DateTime(2025, 7, 1)));
-        // ทิศตรงข้าม: ยอดยกมาจากปิดปี (วันต้นรอบ) = ช่วงเดิม · ฐานของรอบก่อน / ไม่มีฐาน = ต้นรอบ ไม่รวมฐาน
-        Assert.Equal((fyStart, true), OpeningRoll.PnlCloseWindow(fyStart, fyStart));
-        Assert.Equal((fyStart, false), OpeningRoll.PnlCloseWindow(fyStart, new DateTime(2024, 7, 1)));
-        Assert.Equal((fyStart, false), OpeningRoll.PnlCloseWindow(fyStart, null));
+        Assert.Equal((new DateTime(2025, 7, 1), AnchorPnlScope.CurrentYear), OpeningRoll.PnlCloseWindow(fyStart, new DateTime(2025, 7, 1)));
+        // ทิศตรงข้าม: ฐานตรงต้นรอบ = ช่วงเดิม (กำไรขาดทุนของฐานเป็นของปีก่อน — รอบ 3 P2-3) · ฐานของรอบก่อน / ไม่มีฐาน = ต้นรอบ ไม่รวมฐาน
+        Assert.Equal((fyStart, AnchorPnlScope.PriorYears), OpeningRoll.PnlCloseWindow(fyStart, fyStart));
+        Assert.Equal((fyStart, AnchorPnlScope.None), OpeningRoll.PnlCloseWindow(fyStart, new DateTime(2024, 7, 1)));
+        Assert.Equal((fyStart, AnchorPnlScope.None), OpeningRoll.PnlCloseWindow(fyStart, null));
     }
 
     // ───────── P1-2 ยอดยกมา = งบทดลองสิ้นรอบ (ยกเฉพาะ A/L/E · สุทธิฝั่งเดียว) ─────────

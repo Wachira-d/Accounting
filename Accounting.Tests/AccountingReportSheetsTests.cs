@@ -58,6 +58,43 @@ public class AccountingReportSheetsTests
     }
 
     [Fact]
+    public void งบทดลองแบบกรอง_แถวกำไรขาดทุนก่อนรอบ_ยกมาเท่ายกไป_ไม่มีผลต่างเท็จ_แต่ผลต่างจริงยังฟ้อง()
+    {
+        // รอบ 3 P2-1: งบทดลองกรองสาขาหลังปิดปีแรกมีแถวทุน "กำไร(ขาดทุน)ก่อนรอบบัญชีนี้" (ไม่มีรหัส · บัญชีแยกประเภทไม่มีแถวคู่)
+        // เดิมยกมา 0 ⇒ ผลต่างความต่อเนื่อง = กำไรรอบก่อนทั้งก้อน ⇒ ไฟล์กรองทุกไฟล์ขึ้นคำเตือนเท็จ
+        var gl = new GeneralLedgerResponse(new List<GeneralLedgerAccount>
+        {
+            Acc("11111", AccountType.Asset, 7_000m, 3_000m, 1_000m),    // ปิด 9,000 Dr
+            Acc("41000", AccountType.Revenue, 0m, 0m, 3_000m),          // ปิด 3,000 Cr
+            Acc("51000", AccountType.Expense, 0m, 1_000m, 0m),          // ปิด 1,000 Dr
+        }, From, To);
+        var tb = new TrialBalanceResponse(To, new List<TrialBalanceItem>
+        {
+            new("11111", "เงินสด", AccountType.Asset, 0, 9_000m, 0m),
+            new("41000", "รายได้", AccountType.Revenue, 3, 0m, 3_000m),
+            new("51000", "ค่าใช้จ่าย", AccountType.Expense, 4, 1_000m, 0m),
+            new("", LedgerFilterRule.PriorPnlRowName, AccountType.Equity, 2, 0m, 7_000m),
+        }, 10_000m, 10_000m);
+        var ws = AccountingReportSheets.BuildTrialBalanceWorksheet(gl, tb, From);
+        Assert.All(ws.Rows, r => Assert.Equal(0m, r.ContinuityGap));
+        var prior = ws.Rows.Single(r => r.AccountName == LedgerFilterRule.PriorPnlRowName);
+        Assert.Equal(7_000m, prior.OpeningCredit);
+        Assert.Equal(7_000m, prior.ClosingCredit);
+        Assert.Equal(0m, prior.MovementDebit + prior.MovementCredit);
+        Assert.Equal(ws.OpeningDebit, ws.OpeningCredit);
+        Assert.Equal(ws.ClosingDebit, ws.ClosingCredit);
+
+        // ทิศตรงข้าม: บัญชีอื่นที่ยกไปไม่ตรงบัญชีแยกประเภทจริง ⇒ ยังมีผลต่าง (แถวกำไรขาดทุนก่อนรอบไม่กลบ)
+        var tbGap = tb with { Items = tb.Items.Select(i => i.AccountCode == "11111" ? i with { DebitBalance = 9_500m } : i).ToList() };
+        var wsGap = AccountingReportSheets.BuildTrialBalanceWorksheet(gl, tbGap, From);
+        Assert.Equal(-500m, wsGap.Rows.Single(r => r.AccountCode == "11111").ContinuityGap);
+        Assert.Equal(0m, wsGap.Rows.Single(r => r.AccountName == LedgerFilterRule.PriorPnlRowName).ContinuityGap);
+        // แถวทุนที่มีรหัสผังชื่อเดียวกัน (ไม่ใช่แถวสังเคราะห์) ไม่ถูกตีความเป็นยอดยกมา
+        Assert.False(LedgerFilterRule.IsPriorPnlRow("32000", LedgerFilterRule.PriorPnlRowName));
+        Assert.True(LedgerFilterRule.IsPriorPnlRow("", LedgerFilterRule.PriorPnlRowName));
+    }
+
+    [Fact]
     public void บัญชีที่เป็นศูนย์ทุกช่องไม่มีแถว_แต่บัญชีที่มีแต่ยอดยกมายังอยู่()
     {
         var gl = new GeneralLedgerResponse(new List<GeneralLedgerAccount>

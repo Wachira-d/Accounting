@@ -31,7 +31,9 @@ public sealed record DataIntegrityReport(
     // ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1 — ยอดยกมาจากการปิดปีที่เก็บผิด (ปีเก่านับซ้ำตั้งแต่ปิดปีครั้งที่สอง) · ปุ่ม "แก้" ต่อปี (เจ้าของบริษัท)
     List<DataIntegritySuspect> OpeningRollMismatches,
     // ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2 — ผังที่นำเข้าแล้วไม่มีบัญชีแม่ (หัวบัญชีถูกหยิบเป็นผังตั้งต้น) · ปุ่ม "แก้" ต่อผัง (เจ้าของบริษัท)
-    List<DataIntegritySuspect> UnlinkedImportedAccounts)
+    List<DataIntegritySuspect> UnlinkedImportedAccounts,
+    // ฝ่ายค้านรอบส่งออก รอบ 3 P2-7 — ผังที่การผูกรอบแรก (825f5c0e) วางใต้ผังลงรายการของแม่แบบ (ผังลงรายการกลายเป็นบัญชีคุม) · ปุ่ม "แก้" ต่อผัง (เจ้าของบริษัท)
+    List<DataIntegritySuspect> TemplateLeafImportedChildren)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -40,7 +42,7 @@ public sealed record DataIntegrityReport(
     public int Total => PosOrderTotals.Count + RollupBillingNoteChildren.Count + PurchaseInvoicesBilledFromPoWithGrn.Count
         + PayrollRunTotals.Count + PlainReceiptsWithVat.Count + Section40_4RecordedAsPnd3.Count + TipWhtPostedToPnd2Account.Count
         + OcrLineDiscountWouldChangeOnResave.Count + VoidedPayrollRunsWithIssuedWhtCerts.Count
-        + OpeningRollMismatches.Count + UnlinkedImportedAccounts.Count;
+        + OpeningRollMismatches.Count + UnlinkedImportedAccounts.Count + TemplateLeafImportedChildren.Count;
 }
 
 /// <summary>
@@ -164,12 +166,30 @@ public class DataIntegrityReportService
         var ocrLineDiscount = await LoadOcrLineDiscountSuspectsAsync(companyId);
         var voidedRunCerts = await LoadVoidedPayrollRunCertsAsync(companyId);
         var (rollRows, unlinkedRows) = await LoadChartRepairSuspectsAsync(companyId);
+        var leafRows = await LoadTemplateLeafChildSuspectsAsync(companyId);
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
-            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows);
+            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows);
     }
 
     /// <summary>เส้นทางปุ่ม "แก้" ของยอดยกมาปีหนึ่งปี — ตัวเดียวกับ route ของ <c>DataIntegrityController.RepairOpeningRoll</c></summary>
     public static string OpeningRollFixPath(int year) => $"data-integrity/opening-roll/{year}/repair";
+
+    /// <summary>เส้นทางปุ่ม "แก้" ของผังที่อยู่ใต้ผังลงรายการของแม่แบบ — ตัวเดียวกับ route ของ <c>DataIntegrityController.RescueTemplateLeafChild</c></summary>
+    public static string TemplateLeafRescueFixPath(Guid accountId) => $"data-integrity/account-leaf/{accountId}/rescue";
+
+    /// <summary>ฝ่ายค้านรอบส่งออก รอบ 3 P2-7 — ผังที่การผูกบัญชีแม่รอบแรก (825f5c0e) วางใต้ผังลงรายการของแม่แบบ (ตัวตัดสินเดียว
+    /// <c>ChartParentLinker.FindTemplateLeafChildrenAsync</c> → <c>ChartParentLink.PlanTemplateLeafRescue</c>) · แถวที่ย้ายได้มีปุ่ม "แก้"</summary>
+    private async Task<List<DataIntegritySuspect>> LoadTemplateLeafChildSuspectsAsync(Guid companyId)
+        => (await _accounting.FindTemplateLeafChildrenAsync(companyId))
+            .Select(u => new DataIntegritySuspect("AccountTemplateLeaf", u.AccountId, u.Code, DateTime.UtcNow.Date,
+                $"{u.Code} {u.Name} อยู่ใต้ผังลงรายการของแม่แบบ {u.LeafCode} ⇒ {u.LeafCode} กลายเป็นบัญชีคุม (ลงรายการไม่ได้ · ผังตั้งต้นพลิกไปผังอื่น) · "
+                    + (u.BlockedReason ?? $"หัวบัญชีที่ควรอยู่: {u.ProposedParentCode}"),
+                null, null, "/pages/accounts.html", "ผังบัญชี",
+                u.BlockedReason == null ? TemplateLeafRescueFixPath(u.AccountId) : null,
+                u.BlockedReason == null
+                    ? $"ย้าย {u.Code} ไปอยู่ใต้หัวบัญชี {u.ProposedParentCode} (ผังลูกหลานปรับระดับตาม · บันทึกประวัติ) ⇒ {u.LeafCode} กลับเป็นผังลงรายการ\n\nดำเนินการต่อหรือไม่?"
+                    : null))
+            .ToList();
 
     /// <summary>เส้นทางปุ่ม "แก้" ของผังที่ยังไม่ผูกบัญชีแม่ — ตัวเดียวกับ route ของ <c>DataIntegrityController.LinkAccountParent</c></summary>
     public static string AccountParentFixPath(Guid accountId) => $"data-integrity/account-parent/{accountId}/link";
@@ -185,10 +205,23 @@ public class DataIntegrityReportService
             var jan = new DateTime(y.Year, 1, 1);
             if (y.SkipReason != null && y.HasImportedRows)
                 continue;   // งวดที่ผู้ใช้ลงยอดนำเข้าเอง — ไม่ใช่ข้อมูลจากบั๊ก (ไม่รบกวนผู้ตรวจ)
+            if (y.SkipReason != null && (y.FiscalPeriodId != null || y.LegacyRolledRows > 0))
+            {
+                // รอบ 3 P2-6: ซ่อมไม่ได้เพราะเหตุที่ผู้ใช้ต้องแก้ก่อน (ผังที่ถูกลบยังมียอด ฯลฯ) — แสดงเหตุผล + ทางไปต่อ ไม่ข้ามเงียบ
+                roll.Add(new DataIntegritySuspect("OpeningRoll", y.FiscalPeriodId ?? Guid.Empty, $"ยอดยกมาปี {y.Year + 543}", jan,
+                    y.SkipReason + (y.Note == null ? "" : " · " + y.Note), null, null, "/pages/reports.html", "รายงานบัญชี"));
+                continue;
+            }
+            if (y.Mismatches.Count == 0 && y.LegacyRolledRows > 0 && y.SkipReason == null)
+                // รอบ 3 P2-4: ยอดงวดแรกของรอบถูกแล้ว แต่ยังมีแถวยกยอดรุ่นเก่าไป ม.ค. ที่งบทดลองอ่าน
+                roll.Add(new DataIntegritySuspect("OpeningRoll", y.FiscalPeriodId ?? Guid.Empty, $"ยอดยกมารุ่นเก่า ม.ค. ปี {y.Year + 543}", jan,
+                    y.Note ?? "", null, null, "/pages/reports.html", "รายงานบัญชี", OpeningRollFixPath(y.Year),
+                    $"ยกเลิกแถวยกยอดรุ่นเก่าของงวด ม.ค. {y.LegacyRolledRows} แถว (เฉพาะแถวที่การปิดปีเขียน) — บันทึกประวัติทุกแถว\n\nดำเนินการต่อหรือไม่?"));
             foreach (var m in y.Mismatches)
                 roll.Add(new DataIntegritySuspect("OpeningRoll", m.AccountId, $"ยอดยกมา ม.ค. {y.Year + 543} · {m.AccountCode}", jan,
                     $"{m.AccountCode} {m.AccountName} — ยอดยกมาจากการปิดปี {y.Year + 542} ที่เก็บไว้ ≠ ยอดที่ควรเป็น (ปีเก่าถูกนับซ้ำตั้งแต่ปิดปีครั้งที่สอง) · "
-                    + "งบทดลอง/บัญชีแยกประเภท/แดชบอร์ดของปีนี้อ่านยอดนี้ · กด “แก้” เพื่อคำนวณยอดยกมาทั้งปีใหม่ (บันทึกประวัติทุกบัญชี · เจ้าของบริษัทเท่านั้น)",
+                    + "งบทดลอง/บัญชีแยกประเภท/แดชบอร์ดของปีนี้อ่านยอดนี้ · กด “แก้” เพื่อคำนวณยอดยกมาทั้งปีใหม่ (บันทึกประวัติทุกบัญชี · เจ้าของบริษัทเท่านั้น)"
+                    + (y.Note == null ? "" : " · " + y.Note),
                     m.StoredNet, m.ExpectedNet, "/pages/reports.html", "รายงานบัญชี", OpeningRollFixPath(y.Year),
                     $"คำนวณยอดยกมา ม.ค. {y.Year + 543} ใหม่ทุกบัญชีที่ไม่ตรง (ยอดยกมานำเข้า + รายการตั้งแต่วันเริ่มฐาน) — บันทึกประวัติการแก้ทุกบัญชี\n\nดำเนินการต่อหรือไม่?"));
         }

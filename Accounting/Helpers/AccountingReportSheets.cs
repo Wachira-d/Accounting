@@ -87,7 +87,8 @@ public static class AccountingReportSheets
     /// ตัวกรองเดียวกัน) และ <b>ยกไป</b> จากงบทดลองที่หน้าแสดง (<c>GetTrialBalanceAsync</c> ณ วันสิ้นช่วง) ·
     /// <see cref="TrialBalanceWorksheetRow.ContinuityGap"/> = (ยกมา + เคลื่อนไหว) − ยกไป ด้านเดบิต —
     /// ≠ 0 แปลว่าสองรายงานไม่ต่อกัน (เช่น ยอดยกมาที่นำเข้าเริ่มกลางช่วง หรือกรองสาขาแล้วงบทดลองบวกยอดนำเข้าทั้งบริษัท)
-    /// ⇒ แสดงในไฟล์ให้เห็น ไม่กลบด้วยการคำนวณยกมาย้อนจากยกไป
+    /// ⇒ แสดงในไฟล์ให้เห็น ไม่กลบด้วยการคำนวณยกมาย้อนจากยกไป ·
+    /// ยกเว้นแถวทุน "กำไร(ขาดทุน)ก่อนรอบบัญชีนี้" ของงบทดลองแบบกรอง (<see cref="LedgerFilterRule.IsPriorPnlRow"/>) — ยกมาเท่ายกไปตามนิยาม (รอบ 3 P2-1)
     /// </summary>
     public static TrialBalanceWorksheet BuildTrialBalanceWorksheet(GeneralLedgerResponse gl, TrialBalanceResponse closing, DateTime fromDate)
     {
@@ -110,6 +111,9 @@ public static class AccountingReportSheets
             }
             acc.CloseDr += t.DebitBalance;
             acc.CloseCr += t.CreditBalance;
+            // แถวกำไรขาดทุนรอบก่อนของงบทดลองแบบกรอง: ยอดทั้งหมดคือยอดยกมา (ไม่มีการเคลื่อนไหวในช่วง · ไม่มีแถวคู่ในบัญชีแยกประเภท) — รอบ 3 P2-1
+            if (LedgerFilterRule.IsPriorPnlRow(t.AccountCode, t.AccountName))
+                acc.OpenNet += t.DebitBalance - t.CreditBalance;
         }
 
         var list = new List<TrialBalanceWorksheetRow>();

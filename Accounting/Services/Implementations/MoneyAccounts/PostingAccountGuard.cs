@@ -28,8 +28,9 @@ public static class PostingAccountGuard
     /// → รหัสน้อยไปมาก → Id (ตัดสินเสมอ ไม่ขึ้นกับลำดับที่ฐานข้อมูลคืน)
     /// <para>ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2: ผังที่นำเข้าเดิมไม่มี <c>ParentAccountId</c> ⇒ หัวบัญชีที่นำเข้า ("1130" · "4100") ถูกหยิบก่อนผังแม่แบบ
     /// ("11310" · "41100") เพราะรหัสเรียงก่อน · <b>รอบ 2 P1-3:</b> รอบแรกเรียง "ผังระบบก่อน" ⇒ ผังเฉพาะกิจที่ระบบใส่ให้ทุกบริษัท (54960 ไม่มีแม่ ·
-    /// 21240 · 1134x · ผังย่อยธนาคาร) ชนะผังของผู้ใช้ในบริษัทที่ใช้ผังของตัวเอง — ตอนนี้ "มีแม่" มาก่อน "ผังระบบ" และผังเฉพาะกิจถูกตัดออกจาก
-    /// การหาตามหมวด/รหัสต้น (<see cref="WhereGeneralPurpose"/>) · ผังผสม (แม่แบบ + นำเข้าที่ผูกแม่แล้ว) ยังได้ผังแม่แบบ · ผังของผู้ใช้ล้วนเรียงตามรหัส</para>
+    /// 21240 · 1134x · ผังย่อยธนาคาร) ชนะผังของผู้ใช้ในบริษัทที่ใช้ผังของตัวเอง — ตอนนี้ "มีแม่" มาก่อน "ผังระบบ" และการหาตามหมวด/รหัสต้น
+    /// เลื่อนผังเฉพาะกิจไปท้ายสุด (<see cref="OrderByGeneralPurposeFirst"/>) · ผังผสม (แม่แบบ + นำเข้าที่ผูกแม่แล้ว) ยังได้ผังแม่แบบ · ผังของผู้ใช้ล้วนเรียงตามรหัส</para>
+    /// <para>ใช้ตรงกับการหาด้วย<b>รหัสเต็ม</b> (<see cref="DefaultPostingCandidates"/>) — การหาตามหมวด/รหัสต้นใช้ <see cref="OrderByGeneralPurposeFirst"/></para>
     /// </summary>
     public static IOrderedQueryable<ChartOfAccount> OrderByDefaultPreference(this IQueryable<ChartOfAccount> query)
         => query.OrderByDescending(a => a.ParentAccountId != null)
@@ -38,28 +39,33 @@ public static class PostingAccountGuard
             .ThenBy(a => a.Id);
 
     /// <summary>
-    /// ตัดผังเฉพาะกิจ (<see cref="SpecialPurposeAccount"/>) ออกจากการหา "ตามหมวด/ตามรหัสต้น" — รหัสจากเจ้าของแต่ละผัง + ผังที่ผูกเป็นบัญชีธนาคาร
-    /// (<c>BankAccount.LinkedAccountId</c>) + ผังพักของผู้ให้บริการรับชำระเงิน (<c>PaymentProviderConfig.ClearingAccountId</c>) + ผังพัก/ผังกันเงิน
-    /// ของช่องทางรอบโอน (<c>SettlementChannel</c>) · การหาด้วยรหัสเต็มไม่ใช้ตัวนี้ (ผังเฉพาะกิจยังหาได้ด้วยรหัสของมันเอง)
+    /// <b>ลำดับของการหาผังตั้งต้น "ตามหมวด/ตามรหัสต้น"</b> = ผังทั่วไปก่อน → ผังเฉพาะกิจที่<b>ระบบสร้าง</b>ไว้ท้ายสุด
+    /// (<see cref="SpecialPurposeAccount.IsSystemCreated"/>) → ลำดับความชอบเดียวกับ <see cref="OrderByDefaultPreference"/>
+    /// <para><b>ฝ่ายค้านรอบส่งออก รอบ 3 P1</b> (แทน <c>WhereGeneralPurpose</c> ของรอบ 2): รอบ 2 <b>ตัด</b>ผังทิ้งด้วย (1) รหัสอย่างเดียว ⇒ ผังของลูกค้า
+    /// ที่บังเอิญใช้รหัส 54960/53170/21240 ในความหมายอื่นถูกตัด (2) <b>ตัวชี้ใน config</b> (ผังพักของผู้ให้บริการรับชำระเงิน · ผังกันเงินของช่องทาง ·
+    /// ผังที่ผูกบัญชีธนาคาร) ซึ่งผู้ใช้เลือกผังใดก็ได้ ⇒ ตั้งผังพักเป็น 11310 แล้วลูกหนี้ตั้งต้นพลิกไป 11320 (ลูกหนี้แตกสองผัง) · ผูกธนาคารกับ 11111
+    /// แล้วเงินสดตั้งต้นไป 11112 · ผูกครบทุกผัง 111x ⇒ หาไม่เจอแล้วล้ม "ไม่มีผังเงินสดตั้งต้น" ทั้งที่ 09da513a ทำงานได้</para>
+    /// <para><b>กติกา (ตัวตั้งที่นี่):</b> ไม่ตัดอะไรทิ้ง — แค่เลื่อนผังที่ระบบสร้างเพื่อจุดประสงค์เดียวไปท้ายลำดับ ⇒ (ก) ผังที่ config ชี้แต่ผู้ใช้/แม่แบบ
+    /// เป็นคนสร้าง ยังเป็นผังตั้งต้นได้ตามเดิม (ข) <b>การกันผังเฉพาะกิจออกไม่เคยเปลี่ยน "หาเจอ" ให้เป็น "ไม่เจอ"</b> — ถ้าผู้สมัครที่ตรงเงื่อนไขมีแต่ผังเฉพาะกิจ
+    /// ได้ผังนั้นตามลำดับเดิม (ลำดับก่อนรอบ 3)</para>
     /// </summary>
-    public static IQueryable<ChartOfAccount> WhereGeneralPurpose(this IQueryable<ChartOfAccount> query, AccountingDbContext db)
-    {
-        var codes = SpecialPurposeAccount.Codes.ToList();
-        return query.Where(a => !codes.Contains(a.AccountCode)
-            && !db.BankAccounts.Any(b => b.CompanyId == a.CompanyId && b.LinkedAccountId == a.Id)
-            && !db.PaymentProviderConfigs.Any(c => c.CompanyId == a.CompanyId && c.ClearingAccountId == a.Id)
-            && !db.SettlementChannels.Any(c => c.CompanyId == a.CompanyId && (c.ClearingAccountId == a.Id || c.ReserveAccountId == a.Id)));
-    }
+    public static IOrderedQueryable<ChartOfAccount> OrderByGeneralPurposeFirst(this IQueryable<ChartOfAccount> query)
+        => query.OrderBy(SpecialPurposeAccount.IsSystemCreated)
+            .ThenByDescending(a => a.ParentAccountId != null)
+            .ThenByDescending(a => a.IsSystemAccount)
+            .ThenBy(a => a.AccountCode)
+            .ThenBy(a => a.Id);
 
     /// <summary>ผู้สมัคร "ผังตั้งต้น" เมื่อหาด้วย<b>รหัสเต็ม</b> = ไม่ใช่บัญชีคุม (<see cref="WhereNotControlAccount"/>) + ลำดับความชอบ
-    /// (<see cref="OrderByDefaultPreference"/>) — การหาตามหมวด/รหัสต้นใช้ <see cref="DefaultFallbackCandidates"/> (ตัดผังเฉพาะกิจ)</summary>
+    /// (<see cref="OrderByDefaultPreference"/>) — การหาตามหมวด/รหัสต้นใช้ <see cref="DefaultFallbackCandidates"/></summary>
     public static IOrderedQueryable<ChartOfAccount> DefaultPostingCandidates(this IQueryable<ChartOfAccount> query, AccountingDbContext db)
         => query.WhereNotControlAccount(db).OrderByDefaultPreference();
 
-    /// <summary>ผู้สมัคร "ผังตั้งต้น" เมื่อหา<b>ตามหมวด (AccountType) หรือรหัสต้น (StartsWith)</b> = ไม่ใช่บัญชีคุม + ไม่ใช่ผังเฉพาะกิจ + ลำดับความชอบ
-    /// (รอบ 2 P1-3) — ตัวหาผังตั้งต้นแบบ fallback ทุกตัวใช้ตัวนี้ (ห้ามเรียงเอง)</summary>
+    /// <summary>ผู้สมัคร "ผังตั้งต้น" เมื่อหา<b>ตามหมวด (AccountType) หรือรหัสต้น (StartsWith)</b> = ไม่ใช่บัญชีคุม + ผังเฉพาะกิจที่ระบบสร้างไว้ท้ายสุด
+    /// (<see cref="OrderByGeneralPurposeFirst"/> · รอบ 3 P1) — ตัวหาผังตั้งต้นแบบ fallback ทุกตัวใช้ตัวนี้ (ห้ามเรียงเอง) ·
+    /// ผู้เรียกที่ต้องกรองก่อนเรียงใช้ <c>WhereNotControlAccount(db).Where(…).OrderByGeneralPurposeFirst()</c></summary>
     public static IOrderedQueryable<ChartOfAccount> DefaultFallbackCandidates(this IQueryable<ChartOfAccount> query, AccountingDbContext db)
-        => query.WhereNotControlAccount(db).WhereGeneralPurpose(db).OrderByDefaultPreference();
+        => query.WhereNotControlAccount(db).OrderByGeneralPurposeFirst();
 
     /// <summary>ข้อเท็จจริงของผังตาม id (กรอง CompanyId + !IsDeleted) — id ที่ไม่อยู่ในผลลัพธ์ = ไม่พบในบริษัทนี้</summary>
     public static async Task<Dictionary<Guid, PostingAccountFacts>> LoadPostingFactsAsync(
