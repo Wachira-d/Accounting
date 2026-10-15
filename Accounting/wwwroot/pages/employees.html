@@ -31,11 +31,15 @@
 
     <div class="toolbar" style="margin-bottom:14px">
       <input type="text" class="search-input" placeholder="ค้นหาด้วยรหัส / ชื่อ" id="searchInput" oninput="Page.debounceLoad()">
-      <select class="filter-select" id="filterActive" onchange="Page.load()">
+      <select class="filter-select" id="filterActive" onchange="Page._page = 1; Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="true" selected>เฉพาะที่ Active</option>
         <option value="false">เฉพาะที่ Inactive</option>
       </select>
+      <span style="margin-left:auto;display:inline-flex;gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="Page.exportFile('xlsx')" title="ส่งออกพนักงานทุกคนตามคำค้น/สถานะ (ไม่ใช่แค่หน้าที่แสดง) · เลขบัตร/เลขบัญชีปิดบังถ้าไม่มีสิทธิ์ Pii.View">📊 Excel</button>
+        <button class="btn btn-secondary btn-sm" onclick="Page.exportFile('csv')" title="CSV (UTF-8) — ทุกคนตามตัวกรอง">📄 CSV</button>
+      </span>
     </div>
 
     <div class="table-container">
@@ -330,6 +334,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       _page: 1,
@@ -351,7 +356,18 @@
       _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 }); },
       debounceLoad() {
         clearTimeout(this._debounce);
-        this._debounce = setTimeout(() => this.load(), 300);
+        this._debounce = setTimeout(() => { this._page = 1; this.load(); }, 300);
+      },
+      _filterParams() {
+        const p = {};
+        const search = document.getElementById('searchInput').value.trim();
+        const active = document.getElementById('filterActive').value;
+        if (search) p.search = search;
+        if (active !== '') p.isActive = active;
+        return p;
+      },
+      exportFile(format) {
+        return ExportUtil.downloadServer('payroll/employees/export', this._filterParams(), format, 'employees');
       },
       onSalaryTypeChange() {
         const t = document.getElementById('fSalaryType').value;
@@ -362,16 +378,12 @@
         tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:#94a3b8">กำลังโหลด...</td></tr>';
         try {
           const cid = Layout.getCompanyId();
-          const r = await API.get(`/api/companies/${cid}/payroll/employees?page=${this._page}&pageSize=20`);
+          // X4 2026-10-14: ค้นหา/สถานะกรองที่เซิร์ฟเวอร์ — เดิมกรองในหน้าที่โหลดมา 20 คน ⇒ คนที่ 21+ ค้นไม่เจอ ·
+          // ยอด "รวม N คน" ไม่ตรงตัวกรอง · ไฟล์ส่งออกใช้พารามิเตอร์ชุดเดียวกัน (_filterParams)
+          const q = new URLSearchParams(Object.assign({ page: this._page, pageSize: 20 }, this._filterParams()));
+          const r = await API.get(`/api/companies/${cid}/payroll/employees?${q}`);
           const items = r.data?.items || r.data || [];
-          const activeFilter = document.getElementById('filterActive').value;
-          const search = document.getElementById('searchInput').value.trim().toLowerCase();
-          let rows = items;
-          if (activeFilter !== '') rows = rows.filter(e => String(e.isActive) === activeFilter);
-          if (search) rows = rows.filter(e =>
-            (e.employeeCode || '').toLowerCase().includes(search) ||
-            (e.firstNameTh || '').toLowerCase().includes(search) ||
-            (e.lastNameTh || '').toLowerCase().includes(search));
+          const rows = items;
           if (rows.length === 0) {
             tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:#94a3b8">ไม่มีพนักงาน — กด + เพิ่มพนักงาน เพื่อสร้าง</td></tr>';
           } else {

@@ -93,11 +93,22 @@ public class ImportExportController : ControllerBase
     }
 
     [HttpPost("export")]
-    public async Task<ActionResult> Export(Guid companyId, [FromBody] ExportRequest request)
+    public async Task<ActionResult> Export(Guid companyId, [FromBody] ExportRequest request,
+        [FromServices] Services.Implementations.Pdpa.IPdpaService pdpa)
     {
         var deny = await DenyAsync(companyId, request?.EntityType, isExport: true);
         if (deny != null) return deny;
         var result = await _importExportService.ExportAsync(companyId, request!);
+        // X4 2026-10-14: ชนิดที่ด่านส่งออกต้องใช้ Pii.View (ทะเบียนพนักงาน = เลขบัตร/เลขบัญชี/เงินเดือนเต็ม) ⇒ บันทึก PiiAccessLog (PDPA ม.37) —
+        // เดิมด่านสิทธิ์ครบแต่ไม่มีร่องรอยว่าใครส่งออกทะเบียนพนักงานทั้งบริษัทเมื่อไร (ตัวตัดสิน "ชนิดนี้เป็น PII" = ImportExportPermissionScope ตัวเดียว)
+        if (ImportExportPermissionScope.ForExport(request!.EntityType) == Models.Constants.PermissionKeys.PiiView)
+            await pdpa.LogPiiAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+                User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "",
+                subjectType: "Employee", subjectId: Guid.Empty,
+                fieldName: $"* (ส่งออกไฟล์ {request.EntityType})", operation: "Export",
+                purpose: "ส่งออกทะเบียนพนักงานแบบไม่ปกปิดจากหน้านำเข้า/ส่งออกข้อมูล",
+                ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
+                userAgent: Request.Headers.UserAgent.ToString());
         return File(result.Data, result.ContentType, result.FileName);
     }
 

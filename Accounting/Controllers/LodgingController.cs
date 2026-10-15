@@ -231,6 +231,22 @@ public class LodgingController : ControllerBase
         [FromQuery] string? search, [FromQuery] string? view, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
         => Wrap(await _svc.ListReservationsAsync(companyId, propertyId, status, from, to, search, view, page, pageSize));
 
+    /// <summary>ส่งออกการจอง<b>ทุกแถว</b>ตามตัวกรอง/มุมมองเดียวกับรายการ (หน้าจอแสดงทีละ 50) — service ตัวเดียวกับ <see cref="ListReservations"/>
+    /// · ด่านสิทธิ์เดียวกัน (X4 · 2026-10-14)</summary>
+    [HttpGet("reservations/export")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult> ExportReservations(Guid companyId,
+        [FromQuery] Guid? propertyId, [FromQuery] string? status, [FromQuery] DateTime? from, [FromQuery] DateTime? to,
+        [FromQuery] string? search, [FromQuery] string? view, [FromQuery] string? format = null)
+    {
+        if (ModuleExport.ParseFormat(format) is not { } fmt)
+            return BadRequest(new ApiResponse<object>(false, null, ModuleExport.BadFormatMessage));
+        var rows = await ModuleExport.CollectAllPagesAsync(p =>
+            _svc.ListReservationsAsync(companyId, propertyId, status, from, to, search, view, p, ModuleExport.PageSize));
+        var f = ModuleExport.File(fmt, "lodging-reservations", "การจอง", OpsExportSheets.LodgingReservations, rows);
+        return File(f.Content, f.ContentType, f.FileName);
+    }
+
     [HttpGet("reservations/{id:guid}")]
     [RequirePermission(PermissionKeys.LodgingManage)]
     public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> GetReservation(Guid companyId, Guid id)

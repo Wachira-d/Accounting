@@ -227,6 +227,38 @@ public class SettlementController : ControllerBase
         });
     }
 
+    /// <summary>ส่งออกรายการรอบโอน<b>ทุกรอบ</b>ตามช่องทาง/สถานะ (หน้าจอโหลดทีละ 50 + "โหลดเพิ่ม") — service + ด่านเดียวกับ <see cref="ListBatches"/> (X4 · 2026-10-14)</summary>
+    [HttpGet("batches/export")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public async Task<ActionResult> ExportBatches(Guid companyId,
+        [FromQuery] Guid? channelId, [FromQuery] SettlementBatchStatus? status, [FromQuery] string? format = null, CancellationToken ct = default)
+    {
+        if (status is SettlementBatchStatus st && !SettlementReferenceCatalog.IsListable(st))
+            return BadRequest(new ApiResponse<object>(false, null, SettlementReferenceCatalog.VoidedNotListedMessage));
+        if (ModuleExport.ParseFormat(format) is not { } fmt)
+            return BadRequest(new ApiResponse<object>(false, null, ModuleExport.BadFormatMessage));
+        var rows = await ModuleExport.CollectAllSkipTakeAsync((skip, take) =>
+            _import.ListBatchesAsync(companyId, channelId, status, skip, take, ct));
+        var f = ModuleExport.File(fmt, "settlement-batches", "รอบโอน", OpsExportSheets.SettlementBatches, rows);
+        return File(f.Content, f.ContentType, f.FileName);
+    }
+
+    /// <summary>ส่งออกบรรทัดของรอบโอนหนึ่งรอบ (ยอดขาย/ค่าธรรมเนียม/VAT/WHT รายบรรทัด) + แถวรวม — service + ด่านเดียวกับ <see cref="GetBatch"/> (X4 · 2026-10-14)</summary>
+    [HttpGet("batches/{batchId:guid}/export")]
+    [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]
+    public async Task<ActionResult> ExportBatchLines(Guid companyId, Guid batchId, [FromQuery] string? format = null, CancellationToken ct = default)
+    {
+        if (ModuleExport.ParseFormat(format) is not { } fmt)
+            return BadRequest(new ApiResponse<object>(false, null, ModuleExport.BadFormatMessage));
+        SettlementBatchView batch;
+        try { batch = await _import.GetBatchAsync(companyId, batchId, ct); }
+        catch (KeyNotFoundException ex) { return NotFoundMessage(ex); }
+        var rows = batch.Lines.Select(l => OpsExportSheets.SettlementLineRow.From(batch, l)).ToList();
+        var f = ModuleExport.File(fmt, $"settlement-{batch.PayoutRef}", "บรรทัดรอบโอน", OpsExportSheets.SettlementLines, rows,
+            new[] { OpsExportSheets.SettlementLineRow.Totals(batch) });
+        return File(f.Content, f.ContentType, f.FileName);
+    }
+
     /// <summary>รอบโอน + บรรทัด + ผู้สมัครจับคู่ + ปุ่มที่กดได้ (<see cref="SettlementBatchActions"/>) + ผลการลงบัญชีที่ผูกไว้</summary>
     [HttpGet("batches/{batchId:guid}")]
     [Accounting.Filters.RequirePermission(SettlementPermissionScope.View)]

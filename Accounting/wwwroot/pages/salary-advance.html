@@ -32,6 +32,10 @@
       <select class="filter-select" id="employeeFilter" onchange="Page.load()">
         <option value="">พนักงานทั้งหมด</option>
       </select>
+      <span style="margin-left:auto;display:inline-flex;gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="Page.exportFile('xlsx')" title="ส่งออกทุกรายการตามตัวกรอง (ไม่ใช่แค่หน้าที่แสดง)">📊 Excel</button>
+        <button class="btn btn-secondary btn-sm" onclick="Page.exportFile('csv')" title="CSV (UTF-8) — ทุกรายการตามตัวกรอง">📄 CSV</button>
+      </span>
     </div>
 
     <div class="table-container">
@@ -164,6 +168,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script src="/js/money-channel.js"></script>
   <script>
     const statusBadge = (s) => {
@@ -206,6 +211,14 @@
         const e = this._employees.find(x => x.id === empId);
         if (!e) return empId;
         return (e.fullName || (e.firstNameTh + ' ' + e.lastNameTh)) + ' (' + e.employeeCode + ')';
+      },
+      // X4 2026-10-14: ไฟล์ส่งออก = ทุกรายการตามตัวกรองเดียวกับตาราง (เซิร์ฟเวอร์เดินทุกหน้า · ขอบเขตสิทธิ์ชุดเดียวกับรายการ)
+      exportFile(format) {
+        return ExportUtil.downloadServer('salary-advances/export', {
+          search: document.getElementById('searchInput').value.trim(),
+          status: document.getElementById('statusFilter').value,
+          employeeId: document.getElementById('employeeFilter').value,
+        }, format, 'salary-advances');
       },
       async load() {
         const api = Layout.api(); if (!api) return;

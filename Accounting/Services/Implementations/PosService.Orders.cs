@@ -98,7 +98,8 @@ public partial class PosService
         return MapOrder(order);
     }
 
-    public async Task<PagedResponse<OrderResponse>> GetOrdersAsync(Guid companyId, PagedRequest request, Guid? sessionId = null, string? status = null)
+    public async Task<PagedResponse<OrderResponse>> GetOrdersAsync(Guid companyId, PagedRequest request, Guid? sessionId = null, string? status = null,
+        DateTime? fromDate = null, DateTime? toDate = null)
     {
         var query = _db.PosOrders
             .Include(o => o.Items).Include(o => o.Payments)
@@ -109,6 +110,10 @@ public partial class PosService
             query = query.Where(o => o.Status == s);
         if (!string.IsNullOrEmpty(request.Search))
             query = query.Where(o => o.OrderNumber.Contains(request.Search) || (o.CustomerName != null && o.CustomerName.Contains(request.Search)));
+        // X4 2026-10-14: ช่วงวันที่ — หน้า pos-reports ส่ง fromDate/toDate มาตลอดแต่ endpoint ไม่รับ ⇒ แท็บ "ออเดอร์" แสดงทุกวันเงียบ ๆ
+        // (silent no-op) · ขอบวันแบบเดียวกับ GetBranchSummaryAsync บนหน้าเดียวกัน (CreatedAt ≥ from.Date และ < to.Date+1) ⇒ ยอดสองแท็บตรงกัน
+        if (fromDate is DateTime fd) { var start = fd.Date; query = query.Where(o => o.CreatedAt >= start); }
+        if (toDate is DateTime td) { var end = td.Date.AddDays(1); query = query.Where(o => o.CreatedAt < end); }
 
         var total = await query.CountAsync();
         var items = await query.OrderByDescending(o => o.CreatedAt)

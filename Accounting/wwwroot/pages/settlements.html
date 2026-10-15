@@ -114,6 +114,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     // รอบโอนเงินจาก wallet → ธนาคาร (รอบ 198 เฟส 1 ทีม D · SettlementController · DOCUMENT_FLOW §2.10)
     //
@@ -202,10 +203,31 @@
             <div class="fgrid">
               <div><label>ช่องทาง</label><select class="form-select" id="fltChannel" onchange="Page.loadBatches()">${this.options(chOpts, channelId, 'ทุกช่องทาง')}</select></div>
               <div><label>สถานะ</label><select class="form-select" id="fltStatus" onchange="Page.loadBatches()">${this.options(this.cat().batchFilterStatuses, '', 'ทุกสถานะ')}</select></div>
+              <div style="align-self:end;display:flex;gap:6px">
+                <button class="btn btn-sm btn-secondary" onclick="Page.exportBatches('xlsx')" title="ส่งออกรอบโอนทุกรอบตามช่องทาง/สถานะ (ไม่ใช่แค่ที่โหลดอยู่)">📊 Excel</button>
+                <button class="btn btn-sm btn-secondary" onclick="Page.exportBatches('csv')">📄 CSV</button>
+              </div>
             </div>
             ${this.channels.length ? '' : `<div class="banner info" style="margin-top:10px">ยังไม่มีช่องทาง —
               <a href="/pages/settlement-channels.html">ตั้งค่าช่องทาง</a> ก่อน (ผังพัก · ผู้ติดต่อแพลตฟอร์ม · โหมดภาษีของค่าธรรมเนียม)</div>`}
           </div>`;
+      },
+
+      // X4 2026-10-14: ส่งออกจากเซิร์ฟเวอร์ — ทุกรอบตามตัวกรอง (ไม่ใช่แค่หน้าที่ "โหลดรอบที่เก่ากว่า" มาแล้ว) / ทุกบรรทัดของรอบที่เปิด
+      _download(path, format, params) {
+        return ExportUtil.downloadServer(`settlement/${path}`, params || {}, format, 'settlement');
+      },
+      exportBatches(format) {
+        const p = {};
+        const ch = document.getElementById('fltChannel')?.value;
+        const st = document.getElementById('fltStatus')?.value;
+        if (ch) p.channelId = ch;
+        if (st) p.status = st;
+        return this._download('batches/export', format, p);
+      },
+      exportBatchLines(format) {
+        const id = this.detail?.batch?.id; if (!id) return;
+        return this._download(`batches/${id}/export`, format);
       },
 
       /** รายการรอบโอนทีละหน้า — more = ต่อท้ายหน้าถัดไป (เซิร์ฟเวอร์บอก hasMore) · ไม่ใช่ more = เริ่มหน้าแรกใหม่ */
@@ -552,7 +574,11 @@
                 <p class="sub">เงินเข้า ${Layout.date(b.payoutDate)} · ${Layout.esc(this.label(c.sourceKinds, b.sourceKind))}
                   ${b.periodFrom ? ` · รายการ ${Layout.date(b.periodFrom)}–${Layout.date(b.periodTo)}` : ''}
                   ${b.note ? ` · ${Layout.esc(b.note)}` : ''}</p></div>
-              <button class="btn btn-sm btn-secondary" onclick="Page.closeDetail()">ปิด</button>
+              <span style="display:inline-flex;gap:6px;align-items:flex-start">
+                <button class="btn btn-sm btn-secondary" onclick="Page.exportBatchLines('xlsx')" title="ส่งออกบรรทัดทั้งหมดของรอบนี้ (ยอด · VAT · หัก ณ ที่จ่าย · สถานะจับคู่) พร้อมแถวรวม">📊 บรรทัด Excel</button>
+                <button class="btn btn-sm btn-secondary" onclick="Page.exportBatchLines('csv')">CSV</button>
+                <button class="btn btn-sm btn-secondary" onclick="Page.closeDetail()">ปิด</button>
+              </span>
             </div>
             ${importResult ? this.renderImportResult(importResult) : ''}
             ${a.lockedReason ? `<div class="banner info">🔒 ${Layout.esc(a.lockedReason)}</div>` : ''}

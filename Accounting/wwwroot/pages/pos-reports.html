@@ -84,6 +84,10 @@
           <option value="3">เสร็จสิ้น</option>
           <option value="4" data-i18n="common.cancel">ยกเลิก</option>
         </select>
+        <span style="margin-left:auto;display:inline-flex;gap:6px">
+          <button class="btn btn-secondary btn-sm" onclick="Page.exportOrders('xlsx')" title="ส่งออกทุกบิลตามช่วงวันที่/สถานะ/คำค้น (ไม่ใช่แค่หน้าที่แสดง)">📊 Excel</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.exportOrders('csv')" title="CSV (UTF-8) — ทุกบิลตามตัวกรอง">📄 CSV</button>
+        </span>
       </div>
       <div class="table-container">
         <table class="table">
@@ -137,6 +141,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const Page = {
       currentTab: 'daily', ordersPage: 1, _orderCache: {},
@@ -264,6 +269,16 @@
             <div class="text-sm text-gray-500" style="margin-top:4px">ยอดขายรวม ${days} วัน (เฉลี่ย ${Layout.money(totalSales / days)}/วัน)</div>
             <div class="text-xs text-gray-400" style="margin-top:8px">ระบบยังไม่รองรับกราฟแยกรายวัน — ดูรายละเอียดรายบิลได้ที่แท็บ "ออเดอร์"</div>
           </div>`;
+      },
+
+      // X4 2026-10-14: ส่งออกจากเซิร์ฟเวอร์ — ตัวกรองชุดเดียวกับตาราง (ช่วงวันที่ใช้ได้จริงแล้ว — เดิม endpoint ไม่รับ fromDate/toDate)
+      exportOrders(format) {
+        return ExportUtil.downloadServer('pos/orders/export', {
+          fromDate: document.getElementById('dateFrom').value,
+          toDate: document.getElementById('dateTo').value,
+          search: document.getElementById('orderSearch')?.value || '',
+          status: document.getElementById('orderStatus')?.value || '',   // "0" (Open) ส่งได้ — downloadServer ตัดเฉพาะค่าว่าง
+        }, format, 'pos-orders');
       },
 
       async loadOrders() {

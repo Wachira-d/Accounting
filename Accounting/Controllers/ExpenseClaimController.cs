@@ -50,35 +50,51 @@ public class ExpenseClaimController : ControllerBase
         return Ok(new ApiResponse<ExpenseClaimResponse>(true, result));
     }
 
+    /// <summary>ขอบเขตแถวของรายการใบเบิก — ตัวเดียวของรายการบนจอและไฟล์ส่งออก (X4 · 2026-10-14 แยกจาก GetAll เดิม ไม่เปลี่ยนกติกา)
+    ///
+    /// <para>Row-level data-scope policy:
+    ///   Owner / SystemAdmin → see all (existing behaviour)
+    ///   perm:Expense.Approve OR perm:HR.Admin → see all (HR/manager view)
+    ///   anyone else → forced filter to their own SubmittedByUserId
+    /// Without this gate, a plain Employee role could read every
+    /// claim in the company because the controller only required
+    /// [Authorize] (any logged-in user). Auditors flagged this as a
+    /// material data leak.</para>
+    /// <para>null = เห็นทุกใบ · มีค่า = เห็นเฉพาะใบที่ผู้ใช้นี้ยื่น</para></summary>
+    private async Task<Guid?> ResolveRestrictToUserAsync(Guid companyId, IPermissionService? permissions)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (permissions == null) return null;
+        // ชุดคีย์เดียวกับด่านดูรายใบ (ExpenseClaimActionPolicy.ReviewerKeys(View)) — ผู้จ่าย/ผู้ปฏิเสธต้องเห็นคิวของตัวเองด้วย
+        foreach (var key in ExpenseClaimActionPolicy.ReviewerKeys(ExpenseClaimAction.View))
+            if (await permissions.HasPermissionAsync(companyId, userId, key)) return null;
+        return userId;
+    }
+
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<ExpenseClaimResponse>>>> GetAll(
         Guid companyId, [FromQuery] ExpenseClaimStatus? status, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
-        [FromServices] IPermissionService? permissions = null)
+        [FromServices] IPermissionService? permissions = null, [FromQuery] string? search = null)
     {
-        // Row-level data-scope policy:
-        //   Owner / SystemAdmin → see all (existing behaviour)
-        //   perm:Expense.Approve OR perm:HR.Admin → see all (HR/manager view)
-        //   anyone else → forced filter to their own SubmittedByUserId
-        // Without this gate, a plain Employee role could read every
-        // claim in the company because the controller only required
-        // [Authorize] (any logged-in user). Auditors flagged this as a
-        // material data leak.
-        var userId = JwtHelper.GetUserIdFromClaims(User);
-        Guid? restrictToUserId = null;
-        if (permissions != null)
-        {
-            // ชุดคีย์เดียวกับด่านดูรายใบ (ExpenseClaimActionPolicy.ReviewerKeys(View)) — ผู้จ่าย/ผู้ปฏิเสธต้องเห็นคิวของตัวเองด้วย
-            var canSeeAll = false;
-            foreach (var key in ExpenseClaimActionPolicy.ReviewerKeys(ExpenseClaimAction.View))
-            {
-                if (!await permissions.HasPermissionAsync(companyId, userId, key)) continue;
-                canSeeAll = true;
-                break;
-            }
-            if (!canSeeAll) restrictToUserId = userId;
-        }
-        var result = await _expenseService.GetAllAsync(companyId, status, new PagedRequest(page, pageSize), restrictToUserId);
+        var restrictToUserId = await ResolveRestrictToUserAsync(companyId, permissions);
+        // X4 2026-10-14: เดิมไม่รับ search ⇒ ช่องค้นหาบน expense.html ส่งไปแล้วไม่มีผล (silent no-op · กฎ #4 A) ทั้งที่ service ค้นเลขที่/เรื่องได้อยู่แล้ว
+        var result = await _expenseService.GetAllAsync(companyId, status, new PagedRequest(page, pageSize, search), restrictToUserId);
         return Ok(new ApiResponse<PagedResponse<ExpenseClaimResponse>>(true, result));
+    }
+
+    /// <summary>ส่งออกใบเบิกค่าใช้จ่าย<b>ทุกใบ</b>ตามสถานะที่กรอง (หน้าจอแสดงทีละหน้า) — ขอบเขตแถวชุดเดียวกับ <see cref="GetAll"/> (X4 · 2026-10-14)</summary>
+    [HttpGet("export")]
+    public async Task<ActionResult> Export(
+        Guid companyId, [FromQuery] ExpenseClaimStatus? status, [FromQuery] string? format = null,
+        [FromServices] IPermissionService? permissions = null, [FromQuery] string? search = null)
+    {
+        if (ModuleExport.ParseFormat(format) is not { } fmt)
+            return BadRequest(new ApiResponse<object>(false, null, ModuleExport.BadFormatMessage));
+        var restrictToUserId = await ResolveRestrictToUserAsync(companyId, permissions);
+        var rows = await ModuleExport.CollectAllPagesAsync(p =>
+            _expenseService.GetAllAsync(companyId, status, new PagedRequest(p, ModuleExport.PageSize, search), restrictToUserId));
+        var f = ModuleExport.File(fmt, "expense-claims", "ใบเบิกค่าใช้จ่าย", HrExportSheets.ExpenseClaims, rows);
+        return File(f.Content, f.ContentType, f.FileName);
     }
 
     [HttpPut("{claimId:guid}")]

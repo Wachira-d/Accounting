@@ -341,7 +341,7 @@ public class PayrollService : IPayrollService
         };
     }
 
-    public async Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request, bool includePii = false, bool includeSalary = true)
+    public async Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request, bool includePii = false, bool includeSalary = true, bool? isActive = null)
     {
         var query = _db.Set<Employee>()
             .Include(e => e.DepartmentRef)
@@ -357,6 +357,10 @@ public class PayrollService : IPayrollService
                 || EF.Functions.ILike(e.LastNameTh, search)
                 || (e.FirstNameEn != null && EF.Functions.ILike(e.FirstNameEn, search)));
         }
+        // X4 2026-10-14: ตัวกรองสถานะทำงานที่ฝั่งเซิร์ฟเวอร์ — เดิม employees.html กรอง Active/ค้นหา "ในหน้าที่โหลดมา 20 คน"
+        // ⇒ พนักงานคนที่ 21+ ค้นไม่เจอ และยอด "รวม N คน" ไม่ตรงตัวกรอง · ไฟล์ส่งออกใช้ตัวกรองชุดเดียวกันนี้
+        if (isActive is bool active)
+            query = query.Where(e => e.IsActive == active);
 
         var total = await query.CountAsync();
         var items = await query
@@ -1427,7 +1431,11 @@ public class PayrollService : IPayrollService
                     // แหล่งจ่ายที่ใช้ไม่ได้แล้ว — ตัวตัดสินเดียวกับตอนจ่าย (ID#15/PC#22) · ป้ายชื่อผังให้หน้าเว็บแสดงแทนรหัสดิบ
                     NetPaymentAccountWarning: paySources.RowProblem(d.NetPaymentAccountCode, "แถวนี้"),
                     NetPaymentAccountLabel: string.IsNullOrWhiteSpace(d.NetPaymentAccountCode) ? null
-                        : paySources.Labels.GetValueOrDefault(d.NetPaymentAccountCode.Trim(), d.NetPaymentAccountCode.Trim()));
+                        : paySources.Labels.GetValueOrDefault(d.NetPaymentAccountCode.Trim(), d.NetPaymentAccountCode.Trim()),
+                    // X4 2026-10-14: echo ค่าที่เก็บแล้ว — ไฟล์ทะเบียนเงินเดือนกระทบยอด JE ได้ (PVD นายจ้าง · เงินทดแทน · หักคืนเงินทดรองตอนจ่าย)
+                    ProvidentFundEmployer: d.ProvidentFundEmployer,
+                    WorkersCompensation: d.WorkersCompensation,
+                    AdvanceRecovered: d.AdvanceRecovered);
             }).ToList();
         }
 
@@ -1443,6 +1451,55 @@ public class PayrollService : IPayrollService
             SsoEmployerRatePercent = ssoForUi.EmployerRate * 100m,
             SsoWageCeiling = ssoForUi.MaxBase,
         };
+    }
+
+    /// <summary>
+    /// **ข้อมูลไฟล์รายการโอนเงินเดือน** (X4 · 2026-10-14) — แถวละพนักงานในรอบ พร้อมธนาคาร/เลขบัญชี<b>เต็ม</b>
+    ///
+    /// <para>ยอดโอนจริง = <c>NetPay − AdvanceRecovered</c> (สูตรเดียวกับเส้น Cr เงินสด/ธนาคารใน <c>ProcessPaymentAsync</c>) —
+    /// <c>AdvanceRecovered</c> ถูกประทับตอนกดจ่าย ⇒ รอบที่ยังไม่จ่าย ระบบ<b>ไม่เดา</b>ยอดหักคืน แต่ติดธง
+    /// <c>HasOutstandingAdvance</c> จากตัวเดียวกับที่เส้นจ่ายใช้ (<c>ISalaryAdvanceService.GetOutstandingForEmployeeAsync</c>) ·
+    /// ตัดสินยอด/สถานะแถวที่ <c>Helpers/PayrollBankTransfer</c> ตัวเดียว</para>
+    ///
+    /// <para>PDPA: เมธอดนี้คืนเลขบัญชีเต็ม — controller เป็นผู้ตัดสินสิทธิ์ <c>Pii.View</c> + บันทึก PiiAccessLog ก่อนเรียก</para>
+    /// </summary>
+    public async Task<PayrollBankTransferSheet> GetBankTransferSheetAsync(Guid companyId, Guid payrollRunId)
+    {
+        var run = await _db.Set<PayrollRun>().AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == payrollRunId && r.CompanyId == companyId && !r.IsDeleted)
+            ?? throw new KeyNotFoundException("ไม่พบรอบจ่ายเงินเดือน");
+        if (Accounting.Helpers.PayrollBankTransfer.RefuseReason(run.Status) is { } refuse)
+            throw new Accounting.Helpers.BusinessRuleException(refuse, "PAYROLL-BANK-FILE", 409);
+
+        var details = await _db.Set<PayrollDetail>().AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.PayrollRunId == run.Id && !d.IsDeleted)
+            .ToListAsync();
+        var empIds = details.Select(d => d.EmployeeId).Distinct().ToList();
+        var emps = await _db.Set<Employee>().AsNoTracking()
+            .Where(e => e.CompanyId == companyId && empIds.Contains(e.Id))
+            .ToDictionaryAsync(e => e.Id);
+        var paySources = await ResolvePayrollPaymentSourcesAsync(companyId, run.NetPaymentAccountCode,
+            details.Select(d => d.NetPaymentAccountCode));
+
+        var isPaid = run.Status == "Paid";
+        var lines = new List<PayrollBankTransferLine>(details.Count);
+        foreach (var d in details)
+        {
+            emps.TryGetValue(d.EmployeeId, out var e);
+            var name = e != null ? $"{e.TitleTh}{e.FirstNameTh} {e.LastNameTh}".Trim() : "(ไม่พบพนักงาน)";
+            // รอบที่ยังไม่จ่าย: มีเงินทดรองค้างไหม (ตัวเดียวกับเส้นจ่าย) — ไม่คำนวณยอดหักคืนเอง
+            var hasOutstanding = !isPaid && _salaryAdvanceService != null
+                && (await _salaryAdvanceService.GetOutstandingForEmployeeAsync(companyId, d.EmployeeId)).Count > 0;
+            var source = string.IsNullOrWhiteSpace(d.NetPaymentAccountCode)
+                ? paySources.DefaultLabel
+                : paySources.Labels.GetValueOrDefault(d.NetPaymentAccountCode.Trim(), d.NetPaymentAccountCode.Trim());
+            lines.Add(new PayrollBankTransferLine(
+                d.EmployeeId, e?.EmployeeCode ?? "", name,
+                e?.BankName, e?.BankAccountNumber, e?.BankAccountName,
+                d.NetPay, isPaid ? d.AdvanceRecovered : 0m, hasOutstanding, source));
+        }
+        return new PayrollBankTransferSheet(run.Id, run.PayrollNumber, run.Name, run.Year, run.Month, run.PayDate, run.Status,
+            run.TotalNetPay, lines.OrderBy(l => l.EmployeeCode, StringComparer.Ordinal).ToList());
     }
 
     public async Task<PayrollRunResponse> SetEmployeePaymentAccountAsync(

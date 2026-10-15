@@ -11,7 +11,7 @@ public interface IPayrollService
     /// — ตั้งเฉพาะเมื่อ caller มี permission "pii:view". Default mask ทุก field
     /// ตาม PDPA ม.26 (deny by default).</summary>
     Task<EmployeeResponse> GetEmployeeAsync(Guid companyId, Guid employeeId, bool includePii = false, bool includeSalary = true);
-    Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request, bool includePii = false, bool includeSalary = true);
+    Task<PagedResponse<EmployeeResponse>> GetEmployeesAsync(Guid companyId, PagedRequest request, bool includePii = false, bool includeSalary = true, bool? isActive = null);
     Task<EmployeeResponse> UpdateEmployeeAsync(Guid companyId, Guid employeeId, UpdateEmployeeRequest request);
     Task TerminateEmployeeAsync(Guid companyId, Guid employeeId, DateTime endDate);
 
@@ -55,6 +55,8 @@ public interface IPayrollService
     /// <summary>🗑 เอาพนักงานออกจากรอบ (soft-delete) — ด่านเดียวกับแก้ยอด · ห้ามเหลือ 0 คน · เหตุผลบังคับ</summary>
     Task<PayrollRunResponse> RemovePayrollDetailAsync(Guid companyId, Guid payrollRunId, Guid employeeId, string? reason, string actorName, Guid? actorUserId);
     Task<PagedResponse<PayrollRunResponse>> GetPayrollRunsAsync(Guid companyId, PagedRequest request);
+    /// <summary>ไฟล์รายการโอนเงินเดือน (เลขบัญชีเต็ม — ผู้เรียกต้องผ่านด่าน Pii.View + บันทึก PiiAccessLog)</summary>
+    Task<PayrollBankTransferSheet> GetBankTransferSheetAsync(Guid companyId, Guid payrollRunId);
     Task<PayrollRunResponse> CalculatePayrollAsync(Guid companyId, Guid payrollRunId);
     Task<PayrollRunResponse> ApprovePayrollAsync(Guid companyId, Guid payrollRunId, string approvedBy);
     Task<PayrollRunResponse> ProcessPaymentAsync(Guid companyId, Guid payrollRunId, string processedBy);

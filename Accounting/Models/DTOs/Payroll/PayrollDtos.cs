@@ -403,7 +403,25 @@ public record PayrollRunLineDto(
     // 2026-10-14 (ID#15/PC#22): แหล่งจ่ายรายคนที่ใช้ไม่ได้แล้ว (ปิดใช้/ลบ/บัญชีคุม) — ตัวตัดสินเดียวกับตอนจ่าย · null = ใช้ได้/ใช้ค่าเริ่มต้น
     string? NetPaymentAccountWarning = null,
     // ป้าย "รหัส ชื่อผัง" ของแหล่งจ่ายรายคน (หน้าเว็บแสดงแทนรหัสดิบ แม้ผังจะไม่อยู่ในรายการเลือกแล้ว)
-    string? NetPaymentAccountLabel = null);
+    string? NetPaymentAccountLabel = null,
+    // 2026-10-14 (X4 ส่งออกทะเบียนเงินเดือน): ค่าที่เก็บอยู่แล้วแต่ไม่เคย echo — ไฟล์ทะเบียนต้องกระทบยอดกับ JE ได้
+    // (PVD นายจ้าง/เงินทดแทน = ค่าใช้จ่ายบริษัท ไม่หักจากสุทธิ · หักคืนเงินทดรอง = ประทับตอนกดจ่าย ⇒ เงินโอนจริง = NetPay − AdvanceRecovered)
+    decimal ProvidentFundEmployer = 0m,
+    decimal WorkersCompensation = 0m,
+    decimal AdvanceRecovered = 0m);
+
+/// <summary>หนึ่งแถวของไฟล์รายการโอนเงินเดือน (X4 · 2026-10-14) — ข้อมูลดิบจากฐาน · ยอดโอน/สถานะตัดสินที่
+/// <c>Helpers/PayrollBankTransfer</c> ตัวเดียว · เลขบัญชีเต็ม (ผู้เรียกต้องผ่านด่าน Pii.View + บันทึก PiiAccessLog)</summary>
+public sealed record PayrollBankTransferLine(
+    Guid EmployeeId, string EmployeeCode, string EmployeeName,
+    string? BankName, string? BankAccountNumber, string? BankAccountName,
+    decimal NetPay, decimal AdvanceRecovered, bool HasOutstandingAdvance,
+    string? PaymentSourceLabel);
+
+/// <summary>หัวรอบ + แถวของไฟล์รายการโอนเงินเดือน</summary>
+public sealed record PayrollBankTransferSheet(
+    Guid RunId, string PayrollNumber, string RunName, int Year, int Month, DateTime PayDate, string Status,
+    decimal TotalNetPay, IReadOnlyList<PayrollBankTransferLine> Lines);
 
 /// <summary>นำส่งประกันสังคมให้ สปส. — เลือกวันที่จ่าย + บัญชีธนาคาร +
 /// เลขรับใบ สปส.1-10 (optional). ระบบ post JE Dr 21815 / Cr Bank

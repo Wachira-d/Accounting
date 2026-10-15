@@ -4926,3 +4926,16 @@ _2026-10-14 — ส่งออก CSV/Excel รายงานบัญชี (
 · `AuditTrailService` "ถึงวันที่" วันล้วนรวมทั้งวัน + เรียง Id · `ExportUtil.downloadServer`/`renderServerButtons` + `exportCsv` กันสูตรข้อความ · เช็คคงค้างมีปุ่มส่งออก
 · เทสต์ `TabularExportTests` · `AccountingReportSheetsTests` · `Db/AccountingReportExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit efeda848 (ตัวเขียนกลาง) + 6b27612c_
 
+
+_2026-10-14 (ทีม X4 · ส่งออก CSV/Excel โมดูลเงินเดือน/HR · POS · ที่พัก · รอบโอน — `erp-review/2026-10-14/EXPORT_AUDIT.md` §X4):
+ทุกไฟล์ดึง **ทุกแถวตามตัวกรอง** จาก service ตัวเดียวกับหน้าจอ (`Helpers/ModuleExport.CollectAllPagesAsync`/`CollectAllSkipTakeAsync` · เกิน 100,000 แถว
+ล้มดัง `EXPORT-ROW-CAP`) แล้วเขียนผ่าน `TabularExport` ของ X3 · ปุ่มฝั่งหน้า `ExportUtil.downloadServer` ·
+**เงินเดือน**: ทะเบียนพนักงาน (PII ตาม Pii.View · เงินเดือนว่างเมื่อไม่มีสิทธิ์) · รายการรอบทั้งหมด · ทะเบียนเงินเดือนรายคน + แถวรวม
+(echo `ProvidentFundEmployer`/`WorkersCompensation`/`AdvanceRecovered` ใน `PayrollRunLineDto` · "เงินโอนจริง" = `PayrollBankTransfer.CashPaid` สูตรเดียวกับ Cr ธนาคารตอนจ่าย) ·
+**ไฟล์รายการโอนเงินเดือนรูปแบบกลาง** (`GetBankTransferSheetAsync` + ตัวตัดสิน `Helpers/PayrollBankTransfer` · Payroll.View + Pii.View + PiiAccessLog · ไม่มีรูปแบบเฉพาะธนาคาร
+จนกว่าจะได้ไฟล์ตัวอย่าง) · คำขอลา · **HR**: เบิกเงินล่วงหน้า · ใบเบิกค่าใช้จ่าย (ขอบเขตแถวแยกเป็นเมธอดเดียวของรายการ+ไฟล์) ·
+**ที่พัก**: รายการจอง · **รอบโอน**: รายการรอบ + บรรทัดรอบ (ป้ายไทยจาก `SettlementReferenceCatalog`) · **POS**: ออเดอร์ ·
+ส่งออกทะเบียนพนักงานจากหน้านำเข้า/ส่งออกบันทึก PiiAccessLog · **บั๊กข้างเคียง**: employees.html ค้นหา/กรอง Active เฉพาะ 20 คนแรก → กรองที่เซิร์ฟเวอร์
+(`GetEmployeesAsync(..., isActive)`) · expense.html ช่องค้นหาไม่มีผล (controller ไม่รับ `search`) · lodging.html ตัด 100 แถวเงียบ → บอกจำนวนจริง ·
+pos-reports ตัวกรองวันที่ของออเดอร์ไม่มีผล (`GetOrdersAsync(..., fromDate, toDate)` ขอบวันเดียวกับสรุปสาขา) · เปิดไว้: สรุปรายวัน POS แสดงวันเดียว · ขอบวัน POS เป็น UTC ·
+`GET audit/logs` ไม่มีด่าน · เทสต์ `ModuleExportTests` · `PayrollBankTransferTests` · `PayrollExportSheetsTests` · `Db/ModuleExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้_

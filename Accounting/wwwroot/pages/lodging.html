@@ -71,7 +71,12 @@
         <select class="filter-select" id="statusFilter" onchange="Page.loadList()"><option value="">ทุกสถานะ</option><option value="Pending">รอมัดจำ</option><option value="Confirmed">ยืนยันแล้ว</option><option value="CheckedIn">เช็คอินแล้ว</option><option value="CheckedOut">เช็คเอาต์แล้ว</option><option value="Cancelled">ยกเลิก</option><option value="NoShow">No-show</option></select>
         <input type="date" class="form-input" id="fromFilter" onchange="Page.loadList()"><input type="date" class="form-input" id="toFilter" onchange="Page.loadList()">
         <input type="text" class="search-input" id="searchInput" placeholder="เลขจอง / ชื่อ / โทร" oninput="Page.debounce()">
+        <span style="margin-left:auto;display:inline-flex;gap:6px">
+          <button class="btn btn-secondary btn-sm" onclick="Page.exportList('xlsx')" title="ส่งออกการจองทุกแถวตามมุมมอง/สถานะ/ช่วงวันที่/คำค้น (ไม่จำกัด 100 แถวเหมือนตาราง)">📊 Excel</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.exportList('csv')" title="CSV (UTF-8) — ทุกแถวตามตัวกรอง">📄 CSV</button>
+        </span>
       </div>
+      <div id="listCapNote" class="hint" style="display:none;margin:4px 0 8px;color:#92400e"></div>
       <div class="table-container"><table class="table"><thead><tr><th>เลขจอง</th><th>แขก</th><th>เข้า → ออก</th><th>ห้อง</th><th class="text-right">ยอด</th><th class="text-right">คงเหลือ</th><th>สถานะ</th><th>ที่มา</th></tr></thead><tbody id="listBody"></tbody></table></div>
     </div>
 
@@ -113,6 +118,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
     const ST = { Pending: 'รอมัดจำ', Confirmed: 'ยืนยันแล้ว', CheckedIn: 'เช็คอินแล้ว', CheckedOut: 'เช็คเอาต์แล้ว', Cancelled: 'ยกเลิก', NoShow: 'No-show' };
     const SRC = { Web: 'เว็บ', WalkIn: 'Walk-in', Phone: 'โทร', Agent: 'Agent', Ota: 'OTA', Other: 'อื่น' };
@@ -205,6 +211,15 @@
       },
 
       // ─── รายการ ───
+      // X4 2026-10-14: ส่งออกทุกแถวตามตัวกรองเดียวกับตาราง (เซิร์ฟเวอร์เดินทุกหน้าของ service รายการตัวเดิม)
+      exportList(format) {
+        if (!this.propertyId) return;
+        const v = id => document.getElementById(id).value;
+        return ExportUtil.downloadServer('lodging/reservations/export', {
+          propertyId: this.propertyId, view: v('viewFilter'), status: v('statusFilter'),
+          from: v('fromFilter'), to: v('toFilter'), search: v('searchInput'),
+        }, format, 'lodging-reservations');
+      },
       async loadList() {
         if (!this.propertyId) return;
         const api = Layout.api();
@@ -215,6 +230,14 @@
         try {
           const res = await api.lodgingReservations(q); const items = res.data?.items || [];
           document.getElementById('listBody').innerHTML = items.length ? items.map(r => this.resRow(r)).join('') : '<tr><td colspan="8" class="text-center text-gray-400" style="padding:30px">ไม่มีการจองตามเงื่อนไข</td></tr>';
+          // X4 2026-10-14: ตารางแสดง 100 แถวแรกเท่านั้น — เดิมตัดเงียบ ๆ (ไม่มีหน้าถัดไป/ไม่บอกจำนวนจริง) ⇒ บอกให้เห็น + ทางไปต่อ
+          const total = res.data?.totalCount ?? items.length;
+          const capNote = document.getElementById('listCapNote');
+          if (capNote) {
+            capNote.style.display = total > items.length ? '' : 'none';
+            capNote.textContent = total > items.length
+              ? `แสดง ${items.length} จาก ${total} รายการ — กรองช่วงวันที่/สถานะให้แคบลง หรือกด "Excel/CSV" เพื่อส่งออกครบทุกรายการ` : '';
+          }
         } catch (e) { Layout.toast('โหลดรายการไม่สำเร็จ: ' + e.message, 'error'); }
       },
 

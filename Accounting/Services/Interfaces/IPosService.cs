@@ -19,7 +19,8 @@ public interface IPosService
     // Order
     Task<OrderResponse> CreateOrderAsync(Guid companyId, CreateOrderRequest request, string createdBy);
     Task<OrderResponse> GetOrderAsync(Guid companyId, Guid orderId);
-    Task<PagedResponse<OrderResponse>> GetOrdersAsync(Guid companyId, PagedRequest request, Guid? sessionId = null, string? status = null);
+    Task<PagedResponse<OrderResponse>> GetOrdersAsync(Guid companyId, PagedRequest request, Guid? sessionId = null, string? status = null,
+        DateTime? fromDate = null, DateTime? toDate = null);
     Task<OrderResponse> UpdateOrderAsync(Guid companyId, Guid orderId, UpdateOrderRequest request);
     Task<OrderResponse> UpdateOrderStatusAsync(Guid companyId, Guid orderId, UpdateOrderStatusRequest request, string userId);
     Task<OrderResponse> AddOrderItemAsync(Guid companyId, Guid orderId, CreateOrderItemRequest request);

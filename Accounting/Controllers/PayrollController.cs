@@ -154,10 +154,10 @@ public class PayrollController : ControllerBase
     [HttpGet("employees")]
     public async Task<ActionResult<ApiResponse<PagedResponse<EmployeeResponse>>>> GetEmployees(
         Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
-        [FromQuery] string? search = null)
+        [FromQuery] string? search = null, [FromQuery] bool? isActive = null)
         => Ok(new ApiResponse<PagedResponse<EmployeeResponse>>(true,
             await _service.GetEmployeesAsync(companyId, new PagedRequest(page, pageSize, search),
-                await CanViewPiiAsync(companyId), await CanViewPayrollAsync(companyId))));
+                await CanViewPiiAsync(companyId), await CanViewPayrollAsync(companyId), isActive)));
 
     /// <summary>Lookup-by-external for partner ERPs/HRIS — caller passes
     /// its own (ExternalSystem, ExternalId) and gets back our employee
@@ -1069,5 +1069,86 @@ public class PayrollController : ControllerBase
         existing.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new ApiResponse<object>(true, null, $"ลบกฎภาษีปี {y} แล้ว — กลับไปใช้ default"));
+    }
+    // ═══════════ ส่งออกไฟล์ (X4 · 2026-10-14) ═══════════
+    // เจ้าของ: "ตรงจุดที่ดูข้อมูลมีให้กด export รึยัง ข้อมูลครบถ้วน ถูกต้องไหม" — ทุกไฟล์ดึง "ทุกแถวตามตัวกรอง" จาก service ตัวเดียวกับหน้าจอ
+    // (ไม่ใช่แค่หน้าที่โหลดอยู่) · ด่านสิทธิ์ = ด่านของ endpoint ข้อมูลของหน้านั้น · PII ปิดบังตาม Pii.View ชุดเดียวกับหน้าจอ
+    // ตัวเขียนไฟล์ = Helpers/ModuleExport ตัวเดียว · คอลัมน์ = Helpers/PayrollExportSheets ตัวเดียว
+
+    private ActionResult BadExportFormat() => BadRequest(new ApiResponse<object>(false, null, ModuleExport.BadFormatMessage));
+    private FileContentResult ExportFile(ModuleExportFile f) => File(f.Content, f.ContentType, f.FileName);
+
+    /// <summary>ทะเบียนพนักงานทุกคนตามคำค้น — ด่าน/การปิดบังชุดเดียวกับ <see cref="GetEmployees"/> (Pii.View = เลขเต็ม + บันทึก PiiAccessLog ·
+    /// ไม่มีสิทธิ์ดูเงินเดือน = ช่องเงินเดือนว่าง)</summary>
+    [HttpGet("employees/export")]
+    public async Task<ActionResult> ExportEmployees(Guid companyId, [FromQuery] string? format = null, [FromQuery] string? search = null,
+        [FromQuery] bool? isActive = null)
+    {
+        if (ModuleExport.ParseFormat(format) is not { } fmt) return BadExportFormat();
+        var includePii = await CanViewPiiAsync(companyId);
+        var includeSalary = await CanViewPayrollAsync(companyId);
+        var rows = await ModuleExport.CollectAllPagesAsync(page =>
+            _service.GetEmployeesAsync(companyId, new PagedRequest(page, ModuleExport.PageSize, search), includePii, includeSalary, isActive));
+        return ExportFile(ModuleExport.File(fmt, "employees", "พนักงาน", PayrollExportSheets.Employees(includeSalary), rows));
+    }
+
+    /// <summary>รายการรอบเงินเดือนทั้งหมด (หน้าจอแสดงทีละ 20 รอบ) — ด่านเดียวกับ <see cref="GetRuns"/></summary>
+    [HttpGet("runs/export")]
+    public async Task<ActionResult> ExportRuns(Guid companyId, [FromQuery] string? format = null)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        if (ModuleExport.ParseFormat(format) is not { } fmt) return BadExportFormat();
+        var rows = await ModuleExport.CollectAllPagesAsync(page =>
+            _service.GetPayrollRunsAsync(companyId, new PagedRequest(page, ModuleExport.PageSize)));
+        return ExportFile(ModuleExport.File(fmt, "payroll-runs", "รอบเงินเดือน", PayrollExportSheets.Runs, rows));
+    }
+
+    /// <summary>ทะเบียนเงินเดือนรายคนของรอบ (payslip register) — DTO ตัวเดียวกับตารางรายคนบนหน้ารอบ + แถวรวม · ด่านเดียวกับ <see cref="GetRun"/></summary>
+    [HttpGet("runs/{runId:guid}/export")]
+    public async Task<ActionResult> ExportRunRegister(Guid companyId, Guid runId, [FromQuery] string? format = null)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        if (ModuleExport.ParseFormat(format) is not { } fmt) return BadExportFormat();
+        var run = await _service.GetPayrollRunAsync(companyId, runId);
+        var lines = (IReadOnlyList<PayrollRunLineDto>?)run.Details ?? Array.Empty<PayrollRunLineDto>();
+        return ExportFile(ModuleExport.File(fmt, $"payroll-register-{run.PayrollNumber}", run.PayrollNumber,
+            PayrollExportSheets.Register(run, run.DefaultPaymentSourceLabel), lines,
+            new[] { PayrollExportSheets.RegisterTotals(lines) }));
+    }
+
+    /// <summary>
+    /// **ไฟล์รายการโอนเงินเดือน (รูปแบบกลาง)** — เลขบัญชีเต็ม ⇒ ต้องมีทั้งสิทธิ์ดูเงินเดือน และ <c>Pii.View</c>
+    /// (PDPA ม.26 — ไฟล์โอนที่เลขบัญชีถูกปิดบังใช้โอนไม่ได้ จึงไม่ออกแบบปิดบัง) + บันทึก PiiAccessLog ทุกครั้ง (ม.37)
+    ///
+    /// <para><b>ยังไม่มีรูปแบบเฉพาะธนาคาร</b> (KBank/SCB/BBL bulk payroll) — ต้องมีสเปก/ไฟล์ตัวอย่างของธนาคารที่ลูกค้าใช้ก่อน ·
+    /// ไฟล์นี้มี ชื่อบัญชี · ธนาคาร · เลขบัญชี (ตัวเลขล้วน) · จำนวนเงิน · อ้างอิง ให้คัดลอกเข้าแม่แบบของธนาคารได้</para>
+    /// </summary>
+    [HttpGet("runs/{runId:guid}/bank-transfer")]
+    public async Task<ActionResult> ExportBankTransfer(Guid companyId, Guid runId, [FromQuery] string? format = null)
+    {
+        var block = await CheckPayrollAccessAsync(companyId)
+            ?? await RequireAnyAsync(companyId, "ส่งออกรายการโอนเงินเดือน (ไฟล์มีเลขบัญชีธนาคารเต็มของพนักงาน — ข้อมูลส่วนบุคคล ม.26)",
+                Models.Constants.PermissionKeys.PiiView);
+        if (block != null) return block;
+        if (ModuleExport.ParseFormat(format) is not { } fmt) return BadExportFormat();
+        var sheet = await _service.GetBankTransferSheetAsync(companyId, runId);
+        await _pdpa.LogPiiAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User), ActorEmail() ?? "",
+            subjectType: "PayrollRun", subjectId: sheet.RunId,
+            fieldName: $"BankAccountNumber ({sheet.Lines.Count} คน)", operation: "Export",
+            purpose: $"ส่งออกไฟล์รายการโอนเงินเดือน รอบ {sheet.PayrollNumber}",
+            ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
+            userAgent: Request.Headers.UserAgent.ToString());
+        return ExportFile(ModuleExport.File(fmt, $"payroll-bank-transfer-{sheet.PayrollNumber}", "รายการโอน",
+            PayrollExportSheets.BankTransfer, PayrollExportSheets.BankTransferRows(sheet)));
+    }
+
+    /// <summary>คำขอลาทุกคนของปีที่เลือก (แท็บลาหยุด) — ด่านเดียวกับ <see cref="GetLeaves"/> แบบไม่ระบุพนักงาน (ต้องมีสิทธิ์ HR)</summary>
+    [HttpGet("leaves/export")]
+    public async Task<ActionResult> ExportLeaves(Guid companyId, [FromQuery] int? year, [FromQuery] string? format = null)
+    {
+        var block = await CheckPayrollAccessAsync(companyId); if (block != null) return block;
+        if (ModuleExport.ParseFormat(format) is not { } fmt) return BadExportFormat();
+        var rows = await _service.GetLeavesAsync(companyId, null, year);
+        return ExportFile(ModuleExport.File(fmt, year is int y ? $"leaves-{y}" : "leaves", "คำขอลา", PayrollExportSheets.Leaves, rows));
     }
 }

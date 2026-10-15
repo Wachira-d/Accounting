@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **544 ไฟล์ · 5,375 `[Fact]` + 835 `[Theory]` (3,733 `InlineData`)** ณ 2026-10-14 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **546 ไฟล์ · 5,393 `[Fact]` + 838 `[Theory]` (3,745 `InlineData`)** ณ 2026-10-15 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6127,3 +6127,17 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | EXP3-09 | บันทึกการใช้งาน — "ถึงวันที่" | วันที่ล้วน ⇒ รวมทั้งวันสุดท้าย (เดิมตัดทิ้ง) · มีเวลา ⇒ ตามเวลา · ไฟล์ 1,006 แถว (เกินหน้า 1,000) ไม่ซ้ำ/ไม่หาย | ✅ `Db/AccountingReportExportDbTests` (Db) |
 | EXP3-10 | หน้าเรียกไฟล์จากเซิร์ฟเวอร์ | reports/general-ledger/journals/aging/audit/fixed-assets/cash-management ใช้ `ExportUtil.downloadServer` (แนบ JWT) · ใบแจ้งยอดไม่ใช้ `window.location.href` | ⏳ ทดสอบมือ: กดทุกปุ่มบนหน้าจริง เทียบยอดรวมกับหน้า |
 
+### ส่งออก CSV/Excel ของโมดูลเงินเดือน/HR · POS · ที่พัก · รอบโอน (ทีม X4 · 2026-10-14 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X4)
+
+| ID | กรณี | ผลที่คาด | สถานะ |
+| --- | --- | --- | --- |
+| EXP4-01 | คอลัมน์ X4 ผ่านตัวเขียนกลาง `TabularExport` (X3) | บรรทัดรอบโอน: ยอดติดลบ `-1500.00` เป็นตัวเลข · ข้อความสูตรจากไฟล์ต้นทางถูกเติม `'` · วันที่ ISO · **ทุกคอลัมน์ที่ค่าเป็นตัวเลข/วันที่ต้องมีชนิดช่องตรง** (เงินเดือน·รอบ·ลา·ไฟล์โอน·การจอง·บรรทัดรอบโอน) · format ว่าง/ไม่รู้จัก = null (400 ไม่เดา) | ✅ `ModuleExportTests` |
+| EXP4-02 | ส่งออกทุกแถว ไม่ใช่หน้าปัจจุบัน | 450 แถว/หน้าละ 200 ⇒ 3 หน้าครบ · skip/take เดินจนได้น้อยกว่าที่ขอ · เกินเพดาน ⇒ `EXPORT-ROW-CAP` พร้อมจำนวนจริง (ไม่ตัดเงียบ) | ✅ `ModuleExportTests` |
+| EXP4-03 | ไฟล์โอนเงินเดือน (`PayrollBankTransfer`) | จ่ายแล้ว = สุทธิ − หักคืนเงินทดรอง · ยังไม่จ่าย = สุทธิ + หมายเหตุเมื่อมีเงินทดรองค้าง (ไม่มีค้าง = ไม่มีหมายเหตุ) · ขาดเลขบัญชี/เลข < 10 หลัก/ยอด ≤ 0 = ไม่พร้อมแต่อยู่ในไฟล์ · 12 หลักผ่าน · Draft/Voided ถูกปฏิเสธ · ปัด AwayFromZero | ✅ `PayrollBankTransferTests` |
+| EXP4-04 | คอลัมน์โมดูลเงินเดือน (`PayrollExportSheets`) | แถวรวมทะเบียนยาวเท่าหัว · "เงินโอนจริง" รวม = สุทธิ − หักคืน · ไม่มีสิทธิ์ดูเงินเดือน = ช่องว่าง (ไม่ใช่ 0) · เลขบัตรออกตามที่ service ปิดบัง · ไฟล์โอน: เลขบัญชีตัวเลขล้วน · อ้างอิงไม่ซ้ำ · ไม่มีชื่อบัญชี = ชื่อพนักงาน | ✅ `PayrollExportSheetsTests` |
+| EXP4-05 | ทะเบียนเงินเดือน = ตารางรายคนบนหน้ารอบ (PostgreSQL) | แถวในไฟล์ = `GetPayrollRunAsync().Details` + หัว + แถวรวม · สุทธิรวม = ยอดหัวรอบ · หักคืนเงินทดรอง/PVD นายจ้าง echo จากฐาน | ✅ `Db/ModuleExportDbTests` (Db) |
+| EXP4-06 | ไฟล์โอน = เงินออกจากธนาคารใน JE (PostgreSQL) | ยอดโอนรวม = 47,000 − 3,000 · เลขบัญชีถอดรหัสครบ (คอลัมน์เข้ารหัส) · คนไม่มีเลขบัญชี = "ขาดเลขบัญชี" · รอบ Draft = 409 | ✅ `Db/ModuleExportDbTests` (Db) |
+| EXP4-07 | ทะเบียนพนักงานเดินทุกหน้า + กรอง Active ที่เซิร์ฟเวอร์ | 25 คน หน้าละ 10 ⇒ ได้ 25 ไม่ซ้ำ · `isActive=true` = 22 · `false` = 3 (รายการบนจอใช้ตัวกรองเดียวกัน) | ✅ `Db/ModuleExportDbTests` (Db) |
+| EXP4-08 | ด่านสิทธิ์ endpoint ส่งออก | ทุกตัวใช้ด่านเดียวกับ endpoint รายการของหน้านั้น · ไฟล์โอนเงินเดือน = Payroll.View + **Pii.View** + PiiAccessLog · ส่งออกทะเบียนพนักงานจากหน้านำเข้า/ส่งออกบันทึก PiiAccessLog | ⏳ ทดสอบมือ (ยังไม่มี controller test harness ของ PayrollController) |
+| EXP4-09 | หน้าเว็บ: ปุ่ม Excel/CSV ส่งตัวกรองชุดเดียวกับตาราง | payroll (พนักงาน/รอบ/ลา/ทะเบียน/โอน) · employees · salary-advance · expense · lodging · settlements (รอบ/บรรทัด) · pos-reports ออเดอร์ — ผ่าน `ExportUtil.downloadServer` | ⏳ ทดสอบมือ · `node --check` ผ่านใน check_all |
+| EXP4-10 | บั๊กข้างเคียงที่แก้ | `employees.html` ค้นหาคนที่ 21+ เจอ · `expense.html` ค้นหามีผล · `lodging.html` บอก "แสดง 100 จาก N" · `pos-reports` ตัวกรองวันที่ของออเดอร์มีผล | ⏳ ทดสอบมือ · ตัวกรอง Active = EXP4-07 |

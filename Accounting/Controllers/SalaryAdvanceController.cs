@@ -22,36 +22,59 @@ public class SalaryAdvanceController : ControllerBase
     public SalaryAdvanceController(ISalaryAdvanceService service, AccountingDbContext db, IPermissionService permissions)
     { _service = service; _db = db; _permissions = permissions; }
 
+    /// <summary>ขอบเขตแถวที่ผู้เรียกเห็น — ตัวเดียวของรายการบนจอและไฟล์ส่งออก (X4 · 2026-10-14 แยกออกมาจาก GetAll เดิม ไม่เปลี่ยนกติกา)
+    ///
+    /// <para>Row-level scope — same model as ExpenseClaimController.
+    /// When the caller lacks BOTH perm:HR.Admin AND perm:Advance.Approve,
+    /// they can only see THEIR OWN salary-advance requests. Otherwise
+    /// honour the employeeId query param so HR can drill in.</para>
+    /// <para><c>NoEmployee</c> = ผู้เรียกไม่มีทะเบียนพนักงาน ⇒ รายการว่าง (ไม่ใช่ 403 — UI แสดง "ไม่มีรายการ")</para></summary>
+    private async Task<(bool NoEmployee, Guid? EmployeeId)> ResolveListScopeAsync(Guid companyId, Guid? employeeId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var canSeeAll = await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.HrAdmin)
+                     || await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.AdvanceApprove);
+        if (canSeeAll) return (false, employeeId);
+        // Resolve the caller's Employee row from their JWT user id;
+        // override employeeId so the underlying query is forced to
+        // the right scope no matter what the caller passed.
+        var myEmpId = await _db.Employees.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && e.UserId == userId && !e.IsDeleted)
+            .Select(e => (Guid?)e.Id)
+            .FirstOrDefaultAsync();
+        return myEmpId.HasValue ? (false, myEmpId) : (true, (Guid?)null);
+    }
+
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<SalaryAdvanceResponse>>>> GetAll(
         Guid companyId, [FromQuery] string? status = null, [FromQuery] Guid? employeeId = null,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
     {
-        // Row-level scope — same model as ExpenseClaimController.
-        // When the caller lacks BOTH perm:HR.Admin AND perm:Advance.Approve,
-        // they can only see THEIR OWN salary-advance requests. Otherwise
-        // honour the employeeId query param so HR can drill in.
-        var userId = JwtHelper.GetUserIdFromClaims(User);
-        var canSeeAll = await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.HrAdmin)
-                     || await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.AdvanceApprove);
-        if (!canSeeAll)
-        {
-            // Resolve the caller's Employee row from their JWT user id;
-            // override employeeId so the underlying query is forced to
-            // the right scope no matter what the caller passed.
-            var myEmpId = await _db.Employees.AsNoTracking()
-                .Where(e => e.CompanyId == companyId && e.UserId == userId && !e.IsDeleted)
-                .Select(e => (Guid?)e.Id)
-                .FirstOrDefaultAsync();
-            if (!myEmpId.HasValue)
-                // No employee record — return empty list rather than 403 so
-                // the UI can render a sensible "no advances" state.
-                return Ok(new ApiResponse<PagedResponse<SalaryAdvanceResponse>>(true,
-                    new PagedResponse<SalaryAdvanceResponse>(new List<SalaryAdvanceResponse>(), 0, page, pageSize, 0)));
-            employeeId = myEmpId.Value;
-        }
-        var result = await _service.GetAllAsync(companyId, status, employeeId, new PagedRequest(page, pageSize, search));
+        var scope = await ResolveListScopeAsync(companyId, employeeId);
+        if (scope.NoEmployee)
+            // No employee record — return empty list rather than 403 so
+            // the UI can render a sensible "no advances" state.
+            return Ok(new ApiResponse<PagedResponse<SalaryAdvanceResponse>>(true,
+                new PagedResponse<SalaryAdvanceResponse>(new List<SalaryAdvanceResponse>(), 0, page, pageSize, 0)));
+        var result = await _service.GetAllAsync(companyId, status, scope.EmployeeId, new PagedRequest(page, pageSize, search));
         return Ok(new ApiResponse<PagedResponse<SalaryAdvanceResponse>>(true, result));
+    }
+
+    /// <summary>ส่งออกรายการเบิกเงินล่วงหน้า <b>ทุกแถว</b>ตามตัวกรองเดียวกับหน้าจอ (หน้าจอแสดงทีละ 20) — ขอบเขตแถวชุดเดียวกับ <see cref="GetAll"/> (X4 · 2026-10-14)</summary>
+    [HttpGet("export")]
+    public async Task<ActionResult> Export(
+        Guid companyId, [FromQuery] string? status = null, [FromQuery] Guid? employeeId = null,
+        [FromQuery] string? search = null, [FromQuery] string? format = null)
+    {
+        if (ModuleExport.ParseFormat(format) is not { } fmt)
+            return BadRequest(new ApiResponse<object>(false, null, ModuleExport.BadFormatMessage));
+        var scope = await ResolveListScopeAsync(companyId, employeeId);
+        var rows = scope.NoEmployee
+            ? new List<SalaryAdvanceResponse>()
+            : await ModuleExport.CollectAllPagesAsync(p =>
+                _service.GetAllAsync(companyId, status, scope.EmployeeId, new PagedRequest(p, ModuleExport.PageSize, search)));
+        var f = ModuleExport.File(fmt, "salary-advances", "เบิกเงินล่วงหน้า", HrExportSheets.SalaryAdvances, rows);
+        return File(f.Content, f.ContentType, f.FileName);
     }
 
     [HttpGet("{advanceId:guid}")]

@@ -33,6 +33,10 @@
         <option value="Rejected">ปฏิเสธ</option>
         <option value="Paid">จ่ายแล้ว</option>
       </select>
+      <span style="margin-left:auto;display:inline-flex;gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="Page.exportFile('xlsx')" title="ส่งออกใบเบิกทุกใบตามสถานะ/คำค้น (ไม่ใช่แค่หน้าที่แสดง)">📊 Excel</button>
+        <button class="btn btn-secondary btn-sm" onclick="Page.exportFile('csv')" title="CSV (UTF-8) — ทุกใบตามตัวกรอง">📄 CSV</button>
+      </span>
     </div>
     <div class="table-container">
       <table class="table">
@@ -173,6 +177,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script src="/js/money-channel.js"></script>
   <script>
     const Page = {
@@ -194,6 +199,13 @@
           // overlay paints.
           setTimeout(() => this.openCreate(), 50);
         }
+      },
+      // X4 2026-10-14: ไฟล์ส่งออก = ทุกใบตามตัวกรองเดียวกับตาราง (เซิร์ฟเวอร์เดินทุกหน้า · ขอบเขตสิทธิ์ชุดเดียวกับรายการ)
+      exportFile(format) {
+        return ExportUtil.downloadServer('expense-claims/export', {
+          status: document.getElementById('statusFilter').value,
+          search: document.getElementById('searchInput').value.trim(),
+        }, format, 'expense-claims');
       },
       async load() {
         const api = Layout.api(); if (!api) return;

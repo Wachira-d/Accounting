@@ -91,8 +91,23 @@ public class PosController : ControllerBase
     [HttpGet("orders")]
     public async Task<ActionResult<ApiResponse<PagedResponse<OrderResponse>>>> GetOrders(
         Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
-        [FromQuery] string? search = null, [FromQuery] Guid? sessionId = null, [FromQuery] string? status = null)
-        => Ok(new ApiResponse<PagedResponse<OrderResponse>>(true, await _pos.GetOrdersAsync(companyId, new PagedRequest(page, pageSize, search), sessionId, status)));
+        [FromQuery] string? search = null, [FromQuery] Guid? sessionId = null, [FromQuery] string? status = null,
+        [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+        => Ok(new ApiResponse<PagedResponse<OrderResponse>>(true, await _pos.GetOrdersAsync(companyId, new PagedRequest(page, pageSize, search), sessionId, status, fromDate, toDate)));
+
+    /// <summary>ส่งออกออเดอร์<b>ทุกบิล</b>ตามช่วงวันที่/สถานะ/คำค้นเดียวกับแท็บ "ออเดอร์" (หน้าจอแสดงทีละ 20) — service + ด่านเดียวกับ <see cref="GetOrders"/> (X4 · 2026-10-14)</summary>
+    [HttpGet("orders/export")]
+    public async Task<ActionResult> ExportOrders(
+        Guid companyId, [FromQuery] string? search = null, [FromQuery] Guid? sessionId = null, [FromQuery] string? status = null,
+        [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null, [FromQuery] string? format = null)
+    {
+        if (ModuleExport.ParseFormat(format) is not { } fmt)
+            return BadRequest(new ApiResponse<object>(false, null, ModuleExport.BadFormatMessage));
+        var rows = await ModuleExport.CollectAllPagesAsync(p =>
+            _pos.GetOrdersAsync(companyId, new PagedRequest(p, ModuleExport.PageSize, search), sessionId, status, fromDate, toDate));
+        var f = ModuleExport.File(fmt, "pos-orders", "ออเดอร์", OpsExportSheets.PosOrders, rows);
+        return File(f.Content, f.ContentType, f.FileName);
+    }
 
     [HttpGet("orders/{orderId:guid}")]
     public async Task<ActionResult<ApiResponse<OrderResponse>>> GetOrder(Guid companyId, Guid orderId)

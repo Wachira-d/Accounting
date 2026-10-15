@@ -28,6 +28,7 @@
       </div>
       <div class="toolbar">
         <input type="text" class="search-input" placeholder="ค้นหาพนักงาน..." id="empSearch" oninput="Page.loadEmployees()">
+        <span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn btn-secondary btn-sm" onclick="Page.exportEmployees('xlsx')" title="ส่งออกทุกแถวตามตัวกรอง (ไม่ใช่แค่หน้าที่แสดง)">📊 Excel</button><button class="btn btn-secondary btn-sm" onclick="Page.exportEmployees('csv')" title="CSV (UTF-8) — ทุกแถวตามตัวกรอง">📄 CSV</button></span>
       </div>
       <div class="table-container">
         <table class="table">
@@ -42,9 +43,10 @@
     <div id="tab-runs" style="display:none">
       <div class="page-header">
         <div><h2 class="page-title">รอบเงินเดือน</h2><p class="page-subtitle">สร้างและจัดการรอบการจ่ายเงินเดือน</p></div>
+        <span style="display:inline-flex;gap:6px;align-items:center"><button class="btn btn-secondary btn-sm" onclick="Page.exportFile('payroll/runs/export','xlsx')" title="ส่งออกทุกแถวตามตัวกรอง (ไม่ใช่แค่หน้าที่แสดง)">📊 Excel</button><button class="btn btn-secondary btn-sm" onclick="Page.exportFile('payroll/runs/export','csv')" title="CSV (UTF-8) — ทุกแถวตามตัวกรอง">📄 CSV</button>
         <button class="btn btn-primary" onclick="Page.openCreateRun()"
                 data-tour-step="2"
-                data-tour-text="ขั้นที่ 2 — สร้างรอบเงินเดือน → คำนวณ → อนุมัติ → จ่าย · ระบบสร้าง JE + ภงด.1 + สปส.1-10 + payslip ให้อัตโนมัติ">+ สร้างรอบเงินเดือน</button>
+                data-tour-text="ขั้นที่ 2 — สร้างรอบเงินเดือน → คำนวณ → อนุมัติ → จ่าย · ระบบสร้าง JE + ภงด.1 + สปส.1-10 + payslip ให้อัตโนมัติ">+ สร้างรอบเงินเดือน</button></span>
       </div>
       <div class="table-container">
         <table class="table">
@@ -63,6 +65,7 @@
       </div>
       <div class="toolbar">
         <select class="filter-select" id="leaveYear" onchange="Page.loadLeaves()"></select>
+        <span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn btn-secondary btn-sm" onclick="Page.exportLeaves('xlsx')" title="ส่งออกทุกแถวตามตัวกรอง (ไม่ใช่แค่หน้าที่แสดง)">📊 Excel</button><button class="btn btn-secondary btn-sm" onclick="Page.exportLeaves('csv')" title="CSV (UTF-8) — ทุกแถวตามตัวกรอง">📄 CSV</button></span>
       </div>
       <div class="table-container">
         <table class="table">
@@ -501,6 +504,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/export.js"></script>
   <script>
 const Page = {
   currentTab: 'employees',
@@ -523,6 +527,21 @@ const Page = {
     const rm = document.getElementById('reportMonth');
     if (rm) rm.value = m;
     this.loadEmployees();
+  },
+
+  // ═══ ส่งออกไฟล์ (X4 · 2026-10-14) — เซิร์ฟเวอร์ดึงทุกแถวตามตัวกรองจากคิวรีเดียวกับตาราง (ไม่ใช่แค่หน้าที่โหลด) · หน้าเว็บแค่สร้าง URL ·
+  // ข้อความปฏิเสธ (เช่น ต้องมีสิทธิ์ Pii.View สำหรับไฟล์โอน) มาจากเซิร์ฟเวอร์
+  exportFile(path, format, params) {
+    return ExportUtil.downloadServer(path, params || {}, format, 'payroll');
+  },
+  exportEmployees(format) {
+    const search = (document.getElementById('empSearch')?.value || '').trim();
+    return this.exportFile('payroll/employees/export', format, search ? { search } : null);
+  },
+  exportLeaves(format) {
+    // ปีเดียวกับที่ตารางใช้ (ค่าว่าง = ปีปัจจุบัน — loadLeaves)
+    const year = document.getElementById('leaveYear')?.value || new Date().getFullYear();
+    return this.exportFile('payroll/leaves/export', format, { year });
   },
 
   switchTab(tab) {
@@ -1766,7 +1785,13 @@ const Page = {
             ⚠️ <b>แหล่งจ่ายเริ่มต้นใช้ไม่ได้</b> — ${Layout.esc(r.defaultPaymentSourceWarning)}<br>
             <span style="font-size:12px">แถวที่ช่อง "แหล่งจ่าย" เป็นค่าเริ่มต้นจะกด "จ่าย" ไม่ได้จนกว่าจะแก้</span>
           </div>` : ''}
-        <div style="display:flex;justify-content:flex-end;margin-bottom:8px">${addEmpBtn}</div>
+        <div style="display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/export','xlsx')" title="ทะเบียนเงินเดือนรายคน (ทุกช่องรายได้/รายการหัก + ฝั่งนายจ้าง + เงินโอนจริง) พร้อมแถวรวม">📊 ทะเบียนเงินเดือน Excel</button>
+          <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/export','csv')">CSV</button>
+          <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/bank-transfer','xlsx')" title="รายการโอนเงินเดือนรูปแบบกลาง (ชื่อบัญชี · ธนาคาร · เลขบัญชี · จำนวนเงิน · อ้างอิง) — มีเลขบัญชีเต็ม ต้องมีสิทธิ์ดูข้อมูลส่วนบุคคล (Pii.View) · ยังไม่มีรูปแบบเฉพาะธนาคาร">🏦 รายการโอน Excel</button>
+          <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/bank-transfer','csv')">CSV</button>
+          ${addEmpBtn}
+        </div>
         <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right" title="กองทุนสำรองฯ + เงินกู้ + หักอื่น ๆ">หักอื่น</th><th class="text-right">สุทธิ</th><th>แหล่งจ่าย</th><th></th><th>สลิป</th></tr></thead>
         <tbody>${details.length ? details.map(d => {
           const empId = d.employeeId||d.id;
