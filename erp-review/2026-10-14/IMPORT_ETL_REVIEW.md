@@ -154,5 +154,5 @@ master ที่สร้าง = soft-delete ถ้าไม่มีการ�
 ## 7. งานค้างที่ยืนยันแล้ว (รอบ 206 ทีมงานค้าง · 2026-10-15)
 | รหัส | เรื่อง | แก้ | สถานะ |
 |---|---|---|---|
-| R206-1 | ศูนย์นำเข้า (`ImportHubController` · เมนู `import-hub`) ไม่ผูกแพ็กเกจ ทั้งที่แจ้งเจ้าของว่า "จำกัดตามหน้าเดิม" | คีย์ `"/companies/*/import"` = BulkImport ใน `SubscriptionGatePolicy.RouteFeatureMap` (+ `NewlyGatedRouteKeys` ตามแบบคีย์ใหม่) · เมนูผูก `feature: 'BulkImport'` แบบเมนูเดิม · `migration/*` เดิมไม่ gate ⇒ ไม่เพิ่ม | ✅ (sha เติมภายหลัง) |
-| R206-4 | ตัวเขียน statement: ไม่มี Db test ของเส้น "เก็บไฟล์ต้นทางหลัง commit" | เทสต์ 2 ตัวใน `Db/BankStatementImportDbTests` (เห็นจากการเชื่อมต่ออื่นตอนเก็บไฟล์ · ที่เก็บล้ม = รายการคงอยู่ + คำเตือน + ไม่มีแถวไฟล์แนบกำพร้า) | ✅ (sha เติมภายหลัง) |
+| R206-1 | ศูนย์นำเข้า (`ImportHubController` · เมนู `import-hub`) ไม่ผูกแพ็กเกจ ทั้งที่แจ้งเจ้าของว่า "จำกัดตามหน้าเดิม" | คีย์ `"/companies/*/import"` = BulkImport ใน `SubscriptionGatePolicy.RouteFeatureMap` (+ `NewlyGatedRouteKeys` ตามแบบคีย์ใหม่) · เมนูผูก `feature: 'BulkImport'` แบบเมนูเดิม · `migration/*` เดิมไม่ gate ⇒ ไม่เพิ่ม | ✅ c382580d |
+| R206-4 | ตัวเขียน statement: ไม่มี Db test ของเส้น "เก็บไฟล์ต้นทางหลัง commit" | เทสต์ 2 ตัวใน `Db/BankStatementImportDbTests` (เห็นจากการเชื่อมต่ออื่นตอนเก็บไฟล์ · ที่เก็บล้ม = รายการคงอยู่ + คำเตือน + ไม่มีแถวไฟล์แนบกำพร้า) | ✅ c382580d |

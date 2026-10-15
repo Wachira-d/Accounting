@@ -519,7 +519,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ใช้เป็นแหล่งเงิน/หมวดค่าใช้จ่ายได้ทุกทาง · 11122 ที่มีผังเงินฝากย่อย = บัญชีคุมทุกทาง (เดิมผ่านที่นี่แต่ถูกบล็อกที่ทางรับ/จ่ายชำระ) · ผูกผังของบัญชีธนาคาร
   (`ValidateLinkedAccountAsync`) ตัดสินบัญชีคุมด้วยเจ้าของเดียวกัน — ส่งผังเดิมกลับตอนแก้ชื่อไม่ถูกบล็อก · ตัวหาผังตั้งต้นตามรหัส/หมวด 46 จุดกรองด้วย
   `PostingAccountGuard.WhereNotControlAccount` (แทน `Level >= 4`) · หน้าเว็บอ่าน `AccountResponse.HasChildAccounts` (แทน `level >= 4`) ·
-  ห้ามเขียนใหม่: `tools/posting_level_check.py` · Last verified รอบ 206 (sha เติมภายหลัง)
+  ห้ามเขียนใหม่: `tools/posting_level_check.py` · Last verified รอบ 206 `commit c382580d`
 - **ผังลูกหนี้/เจ้าหนี้ของใบที่ออกแล้ว: ตัวตัดสินเดียว `Helpers/OriginalArApAccount`** (รอบ 206 · ฝ่ายค้านรอบ 2 P2(b) ส่วนที่ค้าง): ทุกเส้นที่ปิด/ปรับหนี้ของใบเดิม —
   รับ/จ่ายชำระ (`CreatePaymentJournalAsync` · ระบบเชื่อมต่อ `ResolvePaymentJournalAccountsAsync`) · ตัดหนี้สูญ · หักมัดจำ (เอกสาร/JV) · WHT ตอนปิดยอด ·
   ใบเสร็จ/ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จที่ปิดใบต้นทาง · ใบลด/เพิ่มหนี้ที่อ้างใบต้นทาง (โหมดลูกหนี้/เจ้าหนี้) · พรีวิว GL ของใบสำคัญจ่าย — ตัดผังที่
@@ -527,7 +527,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ไม่นับบัญชีพัก 11340/1134x · **ใช้ได้แม้ผังนั้นถูกปิดใช้ทีหลัง** (ตัดยอดเดิมให้หมด) · ใบไม่มี JE ⇒ ตัวหาเดิม (ผังที่ผู้ติดต่อปัก → ค่าเริ่มต้น — ผู้ติดต่อถูกโหลดให้
   แล้ว: เดิมรับ/จ่ายชำระ/ตัดหนี้สูญไม่โหลด `Contact` ⇒ ข้ามผังที่ปักไป 11310/21210 เงียบ ๆ · ผังที่ปักปิดใช้ = ล้มดังพร้อมทางไปต่อตามเดิม) ·
   ยังใช้ผังที่ผู้ติดต่อปักตอนนี้: คืนเงิน gateway (`GatewayRefundService` ตั้งลูกหนี้รอใบลดหนี้) · ใบลด/เพิ่มหนี้ของระบบเชื่อมต่อ ·
-  เทสต์ `OriginalArApAccountTests` · `Db/OriginalArApAccountDbTests` · Last verified รอบ 206 (sha เติมภายหลัง)
+  เทสต์ `OriginalArApAccountTests` · `Db/OriginalArApAccountDbTests` · Last verified รอบ 206 `commit c382580d`
 - **Phantom split-VAT sanitizer**: `OcrService.SanitizeVatSplitArtifacts`
   ตัด suffix "(ส่วนมีภาษี)/(ส่วนไม่มีภาษี)/(VATable)/(non-VAT)/(VAT included)…"
   ที่ AI/OCR แปะมาจาก footer summary ของใบกำกับ (เคส OfficeMate) + ยุบบรรทัด
@@ -2044,7 +2044,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   อยู่ใน `NewlyGatedRouteKeys` (หน้าเว็บเดินตามสวิตช์เหมือนหน้าเดิม · partner = เงาจนกว่ากดบังคับ) · เมนู `import-hub` ผูก `feature: 'BulkImport'` แบบเมนูเดิม
   (ไม่มี `lockOnEnforce` — หน้าเดิมล็อกแบบนี้) · `migration/*` (ย้ายระบบ/งบทดลองยกมา) เดิมไม่อยู่ในตาราง ⇒ **ไม่เพิ่ม** (ห้ามเข้มเกินพฤติกรรมเดิม) ·
   ทางไปต่อของแพ็กเกจที่ไม่มี: ข้อความอัปเกรดมาตรฐาน (`FEATURE_NOT_AVAILABLE` + `upgradeUrl`) · หน้าบัญชีธนาคารยังนำเข้า statement ทางเดิม (`/bank`) ได้ ·
-  เทสต์ `SubscriptionGateImportHubTests` · `tools/nav_lock_mode_sim.js` (ศูนย์นำเข้า = หน้าเดิมทุกโหมด) · Last verified รอบ 206 (sha เติมภายหลัง)
+  เทสต์ `SubscriptionGateImportHubTests` · `tools/nav_lock_mode_sim.js` (ศูนย์นำเข้า = หน้าเดิมทุกโหมด) · Last verified รอบ 206 `commit c382580d`
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -5622,4 +5622,4 @@ audit "ถึงวันที่" รวมทั้งวัน — ยัง
 _Last verified against codebase: 2026-10-14 (ทีม X1 ไฟล์ยื่นภาษี — §5.3: ภ.ง.ด.1/1ก ออก .txt (detail ล้วน · `ddMMyyyy` ค.ศ. · คำนำหน้าข้อความไทย · แยกไฟล์ต่อประเภทเงินได้ 5 ข้อ) + CSV (BOM) + Excel (ชีตสรุปยอดหน้าแบบ) จากตัวตั้งเดียว `Helpers/Pnd1FileFormat` · รายการจาก `Helpers/Pnd1FilingData` ตัวเดียวกับหน้ารายงาน ภ.ง.ด.1 (เงินได้ = `TaxableGross` · รวม 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือของผู้รับนอกรอบ) · ปุ่ม e-Filing PND.1 ปิดชี้ไปเมนู Export · ภ.พ.36 สองทางออกใช้ `Helpers/Pp36FileFormat` · Excel รายงาน ภ.ง.ด.2/3/53/54 มีชีตใบแนบตรง .txt · ภ.พ.30 CSV มี BOM + `CsvFieldSafety` · ดาวน์โหลดไฟล์ยื่นจากเงินเดือนบันทึก PiiAccessLog — ลำดับคอลัมน์ ภ.ง.ด.1/1ก ยังไม่ได้ยืนยันกับหน้านำเข้าจริง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8d899b1e)_
 _Last verified against codebase: 2026-10-15 (รอบ 206 ทีมงานค้าง — §2.11e แพ็กเกจศูนย์นำเข้า (`/companies/*/import` = BulkImport เหมือนหน้าเดิม · เมนูผูกฟีเจอร์ · migration ไม่เพิ่ม) ·
 §2 แหล่งเงิน "บัญชีคุม" เจ้าของเดียว `PostingAccountRule` (DocumentMoneyChannel/BankService/ตัวหาผังตั้งต้น 46 จุด/หน้าเว็บ · `tools/posting_level_check.py`) ·
-ผังลูกหนี้/เจ้าหนี้ของใบเดิม `Helpers/OriginalArApAccount` ทุกเส้นที่ปิด/ปรับหนี้ · statement เก็บไฟล์หลัง commit มี Db test — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง))_
+ผังลูกหนี้/เจ้าหนี้ของใบเดิม `Helpers/OriginalArApAccount` ทุกเส้นที่ปิด/ปรับหนี้ · statement เก็บไฟล์หลัง commit มี Db test — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c382580d)_

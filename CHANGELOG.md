@@ -4969,4 +4969,4 @@ _รอบ 206 ทีมงานค้าง (2026-10-15 · คำตัดส�
 รับ/จ่ายชำระ (หน้าเว็บ + ระบบเชื่อมต่อ) · ตัดหนี้สูญ · หักมัดจำ ×2 · WHT ตอนปิดยอด · ใบเสร็จ/PV/ใบรับรองแทนใบเสร็จที่ปิดใบต้นทาง · CN/DN · พรีวิว PV ตัดผังที่ JE ตอนออกใบตั้งไว้
 (ปิดใช้ทีหลังก็ตัดได้) · ไม่มี JE ⇒ ตัวหาเดิม + โหลดผู้ติดต่อให้ (เดิมรับ/จ่ายชำระ/ตัดหนี้สูญไม่โหลด ⇒ ข้ามผังที่ปัก) (4) Db test ไฟล์ statement หลัง commit ·
 เทสต์ `SubscriptionGateImportHubTests` · `OriginalArApAccountTests` · `Db/OriginalArApAccountDbTests` · `Db/BankStatementImportDbTests` (+2) · แก้ `DocumentMoneyChannelTests`/`AdversarialRound1Tests`/`Db/AdversarialRound1DbTests`
-— ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง)_
+— ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c382580d_
