@@ -312,7 +312,7 @@ public partial class AccountingService
                     AccountId = accountId,
                     OpeningDebit = debit,
                     OpeningCredit = credit,
-                    Notes = RolledOpeningNote(year),
+                    Notes = OpeningRoll.RolledNote(year),
                     CreatedBy = userId,
                 });
             }
