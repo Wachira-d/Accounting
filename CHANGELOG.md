@@ -4938,4 +4938,4 @@ _2026-10-14 (ทีม X4 · ส่งออก CSV/Excel โมดูลเง�
 ส่งออกทะเบียนพนักงานจากหน้านำเข้า/ส่งออกบันทึก PiiAccessLog · **บั๊กข้างเคียง**: employees.html ค้นหา/กรอง Active เฉพาะ 20 คนแรก → กรองที่เซิร์ฟเวอร์
 (`GetEmployeesAsync(..., isActive)`) · expense.html ช่องค้นหาไม่มีผล (controller ไม่รับ `search`) · lodging.html ตัด 100 แถวเงียบ → บอกจำนวนจริง ·
 pos-reports ตัวกรองวันที่ของออเดอร์ไม่มีผล (`GetOrdersAsync(..., fromDate, toDate)` ขอบวันเดียวกับสรุปสาขา) · เปิดไว้: สรุปรายวัน POS แสดงวันเดียว · ขอบวัน POS เป็น UTC ·
-`GET audit/logs` ไม่มีด่าน · เทสต์ `ModuleExportTests` · `PayrollBankTransferTests` · `PayrollExportSheetsTests` · `Db/ModuleExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+`GET audit/logs` ไม่มีด่าน · เทสต์ `ModuleExportTests` · `PayrollBankTransferTests` · `PayrollExportSheetsTests` · `Db/ModuleExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fbffc7bf_
