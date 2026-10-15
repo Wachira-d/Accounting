@@ -1,3 +1,4 @@
+using Accounting.Models.DTOs.Accounting;
 using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
@@ -66,6 +67,25 @@ public static class OpeningRoll
         => periodMonth == 1 && FiscalYear.NormalizeStartMonth(fiscalYearStartMonth) != 1
             && rowNotes.Any() && rowNotes.All(IsRolled);
 
+    /// <summary>
+    /// ปีของรายงานตรวจ/ซ่อม (<c>OpeningRollCheckYear.Year</c> = ปีที่ปิด + 1) ที่ยกเลิกงวดยกยอดรุ่นเก่าไป ม.ค. ที่เริ่ม <paramref name="legacyPeriodStart"/>
+    /// (pure · ตัวตั้งเดียว — รายงาน/ซ่อมกับด่านปิดปี/ยกยอดด้วยมือใช้ร่วมกัน · รอบ 4 P2-a): งวด ม.ค. ที่การปิดปี N รุ่นเก่าเขียน (ม.ค. N+1) อยู่ในรอบ N
+    /// ⇒ ซ่อมปี N+1
+    /// </summary>
+    public static int LegacyRepairYear(DateTime legacyPeriodStart, int fiscalYearStartMonth)
+        => FiscalYear.FiscalYearOf(legacyPeriodStart, fiscalYearStartMonth) + 1;
+
+    /// <summary>
+    /// ข้อความของด่านปิดปี/ยกยอดด้วยมือเมื่อยังมีงวดยกยอดรุ่นเก่าไป ม.ค. ที่ยังไม่ซ่อม (pure · รอบ 4 P2-a) — ปิดปีตอนนี้จะใช้งวดนั้นเป็นฐาน (คิดแบบปีปฏิทิน)
+    /// ⇒ ยอดยกมาของรอบถัดไปคลาดเท่ากำไรขาดทุนช่วงต้นรอบถึง ธ.ค. · ทางไปต่อ = ซ่อมปีที่ระบุก่อน (หน้าตรวจข้อมูล · ปุ่ม "แก้")
+    /// </summary>
+    public static string LegacyRollBlockMessage(IEnumerable<(DateTime PeriodStart, int RepairYear, int Rows)> periods)
+        => "ยังมียอดยกมารุ่นเก่าที่การปิดปีก่อนหน้าเขียนไว้งวด ม.ค. ทั้งที่รอบบัญชีไม่ใช่ปีปฏิทิน: "
+            + string.Join(" · ", periods.Select(p => $"ม.ค. {p.PeriodStart.Year + 543} ({p.Rows} แถว — ซ่อมปี {p.RepairYear + 543})"))
+            + " — ปิดปี/ยกยอดตอนนี้จะคิดบนยอดนั้น (คิดแบบปีปฏิทิน) ⇒ ยอดยกมาของรอบถัดไปผิด · ยังไม่มีอะไรถูกบันทึก · "
+            + "ทางไปต่อ: ซ่อมยอดยกมารุ่นเก่าก่อน (เจ้าของบริษัท — หน้า \"ตรวจข้อมูลจากบั๊กที่แก้แล้ว\" หมวดยอดยกมาจากการปิดปี กด \"แก้\" ปีที่ระบุ "
+            + "⇒ ระบบเขียนยอดยกมางวดแรกของรอบ + ยกเลิกแถวรุ่นเก่า · บันทึกประวัติ) แล้วปิดปี/ยกยอดอีกครั้ง";
+
     /// <summary>แถวยอดยกมานี้มาจากการนำเข้า (ไม่ใช่จากการปิดปี)</summary>
     public static bool IsImported(string? notes)
         => notes != null && notes.StartsWith(ImportedNotePrefix, StringComparison.Ordinal);
@@ -107,40 +127,55 @@ public static class OpeningRoll
             : a > fiscalYearStart ? (a, AnchorPnlScope.CurrentYear)
             : (fiscalYearStart, AnchorPnlScope.PriorYears);
 
-    /// <summary>บัญชีในงบทดลองที่<b>ไม่รู้ประเภท</b> (ผังถูกลบแบบ soft) แต่ยอดสุทธิ ≠ 0 (pure · รอบ 3 P2-6) — ผู้เรียกต้องล้มดังพร้อมชื่อผัง
-    /// (<see cref="DeletedWithBalanceMessage"/>) <b>ก่อน</b>เขียนอะไร · เดิมถูกตัดเงียบ ⇒ ยอดยกมาไม่ลงตัว / รายงานตรวจบอก "ควรเป็น 0"</summary>
+    /// <summary>บัญชีในงบทดลองที่<b>ยกยอดไม่ได้</b> แต่ยอดสุทธิ ≠ 0 (pure · รอบ 3 P2-6 · รอบ 4 P2-b) — ผู้เรียกต้องล้มดังพร้อมชื่อผัง
+    /// (<see cref="DeletedWithBalanceMessage"/>) <b>ก่อน</b>เขียนอะไร: ไม่รู้ประเภท (ไม่พบผังในบริษัทเลย) หรือ<b>ผังสินทรัพย์/หนี้สิน/ทุนที่ถูกลบ</b>
+    /// (<paramref name="deletedAccountIds"/> — ยกไปผังที่ลบแล้ว = ยอดยกมาที่ไม่มีใครเห็น) · <b>ผังรายได้/ค่าใช้จ่ายที่ถูกลบไม่นับ</b> — ใบปิดปีล้างให้
+    /// (รอบ 4 P2-b: เดิมใบปิดปี join ผังผ่านตัวกรอง soft-delete ⇒ ไม่ล้าง ⇒ ปิดปีถัดไปล้มทุกครั้ง) และยอดที่ค้างรวมเข้ากำไรสะสม (<see cref="CarryForward"/>)</summary>
     public static List<Guid> UnknownAccountsWithBalance(
-        IReadOnlyDictionary<Guid, (decimal Debit, decimal Credit)> trialBalance, IReadOnlyDictionary<Guid, AccountType> types)
-        => trialBalance.Where(kv => !types.ContainsKey(kv.Key) && kv.Value.Debit - kv.Value.Credit != 0m).Select(kv => kv.Key).ToList();
+        IReadOnlyDictionary<Guid, (decimal Debit, decimal Credit)> trialBalance, IReadOnlyDictionary<Guid, AccountType> types,
+        IReadOnlySet<Guid>? deletedAccountIds = null)
+        => trialBalance.Where(kv => kv.Value.Debit - kv.Value.Credit != 0m && !CanCarry(kv.Key, types, deletedAccountIds)).Select(kv => kv.Key).ToList();
 
-    /// <summary>ข้อความ "ผังที่ถูกลบยังมียอด" + ทางไปต่อ (ตัวตั้งเดียว — ปิดปี · ยกยอดด้วยมือ · รายงานตรวจ/ซ่อมใช้ข้อความเดียวกัน)</summary>
+    /// <summary>ยกยอด/รวมเข้ากำไรสะสมได้: รู้ประเภท และ (ไม่ถูกลบ หรือเป็นรายได้/ค่าใช้จ่าย)</summary>
+    private static bool CanCarry(Guid id, IReadOnlyDictionary<Guid, AccountType> types, IReadOnlySet<Guid>? deletedAccountIds)
+        => types.TryGetValue(id, out var t)
+            && (deletedAccountIds == null || !deletedAccountIds.Contains(id) || t == AccountType.Revenue || t == AccountType.Expense);
+
+    /// <summary>action ของ audit เมื่อเจ้าของกู้คืนผังที่ถูกลบ (<c>AccountingService.RestoreAccountAsync</c> · รอบ 4 P2-b)</summary>
+    public const string AccountRestoreAction = "coa-restore";
+
+    /// <summary>ข้อความ "ผังที่ถูกลบยังมียอด" + ทางไปต่อ (ตัวตั้งเดียว — ปิดปี · ยกยอดด้วยมือ · รายงานตรวจ/ซ่อมใช้ข้อความเดียวกัน) ·
+    /// รอบ 4 P2-b: ทางไปต่อชี้ปุ่มกู้คืนที่มีจริง (หน้าตรวจข้อมูล → ปุ่ม "แก้" ของผังนั้น = <c>POST accounting/accounts/{id}/restore</c> · เจ้าของ)</summary>
     public static string DeletedWithBalanceMessage(DateTime asOfExclusive, IEnumerable<(string Code, string Name, decimal NetDebit)> accounts)
         => $"ผังบัญชีที่ถูกลบแล้วยังมียอดคงเหลือ ณ สิ้นวันที่ {ThaiDate.ToThaiDisplayString(asOfExclusive.AddDays(-1))}: "
             + string.Join(" · ", accounts.Select(a => $"{(a.Code.Length == 0 ? "(ไม่พบรหัส)" : a.Code)} {a.Name} ({(a.NetDebit >= 0 ? "เดบิต" : "เครดิต")} {Math.Abs(a.NetDebit):N2})"))
-            + " — ยกยอดไม่ได้เพราะยอดนี้จะหายจากยอดยกมา (ยอดยกมาไม่ลงตัว) · ทางไปต่อ: กู้คืนผังนั้น (ยกเลิกการลบ) แล้วโอนยอดไปผังอื่นด้วยสมุดรายวัน"
-            + " ลงวันที่ภายในรอบที่ปิด จากนั้นปิดปี/ยกยอด/ซ่อมอีกครั้ง";
+            + " — ยกยอดไม่ได้เพราะยอดนี้จะหายจากยอดยกมา (ยอดยกมาไม่ลงตัว) · ยังไม่มีอะไรถูกบันทึก · ทางไปต่อ: กู้คืนผังนั้น (เจ้าของบริษัท — หน้า \"ตรวจข้อมูลจากบั๊กที่แก้แล้ว\" "
+            + "หมวดยอดยกมาจากการปิดปี กดปุ่ม \"แก้\" ของผังนั้น · บันทึกประวัติ) แล้วปิดปี/ยกยอด/ซ่อมอีกครั้ง — ยอดยกไปตามปกติ · "
+            + "ถ้าไม่ใช้ผังนั้นแล้ว: หลังกู้คืนโอนยอดไปผังอื่นด้วยสมุดรายวันแล้ว \"ปิดใช้งาน\" แทนการลบ";
 
     /// <summary>
     /// งบทดลอง ณ สิ้นรอบ → ยอดยกมาของรอบถัดไป (pure): ยกเฉพาะสินทรัพย์/หนี้สิน/ทุน <b>สุทธิฝั่งเดียว</b> · ยอดสุทธิรายได้/ค่าใช้จ่ายที่ยังค้างรวมเข้า
-    /// <paramref name="retainedEarningsAccountId"/> · บัญชีที่ไม่รู้ประเภทและยอดสุทธิศูนย์ถูกตัด · <b>ไม่รู้ประเภทแต่มียอด = ล้มดัง</b> (รอบ 3 P2-6 —
+    /// <paramref name="retainedEarningsAccountId"/> · บัญชีที่ยกไม่ได้ (<see cref="UnknownAccountsWithBalance"/>) และยอดสุทธิศูนย์ถูกตัด · <b>ยกไม่ได้แต่มียอด = ล้มดัง</b> (รอบ 3 P2-6 · รอบ 4: ผังสินทรัพย์/หนี้สิน/ทุนที่ถูกลบ —
     /// ผู้เรียกตรวจ <see cref="UnknownAccountsWithBalance"/> ก่อนเพื่อบอกชื่อผัง) · ค้างแต่ไม่มีผังกำไรสะสม = ล้มดัง
     /// </summary>
     public static Dictionary<Guid, (decimal Debit, decimal Credit)> CarryForward(
         IReadOnlyDictionary<Guid, (decimal Debit, decimal Credit)> trialBalance,
         IReadOnlyDictionary<Guid, AccountType> types,
-        Guid? retainedEarningsAccountId)
+        Guid? retainedEarningsAccountId,
+        IReadOnlySet<Guid>? deletedAccountIds = null)
     {
         var result = new Dictionary<Guid, (decimal Debit, decimal Credit)>();
         var pnlNetDebit = 0m;
         foreach (var (id, amount) in trialBalance)
         {
-            if (!types.TryGetValue(id, out var type))
+            if (!CanCarry(id, types, deletedAccountIds))
             {
                 if (amount.Debit - amount.Credit != 0m)
                     throw new BusinessRuleException(
-                        "มีผังบัญชีที่ถูกลบแล้วแต่ยังมียอดคงเหลือ — ยกยอดไม่ได้ (ยอดจะหายจากยอดยกมา) · กู้คืนผังแล้วโอนยอดออกก่อน", RuleCode);
+                        "มีผังบัญชีที่ถูกลบแล้วแต่ยังมียอดคงเหลือ — ยกยอดไม่ได้ (ยอดจะหายจากยอดยกมา) · กู้คืนผังนั้นที่หน้าตรวจข้อมูลก่อน", RuleCode);
                 continue;
             }
+            var type = types[id];
             if (type == AccountType.Revenue || type == AccountType.Expense)
             {
                 pnlNetDebit += amount.Debit - amount.Credit;
@@ -189,4 +224,14 @@ public enum AnchorPnlScope
     CurrentYear = 1,
     /// <summary>ฐานเริ่มตรงต้นรอบ — กำไรขาดทุนของฐานเป็นของปีก่อน (ปิดเข้ากำไรสะสม แยกบรรทัด ไม่นับในกำไรของปี)</summary>
     PriorYears = 2,
+}
+
+/// <summary>ผังที่ถูกลบแต่ยังมียอด ⇒ ยกยอดไม่ได้ (รอบ 4 P2-b) — ข้อความเดียวกับ <see cref="OpeningRoll.DeletedWithBalanceMessage"/> + รายชื่อผัง
+/// ให้รายงานตรวจ/หน้าตรวจข้อมูลมีปุ่มกู้คืนรายผัง (ไม่ต้องแกะข้อความ)</summary>
+public sealed class DeletedAccountsWithBalanceException : BusinessRuleException
+{
+    public IReadOnlyList<OpeningRollDeletedAccount> Accounts { get; }
+
+    public DeletedAccountsWithBalanceException(string message, IReadOnlyList<OpeningRollDeletedAccount> accounts)
+        : base(message, OpeningRoll.RuleCode) => Accounts = accounts;
 }

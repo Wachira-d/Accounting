@@ -295,28 +295,30 @@ public class AdversarialExportRound3DbTests
         var other = new ChartOfAccount { CompanyId = s.CompanyId, AccountCode = "11500", AccountName = "ลูกหนี้อื่น", AccountType = AccountType.Asset, Level = 4 };
         db.ChartOfAccounts.Add(other);
         await db.SaveChangesAsync();
-        Je(db, s.CompanyId, D(2025, 3, 1), other.Id, s.Capital, 5_000m);
-        Je(db, s.CompanyId, D(2025, 4, 1), s.Cash, s.Revenue, 1_000m);
+        // รอบ 4 (CI 774ea7bc): ปิดปีที่จบแล้วเท่านั้น — ปีที่สิ้นรอบในอนาคตชนด่าน "วันที่ลงบัญชีต้องไม่เป็นวันที่ในอนาคต" (เทสต์ห้ามขึ้นกับนาฬิกา)
+        Je(db, s.CompanyId, D(2024, 3, 1), other.Id, s.Capital, 5_000m);
+        Je(db, s.CompanyId, D(2024, 4, 1), s.Cash, s.Revenue, 1_000m);
         await db.SaveChangesAsync();
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            await new AccountingService(c1).YearEndCloseAsync(s.CompanyId, 2025, s.Re, null, Guid.NewGuid().ToString());
+            await new AccountingService(c1).YearEndCloseAsync(s.CompanyId, 2024, s.Re, null, Guid.NewGuid().ToString());
 
         other.IsDeleted = true;   // ลบผังทั้งที่ยังมียอด 5,000
-        Je(db, s.CompanyId, D(2026, 2, 1), s.Cash, s.Revenue, 500m);
+        Je(db, s.CompanyId, D(2025, 2, 1), s.Cash, s.Revenue, 500m);
         await db.SaveChangesAsync();
 
         using (var c2 = DbTestDatabase.TryCreateContext()!)
         {
-            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
-                new AccountingService(c2).YearEndCloseAsync(s.CompanyId, 2026, s.Re, null, Guid.NewGuid().ToString()));
-            Assert.Contains("11500", ex.Message);                     // เดิมตัดเงียบ ⇒ ยอดยกมา 2027 ไม่ลงตัว
+            var ex = await Assert.ThrowsAsync<DeletedAccountsWithBalanceException>(() =>
+                new AccountingService(c2).YearEndCloseAsync(s.CompanyId, 2025, s.Re, null, Guid.NewGuid().ToString()));
+            Assert.Contains("11500", ex.Message);                     // เดิมตัดเงียบ ⇒ ยอดยกมา 2026 ไม่ลงตัว
             Assert.Contains("กู้คืน", ex.Message);
         }
         using var req = DbTestDatabase.TryCreateContext()!;
-        Assert.False(await req.YearEndClosings.AnyAsync(y => y.CompanyId == s.CompanyId && y.FiscalYear == 2026));   // ไม่เขียนอะไร
-        var y2026 = (await new AccountingService(req).FindOpeningRollMismatchesAsync(s.CompanyId)).Single(y => y.Year == 2026);
-        Assert.Contains("11500", y2026.SkipReason);                   // รายงานบอกเหตุ (เดิม "ควรเป็น 0")
-        Assert.Empty(y2026.Mismatches);
+        Assert.False(await req.YearEndClosings.AnyAsync(y => y.CompanyId == s.CompanyId && y.FiscalYear == 2025));   // ไม่เขียนอะไร
+        Assert.False(await req.JournalEntries.AnyAsync(j => j.CompanyId == s.CompanyId && j.Reference == "YE-2025"));
+        var y2025 = (await new AccountingService(req).FindOpeningRollMismatchesAsync(s.CompanyId)).Single(y => y.Year == 2025);
+        Assert.Contains("11500", y2025.SkipReason);                   // รายงานบอกเหตุ (เดิม "ควรเป็น 0")
+        Assert.Empty(y2025.Mismatches);
     }
 
     // ═══════════════ P2-7 ผังที่ผูกใต้ผังลงรายการของแม่แบบ (รอบแรก 825f5c0e) ═══════════════
@@ -328,7 +330,9 @@ public class AdversarialExportRound3DbTests
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var (cid, acc) = await SeedTemplateAsync(db, "0105556000307");
         // สภาพที่การผูกรอบแรกทิ้งไว้: ผัง PEAK 113101 ใต้ 11310 (+ ลูกของมันอีกชั้น)
-        var peak = new ChartOfAccount { CompanyId = cid, AccountCode = "113101", AccountName = "ลูกหนี้ PEAK", AccountType = AccountType.Asset, Level = 5, ParentAccountId = acc["11310"].Id };
+        // รอบ 4 P2-c: ผังจากโปรแกรมเดิมมีเครื่องหมายผู้สร้าง "Migrate:" (AccountImportAdapter) = หลักฐานว่าแม่มาจากการผูกของระบบ
+        var peak = new ChartOfAccount { CompanyId = cid, AccountCode = "113101", AccountName = "ลูกหนี้ PEAK", AccountType = AccountType.Asset, Level = 5, ParentAccountId = acc["11310"].Id,
+            CreatedBy = ChartParentLink.MigrateActorPrefix + "PEAK:test" };
         db.ChartOfAccounts.Add(peak);
         await db.SaveChangesAsync();
         var grand = new ChartOfAccount { CompanyId = cid, AccountCode = "1131011", AccountName = "ลูกหนี้ PEAK ย่อย", AccountType = AccountType.Asset, Level = 6, ParentAccountId = peak.Id };

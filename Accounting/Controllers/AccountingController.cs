@@ -57,6 +57,17 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<AccountResponse>(true, result));
     }
 
+    /// <summary>ฝ่ายค้านรอบส่งออก รอบ 4 P2-b — กู้คืนผังที่ถูกลบแบบ soft (ทางไปต่อของ "ผังที่ถูกลบยังมียอด ⇒ ปิดปี/ยกยอดไม่ได้") ·
+    /// เจ้าของบริษัทเท่านั้น (สิทธิ์เดียวกับปิดปี) · audit chain · ปุ่ม "แก้" ของหน้าตรวจข้อมูลชี้มาที่นี่ (<c>DataIntegrityReportService.AccountRestoreFixPath</c>)</summary>
+    [HttpPost("accounts/{accountId:guid}/restore")]
+    public async Task<ActionResult<ApiResponse<AccountResponse>>> RestoreAccount(Guid companyId, Guid accountId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        var result = await _accountingService.RestoreAccountAsync(companyId, accountId, userId.ToString());
+        return Ok(new ApiResponse<AccountResponse>(true, result, $"กู้คืนผัง {result.AccountCode} แล้ว — ปิดปี/ยกยอด/ซ่อมอีกครั้งได้"));
+    }
+
     [HttpPost("accounts/seed")]
     public async Task<ActionResult<ApiResponse<string>>> SeedAccounts(Guid companyId, [FromQuery] BusinessType? businessType = null, [FromQuery] IndustryType? industryType = null)
     {

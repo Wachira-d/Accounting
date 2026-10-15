@@ -1088,12 +1088,14 @@ public class ImportExportService : IImportExportService
             AccountNameEn = Val(row, "AccountNameEn"),
             AccountType = acctType,
             Description = Val(row, "Description"),
-            Level = code.Length <= 4 ? 1 : 2
+            Level = code.Length <= 4 ? 1 : 2,
+            // ฝ่ายค้านรอบส่งออก รอบ 4 P2-c: เครื่องหมาย "สร้างจากการนำเข้า" — หลักฐานว่าแม่ของผังนี้มาจากการผูกของระบบ (ChartParentLink.IsImportCreated)
+            CreatedBy = Accounting.Helpers.ChartParentLink.FileImportActor,
         };
         _db.ChartOfAccounts.Add(account);
         // ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2: ผูกบัญชีแม่ (prefix แท้ที่ยาวที่สุด · ChartParentLink) — เดิมไม่ผูก ⇒ หัวบัญชีที่นำเข้าดู "ไม่มีบัญชีย่อย"
         // แล้วถูกหยิบเป็นผังตั้งต้นของการลงบัญชีอัตโนมัติ · ผูกไม่ได้ (บัญชีแม่มีรายการแล้ว) = ผังยังนำเข้าได้ ไม่มีแม่ (รายงานตรวจผังแสดงเหตุผล)
-        await ChartParentLinker.LinkImportedAsync(_db, companyId, new[] { account }, actor: "import:chart-of-accounts");
+        await ChartParentLinker.LinkImportedAsync(_db, companyId, new[] { account }, actor: Accounting.Helpers.ChartParentLink.FileImportActor);
         return new RowWrite("ChartOfAccount", account.Id);
     }
 

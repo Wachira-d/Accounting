@@ -301,13 +301,18 @@ public partial class AccountingService : IAccountingService
     /// <summary>ตรวจการอ้างอิงของใบสำคัญ — ผัง (ไม่พบ = บล็อกเสมอ · เปิดใช้/บัญชีคุม เมื่อ <paramref name="strictAccounts"/>) และ
     /// สาขา/มิติ/โครงการ ทั้งระดับหัวและรายบรรทัด ต้องเป็นของบริษัทนี้ · ข้อความบอกบรรทัด + ที่แก้ (ไม่มี GUID)</summary>
     private async Task ValidateJournalReferencesAsync(Guid companyId, IReadOnlyList<JournalLineRequest> lines,
-        Guid? branchId, Guid? dimensionId, Guid? projectId, bool strictAccounts)
+        Guid? branchId, Guid? dimensionId, Guid? projectId, bool strictAccounts,
+        IReadOnlyCollection<Guid>? allowDeletedAccountIds = null)
     {
         var facts = await _db.LoadPostingFactsAsync(companyId, lines.Select(l => l.AccountId));
         for (var i = 0; i < lines.Count; i++)
         {
             facts.TryGetValue(lines[i].AccountId, out var f);
             var problem = Accounting.Helpers.PostingAccountRule.Check(f);
+            // รอบ 4 P2-b (ฝ่ายค้านรอบส่งออก): ใบปิดปีต้องล้างผังรายได้/ค่าใช้จ่ายที่ถูกลบแบบ soft แต่มีรายการในรอบ — ผู้เรียก (YearEndCloseAsync)
+            // ส่งเฉพาะชุดที่ตรวจแล้วว่าเป็นผังของบริษัทนี้ที่ถูกลบ · ทางอื่นทั้งหมดไม่ส่ง ⇒ ผังที่ลบยังลงรายการไม่ได้เหมือนเดิม
+            if (problem == Accounting.Helpers.PostingAccountProblem.NotFound && allowDeletedAccountIds != null
+                && allowDeletedAccountIds.Contains(lines[i].AccountId)) continue;
             if (!strictAccounts && problem != Accounting.Helpers.PostingAccountProblem.NotFound) continue;
             var msg = Accounting.Helpers.PostingAccountRule.Message(problem, f, $"บรรทัดที่ {i + 1}");
             if (msg != null) throw new Accounting.Helpers.BusinessRuleException(msg, Accounting.Helpers.PostingAccountRule.RuleCode);
@@ -349,6 +354,15 @@ public partial class AccountingService : IAccountingService
 
     public async Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy)
     {
+        var entryId = await CreateJournalEntryCoreAsync(companyId, request, createdBy, null);
+        return await GetJournalEntryAsync(companyId, entryId);
+    }
+
+    /// <summary>ตัวสร้างใบสำคัญ (คืน Id) · <paramref name="allowDeletedAccountIds"/> = ผังที่ถูกลบซึ่งใบปิดปีต้องล้าง (รอบ 4 P2-b — ผู้เรียกเดียว
+    /// <c>YearEndCloseAsync</c> · ผู้เรียกอื่นส่ง null) · ไม่ map คำตอบ (บรรทัดของผังที่ลบไม่มี Account ให้ map)</summary>
+    private async Task<Guid> CreateJournalEntryCoreAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy,
+        IReadOnlyCollection<Guid>? allowDeletedAccountIds)
+    {
         // Validate at least 2 lines (double-entry)
         if (request.Lines.Count < 2)
             throw new InvalidOperationException("ต้องมีรายการอย่างน้อย 2 รายการ (ระบบบัญชีคู่)");
@@ -360,7 +374,8 @@ public partial class AccountingService : IAccountingService
         // Validate each line — ผัง/สาขา/มิติ/โครงการต้องเป็นของบริษัทนี้ (2026-10-14 · ID#18/#24: เดิมข้อความโชว์ GUID ดิบ
         // และสาขา/มิติ/โครงการรายบรรทัดไม่ถูกตรวจ tenant) · ทางอัตโนมัติไม่ตรวจ "เปิดใช้/บัญชีคุม" (ปิดงวดสิ้นปีต้องล้างผังที่ปิดใช้แล้วได้)
         // — ด่านเข้มของการบันทึกด้วยมือคือ ValidateManualJournalAsync ที่ endpoint เรียกก่อน
-        await ValidateJournalReferencesAsync(companyId, request.Lines, request.BranchId, request.DimensionId, request.ProjectId, strictAccounts: false);
+        await ValidateJournalReferencesAsync(companyId, request.Lines, request.BranchId, request.DimensionId, request.ProjectId, strictAccounts: false,
+            allowDeletedAccountIds: allowDeletedAccountIds);
 
         foreach (var line in request.Lines)
         {
@@ -511,7 +526,7 @@ public partial class AccountingService : IAccountingService
             await _db.SaveChangesAsync();
             if (transaction != null) await transaction.CommitAsync();
 
-            return await GetJournalEntryAsync(companyId, entry.Id);
+            return entry.Id;
         }
         catch
         {

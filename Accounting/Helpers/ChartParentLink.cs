@@ -32,6 +32,30 @@ public static class ChartParentLink
     /// <summary>action ของ audit เมื่อย้ายผังออกจากใต้ผังลงรายการของแม่แบบ (<see cref="PlanTemplateLeafRescue"/> · รอบ 3 P2-7)</summary>
     public const string LeafRescueAction = "coa-template-leaf-rescue";
 
+    /// <summary>action ของ audit เมื่อผู้ใช้กดผูกบัญชีแม่จากรายงานตรวจ (<c>ChartParentLinker.RepairAsync</c> — มีตั้งแต่ 825f5c0e)</summary>
+    public const string ParentLinkAction = "coa-parent-link";
+
+    /// <summary>action ของ audit เมื่อการนำเข้าย้ายแม่ของผังเดิม (<c>ChartParentLinker.LinkImportedAsync</c> · รอบ 2 P2-8 เป็นต้นไป)</summary>
+    public const string ParentLinkImportAction = "coa-parent-link-import";
+
+    /// <summary>ผู้สร้าง (<c>CreatedBy</c>) ของผังที่นำเข้าจากไฟล์/ศูนย์นำเข้า (<c>ImportExportService.ImportAccountAsync</c> · รอบ 4 P2-c เป็นต้นไป) +
+    /// actor ของ <c>LinkImportedAsync</c> ทางนั้น</summary>
+    public const string FileImportActor = "import:chart-of-accounts";
+
+    /// <summary>ต้น <c>CreatedBy</c> ของผังที่นำเข้าจากโปรแกรมเดิม (Express/PEAK/FlowAccount · <c>AccountImportAdapter</c> — มีตั้งแต่ก่อน 825f5c0e)</summary>
+    public const string MigrateActorPrefix = "Migrate:";
+
+    /// <summary>
+    /// ผังนี้<b>สร้างจากการนำเข้า</b> (pure · รอบ 4 P2-c) — ผังที่นำเข้าเกิดมาไม่มีแม่ ⇒ แม่ที่มี = การผูกของระบบ (<c>LinkImportedAsync</c>/<c>RepairAsync</c>) ·
+    /// ผังที่ผู้ใช้สร้างเองที่หน้าผังบัญชี (<c>CreateAccountAsync</c> เลือกแม่ได้ทุกผัง) ไม่มีเครื่องหมายนี้ — เป็นหลักฐานหนึ่งในสามของ
+    /// <c>ChartParentLinker.ImportLinkedAccountIdsAsync</c> (อีกสอง: แถวพักของศูนย์นำเข้าที่สร้างผังนี้ · audit การผูก)
+    /// </summary>
+    public static bool IsImportCreated(string? createdBy)
+        => createdBy != null && (createdBy == FileImportActor || createdBy.StartsWith(MigrateActorPrefix, StringComparison.Ordinal));
+
+    /// <summary>ส่วนของ JSON <c>NewValues</c> ใน audit ที่บอกว่าระบบผูกบัญชีแม่ (<see cref="ParentLinkAction"/> และ <see cref="ParentLinkImportAction"/> ขึ้นต้นเหมือนกัน)</summary>
+    public const string ParentLinkAuditMarker = "\"action\":\"" + ParentLinkAction;
+
     /// <summary>บัญชีแม่ที่ควรเป็น (prefix แท้ที่ยาวที่สุด · ประเภทเดียวกัน · <paramref name="canBeParent"/>) — null = ไม่มี</summary>
     private static ChartNode? FindParent(ChartNode account, IEnumerable<ChartNode> chart, Func<ChartNode, bool> canBeParent)
         => chart
@@ -141,7 +165,8 @@ public static class ChartParentLink
     /// กลายเป็นบัญชีคุม ⇒ ลูกหนี้ตั้งต้นพลิกไป 11320) · ลูก = ผังที่ไม่ใช่ผังระบบซึ่งแม่เป็น <see cref="IsTemplateLeaf"/> (ลูกที่ระบบสร้าง เช่น ผังย่อยธนาคาร
     /// ใต้ 11122 ไม่นับ) · ข้อเสนอ = ย้ายไปหัวบัญชีถัดไปที่ถูกต้อง (prefix ที่ยาวที่สุด · ประเภทเดียวกัน · ไม่ใช่ผังลงรายการของแม่แบบ) ระดับ = แม่ + 1 ·
     /// หัวบัญชีของผู้ใช้ที่ยังไม่มีลูกแต่ถูกใช้อยู่ (<paramref name="inUseAccountIds"/>) / ไม่มีหัวบัญชีเลย ⇒ ไม่ย้าย บอกเหตุผล ·
-    /// <paramref name="onlyChildIds"/> = เฉพาะผังที่ผู้ใช้เลือก (null = ทุกผัง — รายงาน)
+    /// <paramref name="onlyChildIds"/> = เฉพาะผังที่ผู้ใช้เลือก (null = ทุกผัง) · รอบ 4 P2-c: ผู้เรียก (<c>ChartParentLinker</c>) ส่งเฉพาะลูกที่มีหลักฐานว่า
+    /// <b>ระบบผูก</b> (<see cref="IsImportCreated"/> / แถวพักนำเข้า / audit การผูก) — ลูกที่ผู้ใช้สร้างใต้ผังแม่แบบเองไม่ถูกเสนอ
     /// </summary>
     public static List<ChartLinkProposal> PlanTemplateLeafRescue(IReadOnlyList<ChartNode> chart, IReadOnlyCollection<Guid>? onlyChildIds,
         IReadOnlySet<Guid> inUseAccountIds)

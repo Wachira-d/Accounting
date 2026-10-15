@@ -119,7 +119,8 @@ public abstract class AccountImportAdapterBase : CompetitorAdapterBase
                             Description = row.Description,
                             Level = row.AccountCode.Length <= 4 ? 1 : 2,
                             IsActive = true,
-                            CreatedBy = $"Migrate:{SourceSystem}:{options.SourceTag ?? "manual"}",
+                            // ต้น "Migrate:" = เครื่องหมายสร้างจากการนำเข้า (ChartParentLink.IsImportCreated · รอบ 4 P2-c) — ห้ามเปลี่ยนรูป
+                            CreatedBy = $"{Accounting.Helpers.ChartParentLink.MigrateActorPrefix}{SourceSystem}:{options.SourceTag ?? "manual"}",
                         };
                         _db.ChartOfAccounts.Add(account);
                         created.Add(account);

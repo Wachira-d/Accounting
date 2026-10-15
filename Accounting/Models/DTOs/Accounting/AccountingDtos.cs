@@ -277,9 +277,13 @@ public record OpeningRollMismatch(
 }
 
 /// <summary>ผลตรวจของปีเป้าหมายหนึ่งปี (งวดแรกของรอบบัญชีถัดจากปีที่ปิด) · SkipReason ≠ null = ไม่ซ่อมอัตโนมัติ ·
-/// <c>Note</c> = คำอธิบายเพิ่ม (รอบ 3 P2-4: พบยอดยกมารุ่นเก่าไป ม.ค. ของรอบที่ไม่ใช่ปีปฏิทิน) · <c>LegacyRolledRows</c> = จำนวนแถวรุ่นเก่าที่การซ่อมจะยกเลิก</summary>
+/// <c>Note</c> = คำอธิบายเพิ่ม (รอบ 3 P2-4: พบยอดยกมารุ่นเก่าไป ม.ค. ของรอบที่ไม่ใช่ปีปฏิทิน) · <c>LegacyRolledRows</c> = จำนวนแถวรุ่นเก่าที่การซ่อมจะยกเลิก
+/// (รอบ 4 P2-d: รายงานแม้งวดแรกของรอบมียอดนำเข้า) · <c>DeletedAccounts</c> = ผังที่ถูกลบแต่ยังมียอด (รอบ 4 P2-b — ปุ่มกู้คืนรายผัง)</summary>
 public record OpeningRollCheckYear(int Year, Guid? FiscalPeriodId, bool HasImportedRows, string? SkipReason, List<OpeningRollMismatch> Mismatches,
-    string? Note = null, int LegacyRolledRows = 0);
+    string? Note = null, int LegacyRolledRows = 0, IReadOnlyList<OpeningRollDeletedAccount>? DeletedAccounts = null);
+
+/// <summary>ผังที่ถูกลบแต่ยังมียอด ณ สิ้นรอบ (หนึ่งผัง · <c>NetDebit</c> = เดบิต − เครดิต)</summary>
+public record OpeningRollDeletedAccount(Guid AccountId, string AccountCode, string AccountName, decimal NetDebit);
 
 public record OpeningRollRepairRequest(List<int>? Years);
 

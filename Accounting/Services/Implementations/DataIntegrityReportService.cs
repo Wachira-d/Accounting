@@ -174,6 +174,9 @@ public class DataIntegrityReportService
     /// <summary>เส้นทางปุ่ม "แก้" ของยอดยกมาปีหนึ่งปี — ตัวเดียวกับ route ของ <c>DataIntegrityController.RepairOpeningRoll</c></summary>
     public static string OpeningRollFixPath(int year) => $"data-integrity/opening-roll/{year}/repair";
 
+    /// <summary>เส้นทางปุ่ม "แก้" ของผังที่ถูกลบแต่ยังมียอด (กู้คืน) — ตัวเดียวกับ route ของ <c>AccountingController.RestoreAccount</c> (รอบ 4 P2-b)</summary>
+    public static string AccountRestoreFixPath(Guid accountId) => $"accounting/accounts/{accountId}/restore";
+
     /// <summary>เส้นทางปุ่ม "แก้" ของผังที่อยู่ใต้ผังลงรายการของแม่แบบ — ตัวเดียวกับ route ของ <c>DataIntegrityController.RescueTemplateLeafChild</c></summary>
     public static string TemplateLeafRescueFixPath(Guid accountId) => $"data-integrity/account-leaf/{accountId}/rescue";
 
@@ -204,12 +207,27 @@ public class DataIntegrityReportService
         {
             var jan = new DateTime(y.Year, 1, 1);
             if (y.SkipReason != null && y.HasImportedRows)
-                continue;   // งวดที่ผู้ใช้ลงยอดนำเข้าเอง — ไม่ใช่ข้อมูลจากบั๊ก (ไม่รบกวนผู้ตรวจ)
-            if (y.SkipReason != null && (y.FiscalPeriodId != null || y.LegacyRolledRows > 0))
+            {
+                // งวดที่ผู้ใช้ลงยอดนำเข้าเอง — ยอดไม่ใช่ข้อมูลจากบั๊ก (ไม่รบกวนผู้ตรวจ) · รอบ 4 P2-d: แต่แถวยกยอดรุ่นเก่าไป ม.ค. ยังต้องแสดง + ยกเลิกได้
+                // (เดิมข้ามทั้งปี ⇒ แถวรุ่นเก่าซ่อนอยู่ · ด่านปิดปีบล็อกโดยไม่มีปุ่ม) — ปุ่มยกเลิกเฉพาะแถวรุ่นเก่า แถวนำเข้าไม่ถูกแตะ
+                if (y.LegacyRolledRows > 0)
+                    roll.Add(new DataIntegritySuspect("OpeningRoll", y.FiscalPeriodId ?? Guid.Empty, $"ยอดยกมารุ่นเก่า ม.ค. ปี {y.Year + 543}", jan,
+                        y.Note ?? "", null, null, "/pages/reports.html", "รายงานบัญชี", OpeningRollFixPath(y.Year),
+                        $"ยกเลิกแถวยกยอดรุ่นเก่าของงวด ม.ค. {y.LegacyRolledRows} แถว (เฉพาะแถวที่การปิดปีเขียน · แถวนำเข้าของงวดแรกของรอบไม่ถูกแตะ) — บันทึกประวัติทุกแถว\n\nดำเนินการต่อหรือไม่?"));
+                continue;
+            }
+            if (y.SkipReason != null && (y.FiscalPeriodId != null || y.LegacyRolledRows > 0 || y.DeletedAccounts is { Count: > 0 }))
             {
                 // รอบ 3 P2-6: ซ่อมไม่ได้เพราะเหตุที่ผู้ใช้ต้องแก้ก่อน (ผังที่ถูกลบยังมียอด ฯลฯ) — แสดงเหตุผล + ทางไปต่อ ไม่ข้ามเงียบ
                 roll.Add(new DataIntegritySuspect("OpeningRoll", y.FiscalPeriodId ?? Guid.Empty, $"ยอดยกมาปี {y.Year + 543}", jan,
                     y.SkipReason + (y.Note == null ? "" : " · " + y.Note), null, null, "/pages/reports.html", "รายงานบัญชี"));
+                // รอบ 4 P2-b: ทางไปต่อที่มีจริง — ปุ่มกู้คืนรายผัง (เจ้าของ · audit) แล้วปิดปี/ซ่อมอีกครั้ง
+                foreach (var d in y.DeletedAccounts ?? Array.Empty<Accounting.Models.DTOs.Accounting.OpeningRollDeletedAccount>())
+                    roll.Add(new DataIntegritySuspect("AccountRestore", d.AccountId, $"ผังที่ถูกลบ {d.AccountCode}", jan,
+                        $"{d.AccountCode} {d.AccountName} ถูกลบแล้วแต่ยังมียอด{(d.NetDebit >= 0 ? "เดบิต" : "เครดิต")} {Math.Abs(d.NetDebit):N2} ⇒ ปิดปี/ยกยอดปี {y.Year + 543} ไม่ได้ · "
+                            + "กด \"แก้\" เพื่อกู้คืนผัง (เจ้าของบริษัท · บันทึกประวัติ) แล้วปิดปี/ซ่อมอีกครั้ง — ยอดยกไปตามปกติ",
+                        d.NetDebit, null, "/pages/accounts.html", "ผังบัญชี", AccountRestoreFixPath(d.AccountId),
+                        $"กู้คืนผัง {d.AccountCode} {d.AccountName} (ยกเลิกการลบ · บันทึกประวัติ)\n\nดำเนินการต่อหรือไม่?"));
                 continue;
             }
             if (y.Mismatches.Count == 0 && y.LegacyRolledRows > 0 && y.SkipReason == null)

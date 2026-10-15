@@ -113,7 +113,7 @@ public static class ChartParentLinker
             row.UpdatedBy = actor ?? row.UpdatedBy;
             row.UpdatedAt = DateTime.UtcNow;
             db.AddChainedAuditLog(LinkAudit(companyId, actorId, actor ?? "import", row, oldParent, oldLevel,
-                oldParent == row.ParentAccountId ? "coa-relevel" : "coa-parent-link-import", parentCodes.GetValueOrDefault(row.Id)));
+                oldParent == row.ParentAccountId ? "coa-relevel" : ChartParentLink.ParentLinkImportAction, parentCodes.GetValueOrDefault(row.Id)));
         }
         return warnings;
     }
@@ -185,7 +185,7 @@ public static class ChartParentLinker
                 OldValues = System.Text.Json.JsonSerializer.Serialize(new { accountCode = row.AccountCode, parentAccountId = (Guid?)null, level = oldLevel }),
                 NewValues = System.Text.Json.JsonSerializer.Serialize(new
                 {
-                    action = "coa-parent-link", accountCode = row.AccountCode, parentAccountId = p.ParentId, parentCode = p.ParentCode,
+                    action = ChartParentLink.ParentLinkAction, accountCode = row.AccountCode, parentAccountId = p.ParentId, parentCode = p.ParentCode,
                     level = p.NewLevel, ruleCode = ChartParentLink.RuleCode, by = actor,
                 }),
                 Timestamp = DateTime.UtcNow,
@@ -209,22 +209,62 @@ public static class ChartParentLinker
 
     // ═══ รอบ 3 P2-7: ผังที่การผูกรอบแรก (825f5c0e) วางไว้ใต้ผังลงรายการของแม่แบบ ═══ รายงาน → ย้ายเฉพาะที่เลือก + audit · ไม่มีงานไหนย้ายเอง
 
-    /// <summary>แผนย้ายพร้อมตรวจ "หัวบัญชีปลายทางถูกใช้อยู่ไหม" เฉพาะหัวบัญชีของผู้ใช้ที่ยังไม่มีลูก (ตัวไล่เดียว <see cref="ChartAccountReferences"/>)</summary>
-    private static async Task<List<ChartLinkProposal>> PlanLeafRescueAsync(AccountingDbContext db, Guid companyId, IReadOnlyList<ChartNode> chart,
-        IReadOnlyCollection<Guid>? onlyChildIds, CancellationToken ct)
+    /// <summary>
+    /// ผังใน <paramref name="accountIds"/> ที่<b>มีหลักฐานว่าแม่ถูกตั้งโดยการผูกของระบบ</b> (รอบ 4 P2-c — ตัวตัดสินเดียวของรายงาน/ปุ่มย้ายผังใต้ผังลงรายการของแม่แบบ):
+    /// (1) สร้างจากการนำเข้า (<see cref="ChartParentLink.IsImportCreated"/> — ผังนำเข้าเกิดมาไม่มีแม่) (2) แถวพักของศูนย์นำเข้าที่<b>สร้าง</b>ผังนี้
+    /// (<c>ImportStagedRow</c> Create + Committed) (3) audit การผูกบัญชีแม่ของระบบ (<see cref="ChartParentLink.ParentLinkAuditMarker"/>) ·
+    /// ผังที่ผู้ใช้สร้างใต้ผังแม่แบบเอง (เช่น 111221 ใต้ 11122) ไม่มีหลักฐาน ⇒ ไม่ใช่ผลของบั๊ก ไม่ถูกรายงาน/ย้าย · ไม่มีหลักฐาน = ไม่ใช่ (ไม่เดาจากความคล้าย)
+    /// </summary>
+    private static async Task<HashSet<Guid>> ImportLinkedAccountIdsAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyCollection<Guid> accountIds, CancellationToken ct)
     {
-        var draft = ChartParentLink.PlanTemplateLeafRescue(chart, onlyChildIds, new HashSet<Guid>());
+        var result = new HashSet<Guid>();
+        if (accountIds.Count == 0) return result;
+        var ids = accountIds.Distinct().ToList();
+        foreach (var a in await db.ChartOfAccounts.AsNoTracking()
+                     .Where(a => a.CompanyId == companyId && ids.Contains(a.Id))
+                     .Select(a => new { a.Id, a.CreatedBy })
+                     .ToListAsync(ct))
+            if (ChartParentLink.IsImportCreated(a.CreatedBy)) result.Add(a.Id);
+        var chartEntity = nameof(ChartOfAccount);
+        result.UnionWith(await db.ImportStagedRows.IgnoreQueryFilters().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.CommittedEntityType == chartEntity && r.CommittedEntityId != null
+                && r.Action == ImportRowAction.Create && r.Status == ImportRowStatus.Committed && ids.Contains(r.CommittedEntityId.Value))
+            .Select(r => r.CommittedEntityId!.Value)
+            .ToListAsync(ct));
+        var keys = ids.Select(i => i.ToString()).ToList();
+        foreach (var key in await db.AuditLogs.AsNoTracking()
+                     .Where(a => a.CompanyId == companyId && a.EntityType == chartEntity && a.EntityId != null && keys.Contains(a.EntityId)
+                         && a.NewValues != null && a.NewValues.Contains(ChartParentLink.ParentLinkAuditMarker))
+                     .Select(a => a.EntityId!)
+                     .Distinct()
+                     .ToListAsync(ct))
+            if (Guid.TryParse(key, out var g)) result.Add(g);
+        return result;
+    }
+
+    /// <summary>แผนย้ายพร้อมตรวจ "หัวบัญชีปลายทางถูกใช้อยู่ไหม" เฉพาะหัวบัญชีของผู้ใช้ที่ยังไม่มีลูก (ตัวไล่เดียว <see cref="ChartAccountReferences"/>) ·
+    /// รอบ 4 P2-c: เฉพาะลูกที่มีหลักฐานว่าระบบผูก (<see cref="ImportLinkedAccountIdsAsync"/>) · <c>UserCreated</c> = ลูกใต้ผังลงรายการของแม่แบบที่ไม่มีหลักฐาน (ผู้ใช้สร้างเอง)</summary>
+    private static async Task<(List<ChartLinkProposal> Plan, HashSet<Guid> UserCreated)> PlanLeafRescueAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyList<ChartNode> chart, IReadOnlyCollection<Guid>? onlyChildIds, CancellationToken ct)
+    {
+        var underLeaf = ChartParentLink.PlanTemplateLeafRescue(chart, onlyChildIds, new HashSet<Guid>()).Select(p => p.AccountId).ToList();
+        var evidenced = await ImportLinkedAccountIdsAsync(db, companyId, underLeaf, ct);
+        var userCreated = underLeaf.Where(id => !evidenced.Contains(id)).ToHashSet();
+        var scope = underLeaf.Where(evidenced.Contains).ToList();
+        if (scope.Count == 0) return (new List<ChartLinkProposal>(), userCreated);
+        var draft = ChartParentLink.PlanTemplateLeafRescue(chart, scope, new HashSet<Guid>());
         var withChildren = chart.Where(c => c.ParentId != null).Select(c => c.ParentId!.Value).ToHashSet();
         var check = draft.Where(p => p.ParentId is Guid t && !withChildren.Contains(t)).Select(p => p.ParentId!.Value).Distinct().ToList();
         var inUse = check.Count == 0 ? new HashSet<Guid>() : await ChartAccountReferences.ReferencedAccountIdsAsync(db, companyId, check, ct);
-        return inUse.Count == 0 ? draft : ChartParentLink.PlanTemplateLeafRescue(chart, onlyChildIds, inUse);
+        return (inUse.Count == 0 ? draft : ChartParentLink.PlanTemplateLeafRescue(chart, scope, inUse), userCreated);
     }
 
     /// <summary>รายงานอ่านอย่างเดียว: ผังของผู้ใช้ที่อยู่ใต้ผังลงรายการของแม่แบบ (ผังลงรายการกลายเป็นบัญชีคุม) + หัวบัญชีที่ควรย้ายไป</summary>
     public static async Task<List<TemplateLeafChildSuspect>> FindTemplateLeafChildrenAsync(AccountingDbContext db, Guid companyId, CancellationToken ct = default)
     {
         var chart = await LoadChartAsync(db, companyId, ct);
-        var plan = await PlanLeafRescueAsync(db, companyId, chart, null, ct);
+        var (plan, _) = await PlanLeafRescueAsync(db, companyId, chart, null, ct);
         if (plan.Count == 0) return new List<TemplateLeafChildSuspect>();
         var ids = plan.Select(p => p.AccountId).ToList();
         var names = await db.ChartOfAccounts.AsNoTracking()
@@ -250,9 +290,11 @@ public static class ChartParentLinker
 
         var chart = await LoadChartAsync(db, companyId, ct);
         var wanted = accountIds.ToHashSet();
-        var plan = await PlanLeafRescueAsync(db, companyId, chart, wanted, ct);
+        var (plan, userCreated) = await PlanLeafRescueAsync(db, companyId, chart, wanted, ct);
         var skipped = wanted.Where(w => plan.All(p => p.AccountId != w))
-            .Select(w => chart.FirstOrDefault(c => c.Id == w) is { } n ? $"{n.Code}: ไม่ได้อยู่ใต้ผังลงรายการของแม่แบบ" : $"{w}: ไม่พบผังในบริษัทนี้")
+            .Select(w => chart.FirstOrDefault(c => c.Id == w) is not { } n ? $"{w}: ไม่พบผังในบริษัทนี้"
+                : userCreated.Contains(w) ? $"{n.Code}: ผู้ใช้สร้างใต้ผังนี้เอง (ไม่มีหลักฐานว่าระบบผูก) — ไม่ย้าย"
+                : $"{n.Code}: ไม่ได้อยู่ใต้ผังลงรายการของแม่แบบ")
             .ToList();
         var movable = plan.Where(p => p.BlockedReason == null).ToList();
         skipped.AddRange(plan.Where(p => p.BlockedReason != null).Select(p => $"{p.Code}: {p.BlockedReason}"));
