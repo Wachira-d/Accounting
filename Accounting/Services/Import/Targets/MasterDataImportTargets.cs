@@ -402,33 +402,11 @@ public sealed class ChartOfAccountsImportTarget : MasterDataImportTarget
         if (await Db.CompanySettings.AnyAsync(x => x.CompanyId == companyId && x.DefaultPaymentAccountId == entityId, ct))
             return ("บัญชีนี้ถูกตั้งเป็นแหล่งเงินตั้งต้นของบริษัท (หน้าตั้งค่า)", "เปลี่ยนแหล่งเงินตั้งต้นที่หน้าตั้งค่าก่อน แล้วย้อนอีกครั้ง");
 
-        var coa = Db.Model.FindEntityType(typeof(ChartOfAccount));
-        if (coa == null) return ("ตรวจการอ้างถึงบัญชีไม่ได้", way);   // ล้มฝั่งปลอดภัย (ไม่ลบ)
-        foreach (var fk in coa.GetReferencingForeignKeys())
-        {
-            var dep = fk.DeclaringEntityType;
-            if (dep.ClrType == typeof(ChartOfAccount) || fk.Properties.Count != 1) continue;   // บัญชีลูกตรวจด้านบน
-            var table = dep.GetTableName();
-            if (table == null) continue;
-            var store = Microsoft.EntityFrameworkCore.Metadata.StoreObjectIdentifier.Table(table, dep.GetSchema());
-            var col = fk.Properties[0].GetColumnName(store);
-            if (col == null) continue;
-            var where = $"\"{col}\" = {{0}}";
-            var args = new List<object> { entityId };
-            if (dep.FindProperty("CompanyId")?.GetColumnName(store) is { } companyCol)
-            {
-                where += $" AND \"{companyCol}\" = {{1}}";
-                args.Add(companyId);
-            }
-            if (dep.FindProperty("IsDeleted")?.GetColumnName(store) is { } deletedCol)
-                where += $" AND NOT \"{deletedCol}\"";
-            var from = dep.GetSchema() is { Length: > 0 } schema ? $"\"{schema}\".\"{table}\"" : $"\"{table}\"";
-            // ชื่อตาราง/คอลัมน์มาจาก metadata ของโมเดล (ไม่ใช่ค่าจากผู้ใช้) · ค่าเป็นพารามิเตอร์ {0}/{1}
-            var sql = "SELECT EXISTS (SELECT 1 FROM " + from + " WHERE " + where + ") AS \"Value\"";
-            var used = await Db.Database.SqlQueryRaw<bool>(sql, args.ToArray()).SingleAsync(ct);
-            if (used)
-                return ($"บัญชีนี้ถูกอ้างถึงโดย{ReferrerLabels.GetValueOrDefault(dep.ClrType.Name, "ข้อมูลอื่นในระบบ")}แล้ว", way);
-        }
+        // ไล่ทุก FK ที่ชี้ผังบัญชี — ตัวไล่ตัวเดียวกับการผูกบัญชีแม่ (Helpers/ChartAccountReferences · ฝ่ายค้านรอบส่งออก 2026-10-15 รอบ 2 P1-4)
+        var (modelMissing, referrer) = await ChartAccountReferences.FirstReferrerAsync(Db, companyId, entityId, ct);
+        if (modelMissing) return ("ตรวจการอ้างถึงบัญชีไม่ได้", way);   // ล้มฝั่งปลอดภัย (ไม่ลบ)
+        if (referrer != null)
+            return ($"บัญชีนี้ถูกอ้างถึงโดย{ReferrerLabels.GetValueOrDefault(referrer, "ข้อมูลอื่นในระบบ")}แล้ว", way);
         return null;
     }
 

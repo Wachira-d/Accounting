@@ -4993,3 +4993,10 @@ _รายการประจำ "ถึงกำหนด" ตามวัน
 เทียบกับ `DateTime.UtcNow` ตรง ๆ ⇒ 00:00–07:00 น. เวลาไทย งวดวันนี้ "ยังไม่ถึง" — กดสร้างทันทีช่วงนั้นถูกนับเป็นรอบพิเศษ (ไม่กินงวด) แล้ว cron ออกใบงวดเดิมซ้ำตอน 07:00 น. ·
 ตัวตัดสินเดียว `RecurringSchedule.IsDue` / `DueCutoffUtc` (query) ใช้ทั้ง cron · RunNow · CatchUp · PlaceholderBaseDate · Resume ใช้วันนี้ตามปฏิทินไทย ·
 ล็อกจุดเรียกใน required_call_site_check (negative test: คืนรูปเดิมแล้วถูกจับ 2 จุด) · เทสต์ `RecurringTemplateTests.IsDue_หลังเที่ยงคืนเวลาไทย…` + Db เดิม 4 ข้อที่ล้มตอน 17:14 UTC — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบส่งออก **รอบ 2** — `EXPORT_AUDIT.md` §"รอบ 2" · §6.0a-y: (P1-2) ใบปิดปี/ยกยอดฐานเดียวกับงบทดลอง —
+ปิดแถว P&L ของฐานนำเข้าในรอบ + รายการตั้งแต่วันฐาน · ยอดยกมาเฉพาะ A/L/E สุทธิฝั่งเดียว + P&L ค้างเข้ากำไรสะสม (`OpeningRoll.PnlCloseWindow`/`CarryForward`) ·
+(P2-6) ยกไปงวดแรกของรอบถัดไป + ล็อกงวดตามรอบ · (P2-7) ยกยอดด้วยมือต้องปิดปีก่อน · ล็อกเดียว · ไม่ทับยอดนำเข้า · audit · (P2-5) ตัวกรองสาขา/มิติ:
+สาขาของบรรทัด = บรรทัด ?? หัวใบ · ส่วนที่ปัน (`LedgerFilterRule.AllocationShare` = รายงานตามมิติ) · TB/GL กรองเริ่ม P&L ต้นรอบ + แถวกำไรขาดทุนก่อนรอบ · รวมยอดในฐาน ·
+(P1-3/P1-4/P2-8/P2-10 ดู ACCOUNT_STRUCTURE §3.1f · งบรวมต้องสิทธิ์งบการเงินทุกบริษัท) — เทสต์ `AdversarialExportRound2Tests` · `Db/AdversarialExportRound2DbTests` ·
+`Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_

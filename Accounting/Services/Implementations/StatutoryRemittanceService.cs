@@ -1845,11 +1845,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             a.CompanyId == companyId && a.AccountCode == code && !a.IsDeleted);
 
     private async Task<ChartOfAccount?> ResolveLateFeeAccountAsync(Guid companyId) =>
-        await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+        await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
             a.CompanyId == companyId && a.IsActive && !a.IsDeleted
             && a.AccountCode.StartsWith("54")
             && (a.AccountName.Contains("เงินเพิ่ม") || a.AccountName.Contains("ค่าปรับ")))
-        ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+        ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
             a.CompanyId == companyId && a.IsActive && !a.IsDeleted
             && a.AccountCode.StartsWith("58"));
 

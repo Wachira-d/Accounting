@@ -187,22 +187,30 @@ public class DimensionalAccountingService : IDimensionalAccountingService
                 && jld.JournalEntryLine.JournalEntry.EntryDate <= toDate)
             .ToListAsync();
 
-        var pnlLines = lines
-            .GroupBy(l => new { l.JournalEntryLine.AccountId, l.JournalEntryLine.Account!.AccountCode, l.JournalEntryLine.Account.AccountName })
+        // ส่วนที่ปันเข้ามิติ = ตัวคำนวณเดียวกับงบทดลอง/งบกำไรขาดทุนแบบกรองมิติ (Helpers/LedgerFilterRule.AllocationShare · ฝ่ายค้านรอบส่งออก
+        // 2026-10-15 รอบ 2 P2-5) — เดิม AllocatedAmount ?? เต็มบรรทัด ⇒ ปันส่วนด้วยร้อยละอย่างเดียว (30/70) ได้ 100% ทั้งสองมิติ
+        // และ AllocatedAmount ไม่มีเครื่องหมาย แต่ถูกบวกเป็น "เดบิต − เครดิต" ของบรรทัดรายได้
+        var shares = lines
+            .Select(l => (Row: l, Share: Accounting.Helpers.LedgerFilterRule.AllocationShare(
+                l.JournalEntryLine.DebitAmount, l.JournalEntryLine.CreditAmount, l.AllocatedAmount, l.AllocatedPercent)))
+            .ToList();
+
+        var pnlLines = shares
+            .GroupBy(x => new { x.Row.JournalEntryLine.AccountId, x.Row.JournalEntryLine.Account!.AccountCode, x.Row.JournalEntryLine.Account.AccountName })
             .Select(g => new DimensionPnLLine(
                 g.Key.AccountCode,
                 g.Key.AccountName,
-                g.Sum(l => l.AllocatedAmount ?? (l.JournalEntryLine.DebitAmount - l.JournalEntryLine.CreditAmount))
+                g.Sum(x => x.Share.Debit - x.Share.Credit)
             ))
             .ToList();
 
-        var totalRevenue = lines
-            .Where(l => l.JournalEntryLine.Account?.AccountType == AccountType.Revenue)
-            .Sum(l => l.AllocatedAmount ?? (l.JournalEntryLine.CreditAmount - l.JournalEntryLine.DebitAmount));
+        var totalRevenue = shares
+            .Where(x => x.Row.JournalEntryLine.Account?.AccountType == AccountType.Revenue)
+            .Sum(x => x.Share.Credit - x.Share.Debit);
 
-        var totalExpenses = lines
-            .Where(l => l.JournalEntryLine.Account?.AccountType == AccountType.Expense)
-            .Sum(l => l.AllocatedAmount ?? (l.JournalEntryLine.DebitAmount - l.JournalEntryLine.CreditAmount));
+        var totalExpenses = shares
+            .Where(x => x.Row.JournalEntryLine.Account?.AccountType == AccountType.Expense)
+            .Sum(x => x.Share.Debit - x.Share.Credit);
 
         return new DimensionPnLResponse(
             dimensionId, dimension.Name, fromDate, toDate,
@@ -229,13 +237,18 @@ public class DimensionalAccountingService : IDimensionalAccountingService
         {
             var dimAllocations = allAllocations.Where(a => a.DimensionId == dim.Id).ToList();
 
+            // ตัวคำนวณส่วนที่ปันตัวเดียวกับ GetDimensionPnLAsync / งบแบบกรองมิติ (Helpers/LedgerFilterRule.AllocationShare)
+            (decimal Debit, decimal Credit) Share(JournalLineDimension a)
+                => Accounting.Helpers.LedgerFilterRule.AllocationShare(
+                    a.JournalEntryLine.DebitAmount, a.JournalEntryLine.CreditAmount, a.AllocatedAmount, a.AllocatedPercent);
+
             var revenue = dimAllocations
                 .Where(a => a.JournalEntryLine.Account?.AccountType == AccountType.Revenue)
-                .Sum(a => a.AllocatedAmount ?? (a.JournalEntryLine.CreditAmount - a.JournalEntryLine.DebitAmount));
+                .Sum(a => Share(a).Credit - Share(a).Debit);
 
             var expenses = dimAllocations
                 .Where(a => a.JournalEntryLine.Account?.AccountType == AccountType.Expense)
-                .Sum(a => a.AllocatedAmount ?? (a.JournalEntryLine.DebitAmount - a.JournalEntryLine.CreditAmount));
+                .Sum(a => Share(a).Debit - Share(a).Credit);
 
             var netIncome = revenue - expenses;
             var variance = dim.AnnualBudget.HasValue ? dim.AnnualBudget.Value - expenses : (decimal?)null;

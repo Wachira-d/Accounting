@@ -2476,10 +2476,8 @@ public class IntegrationService : IIntegrationService
                         .FirstOrDefaultAsync(a => a.Id == pinnedApId && a.CompanyId == companyId && a.IsActive);
                 apAccount ??= await _db.ChartOfAccounts
                         .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21220" && a.IsActive)
-                    ?? await _db.ChartOfAccounts
-                        .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive)
-                        .OrderBy(a => a.AccountCode)
-                        .FirstOrDefaultAsync()
+                    ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db)   // รอบ 2 P1-3: เดิม OrderBy(รหัส) ⇒ หัวกลุ่ม 212 / 21240
+                        .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive)
                     ?? await _db.ChartOfAccounts
                         .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
                 var expenseAccount = await _db.ChartOfAccounts
@@ -2968,10 +2966,8 @@ public class IntegrationService : IIntegrationService
             if (counterpart == null && document.DocumentType == DocumentType.Expense)
                 counterpart = await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21220" && a.IsActive);
-            counterpart ??= await _db.ChartOfAccounts
-                    .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive)
-                    .OrderBy(a => a.AccountCode)
-                    .FirstOrDefaultAsync()
+            counterpart ??= await _db.ChartOfAccounts.DefaultFallbackCandidates(_db)   // รอบ 2 P1-3: เดิม OrderBy(รหัส) ⇒ หัวกลุ่ม 212 / 21240
+                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("212") && a.IsActive)
                 ?? await _db.ChartOfAccounts
                     .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("211") && a.IsActive);
             if (counterpart == null)

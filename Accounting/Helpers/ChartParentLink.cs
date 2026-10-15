@@ -16,30 +16,36 @@ public sealed record ChartLinkProposal(Guid AccountId, string Code, Guid? Parent
 /// กติกาบัญชีคุม (<c>PostingAccountRule</c> = มีบัญชีย่อย) ปล่อยผ่าน และตัวหาผังตั้งต้นตามรหัสหยิบหัวบัญชีก่อนผังจริง</para>
 ///
 /// <para><b>กติกา:</b> บัญชีแม่ = ผังที่รหัส<b>ยาวที่สุด</b>ซึ่งเป็นส่วนต้นของรหัสนี้ (prefix แท้) และประเภทเดียวกัน · ไม่ผูกเมื่อบัญชีแม่ที่จะได้
-/// ยังไม่มีบัญชีย่อย<b>และมีรายการบัญชีแล้ว</b> (ผูกแล้วผังที่ใช้ลงรายการอยู่จะกลายเป็นบัญชีคุม — ยอดเดิมค้างในบัญชีคุม) ⇒ บอกเหตุผล ·
+/// ยังไม่มีบัญชีย่อย<b>และถูกใช้อยู่แล้ว</b> (รายการบัญชี · ยอดยกมา · สินค้า/ผู้ติดต่อ/ค่าตั้ง/บัญชีธนาคารที่ปักผังนี้ — <see cref="ChartAccountReferences"/>:
+/// ผูกแล้วผังที่ใช้อยู่จะกลายเป็นบัญชีคุม — ยอด/ค่าตั้งเดิมค้างในบัญชีคุม) ⇒ บอกเหตุผล ·
 /// <paramref name="allowRehome"/> (ตอนนำเข้า) = ผังที่นำเข้าใหม่ซึ่งอยู่ "ระหว่าง" ผังเดิมกับบัญชีแม่ของมัน รับผังเดิมนั้นมาเป็นลูก
 /// (หัวบัญชีมาทีหลังลูกในไฟล์) · ผังของแม่แบบระบบไม่ถูกย้ายแม่</para>
+///
+/// <para><b>รอบ 2 (ฝ่ายค้าน 2026-10-15 P1-4):</b> ผังแม่แบบระบบที่<b>ยังไม่มีบัญชีย่อย</b> (ผังลงรายการ เช่น 11310 ลูกหนี้การค้า · 21210 เจ้าหนี้การค้า)
+/// <b>ไม่เป็นบัญชีแม่ของผังนำเข้าเด็ดขาด</b> — เดิมผัง PEAK "113101" ถูกผูกใต้ 11310 ⇒ 11310 กลายเป็นบัญชีคุม ⇒ ลูกหนี้ตั้งต้นพลิกไป 11320 ·
+/// ตอนนี้ข้ามไปหัวบัญชีที่สั้นกว่าถัดไป (113) · ผังที่ผูกแล้วระดับเปลี่ยน ⇒ ลูกหลานทุกชั้นปรับระดับตาม (<see cref="Relevel"/>)</para>
 /// </summary>
 public static class ChartParentLink
 {
     public const string RuleCode = "COA-PARENT-LINK";
 
-    /// <summary>บัญชีแม่ที่ควรเป็น (prefix แท้ที่ยาวที่สุด · ประเภทเดียวกัน) — null = ไม่มี</summary>
-    private static ChartNode? FindParent(ChartNode account, IEnumerable<ChartNode> chart)
+    /// <summary>บัญชีแม่ที่ควรเป็น (prefix แท้ที่ยาวที่สุด · ประเภทเดียวกัน · <paramref name="canBeParent"/>) — null = ไม่มี</summary>
+    private static ChartNode? FindParent(ChartNode account, IEnumerable<ChartNode> chart, Func<ChartNode, bool> canBeParent)
         => chart
             .Where(c => c.Id != account.Id && c.Type == account.Type
                 && c.Code.Length < account.Code.Length
                 && account.Code.StartsWith(c.Code, StringComparison.Ordinal))
             .OrderByDescending(c => c.Code.Length)
             .ThenBy(c => c.Code, StringComparer.Ordinal)
-            .FirstOrDefault();
+            .FirstOrDefault(canBeParent);
 
     /// <summary>
-    /// วางแผนผูกบัญชีแม่ของ <paramref name="candidateIds"/> (เฉพาะผังที่ยังไม่มีบัญชีแม่) · <paramref name="postedAccountIds"/> = ผังที่มีรายการบัญชีแล้ว ·
+    /// วางแผนผูกบัญชีแม่ของ <paramref name="candidateIds"/> (เฉพาะผังที่ยังไม่มีบัญชีแม่) · <paramref name="inUseAccountIds"/> = ผังที่ถูกใช้อยู่แล้ว
+    /// (รายการบัญชี · ยอดยกมา · ค่าตั้ง/ผังที่ปักไว้ — <see cref="ChartAccountReferences.ReferencedAccountIdsAsync"/>) ·
     /// คืนข้อเสนอทุกแถวที่พิจารณา (ทั้งที่ผูกได้และไม่ได้) ตามลำดับรหัสสั้นไปยาว (หัวบัญชีก่อน)
     /// </summary>
     public static List<ChartLinkProposal> Plan(IReadOnlyList<ChartNode> chart, IReadOnlyCollection<Guid> candidateIds,
-        IReadOnlySet<Guid> postedAccountIds, bool allowRehome)
+        IReadOnlySet<Guid> inUseAccountIds, bool allowRehome)
     {
         var byId = chart.ToDictionary(c => c.Id);
         var parentOf = chart.ToDictionary(c => c.Id, c => c.ParentId);
@@ -53,15 +59,18 @@ public static class ChartParentLink
             .ToList();
 
         string? Blocked(ChartNode parent)
-            => !hasChildren.Contains(parent.Id) && postedAccountIds.Contains(parent.Id)
-                ? $"บัญชีแม่ที่ควรเป็น ({parent.Code}) มีรายการบัญชีแล้ว — ผูกแล้วจะกลายเป็นบัญชีคุมที่มียอดค้าง · ย้ายยอดออกก่อน หรือผูกเองที่หน้าผังบัญชี"
+            => !hasChildren.Contains(parent.Id) && inUseAccountIds.Contains(parent.Id)
+                ? $"บัญชีแม่ที่ควรเป็น ({parent.Code}) ถูกใช้อยู่แล้ว (มีรายการบัญชี/ยอดยกมา หรือถูกตั้งเป็นผังของสินค้า/ผู้ติดต่อ/ค่าตั้ง/บัญชีธนาคาร) — "
+                    + "ผูกแล้วจะกลายเป็นบัญชีคุมที่มียอด/ค่าตั้งค้าง · ย้ายยอด/ค่าตั้งออกก่อน หรือผูกเองที่หน้าผังบัญชี"
                 : null;
+        // รอบ 2 P1-4: ผังแม่แบบระบบที่ยังไม่มีบัญชีย่อย = ผังลงรายการ ⇒ ไม่เป็นบัญชีแม่ (ข้ามไปหัวบัญชีที่สั้นกว่า)
+        bool CanBeParent(ChartNode c) => !(c.IsSystem && !hasChildren.Contains(c.Id));
 
         foreach (var x in candidates)
         {
             if (parentOf[x.Id] == null && !x.IsSystem)
             {
-                var parent = FindParent(x, chart);
+                var parent = FindParent(x, chart, CanBeParent);
                 if (parent != null)
                 {
                     var blocked = Blocked(parent);
@@ -77,13 +86,13 @@ public static class ChartParentLink
                 }
             }
 
-            if (!allowRehome || x.IsSystem || (postedAccountIds.Contains(x.Id) && !hasChildren.Contains(x.Id))) continue;
+            if (!allowRehome || x.IsSystem || (inUseAccountIds.Contains(x.Id) && !hasChildren.Contains(x.Id))) continue;
             // ผังเดิมที่ x ควรเป็นบัญชีแม่ (x คือ prefix ที่ยาวที่สุดของมัน) และแม่ปัจจุบันสั้นกว่า x (หรือไม่มีแม่) — ไม่ย้ายผังระบบ
             foreach (var y in chart.Where(c => c.Id != x.Id && !c.IsSystem && c.Type == x.Type
                          && c.Code.Length > x.Code.Length && c.Code.StartsWith(x.Code, StringComparison.Ordinal))
                      .OrderBy(c => c.Code.Length).ThenBy(c => c.Code, StringComparer.Ordinal))
             {
-                if (FindParent(y, chart)?.Id != x.Id) continue;
+                if (FindParent(y, chart, CanBeParent)?.Id != x.Id) continue;
                 var current = parentOf[y.Id];
                 if (current == x.Id) continue;
                 if (current != null && byId.TryGetValue(current.Value, out var cur) && cur.Code.Length >= x.Code.Length) continue;
@@ -95,5 +104,39 @@ public static class ChartParentLink
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// ระดับใหม่ของทุกผังหลังใช้ <paramref name="applied"/> (pure · รอบ 2 P2-8): ผังที่ถูกผูก/ย้ายแม่ได้ระดับจากข้อเสนอ แล้ว<b>ลูกหลานทุกชั้น</b>ของมัน
+    /// = ระดับแม่ + 1 (เดิมปรับเฉพาะผังที่ย้าย ⇒ ลูกของหัวบัญชีที่ย้ายค้างระดับเก่า) · คืนเฉพาะผังที่ระดับต่างจากใน <paramref name="chart"/> · กันวนซ้ำ
+    /// </summary>
+    public static Dictionary<Guid, int> Relevel(IReadOnlyList<ChartNode> chart, IEnumerable<ChartLinkProposal> applied)
+    {
+        var parentOf = chart.ToDictionary(c => c.Id, c => c.ParentId);
+        var level = chart.ToDictionary(c => c.Id, c => c.Level);
+        var moved = new List<Guid>();
+        foreach (var p in applied.Where(p => p.BlockedReason == null && p.ParentId != null && parentOf.ContainsKey(p.AccountId)))
+        {
+            parentOf[p.AccountId] = p.ParentId;
+            level[p.AccountId] = p.NewLevel;
+            moved.Add(p.AccountId);
+        }
+        var children = parentOf.Where(kv => kv.Value != null)
+            .GroupBy(kv => kv.Value!.Value)
+            .ToDictionary(g => g.Key, g => g.Select(kv => kv.Key).ToList());
+        var queue = new Queue<Guid>(moved);
+        var seen = new HashSet<Guid>();
+        while (queue.Count > 0)
+        {
+            var id = queue.Dequeue();
+            if (!seen.Add(id) || !children.TryGetValue(id, out var kids)) continue;
+            foreach (var k in kids)
+            {
+                level[k] = level[id] + 1;
+                queue.Enqueue(k);
+            }
+        }
+        var original = chart.ToDictionary(c => c.Id, c => c.Level);
+        return level.Where(kv => original[kv.Key] != kv.Value).ToDictionary(kv => kv.Key, kv => kv.Value);
     }
 }

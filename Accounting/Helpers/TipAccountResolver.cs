@@ -39,7 +39,7 @@ public static class TipAccountResolver
                     && a.IsActive && !a.IsDeleted, ct);
             if (acc != null) return acc;
         }
-        return await db.ChartOfAccounts.DefaultPostingCandidates(db).AsNoTracking()
+        return await db.ChartOfAccounts.DefaultFallbackCandidates(db).AsNoTracking()
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                 && a.AccountCode.StartsWith("21") && !a.AccountCode.StartsWith("216")
                 && a.AccountName.Contains("ทิป"), ct);

@@ -3547,7 +3547,7 @@ public partial class DocumentService : IDocumentService
             if (acc != null) return acc;
         }
         // (2) ผังเฉพาะ "ภาษีซื้อขอคืนไม่ได้" ถ้าบริษัทตั้งไว้
-        return await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+        return await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
             a.CompanyId == companyId && a.IsActive && !a.IsDeleted
             && a.AccountCode.StartsWith("5")
             && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")));
@@ -4377,7 +4377,7 @@ public partial class DocumentService : IDocumentService
         if (revenueAcc == null && accountPlan.FailIfNone)
             throw new Accounting.Helpers.BusinessRuleException(
                 Accounting.Helpers.DepositPolicyResolver.CompensationAccountMissingMessage, "DEPOSIT-FORFEIT-ACCOUNT");
-        revenueAcc ??= await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+        revenueAcc ??= await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive)
                 .OrderByDefaultPreference().FirstOrDefaultAsync()
             ?? throw new InvalidOperationException("ไม่พบบัญชีรายได้ในผังบัญชี");
@@ -15533,7 +15533,7 @@ public partial class DocumentService : IDocumentService
     /// chart predates it — it appears as a standard liability under 212.</summary>
     private async Task<ChartOfAccount?> EnsureGrNiAccountAsync(Guid companyId)
     {
-        var existing = await FindAccountAsync(companyId, "21240");
+        var existing = await FindAccountAsync(companyId, Accounting.Helpers.SpecialPurposeAccount.GoodsReceivedNotInvoicedCode);
         if (existing != null) return existing;
 
         var parentId = await _db.ChartOfAccounts.AsNoTracking()
@@ -15544,7 +15544,7 @@ public partial class DocumentService : IDocumentService
         var acct = new ChartOfAccount
         {
             CompanyId = companyId,
-            AccountCode = "21240",
+            AccountCode = Accounting.Helpers.SpecialPurposeAccount.GoodsReceivedNotInvoicedCode,
             AccountName = "เจ้าหนี้-รับสินค้ายังไม่วางบิล",
             AccountNameEn = "Goods Received Not Invoiced",
             AccountType = AccountType.Liability,
@@ -15579,7 +15579,7 @@ public partial class DocumentService : IDocumentService
                 && j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted);
         if (!grnPosted) return null;
 
-        return await FindAccountAsync(companyId, "21240");
+        return await FindAccountAsync(companyId, Accounting.Helpers.SpecialPurposeAccount.GoodsReceivedNotInvoicedCode);
     }
 
     /// <summary>Resolve the PAYABLE account by document role — the heart of
@@ -15661,7 +15661,7 @@ public partial class DocumentService : IDocumentService
         // 11610 ค้างสูงถาวร) → header หลุดไป prefix-search ที่กรองบัญชีคุมอยู่แล้ว
         var found = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.IsActive)
                 .OrderByDefaultPreference()
                 .FirstOrDefaultAsync();
@@ -15880,11 +15880,11 @@ public partial class DocumentService : IDocumentService
         // fallback ระดับบริษัท เมื่อ resolve ตามก้อนเงินรายใบไม่ได้ — ผังชื่อ
         // "ภาษีซื้อ/ขอคืนไม่ได้" ก่อน แล้วค่อยผังค่าใช้จ่ายใดก็ได้. **ห้าม**
         // fallback ตามเลขนำหน้า 53 (เคยได้ 53120 ค่าโฆษณา — คนละความหมาย)
-        var companyFallbackAcc = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+        var companyFallbackAcc = await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                 && a.AccountCode.StartsWith("5")
                 && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")))
-            ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+            ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                 && a.AccountType == AccountType.Expense);
 
@@ -17306,7 +17306,7 @@ public partial class DocumentService : IDocumentService
         // posting (no child accounts — WhereNotControlAccount) Revenue/Expense account by code as a safe default.
         var defaultRevenue = await FindAccountAsync(companyId, "41000")
             ?? await FindAccountAsync(companyId, "42000")
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive)
                 .OrderByDefaultPreference()
                 .FirstOrDefaultAsync();
@@ -17348,7 +17348,7 @@ public partial class DocumentService : IDocumentService
         }
         defaultExpense ??= await FindAccountAsync(companyId, "51110")
             ?? await FindAccountAsync(companyId, "52110")
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive)
                 .OrderByDefaultPreference()
                 .FirstOrDefaultAsync();

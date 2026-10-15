@@ -151,7 +151,8 @@ public abstract class AccountImportAdapterBase : CompetitorAdapterBase
         // ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2: ผูกบัญชีแม่ของผังที่นำเข้า (เดิมไม่ผูก ⇒ หัวบัญชีดู "ไม่มีบัญชีย่อย" แล้วถูกหยิบเป็นผังตั้งต้น) ·
         // ทั้งชุดในครั้งเดียว ⇒ ลำดับแถวในไฟล์ไม่มีผล · ผูกไม่ได้ = คำเตือน (ผังยังนำเข้าได้)
         if (!options.DryRun && created.Count > 0)
-            foreach (var w in await Accounting.Services.Implementations.ChartParentLinker.LinkImportedAsync(_db, companyId, created, ct))
+            foreach (var w in await Accounting.Services.Implementations.ChartParentLinker.LinkImportedAsync(_db, companyId, created, ct,
+                         actor: $"Migrate:{SourceSystem}:{options.SourceTag ?? "manual"}"))
                 errors.Add("ผูกบัญชีแม่ไม่ได้ — " + w);
         if (!options.DryRun && (imported > 0 || updated > 0))
             await _db.SaveChangesAsync(ct);

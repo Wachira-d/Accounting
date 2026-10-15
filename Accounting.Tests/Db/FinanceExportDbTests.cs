@@ -319,8 +319,22 @@ public class FinanceExportDbTests
             => Task.FromResult(new TenantCheckResult(_allowed.Contains(companyId), _allowed.Contains(companyId) ? null : "ไม่ใช่สมาชิก"));
     }
 
+    /// <summary>สิทธิ์ "งบการเงิน" ต่อบริษัท (null = มีทุกบริษัท) — ฝ่ายค้านรอบส่งออก 2026-10-15 รอบ 2 P2-10</summary>
+    private sealed class FakePermissions : Accounting.Services.Interfaces.IPermissionService
+    {
+        private readonly HashSet<Guid>? _financialIn;
+        public FakePermissions(HashSet<Guid>? financialIn) => _financialIn = financialIn;
+        public Task<bool> HasPermissionAsync(Guid companyId, Guid userId, string permissionKey)
+            => Task.FromResult(permissionKey == Accounting.Models.Constants.PermissionKeys.ReportsFinancial
+                && (_financialIn == null || _financialIn.Contains(companyId)));
+        public Task<List<string>> GetUserPermissionsAsync(Guid companyId, Guid userId) => Task.FromResult(new List<string>());
+    }
+
     private static ConsolidationController MakeController(AccountingDbContext db, params Guid[] memberOf)
-        => new(new ConsolidationService(db), new FakeGuard(memberOf))
+        => MakeController(db, null, memberOf);
+
+    private static ConsolidationController MakeController(AccountingDbContext db, HashSet<Guid>? financialIn, params Guid[] memberOf)
+        => new(new ConsolidationService(db), new FakeGuard(memberOf), new FakePermissions(financialIn))
         {
             ControllerContext = new ControllerContext
             {
@@ -367,5 +381,36 @@ public class FinanceExportDbTests
         var userOfAll = MakeController(req, a, b, c);
         Assert.Equal(200, Status((await userOfAll.GetBalanceSheet(a, groupOfA.Id, D(2026, 3, 31))).Result));
         Assert.Equal(200, Status((await userOfAll.GetGroup(a, groupOfA.Id)).Result));
+    }
+
+    [Fact]
+    public async Task งบรวม_ต้องมีสิทธิ์งบการเงิน_ทั้งบริษัทแม่และทุกสมาชิก_ทิศตรงข้ามมีครบได้งบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (a, _) = await SeedCompanyAsync(db, "บริษัทแม่ A P2-10");
+        var (c, _) = await SeedCompanyAsync(db, "บริษัทลูก C P2-10");
+        var group = new ConsolidationGroup { Name = "กลุ่ม P2-10", ParentCompanyId = a };
+        db.Set<ConsolidationGroup>().Add(group);
+        await db.SaveChangesAsync();
+        db.Set<ConsolidationMember>().Add(new ConsolidationMember { ConsolidationGroupId = group.Id, CompanyId = c });
+        await db.SaveChangesAsync();
+
+        using var req = DbTestDatabase.TryCreateContext()!;
+        // 1) เป็นสมาชิกทั้งสองบริษัท แต่ไม่มีสิทธิ์งบการเงินในบริษัทแม่ (route) = 403 (เดิม 200 — ไม่มีด่านสิทธิ์)
+        var noParentRight = MakeController(req, new HashSet<Guid> { c }, a, c);
+        Assert.Equal(403, Status((await noParentRight.GetBalanceSheet(a, group.Id, D(2026, 3, 31))).Result));
+        Assert.Equal(403, Status((await noParentRight.GetPnL(a, group.Id, D(2026, 1, 1), D(2026, 3, 31))).Result));
+        // 2) มีสิทธิ์ในบริษัทแม่ แต่ไม่มีในบริษัทสมาชิก = 403 (เดิมดูแค่สมาชิกภาพ)
+        var noMemberRight = MakeController(req, new HashSet<Guid> { a }, a, c);
+        Assert.Equal(403, Status((await noMemberRight.GetBalanceSheet(a, group.Id, D(2026, 3, 31))).Result));
+        Assert.Equal(403, Status((await noMemberRight.GetEliminations(a, group.Id, D(2026, 3, 31))).Result));
+        // เพิ่มสมาชิกที่ไม่มีสิทธิ์งบการเงินในบริษัทนั้น = 403
+        var (d, _) = await SeedCompanyAsync(db, "บริษัท D P2-10");
+        var addNoRight = MakeController(req, new HashSet<Guid> { a }, a, c, d);
+        Assert.Equal(403, Status((await addNoRight.AddMember(a, group.Id, new AddConsolidationMemberRequest(d, 100m, ConsolidationMethod.Full))).Result));
+        // ทิศตรงข้าม: มีสิทธิ์ครบทุกบริษัท = ได้งบ
+        var full = MakeController(req, new HashSet<Guid> { a, c }, a, c);
+        Assert.Equal(200, Status((await full.GetBalanceSheet(a, group.Id, D(2026, 3, 31))).Result));
     }
 }

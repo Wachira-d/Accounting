@@ -224,9 +224,9 @@ public class AdversarialExportRoundDbTests
             }).ToList(), "utf-8", ImportFileKind.Csv);
 
     /// <summary>ผังตั้งต้นของการลงบัญชีอัตโนมัติ — คิวรีเดียวกับ <c>DocumentService.FindAccountAsync</c> (prefix) ผ่าน
-    /// <see cref="PostingAccountGuard.DefaultPostingCandidates"/> (จุดเรียกถูกล็อกด้วย tools/required_call_site_check.py)</summary>
+    /// <see cref="PostingAccountGuard.DefaultFallbackCandidates"/> (รอบ 2 P1-3 · จุดเรียกถูกล็อกด้วย tools/required_call_site_check.py)</summary>
     private static Task<ChartOfAccount?> DefaultByPrefixAsync(AccountingDbContext db, Guid companyId, string prefix)
-        => db.ChartOfAccounts.DefaultPostingCandidates(db)
+        => db.ChartOfAccounts.DefaultFallbackCandidates(db)
             .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(prefix) && a.IsActive)
             .FirstOrDefaultAsync();
 

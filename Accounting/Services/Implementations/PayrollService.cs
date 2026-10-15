@@ -3030,7 +3030,7 @@ public class PayrollService : IPayrollService
                         : null)
                     ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode == "54111")
-                    ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+                    ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("541"));
                 if (salaryAccount != null)
                 {
@@ -3064,7 +3064,7 @@ public class PayrollService : IPayrollService
                 {
                     var acc = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                             a.CompanyId == companyId && a.AccountCode == exact)
-                        ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+                        ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
                             a.CompanyId == companyId && a.AccountCode.StartsWith(prefix)
                             && a.AccountName.Contains(nameContains));
                     return acc ?? throw new InvalidOperationException(
@@ -3129,7 +3129,7 @@ public class PayrollService : IPayrollService
                 if (loanDeductTotal > 0)
                 {
                     // ตัดลูกหนี้เงินกู้พนักงาน (asset) ถ้ามีผัง — ไม่มีก็รวมเข้าขาหักอื่น
-                    var loanAcc = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+                    var loanAcc = await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
                         a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                         && (a.AccountName.Contains("เงินกู้พนักงาน")
                             || a.AccountName.Contains("เงินให้กู้ยืมพนักงาน")
@@ -5241,7 +5241,7 @@ public class PayrollService : IPayrollService
         // 21815 ประกันสังคมค้างจ่าย (Cr ตอนจ่ายเงินเดือน) → ตอนนี้ Dr ล้างหนี้
         var ssoPayableAccount = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
             a.CompanyId == companyId && a.AccountCode == "21815")
-            ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+            ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode.StartsWith("218")
                 && a.AccountName.Contains("ประกันสังคม"))
             ?? throw new InvalidOperationException(
@@ -5270,11 +5270,11 @@ public class PayrollService : IPayrollService
             };
             if (lateFee > 0)
             {
-                var lateFeeAccount = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+                var lateFeeAccount = await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                     && a.AccountCode.StartsWith("54")
                     && (a.AccountName.Contains("เงินเพิ่ม") || a.AccountName.Contains("ค่าปรับ")))
-                    ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+                    ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
                         a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                         && a.AccountCode.StartsWith("58"));   // ค่าใช้จ่ายอื่น
                 if (lateFeeAccount != null)

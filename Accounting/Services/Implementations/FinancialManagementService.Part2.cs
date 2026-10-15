@@ -226,7 +226,7 @@ public partial class FinancialManagementService
         {
             var divPayableAcc = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == "22010")
-                ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
+                ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode.StartsWith("220"));
             var creditAcc = divPayableAcc ?? cashAcc;
             if (creditAcc != null)

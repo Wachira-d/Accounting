@@ -24,20 +24,49 @@ public static class ChartParentLinker
             .Select(a => new ChartNode(a.Id, a.AccountCode, a.AccountType, a.ParentAccountId, a.Level, a.IsSystemAccount))
             .ToListAsync(ct);
 
-    private static async Task<HashSet<Guid>> LoadPostedAccountIdsAsync(AccountingDbContext db, Guid companyId, CancellationToken ct)
-        => (await db.JournalEntryLines.AsNoTracking()
-                .Where(l => l.JournalEntry.CompanyId == companyId)
-                .Select(l => l.AccountId)
-                .Distinct()
-                .ToListAsync(ct))
-            .ToHashSet();
+    /// <summary>ผังที่ถูกใช้อยู่ (รายการบัญชี · ยอดยกมา · สินค้า/ผู้ติดต่อ/ค่าตั้ง/บัญชีธนาคารที่ปักผัง) — ตัวไล่ตัวเดียว <see cref="ChartAccountReferences"/>
+    /// (รอบ 2 P1-4: เดิมดูแค่บรรทัด JE ⇒ ผังที่มียอดยกมา/ถูกปักเป็นค่าตั้งถูกทำเป็นบัญชีคุมได้)
+    /// <para>ตรวจเฉพาะผังที่อาจถูกทำเป็นบัญชีแม่ (รหัสเป็นส่วนต้นของผังที่พิจารณา · ยังไม่มีลูก · ไม่ใช่ผังระบบ) + ผังที่พิจารณาเอง —
+    /// นำเข้าทีละแถวจึงไม่ไล่ทุกตารางทุกแถว</para></summary>
+    private static Task<HashSet<Guid>> LoadInUseAccountIdsAsync(AccountingDbContext db, Guid companyId,
+        IReadOnlyList<ChartNode> chart, IReadOnlyCollection<Guid> candidateIds, CancellationToken ct)
+    {
+        var withChildren = chart.Where(c => c.ParentId != null).Select(c => c.ParentId!.Value).ToHashSet();
+        var candidates = chart.Where(c => candidateIds.Contains(c.Id)).ToList();
+        var potential = chart
+            .Where(c => candidateIds.Contains(c.Id)
+                || (!c.IsSystem && !withChildren.Contains(c.Id)
+                    && candidates.Any(x => x.Type == c.Type && x.Code.Length > c.Code.Length && x.Code.StartsWith(c.Code, StringComparison.Ordinal))))
+            .Select(c => c.Id)
+            .ToList();
+        return ChartAccountReferences.ReferencedAccountIdsAsync(db, companyId, potential, ct);
+    }
+
+    private static AuditLog LinkAudit(Guid companyId, Guid? actorId, string actor, ChartOfAccount row, Guid? oldParentId, int oldLevel,
+        string action, string? parentCode)
+        => new()
+        {
+            CompanyId = companyId,
+            UserId = actorId,
+            EntityType = nameof(ChartOfAccount),
+            EntityId = row.Id.ToString(),
+            Action = AuditAction.Update,
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { accountCode = row.AccountCode, parentAccountId = oldParentId, level = oldLevel }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action, accountCode = row.AccountCode, parentAccountId = row.ParentAccountId, parentCode,
+                level = row.Level, ruleCode = ChartParentLink.RuleCode, by = actor,
+            }),
+            Timestamp = DateTime.UtcNow,
+        };
 
     /// <summary>
     /// ผูกบัญชีแม่ให้ผังที่เพิ่งสร้างจากการนำเข้า (ติดตามอยู่ใน context · ยังไม่บันทึกก็ได้) + รับผังเดิมที่ควรอยู่ใต้หัวบัญชีใหม่ ·
-    /// คืนคำเตือนของผังที่ผูกไม่ได้ (ให้ผู้เรียกแสดง — ไม่โยน)
+    /// คืนคำเตือนของผังที่ผูกไม่ได้ (ให้ผู้เรียกแสดง — ไม่โยน) · รอบ 2 P2-8: ผัง<b>เดิม</b>ที่ถูกย้ายแม่/ปรับระดับมี audit chain ทุกแถว
+    /// (ผังที่สร้างใหม่ได้แม่ตั้งแต่เกิด — ประวัติการสร้างอยู่ที่การนำเข้า) · ลูกหลานของผังที่ระดับเปลี่ยนปรับระดับตามทุกชั้น
     /// </summary>
     public static async Task<List<string>> LinkImportedAsync(AccountingDbContext db, Guid companyId,
-        IReadOnlyList<ChartOfAccount> created, CancellationToken ct = default)
+        IReadOnlyList<ChartOfAccount> created, CancellationToken ct = default, string? actor = null)
     {
         var warnings = new List<string>();
         if (created.Count == 0) return warnings;
@@ -45,14 +74,21 @@ public static class ChartParentLinker
         var createdIds = created.Select(c => c.Id).ToHashSet();
         chart.RemoveAll(c => createdIds.Contains(c.Id));
         chart.AddRange(created.Select(a => new ChartNode(a.Id, a.AccountCode, a.AccountType, a.ParentAccountId, a.Level, a.IsSystemAccount)));
-        var posted = await LoadPostedAccountIdsAsync(db, companyId, ct);
+        var inUse = await LoadInUseAccountIdsAsync(db, companyId, chart, createdIds, ct);
 
-        var plan = ChartParentLink.Plan(chart, createdIds, posted, allowRehome: true);
-        var toLoad = plan.Where(p => p.BlockedReason == null && !createdIds.Contains(p.AccountId)).Select(p => p.AccountId).ToList();
+        var plan = ChartParentLink.Plan(chart, createdIds, inUse, allowRehome: true);
+        var levels = ChartParentLink.Relevel(chart, plan);
+        var toLoad = plan.Where(p => p.BlockedReason == null).Select(p => p.AccountId)
+            .Concat(levels.Keys)
+            .Where(id => !createdIds.Contains(id))
+            .Distinct()
+            .ToList();
         var existing = toLoad.Count == 0
             ? new Dictionary<Guid, ChartOfAccount>()
             : await db.ChartOfAccounts.Where(a => a.CompanyId == companyId && toLoad.Contains(a.Id)).ToDictionaryAsync(a => a.Id, ct);
         var createdById = created.ToDictionary(c => c.Id);
+        var before = existing.Values.ToDictionary(a => a.Id, a => (a.ParentAccountId, a.Level));
+        var parentCodes = new Dictionary<Guid, string?>();
         foreach (var p in plan)
         {
             if (p.BlockedReason != null)
@@ -64,6 +100,22 @@ public static class ChartParentLinker
             if (target == null) continue;
             target.ParentAccountId = p.ParentId;
             target.Level = p.NewLevel;
+            parentCodes[target.Id] = p.ParentCode;
+        }
+        foreach (var (id, level) in levels)
+        {
+            var target = createdById.GetValueOrDefault(id) ?? existing.GetValueOrDefault(id);
+            if (target != null) target.Level = level;
+        }
+        Guid? actorId = Guid.TryParse(actor, out var uid) ? uid : null;
+        foreach (var row in existing.Values)
+        {
+            var (oldParent, oldLevel) = before[row.Id];
+            if (oldParent == row.ParentAccountId && oldLevel == row.Level) continue;
+            row.UpdatedBy = actor ?? row.UpdatedBy;
+            row.UpdatedAt = DateTime.UtcNow;
+            db.AddChainedAuditLog(LinkAudit(companyId, actorId, actor ?? "import", row, oldParent, oldLevel,
+                oldParent == row.ParentAccountId ? "coa-relevel" : "coa-parent-link-import", parentCodes.GetValueOrDefault(row.Id)));
         }
         return warnings;
     }
@@ -74,8 +126,8 @@ public static class ChartParentLinker
         var chart = await LoadChartAsync(db, companyId, ct);
         var candidates = chart.Where(c => c.ParentId == null && !c.IsSystem).Select(c => c.Id).ToList();
         if (candidates.Count == 0) return new List<ChartParentLinkSuspect>();
-        var posted = await LoadPostedAccountIdsAsync(db, companyId, ct);
-        var plan = ChartParentLink.Plan(chart, candidates, posted, allowRehome: false);
+        var inUse = await LoadInUseAccountIdsAsync(db, companyId, chart, candidates, ct);
+        var plan = ChartParentLink.Plan(chart, candidates, inUse, allowRehome: false);
         var names = await db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.CompanyId == companyId && candidates.Contains(a.Id))
             .ToDictionaryAsync(a => a.Id, a => a.AccountName, ct);
@@ -96,9 +148,9 @@ public static class ChartParentLinker
             new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.AccountCodeSequence, "parent-link") }, ct);
 
         var chart = await LoadChartAsync(db, companyId, ct);
-        var posted = await LoadPostedAccountIdsAsync(db, companyId, ct);
         var wanted = accountIds.ToHashSet();
-        var plan = ChartParentLink.Plan(chart, wanted, posted, allowRehome: false);
+        var inUse = await LoadInUseAccountIdsAsync(db, companyId, chart, wanted, ct);
+        var plan = ChartParentLink.Plan(chart, wanted, inUse, allowRehome: false);
         var skipped = new List<string>();
         foreach (var id in wanted.Where(w => plan.All(p => p.AccountId != w)))
         {
@@ -108,8 +160,12 @@ public static class ChartParentLinker
                 : node.IsSystem ? $"{node.Code}: ผังของแม่แบบระบบ — ไม่ย้าย"
                 : $"{node.Code}: ไม่มีผังรหัสต้นที่เป็นบัญชีแม่ได้");
         }
-        var ids = plan.Where(p => p.BlockedReason == null).Select(p => p.AccountId).ToList();
+        var linkable = plan.Where(p => p.BlockedReason == null).ToList();
+        // รอบ 2 P2-8: ลูกหลานของผังที่ผูก (เช่น หัวบัญชีนำเข้าที่มีลูกอยู่แล้ว) ปรับระดับตามทุกชั้น + audit
+        var levels = ChartParentLink.Relevel(chart, linkable);
+        var ids = linkable.Select(p => p.AccountId).Concat(levels.Keys).Distinct().ToList();
         var rows = await db.ChartOfAccounts.Where(a => a.CompanyId == companyId && ids.Contains(a.Id)).ToDictionaryAsync(a => a.Id, ct);
+        var linkedIds = new HashSet<Guid>();
         Guid? actorId = Guid.TryParse(actor, out var uid) ? uid : null;
         var linked = 0;
         foreach (var p in plan)
@@ -137,6 +193,16 @@ public static class ChartParentLinker
                 Timestamp = DateTime.UtcNow,
             });
             linked++;
+            linkedIds.Add(row.Id);
+        }
+        foreach (var (id, level) in levels)
+        {
+            if (linkedIds.Contains(id) || !rows.TryGetValue(id, out var row) || row.Level == level) continue;
+            var oldLevel = row.Level;
+            row.Level = level;
+            row.UpdatedBy = actor;
+            row.UpdatedAt = DateTime.UtcNow;
+            db.AddChainedAuditLog(LinkAudit(companyId, actorId, actor, row, row.ParentAccountId, oldLevel, "coa-relevel", null));
         }
         await db.SaveChangesAsync(ct);
         if (tx != null) await tx.CommitAsync(ct);

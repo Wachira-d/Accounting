@@ -189,7 +189,7 @@ public static class AdvisoryLockKey
     /// (IsDue ต้องตรงชั่วโมง = หายทั้งงวด) · ล็อกรวมเหลือไว้กันสองเครื่องเดินรอบพร้อมกันเท่านั้น</summary>
     public const string ScheduledReportSend = "sched-report";
 
-    /// <summary>ซ่อมยอดยกมาจากการปิดปี — part = "repair" ผูก companyId (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1 · <c>RepairOpeningRollAsync</c>):
-    /// สองคนกดซ่อมพร้อมกัน = audit ซ้ำ · xact lock เพราะการซ่อมอยู่ในธุรกรรมเดียว</summary>
+    /// <summary>ปิดปี · ยกยอดด้วยมือ · ซ่อมยอดยกมา — ผูก companyId · ใช้ผ่าน <c>OpeningRoll.LockKey</c> เท่านั้น (ฝ่ายค้านรอบส่งออก 2026-10-15
+    /// P1-1 + รอบ 2 P2-7: เดิมล็อกแค่การซ่อม ⇒ ปิดปี/ยกยอดด้วยมือพร้อมการซ่อมเขียนงวดเดียวกันทับกัน) · xact lock เพราะทุกทางอยู่ในธุรกรรมเดียว</summary>
     public const string OpeningRoll = "opening-roll";
 }

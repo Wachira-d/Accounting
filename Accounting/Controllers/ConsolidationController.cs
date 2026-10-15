@@ -1,3 +1,6 @@
+using Accounting.Filters;
+using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Consolidation;
 using Accounting.Models.Enums;
@@ -18,20 +21,38 @@ namespace Accounting.Controllers;
 /// ตอนนี้: กลุ่มต้องเป็นของบริษัทใน route (ไม่ใช่ = 404 เหมือนไม่มี) · บริษัทแม่ตอนสร้าง = บริษัทใน route ·
 /// บริษัทสมาชิกที่เพิ่ม/ที่ถูกอ่านในรายงาน ผู้ใช้ต้องผ่านด่านสมาชิกบริษัทนั้นด้วย (<see cref="ITenantGuard"/> ตัวเดียวกับ filter กลาง) —
 /// ตรวจตอนอ่านรายงานด้วย จึงครอบสมาชิกที่ถูกเพิ่มไว้ก่อนแก้ (ข้อมูลที่ persist แล้วไม่ต้อง migration)</para>
+///
+/// <para>═══ ด่านสิทธิ์ (ฝ่ายค้านรอบส่งออก 2026-10-15 รอบ 2 P2-10) ═══ เดิมไม่มีด่านสิทธิ์เลย — ผู้ใช้บทบาทใดก็ได้ของบริษัทแม่ (เช่น พนักงานขาย)
+/// เปิดงบรวมที่อ่านยอดบัญชีทั้งผังของทุกสมาชิก · ด่านสมาชิกดูแค่ "เป็นผู้ใช้ของบริษัท" · ตอนนี้ต้องมีสิทธิ์ <see cref="PermissionKeys.ReportsFinancial"/>
+/// ทั้ง<b>บริษัทใน route</b> (attribute + ตรวจซ้ำในตัว — เทสต์เรียกตรงได้) <b>และทุกบริษัทสมาชิก</b> (ตัวตัดสินสิทธิ์ตัวเดียว <see cref="IPermissionService"/>
+/// ของบริษัทนั้น/ผู้ใช้นั้น) · เพิ่มสมาชิกก็ต้องมีสิทธิ์นี้ในบริษัทที่จะเพิ่ม</para>
 /// </summary>
 [ApiController]
 [Route("api/companies/{companyId:guid}/consolidation")]
 [Authorize]
+[RequirePermission(PermissionKeys.ReportsFinancial)]
 public class ConsolidationController : ControllerBase
 {
     private readonly IConsolidationService _service;
     private readonly ITenantGuard _guard;
+    private readonly IPermissionService _permissions;
 
-    public ConsolidationController(IConsolidationService service, ITenantGuard guard)
+    public ConsolidationController(IConsolidationService service, ITenantGuard guard, IPermissionService permissions)
     {
         _service = service;
         _guard = guard;
+        _permissions = permissions;
     }
+
+    /// <summary>ผู้ใช้มีสิทธิ์งบการเงินในบริษัทนี้ไหม (ตัวตัดสินเดียวกับ <see cref="RequirePermissionAttribute"/>)</summary>
+    private Task<bool> CanReadFinancialsAsync(Guid companyId)
+        => _permissions.HasPermissionAsync(companyId, JwtHelper.GetUserIdFromClaims(User), PermissionKeys.ReportsFinancial);
+
+    private ObjectResult FinancialDenied(string? companyName = null) => StatusCode(403, new ApiResponse<object>(false,
+        new { requiredPermission = PermissionKeys.ReportsFinancial.Replace("perm:", "") },
+        companyName == null
+            ? PermissionKeys.DeniedMessage(PermissionKeys.ReportsFinancial)
+            : $"ดูงบรวมของกลุ่มนี้ไม่ได้ — คุณไม่มีสิทธิ์ \"งบการเงิน\" ในบริษัทสมาชิก \"{companyName}\" · ให้ผู้ดูแลบริษัทนั้นเพิ่มสิทธิ์ หรือเอาบริษัทนั้นออกจากกลุ่ม"));
 
     [HttpPost("groups")]
     public async Task<ActionResult<ApiResponse<ConsolidationGroupResponse>>> CreateGroup(Guid companyId, [FromBody] CreateConsolidationGroupRequest request)
@@ -71,11 +92,15 @@ public class ConsolidationController : ControllerBase
     [HttpPost("groups/{groupId:guid}/members")]
     public async Task<ActionResult<ApiResponse<ConsolidationGroupResponse>>> AddMember(Guid companyId, Guid groupId, [FromBody] AddConsolidationMemberRequest request)
     {
+        if (!await CanReadFinancialsAsync(companyId)) return FinancialDenied();
         if (await OwnedGroupAsync(companyId, groupId) == null) return GroupNotFound<ConsolidationGroupResponse>();
         var check = await _guard.CheckAsync(request.CompanyId, User);
         if (check.IsBlocked)
             return StatusCode(403, new ApiResponse<object>(false, null,
                 "เพิ่มบริษัทนี้เป็นสมาชิกไม่ได้ — คุณไม่ได้เป็นผู้ใช้ของบริษัทนั้น (งบรวมอ่านยอดบัญชีของสมาชิกทุกบริษัท)"));
+        if (!await CanReadFinancialsAsync(request.CompanyId))
+            return StatusCode(403, new ApiResponse<object>(false, null,
+                "เพิ่มบริษัทนี้เป็นสมาชิกไม่ได้ — คุณไม่มีสิทธิ์ \"งบการเงิน\" ในบริษัทนั้น (งบรวมอ่านยอดบัญชีของสมาชิกทุกบริษัท)"));
         return StatusCode(201, new ApiResponse<ConsolidationGroupResponse>(true, await _service.AddMemberAsync(groupId, request)));
     }
 
@@ -125,6 +150,7 @@ public class ConsolidationController : ControllerBase
     /// <summary>รายงานงบรวมอ่านยอดบัญชีของสมาชิกทุกบริษัท ⇒ ผู้ใช้ต้องเป็นสมาชิกของ <b>ทุก</b> บริษัทในกลุ่ม</summary>
     private async Task<ActionResult?> DenyUnlessReadableAsync(Guid companyId, Guid groupId)
     {
+        if (!await CanReadFinancialsAsync(companyId)) return FinancialDenied();
         var g = await OwnedGroupAsync(companyId, groupId);
         if (g == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบกลุ่มบริษัท"));
         foreach (var m in g.Members.Where(m => m.IsActive))
@@ -133,6 +159,8 @@ public class ConsolidationController : ControllerBase
             if (check.IsBlocked)
                 return StatusCode(403, new ApiResponse<object>(false, null,
                     $"ดูงบรวมของกลุ่มนี้ไม่ได้ — คุณไม่ได้เป็นผู้ใช้ของบริษัทสมาชิก \"{m.CompanyName}\" · ให้ผู้ดูแลบริษัทนั้นเพิ่มคุณ หรือเอาบริษัทนั้นออกจากกลุ่ม"));
+            // รอบ 2 P2-10: สมาชิกภาพอย่างเดียวไม่พอ — ต้องมีสิทธิ์งบการเงินในบริษัทสมาชิกนั้นด้วย
+            if (!await CanReadFinancialsAsync(m.CompanyId)) return FinancialDenied(m.CompanyName);
         }
         return null;
     }

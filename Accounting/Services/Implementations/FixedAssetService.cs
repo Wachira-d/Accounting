@@ -1354,7 +1354,7 @@ public class FixedAssetService : IFixedAssetService
     {
         return await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
+            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).WhereGeneralPurpose(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.IsActive)
                 .OrderByDefaultPreference()
                 .FirstOrDefaultAsync();

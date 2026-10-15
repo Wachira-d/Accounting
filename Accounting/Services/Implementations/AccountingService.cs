@@ -1394,6 +1394,7 @@ public partial class AccountingService : IAccountingService
 
         // ตัวกรองชุดเดียวกับงบทดลอง (ฝ่ายค้านรอบส่งออก 2026-10-15 P2-6 · ResolveLedgerFilterAsync) — เดิมบัญชีแยกประเภทแปลงสาขาเป็นมิติ
         // แล้วกรอง "สาขา และ มิติของสาขา" ขณะที่งบทดลองกรอง "สาขา" อย่างเดียวและไม่ดูการปันส่วนมิติ ⇒ ยอดยกไปสองรายงานไม่ต่อกัน
+        // · รอบ 2 P2-5: ยอดของบรรทัดที่ปันส่วน = ส่วนที่ปันเข้าตัวกรอง (Helpers/LedgerFilterRule — ไม่ใช่เต็มบรรทัดในทุกมิติ)
         var filter = await ResolveLedgerFilterAsync(companyId, accountId, projectId, branchId, dimensionId);
 
         // Query posted + reversed entry IDs. Reversed entries are historically valid
@@ -1406,17 +1407,8 @@ public partial class AccountingService : IAccountingService
                 && j.EntryDate < toDateEnd)
             .Select(j => j.Id);
 
-        // Get all lines for posted entries, joined with accounts
-        var lineQuery = ApplyLedgerLineFilters(_db.JournalEntryLines
-            .Include(l => l.Account)
-            .Include(l => l.JournalEntry)
-            .Where(l => postedEntryIds.Contains(l.JournalEntryId)), filter);
-
-        var lines = await lineQuery
-            .OrderBy(l => l.Account!.AccountCode)
-            .ThenBy(l => l.JournalEntry.EntryDate)
-            .ThenBy(l => l.JournalEntry.EntryNumber)
-            .ToListAsync();
+        // บรรทัดในช่วง (ช่วงจำกัด — ดึงเป็นแถวได้) ผ่านตัวกรองชุดเดียว: บรรทัดเต็มจำนวน + ส่วนที่ปันเข้าตัวกรอง
+        var lines = await LoadLedgerSliceAsync(_db.JournalEntryLines.Where(l => postedEntryIds.Contains(l.JournalEntryId)), filter);
 
         // ═══ ยอดยกมา ═══ (2026-10-14 ทีม X3 · erp-review/2026-10-14/EXPORT_AUDIT.md §X3)
         // เดิม (1) ยอดยกมา **ไม่กรองโครงการ/สาขา/มิติ** ขณะที่รายการเคลื่อนไหวกรอง ⇒ เลือกสาขาแล้ว "ยอดคงเหลือ"
@@ -1437,29 +1429,26 @@ public partial class AccountingService : IAccountingService
                 && (!anchorStart.HasValue || j.EntryDate >= anchorStart.Value))
             .Select(j => j.Id);
 
-        // P4: รวมยอดยกมา **ในฐานข้อมูล** ไม่ใช่ดึงทุกบรรทัดมารวมในหน่วยความจำ —
-        // เดิม `.ToListAsync()` ดึง JournalEntryLine **ทั้งหมดตั้งแต่เปิดบริษัท**
-        // (ไม่มีตัวกรองวันที่ล่าง) เข้า RAM เมื่อผู้ใช้ไม่ได้เลือกบัญชีเจาะจง ⇒
-        // บริษัทที่ใช้มา 2-3 ปีมีหลายแสนบรรทัด = ช้า/OOM ทั้งที่ต้องการแค่ยอด
-        // สุทธิต่อบัญชี (1 แถว/บัญชี). GroupBy+Sum แปลเป็น SQL ได้ตรง ๆ
-        var openingLineQuery = ApplyLedgerLineFilters(_db.JournalEntryLines
-            .Where(l => openingEntryIds.Contains(l.JournalEntryId)), filter);
-
-        var openingAgg = await openingLineQuery
-            .GroupBy(l => l.AccountId)
-            .Select(g => new
-            {
-                AccountId = g.Key,
-                Debit = g.Sum(x => x.DebitAmount),
-                Credit = g.Sum(x => x.CreditAmount),
-            })
-            .ToListAsync();
+        // P4: รวมยอดยกมา **ในฐานข้อมูล** ไม่ใช่ดึงทุกบรรทัดมารวมในหน่วยความจำ (SumLedgerAsync = GroupBy+Sum ในฐาน + ส่วนที่ปัน)
+        // รอบ 2 P2-5: กรอง ⇒ รายได้/ค่าใช้จ่ายเริ่มที่ต้นรอบบัญชีของวันเริ่มช่วง (เท่างบทดลองแบบกรอง — ใบปิดปีไม่มีสาขา จึงไม่ล้างยอดของสาขา)
+        var openingBase = _db.JournalEntryLines.Where(l => openingEntryIds.Contains(l.JournalEntryId));
+        var notes = new List<string>();
+        if (filter.Filtered)
+        {
+            var startMonth = await FiscalStartMonthAsync(companyId);
+            var pnlFrom = Accounting.Helpers.LedgerFilterRule.PnlWindowStart(fromDateStart, startMonth);
+            openingBase = openingBase.Where(l => (l.Account.AccountType != AccountType.Revenue && l.Account.AccountType != AccountType.Expense)
+                || l.JournalEntry.EntryDate >= pnlFrom);
+            var lastFyStart = Accounting.Helpers.LedgerFilterRule.PnlWindowStart(toDate.Date, startMonth);
+            if (lastFyStart > fromDateStart)
+                notes.Add(Accounting.Helpers.LedgerFilterRule.CrossesFiscalYearNote(lastFyStart));
+        }
 
         var openingGross = new Dictionary<Guid, (decimal Debit, decimal Credit)>(baseline);
-        foreach (var x in openingAgg)
+        foreach (var (accId, amount) in await SumLedgerAsync(openingBase, filter))
         {
-            (decimal Debit, decimal Credit) cur = openingGross.TryGetValue(x.AccountId, out var found) ? found : (0m, 0m);
-            openingGross[x.AccountId] = (cur.Debit + x.Debit, cur.Credit + x.Credit);
+            (decimal Debit, decimal Credit) cur = openingGross.TryGetValue(accId, out var found) ? found : (0m, 0m);
+            openingGross[accId] = (cur.Debit + amount.Debit, cur.Credit + amount.Credit);
         }
 
         // ข้อมูลบัญชีของทุกบัญชีที่มียอดยกมา (บัญชีที่ไม่มีรายการเคลื่อนไหวในช่วงก็ต้องแสดง — เดิมหายจากรายงาน)
@@ -1488,7 +1477,7 @@ public partial class AccountingService : IAccountingService
             var runningBalance = opening;
 
             var transactions = new List<GeneralLedgerTransaction>();
-            foreach (var l in g.OrderBy(l => l.JournalEntry.EntryDate).ThenBy(l => l.JournalEntry.EntryNumber))
+            foreach (var l in g.OrderBy(l => l.JournalEntry.EntryDate).ThenBy(l => l.JournalEntry.EntryNumber).ThenBy(l => l.Id))
             {
                 runningBalance += isDebitNormal ? (l.DebitAmount - l.CreditAmount) : (l.CreditAmount - l.DebitAmount);
                 transactions.Add(new GeneralLedgerTransaction(
@@ -1524,7 +1513,6 @@ public partial class AccountingService : IAccountingService
 
         // ยอดยกมาที่นำเข้า (ย้ายระบบ · OpeningRoll.IsImported — ยอดจากการปิดปีต่อเนื่องกับรายการอยู่แล้ว) ที่เริ่ม "กลางช่วง" — งบทดลอง ณ สิ้นช่วงใช้ยอดนั้นเป็นฐาน แต่บัญชีแยกประเภทเริ่มก่อนฐาน ⇒ ยอดยกไปต่างกันได้
         // บอกให้เห็นบนหน้า/ไฟล์ (คู่กับคอลัมน์ "ผลต่างความต่อเนื่อง" ของงบทดลอง) ไม่กลบด้วยการแต่งรายการ
-        var notes = new List<string>();
         if (!filter.Filtered)
         {
             var inside = await (
@@ -1548,15 +1536,21 @@ public partial class AccountingService : IAccountingService
             + "แต่บัญชีแยกประเภทช่วงนี้นับรายการต่อเนื่องจากก่อนวันนั้น ⇒ ยอดยกไปอาจไม่เท่างบทดลอง · "
             + $"เลือกวันเริ่มตั้งแต่ {Accounting.Helpers.ThaiDate.ToThaiDisplayString(anchorStart)} เพื่อให้ตรงกับงบทดลอง";
 
-    // ═══ ตัวกรองบรรทัด + ฐานยอดยกมาของรายงานบัญชี — เจ้าของเดียว (ฝ่ายค้านรอบส่งออก 2026-10-15 P2-6) ═══
+    // ═══ ตัวกรองบรรทัด + ฐานยอดยกมาของรายงานบัญชี — เจ้าของเดียว (ฝ่ายค้านรอบส่งออก 2026-10-15 P2-6 · รอบ 2 P2-5 Helpers/LedgerFilterRule) ═══
     // บัญชีแยกประเภท · งบทดลอง (→ งบดุล) · งบกำไรขาดทุน · งบกระแสเงินสด · ยอด ณ วันที่ ใช้ชุดนี้ชุดเดียว (ห้ามเขียนเงื่อนไขสาขา/มิติเอง)
 
-    /// <summary>ตัวกรองที่ตีความแล้ว — สาขาที่ผูกมิติ (<c>Branch.DimensionId</c>) = รายการของสาขานั้น <b>หรือ</b> ที่ติดมิติของสาขา</summary>
+    /// <summary>ตัวกรองที่ตีความแล้ว — สาขาที่ผูกมิติ (<c>Branch.DimensionId</c>) = รายการของสาขานั้น <b>หรือ</b> ที่ติดมิติของสาขา (บรรทัดที่ไม่มีสาขา)</summary>
     private sealed record LedgerFilter(Guid? AccountId, Guid? ProjectId, Guid? BranchId, Guid? BranchDimensionId, Guid? DimensionId)
     {
         /// <summary>กรองสาขา/โครงการ/มิติ ⇒ ไม่ใช้ฐานยอดยกมานำเข้า (ยอดนำเข้าไม่มีสาขา/โครงการ — บวกทั้งก้อนเข้าสาขาเดียว = ผิด)</summary>
         public bool Filtered => ProjectId.HasValue || BranchId.HasValue || DimensionId.HasValue;
+
+        /// <summary>มิติที่แถวปันส่วน (JournalLineDimension) ตัดสินยอด — กรองมิติ = มิตินั้น · กรองสาขาอย่างเดียว = มิติของสาขา (LedgerFilterRule ข้อ 2–3)</summary>
+        public Guid? AllocationDimensionId => DimensionId ?? (BranchId.HasValue ? BranchDimensionId : null);
     }
+
+    /// <summary>ส่วนของบรรทัดที่ปันเข้าตัวกรอง (คำนวณด้วย <see cref="Accounting.Helpers.LedgerFilterRule.AllocationShare"/>)</summary>
+    private sealed record LedgerAllocationPart(Guid LineId, Guid AccountId, decimal Debit, decimal Credit);
 
     private async Task<LedgerFilter> ResolveLedgerFilterAsync(Guid companyId, Guid? accountId, Guid? projectId, Guid? branchId, Guid? dimensionId)
     {
@@ -1568,6 +1562,10 @@ public partial class AccountingService : IAccountingService
                 .FirstOrDefaultAsync();
         return new LedgerFilter(accountId, projectId, branchId, branchDim, dimensionId);
     }
+
+    /// <summary>เดือนเริ่มรอบบัญชีของบริษัท (ค่าดิบ — <see cref="Accounting.Helpers.FiscalYear"/> ตีความค่า 0/นอกช่วงเป็นปีปฏิทิน)</summary>
+    private Task<int> FiscalStartMonthAsync(Guid companyId)
+        => _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
 
     /// <summary>ฐานยอดยกมา ณ <paramref name="onOrBefore"/>: งวดล่าสุดที่มีแถวยอดยกมาและเริ่มไม่หลังวันนั้น + ยอดต่อบัญชี ·
     /// กรองมิติใด ⇒ ไม่มีฐาน (รายการตั้งแต่เปิดบริษัทที่ผ่านตัวกรอง)</summary>
@@ -1598,10 +1596,8 @@ public partial class AccountingService : IAccountingService
         return (anchor.StartDate, baseline);
     }
 
-    /// <summary>ตัวกรองบรรทัดของรายงานบัญชี — ใช้ <b>ชุดเดียวกัน</b> ทั้งรายการเคลื่อนไหวและยอดยกมา และทุกรายงาน (GL · งบทดลอง · P&amp;L ·
-    /// กระแสเงินสด) · บัญชี · โครงการ (บรรทัดหรือหัวใบ) · สาขา (บรรทัดหรือหัวใบ <b>หรือ</b> มิติของสาขา) ·
-    /// มิติ (การปันส่วน JournalLineDimension หรือบรรทัด/หัวใบ)</summary>
-    private IQueryable<JournalEntryLine> ApplyLedgerLineFilters(IQueryable<JournalEntryLine> q, LedgerFilter f)
+    /// <summary>บัญชี + โครงการ (บรรทัดหรือหัวใบ) — ส่วนร่วมของบรรทัดเต็มจำนวนและบรรทัดที่ปันส่วน</summary>
+    private static IQueryable<JournalEntryLine> ApplyLedgerAccountProjectFilters(IQueryable<JournalEntryLine> q, LedgerFilter f)
     {
         if (f.AccountId.HasValue)
         {
@@ -1613,28 +1609,117 @@ public partial class AccountingService : IAccountingService
             var projectId = f.ProjectId.Value;
             q = q.Where(l => l.ProjectId == projectId || l.JournalEntry.ProjectId == projectId);
         }
-        if (f.BranchId.HasValue)
+        return q;
+    }
+
+    /// <summary>กรองทั้งมิติและสาขา: สาขาเป็นตัวคัดเข้า — สาขาของบรรทัด (บรรทัด ?? หัวใบ) ตรง หรือไม่มีสาขาแต่ติด/ปันเข้ามิติของสาขา</summary>
+    private IQueryable<JournalEntryLine> ApplyLedgerBranchInclusion(IQueryable<JournalEntryLine> q, LedgerFilter f)
+    {
+        if (!f.BranchId.HasValue) return q;
+        var branchId = f.BranchId.Value;
+        if (!f.BranchDimensionId.HasValue)
+            return q.Where(l => (l.BranchId ?? l.JournalEntry.BranchId) == branchId);
+        var bd = f.BranchDimensionId.Value;
+        var allocations = _db.Set<JournalLineDimension>();
+        return q.Where(l => (l.BranchId ?? l.JournalEntry.BranchId) == branchId
+            || ((l.BranchId ?? l.JournalEntry.BranchId) == null
+                && (allocations.Any(a => a.JournalEntryLineId == l.Id && a.DimensionId == bd)
+                    || l.DimensionId == bd || l.JournalEntry.DimensionId == bd)));
+    }
+
+    /// <summary>บรรทัดที่นับ <b>เต็มจำนวน</b> ภายใต้ตัวกรอง (Helpers/LedgerFilterRule) — ใช้ร่วมทุกรายงาน · บรรทัดที่มีแถวปันส่วนของมิติที่กรอง
+    /// มาทาง <see cref="LoadAllocationSharesAsync"/> (ตามสัดส่วน) สองชุดไม่ทับกัน · สาขา = <c>l.BranchId ?? หัวใบ</c> (บรรทัดที่มีสาขานับในสาขานั้นสาขาเดียว)</summary>
+    private IQueryable<JournalEntryLine> ApplyLedgerLineFilters(IQueryable<JournalEntryLine> q, LedgerFilter f)
+    {
+        q = ApplyLedgerAccountProjectFilters(q, f);
+        var allocations = _db.Set<JournalLineDimension>();
+        if (f.DimensionId.HasValue)
+        {
+            var dimId = f.DimensionId.Value;
+            q = q.Where(l => !allocations.Any(a => a.JournalEntryLineId == l.Id)
+                && (l.DimensionId == dimId || l.JournalEntry.DimensionId == dimId));
+            q = ApplyLedgerBranchInclusion(q, f);
+        }
+        else if (f.BranchId.HasValue)
         {
             var branchId = f.BranchId.Value;
             if (f.BranchDimensionId.HasValue)
             {
                 var bd = f.BranchDimensionId.Value;
-                var branchDimLineIds = _db.Set<JournalLineDimension>().Where(d => d.DimensionId == bd).Select(d => d.JournalEntryLineId);
-                q = q.Where(l => l.BranchId == branchId || l.JournalEntry.BranchId == branchId
-                    || branchDimLineIds.Contains(l.Id) || l.DimensionId == bd || l.JournalEntry.DimensionId == bd);
+                q = q.Where(l => (l.BranchId ?? l.JournalEntry.BranchId) == branchId
+                    || ((l.BranchId ?? l.JournalEntry.BranchId) == null
+                        && !allocations.Any(a => a.JournalEntryLineId == l.Id)
+                        && (l.DimensionId == bd || l.JournalEntry.DimensionId == bd)));
             }
             else
-                q = q.Where(l => l.BranchId == branchId || l.JournalEntry.BranchId == branchId);
-        }
-        if (f.DimensionId.HasValue)
-        {
-            var dimId = f.DimensionId.Value;
-            var dimLineIds = _db.Set<JournalLineDimension>()
-                .Where(d => d.DimensionId == dimId)
-                .Select(d => d.JournalEntryLineId);
-            q = q.Where(l => dimLineIds.Contains(l.Id) || l.DimensionId == dimId || l.JournalEntry.DimensionId == dimId);
+                q = q.Where(l => (l.BranchId ?? l.JournalEntry.BranchId) == branchId);
         }
         return q;
+    }
+
+    /// <summary>ส่วนของบรรทัดที่ปันเข้ามิติของตัวกรอง (เฉพาะแถวปันส่วนของมิตินั้น — ไม่ใช่ทั้งสมุด) · กรองสาขาอย่างเดียว = เฉพาะบรรทัดที่ไม่มีสาขา ·
+    /// สัดส่วนคิดด้วย <see cref="Accounting.Helpers.LedgerFilterRule.AllocationShare"/> ตัวเดียวกับรายงานกำไรขาดทุนตามมิติ</summary>
+    private async Task<List<LedgerAllocationPart>> LoadAllocationSharesAsync(IQueryable<JournalEntryLine> baseLines, LedgerFilter f)
+    {
+        if (f.AllocationDimensionId is not Guid dim) return new List<LedgerAllocationPart>();
+        var lines = ApplyLedgerAccountProjectFilters(baseLines, f);
+        lines = f.DimensionId.HasValue
+            ? ApplyLedgerBranchInclusion(lines, f)
+            : lines.Where(l => (l.BranchId ?? l.JournalEntry.BranchId) == null);
+        var rows = await (
+            from a in _db.Set<JournalLineDimension>().AsNoTracking()
+            join l in lines on a.JournalEntryLineId equals l.Id
+            where a.DimensionId == dim
+            select new { LineId = l.Id, l.AccountId, l.DebitAmount, l.CreditAmount, a.AllocatedAmount, a.AllocatedPercent }
+        ).ToListAsync();
+        return rows.Select(r =>
+        {
+            var (debit, credit) = Accounting.Helpers.LedgerFilterRule.AllocationShare(r.DebitAmount, r.CreditAmount, r.AllocatedAmount, r.AllocatedPercent);
+            return new LedgerAllocationPart(r.LineId, r.AccountId, debit, credit);
+        }).ToList();
+    }
+
+    /// <summary>ยอดรวมต่อบัญชีภายใต้ตัวกรอง — บรรทัดเต็มจำนวนรวมในฐานข้อมูล (GroupBy+Sum) + ส่วนที่ปัน · ไม่ดึงทุกบรรทัดเข้าหน่วยความจำ</summary>
+    private async Task<Dictionary<Guid, (decimal Debit, decimal Credit)>> SumLedgerAsync(IQueryable<JournalEntryLine> baseLines, LedgerFilter f)
+    {
+        var result = (await ApplyLedgerLineFilters(baseLines, f)
+                .GroupBy(l => l.AccountId)
+                .Select(g => new { AccountId = g.Key, Debit = g.Sum(x => x.DebitAmount), Credit = g.Sum(x => x.CreditAmount) })
+                .ToListAsync())
+            .ToDictionary(x => x.AccountId, x => (x.Debit, x.Credit));
+        foreach (var part in await LoadAllocationSharesAsync(baseLines, f))
+        {
+            result.TryGetValue(part.AccountId, out var cur);
+            result[part.AccountId] = (cur.Debit + part.Debit, cur.Credit + part.Credit);
+        }
+        return result;
+    }
+
+    /// <summary>บรรทัด (พร้อมผังและหัวใบ · ไม่ติดตาม) ของช่วงที่จำกัดแล้ว ภายใต้ตัวกรอง — บรรทัดที่ปันส่วนถูกแทนยอดด้วยส่วนที่ปันเข้าตัวกรอง
+    /// (instance แบบ AsNoTracking — ไม่มีวันถูกบันทึกกลับ) · ใช้กับรายงานที่ต้องเห็นรายบรรทัด (บัญชีแยกประเภท · งบกระแสเงินสด)</summary>
+    private async Task<List<JournalEntryLine>> LoadLedgerSliceAsync(IQueryable<JournalEntryLine> baseLines, LedgerFilter f)
+    {
+        var lines = await ApplyLedgerLineFilters(baseLines, f)
+            .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
+            .AsNoTracking()
+            .ToListAsync();
+        var parts = await LoadAllocationSharesAsync(baseLines, f);
+        if (parts.Count == 0) return lines;
+        var ids = parts.Select(p => p.LineId).Distinct().ToList();
+        var allocated = await _db.JournalEntryLines.AsNoTracking()
+            .Include(l => l.Account)
+            .Include(l => l.JournalEntry)
+            .Where(l => ids.Contains(l.Id))
+            .ToDictionaryAsync(l => l.Id);
+        foreach (var g in parts.GroupBy(p => p.LineId))
+        {
+            if (!allocated.TryGetValue(g.Key, out var line)) continue;
+            line.DebitAmount = g.Sum(p => p.Debit);
+            line.CreditAmount = g.Sum(p => p.Credit);
+            lines.Add(line);
+        }
+        return lines;
     }
 
     public async Task<object> GetGlDebugAsync(Guid companyId, DateTime? fromDate = null, DateTime? toDate = null)
@@ -1996,8 +2081,8 @@ public partial class AccountingService : IAccountingService
     {
         // Pick the OpeningBalance baseline anchored to the most recent fiscal
         // period that has begun on/before asOfDate. RollOpeningBalancesAsync
-        // stores compounded balances (year N+1 opening = year N opening +
-        // year N net movements), so reading the latest one and adding the
+        // stores the year-end trial balance (A/L/E only — P&L folded into RE ·
+        // Helpers/OpeningRoll), so reading the latest one and adding the
         // movements within its period up to asOfDate yields the correct
         // closing balance — and crucially, picks up balances imported via the
         // migration wizard that have no inception JE history. When no opening
@@ -2021,51 +2106,52 @@ public partial class AccountingService : IAccountingService
                 && j.EntryDate < asOf
                 && (!movementStart.HasValue || j.EntryDate >= movementStart.Value))
             .Select(j => j.Id);
+        var baseLines = _db.JournalEntryLines.Where(l => postedEntryIds.Contains(l.JournalEntryId));
 
-        var lineQuery = ApplyLedgerLineFilters(_db.JournalEntryLines
-            .Include(l => l.Account)
-            .Include(l => l.JournalEntry)
-            .Where(l => postedEntryIds.Contains(l.JournalEntryId)), filter);
-
-        var postedLines = await lineQuery.ToListAsync();
+        // ═══ รอบ 2 P2-5 (Helpers/LedgerFilterRule) ═══ รวมยอดในฐานข้อมูล (เดิม ToList ทุกบรรทัดตั้งแต่เปิดบริษัทเมื่อกรอง) ·
+        // กรอง ⇒ รายได้/ค่าใช้จ่ายเริ่มที่ต้นรอบบัญชี (ใบปิดปีไม่มีสาขา ⇒ เดิมยอดของสาขาสะสมข้ามปี) + กำไรขาดทุนรอบก่อนเป็นแถวทุนแถวเดียว ⇒ ลงตัว ·
+        // ไม่กรอง ⇒ ตัวเลขเดิมทุกตัว
+        Dictionary<Guid, (decimal Debit, decimal Credit)> movements;
+        decimal priorPnlNetDebit = 0m;
+        if (filter.Filtered)
+        {
+            var pnlFrom = Accounting.Helpers.LedgerFilterRule.PnlWindowStart(asOfDate.Date, await FiscalStartMonthAsync(companyId));
+            movements = await SumLedgerAsync(baseLines.Where(l =>
+                (l.Account.AccountType != AccountType.Revenue && l.Account.AccountType != AccountType.Expense)
+                || l.JournalEntry.EntryDate >= pnlFrom), filter);
+            var prior = await SumLedgerAsync(baseLines.Where(l =>
+                (l.Account.AccountType == AccountType.Revenue || l.Account.AccountType == AccountType.Expense)
+                && l.JournalEntry.EntryDate < pnlFrom), filter);
+            priorPnlNetDebit = prior.Values.Sum(v => v.Debit - v.Credit);
+        }
+        else
+            movements = await SumLedgerAsync(baseLines, filter);
 
         // Merge movements with the OpeningBalance baseline — every account that
         // either has an opening row or saw movement in the window appears.
-        var byAccount = postedLines
-            .Where(l => l.Account != null)
-            .GroupBy(l => new { l.AccountId, l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType })
-            .ToDictionary(g => g.Key, g => (Debit: g.Sum(l => l.DebitAmount), Credit: g.Sum(l => l.CreditAmount)));
-
-        // For accounts that have opening but no movement, fetch their COA detail
-        // so they still appear in the report (otherwise the opening balance
-        // would be silently dropped).
-        var openingOnlyAccountIds = openingByAccount.Keys
-            .Where(aid => !byAccount.Keys.Any(k => k.AccountId == aid)).ToList();
-        var coaDetail = new List<(Guid AccountId, string AccountCode, string AccountName, AccountType AccountType)>();
-        if (openingOnlyAccountIds.Count > 0)
-        {
-            var rows = await _db.ChartOfAccounts.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && openingOnlyAccountIds.Contains(a.Id))
-                .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.AccountType })
-                .ToListAsync();
-            coaDetail = rows.Select(a => (a.Id, a.AccountCode, a.AccountName, a.AccountType)).ToList();
-        }
+        var accountIds = movements.Keys.Union(openingByAccount.Keys).ToList();
+        var coa = accountIds.Count == 0
+            ? new List<(Guid Id, string AccountCode, string AccountName, AccountType AccountType)>()
+            : (await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && accountIds.Contains(a.Id))
+                    .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.AccountType })
+                    .ToListAsync())
+                .Select(a => (a.Id, a.AccountCode, a.AccountName, a.AccountType))
+                .ToList();
 
         var items = new List<TrialBalanceItem>();
-        foreach (var (key, value) in byAccount)
+        foreach (var (accountId, code, name, type) in coa)
         {
-            var (od, oc) = openingByAccount.TryGetValue(key.AccountId, out var ob) ? ob : (0m, 0m);
-            items.Add(new TrialBalanceItem(
-                key.AccountCode, key.AccountName, key.AccountType, (int)key.AccountType,
-                value.Debit + od, value.Credit + oc));
-        }
-        foreach (var (accountId, code, name, type) in coaDetail)
-        {
-            var (od, oc) = openingByAccount[accountId];
-            items.Add(new TrialBalanceItem(code, name, type, (int)type, od, oc));
+            movements.TryGetValue(accountId, out var mv);
+            openingByAccount.TryGetValue(accountId, out var ob);
+            items.Add(new TrialBalanceItem(code, name, type, (int)type, mv.Debit + ob.Debit, mv.Credit + ob.Credit));
         }
 
         var grouped = items.OrderBy(i => i.AccountCode).ToList();
+        // กำไร(ขาดทุน)ของรอบก่อน ๆ ของตัวกรอง — ไม่มีผัง (ใบปิดปีโอนเข้ากำไรสะสมทั้งบริษัท ไม่มีสาขา) · ขาดทุน = เดบิต
+        if (priorPnlNetDebit != 0m)
+            grouped.Add(new TrialBalanceItem("", Accounting.Helpers.LedgerFilterRule.PriorPnlRowName, AccountType.Equity, (int)AccountType.Equity,
+                priorPnlNetDebit > 0m ? priorPnlNetDebit : 0m, priorPnlNetDebit < 0m ? -priorPnlNetDebit : 0m));
 
         return new TrialBalanceResponse(
             asOfDate, grouped,
@@ -2142,28 +2228,27 @@ public partial class AccountingService : IAccountingService
                 && j.EntryDate < toDate.Date.AddDays(1))
             .Select(j => j.Id);
 
-        var lineQuery = _db.JournalEntryLines
-            .Include(l => l.Account)
-            .Include(l => l.JournalEntry)
+        var baseLines = _db.JournalEntryLines
             .Where(l => postedEntryIds.Contains(l.JournalEntryId)
                 && (l.Account!.AccountType == AccountType.Revenue || l.Account!.AccountType == AccountType.Expense));
-        // ตัวกรองสาขา/มิติ/โครงการชุดเดียวกับงบทดลอง/บัญชีแยกประเภท (P2-6)
-        lineQuery = ApplyLedgerLineFilters(lineQuery,
+        // ตัวกรองสาขา/มิติ/โครงการชุดเดียวกับงบทดลอง/บัญชีแยกประเภท (P2-6) · รอบ 2 P2-5: ส่วนที่ปันเข้ามิติตามสัดส่วน (เท่ารายงานกำไรขาดทุนตามมิติ)
+        // + รวมยอดในฐานข้อมูล (เดิม ToList ทุกบรรทัดในช่วง)
+        var sums = await SumLedgerAsync(baseLines,
             await ResolveLedgerFilterAsync(companyId, null, projectId, branchId, dimensionId));
 
-        var postedLines = await lineQuery.ToListAsync();
+        var ids = sums.Keys.ToList();
+        var coa = ids.Count == 0
+            ? new List<ChartOfAccount>()
+            : await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && ids.Contains(a.Id))
+                .ToListAsync();
 
-        var grouped = postedLines
-            .Where(l => l.Account != null)
-            .GroupBy(l => new { l.Account.AccountCode, l.Account.AccountName, l.Account.AccountType })
-            .ToList();
-
-        var revenue = grouped.Where(g => g.Key.AccountType == AccountType.Revenue)
-            .Select(g => new PnlSection(g.Key.AccountCode, g.Key.AccountName, g.Sum(l => l.CreditAmount - l.DebitAmount)))
+        var revenue = coa.Where(a => a.AccountType == AccountType.Revenue)
+            .Select(a => new PnlSection(a.AccountCode, a.AccountName, sums[a.Id].Credit - sums[a.Id].Debit))
             .OrderBy(r => r.AccountCode).ToList();
 
-        var expenses = grouped.Where(g => g.Key.AccountType == AccountType.Expense)
-            .Select(g => new PnlSection(g.Key.AccountCode, g.Key.AccountName, g.Sum(l => l.DebitAmount - l.CreditAmount)))
+        var expenses = coa.Where(a => a.AccountType == AccountType.Expense)
+            .Select(a => new PnlSection(a.AccountCode, a.AccountName, sums[a.Id].Debit - sums[a.Id].Credit))
             .OrderBy(e => e.AccountCode).ToList();
 
         var totalRevenue = revenue.Sum(r => r.Amount);
@@ -2188,15 +2273,9 @@ public partial class AccountingService : IAccountingService
                 && j.EntryDate < toDate.Date.AddDays(1))
             .Select(j => j.Id);
 
-        var lineQuery = _db.JournalEntryLines
-            .Include(l => l.Account)
-            .Include(l => l.JournalEntry)
-            .Where(l => postedEntryIds.Contains(l.JournalEntryId));
-        // ตัวกรองสาขา/มิติ/โครงการชุดเดียวกับงบทดลอง/บัญชีแยกประเภท (P2-6)
-        lineQuery = ApplyLedgerLineFilters(lineQuery,
+        // ตัวกรองสาขา/มิติ/โครงการชุดเดียวกับงบทดลอง/บัญชีแยกประเภท (P2-6) · รอบ 2 P2-5: บรรทัดที่ปันส่วน = ส่วนที่ปันเข้าตัวกรอง (LoadLedgerSliceAsync)
+        var allLines = await LoadLedgerSliceAsync(_db.JournalEntryLines.Where(l => postedEntryIds.Contains(l.JournalEntryId)),
             await ResolveLedgerFilterAsync(companyId, null, projectId, branchId, dimensionId));
-
-        var allLines = await lineQuery.ToListAsync();
 
         var postedLines = allLines.Where(l => l.Account != null).ToList();
 

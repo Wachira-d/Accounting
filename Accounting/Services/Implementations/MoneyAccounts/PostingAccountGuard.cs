@@ -24,22 +24,42 @@ public static class PostingAccountGuard
         => query.Where(a => !db.ChartOfAccounts.Any(c => c.CompanyId == a.CompanyId && !c.IsDeleted && c.ParentAccountId == a.Id));
 
     /// <summary>
-    /// <b>ลำดับความชอบของ "ผังตั้งต้น" — ตัวตั้งตัวเดียว</b> (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2): ผังจากแม่แบบระบบ (<c>IsSystemAccount</c>)
-    /// ก่อน → ผังที่ผูกบัญชีแม่แล้ว (อยู่ในโครงสร้าง) → รหัสน้อยไปมาก → Id (ตัดสินเสมอ ไม่ขึ้นกับลำดับที่ฐานข้อมูลคืน)
-    /// <para>ที่มา: ผังที่นำเข้า (ไฟล์ผังบัญชี/Express/PEAK/FlowAccount) เดิมไม่มี <c>ParentAccountId</c> ⇒ หัวบัญชีที่นำเข้า ("1130" · "4100")
-    /// ดู "ไม่มีบัญชีย่อย" แล้วถูกหยิบก่อนผังจริงของแม่แบบ ("11310" · "41100") เพราะรหัสเรียงก่อน ⇒ ลงบัญชีอัตโนมัติไปหัวบัญชี ·
-    /// ผังที่ผู้ใช้สร้างเองทั้งชุด (ไม่มีผังระบบ) ได้ลำดับเดิม (เรียงตามรหัส) — ไม่เปลี่ยนผลของบริษัทที่ไม่มีผังผสม</para>
+    /// <b>ลำดับความชอบของ "ผังตั้งต้น" — ตัวตั้งตัวเดียว</b>: ผังที่<b>อยู่ในโครงสร้าง</b> (มีบัญชีแม่) ก่อน → ผังจากแม่แบบระบบ (<c>IsSystemAccount</c>)
+    /// → รหัสน้อยไปมาก → Id (ตัดสินเสมอ ไม่ขึ้นกับลำดับที่ฐานข้อมูลคืน)
+    /// <para>ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2: ผังที่นำเข้าเดิมไม่มี <c>ParentAccountId</c> ⇒ หัวบัญชีที่นำเข้า ("1130" · "4100") ถูกหยิบก่อนผังแม่แบบ
+    /// ("11310" · "41100") เพราะรหัสเรียงก่อน · <b>รอบ 2 P1-3:</b> รอบแรกเรียง "ผังระบบก่อน" ⇒ ผังเฉพาะกิจที่ระบบใส่ให้ทุกบริษัท (54960 ไม่มีแม่ ·
+    /// 21240 · 1134x · ผังย่อยธนาคาร) ชนะผังของผู้ใช้ในบริษัทที่ใช้ผังของตัวเอง — ตอนนี้ "มีแม่" มาก่อน "ผังระบบ" และผังเฉพาะกิจถูกตัดออกจาก
+    /// การหาตามหมวด/รหัสต้น (<see cref="WhereGeneralPurpose"/>) · ผังผสม (แม่แบบ + นำเข้าที่ผูกแม่แล้ว) ยังได้ผังแม่แบบ · ผังของผู้ใช้ล้วนเรียงตามรหัส</para>
     /// </summary>
     public static IOrderedQueryable<ChartOfAccount> OrderByDefaultPreference(this IQueryable<ChartOfAccount> query)
-        => query.OrderByDescending(a => a.IsSystemAccount)
-            .ThenByDescending(a => a.ParentAccountId != null)
+        => query.OrderByDescending(a => a.ParentAccountId != null)
+            .ThenByDescending(a => a.IsSystemAccount)
             .ThenBy(a => a.AccountCode)
             .ThenBy(a => a.Id);
 
-    /// <summary>ผู้สมัคร "ผังตั้งต้น" ของการลงบัญชีอัตโนมัติ = ไม่ใช่บัญชีคุม (<see cref="WhereNotControlAccount"/>) + ลำดับความชอบ
-    /// (<see cref="OrderByDefaultPreference"/>) — ตัวหาผังตั้งต้นทุกตัวที่ <c>FirstOrDefaultAsync</c> ใช้ตัวนี้ (ห้ามเรียงเอง)</summary>
+    /// <summary>
+    /// ตัดผังเฉพาะกิจ (<see cref="SpecialPurposeAccount"/>) ออกจากการหา "ตามหมวด/ตามรหัสต้น" — รหัสจากเจ้าของแต่ละผัง + ผังที่ผูกเป็นบัญชีธนาคาร
+    /// (<c>BankAccount.LinkedAccountId</c>) + ผังพักของผู้ให้บริการรับชำระเงิน (<c>PaymentProviderConfig.ClearingAccountId</c>) + ผังพัก/ผังกันเงิน
+    /// ของช่องทางรอบโอน (<c>SettlementChannel</c>) · การหาด้วยรหัสเต็มไม่ใช้ตัวนี้ (ผังเฉพาะกิจยังหาได้ด้วยรหัสของมันเอง)
+    /// </summary>
+    public static IQueryable<ChartOfAccount> WhereGeneralPurpose(this IQueryable<ChartOfAccount> query, AccountingDbContext db)
+    {
+        var codes = SpecialPurposeAccount.Codes.ToList();
+        return query.Where(a => !codes.Contains(a.AccountCode)
+            && !db.BankAccounts.Any(b => b.CompanyId == a.CompanyId && b.LinkedAccountId == a.Id)
+            && !db.PaymentProviderConfigs.Any(c => c.CompanyId == a.CompanyId && c.ClearingAccountId == a.Id)
+            && !db.SettlementChannels.Any(c => c.CompanyId == a.CompanyId && (c.ClearingAccountId == a.Id || c.ReserveAccountId == a.Id)));
+    }
+
+    /// <summary>ผู้สมัคร "ผังตั้งต้น" เมื่อหาด้วย<b>รหัสเต็ม</b> = ไม่ใช่บัญชีคุม (<see cref="WhereNotControlAccount"/>) + ลำดับความชอบ
+    /// (<see cref="OrderByDefaultPreference"/>) — การหาตามหมวด/รหัสต้นใช้ <see cref="DefaultFallbackCandidates"/> (ตัดผังเฉพาะกิจ)</summary>
     public static IOrderedQueryable<ChartOfAccount> DefaultPostingCandidates(this IQueryable<ChartOfAccount> query, AccountingDbContext db)
         => query.WhereNotControlAccount(db).OrderByDefaultPreference();
+
+    /// <summary>ผู้สมัคร "ผังตั้งต้น" เมื่อหา<b>ตามหมวด (AccountType) หรือรหัสต้น (StartsWith)</b> = ไม่ใช่บัญชีคุม + ไม่ใช่ผังเฉพาะกิจ + ลำดับความชอบ
+    /// (รอบ 2 P1-3) — ตัวหาผังตั้งต้นแบบ fallback ทุกตัวใช้ตัวนี้ (ห้ามเรียงเอง)</summary>
+    public static IOrderedQueryable<ChartOfAccount> DefaultFallbackCandidates(this IQueryable<ChartOfAccount> query, AccountingDbContext db)
+        => query.WhereNotControlAccount(db).WhereGeneralPurpose(db).OrderByDefaultPreference();
 
     /// <summary>ข้อเท็จจริงของผังตาม id (กรอง CompanyId + !IsDeleted) — id ที่ไม่อยู่ในผลลัพธ์ = ไม่พบในบริษัทนี้</summary>
     public static async Task<Dictionary<Guid, PostingAccountFacts>> LoadPostingFactsAsync(

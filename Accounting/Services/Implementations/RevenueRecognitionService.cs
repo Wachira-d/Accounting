@@ -339,11 +339,11 @@ public class RevenueRecognitionService : IRevenueRecognitionService
 
         var deferredRevenueAccount = await _db.ChartOfAccounts.DefaultPostingCandidates(_db)
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21810")
-            ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db)
+            ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db)
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("218"));
         var revenueAccount = await _db.ChartOfAccounts.DefaultPostingCandidates(_db)
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41100")
-            ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db)
+            ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db)
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("411"));
 
         var entry = new JournalEntry
