@@ -123,7 +123,6 @@ public class ModuleExportTests
         Assert.Equal(new[] { 0, ModuleExport.PageSize, ModuleExport.PageSize * 2 }, skips);
     }
 }
-}
 
 /// <summary>ไฟล์รายการโอนเงินเดือน — ยอดโอน = สูตรเดียวกับเส้น Cr ธนาคารตอนกดจ่าย · แถวไม่พร้อมยังอยู่ในไฟล์พร้อมเหตุผล</summary>
 public class PayrollBankTransferTests
