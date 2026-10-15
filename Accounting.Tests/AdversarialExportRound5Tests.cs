@@ -23,8 +23,10 @@ public class AdversarialExportRound5Tests
         Assert.Contains("3 บรรทัด", dropped);
         // ทิศตรงข้าม: โหลดครบทุกบรรทัด + ลงตัว ⇒ กลับรายการได้ (ใบปกติไม่ถูกแตะ)
         Assert.Null(JournalLineAccounts.ReversalMismatch("JV-0001", 3, 8_000m, 8_000m, 3, 8_000m, 8_000m));
-        // ใบเดิมไม่ลงตัว (ข้อมูลเสีย) ⇒ ไม่เขียนตัวกลับที่ไม่ลงตัวซ้ำ
-        Assert.NotNull(JournalLineAccounts.ReversalMismatch("JV-0002", 2, 1_000m, 900m, 2, 1_000m, 900m));
+        // ใบเดิมไม่ลงตัว (ข้อมูลเก่า) แต่โหลดครบทุกบรรทัด ⇒ กลับรายการได้ (กระจกครบ = ล้างส่วนต่างออกจาก GL · ฝ่ายค้านรอบ 5 P1-1: เดิมบล็อกการยกเลิกเอกสาร)
+        Assert.Null(JournalLineAccounts.ReversalMismatch("JV-0002", 2, 1_000m, 900m, 2, 1_000m, 900m));
+        // แต่บรรทัดหายระหว่างโหลดของใบไม่ลงตัว ⇒ ยังล้ม
+        Assert.NotNull(JournalLineAccounts.ReversalMismatch("JV-0002", 1, 1_000m, 0m, 2, 1_000m, 900m));
         // ปัดเศษ 2 ตำแหน่ง (AwayFromZero) ไม่ฟ้องเท็จ
         Assert.Null(JournalLineAccounts.ReversalMismatch("JV-0003", 2, 100.004m, 100.001m, 2, 100.001m, 100.004m));
     }
@@ -65,8 +67,9 @@ public class AdversarialExportRound5Tests
         Assert.True(OpeningRoll.IsLegacyCalendarRoll(U(2025, 1, 15), 7, new[] { (U(2025, 2, 1), 4) }));
         // การเปลี่ยน<b>ก่อน</b>การปิดไม่ใช่หลักฐานของตอนปิด (ใช้ค่าปัจจุบัน/การเปลี่ยนครั้งแรกหลังปิด)
         Assert.True(OpeningRoll.IsLegacyCalendarRoll(U(2025, 1, 15), 4, new[] { (U(2024, 6, 1), 1) }));
-        // ยกหลังการแก้รอบ 2 ⇒ แถว ม.ค. = บริษัทปีปฏิทินตอนยก ⇒ ไม่ใช่รุ่นเก่า
-        Assert.False(OpeningRoll.IsLegacyCalendarRoll(OpeningRoll.CalendarRollFixedAtUtc.AddMinutes(1), 4, none));
+        // ไม่ขึ้นกับเวลาคอมมิต/deploy (ฝ่ายค้านรอบ 5 P2-1): เซิร์ฟเวอร์ที่ยังรันโค้ดเก่าหลังเวลาคอมมิตก็ยกไป ม.ค. ⇒ ยังเป็นรุ่นเก่า ·
+        // โค้ดใหม่ไม่เคยเขียนแถว ม.ค. ให้บริษัทรอบไม่ใช่ปีปฏิทิน ⇒ ไม่มีทางฟ้องเท็จจากโค้ดใหม่
+        Assert.True(OpeningRoll.IsLegacyCalendarRoll(new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc), 4, none));
     }
 
     [Fact]

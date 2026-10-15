@@ -57,7 +57,8 @@ public static class JournalLineAccounts
     /// <summary>
     /// ตัวกลับรายการต้องมาจาก<b>บรรทัดที่บันทึกไว้จริงทุกบรรทัด</b> และลงตัว (pure · ด่านป้องกันชั้นสุดท้าย) — <c>loaded*</c> = บรรทัดที่โหลดมาสร้างตัวกลับ ·
     /// <c>persisted*</c> = ยอดรวมบรรทัดของใบนั้นในฐาน (คิวรีที่ไม่ join ผัง) · ไม่ผ่าน = ข้อความ (null = ผ่าน): บรรทัดหายระหว่างโหลด (เช่น ตัวกรองผังที่ลบ)
-    /// หรือใบเดิมไม่ลงตัว ⇒ ห้ามเขียนตัวกลับ · <b>ไม่เทียบหัวใบ</b> (TotalDebit/TotalCredit) — ใบเก่าบางทางไม่ได้ปรับหัวใบตามบรรทัด ⇒ บล็อกยกเลิกเอกสารโดยไม่มีทางไปต่อ
+    /// ⇒ ห้ามเขียนตัวกลับ · <b>ใบเดิมไม่ลงตัวกลับรายการได้</b> (ตัวกลับ = กระจกของบรรทัดที่บันทึกจริงทุกบรรทัด ⇒ รวมกันเป็นศูนย์ = ล้างส่วนต่างออกจาก GL ·
+    /// ฝ่ายค้านรอบ 5 P1-1: เดิมบล็อก ⇒ ยกเลิกเอกสาร/POS/เงินเดือนที่ JE เก่าต่าง 0.01 ไปต่อไม่ได้) · <b>ไม่เทียบหัวใบ</b> (TotalDebit/TotalCredit) — ใบเก่าบางทางไม่ได้ปรับหัวใบตามบรรทัด ⇒ บล็อกยกเลิกเอกสารโดยไม่มีทางไปต่อ
     /// </summary>
     public static string? ReversalMismatch(string originalNumber, int loadedCount, decimal loadedDebit, decimal loadedCredit,
         int persistedCount, decimal persistedDebit, decimal persistedCredit)
@@ -67,9 +68,6 @@ public static class JournalLineAccounts
             return $"กลับรายการ {originalNumber} ไม่ได้: โหลดบรรทัดได้ {loadedCount} บรรทัด (เดบิต {loadedDebit:N2} / เครดิต {loadedCredit:N2}) "
                 + $"แต่ใบนี้มี {persistedCount} บรรทัด (เดบิต {persistedDebit:N2} / เครดิต {persistedCredit:N2}) — ยังไม่มีอะไรถูกบันทึก (กันตัวกลับไม่ลงตัว) · "
                 + "แจ้งผู้ดูแลระบบพร้อมเลขที่ใบนี้";
-        if (R(loadedDebit) != R(loadedCredit))
-            return $"กลับรายการ {originalNumber} ไม่ได้: บรรทัดของใบนี้ไม่ลงตัว (เดบิต {loadedDebit:N2} / เครดิต {loadedCredit:N2}) — ตัวกลับจะไม่ลงตัวเช่นกัน · "
-                + "ยังไม่มีอะไรถูกบันทึก · แจ้งผู้ดูแลระบบพร้อมเลขที่ใบนี้";
         return null;
     }
 }

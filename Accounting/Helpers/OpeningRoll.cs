@@ -86,11 +86,6 @@ public static class OpeningRoll
             + "ทางไปต่อ: ซ่อมยอดยกมารุ่นเก่าก่อน (เจ้าของบริษัท — หน้า \"ตรวจข้อมูลจากบั๊กที่แก้แล้ว\" หมวดยอดยกมาจากการปิดปี กด \"แก้\" ปีที่ระบุ "
             + "⇒ ระบบเขียนยอดยกมางวดแรกของรอบ + ยกเลิกแถวรุ่นเก่า · บันทึกประวัติ) แล้วปิดปี/ยกยอดอีกครั้ง";
 
-    /// <summary>
-    /// เวลาคอมมิตของการแก้ "ยกยอดไปงวดแรกของรอบบัญชี" (de823512 · ฝ่ายค้านรอบส่งออก รอบ 2 · 2026-10-15 17:40:48 UTC) — การยกยอด<b>ก่อน</b>เวลานี้
-    /// ไป 1 ม.ค. เสมอ · หลังจากนี้แถวยกยอดที่อยู่งวด ม.ค. = ตอนยกบริษัทใช้รอบปีปฏิทิน (รอบ 5 P2-2 · ใช้ใน <see cref="IsLegacyCalendarRoll"/>)
-    /// </summary>
-    public static readonly DateTime CalendarRollFixedAtUtc = new(2026, 10, 15, 17, 40, 48, DateTimeKind.Utc);
 
     /// <summary>action ของ audit เมื่อบริษัทเปลี่ยนเดือนเริ่มรอบบัญชี (<c>CompanyService.UpdateAsync</c> · รอบ 5 P2-2 เป็นต้นไป) — หลักฐานของ <see cref="StartMonthAt"/></summary>
     public const string FiscalYearStartMonthChangeAction = "fiscal-year-start-month";
@@ -108,12 +103,13 @@ public static class OpeningRoll
 
     /// <summary>
     /// งวด ม.ค. ที่ยกยอดเมื่อ <paramref name="rolledAtUtc"/> (เวลาที่ใบปิดปีของรอบนั้นถูกสร้าง · ไม่มีใบปิดปี = เวลาที่แถวถูกเขียน) เป็น<b>ของรุ่นเก่าที่ยกผิดที่</b>
-    /// (pure · รอบ 5 P2-2 — คู่กับ <see cref="IsLegacyCalendarRollPeriod"/>): ยกก่อน <see cref="CalendarRollFixedAtUtc"/> <b>และ</b>ตอนยกบริษัทใช้รอบที่ไม่ใช่ปีปฏิทิน
+    /// (pure · รอบ 5 P2-2 — คู่กับ <see cref="IsLegacyCalendarRollPeriod"/>): ตอนยกบริษัทใช้รอบที่ไม่ใช่ปีปฏิทิน (โค้ดใหม่ยกไปงวดแรกของรอบเสมอ ⇒ ไม่เคยเขียนแถว ม.ค. ให้บริษัทแบบนี้ · ไม่ใช้เวลาคอมมิตเป็นเส้นแบ่ง —
+    /// ฝ่ายค้านรอบ 5 P2-1: production รันโค้ดเก่าเลยเวลาคอมมิตได้ ⇒ การปิดปีช่วงนั้นหลุดเงียบ)
     /// (<see cref="StartMonthAt"/>) · บั๊กที่มา: บริษัทปีปฏิทินที่ปิดปีแล้วค่อยเปลี่ยนเดือนเริ่มรอบ ถูกรายงาน/บล็อกว่า "ยกยอดรุ่นเก่า" และปุ่มซ่อมจะยกเลิกยอดยกมา
     /// ม.ค. ที่ถูกต้องของปีนั้น (เขียนประวัติใหม่) · ไม่มี audit การเปลี่ยน (ก่อนรอบ 5 ไม่มีการบันทึก) = ถือว่าใช้ค่าปัจจุบันตอนยก (ข้อจำกัดที่จดใน EXPORT_AUDIT รอบ 5)
     /// </summary>
     public static bool IsLegacyCalendarRoll(DateTime rolledAtUtc, int currentStartMonth, IEnumerable<(DateTime ChangedAtUtc, int OldMonth)> changes)
-        => rolledAtUtc < CalendarRollFixedAtUtc && FiscalYear.NormalizeStartMonth(StartMonthAt(rolledAtUtc, currentStartMonth, changes)) != 1;
+        => FiscalYear.NormalizeStartMonth(StartMonthAt(rolledAtUtc, currentStartMonth, changes)) != 1;
 
     /// <summary>
     /// ข้อความของด่าน "เปลี่ยนเดือนเริ่มรอบบัญชีหลังปิดปีแล้ว" (pure · รอบ 5 P2-2) — ปีที่ปิดแล้ว ยอดยกมา งวดที่ล็อก ถูกคิดด้วยรอบเดิม ·

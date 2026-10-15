@@ -749,10 +749,6 @@ public class CompanyService : ICompanyService
             WhtRoyaltyFormDecidedAt: c.WhtRoyaltyFormDecidedAt);
     }
 
-    /// <summary>ฝ่ายค้านรอบ 204 M2/L6: บันทึกค่าตั้งค่าสิทธิ ม.40(3) — ค่าใหม่จากตัวตัดสินเดียว <c>WhtRoyaltyPolicy.ApplyUpdate</c> ·
-    /// ผลของวันใดในงวด ภ.ง.ด.2/3 ที่ยื่น/นำส่งแล้วเปลี่ยน (ตัวอ่านงวดยื่นแล้วตัวเดียวกับเปลี่ยนผู้ถูกหัก <c>WhtPayeeChangePlan.FiledPeriodsFromAsync</c>)
-    /// ⇒ ยังไม่รับทราบ = 409 <c>RD-50(2)-ROYALTY-FILED</c> (ไม่บันทึก · ทางไปต่อ = รับทราบแล้วบันทึกอีกครั้ง หรือเลือกวันหลังงวดนั้น) ·
-    /// ผลเปลี่ยน ⇒ audit (ค่าก่อน/หลัง · วันแรกที่ผลเปลี่ยน · งวดยื่นแล้วที่รับทราบ)</summary>
     /// <summary>
     /// เปลี่ยนเดือนเริ่มรอบบัญชี (ฝ่ายค้านรอบส่งออก รอบ 5 P2-2) — <b>บริษัทที่ปิดปีในระบบแล้วเปลี่ยนไม่ได้</b> (ปีเก่า/ยอดยกมา/งวดที่ล็อกคิดด้วยรอบเดิม ·
     /// เดิมเปลี่ยนได้เงียบ ๆ ⇒ ด่านยกยอดรุ่นเก่าบล็อกเท็จ + ปุ่มซ่อมเขียนประวัติใหม่ · พ.ร.บ.การบัญชี ม.11 เปลี่ยนรอบต้องได้รับอนุมัติ) ·
@@ -795,6 +791,10 @@ public class CompanyService : ICompanyService
         });
     }
 
+    /// <summary>ฝ่ายค้านรอบ 204 M2/L6: บันทึกค่าตั้งค่าสิทธิ ม.40(3) — ค่าใหม่จากตัวตัดสินเดียว <c>WhtRoyaltyPolicy.ApplyUpdate</c> ·
+    /// ผลของวันใดในงวด ภ.ง.ด.2/3 ที่ยื่น/นำส่งแล้วเปลี่ยน (ตัวอ่านงวดยื่นแล้วตัวเดียวกับเปลี่ยนผู้ถูกหัก <c>WhtPayeeChangePlan.FiledPeriodsFromAsync</c>)
+    /// ⇒ ยังไม่รับทราบ = 409 <c>RD-50(2)-ROYALTY-FILED</c> (ไม่บันทึก · ทางไปต่อ = รับทราบแล้วบันทึกอีกครั้ง หรือเลือกวันหลังงวดนั้น) ·
+    /// ผลเปลี่ยน ⇒ audit (ค่าก่อน/หลัง · วันแรกที่ผลเปลี่ยน · งวดยื่นแล้วที่รับทราบ)</summary>
     private async Task ApplyRoyaltyPolicyAsync(Company company, Guid userId, UpdateCompanyRequest request)
     {
         var before = RoyaltySettingOf(company);
