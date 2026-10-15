@@ -4978,4 +4978,4 @@ _2026-10-15 — ส่งออก CSV/Excel หน้าการเงิน�
 ตรวจข้อมูล (หมวดย้ายไป `DataIntegritySections`) · วิเคราะห์ AR/AP · เงินสดย่อย (ทะเบียนใหม่ `GetRegisterAsync` + หน้า "📋 รายการ") ·
 ตีราคา FX · บริหารการเงิน 9 แท็บ · คาดการณ์เงินสด (รายการทั้งหมด) · เช็คคงค้าง (ชื่อจากเซิร์ฟเวอร์ `ListOutstandingRowsAsync` — เดิม 200 รายแรก) ·
 **งบรวม: ปิด IDOR ข้ามบริษัท** (กลุ่ม/สมาชิกต้องเป็นของผู้ใช้) · ใบเสร็จมือถือ บันทึก PDF/แชร์ผ่าน `Layout.savePdf` · escape ข้อความ ~30 จุดในหน้าที่แตะ ·
-เทสต์ `FinanceReportSheetsTests` · `Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง_
+เทสต์ `FinanceReportSheetsTests` · `Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit cab2326c_
