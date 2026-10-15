@@ -416,7 +416,9 @@ public sealed record PayrollBankTransferLine(
     Guid EmployeeId, string EmployeeCode, string EmployeeName,
     string? BankName, string? BankAccountNumber, string? BankAccountName,
     decimal NetPay, decimal AdvanceRecovered, bool HasOutstandingAdvance,
-    string? PaymentSourceLabel);
+    string? PaymentSourceLabel,
+    // ฝ่ายค้านรอบส่งออก 2026-10-15 P2-4: แหล่งจ่ายเงินสุทธิของคนนี้เป็นบัญชีธนาคารไหม (MoneyAccountRule.GroupOf) · null = ยังไม่มีแหล่งจ่ายที่ใช้ได้
+    bool? PaymentSourceIsBank = null);
 
 /// <summary>หัวรอบ + แถวของไฟล์รายการโอนเงินเดือน</summary>
 public sealed record PayrollBankTransferSheet(

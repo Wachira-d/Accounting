@@ -2457,7 +2457,8 @@ public partial class DocumentService : IDocumentService
         {
             // default: ล่าสุดก่อน + เลขที่มาก→น้อยในวันเดียวกัน
             ordered = query.OrderByDescending(d => d.DocumentDate)
-                           .ThenByDescending(d => d.DocumentNumber);
+                           .ThenByDescending(d => d.DocumentNumber)
+                           .ThenBy(d => d.Id);   // ฝ่ายค้านรอบส่งออก P2-9: เลขที่ซ้ำได้ข้ามชนิดเอกสาร ⇒ ส่งออกวนทุกหน้าต้องมีตัวตัดสินสุดท้าย
         }
         else
         {
@@ -3546,7 +3547,7 @@ public partial class DocumentService : IDocumentService
             if (acc != null) return acc;
         }
         // (2) ผังเฉพาะ "ภาษีซื้อขอคืนไม่ได้" ถ้าบริษัทตั้งไว้
-        return await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+        return await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
             a.CompanyId == companyId && a.IsActive && !a.IsDeleted
             && a.AccountCode.StartsWith("5")
             && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")));
@@ -4378,7 +4379,7 @@ public partial class DocumentService : IDocumentService
                 Accounting.Helpers.DepositPolicyResolver.CompensationAccountMissingMessage, "DEPOSIT-FORFEIT-ACCOUNT");
         revenueAcc ??= await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive)
-                .OrderBy(a => a.AccountCode).FirstOrDefaultAsync()
+                .OrderByDefaultPreference().FirstOrDefaultAsync()
             ?? throw new InvalidOperationException("ไม่พบบัญชีรายได้ในผังบัญชี");
 
         // เคส Deferred output VAT: การรับรู้รายได้ (ส่งมอบ/ให้บริการ) = tax point
@@ -13730,7 +13731,7 @@ public partial class DocumentService : IDocumentService
         var totalCount = await query.CountAsync();
         var page = paging?.Page ?? 1;
         var pageSize = paging?.PageSize ?? 50;
-        var contacts = await query.OrderBy(c => c.Name)
+        var contacts = await query.OrderBy(c => c.Name).ThenBy(c => c.Id) // ฝ่ายค้านรอบส่งออก P2-9: ตัวตัดสินสุดท้าย — ส่งออกวนทุกหน้าไม่ซ้ำ/หาย
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
@@ -15658,11 +15659,11 @@ public partial class DocumentService : IDocumentService
         // มี header ระดับ 3 ชื่อรหัสสั้น ("116", "212") ถ้า exact จับ header จะ
         // ลงบัญชีลงกลุ่มแทนบัญชีจริง (audit F2: CN ซื้อเครดิต "116" header →
         // 11610 ค้างสูงถาวร) → header หลุดไป prefix-search ที่กรองบัญชีคุมอยู่แล้ว
-        var found = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+        var found = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
             ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.IsActive)
-                .OrderBy(a => a.AccountCode)
+                .OrderByDefaultPreference()
                 .FirstOrDefaultAsync();
         _findAccountCache[cacheKey] = found;
         return found;
@@ -15879,11 +15880,11 @@ public partial class DocumentService : IDocumentService
         // fallback ระดับบริษัท เมื่อ resolve ตามก้อนเงินรายใบไม่ได้ — ผังชื่อ
         // "ภาษีซื้อ/ขอคืนไม่ได้" ก่อน แล้วค่อยผังค่าใช้จ่ายใดก็ได้. **ห้าม**
         // fallback ตามเลขนำหน้า 53 (เคยได้ 53120 ค่าโฆษณา — คนละความหมาย)
-        var companyFallbackAcc = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+        var companyFallbackAcc = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                 && a.AccountCode.StartsWith("5")
                 && (a.AccountName.Contains("ภาษีซื้อ") || a.AccountName.Contains("ขอคืนไม่ได้")))
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+            ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                 && a.AccountType == AccountType.Expense);
 
@@ -17307,7 +17308,7 @@ public partial class DocumentService : IDocumentService
             ?? await FindAccountAsync(companyId, "42000")
             ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Revenue && a.IsActive)
-                .OrderBy(a => a.AccountCode)
+                .OrderByDefaultPreference()
                 .FirstOrDefaultAsync();
 
         // Safety net ขา Cr รายได้: บรรทัดที่ผูกผังหมวด "ค่าใช้จ่าย" มาแต่เดิม
@@ -17349,7 +17350,7 @@ public partial class DocumentService : IDocumentService
             ?? await FindAccountAsync(companyId, "52110")
             ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountType == AccountType.Expense && a.IsActive)
-                .OrderBy(a => a.AccountCode)
+                .OrderByDefaultPreference()
                 .FirstOrDefaultAsync();
 
         // Resolve money account for cash/bank movement entries — ตัวตัดสินเดียว Helpers/DocumentMoneyChannel

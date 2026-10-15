@@ -16,14 +16,15 @@ namespace Accounting.Helpers;
 ///   พนักงานต่อรอบ (= ต่อการจ่าย · วันที่จ่ายของรอบนั้น) · รวมคนที่ภาษี 0 (ภ.ง.ด.1 แสดงผู้มีเงินได้ทุกคน) · เงินได้ =
 ///   <see cref="IncomeOf"/> (ฐานภาษี TaxableGross — ไม่รวมสวัสดิการยกเว้น) · ประเภท (1) 40(1) กรณีทั่วไปเสมอ
 ///   (ระบบเงินเดือนไม่มีแนวคิด "อนุมัติ 3%" หรือ "ออกภาษีแทน" — เงื่อนไข = 1)</item>
-/// <item><b>หนังสือรับรอง 50 ทวิ แบบ ภ.ง.ด.1 ที่ออกด้วยมือ</b> (<c>SourcePayrollRunId == null</c>) ของผู้รับที่<b>ไม่อยู่ในรอบ
-///   เงินเดือนของงวด</b> — เช่น ค่าตำแหน่ง/ค่านายหน้า 40(2) ที่จ่ายนอกรอบเงินเดือน · เดิม <b>หายจากไฟล์ยื่นเงียบ ๆ</b>
+/// <item><b>หนังสือรับรอง 50 ทวิ แบบ ภ.ง.ด.1 ที่ออกด้วยมือ</b> (<c>SourcePayrollRunId == null</c>) ที่<b>ไม่ซ้ำกับแถวเงินเดือน</b>
+///   (ดูย่อหน้าถัดไป) — เช่น ค่าตำแหน่ง/ค่านายหน้า 40(2) ที่จ่ายนอกรอบเงินเดือน · เดิม <b>หายจากไฟล์ยื่นเงียบ ๆ</b>
 ///   ทั้งที่หน้านำส่งนับภาษีของใบเหล่านี้ · ประเภทจากรหัสเงินได้ของบรรทัด (<see cref="CategoryOfCertLine"/>) ·
 ///   เงื่อนไขจากชนิดใบ (<see cref="WhtGrossUp.FilingCondition"/>)</item>
 /// </list>
 /// ใบ 50 ทวิ ที่ระบบออกจากรอบเงินเดือนเอง (<c>SourcePayrollRunId != null</c>) <b>ไม่</b>นับซ้ำ (แถวเงินเดือนคือตัวตั้ง) ·
-/// ใบมือของพนักงานที่อยู่ในรอบอยู่แล้ว (HR ออกแทนใบอัตโนมัติ) ไม่นับซ้ำเช่นกัน แต่ <b>เงื่อนไขของใบ</b> (ออกให้ตลอดไป/ครั้งเดียว)
-/// ถูกใช้กับแถวเงินเดือนของคนนั้น</para>
+/// บรรทัด<b> 40(1)</b> ของใบมือที่ผู้รับมีแถวเงินเดือนลงไฟล์ใน<b>งวดยื่นเดียวกัน</b> (HR ออกแทนใบอัตโนมัติ) ไม่นับซ้ำ + แจ้งใน Notes
+/// และ <b>เงื่อนไขของใบ</b> (ออกให้ตลอดไป/ครั้งเดียว) ถูกใช้กับแถวเงินเดือนของคนนั้น · บรรทัด 40(2) ไม่ถูกตัดเสมอ ·
+/// นิยามต่อเดือน ⇒ ภ.ง.ด.1ก = ผลรวม ภ.ง.ด.1 ทุกเดือน (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-3)</para>
 ///
 /// <para><b>ไม่เดา</b>: บรรทัด 50 ทวิ ที่รหัสเงินได้ไม่ใช่ 40(1)/40(2) หรือว่าง ⇒ ไม่ลงไฟล์ + <see cref="Result.Notes"/> บอกเลขที่ใบ
 /// และยอดภาษี (ล้มดัง) · เลขผู้เสียภาษีว่าง ⇒ ไฟล์ปล่อยว่าง (ไม่แต่งเลข 0) + Notes บอกจำนวนแถว ·
@@ -125,26 +126,34 @@ public static class Pnd1FilingData
         var notes = new List<string>();
         var hasRuns = details.Count > 0;
 
-        // ผู้มีเงินได้ที่อยู่ในรอบเงินเดือนของงวด (ทุกสถานะที่ไม่ถูกยกเลิก) — ใบมือของคนกลุ่มนี้ไม่ลงแถวซ้ำ
-        var payrollTaxIds = details
-            .Select(d => EmployeeTaxIdentity.Resolve(d.Employee.TaxId, d.Employee.CitizenId))
-            .Where(t => t != null).Select(t => t!).ToHashSet(StringComparer.Ordinal);
-
-        // เงื่อนไขจากใบมือของพนักงานที่อยู่ในรอบ (HR ออกแทนใบอัตโนมัติ เช่น "ออกภาษีให้ตลอดไป")
-        var conditionByTaxId = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var c in certs.Where(c => c.SourcePayrollRunId == null))
-        {
-            var tid = ThaiTaxId.Normalize(c.PayeeContact?.TaxId);
-            if (tid.Length == 0 || !payrollTaxIds.Contains(tid)) continue;
-            var cond = WhtGrossUp.FilingCondition(c.CertificateType);
-            if (cond != 1) conditionByTaxId[tid] = cond;
-        }
-
         // ── 1. รอบเงินเดือน ──
         var filedDetails = details
             .Where(d => PayrollRunFilingScope.FilingStatuses.Contains(d.PayrollRun.Status)
                 && IncomeOf(d.TaxableGross, d.GrossIncome) > 0)
             .ToList();
+
+        // ฝ่ายค้านรอบส่งออก 2026-10-15 P1-3: ใบมือ "ซ้ำกับเงินเดือน" = ผู้รับคนเดียวกัน (เลขผู้เสียภาษี) + งวดยื่นเดียวกัน (ปี/เดือนของรอบ ·
+        // ปี/เดือนภาษีของใบ) + บรรทัด 40(1) และคนนั้นมีแถวเงินเดือน<b>ที่ลงไฟล์จริง</b>ในงวดนั้น · เดิมตัดใบมือทุกใบของใครก็ตามที่อยู่ในรอบใด ๆ
+        // ของงวด/ปี ⇒ ค่านายหน้า 40(2) ของพนักงาน หรือ 40(1) ของเดือนที่ไม่มีรอบเงินเดือน หายจากแบบเงียบ ๆ · นิยามต่อเดือนเดียวกันทั้งรายเดือน
+        // และรายปี ⇒ ภ.ง.ด.1ก = ผลรวมของ ภ.ง.ด.1 ทุกเดือน
+        var payrollPeriods = filedDetails
+            .Select(d => (TaxId: EmployeeTaxIdentity.Resolve(d.Employee.TaxId, d.Employee.CitizenId), d.PayrollRun.Year, d.PayrollRun.Month))
+            .Where(x => x.TaxId != null)
+            .Select(x => (x.TaxId!, x.Year, x.Month))
+            .ToHashSet();
+        bool DuplicatesPayroll(WithholdingTaxCert c, string tid, int category)
+            => category == Pnd1FileFormat.GeneralSalary && tid.Length > 0 && payrollPeriods.Contains((tid, c.TaxYear, c.TaxMonth));
+
+        // เงื่อนไขจากใบมือที่ซ้ำกับเงินเดือน (HR ออกแทนใบอัตโนมัติ เช่น "ออกภาษีให้ตลอดไป") ⇒ ใช้กับแถวเงินเดือนของคนนั้น
+        var conditionByTaxId = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var c in certs.Where(c => c.SourcePayrollRunId == null))
+        {
+            var tid = ThaiTaxId.Normalize(c.PayeeContact?.TaxId);
+            var anyDup = c.Lines?.Any(l => DuplicatesPayroll(c, tid, CategoryOfCertLine(l.IncomeTypeCode, c.PayeeContact?.CountryCode))) == true;
+            if (!anyDup) continue;
+            var cond = WhtGrossUp.FilingCondition(c.CertificateType);
+            if (cond != 1) conditionByTaxId[tid] = cond;
+        }
         var payrollRows = new List<Pnd1FileFormat.Row>();
         if (!annual)
         {
@@ -169,13 +178,13 @@ public static class Pnd1FilingData
         // ── 2. 50 ทวิ ที่ออกด้วยมือของผู้รับนอกรอบเงินเดือน ──
         var certRows = new List<Pnd1FileFormat.Row>();
         var unknown = new List<(string CertNo, decimal Tax)>();
+        var duplicates = new List<(string CertNo, decimal Tax)>();
         foreach (var c in certs
             .Where(c => c.SourcePayrollRunId == null)
             .OrderBy(c => c.CertificateNumber, StringComparer.Ordinal))
         {
             var contact = c.PayeeContact;
             var tid = ThaiTaxId.Normalize(contact?.TaxId);
-            if (tid.Length > 0 && payrollTaxIds.Contains(tid)) continue;   // แถวเงินเดือนคือตัวตั้ง
 
             var cond = WhtGrossUp.FilingCondition(c.CertificateType);
             var (first, last) = PndTextFileFormat.SplitName(contact?.Name, isJuristic: false, contact?.TitleTh);
@@ -190,6 +199,8 @@ public static class Pnd1FilingData
             {
                 var cat = CategoryOfCertLine(l.IncomeTypeCode, contact?.CountryCode);
                 if (cat == 0) { unknown.Add((c.CertificateNumber, l.TaxAmount)); continue; }
+                // 40(1) ของเดือนที่คนนี้มีแถวเงินเดือนลงไฟล์แล้ว = แถวเงินเดือนคือตัวตั้ง (ไม่ลงซ้ำ — แจ้งใน Notes) · 40(2) ไม่ถูกตัดเสมอ
+                if (DuplicatesPayroll(c, tid, cat)) { duplicates.Add((c.CertificateNumber, l.TaxAmount)); continue; }
                 certRows.Add(new Pnd1FileFormat.Row(
                     Category: cat, PayeeTaxId: tid, Title: title, FirstName: first, LastName: last,
                     PayDate: l.PaymentDate, IncomeAmount: l.IncomeAmount, TaxAmount: l.TaxAmount,
@@ -216,6 +227,14 @@ public static class Pnd1FilingData
             .ToList();   // OrderBy เสถียร — ลำดับภายในประเภทคงตามที่เรียงไว้ (เงินเดือนก่อน แล้ว 50 ทวิ)
 
         // ── คำเตือน (ล้มดัง ไม่หายเงียบ) ──
+        if (duplicates.Count > 0)
+        {
+            var nos = duplicates.Select(u => u.CertNo).Distinct().ToList();
+            notes.Add($"ℹ️ 50 ทวิ แบบ ภ.ง.ด.1 ที่ออกด้วยมือ {nos.Count} ใบ (ภาษี {duplicates.Sum(u => u.Tax):N2} บาท) ไม่ลงซ้ำ "
+                + "เพราะเป็นเงินได้ 40(1) ของพนักงานที่มีแถวเงินเดือนในเดือนเดียวกันแล้ว (แถวเงินเดือนคือตัวตั้ง) — "
+                + string.Join(", ", nos.Take(3)) + (nos.Count > 3 ? ", …" : "")
+                + " · ถ้าเป็นเงินได้คนละก้อนกับเงินเดือน ให้จ่ายผ่านรอบเงินเดือน หรือแก้ประเภทเงินได้ในใบให้ตรง");
+        }
         if (unknown.Count > 0)
             notes.Add($"⚠️ 50 ทวิ แบบ ภ.ง.ด.1 {unknown.Select(u => u.CertNo).Distinct().Count()} ใบ "
                 + $"(ภาษี {unknown.Sum(u => u.Tax):N2} บาท) ไม่ได้ลงไฟล์ เพราะประเภทเงินได้ไม่ใช่ 40(1)/40(2) หรือว่าง — "

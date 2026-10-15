@@ -23,6 +23,24 @@ public static class PostingAccountGuard
     public static IQueryable<ChartOfAccount> WhereNotControlAccount(this IQueryable<ChartOfAccount> query, AccountingDbContext db)
         => query.Where(a => !db.ChartOfAccounts.Any(c => c.CompanyId == a.CompanyId && !c.IsDeleted && c.ParentAccountId == a.Id));
 
+    /// <summary>
+    /// <b>ลำดับความชอบของ "ผังตั้งต้น" — ตัวตั้งตัวเดียว</b> (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2): ผังจากแม่แบบระบบ (<c>IsSystemAccount</c>)
+    /// ก่อน → ผังที่ผูกบัญชีแม่แล้ว (อยู่ในโครงสร้าง) → รหัสน้อยไปมาก → Id (ตัดสินเสมอ ไม่ขึ้นกับลำดับที่ฐานข้อมูลคืน)
+    /// <para>ที่มา: ผังที่นำเข้า (ไฟล์ผังบัญชี/Express/PEAK/FlowAccount) เดิมไม่มี <c>ParentAccountId</c> ⇒ หัวบัญชีที่นำเข้า ("1130" · "4100")
+    /// ดู "ไม่มีบัญชีย่อย" แล้วถูกหยิบก่อนผังจริงของแม่แบบ ("11310" · "41100") เพราะรหัสเรียงก่อน ⇒ ลงบัญชีอัตโนมัติไปหัวบัญชี ·
+    /// ผังที่ผู้ใช้สร้างเองทั้งชุด (ไม่มีผังระบบ) ได้ลำดับเดิม (เรียงตามรหัส) — ไม่เปลี่ยนผลของบริษัทที่ไม่มีผังผสม</para>
+    /// </summary>
+    public static IOrderedQueryable<ChartOfAccount> OrderByDefaultPreference(this IQueryable<ChartOfAccount> query)
+        => query.OrderByDescending(a => a.IsSystemAccount)
+            .ThenByDescending(a => a.ParentAccountId != null)
+            .ThenBy(a => a.AccountCode)
+            .ThenBy(a => a.Id);
+
+    /// <summary>ผู้สมัคร "ผังตั้งต้น" ของการลงบัญชีอัตโนมัติ = ไม่ใช่บัญชีคุม (<see cref="WhereNotControlAccount"/>) + ลำดับความชอบ
+    /// (<see cref="OrderByDefaultPreference"/>) — ตัวหาผังตั้งต้นทุกตัวที่ <c>FirstOrDefaultAsync</c> ใช้ตัวนี้ (ห้ามเรียงเอง)</summary>
+    public static IOrderedQueryable<ChartOfAccount> DefaultPostingCandidates(this IQueryable<ChartOfAccount> query, AccountingDbContext db)
+        => query.WhereNotControlAccount(db).OrderByDefaultPreference();
+
     /// <summary>ข้อเท็จจริงของผังตาม id (กรอง CompanyId + !IsDeleted) — id ที่ไม่อยู่ในผลลัพธ์ = ไม่พบในบริษัทนี้</summary>
     public static async Task<Dictionary<Guid, PostingAccountFacts>> LoadPostingFactsAsync(
         this AccountingDbContext db, Guid companyId, IEnumerable<Guid> accountIds, CancellationToken ct = default)

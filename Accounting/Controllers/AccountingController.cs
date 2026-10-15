@@ -214,7 +214,9 @@ public class AccountingController : ControllerBase
         Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate, [FromQuery] Guid? accountId = null,
         [FromQuery] Guid? dimensionId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? projectId = null)
     {
-        var result = await _accountingService.GetGeneralLedgerAsync(companyId, fromDate, toDate, accountId, dimensionId, branchId, projectId);
+        // ปิดบังใบที่ผู้ใช้ไม่มีสิทธิ์เห็น แบบเดียวกับสมุดรายวัน (ฝ่ายค้านรอบส่งออก 2026-10-15 P2-7)
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _accountingService.GetGeneralLedgerForUserAsync(companyId, userId, fromDate, toDate, accountId, dimensionId, branchId, projectId);
         return Ok(new ApiResponse<GeneralLedgerResponse>(true, result));
     }
 
@@ -405,5 +407,56 @@ public class AccountingController : ControllerBase
         await _companyService.EnsureOwnerAccessAsync(companyId, userId);
         var count = await _accountingService.RollOpeningBalancesAsync(companyId, request.Year, userId.ToString());
         return Ok(new ApiResponse<int>(true, count, $"อัพเดต Opening Balance {count} บัญชี"));
+    }
+
+    // ===== ตรวจ/ซ่อมยอดยกมาจากการปิดปี (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1 · Helpers/OpeningRoll) =====
+    // การปิดปีก่อนรอบนี้นับปีเก่าซ้ำตั้งแต่ปิดปีครั้งที่สอง ⇒ ยอดยกมาที่เก็บไว้ผิด · รายงานก่อน (อ่านอย่างเดียว) → ซ่อมเฉพาะปีที่เลือก + audit
+    // · ไม่มีงานไหนซ่อมเองตอนเปิดระบบ · เจ้าของบริษัทเท่านั้น (สิทธิ์เดียวกับปิดปี)
+
+    [HttpGet("opening-roll-check")]
+    public async Task<ActionResult<ApiResponse<List<OpeningRollCheckYear>>>> OpeningRollCheck(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        var result = await _accountingService.FindOpeningRollMismatchesAsync(companyId);
+        var wrong = result.Count(y => y.Mismatches.Count > 0);
+        return Ok(new ApiResponse<List<OpeningRollCheckYear>>(true, result,
+            wrong == 0 ? "ยอดยกมาจากการปิดปีถูกต้องทุกปี" : $"พบ {wrong} ปีที่ยอดยกมาไม่ตรงกับยอดที่ควรเป็น"));
+    }
+
+    // ===== ผูกบัญชีแม่ของผังที่นำเข้า (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2 · Helpers/ChartParentLink) =====
+
+    public record AccountParentLinkRepairRequest(List<Guid>? AccountIds);
+
+    [HttpGet("accounts/parent-link-check")]
+    public async Task<ActionResult<ApiResponse<List<Services.Implementations.ChartParentLinkSuspect>>>> AccountParentLinkCheck(Guid companyId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        var result = await _accountingService.FindUnlinkedAccountsAsync(companyId);
+        return Ok(new ApiResponse<List<Services.Implementations.ChartParentLinkSuspect>>(true, result,
+            result.Count == 0 ? "ผังที่นำเข้าผูกบัญชีแม่ครบแล้ว" : $"พบ {result.Count} ผังที่ยังไม่ได้ผูกบัญชีแม่"));
+    }
+
+    [HttpPost("accounts/parent-link-check/repair")]
+    public async Task<ActionResult<ApiResponse<Services.Implementations.ChartParentLinkRepairResult>>> AccountParentLinkRepair(
+        Guid companyId, [FromBody] AccountParentLinkRepairRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        var result = await _accountingService.RepairAccountParentLinksAsync(companyId, request.AccountIds ?? new List<Guid>(), userId.ToString());
+        return Ok(new ApiResponse<Services.Implementations.ChartParentLinkRepairResult>(true, result,
+            $"ผูกบัญชีแม่แล้ว {result.Linked} ผัง · ข้าม {result.Skipped.Count} รายการ"));
+    }
+
+    [HttpPost("opening-roll-check/repair")]
+    public async Task<ActionResult<ApiResponse<OpeningRollRepairResult>>> OpeningRollRepair(
+        Guid companyId, [FromBody] OpeningRollRepairRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        var result = await _accountingService.RepairOpeningRollAsync(companyId, request.Years ?? new List<int>(), userId.ToString());
+        return Ok(new ApiResponse<OpeningRollRepairResult>(true, result,
+            $"ซ่อมแล้ว {result.RepairedYears} ปี ({result.RepairedRows} บัญชี) · ข้าม {result.Skipped.Count} รายการ"));
     }
 }

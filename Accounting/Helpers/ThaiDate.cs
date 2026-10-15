@@ -46,6 +46,24 @@ public static class ThaiDate
     public static DateTime? CalendarDateUtc(DateTime? dt)
         => dt.HasValue ? CalendarDateUtc(dt.Value) : null;
 
+    // ═══ ช่วงของ "วันตามปฏิทินไทย" บนคอลัมน์ที่เก็บเป็นเวลาจริง (instant UTC เช่น AuditLog.Timestamp) ═══ (ฝ่ายค้านรอบส่งออก 2026-10-15 P2-8)
+    // ผู้ใช้เลือก "ถึง 14 ต.ค." = ถึงเที่ยงคืนเวลาไทย = 14 ต.ค. 17:00 UTC — เดิมตีเป็นเที่ยงคืน UTC ⇒ รายการ 00:00–07:00 ของวันที่ 15 (เวลาไทย) หลุดเข้ามา
+    // และฝั่ง "ตั้งแต่" ตัด 00:00–07:00 ของวันแรก (เวลาไทย) ทิ้ง · ค่าที่มีเวลากำกับ หรือระบุ Kind=Utc = เวลาจริงตรงตัว (ผู้เรียกแบบ API ไม่เปลี่ยน)
+
+    /// <summary>ค่านี้คือ "วันที่ล้วน" (เวลา 00:00 · ไม่ได้ระบุว่าเป็น UTC) — ตีความเป็นวันตามปฏิทินไทย</summary>
+    private static bool IsDateOnly(DateTime d) => d.TimeOfDay == TimeSpan.Zero && d.Kind != DateTimeKind.Utc;
+
+    /// <summary>เวลา UTC ของเที่ยงคืน (เวลาไทย) ที่เริ่มวัน <paramref name="date"/></summary>
+    private static DateTime BangkokDayStartUtc(DateTime date) => DateTime.SpecifyKind(date.Date.AddHours(-7), DateTimeKind.Utc);
+
+    /// <summary>ขอบล่างของช่วงบนคอลัมน์ instant — วันที่ล้วน = เที่ยงคืนเวลาไทยของวันนั้น · มีเวลา = ตรงตัว (ใช้กับ <c>&gt;=</c>)</summary>
+    public static DateTime InstantFromUtc(DateTime from) => IsDateOnly(from) ? BangkokDayStartUtc(from) : from;
+
+    /// <summary>ขอบบนของช่วงบนคอลัมน์ instant — วันที่ล้วน = เที่ยงคืนเวลาไทยของวัน<b>ถัดไป</b> (Exclusive=true ใช้ <c>&lt;</c>) ·
+    /// มีเวลา = ตรงตัว (Exclusive=false ใช้ <c>&lt;=</c>)</summary>
+    public static (DateTime Bound, bool Exclusive) InstantToUtc(DateTime to)
+        => IsDateOnly(to) ? (BangkokDayStartUtc(to.Date.AddDays(1)), true) : (to, false);
+
     /// <summary>yyyyMMdd ของวันที่ไทย — ใช้กับเลขเอกสาร.</summary>
     public static string YyyyMmDd(DateTime dt)
         => CalendarDateUtc(dt).ToString("yyyyMMdd");

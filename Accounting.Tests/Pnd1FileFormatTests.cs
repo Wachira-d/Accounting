@@ -313,4 +313,62 @@ public class Pnd1FileFormatTests
         else
             Assert.Equal(expected, Assert.Single(r.Rows).Category);
     }
+
+    // ───────── ฝ่ายค้านรอบส่งออก 2026-10-15 P1-3: ใบมือของพนักงานที่อยู่ในรอบเงินเดือน ─────────
+
+    /// <summary>ทิศที่พัง: ค่านายหน้า 40(2) ของพนักงานที่อยู่ในรอบเงินเดือนเดือนเดียวกัน เดิมหายจากไฟล์เงียบ ๆ — ต้องลงไฟล์เป็นประเภท (4)</summary>
+    [Fact]
+    public void Build_ใบมือ40_2ของพนักงานในรอบ_ลงไฟล์เสมอ_ไม่ถูกตัด()
+    {
+        var a = Payroll("E001", "1101700001237", 50000m, 50000m, 2291.67m);
+        var commission = Cert("WHT-COM", "1101700001237", "นาย ชื่อE001 สกุลE001", "2", 20000m, 600m);
+        var r = Pnd1FilingData.Build(new[] { a.Detail }, new[] { commission }, annual: false);
+        Assert.Equal(2, r.Rows.Count);
+        Assert.Equal(new[] { 1, 4 }, r.Rows.Select(x => x.Category).ToArray());
+        Assert.Equal(2291.67m + 600m, r.TotalTax);
+        Assert.DoesNotContain(r.Notes, n => n.Contains("WHT-COM"));
+    }
+
+    /// <summary>ทิศที่พัง: ใบมือ 40(1) ของเดือนที่คนนั้นไม่มีรอบเงินเดือน (เช่น โบนัสจ่ายนอกรอบ ต.ค.) ต้องลงไฟล์ของเดือนนั้น ·
+    /// ทิศตรงข้าม: 40(1) เดือนเดียวกับรอบ = ซ้ำ ⇒ ไม่ลงซ้ำ + แจ้งใน Notes พร้อมเลขที่ใบ</summary>
+    [Fact]
+    public void Build_ใบมือ40_1_ตัดเฉพาะเดือนที่ซ้ำกับรอบ_และแจ้งทุกครั้งที่ตัด()
+    {
+        var sepRun = new PayrollRun { Year = 2026, Month = 9, PayDate = new DateTime(2026, 9, 30), Status = "Paid" };
+        var a = Payroll("E001", "1101700001237", 50000m, 50000m, 2291.67m, run: sepRun);
+        var dupSep = Cert("HR-SEP", "1101700001237", "นาย ชื่อE001 สกุลE001", "1", 50000m, 2291.67m);
+        var bonusOct = Cert("HR-OCT", "1101700001237", "นาย ชื่อE001 สกุลE001", "1", 30000m, 1500m);
+        bonusOct.TaxMonth = 10;
+
+        var sep = Pnd1FilingData.Build(new[] { a.Detail }, new[] { dupSep }, annual: false);
+        Assert.Single(sep.Rows);
+        Assert.Contains(sep.Notes, n => n.Contains("HR-SEP") && n.Contains("ไม่ลงซ้ำ"));
+
+        var oct = Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), new[] { bonusOct }, annual: false);
+        var row = Assert.Single(oct.Rows);
+        Assert.Equal(1500m, row.TaxAmount);
+        Assert.DoesNotContain(oct.Notes, n => n.Contains("ไม่ลงซ้ำ"));
+    }
+
+    /// <summary>ภ.ง.ด.1ก = ผลรวม ภ.ง.ด.1 ทุกเดือน (เงินได้/ภาษี) — เดิมรายปีตัดใบมือทุกใบของใครก็ตามที่อยู่ในรอบใดในปี</summary>
+    [Fact]
+    public void Build_รายปี_เท่ากับผลรวมรายเดือน_เมื่อมีใบมือของพนักงาน()
+    {
+        var sepRun = new PayrollRun { Year = 2026, Month = 9, PayDate = new DateTime(2026, 9, 30), Status = "Paid" };
+        var a = Payroll("E001", "1101700001237", 50000m, 50000m, 2291.67m, run: sepRun);
+        var dupSep = Cert("HR-SEP", "1101700001237", "นาย ชื่อE001 สกุลE001", "1", 50000m, 2291.67m);
+        var commissionSep = Cert("WHT-COM", "1101700001237", "นาย ชื่อE001 สกุลE001", "2", 20000m, 600m);
+        var bonusOct = Cert("HR-OCT", "1101700001237", "นาย ชื่อE001 สกุลE001", "1", 30000m, 1500m);
+        bonusOct.TaxMonth = 10;
+        var allCerts = new[] { dupSep, commissionSep, bonusOct };
+
+        var sep = Pnd1FilingData.Build(new[] { a.Detail }, allCerts.Where(c => c.TaxMonth == 9).ToArray(), annual: false);
+        var oct = Pnd1FilingData.Build(Array.Empty<PayrollDetail>(), allCerts.Where(c => c.TaxMonth == 10).ToArray(), annual: false);
+        var year = Pnd1FilingData.Build(new[] { a.Detail }, allCerts, annual: true);
+
+        Assert.Equal(sep.TotalTax + oct.TotalTax, year.TotalTax);
+        Assert.Equal(sep.TotalIncome + oct.TotalIncome, year.TotalIncome);
+        Assert.Equal(2291.67m + 600m + 1500m, year.TotalTax);
+        Assert.Contains(year.Notes, n => n.Contains("HR-SEP"));
+    }
 }

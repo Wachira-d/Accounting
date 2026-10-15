@@ -358,7 +358,7 @@ public partial class LodgingService
                 || (r.GuestEmail != null && r.GuestEmail.Contains(s)) || (r.SourceReference != null && r.SourceReference.Contains(s)));
         }
         var total = await q.CountAsync();
-        var items = await q.OrderByDescending(r => r.CheckInDate).ThenByDescending(r => r.CreatedAt)
+        var items = await q.OrderByDescending(r => r.CheckInDate).ThenByDescending(r => r.CreatedAt).ThenBy(r => r.Id) // ฝ่ายค้านรอบส่งออก P2-9: ตัวตัดสินสุดท้าย — ส่งออกวนทุกหน้าไม่ซ้ำ/หาย
             .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(r => new
             {

@@ -210,6 +210,14 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 ข้อมูลเดิมที่บันทึกเป็น ภ.ง.ด.3 ก่อนรอบ 204 (50 ทวิ · เอกสารที่ลง 21916 · ใบปน 40(4)+อื่น) **ไม่ถูกย้ายแบบ/ย้าย GL ให้** — `DataIntegrityReport.Section40_4RecordedAsPnd3`
 + `TipWhtPostedToPnd2Account` ให้ผู้ทำบัญชีตัดสินรายใบ
 
+### 3.1f ผังที่นำเข้า — บัญชีแม่ + ลำดับ "ผังตั้งต้น" ✅ ฝ่ายค้านรอบส่งออก 2026-10-15 (P1-2) — ชั้น Company (ผังของบริษัท)
+
+| เรื่อง | ตัวตัดสิน (เจ้าของเดียว) | สถานะ |
+| --- | --- | --- |
+| ผังที่นำเข้า (ไฟล์ `ImportExportService.ImportAccountAsync` · Express/PEAK/FlowAccount `AccountImportAdapter`) ผูก `ParentAccountId` = ผังที่รหัส<b>ยาวที่สุด</b>ซึ่งเป็นส่วนต้นของรหัส (ประเภทเดียวกัน) · ลูกที่มาก่อนหัวในไฟล์ถูกย้ายมาอยู่ใต้หัว · ไม่ผูกใต้ผังที่ยังไม่มีลูกแต่มีรายการแล้ว (จะกลายเป็นบัญชีคุมที่มียอดค้าง — บอกเหตุผล) | `Helpers/ChartParentLink.Plan` ← `ChartParentLinker.LinkImportedAsync` | ✅ เดิมไม่ผูก ⇒ หัวบัญชีนำเข้า ("1130" · "4100") ดู "ไม่มีบัญชีย่อย" (กติกาบัญชีคุม = มีบัญชีย่อย) · ไฟล์ไม่มีคอลัมน์ "หัวบัญชี" — ธงหัวบัญชีแยก = คำถามเจ้าของ |
+| ผังตั้งต้นของการลงบัญชีอัตโนมัติ (ตัวหาผังตามรหัส/หมวด ~30 จุด) เรียง: ผังแม่แบบระบบ (`IsSystemAccount`) → ผังที่มีบัญชีแม่ → รหัส → Id | `PostingAccountGuard.DefaultPostingCandidates` / `OrderByDefaultPreference` | ✅ ผังที่ผู้ใช้สร้างเองทั้งชุดได้ลำดับเดิม (ตามรหัส) |
+| ผังที่นำเข้าไว้ก่อนรอบนี้ | หน้า "ตรวจข้อมูลจากบั๊กที่แก้แล้ว" หมวด `unlinkedImportedAccounts` (`ChartParentLinker.FindUnlinkedAsync`) → ปุ่ม "แก้" ต่อผัง (`ChartParentLinker.RepairAsync` · เจ้าของบริษัท · audit `coa-parent-link`) | ✅ ไม่มีงานไหนผูกเองตอนเปิดระบบ |
+
 
 ### 3.1b ที่พัก (Lodging) ✅ รอบ 124 — ชั้น Company → Site/Branch → LodgingProperty
 
@@ -883,6 +891,8 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 - [ ] SLA + status page ก่อนเซ็นลูกค้า Connected รายแรก
 
 ---
+
+_Last verified against codebase: 2026-10-15 (rev 45 · ฝ่ายค้านรอบส่งออก — **§3.1f** ผังที่นำเข้าผูกบัญชีแม่ (`ChartParentLink`) + ลำดับผังตั้งต้นเจ้าของเดียว (`PostingAccountGuard.DefaultPostingCandidates`) + รายงาน/ซ่อมผังที่นำเข้าไว้ก่อน — ไม่มีคอลัมน์ใหม่ — commit (sha เติมภายหลัง))_
 
 _Last verified against codebase: 2026-10-14 (rev 44 · ฝ่ายค้านรอบ 204 — **§3.1e** ค่าตั้งค่าสิทธิ ม.40(3) มีประวัติ: คอลัมน์ `Companies.WhtRoyaltyPnd2History` (text) + `WhtRoyaltyFormDecidedAt` (timestamptz) ผ่าน `DatabaseMigrationHelper.Round204RoyaltyHistoryStatements` — commit 7e931322)_
 

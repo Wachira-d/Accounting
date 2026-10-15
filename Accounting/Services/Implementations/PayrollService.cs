@@ -364,7 +364,7 @@ public class PayrollService : IPayrollService
 
         var total = await query.CountAsync();
         var items = await query
-            .OrderBy(e => e.EmployeeCode)
+            .OrderBy(e => e.EmployeeCode).ThenBy(e => e.Id) // ฝ่ายค้านรอบส่งออก P2-9: ตัวตัดสินสุดท้าย — ส่งออกวนทุกหน้าไม่ซ้ำ/หาย
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
@@ -1480,6 +1480,13 @@ public class PayrollService : IPayrollService
             .ToDictionaryAsync(e => e.Id);
         var paySources = await ResolvePayrollPaymentSourcesAsync(companyId, run.NetPaymentAccountCode,
             details.Select(d => d.NetPaymentAccountCode));
+        // ฝ่ายค้านรอบส่งออก 2026-10-15 P2-4: แถวที่แหล่งจ่ายไม่ใช่บัญชีธนาคาร (เงินสด/เงินสดย่อย) ต้องไม่ "พร้อมโอน" — กติกากลุ่มตัวเดียว
+        // MoneyAccountRule.GroupOf (ผูกบัญชีธนาคาร หรือ 1112x ของผังมาตรฐาน = ธนาคาร) ผ่าน MoneyAccountContext ตัวเดียวกับ dropdown แหล่งเงิน
+        var moneyCtx = await _db.LoadMoneyContextAsync(companyId);
+        bool? SourceIsBank(Accounting.Helpers.PostingAccountFacts? f)
+            => f == null ? null
+                : Accounting.Helpers.MoneyAccountRule.GroupOf(f.Code, moneyCtx.LinkedBankGls.ContainsKey(f.Id), moneyCtx.Prefixes)
+                    == Accounting.Helpers.MoneyChannelGroup.Bank;
 
         var isPaid = run.Status == "Paid";
         var lines = new List<PayrollBankTransferLine>(details.Count);
@@ -1493,13 +1500,21 @@ public class PayrollService : IPayrollService
             var source = string.IsNullOrWhiteSpace(d.NetPaymentAccountCode)
                 ? paySources.DefaultLabel
                 : paySources.Labels.GetValueOrDefault(d.NetPaymentAccountCode.Trim(), d.NetPaymentAccountCode.Trim());
+            var sourceFacts = string.IsNullOrWhiteSpace(d.NetPaymentAccountCode)
+                ? paySources.Default
+                : paySources.Accounts.GetValueOrDefault(d.NetPaymentAccountCode.Trim());
             lines.Add(new PayrollBankTransferLine(
                 d.EmployeeId, e?.EmployeeCode ?? "", name,
                 e?.BankName, e?.BankAccountNumber, e?.BankAccountName,
-                d.NetPay, isPaid ? d.AdvanceRecovered : 0m, hasOutstanding, source));
+                d.NetPay, isPaid ? d.AdvanceRecovered : 0m, hasOutstanding, source,
+                PaymentSourceIsBank: SourceIsBank(sourceFacts)));
         }
+        // แถวเรียงตามแหล่งจ่าย (บัญชีธนาคารที่จ่าย — ไฟล์หนึ่งชุดต่อบัญชีที่โอนออก) แล้วตามรหัสพนักงาน
         return new PayrollBankTransferSheet(run.Id, run.PayrollNumber, run.Name, run.Year, run.Month, run.PayDate, run.Status,
-            run.TotalNetPay, lines.OrderBy(l => l.EmployeeCode, StringComparer.Ordinal).ToList());
+            run.TotalNetPay, lines
+                .OrderBy(l => l.PaymentSourceIsBank == true ? 0 : 1)
+                .ThenBy(l => l.PaymentSourceLabel ?? "", StringComparer.Ordinal)
+                .ThenBy(l => l.EmployeeCode, StringComparer.Ordinal).ToList());
     }
 
     public async Task<PayrollRunResponse> SetEmployeePaymentAccountAsync(
@@ -2158,7 +2173,7 @@ public class PayrollService : IPayrollService
 
         var total = await query.CountAsync();
         var items = await query
-            .OrderByDescending(r => r.Year).ThenByDescending(r => r.Month)
+            .OrderByDescending(r => r.Year).ThenByDescending(r => r.Month).ThenByDescending(r => r.CreatedAt).ThenBy(r => r.Id) // ฝ่ายค้านรอบส่งออก P2-9: ตัวตัดสินสุดท้าย — ส่งออกวนทุกหน้าไม่ซ้ำ/หาย
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
@@ -3013,9 +3028,9 @@ public class PayrollService : IPayrollService
                             a.CompanyId == companyId && a.AccountCode == run.SalaryExpenseAccountCode
                             && a.IsActive && !a.IsDeleted)
                         : null)
-                    ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                    ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode == "54111")
-                    ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                    ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.AccountCode.StartsWith("541"));
                 if (salaryAccount != null)
                 {
@@ -3047,9 +3062,9 @@ public class PayrollService : IPayrollService
                 // หนี้สินหาย. ธงอยู่ที่ audit: unbalanced-JE risk ตอนผังไม่มาตรฐาน)
                 async Task<ChartOfAccount> ReqAcct(string exact, string prefix, string nameContains, string purpose)
                 {
-                    var acc = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                    var acc = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                             a.CompanyId == companyId && a.AccountCode == exact)
-                        ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                        ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                             a.CompanyId == companyId && a.AccountCode.StartsWith(prefix)
                             && a.AccountName.Contains(nameContains));
                     return acc ?? throw new InvalidOperationException(
@@ -3114,7 +3129,7 @@ public class PayrollService : IPayrollService
                 if (loanDeductTotal > 0)
                 {
                     // ตัดลูกหนี้เงินกู้พนักงาน (asset) ถ้ามีผัง — ไม่มีก็รวมเข้าขาหักอื่น
-                    var loanAcc = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                    var loanAcc = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                         a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                         && (a.AccountName.Contains("เงินกู้พนักงาน")
                             || a.AccountName.Contains("เงินให้กู้ยืมพนักงาน")
@@ -5224,9 +5239,9 @@ public class PayrollService : IPayrollService
 
         // ── หาผังบัญชี ──
         // 21815 ประกันสังคมค้างจ่าย (Cr ตอนจ่ายเงินเดือน) → ตอนนี้ Dr ล้างหนี้
-        var ssoPayableAccount = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+        var ssoPayableAccount = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
             a.CompanyId == companyId && a.AccountCode == "21815")
-            ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+            ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                 a.CompanyId == companyId && a.AccountCode.StartsWith("218")
                 && a.AccountName.Contains("ประกันสังคม"))
             ?? throw new InvalidOperationException(
@@ -5255,11 +5270,11 @@ public class PayrollService : IPayrollService
             };
             if (lateFee > 0)
             {
-                var lateFeeAccount = await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                var lateFeeAccount = await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                     a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                     && a.AccountCode.StartsWith("54")
                     && (a.AccountName.Contains("เงินเพิ่ม") || a.AccountName.Contains("ค่าปรับ")))
-                    ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db).FirstOrDefaultAsync(a =>
+                    ?? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
                         a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                         && a.AccountCode.StartsWith("58"));   // ค่าใช้จ่ายอื่น
                 if (lateFeeAccount != null)

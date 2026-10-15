@@ -188,4 +188,8 @@ public static class AdvisoryLockKey
     /// ตัวส่งตามรอบ (<see cref="BackgroundJob"/>) ระหว่างสร้าง/ส่ง ⇒ รอบรายชั่วโมงได้ล็อกไม่ได้แล้วข้ามรายงาน<b>ของทุกบริษัท</b>ในชั่วโมงนั้น
     /// (IsDue ต้องตรงชั่วโมง = หายทั้งงวด) · ล็อกรวมเหลือไว้กันสองเครื่องเดินรอบพร้อมกันเท่านั้น</summary>
     public const string ScheduledReportSend = "sched-report";
+
+    /// <summary>ซ่อมยอดยกมาจากการปิดปี — part = "repair" ผูก companyId (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1 · <c>RepairOpeningRollAsync</c>):
+    /// สองคนกดซ่อมพร้อมกัน = audit ซ้ำ · xact lock เพราะการซ่อมอยู่ในธุรกรรมเดียว</summary>
+    public const string OpeningRoll = "opening-roll";
 }

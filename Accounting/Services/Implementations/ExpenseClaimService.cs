@@ -213,7 +213,7 @@ public class ExpenseClaimService : IExpenseClaimService
             query = query.Where(e => e.ClaimNumber.Contains(request.Search) || e.Title.Contains(request.Search));
 
         var total = await query.CountAsync();
-        var items = await query.OrderByDescending(e => e.CreatedAt)
+        var items = await query.OrderByDescending(e => e.CreatedAt).ThenBy(e => e.Id) // ฝ่ายค้านรอบส่งออก P2-9: ตัวตัดสินสุดท้าย — ส่งออกวนทุกหน้าไม่ซ้ำ/หาย
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
@@ -822,7 +822,7 @@ public class ExpenseClaimService : IExpenseClaimService
                 a.CompanyId == companyId && a.AccountCode == codePrefix)
             ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix))
-                .OrderBy(a => a.AccountCode)
+                .OrderByDefaultPreference()
                 .FirstOrDefaultAsync();
     }
 

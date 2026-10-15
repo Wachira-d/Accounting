@@ -90,6 +90,7 @@ public abstract class AccountImportAdapterBase : CompetitorAdapterBase
             .ToDictionaryAsync(a => a.AccountCode, ct);
 
         int rowIdx = 0;
+        var created = new List<ChartOfAccount>();
         foreach (var row in rows)
         {
             rowIdx++;
@@ -108,7 +109,7 @@ public abstract class AccountImportAdapterBase : CompetitorAdapterBase
                     }
                     if (!options.DryRun)
                     {
-                        _db.ChartOfAccounts.Add(new ChartOfAccount
+                        var account = new ChartOfAccount
                         {
                             CompanyId = companyId,
                             AccountCode = row.AccountCode,
@@ -119,7 +120,9 @@ public abstract class AccountImportAdapterBase : CompetitorAdapterBase
                             Level = row.AccountCode.Length <= 4 ? 1 : 2,
                             IsActive = true,
                             CreatedBy = $"Migrate:{SourceSystem}:{options.SourceTag ?? "manual"}",
-                        });
+                        };
+                        _db.ChartOfAccounts.Add(account);
+                        created.Add(account);
                     }
                     imported++;
                     continue;
@@ -145,6 +148,11 @@ public abstract class AccountImportAdapterBase : CompetitorAdapterBase
             catch (InvalidOperationException e) { failed++; errors.Add($"แถว {rowIdx} ({row.AccountCode}): {e.Message}"); }
         }
 
+        // ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2: ผูกบัญชีแม่ของผังที่นำเข้า (เดิมไม่ผูก ⇒ หัวบัญชีดู "ไม่มีบัญชีย่อย" แล้วถูกหยิบเป็นผังตั้งต้น) ·
+        // ทั้งชุดในครั้งเดียว ⇒ ลำดับแถวในไฟล์ไม่มีผล · ผูกไม่ได้ = คำเตือน (ผังยังนำเข้าได้)
+        if (!options.DryRun && created.Count > 0)
+            foreach (var w in await Accounting.Services.Implementations.ChartParentLinker.LinkImportedAsync(_db, companyId, created, ct))
+                errors.Add("ผูกบัญชีแม่ไม่ได้ — " + w);
         if (!options.DryRun && (imported > 0 || updated > 0))
             await _db.SaveChangesAsync(ct);
         return new ImportResult(SourceSystem, rows.Count, imported, updated, skipped, failed, errors);

@@ -130,7 +130,7 @@ public class PayrollBankTransferTests
     [Fact]
     public void รอบจ่ายแล้ว_ยอดโอน_เท่ากับสุทธิลบหักคืนเงินทดรอง()
     {
-        var r = PayrollBankTransfer.Evaluate("Paid", 15000m, 2000m, hasOutstandingAdvance: false, "123-4-56789-0");
+        var r = PayrollBankTransfer.Evaluate("Paid", 15000m, 2000m, hasOutstandingAdvance: false, "123-4-56789-0", paymentSourceIsBank: true);
         Assert.Equal(13000m, r.TransferAmount);
         Assert.Equal("1234567890", r.AccountDigits);
         Assert.True(r.Ready);
@@ -140,33 +140,51 @@ public class PayrollBankTransferTests
     [Fact]
     public void รอบยังไม่จ่าย_ใช้สุทธิ_และบอกเมื่อมีเงินทดรองค้าง_ไม่เดายอดหักคืน()
     {
-        var withAdvance = PayrollBankTransfer.Evaluate("Approved", 15000m, 0m, hasOutstandingAdvance: true, "1234567890");
+        var withAdvance = PayrollBankTransfer.Evaluate("Approved", 15000m, 0m, hasOutstandingAdvance: true, "1234567890", paymentSourceIsBank: true);
         Assert.Equal(15000m, withAdvance.TransferAmount);
         Assert.True(withAdvance.Ready);
         Assert.Contains("เงินทดรองค้าง", withAdvance.Note);
         // ทิศตรงข้าม: ไม่มีเงินทดรองค้าง = ไม่มีหมายเหตุรบกวน
-        var clean = PayrollBankTransfer.Evaluate("Approved", 15000m, 0m, hasOutstandingAdvance: false, "1234567890");
+        var clean = PayrollBankTransfer.Evaluate("Approved", 15000m, 0m, hasOutstandingAdvance: false, "1234567890", paymentSourceIsBank: true);
         Assert.Null(clean.Note);
     }
 
     [Fact]
     public void ขาดเลขบัญชี_หรือเลขสั้น_ไม่พร้อมโอน_แต่ยังอยู่ในไฟล์พร้อมทางไปต่อ()
     {
-        var none = PayrollBankTransfer.Evaluate("Paid", 9000m, 0m, false, null);
+        var none = PayrollBankTransfer.Evaluate("Paid", 9000m, 0m, false, null, paymentSourceIsBank: true);
         Assert.False(none.Ready);
         Assert.Equal("ขาดเลขบัญชี", none.Status);
         Assert.Equal(9000m, none.TransferAmount);
-        var shortNo = PayrollBankTransfer.Evaluate("Paid", 9000m, 0m, false, "12345");
+        var shortNo = PayrollBankTransfer.Evaluate("Paid", 9000m, 0m, false, "12345", paymentSourceIsBank: true);
         Assert.False(shortNo.Ready);
         Assert.Contains("5 หลัก", shortNo.Note);
         // ทิศตรงข้าม: 12 หลัก (ออมสิน/ธ.ก.ส.) ผ่าน
-        Assert.True(PayrollBankTransfer.Evaluate("Paid", 9000m, 0m, false, "020123456789").Ready);
+        Assert.True(PayrollBankTransfer.Evaluate("Paid", 9000m, 0m, false, "020123456789", paymentSourceIsBank: true).Ready);
+    }
+
+    /// <summary>ฝ่ายค้านรอบส่งออก 2026-10-15 P2-4: พนักงานที่จ่ายจากเงินสด/เงินสดย่อย เดิมขึ้น "พร้อมโอน" ⇒ อัปโหลดแล้วจ่ายซ้ำ ·
+    /// ทิศตรงข้าม: แหล่งจ่ายเป็นธนาคาร + เลขบัญชีครบ ยังพร้อมโอนเหมือนเดิม</summary>
+    [Fact]
+    public void แหล่งจ่ายไม่ใช่ธนาคาร_ไม่พร้อมโอน_จ่ายจากแหล่งอื่น_และไม่มีแหล่งจ่าย_ไม่พร้อมโอน()
+    {
+        var cash = PayrollBankTransfer.Evaluate("Paid", 9000m, 0m, false, "1234567890", paymentSourceIsBank: false);
+        Assert.False(cash.Ready);
+        Assert.Equal(PayrollBankTransfer.NotFromBankStatus, cash.Status);
+        Assert.Contains("จ่ายซ้ำ", cash.Note);
+        Assert.Equal(9000m, cash.TransferAmount);   // แถวยังอยู่ในไฟล์ (ไม่ตัดทิ้งเงียบ ๆ)
+
+        var unknown = PayrollBankTransfer.Evaluate("Approved", 9000m, 0m, false, "1234567890", paymentSourceIsBank: null);
+        Assert.False(unknown.Ready);
+        Assert.Equal("ยังไม่ได้เลือกแหล่งจ่าย", unknown.Status);
+
+        Assert.True(PayrollBankTransfer.Evaluate("Paid", 9000m, 0m, false, "1234567890", paymentSourceIsBank: true).Ready);
     }
 
     [Fact]
     public void ยอดหลังหักคืนเป็นศูนย์_ไม่ต้องโอน()
     {
-        var r = PayrollBankTransfer.Evaluate("Paid", 5000m, 5000m, false, "1234567890");
+        var r = PayrollBankTransfer.Evaluate("Paid", 5000m, 5000m, false, "1234567890", paymentSourceIsBank: true);
         Assert.False(r.Ready);
         Assert.Equal("ไม่ต้องโอน", r.Status);
         Assert.Equal(0m, r.TransferAmount);
@@ -235,8 +253,8 @@ public class PayrollExportSheetsTests
         var sheet = new PayrollBankTransferSheet(Guid.NewGuid(), "PR-1", "ก.ย.", 2026, 9, new DateTime(2026, 9, 30), "Paid", 30000m,
             new[]
             {
-                new PayrollBankTransferLine(Guid.NewGuid(), "E01", "นายเอ", "กสิกรไทย", "012-3-45678-9", "เอ", 20000m, 0m, false, "11121 ธนาคาร"),
-                new PayrollBankTransferLine(Guid.NewGuid(), "E02", "นายบี", null, null, null, 10000m, 0m, false, null),
+                new PayrollBankTransferLine(Guid.NewGuid(), "E01", "นายเอ", "กสิกรไทย", "012-3-45678-9", "เอ", 20000m, 0m, false, "11121 ธนาคาร", PaymentSourceIsBank: true),
+                new PayrollBankTransferLine(Guid.NewGuid(), "E02", "นายบี", null, null, null, 10000m, 0m, false, "11121 ธนาคาร", PaymentSourceIsBank: true),
             });
         var rows = PayrollExportSheets.BankTransferRows(sheet);
         var cols = PayrollExportSheets.BankTransfer;

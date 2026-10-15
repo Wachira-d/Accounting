@@ -1356,7 +1356,7 @@ public class FixedAssetService : IFixedAssetService
                 a.CompanyId == companyId && a.AccountCode == codePrefix && a.IsActive)
             ?? await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith(codePrefix) && a.IsActive)
-                .OrderBy(a => a.AccountCode)
+                .OrderByDefaultPreference()
                 .FirstOrDefaultAsync();
     }
 

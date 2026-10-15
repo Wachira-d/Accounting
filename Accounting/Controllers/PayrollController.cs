@@ -33,7 +33,10 @@ public class PayrollController : ControllerBase
 
     /// <summary>PDPA ม.26 — เปิดดู PII (CitizenId/Phone/Email) แบบ raw เฉพาะ
     /// user ที่มี permission Pii.View. คนอื่น ๆ ได้ค่า mask ตาม PiiMask helper.</summary>
-    private async Task<bool> CanViewPiiAsync(Guid companyId, Guid? subjectEmployeeId = null)
+    /// <param name="operation">ชนิดการเข้าถึงใน PiiAccessLog — "Read" (ดูบนจอ) / "Export" (ไฟล์ส่งออก · ฝ่ายค้านรอบส่งออก 2026-10-15 P2-11:
+    /// เดิมไฟล์ทะเบียนพนักงานบันทึกเป็น "Read" ⇒ ผู้ตรวจ ม.37 แยกการนำข้อมูลออกนอกระบบไม่ได้)</param>
+    private async Task<bool> CanViewPiiAsync(Guid companyId, Guid? subjectEmployeeId = null, string operation = "Read",
+        string purpose = "ดูข้อมูลพนักงานแบบไม่ปกปิด (HR/Payroll)")
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var can = await _permissions.HasPermissionAsync(companyId, userId,
@@ -52,7 +55,7 @@ public class PayrollController : ControllerBase
                 User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "",
                 subjectType: "Employee", subjectId: subjectEmployeeId ?? Guid.Empty,
                 fieldName: subjectEmployeeId.HasValue ? "*" : "* (รายการพนักงาน)",
-                operation: "Read", purpose: "ดูข้อมูลพนักงานแบบไม่ปกปิด (HR/Payroll)",
+                operation: operation, purpose: purpose,
                 ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
                 userAgent: Request.Headers.UserAgent.ToString());
         }
@@ -1085,7 +1088,8 @@ public class PayrollController : ControllerBase
         [FromQuery] bool? isActive = null)
     {
         if (ModuleExport.ParseFormat(format) is not { } fmt) return BadExportFormat();
-        var includePii = await CanViewPiiAsync(companyId);
+        var includePii = await CanViewPiiAsync(companyId, operation: "Export",
+            purpose: "ส่งออกไฟล์ทะเบียนพนักงานแบบไม่ปกปิด (HR/Payroll)");
         var includeSalary = await CanViewPayrollAsync(companyId);
         var rows = await ModuleExport.CollectAllPagesAsync(page =>
             _service.GetEmployeesAsync(companyId, new PagedRequest(page, ModuleExport.PageSize, search), includePii, includeSalary, isActive));

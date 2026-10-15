@@ -41,10 +41,11 @@
         <div class="text-sm text-gray-500" id="previewPND1">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป (e-Filing ขยายถึงวันที่ 15)</div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1','txt')">ดาวน์โหลด .txt (นำเข้าเว็บสรรพากร)</button>
-          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1','csv')">CSV</button>
           <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1','xlsx')">Excel</button>
+          <button class="btn btn-outline btn-sm" onclick="Page.download('pnd1','csv')" title="CSV เก็บเลขครบ แต่ถ้าเปิดด้วย Excel ตรง ๆ เลขประจำตัวผู้เสียภาษี/วันที่ ddMMyyyy ที่ขึ้นต้นด้วย 0 จะถูกตัด — เปิดดู/แก้ให้ใช้ปุ่ม Excel · CSV ใช้นำเข้าโปรแกรมอื่นเท่านั้น">CSV ⚠️</button>
           <button class="btn btn-outline btn-sm" onclick="Page.preview('PND1')">ดูตัวอย่าง / ยอดหน้าแบบ</button>
         </div>
+        <div class="text-xs" style="margin-top:6px;color:#b45309">⚠️ CSV: เปิดด้วย Excel ตรง ๆ แล้วเลขประจำตัว 13 หลัก/วันที่ ddMMyyyy ที่ขึ้นต้นด้วย 0 จะถูกตัด — เปิดดู/แก้ใช้ปุ่ม Excel (ไฟล์ยื่นจริงใช้ .txt)</div>
         <details class="text-xs" style="margin-top:8px;color:var(--text-secondary)">
           <summary style="cursor:pointer">วิธียื่น ภ.ง.ด.1 ด้วยไฟล์นี้</summary>
           <ol style="margin:6px 0 0 18px;padding:0;line-height:1.6">
@@ -152,10 +153,11 @@
         <div class="text-sm text-gray-500" id="previewPND1K">กำหนดยื่น: ภายในเดือนกุมภาพันธ์ของปีถัดไป</div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1k','txt')">ดาวน์โหลด .txt (นำเข้าเว็บสรรพากร)</button>
-          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1k','csv')">CSV</button>
           <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1k','xlsx')">Excel</button>
+          <button class="btn btn-outline btn-sm" onclick="Page.download('pnd1k','csv')" title="CSV เก็บเลขครบ แต่ถ้าเปิดด้วย Excel ตรง ๆ เลขประจำตัวผู้เสียภาษี/วันที่ ddMMyyyy ที่ขึ้นต้นด้วย 0 จะถูกตัด — เปิดดู/แก้ให้ใช้ปุ่ม Excel · CSV ใช้นำเข้าโปรแกรมอื่นเท่านั้น">CSV ⚠️</button>
           <button class="btn btn-outline btn-sm" onclick="Page.preview('PND1K')">ดูตัวอย่าง / ยอดหน้าแบบ</button>
         </div>
+        <div class="text-xs" style="margin-top:6px;color:#b45309">⚠️ CSV: เปิดด้วย Excel ตรง ๆ แล้วเลขประจำตัว 13 หลัก/วันที่ ddMMyyyy ที่ขึ้นต้นด้วย 0 จะถูกตัด — เปิดดู/แก้ใช้ปุ่ม Excel (ไฟล์ยื่นจริงใช้ .txt)</div>
         <div class="text-xs" style="margin-top:6px;color:var(--text-secondary)">
           ใบแนบ ภ.ง.ด.1ก: ลำดับ · เลขผู้เสียภาษี · คำนำหน้า · ชื่อ · ชื่อสกุล · <b>ที่อยู่ผู้มีเงินได้</b> · เงินได้ทั้งปี · ภาษีทั้งปี · เงื่อนไข · ประเภทเงินได้
           — ⚠️ ยังไม่ได้ยืนยันลำดับคอลัมน์กับหน้านำเข้าจริง

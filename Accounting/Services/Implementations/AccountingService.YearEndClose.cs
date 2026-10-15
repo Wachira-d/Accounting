@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Accounting;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -278,54 +279,30 @@ public partial class AccountingService
             await _db.SaveChangesAsync();
         }
 
-        var asOfExclusive = new DateTime(year, 1, 1);
-        var perAccount = await (
-            from line in _db.JournalEntryLines.AsNoTracking()
-            join entry in _db.JournalEntries on line.JournalEntryId equals entry.Id
-            join account in _db.ChartOfAccounts on line.AccountId equals account.Id
-            where entry.CompanyId == companyId
-                && entry.EntryDate < asOfExclusive
-                && (entry.Status == JournalEntryStatus.Posted || entry.Status == JournalEntryStatus.Reversed)
-                && (account.AccountType == AccountType.Asset
-                    || account.AccountType == AccountType.Liability
-                    || account.AccountType == AccountType.Equity)
-            group new { line.DebitAmount, line.CreditAmount } by account.Id into g
-            select new
-            {
-                AccountId = g.Key,
-                NetDebit = g.Sum(x => x.DebitAmount),
-                NetCredit = g.Sum(x => x.CreditAmount),
-            }
-        ).ToListAsync();
-
-        // Add prior-year opening balances on top (the chain continues).
-        var prevPeriodId = await _db.FiscalPeriods
-            .Where(p => p.CompanyId == companyId && p.Year == year - 1 && p.Month == 1)
-            .Select(p => (Guid?)p.Id)
-            .FirstOrDefaultAsync();
-        var prevOpenings = prevPeriodId.HasValue
-            ? await _db.OpeningBalances
-                .Where(o => o.FiscalPeriodId == prevPeriodId.Value && o.CompanyId == companyId)
-                .Select(o => new { o.AccountId, o.OpeningDebit, o.OpeningCredit })
-                .ToListAsync()
-            : new();
+        // ═══ ยอดยกมาของปีใหม่ = ฐานยอดยกมาล่าสุดก่อน 1 ม.ค. + รายการตั้งแต่วันเริ่มฐานนั้น ═══ (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1)
+        // เดิม = รายการ "ทั้งหมดตั้งแต่เปิดบริษัท" + ยอดยกมา ม.ค. ปีก่อน (ซึ่งรวมทุกปีก่อนหน้าไว้แล้ว) ⇒ ตั้งแต่ปิดปีครั้งที่สอง
+        // ปีเก่าถูกนับซ้ำ และงบทดลอง/บัญชีแยกประเภท/แดชบอร์ด/ยอด ณ วันที่ อ่านฐานเดียวกันจึงผิดตรงกันหมด · ยอดนำเข้ากลางปี
+        // (ย้ายระบบ ก.ค.) ก็ไม่ถูกนับเลย · ตัวคำนวณตัวเดียว ComputeRolledOpeningsAsync (ใช้ร่วมกับรายงานตรวจ/ซ่อม)
+        var rolled = await ComputeRolledOpeningsAsync(companyId, year, null);
 
         var existing = await _db.OpeningBalances
             .Where(o => o.FiscalPeriodId == jan.Id && o.CompanyId == companyId)
             .ToListAsync();
 
         int written = 0;
-        var allAccountIds = perAccount.Select(p => p.AccountId)
-            .Union(prevOpenings.Select(p => p.AccountId)).Distinct();
-        foreach (var accountId in allAccountIds)
+        // แถวที่การปิดปีรอบก่อนเขียนไว้แต่ยอดใหม่เป็นศูนย์ (เช่น ยกเลิกรายการไปแล้ว) ต้องถูกล้าง — ไม่งั้นค่าเก่าค้าง ·
+        // แถวนำเข้า (OpeningRoll.IsImported) ไม่ถูกล้าง (เป็นยอดที่ผู้ใช้ลงเอง)
+        var accountIds = rolled.Keys
+            .Union(existing.Where(o => !OpeningRoll.IsImported(o.Notes)).Select(o => o.AccountId))
+            .ToList();
+        foreach (var accountId in accountIds)
         {
-            var movements = perAccount.FirstOrDefault(p => p.AccountId == accountId);
-            var prior = prevOpenings.FirstOrDefault(p => p.AccountId == accountId);
-            var debit = (movements?.NetDebit ?? 0) + (prior?.OpeningDebit ?? 0);
-            var credit = (movements?.NetCredit ?? 0) + (prior?.OpeningCredit ?? 0);
-            if (debit == 0 && credit == 0) continue;
-
+            rolled.TryGetValue(accountId, out var amounts);
+            var debit = amounts.Debit;
+            var credit = amounts.Credit;
             var row = existing.FirstOrDefault(o => o.AccountId == accountId);
+            if (debit == 0 && credit == 0 && (row == null || (row.OpeningDebit == 0 && row.OpeningCredit == 0))) continue;
+
             if (row == null)
             {
                 _db.OpeningBalances.Add(new OpeningBalance
@@ -335,6 +312,7 @@ public partial class AccountingService
                     AccountId = accountId,
                     OpeningDebit = debit,
                     OpeningCredit = credit,
+                    Notes = RolledOpeningNote(year),
                     CreatedBy = userId,
                 });
             }
@@ -350,5 +328,223 @@ public partial class AccountingService
 
         await _db.SaveChangesAsync();
         return written;
+    }
+
+    /// <summary>
+    /// ยอดยกมา 1 ม.ค. ของ <paramref name="year"/> ที่ควรเป็น (นิยามใน <see cref="OpeningRoll"/>) — ตัวคำนวณตัวเดียวของการปิดปี
+    /// และรายงานตรวจ/ซ่อม · <paramref name="correctedAnchors"/> = ยอดที่ "ควรเป็น" ของงวดฐานที่รายงานคำนวณไว้แล้วในรอบเดียวกัน
+    /// (ปีที่สองขึ้นไปของสายที่ผิด ต้องคิดบนฐานที่แก้แล้ว ไม่ใช่ฐานที่เก็บผิด)
+    /// </summary>
+    private async Task<Dictionary<Guid, (decimal Debit, decimal Credit)>> ComputeRolledOpeningsAsync(
+        Guid companyId, int year, IReadOnlyDictionary<Guid, Dictionary<Guid, (decimal Debit, decimal Credit)>>? correctedAnchors)
+    {
+        var asOfExclusive = new DateTime(year, 1, 1);
+
+        // ฐาน = งวดล่าสุดที่มียอดยกมาและเริ่มก่อน 1 ม.ค. ปีเป้าหมาย — เกณฑ์เดียวกับงบทดลอง ณ 31 ธ.ค. ปีก่อน
+        var anchor = await (
+            from p in _db.FiscalPeriods.AsNoTracking()
+            join o in _db.OpeningBalances.AsNoTracking() on p.Id equals o.FiscalPeriodId
+            where p.CompanyId == companyId && o.CompanyId == companyId && p.StartDate < asOfExclusive
+            orderby p.StartDate descending
+            select new { p.Id, p.StartDate }
+        ).FirstOrDefaultAsync();
+
+        var anchorRows = new Dictionary<Guid, (decimal Debit, decimal Credit)>();
+        if (anchor != null)
+        {
+            if (correctedAnchors != null && correctedAnchors.TryGetValue(anchor.Id, out var corrected))
+                anchorRows = new Dictionary<Guid, (decimal Debit, decimal Credit)>(corrected);
+            else
+                anchorRows = await _db.OpeningBalances.AsNoTracking()
+                    .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == anchor.Id)
+                    .GroupBy(o => o.AccountId)
+                    .Select(g => new { AccountId = g.Key, Debit = g.Sum(x => x.OpeningDebit), Credit = g.Sum(x => x.OpeningCredit) })
+                    .ToDictionaryAsync(x => x.AccountId, x => (x.Debit, x.Credit));
+        }
+        DateTime? movementStart = anchor?.StartDate;
+
+        var movements = await (
+            from line in _db.JournalEntryLines.AsNoTracking()
+            join entry in _db.JournalEntries on line.JournalEntryId equals entry.Id
+            join account in _db.ChartOfAccounts on line.AccountId equals account.Id
+            where entry.CompanyId == companyId
+                && entry.EntryDate < asOfExclusive
+                && (movementStart == null || entry.EntryDate >= movementStart.Value)
+                && (entry.Status == JournalEntryStatus.Posted || entry.Status == JournalEntryStatus.Reversed)
+                && (account.AccountType == AccountType.Asset
+                    || account.AccountType == AccountType.Liability
+                    || account.AccountType == AccountType.Equity)
+            group new { line.DebitAmount, line.CreditAmount } by account.Id into g
+            select new { AccountId = g.Key, Debit = g.Sum(x => x.DebitAmount), Credit = g.Sum(x => x.CreditAmount) }
+        ).ToDictionaryAsync(x => x.AccountId, x => (x.Debit, x.Credit));
+
+        return OpeningRoll.Combine(anchorRows, movements);
+    }
+
+    // ═══ ตรวจ/ซ่อมยอดยกมาจากการปิดปี — เครื่องมือเจ้าของบริษัท (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1 · F2 ข้อ 9) ═══
+    // รายงานก่อน (อ่านอย่างเดียว) → ซ่อมเฉพาะปีที่ผู้ใช้เลือกเมื่อกด + audit chain ทุกบัญชี · ไม่มีงานไหนซ่อมเองตอนเปิดระบบ
+    // (แบบเดียวกับ FindProductTotalMismatchesAsync → RepairProductTotalsAsync)
+
+    public async Task<List<OpeningRollCheckYear>> FindOpeningRollMismatchesAsync(Guid companyId)
+        => (await EvaluateOpeningRollChainAsync(companyId)).Select(x => x.Report).ToList();
+
+    private sealed record OpeningRollEvaluation(
+        OpeningRollCheckYear Report, Guid? PeriodId, Dictionary<Guid, (decimal Debit, decimal Credit)>? Expected);
+
+    /// <summary>เดินทุกปีที่ปิดแล้วจากเก่าไปใหม่ · ปีถัดไปคิดบนฐานที่แก้แล้วของปีก่อน (ไม่ใช่ฐานที่เก็บผิด)</summary>
+    private async Task<List<OpeningRollEvaluation>> EvaluateOpeningRollChainAsync(Guid companyId)
+    {
+        var targetYears = await _db.YearEndClosings.AsNoTracking()
+            .Where(y => y.CompanyId == companyId)
+            .Select(y => y.FiscalYear + 1)
+            .Distinct()
+            .OrderBy(y => y)
+            .ToListAsync();
+
+        var corrected = new Dictionary<Guid, Dictionary<Guid, (decimal Debit, decimal Credit)>>();
+        var result = new List<OpeningRollEvaluation>();
+        foreach (var year in targetYears)
+        {
+            var janId = await _db.FiscalPeriods.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && p.Year == year && p.Month == 1)
+                .Select(p => (Guid?)p.Id)
+                .FirstOrDefaultAsync();
+            if (janId == null)
+            {
+                result.Add(new(new OpeningRollCheckYear(year, null, false, "ไม่มีงวด ม.ค. ของปีนี้ (ยังไม่เคยยกยอด)", new()), null, null));
+                continue;
+            }
+            var storedRows = await _db.OpeningBalances.AsNoTracking()
+                .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == janId.Value)
+                .Select(o => new { o.AccountId, o.OpeningDebit, o.OpeningCredit, o.Notes })
+                .ToListAsync();
+            if (storedRows.Any(o => OpeningRoll.IsImported(o.Notes)))
+            {
+                // ผู้ใช้ลงยอดยกมาจากระบบเดิมในงวดนี้เอง — ยอดที่เก็บคือความตั้งใจของผู้ใช้ (ปีถัดไปใช้ยอดที่เก็บเป็นฐาน)
+                result.Add(new(new OpeningRollCheckYear(year, janId, true,
+                    "งวดนี้มียอดยกมาที่นำเข้าจากระบบเดิม — ไม่ซ่อมอัตโนมัติ (ตรวจกับงบทดลองแล้วแก้ที่หน้าย้ายระบบ)", new()), janId, null));
+                continue;
+            }
+
+            var expected = await ComputeRolledOpeningsAsync(companyId, year, corrected);
+            corrected[janId.Value] = expected;
+            var stored = storedRows.GroupBy(o => o.AccountId)
+                .ToDictionary(g => g.Key, g => (Debit: g.Sum(x => x.OpeningDebit), Credit: g.Sum(x => x.OpeningCredit)));
+            var diff = OpeningRoll.Diff(stored, expected);
+
+            var ids = diff.Select(d => d.AccountId).ToList();
+            var accounts = new Dictionary<Guid, (string Code, string Name)>();
+            if (ids.Count > 0)
+                foreach (var acct in await _db.ChartOfAccounts.AsNoTracking()
+                             .Where(a => a.CompanyId == companyId && ids.Contains(a.Id))
+                             .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+                             .ToListAsync())
+                    accounts[acct.Id] = (acct.AccountCode, acct.AccountName);
+            var mismatches = diff
+                .Select(d =>
+                {
+                    var found = accounts.TryGetValue(d.AccountId, out var acc);
+                    return new OpeningRollMismatch(d.AccountId, found ? acc.Code : "", found ? acc.Name : "",
+                        d.Stored.Debit, d.Stored.Credit, d.Expected.Debit, d.Expected.Credit);
+                })
+                .OrderBy(m => m.AccountCode, StringComparer.Ordinal)
+                .ToList();
+            result.Add(new(new OpeningRollCheckYear(year, janId, false, null, mismatches), janId, expected));
+        }
+        return result;
+    }
+
+    public async Task<OpeningRollRepairResult> RepairOpeningRollAsync(Guid companyId, IReadOnlyCollection<int> years, string actor)
+    {
+        if (years == null || years.Count == 0)
+            throw new BusinessRuleException("ยังไม่ได้เลือกปีที่จะซ่อม — เปิดรายงานตรวจยอดยกมาจากการปิดปีแล้วเลือกปีก่อน", OpeningRoll.RuleCode);
+
+        await using var tx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        // หนึ่งการซ่อมต่อบริษัทในเวลาเดียวกัน (สองคนกดพร้อมกัน = audit ซ้ำ)
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            AdvisoryLockKey.For(companyId, AdvisoryLockKey.OpeningRoll, "repair"));
+
+        var chain = await EvaluateOpeningRollChainAsync(companyId);
+        var wanted = years.ToHashSet();
+        Guid? actorId = Guid.TryParse(actor, out var uid) ? uid : null;
+        var repairedYears = 0;
+        var repairedRows = 0;
+        var skipped = new List<string>();
+        foreach (var y in wanted.Where(w => chain.All(c => c.Report.Year != w)).OrderBy(w => w))
+            skipped.Add($"{y}: ไม่ใช่ปีที่เกิดจากการปิดปี");
+
+        foreach (var ev in chain.Where(c => wanted.Contains(c.Report.Year)))
+        {
+            if (ev.Expected == null || ev.PeriodId == null)
+            {
+                skipped.Add($"{ev.Report.Year}: {ev.Report.SkipReason}");
+                continue;
+            }
+            if (ev.Report.Mismatches.Count == 0)
+            {
+                skipped.Add($"{ev.Report.Year}: ยอดถูกอยู่แล้ว");
+                continue;
+            }
+            var periodId = ev.PeriodId.Value;
+            var rows = await _db.OpeningBalances
+                .Where(o => o.CompanyId == companyId && o.FiscalPeriodId == periodId)
+                .ToListAsync();
+            foreach (var m in ev.Report.Mismatches)
+            {
+                var accRows = rows.Where(o => o.AccountId == m.AccountId).ToList();
+                var row = accRows.FirstOrDefault();
+                if (row == null)
+                {
+                    row = new OpeningBalance
+                    {
+                        CompanyId = companyId, FiscalPeriodId = periodId, AccountId = m.AccountId,
+                        OpeningDebit = m.ExpectedDebit, OpeningCredit = m.ExpectedCredit,
+                        Notes = OpeningRoll.RolledNote(ev.Report.Year), CreatedBy = actor,
+                    };
+                    _db.OpeningBalances.Add(row);
+                }
+                else
+                {
+                    row.OpeningDebit = m.ExpectedDebit;
+                    row.OpeningCredit = m.ExpectedCredit;
+                    row.Notes ??= OpeningRoll.RolledNote(ev.Report.Year);
+                    row.UpdatedBy = actor;
+                    row.UpdatedAt = DateTime.UtcNow;
+                    foreach (var extra in accRows.Skip(1))
+                    {
+                        extra.OpeningDebit = 0m;
+                        extra.OpeningCredit = 0m;
+                        extra.UpdatedBy = actor;
+                        extra.UpdatedAt = DateTime.UtcNow;
+                    }
+                }
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId,
+                    UserId = actorId,
+                    EntityType = nameof(OpeningBalance),
+                    EntityId = row.Id.ToString(),
+                    Action = AuditAction.Update,
+                    OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        year = ev.Report.Year, accountCode = m.AccountCode, debit = m.StoredDebit, credit = m.StoredCredit,
+                    }),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        action = "opening-roll-repair",
+                        year = ev.Report.Year, accountCode = m.AccountCode, debit = m.ExpectedDebit, credit = m.ExpectedCredit,
+                        ruleCode = OpeningRoll.RuleCode,
+                        by = actor,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+                repairedRows++;
+            }
+            repairedYears++;
+        }
+
+        await _db.SaveChangesAsync();
+        if (tx != null) await tx.CommitAsync();
+        return new OpeningRollRepairResult(repairedYears, repairedRows, skipped);
     }
 }

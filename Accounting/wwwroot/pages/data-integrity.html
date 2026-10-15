@@ -48,7 +48,9 @@
         const path = btn.dataset.fixPath;
         const number = btn.dataset.fixNumber || '';
         if (!path) return;
-        if (!confirm('แก้ส่วนลดบรรทัดของ ' + number + ' — ตั้งส่วนลด % เป็น 0 ให้เปิดแก้แล้วบันทึกได้ยอดเดิม\nยอด/VAT/ยอดรวม/รายการบัญชีไม่เปลี่ยน (บันทึกประวัติการแก้ไว้)\n\nดำเนินการต่อหรือไม่?')) return;
+        // ข้อความยืนยันจากเซิร์ฟเวอร์ (fixConfirm) — ไม่มี = ข้อความเดิมของหมวดส่วนลดสแกน
+        const ask = btn.dataset.fixConfirm || ('แก้ส่วนลดบรรทัดของ ' + number + ' — ตั้งส่วนลด % เป็น 0 ให้เปิดแก้แล้วบันทึกได้ยอดเดิม\nยอด/VAT/ยอดรวม/รายการบัญชีไม่เปลี่ยน (บันทึกประวัติการแก้ไว้)\n\nดำเนินการต่อหรือไม่?');
+        if (!confirm(ask)) return;
         btn.disabled = true;
         try {
           const res = await API.post('/api/companies/' + encodeURIComponent(Layout.getCompanyId()) + '/' + path);
@@ -91,7 +93,7 @@
                     <td style="font-size:12px">${esc(r.detail)}</td><td style="text-align:right">${money(r.stored)}</td>
                     <td style="text-align:right">${money(r.expected)}</td>
                     <td style="white-space:nowrap">${r.linkUrl ? `<a href="${esc(r.linkUrl)}" style="font-size:12px">${esc(r.linkLabel || 'เปิด')}</a>` : ''}
-                      ${r.fixPath ? `<button class="btn btn-sm btn-primary" data-fix-path="${esc(r.fixPath)}" data-fix-number="${esc(r.number)}">แก้</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+                      ${r.fixPath ? `<button class="btn btn-sm btn-primary" data-fix-path="${esc(r.fixPath)}" data-fix-number="${esc(r.number)}" data-fix-confirm="${esc(r.fixConfirm || '')}">แก้</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
             return `<div class="card" style="margin-bottom:12px">
               <div class="card-header"><h3 class="card-title">${esc(title)} (${rows.length})</h3></div>
               <div style="padding:0 18px 6px;color:#64748b;font-size:12px">${esc(note)}</div>${body}</div>`;

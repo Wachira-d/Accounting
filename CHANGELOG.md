@@ -4979,3 +4979,12 @@ _2026-10-15 — ส่งออก CSV/Excel หน้าการเงิน�
 ตีราคา FX · บริหารการเงิน 9 แท็บ · คาดการณ์เงินสด (รายการทั้งหมด) · เช็คคงค้าง (ชื่อจากเซิร์ฟเวอร์ `ListOutstandingRowsAsync` — เดิม 200 รายแรก) ·
 **งบรวม: ปิด IDOR ข้ามบริษัท** (กลุ่ม/สมาชิกต้องเป็นของผู้ใช้) · ใบเสร็จมือถือ บันทึก PDF/แชร์ผ่าน `Layout.savePdf` · escape ข้อความ ~30 จุดในหน้าที่แตะ ·
 เทสต์ `FinanceReportSheetsTests` · `Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit cab2326c_
+_Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบส่งออก — `erp-review/2026-10-14/EXPORT_AUDIT.md` §"ฝ่ายค้านรอบส่งออก": (P1-1) ยอดยกมาปิดปี =
+ฐานล่าสุดก่อน 1 ม.ค. + รายการตั้งแต่วันเริ่มฐาน (`ComputeRolledOpeningsAsync` · `Helpers/OpeningRoll` — เดิมปิดครั้งที่สองนับปีเก่าซ้ำ) + รายงาน/ซ่อมยอดที่เก็บผิด
+(หน้าตรวจข้อมูล · เจ้าของ · audit) (P1-2) ผังนำเข้าผูกบัญชีแม่ (`Helpers/ChartParentLink` · `ChartParentLinker`) + ลำดับผังตั้งต้นเจ้าของเดียว
+(`PostingAccountGuard.DefaultPostingCandidates`) + ซ่อมผังเก่า (P1-3) ภ.ง.ด.1/1ก ตัดใบมือเฉพาะ 40(1) เดือนเดียวกับแถวเงินเดือน + Notes · 1ก = ผลรวมรายเดือน
+(P2-4) ไฟล์โอนเงินเดือน: แหล่งจ่ายไม่ใช่ธนาคาร = "จ่ายจากแหล่งอื่น" (P2-5) ปุ่ม CSV ⚠️ (P2-6) ตัวกรอง/ฐานยอดยกมาเดียวของ GL · TB · P&L · กระแสเงินสด · ยอด ณ วันที่
+(สาขา = สาขาหรือมิติของสาขา · กรองใด ⇒ ไม่บวกยอดนำเข้า) + คำเตือนยอดนำเข้ากลางช่วง (P2-7) บัญชีแยกประเภทปิดบังใบที่ผู้ใช้ไม่มีสิทธิ์เห็น (`LedgerRedaction`)
+(P2-8) audit วันล้วน = วันตามเวลาไทย (P2-9) ลำดับแบ่งหน้ามี Id (P2-10) JE ตอนออกใบเลือกตามสมุด + ไม่นับผังพัก/กันเงิน gateway (P2-11) PiiAccessLog "Export" ·
+เทสต์ `AdversarialExportRoundTests` · `Db/AdversarialExportRoundDbTests` · `Pnd1FileFormatTests` · `OriginalArApAccountTests` · `ModuleExportTests` · `Db/ModuleExportDbTests`
+— ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง))_

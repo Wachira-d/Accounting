@@ -3416,8 +3416,8 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 | **ภ.พ.30 (จอ + Excel)** | `TaxService.GenerateVatReport` (`:119`), export ผ่าน `TaxService.Export.cs` | `TaxReport.Lines` |
 | **ภ.พ.30 (CSV ยื่น RD)** | `TaxFilingExportService.ExportPp30Async` (`:243`) — **ใช้ `ComputeVatReportAsync` ตัวเดียวกับจอ** (รวมแล้วใน commit ล่าสุด) | `ComputeVatReportAsync` → TaxReport ชั่วคราว |
 | **ภ.พ.36** (ซื้อบริการ ตปท. self-assess VAT) | `TaxFilingExportService.ExportPp36Async` (คำนวณสด `ComputePp36ReportAsync`) + ปุ่ม e-Filing `TaxService.BuildPp36Async` (รายงานที่บันทึกไว้) — **รูปแบบไฟล์เดียว `Helpers/Pp36FileFormat`** (detail ล้วน · `ddMMyyyy` · ประเทศ = `Contact.CountryCode`) · ตัวโหลดเอกสารเดียว `TaxService.LoadPp36DocInfoAsync` · ไม่ใช่ไฟล์นำเข้า (ภ.พ.36 กรอกทีละรายการ) | Documents.IsForeignService |
-| **ภ.ง.ด.1** (เงินเดือน WHT · รายเดือน) | `ExportPnd1Async(…, format)` — `txt` (นำเข้าเว็บสรรพากร · detail ล้วน · `ddMMyyyy` ค.ศ. · หลายประเภทเงินได้ = zip ไฟล์ละประเภท) · `csv` (BOM) · `xlsx` (ชีตสรุปยอดหน้าแบบ 5 ประเภท + ชีตต่อประเภท) — รูปแบบ `Helpers/Pnd1FileFormat` · รายการ `Helpers/Pnd1FilingData.LoadMonthAsync` (ตัวเดียวกับหน้ารายงาน `PayrollService.GeneratePnd1Async`) · ปุ่ม e-Filing PND.1 **ปิด** (`PND1-USE-PAYROLL-EXPORT`) · ลำดับคอลัมน์ยังไม่ยืนยันกับหน้านำเข้าจริง | รอบเงินเดือน Approved/Paid (`TaxableGross`) + 50 ทวิ ภ.ง.ด.1 ออกด้วยมือของผู้รับนอกรอบ |
-| **ภ.ง.ด.1ก** (เงินเดือน WHT · รายปี) | `ExportPnd1kAsync(…, format)` — รูปแบบเดียวกับ ภ.ง.ด.1 (ช่อง 6 = ที่อยู่ผู้มีเงินได้ · ยอดทั้งปีต่อราย) · `Pnd1FilingData.LoadYearAsync` | เช่นเดียวกับ ภ.ง.ด.1 ทั้งปี |
+| **ภ.ง.ด.1** (เงินเดือน WHT · รายเดือน) | `ExportPnd1Async(…, format)` — `txt` (นำเข้าเว็บสรรพากร · detail ล้วน · `ddMMyyyy` ค.ศ. · หลายประเภทเงินได้ = zip ไฟล์ละประเภท) · `csv` (BOM · ปุ่ม "CSV ⚠️" — เปิดตรงใน Excel แล้ว 0 นำหน้าหาย ⇒ ปุ่ม Excel มาก่อน) · `xlsx` (ชีตสรุปยอดหน้าแบบ 5 ประเภท + ชีตต่อประเภท) — รูปแบบ `Helpers/Pnd1FileFormat` · รายการ `Helpers/Pnd1FilingData.LoadMonthAsync` (ตัวเดียวกับหน้ารายงาน `PayrollService.GeneratePnd1Async`) · ปุ่ม e-Filing PND.1 **ปิด** (`PND1-USE-PAYROLL-EXPORT`) · ลำดับคอลัมน์ยังไม่ยืนยันกับหน้านำเข้าจริง | รอบเงินเดือน Approved/Paid (`TaxableGross`) + 50 ทวิ ภ.ง.ด.1 ออกด้วยมือ — **ตัดเฉพาะบรรทัด 40(1) ของผู้รับที่มีแถวเงินเดือนลงไฟล์ในงวดยื่นเดียวกัน** (ซ้ำกับเงินเดือน · แจ้งใน Notes ทุกครั้ง) · 40(2) ไม่ถูกตัดเสมอ (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-3 — เดิมตัดใบมือทุกใบของใครก็ตามที่อยู่ในรอบใดของงวด/ปี) |
+| **ภ.ง.ด.1ก** (เงินเดือน WHT · รายปี) | `ExportPnd1kAsync(…, format)` — รูปแบบเดียวกับ ภ.ง.ด.1 (ช่อง 6 = ที่อยู่ผู้มีเงินได้ · ยอดทั้งปีต่อราย) · `Pnd1FilingData.LoadYearAsync` | เช่นเดียวกับ ภ.ง.ด.1 ทั้งปี · การตัดใบซ้ำนิยามต่อเดือน ⇒ **ภ.ง.ด.1ก = ผลรวม ภ.ง.ด.1 ทุกเดือน** (P1-3) |
 | **ภ.ง.ด.3 / 53 / 54** | `ExportPnd3 / 53 / 54Async` | WithholdingTaxCert + DocumentLine.WHT |
 | **ภ.ง.ด.2** (ดอกเบี้ย/ปันผล ม.40(4) จ่ายบุคคลธรรมดา · รอบ 204) | `ExportPnd2Async` (50 ทวิ ที่ออกแล้ว → `PndTextFileFormat`) · รายงานจอ `TaxService.GenerateWhtReport` (`TaxType.WithholdingTax2`) · e-Filing `PND.2` | WithholdingTaxCert (`TaxFormType = WithholdingTax2`) + เอกสารที่ยังไม่ออกใบ (แถวติ๊กออก) + JV 21915 (แถวติ๊กออก) — ดู §5.4 |
 | **ภ.ง.ด.50** (CIT รายปี) | `TaxService.GenerateCitReport` (`:731`) — **บวกกลับ §65 ตรี อัตโนมัติ** (commit ล่าสุด: ตัด rule (4) กัน double count · รอบ 201 RTX-3: ข้อ (1)(2)(3)(6)(6 ทวิ) นับเฉพาะบรรทัดผังกำไรขาดทุน — ใบชำระ ภ.ง.ด.50/51 · ถอนใช้ส่วนตัวไม่ถูกบวกกลับ) | JE Revenue/Expense + Document.NonDeductibleAmount |
@@ -3995,7 +3995,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 | รายงาน | ปลายทางไฟล์ (`?format=csv\|xlsx`) | เจ้าของตัวเลข (ตัวเดียวกับหน้า) | หมายเหตุ |
 | --- | --- | --- | --- |
 | สมุดรายวัน | `accounting/exports/journals` | `GetJournalEntriesForUserAsync` วนทุกหน้า / `GetJournalEntryForUserAsync` (`entryIds`) | หนึ่งแถวต่อบรรทัดบัญชี · ใบปิดบัง = แถว "ปิดบัง" · เพดาน 50,000 ใบ = ล้มดัง |
-| บัญชีแยกประเภท | `accounting/exports/general-ledger` | `GetGeneralLedgerAsync` | `accountIds`/`accountType` กรองหลังคำนวณ (ตัวเลขต่อบัญชีไม่เปลี่ยน) |
+| บัญชีแยกประเภท | `accounting/exports/general-ledger` | `GetGeneralLedgerForUserAsync` (หน้า + ไฟล์ · ปิดบังใบที่ผู้ใช้ไม่มีสิทธิ์เห็นแบบสมุดรายวัน — ฝ่ายค้านรอบส่งออก P2-7) | `accountIds`/`accountType` กรองหลังคำนวณ (ตัวเลขต่อบัญชีไม่เปลี่ยน) · `notes` (ยอดนำเข้าเริ่มกลางช่วง) อยู่บนหัวไฟล์/หน้า |
 | งบทดลอง | `accounting/exports/trial-balance` | ยกไป = `GetTrialBalanceAsync(asOf)` · ยกมา+เคลื่อนไหว = `GetGeneralLedgerAsync(from, asOf)` | ผลต่างความต่อเนื่อง ≠ 0 แสดงในไฟล์ (ไม่กลบ) |
 | งบฐานะ / กำไรขาดทุน / กระแสเงินสด | `accounting/exports/balance-sheet` · `profit-loss` · `cash-flow` | `GetBalanceSheetAsync` · `GetProfitAndLossAsync` · `GetCashFlowStatementAsync` | |
 | อายุลูกหนี้/เจ้าหนี้ | `accounting/exports/aging?side=` | `IAgingReportService` | Excel 2 แผ่น · CSV `level=contact\|document` |
@@ -4006,7 +4006,29 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 **บัญชีแยกประเภท — ยอดยกมา (เปลี่ยนพฤติกรรม):** ตัวกรองบรรทัดชุดเดียว (`ApplyLedgerLineFilters`) ใช้ทั้งยอดยกมาและรายการ ·
 ไม่กรองสาขา/โครงการ/มิติ ⇒ ฐานยอดยกมาแบบงบทดลอง (งวดล่าสุดที่มี `OpeningBalances` และเริ่มไม่หลังวันเริ่มช่วง + รายการตั้งแต่วันเริ่มงวดนั้น) ·
 กรองมิติ ⇒ ไม่บวกยอดนำเข้า (ไม่มีสาขา) · บัญชีที่ยอดยกมา ≠ 0 แต่ไม่เคลื่อนไหวในช่วงแสดงด้วย ·
-ข้อที่ยังต่าง: งบทดลองที่กรองมิติยังบวกยอดนำเข้าทั้งบริษัท (คำถามเจ้าของ — EXPORT_AUDIT §X3 ข้อค้นพบ 1)
+~~ข้อที่ยังต่าง: งบทดลองที่กรองมิติยังบวกยอดนำเข้าทั้งบริษัท~~ ✅ ฝ่ายค้านรอบส่งออก 2026-10-15 P2-6 (ดู §6.0a-y)
+
+### 6.0a-y ตัวกรอง/ฐานยอดยกมาเดียวของรายงานบัญชี · ยอดยกมาจากการปิดปี (ฝ่ายค้านรอบส่งออก 2026-10-15 · `EXPORT_AUDIT.md` §"ฝ่ายค้านรอบส่งออก")
+
+- **ตัวกรองเดียว** `AccountingService.ResolveLedgerFilterAsync` → `ApplyLedgerLineFilters(q, LedgerFilter)` — บัญชีแยกประเภท · งบทดลอง (→ งบฐานะ) ·
+  งบกำไรขาดทุน · งบกระแสเงินสด: โครงการ = บรรทัดหรือหัวใบ · **สาขา = บรรทัด/หัวใบของสาขา หรือ ติดมิติของสาขา (`Branch.DimensionId` · รวมการปันส่วน
+  `JournalLineDimension`)** · มิติ = การปันส่วนหรือบรรทัด/หัวใบ (เดิม GL กรอง "สาขา **และ** มิติของสาขา" ส่วนงบทดลองกรองสาขาอย่างเดียวและไม่ดูการปันส่วน ⇒
+  ยอดยกไปกรองสาขาไม่เท่ากัน)
+- **ฐานยอดยกมาเดียว** `LoadLedgerBaseAsync` (บัญชีแยกประเภท · งบทดลอง · `GetAccountBalanceAsOfAsync`): ไม่กรอง ⇒ งวดล่าสุดที่มีแถว `OpeningBalances`
+  เริ่มไม่หลังวันนั้น + รายการตั้งแต่วันเริ่มงวด · **กรองสาขา/โครงการ/มิติ ⇒ ไม่มีฐาน** (รายการตั้งแต่เปิดบริษัทที่ผ่านตัวกรอง — ยอดนำเข้าไม่มีสาขา ·
+  เดิมงบทดลองกรองสาขาบวกยอดนำเข้าทั้งบริษัท) ⇒ **บัญชีแยกประเภทกรองสาขา ยอดยกไป = งบทดลองกรองสาขาเดียวกัน ทุกบัญชี**
+- **ยอดนำเข้าเริ่มกลางช่วงของบัญชีแยกประเภท** (เช่น ย้ายระบบ ก.ค. แต่เลือก ม.ค.–ธ.ค.): ไม่แต่งรายการ — `GeneralLedgerResponse.Notes` +
+  ข้อความ `LedgerAnchorInsideRangeNote` บนหน้า general-ledger และหัวไฟล์ (คู่กับคอลัมน์ "ผลต่างความต่อเนื่อง" ของงบทดลอง) · นับเฉพาะแถวนำเข้า
+  (`OpeningRoll.IsImported`) — ยอดจากการปิดปีต่อเนื่องกับรายการอยู่แล้ว
+- **ยอดยกมาจากการปิดปี** (`RollOpeningBalancesAsync` ← `YearEndCloseAsync`): ยอด 1 ม.ค. ปี N = **ฐานล่าสุดที่เริ่มก่อน 1 ม.ค. N + รายการ (สินทรัพย์/หนี้สิน/ทุน)
+  ตั้งแต่วันเริ่มฐาน** (`ComputeRolledOpeningsAsync` · กติกา `Helpers/OpeningRoll`) = งบทดลอง ณ 31 ธ.ค. N−1 · เดิม = รายการทั้งหมดตั้งแต่เปิดบริษัท + ยอดยกมา
+  ม.ค. ปีก่อน (ซึ่งรวมทุกปีไว้แล้ว) ⇒ **ตั้งแต่ปิดปีครั้งที่สอง ปีเก่าถูกนับซ้ำ** และทุกหน้าที่อ่านฐานนี้ผิดตรงกัน · ยอดนำเข้ากลางปีถูกนับแล้ว (เดิมไม่นับ) ·
+  แถวที่ปิดปีเขียนมีหมายเหตุ `OpeningRoll.RolledNote` · แถวนำเข้า (`Migrated via session …`) ไม่ถูกล้างตอนปิดปีซ้ำ
+- **ข้อมูลที่เก็บผิดไปแล้ว** (F2 ข้อ 9): หน้า "ตรวจข้อมูลจากบั๊กที่แก้แล้ว" หมวด `openingRollMismatches` (`FindOpeningRollMismatchesAsync` — เดินทุกปีที่ปิดจาก
+  เก่าไปใหม่ ปีถัดไปคิดบนฐานที่แก้แล้ว · งวดที่มีแถวนำเข้า = ไม่ซ่อม) → ปุ่ม "แก้" ต่อปี `POST data-integrity/opening-roll/{year}/repair`
+  (= `accounting/opening-roll-check/repair`) · เจ้าของบริษัทเท่านั้น · audit `opening-roll-repair` ทุกบัญชี · `pg_advisory_xact_lock` ต่อบริษัท · ซ่อมซ้ำ = ไม่ทำอะไร ·
+  **ไม่มีงานไหนซ่อมเองตอนเปิดระบบ** · ข้อจำกัดที่รู้: รอบบัญชีไม่ใช่ปีปฏิทินยังยกยอดไป 1 ม.ค. (คำถามเจ้าของ)
+- Last verified `commit (sha เติมภายหลัง)`
 
 ### 6.0a-y ไฟล์ส่งออกหน้าการเงินที่เหลือ = ตัวเลขของหน้า (2026-10-15 ทีม X5 · `erp-review/2026-10-14/EXPORT_AUDIT.md` §X5)
 
@@ -5650,3 +5672,12 @@ _Last verified against codebase: 2026-10-15 (รอบ 206 ทีมงานค
 _Last verified against codebase: 2026-10-15 (ทีม X5 ส่งออกหน้าการเงินที่เหลือ — §6.0a-y ปลายทาง `finance/exports/*` เจ้าของตัวเลขเดียวกับหน้า ·
 ทะเบียนเงินสดย่อยใหม่ · เช็คคงค้างชื่อจากเซิร์ฟเวอร์ · งวดบัญชี echo ผู้/เวลาปิด · สถานะใช้งบ/หมวดตรวจข้อมูลย้ายจาก JS · งบรวมปิดช่องข้ามบริษัท ·
 ใบเสร็จมือถือ PDF/แชร์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit cab2326c)_
+_Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบส่งออก — `erp-review/2026-10-14/EXPORT_AUDIT.md` §"ฝ่ายค้านรอบส่งออก": (P1-1) ยอดยกมาปิดปี =
+ฐานล่าสุดก่อน 1 ม.ค. + รายการตั้งแต่วันเริ่มฐาน (`ComputeRolledOpeningsAsync` · `Helpers/OpeningRoll` — เดิมปิดครั้งที่สองนับปีเก่าซ้ำ) + รายงาน/ซ่อมยอดที่เก็บผิด
+(หน้าตรวจข้อมูล · เจ้าของ · audit) (P1-2) ผังนำเข้าผูกบัญชีแม่ (`Helpers/ChartParentLink` · `ChartParentLinker`) + ลำดับผังตั้งต้นเจ้าของเดียว
+(`PostingAccountGuard.DefaultPostingCandidates`) + ซ่อมผังเก่า (P1-3) ภ.ง.ด.1/1ก ตัดใบมือเฉพาะ 40(1) เดือนเดียวกับแถวเงินเดือน + Notes · 1ก = ผลรวมรายเดือน
+(P2-4) ไฟล์โอนเงินเดือน: แหล่งจ่ายไม่ใช่ธนาคาร = "จ่ายจากแหล่งอื่น" (P2-5) ปุ่ม CSV ⚠️ (P2-6) ตัวกรอง/ฐานยอดยกมาเดียวของ GL · TB · P&L · กระแสเงินสด · ยอด ณ วันที่
+(สาขา = สาขาหรือมิติของสาขา · กรองใด ⇒ ไม่บวกยอดนำเข้า) + คำเตือนยอดนำเข้ากลางช่วง (P2-7) บัญชีแยกประเภทปิดบังใบที่ผู้ใช้ไม่มีสิทธิ์เห็น (`LedgerRedaction`)
+(P2-8) audit วันล้วน = วันตามเวลาไทย (P2-9) ลำดับแบ่งหน้ามี Id (P2-10) JE ตอนออกใบเลือกตามสมุด + ไม่นับผังพัก/กันเงิน gateway (P2-11) PiiAccessLog "Export" ·
+เทสต์ `AdversarialExportRoundTests` · `Db/AdversarialExportRoundDbTests` · `Pnd1FileFormatTests` · `OriginalArApAccountTests` · `ModuleExportTests` · `Db/ModuleExportDbTests`
+— ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (sha เติมภายหลัง))_

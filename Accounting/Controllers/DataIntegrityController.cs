@@ -22,11 +22,42 @@ public class DataIntegrityController : ControllerBase
 {
     private readonly DataIntegrityReportService _service;
     private readonly IPermissionService _permissions;
-    public DataIntegrityController(DataIntegrityReportService service, IPermissionService permissions)
+    private readonly IAccountingService? _accounting;
+    private readonly ICompanyService? _companies;
+    public DataIntegrityController(DataIntegrityReportService service, IPermissionService permissions,
+        IAccountingService? accounting = null, ICompanyService? companies = null)
     {
         _service = service;
         _permissions = permissions;
+        _accounting = accounting;
+        _companies = companies;
     }
+
+    /// <summary>ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1 — ซ่อมยอดยกมาจากการปิดปีของปีที่เลือก (คำนวณใหม่ ณ ตอนกด + audit ทุกบัญชี) ·
+    /// เจ้าของบริษัทเท่านั้น (สิทธิ์เดียวกับปิดปี) · ไม่มีงานไหนเรียกอัตโนมัติ · ปุ่มนี้กับ <c>AccountingController.OpeningRollRepair</c> เรียกตัวเดียวกัน</summary>
+    [HttpPost("opening-roll/{year:int}/repair")]
+    public async Task<ActionResult<ApiResponse<Models.DTOs.Accounting.OpeningRollRepairResult>>> RepairOpeningRoll(Guid companyId, int year)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await Need(_companies).EnsureOwnerAccessAsync(companyId, userId);
+        var result = await Need(_accounting).RepairOpeningRollAsync(companyId, new[] { year }, userId.ToString());
+        return Ok(new ApiResponse<Models.DTOs.Accounting.OpeningRollRepairResult>(true, result,
+            result.RepairedRows > 0 ? $"แก้ยอดยกมา {result.RepairedRows} บัญชีแล้ว" : string.Join(" · ", result.Skipped)));
+    }
+
+    /// <summary>ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2 — ผูกบัญชีแม่ของผังที่นำเข้าหนึ่งผัง (คิดแผนใหม่ ณ ตอนกด + audit) · เจ้าของบริษัทเท่านั้น</summary>
+    [HttpPost("account-parent/{accountId:guid}/link")]
+    public async Task<ActionResult<ApiResponse<ChartParentLinkRepairResult>>> LinkAccountParent(Guid companyId, Guid accountId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await Need(_companies).EnsureOwnerAccessAsync(companyId, userId);
+        var result = await Need(_accounting).RepairAccountParentLinksAsync(companyId, new[] { accountId }, userId.ToString());
+        return Ok(new ApiResponse<ChartParentLinkRepairResult>(true, result,
+            result.Linked > 0 ? "ผูกบัญชีแม่แล้ว" : string.Join(" · ", result.Skipped)));
+    }
+
+    private static T Need<T>(T? svc) where T : class
+        => svc ?? throw new InvalidOperationException("บริการซ่อมข้อมูลไม่พร้อมใช้งาน");
 
     [HttpGet("suspects")]
     public async Task<ActionResult<ApiResponse<DataIntegrityReport>>> Suspects(Guid companyId)

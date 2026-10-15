@@ -410,7 +410,10 @@
           content.innerHTML = '<div class="text-center text-gray-400" style="padding:60px">ไม่พบบัญชีประเภทนี้</div>';
           return;
         }
-        content.innerHTML = accounts.map((a, idx) => `
+        // คำเตือนจากเซิร์ฟเวอร์ (เช่น ยอดยกมานำเข้าเริ่มกลางช่วง ⇒ ยอดยกไปอาจ ≠ งบทดลอง) — หน้าแสดงอย่างเดียว (F2 ข้อ 5)
+        const notesHtml = (this.data.notes || []).map(n =>
+          `<div class="card" style="margin-bottom:10px;padding:10px 14px;background:#fffbeb;border:1px solid #fcd34d;color:#92400e;font-size:13px">${Layout.esc(n)}</div>`).join('');
+        content.innerHTML = notesHtml + accounts.map((a, idx) => `
           <div class="gl-account${idx === 0 ? ' open' : ''}" id="acct_${idx}">
             <div class="gl-account-header">
               <label style="margin-right:10px;cursor:pointer" onclick="event.stopPropagation()">

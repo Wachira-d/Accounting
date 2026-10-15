@@ -1,4 +1,5 @@
 using Accounting.Helpers;
+using Accounting.Models.Enums;
 using Xunit;
 
 namespace Accounting.Tests;
@@ -70,5 +71,41 @@ public class OriginalArApAccountTests
         Assert.Null(OriginalArApAccount.Pick(new[] { new ArApJeLine(Ar, "11310", 0m, 0m) }, ArApSide.Receivable, null));
         var tie = new[] { new ArApJeLine(Ar2, "11320", 500m, 0m), new ArApJeLine(Ar, "11310", 500m, 0m) };
         Assert.Equal(Ar, OriginalArApAccount.Pick(tie, ArApSide.Receivable, null));
+    }
+
+    // ───────── ฝ่ายค้านรอบส่งออก 2026-10-15 P2-10 ─────────
+
+    /// <summary>เงินที่ผู้ให้บริการกันไว้ (11350) และผังพักที่บริษัทตั้งเองใน config gateway (รหัสไม่ใช่ 1134x) ไม่ใช่ลูกหนี้ของใบ ·
+    /// ทิศตรงข้าม: ใบปกติยังได้ 11310</summary>
+    [Fact]
+    public void ผังกันเงิน11350_และผังพักที่ตั้งเองของgateway_ไม่ใช่ลูกหนี้ของใบ()
+    {
+        var reserve = Guid.NewGuid();
+        var customClearing = Guid.NewGuid();
+        var lines = new[]
+        {
+            new ArApJeLine(reserve, "11350", 5_000m, 0m),
+            new ArApJeLine(customClearing, "11399", 4_000m, 0m),
+            new ArApJeLine(Ar, "11310", 1_000m, 0m),
+        };
+        Assert.Equal(Ar, OriginalArApAccount.Pick(lines, ArApSide.Receivable, null, new HashSet<Guid> { customClearing }));
+        // ไม่รู้จักผังพักที่ตั้งเอง ⇒ ผังที่ยอดมากสุดชนะตามเดิม (หลักฐานว่าชุด id คือสิ่งที่กันไว้ ไม่ใช่รหัส)
+        Assert.Equal(customClearing, OriginalArApAccount.Pick(lines, ArApSide.Receivable, null));
+        Assert.Equal(Ar, OriginalArApAccount.Pick(new[] { new ArApJeLine(Ar, "11310", 1_000m, 0m) }, ArApSide.Receivable, null,
+            new HashSet<Guid> { customClearing }));
+    }
+
+    /// <summary>JE ตอนออกใบ = สมุดขาย/ซื้อ แม้ JE รับชำระของใบเดียวกันถูกสร้างก่อน (นำเข้า/ลงย้อนหลัง) — เดิม "ตัวแรกตามเวลาสร้าง" ·
+    /// ทิศตรงข้าม: ไม่มีสมุดขาย/ซื้อ ⇒ สมุดทั่วไปก่อนสมุดรับ/จ่าย · มีแค่สมุดรับ ⇒ ตัวนั้น</summary>
+    [Fact]
+    public void JEตอนออกใบ_เลือกสมุดขายซื้อก่อน_ไม่ใช่ตัวแรกตามเวลาสร้าง()
+    {
+        var receipt = new ArApJeCandidate(Guid.NewGuid(), JournalType.CashReceipts, new DateTime(2026, 3, 5), new DateTime(2026, 3, 1, 8, 0, 0), "RV-001");
+        var issue = new ArApJeCandidate(Guid.NewGuid(), JournalType.Sales, new DateTime(2026, 3, 1), new DateTime(2026, 3, 1, 9, 0, 0), "SV-001");
+        var general = new ArApJeCandidate(Guid.NewGuid(), JournalType.General, new DateTime(2026, 3, 2), new DateTime(2026, 3, 1, 7, 0, 0), "JV-001");
+        Assert.Equal(issue.Id, OriginalArApAccount.PickIssueEntry(new[] { receipt, general, issue }));
+        Assert.Equal(general.Id, OriginalArApAccount.PickIssueEntry(new[] { receipt, general }));
+        Assert.Equal(receipt.Id, OriginalArApAccount.PickIssueEntry(new[] { receipt }));
+        Assert.Null(OriginalArApAccount.PickIssueEntry(Array.Empty<ArApJeCandidate>()));
     }
 }

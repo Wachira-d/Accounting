@@ -421,7 +421,7 @@ public class MigrationWizardService : IMigrationWizardService
 
             var created = new List<OpeningBalance>();
             var overwritten = new List<OverwrittenOpening>();
-            var tag = $"Migrated via session {session.Id.ToString("N")[..8]}";
+            var tag = $"{Accounting.Helpers.OpeningRoll.ImportedNotePrefix} {session.Id.ToString("N")[..8]}";
             foreach (var a in aggregated)
             {
                 if (existingRows.TryGetValue(a.AccountId, out var existing))

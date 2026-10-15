@@ -257,7 +257,7 @@ public sealed partial class SettlementImportService
         var q = _db.SettlementBatches.AsNoTracking().Where(b => b.CompanyId == companyId);
         if (channelId is Guid cid) q = q.Where(b => b.ChannelId == cid);
         if (status is SettlementBatchStatus st) q = q.Where(b => b.Status == st);
-        var batches = await q.OrderByDescending(b => b.PayoutDate).ThenByDescending(b => b.CreatedAt)
+        var batches = await q.OrderByDescending(b => b.PayoutDate).ThenByDescending(b => b.CreatedAt).ThenBy(b => b.Id) // ฝ่ายค้านรอบส่งออก P2-9: ตัวตัดสินสุดท้าย — ส่งออกวนทุกหน้าไม่ซ้ำ/หาย
             .Skip(Math.Max(0, skip)).Take(take)
             .Select(b => new { Batch = b, ChannelName = b.Channel.DisplayName })
             .ToListAsync(ct);

@@ -7847,6 +7847,62 @@ RULES += [
          why=_R206 + ": พรีวิว GL ของใบสำคัญจ่ายที่ปิดใบตั้งหนี้ = mirror ของ AutoPost (สอง renderer ห้าม drift)"),
 ]
 
+# ── ฝ่ายค้านรอบส่งออก 2026-10-15 (erp-review/2026-10-14/EXPORT_AUDIT.md §"ฝ่ายค้านรอบส่งออก") — ล็อกจุดเรียกที่เทสต์ helper มองไม่เห็น ──
+_ADVX = "ฝ่ายค้านรอบส่งออก 2026-10-15"
+_ACC = "Services/Implementations/AccountingService.cs"
+_YEC = "Services/Implementations/AccountingService.YearEndClose.cs"
+RULES += [
+    # P1-1 ยอดยกมาปิดปี: ตัวคำนวณตัวเดียว (ฐานล่าสุดก่อน 1 ม.ค. + รายการตั้งแต่วันเริ่มฐาน) · ห้ามกลับไปบวก "ยอดยกมา ม.ค. ปีก่อน" ทับรายการทั้งหมด
+    dict(file=_YEC, method="RollOpeningBalancesAsync", must=["ComputeRolledOpeningsAsync(", "OpeningRoll.IsImported("],
+         forbid=["prevOpenings", "p.Year == year - 1"],
+         why=_ADVX + " P1-1: ปิดปีครั้งที่สองนับปีเก่าซ้ำ (รายการตั้งแต่เปิดบริษัท + ยอดยกมาปีก่อนที่รวมไว้แล้ว)"),
+    dict(file=_YEC, method="ComputeRolledOpeningsAsync", must=["OpeningRoll.Combine(", "p.StartDate < asOfExclusive"],
+         must_re=[r"entry\.EntryDate\s*>=\s*movementStart\.Value"],
+         why=_ADVX + " P1-1: รายการนับเฉพาะตั้งแต่วันเริ่มงวดฐาน (เท่างบทดลอง ณ 31 ธ.ค.)"),
+    dict(file=_YEC, method="RepairOpeningRollAsync", must=["EvaluateOpeningRollChainAsync(", "AddChainedAuditLog("],
+         must_lit=["pg_advisory_xact_lock"],
+         why=_ADVX + " P1-1: ซ่อมยอดที่เก็บผิดคิดใหม่ ณ ตอนกด + audit ทุกบัญชี + ล็อกต่อบริษัท"),
+    # P1-2 ผังตั้งต้น: ลำดับความชอบตัวเดียว · ผังนำเข้าผูกบัญชีแม่ทุกทางเข้า
+    dict(file=DOC, method="FindAccountAsync", must=["DefaultPostingCandidates(_db)", "OrderByDefaultPreference()"],
+         forbid=[".OrderBy(a => a.AccountCode)"],
+         why=_ADVX + " P1-2: ลงลูกหนี้/เจ้าหนี้อัตโนมัติต้องไม่หยิบหัวบัญชีที่นำเข้า (\"1130\" ก่อน \"11310\")"),
+    dict(file=IMPORT, method="ImportAccountAsync", must=["ChartParentLinker.LinkImportedAsync("],
+         why=_ADVX + " P1-2: ผังที่นำเข้าจากไฟล์ผูกบัญชีแม่ (เดิมไม่ผูก ⇒ หัวบัญชีดูไม่มีบัญชีย่อย)"),
+    dict(file="Services/Implementations/Migration/AccountImportAdapter.cs", method="ImportAsync", must=["ChartParentLinker.LinkImportedAsync("],
+         before=[("ChartParentLinker.LinkImportedAsync(", "SaveChangesAsync(")],
+         why=_ADVX + " P1-2: ผังจากโปรแกรมเดิม (Express/PEAK/FlowAccount) ผูกบัญชีแม่ทั้งชุดก่อนบันทึก"),
+    # P2-4 ไฟล์โอนเงินเดือน: แหล่งจ่ายต้องเป็นธนาคารถึง "พร้อมโอน"
+    # (PayrollExportSheets.BankTransferRows เป็น expression-bodied — checker อ่านไม่ได้ · ล็อกใน ModuleExportTests
+    #  ไฟล์โอน_เลขบัญชีตัวเลขล้วน… — ถอด l.PaymentSourceIsBank ออก ⇒ แถว "พร้อมโอน" กลายเป็น "ยังไม่ได้เลือกแหล่งจ่าย" ⇒ เทสต์แดง)
+    dict(file=PAYROLL, method="GetBankTransferSheetAsync", must=["MoneyAccountRule.GroupOf(", "PaymentSourceIsBank:"],
+         why=_ADVX + " P2-4: ตัดสินว่าแหล่งจ่ายเป็นธนาคารด้วยกติกาเดียวกับ dropdown แหล่งเงิน"),
+    # P2-6 GL/TB ตัวกรองเดียว + ฐานยอดยกมาเดียว
+    dict(file=_ACC, method="GetGeneralLedgerAsync", must=["ResolveLedgerFilterAsync(", "LoadLedgerBaseAsync(", "ApplyLedgerLineFilters("],
+         forbid=["effectiveDimId"],
+         why=_ADVX + " P2-6: บัญชีแยกประเภทกับงบทดลองใช้ตัวกรอง/ฐานชุดเดียว (ยอดยกไปกรองสาขาเท่ากัน)"),
+    dict(file=_ACC, method="GetTrialBalanceAsync", must=["ResolveLedgerFilterAsync(", "LoadLedgerBaseAsync(", "ApplyLedgerLineFilters("],
+         forbid=["l.BranchId == branchId.Value"],
+         why=_ADVX + " P2-6: งบทดลองห้ามเขียนเงื่อนไขสาขา/มิติเอง (เดิมไม่ดูการปันส่วนมิติ + บวกยอดนำเข้าทั้งบริษัทเข้าสาขา)"),
+    dict(file=_ACC, method="GetAccountBalanceAsOfAsync", must=["LoadLedgerBaseAsync("],
+         why=_ADVX + " P2-6: ยอด ณ วันที่ (แดชบอร์ด/กระแสเงินสด) ใช้ฐานเดียวกับงบทดลอง"),
+    # P2-7 ปิดบังใบที่ไม่มีสิทธิ์เห็น: หน้า + ไฟล์บัญชีแยกประเภทผ่านตัวเดียว
+    dict(file="Controllers/AccountingController.cs", method="GetGeneralLedger", must=["GetGeneralLedgerForUserAsync("],
+         why=_ADVX + " P2-7: หน้าบัญชีแยกประเภทปิดบังใบเงินเดือนแบบเดียวกับสมุดรายวัน"),
+    dict(file="Services/Implementations/AccountingReportExportService.cs", method="GeneralLedgerAsync", must=["GetGeneralLedgerForUserAsync("],
+         forbid=["_accounting.GetGeneralLedgerAsync("],
+         why=_ADVX + " P2-7: ไฟล์บัญชีแยกประเภทปิดบังใบเงินเดือนแบบเดียวกับหน้า"),
+    dict(file=_ACC, method="GetGeneralLedgerForUserAsync", must=["GetVisibleKindsAsync(", "LedgerRedaction.Redact("],
+         why=_ADVX + " P2-7: ตัวตัดสินสิทธิ์เดียวกับสมุดรายวัน + กติกาปิดบังตัวเดียว"),
+    # P2-8 บันทึกการใช้งาน: วันที่ล้วน = วันตามเวลาไทย
+    dict(file="Services/Implementations/AuditTrailService.cs", method="GetLogsAsync", must=["ThaiDate.InstantFromUtc(", "ThaiDate.InstantToUtc("],
+         forbid=["to.AddDays(1)"],
+         why=_ADVX + " P2-8: \"ถึง 14 ต.ค.\" = ถึงเที่ยงคืนเวลาไทย (เดิมเที่ยงคืน UTC ⇒ รายการ 7 ชม. แรกของวันถัดไปหลุดเข้ามา)"),
+    # P2-10 JE ตอนออกใบ: เลือกด้วยชนิดสมุด ไม่ใช่ "ตัวแรกตามเวลาสร้าง"
+    dict(file="Helpers/OriginalArApAccount.cs", method="LoadAsync", must=["PickIssueEntry(", "ClearingAccountId", "ReserveAccountId"],
+         forbid=[".OrderBy(j => j.CreatedAt)"],
+         why=_ADVX + " P2-10: JE รับชำระที่ลงย้อนหลังถูกนับเป็น JE ตอนออกใบ · ผังพัก/ผังกันเงินของ gateway ไม่ใช่ลูกหนี้ของใบ"),
+]
+
 _RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

@@ -125,11 +125,12 @@ public class AccountingReportExportService
         return TabularExport.Render(format, "งบทดลอง", fromDate, asOfDate, AccountingReportSheets.TrialBalance(ws, title));
     }
 
-    public async Task<TabularFile> GeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId,
+    public async Task<TabularFile> GeneralLedgerAsync(Guid companyId, Guid userId, DateTime fromDate, DateTime toDate, Guid? accountId,
         IReadOnlyCollection<Guid>? accountIds, AccountType? accountType,
         Guid? dimensionId, Guid? branchId, Guid? projectId, TabularFormat format)
     {
-        var gl = await _accounting.GetGeneralLedgerAsync(companyId, fromDate, toDate, accountId, dimensionId, branchId, projectId);
+        // ตัวเดียวกับหน้า (ปิดบังใบที่ผู้ใช้ไม่มีสิทธิ์เห็นแบบสมุดรายวัน — ฝ่ายค้านรอบส่งออก 2026-10-15 P2-7)
+        var gl = await _accounting.GetGeneralLedgerForUserAsync(companyId, userId, fromDate, toDate, accountId, dimensionId, branchId, projectId);
         // บัญชีที่เลือก / แท็บประเภทบัญชีบนหน้า — กรองหลังคำนวณ (แต่ละบัญชีคำนวณอิสระ ⇒ ตัวเลขเท่ากับที่หน้าแสดงทุกตัว)
         var accounts = gl.Accounts
             .Where(a => accountIds == null || accountIds.Count == 0 || accountIds.Contains(a.AccountId))
@@ -143,6 +144,7 @@ public class AccountingReportExportService
             projectId, branchId, dimensionId);
         if (accountType.HasValue) title.Add("ประเภทบัญชี: " + PickedAccountGuard.TypeLabel(accountType.Value));
         if (accountIds is { Count: > 0 }) title.Add($"เฉพาะบัญชีที่เลือก {accounts.Count} บัญชี");
+        foreach (var n in gl.Notes ?? new List<string>()) title.Add(n);   // P2-6: ยอดยกมานำเข้ากลางช่วง (ข้อความเดียวกับหน้า)
         return TabularExport.Render(format, "บัญชีแยกประเภท", fromDate, toDate, AccountingReportSheets.GeneralLedger(gl, names, title));
     }
 

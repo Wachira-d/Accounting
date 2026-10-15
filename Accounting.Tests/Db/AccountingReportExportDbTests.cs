@@ -128,7 +128,7 @@ public class AccountingReportExportDbTests
 
         using var req = DbTestDatabase.TryCreateContext()!;
         var gl = await new AccountingService(req).GetGeneralLedgerAsync(s.CompanyId, Mar1, Mar31);
-        var file = await Export(req).GeneralLedgerAsync(s.CompanyId, Mar1, Mar31, null, null, null, null, null, null, TabularFormat.Csv);
+        var file = await Export(req).GeneralLedgerAsync(s.CompanyId, Guid.NewGuid(), Mar1, Mar31, null, null, null, null, null, null, TabularFormat.Csv);
         var rows = ParseCsv(file.Content);
         var h = rows[0];
         int Col(string name) { var i = Array.IndexOf(h, name); Assert.True(i >= 0, "ไม่มีคอลัมน์ " + name); return i; }

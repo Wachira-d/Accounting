@@ -140,10 +140,14 @@ public static class PayrollExportSheets
 
     public static IReadOnlyList<BankTransferRow> BankTransferRows(PayrollBankTransferSheet sheet)
         => sheet.Lines.Select((l, i) => new BankTransferRow(i + 1, sheet, l,
-            PayrollBankTransfer.Evaluate(sheet.Status, l.NetPay, l.AdvanceRecovered, l.HasOutstandingAdvance, l.BankAccountNumber))).ToList();
+            PayrollBankTransfer.Evaluate(sheet.Status, l.NetPay, l.AdvanceRecovered, l.HasOutstandingAdvance, l.BankAccountNumber,
+                l.PaymentSourceIsBank))).ToList();
 
     /// <summary>
-    /// ไฟล์รายการโอนเงินเดือน<b>รูปแบบกลาง</b> (ไม่ใช่รูปแบบเฉพาะธนาคาร) — เลขบัญชีเป็นข้อความตัวเลขล้วน (Excel ไม่ตัด 0 นำหน้า) ·
+    /// ไฟล์รายการโอนเงินเดือน<b>รูปแบบกลาง</b> (ไม่ใช่รูปแบบเฉพาะธนาคาร) — เลขบัญชีเป็นเซลล์ข้อความตัวเลขล้วน: ในไฟล์ <b>Excel (.xlsx)</b> 0 นำหน้าคงอยู่ ·
+    /// ไฟล์ <b>CSV</b> เก็บ 0 ครบ แต่<b>ถ้าเปิดด้วย Excel ตรง ๆ Excel จะตัด 0 นำหน้า</b> (ข้อจำกัดของ Excel — ฝ่ายค้านรอบส่งออก 2026-10-15 P2-5:
+    /// คอมเมนต์เดิมอ้างว่า "Excel ไม่ตัด" ซึ่งจริงเฉพาะ .xlsx) ⇒ หน้าเว็บให้ปุ่ม Excel เป็นหลัก + คำเตือนบนปุ่ม CSV ·
+    /// แถวที่แหล่งจ่ายไม่ใช่ธนาคาร = "จ่ายจากแหล่งอื่น" (ไม่พร้อมโอน · P2-4) · แถวเรียงตามแหล่งจ่าย (บัญชีธนาคารที่จ่าย) แล้วตามรหัสพนักงาน ·
     /// ยอดไม่มีตัวคั่นหลักพัน · อ้างอิง = เลขที่รอบ-รหัสพนักงาน (ไม่ซ้ำในไฟล์) · วันที่ ISO ค.ศ. · ไม่มีแถวรวม (ไฟล์ใช้อัปโหลด/คัดลอก)
     /// </summary>
     public static IReadOnlyList<TabularColumn<BankTransferRow>> BankTransfer { get; } = new List<TabularColumn<BankTransferRow>>

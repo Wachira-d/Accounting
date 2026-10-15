@@ -1789,7 +1789,7 @@ const Page = {
           <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/export','xlsx')" title="ทะเบียนเงินเดือนรายคน (ทุกช่องรายได้/รายการหัก + ฝั่งนายจ้าง + เงินโอนจริง) พร้อมแถวรวม">📊 ทะเบียนเงินเดือน Excel</button>
           <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/export','csv')">CSV</button>
           <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/bank-transfer','xlsx')" title="รายการโอนเงินเดือนรูปแบบกลาง (ชื่อบัญชี · ธนาคาร · เลขบัญชี · จำนวนเงิน · อ้างอิง) — มีเลขบัญชีเต็ม ต้องมีสิทธิ์ดูข้อมูลส่วนบุคคล (Pii.View) · ยังไม่มีรูปแบบเฉพาะธนาคาร">🏦 รายการโอน Excel</button>
-          <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/bank-transfer','csv')">CSV</button>
+          <button class="btn btn-sm btn-outline" onclick="Page.exportFile('payroll/runs/${id}/bank-transfer','csv')" title="CSV เก็บเลขบัญชีครบ แต่ถ้าเปิดด้วย Excel ตรง ๆ เลขบัญชีที่ขึ้นต้นด้วย 0 จะถูกตัด (โอนผิดบัญชี/ตีกลับ) — เปิดดู/แก้/อัปโหลดเข้าธนาคารผ่าน Excel ให้ใช้ปุ่ม Excel · แถว &quot;จ่ายจากแหล่งอื่น&quot; ห้ามอัปโหลด">CSV ⚠️ (เลขบัญชี 0 นำหน้าหายถ้าเปิดใน Excel)</button>
           ${addEmpBtn}
         </div>
         <div class="table-container"><table class="table"><thead><tr><th>พนักงาน</th><th class="text-right">เงินเดือน</th><th class="text-right">รายได้อื่น</th><th class="text-right">หักภาษี</th><th class="text-right">ประกันสังคม</th><th class="text-right" title="กองทุนสำรองฯ + เงินกู้ + หักอื่น ๆ">หักอื่น</th><th class="text-right">สุทธิ</th><th>แหล่งจ่าย</th><th></th><th>สลิป</th></tr></thead>
@@ -2630,10 +2630,11 @@ const Page = {
           <h3 style="margin-bottom:8px">ภงด.1 - ${month}/${parseInt(year)+543}</h3>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
             <button class="btn btn-primary btn-sm" onclick="Page.downloadPnd1('txt')">ดาวน์โหลด .txt (นำเข้าเว็บสรรพากร)</button>
-            <button class="btn btn-secondary btn-sm" onclick="Page.downloadPnd1('csv')">CSV</button>
             <button class="btn btn-secondary btn-sm" onclick="Page.downloadPnd1('xlsx')">Excel</button>
+            <button class="btn btn-outline btn-sm" onclick="Page.downloadPnd1('csv')" title="CSV เก็บเลขครบ แต่ถ้าเปิดด้วย Excel ตรง ๆ เลขประจำตัวผู้เสียภาษี/วันที่ ddMMyyyy ที่ขึ้นต้นด้วย 0 จะถูกตัด — เปิดดู/แก้ให้ใช้ปุ่ม Excel · CSV ใช้นำเข้าโปรแกรมอื่นเท่านั้น">CSV ⚠️</button>
             <a class="btn btn-outline btn-sm" href="/pages/tax-export.html" style="text-decoration:none">วิธียื่น / ไฟล์อื่น ๆ</a>
           </div>
+          <div class="text-xs" style="margin:-10px 0 12px;color:#b45309">⚠️ CSV: เปิดด้วย Excel ตรง ๆ แล้วเลขประจำตัว 13 หลัก/วันที่ ddMMyyyy ที่ขึ้นต้นด้วย 0 จะถูกตัด — เปิดดู/แก้ใช้ปุ่ม Excel (ไฟล์ยื่นจริงใช้ .txt)</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.totalEmployees ?? d.employeeCount ?? 0}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">เงินได้รวม (ฐานภาษี)</div><div class="font-medium text-lg">${Layout.money(d.totalTaxableIncome ?? d.totalIncome)}</div></div>

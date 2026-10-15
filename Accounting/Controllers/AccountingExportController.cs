@@ -46,7 +46,8 @@ public class AccountingExportController : ControllerBase
             if (!Enum.TryParse<AccountType>(accountType, true, out var t)) return BadRequest(new ApiResponse<object>(false, null, "ประเภทบัญชีไม่ถูกต้อง"));
             type = t;
         }
-        return FileOf(await _export.GeneralLedgerAsync(companyId, fromDate, toDate, accountId, GuidList(accountIds), type,
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        return FileOf(await _export.GeneralLedgerAsync(companyId, userId, fromDate, toDate, accountId, GuidList(accountIds), type,
             dimensionId, branchId, projectId, fmt));
     }
 

@@ -44,9 +44,19 @@ public interface IAccountingService
     Task<Models.Entities.FiscalPeriod> ReopenPeriodAsync(Guid companyId, Guid periodId, string userId);
     Task<Models.Entities.YearEndClosing> YearEndCloseAsync(Guid companyId, int fiscalYear, Guid retainedEarningsAccountId, DateTime? closingDate, string userId);
     Task<int> RollOpeningBalancesAsync(Guid companyId, int year, string userId);
+    /// <summary>รายงานอ่านอย่างเดียว: ยอดยกมาจากการปิดปีที่เก็บไว้ ≠ ยอดที่ควรเป็น (บั๊กนับซ้ำก่อน 2026-10-15 · Helpers/OpeningRoll)</summary>
+    Task<List<OpeningRollCheckYear>> FindOpeningRollMismatchesAsync(Guid companyId);
+    /// <summary>ซ่อมเฉพาะปีที่เลือก + audit chain ทุกบัญชี · ไม่มีงานไหนเรียกอัตโนมัติ</summary>
+    Task<OpeningRollRepairResult> RepairOpeningRollAsync(Guid companyId, IReadOnlyCollection<int> years, string actor);
+    /// <summary>รายงานอ่านอย่างเดียว: ผังที่นำเข้าแล้วยังไม่มีบัญชีแม่ (Helpers/ChartParentLink)</summary>
+    Task<List<Accounting.Services.Implementations.ChartParentLinkSuspect>> FindUnlinkedAccountsAsync(Guid companyId);
+    /// <summary>ผูกบัญชีแม่เฉพาะผังที่เลือก + audit chain</summary>
+    Task<Accounting.Services.Implementations.ChartParentLinkRepairResult> RepairAccountParentLinksAsync(Guid companyId, IReadOnlyCollection<Guid> accountIds, string actor);
 
     // General Ledger
     Task<GeneralLedgerResponse> GetGeneralLedgerAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null);
+    /// <summary>บัญชีแยกประเภทตามสิทธิ์ผู้ใช้ — ใบที่สมุดรายวันปิดบัง ถูกรวม/ปิดบังแบบเดียวกัน (Helpers/LedgerRedaction) · หน้า + ไฟล์ใช้ตัวนี้</summary>
+    Task<GeneralLedgerResponse> GetGeneralLedgerForUserAsync(Guid companyId, Guid userId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null);
     Task<object> GetGlDebugAsync(Guid companyId, DateTime? fromDate = null, DateTime? toDate = null);
     Task<int> RebuildMissingLinesAsync(Guid companyId);
     Task<int> RepairBuddhistDatesAsync(Guid companyId);

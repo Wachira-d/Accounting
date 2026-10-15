@@ -207,7 +207,9 @@ public record PnlSection(
 public record GeneralLedgerResponse(
     List<GeneralLedgerAccount> Accounts,
     DateTime FromDate,
-    DateTime ToDate);
+    DateTime ToDate,
+    // ฝ่ายค้านรอบส่งออก 2026-10-15 P2-6: คำเตือนที่หน้า/ไฟล์ต้องแสดง (เช่น ยอดยกมานำเข้าเริ่มกลางช่วง ⇒ ยอดยกไปอาจ ≠ งบทดลอง) · null/ว่าง = ไม่มี
+    List<string>? Notes = null);
 
 public record GeneralLedgerAccount(
     Guid AccountId,
@@ -261,3 +263,22 @@ public record FiscalPeriodResponse(
     DateTime? LockedAt = null,
     string? LockedBy = null,
     Guid? YearEndJournalEntryId = null);
+
+
+// ===== ตรวจ/ซ่อมยอดยกมาจากการปิดปี (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1 · Helpers/OpeningRoll) =====
+
+/// <summary>บัญชีที่ยอดยกมาที่เก็บไว้ (สุทธิ) ≠ ยอดที่ควรเป็น</summary>
+public record OpeningRollMismatch(
+    Guid AccountId, string AccountCode, string AccountName,
+    decimal StoredDebit, decimal StoredCredit, decimal ExpectedDebit, decimal ExpectedCredit)
+{
+    public decimal StoredNet => StoredDebit - StoredCredit;
+    public decimal ExpectedNet => ExpectedDebit - ExpectedCredit;
+}
+
+/// <summary>ผลตรวจของปีเป้าหมายหนึ่งปี (ม.ค. ของปีถัดจากปีที่ปิด) · SkipReason ≠ null = ไม่ซ่อมอัตโนมัติ</summary>
+public record OpeningRollCheckYear(int Year, Guid? FiscalPeriodId, bool HasImportedRows, string? SkipReason, List<OpeningRollMismatch> Mismatches);
+
+public record OpeningRollRepairRequest(List<int>? Years);
+
+public record OpeningRollRepairResult(int RepairedYears, int RepairedRows, List<string> Skipped);

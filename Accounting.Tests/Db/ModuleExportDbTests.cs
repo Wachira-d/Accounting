@@ -36,11 +36,15 @@ public class ModuleExportDbTests
         var b = new Employee { CompanyId = company.Id, EmployeeCode = "E002", TitleTh = "นาง", FirstNameTh = "บี", LastNameTh = "ทดสอบ",
             StartDate = start.AddYears(-1) };   // ไม่มีเลขบัญชี — ต้องอยู่ในไฟล์พร้อมสถานะ "ขาดเลขบัญชี"
         db.Set<Employee>().AddRange(a, b);
+        // ฝ่ายค้านรอบส่งออก P2-4: แหล่งจ่ายของรอบ = ผังเงินฝากธนาคาร (1112x ของผังมาตรฐาน) · เงินสด 11111 ไว้ใช้ทดสอบแถวที่จ่ายเงินสด
+        db.ChartOfAccounts.AddRange(
+            new ChartOfAccount { CompanyId = company.Id, AccountCode = "11121", AccountName = "เงินฝากธนาคาร", AccountType = Accounting.Models.Enums.AccountType.Asset, Level = 4 },
+            new ChartOfAccount { CompanyId = company.Id, AccountCode = "11111", AccountName = "เงินสด", AccountType = Accounting.Models.Enums.AccountType.Asset, Level = 4 });
         var run = new PayrollRun
         {
             CompanyId = company.Id, PayrollNumber = "PR-202609-X4", Name = "เงินเดือน กันยายน 2569",
             Year = 2026, Month = 9, PeriodStart = start, PeriodEnd = end, PayDate = end, Status = "Paid",
-            TotalGrossSalary = 50000m, TotalNetPay = 47000m, EmployeeCount = 2,
+            TotalGrossSalary = 50000m, TotalNetPay = 47000m, EmployeeCount = 2, NetPaymentAccountCode = "11121",
         };
         run.Details.Add(new PayrollDetail { CompanyId = company.Id, EmployeeId = a.Id, BaseSalary = 30000m, GrossIncome = 30000m,
             SocialSecurityEmployee = 750m, WithholdingTax = 450m, TotalDeductions = 1200m, NetPay = 28800m, AdvanceRecovered = 3000m,
@@ -96,6 +100,26 @@ public class ModuleExportDbTests
         var b = rows.Single(r => r.Line.EmployeeCode == "E002");
         Assert.False(b.Decision.Ready);
         Assert.Equal("ขาดเลขบัญชี", b.Decision.Status);
+    }
+
+    /// <summary>ฝ่ายค้านรอบส่งออก 2026-10-15 P2-4: พนักงานที่แหล่งจ่ายเป็นเงินสด (11111) ต้องไม่ "พร้อมโอน" แม้มีเลขบัญชีครบ ·
+    /// ทิศตรงข้ามอยู่ในเทสต์ข้างบน (แหล่งจ่ายธนาคาร 11121 ⇒ พร้อมโอน)</summary>
+    [Fact]
+    public async Task รายการโอน_แถวที่จ่ายจากเงินสด_ไม่พร้อมโอน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, runId) = await SeedPaidRunAsync(db);
+        var detail = db.Set<PayrollDetail>().Single(d => d.PayrollRunId == runId && d.BaseSalary == 30000m);
+        detail.NetPaymentAccountCode = "11111";
+        await db.SaveChangesAsync();
+
+        using var reqDb = DbTestDatabase.TryCreateContext()!;
+        var sheet = await new PayrollService(reqDb).GetBankTransferSheetAsync(cid, runId);
+        var a = PayrollExportSheets.BankTransferRows(sheet).Single(r => r.Line.EmployeeCode == "E001");
+        Assert.False(a.Line.PaymentSourceIsBank);
+        Assert.False(a.Decision.Ready);
+        Assert.Equal(PayrollBankTransfer.NotFromBankStatus, a.Decision.Status);
     }
 
     [Fact]

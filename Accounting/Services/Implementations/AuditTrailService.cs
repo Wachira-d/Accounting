@@ -23,20 +23,17 @@ public class AuditTrailService : IAuditTrailService
     {
         var query = _db.AuditLogs.Where(a => a.CompanyId == companyId);
 
+        // วันที่ล้วน = วันตามปฏิทินไทย (เที่ยงคืนเวลาไทย ไม่ใช่เที่ยงคืน UTC) · มีเวลากำกับ = ตรงตัว — ตัวตัดสินเดียว ThaiDate.InstantFromUtc/InstantToUtc
+        // (2026-10-14 ทีม X3 แก้ "ตัดทั้งวันสุดท้าย" · ฝ่ายค้านรอบส่งออก 2026-10-15 P2-8 แก้ขอบเวลาไทย 7 ชั่วโมง)
         if (request.FromDate.HasValue)
-            query = query.Where(a => a.Timestamp >= request.FromDate.Value);
+        {
+            var from = Accounting.Helpers.ThaiDate.InstantFromUtc(request.FromDate.Value);
+            query = query.Where(a => a.Timestamp >= from);
+        }
         if (request.ToDate.HasValue)
         {
-            // หน้าเว็บส่งวันที่ล้วน ("2026-10-14" = เที่ยงคืน) ⇒ เดิม `<= เที่ยงคืน` ตัดทั้งวันสุดท้ายทิ้ง (เลือก "ถึงวันนี้" แล้วไม่เห็นรายการของวันนี้) ·
-            // วันที่ล้วน = รวมทั้งวัน · มีเวลากำกับ = ตามเวลานั้น (ผู้เรียกแบบ API เดิมไม่เปลี่ยน) — 2026-10-14 ทีม X3
-            var to = request.ToDate.Value;
-            if (to.TimeOfDay == TimeSpan.Zero)
-            {
-                var end = to.AddDays(1);
-                query = query.Where(a => a.Timestamp < end);
-            }
-            else
-                query = query.Where(a => a.Timestamp <= to);
+            var (to, exclusive) = Accounting.Helpers.ThaiDate.InstantToUtc(request.ToDate.Value);
+            query = exclusive ? query.Where(a => a.Timestamp < to) : query.Where(a => a.Timestamp <= to);
         }
         if (request.UserId.HasValue)
             query = query.Where(a => a.UserId == request.UserId.Value);
@@ -60,8 +57,11 @@ public class AuditTrailService : IAuditTrailService
 
     public async Task<AuditSummaryResponse> GetSummaryAsync(Guid companyId, DateTime fromDate, DateTime toDate)
     {
+        // ขอบช่วงแบบเดียวกับ GetLogsAsync (วันที่ล้วน = วันตามปฏิทินไทย — P2-8)
+        var from = Accounting.Helpers.ThaiDate.InstantFromUtc(fromDate);
+        var (to, exclusive) = Accounting.Helpers.ThaiDate.InstantToUtc(toDate);
         var logs = await _db.AuditLogs
-            .Where(a => a.CompanyId == companyId && a.Timestamp >= fromDate && a.Timestamp <= toDate)
+            .Where(a => a.CompanyId == companyId && a.Timestamp >= from && (exclusive ? a.Timestamp < to : a.Timestamp <= to))
             .ToListAsync();
 
         var actionSummary = logs.GroupBy(a => a.Action)

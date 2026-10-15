@@ -14,6 +14,9 @@ public enum ArApSide
 /// <summary>บรรทัดของ JE ตอนออกใบ (ข้อเท็จจริงที่ตัวเลือกต้องใช้)</summary>
 public sealed record ArApJeLine(Guid AccountId, string AccountCode, decimal Debit, decimal Credit);
 
+/// <summary>JE ที่ลงแล้วของใบหนึ่งใบ (ผู้สมัคร "JE ตอนออกใบ")</summary>
+public sealed record ArApJeCandidate(Guid Id, JournalType JournalType, DateTime EntryDate, DateTime CreatedAt, string EntryNumber);
+
 /// <summary>
 /// **ผังลูกหนี้/เจ้าหนี้ที่ "ใบที่ออกแล้ว" ตั้งไว้จริง — ตัวตัดสินเดียวของทุกเส้นที่ปิดหนี้ของใบเดิม** (รอบ 206 · ฝ่ายค้านรอบ 2 P2(b) ส่วนที่ค้าง ·
 /// PAYMENT_CHANNEL_AUDIT ADV2-P2-b)
@@ -25,10 +28,13 @@ public sealed record ArApJeLine(Guid AccountId, string AccountCode, decimal Debi
 ///
 /// <para>═══ กติกา ═══
 /// <list type="number">
-/// <item>อ่าน <b>JE ตอนออกใบ</b> = JE ที่ลงแล้วของใบนั้นที่ไม่ถูกกลับ/ไม่ใช่รายการกลับ <b>ตัวแรก</b> (JE รับชำระ/หักมัดจำของใบเดียวกันมาทีหลัง ·
-/// ห้ามรวมยอดทุก JE: รับชำระผ่านบัญชีพัก 11340 ทำให้ "ผัง 113 ที่ยอดมากสุด" กลายเป็นบัญชีพัก)</item>
+/// <item>อ่าน <b>JE ตอนออกใบ</b> = JE ที่ลงแล้วของใบนั้นที่ไม่ถูกกลับ/ไม่ใช่รายการกลับ เลือกด้วย <see cref="PickIssueEntry"/>: สมุดขาย/ซื้อ (SV/UV)
+/// ก่อน → สมุดทั่วไป → สมุดรับ/จ่าย · ภายในกลุ่ม = วันที่รายการ → เวลาสร้าง → เลขที่ → Id (ฝ่ายค้านรอบส่งออก 2026-10-15 P2-10: เดิม "ตัวแรกตาม
+/// เวลาสร้าง" ⇒ JE รับชำระที่นำเข้า/ลงย้อนหลังถูกนับเป็น JE ตอนออกใบ) · ห้ามรวมยอดทุก JE: รับชำระผ่านบัญชีพัก 11340 ทำให้ "ผัง 113 ที่ยอดมากสุด"
+/// กลายเป็นบัญชีพัก</item>
 /// <item>ผู้สมัคร = บรรทัดฝั่งที่ใบตั้งหนี้ (ลูกหนี้ = เดบิต · เจ้าหนี้ = เครดิต) บนผังกลุ่ม 113/212 <b>หรือ</b>ผังที่ผู้ติดต่อปักอยู่ตอนนี้
-/// (ผังของบริษัทเองที่รหัสไม่ขึ้นด้วย 113/212) · ไม่นับบัญชีพักของผู้ให้บริการรับชำระเงิน (11340 · 11341–11349)</item>
+/// (ผังของบริษัทเองที่รหัสไม่ขึ้นด้วย 113/212) · ไม่นับบัญชีพักของผู้ให้บริการรับชำระเงิน (11340 · 11341–11349 · เงินที่ผู้ให้บริการกันไว้ 11350 ·
+/// ผังพัก/ผังกันเงินที่ตั้งเองใน config gateway และช่องทางรอบโอน)</item>
 /// <item>เลือกผังที่ยอดฝั่งนั้นมากสุด (เท่ากัน = รหัสน้อยสุด) · ผังที่ใบตั้งไว้ใช้ได้<b>แม้ปิดใช้ทีหลัง</b> (ตัดยอดเดิมให้หมด ไม่ใช่ตั้งหนี้ใหม่)</item>
 /// <item>ไม่มี JE / ไม่มีผู้สมัคร ⇒ <c>null</c> — ผู้เรียกใช้ตัวหาเดิม (ผังที่ผู้ติดต่อปัก/ค่าเริ่มต้น) ตามเดิม</item>
 /// </list></para>
@@ -42,11 +48,13 @@ public static class OriginalArApAccount
     public const string PayablePrefix = "212";
 
     /// <summary>ผังที่ใบตั้งหนี้ไว้ (pure) — <paramref name="issueLines"/> = บรรทัดของ JE ตอนออกใบเท่านั้น · null = ไม่พบ</summary>
-    public static Guid? Pick(IEnumerable<ArApJeLine> issueLines, ArApSide side, Guid? pinnedAccountId)
+    /// <param name="gatewayAccountIds">ผังพัก/ผังกันเงินของ gateway และช่องทางรอบโอนที่บริษัทตั้งเอง (รหัสไม่ใช่ 1134x/11350) — ไม่นับเป็นลูกหนี้ของใบ</param>
+    public static Guid? Pick(IEnumerable<ArApJeLine> issueLines, ArApSide side, Guid? pinnedAccountId,
+        IReadOnlySet<Guid>? gatewayAccountIds = null)
     {
         var prefix = side == ArApSide.Receivable ? ReceivablePrefix : PayablePrefix;
         var best = issueLines
-            .Where(l => !IsGatewayClearing(l.AccountCode)
+            .Where(l => !IsGatewayClearing(l.AccountCode) && gatewayAccountIds?.Contains(l.AccountId) != true
                         && (l.AccountCode.StartsWith(prefix, StringComparison.Ordinal)
                             || (pinnedAccountId is Guid p && p != Guid.Empty && l.AccountId == p)))
             .GroupBy(l => (l.AccountId, l.AccountCode))
@@ -60,7 +68,28 @@ public static class OriginalArApAccount
     }
 
     private static bool IsGatewayClearing(string? code)
-        => code == TradeReceivableAccount.GatewayClearingCode || SettlementChannelAccounts.IsClearingCode(code);
+        => code == TradeReceivableAccount.GatewayClearingCode || SettlementChannelAccounts.IsClearingCode(code)
+           || code == SettlementChartSeed.ReserveAccountCode;
+
+    /// <summary>JE ตอนออกใบจากผู้สมัคร (pure) — สมุดขาย/ซื้อก่อน (JE ที่ตั้งหนี้) → สมุดทั่วไป → สมุดรับ/จ่าย (รับ/จ่ายชำระของใบเดียวกัน) ·
+    /// ภายในกลุ่ม: วันที่รายการ → เวลาสร้าง → เลขที่ → Id (ตัดสินเสมอ) · null = ไม่มีผู้สมัคร</summary>
+    internal static Guid? PickIssueEntry(IEnumerable<ArApJeCandidate> entries)
+    {
+        static int Rank(JournalType t) => t switch
+        {
+            JournalType.Sales or JournalType.Purchase => 0,
+            JournalType.General => 1,
+            _ => 2,
+        };
+        var best = entries
+            .OrderBy(e => Rank(e.JournalType))
+            .ThenBy(e => e.EntryDate)
+            .ThenBy(e => e.CreatedAt)
+            .ThenBy(e => e.EntryNumber, StringComparer.Ordinal)
+            .ThenBy(e => e.Id)
+            .FirstOrDefault();
+        return best?.Id;
+    }
 
     /// <summary>
     /// อ่าน JE ตอนออกใบของ <paramref name="documentId"/> แล้วตัดสินด้วย <see cref="Pick"/> — ผังที่ผู้ติดต่อของใบปักอยู่ตอนนี้นับเป็นผู้สมัครด้วย ·
@@ -70,13 +99,12 @@ public static class OriginalArApAccount
         CancellationToken ct = default)
     {
         if (documentId is not Guid docId || docId == Guid.Empty) return null;
-        var issueJeId = await db.JournalEntries.AsNoTracking()
+        var candidates = await db.JournalEntries.AsNoTracking()
             .Where(j => j.CompanyId == companyId && j.SourceDocumentId == docId && !j.IsDeleted
                         && j.Status == JournalEntryStatus.Posted && j.ReversedByEntryId == null && j.OriginalEntryId == null)
-            .OrderBy(j => j.CreatedAt).ThenBy(j => j.EntryNumber)
-            .Select(j => (Guid?)j.Id)
-            .FirstOrDefaultAsync(ct);
-        if (issueJeId is not Guid jeId) return null;
+            .Select(j => new ArApJeCandidate(j.Id, j.JournalType, j.EntryDate, j.CreatedAt, j.EntryNumber))
+            .ToListAsync(ct);
+        if (PickIssueEntry(candidates) is not Guid jeId) return null;
         var lines = await (from l in db.JournalEntryLines.AsNoTracking()
                            join a in db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
                            where l.JournalEntryId == jeId && !l.IsDeleted && a.CompanyId == companyId
@@ -88,6 +116,17 @@ public static class OriginalArApAccount
                           where d.Id == docId && d.CompanyId == companyId && c.CompanyId == companyId
                           select new { c.DefaultArAccountId, c.DefaultApAccountId })
                          .FirstOrDefaultAsync(ct);
-        return Pick(lines, side, side == ArApSide.Receivable ? pins?.DefaultArAccountId : pins?.DefaultApAccountId);
+        // ผังพัก/ผังกันเงินของ gateway และช่องทางรอบโอนที่บริษัทตั้งเอง (เจ้าของ: PaymentProviderConfig / SettlementChannel) — ไม่ใช่ลูกหนี้ของใบ
+        var gatewayIds = (await db.PaymentProviderConfigs.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.ClearingAccountId != null)
+                .Select(c => c.ClearingAccountId!.Value).ToListAsync(ct))
+            .Concat(await db.SettlementChannels.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.ClearingAccountId != null)
+                .Select(c => c.ClearingAccountId!.Value).ToListAsync(ct))
+            .Concat(await db.SettlementChannels.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.ReserveAccountId != null)
+                .Select(c => c.ReserveAccountId!.Value).ToListAsync(ct))
+            .ToHashSet();
+        return Pick(lines, side, side == ArApSide.Receivable ? pins?.DefaultArAccountId : pins?.DefaultApAccountId, gatewayIds);
     }
 }

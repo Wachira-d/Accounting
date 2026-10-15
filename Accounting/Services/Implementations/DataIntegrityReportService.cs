@@ -9,8 +9,9 @@ namespace Accounting.Services.Implementations;
 /// <param name="LinkUrl">ลิงก์ไปรายการต้นทาง (เซิร์ฟเวอร์ประกอบ — หน้าแสดงอย่างเดียว) · null = ไม่มี</param>
 /// <param name="LinkLabel">ข้อความของลิงก์</param>
 /// <param name="FixPath">เส้นทาง POST (ต่อท้าย <c>api/companies/{companyId}/</c>) ของปุ่ม "แก้" รายแถว · null = แถวอ่านอย่างเดียว</param>
+/// <param name="FixConfirm">ข้อความยืนยันก่อนกด "แก้" (เซิร์ฟเวอร์ประกอบ — หน้าไม่มีข้อความกติกาเอง · null = ข้อความเดิมของหมวดส่วนลดสแกน)</param>
 public sealed record DataIntegritySuspect(string Kind, Guid Id, string Number, DateTime Date, string Detail, decimal? Stored, decimal? Expected,
-    string? LinkUrl = null, string? LinkLabel = null, string? FixPath = null);
+    string? LinkUrl = null, string? LinkLabel = null, string? FixPath = null, string? FixConfirm = null);
 
 public sealed record DataIntegrityReport(
     List<DataIntegritySuspect> PosOrderTotals,
@@ -26,7 +27,11 @@ public sealed record DataIntegrityReport(
     // ทีม E 2026-10-13 — เอกสารจากสแกนที่ "เปิดแก้แล้วบันทึก ยอดขยับ" (ส่วนลด % ซ้อนบนราคาที่ลดแล้ว · ก่อนทีม D B5) · มีปุ่ม "แก้" รายใบ (metadata อย่างเดียว)
     List<DataIntegritySuspect> OcrLineDiscountWouldChangeOnResave,
     // DECISIONS ข้อ 111 — รอบเงินเดือนที่ยกเลิกแล้วแต่ 50 ทวิ ยังสถานะออกแล้ว · อ่านอย่างเดียว (ไม่ยกเลิกให้ — อาจยื่นไปแล้ว)
-    List<DataIntegritySuspect> VoidedPayrollRunsWithIssuedWhtCerts)
+    List<DataIntegritySuspect> VoidedPayrollRunsWithIssuedWhtCerts,
+    // ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1 — ยอดยกมาจากการปิดปีที่เก็บผิด (ปีเก่านับซ้ำตั้งแต่ปิดปีครั้งที่สอง) · ปุ่ม "แก้" ต่อปี (เจ้าของบริษัท)
+    List<DataIntegritySuspect> OpeningRollMismatches,
+    // ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2 — ผังที่นำเข้าแล้วไม่มีบัญชีแม่ (หัวบัญชีถูกหยิบเป็นผังตั้งต้น) · ปุ่ม "แก้" ต่อผัง (เจ้าของบริษัท)
+    List<DataIntegritySuspect> UnlinkedImportedAccounts)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -34,7 +39,8 @@ public sealed record DataIntegrityReport(
 
     public int Total => PosOrderTotals.Count + RollupBillingNoteChildren.Count + PurchaseInvoicesBilledFromPoWithGrn.Count
         + PayrollRunTotals.Count + PlainReceiptsWithVat.Count + Section40_4RecordedAsPnd3.Count + TipWhtPostedToPnd2Account.Count
-        + OcrLineDiscountWouldChangeOnResave.Count + VoidedPayrollRunsWithIssuedWhtCerts.Count;
+        + OcrLineDiscountWouldChangeOnResave.Count + VoidedPayrollRunsWithIssuedWhtCerts.Count
+        + OpeningRollMismatches.Count + UnlinkedImportedAccounts.Count;
 }
 
 /// <summary>
@@ -50,7 +56,12 @@ public sealed record DataIntegrityReport(
 public class DataIntegrityReportService
 {
     private readonly AccountingDbContext _db;
-    public DataIntegrityReportService(AccountingDbContext db) => _db = db;
+    private readonly Interfaces.IAccountingService _accounting;
+    public DataIntegrityReportService(AccountingDbContext db, Interfaces.IAccountingService? accounting = null)
+    {
+        _db = db;
+        _accounting = accounting ?? new AccountingService(db);
+    }
 
     private const decimal Tol = 0.01m;
 
@@ -152,8 +163,44 @@ public class DataIntegrityReportService
         var (pnd3Section40_4, tipOn21915) = await LoadPnd2SuspectsAsync(companyId);
         var ocrLineDiscount = await LoadOcrLineDiscountSuspectsAsync(companyId);
         var voidedRunCerts = await LoadVoidedPayrollRunCertsAsync(companyId);
+        var (rollRows, unlinkedRows) = await LoadChartRepairSuspectsAsync(companyId);
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
-            ocrLineDiscount, voidedRunCerts);
+            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows);
+    }
+
+    /// <summary>เส้นทางปุ่ม "แก้" ของยอดยกมาปีหนึ่งปี — ตัวเดียวกับ route ของ <c>DataIntegrityController.RepairOpeningRoll</c></summary>
+    public static string OpeningRollFixPath(int year) => $"data-integrity/opening-roll/{year}/repair";
+
+    /// <summary>เส้นทางปุ่ม "แก้" ของผังที่ยังไม่ผูกบัญชีแม่ — ตัวเดียวกับ route ของ <c>DataIntegrityController.LinkAccountParent</c></summary>
+    public static string AccountParentFixPath(Guid accountId) => $"data-integrity/account-parent/{accountId}/link";
+
+    /// <summary>ฝ่ายค้านรอบส่งออก 2026-10-15 P1-1/P1-2 — ข้อมูลที่ถูกเก็บผิดไปแล้ว (F2 ข้อ 9): ยอดยกมาจากการปิดปี (ตัวตัดสินเดียว
+    /// <c>FindOpeningRollMismatchesAsync</c>) และผังที่นำเข้าแต่ยังไม่มีบัญชีแม่ (<c>ChartParentLinker.FindUnlinkedAsync</c>) ·
+    /// แถวที่ซ่อมได้มีปุ่ม "แก้" (เซิร์ฟเวอร์ส่งเส้นทาง + ข้อความยืนยัน) · แถวที่ซ่อมอัตโนมัติไม่ได้ = อ่านอย่างเดียวพร้อมเหตุผล</summary>
+    private async Task<(List<DataIntegritySuspect> Roll, List<DataIntegritySuspect> Unlinked)> LoadChartRepairSuspectsAsync(Guid companyId)
+    {
+        var roll = new List<DataIntegritySuspect>();
+        foreach (var y in await _accounting.FindOpeningRollMismatchesAsync(companyId))
+        {
+            var jan = new DateTime(y.Year, 1, 1);
+            if (y.SkipReason != null && y.HasImportedRows)
+                continue;   // งวดที่ผู้ใช้ลงยอดนำเข้าเอง — ไม่ใช่ข้อมูลจากบั๊ก (ไม่รบกวนผู้ตรวจ)
+            foreach (var m in y.Mismatches)
+                roll.Add(new DataIntegritySuspect("OpeningRoll", m.AccountId, $"ยอดยกมา ม.ค. {y.Year + 543} · {m.AccountCode}", jan,
+                    $"{m.AccountCode} {m.AccountName} — ยอดยกมาจากการปิดปี {y.Year + 542} ที่เก็บไว้ ≠ ยอดที่ควรเป็น (ปีเก่าถูกนับซ้ำตั้งแต่ปิดปีครั้งที่สอง) · "
+                    + "งบทดลอง/บัญชีแยกประเภท/แดชบอร์ดของปีนี้อ่านยอดนี้ · กด “แก้” เพื่อคำนวณยอดยกมาทั้งปีใหม่ (บันทึกประวัติทุกบัญชี · เจ้าของบริษัทเท่านั้น)",
+                    m.StoredNet, m.ExpectedNet, "/pages/reports.html", "รายงานบัญชี", OpeningRollFixPath(y.Year),
+                    $"คำนวณยอดยกมา ม.ค. {y.Year + 543} ใหม่ทุกบัญชีที่ไม่ตรง (ยอดยกมานำเข้า + รายการตั้งแต่วันเริ่มฐาน) — บันทึกประวัติการแก้ทุกบัญชี\n\nดำเนินการต่อหรือไม่?"));
+        }
+        var unlinked = (await ChartParentLinker.FindUnlinkedAsync(_db, companyId))
+            .Select(u => new DataIntegritySuspect("AccountParent", u.AccountId, u.Code, DateTime.UtcNow.Date,
+                u.BlockedReason ?? $"{u.Code} {u.Name} — ผังที่นำเข้ายังไม่มีบัญชีแม่ ⇒ ระบบมองว่า “ไม่มีบัญชีย่อย” และอาจหยิบเป็นผังตั้งต้นของการลงบัญชีอัตโนมัติ · "
+                    + $"บัญชีแม่ที่ควรเป็น: {u.ProposedParentCode}",
+                null, null, "/pages/accounts.html", "ผังบัญชี",
+                u.BlockedReason == null ? AccountParentFixPath(u.AccountId) : null,
+                u.BlockedReason == null ? $"ผูก {u.Code} ใต้บัญชีแม่ {u.ProposedParentCode} (บันทึกประวัติ)\n\nดำเนินการต่อหรือไม่?" : null))
+            .ToList();
+        return (roll, unlinked);
     }
 
     /// <summary>เส้นทางปุ่ม "แก้" ของแถวส่วนลดบรรทัดจากสแกน — ตัวเดียวกับ route ของ <c>DataIntegrityController.FixOcrLineDiscount</c></summary>

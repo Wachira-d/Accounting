@@ -160,7 +160,7 @@ public class ProductService : IProductService
         }
 
         var total = await query.CountAsync();
-        var items = await query.OrderBy(p => p.Code)
+        var items = await query.OrderBy(p => p.Code).ThenBy(p => p.Id) // ฝ่ายค้านรอบส่งออก P2-9: ตัวตัดสินสุดท้าย — ส่งออกวนทุกหน้าไม่ซ้ำ/หาย
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
@@ -1055,14 +1055,14 @@ public class ProductService : IProductService
                 .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
                     && a.AccountCode.StartsWith(
                         Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Supplies)))
-                .OrderBy(a => a.AccountCode)
+                .OrderByDefaultPreference()
                 .Select(a => (Guid?)a.Id)
                 .FirstOrDefaultAsync();
             var inventoryDefaultId = await _db.ChartOfAccounts.WhereNotControlAccount(_db)
                 .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.IsActive
                     && a.AccountCode.StartsWith(
                         Accounting.Helpers.InventoryControlAccount.DefaultAccountPrefix(ProductType.Product)))
-                .OrderBy(a => a.AccountCode)
+                .OrderByDefaultPreference()
                 .Select(a => (Guid?)a.Id)
                 .FirstOrDefaultAsync();
 

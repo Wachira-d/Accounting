@@ -150,7 +150,7 @@ public class SalaryAdvanceService : ISalaryAdvanceService
 
         var total = await query.CountAsync();
         var items = await query
-            .OrderByDescending(a => a.CreatedAt)
+            .OrderByDescending(a => a.CreatedAt).ThenBy(a => a.Id) // ฝ่ายค้านรอบส่งออก P2-9: ตัวตัดสินสุดท้าย — ส่งออกวนทุกหน้าไม่ซ้ำ/หาย
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
