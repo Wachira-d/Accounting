@@ -1076,7 +1076,7 @@ public class PayrollController : ControllerBase
     // ตัวเขียนไฟล์ = Helpers/ModuleExport ตัวเดียว · คอลัมน์ = Helpers/PayrollExportSheets ตัวเดียว
 
     private ActionResult BadExportFormat() => BadRequest(new ApiResponse<object>(false, null, ModuleExport.BadFormatMessage));
-    private FileContentResult ExportFile(ModuleExportFile f) => File(f.Content, f.ContentType, f.FileName);
+    private FileContentResult ExportFile(TabularFile f) => File(f.Content, f.ContentType, f.FileName);
 
     /// <summary>ทะเบียนพนักงานทุกคนตามคำค้น — ด่าน/การปิดบังชุดเดียวกับ <see cref="GetEmployees"/> (Pii.View = เลขเต็ม + บันทึก PiiAccessLog ·
     /// ไม่มีสิทธิ์ดูเงินเดือน = ช่องเงินเดือนว่าง)</summary>
