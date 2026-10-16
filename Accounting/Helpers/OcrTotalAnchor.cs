@@ -495,6 +495,18 @@ public static class OcrTotalAnchor
                 : "ตรวจว่ามีบรรทัดเกินหรือ VAT ซ้ำ (ถ้าตั้งใจเพิ่มรายการเอง กดรับทราบได้)"));
     }
 
+    /// <summary>
+    /// **ผลตรวจสดแบบสามค่า** ของ <see cref="DocumentOverstatement"/> — ฝ่ายค้าน afbb0956 P2-5: ผู้เรียก (ปุ่ม LINE) แปลง "null" เป็น "ไม่เกิน" ทั้งที่ null
+    /// ของ <see cref="DocumentOverstatement"/> แปลว่า "ไม่เกิน" <b>หรือ</b> "ตัดสินไม่ได้" (กระดาษไม่ยืนยันยอด · ผู้สมัครแข็งหลายตัว · เอกสารไม่มียอด) ⇒
+    /// ตัดสินไม่ได้แล้วหมายเหตุเกินกระดาษเก่าถูกตัดทิ้ง = ปลดการหยุดเงียบ ๆ · true = เกิน · false = ตรวจแล้วไม่เกิน · null = ตัดสินไม่ได้ (คงหมายเหตุเดิม)</summary>
+    public static bool? OverstatedNow(string? rawText, decimal? engineTotal, decimal documentTotal)
+    {
+        if (documentTotal <= 0m) return null;
+        var strong = Find(rawText, engineTotal).Candidates.Where(c => c.Strong).ToList();
+        if (strong.Count != 1) return null;
+        return documentTotal > strong[0].Amount + Tol;
+    }
+
     /// <summary>บรรทัดแรกที่พิมพ์เลขนี้<b>ในฐานะฐานก่อน VAT ได้</b> — ข้ามแถวที่เลขนี้อยู่หลังป้าย "รวม VAT"
     /// (<see cref="OcrPaperAmounts.IsVatInclusiveOnLine"/>) · −1 = ไม่มีบนกระดาษในรูปที่เป็นฐานได้</summary>
     private static int FirstBaseLineOf(IReadOnlyList<OcrPrintedAmount> printed, decimal amount)

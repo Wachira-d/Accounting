@@ -21943,11 +21943,20 @@ public partial class DocumentService : IDocumentService
             var linesTotalNow = liveLines.Sum(l => l.Amount + l.VatAmount) + doc.RoundingAdjustment;
             var overstated = Accounting.Helpers.OcrTotalAnchor.DocumentOverstatement(
                 gapScanNormalized, gapScan.ExtractedTotalAmount, linesTotalNow);
+            // ฝ่ายค้าน afbb0956 P2-4: [Σ-GAP] ตารางรหัส ภ.พ. ของตอนสร้างตรวจสดบนบรรทัดตอนนี้ (ตัวตัดสินเดียวกับตัวสร้างบรรทัด) — แก้อัตราแล้วคำเตือนหาย ·
+            // ยังไม่ตรง = ข้อความตัวเลขของตอนนี้ (ไม่ใช่ของตอนสร้าง)
+            var vatCodeMismatchNow = Accounting.Helpers.OcrVatCodeLines.TableMismatch(
+                liveLines.Select(l => new Accounting.Helpers.OcrPlannedLine(l.Amount, l.VatRate, l.VatAmount)).ToList(),
+                Accounting.Helpers.OcrLineVatMarks.ReadGroups(gapScanNormalized));
             warnings.AddRange(Accounting.Helpers.OcrApprovalGapWarning.Build(
-                gapScan.ProcessingNotes, gapScan.ExtractedTotalAmount,
+                Accounting.Helpers.OcrVatCodeLines.LiveNotes(gapScan.ProcessingNotes, vatCodeMismatchNow, checkedLive: liveLines.Count > 0),
+                gapScan.ExtractedTotalAmount,
                 linesTotalNow, vatRateAdvice,
                 linesVat: linesVatNow, paperVat: gapScan.ExtractedVatAmount,
-                headerVatSource: postedVatSource, overstatement: overstated, overstatementCheckedLive: true));
+                headerVatSource: postedVatSource, overstatement: overstated,
+                // ฝ่ายค้าน afbb0956 P2-5: "ตรวจสดแล้ว" เฉพาะเมื่อตัดสินได้ — ตัดสินไม่ได้ (null) ⇒ คงข้อเกินกระดาษของตอนสร้าง (เดิม true เสมอ ⇒ ลบทิ้งเงียบ)
+                overstatementCheckedLive: Accounting.Helpers.OcrTotalAnchor.OverstatedNow(
+                    gapScanNormalized, gapScan.ExtractedTotalAmount, linesTotalNow) is not null));
         }
 
         // ── รอบ 201 ทีม TX (A-TX1 · team-R B-05(b)): §65 ตรี ต้องเห็นก่อนกดอนุมัติ ──

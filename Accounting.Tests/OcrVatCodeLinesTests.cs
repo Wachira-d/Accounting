@@ -147,7 +147,7 @@ public class OcrVatCodeLinesTests
     }
 
     [Fact]
-    public void ข้อความTesseractจริง_คำอธิบายรหัส1อ่านเพี้ยน_รหัสไม่รู้ความหมาย_ไม่เดา_และด่านผลสุดท้ายฟ้อง()
+    public void ข้อความTesseractจริง_คำอธิบายรหัส1อ่านเพี้ยน_รหัสไม่รู้ความหมาย_ไม่เดา_ด่านผลสุดท้ายเทียบเงินกลุ่มไม่มีVAT()
     {
         var text = Norm(OcrMakroPage2VatAddedTwiceTests.MakroPage2of2Tesseract);
         var t = OcrLineVatMarks.ReadGroups(text);
@@ -156,9 +156,12 @@ public class OcrVatCodeLinesTests
         var plan = OcrVatCodeLines.Plan(In(new[] { 1220.00m, 9760.00m }), text, t, 638.50m, 10980.00m, 0m, true, null);
         Assert.Equal(OcrVatCodeVerdict.Unreconciled, plan.Verdict);
         Assert.Contains("ไม่บอกความหมาย", plan.Note);
-        var gap = OcrVatCodeLines.TableMismatch(new[] { new OcrPlannedLine(1220.00m, -1m, 0m), new OcrPlannedLine(9121.50m, 7m, 638.50m) }, t);
+        // ฝ่ายค้าน afbb0956 P2-4: ด่านผลสุดท้ายเป็นเรื่องเงิน — รหัส 1 (VAT 0 · ยกเว้นหรือ 0% ไม่รู้) เทียบรวมกลุ่มไม่มี VAT ⇒ บรรทัดตรงเงิน = ไม่ฟ้อง (เดิมฟ้องทุกสแกน)
+        Assert.Null(OcrVatCodeLines.TableMismatch(new[] { new OcrPlannedLine(1220.00m, -1m, 0m), new OcrPlannedLine(9121.50m, 7m, 638.50m) }, t));
+        // ทิศตรงข้าม: บรรทัดสรุปเดียว 7% (ไม่แยกกลุ่มยกเว้น) ⇒ ยังฟ้องพร้อมตัวเลขของกระดาษ
+        var gap = OcrVatCodeLines.TableMismatch(new[] { new OcrPlannedLine(10341.50m, 7m, 638.50m) }, t);
         Assert.NotNull(gap);
-        Assert.Contains("ไม่บอกความหมาย", gap);
+        Assert.Contains("กระดาษ 1,220.00", gap);
     }
 
     [Fact]

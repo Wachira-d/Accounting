@@ -8157,20 +8157,27 @@ RULES += [
          before=[("OcrLineBuildNotes.StripRecomputed(", "OcrTotalAnchor.DocumentOverstatement(")],
          why="2026-10-16 Makro 2/2: ยอดบรรทัดที่สร้างเกินยอดรวมที่กระดาษยืนยัน ⇒ [Σ-GAP] (รับทราบตอนอนุมัติ · ไม่อนุมัติเอง) — ห้ามลงบัญชีเกินกระดาษเงียบ ๆ"),
     dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
-         must=["OcrTotalAnchor.DocumentOverstatement("],
-         before=[("OcrTotalAnchor.DocumentOverstatement(", "OcrApprovalGapWarning.Build(")],
-         call_args=[("OcrApprovalGapWarning.Build(", "overstatementCheckedLive: true")],
+         must=["OcrTotalAnchor.DocumentOverstatement(", "OcrVatCodeLines.TableMismatch("],
+         before=[("OcrTotalAnchor.DocumentOverstatement(", "OcrApprovalGapWarning.Build("),
+                 ("OcrVatCodeLines.TableMismatch(", "OcrApprovalGapWarning.Build(")],
+         # ฝ่ายค้าน afbb0956 P2-5: "ตรวจสดแล้ว" = ตัดสินได้จริง (OverstatedNow ไม่ใช่ null) — ไม่ใช่ true เสมอ · P2-4: หมายเหตุตารางรหัส ภ.พ. ผ่านผลสด
+         call_args=[("OcrApprovalGapWarning.Build(", "OcrTotalAnchor.OverstatedNow"),
+                    ("OcrApprovalGapWarning.Build(", "OcrVatCodeLines.LiveNotes")],
          why="2026-10-16 Makro 2/2: ตรวจสดบนบรรทัดเอกสารตอนอนุมัติ (ครอบเอกสารที่สร้างก่อนแก้ + บรรทัดที่ผู้ใช้แยกเอง) ทุกทางเข้าที่อนุมัติ"),
 ]
 
 # ── ฝ่ายค้าน 6e56d33d P2-4: [Σ-GAP] "ยอดเอกสารเกินกระดาษ" ตอนสร้างค้างหยุดการอนุมัติจากแชทแม้ผู้ใช้แก้บรรทัดแล้ว ⇒ ปุ่มอนุมัติ LINE ตรวจสด ──
 #    ถอดการตรวจสด = กลับไปหยุดตลอดกาล (เงียบ ไม่มีทางออก) · ไม่ส่ง overstatedNow = ตัวตัดสินอ่านหมายเหตุเก่าอย่างเดียว
 RULES += [
+    # ฝ่ายค้าน afbb0956 P2-5: ผลสามค่า OcrTotalAnchor.OverstatedNow (ตัดสินไม่ได้ ≠ ไม่เกิน) — ห้ามกลับไปแปลง DocumentOverstatement(...) is not null เป็น bool ·
+    # P2-4: หมายเหตุ [Σ-GAP] ตารางรหัส ภ.พ. ตรวจสดผ่าน OcrVatCodeLines.LiveNotes
     dict(file=LINEBOT, method="HandlePostbackAsync",
-         must=["OcrTotalAnchor.DocumentOverstatement(", "OcrPostingReadiness.Evaluate("],
-         before=[("OcrTotalAnchor.DocumentOverstatement(", "OcrPostingReadiness.Evaluate(")],
-         call_args=[("OcrPostingReadiness.Evaluate(", "overstatedNow")],
-         why="ฝ่ายค้าน 6e56d33d P2-4: อนุมัติจากแชทต้องตัดสินข้อ \"เกินกระดาษ\" จากบรรทัดตอนนี้ (ตัวตัดสินเดียวกับด่านอนุมัติ) ไม่ใช่หมายเหตุตอนสร้าง"),
+         must=["OcrTotalAnchor.OverstatedNow(", "OcrPostingReadiness.Evaluate(", "OcrVatCodeLines.TableMismatch("],
+         before=[("OcrTotalAnchor.OverstatedNow(", "OcrPostingReadiness.Evaluate("),
+                 ("OcrVatCodeLines.TableMismatch(", "OcrPostingReadiness.Evaluate(")],
+         call_args=[("OcrPostingReadiness.Evaluate(", "overstatedNow"), ("OcrPostingReadiness.Evaluate(", "OcrVatCodeLines.LiveNotes")],
+         forbid=["OcrTotalAnchor.DocumentOverstatement("],
+         why="ฝ่ายค้าน 6e56d33d P2-4 → afbb0956 P2-4/P2-5: อนุมัติจากแชทตัดสินข้อ \"เกินกระดาษ\" + ตารางรหัส ภ.พ. จากบรรทัดตอนนี้ (สามค่า) ไม่ใช่หมายเหตุตอนสร้าง"),
 ]
 
 # ── 2026-10-16 รหัส ภ.พ. รายบรรทัด (คำสั่งเจ้าของ "อัตรา VAT ต่อบรรทัดยังเดาจากชื่อสินค้า … ควรต้องตามตาราง ภพ") ──────────────────────────

@@ -105,12 +105,16 @@ public static class OcrVatCodeLines
 
     /// <summary>แถวสินค้าที่พิมพ์รหัสระหว่างราคาต่อหน่วยกับยอด (คอลัมน์ "ราคาต่อหน่วย | รหัส ภ.พ. | จำนวนเงินรวม" ของ Makro)</summary>
     private static readonly Regex CodeBetween = new(
-        @"(?<![\d.,])(?:" + Money + @")[ \t]+(?<code>[0-9A-Z])[ \t]+(?<amt>" + Money + @")(?:[ \t]+[,.;:'`|]{1,2})?[ \t]*$",
+        @"(?<![\d.,])(?<price>" + Money + @")[ \t]+(?<code>[0-9A-Z])[ \t]+(?<amt>" + Money + @")(?:[ \t]+[,.;:'`|]{1,2})?[ \t]*$",
         RegexOptions.CultureInvariant);
 
-    /// <summary>แถวสินค้าที่พิมพ์รหัสท้ายยอด (<c>220.00 1</c>)</summary>
+    /// <summary>แถวสินค้าที่พิมพ์รหัส<b>ตัวอักษร</b>ท้ายยอด (<c>220.00 V</c>) — ฝ่ายค้าน afbb0956 P2-1: ตัวเลขท้ายยอด (<c>ค่าขนส่ง 100.00 1</c> ·
+    /// <c>ลำดับ 2 ส่วนลด 10.00 1</c>) คือจำนวน/ลำดับได้ ⇒ ไม่รับเป็นรหัส</summary>
     private static readonly Regex CodeTrailing = new(
-        @"(?<![\d.,])(?<amt>" + Money + @")[ \t]+(?<code>[0-9A-Z])[ \t]*$", RegexOptions.CultureInvariant);
+        @"(?<![\d.,])(?<amt>" + Money + @")[ \t]+(?<code>[A-Z])[ \t]*$", RegexOptions.CultureInvariant);
+
+    /// <summary>ตัวเลขที่อาจเป็น "จำนวน" ก่อนราคาต่อหน่วยบนแถวเดียวกัน (<c>6 EA</c> · <c>1.235 KG</c>)</summary>
+    private static readonly Regex QtyToken = new(@"(?<![\w.,])\d{1,5}(?:\.\d{1,3})?(?![\w,]|\.\d)", RegexOptions.CultureInvariant);
 
     /// <summary>หัวข้อความของด่าน <see cref="TableMismatch"/> — ตัวเดียวทั้งฝั่งเขียนและผู้อ่านข้อความ</summary>
     public const string MismatchLead = "อัตรา VAT รายบรรทัดไม่ตรงตารางรหัส ภ.พ. บนกระดาษ";
@@ -138,22 +142,45 @@ public static class OcrVatCodeLines
     };
 
     /// <summary>รหัส ภ.พ. ที่พิมพ์บนแถวสินค้า (ยอด · รหัส) ตามลำดับบนกระดาษ — รับเฉพาะรหัสที่อยู่ใน <paramref name="codes"/> (รหัสของตารางบนกระดาษเดียวกัน)
-    /// · ข้ามแถวตารางสรุป/คำอธิบาย (ไม่มีรูป "เงิน รหัส เงิน")</summary>
+    /// · ข้ามแถวตารางสรุป/คำอธิบาย (ไม่มีรูป "เงิน รหัส เงิน")
+    /// <para>ฝ่ายค้าน afbb0956 P2-1 — ตัวเลขระหว่างราคากับยอดอาจเป็น<b>จำนวน</b> (<c>ITEM 2 59.00 2 118.00</c> · <c>ไข่ไก่ 53.50 2 107.00</c>) ⇒ รับเป็นรหัสเมื่อ
+    /// เลขคณิตของแถวพิสูจน์ว่าจำนวนอยู่<b>ที่อื่น</b>: มีเลขก่อนราคาที่ จำนวน × ราคา = ยอด (คอลัมน์จำนวนแยก) และ (รหัส = 1 หรือ ราคา × รหัส ≠ ยอด) ·
+    /// แถวที่ ราคา × รหัส = ยอด ("อาจเป็นจำนวน") รับได้เฉพาะเมื่อกระดาษเดียวกันมีแถวที่<b>พิสูจน์คอลัมน์รหัส</b>แล้ว (ราคา × รหัส ≠ ยอด) อย่างน้อยหนึ่งแถว ·
+    /// ไม่มีแถวพิสูจน์ = ไม่รับรหัสตัวเลขเลย (ตกทางแบ่งด้วยผลรวม/ตารางชนะ) · รหัสตัวอักษรท้ายยอดไม่ใช่จำนวน — รับตามเดิม</para></summary>
     internal static IReadOnlyList<(decimal Amount, string Code)> ReadRowCodes(string? rawText, IReadOnlyCollection<string> codes)
     {
-        var list = new List<(decimal, string)>();
-        if (string.IsNullOrWhiteSpace(rawText) || codes.Count == 0) return list;
+        var list = new List<(decimal Amount, string Code, bool Proven)>();
+        if (string.IsNullOrWhiteSpace(rawText) || codes.Count == 0) return Array.Empty<(decimal, string)>();
+        static decimal Num(string v) => decimal.Parse(v.Replace(",", ""), NumberStyles.Number, CultureInfo.InvariantCulture);
         foreach (var raw in rawText.Replace("\r", "").Split('\n'))
         {
             var line = raw.TrimEnd();
             var m = CodeBetween.Match(line);
-            if (!m.Success || !codes.Contains(m.Groups["code"].Value))
-                m = CodeTrailing.Match(line);
+            if (m.Success && codes.Contains(m.Groups["code"].Value))
+            {
+                var code = m.Groups["code"].Value;
+                var amt = Num(m.Groups["amt"].Value);
+                if (!int.TryParse(code, NumberStyles.None, CultureInfo.InvariantCulture, out var c))
+                {
+                    list.Add((amt, code, true));      // รหัสตัวอักษรไม่ใช่จำนวน
+                    continue;
+                }
+                var price = Num(m.Groups["price"].Value);
+                var qtyElsewhere = QtyToken.Matches(line[..m.Groups["price"].Index])
+                    .Select(q => decimal.Parse(q.Value, NumberStyles.Number, CultureInfo.InvariantCulture))
+                    .Any(q => q > 0m && Math.Abs(q * price - amt) <= 0.01m);
+                if (!qtyElsewhere) continue;          // ไม่มีคอลัมน์จำนวนแยก ⇒ เลขนี้อาจเป็นจำนวน — ไม่รับ
+                var couldBeQty = Math.Abs(c * price - amt) <= 0.01m;
+                list.Add((amt, code, !couldBeQty));
+                continue;
+            }
+            m = CodeTrailing.Match(line);
             if (!m.Success || !codes.Contains(m.Groups["code"].Value)) continue;
-            list.Add((decimal.Parse(m.Groups["amt"].Value.Replace(",", ""), NumberStyles.Number, CultureInfo.InvariantCulture),
-                m.Groups["code"].Value));
+            list.Add((Num(m.Groups["amt"].Value), m.Groups["code"].Value, true));
         }
-        return list;
+        // คอลัมน์รหัสต้องถูกพิสูจน์บนกระดาษเดียวกันอย่างน้อยหนึ่งแถว — ไม่งั้นแถว "อาจเป็นจำนวน" ทั้งหมดไม่นับ
+        if (!list.Any(x => x.Proven)) return Array.Empty<(decimal, string)>();
+        return list.Select(x => (x.Amount, x.Code)).ToList();
     }
 
     /// <summary>ตัดสินอัตรา VAT รายบรรทัด (และส่วนลดต่อรหัส) จากรหัส ภ.พ. + ตารางรหัส ภ.พ. ของกระดาษ (pure)</summary>
@@ -195,30 +222,34 @@ public static class OcrVatCodeLines
         var codes = table.Groups.Select(g => g.PaperCode).ToHashSet(StringComparer.Ordinal);
         var kindOfCode = table.Groups.GroupBy(g => g.PaperCode).ToDictionary(g => g.Key, g => g.First().Kind, StringComparer.Ordinal);
         var kinds = new OcrVatGroupKind?[n];
-        var marks = ReadRowCodes(rawText, codes);
-        var j = 0;
+        // ฝ่ายค้าน afbb0956 P1-1: รหัสที่พิมพ์บนแถวจับคู่กับ<b>ทุกบรรทัด</b> (รวมบรรทัดที่ engine ตั้งค่ามาแล้ว) — รหัสบนกระดาษชนะ "อัตรา" ของ engine ที่เป็นรหัส
+        // (Makro จริงที่ engine ให้ [2,1,1,2,2,2,2] เดิม engine ชนะ) · อัตราไทยที่ตั้งไว้ขัดกับรหัสที่พิมพ์ = กระทบไม่ได้ (ไม่เลือกข้างเงียบ)
+        var printedCodes = MatchRowCodes(lines, ReadRowCodes(rawText, codes));
         var fromRow = 0;
+        var engineOverruled = 0;
         for (var i = 0; i < n; i++)
         {
+            OcrVatGroupKind? printedKind = printedCodes[i] is string pc ? kindOfCode[pc] : null;
             if (lines[i].PresetRate is decimal pr)
             {
                 var asCode = pr == decimal.Truncate(pr) ? pr.ToString("0", CultureInfo.InvariantCulture) : null;
                 if (KindOfRate(pr) is null && asCode != null && kindOfCode.TryGetValue(asCode, out var ck))
                 {
-                    kinds[i] = ck; replace[i] = true;
+                    kinds[i] = printedKind ?? ck; replace[i] = true;
+                    if (printedKind is OcrVatGroupKind pk0 && pk0 != ck) engineOverruled++;
+                    if (printedKind is not null) fromRow++;
                     continue;
                 }
-                if (KindOfRate(pr) is OcrVatGroupKind pk) { kinds[i] = pk; continue; }
+                if (KindOfRate(pr) is OcrVatGroupKind pk)
+                {
+                    if (printedKind is OcrVatGroupKind pkk && pkk != pk)
+                        return No($"บรรทัดที่ {i + 1} ตั้งอัตรา {RateText(pr)} แต่รหัส {printedCodes[i]} ที่พิมพ์บนแถวคือ{KindText(pkk)}");
+                    kinds[i] = pk;
+                    continue;
+                }
                 return No($"บรรทัดที่ {i + 1} มีอัตรา {pr:0.##}% ที่ไม่ใช่อัตราไทยและไม่ใช่รหัสบนตาราง");
             }
-            var a = Math.Round(lines[i].PrintedAmount, 2, R);
-            for (var k = j; k < marks.Count; k++)
-            {
-                if (marks[k].Amount != a) continue;
-                kinds[i] = kindOfCode[marks[k].Code];
-                j = k + 1; fromRow++;
-                break;
-            }
+            if (printedKind is not null) { kinds[i] = printedKind; fromRow++; }
         }
 
         // ── 2) ราคารวม/ก่อน VAT: Σ บรรทัด − ส่วนลด = แถว "รวม" หรือ ฐาน ของตาราง ──
@@ -256,7 +287,9 @@ public static class OcrVatCodeLines
                 return No($"{free.Count} บรรทัดไม่มีรหัส ภ.พ. (เกิน {MaxFreeLines}) — ไม่ค้นทางแบ่ง");
             var other = tableKinds.Single(k => k != OcrVatGroupKind.Standard7);
             var need = Target(other) - Fixed(other);
-            var solutions = SubsetsSumming(free.Select(i => lines[i].PrintedAmount).ToList(), need, 2);
+            // ฝ่ายค้าน afbb0956 P2-3: ค้นด้วยค่าเผื่อเดียวกับด่านต่อกลุ่มข้างล่าง (≥ 2 สตางค์ · 1 สตางค์ต่อบรรทัด) และต้องเป็นทางเดียว<b>ภายใต้ค่าเผื่อนั้น</b>
+            // — เดิมค้นตรงถึงสตางค์แต่ตรวจแบบมีค่าเผื่อ ⇒ OCR อ่าน 500.01 (จริง 500.00) แล้วชุดอื่นที่รวมได้ 500.00 พอดีถูกเลือกเป็นยกเว้น
+            var solutions = SubsetsSumming(free.Select(i => lines[i].PrintedAmount).ToList(), need, 2, Math.Max(2, free.Count));
             if (solutions.Count != 1)
                 return No(solutions.Count == 0
                     ? $"ไม่มีชุดบรรทัดที่รวมได้ยอดกลุ่ม{KindText(other)} {need:N2} พอดี"
@@ -267,7 +300,8 @@ public static class OcrVatCodeLines
             source = $"บรรทัดที่ไม่มีรหัส {free.Count} บรรทัดแบ่งด้วยผลรวมของตาราง (ทางเดียวที่ลงตัว)";
         }
         else
-            source = fromRow > 0 ? $"รหัสที่พิมพ์บนแถวสินค้า {fromRow} บรรทัด" : "รหัส/อัตราที่ชั้นบนตั้งไว้";
+            source = (fromRow > 0 ? $"รหัสที่พิมพ์บนแถวสินค้า {fromRow} บรรทัด" : "รหัส/อัตราที่ชั้นบนตั้งไว้")
+                + (engineOverruled > 0 ? $" · รหัสบนแถวชนะค่าของ engine {engineOverruled} บรรทัด" : "");
 
         // ── 4) ต่อกลุ่ม: Σ บรรทัด − ส่วนลดของกลุ่ม = ตาราง · Σ ส่วนลด = ส่วนลดท้ายบิล ──
         decimal[]? after = null, pcts = null;
@@ -335,30 +369,65 @@ public static class OcrVatCodeLines
     /// <summary>
     /// **ด่านผลสุดท้าย**: บรรทัดที่จะเขียนจริง แบ่งตามอัตราแล้ว Σ ฐานต่อกลุ่ม = ฐานต่อกลุ่มในตารางรหัส ภ.พ. ไหม — ไม่ว่าอัตรามาจากชั้นไหน
     /// (engine · ผู้ใช้ · ตัวเดาจากชื่อ) · null = ตรง / กระดาษไม่มีตารางผสม · ข้อความ (ไม่มีแท็ก) = ผู้เรียกเขียนเป็น <c>[Σ-GAP]</c>
-    /// <para>ตารางที่มีรหัสไม่รู้ความหมาย ⇒ ฟ้องเสมอ (อัตรารายบรรทัดพิสูจน์ไม่ได้ — ไม่เดา ให้คนดู) · ไม่แก้ตัวเลขใด ๆ</para>
+    /// <para>รหัสไม่รู้ความหมายที่มี VAT (ตัวเลขขัดกันเอง) ⇒ ฟ้องเสมอ · กลุ่ม VAT 0 ที่ไม่รู้ว่ายกเว้น/0% ⇒ เทียบรวมกับกลุ่มไม่มี VAT (เรื่องเงิน — ฝ่ายค้าน
+    /// afbb0956 P2-4: เดิมฟ้องทุกสแกนของตาราง "N 0 …" ที่ไม่มีคำอธิบาย) · ผู้อ่านตอนอนุมัติ/LINE ตรวจ<b>สด</b>บนบรรทัดตอนนี้ (<see cref="LiveNotes"/>) · ไม่แก้ตัวเลขใด ๆ</para>
     /// </summary>
     public static string? TableMismatch(IReadOnlyList<OcrPlannedLine> planned, OcrVatGroupTable table)
     {
         if (!IsMixed(table) || planned.Count == 0) return null;
-        if (!table.AllKnown)
+        // รหัสที่ไม่รู้ความหมาย<b>และมี VAT</b> ที่ตัวเลขไม่บอกว่า 7% = ตัวเลขของกระดาษเองขัดกัน — ฟ้อง (ไม่เดา)
+        var unknownWithVat = table.Groups.Where(g => g.Kind == OcrVatGroupKind.Unknown && g.Vat != 0m).ToList();
+        if (unknownWithVat.Count > 0)
             return $"{MismatchLead}: ตารางมีรหัสที่กระดาษไม่บอกความหมาย ("
-                + string.Join(" · ", table.Groups.Where(g => g.Kind == OcrVatGroupKind.Unknown).Select(g => g.Evidence))
+                + string.Join(" · ", unknownWithVat.Select(g => g.Evidence))
                 + ") — อัตรารายบรรทัดยังมาจากการเดา ตรวจกับคอลัมน์รหัส ภ.พ. บนกระดาษก่อนอนุมัติ";
-        var problems = new List<string>();
-        var kinds = table.Groups.Select(g => g.Kind).Distinct().ToList();
-        foreach (var k in kinds)
+        // ฝ่ายค้าน afbb0956 P2-4: กลุ่ม VAT 0 ที่ไม่รู้ว่า "ยกเว้น" หรือ "0%" (ตารางตัวอักษร N 0 … ไม่มีคำอธิบาย) เดิมฟ้องทุกสแกน — ด่านนี้คือเรื่อง<b>เงิน</b>
+        // (ฐานต่อกลุ่ม) ⇒ เทียบกลุ่มไม่มี VAT รวมกัน (ยกเว้น + 0%) · แยกยกเว้น/0% เฉพาะเมื่อตารางมีทั้งสองชนิดที่รู้ความหมาย · ความหมายของรหัสเป็นงานของ
+        // ตัวตัดสินความหมาย (ไม่ใช่ด่านนี้)
+        var precise = table.Groups.Any(g => g.Kind == OcrVatGroupKind.Exempt) && table.Groups.Any(g => g.Kind == OcrVatGroupKind.ZeroRated)
+                      && table.Groups.All(g => g.Kind != OcrVatGroupKind.Unknown);
+        string? Bucket(OcrVatGroupKind? k) => k switch
         {
-            var mine = planned.Where(l => KindOfRate(l.VatRate) == k).ToList();
+            OcrVatGroupKind.Standard7 => "7",
+            OcrVatGroupKind.ZeroRated or OcrVatGroupKind.Exempt or OcrVatGroupKind.Unknown => precise ? k.ToString() : "0",
+            _ => null,
+        };
+        var noVatKinds = table.Groups.Where(g => g.Kind != OcrVatGroupKind.Standard7).Select(g => g.Kind).Distinct().ToList();
+        string BucketText(string b) => b switch
+        {
+            "7" => KindText(OcrVatGroupKind.Standard7),
+            // กลุ่มไม่มี VAT ทุกกลุ่มเป็นชนิดเดียวที่รู้ความหมาย ⇒ เรียกชื่อชนิดนั้น · ไม่งั้น (ไม่รู้ว่ายกเว้น/0%) เรียกรวม
+            "0" => noVatKinds.Count == 1 && noVatKinds[0] != OcrVatGroupKind.Unknown ? KindText(noVatKinds[0]) : "ไม่มี VAT (ยกเว้น/0%)",
+            _ => KindText(Enum.Parse<OcrVatGroupKind>(b)),
+        };
+        var problems = new List<string>();
+        var buckets = table.Groups.Select(g => Bucket(g.Kind)!).Distinct().ToList();
+        foreach (var b in buckets)
+        {
+            var mine = planned.Where(l => Bucket(KindOfRate(l.VatRate)) == b).ToList();
             var doc = mine.Sum(l => l.NetAmount);
-            var paper = table.Groups.Where(g => g.Kind == k).Sum(g => g.Net);
+            var paper = table.Groups.Where(g => Bucket(g.Kind) == b).Sum(g => g.Net);
             if (Math.Abs(doc - paper) > Math.Max(0.02m, 0.01m * mine.Count))
-                problems.Add($"{KindText(k)} เอกสาร {doc:N2} · กระดาษ {paper:N2}");
+                problems.Add($"{BucketText(b)} เอกสาร {doc:N2} · กระดาษ {paper:N2}");
         }
-        var stray = planned.Where(l => l.NetAmount != 0m && (KindOfRate(l.VatRate) is not OcrVatGroupKind sk || !kinds.Contains(sk))).ToList();
+        var stray = planned.Where(l => l.NetAmount != 0m && (Bucket(KindOfRate(l.VatRate)) is not string sb || !buckets.Contains(sb))).ToList();
         if (stray.Count > 0)
             problems.Add($"บรรทัดอัตราที่ตารางไม่มี {stray.Count} บรรทัด ({string.Join("/", stray.Select(l => RateText(l.VatRate)).Distinct())}) รวม {stray.Sum(l => l.NetAmount):N2}");
         return problems.Count == 0 ? null
             : $"{MismatchLead}: {string.Join(" · ", problems)} — แก้อัตรา VAT รายบรรทัดตามคอลัมน์รหัส ภ.พ. ({table.Evidence})";
+    }
+
+    /// <summary>หมายเหตุสแกนที่ข้อ <c>[Σ-GAP]</c> ของด่านนี้ (ตัวเลขของบรรทัด<b>ตอนสร้าง</b>) ถูกแทนด้วยผลตรวจ<b>สด</b>บนบรรทัดเอกสารตอนนี้ —
+    /// ฝ่ายค้าน afbb0956 P2-4 (แบบเดียวกับข้อเกินกระดาษของ 7c782d24): ผู้ใช้แก้อัตราตามคอลัมน์รหัสแล้ว หมายเหตุเก่าต้องไม่ค้างหยุดการอนุมัติเอง/LINE
+    /// และไม่ขอ "รับทราบ" ทุกครั้ง · <paramref name="liveMismatch"/> = ผลของ <see cref="TableMismatch"/> บนบรรทัดตอนนี้ (null = ตรงแล้ว) ·
+    /// <paramref name="checkedLive"/> = false (ตรวจสดไม่ได้) ⇒ คืนหมายเหตุเดิม (ปลอดภัย: หยุดต่อ)</summary>
+    public static string? LiveNotes(string? processingNotes, string? liveMismatch, bool checkedLive)
+    {
+        if (!checkedLive || string.IsNullOrEmpty(processingNotes)) return processingNotes;
+        var stale = OcrLineBuildNotes.GapTag + " " + MismatchLead;
+        var kept = processingNotes.Split('\n').Where(l => !l.TrimStart().StartsWith(stale, StringComparison.Ordinal)).ToList();
+        if (liveMismatch is not null) kept.Add(OcrLineBuildNotes.GapTag + " " + liveMismatch);
+        return string.Join("\n", kept);
     }
 
     /// <summary>คำที่บอกว่าแถวคือ "ส่วนลด" ไม่ใช่สินค้า (Makro พิมพ์แถวส่วนลดในคอลัมน์ราคา ไม่มีรหัส ภ.พ. ลงท้าย "(*1.0)")</summary>
@@ -518,23 +587,30 @@ public static class OcrVatCodeLines
         return result;
     }
 
-    /// <summary>แบ่ง <paramref name="total"/> ตามสัดส่วน <paramref name="weights"/> (ปัด 2 ตำแหน่ง · เศษลงตัวสุดท้าย)</summary>
-    private static decimal[] SplitProportional(decimal total, IReadOnlyList<decimal> weights)
+    /// <summary>แบ่ง <paramref name="total"/> (≥ 0) ตามสัดส่วน <paramref name="weights"/> (≥ 0) ด้วยวิธี<b>เศษเหลือมากสุด</b> (largest remainder) ทีละสตางค์ —
+    /// ฝ่ายค้าน afbb0956 P2-2: เดิม "ปัดทุกตัว เศษลงตัวสุดท้าย" ⇒ หกบรรทัด 10.00 ส่วนลด 0.03 ได้ตัวสุดท้าย −0.02 · ตอนนี้ทุกส่วน ≥ 0 และ ≤ ส่วนของตัวเองปัดขึ้น ·
+    /// Σ = total ทุกสตางค์ · เท่ากันใช้ลำดับก่อน</summary>
+    internal static decimal[] SplitProportional(decimal total, IReadOnlyList<decimal> weights)
     {
         var result = new decimal[weights.Count];
-        var baseSum = weights.Sum();
-        if (total == 0m || baseSum <= 0m || weights.Count == 0) return result;
-        decimal given = 0m;
-        for (var x = 0; x < weights.Count; x++)
+        var baseSum = weights.Where(w => w > 0m).Sum();
+        if (total <= 0m || baseSum <= 0m || weights.Count == 0) return result;
+        var cents = (long)Math.Round(total * 100m, 0, R);
+        var exact = weights.Select(w => w > 0m ? cents * w / baseSum : 0m).ToArray();
+        var floor = exact.Select(e => (long)Math.Floor(e)).ToArray();
+        var left = cents - floor.Sum();
+        foreach (var x in Enumerable.Range(0, weights.Count).OrderByDescending(x => exact[x] - floor[x]).ThenBy(x => x))
         {
-            result[x] = x == weights.Count - 1 ? total - given : Math.Round(total * weights[x] / baseSum, 2, R);
-            given += result[x];
+            if (left <= 0) break;
+            if (weights[x] <= 0m) continue;
+            floor[x]++; left--;
         }
+        for (var x = 0; x < weights.Count; x++) result[x] = floor[x] / 100m;
         return result;
     }
 
-    /// <summary>ชุดดัชนีที่ผลรวมยอด = <paramref name="target"/> ถึงสตางค์ — หยุดเมื่อพบครบ <paramref name="limit"/> ชุด (พอรู้ว่า "ทางเดียว" ไหม)</summary>
-    private static List<HashSet<int>> SubsetsSumming(IReadOnlyList<decimal> amounts, decimal target, int limit)
+    /// <summary>ชุดดัชนีที่ผลรวมยอดห่าง <paramref name="target"/> ไม่เกิน <paramref name="tolCents"/> สตางค์ — หยุดเมื่อพบครบ <paramref name="limit"/> ชุด (พอรู้ว่า "ทางเดียว" ไหม)</summary>
+    private static List<HashSet<int>> SubsetsSumming(IReadOnlyList<decimal> amounts, decimal target, int limit, long tolCents = 0)
     {
         var cents = amounts.Select(a => (long)Math.Round(a * 100m, 0, R)).ToArray();
         var goal = (long)Math.Round(target * 100m, 0, R);
@@ -549,10 +625,10 @@ public static class OcrVatCodeLines
             if (found.Count >= limit) return;
             if (i == cents.Length)
             {
-                if (acc == goal) found.Add(chosen.ToHashSet());
+                if (Math.Abs(acc - goal) <= tolCents) found.Add(chosen.ToHashSet());
                 return;
             }
-            if (acc > goal || acc + suffix[i] < goal) return;
+            if (acc > goal + tolCents || acc + suffix[i] < goal - tolCents) return;
             chosen.Push(i);
             Walk(i + 1, acc + cents[i]);
             chosen.Pop();

@@ -828,14 +828,22 @@ public class LineBotService : ILineBotService
                 .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId)
                 .Select(d => d.RoundingAdjustment)
                 .FirstOrDefaultAsync();
-            var linesTotalNow = await _db.DocumentLines.AsNoTracking()
+            var gateLines = await _db.DocumentLines.AsNoTracking()
                 .Where(l => l.DocumentId == doc.Id && !l.IsDeleted)
-                .SumAsync(l => l.Amount + l.VatAmount) + docRounding;
-            var overstatedNow = Accounting.Helpers.OcrTotalAnchor.DocumentOverstatement(
-                Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(scanGate.RawTextContent),
-                scanGate.ExtractedTotalAmount, linesTotalNow) is not null;
+                .Select(l => new { l.Amount, l.VatAmount, l.VatRate })
+                .ToListAsync();
+            var linesTotalNow = gateLines.Sum(l => l.Amount + l.VatAmount) + docRounding;
+            var gateNormalized = Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(scanGate.RawTextContent);
+            // ฝ่ายค้าน afbb0956 P2-5: ผลสามค่า — "ตัดสินไม่ได้" (null) ไม่ใช่ "ไม่เกิน" ⇒ หมายเหตุเกินกระดาษเดิมยังหยุด (เดิม `is not null` ⇒ ปลดเงียบ)
+            var overstatedNow = Accounting.Helpers.OcrTotalAnchor.OverstatedNow(
+                gateNormalized, scanGate.ExtractedTotalAmount, linesTotalNow);
+            // ฝ่ายค้าน afbb0956 P2-4: [Σ-GAP] ตารางรหัส ภ.พ. ของตอนสร้างตรวจสดบนบรรทัดตอนนี้ (ตัวตัดสินเดียวกับตัวสร้างบรรทัด · ผู้ใช้แก้อัตราแล้วไม่ค้างหยุด)
+            var vatCodeMismatchNow = Accounting.Helpers.OcrVatCodeLines.TableMismatch(
+                gateLines.Select(l => new Accounting.Helpers.OcrPlannedLine(l.Amount, l.VatRate, l.VatAmount)).ToList(),
+                Accounting.Helpers.OcrLineVatMarks.ReadGroups(gateNormalized));
             var readiness = Accounting.Helpers.OcrPostingReadiness.Evaluate(
-                scanGate.ProcessingNotes, scanGate.ExtractedDate != null, overstatedNow);
+                Accounting.Helpers.OcrVatCodeLines.LiveNotes(scanGate.ProcessingNotes, vatCodeMismatchNow, checkedLive: gateLines.Count > 0),
+                scanGate.ExtractedDate != null, overstatedNow);
             if (!readiness.CanAutoApprove)
                 return "⛔ ยังอนุมัติจากแชทไม่ได้ — " + readiness.Reason;
         }

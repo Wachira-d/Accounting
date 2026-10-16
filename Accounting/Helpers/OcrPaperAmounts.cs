@@ -151,7 +151,8 @@ public static class OcrPaperAmounts
     /// <summary>คำปฏิเสธ<b>ชิดหน้า</b>ป้ายรวม VAT (ข้อความก่อนป้ายลงท้ายด้วยคำนี้) ⇒ ป้ายแปลว่า "ไม่รวม VAT" (ฝ่ายค้าน 6e56d33d P1-1) —
     /// รับรูปที่ Tesseract ทำวรรณยุกต์หล่น ("รวมเงินไมรวมภาษี") และอังกฤษ ("Amount not incl. VAT" · "excl./incl.")</summary>
     private static readonly Regex InclusiveLabelNegated = new(
-        @"(?:ไม่?|ยังไม่?|not|non|w/o|without|excl\w*\.?[ \t]*/)[ \t\-]*\(?[ \t]*$", Opt);
+        // ฝ่ายค้าน afbb0956 (minor): คำอังกฤษต้องขึ้นต้นคำ — "CANON incl. VAT" ไม่ใช่ "non incl." · คำไทยไม่มีขอบคำ (ไม่มีวรรค) จึงไม่ใส่ \b
+        @"(?:ไม่?|ยังไม่?|\b(?:not|non|w/o|without|excl\w*\.?[ \t]*/))[ \t\-]*\(?[ \t]*$", Opt);
 
     /// <summary>ป้าย "ก่อน VAT / ไม่รวม VAT" ที่ตามมาบนบรรทัดเดียวกัน — เป็นช่วงของตัวเอง ⇒ ช่วงของป้ายรวม VAT จบก่อนป้ายนี้
     /// ("Total (VAT incl.) 1,570.00   Total (VAT excl.) 1,500.00" — สองคอลัมน์ที่ engine รวมเป็นบรรทัดเดียว)</summary>
