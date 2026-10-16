@@ -511,7 +511,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      **ด่านอนุมัติโดยคนของเอกสารจากสแกน**: `DocumentService.ApproveDocumentAsync` (ทุกทางเข้า — เว็บ · มือถือ · API · workflow · LINE · สร้าง+อนุมัติ) → `OcrLumpSumRepairService.ApprovalBlockAsync`
      → ตัวตัดสินเดียว `OcrPostingReadiness.EvaluateHumanApproval` (`HumanApprovalBlockingMarkers` = `OCR-LUMPSUM-REPAIR` · `OCR-ROUNDING-OVER-CAP` · ปลดด้วยร่องรอยเดียวกับ `LiveNotes`
      ผ่าน `OcrLineQuantityGuard.SystemValueHeld` แต่ไม่ถามว่าทุกบรรทัดลงตัว — ด่านคนต้องมีทางไปต่อเสมอ) · `BusinessRuleException` `OCR-LINE-UNFIXED` + ทางไปต่อภาษาไทย ·
-     แท็ก `[LINE-QTY]` อื่นยังหยุดเฉพาะการอนุมัติเอง (ใบ OCR ปกติอนุมัติได้ตามเดิม) · `OcrExtractionVersion` = 11 (10 = ทีม OCR 10) · Last verified `commit a4e2f9a0`
+     แท็ก `[LINE-QTY]` อื่นยังหยุดเฉพาะการอนุมัติเอง (ใบ OCR ปกติอนุมัติได้ตามเดิม) · `OcrExtractionVersion` = 11 (10 = ทีม OCR 10) · Last verified `commit 601225a5`
   3. **`UnitInferrer`** — หน่วยว่าง → อนุมานจากคำอธิบาย (ค่าไฟ=`หน่วย` ·
      น้ำประปา=`ลบ.ม.` (ตัวตัดสินเดียว `IsWaterSupply` — **whitelist** ทีม OCR 12: น้ำประปา · ค่าประปา · การประปา · ค่าใช้น้ำ · ปริมาณ/จำนวนน้ำที่ใช้ · มาตรวัดน้ำ/มิเตอร์น้ำ ·
      "ค่าน้ำ" ที่จบคำ (ตามด้วยช่องว่าง/ตัวเลข/เครื่องหมาย/สิ้นบรรทัด/ประจำ-เดือน-งวด/ค่า…) — ค่าน้ำขวด/ถัง/กระป๋อง/โค้ก/เกลือ/หนักเกิน/ดื่ม/แข็ง/มัน ไม่ใช่) · น้ำมัน=`ลิตร` · รายเดือน/เช่า=`เดือน` · เหมา/บริการ=`งาน`)
