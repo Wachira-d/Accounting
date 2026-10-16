@@ -5160,4 +5160,4 @@ _2026-10-16 ทีม OCR 9 — ฝ่ายค้านของ 13a4d788 (บ�
 สาธารณูปโภค `Helpers/OcrUtilityVendor`) ⇒ 1 × ยอด · ไม่งั้น `RoundedUnitPrice` (คงจำนวน · ราคาปัด 2 ตำแหน่ง · เศษเป็นส่วนลดบรรทัด · `[LINE-QTY]` บอกสตางค์) · ด่านเกิน 2 ตำแหน่ง
 `R2(qty × R2(up)) ≠ amt` · ตัวตัดคีย์เดียว `DescriptionForMatching` (พรีวิวสต็อก · alias ผูก PO · backfill alias · `OcrLearnerDescriptionKey.Descriptions` — คีย์ใบไม่มีบรรทัดของทีม EC2 คงเดิม) ·
 `DocumentLine.DescriptionMaxLength` + `FitDescription` · Corpus +3 ใบสังเคราะห์ (`goods-*`) · ใบเดิมเปลี่ยน 0 แถว · `OcrExtractionVersion` คง 7 (ชุด deploy เดียวกับรุ่น 6/7 · ยังไม่ถึง master) ·
-เทสต์ `OcrGoodsQuantityKeptTests` · ล็อกจุดเรียก +14 กติกา + 9 เคสฝ่ายค้าน (GQ1–GQ9 · GQ9 รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit (เติมในคอมมิตตามหลัง)_
+เทสต์ `OcrGoodsQuantityKeptTests` · ล็อกจุดเรียก +14 กติกา + 9 เคสฝ่ายค้าน (GQ1–GQ9 · GQ9 รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit cdc0150e_

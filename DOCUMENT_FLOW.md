@@ -479,7 +479,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      สินค้า ⇒ `RoundedUnitPrice` · ผู้ขายของสแกนตามไปเส้นสร้าง/พรีวิว/ดึงรายการซ้ำ (`tmpSan.VendorTaxId/VendorName`) · คีย์จับคู่สินค้า (พรีวิวนำเข้าสต็อก ·
      alias ตอนผูก PO · backfill alias) + คีย์ตัวเรียนผัง (`OcrLearnerDescriptionKey.Descriptions`) ตัดท้าย "(4,272 หน่วย)" ของบรรทัด 1 × ยอด ผ่านตัวตัดเดียว
      `OcrLineQuantityGuard.DescriptionForMatching` (เฉพาะจำนวน 1 + หน่วย "รายการ" — ชื่อสินค้าจริงไม่ถูกตัด) · คำอธิบายต่อท้ายพอดีคอลัมน์ `DocumentLine.DescriptionMaxLength`
-     (`FitDescription` — คงท้ายครบ) · `OcrExtractionVersion` คง 7 (ชุด deploy เดียวกับรุ่น 6/7 — ยังไม่ถึง master) · Last verified `commit <ทีม OCR 9>`
+     (`FitDescription` — คงท้ายครบ) · `OcrExtractionVersion` คง 7 (ชุด deploy เดียวกับรุ่น 6/7 — ยังไม่ถึง master) · Last verified `commit cdc0150e`
   3. **`UnitInferrer`** — หน่วยว่าง → อนุมานจากคำอธิบาย (ค่าไฟ=`หน่วย` ·
      น้ำ=`ลบ.ม.` · น้ำมัน=`ลิตร` · รายเดือน/เช่า=`เดือน` · เหมา/บริการ=`งาน`)
      ก่อนตก `ชิ้น`; `ชิ้น` บนบรรทัดที่กฎรู้จัก = default ค้างมา → แทนที่
