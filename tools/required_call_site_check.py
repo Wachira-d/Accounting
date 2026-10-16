@@ -1695,7 +1695,7 @@ RULES += [
 LINE_PIPELINE_HELPERS = [
     "OcrLineVatMarks.Read(", "OcrHeaderVatEvidence.Classify(", "OcrLineVatMarks.Assign(",
     # 2026-10-16: ฐานกระทบยอด (NetSubTotal) + ตัวจำแนกเคส (OcrLineReconciler.Classify) อยู่ใน OcrVatCodeLines.Decide ตัวเดียว (รายการ/แถวส่วนลด/ตารางชนะ)
-    "OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrTotalDecomposer.LineGross(", "OcrVatCodeLines.Decide(",
+    "OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrTotalDecomposer.LineGross(", "OcrVatCodeLines.Decide(", "OcrVatCodeMeaning.Resolve(",
     "OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(",
     "OcrLineVatPlanner.PlanWholeInvoice(", "OcrLineVatPlanner.PaperExemptAmount(", "OcrLineVatMarks.ReadGroups(",
     "ThaiVatTypeRule.ToVatRate(", "ThaiVatTypeRule.Suggest(", "OcrEtaxLineNormalizer.InclusiveLineVats(", "ThaiVatTypeRule.SpreadHeaderVat(",
@@ -8200,6 +8200,37 @@ RULES += [
     dict(file=OCR, method="PreviewDocumentLinesAsync",
          must_re=[r"var\s+lineSources\s*=\s*await\s+BuildScanLinesAsync", r"lineSources\s*\["],
          why="2026-10-16: ดัชนีต้นทางของบรรทัดพรีวิวมาจากตัวสร้างบรรทัด (แถวส่วนลดที่แปลง/บรรทัดสรุปตามตาราง ไม่ใช่ 1 แถว = 1 บรรทัด)"),
+]
+
+# ── 2026-10-16 DECISIONS ข้อ 153 ข้อ 2 — ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก (กฎเหล็ก #1 ครบ 4 ขั้น) ──────────────────────────────────────────
+#    ถอด Resolve ในตัวสร้างบรรทัด = รหัสไม่รู้ ⇒ ตารางใช้ไม่ได้ (กลับไปบรรทัดสรุป 7% + [Σ-GAP]) · ถอด `with { Groups = vatCodeTable }` = สาขาไม่มีรายการไม่ได้ผล ·
+#    ถอดการถามตอนสแกน = ไม่มีวันถาม AI · ถอด Guard ใน augmenter = คำตอบ 7% บนแถว VAT 0 ผ่าน · ถอดการเก็บ JSON/UsedAi = ป้ายโกหก + ปิดลูปไม่ได้ ·
+#    ถอดตัวปิดลูปตอนอนุมัติ = นักเรียนไม่เคยเรียน (จ่าย token ทุกใบตลอดกาล)
+RULES += [
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must=["OcrVatCodeMeaning.Resolve(", "OcrVatCodeMeaning.FromJson(result.VatCodeMeaningsJson)"],
+         must_re=[r"with\s*\{\s*Groups\s*=\s*vatCodeTable\s*\}", r"var\s+vatCodeTable\s*=\s*vatCodeResolution\s*\.\s*Table"],
+         before=[("OcrVatCodeMeaning.Resolve(", "OcrVatCodeLines.Decide("), ("OcrVatCodeMeaning.Resolve(", "OcrVatCodeLines.TableMismatch(")],
+         why="DECISIONS 153 ข้อ 2: ตารางที่รหัสถูกตัดสินความหมายแล้ว (ตัวเลข → AI/นักเรียนที่ persist → ค่าตั้งต้น) เป็นตัวเดียวของทุกสาขาในตัวสร้างบรรทัด"),
+    dict(file=OCR, method="ScanAsync",
+         must=["ResolveVatCodeMeaningsAsync("],
+         why="DECISIONS 153 ข้อ 2: ถามความหมายรหัสตอนสแกน (ครั้งเดียว · ผลถูก persist ให้ทุกทางเข้าที่สร้างบรรทัด)"),
+    dict(file=OCR, method="ResolveVatCodeMeaningsAsync",
+         must=["OcrVatCodeMeaning.Ambiguous(", "InferVatCodeMeaningAsync(", "OcrVatCodeMeaning.Choose("],
+         must_re=[r"scanResult\s*\.\s*VatCodeMeaningsJson\s*=\s*Accounting\.Helpers\.OcrVatCodeMeaning\.ToJson\(", r"scanResult\s*\.\s*VatCodeUsedAi\s*="],
+         before=[("OcrVatCodeMeaning.Ambiguous(", "InferVatCodeMeaningAsync(")],
+         why="DECISIONS 153 ข้อ 2: ถามเฉพาะแถว VAT 0 ที่ไม่รู้ความหมาย (ตัวเลขก่อน AI) · ผ่านด่าน+เกณฑ์ · เก็บ FeedbackId/UsedAi"),
+    dict(file="Services/Ai/OcrAiAugmenter.cs", method="InferVatCodeMeaningAsync",
+         must=["_orchestrator.AskAsync(", "OcrVatCodeMeaning.Guard(", "OcrVatCodeMeaningPrompt.Build("],
+         before=[("_orchestrator.AskAsync(", "OcrVatCodeMeaning.Guard(")],
+         why="DECISIONS 153 ข้อ 2 / กฎเหล็ก #1: เรียกผ่าน orchestrator เท่านั้น + ด่านเลขคณิตของแถวก่อนคืนคำตอบ"),
+    dict(file=DOC, method="ApproveDocumentAsync#2",
+         must=["RecordVatCodeMeaningFeedbackAsync("],
+         why="DECISIONS 153 ข้อ 2 / กฎเหล็ก #1 ขั้น CAPTURE: คำตอบจริงตอนอนุมัติ (ประเภท VAT ของบรรทัดที่ไม่มี VAT)"),
+    dict(file=DOC, method="RecordVatCodeMeaningFeedbackAsync",
+         must=["OcrVatCodeMeaning.ChosenNoVatKind(", "_feedbackRecorder.RecordUserChoiceAsync("],
+         must_re=[r"e\.Source\s*==\s*Accounting\.Helpers\.OcrVatCodeMeaningSource\.Student\s*&&\s*e\.Kind\s*==\s*kind\)\s*continue"],
+         why="DECISIONS 153 ข้อ 2: ปิดลูปด้วยชนิดที่ผู้ใช้อนุมัติ · ไม่บันทึกนักเรียนยืนยันตัวเอง (DECISION_DOCTRINE §3)"),
 ]
 
 _RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}

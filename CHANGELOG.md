@@ -5078,3 +5078,10 @@ _ฝ่ายค้านของ 7c782d24..afbb0956 (รหัส ภ.พ. ร
 (P2-4) `[Σ-GAP]` ตารางรหัสตรวจสดตอนอนุมัติ + ปุ่ม LINE (`OcrVatCodeLines.LiveNotes`) · ตาราง "N 0 …" ไม่มีคำอธิบายไม่ฟ้องทุกสแกนแล้ว (เทียบเงินกลุ่มไม่มี VAT รวม) ·
 (P2-5) `OcrTotalAnchor.OverstatedNow` สามค่า — LINE/ด่านอนุมัติไม่ถือ "ตัดสินไม่ได้" เป็น "ไม่เกิน" · (minor) "CANON incl. VAT" ไม่ใช่คำปฏิเสธ (`\b`) · snapshot Corpus 0 แถวเปลี่ยน ·
 คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง_
+
+_ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก (2026-10-16 · คำตอบเจ้าของ DECISIONS ข้อ 153 ข้อ 2 "ให้โยนไปให้ AI เลย และเอามาสอนระบบอีกที" · กฎเหล็ก #1 ครบ 4 ขั้น):
+`AiFeatureKey.OcrVatCodeMeaning` (60) + นักเรียน `GenericFeedbackDistillationModel` (ทะเบียนเดียว `DistillationModelRegistry`) · prompt `OcrVatCodeMeaningPrompt` (กุญแจ = ผู้ขาย + รหัส ·
+`AiMemoryKey` ตัดคีย์ `paper_evidence` ออกจากกุญแจ — ลิสต์ปิด) · `OcrAiAugmenter.InferVatCodeMeaningAsync` (orchestrator เท่านั้น + ด่าน `OcrVatCodeMeaning.Guard`) · ถามตอนสแกนเฉพาะแถว VAT 0
+(VAT 7% ตัวเลขตอบ) · ค่าตั้งต้น/ปิด AI = ยกเว้น (0.50 · ไม่บล็อก) · `OcrScanResult.VatCodeMeaningsJson` + `VatCodeUsedAi` (migration ADD COLUMN) · ตัวสร้างบรรทัด `OcrVatCodeMeaning.Resolve` ทุกสาขา ·
+หน้ารีวิวป้าย 🤖/⚙️ จากเซิร์ฟเวอร์ · ปิดลูปตอนอนุมัติ `DocumentService.RecordVatCodeMeaningFeedbackAsync` · คำแนะนำ "VAT ÷ 0.07" อ้างตารางรหัส ภ.พ. · Corpus +1 ใบ
+`makro-page2-tesseract-garbled-legend` (Tesseract จริง · รหัส 1 เพี้ยน ⇒ ค่าตั้งต้น ⇒ ยกเว้น 1,220.00 + 9,121.50/638.50 = 10,980.00) · ใบเดิม 0 แถวเปลี่ยน · คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง_

@@ -435,6 +435,8 @@ public class AiFeedbackTrainingJob : BackgroundService
         nameof(AiFeatureKey.ImportDataReview),
         nameof(AiFeatureKey.ImportAccountMap),
         nameof(AiFeatureKey.ImportEntityMatch),
+        // 2026-10-16 (DECISIONS ข้อ 153 ข้อ 2) — นักเรียน generic อ่าน AiSuggestionFeedback ตรง ⇒ ที่นี่แค่ mark consumed ให้ LocalModelHealth นับ
+        nameof(AiFeatureKey.OcrVatCodeMeaning),
     };
 
     /// <summary>
@@ -520,6 +522,7 @@ public class AiFeedbackTrainingJob : BackgroundService
             nameof(AiFeatureKey.ImportDataReview) => true,
             nameof(AiFeatureKey.ImportAccountMap) => true,
             nameof(AiFeatureKey.ImportEntityMatch) => true,
+            nameof(AiFeatureKey.OcrVatCodeMeaning) => true,
             // Other features get their writer added later — return false
             // so the row stays available for a future code release. The
             // unmatched FeatureKey is rolled up + logged once per run in

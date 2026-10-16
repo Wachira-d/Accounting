@@ -468,6 +468,7 @@ public class AiUsageReportService
         "ImportDataReview" => "ตรวจข้อมูลก่อนนำเข้า",
         "ImportAccountMap" => "จับคู่ผังบัญชีตอนนำเข้า",
         "ImportEntityMatch" => "จับคู่ข้อมูลเดิมตอนนำเข้า",
+        "OcrVatCodeMeaning" => "ความหมายรหัส ภ.พ. บนใบเสร็จ (ยกเว้น/0%)",
         "BulkBankStatementMatch" => "จับคู่รายการเดินบัญชี (ยกชุด)",
         "BankMatch" => "จับคู่รายการเดินบัญชี",
         "ApprovalWarningFix" => "อธิบายคำเตือนตอนอนุมัติ",

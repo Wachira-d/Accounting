@@ -5248,6 +5248,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OurRoleAiFeedbackId" uuid NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OurRoleAiSuggested" varchar(20) NULL;""",
             """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "OurRoleUsedAi" boolean NOT NULL DEFAULT false;""",
+            // ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก — ถาม AI/นักเรียนตอนสแกน (2026-10-16 · DECISIONS ข้อ 153 ข้อ 2)
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VatCodeMeaningsJson" text NULL;""",
+            """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VatCodeUsedAi" boolean NOT NULL DEFAULT false;""",
             // ── ล้างของเสียที่ตัวเรียนรู้จาก Azure สอนตัวเองไว้ (รอบ 156) ──
             // ตัวเรียนรู้เคยรัน **ก่อน** ขั้นแก้ไขทุกขั้น ⇒ (1) แพตเทิร์นเลขที่เอกสารถูกสร้างด้วย
             // regex กวาดทุกอย่าง `([A-Za-z0-9\-/]+)` ซึ่งบนสแกนรอบถัดไปคว้า token แรกที่เจอ

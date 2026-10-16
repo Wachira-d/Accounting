@@ -369,6 +369,18 @@ public class OcrScanResult : TenantEntity
     /// "🤖 AI แตกรายการให้ กรุณาตรวจ" ให้ซื่อสัตย์ตามกฎเหล็ก #1</summary>
     public bool LineSplitUsedAi { get; set; }
 
+    /// <summary>ความหมายของรหัส ภ.พ. ที่กระดาษไม่บอก (แถว VAT 0 — ยกเว้น/0%) ที่ตัดสินตอนสแกน — JSON
+    /// <c>List&lt;Helpers.OcrVatCodeMeaningEntry&gt;</c> (รหัส · ชนิด · ที่มา · ความมั่นใจ · <b>FeedbackId ต่อรหัส</b> · คำตอบดิบของ AI/นักเรียน)
+    /// (DECISIONS ข้อ 153 ข้อ 2 · กฎเหล็ก #1 ขั้น CAPTURE)
+    /// <para>เก็บ FeedbackId <b>ต่อรหัส</b> ในก้อนนี้ (ไม่ใช่คอลัมน์ <c>…AiFeedbackId</c> เดี่ยว) เพราะหนึ่งใบมีได้หลายรหัสที่ต้องถาม (ถามรหัสละครั้ง ·
+    /// คอลัมน์เดี่ยว = ความจริงสองชุด) · ผู้อ่าน: ตัวสร้างบรรทัด (<c>OcrVatCodeMeaning.Resolve</c>) · ป้ายหน้ารีวิว · ตัวปิดลูปตอนอนุมัติ ·
+    /// null = ไม่มีรหัสที่ต้องถาม / สแกนก่อนมีช่องนี้ (⇒ ค่าตั้งต้นตอนสร้างบรรทัด)</para></summary>
+    public string? VatCodeMeaningsJson { get; set; }
+
+    /// <summary>true เมื่อ provider จริงตอบความหมายรหัสอย่างน้อยหนึ่งรหัสและคำตอบถูกใช้ — ป้าย "🤖 AI แนะนำ" vs "⚙️ ระบบแนะนำ"
+    /// · ตัวชี้วัด <c>&lt;Feature&gt;UsedAi</c> ที่ต้องลดลงเมื่อนักเรียนโต (กฎเหล็ก #1 ข้อ 6)</summary>
+    public bool VatCodeUsedAi { get; set; }
+
     /// <summary>เวลาที่สแกนนี้ถูก "นำเข้าสต็อก" สำเร็จแล้ว (UTC) — กันกดซ้ำ
     ///
     /// <para>⚠️ <c>POST /ocr/{id}/import-stock</c> เดิม<b>ไม่มี guard ใด ๆ เลย</b>

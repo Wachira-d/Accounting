@@ -1187,6 +1187,11 @@ public class OcrService : IOcrService
                 if (role.ScannedDocType.HasValue)
                     extractedData.DocumentType = role.ScannedDocType.Value.ToString();
                 extractedData.OurRole = role.OurRole;
+
+                // ─── ความหมายของรหัส ภ.พ. ที่กระดาษไม่บอก (2026-10-16 · DECISIONS ข้อ 153 ข้อ 2 "ให้โยนไปให้ AI เลย และเอามาสอนระบบอีกที") ───
+                // ตัวเลขของแถวตอบก่อน (VAT 7% ⇒ ไม่ถาม) · เหลือ VAT 0 (ยกเว้น/0%) ⇒ orchestrator (นักเรียนต่อผู้ขาย + รหัสก่อน) · คำตอบผ่านด่านเลขคณิต ·
+                // ไม่มีคำตอบ ⇒ ยกเว้น (ความมั่นใจต่ำ) · ผลเก็บที่ VatCodeMeaningsJson (FeedbackId ต่อรหัส) ⇒ ตัวสร้างบรรทัด/หน้ารีวิว/ตัวปิดลูปตอนอนุมัติอ่าน
+                await ResolveVatCodeMeaningsAsync(companyId, scanResult, extractedData, normalizedText);
                 SetTargetDocumentType(extractedData, role.TargetDocType.ToString(),
                     // กระดาษบอกชนิดเอกสารเอง = ป้ายบนกระดาษ · ไม่บอก = กติกา/ค่าเริ่มต้นตามบทบาท
                     role.ScannedDocType.HasValue
@@ -7655,7 +7660,15 @@ public class OcrService : IOcrService
         var paperVatSplit = Accounting.Helpers.OcrLineVatMarks.Read(result.RawTextContent);
         var normalizedRawText = Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent);
         // ตารางรหัส ภ.พ. ของกระดาษ (ฐาน · VAT · รวม ต่อรหัส + คำอธิบายรหัส) — ตัวเดียวของชั้นรหัส ภ.พ. รายบรรทัด · ยอดยกเว้นของตัวพิสูจน์ทั้งใบ · ด่านผลสุดท้าย
-        var vatCodeTable = Accounting.Helpers.OcrLineVatMarks.ReadGroups(normalizedRawText);
+        // ★ 2026-10-16 DECISIONS ข้อ 153 ข้อ 2: รหัสที่กระดาษไม่บอกความหมาย ⇒ ตัวเลขของแถวก่อน (VAT 7% ⇒ 7%) · VAT 0 ⇒ คำตอบ AI/นักเรียนที่ตัดสินตอนสแกน
+        // (VatCodeMeaningsJson · ผ่านด่านซ้ำ) หรือค่าตั้งต้น "ยกเว้น" (ความมั่นใจต่ำ · ไม่บล็อก) — ตัวตัดสินเดียว Helpers/OcrVatCodeMeaning.Resolve ·
+        // สแกนเก่า (ไม่มี JSON) ได้ค่าตั้งต้นตอนสร้าง/พรีวิว/ดึงรายการซ้ำ
+        var vatCodeResolution = Accounting.Helpers.OcrVatCodeMeaning.Resolve(
+            Accounting.Helpers.OcrLineVatMarks.ReadGroups(normalizedRawText),
+            Accounting.Helpers.OcrVatCodeMeaning.FromJson(result.VatCodeMeaningsJson));
+        var vatCodeTable = vatCodeResolution.Table;
+        if (vatCodeResolution.Note is string vatCodeMeaningNote)
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] " + vatCodeMeaningNote;
         // ★ รอบ 195 ฝ่ายค้าน C1: VAT หัวใบตัวนี้พิมพ์บนกระดาษไหม หรือระบบคำนวณเอง (7/107 ของยอดรวม) — ตัวตัดสินตัวเดียว
         // Helpers/OcrHeaderVatEvidence · ตัวพิสูจน์ทั้งใบ (OcrLineVatPlanner) ใช้ได้เฉพาะ VAT ที่อยู่บนกระดาษในฐานะ VAT ·
         // VAT ที่ไม่มีบนกระดาษเลย ⇒ [VAT-DERIVED] (OcrPostingReadiness ห้ามอนุมัติเอง — ภาษีซื้อต้องมาจากตัวเลขบนใบกำกับ)
@@ -7902,7 +7915,7 @@ public class OcrService : IOcrService
                     items[pi].VatRate ?? standardVatRate, spreadVat[pi]));
             }
             AppendAmountIntegrityGaps(result, plannedLines, headerVat,
-                alreadyReportedLineGap: recon.UnreconciledGap != 0m, paperVatSplit: paperVatSplit);
+                alreadyReportedLineGap: recon.UnreconciledGap != 0m, paperVatSplit: paperVatSplit, vatCodeTable: vatCodeTable);
             // ด่านผลสุดท้าย (2026-10-16): ฐานต่อกลุ่มของบรรทัดที่จะเขียนจริง = ตารางรหัส ภ.พ. ไหม — ไม่ว่าอัตรามาจากชั้นไหน (engine/ผู้ใช้/ตัวเดาจากชื่อ) ·
             // รหัสที่กระดาษไม่บอกความหมาย = ฟ้อง (พิสูจน์ไม่ได้ — ไม่เดา) · ไม่แก้ตัวเลข · ตัวกระทบยอดรายงานช่องว่างแล้ว = ไม่ซ้ำ (บรรทัดขาด/เกินชี้ผิดสาเหตุ)
             if (recon.UnreconciledGap == 0m
@@ -8069,9 +8082,10 @@ public class OcrService : IOcrService
         }
         else if ((tableLinesInsteadOfItems
                      ?? Accounting.Helpers.OcrTotalDecomposer.SummaryGroupLines(
+                         // ตารางที่รหัสถูกตัดสินความหมายแล้ว (ตัวเดียวกับสาขารายการ — DECISIONS ข้อ 153 ข้อ 2)
                          Accounting.Helpers.OcrTotalDecomposer.Decompose(
                              Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent), result.ExtractedSubTotal,
-                             result.ExtractedVatAmount, result.ExtractedTotalAmount, hdrDiscRaw),
+                             result.ExtractedVatAmount, result.ExtractedTotalAmount, hdrDiscRaw) with { Groups = vatCodeTable },
                          result.ExtractedTotalAmount, result.ExtractedVatAmount, headerSubTotal)) is var paperGroups
                  && paperGroups.Count > 0 && headerWht == 0m)
         {
@@ -8134,7 +8148,7 @@ public class OcrService : IOcrService
                     result.ProcessingNotes += "\n" + Accounting.Helpers.OcrTotalDecomposer.NoItemsNote(paperGroups);
             }
             AppendAmountIntegrityGaps(result, planned, result.ExtractedVatAmount ?? 0m,
-                alreadyReportedLineGap: false, paperVatSplit: paperVatSplit);
+                alreadyReportedLineGap: false, paperVatSplit: paperVatSplit, vatCodeTable: vatCodeTable);
         }
         else
         {
@@ -8168,7 +8182,7 @@ public class OcrService : IOcrService
             sourceIndexes.Add(-1);
             AppendAmountIntegrityGaps(result,
                 new[] { new Accounting.Helpers.OcrPlannedLine(summary.Amount, summary.VatRate, summary.VatAmount) },
-                result.ExtractedVatAmount ?? 0m, alreadyReportedLineGap: false, paperVatSplit: paperVatSplit);
+                result.ExtractedVatAmount ?? 0m, alreadyReportedLineGap: false, paperVatSplit: paperVatSplit, vatCodeTable: vatCodeTable);
         }
 
         // 2026-10-16 (Makro 2/2 — ใบสำคัญจ่าย 11,846.50 ทั้งที่กระดาษยืนยัน 10,980): ทุกสาขาข้างบนเทียบกับยอดหัวสแกน ⇒ ถ้าหัวสแกนเองเกินกระดาษ
@@ -8181,6 +8195,47 @@ public class OcrService : IOcrService
         return sourceIndexes;
     }
 
+    /// <summary>
+    /// **ถามความหมายรหัส ภ.พ. ที่กระดาษไม่บอก** (DECISIONS ข้อ 153 ข้อ 2 · กฎเหล็ก #1) — เฉพาะแถว VAT 0 ที่ไม่รู้ว่ายกเว้น/0%
+    /// (<see cref="Accounting.Helpers.OcrVatCodeMeaning.Ambiguous"/>) · ผ่าน <c>IOcrAiAugmenter.InferVatCodeMeaningAsync</c> → orchestrator เท่านั้น ·
+    /// ไม่มี augmenter / AI ล้ม / ปิด provider ⇒ ค่าตั้งต้นตาม <see cref="Accounting.Helpers.OcrVatCodeMeaning.Choose"/> (ไม่ throw · ไม่ log spam)
+    /// </summary>
+    private async Task ResolveVatCodeMeaningsAsync(
+        Guid companyId, OcrScanResult scanResult, OcrExtractedData extractedData, string? normalizedText)
+    {
+        var asks = Accounting.Helpers.OcrVatCodeMeaning.Ambiguous(Accounting.Helpers.OcrLineVatMarks.ReadGroups(normalizedText));
+        if (asks.Count == 0) return;
+        var legend = Accounting.Helpers.OcrVatCodeMeaning.LegendText(normalizedText);
+        var entries = new List<Accounting.Helpers.OcrVatCodeMeaningEntry>(asks.Count);
+        foreach (var row in asks)
+        {
+            Accounting.Services.Ai.OcrAiAugmentationResult? ai = null;
+            if (_aiAugmenter != null)
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                    ai = await _aiAugmenter.InferVatCodeMeaningAsync(companyId, scanResult.Id,
+                        extractedData.VendorName, extractedData.VendorTaxId, row, legend, cts.Token);
+                }
+                catch (Exception ex)
+                {
+                    // augmenter ไม่ throw อยู่แล้ว — ตรงนี้กันเฉพาะ timeout/ยกเลิก ⇒ ค่าตั้งต้น (ไม่หยุดสแกน)
+                    _logger.LogDebug(ex, "ถามความหมายรหัส ภ.พ. ไม่สำเร็จ — ใช้ค่าตั้งต้น");
+                }
+            }
+            var entry = Accounting.Helpers.OcrVatCodeMeaning.Choose(row, ai?.Answer, ai?.Confidence,
+                hasModelAnswer: ai?.HasModelAnswer == true, usedAi: ai?.UsedAi == true, feedbackId: ai?.FeedbackId);
+            entries.Add(entry);
+            extractedData.ReasoningTrace.Add($"[VatCode] รหัส {row.PaperCode} (ฐาน {row.Net:N2} · VAT 0.00) = "
+                + $"{Accounting.Helpers.OcrVatCodeMeaning.AnswerOf(entry.Kind)} — {Accounting.Helpers.OcrVatCodeMeaning.SourceText(entry)}"
+                + (ai?.Reasoning is string why && entry.Source == Accounting.Helpers.OcrVatCodeMeaningSource.ColdStartDefault ? $" · {why}" : ""));
+        }
+        scanResult.VatCodeMeaningsJson = Accounting.Helpers.OcrVatCodeMeaning.ToJson(entries);
+        // ป้ายซื่อสัตย์: true เฉพาะเมื่อ provider จริงตอบและคำตอบถูกใช้
+        scanResult.VatCodeUsedAi = entries.Any(e => e.Source == Accounting.Helpers.OcrVatCodeMeaningSource.Ai);
+    }
+
     /// <summary>เขียนผลของ <see cref="Accounting.Helpers.OcrAmountIntegrity"/> เป็น <c>[Σ-GAP]</c>
     /// — ต่อท้าย (ห้ามเขียนทับ ProcessingNotes · ธงของด่านอื่นอยู่ในช่องเดียวกัน)
     ///
@@ -8189,11 +8244,13 @@ public class OcrService : IOcrService
     /// — เหลือเฉพาะข้อที่เป็นอิสระจากบรรทัดขาด (บรรทัดติดลบ · กระดาษมี VAT แต่ทุกบรรทัดไม่มี)</para></summary>
     private void AppendAmountIntegrityGaps(
         OcrScanResult result, IReadOnlyList<Accounting.Helpers.OcrPlannedLine> planned, decimal paperVat,
-        bool alreadyReportedLineGap, Accounting.Helpers.OcrPaperVatSplit paperVatSplit)
+        bool alreadyReportedLineGap, Accounting.Helpers.OcrPaperVatSplit paperVatSplit,
+        Accounting.Helpers.OcrVatGroupTable? vatCodeTable = null)
     {
+        // 2026-10-16: คำแนะนำ "VAT ÷ 0.07" อ้างตารางรหัส ภ.พ. ของกระดาษเมื่อมี (ตัวเลขของกระดาษ ไม่ใช่การประมาณ)
         var check = Accounting.Helpers.OcrAmountIntegrity.Check(
             planned, paperVat, result.ExtractedTotalAmount ?? 0m,
-            paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
+            paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount, vatCodeTable);
         foreach (var p in check.Problems)
         {
             if (alreadyReportedLineGap
@@ -10508,6 +10565,11 @@ public class OcrService : IOcrService
             LineSplitUsedAi: r.LineSplitUsedAi,
             TargetDocTypeUsedAi: r.TargetDocTypeUsedAi,
             OurRoleUsedAi: r.OurRoleUsedAi,
+            // DECISIONS ข้อ 153 ข้อ 2 — ป้ายซื่อสัตย์ของความหมายรหัส ภ.พ. (ข้อความจาก helper ตัวเดียว · หน้าเว็บแสดงอย่างเดียว)
+            VatCodeUsedAi: r.VatCodeUsedAi,
+            VatCodeMeaningNote: Accounting.Helpers.OcrVatCodeMeaning.ReviewNote(Accounting.Helpers.OcrVatCodeMeaning.FromJson(r.VatCodeMeaningsJson)),
+            VatCodeLowConfidence: Accounting.Helpers.OcrVatCodeMeaning.FromJson(r.VatCodeMeaningsJson)
+                .Any(e => e.Confidence < 0.85m),
             // สกุลเงินอ่านจากข้อความบนกระดาษ (ตัวเดียวกับที่เส้น "สร้างทันที" ใช้)
             // — ส่งออกมาเพื่อให้เส้น handoff ได้คำตอบเดียวกัน (T4-08)
             Currency: r.Currency ?? Accounting.Helpers.OcrCurrencyEvidence.Infer(r.RawTextContent),

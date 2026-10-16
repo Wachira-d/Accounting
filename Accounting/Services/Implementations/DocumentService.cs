@@ -7337,6 +7337,8 @@ public partial class DocumentService : IDocumentService
         // UserCorrectedFields เมื่อคนแก้ WHT ในฟอร์มเอกสาร — VendorIntelligence อ่านช่องนั้นตัดสินว่าเรียน WHT ได้ไหม (OcrWhtLearningScope)
         // เดิม sync อยู่หลัง train ⇒ ต่อให้ sync เขียนแล้วก็ไม่ทันการเรียนของใบนั้น (train ครั้งเดียวต่อเอกสาร)
         await SyncScanToPostedDocumentAsync(companyId, doc, approvedLines);
+        // DECISIONS ข้อ 153 ข้อ 2 (กฎเหล็ก #1 ขั้น CAPTURE): ประเภท VAT ของบรรทัดที่ไม่มี VAT ในเอกสารที่อนุมัติ = คำตอบจริงของ "ความหมายรหัส ภ.พ."
+        await RecordVatCodeMeaningFeedbackAsync(companyId, doc, approvedLines);
 
         // Best-effort: train vendor intelligence cache for OCR self-learning.
         // Failures are logged inside the helper — training is a derived side-effect
@@ -16147,6 +16149,41 @@ public partial class DocumentService : IDocumentService
             };
         }).ToList();
         return System.Text.Json.JsonSerializer.Serialize(rows);
+    }
+
+    /// <summary>
+    /// **ปิดลูปความหมายรหัส ภ.พ. ตอนอนุมัติ** (DECISIONS ข้อ 153 ข้อ 2 · DECISION_DOCTRINE §3 "คำตอบจริง = อนุมัติ") — สแกนที่สร้างเอกสารนี้ถาม AI/นักเรียนว่ารหัส
+    /// (แถว VAT 0) คือยกเว้นหรือ 0% · คำตอบของผู้ใช้ = ชนิดของบรรทัดที่ไม่มี VAT ในเอกสารที่อนุมัติ (<c>OcrVatCodeMeaning.ChosenNoVatKind</c> — ปน/ไม่มี = ไม่บันทึก) ·
+    /// เปลี่ยนจากที่ระบบเติม = Explicit · คงตามที่เติม = Implicit · คงตามที่นักเรียนตอบเอง = ไม่บันทึก (self-confirm · §3) · ล้ม = log (ไม่ย้อนการอนุมัติ)
+    /// </summary>
+    private async Task RecordVatCodeMeaningFeedbackAsync(Guid companyId, Document doc, List<DocumentLine> approvedLines)
+    {
+        if (_feedbackRecorder == null) return;
+        try
+        {
+            var json = await _db.Set<OcrScanResult>().AsNoTracking()
+                .Where(s => s.CompanyId == companyId && s.CreatedDocumentId == doc.Id && !s.IsDeleted)
+                .OrderByDescending(s => s.CreatedAt)
+                .Select(s => s.VatCodeMeaningsJson)
+                .FirstOrDefaultAsync();
+            var asked = Accounting.Helpers.OcrVatCodeMeaning.FromJson(json).Where(e => e.FeedbackId.HasValue).ToList();
+            if (asked.Count == 0) return;
+            var chosen = Accounting.Helpers.OcrVatCodeMeaning.ChosenNoVatKind(
+                approvedLines.Where(l => !l.IsDeleted).Select(l => l.VatRate));
+            if (chosen is not Accounting.Helpers.OcrVatGroupKind kind) return;
+            var answer = Accounting.Helpers.OcrVatCodeMeaning.AnswerOf(kind);
+            foreach (var e in asked)
+            {
+                if (e.Source == Accounting.Helpers.OcrVatCodeMeaningSource.Student && e.Kind == kind) continue;   // นักเรียนยืนยันตัวเอง
+                await _feedbackRecorder.RecordUserChoiceAsync(e.FeedbackId!.Value, answer,
+                    acceptedAi: Accounting.Helpers.OcrAiLabelScope.AcceptedAi(e.AiAnswer, answer), CancellationToken.None,
+                    e.Kind != kind ? Accounting.Models.Enums.UserChoiceSource.Explicit : Accounting.Models.Enums.UserChoiceSource.Implicit);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "บันทึกคำตอบความหมายรหัส ภ.พ. ตอนอนุมัติไม่สำเร็จ (doc {Id})", doc.Id);
+        }
     }
 
     private async Task RecordLineAccountFeedbackAsync(Guid companyId, IEnumerable<DocumentLine> lines, CancellationToken ct = default)

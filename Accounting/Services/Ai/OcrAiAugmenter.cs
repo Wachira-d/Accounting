@@ -127,6 +127,14 @@ public interface IOcrAiAugmenter
         string lineDescription, decimal? amount,
         IReadOnlyList<ProjectMatchCandidate> candidates,
         CancellationToken ct = default);
+
+    /// <summary>ความหมายของรหัส ภ.พ. ที่กระดาษไม่บอก (แถว VAT 0 — ยกเว้น หรือ 0%) · DECISIONS ข้อ 153 ข้อ 2 ·
+    /// คำตอบผ่านด่าน <c>Helpers/OcrVatCodeMeaning.Guard</c> แล้ว (ขัดเลขคณิตของแถว = Answer null) · ล้ม/ปิด AI = ไม่มีคำตอบ (ผู้เรียกใช้ค่าตั้งต้น)</summary>
+    Task<OcrAiAugmentationResult> InferVatCodeMeaningAsync(
+        Guid companyId, Guid scanResultId,
+        string? vendorName, string? vendorTaxId,
+        Accounting.Helpers.OcrVatGroup row, string? legendText,
+        CancellationToken ct = default);
 }
 
 /// <summary>A candidate project the AI may assign an OCR line to — id + name +
@@ -664,6 +672,48 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             // AI ล้ม = ใช้คำตอบของกติกาต่อ (kill-switch: feature ยังทำงานครบ)
             return new OcrAiAugmentationResult(
                 Answer: localGuess, Confidence: localConfidence,
+                Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
+                ComplianceFlags: Array.Empty<string>(),
+                Reasoning: $"Augmenter exception: {ex.Message}",
+                UsedAi: false, FeedbackId: null);
+        }
+    }
+
+    public async Task<OcrAiAugmentationResult> InferVatCodeMeaningAsync(
+        Guid companyId, Guid scanResultId,
+        string? vendorName, string? vendorTaxId,
+        Accounting.Helpers.OcrVatGroup row, string? legendText,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var req = Prompts.OcrVatCodeMeaningPrompt.Build(companyId, scanResultId, vendorName, vendorTaxId,
+                row.PaperCode, row.Net, row.Vat, row.Gross, row.ItemCount, legendText);
+            var resp = await _orchestrator.AskAsync(req, ct);
+            var fromStudent = IsStudentAnswer(resp);
+            // ด่านกันมั่ว (เลขคณิตของแถว) — คำตอบที่ขัดตัวเลข/นอกชุด = ไม่มีคำตอบ · confidence ต้องอยู่ใน [0,1] (โมเดลตอบ "90" แล้วผ่านเกณฑ์ไม่ได้)
+            var kind = Accounting.Helpers.OcrVatCodeMeaning.Guard(row, resp.PrimaryAnswer, out var why);
+            var confOk = resp.Confidence is null || (resp.Confidence >= 0m && resp.Confidence <= 1m);
+            var valid = (resp.UsedAi || fromStudent) && kind is not null && confOk;
+            return new OcrAiAugmentationResult(
+                Answer: valid ? Accounting.Helpers.OcrVatCodeMeaning.AnswerOf(kind!.Value) : null,
+                Confidence: valid ? resp.Confidence : null,
+                Alternatives: resp.Alternatives,
+                Risks: resp.Risks,
+                ComplianceFlags: resp.ComplianceFlags,
+                Reasoning: valid ? resp.Reasoning
+                    : (resp.UsedAi || fromStudent) ? $"คำตอบ '{resp.PrimaryAnswer}' (conf {resp.Confidence}) ถูกทิ้ง: {why}{(confOk ? "" : " · ความมั่นใจนอกช่วง 0–1")}"
+                    : $"ไม่มีคำตอบจาก AI/นักเรียน ({resp.Status})",
+                UsedAi: resp.UsedAi,
+                FeedbackId: resp.FeedbackId,
+                FromStudent: fromStudent);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "OcrAiAugmenter.InferVatCodeMeaning failed");
+            // AI ล้ม = ไม่มีคำตอบ ⇒ ผู้เรียกใช้ค่าตั้งต้น (kill-switch: feature ยังทำงานครบ)
+            return new OcrAiAugmentationResult(
+                Answer: null, Confidence: null,
                 Alternatives: Array.Empty<string>(), Risks: Array.Empty<string>(),
                 ComplianceFlags: Array.Empty<string>(),
                 Reasoning: $"Augmenter exception: {ex.Message}",

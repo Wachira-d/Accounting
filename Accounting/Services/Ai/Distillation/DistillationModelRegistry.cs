@@ -58,6 +58,8 @@ public static class DistillationModelRegistry
         // รอบ 205 — ศูนย์นำเข้าข้อมูล: รหัสผังบัญชีของแถวงบทดลอง (ด่าน ∈ ผังบริษัท) · id ผู้ติดต่อ/สินค้าเดิมหรือ "NEW" (ด่าน ∈ candidate)
         AiFeatureKey.ImportAccountMap,
         AiFeatureKey.ImportEntityMatch,
+        // 2026-10-16 (DECISIONS ข้อ 153 ข้อ 2) — ความหมายรหัส ภ.พ. (Standard7/ZeroRated/Exempt · กุญแจ = ผู้ขาย + รหัส) · ด่าน OcrVatCodeMeaning.Guard
+        AiFeatureKey.OcrVatCodeMeaning,
     };
 
     /// <summary>แชตบอต (free-form Q→A — จับคู่คำถามด้วย embedding) → <see cref="ChatAnswerDistillationModel"/></summary>

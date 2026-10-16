@@ -92,9 +92,11 @@ public static class OcrAmountIntegrity
     /// <param name="paperTotal">ยอดรวมบนกระดาษ (0 = ไม่รู้)</param>
     /// <param name="paperTaxable">ยอด "ต้องเสียภาษี" ที่กระดาษพิมพ์ (ใช้เป็นข้อมูลในข้อความเท่านั้น)</param>
     /// <param name="paperNonTaxable">ยอด "ไม่ต้องเสียภาษี" ที่กระดาษพิมพ์ (ใช้เป็นข้อมูลในข้อความเท่านั้น)</param>
+    /// <param name="vatCodeTable">ตารางรหัส ภ.พ. ของกระดาษ (รหัสตัดสินความหมายแล้ว) — มีกลุ่มที่ไม่ใช่ 7% ⇒ คำแนะนำข้อ (3) อ้าง<b>ตัวเลขของตาราง</b>
+    /// แทนการประมาณ "VAT ÷ 0.07" (2026-10-16 · ใบ Makro 2/2: ประมาณได้ 2,086.57 บนฐานผิด ทั้งที่ตารางพิมพ์ยกเว้น 1,220.00) · null = สูตรเดิม (ใช้ในข้อความเท่านั้น)</param>
     public static OcrAmountIntegrityResult Check(
         IReadOnlyList<OcrPlannedLine> lines, decimal paperVat, decimal paperTotal,
-        decimal? paperTaxable = null, decimal? paperNonTaxable = null)
+        decimal? paperTaxable = null, decimal? paperNonTaxable = null, OcrVatGroupTable? vatCodeTable = null)
     {
         var problems = new List<OcrAmountIntegrityProblem>();
         var net = lines.Sum(l => l.NetAmount);
@@ -161,7 +163,19 @@ public static class OcrAmountIntegrity
                 var rateText = string.Join("/", taxable.Select(l => l.VatRate).Distinct().Select(r => $"{r:0.##}%"));
                 var msg = $"{VatRateMismatchLead}: บรรทัดที่ติด {rateText} รวม {taxableBase:N2} "
                         + $"→ VAT ควรเป็น {expected:N2} แต่กระดาษพิมพ์ {paperVat:N2} (ต่าง {gap:+#,##0.00;-#,##0.00})";
-                if (paperVat > 0m && gap > 0m)
+                var tableHasNoVatGroups = vatCodeTable is { Found: true } t
+                    && t.Groups.Any(g => g.Kind != OcrVatGroupKind.Standard7);
+                if (tableHasNoVatGroups)
+                {
+                    // ตารางรหัส ภ.พ. ของกระดาษพิมพ์ฐานต่อกลุ่มไว้แล้ว — อ้างตัวเลขของกระดาษตรง ๆ (ไม่ประมาณจาก VAT ÷ 0.07)
+                    var groups = vatCodeTable!.Groups;
+                    msg += " — ตารางรหัส ภ.พ. บนกระดาษ: "
+                         + string.Join(" · ", groups.Select(g => g.Kind == OcrVatGroupKind.Standard7
+                             ? $"รหัส {g.PaperCode} มี VAT ฐาน {g.Net:N2} VAT {g.Vat:N2}"
+                             : $"รหัส {g.PaperCode} {(g.Kind == OcrVatGroupKind.ZeroRated ? "อัตรา 0%" : g.Kind == OcrVatGroupKind.Exempt ? "ยกเว้น VAT" : "ไม่มี VAT")} {g.Net:N2}"))
+                         + " ⇒ แยกบรรทัดตามตารางนี้";
+                }
+                else if (paperVat > 0m && gap > 0m)
                 {
                     var impliedBase = Math.Round(paperVat / 0.07m, 2, R);
                     msg += $" — VAT บนกระดาษบอกว่ายอดที่มี VAT ≈ {impliedBase:N2} ⇒ น่าจะมีรายการยกเว้น/ไม่มี VAT "

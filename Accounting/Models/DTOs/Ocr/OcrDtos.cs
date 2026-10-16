@@ -153,7 +153,14 @@ public record OcrResultResponse(
     string? PredecessorCandidatesJson = null,
     /// <summary>บทบาทเรา (ผู้ซื้อ/ผู้ขาย) ตัดสินโดยเรียก AI จริงไหม — ป้ายซื่อสัตย์
     /// ("🤖 AI แนะนำ" เฉพาะตอนเรียก provider จริง)</summary>
-    bool OurRoleUsedAi = false);
+    bool OurRoleUsedAi = false,
+    /// <summary>ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก ตัดสินโดย provider จริงไหม (DECISIONS ข้อ 153 ข้อ 2) — ป้าย "🤖 AI แนะนำ" vs "⚙️ ระบบแนะนำ"</summary>
+    bool VatCodeUsedAi = false,
+    /// <summary>ข้อความที่หน้ารีวิวแสดงข้างประเภท VAT ของบรรทัด ("รหัส 1 = ยกเว้น VAT — 🤖 AI แนะนำ · มั่นใจ 92%") — เซิร์ฟเวอร์ประกอบ
+    /// (<c>Helpers/OcrVatCodeMeaning.ReviewNote</c>) · null = ไม่มีรหัสที่ต้องตัดสิน</summary>
+    string? VatCodeMeaningNote = null,
+    /// <summary>มีรหัสที่ความหมายมาจากค่าตั้งต้น (ความมั่นใจต่ำ) — หน้าเว็บไฮไลต์เหลือง (กฎเหล็ก #3 ข้อ 3)</summary>
+    bool VatCodeLowConfidence = false);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);

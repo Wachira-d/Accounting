@@ -2328,6 +2328,12 @@ public enum AiFeatureKey
     /// ด่าน = คำตอบ ∈ candidate ids ∪ {"NEW"} · ชื่อคล้ายอย่างเดียวห้าม merge อัตโนมัติ (คำตัดสินข้อ 151 (5)) · ปิดลูปตอนผู้ใช้ยืนยัน (ทีม B)</para></summary>
     ImportEntityMatch = 59,
 
+    /// <summary>ความหมายของรหัส ภ.พ. ที่กระดาษไม่บอก (แถว VAT 0 = ยกเว้น หรือ 0%) — คำตัดสินเจ้าของ 2026-10-16 (DECISIONS ข้อ 153 ข้อ 2)
+    /// <para>คำตอบเดี่ยว ∈ {Standard7, ZeroRated, Exempt} ⇒ student = <c>GenericFeedbackDistillationModel</c> (กุญแจ = ผู้ขาย + รหัส) ·
+    /// local ก่อนถาม = ตัวเลขของแถว (VAT 7% ⇒ ไม่ถาม) · cold start/ปิด AI = ยกเว้น (ความมั่นใจต่ำ) · ด่าน = คำตอบต้องสอดคล้องเลขคณิตของแถว
+    /// (<c>Helpers/OcrVatCodeMeaning.Guard</c>) · ปิดลูปตอนอนุมัติเอกสาร (ประเภท VAT ของบรรทัดที่ไม่มี VAT)</para></summary>
+    OcrVatCodeMeaning = 60,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }

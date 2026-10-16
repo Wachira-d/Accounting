@@ -279,6 +279,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ทางเดียวภายใต้ค่าเผื่อ · ส่วนลดแบ่งแบบเศษเหลือมากสุด (ไม่มีบรรทัดติดลบ) · ด่าน `TableMismatch` เทียบเงินกลุ่มไม่มี VAT รวมกันเมื่อไม่รู้ว่ายกเว้น/0% ·
     `[Σ-GAP]` ตารางรหัสตรวจ**สด**บนบรรทัดตอนอนุมัติ (`CollectApprovalWarningsAsync`) และปุ่ม LINE (`OcrVatCodeLines.LiveNotes`) · ข้อเกินกระดาษตรวจสดแบบสามค่า
     (`OcrTotalAnchor.OverstatedNow` — ตัดสินไม่ได้ = คงหมายเหตุเดิม ไม่ใช่ "ไม่เกิน")
+  - **ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก (2026-10-16 · DECISIONS ข้อ 153 ข้อ 2 · กฎเหล็ก #1)** — ตอนสแกน (`ScanAsync` → `ResolveVatCodeMeaningsAsync`):
+    แถวตารางที่รหัสไม่รู้ความหมาย · VAT = 7% ของฐาน ⇒ 7% (ตัวเลขตอบ ไม่ถาม) · VAT = 0 ⇒ `OcrAiAugmenter.InferVatCodeMeaningAsync` → orchestrator
+    (`AiFeatureKey.OcrVatCodeMeaning` · นักเรียน generic กุญแจ = ผู้ขาย + รหัส · คำอธิบายที่อ่านเพี้ยนส่งเป็น `paper_evidence` ไม่เข้ากุญแจ) · ด่าน `OcrVatCodeMeaning.Guard`
+    (ขัดเลขคณิตของแถว = ทิ้ง) + ความมั่นใจ ≥ 0.70 · ไม่มีคำตอบ/ปิด AI ⇒ **ยกเว้น** (ความมั่นใจ 0.50 · ไม่บล็อก) · เก็บ `OcrScanResult.VatCodeMeaningsJson`
+    (FeedbackId ต่อรหัส) + `VatCodeUsedAi` · ตัวสร้างบรรทัด `OcrVatCodeMeaning.Resolve` (คำตอบที่ persist ผ่านด่านซ้ำ · สแกนเก่า = ค่าตั้งต้น) ⇒ ตารางใช้ได้ทุกสาขา
+    (รายการ / ตารางชนะ / ไม่มีรายการ) · หน้ารีวิวแสดงข้อความ + ป้าย "🤖 AI แนะนำ"/"⚙️ ระบบแนะนำ" จากเซิร์ฟเวอร์ (ความมั่นใจต่ำ = เหลือง) · อนุมัติเอกสาร ⇒
+    `DocumentService.RecordVatCodeMeaningFeedbackAsync` บันทึกชนิดของบรรทัดที่ไม่มี VAT (เปลี่ยน = Explicit · คงเดิม = Implicit · นักเรียนยืนยันตัวเอง = ไม่บันทึก) ·
+    คำแนะนำ "VAT ÷ 0.07" ของ `OcrAmountIntegrity` อ้างตัวเลขของตารางรหัส ภ.พ. เมื่อกระดาษมี
   - **แถวในตารางรายการที่ไม่ใช่สินค้า (2026-10-09)** — `Helpers/OcrNonItemRow` ตัวเดียวทุก engine (Azure prebuilt Items · Azure layout-table ·
     python ocr-service): แถวสรุป/แถวชำระ/เงินทอน ("เงินสด 1,000" · "เงินทอน" · "รวม 3 รายการ" · "VAT 7%" · "Card") ถูกตัดก่อนเป็นบรรทัดสินค้า
     และบอกใน trace/warnings (`[Items] ตัดแถวสรุป…`) · คำแรกต้องเป็นป้ายทั้งคำ + คำที่เหลือเป็นคำประกอบของแถวสรุป ("รวมมิตรทะเล" · "Cash Drawer
@@ -5820,3 +5828,6 @@ _Last verified against codebase: 2026-10-16 (ตารางรหัส ภ.พ
 บรรทัดสรุปต่อรหัสเมื่อรายการไม่ลงตาราง · DECISIONS ข้อ 153 — เทสต์ `OcrVatCodeLinesTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
 _Last verified against codebase: 2026-10-16 (ฝ่ายค้านของ 7c782d24..afbb0956 — §OCR: รหัสบนแถว/engine · ทางแบ่งภายใต้ค่าเผื่อ · ส่วนลดไม่ติดลบ ·
 `[Σ-GAP]` ตารางรหัสตรวจสดตอนอนุมัติ/LINE · ข้อเกินกระดาษสามค่า — เทสต์ `OcrReviewAfbb0956Tests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-10-16 (ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก — §OCR: `Helpers/OcrVatCodeMeaning` · `AiFeatureKey.OcrVatCodeMeaning` ·
+ถามตอนสแกน/ตัดสินซ้ำตอนสร้างบรรทัด/ปิดลูปตอนอนุมัติ · DECISIONS ข้อ 153 ข้อ 2 — เทสต์ `OcrVatCodeMeaningTests` · `OcrReplayLineGoldenTests` · `AiKillSwitchOrchestratorTests` —
+คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_

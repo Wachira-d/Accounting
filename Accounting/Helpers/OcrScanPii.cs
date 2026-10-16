@@ -56,6 +56,7 @@ public static class OcrScanPii
         "VendorBranchCode", "BuyerBranchCode",
         "ContentFingerprint", "FileHash",           // แฮช — ไม่ย้อนกลับเป็นข้อความ
         "FieldConfidenceJson", "UserCorrectedFields",  // ชื่อช่อง + ตัวเลข ไม่ใช่ค่า
+        "VatCodeMeaningsJson",                          // รหัส ภ.พ. + ชนิด VAT + FeedbackId — ไม่มีข้อความบนกระดาษ
         // ── ช่องของ BaseEntity ──
         // ชื่อผู้ทำรายการ = ข้อมูลของ**พนักงานผู้บันทึก** ไม่ใช่ของเจ้าของข้อมูล
         // ที่ใช้สิทธิ · และเป็นร่องรอยตรวจสอบที่ต้องเก็บตาม พ.ร.บ.การบัญชี ม.10

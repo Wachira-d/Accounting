@@ -258,6 +258,17 @@ public class OcrReplayLineGoldenTests
     }
 
     [Fact]
+    public void Makroหน้า2_Tesseractจริง_คำอธิบายรหัส1เพี้ยน_ค่าตั้งต้นยกเว้น_บรรทัดสรุปต่อรหัส_รวม10980()
+    {
+        // DECISIONS ข้อ 153 ข้อ 2 · cold start / ปิด AI (ชุดกระดาษไม่มีคำตอบ AI): รหัส 1 (VAT 0) ⇒ ยกเว้น · รหัส 2 ตัวเลขพิสูจน์ 7%
+        // ก่อน: รหัส 1 ไม่รู้ ⇒ ตารางใช้ไม่ได้ ⇒ บรรทัดสรุปใบเดียว 10,341.50 · 7% · VAT 638.50 + VatRateMismatch
+        Assert.Equal("VatGroups", Val("makro-page2-tesseract-garbled-legend", "LineMode"));
+        Assert.Equal("1220.00|-1|0.00|1220.00|0|0.00|0.00;9121.50|7|638.50|9121.50|0|0.00|0.00",
+            Val("makro-page2-tesseract-garbled-legend", "Lines"));
+        Assert.Equal("ok", Val("makro-page2-tesseract-garbled-legend", "IntegrityGaps"));
+    }
+
+    [Fact]
     public void Makroหน้า1และ2_engineอ่านคอลัมน์รหัสไม่ได้_มีส่วนลด_ตารางชนะ_บรรทัดสรุปต่อรหัส_รวม10980()
     {
         // คำตัดสินเจ้าของ 2026-10-16 ข้อ 1 (กลับคำตัดสินรอบก่อน "คงรายการ + [Σ-GAP]"): ไม่มีรหัสรายบรรทัด + ส่วนลด ⇒ แบ่งส่วนลดต่อรหัสไม่ได้ ⇒

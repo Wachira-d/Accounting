@@ -202,6 +202,12 @@ public static class OcrReplayHarness
         new ReplayPaper("makro-page2-vat-added-twice", OcrPaperSamples.MakroPage2of2,
             EngineSubTotal: 11208.00m, EngineVat: 638.50m, EngineTotal: 11846.50m),
 
+        // 2026-10-16 DECISIONS ข้อ 153 ข้อ 2 — ภาพเดียวกันผ่าน Tesseract 5.3.4 จริง: คำอธิบายรหัส "1«สินค้าได้รับการยกเว้น…" (ไม่มี "=") ⇒ รหัส 1 ไม่รู้ความหมาย ·
+        // ชุดกระดาษไม่มีคำตอบ AI ⇒ ค่าตั้งต้น "ยกเว้น" (cold start / ปิด AI) · หัวสแกน = ยอดที่ยึดได้ (10,980 · ฐาน 10,341.50) — ⚠️ ข้อความ Tesseract นี้
+        // ยึด 10,980 จากหัวสแกน 11,846.50 ไม่ได้ (NET AMOUNT อ่านเป็น 40,980 · ป้าย TOTAL เพี้ยน — ช่องเปิดของขั้นยึดยอด ไม่ใช่ของตารางรหัส)
+        new ReplayPaper("makro-page2-tesseract-garbled-legend", OcrMakroPage2VatAddedTwiceTests.MakroPage2of2Tesseract,
+            EngineSubTotal: 10341.50m, EngineVat: 638.50m, EngineTotal: 10980.00m),
+
         // 2026-10-16 รหัส ภ.พ. รายบรรทัด (คำสั่งเจ้าของ "อัตรา VAT ต่อบรรทัดยังเดาจากชื่อสินค้า … ควรต้องตามตาราง ภพ") — <b>หน้า 1 สังเคราะห์</b> + หน้า 2 จริง
         // (เราไม่มีหน้า 1 ของจริง · ตัวเลขคิดมือให้ลงกับตารางหน้า 2 ทุกสตางค์ — ดู OcrPaperSamples.MakroPage1of2Synthetic) · หัวสแกนหลังยึดยอด 10,980
         new ReplayPaper("makro-p1p2-vatcode-synthetic", OcrPaperSamples.MakroPage1of2Synthetic + "\n" + OcrPaperSamples.MakroPage2of2,
@@ -442,7 +448,8 @@ public static class OcrReplayHarness
                 ? gaps : gaps.Append("Overstated");
 
         // ตรงกับ service: ตารางรหัส ภ.พ. อ่านครั้งเดียว · ตัวตัดสิน "รายการ หรือ ตาราง" (OcrVatCodeLines.Decide — คำตัดสินเจ้าของ 2026-10-16 ข้อ 1/3)
-        var codeTable = OcrLineVatMarks.ReadGroups(normalizedText);
+        // ตรงกับ service (DECISIONS ข้อ 153 ข้อ 2): รหัสที่กระดาษไม่บอกความหมาย ⇒ ตัวเลขของแถว / ค่าตั้งต้น — ชุดกระดาษไม่มีคำตอบ AI ที่ persist (null)
+        var codeTable = OcrVatCodeMeaning.Resolve(OcrLineVatMarks.ReadGroups(normalizedText), null).Table;
         IReadOnlyList<OcrVatGroup>? tableLinesInsteadOfItems = null;
         if (lines is { Count: > 0 })
         {
@@ -525,7 +532,7 @@ public static class OcrReplayHarness
                 planned.Add(new OcrPlannedLine(
                     pricesIncludeVat ? Math.Round(amounts[i] - spreadVat[i], 2, R) : amounts[i],
                     rates[i] ?? standardVatRate, spreadVat[i]));
-            var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
+            var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount, codeTable);
             var gaps = new List<string>();
             if (recon.UnreconciledGap != 0m) gaps.Add("Σ-GAP:" + recon.Case);
             foreach (var problem in check.Problems)
@@ -576,7 +583,7 @@ public static class OcrReplayHarness
         // ไม่มีรายการ — ตารางสรุปตามกลุ่มภาษีบนกระดาษ (Makro 3/3) ก่อน แล้วค่อยบรรทัดสรุปใบเดียว
         // 2026-10-16 ข้อ 1: รายการกระทบตารางไม่ได้ ⇒ ตารางชนะ (สาขาเดียวกัน — ตรงกับ service)
         var groups = tableLinesInsteadOfItems ?? OcrTotalDecomposer.SummaryGroupLines(
-            OcrTotalDecomposer.Decompose(p.RawText, headerSub, headerVat, anchoredTotal, hdrDiscRaw),
+            OcrTotalDecomposer.Decompose(p.RawText, headerSub, headerVat, anchoredTotal, hdrDiscRaw) with { Groups = codeTable },
             anchoredTotal, headerVat, headerSubTotal);
         if (groups.Count > 0 && headerWht == 0m)
         {
@@ -593,7 +600,7 @@ public static class OcrReplayHarness
                 planned.Add(new OcrPlannedLine(g.Net, rate, g.Vat));
                 rows.Add(Fmt(g.Net, rate, g.Vat, g.Net, 0m, 0m, 0m));
             }
-            var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
+            var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount, codeTable);
             return new ReplayBuiltLines(tableLinesInsteadOfItems is null ? "VatGroups" : "VatGroupsInsteadOfItems", null, false, string.Join(";", rows),
                 GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m, duplicateRowsDropped);
         }
@@ -601,7 +608,7 @@ public static class OcrReplayHarness
         var summaryRate = hdrVat > 0m ? 7m : 0m;
         var summaryCheck = OcrAmountIntegrity.Check(
             new[] { new OcrPlannedLine(headerSubTotal, summaryRate, hdrVat) }, hdrVat, hdrTotal,
-            paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
+            paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount, codeTable);
         return new ReplayBuiltLines("Summary", null, false,
             Fmt(headerSubTotal, summaryRate, hdrVat, headerSubTotal, 0m, 0m, headerWht),
             GapText(WithOverstatement(summaryCheck.Problems.Select(x => x.Kind.ToString()), headerSubTotal + hdrVat)), 0m);

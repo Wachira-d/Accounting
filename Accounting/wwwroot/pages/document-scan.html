@@ -2781,6 +2781,18 @@
                        value="${Layout.esc(scan.userNotes || '')}">
               </div>
               ${scan.paymentTermsDays ? `<div class="review-field"><label>เงื่อนไขชำระ</label><span class="form-input" style="background:var(--gray-50)">${scan.paymentTermsDays} วัน</span></div>` : ''}
+              ${scan.vatCodeMeaningNote ? `
+              <!-- DECISIONS ข้อ 153 ข้อ 2 — ประเภท VAT ตามรหัส ภ.พ. ที่กระดาษไม่บอกความหมาย · ป้ายซื่อสัตย์ (กฎเหล็ก #1): ข้อความ + "🤖 AI แนะนำ"/"⚙️ ระบบแนะนำ"
+                   มาจากเซิร์ฟเวอร์ (Helpers/OcrVatCodeMeaning.ReviewNote) · ความมั่นใจต่ำ (ค่าตั้งต้น) = ไฮไลต์เหลือง (กฎเหล็ก #3 ข้อ 3) · แก้ประเภท VAT ได้ที่ฟอร์มเอกสาร
+                   แล้วอนุมัติ = สอนระบบ -->
+              <div class="review-field" style="grid-column:1/-1">
+                <div data-vat-code-meaning style="font-size:12px;border-radius:6px;padding:6px 10px;${scan.vatCodeLowConfidence
+                    ? 'background:#fef9c3;border:1px solid #fde047;color:#854d0e'
+                    : 'background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af'}"
+                     title="${scan.vatCodeUsedAi ? 'AI ถูกเรียกจริงเพื่อตัดสินรหัสนี้' : 'ระบบตัดสินเอง (ตัวเลขของแถว/ค่าที่เรียนไว้/ค่าตั้งต้น) — ไม่ได้เรียก AI'}">
+                  ${Layout.esc(scan.vatCodeMeaningNote)}
+                </div>
+              </div>` : ''}
               ${scan.extractedItems && scan.extractedItems.length > 0 ? `
               <div style="margin-top:8px">
                 <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:6px">

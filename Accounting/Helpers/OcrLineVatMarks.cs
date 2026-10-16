@@ -434,6 +434,11 @@ public static class OcrLineVatMarks
          : Regex.IsMatch(desc, @"ต้องเสียภาษี|ที่เสียภาษี|vatable|taxable|7[ \t]*%", Opt) ? OcrVatGroupKind.Standard7
          : OcrVatGroupKind.Unknown;
 
+    /// <summary>VAT ของแถวตาราง = 7% ของฐาน (ค่าเผื่อเดียวกับตัวอ่านตาราง — VAT รายชิ้นปัดได้ครึ่งสตางค์ต่อชิ้น) · ตัวเดียวของ
+    /// <see cref="OcrVatCodeMeaning"/> ("ตัวเลขพิสูจน์ก่อนถาม AI")</summary>
+    internal static bool IsSevenPercentRow(decimal net, decimal vat, int? itemCount)
+        => vat > 0m && Math.Abs(Math.Round(net * 0.07m, 2, MidpointRounding.AwayFromZero) - vat) <= RateSlack(itemCount);
+
     /// <summary>ค่าเผื่อ "VAT = 7% ของฐาน" ของแถวสรุปที่รวมหลายชิ้น — VAT รายชิ้นปัดได้ครึ่งสตางค์ต่อชิ้น</summary>
     private static decimal RateSlack(int? itemCount)
         => Math.Max(0.10m, 0.005m * (itemCount ?? 0));

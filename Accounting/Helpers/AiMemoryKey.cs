@@ -74,6 +74,13 @@ public static class AiMemoryKey
     private static readonly HashSet<string> ProposedAnswerKeys =
         new(StringComparer.OrdinalIgnoreCase) { "local_model" };
 
+    /// <summary>คีย์ใน payload ที่เป็น <b>"หลักฐานประกอบให้ครู"</b> ไม่ใช่ตัวตนของคำถาม — ตัดทิ้งก่อนทำกุญแจ (ลิสต์ปิด · ห้ามแพตเทิร์น)
+    /// <para>2026-10-16 (DECISIONS ข้อ 153 ข้อ 2): ความหมายรหัส ภ.พ. ของผู้ขายรายเดิมคือคำถามเดิม แต่คำอธิบายรหัสที่ Tesseract อ่านเพี้ยน
+    /// ("1«สินค้า…") เปลี่ยนทุกสแกน ⇒ ถ้านับเข้ากุญแจ นักเรียนไม่มีวันเจอคำถามเดิม (คลังโตแต่ไม่ถูกใช้) · ใช้ได้เฉพาะ prompt builder ที่
+    /// ตั้งใจให้ "ผู้ขาย + รหัส" เป็นตัวตนของคำถาม (<c>OcrVatCodeMeaningPrompt</c>)</para></summary>
+    private static readonly HashSet<string> ContextOnlyKeys =
+        new(StringComparer.OrdinalIgnoreCase) { "paper_evidence" };
+
     private static readonly System.Text.RegularExpressions.Regex _taxIdRe =
         new(@"\b\d{13}\b", System.Text.RegularExpressions.RegexOptions.Compiled);
     // ⚠️ รูปแบบ "หลัง mask" ของ AiPromptSanitizer ต้อง normalise ให้เป็น token
@@ -147,7 +154,7 @@ public static class AiMemoryKey
             {
                 // "คำตอบที่เสนอ" ไม่ใช่อินพุต — ตัดทิ้งทุกชั้น (บล็อกอยู่ชั้นบนสุดในวันนี้
                 // แต่ตัดทุกชั้นกันไว้ ถ้ามี prompt ห่อ payload ซ้อนวันหลัง)
-                if (ProposedAnswerKeys.Contains(key)) continue;
+                if (ProposedAnswerKeys.Contains(key) || ContextOnlyKeys.Contains(key)) continue;
                 var val = obj[key];
                 if (key.EndsWith("_pii", StringComparison.OrdinalIgnoreCase)
                     || key.EndsWith("_personal", StringComparison.OrdinalIgnoreCase))
