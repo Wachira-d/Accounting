@@ -87,7 +87,7 @@ public class TaxFilingExportController : ControllerBase
         return null;
     }
 
-    /// <summary>Export ภ.ง.ด.1 (รายเดือน) — <c>format</c> = txt (นำเข้าเว็บสรรพากร · ค่าตั้งต้น) · csv · xlsx ·
+    /// <summary>Export ภ.ง.ด.1 (รายเดือน) — <c>format</c> = txt (PND1.txt นำเข้า WHTSVS · ค่าตั้งต้น) · xlsx (Sheet1 ไม่มีหัว) · csv · review (รายงานตรวจทานมีหัว) ·
     /// sensitive (payroll) + บันทึก PiiAccessLog</summary>
     [HttpGet("pnd1")]
     public async Task<IActionResult> ExportPnd1(Guid companyId, [FromQuery] int year, [FromQuery] int month,

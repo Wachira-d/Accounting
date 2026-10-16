@@ -130,9 +130,10 @@ public class Pnd1ExportReconcileDbTests
         var txt = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "txt");
         var csv = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "csv");
         var xlsx = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "xlsx");
+        var review = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "review");
 
         // ── ไฟล์: เงินเดือน 3 แถว (รวมคนภาษี 0) + 50 ทวิ นอกรอบ 1 แถว · ใบที่ออกจากรอบไม่ซ้ำ ──
-        foreach (var r in new[] { txt, csv, xlsx })
+        foreach (var r in new[] { txt, csv, xlsx, review })
         {
             Assert.Equal(4, r.RecordCount);
             Assert.Equal(s.PayrollTax + s.CertTax, r.TotalTax);
@@ -144,27 +145,47 @@ public class Pnd1ExportReconcileDbTests
             Assert.Equal(1, cats[3].Count);                    // (4) 40(2) ผู้รับอยู่ในไทย
             Assert.Equal(s.CertTax, cats[3].Tax);
         }
-        // สองประเภท ⇒ .txt เป็น zip ไฟล์ละประเภท (ใบแนบแยกตามประเภท)
-        Assert.Equal("application/zip", txt.ContentType);
+        // รอบ 2026-10-16 สเปก WHTSVS: ไฟล์เดียว PND1.txt ทุกประเภทเงินได้ (รหัสเงินได้ช่อง 15) — เดิม zip ไฟล์ละประเภท
+        Assert.Equal("PND1.txt", txt.FileName);
+        Assert.StartsWith("text/plain", txt.ContentType);
         Assert.EndsWith(".csv", csv.FileName);
         Assert.EndsWith(".xlsx", xlsx.FileName);
-        using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(txt.FileData)))
+        Assert.EndsWith("_review.xlsx", review.FileName);
+        var lines = System.Text.Encoding.UTF8.GetString(txt.FileData).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(4, lines.Length);
+        Assert.All(lines, l => Assert.Equal(20, l.Split('|').Length));
+        Assert.DoesNotContain(lines, l => l.StartsWith("H|") || l.StartsWith("T|") || l.StartsWith("D|"));
+        var payDate = Pnd1FileFormat.ThaiDate(Period.AddMonths(1).AddDays(-1));
+        // E001 — ผู้หัก (ช่อง 1–4) · เงินได้ = TaxableGross 50,000 (ไม่ใช่ Gross 52,000) · วันที่ DDMMYYYY พ.ศ. · คำนำหน้าข้อความไทย
+        var e1 = lines[0].Split('|');
+        Assert.Equal(new[] { "00", "0105556000001", "0000000000", "0000", "1101700001237" }, e1.Take(5).ToArray());
+        Assert.Equal("นาย", e1[6]);
+        Assert.Equal("สมชาย", e1[7]);
+        Assert.Equal(Period.Month.ToString("00"), e1[12]);
+        Assert.Equal((Period.Year + 543).ToString(), e1[13]);
+        Assert.Equal("1", e1[14]);
+        Assert.Equal(payDate, e1[15]);
+        Assert.Equal("50000.00", e1[17]);
+        // E003 — ภาษี 0 ยังอยู่ในแบบ · ข้อมูลเก่า TaxableGross 0 ⇒ Gross
+        var e3 = lines[2].Split('|');
+        Assert.Equal("12000.00", e3[17]);
+        Assert.Equal("0.00", e3[18]);
+        // ใบมือ 40(2) ผู้รับอยู่ในไทย ⇒ รหัสเงินได้ 4 · อัตรา 3 จากบรรทัด 50 ทวิ
+        var broker = lines[3].Split('|');
+        Assert.Equal("3700600009996", broker[4]);
+        Assert.Equal("4", broker[14]);
+        Assert.Equal("3", broker[16]);
+        Assert.Equal("600.00", broker[18]);
+        // Excel นำเข้า = Sheet1 ไม่มีแถวหัว ค่าเท่ากับ .txt ทุกเซลล์
+        using (var ms = new MemoryStream(xlsx.FileData))
         {
-            Assert.Equal(2, zip.Entries.Count);
-            using var sr = new StreamReader(zip.Entries.Single(e => e.Name.EndsWith("_type1.txt")).Open());
-            var lines = sr.ReadToEnd().Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-            Assert.Equal(3, lines.Length);
-            Assert.DoesNotContain(lines, l => l.StartsWith("H|") || l.StartsWith("T|") || l.StartsWith("D|"));
-            // E001 — เงินได้ = TaxableGross 50,000 (ไม่ใช่ Gross 52,000) · วันที่ ddMMyyyy ค.ศ. · คำนำหน้าข้อความไทย
-            var e1 = lines[0].Split('|');
-            Assert.Equal("1101700001237", e1[1]);
-            Assert.Equal("นาย", e1[2]);
-            Assert.Equal(Period.AddMonths(1).AddDays(-1).ToString("ddMMyyyy"), e1[5]);
-            Assert.Equal("50000.00", e1[6]);
-            // E003 — ภาษี 0 ยังอยู่ในแบบ · ข้อมูลเก่า TaxableGross 0 ⇒ Gross
-            var e3 = lines[2].Split('|');
-            Assert.Equal("12000.00", e3[6]);
-            Assert.Equal("0.00", e3[7]);
+            Assert.Equal(new[] { "Sheet1" }, MiniExcelLibs.MiniExcel.GetSheetNames(ms).ToArray());
+            ms.Position = 0;
+            var read = MiniExcelLibs.MiniExcel.Query(ms, useHeaderRow: false, sheetName: "Sheet1").Cast<IDictionary<string, object>>().ToList();
+            Assert.Equal(4, read.Count);
+            for (var i = 0; i < 4; i++)
+                Assert.Equal(lines[i].Split('|'),
+                    Enumerable.Range(0, 20).Select(c => read[i][((char)('A' + c)).ToString()]?.ToString() ?? "").ToArray());
         }
 
         // ── หน้ารายงาน ภ.ง.ด.1 (หน้าเงินเดือน) — ตัวโหลดเดียวกับไฟล์ ──

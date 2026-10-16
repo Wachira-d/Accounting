@@ -2629,12 +2629,13 @@ const Page = {
         content.innerHTML = `
           <h3 style="margin-bottom:8px">ภงด.1 - ${month}/${parseInt(year)+543}</h3>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
-            <button class="btn btn-primary btn-sm" onclick="Page.downloadPnd1('txt')">ดาวน์โหลด .txt (นำเข้าเว็บสรรพากร)</button>
-            <button class="btn btn-secondary btn-sm" onclick="Page.downloadPnd1('xlsx')">Excel</button>
-            <button class="btn btn-outline btn-sm" onclick="Page.downloadPnd1('csv')" title="CSV เก็บเลขครบ แต่ถ้าเปิดด้วย Excel ตรง ๆ เลขประจำตัวผู้เสียภาษี/วันที่ ddMMyyyy ที่ขึ้นต้นด้วย 0 จะถูกตัด — เปิดดู/แก้ให้ใช้ปุ่ม Excel · CSV ใช้นำเข้าโปรแกรมอื่นเท่านั้น">CSV ⚠️</button>
+            <button class="btn btn-primary btn-sm" onclick="Page.downloadPnd1('txt')" title="ไฟล์ PND1.txt ตามสเปก WHTSVS 20 ช่อง คั่นด้วย | ไม่มีแถวหัว">ดาวน์โหลด PND1.txt (นำเข้า WHTSVS)</button>
+            <button class="btn btn-secondary btn-sm" onclick="Page.downloadPnd1('xlsx')" title="Excel นำเข้า WHTSVS — ชีต Sheet1 · ไม่มีแถวหัว · ค่าเดียวกับ .txt">Excel นำเข้า (Sheet1)</button>
+            <button class="btn btn-outline btn-sm" onclick="Page.downloadPnd1('csv')" title="CSV 20 ช่องค่าเดียวกับ .txt ไม่มีแถวหัว — ใช้นำเข้าโปรแกรมอื่น · เปิดด้วย Excel ตรง ๆ แล้วเลขที่ขึ้นต้นด้วย 0 จะถูกตัด">CSV ⚠️</button>
+            <button class="btn btn-outline btn-sm" onclick="Page.downloadPnd1('review')" title="มีหัวคอลัมน์ + สรุปยอดต่อประเภท — สำหรับตรวจทาน ห้ามใช้นำเข้า">รายงานตรวจทาน (มีหัวคอลัมน์)</button>
             <a class="btn btn-outline btn-sm" href="/pages/tax-export.html" style="text-decoration:none">วิธียื่น / ไฟล์อื่น ๆ</a>
           </div>
-          <div class="text-xs" style="margin:-10px 0 12px;color:#b45309">⚠️ CSV: เปิดด้วย Excel ตรง ๆ แล้วเลขประจำตัว 13 หลัก/วันที่ ddMMyyyy ที่ขึ้นต้นด้วย 0 จะถูกตัด — เปิดดู/แก้ใช้ปุ่ม Excel (ไฟล์ยื่นจริงใช้ .txt)</div>
+          <div class="text-xs" style="margin:-10px 0 12px;color:#b45309">⚠️ ไฟล์นำเข้า (.txt / Excel / CSV) ไม่มีแถวหัวตามสเปก WHTSVS · Excel ต้องคงชื่อชีต Sheet1 · ชื่อแฟ้ม .txt ต้องเป็น PND1.txt — ดูความหมายคอลัมน์ในรายงานตรวจทาน</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.totalEmployees ?? d.employeeCount ?? 0}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">เงินได้รวม (ฐานภาษี)</div><div class="font-medium text-lg">${Layout.money(d.totalTaxableIncome ?? d.totalIncome)}</div></div>
@@ -2676,14 +2677,17 @@ const Page = {
   },
 
   /** ดาวน์โหลดไฟล์ ภ.ง.ด.1 ของงวดที่ดูอยู่ — ตัวสร้างไฟล์เดียวกับเมนู Export ยื่นภาษี (TaxFilingExportService.ExportPnd1Async)
-   *  ผ่านตัวดึงไฟล์กลาง API.download (ข้อความผิดพลาดของเซิร์ฟเวอร์ถึงผู้ใช้ · มือถือได้ไฟล์) · fmt = txt | csv | xlsx */
+   *  ผ่านตัวดึงไฟล์กลาง API.download (ข้อความผิดพลาดของเซิร์ฟเวอร์ถึงผู้ใช้ · มือถือได้ไฟล์) · fmt = txt | xlsx | csv | review
+   *  ชื่อไฟล์จริงมาจากเซิร์ฟเวอร์ (.txt = PND1.txt ตามสเปก) — ชื่อข้างล่างเป็นค่าสำรองเท่านั้น */
   async downloadPnd1(fmt) {
     const api = Layout.api(); if (!api) return;
     const year = document.getElementById('reportYear')?.value || new Date().getFullYear();
     const month = document.getElementById('reportMonth')?.value || 1;
-    const ext = fmt === 'csv' ? 'csv' : fmt === 'xlsx' ? 'xlsx' : 'txt';
+    const period = `${year}${String(month).padStart(2, '0')}`;
+    const fallback = fmt === 'csv' ? `PND1_${period}.csv` : fmt === 'xlsx' ? `PND1_${period}.xlsx`
+      : fmt === 'review' ? `PND1_${period}_review.xlsx` : 'PND1.txt';
     try {
-      if (await API.download(api.exportPnd1(year, month, fmt), `PND1_${year}${String(month).padStart(2, '0')}.${ext}`))
+      if (await API.download(api.exportPnd1(year, month, fmt), fallback))
         Layout.toast('ดาวน์โหลดสำเร็จ');
     } catch (err) { Layout.toast(err.message || 'ดาวน์โหลดไม่สำเร็จ', 'error', 8000); }
   },
