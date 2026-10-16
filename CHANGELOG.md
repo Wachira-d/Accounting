@@ -5141,3 +5141,5 @@ _DECISIONS 153a + Makro หน้า 2/2 สแกนซ้ำ (2026-10-16 · �
 ไม่แก้ฐาน · คำตัดสินเจ้าของ 153a: รายการลงยอด ⇒ รายการ · ไม่ลง + ตารางลงยอด ⇒ ตาราง (ถอนเลขหน้า P2-5 · ผัง/โครงการต่างกัน = ยอดมากสุด + หมายเหตุ) · ไม่ลงทั้งคู่ ⇒ รายการ + [Σ-GAP] ·
 `AllDiscountRows` · แถวส่วนลดบางส่วน · ด่านตารางเทียบยอดที่กระดาษพิสูจน์ (`paperTotal`) · `OcrExtractionVersion` 6 → 7 (รวมหลังทีม OCR 8 ซึ่งใช้ 6) · Corpus +3 ใบ · ใบเดิมที่เปลี่ยน 1 ใบ (`makro-p1p2-no-row-codes-synthetic`
 ⇒ ตาราง · ตั้งใจ) + ช่องใหม่ `PlannedHeaderSubTotal`/`SummaryDims` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>_
+`AllDiscountRows` · แถวส่วนลดบางส่วน · ด่านตารางเทียบยอดที่กระดาษพิสูจน์ (`paperTotal`) · `OcrExtractionVersion` 5 → 6 · Corpus +3 ใบ · ใบเดิมที่เปลี่ยน 1 ใบ (`makro-p1p2-no-row-codes-synthetic`
+⇒ ตาราง · ตั้งใจ) + ช่องใหม่ `PlannedHeaderSubTotal`/`SummaryDims` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 9809b71b_

@@ -309,7 +309,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     มี WHT / ผูก PO ⇒ รายการ + `[Σ-GAP]` · หน้าที่มีแต่แถวส่วนลด (`AllDiscountRows`: ไม่มีรหัสบนแถว · คำบอกส่วนลดหรือยอดบนบรรทัดส่วนลดของกระดาษ · Σ ≤ รวมส่วนลด) ⇒ ข้อ 2
     + `[NO-ITEMS] หน้านี้มีแต่แถวส่วนลด … ไม่หักซ้ำ` · แถวส่วนลดบางส่วน (Σ < รวมส่วนลด · ยอดพิมพ์บนบรรทัดส่วนลด) ⇒ ตัดทิ้ง ใช้รวมส่วนลดของกระดาษ (ต้องลงยอดพอดี) ·
     หัวสแกน: ยอดรวมที่ engine อ่านถูก (Confirmed) แต่ยอดก่อน VAT คือยอดที่พิมพ์หลังป้ายรวม VAT (11,208) ⇒ `OcrTotalAnchor.Plan(…, rawText)` เขียนฐานที่พิมพ์ 10,341.50 ตอนสแกน ·
-    `OcrExtractionVersion` 6 · Last verified `commit <pending>`
+    `OcrExtractionVersion` 6 · Last verified `commit 9809b71b`
   - **แถวในตารางรายการที่ไม่ใช่สินค้า (2026-10-09)** — `Helpers/OcrNonItemRow` ตัวเดียวทุก engine (Azure prebuilt Items · Azure layout-table ·
     python ocr-service): แถวสรุป/แถวชำระ/เงินทอน ("เงินสด 1,000" · "เงินทอน" · "รวม 3 รายการ" · "VAT 7%" · "Card") ถูกตัดก่อนเป็นบรรทัดสินค้า
     และบอกใน trace/warnings (`[Items] ตัดแถวสรุป…`) · คำแรกต้องเป็นป้ายทั้งคำ + คำที่เหลือเป็นคำประกอบของแถวสรุป ("รวมมิตรทะเล" · "Cash Drawer
@@ -5888,4 +5888,4 @@ _Last verified against codebase: 2026-10-16 (ทีม OCR 8 · บิลค่�
 _Last verified against codebase: 2026-10-16 (DECISIONS 153a + Makro 2/2 สแกนซ้ำ "ยอดรวมลงถูกแต่บอดราย รายการ" — §OCR ตารางรหัส ภ.พ.: รายการลงยอด ⇒ รายการ · ไม่ลง +
 ตารางลงยอดที่พิสูจน์ ⇒ ตาราง (ไม่ดูเลขหน้า · ผัง/โครงการยอดมากสุด + หมายเหตุรายการเดิม) · หน้าที่มีแต่แถวส่วนลด · แถวส่วนลดบางส่วน · ยอดก่อน VAT หัวสแกน = ฐานที่พิมพ์ ·
 `OcrExtractionVersion` 6 — เทสต์ `OcrVatCodeLinesTests` · `OcrReviewF7c29c2cTests` · `OcrMakroDiscountOnlyPageTests` · `Db/OcrMakroDiscountOnlyPageDbTests` · `OcrReplayLineGoldenTests` —
-คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>)_
+คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 9809b71b)_
