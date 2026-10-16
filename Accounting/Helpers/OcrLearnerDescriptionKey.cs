@@ -32,6 +32,14 @@ public static class OcrLearnerDescriptionKey
         return "";
     }
 
+    /// <summary>คำอธิบายบรรทัดสแกนสำหรับคีย์ — <b>ทุกผู้เรียกฝั่งสแกนส่งบรรทัดผ่านตัวนี้ก่อน</b> <see cref="For(IEnumerable{string?})"/> /
+    /// <see cref="PredictAsync"/> (ทีม OCR 9 · ฝ่ายค้าน 13a4d788 P1): บรรทัดที่ตัวกันจำนวนระเบิดลงเป็น 1 × ยอด มีท้าย "(4,272 หน่วย)" ที่เปลี่ยนทุกเดือน ⇒
+    /// ตัดผ่านตัวตัดเดียว <see cref="OcrLineQuantityGuard.DescriptionForMatching"/> (ไม่งั้นคีย์ "ผู้ขาย + คำอธิบาย" แตกตามจำนวนหน่วย ไม่เคยแมตช์ซ้ำ) ·
+    /// บรรทัดอื่นคืนคำอธิบายเดิม · ไม่มีบรรทัด ⇒ ว่าง (คีย์ใบไม่มีบรรทัดของ <see cref="For(IEnumerable{string?}, string?)"/> ทำงานตามเดิม)</summary>
+    public static IEnumerable<string?> Descriptions(IEnumerable<(string? Description, decimal? Quantity, string? Unit)>? lines)
+        => lines?.Select(l => (string?)OcrLineQuantityGuard.DescriptionForMatching(l.Description, l.Quantity, l.Unit)).ToList()
+           ?? new List<string?>();
+
     /// <summary>คีย์ของตัวเรียนผัง — มีบรรทัด ⇒ คำอธิบายบรรทัดแรก · ไม่มีบรรทัด ⇒ <c>#ไม่มีรายการ#&lt;ชนิดกระดาษ&gt;</c> (ตัวเดียวทั้งเขียนและอ่าน)</summary>
     /// <param name="scannedDocumentType">ชนิดกระดาษที่ไปป์ไลน์อ่านได้ (<c>OcrScanResult.DocumentType</c> ก่อนผู้ใช้แก้)</param>
     public static string For(IEnumerable<string?>? lineDescriptions, string? scannedDocumentType)

@@ -81,13 +81,15 @@ public class OcrLineDiscountFractionalQtyTests
         // ★ ทีม OCR 8 (2026-10-16): harness เล่นซ้ำตัวกันจำนวนระเบิดครบทุกการกระทำแล้ว (ตรงกับ service) — จำนวน 0.35 ไม่มีราคาบนกระดาษ ⇒
         // ตัวกัน (OcrLineQuantityGuard) ลง 1 × 100 + "(0.35 …)" ในคำอธิบาย ก่อนถึงตัวสร้างบรรทัด (ไม่แต่งราคา 285.72 ที่กระดาษไม่พิมพ์) ·
         // เส้น "ไม่มีราคา + จำนวน < 1" ของ OcrLineReconciler.LineDiscount ยังล็อกด้วยเทสต์ pure ข้างบน (ผู้เรียกที่ไม่ผ่านตัวกัน)
+        // ★ ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0): ลวดทองแดงชั่งน้ำหนักเป็นสินค้า (ไม่มีหลักฐานมิเตอร์) และ round(100 ÷ 0.35, 2) = 285.71 ×
+        // 0.35 = 99.9985 ⇒ 100.00 ลงตัวทุกสตางค์ ⇒ คงจำนวน 0.35 × 285.71 (หมายเหตุแจ้ง) · คำอธิบายไม่ถูกต่อ · บันทึกซ้ำได้ 100.00
         Assert.Equal(100.00m, c[0]);
-        Assert.Equal(100.00m, c[3]);
+        Assert.Equal(285.71m, c[3]);
         Assert.Equal(0m, c[4]);
         Assert.Equal(0.00m, c[5]);
-        Assert.StartsWith("QuantityInDescription|1|100.00|", built.QuantityGuard);
-        Assert.Equal("ลวดทองแดง (ชั่งน้ำหนัก) (จำนวน 0.35)", built.Descriptions);
-        var t = DocumentService.PreviewTotals(new[] { Line(1m, c[3], c[4], c[5], c[1]) }, false, 0m);
+        Assert.Equal("FillUnitPrice|0.35|285.71|-|note", built.QuantityGuard);
+        Assert.Null(built.Descriptions);
+        var t = DocumentService.PreviewTotals(new[] { Line(0.35m, c[3], c[4], c[5], c[1]) }, false, 0m);
         Assert.Equal(100.00m, t.Net);
         Assert.Equal(7.00m, t.Vat);
         Assert.Equal(107.00m, t.Total);

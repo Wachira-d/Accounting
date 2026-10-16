@@ -1587,7 +1587,8 @@ public class OcrService : IOcrService
             try
             {
                 // คีย์คำอธิบายตัวเดียวกับตัวเรียน (Helpers/OcrLearnerDescriptionKey) — เดิม fallback เป็นชื่อหมวดที่ระบบเดา
-                var nbDesc = Accounting.Helpers.OcrLearnerDescriptionKey.For(extractedData.Items.Select(i => i.Description));
+                var nbDesc = Accounting.Helpers.OcrLearnerDescriptionKey.For(
+                    Accounting.Helpers.OcrLearnerDescriptionKey.Descriptions(extractedData.Items.Select(i => (i.Description, i.Quantity, i.Unit))));
                 var nbPred = await _nbClassifier.PredictAsync(
                     companyId, extractedData.VendorTaxId, extractedData.VendorName, nbDesc);
                 if (nbPred != null && nbPred.Confidence > 0.7m
@@ -1625,7 +1626,9 @@ public class OcrService : IOcrService
             // ครั้งเดียวเมื่อคีย์ใหม่ยังไม่ถึงเกณฑ์ (ฝ่ายค้าน f5b10674 P2-C: คีย์ว่าง ⇒ ชั้นผู้ขายอย่างเดียว 0.433 < 0.55 ⇒ ผังที่ผู้ใช้สอนไม่ถูกใช้)
             var learned = await Accounting.Helpers.OcrLearnerDescriptionKey.PredictAsync(
                 key => _categoryLearner.PredictAsync(companyId, extractedData.VendorTaxId, extractedData.VendorName, key),
-                extractedData.Items.Select(i => i.Description), extractedData.DocumentType, minConfidence: 0.55m);
+                // ทีม OCR 9: ตัดท้าย "(4,272 หน่วย)" ของบรรทัด 1 × ยอด ผ่านตัวตัดเดียวก่อนสร้างคีย์ (ฝั่งเขียน SubmitCorrectionAsync ใช้ตัวเดียวกัน)
+                Accounting.Helpers.OcrLearnerDescriptionKey.Descriptions(extractedData.Items.Select(i => (i.Description, i.Quantity, i.Unit))),
+                extractedData.DocumentType, minConfidence: 0.55m);
             var (learnedCode, learnedName, learnedConf) = (learned.Code, learned.Name, learned.Confidence);
             if (learned.FromLegacyRow)
                 extractedData.ReasoningTrace.Add(
@@ -4692,18 +4695,19 @@ public class OcrService : IOcrService
 
     /// <summary>คำอธิบายบรรทัดของสแกน (ตามลำดับที่ลงฐาน) สำหรับคีย์ตัวเรียน — JSON เสีย/ไม่มีบรรทัด ⇒ ว่าง (ตัวเรียนตกไปชั้นผู้ขายอย่างเดียว ·
     /// การเรียนเป็นผลพลอยได้ของคำแก้ที่บันทึกไปแล้ว จึงไม่ล้มคำแก้ แต่ต้องเขียน log)</summary>
-    private IEnumerable<string?> ScanLineDescriptionsForLearner(OcrScanResult result)
+    private IEnumerable<(string? Description, decimal? Quantity, string? Unit)> ScanLineDescriptionsForLearner(OcrScanResult result)
     {
-        if (string.IsNullOrWhiteSpace(result.ExtractedItemsJson)) return Array.Empty<string?>();
+        if (string.IsNullOrWhiteSpace(result.ExtractedItemsJson)) return Array.Empty<(string?, decimal?, string?)>();
         try
         {
+            // ทีม OCR 9: ส่งจำนวน/หน่วยไปด้วย — ตัวสร้างคีย์ตัดท้าย "(4,272 หน่วย)" ของบรรทัด 1 × ยอด ให้ตรงกับฝั่งทำนาย (ScanAsync)
             return (System.Text.Json.JsonSerializer.Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson) ?? new())
-                .Select(i => i.Description).ToList();
+                .Select(i => (i.Description, i.Quantity, i.Unit)).ToList();
         }
         catch (System.Text.Json.JsonException ex)
         {
             _logger.LogWarning(ex, "อ่าน ExtractedItemsJson ของสแกน {ScanId} ไม่ได้ — สอนตัวเรียนผังด้วยคีย์ผู้ขายอย่างเดียว", result.Id);
-            return Array.Empty<string?>();
+            return Array.Empty<(string?, decimal?, string?)>();
         }
     }
 
@@ -4781,6 +4785,9 @@ public class OcrService : IOcrService
         //     ★ ฝ่ายค้าน 658e3705 (ทีม OCR 6): ส่วนลดต้องมีหลักฐาน (หัวคอลัมน์/ป้าย) · คอลัมน์หัก ณ ที่จ่าย/มัดจำ ⇒ ยอดก่อนหัก (DeductionRow) ·
         //     ห้ามเก็บบรรทัดที่ไม่ลงตัว · บรรทัดที่ผู้ใช้แก้เอง ⇒ ไม่แตะ (ค่าผู้ใช้ชนะ) — ไม่ลงตัว = แท็กให้คนดู
         var linePaper = Accounting.Helpers.OcrLineQuantityGuard.Read(paperText);
+        // ★ ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0): ผู้ขายสาธารณูปโภค (กุญแจ = เลขผู้เสียภาษี/ชื่อนิติบุคคลเต็ม) เป็นหลักฐานมิเตอร์ข้อหนึ่ง —
+        // เส้นสร้าง/พรีวิว/ดึงรายการซ้ำต้องเติม VendorTaxId/VendorName ของสแกนลง tmpSan (ไม่งั้นได้คำตอบคนละค่ากับตอนสแกน)
+        var utilitySeller = Accounting.Helpers.OcrUtilityVendor.Is(data.VendorTaxId, data.VendorName);
         var paperDiscountRead = false;
         foreach (var item in data.Items)
         {
@@ -4796,7 +4803,7 @@ public class OcrService : IOcrService
                 continue;
             }
             var qtyDecision = Accounting.Helpers.OcrLineQuantityGuard.Decide(
-                item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount, linePaper, item.Description, item.Unit);
+                item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount, linePaper, item.Description, item.Unit, utilitySeller);
             if (qtyDecision.Quantity is decimal decidedQty) item.Quantity = decidedQty;
             if (qtyDecision.UnitPrice is decimal decidedPrice) item.UnitPrice = decidedPrice;
             // ทีม OCR 8 (บิลมิเตอร์ · ราคาที่กระดาษไม่พิมพ์/เก็บ 2 ตำแหน่งไม่ได้): 1 × ยอด — จำนวนหน่วยย้ายไปอยู่ในคำอธิบาย (ตัวประกอบข้อความตัวเดียวใน Decide)
@@ -4807,7 +4814,8 @@ public class OcrService : IOcrService
             if (qtyDecision.LineDiscount is decimal printedDiscount)
             {
                 item.LineDiscountAmount = printedDiscount;
-                paperDiscountRead = true;
+                // ทีม OCR 9: เศษปัดของ RoundedUnitPrice ไม่ใช่ส่วนลดที่อ่านจากกระดาษ ⇒ ไม่ใช่หลักฐานฐานรวม VAT ของใบ
+                if (qtyDecision.Action != Accounting.Helpers.OcrLineQuantityAction.RoundedUnitPrice) paperDiscountRead = true;
             }
             if (qtyDecision.Note is string qtyNote) data.ReasoningTrace.Add(qtyNote);
         }
@@ -5676,7 +5684,8 @@ public class OcrService : IOcrService
                 companyId,
                 correction.VendorTaxId ?? result.ExtractedVendorTaxId,
                 correction.VendorName ?? result.ExtractedVendorName,
-                Accounting.Helpers.OcrLearnerDescriptionKey.For(ScanLineDescriptionsForLearner(result), scannedTypeBeforeCorrection),
+                Accounting.Helpers.OcrLearnerDescriptionKey.For(
+                    Accounting.Helpers.OcrLearnerDescriptionKey.Descriptions(ScanLineDescriptionsForLearner(result)), scannedTypeBeforeCorrection),
                 learnDebitCode,
                 debitName);
         }
@@ -7358,7 +7367,8 @@ public class OcrService : IOcrService
         // ทำให้ document ที่สร้างจาก scan เก่าก็ได้บรรทัดสะอาด. Idempotent.
         if (items.Count > 0)
         {
-            var tmpSan = new OcrExtractedData();
+            // ทีม OCR 9: ผู้ขายของสแกนตามไปด้วย (หลักฐานมิเตอร์ของ OcrLineQuantityGuard — ตอบเหมือนตอนสแกน)
+            var tmpSan = new OcrExtractedData { VendorTaxId = result.ExtractedVendorTaxId, VendorName = result.ExtractedVendorName };
             foreach (var it in items) tmpSan.Items.Add(it);
             SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine), result.RawTextContent);
             items = tmpSan.Items.ToList();
@@ -8321,7 +8331,8 @@ public class OcrService : IOcrService
         }
         if (items.Count > 0)
         {
-            var tmpSan = new OcrExtractedData();
+            // ทีม OCR 9: ผู้ขายของสแกนตามไปด้วย (หลักฐานมิเตอร์ของ OcrLineQuantityGuard — ตอบเหมือนตอนสแกน)
+            var tmpSan = new OcrExtractedData { VendorTaxId = result.ExtractedVendorTaxId, VendorName = result.ExtractedVendorName };
             foreach (var it in items) tmpSan.Items.Add(it);
             SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine), result.RawTextContent);
             items = tmpSan.Items.ToList();
@@ -8863,7 +8874,8 @@ public class OcrService : IOcrService
         // ทำให้ document ที่สร้างจาก scan เก่าก็ได้บรรทัดสะอาด. Idempotent.
         if (items.Count > 0)
         {
-            var tmpSan = new OcrExtractedData();
+            // ทีม OCR 9: ผู้ขายของสแกนตามไปด้วย (หลักฐานมิเตอร์ของ OcrLineQuantityGuard — ตอบเหมือนตอนสแกน)
+            var tmpSan = new OcrExtractedData { VendorTaxId = result.ExtractedVendorTaxId, VendorName = result.ExtractedVendorName };
             foreach (var it in items) tmpSan.Items.Add(it);
             SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine), result.RawTextContent);
             items = tmpSan.Items.ToList();
@@ -11398,7 +11410,9 @@ public class OcrService : IOcrService
                 foreach (var (ocrIdx, poLineId) in cleaned.Where(kv => kv.Value.HasValue))
                 {
                     if (ocrIdx < 0 || ocrIdx >= ocrLines.Count) continue;
-                    var ocrDesc = ocrLines[ocrIdx].Description;
+                    // ทีม OCR 9: บรรทัด 1 × ยอด ของตัวกันจำนวนระเบิด ⇒ ตัดท้าย "(4,272 หน่วย)" ก่อนเรียน alias (ตัวตัดเดียว · ไม่งั้น alias ติดจำนวน)
+                    var ocrDesc = Accounting.Helpers.OcrLineQuantityGuard.DescriptionForMatching(
+                        ocrLines[ocrIdx].Description, ocrLines[ocrIdx].Quantity, ocrLines[ocrIdx].Unit);
                     if (string.IsNullOrWhiteSpace(ocrDesc)) continue;
 
                     var poLine = po.Lines.First(l => l.Id == poLineId!.Value);

@@ -485,6 +485,26 @@ public class OcrReplayLineGoldenTests
     }
 
     [Fact]
+    public void ทีมOCR9_บรรทัดสินค้าที่engineหลุดคอลัมน์ราคา_คงจำนวน_ไม่กลายเป็น1คูณยอด()
+    {
+        // ฝ่ายค้าน 13a4d788 P0: ทีม 8 ลงทั้งสามใบเป็น "QuantityInDescription|1|<ยอด>|-|note" + "(12 ขวด)"/"(30.512 ลิตร)"/"(5 กก.)" ในคำอธิบาย ⇒
+        // นำเข้าสต็อก 1 หน่วย (ขาด 11 / 29.512 / 4) · ทุนเฉลี่ยเพี้ยน · ตัดยอด PO ได้ 1 — ไม่มีอะไรบล็อก
+        // (ก) 300 ÷ 12 = 25.00 ลงตัวทุกสตางค์ ⇒ 12 × 25.00 (รุ่น 5 เดิม) · หมายเหตุแจ้ง · คำอธิบายไม่ถูกต่อ (ไม่มีแถว LineDescriptions)
+        Assert.Equal("FillUnitPrice|12|25.00|-|note", Val("goods-qty-price-column-lost", "LineQtyGuard"));
+        Assert.Equal("300.00|0|0.00|25.00|0|0.00|0.00", Val("goods-qty-price-column-lost", "Lines"));
+        Assert.DoesNotContain(OcrReplayHarness.Run(), a => a.Paper.StartsWith("goods-", StringComparison.Ordinal) && a.Field == "LineDescriptions");
+        // (ข) 990.09 ÷ 30.512 = 32.4492 ⇒ 32.45 · 30.512 × 32.45 = 990.11 ⇒ ส่วนลดบรรทัด 0.02 (ยอดตรงกระดาษ) · แท็กบล็อก (ส่วนต่าง 2 สตางค์)
+        Assert.Equal("RoundedUnitPrice|30.512|32.45|0.02|block", Val("goods-fractional-qty-no-price", "LineQtyGuard"));
+        Assert.Equal("990.09|0|0.00|32.45|0|0.02|0.00", Val("goods-fractional-qty-no-price", "Lines"));
+        Assert.Equal("0.00", Val("goods-fractional-qty-no-price", "RoundingAdjustment"));
+        // (ค) engine อ่านยอดมาใส่ช่องราคา (เคส ก) · "5 กก." พิมพ์คู่หน่วยนับ ⇒ จำนวนพิสูจน์ · 450 ÷ 5 = 90.00 ⇒ 5 × 90 (แจ้ง)
+        Assert.Equal("FixUnitPrice|5|90.00|-|note", Val("goods-price-read-as-amount", "LineQtyGuard"));
+        Assert.Equal("450.00|0|0.00|90.00|0|0.00|0.00", Val("goods-price-read-as-amount", "Lines"));
+        foreach (var p in new[] { "goods-qty-price-column-lost", "goods-fractional-qty-no-price", "goods-price-read-as-amount" })
+            Assert.Equal("ok", Val(p, "IntegrityGaps"));
+    }
+
+    [Fact]
     public void ฝ่ายค้าน_ทิศตรงข้าม_หัวคอลัมน์ส่วนลด_3เปอร์เซ็นต์เป็นส่วนลดจริง_แจ้งไม่บล็อก()
     {
         const string P = "discount-header-invoice";
@@ -500,8 +520,8 @@ public class OcrReplayLineGoldenTests
         var rows = OcrReplayHarness.Run().Where(a => a.Field == "LineQtyGuard").SelectMany(a => a.Value!.Split(';').Select(r => (a.Paper, Tag: r.Split('|')[4])));
         var block = rows.Where(r => r.Tag == "block").Select(r => r.Paper).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
         var note = rows.Where(r => r.Tag == "note").Select(r => r.Paper).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
-        Assert.Equal(new[] { "deposit-installment-invoice", "qty-printed-gap-unexplained", "row-index-receipt", "sku-code-on-row", "weighed-item-qty-not-printed", "wht-column-service-invoice" }, block);
-        Assert.Equal(new[] { "discount-header-invoice", "pea-electricity-bill-0869", "pramie-line-discount-re111", "qty-misread-engine-one", "utility-meter-bill" }, note);
+        Assert.Equal(new[] { "deposit-installment-invoice", "goods-fractional-qty-no-price", "qty-printed-gap-unexplained", "row-index-receipt", "sku-code-on-row", "weighed-item-qty-not-printed", "wht-column-service-invoice" }, block);
+        Assert.Equal(new[] { "discount-header-invoice", "goods-price-read-as-amount", "goods-qty-price-column-lost", "pea-electricity-bill-0869", "pramie-line-discount-re111", "qty-misread-engine-one", "utility-meter-bill" }, note);
     }
 
     [Fact]
@@ -512,7 +532,9 @@ public class OcrReplayLineGoldenTests
             // ฝ่ายค้าน 658e3705 (ทีม OCR 6)
             "wht-column-service-invoice", "deposit-installment-invoice", "sku-code-on-row", "row-index-receipt", "utility-meter-bill", "discount-header-invoice",
             // ทีม OCR 8 (บิลค่าไฟจริง กฟภ.)
-            "pea-electricity-bill-0869" };
+            "pea-electricity-bill-0869",
+            // ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0 — บรรทัดสินค้าห้ามกลายเป็น 1 × ยอด)
+            "goods-qty-price-column-lost", "goods-fractional-qty-no-price", "goods-price-read-as-amount" };
         var all = OcrReplayHarness.Run();
         foreach (var a in all.Where(a => a.Field == "LineQtyGuard" && !added.Contains(a.Paper)))
             foreach (var row in a.Value!.Split(';'))

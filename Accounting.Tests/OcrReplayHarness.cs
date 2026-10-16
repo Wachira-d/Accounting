@@ -404,6 +404,26 @@ public static class OcrReplayHarness
             LineAmounts: new[] { 19381.50m },
             Lines: new ReplayLine[] { new("ค่าไฟฟ้า ประจำเดือน 08/2569", 4272m, null, 19381.50m) },
             VendorTaxId: "0994000165501"),
+
+        // ── ทีม OCR 9 (2026-10-16 · ฝ่ายค้าน 13a4d788 P0) — บรรทัดสินค้าที่ engine หลุดคอลัมน์ราคา/อ่านยอดเป็นราคา ห้ามกลายเป็น 1 × ยอด ──
+        // (ก) น้ำดื่ม 12 ขวด 300 ไม่มีราคาต่อหน่วยบนแถว: ทีม 8 ⇒ 1 × 300 "(12 ขวด)" (สต็อกขาด 11 · ทุนเพี้ยน 12 เท่า) · 300 ÷ 12 = 25.00 ลงตัว ⇒ 12 × 25.00 (รุ่น 5 เดิม · แจ้ง)
+        new ReplayPaper("goods-qty-price-column-lost",
+            "ใบเสร็จรับเงิน\nน้ำดื่ม 600ml 12 ขวด 300.00\nรวมทั้งสิ้น 300.00",
+            EngineSubTotal: null, EngineVat: 0m, EngineTotal: 300m,
+            LineAmounts: new[] { 300.00m },
+            Lines: new ReplayLine[] { new("น้ำดื่ม 600ml", 12m, null, 300.00m) }),
+        // (ข) ดีเซล 30.512 ลิตร 990.09 ไม่มีราคา: ยอด ÷ จำนวน = 32.4492 ไม่ลงตัว · ลิตรเป็นสินค้า (ไม่ใช่มิเตอร์) ⇒ คง 30.512 × 32.45 − ส่วนลด 0.02 + แท็กบล็อก
+        new ReplayPaper("goods-fractional-qty-no-price",
+            "ใบเสร็จรับเงิน\nดีเซล 30.512 ลิตร 990.09\nรวมทั้งสิ้น 990.09",
+            EngineSubTotal: null, EngineVat: 0m, EngineTotal: 990.09m,
+            LineAmounts: new[] { 990.09m },
+            Lines: new ReplayLine[] { new("ดีเซล", 30.512m, null, 990.09m) }),
+        // (ค) หมูสับ 5 กก. 450 · engine อ่านยอดมาใส่ช่องราคา (เคส ก): ทีม 8 ⇒ 1 × 450 (กก. ถูกนับเป็นมิเตอร์) · 450 ÷ 5 = 90.00 ลงตัว + จำนวนพิมพ์คู่หน่วย ⇒ 5 × 90 (แจ้ง)
+        new ReplayPaper("goods-price-read-as-amount",
+            "ใบเสร็จรับเงิน\nหมูสับ 5 กก. 450.00\nรวมทั้งสิ้น 450.00",
+            EngineSubTotal: null, EngineVat: 0m, EngineTotal: 450m,
+            LineAmounts: new[] { 450.00m },
+            Lines: new ReplayLine[] { new("หมูสับ", 5m, 450.00m, 450.00m) }),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -551,13 +571,15 @@ public static class OcrReplayHarness
         if (lines is { Count: > 0 })
         {
             var linePaper = OcrLineQuantityGuard.Read(p.RawText);
+            // ทีม OCR 9: ผู้ขายสาธารณูปโภคเป็นหลักฐานมิเตอร์ข้อหนึ่ง (ตัวตัดสินเดียวกับ service — Helpers/OcrUtilityVendor)
+            var utilitySeller = OcrUtilityVendor.Is(p.VendorTaxId, p.VendorNameFromEngine);
             var guarded = new List<ReplayLine>(lines.Count);
             var guardText = new List<string>(lines.Count);
             var paperDiscountRead = false;
             var descriptionChanged = false;
             foreach (var l in lines)
             {
-                var d = OcrLineQuantityGuard.Decide(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscount, linePaper, l.Description, null);
+                var d = OcrLineQuantityGuard.Decide(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscount, linePaper, l.Description, null, utilitySeller);
                 // ทีม OCR 8 (2026-10-16): เล่นซ้ำทุกการกระทำ รวม FillUnitPrice (เดิมข้าม — ช่องว่างที่จดไว้ว่าเส้น "ไม่มีราคา + จำนวน > 0" ไม่ตรง service) ·
                 // ใบในชุดก่อนรอบนี้ไม่มีบรรทัด "มีจำนวน ไม่มีราคา" (LineAmounts-only = จำนวน null ⇒ Keep) ⇒ golden เดิมไม่ขยับ
                 descriptionChanged |= d.Description is not null;
@@ -570,7 +592,8 @@ public static class OcrReplayHarness
                     // ฝ่ายค้าน 658e3705 P1-1: แถวหัก ณ ที่จ่าย/มัดจำ ⇒ ยอดบรรทัด = จำนวน × ราคาก่อนหัก (ตรงกับ service)
                     Amount = d.Amount ?? l.Amount,
                 };
-                paperDiscountRead |= d.LineDiscount.HasValue;
+                // ทีม OCR 9: เศษปัดของ RoundedUnitPrice ไม่ใช่ส่วนลดจากกระดาษ (ตรงกับ service)
+                paperDiscountRead |= d.LineDiscount.HasValue && d.Action != OcrLineQuantityAction.RoundedUnitPrice;
                 guarded.Add(g);
                 // ช่องท้าย: block = แท็กบล็อก [LINE-QTY] · note = หมายเหตุแจ้ง [LINE-QTY-NOTE] · - = ไม่มีหมายเหตุ (ฝ่ายค้าน 658e3705 — อัตราแท็กวัดได้จาก golden)
                 guardText.Add($"{d.Action}|{g.Quantity?.ToString("0.###") ?? "-"}|{g.UnitPrice?.ToString("0.00##") ?? "-"}|{g.LineDiscount?.ToString("0.00") ?? "-"}"

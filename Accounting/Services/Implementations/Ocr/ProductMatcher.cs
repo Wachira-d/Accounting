@@ -508,7 +508,8 @@ public class ProductMatcher
         // ProductCode → resolvable product, joined to the document so we
         // know the vendor (ContactId).
         var rows = await _db.Database.SqlQueryRaw<HistoryRow>(@"
-            SELECT p.""Id"" AS ProductId, d.""ContactId"" AS ContactId, dl.""Description"" AS Description
+            SELECT p.""Id"" AS ProductId, d.""ContactId"" AS ContactId, dl.""Description"" AS Description,
+                   dl.""Quantity"" AS Quantity, dl.""Unit"" AS Unit
             FROM ""DocumentLines"" dl
             JOIN ""Documents"" d ON d.""Id"" = dl.""DocumentId"" AND d.""IsDeleted"" = false
             JOIN ""Products"" p ON p.""Code"" = dl.""ProductCode""
@@ -525,9 +526,12 @@ public class ProductMatcher
         var count = 0;
         foreach (var r in rows)
         {
-            var key = $"{r.ProductId}|{r.ContactId}|{Normalize(r.Description)}";
+            // ทีม OCR 9: บรรทัดเอกสารที่ตัวกันจำนวนระเบิดลง 1 × ยอด ⇒ ตัดท้าย "(4,272 หน่วย)" ก่อนเรียน alias (ตัวตัดเดียวกับหน้านำเข้าสต็อก)
+            var desc = Accounting.Helpers.OcrLineQuantityGuard.DescriptionForMatching(r.Description, r.Quantity, r.Unit);
+            if (string.IsNullOrWhiteSpace(desc)) continue;
+            var key = $"{r.ProductId}|{r.ContactId}|{Normalize(desc)}";
             if (!seen.Add(key)) continue;  // dedupe within this run
-            await RecordAliasAsync(companyId, r.ProductId, r.Description, r.ContactId, userId, source: "import");
+            await RecordAliasAsync(companyId, r.ProductId, desc, r.ContactId, userId, source: "import");
             count++;
         }
         if (count > 0) await _db.SaveChangesAsync();
@@ -539,6 +543,8 @@ public class ProductMatcher
         public Guid ProductId { get; set; }
         public Guid? ContactId { get; set; }
         public string Description { get; set; } = "";
+        public decimal Quantity { get; set; }
+        public string? Unit { get; set; }
     }
 
     private static void TryAdd(Dictionary<Guid, ProductMatchCandidate> dict, Product p, double score, string reason)

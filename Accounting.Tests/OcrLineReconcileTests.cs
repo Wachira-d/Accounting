@@ -44,11 +44,14 @@ public class OcrLineReconcileTests
         // ที่ลง GL เท่ากันทั้งสองทาง = 100)
         // ★ ทีม OCR 8 (2026-10-16 · คำตัดสินเจ้าของ "ระบบต้องไม่แต่งราคาต่อหน่วยที่กระดาษไม่พิมพ์"): ไม่มีข้อความกระดาษให้พิสูจน์ว่าราคา 10 พิมพ์อยู่
         // ⇒ 1 × ยอด · จำนวน 10 อยู่ในคำอธิบาย (ไม่ทิ้งปริมาณ) · ยอดที่ลง GL = 100 เท่าเดิม · มีข้อความที่พิมพ์ราคา 10.00 ⇒ 10 × 10 (เดิม)
+        // ★ ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0): "สินค้า A" ไม่มีหลักฐานมิเตอร์ และ 100 ÷ 10 = 10.00 ลงตัวทุกสตางค์ (เลขคณิต ไม่ใช่ราคาที่แต่ง) ⇒
+        // คงจำนวน 10 × 10.00 (รุ่น 5 เดิม) · จำนวนไม่พิสูจน์บนกระดาษ ⇒ แท็กบล็อก (เดิม) · 1 × 100 ทำสต็อกขาด 9 ชิ้น
         var d = WithLine(Line(qty: 10m, up: 100m, amt: 100m));
         OcrService.SanitizeVatSplitArtifacts(d);
-        Assert.Equal(1m, d.Items[0].Quantity);
-        Assert.Equal(100m, d.Items[0].UnitPrice);
-        Assert.Equal("สินค้า A (จำนวน 10)", d.Items[0].Description);
+        Assert.Equal(10m, d.Items[0].Quantity);
+        Assert.Equal(10m, d.Items[0].UnitPrice);
+        Assert.Equal("สินค้า A", d.Items[0].Description);
+        Assert.Contains(d.ReasoningTrace, t => t.StartsWith(Accounting.Helpers.OcrLineQuantityGuard.Tag + " ", StringComparison.Ordinal));
         Assert.Equal(100m, (d.Items[0].UnitPrice ?? 0m) * (d.Items[0].Quantity ?? 0m));
 
         var printed = WithLine(Line(qty: 10m, up: 100m, amt: 100m));
@@ -82,12 +85,17 @@ public class OcrLineReconcileTests
         // บิลสาธารณูปโภคพิมพ์แต่ปริมาณ+ยอดรวม ไม่พิมพ์ราคาต่อหน่วย —
         // เดิม skip เงียบ ๆ (ฟอร์มได้ช่องราคาว่าง) → หารหาให้เลย
         // ★ ทีม OCR 8: ไม่แต่ง 4.5282 (ไม่มีบนกระดาษ · เก็บ 2 ตำแหน่งไม่ได้) ⇒ 1 × ยอด + จำนวนในคำอธิบาย (แจ้ง ไม่บล็อก)
+        // ★ ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0): "สินค้า A" ไม่มีหลักฐานมิเตอร์ (ไม่มีหน่วย/ป้าย/ผู้ขายสาธารณูปโภค) ⇒ ห้ามทิ้งจำนวน ⇒ คง 3,611 ·
+        // ราคา round(16,351.48 ÷ 3,611, 2) = 4.53 · 3,611 × 4.53 = 16,357.83 ⇒ ส่วนลดบรรทัด 6.35 ระบุชัด (บรรทัดลงตัว ยอดตรงกระดาษ) · แท็กบล็อก
         var d = WithLine(Line(qty: 3611m, up: null, amt: 16351.48m));
         OcrService.SanitizeVatSplitArtifacts(d);
-        Assert.Equal(16351.48m, d.Items[0].UnitPrice);
-        Assert.Equal(1m, d.Items[0].Quantity);
-        Assert.Equal("สินค้า A (จำนวน 3,611)", d.Items[0].Description);
-        Assert.Contains(d.ReasoningTrace, t => t.StartsWith(Accounting.Helpers.OcrLineQuantityGuard.NoteTag, StringComparison.Ordinal));
+        Assert.Equal(3611m, d.Items[0].Quantity);
+        Assert.Equal(4.53m, d.Items[0].UnitPrice);
+        Assert.Equal(6.35m, d.Items[0].LineDiscountAmount);
+        Assert.Equal(16351.48m, d.Items[0].Amount);
+        Assert.Equal("สินค้า A", d.Items[0].Description);
+        Assert.Contains(d.ReasoningTrace, t => t.StartsWith(Accounting.Helpers.OcrLineQuantityGuard.Tag + " ", StringComparison.Ordinal)
+                                               && t.Contains("635 สตางค์", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -113,11 +121,13 @@ public class OcrLineReconcileTests
     public void Missing_price_or_amount_or_qty_skipped_safely()
     {
         // ทีม OCR 8: ไม่มีข้อความกระดาษพิสูจน์ราคา 100 ⇒ 1 × 500 · จำนวน 5 อยู่ในคำอธิบาย (ไม่หาย)
+        // ★ ทีม OCR 9: 500 ÷ 5 = 100.00 ลงตัวทุกสตางค์ ⇒ คงจำนวน 5 × 100 (รุ่น 5 เดิม) · หมายเหตุแจ้ง (ไม่บล็อก)
         var noPrice = WithLine(Line(qty: 5m, up: null, amt: 500m));
         OcrService.SanitizeVatSplitArtifacts(noPrice);
-        Assert.Equal(1m, noPrice.Items[0].Quantity);
-        Assert.Equal(500m, noPrice.Items[0].UnitPrice);
-        Assert.Equal("สินค้า A (จำนวน 5)", noPrice.Items[0].Description);
+        Assert.Equal(5m, noPrice.Items[0].Quantity);
+        Assert.Equal(100m, noPrice.Items[0].UnitPrice);
+        Assert.Equal("สินค้า A", noPrice.Items[0].Description);
+        Assert.DoesNotContain(noPrice.ReasoningTrace, t => t.StartsWith(Accounting.Helpers.OcrLineQuantityGuard.Tag + " ", StringComparison.Ordinal));
 
         var noAmt = WithLine(Line(qty: 5m, up: 100m, amt: null));
         OcrService.SanitizeVatSplitArtifacts(noAmt);

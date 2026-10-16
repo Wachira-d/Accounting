@@ -791,6 +791,10 @@ public class DocumentAdjustingJournalLine : BaseEntity
 /// </summary>
 public class DocumentLine : BaseEntity
 {
+    /// <summary>ความยาวสูงสุดของ <see cref="Description"/> (คอลัมน์ <c>HasMaxLength</c> ใน <c>AccountingDbContext</c> อ่านค่านี้) — ตัวตั้งตัวเดียว ·
+    /// ผู้ต่อข้อความท้ายคำอธิบาย (เช่น <c>Helpers/OcrLineQuantityGuard.QuantityDescription</c>) ต้องตัดตามค่านี้ ไม่งั้นบันทึกแล้วล้ม</summary>
+    public const int DescriptionMaxLength = 1000;
+
     public Guid DocumentId { get; set; }
     public Document Document { get; set; } = null!;
 

@@ -115,13 +115,19 @@ public class OcrMeterBillLumpSumTests
         Assert.Equal((1m, 19381.50m), (it.Quantity!.Value, it.UnitPrice!.Value));
         Assert.Equal(PeaDescAfter, it.Description);   // 4.5369 ไม่ได้พิมพ์บนกระดาษ ⇒ ไม่ใส่ "× 4.5369"
         Assert.Single(d.ReasoningTrace, t => t.StartsWith(OcrLineQuantityGuard.NoteTag, StringComparison.Ordinal));
-        // ราคา 4 ตำแหน่งที่กระดาษพิมพ์จริง (น้ำมัน) ⇒ ราคานั้นอยู่ในคำอธิบายด้วย
+        // ราคา 4 ตำแหน่งที่กระดาษพิมพ์จริง (น้ำมัน): ทีม OCR 8 ⇒ 1 × ยอด "(45.123 ลิตร × 32.4567)" ·
+        // ★ ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0): ลิตรน้ำมันเป็นสินค้า (เข้าสต็อกได้) ไม่ใช่มิเตอร์ ⇒ คงจำนวน 45.123 · ราคา round(1,464.52 ÷ 45.123, 2) = 32.46 ·
+        //   45.123 × 32.46 = 1,464.69 ⇒ ส่วนลดบรรทัด 0.17 (ยอดตรงกระดาษ · บันทึกซ้ำไม่เลื่อน) · แท็กบล็อก (ระบบเปลี่ยนราคาที่พิมพ์)
         var fuel = OcrLineQuantityGuard.Decide(45.123m, 32.4567m, 1464.52m, null,
             OcrLineQuantityGuard.Read("น้ำมันดีเซล 45.123 ลิตร 32.4567 1,464.52"), "น้ำมันดีเซล");
-        Assert.Equal(OcrLineQuantityAction.QuantityInDescription, fuel.Action);
-        Assert.Equal("น้ำมันดีเซล (45.123 ลิตร × 32.4567)", fuel.Description);
-        Assert.Equal((1m, 1464.52m), (fuel.Quantity!.Value, fuel.UnitPrice!.Value));
-        Assert.False(fuel.Blocking);
+        Assert.Equal(OcrLineQuantityAction.RoundedUnitPrice, fuel.Action);
+        Assert.Null(fuel.Description);
+        Assert.Null(fuel.Quantity);
+        Assert.Equal((32.46m, 0.17m), (fuel.UnitPrice!.Value, fuel.LineDiscount!.Value));
+        Assert.True(fuel.Blocking);
+        Assert.Contains("ราคาที่อ่านได้ 32.4567", fuel.Note);
+        Assert.Equal(1464.52m, DocumentService.PreviewTotals(new[] { new DocumentLineRequest(Description: "x", Quantity: 45.123m, Unit: "ลิตร",
+            UnitPrice: 32.46m, DiscountPercent: 0m, VatRate: 7m, WithholdingTaxRate: 0m, AccountId: null, DiscountAmount: 0.17m) }, false, 0m).Net);
     }
 
     [Fact]
@@ -143,11 +149,11 @@ public class OcrMeterBillLumpSumTests
     // ── ทางเข้าอื่นของบรรทัดมิเตอร์/ชั่ง: น้ำ · โทรศัพท์/เน็ต · ชั่งน้ำหนัก ──────────────────────────────────────────
 
     [Theory]
-    [InlineData("ค่าน้ำประปา ประจำเดือน 08/2569", 25, 245.00, null, "ค่าน้ำประปา ประจำเดือน 08/2569 (25 ลบ.ม.)")]
-    [InlineData("ค่าบริการอินเทอร์เน็ต", 2, 1180.00, null, "ค่าบริการอินเทอร์เน็ต (2 เดือน)")]
-    [InlineData("หมูสับ", 0.45, 54.00, "กก.", "หมูสับ (0.45 กก.)")]
-    [InlineData("ลวดทองแดง", 0.35, 100.00, null, "ลวดทองแดง (จำนวน 0.35)")]
-    public void บรรทัดมีจำนวนและยอด_ไม่มีราคาบนกระดาษ_ลง1คูณยอด_จำนวนในคำอธิบาย(
+    // ★ ทีม OCR 9: ค่าที่ไม่ลงตัว (ยอด ÷ จำนวน ปัด 2 ตำแหน่งแล้ว × จำนวน ≠ ยอด) — ค่าที่ลงตัวพอดีอยู่ในเทสต์ถัดไป (คงจำนวน)
+    [InlineData("ค่าน้ำประปา ประจำเดือน 08/2569", 25, 246.13, null, "ค่าน้ำประปา ประจำเดือน 08/2569 (25 ลบ.ม.)")]
+    [InlineData("ค่าบริการอินเทอร์เน็ต", 3, 1798.00, null, "ค่าบริการอินเทอร์เน็ต (3 เดือน)")]
+    [InlineData("ค่าโทรศัพท์ทางไกล", 37, 100.00, "ครั้ง", "ค่าโทรศัพท์ทางไกล (37 ครั้ง)")]
+    public void บรรทัดมิเตอร์มีจำนวนและยอด_ไม่มีราคาบนกระดาษ_ไม่ลงตัว_ลง1คูณยอด_จำนวนในคำอธิบาย(
         string desc, double qty, double amount, string? unit, string expected)
     {
         var d = OcrLineQuantityGuard.Decide((decimal)qty, null, (decimal)amount, null, OcrLineQuantityGuard.Read($"{desc} {amount:N2}"), desc, unit);
@@ -155,7 +161,28 @@ public class OcrMeterBillLumpSumTests
         Assert.Equal((1m, (decimal)amount), (d.Quantity!.Value, d.UnitPrice!.Value));
         Assert.Equal(expected, d.Description);
         Assert.False(d.Blocking);
+        Assert.Contains("ตามมิเตอร์", d.Note);
         Assert.Equal((decimal)amount, DocumentService.PreviewTotals(new[] { L(1m, d.UnitPrice.Value, 0m) }, false, 0m).Net);
+    }
+
+    [Theory]
+    // ทีม OCR 8 ลงทั้งสี่บรรทัดนี้เป็น 1 × ยอด · ★ ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0): ยอด ÷ จำนวน ลงตัวทุกสตางค์ ⇒ คงจำนวน + ราคา 2 ตำแหน่ง (รุ่น 5 เดิม) ·
+    // หมายเหตุแจ้งที่ไม่พูดถึงมิเตอร์ · คำอธิบายไม่ถูกต่อ
+    [InlineData("ค่าน้ำประปา ประจำเดือน 08/2569", 25, 245.00, null, 9.80)]
+    [InlineData("ค่าบริการอินเทอร์เน็ต", 2, 1180.00, null, 590.00)]
+    [InlineData("หมูสับ", 0.45, 54.00, "กก.", 120.00)]
+    [InlineData("ลวดทองแดง", 0.35, 100.00, null, 285.71)]
+    public void บรรทัดมีจำนวนและยอด_ไม่มีราคาบนกระดาษ_ยอดหารจำนวนลงตัว_คงจำนวน_ราคา2ตำแหน่ง_แจ้ง(
+        string desc, double qty, double amount, string? unit, double price)
+    {
+        var d = OcrLineQuantityGuard.Decide((decimal)qty, null, (decimal)amount, null, OcrLineQuantityGuard.Read($"{desc} {amount:N2}"), desc, unit);
+        Assert.Equal(OcrLineQuantityAction.FillUnitPrice, d.Action);
+        Assert.Null(d.Quantity);
+        Assert.Equal((decimal)price, d.UnitPrice);
+        Assert.Null(d.Description);
+        Assert.False(d.Blocking);
+        Assert.DoesNotContain("มิเตอร์", d.Note);
+        Assert.Equal((decimal)amount, DocumentService.PreviewTotals(new[] { L((decimal)qty, d.UnitPrice!.Value, 0m) }, false, 0m).Net);
     }
 
     [Fact]
@@ -203,12 +230,14 @@ public class OcrMeterBillLumpSumTests
     public void ตัวประกอบคำอธิบาย_ไม่ต่อวงเล็บซ้ำ_คำอธิบายว่างได้วงเล็บอย่างเดียว()
     {
         Assert.Equal(PeaDescAfter, OcrLineQuantityGuard.QuantityDescription(PeaDescAfter, 4272m, null));
-        Assert.Equal("(4,272 หน่วย)", OcrLineQuantityGuard.QuantityDescription(null, 4272m, "หน่วย"));
+        // ทีม OCR 9: "หน่วย" เป็นหน่วยมิเตอร์เฉพาะเมื่อคำอธิบายบอก "ค่าไฟ" (ไม่มีคำอธิบาย ⇒ "จำนวน X" — รูปท้ายเดียวที่ตัวตัดกลับรู้จัก)
+        Assert.Equal("(จำนวน 4,272)", OcrLineQuantityGuard.QuantityDescription(null, 4272m, "หน่วย"));
         Assert.Equal(PeaDescAfter, OcrLineQuantityGuard.QuantityDescription(PeaDesc, 4272m, OcrLineQuantityGuard.LumpSumUnit));
         // "ชิ้น" ค่าตั้งต้นที่หลุดมาบนบรรทัดค่าไฟ ⇒ หน่วยที่อนุมาน · หน่วยอื่นที่ engine ส่ง = ตามที่ส่ง · ไม่รู้หน่วย = "จำนวน X"
         Assert.Equal(PeaDescAfter, OcrLineQuantityGuard.QuantityDescription(PeaDesc, 4272m, "ชิ้น"));
         Assert.Equal("ค่าไฟฟ้า (4,272 kWh)", OcrLineQuantityGuard.QuantityDescription("ค่าไฟฟ้า", 4272m, "kWh"));
-        Assert.Equal("ลวด (2 ชิ้น)", OcrLineQuantityGuard.QuantityDescription("ลวด", 2m, "ชิ้น"));
+        // ทีม OCR 9: หน่วยสินค้า ("ชิ้น" ค่าตั้งต้น) ไม่ใช่หน่วยมิเตอร์ ⇒ "จำนวน X"
+        Assert.Equal("ลวด (จำนวน 2)", OcrLineQuantityGuard.QuantityDescription("ลวด", 2m, "ชิ้น"));
     }
 
     // ── หัวใบของบิลนี้บนเส้นข้อความ PDF ล้วน (Tier 3 hybrid ไม่มี Tesseract) — ล็อก "คำตอบวันนี้" (เจอแต่ไม่แก้ · รายงานแล้ว) ─────────────

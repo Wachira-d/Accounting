@@ -904,13 +904,18 @@ public class OcrController : ControllerBase
         // ยิง GetActivePatternAsync (ตัวเดี่ยว) ทุกบรรทัด = N+1 query ต่อการสแกน
         // 1 ใบ ทั้งที่ตัวรวม GetActivePatternsAsync เขียนไว้ให้ใช้เพื่อการนี้
         // อยู่ติดกันในไฟล์เดียวกันแต่ไม่มีใครเรียก
-        await matcher.PrewarmGlobalPatternsAsync(lines.Select(l => l.Description));
+        // ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P1): คำอธิบายที่ใช้จับคู่/เรียน alias/ตั้งชื่อสินค้าใหม่ = ตัดท้าย "(4,272 หน่วย)" ของบรรทัด 1 × ยอด
+        // (ตัวตัดเดียว OcrLineQuantityGuard.DescriptionForMatching) — ไม่งั้น ProductMatcher.Normalize เก็บตัวเลข ⇒ ไม่แมตช์ alias เดิม และเรียน alias ติดจำนวน
+        var matchDescriptions = lines
+            .Select(l => Accounting.Helpers.OcrLineQuantityGuard.DescriptionForMatching(l.Description, l.Quantity, l.Unit))
+            .ToList();
+        await matcher.PrewarmGlobalPatternsAsync(matchDescriptions);
 
         var resultLines = new List<OcrStockPreviewLine>();
         for (var i = 0; i < lines.Count; i++)
         {
             var line = lines[i];
-            var desc = line.Description ?? "";
+            var desc = matchDescriptions[i];
             var matches = await matcher.MatchAsync(companyId, desc, scan.MatchedContactId);
             var best = matches.FirstOrDefault();
             var alternatives = matches.Skip(1).ToList();

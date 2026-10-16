@@ -1760,7 +1760,8 @@ RULES += [
          forbid_lit=['extractedData.FieldConfidence["ExpenseCategory"]'],
          why="2026-10-16: ตัวจัดหมวดเห็นเฉพาะหลักฐานบนกระดาษ · ตัวเรียน/NaiveBayes ทำนายด้วยคีย์คำอธิบายตัวเดียว ไม่ fallback เป็นชื่อหมวด"),
     dict(file=OCR, method="SubmitCorrectionAsync",
-         must=["OcrLearnerDescriptionKey.For(ScanLineDescriptionsForLearner(result), scannedTypeBeforeCorrection)"],
+         # ทีม OCR 9: บรรทัดผ่านตัวตัดท้าย "(4,272 หน่วย)" ตัวเดียว (OcrLearnerDescriptionKey.Descriptions → OcrLineQuantityGuard.DescriptionForMatching) ก่อนสร้างคีย์
+         must=["OcrLearnerDescriptionKey.For(", "OcrLearnerDescriptionKey.Descriptions(ScanLineDescriptionsForLearner(result)), scannedTypeBeforeCorrection)"],
          before=[("var scannedTypeBeforeCorrection = result.DocumentType;", "result.DocumentType = correction.DocumentType;")],
          forbid=["result.ExpenseCategory"],
          why="2026-10-16: ตัวเรียนผังบันทึกด้วยคีย์เดียวกับฝั่งทำนาย (คำอธิบายบรรทัด) · คำแก้ไม่เขียนหมวดลงสแกน (ช่องถูกถอดจาก DTO)"),
@@ -6521,14 +6522,109 @@ REVIEWER_CASES += [
     # service ทิ้งคำอธิบายที่มีจำนวนหน่วย (1 × ยอด แล้วจำนวนมิเตอร์หายเงียบ)
     ("MB2", "SanitizeVatSplitArtifacts", "            if (qtyDecision.Description is string decidedDesc) item.Description = decidedDesc;\n", "", True),
     # ถอดด่านราคาเกิน 2 ตำแหน่ง (สแกนเก่าที่ persist 4.5369 กลับไป Keep ⇒ บันทึกซ้ำเลื่อน)
-    ("MB3", "Decide", "if (proven == 0m && qty != 1m && !PriceFitsDocumentLine(up))", "if (false)", True),
+    ("MB3", "Decide", "if (proven == 0m && qty != 1m && !PriceFitsDocumentLine(up) && R2(qty * R2(up)) != amt)", "if (false)", True),
     # AI แตกบรรทัดกลับไปเติม 4 ตำแหน่ง
     ("MB4", "Evaluate", "?? (qty == 1m ? amount.Value : null);", "?? (qty > 0m ? Math.Round(amount.Value / qty, 4, MidpointRounding.AwayFromZero) : null);", True),
     # ไม่ส่งคำอธิบายให้ตัวกัน (ได้วงเล็บอย่างเดียว ไม่มีชื่อรายการ)
-    ("MB5", "SanitizeVatSplitArtifacts", "linePaper, item.Description, item.Unit);", "linePaper, null, item.Unit);", True),
+    ("MB5", "SanitizeVatSplitArtifacts", "linePaper, item.Description, item.Unit, utilitySeller);", "linePaper, null, item.Unit, utilitySeller);", True),
     # รูปถูก: ขึ้นบรรทัดใหม่ก่อนกำหนดค่าคำอธิบาย ต้องไม่ถูกฟ้อง
     ("MB6", "SanitizeVatSplitArtifacts", "            if (qtyDecision.Description is string decidedDesc) item.Description = decidedDesc;\n",
      "            if (qtyDecision.Description is string decidedDesc)\n                item.Description = decidedDesc;\n", False),
+]
+
+
+# ── ทีม OCR 9 (2026-10-16 · ฝ่ายค้าน 13a4d788): บรรทัดสินค้าห้ามกลายเป็น 1 × ยอดเงียบ ๆ (น้ำดื่ม 12 / 300 ⇒ 1 × 300 · สต็อกขาด 11) ·
+#    1 × ยอด เฉพาะเมื่อมีหลักฐานมิเตอร์ (MeterEvidence ตัวเดียว) · ยอด ÷ จำนวน ลงตัว ⇒ คงจำนวน · ไม่งั้นคงจำนวน + ส่วนลดเศษ + แท็กบล็อก ·
+#    ด่านราคาเกิน 2 ตำแหน่งถาม "ปัดแล้วลงตัวไหม" · ผู้ขายสาธารณูปโภคตามไปทุกเส้น · คีย์จับคู่/ตัวเรียนตัดท้าย "(4,272 หน่วย)" ผ่านตัวตัดเดียว
+_GQ_WHY = "ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0/P1): "
+_GQ_METER = r"if\s*\(\s*MeterEvidence\(\s*paper\s*,\s*qty\s*,\s*amt\s*,\s*description\s*,\s*unit\s*,\s*utilitySeller\s*\)\s*\)\s*return\s+"
+RULES += [
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="Decide",
+         must=["R2(qty * R2(up)) != amt", "TiePrice(qty, amt)", "Rounded(qty, amt, null,", "Rounded(qty, amt, up,"],
+         must_re=[
+             # ราคาว่าง: ลงตัว ⇒ คงจำนวน → มิเตอร์ ⇒ 1 × ยอด → ไม่งั้น RoundedUnitPrice (ลำดับในแขนงเดียว — "Rounded(qty, amt, null" มีแขนงเดียว)
+             r"TiePrice\(qty,\s*amt\)\s+is\s+decimal\s+filled[\s\S]*?" + _GQ_METER
+             + r"InDescription\(OcrLineQuantityAction\.QuantityInDescription[\s\S]*?return\s+Rounded\(qty,\s*amt,\s*null",
+             # เคส ก: ยอด ÷ จำนวน ลงตัว ⇒ คงจำนวน ก่อนถามมิเตอร์ · มิเตอร์ ⇒ 1 × ยอด · ไม่งั้น RoundedUnitPrice
+             r"if\s*\(\s*TiePrice\(qty,\s*amt\)\s+is\s+decimal\s+tied\s*\)\s*return\s+qtyOnPaper[\s\S]*?" + _GQ_METER
+             + r"qtyOnPaper\s*\?\s*InDescription\(",
+             # ราคาเกิน 2 ตำแหน่งที่ไม่ลงตัว + ส่วนต่างลบของจำนวนที่พิมพ์: 1 × ยอด ต้องอยู่หลังหลักฐานมิเตอร์เสมอ
+             _GQ_METER + r"InDescription\(OcrLineQuantityAction\.QuantityInDescription,\s*qty,\s*amt,\s*description,\s*unit,\s*OnPaper",
+             _GQ_METER + r"InDescription\(OcrLineQuantityAction\.KeepPrintedGap",
+         ],
+         why=_GQ_WHY + "1 × ยอด + จำนวนในคำอธิบาย เฉพาะบรรทัดที่มีหลักฐานมิเตอร์ — สินค้าคงจำนวน (สต็อก/ทุน/PO) · ยอด ÷ จำนวน ลงตัว = เลขคณิต ไม่ใช่ราคาที่แต่ง"),
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="MeterEvidence",
+         must=["MeterLabelBefore(paper.Text, nums[k].Start)", "IsMeterUnit(word, description)", "GoodsUnitRe.IsMatch(word)",
+               "if (goodsOnPaper) return false;", "LineUnit(description, unit)", "return utilitySeller;"],
+         before=[("if (goodsOnPaper) return false;", "return utilitySeller;")],
+         why=_GQ_WHY + "หลักฐานมิเตอร์ = ป้าย/หน่วยมิเตอร์/ผู้ขายสาธารณูปโภค · หน่วยสินค้า (ขวด/กก./ลิตร) บนแถวชนะผู้ขาย — เดิม \"คำหน่วยนับใดก็ได้\" = มิเตอร์"),
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="Rounded",
+         must=["Math.Ceiling(amt / qty * 100m) / 100m", "Fingerprint(qty, price)", "OcrLineQuantityAction.RoundedUnitPrice"],
+         must_lit=["{Tag} {why}", "สตางค์"],
+         why=_GQ_WHY + "คงจำนวน: ราคาปัดขึ้นเมื่อปัดปกติแล้วต่ำกว่ายอด (ส่วนลดติดลบเก็บไม่ได้) · แท็กบล็อกบอกส่วนต่างเป็นสตางค์ + ค่าที่ระบบตั้ง (ตรวจสด)"),
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="QuantityDescription",
+         must=["FitDescription(desc, suffix)", "IsMeterUnit(lineUnit, description)"],
+         why=_GQ_WHY + "P2: ท้ายคำอธิบายต้องพอดีคอลัมน์ DocumentLine.DescriptionMaxLength (ตัวตัดเดียว) และมีรูปเดียวที่ตัวตัดกลับรู้จัก"),
+    dict(file=OCR, method="SanitizeVatSplitArtifacts",
+         must=["OcrUtilityVendor.Is(data.VendorTaxId, data.VendorName)"],
+         call_args=[("OcrLineQuantityGuard.Decide(", "utilitySeller")],
+         why=_GQ_WHY + "ผู้ขายสาธารณูปโภค (กุญแจ = เลขผู้เสียภาษี) เป็นหลักฐานมิเตอร์ข้อหนึ่ง — ต้องถึงตัวตัดสิน"),
+    dict(file=HARNESS, method="BuildLines",
+         must=["OcrUtilityVendor.Is(p.VendorTaxId"],
+         call_args=[("OcrLineQuantityGuard.Decide(", "utilitySeller")],
+         why=_GQ_WHY + "harness เล่นซ้ำหลักฐานผู้ขายเหมือน service"),
+    dict(file=OCR, method="ScanAsync",
+         forbid=["OcrLearnerDescriptionKey.For(extractedData.Items.Select(i => i.Description))"],
+         call_args=[("OcrLearnerDescriptionKey.PredictAsync(", "OcrLearnerDescriptionKey.Descriptions(")],
+         # NaiveBayes + ตัวเรียน = สองจุด ต้องผ่านตัวตัดเดียวทั้งคู่ (ตัวเรียนล็อกด้วย call_args ของ PredictAsync)
+         must=["OcrLearnerDescriptionKey.For(Accounting.Helpers.OcrLearnerDescriptionKey.Descriptions(extractedData.Items.Select(i => (i.Description, i.Quantity, i.Unit))))"],
+         why=_GQ_WHY + "P1: คีย์ตัวเรียนฝั่งทำนายต้องตัดท้าย \"(4,272 หน่วย)\" (ตัวตัดเดียว) — ไม่งั้นคีย์แตกตามจำนวนหน่วยทุกเดือน"),
+    dict(file=OCR, method="ScanLineDescriptionsForLearner",
+         must=["(i.Description, i.Quantity, i.Unit)"],
+         why=_GQ_WHY + "P1: ฝั่งเขียนของตัวเรียนส่งจำนวน/หน่วยให้ตัวตัดเดียวกับฝั่งทำนาย"),
+    dict(file=OCR, method="LinkPurchaseOrderAsync",
+         must=["OcrLineQuantityGuard.DescriptionForMatching("],
+         before=[("OcrLineQuantityGuard.DescriptionForMatching(", "_productMatcher.RecordAliasAsync(")],
+         why=_GQ_WHY + "P1: alias ที่เรียนตอนผูก PO ห้ามติดท้ายจำนวนหน่วย"),
+    dict(file="Controllers/OcrController.cs", method="StockPreview",
+         must=["OcrLineQuantityGuard.DescriptionForMatching(", "PrewarmGlobalPatternsAsync(matchDescriptions)", "var desc = matchDescriptions[i];",
+               "var detectedQty = line.Quantity ??"],
+         forbid=["var desc = line.Description"],
+         why=_GQ_WHY + "P1: พรีวิวนำเข้าสต็อกจับคู่/ตั้งชื่อสินค้าด้วยคำอธิบายที่ตัดท้ายจำนวนหน่วย · จำนวนนำเข้า = จำนวนของบรรทัด (ตัวกันต้องไม่ทิ้งจำนวนสินค้า)"),
+    dict(file="Services/Implementations/Ocr/ProductMatcher.cs", method="BackfillAliasesFromHistoryAsync",
+         must=["OcrLineQuantityGuard.DescriptionForMatching(r.Description, r.Quantity, r.Unit)"],
+         forbid=["RecordAliasAsync(companyId, r.ProductId, r.Description,"],
+         why=_GQ_WHY + "P1: alias จากประวัติบรรทัดเอกสารห้ามติดท้ายจำนวนหน่วย"),
+] + [
+    dict(file=OCR, method=m,
+         must=["VendorTaxId = result.ExtractedVendorTaxId", "VendorName = result.ExtractedVendorName"],
+         why=_GQ_WHY + "สร้างซ้ำ/พรีวิว/ดึงรายการซ้ำต้องพาผู้ขายของสแกนให้ตัวกัน — ไม่งั้นบิลสาธารณูปโภคได้คำตอบคนละค่ากับตอนสแกน")
+    for m in ("CreateDocumentFromScanCoreAsync", "PreviewDocumentLinesAsync", "RepopulateDocumentLinesFromScanAsync")
+]
+REVIEWER_CASES += [
+    # P0 กลับมา: ราคาว่างแล้วลง 1 × ยอดโดยไม่ถามหลักฐานมิเตอร์
+    ("GQ1", "Decide", "            if (MeterEvidence(paper, qty, amt, description, unit, utilitySeller))\n                return InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, null,\n                    $\"{NoteTag} {QuantityInDescriptionPhrase} — กระดาษพิมพ์จำนวน",
+     "            if (true)\n                return InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, null,\n                    $\"{NoteTag} {QuantityInDescriptionPhrase} — กระดาษพิมพ์จำนวน", True),
+    # P1 กลับมา: เคส ก ไม่ถามยอด ÷ จำนวน ลงตัวก่อน (น้ำดื่ม 12 ขวด 300 ⇒ 1 × 300)
+    ("GQ2", "Decide", "            if (TiePrice(qty, amt) is decimal tied)\n                return qtyOnPaper",
+     "            if (false && TiePrice(qty, amt) is decimal tied)\n                return qtyOnPaper", True),
+    # P1 กลับมา: ด่านเกิน 2 ตำแหน่งไม่ถาม "ปัดแล้วลงตัวไหม" (1.235 × 80.0405 ⇒ 1 × 98.85)
+    ("GQ3", "Decide", "!PriceFitsDocumentLine(up) && R2(qty * R2(up)) != amt)", "!PriceFitsDocumentLine(up))", True),
+    # P1 กลับมา: หน่วยสินค้าบนแถวไม่ชนะผู้ขายสาธารณูปโภค
+    ("GQ4", "MeterEvidence", "        if (goodsOnPaper) return false;\n", "", True),
+    # service ไม่ส่งหลักฐานผู้ขาย
+    ("GQ5", "SanitizeVatSplitArtifacts", "item.Unit, utilitySeller);", "item.Unit);", True),
+    # เส้นสร้างเอกสารทิ้งผู้ขายของสแกน
+    ("GQ6", "CreateDocumentFromScanCoreAsync",
+     "new OcrExtractedData { VendorTaxId = result.ExtractedVendorTaxId, VendorName = result.ExtractedVendorName };", "new OcrExtractedData();", True),
+    # พรีวิวสต็อกกลับไปจับคู่ด้วยคำอธิบายดิบ
+    ("GQ7", "StockPreview", "            var desc = matchDescriptions[i];", "            var desc = line.Description ?? \"\";", True),
+    # ตัวเรียนฝั่งทำนายกลับไปใช้คำอธิบายดิบ
+    ("GQ8", "ScanAsync", "Accounting.Helpers.OcrLearnerDescriptionKey.Descriptions(extractedData.Items.Select(i => (i.Description, i.Quantity, i.Unit))),\n                extractedData.DocumentType",
+     "extractedData.Items.Select(i => (string?)i.Description),\n                extractedData.DocumentType", True),
+    # รูปถูก: ขึ้นบรรทัดใหม่ในการเรียกตัวตัดของพรีวิวสต็อก ต้องไม่ถูกฟ้อง
+    ("GQ9", "StockPreview", "            .Select(l => Accounting.Helpers.OcrLineQuantityGuard.DescriptionForMatching(l.Description, l.Quantity, l.Unit))",
+     "            .Select(l => Accounting.Helpers.OcrLineQuantityGuard\n                .DescriptionForMatching(l.Description, l.Quantity, l.Unit))", False),
 ]
 
 

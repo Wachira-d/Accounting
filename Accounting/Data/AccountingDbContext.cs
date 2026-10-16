@@ -904,7 +904,7 @@ public class AccountingDbContext : DbContext
             e.Property(l => l.VatRate).HasPrecision(5, 2);
             e.Property(l => l.WithholdingTaxRate).HasPrecision(5, 2);
             e.Property(l => l.Unit).HasMaxLength(50);
-            e.Property(l => l.Description).HasMaxLength(1000);
+            e.Property(l => l.Description).HasMaxLength(DocumentLine.DescriptionMaxLength);
         });
 
         // ===== Contact =====
