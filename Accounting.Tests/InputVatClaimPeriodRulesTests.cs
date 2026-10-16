@@ -187,7 +187,7 @@ public class InputVatClaimPeriodRulesTests
             new DateTime(2026, 9, 1), JunInvoice, filedReportPeriod: (6, 2026));
         Assert.Equal(InputVatClaimPeriodOutcome.Blocked, d.Outcome);
         Assert.Contains("06/2026", d.BlockReason!);
-        Assert.Contains("ยื่นเพิ่มเติม", d.BlockReason!);
+        Assert.Contains("ยื่นแบบเพิ่มเติม", d.BlockReason!);   // ศัพท์ทางการของสรรพากร — ข้อความโค้ดคือ "ต้องยื่นแบบเพิ่มเติม" (เดิมเทสต์ค้นคำไม่มี "แบบ" จึงไม่เคยเจอ)
     }
 
     [Fact]
@@ -208,7 +208,7 @@ public class InputVatClaimPeriodRulesTests
         var d = InputVatClaimPeriodRules.DecideAgainstReports(
             new DateTime(2027, 1, 1), JunInvoice, filedReportPeriod: (6, 2026));
         Assert.Equal(InputVatClaimPeriodOutcome.Blocked, d.Outcome);
-        Assert.Contains("ยื่นเพิ่มเติม", d.BlockReason!);
+        Assert.Contains("ยื่นแบบเพิ่มเติม", d.BlockReason!);   // ศัพท์ทางการของสรรพากร — ข้อความโค้ดคือ "ต้องยื่นแบบเพิ่มเติม" (เดิมเทสต์ค้นคำไม่มี "แบบ" จึงไม่เคยเจอ)
     }
 
     // ── §82/3 — ต้องตรงกับตัวตัดสินของปุ่ม "ดึงเอกสาร" ────────────────

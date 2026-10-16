@@ -15,7 +15,7 @@ public class GlAccountTemplateSanityTests
 {
     private static Dictionary<string, string> AllNames()
     {
-        // common + ทุกชุด equity/industry — ชื่อแรกของ code ชนะ (ตรงกับ seeding)
+        // common + ทุกชุด equity — ชื่อแรกของ code ชนะ (ตรงกับ seeding) · ชุดอุตสาหกรรม**ไม่รวม** (ตรวจแยกที่ Code_21510)
         var lists = new[]
         {
             ChartOfAccountTemplates.GetCommonAccounts(),
@@ -56,10 +56,17 @@ public class GlAccountTemplateSanityTests
     {
         // pin การชนที่เคยเกิด: 21510 = เงินมัดจำรับล่วงหน้า (หนี้สินมัดจำ) —
         // ห้ามมีใครเข้าใจ/เปลี่ยนเป็นบัญชี WHT (พรีวิวเคย hardcode ผิดตัวนี้)
-        var names = AllNames();
-        Assert.True(names.ContainsKey("21510"));
-        Assert.DoesNotContain("หัก ณ ที่จ่าย", names["21510"]);
-        Assert.Contains("มัดจำ", names["21510"]);
+        // 21510 อยู่ในชุดอุตสาหกรรมโรงแรม/ที่พัก (GetIndustryHotel) ไม่ใช่ผังกลาง — เดิมเทสต์ค้นใน AllNames()
+        // (common + equity) จึงไม่เคยเจอ code นี้เลยตั้งแต่ต้นประวัติ · ผังกลางต้องไม่มี 21510 เป็นอย่างอื่นด้วย
+        Assert.False(AllNames().ContainsKey("21510"), "ผังกลางไม่ควรมี 21510 — ถ้าเพิ่มต้องไม่ใช่ WHT");
+        var hotel = ChartOfAccountTemplates.GetIndustryHotel().Where(a => a.Code == "21510").ToList();
+        var a21510 = Assert.Single(hotel);
+        Assert.DoesNotContain("หัก ณ ที่จ่าย", a21510.NameTh);
+        Assert.Contains("มัดจำ", a21510.NameTh);
+        // ทุกชุดอุตสาหกรรมที่มี 21510 ต้องเป็นมัดจำ ไม่ใช่ WHT (กันชุดใหม่ใช้เลขซ้ำคนละความหมาย)
+        foreach (var it in Enum.GetValues<Accounting.Models.Enums.IndustryType>())
+            foreach (var a in ChartOfAccountTemplates.GetIndustryAccounts(it).Where(x => x.Code == "21510"))
+                Assert.DoesNotContain("หัก ณ ที่จ่าย", a.NameTh);
     }
 
     [Fact]

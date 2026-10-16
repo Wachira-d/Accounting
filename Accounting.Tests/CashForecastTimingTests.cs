@@ -67,10 +67,13 @@ public class CashForecastTimingTests
     [Fact]
     public void ใบเดียวที่ช้ามาก_ห้ามลากทั้งกราฟ_ใช้มัธยฐานไม่ใช่ค่าเฉลี่ย()
     {
-        // mean ของ {2,3,4,300} = 77 · median = 3 → ต้องได้ 3
+        // mean ของ {2,3,4,300} = 77.25 · median = (3+4)/2 = 3.5 → ปัด AwayFromZero = 4 (ตามเทสต์
+        // จำนวนตัวอย่างคู่_มัธยฐานปัดแบบAwayFromZero ในไฟล์นี้) — เดิมคาด 3 ซึ่งคิดมัธยฐานคู่ผิด (ไม่เคยเขียว)
         var t = CashForecastTiming.Resolve(Due, new DateTime(2026, 8, 1), Today,
             new[] { 2, 3, 4, 300 });
-        Assert.Equal(3, t.LagDaysApplied);
+        Assert.Equal(4, t.LagDaysApplied);
+        // จำนวนคี่: {2,3,300} → 3 พอดี (mean 101.7)
+        Assert.Equal(3, CashForecastTiming.Resolve(Due, new DateTime(2026, 8, 1), Today, new[] { 2, 3, 300 }).LagDaysApplied);
     }
 
     [Fact]

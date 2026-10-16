@@ -67,9 +67,14 @@ public class InventoryControlAccountTests
     }
 
     [Fact]
-    public void คำนำหน้ารหัสบัญชีdefault_วัสดุ118_สินค้า115()
+    public void คำนำหน้ารหัสบัญชีdefault_วัสดุ11520_สินค้า115()
     {
-        Assert.Equal("118", InventoryControlAccount.DefaultAccountPrefix(ProductType.Supplies));
+        // เดิม "118" — 4bfe9bfd ย้ายวัสดุสิ้นเปลืองไป 11520 "วัสดุสิ้นเปลืองคงเหลือ" เพราะ 118 ตก prefix-search ไปเจอ
+        // 11810 เงินมัดจำ (ซื้อวัสดุ Dr เข้าบัญชีเงินมัดจำ) · เดิมชื่อเมธอด …วัสดุ118_สินค้า115
+        Assert.Equal("11520", InventoryControlAccount.DefaultAccountPrefix(ProductType.Supplies));
+        Assert.Equal(InventoryControlAccount.SuppliesAccountCode, InventoryControlAccount.DefaultAccountPrefix(ProductType.Supplies));
+        Assert.Contains(Accounting.Services.ChartOfAccountTemplates.GetCommonAccounts(),
+            a => a.Code == "11520" && a.NameTh.Contains("วัสดุสิ้นเปลือง"));   // ต้องมีผังจริงในผังกลาง ไม่ใช่ตกไปเจอมัดจำ
         Assert.Equal("115", InventoryControlAccount.DefaultAccountPrefix(ProductType.Product));
         Assert.Equal("115", InventoryControlAccount.DefaultAccountPrefix(ProductType.RawMaterial));
     }

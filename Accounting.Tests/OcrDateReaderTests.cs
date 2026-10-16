@@ -222,9 +222,17 @@ public class OcrDateReaderTests
     public void ด่านอนุมัติ_วันที่ที่ทับ_engine_หรือเติมให้_ต้องให้คนยืนยัน_และแท็กบล็อกการอนุมัติเอง()
     {
         var replaced = OcrDateReader.CrossCheck(D(2018, 9, 26), WinePro, Uploaded);
-        var filled = OcrDateReader.CrossCheck(null, WinePro, Uploaded);
+        // "เติมให้" ที่ต้องให้คนยืนยัน = เติมจาก**ตัวเลขลอย ๆ** ไม่มีป้าย (0.40–0.80 · deda7c96 ข้อ 1 · DOCUMENT_FLOW §2.2:
+        // ความมั่นใจ < 0.85 และไม่ใช่ "ตรงกับป้าย") — เดิมเทสต์ใช้ WinePro ซึ่งมีป้าย "Date: 18/09/26" ⇒ เติมด้วย
+        // LabelledConfidence 0.90 ⇒ ไม่ต้องยืนยันตามกติกาที่จดไว้ (เทสต์ไม่เคยเขียวตั้งแต่เขียน)
+        var filled = OcrDateReader.CrossCheck(null, "ร้าน ก\n18/09/26\nรวม 100.00", Uploaded);
+        Assert.Equal(OcrDateVerdict.Filled, filled.Verdict);
         Assert.True(OcrDateReader.NeedsHumanConfirm(replaced));
         Assert.True(OcrDateReader.NeedsHumanConfirm(filled));
+        // ทิศตรงข้าม: เติมจากป้ายวันที่เอกสารบนกระดาษ (0.90) ไม่บล็อกการอนุมัติเอง
+        var filledFromLabel = OcrDateReader.CrossCheck(null, WinePro, Uploaded);
+        Assert.Equal(OcrDateReader.LabelledConfidence, filledFromLabel.Confidence);
+        Assert.False(OcrDateReader.NeedsHumanConfirm(filledFromLabel));
         var notes = "\n" + OcrPostingReadiness.DateUnsureTag + " " + replaced.Reason;
         Assert.False(OcrPostingReadiness.Evaluate(notes, hasUsableDate: true).CanAutoApprove);
     }

@@ -94,7 +94,22 @@ public class GatewaySettlementMathTests
             var feeNet = cents / 100m;
             var p = Plan(new[] { I(100000m, feeNet) }, 100000m - feeNet,
                 GatewayFeeWhtMode.Withhold3Percent);
-            Assert.Equal(SettlementBlockReason.WhtCertificateRequired, p.Reason);
+            // ค่าธรรมเนียมไม่กี่สตางค์ ภาษี 3/97 ปัดแล้วเป็น 0 ⇒ ไม่มีขา 21917 ⇒ ไม่ต้องมี 50 ทวิ ⇒ แผนผ่าน (ไม่บล็อก)
+            // — assert เดิม (ef3d97b5 · เขียนพร้อมโค้ด ไม่เคยเขียว) บังคับ WhtCertificateRequired ทุกสตางค์รวมยอดที่ภาษีเป็น 0
+            // ซึ่งโค้ดในคอมมิตเดียวกันตั้งใจไม่บล็อก (บล็อกเฉพาะ wht > 0 — ไม่มีขา 21917 ก็ไม่มีอะไรให้ 50 ทวิ รองรับ)
+            // · ล็อกจุดตัดให้แน่น: round(0.16×3/97) = 0.00 · round(0.17×3/97) = 0.01 ⇒ ภาษี 0 ได้เฉพาะ ≤ 0.16 บาท
+            if (p.WhtOnFee > 0m)
+            {
+                Assert.True(feeNet >= 0.17m, $"ค่าธรรมเนียม {feeNet} ภาษีควรปัดเป็น 0");
+                Assert.Equal(SettlementBlockReason.WhtCertificateRequired, p.Reason);
+                Assert.False(p.Ok);
+            }
+            else
+            {
+                Assert.True(feeNet <= 0.16m, $"ค่าธรรมเนียม {feeNet} ภาษีหัก ณ ที่จ่ายไม่ควรเป็น 0");
+                Assert.Equal(SettlementBlockReason.None, p.Reason);
+                Assert.True(p.Ok);
+            }
             Assert.Equal(feeNet, p.FeeGrossedUp - p.WhtOnFee);
         }
     }

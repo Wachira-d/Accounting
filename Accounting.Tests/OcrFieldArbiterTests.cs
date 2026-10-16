@@ -82,7 +82,10 @@ public class OcrFieldArbiterTests
             Assert.True(OcrFieldArbiter.Rank(OcrFieldArbiter.Precedence[i - 1])
                       > OcrFieldArbiter.Rank(OcrFieldArbiter.Precedence[i]),
                 $"{OcrFieldArbiter.Precedence[i - 1]} ต้องน่าเชื่อกว่า {OcrFieldArbiter.Precedence[i]}");
-        Assert.Equal(OcrFieldSource.EtaxXml, OcrFieldArbiter.Precedence[0]);
+        // รอบ 184 (723f4ea1 · D-7 one-way governor): ผู้ใช้ยืนยัน/แก้เองอยู่ชั้นบนสุด เหนือ e-Tax XML
+        // — เดิมเทสต์ค้างว่า EtaxXml อยู่บนสุด (ก่อนมี UserConfirmed)
+        Assert.Equal(OcrFieldSource.UserConfirmed, OcrFieldArbiter.Precedence[0]);
+        Assert.Equal(OcrFieldSource.EtaxXml, OcrFieldArbiter.Precedence[1]);   // แหล่งอัตโนมัติที่น่าเชื่อสุด
     }
 
     [Fact]

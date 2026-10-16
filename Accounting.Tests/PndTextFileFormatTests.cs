@@ -202,7 +202,10 @@ public class PndTextFileFormatTests
     {
         var row = JuristicRow() with { PayeeName = "บริษัท A|B จำกัด" };
         var c = PndTextFileFormat.DetailRow(1, row).Split('|');
-        Assert.Equal(11, c.Length);             // ยังเป็น 11 ช่อง
+        // 12 ช่อง (Col12 คำนำหน้าชื่อ เพิ่มใน a3b93f71 — เดิมเทสต์ค้างที่ 11) · '|' ในชื่อกลายเป็นช่องว่างใน Col4 ไม่ใช่ช่องใหม่
+        Assert.Equal(PndTextFileFormat.Headers.Count, c.Length);
+        Assert.Equal(12, c.Length);
+        Assert.Contains("A B", c[3]);
     }
 
     [Fact]

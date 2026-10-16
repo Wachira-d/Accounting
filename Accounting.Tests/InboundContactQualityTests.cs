@@ -46,8 +46,14 @@ public class InboundContactQualityTests
 
     [Fact]
     public void ต้นทางไม่ส่งชื่อมา_ใช้ชื่อทางการได้เลย()
-        => Assert.Equal(DbdTrustVerdict.NoIncomingName,
+    {
+        // ตั้งแต่รอบ 177 ทีม T1 (f23a89e2): "ไม่มีชื่อ" ไม่ใช่หลักฐานว่าเลขถูก — ใช้ชื่อทะเบียนได้เต็มที่เฉพาะเมื่อกุญแจพิสูจน์แล้ว
+        // (keyProven) · ไม่พิสูจน์ = NoIncomingNameUnprovenKey (ทะเบียนยังชนะแต่ความมั่นใจต่ำ) — เทสต์เดิมค้างก่อนแยกสองค่านี้
+        Assert.Equal(DbdTrustVerdict.NoIncomingName,
+            DbdIdentityGuard.Judge("บริษัท ก จำกัด", "", 0, keyProven: true));
+        Assert.Equal(DbdTrustVerdict.NoIncomingNameUnprovenKey,
             DbdIdentityGuard.Judge("บริษัท ก จำกัด", "", 0));
+    }
 
     [Fact]
     public void ตัดคำมาตรฐานก่อนเทียบ_ชื่อเดียวกันคนละรูปแบบต้องตรงกัน()

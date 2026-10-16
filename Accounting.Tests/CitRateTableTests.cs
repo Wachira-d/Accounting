@@ -85,7 +85,10 @@ public class CitRateTableTests
     [InlineData(5_000_001, 30_000_000, false)]   // ทุนเกิน 1 บาท
     [InlineData(5_000_000, 30_000_001, false)]   // รายได้เกิน 1 บาท
     [InlineData(5_000_001, 30_000_001, false)]
-    [InlineData(0, 0, true)]                     // บริษัทใหม่ยังไม่มีรายได้
+    [InlineData(1, 0, true)]                     // บริษัทใหม่ (ทุนที่กรอกแล้ว) ยังไม่มีรายได้
+    // ทุน 0 = "ยังไม่ได้กรอก" ไม่ใช่ทุนศูนย์ (คำตัดสินรอบ 182 Q10 · ลงโค้ดใน 30c2e02e — นิติบุคคลมีทุน 0 ไม่ได้)
+    // ⇒ ไม่ใช่ SME · แถวเดิม (0, 0, true) ค้างจากก่อนคำตัดสินนั้น
+    [InlineData(0, 0, false)]
     public void เกณฑ์SMEต้องเข้าทั้งทุนและรายได้(
         int paidUpCapital, int annualRevenue, bool expected)
         => Assert.Equal(expected, CitRateTable.IsSme(paidUpCapital, annualRevenue));
@@ -132,8 +135,8 @@ public class CitRateTableTests
 
     [Theory]
     [InlineData(null)]
-    [InlineData(0)]
-    [InlineData(-1)]
+    [InlineData(0d)]     // ต้องเป็น double literal — xUnit แปลง int → double? ไม่ได้ (แถว 0/-1 ไม่เคยรันจริงตั้งแต่เขียน)
+    [InlineData(-1d)]
     public void ไม่รู้ทุนที่ชำระแล้ว_ต้องไม่ใช่_SME(double? capital)
     {
         var c = capital.HasValue ? (decimal?)(decimal)capital.Value : null;

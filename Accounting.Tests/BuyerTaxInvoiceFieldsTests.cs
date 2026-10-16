@@ -79,10 +79,17 @@ public class BuyerTaxInvoiceFieldsTests
     }
 
     [Fact]
-    public void Juristic_buyer_without_branch_code_is_incomplete()
+    public void Juristic_buyer_with_malformed_branch_code_is_incomplete()
     {
-        var missing = TaxInvoiceCompletenessChecker.MissingBuyerFields(Juristic(branch: null));
-        Assert.Contains(missing, m => m.Contains("สาขา"));
+        // กติกาปัจจุบัน (TaxInvoiceCompletenessChecker.MissingBuyerFields · ดูคอมเมนต์ในโค้ด): สาขา **ว่าง** = "00000
+        // สำนักงานใหญ่" ซึ่ง renderer พิมพ์ "(สำนักงานใหญ่)" ให้อยู่แล้ว ⇒ ไม่ขาด · ขาดเมื่อ**กรอกมาผิดรูป** (ไม่ใช่ 5 หลัก)
+        // เดิมเทสต์นี้คาดว่าสาขาว่าง = ขาด ซึ่งค้างจากกติกาก่อนหน้าประวัติเรพ (≤350a394d) — โค้ดกับระบบทั้งชุด
+        // (ContactTaxBranchKey · FormatBranch · SupplierBranchCode ?? "00000") ถือสาขาว่าง ≡ สนญ.
+        Assert.Contains(TaxInvoiceCompletenessChecker.MissingBuyerFields(Juristic(branch: "12")), m => m.Contains("สาขา"));
+        Assert.Contains(TaxInvoiceCompletenessChecker.MissingBuyerFields(Juristic(branch: "123456")), m => m.Contains("สาขา"));
+        // ทิศตรงข้าม: สาขาว่าง/00000/00001 ไม่ขาด
+        Assert.DoesNotContain(TaxInvoiceCompletenessChecker.MissingBuyerFields(Juristic(branch: null)), m => m.Contains("สาขา"));
+        Assert.DoesNotContain(TaxInvoiceCompletenessChecker.MissingBuyerFields(Juristic(branch: "00001")), m => m.Contains("สาขา"));
     }
 
     /// <summary>ผู้ติดต่อที่ยังตั้งประเภทเป็น Individual แต่เลขภาษีขึ้นต้น 0
@@ -92,9 +99,15 @@ public class BuyerTaxInvoiceFieldsTests
     public void Tax_id_starting_with_zero_is_treated_as_juristic_even_if_type_says_otherwise()
     {
         var c = new Contact { Name = "ห้างหุ้นส่วน ก", ContactType = ContactType.Individual,
-                              TaxId = "0105561040684", Address = "1 ถ.A", BranchCode = null };
+                              TaxId = "0105561040684", Address = "1 ถ.A", BranchCode = "12" };
         Assert.True(TaxInvoiceCompletenessChecker.IsJuristicBuyer(c));
+        // ถูกถือเป็นนิติบุคคล ⇒ เดินด่านสาขา (สาขาผิดรูปถูกจับ — สาขาว่าง ≡ สนญ. ไม่ขาด ดูเทสต์ข้างบน)
         Assert.Contains(TaxInvoiceCompletenessChecker.MissingBuyerFields(c), m => m.Contains("สาขา"));
+        // ทิศตรงข้าม: บุคคลธรรมดาจริง (เลขไม่ขึ้นต้น 0) สาขาผิดรูปไม่ถูกบังคับ
+        var person = new Contact { Name = "นาย ก", ContactType = ContactType.Individual,
+                                   TaxId = "1101700230708", Address = "1 ถ.A", BranchCode = "12" };
+        Assert.False(TaxInvoiceCompletenessChecker.IsJuristicBuyer(person));
+        Assert.DoesNotContain(TaxInvoiceCompletenessChecker.MissingBuyerFields(person), m => m.Contains("สาขา"));
     }
 
     [Fact]
