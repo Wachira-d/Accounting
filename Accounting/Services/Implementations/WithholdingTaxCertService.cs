@@ -1480,15 +1480,15 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             documentIsForeignService, contact?.CountryCode);
         if (isForeignPayee)
             return (TaxType.WithholdingTax54, requested.HasValue && requested.Value != TaxType.WithholdingTax54,
-                "payee ต่างประเทศ (ม.70 → ภ.ง.ด.54)");
+                "ผู้ถูกหักต่างประเทศ (ม.70 → ภ.ง.ด.54)");
 
         var juristic = DetectJuristic(contact);
         TaxType correct;
         string reason;
-        if (juristic == true) { correct = TaxType.WithholdingTax53; reason = "payee เป็นนิติบุคคล"; }
-        else if (juristic == false) { correct = TaxType.WithholdingTax3; reason = "payee เป็นบุคคลธรรมดา"; }
-        else if (contact != null) { correct = DetermineTaxFormType(contact); reason = "จาก ContactType"; }
-        else { correct = requested ?? TaxType.WithholdingTax3; reason = "ไม่พบ payee"; }
+        if (juristic == true) { correct = TaxType.WithholdingTax53; reason = "ผู้ถูกหักเป็นนิติบุคคล"; }
+        else if (juristic == false) { correct = TaxType.WithholdingTax3; reason = "ผู้ถูกหักเป็นบุคคลธรรมดา"; }
+        else if (contact != null) { correct = DetermineTaxFormType(contact); reason = "ตามประเภทผู้ติดต่อ"; }
+        else { correct = requested ?? TaxType.WithholdingTax3; reason = "ไม่พบผู้ถูกหัก"; }
 
         // ── แกนประเภทเงินได้ของผู้รับบุคคลธรรมดา (รอบ 204 ข้อ 148): ม.40(4) ทั้งใบ ⇒ ภ.ง.ด.2 (ม.50(2) · ม.59) ──
         // ผู้ใช้ขอ ภ.ง.ด.2 เองกับบุคคลธรรมดา ⇒ เคารพ (แบบ ภ.ง.ด.2 ของกรมมีแถว ม.40(3) ด้วย — ตารางยังไม่ตัดสินเอง — คำถามค้าง DOCUMENT_FLOW §5.4)
@@ -1496,7 +1496,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         {
             // ฝ่ายค้านรอบ 204 ข้อ 2: เคารพเฉพาะเมื่อประเภทเงินได้ไม่ขัด (มีบรรทัดเงินได้อื่น ⇒ ตกลง ภ.ง.ด.3 + corrected=true ให้ผู้ใช้เห็น)
             if (requested == TaxType.WithholdingTax2 && Accounting.Helpers.WhtPayeeKind.Pnd2ChoiceAllowed(withheldIncomeTypeCodes))
-                return (TaxType.WithholdingTax2, false, "ผู้ใช้เลือก ภ.ง.ด.2 · payee บุคคลธรรมดา");
+                return (TaxType.WithholdingTax2, false, "ผู้ใช้เลือก ภ.ง.ด.2 · ผู้ถูกหักบุคคลธรรมดา");
             if (Accounting.Helpers.WhtPayeeKind.IndividualForm(withheldIncomeTypeCodes) == TaxType.WithholdingTax2)
             { correct = TaxType.WithholdingTax2; reason += " · เงินได้ ม.40(4) ทั้งใบ (ภ.ง.ด.2)"; }
             // c2: ค่าสิทธิ ม.40(3) ตามค่าตั้งบริษัท — เฉพาะเมื่อผู้ใช้ไม่ได้ขอ ภ.ง.ด.3 เอง (ใบคีย์มือเลือก 2 หรือ 3 ได้ทั้งสองค่าตั้ง)

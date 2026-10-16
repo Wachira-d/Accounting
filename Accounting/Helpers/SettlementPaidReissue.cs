@@ -410,6 +410,10 @@ public static class SettlementPaidReissue
         nameof(Document.PreparerName), nameof(Document.PreparerSignatureBase64), nameof(Document.EtaxCancelledByCreditNoteId),
         // รอบ 201 ทีม DV (A-DV2 · ข้อ 65): ผลการปิดธง e-Tax ทาง (ค) เป็นของใบเสร็จนั้นเท่านั้น
         nameof(Document.EtaxKeptOriginalAt),
+        // ผูกเอกสารภายหลัง (a13a995b · ข้อ 138ข) — ตราประทับ "ใคร/เมื่อไรผูกใบเดิมกับต้นทาง" เป็นการกระทำบนใบเดิม ⇒ ไม่ตามไป
+        // (RelatedDocumentId ตามไปแล้ว — ใบแทนผูกต้นทางเดิมโดยการออกใบแทน ไม่ใช่โดยผู้ผูกคนเดิม · ไม่ประทับเวลาที่ไม่ได้เกิดกับใบนี้)
+        // เดิมช่องสองตัวนี้ถูกเพิ่มใน entity โดยไม่ได้จัดกลุ่ม ⇒ เทสต์ partition R7/RV1F11 ล้มพร้อมชื่อช่อง (ทำหน้าที่ถูกต้อง)
+        nameof(Document.SourceLinkedAt), nameof(Document.SourceLinkedBy),
     };
 
     /// <summary>ช่องของบรรทัดที่ตามไป — ทุกอย่างของรายการ ยกเว้นตัวตน/เวลา/ใบแม่ และ feedback AI ของผังบัญชี (สองบรรทัดชี้แถวเดียว)</summary>

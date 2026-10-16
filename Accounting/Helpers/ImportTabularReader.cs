@@ -234,13 +234,25 @@ public static class ImportTabularReader
             var thai = CodePagesEncodingProvider.Instance.GetEncoding(874, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
             if (thai != null)
             {
-                try { return (thai.GetString(bytes), "windows-874"); }
+                // ⚠️ DecoderFallback.ExceptionFallback ไม่พอ: ตาราง 874 ของ .NET "best-fit" ไบต์ที่ไม่มีใน TIS-620/Windows-874
+                // ไปเป็นอักขระ Private Use (0xDB–0xDE · 0xFC–0xFF → U+F8C1–U+F8C8) และ C1 control (0x81–0x9F ที่ไม่ใช่ €/…/อัญประกาศ)
+                // แทนการ throw ⇒ ไฟล์ขยะ "ถอดได้" เป็นอักขระเสียเงียบ ๆ — ต้องตรวจผลถอดเองด้วย (Is874Undefined)
+                try
+                {
+                    var text = thai.GetString(bytes);
+                    if (!text.Any(Is874Undefined)) return (text, "windows-874");
+                }
                 catch (DecoderFallbackException) { /* ตกไปล้มดังข้างล่าง */ }
             }
             throw new ImportFormatException("encoding",
                 "อ่านอักขระในไฟล์ไม่ได้ (ไม่ใช่ UTF-8 หรือ TIS-620) — เปิดไฟล์ใน Excel แล้ว \"บันทึกเป็น CSV UTF-8\" หรือบันทึกเป็น .xlsx");
         }
     }
+
+    /// <summary>อักขระที่ตาราง 874 ของ .NET คืนให้ไบต์ที่<b>ไม่มี</b>ใน TIS-620/Windows-874 — Private Use U+F8C1–U+F8C8
+    /// (ไบต์ 0xDB–0xDE · 0xFC–0xFF) และ C1 control U+0080–U+009F (ไบต์ 0x81–0x9F ที่ Windows-874 ไม่ได้กำหนด · 0x80/0x85/0x91–0x97
+    /// ถอดเป็น € … ‘ ’ “ ” • – — ซึ่งไม่อยู่ในช่วงนี้)</summary>
+    internal static bool Is874Undefined(char c) => c is (>= '\uF8C1' and <= '\uF8C8') or (>= '\u0080' and <= '\u009F');
 
     // ═══════════════════════ CSV ═══════════════════════
 

@@ -31,11 +31,20 @@ public static class ThaiAddressParser
         RegexOptions.Compiled);
 
     // Address keyword patterns — match Thai administrative-area markers
+    //
+    // ⚠️ token ที่สอง (ชื่อสองคำ) ต้องกันด้วย negative lookahead ทั้ง "คำ" — เดิมเขียน
+    // `[^\s,เขตอำเภอจังหวัด]+` / `[^\s,จังหวัด]+` ซึ่งเป็น **character class** (ห้ามตัวอักษร
+    // จ ั ง ห ว ด ทีละตัว) ไม่ใช่ "ห้ามคำว่าจังหวัด" ⇒ "เขตคลองเตย กรุงเทพฯ" จับได้
+    // "คลองเตย กรุ" (หยุดที่ ง) และ "อำเภอเมือง ชลบุรี" กลืนชื่อจังหวัดเข้าอำเภอ ·
+    // ชื่อจังหวัดที่ไม่มี จ. นำ ตัดทิ้งหลังจับใน DropTrailingProvince (ตาราง ProvinceNames
+    // ประกาศหลัง regex จึงใช้ใน pattern ไม่ได้ — static init ตามลำดับบรรทัด) · คำนำถนน/ซอย/หมู่/โทร ก็เป็นจุดหยุดด้วย
+    // (ชุดเดียวกับ BuildingRegex ข้างบน — character class เดิมกันพวกนี้ไว้โดยบังเอิญเพราะมี ห/ว/อ อยู่ในคำ)
+    private const string AreaStop = @"(?!แขวง|ตำบล|ต\.|เขต|อำเภอ|อ\.|จังหวัด|จ\.|กรุงเทพ|กทม|ถนน|ถ\.|ซอย|ซ\.|หมู่|ม\.|โทร|Tel|ประเทศ|[0-9๐-๙])";
     private static readonly Regex SubDistrictRegex = new(
-        @"(?:แขวง|ตำบล|ต\.)\s*([^\s,]+(?:\s+[^\s,เขตอำเภอจังหวัด]+)?)",
+        @"(?:แขวง|ตำบล|ต\.)\s*([^\s,]+(?:\s+" + AreaStop + @"[^\s,]+)?)",
         RegexOptions.Compiled);
     private static readonly Regex DistrictRegex = new(
-        @"(?:เขต|อำเภอ|อ\.)\s*([^\s,]+(?:\s+[^\s,จังหวัด]+)?)",
+        @"(?:เขต|อำเภอ|อ\.)\s*([^\s,]+(?:\s+" + AreaStop + @"[^\s,]+)?)",
         RegexOptions.Compiled);
     private static readonly Regex ProvinceRegex = new(
         @"(?:จังหวัด|จ\.)\s*([^\s,\d]+)",
@@ -92,11 +101,14 @@ public static class ThaiAddressParser
         var mooMatch = MooRegex.Match(text);
         if (mooMatch.Success) moo = NormalizeThaiDigits(mooMatch.Groups[1].Value);
 
+        // ชื่อจังหวัดที่ไม่มี จ. นำ ซึ่งติดมากับตำบล/อำเภอ ("อำเภอพนัสนิคม ชลบุรี") — ตัดออกจากชื่ออำเภอแล้วใช้เป็นจังหวัด
+        // เฉพาะเมื่อไม่มี จ./จังหวัด/กรุงเทพฯ บอกไว้ตรง ๆ (ข้างล่าง)
+        string? trailingProvince = null;
         var subDistMatch = SubDistrictRegex.Match(text);
-        if (subDistMatch.Success) subDistrict = CleanArea(subDistMatch.Groups[1].Value);
+        if (subDistMatch.Success) subDistrict = CleanArea(DropTrailingProvince(subDistMatch.Groups[1].Value, ref trailingProvince));
 
         var distMatch = DistrictRegex.Match(text);
-        if (distMatch.Success) district = CleanArea(distMatch.Groups[1].Value);
+        if (distMatch.Success) district = CleanArea(DropTrailingProvince(distMatch.Groups[1].Value, ref trailingProvince));
 
         var provMatch = ProvinceRegex.Match(text);
         if (provMatch.Success)
@@ -108,6 +120,7 @@ public static class ThaiAddressParser
             // Special case: "กรุงเทพฯ" or "กรุงเทพมหานคร" without จ. prefix
             if (text.Contains("กรุงเทพมหานคร")) province = "กรุงเทพมหานคร";
             else if (text.Contains("กรุงเทพฯ") || text.Contains("กทม")) province = "กรุงเทพมหานคร";
+            else if (trailingProvince != null) province = trailingProvince;
         }
 
         // Fallback: ที่อยู่ไม่มีคำนำหน้าเลย (ไม่มี ต./อ./จ./แขวง/เขต) — เคสจริงจาก
@@ -211,6 +224,18 @@ public static class ThaiAddressParser
             head = Regex.Replace(head, @"(?:หมู่ที่|หมู่|ม\.)\s*[0-9๐-๙]+", " ").Trim();
         head = Regex.Replace(head, @"\s{2,}", " ").Trim().Trim(',').Trim();
         return string.IsNullOrWhiteSpace(head) ? null : head;
+    }
+
+    /// <summary>"เมือง ชลบุรี" → "เมือง" — token ที่สองเป็นชื่อจังหวัด (ไม่มี จ. นำ) ไม่ใช่ส่วนของชื่อตำบล/อำเภอ ·
+    /// ชื่อจังหวัดที่ตัดออกส่งกลับทาง <paramref name="droppedProvince"/> (ตัวแรกชนะ)</summary>
+    private static string DropTrailingProvince(string raw, ref string? droppedProvince)
+    {
+        var parts = raw.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2) return raw;
+        var tail = parts[1].TrimEnd('ฯ', ',', '.');
+        if (!ProvinceNames.Contains(tail)) return raw;
+        droppedProvince ??= tail;
+        return parts[0];
     }
 
     private static string CleanArea(string raw) =>

@@ -55,6 +55,45 @@ public class ThaiAddressParserTests
         Assert.Equal("กรุงเทพมหานคร", p.Province);
     }
 
+    [Fact]
+    public void District_followed_by_province_without_prefix_does_not_swallow_the_province()
+    {
+        // ทิศเดียวกับ Bangkok_prefixed: token ที่สองเป็นชื่อจังหวัดไม่มี จ. นำ ⇒ ไม่ใช่ชื่ออำเภอสองคำ
+        var p = ThaiAddressParser.Parse("44 หมู่ 9 ตำบลหนองเทียง อำเภอพนัสนิคม ชลบุรี 20140");
+        Assert.Equal("หนองเทียง", p.SubDistrict);
+        Assert.Equal("พนัสนิคม", p.District);
+        Assert.Equal("ชลบุรี", p.Province);
+    }
+
+    [Fact]
+    public void Opposite_direction_prefixed_markers_still_split_cleanly()
+    {
+        // ทิศตรงข้าม: ที่อยู่ที่มี marker ครบทุกช่องต้องได้ผลเดิมทุกตัว (ไม่ถูกแตะโดยการแก้ token ที่สอง)
+        var p = ThaiAddressParser.Parse("88 ถ.พระราม 4 แขวงสีลม เขตบางรัก กรุงเทพมหานคร 10500");
+        Assert.Equal("สีลม", p.SubDistrict);
+        Assert.Equal("บางรัก", p.District);
+        Assert.Equal("กรุงเทพมหานคร", p.Province);
+        var q = ThaiAddressParser.Parse("1 ต.ช้างเผือก อ.เมือง จ.เชียงใหม่ 50300");
+        Assert.Equal("ช้างเผือก", q.SubDistrict);
+        Assert.Equal("เมือง", q.District);
+        Assert.Equal("เชียงใหม่", q.Province);
+    }
+
+    [Fact]
+    public void Second_token_that_is_a_road_soi_moo_or_phone_is_not_part_of_the_area_name()
+    {
+        // ทิศตรงข้ามของการเปิดให้ token ที่สอง: character class เดิมกันคำพวกนี้ไว้โดยบังเอิญ — ห้ามถดถอย
+        var p = ThaiAddressParser.Parse("1 ต.สุเทพ ถ.ห้วยแก้ว อ.เมือง จ.เชียงใหม่ 50200");
+        Assert.Equal("สุเทพ", p.SubDistrict);
+        Assert.Equal("เมือง", p.District);
+        var q = ThaiAddressParser.Parse("5 แขวงบางนา ซอย 3 เขตบางนา กรุงเทพฯ 10260 โทร 02-111-2222");
+        Assert.Equal("บางนา", q.SubDistrict);
+        Assert.Equal("บางนา", q.District);
+        var r = ThaiAddressParser.Parse("9 ตำบลบ้านเหล่า หมู่ 4 อำเภอเมือง โทร 081");
+        Assert.Equal("บ้านเหล่า", r.SubDistrict);
+        Assert.Equal("เมือง", r.District);
+    }
+
     // ── ขอบเขต fallback ──────────────────────────────────────────────
 
     [Fact]

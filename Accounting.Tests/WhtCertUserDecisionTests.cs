@@ -69,6 +69,32 @@ public class WhtCertUserDecisionTests
     }
 
     [Fact]
+    public void เหตุผลทุกแบบที่ResolveWhtFormTypeส่งมา_ไม่มีคำอังกฤษ_และไม่เว้นวรรคกลางวลีไทย()
+    {
+        // เหตุผลจริงจาก resolver (ไม่ใช่สตริงที่เทสต์แต่งเอง) — ต้นทางเป็นภาษาไทยแล้ว ไม่พึ่งการแปลงใน Notice
+        var company = new Accounting.Models.Entities.Contact { Name = "บริษัท ก จำกัด", TaxId = "0105561040684", ContactType = ContactType.JuristicPerson };
+        var person = new Accounting.Models.Entities.Contact { Name = "นาย ข", TaxId = "1101700230708", ContactType = ContactType.Individual };
+        var foreign = new Accounting.Models.Entities.Contact { Name = "Acme Inc.", CountryCode = "US", ContactType = ContactType.JuristicPerson };
+        foreach (var (c, asked) in new[] { (company, TaxType.WithholdingTax3), (person, TaxType.WithholdingTax53), (foreign, TaxType.WithholdingTax53) })
+        {
+            var (form, corrected, reason) = Accounting.Services.Implementations.WithholdingTaxCertService.ResolveWhtFormType(c, asked);
+            Assert.True(corrected, c.Name);
+            Assert.DoesNotContain("payee", reason);
+            Assert.DoesNotContain("ContactType", reason);
+            var n = WhtCertFormCorrection.Notice(asked, form, reason)!;
+            Assert.DoesNotContain("payee", n);
+            Assert.DoesNotContain("ผู้ถูกหัก เป็น", n);   // ไทยไม่เว้นวรรคกลางวลี
+        }
+        Assert.Contains("ผู้ถูกหักต่างประเทศ", WhtCertFormCorrection.Notice(TaxType.WithholdingTax53, TaxType.WithholdingTax54,
+            Accounting.Services.Implementations.WithholdingTaxCertService.ResolveWhtFormType(foreign, TaxType.WithholdingTax53).reason));
+        // เหตุผลเก่าที่ยังมีคำ payee (เช่นจากที่อื่น) ยังถูกแปลงไม่เว้นวรรค
+        Assert.Contains("ผู้ถูกหักเป็นบุคคลธรรมดา", WhtCertFormCorrection.Notice(TaxType.WithholdingTax53, TaxType.WithholdingTax3, "payee เป็นบุคคลธรรมดา"));
+        // ทิศตรงข้าม: ไม่มีเหตุผล = ไม่มี " — "
+        var noReason = WhtCertFormCorrection.Notice(TaxType.WithholdingTax53, TaxType.WithholdingTax3, null)!;
+        Assert.DoesNotContain(" — ", noReason);
+    }
+
+    [Fact]
     public void ทิศตรงข้าม_ไม่ได้แก้_หรือไม่ได้ขอแบบ_ไม่มีข้อความ()
     {
         Assert.Null(WhtCertFormCorrection.Notice(TaxType.WithholdingTax53, TaxType.WithholdingTax53, "payee เป็นนิติบุคคล"));

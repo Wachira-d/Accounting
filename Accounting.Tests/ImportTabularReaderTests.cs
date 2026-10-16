@@ -59,6 +59,32 @@ public class ImportTabularReaderTests
         Assert.IsAssignableFrom<BusinessRuleException>(ex);   // middleware ตอบ 400 ข้อความไทย ไม่ใช่ 500
     }
 
+    [Fact]
+    public void ไบต์ขยะ_874_ทีละไบต์_ทุกไบต์ที่ตารางไม่กำหนด_ล้มดัง()
+    {
+        // .NET ไม่ throw ให้ไบต์เหล่านี้ (best-fit เป็น U+F8C1–F8C8 / C1 control) — ด่านต้องจับเองทุกตัว
+        foreach (var b in new byte[] { 0xDB, 0xDC, 0xDD, 0xDE, 0xFC, 0xFD, 0xFE, 0xFF, 0x81, 0x8F, 0x9F })
+        {
+            var ex = Assert.Throws<ImportFormatException>(() => ImportTabularReader.Decode(Thai874.GetBytes("ชื่อ,").Concat(new[] { b }).ToArray()));
+            Assert.Equal("encoding", ex.Code);
+        }
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_TIS620_ทุกอักขระที่ตารางกำหนด_รวมยูโรและอัญประกาศ_ถอดได้ไม่ถูกปัดตก()
+    {
+        // ทุกไบต์ที่ Windows-874 กำหนด: ไทย 0xA1–0xDA · 0xDF–0xFB + € … ‘ ’ “ ” • – — ⇒ ต้องไม่ล้ม (ด่านใหม่ห้ามปัดไฟล์ไทยจริง)
+        var defined = new List<byte> { 0x80, 0x85, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0xA0 };
+        for (int b = 0xA1; b <= 0xDA; b++) defined.Add((byte)b);
+        for (int b = 0xDF; b <= 0xFB; b++) defined.Add((byte)b);
+        var bytes = Encoding.ASCII.GetBytes("x,").Concat(defined).ToArray();
+        var text = ImportTabularReader.Decode(bytes);
+        Assert.Contains("€", text);
+        Assert.Contains("ก", text);
+        Assert.Contains("๛", text);
+        Assert.DoesNotContain(text, ImportTabularReader.Is874Undefined);
+    }
+
     // ═══ CSV ═══
 
     [Fact]

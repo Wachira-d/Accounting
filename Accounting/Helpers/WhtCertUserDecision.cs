@@ -59,7 +59,11 @@ public static class WhtCertFormCorrection
     public static string? Notice(TaxType? requested, TaxType resolved, string? reason)
     {
         if (requested is not TaxType from || from == resolved) return null;
-        var why = string.IsNullOrWhiteSpace(reason) ? "" : " — " + reason.Replace("payee", "ผู้ถูกหัก", StringComparison.Ordinal).Trim();
+        // ต้นทาง (ResolveWhtFormType) เป็นภาษาไทยแล้ว — ตัวแปลงนี้กันเหตุผลรุ่นเก่าที่ยังมีคำ "payee" ·
+        // ภาษาไทยไม่เว้นวรรคระหว่างคำ: "payee เป็นนิติบุคคล" → "ผู้ถูกหักเป็นนิติบุคคล" (เดิมได้ "ผู้ถูกหัก เป็นนิติบุคคล")
+        var why = string.IsNullOrWhiteSpace(reason) ? "" : " — " + reason
+            .Replace("payee ", "ผู้ถูกหัก", StringComparison.Ordinal)
+            .Replace("payee", "ผู้ถูกหัก", StringComparison.Ordinal).Trim();
         return $"ระบบเปลี่ยนแบบยื่นจาก {WhtUnissuedCertGate.FormLabel(from)} เป็น {WhtUnissuedCertGate.FormLabel(resolved)}{why} "
                + "(แบบ ภ.ง.ด. ตัดสินจากผู้ถูกหักและประเภทเงินได้) · ถ้าไม่ถูก ให้แก้เลขผู้เสียภาษี/ประเภทของผู้ติดต่อ หรือประเภทเงินได้ แล้วบันทึกใบนี้อีกครั้ง";
     }
