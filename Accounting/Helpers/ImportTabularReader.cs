@@ -368,16 +368,32 @@ public static class ImportTabularReader
     {
         null => "",
         DateTime d => d.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
-        double d => d.ToString("R", CultureInfo.InvariantCulture),
-        float f => f.ToString("R", CultureInfo.InvariantCulture),
         // R-B7: เลข ≥ 1e15 ในเซลล์ตัวเลขของ Excel เสียหลักท้ายไปแล้ว (Excel เก็บ 15 หลัก) — คงรูป scientific ให้ด่านเลขอ้างอิงเห็น
         // (SettlementValueParser.IdLostPrecision · ImportValueNormalizer.TaxId) แทนที่จะพิมพ์เลขเต็มที่ดูถูกแต่หลักท้ายผิด
-        decimal m when Math.Abs(m) >= 1e15m => ((double)m).ToString("R", CultureInfo.InvariantCulture),
-        long l when l >= 1_000_000_000_000_000L || l <= -1_000_000_000_000_000L => ((double)l).ToString("R", CultureInfo.InvariantCulture),
+        double d when Math.Abs(d) >= 1e15 => Scientific(d),
+        double d => d.ToString("R", CultureInfo.InvariantCulture),
+        float f => f.ToString("R", CultureInfo.InvariantCulture),
+        decimal m when Math.Abs(m) >= 1e15m => Scientific((double)m),
+        long l when l >= 1_000_000_000_000_000L || l <= -1_000_000_000_000_000L => Scientific(l),
         decimal m => m.ToString(CultureInfo.InvariantCulture),
         IFormattable f => f.ToString(null, CultureInfo.InvariantCulture).Trim(),
         _ => (v.ToString() ?? "").Trim(),
     };
+
+    /// <summary>รูป scientific ของเลข ≥ 1e15 เสมอ — "R" ของ .NET 8 พิมพ์เลขที่สั้นพอ (เช่น 1e16 · 2e17) เป็นตัวเลขเต็ม
+    /// "10000000000000000" ⇒ ด่าน IdLostPrecision (หา E+nn) มองไม่เห็นว่าเซลล์นี้เสียหลักไปแล้ว · ตัวเลขนัยสำคัญเท่า "R" (ไม่แต่งหลัก)</summary>
+    private static string Scientific(double d)
+    {
+        var r = d.ToString("R", CultureInfo.InvariantCulture);
+        if (r.Contains('E') || r.Contains('e')) return r;
+        var neg = r.StartsWith('-');
+        var body = neg ? r[1..] : r;
+        var dot = body.IndexOf('.');
+        var intPart = dot < 0 ? body : body[..dot];
+        var frac = dot < 0 ? "" : body[(dot + 1)..];
+        var rest = (intPart[1..] + frac).TrimEnd('0');
+        return (neg ? "-" : "") + intPart[0] + (rest.Length > 0 ? "." + rest : "") + "E+" + (intPart.Length - 1).ToString(CultureInfo.InvariantCulture);
+    }
 
     /// <summary>"A" → 0 · "AB" → 27 · คีย์ที่ไม่ใช่ตัวอักษรคอลัมน์ ⇒ -1</summary>
     public static int ColumnIndex(string key)

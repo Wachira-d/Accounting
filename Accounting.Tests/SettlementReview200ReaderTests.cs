@@ -80,6 +80,14 @@ public class SettlementReview200ReaderTests
         Assert.Equal("123456789012345", SettlementFileReader.CellText(123456789012345d));   // 15 หลัก = Excel เก็บครบ
         Assert.Equal("1070.5", SettlementFileReader.CellText(1070.5m));
         Assert.Equal("-53.5", SettlementFileReader.CellText(-53.5d));
+        // .NET 8 "R" พิมพ์เลขกลม ≥ 1e15 (1e16 · 2e17) เป็นตัวเลขเต็มไม่มี E ⇒ เดิมด่านเลขอ้างอิงมองไม่เห็น (บรรทัด 1e16m ข้างบนล้ม)
+        Assert.Equal("1E+16", SettlementFileReader.CellText(1e16d));
+        Assert.Equal("2E+17", SettlementFileReader.CellText(2e17d));
+        Assert.Equal("-1.5E+15", SettlementFileReader.CellText(-1.5e15d));
+        Assert.True(SettlementValueParser.IdLostPrecision(SettlementFileReader.CellText(2e17d)));
+        // ทิศตรงข้าม: 15 หลักพอดี (ต่ำกว่า 1e15) ยังเป็นเลขเต็ม ไม่ถูกปัดเป็น scientific
+        Assert.Equal("999999999999999", SettlementFileReader.CellText(999999999999999d));
+        Assert.False(SettlementValueParser.IdLostPrecision(SettlementFileReader.CellText(999999999999999d)));
     }
 
     [Fact]
@@ -233,8 +241,12 @@ public class SettlementReview200ReaderTests
     public void RB9_ตัดสินลำดับวันเดือน_ค่าตั้งชนะ_หลักฐานเกิน12_ไม่มีผลใช้วันเดือน_กำกวมล้มดัง()
     {
         List<(int, string?)> D(params string[] v) => v.Select((x, i) => (i + 2, (string?)x)).ToList();
+        // ค่าตั้งชนะเมื่อไฟล์ไม่ขัด (วันที่กำกวม/เข้ากับค่าตั้ง) · ไฟล์ที่ "พิสูจน์" ลำดับตรงข้ามค่าตั้ง ⇒ ล้มดัง date-order-conflict
+        // (I-10 · e1e9f900 รอบ 200 ทีม IF — เดิมเทสต์ค้างว่าค่าตั้งทับหลักฐาน "13/09/2026" ได้เงียบ ๆ = อ่านเป็นเดือน 13)
         Assert.Equal(new SettlementFileDecision<SettlementDateOrder>(SettlementDateOrder.MonthDayYear, false),
-            SettlementFileDecisions.DecideDateOrder(SettlementDateOrder.MonthDayYear, D("13/09/2026"), "Date", null, null));
+            SettlementFileDecisions.DecideDateOrder(SettlementDateOrder.MonthDayYear, D("01/09/2026", "09/13/2026"), "Date", null, null));
+        Assert.Equal("date-order-conflict", Assert.Throws<SettlementFormatException>(() =>
+            SettlementFileDecisions.DecideDateOrder(SettlementDateOrder.MonthDayYear, D("13/09/2026"), "Date", null, null)).Code);
         Assert.Equal(new SettlementFileDecision<SettlementDateOrder>(SettlementDateOrder.DayMonthYear, true),
             SettlementFileDecisions.DecideDateOrder(SettlementDateOrder.Auto, D("01/09/2026", "13/09/2026"), "Date", null, null));
         Assert.Equal(new SettlementFileDecision<SettlementDateOrder>(SettlementDateOrder.MonthDayYear, true),
