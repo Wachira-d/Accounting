@@ -27,7 +27,8 @@ namespace Accounting.Helpers;
 /// นิยามต่อเดือน ⇒ ภ.ง.ด.1ก = ผลรวม ภ.ง.ด.1 ทุกเดือน (ฝ่ายค้านรอบส่งออก 2026-10-15 P1-3)</para>
 ///
 /// <para><b>ไม่เดา</b>: บรรทัด 50 ทวิ ที่รหัสเงินได้ไม่ใช่ 40(1)/40(2) หรือว่าง ⇒ ไม่ลงไฟล์ + <see cref="Result.Notes"/> บอกเลขที่ใบ
-/// และยอดภาษี (ล้มดัง) · เลขผู้เสียภาษีว่าง ⇒ ไฟล์ปล่อยว่าง (ไม่แต่งเลข 0) + Notes บอกจำนวนแถว ·
+/// และยอดภาษี (ล้มดัง) · เลขผู้เสียภาษีว่าง ⇒ แถวเก็บ null · ไฟล์ลงเลข 0 13 หลักตามสเปก WHTSVS ช่อง 5 (ช่อง <c>*</c>) + Notes บอกจำนวนแถว ·
+/// ไม่มีรหัสไปรษณีย์ (ช่อง 12 <c>***</c>) / ไม่มีชื่อ (ช่อง 8 <c>**</c>) / ข้อความยาวเกินสเปก ⇒ Notes (รอบ 2026-10-16) ·
 /// ประเภท (2) อนุมัติ 3% และ (3) เงินชดเชยออกจากงาน <b>ระบบไม่มีข้อมูลแยก</b> (เงินชดเชยที่โพสต์จากหน้าเลิกจ้างไม่ได้หักภาษี
 /// ผ่านเงินเดือน) — บันทึกไว้ใน EXPORT_AUDIT ให้เจ้าของตัดสิน ไม่ใส่ประเภทแทนเอง</para>
 ///
@@ -187,8 +188,14 @@ public static class Pnd1FilingData
             var tid = ThaiTaxId.Normalize(contact?.TaxId);
 
             var cond = WhtGrossUp.FilingCondition(c.CertificateType);
-            var (first, last) = PndTextFileFormat.SplitName(contact?.Name, isJuristic: false, contact?.TitleTh);
-            var title = PndTextFileFormat.TitleOf(contact?.Name, contact?.TitleTh);
+            // รอบ 2026-10-16 (สเปก WHTSVS): นิติบุคคล = ชื่อเต็มในช่องชื่อ · นามสกุล/คำนำหน้าว่าง (ไม่ผ่า "บริษัท ก จำกัด" เป็นชื่อ/สกุล) ·
+            // ตัวตัดสินชนิดผู้รับตัวเดียวกับ ภ.ง.ด.3/53 (WhtPayeeKind) · บุคคล = คำนำหน้าที่ยืนยันไว้ก่อน แล้วค่อยเดาจากชื่อ (PndTextFileFormat)
+            var juristic = contact != null && WhtPayeeKind.IsJuristic(contact.TaxId, contact.ContactType, contact.Name);
+            var (first, last) = PndTextFileFormat.SplitName(contact?.Name, isJuristic: juristic, contact?.TitleTh);
+            var title = juristic ? "" : PndTextFileFormat.TitleOf(contact?.Name, contact?.TitleTh);
+            var address = contact == null ? null : Accounting.Services.Implementations.ThaiAddressFormatter.Format(
+                contact.Address, contact.BuildingNumber, contact.BuildingName, contact.Moo, contact.StreetName,
+                contact.SubDistrict, contact.District, contact.Province, contact.PostalCode);
             var lines = c.Lines?.OrderBy(l => l.LineOrder).ToList() ?? new List<WithholdingTaxCertLine>();
             if (lines.Count == 0)
             {
@@ -204,7 +211,8 @@ public static class Pnd1FilingData
                 certRows.Add(new Pnd1FileFormat.Row(
                     Category: cat, PayeeTaxId: tid, Title: title, FirstName: first, LastName: last,
                     PayDate: l.PaymentDate, IncomeAmount: l.IncomeAmount, TaxAmount: l.TaxAmount,
-                    Condition: cond, Address: contact?.Address, SourceRef: c.CertificateNumber));
+                    Condition: cond, Address: address, SourceRef: c.CertificateNumber,
+                    PostalCode: contact?.PostalCode, TaxRate: l.TaxRate));
             }
         }
         if (annual)
@@ -217,6 +225,8 @@ public static class Pnd1FilingData
                     IncomeAmount = g.Sum(r => r.IncomeAmount),
                     TaxAmount = g.Sum(r => r.TaxAmount),
                     PayDate = g.Max(r => r.PayDate),
+                    // อัตราช่อง 17: ทุกใบอัตราเดียวกัน = อัตรานั้น · ต่างกัน = หาค่าเดียวไม่ได้ ⇒ null (ไฟล์ลง 0 ตามข้อ 9 ของสเปก)
+                    TaxRate = g.Select(r => r.TaxRate).Distinct().Count() == 1 ? g.First().TaxRate : null,
                     SourceRef = string.Join(" ", g.Select(r => r.SourceRef).Distinct()),
                 })
                 .ToList();
@@ -243,11 +253,24 @@ public static class Pnd1FilingData
                 + " · แก้ประเภทเงินได้ในหนังสือรับรอง (หรือย้ายไปแบบ ภ.ง.ด.3) แล้วสร้างไฟล์ใหม่");
         var noTaxId = rows.Count(r => ThaiTaxId.Normalize(r.PayeeTaxId).Length == 0);
         if (noTaxId > 0)
-            notes.Add($"⚠️ {noTaxId} รายการไม่มีเลขประจำตัวผู้เสียภาษี (ช่องว่างในไฟล์ — สรรพากรจะไม่รับแถวนี้) — "
+            notes.Add($"⚠️ {noTaxId} รายการไม่มีเลขประจำตัวผู้เสียภาษี (ไฟล์ลงเลข 0 13 หลักตามสเปกช่องที่ 5 — สรรพากรจะไม่รับเป็นเลขของผู้มีเงินได้) — "
                 + "กรอกเลขบัตรประชาชนที่ทะเบียนพนักงาน/ผู้ติดต่อ แล้วสร้างไฟล์ใหม่");
         var badChecksum = rows.Count(r => ThaiTaxId.Normalize(r.PayeeTaxId).Length > 0 && !ThaiTaxId.IsValid(r.PayeeTaxId));
         if (badChecksum > 0)
             notes.Add($"⚠️ {badChecksum} รายการเลขประจำตัวผู้เสียภาษีไม่ผ่านการตรวจหลักสุดท้าย (13 หลัก + checksum) — ตรวจเลขบัตรประชาชน");
+        // สเปก WHTSVS (2026-10-16): ช่อง 12 รหัสไปรษณีย์ *** (ต้องถูกต้อง) ทั้ง ภ.ง.ด.1 และ 1ก · ช่อง 8 ชื่อ ** (ต้องมีค่า) ·
+        // ข้อความยาวเกินสเปกถูกตัด — ล้มดังที่สรุปผลส่งออก/หน้ารายงาน ไม่แต่งค่าแทน
+        var noPostal = rows.Count(r => Pnd1FileFormat.AddressParts(r).PostalCode.Length != 5);
+        if (noPostal > 0)
+            notes.Add($"⚠️ {noPostal} รายการไม่มีรหัสไปรษณีย์ 5 หลัก (ช่องที่ 12 ของไฟล์ — สรรพากรจะไม่รับแถวนี้) — "
+                + "กรอกที่อยู่พร้อมรหัสไปรษณีย์ที่ทะเบียนพนักงาน/ผู้ติดต่อ แล้วสร้างไฟล์ใหม่");
+        var noName = rows.Count(r => string.IsNullOrWhiteSpace(r.FirstName));
+        if (noName > 0)
+            notes.Add($"⚠️ {noName} รายการไม่มีชื่อผู้มีเงินได้ (ช่องที่ 8 ต้องมีค่า) — กรอกชื่อที่ทะเบียนพนักงาน/ผู้ติดต่อ");
+        var overflow = rows.Count(Pnd1FileFormat.Overflows);
+        if (overflow > 0)
+            notes.Add($"⚠️ {overflow} รายการมีคำนำหน้า/ชื่อ/นามสกุล/ที่อยู่ยาวเกินที่สเปกกำหนด (40/80/80/2×80 ตัวอักษร) ไฟล์ตัดส่วนเกินออก — "
+                + "ตรวจในรายงานตรวจทาน หรือย่อข้อความที่ทะเบียน");
         if (annual)
         {
             var noAddress = rows.Count(r => string.IsNullOrWhiteSpace(r.Address));
@@ -263,17 +286,22 @@ public static class Pnd1FilingData
     {
         var tid = EmployeeTaxIdentity.Resolve(e.TaxId, e.CitizenId);
         var cond = tid != null && conditionByTaxId.TryGetValue(tid, out var c) ? c : 1;
+        // ชื่อ (สเปกช่อง 8 ต้องมีค่า): ชื่อไทยก่อน · ไม่มีชื่อไทยเลย (พนักงานต่างชาติ) ⇒ ชื่อ/สกุลอังกฤษคู่กัน (ไม่ผสมสองภาษา)
+        var thai = !string.IsNullOrWhiteSpace(e.FirstNameTh);
         return new Pnd1FileFormat.Row(
             Category: Pnd1FileFormat.GeneralSalary,
             PayeeTaxId: tid,
             Title: ThaiTitleHelper.Normalize(e.TitleTh),
-            FirstName: e.FirstNameTh,
-            LastName: e.LastNameTh,
+            FirstName: thai ? e.FirstNameTh : e.FirstNameEn,
+            LastName: thai ? e.LastNameTh : e.LastNameEn,
             PayDate: payDate,
             IncomeAmount: income,
             TaxAmount: tax,
             Condition: cond,
-            Address: e.Address,
-            SourceRef: e.EmployeeCode);
+            // ที่อยู่ข้อความเดียวผ่านตัวประกอบกลาง (เติม ต./อ./จ. ⇒ แยกที่อยู่ 1/2 ได้ตรงจุด) · รหัสไปรษณีย์หาจากท้ายที่อยู่
+            Address: string.IsNullOrWhiteSpace(e.Address) ? null : Accounting.Services.Implementations.ThaiAddressFormatter.Format(
+                e.Address, null, null, null, null, null, null, null, null),
+            SourceRef: e.EmployeeCode,
+            TaxRate: null);   // 40(1) อัตราก้าวหน้า — หาอัตราเดียวไม่ได้ ⇒ ช่อง 17 = "0" (ข้อ 9 ของสเปก)
     }
 }

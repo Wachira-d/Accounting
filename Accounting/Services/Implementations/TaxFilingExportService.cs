@@ -72,13 +72,12 @@ public class TaxFilingExportService : ITaxFilingExportService
     private static string TitleCode(string? title) => ThaiTitleHelper.RdCode(title);
 
     // =====================================================================
-    // ภ.ง.ด.1 — ภาษีหัก ณ ที่จ่าย เงินเดือน (รายเดือน) · txt / csv / xlsx
-    // รูปแบบไฟล์: Helpers/Pnd1FileFormat (ตัวตั้งเดียว) · รายการ: Helpers/Pnd1FilingData (ตัวโหลดเดียว —
-    // ตัวเดียวกับหน้ารายงาน ภ.ง.ด.1 ในหน้าเงินเดือน ⇒ จอ = ไฟล์)
+    // ภ.ง.ด.1 — ภาษีหัก ณ ที่จ่าย เงินเดือน (รายเดือน) · txt / xlsx / csv (นำเข้า WHTSVS) · review (รายงานตรวจทาน)
+    // รูปแบบไฟล์: Helpers/Pnd1FileFormat (ตัวตั้งเดียว — สเปก WHTSVS 20 ช่อง รอบ 2026-10-16) · รายการ: Helpers/Pnd1FilingData
+    // (ตัวโหลดเดียว — ตัวเดียวกับหน้ารายงาน ภ.ง.ด.1 ในหน้าเงินเดือน ⇒ จอ = ไฟล์)
     //
-    // เดิม (ก่อนรอบ 2026-10-14) เขียน H|…/D|…/T|… + วันที่ dd/MM/พ.ศ. + รหัสคำนำหน้าตัวเลข = รูปแบบที่ ภ.ง.ด.3/53
-    // พิสูจน์แล้วว่าหน้านำเข้าของสรรพากรใช้ไม่ได้ (บรรทัด H/T เป็นแถวขยะ · วันที่มี slash map ไม่ได้) และ
-    // ไม่แยกประเภทเงินได้ 5 ข้อของหน้าแบบ · ไม่รวม 50 ทวิ ภ.ง.ด.1 ที่ออกด้วยมือนอกรอบเงินเดือน
+    // ประวัติ: ก่อนรอบ 2026-10-14 = H|…/D|…/T|… + วันที่ dd/MM/พ.ศ. · รอบ 2026-10-14 = 10 ช่องตามใบแนบกระดาษ (ยังไม่มีสเปก) ·
+    // รอบ 2026-10-16 = "Format กลางโปรแกรมบันทึก(Import)ข้อมูลยื่นด้วยสื่อฯ ภ.ง.ด.1,1ก และ 1ก พิเศษ" ที่เจ้าของส่งมา
     // =====================================================================
     public async Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month, string? format = null)
     {
@@ -109,66 +108,55 @@ public class TaxFilingExportService : ITaxFilingExportService
                 + "ที่ออกแล้ว — ไม่มีรายการให้สร้างไฟล์ · ตรวจยอดเงินเดือนของรอบนี้",
                 "PND1-NO-ROWS");
 
+        // รอบ 2026-10-16 (สเปก WHTSVS "Format กลางโปรแกรมบันทึก(Import)ข้อมูลยื่นด้วยสื่อฯ ภ.ง.ด.1,1ก และ 1ก พิเศษ"):
+        // 20 ช่องต่อแถว · ช่อง 1–4 ผู้หัก + 13–14 งวด ซ้ำทุกแถว · ทุกประเภทเงินได้อยู่ไฟล์เดียว (รหัสเงินได้ช่อง 15) ·
+        // .txt ชื่อ PND1.txt · Excel ชีต Sheet1 ไม่มีแถวหัว · CSV ค่าเดียวกัน ไม่มีแถวหัว ·
+        // "review" = รายงานตรวจทานมีหัวคอลัมน์ (ไม่ใช่ไฟล์นำเข้า) — ทุกรูปแบบมาจาก Pnd1FileFormat.Fields ตัวเดียว
+        var filer = new Pnd1FileFormat.Filer(company.TaxId, company.BranchCode, year, month);
         byte[] bytes;
         string fileName, contentType;
         switch (fmt)
         {
             case "csv":
-                bytes = Pnd1FileFormat.BuildCsv(data.Rows, annual);
+                bytes = Pnd1FileFormat.BuildCsv(data.Rows, filer);
                 fileName = $"{formCode}_{period}.csv";
                 contentType = "text/csv; charset=utf-8";
                 break;
             case "xlsx":
-                var thaiPeriod = annual
-                    ? $"{year + 543}"
-                    : $"{ThaiMonthName.FullThai[month!.Value]} {year + 543}";
-                bytes = Pnd1FileFormat.BuildXlsx(data.Rows, new Pnd1FileFormat.Header(
-                    company.Name, company.TaxId, company.BranchCode, thaiPeriod, annual));
+                bytes = Pnd1FileFormat.BuildXlsx(data.Rows, filer);
                 fileName = $"{formCode}_{period}.xlsx";
                 contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
                 break;
+            case "review":
+                var thaiPeriod = annual
+                    ? $"{year + 543}"
+                    : $"{ThaiMonthName.FullThai[month!.Value]} {year + 543}";
+                bytes = Pnd1FileFormat.BuildReviewXlsx(data.Rows, filer, new Pnd1FileFormat.Header(
+                    company.Name, company.TaxId, company.BranchCode, thaiPeriod, annual));
+                fileName = $"{formCode}_{period}_review.xlsx";
+                contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                break;
             default:
-                // .txt นำเข้าเว็บสรรพากร — ใบแนบแยกตามประเภทเงินได้ ⇒ ประเภทเดียว = .txt เดียว ·
-                // หลายประเภท = zip ไฟล์ละประเภท (นำเข้าทีละใบแนบ)
-                var perCategory = Pnd1FileFormat.BuildTextPerCategory(data.Rows, annual);
-                if (perCategory.Count == 1)
-                {
-                    bytes = AsBytes(perCategory[0].Text);
-                    fileName = $"{formCode}_{period}.txt";
-                    contentType = "text/plain; charset=utf-8";
-                }
-                else
-                {
-                    using (var zipStream = new MemoryStream())
-                    {
-                        using (var archive = new System.IO.Compression.ZipArchive(
-                            zipStream, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
-                        {
-                            foreach (var (category, text) in perCategory)
-                            {
-                                var entry = archive.CreateEntry($"{formCode}_{period}_type{category}.txt",
-                                    System.IO.Compression.CompressionLevel.Optimal);
-                                using var es = entry.Open();
-                                var eb = AsBytes(text);
-                                es.Write(eb, 0, eb.Length);
-                            }
-                        }
-                        bytes = zipStream.ToArray();
-                    }
-                    fileName = $"{formCode}_{period}.zip";
-                    contentType = "application/zip";
-                }
+                // .txt นำเข้า WHTSVS — ชื่อแฟ้มตามสเปก "PND1.txt" (ใช้ทั้ง ภ.ง.ด.1 และ 1ก) · ไฟล์เดียวทุกประเภทเงินได้ ·
+                // เดิมแยก zip ไฟล์ละประเภทเพราะรูปแบบเดิมไม่มีช่องรหัสเงินได้
+                bytes = AsBytes(Pnd1FileFormat.BuildText(data.Rows, filer));
+                fileName = Pnd1FileFormat.TextFileName;
+                contentType = "text/plain; charset=utf-8";
                 break;
         }
 
         var categories = Pnd1FileFormat.Summarize(data.Rows);
         var breakdown = string.Join(" · ", categories.Where(c => c.Count > 0)
             .Select(c => $"ประเภท ({c.Category}) {c.Count} รายการ เงินได้ {c.Income:N2} ภาษี {c.Tax:N2}"));
+        // ช่อง 2 (***) เลขผู้หักต้องถูกต้อง — ผิด = ทั้งไฟล์ถูกปฏิเสธ ⇒ เตือนดัง (ไม่แต่งเลข)
+        var filerNote = ThaiTaxId.IsValid(company.TaxId) ? "" :
+            "\n⚠️ เลขประจำตัวผู้เสียภาษีของบริษัทไม่ครบ 13 หลักหรือไม่ผ่าน checksum (ช่องที่ 2 ของไฟล์ — สรรพากรจะไม่รับทั้งไฟล์) — แก้ที่ตั้งค่าบริษัท";
         var summary = $"{formName} {periodText} {data.Rows.Count} รายการ "
             + $"(จากรอบเงินเดือน {data.PayrollRowCount} · จาก 50 ทวิ นอกรอบเงินเดือน {data.CertRowCount}) "
             + $"เงินได้รวม {data.TotalIncome:N2} ภาษีรวม {data.TotalTax:N2} บาท · {breakdown}"
+            + filerNote
             + (data.Notes.Count > 0 ? "\n" + string.Join("\n", data.Notes) : "")
-            + "\nℹ️ " + Pnd1FileFormat.UnverifiedNotice;
+            + "\nℹ️ " + Pnd1FileFormat.SpecNotice;
 
         return new TaxFilingExportResult(
             formCode, formName, fileName, contentType, bytes,
@@ -265,7 +253,7 @@ public class TaxFilingExportService : ITaxFilingExportService
     }
 
     // =====================================================================
-    // ภ.ง.ด.1ก — สรุปรายปี · txt / csv / xlsx (ตัวตั้งเดียวกับ ภ.ง.ด.1 — Pnd1FileFormat annual)
+    // ภ.ง.ด.1ก — สรุปรายปี · txt / xlsx / csv / review (สเปก WHTSVS เดียวกับ ภ.ง.ด.1 — เดือนภาษี "00" · Filer.Month = null)
     // เดิมเป็น H|D|T + คอลัมน์ "RD template 2566" ที่ไม่มีบนใบแนบ (วันเริ่ม/ออก · PVD · SSO · ฐานภาษี) แต่ไม่มี
     // "ที่อยู่ผู้มีเงินได้" ที่ใบแนบ ภ.ง.ด.1ก บังคับ
     // =====================================================================
