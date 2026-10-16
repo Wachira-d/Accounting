@@ -893,12 +893,15 @@ public class OcrService : IOcrService
             // ทั้ง CreateDocumentFromScanAsync และ AutoCreateDocumentAsync ได้
             // ประโยชน์เหมือนกัน (ก่อนหน้านี้ AutoCreate path ไม่มี reconcile →
             // เอกสารที่สร้างจาก OCR API ได้บรรทัดผิดต่างจาก web UI).
-            SanitizeVatSplitArtifacts(extractedData, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(ocrEngineUsed));
+            SanitizeVatSplitArtifacts(extractedData, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(ocrEngineUsed), extractedText);
 
             // 2026-10-09 ฝ่ายค้านข้อ 2: ระบบตัดแถวที่อ่านซ้ำเอง ([DUP-ROWS] จาก Sanitize ข้อ 3b หรือจาก line-split) ต้องขึ้น ProcessingNotes —
             // OcrPostingReadiness อ่านแท็กจากตรงนั้น ⇒ เอกสารที่ระบบแก้ข้อมูลเองไม่อนุมัติเองจนกว่าคนจะดู (trace อย่างเดียวไม่มีผู้อ่านเชิงธุรกิจ)
+            // 2026-10-16 RE-20261000111: ตัวกันจำนวนระเบิดเปลี่ยนจำนวน/ราคาที่ engine อ่าน หรือคงค่าที่ขัดกัน ([LINE-QTY] · Helpers/OcrLineQuantityGuard)
+            // ต้องขึ้น ProcessingNotes เหมือนกัน — เดิมหารจำนวนใหม่เงียบ ๆ (1 → 0.78) แล้วเอกสารอนุมัติเองได้
             foreach (var dupRowsNote in extractedData.ReasoningTrace
-                         .Where(t => t.StartsWith(Accounting.Helpers.OcrDuplicateLineGuard.Tag, StringComparison.Ordinal)))
+                         .Where(t => t.StartsWith(Accounting.Helpers.OcrDuplicateLineGuard.Tag, StringComparison.Ordinal)
+                                     || t.StartsWith(Accounting.Helpers.OcrLineQuantityGuard.Tag, StringComparison.Ordinal)))
             {
                 if (!(scanResult.ProcessingNotes ?? "").Contains(dupRowsNote, StringComparison.Ordinal))
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + dupRowsNote;
@@ -4716,8 +4719,11 @@ public class OcrService : IOcrService
     /// <para><paramref name="quantitiesFromSignedXml"/> = สแกนมาจาก e-Tax XML (<c>OcrEtaxLineNormalizer.IsEtaxEngine</c>) ⇒ ทุกบรรทัดคือบรรทัดจริงของ
     /// เอกสารที่ลงนาม: ไม่หารจำนวนใหม่ · ไม่ยุบเป็นเศษ/ไม่ลบ · ไม่รวมบรรทัดซ้ำ (ฝ่ายค้านรอบสอง f1690d11 ข้อ 2/5 — เส้นสร้างซ้ำ/ดึงรายการซ้ำ/
     /// สำเนาจากอัปไฟล์ซ้ำ อ่าน JSON ที่ธงรายบรรทัดอาจหาย) · บรรทัดที่ติดธง <c>QuantityFromEtaxXml</c> ได้รับการคุ้มครองเดียวกัน</para>
+    /// <para><paramref name="paperText"/> = ข้อความกระดาษของสแกน (<c>RawTextContent</c>) — หลักฐานของตัวกันจำนวนระเบิด
+    /// (<c>Helpers/OcrLineQuantityGuard</c>: ส่วนลดที่พิมพ์บนแถว · จำนวนที่พิมพ์บนแถว) · null = ไม่มีหลักฐาน (สูตรเดิม + แท็ก [LINE-QTY]) ·
+    /// ทุกผู้เรียกต้องส่ง (ล็อกใน tools/required_call_site_check.py) ไม่งั้นสร้างเอกสารซ้ำได้จำนวนคนละค่ากับตอนสแกน</para>
     /// </summary>
-    internal static void SanitizeVatSplitArtifacts(OcrExtractedData data, bool quantitiesFromSignedXml = false)
+    internal static void SanitizeVatSplitArtifacts(OcrExtractedData data, bool quantitiesFromSignedXml = false, string? paperText = null)
     {
         if (data?.Items == null || data.Items.Count == 0) return;
         // ทบทวน e8547899 ข้อ 2: รอบ 6 เคยปล่อยบรรทัด e-Tax ที่ตัดสินฐานราคาไม่ได้ให้ตัวแก้จำนวนแบบเดิม ⇒ 3 → 2.13 (จำนวนที่แต่งขึ้นบนเอกสารที่ลงนาม) ·
@@ -4766,63 +4772,38 @@ public class OcrService : IOcrService
         foreach (var item in data.Items)
             item.Description = TrimSplitSuffix(item.Description, splitMarkers);
 
-        // 1b) ⭐ กัน "จำนวนระเบิด": OCR อ่านยอดบรรทัด (Amount) ถูก แต่อ่าน "จำนวน"
-        //     ผิด (มักอ่านตัวเลขในคอลัมน์ยอด/ราคา มาใส่เป็นจำนวน) → line-building
-        //     คิด qty×unitPrice → ยอดพุ่งไกลจาก Amount จริง. ถ้าเจอ Amount ที่เชื่อได้
-        //     + UnitPrice + Quantity ครบ แล้ว qty×price เพี้ยนจาก Amount เกิน tol
-        //     (±2% หรือ ฿1) → **เชื่อ Amount เป็นหลัก** แก้ Quantity = Amount/UnitPrice
-        //     (รักษายอดบรรทัด = Amount ที่ OCR แสดงถูก → ยอดรวมไม่ระเบิด).
-        //     ทำก่อน fold/merge เพื่อให้ EffAmt/ยอดรวมถัดไปใช้ค่าที่ reconcile แล้ว.
+        // 1b) ⭐ กัน "จำนวนระเบิด": OCR อ่านยอดบรรทัด (Amount) ถูก แต่อ่าน "จำนวน" ผิด (ตัวเลขในคอลัมน์ยอด/ราคามาใส่เป็นจำนวน) ⇒
+        //     จำนวน × ราคา ระเบิดไกลจากยอด · ทำก่อน fold/merge เพื่อให้ EffAmt/ยอดรวมถัดไปใช้ค่าที่ reconcile แล้ว
+        //     ★ 2026-10-16 (ผู้ใช้รายงาน · RE-20261000111 พรามี่ ควอลิตี้): ตัวกันเดิมหารจำนวนใหม่ทุกครั้งที่ จำนวน × ราคา ≠ ยอด ⇒
+        //     กระดาษที่พิมพ์ "1.00 · 1,330.00 · ส่วนลด 293.00 · 1,037.00" ได้จำนวน 0.78 + ส่วนลดหาย · ตอนนี้ตัวตัดสินตัวเดียว
+        //     Helpers/OcrLineQuantityGuard ถามแถวบนกระดาษก่อน: ส่วนลดที่พิมพ์ ⇒ ส่วนลดของบรรทัด · จำนวนที่พิมพ์ ⇒ ห้ามแต่ง (แท็ก) ·
+        //     ไม่มีหลักฐาน ⇒ สูตรเดิม (ยอด ÷ ราคา) แต่ไม่เงียบ — แท็ก [LINE-QTY] ใน ReasoningTrace ให้ผู้เรียกขึ้น ProcessingNotes
+        var paperNumbers = Accounting.Helpers.OcrLineQuantityGuard.Numbers(paperText);
+        var paperDiscountRead = false;
         foreach (var item in data.Items)
         {
-            var amt = item.Amount ?? 0m;
-            var up = item.UnitPrice ?? 0m;
-            var qty = item.Quantity ?? 0m;
-            if (amt <= 0m) continue;
             // ★ จำนวนจาก e-Tax XML ที่พิสูจน์สมการบรรทัดแล้ว (Helpers/OcrEtaxLineNormalizer) — เอกสารลงนามไม่มี "อ่านหลงคอลัมน์"
             // ห้ามหารจำนวนใหม่จากยอด (สแกน f1690d11: 3 ชิ้น → 2.13 · ค่าขนส่ง 120 → 37.38 เพราะส่วนลดบรรทัดทำให้ จำนวน × ราคา ≠ ยอด)
             if (Signed(item)) continue;
-            var tol = System.Math.Max(1m, System.Math.Abs(amt) * 0.02m);
-
-            // ราคา/หน่วยหาย แต่มียอด+จำนวน → หารหาให้ (บิลสาธารณูปโภคพิมพ์
-            // แต่ปริมาณกับยอดรวม ไม่พิมพ์ราคาต่อหน่วย)
-            if (up <= 0m && qty > 0m)
+            var qtyDecision = Accounting.Helpers.OcrLineQuantityGuard.Decide(
+                item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount, paperNumbers);
+            if (qtyDecision.Quantity is decimal decidedQty) item.Quantity = decidedQty;
+            if (qtyDecision.UnitPrice is decimal decidedPrice) item.UnitPrice = decidedPrice;
+            if (qtyDecision.LineDiscount is decimal printedDiscount)
             {
-                item.UnitPrice = System.Math.Round(amt / qty, 4, System.MidpointRounding.AwayFromZero);
-                continue;
+                item.LineDiscountAmount = printedDiscount;
+                paperDiscountRead = true;
             }
-            if (up <= 0m || qty <= 0m) continue;
-
-            // ส่วนลดรายบรรทัดที่อธิบายยอดได้จริง = ไม่ใช่จำนวนผิด (ตัวตัดสินเดียวกับด่าน [Gateway] และตัวสร้างบรรทัด)
-            var computed = System.Math.Round(up * qty, 2, MidpointRounding.AwayFromZero)
-                - Accounting.Helpers.OcrEtaxLineNormalizer.ProvenLineDiscount(qty, up, amt, item.LineDiscountAmount);
-            if (System.Math.Abs(computed - amt) <= tol) continue;   // ตรงอยู่แล้ว
-
-            // ⚠️ แยกสองเคสให้ถูกตัว (บั๊กจริง — บิลค่าไฟ 59 ล้าน):
-            //
-            // เคส ก: UnitPrice ≈ Amount ทั้งที่ qty > 1 — OCR อ่าน "ยอดรวม
-            //   บรรทัด" มาใส่ช่องราคา/หน่วย (qty=3,611 kWh, up=16,351.48 =
-            //   ยอดทั้งบิล). ตัวผิดคือ **ราคา** ไม่ใช่จำนวน — 3,611 หน่วยคือ
-            //   ค่ามิเตอร์จริง ตรวจย้อน/เทียบเดือนได้ ทิ้งไม่ได้. ตามหลักบัญชี
-            //   ราคาทุนต่อหน่วย = ยอดจ่ายจริง ÷ ปริมาณ → หารหา ไม่ใช่บิด
-            //   ปริมาณให้เข้ากับราคา (เดิมเคสนี้ตกไปแขนงล่าง → qty โดนเขียน
-            //   ทับเป็น 1 เงียบ ๆ ปริมาณหาย)
-            //
-            // เคส ข: qty ≈ Amount — ตัวจำนวนเองคือยอดที่อ่านหลงคอลัมน์มา
-            //   (เช่น qty=1,180 amt=1,180) → จำนวนไม่ใช่ข้อมูลจริง → เชื่อ
-            //   Amount+UnitPrice แก้ qty ให้ line = Amount (พฤติกรรมเดิม)
-            //
-            // ตัวแยกสองเคส: จำนวน "ใกล้ยอดเงิน" = จำนวนคือตัวหลงคอลัมน์ ·
-            // จำนวน "ต่างจากยอดเงิน" = จำนวนเป็นข้อมูลอิสระจากกระดาษ (มิเตอร์/
-            // ปริมาณจริง) ห้ามทิ้ง — ยอดบรรทัด (Amount) คงเดิมทั้งสองทาง
-            var qtyLooksLikeAmount = System.Math.Abs(qty - amt) <= tol;
-            if (qty > 1m && !qtyLooksLikeAmount && System.Math.Abs(up - amt) <= tol)
-            {
-                item.UnitPrice = System.Math.Round(amt / qty, 4, System.MidpointRounding.AwayFromZero);
-                continue;
-            }
-            var fixedQty = System.Math.Round(amt / up, 3, System.MidpointRounding.AwayFromZero);
-            item.Quantity = fixedQty > 0m ? fixedQty : 1m;
+            if (qtyDecision.Note is string qtyNote) data.ReasoningTrace.Add(qtyNote);
+        }
+        // ส่วนลดที่อ่านจากกระดาษอยู่ฐานเดียวกับราคาบนแถว — ใบที่เลขหัวใบพิสูจน์ว่าราคารวม VAT (เคส A ของตัวจำแนกตัวเดียว) ⇒ ทุกบรรทัดติดธงรวม VAT
+        // (ป้ายส่วนลดในหน้ารีวิว · ทุนสต็อก/สินทรัพย์ถอด VAT · ตัวสร้างบรรทัดถอด VAT รายบรรทัดด้วยสูตรเอกสาร) · ไม่มีส่วนลดจากกระดาษ = ไม่แตะ (เดิม)
+        if (Accounting.Helpers.OcrLineQuantityGuard.PaperDiscountPricesIncludeVat(
+                paperDiscountRead, data.Items.Where(it => !Signed(it)).Sum(it => it.Amount ?? 0m),
+                data.SubTotal, data.VatAmount, data.TotalAmount, data.DiscountAmount))
+        {
+            foreach (var item in data.Items)
+                if (!Signed(item) && (item.Amount ?? 0m) != 0m) item.PriceIncludesVat = true;
         }
 
         // EffAmt = ยอดบรรทัดที่เชื่อถือได้ — Amount ถ้ามี, ไม่งั้น UnitPrice×Quantity.
@@ -7363,7 +7344,7 @@ public class OcrService : IOcrService
         {
             var tmpSan = new OcrExtractedData();
             foreach (var it in items) tmpSan.Items.Add(it);
-            SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine));
+            SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine), result.RawTextContent);
             items = tmpSan.Items.ToList();
         }
 
@@ -8312,7 +8293,7 @@ public class OcrService : IOcrService
         {
             var tmpSan = new OcrExtractedData();
             foreach (var it in items) tmpSan.Items.Add(it);
-            SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine));
+            SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine), result.RawTextContent);
             items = tmpSan.Items.ToList();
         }
 
@@ -8852,7 +8833,7 @@ public class OcrService : IOcrService
         {
             var tmpSan = new OcrExtractedData();
             foreach (var it in items) tmpSan.Items.Add(it);
-            SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine));
+            SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine), result.RawTextContent);
             items = tmpSan.Items.ToList();
         }
 
@@ -11800,7 +11781,8 @@ internal class OcrExtractedLineItem
     public decimal? UnitPrice { get; set; }
     public decimal? Amount { get; set; }
     /// <summary>ส่วนลดรายบรรทัด <b>ก่อน VAT</b> ที่เอกสารประกาศไว้ — <c>round(Quantity × UnitPrice, 2) − LineDiscountAmount = Amount</c>
-    /// (null = ไม่มี) · ตอนนี้มีแหล่งเดียวคือ e-Tax XML (<c>Helpers/OcrEtaxLineNormalizer</c>) · ตัวสร้างบรรทัดเอกสารลงเป็น
+    /// (null = ไม่มี) · แหล่ง: e-Tax XML (<c>Helpers/OcrEtaxLineNormalizer</c>) · ส่วนลดที่<b>กระดาษพิมพ์บนแถว</b> (<c>Helpers/OcrLineQuantityGuard</c> ·
+    /// 2026-10-16 RE-20261000111 — ฐานเดียวกับราคาบนแถว: ใบราคารวม VAT ⇒ รวม VAT คู่ธง <see cref="PriceIncludesVat"/>) · ตัวสร้างบรรทัดเอกสารลงเป็น
     /// <c>DocumentLine.DiscountAmount</c> · ที่มา: สแกน f1690d11 (CRC ไทวัสดุ) ส่วนลดบรรทัดหายแล้วจำนวนถูกหารจากยอด</summary>
     public decimal? LineDiscountAmount { get; set; }
     /// <summary>true = บรรทัดมาจาก e-Tax XML (จำนวนคือ <c>BilledQuantity</c> ทุกบรรทัด รวมบรรทัดที่ตัดสินฐานราคาไม่ได้) ⇒ ตัวกัน "จำนวนระเบิด"

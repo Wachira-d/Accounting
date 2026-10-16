@@ -6353,11 +6353,12 @@ RULES += [
          why=_ETAX_LINE_WHY + "ทบทวนรอบ 8 ข้อ 3: ตัวสกัดต้องอ่านการประกาศยกเว้นของบรรทัดจาก XML เอง"),
     dict(file=OCR, method="SanitizeVatSplitArtifacts",
          must=["bool Signed(OcrExtractedLineItem it) => quantitiesFromSignedXml || it.QuantityFromEtaxXml;",
-               "if (Signed(item)) continue;", "OcrEtaxLineNormalizer.ProvenLineDiscount(",
+               "if (Signed(item)) continue;", "OcrLineQuantityGuard.Decide(",
                "return emptyDesc && isPhantom && !Signed(it);", "!phantoms.Contains(it) && !Signed(it)",
                "if (string.IsNullOrEmpty(desc) || Signed(item))"],
          must_re=[r"var\s+phantoms\s*=\s*data\.Items\.Where\(\s*it\s*=>\s*!\s*Signed\(it\)"],
-         before=[("if (Signed(item)) continue;", "item.Quantity = fixedQty")],
+         # 2026-10-16: สูตรหารจำนวน + ส่วนลดที่พิสูจน์แล้ว (ProvenLineDiscount) ย้ายไปอยู่ใน Helpers/OcrLineQuantityGuard.Decide (กติกาด้านล่าง)
+         before=[("if (Signed(item)) continue;", "OcrLineQuantityGuard.Decide(")],
          forbid=["EtaxUndecided"],
          why=_ETAX_LINE_WHY + "ตัวกันจำนวนระเบิดห้ามหารจำนวนจากยอดบนบรรทัด e-Tax ทุกบรรทัด (รวมที่ตัดสินฐานราคาไม่ได้ — ทบทวน e8547899 ข้อ 2: 3 → 2.13) · ส่วนลดบรรทัดไม่ใช่จำนวนผิด"),
     dict(file=OCR, method="BuildScanLinesAsync",
@@ -6377,6 +6378,35 @@ RULES += [
          must_re=[r"return\s*\(\s*line\.Amount\s*\?\?\s*0m\s*,\s*line\.LineDiscountAmount\s*,\s*discountDropped\s*,\s*line\.UnitPrice\s*,\s*conversionNote\s*\)"],
          forbid=["line.Amount = System.Math.Round(qty * up, 2, MidpointRounding.AwayFromZero)"],
          why=_ETAX_LINE_WHY + "แก้บรรทัดในหน้ารีวิวต้องคงส่วนลดบรรทัด (ไม่งั้นยอดกลับเป็นยอดก่อนลดเงียบ ๆ)"),
+]
+
+
+# ── 2026-10-16 ใบจริง RE-20261000111 (พรามี่ ควอลิตี้ · ผู้ใช้รายงาน "ระบบปรับจำนวนรายการ แทนที่จะลงส่วนลดตามรายการ"):
+#    ตัวกันจำนวนระเบิดหาร 1,037 ÷ 1,330 = 0.78 ทั้งที่กระดาษพิมพ์ส่วนลด 293.00 บนแถว · ตัวตัดสินเดียว Helpers/OcrLineQuantityGuard ·
+#    ล็อก: ถามแถวบนกระดาษก่อนหาร · ส่วนลดที่พิมพ์มาก่อนเกณฑ์ ±2% · จำนวนที่พิมพ์ห้ามแต่ง · ทุกผู้เรียกส่งข้อความกระดาษ · แท็กไม่เงียบ
+_LINE_QTY_WHY = "RE-20261000111 (2026-10-16): "
+RULES += [
+    dict(file=OCR, method="SanitizeVatSplitArtifacts",
+         must=["OcrLineQuantityGuard.Numbers(paperText)", "item.LineDiscountAmount = printedDiscount",
+               "data.ReasoningTrace.Add(qtyNote)", "OcrLineQuantityGuard.PaperDiscountPricesIncludeVat("],
+         call_args=[("OcrLineQuantityGuard.Decide(", "item.LineDiscountAmount"), ("OcrLineQuantityGuard.Decide(", "paperNumbers")],
+         forbid=["item.Quantity = fixedQty", "System.Math.Round(amt / up"],
+         why=_LINE_QTY_WHY + "ตัวกันจำนวนระเบิดต้องถามแถวบนกระดาษ (ส่วนลดที่พิมพ์ ⇒ ส่วนลดบรรทัด · จำนวนที่พิมพ์ ⇒ ห้ามหาร) ผ่านตัวตัดสินเดียว — ห้ามประกอบสูตรหารจำนวนเองใน service"),
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="Decide",
+         must=["OcrEtaxLineNormalizer.ProvenLineDiscount(", "FindRow(paperNumbers, qty, up, amt)", "MidpointRounding.AwayFromZero"],
+         before=[("row.Discount is decimal printed", "if (Math.Abs(computed - amt) <= tol) return Keep;"),
+                 ("if (!qtyLooksLikeAmount && row.QuantityPrinted)", "var fixedQty")],
+         forbid=["Math.Round(amt / up, 3)", "Math.Round(amt / qty, 4)"],
+         why=_LINE_QTY_WHY + "ส่วนลดที่กระดาษพิมพ์ต้องถูกถามก่อนเกณฑ์ ±2% และจำนวนที่พิมพ์บนแถวต้องถูกคุ้มครองก่อนสูตรหารจำนวน (ลำดับ) · ปัดเศษ AwayFromZero"),
+    dict(file=OCR, method="ScanAsync",
+         call_args=[("SanitizeVatSplitArtifacts(", "extractedText")],
+         must=["OcrLineQuantityGuard.Tag"],
+         why=_LINE_QTY_WHY + "ตอนสแกนต้องส่งข้อความกระดาษให้ตัวกันจำนวนระเบิด และแท็ก [LINE-QTY] ต้องขึ้น ProcessingNotes (ห้ามอนุมัติเอง — เดิมหารจำนวนเงียบ)"),
+] + [
+    dict(file=OCR, method=m,
+         call_args=[("SanitizeVatSplitArtifacts(", "RawTextContent")],
+         why=_LINE_QTY_WHY + "สร้างซ้ำ/พรีวิว/ดึงรายการซ้ำต้องส่งข้อความกระดาษ (RawTextContent) ไม่งั้นได้จำนวนคนละค่ากับตอนสแกน")
+    for m in ("CreateDocumentFromScanCoreAsync", "PreviewDocumentLinesAsync", "RepopulateDocumentLinesFromScanAsync")
 ]
 
 

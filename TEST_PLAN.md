@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **576 ไฟล์ · 5,680 `[Fact]` + 856 `[Theory]` (3,833 `InlineData`)** ณ 2026-10-16 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **577 ไฟล์ · 5,703 `[Fact]` + 856 `[Theory]` (3,833 `InlineData`)** ณ 2026-10-16 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -4339,6 +4339,9 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | OCR-VAT-06 | เทียบค่าที่แสดงกับเอกสารที่สร้างจริง | อัตรา/ยอด VAT รายบรรทัดในตาราง review = ที่ปรากฏบนเอกสารหลังกด "สร้างเอกสาร" ทุกบรรทัด (จับคู่ด้วย `sourceItemIndex` ไม่ใช่ลำดับ) |
 | OCR-UI-01 | ตาราง "รายการที่อ่านได้" ที่ชื่อสินค้ายาว | ช่อง "รายละเอียด" ต้องกว้างที่สุดในตาราง (colgroup + `table-layout:fixed`) · จำนวน 62px · ราคา 84px · ตารางไม่ล้นออกนอกกรอบ (wrapper `overflow-x:auto`, min-width 720px) |
 | OCR-CASEC-01 | สแกนใบที่มีส่วนลดท้ายบิล 5% แต่บรรทัดไม่มีราคาต่อหน่วย (370/890/135) → สร้างเอกสาร → เปิดแก้ → บันทึก | ยอดไม่ขยับ 1,325.25 / VAT 92.77 / รวม 1,418.02 (ส่วนลด % ของบรรทัด = 0) · ทิศตรงข้าม: ใบที่มีราคาต่อหน่วยคง % เดิม · golden `hardware-bill-discount-amounts-only` (`OcrCaseCLineDiscountTests`) |
+| OCR-LINEQTY-01 | สแกนใบจริง RE-20261000111 (พรามี่ · 1.00 × 1,330.00 · ส่วนลด 293.00 · มูลค่ารวมภาษี 1,037.00) → สร้างใบสำคัญจ่าย → เปิดแก้ → บันทึก | จำนวน **1** (ไม่ใช่ 0.78) · ราคา 1,330.00 · ส่วนลด ฿293.00 · ราคารวม VAT · ฐาน 969.16 / VAT 67.84 / รวม 1,037.00 ไม่ขยับหลังบันทึกซ้ำ · ไม่มี `[LINE-QTY]` · golden `pramie-line-discount-re111` (`OcrLineQuantityGuardTests` · `OcrReplayLineGoldenTests`) |
+| OCR-LINEQTY-02 | ทิศตรงข้าม: สินค้าชั่งน้ำหนัก (กระดาษพิมพ์แค่ราคาต่อ กก. + ยอด) · engine อ่านจำนวน 1 ทั้งที่กระดาษพิมพ์ 2 · จำนวน = ยอดที่หลงคอลัมน์ · มิเตอร์ (ราคา = ยอด) | จำนวน 0.45 / 2 / 118 · ราคามิเตอร์ = ยอด ÷ หน่วย — ยังแก้ตามเดิม **แต่มี `[LINE-QTY]`** ⇒ ห้ามอนุมัติเอง · golden `weighed-item-qty-not-printed` · `qty-misread-engine-one` |
+| OCR-LINEQTY-03 | จำนวนพิมพ์บนแถว (2 × 100.00) แต่ยอด 150.00 และกระดาษไม่มีส่วนลด | จำนวนคง 2 (ไม่แต่ง 1.5) · `[LINE-QTY]` + `[Σ-GAP]` ให้คนตรวจ · golden `qty-printed-gap-unexplained` · ใบเดิมทุกใบใน Corpus ตัวกัน = Keep ทุกบรรทัด |
 | TEAMC-01 | ออก 50 ทวิ ประจำปีพนักงาน (ภ.ง.ด.1ก) ที่มีประกันสังคม 9,000 + กองทุนสำรองเลี้ยงชีพ 12,000 ทั้งปี | ช่องกองทุนประกันสังคม/กองทุนสำรองเลี้ยงชีพพิมพ์ยอด · กบข. ว่าง · ใบของผู้ขาย/ wht.html ไม่เปลี่ยน (`WhtCertFormTextTests`) |
 | TEAMC-02 | บริษัทที่ไม่เคยออก 50 ทวิ ภ.ง.ด.2/54 และไม่มีเอกสารบริการต่างประเทศ กด "เริ่มต้นปฏิทิน" | ไม่มีรายการ ภ.ง.ด.2/2ก/54/ภ.พ.36 ค้างรอ (แถวที่ระบบสร้างเดิมและยังไม่มีใครแตะถูกลบแบบ soft) · แถวที่ผู้ใช้กรอก/ทำเครื่องหมายไม่ถูกแตะ · มีกิจกรรมแล้วกดใหม่ได้แถวกลับ (`TaxCalendarSeedScopeTests`) |
 | TEAMC-03 | บริษัทจ่ายดอกเบี้ยบุคคลด้วย PV (อนุมัติแล้ว ลง Cr 21915) แต่ยังไม่ออก 50 ทวิ / ปันผลลง JV Cr 21915 → กด "เริ่มต้นปฏิทิน" | แถว ภ.ง.ด.2 ถูกสร้าง/ไม่ถูกถอน · บริษัทที่ไม่มี Cr 21915/21918 และไม่มีใบ ⇒ ไม่มีแถว (ทดสอบมือ — query ใน `LoadSeedActivityAsync`) |

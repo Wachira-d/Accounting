@@ -18,7 +18,11 @@ public sealed record ReplayPaper(
 /// (2026-10-09 ratchet ระดับบรรทัด) · ใบที่ให้แต่ <see cref="ReplayPaper.LineAmounts"/> จะถูกแปลงเป็นบรรทัดที่ไม่มีจำนวน/ราคา
 /// (เหมือน engine ที่คืนแค่ยอด) · <see cref="ReplayPaper.EngineLines"/> = แถว<b>ตามที่ engine คืน</b> เมื่อต่างจากที่พิมพ์ (ต้นฉบับ+สำเนา ⇒
 /// ชุดเดิมสองรอบ) — ด่านแถวซ้ำ (<see cref="OcrDuplicateLineGuard"/>) ต้องพาแถวกลับมาเท่า <c>Lines</c></summary>
-public sealed record ReplayLine(string? Description, decimal? Quantity, decimal? UnitPrice, decimal Amount);
+/// <param name="LineDiscount">ส่วนลดของบรรทัด (ฐานเดียวกับราคา) — <b>ไม่ใช่ข้อมูลป้อน</b>: engine ภาพไม่คืนช่องนี้ ⇒ ใบในชุดปล่อย null ·
+/// <see cref="OcrReplayHarness.BuildLines"/> เติมจากแถวบนกระดาษด้วยตัวตัดสินตัวเดียวกับ service (<see cref="OcrLineQuantityGuard"/>)</param>
+/// <param name="PriceIncludesVat">ธงรวม VAT ของบรรทัด (ผลของ <see cref="OcrLineQuantityGuard.PaperDiscountPricesIncludeVat"/>) — ไม่ใช่ข้อมูลป้อน</param>
+public sealed record ReplayLine(string? Description, decimal? Quantity, decimal? UnitPrice, decimal Amount,
+    decimal? LineDiscount = null, bool PriceIncludesVat = false);
 
 /// <summary>ผลของขั้นสร้างบรรทัดเอกสาร (<see cref="OcrReplayHarness.BuildLines"/>) — ทุกช่องเป็นข้อความอ่านออก เพื่อล็อกเป็น golden</summary>
 /// <param name="Mode"><c>Items</c> (มีรายการ) · <c>VatGroups</c> (ไม่มีรายการแต่กระดาษพิมพ์ตารางสรุปตามกลุ่มภาษี) · <c>Summary</c> (บรรทัดสรุปใบเดียว)</param>
@@ -28,9 +32,11 @@ public sealed record ReplayLine(string? Description, decimal? Quantity, decimal?
 /// <param name="RoundingAdjustment">ผลต่างปัดเศษหัวเอกสาร (= −Σ shift ของบรรทัด)</param>
 /// <param name="DuplicateRowsDropped">จำนวนแถวที่ด่านแถวซ้ำ (<see cref="OcrDuplicateLineGuard"/>) ตัดออกก่อนทุกขั้น — 0 = ไม่ตัด
 /// (2026-10-09 ใบต้นฉบับ+สำเนา · <see cref="ReplayPaper.EngineLines"/>)</param>
+/// <param name="QuantityGuard">ผลของตัวกันจำนวนระเบิด (<see cref="OcrLineQuantityGuard"/>) ต่อบรรทัด <c>การกระทำ|จำนวน|ราคา|ส่วนลดบรรทัด</c> คั่นด้วย <c>;</c>
+/// (2026-10-16 RE-20261000111) · null = ใบไม่มีรายการ</param>
 public sealed record ReplayBuiltLines(
     string Mode, string? ReconCase, bool PricesIncludeVat, string Lines, string Gaps, decimal RoundingAdjustment,
-    int DuplicateRowsDropped = 0);
+    int DuplicateRowsDropped = 0, string? QuantityGuard = null);
 
 /// <summary>คำตอบหนึ่งช่องของใบหนึ่ง</summary>
 public sealed record ReplayAnswer(string Paper, string Field, string? Value);
@@ -280,6 +286,35 @@ public static class OcrReplayHarness
             EngineSubTotal: 100m, EngineVat: 7m, EngineTotal: 107m,
             LineAmounts: new[] { 50m, 50m },
             Lines: new ReplayLine[] { new("น้ำดื่ม", 10m, 5.00m, 50.00m), new("น้ำดื่ม", 10m, 5.00m, 50.00m) }),
+
+        // 2026-10-16 ใบจริง RE-20261000111 (พรามี่): ส่วนลดรายบรรทัด 293.00 พิมพ์บนแถว · engine คืน (1, 1,330, 1,037) ไม่มีช่องส่วนลด ⇒
+        // เดิมตัวกันจำนวนระเบิดหารจำนวนเป็น 0.78 · ต้องได้ จำนวน 1 · ราคา 1,330 (รวม VAT) · ส่วนลด 293 · ฐาน 969.16 · VAT 67.84 · รวม 1,037.00
+        new ReplayPaper("pramie-line-discount-re111", OcrPaperSamples.PramieLineDiscountPdfText,
+            EngineSubTotal: 969.16m, EngineVat: 67.84m, EngineTotal: 1037.00m,
+            LineAmounts: new[] { 1037.00m },
+            Lines: new ReplayLine[] { new("(แพ็ค3)แผ่นรองซับ M 50 แผ่น (P00022)", 1m, 1330.00m, 1037.00m) }),
+
+        // ทิศตรงข้าม (1): สินค้าชั่งน้ำหนัก — กระดาษพิมพ์แค่ราคาต่อ กก. กับยอด ไม่พิมพ์จำนวน · engine เติมจำนวน 1 ⇒ จำนวน = ยอด ÷ ราคา ยังถูก (0.45 กก.)
+        // แต่ไม่เงียบ: [LINE-QTY] (ระบบเปลี่ยนค่าที่ engine อ่านโดยไม่มีจำนวนบนกระดาษ)
+        new ReplayPaper("weighed-item-qty-not-printed",
+            "ใบเสร็จรับเงิน\nหมูสับ (ราคาต่อ กก.) 120.00 54.00\nรวมทั้งสิ้น 54.00",
+            EngineSubTotal: 54m, EngineVat: 0m, EngineTotal: 54m,
+            LineAmounts: new[] { 54.00m },
+            Lines: new ReplayLine[] { new("หมูสับ", 1m, 120.00m, 54.00m) }),
+
+        // ทิศตรงข้าม (2): engine อ่านจำนวนผิด (1) ทั้งที่กระดาษพิมพ์ 2 ติดก่อนราคา — จำนวน 1 ไม่ได้พิมพ์บนแถว ⇒ ยอด ÷ ราคา = 2 (ตรงเลขบนกระดาษ) + [LINE-QTY]
+        new ReplayPaper("qty-misread-engine-one",
+            "ใบเสร็จรับเงิน/ใบกำกับภาษี\nปากกาเจล 2 ด้าม 10.00 20.00\nรวมเป็นเงิน 20.00\nภาษีมูลค่าเพิ่ม 7% 1.40\nรวมทั้งสิ้น 21.40",
+            EngineSubTotal: 20m, EngineVat: 1.40m, EngineTotal: 21.40m,
+            LineAmounts: new[] { 20.00m },
+            Lines: new ReplayLine[] { new("ปากกาเจล", 1m, 10.00m, 20.00m) }),
+
+        // ทิศตรงข้าม (3): จำนวน 2 พิมพ์บนแถว แต่ 2 × 100 ≠ 150 และไม่มีส่วนลดบนกระดาษ ⇒ ห้ามแต่งจำนวน 1.5 — คงจำนวน/ราคา + [LINE-QTY] + [Σ-GAP] ให้คนดู
+        new ReplayPaper("qty-printed-gap-unexplained",
+            "ใบเสร็จรับเงิน/ใบกำกับภาษี\nสายยาง 2 ม้วน 100.00 150.00\nรวมเป็นเงิน 150.00\nภาษีมูลค่าเพิ่ม 7% 10.50\nรวมทั้งสิ้น 160.50",
+            EngineSubTotal: 150m, EngineVat: 10.50m, EngineTotal: 160.50m,
+            LineAmounts: new[] { 150.00m },
+            Lines: new ReplayLine[] { new("สายยาง", 2m, 100.00m, 150.00m) }),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -377,6 +412,8 @@ public static class OcrReplayHarness
             result.Add(new(p.Name, "RoundingAdjustment", built.RoundingAdjustment.ToString("0.00")));
             // 2026-10-09 ใบต้นฉบับ+สำเนา: จำนวนแถวที่ด่านแถวซ้ำตัด (ช่องใหม่ทุกใบ — ใบเดิมได้ 0)
             result.Add(new(p.Name, "DupRowsDropped", built.DuplicateRowsDropped.ToString()));
+            // 2026-10-16 RE-20261000111: ตัวกันจำนวนระเบิด (OcrLineQuantityGuard) ต่อบรรทัด — การกระทำ|จำนวน|ราคา|ส่วนลดบรรทัด (ช่องใหม่เฉพาะใบที่มีรายการ)
+            if (built.QuantityGuard is string qg) result.Add(new(p.Name, "LineQtyGuard", qg));
         }
         return result;
     }
@@ -410,12 +447,43 @@ public static class OcrReplayHarness
         // 2026-10-09 ตรงกับ SanitizeVatSplitArtifacts ข้อ 3b (ก่อนขั้นยุบ/กระทบยอดทุกขั้น): แถวตามที่ engine คืน (EngineLines — PDF ต้นฉบับ+สำเนา
         // ให้ชุดเดิมสองรอบ) เดินด่านแถวซ้ำด้วยยอดหัวใบ · ใบที่ไม่มี EngineLines = แถวที่พิมพ์ (ไม่มีอะไรซ้ำ ⇒ 0 · ช่องเดิมไม่เปลี่ยน)
         var lines = p.EngineLines ?? printedRows;
+        // 2026-10-16 ตรงกับ SanitizeVatSplitArtifacts ข้อ 1b (ก่อนด่านแถวซ้ำ): ตัวกันจำนวนระเบิดถามแถวบนกระดาษ (OcrLineQuantityGuard — ตัวเดียวกับ service)
+        // ส่วนลดที่พิมพ์ ⇒ ส่วนลดของบรรทัด · จำนวนที่พิมพ์ ⇒ คง · ไม่มีหลักฐาน ⇒ ยอด ÷ ราคา (เดิม) · ใบที่ส่วนลดจากกระดาษ + หัวใบพิสูจน์รวม VAT ⇒ ธงรวม VAT ทุกบรรทัด
+        string? quantityGuard = null;
+        if (lines is { Count: > 0 })
+        {
+            var paperNumbers = OcrLineQuantityGuard.Numbers(p.RawText);
+            var guarded = new List<ReplayLine>(lines.Count);
+            var guardText = new List<string>(lines.Count);
+            var paperDiscountRead = false;
+            foreach (var l in lines)
+            {
+                var d = OcrLineQuantityGuard.Decide(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscount, paperNumbers);
+                // ⚠️ ไม่เล่นซ้ำ FillUnitPrice (ราคาว่าง ⇒ ยอด ÷ จำนวน ทศนิยม 4) — harness ไม่เคยเล่นซ้ำขั้นนี้ และ golden ของบรรทัดไม่มีราคา
+                // (OcrLineReconciler.LineDiscount ทีม D/E) ล็อกเส้น "ไม่มีราคา" ไว้ · ช่องว่างที่รู้แล้ว: ใน service ขั้นนี้รันก่อนตัวสร้างบรรทัดเสมอ
+                // ⇒ เส้น "ไม่มีราคา + จำนวน > 0" ของ LineDiscount ไปไม่ถึงจากสแกน (จดใน docs/lessons/ocr-pipeline.md 2026-10-16)
+                var g = l with
+                {
+                    Quantity = d.Quantity ?? l.Quantity,
+                    UnitPrice = d.Action == OcrLineQuantityAction.FillUnitPrice ? l.UnitPrice : d.UnitPrice ?? l.UnitPrice,
+                    LineDiscount = d.LineDiscount ?? l.LineDiscount,
+                };
+                paperDiscountRead |= d.LineDiscount.HasValue;
+                guarded.Add(g);
+                guardText.Add($"{d.Action}|{g.Quantity?.ToString("0.###") ?? "-"}|{g.UnitPrice?.ToString("0.00##") ?? "-"}|{g.LineDiscount?.ToString("0.00") ?? "-"}");
+            }
+            if (OcrLineQuantityGuard.PaperDiscountPricesIncludeVat(paperDiscountRead, guarded.Sum(l => l.Amount),
+                    headerSub, headerVat, anchoredTotal, discountToSpread))
+                guarded = guarded.Select(l => l.Amount != 0m ? l with { PriceIncludesVat = true } : l).ToList();
+            lines = guarded;
+            quantityGuard = string.Join(";", guardText);
+        }
         var duplicateRowsDropped = 0;
         if (lines is { Count: >= 2 })
         {
             // ส่วนลดท้ายบิลที่ตัวสร้างบรรทัดยอมให้กระจาย (PostInvoice = 0 แล้วจาก OcrTotalDecomposer) — ตรงกับ service ที่ส่ง data.DiscountAmount
             var dup = OcrDuplicateLineGuard.Decide(
-                lines.Select(l => new OcrCandidateRow(l.Description, l.Quantity, l.UnitPrice, l.Amount)).ToList(),
+                lines.Select(l => new OcrCandidateRow(l.Description, l.Quantity, l.UnitPrice, l.Amount, l.LineDiscount)).ToList(),
                 headerSub, headerVat, anchoredTotal, discountToSpread);
             if (dup.Deduped)
             {
@@ -457,8 +525,8 @@ public static class OcrReplayHarness
         {
             var n0 = lines.Count;
             var printed0 = lines.Select(l => l.Amount).ToList();
-            // ตรงกับ service: บรรทัดที่เอกสารประกาศส่วนลดรายบรรทัดเอง (e-Tax) ใช้ยอดหลังลด — กระดาษไม่มีช่องนี้ ⇒ 0 ทุกบรรทัด (เรียกตัวเดียวกัน ไม่ประกอบเอง)
-            var lineOwnDisc0 = lines.Select(l => OcrEtaxLineNormalizer.ProvenLineDiscount(l.Quantity, l.UnitPrice, l.Amount, null)).ToList();
+            // ตรงกับ service: บรรทัดที่มีส่วนลดรายบรรทัด (e-Tax · หรือที่พิมพ์บนแถวของกระดาษ — OcrLineQuantityGuard ข้างบน) ใช้ยอดหลังลด (เรียกตัวเดียวกัน ไม่ประกอบเอง)
+            var lineOwnDisc0 = lines.Select(l => OcrEtaxLineNormalizer.ProvenLineDiscount(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscount)).ToList();
             var lineGross0 = lines.Select((l, gi) => lineOwnDisc0[gi] > 0m ? l.Amount
                 : OcrTotalDecomposer.LineGross(l.Quantity, l.UnitPrice, l.Amount)).ToList();
             // ตรงกับ service: สัญลักษณ์ท้ายบรรทัด (ก่อนตัวกระทบยอด) → ตัวตัดสินตารางรหัส ภ.พ. (บรรทัดกระดาษไม่มีธงราคารวม VAT ⇒ preset = false)
@@ -469,7 +537,7 @@ public static class OcrReplayHarness
             var decision = OcrVatCodeLines.Decide(
                 lineGross0.Select((g, i) => new OcrVatCodeLineInput(g, rates0[i], lines[i].Description)).ToList(),
                 normalizedText, codeTable, hdrSub, hdrVat, hdrTotal, hdrDiscRaw,
-                pricesIncludeVatPreset: OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, false)).ToList()),
+                pricesIncludeVatPreset: OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, l.PriceIncludesVat)).ToList()),
                 tableLinesAllowed: headerWht == 0m);
             if (decision.Source == OcrVatCodeLineSource.TableSummary)
                 tableLinesInsteadOfItems = decision.TableLines;
@@ -480,12 +548,15 @@ public static class OcrReplayHarness
             var n = lines.Count;
             var printed = keep.Select(k => printed0[k]).ToList();
             var lineGross = keep.Select(k => lineGross0[k]).ToList();
+            var lineOwnDisc = keep.Select(k => lineOwnDisc0[k]).ToList();
             var grossSum = lineGross.Sum();
             hdrDiscRaw = decision.BillDiscount;
             var netSubForRecon = decision.NetSubForRecon;
             var recon = decision.Recon;
             var docDiscountPercent = recon.DiscountPercent;
-            var pricesIncludeVat = decision.PricesIncludeVat;
+            // ตรงกับ service: ทุกบรรทัดติดธงรวม VAT (e-Tax · หรือส่วนลดจากกระดาษในใบรวม VAT) ⇒ เอกสารราคารวม VAT เสมอ
+            var pricesIncludeVat = decision.PricesIncludeVat
+                || OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, l.PriceIncludesVat)).ToList());
             var rates = keep.Select(k => rates0[k]).ToArray();
             var codePlan = decision.Plan;
             if (codePlan.Applied)
@@ -522,10 +593,10 @@ public static class OcrReplayHarness
                     ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(lines[i].Description, null, p.VendorTaxId), standardVatRate)
                     : 0m;
 
-            // บรรทัดจากภาพ/ข้อความไม่มีธง PriceIncludesVat (เป็นของ e-Tax XML) ⇒ InclusiveLineVats คืน null ⇒ เฉลี่ยหัวใบตามเดิม
+            // บรรทัดจากภาพ/ข้อความไม่มีธง PriceIncludesVat (เว้นใบส่วนลดจากกระดาษที่พิสูจน์รวม VAT) ⇒ InclusiveLineVats คืน null ⇒ เฉลี่ยหัวใบตามเดิม
             var spreadVat = (pricesIncludeVat
                     ? OcrEtaxLineNormalizer.InclusiveLineVats(
-                        amounts.Select((a, i) => (a, rates[i] ?? 0m, false)).ToList(), hdrVat)
+                        amounts.Select((a, i) => (a, rates[i] ?? 0m, lines[i].PriceIncludesVat)).ToList(), hdrVat)
                     : null)
                 ?? ThaiVatTypeRule.SpreadHeaderVat(amounts.Select((a, i) => (a, rates[i] ?? 0m)).ToList(), hdrVat);
 
@@ -548,10 +619,10 @@ public static class OcrReplayHarness
             if (recon.UnreconciledGap == 0m && OcrVatCodeLines.TableMismatch(planned, codeTable) is not null)
                 gaps.Add("VatCodeTable");
 
-            // ผลต่างปัดเศษของราคาต่อหน่วย — เฉพาะบรรทัดที่มี VAT (ฝ่ายค้าน P5 รอบ 193) · บรรทัดกระดาษไม่มีส่วนลดรายบรรทัดของเอกสาร (lineOwnDisc = 0)
+            // ผลต่างปัดเศษของราคาต่อหน่วย — เฉพาะบรรทัดที่มี VAT (ฝ่ายค้าน P5 รอบ 193) · ยอดก่อนลดบรรทัด = ยอดหลังลด + ส่วนลดของบรรทัด (ตรงกับ service)
             var (shifts, _) = DocumentRounding.CapShifts(lines
                 .Select((l, i) => rates[i] is decimal r && r <= 0m ? 0m
-                    : DocumentRounding.FromPrintedLine(l.Quantity, l.UnitPrice, lineGross[i]).Shift)
+                    : DocumentRounding.FromPrintedLine(l.Quantity, l.UnitPrice, lineGross[i] + lineOwnDisc[i]).Shift)
                 .ToList());
 
             var lineAmountSum = amounts.Sum();
@@ -575,10 +646,11 @@ public static class OcrReplayHarness
                 var unitPrice = decidedUnitPrice ?? lines[i].UnitPrice ?? amount;
                 var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shifts[i];
                 builtItemsTotal += net + lineVat;
-                rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt, lineWht));
+                // ตรงกับ service: DiscountAmount = ส่วนลดจากตัวกระจาย + ส่วนลดรายบรรทัดของเอกสาร/กระดาษ
+                rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt + lineOwnDisc[i], lineWht));
             }
             return new ReplayBuiltLines("Items", recon.Case.ToString(), pricesIncludeVat,
-                string.Join(";", rows), GapText(WithOverstatement(gaps, builtItemsTotal - roundingShift)), -roundingShift, duplicateRowsDropped);
+                string.Join(";", rows), GapText(WithOverstatement(gaps, builtItemsTotal - roundingShift)), -roundingShift, duplicateRowsDropped, quantityGuard);
             }
         }
 
@@ -604,7 +676,7 @@ public static class OcrReplayHarness
             }
             var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount, codeTable);
             return new ReplayBuiltLines(tableLinesInsteadOfItems is null ? "VatGroups" : "VatGroupsInsteadOfItems", null, false, string.Join(";", rows),
-                GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m, duplicateRowsDropped);
+                GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m, duplicateRowsDropped, quantityGuard);
         }
 
         var summaryRate = hdrVat > 0m ? 7m : 0m;

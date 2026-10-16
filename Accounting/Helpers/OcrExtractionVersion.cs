@@ -20,10 +20,12 @@ namespace Accounting.Helpers;
 /// 2 = 2026-10-09 ชุด deploy รอบ 7: เส้นกระดาษเปลี่ยนผลแกะ (แถวสรุป/แถวชำระ/เงินทอนไม่เป็นบรรทัดสินค้า <c>OcrNonItemRow</c> · ยอดค้างชำระ
 /// รอบก่อน <c>OcrPriorBalance</c>) — งาน e-Tax ในชุดเดียวกัน (บรรทัดตัดสินไม่ได้ · อัตรา VAT ของ XML) ไม่ใช่เหตุของการเพิ่ม · เพิ่มครั้งเดียวต่อชุด deploy ·
 /// 3 = 2026-10-09 ใบ BS2026100001 (PDF ต้นฉบับ+สำเนา): แถวเดียวกันที่ engine อ่านสองรอบไม่ถูกรวมเป็นจำนวน ×2 อีก (<c>OcrDuplicateLineGuard</c>
-/// ใน <c>SanitizeVatSplitArtifacts</c> + <c>OcrLineSplitGuard</c>) — ไฟล์เดิมที่อัปซ้ำต้องได้จำนวนตามกระดาษ ไม่ใช่ผลรุ่น 2</para>
+/// ใน <c>SanitizeVatSplitArtifacts</c> + <c>OcrLineSplitGuard</c>) — ไฟล์เดิมที่อัปซ้ำต้องได้จำนวนตามกระดาษ ไม่ใช่ผลรุ่น 2 ·
+/// 4 = 2026-10-16 ใบ RE-20261000111 (พรามี่): ตัวกันจำนวนระเบิดถามแถวบนกระดาษ (<c>OcrLineQuantityGuard</c>) — ส่วนลดที่พิมพ์บนแถวเป็นส่วนลดของบรรทัด
+/// ไม่หารจำนวนใหม่ (1 → 0.78) · ไฟล์เดิมที่อัปซ้ำต้องได้จำนวน 1 + ส่วนลด 293 ไม่ใช่ผลรุ่น 3</para>
 /// </summary>
 public static class OcrExtractionVersion
 {
     /// <summary>รุ่นปัจจุบันของตัวแกะ — เพิ่มทีละ 1 ทุกครั้งที่แก้ตัวแกะจนผลของไฟล์เดิมเปลี่ยน</summary>
-    public const int Current = 3;
+    public const int Current = 4;
 }

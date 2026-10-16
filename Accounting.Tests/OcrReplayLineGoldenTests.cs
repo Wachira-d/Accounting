@@ -306,6 +306,62 @@ public class OcrReplayLineGoldenTests
         Assert.Equal(10980.00m, rows.Sum(r => Col(r, 0) + Col(r, 2)));                  // = ยอดชำระบนกระดาษ
     }
 
+    // ── 2026-10-16 ตัวกันจำนวนระเบิดถามแถวบนกระดาษ (OcrLineQuantityGuard · ใบจริง RE-20261000111 + ทิศตรงข้าม 3 ใบ) ─────────────────
+
+    [Fact]
+    public void ใบจริงRE111_พรามี่_จำนวน1_ราคา1330รวมVAT_ส่วนลดบรรทัด293_ฐาน969_16_VAT67_84_ไม่หารจำนวน()
+    {
+        // กระดาษ: 1.00 ชิ้น × 1,330.00 − ส่วนลด 293.00 = 1,037.00 (มูลค่ารวมภาษี) · ฐาน 7% 969.16 · VAT 67.84 · รวม 1,037.00
+        // คิดมือ: 1,037 × 100/107 = 969.158… ⇒ 969.16 · VAT = 1,037 − 969.16 = 67.84 (= กระดาษ) · ส่วนลด 293 อยู่ฐานรวม VAT (ฐานเดียวกับราคา)
+        // ก่อนแก้ (ใบสำคัญจ่ายของผู้ใช้): จำนวน 0.78 (= 1,037 ÷ 1,330) · ส่วนลด 0% — ยอดรวมตรงจึงไม่มีอะไรฟ้อง
+        const string P = "pramie-line-discount-re111";
+        Assert.Equal("PrintedDiscount|1|1330.00|293.00", Val(P, "LineQtyGuard"));
+        Assert.Equal("Items", Val(P, "LineMode"));
+        Assert.Equal("PricesIncludeVat", Val(P, "ReconCase"));
+        Assert.Equal("true", Val(P, "PricesIncludeVat"));
+        Assert.Equal("969.16|7|67.84|1330.00|0|293.00|0.00", Val(P, "Lines"));
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+        Assert.Equal("0.00", Val(P, "RoundingAdjustment"));
+        // ส่วนลดรายบรรทัดต้องไม่ถูกนับซ้ำเป็นส่วนลดท้ายบิล (ข้อความ PDF มีคำ "ส่วนลด" เป็นหัวคอลัมน์)
+        Assert.Null(Val(P, "BillDiscount"));
+        Assert.Equal("0.00", Val(P, "DiscountToSpread"));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_สินค้าชั่งน้ำหนัก_จำนวนไม่ได้พิมพ์_ยอดหารราคา0_45กก_ยังทำ()
+    {
+        Assert.Equal("FixQuantity|0.45|120.00|-", Val("weighed-item-qty-not-printed", "LineQtyGuard"));
+        Assert.Equal("54.00|0|0.00|120.00|0|0.00|0.00", Val("weighed-item-qty-not-printed", "Lines"));
+        Assert.Equal("ok", Val("weighed-item-qty-not-printed", "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_engineอ่านจำนวน1_กระดาษพิมพ์2_จำนวนจากยอดหารราคาเป็น2()
+    {
+        Assert.Equal("FixQuantity|2|10.00|-", Val("qty-misread-engine-one", "LineQtyGuard"));
+        Assert.Equal("20.00|7|1.40|10.00|0|0.00|0.00", Val("qty-misread-engine-one", "Lines"));
+        Assert.Equal("ok", Val("qty-misread-engine-one", "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void จำนวนพิมพ์บนแถว_ส่วนต่างไม่มีส่วนลดอธิบาย_คงจำนวน2_ไม่แต่ง1_5_และฟ้องΣGAP()
+    {
+        Assert.Equal("KeepPrintedGap|2|100.00|-", Val("qty-printed-gap-unexplained", "LineQtyGuard"));
+        Assert.Equal("150.00|7|10.50|100.00|0|0.00|0.00", Val("qty-printed-gap-unexplained", "Lines"));
+        Assert.Equal("Σ-GAP:Ambiguous", Val("qty-printed-gap-unexplained", "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void ใบเดิมทุกใบในชุด_ตัวกันจำนวนระเบิดไม่แตะบรรทัดใดเลย()
+    {
+        // ratchet ของรอบนี้: ใบที่มีอยู่ก่อน 2026-10-16 ทุกบรรทัดได้ Keep (จำนวน/ราคาตามที่ป้อน · ไม่มีส่วนลดใหม่) — ใบใหม่ 4 ใบข้างบนเท่านั้นที่เปลี่ยน
+        var added = new[] { "pramie-line-discount-re111", "weighed-item-qty-not-printed", "qty-misread-engine-one", "qty-printed-gap-unexplained" };
+        var all = OcrReplayHarness.Run();
+        foreach (var a in all.Where(a => a.Field == "LineQtyGuard" && !added.Contains(a.Paper)))
+            foreach (var row in a.Value!.Split(';'))
+                Assert.StartsWith("Keep|", row);
+    }
+
     [Fact]
     public void ทุกใบในชุด_มีแถวระดับบรรทัดครบ_และไม่มีใบไหนที่ok_แล้วยอดบรรทัดไม่ปิดยอดรวม()
     {

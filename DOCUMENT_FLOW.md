@@ -425,6 +425,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      ตรวจย้อนได้ ทิ้งไม่ได้; หลักบัญชี: ราคาทุนต่อหน่วย = ยอดจ่ายจริง ÷ ปริมาณ)
      · `qty ≈ Amount` = จำนวนคือตัวหลงคอลัมน์ → แก้ qty (เดิม) · ไม่มีราคา/หน่วย
      แต่มีจำนวน+ยอด → หารหาให้ _(ที่มา: ค่าไฟ 3,611 × 16,351.48 = 59 ล้าน)_
+     · **(2026-10-16 · ใบ RE-20261000111 พรามี่ — ผู้ใช้รายงาน "ระบบปรับจำนวนรายการ")** ตัวตัดสินย้ายไป
+     `Helpers/OcrLineQuantityGuard` ตัวเดียว (service + replay harness) และ**ถามแถวบนกระดาษก่อนหาร** (`RawTextContent` ส่งเข้าทุกผู้เรียก
+     ทั้งตอนสแกน/สร้าง/พรีวิว/ดึงรายการซ้ำ): ราคา → ส่วนลด → ยอด บนแถวเดียวกัน ลงตัวทุกสตางค์ ⇒ **ส่วนลดของบรรทัด** (`LineDiscountAmount` →
+     `DocumentLine.DiscountAmount` · ฐานเดียวกับราคา — ใบที่หัวใบพิสูจน์ราคารวม VAT ⇒ ธง `PriceIncludesVat` ทุกบรรทัด) แทนการหารจำนวน
+     (1 × 1,330 − 293 = 1,037 · เดิมได้จำนวน 0.78) · จำนวนที่พิมพ์บนแถวแต่ไม่มีส่วนลดอธิบาย ⇒ **คงจำนวน** + `[LINE-QTY]` (ตัวสร้างบรรทัดฟ้อง [Σ-GAP]) ·
+     จำนวนไม่ได้พิมพ์บนแถว (ชั่งน้ำหนัก · engine อ่านจำนวนผิด · ยอดหลงคอลัมน์) ⇒ หารแบบเดิม **แต่ไม่เงียบ** — `[LINE-QTY]` อยู่ใน
+     `OcrPostingReadiness.BlockingTags` (ห้ามอนุมัติเอง) · `OcrExtractionVersion` = 4 · Last verified `commit <pending>`
   3. **`UnitInferrer`** — หน่วยว่าง → อนุมานจากคำอธิบาย (ค่าไฟ=`หน่วย` ·
      น้ำ=`ลบ.ม.` · น้ำมัน=`ลิตร` · รายเดือน/เช่า=`เดือน` · เหมา/บริการ=`งาน`)
      ก่อนตก `ชิ้น`; `ชิ้น` บนบรรทัดที่กฎรู้จัก = default ค้างมา → แทนที่
@@ -5840,3 +5847,6 @@ _Last verified against codebase: 2026-10-16 (ฝ่ายค้านของ 7
 _Last verified against codebase: 2026-10-16 (ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก — §OCR: `Helpers/OcrVatCodeMeaning` · `AiFeatureKey.OcrVatCodeMeaning` ·
 ถามตอนสแกน/ตัดสินซ้ำตอนสร้างบรรทัด/ปิดลูปตอนอนุมัติ · DECISIONS ข้อ 153 ข้อ 2 — เทสต์ `OcrVatCodeMeaningTests` · `OcrReplayLineGoldenTests` · `AiKillSwitchOrchestratorTests` —
 คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 1c77f931)_
+_Last verified against codebase: 2026-10-16 (ใบจริง RE-20261000111 พรามี่ — §OCR ด่านคุณภาพก่อน persist ข้อ 2: ตัวกันจำนวนระเบิด `Helpers/OcrLineQuantityGuard`
+ถามแถวบนกระดาษ · ส่วนลดที่พิมพ์ ⇒ ส่วนลดบรรทัด (ไม่หารจำนวน 1 → 0.78) · จำนวนที่พิมพ์ห้ามแต่ง · `[LINE-QTY]` ห้ามอนุมัติเอง · `OcrExtractionVersion` 4 —
+เทสต์ `OcrLineQuantityGuardTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>)_
