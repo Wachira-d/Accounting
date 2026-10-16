@@ -207,15 +207,27 @@ public class OcrLineQuantityGuardTests
     }
 
     [Fact]
-    public void ทิศตรงข้าม_เคสก_ราคาเท่ายอดทั้งบรรทัด_จำนวนคือมิเตอร์_แก้ราคาไม่แก้จำนวน_มิเตอร์พิมพ์คู่หน่วยแจ้งไม่บล็อก()
+    public void ทิศตรงข้าม_เคสก_ราคาเท่ายอดทั้งบรรทัด_จำนวนคือมิเตอร์_ลง1คูณยอด_จำนวนอยู่ในคำอธิบาย_มิเตอร์พิมพ์คู่หน่วยแจ้งไม่บล็อก()
     {
-        var d = OcrLineQuantityGuard.Decide(3611m, 16351.48m, 16351.48m, null, Paper("ค่าไฟฟ้า 3,611 หน่วย 16,351.48"));
-        Assert.Equal(OcrLineQuantityAction.FixUnitPrice, d.Action);
-        Assert.Null(d.Quantity);
-        Assert.Equal(4.5282m, d.UnitPrice);
+        // ทีม OCR 8 (2026-10-16 · เจ้าของ "ลองเปิดดูแล้วมี 2 หน่วยนะ 4หน่วยน่าจะเป็นค่า ft มากกว่า"): เดิมตั้งราคา = ยอด ÷ จำนวน = 4.5282 ⇒
+        // DocumentLine เก็บ 4.53 ⇒ 3,611 × 4.53 = 16,357.83 ≠ 16,351.48 (บันทึกซ้ำเลื่อน 6.35) · ตอนนี้ 1 × ยอด · 3,611 หน่วยอยู่ในคำอธิบาย
+        var d = OcrLineQuantityGuard.Decide(3611m, 16351.48m, 16351.48m, null, Paper("ค่าไฟฟ้า 3,611 หน่วย 16,351.48"), "ค่าไฟฟ้า");
+        Assert.Equal(OcrLineQuantityAction.QuantityInDescription, d.Action);
+        Assert.Equal(1m, d.Quantity);
+        Assert.Equal(16351.48m, d.UnitPrice);
+        Assert.Equal("ค่าไฟฟ้า (3,611 หน่วย)", d.Description);
+        Assert.Equal(OcrLineQuantityGuard.LumpSumUnit, d.Unit);
         // ฝ่ายค้าน P2-3: บิลค่าไฟทุกเดือน — มิเตอร์ 3,611 พิมพ์คู่ "หน่วย" แล้วยอดตามมา = พิสูจน์แล้ว ⇒ แจ้ง (เดิมบล็อกทุกเดือน)
         Assert.StartsWith(OcrLineQuantityGuard.NoteTag, d.Note);
+        Assert.Contains(OcrLineQuantityGuard.QuantityInDescriptionPhrase, d.Note);
         Assert.False(d.Blocking);
+        // ทิศตรงข้าม: กระดาษพิมพ์ราคา 2 ตำแหน่งที่ลงตัว ("ปากกาเจล 2 ด้าม 10.00 20.00" · engine อ่านยอดเป็นราคา) ⇒ ราคาจากกระดาษ จำนวนคงเดิม
+        var pen = OcrLineQuantityGuard.Decide(2m, 20m, 20m, null, Paper("ปากกาเจล 2 ด้าม 10.00 20.00"), "ปากกาเจล");
+        Assert.Equal(OcrLineQuantityAction.FixUnitPrice, pen.Action);
+        Assert.Null(pen.Quantity);
+        Assert.Equal(10.00m, pen.UnitPrice);
+        Assert.Null(pen.Description);
+        Assert.False(pen.Blocking);
         // ทิศตรงข้าม: ไม่มีข้อความกระดาษ / มิเตอร์ไม่ได้พิมพ์คู่หน่วย ⇒ ยังบล็อก
         Assert.True(OcrLineQuantityGuard.Decide(3611m, 16351.48m, 16351.48m, null, null).Blocking);
         Assert.True(OcrLineQuantityGuard.Decide(3611m, 16351.48m, 16351.48m, null, Paper("ค่าไฟฟ้า 16,351.48 รวม 16,351.48")).Blocking);
@@ -238,15 +250,27 @@ public class OcrLineQuantityGuardTests
     }
 
     [Fact]
-    public void ลงตัวอยู่แล้ว_หรือข้อมูลไม่พอ_ไม่แตะ_และราคาว่างเติมจากยอดหารจำนวนแบบเดิม()
+    public void ลงตัวอยู่แล้ว_หรือข้อมูลไม่พอ_ไม่แตะ_ราคาว่างไม่แต่งราคาที่กระดาษไม่พิมพ์()
     {
         Assert.Equal(OcrLineQuantityAction.Keep, OcrLineQuantityGuard.Decide(2m, 268m, 536m, null, Paper(OcrPaperSamples.UptoyouShopee)).Action);
         Assert.Equal(OcrLineQuantityAction.Keep, OcrLineQuantityGuard.Decide(null, 100m, 50m, null, null).Action);
         Assert.Equal(OcrLineQuantityAction.Keep, OcrLineQuantityGuard.Decide(1m, 100m, 0m, null, null).Action);
-        var fill = OcrLineQuantityGuard.Decide(3611m, null, 16351.48m, null, null);
-        Assert.Equal(OcrLineQuantityAction.FillUnitPrice, fill.Action);
-        Assert.Equal(4.5282m, fill.UnitPrice);
-        Assert.Null(fill.Note);
+        // ทีม OCR 8: ราคาว่าง + จำนวน > 1 + กระดาษไม่พิมพ์ราคา ⇒ 1 × ยอด + จำนวนในคำอธิบาย (เดิม FillUnitPrice 4.5282 — DocumentLine เก็บ 2 ตำแหน่ง ⇒ บันทึกซ้ำเลื่อน)
+        var fill = OcrLineQuantityGuard.Decide(3611m, null, 16351.48m, null, null, "ค่าไฟฟ้า");
+        Assert.Equal(OcrLineQuantityAction.QuantityInDescription, fill.Action);
+        Assert.Equal((1m, 16351.48m), (fill.Quantity!.Value, fill.UnitPrice!.Value));
+        Assert.Equal("ค่าไฟฟ้า (3,611 หน่วย)", fill.Description);
+        Assert.StartsWith(OcrLineQuantityGuard.NoteTag, fill.Note);   // แจ้ง ไม่บล็อก — ยอดคือตัวเลขบนกระดาษ
+        Assert.False(fill.Blocking);
+        // ทิศตรงข้าม: จำนวน 1 ⇒ ราคา = ยอด (เดิมทุกตัวอักษร · ไม่มีหมายเหตุ) · ราคาที่ลงตัวพิมพ์บนแถว (engine อ่านคอลัมน์ราคาหลุด) ⇒ เติมราคานั้น จำนวนคงเดิม
+        var one = OcrLineQuantityGuard.Decide(1m, null, 500m, null, null);
+        Assert.Equal((OcrLineQuantityAction.FillUnitPrice, 500m), (one.Action, one.UnitPrice!.Value));
+        Assert.Null(one.Note);
+        var printed = OcrLineQuantityGuard.Decide(2m, null, 20m, null, Paper("ปากกาเจล 2 ด้าม 10.00 20.00"), "ปากกาเจล");
+        Assert.Equal((OcrLineQuantityAction.FillUnitPrice, 10.00m), (printed.Action, printed.UnitPrice!.Value));
+        Assert.Null(printed.Quantity);
+        Assert.Null(printed.Description);
+        Assert.Null(printed.Note);
         // ส่วนลดที่เอกสารประกาศแล้ว (e-Tax) อธิบายยอดได้ ⇒ ไม่แตะ ไม่อ่านกระดาษซ้ำ
         Assert.Equal(OcrLineQuantityAction.Keep, OcrLineQuantityGuard.Decide(3m, 37m, 84.32m, 26.68m, null).Action);
     }

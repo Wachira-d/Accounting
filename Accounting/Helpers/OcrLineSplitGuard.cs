@@ -86,8 +86,9 @@ public static class OcrLineSplitGuard
                 if (amount is not > 0m) continue;             // ไม่มียอด = ไม่รับบรรทัดนี้
 
                 var qty = Num(el, "quantity") is { } q && q > 0m ? q : 1m;
-                var unitPrice = Num(el, "unit_price")
-                    ?? (qty > 0m ? Math.Round(amount.Value / qty, 4, MidpointRounding.AwayFromZero) : null);
+                // ทีม OCR 8 (2026-10-16): โมเดลไม่ส่งราคา ⇒ จำนวน 1 = ยอด · อื่น ๆ ปล่อยว่างให้ตัวตัดสินตัวเดียว (Helpers/OcrLineQuantityGuard ใน Sanitize)
+                // ถามกระดาษ — เดิมเติม ยอด ÷ จำนวน ทศนิยม 4 (ราคาที่กระดาษไม่พิมพ์ · DocumentLine เก็บ 2 ตำแหน่ง ⇒ บันทึกซ้ำเลื่อน)
+                var unitPrice = Num(el, "unit_price") ?? (qty == 1m ? amount.Value : null);
                 var unit = el.TryGetProperty("unit", out var u) ? u.GetString() : null;
 
                 parsed.Add(new SplitLine(desc!.Trim(), qty, unitPrice, amount.Value,

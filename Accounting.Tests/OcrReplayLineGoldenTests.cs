@@ -402,12 +402,44 @@ public class OcrReplayLineGoldenTests
     }
 
     [Fact]
-    public void ฝ่ายค้าน_บิลค่าไฟมิเตอร์พิมพ์คู่หน่วย_ราคาจากยอดหารจำนวน_แจ้งไม่บล็อก()
+    public void ฝ่ายค้าน_บิลค่าไฟมิเตอร์พิมพ์คู่หน่วย_ลง1คูณยอด_จำนวนอยู่ในคำอธิบาย_แจ้งไม่บล็อก()
     {
-        // เดิม: [LINE-QTY] บล็อกทุกเดือน · มิเตอร์ 3,611 "หน่วย" แล้วยอด 16,351.48 ตามมา = พิสูจน์แล้ว
+        // เดิม (658e3705): [LINE-QTY] บล็อกทุกเดือน · มิเตอร์ 3,611 "หน่วย" แล้วยอด 16,351.48 ตามมา = พิสูจน์แล้ว
+        // ★ ทีม OCR 8 (2026-10-16): เดิม "FixUnitPrice|3611|4.5282|-|note" + ราคาต่อหน่วยในบรรทัด 4.53 ⇒ บันทึกซ้ำ 3,611 × 4.53 = 16,357.83 ≠ 16,351.48 ·
+        // ตอนนี้ 1 × 16,351.48 · ราคาต่อหน่วย = ยอด · "(3,611 หน่วย)" ในคำอธิบาย · ยอด/VAT/รวม เท่าเดิมทุกสตางค์
         const string P = "utility-meter-bill";
-        Assert.Equal("FixUnitPrice|3611|4.5282|-|note", Val(P, "LineQtyGuard"));
+        Assert.Equal("QuantityInDescription|1|16351.48|-|note", Val(P, "LineQtyGuard"));
+        Assert.Equal("ค่าไฟฟ้า (3,611 หน่วย)", Val(P, "LineDescriptions"));
+        Assert.Equal("16351.48|7|1144.60|16351.48|0|0.00|0.00", Val(P, "Lines"));
         Assert.Equal("ok", Val(P, "IntegrityGaps"));
+        Assert.Equal("0.00", Val(P, "RoundingAdjustment"));
+    }
+
+    [Fact]
+    public void บิลค่าไฟจริง_กฟภ_ไม่มีราคาต่อหน่วยบนกระดาษ_ลง1คูณยอด_4272หน่วยในคำอธิบาย_ยอดVATรวมตรงกระดาษ()
+    {
+        // ทีม OCR 8 (2026-10-16 · PDF จริง XH0712609004157): ตาราง จำนวนหน่วย 4,272.00 · จำนวนเงิน 19,381.50 — ไม่มีคอลัมน์ราคาต่อหน่วย ·
+        // ตัวเลข 4 ตำแหน่งตัวเดียวบนกระดาษคือ อัตราค่า Ft 0.1623 · ก่อนแก้: ราคา 19,381.50 ÷ 4,272 = 4.5369 ⇒ เก็บ 4.54 ⇒ บันทึกซ้ำ 19,394.88 (+13.38)
+        const string P = "pea-electricity-bill-0869";
+        Assert.Equal("19381.50", Val(P, "HeaderSubTotal"));
+        Assert.Equal("20738.21", Val(P, "HeaderTotal"));
+        Assert.Equal("20738.21", Val(P, "AnchorTotal"));
+        // ⚠️ ตัวยึดยอดรวมพิสูจน์จากกระดาษไม่ได้ (ข้อความ PdfPig พิมพ์ตัวเลขก่อนป้าย "รวมทั้งสิ้น (Total)") ⇒ ใช้ยอดของ engine — ล็อกคำตอบวันนี้
+        Assert.Equal("Unknown", Val(P, "AnchorVerdict"));
+        Assert.Equal("19381.50", Val(P, "AnchoredNetSubTotal"));
+        Assert.Equal("false", Val(P, "IsDeposit"));
+        Assert.Null(Val(P, "PaperWhtAmount"));
+        Assert.Equal("Items", Val(P, "LineMode"));
+        Assert.Equal("LinesMatchSubTotal", Val(P, "ReconCase"));
+        Assert.Equal("false", Val(P, "PricesIncludeVat"));
+        // จำนวนหน่วยพิมพ์หลังป้าย "หน่วยที่ใช้ 4272.00" แล้วยอด 19,381.50 ตามมา = พิสูจน์แล้ว ⇒ แจ้ง ไม่บล็อก
+        Assert.Equal("QuantityInDescription|1|19381.50|-|note", Val(P, "LineQtyGuard"));
+        Assert.Equal("ค่าไฟฟ้า ประจำเดือน 08/2569 (4,272 หน่วย)", Val(P, "LineDescriptions"));
+        // ยอดก่อนVAT|อัตรา|VAT|ราคาต่อหน่วย|ส่วนลด%|ส่วนลดบาท|หัก ณ ที่จ่าย — 19,381.50 + 1,356.71 = 20,738.21 ✓
+        Assert.Equal("19381.50|7|1356.71|19381.50|0|0.00|0.00", Val(P, "Lines"));
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+        Assert.Equal("0.00", Val(P, "RoundingAdjustment"));
+        Assert.Equal("0", Val(P, "DupRowsDropped"));
     }
 
     [Fact]
@@ -427,7 +459,7 @@ public class OcrReplayLineGoldenTests
         var block = rows.Where(r => r.Tag == "block").Select(r => r.Paper).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
         var note = rows.Where(r => r.Tag == "note").Select(r => r.Paper).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
         Assert.Equal(new[] { "deposit-installment-invoice", "qty-printed-gap-unexplained", "row-index-receipt", "sku-code-on-row", "weighed-item-qty-not-printed", "wht-column-service-invoice" }, block);
-        Assert.Equal(new[] { "discount-header-invoice", "pramie-line-discount-re111", "qty-misread-engine-one", "utility-meter-bill" }, note);
+        Assert.Equal(new[] { "discount-header-invoice", "pea-electricity-bill-0869", "pramie-line-discount-re111", "qty-misread-engine-one", "utility-meter-bill" }, note);
     }
 
     [Fact]
@@ -436,7 +468,9 @@ public class OcrReplayLineGoldenTests
         // ratchet ของรอบนี้: ใบที่มีอยู่ก่อน 2026-10-16 ทุกบรรทัดได้ Keep (จำนวน/ราคาตามที่ป้อน · ไม่มีส่วนลดใหม่) — ใบใหม่ 4 ใบข้างบนเท่านั้นที่เปลี่ยน
         var added = new[] { "pramie-line-discount-re111", "weighed-item-qty-not-printed", "qty-misread-engine-one", "qty-printed-gap-unexplained",
             // ฝ่ายค้าน 658e3705 (ทีม OCR 6)
-            "wht-column-service-invoice", "deposit-installment-invoice", "sku-code-on-row", "row-index-receipt", "utility-meter-bill", "discount-header-invoice" };
+            "wht-column-service-invoice", "deposit-installment-invoice", "sku-code-on-row", "row-index-receipt", "utility-meter-bill", "discount-header-invoice",
+            // ทีม OCR 8 (บิลค่าไฟจริง กฟภ.)
+            "pea-electricity-bill-0869" };
         var all = OcrReplayHarness.Run();
         foreach (var a in all.Where(a => a.Field == "LineQtyGuard" && !added.Contains(a.Paper)))
             foreach (var row in a.Value!.Split(';'))

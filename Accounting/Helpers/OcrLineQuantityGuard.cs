@@ -44,20 +44,23 @@ public enum OcrLineQuantityAction
 {
     /// <summary>ไม่แตะ (ลงตัวอยู่แล้ว · ข้อมูลไม่พอ · ยอด ≤ 0)</summary>
     Keep = 0,
-    /// <summary>ไม่มีราคาต่อหน่วย แต่มีจำนวน + ยอด ⇒ ราคา = ยอด ÷ จำนวน (เติมช่องว่าง ไม่ได้เปลี่ยนค่าที่อ่านได้)</summary>
+    /// <summary>ไม่มีราคาต่อหน่วย แต่มีจำนวน + ยอด และราคานั้น<b>พิมพ์อยู่บนแถวของกระดาษ</b> (engine อ่านคอลัมน์ราคาหลุด) หรือจำนวน = 1 ⇒
+    /// เติมราคา 2 ตำแหน่งที่ round(จำนวน × ราคา) = ยอดทุกสตางค์ (เติมช่องว่าง ไม่ได้เปลี่ยนค่าที่อ่านได้) · กระดาษไม่พิมพ์ราคา ⇒
+    /// <see cref="QuantityInDescription"/> (ทีม OCR 8 · 2026-10-16 — เดิมเติม ยอด ÷ จำนวน ทศนิยม 4 ตำแหน่ง)</summary>
     FillUnitPrice,
     /// <summary>กระดาษพิมพ์ส่วนลดของบรรทัดนี้ <b>พร้อมหลักฐานว่าเป็นส่วนลด</b> (หัวคอลัมน์ "ส่วนลด" หรือป้าย ลด/ส่วนลด ติดตัวเลข · % ที่ไม่ใช่อัตรา
     /// หัก ณ ที่จ่าย) และ round(จำนวน × ราคา) − ส่วนลด = ยอด ทุกสตางค์ ⇒ ลงเป็นส่วนลดของบรรทัด · จำนวน/ราคาคงตามกระดาษ · หมายเหตุแจ้ง (ไม่บล็อก)</summary>
     PrintedDiscount,
-    /// <summary>(เคส ก เดิม) ราคาต่อหน่วย ≈ ยอดทั้งบรรทัดทั้งที่จำนวน &gt; 1 ⇒ engine อ่านยอดมาใส่ช่องราคา ⇒ ราคา = ยอด ÷ จำนวน
-    /// · จำนวนพิมพ์คู่หน่วยนับบนกระดาษ (มิเตอร์) = พิสูจน์แล้ว ⇒ หมายเหตุแจ้ง · ไม่งั้นแท็กบล็อก</summary>
+    /// <summary>(เคส ก) ราคาต่อหน่วย ≈ ยอดทั้งบรรทัดทั้งที่จำนวน &gt; 1 ⇒ engine อ่านยอดมาใส่ช่องราคา ⇒ ราคา 2 ตำแหน่งที่ลงตัว<b>พิมพ์อยู่บนแถว</b> ⇒ ราคานั้น
+    /// (หมายเหตุแจ้ง) · กระดาษไม่พิมพ์ราคาต่อหน่วย (บิลมิเตอร์) ⇒ <see cref="QuantityInDescription"/> (ทีม OCR 8 — เดิม ยอด ÷ จำนวน 4 ตำแหน่ง)</summary>
     FixUnitPrice,
     /// <summary>(เคส ข / เดิม) จำนวนที่ engine อ่านไม่ได้พิมพ์บนแถวของกระดาษ (หรือเป็นยอดที่อ่านหลงคอลัมน์) ⇒ จำนวน = ยอด ÷ ราคา
     /// · จำนวนใหม่พิมพ์อยู่บนแถว = พิสูจน์แล้ว ⇒ หมายเหตุแจ้ง · ไม่งั้นแท็กบล็อก</summary>
     FixQuantity,
     /// <summary>จำนวนที่ engine อ่าน<b>พิมพ์อยู่บนแถวของกระดาษ</b> แต่ จำนวน × ราคา ≠ ยอด และกระดาษไม่มีอะไรอธิบาย ⇒ คงจำนวน/ราคาตามกระดาษ (ห้ามแต่งจำนวน) +
     /// <b>ห้ามเก็บบรรทัดที่ไม่ลงตัว</b> (ฝ่ายค้าน 658e3705 P2-5 — เปิดแก้แล้วบันทึก ComputeLineAmounts คิดใหม่ = ยอดเลื่อน): ส่วนต่างบวก ⇒ ส่วนลดที่ระบุชัด ·
-    /// ส่วนต่างลบ ⇒ ราคา = ยอด ÷ จำนวน · ยอดบรรทัด = ยอดบนกระดาษเสมอ · แท็กบล็อก "ส่วนต่างที่กระดาษไม่บอก — ตรวจ"</summary>
+    /// ส่วนต่างลบ ⇒ 1 × ยอด + จำนวน/ราคาที่พิมพ์ในคำอธิบาย (ทีม OCR 8 — เดิม ราคา = ยอด ÷ จำนวน 4 ตำแหน่ง) · ยอดบรรทัด = ยอดบนกระดาษเสมอ ·
+    /// แท็กบล็อก "ส่วนต่างที่กระดาษไม่บอก — ตรวจ"</summary>
     KeepPrintedGap,
     /// <summary>ตัวเลขบนแถวลงตัวเป็นส่วนต่างพอดี แต่<b>ไม่มีหลักฐานว่าเป็นส่วนลด</b> (ไม่มีหัวคอลัมน์/ป้ายส่วนลด · % เท่าอัตราหัก ณ ที่จ่าย · ตัวเลขเปล่า
     /// เช่นรหัสสินค้า "SKU 50" · อัตรา VAT ไม่มี %) ⇒ เก็บแบบ <see cref="KeepPrintedGap"/> (ส่วนต่างเป็นส่วนลดที่ระบุชัด ยอดตามกระดาษ) + แท็กบล็อก</summary>
@@ -65,14 +68,25 @@ public enum OcrLineQuantityAction
     /// <summary>แถว/หัวคอลัมน์มีคำ หัก ณ ที่จ่าย/มัดจำ ⇒ ส่วนต่าง<b>ไม่ใช่ส่วนลด</b> (ภาษีหัก ณ ที่จ่ายไม่ลดมูลค่าบรรทัด · มัดจำต้องล้างบัญชีมัดจำ ไม่ใช่ลดราคา) ⇒
     /// ยอดบรรทัด = จำนวน × ราคาที่พิมพ์ (ก่อนหัก) · ส่วนที่หักเป็นของเจ้าของเดิม (ภาษีหัก ณ ที่จ่ายของเอกสาร · การหักมัดจำของเอกสาร) · แท็กบล็อก</summary>
     DeductionRow,
+    /// <summary>**บรรทัดที่กระดาษพิมพ์จำนวน + ยอด แต่ไม่พิมพ์ราคาต่อหน่วยที่เก็บได้** (บิลมิเตอร์ค่าไฟ/ค่าน้ำ/โทรศัพท์ · ชั่งน้ำหนัก · ราคาเกิน 2 ตำแหน่ง)
+    /// ⇒ จำนวน 1 × ราคา = ยอดบนกระดาษ (2 ตำแหน่ง · ลงตัวทุกสตางค์) · จำนวนหน่วย (และราคาที่พิมพ์ถ้ามี) ย้ายไปอยู่ในคำอธิบาย
+    /// "ค่าไฟฟ้า ประจำเดือน 08/2569 (4,272 หน่วย)" · หน่วยนับของบรรทัด = <see cref="OcrLineQuantityGuard.LumpSumUnit"/>
+    /// <para>ที่มา (ทีม OCR 8 · 2026-10-16 · บิล PEA จริง XH0712609004157): เดิมตั้งราคา = ยอด ÷ จำนวน ทศนิยม 4 (4.5369/หน่วย) แต่
+    /// <c>DocumentLine.UnitPrice</c> เก็บ 2 ตำแหน่ง ⇒ เปิดแก้แล้วบันทึก 4.54 × 4,272 = 19,394.88 ≠ กระดาษ 19,381.50 · เจ้าของตรวจบิลจริง:
+    /// กระดาษพิมพ์แต่ยอด 2 ตำแหน่ง ตัวเลข 4 ตำแหน่งตัวเดียวคืออัตราค่า Ft — ไม่มีราคาต่อหน่วยบนกระดาษ ⇒ ระบบห้ามแต่งขึ้น (F2 ข้อ 3)</para></summary>
+    QuantityInDescription,
 }
 
 /// <summary>ผลของ <see cref="OcrLineQuantityGuard.Decide"/> — ค่าที่ผู้เรียกต้องเขียนลงบรรทัด (null = ไม่เปลี่ยนช่องนั้น)</summary>
 /// <param name="Note">ข้อความเมื่อระบบเปลี่ยน/ตีความค่าบนบรรทัด — ขึ้นต้น <see cref="OcrLineQuantityGuard.Tag"/> (บล็อกการอนุมัติเอง) หรือ
 /// <see cref="OcrLineQuantityGuard.NoteTag"/> (แจ้งอย่างเดียว) · ผู้เรียกต้องส่งต่อให้คนเห็น (<see cref="OcrLineQuantityGuard.MergeNotes"/>) · null = ไม่มีอะไรต้องบอก</param>
 /// <param name="Amount">ยอดบรรทัดใหม่ (เฉพาะ <see cref="OcrLineQuantityAction.DeductionRow"/> = จำนวน × ราคาก่อนหัก)</param>
+/// <param name="Description">คำอธิบายใหม่ของบรรทัด (เฉพาะ <see cref="OcrLineQuantityAction.QuantityInDescription"/> — คำอธิบายเดิม + "(จำนวน หน่วย)"
+/// จาก <see cref="OcrLineQuantityGuard.QuantityDescription"/>) · null = ไม่เปลี่ยน</param>
+/// <param name="Unit">หน่วยนับใหม่ (เฉพาะ <see cref="OcrLineQuantityAction.QuantityInDescription"/> = <see cref="OcrLineQuantityGuard.LumpSumUnit"/>) · null = ไม่เปลี่ยน</param>
 public sealed record OcrLineQuantityDecision(
-    OcrLineQuantityAction Action, decimal? Quantity, decimal? UnitPrice, decimal? LineDiscount, string? Note, decimal? Amount = null)
+    OcrLineQuantityAction Action, decimal? Quantity, decimal? UnitPrice, decimal? LineDiscount, string? Note, decimal? Amount = null,
+    string? Description = null, string? Unit = null)
 {
     /// <summary>หมายเหตุนี้หยุดการอนุมัติเอง (<see cref="OcrPostingReadiness.BlockingTags"/>)</summary>
     public bool Blocking => Note is not null && Note.StartsWith(OcrLineQuantityGuard.Tag, StringComparison.Ordinal);
@@ -96,6 +110,7 @@ public readonly record struct OcrLiveLine(
 ///
 /// <para>═══ กติกา (ลำดับ) ═══
 /// <list type="number">
+/// <item>ราคาว่าง + จำนวน &gt; 0: จำนวน 1 ⇒ ราคา = ยอด · ราคา 2 ตำแหน่งที่ลงตัวพิมพ์บนแถว ⇒ ราคานั้น · ไม่งั้น ⇒ 1 × ยอด + จำนวนในคำอธิบาย (แจ้ง)</item>
 /// <item>ส่วนลดที่เอกสารประกาศแล้ว (<see cref="OcrEtaxLineNormalizer.ProvenLineDiscount"/>) อธิบายยอดได้ = ไม่แตะ</item>
 /// <item>หาแถว: ราคาต่อหน่วย → (ตัวเลข ≤ <see cref="MaxNumbersBetween"/> ตัว) → ยอดบรรทัด · ตัวเลข d ระหว่างนั้นที่ทำให้ round(จำนวน × ราคา) − d = ยอด
 ///   ทุกสตางค์ (หรือ d% ของยอดก่อนลด = ส่วนต่าง · ไม่รับ 7% · ไม่รับตัวเลขที่เท่า VAT ของบรรทัด) จำแนกตาม<b>หลักฐาน</b> (ใกล้สุดก่อน):
@@ -105,10 +120,12 @@ public readonly record struct OcrLiveLine(
 /// <item>ส่วนลดมีหลักฐาน ⇒ <see cref="OcrLineQuantityAction.PrintedDiscount"/> + หมายเหตุแจ้ง (ก่อนเกณฑ์ ±2% — ส่วนลด 15 บาทของ 1,000 ก็จริง)</item>
 /// <item>ส่วนหัก ⇒ <see cref="OcrLineQuantityAction.DeductionRow"/> (ยอด = จำนวน × ราคา · แท็กบล็อก)</item>
 /// <item>ไม่รู้ ⇒ <see cref="OcrLineQuantityAction.UnevidencedDiscount"/> (แท็กบล็อก)</item>
-/// <item>ลงตัวในเกณฑ์เดิม (±2% หรือ ฿1) = ไม่แตะ</item>
-/// <item>(เคส ก) ราคา ≈ ยอด · จำนวน &gt; 1 ⇒ แก้ราคา</item>
+/// <item>ลงตัวในเกณฑ์เดิม (±2% หรือ ฿1) = ไม่แตะ — <b>เว้น</b>ราคาเกิน 2 ตำแหน่ง (เก็บใน DocumentLine ไม่ได้) ⇒ <see cref="OcrLineQuantityAction.QuantityInDescription"/></item>
+/// <item>(เคส ก) ราคา ≈ ยอด · จำนวน &gt; 1 ⇒ ราคา 2 ตำแหน่งที่ลงตัวพิมพ์บนแถว ⇒ ราคานั้น · ไม่งั้น (บิลมิเตอร์ — กระดาษไม่พิมพ์ราคาต่อหน่วย) ⇒
+///   1 × ยอด + จำนวนหน่วยในคำอธิบาย (ทีม OCR 8 · 2026-10-16 — เดิม ยอด ÷ จำนวน 4 ตำแหน่ง ⇒ บันทึกซ้ำเลื่อน)</item>
 /// <item><b>จำนวนพิมพ์อยู่บนแถว</b> (ติดก่อนราคาโดยมีแค่คำหน่วยนับคั่น และไม่ใช่เลขลำดับแถว · หรืออยู่ระหว่างราคากับยอด) ⇒ ห้ามหารจำนวนใหม่ ·
-///   แถวมีคำหัก/มัดจำ ⇒ <see cref="OcrLineQuantityAction.DeductionRow"/> · ไม่งั้น <see cref="OcrLineQuantityAction.KeepPrintedGap"/></item>
+///   แถวมีคำหัก/มัดจำ ⇒ <see cref="OcrLineQuantityAction.DeductionRow"/> · ไม่งั้น <see cref="OcrLineQuantityAction.KeepPrintedGap"/>
+///   (ส่วนต่างลบ ⇒ 1 × ยอด + จำนวน/ราคาที่พิมพ์ในคำอธิบาย — ไม่แต่งราคา)</item>
 /// <item>อื่น ๆ ⇒ แก้จำนวน = ยอด ÷ ราคา (พฤติกรรมเดิม) · จำนวนใหม่พิมพ์บนแถว = หมายเหตุแจ้ง · ไม่งั้นแท็กบล็อก</item>
 /// </list></para>
 ///
@@ -245,9 +262,62 @@ public static class OcrLineQuantityGuard
         return m.Success && t.Length - m.Length <= 2;
     }
 
-    /// <summary>ตัดสินบรรทัดหนึ่ง — ดูกติกาที่หัวคลาส · <paramref name="paper"/> null/ว่าง = ไม่มีหลักฐานจากกระดาษ (พฤติกรรมเดิม + แท็ก)</summary>
+    /// <summary>หน่วยนับของบรรทัด <see cref="OcrLineQuantityAction.QuantityInDescription"/> — จำนวน 1 คือ "ทั้งรายการ" ไม่ใช่ 1 หน่วยมิเตอร์
+    /// (เดิม <c>UnitInferrer</c> เติม "หน่วย" ให้ค่าไฟ ⇒ "1 หน่วย × 19,381.50" อ่านผิดความหมาย)</summary>
+    public const string LumpSumUnit = "รายการ";
+
+    /// <summary>วลีของหมายเหตุทุกตัวที่ย้ายจำนวนไปไว้ในคำอธิบาย (ค้นในเทสต์/หน้ารีวิว)</summary>
+    public const string QuantityInDescriptionPhrase = "จำนวนหน่วยตามมิเตอร์อยู่ในคำอธิบาย";
+
+    /// <summary>**ตัวเดียวที่ประกอบคำอธิบาย "(จำนวน หน่วย)"** ของ <see cref="OcrLineQuantityAction.QuantityInDescription"/> — service + harness ได้ค่าผ่าน
+    /// <see cref="Decide"/> (ห้ามต่อสตริงเอง) · หน่วย = ที่ engine ส่ง ไม่งั้นอนุมานจากคำอธิบาย (ค่าไฟ → หน่วย · ค่าน้ำ → ลบ.ม.) ไม่รู้ = "จำนวน X" ·
+    /// <paramref name="printedUnitPrice"/> = ราคาที่<b>กระดาษพิมพ์</b>แต่เก็บเป็นบรรทัดลงตัวไม่ได้ ("× 4.5369") · คำอธิบายที่มีวงเล็บเดียวกันอยู่แล้วไม่ต่อซ้ำ (idempotent)</summary>
+    internal static string QuantityDescription(string? description, decimal quantity, string? unit, decimal? printedUnitPrice = null)
+    {
+        // "ชิ้น" บนบรรทัดที่กฎอนุมานหน่วยอื่นได้ = ค่าตั้งต้นที่หลุดมา (กติกาเดียวกับ UnitInferrer.Resolve) ⇒ ใช้หน่วยที่อนุมาน
+        var given = unit?.Trim();
+        var inferred = UnitInferrer.Infer(description);
+        var meterUnit = string.IsNullOrEmpty(given) || given == LumpSumUnit || (given == "ชิ้น" && inferred is not null) ? inferred : given;
+        var qtyText = quantity.ToString("#,0.###", CultureInfo.InvariantCulture);
+        var inner = meterUnit is null ? $"จำนวน {qtyText}" : $"{qtyText} {meterUnit}";
+        if (printedUnitPrice is decimal p) inner += $" × {p.ToString("#,0.00##", CultureInfo.InvariantCulture)}";
+        var suffix = $"({inner})";
+        var desc = (description ?? "").TrimEnd();
+        if (desc.EndsWith(suffix, StringComparison.Ordinal)) return desc;
+        return desc.Length == 0 ? suffix : $"{desc} {suffix}";
+    }
+
+    /// <summary>ราคาเก็บใน <c>DocumentLine.UnitPrice</c> ได้ตรงตัว (<c>HasPrecision(18,2)</c> — ห้ามขยาย · เจ้าของ 2026-10-16) — ราคาเกิน 2 ตำแหน่ง
+    /// ถูกปัดตอนบันทึก ⇒ เปิดแก้แล้วบันทึก round(จำนวน × ราคาที่ปัด) ≠ ยอดบนกระดาษ</summary>
+    private static bool PriceFitsDocumentLine(decimal price) => price == R2(price);
+
+    /// <summary>ราคา 2 ตำแหน่ง <paramref name="price"/> พิมพ์อยู่บนแถวของกระดาษ (ราคา → ยอดตามมา — <see cref="FindRow"/>) และ round(จำนวน × ราคา) = ยอดทุกสตางค์</summary>
+    private static bool PrintedPriceTies(OcrLinePaper paper, decimal qty, decimal price, decimal amt)
+        => price > 0m && R2(qty * price) == amt && FindRow(paper, qty, price, amt).Found;
+
+    /// <summary>ราคาเกิน 2 ตำแหน่งนี้ถูก<b>พิมพ์</b>บนข้อความกระดาษ (ไม่ใช่ระบบหารเอง) — ค้นตัวอักษรของตัวเลขตรง ๆ ("32.4567" · "1,234.5678")
+    /// เพราะตัวแยกตัวเลข (<see cref="NumberRe"/>) ตั้งใจตัดทศนิยม 2 ตำแหน่งก่อนเพื่อแยกช่องที่ PdfPig ต่อติดกัน ("4272.0019,381.50")</summary>
+    private static bool OnPaper(OcrLinePaper paper, decimal value)
+    {
+        if (string.IsNullOrEmpty(paper.Text)) return false;
+        foreach (var fmt in new[] { "0.####", "#,0.####" })
+        {
+            var t = value.ToString(fmt, CultureInfo.InvariantCulture);
+            if (Regex.IsMatch(paper.Text, @"(?<![\d.,])" + Regex.Escape(t) + @"(?![\d])", RegexOptions.CultureInvariant)) return true;
+        }
+        return false;
+    }
+
+    private static OcrLineQuantityDecision InDescription(
+        OcrLineQuantityAction action, decimal qty, decimal amt, string? description, string? unit, decimal? printedPrice, string note)
+        => new(action, 1m, amt, null, note,
+            Description: QuantityDescription(description, qty, unit, printedPrice), Unit: LumpSumUnit);
+
+    /// <summary>ตัดสินบรรทัดหนึ่ง — ดูกติกาที่หัวคลาส · <paramref name="paper"/> null/ว่าง = ไม่มีหลักฐานจากกระดาษ (พฤติกรรมเดิม + แท็ก) ·
+    /// <paramref name="description"/>/<paramref name="unit"/> = คำอธิบาย/หน่วยของบรรทัด (ใช้เมื่อย้ายจำนวนไปไว้ในคำอธิบาย)</summary>
     public static OcrLineQuantityDecision Decide(
-        decimal? quantity, decimal? unitPrice, decimal? amount, decimal? lineDiscount, OcrLinePaper? paper)
+        decimal? quantity, decimal? unitPrice, decimal? amount, decimal? lineDiscount, OcrLinePaper? paper,
+        string? description = null, string? unit = null)
     {
         paper ??= OcrLinePaper.Empty;
         var amt = amount ?? 0m;
@@ -255,10 +325,20 @@ public static class OcrLineQuantityGuard
         var qty = quantity ?? 0m;
         if (amt <= 0m) return Keep;
 
-        // ราคา/หน่วยหาย แต่มียอด+จำนวน → หารหาให้ (บิลสาธารณูปโภคพิมพ์แต่ปริมาณกับยอดรวม ไม่พิมพ์ราคาต่อหน่วย) — เดิมทุกตัวอักษร
+        // ราคา/หน่วยหาย แต่มียอด+จำนวน (บิลสาธารณูปโภคพิมพ์แต่ปริมาณกับยอดรวม ไม่พิมพ์ราคาต่อหน่วย)
+        // ★ ทีม OCR 8 (2026-10-16 · บิล PEA จริง): เดิมเติม ยอด ÷ จำนวน ทศนิยม 4 ⇒ DocumentLine เก็บ 2 ตำแหน่ง ⇒ บันทึกซ้ำเลื่อน ·
+        //   ตอนนี้: จำนวน 1 ⇒ ราคา = ยอด (เดิมทุกตัวอักษร) · ราคา 2 ตำแหน่งที่ลงตัวพิมพ์อยู่บนแถว (engine อ่านคอลัมน์ราคาหลุด) ⇒ เติมราคานั้น ·
+        //   ไม่งั้น ⇒ 1 × ยอด + จำนวนในคำอธิบาย (ไม่แต่งราคาที่กระดาษไม่พิมพ์ · แจ้ง ไม่บล็อก — ยอดคือตัวเลขบนกระดาษ)
         if (up <= 0m && qty > 0m)
-            return new(OcrLineQuantityAction.FillUnitPrice, null,
-                Math.Round(amt / qty, 4, MidpointRounding.AwayFromZero), null, null);
+        {
+            if (qty == 1m) return new(OcrLineQuantityAction.FillUnitPrice, null, amt, null, null);
+            var filled = R2(amt / qty);
+            if (PrintedPriceTies(paper, qty, filled, amt))
+                return new(OcrLineQuantityAction.FillUnitPrice, null, filled, null, null);
+            return InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, null,
+                $"{NoteTag} {QuantityInDescriptionPhrase} — กระดาษพิมพ์จำนวน {qty:#,0.###} และยอด {amt:N2} แต่ไม่พิมพ์ราคาต่อหน่วย ⇒ "
+                + $"ระบบลง 1 × {amt:N2} (ไม่ตั้งราคาต่อหน่วยที่กระดาษไม่พิมพ์ · ยอดตรงกระดาษ · บันทึกซ้ำไม่เลื่อน)");
+        }
         if (up <= 0m || qty <= 0m) return Keep;
 
         var gross = R2(up * qty);
@@ -281,20 +361,37 @@ public static class OcrLineQuantityGuard
                 + Fingerprint(qty, up));
 
         var computed = gross - proven;
-        if (Math.Abs(computed - amt) <= tol) return Keep;   // ตรงอยู่แล้ว (เกณฑ์เดิม)
+        if (Math.Abs(computed - amt) <= tol)   // ตรงอยู่แล้ว (เกณฑ์เดิม)
+        {
+            // ★ ทีม OCR 8: "ลงตัวในเกณฑ์ ±2%" ≠ เก็บได้ — ราคาเกิน 2 ตำแหน่ง (สแกนเก่าที่เติม ยอด ÷ จำนวน 4 ตำแหน่งไว้ใน ExtractedItemsJson ·
+            //   ราคา 4 ตำแหน่งที่กระดาษพิมพ์ เช่นน้ำมัน) ⇒ DocumentLine ปัดเหลือ 2 ตำแหน่ง ⇒ บันทึกซ้ำแล้วยอดเลื่อน ⇒ 1 × ยอด + จำนวน (และราคาที่พิมพ์) ในคำอธิบาย ·
+            //   ราคา 2 ตำแหน่งที่พิมพ์ (ต่างยอดในเกณฑ์) / จำนวน 1 / ส่วนลดที่พิสูจน์แล้ว ⇒ ไม่แตะ (คงเดิมทุกตัวอักษร — ทิศตรงข้ามล็อกในเทสต์)
+            if (proven == 0m && qty != 1m && !PriceFitsDocumentLine(up))
+                return InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, OnPaper(paper, up) ? up : null,
+                    $"{NoteTag} {QuantityInDescriptionPhrase} — ราคาต่อหน่วย {up:0.00##} เกิน 2 ตำแหน่ง (เอกสารเก็บได้ 2 ตำแหน่ง: "
+                    + $"{qty:#,0.###} × {R2(up):N2} = {R2(qty * R2(up)):N2} ≠ ยอด {amt:N2} — บันทึกซ้ำแล้วยอดเลื่อน) ⇒ ระบบลง 1 × ยอดตามกระดาษ");
+            return Keep;
+        }
 
         // ⚠️ เคส ก (บิลค่าไฟ 59 ล้าน — เดิม): ราคา ≈ ยอดทั้งที่จำนวน > 1 ⇒ ตัวผิดคือราคา ไม่ใช่จำนวน (3,611 หน่วยคือมิเตอร์จริง)
         var qtyLooksLikeAmount = Math.Abs(qty - amt) <= tol;
         if (qty > 1m && !qtyLooksLikeAmount && Math.Abs(up - amt) <= tol)
         {
-            var price = Math.Round(amt / qty, 4, MidpointRounding.AwayFromZero);
-            // ฝ่ายค้าน P2-3: จำนวนพิมพ์คู่หน่วยนับบนกระดาษ + ยอดตามมา (บิลมิเตอร์) = พิสูจน์แล้ว ⇒ แจ้ง ไม่บล็อกทุกเดือน
-            return MeterQuantityPrinted(paper, qty, amt, price)
-                ? new(OcrLineQuantityAction.FixUnitPrice, null, price, null,
-                    $"{NoteTag} จำนวน {qty:0.###} พิมพ์คู่หน่วยนับบนกระดาษ · ราคาต่อหน่วยที่อ่านได้ {up:N2} คือยอดทั้งบรรทัด — ระบบตั้งราคาต่อหน่วย = ยอด ÷ จำนวน = {price:0.####}")
-                : new(OcrLineQuantityAction.FixUnitPrice, null, price, null,
-                    $"{Tag} ราคาต่อหน่วย {up:N2} เท่ากับยอดทั้งบรรทัด {amt:N2} (จำนวน {qty:0.###}) — ระบบตั้งราคาต่อหน่วย = ยอด ÷ จำนวน = {price:0.####} · ตรวจกับกระดาษก่อนอนุมัติ"
-                    + Fingerprint(qty, price));
+            // ราคา 2 ตำแหน่งที่ลงตัวพิมพ์อยู่บนแถว ("ปากกา 2 ด้าม 10.00 20.00" · engine อ่านยอดมาใส่ช่องราคา) ⇒ ราคาจากกระดาษ (แจ้ง)
+            var paperPrice = R2(amt / qty);
+            if (PrintedPriceTies(paper, qty, paperPrice, amt))
+                return new(OcrLineQuantityAction.FixUnitPrice, null, paperPrice, null,
+                    $"{NoteTag} ราคาต่อหน่วย {paperPrice:N2} จากแถวบนกระดาษ · ราคาที่อ่านได้ {up:N2} คือยอดทั้งบรรทัด — {qty:#,0.###} × {paperPrice:N2} = {amt:N2}");
+            // ★ ทีม OCR 8: กระดาษไม่พิมพ์ราคาต่อหน่วย (บิลมิเตอร์) ⇒ ห้ามแต่ง ยอด ÷ จำนวน (เดิม 4 ตำแหน่ง ⇒ บันทึกซ้ำเลื่อน 6.35) — 1 × ยอด + จำนวนในคำอธิบาย ·
+            //   ฝ่ายค้าน P2-3: จำนวนพิมพ์คู่หน่วยนับ (หรือหลังป้าย "หน่วยที่ใช้") แล้วยอดตามมา = พิสูจน์แล้ว ⇒ แจ้ง ไม่บล็อกทุกเดือน · ไม่งั้นแท็กบล็อก (จำนวนยังไม่พิสูจน์)
+            return MeterQuantityPrinted(paper, qty, amt, Math.Round(amt / qty, 4, MidpointRounding.AwayFromZero))
+                ? InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, null,
+                    $"{NoteTag} {QuantityInDescriptionPhrase} — จำนวน {qty:#,0.###} พิมพ์คู่หน่วยนับบนกระดาษ · ราคาที่อ่านได้ {up:N2} คือยอดทั้งบรรทัด และกระดาษไม่พิมพ์ราคาต่อหน่วย ⇒ "
+                    + $"ระบบลง 1 × {amt:N2} (ไม่ตั้งราคาต่อหน่วยที่กระดาษไม่พิมพ์)")
+                : InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, null,
+                    $"{Tag} ราคาต่อหน่วย {up:N2} เท่ากับยอดทั้งบรรทัด {amt:N2} (จำนวน {qty:#,0.###}) และไม่พบจำนวนนี้คู่หน่วยนับบนกระดาษ — "
+                    + $"ระบบลง 1 × {amt:N2} · {QuantityInDescriptionPhrase} · ตรวจจำนวนกับกระดาษก่อนอนุมัติ"
+                    + Fingerprint(1m, amt));
         }
 
         // ★ จำนวนพิมพ์อยู่บนแถว + ไม่มีอะไรอธิบาย ⇒ ห้ามแต่งจำนวน (เคส ข "จำนวน = ยอด" ยังแก้ตามเดิม — จำนวนนั้นไม่ใช่จำนวน)
@@ -308,10 +405,10 @@ public static class OcrLineQuantityGuard
                 return new(OcrLineQuantityAction.KeepPrintedGap, null, null, gap,
                     $"{Tag} {line} (ต่าง {gap:N2}) และกระดาษไม่พิมพ์อะไรอธิบายส่วนต่าง — ระบบคงจำนวน/ราคาตามกระดาษ (ไม่หารจำนวนใหม่) "
                     + $"และเก็บส่วนต่างเป็นส่วนลดบรรทัด {gap:N2} ให้ยอดตรงกระดาษ · ส่วนต่างที่กระดาษไม่บอก — ตรวจ" + Fingerprint(qty, up));
-            var derived = Math.Round(amt / qty, 4, MidpointRounding.AwayFromZero);
-            return new(OcrLineQuantityAction.KeepPrintedGap, null, derived, null,
-                $"{Tag} {line} (ยอดมากกว่า {-gap:N2}) และกระดาษไม่พิมพ์อะไรอธิบาย — ระบบคงจำนวนตามกระดาษ ยอดตามกระดาษ "
-                + $"และตั้งราคาต่อหน่วย = ยอด ÷ จำนวน = {derived:0.####} · ส่วนต่างที่กระดาษไม่บอก — ตรวจ" + Fingerprint(qty, derived));
+            // ★ ทีม OCR 8: เดิมตั้งราคา = ยอด ÷ จำนวน 4 ตำแหน่ง (ราคาที่กระดาษไม่พิมพ์ + บันทึกซ้ำเลื่อน) ⇒ 1 × ยอด · จำนวน/ราคาที่พิมพ์อยู่ในคำอธิบาย
+            return InDescription(OcrLineQuantityAction.KeepPrintedGap, qty, amt, description, unit, up,
+                $"{Tag} {line} (ยอดมากกว่า {-gap:N2}) และกระดาษไม่พิมพ์อะไรอธิบาย — ระบบลง 1 × ยอดตามกระดาษ (ไม่แต่งราคาต่อหน่วย) · "
+                + $"{QuantityInDescriptionPhrase} · ส่วนต่างที่กระดาษไม่บอก — ตรวจ" + Fingerprint(1m, amt));
         }
 
         var fixedQty = Math.Round(amt / up, 3, MidpointRounding.AwayFromZero);
@@ -453,7 +550,8 @@ public static class OcrLineQuantityGuard
         var nums = paper.Numbers;
         for (var k = 0; k < nums.Count; k++)
         {
-            if (nums[k].IsPercent || nums[k].Value != qty || !nums[k].UnitAfter || nums[k].RowIndexLike) continue;
+            if (nums[k].IsPercent || nums[k].Value != qty || nums[k].RowIndexLike) continue;
+            if (!nums[k].UnitAfter && !MeterLabelBefore(paper.Text, nums[k].Start)) continue;
             for (var j = k + 1; j < nums.Count && j <= k + MaxNumbersBetween + 1; j++)
             {
                 if (nums[j].IsPercent) continue;
@@ -462,6 +560,17 @@ public static class OcrLineQuantityGuard
             }
         }
         return false;
+    }
+
+    /// <summary>ป้ายจำนวนหน่วยมิเตอร์ที่พิมพ์<b>ก่อน</b>ตัวเลข ("หน่วยที่ใช้ 4272.00" — บิล PEA จริง · "จำนวนหน่วย" · "ปริมาณน้ำที่ใช้") — ของตัวกันนี้เท่านั้น</summary>
+    private static readonly Regex MeterLabelBeforeRe = new(
+        @"(?:หน่วยที่ใช้|จำนวนหน่วย(?:ที่ใช้)?|ปริมาณ(?:น้ำ)?(?:ที่)?ใช้(?:ไป)?|units?\s*used|kwh\s*used)\s*[:：]?\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static bool MeterLabelBefore(string text, int start)
+    {
+        var from = Math.Max(0, start - 24);
+        return MeterLabelBeforeRe.IsMatch(ThaiTextNormalizer.MapThaiPua(text[from..start]));
     }
 
     /// <summary>บรรทัดที่<b>ผู้ใช้แก้เอง</b> (ฝ่ายค้าน P2-6 · CLAUDE #4 A "ค่าผู้ใช้ชนะเสมอ"): ตัวกันไม่แก้ค่าใด ๆ · ไม่ลงตัว ⇒ คืนแท็กบล็อกให้คนดู · ลงตัว/ข้อมูลไม่พอ ⇒ null</summary>

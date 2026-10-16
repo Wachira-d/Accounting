@@ -4781,9 +4781,12 @@ public class OcrService : IOcrService
                 continue;
             }
             var qtyDecision = Accounting.Helpers.OcrLineQuantityGuard.Decide(
-                item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount, linePaper);
+                item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount, linePaper, item.Description, item.Unit);
             if (qtyDecision.Quantity is decimal decidedQty) item.Quantity = decidedQty;
             if (qtyDecision.UnitPrice is decimal decidedPrice) item.UnitPrice = decidedPrice;
+            // ทีม OCR 8 (บิลมิเตอร์ · ราคาที่กระดาษไม่พิมพ์/เก็บ 2 ตำแหน่งไม่ได้): 1 × ยอด — จำนวนหน่วยย้ายไปอยู่ในคำอธิบาย (ตัวประกอบข้อความตัวเดียวใน Decide)
+            if (qtyDecision.Description is string decidedDesc) item.Description = decidedDesc;
+            if (qtyDecision.Unit is string decidedUnit) item.Unit = decidedUnit;
             // DeductionRow: ยอดบรรทัด = จำนวน × ราคาก่อนหัก (ภาษีหัก ณ ที่จ่าย/มัดจำไม่ใช่ส่วนลด — เจ้าของเดิมตัดสิน · แท็กบล็อก)
             if (qtyDecision.Amount is decimal grossAmount) item.Amount = grossAmount;
             if (qtyDecision.LineDiscount is decimal printedDiscount)
@@ -9594,7 +9597,9 @@ public class OcrService : IOcrService
                     var unit = Num(el, "unitPrice", "price", "unit_price");
                     var amt = Num(el, "amount", "lineAmount", "total");
                     if (!amt.HasValue && unit.HasValue) amt = Math.Round(unit.Value * qty, 2, MidpointRounding.AwayFromZero);
-                    if (!unit.HasValue && amt.HasValue && qty != 0) unit = Math.Round(amt.Value / qty, 2, MidpointRounding.AwayFromZero);
+                    // ทีม OCR 8 (2026-10-16): ไม่มีราคา ⇒ จำนวน 1 = ยอด · อื่น ๆ ปล่อยว่างให้ตัวตัดสินตัวเดียว (OcrLineQuantityGuard ใน Sanitize ถัดไป) ถามกระดาษ —
+                    // เดิมเติม round(ยอด ÷ จำนวน, 2) ⇒ จำนวน × ราคา ≠ ยอด ⇒ บันทึกซ้ำเลื่อน
+                    if (!unit.HasValue && amt.HasValue && qty == 1m) unit = amt;
                     string? desc = null;
                     if (el.TryGetProperty("description", out var de) && de.ValueKind == System.Text.Json.JsonValueKind.String)
                         desc = de.GetString();

@@ -6421,12 +6421,41 @@ RULES += [
     dict(file="Helpers/OcrLineQuantityGuard.cs", method="Decide",
          must=["OcrEtaxLineNormalizer.ProvenLineDiscount(", "FindRow(paper, qty, up, amt)", "MidpointRounding.AwayFromZero",
                # ฝ่ายค้าน 658e3705 P2-3: แก้ที่พิสูจน์แล้ว = แจ้ง (มิเตอร์คู่หน่วย · จำนวนใหม่บนแถว) · แท็กบล็อกต้องพกค่าที่ระบบตั้ง (ตรวจสด P2-2)
-               "MeterQuantityPrinted(paper, qty, amt, price)", "FindRow(paper, newQty, up, amt)", "Fingerprint(newQty, up)", "Fingerprint(qty, up)"],
+               "MeterQuantityPrinted(paper, qty, amt", "FindRow(paper, newQty, up, amt)", "Fingerprint(newQty, up)", "Fingerprint(qty, up)"],
          must_lit=["ส่วนลดรายบรรทัด {printed:N2} จากกระดาษ", "ส่วนต่างที่กระดาษไม่บอก — ตรวจ"],
-         before=[("row.Discount is decimal printed", "if (Math.Abs(computed - amt) <= tol) return Keep;"),
+         # ทีม OCR 8: เกณฑ์ ±2% เปลี่ยนเป็นบล็อก (ด่านราคาเกิน 2 ตำแหน่งอยู่ข้างใน) — ลำดับเดิมคงไว้
+         before=[("row.Discount is decimal printed", "if (Math.Abs(computed - amt) <= tol)"),
                  ("if (!qtyLooksLikeAmount && row.QuantityPrinted)", "var fixedQty")],
          forbid=["Math.Round(amt / up, 3)", "Math.Round(amt / qty, 4)"],
          why=_LINE_QTY_WHY + "ส่วนลดที่กระดาษพิมพ์ต้องถูกถามก่อนเกณฑ์ ±2% และจำนวนที่พิมพ์บนแถวต้องถูกคุ้มครองก่อนสูตรหารจำนวน (ลำดับ) · ปัดเศษ AwayFromZero"),
+    # ── ทีม OCR 8 (2026-10-16 · บิลค่าไฟจริง กฟภ. · เจ้าของ "มี 2 หน่วยนะ 4หน่วยน่าจะเป็นค่า ft"): ห้ามแต่งราคาต่อหน่วยที่กระดาษไม่พิมพ์ ·
+    #    ห้ามเก็บราคาเกิน 2 ตำแหน่ง (DocumentLine.UnitPrice numeric(18,2) ⇒ บันทึกซ้ำเลื่อน) ⇒ 1 × ยอด + จำนวนในคำอธิบาย (ตัวตัดสินเดียว Decide)
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="Decide",
+         must=["OcrLineQuantityAction.QuantityInDescription", "PrintedPriceTies(paper, qty, filled, amt)", "PrintedPriceTies(paper, qty, paperPrice, amt)",
+               "!PriceFitsDocumentLine(up)", "Fingerprint(1m, amt)"],
+         must_lit=["{NoteTag} {QuantityInDescriptionPhrase}"],
+         before=[("if (qty == 1m) return new(OcrLineQuantityAction.FillUnitPrice", "PrintedPriceTies(paper, qty, filled, amt)"),
+                 ("PrintedPriceTies(paper, qty, paperPrice, amt)", "MeterQuantityPrinted(paper, qty, amt")],
+         forbid=["Math.Round(amt / qty, 4, MidpointRounding.AwayFromZero), null, null)", "null, price, null", "null, derived, null"],
+         why="ทีม OCR 8 (2026-10-16 บิล PEA): ราคาว่าง/ราคาเท่ายอด/ราคาเกิน 2 ตำแหน่ง ⇒ 1 × ยอด + จำนวนในคำอธิบาย — ห้ามกลับไปเติม ยอด ÷ จำนวน 4 ตำแหน่ง "
+             "(DocumentLine เก็บ 2 ตำแหน่ง ⇒ 4.54 × 4,272 = 19,394.88 ≠ 19,381.50) · ราคาที่พิมพ์บนแถวถูกถามก่อน"),
+    dict(file=OCR, method="SanitizeVatSplitArtifacts",
+         must=["item.Description = decidedDesc", "item.Unit = decidedUnit"],
+         call_args=[("OcrLineQuantityGuard.Decide(", "item.Description"), ("OcrLineQuantityGuard.Decide(", "item.Unit")],
+         why="ทีม OCR 8: คำอธิบาย \"(4,272 หน่วย)\" + หน่วย \"รายการ\" จากตัวกันต้องถูกเขียนลงบรรทัด — ไม่งั้น 1 × ยอด ทิ้งจำนวนหน่วยมิเตอร์เงียบ"),
+    dict(file="Helpers/OcrLineSplitGuard.cs", method="Evaluate",
+         must=["(qty == 1m ? amount.Value : null)"],
+         forbid=["Math.Round(amount.Value / qty"],
+         why="ทีม OCR 8: AI แตกบรรทัดไม่ส่งราคา ⇒ ปล่อยว่างให้ตัวกันจำนวนระเบิดถามกระดาษ — ห้ามเติม ยอด ÷ จำนวน 4 ตำแหน่งเอง"),
+    dict(file=HARNESS, method="BuildLines",
+         must=["Description = d.Description ?? l.Description", "UnitPrice = d.UnitPrice ?? l.UnitPrice"],
+         call_args=[("OcrLineQuantityGuard.Decide(", "l.Description")],
+         forbid=["d.Action == OcrLineQuantityAction.FillUnitPrice ? l.UnitPrice"],
+         why="ทีม OCR 8: harness ต้องเล่นซ้ำตัวกันจำนวนระเบิดครบทุกการกระทำ (รวมเติมราคา/ย้ายจำนวนไปคำอธิบาย) ตรงกับ service — เดิมข้าม FillUnitPrice ⇒ golden ไม่เห็นราคา 4 ตำแหน่ง"),
+    dict(file=OCR, method="ApplyExternalAmountOverrides",
+         must=["qty == 1m) unit = amt"],
+         forbid=["unit = Math.Round(amt.Value / qty"],
+         why="ทีม OCR 8: ระบบภายนอกไม่ส่งราคา ⇒ ปล่อยว่างให้ตัวกันจำนวนระเบิดถามกระดาษ — ห้ามเติม round(ยอด ÷ จำนวน, 2) (จำนวน × ราคา ≠ ยอด ⇒ บันทึกซ้ำเลื่อน)"),
     dict(file=OCR, method="ScanAsync",
          call_args=[("SanitizeVatSplitArtifacts(", "extractedText"), ("OcrLineQuantityGuard.MergeNotes(", "extractedData.ReasoningTrace")],
          must=["OcrLineQuantityGuard.MergeNotes("],
@@ -6477,6 +6506,21 @@ REVIEWER_CASES += [
     # รูปถูก: ขึ้นบรรทัดใหม่ก่อน .LiveNotes( ต้องไม่ถูกฟ้อง
     ("LQ5", "HandlePostbackAsync", "                Accounting.Helpers.OcrLineQuantityGuard.LiveNotes(",
      "                Accounting.Helpers.OcrLineQuantityGuard\n                    .LiveNotes(", False),
+    # ── ทีม OCR 8 (บิลมิเตอร์): การถดถอยจริงที่ต้องถูกจับ + รูปถูกที่ต้องไม่ถูกฟ้อง ──
+    # กลับไปเติม ยอด ÷ จำนวน 4 ตำแหน่ง (FillUnitPrice เดิม)
+    ("MB1", "Decide", "            if (qty == 1m) return new(OcrLineQuantityAction.FillUnitPrice, null, amt, null, null);\n",
+     "            return new(OcrLineQuantityAction.FillUnitPrice, null, Math.Round(amt / qty, 4, MidpointRounding.AwayFromZero), null, null);\n", True),
+    # service ทิ้งคำอธิบายที่มีจำนวนหน่วย (1 × ยอด แล้วจำนวนมิเตอร์หายเงียบ)
+    ("MB2", "SanitizeVatSplitArtifacts", "            if (qtyDecision.Description is string decidedDesc) item.Description = decidedDesc;\n", "", True),
+    # ถอดด่านราคาเกิน 2 ตำแหน่ง (สแกนเก่าที่ persist 4.5369 กลับไป Keep ⇒ บันทึกซ้ำเลื่อน)
+    ("MB3", "Decide", "if (proven == 0m && qty != 1m && !PriceFitsDocumentLine(up))", "if (false)", True),
+    # AI แตกบรรทัดกลับไปเติม 4 ตำแหน่ง
+    ("MB4", "Evaluate", "?? (qty == 1m ? amount.Value : null);", "?? (qty > 0m ? Math.Round(amount.Value / qty, 4, MidpointRounding.AwayFromZero) : null);", True),
+    # ไม่ส่งคำอธิบายให้ตัวกัน (ได้วงเล็บอย่างเดียว ไม่มีชื่อรายการ)
+    ("MB5", "SanitizeVatSplitArtifacts", "linePaper, item.Description, item.Unit);", "linePaper, null, item.Unit);", True),
+    # รูปถูก: ขึ้นบรรทัดใหม่ก่อนกำหนดค่าคำอธิบาย ต้องไม่ถูกฟ้อง
+    ("MB6", "SanitizeVatSplitArtifacts", "            if (qtyDecision.Description is string decidedDesc) item.Description = decidedDesc;\n",
+     "            if (qtyDecision.Description is string decidedDesc)\n                item.Description = decidedDesc;\n", False),
 ]
 
 

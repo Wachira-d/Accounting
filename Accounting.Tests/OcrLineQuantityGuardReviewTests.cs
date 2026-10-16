@@ -218,14 +218,24 @@ public class OcrLineQuantityGuardReviewTests
     }
 
     [Fact]
-    public void P2_5_ส่วนต่างติดลบ_ยอดมากกว่าจำนวนคูณราคา_ราคาจากยอดหารจำนวน_ยอดตรงกระดาษ()
+    public void P2_5_ส่วนต่างติดลบ_ยอดมากกว่าจำนวนคูณราคา_ลง1คูณยอด_จำนวนราคาที่พิมพ์อยู่ในคำอธิบาย_ยอดตรงกระดาษ()
     {
-        var d = OcrLineQuantityGuard.Decide(2m, 100m, 250m, null, Paper("สายยาง 2 ม้วน 100.00 250.00"));
+        // ทีม OCR 8 (2026-10-16): เดิมตั้งราคา = ยอด ÷ จำนวน (125 · ราคาที่กระดาษไม่พิมพ์ — ใบที่ไม่ลงตัวพอดีได้ 4 ตำแหน่ง ⇒ บันทึกซ้ำเลื่อน)
+        // ตอนนี้ 1 × ยอด · จำนวน/ราคาที่พิมพ์อยู่ในคำอธิบาย · ยังบล็อก (ส่วนต่างที่กระดาษไม่บอก)
+        var d = OcrLineQuantityGuard.Decide(2m, 100m, 250m, null, Paper("สายยาง 2 ม้วน 100.00 250.00"), "สายยาง");
         Assert.Equal(OcrLineQuantityAction.KeepPrintedGap, d.Action);
-        Assert.Equal(125m, d.UnitPrice);
+        Assert.Equal(1m, d.Quantity);
+        Assert.Equal(250m, d.UnitPrice);
+        Assert.Equal("สายยาง (จำนวน 2 × 100.00)", d.Description);
+        Assert.Equal(OcrLineQuantityGuard.LumpSumUnit, d.Unit);
         Assert.Null(d.LineDiscount);
         Assert.True(d.Blocking);
-        Assert.Equal(250m, DocumentService.PreviewTotals(new[] { L(2m, d.UnitPrice!.Value, 0m, 0m) }, false, 0m).Total);
+        Assert.Contains("⟦1×250⟧", d.Note);
+        Assert.Equal(250m, DocumentService.PreviewTotals(new[] { L(d.Quantity!.Value, d.UnitPrice!.Value, 0m, 0m) }, false, 0m).Total);
+        // ใบที่ไม่ลงตัวพอดี (3 × 80 ≠ 250): เดิม 83.3333 ⇒ บันทึกซ้ำ 3 × 83.33 = 249.99 · ตอนนี้ 1 × 250 ทุกสตางค์
+        var odd = OcrLineQuantityGuard.Decide(3m, 80m, 250m, null, Paper("ถุงปุ๋ย 3 ถุง 80.00 250.00"), "ถุงปุ๋ย");
+        Assert.Equal((1m, 250m), (odd.Quantity!.Value, odd.UnitPrice!.Value));
+        Assert.Equal(250m, DocumentService.PreviewTotals(new[] { L(odd.Quantity.Value, odd.UnitPrice.Value, 0m, 0m) }, false, 0m).Total);
     }
 
     [Fact]
@@ -280,11 +290,15 @@ public class OcrLineQuantityGuardReviewTests
     [Fact]
     public void P2_2_ราคาที่ระบบตั้ง4ตำแหน่ง_บรรทัดเอกสารเก็บ2ตำแหน่ง_ยังนับเป็นค่าของระบบ_บล็อกต่อ()
     {
-        // DocumentLine.UnitPrice = numeric(18,2) ⇒ 83.3333 ถูกเก็บเป็น 83.33 · 3 × 83.33 = 249.99 ≈ 250 (ลงตัวในเกณฑ์) — ถ้าเทียบราคาเป๊ะจะปลดแท็กทันทีที่สร้าง
+        // แท็กรุ่นก่อนทีม OCR 8 (persist ใน ProcessingNotes): DocumentLine.UnitPrice = numeric(18,2) ⇒ 83.3333 ถูกเก็บเป็น 83.33 ·
+        // 3 × 83.33 = 249.99 ≈ 250 (ลงตัวในเกณฑ์) — ถ้าเทียบราคาเป๊ะจะปลดแท็กทันทีที่สร้าง
+        const string legacy = "[LINE-QTY] จำนวน 3 × ราคา 80.00 = 240.00 · ยอดบรรทัด 250.00 (ยอดมากกว่า 10.00) — ตั้งราคา 83.3333 · ค่าที่ระบบตั้ง ⟦3×83.3333⟧";
+        var legacyLive = new[] { new OcrLiveLine(3m, 83.33m, 0m, 0m, 249.99m, 0m) };
+        Assert.Equal(legacy, OcrLineQuantityGuard.LiveNotes(legacy, legacyLive, false, checkedLive: true));
+        // รุ่นนี้: ระบบไม่ตั้งราคา 4 ตำแหน่งแล้ว — 1 × 250 (ร่องรอย ⟦1×250⟧) · บรรทัดที่ตัวสร้างลงตามค่านั้น = ยังไม่มีคนดู ⇒ บล็อกต่อ
         var note = OcrLineQuantityGuard.Decide(3m, 80m, 250m, null, Paper("ถุงปุ๋ย 3 ถุง 80.00 250.00")).Note!;
-        Assert.Contains("⟦3×83.3333⟧", note);
-        var live = new[] { new OcrLiveLine(3m, 83.33m, 0m, 0m, 249.99m, 0m) };
-        Assert.Equal(note, OcrLineQuantityGuard.LiveNotes(note, live, false, checkedLive: true));
+        Assert.Contains("⟦1×250⟧", note);
+        Assert.Equal(note, OcrLineQuantityGuard.LiveNotes(note, new[] { new OcrLiveLine(1m, 250m, 0m, 0m, 250m, 0m) }, false, checkedLive: true));
     }
 
     [Fact]

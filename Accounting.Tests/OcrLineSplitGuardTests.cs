@@ -114,12 +114,19 @@ public class OcrLineSplitGuardTests
     }
 
     [Fact]
-    public void ไม่ส่งราคาต่อหน่วยมา_คำนวณให้จากยอดหารจำนวน()
+    public void ไม่ส่งราคาต่อหน่วยมา_จำนวนมากกว่า1_ปล่อยว่างให้ตัวกันจำนวนระเบิดถามกระดาษ()
     {
+        // ทีม OCR 8 (2026-10-16): เดิมเติม ยอด ÷ จำนวน ทศนิยม 4 (ราคาที่กระดาษไม่พิมพ์ · DocumentLine เก็บ 2 ตำแหน่ง) — ตอนนี้ตัวตัดสินตัวเดียว
+        // OcrLineQuantityGuard (ใน Sanitize) ตัดสิน: ราคาพิมพ์บนแถว ⇒ ราคานั้น · ไม่พิมพ์ ⇒ 1 × ยอด + จำนวนในคำอธิบาย
         var json = """{"lines":[{"description":"บริการรายเดือน","quantity":4,"amount":1000}]}""";
         var r = OcrLineSplitGuard.Evaluate(json, subTotal: 1000m, totalAmount: 0m);
         Assert.True(r.Accepted);
-        Assert.Equal(250m, r.Lines[0].UnitPrice);
+        Assert.Equal(4m, r.Lines[0].Quantity);
+        Assert.Null(r.Lines[0].UnitPrice);
+        // ส่งราคามาเอง ⇒ คงตามที่ส่ง (ทิศตรงข้าม)
+        var priced = OcrLineSplitGuard.Evaluate("""{"lines":[{"description":"บริการรายเดือน","quantity":4,"unit_price":250,"amount":1000}]}""",
+            subTotal: 1000m, totalAmount: 0m);
+        Assert.Equal(250m, priced.Lines[0].UnitPrice);
     }
 
     [Fact]

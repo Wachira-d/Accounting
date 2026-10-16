@@ -34,9 +34,11 @@ public sealed record ReplayLine(string? Description, decimal? Quantity, decimal?
 /// (2026-10-09 ใบต้นฉบับ+สำเนา · <see cref="ReplayPaper.EngineLines"/>)</param>
 /// <param name="QuantityGuard">ผลของตัวกันจำนวนระเบิด (<see cref="OcrLineQuantityGuard"/>) ต่อบรรทัด <c>การกระทำ|จำนวน|ราคา|ส่วนลดบรรทัด|block/note/-</c> คั่นด้วย <c>;</c>
 /// (2026-10-16 RE-20261000111) · null = ใบไม่มีรายการ</param>
+/// <param name="Descriptions">คำอธิบายบรรทัดหลังตัวกันจำนวนระเบิด คั่นด้วย <c>;</c> — <b>เฉพาะใบที่ตัวกันเปลี่ยนคำอธิบาย</b> (ย้ายจำนวนหน่วยมิเตอร์ไปไว้ในคำอธิบาย ·
+/// ทีม OCR 8 2026-10-16) · null = ไม่เปลี่ยน (ใบเดิมไม่มีแถวนี้)</param>
 public sealed record ReplayBuiltLines(
     string Mode, string? ReconCase, bool PricesIncludeVat, string Lines, string Gaps, decimal RoundingAdjustment,
-    int DuplicateRowsDropped = 0, string? QuantityGuard = null);
+    int DuplicateRowsDropped = 0, string? QuantityGuard = null, string? Descriptions = null);
 
 /// <summary>คำตอบหนึ่งช่องของใบหนึ่ง</summary>
 public sealed record ReplayAnswer(string Paper, string Field, string? Value);
@@ -362,6 +364,15 @@ public static class OcrReplayHarness
             EngineSubTotal: 9700m, EngineVat: 679m, EngineTotal: 10379m,
             LineAmounts: new[] { 9700.00m },
             Lines: new ReplayLine[] { new("ค่าบริการออกแบบ", 1m, 10000.00m, 9700.00m) }),
+
+        // ── ทีม OCR 8 (2026-10-16) — บิลค่าไฟจริง กฟภ. (PDF ข้อความ · ไม่มี XML) · เจ้าของ: "มี 2 หน่วยนะ 4หน่วยน่าจะเป็นค่า ft" ──
+        // ตารางพิมพ์ จำนวนหน่วย 4,272.00 + จำนวนเงิน 19,381.50 · ไม่มีราคาต่อหน่วย ⇒ 1 × 19,381.50 · "(4,272 หน่วย)" ในคำอธิบาย (เดิม 4.5369/หน่วย ⇒ เก็บ 4.54 ⇒
+        // บันทึกซ้ำ 19,394.88) · หัวใบ = ค่าที่ engine ภาพอ่าน (Azure/python) — เส้นข้อความ PDF ล้วนอ่านหัวใบผิด (ล็อกแยกใน OcrMeterBillLumpSumTests)
+        new ReplayPaper("pea-electricity-bill-0869", OcrPaperSamples.PeaElectricityBill0869,
+            EngineSubTotal: 19381.50m, EngineVat: 1356.71m, EngineTotal: 20738.21m,
+            LineAmounts: new[] { 19381.50m },
+            Lines: new ReplayLine[] { new("ค่าไฟฟ้า ประจำเดือน 08/2569", 4272m, null, 19381.50m) },
+            VendorTaxId: "0994000165501"),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -461,6 +472,8 @@ public static class OcrReplayHarness
             result.Add(new(p.Name, "DupRowsDropped", built.DuplicateRowsDropped.ToString()));
             // 2026-10-16 RE-20261000111: ตัวกันจำนวนระเบิด (OcrLineQuantityGuard) ต่อบรรทัด — การกระทำ|จำนวน|ราคา|ส่วนลดบรรทัด (ช่องใหม่เฉพาะใบที่มีรายการ)
             if (built.QuantityGuard is string qg) result.Add(new(p.Name, "LineQtyGuard", qg));
+            // ทีม OCR 8: คำอธิบายที่ตัวกันเปลี่ยน ("ค่าไฟฟ้า … (4,272 หน่วย)") — แถวใหม่เฉพาะใบที่เปลี่ยน
+            if (built.Descriptions is string ds) result.Add(new(p.Name, "LineDescriptions", ds));
         }
         return result;
     }
@@ -497,22 +510,25 @@ public static class OcrReplayHarness
         // 2026-10-16 ตรงกับ SanitizeVatSplitArtifacts ข้อ 1b (ก่อนด่านแถวซ้ำ): ตัวกันจำนวนระเบิดถามแถวบนกระดาษ (OcrLineQuantityGuard — ตัวเดียวกับ service)
         // ส่วนลดที่พิมพ์ ⇒ ส่วนลดของบรรทัด · จำนวนที่พิมพ์ ⇒ คง · ไม่มีหลักฐาน ⇒ ยอด ÷ ราคา (เดิม) · ใบที่ส่วนลดจากกระดาษ + หัวใบพิสูจน์รวม VAT ⇒ ธงรวม VAT ทุกบรรทัด
         string? quantityGuard = null;
+        string? descriptions = null;
         if (lines is { Count: > 0 })
         {
             var linePaper = OcrLineQuantityGuard.Read(p.RawText);
             var guarded = new List<ReplayLine>(lines.Count);
             var guardText = new List<string>(lines.Count);
             var paperDiscountRead = false;
+            var descriptionChanged = false;
             foreach (var l in lines)
             {
-                var d = OcrLineQuantityGuard.Decide(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscount, linePaper);
-                // ⚠️ ไม่เล่นซ้ำ FillUnitPrice (ราคาว่าง ⇒ ยอด ÷ จำนวน ทศนิยม 4) — harness ไม่เคยเล่นซ้ำขั้นนี้ และ golden ของบรรทัดไม่มีราคา
-                // (OcrLineReconciler.LineDiscount ทีม D/E) ล็อกเส้น "ไม่มีราคา" ไว้ · ช่องว่างที่รู้แล้ว: ใน service ขั้นนี้รันก่อนตัวสร้างบรรทัดเสมอ
-                // ⇒ เส้น "ไม่มีราคา + จำนวน > 0" ของ LineDiscount ไปไม่ถึงจากสแกน (จดใน docs/lessons/ocr-pipeline.md 2026-10-16)
+                var d = OcrLineQuantityGuard.Decide(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscount, linePaper, l.Description, null);
+                // ทีม OCR 8 (2026-10-16): เล่นซ้ำทุกการกระทำ รวม FillUnitPrice (เดิมข้าม — ช่องว่างที่จดไว้ว่าเส้น "ไม่มีราคา + จำนวน > 0" ไม่ตรง service) ·
+                // ใบในชุดก่อนรอบนี้ไม่มีบรรทัด "มีจำนวน ไม่มีราคา" (LineAmounts-only = จำนวน null ⇒ Keep) ⇒ golden เดิมไม่ขยับ
+                descriptionChanged |= d.Description is not null;
                 var g = l with
                 {
+                    Description = d.Description ?? l.Description,
                     Quantity = d.Quantity ?? l.Quantity,
-                    UnitPrice = d.Action == OcrLineQuantityAction.FillUnitPrice ? l.UnitPrice : d.UnitPrice ?? l.UnitPrice,
+                    UnitPrice = d.UnitPrice ?? l.UnitPrice,
                     LineDiscount = d.LineDiscount ?? l.LineDiscount,
                     // ฝ่ายค้าน 658e3705 P1-1: แถวหัก ณ ที่จ่าย/มัดจำ ⇒ ยอดบรรทัด = จำนวน × ราคาก่อนหัก (ตรงกับ service)
                     Amount = d.Amount ?? l.Amount,
@@ -528,6 +544,7 @@ public static class OcrReplayHarness
                 guarded = guarded.Select(l => l.Amount != 0m ? l with { PriceIncludesVat = true } : l).ToList();
             lines = guarded;
             quantityGuard = string.Join(";", guardText);
+            if (descriptionChanged) descriptions = string.Join(";", guarded.Select(l => l.Description ?? "-"));
         }
         var duplicateRowsDropped = 0;
         if (lines is { Count: >= 2 })
@@ -701,7 +718,7 @@ public static class OcrReplayHarness
                 rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt + lineOwnDisc[i], lineWht));
             }
             return new ReplayBuiltLines("Items", recon.Case.ToString(), pricesIncludeVat,
-                string.Join(";", rows), GapText(WithOverstatement(gaps, builtItemsTotal - roundingShift)), -roundingShift, duplicateRowsDropped, quantityGuard);
+                string.Join(";", rows), GapText(WithOverstatement(gaps, builtItemsTotal - roundingShift)), -roundingShift, duplicateRowsDropped, quantityGuard, descriptions);
             }
         }
 
@@ -727,7 +744,7 @@ public static class OcrReplayHarness
             }
             var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount, codeTable);
             return new ReplayBuiltLines(tableLinesInsteadOfItems is null ? "VatGroups" : "VatGroupsInsteadOfItems", null, false, string.Join(";", rows),
-                GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m, duplicateRowsDropped, quantityGuard);
+                GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m, duplicateRowsDropped, quantityGuard, descriptions);
         }
 
         var summaryRate = hdrVat > 0m ? 7m : 0m;
