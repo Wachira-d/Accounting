@@ -25,8 +25,15 @@ public class OcrPayeeEvidenceTests
 
     [Fact]
     public void เลขผู้เสียภาษีถูกต้อง_พิสูจน์ได้ทันทีแม้ไม่มีที่อยู่()
-        => Assert.Equal(OcrPayeeProof.Identified,
+    {
+        // เลขเดิมในเทสต์ 0105558123456 ไม่ผ่าน mod-11 (ผลรวมถ่วงน้ำหนักได้หลักตรวจ 1 ไม่ใช่ 6) ⇒ ตัวตัดสินถูกที่ไม่ยอมรับ ·
+        // เทสต์ไม่เคยเขียวตั้งแต่ 2428110f · ใช้เลขที่ผ่าน checksum จริง
+        Assert.Equal(OcrPayeeProof.Identified,
+            OcrPayeeEvidence.Evaluate("0105558123451", "บจก. ทดสอบ", null, null).Level);
+        // ทิศตรงข้าม: เลข 13 หลักที่ checksum ผิด ไม่ใช่หลักฐานตัวตน (ไม่มีที่อยู่/โทร ⇒ ยังพิสูจน์ไม่ได้)
+        Assert.NotEqual(OcrPayeeProof.Identified,
             OcrPayeeEvidence.Evaluate("0105558123456", "บจก. ทดสอบ", null, null).Level);
+    }
 
     // ── ทิศที่ต้องยังดักอยู่ (ห้ามปิดด่านทิ้ง) ──
     [Fact]

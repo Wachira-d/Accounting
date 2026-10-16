@@ -44,11 +44,13 @@ public class SimulationRound6Tests
     public void The_summary_header_always_counted_the_missing_certificate()
     {
         // หัวสรุปนับจาก certs.Count + Σ TotalTaxAmount ⇒ ผู้ใช้เห็น "3 ราย
-        // ภาษีรวม 1,050" แต่ไฟล์ที่อัปโหลดมีแค่ 900 — นำส่งขาดเงียบ ๆ
+        // ภาษีรวม 1,050" แต่ไฟล์ที่อัปโหลดมีแค่ 450 (300 + 150 · ใบที่ 3 ภาษี 600 หายทั้งใบ) — นำส่งขาดเงียบ ๆ
+        // (เดิมเขียน 900 = คิดเลขผิด · เทสต์ไม่เคยเขียว · สูตรจำลองไม่เปลี่ยน)
         var certs = MixedMonth();
         var headerTax = certs.Sum(c => c.TotalTax);
         Assert.Equal(1_050m, headerTax);
-        Assert.Equal(900m, TaxInFileOld(certs));    // ก่อนแก้: ไฟล์ ≠ หัวสรุป
+        Assert.Equal(450m, TaxInFileOld(certs));    // ก่อนแก้: ไฟล์ ≠ หัวสรุป
+        Assert.Equal(600m, headerTax - TaxInFileOld(certs));   // ส่วนที่หาย = ภาษีของใบไม่มีบรรทัดพอดี
         Assert.Equal(headerTax, TaxInFileNew(certs));
         Assert.Equal(3, certs.Count);
     }

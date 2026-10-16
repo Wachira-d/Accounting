@@ -184,11 +184,22 @@ public class OcrApprovalGapWarningTests
     }
 
     [Fact]
-    public void คำเตือนVATไม่อยู่บนกระดาษ_workflowต้องหยุด_APIผ่านแต่คืนในคำตอบ()
+    public void คำเตือนVATไม่อยู่บนกระดาษ_workflowและAPIต้องหยุด_ผู้ใช้รับทราบเองได้()
     {
+        // เดิม "API ผ่านแต่คืนในคำตอบ" — คำตัดสินเจ้าของรอบ 198 ข้อ 6 (ลงโค้ด 33a127f2 รอบ 199 ทีม H): API v1 **ปฏิเสธ** ใบสแกนที่ VAT
+        // ไม่ได้พิมพ์บนกระดาษ (VAT ที่ระบบถอดเองถ้าใบไม่แยก VAT = ภาษีซื้อต้องห้าม ม.82/5(1)) ให้คนรับทราบบนเว็บ/มือถือ
         var w = OcrApprovalGapWarning.VatDerivedWarning(OcrHeaderVatSource.NotOnPaper, 70.00m, 70.00m)!;
         Assert.Equal(new[] { w }, ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.SystemWorkflow, new[] { w }));
-        Assert.Empty(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.ApiClient, new[] { w }));
+        Assert.Equal(new[] { w }, ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.ApiClient, new[] { w }));
         Assert.Empty(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.User, new[] { w }));
+        var refusal = ApprovalAcknowledgement.ApiRefusal(new[] { w })!;
+        Assert.Equal(ApprovalAcknowledgement.ApiVatNotOnPaperCode, refusal.Code);
+        Assert.True(refusal.ScanVatNotOnPaper);
+        // ทิศตรงข้าม: ยอดไม่ตรงกระดาษ [Σ-GAP] อย่างเดียว API ยังผ่าน (คำตัดสินข้อ 12) — ปฏิเสธเฉพาะชุด VAT
+        var gap = OcrApprovalGapWarning.Build(GapNotes, 23812.25m, 24110.00m,
+            linesVat: 1577.29m, paperVat: 1577.29m, headerVatSource: OcrHeaderVatSource.Labelled);
+        Assert.NotEmpty(gap);
+        Assert.Empty(ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.ApiClient, gap));
+        Assert.Null(ApprovalAcknowledgement.ApiRefusal(gap));
     }
 }

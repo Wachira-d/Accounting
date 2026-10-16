@@ -61,7 +61,7 @@ public class RdComplianceOcrNoiseTests
         VatAmount = 68.95m,
     };
 
-    private static OcrResultResponse Scan(string? buyerTaxId) => new(
+    private static OcrResultResponse Scan(string? buyerTaxId, string? vendorBranch = null, string? buyerBranch = null) => new(
         Id: Guid.NewGuid(), OriginalFileName: "hardwarehouse.jpg", ScanStatus: "Completed",
         DocumentType: "PurchaseInvoice", Confidence: 0.75m,
         ExtractedVendorName: "บริษัท ฮาร์ดแวร์เฮ้าส์ จำกัด", ExtractedVendorTaxId: SellerTaxId,
@@ -69,7 +69,8 @@ public class RdComplianceOcrNoiseTests
         ExtractedDate: new DateTime(2026, 8, 20, 0, 0, 0, DateTimeKind.Utc),
         ExtractedSubTotal: 985.00m, ExtractedVatAmount: 68.95m, ExtractedTotalAmount: 1053.95m,
         MatchedContactId: null, CreatedDocumentId: null, ProcessedAt: DateTime.UtcNow,
-        BuyerTaxId: buyerTaxId, RawTextContent: RawPaper);
+        BuyerTaxId: buyerTaxId, RawTextContent: RawPaper,
+        VendorBranchCode: vendorBranch, BuyerBranchCode: buyerBranch);
 
     private static RdComplianceValidator.RuleResult Rule(
         List<RdComplianceValidator.RuleResult> rs, string code)
@@ -139,10 +140,15 @@ public class RdComplianceOcrNoiseTests
     [Fact]
     public void เลขผู้ซื้อตรงกับบริษัท_ผ่านสะอาดไม่มีคำเตือนเลย()
     {
-        var r = RdComplianceValidator.RunRules(Scan(OurTaxId), RawPaper, Us(), PurchaseDoc());
+        // ใบที่ถูกต้องครบ = สแกนอ่านสาขาได้ด้วย (กระดาษพิมพ์ "สำนักงานใหญ่" ทั้งสองฝั่ง) — เดิม fixture ไม่ส่งสาขา ⇒ กฎที่ 4
+        // (BRANCH_CODE_PRESENT · §86/4 + ประกาศฯ 199) เตือนถูกต้องว่าไม่พบสาขาผู้ขาย ⇒ เทสต์ไม่เคยเขียว · ตัวกฎถูก fixture ขาด
+        var r = RdComplianceValidator.RunRules(Scan(OurTaxId, vendorBranch: "00000", buyerBranch: "00000"), RawPaper, Us(), PurchaseDoc());
         Assert.True(Rule(r, "TENANT_BUYER_MISMATCH").IsValid);
         Assert.False(Has(r, "BUYER_TAX_ID_MISREAD"));
         Assert.DoesNotContain(r, x => !x.IsValid);      // ใบที่ถูกต้อง = ไม่มีคำเตือนสักข้อ
+        // ทิศตรงข้าม: สแกนที่ไม่ได้สาขาผู้ขาย ยังต้องเตือน (ห้ามความ "สะอาด" มาจากการปิดกฎสาขา)
+        var noBranch = RdComplianceValidator.RunRules(Scan(OurTaxId), RawPaper, Us(), PurchaseDoc());
+        Assert.False(Rule(noBranch, "BRANCH_CODE_PRESENT").IsValid);
     }
 
     [Fact]

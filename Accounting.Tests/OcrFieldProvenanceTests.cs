@@ -99,7 +99,12 @@ public class OcrFieldProvenanceTests
             new Dictionary<string, string?> { [F] = "บจก. ก" }));
         Assert.Contains("sourceLabel", json);
         Assert.Contains("arbiterAgreed", json);
-        Assert.Contains(OcrFieldArbiter.SourceLabel(OcrFieldSource.Statute), json);
+        // ตรวจ "ค่า" ของป้ายหลัง parse (สัญญาคือหน้าเว็บ JSON.parse แล้วได้ป้ายไทย) — เดิมค้นสตริงไทยดิบในข้อความ JSON ซึ่ง
+        // System.Text.Json ค่าเริ่มต้นเขียนเป็น \u0E.. ⇒ ไม่เคยเจอตั้งแต่เขียน · ล็อกถึงระดับช่องของ field จริง (แน่นกว่าค้นทั้งก้อน)
+        var f0 = System.Text.Json.Nodes.JsonNode.Parse(json)!["fields"]![0]!;
+        Assert.Equal(OcrFieldArbiter.SourceLabel(OcrFieldSource.Statute), f0["sourceLabel"]!.GetValue<string>());
+        Assert.Equal("ตารางกฎหมาย (อัตรา/เพดานตามประมวลรัษฎากร)", f0["sourceLabel"]!.GetValue<string>());   // ไทยจริง ไม่ใช่ชื่อ enum
+        Assert.Equal(nameof(OcrFieldSource.Statute), f0["source"]!.GetValue<string>());
     }
 
     [Fact]

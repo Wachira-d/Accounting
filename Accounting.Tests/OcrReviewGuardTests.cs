@@ -10,7 +10,8 @@ namespace Accounting.Tests;
 /// </summary>
 public class OcrReviewGuardTests
 {
-    private const string TaxIdValid = "0105561012345";   // ผ่าน mod-11
+    // ผ่าน mod-11 จริง (เดิม 0105561012345 — หลักตรวจที่ถูกคือ 6 ⇒ เทสต์ "รับได้" ไม่เคยเขียวตั้งแต่ bc32e60f · ตัวตรวจถูก เลขในเทสต์ผิด)
+    private const string TaxIdValid = "0105561012346";
 
     [Fact]
     public void ยอดที่ไม่ลงตัวสามเหลี่ยม_ต้องถูกปฏิเสธทั้งชุด()
@@ -47,6 +48,9 @@ public class OcrReviewGuardTests
         var json = $$$"""{"corrections":{"vendor_tax_id":"{{{TaxIdValid}}}"}}""";
         var r = OcrReviewGuard.Filter(json, null, null, null);
         Assert.Equal(TaxIdValid, r.Accepted["vendor_tax_id"]);
+        // ทิศตรงข้าม: หลักตรวจผิดหลักเดียว ถูกปฏิเสธ
+        var bad = OcrReviewGuard.Filter("""{"corrections":{"vendor_tax_id":"0105561012345"}}""", null, null, null);
+        Assert.DoesNotContain("vendor_tax_id", bad.Accepted.Keys);
     }
 
     [Fact]

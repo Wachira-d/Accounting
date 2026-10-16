@@ -126,9 +126,11 @@ public class PosRefundMathTests
         Assert.Equal(r.Gross, r.Goods + r.ServiceCharge);  // สองก้อนต้องบวกได้ยอดจ่ายเป๊ะ
         Assert.Equal(0.85m, r.DiscountFactor);
 
-        // สูตรก่อนรอบ 184 คืนแค่ส่วนของ ⇒ ลูกค้าขาดค่าบริการไป 85 บาท
-        Assert.Equal(850m, OldGrossAllLines(o));
-        Assert.Equal(85m, r.Gross - OldGrossAllLines(o));
+        // สูตรก่อนรอบ 184 (OldDiscountFactor ตัวเดียวกับเทสต์ข้างบน): หักคูปองซ้ำ (DiscountAmount รวมคูปองแล้ว + CouponDiscountAmount
+        // อีกรอบ ⇒ (1000 − 150 − 50)/1000 = 0.80) **และ**ไม่คืนค่าบริการ ⇒ คืน 800 · ลูกค้าขาด 135 = คูปองซ้ำ 50 + ค่าบริการ 85
+        // — เทสต์เดิมเขียน 850/85 (นับแค่ค่าบริการ ลืมว่าสูตรเดิมหักคูปองซ้ำด้วย) ⇒ ไม่เคยเขียว · ตัวเลขของโค้ดปัจจุบันข้างบนไม่เปลี่ยน
+        Assert.Equal(800m, OldGrossAllLines(o));
+        Assert.Equal(135m, r.Gross - OldGrossAllLines(o));
     }
 
     [Fact]
