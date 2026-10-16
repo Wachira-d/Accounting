@@ -130,6 +130,20 @@ public class OcrReplayGoldenTests
         Assert.Equal("22663.97", Val("makro-page3-total-first", "AnchoredNetSubTotal"));
     }
 
+    /// <summary>2026-10-16 Makro หน้า 2/2: หัวสแกนตามภาพหน้าจอผู้ใช้ (ฐาน 11,208 · VAT 638.50 · รวม 11,846.50) — เดิมขั้นยึดยอดนับ 11,208 ที่ป้ายบอก
+    /// "รวมภาษีมูลค่าเพิ่ม" เป็นฐาน ⇒ 11,846.50 ได้ชั้น VAT ปลอม ⇒ Conflict ⇒ ไม่แตะค่า ⇒ ใบสำคัญจ่าย 11,846.50 · ตอนนี้ Proven 10,980.00</summary>
+    [Fact]
+    public void ใบM2_Makro_หน้า2_ยอดรวม10980_ฐาน10341_50_ไม่ใช่ยอดที่บวกVATซ้ำ11846_50()
+    {
+        Assert.Equal("11846.50", Val("makro-page2-vat-added-twice", "HeaderTotal"));    // ค่าที่ engine ถือ (บั๊ก)
+        Assert.Equal("Proven", Val("makro-page2-vat-added-twice", "AnchorVerdict"));
+        Assert.Equal("10980.00", Val("makro-page2-vat-added-twice", "AnchorTotal"));
+        Assert.Equal("228.00", Val("makro-page2-vat-added-twice", "BillDiscount"));
+        Assert.Equal("InclVat", Val("makro-page2-vat-added-twice", "DiscountPlacement"));
+        Assert.Equal("10341.50", Val("makro-page2-vat-added-twice", "AnchoredNetSubTotal"));
+        Assert.Equal("false", Val("makro-page2-vat-added-twice", "IsDeposit"));          // แถวฟอร์ม "หักเงินมัดจำ/ DEPOSIT 0.00"
+    }
+
     [Fact]
     public void ใบU_Shopee_ยอดใบกำกับ536_ส่วนลดพิเศษหลังVATไม่ถูกกระจาย()
     {
@@ -177,7 +191,7 @@ public class OcrReplayGoldenTests
     {
         // 2026-10-09: ใบบิลเน็ตที่มีค้างชำระถูกยึดยอดใหม่โดยตั้งใจ (ดูเทสต์ด้านล่าง) — ใบรอบที่ไม่มีค้างยังอยู่ในชุด "ห้ามแตะ"
         var newPapers = new[] { "makro-page3-total-first", "uptoyou-shopee-pay-not-total", "scommerce-lazada-prevat-discount",
-            "telecom-prior-balance" };
+            "telecom-prior-balance", "makro-page2-vat-added-twice" };
         foreach (var p in OcrReplayHarness.Corpus.Where(x => !newPapers.Contains(x.Name)))
         {
             // ขั้นยึดยอดต้องไม่เขียนทับ/ขัดใบเดิมใบไหนเลย

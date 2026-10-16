@@ -136,6 +136,20 @@ public class OcrReplayLineGoldenTests
         Assert.Equal("ok", Val("makro-page3-total-first", "IntegrityGaps"));
     }
 
+    /// <summary>2026-10-16 ผู้ใช้รายงาน (Makro หน้า 2/2): เดิมได้บรรทัดสรุปเดียว 11,208.00 · 7% · VAT 638.50 (ยอดสุทธิ 11,846.50) แล้วคำแนะนำ
+    /// "VAT/0.07" ของระบบพาไปแยกเป็น 9,121.43 + 2,086.57 · ตอนนี้ยึดยอด 10,980 (ยอดหัวสแกนคือ VAT บวกซ้ำ) แล้วสร้างบรรทัดตามตารางรหัส ภ.พ.:
+    /// ยกเว้น 1,220.00 · มี VAT ฐาน 9,121.50 VAT 638.50 · Σ = 10,980.00 ตรงยอดที่ต้องชำระ/ตัวอักษร</summary>
+    [Fact]
+    public void ใบM2_Makro_หน้า2_ยกเว้น1220_มีVAT9121_50_รวม10980_ไม่ใช่11846_50()
+    {
+        Assert.Equal("VatGroups", Val("makro-page2-vat-added-twice", "LineMode"));
+        Assert.Null(Val("makro-page2-vat-added-twice", "ReconCase"));
+        Assert.Equal("1220.00|-1|0.00|1220.00|0|0.00|0.00;9121.50|7|638.50|9121.50|0|0.00|0.00",
+            Val("makro-page2-vat-added-twice", "Lines"));
+        Assert.Equal("ok", Val("makro-page2-vat-added-twice", "IntegrityGaps"));
+        Assert.Equal("0.00", Val("makro-page2-vat-added-twice", "RoundingAdjustment"));
+    }
+
     [Fact]
     public void ใบที่ไม่มีรายการและไม่มีตาราง_บรรทัดสรุปใบเดียวจากหัวใบ()
     {

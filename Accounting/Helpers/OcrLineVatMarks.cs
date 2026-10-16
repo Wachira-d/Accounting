@@ -268,12 +268,16 @@ public static class OcrLineVatMarks
     /// (Makro: <c>17 1 6,260.00 0.00 6,260.00</c>) — <see cref="SummaryRow"/> เดิมรับแต่รหัสตัวอักษร+อัตรา</summary>
     private static readonly Regex NumericCodeRow = new(
         @"^[ \t]*(?<qty>\d{1,6})[ \t]+(?<code>\d)[ \t]+(?<net>" + Money + @")[ \t]+(?<vat>" + Money
-        + @")[ \t]+(?<gross>" + Money + @")[ \t]*$", RegexOptions.CultureInvariant);
+        + @")[ \t]+(?<gross>" + Money + @")" + TrailingScanNoise + @"[ \t]*$", RegexOptions.CultureInvariant);
+
+    /// <summary>เศษจุด/ขีดท้ายแถวที่ engine อ่านจากเส้นตาราง/รอยพับ ("… 9,760.00      ," — Tesseract บนภาพถ่าย Makro หน้า 2/2 · 2026-10-16)
+    /// — แค่เครื่องหมายวรรคตอน 1–2 ตัวหลังช่องว่าง · ตัวเลข/ตัวอักษรท้ายแถวยังทำให้แถวไม่ผ่าน (ไม่ใช่แถวตารางสรุป)</summary>
+    private const string TrailingScanNoise = @"(?:[ \t]+[,.;:'`|]{1,2})?";
 
     /// <summary>แถว "รวม" ของตารางสรุป: <c>รวม 22,663.97 1,148.28 23,812.25</c> (จำนวนชิ้นรวมนำหน้าได้)</summary>
     private static readonly Regex GroupTotalRow = new(
         @"^[ \t]*(?:\d{1,6}[ \t]+)?(?:รวม(?:ทั้งสิ้น)?|total)[ \t]*:?[ \t]+(?<net>" + Money + @")[ \t]+(?<vat>"
-        + Money + @")[ \t]+(?<gross>" + Money + @")[ \t]*$", Opt);
+        + Money + @")[ \t]+(?<gross>" + Money + @")" + TrailingScanNoise + @"[ \t]*$", Opt);
 
     /// <summary>คำอธิบายรหัสตัวเลข: <c>1=สินค้าได้รับการยกเว้นภาษีมูลค่าเพิ่ม · 2=สินค้าที่ต้องเสียภาษีมูลค่าเพิ่ม</c>
     /// — หลายคู่ในบรรทัดเดียว (คำอธิบายหยุดก่อนคู่ถัดไป)</summary>

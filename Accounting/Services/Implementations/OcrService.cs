@@ -8093,6 +8093,13 @@ public class OcrService : IOcrService
                 result.ExtractedVatAmount ?? 0m, alreadyReportedLineGap: false, paperVatSplit: paperVatSplit);
         }
 
+        // 2026-10-16 (Makro 2/2 — ใบสำคัญจ่าย 11,846.50 ทั้งที่กระดาษยืนยัน 10,980): ทุกสาขาข้างบนเทียบกับยอดหัวสแกน ⇒ ถ้าหัวสแกนเองเกินกระดาษ
+        // (ยอดรวม VAT ก่อนส่วนลดถูกอ่านเป็นฐาน + VAT ซ้ำ) ไม่มีด่านไหนเห็น · ตัวตัดสิน Helpers/OcrTotalAnchor.DocumentOverstatement (pure) อ่านข้อความดิบ
+        // ทุกครั้ง ⇒ สแกนเก่าที่ persist ยอดผิดได้คำเตือนด้วย · ไม่เปลี่ยนตัวเลข — [Σ-GAP] = รับทราบตอนอนุมัติ + ไม่อนุมัติเอง
+        var builtTotal = document.Lines.Sum(l => l.Amount + l.VatAmount) + document.RoundingAdjustment;
+        if (Accounting.Helpers.OcrTotalAnchor.DocumentOverstatement(
+                normalizedRawText, result.ExtractedTotalAmount, builtTotal) is { } overstated)
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrLineBuildNotes.GapTag + " " + overstated.Message;
     }
 
     /// <summary>เขียนผลของ <see cref="Accounting.Helpers.OcrAmountIntegrity"/> เป็น <c>[Σ-GAP]</c>

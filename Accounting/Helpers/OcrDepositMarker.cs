@@ -41,6 +41,16 @@ public static class OcrDepositMarker
     private static readonly Regex NegationPrefix = new(
         @"^\s*(?:\(?-?\)?\s*)?(?:หัก|ลบ|LESS|MINUS|DEDUCT)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>“หัก(เงิน)มัดจำ” / “Less deposit” <b>ติดกัน</b>ที่ใดก็ได้บนบรรทัด — ความหมายเดียวกับ <see cref="NegationPrefix"/> แต่ไม่ต้องอยู่ต้นบรรทัด
+    /// (2026-10-16 · Tesseract บนภาพถ่าย Makro หน้า 2/2 อ่านเส้นตารางเป็น ": = : ie" นำหน้า "หักเงินมัดจำ/ DEPOSIT" แล้วยอดหาย ⇒ ตัวเลข "4" ของ
+    /// บรรทัดหมายเหตุถัดไปถูกนับเป็นยอดมัดจำ ⇒ ใบซื้อธรรมดาติดธงมัดจำ · ป้ายแบบ "ยอดหลังหักเงินมัดจำ" ก็เป็นการหักเช่นกัน)</summary>
+    private static readonly Regex DeductedDeposit = new(
+        @"(?:หัก|LESS|DEDUCT)[ \t]*(?:เงิน|ค่า)?[ \t]*(?:มัดจ(?:ำ|ํา)|DEPOSIT|ADVANCE|ล่วงหน้า)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>ข้อความนี้คือ "การหักมัดจำเดิมออก" — ตัวตัดสินเดียวของสามทางอ่าน (บรรทัดกระดาษ · รายการ · e-Tax XML)</summary>
+    private static bool IsDeduction(string text) => NegationPrefix.IsMatch(text) || DeductedDeposit.IsMatch(text);
+
     /// <summary>จำนวนเงินบนบรรทัด — ตัวคั่นหลักพันด้วย , เท่านั้น ห้าม \s (regex_line_span_check)</summary>
     private static readonly Regex Money = new(@"(?<![\d.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?![\d])",
         RegexOptions.Compiled);
@@ -69,7 +79,7 @@ public static class OcrDepositMarker
         {
             var line = lines[i];
             if (!Keyword.IsMatch(line)) continue;
-            if (NegationPrefix.IsMatch(line)) { sawNegation = true; continue; }
+            if (IsDeduction(line)) { sawNegation = true; continue; }
 
             var amt = FirstPositiveMoney(line) ?? (i + 1 < lines.Length ? FirstPositiveMoney(lines[i + 1]) : null);
             if (amt is > 0m)
@@ -91,7 +101,7 @@ public static class OcrDepositMarker
         foreach (var (desc, amount) in items)
         {
             if (amount is > 0m && !string.IsNullOrWhiteSpace(desc) && Keyword.IsMatch(desc)
-                && !NegationPrefix.IsMatch(desc))
+                && !IsDeduction(desc))
                 return new(true, $"รายการ “{desc.Trim()}” ยอด {amount.Value:N2}");
         }
         return null;
@@ -134,7 +144,7 @@ public static class OcrDepositMarker
                 var m = re.Match(head.Groups[1].Value);
                 if (!m.Success) continue;
                 var v = System.Net.WebUtility.HtmlDecode(m.Groups[1].Value).Trim();
-                if (Keyword.IsMatch(v) && !NegationPrefix.IsMatch(v) && !Exclusion.IsMatch(v))
+                if (Keyword.IsMatch(v) && !IsDeduction(v) && !Exclusion.IsMatch(v))
                     return new(true, $"ชื่อเอกสาร e-Tax “{v}” ระบุมัดจำ/รับล่วงหน้า");
             }
         }

@@ -55,20 +55,32 @@ public static class OcrApprovalGapWarning
     /// <param name="headerVatSource">ที่มาของ VAT หัวใบของสแกน<b>ตัดสินสด</b>ด้วย <see cref="OcrHeaderVatEvidence.Classify"/> ตัวเดียวกับตอนสร้างบรรทัด
     /// (ครอบสแกนเก่าที่สร้างก่อนมีแท็ก <see cref="OcrHeaderVatEvidence.DerivedTag"/> ด้วย) · <see cref="OcrHeaderVatSource.NotOnPaper"/> ⇒
     /// คำเตือน <see cref="VatDerivedPrefix"/> (รอบ 195 ฝ่ายค้านรอบสอง R2-3) · ค่าเริ่มต้น = ไม่เตือน (พฤติกรรมเดิม)</param>
+    /// <param name="overstatement">ผลตรวจ<b>สด</b>ของ <see cref="OcrTotalAnchor.DocumentOverstatement"/> บนบรรทัดเอกสารตอนนี้ (2026-10-16 · Makro 2/2) —
+    /// เป็นข้อ "ยอดไม่ตรงกระดาษ" อีกข้อ (ชุดเดียวกับ [Σ-GAP]) · ยอดกระดาษในท่อน "ตอนนี้…" ใช้ยอดที่กระดาษยืนยันแทนยอดสแกน
+    /// (ยอดสแกนคือค่าที่เกิน — ใช้ตัวนั้นจะได้ "ตรงกันแล้ว" ที่โกหก) · null = ไม่เกิน</param>
+    /// <param name="overstatementCheckedLive">ผู้เรียกตรวจ <paramref name="overstatement"/> สดแล้ว ⇒ ข้อ "เกินกระดาษ" ในหมายเหตุสแกน (ตัวเลขของบรรทัดตอนสร้าง)
+    /// ถูกแทนด้วยผลสด — ผู้ใช้แก้บรรทัดให้ตรงแล้ว = คำเตือนหาย ไม่ค้างเป็นข้อความโกหก · false = พฤติกรรมเดิม (อ่านจากหมายเหตุอย่างเดียว)</param>
     public static IReadOnlyList<string> Build(string? scanNotes, decimal? paperTotal, decimal linesTotalInclVat,
         string? rateAdvice = null, decimal? linesVat = null, decimal? paperVat = null,
-        OcrHeaderVatSource headerVatSource = OcrHeaderVatSource.NoVat)
+        OcrHeaderVatSource headerVatSource = OcrHeaderVatSource.NoVat, OcrDocumentOverstatement? overstatement = null,
+        bool overstatementCheckedLive = false)
     {
         var derived = VatDerivedWarning(headerVatSource, paperVat, linesVat);
-        if (string.IsNullOrWhiteSpace(scanNotes))
-            return derived is null ? Array.Empty<string>() : new[] { derived };
-        var gaps = scanNotes.Split('\n')
+        var gaps = (scanNotes ?? "").Split('\n')
             .Select(l => l.Trim())
             .Where(l => l.StartsWith(GapTag, StringComparison.Ordinal))
             .Select(l => l[GapTag.Length..].Trim())
             .Where(l => l.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .ToList();
+        // ข้อ "เกินกระดาษ" ในหมายเหตุ (ตอนสร้าง) เป็นตัวเลขของบรรทัดรอบนั้น — ผลสด (บรรทัดตอนนี้) แทนที่ ไม่ซ้อนสองข้อ
+        if (overstatementCheckedLive || overstatement is not null)
+            gaps.RemoveAll(g => g.StartsWith(OcrTotalAnchor.OverstatementLead, StringComparison.Ordinal));
+        if (overstatement is not null)
+        {
+            gaps.Insert(0, overstatement.Message);
+            paperTotal = overstatement.PaperTotal;
+        }
         if (gaps.Count == 0)
             return derived is null ? Array.Empty<string>() : new[] { derived };
 

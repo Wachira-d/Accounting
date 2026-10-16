@@ -142,6 +142,35 @@ public static class OcrPaperAmounts
         @"value[ \t]*[- ]?[ \t]*added[ \t]*tax[ \t]*(?:incl|excl)|(?:incl|excl)\w*\.?[ \t]*(?:of[ \t]+)?value[ \t]*[- ]?[ \t]*added|"
         + @"before[ \t]*value[ \t]*[- ]?[ \t]*added|(?:รวม|ก่อน|ยกเว้น)[ \t]*ภาษีมูลค่าเพ[ิื]่?ม", Opt);
 
+    /// <summary>ป้ายบอกว่า "ยอดบนแถวนี้<b>รวม VAT แล้ว</b>" — ราคาสินค้ารวมภาษีมูลค่าเพิ่ม · (รวม VAT) · Incl. VAT · VAT Included ·
+    /// Value Added Tax Included · ไม่รับ "ไม่รวม" (= ก่อน VAT)</summary>
+    private static readonly Regex VatInclusiveLabel = new(
+        @"(?<!ไม่[ \t]*)รวม[ \t]*(?:ภาษี|vat)|incl\w*\.?[ \t]*(?:of[ \t]+)?(?:vat|value[ \t]*[- ]?[ \t]*added)|vat[ \t]*incl|"
+        + @"value[ \t]*[- ]?[ \t]*added[ \t]*tax[ \t]*incl", Opt);
+
+    /// <summary>
+    /// **ยอด <paramref name="amount"/> พิมพ์บนกระดาษเป็น "ยอดที่รวม VAT แล้ว" ไหม** — มีบรรทัดที่ตัวเลขนี้อยู่<b>หลัง</b>ป้ายรวม VAT
+    /// (<see cref="VatInclusiveLabel"/>) บนบรรทัดเดียวกัน (±<see cref="ExactTol"/>)
+    ///
+    /// <para>ที่มา (2026-10-16 · Makro หน้า 2/2 เลขที่ 405901117163): ป้าย "ราคาสินค้ารวมภาษีมูลค่าเพิ่ม/ TOTAL 11,208.00" เป็นยอด<b>รวม VAT
+    /// ก่อน</b>หักส่วนลด 228 · ขั้นยึดยอด (<see cref="OcrTotalAnchor"/>) นับ 11,208 เป็น "ฐานที่พิมพ์" ⇒ ยอดที่ engine บวก VAT ซ้ำ
+    /// (11,208 + 638.50 = 11,846.50 — ไม่มีบนกระดาษ) ได้หลักฐานชั้น VAT ปลอม แล้วขัดกับยอดจริง 10,980 · ยอดที่ป้ายบอกว่ารวม VAT
+    /// แล้วเป็นฐานก่อน VAT ไม่ได้ (ฐาน + VAT ⇒ VAT ถูกนับสองครั้ง)</para>
+    /// <para>ตัวเลขที่อยู่<b>ก่อน</b>ป้ายบนแถวเดียวกันไม่นับ (แถว "มูลค่า 1,000.00 รวมภาษี 70.00" — ตัวเลขแรกเป็นฐาน ไม่ใช่ยอดรวม VAT)</para>
+    /// </summary>
+    public static bool IsPrintedAsVatInclusive(string? rawText, decimal amount)
+        => amount > 0m && Lines(rawText).Any(line => IsVatInclusiveOnLine(line, amount));
+
+    /// <summary>บนบรรทัดเดียว: <paramref name="amount"/> อยู่หลังป้ายรวม VAT (ตัวตัดสินของ <see cref="IsPrintedAsVatInclusive"/> ·
+    /// ใช้ตรงเมื่อผู้เรียกรู้บรรทัดอยู่แล้ว — เลขเดียวกันบนแถวอื่นที่ไม่มีป้ายยังเป็นฐานได้)</summary>
+    public static bool IsVatInclusiveOnLine(string? line, decimal amount)
+    {
+        if (amount <= 0m || string.IsNullOrEmpty(line)) return false;
+        var label = VatInclusiveLabel.Match(line);
+        return label.Success
+            && MoneyOn(line[(label.Index + label.Length)..]).Any(m => Math.Abs(m - amount) <= ExactTol);
+    }
+
     /// <summary>บรรทัดที่เป็นเปอร์เซ็นต์ล้วน ("7%" · "7.00 %") — ข้ามได้ระหว่างป้าย VAT กับตัวเลข</summary>
     private static readonly Regex PurePercentLine = new(@"^[ \t]*\d+(?:[.,]\d+)?[ \t]*%[ \t]*$", Opt);
 

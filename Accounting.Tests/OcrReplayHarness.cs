@@ -180,6 +180,11 @@ public static class OcrReplayHarness
         new ReplayPaper("makro-page3-total-first", OcrPaperSamples.MakroPage3of3,
             EngineSubTotal: 22663.97m, EngineVat: 1148.28m, EngineTotal: 24110.00m),
 
+        // 2026-10-16 Makro หน้า 2/2 (ผู้ใช้รายงาน "ยอดส่วนไม่มี vat สร้างผิด · ควร 1,220 · รวม 10,980") — หัวสแกนตามภาพหน้าจอผู้ใช้:
+        // ฐาน 11,208 (= ป้าย "ราคาสินค้ารวมภาษีมูลค่าเพิ่ม/ TOTAL" ยอดรวม VAT ก่อนส่วนลด) · VAT 638.50 · ยอดรวม 11,846.50 (= 11,208 + VAT ซ้ำ ไม่มีบนกระดาษ)
+        new ReplayPaper("makro-page2-vat-added-twice", OcrPaperSamples.MakroPage2of2,
+            EngineSubTotal: 11208.00m, EngineVat: 638.50m, EngineTotal: 11846.50m),
+
         // Shopee — ใบกำกับ 536 · ส่วนลดพิเศษ 98 หลัง VAT · จ่าย 438
         new ReplayPaper("uptoyou-shopee-pay-not-total", OcrPaperSamples.UptoyouShopee,
             EngineSubTotal: 500.93m, EngineVat: 35.07m, EngineTotal: 536.00m,
@@ -390,6 +395,11 @@ public static class OcrReplayHarness
             var list = gaps.ToList();
             return list.Count == 0 ? "ok" : string.Join(",", list);
         }
+        // 2026-10-16 ตรงกับ service (ท้าย BuildScanLinesAsync): ยอดเอกสารที่สร้างเกินยอดรวมที่กระดาษยืนยัน ⇒ [Σ-GAP] (OcrTotalAnchor.DocumentOverstatement)
+        var normalizedText = Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(p.RawText);
+        IEnumerable<string> WithOverstatement(IEnumerable<string> gaps, decimal builtTotal)
+            => OcrTotalAnchor.DocumentOverstatement(normalizedText, anchoredTotal, builtTotal) is null
+                ? gaps : gaps.Append("Overstated");
 
         if (lines is { Count: > 0 })
         {
@@ -476,7 +486,7 @@ public static class OcrReplayHarness
                 .ToList());
 
             var lineAmountSum = amounts.Sum();
-            decimal whtAssigned = 0m, roundingShift = 0m;
+            decimal whtAssigned = 0m, roundingShift = 0m, builtItemsTotal = 0m;
             var rows = new List<string>(n);
             for (var i = 0; i < n; i++)
             {
@@ -495,10 +505,11 @@ public static class OcrReplayHarness
                     docDiscountPercent, lineGross[i], lines[i].UnitPrice.HasValue, amount, lines[i].Quantity);
                 var unitPrice = decidedUnitPrice ?? lines[i].UnitPrice ?? amount;
                 var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shifts[i];
+                builtItemsTotal += net + lineVat;
                 rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt, lineWht));
             }
             return new ReplayBuiltLines("Items", recon.Case.ToString(), pricesIncludeVat,
-                string.Join(";", rows), GapText(gaps), -roundingShift, duplicateRowsDropped);
+                string.Join(";", rows), GapText(WithOverstatement(gaps, builtItemsTotal - roundingShift)), -roundingShift, duplicateRowsDropped);
         }
 
         // ไม่มีรายการ — ตารางสรุปตามกลุ่มภาษีบนกระดาษ (Makro 3/3) ก่อน แล้วค่อยบรรทัดสรุปใบเดียว
@@ -522,7 +533,7 @@ public static class OcrReplayHarness
             }
             var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
             return new ReplayBuiltLines("VatGroups", null, false, string.Join(";", rows),
-                GapText(check.Problems.Select(x => x.Kind.ToString())), 0m);
+                GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m);
         }
 
         var summaryRate = hdrVat > 0m ? 7m : 0m;
@@ -531,7 +542,7 @@ public static class OcrReplayHarness
             paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
         return new ReplayBuiltLines("Summary", null, false,
             Fmt(headerSubTotal, summaryRate, hdrVat, headerSubTotal, 0m, 0m, headerWht),
-            GapText(summaryCheck.Problems.Select(x => x.Kind.ToString())), 0m);
+            GapText(WithOverstatement(summaryCheck.Problems.Select(x => x.Kind.ToString()), headerSubTotal + hdrVat)), 0m);
     }
 
     /// <summary>ตารางผลต่าง "ก่อน → หลัง" — <b>ว่าง = ไม่มีใบไหนเปลี่ยนคำตอบ</b></summary>

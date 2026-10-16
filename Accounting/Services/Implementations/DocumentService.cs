@@ -21937,11 +21937,17 @@ public partial class DocumentService : IDocumentService
             var postedVatSource = Accounting.Helpers.OcrHeaderVatEvidence.ClassifyPosted(
                 gapScan.RawTextContent, gapScanNormalized, gapScan.ExtractedVatAmount ?? 0m, linesVatNow, gapScan.OcrEngine,
                 gapScan.ProcessingNotes, gapScan.ExtractedTotalAmount);
+            // 2026-10-16 (Makro 2/2 — ใบสำคัญจ่าย 11,846.50 ทั้งที่กระดาษยืนยัน 10,980): ยอดของบรรทัด<b>ตอนนี้</b>เกินยอดรวมที่กระดาษยืนยันไหม
+            // — ตรวจสดจากข้อความดิบ (ตัวตัดสินเดียวกับตัวสร้างบรรทัด Helpers/OcrTotalAnchor.DocumentOverstatement) ⇒ ครอบเอกสารที่สร้างก่อนแก้
+            // และบรรทัดที่ผู้ใช้แยกเอง · ทุกทางเข้าที่อนุมัติเดินผ่านเมธอดนี้ (เว็บ · มือถือ · API · workflow)
+            var linesTotalNow = liveLines.Sum(l => l.Amount + l.VatAmount) + doc.RoundingAdjustment;
+            var overstated = Accounting.Helpers.OcrTotalAnchor.DocumentOverstatement(
+                gapScanNormalized, gapScan.ExtractedTotalAmount, linesTotalNow);
             warnings.AddRange(Accounting.Helpers.OcrApprovalGapWarning.Build(
                 gapScan.ProcessingNotes, gapScan.ExtractedTotalAmount,
-                liveLines.Sum(l => l.Amount + l.VatAmount) + doc.RoundingAdjustment, vatRateAdvice,
+                linesTotalNow, vatRateAdvice,
                 linesVat: linesVatNow, paperVat: gapScan.ExtractedVatAmount,
-                headerVatSource: postedVatSource));
+                headerVatSource: postedVatSource, overstatement: overstated, overstatementCheckedLive: true));
         }
 
         // ── รอบ 201 ทีม TX (A-TX1 · team-R B-05(b)): §65 ตรี ต้องเห็นก่อนกดอนุมัติ ──

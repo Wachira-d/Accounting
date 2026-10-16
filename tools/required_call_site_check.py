@@ -8105,6 +8105,22 @@ RULES += [
          why=_ADVX + " รอบ 5 P2-3: ปุ่มกู้คืนใช้แผนเดียวกับบริการ (ผังแม่รับไม่ได้ ⇒ ปุ่มกู้คืนใต้หัวบัญชีที่เสนอ / ไม่มีปุ่ม + เหตุผล)"),
 ]
 
+# ── 2026-10-16 (Makro หน้า 2/2 · ใบสำคัญจ่าย 11,846.50 ทั้งที่กระดาษยืนยัน 10,980): ยอดเอกสารห้ามเกินยอดรวมที่กระดาษยืนยัน ──────────
+#    ตัวตัดสิน Helpers/OcrTotalAnchor.DocumentOverstatement (pure + OcrMakroPage2VatAddedTwiceTests) · ถอดการเรียกที่ตัวสร้างบรรทัด =
+#    สแกนใหม่/เก่าที่หัวสแกนเกินกระดาษไม่มี [Σ-GAP] · ถอดที่ด่านอนุมัติ = เอกสารที่สร้างไปแล้ว/บรรทัดที่ผู้ใช้แยกเองผ่านเงียบ
+RULES += [
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must=["OcrTotalAnchor.DocumentOverstatement(", "OcrLineBuildNotes.GapTag"],
+         must_re=[r"overstated\s*\.\s*Message"],
+         before=[("OcrLineBuildNotes.StripRecomputed(", "OcrTotalAnchor.DocumentOverstatement(")],
+         why="2026-10-16 Makro 2/2: ยอดบรรทัดที่สร้างเกินยอดรวมที่กระดาษยืนยัน ⇒ [Σ-GAP] (รับทราบตอนอนุมัติ · ไม่อนุมัติเอง) — ห้ามลงบัญชีเกินกระดาษเงียบ ๆ"),
+    dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
+         must=["OcrTotalAnchor.DocumentOverstatement("],
+         before=[("OcrTotalAnchor.DocumentOverstatement(", "OcrApprovalGapWarning.Build(")],
+         call_args=[("OcrApprovalGapWarning.Build(", "overstatementCheckedLive: true")],
+         why="2026-10-16 Makro 2/2: ตรวจสดบนบรรทัดเอกสารตอนอนุมัติ (ครอบเอกสารที่สร้างก่อนแก้ + บรรทัดที่ผู้ใช้แยกเอง) ทุกทางเข้าที่อนุมัติ"),
+]
+
 _RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

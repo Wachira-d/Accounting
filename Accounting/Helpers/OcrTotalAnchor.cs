@@ -43,6 +43,10 @@ public enum OcrTotalRole
     /// <summary>ยอดที่ต้องชำระซึ่ง<b>รวมยอดค้างชำระจากรอบก่อน</b> (บิลโทรศัพท์/เน็ต/ไฟฟ้า: ใบกำกับรอบนี้ 1,070 + ค้าง 500 = ที่ต้องชำระ
     /// 1,570) — ยอดค้างเป็นหนี้ของใบก่อน ไม่ใช่ยอดของใบกำกับนี้ (2026-10-09 · <see cref="OcrPaperAmounts.PriorBalanceRows"/>)</summary>
     PriorBalanceIncluded = 8,
+    /// <summary>ยอดที่<b>ไม่ได้พิมพ์บนกระดาษ</b> = ยอดที่รวม VAT แล้ว (ยอดรวมทั้งสิ้น · หรือยอดก่อนส่วนลดที่ป้ายบอกว่ารวม VAT) + VAT ที่พิมพ์
+    /// <b>อีกรอบ</b> — VAT ถูกนับสองครั้ง (2026-10-16 · Makro หน้า 2/2: 11,208 "ราคาสินค้ารวมภาษีมูลค่าเพิ่ม/TOTAL" + VAT 638.50 = 11,846.50
+    /// ทั้งที่ยอดรวมทั้งสิ้น 10,980 · <see cref="OcrPaperAmounts.IsPrintedAsVatInclusive"/>)</summary>
+    VatAddedTwice = 9,
 }
 
 /// <summary>ชนิดหลักฐานของยอดหนึ่ง — จัดเป็น "ชั้นอิสระ" 4 ชั้น: VAT · ตัวอักษร · ป้าย · แถวชำระ</summary>
@@ -96,6 +100,9 @@ public sealed record OcrTotalAnchorResult(
     decimal? PrintedVat,
     IReadOnlyList<OcrTotalCandidate> Candidates,
     string Reason);
+
+/// <summary>ผลของ <see cref="OcrTotalAnchor.DocumentOverstatement"/> — ยอดรวมทั้งสิ้นที่กระดาษยืนยัน + ข้อความ (ไม่มีแท็ก)</summary>
+public sealed record OcrDocumentOverstatement(decimal PaperTotal, string Message);
 
 /// <summary>สิ่งที่ไปป์ไลน์ต้องเขียนตามคำตัดสิน — ตัวต่อสาย (<c>OcrService.ApplyTotalFirst</c>) แค่เขียนตามนี้
 /// <para><c>SubSource</c>/<c>SubConfidence</c>: ฐานที่พิมพ์ = <see cref="OcrFieldSource.PaperLabel"/> 0.95 ·
@@ -294,7 +301,9 @@ public static class OcrTotalAnchor
             foreach (var v in vats)
             {
                 var b = x - v.Amount;
-                var baseLine = b > 0m ? FirstLineOf(printed, b) : -1;
+                // ฐานต้องเป็นเลขที่พิมพ์<b>ในฐานะฐาน</b> — เลขที่ป้ายบอกว่ารวม VAT แล้ว ("ราคาสินค้ารวมภาษีมูลค่าเพิ่ม/ TOTAL 11,208.00")
+                // + VAT = VAT นับสองครั้ง ไม่ใช่หลักฐานชั้น VAT (2026-10-16 Makro 2/2 — เดิมทำให้ 11,846.50 ที่ไม่มีบนกระดาษ "ขัด" กับ 10,980)
+                var baseLine = b > 0m ? FirstBaseLineOf(printed, b) : -1;
                 if (baseLine >= 0)
                 {
                     ev.Add(new OcrTotalEvidence(OcrTotalEvidenceKind.VatClosure,
@@ -450,11 +459,43 @@ public static class OcrTotalAnchor
         return new OcrTotalWritePlan(t, t - v, OcrFieldSource.Rule, DerivedConfidence, v, null, Note(r), trace);
     }
 
-    /// <summary>บรรทัดแรกที่พิมพ์เลขนี้ (−1 = ไม่มีบนกระดาษ)</summary>
-    private static int FirstLineOf(IReadOnlyList<OcrPrintedAmount> printed, decimal amount)
+    /// <summary>คำขึ้นต้นของข้อความ <see cref="DocumentOverstatement"/> — ด่านอนุมัติใช้กันข้อความซ้ำเมื่อหมายเหตุสแกนมีอยู่แล้ว</summary>
+    public const string OverstatementLead = "ยอดเอกสารเกินยอดรวมที่กระดาษยืนยัน";
+
+    /// <summary>
+    /// **ด่าน "เอกสารที่จะสร้างห้ามเกินยอดที่กระดาษยืนยัน"** — คืนข้อความ (ไม่มีแท็ก) เมื่อ ยอดของเอกสาร (Σ ยอดบรรทัด + VAT + ผลต่างปัดเศษ)
+    /// <b>สูงกว่า</b>ยอดรวมทั้งสิ้นที่กระดาษพิสูจน์ได้ (ผู้สมัคร<b>แข็งตัวเดียว</b>: ชั้น VAT + ≥1 ชั้นอิสระ) · null = ไม่เกิน / กระดาษไม่ยืนยันยอดใด /
+    /// มีผู้สมัครแข็งมากกว่าหนึ่งตัว (ไม่รู้ว่ายอดไหน — ไม่เดา)
+    ///
+    /// <para>ที่มา (2026-10-16 · Makro หน้า 2/2): ใบสำคัญจ่ายถูกสร้างที่ 11,846.50 ทั้งที่กระดาษยืนยัน 10,980.00 ห้าทาง (AMOUNT · NET AMOUNT ·
+    /// ตัวอักษร · แถวชำระ · ตารางรหัส ภ.พ.) — ขั้นยึดยอดตอนสแกนตัดสิน "ขัดกัน" แล้วไม่แตะค่า (ถูกตามกติกา) แต่ไม่มีอะไรบอกที่หน้าอนุมัติ ⇒
+    /// ภาษีซื้อ/เจ้าหนี้เกินกระดาษเงียบ ๆ · ด่านนี้รันใน<b>ตัวสร้างบรรทัด</b>ทุกครั้ง (สร้าง · พรีวิว · ดึงรายการซ้ำ) จากข้อความดิบ ⇒ ครอบสแกนเก่าที่
+    /// persist ยอดผิดไว้แล้วด้วย · ผลเป็น <c>[Σ-GAP]</c> (ต้องกดรับทราบตอนอนุมัติ · หยุดการอนุมัติเอง) — <b>ไม่เปลี่ยนตัวเลข</b> (คนตัดสิน)</para>
+    /// <para>ทิศเดียว (เกินเท่านั้น): เอกสารต่ำกว่ายอดกระดาษมีเหตุที่ถูกได้หลายแบบ (บรรทัดขาด = ตัวกระทบยอดฟ้องอยู่แล้ว)</para>
+    /// </summary>
+    /// <param name="rawText">ข้อความทั้งใบ (normalize แล้ว)</param>
+    /// <param name="engineTotal">ยอดรวมที่สแกนถืออยู่ (<c>ExtractedTotalAmount</c>)</param>
+    /// <param name="documentTotal">ยอดที่บรรทัดของเอกสารรวมกันได้จริง</param>
+    public static OcrDocumentOverstatement? DocumentOverstatement(string? rawText, decimal? engineTotal, decimal documentTotal)
+    {
+        if (documentTotal <= 0m) return null;
+        var r = Find(rawText, engineTotal);
+        var strong = r.Candidates.Where(c => c.Strong).ToList();
+        if (strong.Count != 1) return null;
+        var paper = strong[0];
+        if (documentTotal <= paper.Amount + Tol) return null;
+        return new OcrDocumentOverstatement(paper.Amount,
+            $"{OverstatementLead}: เอกสาร {documentTotal:N2} · กระดาษ {paper.Amount:N2} "
+            + $"({paper.IndependentClasses} ทาง: {Describe(paper)}) เกิน {documentTotal - paper.Amount:N2} — "
+            + "ห้ามลงบัญชีเกินกระดาษ (มักเกิดจากยอดรวม VAT ก่อนส่วนลดถูกอ่านเป็นฐานแล้วบวก VAT ซ้ำ) แก้ยอด/บรรทัดให้ตรงกระดาษก่อนอนุมัติ");
+    }
+
+    /// <summary>บรรทัดแรกที่พิมพ์เลขนี้<b>ในฐานะฐานก่อน VAT ได้</b> — ข้ามแถวที่เลขนี้อยู่หลังป้าย "รวม VAT"
+    /// (<see cref="OcrPaperAmounts.IsVatInclusiveOnLine"/>) · −1 = ไม่มีบนกระดาษในรูปที่เป็นฐานได้</summary>
+    private static int FirstBaseLineOf(IReadOnlyList<OcrPrintedAmount> printed, decimal amount)
     {
         foreach (var p in printed)
-            if (Math.Abs(p.Amount - amount) <= Tol) return p.LineNo;
+            if (Math.Abs(p.Amount - amount) <= Tol && !OcrPaperAmounts.IsVatInclusiveOnLine(p.Text, amount)) return p.LineNo;
         return -1;
     }
 
@@ -504,6 +545,20 @@ public static class OcrTotalAnchor
             if (PaperWhtReader.Read(rawText).Amount is decimal w && Math.Abs(w - gap) <= Tol) return OcrTotalRole.WhtDeducted;
             if (vats.Any(v => Math.Abs(v.Amount - gap) <= Tol)) return OcrTotalRole.NetBeforeVat;
         }
+        // 2026-10-16 (Makro 2/2): ยอดที่ไม่มีบนกระดาษ = ยอดที่รวม VAT แล้ว + VAT ที่พิมพ์อีกรอบ — engine/ตัวเติมบวก VAT บน "ยอดรวม VAT ก่อนส่วนลด"
+        // ที่ถูกอ่านเป็นฐาน · ทุกตัวเลขของคำอธิบายต้องพิมพ์บนกระดาษ (ยอดรวม VAT · VAT · ส่วนลด) — ตัว loser เองต้อง<b>ไม่</b>พิมพ์ (เลขที่พิมพ์มีความหมายของมันเอง)
+        if (diff > 0m && !OcrPaperAmounts.IsPrinted(OcrPaperAmounts.AllPrinted(rawText), loser))
+        {
+            foreach (var v in vats)
+            {
+                var inclusive = loser - v.Amount;
+                if (inclusive <= 0m) continue;
+                if (Math.Abs(inclusive - total) <= Tol) return OcrTotalRole.VatAddedTwice;
+                if (OcrPaperAmounts.IsPrintedAsVatInclusive(rawText, inclusive)
+                    && Explain(inclusive, total, rawText, vats) == OcrTotalRole.PreDiscountTotal)
+                    return OcrTotalRole.VatAddedTwice;
+            }
+        }
         return OcrTotalRole.Unknown;
     }
 
@@ -540,6 +595,8 @@ public static class OcrTotalAnchor
         OcrTotalRole.WhtDeducted => $"ยอดหลังหัก ณ ที่จ่าย {total - loser:N2}",
         OcrTotalRole.NetBeforeVat => $"ยอดก่อน VAT (VAT {total - loser:N2})",
         OcrTotalRole.RoundedPayable => $"ยอดชำระหลังปัดเศษ {loser - total:+0.00;−0.00} (แถวปัดเศษพิมพ์บนกระดาษ)",
+        OcrTotalRole.VatAddedTwice =>
+            $"ยอดที่ไม่มีบนกระดาษ — ยอดที่รวม VAT แล้วถูกบวก VAT ซ้ำอีกรอบ (เกินยอดรวมทั้งสิ้น {loser - total:N2}) · ห้ามใช้เป็นยอดรวมหรือฐานภาษีซื้อ",
         OcrTotalRole.PriorBalanceIncluded =>
             $"ยอดที่ต้องชำระซึ่งรวมยอดค้างชำระจากรอบก่อน {loser - total:N2} — ใบกำกับนี้ลงบัญชีที่ {total:N2} "
             + "ส่วนยอดค้างเป็นหนี้ของใบก่อนที่ลงไปแล้ว (ตรวจว่าใบก่อนบันทึก/ชำระแล้วหรือยัง)",

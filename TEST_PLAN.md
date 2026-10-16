@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **568 ไฟล์ · 5,553 `[Fact]` + 848 `[Theory]` (3,794 `InlineData`)** ณ 2026-10-16 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **569 ไฟล์ · 5,569 `[Fact]` + 848 `[Theory]` (3,794 `InlineData`)** ณ 2026-10-16 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6261,3 +6261,13 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | WPDF-03 | เปิด PDF เทียบหน้าพิมพ์ (🖨) | ฟอนต์ Sarabun · ช่องติ๊ก ☑ เห็นช่องที่เลือก · ตราวงกลม · เส้นจุด · ตัดบรรทัดแถว 5/คำเตือนตรงกัน | ✅ `WhtCertPdfLayoutTests` + ตา |
 | WPDF-04 | แก้ข้อความแบบ 50 ทวิ (WhtCertFormText) | ตัวตัดคำไทยครอบทุกคำ ไม่งั้นเทสต์ล้ม | ✅ `ThaiWordBreakTests` |
 
+
+## OCR-M2 — Makro หน้า 2/2: ยอดรวม VAT ก่อนส่วนลดถูกอ่านเป็นฐาน แล้วบวก VAT ซ้ำ (2026-10-16 · ผู้ใช้: "ยอดส่วนไม่มี vat สร้างผิด … ควร 1,220 · รวม 10,980")
+
+| # | ขั้นตอน | ผลที่ต้องได้ | เทสต์ |
+| --- | --- | --- | --- |
+| OCR-M2-01 | สแกนใบ Makro หน้า 2/2 (405901117163) ที่หัวสแกนได้ ฐาน 11,208 · VAT 638.50 · ยอด 11,846.50 แล้วสร้างใบสำคัญจ่าย | ยึดยอด 10,980.00 (Proven · บทบาท "VAT บวกซ้ำ") · ฐาน 10,341.50 (ตารางรหัส ภ.พ.) · บรรทัด **ยกเว้น 1,220.00 · VAT 0** + **มี VAT 9,121.50 · VAT 638.50** · ไม่มี [Σ-GAP] · เดิม: Conflict ⇒ บรรทัดเดียว 11,208 · 7% · ยอด 11,846.50 | ✅ `OcrMakroPage2VatAddedTwiceTests` · `OcrReplayGoldenTests` · `OcrReplayLineGoldenTests` (`makro-page2-vat-added-twice`) |
+| OCR-M2-02 | ใบสำคัญจ่ายที่สร้างไปแล้ว (9,121.43 + VAT 638.50 + 2,086.57 = 11,846.50) → กดอนุมัติ (เว็บ/มือถือ/API) | คำเตือน "ยอดจากสแกนไม่ตรงกระดาษ: ยอดเอกสารเกินยอดรวมที่กระดาษยืนยัน … กระดาษ 10,980.00 (ต่าง +866.50)" ต้องกดรับทราบ (API: `scanAmountGap`) · แก้บรรทัดให้ตรงแล้วคำเตือนหาย · เอกสารเท่า/ต่ำกว่ายอดกระดาษ ⇒ ไม่เตือน | ✅ `OcrMakroPage2VatAddedTwiceTests` (pure) · จุดเรียกล็อกด้วย `required_call_site_check` · ⚠️ ทางอนุมัติจริงต้องทดสอบบน staging |
+| OCR-M2-03 | กดสร้าง/พรีวิว/ดึงรายการซ้ำจากสแกนเก่าที่ persist 11,846.50 | ตัวสร้างบรรทัดเขียน `[Σ-GAP] ยอดเอกสารเกินยอดรวมที่กระดาษยืนยัน…` (ไม่อนุมัติเอง) · ตัวเลขไม่เปลี่ยนเอง — สแกนใหม่ (สแกนซ้ำ) จึงได้บรรทัดตามตาราง | ✅ `OcrMakroPage2VatAddedTwiceTests` · `OcrReplayHarness` (ช่อง `IntegrityGaps` = `Overstated`) |
+| OCR-M2-04 | ทิศตรงข้าม: Makro 3/3 · ชุดกระดาษทั้ง Corpus · ยอดรวม+VAT ที่**พิมพ์อยู่**บนกระดาษ · ฐานที่อยู่ก่อนป้าย "รวมภาษี" · "ไม่รวม VAT" | คำตอบเดิมทุกใบ (diff snapshot ทั้ง Corpus = 0 แถว) · เลขที่พิมพ์ไม่ถูกตีเป็น "VAT ซ้ำ" (ยังขัดกัน) · ฐานบนแถวอื่นยังเป็นหลักฐานชั้น VAT | ✅ `OcrMakroPage2VatAddedTwiceTests` · `OcrTotalAnchorTests` |
+| OCR-M2-05 | ข้อความ Tesseract จริงของภาพนี้ ("59 2 … 9,760.00 ," · คำอธิบายรหัส "1«…" · ": = : ie หักเงินมัดจำ/ DEPOSIT") | ตารางรหัส ภ.พ. อ่านได้ (รหัส 1 = ไม่รู้ ไม่เดา — ไม่สร้างบรรทัดต่อกลุ่ม · ยอดยกเว้น 1,220 กันตัวพิสูจน์ "ทั้งใบ 7%") · ไม่ติดธงมัดจำ · มัดจำจริง ("รับเงินมัดจำ 5,000") ยังติด | ✅ `OcrMakroPage2VatAddedTwiceTests` |
