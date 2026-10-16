@@ -2352,14 +2352,19 @@ public class OcrService : IOcrService
                 // 5306 that doesn't exist in the company's CoA and the
                 // UI dropdown can't auto-select anything.
                 var seeded = extractedData.DebitAccountCode;
+                // ฝ่ายค้าน EC2 P2-1: ทุกชั้น (ตรงรหัส · รหัสต้น · ชื่อ) ห้ามได้บัญชีคุม — กติกาเดียวกับ IsPostableGl ตอนสร้างเอกสาร (WhereNotControlAccount)
+                // เดิมค่าตั้งต้น "5100 ต้นทุนขาย" ค้นตามชื่อได้ "51" (บัญชีคุม) ⇒ ตอนสร้างเอกสารถูกตัด ⇒ เดบิตว่าง · รหัสที่ตรงแต่เป็นบัญชีคุม ⇒ ตกไปบัญชีย่อย
                 var debitAccount = await _db.ChartOfAccounts
-                    .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == seeded && !a.IsDeleted);
+                    .Where(a => a.CompanyId == companyId && a.AccountCode == seeded && !a.IsDeleted)
+                    .WhereNotControlAccount(_db)
+                    .FirstOrDefaultAsync();
                 if (debitAccount == null)
                 {
                     // Prefix match — longest first so 53061 beats 5306x
                     debitAccount = await _db.ChartOfAccounts
                         .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                             && a.AccountCode.StartsWith(seeded))
+                        .WhereNotControlAccount(_db)
                         .OrderByDescending(a => a.AccountCode.Length)
                         .ThenBy(a => a.AccountCode)
                         .FirstOrDefaultAsync();
@@ -2385,6 +2390,7 @@ public class OcrService : IOcrService
                         var candidates = await _db.ChartOfAccounts
                             .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                                 && a.AccountName.Contains(keyword))
+                            .WhereNotControlAccount(_db)
                             .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.AccountType })
                             .ToListAsync();
                         var picked = Accounting.Helpers.GlDebitAccountPicker.Pick(
@@ -2477,7 +2483,8 @@ public class OcrService : IOcrService
                         // ฝ่ายค้าน f5b10674 P2-A: ใบที่ไม่มีกฎหมวดไหนตรง ⇒ seed (null, null) ⇒ เดบิตว่าง — ตกไปผังตั้งต้นของชนิดกระดาษ → ผังค่าใช้จ่ายทั่วไป
                         // (Helpers/OcrDocTypeDefaultAccounts ตัวเดียวกับ ParseThaiDocument · ผู้เลือกกรองเฉพาะค่าใช้จ่าย/สินทรัพย์)
                         if (seededDebit == null)
-                            foreach (var fb in Accounting.Helpers.OcrDocTypeDefaultAccounts.DebitFallbackSeeds(extractedData.DocumentType))
+                            foreach (var fb in Accounting.Helpers.OcrDocTypeDefaultAccounts.DebitFallbackSeeds(extractedData.DocumentType,
+                                         Accounting.Helpers.InventoryIndustry.KeepsInventory(companyContext?.IndustryType)))
                             {
                                 seededDebit = await PickCategorySeededDebitAsync(companyId, fb.Code, fb.Name);
                                 if (seededDebit != null) { seedSource = $"ผังตั้งต้นของชนิดกระดาษ ({extractedData.DocumentType ?? "ไม่ทราบชนิด"})"; break; }
@@ -3974,10 +3981,13 @@ public class OcrService : IOcrService
         var keyword = ExtractDistinctiveKeyword(seedName);
         var code = string.IsNullOrWhiteSpace(seedCode) ? null : seedCode.Trim();
         if (code == null && keyword == null) return null;
+        // ฝ่ายค้าน EC2 P2-1: ห้ามได้บัญชีคุม (มีบัญชีย่อย) — เดิมผังจริงได้ "54 ค่าใช้จ่ายในการบริหาร" / "51 ต้นทุนขาย" แล้วด่าน IsPostableGl ตอนสร้าง
+        // เอกสารตัดทิ้ง ⇒ เดบิตว่างที่ฟอร์ม · ตัวกรองฝั่ง query ของกติกาเดียวกับ IsPostableGl (PostingAccountRule) = WhereNotControlAccount
         var candidates = await _db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
                 && ((code != null && a.AccountCode.StartsWith(code))
                     || (keyword != null && a.AccountName.Contains(keyword))))
+            .WhereNotControlAccount(_db)
             .Select(a => new Accounting.Helpers.GlAccountCandidate(a.AccountCode, a.AccountName, a.AccountType))
             .ToListAsync();
         return Accounting.Helpers.GlDebitAccountPicker.Pick(candidates, code);
@@ -6456,9 +6466,12 @@ public class OcrService : IOcrService
         // ⚠️ (2026-10-16) ไม่ตั้งหมวดค่าใช้จ่ายตามชนิดกระดาษแล้ว — เดิม Receipt ⇒ "ค่าบริการ" ซึ่งตัวจัดหมวดรับเป็นหลักฐานผูกกับเงิน
         // แล้วเสนอหัก ณ ที่จ่าย 3% 40(8) บนใบเสร็จซื้อของ (ค่าตั้งต้นของระบบ ≠ ข้อความบนกระดาษ) · ผังเดบิต/เครดิตตั้งต้นคงเดิม
         // ตารางผังตั้งต้นตามชนิดกระดาษ = Helpers/OcrDocTypeDefaultAccounts ตัวเดียว (ด่านวางฝั่งของ ScanAsync ใช้ตารางเดียวกันเป็นเดบิตแทน)
+        // ยังไม่รู้จักบริษัท (ประเภทกิจการ) ⇒ ใบซื้อสินค้าได้ค่าใช้จ่ายทั่วไป ไม่ใช่ต้นทุนขาย (ฝ่ายค้าน EC2 P2-1) · ค่าตั้งต้น ≠ อ่านจากกระดาษ ⇒ ไฮไลต์เหลือง
+        // (P2-3 · กฎเหล็ก #3 ข้อ 3) ที่ 0.5 — ต่ำกว่าเกณฑ์ทับของทุกชั้นถัดไป (ตัวเรียน ≥ 0.55 · NB > 0.7 · AI ≥ 0.70) จึงไม่เปลี่ยนว่าใครทับได้
         if (Accounting.Helpers.OcrDocTypeDefaultAccounts.For(data.DocumentType) is { } acct)
         {
             data.DebitAccountCode = acct.DebitCode; data.DebitAccountName = acct.DebitName;
+            data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.DebitAccount] = 0.5;
             data.CreditAccountCode = acct.CreditCode; data.CreditAccountName = acct.CreditName;
             if (data.VatAmount > 0) { data.VatAccountCode = "1400"; data.VatAccountName = "ภาษีซื้อ"; }
         }

@@ -102,11 +102,13 @@ public class OcrExpenseCategoryRemovalTests
     {
         // ผังเดบิตคือการตัดสินใจเดียว — กฎเหล็ก #3 ห้ามปล่อยว่าง: ค่าตั้งต้นตามชนิดกระดาษต้องยังอยู่ (เส้นสร้างเอกสารตั้ง
         // Document.ExpenseCategoryId = ผังเดบิตของสแกน · หน้ารีวิวส่ง expenseCategoryCode = ผังเดบิต)
+        // ฝ่ายค้าน EC2 P2-1: รหัสตั้งต้นเป็นบัญชีย่อยจริงในผังมาตรฐาน (เดิม "5300" ไม่มีในแม่แบบ ⇒ ค้นตามชื่อได้บัญชีคุม "54")
+        var expected = OcrDocTypeDefaultAccounts.GenericExpenseDebit.Code;
         var data = OcrService.ParseThaiDocument(GoodsReceiptText);
-        Assert.Equal("5300", data.DebitAccountCode);
+        Assert.Equal(expected, data.DebitAccountCode);
         Assert.Equal("1110", data.CreditAccountCode);
         ResolveLikePipeline(data, GoodsReceiptText);
-        Assert.Equal("5300", data.DebitAccountCode);   // ตัวจัดหมวดเติมเฉพาะช่องที่ว่าง — ไม่ทับ
+        Assert.Equal(expected, data.DebitAccountCode);   // ตัวจัดหมวดเติมเฉพาะช่องที่ว่าง — ไม่ทับ
     }
 
     // ── ต้นเหตุ "ค่าประกัน" บนใบที่ไม่ใช่ประกัน (ทำซ้ำได้ใน resolver · เส้น Azure ที่ยังไม่มีหมวด/ผังมาก่อน) ──────

@@ -82,10 +82,17 @@ internal static class ExpenseCategoryResolver
         var weakParts = BuildCorpus(null, null, zeroAmountLineDescriptions, rawText);
         var corpus = (primaryCorpus + " " + weakParts).ToLowerInvariant();
 
+        // ── ชื่อผู้ขายไม่ใช่หลักฐานของค่าบริการ เมื่อทุกบรรทัดที่มีเงินเป็นสินค้า (ฝ่ายค้าน EC2 P1-4) ──
+        // "ศูนย์ซ่อมและอะไหล่รถยนต์" ขาย "ผ้าเบรคหน้า" · "ห้างฯ ผู้รับเหมา วัสดุ" ขาย "ปูนซีเมนต์/ทราย" เคยได้ 3% 40(8)/40(7) จากคำในชื่อร้าน
+        // ชื่อร้านยังให้คะแนนหมวด/ผังได้ (ผังซ่อม/ผังรับเหมา) แต่ไม่ผูกกับเงิน ⇒ ไม่เสนอประเภทเงินได้/อัตรา · ไม่มีบรรทัด = พฤติกรรมเดิม
+        var paidLineList = (lineDescriptions ?? Enumerable.Empty<string?>()).Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => l!).ToList();
+        var vendorNameIsNotServiceEvidence = paidLineList.Count > 0 && paidLineList.All(LooksGoodsOnlyLine);
+
         // Score every rule against the corpus; highest wins.
         CategoryRule? best = null;
         decimal bestScore = 0m;
         bool bestMoneyBacked = false;
+        bool bestVendorEvidence = false;
         foreach (var rule in Rules)
         {
             decimal kwScore = 0m;
@@ -103,24 +110,36 @@ internal static class ExpenseCategoryResolver
             var ruleAnchor = StripExclusions(rule, anchorCorpus);
             var ruleLines = StripExclusions(rule, lineCorpus);
             var ruleAll = StripExclusions(rule, corpus);
-            foreach (var kw in rule.Keywords)
+            // ── นับคำที่ยาวที่สุดที่ตรง · คำที่เป็นส่วนหนึ่งของคำที่นับไปแล้วไม่นับซ้ำ (ฝ่ายค้าน EC2 P1-1) ──
+            // เดิมทุกคำที่ตรงบวกคะแนนหมด ⇒ "ค่าขนส่ง"(+2) + "ขนส่ง"(+1) = 3 = มั่นใจ 0.70 จากคำเดียวบนกระดาษ ("ทีวี (รวมค่าขนส่ง)" ได้ 1%)
+            var counted = new List<string>();
+            bool AlreadyCounted(string k) => counted.Any(c => c.Contains(k, StringComparison.Ordinal));
+            foreach (var kw in rule.Keywords.OrderByDescending(k => k.Length))
             {
                 var k = kw.ToLowerInvariant();
-                if (ruleAnchor.Contains(k)) { kwScore += kw.Length >= 6 ? 2m : 1m; moneyBacked = true; anchored = true; }
+                if (AlreadyCounted(k)) continue;
+                if (ruleAnchor.Contains(k))
+                {
+                    kwScore += kw.Length >= 6 ? 2m : 1m; anchored = true; counted.Add(k);
+                    // ชื่อผู้ขายมีคำของงานบริการ แต่ทุกบรรทัดที่มีเงินเป็นสินค้า ⇒ ชื่อร้านไม่ใช่หลักฐานว่าจ่ายค่าบริการ (P1-4)
+                    if (!vendorNameIsNotServiceEvidence) moneyBacked = true;
+                }
                 else if (ruleLines.Contains(k))
                 {
                     // คำบนบรรทัดส่วนน้อย = ไม่นับเลย (รวมถึงเสียงสะท้อนของบรรทัดเดียวกันใน rawText)
                     if (!lineMinority) { kwScore += kw.Length >= 6 ? 2m : 1m; moneyBacked = true; }
+                    counted.Add(k);
                 }
-                else if (ruleAll.Contains(k)) kwScore += kw.Length >= 6 ? 1m : 0.5m;
+                else if (ruleAll.Contains(k)) { kwScore += kw.Length >= 6 ? 1m : 0.5m; counted.Add(k); }
             }
             // คำที่บอก "ซื้อของ" ของหมวดนั้น (อะไหล่) — ให้คะแนนหมวด/ผังได้ แต่**ไม่ใช่หลักฐานของค่าบริการ** ⇒ ไม่ทำให้ผูกกับเงิน
             // (ใบซื้ออะไหล่จากร้านอะไหล่เคยได้ข้อเสนอหัก 3% 40(8) ของกฎซ่อม — การซื้อสินค้าไม่อยู่ในข่าย ท.ป.4/2528)
-            foreach (var kw in rule.GoodsKeywords ?? Array.Empty<string>())
+            foreach (var kw in (rule.GoodsKeywords ?? Array.Empty<string>()).OrderByDescending(k => k.Length))
             {
                 var k = kw.ToLowerInvariant();
-                if (ruleAnchor.Contains(k) || (ruleLines.Contains(k) && !lineMinority)) kwScore += kw.Length >= 6 ? 2m : 1m;
-                else if (ruleAll.Contains(k)) kwScore += kw.Length >= 6 ? 1m : 0.5m;
+                if (AlreadyCounted(k)) continue;
+                if (ruleAnchor.Contains(k) || (ruleLines.Contains(k) && !lineMinority)) { kwScore += kw.Length >= 6 ? 2m : 1m; counted.Add(k); }
+                else if (ruleAll.Contains(k)) { kwScore += kw.Length >= 6 ? 1m : 0.5m; counted.Add(k); }
             }
             // Vendor-brand matches outweigh single keyword hits because they're
             // far more discriminating ("ปตท." in a vendor name strongly
@@ -129,7 +148,7 @@ internal static class ExpenseCategoryResolver
             foreach (var brand in rule.VendorBrands)
                 if (!string.IsNullOrEmpty(vendorName)
                     && vendorName.ToLowerInvariant().Contains(brand.ToLowerInvariant()))
-                { kwScore += 4; brandExactHit = true; moneyBacked = true; }
+                { kwScore += 4; brandExactHit = true; if (!vendorNameIsNotServiceEvidence) moneyBacked = true; }
 
             // Fuzzy brand fallback: when exact substring missed, use char
             // n-gram cosine to catch OCR variants of brand names ("ปตท."
@@ -144,7 +163,8 @@ internal static class ExpenseCategoryResolver
                     if (sim >= 0.65)
                     {
                         kwScore += 2;     // half of exact match's +4
-                        moneyBacked = true;   // ชื่อผู้ขายคือหลักฐานที่ผูกกับเงินเสมอ
+                        // ชื่อผู้ขายคือหลักฐานที่ผูกกับเงิน — เว้นแต่ทุกบรรทัดที่มีเงินเป็นสินค้า (P1-4)
+                        if (!vendorNameIsNotServiceEvidence) moneyBacked = true;
                         brandFuzzyHit = true;
                         break;
                     }
@@ -168,7 +188,11 @@ internal static class ExpenseCategoryResolver
             // per-industry weight. Default weight is 1.0 (no change).
             var industryWeight = IndustryWeight(rule.Category, industry);
             decimal score = kwScore * industryWeight;
-            if (score > bestScore) { bestScore = score; best = rule; bestMoneyBacked = moneyBacked; }
+            if (score > bestScore)
+            {
+                bestScore = score; best = rule; bestMoneyBacked = moneyBacked;
+                bestVendorEvidence = anchored || brandExactHit || brandFuzzyHit;
+            }
         }
 
         if (best == null || bestScore <= 0) return null;
@@ -181,9 +205,14 @@ internal static class ExpenseCategoryResolver
             ? $"จับคู่ '{best.Category}' จาก score {bestScore:F1} (industry={industry.Value})"
             : $"จับคู่ '{best.Category}' จาก score {bestScore:F1}";
         reasons.Add(reasonText);
-        if (!bestMoneyBacked && best.StatutoryWhtRate is > 0m)
+        if (!bestMoneyBacked && best.StatutoryWhtRate is > 0m && bestVendorEvidence && vendorNameIsNotServiceEvidence)
+            reasons.Add($"ชื่อผู้ขายมีคำของ '{best.Category}' แต่ทุกบรรทัดที่มีเงินเป็นสินค้า "
+                + $"({string.Join(", ", paidLineList.Take(3).Select(l => $"'{l}'"))}) → เสนอหมวดได้ แต่ไม่เสนอประเภทเงินได้/อัตราหัก ณ ที่จ่าย "
+                + "(การซื้อสินค้าไม่อยู่ในข่าย ท.ป.4/2528 · ถ้ามีค่าแรง/ค่าบริการแยกบรรทัด ให้ตั้งเอง)");
+        else if (!bestMoneyBacked && best.StatutoryWhtRate is > 0m)
             reasons.Add($"หลักฐานของ '{best.Category}' อยู่นอกบรรทัดที่มีจำนวนเงิน "
                 + "(ข้อความทั้งใบ/แถวยอด 0) → เสนอหมวดได้ แต่ไม่เสนอประเภทเงินได้/อัตราหัก ณ ที่จ่าย");
+        if (best.Hint != null) reasons.Add(best.Hint);
         return new CategoryResult(best.Category, best.AccountCode, best.AccountName,
             best.StatutoryWhtRate, best.WhtIncomeTypeCode, conf, reasons, bestMoneyBacked);
     }
@@ -197,13 +226,69 @@ internal static class ExpenseCategoryResolver
         return false;
     }
 
-    /// <summary>ลบวลียกเว้นของกฎออกจากข้อความ (ตัวพิมพ์เล็กแล้ว) — ตัวเดียวของทั้งการให้คะแนนและการวัดบรรทัดส่วนน้อย</summary>
+    /// <summary>ลบวลียกเว้นของกฎออกจากข้อความ (ตัวพิมพ์เล็กแล้ว) — ตัวเดียวของทั้งการให้คะแนนและการวัดบรรทัดส่วนน้อย ·
+    /// วลี "ของแถม/รวมในราคา" (<see cref="BundledOrFreePhrases"/>) + "เงินมัดจำ/ค่าประกัน&lt;สิ่งที่วางประกัน&gt;" (<see cref="DepositPhrases"/>) ถูกลบก่อนสำหรับทุกกฎ</summary>
     private static string StripExclusions(CategoryRule rule, string lowered)
     {
-        if (rule.Exclusions is not { Length: > 0 } ex || string.IsNullOrEmpty(lowered)) return lowered;
+        if (string.IsNullOrEmpty(lowered)) return lowered;
+        foreach (var pattern in BundledOrFreePhrases.Concat(DepositPhrases))
+            lowered = Regex.Replace(lowered, pattern, " ", RegexOptions.CultureInvariant);
+        if (rule.Exclusions is not { Length: > 0 } ex) return lowered;
         foreach (var pattern in ex)
             lowered = Regex.Replace(lowered, pattern, " ", RegexOptions.CultureInvariant);
         return lowered;
+    }
+
+    /// <summary>
+    /// วลี "ของแถม / รวมอยู่ในราคา" — <b>ไม่ใช่หลักฐานว่าจ่ายค่าบริการแยก</b> (ฝ่ายค้าน EC2 P1-1 · 2026-10-16):
+    /// "ทีวี 55 นิ้ว (รวมค่าขนส่ง)" · "ปูนซีเมนต์ ฟรีค่าขนส่ง" · "แอร์ (บริการซ่อมฟรี 1 ปี)" · "เสื้อยืดสกรีน (ฟรีค่าออกแบบ)" เคยได้ข้อเสนอหัก 1%/3%
+    /// ทั้งที่จ่ายค่าสินค้าอย่างเดียว · ลบทั้งวลีจนถึงช่องว่าง/ตัวเลข/วงเล็บ (ภาษาไทยไม่เว้นวรรคระหว่างคำ) · ใช้กับทุกกฎ (ข้อความตัวพิมพ์เล็กแล้ว)
+    /// </summary>
+    private static readonly string[] BundledOrFreePhrases =
+    {
+        @"ฟรี\s*[\u0E00-\u0E7Fa-z]+",          // ฟรีค่าขนส่ง · ฟรีค่าออกแบบ · ฟรีติดตั้ง
+        @"[\u0E00-\u0E7Fa-z]+\s*ฟรี",          // บริการซ่อมฟรี · ส่งฟรี · ติดตั้งฟรี
+        @"รวม\s*ค่า[\u0E00-\u0E7Fa-z]+",        // (รวมค่าขนส่ง) · ราคารวมค่าติดตั้ง
+        @"\bfree\s+[a-z]+",                      // free shipping · free installation
+        @"\b(?:incl\.?|including)\s+[a-z]+",    // incl. delivery · including installation
+    };
+
+    /// <summary>
+    /// วลี "เงินประกัน/ค่าประกัน + สิ่งที่วางเป็นหลักประกัน" = <b>เงินมัดจำ</b> (สินทรัพย์ เรียกคืนได้) — ไม่ใช่หลักฐานของหมวดค่าใช้จ่ายใด ๆ (ฝ่ายค้าน EC2 P1-3):
+    /// "ค่าประกันห้อง 10,000" · "ค่าประกันมิเตอร์น้ำ" · "ค่าประกันความเสียหาย" เคยได้ 5800 ค่าเบี้ยประกัน · ลบ<b>ทั้งวลีรวมสิ่งที่วางประกัน</b> สำหรับทุกกฎ
+    /// (ไม่งั้น "ค่าประกันการเช่า" ไปได้หมวดค่าเช่า · "ค่าประกันไฟฟ้า" ได้ค่าไฟฟ้า) · ไม่มีผังเงินมัดจำในกฎ ⇒ ไม่ให้หมวด (ไม่แต่งผังขึ้น) ·
+    /// "ค่าประกันไฟไหม้/น้ำท่วม" · "เงินประกันภัย/ชีวิต/สุขภาพ" ยังเป็นประกันภัย · "เงินมัดจำค่าก่อสร้าง" (จ่ายล่วงหน้าค่างาน) ไม่อยู่ในชุดนี้
+    /// </summary>
+    private static readonly string[] DepositPhrases =
+    {
+        @"ค่าประกัน\s*(?:ห้อง|มิเตอร์|ความเสียหาย|สัญญา|การเช่า|ซอง|ผลงาน|ไฟฟ้า|ไฟ(?!ไหม้)|น้ำ(?!ท่วม)|ประปา|กุญแจ|คีย์การ์ด|บัตร)[\u0E00-\u0E7Fa-z]*",
+        @"เงินประกัน(?!ภัย|ชีวิต|สุขภาพ)[\u0E00-\u0E7Fa-z]*",
+    };
+
+    /// <summary>คำที่บอกว่าบรรทัดนี้เป็น "ตัวสินค้า" (อะไหล่ · วัสดุก่อสร้าง) — ใช้เฉพาะตัดสินว่า<b>ชื่อผู้ขาย</b>เป็นหลักฐานของค่าบริการได้ไหม (P1-4)</summary>
+    private static readonly string[] GoodsLineWords =
+    {
+        "อะไหล่", "spare part", "ผ้าเบรค", "ผ้าเบรก", "ไส้กรอง", "กรองอากาศ", "กรองน้ำมัน", "หัวเทียน", "แบตเตอรี่", "โช้คอัพ",
+        "ยางรถ", "ยางนอก", "ยางใน", "น้ำมันเครื่อง", "น้ำยาแอร์", "คอมเพรสเซอร์",
+        "ปูน", "ทราย", "หินคลุก", "อิฐ", "เหล็กเส้น", "เหล็กกล่อง", "วัสดุ", "กระเบื้อง", "ไม้อัด", "ตะปู", "ท่อพีวีซี", "ท่อ pvc",
+        "สายไฟ", "หลอดไฟ", "สีทา", "สีรองพื้น",
+    };
+
+    /// <summary>บรรทัดนี้เป็นสินค้าล้วนไหม — มีคำของสินค้า และ<b>ไม่มี</b>คำของงานบริการ/ค่ารับเหมาของกฎที่มีอัตราหักเลย
+    /// ("ค่าแรงเปลี่ยนผ้าเบรค" = มีค่าแรง ⇒ ไม่ใช่สินค้าล้วน) · ข้อความหลังลบวลีของแถม (BundledOrFreePhrases)</summary>
+    private static bool LooksGoodsOnlyLine(string description)
+    {
+        var d = description.ToLowerInvariant();
+        foreach (var pattern in BundledOrFreePhrases)
+            d = Regex.Replace(d, pattern, " ", RegexOptions.CultureInvariant);
+        if (!GoodsLineWords.Any(g => d.Contains(g, StringComparison.Ordinal))) return false;
+        foreach (var rule in Rules)
+        {
+            if (rule.WhtIncomeTypeCode == null) continue;
+            var stripped = StripExclusions(rule, d);
+            if (rule.Keywords.Any(k => stripped.Contains(k.ToLowerInvariant(), StringComparison.Ordinal))) return false;
+        }
+        return true;
     }
 
     /// <summary>เหตุผลของหมวดที่ถูกตัดเพราะชนะด้วยบรรทัดส่วนน้อย — บอกเกณฑ์ 1,000 บาทของ<b>ยอดส่วนนั้น</b>
@@ -337,6 +422,7 @@ internal static class ExpenseCategoryResolver
     /// <param name="GoodsKeywords">คำที่บอกว่า "ซื้อของ" ของหมวดนี้ (อะไหล่) — ให้คะแนนหมวด/ผังได้ แต่<b>ไม่ใช่หลักฐานที่ผูกกับเงินของค่าบริการ</b>
     /// ⇒ ชนะด้วยคำพวกนี้ล้วนไม่เสนอประเภทเงินได้/อัตราหัก (การซื้อสินค้าไม่อยู่ในข่าย ท.ป.4/2528)</param>
     /// <param name="Exclusions">regex (ตัวพิมพ์เล็ก) ของวลีที่มีคำของกฎแต่<b>ไม่ใช่เรื่องของกฎ</b> — ลบออกจากข้อความก่อนนับคะแนนของกฎนี้เท่านั้น</param>
+    /// <param name="Hint">ข้อความที่ต่อท้ายเหตุผลเมื่อกฎนี้ชนะ — บอกเงื่อนไขที่ระบบตัดสินแทนไม่ได้ (เช่น ผู้รับเป็นนิติบุคคลอาคารชุดหรือบริษัทบริหารอาคาร)</param>
     private record CategoryRule(
         string Category,
         string AccountCode,
@@ -345,7 +431,8 @@ internal static class ExpenseCategoryResolver
         string[] VendorBrands,
         string? WhtIncomeTypeCode = null,
         string[]? GoodsKeywords = null,
-        string[]? Exclusions = null)
+        string[]? Exclusions = null,
+        string? Hint = null)
     {
         /// <summary>อัตราตามกฎหมายของประเภทเงินได้ — <b>ถามตารางเจ้าของ</b> (<see cref="Accounting.Helpers.ThaiWhtRateTable"/>) ห้ามฝังตัวเลขในแถวกฎ
         /// (ตัวตั้งตัวเดียว · ฝ่ายค้าน f5b10674 2026-10-16) · อัตราที่ขึ้นกับชนิดผู้รับ (ดอกเบี้ย 4a: บุคคล 15 · นิติบุคคล 1) คืนอัตราบุคคล
@@ -513,7 +600,19 @@ internal static class ExpenseCategoryResolver
             },
             VendorBrands: Array.Empty<string>(),
             WhtIncomeTypeCode: "8",
-            GoodsKeywords: new[] { "อะไหล่", "spare part" }),
+            GoodsKeywords: new[] { "อะไหล่", "spare part" },
+            // ค่าส่วนกลาง/ค่าบำรุงรักษาส่วนกลาง = เงินที่เจ้าของร่วมจ่ายนิติบุคคลอาคารชุด ไม่ใช่ค่าจ้างซ่อม (กฎ "ค่าส่วนกลาง" ข้างล่าง · ฝ่ายค้าน EC2 P2-5)
+            Exclusions: new[] { @"(?:ค่า)?บำรุง(?:รักษา)?ส่วนกลาง", @"ค่าส่วนกลาง" }),
+
+        // ─── ค่าส่วนกลาง (อาคารชุด/หมู่บ้านจัดสรร) — 5300 · ไม่เสนอหัก ณ ที่จ่าย ───
+        // ฝ่ายค้าน EC2 P2-5 (2026-10-16): "ค่าบำรุงรักษาส่วนกลาง" ที่จ่ายนิติบุคคลอาคารชุดเคยได้ 3% 40(8) ที่ 0.90 จากคำของกฎซ่อม ·
+        // นิติบุคคลอาคารชุด (พ.ร.บ.อาคารชุด 2522) เก็บเงินจากเจ้าของร่วมเพื่อจัดการทรัพย์ส่วนกลาง — ไม่ใช่บริษัท/ห้างฯ ที่รับจ้างทำของ
+        // ⇒ ไม่มีรหัส ม.40 · ค่าบริการส่วนกลางที่จ่าย "บริษัทบริหารอาคาร" เป็นอีกเรื่อง ⇒ Hint บอกให้คนตรวจ (ไม่เดาว่าไม่ต้องหักแบบเงียบ)
+        new CategoryRule("ค่าส่วนกลาง", "5300", "ค่าใช้จ่ายบริหาร",
+            Keywords: new[] { "ค่าส่วนกลาง", "ค่าบำรุงรักษาส่วนกลาง", "บำรุงรักษาส่วนกลาง", "ค่าบำรุงส่วนกลาง", "common fee", "common area fee" },
+            VendorBrands: new[] { "นิติบุคคลอาคารชุด", "นิติบุคคลหมู่บ้านจัดสรร", "นิติบุคคลบ้านจัดสรร", "juristic person condominium" },
+            Hint: "ค่าส่วนกลางที่จ่ายนิติบุคคลอาคารชุด/หมู่บ้านจัดสรร ระบบไม่เสนอหัก ณ ที่จ่าย — ถ้าผู้รับเป็นบริษัท/ห้างฯ "
+                + "ที่รับจ้างบริหารอาคาร (ค่าบริการ 40(8)) ให้ตั้งประเภทเงินได้และอัตราหักเอง"),
 
         // ─── ค่าเดินทาง — 5401 (no WHT for personal travel reimbursement) ───
         new CategoryRule("ค่าเดินทาง", "5401", "ค่าเดินทาง",
@@ -563,6 +662,7 @@ internal static class ExpenseCategoryResolver
                 "ประกันสังคม",
                 "รับประกัน(?!ภัย|ชีวิต|วินาศภัย)",
                 "เงินประกัน(?!ภัย|ชีวิต|สุขภาพ)",
+                // "ค่าประกัน<สิ่งที่วางเป็นหลักประกัน>" (ห้อง · มิเตอร์ · ความเสียหาย …) ถูกลบสำหรับทุกกฎใน DepositPhrases (ฝ่ายค้าน EC2 P1-3)
             }),
 
         // ─── ดอกเบี้ยจ่าย — 5701 (40(4)(ก) — อัตราขึ้นกับชนิดผู้รับ: ApplyTo ตัดสิน) ───
@@ -604,6 +704,37 @@ internal static class ExpenseCategoryResolver
         // receipt shows no WHT line, don't auto-suggest 1%/3%/etc. just
         // because the expense category technically allows it.
         bool docMentionsWht = rawText != null && ContainsWhtKeyword(rawText);
+
+        // ── ผู้ขายต่างประเทศ: ห้ามเสนออัตราในประเทศ (ภ.ง.ด.3/53) — ฝ่ายค้าน EC2 P1-5 ──
+        // "Meta Platforms Ireland / Facebook ads" เคยได้ 2% 8ad คู่กับโน้ต ภ.พ.36/ม.70 ตอนสร้างเอกสาร = ใบเดียวสองคำแนะนำที่ขัดกัน ·
+        // ตัวตัดสินเดียวกับโน้ตนั้น (ThaiVatTypeRule.LooksForeignVendor บนเลขผู้เสียภาษีที่อ่านได้) ⇒ โน้ต ม.70/ภ.พ.36 เป็นคำแนะนำเดียว
+        if (Accounting.Helpers.ThaiVatTypeRule.LooksForeignVendor(null, data.VendorTaxId))
+        {
+            if (result.StatutoryWhtRate is > 0m || result.WhtIncomeTypeCode != null)
+                data.ReasoningTrace.Add(
+                    $"[Category] ผู้ขายมีเลขผู้เสียภาษีที่ไม่ใช่รูปแบบไทย ({data.VendorTaxId}) — ไม่เสนอประเภทเงินได้/อัตราหัก ณ ที่จ่ายในประเทศ "
+                    + $"(ภ.ง.ด.3/53) ของหมวด '{result.Category}' · การจ่ายออกต่างประเทศดูหมายเหตุ ภ.พ.36 (§83/6) / ม.70 (ภ.ง.ด.54) ตอนสร้างเอกสาร");
+            foreach (var r in result.Reasons)
+                data.ReasoningTrace.Add("[Category] " + r);
+            return;
+        }
+
+        // ── เกณฑ์ 1,000 บาท (ท.ป.4/2528 ข้อ 12) ก่อนเสนอ — ฝ่ายค้าน EC2 P1-2 ──
+        // "ค่าซ่อมรองเท้า 80" · "ค่าขนส่ง 50" · "ค่าพิมพ์เอกสาร 120" เคยได้แถบ "ไม่หัก = ผู้จ่ายรับผิด ม.54" · ตัวตัดสินเกณฑ์ตัวเดียว
+        // ThaiWhtRateTable.ShouldWithhold (ห้ามเขียน 1,000 ซ้ำ) · ฐาน = ยอดรวม − VAT (สูตรเดียวกับโน้ตตอนสร้างเอกสาร) · ไม่รู้ยอด ⇒ ไม่ตัดสินแทน
+        // คงหมวด/ผังไว้ · ทิ้งเฉพาะข้อเสนออัตรา + ประเภทเงินได้ (คู่กันเสมอ) พร้อมบอกเหตุผล
+        var whtBase = SuggestionBase(data);
+        if (whtBase is > 0m && !Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(whtBase.Value))
+        {
+            if (result.StatutoryWhtRate is > 0m && result.MoneyBackedEvidence && !data.HasWht)
+                data.ReasoningTrace.Add(
+                    $"[Category] หมวด '{result.Category}' อยู่ในข่ายหัก ณ ที่จ่าย แต่ยอดใบนี้ {whtBase.Value:N2} บาท ต่ำกว่าเกณฑ์ "
+                    + $"{Accounting.Helpers.ThaiWhtRateTable.MinimumThresholdBaht:N0} บาท (ท.ป.4/2528 ข้อ 12) — ไม่เสนออัตราหัก "
+                    + "(ถ้ารวมทั้งสัญญากับผู้รับรายนี้ถึงเกณฑ์ ให้ตั้งอัตราเอง)");
+            foreach (var r in result.Reasons)
+                data.ReasoningTrace.Add("[Category] " + r);
+            return;
+        }
 
         // ── ข้อเสนอตามกฎหมาย (แยกจาก "ยอดที่พิมพ์บนกระดาษ") · T1-07 ──────────
         // ผู้ขายไทยเกือบทั้งหมด**ไม่พิมพ์** WHT บนใบแจ้งหนี้ เพราะหน้าที่หักเป็นของ
@@ -702,6 +833,16 @@ internal static class ExpenseCategoryResolver
         }
         foreach (var r in result.Reasons)
             data.ReasoningTrace.Add("[Category] " + r);
+    }
+
+    /// <summary>ฐานของการเทียบเกณฑ์ 1,000 บาทตอนเสนอ = ยอดรวม − VAT (สูตรเดียวกับโน้ตตอนสร้างเอกสาร) → ยอดก่อน VAT → ผลรวมบรรทัด ·
+    /// null = ไม่รู้ยอด (ไม่ตัดสินแทน)</summary>
+    private static decimal? SuggestionBase(OcrExtractedData data)
+    {
+        if (data.TotalAmount is > 0m) return Math.Max(0m, data.TotalAmount.Value - (data.VatAmount ?? 0m));
+        if (data.SubTotal is > 0m) return data.SubTotal;
+        var lines = data.Items.Sum(i => i.Amount is > 0m ? i.Amount.Value : 0m);
+        return lines > 0m ? lines : null;
     }
 
     /// <summary>True when the raw OCR text contains any phrase that

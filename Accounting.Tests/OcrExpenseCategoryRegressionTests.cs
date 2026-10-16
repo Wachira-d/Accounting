@@ -249,11 +249,14 @@ public class OcrExpenseCategoryRegressionTests
     [Fact]
     public void เดบิตแทนของด่านวางฝั่ง_ตกไปผังตั้งต้นของชนิดกระดาษแล้วผังค่าใช้จ่ายทั่วไป()
     {
-        Assert.Equal(new[] { ("5300", "ค่าใช้จ่ายบริหาร") }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("Receipt"));
-        Assert.Equal(new[] { ("5100", "ต้นทุนขาย"), ("5300", "ค่าใช้จ่ายบริหาร") }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("TaxInvoice"));
-        Assert.Equal(new[] { ("5300", "ค่าใช้จ่ายบริหาร") }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds(null));
+        // ฝ่ายค้าน EC2 P2-1: รหัสเป็นบัญชีย่อยจริงในผังมาตรฐาน (เดิม 5100/5300 ไม่มีในแม่แบบ ⇒ ได้บัญชีคุม) — ล็อกกับแม่แบบจริงใน OcrExpenseCategoryEc3Tests
+        var generic = OcrDocTypeDefaultAccounts.GenericExpenseDebit;
+        Assert.Equal(new[] { generic }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("Receipt"));
+        Assert.Equal(new[] { generic }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("TaxInvoice"));   // ไม่ถือสต็อก ⇒ ไม่ใช่ต้นทุนขาย
+        Assert.Equal(new[] { ("51110", "ต้นทุนสินค้า"), generic }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("TaxInvoice", keepsInventory: true));
+        Assert.Equal(new[] { generic }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds(null));
         // ใบลดหนี้: ผังตั้งต้นเดบิตเป็นเจ้าหนี้ (หนี้สิน) — ผู้เลือกตัดทิ้ง ⇒ ผังค่าใช้จ่ายทั่วไปเป็นชั้นถัดไปเสมอ
-        Assert.Equal("5300", OcrDocTypeDefaultAccounts.DebitFallbackSeeds("CreditNote").Last().Code);
+        Assert.Equal(generic.Code, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("CreditNote").Last().Code);
         // ตารางเดียวกับ ParseThaiDocument (เส้น Tesseract)
         var parsed = OcrService.ParseThaiDocument("ใบกำกับภาษี\nเลขที่ INV-1\nรวมทั้งสิ้น 1,070.00\n");
         Assert.Equal(OcrDocTypeDefaultAccounts.For(parsed.DocumentType)!.Value.DebitCode, parsed.DebitAccountCode);
@@ -262,24 +265,24 @@ public class OcrExpenseCategoryRegressionTests
     [Fact]
     public void ผังที่ตัวเรียนสอนเป็นเจ้าหนี้กรรมการ_ถูกตัด_แล้วได้ผังค่าใช้จ่ายของบริษัทแทน_ไม่ว่าง()
     {
-        // จำลองด่านวางฝั่งของ ScanAsync บนผังบัญชีของบริษัท: Dr 21230 (หนี้สิน) / Cr 11100 ⇒ ตัดเดบิต · ใบไม่มีกฎหมวดไหนตรง (seed หมวด = null)
-        var coa = new[]
-        {
-            new GlAccountCandidate("21230", "เจ้าหนี้กรรมการ", Accounting.Models.Enums.AccountType.Liability),
-            new GlAccountCandidate("11100", "เงินสด", Accounting.Models.Enums.AccountType.Asset),
-            new GlAccountCandidate("53000", "ค่าใช้จ่ายบริหาร", Accounting.Models.Enums.AccountType.Expense),
-        };
-        var placement = OcrAccountPlacement.Check(coa[0], coa[1], debitIsSystemSuggested: true);
+        // จำลองด่านวางฝั่งของ ScanAsync บนผังมาตรฐานจริง (ChartOfAccountTemplates): Dr 21230 (หนี้สิน) / Cr 11111 ⇒ ตัดเดบิต · ใบไม่มีกฎหมวดไหนตรง
+        // ฝ่ายค้าน EC2 P2-1: เดิมเทสต์นี้ใช้ "53000" ที่แต่งขึ้น — บนผังจริงได้บัญชีคุม "54" ⇒ ตอนสร้างเอกสารเดบิตว่าง
+        var tpl = Accounting.Services.ChartOfAccountTemplates.GetCommonAccounts();
+        GlAccountCandidate Of(string code) { var t = tpl.Single(x => x.Code == code); return new GlAccountCandidate(t.Code, t.NameTh, t.Type); }
+        var placement = OcrAccountPlacement.Check(Of("21230"), Of("11111"), debitIsSystemSuggested: true);
         Assert.Equal(OcrAccountPlacement.Verdict.DebitRejected, placement.Verdict);
         Assert.Null(placement.DebitCode);
+        // บัญชีคุม = มีรหัสอื่นขึ้นต้นด้วยรหัสนี้ (แม่แบบผูกแม่ด้วยรหัสต้น) — ผู้ค้นจริงตัดด้วย WhereNotControlAccount
+        var leaves = tpl.Where(t => !tpl.Any(o => o.Code != t.Code && o.Code.StartsWith(t.Code)))
+            .Select(t => new GlAccountCandidate(t.Code, t.NameTh, t.Type)).ToList();
         GlAccountCandidate? picked = null;
         foreach (var fb in OcrDocTypeDefaultAccounts.DebitFallbackSeeds("Receipt"))
         {
-            // รูปเดียวกับ PickCategorySeededDebitAsync: รหัสขึ้นต้นด้วย seed หรือชื่อมีคำเด่นของ seed
-            picked = GlDebitAccountPicker.Pick(coa.Where(a => a.Code.StartsWith(fb.Code) || a.Name.Contains("บริหาร")), fb.Code);
+            // รูปเดียวกับ PickCategorySeededDebitAsync: รหัสขึ้นต้นด้วย seed หรือชื่อมีคำเด่นของ seed · ไม่ใช่บัญชีคุม
+            picked = GlDebitAccountPicker.Pick(leaves.Where(a => a.Code.StartsWith(fb.Code) || a.Name.Contains("บริหาร")), fb.Code);
             if (picked != null) break;
         }
-        Assert.Equal("53000", picked?.Code);
+        Assert.Equal(OcrDocTypeDefaultAccounts.GenericExpenseDebit.Code, picked?.Code);
     }
 
     // ── P2-C: ใบไม่มีบรรทัด — คีย์ตัวเรียนตามชนิดกระดาษ + อ่านแถวรุ่นเก่าครั้งเดียว ───────────────────────────────

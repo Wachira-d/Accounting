@@ -1766,8 +1766,10 @@ RULES += [
          forbid=["result.ExpenseCategory"],
          why="2026-10-16: ตัวเรียนผังบันทึกด้วยคีย์เดียวกับฝั่งทำนาย (คำอธิบายบรรทัด) · คำแก้ไม่เขียนหมวดลงสแกน (ช่องถูกถอดจาก DTO)"),
     dict(file=OCR, method="ScanAsync",
-         must=["OcrLearnerDescriptionKey.PredictAsync(", "OcrDocTypeDefaultAccounts.DebitFallbackSeeds(extractedData.DocumentType)"],
-         call_args=[("OcrLearnerDescriptionKey.PredictAsync(", "extractedData.DocumentType")],
+         must=["OcrLearnerDescriptionKey.PredictAsync(", "OcrDocTypeDefaultAccounts.DebitFallbackSeeds(extractedData.DocumentType,"],
+         call_args=[("OcrLearnerDescriptionKey.PredictAsync(", "extractedData.DocumentType"),
+                    # ฝ่ายค้าน EC2 P2-1: ใบซื้อสินค้าได้ต้นทุนสินค้าเฉพาะบริษัทที่ถือสต็อก
+                    ("OcrDocTypeDefaultAccounts.DebitFallbackSeeds(", "InventoryIndustry.KeepsInventory(")],
          before=[("OcrDocTypeDefaultAccounts.DebitFallbackSeeds(", "SuggestedAccountsJson = System.Text.Json.JsonSerializer.Serialize(")],
          why="ฝ่ายค้าน f5b10674 (2026-10-16): ใบไม่มีบรรทัดใช้คีย์ตามชนิดกระดาษ (ไม่ตกชั้นผู้ขายอย่างเดียว 0.433) · ด่านวางฝั่งตัดเดบิตแล้ว "
              "หมวดไม่มีผัง ⇒ ผังตั้งต้นของชนิดกระดาษ ห้ามปล่อยเดบิตว่าง (กฎเหล็ก #3)"),
@@ -1779,6 +1781,21 @@ RULES += [
          forbid=["ExpenseCategory ="],
          forbid_lit=['"expense_category"'],
          why="2026-10-16: หมวดที่ LLM ของ ocr-service เลือก (ไม่มีด่าน) ไม่ถูกอ่านเป็นหลักฐาน"),
+    # ── ฝ่ายค้าน EC2 (7fd7a0a5) · ทีม EC3 2026-10-16 ──
+    dict(file="Services/Implementations/Ocr/ExpenseCategoryResolver.cs", method="ApplyTo",
+         must=["ThaiVatTypeRule.LooksForeignVendor(null, data.VendorTaxId)", "ThaiWhtRateTable.ShouldWithhold(whtBase.Value)"],
+         before=[("ThaiVatTypeRule.LooksForeignVendor(", "data.SuggestedWhtRate = effectiveWhtRate;"),
+                 ("ThaiWhtRateTable.ShouldWithhold(", "data.SuggestedWhtRate = effectiveWhtRate;")],
+         forbid=["1000m", "1_000m"],
+         why="ฝ่ายค้าน EC2 P1-2/P1-5: ข้อเสนออัตราต้องผ่านเกณฑ์ 1,000 บาทตัวเดียว (ห้ามเขียนตัวเลขซ้ำ) และผู้ขายต่างประเทศไม่ได้อัตราในประเทศ "
+             "(ตัวตัดสินเดียวกับโน้ต ภ.พ.36/ม.70 ตอนสร้างเอกสาร)"),
+    dict(file="Services/Implementations/Ocr/ExpenseCategoryResolver.cs", method="Resolve",
+         must=["AlreadyCounted(k)", "LooksGoodsOnlyLine"],
+         why="ฝ่ายค้าน EC2 P1-1/P1-4: คำที่เป็นส่วนหนึ่งของคำที่นับแล้วไม่บวกซ้ำ · ชื่อผู้ขายไม่ใช่หลักฐานค่าบริการเมื่อทุกบรรทัดเป็นสินค้า"),
+    dict(file=OCR, method="PickCategorySeededDebitAsync",
+         must=[".WhereNotControlAccount(_db)", "GlDebitAccountPicker.Pick("],
+         before=[(".WhereNotControlAccount(_db)", "GlDebitAccountPicker.Pick(")],
+         why="ฝ่ายค้าน EC2 P2-1: เดบิตแทนห้ามเป็นบัญชีคุม (เดิมได้ 54/51 แล้ว IsPostableGl ตอนสร้างเอกสารตัดทิ้ง ⇒ เดบิตว่าง)"),
 ]
 
 # โฟลเดอร์ OCR ทั้งโฟลเดอร์ (ไม่ใช่รายเมธอด): ห้ามเขียนสูตรถอด VAT 7% จากยอดรวมเอง — ตัวตั้งคือ Helpers/OcrVatBackCalc.SplitInclusive
