@@ -5825,9 +5825,9 @@ _Last verified against codebase: 2026-10-16 (ฝ่ายค้านของ 6
 _Last verified against codebase: 2026-10-16 (รหัส ภ.พ. รายบรรทัด — §OCR: `Helpers/OcrVatCodeLines` ใน `BuildScanLinesAsync` · ส่วนลดแบ่งต่อรหัส · [Σ-GAP] ตารางรหัส ภ.พ. —
 เทสต์ `OcrVatCodeLinesTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit afbb0956)_
 _Last verified against codebase: 2026-10-16 (ตารางรหัส ภ.พ. ชนะ + แถวส่วนลดที่ engine คืนเป็นสินค้า — §OCR: `Helpers/OcrVatCodeLines.Decide` ใน `BuildScanLinesAsync` ·
-บรรทัดสรุปต่อรหัสเมื่อรายการไม่ลงตาราง · DECISIONS ข้อ 153 — เทสต์ `OcrVatCodeLinesTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
+บรรทัดสรุปต่อรหัสเมื่อรายการไม่ลงตาราง · DECISIONS ข้อ 153 — เทสต์ `OcrVatCodeLinesTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 611c3b01)_
 _Last verified against codebase: 2026-10-16 (ฝ่ายค้านของ 7c782d24..afbb0956 — §OCR: รหัสบนแถว/engine · ทางแบ่งภายใต้ค่าเผื่อ · ส่วนลดไม่ติดลบ ·
-`[Σ-GAP]` ตารางรหัสตรวจสดตอนอนุมัติ/LINE · ข้อเกินกระดาษสามค่า — เทสต์ `OcrReviewAfbb0956Tests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
+`[Σ-GAP]` ตารางรหัสตรวจสดตอนอนุมัติ/LINE · ข้อเกินกระดาษสามค่า — เทสต์ `OcrReviewAfbb0956Tests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 0bedbc43)_
 _Last verified against codebase: 2026-10-16 (ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก — §OCR: `Helpers/OcrVatCodeMeaning` · `AiFeatureKey.OcrVatCodeMeaning` ·
 ถามตอนสแกน/ตัดสินซ้ำตอนสร้างบรรทัด/ปิดลูปตอนอนุมัติ · DECISIONS ข้อ 153 ข้อ 2 — เทสต์ `OcrVatCodeMeaningTests` · `OcrReplayLineGoldenTests` · `AiKillSwitchOrchestratorTests` —
-คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
+คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 1c77f931)_
