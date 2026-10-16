@@ -113,7 +113,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (P2-1) `OcrDocTypeDefaultAccounts` เดบิตเป็นบัญชีย่อยจริงในผังมาตรฐาน: ทั่วไป 54910 · ใบซื้อสินค้า/ใบสั่งซื้อของบริษัทที่ถือสต็อก 51110/11500
     (`InventoryIndustry.KeepsInventory`) ไม่งั้น 54910 · ParseThaiDocument (ยังไม่รู้จักบริษัท) = 54910 + ความมั่นใจ 0.5 (ไฮไลต์เหลือง · P2-3 · ต่ำกว่าเกณฑ์ทับของทุกชั้น) ·
     `PickCategorySeededDebitAsync` และตัวจับคู่ผังเดบิตของ ScanAsync (ตรงรหัส/รหัสต้น/ชื่อ) ตัดบัญชีคุมด้วย `WhereNotControlAccount` (กติกาเดียวกับ `IsPostableGl`) ·
-    ฝั่งเครดิต/เดบิตที่เป็นหนี้สินในตารางคงรหัสเดิม · Last verified `commit <pending>`
+    ฝั่งเครดิต/เดบิตที่เป็นหนี้สินในตารางคงรหัสเดิม · Last verified `commit 4bcc17a0`
 - **บรรทัดจากสแกนที่ไม่มีราคาต่อหน่วย (เคส C · รอบ 204 ทีม D)**: ราคาต่อหน่วย = ยอดหลังกระจายส่วนลดท้ายบิล ⇒ ส่วนลด % = 0 (ตัวตัดสินเดียว `OcrLineReconciler.LineDiscount` — เดิมติด % ทั้งบิลไว้ ⇒ เปิดแก้แล้วบันทึก `ComputeLineAmounts` หักซ้ำ 950 ลด 5% ⇒ 902.50) · ยอด/VAT/ยอดรวมตอนสร้างไม่ขยับ · golden เดิมเปลี่ยน 0 แถว · เอกสารเก่าก่อนแก้ยังติด % (ไม่มี migration อัตโนมัติ) ⇒ หน้าตรวจข้อมูลแถว `OcrLineDiscountWouldChangeOnResave` + ปุ่ม "แก้" รายใบ (ทีม E 2026-10-13 · ดูข้อถัดไป) · Last verified `commit 1c46ebcd`
 - **จำนวน < 1 ไม่มีราคาต่อหน่วย (ทีม E 2026-10-13)**: `OcrLineReconciler.LineDiscount` คืน `(Percent, Amount, UnitPrice?)` — ราคา = ปัดขึ้น 2 ตำแหน่งของ ยอด ÷ จำนวน ·
   ส่วนลดบาท = round(จำนวน × ราคา) − ยอด (0–0.01) · % = 0 (เดิมส่วนลดบาทติดลบ ⇒ บันทึกซ้ำได้ 0.35 × 100 = 35.00) · จำนวน ≥ 1 / มีราคา = สูตรเดิมทุกตัวอักษร ·
@@ -5921,7 +5921,7 @@ _Last verified against codebase: 2026-10-16 (§2.2 OCR — ฝ่ายค้า
 _Last verified against codebase: 2026-10-16 (§2.2 OCR — ฝ่ายค้าน EC2 (ทีม EC3): คำซ้อนนับครั้งเดียว · วลีของแถม/รวมในราคาไม่ใช่หลักฐาน · เกณฑ์ 1,000 บาทก่อนเสนอ
 (`ThaiWhtRateTable.ShouldWithhold`) · ค่าประกัน/เงินประกัน&lt;มัดจำ&gt; ไม่ใช่ 5800 · ชื่อผู้ขายไม่ผูกกับเงินเมื่อทุกบรรทัดเป็นสินค้า · ผู้ขายต่างประเทศไม่ได้อัตราในประเทศ · ค่าส่วนกลาง ·
 ผังเดบิตตั้งต้นเป็นบัญชีย่อยจริง + ตัดบัญชีคุม — เทสต์ `OcrExpenseCategoryEc3Tests` · `OcrExpenseCategoryRegressionTests` · `OcrExpenseCategoryRemovalTests` —
-คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>)_
+คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 4bcc17a0)_
 _Last verified against codebase: 2026-10-16 (ทีม OCR 8 · บิลค่าไฟจริง กฟภ. — §OCR ด่านคุณภาพก่อน persist ข้อ 2: บิลมิเตอร์/ไม่มีราคาต่อหน่วยบนกระดาษ/ราคาเกิน 2 ตำแหน่ง ⇒
 1 × ยอด + จำนวนหน่วยในคำอธิบาย (`QuantityInDescription`) · ไม่แต่งราคา ยอด ÷ จำนวน · `OcrExtractionVersion` 6 — เทสต์ `OcrMeterBillLumpSumTests` · `OcrLineQuantityGuardTests` ·
 `OcrLineReconcileTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 13a4d788)_
