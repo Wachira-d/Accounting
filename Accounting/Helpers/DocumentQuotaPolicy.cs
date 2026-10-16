@@ -47,8 +47,10 @@ public static class DocumentQuotaPolicy
         bool isReplacement = false)
     {
         if (isReplacement) return QuotaEnforcement.NotCounted;
-        var mustAllow = MustAlwaysIssue(type);
-        if (fromLodging) return mustAllow ? QuotaEnforcement.CountedMustAllow : QuotaEnforcement.NotCounted;
+        // ⚠️ ที่พัก: ไม่นับ **ทุกชนิด** — มิเตอร์คือ lodging.stay (LODGING_LICENSING_PLAN §13 "เอกสารที่ Lodging ออกเอง ไม่นับซ้ำ")
+        // เดิมคืน CountedMustAllow ให้ใบที่กฎหมายบังคับ (ใบกำกับ/ใบเสร็จ) ⇒ นับโควตาเอกสาร**และ**การเข้าพัก = คิดสองเด้ง
+        // ตรงข้ามกับ doc-comment ข้างบน (ไม่เคยตรงตั้งแต่ 4ffcb92c) · NotCounted ไม่มีวันถูกปฏิเสธ (CanRefuseWhenOverQuota) ⇒ ห้ามบล็อกยังจริง
+        if (fromLodging) return QuotaEnforcement.NotCounted;
         return type switch
         {
             // ── ใบที่แทน "การขาย 1 ครั้ง" → นับ + ห้ามบล็อก ──

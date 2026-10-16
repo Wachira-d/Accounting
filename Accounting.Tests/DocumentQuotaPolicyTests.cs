@@ -65,6 +65,18 @@ public class DocumentQuotaPolicyTests
         Assert.False(DocumentQuotaPolicy.Counts(e));
     }
 
+    [Theory]
+    [InlineData(DocumentType.TaxInvoice)]
+    [InlineData(DocumentType.Receipt)]
+    public void ทิศตรงข้าม_ใบชนิดเดียวกันที่ไม่ได้มาจากที่พัก_ยังนับและห้ามบล็อก(DocumentType type)
+    {
+        // การแก้ "ที่พักไม่นับ" ต้องไม่ลามไปใบขายทั่วไป (POS/ขายหน้าร้าน) ที่ยังคิดตามโควตาเอกสาร
+        var e = DocumentQuotaPolicy.Classify(type, isDeposit: false, fromLodging: false);
+        Assert.Equal(QuotaEnforcement.CountedMustAllow, e);
+        Assert.True(DocumentQuotaPolicy.Counts(e));
+        Assert.False(DocumentQuotaPolicy.CanRefuseWhenOverQuota(e));
+    }
+
     [Fact]
     public void เอกสารจากที่พักที่กฎหมายบังคับ_ยังห้ามบล็อกเหมือนเดิม()
     {

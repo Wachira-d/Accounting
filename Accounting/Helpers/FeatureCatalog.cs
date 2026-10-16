@@ -143,7 +143,7 @@ public static class FeatureCatalog
         "EtaxByEmail" => new(name, "advanced", "e-Tax Invoice by Email", "e-Tax Invoice by Email", "PDF/A-3 ส่งลูกค้า + RD ประทับเวลา"),
         "EtaxDirect" => new(name, "advanced", "e-Tax Direct (ส่ง XML เข้า RD)", "e-Tax Direct (RD API)", "ส่ง XML ตรงเข้า RD API"),
         "OpenBanking" => new(name, "advanced", "Open Banking", "Open Banking", "ดึงรายการธนาคารอัตโนมัติ"),
-        "Webhook" => new(name, "advanced", "Webhook", "Webhook", "ส่งเหตุการณ์ออกไประบบนอก"),
+        "Webhook" => new(name, "advanced", "เว็บฮุก (Webhook)", "Webhook", "ส่งเหตุการณ์ออกไประบบนอก"),
         // ─── integration ───
         "APIAccess" => new(name, "integration", "API Access", "API access", "เชื่อมระบบนอกผ่าน REST API"),
         "BulkImport" => new(name, "integration", "นำเข้าจำนวนมาก", "Bulk import", "นำเข้า CSV/Excel"),

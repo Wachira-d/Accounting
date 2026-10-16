@@ -51,6 +51,15 @@ public interface IAiPromptSanitizer
 
 public class AiPromptSanitizer : IAiPromptSanitizer
 {
+    /// <summary>เขียน JSON กลับ<b>โดยไม่ escape อักขระไทย</b> — ตัวเข้ารหัสค่าเริ่มต้นของ System.Text.Json เขียนไทยเป็น <c>\u0E42…</c>
+    /// ⇒ prompt ที่ปิดบัง PII แล้วยาวขึ้นหลายเท่า (เสีย token) และไม่ตรงรูปกับ prompt ตอนปิดการปิดบัง (คืนสตริงเดิม) · ข้อความนี้ไปหา
+    /// provider ไม่ได้ฝังลง HTML ⇒ ไม่ต้อง escape แบบเว็บ (รูปเดียวกับ ImportColumnMatch/ImportDataReview distillation)</summary>
+    private static readonly JsonSerializerOptions PromptJsonOptions = new()
+    {
+        WriteIndented = false,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
     // Thai national ID / tax ID: 13 digits, often dash-separated as
     // 1-2345-67890-12-3. Match both formats.
     private static readonly System.Text.RegularExpressions.Regex ThaiIdRegex =
@@ -110,7 +119,7 @@ public class AiPromptSanitizer : IAiPromptSanitizer
             if (node != null)
             {
                 WalkAndMask(node, keepTaxIds);
-                return node.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+                return node.ToJsonString(PromptJsonOptions);
             }
         }
         catch

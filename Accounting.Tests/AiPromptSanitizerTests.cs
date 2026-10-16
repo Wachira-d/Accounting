@@ -83,6 +83,18 @@ public class AiPromptSanitizerTests
         Assert.Contains("เลขที่บัญชี", outp);          // ป้ายต้องอยู่ โมเดลจะได้รู้ว่าคืออะไร
         Assert.DoesNotContain("123456789", outp);
         Assert.Contains("12xxxxxx90", outp);
+        // ไทยต้องไม่ถูก escape เป็น \u0E.. (เดิม ToJsonString ค่าเริ่มต้น ⇒ prompt ยาวหลายเท่า + ป้ายหายจากรูปที่อ่านได้)
+        Assert.DoesNotContain("\\u0E", outp);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ไม่escapeไทยแล้ว_JSONยังถูกรูป_คำพูดและแบ็กสแลชยังถูกescape()
+    {
+        var outp = San("""{"memo":"ร้าน \"ก\" สาขา C:\\x · โอนเข้าเลขที่บัญชี 123-4-56789-0"}""");
+        var node = System.Text.Json.Nodes.JsonNode.Parse(outp)!;   // ต้อง parse ได้ (ไม่ใช่สตริงพัง)
+        var memo = node["memo"]!.GetValue<string>();
+        Assert.Contains("ร้าน \"ก\" สาขา C:\\x", memo);
+        Assert.DoesNotContain("123456789", memo);
     }
 
     [Fact]
