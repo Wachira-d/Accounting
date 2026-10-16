@@ -295,7 +295,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     หน้าสุดท้ายหน้าเดียว/ไม่พิมพ์เลขหน้า ⇒ ตารางชนะตามเดิม · (P2-1) ส่วนลดที่เอ่ยชื่อสินค้าต้องใช้คำเฉพาะตัว (ไม่ใช่หน่วย/บรรจุภัณฑ์ "ขวด/แพ็ค/pcs") ·
     (P2-3) คำตอบ ZeroRated (AI · นักเรียน · ที่ persist) ใช้ได้เฉพาะเมื่อกระดาษมีหลักฐาน 0% (`ZeroRatedOnPaper`) ไม่งั้นยกเว้น · ข้อความ OCR ในพรอมต์ผ่าน `SanitizeEvidence` ·
     (P2-4) อนุมัติ: คงค่าตั้งต้น/คงคำตอบนักเรียน = ไม่บันทึก (`Teaches`) · (P2-6) บรรทัดไม่มี VAT ปนยกเว้น/0% ⇒ คำตอบต่อรหัสด้วยยอดของกลุ่ม (`ChosenKindsByCode`) ·
-    Last verified `commit <pending>`
+    Last verified `commit 6b9bf926`
   - **แถวในตารางรายการที่ไม่ใช่สินค้า (2026-10-09)** — `Helpers/OcrNonItemRow` ตัวเดียวทุก engine (Azure prebuilt Items · Azure layout-table ·
     python ocr-service): แถวสรุป/แถวชำระ/เงินทอน ("เงินสด 1,000" · "เงินทอน" · "รวม 3 รายการ" · "VAT 7%" · "Card") ถูกตัดก่อนเป็นบรรทัดสินค้า
     และบอกใน trace/warnings (`[Items] ตัดแถวสรุป…`) · คำแรกต้องเป็นป้ายทั้งคำ + คำที่เหลือเป็นคำประกอบของแถวสรุป ("รวมมิตรทะเล" · "Cash Drawer
