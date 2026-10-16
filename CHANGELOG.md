@@ -5161,3 +5161,6 @@ _2026-10-16 ทีม OCR 9 — ฝ่ายค้านของ 13a4d788 (บ�
 `R2(qty × R2(up)) ≠ amt` · ตัวตัดคีย์เดียว `DescriptionForMatching` (พรีวิวสต็อก · alias ผูก PO · backfill alias · `OcrLearnerDescriptionKey.Descriptions` — คีย์ใบไม่มีบรรทัดของทีม EC2 คงเดิม) ·
 `DocumentLine.DescriptionMaxLength` + `FitDescription` · Corpus +3 ใบสังเคราะห์ (`goods-*`) · ใบเดิมเปลี่ยน 0 แถว · `OcrExtractionVersion` คง 7 (ชุด deploy เดียวกับรุ่น 6/7 · ยังไม่ถึง master) ·
 เทสต์ `OcrGoodsQuantityKeptTests` · ล็อกจุดเรียก +14 กติกา + 9 เคสฝ่ายค้าน (GQ1–GQ9 · GQ9 รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit cdc0150e_
+
+_OcrExtractionVersion 7 → 8 (2026-10-16 · หลังรวมทีม OCR 9 cdc0150e): ทีม 9 เสนอไม่เพิ่มรุ่นเพราะคิดว่ารุ่น 6/7 ยังไม่ขึ้น production แต่เจ้าของ deploy จาก branch นี้โดยตรง ⇒ เพิ่มกันไว้ —
+ไฟล์ที่เคยแกะด้วยรุ่น 6/7 (บรรทัดสินค้าถูกตั้งเป็น 1 × ยอด) แล้วอัปซ้ำจะถูกแกะใหม่ ไม่เล่นผลเดิม · ค่าใช้จ่าย: แกะใหม่หนึ่งครั้งต่อไฟล์ที่อัปซ้ำ_
