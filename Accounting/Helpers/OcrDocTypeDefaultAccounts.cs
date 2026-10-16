@@ -17,6 +17,11 @@ namespace Accounting.Helpers;
 /// <para>ฝั่งเครดิต (เจ้าหนี้/เงินสด) และเดบิตที่เป็นหนี้สิน (ใบลดหนี้ · หนังสือรับรองหัก ณ ที่จ่าย) <b>คงรหัสเดิม</b> — ไม่อยู่ในขอบเขตรอบนี้
 /// (เครดิตที่ตรงผังจริงจะเปิดเส้นแหล่งเงินตอนสร้างเอกสาร ต้องตรวจแยก) · ตัวเลือกเดบิตแทนตัดหนี้สินทิ้งเองอยู่แล้ว</para>
 ///
+/// <para>═══ ฝ่ายค้าน EC3 P2-7 (ทีม EC4 · 2026-10-16) ═══ "บริษัทถือสต็อก" ไม่ได้แปลว่า "ของบนใบนี้เป็นสินค้าคงเหลือ" — ใบกำกับภาษีค่าซ่อมแอร์/ค่าเช่า
+/// ของบริษัทซื้อขายเคยได้ 51110 ต้นทุนขาย (เส้นด่านวางฝั่ง) ⇒ กำไรขั้นต้นเพี้ยน · ตอนนี้ผังสต็อก (51110 · 11500) ต้องผ่าน <see cref="PurchaseIsStock"/>:
+/// บริษัทถือสต็อก <b>และทุกบรรทัดจับคู่กับสินค้า master ได้</b> (<c>OcrExtractedData.ProductMasterMatchedLines</c> — หลักฐานเดียวที่มีตอนนั้นว่าของบนใบคือสินค้าของเรา) ·
+/// ไม่รู้ ⇒ 54910 ค่าใช้จ่ายทั่วไป + ไฮไลต์เหลือง (ห้ามเดาเป็นต้นทุนขาย)</para>
+///
 /// <para>ไม่ใช่หมวดค่าใช้จ่าย — ไม่มีชื่อหมวดในตารางนี้ (คำตัดสินเจ้าของ 2026-10-16 "ถอดออกเลย")</para>
 /// </summary>
 public static class OcrDocTypeDefaultAccounts
@@ -26,10 +31,10 @@ public static class OcrDocTypeDefaultAccounts
     /// <summary>ผังเดบิตค่าใช้จ่ายทั่วไป (บัญชีย่อยใต้ 549 ในผังมาตรฐาน) — ชั้นสุดท้ายเมื่อชนิดกระดาษไม่มีผังตั้งต้นที่เป็นค่าใช้จ่าย/สินทรัพย์</summary>
     public static readonly (string Code, string Name) GenericExpenseDebit = ("54910", "ค่าใช้จ่ายบริหารอื่นๆ");
 
-    /// <summary>ใบซื้อสินค้าของบริษัทที่ถือสต็อก (ซื้อขาย/ผลิต) — ผังเดียวกับกฎ "ซื้อสินค้า / วัตถุดิบ" ของตัวจัดหมวด</summary>
+    /// <summary>ใบซื้อสินค้าคงเหลือ (<see cref="PurchaseIsStock"/>) — ผังเดียวกับกฎ "ซื้อสินค้า / วัตถุดิบ" ของตัวจัดหมวด</summary>
     private static readonly (string Code, string Name) GoodsCostDebit = ("51110", "ต้นทุนสินค้า");
 
-    /// <summary>ใบสั่งซื้อของบริษัทที่ถือสต็อก</summary>
+    /// <summary>ใบสั่งซื้อสินค้าคงเหลือ (<see cref="PurchaseIsStock"/>)</summary>
     private static readonly (string Code, string Name) InventoryDebit = ("11500", "สินค้าคงเหลือ");
 
     /// <summary>ชนิดกระดาษที่เป็น "ซื้อสินค้า" โดยปกติ — เดบิตขึ้นกับว่าบริษัทถือสต็อกไหม</summary>
@@ -53,29 +58,36 @@ public static class OcrDocTypeDefaultAccounts
         ["CreditNote"] = ("2100", "เจ้าหนี้การค้า"),
     };
 
+    /// <summary>
+    /// ของบนใบนี้เป็น<b>สินค้าคงเหลือ</b>ของบริษัทไหม — ตัวตัดสินเดียวของผังสต็อก (51110 / 11500)
+    /// · บริษัทถือสต็อก (<see cref="InventoryIndustry.KeepsInventory"/>) <b>และ</b>ทุกบรรทัดจับคู่กับสินค้า master ได้ · ไม่มีบรรทัด/จับคู่ไม่ครบ ⇒ false (ไม่เดา)
+    /// </summary>
+    public static bool PurchaseIsStock(bool keepsInventory, int lineCount, int linesMatchedToProductMaster)
+        => keepsInventory && lineCount > 0 && linesMatchedToProductMaster >= lineCount;
+
     /// <summary>ผัง Dr/Cr ตั้งต้นของชนิดกระดาษ · null = ไม่รู้จักชนิดนี้</summary>
-    /// <param name="keepsInventory">บริษัทถือสต็อกไหม (<see cref="InventoryIndustry.KeepsInventory"/>) — false/ไม่รู้ ⇒ ใบซื้อสินค้าได้ค่าใช้จ่ายทั่วไป ไม่ใช่ต้นทุนขาย</param>
-    public static Defaults? For(string? scannedDocumentType, bool keepsInventory = false)
+    /// <param name="purchaseIsStock">ของบนใบเป็นสินค้าคงเหลือไหม (<see cref="PurchaseIsStock"/>) — false/ไม่รู้ ⇒ ใบซื้อได้ค่าใช้จ่ายทั่วไป ไม่ใช่ต้นทุนขาย</param>
+    public static Defaults? For(string? scannedDocumentType, bool purchaseIsStock = false)
     {
         if (scannedDocumentType == null || !Credits.TryGetValue(scannedDocumentType, out var cr)) return null;
-        var dr = DebitFor(scannedDocumentType, keepsInventory);
+        var dr = DebitFor(scannedDocumentType, purchaseIsStock);
         return new Defaults(dr.Code, dr.Name, cr.CreditCode, cr.CreditName);
     }
 
-    private static (string Code, string Name) DebitFor(string type, bool keepsInventory)
+    private static (string Code, string Name) DebitFor(string type, bool purchaseIsStock)
     {
         if (LiabilityDebits.TryGetValue(type, out var liab)) return liab;
-        if (type == "PurchaseOrder") return keepsInventory ? InventoryDebit : GenericExpenseDebit;
-        if (GoodsPurchaseTypes.Contains(type)) return keepsInventory ? GoodsCostDebit : GenericExpenseDebit;
+        if (type == "PurchaseOrder") return purchaseIsStock ? InventoryDebit : GenericExpenseDebit;
+        if (GoodsPurchaseTypes.Contains(type)) return purchaseIsStock ? GoodsCostDebit : GenericExpenseDebit;
         return GenericExpenseDebit;   // Receipt และชนิดอื่นที่รู้จัก
     }
 
     /// <summary>seed ของเดบิตแทนเมื่อด่านวางฝั่งตัดเดบิตทิ้งและหมวดไม่มีผัง — ตามลำดับ: ผังตั้งต้นของชนิดกระดาษ → ผังค่าใช้จ่ายทั่วไป
     /// (ผู้เรียกกรองประเภทบัญชี + บัญชีคุมเอง — <see cref="GlDebitAccountPicker"/> รับเฉพาะค่าใช้จ่าย/สินทรัพย์ ⇒ ผังตั้งต้นที่เป็นหนี้สินตกไปชั้นถัดไป)</summary>
-    public static IReadOnlyList<(string Code, string Name)> DebitFallbackSeeds(string? scannedDocumentType, bool keepsInventory = false)
+    public static IReadOnlyList<(string Code, string Name)> DebitFallbackSeeds(string? scannedDocumentType, bool purchaseIsStock = false)
     {
         var seeds = new List<(string Code, string Name)>();
-        if (For(scannedDocumentType, keepsInventory) is { } d) seeds.Add((d.DebitCode, d.DebitName));
+        if (For(scannedDocumentType, purchaseIsStock) is { } d) seeds.Add((d.DebitCode, d.DebitName));
         if (!seeds.Contains(GenericExpenseDebit)) seeds.Add(GenericExpenseDebit);
         return seeds;
     }

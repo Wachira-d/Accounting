@@ -125,7 +125,7 @@ public class OcrExpenseCategoryRemovalTests
         foreach (var l in lines.Split('|')) data.Items.Add(new OcrExtractedLineItem { Description = l, Amount = 100m });
         ResolveLikePipeline(data, raw);
         Assert.NotEqual("ค่าประกัน", data.ExpenseCategory);
-        Assert.NotEqual("5800", data.DebitAccountCode);
+        Assert.NotEqual("54510", data.DebitAccountCode);
     }
 
     [Theory]
@@ -138,7 +138,7 @@ public class OcrExpenseCategoryRemovalTests
         data.Items.Add(new OcrExtractedLineItem { Description = line, Amount = 12000m });
         ResolveLikePipeline(data, "ใบเสร็จรับเงิน\n" + line + " 12,000.00");
         Assert.Equal("ค่าประกัน", data.ExpenseCategory);
-        Assert.Equal("5800", data.DebitAccountCode);
+        Assert.Equal("54510", data.DebitAccountCode);
     }
 
     // ── หน้าเว็บ: ช่องถูกถอดจริง และผังเดบิตยังไหลไปฟอร์มเอกสาร ─────────────

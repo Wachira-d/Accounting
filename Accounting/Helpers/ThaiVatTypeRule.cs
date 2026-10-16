@@ -98,17 +98,100 @@ public static class ThaiVatTypeRule
         return false;
     }
 
-    /// <summary>ผู้ขายอยู่ต่างประเทศหรือไม่ — เลขผู้เสียภาษีไทยมี 13 หลักเสมอ
-    /// (ตัวเลขที่ไม่ใช่ 13 หลัก = ไม่ใช่รูปแบบไทย)</summary>
-    public static bool LooksForeignVendor(string? vendorCountryCode, string? vendorTaxId)
+    /// <summary>
+    /// ผู้ขายอยู่ต่างประเทศหรือไม่ — <b>ตัวตัดสินตัวเดียว</b> ของทุกคำแนะนำ "ผู้ขายต่างประเทศ" (อัตรา VAT รายบรรทัด · โน้ต ภ.พ.36/ม.70 ·
+    /// ข้อเสนอหัก ณ ที่จ่ายในประเทศของตัวจัดหมวด) · หลักฐานเรียงตามความแน่น: รหัสประเทศ → ชื่อนิติบุคคลต่างประเทศ (<see cref="ForeignEntityNameSignal"/>)
+    /// → เลขผู้เสียภาษีรูปแบบต่างประเทศ (<see cref="TaxIdLooksForeign"/>)
+    /// <para>═══ ฝ่ายค้าน EC3 P1-3 (ทีม EC4 · 2026-10-16) ═══ เดิม "นับหลักของเลขผู้เสียภาษี ≠ 13 ⇒ ต่างประเทศ" บนเลขที่ OCR <b>ยังไม่ validate</b>
+    /// (เส้น Azure <c>ExtractDigits(…,13)</c> คืนกี่หลักก็ได้) ⇒ ผู้ขายไทยที่อ่านหลักหายไปหนึ่งหลัก ("010556123456") หรือเลขสาขาติดมา
+    /// ("0105561234567 00000") ถูกตัดสินเป็นต่างประเทศ ⇒ ข้อเสนอหักในประเทศหาย + โน้ต ภ.พ.36 ขึ้นผิดใบ + บรรทัดได้ VAT 0% ·
+    /// ตอนนี้: เลขที่อ่านเพี้ยน = <b>ไม่รู้</b> (ไม่ใช่หลักฐาน) ⇒ พฤติกรรมในประเทศเหมือนก่อนมีด่านนี้ · ห้ามประกาศต่างประเทศจากเลขที่ไม่ผ่านด่าน</para>
+    /// </summary>
+    /// <param name="vendorName">ชื่อผู้ขายตามกระดาษ/ผู้ติดต่อ — null = ไม่ใช้สัญญาณชื่อ (ผู้เรียกเดิมที่ไม่มีชื่อ)</param>
+    public static bool LooksForeignVendor(string? vendorCountryCode, string? vendorTaxId, string? vendorName = null)
+        => ForeignVendorReason(vendorCountryCode, vendorTaxId, vendorName) != null;
+
+    /// <summary>เหตุผลที่ตัดสินว่าผู้ขายอยู่ต่างประเทศ (ข้อความไทยสำหรับ trace/โน้ต) · null = ไม่มีหลักฐาน (ถือเป็นในประเทศ — ไม่เดา)</summary>
+    public static string? ForeignVendorReason(string? vendorCountryCode, string? vendorTaxId, string? vendorName = null)
     {
         if (!string.IsNullOrWhiteSpace(vendorCountryCode)
-            && !string.Equals(vendorCountryCode, "TH", StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (string.IsNullOrWhiteSpace(vendorTaxId)) return false;
-        var digits = vendorTaxId.Count(char.IsDigit);
-        return digits > 0 && digits != 13;
+            && !string.Equals(vendorCountryCode.Trim(), "TH", StringComparison.OrdinalIgnoreCase))
+            return $"ประเทศของผู้ขาย {vendorCountryCode.Trim().ToUpperInvariant()}";
+        if (ForeignEntityNameSignal(vendorName) is string sig)
+            return $"ชื่อผู้ขายเป็นนิติบุคคลต่างประเทศ ('{sig}')";
+        if (TaxIdLooksForeign(vendorTaxId))
+            return $"เลขผู้เสียภาษีรูปแบบต่างประเทศ ({vendorTaxId!.Trim()})";
+        return null;
     }
+
+    /// <summary>
+    /// เลขผู้เสียภาษีนี้เป็น<b>หลักฐานเชิงบวก</b>ว่าผู้ขายอยู่ต่างประเทศไหม — <b>ห้ามนับหลัก</b> (ฝ่ายค้าน EC3 P1-3)
+    /// <list type="bullet">
+    /// <item>ตัดตัวคั่น + เลขสาขา 5 หลักท้าย ("0105561234567 00000" · "…-00001") แล้วผ่าน <see cref="ThaiTaxId.IsValid"/> (mod-11 · เจ้าของ checksum ตัวเดียว)
+    /// ⇒ เลขไทย ⇒ false</item>
+    /// <item>เลขไทยไม่มีตัวอักษรเลย ⇒ ขึ้นต้นด้วย<b>รหัสประเทศสองตัวอักษร</b>ตามด้วยตัวเลข ("US-99-1234567" · "IE9692928F") = รูปแบบเลขต่างประเทศ ⇒ true ·
+    /// คู่ตัวอักษรที่เป็นตัวเลขอ่านเพี้ยนล้วน (O/I/L/S/B/Z/G/Q/D — "OI05561234567") ไม่นับ</item>
+    /// <item>อย่างอื่น (หลักขาด/เกิน · ตัวเลขล้วนที่ checksum ไม่ผ่าน · ว่าง) ⇒ <b>ไม่รู้</b> ⇒ false</item>
+    /// </list>
+    /// </summary>
+    private static bool TaxIdLooksForeign(string? vendorTaxId)
+    {
+        if (string.IsNullOrWhiteSpace(vendorTaxId)) return false;
+        var t = vendorTaxId.Trim();
+        if (ThaiTaxId.IsValid(ThaiTaxIdWithoutBranch(t))) return false;
+        var m = System.Text.RegularExpressions.Regex.Match(t.ToUpperInvariant(), @"^([A-Z]{2})[\s\-.]?[0-9A-Z]*[0-9]");
+        if (!m.Success) return false;
+        return m.Groups[1].Value.Any(c => !OcrDigitLookalikes.Contains(c));
+    }
+
+    /// <summary>ตัวอักษรที่ OCR อ่านเป็นตัวเลขบ่อย (0/1/5/8/2/6/9/0) — คู่ตัวอักษรนำหน้าที่เป็นตัวพวกนี้ล้วนไม่ใช่รหัสประเทศที่เชื่อได้</summary>
+    private const string OcrDigitLookalikes = "OILSBZGQD";
+
+    /// <summary>ตัดตัวคั่น + เลขสาขา 5 หลักที่ติดท้ายมา (สาขาพิมพ์ต่อท้ายเลขผู้เสียภาษีบ่อย) — เหลือเลข 13 หลักแรกเมื่อยาว 18 หลักพอดี</summary>
+    private static string ThaiTaxIdWithoutBranch(string raw)
+    {
+        var digits = ThaiTaxId.Normalize(raw);
+        return digits.Length == 18 ? digits[..13] : digits;
+    }
+
+    /// <summary>
+    /// ชื่อผู้ขายบอกว่าเป็น<b>นิติบุคคลต่างประเทศ</b>ไหม — คืนคำที่ตรง (สำหรับ trace) หรือ null
+    /// <para>สัญญาณเชิงบวกเท่านั้น: ชื่อแพลตฟอร์มต่างประเทศที่รู้จัก ("Meta Platforms" · "Google Asia Pacific" · "Amazon Web Services") · คำรูปแบบนิติบุคคลที่ไทยไม่ใช้
+    /// ("Pte." · "Inc." · "LLC" · "GmbH" …) · "Limited/Ltd" <b>เฉพาะเมื่อมีชื่อประเทศอื่นในชื่อ</b> ("… Ireland Limited") — "Co., Ltd." ของบริษัทไทยไม่นับ ·
+    /// ชื่อที่มีอักษรไทย (บริษัท … จำกัด) ไม่ใช่สัญญาณ</para>
+    /// <para>ไม่ได้ตัดสินว่าอยู่ใต้ ม.70 หรือไม่ — บริษัทต่างประเทศที่มีเลขผู้เสียภาษีไทย (จด VAT e-Service หรือมีสาขาในไทย) ⇒ ขอบเขตผู้รับยัง "ไม่รู้"
+    /// (<see cref="ForeignWhtPayeeCheck.ScopeOf"/>) · ตัวนี้บอกแค่ว่า "ห้ามเสนออัตราในประเทศแบบมั่นใจ"</para>
+    /// </summary>
+    private static string? ForeignEntityNameSignal(string? vendorName)
+    {
+        if (string.IsNullOrWhiteSpace(vendorName)) return null;
+        var n = vendorName.Trim();
+        if (n.Any(c => c >= '฀' && c <= '๿')) return null;   // ชื่อไทย = ไม่ใช่สัญญาณ
+        var lower = " " + System.Text.RegularExpressions.Regex.Replace(n.ToLowerInvariant(), @"[,()]", " ") + " ";
+        foreach (var brand in ForeignPlatformNames)
+            if (lower.Contains(brand, StringComparison.Ordinal)) return brand.Trim();
+        var form = System.Text.RegularExpressions.Regex.Match(lower, @"\s(pte\.?|inc\.?|llc|l\.l\.c\.|gmbh|s\.a\.r\.l\.|b\.v\.|pty\.?)(?=\s)");
+        if (form.Success) return form.Groups[1].Value;
+        // "<ประเทศ> Limited/Ltd" ติดกันเท่านั้น — "Siam Japan Tools Co., Ltd." (บริษัทไทย) ไม่นับ
+        foreach (var country in ForeignCountryWords)
+            if (System.Text.RegularExpressions.Regex.IsMatch(lower, $@"\s{country}\s+(?:limited|ltd\.?)\s")) return country;
+        return null;
+    }
+
+    /// <summary>ชื่อแพลตฟอร์ม/นิติบุคคลต่างประเทศที่ออกใบให้ธุรกิจไทยบ่อย (ตัวพิมพ์เล็ก)</summary>
+    private static readonly string[] ForeignPlatformNames =
+    {
+        "meta platforms", "facebook ireland", "google asia pacific", "google ireland", "amazon web services",
+        "microsoft regional sales", "microsoft ireland", "apple distribution international", "tiktok pte", "bytedance",
+        "linkedin ireland", "zoom video communications", "adobe systems software ireland", "canva pty",
+    };
+
+    /// <summary>ชื่อประเทศ/เมืองที่ใช้ประกอบกับ "Limited/Ltd" — ตัวพิมพ์เล็ก · ไม่มี thailand</summary>
+    private static readonly string[] ForeignCountryWords =
+    {
+        "ireland", "singapore", "hong kong", "japan", "china", "korea", "taiwan", "malaysia", "india", "australia",
+        "netherlands", "luxembourg", "germany", "france", "uk", "united kingdom", "usa", "united states", "vietnam", "indonesia", "philippines",
+    };
 
     /// <summary>คำตอบเป็นข้อความตามสัญญาของ endpoint <c>/ai/vat/infer-type</c>
     /// — <c>"7"</c> · <c>"0"</c> · <c>"Exempt"</c></summary>

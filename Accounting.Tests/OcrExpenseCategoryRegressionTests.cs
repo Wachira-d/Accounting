@@ -182,7 +182,7 @@ public class OcrExpenseCategoryRegressionTests
         var data = ResolveLikePipeline(NeutralVendor, new[] { (line, 12000m) }, Receipt(line, 12000m));
         _out.WriteLine($"{line}: category={data.ExpenseCategory ?? "-"} debit={data.DebitAccountCode ?? "-"}");
         Assert.Equal("ค่าประกัน", data.ExpenseCategory);
-        Assert.Equal("5800", data.DebitAccountCode);
+        Assert.Equal("54510", data.DebitAccountCode);
         Assert.Null(data.SuggestedWhtRate);   // กฎประกันไม่เสนออัตรา (เบี้ยชีวิต/วินาศภัยคนละเรื่อง — พฤติกรรมเดิม)
     }
 
@@ -199,7 +199,7 @@ public class OcrExpenseCategoryRegressionTests
         var data = ResolveLikePipeline(NeutralVendor, new[] { (line, 12000m) }, Receipt(line, 12000m));
         _out.WriteLine($"{line}: category={data.ExpenseCategory ?? "-"} debit={data.DebitAccountCode ?? "-"}");
         Assert.NotEqual("ค่าประกัน", data.ExpenseCategory);
-        Assert.NotEqual("5800", data.DebitAccountCode);
+        Assert.NotEqual("54510", data.DebitAccountCode);
     }
 
     // ── สินค้าใน corpus จริง (ทิศตรงข้ามบนกระดาษจริง) ───────────────────────────────────────────────
@@ -253,7 +253,7 @@ public class OcrExpenseCategoryRegressionTests
         var generic = OcrDocTypeDefaultAccounts.GenericExpenseDebit;
         Assert.Equal(new[] { generic }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("Receipt"));
         Assert.Equal(new[] { generic }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("TaxInvoice"));   // ไม่ถือสต็อก ⇒ ไม่ใช่ต้นทุนขาย
-        Assert.Equal(new[] { ("51110", "ต้นทุนสินค้า"), generic }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("TaxInvoice", keepsInventory: true));
+        Assert.Equal(new[] { ("51110", "ต้นทุนสินค้า"), generic }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("TaxInvoice", purchaseIsStock: true));
         Assert.Equal(new[] { generic }, OcrDocTypeDefaultAccounts.DebitFallbackSeeds(null));
         // ใบลดหนี้: ผังตั้งต้นเดบิตเป็นเจ้าหนี้ (หนี้สิน) — ผู้เลือกตัดทิ้ง ⇒ ผังค่าใช้จ่ายทั่วไปเป็นชั้นถัดไปเสมอ
         Assert.Equal(generic.Code, OcrDocTypeDefaultAccounts.DebitFallbackSeeds("CreditNote").Last().Code);

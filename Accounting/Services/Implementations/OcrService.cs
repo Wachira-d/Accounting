@@ -2487,8 +2487,11 @@ public class OcrService : IOcrService
                         // ฝ่ายค้าน f5b10674 P2-A: ใบที่ไม่มีกฎหมวดไหนตรง ⇒ seed (null, null) ⇒ เดบิตว่าง — ตกไปผังตั้งต้นของชนิดกระดาษ → ผังค่าใช้จ่ายทั่วไป
                         // (Helpers/OcrDocTypeDefaultAccounts ตัวเดียวกับ ParseThaiDocument · ผู้เลือกกรองเฉพาะค่าใช้จ่าย/สินทรัพย์)
                         if (seededDebit == null)
+                            // ฝ่ายค้าน EC3 P2-7 (ทีม EC4): ผังสต็อกเฉพาะเมื่อของบนใบเป็นสินค้า master ทุกบรรทัด — บริษัทถือสต็อกที่ซื้อบริการ ⇒ 54910 ไม่ใช่ต้นทุนขาย
                             foreach (var fb in Accounting.Helpers.OcrDocTypeDefaultAccounts.DebitFallbackSeeds(extractedData.DocumentType,
-                                         Accounting.Helpers.InventoryIndustry.KeepsInventory(companyContext?.IndustryType)))
+                                         Accounting.Helpers.OcrDocTypeDefaultAccounts.PurchaseIsStock(
+                                             Accounting.Helpers.InventoryIndustry.KeepsInventory(companyContext?.IndustryType),
+                                             extractedData.Items.Count, extractedData.ProductMasterMatchedLines)))
                             {
                                 seededDebit = await PickCategorySeededDebitAsync(companyId, fb.Code, fb.Name);
                                 if (seededDebit != null) { seedSource = $"ผังตั้งต้นของชนิดกระดาษ ({extractedData.DocumentType ?? "ไม่ทราบชนิด"})"; break; }
@@ -6518,8 +6521,11 @@ public class OcrService : IOcrService
                 // ── เกณฑ์ 1,000 บาท (ท.ป.4/2528 ข้อ 12) ──
                 // เดิมไม่มีที่ไหนในเส้น OCR เรียกเกณฑ์นี้เลย ⇒ ใบ 500 บาทก็ถูกตั้ง
                 // อัตราหัก 3% ให้ (ผู้รับเงินโดนหักเกินความจำเป็น) — ผลตรวจ T1-24
-                var whtBase = data.SubTotal ?? data.TotalAmount ?? 0m;
-                if (whtBase > 0m && !Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(whtBase))
+                // ฝ่ายค้าน EC3 P2-5 (ทีม EC4): ฐานจากตัวตั้งตัวเดียว (Helpers/OcrWhtThresholdBase) — เดิม SubTotal ?? Total (คนละสูตรกับตัวจัดหมวด/ตอนสร้างเอกสาร)
+                var whtBasis = Accounting.Helpers.OcrWhtThresholdBase.FromScan(data.SubTotal, data.VatAmount, data.TotalAmount,
+                    null, data.DocumentType);
+                var whtBase = whtBasis.Amount ?? 0m;
+                if (whtBasis.Verdict == Accounting.Helpers.OcrWhtThresholdVerdict.Below)
                 {
                     data.HasWht = false;
                     data.ReasoningTrace.Add(
@@ -7077,13 +7083,17 @@ public class OcrService : IOcrService
         // ตัวตั้งต้นที่เชื่อถือได้สุด) เพื่อให้ subtotal/line/total แตกกันไม่ได้.
         var hdrDiscRaw = ScanBillDiscount(result);   // รอบ 192: ส่วนลดที่ปรับตอนชำระ = 0
         var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
-        var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        // ฝ่ายค้าน EC3 P2-5 (ทีม EC4): ฐานเกณฑ์ 1,000 + ยอดหักจากตัวตั้งตัวเดียว (Helpers/OcrWhtThresholdBase) — สูตรเดียวกับตัวจัดหมวดตอนสแกน ·
+        // อ่าน VAT ได้ ⇒ ยอดรวม − VAT เหมือนเดิมทุกตัวอักษร (เหตุผลข้างบน) · อ่าน VAT ไม่ได้ ⇒ ยอดก่อน VAT ที่พิมพ์ (เดิมใช้ยอดรวมที่มี VAT ข้างใน)
+        var whtBasis = Accounting.Helpers.OcrWhtThresholdBase.FromScan(result.ExtractedSubTotal, result.ExtractedVatAmount,
+            result.ExtractedTotalAmount, null, result.DocumentType);
+        var whtBase = whtBasis.Amount ?? 0m;
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
         // ⚠️ ไม่หักให้เอง (ผู้ใช้ต้องยืนยัน) แต่ **ต้องเตือน** เมื่อกฎหมายให้หักและถึงเกณฑ์
         // ฿1,000 ท.ป.4/2528 ข้อ 12 — ไม่หัก = ผู้จ่ายรับผิด ม.54 + เงินเพิ่ม 1.5%/เดือน
         // (ผลตรวจ 2026-09-06 · T1-07 · T1-24)
         if (!isSalesSide && whtRate == 0m && result.SuggestedWhtRate is > 0m
-            && Accounting.Helpers.ThaiWhtRateTable.ShouldWithhold(whtBase, 0m))
+            && whtBasis.Verdict == Accounting.Helpers.OcrWhtThresholdVerdict.Meets)
         {
             var it = Accounting.Helpers.ThaiWhtRateTable.Find(result.WhtIncomeTypeCode);
             // ⚠️ ข้อเสนอมาได้ 2 ทาง และ**ข้อความต้องบอกตรงว่ามาจากไหน** (D3-2 · D-3)
@@ -7480,14 +7490,22 @@ public class OcrService : IOcrService
         // แทนผู้ขายด้วย ภ.พ.36 (แล้วเคลมเป็นภาษีซื้อเดือนถัดไป) (2) หัก ณ ที่จ่ายตาม
         // ม.70 ถ้าเป็นค่าบริการ/ค่าสิทธิ — ระบบเดิม**ไม่เคยพูดถึงทั้งสองอย่าง**
         // ⇒ ภาระหายทั้งก้อน (เบี้ยปรับ 2 เท่า + เงินเพิ่ม) · ผลตรวจ 2026-09-06 · T1-12
-        if (!isSalesSide
-            && Accounting.Helpers.ThaiVatTypeRule.LooksForeignVendor(null, result.ExtractedVendorTaxId)
+        // ฝ่ายค้าน EC3 P1-3 (ทีม EC4): ตัวตัดสินเดียวกับข้อเสนอหักของตัวจัดหมวด (ExpenseCategoryResolver.ApplyTo) — เลขที่ OCR อ่านเพี้ยนไม่ใช่หลักฐาน ·
+        // ชื่อนิติบุคคลต่างประเทศ (Meta Platforms Ireland · … Pte. Ltd.) เป็นหลักฐาน · ข้อความบอกเหตุผลจริง (เดิม "ไม่มีเลขผู้เสียภาษีไทย" ทุกกรณี)
+        var foreignVendorReason = isSalesSide ? null
+            : Accounting.Helpers.ThaiVatTypeRule.ForeignVendorReason(null, result.ExtractedVendorTaxId, result.ExtractedVendorName);
+        if (foreignVendorReason != null
             && (result.ExtractedTotalAmount ?? 0m) > 0m)
         {
             var baseAmt = Math.Max(0m, (result.ExtractedTotalAmount ?? 0m) - (result.ExtractedVatAmount ?? 0m));
             var pp36 = Math.Round(baseAmt * 0.07m, 2, MidpointRounding.AwayFromZero);
+            var hasThaiTaxId = Accounting.Helpers.ThaiTaxId.IsValid(result.ExtractedVendorTaxId);
             result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                + $"\n[PP36] ผู้ขายไม่มีเลขผู้เสียภาษีไทย — ถ้าเป็นบริการที่ใช้ในไทย ต้องนำส่ง VAT แทน "
+                + $"\n[PP36] ผู้ขายต่างประเทศ ({foreignVendorReason})"
+                + (hasThaiTaxId
+                    ? " แต่มีเลขผู้เสียภาษีไทย — ถ้าใบนี้เก็บ VAT ไทยแล้ว (จด VAT e-Service/มีสาขาในไทย) ไม่ต้องยื่น ภ.พ.36 · ถ้าไม่ได้เก็บ "
+                    : " — ")
+                + $"ถ้าเป็นบริการที่ใช้ในไทย ต้องนำส่ง VAT แทน "
                 + $"ผู้ประกอบการต่างประเทศด้วย ภ.พ.36 ≈ {pp36:N2} บาท (§83/6) ภายในวันที่ 7/15 ของเดือนถัดไป "
                 + "แล้วจึงเคลมเป็นภาษีซื้อในเดือนที่นำส่ง"
                 + $"\n[PND54] ค่าธรรมเนียม/ค่านายหน้า 40(2) · ค่าสิทธิ · ดอกเบี้ย · ค่าเช่า · วิชาชีพอิสระ ที่จ่ายออกต่างประเทศ ต้องหัก ณ ที่จ่ายตาม ม.70 "
@@ -8402,7 +8420,9 @@ public class OcrService : IOcrService
         var hdrDiscRaw = ScanBillDiscount(result);   // รอบ 192: ส่วนลดที่ปรับตอนชำระ = 0
         var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
-        var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        // ฐานยอดหักตัวตั้งตัวเดียวกับ CreateDocumentFromScanAsync (Helpers/OcrWhtThresholdBase · ฝ่ายค้าน EC3 P2-5) — ใบเดียวกันห้ามได้ยอดหักต่างกันตามปุ่มที่กด (T1-03)
+        var whtBase = Accounting.Helpers.OcrWhtThresholdBase.FromScan(result.ExtractedSubTotal, result.ExtractedVatAmount,
+            result.ExtractedTotalAmount, null, result.DocumentType).Amount ?? 0m;
         var headerWht = whtRate > 0
             ? Math.Round(whtBase * whtRate / 100m, 2, MidpointRounding.AwayFromZero)
             : 0m;
@@ -8917,7 +8937,9 @@ public class OcrService : IOcrService
         var headerSubTotal = ResolveHeaderSubTotal(result, hdrDiscRaw);
         var isSalesSide = Accounting.Helpers.DocumentSide.IsSales(document.DocumentType, result.OurRole);
         var whtRate = result.HasWht && result.WhtRate is > 0 ? result.WhtRate.Value : 0m;
-        var whtBase = Math.Max(0, (result.ExtractedTotalAmount ?? 0) - (result.ExtractedVatAmount ?? 0));
+        // ฐานยอดหักตัวตั้งตัวเดียวกับ CreateDocumentFromScanAsync (Helpers/OcrWhtThresholdBase · ฝ่ายค้าน EC3 P2-5) — ใบเดียวกันห้ามได้ยอดหักต่างกันตามปุ่มที่กด (T1-03)
+        var whtBase = Accounting.Helpers.OcrWhtThresholdBase.FromScan(result.ExtractedSubTotal, result.ExtractedVatAmount,
+            result.ExtractedTotalAmount, null, result.DocumentType).Amount ?? 0m;
         var headerWht = whtRate > 0
             ? Math.Round(whtBase * whtRate / 100m, 2, MidpointRounding.AwayFromZero)
             : 0m;
@@ -9010,7 +9032,9 @@ public class OcrService : IOcrService
             // ฐาน WHT = ยอดรวมบนกระดาษ − VAT (สูตรเดียวกับเส้นเอกสาร CreateDocumentFromScanAsync)
             // — ExtractedSubTotal บนใบมีส่วนลดคือยอด**ก่อนหักส่วนลด** ใช้แล้วหักเกิน
             // (ผลตรวจ 2026-09-05 T1-03: ใบเดียวกันเคยได้ WHT ต่างกันตามปุ่มที่กด)
-            var whtBase = Math.Max(0m, total - (result.ExtractedVatAmount ?? 0m));
+            // ฝ่ายค้าน EC3 P2-5 (ทีม EC4): ตัวตั้งตัวเดียว Helpers/OcrWhtThresholdBase (อ่าน VAT ได้ ⇒ ยอดรวม − VAT เหมือนเดิม)
+            var whtBase = Accounting.Helpers.OcrWhtThresholdBase.FromScan(result.ExtractedSubTotal, result.ExtractedVatAmount,
+                total, null, result.DocumentType).Amount ?? 0m;
             wht = Math.Round(whtBase * result.WhtRate!.Value / 100m, 2, MidpointRounding.AwayFromZero);
         }
 
@@ -9693,7 +9717,9 @@ public class OcrService : IOcrService
             if (extWht.HasValue && extWht.Value > 0)
             {
                 data.HasWht = true;
-                var baseAmt = (data.TotalAmount ?? 0) - (data.VatAmount ?? 0);
+                // ฐานตัวตั้งตัวเดียว (Helpers/OcrWhtThresholdBase · ฝ่ายค้าน EC3 P2-5) — อ่าน VAT ได้ ⇒ ยอดรวม − VAT เหมือนเดิม
+                var baseAmt = Accounting.Helpers.OcrWhtThresholdBase.FromScan(data.SubTotal, data.VatAmount, data.TotalAmount,
+                    null, data.DocumentType).Amount ?? 0m;
                 if (baseAmt > 0) data.WhtRate = Math.Round(extWht.Value / baseAmt * 100m, 2, MidpointRounding.AwayFromZero);
                 changed.Add($"wht={extWht:0.00}");
             }

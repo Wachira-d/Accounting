@@ -22,7 +22,7 @@ public class ExpenseCategoryResolverTests
 
         Assert.NotNull(result);
         Assert.Equal("ค่าน้ำมันเชื้อเพลิง", result!.Category);
-        Assert.Equal("5402", result.AccountCode);
+        Assert.Equal("54440", result.AccountCode);
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public class ExpenseCategoryResolverTests
             rawText: "ใบแจ้งค่าไฟฟ้า การไฟฟ้านครหลวง");
 
         Assert.NotNull(result);
-        Assert.Equal("5303", result!.AccountCode);
+        Assert.Equal("54310", result!.AccountCode);
     }
 
     [Fact]
@@ -48,7 +48,7 @@ public class ExpenseCategoryResolverTests
             rawText: null);
 
         Assert.NotNull(result);
-        Assert.Equal("5306", result!.AccountCode);
+        Assert.Equal("54430", result!.AccountCode);
         Assert.Equal(3m, result.StatutoryWhtRate);
     }
 

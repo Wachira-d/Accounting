@@ -168,7 +168,7 @@ public class OcrExpenseCategoryEc3Tests
         var lines = spec.Split(';').Select(x => x.Split('|')).Select(p => (p[0], decimal.Parse(p[1]))).ToList();
         var d = Run(NeutralVendor, lines);
         Assert.NotEqual("ค่าประกัน", d.ExpenseCategory);
-        Assert.NotEqual("5800", d.DebitAccountCode);
+        Assert.NotEqual("54510", d.DebitAccountCode);
         // ไม่มีผังเงินมัดจำในกฎ ⇒ ไม่ได้ผังค่าใช้จ่ายที่แต่งขึ้น · ทั้งใบไม่ได้ข้อเสนออัตราของหมวดที่เดาจากบรรทัดส่วนน้อย
         Assert.Null(d.SuggestedWhtRate);
         // ใบมัดจำล้วน ⇒ ไม่มีหลักฐานของหมวดค่าใช้จ่ายใดเลย ⇒ ไม่มีหมวด (เดิม "ค่าประกันการเช่า" ⇒ ค่าเช่า · "ค่าประกันไฟฟ้า" ⇒ ค่าไฟฟ้า)
@@ -188,7 +188,7 @@ public class OcrExpenseCategoryEc3Tests
     {
         var d = One(line, 12000);
         Assert.Equal("ค่าประกัน", d.ExpenseCategory);
-        Assert.Equal("5800", d.DebitAccountCode);
+        Assert.Equal("54510", d.DebitAccountCode);
     }
 
     // ── P1-4: ชื่อผู้ขายมีคำของงานบริการ แต่บรรทัดเป็นสินค้าล้วน ────────────────────────────────────
@@ -279,7 +279,7 @@ public class OcrExpenseCategoryEc3Tests
     [InlineData("สินค้ารับประกัน 1 ปี")]
     [InlineData("เงินประกันสัญญา 5%")]
     public void ตรวจแล้วถูก_ข้อยกเว้นประกันยังทำงาน(string line)
-        => Assert.NotEqual("5800", One(line, 12000).DebitAccountCode);
+        => Assert.NotEqual("54510", One(line, 12000).DebitAccountCode);
 
     // ── P2-1: ผังเดบิตตั้งต้นต้องเป็นบัญชีย่อยจริงในผังมาตรฐาน ───────────────────────────────────────────
 
@@ -317,10 +317,12 @@ public class OcrExpenseCategoryEc3Tests
     [Fact]
     public void P2_1_ใบกำกับภาษีของบริษัทที่ไม่ถือสต็อก_ไม่ใช่ต้นทุนขาย_บริษัทถือสต็อกได้ต้นทุนสินค้า()
     {
-        var service = OcrDocTypeDefaultAccounts.For("TaxInvoice", keepsInventory: false)!.Value;
+        var service = OcrDocTypeDefaultAccounts.For("TaxInvoice", purchaseIsStock: false)!.Value;
         Assert.False(service.DebitCode.StartsWith("51"), service.DebitCode);
         Assert.Equal(OcrDocTypeDefaultAccounts.GenericExpenseDebit.Code, service.DebitCode);
-        var trading = OcrDocTypeDefaultAccounts.For("TaxInvoice", keepsInventory: true)!.Value;
+        // ทีม EC4 (ฝ่ายค้าน EC3 P2-7): ผังสต็อกเฉพาะเมื่อ "ของบนใบเป็นสินค้า master ทุกบรรทัด" — ไม่ใช่แค่บริษัทถือสต็อก
+        var trading = OcrDocTypeDefaultAccounts.For("TaxInvoice",
+            OcrDocTypeDefaultAccounts.PurchaseIsStock(keepsInventory: true, lineCount: 2, linesMatchedToProductMaster: 2))!.Value;
         Assert.Equal("51110", trading.DebitCode);
         // ParseThaiDocument ยังไม่รู้จักบริษัท ⇒ ค่าใช้จ่ายทั่วไป + ไฮไลต์เหลือง (P2-3)
         var parsed = OcrService.ParseThaiDocument("ใบกำกับภาษี\nเลขที่ INV-1\nรวมทั้งสิ้น 1,070.00\n");
