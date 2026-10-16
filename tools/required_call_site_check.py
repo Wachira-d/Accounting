@@ -1694,8 +1694,9 @@ RULES += [
 #    BuildScanLinesAsync — ลิสต์เดียวใช้กับทั้งสองเมธอด ⇒ เพิ่ม/ถอด helper ฝั่งใดฝั่งหนึ่งแล้วอีกฝั่งไม่ตาม = แดง (ป้องกัน harness ล็อกคำตอบที่ service ไม่ได้ให้)
 LINE_PIPELINE_HELPERS = [
     "OcrLineVatMarks.Read(", "OcrHeaderVatEvidence.Classify(", "OcrLineVatMarks.Assign(",
-    "OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrTotalDecomposer.LineGross(", "OcrHeaderAmounts.NetSubTotal(",
-    "OcrLineReconciler.Classify(", "OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(",
+    # 2026-10-16: ฐานกระทบยอด (NetSubTotal) + ตัวจำแนกเคส (OcrLineReconciler.Classify) อยู่ใน OcrVatCodeLines.Decide ตัวเดียว (รายการ/แถวส่วนลด/ตารางชนะ)
+    "OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrTotalDecomposer.LineGross(", "OcrVatCodeLines.Decide(",
+    "OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(",
     "OcrLineVatPlanner.PlanWholeInvoice(", "OcrLineVatPlanner.PaperExemptAmount(", "OcrLineVatMarks.ReadGroups(",
     "ThaiVatTypeRule.ToVatRate(", "ThaiVatTypeRule.Suggest(", "OcrEtaxLineNormalizer.InclusiveLineVats(", "ThaiVatTypeRule.SpreadHeaderVat(",
     "DocumentRounding.CapShifts(", "DocumentRounding.FromPrintedLine(",
@@ -1743,7 +1744,7 @@ RULES += [
     dict(file=HARNESS, method="BuildLines",
          must=["OcrDuplicateLineGuard.Decide("],
          call_args=[("OcrDuplicateLineGuard.Decide(", "discountToSpread")],
-         before=[("OcrDuplicateLineGuard.Decide(", "OcrLineReconciler.Classify(")],
+         before=[("OcrDuplicateLineGuard.Decide(", "OcrVatCodeLines.Decide(")],
          why="2026-10-09 BS2026100001: harness เล่นซ้ำด่านแถวซ้ำก่อนกระทบยอด — golden ของใบต้นฉบับ+สำเนาถึงล็อกคำตอบที่ service ให้จริง"),
 ]
 
@@ -6360,7 +6361,7 @@ RULES += [
          why=_ETAX_LINE_WHY + "ตัวกันจำนวนระเบิดห้ามหารจำนวนจากยอดบนบรรทัด e-Tax ทุกบรรทัด (รวมที่ตัดสินฐานราคาไม่ได้ — ทบทวน e8547899 ข้อ 2: 3 → 2.13) · ส่วนลดบรรทัดไม่ใช่จำนวนผิด"),
     dict(file=OCR, method="BuildScanLinesAsync",
          must=["OcrEtaxLineNormalizer.ProvenLineDiscount(", "+ lineOwnDisc[i]", "lineGross[idx] + lineOwnDisc[idx]"],
-         before=[("OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrLineReconciler.Classify(")],
+         before=[("OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrVatCodeLines.Decide(")],
          why=_ETAX_LINE_WHY + "ส่วนลดบรรทัดลง DocumentLine.DiscountAmount และไม่ถูกตีเป็นส่วนลดท้ายบิล/ผลต่างปัดเศษ"),
     dict(file=OCR, method="ScanAsync",
          call_args=[("OcrConfidenceGateway.LineItemForValidation(", "LineDiscountAmount")],
@@ -8177,13 +8178,21 @@ RULES += [
 #    ถอดการใช้ AmountsAfterDiscount/DiscountPercents = ส่วนลดกลับไป % เดียวทั้งใบ (Σ กลุ่มยกเว้น ≠ ตาราง) · ถอด TableMismatch = ใบที่ไม่ลงตารางผ่านเงียบ ·
 #    ลำดับ: หลังตัวกระทบยอด (ต้องรู้ราคารวม VAT/เป้าหลังส่วนลด) และก่อนตัวพิสูจน์ทั้งใบ/ตัวเดาจากชื่อ (ชั้นล่างกว่า)
 RULES += [
+    # 2026-10-16 คำตัดสินเจ้าของข้อ 1/3: ตัวกระทบยอด + แผนรหัส ภ.พ. ย้ายเข้าตัวตัดสินเดียว OcrVatCodeLines.Decide (รายการ / แถวส่วนลด→ส่วนลด /
+    # ตารางชนะ) · ถอด Decide = ใบผสมกลับไปเดาจากชื่อ · ถอดการใช้ TableLines = รายการครึ่งใบ + ช่องว่างกลับมา · ถอดการใช้ Keep/BillDiscount =
+    # แถวส่วนลดยอดบวกพองยอดรวม · ถอด lineSources ในพรีวิว = ป้าย VAT เลื่อนผิดแถว
     dict(file=OCR, method="BuildScanLinesAsync",
-         must=["OcrVatCodeLines.Plan(", "OcrVatCodeLines.TableMismatch("],
-         must_re=[r"vatCodePlan\s*\.\s*AmountsAfterDiscount", r"vatCodePlan\s*\.\s*DiscountPercents", r"vatCodePlan\s*\.\s*ReplaceEngineRate"],
-         before=[("OcrLineReconciler.Classify(", "OcrVatCodeLines.Plan("),
-                 ("OcrVatCodeLines.Plan(", "OcrLineVatPlanner.PlanWholeInvoice("),
-                 ("OcrVatCodeLines.Plan(", "ThaiVatTypeRule.Suggest(")],
-         why="2026-10-16 รหัส ภ.พ.: อัตรารายบรรทัด + ส่วนลดต่อรหัสตามตารางของกระดาษก่อนการเดาจากชื่อ · ผลสุดท้ายไม่ลงตาราง = [Σ-GAP]"),
+         must=["OcrVatCodeLines.Decide(", "OcrVatCodeLines.TableMismatch("],
+         must_re=[r"vatCodePlan\s*\.\s*AmountsAfterDiscount", r"vatCodePlan\s*\.\s*DiscountPercents", r"vatCodePlan\s*\.\s*ReplaceEngineRate",
+                  r"codeDecision\s*\.\s*TableLines", r"codeDecision\s*\.\s*Keep", r"codeDecision\s*\.\s*BillDiscount",
+                  r"codeDecision\s*\.\s*Recon", r"tableLinesInsteadOfItems\s*\?\?", r"poLineMap\s*\.\s*TryGetValue\s*\(\s*srcIdx\s*\["],
+         before=[("OcrVatCodeLines.Decide(", "OcrLineVatPlanner.PlanWholeInvoice("),
+                 ("OcrVatCodeLines.Decide(", "ThaiVatTypeRule.Suggest(")],
+         forbid=["OcrVatCodeLines.Plan(", "OcrLineReconciler.Classify("],
+         why="2026-10-16 รหัส ภ.พ.: ตารางของกระดาษเป็นตัวตั้ง (รายการลงตาราง/แถวส่วนลดแปลงเป็นส่วนลด/ตารางชนะ) ก่อนการเดาจากชื่อ · ผลสุดท้ายไม่ลงตาราง = [Σ-GAP]"),
+    dict(file=OCR, method="PreviewDocumentLinesAsync",
+         must_re=[r"var\s+lineSources\s*=\s*await\s+BuildScanLinesAsync", r"lineSources\s*\["],
+         why="2026-10-16: ดัชนีต้นทางของบรรทัดพรีวิวมาจากตัวสร้างบรรทัด (แถวส่วนลดที่แปลง/บรรทัดสรุปตามตาราง ไม่ใช่ 1 แถว = 1 บรรทัด)"),
 ]
 
 _RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}

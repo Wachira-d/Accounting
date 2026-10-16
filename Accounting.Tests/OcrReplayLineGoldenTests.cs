@@ -258,23 +258,36 @@ public class OcrReplayLineGoldenTests
     }
 
     [Fact]
-    public void Makroหน้า1และ2_engineอ่านคอลัมน์รหัสไม่ได้_มีส่วนลด_ไม่แตะบรรทัด_แต่ฟ้องตารางรหัสภพ()
+    public void Makroหน้า1และ2_engineอ่านคอลัมน์รหัสไม่ได้_มีส่วนลด_ตารางชนะ_บรรทัดสรุปต่อรหัส_รวม10980()
     {
-        // ทิศตรงข้าม: ไม่มีรหัสรายบรรทัด + ส่วนลด ⇒ แบ่งส่วนลดต่อรหัสไม่ได้ ⇒ บรรทัดเท่าเดิมทุกตัวอักษร · ด่านผลสุดท้ายเพิ่ม VatCodeTable (ไม่ลงเงียบ)
-        Assert.Equal(
-            "979.66|-1|0.00|1000.00|2.03|20.34|0.00;227.45|7|15.51|248.00|2.03|5.04|0.00;1040.00|7|70.93|189.00|2.03|23.07|0.00;"
-            + "2375.31|7|162.00|259.00|2.03|52.69|0.00;1082.19|7|73.81|59.00|2.03|24.00|0.00;880.42|7|60.05|64.00|2.03|19.53|0.00;"
-            + "3756.47|7|256.20|512.00|2.03|83.33|0.00",
+        // คำตัดสินเจ้าของ 2026-10-16 ข้อ 1 (กลับคำตัดสินรอบก่อน "คงรายการ + [Σ-GAP]"): ไม่มีรหัสรายบรรทัด + ส่วนลด ⇒ แบ่งส่วนลดต่อรหัสไม่ได้ ⇒
+        // ตารางรหัส ภ.พ. ชนะ — บรรทัดสรุปต่อกลุ่ม ยกเว้น 1,220.00 + ฐาน 9,121.50/VAT 638.50 = 10,980.00 (ยอดชำระบนกระดาษ) · ไม่มีช่องว่าง
+        // ก่อน (afbb0956): รายการ 7 บรรทัด ส่วนลด 2.03% ทั้งใบ ยกเว้น 979.66 + [Σ-GAP] VatRateMismatch,VatCodeTable
+        Assert.Equal("VatGroupsInsteadOfItems", Val("makro-p1p2-no-row-codes-synthetic", "LineMode"));
+        Assert.Equal("1220.00|-1|0.00|1220.00|0|0.00|0.00;9121.50|7|638.50|9121.50|0|0.00|0.00",
             Val("makro-p1p2-no-row-codes-synthetic", "Lines"));
-        Assert.Equal("VatRateMismatch,VatCodeTable", Val("makro-p1p2-no-row-codes-synthetic", "IntegrityGaps"));
+        Assert.Equal("ok", Val("makro-p1p2-no-row-codes-synthetic", "IntegrityGaps"));
+        Assert.Equal("false", Val("makro-p1p2-no-row-codes-synthetic", "PricesIncludeVat"));
     }
 
     [Fact]
-    public void Makroหน้า1และ2_engineคืนแถวส่วนลดเป็นสินค้า_ไม่แบ่งตามรหัส_ตัวกระทบยอดฟ้อง()
+    public void Makroหน้า1และ2_engineคืนแถวส่วนลดเป็นสินค้า_แปลงเป็นส่วนลด_ส่วนลดที่ระบุชื่อลงบรรทัดนั้น_ต่อกลุ่มตรงตาราง()
     {
-        Assert.Equal("Ambiguous", Val("makro-p1p2-discount-rows-as-items-synthetic", "ReconCase"));
-        Assert.Equal("Σ-GAP:Ambiguous,Overstated", Val("makro-p1p2-discount-rows-as-items-synthetic", "IntegrityGaps"));
-        Assert.StartsWith("1000.00|-1|0.00|1000.00|0|0.00|0.00;248.00|7|15.17|", Val("makro-p1p2-discount-rows-as-items-synthetic", "Lines"));
+        // คำตัดสินเจ้าของ 2026-10-16 ข้อ 3: แถวส่วนลด 5 แถว (28 · 100 · 30 · 60 · 10 = รวมส่วนลด 228) ไม่มีรหัส ภ.พ. ⇒ ส่วนลดของเอกสาร (ห้ามพองยอดรวม)
+        // "ลดราคาไข่ไก่" เอ่ยชื่อสินค้า ⇒ ไข่ไก่ 248 − 28 = 220 (ข้าวสารไม่ถูกหัก) · "สินค้าฮีโร่" ⇒ ถุงขยะดำ ฮีโร่ −30 + ส่วนแบ่งของ 170 ที่เหลือในกลุ่ม 7%
+        // ก่อน: Σ-GAP:Ambiguous,Overstated · แถวส่วนลดเป็นสินค้า 7% ยอดบวก (ยอดเอกสารเกินกระดาษ 456)
+        Assert.Equal("DiscountOnTotalInclVat", Val("makro-p1p2-discount-rows-as-items-synthetic", "ReconCase"));
+        Assert.Equal("ok", Val("makro-p1p2-discount-rows-as-items-synthetic", "IntegrityGaps"));
+        var rows = Val("makro-p1p2-discount-rows-as-items-synthetic", "Lines")!.Split(';');
+        Assert.Equal(7, rows.Length);
+        Assert.Equal("1000.00|-1|0.00|1000.00|0|0.00|0.00", rows[0]);
+        Assert.Equal("220.00|-1|0.00|248.00|11.29|28.00|0.00", rows[1]);
+        decimal Col(string r, int c) => decimal.Parse(r.Split('|')[c], CultureInfo.InvariantCulture);
+        Assert.Equal(1220.00m, rows.Take(2).Sum(r => Col(r, 0)));                       // ยกเว้นตามตาราง
+        Assert.Equal(9121.50m, rows.Skip(2).Sum(r => Col(r, 0)));                       // ฐานรหัส 2 ตามตาราง
+        Assert.Equal(638.50m, rows.Skip(2).Sum(r => Col(r, 2)));                        // VAT ตามตาราง
+        Assert.Equal(228.00m, rows.Sum(r => Col(r, 5)));                                // ส่วนลดบาทรวม = ส่วนลดบนกระดาษ
+        Assert.Equal(10980.00m, rows.Sum(r => Col(r, 0) + Col(r, 2)));                  // = ยอดชำระบนกระดาษ
     }
 
     [Fact]
@@ -284,7 +297,7 @@ public class OcrReplayLineGoldenTests
         foreach (var p in OcrReplayHarness.Corpus)
         {
             var mode = all.Single(a => a.Paper == p.Name && a.Field == "LineMode").Value;
-            Assert.Contains(mode, new[] { "Items", "VatGroups", "Summary" });
+            Assert.Contains(mode, new[] { "Items", "VatGroups", "VatGroupsInsteadOfItems", "Summary" });
             var lines = all.Single(a => a.Paper == p.Name && a.Field == "Lines").Value!;
             Assert.NotEmpty(lines);
             foreach (var row in lines.Split(';'))

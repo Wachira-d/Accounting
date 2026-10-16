@@ -7641,7 +7641,7 @@ public class OcrService : IOcrService
     /// <para>ตั้ง <c>document.PricesIncludeVat</c> เมื่อกระดาษพิมพ์ราคารวม VAT และเขียน
     /// <c>result.ProcessingNotes</c> ([Σ]/[Σ-GAP]) — ผู้เรียกต้อง persist ทั้งคู่</para>
     /// </summary>
-    private async Task BuildScanLinesAsync(
+    private async Task<IReadOnlyList<int>> BuildScanLinesAsync(
         Guid companyId, OcrScanResult result, List<OcrExtractedLineItem> items, Document document,
         Document? linkedPo, Dictionary<int, Guid?> poLineMap, Guid? scanDebitAccountId,
         decimal headerSubTotal, decimal hdrDiscRaw, decimal whtRate, decimal headerWht, bool isSalesSide)
@@ -7666,6 +7666,16 @@ public class OcrService : IOcrService
             result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrHeaderVatEvidence.DerivedTag + " " + derivedVatNote;
         // ผลต่างปัดเศษเป็นของ "บรรทัดชุดนี้" — เริ่มจาก 0 ทุกครั้ง (สาขามีรายการตั้งค่าเองด้านล่าง · สาขาบรรทัดสรุป = 0)
         document.RoundingAdjustment = 0m;
+        // ดัชนีต้นทาง (ExtractedItems[i]) ของแต่ละบรรทัดเอกสารตามลำดับ — พรีวิวใช้จับคู่แถวในตาราง "รายการที่อ่านได้" (−1 = ไม่มีต้นทาง)
+        var sourceIndexes = new List<int>();
+        var srcIdx = Enumerable.Range(0, items.Count).ToList();
+        // ★ 2026-10-16 คำตัดสินเจ้าของข้อ 1/3 (ตารางรหัส ภ.พ. ชนะ · แถวส่วนลดที่ engine คืนเป็นสินค้า): ตัวตัดสินเดียว Helpers/OcrVatCodeLines.Decide
+        Accounting.Helpers.OcrVatCodeDecision? codeDecision = null;
+        IReadOnlyList<Accounting.Helpers.OcrVatGroup>? tableLinesInsteadOfItems = null;
+        var hdrSub   = result.ExtractedSubTotal   ?? 0m;
+        var hdrTotal = result.ExtractedTotalAmount ?? 0m;
+        var hdrVatHdr = result.ExtractedVatAmount  ?? 0m;
+        List<decimal> lineOwnDisc = new(), lineGross = new();
         if (items.Count > 0)
         {
             // ★ ใบผสม VAT/ไม่มี VAT (รอบ 190 ข้อ 9): สัญลักษณ์ท้ายบรรทัดบนกระดาษ (V · N · E · ดอกจัน) ที่พิสูจน์
@@ -7691,24 +7701,49 @@ public class OcrService : IOcrService
             //   (B) ราคาแยก VAT มาตรฐาน — linesGross ≈ subtotal → ไม่ทำอะไร
             //   (C) มีส่วนลดจริง — linesGross > total → ใส่ DiscountAmount
             //   (D) OCR ขาด — linesGross < subtotal → ไม่ทำอะไร (user แก้เอง)
-            var hdrSub   = result.ExtractedSubTotal   ?? 0m;
-            var hdrTotal = result.ExtractedTotalAmount ?? 0m;
-            var hdrVatHdr = result.ExtractedVatAmount  ?? 0m;
+            // (ยอดหัวใบ hdrSub/hdrTotal/hdrVatHdr ประกาศไว้ก่อนสาขา — ใช้ร่วมกับตัวตัดสินตารางรหัส ภ.พ.)
             // ยอดก่อนลดของแต่ละบรรทัด — ตัวเดียวของกระทบยอด/กระจายส่วนลด/ส่วนลดรายบรรทัด (รอบ 192:
             // ยอดที่พิมพ์ชนะ ราคา×จำนวน เมื่อต่างแค่เศษปัดของราคาต่อหน่วย · Lazada 4,912.15 ไม่ใช่ 4,912.16)
             // เก็บไว้ก่อนตัวกระจายส่วนลดเขียนทับ Amount
             // ★ ส่วนลดรายบรรทัดที่เอกสารประกาศเอง (e-Tax XML · Helpers/OcrEtaxLineNormalizer) เป็นของบรรทัดนั้น ไม่ใช่ส่วนลดท้ายบิล ⇒
             // ยอดที่ใช้กระทบยอดกับหัวใบ = ยอดหลังส่วนลดบรรทัด (= Amount) · ไม่งั้น Σ ก่อนลดบรรทัดถูกตีเป็น "ส่วนลดท้ายบิล"/[Σ-GAP]
             // (สแกน f1690d11 · ใบ CRC ไทวัสดุ: Σ ยอดก่อนลด 4,000 เทียบหัวใบ 2,991.59) · ไม่มีส่วนลดบรรทัด = สูตรเดิมทุกตัวอักษร
-            var lineOwnDisc = items
+            lineOwnDisc = items
                 .Select(x => Accounting.Helpers.OcrEtaxLineNormalizer.ProvenLineDiscount(
                     x.Quantity, x.UnitPrice, x.Amount, x.LineDiscountAmount))
                 .ToList();
-            var lineGross = items
+            lineGross = items
                 .Select((x, gi) => lineOwnDisc[gi] > 0m
                     ? x.Amount!.Value
                     : Accounting.Helpers.OcrTotalDecomposer.LineGross(x.Quantity, x.UnitPrice, x.Amount))
                 .ToList();
+
+            // ★ ตารางรหัส ภ.พ. ของกระดาษเป็นตัวตั้ง (คำตัดสินเจ้าของ 2026-10-16): รายการลงตาราง ⇒ รายการ · แถวส่วนลดที่ engine คืนเป็นสินค้า ⇒ ส่วนลด
+            // (ต้องลงตารางพอดี) · ยังไม่ลง ⇒ บรรทัดสรุปต่อกลุ่มรหัส (ตารางชนะ) — ไม่คงรายการครึ่งใบ + [Σ-GAP] · ไม่มีตารางผสม = เส้นเดิมทุกตัวอักษร
+            // บรรทัดสรุปแทนรายการไม่ได้เมื่อมีหัก ณ ที่จ่าย (บรรทัดสรุปไม่แบก WHT) หรือผูกบรรทัด PO (ต้องคง SourceLineId ของการรับของ)
+            codeDecision = Accounting.Helpers.OcrVatCodeLines.Decide(
+                items.Select((x, ci) => new Accounting.Helpers.OcrVatCodeLineInput(lineGross[ci], x.VatRate, x.Description)).ToList(),
+                normalizedRawText, vatCodeTable, hdrSub, hdrVatHdr, hdrTotal, hdrDiscRaw,
+                pricesIncludeVatPreset: document.PricesIncludeVat || Accounting.Helpers.OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(
+                    items.Select(x => (x.Amount ?? 0m, x.PriceIncludesVat)).ToList()),
+                tableLinesAllowed: headerWht == 0m && !(linkedPo != null && poLineMap.Values.Any(v => v.HasValue)));
+            if (codeDecision.Source == Accounting.Helpers.OcrVatCodeLineSource.TableSummary)
+                tableLinesInsteadOfItems = codeDecision.TableLines;
+            else if (codeDecision.DiscountRows.Count > 0)
+            {
+                // แถวส่วนลดแปลงเป็นส่วนลดของเอกสารแล้ว — ไม่เป็นบรรทัด (ยอดบวกห้ามพองยอดรวม) · ดัชนีต้นทางตามแถวที่เหลือ
+                srcIdx = codeDecision.Keep.ToList();
+                var keptItems = srcIdx.Select(k => items[k]).ToList();
+                lineOwnDisc = srcIdx.Select(k => lineOwnDisc[k]).ToList();
+                lineGross = srcIdx.Select(k => lineGross[k]).ToList();
+                items = keptItems;
+                hdrDiscRaw = codeDecision.BillDiscount;
+            }
+            if (codeDecision.Note is string codeDecisionNote && tableLinesInsteadOfItems is null)
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] " + codeDecisionNote;
+        }
+        if (items.Count > 0 && tableLinesInsteadOfItems is null && codeDecision is not null)
+        {
             var grossSum = lineGross.Sum();
 
             // ★ ตัวจำแนกอยู่ใน Helpers/OcrLineReconciler (pure + มีเทสต์ด้วยตัวเลขจริง)
@@ -7725,15 +7760,10 @@ public class OcrService : IOcrService
             // "รวมเงิน − ส่วนลด + VAT = ยอดรวม" ⇒ บิลห้างที่ engine หยิบ "รวม (ราคารวม VAT
             // ก่อนลด)" มาเป็น SubTotal ไม่เข้าเงื่อนไข แล้ว Σ บรรทัด = SubTotal นั้นพอดีจึงตกเคส B
             // เงียบ ๆ ทั้งที่ Σ บรรทัด + VAT ≠ ยอดรวม (รอบ 190 ข้อ 9) · ไม่มีส่วนลด = สูตรเดิม
-            var netSubForRecon = hdrSub;
-            if (hdrDiscRaw > 0m && hdrTotal > 0m)
-                netSubForRecon = Accounting.Helpers.OcrHeaderAmounts.NetSubTotal(
-                    hdrSub, hdrVatHdr, hdrTotal, hdrDiscRaw);
-            else if (hdrSub <= 0m && hdrTotal > 0m)
-                netSubForRecon = Math.Max(0m, hdrTotal - hdrVatHdr);
-
-            var recon = Accounting.Helpers.OcrLineReconciler.Classify(
-                grossSum, netSubForRecon, hdrVatHdr, hdrTotal, hdrDiscRaw);
+            // ★ สูตรฐานกระทบยอด + ตัวจำแนกเคสย้ายไปอยู่ใน Helpers/OcrVatCodeLines.Decide (ตัวเดียวกับที่ตัดสินแถวส่วนลด/ตารางชนะ —
+            // สูตรเดิมทุกตัวอักษร: มีส่วนลด ⇒ OcrHeaderAmounts.NetSubTotal · ไม่มียอดก่อน VAT ⇒ ยอดรวม − VAT) · บรรทัด = บรรทัดที่เหลือหลังแปลงแถวส่วนลด
+            var netSubForRecon = codeDecision.NetSubForRecon;
+            var recon = codeDecision.Recon;
             decimal docDiscountPercent = recon.DiscountPercent;   // ใช้เฉพาะ case C
             if (recon.PricesIncludeVat)
                 document.PricesIncludeVat = true;    // Case A — ถอด VAT ออกจากยอดบรรทัดข้างล่าง
@@ -7749,9 +7779,7 @@ public class OcrService : IOcrService
             // ส่วนลดท้ายบิลแบ่ง "ต่อรหัส" ให้ Σ ต่อกลุ่ม = ตาราง (แทน % เดียวทั้งใบ) · ไม่ลงตัว = ไม่แตะ (ตกชั้นเดิม) แล้วด่านผลสุดท้ายข้างล่างฟ้อง ·
             // ตัวตัดสิน Helpers/OcrVatCodeLines ตัวเดียว (pure + เทสต์ OcrVatCodeLinesTests) · อยู่หลังตัวกระทบยอด (ต้องรู้ราคารวม VAT/เป้าหลังส่วนลด)
             // และก่อนตัวกระจายส่วนลด · ค่าจาก engine/ผู้ใช้ชนะ ยกเว้น "อัตรา" ที่เป็นรหัสบนตาราง (Azure TaxRate = รหัส 1/2)
-            var vatCodePlan = Accounting.Helpers.OcrVatCodeLines.Plan(
-                items.Select((x, ci) => new Accounting.Helpers.OcrVatCodeLineInput(lineGross[ci], x.VatRate)).ToList(),
-                normalizedRawText, vatCodeTable, hdrVatHdr, hdrTotal, hdrDiscRaw, document.PricesIncludeVat, recon.TargetLineSum);
+            var vatCodePlan = codeDecision.Plan;
             if (vatCodePlan.Applied)
             {
                 for (var ci = 0; ci < items.Count; ci++)
@@ -7913,7 +7941,8 @@ public class OcrService : IOcrService
                 // SourceLineId records the consumption — ComputeConsumptionAsync
                 // keys 3-way-match / PO fulfillment on it; without it the PO
                 // stays 100% open after receiving (duplicate-booking risk).
-                if (linkedPo != null && poLineMap.TryGetValue(i, out var mappedPoLineId) && mappedPoLineId.HasValue)
+                // ดัชนีต้นทาง (แถวส่วนลดที่แปลงแล้วไม่อยู่ใน items — การผูก PO อ้างดัชนีของ ExtractedItems เดิม)
+                if (linkedPo != null && poLineMap.TryGetValue(srcIdx[i], out var mappedPoLineId) && mappedPoLineId.HasValue)
                 {
                     var poLine = linkedPo.Lines.FirstOrDefault(l => l.Id == mappedPoLineId.Value && !l.IsDeleted);
                     if (poLine != null)
@@ -7966,6 +7995,7 @@ public class OcrService : IOcrService
                     glFeedbackAttached = true;
                 }
 
+                sourceIndexes.Add(srcIdx[i]);
                 document.Lines.Add(new DocumentLine
                 {
                     LineOrder = lineOrder++,
@@ -8037,13 +8067,18 @@ public class OcrService : IOcrService
             if (lineProjects.Count == 1 && lineProjects[0].HasValue)
                 document.ProjectId = lineProjects[0];
         }
-        else if (Accounting.Helpers.OcrTotalDecomposer.SummaryGroupLines(
-                     Accounting.Helpers.OcrTotalDecomposer.Decompose(
-                         Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent), result.ExtractedSubTotal,
-                         result.ExtractedVatAmount, result.ExtractedTotalAmount, hdrDiscRaw),
-                     result.ExtractedTotalAmount, result.ExtractedVatAmount, headerSubTotal) is var paperGroups
+        else if ((tableLinesInsteadOfItems
+                     ?? Accounting.Helpers.OcrTotalDecomposer.SummaryGroupLines(
+                         Accounting.Helpers.OcrTotalDecomposer.Decompose(
+                             Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent), result.ExtractedSubTotal,
+                             result.ExtractedVatAmount, result.ExtractedTotalAmount, hdrDiscRaw),
+                         result.ExtractedTotalAmount, result.ExtractedVatAmount, headerSubTotal)) is var paperGroups
                  && paperGroups.Count > 0 && headerWht == 0m)
         {
+            // ★ 2026-10-16 คำตัดสินเจ้าของข้อ 1: รายการที่อ่านได้กระทบกับตารางรหัส ภ.พ. ไม่ได้ (อัปโหลดแค่หน้าสุดท้าย/แถวขาด) ⇒ ตารางชนะ —
+            // สาขานี้เดียวกับ "ไม่มีรายการ" (tableLinesInsteadOfItems จาก OcrVatCodeLines.Decide) · ยอดรวมเอกสาร = ตาราง = ยอดชำระบนกระดาษ
+            // บรรทัดสรุปเป็นฐาน + VAT เสมอ ⇒ เอกสารไม่ใช่ราคารวม VAT (ดึงรายการซ้ำบนเอกสารที่เคยเป็นราคารวม VAT ต้องไม่ค้างธงเดิม)
+            document.PricesIncludeVat = false;
             // ★ รอบ 192 (Total-first · ใบ Makro หน้า 3/3): ไม่มีรายการสินค้าในไฟล์ แต่กระดาษพิมพ์ตารางสรุปตามกลุ่มภาษี
             // (ยกเว้น 6,260.00 · มี VAT ฐาน 16,403.97 VAT 1,148.28) ⇒ บรรทัดสรุป<b>ต่อกลุ่ม</b>แทนบรรทัดเดียว 7% ทั้งใบ
             // — ทุกตัวเลขพิมพ์บนกระดาษ (ตัวตัดสิน Helpers/OcrTotalDecomposer.SummaryGroupLines) · อ่านจากข้อความดิบ
@@ -8079,14 +8114,25 @@ public class OcrService : IOcrService
                     GlAccountAiFeedbackId = order == 1 && scanDebitAccountId.HasValue ? result.GlAccountAiFeedbackId : null,
                 });
                 planned.Add(new Accounting.Helpers.OcrPlannedLine(grp.Net, rate, grp.Vat));
+                sourceIndexes.Add(-1);
                 order++;
             }
-            result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                + "\n[Σ] ไม่มีรายการสินค้าในไฟล์ — สร้างบรรทัดสรุปตามกลุ่มภาษีที่กระดาษพิมพ์ไว้: "
-                + string.Join(" · ", paperGroups.Select(g => $"รหัส {g.PaperCode} ฐาน {g.Net:N2} VAT {g.Vat:N2}"));
-            // รอบ 193 (เจ้าของข้อ 5): ยอมรับบรรทัดสรุปต่อกลุ่ม + คำเตือนเรื่องตัดสต็อก (ไม่บล็อก) · ไม่ซ้ำเมื่อสร้าง/พรีวิวซ้ำ
-            if (!(result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrTotalDecomposer.NoItemsTag, StringComparison.Ordinal))
-                result.ProcessingNotes += "\n" + Accounting.Helpers.OcrTotalDecomposer.NoItemsNote(paperGroups);
+            if (tableLinesInsteadOfItems is not null)
+            {
+                // ข้อความบอกว่าทำไมไม่ใช้รายการ (ตัวเลขของกระดาษ) — ไม่บล็อก (ยอด/ภาษีตรงกระดาษ) · ขาดแค่รายการสำหรับตัดสต็อก
+                if (!(result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrVatCodeLines.TableSummaryLead, StringComparison.Ordinal))
+                    result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrTotalDecomposer.NoItemsTag
+                        + " " + codeDecision!.Note;
+            }
+            else
+            {
+                result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                    + "\n[Σ] ไม่มีรายการสินค้าในไฟล์ — สร้างบรรทัดสรุปตามกลุ่มภาษีที่กระดาษพิมพ์ไว้: "
+                    + string.Join(" · ", paperGroups.Select(g => $"รหัส {g.PaperCode} ฐาน {g.Net:N2} VAT {g.Vat:N2}"));
+                // รอบ 193 (เจ้าของข้อ 5): ยอมรับบรรทัดสรุปต่อกลุ่ม + คำเตือนเรื่องตัดสต็อก (ไม่บล็อก) · ไม่ซ้ำเมื่อสร้าง/พรีวิวซ้ำ
+                if (!(result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrTotalDecomposer.NoItemsTag, StringComparison.Ordinal))
+                    result.ProcessingNotes += "\n" + Accounting.Helpers.OcrTotalDecomposer.NoItemsNote(paperGroups);
+            }
             AppendAmountIntegrityGaps(result, planned, result.ExtractedVatAmount ?? 0m,
                 alreadyReportedLineGap: false, paperVatSplit: paperVatSplit);
         }
@@ -8119,6 +8165,7 @@ public class OcrService : IOcrService
             // บรรทัดสรุปใบเดียวก็ต้องผ่านด่านเดียวกัน — ใบผสม VAT/ยกเว้นที่ไม่มีรายการ (Makro 951/49)
             // จะได้บรรทัด 7% ที่ VAT ไม่เท่า 7% ของยอด ⇒ ฐานภาษีซื้อ §87 เกินจริง ต้องให้คนแยกบรรทัด
             var summary = document.Lines.Last();
+            sourceIndexes.Add(-1);
             AppendAmountIntegrityGaps(result,
                 new[] { new Accounting.Helpers.OcrPlannedLine(summary.Amount, summary.VatRate, summary.VatAmount) },
                 result.ExtractedVatAmount ?? 0m, alreadyReportedLineGap: false, paperVatSplit: paperVatSplit);
@@ -8131,6 +8178,7 @@ public class OcrService : IOcrService
         if (Accounting.Helpers.OcrTotalAnchor.DocumentOverstatement(
                 normalizedRawText, result.ExtractedTotalAmount, builtTotal) is { } overstated)
             result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrLineBuildNotes.GapTag + " " + overstated.Message;
+        return sourceIndexes;
     }
 
     /// <summary>เขียนผลของ <see cref="Accounting.Helpers.OcrAmountIntegrity"/> เป็น <c>[Σ-GAP]</c>
@@ -8234,7 +8282,7 @@ public class OcrService : IOcrService
         var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(companyId, result, docType);
 
         var document = new Document { CompanyId = companyId, DocumentType = docType };
-        await BuildScanLinesAsync(companyId, result, items, document, linkedPo, poLineMap,
+        var lineSources = await BuildScanLinesAsync(companyId, result, items, document, linkedPo, poLineMap,
             scanDebitAccountId, headerSubTotal, hdrDiscRaw, whtRate, headerWht, isSalesSide);
 
         // AccountId → รหัสผัง (ฟอร์มปลายทางรับเป็น code)
@@ -8250,9 +8298,9 @@ public class OcrService : IOcrService
             l.VatRate, l.VatAmount, l.WithholdingTaxRate,
             l.AccountId.HasValue && codeMap.TryGetValue(l.AccountId.Value, out var code) ? code : null,
             l.ProductCode, l.ProjectId, l.SourceLineId,
-            // BuildScanLinesAsync เดินลูป items แบบ 1 แถว = 1 บรรทัด (LineOrder เริ่มที่ 1)
-            // — ส่งดัชนีต้นทางออกไปตรง ๆ แทนที่จะให้หน้าเว็บสมมติว่าลำดับตรงกัน
-            items.Count > 0 ? l.LineOrder - 1 : -1)).ToList();
+            // ดัชนีต้นทางที่ตัวสร้างบรรทัดคืนมาเอง (2026-10-16: แถวส่วนลดที่แปลงเป็นส่วนลด/บรรทัดสรุปตามตารางรหัส ภ.พ. ไม่ใช่ 1 แถว = 1 บรรทัดแล้ว)
+            // — ห้ามให้หน้าเว็บ (หรือที่นี่) สมมติว่าลำดับตรงกัน
+            l.LineOrder - 1 < lineSources.Count ? lineSources[l.LineOrder - 1] : -1)).ToList();
 
         // ── คู่ค้าของฟอร์ม (รอบ 200 ทีม K2 · C-02): เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดง ──
         // เดิมปุ่ม "แก้ในฟอร์มก่อน" ส่ง**ผู้ขาย** (MatchedContactId/ชื่อ/เลขผู้ขาย) เป็นคู่ค้าเสมอ แม้ใบเป็นฝั่งขาย ⇒ ฟอร์มรายได้ได้ชื่อบริษัทเราเอง

@@ -1595,6 +1595,8 @@
           notApprovedReason: fail[0] || skip[0] || 'ไม่ทราบสาเหตุ',
           gaps,
           s65,
+          // 2026-10-16 คำตัดสินเจ้าของข้อ 1 — ตารางรหัส ภ.พ. ชนะ (บรรทัดสรุปแทนรายการ) · ข้อความ+ตัวเลขจากเซิร์ฟเวอร์ (Helpers/OcrVatCodeLines.Decide)
+          noItems: pick('NO-ITEMS'),
           warnings: [
             ...gaps,
             ...pick('DATE-UNKNOWN'),
@@ -3131,13 +3133,21 @@
           if (td.textContent.trim() === '…') td.textContent = '-';
         });
         if (!summaryEl) return;
+        // ── 2026-10-16 ตารางรหัส ภ.พ. ชนะ: เซิร์ฟเวอร์ใช้บรรทัดสรุปต่อรหัสแทนรายการ (รายการกระทบตารางไม่ได้) — บอกตรง ๆ ว่าทำไมคอลัมน์ VAT ขึ้น "-"
+        // ข้อความ/ตัวเลขทั้งหมดมาจากเซิร์ฟเวอร์ (แท็ก [NO-ITEMS]) · หน้านี้ไม่คำนวณเอง
+        const noItemsNotes = Page.parseScanNotes(preview.notes).noItems;
+        const noItemsHtml = noItemsNotes.length && (preview.lines || []).every(l => l.sourceItemIndex == null || l.sourceItemIndex < 0)
+          ? `<div style="font-size:11.5px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:6px;padding:6px 10px;margin-bottom:6px">
+               📋 ${noItemsNotes.map(n => Layout.esc(n)).join('<br>')}
+             </div>`
+          : '';
         // ── ยอดที่จะได้ ≠ กระดาษ → เตือนเป็นตัวเลข **ก่อน**กดสร้าง/อนุมัติ (รอบ 190 ข้อ 9) ──
         // เซิร์ฟเวอร์ตัดสินแล้วใน BuildScanLinesAsync (Helpers/OcrAmountIntegrity + OcrLineReconciler)
         // แล้วเขียนเป็นแท็ก [Σ-GAP] ใน notes ของพรีวิว — หน้านี้อ่านด้วยตัวอ่านแท็กตัวเดียว
         // (parseScanNotes) ห้ามคำนวณ Σ เอง · และห้ามโชว์ป้ายเขียว "ผลรวมบรรทัดตรง" ทับคำเตือน
         const previewGaps = Page.parseScanNotes(preview.notes).gaps;
         if (previewGaps.length) {
-          summaryEl.innerHTML = `<div style="font-size:12px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;color:#991b1b;border-radius:6px;padding:8px 10px;line-height:1.6">
+          summaryEl.innerHTML = noItemsHtml + `<div style="font-size:12px;background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;color:#991b1b;border-radius:6px;padding:8px 10px;line-height:1.6">
                <div style="font-weight:700">⛔ ยอดที่ระบบจะสร้างไม่ตรงกับกระดาษ — ระบบจะไม่อนุมัติให้อัตโนมัติ ตรวจก่อนยืนยัน</div>
                ${previewGaps.map(g => `<div style="margin-top:2px">• ${Layout.esc(g)}</div>`).join('')}
              </div>`;
@@ -3146,16 +3156,16 @@
         const sub = Number(preview.headerSubTotal) || 0;
         const vat = Number(preview.headerVat) || 0;
         const tot = Number(preview.headerTotal) || 0;
-        if (vat <= 0) { summaryEl.innerHTML = ''; return; }
+        if (vat <= 0) { summaryEl.innerHTML = noItemsHtml; return; }
         const math = `${Layout.money(sub)} + VAT ${Layout.money(vat)} = ${Layout.money(tot)}`;
-        summaryEl.innerHTML = incl
+        summaryEl.innerHTML = noItemsHtml + (incl
           ? `<div style="font-size:11.5px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;border-radius:6px;padding:6px 10px">
                💡 <b>ราคาต่อหน่วยบนกระดาษรวม VAT แล้ว</b> (⊂ = VAT อยู่ในราคา) — ผลรวมบรรทัดตรงกับยอดรวมทั้งสิ้น
                ระบบจะถอด VAT ออกให้ตอนสร้างเอกสาร: <b>${Layout.esc(math)}</b> · ช่อง "ราคา" ในตารางนี้จึงเป็นราคารวม VAT ตามกระดาษ ไม่ต้องแก้
              </div>`
           : `<div style="font-size:11.5px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;border-radius:6px;padding:6px 10px">
                💡 ราคาต่อหน่วยเป็น<b>ยอดก่อน VAT</b> — ระบบบวก VAT ตามอัตราของแต่ละบรรทัด: <b>${Layout.esc(math)}</b>
-             </div>`;
+             </div>`);
       },
 
       async _loadAccountDropdowns(scan) {

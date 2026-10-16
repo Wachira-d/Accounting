@@ -20,7 +20,34 @@ public enum OcrVatCodeVerdict
 /// <summary>หนึ่งบรรทัดที่ป้อนชั้นนี้</summary>
 /// <param name="PrintedAmount">ยอดก่อนส่วนลดท้ายบิลของบรรทัดตามที่พิมพ์ (ตัวเดียวกับที่ตัวกระทบยอดใช้ — <c>lineGross</c>)</param>
 /// <param name="PresetRate">อัตราที่ชั้นบนตั้งไว้แล้ว (engine · ผู้ใช้ในหน้ารีวิว · สัญลักษณ์ท้ายบรรทัด) · null = ยังไม่มี</param>
-public readonly record struct OcrVatCodeLineInput(decimal PrintedAmount, decimal? PresetRate);
+/// <param name="Description">รายละเอียดของบรรทัด — ใช้แยก "แถวส่วนลดที่ engine คืนเป็นสินค้า" และหาสินค้าที่แถวส่วนลดเอ่ยชื่อ
+/// (<see cref="OcrVatCodeLines.Decide"/> · คำตัดสินเจ้าของ 2026-10-16 ข้อ 3) · null = ไม่รู้</param>
+public readonly record struct OcrVatCodeLineInput(decimal PrintedAmount, decimal? PresetRate, string? Description = null);
+
+/// <summary>บรรทัดเอกสารของใบที่มีตารางรหัส ภ.พ. ผสม มาจากไหน (คำตัดสินเจ้าของ 2026-10-16 ข้อ 1)</summary>
+public enum OcrVatCodeLineSource
+{
+    /// <summary>บรรทัดรายการที่ engine อ่าน (ลงตารางแล้ว หรือกระดาษไม่มีตารางผสม — เส้นเดิม)</summary>
+    Items = 0,
+    /// <summary>บรรทัดสรุปหนึ่งบรรทัดต่อกลุ่มรหัส ภ.พ. ตามตารางของกระดาษ — รายการกระทบกับตารางไม่ได้ (อัปโหลดแค่หน้าสุดท้าย/แถวขาด) ⇒ <b>ตารางชนะ</b></summary>
+    TableSummary = 1,
+}
+
+/// <summary>ผลของ <see cref="OcrVatCodeLines.Decide"/> — ตัวสร้างบรรทัด (service + replay harness) เดินตามนี้อย่างเดียว</summary>
+/// <param name="Source">ใช้บรรทัดรายการ หรือบรรทัดสรุปตามตาราง</param>
+/// <param name="Keep">ดัชนีบรรทัดต้นทางที่เป็นบรรทัดเอกสาร (ลำดับเดิม) — แถวส่วนลดที่แปลงแล้วไม่อยู่ในนี้</param>
+/// <param name="DiscountRows">ดัชนีบรรทัดต้นทางที่ engine คืนเป็น "สินค้า" แต่คือแถวส่วนลด (แปลงเป็นส่วนลดเอกสารแล้ว · ว่าง = ไม่มี)</param>
+/// <param name="BillDiscount">ส่วนลดท้ายบิลที่ใช้กระทบยอด (ของกระดาษ · หรือ Σ แถวส่วนลดที่แปลงเมื่อหัวใบอ่านส่วนลดไม่ได้)</param>
+/// <param name="NetSubForRecon">ฐานก่อน VAT หลังส่วนลดที่ใช้กระทบยอด (สูตรเดียวกับตัวสร้างบรรทัดเดิม)</param>
+/// <param name="Recon">ผลตัวกระทบยอดบนบรรทัด <paramref name="Keep"/></param>
+/// <param name="PricesIncludeVat">ยอดบรรทัดรวม VAT (ค่าที่ผู้เรียกตั้งมา หรือที่ตัวกระทบยอดตัดสิน)</param>
+/// <param name="Plan">แผนอัตรา/ส่วนลดตามรหัส ภ.พ. — ดัชนีตาม <paramref name="Keep"/></param>
+/// <param name="TableLines">กลุ่มของตาราง (ฐาน · VAT) เมื่อ <paramref name="Source"/> = <see cref="OcrVatCodeLineSource.TableSummary"/></param>
+/// <param name="Note">ข้อความอธิบาย (ไม่มีแท็ก) · null = ไม่มีอะไรต้องบอก</param>
+public sealed record OcrVatCodeDecision(
+    OcrVatCodeLineSource Source, IReadOnlyList<int> Keep, IReadOnlyList<int> DiscountRows,
+    decimal BillDiscount, decimal NetSubForRecon, OcrLineReconcileResult Recon, bool PricesIncludeVat,
+    OcrVatCodePlan Plan, IReadOnlyList<OcrVatGroup> TableLines, string? Note);
 
 /// <summary>ผลของชั้นนี้</summary>
 /// <param name="Rates">อัตราต่อบรรทัดตามลำดับเดิม — ผู้เรียกเติมเฉพาะบรรทัดที่ยังไม่มีอัตรา <b>หรือ</b> <paramref name="ReplaceEngineRate"/> = true · null = ไม่แตะ</param>
@@ -138,10 +165,13 @@ public static class OcrVatCodeLines
     /// <param name="headerDiscount">ส่วนลดท้ายบิลที่กระดาษพิมพ์ (0 = ไม่มี)</param>
     /// <param name="reconPricesIncludeVat">ตัวกระทบยอด (<see cref="OcrLineReconciler"/>) ตัดสินว่ายอดบรรทัดรวม VAT</param>
     /// <param name="reconTargetLineSum">เป้า Σ บรรทัดหลังส่วนลดของตัวกระทบยอด (null = ไม่มีส่วนลดให้กระจาย)</param>
+    /// <param name="namedDiscounts">ส่วนลดที่แถวส่วนลด<b>เอ่ยชื่อสินค้า</b> (ดัชนีบรรทัด · ยอด) — ลงบรรทัดนั้นก่อน ส่วนที่เหลือของกลุ่มกระจายตามสัดส่วน
+    /// (คำตัดสินเจ้าของ 2026-10-16 ข้อ 3) · null = ไม่มี (สูตรเดิมทุกตัวอักษร)</param>
     public static OcrVatCodePlan Plan(
         IReadOnlyList<OcrVatCodeLineInput> lines, string? rawText, OcrVatGroupTable table,
         decimal headerVat, decimal headerTotal, decimal headerDiscount,
-        bool reconPricesIncludeVat, decimal? reconTargetLineSum)
+        bool reconPricesIncludeVat, decimal? reconTargetLineSum,
+        IReadOnlyList<(int Line, decimal Amount)>? namedDiscounts = null)
     {
         var n = lines.Count;
         var rates = new decimal?[n];
@@ -268,16 +298,26 @@ public static class OcrVatCodeLines
             {
                 if (d <= 0m) continue;
                 var idx = Enumerable.Range(0, n).Where(i => kinds[i] == k && lines[i].PrintedAmount != 0m).ToList();
-                var baseSum = idx.Sum(i => lines[i].PrintedAmount);
-                var pct = Math.Round(d / baseSum * 100m, 2, R);
-                decimal given = 0m;
+                // ส่วนลดที่เอ่ยชื่อสินค้าในกลุ่มนี้ ลงบรรทัดนั้นก่อน — ใช้ได้เมื่อ Σ ไม่เกินส่วนลดของกลุ่มตามตาราง และไม่เกินยอดของบรรทัด
+                var named = (namedDiscounts ?? Array.Empty<(int Line, decimal Amount)>())
+                    .Where(nd => nd.Line >= 0 && nd.Line < n && kinds[nd.Line] == k).ToList();
+                var namedByLine = named.GroupBy(nd => nd.Line).ToDictionary(g => g.Key, g => g.Sum(x => x.Amount));
+                if (named.Count > 0 && (named.Sum(x => x.Amount) > d + HeaderTol
+                        || namedByLine.Any(kv => kv.Value > lines[kv.Key].PrintedAmount)))
+                    namedByLine.Clear();
+                var rest = d - namedByLine.Values.Sum();
+                var remaining = idx.Select(i => lines[i].PrintedAmount - namedByLine.GetValueOrDefault(i)).ToList();
+                var shares = SplitProportional(rest, remaining);
+                var groupPct = Math.Round(d / idx.Sum(i => lines[i].PrintedAmount) * 100m, 2, R);
                 for (var x = 0; x < idx.Count; x++)
                 {
                     var i = idx[x];
-                    var share = x == idx.Count - 1 ? d - given : Math.Round(d * lines[i].PrintedAmount / baseSum, 2, R);
-                    given += share;
+                    var share = shares[x] + namedByLine.GetValueOrDefault(i);
                     after[i] = lines[i].PrintedAmount - share;
-                    pcts[i] = pct;
+                    // % ของบรรทัด: ไม่มีส่วนลดที่เอ่ยชื่อ = % ของกลุ่ม (สูตรเดิม) · มี = % ของบรรทัดเอง · ส่วนลด 0 = 0% (ห้ามติด % ที่ไม่มีบาทรองรับ)
+                    pcts[i] = share <= 0m ? 0m
+                        : namedByLine.Count == 0 ? groupPct
+                        : Math.Round(share / lines[i].PrintedAmount * 100m, 2, R);
                 }
             }
         }
@@ -319,6 +359,178 @@ public static class OcrVatCodeLines
             problems.Add($"บรรทัดอัตราที่ตารางไม่มี {stray.Count} บรรทัด ({string.Join("/", stray.Select(l => RateText(l.VatRate)).Distinct())}) รวม {stray.Sum(l => l.NetAmount):N2}");
         return problems.Count == 0 ? null
             : $"{MismatchLead}: {string.Join(" · ", problems)} — แก้อัตรา VAT รายบรรทัดตามคอลัมน์รหัส ภ.พ. ({table.Evidence})";
+    }
+
+    /// <summary>คำที่บอกว่าแถวคือ "ส่วนลด" ไม่ใช่สินค้า (Makro พิมพ์แถวส่วนลดในคอลัมน์ราคา ไม่มีรหัส ภ.พ. ลงท้าย "(*1.0)")</summary>
+    private static readonly Regex DiscountLabel = new(
+        @"ส่วนลด|ลด|discount|\bslab\d*|\([ \t]*\*[ \t]*\d", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>ข้อความต้นของหมายเหตุ "ตารางชนะ — ใช้บรรทัดสรุปตามตาราง" (ไม่มีแท็ก · ผู้เรียกต่อท้ายแท็ก <see cref="OcrTotalDecomposer.NoItemsTag"/>)</summary>
+    public const string TableSummaryLead = "รายการที่อ่านได้กระทบกับตารางรหัส ภ.พ. ของกระดาษไม่ได้";
+
+    /// <summary>
+    /// **ตัดสินว่าบรรทัดเอกสารของใบนี้มาจากไหน** — ตัวตัดสินเดียวของ "รายการ หรือ ตารางรหัส ภ.พ." (คำตัดสินเจ้าของ 2026-10-16 · pure)
+    ///
+    /// <para>เจ้าของ (ข้อ 1): "ส่วนใหญ่ผู้ใช้อัพโหลดแค่หน้าสุดท้าย ถ้าหน้าสุดท้ายมีตารางสรุป ให้ยึดตามนั้นไปเลย" · (ข้อ 3) "แบบไหนก็ได้ ที่ครบถ้วน
+    /// ยอดรวม และ แยกรายการถูกต้อง" — กลับคำตัดสินรอบก่อน (คงรายการ + [Σ-GAP])</para>
+    /// <list type="number">
+    /// <item>รายการลงตาราง (<see cref="Plan"/> = Applied) ⇒ ใช้รายการ + อัตรา/ส่วนลดต่อรหัส (เส้น afbb0956 ทุกตัวอักษร)</item>
+    /// <item>ไม่ลง แต่มีแถวที่ engine คืนเป็น "สินค้า" ที่คือ<b>แถวส่วนลด</b> (ไม่มีรหัส ภ.พ. · Σ = ส่วนลดบนกระดาษ หรือมีคำว่า ลด/ส่วนลด/discount/SLAB)
+    ///   ⇒ แปลงเป็นส่วนลดเอกสาร (เอ่ยชื่อสินค้า = ลงบรรทัดนั้น · ไม่งั้นแบ่งต่อกลุ่มตามตาราง) แล้วต้อง<b>ลงตารางพอดี</b> จึงใช้</item>
+    /// <item>ยังไม่ลง ⇒ <b>ตารางชนะ</b>: บรรทัดสรุปหนึ่งบรรทัดต่อกลุ่มรหัส (ฐาน + VAT ที่กระดาษพิมพ์) — ไม่คงรายการครึ่งใบ + ช่องว่าง ·
+    ///   ใช้ได้เมื่อตารางรู้ความหมายทุกรหัส · VAT ตาราง = VAT หัวใบ · รวมตาราง = ยอดรวมหัวใบ และผู้เรียกอนุญาต (<paramref name="tableLinesAllowed"/>)</item>
+    /// <item>ไม่เข้าข้อใด ⇒ รายการเดิม (ด่าน <see cref="TableMismatch"/> ฟ้อง)</item>
+    /// </list>
+    /// <para>ไม่มีตารางรหัส ภ.พ. ผสม ⇒ <see cref="OcrVatCodeLineSource.Items"/> + ตัวกระทบยอดสูตรเดิมทุกตัวอักษร</para>
+    /// </summary>
+    /// <param name="lines">บรรทัดตามลำดับเดิม (ยอดก่อนลดตามที่พิมพ์ · อัตราที่ตั้งแล้ว · รายละเอียด)</param>
+    /// <param name="headerSub">ยอดก่อน VAT หัวสแกน</param>
+    /// <param name="headerVat">VAT หัวใบ</param>
+    /// <param name="headerTotal">ยอดรวมทั้งสิ้นหัวใบ (ยอดที่ยึดแล้ว)</param>
+    /// <param name="headerDiscount">ส่วนลดท้ายบิลบนกระดาษ (0 = ไม่มี)</param>
+    /// <param name="pricesIncludeVatPreset">เอกสารเป็นราคารวม VAT อยู่แล้ว (บรรทัด e-Tax ติดธง ฯลฯ)</param>
+    /// <param name="tableLinesAllowed">ผู้เรียกยอมให้แทนรายการด้วยบรรทัดสรุปได้ (ไม่มีหัก ณ ที่จ่าย · ไม่ผูกบรรทัด PO)</param>
+    public static OcrVatCodeDecision Decide(
+        IReadOnlyList<OcrVatCodeLineInput> lines, string? rawText, OcrVatGroupTable table,
+        decimal headerSub, decimal headerVat, decimal headerTotal, decimal headerDiscount,
+        bool pricesIncludeVatPreset, bool tableLinesAllowed)
+    {
+        var all = Enumerable.Range(0, lines.Count).ToList();
+        var first = Analyze(lines, all, rawText, table, headerSub, headerVat, headerTotal, headerDiscount, pricesIncludeVatPreset, null);
+        if (first.Plan.Verdict != OcrVatCodeVerdict.Unreconciled) return first;
+
+        // ── ข้อ 3: แถวส่วนลดที่ engine คืนเป็นสินค้ายอดบวก ⇒ ส่วนลดเอกสาร (ต้องลงตารางพอดี ไม่งั้นทิ้งการแปลง) ──
+        if (DiscountRows(lines, rawText, table, headerDiscount) is { } conv)
+        {
+            var keep = all.Where(i => !conv.Indexes.Contains(i)).ToList();
+            var named = conv.Named.Select(nd => (Line: keep.IndexOf(nd.Line), nd.Amount)).Where(nd => nd.Line >= 0).ToList();
+            var alt = Analyze(lines, keep, rawText, table, headerSub, headerVat, headerTotal, conv.Discount, pricesIncludeVatPreset, named);
+            if (alt.Plan.Applied)
+                return alt with
+                {
+                    DiscountRows = conv.Indexes,
+                    Note = $"แถวส่วนลด {conv.Indexes.Count} แถวที่ engine อ่านเป็นสินค้า (รวม {conv.Indexes.Sum(i => lines[i].PrintedAmount):N2}) "
+                        + $"แปลงเป็นส่วนลดของเอกสาร {conv.Discount:N2}"
+                        + (named.Count > 0 ? $" · ส่วนลดที่ระบุชื่อสินค้า {named.Count} แถวลงบรรทัดสินค้านั้น" : "")
+                        + " — ส่วนลดแบ่งต่อรหัส ภ.พ. ให้ตรงตาราง",
+                };
+        }
+
+        // ── ข้อ 1: ตารางชนะ — บรรทัดสรุปต่อกลุ่มรหัส ──
+        if (tableLinesAllowed && SummaryInsteadOfItems(first.Plan, table, headerVat, headerTotal) is { Count: > 0 } groups)
+            return first with
+            {
+                Source = OcrVatCodeLineSource.TableSummary,
+                TableLines = groups,
+                Note = $"{TableSummaryLead} [{first.Plan.Note}] — "
+                    + $"ระบบใช้บรรทัดสรุปตามตาราง {groups.Count} บรรทัด (ยอดและ VAT ตรงกระดาษ: "
+                    + string.Join(" · ", groups.Select(g => $"รหัส {g.PaperCode} {KindText(g.Kind)} ฐาน {g.Net:N2} VAT {g.Vat:N2}"))
+                    + $" · รวม {table.Gross:N2}) · รายการสินค้า {lines.Count} แถวที่อ่านได้ไม่ถูกลงเป็นบรรทัด — หากต้องตัดสต็อก กรุณาบันทึกรายการย่อยเอง",
+            };
+        return first;
+    }
+
+    private static OcrVatCodeDecision Analyze(
+        IReadOnlyList<OcrVatCodeLineInput> lines, IReadOnlyList<int> keep, string? rawText, OcrVatGroupTable table,
+        decimal headerSub, decimal headerVat, decimal headerTotal, decimal discount, bool pricesIncludeVatPreset,
+        IReadOnlyList<(int Line, decimal Amount)>? named)
+    {
+        // ฐานก่อน VAT หลังส่วนลดที่ใช้กระทบยอด — สูตรเดียวกับตัวสร้างบรรทัด (เดิมอยู่ใน OcrService.BuildScanLinesAsync)
+        var netSub = headerSub;
+        if (discount > 0m && headerTotal > 0m)
+            netSub = OcrHeaderAmounts.NetSubTotal(headerSub, headerVat, headerTotal, discount);
+        else if (headerSub <= 0m && headerTotal > 0m)
+            netSub = Math.Max(0m, headerTotal - headerVat);
+        var kept = keep.Select(i => lines[i]).ToList();
+        var recon = OcrLineReconciler.Classify(kept.Sum(l => l.PrintedAmount), netSub, headerVat, headerTotal, discount);
+        var incl = pricesIncludeVatPreset || recon.PricesIncludeVat;
+        var plan = Plan(kept, rawText, table, headerVat, headerTotal, discount, incl, recon.TargetLineSum, named);
+        return new OcrVatCodeDecision(OcrVatCodeLineSource.Items, keep, Array.Empty<int>(), discount, netSub, recon, incl,
+            plan, Array.Empty<OcrVatGroup>(), null);
+    }
+
+    /// <summary>กลุ่มของตารางที่ใช้เป็นบรรทัดสรุปแทนรายการ (ข้อ 1 "ตารางชนะ") · ว่าง = ใช้ไม่ได้ (คงรายการ)</summary>
+    internal static IReadOnlyList<OcrVatGroup> SummaryInsteadOfItems(
+        OcrVatCodePlan plan, OcrVatGroupTable table, decimal headerVat, decimal headerTotal)
+    {
+        if (plan.Verdict != OcrVatCodeVerdict.Unreconciled || !IsMixed(table) || !table.AllKnown || headerTotal <= 0m)
+            return Array.Empty<OcrVatGroup>();
+        if (Math.Abs(table.Vat - headerVat) > HeaderTol || Math.Abs(table.Gross - headerTotal) > HeaderTol)
+            return Array.Empty<OcrVatGroup>();
+        return table.Groups.Where(g => g.Net > 0m || g.Vat > 0m).ToList();
+    }
+
+    /// <summary>แถวส่วนลดที่ engine คืนเป็น "สินค้า" (คำตัดสินเจ้าของข้อ 3)</summary>
+    internal sealed record DiscountConversion(IReadOnlyList<int> Indexes, decimal Discount, IReadOnlyList<(int Line, decimal Amount)> Named);
+
+    /// <summary>หาแถวส่วนลดในบรรทัดที่ engine คืน — แถวที่<b>ไม่มีรหัส ภ.พ. บนกระดาษ</b> · ไม่มีอัตราตั้งไว้ · ยอดบวก และ
+    /// (Σ = ส่วนลดบนกระดาษ) หรือ (มีคำว่า ลด/ส่วนลด/discount/SLAB/"(*n)" และ Σ = ส่วนลดบนกระดาษ หรือกระดาษไม่บอกส่วนลด) · null = ไม่มี/ไม่แน่ใจ ·
+    /// แถวส่วนลดที่ระบุชื่อสินค้า (คำในรายละเอียดของสินค้า<b>บรรทัดเดียว</b>อยู่ในข้อความแถวส่วนลด) ⇒ คืนเป็นส่วนลดของบรรทัดนั้น</summary>
+    internal static DiscountConversion? DiscountRows(
+        IReadOnlyList<OcrVatCodeLineInput> lines, string? rawText, OcrVatGroupTable table, decimal headerDiscount)
+    {
+        if (lines.Count < 2 || !IsMixed(table)) return null;
+        var codes = table.Groups.Select(g => g.PaperCode).ToHashSet(StringComparer.Ordinal);
+        var coded = MatchRowCodes(lines, ReadRowCodes(rawText, codes)).Select(c => c is not null).ToArray();
+        var uncoded = Enumerable.Range(0, lines.Count)
+            .Where(i => !coded[i] && lines[i].PresetRate is null && lines[i].PrintedAmount != 0m).ToList();
+        if (uncoded.Count == 0 || uncoded.Any(i => lines[i].PrintedAmount < 0m)) return null;
+        var labelled = uncoded.Where(i => DiscountLabel.IsMatch(lines[i].Description ?? "")).ToList();
+        decimal Sum(IEnumerable<int> idx) => idx.Sum(i => lines[i].PrintedAmount);
+        List<int>? pick = null;
+        if (headerDiscount > 0m && Math.Abs(Sum(uncoded) - headerDiscount) <= HeaderTol) pick = uncoded;
+        else if (labelled.Count > 0 && (headerDiscount <= 0m || Math.Abs(Sum(labelled) - headerDiscount) <= HeaderTol)) pick = labelled;
+        if (pick is null || pick.Count >= lines.Count) return null;
+        var discount = headerDiscount > 0m ? headerDiscount : Sum(pick);
+
+        // ส่วนลดที่เอ่ยชื่อสินค้า: คำ (≥ 3 ตัวอักษร ไม่มีตัวเลข) ในรายละเอียดของสินค้าที่เหลือ อยู่ในข้อความแถวส่วนลด — ต้องชี้สินค้าได้บรรทัดเดียว
+        var products = Enumerable.Range(0, lines.Count).Where(i => !pick.Contains(i)).ToList();
+        var named = new List<(int Line, decimal Amount)>();
+        foreach (var d in pick)
+        {
+            var text = lines[d].Description ?? "";
+            var hits = products.Where(p => Tokens(lines[p].Description).Any(t => text.Contains(t, StringComparison.OrdinalIgnoreCase))).ToList();
+            if (hits.Count == 1 && lines[d].PrintedAmount <= lines[hits[0]].PrintedAmount)
+                named.Add((hits[0], lines[d].PrintedAmount));
+        }
+        return new DiscountConversion(pick, discount, named);
+    }
+
+    private static IEnumerable<string> Tokens(string? s)
+        => Regex.Split(s ?? "", @"[\s()\[\],/:;*]+").Where(t => t.Length >= 3 && !t.Any(char.IsDigit));
+
+    /// <summary>จับคู่รหัสที่พิมพ์บนแถวสินค้ากับบรรทัด — ยอดตรงถึงสตางค์ตามลำดับบนกระดาษ (ตัวเดียวของ <see cref="Plan"/> และ <see cref="DiscountRows"/>)</summary>
+    private static string?[] MatchRowCodes(IReadOnlyList<OcrVatCodeLineInput> lines, IReadOnlyList<(decimal Amount, string Code)> marks)
+    {
+        var result = new string?[lines.Count];
+        var j = 0;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var a = Math.Round(lines[i].PrintedAmount, 2, R);
+            for (var k = j; k < marks.Count; k++)
+            {
+                if (marks[k].Amount != a) continue;
+                result[i] = marks[k].Code;
+                j = k + 1;
+                break;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>แบ่ง <paramref name="total"/> ตามสัดส่วน <paramref name="weights"/> (ปัด 2 ตำแหน่ง · เศษลงตัวสุดท้าย)</summary>
+    private static decimal[] SplitProportional(decimal total, IReadOnlyList<decimal> weights)
+    {
+        var result = new decimal[weights.Count];
+        var baseSum = weights.Sum();
+        if (total == 0m || baseSum <= 0m || weights.Count == 0) return result;
+        decimal given = 0m;
+        for (var x = 0; x < weights.Count; x++)
+        {
+            result[x] = x == weights.Count - 1 ? total - given : Math.Round(total * weights[x] / baseSum, 2, R);
+            given += result[x];
+        }
+        return result;
     }
 
     /// <summary>ชุดดัชนีที่ผลรวมยอด = <paramref name="target"/> ถึงสตางค์ — หยุดเมื่อพบครบ <paramref name="limit"/> ชุด (พอรู้ว่า "ทางเดียว" ไหม)</summary>

@@ -188,4 +188,148 @@ public class OcrVatCodeLinesTests
         // แถวตารางสรุปเองไม่ใช่แถวสินค้า
         Assert.Empty(OcrVatCodeLines.ReadRowCodes("59 2 9,121.50 638.50 9,760.00\nรวม 10,341.50 638.50 10,980.00", new[] { "1", "2" }));
     }
+
+    // ══ 2026-10-16 คำตัดสินเจ้าของข้อ 1 (ตารางชนะ) + ข้อ 3 (แถวส่วนลดที่ engine คืนเป็นสินค้า) — OcrVatCodeLines.Decide ══
+
+    private static IReadOnlyList<OcrVatCodeLineInput> InD(params (decimal Amount, string Desc)[] rows)
+        => rows.Select(r => new OcrVatCodeLineInput(r.Amount, null, r.Desc)).ToList();
+
+    private static readonly (decimal, string)[] MakroItemRows =
+    {
+        (1000.00m, "ข้าวสารหอมมะลิ 100% ตราเอโร่ 15 กก."), (248.00m, "ไข่ไก่ เบอร์ 0 แผง 30 ฟอง"),
+        (1134.00m, "น้ำยาล้างจาน ซันไลต์ 3,600 มล."), (2590.00m, "กระดาษทิชชู่ ม้วนใหญ่ 24 ม้วน"),
+        (1180.00m, "ถุงขยะดำ ฮีโร่ 30x40 นิ้ว"), (960.00m, "น้ำดื่ม เอโร่ 600 มล. แพ็ค 12 ขวด"), (4096.00m, "แชมพู ซันซิล 900 มล."),
+    };
+
+    private static OcrVatCodeDecision DecideMakro(string text, IReadOnlyList<OcrVatCodeLineInput> lines, bool allowed = true)
+        => OcrVatCodeLines.Decide(lines, text, OcrLineVatMarks.ReadGroups(text), 10341.50m, 638.50m, 10980.00m, 228.00m,
+            pricesIncludeVatPreset: false, tableLinesAllowed: allowed);
+
+    [Fact]
+    public void ตัดสิน_รายการลงตาราง_ใช้รายการ_เท่าเส้นafbb0956ทุกตัวเลข()
+    {
+        // ทิศตรงข้าม (ใบที่ถูกอยู่แล้วไม่ถูกแตะ): หน้า 1 สังเคราะห์ + หน้า 2 จริง รายการลงตาราง ⇒ Items · แผนเดียวกับ Plan ตรง ๆ
+        var d = DecideMakro(MakroFull, InD(MakroItemRows));
+        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
+        Assert.Empty(d.DiscountRows);
+        Assert.Equal(Enumerable.Range(0, 7), d.Keep);
+        Assert.Equal(OcrVatCodeVerdict.Applied, d.Plan.Verdict);
+        Assert.Equal(new[] { 977.56m, 242.44m }, d.Plan.AmountsAfterDiscount!.Take(2).ToArray());
+        Assert.Equal(OcrLineReconcileCase.DiscountOnTotalInclVat, d.Recon.Case);
+        Assert.Null(d.Note);
+    }
+
+    [Fact]
+    public void ตัดสิน_อัปโหลดแค่หน้าสุดท้าย_engineคืนแถวส่วนลดหน้า2_ตารางชนะ_ยกเว้น1220_มีVAT9121_50_รวม10980()
+    {
+        // กระดาษจริง Makro หน้า 2/2 (ข้อความถอดภาพ): หน้านี้มีแต่แถวส่วนลด 30 · 60 · 10 — Σ ≠ ส่วนลดบนกระดาษ (228) และไม่ลงตาราง
+        // ⇒ ไม่คงรายการครึ่งใบ + ช่องว่าง (คำตัดสินรอบก่อน) — ตารางชนะ: หนึ่งบรรทัดต่อกลุ่มรหัส
+        var text = Norm(OcrPaperSamples.MakroPage2of2);
+        var d = DecideMakro(text, InD((30.00m, "ซื้อสินค้าฮีโร่ ถุงขยะ ถุงหูหิ้ว ถุงซิป ครบ 359 ลด 30 บาท(*1.0)"),
+            (60.00m, "ลด 60บเมื่อซื้อสินค้ายูนิลีเวอร์ ดูแลเส้นผม ผิวหน้า ผิวกาย ที่ร่วมครบ 599 บ(*1.0)"), (10.00m, "SLAB1(*5.0)")));
+        Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
+        Assert.Equal(new[] { ("1", OcrVatGroupKind.Exempt, 1220.00m, 0.00m), ("2", OcrVatGroupKind.Standard7, 9121.50m, 638.50m) },
+            d.TableLines.Select(g => (g.PaperCode, g.Kind, g.Net, g.Vat)).ToArray());
+        Assert.Equal(10980.00m, d.TableLines.Sum(g => g.Net + g.Vat));            // = ยอดชำระบนกระดาษ
+        Assert.StartsWith(OcrVatCodeLines.TableSummaryLead, d.Note);
+        Assert.Contains("หากต้องตัดสต็อก", d.Note);
+    }
+
+    [Fact]
+    public void ตัดสิน_แถวสินค้าขาดสองแถว_ไม่ลงตาราง_ตารางชนะ_รวม10980()
+    {
+        // ใบเดียวกัน แต่ engine อ่านได้ 5 จาก 7 แถว (ข้าวสาร + แชมพูหาย) ⇒ Σ ไม่ลงตาราง ⇒ บรรทัดสรุปตามตาราง (ไม่คงรายการ 5 แถว + [Σ-GAP])
+        var d = DecideMakro(MakroFull, InD(MakroItemRows.Skip(1).Take(5).ToArray()));
+        Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
+        Assert.Equal(10980.00m, d.TableLines.Sum(g => g.Net + g.Vat));
+        Assert.Equal(1220.00m, d.TableLines.Where(g => g.Kind == OcrVatGroupKind.Exempt).Sum(g => g.Net));
+    }
+
+    [Fact]
+    public void ตัดสิน_ผู้เรียกไม่อนุญาตบรรทัดสรุป_มีหักณที่จ่ายหรือผูกPO_คงรายการและด่านผลสุดท้ายฟ้อง()
+    {
+        // ทิศตรงข้าม: บรรทัดสรุปไม่แบก WHT / SourceLineId ของ PO ⇒ คงรายการ (Unreconciled) — ไม่แต่งบรรทัดสรุปที่ทำข้อมูลอื่นหาย
+        var d = DecideMakro(MakroFull, InD(MakroItemRows.Skip(1).Take(5).ToArray()), allowed: false);
+        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
+        Assert.Equal(OcrVatCodeVerdict.Unreconciled, d.Plan.Verdict);
+        Assert.Empty(d.TableLines);
+    }
+
+    [Fact]
+    public void ตัดสิน_ตารางกับหัวใบไม่ตรงกัน_ไม่ใช้ตาราง_คงรายการ()
+    {
+        // ตารางชนะได้เฉพาะเมื่อเป็นเรื่องเดียวกับหัวสแกน (รวมตาราง = ยอดรวมหัวใบ · VAT ตาราง = VAT หัวใบ) — ไม่งั้นไม่รู้ว่าใครผิด
+        var t = OcrLineVatMarks.ReadGroups(MakroFull);
+        var d = OcrVatCodeLines.Decide(InD(MakroItemRows.Skip(1).Take(5).ToArray()), MakroFull, t,
+            11208.00m, 638.50m, 11846.50m, 228.00m, false, true);
+        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
+    }
+
+    [Fact]
+    public void ตัดสิน_แถวส่วนลดที่engineคืนเป็นสินค้า_แปลงเป็นส่วนลด_ไข่ไก่ได้ส่วนลดที่เอ่ยชื่อ_ต่อกลุ่มตรงตาราง()
+    {
+        var rows = MakroItemRows.Concat(new[]
+        {
+            (28.00m, "ลดราคาไข่ไก่ แม็คโคร(*1.0)"), (100.00m, "ลด 100บ เมื่อซื้อทิชชู่ครบ 2,500 บ(*1.0)"),
+            (30.00m, "ซื้อสินค้าฮีโร่ ถุงขยะ ถุงหูหิ้ว ถุงซิป ครบ 359 ลด 30 บาท(*1.0)"),
+            (60.00m, "ลด 60บเมื่อซื้อสินค้ายูนิลีเวอร์ ดูแลเส้นผม ผิวหน้า ผิวกาย ที่ร่วมครบ 599 บ(*1.0)"), (10.00m, "SLAB1(*5.0)"),
+        }).ToArray();
+        var d = DecideMakro(MakroFull, InD(rows));
+        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
+        Assert.Equal(new[] { 7, 8, 9, 10, 11 }, d.DiscountRows);
+        Assert.Equal(Enumerable.Range(0, 7), d.Keep);
+        Assert.Equal(228.00m, d.BillDiscount);
+        Assert.Equal(OcrVatCodeVerdict.Applied, d.Plan.Verdict);
+        var after = d.Plan.AmountsAfterDiscount!;
+        Assert.Equal(1000.00m, after[0]);                                // ข้าวสาร: ส่วนลดกลุ่มยกเว้นทั้ง 28 เป็นของไข่ไก่ (เอ่ยชื่อ)
+        Assert.Equal(220.00m, after[1]);
+        Assert.Equal(9760.00m, after.Skip(2).Sum());                     // กลุ่ม 7% ตรงตาราง (รวม VAT)
+        Assert.True(after[4] <= 1180.00m - 30.00m);                      // ถุงขยะ ฮีโร่ ได้ 30 ที่เอ่ยชื่อ + ส่วนแบ่ง
+        Assert.Equal(0m, d.Plan.DiscountPercents![0]);                   // ไม่มีส่วนลด ⇒ 0% (ห้ามติด % ที่ไม่มีบาท)
+        Assert.Contains("แปลงเป็นส่วนลดของเอกสาร 228.00", d.Note);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_สินค้าชื่อมีคำว่าลด_แต่มีรหัสภพบนแถว_ไม่ถูกตีเป็นส่วนลด()
+    {
+        // "นมลดไขมัน" พิมพ์รหัส 2 บนแถวเหมือนสินค้าอื่น ⇒ เป็นสินค้า (แปลงเฉพาะแถวที่ไม่มีรหัส) · รายการลงตารางอยู่แล้ว ⇒ ไม่แตะ
+        const string paper =
+            "1 นมจืดลดไขมัน 4 EA 125.00 2 500.00\n" +
+            "2 ไข่ไก่ เบอร์ 0 1 EA 500.00 1 500.00\n" +
+            "3 น้ำยาล้างจาน 1 EA 570.00 2 570.00\n" +
+            "จำนวนชิ้น รหัส ภ.พ. ราคาสินค้า ภาษีมูลค่าเพิ่ม รวม\n" +
+            "1 1 500.00 0.00 500.00\n" +
+            "3 2 1,000.00 70.00 1,070.00\n" +
+            "รวม 1,500.00 70.00 1,570.00\n" +
+            "รหัส ภ.พ. 1=สินค้าได้รับการยกเว้นภาษีมูลค่าเพิ่ม 2=สินค้าที่ต้องเสียภาษีมูลค่าเพิ่ม\n";
+        var d = OcrVatCodeLines.Decide(InD((500.00m, "นมจืดลดไขมัน"), (500.00m, "ไข่ไก่ เบอร์ 0"), (570.00m, "น้ำยาล้างจาน")),
+            paper, OcrLineVatMarks.ReadGroups(paper), 1500.00m, 70.00m, 1570.00m, 0m, false, true);
+        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
+        Assert.Empty(d.DiscountRows);
+        Assert.Equal(new decimal?[] { 7m, -1m, 7m }, d.Plan.Rates);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_แถวส่วนลดรวมไม่เท่าส่วนลดบนกระดาษ_ไม่แปลงครึ่งทาง_ตารางชนะ()
+    {
+        // แถว "ลด" 28 + 100 = 128 ≠ ส่วนลด 228 บนกระดาษ ⇒ ไม่แปลง (ยอดไม่ลงตาราง) ⇒ บรรทัดสรุปตามตาราง — ไม่คงแถวส่วนลดยอดบวกพองยอดรวม
+        var rows = MakroItemRows.Concat(new[] { (28.00m, "ลดราคาไข่ไก่ แม็คโคร(*1.0)"), (100.00m, "ลด 100บ เมื่อซื้อทิชชู่ครบ 2,500 บ(*1.0)") }).ToArray();
+        var d = DecideMakro(MakroFull, InD(rows));
+        Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
+        Assert.Equal(10980.00m, d.TableLines.Sum(g => g.Net + g.Vat));
+    }
+
+    [Fact]
+    public void ใบไม่มีตารางรหัสผสม_ตัดสินเป็นรายการ_ตัวกระทบยอดสูตรเดิมทุกตัวอักษร()
+    {
+        foreach (var paper in new[] { OcrPaperSamples.WinePro, OcrPaperSamples.WholesaleMixedVat, OcrPaperSamples.HardwareBillDiscount })
+        {
+            var t = OcrLineVatMarks.ReadGroups(paper);
+            var d = OcrVatCodeLines.Decide(InD((100m, "สินค้า"), (50m, "ลดราคา")), paper, t, 150m, 10.5m, 160.5m, 0m, false, true);
+            Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
+            Assert.Equal(OcrVatCodeVerdict.NotApplicable, d.Plan.Verdict);
+            Assert.Empty(d.DiscountRows);                                // "ลดราคา" บนใบที่ไม่มีตารางผสม ไม่ถูกแปลง
+            Assert.Equal(OcrLineReconciler.Classify(150m, 150m, 10.5m, 160.5m, 0m), d.Recon);
+        }
+    }
 }

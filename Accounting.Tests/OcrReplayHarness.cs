@@ -441,40 +441,47 @@ public static class OcrReplayHarness
             => OcrTotalAnchor.DocumentOverstatement(normalizedText, anchoredTotal, builtTotal) is null
                 ? gaps : gaps.Append("Overstated");
 
+        // ตรงกับ service: ตารางรหัส ภ.พ. อ่านครั้งเดียว · ตัวตัดสิน "รายการ หรือ ตาราง" (OcrVatCodeLines.Decide — คำตัดสินเจ้าของ 2026-10-16 ข้อ 1/3)
+        var codeTable = OcrLineVatMarks.ReadGroups(normalizedText);
+        IReadOnlyList<OcrVatGroup>? tableLinesInsteadOfItems = null;
         if (lines is { Count: > 0 })
         {
-            var n = lines.Count;
-            var printed = lines.Select(l => l.Amount).ToList();
+            var n0 = lines.Count;
+            var printed0 = lines.Select(l => l.Amount).ToList();
             // ตรงกับ service: บรรทัดที่เอกสารประกาศส่วนลดรายบรรทัดเอง (e-Tax) ใช้ยอดหลังลด — กระดาษไม่มีช่องนี้ ⇒ 0 ทุกบรรทัด (เรียกตัวเดียวกัน ไม่ประกอบเอง)
-            var lineOwnDisc = lines.Select(l => OcrEtaxLineNormalizer.ProvenLineDiscount(l.Quantity, l.UnitPrice, l.Amount, null)).ToList();
-            var lineGross = lines.Select((l, gi) => lineOwnDisc[gi] > 0m ? l.Amount
+            var lineOwnDisc0 = lines.Select(l => OcrEtaxLineNormalizer.ProvenLineDiscount(l.Quantity, l.UnitPrice, l.Amount, null)).ToList();
+            var lineGross0 = lines.Select((l, gi) => lineOwnDisc0[gi] > 0m ? l.Amount
                 : OcrTotalDecomposer.LineGross(l.Quantity, l.UnitPrice, l.Amount)).ToList();
-            var grossSum = lineGross.Sum();
-
-            var netSubForRecon = hdrSub;
-            if (hdrDiscRaw > 0m && hdrTotal > 0m)
-                netSubForRecon = OcrHeaderAmounts.NetSubTotal(hdrSub, hdrVat, hdrTotal, hdrDiscRaw);
-            else if (hdrSub <= 0m && hdrTotal > 0m)
-                netSubForRecon = Math.Max(0m, hdrTotal - hdrVat);
-
-            var recon = OcrLineReconciler.Classify(grossSum, netSubForRecon, hdrVat, hdrTotal, hdrDiscRaw);
-            var docDiscountPercent = recon.DiscountPercent;
-            var pricesIncludeVat = recon.PricesIncludeVat;
-            // ตรงกับ service: บรรทัด e-Tax ที่ติดธงราคารวม VAT ทั้งใบ ⇒ เอกสารราคารวม VAT — บรรทัดกระดาษไม่มีธง ⇒ false เสมอ
-            if (OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, false)).ToList()))
-                pricesIncludeVat = true;
-
-            // ตรงกับ service: สัญลักษณ์ท้ายบรรทัด (ก่อนตัวกระทบยอด) → ชั้นรหัส ภ.พ. (หลังตัวกระทบยอด · ก่อนกระจายส่วนลด · เติมเฉพาะบรรทัดที่ยังว่าง)
-            var rates = new decimal?[n];
-            var markPick = OcrLineVatMarks.Assign(printed, paperVatSplit, hdrVat);
+            // ตรงกับ service: สัญลักษณ์ท้ายบรรทัด (ก่อนตัวกระทบยอด) → ตัวตัดสินตารางรหัส ภ.พ. (บรรทัดกระดาษไม่มีธงราคารวม VAT ⇒ preset = false)
+            var rates0 = new decimal?[n0];
+            var markPick = OcrLineVatMarks.Assign(printed0, paperVatSplit, hdrVat);
             if (markPick.Applied)
-                for (var i = 0; i < n; i++) rates[i] ??= markPick.Rates[i];
-            var codeTable = OcrLineVatMarks.ReadGroups(normalizedText);
-            var codePlan = OcrVatCodeLines.Plan(
-                lineGross.Select((g, i) => new OcrVatCodeLineInput(g, rates[i])).ToList(),
-                normalizedText, codeTable, hdrVat, hdrTotal, hdrDiscRaw, pricesIncludeVat, recon.TargetLineSum);
+                for (var i = 0; i < n0; i++) rates0[i] ??= markPick.Rates[i];
+            var decision = OcrVatCodeLines.Decide(
+                lineGross0.Select((g, i) => new OcrVatCodeLineInput(g, rates0[i], lines[i].Description)).ToList(),
+                normalizedText, codeTable, hdrSub, hdrVat, hdrTotal, hdrDiscRaw,
+                pricesIncludeVatPreset: OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, false)).ToList()),
+                tableLinesAllowed: headerWht == 0m);
+            if (decision.Source == OcrVatCodeLineSource.TableSummary)
+                tableLinesInsteadOfItems = decision.TableLines;
+            else
+            {
+            var keep = decision.Keep;
+            lines = keep.Select(k => lines[k]).ToList();
+            var n = lines.Count;
+            var printed = keep.Select(k => printed0[k]).ToList();
+            var lineGross = keep.Select(k => lineGross0[k]).ToList();
+            var grossSum = lineGross.Sum();
+            hdrDiscRaw = decision.BillDiscount;
+            var netSubForRecon = decision.NetSubForRecon;
+            var recon = decision.Recon;
+            var docDiscountPercent = recon.DiscountPercent;
+            var pricesIncludeVat = decision.PricesIncludeVat;
+            var rates = keep.Select(k => rates0[k]).ToArray();
+            var codePlan = decision.Plan;
             if (codePlan.Applied)
-                for (var i = 0; i < n; i++) rates[i] ??= codePlan.Rates[i];
+                for (var i = 0; i < n; i++)
+                    if (codePlan.Rates[i] is decimal cr && (rates[i] is null || codePlan.ReplaceEngineRate[i])) rates[i] = cr;
 
             var amounts = printed.ToArray();
             if (codePlan.AmountsAfterDiscount is { } codeAmounts)
@@ -497,7 +504,7 @@ public static class OcrReplayHarness
                 Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(p.RawText), hdrVat, null, null, anchoredTotal)
                 == OcrHeaderVatSource.Labelled;
             var plan = OcrLineVatPlanner.PlanWholeInvoice(amounts, rates, hdrVat, netSubForRecon, hdrTotal, pricesIncludeVat,
-                OcrLineVatPlanner.PaperExemptAmount(paperVatSplit, OcrLineVatMarks.ReadGroups(p.RawText)), vatPrinted);
+                OcrLineVatPlanner.PaperExemptAmount(paperVatSplit, codeTable), vatPrinted);
             if (plan.Decided)
                 for (var i = 0; i < n; i++) rates[i] ??= plan.Rates[i];
             var standardVatRate = hdrVat > 0m ? 7m : 0m;
@@ -563,10 +570,12 @@ public static class OcrReplayHarness
             }
             return new ReplayBuiltLines("Items", recon.Case.ToString(), pricesIncludeVat,
                 string.Join(";", rows), GapText(WithOverstatement(gaps, builtItemsTotal - roundingShift)), -roundingShift, duplicateRowsDropped);
+            }
         }
 
         // ไม่มีรายการ — ตารางสรุปตามกลุ่มภาษีบนกระดาษ (Makro 3/3) ก่อน แล้วค่อยบรรทัดสรุปใบเดียว
-        var groups = OcrTotalDecomposer.SummaryGroupLines(
+        // 2026-10-16 ข้อ 1: รายการกระทบตารางไม่ได้ ⇒ ตารางชนะ (สาขาเดียวกัน — ตรงกับ service)
+        var groups = tableLinesInsteadOfItems ?? OcrTotalDecomposer.SummaryGroupLines(
             OcrTotalDecomposer.Decompose(p.RawText, headerSub, headerVat, anchoredTotal, hdrDiscRaw),
             anchoredTotal, headerVat, headerSubTotal);
         if (groups.Count > 0 && headerWht == 0m)
@@ -585,8 +594,8 @@ public static class OcrReplayHarness
                 rows.Add(Fmt(g.Net, rate, g.Vat, g.Net, 0m, 0m, 0m));
             }
             var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount);
-            return new ReplayBuiltLines("VatGroups", null, false, string.Join(";", rows),
-                GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m);
+            return new ReplayBuiltLines(tableLinesInsteadOfItems is null ? "VatGroups" : "VatGroupsInsteadOfItems", null, false, string.Join(";", rows),
+                GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m, duplicateRowsDropped);
         }
 
         var summaryRate = hdrVat > 0m ? 7m : 0m;
