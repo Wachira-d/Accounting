@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.DTOs.Accounting;
@@ -293,3 +294,15 @@ public record AccountRestorePlan(Guid AccountId, string AccountCode, string? Blo
 public record OpeningRollRepairRequest(List<int>? Years);
 
 public record OpeningRollRepairResult(int RepairedYears, int RepairedRows, List<string> Skipped);
+
+/// <summary>ยกเลิกการปิดปี (คำสั่งเจ้าของ 2026-10-16 · <c>Helpers/YearEndReopenRule</c>) — <c>Reason</c> บังคับ ·
+/// <c>AcknowledgeFiled</c> = รับทราบว่าต้องยื่น ภ.ง.ด.50 เพิ่มเติม/งบการเงินฉบับแก้ไข (จำเป็นเมื่อปีนั้นยื่นแล้ว — ไม่ติ๊ก ⇒ 409 + <c>filedReturns</c>)</summary>
+public record YearEndReopenRequest(string? Reason, bool AcknowledgeFiled = false);
+
+/// <summary>ผลของการยกเลิกการปิดปี — ใบกลับรายการใบปิดปี · งวดที่เปิดคืน · แถวยกยอดที่ยกเลิก · แบบที่ยื่นแล้วที่ผู้ใช้รับทราบ</summary>
+public record YearEndReopenResult(int FiscalYear, Guid ClosingJournalEntryId, Guid ReversalJournalEntryId, string ReversalEntryNumber,
+    int PeriodsReopened, int RolledRowsRemoved, IReadOnlyList<YearEndFiledReturn> AcknowledgedFiledReturns);
+
+/// <summary>ปีที่ปิดแล้วหนึ่งปี (หน้างวดบัญชี) — <c>CanReopen</c> = ปีล่าสุดที่ปิด (ด่านอื่นตรวจตอนกด) · <c>ReopenEffects</c> = ข้อความผลของการยกเลิก (เซิร์ฟเวอร์เป็นเจ้าของ)</summary>
+public record YearEndClosingSummary(Guid Id, int FiscalYear, Guid ClosingJournalEntryId, string? ClosingEntryNumber, decimal TransferredAmount,
+    DateTime ClosedAt, string? ClosedBy, bool CanReopen, string? ReopenBlockedReason, IReadOnlyList<string> ReopenEffects);

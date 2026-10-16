@@ -44,6 +44,11 @@ public interface IAccountingService
     Task<Models.Entities.FiscalPeriod> ReopenPeriodAsync(Guid companyId, Guid periodId, string userId);
     Task<Models.Entities.YearEndClosing> YearEndCloseAsync(Guid companyId, int fiscalYear, Guid retainedEarningsAccountId, DateTime? closingDate, string userId);
     Task<int> RollOpeningBalancesAsync(Guid companyId, int year, string userId);
+    /// <summary>ยกเลิกการปิดปี (เจ้าของบริษัท — ด่านที่ controller) · ตัวตัดสินเดียว <c>Helpers/YearEndReopenRule</c> · ล็อกเดียวกับปิดปี/ยกยอด/ซ่อม ·
+    /// ไม่ผ่าน = <c>YearEndReopenException</c> ก่อนเขียนอะไร</summary>
+    Task<YearEndReopenResult> ReopenYearEndAsync(Guid companyId, int fiscalYear, string? reason, bool acknowledgeFiled, string userId);
+    /// <summary>ปีที่ปิดแล้ว (ใหม่ → เก่า) + ปีไหนยกเลิกการปิดได้ (ปีล่าสุด)</summary>
+    Task<List<YearEndClosingSummary>> GetYearEndClosingsAsync(Guid companyId);
     /// <summary>รายงานอ่านอย่างเดียว: ยอดยกมาจากการปิดปีที่เก็บไว้ ≠ ยอดที่ควรเป็น (บั๊กนับซ้ำก่อน 2026-10-15 · Helpers/OpeningRoll)</summary>
     Task<List<OpeningRollCheckYear>> FindOpeningRollMismatchesAsync(Guid companyId);
     /// <summary>ซ่อมเฉพาะปีที่เลือก + audit chain ทุกบัญชี · ไม่มีงานไหนเรียกอัตโนมัติ</summary>

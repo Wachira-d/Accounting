@@ -1693,7 +1693,7 @@ public static class DatabaseMigrationHelper
             """,
             """
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_OpeningBalances_Lookup"
-                ON "OpeningBalances" ("CompanyId", "FiscalPeriodId", "AccountId");
+                ON "OpeningBalances" ("CompanyId", "FiscalPeriodId", "AccountId") WHERE "IsDeleted" = false;
             """,
 
             // YearEndClosings — audit per closed fiscal year
@@ -1715,8 +1715,32 @@ public static class DatabaseMigrationHelper
             """,
             """
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_YearEndClosings_CompanyYear"
-                ON "YearEndClosings" ("CompanyId", "FiscalYear");
+                ON "YearEndClosings" ("CompanyId", "FiscalYear") WHERE "IsDeleted" = false;
             """,
+            // ═══ ยกเลิกการปิดปี (คำสั่งเจ้าของ 2026-10-16 · Helpers/YearEndReopenRule) ═══
+            // แถวปิดปีที่ยกเลิกคงไว้ (soft delete) + คอลัมน์ผู้/เวลา/เหตุผล/ใบกลับรายการ · unique index สองตัวเป็น partial (แถวที่ลบไม่กันการปิดปีซ้ำ/ยกยอดซ้ำ)
+            """ALTER TABLE "YearEndClosings" ADD COLUMN IF NOT EXISTS "ReopenedAt" timestamp with time zone NULL;""",
+            """ALTER TABLE "YearEndClosings" ADD COLUMN IF NOT EXISTS "ReopenedBy" text NULL;""",
+            """ALTER TABLE "YearEndClosings" ADD COLUMN IF NOT EXISTS "ReopenReason" text NULL;""",
+            """ALTER TABLE "YearEndClosings" ADD COLUMN IF NOT EXISTS "ReopenJournalEntryId" uuid NULL;""",
+            // ฐานเดิม: index เต็ม (ไม่มี WHERE) ทั้งชื่อของ migration นี้และชื่อที่ EnsureCreated ตั้ง ⇒ ทิ้งแล้วสร้าง partial · idempotent (ข้ามเมื่อเป็น partial แล้ว)
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'IX_YearEndClosings_CompanyYear'
+                           AND indexdef NOT LIKE '%WHERE%') THEN
+                    DROP INDEX "IX_YearEndClosings_CompanyYear";
+                END IF;
+                DROP INDEX IF EXISTS "IX_YearEndClosings_CompanyId_FiscalYear";
+                IF EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'IX_OpeningBalances_Lookup'
+                           AND indexdef NOT LIKE '%WHERE%') THEN
+                    DROP INDEX "IX_OpeningBalances_Lookup";
+                END IF;
+                DROP INDEX IF EXISTS "IX_OpeningBalances_CompanyId_FiscalPeriodId_AccountId";
+            END $$;
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_YearEndClosings_CompanyYear" ON "YearEndClosings" ("CompanyId", "FiscalYear") WHERE "IsDeleted" = false;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_OpeningBalances_Lookup" ON "OpeningBalances" ("CompanyId", "FiscalPeriodId", "AccountId") WHERE "IsDeleted" = false;""",
 
             // MigrationSessions + AccountMappings (Task 1 wizard)
             """

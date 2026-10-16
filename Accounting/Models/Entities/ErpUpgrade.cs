@@ -57,6 +57,21 @@ public class YearEndClosing : TenantEntity
 
     /// <summary>Locks every fiscal period in the closed year.</summary>
     public bool LockedFiscalPeriods { get; set; } = true;
+
+    // ── ยกเลิกการปิดปี (คำสั่งเจ้าของ 2026-10-16 · Helpers/YearEndReopenRule) ── แถวที่ยกเลิกแล้วถูก soft delete (IsDeleted) แต่คงไว้เป็นหลักฐาน ·
+    // unique index (CompanyId, FiscalYear) เป็น partial WHERE "IsDeleted" = false ⇒ ปิดปีเดิมซ้ำได้
+
+    /// <summary>เวลาที่ยกเลิกการปิดปีนี้ (UTC) — null = ยังปิดอยู่</summary>
+    public DateTime? ReopenedAt { get; set; }
+
+    /// <summary>ผู้ยกเลิก (user id)</summary>
+    public string? ReopenedBy { get; set; }
+
+    /// <summary>เหตุผลที่ผู้ใช้ระบุ (บังคับ)</summary>
+    public string? ReopenReason { get; set; }
+
+    /// <summary>ใบกลับรายการใบปิดปี (ลงวันเดียวกับใบเดิม · ติดธง IsClosingEntry)</summary>
+    public Guid? ReopenJournalEntryId { get; set; }
 }
 
 /// <summary>

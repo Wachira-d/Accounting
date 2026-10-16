@@ -408,6 +408,42 @@ public class AccountingController : ControllerBase
             $"ปิดงบประจำปี {request.FiscalYear} สำเร็จ — โอน {result.TransferredAmount:N2} ไป Retained Earnings"));
     }
 
+    /// <summary>ปีที่ปิดแล้ว (หน้างวดบัญชี — แถวปีที่ปิด + ปุ่ม "ยกเลิกการปิดปี" ของปีล่าสุด)</summary>
+    [HttpGet("year-end-closings")]
+    public async Task<ActionResult<ApiResponse<List<YearEndClosingSummary>>>> GetYearEndClosings(Guid companyId)
+    {
+        var result = await _accountingService.GetYearEndClosingsAsync(companyId);
+        return Ok(new ApiResponse<List<YearEndClosingSummary>>(true, result));
+    }
+
+    /// <summary>
+    /// ยกเลิกการปิดปี (คำสั่งเจ้าของ 2026-10-16 · <c>Helpers/YearEndReopenRule</c>) — เจ้าของบริษัทเท่านั้น (ด่านเดียวกับปิดปี) ·
+    /// ปีนั้นยื่น ภ.ง.ด.50/งบการเงินแล้วแต่ไม่รับทราบ ⇒ <b>409</b> + <c>data.filedReturns</c> (หน้าเว็บแสดงช่องรับทราบแล้วส่งใหม่) · ด่านอื่น = 400/404 พร้อมทางไปต่อ
+    /// </summary>
+    [HttpPost("year-end-close/{year:int}/reopen")]
+    public async Task<ActionResult<ApiResponse<object>>> ReopenYearEnd(Guid companyId, int year, [FromBody] YearEndReopenRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await _companyService.EnsureOwnerAccessAsync(companyId, userId);
+        try
+        {
+            var result = await _accountingService.ReopenYearEndAsync(companyId, year, request?.Reason, request?.AcknowledgeFiled == true, userId.ToString());
+            return Ok(new ApiResponse<object>(true, result,
+                $"ยกเลิกการปิดปี {year + 543} แล้ว — กลับรายการใบปิดปีด้วย {result.ReversalEntryNumber} · เปิด {result.PeriodsReopened} งวด · "
+                + $"ยกเลิกยอดยกมา {result.RolledRowsRemoved} บัญชี · แก้รายการแล้วปิดปีใหม่ได้"));
+        }
+        catch (YearEndReopenException ex) when (ex.Outcome == YearEndReopenOutcome.FiledNeedsAcknowledgement)
+        {
+            return StatusCode(409, new ApiResponse<object>(false,
+                new { ruleCode = ex.RuleCode, needsAcknowledgement = true, filedReturns = ex.FiledReturns.Select(f => new
+                {
+                    f.FilingId, form = YearEndReopenRule.FilingLabel(f), f.FilingType, f.FormCode, f.Status, f.FiledDate,
+                    reference = YearEndReopenRule.FilingRef(f),
+                }).ToList() },
+                ex.Message));
+        }
+    }
+
     public record RollOpeningBalancesRequest(int Year);
 
     /// <summary>Re-run the opening-balance roll-over for a given target year

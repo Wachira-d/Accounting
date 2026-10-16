@@ -5448,6 +5448,19 @@ REVIEWER_CASES = [
     ("EXA5d", "FindLegacyCalendarRollPeriodsAsync", "if (!OpeningRoll.IsLegacyCalendarRoll(rolledAt, startMonth, changes)) continue;", "", True),
     ("EXA5e", "RestoreAccountAsync", "var plan = await PlanRestoreUnderAsync(companyId, account, parentId);",
      "var plan = new AccountRestorePlan(account.Id, account.AccountCode, null, null, null);", True),
+    # ยกเลิกการปิดปี (2026-10-16): ทิ้งผลตัวตัดสิน · ถอดล็อก · ถอดด่านเจ้าของ · ยกเลิกแถวนำเข้าด้วย · กลับใบผ่านทางสมุดรายวัน · ถอดการเปิดงวด ธ.ค. ตอนปิดปี ⇒ ต้องฟ้อง
+    ("REO1", "ReopenYearEndAsync", "if (!decision.Allowed) throw new YearEndReopenException(decision);", "_ = decision;", True),
+    ("REO2", "ReopenYearEndAsync", 'await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", OpeningRoll.LockKey(companyId));\n\n        // ── ข้อเท็จจริง',
+     "\n        // ── ข้อเท็จจริง", True),
+    ("REO3", "ReopenYearEnd", "await _companyService.EnsureOwnerAccessAsync(companyId, userId);\n        try\n        {\n            var result = await _accountingService.ReopenYearEndAsync(",
+     "try\n        {\n            var result = await _accountingService.ReopenYearEndAsync(", True),
+    ("REO4", "ReopenYearEndAsync", "foreach (var row in nextRows.Where(o => OpeningRoll.IsRolled(o.Notes)))", "foreach (var row in nextRows)", True),
+    ("REO5", "ReopenYearEndAsync", "var reversalId = await CreateJournalEntryCoreAsync(companyId, reversalRequest, userId, deletedClosingAccounts);",
+     "var reversalId = (await ReverseJournalEntryAsync(companyId, original.Id, original.EntryDate, null, true)).Id;", True),
+    ("REO6", "YearEndCloseAsync", "            closingDatePeriod.Status = FiscalPeriodStatus.Open;\n", "", True),
+    # ทิศตรงข้าม: จัดรูปแบบใหม่ (ขึ้นบรรทัด) ต้องไม่ฟ้อง
+    ("REO7", "ReopenYearEndAsync", "if (!decision.Allowed) throw new YearEndReopenException(decision);",
+     "if (!decision.Allowed)\n            throw new YearEndReopenException(decision);", False),
     # (LW3 เดิม — ทิ้งผลด่าน quota ใน CreatePropertyAsync — ย้ายไปพึ่งกลายพันธุ์อัตโนมัติของ must_re ในกติกาของ LW เพราะ by_method ผูกชื่อเมธอดนี้กับกติกาของทีม LS ที่มาก่อน)
 ]
 
@@ -8103,6 +8116,34 @@ RULES += [
     dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadChartRepairSuspectsAsync",
          must=["PlanAccountRestoreAsync(", "plan.SuggestedParentId"],
          why=_ADVX + " รอบ 5 P2-3: ปุ่มกู้คืนใช้แผนเดียวกับบริการ (ผังแม่รับไม่ได้ ⇒ ปุ่มกู้คืนใต้หัวบัญชีที่เสนอ / ไม่มีปุ่ม + เหตุผล)"),
+    # ── ยกเลิกการปิดปี (คำสั่งเจ้าของ 2026-10-16 · DECISIONS ข้อ 152 · Helpers/YearEndReopenRule) ──
+    dict(file=_YEC, method="ReopenYearEndAsync",
+         must=["OpeningRoll.LockKey(", "YearEndReopenRule.Evaluate(", "throw new YearEndReopenException(", "FindLegacyCalendarRollPeriodsAsync(",
+               "YearEndReopenRule.IsFiledReturn(", "JournalLineAccounts.ReversalMismatch(", "CreateJournalEntryCoreAsync(", "OpeningRoll.IsRolled(",
+               "AddChainedAuditLog(", "y.CompanyId == companyId", "f.CompanyId == companyId", "o.CompanyId == companyId", "p.CompanyId == companyId",
+               "a.CompanyId == companyId", "reversal.IsClosingEntry = true", "original.Status = JournalEntryStatus.Reversed"],
+         must_lit=['"SELECT pg_advisory_xact_lock({0})"'],
+         must_re=[r"if\s*\(\s*!decision\.Allowed\s*\)\s*throw new YearEndReopenException\(decision\)"],
+         before=[("OpeningRoll.LockKey(", "YearEndReopenRule.Evaluate("),
+                 ("YearEndReopenRule.Evaluate(", "SaveChangesAsync("),
+                 ("YearEndReopenRule.Evaluate(", "CreateJournalEntryCoreAsync("),
+                 ("p.Status = FiscalPeriodStatus.Open", "CreateJournalEntryCoreAsync(")],
+         forbid=["ReverseJournalEntryAsync(", "ThenInclude(l => l.Account)", "IgnoreQueryFilters().Where(o =>"],
+         why="ยกเลิกการปิดปี (2026-10-16): ล็อกเดียวกับปิดปี/ยกยอด/ซ่อม → ตัวตัดสินเดียวก่อนเขียน → เปิดงวดก่อนสร้างใบกลับ · ใบกลับผ่านทางเฉพาะ"
+             " (ไม่ผ่าน ReverseJournalEntryAsync ที่ ClosingEntryLock กันไว้) ติดธงใบปิด · ยกเลิกเฉพาะแถวยกยอด (แถวนำเข้าไม่แตะ) · audit ทุกแถว · กรองบริษัททุกคิวรี"),
+    dict(file="Controllers/AccountingController.cs", method="ReopenYearEnd",
+         must=["EnsureOwnerAccessAsync(companyId, userId)", "ReopenYearEndAsync(", "YearEndReopenOutcome.FiledNeedsAcknowledgement", "filedReturns"],
+         before=[("EnsureOwnerAccessAsync(companyId, userId)", "ReopenYearEndAsync(")],
+         why="ยกเลิกการปิดปี (2026-10-16 คำตอบเจ้าของข้อ 4): เจ้าของเท่านั้น — ด่านมาก่อน service · ยื่นแล้วไม่รับทราบ = 409 + filedReturns (คำตอบข้อ 1)"),
+    dict(file=_YEC, method="YearEndCloseAsync",
+         must=["YearEndCloseThroughSoftClosedAction", "AddChainedAuditLog("],
+         before=[("closingDatePeriod.Status = FiscalPeriodStatus.Open", "CreateJournalEntryCoreAsync("),
+                 ("CreateJournalEntryCoreAsync(", "p.Status = FiscalPeriodStatus.Locked")],
+         why="ยกเลิกการปิดปี (2026-10-16) บั๊กข้างเคียง: งวดของวันที่ใบปิดปีที่ปิดชั่วคราว ⇒ เปิดใต้ล็อกเดียวกัน + audit ก่อนสร้างใบ แล้วล็อกในธุรกรรมเดียวกัน"),
+    dict(file=_YEC, method="ReopenPeriodAsync", must=["YearEndReopenRule.LockedPeriodMessage("],
+         why="ยกเลิกการปิดปี (2026-10-16): เปิดงวดเดี่ยวที่ล็อกจากการปิดปีไม่ได้ — ข้อความชี้ปุ่ม \"ยกเลิกการปิดปี\" (เดิมอ้างคำสั่งที่ไม่มีอยู่)"),
+    dict(file=_YEC, method="GetYearEndClosingsAsync", must=["y.CompanyId == companyId", "YearEndReopenRule.Effects(", "YearEndReopenRule.LaterYearClosedMessage("],
+         why="ยกเลิกการปิดปี (2026-10-16): หน้างวดบัญชีแสดงข้อความผลกระทบ/เหตุที่เปิดไม่ได้จากตัวตัดสินเดียว (หน้าเว็บไม่มีสำเนากติกา)"),
 ]
 
 # ── 2026-10-16 (Makro หน้า 2/2 · ใบสำคัญจ่าย 11,846.50 ทั้งที่กระดาษยืนยัน 10,980): ยอดเอกสารห้ามเกินยอดรวมที่กระดาษยืนยัน ──────────

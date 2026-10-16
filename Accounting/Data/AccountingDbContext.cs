@@ -797,7 +797,10 @@ public class AccountingDbContext : DbContext
             e.Property(o => o.OpeningCredit).HasPrecision(18, 2);
             e.HasOne(o => o.FiscalPeriod).WithMany().HasForeignKey(o => o.FiscalPeriodId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(o => o.Account).WithMany().HasForeignKey(o => o.AccountId).OnDelete(DeleteBehavior.Restrict);
-            e.HasIndex(o => new { o.CompanyId, o.FiscalPeriodId, o.AccountId }).IsUnique();
+            // ยกเลิกการปิดปี (2026-10-16): แถวยกยอดถูก soft delete แล้วปิดปีซ้ำเขียนแถวใหม่ของบัญชีเดิม ⇒ unique เฉพาะแถวที่ยังไม่ลบ
+            // (ชื่อเดียวกับ DatabaseMigrationHelper — ฐานที่สร้างจากโมเดลกับฐานที่ migrate ได้ index ชุดเดียวกัน)
+            e.HasIndex(o => new { o.CompanyId, o.FiscalPeriodId, o.AccountId }).IsUnique()
+                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("IX_OpeningBalances_Lookup");
             e.HasQueryFilter(o => !o.IsDeleted);
         });
         modelBuilder.Entity<YearEndClosing>(e =>
@@ -805,7 +808,9 @@ public class AccountingDbContext : DbContext
             e.Property(y => y.TransferredAmount).HasPrecision(18, 2);
             e.HasOne(y => y.RetainedEarningsAccount).WithMany().HasForeignKey(y => y.RetainedEarningsAccountId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(y => y.ClosingJournalEntry).WithMany().HasForeignKey(y => y.ClosingJournalEntryId).OnDelete(DeleteBehavior.Restrict);
-            e.HasIndex(y => new { y.CompanyId, y.FiscalYear }).IsUnique();
+            // ยกเลิกการปิดปี (2026-10-16): แถวที่ยกเลิกแล้วคงไว้ (soft delete) ⇒ unique เฉพาะแถวที่ยังไม่ลบ — ปิดปีเดิมซ้ำได้
+            e.HasIndex(y => new { y.CompanyId, y.FiscalYear }).IsUnique()
+                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("IX_YearEndClosings_CompanyYear");
             e.HasQueryFilter(y => !y.IsDeleted);
         });
         modelBuilder.Entity<MigrationSession>(e =>
