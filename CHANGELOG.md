@@ -5197,4 +5197,4 @@ _ทีม OCR 11 (2026-10-16 · ฝ่ายค้าน OCR 9 bbf596e9..5a5813
 **P2-1/P2-2** เศษปัดราคาต่อหน่วยมีเพดาน 1.00 บาท และ 0.5% ของบรรทัด (ตัวเลขเดียวกับเศษถอด VAT) — ใต้เพดานติดธง `UnitPriceRoundingResidual` ป้าย "เศษจากการปัดราคาต่อหน่วย" ·
 เกินเพดานคงจำนวน ราคาปัด ไม่แต่งส่วนลด (บล็อก · รันซ้ำไม่หารจำนวนใหม่) · **P2-3** `DescriptionForMatching` ตัดเฉพาะเครื่องหมายของตัวกัน (`LumpSumSuffix` — สมมาตรกับตัวเขียน +
 ย้อนหลังรุ่น 6–8 แบบแคบ) ⇒ "Flash Drive (64 GB)" ไม่ถูกตัด · `OcrExtractionVersion` 8 → 9 · replay corpus 1,010 แถว เปลี่ยน 0 · เทสต์ `OcrQuantityGuardOcr11Tests` · `OcrLumpSumRepairTests` ·
-`Db/OcrLumpSumRepairDbTests` · ล็อกจุดเรียก +11 กติกา + 7 เคสฝ่ายค้าน (G11a–G11g · G11g รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (รวม Db บน PostgreSQL 16) — commit <sha-ocr11>_
+`Db/OcrLumpSumRepairDbTests` · ล็อกจุดเรียก +11 กติกา + 7 เคสฝ่ายค้าน (G11a–G11g · G11g รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (รวม Db บน PostgreSQL 16) — commit ef2faa35_
