@@ -5113,3 +5113,15 @@ _ฝ่ายค้านของ 73573e9a..658e3705 (ตัวกันจำ�
 `ThaiTextNormalizer.MapThaiPua` (PUA ของฟอนต์ไทยใน PDF — ใช้เฉพาะตัวค้นคำนี้) · `OcrExtractionVersion` 4 → 5 · Corpus +6 ใบ · golden ใบเดิมเปลี่ยน 0 ค่า (เพิ่มช่อง `|-`) ·
 เจอแต่ไม่แก้: `PaperWhtReader` บนหัวคอลัมน์ WHT หยิบ 10,000 · `OcrDepositMarker` ตีใบงวดหักมัดจำเป็นใบมัดจำ · เคส ก ราคา 4 ตำแหน่งต่าง 0.15 —
 คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 687d3a10_
+
+_2026-10-16 ทีม EC — ถอดช่อง "หมวดค่าใช้จ่าย" ออกจากหน้ารีวิวสแกน (คำตัดสินเจ้าของ "ถอดออกเลย" · DECISIONS ข้อ 154) — ผังเดบิตคือการตัดสินใจเดียว ·
+หน้าเว็บ: ถอด select + การผูกสองทางกับผังเดบิต + `_mapCategoryToAccountCode`/`_mapAccountCodeToCategory` (สำเนากติกาฝั่ง JS) + ช่องใน payload คำแก้ +
+ตัวแปร `reviewedCategory` ที่ไม่ได้ใช้ + แถว debug · มือถือถอดช่อง "ประเภทค่าใช้จ่าย" (ส่งรหัสอังกฤษทับหมวดของสแกน · ไม่มีผู้อ่าน) ·
+เซิร์ฟเวอร์: `OcrCorrectionRequest` ไม่มี `ExpenseCategory` (client เก่า = ทิ้ง) · `ParseThaiDocument`/`DocumentZoneAnalyzer` ไม่ตั้งหมวดตามชนิดกระดาษ ·
+ไม่อ่าน `expense_category` ของ ocr-service · ตัวจัดหมวดรับ `headerDescription: null` (เดิมหมวดตั้งต้น "ค่าบริการ" = หลักฐานผูกกับเงิน ⇒ ใบเสร็จซื้อของได้ข้อเสนอ
+หัก ณ ที่จ่าย 3% 40(8) — ยืนยันด้วยเทสต์) · ตัวเรียนผังบันทึก/ทำนายด้วย `Helpers/OcrLearnerDescriptionKey` (เดิมบันทึกด้วยชื่อหมวด ⇒ ชั้นผู้ขาย+คำอธิบายไม่เคยแมตช์ ·
+Db test 0.667 vs 0.433) · ลบตัวดันความมั่นใจหมวดของ VendorIntel + fallback ชื่อหมวดใน NaiveBayes/seed ผังเดบิต · นักเรียน `OcrFullReview` เลิกตอบ `expense_category`
+(ครูไม่มีช่องนี้ · หน้าเว็บไม่อ่าน) · กฎ "ค่าประกัน" ไม่รับคำเดี่ยว "ประกัน"/"premium" (ต้นเหตุที่ทำซ้ำได้ของหมวด/ผัง 5800 บนใบรับประกันสินค้า · ประกันสังคม · Premium Quality) ·
+ล็อกจุดเรียก `tools/required_call_site_check.py` 4 กติกา · คอลัมน์คงไว้ ไม่มี migration · `AiFeatureKey` ไม่มีตัวไหนผูกกับหมวด ·
+เทสต์ `OcrExpenseCategoryRemovalTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>_
+

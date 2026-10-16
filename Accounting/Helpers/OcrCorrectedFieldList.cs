@@ -63,7 +63,6 @@ public static class OcrCorrectedFieldList
         Add("SubTotal", c.SubTotal);
         Add("VatAmount", c.VatAmount);
         Add("TotalAmount", c.TotalAmount);
-        Add("ExpenseCategory", c.ExpenseCategory);
         // ผังบัญชี Dr/Cr (ฝ่ายค้านรอบสาม f1690d11): หน้ารีวิวส่งทั้งสอง dropdown ทุกครั้ง ⇒ นับเฉพาะเมื่อเปลี่ยนจากคู่ที่<b>จอแสดง</b>
         // (Accounts baseline · null = กติกาเดิม "ส่งมา = แก้")
         if (before?.Accounts is not OcrAccountsBaseline acc)

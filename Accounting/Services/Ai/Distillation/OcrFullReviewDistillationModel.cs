@@ -63,7 +63,6 @@ public sealed class OcrFullReviewDistillationModel : ILocalDistillationModel
         string? VendorName,
         string? VendorTaxId,
         string? VendorBranchCode,
-        string? ExpenseCategory,
         int Samples);
 
     public OcrFullReviewDistillationModel(
@@ -91,7 +90,7 @@ public sealed class OcrFullReviewDistillationModel : ILocalDistillationModel
                 .Select(r => new
                 {
                     r.ExtractedVendorTaxId, r.ExtractedVendorName, r.VendorBranchCode,
-                    r.ScannedDocumentType, r.DocumentType, r.TargetDocumentType, r.ExpenseCategory,
+                    r.ScannedDocumentType, r.DocumentType, r.TargetDocumentType,
                 })
                 .ToListAsync(ct);
 
@@ -113,7 +112,7 @@ public sealed class OcrFullReviewDistillationModel : ILocalDistillationModel
                 {
                     grouped[key] = new VendorProfile(
                         r.TargetDocumentType, r.ExtractedVendorName, r.ExtractedVendorTaxId,
-                        r.VendorBranchCode, r.ExpenseCategory, 1);
+                        r.VendorBranchCode, 1);
                 }
             }
 
@@ -169,7 +168,8 @@ public sealed class OcrFullReviewDistillationModel : ILocalDistillationModel
                     vendor_name = hit.VendorName,
                     vendor_tax_id = hit.VendorTaxId,
                     vendor_branch_code = hit.VendorBranchCode,
-                    expense_category = hit.ExpenseCategory,
+                    // (2026-10-16) เดิมส่ง expense_category จากประวัติด้วย — ครู (OcrReviewPrompt) ไม่มีช่องนี้ และหน้าเว็บไม่เคยอ่าน
+                    // (_applyAiCorrections) ⇒ นักเรียนตอบช่องที่ไม่มีใครถาม · ถอดพร้อมช่องหมวดค่าใช้จ่ายของหน้ารีวิว
                 },
                 target_document = hit.TargetDocumentType,
                 vendor_canonical = hit.VendorName,

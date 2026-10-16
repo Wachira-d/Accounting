@@ -54,7 +54,6 @@ public static class OcrFieldKeys
     /// <para>ℹ️ <c>FieldConfidence</c> ยัง<b>เขียนที่ <see cref="WhtRate"/></b> เพราะ
     /// ไฮไลต์เหลืองผูกกับ<b>ช่องกรอกบนฟอร์ม</b> ซึ่งมีช่องเดียว (<c>fWhtRate</c>)</para></summary>
     public const string SuggestedWhtRate = "SuggestedWhtRate";
-    public const string ExpenseCategory = "ExpenseCategory";
     public const string DebitAccount = "DebitAccount";
     public const string PaymentTerms = "PaymentTerms";
 

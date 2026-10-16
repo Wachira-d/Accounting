@@ -85,6 +85,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Flow**: อัปโหลด → OCR เก็บ `OcrScanResult` → review modal → "สร้างเอกสาร"
 - **Endpoint**: `POST /api/companies/{id}/ocr/{scanId}/create-document`
   (`?targetType=` เลือกชนิด · `?approve=true` = **สร้าง + อนุมัติทันที**)
+- **หน้ารีวิวสแกนไม่มีช่อง "หมวดค่าใช้จ่าย" แล้ว (คำตัดสินเจ้าของ 2026-10-16 "ถอดออกเลย" · DECISIONS ข้อ 154)**: ผังบัญชีเดบิตคือการตัดสินใจเดียว —
+  เอกสารรับ `ExpenseCategoryId` = ผังเดบิตของสแกน (เส้นสร้าง) / `expenseCategoryCode` = ผังเดบิตที่เลือก (ฟอร์ม handoff) เหมือนเดิม · ถอด select + การผูกสองทางกับผังเดบิต
+  + ตัวแปลงหมวด↔ผังฝั่ง JS + ช่องใน payload คำแก้ (หน้าเดสก์ท็อป + `mobile-expense.html`) · `OcrCorrectionRequest` ไม่มีช่อง `ExpenseCategory` (client เก่าที่ส่งมา = ถูกทิ้ง) ·
+  เซิร์ฟเวอร์: หมวดตั้งต้นตามชนิดกระดาษ (ใบเสร็จ ⇒ "ค่าบริการ") และหมวดจาก LLM ของ ocr-service ไม่ถูกตั้ง/อ่านแล้ว · ตัวจัดหมวดรับ `headerDescription: null`
+  (เดิมชื่อหมวดเป็นหลักฐานผูกกับเงิน ⇒ เสนอหัก ณ ที่จ่าย 3% 40(8) บนใบเสร็จซื้อของ) · ตัวเรียนผังบันทึก/ทำนายด้วยคีย์เดียว `Helpers/OcrLearnerDescriptionKey`
+  (เดิมบันทึกด้วยชื่อหมวด ทำนายด้วยคำอธิบาย) · กฎ "ค่าประกัน" ไม่รับคำเดี่ยว "ประกัน"/"premium" (ข้อความรับประกันสินค้า/ประกันสังคมเคยได้ผัง 5800) ·
+  คอลัมน์ `OcrScanResult.ExpenseCategory` คงไว้เป็นค่าวินิจฉัย (ไม่มี migration) · Last verified `commit <pending>`
 - **บรรทัดจากสแกนที่ไม่มีราคาต่อหน่วย (เคส C · รอบ 204 ทีม D)**: ราคาต่อหน่วย = ยอดหลังกระจายส่วนลดท้ายบิล ⇒ ส่วนลด % = 0 (ตัวตัดสินเดียว `OcrLineReconciler.LineDiscount` — เดิมติด % ทั้งบิลไว้ ⇒ เปิดแก้แล้วบันทึก `ComputeLineAmounts` หักซ้ำ 950 ลด 5% ⇒ 902.50) · ยอด/VAT/ยอดรวมตอนสร้างไม่ขยับ · golden เดิมเปลี่ยน 0 แถว · เอกสารเก่าก่อนแก้ยังติด % (ไม่มี migration อัตโนมัติ) ⇒ หน้าตรวจข้อมูลแถว `OcrLineDiscountWouldChangeOnResave` + ปุ่ม "แก้" รายใบ (ทีม E 2026-10-13 · ดูข้อถัดไป) · Last verified `commit 1c46ebcd`
 - **จำนวน < 1 ไม่มีราคาต่อหน่วย (ทีม E 2026-10-13)**: `OcrLineReconciler.LineDiscount` คืน `(Percent, Amount, UnitPrice?)` — ราคา = ปัดขึ้น 2 ตำแหน่งของ ยอด ÷ จำนวน ·
   ส่วนลดบาท = round(จำนวน × ราคา) − ยอด (0–0.01) · % = 0 (เดิมส่วนลดบาทติดลบ ⇒ บันทึกซ้ำได้ 0.35 × 100 = 35.00) · จำนวน ≥ 1 / มีราคา = สูตรเดิมทุกตัวอักษร ·
@@ -5859,3 +5866,5 @@ _Last verified against codebase: 2026-10-16 (ใบจริง RE-20261000111 �
 _Last verified against codebase: 2026-10-16 (ฝ่ายค้าน 73573e9a..658e3705 — §OCR ด่านคุณภาพก่อน persist ข้อ 2: ส่วนลดจากกระดาษต้องมีหลักฐาน ·
 หัก ณ ที่จ่าย/มัดจำไม่ใช่ส่วนลด (`DeductionRow`) · บรรทัดลงตัวเสมอ · ตรวจสด `[LINE-QTY]` ตอนอนุมัติ LINE/สร้าง+อนุมัติ · `OcrExtractionVersion` 5 —
 เทสต์ `OcrLineQuantityGuardTests` · `OcrLineQuantityGuardReviewTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 687d3a10)_
+_Last verified against codebase: 2026-10-16 (§2.2 OCR — ถอดช่องหมวดค่าใช้จ่ายจากหน้ารีวิวสแกน/มือถือ · ตัวจัดหมวดไม่รับหมวดที่ระบบ/LLM เดาเป็นหลักฐาน ·
+คีย์ตัวเรียนผัง `OcrLearnerDescriptionKey` · กฎค่าประกันไม่รับคำเดี่ยว — เทสต์ `OcrExpenseCategoryRemovalTests` · `ExpenseCategoryResolverTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>)_

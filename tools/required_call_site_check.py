@@ -1749,6 +1749,29 @@ RULES += [
          why="2026-10-09 BS2026100001: harness เล่นซ้ำด่านแถวซ้ำก่อนกระทบยอด — golden ของใบต้นฉบับ+สำเนาถึงล็อกคำตอบที่ service ให้จริง"),
 ]
 
+# ── 2026-10-16 คำตัดสินเจ้าของ "ถอดช่องหมวดค่าใช้จ่ายออกเลย": หมวดที่ระบบ/LLM/ผู้ใช้เลือก ห้ามกลับมาเป็นหลักฐาน/คีย์ ─────
+#    เทสต์ OcrExpenseCategoryRemovalTests ล็อก helper + ตัวจัดหมวด (pure) — ถอด headerDescription: null กลับเป็นชื่อหมวด ⇒ เทสต์ยังเขียว
+#    แต่ใบเสร็จซื้อของได้ข้อเสนอหัก ณ ที่จ่าย 3% 40(8) กลับมา (ค่าตั้งต้น "ค่าบริการ") ⇒ ล็อกจุดเรียกที่นี่
+RULES += [
+    dict(file=OCR, method="ScanAsync",
+         must=["OcrLearnerDescriptionKey.For("],
+         must_re=[r"headerDescription\s*:\s*null\s*,"],
+         forbid=["headerDescription: extractedData.ExpenseCategory", "?? extractedData.ExpenseCategory"],
+         forbid_lit=['extractedData.FieldConfidence["ExpenseCategory"]'],
+         why="2026-10-16: ตัวจัดหมวดเห็นเฉพาะหลักฐานบนกระดาษ · ตัวเรียน/NaiveBayes ทำนายด้วยคีย์คำอธิบายตัวเดียว ไม่ fallback เป็นชื่อหมวด"),
+    dict(file=OCR, method="SubmitCorrectionAsync",
+         must=["OcrLearnerDescriptionKey.For(ScanLineDescriptionsForLearner(result))"],
+         forbid=["result.ExpenseCategory"],
+         why="2026-10-16: ตัวเรียนผังบันทึกด้วยคีย์เดียวกับฝั่งทำนาย (คำอธิบายบรรทัด) · คำแก้ไม่เขียนหมวดลงสแกน (ช่องถูกถอดจาก DTO)"),
+    dict(file=OCR, method="ParseThaiDocument",
+         forbid=["ExpenseCategory ="],
+         why="2026-10-16: ค่าตั้งต้นตามชนิดกระดาษ (Receipt ⇒ ค่าบริการ) ไม่ใช่ข้อความบนกระดาษ — ห้ามตั้งเป็นหมวด"),
+    dict(file=OCR, method="ExtractWithLocalServiceAsync",
+         forbid=["ExpenseCategory ="],
+         forbid_lit=['"expense_category"'],
+         why="2026-10-16: หมวดที่ LLM ของ ocr-service เลือก (ไม่มีด่าน) ไม่ถูกอ่านเป็นหลักฐาน"),
+]
+
 # โฟลเดอร์ OCR ทั้งโฟลเดอร์ (ไม่ใช่รายเมธอด): ห้ามเขียนสูตรถอด VAT 7% จากยอดรวมเอง — ตัวตั้งคือ Helpers/OcrVatBackCalc.SplitInclusive
 # (ค้นบนโค้ดที่ตัดคอมเมนต์+สตริงแล้ว · ตัวตรวจ "VAT บนกระดาษ = 7/107 ของยอด" อยู่ใน Helpers/ ซึ่งไม่ถูกกวาด — เป็นการตรวจ ไม่ใช่การผลิตค่า)
 FOLDER_FORBID = dict(

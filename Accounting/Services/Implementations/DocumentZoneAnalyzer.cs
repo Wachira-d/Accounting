@@ -48,7 +48,8 @@ public static class DocumentZoneAnalyzer
         public decimal? TotalAmount { get; set; }
 
         // Extra
-        public string? ExpenseCategory { get; set; }
+        // (2026-10-16) เดิมมี ExpenseCategory ตามชนิดกระดาษ (Receipt ⇒ "ค่าบริการ") — ไม่มีผู้อ่าน และเป็นค่าตั้งต้นชุดเดียวกับที่ทำให้
+        // ตัวจัดหมวดเสนอหัก ณ ที่จ่าย 3% ⇒ ลบพร้อม AssignAccountSuggestions (ฟังก์ชันนั้นเขียนแค่ช่องนี้)
         public bool HasWht { get; set; }
         public decimal? WhtRate { get; set; }
         public int? PaymentTermsDays { get; set; }
@@ -372,8 +373,6 @@ public static class DocumentZoneAnalyzer
         if (amountValidation.Issues.Count > 0)
             result.ReasoningTrace.AddRange(amountValidation.Issues.Select(i => "Amount: " + i));
 
-        // --- GL suggestions ---
-        AssignAccountSuggestions(result);
     }
 
     /// <summary>
@@ -584,22 +583,6 @@ public static class DocumentZoneAnalyzer
         if (afterCtx.Contains("จำกัด"))
             suffix = afterCtx.Contains("มหาชน") ? " จำกัด (มหาชน)" : " จำกัด";
         return $"{prefix} {name}{suffix}".Trim();
-    }
-
-    static void AssignAccountSuggestions(ZoneAnalysisResult r)
-    {
-        var map = new Dictionary<string, (string Cat, string Dc, string Dn, string Cc, string Cn)>
-        {
-            ["TaxInvoice"] = ("ค่าสินค้า", "5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า"),
-            ["Invoice"] = ("ค่าสินค้า", "5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า"),
-            ["Receipt"] = ("ค่าบริการ", "5300", "ค่าใช้จ่ายบริหาร", "1110", "เงินสด"),
-            ["PurchaseOrder"] = ("ค่าสินค้า", "1200", "สินค้าคงเหลือ", "2100", "เจ้าหนี้การค้า"),
-            ["WHT"] = ("อื่นๆ", "2170", "ภาษีหัก ณ ที่จ่าย", "1110", "เงินสด"),
-            ["CreditNote"] = ("ค่าสินค้า", "2100", "เจ้าหนี้การค้า", "5100", "ต้นทุนขาย"),
-            ["DebitNote"] = ("ค่าสินค้า", "5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า"),
-        };
-        if (r.DocumentType != null && map.TryGetValue(r.DocumentType, out var a))
-            r.ExpenseCategory = a.Cat;
     }
 
     // === Learning ===

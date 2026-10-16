@@ -47,15 +47,9 @@
 
     <div class="card">
       <h3>รายละเอียด</h3>
-      <label>ประเภทค่าใช้จ่าย</label>
-      <select id="category">
-        <option value="travel">เดินทาง / ค่าแท็กซี่</option>
-        <option value="meals">อาหาร / รับรอง</option>
-        <option value="office">วัสดุสำนักงาน</option>
-        <option value="fuel">น้ำมัน</option>
-        <option value="utilities">ค่าสาธารณูปโภค</option>
-        <option value="other">อื่นๆ</option>
-      </select>
+      <!-- 2026-10-16 คำตัดสินเจ้าของ "ถอดออกเลย" (ช่องหมวดค่าใช้จ่ายของเส้น OCR): เดิมช่อง "ประเภทค่าใช้จ่าย" ส่งรหัสอังกฤษ
+           (travel/meals/…) ไปทับข้อความหมวดของสแกน — ไม่มีผู้อ่านเชิงธุรกิจ และเซิร์ฟเวอร์เลิกรับช่องนี้แล้ว ⇒ ถอดแทนการปล่อยให้เลือกแล้วไม่มีผล
+           (กฎเหล็ก #4 A ห้าม silent no-op) · ผังบัญชีที่ลงจริงมาจากผังเดบิตที่ระบบแนะนำ แก้ได้ในหน้าสแกนบนเดสก์ท็อป -->
 
       <label>ร้านค้า / ผู้ขาย</label>
       <input id="vendor" placeholder="เช่น 7-Eleven, Grab">
@@ -164,7 +158,6 @@
         const amount = +document.getElementById('amount').value;
         const vendor = document.getElementById('vendor').value.trim();
         const date = document.getElementById('expDate').value;
-        const category = document.getElementById('category').value;
         const notes = document.getElementById('notes').value;
         if (!amount || !vendor) {
           res.innerHTML = '<div class="err">กรอกร้านค้า + ยอดเงิน</div>'; return;
@@ -198,7 +191,7 @@
             method: 'POST', headers: H,
             body: JSON.stringify({
               vendorName: vendor, totalAmount: amount,
-              documentDate: date || null, expenseCategory: category || null,
+              documentDate: date || null,
               // ⚠️ เดิมอ่านค่าช่องนี้ใส่ตัวแปรแล้ว**ไม่ส่งไปไหน** ⇒ เหตุผลที่
               // ผู้เบิกพิมพ์หายเงียบ. §65 ตรี(3)/(14) รายจ่ายที่พิสูจน์ไม่ได้ว่า
               // เกี่ยวกับกิจการ = รายจ่ายต้องห้าม — ข้อความนี้คือหลักฐานชิ้นแรก

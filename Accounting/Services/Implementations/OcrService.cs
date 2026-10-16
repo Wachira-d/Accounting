@@ -1502,21 +1502,13 @@ public class OcrService : IOcrService
             var zeroLines = extractedData.Items
                 .Where(i => (i.Amount ?? 0m) <= 0m && (i.UnitPrice ?? 0m) <= 0m)
                 .Select(i => i.Description).ToList();
-            // ── หมวดค่าใช้จ่ายที่ "มาถึงก่อน" ตัวจัดหมวดของเรา ──────────────
-            // `extractedData.ExpenseCategory` ณ จุดนี้ **ไม่ได้มาจาก**
-            // `ExpenseCategoryResolver` — มันมาจากชั้นก่อนหน้า (ช่อง
-            // `expense_category` ของ engine ในเครื่อง · ตารางค่าตั้งต้นตามชนิด
-            // เอกสาร · ค่าที่ผู้ใช้เคยแก้) ซึ่ง**ไม่มีชั้นไหนเขียนร่องรอยไว้เลย**
-            // ⇒ ผู้ใช้ถามว่า "ทำไมแนะนำหมวดนี้" แล้วตอบไม่ได้ แม้แต่ตอนไล่โค้ด
-            // (เคสจริง: หมวด "ค่าสาธารณูปโภค" บนใบซื้ออุปกรณ์แคมป์ปิ้ง 2026-09-18
-            //  ซึ่ง grep แล้วไม่มี label นี้ใน resolver เลย)
-            // หลักการข้อ G4: ผู้ชนะต้องบอกได้ว่าตัวเองมาจากไหน ก่อนจะให้ใครเชื่อ
-            if (!string.IsNullOrWhiteSpace(extractedData.ExpenseCategory))
-                extractedData.ReasoningTrace.Add(
-                    $"[Category] ค่าที่ติดมาก่อนตัวจัดหมวด: '{extractedData.ExpenseCategory}' "
-                    + "(มาจากช่อง expense_category ของ engine หรือค่าตั้งต้นตามชนิดเอกสาร "
-                    + "— ไม่ใช่ผลของ ExpenseCategoryResolver)");
-
+            // ── หมวดค่าใช้จ่าย "ที่มาถึงก่อน" ตัวจัดหมวด ไม่ใช่หลักฐานอีกต่อไป (2026-10-16 · คำตัดสินเจ้าของ "ถอดออกเลย") ──
+            // เดิมส่ง `extractedData.ExpenseCategory` เป็น headerDescription = **คลังหลักฐานน้ำหนักเต็ม + ผูกกับเงิน** ของตัวจัดหมวด
+            // ทั้งที่ค่านั้นไม่เคยมาจากกระดาษ: (ก) ค่าตั้งต้นตามชนิดกระดาษใน ParseThaiDocument (Receipt ⇒ "ค่าบริการ") · (ข) ช่อง
+            // expense_category ที่ LLM ของ ocr-service เลือกจากรายการตายตัวโดยไม่มีด่าน · (ค) ค่าที่ผู้ใช้เลือกบน select ที่ถอดแล้ว
+            // ⇒ หมวดยืนยันตัวเอง และ "ค่าบริการ" ตั้งต้นทำให้กฎ ค่าบริการ 40(8) ชนะด้วยคะแนน 2 (มั่นใจ 0.60 = ผ่านเกณฑ์ 0.6 พอดี)
+            // แล้วเสนอหัก ณ ที่จ่าย 3% บนใบเสร็จร้านค้าที่ซื้อของ (เทสต์ทิศตรงข้าม OcrExpenseCategoryRemovalTests)
+            // ตอนนี้: ตัวจัดหมวดเห็นเฉพาะชื่อผู้ขาย + บรรทัดรายการ + ข้อความกระดาษ · ทั้ง (ก) และ (ข) ถูกถอดที่ต้นทางแล้วด้วย
             // บรรทัดที่มีเงินพร้อมยอด — ให้ตัวจัดหมวดรู้ว่าคำที่ชนะอยู่บนบรรทัด "ส่วนใหญ่ของมูลค่า" หรือแค่บรรทัดประกอบ
             // (สแกนจริง f1690d11: ค่าขนส่ง 37.38 จาก 2,991.59 เคยชนะทั้งใบ แล้วเสนอหัก 1% บนยอดทั้งใบ — Helpers/OcrLineValueShare)
             var pricedLines = extractedData.Items
@@ -1529,7 +1521,7 @@ public class OcrService : IOcrService
             var minorityWhtParts = new List<Accounting.Helpers.OcrMinorityWhtPart>();
             var categoryResult = Ocr.ExpenseCategoryResolver.Resolve(
                 vendorName: extractedData.VendorName,
-                headerDescription: extractedData.ExpenseCategory,
+                headerDescription: null,   // ไม่มีหัวเรื่องจากกระดาษให้ส่ง — ห้ามส่งหมวดที่ระบบ/LLM/ผู้ใช้เลือก (ดูคอมเมนต์ข้างบน)
                 lineDescriptions: paidLines,
                 rawText: categoryResolverText,
                 industry: companyContext?.IndustryType,
@@ -1552,11 +1544,6 @@ public class OcrService : IOcrService
             }
             if (categoryResult != null)
                 Ocr.ExpenseCategoryResolver.ApplyTo(extractedData, categoryResult, categoryResolverText);
-            else if (!string.IsNullOrWhiteSpace(extractedData.ExpenseCategory))
-                extractedData.ReasoningTrace.Add(
-                    "[Category] ตัวจัดหมวดไม่มีกติกาไหนตรงกับใบนี้ ⇒ คงค่าที่ติดมาก่อนหน้าไว้ "
-                    + $"('{extractedData.ExpenseCategory}') — ถ้าหมวดนี้ดูไม่เข้าเรื่อง แปลว่า"
-                    + "ค่ามาจากชั้น engine/ค่าตั้งต้น ไม่ใช่จากกติกาของระบบ");
 
             // ───── Basket-analysis association rule lookup ─────
             // Apriori-mined rules from approved-doc history across all
@@ -1599,8 +1586,8 @@ public class OcrService : IOcrService
             // log-margin over the runner-up class exceeds 1 nat.
             try
             {
-                var nbDesc = extractedData.Items.FirstOrDefault()?.Description
-                    ?? extractedData.ExpenseCategory ?? "";
+                // คีย์คำอธิบายตัวเดียวกับตัวเรียน (Helpers/OcrLearnerDescriptionKey) — เดิม fallback เป็นชื่อหมวดที่ระบบเดา
+                var nbDesc = Accounting.Helpers.OcrLearnerDescriptionKey.For(extractedData.Items.Select(i => i.Description));
                 var nbPred = await _nbClassifier.PredictAsync(
                     companyId, extractedData.VendorTaxId, extractedData.VendorName, nbDesc);
                 if (nbPred != null && nbPred.Confidence > 0.7m
@@ -1632,8 +1619,9 @@ public class OcrService : IOcrService
             // If we have a learned mapping for this vendor, prefer it over generic
             // industry-based defaults. Per-line predictions also override individual
             // line item.SuggestedAccountCode when learner is more confident.
-            var bestDescription = extractedData.Items.FirstOrDefault()?.Description
-                ?? extractedData.ExpenseCategory;
+            // คีย์เดียวกับฝั่งเขียน (SubmitCorrectionAsync) — Helpers/OcrLearnerDescriptionKey · เดิมเขียนด้วยชื่อหมวด อ่านด้วยคำอธิบาย
+            // ⇒ ชั้น "ผู้ขาย + คำอธิบายตรงกัน" ไม่เคยแมตช์ (2026-10-16)
+            var bestDescription = Accounting.Helpers.OcrLearnerDescriptionKey.For(extractedData.Items.Select(i => i.Description));
             var (learnedCode, learnedName, learnedConf) = await _categoryLearner.PredictAsync(
                 companyId, extractedData.VendorTaxId, extractedData.VendorName, bestDescription);
             // ⚠️ เดิมบล็อกนี้ **ทับผังเดบิตโดยไม่เทียบกับใคร** และไม่อัปเดต
@@ -1916,29 +1904,8 @@ public class OcrService : IOcrService
                     }
                 }
 
-                // Boost ExpenseCategory confidence when the current scan's
-                // descriptions share words with the vendor's historical
-                // top-keywords. This pushes a marginal category match into
-                // high-confidence territory without overriding what the user
-                // (or learner) has already trained.
-                if (vendorPred.TopLineKeywords != null && vendorPred.TopLineKeywords.Count > 0
-                    && !string.IsNullOrEmpty(extractedData.ExpenseCategory))
-                {
-                    var corpus = string.Join(" ",
-                        new[] { extractedData.ExpenseCategory ?? "" }
-                            .Concat(extractedData.Items.Select(i => i.Description ?? ""))
-                    ).ToLowerInvariant();
-                    int hits = vendorPred.TopLineKeywords
-                        .Where(kv => corpus.Contains(kv.Key))
-                        .Sum(kv => kv.Value);
-                    if (hits >= 3)
-                    {
-                        extractedData.FieldConfidence["ExpenseCategory"] = Math.Max(
-                            extractedData.FieldConfidence.GetValueOrDefault("ExpenseCategory", 0), 0.92);
-                        extractedData.ReasoningTrace.Add(
-                            $"[VendorIntel] รายการตรงกับ keyword ประวัติ {hits} ครั้ง → หมวด '{extractedData.ExpenseCategory}' มั่นใจสูง");
-                    }
-                }
+                // (2026-10-16) เดิมตรงนี้ "ดันความมั่นใจของหมวดค่าใช้จ่าย" เป็น 0.92 เมื่อคำบรรทัดตรงประวัติผู้ขาย — ช่องหมวดถูกถอดจาก
+                // หน้ารีวิวแล้ว ไม่มีผู้อ่านความมั่นใจช่องนี้ ⇒ ลบ (ผังเดบิตมีความมั่นใจของตัวเองใน FieldConfidence["DebitAccount"])
             }
 
             // ───── DeepSeek GL-account classification (teacher → student) ─────
@@ -2496,7 +2463,7 @@ public class OcrService : IOcrService
                     if (extractedData.DebitAccountCode == null)
                     {
                         var seededDebit = await PickCategorySeededDebitAsync(companyId,
-                            categoryResult?.AccountCode, categoryResult?.AccountName ?? extractedData.ExpenseCategory);
+                            categoryResult?.AccountCode, categoryResult?.AccountName);   // ห้ามใช้ชื่อหมวดที่ LLM/ค่าตั้งต้นเดาเป็น seed (2026-10-16)
                         if (seededDebit is { } sd)
                         {
                             extractedData.DebitAccountCode = sd.Code;
@@ -4649,7 +4616,6 @@ public class OcrService : IOcrService
             [Accounting.Helpers.OcrFieldKeys.TotalAmount] = Amt(d.TotalAmount),
             [Accounting.Helpers.OcrFieldKeys.WhtRate] = Amt(d.WhtRate),
             [Accounting.Helpers.OcrFieldKeys.SuggestedWhtRate] = Amt(d.SuggestedWhtRate),
-            [Accounting.Helpers.OcrFieldKeys.ExpenseCategory] = d.ExpenseCategory,
             [Accounting.Helpers.OcrFieldKeys.DebitAccount] = d.DebitAccountCode,
             [Accounting.Helpers.OcrFieldKeys.PaymentTerms] = d.PaymentTermsDays?.ToString(inv),
             [Accounting.Helpers.OcrFieldKeys.TargetDocumentType] = d.TargetDocumentType,
@@ -4708,6 +4674,23 @@ public class OcrService : IOcrService
     /// ค่าหายเงียบ ๆ ตอน reload</para></summary>
     internal static string SerializeExtractedItems(IReadOnlyList<OcrExtractedLineItem> items)
         => System.Text.Json.JsonSerializer.Serialize(items);
+
+    /// <summary>คำอธิบายบรรทัดของสแกน (ตามลำดับที่ลงฐาน) สำหรับคีย์ตัวเรียน — JSON เสีย/ไม่มีบรรทัด ⇒ ว่าง (ตัวเรียนตกไปชั้นผู้ขายอย่างเดียว ·
+    /// การเรียนเป็นผลพลอยได้ของคำแก้ที่บันทึกไปแล้ว จึงไม่ล้มคำแก้ แต่ต้องเขียน log)</summary>
+    private IEnumerable<string?> ScanLineDescriptionsForLearner(OcrScanResult result)
+    {
+        if (string.IsNullOrWhiteSpace(result.ExtractedItemsJson)) return Array.Empty<string?>();
+        try
+        {
+            return (System.Text.Json.JsonSerializer.Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson) ?? new())
+                .Select(i => i.Description).ToList();
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            _logger.LogWarning(ex, "อ่าน ExtractedItemsJson ของสแกน {ScanId} ไม่ได้ — สอนตัวเรียนผังด้วยคีย์ผู้ขายอย่างเดียว", result.Id);
+            return Array.Empty<string?>();
+        }
+    }
 
     /// <summary>
     /// ตัด "(ส่วนมีภาษี)" / "(ส่วนไม่มีภาษี)" / "(VATable)" / "(non-VAT)" /
@@ -5097,7 +5080,8 @@ public class OcrService : IOcrService
                 SubTotal = root.TryGetProperty("subtotal", out var st) && st.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)st.GetDouble() : null,
                 VatAmount = root.TryGetProperty("vat_amount", out var va) && va.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)va.GetDouble() : null,
                 TotalAmount = root.TryGetProperty("total_amount", out var ta) && ta.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)ta.GetDouble() : null,
-                ExpenseCategory = root.TryGetProperty("expense_category", out var ec) ? ec.GetString() : null,
+                // expense_category ของ ocr-service ไม่ถูกอ่านแล้ว (2026-10-16): LLM เลือกจากรายการตายตัวโดยไม่มีด่าน + กติกาสำรองของ python
+                // ตั้ง "ค่าบริการ" ให้ใบเสร็จทุกใบ — ทั้งคู่ไม่ใช่ข้อความบนกระดาษ · หมวดของสแกนมาจาก ExpenseCategoryResolver (หลักฐานจากกระดาษ) เท่านั้น
                 HasWht = root.TryGetProperty("has_wht", out var hw) && hw.ValueKind == System.Text.Json.JsonValueKind.True,
                 WhtRate = root.TryGetProperty("wht_rate", out var wr) && wr.ValueKind == System.Text.Json.JsonValueKind.Number ? (decimal)wr.GetDouble() : null,
                 PaymentTermsDays = root.TryGetProperty("payment_terms_days", out var pt) && pt.ValueKind == System.Text.Json.JsonValueKind.Number ? pt.GetInt32() : null,
@@ -5267,7 +5251,9 @@ public class OcrService : IOcrService
         // the scan-detail panel reopens showing the original suggestions.
         // (The previous code only fed corrections to the learners; it
         // never updated the displayed scan record.)
-        if (correction.ExpenseCategory != null) result.ExpenseCategory = correction.ExpenseCategory;
+        // หมวดค่าใช้จ่าย: OcrCorrectionRequest ไม่มีช่องนี้แล้ว (2026-10-16 · ช่องถูกถอดจากหน้ารีวิว/มือถือ) — client รุ่นเก่าที่ยังส่ง
+        // "expenseCategory" มา ⇒ ตัวแปลง JSON ทิ้งเงียบ (ช่องที่ไม่รู้จัก) **โดยตั้งใจ**: หมวดเป็นข้อความที่ไม่มีผู้อ่านเชิงธุรกิจ และเดิม
+        // ค่าที่ส่งมาถูกใช้เป็นคีย์ตัวเรียน/หลักฐานของตัวจัดหมวด = ยืนยันตัวเอง · ผังเดบิต (DebitAccountCode) คือการตัดสินใจเดียว
         if (correction.HasWht.HasValue) result.HasWht = correction.HasWht.Value;
         if (correction.WhtRate.HasValue) result.WhtRate = correction.WhtRate;
         // ประเภทเงินได้ ม.40 ที่ผู้ใช้เลือก — "" = ล้างค่า (กติกาช่องแก้ไขของเรพนี้)
@@ -5662,11 +5648,14 @@ public class OcrService : IOcrService
                 .Where(a => a.CompanyId == companyId && a.AccountCode == learnDebitCode && !a.IsDeleted)
                 .Select(a => a.AccountName)
                 .FirstOrDefaultAsync();
+            // คีย์คำอธิบาย = ตัวเดียวกับฝั่งทำนายใน ScanAsync (Helpers/OcrLearnerDescriptionKey บนบรรทัดของสแกนใบนี้) — เดิมบันทึกด้วย
+            // ชื่อหมวด ("ค่าบริการ") ขณะที่ฝั่งทำนายค้นด้วยคำอธิบายบรรทัด ⇒ ชั้น "ผู้ขาย+คำอธิบาย" ไม่เคยแมตช์ (2026-10-16)
+            // แถวเก่าที่คีย์เป็นชื่อหมวดไม่ต้อง migrate: ผัง/ผู้ขายของแถวยังถูก และยังนับในชั้น "ผู้ขายอย่างเดียว" ตามเดิม
             await _categoryLearner.RecordAsync(
                 companyId,
                 correction.VendorTaxId ?? result.ExtractedVendorTaxId,
                 correction.VendorName ?? result.ExtractedVendorName,
-                correction.ExpenseCategory ?? result.ExpenseCategory,
+                Accounting.Helpers.OcrLearnerDescriptionKey.For(ScanLineDescriptionsForLearner(result)),
                 learnDebitCode,
                 debitName);
         }
@@ -6150,7 +6139,7 @@ public class OcrService : IOcrService
         }
     }
 
-    private static OcrExtractedData ParseThaiDocument(string text)
+    internal static OcrExtractedData ParseThaiDocument(string text)   // internal: เทสต์ผ่าน InternalsVisibleTo (OcrExpenseCategoryRemovalTests)
     {
         var data = new OcrExtractedData();
 
@@ -6434,21 +6423,22 @@ public class OcrService : IOcrService
         }
 
         // GL account suggestions
-        var accountMap = new Dictionary<string, (string Dc, string Dn, string Cc, string Cn, string Cat)>
+        // ⚠️ (2026-10-16) ไม่ตั้งหมวดค่าใช้จ่ายตามชนิดกระดาษแล้ว — เดิม Receipt ⇒ "ค่าบริการ" ซึ่งตัวจัดหมวดรับเป็นหลักฐานผูกกับเงิน
+        // แล้วเสนอหัก ณ ที่จ่าย 3% 40(8) บนใบเสร็จซื้อของ (ค่าตั้งต้นของระบบ ≠ ข้อความบนกระดาษ) · ผังเดบิต/เครดิตตั้งต้นคงเดิม
+        var accountMap = new Dictionary<string, (string Dc, string Dn, string Cc, string Cn)>
         {
-            ["TaxInvoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", "ค่าสินค้า"),
-            ["Invoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", "ค่าสินค้า"),
-            ["Receipt"] = ("5300", "ค่าใช้จ่ายบริหาร", "1110", "เงินสด", "ค่าบริการ"),
-            ["PurchaseOrder"] = ("1200", "สินค้าคงเหลือ", "2100", "เจ้าหนี้การค้า", "ค่าสินค้า"),
-            ["WHT"] = ("2170", "ภาษีหัก ณ ที่จ่าย", "1110", "เงินสด", "อื่นๆ"),
-            ["CreditNote"] = ("2100", "เจ้าหนี้การค้า", "5100", "ต้นทุนขาย", "ค่าสินค้า"),
-            ["DebitNote"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า", "ค่าสินค้า"),
+            ["TaxInvoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า"),
+            ["Invoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า"),
+            ["Receipt"] = ("5300", "ค่าใช้จ่ายบริหาร", "1110", "เงินสด"),
+            ["PurchaseOrder"] = ("1200", "สินค้าคงเหลือ", "2100", "เจ้าหนี้การค้า"),
+            ["WHT"] = ("2170", "ภาษีหัก ณ ที่จ่าย", "1110", "เงินสด"),
+            ["CreditNote"] = ("2100", "เจ้าหนี้การค้า", "5100", "ต้นทุนขาย"),
+            ["DebitNote"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า"),
         };
         if (accountMap.TryGetValue(data.DocumentType, out var acct))
         {
             data.DebitAccountCode = acct.Dc; data.DebitAccountName = acct.Dn;
             data.CreditAccountCode = acct.Cc; data.CreditAccountName = acct.Cn;
-            data.ExpenseCategory = acct.Cat;
             if (data.VatAmount > 0) { data.VatAccountCode = "1400"; data.VatAccountName = "ภาษีซื้อ"; }
         }
 

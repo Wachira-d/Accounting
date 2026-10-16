@@ -8,6 +8,8 @@ public record OcrResultResponse(
     DateTime? ExtractedDate, decimal? ExtractedSubTotal, decimal? ExtractedVatAmount, decimal? ExtractedTotalAmount,
     Guid? MatchedContactId, Guid? CreatedDocumentId, DateTime? ProcessedAt,
     bool IsDuplicate = false, Guid? DuplicateOfScanId = null, string? FileHash = null, string? ProcessingNotes = null,
+    // ค่าวินิจฉัย/เข้ากันได้ย้อนหลังของ API เท่านั้น (2026-10-16): หน้าจอไม่อ่านช่องนี้แล้ว (select หมวด + แถว debug ถูกถอด) ·
+    // ผู้เขียน = ExpenseCategoryResolver จากหลักฐานบนกระดาษ · ไม่ใช่ตัวตัดสินอะไร — ผังเดบิตอยู่ใน SuggestedAccounts
     string? ExpenseCategory = null,
     OcrSuggestedAccountsDto? SuggestedAccounts = null,
     bool HasWht = false, decimal? WhtRate = null,
@@ -305,7 +307,9 @@ public record OcrCorrectionRequest(
     decimal? SubTotal = null,
     decimal? VatAmount = null,
     decimal? TotalAmount = null,
-    string? ExpenseCategory = null,
+    // ⚠️ (2026-10-16 · คำตัดสินเจ้าของ "ถอดออกเลย") เดิมมีช่อง ExpenseCategory ตรงนี้ — ถอดแล้ว: client รุ่นเก่า (หน้ารีวิวสแกน/มือถือ)
+    // ที่ยังส่ง "expenseCategory" ⇒ System.Text.Json ทิ้งช่องที่ไม่รู้จักเงียบ ๆ **โดยตั้งใจ** (ไม่มีผู้อ่านเชิงธุรกิจ · เดิมไหลไปเป็นคีย์
+    // ตัวเรียน/หลักฐานของตัวจัดหมวด = ยืนยันตัวเอง) · ผังเดบิตด้านล่างคือการตัดสินใจเดียวของหมวดค่าใช้จ่าย
     string? DebitAccountCode = null,
     string? CreditAccountCode = null,
     bool? HasWht = null,
