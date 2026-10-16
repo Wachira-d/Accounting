@@ -451,7 +451,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      ตัวประกอบข้อความเดียว `OcrLineQuantityGuard.QuantityDescription`) — เดิม ราคา = ยอด ÷ จำนวน 4 ตำแหน่ง แต่ `DocumentLine.UnitPrice` เก็บ 2 ตำแหน่ง ⇒ เปิดแก้แล้วบันทึกเลื่อน
      (4.54 × 4,272 = 19,394.88 ≠ 19,381.50) · **ไม่ขยาย precision** · ไม่แยกค่าไฟฐาน/ค่า Ft · `[LINE-QTY-NOTE]` "จำนวนหน่วยตามมิเตอร์อยู่ในคำอธิบาย" (ไม่บล็อก · มิเตอร์ไม่พิสูจน์ ⇒ `[LINE-QTY]`) ·
      ราคา 2 ตำแหน่งที่กระดาษพิมพ์ ⇒ คงจำนวน/ราคา (เดิม) · AI แตกบรรทัด (`OcrLineSplitGuard`) / ระบบภายนอก (`ApplyExternalAmountOverrides`) ไม่ส่งราคา ⇒ ปล่อยว่างให้ตัวกันตัดสิน
-     (เดิมเติม 4 / 2 ตำแหน่งเอง) · harness เล่นซ้ำครบทุกการกระทำ · `OcrExtractionVersion` = 6 · Last verified `commit <pending>`
+     (เดิมเติม 4 / 2 ตำแหน่งเอง) · harness เล่นซ้ำครบทุกการกระทำ · `OcrExtractionVersion` = 6 · Last verified `commit 13a4d788`
   3. **`UnitInferrer`** — หน่วยว่าง → อนุมานจากคำอธิบาย (ค่าไฟ=`หน่วย` ·
      น้ำ=`ลบ.ม.` · น้ำมัน=`ลิตร` · รายเดือน/เช่า=`เดือน` · เหมา/บริการ=`งาน`)
      ก่อนตก `ชิ้น`; `ชิ้น` บนบรรทัดที่กฎรู้จัก = default ค้างมา → แทนที่
@@ -5877,4 +5877,4 @@ _Last verified against codebase: 2026-10-16 (§2.2 OCR — ถอดช่อง
 คีย์ตัวเรียนผัง `OcrLearnerDescriptionKey` · กฎค่าประกันไม่รับคำเดี่ยว — เทสต์ `OcrExpenseCategoryRemovalTests` · `ExpenseCategoryResolverTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit f5b10674)_
 _Last verified against codebase: 2026-10-16 (ทีม OCR 8 · บิลค่าไฟจริง กฟภ. — §OCR ด่านคุณภาพก่อน persist ข้อ 2: บิลมิเตอร์/ไม่มีราคาต่อหน่วยบนกระดาษ/ราคาเกิน 2 ตำแหน่ง ⇒
 1 × ยอด + จำนวนหน่วยในคำอธิบาย (`QuantityInDescription`) · ไม่แต่งราคา ยอด ÷ จำนวน · `OcrExtractionVersion` 6 — เทสต์ `OcrMeterBillLumpSumTests` · `OcrLineQuantityGuardTests` ·
-`OcrLineReconcileTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>)_
+`OcrLineReconcileTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 13a4d788)_

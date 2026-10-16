@@ -5134,4 +5134,4 @@ _ทีม OCR 8 (บิลมิเตอร์ · 2026-10-16) — ทีม OC
 `OcrLineSplitGuard`/`ApplyExternalAmountOverrides` ไม่เติมราคาเอง · harness เล่นซ้ำ FillUnitPrice แล้ว · ไม่แยกค่าไฟฐาน/ค่า Ft (เหตุผลใน lessons) · ไม่ขยาย precision ·
 `OcrExtractionVersion` 5 → 6 · Corpus +1 (`pea-electricity-bill-0869`) · golden ใบเดิมเปลี่ยนเฉพาะ `utility-meter-bill` (LineQtyGuard · Lines ราคา 4.53 → 16,351.48 · แถวใหม่ LineDescriptions) ·
 เจอแต่ไม่แก้: เส้นข้อความ PDF ล้วนของบิลนี้อ่านหัวใบผิด (เลขที่ 516004632612 แทน XH0712609004157 · สาขาว่าง · ยอด 738.21 · ชื่อผู้ขายเป็นชื่อผู้ซื้อ · ผู้ซื้อเป็นบริษัทบัตรที่หักบัญชี · ไม่มีรายการ) —
-คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>_
+คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 13a4d788_
