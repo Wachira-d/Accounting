@@ -16153,28 +16153,36 @@ public partial class DocumentService : IDocumentService
 
     /// <summary>
     /// **ปิดลูปความหมายรหัส ภ.พ. ตอนอนุมัติ** (DECISIONS ข้อ 153 ข้อ 2 · DECISION_DOCTRINE §3 "คำตอบจริง = อนุมัติ") — สแกนที่สร้างเอกสารนี้ถาม AI/นักเรียนว่ารหัส
-    /// (แถว VAT 0) คือยกเว้นหรือ 0% · คำตอบของผู้ใช้ = ชนิดของบรรทัดที่ไม่มี VAT ในเอกสารที่อนุมัติ (<c>OcrVatCodeMeaning.ChosenNoVatKind</c> — ปน/ไม่มี = ไม่บันทึก) ·
-    /// เปลี่ยนจากที่ระบบเติม = Explicit · คงตามที่เติม = Implicit · คงตามที่นักเรียนตอบเอง = ไม่บันทึก (self-confirm · §3) · ล้ม = log (ไม่ย้อนการอนุมัติ)
+    /// (แถว VAT 0) คือยกเว้นหรือ 0% · คำตอบของผู้ใช้ = ชนิดของบรรทัดที่ไม่มี VAT ในเอกสารที่อนุมัติ <b>ต่อรหัส</b> (<c>OcrVatCodeMeaning.ChosenKindsByCode</c> —
+    /// ปนยกเว้น + 0% ⇒ จับคู่ด้วยยอดของกลุ่ม · ไม่รู้ = ไม่บันทึกรหัสนั้น) · เปลี่ยนจากที่ระบบเติม = Explicit · คงคำตอบ AI = Implicit ·
+    /// คงค่าตั้งต้น/คงคำตอบนักเรียน = ไม่บันทึก (<c>OcrVatCodeMeaning.Teaches</c> · ฝ่ายค้าน f7c29c2c P2-4) · ล้ม = log (ไม่ย้อนการอนุมัติ)
     /// </summary>
     private async Task RecordVatCodeMeaningFeedbackAsync(Guid companyId, Document doc, List<DocumentLine> approvedLines)
     {
         if (_feedbackRecorder == null) return;
         try
         {
-            var json = await _db.Set<OcrScanResult>().AsNoTracking()
+            var scan = await _db.Set<OcrScanResult>().AsNoTracking()
                 .Where(s => s.CompanyId == companyId && s.CreatedDocumentId == doc.Id && !s.IsDeleted)
                 .OrderByDescending(s => s.CreatedAt)
-                .Select(s => s.VatCodeMeaningsJson)
+                .Select(s => new { s.VatCodeMeaningsJson, s.RawTextContent })
                 .FirstOrDefaultAsync();
-            var asked = Accounting.Helpers.OcrVatCodeMeaning.FromJson(json).Where(e => e.FeedbackId.HasValue).ToList();
+            if (scan == null) return;
+            var asked = Accounting.Helpers.OcrVatCodeMeaning.FromJson(scan.VatCodeMeaningsJson).Where(e => e.FeedbackId.HasValue).ToList();
             if (asked.Count == 0) return;
-            var chosen = Accounting.Helpers.OcrVatCodeMeaning.ChosenNoVatKind(
-                approvedLines.Where(l => !l.IsDeleted).Select(l => l.VatRate));
-            if (chosen is not Accounting.Helpers.OcrVatGroupKind kind) return;
-            var answer = Accounting.Helpers.OcrVatCodeMeaning.AnswerOf(kind);
+            // ฝ่ายค้าน f7c29c2c P2-6: คำตอบต่อรหัส (ปนยกเว้น + 0% ⇒ จับคู่ด้วยยอดของกลุ่มในตาราง) — เดิมปน ⇒ ไม่บันทึกทั้งใบ
+            var chosenByCode = Accounting.Helpers.OcrVatCodeMeaning.ChosenKindsByCode(
+                Accounting.Helpers.OcrVatCodeMeaning.ResolvedTable(
+                    Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(scan.RawTextContent), scan.VatCodeMeaningsJson).Table,
+                asked.Select(e => e.Code).ToList(),
+                approvedLines.Where(l => !l.IsDeleted).Select(l => (l.Amount, l.VatRate)).ToList());
             foreach (var e in asked)
             {
-                if (e.Source == Accounting.Helpers.OcrVatCodeMeaningSource.Student && e.Kind == kind) continue;   // นักเรียนยืนยันตัวเอง
+                if (!chosenByCode.TryGetValue(e.Code, out var kind)) continue;                                    // รหัสนี้ไม่รู้ว่าผู้ใช้ตอบอะไร
+                // ฝ่ายค้าน f7c29c2c P2-4: สอนเฉพาะ "ผู้ใช้แก้" หรือ "คงคำตอบ AI" — คงค่าตั้งต้น/คงคำตอบนักเรียน = ไม่ใช่หลักฐาน (กดผ่าน ~10 ใบแล้วค่าตั้งต้น
+                // กลายเป็น "เรียนจากใบก่อนของผู้ขายนี้" · นักเรียนยืนยันตัวเอง §3)
+                if (!Accounting.Helpers.OcrVatCodeMeaning.Teaches(e, kind)) continue;
+                var answer = Accounting.Helpers.OcrVatCodeMeaning.AnswerOf(kind);
                 await _feedbackRecorder.RecordUserChoiceAsync(e.FeedbackId!.Value, answer,
                     acceptedAi: Accounting.Helpers.OcrAiLabelScope.AcceptedAi(e.AiAnswer, answer), CancellationToken.None,
                     e.Kind != kind ? Accounting.Models.Enums.UserChoiceSource.Explicit : Accounting.Models.Enums.UserChoiceSource.Implicit);
@@ -21940,7 +21948,7 @@ public partial class DocumentService : IDocumentService
         var gapScan = await _db.Set<OcrScanResult>().AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id)
             .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new { r.ProcessingNotes, r.ExtractedTotalAmount, r.ExtractedVatAmount, r.RawTextContent, r.OcrEngine })
+            .Select(r => new { r.ProcessingNotes, r.ExtractedTotalAmount, r.ExtractedVatAmount, r.RawTextContent, r.OcrEngine, r.VatCodeMeaningsJson })
             .FirstOrDefaultAsync();
         if (gapScan != null)
         {
@@ -21953,6 +21961,8 @@ public partial class DocumentService : IDocumentService
             // [VAT-DERIVED]) · ร่องรอย [VAT back-calc] ในหมายเหตุ = ค่าที่ถอดเอง แม้เลขบังเอิญตรงเลขอื่นบนใบ · ผลใช้ทั้งคำแนะนำอัตรา
             // และคำเตือน "VAT ไม่ได้พิมพ์บนกระดาษ" (ทุกทางเข้าที่อนุมัติ: หน้าเอกสาร · มือถือ · API · workflow เดินผ่านเมธอดนี้)
             var gapScanNormalized = Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(gapScan.RawTextContent);
+            // ฝ่ายค้าน f7c29c2c P1-1: ตารางรหัส ภ.พ. ที่ตัดสินความหมายแล้ว — ตัวเดียวกับตัวสร้างบรรทัด (ตารางดิบ ⇒ รหัสที่ตัวเลขพิสูจน์ 7% แล้วถูกฟ้อง "ไม่บอกความหมาย")
+            var gapScanCodeTable = Accounting.Helpers.OcrVatCodeMeaning.ResolvedTable(gapScanNormalized, gapScan.VatCodeMeaningsJson).Table;
             var headerVatSource = Accounting.Helpers.OcrHeaderVatEvidence.Classify(
                 gapScan.RawTextContent, gapScanNormalized, gapScan.ExtractedVatAmount ?? 0m, gapScan.OcrEngine,
                 gapScan.ProcessingNotes, gapScan.ExtractedTotalAmount);
@@ -21964,7 +21974,7 @@ public partial class DocumentService : IDocumentService
                     gapScan.ExtractedVatAmount ?? 0m,
                     Accounting.Helpers.OcrLineVatPlanner.PaperExemptAmount(
                         Accounting.Helpers.OcrLineVatMarks.Read(gapScan.RawTextContent),
-                        Accounting.Helpers.OcrLineVatMarks.ReadGroups(gapScanNormalized)),
+                        gapScanCodeTable),
                     vatPrintedOnPaper: headerVatSource == Accounting.Helpers.OcrHeaderVatSource.Labelled);
             }
             // รอบ 199 ฝ่ายค้าน B-2: คำเตือน "VAT ไม่ได้พิมพ์บนกระดาษ" ตัดสินจาก VAT ที่จะลงบัญชี<b>ตอนนี้</b> (Σ VAT บรรทัด) — ผู้ใช้แก้ VAT
@@ -21984,7 +21994,7 @@ public partial class DocumentService : IDocumentService
             // ยังไม่ตรง = ข้อความตัวเลขของตอนนี้ (ไม่ใช่ของตอนสร้าง)
             var vatCodeMismatchNow = Accounting.Helpers.OcrVatCodeLines.TableMismatch(
                 liveLines.Select(l => new Accounting.Helpers.OcrPlannedLine(l.Amount, l.VatRate, l.VatAmount)).ToList(),
-                Accounting.Helpers.OcrLineVatMarks.ReadGroups(gapScanNormalized));
+                gapScanCodeTable);
             warnings.AddRange(Accounting.Helpers.OcrApprovalGapWarning.Build(
                 Accounting.Helpers.OcrVatCodeLines.LiveNotes(gapScan.ProcessingNotes, vatCodeMismatchNow, checkedLive: liveLines.Count > 0),
                 gapScan.ExtractedTotalAmount,

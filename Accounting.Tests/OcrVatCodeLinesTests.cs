@@ -18,6 +18,8 @@ namespace Accounting.Tests;
 public class OcrVatCodeLinesTests
 {
     private static string MakroFull => Norm(OcrPaperSamples.MakroPage1of2Synthetic + "\n" + OcrPaperSamples.MakroPage2of2);
+    /// <summary>ใบเดียวกันที่ engine อ่านเลขหน้า "1 จาก 2" ไม่ได้ — พิสูจน์ไม่ได้ว่าไฟล์ครบทุกหน้า (ฝ่ายค้าน f7c29c2c P2-5) ⇒ ตารางชนะตามคำตัดสินข้อ 1</summary>
+    private static string MakroPagesUnproven => Norm(OcrPaperSamples.MakroPage1of2Synthetic.Replace("หน้าที่ 1 จาก 2\n", "") + "\n" + OcrPaperSamples.MakroPage2of2);
     private static string Norm(string s) => ThaiTextNormalizer.Normalize(s);
     private static readonly decimal[] MakroItems = { 1000.00m, 248.00m, 1134.00m, 2590.00m, 1180.00m, 960.00m, 4096.00m };
 
@@ -242,10 +244,23 @@ public class OcrVatCodeLinesTests
     public void ตัดสิน_แถวสินค้าขาดสองแถว_ไม่ลงตาราง_ตารางชนะ_รวม10980()
     {
         // ใบเดียวกัน แต่ engine อ่านได้ 5 จาก 7 แถว (ข้าวสาร + แชมพูหาย) ⇒ Σ ไม่ลงตาราง ⇒ บรรทัดสรุปตามตาราง (ไม่คงรายการ 5 แถว + [Σ-GAP])
-        var d = DecideMakro(MakroFull, InD(MakroItemRows.Skip(1).Take(5).ToArray()));
+        // ฝ่ายค้าน f7c29c2c P2-5: เฉพาะเมื่อพิสูจน์ไม่ได้ว่าไฟล์ครบทุกหน้า (เลขหน้า 1 จาก 2 อ่านไม่ได้) — ครบทุกหน้า ⇒ คงรายการ + ฟ้อง (เทสต์ถัดไป)
+        var d = DecideMakro(MakroPagesUnproven, InD(MakroItemRows.Skip(1).Take(5).ToArray()));
         Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
         Assert.Equal(10980.00m, d.TableLines.Sum(g => g.Net + g.Vat));
         Assert.Equal(1220.00m, d.TableLines.Where(g => g.Kind == OcrVatGroupKind.Exempt).Sum(g => g.Net));
+    }
+
+    [Fact]
+    public void ตัดสิน_ทิศตรงข้าม_ไฟล์ครบทุกหน้า_แถวขาด_คงรายการและบอกเหตุ_ไม่ทิ้งรายการ()
+    {
+        // ฝ่ายค้าน f7c29c2c P2-5: "หน้าที่ 1 จาก 2" + "หน้าที่ 2 จาก 2" ครบ ⇒ ไม่ใช่การอัปโหลดแค่หน้าสุดท้าย — แถวที่ไม่ลงตารางคือแถวอ่านผิด ⇒ ฟ้อง ([Σ-GAP]) ดีกว่าทิ้ง
+        var d = DecideMakro(MakroFull, InD(MakroItemRows.Skip(1).Take(5).ToArray()));
+        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
+        Assert.Equal(OcrVatCodeVerdict.Unreconciled, d.Plan.Verdict);
+        Assert.Empty(d.TableLines);
+        Assert.Contains("ครบทุกหน้า (หน้า 1–2 จาก 2)", d.Note);
+        Assert.StartsWith(OcrVatCodeLines.TableSummaryLead, d.Note);
     }
 
     [Fact]
@@ -317,7 +332,7 @@ public class OcrVatCodeLinesTests
     {
         // แถว "ลด" 28 + 100 = 128 ≠ ส่วนลด 228 บนกระดาษ ⇒ ไม่แปลง (ยอดไม่ลงตาราง) ⇒ บรรทัดสรุปตามตาราง — ไม่คงแถวส่วนลดยอดบวกพองยอดรวม
         var rows = MakroItemRows.Concat(new[] { (28.00m, "ลดราคาไข่ไก่ แม็คโคร(*1.0)"), (100.00m, "ลด 100บ เมื่อซื้อทิชชู่ครบ 2,500 บ(*1.0)") }).ToArray();
-        var d = DecideMakro(MakroFull, InD(rows));
+        var d = DecideMakro(MakroPagesUnproven, InD(rows));
         Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
         Assert.Equal(10980.00m, d.TableLines.Sum(g => g.Net + g.Vat));
     }

@@ -133,7 +133,7 @@ public interface IOcrAiAugmenter
     Task<OcrAiAugmentationResult> InferVatCodeMeaningAsync(
         Guid companyId, Guid scanResultId,
         string? vendorName, string? vendorTaxId,
-        Accounting.Helpers.OcrVatGroup row, string? legendText,
+        Accounting.Helpers.OcrVatGroup row, string? legendText, bool zeroRatedOnPaper,
         CancellationToken ct = default);
 }
 
@@ -682,7 +682,7 @@ public class OcrAiAugmenter : IOcrAiAugmenter
     public async Task<OcrAiAugmentationResult> InferVatCodeMeaningAsync(
         Guid companyId, Guid scanResultId,
         string? vendorName, string? vendorTaxId,
-        Accounting.Helpers.OcrVatGroup row, string? legendText,
+        Accounting.Helpers.OcrVatGroup row, string? legendText, bool zeroRatedOnPaper,
         CancellationToken ct = default)
     {
         try
@@ -692,7 +692,8 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             var resp = await _orchestrator.AskAsync(req, ct);
             var fromStudent = IsStudentAnswer(resp);
             // ด่านกันมั่ว (เลขคณิตของแถว) — คำตอบที่ขัดตัวเลข/นอกชุด = ไม่มีคำตอบ · confidence ต้องอยู่ใน [0,1] (โมเดลตอบ "90" แล้วผ่านเกณฑ์ไม่ได้)
-            var kind = Accounting.Helpers.OcrVatCodeMeaning.Guard(row, resp.PrimaryAnswer, out var why);
+            // ฝ่ายค้าน f7c29c2c P2-3: ZeroRated ต้องมีหลักฐาน 0% บนกระดาษ (ใบขายปลีกในประเทศไม่มี 0%)
+            var kind = Accounting.Helpers.OcrVatCodeMeaning.Guard(row, resp.PrimaryAnswer, out var why, zeroRatedOnPaper);
             var confOk = resp.Confidence is null || (resp.Confidence >= 0m && resp.Confidence <= 1m);
             var valid = (resp.UsedAi || fromStudent) && kind is not null && confOk;
             return new OcrAiAugmentationResult(

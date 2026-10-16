@@ -356,7 +356,9 @@ public static class OcrReplayHarness
                 var plan = OcrLineVatPlanner.PlanWholeInvoice(nets,
                     pick.Applied ? pick.Rates : new decimal?[nets.Length],
                     n.Vat ?? 0m, netBase, anchoredTotal ?? 0m, recon.PricesIncludeVat,
-                    OcrLineVatPlanner.PaperExemptAmount(OcrLineVatMarks.Read(p.RawText), OcrLineVatMarks.ReadGroups(p.RawText)),
+                    // ฝ่ายค้าน f7c29c2c P1-1: ตารางที่ตัดสินความหมายแล้ว (ตัวเดียวกับ service — OcrVatCodeMeaning.ResolvedTable)
+                    OcrLineVatPlanner.PaperExemptAmount(OcrLineVatMarks.Read(p.RawText),
+                        OcrVatCodeMeaning.ResolvedTable(Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(p.RawText), null).Table),
                     // รอบ 195 ฝ่ายค้าน R2-1: ส่งหลักฐานจริงจากข้อความกระดาษ (ห้าม hard-code true — replay ชุดกระดาษจริงต้องเห็นผลของด่าน)
                     vatPrintedOnPaper: OcrHeaderVatEvidence.Classify(p.RawText, null, n.Vat ?? 0m, null) == OcrHeaderVatSource.Labelled);
                 result.Add(new(p.Name, "LineVatPlan", plan.Decided
@@ -449,7 +451,7 @@ public static class OcrReplayHarness
 
         // ตรงกับ service: ตารางรหัส ภ.พ. อ่านครั้งเดียว · ตัวตัดสิน "รายการ หรือ ตาราง" (OcrVatCodeLines.Decide — คำตัดสินเจ้าของ 2026-10-16 ข้อ 1/3)
         // ตรงกับ service (DECISIONS ข้อ 153 ข้อ 2): รหัสที่กระดาษไม่บอกความหมาย ⇒ ตัวเลขของแถว / ค่าตั้งต้น — ชุดกระดาษไม่มีคำตอบ AI ที่ persist (null)
-        var codeTable = OcrVatCodeMeaning.Resolve(OcrLineVatMarks.ReadGroups(normalizedText), null).Table;
+        var codeTable = OcrVatCodeMeaning.ResolvedTable(normalizedText, null).Table;
         IReadOnlyList<OcrVatGroup>? tableLinesInsteadOfItems = null;
         if (lines is { Count: > 0 })
         {

@@ -817,7 +817,7 @@ public class LineBotService : ILineBotService
         var scanGate = await _db.Set<OcrScanResult>().AsNoTracking()
             .Where(r => r.CompanyId == doc.CompanyId && r.CreatedDocumentId == doc.Id)
             .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new { r.ProcessingNotes, r.ExtractedDate, r.RawTextContent, r.ExtractedTotalAmount })
+            .Select(r => new { r.ProcessingNotes, r.ExtractedDate, r.RawTextContent, r.ExtractedTotalAmount, r.VatCodeMeaningsJson })
             .FirstOrDefaultAsync();
         if (scanGate != null)
         {
@@ -840,7 +840,8 @@ public class LineBotService : ILineBotService
             // ฝ่ายค้าน afbb0956 P2-4: [Σ-GAP] ตารางรหัส ภ.พ. ของตอนสร้างตรวจสดบนบรรทัดตอนนี้ (ตัวตัดสินเดียวกับตัวสร้างบรรทัด · ผู้ใช้แก้อัตราแล้วไม่ค้างหยุด)
             var vatCodeMismatchNow = Accounting.Helpers.OcrVatCodeLines.TableMismatch(
                 gateLines.Select(l => new Accounting.Helpers.OcrPlannedLine(l.Amount, l.VatRate, l.VatAmount)).ToList(),
-                Accounting.Helpers.OcrLineVatMarks.ReadGroups(gateNormalized));
+                // ฝ่ายค้าน f7c29c2c P1-1: ตารางที่ตัดสินความหมายแล้ว — ตัวเดียวกับตัวสร้างบรรทัด/ด่านอนุมัติเว็บ (ตารางดิบ ⇒ LINE ปฏิเสธใบที่สร้างสะอาด)
+                Accounting.Helpers.OcrVatCodeMeaning.ResolvedTable(gateNormalized, scanGate.VatCodeMeaningsJson).Table);
             var readiness = Accounting.Helpers.OcrPostingReadiness.Evaluate(
                 Accounting.Helpers.OcrVatCodeLines.LiveNotes(scanGate.ProcessingNotes, vatCodeMismatchNow, checkedLive: gateLines.Count > 0),
                 scanGate.ExtractedDate != null, overstatedNow);

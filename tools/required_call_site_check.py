@@ -1695,9 +1695,10 @@ RULES += [
 LINE_PIPELINE_HELPERS = [
     "OcrLineVatMarks.Read(", "OcrHeaderVatEvidence.Classify(", "OcrLineVatMarks.Assign(",
     # 2026-10-16: ฐานกระทบยอด (NetSubTotal) + ตัวจำแนกเคส (OcrLineReconciler.Classify) อยู่ใน OcrVatCodeLines.Decide ตัวเดียว (รายการ/แถวส่วนลด/ตารางชนะ)
-    "OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrTotalDecomposer.LineGross(", "OcrVatCodeLines.Decide(", "OcrVatCodeMeaning.Resolve(",
+    # ฝ่ายค้าน f7c29c2c P1-1: ตารางรหัส ภ.พ. ที่ตัดสินแล้วมาจาก OcrVatCodeMeaning.ResolvedTable ตัวเดียว (ไม่ประกอบ ReadGroups + Resolve เอง)
+    "OcrEtaxLineNormalizer.ProvenLineDiscount(", "OcrTotalDecomposer.LineGross(", "OcrVatCodeLines.Decide(", "OcrVatCodeMeaning.ResolvedTable(",
     "OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(",
-    "OcrLineVatPlanner.PlanWholeInvoice(", "OcrLineVatPlanner.PaperExemptAmount(", "OcrLineVatMarks.ReadGroups(",
+    "OcrLineVatPlanner.PlanWholeInvoice(", "OcrLineVatPlanner.PaperExemptAmount(",
     "ThaiVatTypeRule.ToVatRate(", "ThaiVatTypeRule.Suggest(", "OcrEtaxLineNormalizer.InclusiveLineVats(", "ThaiVatTypeRule.SpreadHeaderVat(",
     "DocumentRounding.CapShifts(", "DocumentRounding.FromPrintedLine(",
     "OcrLineReconciler.LineDiscount(", "OcrTotalDecomposer.SummaryGroupLines(", "OcrTotalDecomposer.Decompose(",
@@ -8208,29 +8209,62 @@ RULES += [
 #    ถอดตัวปิดลูปตอนอนุมัติ = นักเรียนไม่เคยเรียน (จ่าย token ทุกใบตลอดกาล)
 RULES += [
     dict(file=OCR, method="BuildScanLinesAsync",
-         must=["OcrVatCodeMeaning.Resolve(", "OcrVatCodeMeaning.FromJson(result.VatCodeMeaningsJson)"],
+         must=["OcrVatCodeMeaning.ResolvedTable("],
          must_re=[r"with\s*\{\s*Groups\s*=\s*vatCodeTable\s*\}", r"var\s+vatCodeTable\s*=\s*vatCodeResolution\s*\.\s*Table"],
-         before=[("OcrVatCodeMeaning.Resolve(", "OcrVatCodeLines.Decide("), ("OcrVatCodeMeaning.Resolve(", "OcrVatCodeLines.TableMismatch(")],
+         call_args=[("OcrVatCodeMeaning.ResolvedTable(", "result.VatCodeMeaningsJson")],
+         before=[("OcrVatCodeMeaning.ResolvedTable(", "OcrVatCodeLines.Decide("), ("OcrVatCodeMeaning.ResolvedTable(", "OcrVatCodeLines.TableMismatch(")],
+         # ฝ่ายค้าน f7c29c2c P1-1: ห้ามประกอบตารางเอง (ReadGroups ดิบ / Resolve ตรง) — ผู้อ่านทุกตัวต้องได้ตารางเดียวกัน
+         forbid=["OcrLineVatMarks.ReadGroups(", "OcrVatCodeMeaning.Resolve("],
          why="DECISIONS 153 ข้อ 2: ตารางที่รหัสถูกตัดสินความหมายแล้ว (ตัวเลข → AI/นักเรียนที่ persist → ค่าตั้งต้น) เป็นตัวเดียวของทุกสาขาในตัวสร้างบรรทัด"),
+    # ฝ่ายค้าน f7c29c2c P1-1: ด่านตรวจสดตอนอนุมัติ (เว็บ/มือถือ/API/workflow) + ปุ่มอนุมัติ LINE อ่านตารางที่ตัดสินแล้วตัวเดียวกับตัวสร้างบรรทัด ·
+    #    ตารางดิบ ⇒ Makro 2/2 ที่รหัส 2 พิสูจน์ด้วยตัวเลขแล้ว ถูกฟ้อง "ไม่บอกความหมาย" ตอนอนุมัติ และ LINE ปฏิเสธ ทั้งที่สร้างสะอาด
+    dict(file=DOCSVC, method="CollectApprovalWarningsAsync",
+         must=["OcrVatCodeMeaning.ResolvedTable("],
+         must_re=[r"OcrVatCodeMeaning\.ResolvedTable\(\s*gapScanNormalized\s*,\s*gapScan\.VatCodeMeaningsJson\s*\)"],
+         call_args=[("OcrVatCodeLines.TableMismatch(", "gapScanCodeTable"), ("OcrLineVatPlanner.PaperExemptAmount(", "gapScanCodeTable")],
+         forbid=["OcrLineVatMarks.ReadGroups(", "OcrVatCodeMeaning.Resolve("],
+         why="ฝ่ายค้าน f7c29c2c P1-1: ด่านอนุมัติใช้ตารางที่ตัดสินแล้ว (OcrVatCodeMeaning.ResolvedTable) ตัวเดียวกับตอนสร้าง"),
+    dict(file=LINEBOT, method="HandlePostbackAsync",
+         must=["OcrVatCodeMeaning.ResolvedTable("],
+         must_re=[r"OcrVatCodeMeaning\.ResolvedTable\(\s*gateNormalized\s*,\s*scanGate\.VatCodeMeaningsJson\s*\)"],
+         call_args=[("OcrVatCodeLines.TableMismatch(", "OcrVatCodeMeaning.ResolvedTable")],
+         forbid=["OcrLineVatMarks.ReadGroups(", "OcrVatCodeMeaning.Resolve("],
+         why="ฝ่ายค้าน f7c29c2c P1-1: ปุ่มอนุมัติ LINE ใช้ตารางที่ตัดสินแล้วตัวเดียวกับตอนสร้าง/เว็บ"),
+    # ฝ่ายค้าน f7c29c2c P1-2/P1-3: ผัง/โครงการของรายการเข้าตัวตัดสิน (ต่างกัน ⇒ คงรายการ) · บรรทัดสรุปแบกผัง/โครงการที่ทุกรายการใช้ร่วม + โครงการหัวเอกสาร
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must_re=[r"AccountId\s*:\s*ItemAccount\(\s*x\s*\)", r"ProjectId\s*:\s*x\s*\.\s*ProjectId",
+                  r"codeDecision\s*!\s*\.\s*SummaryAccountId", r"codeDecision\s*!\s*\.\s*SummaryProjectId\s+is\s+Guid\s+summaryProject",
+                  r"ProjectId\s*=\s*tableLinesInsteadOfItems\s+is\s+not\s+null\s*\?\s*codeDecision\s*!\s*\.\s*SummaryProjectId"],
+         call_args=[("OcrLineAccountSource.Resolve(", "scanDebitAccountId")],
+         why="ฝ่ายค้าน f7c29c2c P1-2/P1-3: ตารางชนะต้องไม่ทิ้งผังบัญชี/โครงการรายบรรทัด"),
     dict(file=OCR, method="ScanAsync",
          must=["ResolveVatCodeMeaningsAsync("],
          why="DECISIONS 153 ข้อ 2: ถามความหมายรหัสตอนสแกน (ครั้งเดียว · ผลถูก persist ให้ทุกทางเข้าที่สร้างบรรทัด)"),
     dict(file=OCR, method="ResolveVatCodeMeaningsAsync",
-         must=["OcrVatCodeMeaning.Ambiguous(", "InferVatCodeMeaningAsync(", "OcrVatCodeMeaning.Choose("],
+         # ฝ่ายค้าน f7c29c2c P2-3: หลักฐาน 0% บนกระดาษถึงทั้งด่านของ augmenter และ Choose
+         must=["OcrVatCodeMeaning.Ambiguous(", "InferVatCodeMeaningAsync(", "OcrVatCodeMeaning.Choose(", "OcrVatCodeMeaning.ZeroRatedOnPaper("],
+         call_args=[("OcrVatCodeMeaning.Choose(", "zeroRatedOnPaper"), ("InferVatCodeMeaningAsync(", "zeroRatedOnPaper")],
          must_re=[r"scanResult\s*\.\s*VatCodeMeaningsJson\s*=\s*Accounting\.Helpers\.OcrVatCodeMeaning\.ToJson\(", r"scanResult\s*\.\s*VatCodeUsedAi\s*="],
          before=[("OcrVatCodeMeaning.Ambiguous(", "InferVatCodeMeaningAsync(")],
          why="DECISIONS 153 ข้อ 2: ถามเฉพาะแถว VAT 0 ที่ไม่รู้ความหมาย (ตัวเลขก่อน AI) · ผ่านด่าน+เกณฑ์ · เก็บ FeedbackId/UsedAi"),
     dict(file="Services/Ai/OcrAiAugmenter.cs", method="InferVatCodeMeaningAsync",
          must=["_orchestrator.AskAsync(", "OcrVatCodeMeaning.Guard(", "OcrVatCodeMeaningPrompt.Build("],
          before=[("_orchestrator.AskAsync(", "OcrVatCodeMeaning.Guard(")],
+         call_args=[("OcrVatCodeMeaning.Guard(", "zeroRatedOnPaper")],
          why="DECISIONS 153 ข้อ 2 / กฎเหล็ก #1: เรียกผ่าน orchestrator เท่านั้น + ด่านเลขคณิตของแถวก่อนคืนคำตอบ"),
     dict(file=DOC, method="ApproveDocumentAsync#2",
          must=["RecordVatCodeMeaningFeedbackAsync("],
          why="DECISIONS 153 ข้อ 2 / กฎเหล็ก #1 ขั้น CAPTURE: คำตอบจริงตอนอนุมัติ (ประเภท VAT ของบรรทัดที่ไม่มี VAT)"),
     dict(file=DOC, method="RecordVatCodeMeaningFeedbackAsync",
-         must=["OcrVatCodeMeaning.ChosenNoVatKind(", "_feedbackRecorder.RecordUserChoiceAsync("],
-         must_re=[r"e\.Source\s*==\s*Accounting\.Helpers\.OcrVatCodeMeaningSource\.Student\s*&&\s*e\.Kind\s*==\s*kind\)\s*continue"],
-         why="DECISIONS 153 ข้อ 2: ปิดลูปด้วยชนิดที่ผู้ใช้อนุมัติ · ไม่บันทึกนักเรียนยืนยันตัวเอง (DECISION_DOCTRINE §3)"),
+         # ฝ่ายค้าน f7c29c2c P2-6: คำตอบต่อรหัส (ปนยกเว้น+0% จับคู่ด้วยยอด) · P2-4: สอนเฉพาะแก้/คงคำตอบ AI (ค่าตั้งต้น/นักเรียนที่กดผ่านไม่สอน)
+         must=["OcrVatCodeMeaning.ChosenKindsByCode(", "OcrVatCodeMeaning.ResolvedTable(", "_feedbackRecorder.RecordUserChoiceAsync("],
+         must_re=[r"if\s*\(\s*!\s*Accounting\.Helpers\.OcrVatCodeMeaning\.Teaches\(\s*e\s*,\s*kind\s*\)\s*\)\s*continue"],
+         before=[("OcrVatCodeMeaning.Teaches(", "_feedbackRecorder.RecordUserChoiceAsync(")],
+         forbid=["ChosenNoVatKind(", "OcrLineVatMarks.ReadGroups("],
+         why="DECISIONS 153 ข้อ 2: ปิดลูปด้วยชนิดที่ผู้ใช้อนุมัติต่อรหัส · ไม่บันทึกนักเรียน/ค่าตั้งต้นยืนยันตัวเอง (DECISION_DOCTRINE §3 · ฝ่ายค้าน f7c29c2c P2-4)"),
+    dict(file="Services/Ai/Prompts/OcrVatCodeMeaningPrompt.cs", method="Build",
+         must=["OcrVatCodeMeaning.SanitizeEvidence(legendText)", "OcrVatCodeMeaning.SanitizeEvidence(vendorName)"],
+         why="ฝ่ายค้าน f7c29c2c P2-3: ข้อความ OCR ในพรอมต์ = ข้อมูล (ตัดบรรทัดหน้าตาคำสั่ง · เพดานความยาว)"),
 ]
 
 _RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}

@@ -283,10 +283,19 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     แถวตารางที่รหัสไม่รู้ความหมาย · VAT = 7% ของฐาน ⇒ 7% (ตัวเลขตอบ ไม่ถาม) · VAT = 0 ⇒ `OcrAiAugmenter.InferVatCodeMeaningAsync` → orchestrator
     (`AiFeatureKey.OcrVatCodeMeaning` · นักเรียน generic กุญแจ = ผู้ขาย + รหัส · คำอธิบายที่อ่านเพี้ยนส่งเป็น `paper_evidence` ไม่เข้ากุญแจ) · ด่าน `OcrVatCodeMeaning.Guard`
     (ขัดเลขคณิตของแถว = ทิ้ง) + ความมั่นใจ ≥ 0.70 · ไม่มีคำตอบ/ปิด AI ⇒ **ยกเว้น** (ความมั่นใจ 0.50 · ไม่บล็อก) · เก็บ `OcrScanResult.VatCodeMeaningsJson`
-    (FeedbackId ต่อรหัส) + `VatCodeUsedAi` · ตัวสร้างบรรทัด `OcrVatCodeMeaning.Resolve` (คำตอบที่ persist ผ่านด่านซ้ำ · สแกนเก่า = ค่าตั้งต้น) ⇒ ตารางใช้ได้ทุกสาขา
+    (FeedbackId ต่อรหัส) + `VatCodeUsedAi` · ตัวสร้างบรรทัด `OcrVatCodeMeaning.ResolvedTable` (คำตอบที่ persist ผ่านด่านซ้ำ · สแกนเก่า = ค่าตั้งต้น) ⇒ ตารางใช้ได้ทุกสาขา
     (รายการ / ตารางชนะ / ไม่มีรายการ) · หน้ารีวิวแสดงข้อความ + ป้าย "🤖 AI แนะนำ"/"⚙️ ระบบแนะนำ" จากเซิร์ฟเวอร์ (ความมั่นใจต่ำ = เหลือง) · อนุมัติเอกสาร ⇒
-    `DocumentService.RecordVatCodeMeaningFeedbackAsync` บันทึกชนิดของบรรทัดที่ไม่มี VAT (เปลี่ยน = Explicit · คงเดิม = Implicit · นักเรียนยืนยันตัวเอง = ไม่บันทึก) ·
+    `DocumentService.RecordVatCodeMeaningFeedbackAsync` บันทึกชนิดของบรรทัดที่ไม่มี VAT ต่อรหัส (เปลี่ยน = Explicit · คงคำตอบ AI = Implicit · คงค่าตั้งต้น/นักเรียนยืนยันตัวเอง = ไม่บันทึก) ·
     คำแนะนำ "VAT ÷ 0.07" ของ `OcrAmountIntegrity` อ้างตัวเลขของตารางรหัส ภ.พ. เมื่อกระดาษมี
+  - **ฝ่ายค้านของ 11513c3d..f7c29c2c (2026-10-16 · ทีม OCR 4)** — (P1-1) ตารางที่ตัดสินความหมายแล้วมาจาก `OcrVatCodeMeaning.ResolvedTable(ข้อความ, VatCodeMeaningsJson)`
+    ตัวเดียว: ตัวสร้างบรรทัด · ด่านอนุมัติ (`CollectApprovalWarningsAsync` — `TableMismatch` + `PaperExemptAmount`) · ปุ่ม LINE · ตัวปิดลูป · harness (เดิมด่านอนุมัติ/LINE อ่านตารางดิบ ⇒
+    ใบที่สร้างสะอาดถูกฟ้อง "รหัสไม่บอกความหมาย" และ LINE ปฏิเสธ) · (P1-2/P1-3) ตารางชนะแทนรายการได้เฉพาะเมื่อทุกรายการ**ผังบัญชีเดียวกัน** (ลำดับชั้น
+    `OcrLineAccountSource` เดียวกับลูปสร้างบรรทัด) และ**โครงการเดียวกัน** — บรรทัดสรุป + หัวเอกสารแบกค่านั้น · ต่างกัน ⇒ คงรายการ + `[Σ-GAP]` + `[Σ]` เหตุผล ·
+    ข้อความ `[NO-ITEMS]` บอกสิ่งที่ถูกแทน (รายการย่อยสำหรับสต็อก) · (P2-5) กระดาษพิมพ์ "หน้า N จาก M" ครบ 1..M (`OcrPageSet`) ⇒ ไม่ใช่การอัปโหลดแค่หน้าสุดท้าย ⇒ คงรายการ + ฟ้อง ·
+    หน้าสุดท้ายหน้าเดียว/ไม่พิมพ์เลขหน้า ⇒ ตารางชนะตามเดิม · (P2-1) ส่วนลดที่เอ่ยชื่อสินค้าต้องใช้คำเฉพาะตัว (ไม่ใช่หน่วย/บรรจุภัณฑ์ "ขวด/แพ็ค/pcs") ·
+    (P2-3) คำตอบ ZeroRated (AI · นักเรียน · ที่ persist) ใช้ได้เฉพาะเมื่อกระดาษมีหลักฐาน 0% (`ZeroRatedOnPaper`) ไม่งั้นยกเว้น · ข้อความ OCR ในพรอมต์ผ่าน `SanitizeEvidence` ·
+    (P2-4) อนุมัติ: คงค่าตั้งต้น/คงคำตอบนักเรียน = ไม่บันทึก (`Teaches`) · (P2-6) บรรทัดไม่มี VAT ปนยกเว้น/0% ⇒ คำตอบต่อรหัสด้วยยอดของกลุ่ม (`ChosenKindsByCode`) ·
+    Last verified `commit <pending>`
   - **แถวในตารางรายการที่ไม่ใช่สินค้า (2026-10-09)** — `Helpers/OcrNonItemRow` ตัวเดียวทุก engine (Azure prebuilt Items · Azure layout-table ·
     python ocr-service): แถวสรุป/แถวชำระ/เงินทอน ("เงินสด 1,000" · "เงินทอน" · "รวม 3 รายการ" · "VAT 7%" · "Card") ถูกตัดก่อนเป็นบรรทัดสินค้า
     และบอกใน trace/warnings (`[Items] ตัดแถวสรุป…`) · คำแรกต้องเป็นป้ายทั้งคำ + คำที่เหลือเป็นคำประกอบของแถวสรุป ("รวมมิตรทะเล" · "Cash Drawer

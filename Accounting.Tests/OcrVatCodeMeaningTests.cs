@@ -46,7 +46,7 @@ public class OcrVatCodeMeaningTests
             new OcrVatGroup(OcrVatGroupKind.Unknown, "4", 100.00m, 3.00m, 103.00m, 1, "รหัส 4"),
         }, 10441.50m, 641.50m, 11083.00m, 9, "t");
         Assert.Equal(new[] { "1" }, OcrVatCodeMeaning.Ambiguous(table).Select(g => g.PaperCode).ToArray());
-        var r = OcrVatCodeMeaning.Resolve(table, null);
+        var r = OcrVatCodeMeaning.Resolve(table, null, zeroRatedOnPaper: false);
         Assert.Equal(new[] { OcrVatGroupKind.Exempt, OcrVatGroupKind.Standard7, OcrVatGroupKind.Unknown },
             r.Table.Groups.Select(g => g.Kind).ToArray());
         Assert.Equal(OcrVatCodeMeaningSource.Arithmetic, r.Entries.Single(e => e.Code == "2").Source);
@@ -60,7 +60,7 @@ public class OcrVatCodeMeaningTests
     [InlineData("ZeroRated", OcrVatGroupKind.ZeroRated)]
     [InlineData(" exempt ", OcrVatGroupKind.Exempt)]
     public void ด่าน_แถวVATศูนย์_รับยกเว้นหรือศูนย์(string answer, OcrVatGroupKind expected)
-        => Assert.Equal(expected, OcrVatCodeMeaning.Guard(ZeroRow(), answer, out _));
+        => Assert.Equal(expected, OcrVatCodeMeaning.Guard(ZeroRow(), answer, out _, zeroRatedOnPaper: true));
 
     [Theory]
     [InlineData("Standard7")]
@@ -69,16 +69,16 @@ public class OcrVatCodeMeaningTests
     [InlineData(null)]
     public void ด่าน_ทิศตรงข้าม_7เปอร์เซ็นต์บนแถวVATศูนย์_และคำตอบนอกชุด_ทิ้ง(string? answer)
     {
-        Assert.Null(OcrVatCodeMeaning.Guard(ZeroRow(), answer, out var why));
+        Assert.Null(OcrVatCodeMeaning.Guard(ZeroRow(), answer, out var why, zeroRatedOnPaper: true));
         Assert.NotEmpty(why);
     }
 
     [Fact]
     public void ด่าน_แถวที่มีVAT7เปอร์เซ็นต์_ตอบยกเว้นถูกทิ้ง_ตอบ7ผ่าน()
     {
-        Assert.Null(OcrVatCodeMeaning.Guard(SevenRow, "Exempt", out var why));
+        Assert.Null(OcrVatCodeMeaning.Guard(SevenRow, "Exempt", out var why, zeroRatedOnPaper: true));
         Assert.Contains("ขัดกับแถวที่มี VAT 638.50", why);
-        Assert.Equal(OcrVatGroupKind.Standard7, OcrVatCodeMeaning.Guard(SevenRow, "Standard7", out _));
+        Assert.Equal(OcrVatGroupKind.Standard7, OcrVatCodeMeaning.Guard(SevenRow, "Standard7", out _, zeroRatedOnPaper: false));
     }
 
     // ── เลือกคำตอบ: AI / นักเรียน / ค่าตั้งต้น ──
@@ -87,7 +87,7 @@ public class OcrVatCodeMeaningTests
     public void เลือก_AIมั่นใจ_ใช้คำตอบAI_ป้ายAIแนะนำ_เก็บFeedbackId()
     {
         var fid = Guid.NewGuid();
-        var e = OcrVatCodeMeaning.Choose(ZeroRow(), "ZeroRated", 0.92m, hasModelAnswer: true, usedAi: true, fid);
+        var e = OcrVatCodeMeaning.Choose(ZeroRow(), "ZeroRated", 0.92m, hasModelAnswer: true, usedAi: true, fid, zeroRatedOnPaper: true);
         Assert.Equal((OcrVatGroupKind.ZeroRated, OcrVatCodeMeaningSource.Ai, fid), (e.Kind, e.Source, e.FeedbackId));
         Assert.StartsWith("🤖 AI แนะนำ", OcrVatCodeMeaning.SourceText(e));
     }
@@ -98,7 +98,7 @@ public class OcrVatCodeMeaningTests
         var fid = Guid.NewGuid();
         foreach (var (ans, conf, has) in new[] { ("ZeroRated", 0.60m, true), ("Standard7", 0.99m, true), ((string)null!, 0m, false) })
         {
-            var e = OcrVatCodeMeaning.Choose(ZeroRow(), ans, conf, has, usedAi: has, fid);
+            var e = OcrVatCodeMeaning.Choose(ZeroRow(), ans, conf, has, usedAi: has, fid, zeroRatedOnPaper: true);
             Assert.Equal(OcrVatCodeMeaning.ColdStartKind, e.Kind);
             Assert.Equal(OcrVatGroupKind.Exempt, e.Kind);
             Assert.Equal(OcrVatCodeMeaningSource.ColdStartDefault, e.Source);
@@ -114,7 +114,8 @@ public class OcrVatCodeMeaningTests
     {
         var table = OcrLineVatMarks.ReadGroups(Tesseract);
         var fid = Guid.NewGuid();
-        var good = OcrVatCodeMeaning.Resolve(table, new[] { new OcrVatCodeMeaningEntry("1", OcrVatGroupKind.ZeroRated, OcrVatCodeMeaningSource.Ai, 0.9m, fid, "ZeroRated") });
+        var good = OcrVatCodeMeaning.Resolve(table, new[] { new OcrVatCodeMeaningEntry("1", OcrVatGroupKind.ZeroRated, OcrVatCodeMeaningSource.Ai, 0.9m, fid, "ZeroRated") },
+            zeroRatedOnPaper: true);
         Assert.Equal(OcrVatGroupKind.ZeroRated, good.Table.Groups.Single(g => g.PaperCode == "1").Kind);
         Assert.True(good.Table.AllKnown);
         // persist ผิด (7% บนแถว VAT 0 · ความมั่นใจต่ำ) ⇒ ไม่เชื่อ ⇒ ค่าตั้งต้น (FeedbackId เดิมคงไว้ให้ปิดลูป)
@@ -124,7 +125,7 @@ public class OcrVatCodeMeaningTests
             new OcrVatCodeMeaningEntry("1", OcrVatGroupKind.ZeroRated, OcrVatCodeMeaningSource.Ai, 0.5m, fid, "ZeroRated"),
         })
         {
-            var r = OcrVatCodeMeaning.Resolve(table, new[] { bad });
+            var r = OcrVatCodeMeaning.Resolve(table, new[] { bad }, zeroRatedOnPaper: true);
             var e = r.Entries.Single();
             Assert.Equal((OcrVatGroupKind.Exempt, OcrVatCodeMeaningSource.ColdStartDefault, fid), (e.Kind, e.Source, e.FeedbackId));
         }
@@ -139,7 +140,7 @@ public class OcrVatCodeMeaningTests
     {
         var table = OcrLineVatMarks.ReadGroups(Norm(OcrPaperSamples.MakroPage2of2));
         Assert.True(table.AllKnown);
-        var r = OcrVatCodeMeaning.Resolve(table, null);
+        var r = OcrVatCodeMeaning.Resolve(table, null, zeroRatedOnPaper: false);
         Assert.Same(table, r.Table);
         Assert.Empty(r.Entries);
         Assert.Null(r.Note);
@@ -152,7 +153,7 @@ public class OcrVatCodeMeaningTests
     public void Tesseractจริงหน้า2_ค่าตั้งต้นตัดสินรหัส1_บรรทัดสรุปต่อรหัส_รวม10980()
     {
         // ก่อน: รหัส 1 ไม่รู้ ⇒ ตารางใช้ไม่ได้ ⇒ บรรทัดสรุปใบเดียว 7% + [Σ-GAP] VatRateMismatch
-        var resolved = OcrVatCodeMeaning.Resolve(OcrLineVatMarks.ReadGroups(Tesseract), null).Table;
+        var resolved = OcrVatCodeMeaning.ResolvedTable(Tesseract, null).Table;
         var d = OcrVatCodeLines.Decide(new[] { new OcrVatCodeLineInput(30m, null, "ซื้อสินค้าฮีโร่ … ลด 30 บาท(*1.0)"), new OcrVatCodeLineInput(60m, null, "ลด 60บ(*1.0)") },
             Tesseract, resolved, 10341.50m, 638.50m, 10980.00m, 228.00m, false, true);
         Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
@@ -172,7 +173,7 @@ public class OcrVatCodeMeaningTests
     [Fact]
     public void Tesseractจริงหน้า2_รายการลงตาราง_รหัส1ตัดสินแล้ว_แบ่งทางเดียว_ยกเว้น1220()
     {
-        var resolved = OcrVatCodeMeaning.Resolve(OcrLineVatMarks.ReadGroups(Tesseract), null).Table;
+        var resolved = OcrVatCodeMeaning.ResolvedTable(Tesseract, null).Table;
         var plan = OcrVatCodeLines.Plan(new[] { new OcrVatCodeLineInput(1220.00m, null), new OcrVatCodeLineInput(9760.00m, null) },
             Tesseract, resolved, 638.50m, 10980.00m, 0m, true, null);
         Assert.Equal(OcrVatCodeVerdict.Applied, plan.Verdict);
@@ -181,13 +182,67 @@ public class OcrVatCodeMeaningTests
 
     // ── ปิดลูปตอนอนุมัติ ──
 
+    private static IReadOnlyDictionary<string, OcrVatGroupKind> Chosen(OcrVatGroupTable t, string[] asked, params (decimal, decimal)[] lines)
+        => OcrVatCodeMeaning.ChosenKindsByCode(t, asked, lines);
+
     [Fact]
-    public void คำตอบจริงตอนอนุมัติ_ชนิดของบรรทัดไม่มีVAT_ปนหรือไม่มีไม่บันทึก()
+    public void คำตอบจริงตอนอนุมัติ_ชนิดเดียว_ทุกรหัสได้ชนิดนั้น_ไม่มีบรรทัดไม่มีVAT_ไม่บันทึก()
     {
-        Assert.Equal(OcrVatGroupKind.Exempt, OcrVatCodeMeaning.ChosenNoVatKind(new[] { -1m, 7m, -1m }));
-        Assert.Equal(OcrVatGroupKind.ZeroRated, OcrVatCodeMeaning.ChosenNoVatKind(new[] { 0m, 7m }));
-        Assert.Null(OcrVatCodeMeaning.ChosenNoVatKind(new[] { 0m, -1m, 7m }));           // ปน ⇒ ไม่รู้ว่าผู้ใช้ตอบอะไร
-        Assert.Null(OcrVatCodeMeaning.ChosenNoVatKind(new[] { 7m }));                     // ผู้ใช้รวมเป็น 7% ทั้งใบ ⇒ ไม่ใช่คำตอบของคำถามนี้
+        var t = OcrVatCodeMeaning.ResolvedTable(Tesseract, null).Table;
+        Assert.Equal(OcrVatGroupKind.Exempt, Chosen(t, new[] { "1" }, (1220m, -1m), (9121.50m, 7m))["1"]);
+        Assert.Equal(OcrVatGroupKind.ZeroRated, Chosen(t, new[] { "1" }, (1220m, 0m), (9121.50m, 7m))["1"]);
+        Assert.Empty(Chosen(t, new[] { "1" }, (10341.50m, 7m)));                          // ผู้ใช้รวมเป็น 7% ทั้งใบ ⇒ ไม่ใช่คำตอบของคำถามนี้
+    }
+
+    // ── ฝ่ายค้าน f7c29c2c P2-6: ปนยกเว้น + 0% ⇒ ต่อรหัสด้วยยอดของกลุ่ม (เดิม null ทั้งใบ ⇒ ไม่เคยสอน) ──
+
+    private static readonly OcrVatGroupTable TwoZeroCodes = new(new[]
+    {
+        new OcrVatGroup(OcrVatGroupKind.Exempt, "1", 300.00m, 0m, 300.00m, 2, "รหัส 1 (ค่าตั้งต้น)"),
+        new OcrVatGroup(OcrVatGroupKind.Exempt, "3", 500.00m, 0m, 500.00m, 1, "รหัส 3 (ค่าตั้งต้น)"),
+        new OcrVatGroup(OcrVatGroupKind.Standard7, "2", 1000.00m, 70.00m, 1070.00m, 4, "รหัส 2"),
+    }, 1800.00m, 70.00m, 1870.00m, 9, "t");
+
+    [Fact]
+    public void คำตอบจริงตอนอนุมัติ_ปนยกเว้นและศูนย์_จับคู่ต่อรหัสด้วยยอด()
+    {
+        // ผู้ใช้แก้รหัส 3 (500) เป็น 0% · รหัส 1 (100 + 200) คงยกเว้น
+        var c = Chosen(TwoZeroCodes, new[] { "1", "3" }, (100m, -1m), (200m, -1m), (500m, 0m), (1000m, 7m));
+        Assert.Equal(OcrVatGroupKind.Exempt, c["1"]);
+        Assert.Equal(OcrVatGroupKind.ZeroRated, c["3"]);
+    }
+
+    [Fact]
+    public void คำตอบจริงตอนอนุมัติ_ทิศตรงข้าม_ปนแต่ยอดไม่ลงกลุ่ม_หรือสองทาง_ไม่บันทึกรหัสนั้น()
+    {
+        // ยอดไม่ตรงกลุ่มใด (ผู้ใช้แยกบรรทัดเอง 250/550) ⇒ ไม่รู้ว่าแต่ละรหัสตอบอะไร
+        Assert.Empty(Chosen(TwoZeroCodes, new[] { "1", "3" }, (250m, -1m), (550m, 0m), (1000m, 7m)));
+        // สองรหัสยอดเท่ากัน ⇒ สองทางลงตัว ⇒ ไม่เดา
+        var twin = TwoZeroCodes with { Groups = new[]
+        {
+            new OcrVatGroup(OcrVatGroupKind.Exempt, "1", 400.00m, 0m, 400.00m, 1, "1"),
+            new OcrVatGroup(OcrVatGroupKind.Exempt, "3", 400.00m, 0m, 400.00m, 1, "3"),
+            new OcrVatGroup(OcrVatGroupKind.Standard7, "2", 1000.00m, 70.00m, 1070.00m, 4, "2"),
+        } };
+        Assert.Empty(Chosen(twin, new[] { "1", "3" }, (400m, -1m), (400m, 0m), (1000m, 7m)));
+        // รหัสที่กระดาษบอกความหมาย (ไม่ได้ถาม) คงชนิดเดิม — รหัสที่ถามเหลือทางเดียว
+        var c = Chosen(TwoZeroCodes, new[] { "3" }, (300m, -1m), (500m, 0m), (1000m, 7m));
+        Assert.Equal(new[] { "3" }, c.Keys.ToArray());
+        Assert.Equal(OcrVatGroupKind.ZeroRated, c["3"]);
+    }
+
+    // ── ฝ่ายค้าน f7c29c2c P2-4: ค่าตั้งต้นที่กดผ่านไม่สอนตัวเอง ──
+
+    [Fact]
+    public void สอนนักเรียน_แก้ชนิดสอน_คงคำตอบAIสอน_คงค่าตั้งต้นหรือคงคำตอบนักเรียนไม่สอน()
+    {
+        static OcrVatCodeMeaningEntry E(OcrVatCodeMeaningSource s, OcrVatGroupKind k) => new("1", k, s, 0.5m, Guid.NewGuid(), null);
+        Assert.False(OcrVatCodeMeaning.Teaches(E(OcrVatCodeMeaningSource.ColdStartDefault, OcrVatGroupKind.Exempt), OcrVatGroupKind.Exempt));
+        Assert.False(OcrVatCodeMeaning.Teaches(E(OcrVatCodeMeaningSource.Student, OcrVatGroupKind.Exempt), OcrVatGroupKind.Exempt));
+        // ทิศตรงข้าม
+        Assert.True(OcrVatCodeMeaning.Teaches(E(OcrVatCodeMeaningSource.ColdStartDefault, OcrVatGroupKind.Exempt), OcrVatGroupKind.ZeroRated));
+        Assert.True(OcrVatCodeMeaning.Teaches(E(OcrVatCodeMeaningSource.Student, OcrVatGroupKind.ZeroRated), OcrVatGroupKind.Exempt));
+        Assert.True(OcrVatCodeMeaning.Teaches(E(OcrVatCodeMeaningSource.Ai, OcrVatGroupKind.Exempt), OcrVatGroupKind.Exempt));
     }
 
     // ── กุญแจนักเรียน = ผู้ขาย + รหัส (คำอธิบายที่อ่านเพี้ยน/ยอดเงินไม่เข้ากุญแจ) ──
@@ -242,10 +297,10 @@ public class OcrVatCodeMeaningTests
                 .UseNpgsql("Host=127.0.0.1;Port=1;Database=offline;Username=none;Password=none").Options),
             new KillSwitchRig.Orchestrator(students, AllProvidersOff()), NullLogger<OcrAiAugmenter>.Instance);
 
-    private static async Task<OcrVatCodeMeaningEntry> AskAndChoose(OcrAiAugmenter aug, OcrVatGroup row)
+    private static async Task<OcrVatCodeMeaningEntry> AskAndChoose(OcrAiAugmenter aug, OcrVatGroup row, bool zeroRatedOnPaper = false)
     {
-        var ai = await aug.InferVatCodeMeaningAsync(Cid, Guid.NewGuid(), "ซีพี แอ็กซ์ตร้า", "0107567000414", row, "1«สินค้าได้รับการยกเว้น");
-        return OcrVatCodeMeaning.Choose(row, ai.Answer, ai.Confidence, ai.HasModelAnswer, ai.UsedAi, ai.FeedbackId);
+        var ai = await aug.InferVatCodeMeaningAsync(Cid, Guid.NewGuid(), "ซีพี แอ็กซ์ตร้า", "0107567000414", row, "1«สินค้าได้รับการยกเว้น", zeroRatedOnPaper);
+        return OcrVatCodeMeaning.Choose(row, ai.Answer, ai.Confidence, ai.HasModelAnswer, ai.UsedAi, ai.FeedbackId, zeroRatedOnPaper);
     }
 
     [Fact]
@@ -256,7 +311,7 @@ public class OcrVatCodeMeaningTests
         Assert.Equal(OcrVatCodeMeaningSource.ColdStartDefault, e.Source);
         Assert.NotNull(e.FeedbackId);                                               // ผู้ใช้อนุมัติแล้ว = สอนนักเรียนได้แม้ปิด AI
         // ตัวสร้างบรรทัดได้ตารางที่ใช้ได้ (cold start) ⇒ 1,220 ยกเว้น + 9,121.50/638.50
-        var resolved = OcrVatCodeMeaning.Resolve(OcrLineVatMarks.ReadGroups(Tesseract), new[] { e }).Table;
+        var resolved = OcrVatCodeMeaning.Resolve(OcrLineVatMarks.ReadGroups(Tesseract), new[] { e }, zeroRatedOnPaper: false).Table;
         Assert.True(resolved.AllKnown);
         Assert.Equal(1220.00m, resolved.Groups.Where(g => g.Kind == OcrVatGroupKind.Exempt).Sum(g => g.Net));
     }
@@ -264,19 +319,22 @@ public class OcrVatCodeMeaningTests
     [Fact]
     public async Task KillSwitch_ปิดprovider_นักเรียนที่เรียนผู้ขายนี้แล้วตอบ_ใช้คำตอบนักเรียน_ป้ายระบบแนะนำไม่ใช่AI()
     {
-        var e = await AskAndChoose(Augmenter(new[] { new ConfidentStudent("ZeroRated", 0.80m) }), ZeroRow());
+        var e = await AskAndChoose(Augmenter(new[] { new ConfidentStudent("ZeroRated", 0.80m) }), ZeroRow(), zeroRatedOnPaper: true);
         Assert.Equal((OcrVatGroupKind.ZeroRated, OcrVatCodeMeaningSource.Student), (e.Kind, e.Source));
         Assert.DoesNotContain("🤖", OcrVatCodeMeaning.SourceText(e));
+        // ฝ่ายค้าน f7c29c2c P2-3 ทิศตรงข้าม: กระดาษไม่มีหลักฐาน 0% ⇒ คำตอบ 0% ของนักเรียนถูกทิ้ง ⇒ ค่าตั้งต้นยกเว้น
+        var noEvidence = await AskAndChoose(Augmenter(new[] { new ConfidentStudent("ZeroRated", 0.80m) }), ZeroRow());
+        Assert.Equal((OcrVatGroupKind.Exempt, OcrVatCodeMeaningSource.ColdStartDefault), (noEvidence.Kind, noEvidence.Source));
     }
 
     [Fact]
     public async Task KillSwitch_ทิศตรงข้าม_นักเรียนตอบ7เปอร์เซ็นต์บนแถวVATศูนย์_ถูกทิ้ง_ค่าตั้งต้น()
     {
         var aug = Augmenter(new[] { new ConfidentStudent("Standard7", 0.95m) });
-        var ai = await aug.InferVatCodeMeaningAsync(Cid, Guid.NewGuid(), "ซีพี", "0107567000414", ZeroRow(), null);
+        var ai = await aug.InferVatCodeMeaningAsync(Cid, Guid.NewGuid(), "ซีพี", "0107567000414", ZeroRow(), null, zeroRatedOnPaper: true);
         Assert.Null(ai.Answer);
         Assert.Contains("ถูกทิ้ง", ai.Reasoning);
-        var e = OcrVatCodeMeaning.Choose(ZeroRow(), ai.Answer, ai.Confidence, ai.HasModelAnswer, ai.UsedAi, ai.FeedbackId);
+        var e = OcrVatCodeMeaning.Choose(ZeroRow(), ai.Answer, ai.Confidence, ai.HasModelAnswer, ai.UsedAi, ai.FeedbackId, zeroRatedOnPaper: true);
         Assert.Equal(OcrVatCodeMeaningSource.ColdStartDefault, e.Source);
     }
 

@@ -7663,9 +7663,8 @@ public class OcrService : IOcrService
         // ★ 2026-10-16 DECISIONS ข้อ 153 ข้อ 2: รหัสที่กระดาษไม่บอกความหมาย ⇒ ตัวเลขของแถวก่อน (VAT 7% ⇒ 7%) · VAT 0 ⇒ คำตอบ AI/นักเรียนที่ตัดสินตอนสแกน
         // (VatCodeMeaningsJson · ผ่านด่านซ้ำ) หรือค่าตั้งต้น "ยกเว้น" (ความมั่นใจต่ำ · ไม่บล็อก) — ตัวตัดสินเดียว Helpers/OcrVatCodeMeaning.Resolve ·
         // สแกนเก่า (ไม่มี JSON) ได้ค่าตั้งต้นตอนสร้าง/พรีวิว/ดึงรายการซ้ำ
-        var vatCodeResolution = Accounting.Helpers.OcrVatCodeMeaning.Resolve(
-            Accounting.Helpers.OcrLineVatMarks.ReadGroups(normalizedRawText),
-            Accounting.Helpers.OcrVatCodeMeaning.FromJson(result.VatCodeMeaningsJson));
+        // ฝ่ายค้าน f7c29c2c P1-1: ตัวเดียวกับด่านอนุมัติ/LINE/ตัวปิดลูป (OcrVatCodeMeaning.ResolvedTable) — ห้ามประกอบ ReadGroups + Resolve เอง
+        var vatCodeResolution = Accounting.Helpers.OcrVatCodeMeaning.ResolvedTable(normalizedRawText, result.VatCodeMeaningsJson);
         var vatCodeTable = vatCodeResolution.Table;
         if (vatCodeResolution.Note is string vatCodeMeaningNote)
             result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] " + vatCodeMeaningNote;
@@ -7734,8 +7733,22 @@ public class OcrService : IOcrService
             // ★ ตารางรหัส ภ.พ. ของกระดาษเป็นตัวตั้ง (คำตัดสินเจ้าของ 2026-10-16): รายการลงตาราง ⇒ รายการ · แถวส่วนลดที่ engine คืนเป็นสินค้า ⇒ ส่วนลด
             // (ต้องลงตารางพอดี) · ยังไม่ลง ⇒ บรรทัดสรุปต่อกลุ่มรหัส (ตารางชนะ) — ไม่คงรายการครึ่งใบ + [Σ-GAP] · ไม่มีตารางผสม = เส้นเดิมทุกตัวอักษร
             // บรรทัดสรุปแทนรายการไม่ได้เมื่อมีหัก ณ ที่จ่าย (บรรทัดสรุปไม่แบก WHT) หรือผูกบรรทัด PO (ต้องคง SourceLineId ของการรับของ)
+            // ฝ่ายค้าน f7c29c2c P1-2/P1-3: ผังบัญชี + โครงการของแต่ละรายการเข้าตัวตัดสิน — ต่างกัน ⇒ คงรายการ (บรรทัดสรุปแบกได้ผัง/โครงการเดียว) ·
+            // ผังที่รายการจะได้ = ลำดับชั้นเดียวกับลูปสร้างบรรทัดข้างล่าง (OcrLineAccountSource: ผังของบรรทัด > ผังหัวใบ · บรรทัด PO ถูกกันที่ tableLinesAllowed แล้ว)
+            var itemAccountCodes = items.Select(x => x.SuggestedAccountCode).Where(c => !string.IsNullOrEmpty(c)).Select(c => c!).Distinct().ToList();
+            var itemAccountIdByCode = itemAccountCodes.Count == 0 ? new Dictionary<string, Guid>()
+                : (await _db.ChartOfAccounts.AsNoTracking()
+                        .Where(a => a.CompanyId == companyId && itemAccountCodes.Contains(a.AccountCode) && !a.IsDeleted)
+                        .Select(a => new { a.AccountCode, a.Id })
+                        .ToListAsync())
+                    .GroupBy(a => a.AccountCode).ToDictionary(g => g.Key, g => g.First().Id);
+            Guid? ItemAccount(OcrExtractedLineItem x) => Accounting.Helpers.OcrLineAccountSource.Resolve(
+                null,
+                !string.IsNullOrEmpty(x.SuggestedAccountCode) && itemAccountIdByCode.TryGetValue(x.SuggestedAccountCode!, out var aid) ? aid : null,
+                scanDebitAccountId).AccountId;
             codeDecision = Accounting.Helpers.OcrVatCodeLines.Decide(
-                items.Select((x, ci) => new Accounting.Helpers.OcrVatCodeLineInput(lineGross[ci], x.VatRate, x.Description)).ToList(),
+                items.Select((x, ci) => new Accounting.Helpers.OcrVatCodeLineInput(lineGross[ci], x.VatRate, x.Description,
+                    AccountId: ItemAccount(x), ProjectId: x.ProjectId)).ToList(),
                 normalizedRawText, vatCodeTable, hdrSub, hdrVatHdr, hdrTotal, hdrDiscRaw,
                 pricesIncludeVatPreset: document.PricesIncludeVat || Accounting.Helpers.OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(
                     items.Select(x => (x.Amount ?? 0m, x.PriceIncludesVat)).ToList()),
@@ -8124,8 +8137,11 @@ public class OcrService : IOcrService
                     Amount = grp.Net,
                     VatRate = rate,
                     VatAmount = grp.Vat,
-                    AccountId = scanDebitAccountId,
-                    GlAccountAiFeedbackId = order == 1 && scanDebitAccountId.HasValue ? result.GlAccountAiFeedbackId : null,
+                    // ฝ่ายค้าน f7c29c2c P1-2/P1-3: ตารางชนะแทนรายการ ⇒ ผังบัญชี/โครงการที่ทุกรายการใช้ร่วมกัน (ตัวตัดสินกันใบที่ต่างกันไว้แล้ว) · ไม่มีรายการ = ผังหัวใบ
+                    AccountId = tableLinesInsteadOfItems is not null ? codeDecision!.SummaryAccountId : scanDebitAccountId,
+                    GlAccountAiFeedbackId = order == 1 && (tableLinesInsteadOfItems is not null ? codeDecision!.SummaryAccountId : scanDebitAccountId).HasValue
+                        ? result.GlAccountAiFeedbackId : null,
+                    ProjectId = tableLinesInsteadOfItems is not null ? codeDecision!.SummaryProjectId : null,
                 });
                 planned.Add(new Accounting.Helpers.OcrPlannedLine(grp.Net, rate, grp.Vat));
                 sourceIndexes.Add(-1);
@@ -8133,6 +8149,8 @@ public class OcrService : IOcrService
             }
             if (tableLinesInsteadOfItems is not null)
             {
+                // ฝ่ายค้าน f7c29c2c P1-2: โครงการหัวเอกสารตามรายการ (สาขารายการตั้งจาก lineProjects — สาขานี้เดิมไม่ตั้ง ⇒ หน้ารายการ/งบโครงการหาย)
+                if (codeDecision!.SummaryProjectId is Guid summaryProject) document.ProjectId = summaryProject;
                 // ข้อความบอกว่าทำไมไม่ใช้รายการ (ตัวเลขของกระดาษ) — ไม่บล็อก (ยอด/ภาษีตรงกระดาษ) · ขาดแค่รายการสำหรับตัดสต็อก
                 if (!(result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrVatCodeLines.TableSummaryLead, StringComparison.Ordinal))
                     result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrTotalDecomposer.NoItemsTag
@@ -8206,6 +8224,8 @@ public class OcrService : IOcrService
         var asks = Accounting.Helpers.OcrVatCodeMeaning.Ambiguous(Accounting.Helpers.OcrLineVatMarks.ReadGroups(normalizedText));
         if (asks.Count == 0) return;
         var legend = Accounting.Helpers.OcrVatCodeMeaning.LegendText(normalizedText);
+        // ฝ่ายค้าน f7c29c2c P2-3: หลักฐาน 0% ทั้งใบ (ตัวเดียวกับ ResolvedTable ตอนสร้าง/อนุมัติ) — ไม่มี ⇒ คำตอบ ZeroRated ถูกทิ้ง
+        var zeroRatedOnPaper = Accounting.Helpers.OcrVatCodeMeaning.ZeroRatedOnPaper(normalizedText);
         var entries = new List<Accounting.Helpers.OcrVatCodeMeaningEntry>(asks.Count);
         foreach (var row in asks)
         {
@@ -8216,7 +8236,7 @@ public class OcrService : IOcrService
                 {
                     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                     ai = await _aiAugmenter.InferVatCodeMeaningAsync(companyId, scanResult.Id,
-                        extractedData.VendorName, extractedData.VendorTaxId, row, legend, cts.Token);
+                        extractedData.VendorName, extractedData.VendorTaxId, row, legend, zeroRatedOnPaper, cts.Token);
                 }
                 catch (Exception ex)
                 {
@@ -8225,7 +8245,8 @@ public class OcrService : IOcrService
                 }
             }
             var entry = Accounting.Helpers.OcrVatCodeMeaning.Choose(row, ai?.Answer, ai?.Confidence,
-                hasModelAnswer: ai?.HasModelAnswer == true, usedAi: ai?.UsedAi == true, feedbackId: ai?.FeedbackId);
+                hasModelAnswer: ai?.HasModelAnswer == true, usedAi: ai?.UsedAi == true, feedbackId: ai?.FeedbackId,
+                zeroRatedOnPaper: zeroRatedOnPaper);
             entries.Add(entry);
             extractedData.ReasoningTrace.Add($"[VatCode] รหัส {row.PaperCode} (ฐาน {row.Net:N2} · VAT 0.00) = "
                 + $"{Accounting.Helpers.OcrVatCodeMeaning.AnswerOf(entry.Kind)} — {Accounting.Helpers.OcrVatCodeMeaning.SourceText(entry)}"

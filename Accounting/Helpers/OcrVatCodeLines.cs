@@ -22,7 +22,11 @@ public enum OcrVatCodeVerdict
 /// <param name="PresetRate">อัตราที่ชั้นบนตั้งไว้แล้ว (engine · ผู้ใช้ในหน้ารีวิว · สัญลักษณ์ท้ายบรรทัด) · null = ยังไม่มี</param>
 /// <param name="Description">รายละเอียดของบรรทัด — ใช้แยก "แถวส่วนลดที่ engine คืนเป็นสินค้า" และหาสินค้าที่แถวส่วนลดเอ่ยชื่อ
 /// (<see cref="OcrVatCodeLines.Decide"/> · คำตัดสินเจ้าของ 2026-10-16 ข้อ 3) · null = ไม่รู้</param>
-public readonly record struct OcrVatCodeLineInput(decimal PrintedAmount, decimal? PresetRate, string? Description = null);
+/// <param name="AccountId">ผังบัญชีที่บรรทัดนี้จะได้ (บรรทัดที่เรียนไว้/ผู้ใช้เลือก · ไม่มี = ผังระดับหัวใบ — ผู้เรียก resolve ด้วย <c>OcrLineAccountSource</c> ตัวเดียวกับตัวสร้างบรรทัด)
+/// — บรรทัดสรุปแทนรายการได้เฉพาะเมื่อทุกรายการใช้ผังเดียวกัน (ฝ่ายค้าน f7c29c2c P1-3)</param>
+/// <param name="ProjectId">โครงการของบรรทัด — บรรทัดสรุปแทนรายการได้เฉพาะเมื่อทุกรายการโครงการเดียวกัน (ฝ่ายค้าน f7c29c2c P1-2)</param>
+public readonly record struct OcrVatCodeLineInput(decimal PrintedAmount, decimal? PresetRate, string? Description = null,
+    Guid? AccountId = null, Guid? ProjectId = null);
 
 /// <summary>บรรทัดเอกสารของใบที่มีตารางรหัส ภ.พ. ผสม มาจากไหน (คำตัดสินเจ้าของ 2026-10-16 ข้อ 1)</summary>
 public enum OcrVatCodeLineSource
@@ -44,10 +48,13 @@ public enum OcrVatCodeLineSource
 /// <param name="Plan">แผนอัตรา/ส่วนลดตามรหัส ภ.พ. — ดัชนีตาม <paramref name="Keep"/></param>
 /// <param name="TableLines">กลุ่มของตาราง (ฐาน · VAT) เมื่อ <paramref name="Source"/> = <see cref="OcrVatCodeLineSource.TableSummary"/></param>
 /// <param name="Note">ข้อความอธิบาย (ไม่มีแท็ก) · null = ไม่มีอะไรต้องบอก</param>
+/// <param name="SummaryAccountId">ผังบัญชีของบรรทัดสรุป (= ผังที่ทุกรายการใช้ร่วมกัน) เมื่อ <paramref name="Source"/> = <see cref="OcrVatCodeLineSource.TableSummary"/></param>
+/// <param name="SummaryProjectId">โครงการของบรรทัดสรุป (= โครงการที่ทุกรายการใช้ร่วมกัน · null = ไม่มี) เมื่อเป็นบรรทัดสรุป</param>
 public sealed record OcrVatCodeDecision(
     OcrVatCodeLineSource Source, IReadOnlyList<int> Keep, IReadOnlyList<int> DiscountRows,
     decimal BillDiscount, decimal NetSubForRecon, OcrLineReconcileResult Recon, bool PricesIncludeVat,
-    OcrVatCodePlan Plan, IReadOnlyList<OcrVatGroup> TableLines, string? Note);
+    OcrVatCodePlan Plan, IReadOnlyList<OcrVatGroup> TableLines, string? Note,
+    Guid? SummaryAccountId = null, Guid? SummaryProjectId = null);
 
 /// <summary>ผลของชั้นนี้</summary>
 /// <param name="Rates">อัตราต่อบรรทัดตามลำดับเดิม — ผู้เรียกเติมเฉพาะบรรทัดที่ยังไม่มีอัตรา <b>หรือ</b> <paramref name="ReplaceEngineRate"/> = true · null = ไม่แตะ</param>
@@ -487,16 +494,59 @@ public static class OcrVatCodeLines
 
         // ── ข้อ 1: ตารางชนะ — บรรทัดสรุปต่อกลุ่มรหัส ──
         if (tableLinesAllowed && SummaryInsteadOfItems(first.Plan, table, headerVat, headerTotal) is { Count: > 0 } groups)
+        {
+            // ฝ่ายค้าน f7c29c2c P1-2/P1-3/P2-5: บรรทัดสรุปแทนรายการได้เฉพาะเมื่อไม่ทิ้งอะไรที่รายการแบกอยู่ — ไม่งั้นคงรายการ + [Σ-GAP] (ด่าน TableMismatch) + บอกเหตุผล
+            if (KeepItemsReason(lines, rawText) is string keepWhy)
+                return first with
+                {
+                    Note = $"{TableSummaryLead} [{first.Plan.Note}] — ไม่แทนด้วยบรรทัดสรุปตามตาราง เพราะ{keepWhy} ⇒ คงรายการที่อ่านได้ "
+                        + "และแจ้งยอดที่ไม่ตรงตาราง ([Σ-GAP]) ให้แก้อัตรา/บรรทัดก่อนอนุมัติ",
+                };
+            var used = lines.Where(l => l.PrintedAmount != 0m).ToList();
+            var account = used.Select(l => l.AccountId).FirstOrDefault();
+            var project = used.Select(l => l.ProjectId).FirstOrDefault();
             return first with
             {
                 Source = OcrVatCodeLineSource.TableSummary,
                 TableLines = groups,
+                SummaryAccountId = account,
+                SummaryProjectId = project,
                 Note = $"{TableSummaryLead} [{first.Plan.Note}] — "
                     + $"ระบบใช้บรรทัดสรุปตามตาราง {groups.Count} บรรทัด (ยอดและ VAT ตรงกระดาษ: "
                     + string.Join(" · ", groups.Select(g => $"รหัส {g.PaperCode} {KindText(g.Kind)} ฐาน {g.Net:N2} VAT {g.Vat:N2}"))
-                    + $" · รวม {table.Gross:N2}) · รายการสินค้า {lines.Count} แถวที่อ่านได้ไม่ถูกลงเป็นบรรทัด — หากต้องตัดสต็อก กรุณาบันทึกรายการย่อยเอง",
+                    + $" · รวม {table.Gross:N2}) · สิ่งที่ถูกแทน: รายการสินค้า {lines.Count} แถวที่อ่านได้ไม่ถูกลงเป็นบรรทัด ⇒ ไม่มีรายการย่อยสำหรับตัดสต็อก "
+                    + "(หากต้องตัดสต็อก กรุณาบันทึกรายการย่อยเอง) · ผังบัญชี"
+                    + (project.HasValue ? "และโครงการ" : "")
+                    + "ของบรรทัดสรุป = ของรายการ (ทุกรายการใช้ร่วมกัน — ไม่มีอะไรหาย)",
             };
+        }
         return first;
+    }
+
+    /// <summary>
+    /// **เหตุที่ต้องคงรายการแทนบรรทัดสรุป** (ฝ่ายค้าน f7c29c2c P1-2 · P1-3 · P2-5) · null = แทนได้
+    /// <list type="bullet">
+    /// <item>รายการมี<b>โครงการต่างกัน</b> — บรรทัดสรุปต่อรหัสแบกโครงการได้ตัวเดียว ⇒ งบโครงการเพี้ยน</item>
+    /// <item>รายการมี<b>ผังบัญชีต่างกัน</b> (เรียนไว้/ผู้ใช้เลือกรายบรรทัด) — บรรทัดสรุปใช้ผังเดียว ⇒ การจัดประเภทที่เรียนไว้หายเงียบ ·
+    ///   แยกบรรทัดสรุปต่อ (รหัส × ผัง) ได้ก็ต่อเมื่อพิสูจน์ยอดต่อผังได้ แต่เคสนี้คือรายการ<b>ไม่ลงตาราง</b> ⇒ พิสูจน์ไม่ได้ ⇒ คงรายการ</item>
+    /// <item>กระดาษบอกว่าไฟล์นี้<b>ครบทุกหน้า</b> (<see cref="OcrPageSet"/> "หน้า N จาก M" ครบ 1..M) — ไม่ใช่ "อัปโหลดแค่หน้าสุดท้าย" ที่คำตัดสินข้อ 1 ตั้งใจ ·
+    ///   รายการควรครบ ⇒ ที่ไม่ลงตารางคือแถวอ่านผิด ⇒ ฟ้อง ([Σ-GAP]) ดีกว่าทิ้งรายการ · ไม่พิมพ์เลขหน้า/ขาดหน้า ⇒ ตารางชนะตามเดิม</item>
+    /// </list>
+    /// </summary>
+    internal static string? KeepItemsReason(IReadOnlyList<OcrVatCodeLineInput> lines, string? rawText)
+    {
+        var used = lines.Where(l => l.PrintedAmount != 0m).ToList();
+        var reasons = new List<string>();
+        var projects = used.Select(l => l.ProjectId).Distinct().Count();
+        if (projects > 1) reasons.Add($"รายการมีโครงการต่างกัน {projects} แบบ (บรรทัดสรุปแบกโครงการได้แบบเดียว)");
+        var accounts = used.Select(l => l.AccountId).Distinct().Count();
+        if (accounts > 1)
+            reasons.Add($"รายการมีผังบัญชีต่างกัน {accounts} ผัง (ผังที่เรียนไว้/เลือกรายบรรทัดจะหาย และพิสูจน์ยอดต่อผังจากตารางไม่ได้)");
+        var pages = OcrPageSet.Read(rawText);
+        if (pages.DeclaredPages is int m && pages.MissingPages.Count == 0)
+            reasons.Add($"กระดาษบอกว่าไฟล์นี้ครบทุกหน้า ({(m == 1 ? "หน้า 1 จาก 1" : $"หน้า 1–{m} จาก {m}")}) — ไม่ใช่การอัปโหลดแค่หน้าสุดท้าย "
+                + "รายการที่ไม่ลงตารางคือแถวที่อ่านผิด");
+        return reasons.Count == 0 ? null : string.Join(" · ", reasons);
     }
 
     private static OcrVatCodeDecision Analyze(
@@ -552,21 +602,39 @@ public static class OcrVatCodeLines
         if (pick is null || pick.Count >= lines.Count) return null;
         var discount = headerDiscount > 0m ? headerDiscount : Sum(pick);
 
-        // ส่วนลดที่เอ่ยชื่อสินค้า: คำ (≥ 3 ตัวอักษร ไม่มีตัวเลข) ในรายละเอียดของสินค้าที่เหลือ อยู่ในข้อความแถวส่วนลด — ต้องชี้สินค้าได้บรรทัดเดียว
+        // ส่วนลดที่เอ่ยชื่อสินค้า: คำ<b>เฉพาะตัว</b> (<see cref="DistinctiveTokens"/> — ไม่ใช่หน่วย/บรรจุภัณฑ์/คำทั่วไป) ในรายละเอียดของสินค้าที่เหลือ อยู่ในข้อความแถวส่วนลด
+        // — ต้องชี้สินค้าได้บรรทัดเดียว · ชี้ไม่ได้/หลายบรรทัด ⇒ ไม่ระบุ (ส่วนลดแบ่งตามสัดส่วนในกลุ่ม) · ฝ่ายค้าน f7c29c2c P2-1: "ลด 20 น้ำยาล้างจาน ขวด"
+        // เดิมชี้ "น้ำดื่ม ขวด" ด้วยคำว่า "ขวด"
         var products = Enumerable.Range(0, lines.Count).Where(i => !pick.Contains(i)).ToList();
         var named = new List<(int Line, decimal Amount)>();
         foreach (var d in pick)
         {
             var text = lines[d].Description ?? "";
-            var hits = products.Where(p => Tokens(lines[p].Description).Any(t => text.Contains(t, StringComparison.OrdinalIgnoreCase))).ToList();
+            var hits = products.Where(p => DistinctiveTokens(lines[p].Description).Any(t => text.Contains(t, StringComparison.OrdinalIgnoreCase))).ToList();
             if (hits.Count == 1 && lines[d].PrintedAmount <= lines[hits[0]].PrintedAmount)
                 named.Add((hits[0], lines[d].PrintedAmount));
         }
         return new DiscountConversion(pick, discount, named);
     }
 
-    private static IEnumerable<string> Tokens(string? s)
-        => Regex.Split(s ?? "", @"[\s()\[\],/:;*]+").Where(t => t.Length >= 3 && !t.Any(char.IsDigit));
+    /// <summary>คำหน่วย/บรรจุภัณฑ์/คำทั่วไปที่ไม่ชี้สินค้า (ฝ่ายค้าน f7c29c2c P2-1) — "ขวด" อยู่ในทั้งน้ำดื่มและน้ำยาล้างจาน</summary>
+    private static readonly HashSet<string> GenericTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // หน่วย/บรรจุภัณฑ์ไทย
+        "ขวด", "แพ็ค", "แพค", "แพ็ก", "ถุง", "กล่อง", "ชิ้น", "ซอง", "กระป๋อง", "กระปุก", "หลอด", "ลัง", "โหล", "แผง", "ม้วน", "แท่ง", "ก้อน", "ห่อ", "อัน",
+        "ใบ", "ตัว", "คู่", "ชุด", "แกลลอน", "ถัง", "กิโล", "กรัม", "ลิตร", "มล.", "ซม.", "เมตร", "หน่วย", "รายการ",
+        // คำทั่วไปบนแถวส่วนลด/สินค้า
+        "ส่วนลด", "ลดราคา", "สินค้า", "โปรโมชั่น", "โปรฯ", "พิเศษ", "ราคา", "บาท", "ขนาด", "ฟรี", "แถม",
+        // อังกฤษ
+        "pack", "pck", "pcs", "piece", "pieces", "each", "bottle", "btl", "box", "bag", "can", "unit", "units", "set", "pair",
+        "carton", "ctn", "dozen", "roll", "tube", "item", "items", "disc", "discount", "promo", "promotion", "free", "size", "price",
+    };
+
+    /// <summary>คำที่ชี้สินค้าได้ — ไม่อยู่ใน <see cref="GenericTokens"/> · ไม่มีตัวเลข · ไทย ≥ 3 ตัวอักษร หรือละติน ≥ 4 ตัวอักษร</summary>
+    internal static IEnumerable<string> DistinctiveTokens(string? s)
+        => Regex.Split(s ?? "", @"[\s()\[\],/:;*]+")
+            .Where(t => !t.Any(char.IsDigit) && !GenericTokens.Contains(t)
+                && (t.Any(c => c >= '\u0E00' && c <= '\u0E7F') ? t.Length >= 3 : t.Count(char.IsLetter) >= 4));
 
     /// <summary>จับคู่รหัสที่พิมพ์บนแถวสินค้ากับบรรทัด — ยอดตรงถึงสตางค์ตามลำดับบนกระดาษ (ตัวเดียวของ <see cref="Plan"/> และ <see cref="DiscountRows"/>)</summary>
     private static string?[] MatchRowCodes(IReadOnlyList<OcrVatCodeLineInput> lines, IReadOnlyList<(decimal Amount, string Code)> marks)

@@ -269,16 +269,21 @@ public class OcrReplayLineGoldenTests
     }
 
     [Fact]
-    public void Makroหน้า1และ2_engineอ่านคอลัมน์รหัสไม่ได้_มีส่วนลด_ตารางชนะ_บรรทัดสรุปต่อรหัส_รวม10980()
+    public void Makroหน้า1และ2ครบ_engineอ่านคอลัมน์รหัสไม่ได้_มีส่วนลด_คงรายการ7บรรทัด_ฟ้องตารางรหัส()
     {
-        // คำตัดสินเจ้าของ 2026-10-16 ข้อ 1 (กลับคำตัดสินรอบก่อน "คงรายการ + [Σ-GAP]"): ไม่มีรหัสรายบรรทัด + ส่วนลด ⇒ แบ่งส่วนลดต่อรหัสไม่ได้ ⇒
-        // ตารางรหัส ภ.พ. ชนะ — บรรทัดสรุปต่อกลุ่ม ยกเว้น 1,220.00 + ฐาน 9,121.50/VAT 638.50 = 10,980.00 (ยอดชำระบนกระดาษ) · ไม่มีช่องว่าง
-        // ก่อน (afbb0956): รายการ 7 บรรทัด ส่วนลด 2.03% ทั้งใบ ยกเว้น 979.66 + [Σ-GAP] VatRateMismatch,VatCodeTable
-        Assert.Equal("VatGroupsInsteadOfItems", Val("makro-p1p2-no-row-codes-synthetic", "LineMode"));
-        Assert.Equal("1220.00|-1|0.00|1220.00|0|0.00|0.00;9121.50|7|638.50|9121.50|0|0.00|0.00",
+        // ฝ่ายค้าน f7c29c2c P2-5 (เปลี่ยนจาก 611c3b01 โดยตั้งใจ): ไฟล์พิมพ์ "หน้าที่ 1 จาก 2" + "หน้าที่ 2 จาก 2" ครบ ⇒ ไม่ใช่ "อัปโหลดแค่หน้าสุดท้าย" ที่คำตัดสินข้อ 1
+        // ตั้งใจ — รายการครบ 7 แถว (ยอดตรงกระดาษทุกแถว) แต่แบ่งส่วนลดต่อรหัสไม่ได้ ⇒ คงรายการ + [Σ-GAP] (ผู้ใช้แก้อัตราไข่ไก่/ข้าวสารตามคอลัมน์รหัส) ดีกว่าทิ้งรายการ ·
+        // ตัวเลขเท่าเส้น afbb0956 ทุกตัวอักษร: ส่วนลด 2.03% ทั้งใบ · ยกเว้น 979.66 (ข้าวสาร) · ไข่ไก่ 7% จากชื่อ · VatRateMismatch,VatCodeTable
+        // 611c3b01–f7c29c2c: บรรทัดสรุปต่อรหัส 1,220.00 + 9,121.50/638.50 (รายการ 7 แถวหาย) — ยังเป็นคำตอบของใบที่พิสูจน์ไม่ได้ว่าครบทุกหน้า (OcrVatCodeLinesTests)
+        Assert.Equal("Items", Val("makro-p1p2-no-row-codes-synthetic", "LineMode"));
+        Assert.Equal("DiscountOnTotalInclVat", Val("makro-p1p2-no-row-codes-synthetic", "ReconCase"));
+        Assert.Equal(
+            "979.66|-1|0.00|1000.00|2.03|20.34|0.00;227.45|7|15.51|248.00|2.03|5.04|0.00;1040.00|7|70.93|189.00|2.03|23.07|0.00;"
+            + "2375.31|7|162.00|259.00|2.03|52.69|0.00;1082.19|7|73.81|59.00|2.03|24.00|0.00;880.42|7|60.05|64.00|2.03|19.53|0.00;"
+            + "3756.47|7|256.20|512.00|2.03|83.33|0.00",
             Val("makro-p1p2-no-row-codes-synthetic", "Lines"));
-        Assert.Equal("ok", Val("makro-p1p2-no-row-codes-synthetic", "IntegrityGaps"));
-        Assert.Equal("false", Val("makro-p1p2-no-row-codes-synthetic", "PricesIncludeVat"));
+        Assert.Equal("VatRateMismatch,VatCodeTable", Val("makro-p1p2-no-row-codes-synthetic", "IntegrityGaps"));
+        Assert.Equal("true", Val("makro-p1p2-no-row-codes-synthetic", "PricesIncludeVat"));
     }
 
     [Fact]
