@@ -476,7 +476,7 @@ public sealed class EmployeesImportTarget : MasterDataImportTarget
     protected override void Check(ImportTargetRow row, List<ImportIssueDto> issues, Dictionary<string, string?> filled)
     {
         if (V(row, "CitizenId") is not { } raw) return;
-        var digits = new string(raw.Where(char.IsDigit).ToArray());
+        var digits = Accounting.Helpers.ThaiTaxId.Normalize(raw);
         var check = ThaiTaxIdValidator.Check(digits);
         if (!check.IsValid)
             issues.Add(Issue("CitizenId", "citizenid-checksum", ImportIssueSeverity.Warning,

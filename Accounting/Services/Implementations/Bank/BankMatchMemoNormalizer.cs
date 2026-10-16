@@ -69,7 +69,7 @@ public static class BankMatchMemoNormalizer
         if (string.IsNullOrWhiteSpace(memo)) return set;
         foreach (Match m in _tinRx.Matches(memo))
         {
-            var digits = new string(m.Value.Where(char.IsDigit).ToArray());
+            var digits = Accounting.Helpers.ThaiTaxId.Normalize(m.Value);
             if (digits.Length >= 10) set.Add(digits);
         }
         return set;

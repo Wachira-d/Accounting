@@ -1752,7 +1752,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
                 { signals.Add(BankMatchScoring.P_CONTACT_NAME); signalCount++; }
                 if (!string.IsNullOrWhiteSpace(taxId))
                 {
-                    var tid = new string(taxId!.Where(char.IsDigit).ToArray());
+                    var tid = Accounting.Helpers.ThaiTaxId.Normalize(taxId);
                     if (tid.Length >= 10 && memoTins.Contains(tid))
                     { signals.Add(BankMatchScoring.P_TAX_ID); signalCount++; }
                 }
@@ -2614,7 +2614,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
         if (!string.IsNullOrWhiteSpace(info.TaxId))
         {
             var tins = BankMatchMemoNormalizer.ExtractTaxIds(memoBlob);
-            var tid = new string(info.TaxId!.Where(char.IsDigit).ToArray());
+            var tid = Accounting.Helpers.ThaiTaxId.Normalize(info.TaxId);
             if (tid.Length >= 10 && tins.Contains(tid)) return true;
         }
         if (BankMatchMemoNormalizer.AccountTailInMemo(info.Account,

@@ -225,6 +225,7 @@ public static class Pnd1FileFormat
             var v = Fields(r, f);
             for (var i = 0; i < v.Length; i++)
             {
+                v[i] = FoldForTis620(v[i], Spec[i].Length);
                 var bad = FirstUnencodable(v[i], enc);
                 if (bad < 0) continue;
                 var pair = char.IsSurrogatePair(v[i], bad);
@@ -240,6 +241,26 @@ public static class Pnd1FileFormat
             sb.Append(string.Join("|", v)).Append("\r\n");
         }
         return enc.GetBytes(sb.ToString());
+    }
+
+    /// <summary>
+    /// อักขระที่ <b>Windows-874 มีแต่ TIS-620 ไม่มี</b> (ไบต์ 0x80–0xA0 — ฝ่ายค้าน W1c P2-3: code page 874 ของ .NET คือ Windows-874 ⇒ ตัวเข้ารหัสเข้มงวด
+    /// แต่ยังเขียนไบต์ที่ TIS-620 ไม่มีโดยไม่รายงาน) ที่มี<b>ตัวเทียบ ASCII ความหมายเดิม</b> — … ⇒ "..." · คำพูดโค้ง ⇒ ' " · ขีด en/em ⇒ "-" · NBSP ⇒ ช่องว่าง ·
+    /// ตัวที่ไม่มีตัวเทียบ (€ 0x80 · • 0x95) ไม่อยู่ในตาราง ⇒ ล้มดัง <c>PND1-TIS620-UNENCODABLE</c> (<see cref="RoundTrips"/> ไม่รับไบต์ 0x80–0xA0)
+    /// </summary>
+    private static readonly IReadOnlyDictionary<char, string> Tis620AsciiFold = new Dictionary<char, string>
+    {
+        ['\u2026'] = "...", ['\u2018'] = "'", ['\u2019'] = "'", ['\u201C'] = "\"", ['\u201D'] = "\"",
+        ['\u2013'] = "-", ['\u2014'] = "-", ['\u00A0'] = " ",
+    };
+
+    /// <summary>แปลงตาม <see cref="Tis620AsciiFold"/> · ยาวเกินสเปกหลังแปลง ("…" = 3 ตัว) ⇒ ตัดตามความยาวช่องแบบเดียวกับ <see cref="Fields"/></summary>
+    private static string FoldForTis620(string s, int length)
+    {
+        if (!s.Any(Tis620AsciiFold.ContainsKey)) return s;
+        var sb = new StringBuilder(s.Length + 4);
+        foreach (var ch in s) sb.Append(Tis620AsciiFold.TryGetValue(ch, out var to) ? to : ch.ToString());
+        return Fit(sb.ToString(), length);
     }
 
     /// <summary>ตาราง 874 แบบเข้มงวด (ไม่ best-fit · ไม่แทนด้วย ?) — provider เดียวกับ <see cref="ImportTabularReader"/> (ไม่ RegisterProvider ทั้ง process)</summary>
@@ -263,7 +284,13 @@ public static class Pnd1FileFormat
     private static bool RoundTrips(string s, Encoding enc)
     {
         if (s.Any(ImportTabularReader.Is874Undefined)) return false;
-        try { return enc.GetString(enc.GetBytes(s)) == s; }
+        try
+        {
+            var bytes = enc.GetBytes(s);
+            // ไบต์ 0x80–0xA0 = Windows-874 เท่านั้น (TIS-620 ไม่มี) — W1c P2-3: เดิมผ่านเงียบ ๆ (€ … คำพูดโค้ง ขีด NBSP)
+            if (bytes.Any(b => b is >= 0x80 and <= 0xA0)) return false;
+            return enc.GetString(bytes) == s;
+        }
         catch (EncoderFallbackException) { return false; }
         catch (DecoderFallbackException) { return false; }
     }
@@ -291,7 +318,9 @@ public static class Pnd1FileFormat
         var sb = new StringBuilder();
         foreach (var r in rows)
         {
-            var v = Fields(r, f);
+            // สาขาผู้หักแบบรายงานตรวจทาน (4 หลักเมื่อลงได้ = ค่าเดียวกับไฟล์ · ≥ 10000 แสดงเลขเดิม) — พรีวิวห้ามล้มด้วยด่านของไฟล์นำเข้า
+            // (W1c P2-4: ด่านนั้นแสดงเป็นคำเตือนในสรุปของพรีวิวแทน)
+            var v = FieldsCore(r, f, forReview: true);
             if (maskPayeeTaxId) v[4] = MaskTaxId(v[4]);
             sb.Append(string.Join("|", v)).Append("\r\n");
         }
@@ -483,15 +512,16 @@ public static class Pnd1FileFormat
     private static string WithholderBranch(string? branchCode)
     {
         var five = TaxBranchCode.Normalize(branchCode);
-        if (five[0] != '0')
-            throw new BusinessRuleException(
-                $"รหัสสาขาผู้หักภาษี {five} มี 5 หลักเต็ม แต่ช่อง \"เลขที่สาขา ผู้มีหน้าที่หัก ณ ที่จ่าย\" ของไฟล์ ภ.ง.ด.1 (สเปก WHTSVS) รับ 4 หลัก — "
-                + "ระบบไม่ตัดเลขสาขาทิ้งเอง (จะกลายเป็นการยื่นในนามสาขาอื่น) · สอบถามสำนักงานสรรพากรพื้นที่ว่าสาขานี้ยื่นด้วยสื่ออย่างไร "
-                + "แล้วยื่นด้วยการบันทึกแบบที่หน้าเว็บสรรพากร (ใช้ยอดจาก \"รายงานตรวจทาน\") · "
-                + "การยื่นรวมในนามสำนักงานใหญ่แทนสาขาทำได้เฉพาะเมื่อได้รับอนุมัติจากกรมสรรพากรแล้วเท่านั้น",
-                "PND1-BRANCH-4DIGIT");
+        if (five[0] != '0') throw BranchBlocker(five);
         return five[1..];
     }
+
+    private static BusinessRuleException BranchBlocker(string five) => new(
+        $"รหัสสาขาผู้หักภาษี {five} มี 5 หลักเต็ม แต่ช่อง \"เลขที่สาขา ผู้มีหน้าที่หัก ณ ที่จ่าย\" ของไฟล์ ภ.ง.ด.1 (สเปก WHTSVS) รับ 4 หลัก — "
+        + "ระบบไม่ตัดเลขสาขาทิ้งเอง (จะกลายเป็นการยื่นในนามสาขาอื่น) · สอบถามสำนักงานสรรพากรพื้นที่ว่าสาขานี้ยื่นด้วยสื่ออย่างไร "
+        + "แล้วยื่นด้วยการบันทึกแบบที่หน้าเว็บสรรพากร (ใช้ยอดจาก \"รายงานตรวจทาน\") · "
+        + "การยื่นรวมในนามสำนักงานใหญ่แทนสาขาทำได้เฉพาะเมื่อได้รับอนุมัติจากกรมสรรพากรแล้วเท่านั้น",
+        "PND1-BRANCH-4DIGIT");
 
     /// <summary>ช่อง 4 ของรายงานตรวจทาน — 4 หลักตามสเปกเมื่อลงได้ · สาขา 10000 ขึ้นไปแสดงเลข 5 หลักเดิม (รายงานไม่ใช่ไฟล์นำเข้า ·
     /// ผู้ใช้ต้องเห็นเลขสาขาจริงเพื่อบันทึกแบบด้วยมือ)</summary>
@@ -507,20 +537,34 @@ public static class Pnd1FileFormat
         => string.IsNullOrEmpty(digits) || digits.All(c => c == '0') ? digits ?? "" : PiiMask.CitizenId(digits) ?? "";
 
     /// <summary>
-    /// <b>ช่อง 2 (<c>***</c> ต้องถูกต้อง) — ด่านก่อนออกไฟล์นำเข้า</b> (ฝ่ายค้าน ภ.ง.ด.1 P2-4): เลขผู้เสียภาษีของบริษัทว่าง/ไม่ครบ 13 หลัก/
-    /// ไม่ผ่าน checksum ⇒ <see cref="BusinessRuleException"/> พร้อมทางไปต่อ · เดิมเป็นคำเตือนแล้วยังออกไฟล์ (ช่อง 2 = 0000000000000)
-    /// ทั้งที่คำเตือนเองยอมรับว่าสรรพากรไม่รับทั้งไฟล์ · รายงานตรวจทาน (ไม่ใช่ไฟล์ยื่น) ไม่ถูกกั้น — ผู้เรียกเตือนแทน
+    /// <b>ช่อง 2 (<c>***</c> ต้องถูกต้อง)</b> (ฝ่ายค้าน ภ.ง.ด.1 P2-4): เลขผู้เสียภาษีของบริษัทว่าง/ไม่ครบ 13 หลัก/ไม่ผ่าน checksum ⇒ เหตุพร้อมทางไปต่อ ·
+    /// เดิมเป็นคำเตือนแล้วยังออกไฟล์ (ช่อง 2 = 0000000000000) ทั้งที่คำเตือนเองยอมรับว่าสรรพากรไม่รับทั้งไฟล์ · ผู้เรียกผ่าน <see cref="ImportFileBlocker"/> เท่านั้น
+    /// (W1d: <c>RequireWithholderTaxId</c> ที่โยนตรงถูกลบ — ผู้เรียกตัวเดียวย้ายไปใช้ด่านรวม)
     /// </summary>
-    public static void RequireWithholderTaxId(string? companyTaxId, string formName)
+    private static BusinessRuleException? WithholderTaxIdBlocker(string? companyTaxId, string formName)
     {
-        if (ThaiTaxId.IsValid(companyTaxId)) return;
+        if (ThaiTaxId.IsValid(companyTaxId)) return null;
         var shown = ThaiTaxId.Normalize(companyTaxId);
-        throw new BusinessRuleException(
+        return new BusinessRuleException(
             $"{formName}: เลขประจำตัวผู้เสียภาษีของบริษัท" + (shown.Length == 0 ? "ยังไม่ได้กรอก" : $" ({shown}) ไม่ครบ 13 หลักหรือไม่ผ่านการตรวจหลักสุดท้าย")
             + " — ช่องที่ 2 ของไฟล์ (ผู้มีหน้าที่หักภาษี ณ ที่จ่าย) ต้องถูกต้อง ไม่งั้นสรรพากรไม่รับทั้งไฟล์ · "
             + "ตั้งค่าเลขผู้เสียภาษีบริษัท ที่หน้า ตั้งค่า → ข้อมูลบริษัท (ช่อง \"เลขผู้เสียภาษี 13 หลัก\") แล้วสร้างไฟล์ใหม่ · "
             + "ระหว่างนี้ดูยอดได้จาก \"รายงานตรวจทาน\"",
             "PND1-WITHHOLDER-TAXID");
+    }
+
+    /// <summary>
+    /// <b>ด่านของไฟล์นำเข้า ภ.ง.ด.1/1ก ที่ขึ้นกับผู้หัก — ตัวตัดสินเดียว</b> (ฝ่ายค้าน W1c P2-4/P2-5): ช่อง 2 เลขผู้เสียภาษีบริษัท
+    /// (<see cref="WithholderTaxIdBlocker"/>) แล้วช่อง 4 สาขาผู้หัก 4 หลัก (<see cref="WithholderBranch"/>) · คืนข้อยกเว้น (มี <c>RuleCode</c> +
+    /// ข้อความไทยพร้อมทางไปต่อ) โดย<b>ไม่โยน</b> ⇒ ผู้เรียกเลือกได้: ไฟล์นำเข้าโยน · พรีวิว/รายงานตรวจทานแสดงเป็นคำเตือน ·
+    /// รอบเงินเดือนบันทึกเหตุที่ไม่มีไฟล์แนบ · null = ออกไฟล์นำเข้าได้
+    /// </summary>
+    public static BusinessRuleException? ImportFileBlocker(string? companyTaxId, string? branchCode, string formName)
+    {
+        var taxId = WithholderTaxIdBlocker(companyTaxId, formName);
+        if (taxId != null) return taxId;
+        var five = TaxBranchCode.Normalize(branchCode);
+        return five[0] != '0' ? BranchBlocker(five) : null;
     }
 
     /// <summary>ช่อง 16 — <c>DDMMYYYY</c> ปี พ.ศ. (เช่น 31 ม.ค. 2002 → <c>31012545</c>)</summary>
@@ -549,7 +593,7 @@ public static class Pnd1FileFormat
     }
 
     /// <summary>ที่อยู่ 1 · ที่อยู่ 2 (ช่องละ ≤ 80 ตัว) · รหัสไปรษณีย์ 5 หลัก จากที่อยู่ข้อความเดียว ·
-    /// รหัสไปรษณีย์: ช่องที่เก็บแยกก่อน แล้วค่อยตัวเลข 5 หลักตัวสุดท้ายในที่อยู่ (<see cref="ContactDataHygiene.PostalCodeOf"/>) — ถูกตัดออกจากข้อความ ·
+    /// รหัสไปรษณีย์: ช่องที่เก็บแยกก่อน แล้วค่อยหาในที่อยู่ด้วยตัวตัดสินเดียว <see cref="ContactDataHygiene.PostalCodeOf"/> (ไม่หยิบบ้านเลขที่/เลขห้อง/เลขในเบอร์โทร) — ถูกตัดออกจากข้อความ ·
     /// แบ่งบรรทัดที่ อ./อำเภอ/เขต ตัวแรก ไม่มีก็ที่ จ./จังหวัด/กรุงเทพ ตัวสุดท้าย (ตรงตัวอย่างในสเปก "78/4 ต.พระองค์ดำ ต.ในเมือง" | "จ.พิษณุโลก") ·
     /// บรรทัด 1 ยาวเกิน ⇒ ตัดที่ช่องว่าง ส่วนเกินไปต้นบรรทัด 2 · บรรทัด 2 ยาวเกิน ⇒ ตัด + <paramref name="Truncated"/> (ผู้เรียกต้องเตือน)</summary>
     public static (string Line1, string Line2, string PostalCode, bool Truncated) AddressParts(Row r)
@@ -615,10 +659,14 @@ public static class Pnd1FileFormat
     private static string Clean(string? raw)
     {
         if (string.IsNullOrEmpty(raw)) return "";
-        var a = raw.ToCharArray();
-        for (var i = 0; i < a.Length; i++)
-            if (a[i] == '|' || char.IsControl(a[i]) || a[i] is '\u2028' or '\u2029') a[i] = ' ';
-        return new string(a).Trim();
+        var sb = new StringBuilder(raw.Length);
+        foreach (var ch in raw)
+        {
+            // zero-width space / BOM กลางข้อความ — ไม่มีความหมาย (พบบ่อยในข้อความไทยที่ก๊อปจากเว็บ) ⇒ ตัดทิ้ง (W1c P2-3 · ทุกรูปแบบไฟล์)
+            if (ch is '\u200B' or '\uFEFF') continue;
+            sb.Append(ch == '|' || char.IsControl(ch) || ch is '\u2028' or '\u2029' ? ' ' : ch);
+        }
+        return sb.ToString().Trim();
     }
 
     private static Dictionary<string, object?> SheetRow(int width, params object?[] cells)

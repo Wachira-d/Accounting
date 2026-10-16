@@ -225,7 +225,7 @@ public static class OcrSelfPartyGuard
         foreach (System.Text.RegularExpressions.Match m in
             System.Text.RegularExpressions.Regex.Matches(rawText, @"(?<!\d)\d(?:[- \t]?\d){12}(?!\d)"))
         {
-            var digits = new string(m.Value.Where(char.IsDigit).ToArray());
+            var digits = ThaiTaxId.Normalize(m.Value);   // รูปเดียวกับ ours (เลขไทย ⇒ ASCII)
             var diff = 0;
             for (var i = 0; i < 13 && diff <= 1; i++) if (digits[i] != ours[i]) diff++;
             if (diff <= 1) return m.Index;

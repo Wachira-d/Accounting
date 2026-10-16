@@ -3963,7 +3963,7 @@ public class OcrService : IOcrService
 
         var vendorKey = string.IsNullOrWhiteSpace(data.VendorTaxId)
             ? (data.VendorName ?? "").Trim().ToLowerInvariant()
-            : new string(data.VendorTaxId.Where(char.IsDigit).ToArray());
+            : Accounting.Helpers.ThaiTaxId.Normalize(data.VendorTaxId);
         var docKey = (data.DocumentNumber ?? "").Trim().ToLowerInvariant();
         var dateKey = data.DocumentDate?.ToString("yyyy-MM-dd") ?? "";
         var amtKey = data.TotalAmount.HasValue
@@ -4330,7 +4330,7 @@ public class OcrService : IOcrService
                 // ทุกบรรทัดสินค้า ⇒ เกือบการันตีว่าจะมีตัวหนึ่งถูกยัดเป็นเลข
                 // ผู้เสียภาษีผู้ขาย ทับของจริง (defect class เดียวกับ
                 // PI-20260820-0005). QR ของสรรพากรไม่ใช่ EAN-13 จึงไม่โดนตัด
-                var digits = new string(bc.Value.Where(char.IsDigit).ToArray());
+                var digits = Accounting.Helpers.ThaiTaxId.Normalize(bc.Value);
                 if (digits.Length >= 13)
                 {
                     var taxId = digits.Substring(0, 13);
@@ -4578,7 +4578,7 @@ public class OcrService : IOcrService
     private static string? ExtractDigits(string? value, int expectedLength)
     {
         if (string.IsNullOrEmpty(value)) return null;
-        var digits = new string(value.Where(char.IsDigit).ToArray());
+        var digits = Accounting.Helpers.ThaiTaxId.Normalize(value);   // ผู้เรียกทุกตัวเป็นเลขผู้เสียภาษี — ตัวตั้งเดียว (W1d P2-6)
         return digits.Length == expectedLength ? digits : (digits.Length > 0 ? digits : null);
     }
 

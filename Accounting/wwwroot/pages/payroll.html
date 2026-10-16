@@ -1356,8 +1356,10 @@ const Page = {
     if (!confirm('ยืนยันการจ่ายเงินเดือน?')) return;
     const api = Layout.api(); if (!api) return;
     try {
-      await api.payPayroll(id);
-      Layout.toast('จ่ายเงินเดือนสำเร็จ');
+      const rr = await api.payPayroll(id);
+      // ข้อความจากเซิร์ฟเวอร์ (เช่น ปรับยอดประกันสังคม) + คำเตือนไฟล์แนบ ภ.ง.ด.1 ที่จะสร้างไม่ได้ (W1c P2-5) — เดิมโชว์ข้อความตายตัวทิ้งทั้งคู่
+      Layout.toast(rr?.message || 'จ่ายเงินเดือนสำเร็จ', 'success', rr?.message && rr.message.includes('⚠') ? 12000 : undefined);
+      if (rr?.data?.notice) Layout.toast(rr.data.notice, 'warning', 15000);
       this.loadRuns();
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
@@ -1780,6 +1782,10 @@ const Page = {
               <span style="font-size:12px">วิธีแก้: กด "✏️ แก้ยอด" ที่แถวที่มีป้ายเตือน แล้วปรับตัวเลขให้เงินได้สุทธิในหน้าต่างแก้ยอดตรงกับยอดที่จ่ายจริง (ระบบคำนวณสุทธิให้สด ๆ ระหว่างพิมพ์) — มักเกิดจากข้อมูล import ที่ส่ง "สุทธิ" มาไม่ตรงส่วนประกอบ เช่น มียอดหักที่ไม่ได้ส่งรายละเอียดมา ให้ใส่ยอดนั้นในช่อง "หักอื่น ๆ"</span>
             </div>` : '';
         })()}
+        ${r.filingAttachmentWarning ? `
+          <div style="margin-bottom:12px;padding:10px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:13px;color:#92400e">
+            ⚠️ <b>ไฟล์แนบยื่นแบบของรอบนี้ไม่ครบ</b><div style="white-space:pre-line;margin-top:4px">${Layout.esc(r.filingAttachmentWarning)}</div>
+          </div>` : ''}
         ${(r.defaultPaymentSourceWarning && r.status !== 'Paid' && r.status !== 'Voided') ? `
           <div style="margin-bottom:12px;padding:10px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:13px;color:#92400e">
             ⚠️ <b>แหล่งจ่ายเริ่มต้นใช้ไม่ได้</b> — ${Layout.esc(r.defaultPaymentSourceWarning)}<br>

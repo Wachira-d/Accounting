@@ -73,7 +73,7 @@ public static class OcrDocumentRoleInferrer
                      || lower.Contains("tax withheld at source");
         if (!isWhtCert) return null;
 
-        var companyTax = new string((companyTaxId ?? "").Where(char.IsDigit).ToArray());
+        var companyTax = Accounting.Helpers.ThaiTaxId.Normalize(companyTaxId);
         if (companyTax.Length != 13) return null;
 
         // ตำแหน่งของหัวข้อทั้งสองช่องบนกระดาษ
@@ -88,7 +88,7 @@ public static class OcrDocumentRoleInferrer
                  // จนได้ "ตำแหน่งของเลขเรา" ที่ผิดช่อง แล้วทิศ 50 ทวิ กลับด้าน
                  System.Text.RegularExpressions.Regex.Matches(text, @"[\d \t-]{13,}"))
         {
-            var digits = new string(m.Value.Where(char.IsDigit).ToArray());
+            var digits = Accounting.Helpers.ThaiTaxId.Normalize(m.Value);
             if (digits.Contains(companyTax, StringComparison.Ordinal)) ourPositions.Add(m.Index);
         }
         if (ourPositions.Count == 0) return null;
@@ -657,8 +657,8 @@ public static class OcrDocumentRoleInferrer
     private static bool TaxIdMatches(string? a, string? b)
     {
         if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
-        var aDigits = new string(a.Where(char.IsDigit).ToArray());
-        var bDigits = new string(b.Where(char.IsDigit).ToArray());
+        var aDigits = Accounting.Helpers.ThaiTaxId.Normalize(a);
+        var bDigits = Accounting.Helpers.ThaiTaxId.Normalize(b);
         if (aDigits.Length != 13 || bDigits.Length != 13) return false;
         return aDigits == bDigits;
     }

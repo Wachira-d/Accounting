@@ -85,6 +85,16 @@ public static class ThaiAdminCodes
             .GroupBy(e => (NormalizeName(e.Province), NormalizeName(e.District), NormalizeName(e.SubDistrict)))
             .ToDictionary(g => g.Key, g => g.First()));
 
+    private static readonly Lazy<Dictionary<string, string>> _provinceByPostcode =
+        new(() => _entries.Value
+            .GroupBy(e => e.PostalCode)
+            .ToDictionary(g => g.Key, g => g.First().Province));
+
+    /// <summary>จังหวัดของรหัสไปรษณีย์ตามทะเบียน (ไม่รู้จัก = null) — หลักฐานยืนยันของ <c>ContactDataHygiene.PostalCodeOf</c>
+    /// ว่าเลข 5 หลักเป็นรหัสไปรษณีย์จริง ไม่ใช่บ้านเลขที่</summary>
+    public static string? ProvinceOfPostcode(string? postcode)
+        => !string.IsNullOrEmpty(postcode) && _provinceByPostcode.Value.TryGetValue(postcode, out var p) ? p : null;
+
     private static List<AdminEntry> LoadFromEmbedded()
     {
         var list = new List<AdminEntry>();

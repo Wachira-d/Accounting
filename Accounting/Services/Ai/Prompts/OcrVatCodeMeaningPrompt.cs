@@ -48,7 +48,7 @@ Respond ONLY as JSON:
         string code, decimal net, decimal vat, decimal gross, int? itemCount,
         string? legendText)
     {
-        var digits = new string((vendorTaxId ?? "").Where(char.IsDigit).ToArray());
+        var digits = Accounting.Helpers.ThaiTaxId.Normalize(vendorTaxId);
         // ตัวทำกุญแจ (Helpers/AiMemoryKey) แทนตัวเลข/เลขผู้เสียภาษี/เลขเอกสาร ("TAX0107…") ด้วย token คงที่ ⇒ ตัวเลขในกุญแจต้องถูกแปลงเป็นตัวอักษร
         // (0→a … 9→j) ไม่งั้นผู้ขายทุกราย/รหัสทุกรหัสกลายเป็นคำถามเดียวกัน
         static string Letters(string s) => new(s.Select(ch => ch is >= '0' and <= '9' ? (char)('a' + (ch - '0')) : ch).ToArray());

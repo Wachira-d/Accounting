@@ -1859,7 +1859,7 @@ public class IntegrationService : IIntegrationService
     }
 
     private static string NormalizeTaxId(string? taxId) =>
-        string.IsNullOrEmpty(taxId) ? "" : new string(taxId.Where(char.IsDigit).ToArray());
+        Accounting.Helpers.ThaiTaxId.Normalize(taxId);
 
     /// <summary>Resolve/สร้างผู้จำหน่ายจาก integration แบบ "กัน contact ซ้ำ" —
     /// match ตามลำดับความแม่น แล้วค่อยสร้างใหม่ (upsert):

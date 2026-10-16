@@ -2588,7 +2588,7 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         string TaxIdBoxes(string? taxId)
         {
-            var dg = Regex.Replace(taxId ?? "", @"\D", "").PadRight(13);
+            var dg = Accounting.Helpers.ThaiTaxId.Normalize(taxId).PadRight(13);
             int[][] groups = { new[]{0,1}, new[]{1,5}, new[]{5,10}, new[]{10,12}, new[]{12,13} };
             var r = new StringBuilder();
             for (int g = 0; g < groups.Length; g++)

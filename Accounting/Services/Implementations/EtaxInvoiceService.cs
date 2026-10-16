@@ -228,7 +228,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             throw new InvalidOperationException("กรุณาตั้งค่าเลขประจำตัวผู้เสียภาษีของบริษัทก่อน");
 
         // Auto-clean: strip dashes/dots/spaces from TaxId (users often enter "0-1234-56789-01-2")
-        var sellerTaxClean = new string((company.TaxId ?? "").Where(char.IsDigit).ToArray());
+        var sellerTaxClean = Accounting.Helpers.ThaiTaxId.Normalize(company.TaxId);
         if (sellerTaxClean.Length != 13)
             throw new InvalidOperationException(
                 $"เลขประจำตัวผู้เสียภาษีของบริษัทต้องเป็นตัวเลข 13 หลัก (ปัจจุบัน: \"{company.TaxId}\" → {sellerTaxClean.Length} หลัก)");
@@ -249,7 +249,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             throw new InvalidOperationException("กรุณาระบุเลขประจำตัวผู้เสียภาษีของผู้ซื้อ");
 
         // Auto-clean buyer TaxId too
-        var buyerTaxClean = new string((document.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
+        var buyerTaxClean = Accounting.Helpers.ThaiTaxId.Normalize(document.Contact.TaxId);
         if (document.Contact.TaxId != buyerTaxClean && buyerTaxClean.Length > 0)
         {
             document.Contact.TaxId = buyerTaxClean;
@@ -1110,7 +1110,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     private static string ComposeTxId(string? taxId, string? branchCode, string schemeId)
     {
         // Strip everything except digits for all numeric schemes
-        var digits = new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        var digits = Accounting.Helpers.ThaiTaxId.Normalize(taxId);
         switch (schemeId)
         {
             case "TXID":

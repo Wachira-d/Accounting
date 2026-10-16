@@ -333,7 +333,7 @@ public class GlAccountDistillationModel : ILocalDistillationModel
             var vendorTaxId = v.TryGetProperty("tax_id", out var t) ? t.GetString() ?? "" : "";
             var vendorName = v.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
             var description = line.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";
-            var digits = new string(vendorTaxId.Where(char.IsDigit).ToArray());
+            var digits = Accounting.Helpers.ThaiTaxId.Normalize(vendorTaxId);
             var vendorKey = digits.Length == 13 ? digits
                 : vendorName.Trim().ToLowerInvariant();
             var keyword = description.Trim().ToLowerInvariant();

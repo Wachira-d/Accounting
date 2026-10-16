@@ -180,14 +180,14 @@ public static class OcrConfidenceGateway
         }
 
         // 4. Tax ID checksums — only penalize when extracted TaxId is 13 digits
-        if (!string.IsNullOrEmpty(vendorTaxId) && new string(vendorTaxId.Where(char.IsDigit).ToArray()).Length == 13
-            && !ValidateThaiTaxId(vendorTaxId))
+        if (Accounting.Helpers.ThaiTaxId.Normalize(vendorTaxId).Length == 13
+            && !Accounting.Helpers.ThaiTaxId.HasValidChecksum(vendorTaxId))
         {
             warnings.Add($"เลขผู้เสียภาษีผู้ขาย {vendorTaxId} checksum ไม่ผ่าน");
             penalty += config.TaxIdPenalty;
         }
-        if (!string.IsNullOrEmpty(buyerTaxId) && new string(buyerTaxId.Where(char.IsDigit).ToArray()).Length == 13
-            && !ValidateThaiTaxId(buyerTaxId))
+        if (Accounting.Helpers.ThaiTaxId.Normalize(buyerTaxId).Length == 13
+            && !Accounting.Helpers.ThaiTaxId.HasValidChecksum(buyerTaxId))
         {
             warnings.Add($"เลขผู้เสียภาษีผู้ซื้อ {buyerTaxId} checksum ไม่ผ่าน");
             penalty += config.TaxIdPenalty * 0.67m; // buyer mismatch less severe than vendor
@@ -345,17 +345,5 @@ public static class OcrConfidenceGateway
         return new GatewayResult(adjusted, warnings, mathConsistent, notes);
     }
 
-    private static bool ValidateThaiTaxId(string taxId)
-    {
-        if (string.IsNullOrEmpty(taxId)) return false;
-        var digits = new string(taxId.Where(char.IsDigit).ToArray());
-        if (digits.Length != 13) return false;
-
-        var sum = 0;
-        for (var i = 0; i < 12; i++)
-            sum += (digits[i] - '0') * (13 - i);
-
-        var checkDigit = (11 - (sum % 11)) % 10;
-        return checkDigit == (digits[12] - '0');
-    }
+    // W1d P2-6: ValidateThaiTaxId (สำเนา checksum + ตัวกรองตัวเลขที่คงเลขไทย ⇒ "๐๑๐๕…" ไม่มีวันผ่าน) ถูกลบ — ใช้ ThaiTaxId.HasValidChecksum ตัวเดียว
 }

@@ -312,16 +312,17 @@ public class TaxFilingExportController : ControllerBase
             var block = await CheckPayrollAsync(companyId); if (block != null) return (ActionResult<ApiResponse<TaxFilingExportResult>>)block;
         }
 
-        // ภ.ง.ด.1/1ก: ข้อความดูตัวอย่าง (PreviewText) ปิดบังเลขผู้มีเงินได้เมื่อไม่มี Pii.View — หน้าเว็บไม่ดึงไฟล์ยื่นจริงมาแสดงอีก (P1-3)
+        // ภ.ง.ด.1/1ก: ข้อความดูตัวอย่าง (PreviewText) ปิดบังเลขผู้มีเงินได้เมื่อไม่มี Pii.View — หน้าเว็บไม่ดึงไฟล์ยื่นจริงมาแสดงอีก (P1-3) ·
+        // previewOnly: ด่านของไฟล์นำเข้า (เลขผู้หัก/สาขา) ไม่กั้นพรีวิว — แสดงเป็นคำเตือนในสรุปแทน (W1c P2-4)
         var pnd1Pii = code is "PND1" or "PND1K"
             && await Pnd1IncludePiiAsync(companyId, "preview", code == "PND1K" ? "ภ.ง.ด.1ก" : "ภ.ง.ด.1", year, code == "PND1K" ? null : month);
         var result = code switch
         {
-            "PND1" => await _exportService.ExportPnd1Async(companyId, year, month, includePii: pnd1Pii),
+            "PND1" => await _exportService.ExportPnd1Async(companyId, year, month, includePii: pnd1Pii, previewOnly: true),
             "PND2" => await _exportService.ExportPnd2Async(companyId, year, month),
             "PND3" => await _exportService.ExportPnd3Async(companyId, year, month),
             "PND53" => await _exportService.ExportPnd53Async(companyId, year, month),
-            "PND1K" => await _exportService.ExportPnd1kAsync(companyId, year, includePii: pnd1Pii),
+            "PND1K" => await _exportService.ExportPnd1kAsync(companyId, year, includePii: pnd1Pii, previewOnly: true),
             "PND91" => await _exportService.ExportPnd91Async(companyId, year),
             "PP30" => await _exportService.ExportPp30Async(companyId, year, month),
             "PP36" => await _exportService.ExportPp36Async(companyId, year, month),

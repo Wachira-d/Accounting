@@ -116,7 +116,7 @@ public static class FieldPatternLibrary
         foreach (Match m in Regex.Matches(text, pattern))
         {
             var raw = m.Groups[1].Value;
-            var normalized = Regex.Replace(raw, @"[-\s]", "");
+            var normalized = Accounting.Helpers.ThaiTaxId.Normalize(raw);   // ตัวตั้งเดียว (W1d P2-6 · เลขไทย ⇒ ASCII)
             if (normalized.Length != 13) continue;
             var checksumOk = ValidateThaiTaxId(normalized);
             var c = new FieldCandidate
@@ -137,16 +137,10 @@ public static class FieldPatternLibrary
         return results;
     }
 
-    /// <summary>Thai national/juristic ID checksum: mod-11 of weighted sum of first 12 digits.</summary>
+    /// <summary>Thai national/juristic ID checksum: mod-11 of weighted sum of first 12 digits — ตัวตั้งเดียว <see cref="Accounting.Helpers.ThaiTaxId.HasValidChecksum"/>
+    /// (W1d P2-6: เดิมเป็นสำเนาสูตร + <c>char.IsDigit</c> ที่รับเลขไทยแต่คิด <c>id[i] - '0'</c> ⇒ เลขไทยที่ถูกไม่ผ่าน) · ต้องเป็นตัวเลข 13 ตัวล้วน (ไม่มีขีด) เหมือนเดิม</summary>
     public static bool ValidateThaiTaxId(string id)
-    {
-        if (id == null || id.Length != 13 || !id.All(char.IsDigit)) return false;
-        int sum = 0;
-        for (int i = 0; i < 12; i++)
-            sum += (id[i] - '0') * (13 - i);
-        int check = (11 - (sum % 11)) % 10;
-        return check == (id[12] - '0');
-    }
+        => id != null && id.Length == 13 && id.All(char.IsDigit) && Accounting.Helpers.ThaiTaxId.HasValidChecksum(id);
 
     // === BranchCode ===
 

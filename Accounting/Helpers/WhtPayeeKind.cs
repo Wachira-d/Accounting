@@ -46,7 +46,7 @@ public static class WhtPayeeKind
     /// (ให้ผู้เรียก fallback เอง — ห้ามตีความ null ว่า "บุคคลธรรมดา")</summary>
     public static bool? Detect(string? taxId, ContactType contactType, string? name)
     {
-        var digits = new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        var digits = ThaiTaxId.Normalize(taxId);
         if (digits.Length == 13)
         {
             if (digits[0] == '0') return true;                      // นิติบุคคล

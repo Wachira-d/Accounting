@@ -20,7 +20,7 @@ public static class ThaiTaxIdValidator
         if (string.IsNullOrWhiteSpace(taxId))
             return new ValidationResult(true, null);   // optional field
 
-        var clean = new string(taxId.Where(char.IsDigit).ToArray());
+        var clean = ThaiTaxId.Normalize(taxId);   // เลขไทย ⇒ ASCII (เดิมคงเลขไทย ⇒ checksum ไม่ผ่านทั้งที่เลขถูก)
         if (clean.Length != 13)
             return new ValidationResult(false, $"ต้องเป็นเลข 13 หลัก (ปัจจุบัน {clean.Length})");
 
@@ -39,5 +39,5 @@ public static class ThaiTaxIdValidator
     /// <summary>Normalize → 13 digit string. คืน null ถ้า invalid.</summary>
     public static string? Normalize(string? input)
         => input == null ? null
-            : new string(input.Where(char.IsDigit).ToArray()) is { Length: 13 } s ? s : null;
+            : ThaiTaxId.Normalize(input) is { Length: 13 } s ? s : null;
 }

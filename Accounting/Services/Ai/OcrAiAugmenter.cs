@@ -221,7 +221,7 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             if (!string.IsNullOrWhiteSpace(ocrVendorTaxId))
             {
                 // Strip non-digits — OCR sometimes inserts dashes/spaces.
-                var digits = new string(ocrVendorTaxId.Where(char.IsDigit).ToArray());
+                var digits = Accounting.Helpers.ThaiTaxId.Normalize(ocrVendorTaxId);
                 if (digits.Length >= 4)
                 {
                     var pfx = digits[..Math.Min(13, digits.Length)];
@@ -287,12 +287,12 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             // OCR captured a full 13-digit string, that's a confirmed match.
             if (!string.IsNullOrWhiteSpace(ocrVendorTaxId))
             {
-                var ocrDigits = new string(ocrVendorTaxId.Where(char.IsDigit).ToArray());
+                var ocrDigits = Accounting.Helpers.ThaiTaxId.Normalize(ocrVendorTaxId);
                 if (ocrDigits.Length == 13)
                 {
                     var tinHits = candidates.Where(c =>
                         !string.IsNullOrEmpty(c.TaxId)
-                        && new string(c.TaxId.Where(char.IsDigit).ToArray()) == ocrDigits).ToList();
+                        && Accounting.Helpers.ThaiTaxId.Normalize(c.TaxId) == ocrDigits).ToList();
                     if (tinHits.Count == 1)
                     {
                         _logger.LogInformation(

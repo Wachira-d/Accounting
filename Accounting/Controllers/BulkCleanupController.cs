@@ -392,7 +392,7 @@ public class BulkCleanupController : ControllerBase
             .Select(g => new { ContactId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.ContactId, x => x.Count);
 
-        static string Digits(string? s) => string.IsNullOrEmpty(s) ? "" : new string(s.Where(char.IsDigit).ToArray());
+        static string Digits(string? s) => Accounting.Helpers.ThaiTaxId.Normalize(s);   // เลขผู้เสียภาษี — ตัวตั้งเดียว (W1d P2-6 · เลขไทยเป็น ASCII)
 
         DuplicateContactEntry ToEntry(RawContact c) => new(
             c.Id, c.Name, c.TaxId,

@@ -12,7 +12,7 @@ public static class EncryptedIdMatch
     public static string? Normalize(string? id)
     {
         if (string.IsNullOrWhiteSpace(id)) return null;
-        var digits = new string(id.Where(char.IsDigit).ToArray());
+        var digits = ThaiTaxId.Normalize(id);   // เลขบัตร/เลขผู้เสียภาษี — ตัวตั้งเดียว (W1d P2-6)
         return digits.Length == 0 ? null : digits;
     }
 

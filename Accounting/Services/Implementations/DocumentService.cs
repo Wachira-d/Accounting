@@ -6578,7 +6578,7 @@ public partial class DocumentService : IDocumentService
         // (ห้ามปล่อยผ่าน: เคลมภาษีซื้อผิด/ไม่มีใบกำกับ = ลูกค้าโดนสรรพากรประเมินคืน+เบี้ยปรับ)
         if (doc.HasTaxInvoiceReference == true && doc.VatAmount > 0 && doc.Contact != null)
         {
-            var supTid = new string((doc.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
+            var supTid = Accounting.Helpers.ThaiTaxId.Normalize(doc.Contact.TaxId);
             if (supTid.Length != 13)
                 throw new InvalidOperationException(
                     $"ผู้ขาย \"{doc.Contact.Name}\" ยังไม่มีเลขผู้เสียภาษี 13 หลัก — ขอเครดิตภาษีซื้อ (ภ.พ.30) " +
@@ -13334,7 +13334,7 @@ public partial class DocumentService : IDocumentService
     /// ตัวนี้ (เดิมเทียบ == ตรง ๆ → "0-2735-63000-92-0" ไม่เจอ "0273563000920"
     /// → OCR/API สร้างผู้ติดต่อซ้ำทุกครั้งที่สแกน).</summary>
     internal static string NormalizeTaxDigits(string? taxId)
-        => new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        => Accounting.Helpers.ThaiTaxId.Normalize(taxId);
 
     internal static string NormalizeBranchCode(string? branch)
     {
@@ -21808,7 +21808,7 @@ public partial class DocumentService : IDocumentService
             if (!hasAddr)
                 warnings.Add($"ใบกำกับภาษีต้องระบุที่อยู่ผู้ซื้อ ('{doc.Contact.Name}' ยังไม่มีที่อยู่) — ตามมาตรา 86/4 ผู้ซื้อใช้เป็นหลักฐานภาษีซื้อไม่ได้");
             // Thai corporate Tax ID is exactly 13 digits.
-            var tid = new string((doc.Contact.TaxId ?? "").Where(char.IsDigit).ToArray());
+            var tid = Accounting.Helpers.ThaiTaxId.Normalize(doc.Contact.TaxId);
             if (!string.IsNullOrEmpty(tid) && tid.Length != 13)
                 warnings.Add($"เลขประจำตัวผู้เสียภาษีของ '{doc.Contact.Name}' มี {tid.Length} หลัก (ต้อง 13 หลัก) — ตรวจก่อนออกใบกำกับภาษี");
         }

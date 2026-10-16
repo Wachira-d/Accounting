@@ -266,7 +266,7 @@ public partial class PdfGenerationService
     // ── 13 ช่องเลขประจำตัวผู้เสียภาษี กลุ่ม 1-4-5-2-1 ──
     private static void DrawTinBoxes(QuestPDF.Infrastructure.IContainer e, string? taxId)
     {
-        var digits = Regex.Replace(taxId ?? "", @"\D", "").PadRight(13);
+        var digits = Accounting.Helpers.ThaiTaxId.Normalize(taxId).PadRight(13);
         e.Row(r =>
         {
             int[][] groups = { new[]{0,1}, new[]{1,5}, new[]{5,10}, new[]{10,12}, new[]{12,13} };

@@ -265,7 +265,7 @@ public class VendorKnownGoodCorrector
     private static string? NormalizeTaxId(string? taxId)
     {
         if (string.IsNullOrWhiteSpace(taxId)) return null;
-        var digits = new string(taxId.Where(char.IsDigit).ToArray());
+        var digits = Accounting.Helpers.ThaiTaxId.Normalize(taxId);
         return digits.Length == 13 ? digits : null;
     }
 }

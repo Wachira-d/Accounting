@@ -944,7 +944,7 @@ public class AiSuggestionController : ControllerBase
         var limit = Math.Clamp(req.Limit ?? 5, 1, 20);
         var nameLower = req.Name.Trim().ToLowerInvariant();
         var taxIdDigits = string.IsNullOrWhiteSpace(req.TaxId)
-            ? null : new string(req.TaxId.Where(char.IsDigit).ToArray());
+            ? null : Accounting.Helpers.ThaiTaxId.Normalize(req.TaxId);
 
         // Stage 1: exact TaxId hit wins (perfect signal — same legal entity)
         // ตั้งใจคืน "ทุกสาขา" ของเลขนี้ (ไม่ใช้ Helpers/ContactTaxBranchKey): นี่คือรายการผู้สมัครให้ผู้ใช้เลือกตอนพิมพ์

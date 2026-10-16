@@ -388,7 +388,7 @@ public static class OcrPartyResolver
         var exact = false; string? near = null;
         foreach (Match m in Regex.Matches(rawText, @"(?<!\d)\d(?:[- \t]?\d){12}(?!\d)"))
         {
-            var digits = new string(m.Value.Where(char.IsDigit).ToArray());
+            var digits = ThaiTaxId.Normalize(m.Value);   // รูปเดียวกับ ours (เลขไทย ⇒ ASCII)
             if (digits == ours) { exact = true; continue; }
             var diff = 0;
             for (var i = 0; i < 13 && diff <= 1; i++) if (digits[i] != ours[i]) diff++;

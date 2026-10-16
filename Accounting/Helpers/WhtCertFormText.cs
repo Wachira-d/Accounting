@@ -218,7 +218,7 @@ public static class WhtCertFormText
     public static string PartyName(string? titleTh, string? name, string? taxId, string? branchCode, string? branchName)
     {
         var n = ThaiTitleHelper.WithTitle(titleTh, name);
-        var tid = new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        var tid = ThaiTaxId.Normalize(taxId);
         if (tid.Length != 13 || !tid.StartsWith("0", StringComparison.Ordinal)) return n;
         return n + "  (" + TaxBranchCode.LabelWithName(branchCode, branchName, false) + ")";
     }

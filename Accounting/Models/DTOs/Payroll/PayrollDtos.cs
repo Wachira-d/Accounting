@@ -367,7 +367,9 @@ public record PayrollRunResponse(
     // 2026-10-14 (PC#12): แหล่งจ่ายเริ่มต้นที่ระบบจะใช้กับแถวที่ไม่ได้เลือกเอง ("รหัส ชื่อผัง") + ปัญหาถ้าใช้ไม่ได้ (ตอนจ่ายจะล้มด้วยข้อความเดียวกัน)
     // — เติมเฉพาะตอนดึง run เดี่ยว · หน้าเว็บแสดงอย่างเดียว
     string? DefaultPaymentSourceLabel = null,
-    string? DefaultPaymentSourceWarning = null);
+    string? DefaultPaymentSourceWarning = null,
+    // ฝ่ายค้าน W1c P2-5 (ทีม W1d): เหตุที่ไฟล์แนบ ภ.ง.ด.1/สปส.1-10 อัตโนมัติไม่ถูกสร้างตอนจ่าย + ทางไปต่อ (PayrollRun.FilingAttachmentWarning · เก็บแล้วต้อง echo)
+    string? FilingAttachmentWarning = null);
 
 /// <summary>1 บรรทัดรายคนในรอบเงินเดือน (สำหรับตารางหน้าจอ run detail).
 /// ชื่อ field ตรงกับที่ payroll.html viewRun อ่าน (employeeName/baseSalary/

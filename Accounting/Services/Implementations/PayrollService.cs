@@ -1184,7 +1184,7 @@ public class PayrollService : IPayrollService
             .ToListAsync();
         var byExtId = employees.Where(e => !string.IsNullOrEmpty(e.ExternalId))
             .GroupBy(e => e.ExternalId!).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-        string DigitsOnly(string? s) => new string((s ?? "").Where(char.IsDigit).ToArray());
+        string DigitsOnly(string? s) => Accounting.Helpers.ThaiTaxId.Normalize(s);   // เลขบัตรประชาชน (= เลขผู้เสียภาษีบุคคล) — ตัวตั้งเดียว (W1d P2-6)
         var byCitizen = employees.Where(e => !string.IsNullOrEmpty(e.CitizenId))
             .GroupBy(e => DigitsOnly(e.CitizenId)).ToDictionary(g => g.Key, g => g.First());
 
@@ -3370,7 +3370,17 @@ public class PayrollService : IPayrollService
                 actionUrl: "/pages/salary-advance.html");
         }
 
-        return await ToRunResponseAsync(companyId, run);
+        // ฝ่ายค้าน W1c P2-5 (ทีม W1d): ไฟล์แนบ ภ.ง.ด.1 สร้างหลังตอบ (background) — ด่านที่จะกั้นมันตัดสินได้ตอนนี้ (ตัวเดียวกับตัวสร้างไฟล์) ⇒
+        // บอกในคำตอบทันที ไม่ต้องรอผู้ใช้ไปเจอว่ารอบไม่มีไฟล์ · แบนเนอร์บนหน้ารอบมาจาก FilingAttachmentWarning ที่งานหลังจ่ายประทับ
+        var resp = await ToRunResponseAsync(companyId, run);
+        if (_taxFilingExport != null && _attachments != null && run.TotalWithholdingTax > 0)
+        {
+            var filer = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+                .Select(c => new { c.TaxId, c.BranchCode }).FirstOrDefaultAsync();
+            var notice = PayrollFilingAttachmentNotice.PredictAtPayment(run.TotalWithholdingTax, filer?.TaxId, filer?.BranchCode);
+            if (notice != null) resp = resp with { Notice = notice };
+        }
+        return resp;
     }
 
     /// <summary>
@@ -4240,6 +4250,11 @@ public class PayrollService : IPayrollService
             catch (Exception ex) { _logger?.LogWarning(ex, "Attach filing {File} failed for run {Run}", fileName, run.Id); }
         }
 
+        // ฝ่ายค้าน W1c P2-5 (ทีม W1d): ไฟล์แนบที่สร้างไม่ได้ต้อง "ดัง 3 ที่" — (1) ข้อมูล: PayrollRun.FilingAttachmentWarning ⇒ แบนเนอร์บนหน้ารอบ
+        // (2) สถานะงาน: แจ้งเตือน PayrollPaid + LogError (3) คำตอบ: ProcessPaymentAsync ใส่ Notice จากด่านเดียวกันก่อนตอบ (งานนี้รันหลังตอบ)
+        // เดิมมีแค่ LogWarning ⇒ รอบที่จ่ายแล้วไม่มีไฟล์ ภ.ง.ด.1 โดยไม่มีใครรู้เหตุ · การจ่ายเองไม่ล้ม (คำตัดสินข้อ 150)
+        var filingProblems = new List<string>();
+
         // ── 1. ภ.ง.ด.1 — monthly salary WHT remittance ──────────────────
         if (_taxFilingExport != null && run.TotalWithholdingTax > 0)
         {
@@ -4250,7 +4265,8 @@ public class PayrollService : IPayrollService
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "ภ.ง.ด.1 generation failed for run {Run}", run.Id);
+                _logger?.LogError(ex, "ภ.ง.ด.1 generation failed for run {Run}", run.Id);
+                filingProblems.Add(PayrollFilingAttachmentNotice.Pnd1Missing(ex));
             }
         }
 
@@ -4265,9 +4281,22 @@ public class PayrollService : IPayrollService
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "สปส.1-10 generation failed for run {Run}", run.Id);
+                _logger?.LogError(ex, "สปส.1-10 generation failed for run {Run}", run.Id);
+                filingProblems.Add(PayrollFilingAttachmentNotice.Sso110Missing(ex));
             }
         }
+
+        var warning = PayrollFilingAttachmentNotice.Combine(filingProblems);
+        var tracked = await _db.Set<PayrollRun>().FirstOrDefaultAsync(r => r.Id == run.Id && r.CompanyId == companyId);
+        if (tracked != null && tracked.FilingAttachmentWarning != warning)
+        {
+            tracked.FilingAttachmentWarning = warning;
+            await _db.SaveChangesAsync();
+        }
+        if (warning != null)
+            await NotifyRunAsync(companyId, NotificationEvents.PayrollPaid, actorUserId: null,
+                title: $"⚠️ ไฟล์แนบยื่นแบบของรอบเงินเดือน {run.Month:D2}/{run.Year} สร้างไม่ได้",
+                message: warning, entityId: run.Id);
 
         // ── 3. Payslips — one PDF per employee ──────────────────────────
         var employeeIds = await _db.Set<PayrollDetail>().AsNoTracking()
@@ -5173,7 +5202,8 @@ public class PayrollService : IPayrollService
             // รอบ 200 (D-04): วันครบกำหนดนำส่ง สปส. (เลื่อนวันหยุดแล้ว) — หน้าเว็บห้ามคิดเอง
             SsoDueDate: Accounting.Helpers.SsoLateFee.DueDate(r.Year, r.Month),
             PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd,
-            CanVoid: canVoid, VoidBlockReason: voidBlockReason);
+            CanVoid: canVoid, VoidBlockReason: voidBlockReason,
+            FilingAttachmentWarning: r.FilingAttachmentWarning);
     }
 
     private static LeaveResponse MapToLeaveResponse(EmployeeLeave l, Employee e) =>

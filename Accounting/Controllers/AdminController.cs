@@ -2876,7 +2876,7 @@ public class AdminController : ControllerBase
 
         var taxIdPattern = @"(\d{1}\s*-?\s*\d{4}\s*-?\s*\d{5}\s*-?\s*\d{2}\s*-?\s*\d{1})";
         var taxIds = System.Text.RegularExpressions.Regex.Matches(text, taxIdPattern)
-            .Select(m => new string(m.Value.Where(char.IsDigit).ToArray()))
+            .Select(m => Accounting.Helpers.ThaiTaxId.Normalize(m.Value))
             .Where(s => s.Length == 13).Distinct().Take(5).ToArray();
         if (taxIds.Length == 0)
             taxIds = System.Text.RegularExpressions.Regex.Matches(text, @"\d{13}")

@@ -1769,7 +1769,7 @@ public class ImportExportService : IImportExportService
         // รอบ 205 ทีม B: เลขบัตรประชาชนเก็บเป็นตัวเลขล้วน (ขีด/ช่องว่างจากไฟล์ตัดออก) — checksum ไม่ผ่าน = คำเตือนที่ศูนย์นำเข้า
         // (EmployeesImportTarget · ไม่บล็อก — บัตรต่างด้าว/เลขชั่วคราวมีจริง · คำตัดสินข้อ 150)
         var citizenRaw = Val(row, "CitizenId");
-        var citizenDigits = citizenRaw == null ? null : new string(citizenRaw.Where(char.IsDigit).ToArray());
+        var citizenDigits = citizenRaw == null ? null : Accounting.Helpers.ThaiTaxId.Normalize(citizenRaw);
 
         var employee = new Employee
         {

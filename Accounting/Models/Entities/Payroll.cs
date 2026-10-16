@@ -214,6 +214,11 @@ public class PayrollRun : TenantEntity
     // ใช้เตือนก่อน "คำนวณใหม่" ว่าจะทับรายชื่อที่แก้มือ · คำนวณรอบใหม่ล้างเป็น null (รายชื่อกลับมาจากเงื่อนไขงวด)
     public DateTime? ManualRosterChangedAt { get; set; }
 
+    /// <summary>ฝ่ายค้าน W1c P2-5 (ทีม W1d): เหตุที่ไฟล์แนบยื่นแบบอัตโนมัติ (ภ.ง.ด.1 · สปส.1-10) ของรอบนี้<b>ไม่ถูกสร้าง</b>ตอนจ่าย พร้อมทางไปต่อ —
+    /// ประทับโดย <c>AutoGenerateFilingsAsync</c> (สร้างสำเร็จทุกไฟล์ = ล้างเป็น null) · หน้ารอบเงินเดือนแสดงเป็นแบนเนอร์ · เดิมมีแค่ LogWarning
+    /// ⇒ HR ไม่รู้ว่าทำไมรอบที่จ่ายแล้วไม่มีไฟล์ ภ.ง.ด.1 (F2 #7 ล้มดัง 3 ที่)</summary>
+    public string? FilingAttachmentWarning { get; set; }
+
     public ICollection<PayrollDetail> Details { get; set; } = new List<PayrollDetail>();
 }
 

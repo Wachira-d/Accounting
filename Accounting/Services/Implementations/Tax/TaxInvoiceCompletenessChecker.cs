@@ -148,8 +148,7 @@ public static class TaxInvoiceCompletenessChecker
         return missing.Count > 0 && IsJuristicBuyer(buyer) ? missing : null;
     }
 
-    private static string Digits(string? raw) =>
-        new((raw ?? "").Where(char.IsDigit).ToArray());
+    private static string Digits(string? raw) => Accounting.Helpers.ThaiTaxId.Normalize(raw);   // เลขผู้เสียภาษี/สาขา — ตัวตั้งเดียว (W1d P2-6)
 
     /// <summary>Thai TaxId 13-digit + mod-11 checksum ตาม spec กรมสรรพากร
     /// (ใช้ใน e-Tax XML schema validation ด้วย).

@@ -7,7 +7,7 @@ public interface ITaxFilingExportService
     /// <summary>ภ.ง.ด.1 รายเดือน ตามสเปก WHTSVS 20 ช่อง — <paramref name="format"/> = <c>txt</c> (ค่าตั้งต้น · <c>PND1.txt</c> ไฟล์เดียวทุกประเภท) ·
     /// <c>xlsx</c> (ชีต Sheet1 ไม่มีแถวหัว) · <c>csv</c> (ไม่มีแถวหัว) · <c>review</c> (รายงานตรวจทานมีหัวคอลัมน์ — ไม่ใช่ไฟล์นำเข้า) —
     /// รูปแบบ <c>Helpers/Pnd1FileFormat</c> · รายการ <c>Helpers/Pnd1FilingData</c></summary>
-    Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month, string? format = null, bool includePii = true);
+    Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month, string? format = null, bool includePii = true, bool previewOnly = false);
 
     // ภ.ง.ด.3 - Service WHT for individuals (e-Filing text format)
     Task<TaxFilingExportResult> ExportPnd3Async(Guid companyId, int year, int month);
@@ -16,7 +16,7 @@ public interface ITaxFilingExportService
     Task<TaxFilingExportResult> ExportPnd53Async(Guid companyId, int year, int month);
 
     /// <summary>ภ.ง.ด.1ก รายปี — สเปกเดียวกับ ภ.ง.ด.1 (เดือนภาษีช่อง 13 = <c>00</c> · วันที่จ่าย = วันจ่ายครั้งสุดท้ายของปี · ยอดทั้งปีต่อราย)</summary>
-    Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year, string? format = null, bool includePii = true);
+    Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year, string? format = null, bool includePii = true, bool previewOnly = false);
 
     /// <summary>ภ.ง.ด.91 — Annual personal-income summary per employee.
     /// Aggregates YTD income + WHT + SSO + PF from every payroll

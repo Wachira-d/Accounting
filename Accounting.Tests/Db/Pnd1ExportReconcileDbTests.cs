@@ -35,9 +35,10 @@ public class Pnd1ExportReconcileDbTests
     /// โดยไม่มีใคร assert — ตอนนี้เลขผิดกั้นไฟล์นำเข้า จึงต้องเป็นเลขถูก)</summary>
     private const string CompanyTaxId = "0105561012346";
 
-    private static async Task<Seed> SeedAsync(Accounting.Data.AccountingDbContext db, string runStatus, string companyTaxId = CompanyTaxId)
+    private static async Task<Seed> SeedAsync(Accounting.Data.AccountingDbContext db, string runStatus, string companyTaxId = CompanyTaxId,
+        string companyBranchCode = "00000")
     {
-        var company = new Company { Name = "บริษัททดสอบ ภ.ง.ด.1", TaxId = companyTaxId, BranchCode = "00000" };
+        var company = new Company { Name = "บริษัททดสอบ ภ.ง.ด.1", TaxId = companyTaxId, BranchCode = companyBranchCode };
         db.Companies.Add(company);
         await db.SaveChangesAsync();
         var cid = company.Id;
@@ -281,5 +282,124 @@ public class Pnd1ExportReconcileDbTests
         var review = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "review");
         Assert.Equal(4, review.RecordCount);
         Assert.Contains("เลขประจำตัวผู้เสียภาษีของบริษัท", review.Summary);
+    }
+
+    // ── ฝ่ายค้าน W1c P2-4 (ทีม W1d): ด่านของไฟล์นำเข้าห้ามกั้นพรีวิว — แสดงเป็นคำเตือนแทน ──
+
+    [Theory]
+    [InlineData("0105556000001", "00000", "PND1-WITHHOLDER-TAXID", "ตั้งค่า → ข้อมูลบริษัท")]   // เลขผู้หักไม่ผ่าน checksum
+    [InlineData("", "00000", "PND1-WITHHOLDER-TAXID", "ยังไม่ได้กรอก")]
+    [InlineData(CompanyTaxId, "10001", "PND1-BRANCH-4DIGIT", "รายงานตรวจทาน")]                // สาขาผู้หัก ≥ 10000
+    public async Task พรีวิว_ด่านไฟล์นำเข้าของผู้หัก_ไม่กั้นพรีวิว_และแสดงคำเตือน(string taxId, string branch, string rule, string wayForward)
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, PayrollRunFilingScope.Paid, companyTaxId: taxId, companyBranchCode: branch);
+
+        using var reqDb = DbTestDatabase.TryCreateContext()!;
+        var export = new TaxFilingExportService(reqDb, new TaxService(reqDb));
+        // เดิม: พรีวิว = txt ⇒ โยน PND1-WITHHOLDER-TAXID ⇒ ยอดรวม/ตัวอย่างบนหน้า tax-export ใช้ไม่ได้ และคำเตือนไม่มีทางแสดง
+        var preview = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, includePii: false, previewOnly: true);
+        Assert.Equal(4, preview.RecordCount);
+        Assert.Equal(s.PayrollTax + s.CertTax, preview.TotalTax);
+        Assert.Empty(preview.FileData);
+        Assert.Contains("⚠️ ไฟล์นำเข้า (Excel/.txt/CSV) ถูกกั้นจนกว่าจะแก้", preview.Summary);
+        Assert.Contains(wayForward, preview.Summary);
+        Assert.Equal(4, preview.PreviewText!.Split("\r\n", StringSplitOptions.RemoveEmptyEntries).Length);
+        Assert.NotNull(preview.Categories);
+        var annual = await export.ExportPnd1kAsync(s.CompanyId, Period.Year, includePii: false, previewOnly: true);
+        Assert.Contains("⚠️ ไฟล์นำเข้า", annual.Summary);
+
+        // ทิศตรงข้าม: ไฟล์นำเข้าจริงยังถูกกั้นด้วยด่านเดียวกัน (รหัสเดียวกัน)
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "xlsx"));
+        Assert.Equal(rule, ex.RuleCode);
+    }
+
+    [Fact]
+    public async Task ทิศตรงข้าม_พรีวิวของบริษัทที่ข้อมูลผู้หักถูก_ไม่มีคำเตือนด่านไฟล์นำเข้า()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, PayrollRunFilingScope.Paid);
+        using var reqDb = DbTestDatabase.TryCreateContext()!;
+        var export = new TaxFilingExportService(reqDb, new TaxService(reqDb));
+        var preview = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, previewOnly: true);
+        Assert.DoesNotContain("ไฟล์นำเข้า (Excel/.txt/CSV) ถูกกั้น", preview.Summary);
+        // ตัวอย่าง = ไฟล์ .txt จริงทุกบรรทัด (สาขา 4 หลักเท่ากัน)
+        var txt = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "txt");
+        Assert.Equal(System.Text.Encoding.UTF8.GetString(txt.FileData), preview.PreviewText);
+    }
+
+    // ── ฝ่ายค้าน W1c P2-5 (ทีม W1d): ไฟล์แนบ ภ.ง.ด.1 ของรอบเงินเดือนที่สร้างไม่ได้ต้องดัง (ข้อมูล · คำตอบ) ──
+
+    private sealed class RecordingFiles : Accounting.Services.Interfaces.IFileAttachmentService
+    {
+        public List<string> Uploaded { get; } = new();
+        public Task<Accounting.Models.DTOs.FileAttachment.FileAttachmentResponse> UploadBytesAsync(Guid companyId, string entityType, Guid entityId,
+            string originalFileName, string contentType, byte[] content, Guid uploadedByUserId)
+        {
+            Uploaded.Add(originalFileName);
+            return Task.FromResult(new Accounting.Models.DTOs.FileAttachment.FileAttachmentResponse(Guid.NewGuid(), originalFileName, originalFileName,
+                contentType, content.LongLength, "/dev/null", null, entityType, entityId, "ผู้ทดสอบ", DateTime.UtcNow));
+        }
+        public Task<Accounting.Models.DTOs.FileAttachment.FileAttachmentResponse> UploadAsync(Guid companyId, string entityType, Guid entityId,
+            string fileName, string originalFileName, string contentType, long fileSize, string storagePath, Guid uploadedByUserId)
+            => throw new NotSupportedException();
+        public Task<List<Accounting.Models.DTOs.FileAttachment.FileAttachmentResponse>> GetByEntityAsync(Guid companyId, string entityType, Guid entityId)
+            => throw new NotSupportedException();
+        public Task<Accounting.Models.DTOs.FileAttachment.FileAttachmentResponse?> GetByIdAsync(Guid companyId, Guid attachmentId)
+            => throw new NotSupportedException();
+        public Task<byte[]?> ReadBytesAsync(Guid companyId, Guid attachmentId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task DeleteAsync(Guid companyId, Guid attachmentId, bool keepPhysicalFile = false) => throw new NotSupportedException();
+    }
+
+    private async Task<(Guid RunId, RecordingFiles Files, Accounting.Data.AccountingDbContext Db)?> PayAttachAsync(string taxId)
+    {
+        var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return null; }
+        var s = await SeedAsync(db, PayrollRunFilingScope.Paid, companyTaxId: taxId);
+        var user = new User { Email = $"w1d-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "ผู้ทดสอบ W1d" };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        var runId = await db.Set<PayrollRun>().Where(r => r.CompanyId == s.CompanyId).Select(r => r.Id).SingleAsync();
+        db.Dispose();
+
+        var reqDb = DbTestDatabase.TryCreateContext()!;
+        var files = new RecordingFiles();
+        var svc = new PayrollService(reqDb, taxFilingExport: new TaxFilingExportService(reqDb, new TaxService(reqDb)), attachments: files);
+        await svc.GeneratePostPaymentArtifactsAsync(s.CompanyId, runId, user.Id.ToString());
+        return (runId, files, reqDb);
+    }
+
+    [Fact]
+    public async Task รอบเงินเดือน_ไฟล์แนบภงด1สร้างไม่ได้_เหตุและทางไปต่ออยู่บนรอบ_และคำตอบของรอบ()
+    {
+        var r = await PayAttachAsync("0105556000001");
+        if (r == null) return;
+        var (runId, files, db) = r.Value;
+        using var _ = db;
+        // เดิม: LogWarning อย่างเดียว ⇒ รอบที่จ่ายแล้วไม่มีไฟล์ ภ.ง.ด.1 โดยไม่มีใครรู้เหตุ
+        Assert.DoesNotContain(files.Uploaded, f => f.Contains("PND1", StringComparison.OrdinalIgnoreCase));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var run = await check.Set<PayrollRun>().AsNoTracking().SingleAsync(x => x.Id == runId);
+        Assert.NotNull(run.FilingAttachmentWarning);
+        Assert.Contains("ไม่มีไฟล์แนบ ภ.ง.ด.1", run.FilingAttachmentWarning);
+        Assert.Contains("ตั้งค่า → ข้อมูลบริษัท", run.FilingAttachmentWarning);
+        Assert.Contains("Export ยื่นภาษี", run.FilingAttachmentWarning);
+        // เก็บแล้วต้อง echo — หน้ารอบเงินเดือนอ่านจากคำตอบนี้
+        var resp = await new PayrollService(check).GetPayrollRunAsync(run.CompanyId, runId);
+        Assert.Equal(run.FilingAttachmentWarning, resp.FilingAttachmentWarning);
+    }
+
+    [Fact]
+    public async Task ทิศตรงข้าม_รอบเงินเดือน_เลขผู้หักถูก_ได้ไฟล์แนบภงด1_และไม่มีคำเตือน()
+    {
+        var r = await PayAttachAsync(CompanyTaxId);
+        if (r == null) return;
+        var (runId, files, db) = r.Value;
+        using var _ = db;
+        Assert.Contains(Pnd1FileFormat.TextFileName, files.Uploaded);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Null(await check.Set<PayrollRun>().AsNoTracking().Where(x => x.Id == runId).Select(x => x.FilingAttachmentWarning).SingleAsync());
     }
 }

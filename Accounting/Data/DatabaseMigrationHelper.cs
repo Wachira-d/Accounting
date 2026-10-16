@@ -213,6 +213,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round205TeamDMigrationStatements());   // รอบ 205 ทีม D คำแนะนำบัญชีของ migration wizard (บล็อกท้ายไฟล์)
         list.AddRange(Adversarial1BankStatements());   // ฝ่ายค้านรอบ 1 — ยอดคงเหลือ statement ที่ไม่รู้ (บล็อกท้ายไฟล์)
         list.AddRange(AdversarialEtlStatements());   // ฝ่ายค้านรอบ ETL — ปิดค่า "ลงอัตโนมัติ" ที่ยังไม่มีผล (บล็อกท้ายไฟล์)
+        list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -4844,6 +4845,8 @@ public static class DatabaseMigrationHelper
             """UPDATE "PayrollRuns" pr SET "PaidAt" = je."CreatedAt" FROM "JournalEntries" je WHERE je."Id" = pr."JournalEntryId" AND je."CompanyId" = pr."CompanyId" AND pr."Status" = 'Paid' AND pr."PaidAt" IS NULL;""",
             // รอบ 201 (PR2 · X4): เวลาล่าสุดที่รายชื่อรอบถูกเปลี่ยนด้วยมือ — เตือนก่อนคำนวณใหม่ว่าจะทับ
             """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "ManualRosterChangedAt" timestamptz NULL;""",
+            // ฝ่ายค้าน W1c P2-5 (ทีม W1d): เหตุที่ไฟล์แนบ ภ.ง.ด.1/สปส.1-10 อัตโนมัติไม่ถูกสร้างตอนจ่าย (แบนเนอร์หน้ารอบ · null = สร้างครบ/ยังไม่จ่าย)
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "FilingAttachmentWarning" text NULL;""",
             // Employee tax allowances §47/47ทวิ — ละเอียดขึ้นจากที่เก่า
             // เป็น count × 30K เฉย ๆ (ครอบครัวใหญ่ over-withhold).
             """ALTER TABLE "Employees" ADD COLUMN IF NOT EXISTS "HasSpouseAllowance" boolean NOT NULL DEFAULT false;""",
@@ -7615,4 +7618,55 @@ public static class DatabaseMigrationHelper
     {
         """UPDATE "ImportMappingTemplates" SET "AutoCommitWhenClean" = false WHERE "AutoCommitWhenClean" = true;""",
     };
+
+    /// <summary>
+    /// <b>ทีม W1d P2-6 (ฝ่ายค้าน W1c)</b> — คีย์ตัวเรียนรู้ที่ persist ไว้ด้วยเลขผู้เสียภาษี<b>เลขไทย</b> ⇒ แปลงเป็นเลขอารบิก ·
+    /// <c>ThaiTaxId.Normalize</c> แปลง ๐–๙ เป็น 0–9 ตั้งแต่ b195bc96 (เดิมคงเลขไทย) และตอนนี้สำเนา inline ทุกตัวเรียกตัวนี้ ⇒ ผู้อ่านสร้างคีย์
+    /// <c>tax:0105…</c> ขณะที่แถวเก่าเก็บ <c>tax:๐๑๐๕…</c> = ความรู้ที่สะสมไว้หาไม่เจอ (F2 ข้อ 9: แก้โค้ดอย่างเดียวไม่พอเมื่อของถูกเก็บไว้แล้ว)
+    ///
+    /// <para><b>ทำไม migrate ไม่ใช่ "ผู้อ่านรับสองรูป"</b>: คีย์เลขไทยเกิดได้ทางเดียว (เลขไทยในเลขผู้เสียภาษี) แปลงกลับได้แน่นอนด้วย
+    /// <c>translate()</c> ไม่มีการเดา · ผู้อ่านมี ≥ 6 จุด (VendorIntelligence · ExpenseCategoryLearner · GlobalDocWorkflow · OcrController ·
+    /// VendorKnownGood · OcrLearnedPattern) — ให้ทุกจุดรับสองรูปคือสำเนากติกาใหม่ 6 ชุดที่ต้องจำไปตลอด · ผู้เขียนใหม่ทุกตัวเขียน ASCII แล้ว</para>
+    ///
+    /// <para>ขอบเขต: เฉพาะคีย์ขึ้นต้น <c>tax:</c> (คีย์ <c>name:</c> เป็นชื่อร้าน ห้ามแตะเลขไทยในชื่อ) + คอลัมน์ <c>VendorTaxId</c> ของตารางตัวเรียนรู้ ·
+    /// <b>ไม่ชนคีย์เดิม</b>: ถ้ามีแถว ASCII ของคีย์เดียวกันอยู่แล้ว (ในขอบเขต unique/ธรรมชาติของตาราง) แถวเลขไทยคงไว้ไม่แตะ (ไม่ลบความรู้ —
+    /// แถวนั้นหาไม่เจอเหมือนก่อน migrate) · หลายแถวเลขไทยที่แปลงแล้วเป็นคีย์เดียวกัน ⇒ แปลงแถวเดียว (DISTINCT ON) · รันทุกบูตได้ (หลังแปลงไม่มีแถวเข้าเงื่อนไข)</para>
+    /// <para>ตัวเรียนรู้ในหน่วยความจำ (GlAccount/VendorCanon distillation · OcrConfidenceGateway) สร้างคีย์ใหม่จากข้อมูลดิบทุกครั้งที่ retrain — ไม่ต้อง migrate ·
+    /// <c>Contacts.TaxId</c> ไม่ใช่คีย์ตัวเรียนรู้ (ผู้เปรียบเทียบ normalize ทั้งสองฝั่ง) — ไม่แตะข้อมูลผู้ใช้</para>
+    /// </summary>
+    internal static IReadOnlyList<string> ThaiDigitLearnerKeyStatements()
+    {
+        const string thai = "๐๑๒๓๔๕๖๗๘๙", ascii = "0123456789";
+        string Key(string table, params string[] scope)
+        {
+            var k = $"translate(t.\"VendorKey\", '{thai}', '{ascii}')";
+            var scopeT = string.Concat(scope.Select(s => $"t.\"{s}\", "));
+            var twin = string.Concat(scope.Select(s => $" AND o.\"{s}\" = t.\"{s}\""));
+            return $"""
+                WITH c AS (
+                  SELECT DISTINCT ON ({scopeT}{k}) t."Id", {k} AS k
+                  FROM "{table}" t
+                  WHERE t."VendorKey" LIKE 'tax:%' AND t."VendorKey" ~ '[{thai}]'
+                  ORDER BY {scopeT}{k}, t."Id")
+                UPDATE "{table}" t SET "VendorKey" = c.k FROM c
+                WHERE t."Id" = c."Id"
+                  AND NOT EXISTS (SELECT 1 FROM "{table}" o WHERE o."VendorKey" = c.k{twin});
+                """;
+        }
+        string TaxCol(string table)
+            => $"""UPDATE "{table}" SET "VendorTaxId" = translate("VendorTaxId", '{thai}', '{ascii}') WHERE "VendorTaxId" ~ '[{thai}]';""";
+        return new List<string>
+        {
+            Key("OcrVendorIntelligence", "CompanyId"),                       // unique (CompanyId, VendorKey)
+            Key("SystemOcrVendorIntelligence"),                              // unique (VendorKey)
+            Key("OcrCategoryMappings", "CompanyId", "DescriptionKeyword"),   // ธรรมชาติ (CompanyId, VendorKey, DescriptionKeyword)
+            Key("SystemOcrCategoryMappings", "DescriptionKeyword"),
+            Key("GlobalExpenseCategoryPatterns", "DescriptionKeyword"),
+            Key("GlobalDocWorkflowPatterns", "ScannedDocType", "TargetDocType"),
+            TaxCol("OcrVendorIntelligence"),
+            TaxCol("SystemOcrVendorIntelligence"),
+            TaxCol("OcrLearnedPatterns"),
+            TaxCol("VendorKnownGoodValues"),
+        };
+    }
 }

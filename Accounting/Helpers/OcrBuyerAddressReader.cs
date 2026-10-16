@@ -188,7 +188,7 @@ public static class OcrBuyerAddressReader
     private static int FindTaxId(string text, string digits)
     {
         foreach (Match m in Regex.Matches(text, @"(?<![0-9])[0-9](?:[- \t]?[0-9]){12}(?![0-9])"))
-            if (new string(m.Value.Where(char.IsDigit).ToArray()) == digits) return m.Index;
+            if (ThaiTaxId.Normalize(m.Value) == digits) return m.Index;
         return -1;
     }
 

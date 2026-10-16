@@ -186,8 +186,7 @@ public static class PndTextFileFormat
     }
 
     /// <summary>ตัวเลขล้วน — เลขผู้เสียภาษีที่ผู้ใช้พิมพ์ขีดคั่นมาต้องส่งเป็น 13 หลักติดกัน</summary>
-    private static string Digits(string? raw) =>
-        new((raw ?? "").Where(char.IsDigit).ToArray());
+    private static string Digits(string? raw) => ThaiTaxId.Normalize(raw);   // ตัวตั้งเดียว (W1d P2-6 · เลขไทยเป็น ASCII)
 
     private static string NormalizeBranch(string? raw)
     {

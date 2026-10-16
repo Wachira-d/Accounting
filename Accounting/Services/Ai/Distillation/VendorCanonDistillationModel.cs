@@ -209,7 +209,7 @@ public class VendorCanonDistillationModel : ILocalDistillationModel
                 return "";
             var name = ocr.TryGetProperty("vendor_name", out var n) ? n.GetString() ?? "" : "";
             var taxId = ocr.TryGetProperty("vendor_tax_id", out var t) ? t.GetString() ?? "" : "";
-            var digits = new string(taxId.Where(char.IsDigit).ToArray());
+            var digits = Accounting.Helpers.ThaiTaxId.Normalize(taxId);
             // Prefer tax-id when present (13-digit numbers are globally
             // unique); fall back to normalised name.
             if (digits.Length == 13) return "tid:" + digits;

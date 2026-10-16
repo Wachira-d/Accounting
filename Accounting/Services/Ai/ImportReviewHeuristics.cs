@@ -267,7 +267,7 @@ public static class ImportReviewHeuristics
             {
                 var t = ImportValueNormalizer.TaxId(value);
                 if (t.Ok) return null;
-                var digits = new string(SettlementValueParser.ThaiDigitsToAscii(value).Where(char.IsDigit).ToArray());
+                var digits = Accounting.Helpers.ThaiTaxId.Normalize(value);
                 return t.IssueCode switch
                 {
                     "taxid-leading-zero" => (t.Message ?? "เลขผู้เสียภาษีขาดศูนย์นำหน้า", t.Suggested, t.IssueCode),

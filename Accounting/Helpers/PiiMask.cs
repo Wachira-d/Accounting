@@ -19,7 +19,7 @@ public static class PiiMask
     public static string? CitizenId(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return value;
-        var digits = new string(value.Where(char.IsDigit).ToArray());
+        var digits = ThaiTaxId.Normalize(value);
         if (digits.Length != 13) return "XXXXXXXXXXXXX";
         return $"{digits[0]}-XXXX-XXXXX-XX-{digits[12]}";
     }
@@ -27,7 +27,7 @@ public static class PiiMask
     public static string? TaxId(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return value;
-        var digits = new string(value.Where(char.IsDigit).ToArray());
+        var digits = ThaiTaxId.Normalize(value);
         if (digits.Length != 13) return "XXXXXXXXXXXXX";
         // เปิด 7 หลักแรก ปกปิด 6 หลักหลัง (เพียงพอเทียบ vendor + ไม่ระบุตัว)
         return digits[..7] + "XXXXXX";

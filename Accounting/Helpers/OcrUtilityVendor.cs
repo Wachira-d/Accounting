@@ -58,7 +58,7 @@ public static class OcrUtilityVendor
     /// </summary>
     public static OcrUtilityKind KindOf(string? taxId, string? vendorName)
     {
-        var digits = new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        var digits = ThaiTaxId.Normalize(taxId);
         if (digits.Length == 13 && TaxIds.TryGetValue(digits, out var byId)) return byId;
         if (string.IsNullOrWhiteSpace(vendorName)) return OcrUtilityKind.None;
         var squashed = ThaiTextNormalizer.SquashForKeywordMatch(vendorName);

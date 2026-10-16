@@ -1351,7 +1351,7 @@ public partial class TaxService : ITaxService
                     var inv = JournalInputTaxInvoice.Resolve(je.EntryDate, je.TaxInvoiceNo, je.TaxInvoiceDate,
                         je.TaxInvoiceSupplierName, je.TaxInvoiceSupplierTaxId, je.TaxInvoiceSupplierBranch,
                         ExtractDocRefFromJe(je), jePayerName, jePayerId);
-                    var jeInputTid = new string((inv.SupplierTaxId ?? "").Where(char.IsDigit).ToArray());
+                    var jeInputTid = Accounting.Helpers.ThaiTaxId.Normalize(inv.SupplierTaxId);
                     var jeInputClaimable = jeInputTid.Length == 13;
                     if (jeInputClaimable) inputVat += inputVatAmt;
                     report.Lines.Add(new TaxReportLine
