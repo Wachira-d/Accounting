@@ -544,7 +544,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      ได้ที่ราคา 2 ตำแหน่ง (1 × ยอด = จำนวนสต็อกหาย · ตัดส่วนลด = ยอดกลายเป็น 1,000) · **workflow บอกตั้งแต่ขั้นแรก**: `ApprovalService.SubmitActionAsync` ทุกขั้นที่ "อนุมัติ" เอกสาร ⇒
      `BusinessRuleException` 409 `OCR-LINE-UNFIXED` + "กด ปฏิเสธ เพื่อส่งกลับให้ผู้ขอแก้บรรทัด" (ใบที่รออนุมัติแก้ไม่ได้ · การปฏิเสธไม่ถูกกั้น · คำตัดสินข้อ 150: เอกสารนี้ออกไม่ได้อยู่แล้ว
      การให้ผู้อนุมัติลงนามต่อคือทางตัน) · index `IX_OcrScanResults_CompanyId_CreatedDocumentId` (partial · `DatabaseMigrationHelper`) · `OcrExtractionVersion` = 14 (13 = ทีม OCR 13 —
-     ผู้รวมจัดลำดับ) · Last verified commit 028f52c5
+     ผู้รวมจัดลำดับ) · Last verified commit 88ca4b9f
   3. **`UnitInferrer`** — หน่วยว่าง → อนุมานจากคำอธิบาย (ค่าไฟ=`หน่วย` ·
      น้ำประปา=`ลบ.ม.` (ตัวตั้งเดียว `Helpers/OcrMeteredWater.IsMeteredWater` (ทีม OCR 14 — `IsWaterSupply` ส่งต่อ · กฎหมวดค่าน้ำประปา 54320 ของ `ExpenseCategoryResolver` ใช้ทางลบ
      `NotMeteredWaterPhrase` ชุดเดียวกัน ⇒ ค่าน้ำหนักเกิน/ขวด/ถัง/มัน ไม่ลงค่าน้ำประปาแล้ว) — **whitelist** ทีม OCR 12: น้ำประปา · ค่าประปา · การประปา · ค่าใช้น้ำ · ปริมาณ/จำนวนน้ำที่ใช้ · มาตรวัดน้ำ/มิเตอร์น้ำ ·
