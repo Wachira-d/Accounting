@@ -5207,4 +5207,4 @@ PdfPig `page.Text` (ลำดับ stream) · ประกอบไม่ได
 + `Read` ไม่หยิบบรรทัดถัดไป) · ตารางคั่นสองช่องว่าง `RawTextLineSplitter.TableRows` (หัวผ่าน `OcrTableColumnMapper` + "คำอธิบาย") · ผล: กฟภ. 19,381.50/1,356.71/20,738.21 ·
 XH0712609004157 · การไฟฟ้าส่วนภูมิภาค 0994000165501/00000 · ผู้ซื้อ 0203562005871/00000 · `OcrTotalAnchor` Confirmed · 1 × 19,381.50 · พรามี่ 1 × 1,330 − 293 = 1,037 · ไม่ติ๊กหัก ·
 Corpus ใบเดิม 42 ใบ 0 แถวเปลี่ยน + 2 ใบ `*-positional` · `OcrExtractionVersion` 9 → 10 (รุ่น 9 = ทีม OCR 11) · เทสต์ `PdfPositionalTextTests` · `OcrPdfTextPathTests` · `OcrReplayLineGoldenTests` ·
-ล็อกจุดเรียก +11 กติกา + 5 เคส (PP1–PP5 · PP5 รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit e6ee9a10_
+ล็อกจุดเรียก +11 กติกา + 5 เคส (PP1–PP5 · PP5 รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit cfcb1693_
