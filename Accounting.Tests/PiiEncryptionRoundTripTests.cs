@@ -74,7 +74,8 @@ public class PiiEncryptionRoundTripTests
     public void คีย์ผิดต้องถอดไม่ได้()
     {
         var cipher = EncryptionHelper.Encrypt("1234567890121", KeyA);
-        Assert.Throws<CryptographicException>(() => EncryptionHelper.Decrypt(cipher, KeyB));
+        // .NET 8 โยน AuthenticationTagMismatchException (ลูกของ CryptographicException) — Throws<> ต้องตรงชนิดเป๊ะจึงล้ม · ThrowsAny ยังบังคับว่า "ถอดไม่ได้"
+        Assert.ThrowsAny<CryptographicException>(() => EncryptionHelper.Decrypt(cipher, KeyB));
     }
 
     [Fact]
@@ -84,7 +85,7 @@ public class PiiEncryptionRoundTripTests
         var bytes = Convert.FromBase64String(cipher);
         bytes[^1] ^= 0xFF;                       // พลิกไบต์สุดท้ายของ ciphertext
         var tampered = Convert.ToBase64String(bytes);
-        Assert.Throws<CryptographicException>(() => EncryptionHelper.Decrypt(tampered, KeyA));
+        Assert.ThrowsAny<CryptographicException>(() => EncryptionHelper.Decrypt(tampered, KeyA));   // ดูเหตุผลข้างบน (.NET 8 ชนิดลูก)
     }
 
     [Theory]

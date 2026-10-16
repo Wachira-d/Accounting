@@ -74,7 +74,12 @@ public class ImportHubSchemaTests
         var all = DatabaseMigrationHelper.GetAlterStatements();
         Assert.All(Stmts, s => Assert.Contains(s, all));
         Assert.All(Stmts, s => Assert.Matches("IF NOT EXISTS", s));
-        Assert.DoesNotContain(Stmts, s => s.Contains("UPDATE ", StringComparison.Ordinal) || s.Contains("DELETE ", StringComparison.Ordinal));
+        // คำสั่ง DML (UPDATE/DELETE ข้อมูล) — ไม่ใช่ "ON DELETE CASCADE" ของ FK (เดิมสตริงย่อย "DELETE " ฟ้อง FK ของ ImportStagedRows ตั้งแต่ 95c3031b)
+        var dml = new System.Text.RegularExpressions.Regex(@"(?<!ON )\b(UPDATE|DELETE)\s");
+        Assert.DoesNotContain(Stmts, s => dml.IsMatch(s));
+        Assert.Contains(Stmts, s => s.Contains("ON DELETE CASCADE", StringComparison.Ordinal));   // ตัวกรองต้องไม่ตัด FK ทิ้ง
+        Assert.Matches(dml, """UPDATE "ImportMappingTemplates" SET "AutoCommitWhenClean" = false;""");   // ทิศตรงข้าม: DML จริงยังจับได้
+        Assert.Matches(dml, """DELETE FROM "ImportStagedRows";""");
         // ตารางก่อน index ของตาราง
         var list = Stmts.ToList();
         Assert.True(list.FindIndex(s => s.Contains("CREATE TABLE IF NOT EXISTS \"ImportStagedRows\"")) <

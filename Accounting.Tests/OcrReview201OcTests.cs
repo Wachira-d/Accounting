@@ -371,8 +371,12 @@ public class OcrReview201OcTests
     {
         // บล็อก C-18 ถูกต่อเข้าชุด GetFullTextSearchStatements ตอน merge — ต้องอยู่ในชุดที่บูตรันจริง (Program.cs เรียก ApplyFullTextSearchIndexes)
         Assert.Contains(DatabaseMigrationHelper.WhtCorrectionsPredateBaselineMigrationSql(), DatabaseMigrationHelper.GetFullTextSearchStatements());
-        // OCX-1: คอลัมน์ธงใหม่อยู่ในชุด ADD COLUMN
-        Assert.Contains(DatabaseMigrationHelper.GetAlterStatements(), sql => sql.Contains("\"VendorTaxIdUserChanged\"", StringComparison.Ordinal));
+        // OCX-1: คอลัมน์ธงใหม่อยู่ในชุดที่บูตรัน — คอลัมน์ OcrScanResults ตระกูลนี้ (SuggestedWhtSource · VendorAddressUserTyped ·
+        // ExtractionVersion …) อยู่ใน GetFullTextSearchStatements มาตั้งแต่ f01811b2 ที่เพิ่มคอลัมน์ (เทสต์เดิมค้นใน GetAlterStatements
+        // ซึ่งไม่เคยมีคอลัมน์นี้ ⇒ ไม่เคยเขียว) · ล็อกว่าอยู่ชุดบูตชุดใดชุดหนึ่ง "ครั้งเดียว" ไม่หายและไม่ซ้ำสองชุด
+        bool Has(string s) => s.Contains("ADD COLUMN IF NOT EXISTS \"VendorTaxIdUserChanged\"", StringComparison.Ordinal);
+        Assert.Equal(1, DatabaseMigrationHelper.GetFullTextSearchStatements().Count(Has)
+                      + DatabaseMigrationHelper.GetAlterStatements().Count(Has));
     }
 
     [Fact]

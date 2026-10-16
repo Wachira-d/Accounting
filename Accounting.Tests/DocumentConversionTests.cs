@@ -22,11 +22,17 @@ public class DocumentConversionTests
     }
 
     [Fact]
-    public void Receipt_is_a_terminal_document()
+    public void Receipt_converts_only_to_credit_or_debit_note()
     {
+        // เดิม "ใบเสร็จเป็นปลายทาง" — ตารางแปลง (DocumentService.ValidConversions) ให้ใบเสร็จที่เป็นใบกำกับในตัว
+        // ออกใบลด/เพิ่มหนี้อ้างได้ตาม §86/9–10 (CN/DN ต้องอ้างกระดาษใบกำกับจริง · ด่านใบเสร็จเปล่า/มัดจำอยู่ที่ ValidateConversionAsync)
+        // · ห้ามย้อนกลับเป็นใบขายอื่นเหมือนเดิม
         var targets = DocumentService.GetValidConversionTargets(DocumentType.Receipt);
 
-        Assert.Empty(targets);
+        Assert.Equal(new HashSet<DocumentType> { DocumentType.CreditNote, DocumentType.DebitNote }, targets.ToHashSet());
+        Assert.DoesNotContain(DocumentType.Invoice, targets);
+        Assert.DoesNotContain(DocumentType.TaxInvoice, targets);
+        Assert.DoesNotContain(DocumentType.Receipt, targets);
     }
 
     [Fact]

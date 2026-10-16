@@ -335,13 +335,23 @@ public class ForeignServicePayeeBalanceMigrationTests
     [Fact]
     public void ทุกคำสั่งจำกัดเฉพาะใบต่างประเทศที่มี_VAT_ไม่ถูกลบ_ไม่ยกเลิก()
     {
-        foreach (var sql in ForeignServicePayeeBalanceMigration.Statements().Append(ForeignServicePayeeBalanceMigration.OverpaidReportSql))
+        // (1)(2) + รายงาน: ใบตั้งต้นที่ติ๊กเอง — ขอบเขตร่วมเต็ม
+        foreach (var sql in new[] { ForeignServicePayeeBalanceMigration.CashVoucherSql, ForeignServicePayeeBalanceMigration.PayableSql,
+                     ForeignServicePayeeBalanceMigration.OverpaidReportSql })
         {
-            Assert.Contains("\"IsForeignService\" = true", sql);
-            Assert.Contains("\"VatAmount\" > 0", sql);
-            Assert.Contains("\"IsDeleted\" = false", sql);
-            Assert.Contains("\"Status\" <> 6", sql);
+            Assert.Contains("\"IsForeignService\" = true AND \"VatAmount\" > 0 AND \"IsDeleted\" = false AND \"Status\" <> 6", sql);
         }
+        // (3)(4) เพิ่มใน 5985acef (ฝ่ายค้าน F2+F3): ใบลูก<b>ที่ยังไม่อนุมัติ</b> (สถานะ 0/1/8 — ไม่รวม Voided 6 โดยนิยาม) ที่อ้างใบต้นทาง
+        // เจ้าของ ภ.พ.36 · (3) ตั้งธงสองทิศจึงไม่มี `IsForeignService = true` ของตัวเอง — ขอบเขต "ต่างประเทศ + VAT" มาจากใบต้นทาง (SourceOwnsSql)
+        // · เดิมเทสต์บังคับขอบเขต (1) กับทุกคำสั่ง ⇒ ล้มตั้งแต่เพิ่ม (3)(4)
+        foreach (var sql in new[] { ForeignServicePayeeBalanceMigration.LinkedVoucherFlagSql, ForeignServicePayeeBalanceMigration.LinkedAdjustmentNoteSql })
+        {
+            Assert.Contains("\"IsDeleted\" = false", sql);
+            Assert.Contains("\"Status\" IN (0, 1, 8)", sql);
+            Assert.Contains("s.\"IsForeignService\" = true AND s.\"VatAmount\" > 0", sql);
+            Assert.Contains("s.\"Id\" = d", sql);   // ผูกกับใบต้นทางของแถวนั้นจริง ไม่ใช่ใบใดก็ได้
+        }
+        Assert.Equal(4, ForeignServicePayeeBalanceMigration.Statements().Count);   // คำสั่งใหม่ต้องถูกจัดกลุ่มในเทสต์นี้
     }
 
     [Fact]

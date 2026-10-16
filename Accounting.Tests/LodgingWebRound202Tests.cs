@@ -135,7 +135,8 @@ public class LodgingWebRound202Tests
         // ตัวแรกต่อหน้า → บล็อกสด · ที่เหลือ → ซ่อน (ไม่ลบ)
         Assert.Contains("PARTITION BY b.\"PageId\"", sql);
         Assert.Contains("ELSE false END", sql);
-        Assert.DoesNotContain("DELETE", sql, StringComparison.OrdinalIgnoreCase);
+        // คำสั่ง DELETE (ไม่ใช่สตริงย่อย — "IsDeleted" มี "Deleted" ⇒ เทสต์เดิมฟ้องผิดเสมอ · checker ที่ฟ้องผิด = checker ที่พัง F2 ข้อ 6)
+        Assert.DoesNotMatch(new Regex(@"\bDELETE\b", RegexOptions.IgnoreCase), sql);
     }
 
     [Fact]
@@ -174,7 +175,9 @@ public class LodgingWebRound202Tests
         // ฝ่ายค้าน P2-5(ก): เปิดช่วงเวลา/ใส่คำแปลแล้ว = ใช้งานจริง ⇒ ไม่แตะ
         Assert.Contains("NOT EXISTS (SELECT 1 FROM \"SiteBookingSlots\" l WHERE l.\"BookingServiceId\" = v.\"Id\" AND l.\"CompanyId\" = v.\"CompanyId\")", sql);
         Assert.Contains("NOT EXISTS (SELECT 1 FROM \"SiteBookingServiceTranslations\" t WHERE t.\"BookingServiceId\" = v.\"Id\" AND t.\"CompanyId\" = v.\"CompanyId\")", sql);
-        Assert.DoesNotContain("DELETE", sql, StringComparison.OrdinalIgnoreCase);
+        // คำสั่ง DELETE (ไม่ใช่สตริงย่อย — "IsDeleted" มี "Deleted" ⇒ เทสต์เดิมฟ้องผิดเสมอ · checker ที่ฟ้องผิด = checker ที่พัง F2 ข้อ 6)
+        Assert.DoesNotMatch(new Regex(@"\bDELETE\b", RegexOptions.IgnoreCase), sql);
+        Assert.Matches(new Regex(@"\bDELETE\b", RegexOptions.IgnoreCase), "delete from \"SiteBookingServices\"");   // ทิศตรงข้าม: คำสั่งลบจริงยังจับได้
     }
 
     // ───────────── W-05 / ข้อ 118: ไม่สร้างที่พักแห่งที่สอง ─────────────

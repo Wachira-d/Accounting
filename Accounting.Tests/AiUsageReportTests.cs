@@ -198,12 +198,19 @@ public class AiUsageReportTests
             AiCallStatus.BudgetExceeded => "budget",
             AiCallStatus.NoProvider => "noProvider",
             AiCallStatus.Skipped => "skipped",
+            // 32feb697: สถานะที่ 8 "ตอบด้วยของในบ้านล้วน" — รายงานนับเข้า CallsLocalServed (AiUsageReportService)
+            // · เดิมเทสต์ค้างที่ 7 สถานะ ⇒ ล้มตั้งแต่เพิ่ม enum (ทำหน้าที่ถูก: บังคับให้ตัดสินถังของสถานะใหม่)
+            AiCallStatus.LocalServed => "localServed",
             _ => "other",
         };
         foreach (var s in Enum.GetValues<AiCallStatus>())
+        {
             Assert.NotEqual("other", Bucket(s));
+            // ของจริงในโค้ด: ทุกสถานะต้องมีป้ายไทยบนรายงาน (ไม่ตกไปเป็นชื่อ enum)
+            Assert.NotEqual(s.ToString(), AiUsageReportService.StatusLabelTh(s));
+        }
         // ยอดรวมของช่องย่อยต้องไม่เกิน CallsTotal (แต่ละ call นับช่องเดียว)
-        Assert.Equal(7, Enum.GetValues<AiCallStatus>().Length);
+        Assert.Equal(8, Enum.GetValues<AiCallStatus>().Length);
     }
 
     // ── ต้นทุน ──────────────────────────────────────────────────────────
@@ -214,7 +221,7 @@ public class AiUsageReportTests
         static decimal Thb(decimal usd, decimal rate)
             => Math.Round(usd * rate, 2, MidpointRounding.AwayFromZero);
         Assert.Equal(0.54m, Thb(0.014820m, 36.5m));
-        Assert.Equal(541.0m, Thb(14.82m, 36.5m));
+        Assert.Equal(540.93m, Thb(14.82m, 36.5m));   // 14.82 × 36.5 = 540.93 พอดี — เดิมเทสต์เขียน 541.0 (คิดเลขผิด · ไม่เคยเขียว)
         // ปัดแบบ AwayFromZero ตามกฎเงินของโปรเจกต์ ไม่ใช่ banker's rounding
         Assert.Equal(0.13m, Thb(0.125m, 1m));
     }

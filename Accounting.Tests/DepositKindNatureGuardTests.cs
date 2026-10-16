@@ -59,8 +59,16 @@ public class DepositKindNatureGuardTests
     {
         var advance = Kind("ADVANCE", DepositNature.PartOfPrice, null, isDefault: true);
         var d = Room(companyDefault: advance, companyT: DepositVatTreatment.VatImmediate);
-        Assert.Equal((advance.Id, DepositVatTreatmentSource.CompanyDefaultKind), (d.KindId!.Value, d.Source));
+        // ประเภทคือ ADVANCE (ค่าเริ่มต้นบริษัท) · แต่ ADVANCE ไม่มีวิธี VAT ของตัวเอง ⇒ วิธี VAT มาจากค่าตั้งบริษัท ⇒ Source = CompanySetting
+        // (Source บอก "วิธี VAT มาจากไหน" ไม่ใช่ "ประเภทมาจากไหน" — ตัวตัดสินเป็นแบบนี้ตั้งแต่ 219223e2 ที่เขียนเทสต์ · เทสต์ไม่เคยเขียว)
+        Assert.Equal((advance.Id, DepositVatTreatmentSource.CompanySetting), (d.KindId!.Value, d.Source));
+        Assert.Equal(DepositVatTreatment.VatImmediate, d.Treatment);
         Assert.Null(d.Warning);
+        // ทิศตรงข้าม: ADVANCE ที่ตั้งวิธี VAT เอง ⇒ ที่มาเป็นประเภทเริ่มต้นของบริษัท (ชนะค่าตั้งบริษัท)
+        var own = Kind("ADVANCE", DepositNature.PartOfPrice, DepositVatTreatment.FullDeposit, isDefault: true);
+        var d2 = Room(companyDefault: own, companyT: DepositVatTreatment.VatImmediate);
+        Assert.Equal((own.Id, DepositVatTreatmentSource.CompanyDefaultKind), (d2.KindId!.Value, d2.Source));
+        Assert.Equal(DepositVatTreatment.FullDeposit, d2.Treatment);
     }
 
     [Fact]
