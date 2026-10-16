@@ -431,7 +431,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
      `DocumentLine.DiscountAmount` · ฐานเดียวกับราคา — ใบที่หัวใบพิสูจน์ราคารวม VAT ⇒ ธง `PriceIncludesVat` ทุกบรรทัด) แทนการหารจำนวน
      (1 × 1,330 − 293 = 1,037 · เดิมได้จำนวน 0.78) · จำนวนที่พิมพ์บนแถวแต่ไม่มีส่วนลดอธิบาย ⇒ **คงจำนวน** + `[LINE-QTY]` (ตัวสร้างบรรทัดฟ้อง [Σ-GAP]) ·
      จำนวนไม่ได้พิมพ์บนแถว (ชั่งน้ำหนัก · engine อ่านจำนวนผิด · ยอดหลงคอลัมน์) ⇒ หารแบบเดิม **แต่ไม่เงียบ** — `[LINE-QTY]` อยู่ใน
-     `OcrPostingReadiness.BlockingTags` (ห้ามอนุมัติเอง) · `OcrExtractionVersion` = 4 · Last verified `commit <pending>`
+     `OcrPostingReadiness.BlockingTags` (ห้ามอนุมัติเอง) · `OcrExtractionVersion` = 4 · Last verified `commit 38e16447`
   3. **`UnitInferrer`** — หน่วยว่าง → อนุมานจากคำอธิบาย (ค่าไฟ=`หน่วย` ·
      น้ำ=`ลบ.ม.` · น้ำมัน=`ลิตร` · รายเดือน/เช่า=`เดือน` · เหมา/บริการ=`งาน`)
      ก่อนตก `ชิ้น`; `ชิ้น` บนบรรทัดที่กฎรู้จัก = default ค้างมา → แทนที่
@@ -5849,4 +5849,4 @@ _Last verified against codebase: 2026-10-16 (ความหมายรหั�
 คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 1c77f931)_
 _Last verified against codebase: 2026-10-16 (ใบจริง RE-20261000111 พรามี่ — §OCR ด่านคุณภาพก่อน persist ข้อ 2: ตัวกันจำนวนระเบิด `Helpers/OcrLineQuantityGuard`
 ถามแถวบนกระดาษ · ส่วนลดที่พิมพ์ ⇒ ส่วนลดบรรทัด (ไม่หารจำนวน 1 → 0.78) · จำนวนที่พิมพ์ห้ามแต่ง · `[LINE-QTY]` ห้ามอนุมัติเอง · `OcrExtractionVersion` 4 —
-เทสต์ `OcrLineQuantityGuardTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>)_
+เทสต์ `OcrLineQuantityGuardTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 38e16447)_
