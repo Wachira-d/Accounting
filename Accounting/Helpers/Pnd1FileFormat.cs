@@ -235,7 +235,7 @@ public static class Pnd1FileFormat
     public const string ReviewRowsSheetName = "รายการ (ค่าเดียวกับไฟล์ยื่น)";
 
     /// <summary>หัวคอลัมน์ของรายงานตรวจทาน — "เลขช่อง. ชื่อช่องตามสเปก" + "อ้างอิง"</summary>
-    public static IReadOnlyList<string> ReviewHeaders()
+    private static IReadOnlyList<string> ReviewHeaders()
         => Spec.Select(s => $"{s.No}. {s.Name}").Append("อ้างอิง (รหัสพนักงาน/เลขที่ 50 ทวิ)").ToList();
 
     /// <summary>ยอดต่อประเภท — คืนครบ 5 ประเภทเสมอ (ประเภทที่ไม่มีรายการ = 0) เพื่อให้ตรงบรรทัดบนหน้าแบบ ·
@@ -322,7 +322,7 @@ public static class Pnd1FileFormat
     /// <summary>ช่อง 4 — สาขาผู้หัก <b>4 หลัก</b> จากรหัสสาขา 5 หลักของระบบ (ประกาศอธิบดีฯ ฉบับที่ 199):
     /// <c>00000</c> สำนักงานใหญ่ → <c>0000</c> · <c>00001</c> → <c>0001</c> (ตัดเลข 0 หน้าสุด) · ว่าง → <c>0000</c> ·
     /// สาขาที่ 10000 ขึ้นไปลง 4 หลักไม่ได้ ⇒ <see cref="BusinessRuleException"/> (ไม่ตัดเลขทิ้งเงียบ ๆ = ยื่นผิดสาขา)</summary>
-    public static string WithholderBranch(string? branchCode)
+    private static string WithholderBranch(string? branchCode)
     {
         var five = TaxBranchCode.Normalize(branchCode);
         if (five[0] != '0')

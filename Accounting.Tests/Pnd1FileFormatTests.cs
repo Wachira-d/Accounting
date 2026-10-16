@@ -168,12 +168,12 @@ public class Pnd1FileFormatTests
     [InlineData("1", "0001")]
     [InlineData("01234", "1234")]
     public void สาขาผู้หัก_4หลัก_จากรหัส5หลัก(string? code, string expected)
-        => Assert.Equal(expected, Pnd1FileFormat.WithholderBranch(code));
+        => Assert.Equal(expected, Pnd1FileFormat.Fields(Salary(), Sep2026 with { BranchCode = code })[3]);
 
     [Fact]
     public void สาขาผู้หัก_ลง4หลักไม่ได้_ล้มดัง_ไม่ตัดเลขทิ้ง()
         => Assert.Equal("PND1-BRANCH-4DIGIT",
-            Assert.Throws<BusinessRuleException>(() => Pnd1FileFormat.WithholderBranch("10001")).RuleCode);
+            Assert.Throws<BusinessRuleException>(() => Pnd1FileFormat.Fields(Salary(), Sep2026 with { BranchCode = "10001" })).RuleCode);
 
     [Theory]
     [InlineData(null, "0")]
