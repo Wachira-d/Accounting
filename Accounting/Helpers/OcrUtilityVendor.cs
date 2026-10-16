@@ -20,34 +20,66 @@ namespace Accounting.Helpers;
 public static class OcrUtilityVendor
 {
     /// <summary>เลขผู้เสียภาษีที่ยืนยันจากกระดาษจริง — การไฟฟ้าส่วนภูมิภาค (บิล XH0712609004157 · <c>OcrPaperSamples.PeaElectricityBill0869</c>)</summary>
-    private static readonly HashSet<string> TaxIds = new(StringComparer.Ordinal) { "0994000165501" };
-
-    /// <summary>ชื่อนิติบุคคล (ย่อด้วย <see cref="ThaiTextNormalizer.SquashForKeywordMatch"/> ทั้งสองฝั่ง)</summary>
-    private static readonly string[] LegalNames =
+    private static readonly Dictionary<string, OcrUtilityKind> TaxIds = new(StringComparer.Ordinal)
     {
-        "การไฟฟ้าส่วนภูมิภาค", "การไฟฟ้านครหลวง", "การประปาส่วนภูมิภาค", "การประปานครหลวง",
-        "provincial electricity authority", "metropolitan electricity authority",
-        "provincial waterworks authority", "metropolitan waterworks authority",
-        "แอดวานซ์ อินโฟร์ เซอร์วิส", "แอดวานซ์ ไวร์เลส เน็ทเวอร์ค", "advanced info service", "advanced wireless network",
-        "ทรู มูฟ เอช", "ทรู อินเทอร์เน็ต", "ทรูมูฟ", "true move", "true internet",
-        "ทริปเปิลที บรอดแบนด์", "triple t broadband", "โทรคมนาคมแห่งชาติ", "national telecom",
+        ["0994000165501"] = OcrUtilityKind.Electricity,
     };
 
-    private static readonly string[] SquashedNames = LegalNames.Select(ThaiTextNormalizer.SquashForKeywordMatch).ToArray();
+    /// <summary>ชื่อนิติบุคคล (ย่อด้วย <see cref="ThaiTextNormalizer.SquashForKeywordMatch"/> ทั้งสองฝั่ง) + ชนิดบริการ</summary>
+    private static readonly (string Name, OcrUtilityKind Kind)[] LegalNames =
+    {
+        ("การไฟฟ้าส่วนภูมิภาค", OcrUtilityKind.Electricity), ("การไฟฟ้านครหลวง", OcrUtilityKind.Electricity),
+        ("provincial electricity authority", OcrUtilityKind.Electricity), ("metropolitan electricity authority", OcrUtilityKind.Electricity),
+        ("การประปาส่วนภูมิภาค", OcrUtilityKind.Water), ("การประปานครหลวง", OcrUtilityKind.Water),
+        ("provincial waterworks authority", OcrUtilityKind.Water), ("metropolitan waterworks authority", OcrUtilityKind.Water),
+        ("แอดวานซ์ อินโฟร์ เซอร์วิส", OcrUtilityKind.Telecom), ("แอดวานซ์ ไวร์เลส เน็ทเวอร์ค", OcrUtilityKind.Telecom),
+        ("advanced info service", OcrUtilityKind.Telecom), ("advanced wireless network", OcrUtilityKind.Telecom),
+        ("ทรู มูฟ เอช", OcrUtilityKind.Telecom), ("ทรู อินเทอร์เน็ต", OcrUtilityKind.Telecom), ("ทรูมูฟ", OcrUtilityKind.Telecom),
+        ("true move", OcrUtilityKind.Telecom), ("true internet", OcrUtilityKind.Telecom),
+        ("ทริปเปิลที บรอดแบนด์", OcrUtilityKind.Telecom), ("triple t broadband", OcrUtilityKind.Telecom),
+        ("โทรคมนาคมแห่งชาติ", OcrUtilityKind.Telecom), ("national telecom", OcrUtilityKind.Telecom),
+    };
+
+    private static readonly (string Squashed, OcrUtilityKind Kind)[] SquashedNames =
+        LegalNames.Select(n => (ThaiTextNormalizer.SquashForKeywordMatch(n.Name), n.Kind)).ToArray();
 
     /// <summary>อักษรย่อทางการ/แบรนด์ที่เป็นผู้ให้บริการอย่างเดียว — ต้องเป็นคำเต็ม (ไม่ติดตัวอักษรอื่น)</summary>
     private static readonly Regex AbbrevRe = new(
-        @"(?<![\p{L}\d])(?:กฟภ|กฟน|กปภ|กปน|pea|mea|pwa|mwa|3bb)(?![\p{L}\d])",
+        @"(?<![\p{L}\d])(?<a>กฟภ|กฟน|กปภ|กปน|pea|mea|pwa|mwa|3bb)(?![\p{L}\d])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     /// <summary>ผู้ขายเป็นผู้ให้บริการแบบคิดตามมิเตอร์ (ไฟฟ้า · ประปา · โทรศัพท์/อินเทอร์เน็ต) — เลขผู้เสียภาษีชนะชื่อ · ข้อมูลไม่พอ = false</summary>
-    public static bool Is(string? taxId, string? vendorName)
+    public static bool Is(string? taxId, string? vendorName) => KindOf(taxId, vendorName) != OcrUtilityKind.None;
+
+    /// <summary>
+    /// **ชนิดบริการของผู้ขายสาธารณูปโภค** (ทีม OCR 11 · ฝ่ายค้าน OCR 9 P1-1/P1-2) — <see cref="OcrLineQuantityGuard"/> ใช้เป็น<b>บริบท</b>ของหน่วยที่กำกวม
+    /// (ประปา ⇒ ลบ.ม. · ไฟฟ้า ⇒ "หน่วย" · สื่อสาร ⇒ ครั้ง/GB/MB) — <b>ไม่ใช่หลักฐานมิเตอร์ด้วยตัวเอง</b> (AWN/ทรูมูฟ เอช ขายเคส/หูฟัง:
+    /// เดิมชื่อผู้ขายอย่างเดียวพาบรรทัดสินค้า 3 ชิ้นไปเป็น 1 × ยอด) · เลขผู้เสียภาษีชนะชื่อ · ข้อมูลไม่พอ = <see cref="OcrUtilityKind.None"/>
+    /// </summary>
+    public static OcrUtilityKind KindOf(string? taxId, string? vendorName)
     {
         var digits = new string((taxId ?? "").Where(char.IsDigit).ToArray());
-        if (digits.Length == 13 && TaxIds.Contains(digits)) return true;
-        if (string.IsNullOrWhiteSpace(vendorName)) return false;
+        if (digits.Length == 13 && TaxIds.TryGetValue(digits, out var byId)) return byId;
+        if (string.IsNullOrWhiteSpace(vendorName)) return OcrUtilityKind.None;
         var squashed = ThaiTextNormalizer.SquashForKeywordMatch(vendorName);
-        if (SquashedNames.Any(n => n.Length > 0 && squashed.Contains(n, StringComparison.Ordinal))) return true;
-        return AbbrevRe.IsMatch(vendorName);
+        foreach (var (n, kind) in SquashedNames)
+            if (n.Length > 0 && squashed.Contains(n, StringComparison.Ordinal)) return kind;
+        var m = AbbrevRe.Match(vendorName);
+        if (!m.Success) return OcrUtilityKind.None;
+        return m.Groups["a"].Value.ToLowerInvariant() switch
+        {
+            "กฟภ" or "กฟน" or "pea" or "mea" => OcrUtilityKind.Electricity,
+            "กปภ" or "กปน" or "pwa" or "mwa" => OcrUtilityKind.Water,
+            _ => OcrUtilityKind.Telecom,
+        };
     }
+}
+
+/// <summary>ชนิดบริการของผู้ขายสาธารณูปโภค (<see cref="OcrUtilityVendor.KindOf"/>) — None = ไม่ใช่/ไม่รู้</summary>
+public enum OcrUtilityKind
+{
+    None = 0,
+    Electricity,
+    Water,
+    Telecom,
 }

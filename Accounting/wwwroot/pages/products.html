@@ -27,6 +27,7 @@
             <a class="dropdown-item" href="/pages/fixed-assets.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">🏢 ไปหน้าสินทรัพย์ถาวร</a>
             <div style="border-top:1px solid var(--gray-200);margin:4px 0"></div>
             <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Page.openStockTotalsCheck()">🔎 ตรวจยอดสต็อกรวม ↔ ผลรวมคลัง</a>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Page.openOcrLumpSumCheck()">🔎 ตรวจผลสแกนที่จำนวนสินค้าหาย (รุ่น 6–8)</a>
           </div>
         </div>
         <button class="btn btn-primary" onclick="Page.openCreate()"
@@ -68,6 +69,20 @@
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('stockTotalsModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" id="stockTotalsRepairBtn" onclick="Page.repairStockTotals()">ซ่อมแถวที่เลือก</button>
+        </div>
+      </div>
+    </div>
+    <!-- ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-5): ผลสแกนรุ่น 6–8 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด — รายงานก่อน · ซ่อมเฉพาะส่วนที่ปลอดภัย (สแกน/alias/คีย์ตัวเรียน) · เอกสาร/สต็อก/ชื่อสินค้า = ทางไปต่อ -->
+    <div class="modal-overlay" id="ocrLumpSumModal">
+      <div class="modal" style="max-width:960px">
+        <div class="modal-header"><h3 class="modal-title">ผลสแกนที่จำนวนสินค้าหาย (รุ่น 6–8)</h3><button class="modal-close" onclick="Layout.closeModal('ocrLumpSumModal')">&times;</button></div>
+        <div class="modal-body">
+          <p style="font-size:13px;color:#475569;margin-bottom:8px">ตัวแกะรุ่น 6–8 ลงบางบรรทัดสินค้าเป็น “1 × ยอด” และย้ายจำนวนไปไว้ในวงเล็บท้ายรายการ · การซ่อมติดป้ายให้สแกนต้องแกะใหม่ (ไม่ใช้โควต้า) และตัดวงเล็บออกจาก alias/คีย์ตัวเรียน · เอกสารที่ออกแล้ว สต็อก และชื่อสินค้า ระบบไม่แก้เอง — ดูทางไปต่อในแต่ละแถว</p>
+          <div id="ocrLumpSumBody" style="max-height:480px;overflow:auto"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('ocrLumpSumModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" id="ocrLumpSumRepairBtn" onclick="Page.repairOcrLumpSum()">ซ่อมแถวที่เลือก</button>
         </div>
       </div>
     </div>
@@ -586,6 +601,68 @@
           Layout.toast(res.message || 'ซ่อมแล้ว');
           this._renderStockTotals(res.message || '', (res.data && res.data.items) || []);
           await this.load();
+        } catch(e) { Layout.toast(e.message,'error'); }
+      },
+      // ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-5): ผลสแกนรุ่น 6–8 — ข้อความ/ทางไปต่อ/ตัวตัดสินมาจากเซิร์ฟเวอร์ (Helpers/OcrLumpSumRepair) · หน้าแค่แสดงและส่งแถวที่เลือก
+      _ocrLumpSum: null,
+      async openOcrLumpSumCheck() {
+        const api=Layout.api(); if(!api)return;
+        document.getElementById('ocrLumpSumBody').innerHTML='<div class="text-gray-400" style="padding:16px">กำลังตรวจ...</div>';
+        Layout.openModal('ocrLumpSumModal');
+        try {
+          const res = await api.getOcrLumpSumCheck();
+          this._ocrLumpSum = res.data || null;
+          this._renderOcrLumpSum(res.message || '');
+        } catch(e) { document.getElementById('ocrLumpSumBody').innerHTML=`<div class="text-danger" style="padding:16px">${Layout.esc(e.message)}</div>`; }
+      },
+      _renderOcrLumpSum(message, outcomes) {
+        const r = this._ocrLumpSum || {};
+        const esc = Layout.esc;
+        const outBy = {};
+        (outcomes || []).forEach(o => { outBy[o.kind + ':' + o.id] = o; });
+        const note = (kind, id, fallback) => {
+          const o = outBy[kind + ':' + id];
+          return o ? (o.repaired ? `✅ ${esc(o.after || 'ซ่อมแล้ว')}` : `⏭️ ${esc(o.reason || '')}`) : esc(fallback || '');
+        };
+        const box = (kind, id, disabled) => {
+          const o = outBy[kind + ':' + id];
+          return `<input type="checkbox" data-ols-kind="${kind}" data-ols-id="${esc(id)}" ${disabled || (o && o.repaired) ? 'disabled' : 'checked'}>`;
+        };
+        const scans = r.scans || [], docs = r.documents || [], moves = r.stockMovements || [];
+        const aliases = r.aliases || [], learner = r.learnerKeys || [], products = r.products || [];
+        const sec = (title, head, rows) => rows.length === 0 ? '' :
+          `<h4 style="margin:12px 0 6px;font-size:14px">${esc(title)} (${rows.length})</h4><table class="table"><thead><tr>${head}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
+        const body = (scans.length + aliases.length + learner.length + products.length) === 0
+          ? `<div style="padding:16px;color:#16a34a">✅ ${esc(message || 'ไม่พบข้อมูลที่ต้องซ่อม')}</div>`
+          : `<div style="font-size:13px;margin-bottom:6px">${esc(message)}</div>`
+            + sec('สแกนที่ต้องแกะใหม่', '<th></th><th>ไฟล์</th><th>รุ่น</th><th>บรรทัดที่เป็น 1 × ยอด</th><th>หมายเหตุ</th>',
+                scans.map(s => `<tr><td>${box('scan', s.scanId, s.alreadyMarked)}</td><td>${esc(s.fileName)}</td><td>${esc(String(s.extractionVersion ?? ''))}</td>`
+                  + `<td style="font-size:12px">${(s.lines || []).map(l => `${l.lineNo}. ${esc(l.description || '')}`).join('<br>')}</td>`
+                  + `<td style="font-size:12px">${note('scan', s.scanId, s.alreadyMarked ? 'ติดป้ายให้แกะใหม่แล้ว' : '')}</td></tr>`))
+            + sec('alias สินค้าที่ติดจำนวน', '<th></th><th>สินค้า</th><th>alias ตอนนี้</th><th>หลังซ่อม</th><th>หมายเหตุ</th>',
+                aliases.map(a => `<tr><td>${box('alias', a.id)}</td><td>${esc(a.owner || '')}</td><td>${esc(a.current)}</td><td>${esc(a.proposed)}</td><td style="font-size:12px">${note('alias', a.id)}</td></tr>`))
+            + sec('คีย์ตัวเรียนผังบัญชีที่ติดจำนวน', '<th></th><th>ผู้ขาย → ผัง</th><th>คีย์ตอนนี้</th><th>หลังซ่อม</th><th>หมายเหตุ</th>',
+                learner.map(a => `<tr><td>${box('learner', a.id)}</td><td>${esc(a.owner || '')}</td><td>${esc(a.current)}</td><td>${esc(a.proposed)}</td><td style="font-size:12px">${note('learner', a.id)}</td></tr>`))
+            + sec('เอกสารจากสแกนเหล่านี้ (ระบบไม่แก้เอง)', '<th>เลขที่</th><th>ชนิด</th><th>สถานะ</th><th>ทางไปต่อ</th>',
+                docs.map(d => `<tr><td>${esc(d.documentNumber || '')}</td><td>${esc(d.documentType)}</td><td>${esc(d.status)}</td><td style="font-size:12px">${esc(d.wayForward)}</td></tr>`))
+            + sec('การเคลื่อนไหวสต็อก (ระบบไม่แก้เอง)', '<th>สินค้า</th><th class="text-right">จำนวน</th><th class="text-right">ทุน/หน่วย</th><th>อ้างอิง</th><th>ทางไปต่อ</th>',
+                moves.map(m => `<tr><td>${esc((m.productCode || '') + ' ' + (m.productName || ''))}</td><td class="text-right">${esc(String(m.quantity))}</td><td class="text-right">${esc(String(m.unitCost))}</td><td>${esc(m.reference || '')}</td><td style="font-size:12px">${esc(m.wayForward)}</td></tr>`))
+            + sec('สินค้าที่ชื่อติดจำนวน (ระบบไม่แก้เอง)', '<th>รหัส</th><th>ชื่อตอนนี้</th><th>ชื่อที่ควรเป็น</th><th>ทางไปต่อ</th>',
+                products.map(p => `<tr><td>${esc(p.owner || '')}</td><td>${esc(p.current)}</td><td>${esc(p.proposed)}</td><td style="font-size:12px">${esc(p.wayForward || '')}</td></tr>`));
+        document.getElementById('ocrLumpSumBody').innerHTML = body;
+        document.getElementById('ocrLumpSumRepairBtn').disabled =
+          document.querySelectorAll('#ocrLumpSumBody input[data-ols-kind]:not(:disabled)').length === 0;
+      },
+      async repairOcrLumpSum() {
+        const api=Layout.api(); if(!api)return;
+        const picked = [...document.querySelectorAll('#ocrLumpSumBody input[data-ols-kind]:checked:not(:disabled)')];
+        const ids = (k) => picked.filter(cb => cb.dataset.olsKind === k).map(cb => cb.dataset.olsId);
+        const body = { scanIds: ids('scan'), aliasIds: ids('alias'), learnerKeyIds: ids('learner') };
+        if (body.scanIds.length + body.aliasIds.length + body.learnerKeyIds.length === 0) { Layout.toast('ยังไม่ได้เลือกแถวที่จะซ่อม','error'); return; }
+        try {
+          const res = await api.repairOcrLumpSum(body);
+          Layout.toast(res.message || 'ซ่อมแล้ว');
+          this._renderOcrLumpSum(res.message || '', (res.data && res.data.items) || []);
         } catch(e) { Layout.toast(e.message,'error'); }
       },
       // รอบ 201 ทีม IN (A-IN1): วิธีคิดต้นทุน — ค่า/สถานะล็อก/เหตุผลมาจากเซิร์ฟเวอร์ (CostingMethodPolicy) ·

@@ -853,6 +853,9 @@ const API = {
       // รอบ 201 ทีม IN (C-5): ตรวจยอดสต็อกรวม ↔ ผลรวมคลัง — รายงานก่อน · ซ่อมเฉพาะแถวที่เลือกเมื่อกด (audit)
       getStockTotalsCheck: () => API.get(`${base}/product/inventory/stock-totals-check`),
       repairStockTotals: (d) => API.post(`${base}/product/inventory/stock-totals-check/repair`, d),
+      // ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-5): ผลสแกนรุ่น 6–8 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด — รายงานก่อน · ซ่อมเฉพาะส่วนที่ปลอดภัยที่เลือก (audit)
+      getOcrLumpSumCheck: () => API.get(`${base}/product/inventory/ocr-lumpsum-check`),
+      repairOcrLumpSum: (d) => API.post(`${base}/product/inventory/ocr-lumpsum-check/repair`, d),
       getStockBalance: (q = '') => API.get(`${base}/product/inventory/balance${q}`),
       getStockAging: () => API.get(`${base}/product/inventory/aging`),
       getMovementSummary: (q) => API.get(`${base}/product/inventory/movement-summary${q}`),

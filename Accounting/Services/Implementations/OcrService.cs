@@ -4797,7 +4797,7 @@ public class OcrService : IOcrService
         var linePaper = Accounting.Helpers.OcrLineQuantityGuard.Read(paperText);
         // ★ ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0): ผู้ขายสาธารณูปโภค (กุญแจ = เลขผู้เสียภาษี/ชื่อนิติบุคคลเต็ม) เป็นหลักฐานมิเตอร์ข้อหนึ่ง —
         // เส้นสร้าง/พรีวิว/ดึงรายการซ้ำต้องเติม VendorTaxId/VendorName ของสแกนลง tmpSan (ไม่งั้นได้คำตอบคนละค่ากับตอนสแกน)
-        var utilitySeller = Accounting.Helpers.OcrUtilityVendor.Is(data.VendorTaxId, data.VendorName);
+        var utilitySeller = Accounting.Helpers.OcrUtilityVendor.KindOf(data.VendorTaxId, data.VendorName);
         var paperDiscountRead = false;
         foreach (var item in data.Items)
         {
@@ -4825,7 +4825,9 @@ public class OcrService : IOcrService
             {
                 item.LineDiscountAmount = printedDiscount;
                 // ทีม OCR 9: เศษปัดของ RoundedUnitPrice ไม่ใช่ส่วนลดที่อ่านจากกระดาษ ⇒ ไม่ใช่หลักฐานฐานรวม VAT ของใบ
-                if (qtyDecision.Action != Accounting.Helpers.OcrLineQuantityAction.RoundedUnitPrice) paperDiscountRead = true;
+                // ทีม OCR 11 (ฝ่ายค้าน OCR 9 P2-2): และติดป้าย "เศษจากการปัดราคาต่อหน่วย" (ไม่ใช่ "ส่วนลด") — persist ใน ExtractedItemsJson ให้หน้ารีวิวอ่าน
+                if (qtyDecision.Action == Accounting.Helpers.OcrLineQuantityAction.RoundedUnitPrice) item.UnitPriceRoundingResidual = printedDiscount;
+                else paperDiscountRead = true;
             }
             if (qtyDecision.Note is string qtyNote) data.ReasoningTrace.Add(qtyNote);
         }
@@ -9357,11 +9359,13 @@ public class OcrService : IOcrService
         {
             line.LineDiscountAmount = priceEdit.Discount;
             line.VatStripResidual = null;   // ค่าใหม่เป็นของผู้ใช้ — ไม่ใช่เศษจากถอด VAT แล้ว
+            line.UnitPriceRoundingResidual = null;   // ทีม OCR 11: และไม่ใช่เศษปัดราคาต่อหน่วยของตัวกันแล้ว
         }
         if (priceEdit.AppliedRate is decimal convRate)
         {
             line.VatRate ??= convRate;
             line.VatStripResidual = null;
+            line.UnitPriceRoundingResidual = null;
         }
         var conversionNote = priceEdit.ConversionNote;
 
@@ -10482,7 +10486,8 @@ public class OcrService : IOcrService
                     i.Description, i.Quantity, i.UnitPrice, i.Amount, i.SuggestedAccountCode,
                     i.ProjectId, i.ProjectName, i.Unit, i.VatRate, i.VatAmount, i.LineDiscountAmount,
                     i.PriceIncludesVat,
-                    Accounting.Helpers.OcrEtaxLineNormalizer.DiscountLabel(i.LineDiscountAmount, i.PriceIncludesVat, i.VatStripResidual),
+                    Accounting.Helpers.OcrEtaxLineNormalizer.DiscountLabel(i.LineDiscountAmount, i.PriceIncludesVat, i.VatStripResidual,
+                        i.UnitPriceRoundingResidual),
                     Accounting.Helpers.OcrEtaxLineNormalizer.PriceBasisLabel(i.PriceIncludesVat))).ToList();
             }
         }
@@ -10535,7 +10540,8 @@ public class OcrService : IOcrService
                     Accounting.Helpers.OcrEtaxLineNormalizer.DiscountLabel(
                         el.TryGetProperty("LineDiscountAmount", out var ld2) && ld2.ValueKind == System.Text.Json.JsonValueKind.Number ? ld2.GetDecimal() : null,
                         el.TryGetProperty("PriceIncludesVat", out var piv2) && piv2.ValueKind == System.Text.Json.JsonValueKind.True,
-                        el.TryGetProperty("VatStripResidual", out var vsr) && vsr.ValueKind == System.Text.Json.JsonValueKind.Number ? vsr.GetDecimal() : null),
+                        el.TryGetProperty("VatStripResidual", out var vsr) && vsr.ValueKind == System.Text.Json.JsonValueKind.Number ? vsr.GetDecimal() : null,
+                        el.TryGetProperty("UnitPriceRoundingResidual", out var upr) && upr.ValueKind == System.Text.Json.JsonValueKind.Number ? upr.GetDecimal() : null),
                     Accounting.Helpers.OcrEtaxLineNormalizer.PriceBasisLabel(
                         el.TryGetProperty("PriceIncludesVat", out var piv3) && piv3.ValueKind == System.Text.Json.JsonValueKind.True)
                 )).ToList();
@@ -11864,6 +11870,9 @@ internal class OcrExtractedLineItem
     /// <summary>ส่วนของ <see cref="LineDiscountAmount"/> ที่เป็น "เศษจากการถอด VAT" (ไม่ใช่ส่วนลดบนเอกสาร) — หน้า review แสดงป้ายตามนี้ ·
     /// ผู้ใช้แก้ส่วนลดเอง ⇒ ล้าง (ค่าใหม่เป็นของผู้ใช้)</summary>
     public decimal? VatStripResidual { get; set; }
+    /// <summary>ส่วนของ <see cref="LineDiscountAmount"/> ที่เป็น "เศษจากการปัดราคาต่อหน่วย" ของตัวกันจำนวน (<c>OcrLineQuantityGuard</c> ·
+    /// <c>RoundedUnitPrice</c> ใต้เพดาน — ทีม OCR 11 ฝ่ายค้าน OCR 9 P2-2) ไม่ใช่ส่วนลดบนกระดาษ — หน้า review แสดงป้ายตามนี้ · ผู้ใช้แก้ส่วนลด/ราคาเอง ⇒ ล้าง</summary>
+    public decimal? UnitPriceRoundingResidual { get; set; }
     public string? SuggestedAccountCode { get; set; }
     /// <summary>Per-line project assignment captured in the review UI.
     /// Persisted so re-opening the review after a crash preserves the

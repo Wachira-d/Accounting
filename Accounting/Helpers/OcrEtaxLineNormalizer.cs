@@ -500,9 +500,13 @@ public static class OcrEtaxLineNormalizer
 
 
     /// <summary>ป้ายของช่องส่วนลดในตาราง review (เซิร์ฟเวอร์เป็นคนเขียน — หน้าแสดงอย่างเดียว) · null = ไม่มีส่วนลด</summary>
-    public static string? DiscountLabel(decimal? lineDiscount, bool priceIncludesVat, decimal? vatStripResidual)
+    public static string? DiscountLabel(decimal? lineDiscount, bool priceIncludesVat, decimal? vatStripResidual,
+        decimal? unitPriceRoundingResidual = null)
     {
         if (lineDiscount is not > 0m) return null;
+        // ทีม OCR 11 (ฝ่ายค้าน OCR 9 P2-2): เศษปัดราคาต่อหน่วยของตัวกันจำนวน — ไม่มีส่วนลดบนกระดาษเลย (ค่าทั้งช่องคือเศษ)
+        if (unitPriceRoundingResidual is decimal u && u != 0m)
+            return $"{OcrLineQuantityGuard.RoundingRemainderPhrase} {Math.Abs(u):0.00} บาท (ไม่ใช่ส่วนลดบนเอกสาร — ระบบเก็บในช่องส่วนลดให้ยอดบรรทัดตรงกระดาษ)";
         if (priceIncludesVat) return "ส่วนลดของบรรทัด (รวม VAT — ราคา/ส่วนลด/รวมของบรรทัดนี้รวม VAT ตามกระดาษ)";
         if (vatStripResidual is decimal r && r != 0m)
             return $"ส่วนลดก่อน VAT — รวมเศษจากการถอด VAT {Math.Abs(r):0.00} บาท (ไม่ใช่ส่วนลดบนเอกสาร)";

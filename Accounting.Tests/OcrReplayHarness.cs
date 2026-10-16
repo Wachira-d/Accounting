@@ -571,8 +571,8 @@ public static class OcrReplayHarness
         if (lines is { Count: > 0 })
         {
             var linePaper = OcrLineQuantityGuard.Read(p.RawText);
-            // ทีม OCR 9: ผู้ขายสาธารณูปโภคเป็นหลักฐานมิเตอร์ข้อหนึ่ง (ตัวตัดสินเดียวกับ service — Helpers/OcrUtilityVendor)
-            var utilitySeller = OcrUtilityVendor.Is(p.VendorTaxId, p.VendorNameFromEngine);
+            // ทีม OCR 9/11: ชนิดผู้ขายสาธารณูปโภค = บริบทของหน่วยมิเตอร์ที่กำกวม (ตัวตัดสินเดียวกับ service — Helpers/OcrUtilityVendor)
+            var utilitySeller = OcrUtilityVendor.KindOf(p.VendorTaxId, p.VendorNameFromEngine);
             var guarded = new List<ReplayLine>(lines.Count);
             var guardText = new List<string>(lines.Count);
             var paperDiscountRead = false;

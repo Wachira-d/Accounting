@@ -455,6 +455,8 @@ builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IAgingReportService, AgingReportService>();
 // รายงานตรวจข้อมูลที่อาจผิดจากบั๊กที่แก้ 2026-10-08 (อ่านอย่างเดียว · คำตัดสินเจ้าของ)
 builder.Services.AddScoped<Accounting.Services.Implementations.DataIntegrityReportService>();
+// ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-5): รายงาน + ซ่อมเมื่อกด ผลแกะรุ่น 6–8 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด (ProductController inventory/ocr-lumpsum-check)
+builder.Services.AddScoped<Accounting.Services.Implementations.Ocr.OcrLumpSumRepairService>();
 builder.Services.AddScoped<IArApAnalysisService, ArApAnalysisService>();
 builder.Services.AddScoped<IExpenseClaimService, ExpenseClaimService>();
 builder.Services.AddScoped<IImportExportService, ImportExportService>();

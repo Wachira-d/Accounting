@@ -61,6 +61,34 @@ public class ProductController : ControllerBase
             $"ซ่อมแล้ว {result.RepairedCount} รายการ · ข้าม {result.SkippedCount} รายการ"));
     }
 
+    // ===== ตรวจ/ซ่อมผลแกะรุ่น 6–8 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด (ทีม OCR 11 · ฝ่ายค้าน OCR 9 P1-5 · CLAUDE F2 ข้อ 9) =====
+    // รูปเดียวกับตรวจยอดสต็อกรวม: รายงานก่อน (อ่านอย่างเดียว) → ซ่อมเฉพาะส่วนที่ปลอดภัยที่ผู้ใช้เลือก (สแกน · alias · คีย์ตัวเรียน) + audit chain ·
+    // เอกสารที่ออกแล้ว/สต็อก/ชื่อสินค้า = รายงานพร้อมทางไปต่อ ระบบไม่แก้เอง · ไม่มีงานไหนเรียกอัตโนมัติ
+
+    [HttpGet("inventory/ocr-lumpsum-check")]
+    public async Task<ActionResult<ApiResponse<Models.DTOs.Ocr.OcrLumpSumRepairReport>>> OcrLumpSumCheck(
+        Guid companyId, [FromServices] Services.Implementations.Ocr.OcrLumpSumRepairService repair)
+    {
+        if (await RequireInventoryAsync(companyId, PermissionKeys.InventoryView, "ดูรายงานตรวจผลสแกนที่จำนวนสินค้าหาย") is { } deny) return deny;
+        var report = await repair.FindAsync(companyId);
+        var any = report.Scans.Count + report.Aliases.Count + report.LearnerKeys.Count + report.Products.Count > 0;
+        return Ok(new ApiResponse<Models.DTOs.Ocr.OcrLumpSumRepairReport>(true, report, any
+            ? $"พบสแกน {report.Scans.Count} ใบ · alias {report.Aliases.Count} · คีย์ตัวเรียน {report.LearnerKeys.Count} · สินค้า {report.Products.Count} ที่ต้องตรวจ"
+            : "ไม่พบผลสแกนรุ่น 6–8 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด"));
+    }
+
+    [HttpPost("inventory/ocr-lumpsum-check/repair")]
+    public async Task<ActionResult<ApiResponse<Models.DTOs.Ocr.OcrLumpSumRepairResult>>> OcrLumpSumRepair(
+        Guid companyId, [FromBody] Models.DTOs.Ocr.OcrLumpSumRepairRequest request,
+        [FromServices] Services.Implementations.Ocr.OcrLumpSumRepairService repair)
+    {
+        if (await RequireInventoryAsync(companyId, PermissionKeys.InventoryAdjust, "ซ่อมผลสแกนที่จำนวนสินค้าหาย") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await repair.RepairAsync(companyId, request, userId);
+        return Ok(new ApiResponse<Models.DTOs.Ocr.OcrLumpSumRepairResult>(true, result,
+            $"ซ่อมแล้ว {result.RepairedCount} รายการ · ข้าม {result.SkippedCount} รายการ"));
+    }
+
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<ProductResponse>>>> GetAll(
         Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,

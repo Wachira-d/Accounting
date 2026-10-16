@@ -59,6 +59,8 @@ public static class AdvisoryLockKey
     public const string FinanceReference = "fin-ref";
     /// <summary>ปรับสต็อกรายสินค้า (read-modify-write) — part = ProductId</summary>
     public const string StockAdjust = "stock-adj";
+    /// <summary>ซ่อมผลแกะรุ่น 6–8 (<c>OcrLumpSumRepairService</c> · ทีม OCR 11) — หนึ่งการซ่อมต่อบริษัท · part = "repair"</summary>
+    public const string OcrLumpSumRepair = "ocr-lumpsum";
     /// <summary>ออกค่าเหมา add-on รายเดือน — part = งวด "yyyy-MM" (กันหลาย instance
     /// ออกบิลงวดเดียวกันพร้อมกัน · คีย์ระดับระบบไม่ผูกบริษัท)</summary>
     public const string AddOnMonthlyBilling = "addon-bill";

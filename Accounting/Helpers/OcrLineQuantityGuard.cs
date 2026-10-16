@@ -101,6 +101,11 @@ public sealed record OcrLineQuantityDecision(
     public bool Blocking => Note is not null && Note.StartsWith(OcrLineQuantityGuard.Tag, StringComparison.Ordinal);
 }
 
+/// <summary>ท้ายคำอธิบายที่ <see cref="OcrLineQuantityGuard"/> เขียนไว้บนบรรทัด 1 × ยอด (<see cref="OcrLineQuantityGuard.LumpSumSuffix"/>) —
+/// <see cref="Base"/> = คำอธิบายก่อนท้าย (คีย์จับคู่) · <see cref="Suffix"/> = วงเล็บท้าย · <see cref="Meter"/> = ท้ายเป็นจำนวนหน่วยมิเตอร์ที่ตัวกันรุ่นปัจจุบันก็เขียน
+/// (บิลค่าไฟ "(4,272 หน่วย)") · false = "(จำนวน N)" หรือท้ายของรุ่น 6/7/8 บนบรรทัดที่ไม่มีหลักฐานมิเตอร์ (จำนวนสินค้าหาย — รายงานซ่อม)</summary>
+public readonly record struct OcrLumpSumSuffix(string Base, string Suffix, bool Meter);
+
 /// <summary>บรรทัดเอกสาร<b>ตอนนี้</b> สำหรับตรวจสดของ <see cref="OcrLineQuantityGuard.LiveNotes"/> (ค่าที่บันทึกใน DocumentLine)</summary>
 public readonly record struct OcrLiveLine(
     decimal Quantity, decimal UnitPrice, decimal DiscountPercent, decimal DiscountAmount, decimal Amount, decimal VatRate);
@@ -286,14 +291,30 @@ public static class OcrLineQuantityGuard
     /// <summary>วลีกลางของหมายเหตุที่คงจำนวนแล้วตั้งราคา = ยอด ÷ จำนวน (ไม่พูดถึงมิเตอร์ — บรรทัดสินค้า · ทีม OCR 9)</summary>
     public const string KeepQuantityPhrase = "คงจำนวนตามที่อ่านได้ · ราคาต่อหน่วย = ยอด ÷ จำนวน";
 
-    /// <summary>หน่วยมิเตอร์ที่ชี้ชัดในตัว (kWh · ลบ.ม./m3 · นาที · GB/MB · เดือน) — ของตัวกันนี้เท่านั้น</summary>
+    /// <summary>หน่วยมิเตอร์ที่ชี้ชัดในตัว (kWh · นาที · เดือน) — ของตัวกันนี้เท่านั้น · ทีม OCR 11: ลบ.ม./m3 และ GB/MB ย้ายไป <see cref="ContextMeterUnitRe"/>
+    /// (คอนกรีต/ทราย/หิน ขายเป็น ลบ.ม. · "Flash Drive (64 GB)" เป็นสเปกสินค้า)</summary>
     private static readonly Regex StrongMeterUnitRe = new(
-        @"^(?:kwh\b|กิโลวัตต์|ลบ\.?\s*ม\.?|ลูกบาศก์เมตร|m3\b|m³|นาที|mins?\b|minutes?\b|gb\b|mb\b|เดือน|months?\b)",
+        @"^(?:kwh\b|กิโลวัตต์|นาที|mins?\b|minutes?\b|เดือน|months?\b)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
-    /// <summary>หน่วยที่เป็นมิเตอร์เฉพาะเมื่อคำอธิบายบอกบริบท: "หน่วย"/unit ⇒ ค่าไฟ · "ครั้ง" ⇒ โทร (สินค้า "12 หน่วย" ทั่วไปไม่นับ)</summary>
-    private static readonly Regex ContextMeterUnitRe = new(@"^(?:หน่วย|units?\b|ครั้ง)",
+    /// <summary>หน่วยที่เป็นมิเตอร์เฉพาะเมื่อมีบริบท (<see cref="IsMeterUnit"/>): "หน่วย"/unit ⇒ ค่าไฟ · "ครั้ง" ⇒ โทร · ลบ.ม./m3 ⇒ น้ำประปา ·
+    /// GB/MB ⇒ อินเทอร์เน็ต/ดาต้า (สินค้า "12 หน่วย" · คอนกรีต "2.75 ลบ.ม." · "64 GB" ทั่วไปไม่นับ)</summary>
+    private static readonly Regex ContextMeterUnitRe = new(@"^(?:หน่วย|units?\b|ครั้ง|ลบ\.?\s*ม\.?|ลูกบาศก์เมตร|m3\b|m³|gb\b|mb\b)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>บริบทอินเทอร์เน็ต/ดาต้าของ GB/MB — "data" ต้องเป็นคำเต็ม ("DataTraveler" คือแฟลชไดรฟ์)</summary>
+    private static readonly Regex DataContextRe = new(
+        @"อินเทอร์เน็ต|อินเตอร์เน็ต|internet|(?<![A-Za-z])data(?![A-Za-z])|ดาต้า|เน็ตบ้าน|เน็ตมือถือ|ค่าเน็ต|แพ็กเกจ|แพคเกจ|แพ็คเกจ|package|roaming|โรมมิ่ง|broadband|บรอดแบนด์",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>วัสดุก่อสร้างที่ขายเป็น ลบ.ม. — บริบทน้ำของ<b>ทั้งใบ</b> (ใบมีคำ "น้ำประปา") ไม่ทำให้บรรทัดนี้เป็นมิเตอร์ (ร้านวัสดุขายท่อ/ค่าน้ำประปาหน้างานปนกับคอนกรีต)</summary>
+    private static readonly Regex BulkMaterialRe = new(
+        @"คอนกรีต|ทราย|หิน|ดิน|กรวด|ลูกรัง|ปูน|ยางมะตอย|แอสฟัลต์|concrete|sand|gravel|soil|asphalt",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>บริบทของหน่วยมิเตอร์ที่กำกวม นอกเหนือคำอธิบายบรรทัด — ผู้ขายสาธารณูปโภค (ชนิดบริการ) · ข้อความทั้งใบพูดถึงน้ำประปา ·
+    /// <c>default</c> = บรรทัดอย่างเดียว (ตัวประกอบท้ายคำอธิบาย <see cref="QuantityDescription"/> และตัวตัดกลับ <see cref="LumpSumSuffix"/> ใช้ค่านี้ — สมมาตร)</summary>
+    private readonly record struct MeterContext(OcrUtilityKind Seller, bool PaperWater);
 
     private static readonly Regex ElectricityContextRe = new(@"ค่าไฟ|kwh|กิโลวัตต์|พลังงานไฟฟ้า|electricity",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
@@ -310,7 +331,7 @@ public static class OcrLineQuantityGuard
 
     /// <summary>ท้ายคำอธิบายที่ <see cref="QuantityDescription"/> ประกอบ: " (4,272 หน่วย)" · " (จำนวน 12)" · " (… × 4.5369)" — ตัวเดียวทั้งฝั่งเขียนและฝั่งตัด</summary>
     private static readonly Regex QuantitySuffixRe = new(
-        @"\s*\((?:จำนวน [\d,]+(?:\.\d+)?|[\d,]+(?:\.\d+)? [^()\s]+)(?: × [\d,]+\.\d{2,4})?\)$",
+        @"\s*\((?:จำนวน (?<cn>[\d,]+(?:\.\d+)?)|(?<n>[\d,]+(?:\.\d+)?) (?<u>[^()\s]+))(?: × [\d,]+\.\d{2,4})?\)$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>หน่วยของบรรทัดสำหรับตัดสินมิเตอร์/ประกอบคำอธิบาย — หน่วยที่ engine ส่ง · ว่าง/"รายการ"/"ชิ้น" (ค่าตั้งต้นที่หลุดมา — กติกาเดียวกับ
@@ -321,8 +342,10 @@ public static class OcrLineQuantityGuard
         return string.IsNullOrEmpty(given) || given == LumpSumUnit || given == "ชิ้น" ? UnitInferrer.Infer(description) : given;
     }
 
-    /// <summary>คำหน่วยนี้เป็นหน่วยมิเตอร์ของบรรทัดนี้ไหม (<see cref="StrongMeterUnitRe"/> · หรือ หน่วย/ครั้ง ที่คำอธิบายบอกบริบท)</summary>
-    private static bool IsMeterUnit(string? unitWord, string? description)
+    /// <summary>คำหน่วยนี้เป็นหน่วยมิเตอร์ของบรรทัดนี้ไหม (<see cref="StrongMeterUnitRe"/> · หรือหน่วยกำกวมที่มีบริบท: คำอธิบาย → ผู้ขาย → ข้อความทั้งใบ)
+    /// <para>ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-1): ลบ.ม. ⇒ น้ำประปาในคำอธิบาย (<see cref="UnitInferrer.IsWaterSupply"/>) · ผู้ขายการประปา · ใบพูดถึงน้ำประปา
+    /// และบรรทัดไม่ใช่วัสดุก่อสร้าง — "คอนกรีตผสมเสร็จ 2.75 ลบ.ม." คงจำนวน 2.75</para></summary>
+    private static bool IsMeterUnit(string? unitWord, string? description, MeterContext ctx = default)
     {
         var w = ThaiTextNormalizer.MapThaiPua((unitWord ?? "").Trim());
         if (w.Length == 0) return false;
@@ -330,7 +353,16 @@ public static class OcrLineQuantityGuard
         var m = ContextMeterUnitRe.Match(w);
         if (!m.Success) return false;
         var d = ThaiTextNormalizer.MapThaiPua(description ?? "");
-        return m.Value.StartsWith("ครั้ง", StringComparison.Ordinal) ? CallContextRe.IsMatch(d) : ElectricityContextRe.IsMatch(d);
+        var u = m.Value.ToLowerInvariant();
+        if (u.StartsWith("ครั้ง", StringComparison.Ordinal))
+            return CallContextRe.IsMatch(d) || ctx.Seller == OcrUtilityKind.Telecom;
+        if (u is "gb" or "mb")
+            return DataContextRe.IsMatch(d) || ctx.Seller == OcrUtilityKind.Telecom;
+        if (u.StartsWith("หน่วย", StringComparison.Ordinal) || u.StartsWith("unit", StringComparison.Ordinal))
+            return ElectricityContextRe.IsMatch(d) || ctx.Seller == OcrUtilityKind.Electricity;
+        // ลบ.ม. / ลูกบาศก์เมตร / m3 / m³
+        return UnitInferrer.IsWaterSupply(d) || ctx.Seller == OcrUtilityKind.Water
+            || (ctx.PaperWater && !BulkMaterialRe.IsMatch(d));
     }
 
     /// <summary>คำหน่วยที่ตามหลังตัวเลขบนกระดาษ (หน่วยมิเตอร์ก่อน แล้ว <see cref="UnitRe"/>) · ไม่มี = null</summary>
@@ -342,6 +374,8 @@ public static class OcrLineQuantityGuard
         var tail = ThaiTextNormalizer.MapThaiPua(text.Substring(i, Math.Min(16, text.Length - i)));
         var meter = StrongMeterUnitRe.Match(tail);
         if (meter.Success) return meter.Value;
+        var ctxMeter = ContextMeterUnitRe.Match(tail);
+        if (ctxMeter.Success) return ctxMeter.Value;
         var m = UnitRe.Match(tail);
         return m.Success ? m.Value : null;
     }
@@ -349,11 +383,15 @@ public static class OcrLineQuantityGuard
     /// <summary>
     /// **หลักฐานมิเตอร์ของบรรทัด — ตัวเดียวที่เปิดทาง <see cref="OcrLineQuantityAction.QuantityInDescription"/>** (ทีม OCR 9 · ฝ่ายค้าน 13a4d788 P0/P1)
     /// <para>ลำดับ: บนกระดาษ — ตัวเลขจำนวนที่ยอดตามมาในแถว (ไม่ใช่เลขลำดับแถว) มีป้าย "หน่วยที่ใช้/จำนวนหน่วย" นำหน้า หรือหน่วยมิเตอร์ตามหลัง ⇒ ใช่ ·
-    /// หน่วยสินค้าตามหลัง (ขวด/กก./ลิตร …) ⇒ ไม่ใช่ (ชนะผู้ขาย) → หน่วยของบรรทัด (<see cref="LineUnit"/>) เป็นหน่วยมิเตอร์ ⇒ ใช่ · หน่วยสินค้า ⇒ ไม่ใช่ →
-    /// ผู้ขายสาธารณูปโภค (<see cref="OcrUtilityVendor"/>) · เดิม (13a4d788) "คำหน่วยนับใดก็ได้ตามหลัง" = มิเตอร์ ⇒ น้ำดื่ม 12 ขวด / หมู 5 กก. กลายเป็น 1 × ยอด</para>
+    /// หน่วยสินค้าตามหลัง (ขวด/กก./ลิตร …) ⇒ ไม่ใช่ → หน่วยของบรรทัด (<see cref="LineUnit"/>) เป็นหน่วยมิเตอร์ ⇒ ใช่ → ไม่งั้น<b>ไม่ใช่</b> ·
+    /// เดิม (13a4d788) "คำหน่วยนับใดก็ได้ตามหลัง" = มิเตอร์ ⇒ น้ำดื่ม 12 ขวด / หมู 5 กก. กลายเป็น 1 × ยอด</para>
+    /// <para>★ ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-2): <b>ผู้ขายสาธารณูปโภคอย่างเดียวไม่ใช่หลักฐาน</b> — เดิมข้อสุดท้าย "ผู้ขาย ⇒ ใช่" ⇒ AWN/ทรูมูฟ เอช ขายเคส iPhone 3 ชิ้น
+    /// ได้ 1 × 2,775.70 "(จำนวน 3)" ไม่บล็อก · ตอนนี้ผู้ขายเป็นแค่<b>บริบท</b>ของหน่วยกำกวม (ประปา ⇒ ลบ.ม. · ไฟฟ้า ⇒ หน่วย · สื่อสาร ⇒ ครั้ง/GB) —
+    /// ต้องมีคำ/หน่วยมิเตอร์บนบรรทัดเองหรือป้ายมิเตอร์บนกระดาษ ⇒ ผู้ขายอย่างเดียวพาไปได้แค่ <see cref="OcrLineQuantityAction.RoundedUnitPrice"/> (บล็อก)</para>
     /// </summary>
-    private static bool MeterEvidence(OcrLinePaper paper, decimal qty, decimal amt, string? description, string? unit, bool utilitySeller)
+    private static bool MeterEvidence(OcrLinePaper paper, decimal qty, decimal amt, string? description, string? unit, OcrUtilityKind seller)
     {
+        var ctx = new MeterContext(seller, UnitInferrer.IsWaterSupply(ThaiTextNormalizer.MapThaiPua(paper.Text)));
         var goodsOnPaper = false;
         var nums = paper.Numbers;
         for (var k = 0; k < nums.Count; k++)
@@ -366,16 +404,11 @@ public static class OcrLineQuantityGuard
             if (MeterLabelBefore(paper.Text, nums[k].Start)) return true;
             var word = UnitWordAfter(paper.Text, nums[k].End);
             if (word is null) continue;
-            if (IsMeterUnit(word, description)) return true;
+            if (IsMeterUnit(word, description, ctx)) return true;
             if (GoodsUnitRe.IsMatch(word)) goodsOnPaper = true;
         }
         if (goodsOnPaper) return false;
-        if (LineUnit(description, unit) is string lineUnit)
-        {
-            if (IsMeterUnit(lineUnit, description)) return true;
-            if (GoodsUnitRe.IsMatch(ThaiTextNormalizer.MapThaiPua(lineUnit))) return false;
-        }
-        return utilitySeller;
+        return LineUnit(description, unit) is string lineUnit && IsMeterUnit(lineUnit, description, ctx);
     }
 
     /// <summary>**ตัวเดียวที่ประกอบคำอธิบาย "(จำนวน หน่วย)"** ของ <see cref="OcrLineQuantityAction.QuantityInDescription"/> — service + harness ได้ค่าผ่าน
@@ -409,16 +442,43 @@ public static class OcrLineQuantityGuard
     }
 
     /// <summary>
-    /// **คำอธิบายสำหรับจับคู่สินค้า/คีย์ตัวเรียน — ตัวเดียว** (ทีม OCR 9 · ฝ่ายค้าน 13a4d788 P1): บรรทัดที่ตัวกันลงเป็น 1 × ยอด (จำนวน 1 · หน่วย
-    /// <see cref="LumpSumUnit"/>) ⇒ ตัดท้าย "(4,272 หน่วย)" ที่ <see cref="QuantityDescription"/> ต่อไว้ — ไม่งั้นทุกเดือนได้คีย์ใหม่ (จำนวนหน่วยเปลี่ยน) ·
-    /// alias ที่เรียนติดจำนวน · <c>ProductMatcher.Normalize</c> เก็บตัวเลข ⇒ ไม่แมตช์ชื่อเดิม · บรรทัดอื่น (จำนวน ≠ 1 หรือหน่วยอื่น) ⇒ คืนตามเดิม
-    /// (ชื่อสินค้าจริง "น้ำดื่ม (12 ขวด)" ไม่ถูกตัด) · ผู้ใช้: <c>OcrLearnerDescriptionKey.For</c> · หน้านำเข้าสต็อก · เรียน alias ตอนผูก PO · backfill alias</summary>
+    /// **คำอธิบายสำหรับจับคู่สินค้า/คีย์ตัวเรียน — ตัวเดียว** (ทีม OCR 9 · ฝ่ายค้าน 13a4d788 P1): บรรทัดที่ตัวกันลงเป็น 1 × ยอด ⇒ ตัดท้าย "(4,272 หน่วย)"
+    /// ที่ <see cref="QuantityDescription"/> ต่อไว้ — ไม่งั้นทุกเดือนได้คีย์ใหม่ (จำนวนหน่วยเปลี่ยน) · alias ที่เรียนติดจำนวน · <c>ProductMatcher.Normalize</c> เก็บตัวเลข ·
+    /// ตัดเฉพาะท้ายที่เป็น<b>เครื่องหมายของตัวกันเอง</b> (<see cref="LumpSumSuffix"/> — ทีม OCR 11 ฝ่ายค้าน OCR 9 P2-3: เดิมตัดทุกวงเล็บ "ตัวเลข คำ" ⇒ "Flash Drive (64 GB)" ⇒
+    /// "Flash Drive" ในทุกทางที่เรียก รวม backfill alias จากบรรทัดที่พิมพ์มือ) · ไม่แน่ใจ ⇒ ไม่ตัด (alias ที่พลาดปลอดภัยกว่าชื่อสินค้าผิด) ·
+    /// ผู้ใช้: <c>OcrLearnerDescriptionKey.For</c> · หน้านำเข้าสต็อก (พรีวิว + ตอนนำเข้า) · เรียน alias ตอนผูก PO · backfill alias · รายงานซ่อมผลแกะรุ่น 6–8
+    /// </summary>
     public static string DescriptionForMatching(string? description, decimal? quantity, string? unit)
     {
+        return LumpSumSuffix(description, quantity, unit) is { } s ? s.Base : (description ?? "").Trim();
+    }
+
+    /// <summary>
+    /// **ท้ายคำอธิบาย "(จำนวน หน่วย)" ที่ตัวกันนี้เขียน — ตัวอ่านกลับตัวเดียว (คู่ของ <see cref="QuantityDescription"/>)** · ทีม OCR 11 (ฝ่ายค้าน OCR 9 P2-3)
+    /// <para>เงื่อนไขร่วม: จำนวน 1 · หน่วย <see cref="LumpSumUnit"/> · ท้ายรูป <see cref="QuantitySuffixRe"/> · มีคำอธิบายเหลือ ⇒ แล้ว:
+    /// (1) "(จำนวน N)" = เครื่องหมายของตัวกัน (ชื่อสินค้าจริงไม่เขียนแบบนี้) · (2) "(N หน่วย)" ที่<b>ตัวเขียนจะเขียน</b> = หน่วยเป็นหน่วยมิเตอร์ด้วยบริบทของคำอธิบายเอง
+    /// (<see cref="IsMeterUnit"/> แบบบรรทัดอย่างเดียว — เงื่อนไขเดียวกับฝั่งเขียน ⇒ สมมาตร · <see cref="Meter"/> = true) ·
+    /// (3) ย้อนหลังรุ่น 6/7/8 (ทีม 8 ต่อหน่วยสินค้าใดก็ได้ "(12 ขวด)" · ทีม 9 ต่อ ลบ.ม./GB โดยไม่ดูบริบท): หน่วยเป็นคำหน่วยนับ (<see cref="UnitRe"/> ทั้งคำ — ไม่รวม
+    /// GB/MB/ml ซึ่งเป็นสเปกสินค้า) <b>และ</b>ตัวเลขในวงเล็บไม่อยู่ในคำอธิบายเอง ("ปูน 50 กก. (50 กก.)" = สเปก) · นอกนั้น = null (ไม่ตัด — "Flash Drive (64 GB)")</para>
+    /// </summary>
+    public static OcrLumpSumSuffix? LumpSumSuffix(string? description, decimal? quantity, string? unit)
+    {
         var d = (description ?? "").Trim();
-        if (quantity != 1m || unit?.Trim() != LumpSumUnit) return d;
+        if (quantity != 1m || unit?.Trim() != LumpSumUnit) return null;
         var m = QuantitySuffixRe.Match(d);
-        return m.Success && m.Index > 0 ? d[..m.Index].TrimEnd() : d;
+        if (!m.Success || m.Index == 0) return null;
+        var baseText = d[..m.Index].TrimEnd();
+        if (baseText.Length == 0) return null;
+        if (m.Groups["cn"].Success) return new OcrLumpSumSuffix(baseText, m.Value.Trim(), Meter: false);
+        var unitWord = m.Groups["u"].Value;
+        if (IsMeterUnit(unitWord, baseText)) return new OcrLumpSumSuffix(baseText, m.Value.Trim(), Meter: true);
+        var mapped = ThaiTextNormalizer.MapThaiPua(unitWord);
+        var um = UnitRe.Match(mapped);
+        var wholeWord = um.Success && mapped[um.Length..].Trim('.').Length == 0;
+        var number = m.Groups["n"].Value;
+        var specInDescription = Regex.IsMatch(baseText, @"(?<![\d.,])" + Regex.Escape(number) + @"(?![\d])", RegexOptions.CultureInvariant)
+                                || Regex.IsMatch(baseText, @"(?<![\d.,])" + Regex.Escape(number.Replace(",", "")) + @"(?![\d])", RegexOptions.CultureInvariant);
+        return wholeWord && !specInDescription ? new OcrLumpSumSuffix(baseText, m.Value.Trim(), Meter: false) : null;
     }
 
     /// <summary>ราคาเก็บใน <c>DocumentLine.UnitPrice</c> ได้ตรงตัว (<c>HasPrecision(18,2)</c> — ห้ามขยาย · เจ้าของ 2026-10-16) — ราคาเกิน 2 ตำแหน่ง
@@ -455,27 +515,60 @@ public static class OcrLineQuantityGuard
         => new(action, 1m, amt, null, note,
             Description: QuantityDescription(description, qty, unit, printedPrice), Unit: LumpSumUnit);
 
-    /// <summary><see cref="OcrLineQuantityAction.RoundedUnitPrice"/> — คงจำนวน · ราคา = round(ยอด ÷ จำนวน, 2) (ปัดขึ้น 1 สตางค์เมื่อ จำนวน × ราคา ต่ำกว่ายอด)
-    /// · ส่วนต่าง (≥ 0) เป็นส่วนลดบรรทัดที่ระบุชัด ⇒ round(จำนวน × ราคา) − ส่วนลด = ยอดทุกสตางค์ · แท็กบล็อกบอกส่วนต่างเป็นสตางค์ (ทีม OCR 9 · ห้ามทิ้งจำนวนเงียบ)</summary>
+    /// <summary>เพดาน "เศษจากการปัดราคาต่อหน่วย" ที่ยอมเก็บเป็นส่วนลดบรรทัด (<see cref="OcrLineQuantityAction.RoundedUnitPrice"/>) — ตัวเลขเดียวกับเพดานเศษถอด VAT
+    /// (<see cref="OcrEtaxLineNormalizer.MaxVatStripResidual"/> 1.00 บาท และ <see cref="OcrEtaxLineNormalizer.MaxVatStripResidualShare"/> 0.5% ของยอดบรรทัด):
+    /// ราคา 2 ตำแหน่งบิดยอดได้ไม่เกิน จำนวน × 0.01 — เกินบาท/เกินครึ่งเปอร์เซ็นต์ = ราคาบนกระดาษเกิน 2 ตำแหน่งหรือจำนวนผิด ไม่ใช่ "เศษ" (ทีม OCR 11 · ฝ่ายค้าน OCR 9 P2-1:
+    /// น็อต 100,000 ตัว / 500 เดิมได้ "ส่วนลด" 500 = 50% ของบรรทัด)</summary>
+    internal static bool RoundingRemainderWithinCap(decimal remainder, decimal amount)
+        => remainder >= 0m && remainder <= OcrEtaxLineNormalizer.MaxVatStripResidual
+           && remainder <= Math.Abs(amount) * OcrEtaxLineNormalizer.MaxVatStripResidualShare;
+
+    /// <summary>วลีของเศษปัดราคาต่อหน่วย — หมายเหตุ · ป้ายส่วนลดหน้ารีวิว (<see cref="OcrEtaxLineNormalizer.DiscountLabel"/>) · ไม่ใช่ส่วนลดบนกระดาษ</summary>
+    public const string RoundingRemainderPhrase = "เศษจากการปัดราคาต่อหน่วย";
+
+    /// <summary>ราคา 2 ตำแหน่งที่ <see cref="Rounded"/> ตั้งได้จาก ยอด ÷ จำนวน — round ปกติ และปัดขึ้น 1 สตางค์ (ใช้จำผลของตัวเองตอนรันซ้ำบน ExtractedItemsJson)</summary>
+    private static (decimal Nearest, decimal Up) RoundedPrices(decimal qty, decimal amt)
+    {
+        var nearest = R2(amt / qty);
+        if (nearest <= 0m) nearest = 0.01m;
+        var up = R2(qty * nearest) < amt ? Math.Ceiling(amt / qty * 100m) / 100m : nearest;
+        return (nearest, up);
+    }
+
+    /// <summary><see cref="OcrLineQuantityAction.RoundedUnitPrice"/> — คงจำนวนเสมอ (ห้ามทิ้งจำนวนเงียบ · ทีม OCR 9) · แท็กบล็อกเสมอ
+    /// <para>ทีม OCR 11 (ฝ่ายค้าน OCR 9 P2-1/P2-2): (ก) เศษ ≤ เพดาน (<see cref="RoundingRemainderWithinCap"/>) ⇒ ราคา round(ยอด ÷ จำนวน, 2) (ปัดขึ้น 1 สตางค์เมื่อคูณแล้วต่ำกว่ายอด)
+    /// · เศษเป็นส่วนลดบรรทัดให้ round(จำนวน × ราคา) − ส่วนลด = ยอดทุกสตางค์ (VAT คิดจากฐานบนกระดาษ · บันทึกซ้ำไม่เลื่อน) แต่<b>ติดป้าย
+    /// "<see cref="RoundingRemainderPhrase"/>" ไม่ใช่ส่วนลดบนกระดาษ</b> (ผู้เรียกเก็บ <c>UnitPriceRoundingResidual</c>) · (ข) เศษเกินเพดาน ⇒ ราคา round(ยอด ÷ จำนวน, 2)
+    /// <b>ไม่แต่งส่วนลด</b> · บรรทัดไม่ลงตัวโดยตั้งใจ (ยอดบรรทัด = ยอดบนกระดาษ · จำนวน × ราคา ≠ ยอด) · แท็กบอกให้ตรวจราคาต่อหน่วยบนกระดาษ ·
+    /// ข้อความไม่ขึ้นกับทางเข้า (<paramref name="why"/>/ราคาที่อ่าน) ⇒ รันซ้ำบน ExtractedItemsJson ได้หมายเหตุเดิมทุกตัวอักษร (MergeNotes ไม่ต่อซ้ำ)</para></summary>
     private static OcrLineQuantityDecision Rounded(decimal qty, decimal amt, decimal? readPrice, string why)
     {
-        var price = R2(amt / qty);
-        if (price <= 0m || R2(qty * price) < amt) price = Math.Ceiling(amt / qty * 100m) / 100m;
-        var gross = R2(qty * price);
-        var gap = gross - amt;
-        return new(OcrLineQuantityAction.RoundedUnitPrice, null, price, gap > 0m ? gap : null,
-            $"{Tag} {why} — ระบบ{KeepQuantityPhrase}: {qty:#,0.###} × {price:N2} = {gross:N2} · ยอดบนกระดาษ {amt:N2} · "
-            + (gap > 0m ? $"ส่วนต่าง {gap * 100m:0.##} สตางค์ (เก็บเป็นส่วนลดบรรทัด {gap:N2} ให้ยอดตรงกระดาษ · บันทึกซ้ำไม่เลื่อน)" : "ลงตัวทุกสตางค์")
+        var (nearest, up) = RoundedPrices(qty, amt);
+        var gap = R2(qty * up) - amt;
+        if (!RoundingRemainderWithinCap(gap, amt))
+        {
+            var gross = R2(qty * nearest);
+            return new(OcrLineQuantityAction.RoundedUnitPrice, null, nearest, null,
+                $"{Tag} {qty:#,0.###} × {nearest:N2} = {gross:N2} ≠ ยอดบนกระดาษ {amt:N2} (ต่าง {gross - amt:+#,0.00;-#,0.00}) — ไม่มีราคาต่อหน่วย 2 ตำแหน่งที่คูณจำนวนแล้วได้ยอด "
+                + $"และเศษเกินเพดานปัด ({OcrEtaxLineNormalizer.MaxVatStripResidual:0.00} บาท / {OcrEtaxLineNormalizer.MaxVatStripResidualShare * 100m:0.#}% ของบรรทัด) ⇒ "
+                + "ระบบคงจำนวนตามที่อ่านได้ ไม่แต่งส่วนลด (ยอดบรรทัด = ยอดบนกระดาษ) · ตรวจราคาต่อหน่วยบนกระดาษ (อาจเกิน 2 ตำแหน่ง) หรือจำนวน แล้วแก้บรรทัดก่อนอนุมัติ"
+                + Fingerprint(qty, nearest));
+        }
+        var grossUp = R2(qty * up);
+        return new(OcrLineQuantityAction.RoundedUnitPrice, null, up, gap > 0m ? gap : null,
+            $"{Tag} {why} — ระบบ{KeepQuantityPhrase}: {qty:#,0.###} × {up:N2} = {grossUp:N2} · ยอดบนกระดาษ {amt:N2} · "
+            + (gap > 0m ? $"ส่วนต่าง {gap * 100m:0.##} สตางค์ = {RoundingRemainderPhrase} (ไม่ใช่ส่วนลดบนกระดาษ · เก็บในช่องส่วนลดบรรทัด {gap:N2} ให้ยอดตรงกระดาษ · บันทึกซ้ำไม่เลื่อน)" : "ลงตัวทุกสตางค์")
             + (readPrice is decimal rp ? $" · ราคาที่อ่านได้ {rp:#,0.00##}" : "")
-            + " · ตรวจจำนวน/ราคาต่อหน่วยกับกระดาษก่อนอนุมัติ" + Fingerprint(qty, price));
+            + " · ตรวจจำนวน/ราคาต่อหน่วยกับกระดาษก่อนอนุมัติ" + Fingerprint(qty, up));
     }
 
     /// <summary>ตัดสินบรรทัดหนึ่ง — ดูกติกาที่หัวคลาส · <paramref name="paper"/> null/ว่าง = ไม่มีหลักฐานจากกระดาษ (พฤติกรรมเดิม + แท็ก) ·
     /// <paramref name="description"/>/<paramref name="unit"/> = คำอธิบาย/หน่วยของบรรทัด (หลักฐานมิเตอร์ + ใช้เมื่อย้ายจำนวนไปไว้ในคำอธิบาย) ·
-    /// <paramref name="utilitySeller"/> = ผู้ขายเป็นผู้ให้บริการสาธารณูปโภค (<see cref="OcrUtilityVendor.Is"/> — ผู้เรียกตัดสินจากเลขผู้เสียภาษี/ชื่อของใบ)</summary>
+    /// <paramref name="utilitySeller"/> = ชนิดบริการของผู้ขายสาธารณูปโภค (<see cref="OcrUtilityVendor.KindOf"/> — ผู้เรียกตัดสินจากเลขผู้เสียภาษี/ชื่อของใบ) ·
+    /// ทีม OCR 11: เป็นบริบทของหน่วยกำกวมเท่านั้น ไม่ใช่หลักฐานมิเตอร์ด้วยตัวเอง (<see cref="MeterEvidence"/>)</summary>
     public static OcrLineQuantityDecision Decide(
         decimal? quantity, decimal? unitPrice, decimal? amount, decimal? lineDiscount, OcrLinePaper? paper,
-        string? description = null, string? unit = null, bool utilitySeller = false)
+        string? description = null, string? unit = null, OcrUtilityKind utilitySeller = OcrUtilityKind.None)
     {
         paper ??= OcrLinePaper.Empty;
         var amt = amount ?? 0m;
@@ -550,6 +643,12 @@ public static class OcrLineQuantityGuard
             }
             return Keep;
         }
+
+        // ★ ทีม OCR 11 (ฝ่ายค้าน OCR 9 P2-1): ราคา = round(ยอด ÷ จำนวน, 2) อยู่แล้ว แต่คูณกลับห่างยอดเกินเกณฑ์ (ราคาต่อหน่วยเศษสตางค์ 100,000 × 0.005 —
+        // ผลของ Rounded เกินเพดานที่ persist ไว้ หรือ engine ปัดราคาเอง) ⇒ ตัวผิดคือ "ราคาเก็บ 2 ตำแหน่งไม่ได้" ไม่ใช่จำนวน ⇒ ห้ามหารจำนวนใหม่ (เดิมได้ 50,000) ·
+        // ตัดสินแบบ Rounded ซ้ำ (บล็อก · หมายเหตุเดิม) — รันซ้ำตอนสร้างเอกสารต้องได้คำตอบเดิม
+        if (proven == 0m && qty != 1m && !qtyLooksLikeAmount && RoundedPrices(qty, amt) is var rp && (up == rp.Nearest || up == rp.Up))
+            return Rounded(qty, amt, up, $"{line} · ราคาต่อหน่วยคือ ยอด ÷ จำนวน ที่ปัด 2 ตำแหน่งแล้ว");
 
         // ⚠️ เคส ก (บิลค่าไฟ 59 ล้าน — เดิม): ราคา ≈ ยอดทั้งที่จำนวน > 1 ⇒ ตัวผิดคือราคา ไม่ใช่จำนวน (3,611 หน่วยคือมิเตอร์จริง)
         if (qty > 1m && !qtyLooksLikeAmount && Math.Abs(up - amt) <= tol)

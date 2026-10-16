@@ -22,7 +22,7 @@ internal static class UnitInferrer
     {
         // สาธารณูปโภค — หน่วยตามที่ผู้ให้บริการพิมพ์บนบิลจริง
         (new[] { "ค่าไฟ", "ไฟฟ้า", "kwh", "กิโลวัตต์" }, "หน่วย"),
-        (new[] { "ค่าน้ำ", "น้ำประปา", "การประปา" }, "ลบ.ม."),
+        // ค่าน้ำประปา ⇒ ลบ.ม. — ไม่อยู่ในตารางคำนี้ (substring "ค่าน้ำ" จับ "ค่าน้ำดื่ม"/"ค่าน้ำแข็ง"/"ค่าน้ำมัน" ด้วย · ทีม OCR 11) ⇒ ตัวตัดสินเดียว IsWaterSupply ใน Infer
         (new[] { "น้ำมันดีเซล", "น้ำมันเบนซิน", "แก๊สโซฮอล์", "ดีเซล", "เบนซิน", "ลิตร" }, "ลิตร"),
 
         // บริการตามรอบเวลา
@@ -42,12 +42,35 @@ internal static class UnitInferrer
     internal static string? Infer(string? description)
     {
         if (string.IsNullOrWhiteSpace(description)) return null;
-        foreach (var (keywords, unit) in Rules)
-            foreach (var k in keywords)
+        for (var r = 0; r < Rules.Length; r++)
+        {
+            // ลำดับเดิม: ไฟฟ้า → น้ำประปา → น้ำมัน → … (น้ำประปาอยู่ระหว่างกฎแรกกับกฎที่สอง)
+            if (r == 1 && IsWaterSupply(description)) return WaterUnit;
+            foreach (var k in Rules[r].Keywords)
                 if (description.Contains(k, StringComparison.OrdinalIgnoreCase))
-                    return unit;
+                    return Rules[r].Unit;
+        }
         return null;
     }
+
+    /// <summary>หน่วยของค่าน้ำประปา (ตามที่การประปาพิมพ์บนบิล)</summary>
+    internal const string WaterUnit = "ลบ.ม.";
+
+    /// <summary>"ค่าน้ำ" ที่ตามด้วยคำนี้ไม่ใช่น้ำประปา — น้ำดื่ม/น้ำแข็ง/น้ำมัน/เครื่องดื่ม (ขายเป็นขวด/ถุง/ลิตร ไม่ใช่ ลบ.ม.)</summary>
+    private static readonly System.Text.RegularExpressions.Regex WaterSupplyRe = new(
+        @"ค่าน้ำ(?!\s*(?:ดื่ม|แข็ง|มัน|ผลไม้|หวาน|อัดลม|ยา|หอม|ส้ม|ปลา|ตาล|ผึ้ง|แร่|เปล่า|จิ้ม|สลัด|ซุป|เต้าหู้|มะ|ชา|กาแฟ|เต้า))"
+        + @"|น้ำประปา|ค่าประปา|การประปา|waterworks|water\s*supply|water\s*bill|tap\s*water",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant
+        | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// **ข้อความนี้พูดถึงน้ำประปา (คิดตามมิเตอร์ ลบ.ม.) ไหม — ตัวตัดสินตัวเดียว** (ทีม OCR 11 · ฝ่ายค้าน OCR 9 P1-3)
+    /// <para>เดิมกฎ substring "ค่าน้ำ" ⇒ "ค่าน้ำดื่ม 600ml" 12 ขวดได้หน่วย ลบ.ม. ⇒ ตัวกันจำนวนนับเป็นบิลมิเตอร์ ⇒ 1 × ยอด "(12 ลบ.ม.)" ไม่บล็อก ·
+    /// "ค่าน้ำมันดีเซล" ก็ได้ ลบ.ม. (กฎน้ำประปามาก่อนกฎน้ำมัน) · ผู้ใช้: <see cref="Infer"/> และบริบทน้ำของ <c>Helpers/OcrLineQuantityGuard</c>
+    /// (หน่วย ลบ.ม. เป็นหลักฐานมิเตอร์เฉพาะเมื่อมีบริบทน้ำประปา — คอนกรีต/ทราย/หิน ขายเป็น ลบ.ม.) · "ท่อประปา" ไม่ใช่ (ไม่มี น้ำประปา/ค่าประปา/การประปา)</para>
+    /// </summary>
+    internal static bool IsWaterSupply(string? text)
+        => !string.IsNullOrWhiteSpace(text) && WaterSupplyRe.IsMatch(text);
 
     /// <summary>หน่วยที่ AI/เอกสารให้มาน่าเชื่อไหม — "ชิ้น" บนบรรทัดที่กฎอนุมาน
     /// ได้หน่วยอื่น = default ที่หลุดมาจากชั้นก่อนหน้า ไม่ใช่หน่วยจริง ให้แทนที่

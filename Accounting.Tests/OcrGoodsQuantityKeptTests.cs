@@ -151,14 +151,25 @@ public class OcrGoodsQuantityKeptTests
     // ── หลักฐานมิเตอร์จากผู้ขาย · หน่วยสินค้าชนะผู้ขาย ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public void ผู้ขายสาธารณูปโภค_เป็นหลักฐานมิเตอร์_หน่วยสินค้าบนแถวชนะผู้ขาย()
+    public void ผู้ขายสาธารณูปโภคอย่างเดียว_ไม่ใช่หลักฐานมิเตอร์_เป็นแค่บริบทของหน่วย_หน่วยสินค้าบนแถวชนะผู้ขาย()
     {
-        var bySeller = OcrLineQuantityGuard.Decide(4272m, null, 19381.50m, null, Paper("ค่าบริการ 4,272.00 19,381.50"), "ค่าบริการ", null, utilitySeller: true);
-        Assert.Equal(OcrLineQuantityAction.QuantityInDescription, bySeller.Action);
-        Assert.Equal("ค่าบริการ (จำนวน 4,272)", bySeller.Description);
-        var noSeller = OcrLineQuantityGuard.Decide(4272m, null, 19381.50m, null, Paper("ค่าบริการ 4,272.00 19,381.50"), "ค่าบริการ", null);
+        // ★ ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-2 · ตั้งใจพลิก): เดิมผู้ขายอย่างเดียว ⇒ QuantityInDescription "ค่าบริการ (จำนวน 4,272)" ไม่บล็อก ·
+        // AWN/ทรูมูฟ เอช ขายเคส/หูฟังด้วย ⇒ ชื่อผู้ขายพาได้แค่ RoundedUnitPrice (บล็อก · คงจำนวน)
+        var bySeller = OcrLineQuantityGuard.Decide(4272m, null, 19381.50m, null, Paper("ค่าบริการ 4,272.00 19,381.50"), "ค่าบริการ", null,
+            utilitySeller: OcrUtilityKind.Electricity);
+        Assert.Equal(OcrLineQuantityAction.RoundedUnitPrice, bySeller.Action);
+        Assert.True(bySeller.Blocking);
+        Assert.Null(bySeller.Description);
+        // ผู้ขายไฟฟ้า + "หน่วย" พิมพ์คู่จำนวนบนแถว = หน่วยมิเตอร์บนบรรทัดเอง (ผู้ขายเป็นบริบทของ "หน่วย") ⇒ 1 × ยอด
+        var withUnit = OcrLineQuantityGuard.Decide(4272m, null, 19381.50m, null, Paper("ค่าบริการ 4,272 หน่วย 19,381.50"), "ค่าบริการ", null,
+            utilitySeller: OcrUtilityKind.Electricity);
+        Assert.Equal(OcrLineQuantityAction.QuantityInDescription, withUnit.Action);
+        Assert.Equal("ค่าบริการ (จำนวน 4,272)", withUnit.Description);
+        // ไม่มีผู้ขาย ⇒ "หน่วย" บน "ค่าบริการ" ไม่ใช่มิเตอร์
+        var noSeller = OcrLineQuantityGuard.Decide(4272m, null, 19381.50m, null, Paper("ค่าบริการ 4,272 หน่วย 19,381.50"), "ค่าบริการ", null);
         Assert.Equal(OcrLineQuantityAction.RoundedUnitPrice, noSeller.Action);
-        var goods = OcrLineQuantityGuard.Decide(12m, null, 299.99m, null, Paper("สายไฟ 12 ม้วน 299.99"), "สายไฟ", null, utilitySeller: true);
+        var goods = OcrLineQuantityGuard.Decide(12m, null, 299.99m, null, Paper("สายไฟ 12 ม้วน 299.99"), "สายไฟ", null,
+            utilitySeller: OcrUtilityKind.Telecom);
         Assert.Equal(OcrLineQuantityAction.RoundedUnitPrice, goods.Action);
     }
 

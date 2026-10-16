@@ -1130,7 +1130,13 @@ public class OcrController : ControllerBase
         {
             foreach (var item in req.Lines)
             {
-                var ocrDesc = (item.LineIndex >= 0 && item.LineIndex < ocrLines.Count) ? ocrLines[item.LineIndex].Description : null;
+                var ocrLine = (item.LineIndex >= 0 && item.LineIndex < ocrLines.Count) ? ocrLines[item.LineIndex] : null;
+                var ocrDesc = ocrLine?.Description;
+                // ★ ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-4): ชื่อ/alias/global pattern/ตัวเรียนสินทรัพย์ ใช้คำอธิบายตัดท้าย "(4,272 หน่วย)" ของบรรทัด 1 × ยอด
+                // ตัวตัดเดียวกับพรีวิว (OcrLineQuantityGuard.DescriptionForMatching) — เดิมพรีวิวตัดแต่ตอนนำเข้าใช้คำอธิบายดิบ ⇒ alias ติดจำนวน (ไหลถึง global pattern
+                // ข้ามบริษัทผ่าน RecordAliasAsync) · สินค้าใหม่ชื่อ "ค่าไฟฟ้า (4,272 หน่วย)" · Description ของสินค้า/สินทรัพย์ + หมายเหตุสต็อก คงข้อความเต็ม (ตรวจย้อนได้)
+                var matchDesc = ocrLine is null ? null
+                    : Accounting.Helpers.OcrLineQuantityGuard.DescriptionForMatching(ocrLine.Description, ocrLine.Quantity, ocrLine.Unit) is { Length: > 0 } md ? md : null;
 
                 // Resolve effective destination: Destination wins; if it's
                 // the default Stock and the legacy AsSupplies bool is set,
@@ -1149,7 +1155,7 @@ public class OcrController : ControllerBase
                 if (dest == OcrImportDestination.FixedAsset)
                 {
                     var assetName = !string.IsNullOrWhiteSpace(item.NewProductName) ? item.NewProductName!
-                                  : !string.IsNullOrWhiteSpace(ocrDesc) ? ocrDesc!
+                                  : !string.IsNullOrWhiteSpace(matchDesc) ? matchDesc!
                                   : $"Asset {DateTime.UtcNow:HHmmss}";
                     var assetCode = !string.IsNullOrWhiteSpace(item.AssetCode) ? item.AssetCode!
                                   : await GenerateAssetCodeAsync(companyId);
@@ -1186,11 +1192,11 @@ public class OcrController : ControllerBase
                         assetsCreated++;
 
                         // Federated category pool — anonymized.
-                        if (!string.IsNullOrWhiteSpace(ocrDesc))
+                        if (!string.IsNullOrWhiteSpace(matchDesc))
                         {
                             try
                             {
-                                var norm = Services.Implementations.Ocr.ProductMatcher.Normalize(ocrDesc);
+                                var norm = Services.Implementations.Ocr.ProductMatcher.Normalize(matchDesc);
                                 await globalAssetLearner.RecordConfirmAsync(companyId, norm, category, ulm, depMethod.ToString());
                             }
                             catch { /* federation outage */ }
@@ -1241,7 +1247,7 @@ public class OcrController : ControllerBase
                 else
                 {
                     var newName = !string.IsNullOrWhiteSpace(item.NewProductName) ? item.NewProductName!
-                                : !string.IsNullOrWhiteSpace(ocrDesc) ? ocrDesc!
+                                : !string.IsNullOrWhiteSpace(matchDesc) ? matchDesc!
                                 : $"Auto product {DateTime.UtcNow:HHmmss}";
                     var newCode = !string.IsNullOrWhiteSpace(item.NewProductCode) ? item.NewProductCode!
                                 : await GenerateProductCodeAsync(companyId);
@@ -1259,7 +1265,7 @@ public class OcrController : ControllerBase
                         // เขียนลง **ทะเบียนสินค้า** ⇒ ค่าไฟ/ค่าบริการได้หน่วย
                         // "ชิ้น" ติดตัวไปตลอด (defect class "แก้ตัวเดียว เหลือที่เหลือ")
                         Unit: !string.IsNullOrWhiteSpace(item.Unit) ? item.Unit
-                            : (Services.Implementations.Ocr.UnitInferrer.Infer(ocrDesc) ?? "ชิ้น"),
+                            : (Services.Implementations.Ocr.UnitInferrer.Infer(matchDesc) ?? "ชิ้น"),
                         SellingPrice: 0m,
                         CostPrice: item.UnitCost,
                         // ⚠️ เดิม `?? 7m` = สมมติว่าทุกอย่างเสีย VAT 7% ⇒ สินค้าที่
@@ -1298,9 +1304,9 @@ public class OcrController : ControllerBase
                 }
 
                 var aliasLearned = false;
-                if (req.LearnAliases && !string.IsNullOrWhiteSpace(ocrDesc))
+                if (req.LearnAliases && !string.IsNullOrWhiteSpace(matchDesc))
                 {
-                    await matcher.RecordAliasAsync(companyId, productId, ocrDesc!, vendorId, userId,
+                    await matcher.RecordAliasAsync(companyId, productId, matchDesc!, vendorId, userId,
                         source: wasCreated ? "auto" : "user");
                     aliasLearned = true; aliases++;
                 }
