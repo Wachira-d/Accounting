@@ -5187,4 +5187,4 @@ _2026-10-16 ทีม EC3 — ฝ่ายค้านของ 7fd7a0a5 (ที
 `BundledOrFreePhrases` + `DepositPhrases` ลบก่อนนับทุกกฎ · `ApplyTo`: `ThaiVatTypeRule.LooksForeignVendor` → `ThaiWhtRateTable.ShouldWithhold` ก่อนเสนอ (คงหมวด ทิ้งอัตรา+ประเภทเงินได้ + trace) ·
 `LooksGoodsOnlyLine` ⇒ ชื่อผู้ขายไม่ผูกกับเงิน · กฎ "ค่าส่วนกลาง" (ไม่มีรหัส ม.40 + Hint) · `OcrDocTypeDefaultAccounts` 54910/51110/11500 (`keepsInventory`) · ParseThaiDocument ความมั่นใจเดบิต 0.5 ·
 `WhereNotControlAccount` ใน `PickCategorySeededDebitAsync` + ตัวจับคู่ผังเดบิตของ ScanAsync · probe 34 แถวเปลี่ยนตามตั้งใจ · corpus 42 ใบ: หมวด/อัตรา/ประเภทเงินได้เดิมทุกใบ (เปลี่ยนเฉพาะรหัสเดบิตตั้งต้นของ
-ParseThaiDocument 5100/5300 → 54910) · เทสต์ `OcrExpenseCategoryEc3Tests` · ล็อกจุดเรียก +3 กติกา (ถอดแล้วฟ้องจริง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 4bcc17a0_
+ParseThaiDocument 5100/5300 → 54910) · เทสต์ `OcrExpenseCategoryEc3Tests` · ล็อกจุดเรียก +3 กติกา (ถอดแล้วฟ้องจริง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit bf0e5f4b_
