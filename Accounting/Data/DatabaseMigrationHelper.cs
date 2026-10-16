@@ -6988,8 +6988,8 @@ public static class DatabaseMigrationHelper
             // ไม่มีคอลัมน์นี้. ใช้เก็บ "คำเตือนที่ผู้ใช้กดรับทราบตอนอนุมัติ"
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "InternalNotes" text NULL;""",
 
-            // โมดูลต้นทางของเอกสาร — ใช้กันนับโควตาซ้ำ (เอกสารจากโมดูลที่พักมีมิเตอร์
-            // ของตัวเองคือ lodging.stay) ดู Helpers/DocumentQuotaPolicy
+            // โมดูลต้นทางของเอกสาร — เอกสารจากโมดูลที่พักห้ามบล็อกเมื่อโควตาเต็ม (การนับ: Helpers/DocumentQuotaPolicy ·
+            // ยังนับใบที่กฎหมายบังคับจนกว่า stay → 2 หน่วยโควตาตาม LODGING_LICENSING_PLAN §13.2 จะมีโค้ด)
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OriginModule" varchar(40) NULL;""",
 
             // รอบ 193 (เจ้าของข้อ 8): ผังผลต่างจากการปัดเศษ 54960 — ขา JE ของ Document.RoundingAdjustment (Helpers/DocumentRounding)

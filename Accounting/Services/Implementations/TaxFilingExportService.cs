@@ -79,7 +79,7 @@ public class TaxFilingExportService : ITaxFilingExportService
     // ประวัติ: ก่อนรอบ 2026-10-14 = H|…/D|…/T|… + วันที่ dd/MM/พ.ศ. · รอบ 2026-10-14 = 10 ช่องตามใบแนบกระดาษ (ยังไม่มีสเปก) ·
     // รอบ 2026-10-16 = "Format กลางโปรแกรมบันทึก(Import)ข้อมูลยื่นด้วยสื่อฯ ภ.ง.ด.1,1ก และ 1ก พิเศษ" ที่เจ้าของส่งมา
     // =====================================================================
-    public async Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month, string? format = null)
+    public async Task<TaxFilingExportResult> ExportPnd1Async(Guid companyId, int year, int month, string? format = null, bool includePii = true)
     {
         var fmt = Pnd1FileFormat.ParseFormat(format);
         var data = await Pnd1FilingData.LoadMonthAsync(_db, companyId, year, month);
@@ -88,13 +88,15 @@ public class TaxFilingExportService : ITaxFilingExportService
         if (data.HasPayrollRuns || data.Rows.Count == 0)
             await EnsureFilableRunsAsync(companyId, year, month, "ภ.ง.ด.1");
         var company = await GetCompanyAsync(companyId);
-        return Pnd1Result(company, data, fmt, year, month);
+        return Pnd1Result(company, data, fmt, year, month, includePii);
     }
 
     /// <summary>ประกอบผลส่งออก ภ.ง.ด.1/1ก จากรายการที่โหลดแล้ว — ทั้งสามรูปแบบใช้ <c>data.Rows</c> ชุดเดียว
     /// <paramref name="month"/> = null ⇒ ภ.ง.ด.1ก (รายปี)</summary>
+    /// <param name="includePii">false = ผู้ขอไม่มีสิทธิ์ <c>Pii.View</c> ⇒ รายงานตรวจทาน + ข้อความดูตัวอย่างปิดบังเลขผู้มีเงินได้ (P1-3) ·
+    /// ไฟล์นำเข้า (txt/xlsx/csv) ต้องมีเลขเต็มเสมอ — ด่านของไฟล์นำเข้าอยู่ที่ controller (Payroll.View · แบบเดียวกับไฟล์ สปส.)</param>
     private static TaxFilingExportResult Pnd1Result(
-        Company company, Pnd1FilingData.Result data, string fmt, int year, int? month)
+        Company company, Pnd1FilingData.Result data, string fmt, int year, int? month, bool includePii = true)
     {
         var annual = month == null;
         var formCode = annual ? "PND1K" : "PND1";
@@ -113,8 +115,11 @@ public class TaxFilingExportService : ITaxFilingExportService
         // .txt ชื่อ PND1.txt · Excel ชีต Sheet1 ไม่มีแถวหัว · CSV ค่าเดียวกัน ไม่มีแถวหัว ·
         // "review" = รายงานตรวจทานมีหัวคอลัมน์ (ไม่ใช่ไฟล์นำเข้า) — ทุกรูปแบบมาจาก Pnd1FileFormat.Fields ตัวเดียว
         var filer = new Pnd1FileFormat.Filer(company.TaxId, company.BranchCode, year, month);
+        // ช่อง 2 (***) เลขผู้หักต้องถูกต้อง — ไฟล์นำเข้าถูกกั้นพร้อมทางไปต่อ (P2-4) · รายงานตรวจทานยังออกได้ (เตือนในสรุป)
+        if (fmt != "review") Pnd1FileFormat.RequireWithholderTaxId(company.TaxId, formName);
         byte[] bytes;
         string fileName, contentType;
+        var encodingNote = "";
         switch (fmt)
         {
             case "csv":
@@ -132,35 +137,52 @@ public class TaxFilingExportService : ITaxFilingExportService
                     ? $"{year + 543}"
                     : $"{ThaiMonthName.FullThai[month!.Value]} {year + 543}";
                 bytes = Pnd1FileFormat.BuildReviewXlsx(data.Rows, filer, new Pnd1FileFormat.Header(
-                    company.Name, company.TaxId, company.BranchCode, thaiPeriod, annual));
+                    company.Name, company.TaxId, company.BranchCode, thaiPeriod, annual), maskPayeeTaxId: !includePii);
                 fileName = $"{formCode}_{period}_review.xlsx";
                 contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
                 break;
             default:
                 // .txt นำเข้า WHTSVS — ชื่อแฟ้มตามสเปก "PND1.txt" (ใช้ทั้ง ภ.ง.ด.1 และ 1ก) · ไฟล์เดียวทุกประเภทเงินได้ ·
                 // เดิมแยก zip ไฟล์ละประเภทเพราะรูปแบบเดิมไม่มีช่องรหัสเงินได้
-                bytes = AsBytes(Pnd1FileFormat.BuildText(data.Rows, filer));
+                // P1-2: encoding ที่ WHTSVS อ่านยังไม่ได้ยืนยัน — UTF-8 ไม่มี BOM (ค่าตั้งต้นเดิม) + เตือนช่องที่ไบต์เกินความยาวสเปก
+                bytes = Pnd1FileFormat.EncodeTextUtf8(data.Rows, filer);
                 fileName = Pnd1FileFormat.TextFileName;
                 contentType = "text/plain; charset=utf-8";
+                var over = data.Rows.Count(r => Pnd1FileFormat.ByteLengthOverflowFields(r, filer, Encoding.UTF8).Count > 0);
+                encodingNote = "\nℹ️ PND1.txt นี้เข้ารหัส UTF-8 — ยังไม่ได้ยืนยันว่า WHTSVS อ่าน UTF-8 · แนะนำให้นำเข้าด้วยไฟล์ Excel ก่อน "
+                    + "(หรือ PND1.txt แบบ TIS-620 ถ้าโปรแกรมแสดงภาษาไทยเพี้ยน)"
+                    + (over == 0 ? "" : $" · {over} รายการมีช่องภาษาไทยที่ยาวเกินความยาวสเปกเมื่อนับเป็นไบต์ UTF-8 (ไทย 1 ตัว = 3 ไบต์ · "
+                        + "ระบบนับเป็นตัวอักษร) — ถ้า WHTSVS นับเป็นไบต์ช่องเหล่านี้จะเกิน ใช้ Excel หรือ TIS-620 (ไทย 1 ตัว = 1 ไบต์)");
+                break;
+            case Pnd1FileFormat.Tis620Format:
+                // TIS-620 (code page 874): อักขระที่เข้ารหัสไม่ได้ ⇒ ล้มดังพร้อมชื่อรายการ (ไม่แทนด้วย ?) · ไทย 1 ตัว = 1 ไบต์
+                bytes = Pnd1FileFormat.EncodeTextTis620(data.Rows, filer);
+                fileName = Pnd1FileFormat.TextFileName;
+                contentType = "text/plain; charset=windows-874";
+                encodingNote = "\nℹ️ PND1.txt นี้เข้ารหัส TIS-620 (ไทย 1 ตัวอักษร = 1 ไบต์ ⇒ ความยาวช่องเท่ากันทั้งนับตัวอักษรและนับไบต์) — "
+                    + "ยังไม่ได้ยืนยันว่า WHTSVS อ่าน TIS-620 · ถ้าภาษาไทยเพี้ยน ใช้ไฟล์ Excel นำเข้า";
                 break;
         }
 
         var categories = Pnd1FileFormat.Summarize(data.Rows);
         var breakdown = string.Join(" · ", categories.Where(c => c.Count > 0)
             .Select(c => $"ประเภท ({c.Category}) {c.Count} รายการ เงินได้ {c.Income:N2} ภาษี {c.Tax:N2}"));
-        // ช่อง 2 (***) เลขผู้หักต้องถูกต้อง — ผิด = ทั้งไฟล์ถูกปฏิเสธ ⇒ เตือนดัง (ไม่แต่งเลข)
+        // ช่อง 2 (***) เลขผู้หักต้องถูกต้อง — ไฟล์นำเข้าถูกกั้นข้างบนแล้ว · เหลือเฉพาะรายงานตรวจทานที่มาถึงตรงนี้ได้ ⇒ เตือนดัง (ไม่แต่งเลข)
         var filerNote = ThaiTaxId.IsValid(company.TaxId) ? "" :
-            "\n⚠️ เลขประจำตัวผู้เสียภาษีของบริษัทไม่ครบ 13 หลักหรือไม่ผ่าน checksum (ช่องที่ 2 ของไฟล์ — สรรพากรจะไม่รับทั้งไฟล์) — แก้ที่ตั้งค่าบริษัท";
+            "\n⚠️ เลขประจำตัวผู้เสียภาษีของบริษัทไม่ครบ 13 หลักหรือไม่ผ่าน checksum (ช่องที่ 2 ของไฟล์ — สรรพากรจะไม่รับทั้งไฟล์ · ไฟล์นำเข้าถูกกั้นจนกว่าจะแก้) — "
+            + "ตั้งค่าเลขผู้เสียภาษีบริษัท ที่หน้า ตั้งค่า → ข้อมูลบริษัท";
         var summary = $"{formName} {periodText} {data.Rows.Count} รายการ "
             + $"(จากรอบเงินเดือน {data.PayrollRowCount} · จาก 50 ทวิ นอกรอบเงินเดือน {data.CertRowCount}) "
             + $"เงินได้รวม {data.TotalIncome:N2} ภาษีรวม {data.TotalTax:N2} บาท · {breakdown}"
             + filerNote
             + (data.Notes.Count > 0 ? "\n" + string.Join("\n", data.Notes) : "")
+            + encodingNote
             + "\nℹ️ " + Pnd1FileFormat.SpecNotice;
 
         return new TaxFilingExportResult(
             formCode, formName, fileName, contentType, bytes,
-            data.Rows.Count, data.TotalIncome, data.TotalTax, summary, categories);
+            data.Rows.Count, data.TotalIncome, data.TotalTax, summary, categories,
+            PreviewText: Pnd1FileFormat.BuildPreviewText(data.Rows, filer, maskPayeeTaxId: !includePii));
     }
 
     // =====================================================================
@@ -257,14 +279,14 @@ public class TaxFilingExportService : ITaxFilingExportService
     // เดิมเป็น H|D|T + คอลัมน์ "RD template 2566" ที่ไม่มีบนใบแนบ (วันเริ่ม/ออก · PVD · SSO · ฐานภาษี) แต่ไม่มี
     // "ที่อยู่ผู้มีเงินได้" ที่ใบแนบ ภ.ง.ด.1ก บังคับ
     // =====================================================================
-    public async Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year, string? format = null)
+    public async Task<TaxFilingExportResult> ExportPnd1kAsync(Guid companyId, int year, string? format = null, bool includePii = true)
     {
         var fmt = Pnd1FileFormat.ParseFormat(format);
         var data = await Pnd1FilingData.LoadYearAsync(_db, companyId, year);
         if (data.HasPayrollRuns || data.Rows.Count == 0)
             await EnsureFilableRunsAsync(companyId, year, null, "ภ.ง.ด.1ก");
         var company = await GetCompanyAsync(companyId);
-        return Pnd1Result(company, data, fmt, year, null);
+        return Pnd1Result(company, data, fmt, year, null, includePii);
     }
 
     // =====================================================================

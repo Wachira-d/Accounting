@@ -115,4 +115,32 @@ public class ContactDataHygieneTests
     [InlineData(null, "โทร 02-123-4567", null)]
     public void PostalCodeOf_PicksFiveDigitPostal(string? structured, string? address, string? expected)
         => Assert.Equal(expected, ContactDataHygiene.PostalCodeOf(structured, address));
+
+    // ฝ่ายค้าน ภ.ง.ด.1 P2-2: ห้ามเอารหัสไปรษณีย์จากบ้านเลขที่ (ช่อง 12 ของไฟล์ ภ.ง.ด.1 + บ้านเลขที่หายจากที่อยู่ 1)
+    [Theory]
+    [InlineData("บ้านเลขที่ 12345 หมู่ 3 ถนนสุขุมวิท")]
+    [InlineData("เลขที่ 12345 หมู่ 3 ถนนสุขุมวิท")]
+    [InlineData("12345/6 หมู่ 3 ถนนสุขุมวิท")]
+    [InlineData("12345 หมู่ 3 ถนนสุขุมวิท")]                  // คำแรกของที่อยู่ = บ้านเลขที่
+    [InlineData("99/12345 ถนนสุขุมวิท ต.บางพลี")]              // ติด "/" กับเลขบ้าน
+    [InlineData("88 ถนนสุขุมวิท ต.บางพลี 99999")]              // ท้ายข้อความแต่นอกช่วง 10–96
+    [InlineData("88 ห้อง 10110 ถนนสุขุมวิท ต.บางพลี")]          // ไม่ใช่ท้ายข้อความและไม่ตามหลังจังหวัด
+    public void PostalCodeOf_ไม่หยิบบ้านเลขที่หรือเลขกลางที่อยู่(string address)
+        => Assert.Null(ContactDataHygiene.PostalCodeOf(null, address));
+
+    [Theory]
+    [InlineData("บ้านเลขที่ 12345 หมู่ 3 ต.บางพลี จ.สมุทรปราการ 10540", "10540")]   // บ้านเลขที่ 5 หลัก + รหัสจริงท้าย
+    [InlineData("1 ถนนสุขุมวิท กรุงเทพฯ 10110 โทร 02-111-2222", "10110")]          // ตามหลังจังหวัด แม้มีเบอร์ต่อท้าย
+    [InlineData("44 หมู่ 9 หนองเทียง พนัสนิคม ชลบุรี 20140 ประเทศไทย", "20140")]
+    [InlineData("44 หมู่ 9 หนองเหียง พนัสนิคม 20140", "20140")]                     // ไม่มีจังหวัด แต่อยู่ท้าย + ในช่วง
+    [InlineData("44 หมู่ 9 ต.หนองเหียง จ.ชลบุรี ๒๐๑๔๐", "20140")]                    // เลขไทย
+    [InlineData("12345 ต.บางพลี จ.สมุทรปราการ 10540", "10540")]
+    [InlineData("123 ถ.สุขุมวิท ต.บางนา อ.บางนา 10260 สาขา 00001", "10260")]          // หัวกระดาษ: ตามหลังอำเภอ มีข้อความต่อท้าย
+    public void ทิศตรงข้าม_PostalCodeOf_รหัสไปรษณีย์จริงยังหยิบได้(string address, string expected)
+        => Assert.Equal(expected, ContactDataHygiene.PostalCodeOf(null, address));
+
+    [Fact]
+    public void DuplicateKey_เลขไทยเป็นคีย์เดียวกับเลขอารบิก()
+        => Assert.Equal(ContactDataHygiene.DuplicateKey("0105551136085", "00000"),
+            ContactDataHygiene.DuplicateKey("๐๑๐๕๕๕๑๑๓๖๐๘๕", "๐๐๐๐๐"));
 }

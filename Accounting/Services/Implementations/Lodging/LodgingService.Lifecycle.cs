@@ -23,8 +23,8 @@ public partial class LodgingService
 {
     private static readonly LodgingReservationStatus[] Terminal = { LodgingReservationStatus.Cancelled, LodgingReservationStatus.NoShow, LodgingReservationStatus.CheckedOut };
 
-    /// <summary>ป้ายโมดูลบนเอกสารที่โมดูลนี้ออกให้ — ใช้กันนับโควตาเอกสารซ้ำ
-    /// (มิเตอร์ของที่พักคือ lodging.stay ไม่ใช่จำนวนใบ — DocumentQuotaPolicy)</summary>
+    /// <summary>ป้ายโมดูลบนเอกสารที่โมดูลนี้ออกให้ — DocumentQuotaPolicy ใช้ตัดสิน "ห้ามบล็อก" (และจะใช้กันนับซ้ำเมื่อการแปลง
+    /// stay → 2 หน่วยโควตาตาม LODGING_LICENSING_PLAN §13.2 มีโค้ด — ตอนนี้ใบที่กฎหมายบังคับยังนับโควตาเอกสาร)</summary>
     internal const string LodgingOrigin = "Lodging";
 
     /// <summary>นับการเข้าพักนี้เป็น 1 หน่วยมิเตอร์ (`lodging.stay`)

@@ -560,9 +560,9 @@ public class Document : TenantEntity
 
     /// <summary>โมดูลที่สร้างเอกสารนี้ ("Lodging", "Pos", "Ocr", null = ฟอร์มปกติ/API)
     ///
-    /// ใช้ตัดสิน**โควตา**: เอกสารที่โมดูลที่พักออกให้อัตโนมัติไม่นับเข้าโควตาเอกสาร
-    /// เพราะมิเตอร์ของที่พักคือ `lodging.stay` (นับตอนปิดการเข้าพัก) — นับสองทาง
-    /// = ลูกค้าโดนคิดสองเด้งจากงานเดียว (LODGING_LICENSING_PLAN §13.2)</summary>
+    /// ใช้ตัดสิน**โควตา** (Helpers/DocumentQuotaPolicy): เอกสารที่โมดูลที่พักออกให้อัตโนมัติ<b>ห้ามบล็อก</b>เสมอ ·
+    /// ใบที่กฎหมายบังคับยังนับโควตาเอกสาร จนกว่าการแปลง "1 การเข้าพัก = 2 หน่วยโควตา" (LODGING_LICENSING_PLAN §13.2)
+    /// จะมีโค้ด — แล้วค่อยเปลี่ยนเป็นไม่นับซ้ำ (ฝ่ายค้าน ภ.ง.ด.1/Tb P1-1)</summary>
     public string? OriginModule { get; set; }
 
     /// <summary>True when the operator has explicitly DISMISSED this document

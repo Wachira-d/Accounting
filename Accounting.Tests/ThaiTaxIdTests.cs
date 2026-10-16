@@ -35,6 +35,29 @@ public class ThaiTaxIdTests
     }
 
     [Theory]
+    [InlineData("๐๒๐๕๕๖๕๐๑๗๗๔๑")]                 // เลขไทยล้วน (ฝ่ายค้าน ภ.ง.ด.1 P2-3)
+    [InlineData("๐-๒๐๕๕-๖๕๐๑๗-๗๔-๑")]             // เลขไทย + ขีดตามกระดาษ
+    [InlineData("0-๒๐๕๕-65017-๗๔-1")]              // ปนกัน
+    [InlineData("０２０５５６５０１７７４１")]        // เลขเต็มความกว้าง (IME ญี่ปุ่น/จีน)
+    public void เลขไทยและเลขอักษรอื่น_แปลงเป็นASCIIก่อนตรวจ(string raw)
+    {
+        Assert.Equal(OurCompany, ThaiTaxId.Normalize(raw));
+        Assert.True(ThaiTaxId.IsValid(raw));
+        Assert.True(ThaiTaxId.Same(raw, OurCompany));
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ผลNormalizeมีแต่ASCIIเสมอ_และตัวอักษรไทยที่ไม่ใช่เลขถูกทิ้ง()
+    {
+        // ตัวอักษรไทยที่ไม่ใช่ตัวเลข (เช่น "เลขที่") ต้องไม่ถูกแปลงเป็นเลข · ผลลัพธ์ไม่มีอักขระนอก 0–9
+        var n = ThaiTaxId.Normalize("เลขที่ ๑๒ ก/3");
+        Assert.Equal("123", n);
+        Assert.All(n, ch => Assert.InRange(ch, '0', '9'));
+        // เลขที่ checksum ผิดยังผิดแม้เขียนเป็นเลขไทย (แปลงแล้วไม่ใช่การ "ซ่อม")
+        Assert.False(ThaiTaxId.IsValid("๐๒๐๕๕๖๕๐๑๗๗๔๐"));
+    }
+
+    [Theory]
     [InlineData("0205565017740")]   // check digit ผิด
     [InlineData("020556501774")]    // 12 หลัก
     [InlineData("02055650177410")]  // 14 หลัก

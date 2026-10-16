@@ -542,6 +542,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 - `POST …/quota/rewards/{id}/claim` — ภารกิจแลกโควตา (§12 ของ LODGING_LICENSING_PLAN),
   สวิตช์ 3 ชั้น: ไม่มี option ที่ `IsActive` · `PlanTemplate.AllowQuotaReward` ·
   `Subscription.QuotaRewardBlocked`
+- เอกสารที่โมดูลที่พักออก (`OriginModule="Lodging"`): ใบที่กฎหมายบังคับ (ใบเสร็จมัดจำ · ใบกำกับ/ใบแจ้งหนี้เช็คเอาต์ · ใบเสร็จเงินประกัน) **นับโควตาเอกสาร** + ห้ามบล็อกทุกใบ · `lodging.stay` เป็นมิเตอร์นับอย่างเดียว (ราคา 0) — การแปลง "1 การเข้าพัก = 2 หน่วยโควตา" (LODGING_LICENSING_PLAN §13.2) **ยังไม่มีโค้ด** ⇒ ยังไม่ตัดการนับเอกสาร (ทีม W1c P1-1 · คำถามเจ้าของ UNIT_TEST_TRIAGE ข้อ 0)
 - โบนัสถูก **หักทีละใบ** ตอนออกเอกสารที่เกินโควตาแพ็กเกจ (`IncrementUsageAsync`) —
   ถ้าไม่หัก ผู้ที่ซื้อครั้งเดียวจะได้โควตาเพิ่มทุกเดือนจนหมดอายุ
 - มิเตอร์ของระบบ (`AddOnCodes.SystemMeters`) **ไม่ต้องให้ลูกค้าเปิด** — `RecordAsync`

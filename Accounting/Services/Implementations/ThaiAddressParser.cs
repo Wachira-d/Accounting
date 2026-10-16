@@ -15,7 +15,6 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public static class ThaiAddressParser
 {
-    private static readonly Regex PostcodeRegex = new(@"\b(\d{5})\b", RegexOptions.Compiled);
     private static readonly Regex BuildingNumberRegex = new(
         @"^(?:เลขที่\s*)?(\d+(?:[/-]\d+)*)\s",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -32,19 +31,22 @@ public static class ThaiAddressParser
 
     // Address keyword patterns — match Thai administrative-area markers
     //
-    // ⚠️ token ที่สอง (ชื่อสองคำ) ต้องกันด้วย negative lookahead ทั้ง "คำ" — เดิมเขียน
-    // `[^\s,เขตอำเภอจังหวัด]+` / `[^\s,จังหวัด]+` ซึ่งเป็น **character class** (ห้ามตัวอักษร
-    // จ ั ง ห ว ด ทีละตัว) ไม่ใช่ "ห้ามคำว่าจังหวัด" ⇒ "เขตคลองเตย กรุงเทพฯ" จับได้
-    // "คลองเตย กรุ" (หยุดที่ ง) และ "อำเภอเมือง ชลบุรี" กลืนชื่อจังหวัดเข้าอำเภอ ·
-    // ชื่อจังหวัดที่ไม่มี จ. นำ ตัดทิ้งหลังจับใน DropTrailingProvince (ตาราง ProvinceNames
-    // ประกาศหลัง regex จึงใช้ใน pattern ไม่ได้ — static init ตามลำดับบรรทัด) · คำนำถนน/ซอย/หมู่/โทร ก็เป็นจุดหยุดด้วย
-    // (ชุดเดียวกับ BuildingRegex ข้างบน — character class เดิมกันพวกนี้ไว้โดยบังเอิญเพราะมี ห/ว/อ อยู่ในคำ)
+    // ⚠️ ชื่อตำบล/แขวง/อำเภอ/เขต = <b>token เดียว</b> (ชื่อเขตปกครองไทยไม่มีช่องว่าง) — ประวัติ:
+    //   • เดิม `[^\s,]+(?:\s+[^\s,เขตอำเภอจังหวัด]+)?` — character class (ห้ามตัวอักษร จ ั ง ห ว ด ทีละตัว) ไม่ใช่ "ห้ามคำ" ⇒
+    //     "เขตคลองเตย กรุงเทพฯ" ได้ "คลองเตย กรุ" · แต่บังเอิญกัน token ที่สองส่วนใหญ่ไว้ (มี เ/อ/จ ฯลฯ)
+    //   • 7084919a เปลี่ยนเป็น negative lookahead ทั้งคำ ⇒ token ที่สองเปิดกว้าง ⇒ อำเภอ/เขตที่<b>ไม่มีคำนำ</b>ถูกต่อเข้าตำบล
+    //     ("1 แขวงลาดยาว จตุจักร กรุงเทพฯ" ⇒ แขวง "ลาดยาว จตุจักร" · "5 ต.ช้างเผือก เมือง เชียงใหม่" ⇒ "ช้างเผือก เมือง" แล้ว
+    //     formatter พิมพ์ซ้ำ — ฝ่ายค้าน ภ.ง.ด.1 P2-1)
+    //   • ตอนนี้: token เดียว · จังหวัดที่ไม่มี จ. นำ = ชื่อ 77 จังหวัดตัวสุดท้าย<b>หลัง</b> marker เขตปกครอง (FindProvinceAfter) ·
+    //     อำเภอ/เขตไม่มีคำนำ = token ที่อยู่ระหว่างตำบลกับจังหวัด/รหัสไปรษณีย์พอดี (InferUndecoratedDistrict)
     private const string AreaStop = @"(?!แขวง|ตำบล|ต\.|เขต|อำเภอ|อ\.|จังหวัด|จ\.|กรุงเทพ|กทม|ถนน|ถ\.|ซอย|ซ\.|หมู่|ม\.|โทร|Tel|ประเทศ|[0-9๐-๙])";
+    /// <summary>คำนี้<b>ไม่ใช่</b> marker/ตัวเลข (AreaStop เป็น negative lookahead ⇒ IsMatch = true เมื่อไม่ใช่คำหยุด)</summary>
+    private static readonly Regex AreaStopRegex = new("^" + AreaStop, RegexOptions.Compiled);
     private static readonly Regex SubDistrictRegex = new(
-        @"(?:แขวง|ตำบล|ต\.)\s*([^\s,]+(?:\s+" + AreaStop + @"[^\s,]+)?)",
+        @"(?:แขวง|ตำบล|ต\.)\s*([^\s,]+)",
         RegexOptions.Compiled);
     private static readonly Regex DistrictRegex = new(
-        @"(?:เขต|อำเภอ|อ\.)\s*([^\s,]+(?:\s+" + AreaStop + @"[^\s,]+)?)",
+        @"(?:เขต|อำเภอ|อ\.)\s*([^\s,]+)",
         RegexOptions.Compiled);
     private static readonly Regex ProvinceRegex = new(
         @"(?:จังหวัด|จ\.)\s*([^\s,\d]+)",
@@ -86,8 +88,9 @@ public static class ThaiAddressParser
         string? subDistrict = null, district = null, province = null, postcode = null;
         string? moo = null;
 
-        var pcMatch = PostcodeRegex.Match(text);
-        if (pcMatch.Success) postcode = pcMatch.Groups[1].Value;
+        // รหัสไปรษณีย์: ตัวตัดสินเดียวของระบบ (ContactDataHygiene.PostalCodeOf) — เดิม regex ของไฟล์นี้หยิบ "เลข 5 หลักตัวแรก"
+        // ⇒ "บ้านเลขที่ 12345 …" กลายเป็นรหัสไปรษณีย์ แล้ว formatter ย้ายบ้านเลขที่ไปไว้ท้ายที่อยู่ (ฝ่ายค้าน ภ.ง.ด.1 P2-2)
+        postcode = Accounting.Helpers.ContactDataHygiene.PostalCodeOf(null, text);
 
         var bnMatch = BuildingNumberRegex.Match(text);
         if (bnMatch.Success) buildingNumber = bnMatch.Groups[1].Value;
@@ -101,14 +104,16 @@ public static class ThaiAddressParser
         var mooMatch = MooRegex.Match(text);
         if (mooMatch.Success) moo = NormalizeThaiDigits(mooMatch.Groups[1].Value);
 
-        // ชื่อจังหวัดที่ไม่มี จ. นำ ซึ่งติดมากับตำบล/อำเภอ ("อำเภอพนัสนิคม ชลบุรี") — ตัดออกจากชื่ออำเภอแล้วใช้เป็นจังหวัด
-        // เฉพาะเมื่อไม่มี จ./จังหวัด/กรุงเทพฯ บอกไว้ตรง ๆ (ข้างล่าง)
-        string? trailingProvince = null;
         var subDistMatch = SubDistrictRegex.Match(text);
-        if (subDistMatch.Success) subDistrict = CleanArea(DropTrailingProvince(subDistMatch.Groups[1].Value, ref trailingProvince));
+        if (subDistMatch.Success) subDistrict = CleanArea(subDistMatch.Groups[1].Value);
 
         var distMatch = DistrictRegex.Match(text);
-        if (distMatch.Success) district = CleanArea(DropTrailingProvince(distMatch.Groups[1].Value, ref trailingProvince));
+        if (distMatch.Success) district = CleanArea(distMatch.Groups[1].Value);
+
+        // ตำแหน่งท้ายสุดของ marker เขตปกครองที่จับได้ — จังหวัด/อำเภอที่ไม่มีคำนำต้องอยู่ "หลัง" จุดนี้ (ลำดับที่อยู่ไทย ตำบล → อำเภอ → จังหวัด)
+        var areaEnd = Math.Max(
+            subDistMatch.Success ? subDistMatch.Index + subDistMatch.Length : -1,
+            distMatch.Success ? distMatch.Index + distMatch.Length : -1);
 
         var provMatch = ProvinceRegex.Match(text);
         if (provMatch.Success)
@@ -120,8 +125,16 @@ public static class ThaiAddressParser
             // Special case: "กรุงเทพฯ" or "กรุงเทพมหานคร" without จ. prefix
             if (text.Contains("กรุงเทพมหานคร")) province = "กรุงเทพมหานคร";
             else if (text.Contains("กรุงเทพฯ") || text.Contains("กทม")) province = "กรุงเทพมหานคร";
-            else if (trailingProvince != null) province = trailingProvince;
+            // ชื่อจังหวัดไม่มี จ. นำ หลังตำบล/อำเภอ ("อำเภอพนัสนิคม ชลบุรี") — เฉพาะเมื่อมี marker เขตปกครองแล้ว
+            // (ไม่มี marker เลย = fallback ข้างล่างจัดการทั้งชุด)
+            else if (areaEnd >= 0) province = FindProvinceAfter(text, areaEnd);
         }
+
+        // อำเภอ/เขตที่ไม่มีคำนำ ("1 แขวงลาดยาว จตุจักร กรุงเทพฯ" · "5 ต.ช้างเผือก เมือง เชียงใหม่") — token ถัดจากตำบลพอดี
+        // และตามด้วยจังหวัด/รหัสไปรษณีย์/จบข้อความ · ไม่ใช่ token ที่เป็น marker/ตัวเลข/ชื่อจังหวัด (เดิมก่อน 7084919a = null ·
+        // 7084919a = ต่อเข้าชื่อตำบล) · มี marker อำเภอ/เขตแล้วไม่เดา
+        if (district == null && subDistMatch.Success)
+            district = InferUndecoratedDistrict(text, subDistMatch.Index + subDistMatch.Length, postcode);
 
         // Fallback: ที่อยู่ไม่มีคำนำหน้าเลย (ไม่มี ต./อ./จ./แขวง/เขต) — เคสจริงจาก
         // contact/company ที่ import/OCR เก็บเป็นก้อนเดียว. ยึด "ชื่อจังหวัด" ที่รู้จัก
@@ -216,6 +229,10 @@ public static class ThaiAddressParser
             var idx = t.IndexOf(m, StringComparison.Ordinal);
             if (idx >= 0 && (cut < 0 || idx < cut)) cut = idx;
         }
+        // คำนำแบบย่อ ต./อ./จ. ที่ต้นคำ (ฝ่ายค้าน ภ.ง.ด.1 P2-1: เดิมไม่อยู่ในรายการ ⇒ "5 ต.ช้างเผือก เมือง เชียงใหม่" ทั้งก้อนกลายเป็น
+        // "ส่วนหัว" แล้ว formatter พิมพ์ตำบล/อำเภอซ้ำต่อท้าย) · ต้องอยู่ต้นข้อความหรือหลังช่องว่าง (ไม่ตัดกลางคำ)
+        var abbr = AbbrevAreaMarker.Match(t);
+        if (abbr.Success && (cut < 0 || abbr.Index < cut)) cut = abbr.Index;
         var head = (cut >= 0 ? t[..cut] : t).Trim().Trim(',').Trim();
         if (!string.IsNullOrWhiteSpace(buildingNumber)
             && head.StartsWith(buildingNumber!, StringComparison.Ordinal))
@@ -226,16 +243,44 @@ public static class ThaiAddressParser
         return string.IsNullOrWhiteSpace(head) ? null : head;
     }
 
-    /// <summary>"เมือง ชลบุรี" → "เมือง" — token ที่สองเป็นชื่อจังหวัด (ไม่มี จ. นำ) ไม่ใช่ส่วนของชื่อตำบล/อำเภอ ·
-    /// ชื่อจังหวัดที่ตัดออกส่งกลับทาง <paramref name="droppedProvince"/> (ตัวแรกชนะ)</summary>
-    private static string DropTrailingProvince(string raw, ref string? droppedProvince)
+    /// <summary>ชื่อนี้เป็นหนึ่งใน 77 จังหวัดไหม (ตัด ฯ . , ท้าย) — ตัวเดียวที่ <c>ContactDataHygiene.PostalCodeOf</c> ใช้ตัดสิน "ตามหลังจังหวัด"</summary>
+    internal static bool IsProvinceName(string? token)
+        => !string.IsNullOrWhiteSpace(token) && ProvinceNames.Contains(token.Trim().TrimEnd('ฯ', ',', '.'));
+
+    private static readonly Regex AbbrevAreaMarker = new(@"(?<=^|\s)(?:ต|อ|จ)\.", RegexOptions.Compiled);
+
+    private static readonly Regex Tokens = new(@"[^\s,]+", RegexOptions.Compiled);
+
+    /// <summary>ชื่อจังหวัด (77 จังหวัด) ตัวสุดท้ายที่อยู่หลังตำแหน่ง <paramref name="from"/> · ไม่พบ = null</summary>
+    private static string? FindProvinceAfter(string text, int from)
     {
-        var parts = raw.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 2) return raw;
-        var tail = parts[1].TrimEnd('ฯ', ',', '.');
-        if (!ProvinceNames.Contains(tail)) return raw;
-        droppedProvince ??= tail;
-        return parts[0];
+        string? hit = null;
+        foreach (Match m in Tokens.Matches(text[from..]))
+        {
+            var t = m.Value.TrimEnd('ฯ', '.', ',');
+            if (ProvinceNames.Contains(t)) hit = t;
+        }
+        return hit;
+    }
+
+    /// <summary>token ถัดจากชื่อตำบล (ตำแหน่ง <paramref name="from"/>) เป็นอำเภอ/เขตที่ไม่มีคำนำไหม — ต้องตามด้วยจังหวัด
+    /// (ชื่อ 77 จังหวัด · จ./จังหวัด · กรุงเทพ/กทม) หรือรหัสไปรษณีย์ หรือจบข้อความ · ตัวมันเองต้องไม่ใช่ marker/ตัวเลข/ชื่อจังหวัด</summary>
+    private static string? InferUndecoratedDistrict(string text, int from, string? postcode)
+    {
+        var toks = Tokens.Matches(text[from..]).Select(m => m.Value).ToList();
+        if (toks.Count == 0) return null;
+        var cand = toks[0];
+        if (!AreaStopRegex.IsMatch(cand) || IsProvinceName(cand) || cand.StartsWith("อำเภอ", StringComparison.Ordinal)
+            || cand.StartsWith("เขต", StringComparison.Ordinal)) return null;
+        var clean = CleanArea(cand);
+        if (clean.Length == 0) return null;
+        if (toks.Count == 1) return clean;
+        var next = toks[1];
+        var nextIsProvince = IsProvinceName(next)
+            || next.StartsWith("จ.", StringComparison.Ordinal) || next.StartsWith("จังหวัด", StringComparison.Ordinal)
+            || next.StartsWith("กรุงเทพ", StringComparison.Ordinal) || next.StartsWith("กทม", StringComparison.Ordinal);
+        var nextIsPostcode = postcode != null && NormalizeThaiDigits(next).TrimEnd(',', '.') == postcode;
+        return nextIsProvince || nextIsPostcode ? clean : null;
     }
 
     private static string CleanArea(string raw) =>

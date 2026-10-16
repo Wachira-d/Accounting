@@ -557,4 +557,212 @@ public class Pnd1FileFormatTests
         Assert.Equal(2291.67m + 600m + 1500m, year.TotalTax);
         Assert.Contains(year.Notes, n => n.Contains("HR-SEP"));
     }
+
+    // ═══════════ ฝ่ายค้าน ภ.ง.ด.1 (ทีม W1c) — สองทิศทุกข้อ ═══════════
+
+    private static readonly Pnd1FileFormat.Filer ValidFiler = new("0105561012346", "00000", 2026, 9);
+
+    // P1-2: TIS-620 · อักขระที่เข้ารหัสไม่ได้ล้มดังพร้อมชื่อรายการ · ความยาวไบต์
+
+    [Fact]
+    public void Tis620_ภาษาไทยหนึ่งตัวเท่ากับหนึ่งไบต์_ถอดกลับได้ค่าเดียวกับUtf8()
+    {
+        var rows = new[] { Salary(), Salary("E002") };
+        var tis = Pnd1FileFormat.EncodeTextTis620(rows, ValidFiler);
+        var utf = Pnd1FileFormat.EncodeTextUtf8(rows, ValidFiler);
+        var text = Pnd1FileFormat.BuildText(rows, ValidFiler);
+        Assert.Equal(text.Length, tis.Length);                       // single-byte: ตัวอักษร = ไบต์ ทุกตัว
+        Assert.True(utf.Length > tis.Length);                        // UTF-8 ไทย 3 ไบต์
+        Assert.NotEqual(new byte[] { 0xEF, 0xBB, 0xBF }, utf.Take(3).ToArray());   // UTF-8 ไม่มี BOM (ค่าตั้งต้นเดิม)
+        var thai = CodePagesEncodingProvider.Instance.GetEncoding(874)!;
+        Assert.Equal(text, thai.GetString(tis));
+        Assert.Contains((byte)0xCA, tis);                            // "ส" ของ "สมชาย" = 0xCA ใน TIS-620
+        Assert.All(rows, r => Assert.Empty(Pnd1FileFormat.ByteLengthOverflowFields(r, ValidFiler, thai)));
+    }
+
+    [Theory]
+    [InlineData("王小明")]        // จีน
+    [InlineData("José")]          // อักษรเน้นเสียง (best-fit จะเปลี่ยนเป็น e เงียบ ๆ)
+    [InlineData("สมชาย😀")]       // อีโมจิ (surrogate pair)
+    public void Tis620_อักขระที่ไม่มีในตาราง_ล้มดังบอกรายการและช่อง_ไม่แทนด้วยเครื่องหมายคำถาม(string name)
+    {
+        var rows = new[] { Salary(), Salary("E777") with { FirstName = name } };
+        var ex = Assert.Throws<BusinessRuleException>(() => Pnd1FileFormat.EncodeTextTis620(rows, ValidFiler));
+        Assert.Equal("PND1-TIS620-UNENCODABLE", ex.RuleCode);
+        Assert.Contains("รายการที่ 2", ex.Message);
+        Assert.Contains("E777", ex.Message);
+        Assert.Contains("ช่อง 8", ex.Message);
+        Assert.Contains("Excel", ex.Message);                        // ทางไปต่อ
+    }
+
+    [Fact]
+    public void ความยาวนับเป็นตัวอักษร_Utf8เตือนเมื่อไบต์เกินสเปก_ทิศตรงข้ามชื่อสั้นไม่เตือน()
+    {
+        var longThai = Salary() with { FirstName = new string('ก', 30) };   // 30 ตัว ≤ 80 · UTF-8 = 90 ไบต์ > 80
+        Assert.Equal(new[] { 8 }, Pnd1FileFormat.ByteLengthOverflowFields(longThai, ValidFiler, Encoding.UTF8));
+        var shortRow = Salary() with { Address = "1 ถ.สุขุมวิท จ.ชลบุรี 20000" };
+        Assert.Empty(Pnd1FileFormat.ByteLengthOverflowFields(shortRow, ValidFiler, Encoding.UTF8));
+        Assert.Equal(30, Pnd1FileFormat.Fields(longThai, ValidFiler)[7].Length);   // ไม่ตัดตามไบต์ — ยังนับตัวอักษร
+    }
+
+    [Theory]
+    [InlineData("txt-tis620")]
+    [InlineData("TIS620")]
+    [InlineData("tis-620")]
+    [InlineData("874")]
+    public void ParseFormat_รับTis620(string input)
+        => Assert.Equal(Pnd1FileFormat.Tis620Format, Pnd1FileFormat.ParseFormat(input));
+
+    // P2-7: แท็บ/อักขระควบคุม
+
+    [Fact]
+    public void แท็บและอักขระควบคุม_ถูกตัดจากทุกช่องข้อความ_ทิศตรงข้ามข้อความปกติไม่ถูกแตะ()
+    {
+        var r = Salary() with { FirstName = "ใจ\tดี", LastName = "สกุล\u0085x\u2028y", Title = "นาย\u0007" };
+        var c = Pnd1FileFormat.Fields(r, ValidFiler);
+        Assert.Equal("ใจ ดี", c[7]);
+        Assert.Equal("สกุล x y", c[8]);
+        Assert.Equal("นาย", c[6]);
+        Assert.DoesNotContain(string.Join("|", c), ch => char.IsControl(ch));
+        var normal = Pnd1FileFormat.Fields(Salary(), ValidFiler);
+        Assert.Equal("สมชาย", normal[7]);
+        Assert.Equal("ใจดี", normal[8]);
+    }
+
+    // P2-4: เลขผู้หักผิด ⇒ กั้นไฟล์นำเข้า
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("0105556000001")]   // checksum ผิด (fixture เดิมของ Db test)
+    [InlineData("01055610123")]     // ไม่ครบ 13 หลัก
+    public void เลขผู้หักว่างหรือผิด_กั้นไฟล์นำเข้า_บอกทางไปต่อ(string? taxId)
+    {
+        var ex = Assert.Throws<BusinessRuleException>(() => Pnd1FileFormat.RequireWithholderTaxId(taxId, "ภ.ง.ด.1"));
+        Assert.Equal("PND1-WITHHOLDER-TAXID", ex.RuleCode);
+        Assert.Contains("ตั้งค่าเลขผู้เสียภาษีบริษัท ที่หน้า", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("0105561012346")]
+    [InlineData("0-1055-61012-34-6")]
+    [InlineData("๐๑๐๕๕๖๑๐๑๒๓๔๖")]
+    public void ทิศตรงข้าม_เลขผู้หักถูกต้อง_ไม่กั้น(string taxId)
+        => Pnd1FileFormat.RequireWithholderTaxId(taxId, "ภ.ง.ด.1");
+
+    // P2-3: เลขไทยในเลขผู้มีเงินได้ ⇒ ASCII ในไฟล์
+
+    [Fact]
+    public void เลขผู้มีเงินได้เป็นเลขไทย_ลงไฟล์เป็นเลขอารบิก()
+    {
+        var c = Pnd1FileFormat.Fields(Salary() with { PayeeTaxId = "๑-๑๐๑๗-๐๐๐๐๑-๒๓-๗" }, ValidFiler);
+        Assert.Equal("1101700001237", c[4]);
+        Assert.All(string.Join("|", c), ch => Assert.False(ch is >= '๐' and <= '๙'));
+    }
+
+    // P2-5: สาขา ≥ 10000
+
+    [Fact]
+    public void สาขาลง4หลักไม่ได้_ข้อความบอกว่าต้องได้รับอนุมัติ_และรายงานตรวจทานยังออกได้()
+    {
+        var ex = Assert.Throws<BusinessRuleException>(() => Pnd1FileFormat.Fields(Salary(), ValidFiler with { BranchCode = "10001" }));
+        Assert.Contains("ได้รับอนุมัติจากกรมสรรพากร", ex.Message);
+        Assert.Contains("รายงานตรวจทาน", ex.Message);
+        // ทางไปต่อที่ข้อความบอกต้องใช้ได้จริง: รายงานตรวจทานแสดงเลขสาขา 5 หลักเดิม (ไม่ล้ม)
+        var bytes = Pnd1FileFormat.BuildReviewXlsx(new[] { Salary() }, ValidFiler with { BranchCode = "10001" },
+            new Pnd1FileFormat.Header("บริษัท ทดสอบ จำกัด", "0105561012346", "10001", "กันยายน 2569", false));
+        using var ms = new MemoryStream(bytes);
+        var detail = MiniExcel.Query(ms, useHeaderRow: false, sheetName: Pnd1FileFormat.ReviewRowsSheetName)
+            .Cast<IDictionary<string, object>>().ToList();
+        Assert.Equal("10001", detail[1]["D"]?.ToString());
+    }
+
+    // P2-8: Excel นำเข้า — ไม่ตรึงแถว · ไม่มีตัวกรอง · ข้อความเป็น inlineStr
+
+    private static string SheetXml(byte[] xlsx)
+    {
+        using var zip = new System.IO.Compression.ZipArchive(new MemoryStream(xlsx));
+        var e = zip.Entries.Single(x => x.FullName.StartsWith("xl/worksheets/", StringComparison.Ordinal) && x.FullName.EndsWith(".xml", StringComparison.Ordinal));
+        using var r = new StreamReader(e.Open());
+        return r.ReadToEnd();
+    }
+
+    [Fact]
+    public void Xlsx_ไม่ตรึงแถว_ไม่มีautoFilter_ข้อความเป็นinlineStr_ค่ายังเท่ากับtxt()
+    {
+        var rows = new[] { Salary() with { PayeeTaxId = "0105561012346" }, Salary("E002") };
+        var bytes = Pnd1FileFormat.BuildXlsx(rows, ValidFiler);
+        var xml = SheetXml(bytes);
+        Assert.DoesNotContain("autoFilter", xml);
+        Assert.DoesNotContain("ySplit", xml);
+        Assert.DoesNotContain("state=\"frozen\"", xml);
+        Assert.DoesNotContain("t=\"str\"", xml);
+        Assert.Contains("t=\"inlineStr\"", xml);
+        // ทิศตรงข้าม: ค่าทุกเซลล์ยังเท่ากับ .txt (การแปลงชนิดเซลล์ต้องไม่แตะค่า) · Sheet1 · ไม่มีแถวหัว
+        using var ms = new MemoryStream(bytes);
+        Assert.Equal(new[] { "Sheet1" }, MiniExcel.GetSheetNames(ms).ToArray());
+        ms.Position = 0;
+        var read = MiniExcel.Query(ms, useHeaderRow: false, sheetName: "Sheet1").Cast<IDictionary<string, object>>().ToList();
+        var txt = Pnd1FileFormat.BuildText(rows, ValidFiler).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(2, read.Count);
+        for (var i = 0; i < rows.Length; i++)
+            Assert.Equal(txt[i].Split('|'), Enumerable.Range(0, 20).Select(c => read[i][((char)('A' + c)).ToString()]?.ToString() ?? "").ToArray());
+        Assert.Equal("0105561012346", read[0]["E"]?.ToString());
+    }
+
+    // P1-3: รายงานตรวจทาน/ดูตัวอย่าง ปิดบังเลขผู้มีเงินได้
+
+    [Fact]
+    public void รายงานตรวจทานและดูตัวอย่าง_ปิดบังเลขผู้มีเงินได้เมื่อไม่มีสิทธิ์_ทิศตรงข้ามมีสิทธิ์เห็นเลขเต็ม()
+    {
+        var rows = new[] { Salary(), Salary("E002") with { PayeeTaxId = null } };
+        var header = new Pnd1FileFormat.Header("บริษัท ทดสอบ จำกัด", "0105561012346", "00000", "กันยายน 2569", false);
+        static string Cell(byte[] b)
+        {
+            using var ms = new MemoryStream(b);
+            return MiniExcel.Query(ms, useHeaderRow: false, sheetName: Pnd1FileFormat.ReviewRowsSheetName)
+                .Cast<IDictionary<string, object>>().ToList()[1]["E"]?.ToString() ?? "";
+        }
+        Assert.Equal("1-XXXX-XXXXX-XX-7", Cell(Pnd1FileFormat.BuildReviewXlsx(rows, ValidFiler, header, maskPayeeTaxId: true)));
+        Assert.Equal("1101700001237", Cell(Pnd1FileFormat.BuildReviewXlsx(rows, ValidFiler, header, maskPayeeTaxId: false)));
+
+        var masked = Pnd1FileFormat.BuildPreviewText(rows, ValidFiler, maskPayeeTaxId: true);
+        Assert.DoesNotContain("1101700001237", masked);
+        Assert.Contains("|1-XXXX-XXXXX-XX-7|", masked);
+        Assert.Contains("|0000000000000|", masked);                 // ไม่มีเลข = 0 ล้วน ไม่ใช่ PII คงไว้
+        Assert.Contains("50000.00", masked);                         // ยอดเงินยังเห็น (ด่าน Payroll.View)
+        var full = Pnd1FileFormat.BuildPreviewText(rows, ValidFiler, maskPayeeTaxId: false);
+        Assert.Equal(Pnd1FileFormat.BuildText(rows, ValidFiler), full);
+    }
+
+    // P2-6: วันที่จ่ายนอกเดือนภาษี ⇒ เตือน
+
+    [Fact]
+    public void วันที่จ่ายอยู่นอกเดือนภาษี_เตือน_ทิศตรงข้ามอยู่ในเดือนไม่เตือน()
+    {
+        var oct1 = Salary() with { PayDate = new DateTime(2026, 10, 1) };
+        var note = Pnd1FilingData.PayDateOutsidePeriodNote(new[] { Salary(), oct1 }, 2026, 9);
+        Assert.NotNull(note);
+        Assert.Contains("1 รายการ", note);
+        Assert.Contains("01/10/2569", note);
+        Assert.Contains("09/2569", note);
+        Assert.Null(Pnd1FilingData.PayDateOutsidePeriodNote(new[] { Salary() }, 2026, 9));
+        // ช่อง 13 ยังเป็นเดือนของไฟล์ (ไม่เปลี่ยนเงียบ ๆ ให้ไม่ตรงงวดที่ยื่น) · ช่อง 16 เป็นวันที่จ่ายจริง
+        var c = Pnd1FileFormat.Fields(oct1, ValidFiler);
+        Assert.Equal("09", c[12]);
+        Assert.Equal("01102569", c[15]);
+    }
+
+    // P2-2: บ้านเลขที่ 5 หลักไม่ถูกเอาไปเป็นรหัสไปรษณีย์ (ช่อง 12) และไม่หายจากที่อยู่ 1
+
+    [Fact]
+    public void บ้านเลขที่5หลัก_ไม่เป็นรหัสไปรษณีย์_และอยู่ในที่อยู่1_ทิศตรงข้ามรหัสจริงยังได้()
+    {
+        var p = Pnd1FileFormat.AddressParts(Salary() with { Address = "บ้านเลขที่ 12345 หมู่ 3 ถนนสุขุมวิท" });
+        Assert.Equal("", p.PostalCode);
+        Assert.Equal("บ้านเลขที่ 12345 หมู่ 3 ถนนสุขุมวิท", p.Line1);
+        var q = Pnd1FileFormat.AddressParts(Salary() with { Address = "บ้านเลขที่ 12345 หมู่ 3 ต.บางพลี อ.บางพลี จ.สมุทรปราการ 10540" });
+        Assert.Equal("10540", q.PostalCode);
+        Assert.StartsWith("บ้านเลขที่ 12345", q.Line1);
+    }
 }

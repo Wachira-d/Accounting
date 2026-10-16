@@ -4,8 +4,15 @@
 (ตัวเลขสุดท้ายอยู่ในข้อความรายงาน/คอมมิตปิดรอบ) · ไม่มีเทสต์ใดถูก skip/ลบ · ทุกเทสต์ที่แก้ฝั่งเทสต์ อ้างคอมมิต/คำตัดสินที่เปลี่ยนกติกา
 
 **ทำไมเน่า:** `tools/check_all.sh` เขียน `dotnet test … | tail -20 || fail=1` — exit code ของ pipeline คือของ `tail` (0 เสมอ) ⇒
-พิมพ์ "ผ่านทั้งหมด" ทั้งที่ล้ม 64 · CI รันเฉพาะ `Category=Db` + build ⇒ unit test ไม่มีผู้รันเลย · แก้แล้วใน `64fcf74d`
-(เก็บ exit code ของ dotnet เอง + พิมพ์รายชื่อที่ล้ม)
+พิมพ์ "ผ่านทั้งหมด" ทั้งที่ล้ม 64 · CI รันเฉพาะ `Category=Db` + build ⇒ unit test ไม่มีผู้รันเลย · **`64fcf74d` แก้เฉพาะ `check_all.sh` ในเครื่อง**
+(เก็บ exit code ของ dotnet เอง + พิมพ์รายชื่อที่ล้ม — มีผลเฉพาะเครื่องที่มี SDK) · **CI ยังข้าม unit test บน push ไป `claude/**`**:
+`.github/workflows/ci.yml:83` จำกัด job `test` (`Category!=Db`) ไว้ที่ PR / push main·master / สั่งเอง — ทีมนี้ห้ามแตะ ci.yml ⇒ ยังเปิดอยู่ (ข้อเสนอท้ายไฟล์) ·
+(แก้ถ้อยคำ — ฝ่ายค้าน ภ.ง.ด.1/Tb P2-11 · เดิมเขียน "แก้แล้วใน 64fcf74d" ซึ่งเกินจริง)
+
+**Db test เมื่อไม่ได้ตั้ง `ACCOUNTING_TEST_PG`:** ขึ้นเป็น **Passed** (ไม่ใช่ Skipped) — `DbTestDatabase.TryCreateContext()` คืน null แล้วเทสต์ `return`
+พร้อมข้อความ "ไม่มีฐาน PostgreSQL — ข้าม" · **เป็นการออกแบบที่ตั้งใจ** (doc-comment `Accounting.Tests/Db/DbTestDatabase.cs`: เครื่องนักพัฒนาที่ไม่มีฐาน
+ไม่ใช่หลักฐาน — หลักฐานคือ job `db-test` ที่ตั้ง `ACCOUNTING_DB_TEST_REQUIRED=1` ⇒ ไม่มีฐาน = โยน ไม่ใช่ผ่าน) · job `db-test` รันทุก push (ไม่มี `if:`) ·
+ข้อควรระวัง: ตัวเลข "Passed" ของ `Category=Db` บนเครื่องที่ไม่ได้ตั้ง env **ไม่ใช่หลักฐาน** — ต้องตั้ง `ACCOUNTING_TEST_PG` + `ACCOUNTING_DB_TEST_REQUIRED=1` เอง
 
 ชนิด: **(a)** บั๊กโค้ดจริง — แก้ที่ owner + เทสต์ทิศตรงข้าม · **(b)** เทสต์ค้างหลังเปลี่ยนกติกาโดยเจตนา/เทสต์ผิดตั้งแต่เขียน · **(c)** สภาพแวดล้อม/ไม่ deterministic
 
@@ -13,11 +20,11 @@
 
 | test | class | root cause | breaking commit | fix | file |
 | --- | --- | --- | --- | --- | --- |
-| DocumentQuotaPolicyTests.เอกสารจากโมดูลที่พัก_ไม่นับโควตาเอกสาร… (TaxInvoice, Receipt) | a | ใบกำกับ/ใบเสร็จจากที่พักคืน `CountedMustAllow` ⇒ นับโควตาเอกสาร**และ** `lodging.stay` = คิดลูกค้าสองเด้ง (ขัด doc-comment + LODGING_LICENSING_PLAN §13) | 4ffcb92c | ที่พัก = `NotCounted` ทุกชนิด (ยังห้ามบล็อก) + ทิศตรงข้าม ใบขายทั่วไปยังนับ | Helpers/DocumentQuotaPolicy.cs |
+| DocumentQuotaPolicyTests.เอกสารจากโมดูลที่พัก_ไม่นับโควตาเอกสาร… (TaxInvoice, Receipt) | a → **ถอนคืน (W1c P1-1)** | ~~ใบกำกับ/ใบเสร็จจากที่พักคืน `CountedMustAllow` ⇒ คิดสองเด้ง~~ — ตรวจซ้ำ: `lodging.stay` ราคา 0.0 + การแปลง §13.2 (1 stay = 2 หน่วยโควตา) **ไม่มีโค้ด** ⇒ ไม่มีสองเด้งในเงิน · การแก้เป็น `NotCounted` ทำให้ปริมาณงานที่พักไม่ถูกคิดเงินที่ไหนเลย | 4ffcb92c (เทสต์) · 058233b5 (แก้) | **คืนพฤติกรรมเดิม** (ใบที่กฎหมายบังคับนับ + ห้ามบล็อกทุกใบ) + TODO §13.2 ในโค้ด · เทสต์เปลี่ยนชื่อเป็น `เอกสารจากโมดูลที่พักที่กฎหมายบังคับ_ยังนับโควตาเอกสาร_จนกว่าการแปลงstayเป็น2หน่วยจะมีโค้ด` + ทิศตรงข้าม `…ไม่ใช่ใบบังคับ_ไม่นับและไม่มีวันถูกบล็อก` · **เจ้าของตัดสิน ข้อ 0 ข้างล่าง** | Helpers/DocumentQuotaPolicy.cs |
 | VatBackCalcGuardTests.กระดาษบอกไม่มีVAT_ยังไม่รู้รายการ_ไม่ถอด ×4 | a | บรรทัดว่างล้วนเข้ากิ่ง "ทุกรายการยกเว้น §81" (`All()` บนว่างล้วน = จริง) ⇒ ใบกำกับปกติที่ยังไม่ได้รายการถูกปฏิเสธการแยก 7/107 · เหตุผลผิดข้อ | 099e4702 (เทสต์ที่จับได้เพิ่มใน 8ab95947) | ต้องมีรายการอ่านได้ ≥ 1 + ทิศตรงข้าม | Helpers/VatBackCalcGuard.cs |
 | ImportTabularReaderTests.ไบต์ที่ไม่ใช่ทั้ง_UTF8_และ_874_ล้มดัง · BankStatementParsingTests.ไฟล์ที่ไม่ใช่UTF8หรือTIS620_ล้มดัง | a | ตาราง 874 ของ .NET best-fit ไบต์ที่ TIS-620 ไม่กำหนดเป็น U+F8C1–F8C8/C1 แทนการ throw ⇒ ไฟล์ขยะถอด "สำเร็จ" เป็นอักขระเสีย | 71c8fdeb (ย้ายเข้า ImportTabularReader ใน 95c3031b) | ตรวจผลถอด `Is874Undefined` + ทิศตรงข้ามทุกไบต์ที่ 874 กำหนด | Helpers/ImportTabularReader.cs |
 | SettlementReview200ReaderTests.RB7_เซลล์ตัวเลขxlsx_ตั้งแต่1e15… | a | "R" ของ .NET 8 พิมพ์เลขกลม ≥ 1e15 เป็นตัวเลขเต็ม ⇒ ด่าน IdLostPrecision มองไม่เห็น · กิ่ง double ไม่ถูกบังคับเลย | b7cd77eb | `Scientific()` บังคับ E+nn ทุกชนิดตัวเลข ≥ 1e15 + ทิศตรงข้าม 15 หลัก | Helpers/ImportTabularReader.cs |
-| ThaiAddressParserTests.Bangkok_prefixed_address_still_parses | a | ตำบล/อำเภอ token ที่สองเขียนเป็น character class `[^\s,จังหวัด]+` (ห้ามตัวอักษรทีละตัว) ⇒ "คลองเตย กรุ" | ≤350a394d | negative lookahead ทั้งคำ + จังหวัดไม่มี จ. ที่ติดอำเภอใช้เป็นจังหวัด + ทิศตรงข้าม 3 เทสต์ | Services/Implementations/ThaiAddressParser.cs |
+| ThaiAddressParserTests.Bangkok_prefixed_address_still_parses | a | ตำบล/อำเภอ token ที่สองเขียนเป็น character class `[^\s,จังหวัด]+` (ห้ามตัวอักษรทีละตัว) ⇒ "คลองเตย กรุ" | ≤350a394d | negative lookahead ทั้งคำ + จังหวัดไม่มี จ. ที่ติดอำเภอใช้เป็นจังหวัด + ทิศตรงข้าม 3 เทสต์ · **ถดถอยที่ W1c แก้ (P2-1)**: token ที่สองเปิดกว้าง ⇒ อำเภอไม่มีคำนำถูกต่อเข้าตำบล ("ลาดยาว จตุจักร") + formatter พิมพ์ซ้ำ ⇒ ชื่อเขตปกครอง = token เดียว · อำเภอไม่มีคำนำ = คำระหว่างตำบลกับจังหวัด/รหัสไปรษณีย์ · จังหวัดไม่มี จ. = ชื่อ 77 จังหวัดหลัง marker | Services/Implementations/ThaiAddressParser.cs |
 | AiPromptSanitizerTests.เลขบัญชีที่มีป้ายกำกับ…คงป้ายไว้ | a | `ToJsonString` ค่าเริ่มต้น escape ไทยเป็น `\u0E..` ⇒ prompt ยาวหลายเท่า (token) ทุก call ที่เปิดปิดบัง PII | 1d688c15 | `UnsafeRelaxedJsonEscaping` + ทิศตรงข้าม JSON ยังถูกรูป | Services/Ai/AiPromptSanitizer.cs |
 | WhtCertUserDecisionTests.แบบที่ขอไม่ตรงผู้ถูกหัก… | a | เหตุผลถึงผู้ใช้มีคำ "payee"/"ContactType" + เว้นวรรคกลางวลีไทย | (รอบ 204) | ต้นทาง ResolveWhtFormType เป็นไทย + Notice ไม่เว้นวรรค | Services/Implementations/WithholdingTaxCertService.cs · Helpers/WhtCertUserDecision.cs |
 | VoidReissueR200FTests.R7 · VoidReissueR200GTests.RV1F11 | a | `SourceLinkedAt/By` เพิ่มใน entity ไม่ได้จัดกลุ่มตามไป/ไม่ตามไป (เทสต์ partition ทำหน้าที่ถูก) | a13a995b | จัดเป็น "ไม่ตามไป" | Helpers/SettlementPaidReissue.cs |
@@ -65,13 +72,20 @@
 | PiiEncryptionRoundTripTests ×2 | c | .NET 8 โยน `AuthenticationTagMismatchException` (ลูกของ CryptographicException) | runtime | `ThrowsAny` (ยังบังคับถอดไม่ได้) | PiiEncryptionRoundTripTests.cs |
 | SettlementGatewayPhase2Tests.บวกVATเพิ่ม… (flaky) | c | BuildRows เรียง ConfirmedAt แล้ว Id (Guid สุ่ม) | — | เรียงตามยอดก่อนเทียบ | SettlementGatewayPhase2Tests.cs |
 | SettlementReview198FixTests.C1c | c | fixture สุ่ม BankAccountId แต่ลายนิ้วมือรวม bank= | 60db75ee | Guid คงที่ | SettlementReview198FixTests.cs |
-| SettlementRound201StTests.ST1_ตัวฟังSaveChanges… | c | ฐานออฟไลน์: ตั้งแต่ audit ตอน commit SaveChanges เปิดธุรกรรมก่อนยิง SavingChanges | 9f226f15 | ล็อกเส้นหลัก (Tracked) · ตาข่าย SavingChanges → งานค้างข้างล่าง | SettlementRound201StTests.cs |
+| SettlementRound201StTests.ST1_ตัวฟังSaveChanges… → `ST1_ตัวฟังTracked_ประทับตั้งแต่แถวถูกติดตามในขอบเขต_และถอดเมื่อออกจากขอบเขต` | c | ฐานออฟไลน์: ตั้งแต่ audit ตอน commit SaveChanges เปิดธุรกรรมก่อนยิง SavingChanges | 9f226f15 | ล็อกเส้นหลัก (Tracked) · เปลี่ยนชื่อ (W1c P2-10 — ชื่อเดิมอ้างว่าครอบตาข่าย SavingChanges ซึ่งไม่จริงแล้ว) · ตาข่าย SavingChanges ตรวจบน PG จริงที่ `Db/SettlementPaymentOwnerSaveDbTests` (2 เทสต์ · ทิศตรงข้าม: ใบอื่น/มีเจ้าของแล้ว/หลังปิดขอบเขต ไม่ถูกแตะ) | SettlementRound201StTests.cs · Db/SettlementPaymentOwnerSaveDbTests.cs |
 
 ## ต้องให้เจ้าของตัดสิน / งานค้าง
 
-1. **ยอดโควตาเอกสารที่นับเกินจากที่พักไปแล้ว** (ข้อ a แถวแรก) — ไม่ migrate: ไม่รู้ว่าเดือนไหนถูกคิด overage ไปแล้ว · ถ้ามีลูกค้าที่พักที่จ่าย overage ต้องตรวจย้อนจาก `UsageEvent`
+0. **โควตา/การคิดเงินของที่พัก (W1c P1-1 · ตัดสินโดยเจ้าของ)** — ตอนนี้: เอกสารที่โมดูลที่พักออก (ใบเสร็จมัดจำ · ใบกำกับ/ใบแจ้งหนี้เช็คเอาต์ ·
+   ใบเสร็จเงินประกัน) **นับโควตาเอกสารแบบเดิม + ห้ามบล็อก** · `lodging.stay` นับอย่างเดียว ราคา 0 · เส้น AccountingMode=Off / night audit (ไม่มีเอกสาร) = 0 หน่วย ·
+   ทำไมไม่ทำ §13.2 ในรอบนี้: สเปกยังขัดกันเอง/ไม่ครบ — §4 "ยกเลิก = 1 หน่วย (มัดจำ)" vs §13.2 "Cancelled ที่มีมัดจำ = 1 stay-unit = 2 หน่วย" ·
+   overage ของหน่วยที่มาจาก stay คิด `documents.overage` ฿5/หน่วย หรือราคา stay แยก · บัญชีกลุ่ม (AccountSubscription) รวมหน่วย stay ด้วยไหม · หน้าโควตา 2 บรรทัด (§13.5) ·
+   ต้องให้เจ้าของเลือก: (ก) คงแบบนี้ (นับใบ — 1 การเข้าพักปกติ ≈ 2 ใบ ≈ ผลเดียวกับ §13.2 ยกเว้นโหมดไม่ออกเอกสาร) · (ข) ทำ §13.2 เต็ม (ตอบ 3 ข้อข้างบนก่อน) ·
+   ยอดที่ไม่ได้นับระหว่าง deploy 058233b5 ถึง deploy การแก้นี้: **ไม่ migrate อัตโนมัติ** (ช่วงสั้น · ตัวนับเป็นรายเดือน) — ถ้าต้องการนับย้อน
+   ให้นับ `Documents` ที่ `OriginModule='Lodging'` ชนิด TaxInvoice/Invoice/Receipt ที่สร้างในช่วงนั้นต่อบริษัท แล้วบวกเข้า `CurrentMonthDocuments` ของเดือนนั้น (เจ้าของสั่ง)
+1. **ยอดโควตาเอกสารที่นับเกินจากที่พักไปแล้ว** (ข้อ a แถวแรก) — ~~ไม่ migrate~~ ถอนคืน: การนับเดิมไม่ใช่การคิดสองเด้ง (stay = 0 บาท) ⇒ ไม่มีอะไรต้องคืน
 2. **ExtractionVersion** — การแก้ VatBackCalcGuard เปลี่ยนผลแยก VAT เฉพาะใบที่บรรทัดว่างล้วน · ไม่ได้ bump รุ่น (ผลสแกนเก่าไม่เล่นซ้ำ) — ถ้าต้องการให้สแกนเดิมได้ผลใหม่ เจ้าของสั่ง bump
-3. **ตาข่าย `SavingChanges` ของ `SettlementPaymentOwner.StampOnSave`** ไม่มีเทสต์ที่รันได้นอก PostgreSQL แล้ว — เสนอ Db test (Category=Db รันบน CI) ที่เพิ่มแถวก่อนเปิดขอบเขตแล้ว SaveChanges จริง
+3. ~~**ตาข่าย `SavingChanges` ของ `SettlementPaymentOwner.StampOnSave`** ไม่มีเทสต์ที่รันได้นอก PostgreSQL แล้ว~~ — ✅ ทำแล้ว (W1c P2-10): `Db/SettlementPaymentOwnerSaveDbTests` (Category=Db · job db-test รันทุก push)
 4. ข้อสังเกต (ไม่ได้แก้): เส้น "last resort" ใน `Program.cs` รันแค่ `ApplyMissingColumns` ไม่รัน `ApplyFullTextSearchIndexes` ซึ่งถือคอลัมน์ `OcrScanResults` ~389 คำสั่ง
 5. `SimulationRound6Tests` / ส่วนหนึ่งของ `AiUsageReportTests` ทดสอบสูตรที่เทสต์เขียนเอง ไม่เรียกโค้ดจริง (F2 ข้อ 6) — เสนอผูกกับ `PndTextFileFormat`/`AiUsageReportService` หรือลบ
 

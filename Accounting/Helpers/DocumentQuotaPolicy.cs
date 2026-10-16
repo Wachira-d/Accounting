@@ -35,10 +35,9 @@ public static class DocumentQuotaPolicy
 {
     /// <summary>ชนิดเอกสารนี้ปฏิบัติอย่างไร
     ///
-    /// <paramref name="fromLodging"/> = เอกสารที่โมดูลที่พักออกให้อัตโนมัติ —
-    /// **ไม่นับเข้าโควตาเอกสาร** เพราะมิเตอร์ของที่พักคือ `lodging.stay`
-    /// (นับตอนปิดการเข้าพัก) ถ้านับทั้งสองทางลูกค้าจะโดนคิดสองเด้งจากงานเดียว
-    /// แต่ยังคง **ห้ามบล็อก** ตามกฎหมายเหมือนเดิม</summary>
+    /// <paramref name="fromLodging"/> = เอกสารที่โมดูลที่พักออกให้อัตโนมัติ — <b>นับโควตาเอกสาร (ใบที่กฎหมายบังคับ) + ห้ามบล็อกทุกใบ</b>
+    /// จนกว่าการแปลง "1 การเข้าพัก = 2 หน่วยของ MaxDocumentsPerMonth" (LODGING_LICENSING_PLAN §13.2) จะมีโค้ด —
+    /// ดูคอมเมนต์ในตัวเมธอด (ฝ่ายค้าน ภ.ง.ด.1/Tb P1-1)</summary>
     /// <param name="isReplacement">ใบกำกับภาษีเต็มรูปที่ออก "แทน" ใบเสร็จ/ใบกำกับ
     /// อย่างย่อ (§86/6 → §86/4) — <b>การขายครั้งเดียวกัน</b>กับใบที่นับไปแล้ว
     /// จึงไม่นับซ้ำ (หลักการข้อ 1 ของไฟล์นี้: นับ "การขาย 1 ครั้ง" ไม่ใช่นับใบ)
@@ -47,10 +46,19 @@ public static class DocumentQuotaPolicy
         bool isReplacement = false)
     {
         if (isReplacement) return QuotaEnforcement.NotCounted;
-        // ⚠️ ที่พัก: ไม่นับ **ทุกชนิด** — มิเตอร์คือ lodging.stay (LODGING_LICENSING_PLAN §13 "เอกสารที่ Lodging ออกเอง ไม่นับซ้ำ")
-        // เดิมคืน CountedMustAllow ให้ใบที่กฎหมายบังคับ (ใบกำกับ/ใบเสร็จ) ⇒ นับโควตาเอกสาร**และ**การเข้าพัก = คิดสองเด้ง
-        // ตรงข้ามกับ doc-comment ข้างบน (ไม่เคยตรงตั้งแต่ 4ffcb92c) · NotCounted ไม่มีวันถูกปฏิเสธ (CanRefuseWhenOverQuota) ⇒ ห้ามบล็อกยังจริง
-        if (fromLodging) return QuotaEnforcement.NotCounted;
+        // ⚠️ ที่พัก — คืนพฤติกรรมเดิม (ก่อน 058233b5): ใบที่กฎหมายบังคับ (ใบกำกับ/ใบเสร็จมัดจำ/…) นับโควตาเอกสาร + ห้ามบล็อก ·
+        // ใบอื่นไม่นับ (และจึงไม่มีวันถูกบล็อก)
+        //
+        // ทำไมไม่ "ไม่นับทุกใบ" ตาม LODGING_LICENSING_PLAN §13.2 ("เอกสารที่ Lodging ออกเอง ไม่นับซ้ำ"): §13.2 แทนที่ด้วย
+        // "1 stay-unit = 2 หน่วยของ MaxDocumentsPerMonth" แต่การแปลงนั้น**ยังไม่มีโค้ด** — มิเตอร์ lodging.stay ราคา 0.0
+        // ("มิเตอร์นับอย่างเดียว — โควตาอยู่ที่แพ็กเกจบัญชี" · DatabaseMigrationHelper) และ CurrentMonthDocuments++ มีที่เดียว
+        // (SubscriptionService.IncrementUsageAsync) ⇒ ไม่นับเอกสาร = ปริมาณงานของที่พักไม่ถูกคิดเงินที่ไหนเลย (โรงแรมออกใบกำกับ 300 ใบ/เดือน
+        // ⇒ 0 หน่วย 0 บาท) · "คิดสองเด้ง" ที่ 058233b5 อ้าง ไม่เกิดจริงในเงิน (stay = 0 บาท) · หลัก "ห้ามแย่ลง": รายได้ห้ามหายเงียบ
+        //
+        // TODO(LODGING_LICENSING_PLAN §13.2 · คำถามเจ้าของใน UNIT_TEST_TRIAGE): เมื่อทำการแปลง stay → 2 หน่วยโควตา (ตอนปิดการเข้าพัก ·
+        // MeterStayAsync + LodgingNightAuditJob · idempotent ต่อการจอง · overage ตาม §4) แล้ว ค่อยเปลี่ยนบรรทัดนี้เป็น NotCounted ทุกชนิด
+        // ในคอมมิตเดียวกัน — ห้ามเปลี่ยนก่อน
+        if (fromLodging) return MustAlwaysIssue(type) ? QuotaEnforcement.CountedMustAllow : QuotaEnforcement.NotCounted;
         return type switch
         {
             // ── ใบที่แทน "การขาย 1 ครั้ง" → นับ + ห้ามบล็อก ──

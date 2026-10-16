@@ -35,7 +35,7 @@ public sealed record ContactDuplicateGroup(string Key, string TaxId, string Bran
 public static class ContactDataHygiene
 {
     private static readonly Regex TruncatedHead = new(@"^\s*/\s*\d", RegexOptions.Compiled);
-    private static readonly Regex Postal = new(@"(?<!\d)([1-9]\d{4})(?!\d)", RegexOptions.Compiled);
+    private static readonly Regex Postal = new(@"(?<![0-9])([1-9][0-9]{4})(?![0-9])", RegexOptions.Compiled);
 
     /// <summary>ที่อยู่ขึ้นต้นด้วย "/เลข" — เลขบ้านส่วนหน้าหายไป</summary>
     public static bool IsTruncatedAddress(string? address)
@@ -47,15 +47,85 @@ public static class ContactDataHygiene
         => (createdBy ?? "").StartsWith("OCR", StringComparison.OrdinalIgnoreCase)
         || (updatedBy ?? "").StartsWith("OCR", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>รหัสไปรษณีย์ 5 หลัก — ช่อง structured ก่อน แล้วค่อยหาในข้อความ (ตัวสุดท้ายของข้อความ =
-    /// ท้ายที่อยู่ · เลขบ้าน/เลขภาษีที่ยาวกว่า 5 หลักไม่ถูกหยิบ)</summary>
+    /// <summary>
+    /// <b>รหัสไปรษณีย์ 5 หลัก — ตัวตัดสินเดียวของระบบ</b> (รายงานผู้ติดต่อ · ช่อง 12 ของไฟล์ ภ.ง.ด.1 · <c>ThaiAddressParser</c>) —
+    /// ช่อง structured ก่อน แล้วค่อยหาในข้อความ · ไม่รู้ = <c>null</c> (ไม่เดา — ค่าที่แต่งขึ้นอันตรายกว่าการไม่ตอบ)
+    ///
+    /// <para>ตัวเลข 5 หลักในข้อความจะเป็นรหัสไปรษณีย์ได้ต้อง<b>ทั้ง</b> (ก) อยู่ในช่วงรหัสไปรษณีย์ไทย (สองหลักแรก 10–96) ·
+    /// (ข) ไม่ใช่บ้านเลขที่ — ไม่ตามหลัง "เลขที่/บ้านเลขที่/No./#" · ไม่ติด <c>/</c> หรือ <c>-</c> กับตัวเลข ("12345/6") · ไม่ใช่คำแรกของที่อยู่ ·
+    /// <b>และ</b> (ค) ตามหลังชื่อจังหวัด (จ./จังหวัด/ชื่อ 77 จังหวัด/กรุงเทพฯ/กทม) หรืออำเภอ/เขต/ตำบล/แขวงที่มีคำนำ <b>หรือ</b>อยู่ท้ายข้อความ (ตามด้วยได้แค่ "ประเทศไทย"/เบอร์โทร)</para>
+    ///
+    /// <para>ฝ่ายค้าน ภ.ง.ด.1 P2-2: เดิมหยิบ "ตัวเลข 5 หลักตัวสุดท้าย" ⇒ "บ้านเลขที่ 12345 หมู่ 3 ถนนสุขุมวิท" (ไม่มีรหัสไปรษณีย์)
+    /// ได้ช่อง 12 = 12345 + บ้านเลขที่หายจากที่อยู่ 1 · ไม่มีคำเตือนเพราะยาวพอดี 5 หลัก · เลขไทย ๐–๙ แปลงเป็น ASCII ก่อน</para>
+    /// </summary>
     internal static string? PostalCodeOf(string? structuredPostal, string? address)
     {
-        var s = (structuredPostal ?? "").Trim();
+        var s = AsciiDigits((structuredPostal ?? "").Trim());
         if (s.Length == 5 && s.All(ch => ch >= '0' && ch <= '9')) return s;
         if (string.IsNullOrWhiteSpace(address)) return null;
-        var ms = Postal.Matches(address);
-        return ms.Count == 0 ? null : ms[^1].Groups[1].Value;
+        var text = AsciiDigits(address);
+        var ms = Postal.Matches(text);
+        for (var i = ms.Count - 1; i >= 0; i--)
+        {
+            var m = ms[i];
+            var code = m.Groups[1].Value;
+            if (!InThaiPostalRange(code)) continue;
+            var before = text[..m.Index];
+            var after = text[(m.Index + m.Length)..];
+            if (LooksLikeHouseNumber(before, after)) continue;
+            if (FollowsProvince(before) || PostalTail.IsMatch(after)) return code;
+        }
+        return null;
+    }
+
+    /// <summary>สองหลักแรก 10–96 = ช่วงรหัสไปรษณีย์ไทย (10 กรุงเทพฯ … 96 นราธิวาส)</summary>
+    private static bool InThaiPostalRange(string code)
+        => code.Length == 5 && int.TryParse(code.AsSpan(0, 2), out var p) && p is >= 10 and <= 96;
+
+    private static readonly Regex HouseLabelBefore = new(@"(?:บ้านเลขที่|เลขที่|ที่อยู่เลขที่|No\.?|#)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex DigitJoinBefore = new(@"[0-9]\s*[/\-]\s*$", RegexOptions.Compiled);
+    private static readonly Regex DigitJoinAfter = new(@"^\s*[/\-]\s*[0-9]", RegexOptions.Compiled);
+    /// <summary>หลังรหัสไปรษณีย์ยอมให้มีได้แค่ชื่อประเทศ และ/หรือเบอร์โทร/แฟกซ์ (ที่อยู่บนหัวกระดาษมักต่อด้วยเบอร์)</summary>
+    private static readonly Regex PostalTail = new(
+        @"^[\s,.;)]*(?:(?:ประเทศไทย|ไทย|Thailand|TH)\b[\s,.;)]*)?(?:(?:โทรศัพท์|โทร|Tel|T\.|Fax|แฟกซ์|มือถือ|Mobile)[\s\S]*)?$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex AreaMarkedToken = new(@"^(?:อำเภอ|อ\.|เขต|ตำบล|ต\.|แขวง)\S+", RegexOptions.Compiled);
+    private static readonly Regex LastToken = new(@"(\S+)\s*[,]?\s*$", RegexOptions.Compiled);
+
+    private static bool LooksLikeHouseNumber(string before, string after)
+        => before.Trim().Length == 0                     // คำแรกของที่อยู่ = บ้านเลขที่
+        || HouseLabelBefore.IsMatch(before)
+        || DigitJoinBefore.IsMatch(before)
+        || DigitJoinAfter.IsMatch(after);
+
+    /// <summary>คำก่อนหน้าเป็นจังหวัด — จ.X · จังหวัดX · ชื่อ 77 จังหวัด · กรุงเทพ*/กทม*</summary>
+    private static bool FollowsProvince(string before)
+    {
+        var m = LastToken.Match(before);
+        if (!m.Success) return false;
+        var tok = m.Groups[1].Value.Trim().TrimEnd('ฯ', '.', ',');
+        if (tok.StartsWith("จังหวัด", StringComparison.Ordinal)) tok = tok["จังหวัด".Length..];
+        else if (tok.StartsWith("จ.", StringComparison.Ordinal)) tok = tok[2..];
+        tok = tok.Trim().TrimEnd('ฯ', '.');
+        // ตามหลังอำเภอ/เขต/ตำบล/แขวงที่มีคำนำ ("อ.บางนา 10260 สาขา …" — ที่อยู่บนหัวกระดาษที่ไม่มีจังหวัด และมีข้อความต่อท้าย)
+        if (AreaMarkedToken.IsMatch(m.Groups[1].Value)) return true;
+        if (tok.Length == 0)
+        {
+            // "จังหวัด ชลบุรี 20140" ⇒ คำสุดท้ายคือ "ชลบุรี" อยู่แล้ว · "จ. 20140" (ไม่มีชื่อ) ไม่นับ
+            return false;
+        }
+        return tok.StartsWith("กรุงเทพ", StringComparison.Ordinal) || tok.StartsWith("กทม", StringComparison.Ordinal)
+            || Accounting.Services.Implementations.ThaiAddressParser.IsProvinceName(tok);
+    }
+
+    /// <summary>เลขไทย ๐–๙ → 0–9 (ตัวอื่นคงเดิม · ความยาวเท่าเดิม ⇒ ตำแหน่ง match ใช้กับข้อความเดิมได้)</summary>
+    private static string AsciiDigits(string s)
+    {
+        if (s.All(ch => ch is < '๐' or > '๙')) return s;
+        var a = s.ToCharArray();
+        for (var i = 0; i < a.Length; i++)
+            if (a[i] is >= '๐' and <= '๙') a[i] = (char)('0' + (a[i] - '๐'));
+        return new string(a);
     }
 
     /// <summary>
@@ -65,9 +135,9 @@ public static class ContactDataHygiene
     /// </summary>
     public static string? DuplicateKey(string? taxId, string? branchCode)
     {
-        var tax = new string((taxId ?? "").Where(char.IsDigit).ToArray());
+        var tax = ThaiTaxId.Normalize(taxId);   // ASCII ล้วน (เลขไทยแปลงแล้ว — P2-3) · ตัวตัดสินเดียวของ "เลขผู้เสียภาษีเหลือแต่ตัวเลข"
         if (tax.Length != 13) return null;
-        var br = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
+        var br = ThaiTaxId.Normalize(branchCode);
         return tax + "|" + (br.Length == 0 ? TaxBranchCode.HeadOffice : br.PadLeft(5, '0'));
     }
 

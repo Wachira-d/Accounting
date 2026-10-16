@@ -35,32 +35,10 @@ public class PayrollController : ControllerBase
     /// user ที่มี permission Pii.View. คนอื่น ๆ ได้ค่า mask ตาม PiiMask helper.</summary>
     /// <param name="operation">ชนิดการเข้าถึงใน PiiAccessLog — "Read" (ดูบนจอ) / "Export" (ไฟล์ส่งออก · ฝ่ายค้านรอบส่งออก 2026-10-15 P2-11:
     /// เดิมไฟล์ทะเบียนพนักงานบันทึกเป็น "Read" ⇒ ผู้ตรวจ ม.37 แยกการนำข้อมูลออกนอกระบบไม่ได้)</param>
-    private async Task<bool> CanViewPiiAsync(Guid companyId, Guid? subjectEmployeeId = null, string operation = "Read",
+    private Task<bool> CanViewPiiAsync(Guid companyId, Guid? subjectEmployeeId = null, string operation = "Read",
         string purpose = "ดูข้อมูลพนักงานแบบไม่ปกปิด (HR/Payroll)")
-    {
-        var userId = JwtHelper.GetUserIdFromClaims(User);
-        var can = await _permissions.HasPermissionAsync(companyId, userId,
-            Models.Constants.PermissionKeys.PiiView);
-        // ม.37(4) — เปิดดูแบบ raw ต้องมีร่องรอยว่าใครดูของใครเมื่อไร
-        //
-        // ⚠️ doc-comment ของ PermissionKeys.PiiView ระบุข้อนี้ไว้ตั้งแต่ต้นและ
-        // PdpaService.LogPiiAccessAsync ก็เขียนไว้ครบ — แต่**ไม่มี call site เลย
-        // ทั้งเรพ** ⇒ ตารางว่างเปล่าตลอด = ไม่มี control จริง
-        // (doc-comment ที่บอกว่า "ป้องกันแล้วที่ X" เป็นเจตนา ไม่ใช่หลักฐาน)
-        //
-        // log เฉพาะตอน "ได้ดูจริง" — คนที่ถูก mask ไม่ได้เข้าถึง PII จึงไม่ต้องบันทึก
-        if (can)
-        {
-            await _pdpa.LogPiiAccessAsync(companyId, userId,
-                User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "",
-                subjectType: "Employee", subjectId: subjectEmployeeId ?? Guid.Empty,
-                fieldName: subjectEmployeeId.HasValue ? "*" : "* (รายการพนักงาน)",
-                operation: operation, purpose: purpose,
-                ipAddress: HttpContext.Connection.RemoteIpAddress?.ToString(),
-                userAgent: Request.Headers.UserAgent.ToString());
-        }
-        return can;
-    }
+        // ตัวตัดสิน + บันทึก PiiAccessLog อยู่ที่ Helpers/PiiViewGate ตัวเดียว (ใช้ร่วมกับ TaxFilingExportController — ฝ่ายค้าน ภ.ง.ด.1 P1-3)
+        => PiiViewGate.CanViewAsync(_permissions, _pdpa, User, HttpContext, companyId, subjectEmployeeId, operation, purpose);
 
     /// <summary>เงินเดือน (BaseSalary) = ข้อมูลอ่อนไหว payroll — คืน true ถ้า user
     /// มีสิทธิ์ดู. ใช้กับ read ของพนักงานเพื่อ mask ฐานเงินเดือน (แต่ยังคืน row

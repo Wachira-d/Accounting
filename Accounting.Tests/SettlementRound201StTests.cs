@@ -39,13 +39,13 @@ public class SettlementRound201StTests
     }
 
     [Fact]
-    public void ST1_ตัวฟังSaveChanges_ประทับในSaveChangesเดียวกับINSERT_และถอดเมื่อออกจากขอบเขต()
+    public void ST1_ตัวฟังTracked_ประทับตั้งแต่แถวถูกติดตามในขอบเขต_และถอดเมื่อออกจากขอบเขต()
     {
         // เส้นจริงของผู้ลงบัญชีรอบโอน: เปิดขอบเขต → CreatePaymentAsync เพิ่มแถว → SaveChanges · แถวต้องมีเจ้าของ**ก่อน** SaveChanges เริ่ม
         // (ก่อน CaptureAuditEntries และก่อน INSERT) — ตัวฟัง Tracked (ฝ่ายค้าน ST-X2)
         // ⚠️ เดิมเทสต์เพิ่มแถว**ก่อน**เปิดขอบเขตแล้วพึ่งตัวฟัง SavingChanges (ตาข่าย) บนฐานออฟไลน์ — ตั้งแต่ 9f226f15 (ประทับ audit ตอน commit)
         // SaveChanges เปิดธุรกรรม (= เชื่อมต่อฐาน) ก่อน base.SaveChanges ที่ยิง SavingChanges ⇒ ออฟไลน์ไปไม่ถึงตัวฟัง (บนฐานจริงยังถึง) ·
-        // ตาข่ายเส้นนั้นต้องตรวจบน PostgreSQL จริง — ส่งเป็นงานค้าง Db test (UNIT_TEST_TRIAGE.md)
+        // ตาข่ายเส้นนั้นตรวจบน PostgreSQL จริงที่ Db/SettlementPaymentOwnerSaveDbTests (Category=Db · ฝ่ายค้าน ภ.ง.ด.1/Tb P2-10)
         using var db = OfflineDb();
         var inScope = new Payment { CompanyId = Guid.NewGuid(), DocumentId = DocX, PaymentNumber = "PAY-1" };
         using (SettlementPaymentOwner.StampOnSave(db, BatchA, DocX))

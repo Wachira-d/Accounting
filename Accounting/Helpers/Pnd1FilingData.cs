@@ -89,7 +89,28 @@ public static class Pnd1FilingData
                 && d.PayrollRun.Status != PayrollRunFilingScope.Voided)
             .ToListAsync();
         var certs = await LoadPnd1CertsAsync(db, companyId, year, month);
-        return Build(details, certs, annual: false);
+        var result = Build(details, certs, annual: false);
+        var periodNote = PayDateOutsidePeriodNote(result.Rows, year, month);
+        return periodNote == null ? result : result with { Notes = result.Notes.Append(periodNote).ToList() };
+    }
+
+    /// <summary>
+    /// <b>วันที่จ่าย (ช่อง 16) อยู่นอกเดือน/ปีภาษีของไฟล์ (ช่อง 13–14)</b> — คำเตือน · null = ทุกแถวอยู่ในงวด (ฝ่ายค้าน ภ.ง.ด.1 P2-6)
+    ///
+    /// <para>สเปก WHTSVS ช่อง 13 "ต้องบันทึก<b>เดือนที่จ่ายภาษี</b>" และ ภ.ง.ด.1 ยื่นตามเดือนที่จ่ายเงินได้ (ป.รัษฎากร ม.50 หักเมื่อจ่าย ·
+    /// ม.52 นำส่งภายใน 7 วันของเดือนถัดจากเดือนที่จ่าย) แต่ระบบจัดงวดตาม<b>เดือนของรอบเงินเดือน</b> (รอบ ก.ย. ที่จ่าย 1 ต.ค. ⇒ ไฟล์ ก.ย.
+    /// ช่อง 13 = 09 · ช่อง 16 = 01102569) · ไม่ย้ายงวดเอง: การย้ายต้องเปลี่ยนการจัดงวดของหน้านำส่ง/ปฏิทินภาษี/หนี้ 21914 พร้อมกัน
+    /// (ส่งเจ้าของตัดสิน — EXPORT_AUDIT) ⇒ ล้มดังให้ผู้ยื่นเห็นก่อนยื่น</para>
+    /// </summary>
+    internal static string? PayDateOutsidePeriodNote(IEnumerable<Pnd1FileFormat.Row> rows, int year, int month)
+    {
+        var outside = rows.Where(r => r.PayDate.Year != year || r.PayDate.Month != month).ToList();
+        if (outside.Count == 0) return null;
+        var ex = outside[0];
+        return $"⚠️ {outside.Count} รายการวันที่จ่ายเงินได้ (ช่องที่ 16) อยู่นอกเดือนภาษี {month:D2}/{year + 543} ของไฟล์ (ช่องที่ 13–14) — "
+            + $"เช่น {ex.SourceRef ?? ex.FirstName} จ่าย {ex.PayDate:dd/MM}/{ex.PayDate.Year + 543} · "
+            + "ภ.ง.ด.1 ยื่นตามเดือนที่จ่ายเงินได้ (ม.50 · ม.52) แต่ระบบจัดงวดตามเดือนของรอบเงินเดือน — "
+            + "ตรวจกับผู้ทำบัญชีว่ารายการนี้ต้องยื่นในแบบของเดือนที่จ่ายจริงหรือไม่ก่อนยื่น";
     }
 
     /// <summary>ภ.ง.ด.1ก รายปี — หนึ่งแถวต่อผู้มีเงินได้ต่อประเภท/เงื่อนไข (ยอดทั้งปี)</summary>

@@ -1807,8 +1807,8 @@ public partial class DocumentService : IDocumentService
             await _db.SaveChangesAsync();
 
             // นับเข้าโควตาเฉพาะใบที่ "แทนการขาย 1 ครั้ง" — ใบลดหนี้/ใบเสร็จรับชำระ/
-            // เอกสารฝั่งซื้อ/เอกสารที่โมดูลที่พักออกให้ ไม่นับซ้ำ (มิเตอร์ของที่พัก
-            // คือ lodging.stay ที่นับตอนปิดการเข้าพัก — DocumentQuotaPolicy)
+            // เอกสารฝั่งซื้อ ไม่นับซ้ำ · เอกสารที่โมดูลที่พักออกให้: ใบที่กฎหมายบังคับยังนับ
+            // จนกว่าการแปลง stay → 2 หน่วยโควตา (§13.2) จะมีโค้ด — DocumentQuotaPolicy
             if (DocumentQuotaPolicy.Counts(quotaClass))
             {
                 await _subscriptionService.IncrementUsageAsync(companyId, "document");
@@ -4149,7 +4149,7 @@ public partial class DocumentService : IDocumentService
         }
     }
 
-    /// <summary>เอกสารนี้มาจากโมดูลที่พักไหม (ไม่นับโควตาซ้ำ — มิเตอร์คือ lodging.stay)</summary>
+    /// <summary>เอกสารนี้มาจากโมดูลที่พักไหม (ห้ามบล็อก · การนับโควตาตัดสินที่ DocumentQuotaPolicy)</summary>
     private static bool IsLodgingOrigin(string? originModule)
         => string.Equals(originModule, "Lodging", StringComparison.OrdinalIgnoreCase);
 

@@ -148,7 +148,11 @@ public static class Pnd1FileFormat
 
     /// <summary>ค่าของ 20 ช่องตามสเปก — ข้อความล้วน (เท่ากับที่เขียนลง .txt) · ตัดความยาวตามสเปกแล้ว ·
     /// ผู้เขียนแต่ละรูปแบบ (.txt / Excel / CSV / รายงานตรวจทาน) ห้ามจัดค่าเอง</summary>
-    public static string[] Fields(Row r, Filer f)
+    public static string[] Fields(Row r, Filer f) => FieldsCore(r, f, forReview: false);
+
+    /// <param name="forReview">รายงานตรวจทาน (ไม่ใช่ไฟล์นำเข้า) — สาขาที่ลง 4 หลักไม่ได้แสดงเลข 5 หลักเดิมแทนการล้ม
+    /// (ผู้ใช้ต้องใช้รายงานนี้บันทึกแบบด้วยมือ — <see cref="WithholderBranch"/>)</param>
+    private static string[] FieldsCore(Row r, Filer f, bool forReview)
     {
         var addr = AddressParts(r);
         var condition = r.Condition is 1 or 2 or 3 ? r.Condition : 1;
@@ -159,7 +163,7 @@ public static class Pnd1FileFormat
             NormalFiling,                                                     // 1  ลักษณะการยื่นแบบ
             ZeroFillIfEmpty(Digits(f.TaxId), 13),                             // 2  เลขผู้หัก 13 หลัก
             ZeroFillIfEmpty(Digits(f.TaxId10), 10),                           // 3  เลขผู้หัก 10 หลัก (ไม่มี = 0×10)
-            WithholderBranch(f.BranchCode),                                   // 4  สาขาผู้หัก 4 หลัก
+            forReview ? ReviewBranch(f.BranchCode) : WithholderBranch(f.BranchCode), // 4  สาขาผู้หัก 4 หลัก
             ZeroFillIfEmpty(Digits(r.PayeeTaxId), 13),                        // 5  เลขผู้ถูกหัก 13 หลัก
             ZeroFillIfEmpty(Digits(r.PayeeTaxId10), 10),                      // 6  เลขผู้มีเงินได้ 10 หลัก
             Clean(r.Title),                                                   // 7  คำนำหน้า
@@ -179,6 +183,7 @@ public static class Pnd1FileFormat
         };
         for (var i = 0; i < v.Length; i++)
             if (Spec[i].Kind == FieldKind.Character) v[i] = Fit(v[i], Spec[i].Length);
+        if (forReview) v[3] = ReviewBranch(f.BranchCode);   // รายงานตรวจทาน: สาขา 5 หลักห้ามถูกตัดเหลือ 4 (ไม่ใช่ไฟล์นำเข้า)
         return v;
     }
 
@@ -186,10 +191,110 @@ public static class Pnd1FileFormat
     public static string DetailRow(Row r, Filer f) => string.Join("|", Fields(r, f));
 
     /// <summary>ไฟล์ .txt ทั้งฉบับ — รายการล้วน · CRLF ทุกบรรทัด · ทุกประเภทเงินได้อยู่ไฟล์เดียว</summary>
-    public static string BuildText(IEnumerable<Row> rows, Filer f)
+    internal static string BuildText(IEnumerable<Row> rows, Filer f)
     {
         var sb = new StringBuilder();
         foreach (var r in rows) sb.Append(DetailRow(r, f)).Append("\r\n");
+        return sb.ToString();
+    }
+
+    // ─────────────────────────── การเข้ารหัส .txt (UTF-8 · TIS-620) ───────────────────────────
+
+    /// <summary>รูปแบบ .txt แบบ TIS-620 (code page 874) — ค่าที่ <see cref="ParseFormat"/> คืน</summary>
+    public const string Tis620Format = "txt-tis620";
+
+    /// <summary>
+    /// <b>⚠️ การเข้ารหัสที่ WHTSVS อ่านยังไม่ได้ยืนยัน</b> (ฝ่ายค้าน ภ.ง.ด.1 P1-2 · EXPORT_AUDIT): ภาพสเปกไม่ระบุ encoding ·
+    /// บันทึกเดิม (erp-review/2026-09-05/report-C.md) เขียนว่า "ต้อง verify กับ RD — ยังไม่ยืนยัน" ⇒ ระบบออกได้สองแบบ
+    /// (UTF-8 ไม่มี BOM = ค่าตั้งต้นเดิม · TIS-620) และหน้าเว็บแนะนำ <b>ไฟล์ Excel ก่อน</b> (ข้อความในเซลล์ไม่มีเรื่อง encoding)
+    /// จนกว่าเจ้าของจะทดลองนำเข้าจริง · ความยาวช่องนับเป็น<b>ตัวอักษร</b> — TIS-620: ไทย 1 ตัว = 1 ไบต์ (เท่ากันเสมอ) ·
+    /// UTF-8: ไทย 1 ตัว = 3 ไบต์ (<see cref="ByteLengthOverflowFields"/> เตือนถ้า WHTSVS นับเป็นไบต์)
+    /// </summary>
+    public static byte[] EncodeTextUtf8(IEnumerable<Row> rows, Filer f) => new UTF8Encoding(false).GetBytes(BuildText(rows, f));
+
+    /// <summary>.txt แบบ TIS-620 (Windows-874) — อักขระที่เข้ารหัสไม่ได้ (เช่น ภาษาจีน · อีโมจิ · อักษรเน้นเสียงยุโรป) ⇒
+    /// <see cref="BusinessRuleException"/> บอกรายการ/ช่อง/อักขระ (<b>ไม่แทนด้วย "?" เงียบ ๆ</b> = ชื่อผิดในแบบที่ยื่นแล้วแก้ไม่ได้)</summary>
+    public static byte[] EncodeTextTis620(IEnumerable<Row> rows, Filer f)
+    {
+        var enc = Tis620();
+        var sb = new StringBuilder();
+        var n = 0;
+        foreach (var r in rows)
+        {
+            n++;
+            var v = Fields(r, f);
+            for (var i = 0; i < v.Length; i++)
+            {
+                var bad = FirstUnencodable(v[i], enc);
+                if (bad < 0) continue;
+                var pair = char.IsSurrogatePair(v[i], bad);
+                var cp = pair ? char.ConvertToUtf32(v[i], bad) : v[i][bad];
+                var ch = pair ? v[i].Substring(bad, 2) : v[i][bad].ToString();
+                throw new BusinessRuleException(
+                    $"สร้าง PND1.txt แบบ TIS-620 ไม่ได้: รายการที่ {n} ({Clean(r.FirstName)} {Clean(r.LastName)}".TrimEnd()
+                    + (string.IsNullOrWhiteSpace(r.SourceRef) ? "" : $" · อ้างอิง {Clean(r.SourceRef)}")
+                    + $") ช่อง {Spec[i].No}. {Spec[i].Name} มีอักขระ “{ch}” (U+{cp:X4}) ที่ TIS-620 ไม่มี — "
+                    + "แก้ข้อความที่ทะเบียนพนักงาน/ผู้ติดต่อ หรือใช้ไฟล์ Excel นำเข้า / PND1.txt แบบ UTF-8 แทน",
+                    "PND1-TIS620-UNENCODABLE");
+            }
+            sb.Append(string.Join("|", v)).Append("\r\n");
+        }
+        return enc.GetBytes(sb.ToString());
+    }
+
+    /// <summary>ตาราง 874 แบบเข้มงวด (ไม่ best-fit · ไม่แทนด้วย ?) — provider เดียวกับ <see cref="ImportTabularReader"/> (ไม่ RegisterProvider ทั้ง process)</summary>
+    private static Encoding Tis620()
+        => CodePagesEncodingProvider.Instance.GetEncoding(874, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)
+           ?? throw new InvalidOperationException("ไม่มีตารางอักขระ 874 (TIS-620) ในเครื่องนี้");
+
+    /// <summary>ตำแหน่งอักขระแรกที่ <paramref name="enc"/> เข้ารหัสแล้วถอดกลับไม่ได้ตัวเดิม · -1 = เข้ารหัสได้ทั้งหมด</summary>
+    private static int FirstUnencodable(string s, Encoding enc)
+    {
+        if (s.Length == 0) return -1;
+        if (RoundTrips(s, enc)) return -1;
+        for (var i = 0; i < s.Length; i++)
+        {
+            if (char.IsSurrogate(s[i])) return i;
+            if (!RoundTrips(s[i].ToString(), enc)) return i;
+        }
+        return -1;
+    }
+
+    private static bool RoundTrips(string s, Encoding enc)
+    {
+        if (s.Any(ImportTabularReader.Is874Undefined)) return false;
+        try { return enc.GetString(enc.GetBytes(s)) == s; }
+        catch (EncoderFallbackException) { return false; }
+        catch (DecoderFallbackException) { return false; }
+    }
+
+    /// <summary>ช่องข้อความ (เลขช่องตามสเปก) ที่เข้ารหัสด้วย <paramref name="enc"/> แล้ว<b>จำนวนไบต์ไม่เท่าจำนวนตัวอักษร และเกินความยาวสเปก</b> —
+    /// ระบบนับความยาวเป็นตัวอักษร · ถ้า WHTSVS นับเป็นไบต์ ช่องเหล่านี้จะยาวเกิน · TIS-620 คืนว่างเสมอ (1 ตัว = 1 ไบต์)</summary>
+    public static IReadOnlyList<int> ByteLengthOverflowFields(Row r, Filer f, Encoding enc)
+    {
+        var v = Fields(r, f);
+        var over = new List<int>();
+        for (var i = 0; i < v.Length; i++)
+        {
+            if (Spec[i].Kind != FieldKind.Character) continue;
+            int bytes;
+            try { bytes = enc.GetByteCount(v[i]); } catch (EncoderFallbackException) { continue; }
+            if (bytes != v[i].Length && bytes > Spec[i].Length) over.Add(Spec[i].No);
+        }
+        return over;
+    }
+
+    /// <summary>ข้อความ .txt สำหรับ "ดูตัวอย่าง" บนหน้าเว็บ — ค่าเดียวกับไฟล์ทุกช่อง ยกเว้นช่อง 5 ปิดบังเมื่อ <paramref name="maskPayeeTaxId"/>
+    /// (ผู้ดูไม่มีสิทธิ์ Pii.View — P1-3 · เดิมหน้าเว็บดึงไฟล์ยื่นจริงที่มีเลขเต็มมาแสดง)</summary>
+    public static string BuildPreviewText(IEnumerable<Row> rows, Filer f, bool maskPayeeTaxId)
+    {
+        var sb = new StringBuilder();
+        foreach (var r in rows)
+        {
+            var v = Fields(r, f);
+            if (maskPayeeTaxId) v[4] = MaskTaxId(v[4]);
+            sb.Append(string.Join("|", v)).Append("\r\n");
+        }
         return sb.ToString();
     }
 
@@ -201,8 +306,57 @@ public static class Pnd1FileFormat
     {
         var sheet = rows.Select(r => SheetRow(FieldCount, Fields(r, f).Cast<object?>().ToArray())).ToList();
         using var ms = new MemoryStream();
-        MiniExcelLibs.MiniExcel.SaveAs(ms, sheet, printHeader: false, sheetName: ExcelSheetName);
-        return ms.ToArray();
+        MiniExcelLibs.MiniExcel.SaveAs(ms, sheet, printHeader: false, sheetName: ExcelSheetName, configuration: ImportXlsxConfig());
+        return InlineStrings(ms.ToArray());
+    }
+
+    /// <summary>ไฟล์นำเข้า: <b>ไม่ตรึงแถว · ไม่มีตัวกรองอัตโนมัติ · ไม่มีสไตล์ตาราง</b> (ฝ่ายค้าน ภ.ง.ด.1 P2-8 — ค่าตั้งต้นของ MiniExcel
+    /// 1.34.2 เขียน frozen pane ySplit=1 + autoFilter A1:T1 แม้ printHeader=false ⇒ แถวข้อมูลแถวแรกดูเหมือนหัวตาราง และโปรแกรมนำเข้าที่
+    /// อ่าน autoFilter อาจข้ามแถวแรก)</summary>
+    private static MiniExcelLibs.OpenXml.OpenXmlConfiguration ImportXlsxConfig() => new()
+    {
+        AutoFilter = false,
+        FreezeRowCount = 0,
+        FreezeColumnCount = 0,
+        TableStyles = MiniExcelLibs.OpenXml.TableStyles.None,
+    };
+
+    private static readonly Regex StrCell = new(
+        @"<(?<p>(?:\w+:)?)c(?<a>[^>]*?) t=""str""(?<b>[^>]*)><(?:\w+:)?v>(?<v>[^<]*)</(?:\w+:)?v></(?:\w+:)?c>",
+        RegexOptions.Compiled);
+
+    /// <summary>เซลล์ข้อความจาก MiniExcel เป็น <c>t="str"</c> (ในสเปก OOXML = "ผลลัพธ์ข้อความของสูตร") ⇒ แปลงเป็น
+    /// <c>t="inlineStr"</c> + <c>&lt;is&gt;&lt;t&gt;</c> (ข้อความล้วนตามสเปก — โปรแกรมนำเข้าที่เข้มงวดอ่านเป็นข้อความแน่นอน) ·
+    /// ค่าในเซลล์ไม่เปลี่ยน (ข้อความที่ escape แล้วย้ายตรง ๆ) · ไฟล์อื่นใน zip คัดลอกทั้งไบต์</summary>
+    private static byte[] InlineStrings(byte[] xlsx)
+    {
+        using var input = new MemoryStream(xlsx);
+        using var src = new System.IO.Compression.ZipArchive(input, System.IO.Compression.ZipArchiveMode.Read);
+        using var output = new MemoryStream();
+        using (var dst = new System.IO.Compression.ZipArchive(output, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var e in src.Entries)
+            {
+                var ne = dst.CreateEntry(e.FullName, System.IO.Compression.CompressionLevel.Optimal);
+                using var r = e.Open();
+                using var w = ne.Open();
+                if (e.FullName.StartsWith("xl/worksheets/", StringComparison.OrdinalIgnoreCase) && e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                {
+                    using var sr = new StreamReader(r, new UTF8Encoding(false));
+                    var xml = StrCell.Replace(sr.ReadToEnd(), m =>
+                    {
+                        var p = m.Groups["p"].Value;
+                        var v = m.Groups["v"].Value;
+                        var space = v.Length > 0 && (char.IsWhiteSpace(v[0]) || char.IsWhiteSpace(v[^1])) ? " xml:space=\"preserve\"" : "";
+                        return $"<{p}c{m.Groups["a"].Value} t=\"inlineStr\"{m.Groups["b"].Value}><{p}is><{p}t{space}>{v}</{p}t></{p}is></{p}c>";
+                    });
+                    var bytes = new UTF8Encoding(false).GetBytes(xml);
+                    w.Write(bytes, 0, bytes.Length);
+                }
+                else r.CopyTo(w);
+            }
+        }
+        return output.ToArray();
     }
 
     // ─────────────────────────── CSV ───────────────────────────
@@ -253,7 +407,9 @@ public static class Pnd1FileFormat
 
     /// <summary>รายงานตรวจทาน .xlsx — ชีตสรุปยอดต่อประเภท (ตรวจกับหน้าแบบ) + ชีตรายการที่มีหัวคอลัมน์ ·
     /// ค่าในชีตรายการมาจาก <see cref="Fields"/> ตัวเดียวกับไฟล์ยื่น (เงินช่อง 18–19 เป็นตัวเลขให้รวมยอดได้)</summary>
-    public static byte[] BuildReviewXlsx(IEnumerable<Row> rows, Filer f, Header header)
+    /// <param name="maskPayeeTaxId">ปิดบังเลขผู้มีเงินได้ (ช่อง 5) — ผู้ดาวน์โหลดไม่มีสิทธิ์ <c>Pii.View</c> (PDPA ม.26 · CLAUDE.md §J ·
+    /// ฝ่ายค้าน ภ.ง.ด.1 P1-3: รายงานนี้ไม่ใช่ไฟล์ยื่น จึงไม่จำเป็นต้องมีเลขเต็ม — แบบเดียวกับหน้ารายงาน ภ.ง.ด.1 ของหน้าเงินเดือน)</param>
+    public static byte[] BuildReviewXlsx(IEnumerable<Row> rows, Filer f, Header header, bool maskPayeeTaxId = false)
     {
         var list = rows.ToList();
         var headers = ReviewHeaders();
@@ -266,7 +422,7 @@ public static class Pnd1FileFormat
                 + " — รายงานตรวจทาน (มีหัวคอลัมน์ · ไม่ใช่ไฟล์นำเข้า — ไฟล์ยื่นใช้ปุ่ม .txt หรือ Excel)"),
             SheetRow(width, "ผู้มีหน้าที่หักภาษี ณ ที่จ่าย", Clean(header.CompanyName)),
             SheetRow(width, "เลขประจำตัวผู้เสียภาษีอากร", ZeroFillIfEmpty(Digits(f.TaxId), 13)),
-            SheetRow(width, "เลขที่สาขา (4 หลักตามสเปก)", WithholderBranch(f.BranchCode)),
+            SheetRow(width, "เลขที่สาขา (4 หลักตามสเปก)", ReviewBranch(f.BranchCode)),
             SheetRow(width, header.Annual ? "ปีภาษี" : "เดือนที่จ่ายเงินได้", header.PeriodLabel),
             SheetRow(width),
             SheetRow(width, "ประเภทเงินได้ (= รหัสเงินได้ช่อง 15)", "จำนวนราย", "เงินได้ทั้งสิ้น", "ภาษีที่นำส่งทั้งสิ้น"),
@@ -282,7 +438,8 @@ public static class Pnd1FileFormat
         var detail = new List<Dictionary<string, object?>> { SheetRow(width, headers.Cast<object?>().ToArray()) };
         foreach (var r in list)
         {
-            var cells = Fields(r, f).Cast<object?>().ToList();
+            var cells = FieldsCore(r, f, forReview: true).Cast<object?>().ToList();
+            if (maskPayeeTaxId) cells[4] = MaskTaxId(cells[4] as string);
             cells[17] = Money(r.IncomeAmount);
             cells[18] = Money(r.TaxAmount);
             cells.Add(Clean(r.SourceRef));
@@ -305,11 +462,12 @@ public static class Pnd1FileFormat
         return f switch
         {
             "" or "txt" or "text" => "txt",
+            Tis620Format or "tis620" or "tis-620" or "txt874" or "874" or "windows-874" => Tis620Format,
             "csv" => "csv",
             "xlsx" or "excel" => "xlsx",
             "review" => "review",
             _ => throw new BusinessRuleException(
-                $"ไม่รู้จักรูปแบบไฟล์ \"{format}\" — ใช้ได้: txt (นำเข้า WHTSVS) · xlsx (นำเข้า WHTSVS) · csv · review (รายงานตรวจทาน)",
+                $"ไม่รู้จักรูปแบบไฟล์ \"{format}\" — ใช้ได้: xlsx (นำเข้า WHTSVS · แนะนำ) · txt (UTF-8) · txt-tis620 (TIS-620) · csv · review (รายงานตรวจทาน)",
                 "PND1-FORMAT"),
         };
     }
@@ -327,10 +485,42 @@ public static class Pnd1FileFormat
         var five = TaxBranchCode.Normalize(branchCode);
         if (five[0] != '0')
             throw new BusinessRuleException(
-                $"รหัสสาขาผู้หักภาษี {five} มี 5 หลักเต็ม แต่ช่อง \"เลขที่สาขา ผู้มีหน้าที่หัก ณ ที่จ่าย\" ของไฟล์ ภ.ง.ด.1 รับ 4 หลัก — "
-                + "ยื่นด้วยไฟล์นี้ไม่ได้ ติดต่อสรรพากรเรื่องเลขสาขา หรือยื่นในนามสำนักงานใหญ่",
+                $"รหัสสาขาผู้หักภาษี {five} มี 5 หลักเต็ม แต่ช่อง \"เลขที่สาขา ผู้มีหน้าที่หัก ณ ที่จ่าย\" ของไฟล์ ภ.ง.ด.1 (สเปก WHTSVS) รับ 4 หลัก — "
+                + "ระบบไม่ตัดเลขสาขาทิ้งเอง (จะกลายเป็นการยื่นในนามสาขาอื่น) · สอบถามสำนักงานสรรพากรพื้นที่ว่าสาขานี้ยื่นด้วยสื่ออย่างไร "
+                + "แล้วยื่นด้วยการบันทึกแบบที่หน้าเว็บสรรพากร (ใช้ยอดจาก \"รายงานตรวจทาน\") · "
+                + "การยื่นรวมในนามสำนักงานใหญ่แทนสาขาทำได้เฉพาะเมื่อได้รับอนุมัติจากกรมสรรพากรแล้วเท่านั้น",
                 "PND1-BRANCH-4DIGIT");
         return five[1..];
+    }
+
+    /// <summary>ช่อง 4 ของรายงานตรวจทาน — 4 หลักตามสเปกเมื่อลงได้ · สาขา 10000 ขึ้นไปแสดงเลข 5 หลักเดิม (รายงานไม่ใช่ไฟล์นำเข้า ·
+    /// ผู้ใช้ต้องเห็นเลขสาขาจริงเพื่อบันทึกแบบด้วยมือ)</summary>
+    private static string ReviewBranch(string? branchCode)
+    {
+        var five = TaxBranchCode.Normalize(branchCode);
+        return five[0] != '0' ? five : five[1..];
+    }
+
+    /// <summary>เลขผู้มีเงินได้แบบปิดบัง — ตัวปิดบังกลาง <see cref="PiiMask.CitizenId"/> (ตัวเดียวกับหน้ารายงาน ภ.ง.ด.1/ทะเบียนพนักงาน) ·
+    /// เลข 0 ล้วน (= ไม่มีเลข ตามสเปกช่อง *) ไม่ใช่ข้อมูลส่วนบุคคล ⇒ คงไว้ให้ผู้ตรวจเห็นว่าแถวนี้ไม่มีเลข</summary>
+    private static string MaskTaxId(string? digits)
+        => string.IsNullOrEmpty(digits) || digits.All(c => c == '0') ? digits ?? "" : PiiMask.CitizenId(digits) ?? "";
+
+    /// <summary>
+    /// <b>ช่อง 2 (<c>***</c> ต้องถูกต้อง) — ด่านก่อนออกไฟล์นำเข้า</b> (ฝ่ายค้าน ภ.ง.ด.1 P2-4): เลขผู้เสียภาษีของบริษัทว่าง/ไม่ครบ 13 หลัก/
+    /// ไม่ผ่าน checksum ⇒ <see cref="BusinessRuleException"/> พร้อมทางไปต่อ · เดิมเป็นคำเตือนแล้วยังออกไฟล์ (ช่อง 2 = 0000000000000)
+    /// ทั้งที่คำเตือนเองยอมรับว่าสรรพากรไม่รับทั้งไฟล์ · รายงานตรวจทาน (ไม่ใช่ไฟล์ยื่น) ไม่ถูกกั้น — ผู้เรียกเตือนแทน
+    /// </summary>
+    public static void RequireWithholderTaxId(string? companyTaxId, string formName)
+    {
+        if (ThaiTaxId.IsValid(companyTaxId)) return;
+        var shown = ThaiTaxId.Normalize(companyTaxId);
+        throw new BusinessRuleException(
+            $"{formName}: เลขประจำตัวผู้เสียภาษีของบริษัท" + (shown.Length == 0 ? "ยังไม่ได้กรอก" : $" ({shown}) ไม่ครบ 13 หลักหรือไม่ผ่านการตรวจหลักสุดท้าย")
+            + " — ช่องที่ 2 ของไฟล์ (ผู้มีหน้าที่หักภาษี ณ ที่จ่าย) ต้องถูกต้อง ไม่งั้นสรรพากรไม่รับทั้งไฟล์ · "
+            + "ตั้งค่าเลขผู้เสียภาษีบริษัท ที่หน้า ตั้งค่า → ข้อมูลบริษัท (ช่อง \"เลขผู้เสียภาษี 13 หลัก\") แล้วสร้างไฟล์ใหม่ · "
+            + "ระหว่างนี้ดูยอดได้จาก \"รายงานตรวจทาน\"",
+            "PND1-WITHHOLDER-TAXID");
     }
 
     /// <summary>ช่อง 16 — <c>DDMMYYYY</c> ปี พ.ศ. (เช่น 31 ม.ค. 2002 → <c>31012545</c>)</summary>
@@ -420,9 +610,16 @@ public static class Pnd1FileFormat
 
     private static string Fit(string s, int length) => s.Length <= length ? s : s[..length].TrimEnd();
 
-    /// <summary>ตัด pipe/บรรทัดใหม่ — .txt คั่นด้วย pipe ไม่มี quoting</summary>
-    private static string Clean(string? raw) =>
-        (raw ?? "").Replace("|", " ").Replace("\r", " ").Replace("\n", " ").Trim();
+    /// <summary>ตัด pipe + <b>อักขระควบคุมทุกตัว</b> (แท็บ · ขึ้นบรรทัด · C0/C1 · ตัวคั่นบรรทัด/ย่อหน้า U+2028/2029) เป็นช่องว่างทีละตัว —
+    /// .txt คั่นด้วย pipe ไม่มี quoting · ฝ่ายค้าน ภ.ง.ด.1 P2-7: เดิมตัดแค่ <c>|</c> <c>\r</c> <c>\n</c> ⇒ "ใจ\tดี" หลุดเข้าไฟล์ยื่น</summary>
+    private static string Clean(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return "";
+        var a = raw.ToCharArray();
+        for (var i = 0; i < a.Length; i++)
+            if (a[i] == '|' || char.IsControl(a[i]) || a[i] is '\u2028' or '\u2029') a[i] = ' ';
+        return new string(a).Trim();
+    }
 
     private static Dictionary<string, object?> SheetRow(int width, params object?[] cells)
     {

@@ -57,12 +57,27 @@ public class DocumentQuotaPolicyTests
 
     [Theory]
     [InlineData(DocumentType.TaxInvoice)]
+    [InlineData(DocumentType.Invoice)]
     [InlineData(DocumentType.Receipt)]
-    [InlineData(DocumentType.Quotation)]
-    public void เอกสารจากโมดูลที่พัก_ไม่นับโควตาเอกสาร_เพราะมีมิเตอร์การเข้าพักแล้ว(DocumentType type)
+    public void เอกสารจากโมดูลที่พักที่กฎหมายบังคับ_ยังนับโควตาเอกสาร_จนกว่าการแปลงstayเป็น2หน่วยจะมีโค้ด(DocumentType type)
     {
+        // ฝ่ายค้าน ภ.ง.ด.1/Tb P1-1: 058233b5 เปลี่ยนเป็น "ไม่นับ" ตาม LODGING_LICENSING_PLAN §13.2 แต่ §13.2 แทนด้วย 1 stay = 2 หน่วยโควตา
+        // ซึ่งยังไม่มีโค้ด (lodging.stay ราคา 0.0) ⇒ ปริมาณงานที่พักไม่ถูกคิดเงินที่ไหนเลย · คืนพฤติกรรมเดิม (ห้ามแย่ลง) — TODO ในตัวโค้ด
         var e = DocumentQuotaPolicy.Classify(type, isDeposit: false, fromLodging: true);
-        Assert.False(DocumentQuotaPolicy.Counts(e));
+        Assert.Equal(QuotaEnforcement.CountedMustAllow, e);
+        Assert.True(DocumentQuotaPolicy.Counts(e));
+    }
+
+    [Theory]
+    [InlineData(DocumentType.Quotation)]
+    [InlineData(DocumentType.DeliveryNote)]
+    [InlineData(DocumentType.BillingNote)]
+    public void ทิศตรงข้าม_เอกสารจากที่พักที่ไม่ใช่ใบบังคับ_ไม่นับและไม่มีวันถูกบล็อก(DocumentType type)
+    {
+        // ใบเสนอราคาทั่วไปบล็อกได้เมื่อเต็ม แต่ใบที่โมดูลที่พักออกเองห้ามทำให้เช็คอิน/เช็คเอาต์สะดุด
+        var e = DocumentQuotaPolicy.Classify(type, isDeposit: false, fromLodging: true);
+        Assert.Equal(QuotaEnforcement.NotCounted, e);
+        Assert.False(DocumentQuotaPolicy.CanRefuseWhenOverQuota(e));
     }
 
     [Theory]

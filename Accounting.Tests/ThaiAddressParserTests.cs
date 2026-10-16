@@ -94,6 +94,54 @@ public class ThaiAddressParserTests
         Assert.Equal("เมือง", r.District);
     }
 
+    // ── ฝ่ายค้าน ภ.ง.ด.1 P2-1: อำเภอ/เขตที่ไม่มีคำนำ ห้ามถูกต่อเข้าชื่อตำบล (ถดถอยจาก 7084919a) ──
+
+    [Theory]
+    [InlineData("1 แขวงลาดยาว จตุจักร กรุงเทพฯ 10900", "ลาดยาว", "จตุจักร", "กรุงเทพมหานคร", "10900")]
+    [InlineData("5 ต.ช้างเผือก เมือง เชียงใหม่ 50300", "ช้างเผือก", "เมือง", "เชียงใหม่", "50300")]
+    [InlineData("7 ตำบลบางแก้ว บางพลี จ.สมุทรปราการ 10540", "บางแก้ว", "บางพลี", "สมุทรปราการ", "10540")]
+    [InlineData("8 ต.หนองเหียง พนัสนิคม 20140", "หนองเหียง", "พนัสนิคม", null, "20140")]
+    public void อำเภอไม่มีคำนำ_ไม่ถูกต่อเข้าตำบล_และอ่านเป็นอำเภอเมื่อตามด้วยจังหวัดหรือรหัสไปรษณีย์(
+        string addr, string sub, string dist, string? prov, string post)
+    {
+        var p = ThaiAddressParser.Parse(addr);
+        Assert.Equal(sub, p.SubDistrict);
+        Assert.Equal(dist, p.District);
+        Assert.Equal(prov, p.Province);
+        Assert.Equal(post, p.PostalCode);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ไม่เดาอำเภอจากคำที่ไม่ได้อยู่ระหว่างตำบลกับจังหวัด()
+    {
+        // token ถัดจากตำบลเป็นถนน/หมู่ ⇒ ไม่ใช่อำเภอ · ตามด้วยคำอื่นที่ไม่ใช่จังหวัด/รหัสไปรษณีย์ ⇒ ไม่เดา (คงพฤติกรรมก่อน 7084919a = null)
+        Assert.Null(ThaiAddressParser.Parse("1 ต.สุเทพ ถ.ห้วยแก้ว เชียงใหม่ 50200").District);
+        Assert.Null(ThaiAddressParser.Parse("9 ตำบลบ้านเหล่า หมู่ 4 ลำปาง 52000").District);
+        Assert.Null(ThaiAddressParser.Parse("3 แขวงสีลม อาคารเอ ชั้น 5 กรุงเทพฯ 10500").District);
+        // มี marker อำเภอ/เขตอยู่แล้ว ⇒ ใช้ marker ไม่เดาจากคำถัดตำบล
+        var q = ThaiAddressParser.Parse("1 ต.ช้างเผือก หมู่ 2 อ.เมือง จ.เชียงใหม่ 50300");
+        Assert.Equal("เมือง", q.District);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ที่อยู่ที่ไม่ใช่ปัญหาเดิม_ผลไม่เปลี่ยน()
+    {
+        // การแก้ของ 7084919a ที่ดีขึ้นจริงต้องคงอยู่: จังหวัดไม่มี จ. หลังอำเภอ ไม่ถูกกลืนเข้าอำเภอ
+        var p = ThaiAddressParser.Parse("44 หมู่ 9 ตำบลหนองเทียง อำเภอพนัสนิคม ชลบุรี 20140");
+        Assert.Equal(("หนองเทียง", "พนัสนิคม", "ชลบุรี"), (p.SubDistrict, p.District, p.Province));
+        var b = ThaiAddressParser.Parse("123/45 ถนนสุขุมวิท แขวงคลองเตย เขตคลองเตย กรุงเทพฯ 10110");
+        Assert.Equal(("คลองเตย", "คลองเตย", "กรุงเทพมหานคร", "10110"), (b.SubDistrict, b.District, b.Province, b.PostalCode));
+    }
+
+    // ── ฝ่ายค้าน ภ.ง.ด.1 P2-2: รหัสไปรษณีย์ผ่านตัวตัดสินกลาง (ไม่หยิบบ้านเลขที่) ──
+
+    [Theory]
+    [InlineData("บ้านเลขที่ 12345 หมู่ 3 ถนนสุขุมวิท")]
+    [InlineData("เลขที่ 12345 ต.บางพลี อ.บางพลี")]
+    [InlineData("12345/6 ต.บางพลี อ.บางพลี จ.สมุทรปราการ")]
+    public void บ้านเลขที่5หลัก_ไม่ใช่รหัสไปรษณีย์(string addr)
+        => Assert.Null(ThaiAddressParser.Parse(addr).PostalCode);
+
     // ── ขอบเขต fallback ──────────────────────────────────────────────
 
     [Fact]

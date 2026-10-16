@@ -40,8 +40,9 @@
         </div>
         <div class="text-sm text-gray-500" id="previewPND1">กำหนดยื่น: ภายในวันที่ 7 ของเดือนถัดไป (e-Filing ขยายถึงวันที่ 15)</div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1','txt')" title="ไฟล์ PND1.txt ตามสเปก WHTSVS 20 ช่อง คั่นด้วย | ไม่มีแถวหัว">ดาวน์โหลด PND1.txt (นำเข้า WHTSVS)</button>
-          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1','xlsx')" title="Excel นำเข้า WHTSVS — ชีตชื่อ Sheet1 · ไม่มีแถวหัว · 20 คอลัมน์ค่าเดียวกับ .txt">Excel นำเข้า (Sheet1)</button>
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1','xlsx')" title="แนะนำ — Excel นำเข้า WHTSVS ชีตชื่อ Sheet1 · ไม่มีแถวหัว · 20 คอลัมน์ค่าเดียวกับ .txt · ไม่มีปัญหาการเข้ารหัสภาษาไทย">Excel นำเข้า (Sheet1) — แนะนำ</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1','txt')" title="PND1.txt ตามสเปก WHTSVS 20 ช่อง คั่นด้วย | ไม่มีแถวหัว · เข้ารหัส UTF-8 (ยังไม่ได้ยืนยันว่า WHTSVS อ่าน UTF-8)">PND1.txt (UTF-8)</button>
+          <button class="btn btn-outline btn-sm" onclick="Page.download('pnd1','txt-tis620')" title="PND1.txt เข้ารหัส TIS-620 (ไทย 1 ตัว = 1 ไบต์) — ใช้เมื่อนำเข้า .txt UTF-8 แล้วภาษาไทยเพี้ยน · อักขระที่ TIS-620 ไม่มีจะถูกแจ้งพร้อมชื่อรายการ">PND1.txt (TIS-620)</button>
           <button class="btn btn-outline btn-sm" onclick="Page.download('pnd1','csv')" title="CSV 20 ช่องค่าเดียวกับ .txt ไม่มีแถวหัว — สเปก WHTSVS กำหนดเฉพาะ Text/Excel · CSV ใช้นำเข้าโปรแกรมอื่น · เปิดด้วย Excel ตรง ๆ แล้วเลขที่ขึ้นต้นด้วย 0 จะถูกตัด">CSV ⚠️</button>
           <button class="btn btn-outline btn-sm" onclick="Page.download('pnd1','review')" title="มีหัวคอลัมน์ + ชีตสรุปยอดต่อประเภทเงินได้ — สำหรับตรวจทาน ห้ามใช้นำเข้า">รายงานตรวจทาน (มีหัวคอลัมน์)</button>
           <button class="btn btn-outline btn-sm" onclick="Page.preview('PND1')">ดูตัวอย่าง / ยอดหน้าแบบ</button>
@@ -53,7 +54,9 @@
             <li>อนุมัติรอบเงินเดือนของเดือนนั้นก่อน (ไฟล์รับเฉพาะรอบที่อนุมัติ/จ่ายแล้ว)</li>
             <li>กด <b>รายงานตรวจทาน</b> เพื่อตรวจ: ชีต “สรุปยอดหน้าแบบ” = จำนวนราย · เงินได้ · ภาษี ของประเภทเงินได้ (1)–(5) · ชีตรายการมีหัวคอลัมน์ 20 ช่องตามสเปก (ไฟล์นี้<b>ไม่ใช่</b>ไฟล์นำเข้า)</li>
             <li>แก้คำเตือน ⚠️ ในสรุปผลก่อน (เลขประจำตัวผู้เสียภาษี · ชื่อ · รหัสไปรษณีย์ เป็นช่องที่สรรพากรตรวจ) แล้วสร้างไฟล์ใหม่</li>
-            <li>กด <b>PND1.txt</b> หรือ <b>Excel นำเข้า</b> แล้วนำเข้าที่ระบบ WHTSVS ของกรมสรรพากร (ยื่นด้วยสื่อ ภ.ง.ด.1) — ไฟล์เป็นไปตาม “Format กลางโปรแกรมบันทึก(Import)ข้อมูลยื่นด้วยสื่อฯ ภ.ง.ด.1,1ก และ 1ก พิเศษ”</li>
+            <li>กด <b>Excel นำเข้า</b> (แนะนำ) แล้วนำเข้าที่ระบบ WHTSVS ของกรมสรรพากร (ยื่นด้วยสื่อ ภ.ง.ด.1) — ไฟล์เป็นไปตาม “Format กลางโปรแกรมบันทึก(Import)ข้อมูลยื่นด้วยสื่อฯ ภ.ง.ด.1,1ก และ 1ก พิเศษ” · ข้อความในเซลล์ Excel ไม่มีปัญหาการเข้ารหัสภาษาไทย</li>
+            <li>.txt: <b>ยังไม่ได้ยืนยันว่า WHTSVS อ่านภาษาไทยแบบ UTF-8 หรือ TIS-620</b> (สเปกไม่ระบุ) — ใช้ Excel ก่อน · ถ้าจำเป็นต้องใช้ .txt ลอง <b>PND1.txt (UTF-8)</b> ก่อน ถ้าชื่อ/ที่อยู่ภาษาไทยเพี้ยนให้ใช้ <b>PND1.txt (TIS-620)</b> ·
+              ความยาวช่องนับเป็น<b>ตัวอักษร</b> — แบบ TIS-620 ไทย 1 ตัวอักษร = 1 ไบต์ จึงเท่ากันทั้งนับตัวอักษรและนับไบต์ · แบบ UTF-8 ไทย 1 ตัว = 3 ไบต์ (สรุปผลเตือนถ้าช่องใดเกินเมื่อนับเป็นไบต์)</li>
             <li>.txt: ชื่อแฟ้มต้องเป็น <b>PND1.txt</b> — ถ้าเบราว์เซอร์ตั้งชื่อเป็น “PND1 (1).txt” ให้เปลี่ยนกลับก่อนนำเข้า · คั่นด้วย <b>|</b> · ไม่มีแถวหัว · ทุกประเภทเงินได้อยู่ไฟล์เดียว (รหัสเงินได้ช่องที่ 15)</li>
             <li>Excel: ชีตชื่อ <b>Sheet1</b> เท่านั้น · <b>ไม่มีแถวหัว</b> · คอลัมน์ A–T เรียงตามสเปก 20 ช่อง — ห้ามเพิ่มหัวตาราง/ชีตอื่น</li>
             <li>ไฟล์เติมให้ตามสเปก: ลักษณะการยื่น “00” (ยื่นปกติ) · สาขาผู้หัก 4 หลัก (สำนักงานใหญ่ = 0000) · เลข 10 หลักที่ระบบไม่เก็บ = 0000000000 · วันที่จ่าย DDMMYYYY <b>พ.ศ.</b> · อัตราภาษีของเงินเดือนอัตราก้าวหน้า = 0</li>
@@ -153,14 +156,15 @@
         </div>
         <div class="text-sm text-gray-500" id="previewPND1K">กำหนดยื่น: ภายในเดือนกุมภาพันธ์ของปีถัดไป</div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1k','txt')" title="ไฟล์ PND1.txt ตามสเปก WHTSVS (ภ.ง.ด.1ก เดือนภาษี = 00)">ดาวน์โหลด PND1.txt (นำเข้า WHTSVS)</button>
-          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1k','xlsx')" title="Excel นำเข้า WHTSVS — ชีต Sheet1 · ไม่มีแถวหัว">Excel นำเข้า (Sheet1)</button>
+          <button class="btn btn-primary btn-sm" onclick="Page.download('pnd1k','xlsx')" title="แนะนำ — Excel นำเข้า WHTSVS ชีต Sheet1 · ไม่มีแถวหัว · ไม่มีปัญหาการเข้ารหัสภาษาไทย">Excel นำเข้า (Sheet1) — แนะนำ</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.download('pnd1k','txt')" title="PND1.txt ตามสเปก WHTSVS (ภ.ง.ด.1ก เดือนภาษี = 00) · UTF-8 (ยังไม่ได้ยืนยันว่า WHTSVS อ่าน UTF-8)">PND1.txt (UTF-8)</button>
+          <button class="btn btn-outline btn-sm" onclick="Page.download('pnd1k','txt-tis620')" title="PND1.txt เข้ารหัส TIS-620 (ไทย 1 ตัว = 1 ไบต์) — ใช้เมื่อ .txt UTF-8 แสดงภาษาไทยเพี้ยน">PND1.txt (TIS-620)</button>
           <button class="btn btn-outline btn-sm" onclick="Page.download('pnd1k','csv')" title="CSV 20 ช่องค่าเดียวกับ .txt ไม่มีแถวหัว — ใช้นำเข้าโปรแกรมอื่น · เปิดด้วย Excel ตรง ๆ แล้วเลขที่ขึ้นต้นด้วย 0 จะถูกตัด">CSV ⚠️</button>
           <button class="btn btn-outline btn-sm" onclick="Page.download('pnd1k','review')" title="มีหัวคอลัมน์ + สรุปยอดต่อประเภท — สำหรับตรวจทาน ห้ามใช้นำเข้า">รายงานตรวจทาน (มีหัวคอลัมน์)</button>
           <button class="btn btn-outline btn-sm" onclick="Page.preview('PND1K')">ดูตัวอย่าง / ยอดหน้าแบบ</button>
         </div>
         <div class="text-xs" style="margin-top:6px;color:var(--text-secondary)">
-          สเปกเดียวกับ ภ.ง.ด.1 (20 ช่อง · ไม่มีแถวหัว · Excel ชีต Sheet1 · ชื่อแฟ้ม PND1.txt) — ภ.ง.ด.1ก: <b>เดือนภาษี = 00</b> · ยอดทั้งปีต่อราย ·
+          สเปกเดียวกับ ภ.ง.ด.1 (20 ช่อง · ไม่มีแถวหัว · Excel ชีต Sheet1 · ชื่อแฟ้ม PND1.txt · แนะนำ Excel ก่อน — การเข้ารหัส .txt ยังไม่ได้ยืนยัน) — ภ.ง.ด.1ก: <b>เดือนภาษี = 00</b> · ยอดทั้งปีต่อราย ·
           วันที่จ่าย = วันจ่ายครั้งสุดท้ายของปี · ที่อยู่แยกเป็นที่อยู่ 1/2 + รหัสไปรษณีย์
         </div>
       </div>
@@ -276,7 +280,7 @@
         const ext = fmt === 'csv' ? '.csv' : (fmt === 'xlsx' || fmt === 'review' || formCode === 'sso110excel') ? '.xlsx' : '.txt';
         const annual = formCode === 'pnd1k' || formCode === 'pnd51';
         // ภ.ง.ด.1/1ก .txt: สเปก WHTSVS กำหนดชื่อแฟ้ม PND1.txt (ชื่อจริงมาจากเซิร์ฟเวอร์ — นี่คือค่าสำรอง)
-        const pnd1Txt = (formCode === 'pnd1' || formCode === 'pnd1k') && (!fmt || fmt === 'txt');
+        const pnd1Txt = (formCode === 'pnd1' || formCode === 'pnd1k') && (!fmt || fmt === 'txt' || fmt === 'txt-tis620');
         const fallback = pnd1Txt ? 'PND1.txt'
           : `${String(formCode).toUpperCase()}_${year}${annual ? '' : String(month).padStart(2, '0')}${fmt === 'review' ? '_review' : ''}${ext}`;
         try {
@@ -303,8 +307,10 @@
           const res = await api.previewTaxExport(formCode, year, m);
           const d = res.data;
           let text = '(ไฟล์ไม่ใช่ข้อความ — ตรวจสรุปด้านบน แล้วกดดาวน์โหลด)';
+          // ภ.ง.ด.1/1ก: ข้อความตัวอย่างจากเซิร์ฟเวอร์ (เลขผู้มีเงินได้ปิดบังเมื่อไม่มีสิทธิ์ Pii.View) — ไม่ดึงไฟล์ยื่นจริงมาแสดง
+          if (typeof d.previewText === 'string') text = d.previewText || '(ไม่มีรายการ)';
           // เนื้อไฟล์ .txt ผ่านตัวดึงไฟล์กลาง — zip/xlsx ไม่แสดงเนื้อ
-          if (formCode !== 'SSO110X' && formCode !== 'PP30') {
+          else if (formCode !== 'SSO110X' && formCode !== 'PP30') {
             const f = await API.fetchFile(this.fileUrl(formCode, 'txt'), 'preview.txt');
             if (f && /\.txt$/i.test(f.name)) text = await f.blob.text();
             else if (f) text = `(ไฟล์ ${f.name} — กดดาวน์โหลดเพื่อดู)`;
@@ -320,7 +326,7 @@
 
           document.getElementById('previewData').textContent = text;
           const dl = formCode === 'SSO110X' ? 'sso110excel' : formCode.toLowerCase();
-          const fmt = (formCode === 'PND1' || formCode === 'PND1K') ? 'txt' : undefined;
+          const fmt = (formCode === 'PND1' || formCode === 'PND1K') ? 'xlsx' : undefined;   // แนะนำ Excel ก่อน (encoding .txt ยังไม่ยืนยัน)
           document.getElementById('previewDownloadBtn').onclick = () => this.download(dl, fmt);
           Layout.openModal('previewModal');
         } catch (e) { Layout.toast(e.message, 'error', 8000); }

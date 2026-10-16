@@ -31,9 +31,13 @@ public class Pnd1ExportReconcileDbTests
 
     private sealed record Seed(Guid CompanyId, decimal PayrollTax, decimal PayrollIncome, decimal CertTax, decimal CertIncome);
 
-    private static async Task<Seed> SeedAsync(Accounting.Data.AccountingDbContext db, string runStatus)
+    /// <summary>เลขผู้เสียภาษีบริษัทที่ผ่าน mod-11 (ฝ่ายค้าน ภ.ง.ด.1 P2-9: เดิม 0105556000001 ไม่ผ่าน checksum ⇒ เส้นหลักติดคำเตือนผู้ยื่นตลอด
+    /// โดยไม่มีใคร assert — ตอนนี้เลขผิดกั้นไฟล์นำเข้า จึงต้องเป็นเลขถูก)</summary>
+    private const string CompanyTaxId = "0105561012346";
+
+    private static async Task<Seed> SeedAsync(Accounting.Data.AccountingDbContext db, string runStatus, string companyTaxId = CompanyTaxId)
     {
-        var company = new Company { Name = "บริษัททดสอบ ภ.ง.ด.1", TaxId = "0105556000001", BranchCode = "00000" };
+        var company = new Company { Name = "บริษัททดสอบ ภ.ง.ด.1", TaxId = companyTaxId, BranchCode = "00000" };
         db.Companies.Add(company);
         await db.SaveChangesAsync();
         var cid = company.Id;
@@ -145,6 +149,32 @@ public class Pnd1ExportReconcileDbTests
             Assert.Equal(1, cats[3].Count);                    // (4) 40(2) ผู้รับอยู่ในไทย
             Assert.Equal(s.CertTax, cats[3].Tax);
         }
+        // P2-9: เส้นหลัก (เลขบริษัทถูก) ต้องไม่มีคำเตือนผู้ยื่น · วันที่จ่ายอยู่ในเดือนภาษี ⇒ ไม่มีคำเตือนงวด (P2-6)
+        foreach (var r in new[] { txt, csv, xlsx, review })
+        {
+            Assert.DoesNotContain("เลขประจำตัวผู้เสียภาษีของบริษัท", r.Summary);
+            Assert.DoesNotContain("อยู่นอกเดือนภาษี", r.Summary);
+        }
+        // P1-2: .txt UTF-8 บอกว่า encoding ยังไม่ยืนยัน + แนะนำ Excel · TIS-620 ออกได้ ค่าเดียวกันทุกช่อง
+        Assert.Contains("แนะนำให้นำเข้าด้วยไฟล์ Excel", txt.Summary);
+        var tis = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "txt-tis620");
+        Assert.Equal("PND1.txt", tis.FileName);
+        Assert.Contains("windows-874", tis.ContentType);
+        Assert.Equal(System.Text.Encoding.UTF8.GetString(txt.FileData),
+            System.Text.CodePagesEncodingProvider.Instance.GetEncoding(874)!.GetString(tis.FileData));
+        // P1-3: ไม่มีสิทธิ์ Pii.View ⇒ รายงานตรวจทาน + ข้อความดูตัวอย่างปิดบังเลข · ไฟล์นำเข้าเลขเต็มเสมอ
+        var maskedReview = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "review", includePii: false);
+        using (var rms = new MemoryStream(maskedReview.FileData))
+        {
+            var detail = MiniExcelLibs.MiniExcel.Query(rms, useHeaderRow: false, sheetName: Pnd1FileFormat.ReviewRowsSheetName)
+                .Cast<IDictionary<string, object>>().ToList();
+            Assert.Equal("1-XXXX-XXXXX-XX-7", detail[1]["E"]?.ToString());
+        }
+        var maskedPreview = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, includePii: false);
+        Assert.DoesNotContain("1101700001237", maskedPreview.PreviewText);
+        Assert.Contains("1101700001237", System.Text.Encoding.UTF8.GetString(maskedPreview.FileData));
+        Assert.Contains("1101700001237", txt.PreviewText);
+
         // รอบ 2026-10-16 สเปก WHTSVS: ไฟล์เดียว PND1.txt ทุกประเภทเงินได้ (รหัสเงินได้ช่อง 15) — เดิม zip ไฟล์ละประเภท
         Assert.Equal("PND1.txt", txt.FileName);
         Assert.StartsWith("text/plain", txt.ContentType);
@@ -158,7 +188,7 @@ public class Pnd1ExportReconcileDbTests
         var payDate = Pnd1FileFormat.ThaiDate(Period.AddMonths(1).AddDays(-1));
         // E001 — ผู้หัก (ช่อง 1–4) · เงินได้ = TaxableGross 50,000 (ไม่ใช่ Gross 52,000) · วันที่ DDMMYYYY พ.ศ. · คำนำหน้าข้อความไทย
         var e1 = lines[0].Split('|');
-        Assert.Equal(new[] { "00", "0105556000001", "0000000000", "0000", "1101700001237" }, e1.Take(5).ToArray());
+        Assert.Equal(new[] { "00", CompanyTaxId, "0000000000", "0000", "1101700001237" }, e1.Take(5).ToArray());
         Assert.Equal("นาย", e1[6]);
         Assert.Equal("สมชาย", e1[7]);
         Assert.Equal(Period.Month.ToString("00"), e1[12]);
@@ -230,5 +260,26 @@ public class Pnd1ExportReconcileDbTests
         Assert.Equal("PND1-USE-PAYROLL-EXPORT", ef.RuleCode);
         // ไม่มีแถว EFilingExport ค้าง (ไม่บันทึกไฟล์ที่ไม่ได้สร้าง)
         Assert.False(await reqDb.EFilingExports.AnyAsync(x => x.CompanyId == s.CompanyId));
+    }
+
+    [Fact]
+    public async Task ทิศตรงข้าม_เลขผู้เสียภาษีบริษัทผิด_ไฟล์นำเข้าถูกกั้นพร้อมทางไปต่อ_รายงานตรวจทานยังออกได้พร้อมคำเตือน()
+    {
+        // P2-4: เดิมออกไฟล์ได้ (ช่อง 2 = เลขผิด) แล้วเตือนว่า "สรรพากรจะไม่รับทั้งไฟล์" · fixture เดิมของเทสต์นี้คือเลขชุดนี้
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, PayrollRunFilingScope.Paid, companyTaxId: "0105556000001");
+
+        using var reqDb = DbTestDatabase.TryCreateContext()!;
+        var export = new TaxFilingExportService(reqDb, new TaxService(reqDb));
+        foreach (var fmt in new[] { "txt", "txt-tis620", "xlsx", "csv" })
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, fmt));
+            Assert.Equal("PND1-WITHHOLDER-TAXID", ex.RuleCode);
+            Assert.Contains("ตั้งค่า → ข้อมูลบริษัท", ex.Message);
+        }
+        var review = await export.ExportPnd1Async(s.CompanyId, Period.Year, Period.Month, "review");
+        Assert.Equal(4, review.RecordCount);
+        Assert.Contains("เลขประจำตัวผู้เสียภาษีของบริษัท", review.Summary);
     }
 }

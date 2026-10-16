@@ -51,9 +51,25 @@ public static class ThaiTaxId
     /// </summary>
     public const string LooseGroupingPattern = @"(?<!\d[- \t]?)(\d(?:[- \t]?\d){12})(?![- \t]?\d)";
 
-    /// <summary>เหลือเฉพาะตัวเลข — กระดาษพิมพ์เป็น "0-2055-65017-74-1" หรือเว้นวรรค</summary>
+    /// <summary>เหลือเฉพาะตัวเลข <b>ASCII 0–9</b> — กระดาษพิมพ์เป็น "0-2055-65017-74-1" หรือเว้นวรรค ·
+    /// เลขไทย ๐–๙ (และเลขฐานสิบของอักษรอื่นที่ <c>char.IsDigit</c> รับ เช่น เลขเต็มความกว้าง ０–９) ถูกแปลงเป็น ASCII ก่อน
+    /// (ฝ่ายค้าน ภ.ง.ด.1 P2-3: เดิมคงเลขไทยไว้ทั้งตัว ⇒ "๑๑๐๑…" ถูกเขียนลงช่อง 5 ของไฟล์ยื่นเป็นเลขไทย และ checksum คิด
+    /// <c>d[i] - '0'</c> จากรหัสอักขระไทย = ไม่มีวันผ่าน ทั้งที่เลขถูก) · ผู้เรียกทุกตัวได้ ASCII ล้วนเสมอ</summary>
     public static string Normalize(string? s)
-        => string.IsNullOrEmpty(s) ? "" : new string(s.Where(char.IsDigit).ToArray());
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        var sb = new System.Text.StringBuilder(s.Length);
+        foreach (var ch in s)
+        {
+            if (ch is >= '0' and <= '9') sb.Append(ch);
+            else if (char.IsDigit(ch))
+            {
+                var v = System.Globalization.CharUnicodeInfo.GetDecimalDigitValue(ch);
+                if (v is >= 0 and <= 9) sb.Append((char)('0' + v));
+            }
+        }
+        return sb.ToString();
+    }
 
     /// <summary>13 หลักพอดี (ยังไม่ตรวจ checksum)</summary>
     public static bool IsWellFormed(string? s) => Normalize(s).Length == 13;
