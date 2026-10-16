@@ -150,8 +150,19 @@ if ! python3 tools/test_inventory.py --check; then fail=1; fi
 if [ $nodotnet -eq 1 ]; then
   echo "ℹ️  --no-dotnet: ข้าม build/test (job อื่นทำ)"
 elif command -v dotnet >/dev/null 2>&1; then
-  dotnet build Accounting.sln -c Release 2>&1 | tail -20 || fail=1
-  dotnet test Accounting.sln -c Release --no-build 2>&1 | tail -20 || fail=1
+  # ⚠️ ห้ามเขียน `dotnet … | tail -20 || fail=1` — exit code ของ pipeline คือของ `tail` (0 เสมอ) ⇒ build/test แดง
+  # แต่ check_all พิมพ์ "ผ่านทั้งหมด" (เคยเกิดจริง: unit test ล้ม 64 ตัวเงียบ ๆ จนถึง 2026-10-16) · เก็บ exit code ของ dotnet เอง
+  dlog=$(mktemp)
+  dotnet build Accounting.sln -c Release >"$dlog" 2>&1; rc=$?
+  tail -20 "$dlog"
+  if [ $rc -ne 0 ]; then red "❌ dotnet build ล้ม (exit $rc)"; fail=1
+  else
+    dotnet test Accounting.sln -c Release --no-build >"$dlog" 2>&1; rc=$?
+    grep -E '^\s+Failed ' "$dlog" | head -40
+    tail -20 "$dlog"
+    if [ $rc -ne 0 ]; then red "❌ dotnet test ล้ม (exit $rc) — รายชื่อเทสต์ที่ล้มอยู่ข้างบน"; fail=1; fi
+  fi
+  rm -f "$dlog"
 else
   echo "ℹ️  ไม่มี dotnet SDK ในเครื่องนี้ — ยังไม่ได้คอมไพล์ (แจ้งผู้ใช้ rebuild ฝั่งเขา)"
 fi
