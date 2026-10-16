@@ -106,7 +106,8 @@ public class SettlementReview198S5Tests
         Assert.Empty(t.Voidable);
         var warn = Assert.Single(t.Unvoidable);
         Assert.Contains("ยกเลิกในระบบไม่ได้แล้ว", warn);
-        Assert.Contains("Accepted", warn);
+        // 3f4e1ea2 (รอบ 200 V1G): ข้อความเป็นไทยและครอบ e-Tax by Email ที่ประทับเวลาแล้วด้วย — ไม่มีคำ "Accepted" อีก (เทสต์ค้าง)
+        Assert.Contains("ถึงกรมสรรพากรแล้ว", warn);
 
         var (plan, facts) = NewBatch();
         Assert.True(SettlementPostingGate.Evaluate(plan, facts).CanPost);           // ฐาน: ไม่มีของกำพร้า ลงได้

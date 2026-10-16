@@ -41,11 +41,19 @@ public class SettlementRound201StTests
     [Fact]
     public void ST1_ตัวฟังSaveChanges_ประทับในSaveChangesเดียวกับINSERT_และถอดเมื่อออกจากขอบเขต()
     {
+        // เส้นจริงของผู้ลงบัญชีรอบโอน: เปิดขอบเขต → CreatePaymentAsync เพิ่มแถว → SaveChanges · แถวต้องมีเจ้าของ**ก่อน** SaveChanges เริ่ม
+        // (ก่อน CaptureAuditEntries และก่อน INSERT) — ตัวฟัง Tracked (ฝ่ายค้าน ST-X2)
+        // ⚠️ เดิมเทสต์เพิ่มแถว**ก่อน**เปิดขอบเขตแล้วพึ่งตัวฟัง SavingChanges (ตาข่าย) บนฐานออฟไลน์ — ตั้งแต่ 9f226f15 (ประทับ audit ตอน commit)
+        // SaveChanges เปิดธุรกรรม (= เชื่อมต่อฐาน) ก่อน base.SaveChanges ที่ยิง SavingChanges ⇒ ออฟไลน์ไปไม่ถึงตัวฟัง (บนฐานจริงยังถึง) ·
+        // ตาข่ายเส้นนั้นต้องตรวจบน PostgreSQL จริง — ส่งเป็นงานค้าง Db test (UNIT_TEST_TRIAGE.md)
         using var db = OfflineDb();
         var inScope = new Payment { CompanyId = Guid.NewGuid(), DocumentId = DocX, PaymentNumber = "PAY-1" };
-        db.Payments.Add(inScope);
         using (SettlementPaymentOwner.StampOnSave(db, BatchA, DocX))
-            Assert.ThrowsAny<Exception>(() => db.SaveChanges());   // ไม่มีฐานข้อมูล — ตัวฟังทำงานก่อนเปิดการเชื่อมต่อ
+        {
+            db.Payments.Add(inScope);
+            Assert.Equal(BatchA, inScope.SettlementBatchId);          // มีเจ้าของตั้งแต่ถูกติดตาม — ก่อน SaveChanges
+            Assert.ThrowsAny<Exception>(() => db.SaveChanges());     // ไม่มีฐานข้อมูล
+        }
         Assert.Equal(BatchA, inScope.SettlementBatchId);
 
         // ทิศตรงข้าม: นอกขอบเขต (เส้นรับชำระทั่วไป) ไม่มีใครประทับ แม้ใบเดียวกัน
@@ -509,7 +517,9 @@ public class SettlementRound201StTests
             SettlementLineMakers.RolesOf(other, new (string?, string?)[] { (me.ToString(), null) }, me));
         Assert.Equal(new[] { "ผู้ตัดสินการจับคู่/จัดประเภทบรรทัด" },
             SettlementLineMakers.RolesOf(other, new (string?, string?)[] { (other, me.ToString().ToUpperInvariant()) }, me));
-        Assert.Contains("ไม่รู้ผู้สร้างรอบโอน (ระบบบล็อกไว้ก่อน)", SettlementLineMakers.RolesOf(null, Array.Empty<(string?, string?)>(), me));
+        // ข้อความในโค้ด (d0b19cf7 · เขียนพร้อมเทสต์คนละถ้อยคำ ⇒ ไม่เคยเขียว) บอกตรงกว่า: ระบบยืนยันไม่ได้ว่าผู้ลงบัญชีไม่ใช่ผู้สร้าง
+        Assert.Contains("ผู้ที่ระบบยืนยันไม่ได้ว่าไม่ใช่ผู้สร้าง (รอบโอนไม่มีชื่อผู้สร้าง)", SettlementLineMakers.RolesOf(null, Array.Empty<(string?, string?)>(), me));
+        Assert.Contains("ผู้ที่ระบบยืนยันไม่ได้ว่าไม่ใช่ผู้สร้าง (รอบโอนไม่มีชื่อผู้สร้าง)", SettlementLineMakers.RolesOf("  ", Array.Empty<(string?, string?)>(), me));
 
         var plan = SodPlan();
         var issue = Assert.Single(SettlementPostingGate.Evaluate(plan, SodFacts(plan) with

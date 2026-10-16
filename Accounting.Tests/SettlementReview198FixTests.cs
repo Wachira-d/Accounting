@@ -287,13 +287,18 @@ public class SettlementReview198FixTests
 
     // ═════════════ C-4/C-5: การรับชำระค้าง · ความครบก่อนประทับ Posted ═════════════
 
+    // ค่าคงที่ — ลายนิ้วมือแผน (SettlementPlanFingerprint) รวมบัญชีธนาคาร/คู่ค้า ⇒ fixture ที่สุ่ม Guid ทุกครั้งทำให้ "แผนเดิม" ได้ลายนิ้วมือ
+    // ไม่เท่ากันเอง (C1c ไม่เคยเขียวตั้งแต่ 60db75ee ที่เพิ่ม bank= เข้าลายนิ้วมือพร้อมเทสต์)
+    private static readonly Guid PlanBank = Guid.Parse("b0000000-0000-0000-0000-000000000198");
+    private static readonly Guid PlanCounterparty = Guid.Parse("c0000000-0000-0000-0000-000000000198");
+
     private static SettlementPostingPlan PlanWithReceiptAndSummary()
     {
-        var batch = new SettlementBatch { CompanyId = Co, PayoutRef = "PO-001", PayoutDate = Day, NetPayout = 1963m, BankAccountId = Guid.NewGuid() };
+        var batch = new SettlementBatch { CompanyId = Co, PayoutRef = "PO-001", PayoutDate = Day, NetPayout = 1963m, BankAccountId = PlanBank };
         var channel = new SettlementChannel
         {
             CompanyId = Co, Kind = SettlementChannelKind.Marketplace, DisplayName = "Shopee", ClearingAccountId = Clearing,
-            CounterpartyContactId = Guid.NewGuid(),
+            CounterpartyContactId = PlanCounterparty,
         };
         var lines = new[]
         {

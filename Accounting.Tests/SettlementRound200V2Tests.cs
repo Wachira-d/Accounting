@@ -101,7 +101,8 @@ public class SettlementRound200V2Tests
         var hard = Assert.Single(t.Unvoidable);
         Assert.Contains("PV-0009", hard);
         Assert.Contains("ใบลดหนี้ CN-0009", hard);
-        Assert.Contains("Accepted", hard);
+        // 3f4e1ea2 (รอบ 200 V1G): ข้อความเป็นไทยและครอบ e-Tax by Email ที่ประทับเวลาแล้วด้วย — ไม่มีคำ "Accepted" อีก (เทสต์ค้าง)
+        Assert.Contains("ถึงกรมสรรพากรแล้ว", hard);
         var item = Assert.Single(t.Items!);
         Assert.Equal(SettlementOrphanPile.Unvoidable, item.Pile);
         Assert.True(item.CanAcknowledge);

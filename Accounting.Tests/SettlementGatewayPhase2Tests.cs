@@ -61,7 +61,9 @@ public class SettlementGatewayPhase2Tests
         // ค่าธรรมเนียมก่อน VAT 39.06 + VAT 2.73 · 18.25 + 1.28 ⇒ ถูกหัก 61.32 · เดิม adapter ใส่ -57.31 (ก่อน VAT) ⇒ ต่าง 4.01 ทุกรอบ
         var snaps = new[] { Fresh(1070m, 39.06m), Fresh(500m, 18.25m) };
         var rows = PaymentIntentAdapter.BuildRows(snaps, GatewayFeeVatMode.AddedOnTop);
-        var fees = rows.Rows.Where(r => r.ExplicitType == SettlementLineType.PaymentFee).ToList();
+        // เรียงตามยอดก่อนเทียบ — BuildRows ไม่การันตีลำดับระหว่าง intent (Fresh() สุ่ม Id ⇒ เดิมเทสต์ล้มสุ่มตามลำดับ Guid ·
+        // ยอด/VAT ยังจับคู่กันทีละแถวเหมือนเดิม)
+        var fees = rows.Rows.Where(r => r.ExplicitType == SettlementLineType.PaymentFee).OrderBy(r => r.Amount).ToList();
         Assert.Equal(new[] { -41.79m, -19.53m }, fees.Select(r => r.Amount));
         Assert.Equal(new decimal?[] { -2.73m, -1.28m }, fees.Select(r => r.VatAmount));
 
