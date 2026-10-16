@@ -595,6 +595,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ตัดสินไม่ได้/บรรทัดขาด = `[Σ-GAP]` ให้คนดู. เดิมเทียบผิดฝั่ง ⇒ ใบมีส่วนลด
     ถูกตีเป็น "ราคารวม VAT" แล้ว**แต่งบรรทัด "ค่าขนส่ง/บริการอื่น"** ที่ไม่มีบน
     กระดาษ · ส่วนลดถูกคิดเทียบยอดรวมแล้วบวก VAT ซ้ำ (เอกสาร ≠ กระดาษ)
+- **ข้อความ PDF (text-layer) ตามพิกัด (ทีม OCR 10 · 2026-10-16)**: `PdfTextLayerExtractor` ประกอบข้อความทุกหน้าด้วย `Helpers/PdfPositionalText`
+  (แถวตามเส้นฐาน · ซ้าย→ขวา · ช่องตาราง/ป้าย-ค่าคั่นสองช่องว่าง · glyph ตัวหนาที่วาดซ้ำถูกตัด · PUA ไทยผ่าน `ThaiTextNormalizer.MapThaiPua` · ไอคอนฟอนต์ทิ้ง ·
+  สระอำ) แทน PdfPig `page.Text` (ลำดับ stream — บิล กฟภ. ยอดติดกัน "1,356.7120,738.21" · ป้ายกับค่าสลับ) · ประกอบไม่ได้ ⇒ `page.Text` เดิม ·
+  ผู้ใช้: Tier 0 (ข้อความหน้า PDF ของ e-Tax ไว้หาการปรับตอนชำระ) + Tier 3 hybrid · ไม่มี hash บนข้อความ · ตารางคั่นสองช่องว่าง ⇒ `RawTextLineSplitter.TableRows`
+  (ทาง `TrySplitLineItemsAsync` เมื่อไม่มีโมเดล · ผ่าน `OcrLineSplitGuard` เหมือนเดิม · ไม่มีคอลัมน์ราคา ⇒ ราคาว่าง ให้ `OcrLineQuantityGuard` ตัดสิน) ·
+  ตัวอ่านหัวใบที่แก้ตาม: ผู้ออกบิลหน่วยงานรัฐบนหัวกระดาษ · เลข/สาขาผู้ซื้อเมื่อรู้เลขผู้ขาย (`BranchCodeExtractor.OnTaxIdLine`) · ป้ายหัก ณ ที่จ่ายที่พิมพ์ 0.00 =
+  ไม่หัก (`PaperWhtReader.PrintedZero`) · `VendorAddressRegex` ไม่ backtrack O(n⁴) (เดิมค้างบนข้อความบรรทัดเดียว + ตัวคั่น Tesseract) · `OcrExtractionVersion` 10 ·
+  Last verified `commit e6ee9a10`
 - **แหล่งเงิน (Cr) auto-fill — 3 ชั้น priority** (`OcrService.cs` credit auto-fill
   + `ResolvePaymentSourceOverrideAsync`): สำหรับ PV/Receipt/Expense จ่ายสด —
   (1) partner metadata top-level `paymentAccountCode`/`bankCode`/`bankAccountCode`
@@ -5950,3 +5958,6 @@ _Last verified against codebase: 2026-10-16 (DECISIONS 153a + Makro 2/2 สแ�
 คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 9809b71b)_
 
 _Last verified against codebase: 2026-10-16 (ทีม W1b ภ.ง.ด.1 เทียบสเปก WHTSVS — §5.3: ไฟล์ ภ.ง.ด.1/1ก เปลี่ยนจาก 10 ช่องตามใบแนบกระดาษเป็น 20 ช่องตาม "Format กลางโปรแกรมบันทึก(Import)ข้อมูลยื่นด้วยสื่อฯ ภ.ง.ด.1,1ก และ 1ก พิเศษ" (ภาพสเปกจากเจ้าของ) · `PND1.txt` ไฟล์เดียว (เลิก zip ต่อประเภท) · Excel `Sheet1` ไม่มีหัว · CSV ไม่มีหัว · ปุ่มใหม่ "รายงานตรวจทาน (มีหัวคอลัมน์)" · ภ.ง.ด.1ก เดือนภาษี `00` · ที่อยู่แยก 2 บรรทัด + รหัสไปรษณีย์ · ผู้รับนิติบุคคลชื่อเต็มช่องชื่อ — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (Db test ไม่มี PostgreSQL ในเครื่อง ⇒ ข้าม · หลักฐานอยู่ที่ job db-test) — commit c597b86b + bffcb834 + fccab086 + 6592f328)_
+_Last verified against codebase: 2026-10-16 (ทีม OCR 10 · ข้อความ PDF ตามพิกัด — §2.2 OCR: `PdfTextLayerExtractor` → `Helpers/PdfPositionalText` แทน page.Text ·
+ตัวอ่านหัวใบ/ตาราง/หัก ณ ที่จ่ายที่แก้ตาม · `OcrExtractionVersion` 10 — เทสต์ `PdfPositionalTextTests` · `OcrPdfTextPathTests` · `OcrReplayLineGoldenTests` —
+คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit e6ee9a10)_

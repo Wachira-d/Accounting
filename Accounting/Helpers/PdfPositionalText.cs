@@ -147,7 +147,7 @@ public static class PdfPositionalText
 
     /// <summary>แปลงข้อความ glyph เป็น Unicode ปกติ — PUA วรรณยุกต์/สระของฟอนต์ไทย (ตารางเดียว <see cref="ThaiTextNormalizer.MapThaiPua"/>) ·
     /// PUA อื่น (ไอคอนฟอนต์ เช่น โทรศัพท์/ลูกโลกของใบพรามี่) ไม่ใช่ข้อความ ⇒ ตัดทิ้ง</summary>
-    public static string NormalizeGlyphText(string? text)
+    internal static string NormalizeGlyphText(string? text)
     {
         if (string.IsNullOrEmpty(text)) return "";
         var mapped = ThaiTextNormalizer.MapThaiPua(text);
@@ -157,9 +157,9 @@ public static class PdfPositionalText
     }
 
     /// <summary>นิคหิต+สระอา (U+0E4D U+0E32) ⇒ สระอำ (U+0E33) — ตาเห็นตัวเดียวกัน · NFC ไม่รวมให้</summary>
-    public static string ComposeSaraAm(string text) => text.Replace("ํา", "ำ", StringComparison.Ordinal);
+    private static string ComposeSaraAm(string text) => text.Replace("\u0E4D\u0E32", "\u0E33", StringComparison.Ordinal);
 
-    private static bool IsPrivateUse(char ch) => ch >= '' && ch <= '';
+    private static bool IsPrivateUse(char ch) => ch >= '\uE000' && ch <= '\uF8FF';
 
     private static bool Usable(PdfGlyph g)
         => !string.IsNullOrEmpty(g.Text) && g.Size > 0 && double.IsFinite(g.Left) && double.IsFinite(g.Right) && double.IsFinite(g.Baseline);

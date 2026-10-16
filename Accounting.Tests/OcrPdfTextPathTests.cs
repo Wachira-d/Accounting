@@ -99,7 +99,7 @@ public class OcrPdfTextPathTests
         Assert.Equal(67.84m, data.VatAmount);
         Assert.Equal(1037.00m, data.TotalAmount);
         Assert.Equal("0105567070534", data.VendorTaxId);
-        Assert.Equal("00000", data.VendorBranchCode);          // เดิมว่าง ("สํานักงานใหญ" ไม่ตรงคำค้น)
+        Assert.Equal("00000", data.VendorBranchCode);          // เดิมว่าง ("สํานักงานใหญ\uF70A" ไม่ตรงคำค้น)
         Assert.Equal("00000", data.BuyerBranchCode);
         // "จำนวนเงินที่ถูกหัก ณ ที่จ่าย 0.00 บาท" — ป้ายอ่านได้แล้ว (PUA แปลงแล้ว) แต่ยอดศูนย์ ⇒ ไม่ติ๊กหัก ณ ที่จ่าย (ทิศที่ห้ามแย่ลง)
         Assert.False(data.HasWht);

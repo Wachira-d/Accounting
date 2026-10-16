@@ -23,7 +23,7 @@ public class PdfPositionalTextTests
         {
             var s = ch.ToString();
             var mark = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.NonSpacingMark
-                       || (ch >= '' && ch <= '');
+                       || (ch >= '\uF700' && ch <= '\uF71A');
             var w = mark ? 0 : 0.5 * size;
             yield return new PdfGlyph(s, x, x + w, y, size);
             x += w;
@@ -80,11 +80,11 @@ public class PdfPositionalTextTests
     [Fact]
     public void วรรณยุกต์PUA_แปลงเป็นอักขระไทย_ไอคอนฟอนต์ทิ้ง_นิคหิตสระอารวมเป็นสระอำ()
     {
-        // พรามี่: "แผน" (ไม้เอก PUA) · "จํากัด" (นิคหิต + สระอา) · ไอคอนโทรศัพท์  หน้าเบอร์
-        var glyphs = Run("แผน", 10, 100).Concat(Run("จํากัด", 60, 100)).Concat(Run("", 10, 80)).Concat(Run("085-914-8140", 16, 80)).ToList();
+        // พรามี่: "แผ\uF70Aน" (ไม้เอก PUA) · "จํากัด" (นิคหิต + สระอา) · ไอคอนโทรศัพท์ \uF879 หน้าเบอร์
+        var glyphs = Run("แผ\uF70Aน", 10, 100).Concat(Run("จํากัด", 60, 100)).Concat(Run("\uF879", 10, 80)).Concat(Run("085-914-8140", 16, 80)).ToList();
         Assert.Equal("แผ่น  จำกัด\n085-914-8140", PdfPositionalText.Build(glyphs));
-        Assert.Equal("ส่วนลด", PdfPositionalText.NormalizeGlyphText("สวนลด"));
-        Assert.Equal("", PdfPositionalText.NormalizeGlyphText(""));
+        Assert.Equal("ส่วนลด", PdfPositionalText.NormalizeGlyphText("ส\uF70Aวนลด"));
+        Assert.Equal("", PdfPositionalText.NormalizeGlyphText("\uF0AC"));
         Assert.Equal("✉", PdfPositionalText.NormalizeGlyphText("✉"));   // อักขระ Unicode จริง (ไม่ใช่ PUA) คงไว้
     }
 

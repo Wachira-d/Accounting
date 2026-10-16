@@ -140,7 +140,7 @@ public static class RawTextLineSplitter
     /// <para><b>ไม่ตัดสินเงิน</b>: ไม่หาร ยอด ÷ จำนวน · ไม่อ่านคอลัมน์ส่วนลด/อัตรา VAT (ส่วนลดบนแถวเป็นหน้าที่ของ <see cref="OcrLineQuantityGuard"/> ตัวเดียว) ·
     /// ผลยังต้องผ่าน <see cref="OcrLineSplitGuard"/> (Σ = ยอดบนกระดาษ) เหมือนคำตอบโมเดล</para>
     /// </summary>
-    public static List<Candidate> TableRows(string? rawText)
+    internal static List<Candidate> TableRows(string? rawText)
     {
         var result = new List<Candidate>();
         if (string.IsNullOrWhiteSpace(rawText)) return result;

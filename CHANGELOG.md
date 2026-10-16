@@ -5198,3 +5198,13 @@ _ทีม OCR 11 (2026-10-16 · ฝ่ายค้าน OCR 9 bbf596e9..5a5813
 เกินเพดานคงจำนวน ราคาปัด ไม่แต่งส่วนลด (บล็อก · รันซ้ำไม่หารจำนวนใหม่) · **P2-3** `DescriptionForMatching` ตัดเฉพาะเครื่องหมายของตัวกัน (`LumpSumSuffix` — สมมาตรกับตัวเขียน +
 ย้อนหลังรุ่น 6–8 แบบแคบ) ⇒ "Flash Drive (64 GB)" ไม่ถูกตัด · `OcrExtractionVersion` 8 → 9 · replay corpus 1,010 แถว เปลี่ยน 0 · เทสต์ `OcrQuantityGuardOcr11Tests` · `OcrLumpSumRepairTests` ·
 `Db/OcrLumpSumRepairDbTests` · ล็อกจุดเรียก +11 กติกา + 7 เคสฝ่ายค้าน (G11a–G11g · G11g รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (รวม Db บน PostgreSQL 16) — commit 02c30a2a_
+
+_ทีม OCR 10 (2026-10-16 · ข้อความ PDF ตามพิกัด — บิลค่าไฟจริง กฟภ. XH0712609004157 + ใบพรามี่ RE-20261000111): `PdfTextLayerExtractor` ประกอบข้อความทุกหน้าด้วย
+`Helpers/PdfPositionalText` (แถวตามเส้นฐาน · ซ้าย→ขวา · ช่องคั่นสองช่องว่าง · ตัด glyph ตัวหนาที่วาดซ้ำ · PUA ไทยผ่าน `ThaiTextNormalizer.MapThaiPua` · สระอำ) แทน
+PdfPig `page.Text` (ลำดับ stream) · ประกอบไม่ได้ ⇒ page.Text · ตัวอ่านที่แก้ตาม (เจ้าของละตัว): `VendorAddressRegex` ไม่ backtrack O(n⁴) (เดิม `ParseThaiDocument` ค้างบนข้อความ
+บรรทัดเดียว + ตัวคั่น Tesseract) · ผู้ออกบิลหน่วยงานรัฐบนหัวกระดาษ · เลขผู้ซื้อเมื่อรู้เลขผู้ขาย (ป้ายเลขผู้เสียภาษีหน้าเลขบนบรรทัดเดียวกัน) · สาขาบนบรรทัดเลขผู้เสียภาษี
+(`BranchCodeExtractor.OnTaxIdLine` + ป้าย "สาขา (Branch No.)") · "ห้างหุ้นส่วนจำกัด X" ไม่ต่อ "จำกัด" ซ้ำ · หัก ณ ที่จ่ายที่พิมพ์ 0.00 = ไม่หัก (`PaperWhtReader.PrintedZero`
++ `Read` ไม่หยิบบรรทัดถัดไป) · ตารางคั่นสองช่องว่าง `RawTextLineSplitter.TableRows` (หัวผ่าน `OcrTableColumnMapper` + "คำอธิบาย") · ผล: กฟภ. 19,381.50/1,356.71/20,738.21 ·
+XH0712609004157 · การไฟฟ้าส่วนภูมิภาค 0994000165501/00000 · ผู้ซื้อ 0203562005871/00000 · `OcrTotalAnchor` Confirmed · 1 × 19,381.50 · พรามี่ 1 × 1,330 − 293 = 1,037 · ไม่ติ๊กหัก ·
+Corpus ใบเดิม 42 ใบ 0 แถวเปลี่ยน + 2 ใบ `*-positional` · `OcrExtractionVersion` 9 → 10 (รุ่น 9 = ทีม OCR 11) · เทสต์ `PdfPositionalTextTests` · `OcrPdfTextPathTests` · `OcrReplayLineGoldenTests` ·
+ล็อกจุดเรียก +11 กติกา + 5 เคส (PP1–PP5 · PP5 รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit e6ee9a10_
