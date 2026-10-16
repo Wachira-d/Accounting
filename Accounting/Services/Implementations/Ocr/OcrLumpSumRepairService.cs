@@ -94,21 +94,39 @@ public sealed class OcrLumpSumRepairService
     /// อ่านหมายเหตุของทุกสแกนที่สร้างเอกสารนี้ (<c>CreatedDocumentId</c> · กรอง <c>CompanyId</c>) แล้วถามตัวตัดสินเดียว
     /// <see cref="OcrPostingReadiness.EvaluateHumanApproval"/> บนบรรทัดเอกสาร<b>ตอนนี้</b> · ไม่ใช่เอกสารจากสแกน/สแกนไม่มีหมายเหตุที่บล็อก ⇒ null (อนุมัติตามเดิม)
     /// </summary>
+    /// <remarks>ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-a · CLAUDE #4 A "เอกสารลูกต้องสืบทอด"): ด่านเดิมผูกกับลิงก์ <c>CreatedDocumentId</c> อย่างเดียว ⇒ คัดลอก draft ที่ถูกบล็อก
+    /// (<c>DocumentCloneController</c> ก๊อป <c>DiscountAmount</c>) · แปลงจาก draft OCR · รายการเกิดซ้ำที่ก๊อปบรรทัด ⇒ ใบลูกไม่มีลิงก์สแกน ⇒ อนุมัติได้ และ "ส่วนลด" ที่เป็นเศษปัดพิมพ์ออก
+    /// เป็นส่วนลดจริง · <b>ทางที่เลือก = บล็อกตามค่า (carry by value)</b> ไม่ใช่สืบทอดธงทีละเส้น: บรรทัดที่มีรูปค่าที่ระบบตั้ง (<see cref="OcrLineQuantityGuard.MayCarryHumanBlock"/>)
+    /// ⇒ ค้นหมายเหตุบล็อกของสแกนบริษัทนี้ทุกใบ แล้วนับเฉพาะบรรทัดที่ตรงร่องรอย + ยอดของหมายเหตุ — ครอบทุกเส้นที่ก๊อปค่า (5 เส้นอนุพันธ์ + API + JSON รายการเกิดซ้ำ)
+    /// โดยไม่ต้องมีคอลัมน์ใหม่/โค้ดสืบทอดในแต่ละเส้น (defect class "เส้นอนุพันธ์ลืมสืบทอด") · ปลดด้วยเงื่อนไขเดียวกัน (แก้บรรทัดในใบลูก) ·
+    /// ใบทั่วไปไม่ผ่านตัวกรอง ⇒ ไม่มี query เพิ่ม</remarks>
     public static async Task<string?> ApprovalBlockAsync(AccountingDbContext db, Guid companyId, Document doc, CancellationToken ct = default)
     {
         var m0 = OcrPostingReadiness.HumanApprovalBlockingMarkers[0].Marker;
         var m1 = OcrPostingReadiness.HumanApprovalBlockingMarkers[1].Marker;
+        var live = doc.Lines.Where(l => !l.IsDeleted).ToList();
+        var lines = live
+            .Select(l => new OcrLiveLine(l.Quantity, l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount, l.VatRate) { Description = l.Description, Unit = l.Unit })
+            .ToList();
         var notes = await db.OcrScanResults.AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id && r.ProcessingNotes != null
                 && (r.ProcessingNotes.Contains(m0) || r.ProcessingNotes.Contains(m1)))
-            .Select(r => r.ProcessingNotes)
+            .Select(r => new { r.ProcessingNotes, r.ExtractedVendorTaxId, r.ExtractedVendorName })
             .ToListAsync(ct);
-        if (notes.Count == 0) return null;
-        var lines = doc.Lines.Where(l => !l.IsDeleted)
-            .Select(l => new OcrLiveLine(l.Quantity, l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount, l.VatRate) { Description = l.Description })
-            .ToList();
         foreach (var n in notes)
-            if (OcrPostingReadiness.EvaluateHumanApproval(n, lines) is { CanAutoApprove: false } v) return v.Reason;
+            if (OcrPostingReadiness.EvaluateHumanApproval(n.ProcessingNotes, lines, OcrUtilityVendor.KindOf(n.ExtractedVendorTaxId, n.ExtractedVendorName))
+                    is { CanAutoApprove: false } v) return v.Reason;
+
+        // ── เอกสารลูก: ค่าที่ระบบตั้งมากับบรรทัด (ไม่มีลิงก์สแกน) ──
+        if (!live.Any(l => OcrLineQuantityGuard.MayCarryHumanBlock(l.Quantity, l.UnitPrice, l.DiscountAmount, l.Amount, l.Description, l.Unit))) return null;
+        var carried = await db.OcrScanResults.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && (r.CreatedDocumentId == null || r.CreatedDocumentId != doc.Id) && r.ProcessingNotes != null
+                && (r.ProcessingNotes.Contains(m0) || r.ProcessingNotes.Contains(m1)))
+            .Select(r => new { r.ProcessingNotes, r.ExtractedVendorTaxId, r.ExtractedVendorName })
+            .ToListAsync(ct);
+        foreach (var n in carried)
+            if (OcrPostingReadiness.EvaluateHumanApproval(n.ProcessingNotes, lines, OcrUtilityVendor.KindOf(n.ExtractedVendorTaxId, n.ExtractedVendorName), carried: true)
+                    is { CanAutoApprove: false } v) return v.Reason;
         return null;
     }
 

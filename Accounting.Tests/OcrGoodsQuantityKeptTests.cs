@@ -155,11 +155,13 @@ public class OcrGoodsQuantityKeptTests
     {
         // ★ ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-2 · ตั้งใจพลิก): เดิมผู้ขายอย่างเดียว ⇒ QuantityInDescription "ค่าบริการ (จำนวน 4,272)" ไม่บล็อก ·
         // AWN/ทรูมูฟ เอช ขายเคส/หูฟังด้วย ⇒ ชื่อผู้ขายพาได้แค่ RoundedUnitPrice (บล็อก · คงจำนวน)
+        // ★ ทีม OCR 14 (ฝ่ายค้านรอบ 5 P1-1 · ตั้งใจพลิกกลับเฉพาะกรณีนี้): "ค่าบริการ" บนบิลของผู้ขายสาธารณูปโภค = คำอธิบายเป็นค่ามิเตอร์ด้วย (ไม่ใช่ผู้ขายอย่างเดียว)
+        // ⇒ 1 × ยอด ไม่บล็อกคน (เดิมเศษปัด 13.38 เกินเพดาน ⇒ OCR-ROUNDING-OVER-CAP บล็อกแม้คนอนุมัติ) · สินค้าของผู้ขายสื่อสาร (สายไฟ/เคส) ยังคงจำนวน — ล่างนี้ + OcrQuantityGuardOcr14Tests
         var bySeller = OcrLineQuantityGuard.Decide(4272m, null, 19381.50m, null, Paper("ค่าบริการ 4,272.00 19,381.50"), "ค่าบริการ", null,
             utilitySeller: OcrUtilityKind.Electricity);
-        Assert.Equal(OcrLineQuantityAction.RoundedUnitPrice, bySeller.Action);
-        Assert.True(bySeller.Blocking);
-        Assert.Null(bySeller.Description);
+        Assert.Equal(OcrLineQuantityAction.QuantityInDescription, bySeller.Action);
+        Assert.False(bySeller.Blocking);
+        Assert.Equal("ค่าบริการ (จำนวน 4,272)", bySeller.Description);
         // ผู้ขายไฟฟ้า + "หน่วย" พิมพ์คู่จำนวนบนแถว = หน่วยมิเตอร์บนบรรทัดเอง (ผู้ขายเป็นบริบทของ "หน่วย") ⇒ 1 × ยอด
         var withUnit = OcrLineQuantityGuard.Decide(4272m, null, 19381.50m, null, Paper("ค่าบริการ 4,272 หน่วย 19,381.50"), "ค่าบริการ", null,
             utilitySeller: OcrUtilityKind.Electricity);

@@ -474,6 +474,17 @@ public class ApprovalService : IApprovalService
                 Accounting.Helpers.ApprovalApproverCheck.NotAssignedMessage(request.CurrentStep),
                 Accounting.Helpers.ApprovalApproverCheck.NotAssignedRuleCode, 403);
 
+        // ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-a · คำตัดสินข้อ 150): เอกสารที่บรรทัดยังถือค่าที่ระบบรู้ว่าผิด (ด่านอนุมัติโดยคนของ ApproveDocumentAsync) ออกไม่ได้จนกว่าจะแก้ —
+        // เดิมบล็อกที่ขั้นสุดท้ายเท่านั้น ⇒ ผู้อนุมัติทุกขั้นลงนามแล้วเอกสารค้าง WaitingApproval · ตอนนี้บอกตั้งแต่ขั้นแรก (ตัวตัดสินเดียวกัน) พร้อมทางไปต่อ:
+        // ปฏิเสธ ⇒ ใบกลับเป็น draft ให้ผู้ขอแก้บรรทัด (ใบที่รออนุมัติแก้ไม่ได้) · การปฏิเสธไม่ถูกกั้น
+        if (actionRequest.Status == ApprovalStatus.Approved && request.EntityType == "Document"
+            && await _db.Documents.AsNoTracking().Include(d => d.Lines)
+                .FirstOrDefaultAsync(d => d.Id == request.EntityId && d.CompanyId == companyId) is { } ocrDoc
+            && await Accounting.Services.Implementations.Ocr.OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, ocrDoc) is string ocrLineBlock)
+            throw new Accounting.Helpers.BusinessRuleException(
+                ocrLineBlock + " · ขั้นอนุมัตินี้ลงนามไม่ได้เพราะเอกสารจะออกไม่ได้ — กด \"ปฏิเสธ\" เพื่อส่งกลับให้ผู้ขอแก้บรรทัดใน Draft แล้วส่งขออนุมัติใหม่",
+                Accounting.Helpers.OcrPostingReadiness.HumanApprovalRuleCode, 409);
+
         // ขั้นสุดท้ายของเอกสาร = อนุมัติเอกสารจริง ⇒ ผู้กดต้องมีสิทธิ์อนุมัติเอกสารชนิดนั้นด้วย (ด่านเดียวกับปุ่มอนุมัติบนหน้าเอกสาร) —
         // เดิมมีเฉพาะช่องมือถือ (ERP_REVIEW G-05) ⇒ เว็บกับมือถือเดินกติกาต่างกัน · ตรวจก่อนบันทึกอะไร
         if (actionRequest.Status == ApprovalStatus.Approved && request.EntityType == "Document"

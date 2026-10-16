@@ -131,7 +131,10 @@ public class OcrQuantityGuardOcr12Tests
         var d = OcrLineQuantityGuard.Decide(qty, null, (decimal)amt, null, p, desc, null, seller);
         Assert.Equal(OcrLineQuantityAction.QuantityInDescription, d.Action);
         // ตัวตรวจไม่มีบริบท (เดิม) ฟ้อง · มีบริบทของสแกน (ข้อความกระดาษ + ผู้ขาย) ไม่ฟ้อง
-        Assert.True(OcrLumpSumRepair.IsPollutedLine(d.Description, d.Quantity, d.Unit));
+        // ★ ทีม OCR 14 (ตั้งใจพลิก): ตัวเขียนรู้จัก "ค่าพลังงาน"/"ค่า Ft" แล้ว ⇒ เขียน "(4,272 หน่วย)" (ท้ายมิเตอร์) ⇒ ไม่มีบริบทก็ไม่ฟ้อง · "Water charge" ยัง "(จำนวน N)"
+        var energy = desc != "Water charge";
+        Assert.Equal(energy ? $"{desc} ({qty:#,0} หน่วย)" : $"{desc} (จำนวน {qty:#,0})", d.Description);
+        Assert.Equal(!energy, OcrLumpSumRepair.IsPollutedLine(d.Description, d.Quantity, d.Unit));
         Assert.False(OcrLumpSumRepair.IsPollutedLine(d.Description, d.Quantity, d.Unit, (decimal)amt, p, seller));
     }
 

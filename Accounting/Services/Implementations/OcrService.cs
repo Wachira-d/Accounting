@@ -4813,8 +4813,17 @@ public class OcrService : IOcrService
                     data.ReasoningTrace.Add(userNote);
                 continue;
             }
+            // ★ ทีม OCR 14 (ฝ่ายค้านรอบ 5 P1-1): ช่องส่วนลดที่เป็นเศษปัดของตัวกันเอง (ธง UnitPriceRoundingResidual ใน ExtractedItemsJson) ไม่ใช่ส่วนลดที่พิสูจน์แล้ว —
+            //   รันซ้ำ (สร้างเอกสาร/พรีวิว/ดึงรายการซ้ำ) ส่งเป็น null ให้ตัวกันตัดสินรูปเดิมซ้ำ ⇒ บรรทัดมิเตอร์ของผลแกะรุ่นก่อน (4,272 × 4.54 − 13.38) ลงใหม่เป็น 1 × ยอด ·
+            //   สินค้าได้คำตอบเดิม (Rounded ซ้ำ · หมายเหตุเดิม · ธงเดิม)
+            var ownResidual = item.UnitPriceRoundingResidual is decimal ownRes && item.LineDiscountAmount == ownRes;
             var qtyDecision = Accounting.Helpers.OcrLineQuantityGuard.Decide(
-                item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount, linePaper, item.Description, item.Unit, utilitySeller);
+                item.Quantity, item.UnitPrice, item.Amount, ownResidual ? null : item.LineDiscountAmount, linePaper, item.Description, item.Unit, utilitySeller);
+            if (ownResidual && qtyDecision.Action == Accounting.Helpers.OcrLineQuantityAction.QuantityInDescription)
+            {
+                item.LineDiscountAmount = null;
+                item.UnitPriceRoundingResidual = null;
+            }
             if (qtyDecision.Quantity is decimal decidedQty) item.Quantity = decidedQty;
             if (qtyDecision.UnitPrice is decimal decidedPrice) item.UnitPrice = decidedPrice;
             // ทีม OCR 8 (บิลมิเตอร์ · ราคาที่กระดาษไม่พิมพ์/เก็บ 2 ตำแหน่งไม่ได้): 1 × ยอด — จำนวนหน่วยย้ายไปอยู่ในคำอธิบาย (ตัวประกอบข้อความตัวเดียวใน Decide)

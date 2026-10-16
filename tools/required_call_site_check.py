@@ -6629,13 +6629,15 @@ RULES += [
     dict(file="Helpers/OcrLineQuantityGuard.cs", method="MeterEvidence",
          must=["MeterLabelBefore(paper.Text, nums[k].Start)", "IsMeterUnit(word, description, ctx)", "GoodsUnitRe.IsMatch(word)",
                "if (goodsOnPaper) return false;", "LineUnit(description, unit)", "IsMeterUnit(lineUnit, description, ctx)",
-               "new MeterContext(seller, UnitInferrer.IsWaterSupply("],
-         before=[("if (goodsOnPaper) return false;", "IsMeterUnit(lineUnit, description, ctx)")],
+               "new MeterContext(seller, OcrMeteredWater.IsMeteredWater(", "MeterChargeDescription(description, seller)"],
+         before=[("if (goodsOnPaper) return false;", "IsMeterUnit(lineUnit, description, ctx)"),
+                 # ทีม OCR 14: หน่วยสินค้าบนบรรทัดชนะคำอธิบายค่ามิเตอร์
+                 ("GoodsUnitRe.IsMatch(ThaiTextNormalizer.MapThaiPua(lineUnit))", "MeterChargeDescription(description, seller)")],
          # ★ ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-2): ผู้ขายอย่างเดียวห้ามเป็นหลักฐาน (AWN ขายเคส 3 ชิ้น ⇒ 1 × ยอด) — เป็นบริบทของหน่วยกำกวมเท่านั้น
          forbid=["return utilitySeller;", "return seller;", "return seller !=", "|| seller !=", "|| seller =="],
          why=_GQ_WHY + "หลักฐานมิเตอร์ = ป้าย/หน่วยมิเตอร์บนบรรทัด (ผู้ขายเป็นแค่บริบทของหน่วยกำกวม — ทีม OCR 11) · หน่วยสินค้า (ขวด/กก./ลิตร) บนแถวชนะ — เดิม \"คำหน่วยนับใดก็ได้\" = มิเตอร์"),
     dict(file="Helpers/OcrLineQuantityGuard.cs", method="IsMeterUnit",
-         must=["UnitInferrer.IsWaterSupply(d)", "BulkMaterialRe.IsMatch(d)", "DataContextRe.IsMatch(d)", "ElectricityContextRe.IsMatch(d)"],
+         must=["OcrMeteredWater.IsMeteredWater(d)", "BulkMaterialRe.IsMatch(d)", "DataContextRe.IsMatch(d)", "ElectricityContextRe.IsMatch(d)"],
          why="ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-1): ลบ.ม./m3 เป็นมิเตอร์เฉพาะบริบทน้ำประปา (คอนกรีต/ทราย/หินขายเป็น ลบ.ม.) · GB/MB เฉพาะอินเทอร์เน็ต/ดาต้า"),
     dict(file="Helpers/OcrLineQuantityGuard.cs", method="RoundedPrices",
          must=["Math.Ceiling(amt / qty * 100m) / 100m"],
@@ -6676,7 +6678,10 @@ RULES += [
                  ("OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, doc)", "CollectApprovalWarningsAsync(companyId, doc)")],
          why="ทีม OCR 12 (ฝ่ายค้านรอบ 3 P1-4): ทางไปต่อของการซ่อมสัญญาว่า \"ด่านอนุมัติบล็อก\" — ด่านต้องมีจริงในทางเข้าเดียวของการอนุมัติ ก่อนทุกขั้นที่บันทึก"),
     dict(file="Services/Implementations/Ocr/OcrLumpSumRepairService.cs", method="ApprovalBlockAsync",
-         must=["r.CompanyId == companyId", "r.CreatedDocumentId == doc.Id", "OcrPostingReadiness.EvaluateHumanApproval(", "Description = l.Description"],
+         must=["r.CompanyId == companyId && r.CreatedDocumentId == doc.Id", "OcrPostingReadiness.EvaluateHumanApproval(", "Description = l.Description",
+               # ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-a): เอกสารลูกที่ก๊อปค่าที่ระบบตั้ง (ไม่มีลิงก์สแกน) — บล็อกตามค่า · กรองบริษัท · บริบทผู้ขายของสแกน
+               "OcrLineQuantityGuard.MayCarryHumanBlock(", "r.CompanyId == companyId && (r.CreatedDocumentId == null", "carried: true",
+               "OcrUtilityVendor.KindOf(n.ExtractedVendorTaxId, n.ExtractedVendorName)"],
          why="ทีม OCR 12: ด่านอ่านหมายเหตุสแกนของบริษัทนี้เท่านั้น (กฎ M) และตัดสินด้วยตัวเดียว OcrPostingReadiness บนบรรทัดตอนนี้"),
     dict(file="Helpers/OcrPostingReadiness.cs", method="EvaluateHumanApproval",
          must=["HumanApprovalBlockingMarkers", "OcrLineQuantityGuard.SystemValueHeld(", "OcrLumpSumRepair.NoteDescription("],
@@ -6686,6 +6691,20 @@ RULES += [
          must=["OcrLineQuantityGuard.Read(scan.RawTextContent)", "OcrUtilityVendor.KindOf(scan.ExtractedVendorTaxId, scan.ExtractedVendorName)"],
          call_args=[("OcrLumpSumRepair.IsPollutedLine(", "paper"), ("OcrLumpSumRepair.IsPollutedLine(", "seller")],
          why="ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-2): ตัวตรวจซ่อมต้องใช้บริบทเดียวกับตัวตัดสินตอนเขียน — บิล PEA \"ค่าพลังงาน (จำนวน 4,272)\" ห้ามถูกฟ้องว่าจำนวนสินค้าหาย"),
+    # ── ทีม OCR 14 (ฝ่ายค้านรอบ 5) ──
+    dict(file="Services/Implementations/ApprovalService.cs", method="SubmitActionAsync",
+         must=["OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, ocrDoc)", "Accounting.Helpers.OcrPostingReadiness.HumanApprovalRuleCode, 409"],
+         before=[("OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, ocrDoc)", "action.Status = actionRequest.Status;")],
+         why="ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-a): ด่านอนุมัติโดยคนต้องบอกตั้งแต่ขั้นแรกของ workflow (เดิมขั้นสุดท้ายเท่านั้น ⇒ ทุกคนลงนามแล้วใบค้าง) ก่อนบันทึกผลขั้น"),
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="MeterChargeDescription",
+         must=["OcrMeteredWater.IsMeteredWater(d, seller)", "if (seller == OcrUtilityKind.None) return false;"],
+         why="ทีม OCR 14 (ฝ่ายค้านรอบ 5 P1-1): ค่ามิเตอร์ตัดสินจากคำอธิบาย · ค่าบริการนับเฉพาะบนบิลผู้ขายสาธารณูปโภค (ผู้ขายอย่างเดียวไม่ใช่หลักฐาน — OCR 11)"),
+    dict(file="Services/Implementations/Ocr/UnitInferrer.cs", method="IsWaterSupply",
+         must=["Accounting.Helpers.OcrMeteredWater.IsMeteredWater(text)"],
+         why="ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-c · F2 ข้อ 4): น้ำมิเตอร์มีตัวตั้งเดียว Helpers/OcrMeteredWater (หน่วย + กฎหมวด)"),
+    dict(file=OCR, method="SanitizeVatSplitArtifacts",
+         must=["ownResidual ? null : item.LineDiscountAmount"],
+         why="ทีม OCR 14 (ฝ่ายค้านรอบ 5 P1-1): เศษปัดของตัวกันเอง (ธง UnitPriceRoundingResidual) ไม่ใช่ส่วนลดที่พิสูจน์แล้ว — รันซ้ำต้องตัดสินรูปเดิมใหม่"),
     dict(file="Helpers/OcrLumpSumRepair.cs", method="IsPollutedLine",
          must=["OcrLineQuantityGuard.WasMeterLine(s, amount, paper, seller)"],
          why="ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-2): เล่นหลักฐานมิเตอร์ซ้ำด้วยบริบทของสแกน"),
@@ -6758,8 +6777,8 @@ REVIEWER_CASES += [
      "            .Select(l => Accounting.Helpers.OcrLineQuantityGuard\n                .DescriptionForMatching(l.Description, l.Quantity, l.Unit))", False),
     # ── ทีม OCR 11 (ฝ่ายค้าน OCR 9) ──
     # P1-2 กลับมา: ผู้ขายอย่างเดียวเป็นหลักฐานมิเตอร์ (AWN เคส 3 ชิ้น ⇒ 1 × ยอด)
-    ("G11a", "MeterEvidence", "        return LineUnit(description, unit) is string lineUnit && IsMeterUnit(lineUnit, description, ctx);\n",
-     "        if (LineUnit(description, unit) is string lineUnit && IsMeterUnit(lineUnit, description, ctx)) return true;\n        return seller != OcrUtilityKind.None;\n", True),
+    ("G11a", "MeterEvidence", "        return MeterChargeDescription(description, seller);\n",
+     "        return seller != OcrUtilityKind.None;\n", True),
     # P1-1 กลับมา: ลบ.ม. ไม่ถามว่าเป็นวัสดุก่อสร้าง
     ("G11b", "IsMeterUnit", "|| (ctx.PaperWater && !BulkMaterialRe.IsMatch(d));", "|| ctx.PaperWater;", True),
     # P2-1 กลับมา: เศษไม่มีเพดาน (น็อต 100,000 ตัว ⇒ "ส่วนลด" 500)
@@ -6783,6 +6802,19 @@ REVIEWER_CASES += [
     ("G12c", "PollutedLines", "it.Amount ?? 0m, paper, seller)", "it.Amount ?? 0m)", True),
     # ด่านอ่านหมายเหตุข้ามบริษัท
     ("G12d", "ApprovalBlockAsync", "r.CompanyId == companyId && ", "", True),
+    # ── ทีม OCR 14 (ฝ่ายค้านรอบ 5) ──
+    # P2-a กลับมา: ด่านไม่ดูเอกสารลูก (คัดลอก/แปลง/รายการเกิดซ้ำ)
+    ("G14a", "ApprovalBlockAsync", "carried: true)", "carried: false)", True),
+    # เส้นเอกสารลูกอ่านหมายเหตุข้ามบริษัท
+    ("G14b", "ApprovalBlockAsync", "r.CompanyId == companyId && (r.CreatedDocumentId == null", "(r.CreatedDocumentId == null", True),
+    # workflow กลับไปบล็อกที่ขั้นสุดท้ายเท่านั้น
+    ("G14c", "SubmitActionAsync", "OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, ocrDoc)", "Task.FromResult<string?>(null).Result", True),
+    # P1-1 กลับมา: ผู้ขายสาธารณูปโภคอย่างเดียวพา "ค่าบริการ" ของใครก็ได้ไปเป็นมิเตอร์
+    ("G14d", "MeterChargeDescription", "        if (seller == OcrUtilityKind.None) return false;\n", "", True),
+    # P2-c กลับมา: UnitInferrer มีสำเนาน้ำประปาของตัวเอง
+    ("G14e", "IsWaterSupply", "return Accounting.Helpers.OcrMeteredWater.IsMeteredWater(text);", "return text?.Contains(\"ค่าน้ำ\") == true;", True),
+    # P1-1 กลับมา: รันซ้ำส่งเศษปัดของตัวกันเป็นส่วนลดที่พิสูจน์แล้ว (บรรทัดมิเตอร์รุ่นก่อนค้าง 4,272 × 4.54 − 13.38)
+    ("G14f", "SanitizeVatSplitArtifacts", "ownResidual ? null : item.LineDiscountAmount", "item.LineDiscountAmount", True),
     # รูปถูก: ขึ้นบรรทัดใหม่ในการเรียกตัวตัดตอนนำเข้า ต้องไม่ถูกฟ้อง
     ("G11g", "ImportStock", "Accounting.Helpers.OcrLineQuantityGuard.DescriptionForMatching(ocrLine.Description, ocrLine.Quantity, ocrLine.Unit)",
      "Accounting.Helpers.OcrLineQuantityGuard.DescriptionForMatching(\n                        ocrLine.Description, ocrLine.Quantity, ocrLine.Unit)", False),

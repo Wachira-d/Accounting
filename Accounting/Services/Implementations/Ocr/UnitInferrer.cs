@@ -21,7 +21,8 @@ internal static class UnitInferrer
     private static readonly (string[] Keywords, string Unit)[] Rules =
     {
         // สาธารณูปโภค — หน่วยตามที่ผู้ให้บริการพิมพ์บนบิลจริง
-        (new[] { "ค่าไฟ", "ไฟฟ้า", "kwh", "กิโลวัตต์" }, "หน่วย"),
+        // ทีม OCR 14 (ฝ่ายค้านรอบ 5 P1-1): บิล กฟภ./กฟน. แยกบรรทัด "ค่าพลังงาน" / "ค่า Ft" (จำนวน = หน่วยที่ใช้ทั้งคู่ — ตัวเลข 4 ตำแหน่งคืออัตรา Ft ต่อหน่วย)
+        (new[] { "ค่าไฟ", "ไฟฟ้า", "kwh", "กิโลวัตต์", "ค่าพลังงาน", "ค่า ft", "ค่าft", "ค่าเอฟที" }, "หน่วย"),
         // ค่าน้ำประปา ⇒ ลบ.ม. — ไม่อยู่ในตารางคำนี้ (substring "ค่าน้ำ" จับ "ค่าน้ำดื่ม"/"ค่าน้ำแข็ง"/"ค่าน้ำมัน" ด้วย · ทีม OCR 11) ⇒ ตัวตัดสินเดียว IsWaterSupply ใน Infer
         (new[] { "น้ำมันดีเซล", "น้ำมันเบนซิน", "แก๊สโซฮอล์", "ดีเซล", "เบนซิน", "ลิตร" }, "ลิตร"),
 
@@ -46,38 +47,41 @@ internal static class UnitInferrer
         {
             // ลำดับเดิม: ไฟฟ้า → น้ำประปา → น้ำมัน → … (น้ำประปาอยู่ระหว่างกฎแรกกับกฎที่สอง)
             if (r == 1 && IsWaterSupply(description)) return WaterUnit;
+            // ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-c): "ค่าน้ำถัง 20 ลิตร" × 7 = 7 ถัง — "20 ลิตร" คือขนาดภาชนะ ไม่ใช่หน่วยนับ (เดิมได้ "ลิตร" ⇒ พิมพ์ "7 ลิตร" = หน่วยที่แต่งขึ้น F2 ข้อ 3)
+            if (r == 1 && ContainerSizeRe.Match(description) is { Success: true } container) return container.Groups["c"].Value;
             foreach (var k in Rules[r].Keywords)
+            {
+                // "ลิตร" ที่มีตัวเลขนำหน้าในคำอธิบาย = สเปกขนาด ("น้ำยา 3.8 ลิตร") ไม่ใช่หน่วยนับ — คำน้ำมันเชื้อเพลิงมาก่อนในรายการ (ดีเซล 20 ลิตร ⇒ ลิตร เหมือนเดิม)
+                if (k == "ลิตร" && SizeSpecLitreRe.IsMatch(description)) continue;
                 if (description.Contains(k, StringComparison.OrdinalIgnoreCase))
                     return Rules[r].Unit;
+            }
         }
         return null;
     }
 
-    /// <summary>หน่วยของค่าน้ำประปา (ตามที่การประปาพิมพ์บนบิล)</summary>
-    internal const string WaterUnit = "ลบ.ม.";
+    /// <summary>หน่วยของค่าน้ำประปา (ตามที่การประปาพิมพ์บนบิล) — ตัวตั้ง <see cref="Accounting.Helpers.OcrMeteredWater.Unit"/></summary>
+    internal const string WaterUnit = Accounting.Helpers.OcrMeteredWater.Unit;
 
-    /// <summary>
-    /// **น้ำประปา — รายการคำที่ยืนยันได้ (whitelist)** · ทีม OCR 12 (ฝ่ายค้านรอบ 3 P1-5): เดิมเป็น "ค่าน้ำ ที่ไม่ตามด้วยคำต้องห้าม" (blacklist) ⇒ คำที่ไม่อยู่ในรายการห้าม
-    /// หลุดเป็นน้ำประปาหมด — "ค่าน้ำขวด 600ml" 12 ⇒ 1 × 299 "(12 ลบ.ม.)" · ค่าน้ำถัง/กระป๋อง/โค้ก/เกลือ · "ค่าน้ำหนักเกิน" ⇒ "(3 ลบ.ม.)" · ภาษาไทยไม่มีช่องว่างคั่นคำ ⇒
-    /// รายการห้ามไม่มีวันครบ · ตอนนี้นับเฉพาะ: น้ำประปา · ค่าประปา · การประปา · ค่าใช้น้ำ · ปริมาณ/จำนวนน้ำ(ที่)ใช้ · มาตร(วัด)น้ำ/มิเตอร์น้ำ ·
-    /// "ค่าน้ำ" <b>ที่จบคำ</b> (ตามด้วยช่องว่าง+คำบอกงวด/ค่าอื่น · ตัวเลข · วงเล็บ/เครื่องหมาย · สิ้นบรรทัด · ประจำ/เดือน/งวด/รอบ · มาตร/มิเตอร์ · ค่า… เช่น "ค่าน้ำค่าไฟ") ·
-    /// คำอังกฤษของการประปา · ไม่รู้ = ไม่ใช่ (หน่วยตกไปค่าตั้งต้นของเส้นนั้น — ปลอดภัยกว่า ลบ.ม. ที่แต่ง)
-    /// </summary>
-    private static readonly System.Text.RegularExpressions.Regex WaterSupplyRe = new(
-        @"ค่าน้ำ(?=[ \t]*\r?$|[ \t]*[\d๐-๙(\[/,.:;+&\-–]|[ \t]*(?:ประจำ|เดือน|งวด|รอบ|มาตร|มิเตอร์|ค่า|และ|ประปา|ปะปา))"
-        + @"|น้ำประปา|ค่าประปา|การประปา|ค่าใช้น้ำ|(?:ปริมาณ|จำนวน)น้ำ(?:ที่)?ใช้|มาตร(?:วัด)?น้ำ|มิเตอร์น้ำ"
-        + @"|waterworks|water\s*supply|water\s*bill|tap\s*water",
+    /// <summary>ภาชนะ + ขนาด ("ถัง 20 ลิตร" · "ขวด 1.5 ลิตร" · "แกลลอน 3.8 ลิตร" · "ถัง 18 ล.") ⇒ หน่วยนับ = ภาชนะ (คำที่พิมพ์อยู่ในคำอธิบายเอง ไม่ใช่หน่วยที่แต่ง)</summary>
+    private static readonly System.Text.RegularExpressions.Regex ContainerSizeRe = new(
+        @"(?<c>ถัง|ขวด|แกลลอน|กระป๋อง)\s*(?:ขนาด\s*)?\d+(?:[.,]\d+)?\s*(?:ลิตร|ล\.|มล\.?|ml\b|l\b|ลบ\.?\s*ม)",
         System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant
-        | System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Multiline);
+        | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>"&lt;ตัวเลข&gt; ลิตร" ในคำอธิบาย = สเปกขนาดสินค้า</summary>
+    private static readonly System.Text.RegularExpressions.Regex SizeSpecLitreRe = new(
+        @"\d(?:[.,]\d+)?\s*ลิตร", System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
-    /// **ข้อความนี้พูดถึงน้ำประปา (คิดตามมิเตอร์ ลบ.ม.) ไหม — ตัวตัดสินตัวเดียว** (ทีม OCR 11 · ฝ่ายค้าน OCR 9 P1-3)
-    /// <para>เดิมกฎ substring "ค่าน้ำ" ⇒ "ค่าน้ำดื่ม 600ml" 12 ขวดได้หน่วย ลบ.ม. ⇒ ตัวกันจำนวนนับเป็นบิลมิเตอร์ ⇒ 1 × ยอด "(12 ลบ.ม.)" ไม่บล็อก ·
-    /// "ค่าน้ำมันดีเซล" ก็ได้ ลบ.ม. (กฎน้ำประปามาก่อนกฎน้ำมัน) · ผู้ใช้: <see cref="Infer"/> และบริบทน้ำของ <c>Helpers/OcrLineQuantityGuard</c>
-    /// (หน่วย ลบ.ม. เป็นหลักฐานมิเตอร์เฉพาะเมื่อมีบริบทน้ำประปา — คอนกรีต/ทราย/หิน ขายเป็น ลบ.ม.) · "ท่อประปา" ไม่ใช่ (ไม่มี น้ำประปา/ค่าประปา/การประปา)</para>
+    /// **ข้อความนี้พูดถึงน้ำประปา/น้ำคิดตามมิเตอร์ (ลบ.ม.) ไหม** — ส่งต่อให้ตัวตั้งตัวเดียว <see cref="Accounting.Helpers.OcrMeteredWater.IsMeteredWater(string?)"/>
+    /// (ทีม OCR 14 · ฝ่ายค้านรอบ 5 P2-c: เดิม whitelist อยู่ที่นี่ และกฎหมวด ExpenseCategoryResolver มีสำเนา substring "ค่าน้ำ" อีกชุด) ·
+    /// ผู้ใช้: <see cref="Infer"/> และบริบทน้ำของ <c>Helpers/OcrLineQuantityGuard</c>
     /// </summary>
     internal static bool IsWaterSupply(string? text)
-        => !string.IsNullOrWhiteSpace(text) && WaterSupplyRe.IsMatch(text);
+    {
+        return Accounting.Helpers.OcrMeteredWater.IsMeteredWater(text);
+    }
 
     /// <summary>หน่วยที่ AI/เอกสารให้มาน่าเชื่อไหม — "ชิ้น" บนบรรทัดที่กฎอนุมาน
     /// ได้หน่วยอื่น = default ที่หลุดมาจากชั้นก่อนหน้า ไม่ใช่หน่วยจริง ให้แทนที่

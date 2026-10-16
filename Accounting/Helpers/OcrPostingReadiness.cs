@@ -85,25 +85,56 @@ public static class OcrPostingReadiness
     /// workflow · LINE · สร้าง+อนุมัติ) · <paramref name="processingNotes"/> = หมายเหตุของสแกนที่สร้างเอกสารนี้ · <paramref name="liveLines"/> = บรรทัดเอกสาร<b>ตอนนี้</b> ·
     /// เหตุผลมีทางไปต่อภาษาไทยเสมอ (แก้บรรทัดใน draft หรือลบ draft แล้วแกะใหม่)
     /// </summary>
-    public static Verdict EvaluateHumanApproval(string? processingNotes, IReadOnlyList<OcrLiveLine> liveLines)
+    /// <param name="seller">ชนิดผู้ขายสาธารณูปโภคของสแกน (<see cref="OcrUtilityVendor.KindOf"/>) — บรรทัดมิเตอร์ ("ค่าบริการรายเดือน" บนบิลประปา) ตัดสินด้วยบริบทเดียวกับตัวเขียน</param>
+    /// <param name="carried">ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-a): เอกสาร<b>ไม่ได้</b>สร้างจากสแกนนี้ (คัดลอก · แปลง · รายการเกิดซ้ำ · API ที่ก๊อปบรรทัดมา) ⇒ บรรทัดต้องตรง
+    /// ค่าที่ระบบตั้ง<b>และยอด</b>ของหมายเหตุ (<see cref="OcrLineQuantityGuard.NoteAmount"/>) จึงนับ · เหตุผลบอกว่าค่ามาจากสแกนไหน</param>
+    public static Verdict EvaluateHumanApproval(string? processingNotes, IReadOnlyList<OcrLiveLine> liveLines,
+        OcrUtilityKind seller = OcrUtilityKind.None, bool carried = false)
     {
         if (string.IsNullOrEmpty(processingNotes)) return new Verdict(true, null);
         foreach (var (marker, why) in HumanApprovalBlockingMarkers)
         {
-            var held = processingNotes.Split('\n')
-                .Select(n => n.Trim())
-                .Where(n => n.StartsWith(marker, StringComparison.Ordinal)
-                    && OcrLineQuantityGuard.SystemValueHeld(n, liveLines, OcrLumpSumRepair.NoteDescription(n)))
-                .ToList();
-            if (held.Count == 0) continue;
-            var which = string.Join(" · ", held.Select(n => OcrLumpSumRepair.NoteDescription(n) is string d ? $"\"{d}\"" : null)
-                .Where(d => d != null).Distinct());
-            return new Verdict(false, why + (which.Length > 0 ? $" ({which})" : "")
-                + " — อนุมัติไม่ได้จนกว่าจะแก้: เปิดใบ Draft แก้จำนวน/ราคา/หน่วยของบรรทัดนั้นตามกระดาษ แล้วบันทึก "
-                + "หรือลบ Draft แล้วกด \"แกะใหม่\" ที่หน้าสแกน (ไม่ใช้โควต้า) แล้วสร้างเอกสารใหม่");
+            var reasons = new List<string>();
+            foreach (var n in processingNotes.Split('\n').Select(x => x.Trim()).Where(x => x.StartsWith(marker, StringComparison.Ordinal)))
+            {
+                var desc = OcrLumpSumRepair.NoteDescription(n);
+                var amount = carried ? OcrLineQuantityGuard.NoteAmount(n) : null;
+                if (carried && amount is null) continue;
+                var held = OcrLineQuantityGuard.HeldLines(n, liveLines, desc, amount);
+                if (held.Count == 0)
+                {
+                    // หมายเหตุไม่มีร่องรอยค่าที่ระบบตั้ง (SystemValueHeld = true) ⇒ ไม่รู้ = ยังไม่มีคนดู — เฉพาะเอกสารที่สร้างจากสแกนนี้เอง
+                    if (!carried && OcrLineQuantityGuard.SystemValueHeld(n, liveLines, desc))
+                        reasons.Add((desc is null ? "" : $"\"{desc}\": ") + "เปิดใบ Draft แก้จำนวน/ราคาของบรรทัดนั้นตามกระดาษ แล้วบันทึก "
+                            + "หรือลบ Draft แล้วกด \"แกะใหม่\" ที่หน้าสแกน (ไม่ใช้โควต้า) แล้วสร้างเอกสารใหม่");
+                    continue;
+                }
+                foreach (var l in held)
+                {
+                    var lineDesc = OcrLineQuantityGuard.DescriptionForMatching(l.Description, l.Quantity, l.Unit);
+                    var meter = OcrLineQuantityGuard.MeterChargeDescription(lineDesc, seller);
+                    if (marker == HumanApprovalBlockingMarkers[0].Marker)
+                    {
+                        // ทีม OCR 14 (ฝ่ายค้านรอบ 5 P1-1): 1 × ยอด บนบรรทัดมิเตอร์คือรูปที่ถูก (บิลค่าไฟ/ค่าน้ำ) — ไม่ใช่ "จำนวนสินค้าหาย" ⇒ ไม่บล็อก
+                        if (meter) continue;
+                        reasons.Add($"\"{l.Description}\": เปิดใบ Draft แก้จำนวน/ราคาของบรรทัดนี้ตามกระดาษ (ยอด {l.Amount:N2} เท่าเดิม) แล้วบันทึก"
+                            // ใบลูก (คัดลอก/แปลง) ไม่ได้มาจากสแกนโดยตรง ⇒ "แกะใหม่" ไม่แก้ใบนี้
+                            + (carried ? "" : " หรือลบ Draft แล้วกด \"แกะใหม่\" ที่หน้าสแกน (ไม่ใช้โควต้า — รุ่นนี้คงจำนวนสินค้า) แล้วสร้างเอกสารใหม่"));
+                    }
+                    else
+                        reasons.Add($"\"{l.Description}\": " + (meter
+                            ? OcrLineQuantityGuard.MeterLineWayForward(l.Quantity, l.Amount, l.Description, l.Unit, rescanFixes: !carried)
+                            : OcrLineQuantityGuard.OverCapWayForward(l.Quantity, l.Amount)));
+                }
+            }
+            if (reasons.Count == 0) continue;
+            return new Verdict(false, (carried ? CarriedLead : "") + why + " — อนุมัติไม่ได้จนกว่าจะแก้: " + string.Join(" ‖ ", reasons.Distinct()));
         }
         return new Verdict(true, null);
     }
+
+    /// <summary>ต้นข้อความเมื่อค่าที่ระบบตั้งมากับเอกสารลูก (ทีม OCR 14 · P2-a)</summary>
+    public const string CarriedLead = "บรรทัดของเอกสารนี้ก๊อปค่าที่ระบบตั้งมาจากบรรทัดสแกนที่ยังต้องแก้ (คัดลอก/แปลง/รายการเกิดซ้ำจากใบ OCR) — ";
 
     /// <summary>ผลการตัดสิน</summary>
     /// <param name="CanAutoApprove">อนุมัติอัตโนมัติได้ไหม</param>

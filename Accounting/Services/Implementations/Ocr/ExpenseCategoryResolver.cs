@@ -512,7 +512,9 @@ internal static class ExpenseCategoryResolver
         // ─── ค่าน้ำประปา — 54320 ───
         new CategoryRule("ค่าน้ำประปา", "54320", "ค่าน้ำประปา",
             Keywords: new[] { "ค่าน้ำ", "น้ำประปา", "การประปา", "water bill", "water supply" },
-            VendorBrands: new[] { "การประปานครหลวง", "การประปาส่วนภูมิภาค", "mwa", "pwa" }),
+            VendorBrands: new[] { "การประปานครหลวง", "การประปาส่วนภูมิภาค", "mwa", "pwa" },
+            // ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-c · F2 ข้อ 4): "ค่าน้ำ" ที่ไม่ใช่ค่าน้ำมิเตอร์ (หนักเกิน/ขวด/ถัง/มัน …) ตัดก่อนนับ — ตัวตั้งเดียว Helpers/OcrMeteredWater
+            Exclusions: new[] { Accounting.Helpers.OcrMeteredWater.NotMeteredWaterPhrase }),
 
         // ─── ค่าโทรศัพท์/อินเทอร์เน็ต — 54330 ค่าโทรศัพท์ (40(8) ค่าบริการ) · ใบอินเทอร์เน็ตล้วนผู้ใช้เลือก 54340 เอง ───
         new CategoryRule("ค่าโทรศัพท์ / อินเทอร์เน็ต", "54330", "ค่าโทรศัพท์",

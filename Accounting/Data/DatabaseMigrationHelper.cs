@@ -2146,6 +2146,13 @@ public static class DatabaseMigrationHelper
             CREATE INDEX IF NOT EXISTS "IX_OcrScanResults_CompanyId_FileHash_CreatedAt"
             ON "OcrScanResults" ("CompanyId", "FileHash", "CreatedAt");
             """,
+            // ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-d): ด่านอนุมัติโดยคน (OcrLumpSumRepairService.ApprovalBlockAsync — ทุกการอนุมัติเอกสาร) · gapScan · SyncScan ค้นสแกนจาก
+            // เอกสาร (CompanyId + CreatedDocumentId) — เดิมไม่มี index บน CreatedDocumentId (ใช้ได้แค่ index ที่ขึ้นต้น CompanyId แล้วกรองทั้งบริษัท)
+            """
+            CREATE INDEX IF NOT EXISTS "IX_OcrScanResults_CompanyId_CreatedDocumentId"
+            ON "OcrScanResults" ("CompanyId", "CreatedDocumentId")
+            WHERE "CreatedDocumentId" IS NOT NULL;
+            """,
             // Self-correction maintenance scans by IsNegativeExample + LastConfirmedAt:
             """
             CREATE INDEX IF NOT EXISTS "IX_OcrLearnedPatterns_IsNegativeExample_LastConfirmedAt"
