@@ -5123,5 +5123,5 @@ _2026-10-16 ทีม EC — ถอดช่อง "หมวดค่าใช�
 Db test 0.667 vs 0.433) · ลบตัวดันความมั่นใจหมวดของ VendorIntel + fallback ชื่อหมวดใน NaiveBayes/seed ผังเดบิต · นักเรียน `OcrFullReview` เลิกตอบ `expense_category`
 (ครูไม่มีช่องนี้ · หน้าเว็บไม่อ่าน) · กฎ "ค่าประกัน" ไม่รับคำเดี่ยว "ประกัน"/"premium" (ต้นเหตุที่ทำซ้ำได้ของหมวด/ผัง 5800 บนใบรับประกันสินค้า · ประกันสังคม · Premium Quality) ·
 ล็อกจุดเรียก `tools/required_call_site_check.py` 4 กติกา · คอลัมน์คงไว้ ไม่มี migration · `AiFeatureKey` ไม่มีตัวไหนผูกกับหมวด ·
-เทสต์ `OcrExpenseCategoryRemovalTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>_
+เทสต์ `OcrExpenseCategoryRemovalTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit f5b10674_
 
