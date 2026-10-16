@@ -47,7 +47,10 @@ public static class RawTextLineSplitter
 
     /// <summary>แตกบรรทัดจากข้อความ · คืน <c>null</c> เมื่อหาไม่ได้เลย
     /// (ผู้เรียกต้องส่งผลลัพธ์ผ่าน <see cref="OcrLineSplitGuard"/> เสมอ)</summary>
-    public static string? SplitToJson(string? rawText)
+    public static string? SplitToJson(string? rawText) => SplitToJson(rawText, null, null);
+
+    /// <summary>แตกบรรทัดโดยรู้ยอดบนกระดาษ (ยอดก่อน VAT / ยอดรวม) — ทีม OCR 13: ทางเข้าของตัวเทียบ PDF (OcrPdfTextHarness) · รอบนี้ยังไม่ใช้ยอด (ผลเท่า SplitToJson เดิม)</summary>
+    public static string? SplitToJson(string? rawText, decimal? subTotal, decimal? total)
     {
         var lines = Split(rawText);
         if (lines.Count == 0) return null;

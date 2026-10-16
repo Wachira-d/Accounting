@@ -543,6 +543,11 @@ public static class OcrReplayHarness
             if (built.Descriptions is string ds) result.Add(new(p.Name, "LineDescriptions", ds));
             // 2026-10-16 คำตัดสินเจ้าของภาคต่อ: ผัง/โครงการของบรรทัดสรุปเมื่อตารางชนะ (ช่องใหม่เฉพาะใบที่ระบุผังรายบรรทัด)
             if (built.SummaryDims is string sd) result.Add(new(p.Name, "SummaryDims", sd));
+
+            // 9. ทีม OCR 13 (ฝ่ายค้าน OCR 10 P2): ที่อยู่ผู้ขายจากป้าย "ที่อยู่" (ParseThaiDocument — ตัวอ่าน VendorAddressRegex ที่ทีม OCR 10 เปลี่ยนรูป) ·
+            //    เดิมไม่อยู่ใน snapshot ⇒ การเปลี่ยนรูป regex ที่ให้ผลต่างจริง (fuzz 5,065/300k) มองไม่เห็น · แถวใหม่ทุกใบ
+            result.Add(new(p.Name, "VendorAddress", Accounting.Services.Implementations.OcrService.ParseThaiDocument(
+                Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(p.RawText)).VendorAddress));
         }
         return result;
     }
