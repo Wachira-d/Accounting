@@ -81,7 +81,11 @@ public static class VatBackCalcGuard
 
         // สินค้ายกเว้น §81 — ยอดรวมไม่มี VAT อยู่ข้างใน การแยก 7/107 คือการแต่งภาษีซื้อ
         var lines = (lineDescriptions ?? Enumerable.Empty<string?>()).ToList();
-        if (lines.Count > 0 && lines.All(d => string.IsNullOrWhiteSpace(d) || ThaiVatTypeRule.LooksExempt(d)))
+        // ⚠️ ต้องมีรายการที่<b>อ่านได้</b>อย่างน้อยหนึ่งรายการ — บรรทัดว่างล้วน = "ยังไม่รู้รายการ" ไม่ใช่ "ทุกรายการยกเว้น"
+        // (เดิม All() บนบรรทัดว่างล้วนเป็นจริงเสมอ ⇒ ใบกำกับปกติที่ยังไม่ได้รายการถูกปฏิเสธการแยก VAT ด้วยเหตุผล "ยกเว้น §81" ที่ไม่จริง
+        // และใบที่กระดาษบอกไม่มี VAT ได้เหตุผลผิดข้อ — กิ่งถัดไปคือกิ่งที่ตั้งใจรับ "ยังไม่รู้รายการ")
+        if (lines.Any(d => !string.IsNullOrWhiteSpace(d))
+            && lines.All(d => string.IsNullOrWhiteSpace(d) || ThaiVatTypeRule.LooksExempt(d)))
             return new(false, 0d,
                 "ทุกรายการบนใบเข้าข่ายสินค้ายกเว้น VAT (§81) — ยอดรวมไม่น่ามี VAT อยู่ข้างใน จึงไม่แยกให้");
 

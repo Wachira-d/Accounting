@@ -3168,7 +3168,7 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
                ชื่อ+ตำแหน่งครบชุด) ยกไปหน้าใหม่ด้วยกัน */
             .signatures {{ width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 12px 0;
                            margin-top: 28px; page-break-inside: avoid; break-inside: avoid; }}
-            /* avoid บน <tr> คือตัวที่ Chromium เคารพจริง — ทั้งแถว (รูป+เส้น+
+            /* avoid บนแถว (tr) คือตัวที่ Chromium เคารพจริง — ทั้งแถว (รูป+เส้น+
                ป้าย+ชื่อ+ตำแหน่ง) ยกไปหน้าใหม่พร้อมกัน ไม่ผ่ากลาง */
             .signatures tr {{ page-break-inside: avoid; break-inside: avoid; }}
             .sig-box {{ text-align: center; vertical-align: bottom; position: relative;

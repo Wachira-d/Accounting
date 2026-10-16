@@ -57,6 +57,11 @@ public static class OcrScanPii
         "ContentFingerprint", "FileHash",           // แฮช — ไม่ย้อนกลับเป็นข้อความ
         "FieldConfidenceJson", "UserCorrectedFields",  // ชื่อช่อง + ตัวเลข ไม่ใช่ค่า
         "VatCodeMeaningsJson",                          // รหัส ภ.พ. + ชนิด VAT + FeedbackId — ไม่มีข้อความบนกระดาษ
+        // ใบต้นทาง (7ab17f4b) — เลขที่/ชนิดเอกสารในระบบ + เหตุผลที่ระบบประกอบจากเลขที่/ยอด/% (OcrPredecessorMatcher)
+        // + ผู้สมัคร (PredecessorCandidateDto: Id/ชนิด/เลขที่/วันที่/ยอด/คะแนน/เหตุผล) — ไม่มีชื่อ/ที่อยู่/เลขผู้เสียภาษีของบุคคล
+        // เหมือน LinkedPurchaseOrderNumber/OpenPoNumbersJson · เพิ่มเข้า entity โดยยังไม่ได้ตัดสิน ⇒ เทสต์ reflection ฟ้อง (ทำหน้าที่ถูก)
+        "LinkedPredecessorNumber", "LinkedPredecessorType", "PredecessorLinkReason", "PredecessorCandidatesJson",
+        "OurRoleAiSuggested",                           // 7bac95b2 — คำตอบ "Buyer"/"Seller" เท่านั้น
         // ── ช่องของ BaseEntity ──
         // ชื่อผู้ทำรายการ = ข้อมูลของ**พนักงานผู้บันทึก** ไม่ใช่ของเจ้าของข้อมูล
         // ที่ใช้สิทธิ · และเป็นร่องรอยตรวจสอบที่ต้องเก็บตาม พ.ร.บ.การบัญชี ม.10

@@ -45,6 +45,21 @@ public class VatBackCalcGuardTests
     }
 
     [Fact]
+    public void ทิศตรงข้าม_บรรทัดว่างล้วนคือยังไม่รู้รายการ_ไม่ใช่ทุกรายการยกเว้น_ใบกำกับปกติยังแยกได้()
+    {
+        // เดิมบรรทัดว่างล้วนเข้ากิ่ง "ทุกรายการยกเว้น §81" ⇒ ใบกำกับปกติที่ OCR ยังไม่ได้รายการถูกปฏิเสธการแยก VAT
+        foreach (var lines in new[] { new string?[] { "" }, new string?[] { "", "  " }, new string?[] { null } })
+        {
+            var d = VatBackCalcGuard.Decide("ใบกำกับภาษี\nรวม 1,070.00", GoodTaxId, lines);
+            Assert.True(d.Allowed, d.Reason);
+        }
+        // รายการที่อ่านได้และยกเว้นทั้งหมด (ปนบรรทัดว่าง) ยังถูกกันเหมือนเดิม
+        var exempt = VatBackCalcGuard.Decide("ใบกำกับภาษี\nรวม 1,070.00", GoodTaxId, new[] { "ผักคะน้าสด", "" });
+        Assert.False(exempt.Allowed);
+        Assert.Contains("§81", exempt.Reason);
+    }
+
+    [Fact]
     public void มีรายการที่เสีย_VAT_ปนอยู่_ยังแยกได้()
     {
         var d = VatBackCalcGuard.Decide("ใบกำกับภาษี\nรวม 1,070.00", GoodTaxId,
