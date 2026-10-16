@@ -3235,7 +3235,10 @@
           'TotalAmount': null,                // computed from lines
           'VatAmount': null,
           'SubTotal': null,
-          'ExpenseCategory': 'fExpenseCategory',
+          // ช่อง fExpenseCategory คือ "ผังบัญชีค่าใช้จ่าย" (handoff ส่ง expenseCategoryCode = ผังเดบิตของสแกน) ⇒ ไฮไลต์ตามความมั่นใจของ
+          // ผังเดบิต (OcrFieldKeys.DebitAccount) — เดิมผูกกับ 'ExpenseCategory' (ความมั่นใจของหมวดที่ถูกถอดจากหน้ารีวิว 2026-10-16
+          // · ตัวดัน 0.92 ของประวัติผู้ขายถูกลบ) ⇒ ผู้ขายที่รู้จักดีขึ้นเหลืองทุกใบ (ฝ่ายค้าน f5b10674 P2-D)
+          'DebitAccount': 'fExpenseCategory',
           'PaymentTerms': 'fPaymentTerms',
           'WhtRate': 'fWhtRate',
           // ── ช่อง §86/4 ที่ map ไม่ครบมาตลอด (E-OCR-04) ──

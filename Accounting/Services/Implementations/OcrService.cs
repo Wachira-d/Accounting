@@ -1621,9 +1621,15 @@ public class OcrService : IOcrService
             // line item.SuggestedAccountCode when learner is more confident.
             // คีย์เดียวกับฝั่งเขียน (SubmitCorrectionAsync) — Helpers/OcrLearnerDescriptionKey · เดิมเขียนด้วยชื่อหมวด อ่านด้วยคำอธิบาย
             // ⇒ ชั้น "ผู้ขาย + คำอธิบายตรงกัน" ไม่เคยแมตช์ (2026-10-16)
-            var bestDescription = Accounting.Helpers.OcrLearnerDescriptionKey.For(extractedData.Items.Select(i => i.Description));
-            var (learnedCode, learnedName, learnedConf) = await _categoryLearner.PredictAsync(
-                companyId, extractedData.VendorTaxId, extractedData.VendorName, bestDescription);
+            // ใบไม่มีบรรทัด: คีย์ "#ไม่มีรายการ#<ชนิดกระดาษ>" (หลักฐานจากกระดาษ ไม่ใช่ชื่อหมวด) + อ่านแถวรุ่นก่อน 2026-10-16 ที่คีย์เป็นหมวดตั้งต้น
+            // ครั้งเดียวเมื่อคีย์ใหม่ยังไม่ถึงเกณฑ์ (ฝ่ายค้าน f5b10674 P2-C: คีย์ว่าง ⇒ ชั้นผู้ขายอย่างเดียว 0.433 < 0.55 ⇒ ผังที่ผู้ใช้สอนไม่ถูกใช้)
+            var learned = await Accounting.Helpers.OcrLearnerDescriptionKey.PredictAsync(
+                key => _categoryLearner.PredictAsync(companyId, extractedData.VendorTaxId, extractedData.VendorName, key),
+                extractedData.Items.Select(i => i.Description), extractedData.DocumentType, minConfidence: 0.55m);
+            var (learnedCode, learnedName, learnedConf) = (learned.Code, learned.Name, learned.Confidence);
+            if (learned.FromLegacyRow)
+                extractedData.ReasoningTrace.Add(
+                    $"[Learner] ใบไม่มีรายการ — ใช้ผังที่สอนไว้ก่อน 2026-10-16 (แถวรุ่นเก่า คีย์ตามชนิดกระดาษ {extractedData.DocumentType}) · ครั้งหน้าบันทึกด้วยคีย์ใหม่");
             // ⚠️ เดิมบล็อกนี้ **ทับผังเดบิตโดยไม่เทียบกับใคร** และไม่อัปเดต
             // FieldConfidence ⇒ (ก) คำตอบของ NaiveBayes ที่ 0.92 และของ **สินค้า
             // master ที่ 0.95** (ซึ่ง doc-comment ข้างบนเขียนเองว่า "แข็งแรงที่สุด
@@ -2464,16 +2470,25 @@ public class OcrService : IOcrService
                     {
                         var seededDebit = await PickCategorySeededDebitAsync(companyId,
                             categoryResult?.AccountCode, categoryResult?.AccountName);   // ห้ามใช้ชื่อหมวดที่ LLM/ค่าตั้งต้นเดาเป็น seed (2026-10-16)
+                        var seedSource = "ผังตามหมวดของใบนี้";
+                        // ฝ่ายค้าน f5b10674 P2-A: ใบที่ไม่มีกฎหมวดไหนตรง ⇒ seed (null, null) ⇒ เดบิตว่าง — ตกไปผังตั้งต้นของชนิดกระดาษ → ผังค่าใช้จ่ายทั่วไป
+                        // (Helpers/OcrDocTypeDefaultAccounts ตัวเดียวกับ ParseThaiDocument · ผู้เลือกกรองเฉพาะค่าใช้จ่าย/สินทรัพย์)
+                        if (seededDebit == null)
+                            foreach (var fb in Accounting.Helpers.OcrDocTypeDefaultAccounts.DebitFallbackSeeds(extractedData.DocumentType))
+                            {
+                                seededDebit = await PickCategorySeededDebitAsync(companyId, fb.Code, fb.Name);
+                                if (seededDebit != null) { seedSource = $"ผังตั้งต้นของชนิดกระดาษ ({extractedData.DocumentType ?? "ไม่ทราบชนิด"})"; break; }
+                            }
                         if (seededDebit is { } sd)
                         {
                             extractedData.DebitAccountCode = sd.Code;
                             extractedData.DebitAccountName = sd.Name;
                             extractedData.ReasoningTrace.Add(Accounting.Helpers.OcrAccountPlacement.Tag
-                                + $" ใช้ผังตามหมวดของใบนี้แทน: {sd.Code} {sd.Name} (ตรวจก่อนอนุมัติ)");
+                                + $" ใช้{seedSource}แทน: {sd.Code} {sd.Name} (ตรวจก่อนอนุมัติ)");
                         }
                         else
                             extractedData.ReasoningTrace.Add(Accounting.Helpers.OcrAccountPlacement.Tag
-                                + " ไม่พบผังค่าใช้จ่ายตามหมวดในผังบัญชีของบริษัท — เว้นบัญชีเดบิตไว้ให้เลือก");
+                                + " ไม่พบผังค่าใช้จ่าย/สินทรัพย์ที่ใช้แทนได้ในผังบัญชีของบริษัท — เว้นบัญชีเดบิตไว้ให้เลือก");
                     }
                 }
                 // รายบรรทัด: ผังที่ตัวเรียน/สินค้า master เสนอ ห้ามเป็นหนี้สิน/ทุน/รายได้ (ตกไปใช้ผังหัวใบแทน)
@@ -5232,6 +5247,9 @@ public class OcrService : IOcrService
             catch { /* malformed — leave null */ }
         }
 
+        // ชนิดกระดาษที่ไปป์ไลน์อ่านได้ (ก่อนผู้ใช้แก้) — คีย์ตัวเรียนของใบไม่มีบรรทัด: ใบถัดไปของผู้ขายเดียวกันถูกอ่านเป็นชนิดนี้ (OcrLearnerDescriptionKey)
+        var scannedTypeBeforeCorrection = result.DocumentType;
+
         // Update the scan result with corrected data
         if (correction.DocumentType != null)
         {
@@ -5658,7 +5676,7 @@ public class OcrService : IOcrService
                 companyId,
                 correction.VendorTaxId ?? result.ExtractedVendorTaxId,
                 correction.VendorName ?? result.ExtractedVendorName,
-                Accounting.Helpers.OcrLearnerDescriptionKey.For(ScanLineDescriptionsForLearner(result)),
+                Accounting.Helpers.OcrLearnerDescriptionKey.For(ScanLineDescriptionsForLearner(result), scannedTypeBeforeCorrection),
                 learnDebitCode,
                 debitName);
         }
@@ -6428,20 +6446,11 @@ public class OcrService : IOcrService
         // GL account suggestions
         // ⚠️ (2026-10-16) ไม่ตั้งหมวดค่าใช้จ่ายตามชนิดกระดาษแล้ว — เดิม Receipt ⇒ "ค่าบริการ" ซึ่งตัวจัดหมวดรับเป็นหลักฐานผูกกับเงิน
         // แล้วเสนอหัก ณ ที่จ่าย 3% 40(8) บนใบเสร็จซื้อของ (ค่าตั้งต้นของระบบ ≠ ข้อความบนกระดาษ) · ผังเดบิต/เครดิตตั้งต้นคงเดิม
-        var accountMap = new Dictionary<string, (string Dc, string Dn, string Cc, string Cn)>
+        // ตารางผังตั้งต้นตามชนิดกระดาษ = Helpers/OcrDocTypeDefaultAccounts ตัวเดียว (ด่านวางฝั่งของ ScanAsync ใช้ตารางเดียวกันเป็นเดบิตแทน)
+        if (Accounting.Helpers.OcrDocTypeDefaultAccounts.For(data.DocumentType) is { } acct)
         {
-            ["TaxInvoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า"),
-            ["Invoice"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า"),
-            ["Receipt"] = ("5300", "ค่าใช้จ่ายบริหาร", "1110", "เงินสด"),
-            ["PurchaseOrder"] = ("1200", "สินค้าคงเหลือ", "2100", "เจ้าหนี้การค้า"),
-            ["WHT"] = ("2170", "ภาษีหัก ณ ที่จ่าย", "1110", "เงินสด"),
-            ["CreditNote"] = ("2100", "เจ้าหนี้การค้า", "5100", "ต้นทุนขาย"),
-            ["DebitNote"] = ("5100", "ต้นทุนขาย", "2100", "เจ้าหนี้การค้า"),
-        };
-        if (accountMap.TryGetValue(data.DocumentType, out var acct))
-        {
-            data.DebitAccountCode = acct.Dc; data.DebitAccountName = acct.Dn;
-            data.CreditAccountCode = acct.Cc; data.CreditAccountName = acct.Cn;
+            data.DebitAccountCode = acct.DebitCode; data.DebitAccountName = acct.DebitName;
+            data.CreditAccountCode = acct.CreditCode; data.CreditAccountName = acct.CreditName;
             if (data.VatAmount > 0) { data.VatAccountCode = "1400"; data.VatAccountName = "ภาษีซื้อ"; }
         }
 
