@@ -143,10 +143,20 @@ public static class OcrPaperAmounts
         + @"before[ \t]*value[ \t]*[- ]?[ \t]*added|(?:รวม|ก่อน|ยกเว้น)[ \t]*ภาษีมูลค่าเพ[ิื]่?ม", Opt);
 
     /// <summary>ป้ายบอกว่า "ยอดบนแถวนี้<b>รวม VAT แล้ว</b>" — ราคาสินค้ารวมภาษีมูลค่าเพิ่ม · (รวม VAT) · Incl. VAT · VAT Included ·
-    /// Value Added Tax Included · ไม่รับ "ไม่รวม" (= ก่อน VAT)</summary>
+    /// Value Added Tax Included · ป้ายที่ถูกปฏิเสธ ("ไม่รวม" · "not incl.") ตัดสินที่ <see cref="InclusiveLabelNegated"/> ไม่ใช่ที่นี่</summary>
     private static readonly Regex VatInclusiveLabel = new(
-        @"(?<!ไม่[ \t]*)รวม[ \t]*(?:ภาษี|vat)|incl\w*\.?[ \t]*(?:of[ \t]+)?(?:vat|value[ \t]*[- ]?[ \t]*added)|vat[ \t]*incl|"
+        @"รวม[ \t]*(?:ภาษี|vat)|incl\w*\.?[ \t]*(?:of[ \t]+)?(?:vat|value[ \t]*[- ]?[ \t]*added)|vat[ \t]*incl|"
         + @"value[ \t]*[- ]?[ \t]*added[ \t]*tax[ \t]*incl", Opt);
+
+    /// <summary>คำปฏิเสธ<b>ชิดหน้า</b>ป้ายรวม VAT (ข้อความก่อนป้ายลงท้ายด้วยคำนี้) ⇒ ป้ายแปลว่า "ไม่รวม VAT" (ฝ่ายค้าน 6e56d33d P1-1) —
+    /// รับรูปที่ Tesseract ทำวรรณยุกต์หล่น ("รวมเงินไมรวมภาษี") และอังกฤษ ("Amount not incl. VAT" · "excl./incl.")</summary>
+    private static readonly Regex InclusiveLabelNegated = new(
+        @"(?:ไม่?|ยังไม่?|not|non|w/o|without|excl\w*\.?[ \t]*/)[ \t\-]*\(?[ \t]*$", Opt);
+
+    /// <summary>ป้าย "ก่อน VAT / ไม่รวม VAT" ที่ตามมาบนบรรทัดเดียวกัน — เป็นช่วงของตัวเอง ⇒ ช่วงของป้ายรวม VAT จบก่อนป้ายนี้
+    /// ("Total (VAT incl.) 1,570.00   Total (VAT excl.) 1,500.00" — สองคอลัมน์ที่ engine รวมเป็นบรรทัดเดียว)</summary>
+    private static readonly Regex VatExclusiveLabel = new(
+        @"(?:ไม่?|ยังไม่?)[ \t]*รวม[ \t]*(?:ภาษี|vat)|excl\w*|exclusive|before[ \t]*(?:vat|tax)|ก่อน[ \t]*(?:vat|ภาษี)|not[ \t]+incl", Opt);
 
     /// <summary>
     /// **ยอด <paramref name="amount"/> พิมพ์บนกระดาษเป็น "ยอดที่รวม VAT แล้ว" ไหม** — มีบรรทัดที่ตัวเลขนี้อยู่<b>หลัง</b>ป้ายรวม VAT
@@ -166,9 +176,19 @@ public static class OcrPaperAmounts
     public static bool IsVatInclusiveOnLine(string? line, decimal amount)
     {
         if (amount <= 0m || string.IsNullOrEmpty(line)) return false;
-        var label = VatInclusiveLabel.Match(line);
-        return label.Success
-            && MoneyOn(line[(label.Index + label.Length)..]).Any(m => Math.Abs(m - amount) <= ExactTol);
+        // ฝ่ายค้าน 6e56d33d P1-1: (1) ป้ายที่มีคำปฏิเสธชิดหน้า = ก่อน VAT · (2) นับเฉพาะ<b>ตัวเลขแรก</b>หลังป้าย (ตัวเลขถัดไปเป็นของช่อง/ป้ายอื่น) ·
+        // (3) ป้าย "ก่อน VAT/excl." ที่ตามมาบนบรรทัดเดียวกันเป็นช่วงของตัวเอง — เดิมทุกเลขหลังป้ายนับเป็นรวม VAT ⇒ ใบผสมที่ยึดยอดได้ (ฐาน 1,500 + VAT 70
+        // = 1,570) กลายเป็น Unknown เมื่อ Tesseract ทำ "ไม่" หล่นเป็น "ไม" หรือป้ายเป็นอังกฤษ
+        foreach (Match label in VatInclusiveLabel.Matches(line))
+        {
+            if (InclusiveLabelNegated.IsMatch(line[..label.Index])) continue;
+            var after = line[(label.Index + label.Length)..];
+            var stop = VatExclusiveLabel.Match(after);
+            if (stop.Success) after = after[..stop.Index];
+            var money = MoneyOn(after);
+            if (money.Count > 0 && Math.Abs(money[0] - amount) <= ExactTol) return true;
+        }
+        return false;
     }
 
     /// <summary>บรรทัดที่เป็นเปอร์เซ็นต์ล้วน ("7%" · "7.00 %") — ข้ามได้ระหว่างป้าย VAT กับตัวเลข</summary>

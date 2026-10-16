@@ -260,6 +260,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ยอดที่กระดาษยืนยัน (ผู้สมัครแข็งตัวเดียว) ⇒ `[Σ-GAP]` ท้าย `BuildScanLinesAsync` (สร้าง/พรีวิว/ดึงซ้ำ) **และ**ตรวจสดใน `CollectApprovalWarningsAsync`
     (`OcrApprovalGapWarning.Build(overstatement:, overstatementCheckedLive: true)` — ชุด "ยอดไม่ตรงกระดาษ" รับทราบตอนอนุมัติ · API คืน `scanAmountGap`)
     ⇒ ครอบเอกสารที่สร้างก่อนแก้/บรรทัดที่ผู้ใช้แยกเอง · ไม่เปลี่ยนตัวเลขเอง
+    · **ฝ่ายค้านของรอบนี้**: ป้ายรวม VAT นับเฉพาะ**เลขแรก**หลังป้าย · คำปฏิเสธชิดหน้าป้าย ("ไม/ไม่/not/excl./") = ก่อน VAT · ป้าย excl./ก่อน VAT
+    ที่ตามมาเป็นช่วงของตัวเอง · ข้อความเกินกระดาษเป็นกลาง ("ตรวจว่ามีบรรทัดเกินหรือ VAT ซ้ำ" — โทษ VAT ซ้ำเฉพาะเมื่อพิสูจน์บทบาทได้) · ปุ่ม "อนุมัติเลย"
+    ใน LINE ตรวจข้อเกินกระดาษ**สด**บนบรรทัดตอนนี้ (`OcrPostingReadiness.Evaluate(…, overstatedNow)`) — หมายเหตุตอนสร้างไม่ค้างหยุดหลังผู้ใช้แก้ · ตรวจไม่ได้ = หยุดต่อ
   - **แถวในตารางรายการที่ไม่ใช่สินค้า (2026-10-09)** — `Helpers/OcrNonItemRow` ตัวเดียวทุก engine (Azure prebuilt Items · Azure layout-table ·
     python ocr-service): แถวสรุป/แถวชำระ/เงินทอน ("เงินสด 1,000" · "เงินทอน" · "รวม 3 รายการ" · "VAT 7%" · "Card") ถูกตัดก่อนเป็นบรรทัดสินค้า
     และบอกใน trace/warnings (`[Items] ตัดแถวสรุป…`) · คำแรกต้องเป็นป้ายทั้งคำ + คำที่เหลือเป็นคำประกอบของแถวสรุป ("รวมมิตรทะเล" · "Cash Drawer
@@ -5792,3 +5795,6 @@ _Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบ�
 _Last verified against codebase: 2026-10-16 (OCR Makro หน้า 2/2 — §OCR "ยึดยอดรวมทั้งสิ้นก่อน": เลขหลังป้าย "รวม VAT" ไม่ใช่ฐาน · บทบาท `VatAddedTwice` ·
 ด่านยอดเอกสารเกินยอดที่กระดาษยืนยัน (`[Σ-GAP]` ตอนสร้าง + คำเตือนสดตอนอนุมัติ) — เทสต์ `OcrMakroPage2VatAddedTwiceTests` · `OcrReplayGoldenTests` ·
 `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-10-16 (ฝ่ายค้านของ 6e56d33d — §OCR "ยึดยอดรวมทั้งสิ้นก่อน": ป้ายรวม VAT เลขแรก + คำปฏิเสธ · มัดจำถอนกฎ "หัก…ที่ใดก็ได้"
+(fallback บรรทัดถัดไปรับเฉพาะยอดเงินล้วน) · ข้อความเกินกระดาษเป็นกลาง · LINE อนุมัติตรวจเกินกระดาษสด — เทสต์ `OcrReview6e56d33dTests` —
+คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_

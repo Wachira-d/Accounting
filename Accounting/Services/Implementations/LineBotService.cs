@@ -817,12 +817,25 @@ public class LineBotService : ILineBotService
         var scanGate = await _db.Set<OcrScanResult>().AsNoTracking()
             .Where(r => r.CompanyId == doc.CompanyId && r.CreatedDocumentId == doc.Id)
             .OrderByDescending(r => r.CreatedAt)
-            .Select(r => new { r.ProcessingNotes, r.ExtractedDate })
+            .Select(r => new { r.ProcessingNotes, r.ExtractedDate, r.RawTextContent, r.ExtractedTotalAmount })
             .FirstOrDefaultAsync();
         if (scanGate != null)
         {
+            // ฝ่ายค้าน 6e56d33d P2-4: ข้อ [Σ-GAP] "ยอดเอกสารเกินกระดาษ" ในหมายเหตุเป็นตัวเลขของบรรทัดตอนสร้าง — ผู้ใช้แก้บรรทัดในเว็บแล้วต้องไม่ค้างหยุดแชท
+            // ⇒ ตรวจสดบนบรรทัดตอนนี้ด้วยตัวตัดสินเดียวกับด่านอนุมัติ (OcrTotalAnchor.DocumentOverstatement · สูตรยอดเดียวกับ
+            // DocumentService.CollectApprovalWarningsAsync: Σ (ยอด + VAT) ของบรรทัดที่ไม่ถูกลบ + ผลต่างปัดเศษ) · ข้ออื่นตัดสินจากหมายเหตุเหมือนเดิม
+            var docRounding = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId)
+                .Select(d => d.RoundingAdjustment)
+                .FirstOrDefaultAsync();
+            var linesTotalNow = await _db.DocumentLines.AsNoTracking()
+                .Where(l => l.DocumentId == doc.Id && !l.IsDeleted)
+                .SumAsync(l => l.Amount + l.VatAmount) + docRounding;
+            var overstatedNow = Accounting.Helpers.OcrTotalAnchor.DocumentOverstatement(
+                Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(scanGate.RawTextContent),
+                scanGate.ExtractedTotalAmount, linesTotalNow) is not null;
             var readiness = Accounting.Helpers.OcrPostingReadiness.Evaluate(
-                scanGate.ProcessingNotes, scanGate.ExtractedDate != null);
+                scanGate.ProcessingNotes, scanGate.ExtractedDate != null, overstatedNow);
             if (!readiness.CanAutoApprove)
                 return "⛔ ยังอนุมัติจากแชทไม่ได้ — " + readiness.Reason;
         }

@@ -484,10 +484,15 @@ public static class OcrTotalAnchor
         if (strong.Count != 1) return null;
         var paper = strong[0];
         if (documentTotal <= paper.Amount + Tol) return null;
+        // ฝ่ายค้าน 6e56d33d P2-3: ข้อความเป็นกลาง — ส่วนเกินมีเหตุที่ถูกได้ (ผู้ใช้เพิ่มบรรทัดค่าขนส่งเอง) · โทษ "VAT บวกซ้ำ" เฉพาะเมื่อ
+        // ตัวเลขพิสูจน์บทบาทนั้นได้จริง (ตัวตัดสินเดียวกับขั้นยึดยอด Explain → VatAddedTwice) — ข้อความที่ระบุสาเหตุต้องตรวจสาเหตุนั้นจริง (F2 ข้อ 7)
+        var vatTwice = Explain(documentTotal, paper.Amount, rawText ?? "", OcrPaperAmounts.VatAmounts(rawText)) == OcrTotalRole.VatAddedTwice;
         return new OcrDocumentOverstatement(paper.Amount,
-            $"{OverstatementLead}: เอกสาร {documentTotal:N2} · กระดาษ {paper.Amount:N2} "
-            + $"({paper.IndependentClasses} ทาง: {Describe(paper)}) เกิน {documentTotal - paper.Amount:N2} — "
-            + "ห้ามลงบัญชีเกินกระดาษ (มักเกิดจากยอดรวม VAT ก่อนส่วนลดถูกอ่านเป็นฐานแล้วบวก VAT ซ้ำ) แก้ยอด/บรรทัดให้ตรงกระดาษก่อนอนุมัติ");
+            $"{OverstatementLead}: ยอดเอกสาร {documentTotal:N2} สูงกว่ายอดชำระบนกระดาษ {paper.Amount:N2} "
+            + $"(ต่าง {documentTotal - paper.Amount:N2} · กระดาษยืนยัน {paper.IndependentClasses} ทาง: {Describe(paper)}) — "
+            + (vatTwice
+                ? "ยอดเอกสาร = ยอดที่รวม VAT แล้วถูกบวก VAT ซ้ำอีกรอบ (ตัวเลขบนกระดาษพิสูจน์) — แก้ยอด/บรรทัดให้ตรงกระดาษก่อนอนุมัติ"
+                : "ตรวจว่ามีบรรทัดเกินหรือ VAT ซ้ำ (ถ้าตั้งใจเพิ่มรายการเอง กดรับทราบได้)"));
     }
 
     /// <summary>บรรทัดแรกที่พิมพ์เลขนี้<b>ในฐานะฐานก่อน VAT ได้</b> — ข้ามแถวที่เลขนี้อยู่หลังป้าย "รวม VAT"

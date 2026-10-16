@@ -105,6 +105,22 @@ public static class OcrPostingReadiness
         return new Verdict(true, null);
     }
 
+    /// <summary>หมายเหตุสแกนที่ตัดข้อ <c>[Σ-GAP]</c> "ยอดเอกสารเกินยอดรวมที่กระดาษยืนยัน" (ตัวเลขของบรรทัด<b>ตอนสร้าง</b>) ออก เมื่อผู้เรียก<b>ตรวจสดแล้ว</b>
+    /// ว่าบรรทัดตอนนี้ไม่เกิน (<paramref name="overstatedNow"/> = false) — ฝ่ายค้าน 6e56d33d P2-4: ผู้ใช้แก้บรรทัดให้ตรงกระดาษแล้ว หมายเหตุเก่ายังหยุด
+    /// การอนุมัติเอง/LINE ตลอดไป · null (ตรวจสดไม่ได้) / true (ยังเกิน) ⇒ คงหมายเหตุเดิม (ปลอดภัย: หยุดต่อ) · [Σ-GAP] ข้ออื่นคงทุกตัวอักษร</summary>
+    private static string? WithLiveOverstatement(string? processingNotes, bool? overstatedNow)
+    {
+        if (overstatedNow != false || string.IsNullOrEmpty(processingNotes)) return processingNotes;
+        var stale = OcrLineBuildNotes.GapTag + " " + OcrTotalAnchor.OverstatementLead;
+        return string.Join("\n", processingNotes.Split('\n')
+            .Where(l => !l.TrimStart().StartsWith(stale, StringComparison.Ordinal)));
+    }
+
+    /// <param name="overstatedNow">ผลตรวจ<b>สด</b>ของ <see cref="OcrTotalAnchor.DocumentOverstatement"/> บนบรรทัดเอกสารตอนนี้ · null = ไม่ได้ตรวจสด
+    /// (ตัดสินจากหมายเหตุเดิม — ปลอดภัย) · ดู <see cref="WithLiveOverstatement"/></param>
+    public static Verdict Evaluate(string? processingNotes, bool hasUsableDate, bool? overstatedNow)
+        => Evaluate(WithLiveOverstatement(processingNotes, overstatedNow), hasUsableDate);
+
     public static Verdict Evaluate(string? processingNotes, bool hasUsableDate)
     {
         if (!hasUsableDate)

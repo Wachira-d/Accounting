@@ -41,15 +41,23 @@ public static class OcrDepositMarker
     private static readonly Regex NegationPrefix = new(
         @"^\s*(?:\(?-?\)?\s*)?(?:หัก|ลบ|LESS|MINUS|DEDUCT)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>“หัก(เงิน)มัดจำ” / “Less deposit” <b>ติดกัน</b>ที่ใดก็ได้บนบรรทัด — ความหมายเดียวกับ <see cref="NegationPrefix"/> แต่ไม่ต้องอยู่ต้นบรรทัด
-    /// (2026-10-16 · Tesseract บนภาพถ่าย Makro หน้า 2/2 อ่านเส้นตารางเป็น ": = : ie" นำหน้า "หักเงินมัดจำ/ DEPOSIT" แล้วยอดหาย ⇒ ตัวเลข "4" ของ
-    /// บรรทัดหมายเหตุถัดไปถูกนับเป็นยอดมัดจำ ⇒ ใบซื้อธรรมดาติดธงมัดจำ · ป้ายแบบ "ยอดหลังหักเงินมัดจำ" ก็เป็นการหักเช่นกัน)</summary>
-    private static readonly Regex DeductedDeposit = new(
-        @"(?:หัก|LESS|DEDUCT)[ \t]*(?:เงิน|ค่า)?[ \t]*(?:มัดจ(?:ำ|ํา)|DEPOSIT|ADVANCE|ล่วงหน้า)",
+    /// <summary>"ยอด<b>หลัง</b>หัก(เงิน)มัดจำ" / "after deducting deposit" ที่ใดก็ได้บนบรรทัด = ยอดของใบสุดท้ายหลังหักมัดจำเดิม (ไม่ใช่การรับ/จ่ายมัดจำ)
+    /// <para>ฝ่ายค้าน 6e56d33d P2-2: รุ่นก่อนถือ "หัก…มัดจำ" <b>ที่ใดก็ได้</b> = การหัก ⇒ ใบมัดจำจริงที่อธิบายการหักงวดก่อนในบรรทัดเดียวกัน
+    /// ("รับเงินมัดจำ 30% หักมัดจำครั้งก่อน 10,000.00" · "Advance payment received (less advance previously paid)" ·
+    /// รายการ "ค่ามัดจำงวดที่ 2 (หักมัดจำงวดที่ 1 แล้ว)") พลิกเป็น "ไม่ใช่มัดจำ" · กฎนั้นถูกถอน — เหตุจริงของ Makro 2/2 คือ fallback บรรทัดถัดไป
+    /// (ดู <see cref="PureMoneyLine"/>) · เหลือเฉพาะรูป "หลังหัก" ที่ไม่มีความหมายอื่น</para></summary>
+    private static readonly Regex AfterDeduction = new(
+        @"หลัง[ \t]*หัก[ \t]*(?:เงิน|ค่า)?[ \t]*มัดจ(?:ำ|ํา)|after[ \t]+(?:less(?:ing)?|deduct\w*)[ \t]+(?:the[ \t]+)?(?:deposit|advance)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>ข้อความนี้คือ "การหักมัดจำเดิมออก" — ตัวตัดสินเดียวของสามทางอ่าน (บรรทัดกระดาษ · รายการ · e-Tax XML)</summary>
-    private static bool IsDeduction(string text) => NegationPrefix.IsMatch(text) || DeductedDeposit.IsMatch(text);
+    private static bool IsDeduction(string text) => NegationPrefix.IsMatch(text) || AfterDeduction.IsMatch(text);
+
+    /// <summary>บรรทัดที่เป็น<b>ยอดเงินล้วน</b> (engine แยก cell: ป้ายมัดจำบรรทัดหนึ่ง ยอดบรรทัดถัดไป) — fallback บรรทัดถัดไปรับเฉพาะรูปนี้
+    /// (2026-10-16 Makro 2/2 Tesseract: ป้าย "หักเงินมัดจำ/ DEPOSIT" ยอด 0.00 หาย แล้วบรรทัดถัดไปคือหมายเหตุ "4ะสินค้ามูลค่า…" ⇒ เดิมเลข 4 = ยอดมัดจำ)</summary>
+    private static readonly Regex PureMoneyLine = new(
+        @"^[ \t]*\(?-?[ \t]*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?[ \t]*\)?[ \t]*(?:บาท|฿|THB)?[ \t]*$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>จำนวนเงินบนบรรทัด — ตัวคั่นหลักพันด้วย , เท่านั้น ห้าม \s (regex_line_span_check)</summary>
     private static readonly Regex Money = new(@"(?<![\d.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?![\d])",
@@ -81,7 +89,8 @@ public static class OcrDepositMarker
             if (!Keyword.IsMatch(line)) continue;
             if (IsDeduction(line)) { sawNegation = true; continue; }
 
-            var amt = FirstPositiveMoney(line) ?? (i + 1 < lines.Length ? FirstPositiveMoney(lines[i + 1]) : null);
+            var amt = FirstPositiveMoney(line)
+                ?? (i + 1 < lines.Length && PureMoneyLine.IsMatch(lines[i + 1]) ? FirstPositiveMoney(lines[i + 1]) : null);
             if (amt is > 0m)
                 return new(true, $"บรรทัด “{line.Trim()}” มียอด {amt.Value:N2}");
             sawZeroOnly = true;
