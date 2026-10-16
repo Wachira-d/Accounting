@@ -130,6 +130,23 @@ public static class BranchCodeExtractor
         return FromSegment(tail);
     }
 
+    /// <summary>
+    /// <b>สาขาผู้ขายที่อ่านได้มาจากบรรทัดเลขผู้เสียภาษีของผู้ซื้อ</b> (ทีม OCR 13 · ฝ่ายค้าน OCR 10 P2 · F2 #3) — ข้อความ PDF รูปเดิม (บิล กฟภ. page.Text)
+    /// ไม่มีป้ายผู้ซื้อก่อนบล็อกผู้ซื้อ (ป้ายเดียวคือ "รหัสลูกค้า" ใต้บล็อก) ⇒ <see cref="Extract"/> ถือบรรทัด "…0203562005871สาขา (Branch No.) 00000" เป็นบล็อกผู้ขาย ⇒
+    /// สาขาผู้ขาย = สาขาผู้ซื้อ (ค่าตรงกระดาษ "โดยบังเอิญ" เพราะผู้ขายก็ 00000) · กุญแจ = เลขผู้เสียภาษีที่จัดฝั่งแล้ว: true เมื่อ (1) ไม่มีประโยคประกาศสาขาผู้ออกที่อ่านได้ ·
+    /// (2) บรรทัดเลขผู้ขายไม่มีสาขา · (3) สาขาบนบรรทัดเลขผู้ซื้อ = ค่าที่ได้ · (4) ข้อความก่อนเลขผู้ซื้อไม่มีสาขา/สำนักงานใหญ่ให้ผู้ขายเลย ⇒ ผู้เรียกล้างค่า (ไม่รู้ ≠ เดา)
+    /// </summary>
+    public static bool VendorBranchFromBuyerLine(string? rawText, string? vendorBranch, string? vendorTaxId, string? buyerTaxId)
+    {
+        if (string.IsNullOrWhiteSpace(rawText) || string.IsNullOrWhiteSpace(vendorBranch)
+            || string.IsNullOrWhiteSpace(buyerTaxId) || buyerTaxId.Length != 13 || buyerTaxId == vendorTaxId) return false;
+        if (Accounting.Helpers.OcrIssuerBranch.Detect(rawText) != null) return false;
+        if (OnTaxIdLine(rawText, vendorTaxId) != null) return false;
+        if (!string.Equals(OnTaxIdLine(rawText, buyerTaxId), vendorBranch, StringComparison.Ordinal)) return false;
+        var at = rawText.IndexOf(buyerTaxId, StringComparison.Ordinal);
+        return at > 0 && FromSegment(rawText[..at]) == null;
+    }
+
     public static Result Extract(string? rawText)
     {
         if (string.IsNullOrWhiteSpace(rawText)) return new Result(null, null);

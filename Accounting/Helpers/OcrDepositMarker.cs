@@ -85,15 +85,17 @@ public static class OcrDepositMarker
         var sawNegation = false;
         for (var i = 0; i < lines.Length; i++)
         {
-            var line = lines[i];
-            if (!Keyword.IsMatch(line)) continue;
-            if (IsDeduction(line)) { sawNegation = true; continue; }
+            if (!Keyword.IsMatch(lines[i])) continue;
+            foreach (var line in KeywordScopes(lines[i]))
+            {
+                if (IsDeduction(line)) { sawNegation = true; continue; }
 
-            var amt = FirstPositiveMoney(line)
-                ?? (i + 1 < lines.Length && PureMoneyLine.IsMatch(lines[i + 1]) ? FirstPositiveMoney(lines[i + 1]) : null);
-            if (amt is > 0m)
-                return new(true, $"บรรทัด “{line.Trim()}” มียอด {amt.Value:N2}");
-            sawZeroOnly = true;
+                var amt = FirstPositiveMoney(line)
+                    ?? (i + 1 < lines.Length && PureMoneyLine.IsMatch(lines[i + 1]) ? FirstPositiveMoney(lines[i + 1]) : null);
+                if (amt is > 0m)
+                    return new(true, $"บรรทัด “{line.Trim()}” มียอด {amt.Value:N2}");
+                sawZeroOnly = true;
+            }
         }
 
         if (sawNegation && !sawZeroOnly)
@@ -180,6 +182,25 @@ public static class OcrDepositMarker
         if (Keyword.IsMatch(content))
             return new(false, "e-Tax XML: คำว่ามัดจำไม่ได้อยู่ในชื่อเอกสารหรือรายการที่มียอด — ไม่ถือเป็นใบมัดจำ");
         return new(false, "ไม่พบคำว่ามัดจำ");
+    }
+
+    /// <summary>
+    /// ช่วงของบรรทัดที่เป็น "ป้ายมัดจำ + ยอดของมัน" — ข้อความ PDF ตามพิกัดคั่นคอลัมน์ด้วย tab (<see cref="PdfPositionalText.ColumnSeparator"/>) ⇒ บรรทัดเดียวมีหลายคู่ป้าย-ค่า
+    /// ("ภาษีมูลค่าเพิ่ม⇥209.41 บาท⇥หักเงินมัดจำ⇥0.00" — ใบ CRC ไทวัสดุ · ทีม OCR 13) · เดิมอ่านทั้งบรรทัด ⇒ ยอด VAT 209.41 กลายเป็นยอดมัดจำ และ "หัก…" ไม่ได้อยู่ต้นบรรทัด
+    /// ⇒ ใบขายธรรมดาติดธงมัดจำ · ตอนนี้: แต่ละช่องที่มีคำมัดจำ + ช่องตัวเลขที่ตามมาจนถึงช่องข้อความถัดไป · บรรทัดไม่มี tab = ทั้งบรรทัด (เส้น Tesseract/Azure เท่าเดิม)
+    /// </summary>
+    private static IEnumerable<string> KeywordScopes(string line)
+    {
+        if (!line.Contains('\t')) { yield return line; yield break; }
+        var cells = line.Split('\t');
+        for (var k = 0; k < cells.Length; k++)
+        {
+            if (!Keyword.IsMatch(cells[k])) continue;
+            var scope = cells[k];
+            for (var j = k + 1; j < cells.Length && (!cells[j].Any(char.IsLetter) || PureMoneyLine.IsMatch(cells[j])); j++)
+                scope += " " + cells[j];
+            yield return scope;
+        }
     }
 
     private static decimal? FirstPositiveMoney(string line)

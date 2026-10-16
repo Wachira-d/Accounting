@@ -49,19 +49,27 @@ public static class PdfTextLayerExtractor
 
     /// <summary>ข้อความหน้าเดียวตามพิกัด (ตัวแปลง PdfPig <c>Letter</c> → <see cref="Accounting.Helpers.PdfGlyph"/> ที่นี่ที่เดียว · ตัวประกอบไม่รู้จัก PdfPig) ·
     /// null = ประกอบไม่ได้ ⇒ ผู้เรียกใช้ <c>page.Text</c></summary>
-    internal static string? PositionalPageText(Page page)
+    internal static string? PositionalPageText(Page page) => PositionalPageLayout(page).Text;
+
+    /// <summary>ข้อความหน้าเดียวตามพิกัด + เหตุผลเมื่อประกอบไม่ได้ (ทีม OCR 13 · F2 #7: เดิม <c>catch {}</c> + คืน null เงียบ ⇒ ไม่รู้ว่าสแกนใบนั้นใช้เส้นไหน)</summary>
+    internal static Accounting.Helpers.PdfPageLayout PositionalPageLayout(Page page)
     {
         IReadOnlyList<Letter> letters;
         try { letters = page.Letters; }
-        catch { return null; }   // หน้าที่ PdfPig ถอดพิกัดไม่ได้ ⇒ ข้อความเดิม (ไม่ใช่เส้นเงิน · ข้อความเดิมยังอยู่)
-        if (letters == null || letters.Count == 0) return null;
+        catch (Exception ex)
+        {
+            // หน้าที่ PdfPig ถอดพิกัดไม่ได้ ⇒ ข้อความเดิม (ไม่ใช่เส้นเงิน · ข้อความเดิมยังอยู่) — เหตุผลไปถึง trace ของสแกนทาง Result.Reason
+            return new(null, $"PdfPig ถอดพิกัดไม่ได้ ({ex.GetType().Name}: {ex.Message})", 0);
+        }
+        if (letters == null || letters.Count == 0) return new(null, "ไม่มี glyph บนหน้า", 0);
         var glyphs = new List<Accounting.Helpers.PdfGlyph>(letters.Count);
         foreach (var l in letters)
             glyphs.Add(new Accounting.Helpers.PdfGlyph(
                 l.Value ?? "", l.StartBaseLine.X, l.EndBaseLine.X, l.StartBaseLine.Y,
                 l.PointSize > 0 ? l.PointSize : l.FontSize,
-                l.TextOrientation == TextOrientation.Horizontal));
-        return Accounting.Helpers.PdfPositionalText.Build(glyphs);
+                l.TextOrientation == TextOrientation.Horizontal,
+                l.FontName));
+        return Accounting.Helpers.PdfPositionalText.Layout(glyphs);
     }
 
     public static Result TryExtract(byte[] pdfBytes, int maxPages = 10)
@@ -81,16 +89,27 @@ public static class PdfTextLayerExtractor
 
             var sb = new System.Text.StringBuilder();
             int charsExtracted = 0;
+            // ทีม OCR 13 (F2 #7): หน้าที่ถอยไปใช้ลำดับ stream / เปิดไม่ได้ / ตัดไอคอน PUA — บอกในเหตุผลของผล (⇒ trace ของสแกน) ไม่ใช่เงียบ
+            var pageNotes = new List<string>();
             for (int pageNum = 1; pageNum <= scanLimit; pageNum++)
             {
                 Page page;
                 try { page = doc.GetPage(pageNum); }
-                catch { continue; }
+                catch (Exception ex)
+                {
+                    pageNotes.Add($"หน้า {pageNum} เปิดไม่ได้ ({ex.GetType().Name}) — ข้าม");
+                    continue;
+                }
 
                 // ทีม OCR 10 (2026-10-16): ประกอบข้อความตาม "ตำแหน่งบนกระดาษ" (Helpers/PdfPositionalText — ตัวตั้งตัวเดียว)
                 // เดิม page.Text ต่อ glyph ตามลำดับ content stream ⇒ ช่องตารางติดกัน ("1,356.7120,738.21") · ป้ายกับค่าสลับคู่ ·
                 // วรรณยุกต์เป็น PUA — ประกอบไม่ได้ (หน้าหมุน/ไม่มีพิกัด) ⇒ page.Text เดิม (ไม่เดาลำดับ)
-                var pageText = PositionalPageText(page) ?? page.Text ?? "";
+                var layout = PositionalPageLayout(page);
+                if (layout.Text == null)
+                    pageNotes.Add($"หน้า {pageNum} ใช้ข้อความลำดับ stream (page.Text): {layout.FallbackReason}");
+                if (layout.PuaDropped > 0)
+                    pageNotes.Add($"หน้า {pageNum} ตัดอักขระ Private Use {layout.PuaDropped} ตัว (ไอคอน/ฟอนต์สัญลักษณ์)");
+                var pageText = layout.Text ?? page.Text ?? "";
                 if (string.IsNullOrWhiteSpace(pageText)) continue;
                 sb.AppendLine(pageText);
                 charsExtracted += pageText.Length;
@@ -98,19 +117,20 @@ public static class PdfTextLayerExtractor
             }
 
             var text = sb.ToString();
+            var notes = pageNotes.Count == 0 ? "" : " · " + string.Join(" · ", pageNotes);
             if (string.IsNullOrWhiteSpace(text))
                 return new Result(false, "", totalPages, 0,
-                    "PDF ไม่มี text layer (image-only — ต้อง OCR)");
+                    "PDF ไม่มี text layer (image-only — ต้อง OCR)" + notes);
 
             // Density check: real digital invoices have 200-2000 chars
             // per page. Below the threshold means OCR is needed.
             var charsPerPage = (double)charsExtracted / scanLimit;
             if (charsPerPage < MinCharsPerPage)
                 return new Result(false, text, totalPages, charsExtracted,
-                    $"text layer บาง ({charsPerPage:F0} chars/page) — น่าจะ scan paper");
+                    $"text layer บาง ({charsPerPage:F0} chars/page) — น่าจะ scan paper" + notes);
 
             return new Result(true, text, totalPages, charsExtracted,
-                $"text layer ใช้ได้ ({charsPerPage:F0} chars/page, {scanLimit}/{totalPages} pages)");
+                $"text layer ใช้ได้ ({charsPerPage:F0} chars/page, {scanLimit}/{totalPages} pages)" + notes);
         }
         catch (Exception ex)
         {

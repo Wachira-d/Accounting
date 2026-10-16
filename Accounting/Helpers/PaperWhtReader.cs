@@ -51,9 +51,13 @@ public static class PaperWhtReader
     /// และไม่มีป้ายใดมียอด &gt; 0 · ไม่มีตัวเลขบนบรรทัดป้าย = ไม่รู้ (false)
     /// <para>ที่มา (ทีม OCR 10 · 2026-10-16 · ใบ RE-20261000111): ข้อความ PDF เดิมมีวรรณยุกต์ PUA ("ที่จ\uF70Aาย") ⇒ ป้ายไม่เคยถูกจับ · พอแปลง PUA แล้ว
     /// ตัวตรวจป้ายของ <c>ParseThaiDocument</c> ติ๊ก "มีหัก ณ ที่จ่าย" ทั้งที่กระดาษพิมพ์ 0.00</para></summary>
+    /// <para>ทีม OCR 13 (ฝ่ายค้าน OCR 10 P2): ดูเฉพาะ "ช่องยอด" ของป้ายตัวเอง (ยอดเงินตัวแรกหลังป้ายบนบรรทัดเดียวกัน) และ<b>ยอมให้ <see cref="Read"/></b>
+    /// — ตัวอ่านยอดหักตัวเดียวพบยอด &gt; 0 ของป้ายใดก็ตาม (ป้ายหนึ่งบรรทัด ยอดบรรทัดถัดไป: "ภาษีหัก ณ ที่จ่าย\n3%  30.00") ⇒ ไม่ใช่ "พิมพ์ศูนย์"
+    /// (เดิมป้ายที่ไม่มียอดบนบรรทัดตัวเองถูกข้าม แล้ว "…ถูกหัก ณ ที่จ่าย 0.00 บาท" ท้ายหน้าซ่อน 30.00 / 3%)</para>
     public static bool PrintedZero(string? rawText)
     {
         if (string.IsNullOrWhiteSpace(rawText)) return false;
+        if (Read(rawText).Amount is > 0m) return false;
         var zero = false;
         foreach (Match label in Label.Matches(rawText))
         {

@@ -12,7 +12,15 @@ namespace Accounting.Helpers;
 /// <param name="Baseline">เส้นฐาน (StartBaseLine.Y)</param>
 /// <param name="Size">ขนาดตัวอักษรที่วาดจริง (PointSize · ถ้าไม่มีใช้ FontSize)</param>
 /// <param name="Horizontal">วางแนวนอนปกติ — glyph ที่หมุน (ตราประทับข้าง · ลายน้ำ) ไม่ถูกจัดแถวตามพิกัด (ต่อท้ายหน้าตามลำดับ stream)</param>
-public readonly record struct PdfGlyph(string Text, double Left, double Right, double Baseline, double Size, bool Horizontal = true);
+/// <param name="Font">ชื่อฟอนต์ (PdfPig <c>FontName</c>) — ทีม OCR 13: ตัดตัวหนาที่วาดทับเฉพาะฟอนต์เดียวกัน · แปลง PUA ไทยเฉพาะฟอนต์ที่วาดอักษรไทยบนหน้านี้
+/// (ไอคอนฟอนต์ใช้ช่วง U+F700–F71A ซ้อนกับ PUA ไทย) · null = ไม่รู้ (ทุก glyph ที่ไม่รู้ฟอนต์ถือเป็นฟอนต์เดียวกัน)</param>
+public readonly record struct PdfGlyph(string Text, double Left, double Right, double Baseline, double Size, bool Horizontal = true, string? Font = null);
+
+/// <summary>ผลประกอบหนึ่งหน้า + เหตุผลเมื่อประกอบไม่ได้ (ทีม OCR 13 · F2 #7 — ทางถอยไป <c>page.Text</c> ต้องบอกเหตุ ไม่ใช่เงียบ)</summary>
+/// <param name="Text">ข้อความตามพิกัด · null = ประกอบไม่ได้ ⇒ ผู้เรียกใช้ <c>page.Text</c></param>
+/// <param name="FallbackReason">เหตุที่ประกอบไม่ได้ (ไม่มี glyph · หน้าหมุน) · null เมื่อประกอบได้</param>
+/// <param name="PuaDropped">จำนวนอักขระ Private Use ที่ถูกตัดออกจากข้อความ (ไอคอนฟอนต์ · ฟอนต์สัญลักษณ์ไม่มี ToUnicode · PUA ของฟอนต์ที่ไม่มีอักษรไทย) — บอกใน trace</param>
+public readonly record struct PdfPageLayout(string? Text, string? FallbackReason, int PuaDropped);
 
 /// <summary>
 /// **ประกอบข้อความหน้า PDF ตาม "ตำแหน่งบนกระดาษ" — ตัวตั้งตัวเดียวของเส้นข้อความ PDF** (ทีม OCR 10 · 2026-10-16)
@@ -24,8 +32,13 @@ public readonly record struct PdfGlyph(string Text, double Left, double Right, d
 ///
 /// <para>═══ วิธี (ทุกเกณฑ์เป็นสัดส่วนของขนาดตัวอักษร · ตั้งจากช่องว่างที่วัดบนกระดาษจริงสองใบ) ═══
 /// <list type="number">
-/// <item>แปลงอักขระเฉพาะฟอนต์เป็น Unicode ปกติ (<see cref="NormalizeGlyphText"/> — PUA ไทยผ่าน <see cref="ThaiTextNormalizer.MapThaiPua"/> ตัวเดียว · ไอคอนฟอนต์ทิ้ง)</item>
-/// <item>ตัด glyph ซ้ำที่วาดทับตำแหน่งเดิม (ตัวหนาแบบวาดสองรอบ — กฟภ. วาด "4,272.00" / "19,381.50" ซ้ำ) — อักขระเดียวกัน ห่างไม่เกิน <see cref="DuplicateTolerance"/></item>
+/// <item>แปลงอักขระเฉพาะฟอนต์เป็น Unicode ปกติ (<c>NormalizeGlyphText</c> — PUA ไทยผ่าน <see cref="ThaiTextNormalizer.MapThaiPua"/> ตัวเดียว
+/// <b>เฉพาะฟอนต์ที่วาดอักษรไทยบนหน้านี้</b> · PUA อื่น/ฟอนต์ที่ไม่มีอักษรไทย (ไอคอนฟอนต์ FontAwesome ใช้ U+F700–F71A ซ้อนกัน) ไม่ถูกแปลงเป็นไทย — ตัดออกและนับใน
+/// <see cref="PdfPageLayout.PuaDropped"/>)</item>
+/// <item>ตัด glyph ซ้ำที่วาดทับตำแหน่งเดิม (ตัวหนาแบบวาดสองรอบ — กฟภ. วาด "4,272.00" / "19,381.50" ซ้ำ) — อักขระเดียวกัน ฟอนต์เดียวกัน ห่างไม่เกิน
+/// <see cref="DuplicateTolerance"/> × ขนาด และไม่เกินครึ่งความกว้างของตัวเอง (ทีม OCR 13: ตัวเลขแคบมาก "2,000.00" ไม่ถูกกินเป็น "2,00.0")</item>
+/// <item>เลขในช่องตีกรอบ (ทีม OCR 13 · 50 ทวิ / แบบฟอร์มกรมสรรพากร "0 - 1 0 7 5 - …") — ตัวเลขทีละตัว + ขีด ระยะห่างสม่ำเสมอ ครบ 13 หลัก ⇒ ต่อกลับเป็นก้อนเดียว
+/// "0-1075-38000-53-3" (<c>DigitBoxRuns</c>)</item>
 /// <item>วรรณยุกต์/สระบน-ล่าง (Unicode Mn) ติดกับ glyph ก่อนหน้าตามลำดับ stream — ไม่เรียงใหม่ตามพิกัด (กว้าง 0 · x ชนตัวถัดไป)</item>
 /// <item>จัดแถวด้วยเส้นฐาน: ห่างจากเส้นฐานแรกของแถวไม่เกิน <see cref="LineTolerance"/> = แถวเดียวกัน · เรียงแถวบน→ล่าง · ในแถวเรียงซ้าย→ขวา</item>
 /// <item>ช่องว่างระหว่าง glyph &gt; <see cref="WordGap"/> = เว้นวรรคหนึ่งตัว · &gt; <see cref="ColumnGap"/> = <see cref="ColumnSeparator"/> (ช่องตาราง/ป้าย-ค่า แยกกันเสมอ)</item>
@@ -51,9 +64,13 @@ public static class PdfPositionalText
     /// ช่องตาราง/ป้าย-ค่าที่น้อยสุด 1.57 (กฟภ.) / 1.41 (พรามี่) ⇒ 1.2 อยู่กลางช่องว่างของทั้งสองใบ</summary>
     public const double ColumnGap = 1.2;
 
-    /// <summary>ตัวคั่นช่อง — สองช่องว่าง (ตัวอ่านหลายตัวรับเฉพาะ ' ' ไม่รับ tab · <see cref="ThaiTextNormalizer.Normalize"/> ยุบเหลือหนึ่งช่อง
-    /// ⇒ ตัวอ่านที่อ่านข้อความ normalize ยังเห็นช่องคั่น · ช่องคั่นระหว่างอักษรไทยสองตัวถูก Normalize ตัดทิ้ง เหมือนเว้นวรรคเดิม)</summary>
-    public const string ColumnSeparator = "  ";
+    /// <summary>ตัวคั่นช่อง — <b>tab</b> (ทีม OCR 13 · ฝ่ายค้าน OCR 10 P1-4)
+    /// <para>เดิมสองช่องว่าง ⇒ <see cref="ThaiTextNormalizer.Normalize"/> (ตัวที่ตัวอ่านหัวใบทุกตัวเรียกก่อน — กติกาของ Tesseract) ตัดช่องว่างระหว่างอักษรไทยสองตัวทิ้ง
+    /// และยุบช่องว่างที่เหลือเป็นหนึ่ง ⇒ หัวใบหลายคอลัมน์ต่อกัน ("หจก.แอม แฮปปี้เนส  เลขที่/ No. …" ⇒ "หจก.แอมแฮปปี้เนสเลขที่/ No. …") ⇒ ชื่อ/ที่อยู่กลืนคอลัมน์ขวา
+    /// (e-Tax TXE05202609T004679 · ใบ CRC ไทวัสดุ) · tab ไม่ถูก Normalize แตะ (กติกาทั้งสองข้อแตะเฉพาะ ' ') ⇒ ตัวคั่นคอลัมน์รอดถึงตัวอ่านทุกตัวโดยไม่ต้องแก้
+    /// Normalize ที่ทุกเส้น OCR ใช้ · ตัวอ่านป้าย-ค่าใช้ <c>\s</c>/<c>[ \t]</c> อยู่แล้ว · ตัวอ่านชื่อ/ที่อยู่หยุดที่ tab (<see cref="ThaiCompanyName"/> · ตัวอ่านที่อยู่)
+    /// · ตัวแบ่งช่องตาราง (<see cref="RawTextLineSplitter"/>) รับ tab อยู่แล้ว</para></summary>
+    public const string ColumnSeparator = "\t";
 
     /// <summary>หน้าที่ glyph แนวนอนน้อยกว่าสัดส่วนนี้ = หน้าหมุน/วาดแปลก ⇒ คืน null ให้ผู้เรียกใช้ข้อความเดิม (ไม่เดาลำดับ)</summary>
     public const double MinHorizontalShare = 0.5;
@@ -61,9 +78,12 @@ public static class PdfPositionalText
     private readonly record struct Cluster(string Text, double Left, double Right, double Baseline, double Size, int Order);
 
     /// <summary>ประกอบข้อความหนึ่งหน้า — คืน null เมื่อไม่มี glyph ที่ใช้ได้หรือหน้าส่วนใหญ่ไม่ใช่แนวนอน (ผู้เรียกถอยไปใช้ <c>page.Text</c>)</summary>
-    public static string? Build(IReadOnlyList<PdfGlyph>? glyphs)
+    public static string? Build(IReadOnlyList<PdfGlyph>? glyphs) => Layout(glyphs).Text;
+
+    /// <summary>ประกอบข้อความหนึ่งหน้าพร้อมเหตุผลเมื่อประกอบไม่ได้ + จำนวน PUA ที่ตัด (ผู้เรียกบันทึกลงเหตุผลของตัวสกัด ⇒ trace ของสแกน)</summary>
+    public static PdfPageLayout Layout(IReadOnlyList<PdfGlyph>? glyphs)
     {
-        if (glyphs == null || glyphs.Count == 0) return null;
+        if (glyphs == null || glyphs.Count == 0) return new(null, "ไม่มี glyph บนหน้า", 0);
         var usable = 0;
         var horizontal = 0;
         foreach (var g in glyphs)
@@ -72,16 +92,26 @@ public static class PdfPositionalText
             usable++;
             if (g.Horizontal) horizontal++;
         }
-        if (usable == 0 || horizontal < usable * MinHorizontalShare) return null;
+        if (usable == 0) return new(null, "ไม่มี glyph ที่มีพิกัด/ขนาดใช้ได้", 0);
+        if (horizontal < usable * MinHorizontalShare)
+            return new(null, string.Create(CultureInfo.InvariantCulture, $"หน้าหมุน/แนวตั้ง (glyph แนวนอน {horizontal}/{usable})"), 0);
+
+        // ฟอนต์ที่วาดอักษรไทยบนหน้านี้ — PUA ไทย (U+F700–F71A) แปลงเฉพาะฟอนต์กลุ่มนี้ (ไอคอนฟอนต์ไม่มีอักษรไทย)
+        var thaiFonts = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var g in glyphs)
+            if (Usable(g) && g.Text.Any(IsThai)) thaiFonts.Add(g.Font ?? "");
 
         // 1–3) แปลงอักขระ · ตัด glyph ที่วาดทับ · ติดวรรณยุกต์กับ glyph ก่อนหน้า (ลำดับ stream) · glyph ที่หมุนเก็บไว้ต่อท้ายตามลำดับ stream
         var clusters = new List<Cluster>(glyphs.Count);
         var rotated = new StringBuilder();
-        var seen = new Dictionary<string, List<(double X, double Y)>>(StringComparer.Ordinal);
+        var seen = new Dictionary<(string Text, string Font), List<(double X, double Y)>>();
+        var puaDropped = 0;
         foreach (var g in glyphs)
         {
             if (!Usable(g)) continue;
-            var text = NormalizeGlyphText(g.Text);
+            var mapThai = thaiFonts.Contains(g.Font ?? "");
+            var text = NormalizeGlyphText(g.Text, mapThai);
+            puaDropped += DroppedPua(g.Text, mapThai);
             if (text.Length == 0) continue;
             if (!g.Horizontal) { rotated.Append(text); continue; }
             if (string.IsNullOrWhiteSpace(text)) continue;   // ช่องว่างที่พิมพ์ = ช่องว่างระหว่างพิกัด (วัดจากพิกัด ไม่นับตัวอักษร)
@@ -98,7 +128,8 @@ public static class PdfPositionalText
             }
             clusters.Add(new Cluster(text, g.Left, Math.Max(g.Left, g.Right), g.Baseline, g.Size, clusters.Count));
         }
-        if (clusters.Count == 0) return rotated.Length == 0 ? null : rotated.ToString();
+        if (clusters.Count == 0)
+            return rotated.Length == 0 ? new(null, "ไม่มีอักขระที่เป็นข้อความ (ไอคอน/ช่องว่างล้วน)", puaDropped) : new(rotated.ToString(), null, puaDropped);
 
         // 4) จัดแถวด้วยเส้นฐาน (บน → ล่าง) · แถวใหม่เมื่อห่างจากเส้นฐานแรกของแถวเกินเกณฑ์
         var ordered = clusters.OrderByDescending(c => c.Baseline).ThenBy(c => c.Order).ToList();
@@ -125,9 +156,12 @@ public static class PdfPositionalText
             var lineSb = new StringBuilder();
             var right = double.NegativeInfinity;
             var prevSize = 0.0;
-            foreach (var c in line.OrderBy(c => c.Left).ThenBy(c => c.Order))
+            var cells = line.OrderBy(c => c.Left).ThenBy(c => c.Order).ToList();
+            var boxJoin = DigitBoxRuns(cells);
+            for (var k = 0; k < cells.Count; k++)
             {
-                if (lineSb.Length > 0)
+                var c = cells[k];
+                if (lineSb.Length > 0 && !boxJoin[k])
                 {
                     var gap = c.Left - right;
                     var size = Math.Max(prevSize, c.Size);
@@ -142,22 +176,88 @@ public static class PdfPositionalText
             if (lineText.Length > 0) sb.Append(lineText).Append('\n');
         }
         if (rotated.Length > 0) sb.Append(ComposeSaraAm(rotated.ToString())).Append('\n');
-        return sb.Length == 0 ? null : sb.ToString().TrimEnd('\n');
+        return sb.Length == 0 ? new(null, "ไม่มีอักขระที่เป็นข้อความ", puaDropped) : new(sb.ToString().TrimEnd('\n'), null, puaDropped);
     }
+
+    /// <summary>จำนวนหลักของเลขในช่องตีกรอบที่ต่อกลับ — เลขผู้เสียภาษี/บัตรประชาชน 13 หลัก (แบบฟอร์ม 50 ทวิ / ภ.ง.ด. ตีกรอบทีละหลัก)</summary>
+    public const int DigitBoxLength = 13;
+
+    /// <summary>
+    /// **เลขในช่องตีกรอบ** (ทีม OCR 13 · ฝ่ายค้าน OCR 10 P1-1) — หนังสือรับรอง 50 ทวิ ที่ระบบเราสร้าง (HeadlessChrome) และแบบฟอร์มกรมสรรพากรวาดเลข 13 หลัก
+    /// ทีละหลักในช่อง ห่างกันเท่า ๆ กัน (วัดจริง 50 ทวิ ขนาด 9.8: ระยะหลักถึงหลัก 12.0 · ช่องว่างระหว่างหลัก 0.66 × ขนาด &gt; <see cref="WordGap"/>) ⇒
+    /// ข้อความตามพิกัดได้ "0 - 1 0 7 5 - 3 8 0 0 0 - 5 3 - 3" ⇒ ตัวอ่านเลขผู้เสียภาษีไม่เห็นเลข (เดิม page.Text ได้ "0-1075-38000-53-3")
+    ///
+    /// <para>คืนธง "ต่อกับตัวก่อนหน้าโดยไม่เว้นวรรค" ต่อ cluster (เรียงซ้าย→ขวาแล้ว) — เฉพาะช่วงที่: ทุกตัวเป็นตัวเลขหนึ่งหลักหรือขีด · ไม่มีช่องห่างเกิน
+    /// <see cref="ColumnGap"/> · ขึ้นต้นและจบด้วยตัวเลข · ตัวเลข<b>ครบ <see cref="DigitBoxLength"/> หลักพอดี</b> · ระยะหลักถึงหลัก (ไม่ข้ามขีด) สม่ำเสมอ
+    /// (0.75–2 เท่าของค่ากลาง) · ไม่มีขีดติดกันสองตัว — ไม่ตรวจ checksum ที่นี่ (ตัวประกอบไม่ตัดสินค่า · ตัวอ่านเลขผู้เสียภาษีตรวจ mod-11 เอง)</para>
+    /// </summary>
+    private static bool[] DigitBoxRuns(IReadOnlyList<Cluster> cells)
+    {
+        var join = new bool[cells.Count];
+        var i = 0;
+        while (i < cells.Count)
+        {
+            if (!IsBoxChar(cells[i].Text)) { i++; continue; }
+            var j = i;
+            while (j + 1 < cells.Count && IsBoxChar(cells[j + 1].Text)
+                   && cells[j + 1].Left - cells[j].Right <= ColumnGap * Math.Max(cells[j].Size, cells[j + 1].Size))
+                j++;
+            if (IsDigitBoxRun(cells, i, j))
+                for (var k = i + 1; k <= j; k++) join[k] = true;
+            i = j + 1;
+        }
+        return join;
+    }
+
+    private static bool IsBoxChar(string t) => t.Length == 1 && (char.IsAsciiDigit(t[0]) || t[0] == '-');
+
+    private static bool IsDigitBoxRun(IReadOnlyList<Cluster> cells, int from, int to)
+    {
+        if (!char.IsAsciiDigit(cells[from].Text[0]) || !char.IsAsciiDigit(cells[to].Text[0])) return false;
+        var digits = 0;
+        var pitches = new List<double>();
+        for (var k = from; k <= to; k++)
+        {
+            var isDigit = char.IsAsciiDigit(cells[k].Text[0]);
+            if (isDigit) digits++;
+            else if (cells[k - 1].Text[0] == '-') return false;   // ขีดติดกันสองตัว = ไม่ใช่เลขตีกรอบ (k > from เสมอ เพราะตัวแรกเป็นตัวเลข)
+            if (isDigit && k > from && char.IsAsciiDigit(cells[k - 1].Text[0])) pitches.Add(cells[k].Left - cells[k - 1].Left);
+        }
+        if (digits != DigitBoxLength || pitches.Count == 0) return false;
+        var sorted = pitches.OrderBy(p => p).ToList();
+        var median = sorted[sorted.Count / 2];
+        if (median <= 0) return false;
+        return pitches.All(p => p >= 0.75 * median && p <= 2.0 * median);
+    }
+
+    private static bool IsThai(char ch) => ch >= '\u0E00' && ch <= '\u0E7F';
+
+    /// <summary>จำนวนอักขระ PUA ของ glyph ที่จะถูกตัด (ไม่ได้แปลงเป็นไทย)</summary>
+    private static int DroppedPua(string text, bool mapThaiPua)
+        => text.Count(ch => IsPrivateUse(ch) && !(mapThaiPua && ch >= '\uF700' && ch <= '\uF71A'));
 
     /// <summary>แปลงข้อความ glyph เป็น Unicode ปกติ — PUA วรรณยุกต์/สระของฟอนต์ไทย (ตารางเดียว <see cref="ThaiTextNormalizer.MapThaiPua"/>) ·
     /// PUA อื่น (ไอคอนฟอนต์ เช่น โทรศัพท์/ลูกโลกของใบพรามี่) ไม่ใช่ข้อความ ⇒ ตัดทิ้ง</summary>
-    internal static string NormalizeGlyphText(string? text)
+    internal static string NormalizeGlyphText(string? text) => NormalizeGlyphText(text, true);
+
+    /// <param name="text">ข้อความของ glyph</param>
+    /// <param name="mapThaiPua">ฟอนต์ของ glyph วาดอักษรไทยบนหน้านี้ (ทีม OCR 13) — false ⇒ PUA ทุกตัวถูกตัด ไม่ถูกแปลงเป็นไทย
+    /// (FontAwesome 5 วาดไอคอนที่ U+F700 ⇒ เดิมกลายเป็น "ฐ" · U+F70A ⇒ ไม้เอกลอย)</param>
+    internal static string NormalizeGlyphText(string? text, bool mapThaiPua)
     {
         if (string.IsNullOrEmpty(text)) return "";
-        var mapped = ThaiTextNormalizer.MapThaiPua(text);
-        if (mapped.Any(IsPrivateUse))
-            mapped = new string(mapped.Where(ch => !IsPrivateUse(ch)).ToArray());
+        var mapped = mapThaiPua ? ThaiTextNormalizer.MapThaiPua(text) : text;
+        // ทีม OCR 13: อักขระควบคุม (U+0000 ฯลฯ — glyph ที่ฟอนต์ไม่มี ToUnicode · PDF จาก HeadlessChrome ให้วรรณยุกต์เป็น "\0") ไม่ใช่ข้อความ ·
+        // เดิมค้างในข้อความ ⇒ "ใ\0บกำกับภาษี" (เรียงตาม x แล้วแทรกกลางคำ) ⇒ ชนิดเอกสารหลุด · JSON ของตัวแตกบรรทัดพัง
+        if (mapped.Any(ch => IsPrivateUse(ch) || char.IsControl(ch)))
+            mapped = new string(mapped.Where(ch => !IsPrivateUse(ch) && !char.IsControl(ch)).ToArray());
         return mapped;
     }
 
     /// <summary>นิคหิต+สระอา (U+0E4D U+0E32) ⇒ สระอำ (U+0E33) — ตาเห็นตัวเดียวกัน · NFC ไม่รวมให้</summary>
-    private static string ComposeSaraAm(string text) => text.Replace("\u0E4D\u0E32", "\u0E33", StringComparison.Ordinal);
+    /// <remarks>\u0E17\u0E35\u0E21 OCR 13: \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E32\u0E07\u0E15\u0E31\u0E27\u0E40\u0E01\u0E47\u0E1A\u0E2A\u0E23\u0E30\u0E2D\u0E33\u0E41\u0E25\u0E49\u0E27\u0E15\u0E32\u0E21\u0E14\u0E49\u0E27\u0E22\u0E2A\u0E23\u0E30\u0E2D\u0E32\u0E0B\u0E49\u0E33 ("\u0E08\u0E33\u0E32\u0E01\u0E31\u0E14" \u00B7 "\u0E15\u0E33\u0E32\u0E1A\u0E25" \u2014 \u0E43\u0E1A BS2026100001) \u2014 \u0E20\u0E32\u0E29\u0E32\u0E44\u0E17\u0E22\u0E44\u0E21\u0E48\u0E21\u0E35 \u0E33\u0E32 \u21D2 \u0E40\u0E2B\u0E25\u0E37\u0E2D \u0E33 \u0E15\u0E31\u0E27\u0E40\u0E14\u0E35\u0E22\u0E27</remarks>
+    private static string ComposeSaraAm(string text)
+        => text.Replace("\u0E4D\u0E32", "\u0E33", StringComparison.Ordinal).Replace("\u0E33\u0E32", "\u0E33", StringComparison.Ordinal);
 
     private static bool IsPrivateUse(char ch) => ch >= '\uE000' && ch <= '\uF8FF';
 
@@ -171,16 +271,22 @@ public static class PdfPositionalText
         return true;
     }
 
-    private static bool IsDuplicate(Dictionary<string, List<(double X, double Y)>> seen, string text, PdfGlyph g)
+    /// <summary>glyph ซ้ำที่วาดทับ — อักขระเดียวกัน <b>ฟอนต์เดียวกัน</b> · ห่างไม่เกิน <see cref="DuplicateTolerance"/> × ขนาด และ (เมื่อ glyph มีความกว้าง)
+    /// ไม่เกินครึ่งความกว้างของตัวเอง — ตัวเลขที่ advance แคบมาก (0.09 em) ตัวถัดไปอยู่ห่างเท่าความกว้าง ⇒ ไม่ใช่ตัวซ้ำ (ทีม OCR 13 · ฝ่ายค้าน OCR 10 P2:
+    /// เดิม 0.1 × ขนาดล้วน ⇒ "2,000.00" กลายเป็น "2,00.0") · ตัวหนาที่วาดทับจริงอยู่ตำแหน่งเดียวกันเป๊ะ (กฟภ. ห่าง 0.00 · ฟอนต์เดียวกัน)</summary>
+    private static bool IsDuplicate(Dictionary<(string Text, string Font), List<(double X, double Y)>> seen, string text, PdfGlyph g)
     {
         var tol = DuplicateTolerance * g.Size;
-        if (seen.TryGetValue(text, out var list))
+        var advance = g.Right - g.Left;
+        if (advance > 0) tol = Math.Min(tol, 0.5 * advance);
+        var key = (text, g.Font ?? "");
+        if (seen.TryGetValue(key, out var list))
         {
             foreach (var (x, y) in list)
                 if (Math.Abs(x - g.Left) <= tol && Math.Abs(y - g.Baseline) <= tol) return true;
             list.Add((g.Left, g.Baseline));
         }
-        else seen[text] = new List<(double, double)> { (g.Left, g.Baseline) };
+        else seen[key] = new List<(double, double)> { (g.Left, g.Baseline) };
         return false;
     }
 }

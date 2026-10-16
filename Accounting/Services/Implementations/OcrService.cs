@@ -34,13 +34,7 @@ public class OcrService : IOcrService
     // ฝั่งผู้ขายและผู้ซื้อด้วยกฎเดียวกัน — ห้ามมี regex สาขาซ้ำในไฟล์นี้อีก
     // คำ/ข้อยกเว้นเรื่อง "มัดจำ" ย้ายไป Helpers/OcrDepositMarker ตัวเดียว — ตัวนั้นบังคับว่า
     // คำต้องมีเงิน > 0 ประกอบ และบรรทัด "หัก…มัดจำ" ไม่ใช่ใบมัดจำ (สแกนจริง 2026-09-10)
-    // ⚠️ ทีม OCR 10 (2026-10-16): รูปเดิม `((?:[^\n]+\n?){1,4}?)` แบ่งบรรทัดยาวเป็นท่อนได้ทุกแบบ (\n ไม่บังคับ) ⇒ ตัวหน้าต่อท้ายไม่เจอป้าย =
-    // ลองทุกวิธีแบ่ง O(n⁴) · ข้อความ PDF แบบเดิม (page.Text บรรทัดเดียว ~2,900 ตัว เช่น บิล กฟภ.) + "──── TESSERACT ────" ต่อท้ายในเส้น Tier 3 ⇒
-    // ParseThaiDocument ค้าง (probe: CPU 16 นาทีไม่จบ) · รูปใหม่ = บรรทัดแรก + ต่อได้อีก 3 บรรทัดเต็ม (ท่อนละบรรทัด แบ่งได้วิธีเดียว) — ผลเท่าเดิมทุกเคสที่จบได้
-    // (เทสต์ OcrPdfTextPathTests · ที่อยู่ 1–4 บรรทัด · เว้นบรรทัดก่อนป้าย · เกิน 4 บรรทัดไม่จับ)
-    private static readonly Regex VendorAddressRegex = new(
-        @"(?:ที่อยู่|ADDRESS)\s*[:：]?\s*([^\n]+(?:\n[^\n]+){0,3}?)(?=\n\s*(?:โทร|TEL|เลขประจำตัว|TAX\s*ID|อีเมล|EMAIL|FAX|$))",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    // ที่อยู่ผู้ขายจากป้าย "ที่อยู่/ADDRESS": Helpers/OcrVendorAddressReader (ทีม OCR 13 — ย้ายจากที่นี่ · ห้ามมี regex ที่อยู่ซ้ำในไฟล์นี้)
 
     private readonly AccountingDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -6231,22 +6225,10 @@ public class OcrService : IOcrService
             .ToList();
 
         // Extract ALL company names with position
-        var companyPattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{1}[- \t]?\d{4})|$)";
-        var companyMatches = Regex.Matches(text, companyPattern, RegexOptions.Multiline);
-        var companyNames = new List<(string FullName, int Position)>();
-        foreach (Match cm in companyMatches)
-        {
-            var prefix = cm.Groups[1].Value;
-            var name = cm.Groups[2].Value.Trim();
-            if (string.IsNullOrWhiteSpace(name) || name.Length < 2) continue;
-            // ทีม OCR 10: หา "จำกัด" ต่อจากชื่อ ไม่ใช่จากคำนำหน้า ("ห้างหุ้นส่วนจำกัด X" ⇒ เดิมได้ "ห้างหุ้นส่วนจำกัด X จำกัด") — คู่เดียวกับ SmartFieldExtractor.ExtractCompanyNames
-            var afterName = cm.Groups[2].Index;
-            var afterMatch = text.Substring(afterName, Math.Min(cm.Index + cm.Length + 30, text.Length) - afterName);
-            var suffix = "";
-            if (afterMatch.Contains("จำกัด"))
-                suffix = afterMatch.Contains("มหาชน") ? " จำกัด (มหาชน)" : " จำกัด";
-            companyNames.Add(($"{prefix} {name}{suffix}".Trim(), cm.Index));
-        }
+        // ทีม OCR 13: ชื่อนิติบุคคล + คำท้าย "จำกัด" — ตัวตั้งตัวเดียว Helpers/ThaiCompanyName (เดิมสำเนา regex อยู่ที่นี่ · หจก./บจก./บมจ. ไม่ถูกนับ)
+        // ชื่อที่มีป้ายฝั่งผู้ซื้อนำหน้าบนบรรทัดเดียวกัน ("ชื่อลูกค้า/ Customer name  หจก.แอม แฮปปี้เนส") ไม่ใช่ผู้ขาย — ไม่เป็นตัวเลือกผู้ขายของขั้นนี้
+        var companyNames = Accounting.Helpers.ThaiCompanyName.FindAll(text)
+            .Where(c => !Accounting.Helpers.OcrPartyLabels.BuyerLabelBeforeOnLine(text, c.Position)).ToList();
 
         // Distinguish vendor from our company by seller/buyer section context
         var sellerKeywords = new[] { "ผู้ขาย", "ผู้ออกใบ", "ผู้ให้บริการ", "SELLER", "FROM", "ผู้ออก" };
@@ -6280,7 +6262,15 @@ public class OcrService : IOcrService
                         .Select(m => (Id: Regex.Replace(m.Groups[1].Value, @"[-\s]", ""), Pos: m.Index))
                         .Where(x => x.Id.Length == 13)
                         .ToList();
-                    vendorTaxId = taxIdPositions.OrderBy(x => Math.Abs(x.Pos - sellerIdx)).First().Id;
+                    var vendorIdAt = taxIdPositions.OrderBy(x => Math.Abs(x.Pos - sellerIdx)).First();
+                    vendorTaxId = vendorIdAt.Id;
+                    // ทีม OCR 13 (กุญแจ = เลขผู้เสียภาษี · หลัก DbdIdentityGuard): ชื่อนิติบุคคลที่อยู่<b>เหนือเลขผู้ขายในบล็อกเดียวกัน</b> (≤ 300 ตัว · ไม่มีเลข 13 หลักอื่นคั่น)
+                    // ชนะชื่อที่ ใกล้ป้ายผู้ขาย — ป้าย ผู้ขาย บนใบ BS2026100001 คือช่องพนักงานขาย (คอลัมน์ขวาบรรทัดเลขผู้ขาย) ⇒ ชื่อใกล้ป้าย = ชื่อลูกค้าบรรทัดถัดไป
+                    var keyed = companyNames
+                        .Where(c => c.Position < vendorIdAt.Pos && vendorIdAt.Pos - c.Position <= 300
+                                    && !taxIdPositions.Any(t => t.Pos > c.Position && t.Pos < vendorIdAt.Pos))
+                        .OrderByDescending(c => c.Position).FirstOrDefault();
+                    if (keyed.FullName != null) vendorName = keyed.FullName;
                 }
                 else if (allTaxIds.Count == 1)
                     vendorTaxId = allTaxIds[0];
@@ -6335,17 +6325,10 @@ public class OcrService : IOcrService
         if (!string.IsNullOrWhiteSpace(branches.BuyerBranchCode))
             data.BuyerBranchCode = branches.BuyerBranchCode;
 
-        var addrMatch = VendorAddressRegex.Match(text);
-        if (addrMatch.Success)
-        {
-            var raw = addrMatch.Groups[1].Value
-                .Replace("\r", " ").Replace("\n", " ")
-                .Trim();
-            // >250 chars almost certainly means the regex bled through into
-            // the next section — Thai vendor addresses fit in ~120 chars.
-            if (raw.Length >= 10 && raw.Length <= 250)
-                data.VendorAddress = raw;
-        }
+        // >250 chars almost certainly means the regex bled through into
+        // the next section — Thai vendor addresses fit in ~120 chars.
+        if (Accounting.Helpers.OcrVendorAddressReader.Read(text) is { Length: >= 10 and <= 250 } vendorAddr)
+            data.VendorAddress = vendorAddr;
 
         // Document number
         // ⚠️ "เลขที่ 99/1 ถ.สุขุมวิท" (ที่อยู่) ใช้คำเดียวกับเลขที่เอกสาร — คัดค่าที่ตาม
@@ -10914,7 +10897,8 @@ public class OcrService : IOcrService
 
             // ★ T3-02: ไม่มีโมเดลตอบ (ปิด provider / เกินงบ / ยังไม่มี student) →
             // แตกบรรทัดจากข้อความเอง แล้วให้ด่านตัวเดิมเป็นคนตัดสิน
-            candidateJson ??= Accounting.Helpers.RawTextLineSplitter.SplitToJson(rawText);
+            // ทีม OCR 13: ส่งยอดบนกระดาษให้ตัวแตกบรรทัดเลือกระหว่างแถวตารางกับกติกาท้ายบรรทัด (Σ ตรงยอด) — ด่านด้านล่างยังตัดสินเหมือนเดิม
+            candidateJson ??= Accounting.Helpers.RawTextLineSplitter.SplitToJson(rawText, data.SubTotal, data.TotalAmount);
             if (string.IsNullOrWhiteSpace(candidateJson))
             {
                 data.ReasoningTrace.Add("[LineSplit] ข้อความไม่มีบรรทัดที่ลงท้ายด้วยจำนวนเงิน — ใช้บรรทัดสรุปใบเดียว");
@@ -11154,22 +11138,17 @@ public class OcrService : IOcrService
         // ถูกใช้ในเส้นทาง Tesseract — ยกมาให้ทุกเส้นทางใช้ร่วมกัน
         if (string.IsNullOrWhiteSpace(data.VendorAddress))
         {
-            var addr = VendorAddressRegex.Match(text);
-            if (addr.Success && addr.Groups.Count > 1)
+            if (Accounting.Helpers.OcrVendorAddressReader.Read(text, keepLineBreaks: true) is { Length: >= 10 } candidate)
             {
-                var candidate = addr.Groups[1].Value.Trim();
-                if (candidate.Length >= 10)
-                {
-                    data.VendorAddress = candidate;
-                    data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerAddress] = 0.7;
-                    data.ReasoningTrace.Add("[Enrich] ที่อยู่ผู้ขายจากข้อความบนกระดาษ");
-                }
+                data.VendorAddress = candidate;
+                data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.SellerAddress] = 0.7;
+                data.ReasoningTrace.Add("[Enrich] ที่อยู่ผู้ขายจากข้อความบนกระดาษ");
             }
         }
 
         // ── ที่อยู่ผู้ซื้อจากข้อความ — ทุก engine (รอบ 190 · ข้อ 11 "local จับที่อยู่ผู้ซื้อไม่ได้") ──
         // Azure ได้ CustomerAddress จากโมเดลของมัน · python/Tesseract ไม่มีตัวอ่านที่อยู่ผู้ซื้อเลย
-        // และ VendorAddressRegex ข้างบนหยิบป้าย "ที่อยู่" ตัวแรกของหน้า ⇒ บนใบที่หัวร้านไม่มีป้าย
+        // และ Helpers/OcrVendorAddressReader ข้างบนหยิบป้าย "ที่อยู่" ตัวแรกของหน้า ⇒ บนใบที่หัวร้านไม่มีป้าย
         // (POS Wine Pro · ใบเขียนมือ Radisson) ที่อยู่ของ**เรา**ไปอยู่ช่องผู้ขาย
         // ตัวอ่านกลาง: Helpers/OcrBuyerAddressReader (ป้ายผู้ซื้อจาก OcrPartyLabels → ป้าย "ที่อยู่" ใต้นั้น)
         {

@@ -37,7 +37,7 @@ public class PdfPositionalTextTests
         var glyphs = Run("19,381.50", 500, 270).Concat(Run("1,356.71", 505, 240)).Concat(Run("20,738.21", 500, 213))
             .Concat(Run("Sub Total", 300, 270)).Concat(Run("VAT", 300, 240)).Concat(Run("Total", 300, 213)).ToList();
         var text = PdfPositionalText.Build(glyphs);
-        Assert.Equal("Sub Total  19,381.50\nVAT  1,356.71\nTotal  20,738.21", text);
+        Assert.Equal("Sub Total\t19,381.50\nVAT\t1,356.71\nTotal\t20,738.21", text);
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public class PdfPositionalTextTests
         // "1.00" | "ชิ้น" | "1,330.00" | "293.00" — ช่องตารางห่าง 2 × ขนาด · เว้นวรรคในคำอธิบายห่าง 0.25 × ขนาด
         var glyphs = Run("แผ่น", 100, 500).Concat(Run("M", 122.5, 500)).Concat(Run("1.00", 200, 500)).Concat(Run("ชิ้น", 240, 500))
             .Concat(Run("1,330.00", 280, 500)).Concat(Run("293.00", 340, 500)).ToList();
-        Assert.Equal("แผ่น M  1.00  ชิ้น  1,330.00  293.00", PdfPositionalText.Build(glyphs));
+        Assert.Equal("แผ่น M\t1.00\tชิ้น\t1,330.00\t293.00", PdfPositionalText.Build(glyphs));
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public class PdfPositionalTextTests
         Assert.Equal("No. XH0712609004157\n200 Ngamwongwan", PdfPositionalText.Build(apart));
         // ตัวเลขยอดตัวใหญ่ที่เส้นฐานต่ำกว่าป้ายเล็กน้อย (0.2 × ขนาดตัวเล็ก) = แถวเดียวกัน
         var same = Run("Total", 100, 300, 9).Concat(Run("1,037.00", 300, 298.2, 14)).ToList();
-        Assert.Equal("Total  1,037.00", PdfPositionalText.Build(same));
+        Assert.Equal("Total\t1,037.00", PdfPositionalText.Build(same));
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public class PdfPositionalTextTests
     {
         // พรามี่: "แผ\uF70Aน" (ไม้เอก PUA) · "จํากัด" (นิคหิต + สระอา) · ไอคอนโทรศัพท์ \uF879 หน้าเบอร์
         var glyphs = Run("แผ\uF70Aน", 10, 100).Concat(Run("จํากัด", 60, 100)).Concat(Run("\uF879", 10, 80)).Concat(Run("085-914-8140", 16, 80)).ToList();
-        Assert.Equal("แผ่น  จำกัด\n085-914-8140", PdfPositionalText.Build(glyphs));
+        Assert.Equal("แผ่น\tจำกัด\n085-914-8140", PdfPositionalText.Build(glyphs));
         Assert.Equal("ส่วนลด", PdfPositionalText.NormalizeGlyphText("ส\uF70Aวนลด"));
         Assert.Equal("", PdfPositionalText.NormalizeGlyphText("\uF0AC"));
         Assert.Equal("✉", PdfPositionalText.NormalizeGlyphText("✉"));   // อักขระ Unicode จริง (ไม่ใช่ PUA) คงไว้
@@ -126,7 +126,7 @@ public class PdfPositionalTextTests
             Assert.Contains("1,356.7120,738.21", doc.GetPage(1).Text);   // ทำซ้ำอาการเดิม (page.Text = ลำดับ stream)
         var r = PdfTextLayerExtractor.TryExtract(pdf);
         Assert.True(r.HasUsableText, r.Reason);
-        Assert.Equal("Tax Invoice No. XH0712609004157 Invoice No. 516004632612\nSub Total  19,381.50\nVAT 7%  1,356.71\nTotal  20,738.21\n",
+        Assert.Equal("Tax Invoice No. XH0712609004157 Invoice No. 516004632612\nSub Total\t19,381.50\nVAT 7%\t1,356.71\nTotal\t20,738.21\n",
             r.Text.Replace("\r\n", "\n"));
     }
 

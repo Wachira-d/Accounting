@@ -266,6 +266,34 @@ public class OcrReplayGoldenTests
         => Assert.Contains("0 แถว",
             OcrReplayHarness.DiffTable(OcrReplayHarness.Run(), OcrReplayHarness.Run()));
 
+    // ── ทีม OCR 13 (ฝ่ายค้าน OCR 10) ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ทีมOCR13_ใบCRCไทวัสดุ_แถวสองคอลัมน์ป้ายหักมัดจำศูนย์_ไม่ใช่ใบมัดจำ()
+    {
+        // "ภาษีมูลค่าเพิ่ม⇥209.41 บาท⇥หักเงินมัดจำ⇥0.00" — เดิมอ่านทั้งบรรทัด ⇒ ยอด VAT เป็นยอดมัดจำ ⇒ ใบขายธรรมดาติดธงมัดจำ
+        Assert.Equal("false", Val("crc-thaiwatsadu-srcie75384-positional", "IsDeposit"));
+        Assert.Equal("3201.00", Val("crc-thaiwatsadu-srcie75384-positional", "AnchorTotal"));
+        Assert.Equal("1080.00", Val("crc-thaiwatsadu-srcie75384-positional", "BillDiscount"));
+    }
+
+    [Fact]
+    public void ทีมOCR13_50ทวิ_ยอดยึดคือจำนวนเงินที่จ่าย_ไม่ติดธงมัดจำ()
+    {
+        Assert.Equal("7264.00", Val("wht-cert-50tawi-w53-positional", "AnchorTotal"));
+        Assert.Equal("false", Val("wht-cert-50tawi-w53-positional", "IsDeposit"));
+        Assert.Null(Val("wht-cert-50tawi-w53-positional", "VendorAddress"));   // ที่อยู่ผู้มีหน้าที่หักอยู่หลังป้าย "ทีอยู่" (ไม้เอกหาย) — ไม่เดา
+    }
+
+    [Fact]
+    public void ทีมOCR13_ที่อยู่ผู้ขาย_ป้ายที่อยู่ในบล็อกผู้ซื้อไม่ใช่ที่อยู่ผู้ขาย()
+    {
+        // Makro: "ชื่อลูกค้า/Customer Name …\nที่อยู่/ Address …" — เดิมได้ที่อยู่เรา + เศษที่อยู่สาขา Makro ปนกัน
+        Assert.Null(Val("makro-page2-vat-added-twice", "VendorAddress"));
+        // กฟภ. (ข้อความตามพิกัด): "ที่อยู่ (Address)⇥เลขที่ 202/24 …" คือที่อยู่ผู้ซื้อ — เดิมได้ "(Address) เลขที่ 202/24 …" (ทีม OCR 10 จดไว้ว่ายังเปิด)
+        Assert.Null(Val("pea-electricity-bill-0869-positional", "VendorAddress"));
+    }
+
     [Fact]
     public void สแนปช็อตต้องอ่านออกและมีทุกใบ()
     {

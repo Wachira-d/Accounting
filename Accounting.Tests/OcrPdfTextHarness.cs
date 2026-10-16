@@ -85,6 +85,7 @@ public class OcrPdfTextHarness
             ("HasWht", data.HasWht ? "true:" + (data.WhtRate?.ToString("0.##", CultureInfo.InvariantCulture) ?? "") : "false"),
             ("PaperWht", M(wht.Amount) + (wht.RatePercent is decimal r ? "@" + r.ToString("0.##", CultureInfo.InvariantCulture) : "")),
             ("Anchor", anchor.Verdict.ToString()),
+            ("IsDeposit", OcrDepositMarker.Decide(combined, null).IsDeposit ? "true" : "false"),
             ("Lines", lineCount),
             ("Sigma", sigma),
         };

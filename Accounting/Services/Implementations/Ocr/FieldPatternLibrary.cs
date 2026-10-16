@@ -477,37 +477,22 @@ public static class FieldPatternLibrary
 
     // === Company Name ===
 
-    static List<FieldCandidate> ExtractCompanyNameCandidates(string text)
+    private static List<FieldCandidate> ExtractCompanyNameCandidates(string text)
     {
         var results = new List<FieldCandidate>();
-        // Thai company name patterns
-        var patterns = new[]
+        // Thai company name — ทีม OCR 13 (ฝ่ายค้าน OCR 10 P1-5): ตัวตั้งตัวเดียว Helpers/ThaiCompanyName · สำเนาเดิมที่นี่ต่อ " จำกัด" ให้
+        // "ห้างหุ้นส่วนจำกัด X" เพราะดูคำว่าจำกัดใน pattern ของคำนำหน้า ⇒ "ห้างหุ้นส่วนจำกัด X จำกัด"
+        foreach (var (full, position) in Accounting.Helpers.ThaiCompanyName.FindAll(text))
         {
-            @"(บริษัท)\s+(.+?)\s*จำกัด\s*\(มหาชน\)",
-            @"(บริษัท)\s+(.+?)\s*จำกัด",
-            @"(ห้างหุ้นส่วนจำกัด|หจก\.?)\s+(.+?)(?=\s*(?:เลข|สาขา|ที่อยู่|\d{1}-?\d{4}|\n|$))",
-            @"(ห้างหุ้นส่วนสามัญ)\s+(.+?)(?=\s*(?:เลข|สาขา|ที่อยู่|\n|$))",
-            @"(ร้าน)\s+(.+?)(?=\s*(?:เลข|สาขา|ที่อยู่|\n|$))",
-        };
-        foreach (var p in patterns)
-        {
-            foreach (Match m in Regex.Matches(text, p))
+            if (full.Length > 120) continue;
+            results.Add(new FieldCandidate
             {
-                var prefix = m.Groups[1].Value.Trim();
-                var name = m.Groups[2].Value.Trim();
-                if (string.IsNullOrWhiteSpace(name) || name.Length < 2 || name.Length > 100) continue;
-                var full = p.Contains("มหาชน") ? $"{prefix} {name} จำกัด (มหาชน)"
-                         : p.Contains("จำกัด") ? $"{prefix} {name} จำกัด"
-                         : $"{prefix} {name}";
-                results.Add(new FieldCandidate
-                {
-                    Value = full, NormalizedValue = full,
-                    Position = m.Index, Length = m.Length,
-                    Score = 1.0,
-                    FieldType = FieldType.CompanyName,
-                    ScoreReasons = { "format:thai-legal-entity" }
-                });
-            }
+                Value = full, NormalizedValue = full,
+                Position = position, Length = full.Length,
+                Score = 1.0,
+                FieldType = FieldType.CompanyName,
+                ScoreReasons = { "format:thai-legal-entity" }
+            });
         }
         // English: Co., Ltd / Public Co., Ltd
         foreach (Match m in Regex.Matches(text,

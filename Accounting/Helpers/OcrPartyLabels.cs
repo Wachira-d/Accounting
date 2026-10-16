@@ -147,6 +147,39 @@ public static class OcrPartyLabels
     public static int FindBuyer(string? text) => Find(text).BuyerPos;
     public static int FindSeller(string? text) => Find(text).SellerPos;
 
+    /// <summary>คำขึ้นต้นจดหมาย "เรียน …" — ชื่อที่ตามมาคือผู้รับเอกสาร (ฝั่งผู้ซื้อ) · <b>ไม่อยู่ใน <see cref="BuyerLabels"/> โดยตั้งใจ</b>
+    /// (รายการนั้นตัดสินบทบาทของกระดาษทุกใบ — เพิ่มคำตรงนั้นขยับคำตัดสินทั้งชุด) · ใช้เฉพาะคำถาม "ชื่อนี้มีป้ายฝั่งผู้ซื้อนำหน้าไหม"</summary>
+    private static readonly System.Text.RegularExpressions.Regex Salutation = new(
+        @"(?:^|[\s:：(])เรียน(?:[\s:：]|$)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// <b>ชื่อที่ตำแหน่ง <paramref name="index"/> มีป้ายฝั่งผู้ซื้อนำหน้าบนบรรทัดเดียวกันไหม</b> (ทีม OCR 13 · ฝ่ายค้าน OCR 10 P1-2/P1-4) —
+    /// "ชื่อลูกค้า/ Customer name  หจก.แอม แฮปปี้เนส" · "ลูกค้า: การไฟฟ้าส่วนภูมิภาค" · "เรียน การไฟฟ้าส่วนภูมิภาค" ⇒ ชื่อนั้นเป็นของผู้ซื้อ ไม่ใช่ผู้ออกเอกสาร ·
+    /// ป้ายผู้ขายที่อยู่ระหว่างป้ายผู้ซื้อกับชื่อ (สองคอลัมน์บนบรรทัดเดียว "ลูกค้า: … ผู้ขาย: X") ⇒ ไม่ใช่ · ป้ายรบกวน ("รหัสลูกค้า" · "ศูนย์บริการลูกค้า") ไม่นับ
+    /// </summary>
+    /// <summary><b>ตำแหน่ง <paramref name="index"/> อยู่ในบล็อกผู้ซื้อไหม</b> — ป้ายฝั่งที่ใกล้ที่สุดก่อนหน้าเป็นป้ายผู้ซื้อ (ทีม OCR 13 · ป้ายที่อยู่ใต้ "ชื่อลูกค้า/ Customer name")
+    /// · ไม่มีป้ายผู้ซื้อก่อนหน้า ⇒ false (พฤติกรรมเดิมของผู้เรียก)</summary>
+    public static bool InBuyerBlock(string? text, int index)
+    {
+        if (string.IsNullOrEmpty(text) || index <= 0) return false;
+        var (buyers, sellers) = FindAll(text);
+        var buyer = buyers.Where(p => p < index).DefaultIfEmpty(-1).Max();
+        if (buyer < 0) return false;
+        return sellers.Where(p => p < index).DefaultIfEmpty(-1).Max() < buyer;
+    }
+
+    public static bool BuyerLabelBeforeOnLine(string? text, int index)
+    {
+        if (string.IsNullOrEmpty(text) || index <= 0 || index > text.Length) return false;
+        var lineStart = text.LastIndexOf('\n', index - 1) + 1;
+        var head = MaskNoise(text[lineStart..index]);
+        var buyer = Math.Max(FindEvery(head, BuyerLabels).DefaultIfEmpty(-1).Max(),
+            Salutation.Match(head) is { Success: true } s ? s.Index : -1);
+        if (buyer < 0) return false;
+        var seller = FindEvery(head, SellerLabels).DefaultIfEmpty(-1).Max();
+        return seller < buyer;
+    }
+
     /// <summary>ตำแหน่ง<b>ทุก</b>ป้ายของแต่ละฝั่ง — ใช้วัด "ป้ายที่ใกล้ชื่อเราที่สุด" (ป้ายตัวแรก
     /// ของหน้าอาจเป็นคนละบล็อก เช่น "ศูนย์บริการลูกค้า" ในหัวผู้ขาย แล้ว "ลูกค้า:" ตัวจริง
     /// อยู่ห่างออกไป — ทีมตรวจ 2026-09-11)</summary>

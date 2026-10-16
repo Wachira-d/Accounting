@@ -416,24 +416,6 @@ public static class DocumentZoneAnalyzer
         }
     }
 
-    static string? ExtractCompanyName(string zoneText)
-    {
-        var pattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่|\s*\d{13})|$)";
-        var match = Regex.Match(zoneText, pattern, RegexOptions.Multiline);
-        if (!match.Success) return null;
-
-        var prefix = match.Groups[1].Value;
-        var name = match.Groups[2].Value.Trim();
-        if (string.IsNullOrWhiteSpace(name) || name.Length < 2) return null;
-
-        var afterCtx = SafeSubstring(zoneText, match.Index, match.Length + 30);
-        var suffix = "";
-        if (afterCtx.Contains("จำกัด"))
-            suffix = afterCtx.Contains("มหาชน") ? " จำกัด (มหาชน)" : " จำกัด";
-
-        return $"{prefix} {name}{suffix}".Trim();
-    }
-
     static string? ExtractTaxId(string zoneText)
     {
         var match = Regex.Match(zoneText, Accounting.Helpers.ThaiTaxId.Pattern);
@@ -523,16 +505,10 @@ public static class DocumentZoneAnalyzer
         return m.Success ? ParseAmount(m.Groups[1].Value) : null;
     }
 
-    static void FallbackCompanyExtraction(string text, ZoneAnalysisResult result)
+    private static void FallbackCompanyExtraction(string text, ZoneAnalysisResult result)
     {
-        var pattern = @"(บริษัท|ห้างหุ้นส่วน(?:จำกัด|สามัญ)?|ร้าน)\s*(.+?)(?:\s*จำกัด(?:\s*\(มหาชน\))?|\s*\(|(?=\s*เลข|\s*สาขา|\s*ที่อยู่)|$)";
-        var matches = Regex.Matches(text, pattern, RegexOptions.Multiline);
-        var companies = new List<(string Name, int Pos)>();
-        foreach (Match cm in matches)
-        {
-            var name = ExtractCompanyNameFromMatch(cm, text);
-            if (name != null) companies.Add((name, cm.Index));
-        }
+        // ทีม OCR 13 (ฝ่ายค้าน OCR 10 P1-5): ตัวตั้งตัวเดียว Helpers/ThaiCompanyName — สำเนาเดิมที่นี่หา "จำกัด" ตั้งแต่คำนำหน้า ⇒ "ห้างหุ้นส่วนจำกัด X จำกัด"
+        var companies = Accounting.Helpers.ThaiCompanyName.FindAll(text).Select(c => (Name: c.FullName, Pos: c.Position)).ToList();
 
         var taxIdPattern = Accounting.Helpers.ThaiTaxId.Pattern;
         var taxIds = Regex.Matches(text, taxIdPattern)
@@ -571,18 +547,6 @@ public static class DocumentZoneAnalyzer
         {
             result.SellerTaxId = taxIds[0].Id;
         }
-    }
-
-    static string? ExtractCompanyNameFromMatch(Match cm, string fullText)
-    {
-        var prefix = cm.Groups[1].Value;
-        var name = cm.Groups[2].Value.Trim();
-        if (string.IsNullOrWhiteSpace(name) || name.Length < 2) return null;
-        var afterCtx = SafeSubstring(fullText, cm.Index, cm.Length + 30);
-        var suffix = "";
-        if (afterCtx.Contains("จำกัด"))
-            suffix = afterCtx.Contains("มหาชน") ? " จำกัด (มหาชน)" : " จำกัด";
-        return $"{prefix} {name}{suffix}".Trim();
     }
 
     // === Learning ===

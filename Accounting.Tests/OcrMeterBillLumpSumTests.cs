@@ -262,7 +262,10 @@ public class OcrMeterBillLumpSumTests
         // ทีม OCR 10 (2026-10-16): ตัวอ่านสาขารับป้ายสองภาษา "สาขา (Branch No.) 00000" แล้ว ⇒ ข้อความเดิมได้ 00000 จากบรรทัด<b>ผู้ซื้อ</b>
         // (ป้ายผู้ซื้อตัวเดียวคือ "รหัสลูกค้า" ซึ่งพิมพ์หลังบรรทัดนั้น) — ค่าตรงกระดาษโดยบังเอิญ (ผู้ขายก็ 00000) ไม่ใช่การอ่านที่ถูก ·
         // ข้อความใหม่ (PeaElectricityBill0869Positional) ได้ 00000 จากประโยค "สาขาที่ออกใบกำกับภาษี" (ล็อกใน OcrPdfTextPathTests)
-        Assert.Equal("00000", data.VendorBranchCode);
+        // ทีม OCR 13 (ฝ่ายค้าน OCR 10 P2 · F2 #3): ค่าที่ "ถูกโดยบังเอิญ" ไม่ใช่การอ่าน — สาขาที่มาจากบรรทัดเลขผู้ซื้อ (กุญแจ = เลข 0203562005871) ถูกล้าง
+        // (BranchCodeExtractor.VendorBranchFromBuyerLine) ⇒ ว่าง ให้ขั้นทะเบียน/ประวัติผู้ขาย/ผู้ใช้เติม · ไม่รู้ ดีกว่าเดาถูกเพราะโชค
+        Assert.Null(data.VendorBranchCode);
+        Assert.Contains(data.ReasoningTrace, t => t.Contains("บรรทัดเลขผู้เสียภาษีผู้ซื้อ", StringComparison.Ordinal));
         Assert.Equal(738.21m, data.TotalAmount);
         Assert.Contains(data.ReasoningTrace, t => t.Contains("[AmountWords]", StringComparison.Ordinal) && t.Contains("20,738.21", StringComparison.Ordinal));
         Assert.Empty(data.Items);

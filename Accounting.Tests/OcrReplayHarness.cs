@@ -417,6 +417,14 @@ public static class OcrReplayHarness
             LineAmounts: new[] { 1037.00m },
             Lines: new ReplayLine[] { new("(แพ็ค3)แผ่นรองซับ M 50 แผ่น (P00022)", 1m, 1330.00m, 1037.00m) }),
 
+        // ── ทีม OCR 13 (2026-10-16 · ฝ่ายค้าน OCR 10) — ข้อความ PDF ตามพิกัดรุ่นปัจจุบัน (ช่องคั่น tab) ของสองใบจริงที่รุ่น OCR 10 อ่านแย่กว่า page.Text ──
+        // หัวใบ (ชื่อ/เลข/สาขา) ล็อกใน PdfTextOcr13Tests · ที่นี่ล็อกตัวตัดสิน pure (ยอดยึด · ที่อยู่ · หัก ณ ที่จ่าย) — ไม่ป้อนบรรทัด (บรรทัดสรุป)
+        new ReplayPaper("crc-thaiwatsadu-srcie75384-positional", OcrPaperSamples.CrcThaiwatsaduSrcie75384Positional,
+            EngineSubTotal: 2991.59m, EngineVat: 209.41m, EngineTotal: 3201.00m),
+        // 50 ทวิ: ยอดของเอกสาร = จำนวนเงินที่จ่าย 7,264.00 (แถว "รวมเงินที่จ่ายและภาษีที่หักนำส่ง") · ภาษีที่หัก 72.64 เป็นช่องหัก ณ ที่จ่าย ไม่ใช่ยอดรวม
+        new ReplayPaper("wht-cert-50tawi-w53-positional", OcrPaperSamples.WhtCert50TawiW53Positional,
+            EngineSubTotal: null, EngineVat: 0m, EngineTotal: 7264.00m, BaseAmount: 7264.00m),
+
         // ── ทีม OCR 9 (2026-10-16 · ฝ่ายค้าน 13a4d788 P0) — บรรทัดสินค้าที่ engine หลุดคอลัมน์ราคา/อ่านยอดเป็นราคา ห้ามกลายเป็น 1 × ยอด ──
         // (ก) น้ำดื่ม 12 ขวด 300 ไม่มีราคาต่อหน่วยบนแถว: ทีม 8 ⇒ 1 × 300 "(12 ขวด)" (สต็อกขาด 11 · ทุนเพี้ยน 12 เท่า) · 300 ÷ 12 = 25.00 ลงตัว ⇒ 12 × 25.00 (รุ่น 5 เดิม · แจ้ง)
         new ReplayPaper("goods-qty-price-column-lost",

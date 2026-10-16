@@ -127,9 +127,13 @@ public sealed class LineSplitDistillationModel : ILocalDistillationModel
             if (string.IsNullOrWhiteSpace(rawText)) return Task.FromResult<LocalPrediction?>(null);
 
             // ยอดเป้าหมายบนกระดาษ **ใบนี้** — ตัวเลขทุกตัวที่คืนออกไปต้องมาจากตรงนี้
-            decimal? target = null;
+            decimal? target = null, knownSub = null, knownTotal = null;
             if (root.TryGetProperty("known_totals", out var kt) && kt.ValueKind == JsonValueKind.Object)
-                target = Num(kt, "sub_total") ?? Num(kt, "total_amount");
+            {
+                knownSub = Num(kt, "sub_total");
+                knownTotal = Num(kt, "total_amount");
+                target = knownSub ?? knownTotal;
+            }
 
             // ── ชั้นที่ 1: เคยยืนยันโครงนี้มาแล้วกี่ครั้ง ─────────────────────
             var shape = ShapeFingerprint(rawText);
@@ -152,7 +156,7 @@ public sealed class LineSplitDistillationModel : ILocalDistillationModel
             }
 
             // ── ชั้นที่ 2: กติกาแตกบรรทัด (ตอบได้ตั้งแต่ใบแรก) ────────────────
-            var ruleJson = Accounting.Helpers.RawTextLineSplitter.SplitToJson(rawText);
+            var ruleJson = Accounting.Helpers.RawTextLineSplitter.SplitToJson(rawText, knownSub, knownTotal);   // ทีม OCR 13: ยอดบนกระดาษเลือกตาราง/กติกาท้ายบรรทัด
             if (string.IsNullOrWhiteSpace(ruleJson)) return Task.FromResult<LocalPrediction?>(null);
 
             return Task.FromResult<LocalPrediction?>(new LocalPrediction(
