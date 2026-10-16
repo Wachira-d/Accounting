@@ -236,8 +236,11 @@ public class OcrVatCodeLinesTests
         Assert.Equal(new[] { ("1", OcrVatGroupKind.Exempt, 1220.00m, 0.00m), ("2", OcrVatGroupKind.Standard7, 9121.50m, 638.50m) },
             d.TableLines.Select(g => (g.PaperCode, g.Kind, g.Net, g.Vat)).ToArray());
         Assert.Equal(10980.00m, d.TableLines.Sum(g => g.Net + g.Vat));            // = ยอดชำระบนกระดาษ
-        Assert.StartsWith(OcrVatCodeLines.TableSummaryLead, d.Note);
-        Assert.Contains("หากต้องตัดสต็อก", d.Note);
+        // 2026-10-16 (สแกนซ้ำ · "ยอดรวมลงถูกแต่บอดราย รายการ"): หน้านี้มีแต่แถวส่วนลด ⇒ บอกตรง ๆ ว่าแถวส่วนลดไม่ลงเป็นสินค้า/ไม่หักซ้ำ — ไม่ใช่ "รายการสินค้าถูกแทน"
+        Assert.True(d.DiscountOnly);
+        Assert.StartsWith("หน้านี้มีแต่แถวส่วนลด 3 แถว (รวม 100.00 ⊂ รวมส่วนลดบนกระดาษ 228.00)", d.Note);
+        Assert.Contains("ไม่หักซ้ำ", d.Note);
+        Assert.DoesNotContain("หากต้องตัดสต็อก", d.Note);
     }
 
     [Fact]
@@ -252,15 +255,30 @@ public class OcrVatCodeLinesTests
     }
 
     [Fact]
-    public void ตัดสิน_ทิศตรงข้าม_ไฟล์ครบทุกหน้า_แถวขาด_คงรายการและบอกเหตุ_ไม่ทิ้งรายการ()
+    public void ตัดสิน_ไฟล์ครบทุกหน้า_แถวขาด_ตารางลงยอด_ตารางชนะ_เลขหน้าบอกแค่ในหมายเหตุ()
     {
-        // ฝ่ายค้าน f7c29c2c P2-5: "หน้าที่ 1 จาก 2" + "หน้าที่ 2 จาก 2" ครบ ⇒ ไม่ใช่การอัปโหลดแค่หน้าสุดท้าย — แถวที่ไม่ลงตารางคือแถวอ่านผิด ⇒ ฟ้อง ([Σ-GAP]) ดีกว่าทิ้ง
+        // 6b9bf926 (ฝ่ายค้าน f7c29c2c P2-5) เคยคงรายการ + [Σ-GAP] เมื่อเลขหน้าครบ — คำตัดสินเจ้าของ 2026-10-16 ภาคต่อ: "ถ้าไม่ตรงและตารางภพ ตรงกับยอดรวม
+        // ให้ยึดตาราง ภพ" (ไม่ดูเลขหน้า) ⇒ ตารางชนะ · หมายเหตุบอกว่ากระดาษครบทุกหน้าแต่รายการไม่ลงยอด (แถวที่อ่านผิด/ขาด)
         var d = DecideMakro(MakroFull, InD(MakroItemRows.Skip(1).Take(5).ToArray()));
-        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
-        Assert.Equal(OcrVatCodeVerdict.Unreconciled, d.Plan.Verdict);
-        Assert.Empty(d.TableLines);
-        Assert.Contains("ครบทุกหน้า (หน้า 1–2 จาก 2)", d.Note);
+        Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
+        Assert.Equal(10980.00m, d.TableLines.Sum(g => g.Net + g.Vat));
+        Assert.Contains("ครบทุกหน้า หน้า 1–2 จาก 2", d.Note);
         Assert.StartsWith(OcrVatCodeLines.TableSummaryLead, d.Note);
+        Assert.False(d.DiscountOnly);
+    }
+
+    [Fact]
+    public void ตัดสิน_หัวสแกนเก่ายังผิด11846_50_แต่กระดาษพิสูจน์10980_ตารางลงยอดที่พิสูจน์แล้ว_ตารางชนะ()
+    {
+        // (d) ด่าน "ตารางลงยอด" เทียบกับยอดที่กระดาษพิสูจน์ (OcrTotalAnchor) ได้ — สแกนที่ persist ก่อนขั้นยึดยอด (11,846.50) ไม่ทำให้ตารางที่ปิด 10,980 แพ้
+        var t = OcrLineVatMarks.ReadGroups(MakroFull);
+        var rows = InD(MakroItemRows.Skip(1).Take(5).ToArray());
+        var d = OcrVatCodeLines.Decide(rows, MakroFull, t, 11208.00m, 638.50m, 11846.50m, 228.00m, false, true,
+            paperTotal: 10980.00m, paperVat: 638.50m);
+        Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
+        // ทิศตรงข้าม: ยอดที่ "พิสูจน์" ไม่ตรงตาราง ⇒ ไม่ใช้ (คงรายการ)
+        Assert.Equal(OcrVatCodeLineSource.Items, OcrVatCodeLines.Decide(rows, MakroFull, t, 11208.00m, 638.50m, 11846.50m, 228.00m, false, true,
+            paperTotal: 11846.50m, paperVat: 638.50m).Source);
     }
 
     [Fact]
@@ -328,13 +346,47 @@ public class OcrVatCodeLinesTests
     }
 
     [Fact]
-    public void ทิศตรงข้าม_แถวส่วนลดรวมไม่เท่าส่วนลดบนกระดาษ_ไม่แปลงครึ่งทาง_ตารางชนะ()
+    public void แถวส่วนลดบางส่วน_128จากรวมส่วนลด228_ตัดทิ้งใช้รวมส่วนลดของกระดาษ_รายการลงยอด_คงรายการ()
     {
-        // แถว "ลด" 28 + 100 = 128 ≠ ส่วนลด 228 บนกระดาษ ⇒ ไม่แปลง (ยอดไม่ลงตาราง) ⇒ บรรทัดสรุปตามตาราง — ไม่คงแถวส่วนลดยอดบวกพองยอดรวม
+        // (b) 2026-10-16: แถว "ลด" 28 + 100 = 128 < รวมส่วนลด 228 บนกระดาษ (แถวที่เหลือ engine อ่านหลุด) · ทุกแถวมีคำบอกส่วนลด + ยอดพิมพ์บนบรรทัดส่วนลดของกระดาษ
+        // ⇒ ตัดทิ้ง (ไม่เป็นสินค้า) แล้วใช้รวมส่วนลด 228 ของกระดาษ (ไม่บวก 128 ซ้ำ) ⇒ Σ สินค้า 11,208 − 228 = 10,980 = ตาราง ⇒ ข้อ 1 คงรายการ 7 บรรทัด + อัตราตามรหัส
+        // (เดิม 611c3b01: ไม่แปลงครึ่งทาง ⇒ ตารางชนะ — รายการ 7 บรรทัดที่ลงยอดได้ถูกทิ้ง)
         var rows = MakroItemRows.Concat(new[] { (28.00m, "ลดราคาไข่ไก่ แม็คโคร(*1.0)"), (100.00m, "ลด 100บ เมื่อซื้อทิชชู่ครบ 2,500 บ(*1.0)") }).ToArray();
         var d = DecideMakro(MakroPagesUnproven, InD(rows));
+        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
+        Assert.Equal(new[] { 7, 8 }, d.DiscountRows);
+        Assert.Equal(228.00m, d.BillDiscount);
+        Assert.Equal(OcrVatCodeVerdict.Applied, d.Plan.Verdict);
+        var after = d.Plan.AmountsAfterDiscount!;
+        Assert.Equal(1220.00m, after[0] + after[1]);
+        Assert.Equal(9760.00m, after.Skip(2).Sum());
+        Assert.Contains("เป็นส่วนหนึ่งของรวมส่วนลดบนกระดาษ 228.00", d.Note);
+        Assert.Contains("ไม่หักซ้ำ", d.Note);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_แถวลดที่ไม่พิมพ์บนบรรทัดส่วนลดของกระดาษ_ไม่ตัดทิ้ง_ตารางชนะ()
+    {
+        // แถวที่ engine ให้คำว่า "ลด" แต่ยอดไม่อยู่บนบรรทัดส่วนลดของกระดาษ (128 = ยอดที่ไม่มีบนกระดาษ) ⇒ ไม่ใช่หลักฐานแถวส่วนลดบางส่วน ⇒ ไม่แปลงครึ่งทาง ⇒ ข้อ 2
+        var rows = MakroItemRows.Append((128.00m, "ลดพิเศษ(*1.0)")).ToArray();
+        var d = DecideMakro(MakroPagesUnproven, InD(rows));
+        Assert.Empty(d.DiscountRows);
         Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
-        Assert.Equal(10980.00m, d.TableLines.Sum(g => g.Net + g.Vat));
+    }
+
+    [Fact]
+    public void หน้าที่มีแต่แถวส่วนลด_ตัวตัดสิน_ทั้งสองทิศ()
+    {
+        var text = Norm(OcrPaperSamples.MakroPage2of2);
+        var t = OcrVatCodeMeaning.ResolvedTable(text, null).Table;
+        var three = InD((30.00m, "ซื้อสินค้าฮีโร่ ครบ 359 ลด 30 บาท(*1.0)"), (60.00m, "ลด 60บ(*1.0)"), (10.00m, "SLAB1(*5.0)"));
+        Assert.True(OcrVatCodeLines.AllDiscountRows(three, text, t, 228.00m));
+        // รายละเอียดที่ engine ตัดคำหาย แต่ยอดพิมพ์บนบรรทัดส่วนลดของกระดาษ ⇒ ยังเป็นแถวส่วนลด
+        Assert.True(OcrVatCodeLines.AllDiscountRows(InD((30.00m, "ซื้อสินค้าฮีโร่"), (60.00m, "ยูนิลีเวอร์"), (10.00m, "")), text, t, 228.00m));
+        // ทิศตรงข้าม: Σ เกินรวมส่วนลด · มีแถวที่ไม่ใช่ส่วนลด (ยอดไม่อยู่บนบรรทัดส่วนลดและไม่มีคำ) · ไม่มีตารางผสม
+        Assert.False(OcrVatCodeLines.AllDiscountRows(InD((300.00m, "ลดราคา(*1.0)")), text, t, 228.00m));
+        Assert.False(OcrVatCodeLines.AllDiscountRows(InD((30.00m, "ลด 30(*1.0)"), (1220.00m, "ข้าวสาร")), text, t, 228.00m));
+        Assert.False(OcrVatCodeLines.AllDiscountRows(three, text, OcrLineVatMarks.ReadGroups(OcrPaperSamples.WinePro), 228.00m));
     }
 
     [Fact]

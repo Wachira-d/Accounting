@@ -269,21 +269,63 @@ public class OcrReplayLineGoldenTests
     }
 
     [Fact]
-    public void Makroหน้า1และ2ครบ_engineอ่านคอลัมน์รหัสไม่ได้_มีส่วนลด_คงรายการ7บรรทัด_ฟ้องตารางรหัส()
+    public void Makroหน้า1และ2ครบ_engineอ่านคอลัมน์รหัสไม่ได้_มีส่วนลด_รายการไม่ลงยอด_ตารางลงยอด_ตารางชนะ()
     {
-        // ฝ่ายค้าน f7c29c2c P2-5 (เปลี่ยนจาก 611c3b01 โดยตั้งใจ): ไฟล์พิมพ์ "หน้าที่ 1 จาก 2" + "หน้าที่ 2 จาก 2" ครบ ⇒ ไม่ใช่ "อัปโหลดแค่หน้าสุดท้าย" ที่คำตัดสินข้อ 1
-        // ตั้งใจ — รายการครบ 7 แถว (ยอดตรงกระดาษทุกแถว) แต่แบ่งส่วนลดต่อรหัสไม่ได้ ⇒ คงรายการ + [Σ-GAP] (ผู้ใช้แก้อัตราไข่ไก่/ข้าวสารตามคอลัมน์รหัส) ดีกว่าทิ้งรายการ ·
-        // ตัวเลขเท่าเส้น afbb0956 ทุกตัวอักษร: ส่วนลด 2.03% ทั้งใบ · ยกเว้น 979.66 (ข้าวสาร) · ไข่ไก่ 7% จากชื่อ · VatRateMismatch,VatCodeTable
-        // 611c3b01–f7c29c2c: บรรทัดสรุปต่อรหัส 1,220.00 + 9,121.50/638.50 (รายการ 7 แถวหาย) — ยังเป็นคำตอบของใบที่พิสูจน์ไม่ได้ว่าครบทุกหน้า (OcrVatCodeLinesTests)
-        Assert.Equal("Items", Val("makro-p1p2-no-row-codes-synthetic", "LineMode"));
-        Assert.Equal("DiscountOnTotalInclVat", Val("makro-p1p2-no-row-codes-synthetic", "ReconCase"));
-        Assert.Equal(
-            "979.66|-1|0.00|1000.00|2.03|20.34|0.00;227.45|7|15.51|248.00|2.03|5.04|0.00;1040.00|7|70.93|189.00|2.03|23.07|0.00;"
-            + "2375.31|7|162.00|259.00|2.03|52.69|0.00;1082.19|7|73.81|59.00|2.03|24.00|0.00;880.42|7|60.05|64.00|2.03|19.53|0.00;"
-            + "3756.47|7|256.20|512.00|2.03|83.33|0.00",
+        // คำตัดสินเจ้าของ 2026-10-16 ภาคต่อ ("ถ้าไม่ตรงและตารางภพ ตรงกับยอดรวม ให้ยึดตาราง ภพ") — เปลี่ยนโดยตั้งใจครั้งที่สามของใบนี้:
+        // afbb0956/6b9bf926 คงรายการ 7 แถว + [Σ-GAP] (เลขหน้าครบ 1..2 ⇒ "คงรายการ") · ตอนนี้เลขหน้าไม่ใช่เกณฑ์: รายการแบ่งส่วนลดต่อรหัสไม่ได้
+        // (ไข่ไก่ 7% จากชื่อ ⇒ ยกเว้น 979.66 ≠ 1,220) = ไม่ลงยอด · ตาราง "รวม" 10,980 = ยอดที่พิสูจน์ + VAT 638.50 ⇒ บรรทัดสรุปต่อรหัส (ไม่มี [Σ-GAP])
+        Assert.Equal("VatGroupsInsteadOfItems", Val("makro-p1p2-no-row-codes-synthetic", "LineMode"));
+        Assert.Null(Val("makro-p1p2-no-row-codes-synthetic", "ReconCase"));
+        Assert.Equal("1220.00|-1|0.00|1220.00|0|0.00|0.00;9121.50|7|638.50|9121.50|0|0.00|0.00",
             Val("makro-p1p2-no-row-codes-synthetic", "Lines"));
-        Assert.Equal("VatRateMismatch,VatCodeTable", Val("makro-p1p2-no-row-codes-synthetic", "IntegrityGaps"));
-        Assert.Equal("true", Val("makro-p1p2-no-row-codes-synthetic", "PricesIncludeVat"));
+        Assert.Equal("ok", Val("makro-p1p2-no-row-codes-synthetic", "IntegrityGaps"));
+        Assert.Equal("false", Val("makro-p1p2-no-row-codes-synthetic", "PricesIncludeVat"));
+    }
+
+    [Theory]
+    [InlineData("makro-page2-discount-rows-only", "52120|-")]
+    [InlineData("makro-page2-discount-rows-mixed-accounts", "52120|-|mixed")]
+    [InlineData("makro-page2-tesseract-discount-rows-only", "52120|-")]
+    public void Makroหน้า2สแกนซ้ำ_engineคืนแถวส่วนลด3แถว_บรรทัดสรุปตามตาราง_ยกเว้น1220_มีVAT9121_50_ฐานหัวใบ10341_50(string paper, string dims)
+    {
+        // เจ้าของ 2026-10-16: "ยอดรวมลงถูกแต่บอดราย รายการ … เห็นตารางสรุปรวม ก็ใช้ตารางนั้นได้เลย ถ้ายอดรวมตรง" — ก่อนแก้ (ภาพหน้าจอ · ทำซ้ำผ่าน
+        // PreviewDocumentLinesAsync จริง): แถวส่วนลด 30/60/10 เป็นสินค้า 7% + ⛔ "Σ บรรทัด 100.00 น้อยกว่ายอดก่อน VAT 10,341.50" · ยอดก่อน VAT หัวใบ 11,208
+        Assert.Equal("VatGroupsInsteadOfItems", Val(paper, "LineMode"));
+        Assert.Equal("1220.00|-1|0.00|1220.00|0|0.00|0.00;9121.50|7|638.50|9121.50|0|0.00|0.00", Val(paper, "Lines"));
+        Assert.Equal("ok", Val(paper, "IntegrityGaps"));
+        Assert.Equal(dims, Val(paper, "SummaryDims"));
+        // แถวส่วนลดไม่ถูกหักซ้ำ: Σ บรรทัด + VAT = 10,980 = ยอดชำระ (ไม่ใช่ 10,880 · ไม่ใช่ 11,080)
+        Assert.Equal("10980.00", Val(paper, "AnchorTotal"));
+    }
+
+    [Fact]
+    public void Makroหน้า2สแกนซ้ำ_golden_หัวใบและระดับบรรทัดต่อใบ()
+    {
+        // golden ตัวอักษรต่อใบ (ocr_golden_corpus_check — ทุกใบต้องมี Val ของตัวเอง ทั้งหัวใบและระดับบรรทัด)
+        Assert.Equal("Confirmed", Val("makro-page2-discount-rows-only", "AnchorVerdict"));
+        Assert.Equal("228.00", Val("makro-page2-discount-rows-only", "BillDiscount"));
+        Assert.Equal("VatGroupsInsteadOfItems", Val("makro-page2-discount-rows-only", "LineMode"));
+        Assert.Equal("Confirmed", Val("makro-page2-discount-rows-mixed-accounts", "AnchorVerdict"));
+        Assert.Equal("10341.50", Val("makro-page2-discount-rows-mixed-accounts", "PlannedHeaderSubTotal"));
+        Assert.Equal("VatGroupsInsteadOfItems", Val("makro-page2-discount-rows-mixed-accounts", "LineMode"));
+        Assert.Equal("52120|-|mixed", Val("makro-page2-discount-rows-mixed-accounts", "SummaryDims"));
+        Assert.Equal("Unknown", Val("makro-page2-tesseract-discount-rows-only", "AnchorVerdict"));
+        Assert.Equal("228.00", Val("makro-page2-tesseract-discount-rows-only", "BillDiscount"));
+        Assert.Equal("VatGroupsInsteadOfItems", Val("makro-page2-tesseract-discount-rows-only", "LineMode"));
+        Assert.Equal("ok", Val("makro-page2-tesseract-discount-rows-only", "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void Makroหน้า2สแกนซ้ำ_ยอดก่อนVATหัวใบ_ไม่ใช่ยอดรวมVATก่อนส่วนลด11208_แต่ฐานที่พิสูจน์10341_50()
+    {
+        // (c) OcrTotalAnchor.Plan สาขา Confirmed: ยอดรวม 10,980 ถูกแล้ว แต่ "ยอดก่อน VAT" 11,208 คือป้าย "ราคาสินค้ารวมภาษีมูลค่าเพิ่ม/ TOTAL" ⇒ ฐานที่พิมพ์ 10,341.50
+        Assert.Equal("10341.50", Val("makro-page2-discount-rows-only", "PlannedHeaderSubTotal"));
+        Assert.Equal("10341.50", Val("makro-page2-vat-added-twice", "PlannedHeaderSubTotal"));   // สาขา Proven เดิม (ไม่เปลี่ยน)
+        // ทิศตรงข้าม: ใบที่ฐานถูกอยู่แล้ว / ไม่มีป้ายรวม VAT บนตัวเลขนั้น ⇒ ฐานเดิมทุกตัวอักษร
+        Assert.Equal("951.00", Val("makro-correct", "PlannedHeaderSubTotal"));
+        Assert.Equal("22663.97", Val("makro-page3-total-first", "PlannedHeaderSubTotal"));
+        // ข้อความ Tesseract ยึดยอดไม่ได้ (Unknown) ⇒ ไม่แตะ (ไม่รู้ = ไม่เขียนทับ) — ช่องเปิดที่จดไว้ใน lessons
+        Assert.Equal("11208.00", Val("makro-page2-tesseract-discount-rows-only", "PlannedHeaderSubTotal"));
     }
 
     [Fact]

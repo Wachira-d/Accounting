@@ -21,8 +21,11 @@ public sealed record ReplayPaper(
 /// <param name="LineDiscount">ส่วนลดของบรรทัด (ฐานเดียวกับราคา) — <b>ไม่ใช่ข้อมูลป้อน</b>: engine ภาพไม่คืนช่องนี้ ⇒ ใบในชุดปล่อย null ·
 /// <see cref="OcrReplayHarness.BuildLines"/> เติมจากแถวบนกระดาษด้วยตัวตัดสินตัวเดียวกับ service (<see cref="OcrLineQuantityGuard"/>)</param>
 /// <param name="PriceIncludesVat">ธงรวม VAT ของบรรทัด (ผลของ <see cref="OcrLineQuantityGuard.PaperDiscountPricesIncludeVat"/>) — ไม่ใช่ข้อมูลป้อน</param>
+/// <param name="Account">ผังบัญชีรายบรรทัด (รหัสผังที่เรียนไว้/ผู้ใช้เลือก) — null = ผังหัวใบ · ป้อนตัวตัดสินตารางรหัส ภ.พ. (ผัง/โครงการของบรรทัดสรุป ·
+/// หมายเหตุรายการเดิม — 2026-10-16 คำตัดสินเจ้าของภาคต่อ)</param>
+/// <param name="Project">ชื่อโครงการรายบรรทัด — null = ไม่มี</param>
 public sealed record ReplayLine(string? Description, decimal? Quantity, decimal? UnitPrice, decimal Amount,
-    decimal? LineDiscount = null, bool PriceIncludesVat = false);
+    decimal? LineDiscount = null, bool PriceIncludesVat = false, string? Account = null, string? Project = null);
 
 /// <summary>ผลของขั้นสร้างบรรทัดเอกสาร (<see cref="OcrReplayHarness.BuildLines"/>) — ทุกช่องเป็นข้อความอ่านออก เพื่อล็อกเป็น golden</summary>
 /// <param name="Mode"><c>Items</c> (มีรายการ) · <c>VatGroups</c> (ไม่มีรายการแต่กระดาษพิมพ์ตารางสรุปตามกลุ่มภาษี) · <c>Summary</c> (บรรทัดสรุปใบเดียว)</param>
@@ -36,9 +39,11 @@ public sealed record ReplayLine(string? Description, decimal? Quantity, decimal?
 /// (2026-10-16 RE-20261000111) · null = ใบไม่มีรายการ</param>
 /// <param name="Descriptions">คำอธิบายบรรทัดหลังตัวกันจำนวนระเบิด คั่นด้วย <c>;</c> — <b>เฉพาะใบที่ตัวกันเปลี่ยนคำอธิบาย</b> (ย้ายจำนวนหน่วยมิเตอร์ไปไว้ในคำอธิบาย ·
 /// ทีม OCR 8 2026-10-16) · null = ไม่เปลี่ยน (ใบเดิมไม่มีแถวนี้)</param>
+/// <param name="SummaryDims">ตารางชนะแทนรายการ: ผัง|โครงการ ที่บรรทัดสรุปแบก (+ <c>|mixed</c> เมื่อรายการเดิมหลายผัง/โครงการ ⇒ หมายเหตุรายการเดิม) —
+/// เฉพาะใบในชุดที่ระบุผัง/โครงการรายบรรทัด (2026-10-16 คำตัดสินเจ้าของภาคต่อ) · null = ไม่มีช่องนี้</param>
 public sealed record ReplayBuiltLines(
     string Mode, string? ReconCase, bool PricesIncludeVat, string Lines, string Gaps, decimal RoundingAdjustment,
-    int DuplicateRowsDropped = 0, string? QuantityGuard = null, string? Descriptions = null);
+    int DuplicateRowsDropped = 0, string? QuantityGuard = null, string? Descriptions = null, string? SummaryDims = null);
 
 /// <summary>คำตอบหนึ่งช่องของใบหนึ่ง</summary>
 public sealed record ReplayAnswer(string Paper, string Field, string? Value);
@@ -88,6 +93,14 @@ public static class OcrReplayHarness
         new("ถุงขยะดำ ฮีโร่ 30x40 นิ้ว", 20m, 59.00m, 1180.00m),
         new("น้ำดื่ม เอโร่ 600 มล. แพ็ค 12 ขวด", 15m, 64.00m, 960.00m),
         new("แชมพู ซันซิล 900 มล.", 8m, 512.00m, 4096.00m),
+    };
+
+    /// <summary>แถวส่วนลด 3 แถวของ Makro หน้า 2/2 (405901117163) ตามที่ engine คืนเป็น "สินค้า" — ไม่มีจำนวน/ราคา · ผังรายบรรทัดตามที่ส่ง (null = ผังหัวใบ)</summary>
+    private static ReplayLine[] MakroPage2DiscountRows(string? a1, string? a2, string? a3) => new ReplayLine[]
+    {
+        new("ซื้อสินค้าฮีโร่ ถุงขยะ ถุงหูหิ้ว ถุงซิป ครบ 359 ลด 30 บาท(*1.0)", null, null, 30.00m, Account: a1),
+        new("ลด 60บเมื่อซื้อสินค้ายูนิลีเวอร์ ดูแลเส้นผม ผิวหน้า ผิวกาย ที่ร่วมครบ 599 บ(*1.0)", null, null, 60.00m, Account: a2),
+        new("SLAB1(*5.0)", null, null, 10.00m, Account: a3),
     };
 
     /// <summary>ลบคอลัมน์รหัส ภ.พ. ออกจากแถวสินค้า ("248.00 1 248.00" → "248.00 248.00") — จำลอง engine ที่อ่านคอลัมน์รหัสไม่ได้</summary>
@@ -238,6 +251,24 @@ public static class OcrReplayHarness
                 new("ลด 60บเมื่อซื้อสินค้ายูนิลีเวอร์ ดูแลเส้นผม ผิวหน้า ผิวกาย ที่ร่วมครบ 599 บ(*1.0)", null, null, 60.00m),
                 new("SLAB1(*5.0)", null, null, 10.00m),
             }).ToList()),
+
+        // 2026-10-16 Makro หน้า 2/2 สแกนซ้ำ (เจ้าของ: "ยอดรวมลงถูกแต่บอดราย รายการ … เห็นตารางสรุปรวม ก็ใช้ตารางนั้นได้เลย") — engine คืน<b>แถวส่วนลด 3 แถวเป็นสินค้า</b>
+        // (30 · 60 · 10 ไม่มีจำนวน/ราคา · ผัง 52120 ทุกแถวตามภาพหน้าจอ) · หัวสแกนตามภาพหน้าจอ: ยอดก่อน VAT 11,208 (= ป้าย "รวมภาษีมูลค่าเพิ่ม/ TOTAL" ก่อนส่วนลด) ·
+        // VAT 638.50 · ยอดรวม 10,980 (ถูก) · คำตอบที่ถูก = บรรทัดสรุปตามตาราง ยกเว้น 1,220.00 + 9,121.50/638.50 · ฐานหัวใบ 10,341.50 · ไม่มี [Σ-GAP]
+        new ReplayPaper("makro-page2-discount-rows-only", OcrPaperSamples.MakroPage2of2,
+            EngineSubTotal: 11208.00m, EngineVat: 638.50m, EngineTotal: 10980.00m, VendorTaxId: "0107567000414",
+            Lines: MakroPage2DiscountRows("52120", "52120", "52120")),
+
+        // ใบเดียวกัน — แถว SLAB1 ไม่มีผังของตัวเอง (ผังหัวใบ) ⇒ เดิม "ผังต่างกัน 2 ผัง" (ฝ่ายค้าน f7c29c2c P1-3) คงแถวส่วนลด 3 แถวเป็นสินค้า 7% + ⛔ Σ บรรทัด 100 น้อยกว่า
+        // ยอดก่อน VAT 10,341.50 (ทำซ้ำผ่าน PreviewDocumentLinesAsync จริงบน PostgreSQL) — คำตัดสินเจ้าของภาคต่อ: ตารางลงยอด ⇒ ตารางชนะ · ผังยอดมากสุด + หมายเหตุรายการเดิม
+        new ReplayPaper("makro-page2-discount-rows-mixed-accounts", OcrPaperSamples.MakroPage2of2,
+            EngineSubTotal: 11208.00m, EngineVat: 638.50m, EngineTotal: 10980.00m, VendorTaxId: "0107567000414",
+            Lines: MakroPage2DiscountRows("52120", "52120", null)),
+
+        // ใบเดียวกัน ข้อความ Tesseract 5.3.4 จริง (คำอธิบายรหัส 1 เพี้ยน ⇒ ค่าตั้งต้นยกเว้น · ยอดยึดไม่ได้จากข้อความ) + แถวส่วนลด 3 แถว
+        new ReplayPaper("makro-page2-tesseract-discount-rows-only", OcrMakroPage2VatAddedTwiceTests.MakroPage2of2Tesseract,
+            EngineSubTotal: 11208.00m, EngineVat: 638.50m, EngineTotal: 10980.00m, VendorTaxId: "0107567000414",
+            Lines: MakroPage2DiscountRows("52120", "52120", "52120")),
 
         // Shopee — ใบกำกับ 536 · ส่วนลดพิเศษ 98 หลัง VAT · จ่าย 438
         new ReplayPaper("uptoyou-shopee-pay-not-total", OcrPaperSamples.UptoyouShopee,
@@ -422,6 +453,10 @@ public static class OcrReplayHarness
             result.Add(new(p.Name, "DiscountToSpread", shape.DiscountToSpread.ToString("0.00")));
             result.Add(new(p.Name, "AnchoredNetSubTotal",
                 OcrHeaderAmounts.NetSubTotal(n.SubTotal, n.Vat, anchoredTotal, shape.DiscountToSpread).ToString("0.00")));
+            // 2026-10-16 (Makro 2/2 · หน้ารีวิว "ยอดก่อน VAT 11208"): ช่องยอดก่อน VAT ของหัวสแกนหลังขั้นยึดยอด (OcrTotalAnchor.Plan — ตัวเดียวกับ ApplyTotalFirst)
+            var writePlan = OcrTotalAnchor.Plan(anchor, n.SubTotal, n.Vat,
+                Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(p.RawText));
+            result.Add(new(p.Name, "PlannedHeaderSubTotal", (writePlan.SubTotal ?? n.SubTotal)?.ToString("0.00")));
 
             // 6. อัตรา VAT รายบรรทัดจากสัญลักษณ์บนกระดาษ (OcrLineVatMarks) — เฉพาะใบที่มีรายการ
             if (p.LineAmounts is { } amounts)
@@ -474,6 +509,8 @@ public static class OcrReplayHarness
             if (built.QuantityGuard is string qg) result.Add(new(p.Name, "LineQtyGuard", qg));
             // ทีม OCR 8: คำอธิบายที่ตัวกันเปลี่ยน ("ค่าไฟฟ้า … (4,272 หน่วย)") — แถวใหม่เฉพาะใบที่เปลี่ยน
             if (built.Descriptions is string ds) result.Add(new(p.Name, "LineDescriptions", ds));
+            // 2026-10-16 คำตัดสินเจ้าของภาคต่อ: ผัง/โครงการของบรรทัดสรุปเมื่อตารางชนะ (ช่องใหม่เฉพาะใบที่ระบุผังรายบรรทัด)
+            if (built.SummaryDims is string sd) result.Add(new(p.Name, "SummaryDims", sd));
         }
         return result;
     }
@@ -589,6 +626,8 @@ public static class OcrReplayHarness
         // ตรงกับ service (DECISIONS ข้อ 153 ข้อ 2): รหัสที่กระดาษไม่บอกความหมาย ⇒ ตัวเลขของแถว / ค่าตั้งต้น — ชุดกระดาษไม่มีคำตอบ AI ที่ persist (null)
         var codeTable = OcrVatCodeMeaning.ResolvedTable(normalizedText, null).Table;
         IReadOnlyList<OcrVatGroup>? tableLinesInsteadOfItems = null;
+        string? summaryAccount = null, summaryProject = null;
+        var mixedDimensions = false;
         if (lines is { Count: > 0 })
         {
             var n0 = lines.Count;
@@ -602,13 +641,25 @@ public static class OcrReplayHarness
             var markPick = OcrLineVatMarks.Assign(printed0, paperVatSplit, hdrVat);
             if (markPick.Applied)
                 for (var i = 0; i < n0; i++) rates0[i] ??= markPick.Rates[i];
+            // ตรงกับ service: ผัง/โครงการรายบรรทัด (null = ผังหัวใบ · ตัวเดียวกันทุกบรรทัด) + ยอดที่กระดาษพิสูจน์ (OcrTotalAnchor.Find) เข้าด่าน "ตารางลงยอด"
+            var paperAnchor = OcrTotalAnchor.Find(normalizedText, hdrTotal);
+            var paperProven = paperAnchor.Verdict is OcrTotalVerdict.Proven or OcrTotalVerdict.Confirmed;
             var decision = OcrVatCodeLines.Decide(
-                lineGross0.Select((g, i) => new OcrVatCodeLineInput(g, rates0[i], lines[i].Description)).ToList(),
+                lineGross0.Select((g, i) => new OcrVatCodeLineInput(g, rates0[i], lines[i].Description,
+                    AccountId: DimensionId(lines[i].Account ?? "ผังหัวใบ"), ProjectId: lines[i].Project is string pj ? DimensionId(pj) : null,
+                    AccountLabel: lines[i].Account ?? "ผังหัวใบ", ProjectLabel: lines[i].Project)).ToList(),
                 normalizedText, codeTable, hdrSub, hdrVat, hdrTotal, hdrDiscRaw,
                 pricesIncludeVatPreset: OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, l.PriceIncludesVat)).ToList()),
-                tableLinesAllowed: headerWht == 0m);
+                tableLinesAllowed: headerWht == 0m,
+                paperTotal: paperProven ? paperAnchor.Total : null, paperVat: paperProven ? paperAnchor.PrintedVat : null);
             if (decision.Source == OcrVatCodeLineSource.TableSummary)
+            {
                 tableLinesInsteadOfItems = decision.TableLines;
+                summaryAccount = decision.SummaryAccountId is Guid sa
+                    ? lines.Select(l => l.Account ?? "ผังหัวใบ").First(a => DimensionId(a) == sa) : null;
+                summaryProject = decision.SummaryProjectId is Guid sp ? lines.Select(l => l.Project).First(x => x != null && DimensionId(x!) == sp) : null;
+                mixedDimensions = decision.MixedDimensionsNote is not null;
+            }
             else
             {
             var keep = decision.Keep;
@@ -743,8 +794,11 @@ public static class OcrReplayHarness
                 rows.Add(Fmt(g.Net, rate, g.Vat, g.Net, 0m, 0m, 0m));
             }
             var check = OcrAmountIntegrity.Check(planned, hdrVat, hdrTotal, paperVatSplit.TaxableAmount, paperVatSplit.NonTaxableAmount, codeTable);
+            // ตารางชนะแทนรายการ: ผัง/โครงการที่บรรทัดสรุปแบก (+ ธงหมายเหตุรายการเดิมหลายผัง/โครงการ) — เฉพาะใบที่มีรายการผัง/โครงการรายบรรทัดในชุด (ช่องเดิมไม่เปลี่ยน)
+            var dims = tableLinesInsteadOfItems is not null && (p.Lines ?? p.EngineLines ?? Array.Empty<ReplayLine>()).Any(l => l.Account != null || l.Project != null)
+                ? $"{summaryAccount ?? "-"}|{summaryProject ?? "-"}{(mixedDimensions ? "|mixed" : "")}" : null;
             return new ReplayBuiltLines(tableLinesInsteadOfItems is null ? "VatGroups" : "VatGroupsInsteadOfItems", null, false, string.Join(";", rows),
-                GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m, duplicateRowsDropped, quantityGuard, descriptions);
+                GapText(WithOverstatement(check.Problems.Select(x => x.Kind.ToString()), groups.Sum(g => g.Net + g.Vat))), 0m, duplicateRowsDropped, quantityGuard, descriptions, dims);
         }
 
         var summaryRate = hdrVat > 0m ? 7m : 0m;
@@ -755,6 +809,10 @@ public static class OcrReplayHarness
             Fmt(headerSubTotal, summaryRate, hdrVat, headerSubTotal, 0m, 0m, headerWht),
             GapText(WithOverstatement(summaryCheck.Problems.Select(x => x.Kind.ToString()), headerSubTotal + hdrVat)), 0m);
     }
+
+    /// <summary>Guid คงที่ต่อชื่อผัง/โครงการ (ชุดกระดาษไม่มี DB — ชื่อเดียวกัน = ค่าเดียวกัน)</summary>
+    private static Guid DimensionId(string name)
+        => new(System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes(name)));
 
     /// <summary>ตารางผลต่าง "ก่อน → หลัง" — <b>ว่าง = ไม่มีใบไหนเปลี่ยนคำตอบ</b></summary>
     public static IReadOnlyList<(string Paper, string Field, string? Before, string? After)> Diff(

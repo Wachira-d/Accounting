@@ -443,11 +443,23 @@ public static class OcrTotalAnchor
     /// <item>อื่น ๆ ⇒ ไม่เขียนอะไร (trace เท่านั้น)</item>
     /// </list>
     /// </summary>
-    public static OcrTotalWritePlan Plan(OcrTotalAnchorResult r, decimal? currentSub, decimal? currentVat)
+    /// <param name="rawText">ข้อความทั้งใบ (normalize แล้ว) — ใช้ตรวจว่า "ยอดก่อน VAT" ที่ถืออยู่พิมพ์เป็น<b>ยอดรวม VAT</b> ไหม (2026-10-16 · Makro 2/2) ·
+    /// null = ไม่ตรวจ (สูตรเดิมทุกตัวอักษร)</param>
+    public static OcrTotalWritePlan Plan(OcrTotalAnchorResult r, decimal? currentSub, decimal? currentVat, string? rawText = null)
     {
         var trace = r.Verdict == OcrTotalVerdict.NotChecked ? null : r.Reason;
         if (r.Verdict is OcrTotalVerdict.Conflict or OcrTotalVerdict.Unsure)
             return new OcrTotalWritePlan(null, null, OcrFieldSource.Unknown, 0d, null, DisputedConfidenceCap, Note(r), trace);
+        // 2026-10-16 (Makro 2/2 เลขที่ 405901117163 — หน้ารีวิว "ยอดก่อน VAT 11208"): ยอดรวมที่ engine อ่าน<b>ถูกแล้ว</b> (Confirmed 10,980) แต่ "ยอดก่อน VAT" ที่ถืออยู่คือ
+        // ป้าย "ราคาสินค้ารวมภาษีมูลค่าเพิ่ม/ TOTAL 11,208.00" (รวม VAT · ก่อนหักส่วนลด) — เดิมสาขา Confirmed ไม่เขียนอะไรเลย ⇒ ช่องหัวใบค้าง 11,208 ทั้งที่กระดาษพิสูจน์ฐาน
+        // 10,341.50 (แถว "รวม" ของตาราง/ฐานที่พิมพ์ + VAT ที่พิมพ์ = ยอดรวม) · เขียนฐานเฉพาะเมื่อ: ฐานที่ถืออยู่ + VAT ไม่ปิดยอด <b>และ</b>ตัวเลขนั้นพิมพ์หลังป้ายรวม VAT
+        // บนกระดาษ (OcrPaperAmounts.IsPrintedAsVatInclusive) <b>และ</b>ฐาน+VAT ที่พิมพ์ปิดยอดพอดี — "รวมเงินก่อนหักส่วนลด" ที่เป็นฐานจริง (ไม่มีป้ายรวม VAT) ไม่ถูกแตะ
+        if (r.Verdict == OcrTotalVerdict.Confirmed && r.Total is decimal ct && rawText is not null
+            && currentSub is decimal cs && r.PrintedBase is decimal cb && r.PrintedVat is decimal cv
+            && Math.Abs(cb + cv - ct) <= Tol && Math.Abs(cs + (currentVat ?? 0m) - ct) > Tol
+            && OcrPaperAmounts.IsPrintedAsVatInclusive(rawText, cs))
+            return new OcrTotalWritePlan(null, cb, OcrFieldSource.PaperLabel, ProvenConfidence, cv, null, Note(r),
+                $"{trace} · ยอดก่อน VAT ที่อ่านได้ {cs:N2} คือยอดที่กระดาษพิมพ์ว่ารวม VAT แล้ว (ไม่ใช่ฐาน) ⇒ ใช้ฐานที่พิมพ์ {cb:N2} + VAT {cv:N2} = {ct:N2}");
         if (r.Verdict != OcrTotalVerdict.Proven || r.Total is not decimal t)
             return new OcrTotalWritePlan(null, null, OcrFieldSource.Unknown, 0d, null, null, Note(r), trace);
 

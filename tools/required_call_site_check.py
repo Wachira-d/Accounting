@@ -8347,6 +8347,28 @@ RULES += [
          why="2026-10-16: ดัชนีต้นทางของบรรทัดพรีวิวมาจากตัวสร้างบรรทัด (แถวส่วนลดที่แปลง/บรรทัดสรุปตามตาราง ไม่ใช่ 1 แถว = 1 บรรทัด)"),
 ]
 
+# ── 2026-10-16 ทีม OCR 7 — Makro หน้า 2/2 สแกนซ้ำ ("ยอดรวมลงถูกแต่บอดราย รายการ … เห็นตารางสรุปรวม ก็ใช้ตารางนั้นได้เลย") + คำตัดสินเจ้าของภาคต่อ ──────
+#    "ถ้าตารางสินค้าตรงกับยอดรวม ยึด รายการสินค้าทั้งหมด · แต่ถ้าไม่ตรงและตารางภพ ตรงกับยอดรวม ให้ยึดตาราง ภพ"
+#    ถอด paperTotal = สแกนเก่าที่หัวสแกนผิด (11,846.50) ตารางแพ้ · ถอด MixedDimensionsNote = ผัง/โครงการรายการเดิมหายเงียบ · ถอด rawText ใน Plan = ยอดก่อน VAT ค้าง 11,208 ·
+#    กลับไปเรียก KeepItemsReason = เลขหน้าครบ/ผังต่างกันกลับมาบล็อกตาราง (ภาพหน้าจอของผู้ใช้) · ถอด AllDiscountRows = หน้าที่มีแต่ส่วนลดได้หมายเหตุ "รายการสินค้าถูกแทน" ผิด
+RULES += [
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must=["OcrTotalAnchor.Find(", "OcrVatCodeLines.Decide("],
+         must_re=[r"paperTotal\s*:\s*paperProven\s*\?\s*paperAnchor\s*\.\s*Total", r"paperVat\s*:\s*paperProven\s*\?\s*paperAnchor\s*\.\s*PrintedVat",
+                  r"codeDecision\s*\.\s*MixedDimensionsNote\s+is\s+string", r"AccountLabel\s*:\s*ItemAccountLabel\(\s*x\s*\)"],
+         before=[("OcrTotalAnchor.Find(", "OcrVatCodeLines.Decide(")],
+         why="2026-10-16 คำตัดสินเจ้าของภาคต่อ: ด่าน \"ตารางลงยอด\" เทียบยอดที่กระดาษพิสูจน์ · ผัง/โครงการต่างกัน = หมายเหตุรายการเดิม (ไม่ทิ้งเงียบ)"),
+    dict(file=OCR, method="ApplyTotalFirst",
+         must=["OcrTotalAnchor.Plan("],
+         call_args=[("OcrTotalAnchor.Plan(", "text")],
+         why="2026-10-16 Makro 2/2: ยอดก่อน VAT ที่พิมพ์ว่ารวม VAT (11,208) ต้องถูกแทนด้วยฐานที่พิมพ์ — Plan ต้องได้ข้อความกระดาษ"),
+    dict(file="Helpers/OcrVatCodeLines.cs", method="Decide",
+         must=["AllDiscountRows(", "SummaryInsteadOfItems(", "MixedDimensionsNote(", "LargestShare("],
+         call_args=[("SummaryInsteadOfItems(", "paperTotal")],
+         forbid=["KeepItemsReason("],
+         why="2026-10-16 คำตัดสินเจ้าของภาคต่อ: รายการลงยอด ⇒ รายการ · ไม่ลงแต่ตารางลงยอด ⇒ ตาราง (ไม่ดูเลขหน้า · ไม่บล็อกเพราะผัง/โครงการ) · ไม่ลงทั้งคู่ ⇒ รายการ + [Σ-GAP]"),
+]
+
 # ── 2026-10-16 DECISIONS ข้อ 153 ข้อ 2 — ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก (กฎเหล็ก #1 ครบ 4 ขั้น) ──────────────────────────────────────────
 #    ถอด Resolve ในตัวสร้างบรรทัด = รหัสไม่รู้ ⇒ ตารางใช้ไม่ได้ (กลับไปบรรทัดสรุป 7% + [Σ-GAP]) · ถอด `with { Groups = vatCodeTable }` = สาขาไม่มีรายการไม่ได้ผล ·
 #    ถอดการถามตอนสแกน = ไม่มีวันถาม AI · ถอด Guard ใน augmenter = คำตอบ 7% บนแถว VAT 0 ผ่าน · ถอดการเก็บ JSON/UsedAi = ป้ายโกหก + ปิดลูปไม่ได้ ·
@@ -8374,7 +8396,8 @@ RULES += [
          call_args=[("OcrVatCodeLines.TableMismatch(", "OcrVatCodeMeaning.ResolvedTable")],
          forbid=["OcrLineVatMarks.ReadGroups(", "OcrVatCodeMeaning.Resolve("],
          why="ฝ่ายค้าน f7c29c2c P1-1: ปุ่มอนุมัติ LINE ใช้ตารางที่ตัดสินแล้วตัวเดียวกับตอนสร้าง/เว็บ"),
-    # ฝ่ายค้าน f7c29c2c P1-2/P1-3: ผัง/โครงการของรายการเข้าตัวตัดสิน (ต่างกัน ⇒ คงรายการ) · บรรทัดสรุปแบกผัง/โครงการที่ทุกรายการใช้ร่วม + โครงการหัวเอกสาร
+    # ฝ่ายค้าน f7c29c2c P1-2/P1-3 → คำตัดสินเจ้าของ 2026-10-16 ภาคต่อ: ผัง/โครงการของรายการเข้าตัวตัดสิน (ต่างกัน ⇒ ของที่ยอดมากสุด + หมายเหตุรายการเดิม ·
+    # ไม่คงรายการ) · บรรทัดสรุปแบกผัง/โครงการที่ตัวตัดสินเลือก + โครงการหัวเอกสาร
     dict(file=OCR, method="BuildScanLinesAsync",
          must_re=[r"AccountId\s*:\s*ItemAccount\(\s*x\s*\)", r"ProjectId\s*:\s*x\s*\.\s*ProjectId",
                   r"codeDecision\s*!\s*\.\s*SummaryAccountId", r"codeDecision\s*!\s*\.\s*SummaryProjectId\s+is\s+Guid\s+summaryProject",

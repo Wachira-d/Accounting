@@ -94,8 +94,10 @@ public class OcrReviewF7c29c2cTests
         Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
         Assert.Equal(ProjA, d.SummaryProjectId);
         Assert.Equal(Acc1, d.SummaryAccountId);
-        Assert.Contains("สิ่งที่ถูกแทน", d.Note);
-        Assert.Contains("ตัดสต็อก", d.Note);
+        // หน้านี้มีแต่แถวส่วนลด (2026-10-16) ⇒ ไม่มี "รายการสินค้าถูกแทน" ให้พูดถึง · ผัง/โครงการยังแบกตามรายการ
+        Assert.True(d.DiscountOnly);
+        Assert.DoesNotContain("ตัดสต็อก", d.Note);
+        Assert.Null(d.MixedDimensionsNote);
         Assert.Contains("ผังบัญชีและโครงการของบรรทัดสรุป = ของรายการ", d.Note);
         // ไม่มีโครงการเลย ⇒ บรรทัดสรุปไม่มีโครงการ (ไม่แต่ง) · ข้อความไม่อ้างโครงการ
         var none = LastPage((Acc1, null), (Acc1, null), (Acc1, null));
@@ -105,40 +107,52 @@ public class OcrReviewF7c29c2cTests
     }
 
     [Fact]
-    public void P1_2_ทิศตรงข้าม_รายการต่างโครงการ_คงรายการ_บอกเหตุผล()
+    public void P1_2_รายการต่างโครงการ_คำตัดสินเจ้าของภาคต่อ_ตารางชนะ_โครงการยอดมากสุด_หมายเหตุรายการเดิม()
     {
-        // ก่อนแก้: TableSummary ทุกบรรทัด ProjectId = null + หัวเอกสารไม่มีโครงการ ⇒ งบโครงการ A/B หายเงียบ
+        // 6b9bf926 (ฝ่ายค้าน f7c29c2c P1-2): ต่างโครงการ ⇒ คงรายการ + [Σ-GAP] · คำตัดสินเจ้าของ 2026-10-16 ภาคต่อ ("ไม่ตรงและตารางภพ ตรงกับยอดรวม ให้ยึดตาราง ภพ"):
+        // ตารางชนะ ไม่บล็อก — โครงการของบรรทัดสรุป = โครงการที่ยอดมากสุด (B 60 > A 30+10) + หมายเหตุรายการเดิมให้แยกเอง (ไม่ทิ้งเงียบ)
         var d = LastPage((Acc1, ProjA), (Acc1, ProjB), (Acc1, ProjA));
-        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
-        Assert.Empty(d.TableLines);
-        Assert.Equal(OcrVatCodeVerdict.Unreconciled, d.Plan.Verdict);         // ⇒ ด่าน TableMismatch ฟ้อง [Σ-GAP] ที่ service
-        Assert.Contains("โครงการต่างกัน 2 แบบ", d.Note);
-        Assert.Contains("ไม่แทนด้วยบรรทัดสรุปตามตาราง", d.Note);
+        Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
+        Assert.Equal(ProjB, d.SummaryProjectId);
+        Assert.Equal(Acc1, d.SummaryAccountId);
+        Assert.NotNull(d.MixedDimensionsNote);
+        Assert.Contains("รายการเดิม 3 บรรทัดมีหลายโครงการ", d.MixedDimensionsNote);
+        Assert.Contains(OcrVatCodeLines.MixedDimensionsLead, d.MixedDimensionsNote);
+        Assert.Contains("60.00", d.MixedDimensionsNote);
+        Assert.Contains("ของรายการที่ยอดมากสุด", d.Note);
     }
 
     [Fact]
-    public void P1_3_ทิศตรงข้าม_รายการต่างผังบัญชี_คงรายการ_บอกเหตุผล()
+    public void P1_3_รายการต่างผังบัญชี_ตารางชนะ_ผังยอดมากสุด_ทิศตรงข้ามผังเดียวไม่มีหมายเหตุ()
     {
-        // ก่อนแก้: ทุกบรรทัดสรุปใช้ผังหัวใบ ⇒ ผัง 5202 ที่เรียนไว้/ผู้ใช้เลือกรายบรรทัดหายเงียบ
         var d = LastPage((Acc1, null), (Acc2, null), (Acc1, null));
-        Assert.Equal(OcrVatCodeLineSource.Items, d.Source);
-        Assert.Contains("ผังบัญชีต่างกัน 2 ผัง", d.Note);
-        // ผังหัวใบ (null ทุกบรรทัด) = ผังเดียว ⇒ ตารางชนะตามเดิม
-        Assert.Equal(OcrVatCodeLineSource.TableSummary, LastPage((null, null), (null, null), (null, null)).Source);
+        Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
+        Assert.Equal(Acc2, d.SummaryAccountId);                                // 60 > 30 + 10
+        Assert.Contains("หลายผัง", d.MixedDimensionsNote);
+        Assert.Null(d.SummaryProjectId);
+        // ผังหัวใบ (null ทุกบรรทัด) = ผังเดียว ⇒ ตารางชนะ · ไม่มีหมายเหตุรายการเดิม
+        var same = LastPage((null, null), (null, null), (null, null));
+        Assert.Equal(OcrVatCodeLineSource.TableSummary, same.Source);
+        Assert.Null(same.MixedDimensionsNote);
+        Assert.Contains("ไม่มีอะไรหาย", same.Note);
     }
 
-    // ══ P2-5: เลขหน้าบนกระดาษ — ครบทุกหน้า ⇒ คงรายการ + ฟ้อง · หน้าสุดท้ายหน้าเดียว ⇒ ตารางชนะ ══
+    // ══ P2-5 → คำตัดสินเจ้าของ 2026-10-16 ภาคต่อ: เลขหน้าไม่ใช่เกณฑ์อีกต่อไป — ตารางลงยอด ⇒ ตารางชนะ แม้ครบทุกหน้า ══
 
-    [Fact]
-    public void P2_5_เหตุคงรายการ_ครบทุกหน้า_รวมใบหน้าเดียว1จาก1()
+    [Theory]
+    [InlineData("หน้าที่ 1 จาก 2\n…\nหน้าที่ 2 จาก 2", true)]
+    [InlineData("Page 1 of 1", true)]
+    [InlineData("หน้าที่ 2 จาก 2", false)]
+    [InlineData("ไม่มีเลขหน้า", false)]
+    public void P2_5_ครบทุกหน้าหรือไม่_รายการไม่ลงยอดแต่ตารางลงยอด_ตารางชนะเสมอ(string pageMarks, bool allPages)
     {
-        var one = new[] { new OcrVatCodeLineInput(100m, null) };
-        Assert.Contains("หน้า 1–2 จาก 2", OcrVatCodeLines.KeepItemsReason(one, "หน้าที่ 1 จาก 2\n…\nหน้าที่ 2 จาก 2"));
-        Assert.Contains("หน้า 1 จาก 1", OcrVatCodeLines.KeepItemsReason(one, "Page 1 of 1"));
-        // ทิศตรงข้าม: แค่หน้าสุดท้าย / ไม่พิมพ์เลขหน้า / เลขหน้าขัดกันเอง ⇒ ไม่มีเหตุ (ตารางชนะตามคำตัดสินข้อ 1)
-        Assert.Null(OcrVatCodeLines.KeepItemsReason(one, "หน้าที่ 2 จาก 2"));
-        Assert.Null(OcrVatCodeLines.KeepItemsReason(one, "ไม่มีเลขหน้า"));
-        Assert.Null(OcrVatCodeLines.KeepItemsReason(one, "หน้า 1 จาก 2\nหน้า 2 จาก 3"));
+        // 6b9bf926: ครบทุกหน้า ⇒ คงรายการ + [Σ-GAP] (KeepItemsReason) — ถอนตามคำตัดสินเจ้าของ · เลขหน้าเหลือแค่บอกในหมายเหตุ
+        var text = Norm(pageMarks + "\n" + OcrPaperSamples.MakroPage2of2.Replace("หน้าที่ 2 จาก 2\n", ""));
+        var lines = new[] { new OcrVatCodeLineInput(500.00m, null, "สินค้า A"), new OcrVatCodeLineInput(700.00m, null, "สินค้า B") };
+        var d = OcrVatCodeLines.Decide(lines, text, OcrVatCodeMeaning.ResolvedTable(text, null).Table,
+            10341.50m, 638.50m, 10980.00m, 228.00m, pricesIncludeVatPreset: false, tableLinesAllowed: true);
+        Assert.Equal(OcrVatCodeLineSource.TableSummary, d.Source);
+        Assert.Equal(allPages, d.Note!.Contains("กระดาษบอกว่าไฟล์ครบทุกหน้า"));
     }
 
     // ══ P2-1: ส่วนลดที่เอ่ยชื่อสินค้าด้วยคำทั่วไป ("ขวด") ห้ามลงผิดสินค้า ══

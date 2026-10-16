@@ -7723,8 +7723,10 @@ public class OcrService : IOcrService
             // ★ ตารางรหัส ภ.พ. ของกระดาษเป็นตัวตั้ง (คำตัดสินเจ้าของ 2026-10-16): รายการลงตาราง ⇒ รายการ · แถวส่วนลดที่ engine คืนเป็นสินค้า ⇒ ส่วนลด
             // (ต้องลงตารางพอดี) · ยังไม่ลง ⇒ บรรทัดสรุปต่อกลุ่มรหัส (ตารางชนะ) — ไม่คงรายการครึ่งใบ + [Σ-GAP] · ไม่มีตารางผสม = เส้นเดิมทุกตัวอักษร
             // บรรทัดสรุปแทนรายการไม่ได้เมื่อมีหัก ณ ที่จ่าย (บรรทัดสรุปไม่แบก WHT) หรือผูกบรรทัด PO (ต้องคง SourceLineId ของการรับของ)
-            // ฝ่ายค้าน f7c29c2c P1-2/P1-3: ผังบัญชี + โครงการของแต่ละรายการเข้าตัวตัดสิน — ต่างกัน ⇒ คงรายการ (บรรทัดสรุปแบกได้ผัง/โครงการเดียว) ·
+            // ฝ่ายค้าน f7c29c2c P1-2/P1-3 → คำตัดสินเจ้าของ 2026-10-16 ภาคต่อ ("ถ้าตารางสินค้าตรงกับยอดรวม ยึดรายการ · ไม่ตรงและตารางภพตรงยอดรวม ยึดตาราง ภพ"):
+            // ผัง/โครงการของรายการเข้าตัวตัดสิน — เหมือนกัน ⇒ บรรทัดสรุปแบกค่านั้น · ต่างกัน ⇒ ของที่ยอดมากสุด + หมายเหตุรายการเดิม (ไม่บล็อก · ไม่ทิ้งเงียบ) ·
             // ผังที่รายการจะได้ = ลำดับชั้นเดียวกับลูปสร้างบรรทัดข้างล่าง (OcrLineAccountSource: ผังของบรรทัด > ผังหัวใบ · บรรทัด PO ถูกกันที่ tableLinesAllowed แล้ว)
+            // ด่าน "ตารางลงยอด" เทียบกับยอดที่กระดาษพิสูจน์ด้วย (สแกนเก่าที่ persist หัวสแกนก่อนขั้นยึดยอด — 11,846.50) · ตัวตัดสินเดียว OcrTotalAnchor.Find
             var itemAccountCodes = items.Select(x => x.SuggestedAccountCode).Where(c => !string.IsNullOrEmpty(c)).Select(c => c!).Distinct().ToList();
             var itemAccountIdByCode = itemAccountCodes.Count == 0 ? new Dictionary<string, Guid>()
                 : (await _db.ChartOfAccounts.AsNoTracking()
@@ -7736,13 +7738,19 @@ public class OcrService : IOcrService
                 null,
                 !string.IsNullOrEmpty(x.SuggestedAccountCode) && itemAccountIdByCode.TryGetValue(x.SuggestedAccountCode!, out var aid) ? aid : null,
                 scanDebitAccountId).AccountId;
+            string ItemAccountLabel(OcrExtractedLineItem x)
+                => !string.IsNullOrEmpty(x.SuggestedAccountCode) && itemAccountIdByCode.ContainsKey(x.SuggestedAccountCode!) ? x.SuggestedAccountCode! : "ผังหัวใบ";
+            var paperAnchor = Accounting.Helpers.OcrTotalAnchor.Find(normalizedRawText, hdrTotal);
+            var paperProven = paperAnchor.Verdict is Accounting.Helpers.OcrTotalVerdict.Proven or Accounting.Helpers.OcrTotalVerdict.Confirmed;
             codeDecision = Accounting.Helpers.OcrVatCodeLines.Decide(
                 items.Select((x, ci) => new Accounting.Helpers.OcrVatCodeLineInput(lineGross[ci], x.VatRate, x.Description,
-                    AccountId: ItemAccount(x), ProjectId: x.ProjectId)).ToList(),
+                    AccountId: ItemAccount(x), ProjectId: x.ProjectId,
+                    AccountLabel: ItemAccountLabel(x), ProjectLabel: x.ProjectName)).ToList(),
                 normalizedRawText, vatCodeTable, hdrSub, hdrVatHdr, hdrTotal, hdrDiscRaw,
                 pricesIncludeVatPreset: document.PricesIncludeVat || Accounting.Helpers.OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(
                     items.Select(x => (x.Amount ?? 0m, x.PriceIncludesVat)).ToList()),
-                tableLinesAllowed: headerWht == 0m && !(linkedPo != null && poLineMap.Values.Any(v => v.HasValue)));
+                tableLinesAllowed: headerWht == 0m && !(linkedPo != null && poLineMap.Values.Any(v => v.HasValue)),
+                paperTotal: paperProven ? paperAnchor.Total : null, paperVat: paperProven ? paperAnchor.PrintedVat : null);
             if (codeDecision.Source == Accounting.Helpers.OcrVatCodeLineSource.TableSummary)
                 tableLinesInsteadOfItems = codeDecision.TableLines;
             else if (codeDecision.DiscountRows.Count > 0)
@@ -8142,9 +8150,13 @@ public class OcrService : IOcrService
                 // ฝ่ายค้าน f7c29c2c P1-2: โครงการหัวเอกสารตามรายการ (สาขารายการตั้งจาก lineProjects — สาขานี้เดิมไม่ตั้ง ⇒ หน้ารายการ/งบโครงการหาย)
                 if (codeDecision!.SummaryProjectId is Guid summaryProject) document.ProjectId = summaryProject;
                 // ข้อความบอกว่าทำไมไม่ใช้รายการ (ตัวเลขของกระดาษ) — ไม่บล็อก (ยอด/ภาษีตรงกระดาษ) · ขาดแค่รายการสำหรับตัดสต็อก
-                if (!(result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrVatCodeLines.TableSummaryLead, StringComparison.Ordinal))
+                if (!(result.ProcessingNotes ?? "").Contains(codeDecision!.Note ?? "", StringComparison.Ordinal))
                     result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrTotalDecomposer.NoItemsTag
                         + " " + codeDecision!.Note;
+                // คำตัดสินเจ้าของ 2026-10-16 ภาคต่อ: รายการเดิมหลายผัง/โครงการ ⇒ บรรทัดสรุปใช้ของที่ยอดมากสุด + รายการเดิมให้แยกเอง (ไม่บล็อก — แท็ก [NO-ITEMS] เดียวกัน)
+                if (codeDecision.MixedDimensionsNote is string mixedNote
+                    && !(result.ProcessingNotes ?? "").Contains(mixedNote, StringComparison.Ordinal))
+                    result.ProcessingNotes += "\n" + Accounting.Helpers.OcrTotalDecomposer.NoItemsTag + " " + mixedNote;
             }
             else
             {
@@ -8540,7 +8552,7 @@ public class OcrService : IOcrService
         var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
         var anchor = Accounting.Helpers.OcrTotalAnchor.Find(text, data.TotalAmount, data.EngineAmountDue);
         // สิ่งที่ต้องเขียนตัดสินใน helper (OcrTotalAnchor.Plan — เทสต์ได้) · ที่นี่เขียนตามอย่างเดียว
-        var plan = Accounting.Helpers.OcrTotalAnchor.Plan(anchor, data.SubTotal, data.VatAmount);
+        var plan = Accounting.Helpers.OcrTotalAnchor.Plan(anchor, data.SubTotal, data.VatAmount, text);
         var totalKey = Accounting.Helpers.OcrFieldKeys.TotalAmount;
         if (plan.Total is decimal anchored)
         {
