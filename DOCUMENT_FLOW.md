@@ -5858,4 +5858,4 @@ _Last verified against codebase: 2026-10-16 (ใบจริง RE-20261000111 �
 เทสต์ `OcrLineQuantityGuardTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 38e16447)_
 _Last verified against codebase: 2026-10-16 (ฝ่ายค้าน 73573e9a..658e3705 — §OCR ด่านคุณภาพก่อน persist ข้อ 2: ส่วนลดจากกระดาษต้องมีหลักฐาน ·
 หัก ณ ที่จ่าย/มัดจำไม่ใช่ส่วนลด (`DeductionRow`) · บรรทัดลงตัวเสมอ · ตรวจสด `[LINE-QTY]` ตอนอนุมัติ LINE/สร้าง+อนุมัติ · `OcrExtractionVersion` 5 —
-เทสต์ `OcrLineQuantityGuardTests` · `OcrLineQuantityGuardReviewTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>)_
+เทสต์ `OcrLineQuantityGuardTests` · `OcrLineQuantityGuardReviewTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 687d3a10)_
