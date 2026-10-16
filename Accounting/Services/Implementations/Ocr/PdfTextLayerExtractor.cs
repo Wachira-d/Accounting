@@ -23,7 +23,8 @@ namespace Accounting.Services.Implementations.Ocr;
 /// Algorithm:
 ///   1. Open the PDF (PdfPig — pure C#, MIT, no native deps).
 ///   2. Walk first N pages (default 10 — matches OcrMaxPagesPerScan).
-///   3. Concatenate page text in reading order.
+///   3. Concatenate page text in visual reading order — Helpers/PdfPositionalText (letters + coordinates),
+///      falling back to PdfPig page.Text (content-stream order) when a page cannot be laid out.
 ///   4. Confidence check: when extracted text is too short / too sparse
 ///      for the PDF's filesize, treat as image-only and let OCR run.
 /// </summary>
@@ -45,6 +46,23 @@ public static class PdfTextLayerExtractor
     /// <summary>Hard cap on total extracted text — protects against
     /// runaway extraction from catalog PDFs.</summary>
     private const int MaxTotalChars = 500_000;
+
+    /// <summary>ข้อความหน้าเดียวตามพิกัด (ตัวแปลง PdfPig <c>Letter</c> → <see cref="Accounting.Helpers.PdfGlyph"/> ที่นี่ที่เดียว · ตัวประกอบไม่รู้จัก PdfPig) ·
+    /// null = ประกอบไม่ได้ ⇒ ผู้เรียกใช้ <c>page.Text</c></summary>
+    internal static string? PositionalPageText(Page page)
+    {
+        IReadOnlyList<Letter> letters;
+        try { letters = page.Letters; }
+        catch { return null; }   // หน้าที่ PdfPig ถอดพิกัดไม่ได้ ⇒ ข้อความเดิม (ไม่ใช่เส้นเงิน · ข้อความเดิมยังอยู่)
+        if (letters == null || letters.Count == 0) return null;
+        var glyphs = new List<Accounting.Helpers.PdfGlyph>(letters.Count);
+        foreach (var l in letters)
+            glyphs.Add(new Accounting.Helpers.PdfGlyph(
+                l.Value ?? "", l.StartBaseLine.X, l.EndBaseLine.X, l.StartBaseLine.Y,
+                l.PointSize > 0 ? l.PointSize : l.FontSize,
+                l.TextOrientation == TextOrientation.Horizontal));
+        return Accounting.Helpers.PdfPositionalText.Build(glyphs);
+    }
 
     public static Result TryExtract(byte[] pdfBytes, int maxPages = 10)
     {
@@ -69,11 +87,10 @@ public static class PdfTextLayerExtractor
                 try { page = doc.GetPage(pageNum); }
                 catch { continue; }
 
-                // PdfPig's Page.Text concatenates content-stream text in
-                // visual reading order. For most digital invoices this
-                // produces a clean human-readable string with line breaks
-                // already in the right places.
-                var pageText = page.Text ?? "";
+                // ทีม OCR 10 (2026-10-16): ประกอบข้อความตาม "ตำแหน่งบนกระดาษ" (Helpers/PdfPositionalText — ตัวตั้งตัวเดียว)
+                // เดิม page.Text ต่อ glyph ตามลำดับ content stream ⇒ ช่องตารางติดกัน ("1,356.7120,738.21") · ป้ายกับค่าสลับคู่ ·
+                // วรรณยุกต์เป็น PUA — ประกอบไม่ได้ (หน้าหมุน/ไม่มีพิกัด) ⇒ page.Text เดิม (ไม่เดาลำดับ)
+                var pageText = PositionalPageText(page) ?? page.Text ?? "";
                 if (string.IsNullOrWhiteSpace(pageText)) continue;
                 sb.AppendLine(pageText);
                 charsExtracted += pageText.Length;
