@@ -253,6 +253,13 @@ internal static class SmartFieldExtractor
             .ToList();
     }
 
+    /// <summary>ป้ายเลขผู้เสียภาษีอยู่หน้าเลขที่ตำแหน่งนี้บนบรรทัดเดียวกัน ("เลขประจำตัวผู้เสียภาษี (Tax ID No.) 0203562005871") — ทีม OCR 10</summary>
+    private static bool LabelBeforeOnSameLine(string text, int index)
+    {
+        var lineStart = index <= 0 ? 0 : text.LastIndexOf('\n', index - 1) + 1;
+        return WindowHasLabel(text, lineStart, index);
+    }
+
     /// <summary>มีป้าย "เลขประจำตัวผู้เสียภาษี" อยู่ใกล้ ๆ เลขก้อนนี้ไหม —
     /// ดู<b>ทั้งสองทิศ</b> (ดูเหตุผลที่ <see cref="TaxIdLabelLookAhead"/>)</summary>
     private static bool HasTaxIdLabelNear(string text, int index, int length)
@@ -410,14 +417,30 @@ internal static class SmartFieldExtractor
         // one role, the same ID cannot also be assigned to the other.
         string? newVendorTaxId = data.VendorTaxId;
         string? newBuyerTaxId = data.BuyerTaxId;
+        // ทีม OCR 10 (2026-10-16 · บิล กฟภ. XH0712609004157): เลขผู้ซื้อเมื่อรู้เลขผู้ขายแล้ว — หลักฐานชุดเดียวกับเลขเดี่ยวข้างล่าง:
+        // (ก) มีป้ายผู้ซื้อ ⇒ เลขอื่น (≠ ผู้ขาย) ที่ใกล้ป้ายที่สุด (กติกาเดิม) · (ข) ไม่มีป้ายผู้ซื้อ (กฟภ. มีแต่ "รหัสลูกค้า" ซึ่งเป็นป้ายรบกวน) ⇒
+        // เฉพาะเมื่อเลขที่มี<b>ป้ายเลขผู้เสียภาษี</b>นำหน้าเหลือตัวเดียวที่ไม่ใช่ผู้ขาย (บาร์โค้ด/เลขลอยไม่มีป้าย ⇒ ไม่เดา) · เดิมไม่มีข้อ (ข) และ
+        // ข้ามทั้งหมดเมื่อขั้นก่อนตั้งเลขผู้ขายไว้แล้ว ⇒ เลขผู้ซื้อว่างทั้งที่กระดาษพิมพ์ "เลขประจำตัวผู้เสียภาษี (Tax ID No.) 0203562005871"
+        string? BuyerTaxIdBesides(string vendorId)
+        {
+            var remaining = pool.Where(t => t.Id != vendorId).ToList();
+            if (remaining.Count > 0 && buyerAnchor >= 0)
+                return remaining.OrderBy(t => Math.Abs(t.Position - buyerAnchor)).First().Id;
+            // ป้ายต้องอยู่<b>หน้าเลขบนบรรทัดเดียวกัน</b> — "ป้ายใกล้ ๆ" (±60 ตัวอักษร) ของ Labelled คว้าบาร์โค้ดบรรทัดถัดจากเลขผู้ขายได้
+            // (RdComplianceOcrNoiseTests ไม่มีคำว่าผู้ซื้อ — 8885009199627 ใต้บรรทัดเลขผู้ขาย)
+            if (labelled.Count >= 2 && remaining.Select(t => t.Id).Distinct().Count() == 1
+                && LabelBeforeOnSameLine(text, remaining[0].Position))
+                return remaining[0].Id;
+            return null;
+        }
         if (pool.Count >= 2 && string.IsNullOrEmpty(newVendorTaxId) && string.IsNullOrEmpty(newBuyerTaxId))
         {
             var byDistToSeller = pool.OrderBy(t => Math.Abs(t.Position - sellerPos)).First();
             newVendorTaxId = byDistToSeller.Id;
-            var remaining = pool.Where(t => t.Id != newVendorTaxId).ToList();
-            if (remaining.Count > 0 && buyerAnchor >= 0)
-                newBuyerTaxId = remaining.OrderBy(t => Math.Abs(t.Position - buyerAnchor)).First().Id;
+            newBuyerTaxId = BuyerTaxIdBesides(newVendorTaxId);
         }
+        else if (pool.Count >= 2 && !string.IsNullOrEmpty(newVendorTaxId) && string.IsNullOrEmpty(newBuyerTaxId))
+            newBuyerTaxId = BuyerTaxIdBesides(newVendorTaxId);
         else if (pool.Count == 1)
         {
             // Single tax id — bias toward vendor unless an explicit buyer
@@ -447,6 +470,11 @@ internal static class SmartFieldExtractor
         data.Note(Accounting.Helpers.OcrFieldKeys.BuyerTaxId, newBuyerTaxId, Accounting.Helpers.OcrFieldSource.PaperLabel, 0.85m,
             "เลขผู้เสียภาษีฝั่งผู้ซื้อบนกระดาษ");
 
+        // ทีม OCR 10: ไม่มีป้ายผู้ซื้อแต่รู้เลขผู้ซื้อแล้ว ⇒ เดาชื่อผู้ซื้อจากตำแหน่งเลขนั้น (กุญแจ) แทน "ท้ายหน้า" (บิล กฟภ.: ท้ายหน้า = บริษัทบัตรที่หักบัญชี)
+        if (buyerAnchor < 0 && !string.IsNullOrEmpty(newBuyerTaxId)
+            && pool.Where(t => t.Id == newBuyerTaxId).Select(t => (int?)t.Position).FirstOrDefault() is int buyerIdPos)
+            buyerPos = buyerIdPos;
+
         // Name resolution: extract company names, attach to nearest keyword
         var names = ExtractCompanyNames(text);
         if (names.Count >= 1)
@@ -461,6 +489,18 @@ internal static class SmartFieldExtractor
                     .Select(n => n.FullName)
                     .FirstOrDefault();
             }
+        }
+
+        // ทีม OCR 10 (2026-10-16 · บิล กฟภ.): สาขาที่พิมพ์บนบรรทัดเลขผู้เสียภาษีของฝั่งนั้น — เติมเฉพาะช่องว่าง (BranchCodeExtractor ตัวเดียว)
+        if (string.IsNullOrEmpty(data.BuyerBranchCode) && BranchCodeExtractor.OnTaxIdLine(text, data.BuyerTaxId) is { } buyerBranch)
+        {
+            data.BuyerBranchCode = buyerBranch;
+            data.ReasoningTrace.Add($"[Buyer] สาขา {buyerBranch} จากบรรทัดเลขผู้เสียภาษีผู้ซื้อ {data.BuyerTaxId}");
+        }
+        if (string.IsNullOrEmpty(data.VendorBranchCode) && BranchCodeExtractor.OnTaxIdLine(text, data.VendorTaxId) is { } vendorBranch)
+        {
+            data.VendorBranchCode = vendorBranch;
+            data.ReasoningTrace.Add($"[Vendor] สาขา {vendorBranch} จากบรรทัดเลขผู้เสียภาษีผู้ขาย {data.VendorTaxId}");
         }
 
         // Final invariant: Vendor name and Buyer name must differ.
@@ -488,7 +528,9 @@ internal static class SmartFieldExtractor
             var prefix = m.Groups[1].Value;
             var name = m.Groups[2].Value.Trim();
             if (string.IsNullOrWhiteSpace(name) || name.Length < 2) continue;
-            var afterMatch = text.Substring(m.Index, Math.Min(m.Length + 30, text.Length - m.Index));
+            // ทีม OCR 10: หา "จำกัด" ต่อจาก<b>ชื่อ</b> ไม่ใช่จากคำนำหน้า — "ห้างหุ้นส่วนจำกัด X" มีคำว่าจำกัดในคำนำหน้าเอง ⇒ เดิมได้ "ห้างหุ้นส่วนจำกัด X จำกัด"
+            var afterName = m.Groups[2].Index;
+            var afterMatch = text.Substring(afterName, Math.Min(m.Index + m.Length + 30, text.Length) - afterName);
             var suffix = "";
             if (afterMatch.Contains("จำกัด"))
                 suffix = afterMatch.Contains("มหาชน") ? " จำกัด (มหาชน)" : " จำกัด";
@@ -1057,31 +1099,53 @@ internal static class SmartFieldExtractor
         }
     }
 
-    private static void TryExtractVendorNameFromRawText(string text, OcrExtractedData data)
+    // Thai government entities don't use บริษัท/ห้างหุ้นส่วน prefixes —
+    // pattern-match them explicitly because the static company-name
+    // regex (which requires those prefixes) would silently miss them.
+    private static readonly string[] GovPatterns =
     {
-        if (!string.IsNullOrEmpty(data.VendorName)) return;
+        @"(การไฟฟ้า(?:นครหลวง|ส่วนภูมิภาค))",
+        @"(การประปา(?:นครหลวง|ส่วนภูมิภาค))",
+        @"(บริษัท\s+ท่าอากาศยานไทย[^\n]{0,40})",
+        @"(ไปรษณีย์ไทย)",
+        @"(การรถไฟแห่งประเทศไทย)",
+        @"(บริษัท\s+ปตท\.[^\n]{0,40})",
+    };
 
-        // Thai government entities don't use บริษัท/ห้างหุ้นส่วน prefixes —
-        // pattern-match them explicitly because the static company-name
-        // regex (which requires those prefixes) would silently miss them.
-        var govPatterns = new[]
-        {
-            @"(การไฟฟ้า(?:นครหลวง|ส่วนภูมิภาค))",
-            @"(การประปา(?:นครหลวง|ส่วนภูมิภาค))",
-            @"(บริษัท\s+ท่าอากาศยานไทย[^\n]{0,40})",
-            @"(ไปรษณีย์ไทย)",
-            @"(การรถไฟแห่งประเทศไทย)",
-            @"(บริษัท\s+ปตท\.[^\n]{0,40})",
-        };
-        foreach (var p in govPatterns)
+    /// <summary>ชื่อหน่วยงานรัฐ/รัฐวิสาหกิจตัวแรกตามลำดับกติกา (ลำดับเดิม — กติกาแรกที่เจอชนะ) พร้อมตำแหน่ง · null = ไม่มี</summary>
+    private static (string Name, int Index)? FirstGovEntity(string text)
+    {
+        foreach (var p in GovPatterns)
         {
             var m = Regex.Match(text, p);
-            if (m.Success)
+            if (m.Success) return (m.Groups[1].Value.Trim(), m.Index);
+        }
+        return null;
+    }
+
+    private static void TryExtractVendorNameFromRawText(string text, OcrExtractedData data)
+    {
+        if (!string.IsNullOrEmpty(data.VendorName))
+        {
+            // ทีม OCR 10 (2026-10-16 · บิล กฟภ. XH0712609004157): หน่วยงานรัฐที่ออกบิลไม่มีคำนำหน้า บริษัท/ห้างหุ้นส่วน ⇒ ตัวอ่านขั้นก่อนหยิบ
+            // "บริษัท/หจก. ตัวแรกบนหน้า" = ชื่อผู้ซื้อ ("ชื่อ (Name) ห้างหุ้นส่วนจำกัด แอม แฮปปี้เนส") · แทนเฉพาะเมื่อชื่อหน่วยงานรัฐเป็น
+            // ชื่อคู่สัญญาตัวแรกบนหน้า (หัวกระดาษ = ผู้ออก) และกระดาษไม่มีป้ายฝั่งผู้ขาย (มีป้าย = ตัวอ่านขั้นก่อนตัดสินด้วยป้ายแล้ว) ·
+            // ใบที่หน่วยงานรัฐเป็นผู้ซื้อ (ผู้ขายพิมพ์ชื่อตัวเองบนหัว) ⇒ ชื่อบริษัทมาก่อน ⇒ ไม่แตะ
+            if (FirstGovEntity(text) is { } gov && Accounting.Helpers.OcrPartyLabels.FindSeller(text) < 0
+                && ExtractCompanyNames(text).All(n => n.Position > gov.Index))
             {
-                data.VendorName = m.Groups[1].Value.Trim();
+                data.ReasoningTrace.Add($"[SmartExtract] ผู้ออกบิลบนหัวกระดาษ “{gov.Name}” (หน่วยงานรัฐ · ชื่อคู่สัญญาตัวแรกบนหน้า) แทน “{data.VendorName}”");
+                data.VendorName = gov.Name;
                 data.FieldConfidence["SellerName"] = 0.9;
-                return;
             }
+            return;
+        }
+
+        if (FirstGovEntity(text) is { } first)
+        {
+            data.VendorName = first.Name;
+            data.FieldConfidence["SellerName"] = 0.9;
+            return;
         }
 
         // Generic บริษัท/ห้างหุ้นส่วน — re-run with the now-normalized text

@@ -1684,6 +1684,9 @@ RULES += [
          before=[("OcrLineSplitGuard.Evaluate(", "OcrNonItemRow.IsSummaryOrTenderRow("),
                  ("OcrNonItemRow.IsSummaryOrTenderRow(", "data.Items.Add(")],
          why="2026-10-09: บรรทัดจาก line-split (AI/นักเรียน/กติกา) ไม่ให้แถวเงินสด/เงินทอน/รวม เป็นสินค้า"),
+    dict(file="Helpers/PaperWhtReader.cs", method="Read",
+         must=["if (amt == 0m && mm.Index < labelLineEnd) break;"],
+         why=_PDF_POS_WHY + "ยอด 0.00 บนบรรทัดป้ายหัก ณ ที่จ่าย = ไม่หัก — ห้ามหยิบตัวเลขบรรทัดถัดไป (ใบพรามี่ 1,037.00)"),
     dict(file="Helpers/RawTextLineSplitter.cs", method="Split",
          must=["OcrNonItemRow.MentionsSummaryLabel(line)"],
          forbid=["SummaryMarkers"],
@@ -8607,6 +8610,69 @@ RULES += [
     dict(file="Services/Ai/Prompts/OcrVatCodeMeaningPrompt.cs", method="Build",
          must=["OcrVatCodeMeaning.SanitizeEvidence(legendText)", "OcrVatCodeMeaning.SanitizeEvidence(vendorName)"],
          why="ฝ่ายค้าน f7c29c2c P2-3: ข้อความ OCR ในพรอมต์ = ข้อมูล (ตัดบรรทัดหน้าตาคำสั่ง · เพดานความยาว)"),
+]
+
+
+# ── ทีม OCR 10 (2026-10-16) — ข้อความ PDF ตามพิกัด (บิล กฟภ. XH0712609004157 · ใบพรามี่ RE-20261000111) ──
+#    page.Text ต่อ glyph ตามลำดับ content stream ⇒ ช่องติดกัน/ป้ายกับค่าสลับ/PUA · ตัวประกอบเดียว Helpers/PdfPositionalText ·
+#    ตัวอ่านหัวใบที่แก้ตามมา: ผู้ออกบิลหน่วยงานรัฐบนหัวกระดาษ · เลข/สาขาผู้ซื้อเมื่อรู้เลขผู้ขาย · หัก ณ ที่จ่ายพิมพ์ 0.00 · แถวตารางคั่นสองช่องว่าง
+_PDF_POS_WHY = "ทีม OCR 10 (2026-10-16 · ข้อความ PDF ตามพิกัด): "
+PDFTEXT = "Services/Implementations/Ocr/PdfTextLayerExtractor.cs"
+RULES += [
+    dict(file=PDFTEXT, method="TryExtract",
+         must=["PositionalPageText(page) ?? page.Text"],
+         forbid=["var pageText = page.Text"],
+         why=_PDF_POS_WHY + "ข้อความทุกหน้าต้องผ่านตัวประกอบตามพิกัดก่อน · page.Text เป็นทางถอยเมื่อประกอบไม่ได้เท่านั้น"),
+    dict(file=PDFTEXT, method="PositionalPageText",
+         must=["Accounting.Helpers.PdfPositionalText.Build(glyphs)", "l.TextOrientation == TextOrientation.Horizontal"],
+         why=_PDF_POS_WHY + "ตัวแปลง PdfPig → glyph มีที่เดียว และ glyph ที่หมุนต้องถูกแยกออกจากการจัดแถว"),
+    dict(file="Helpers/PdfPositionalText.cs", method="NormalizeGlyphText",
+         must=["ThaiTextNormalizer.MapThaiPua(text)"],
+         why=_PDF_POS_WHY + "ตาราง PUA ไทยมีเจ้าของเดียว (ThaiTextNormalizer) — ห้ามมีตารางที่สอง"),
+    dict(file="Helpers/PdfPositionalText.cs", method="Build",
+         must=["NormalizeGlyphText(g.Text)", "IsDuplicate(seen, text, g)", "ComposeSaraAm(lineSb.ToString())"],
+         before=[("NormalizeGlyphText(g.Text)", "IsDuplicate(seen, text, g)")],
+         why=_PDF_POS_WHY + "glyph ตัวหนาที่วาดซ้ำต้องถูกตัด (กฟภ. วาดยอดซ้ำ) · PUA แปลงก่อนเทียบซ้ำ · สระอำรวมทุกบรรทัด"),
+    dict(file=OCR, method="ParseThaiDocument",
+         must=["Accounting.Helpers.PaperWhtReader.PrintedZero(text)"],
+         before=[("Accounting.Helpers.PaperWhtReader.PrintedZero(text)", "data.HasWht = true")],
+         why=_PDF_POS_WHY + "ป้ายหัก ณ ที่จ่ายที่พิมพ์ยอด 0.00 ห้ามติ๊กมีหัก (ใบพรามี่ — ป้ายอ่านได้หลังแปลง PUA)"),
+    dict(file=SMART, method="TryExtractVendorNameFromRawText",
+         must=["Accounting.Helpers.OcrPartyLabels.FindSeller(text) < 0", "ExtractCompanyNames(text).All(n => n.Position > gov.Index)"],
+         why=_PDF_POS_WHY + "ผู้ออกบิลหน่วยงานรัฐแทนชื่อที่อ่านได้เฉพาะเมื่อเป็นชื่อคู่สัญญาตัวแรกบนหน้าและไม่มีป้ายผู้ขาย"),
+    dict(file=SMART, method="AssignVendorBuyerRoles",
+         must=["BranchCodeExtractor.OnTaxIdLine(text, data.BuyerTaxId)",
+               "labelled.Count >= 2 && remaining.Select(t => t.Id).Distinct().Count() == 1",
+               "LabelBeforeOnSameLine(text, remaining[0].Position)",
+               "newBuyerTaxId = BuyerTaxIdBesides(newVendorTaxId);"],
+         why=_PDF_POS_WHY + "เลขผู้ซื้อไม่มีป้ายผู้ซื้อ = เฉพาะเลขที่มีป้ายเลขผู้เสียภาษีที่เหลือตัวเดียว · สาขาผู้ซื้อจากบรรทัดเลขของตัวเอง"),
+    dict(file="Helpers/PaperWhtReader.cs", method="Read",
+         must=["if (amt == 0m && mm.Index < labelLineEnd) break;"],
+         why=_PDF_POS_WHY + "ยอด 0.00 บนบรรทัดป้ายหัก ณ ที่จ่าย = ไม่หัก — ห้ามหยิบตัวเลขบรรทัดถัดไป (ใบพรามี่ 1,037.00)"),
+    dict(file="Helpers/RawTextLineSplitter.cs", method="Split",
+         must=["var table = TableRows(rawText);"],
+         before=[("var table = TableRows(rawText);", "TrailingAmount.Match(line)")],
+         why=_PDF_POS_WHY + "ข้อความที่มีหัวตารางอ่านตามคอลัมน์ก่อนกติกาท้ายบรรทัด"),
+    dict(file="Helpers/RawTextLineSplitter.cs", method="TableRow",
+         must=["if (cells.Count != width) return null;", "OcrNonItemRow.IsSummaryOrTenderRow(desc)"],
+         forbid=["amount / qty"],
+         why=_PDF_POS_WHY + "แถวต้องมีจำนวนช่องเท่าหัวตาราง · แถวสรุปไม่ใช่รายการ · ห้ามหาร ยอด ÷ จำนวน (ราคาที่กระดาษไม่พิมพ์ = ว่าง ให้ตัวกันจำนวนตัดสิน)"),
+    dict(file="Helpers/RawTextLineSplitter.cs", method="TableRows",
+         must=["OcrTableColumnMapper.Map(header)"],
+         why=_PDF_POS_WHY + "บทบาทหัวคอลัมน์มาจากตัวจับคู่ตัวเดียวกับตาราง Azure"),
+]
+REVIEWER_CASES += [
+    # ถอยกลับไปใช้ page.Text ตรง ๆ (ลำดับ stream)
+    ("PP1", "TryExtract", "var pageText = PositionalPageText(page) ?? page.Text ?? \"\";", "var pageText = page.Text ?? \"\";", True),
+    # ตาราง PUA ชุดที่สองในตัวประกอบ
+    ("PP2", "NormalizeGlyphText", "var mapped = ThaiTextNormalizer.MapThaiPua(text);", "var mapped = text;", True),
+    # ป้ายหัก 0.00 กลับไปติ๊กมีหัก
+    ("PP3", "ParseThaiDocument", "if (whtMatch.Success && Accounting.Helpers.PaperWhtReader.PrintedZero(text))", "if (false)", True),
+    # แถวตารางหารราคาเอง
+    ("PP4", "TableRow", "else if (cols.Quantity < 0) price = amount;", "else price = amount / qty;", True),
+    # รูปถูก: ขึ้นบรรทัดใหม่ในการเรียกตัวประกอบ ต้องไม่ถูกฟ้อง
+    ("PP5", "PositionalPageText", "return Accounting.Helpers.PdfPositionalText.Build(glyphs);",
+     "return Accounting.Helpers.PdfPositionalText\n            .Build(glyphs);", False),
 ]
 
 _RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}

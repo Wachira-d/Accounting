@@ -35,9 +35,12 @@ namespace Accounting.Helpers;
 /// (เคส iPhone ของ AWN คง 3) · "ค่าน้ำดื่ม" ไม่ใช่ ลบ.ม. · เศษปัดราคาต่อหน่วยเกินเพดาน (1 บาท / 0.5%) ไม่แต่งส่วนลด · เศษใต้เพดานติดธง
 /// <c>UnitPriceRoundingResidual</c> — บรรทัดที่ persist จากรุ่น 8 รูปเหล่านี้ผิด ⇒ ไฟล์ที่อัปซ้ำต้องแกะใหม่ (สแกนที่เก็บไว้แล้ว: รายงานซ่อม
 /// <c>OcrLumpSumRepairService</c> · รุ่นที่ตรวจ = <see cref="OcrLumpSumRepair.AffectedVersions"/>)</para>
+/// 10 = 2026-10-16 ทีม OCR 10: ข้อความ PDF (text-layer) ประกอบตามพิกัด (<c>PdfPositionalText</c>) แทน page.Text ลำดับ stream — บิล กฟภ. ยอด
+/// 689.92/48.29/738.21 ⇒ 19,381.50/1,356.71/20,738.21 · เลขที่ 516004632612 ⇒ XH0712609004157 · ผู้ขาย/ผู้ซื้อ/สาขา · ใบพรามี่ได้รายการจากตาราง ⇒ PDF ที่แกะด้วยรุ่น 9 (หรือก่อนหน้า)
+/// (ถ้าเจ้าของ deploy ไปแล้ว) แล้วอัปซ้ำต้องแกะใหม่ ไม่เล่นยอดที่ผิด
 /// </summary>
 public static class OcrExtractionVersion
 {
     /// <summary>รุ่นปัจจุบันของตัวแกะ — เพิ่มทีละ 1 ทุกครั้งที่แก้ตัวแกะจนผลของไฟล์เดิมเปลี่ยน</summary>
-    public const int Current = 9;
+    public const int Current = 10;
 }

@@ -23,8 +23,10 @@ public static class BranchCodeExtractor
     /// <summary>"สาขาที่ 3" / "BRANCH: 00003" / "สาขา เลขที่ 3" / "Branch No. 8" / "สาขาที 3"
     /// (รอบ 190: ยอม "ที" ที่ OCR ทำไม้เอกหล่น และ "No." ของหัวกระดาษอังกฤษ — เดิมสองรูปนี้
     /// ไม่เจอตัวเลขแล้วตกไปอ่าน "สำนักงานใหญ่" ของหัวกระดาษแทน)</summary>
+    /// <para>ทีม OCR 10 (2026-10-16): ป้ายสองภาษาที่มีคำแปลในวงเล็บคั่น "สาขา (Branch No.) 00000" (บิล กฟภ. — บรรทัดเลขผู้เสียภาษีผู้ซื้อ) เดิมไม่ติด
+    /// (รูปเดียวกับที่ <c>OcrIssuerBranch</c> รับแล้วตั้งแต่รอบ 197)</para>
     private static readonly Regex BranchRegex = new(
-        @"(?:สาขา(?:ที่|ที)?|BRANCH)\s*(?:เลข(?:ที่)?\s*|NO\.?\s*|#\s*)?[:：]?\s*(\d{1,5})",
+        @"(?:สาขา(?:ที่|ที)?(?:[ \t]*[/(（][ \t]*(?i:branch)(?:[ \t]*(?i:no\.?|code))?[ \t]*[)）]?)?|BRANCH)\s*(?:เลข(?:ที่)?\s*|NO\.?\s*|#\s*)?[:：]?\s*(\d{1,5})",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Regex HeadOfficeRegex = new(
@@ -107,6 +109,25 @@ public static class BranchCodeExtractor
         var m = BranchRegex.Match(segment);
         if (m.Success) return m.Groups[1].Value.PadLeft(5, '0');
         return HeadOfficeRegex.IsMatch(segment) ? "00000" : null;
+    }
+
+    /// <summary>
+    /// สาขาที่พิมพ์<b>บนบรรทัดเดียวกับเลขผู้เสียภาษี</b>ที่รู้ฝั่งแล้ว — "เลขประจำตัวผู้เสียภาษี (Tax ID No.) 0203562005871  สาขา (Branch No.) 00000" ·
+    /// อ่านเฉพาะข้อความหลังเลขนั้นจนจบบรรทัดหรือถึงเลข 13 หลักตัวถัดไป (หัวใบสองคอลัมน์ที่วางเลขสองฝั่งบรรทัดเดียวกันไม่ข้ามฝั่ง) · ไม่พบ = null
+    /// <para>ที่มา (ทีม OCR 10 · บิล กฟภ. XH0712609004157): ไม่มีป้ายผู้ซื้อก่อนบล็อกผู้ซื้อ (ป้ายเดียวคือ "รหัสลูกค้า" ใต้บล็อก) ⇒ <see cref="Extract"/>
+    /// อ่านสาขาผู้ซื้อไม่ได้ · กุญแจ = เลขผู้เสียภาษี (ตัดสินฝั่งแล้วโดยตัวจัดฝั่ง) ไม่ใช่ตำแหน่งป้าย</para>
+    /// </summary>
+    public static string? OnTaxIdLine(string? rawText, string? taxId)
+    {
+        if (string.IsNullOrWhiteSpace(rawText) || string.IsNullOrWhiteSpace(taxId) || taxId.Length != 13) return null;
+        var at = rawText.IndexOf(taxId, StringComparison.Ordinal);
+        if (at < 0) return null;
+        var start = at + taxId.Length;
+        var end = rawText.IndexOf('\n', start);
+        var tail = rawText[start..(end < 0 ? rawText.Length : end)];
+        var nextId = Regex.Match(tail, @"\d{13}");
+        if (nextId.Success) tail = tail[..nextId.Index];
+        return FromSegment(tail);
     }
 
     public static Result Extract(string? rawText)

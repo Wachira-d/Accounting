@@ -55,18 +55,33 @@ public static class RawTextLineSplitter
             "{{\"description\":{0},\"quantity\":{1},\"unit\":{2},\"unit_price\":{3},\"amount\":{4}}}",
             JsonString(l.Description), l.Quantity.ToString(CultureInfo.InvariantCulture),
             l.Unit == null ? "null" : JsonString(l.Unit),
-            l.UnitPrice.ToString(CultureInfo.InvariantCulture),
+            l.UnitPrice?.ToString(CultureInfo.InvariantCulture) ?? "null",
             l.Amount.ToString(CultureInfo.InvariantCulture)));
         return "{\"lines\":[" + string.Join(",", items) + "]}";
     }
 
-    public sealed record Candidate(string Description, decimal Quantity, string? Unit, decimal UnitPrice, decimal Amount);
+    /// <param name="UnitPrice">ราคาต่อหน่วย — null = กระดาษไม่พิมพ์ (ตารางมีคอลัมน์จำนวนแต่ไม่มีคอลัมน์ราคา · บิลมิเตอร์) ⇒ ตัวกันจำนวน
+    /// (<see cref="OcrLineQuantityGuard"/>) ตัดสิน ห้ามหาร ยอด ÷ จำนวน ที่นี่ (ทีม OCR 8)</param>
+    public sealed record Candidate(string Description, decimal Quantity, string? Unit, decimal? UnitPrice, decimal Amount);
 
-    /// <summary>บรรทัดที่ "ลงท้ายด้วยจำนวนเงิน และไม่ใช่บรรทัดสรุป"</summary>
+    /// <summary>ตัวคั่นช่องของตาราง — ช่องว่างตั้งแต่สองตัว (<see cref="PdfPositionalText.ColumnSeparator"/> ของข้อความ PDF ที่ประกอบตามพิกัด) หรือ tab</summary>
+    private static readonly Regex CellSeparator = new(@" {2,}|\t", RegexOptions.Compiled);
+
+    /// <summary>ตัวเลขทั้งช่อง (คอมมาหลักพัน · ทศนิยม) — ช่องตารางต้องเป็นตัวเลขล้วน ไม่ใช่ "มีตัวเลขอยู่ข้างใน"</summary>
+    private static readonly Regex CellNumber = new(
+        @"^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>เลขลำดับแถวหน้าคำอธิบาย ("1. " · "12) ")</summary>
+    private static readonly Regex RowNumber = new(@"^\d{1,3}[.)]\s*", RegexOptions.Compiled);
+
+    /// <summary>บรรทัดที่ "ลงท้ายด้วยจำนวนเงิน และไม่ใช่บรรทัดสรุป" — ข้อความที่มีหัวตาราง (ช่องคั่นด้วยช่องว่าง ≥ 2) อ่านตามคอลัมน์ก่อน
+    /// (<see cref="TableRows"/> · ทีม OCR 10) · ไม่เจอตาราง = กติกาท้ายบรรทัดเดิมทุกตัวอักษร</summary>
     public static List<Candidate> Split(string? rawText)
     {
         var result = new List<Candidate>();
         if (string.IsNullOrWhiteSpace(rawText)) return result;
+        var table = TableRows(rawText);
+        if (table.Count > 0) return table.Count > MaxLines ? new List<Candidate>() : table;
 
         foreach (var raw in rawText.Split('\n'))
         {
@@ -112,6 +127,69 @@ public static class RawTextLineSplitter
             if (result.Count > MaxLines) return new List<Candidate>();   // จับมั่ว = ไม่ตอบดีกว่า
         }
         return result;
+    }
+
+    /// <summary>
+    /// **แถวตารางตามคอลัมน์** (ทีม OCR 10 · 2026-10-16) — ข้อความ PDF ที่ประกอบตามพิกัด (<see cref="PdfPositionalText"/>) คั่นช่องตารางด้วยช่องว่าง ≥ 2 ตัว ⇒
+    /// หัวตาราง (ทุกช่องไม่มีตัวเลข · ≥ 3 ช่อง · บทบาทจาก <see cref="OcrTableColumnMapper"/> ตัวเดียวกับตาราง Azure: ต้องมีคำอธิบาย + ยอด + (จำนวนหรือราคา)) ·
+    /// แถวรายการ = บรรทัดใต้หัวที่<b>จำนวนช่องเท่าหัว</b> และช่องตัวเลขทุกช่องเป็นตัวเลขล้วน · ไม่ลงตัว = ไม่ใช่แถว (บรรทัดคำอธิบายต่อ/หัวภาษาอังกฤษ/แถวสรุป)
+    ///
+    /// <para>ที่มา: ใบ RE-20261000111 (พรามี่) "1.00ชิ้น1,330.00293.007%1,037.00" — ข้อความเดิมช่องติดกัน ⇒ กติกาท้ายบรรทัดได้ "ราคา" 1,037 + คำอธิบายที่มีตัวเลขทั้งแถว ·
+    /// บิล กฟภ. "ค่าไฟฟ้า ประจำเดือน 08/2569  4,272.00  19,381.50" (จำนวนหน่วย · จำนวนเงิน · ไม่มีคอลัมน์ราคา) ⇒ จำนวน 4,272 ราคาว่าง (ตัวกันจำนวนตัดสิน)</para>
+    ///
+    /// <para><b>ไม่ตัดสินเงิน</b>: ไม่หาร ยอด ÷ จำนวน · ไม่อ่านคอลัมน์ส่วนลด/อัตรา VAT (ส่วนลดบนแถวเป็นหน้าที่ของ <see cref="OcrLineQuantityGuard"/> ตัวเดียว) ·
+    /// ผลยังต้องผ่าน <see cref="OcrLineSplitGuard"/> (Σ = ยอดบนกระดาษ) เหมือนคำตอบโมเดล</para>
+    /// </summary>
+    public static List<Candidate> TableRows(string? rawText)
+    {
+        var result = new List<Candidate>();
+        if (string.IsNullOrWhiteSpace(rawText)) return result;
+        var lines = rawText.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var header = Cells(lines[i]);
+            if (header.Count < 3 || header.Any(c => c.Any(char.IsDigit))) continue;
+            var cols = OcrTableColumnMapper.Map(header);
+            if (cols.Description < 0 || cols.Amount < 0 || (cols.Quantity < 0 && cols.UnitPrice < 0)) continue;
+            var j = i + 1;
+            for (; j < lines.Length; j++)
+            {
+                var row = TableRow(Cells(lines[j]), header.Count, cols);
+                if (row != null) { result.Add(row); continue; }
+                // แถวสรุปหลังรายการแรก = จบตาราง (หัวตารางถัดไป เช่น หน้าสำเนา เริ่มนับใหม่ที่ลูปนอก)
+                if (result.Count > 0 && OcrNonItemRow.MentionsSummaryLabel(lines[j])) break;
+            }
+            i = j;
+        }
+        return result;
+    }
+
+    private static Candidate? TableRow(List<string> cells, int width, OcrTableColumns cols)
+    {
+        if (cells.Count != width) return null;
+        var desc = RowNumber.Replace(cells[cols.Description], "").Trim();
+        if (desc.Count(char.IsLetter) < 2 || OcrNonItemRow.IsSummaryOrTenderRow(desc)) return null;
+        if (!TryCell(cells[cols.Amount], out var amount) || amount <= 0m) return null;
+        decimal qty = 1m;
+        if (cols.Quantity >= 0 && (!TryCell(cells[cols.Quantity], out qty) || qty <= 0m)) return null;
+        decimal? price = null;
+        if (cols.UnitPrice >= 0)
+        {
+            if (!TryCell(cells[cols.UnitPrice], out var p)) return null;
+            price = p;
+        }
+        else if (cols.Quantity < 0) price = amount;   // ไม่มีทั้งคอลัมน์จำนวนและราคา — ไม่เกิด (หัวต้องมีอย่างใดอย่างหนึ่ง) · คงรูปเดิม 1 × ยอด
+        var unit = cols.Unit >= 0 && cells[cols.Unit].Any(char.IsLetter) && !cells[cols.Unit].Any(char.IsDigit) ? cells[cols.Unit] : null;
+        return new Candidate(desc, qty, unit, price, amount);
+    }
+
+    private static List<string> Cells(string line)
+        => CellSeparator.Split(line.Trim()).Select(c => c.Trim()).Where(c => c.Length > 0).ToList();
+
+    private static bool TryCell(string cell, out decimal value)
+    {
+        value = 0m;
+        return CellNumber.IsMatch(cell) && TryMoney(cell, out value);
     }
 
     private static bool TryMoney(string s, out decimal value)

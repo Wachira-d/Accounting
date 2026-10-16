@@ -405,6 +405,18 @@ public static class OcrReplayHarness
             Lines: new ReplayLine[] { new("ค่าไฟฟ้า ประจำเดือน 08/2569", 4272m, null, 19381.50m) },
             VendorTaxId: "0994000165501"),
 
+        // ── ทีม OCR 10 (2026-10-16) — สองใบจริงข้างบน ด้วยข้อความ PDF ที่ประกอบตามพิกัด (Helpers/PdfPositionalText · ข้อความที่ PdfTextLayerExtractor คืนตอนนี้) ──
+        // ตัวเลข engine / บรรทัด / เลขผู้ขาย เท่าใบเดิมทุกตัว ⇒ ผลต่างระหว่างคู่ใบ = ผลของข้อความอย่างเดียว · ใบเดิม (page.Text) คงไว้ไม่แก้
+        new ReplayPaper("pea-electricity-bill-0869-positional", OcrPaperSamples.PeaElectricityBill0869Positional,
+            EngineSubTotal: 19381.50m, EngineVat: 1356.71m, EngineTotal: 20738.21m,
+            LineAmounts: new[] { 19381.50m },
+            Lines: new ReplayLine[] { new("ค่าไฟฟ้า ประจำเดือน 08/2569", 4272m, null, 19381.50m) },
+            VendorTaxId: "0994000165501"),
+        new ReplayPaper("pramie-re111-positional", OcrPaperSamples.PramieRe111Positional,
+            EngineSubTotal: 969.16m, EngineVat: 67.84m, EngineTotal: 1037.00m,
+            LineAmounts: new[] { 1037.00m },
+            Lines: new ReplayLine[] { new("(แพ็ค3)แผ่นรองซับ M 50 แผ่น (P00022)", 1m, 1330.00m, 1037.00m) }),
+
         // ── ทีม OCR 9 (2026-10-16 · ฝ่ายค้าน 13a4d788 P0) — บรรทัดสินค้าที่ engine หลุดคอลัมน์ราคา/อ่านยอดเป็นราคา ห้ามกลายเป็น 1 × ยอด ──
         // (ก) น้ำดื่ม 12 ขวด 300 ไม่มีราคาต่อหน่วยบนแถว: ทีม 8 ⇒ 1 × 300 "(12 ขวด)" (สต็อกขาด 11 · ทุนเพี้ยน 12 เท่า) · 300 ÷ 12 = 25.00 ลงตัว ⇒ 12 × 25.00 (รุ่น 5 เดิม · แจ้ง)
         new ReplayPaper("goods-qty-price-column-lost",

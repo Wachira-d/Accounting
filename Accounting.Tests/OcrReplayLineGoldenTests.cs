@@ -484,6 +484,47 @@ public class OcrReplayLineGoldenTests
         Assert.Equal("0", Val(P, "DupRowsDropped"));
     }
 
+    // ── ทีม OCR 10 (2026-10-16): ใบจริงสองใบเดิมด้วยข้อความ PDF ที่ประกอบตามพิกัด — ตัวเลข engine/บรรทัดเท่าใบเดิม ⇒ ผลต่างทั้งหมดมาจากข้อความ ──
+
+    [Fact]
+    public void ทีมOCR10_บิลกฟภ_ข้อความตามพิกัด_ตัวยึดยอดพิสูจน์ได้_บรรทัดเท่าใบเดิมทุกช่อง()
+    {
+        const string P = "pea-electricity-bill-0869-positional";
+        const string Old = "pea-electricity-bill-0869";
+        // เปลี่ยน (ตั้งใจ): ป้าย "รวมทั้งสิ้น (Total)" นำหน้า 20,738.21 แล้ว ⇒ พิสูจน์ยอดรวมจากกระดาษได้ (ใบเดิม Unknown — ตัวเลขพิมพ์ก่อนป้าย)
+        Assert.Equal("Unknown", Val(Old, "AnchorVerdict"));
+        Assert.Equal("Confirmed", Val(P, "AnchorVerdict"));
+        Assert.Equal("20738.21", Val(P, "AnchorTotal"));
+        // เปลี่ยน (ตั้งใจ): VAT 1,356.71 อยู่คู่ป้าย "ภาษีมูลค่าเพิ่ม (VAT)7 %" ⇒ ชั้นตัวเลขหัวใบพิสูจน์อัตราทั้งใบได้ (ใบเดิม Unknown)
+        Assert.Equal("Unknown", Val(Old, "LineVatPlan"));
+        Assert.Equal("AllStandard7:7", Val(P, "LineVatPlan"));
+        // ไม่เปลี่ยน: บรรทัด 1 × 19,381.50 + "(4,272 หน่วย)" · ยอด/VAT/รวม · หัก ณ ที่จ่ายว่าง · ไม่มีส่วนลด
+        foreach (var f in new[] { "LineQtyGuard", "LineDescriptions", "Lines", "IntegrityGaps", "RoundingAdjustment", "HeaderSubTotal", "HeaderTotal",
+                     "AnchoredNetSubTotal", "PaperWhtAmount", "BillDiscount", "IsDeposit", "ReconCase", "PricesIncludeVat" })
+            Assert.Equal(Val(Old, f), Val(P, f));
+        Assert.Equal("QuantityInDescription|1|19381.50|-|note", Val(P, "LineQtyGuard"));
+        Assert.Equal("19381.50|7|1356.71|19381.50|0|0.00|0.00", Val(P, "Lines"));
+    }
+
+    [Fact]
+    public void ทีมOCR10_ใบพรามี่_ข้อความตามพิกัด_ส่วนลดบรรทัด293ตามเดิม_หักณที่จ่าย0บาทไม่ถูกอ่านเป็นยอดถัดไป()
+    {
+        const string P = "pramie-re111-positional";
+        const string Old = "pramie-line-discount-re111";
+        // ไม่เปลี่ยน: ตัวกันจำนวนอ่านส่วนลด 293.00 จากแถวที่แยกช่องแล้ว (เดิมอ่านจากแถวที่ติดกัน) · ฐาน 969.16 · VAT 67.84
+        foreach (var f in new[] { "LineQtyGuard", "Lines", "IntegrityGaps", "RoundingAdjustment", "ReconCase", "PricesIncludeVat", "AnchorVerdict",
+                     "AnchorTotal", "BillDiscount", "DiscountToSpread", "IsDeposit" })
+            Assert.Equal(Val(Old, f), Val(P, f));
+        Assert.Equal("PrintedDiscount|1|1330.00|293.00|note", Val(P, "LineQtyGuard"));
+        Assert.Equal("969.16|7|67.84|1330.00|0|293.00|0.00", Val(P, "Lines"));
+        // ทิศที่ห้ามแย่ลง: ป้าย "จำนวนเงินที่ถูกหัก ณ ที่จ่าย 0.00 บาท" อ่านได้แล้ว (PUA แปลงแล้ว) — ห้ามหยิบ 1,037.00 ของบรรทัดถัดไปเป็นยอดหัก
+        Assert.Null(Val(P, "PaperWhtAmount"));
+        Assert.Null(Val(P, "PaperWhtRate"));
+        // เปลี่ยน (ตั้งใจ): VAT 67.84 อยู่คู่ป้าย ⇒ ชั้นตัวเลขหัวใบพิสูจน์อัตราได้
+        Assert.Equal("Unknown", Val(Old, "LineVatPlan"));
+        Assert.Equal("AllStandard7:7", Val(P, "LineVatPlan"));
+    }
+
     [Fact]
     public void ทีมOCR9_บรรทัดสินค้าที่engineหลุดคอลัมน์ราคา_คงจำนวน_ไม่กลายเป็น1คูณยอด()
     {
@@ -521,7 +562,8 @@ public class OcrReplayLineGoldenTests
         var block = rows.Where(r => r.Tag == "block").Select(r => r.Paper).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
         var note = rows.Where(r => r.Tag == "note").Select(r => r.Paper).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
         Assert.Equal(new[] { "deposit-installment-invoice", "goods-fractional-qty-no-price", "qty-printed-gap-unexplained", "row-index-receipt", "sku-code-on-row", "weighed-item-qty-not-printed", "wht-column-service-invoice" }, block);
-        Assert.Equal(new[] { "discount-header-invoice", "goods-price-read-as-amount", "goods-qty-price-column-lost", "pea-electricity-bill-0869", "pramie-line-discount-re111", "qty-misread-engine-one", "utility-meter-bill" }, note);
+        Assert.Equal(new[] { "discount-header-invoice", "goods-price-read-as-amount", "goods-qty-price-column-lost", "pea-electricity-bill-0869",
+            "pea-electricity-bill-0869-positional", "pramie-line-discount-re111", "pramie-re111-positional", "qty-misread-engine-one", "utility-meter-bill" }, note);
     }
 
     [Fact]
@@ -534,7 +576,9 @@ public class OcrReplayLineGoldenTests
             // ทีม OCR 8 (บิลค่าไฟจริง กฟภ.)
             "pea-electricity-bill-0869",
             // ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0 — บรรทัดสินค้าห้ามกลายเป็น 1 × ยอด)
-            "goods-qty-price-column-lost", "goods-fractional-qty-no-price", "goods-price-read-as-amount" };
+            "goods-qty-price-column-lost", "goods-fractional-qty-no-price", "goods-price-read-as-amount",
+            // ทีม OCR 10 (สองใบจริงข้างบนด้วยข้อความ PDF ตามพิกัด)
+            "pea-electricity-bill-0869-positional", "pramie-re111-positional" };
         var all = OcrReplayHarness.Run();
         foreach (var a in all.Where(a => a.Field == "LineQtyGuard" && !added.Contains(a.Paper)))
             foreach (var row in a.Value!.Split(';'))

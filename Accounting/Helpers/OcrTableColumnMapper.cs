@@ -81,6 +81,9 @@ public static class OcrTableColumnMapper
         ("รายละเอียด", OcrTableColumn.Description, 90),
         ("รายการ", OcrTableColumn.Description, 90),
         ("description", OcrTableColumn.Description, 90),
+        // ทีม OCR 10 (2026-10-16): ใบ RE-20261000111 (พรามี่) หัวคอลัมน์ "คำอธิบาย" — เดิมไม่รู้จัก ⇒ ตารางทั้งตารางถูกข้าม (ไม่มีคอลัมน์คำอธิบาย)
+        ("คำอธิบาย", OcrTableColumn.Description, 90),
+        ("คําอธิบาย", OcrTableColumn.Description, 90),   // นิคหิต+สระอา (ฟอนต์/engine ที่ไม่รวมเป็นสระอำ)
         ("desc", OcrTableColumn.Description, 60),
         ("ชื่อสินค้า", OcrTableColumn.Description, 100),
         ("สินค้า", OcrTableColumn.Description, 80),

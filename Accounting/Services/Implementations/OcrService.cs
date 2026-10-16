@@ -34,8 +34,12 @@ public class OcrService : IOcrService
     // ฝั่งผู้ขายและผู้ซื้อด้วยกฎเดียวกัน — ห้ามมี regex สาขาซ้ำในไฟล์นี้อีก
     // คำ/ข้อยกเว้นเรื่อง "มัดจำ" ย้ายไป Helpers/OcrDepositMarker ตัวเดียว — ตัวนั้นบังคับว่า
     // คำต้องมีเงิน > 0 ประกอบ และบรรทัด "หัก…มัดจำ" ไม่ใช่ใบมัดจำ (สแกนจริง 2026-09-10)
+    // ⚠️ ทีม OCR 10 (2026-10-16): รูปเดิม `((?:[^\n]+\n?){1,4}?)` แบ่งบรรทัดยาวเป็นท่อนได้ทุกแบบ (\n ไม่บังคับ) ⇒ ตัวหน้าต่อท้ายไม่เจอป้าย =
+    // ลองทุกวิธีแบ่ง O(n⁴) · ข้อความ PDF แบบเดิม (page.Text บรรทัดเดียว ~2,900 ตัว เช่น บิล กฟภ.) + "──── TESSERACT ────" ต่อท้ายในเส้น Tier 3 ⇒
+    // ParseThaiDocument ค้าง (probe: CPU 16 นาทีไม่จบ) · รูปใหม่ = บรรทัดแรก + ต่อได้อีก 3 บรรทัดเต็ม (ท่อนละบรรทัด แบ่งได้วิธีเดียว) — ผลเท่าเดิมทุกเคสที่จบได้
+    // (เทสต์ OcrPdfTextPathTests · ที่อยู่ 1–4 บรรทัด · เว้นบรรทัดก่อนป้าย · เกิน 4 บรรทัดไม่จับ)
     private static readonly Regex VendorAddressRegex = new(
-        @"(?:ที่อยู่|ADDRESS)\s*[:：]?\s*((?:[^\n]+\n?){1,4}?)(?=\n\s*(?:โทร|TEL|เลขประจำตัว|TAX\s*ID|อีเมล|EMAIL|FAX|$))",
+        @"(?:ที่อยู่|ADDRESS)\s*[:：]?\s*([^\n]+(?:\n[^\n]+){0,3}?)(?=\n\s*(?:โทร|TEL|เลขประจำตัว|TAX\s*ID|อีเมล|EMAIL|FAX|$))",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly AccountingDbContext _db;
@@ -6232,7 +6236,9 @@ public class OcrService : IOcrService
             var prefix = cm.Groups[1].Value;
             var name = cm.Groups[2].Value.Trim();
             if (string.IsNullOrWhiteSpace(name) || name.Length < 2) continue;
-            var afterMatch = text.Substring(cm.Index, Math.Min(cm.Length + 30, text.Length - cm.Index));
+            // ทีม OCR 10: หา "จำกัด" ต่อจากชื่อ ไม่ใช่จากคำนำหน้า ("ห้างหุ้นส่วนจำกัด X" ⇒ เดิมได้ "ห้างหุ้นส่วนจำกัด X จำกัด") — คู่เดียวกับ SmartFieldExtractor.ExtractCompanyNames
+            var afterName = cm.Groups[2].Index;
+            var afterMatch = text.Substring(afterName, Math.Min(cm.Index + cm.Length + 30, text.Length) - afterName);
             var suffix = "";
             if (afterMatch.Contains("จำกัด"))
                 suffix = afterMatch.Contains("มหาชน") ? " จำกัด (มหาชน)" : " จำกัด";
@@ -6491,7 +6497,11 @@ public class OcrService : IOcrService
         var whtMatch = Regex.Match(text,
             @"หัก[ \t]*ณ[ \t]*ที่จ่าย|ภาษี[ \t]*หัก|\bWHT\b|\bW\.?T\.?\b",
             RegexOptions.IgnoreCase);
-        if (whtMatch.Success)
+        // ทีม OCR 10 (2026-10-16): ป้ายที่พิมพ์ยอดหัก 0.00 ("จำนวนเงินที่ถูกหัก ณ ที่จ่าย 0.00 บาท" — ใบ RE-20261000111) = ไม่มีการหัก ·
+        // ตัวอ่านยอดบนกระดาษตัวเดียว Helpers/PaperWhtReader
+        if (whtMatch.Success && Accounting.Helpers.PaperWhtReader.PrintedZero(text))
+            data.ReasoningTrace.Add("[WHT] กระดาษพิมพ์ยอดหัก ณ ที่จ่าย 0.00 — ไม่ตั้งภาษีหัก ณ ที่จ่าย");
+        else if (whtMatch.Success)
         {
             data.HasWht = true;
             var rateMatch = Regex.Match(text,

@@ -47,6 +47,28 @@ public static class PaperWhtReader
     /// <summary>ระยะที่ยอมให้ยอดอยู่ห่างจากป้าย (ตัวอักษร) — ไกลกว่านี้คือเลขคนละเรื่อง</summary>
     private const int WindowChars = 60;
 
+    /// <summary>กระดาษพิมพ์ยอดหัก ณ ที่จ่าย<b>เป็นศูนย์</b> ("จำนวนเงินที่ถูกหัก ณ ที่จ่าย 0.00 บาท") = ไม่มีการหัก — ยอดเงินตัวแรกบนบรรทัดเดียวกับป้ายทุกป้ายเป็น 0
+    /// และไม่มีป้ายใดมียอด &gt; 0 · ไม่มีตัวเลขบนบรรทัดป้าย = ไม่รู้ (false)
+    /// <para>ที่มา (ทีม OCR 10 · 2026-10-16 · ใบ RE-20261000111): ข้อความ PDF เดิมมีวรรณยุกต์ PUA ("ที่จ\uF70Aาย") ⇒ ป้ายไม่เคยถูกจับ · พอแปลง PUA แล้ว
+    /// ตัวตรวจป้ายของ <c>ParseThaiDocument</c> ติ๊ก "มีหัก ณ ที่จ่าย" ทั้งที่กระดาษพิมพ์ 0.00</para></summary>
+    public static bool PrintedZero(string? rawText)
+    {
+        if (string.IsNullOrWhiteSpace(rawText)) return false;
+        var zero = false;
+        foreach (Match label in Label.Matches(rawText))
+        {
+            var start = label.Index + label.Length;
+            var end = rawText.IndexOf('\n', start);
+            if (end < 0) end = rawText.Length;
+            var mm = MoneyPattern.Match(rawText.Substring(start, Math.Min(end - start, WindowChars)));
+            if (!mm.Success || !decimal.TryParse(mm.Groups["amt"].Value.Replace(",", ""), NumberStyles.Number,
+                    CultureInfo.InvariantCulture, out var amt)) continue;
+            if (amt != 0m) return false;
+            zero = true;
+        }
+        return zero;
+    }
+
     /// <param name="rawText">ข้อความทั้งใบ (normalize แล้ว)</param>
     /// <param name="baseAmount">ฐานที่ควรใช้คำนวณ (ยอดก่อน VAT) — ใช้เป็นด่าน
     /// ความสมเหตุสมผล: ยอดหักต้องไม่เกินฐาน · ส่ง <c>null</c> ได้ถ้ายังไม่รู้</param>
@@ -75,11 +97,16 @@ public static class PaperWhtReader
                 bestRate ??= r;
 
             // ยอด: หยิบตัวแรกที่ไม่ใช่ตัวเลขของอัตรา และผ่านด่านความสมเหตุสมผล
+            // ทีม OCR 10 (2026-10-16 · ใบ RE-20261000111): ยอดบนบรรทัดป้ายเป็น 0.00 = ป้ายนี้บอกว่า "ไม่หัก" ⇒ ห้ามหยิบตัวเลขบรรทัดถัดไป
+            // ("จำนวนเงินที่ถูกหัก ณ ที่จ่าย 0.00 บาท\nจำนวนเงินที่ชำระ 1,037.00 บาท" เดิมได้ 1,037 เมื่อไม่มีฐานให้เทียบ) — ตัวเดียวกับ PrintedZero
+            var labelLineEnd = nl >= 0 ? nl : window.Length;
             foreach (Match mm in MoneyPattern.Matches(window))
             {
                 if (rm.Success && mm.Index >= rm.Index && mm.Index < rm.Index + rm.Length) continue;
                 if (!decimal.TryParse(mm.Groups["amt"].Value.Replace(",", ""), NumberStyles.Number,
-                        CultureInfo.InvariantCulture, out var amt) || amt <= 0m) continue;
+                        CultureInfo.InvariantCulture, out var amt)) continue;
+                if (amt == 0m && mm.Index < labelLineEnd) break;
+                if (amt <= 0m) continue;
                 // ยอดหักมากกว่าฐาน = อ่านผิดแน่ (หยิบยอดรวมมา) — ข้าม
                 if (baseAmount is > 0m && amt > baseAmount.Value) continue;
                 bestAmount ??= amt;
