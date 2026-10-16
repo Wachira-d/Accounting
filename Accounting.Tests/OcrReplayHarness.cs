@@ -556,6 +556,20 @@ public static class OcrReplayHarness
             //    เดิมไม่อยู่ใน snapshot ⇒ การเปลี่ยนรูป regex ที่ให้ผลต่างจริง (fuzz 5,065/300k) มองไม่เห็น · แถวใหม่ทุกใบ
             result.Add(new(p.Name, "VendorAddress", Accounting.Services.Implementations.OcrService.ParseThaiDocument(
                 Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(p.RawText)).VendorAddress));
+
+            // 10. ทีม OCR 15 (ฝ่ายค้าน OCR 13 P1-3): ช่องคู่สัญญา §86/4 — ParseThaiDocument → SmartFieldExtractor.Enrich (ลำดับเดียวกับ ProcessScanAsync ชั้น pure) ·
+            //     เดิมไม่อยู่ใน snapshot ทั้งที่ตัวอ่านที่ใช้ร่วมกันเปลี่ยนหมด (ThaiCompanyName · ป้ายผู้ซื้อบนบรรทัด · ผู้ออกบิลรัฐ · สาขา · ชื่อผูกเลขผู้ขาย) ⇒
+            //     ชื่อสลับคอลัมน์ (P1-2) ผ่าน golden เงียบ ๆ · golden ตัวอักษรอยู่ที่ OcrReplayPartyGoldenTests · "" = ว่าง (เท่า null)
+            var party = Accounting.Services.Implementations.OcrService.ParseThaiDocument(
+                Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(p.RawText));
+            Accounting.Services.Implementations.Ocr.SmartFieldExtractor.Enrich(party, p.RawText);
+            static string? Blank(string? s) => string.IsNullOrEmpty(s) ? null : s;
+            result.Add(new(p.Name, "VendorName", Blank(party.VendorName)));
+            result.Add(new(p.Name, "VendorTaxId", Blank(party.VendorTaxId)));
+            result.Add(new(p.Name, "VendorBranch", Blank(party.VendorBranchCode)));
+            result.Add(new(p.Name, "BuyerName", Blank(party.BuyerName)));
+            result.Add(new(p.Name, "BuyerTaxId", Blank(party.BuyerTaxId)));
+            result.Add(new(p.Name, "BuyerBranch", Blank(party.BuyerBranchCode)));
         }
         return result;
     }
