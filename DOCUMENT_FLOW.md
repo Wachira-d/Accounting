@@ -5801,6 +5801,6 @@ _Last verified against codebase: 2026-10-16 (OCR Makro หน้า 2/2 — §OC
 `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
 _Last verified against codebase: 2026-10-16 (ฝ่ายค้านของ 6e56d33d — §OCR "ยึดยอดรวมทั้งสิ้นก่อน": ป้ายรวม VAT เลขแรก + คำปฏิเสธ · มัดจำถอนกฎ "หัก…ที่ใดก็ได้"
 (fallback บรรทัดถัดไปรับเฉพาะยอดเงินล้วน) · ข้อความเกินกระดาษเป็นกลาง · LINE อนุมัติตรวจเกินกระดาษสด — เทสต์ `OcrReview6e56d33dTests` —
-คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
+คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 7c782d24)_
 _Last verified against codebase: 2026-10-16 (รหัส ภ.พ. รายบรรทัด — §OCR: `Helpers/OcrVatCodeLines` ใน `BuildScanLinesAsync` · ส่วนลดแบ่งต่อรหัส · [Σ-GAP] ตารางรหัส ภ.พ. —
-เทสต์ `OcrVatCodeLinesTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
+เทสต์ `OcrVatCodeLinesTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit afbb0956)_
