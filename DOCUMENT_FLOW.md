@@ -101,7 +101,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ด่านวางฝั่งตัดเดบิตแล้วหมวดไม่มีผัง ⇒ ผังตั้งต้นของชนิดกระดาษ → 5300 (`Helpers/OcrDocTypeDefaultAccounts` ตัวเดียวกับ `ParseThaiDocument` · เดิมเดบิตว่าง) ·
     ใบไม่มีบรรทัด: คีย์ตัวเรียน `#ไม่มีรายการ#<ชนิดกระดาษ>` (ฝั่งเขียนใช้ชนิดก่อนผู้ใช้แก้) + อ่านแถวรุ่นเก่าที่คีย์เป็นหมวดตั้งต้นครั้งเดียว (`OcrLearnerDescriptionKey.PredictAsync`) ·
     ฟอร์มเอกสารไฮไลต์ช่องผังค่าใช้จ่ายตาม `FieldConfidence["DebitAccount"]` (เดิม `ExpenseCategory` ⇒ ผู้ขายที่รู้จักขึ้นเหลืองทุกใบ) · ตัวจัดหมวดไม่รู้ "ผู้จ่ายมีหน้าที่หักไหม"
-    (รับ `BusinessType` แต่ไม่ใช้ · ไม่มี helper เจ้าของเรื่องนี้) ⇒ พฤติกรรมเดิม · Last verified `commit <pending>`
+    (รับ `BusinessType` แต่ไม่ใช้ · ไม่มี helper เจ้าของเรื่องนี้) ⇒ พฤติกรรมเดิม · Last verified `commit 7fd7a0a5`
 - **บรรทัดจากสแกนที่ไม่มีราคาต่อหน่วย (เคส C · รอบ 204 ทีม D)**: ราคาต่อหน่วย = ยอดหลังกระจายส่วนลดท้ายบิล ⇒ ส่วนลด % = 0 (ตัวตัดสินเดียว `OcrLineReconciler.LineDiscount` — เดิมติด % ทั้งบิลไว้ ⇒ เปิดแก้แล้วบันทึก `ComputeLineAmounts` หักซ้ำ 950 ลด 5% ⇒ 902.50) · ยอด/VAT/ยอดรวมตอนสร้างไม่ขยับ · golden เดิมเปลี่ยน 0 แถว · เอกสารเก่าก่อนแก้ยังติด % (ไม่มี migration อัตโนมัติ) ⇒ หน้าตรวจข้อมูลแถว `OcrLineDiscountWouldChangeOnResave` + ปุ่ม "แก้" รายใบ (ทีม E 2026-10-13 · ดูข้อถัดไป) · Last verified `commit 1c46ebcd`
 - **จำนวน < 1 ไม่มีราคาต่อหน่วย (ทีม E 2026-10-13)**: `OcrLineReconciler.LineDiscount` คืน `(Percent, Amount, UnitPrice?)` — ราคา = ปัดขึ้น 2 ตำแหน่งของ ยอด ÷ จำนวน ·
   ส่วนลดบาท = round(จำนวน × ราคา) − ยอด (0–0.01) · % = 0 (เดิมส่วนลดบาทติดลบ ⇒ บันทึกซ้ำได้ 0.35 × 100 = 35.00) · จำนวน ≥ 1 / มีราคา = สูตรเดิมทุกตัวอักษร ·
@@ -5894,7 +5894,7 @@ _Last verified against codebase: 2026-10-16 (§2.2 OCR — ถอดช่อง
 คีย์ตัวเรียนผัง `OcrLearnerDescriptionKey` · กฎค่าประกันไม่รับคำเดี่ยว — เทสต์ `OcrExpenseCategoryRemovalTests` · `ExpenseCategoryResolverTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit f5b10674)_
 _Last verified against codebase: 2026-10-16 (§2.2 OCR — ฝ่ายค้าน f5b10674: ใบบริการจริงได้ข้อเสนอหัก ณ ที่จ่ายตามประเภทเงินได้กลับมา (คำยาว + กฎค่ารับเหมา 40(7) · อัตราจาก
 `ThaiWhtRateTable` เท่านั้น) · ใบซื้อของ/อะไหล่ไม่ได้หัก · ใบประกันจริงได้ผัง 5800 · ด่านวางฝั่งไม่ปล่อยเดบิตว่าง (`OcrDocTypeDefaultAccounts`) · คีย์ตัวเรียนใบไม่มีบรรทัด ·
-ไฮไลต์ผังค่าใช้จ่ายของฟอร์มเอกสารตามความมั่นใจของผังเดบิต — เทสต์ `OcrExpenseCategoryRegressionTests` (+1 Db) · `OcrExpenseCategoryRemovalTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>)_
+ไฮไลต์ผังค่าใช้จ่ายของฟอร์มเอกสารตามความมั่นใจของผังเดบิต — เทสต์ `OcrExpenseCategoryRegressionTests` (+1 Db) · `OcrExpenseCategoryRemovalTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 7fd7a0a5)_
 _Last verified against codebase: 2026-10-16 (ทีม OCR 8 · บิลค่าไฟจริง กฟภ. — §OCR ด่านคุณภาพก่อน persist ข้อ 2: บิลมิเตอร์/ไม่มีราคาต่อหน่วยบนกระดาษ/ราคาเกิน 2 ตำแหน่ง ⇒
 1 × ยอด + จำนวนหน่วยในคำอธิบาย (`QuantityInDescription`) · ไม่แต่งราคา ยอด ÷ จำนวน · `OcrExtractionVersion` 6 — เทสต์ `OcrMeterBillLumpSumTests` · `OcrLineQuantityGuardTests` ·
 `OcrLineReconcileTests` · `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 13a4d788)_
