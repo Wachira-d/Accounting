@@ -103,12 +103,19 @@ public sealed record OcrLineQuantityDecision(
 
 /// <summary>ท้ายคำอธิบายที่ <see cref="OcrLineQuantityGuard"/> เขียนไว้บนบรรทัด 1 × ยอด (<see cref="OcrLineQuantityGuard.LumpSumSuffix"/>) —
 /// <see cref="Base"/> = คำอธิบายก่อนท้าย (คีย์จับคู่) · <see cref="Suffix"/> = วงเล็บท้าย · <see cref="Meter"/> = ท้ายเป็นจำนวนหน่วยมิเตอร์ที่ตัวกันรุ่นปัจจุบันก็เขียน
-/// (บิลค่าไฟ "(4,272 หน่วย)") · false = "(จำนวน N)" หรือท้ายของรุ่น 6/7/8 บนบรรทัดที่ไม่มีหลักฐานมิเตอร์ (จำนวนสินค้าหาย — รายงานซ่อม)</summary>
-public readonly record struct OcrLumpSumSuffix(string Base, string Suffix, bool Meter);
+/// (บิลค่าไฟ "(4,272 หน่วย)") · false = "(จำนวน N)" หรือท้ายของรุ่น 6/7/8 บนบรรทัดที่ไม่มีหลักฐานมิเตอร์ (จำนวนสินค้าหาย — รายงานซ่อม)
+/// <para>ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-2): <see cref="Quantity"/>/<see cref="UnitWord"/> = จำนวนและคำหน่วยในวงเล็บ (UnitWord null = "(จำนวน N)") — ให้ตัวตรวจย้อนหลัง
+/// เล่นหลักฐานมิเตอร์ด้วยบริบทเดียวกับตัวตัดสินตอนเขียน (<see cref="OcrLineQuantityGuard.WasMeterLine"/>)</para></summary>
+public readonly record struct OcrLumpSumSuffix(string Base, string Suffix, bool Meter, decimal Quantity = 0m, string? UnitWord = null);
 
-/// <summary>บรรทัดเอกสาร<b>ตอนนี้</b> สำหรับตรวจสดของ <see cref="OcrLineQuantityGuard.LiveNotes"/> (ค่าที่บันทึกใน DocumentLine)</summary>
+/// <summary>บรรทัดเอกสาร<b>ตอนนี้</b> สำหรับตรวจสดของ <see cref="OcrLineQuantityGuard.LiveNotes"/> (ค่าที่บันทึกใน DocumentLine) ·
+/// <see cref="Description"/> = คำอธิบายบรรทัด (ทีม OCR 12 — ด่านอนุมัติของหมายเหตุซ่อมเทียบบรรทัดเดียวกัน · null = ไม่เทียบคำอธิบาย)</summary>
 public readonly record struct OcrLiveLine(
-    decimal Quantity, decimal UnitPrice, decimal DiscountPercent, decimal DiscountAmount, decimal Amount, decimal VatRate);
+    decimal Quantity, decimal UnitPrice, decimal DiscountPercent, decimal DiscountAmount, decimal Amount, decimal VatRate)
+{
+    /// <summary>คำอธิบายบรรทัด (init — expression tree ของ EF ใช้ optional argument ไม่ได้)</summary>
+    public string? Description { get; init; }
+}
 
 /// <summary>
 /// **ตัวกัน "จำนวนระเบิด" ของบรรทัดสแกน + หลักฐานจากแถวบนกระดาษ** (pure · ตัวตัดสินตัวเดียวของ <c>OcrService.SanitizeVatSplitArtifacts</c> ข้อ 1b
@@ -469,16 +476,32 @@ public static class OcrLineQuantityGuard
         if (!m.Success || m.Index == 0) return null;
         var baseText = d[..m.Index].TrimEnd();
         if (baseText.Length == 0) return null;
-        if (m.Groups["cn"].Success) return new OcrLumpSumSuffix(baseText, m.Value.Trim(), Meter: false);
+        static decimal Num(string t) => decimal.TryParse(t.Replace(",", ""), NumberStyles.Number, CultureInfo.InvariantCulture, out var v) ? v : 0m;
+        if (m.Groups["cn"].Success) return new OcrLumpSumSuffix(baseText, m.Value.Trim(), Meter: false, Num(m.Groups["cn"].Value));
         var unitWord = m.Groups["u"].Value;
-        if (IsMeterUnit(unitWord, baseText)) return new OcrLumpSumSuffix(baseText, m.Value.Trim(), Meter: true);
+        var n = Num(m.Groups["n"].Value);
+        if (IsMeterUnit(unitWord, baseText)) return new OcrLumpSumSuffix(baseText, m.Value.Trim(), Meter: true, n, unitWord);
         var mapped = ThaiTextNormalizer.MapThaiPua(unitWord);
         var um = UnitRe.Match(mapped);
         var wholeWord = um.Success && mapped[um.Length..].Trim('.').Length == 0;
         var number = m.Groups["n"].Value;
         var specInDescription = Regex.IsMatch(baseText, @"(?<![\d.,])" + Regex.Escape(number) + @"(?![\d])", RegexOptions.CultureInvariant)
                                 || Regex.IsMatch(baseText, @"(?<![\d.,])" + Regex.Escape(number.Replace(",", "")) + @"(?![\d])", RegexOptions.CultureInvariant);
-        return wholeWord && !specInDescription ? new OcrLumpSumSuffix(baseText, m.Value.Trim(), Meter: false) : null;
+        return wholeWord && !specInDescription ? new OcrLumpSumSuffix(baseText, m.Value.Trim(), Meter: false, n, unitWord) : null;
+    }
+
+    /// <summary>
+    /// **ท้ายที่อ่านกลับได้ว่า "ไม่ใช่มิเตอร์" (<see cref="OcrLumpSumSuffix.Meter"/> = false) เป็นบรรทัดมิเตอร์จริงเมื่อเล่นด้วยบริบทของตัวตัดสินตอนเขียนไหม** · ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-2)
+    /// <para>ตัวเขียน (<see cref="QuantityDescription"/>) ใช้บริบทบรรทัดอย่างเดียว แต่ตัวตัดสิน (<see cref="MeterEvidence"/>) ใช้ป้ายบนกระดาษ + ชนิดผู้ขาย ⇒ บิลจริง
+    /// "ค่าพลังงาน" (ป้าย "จำนวนหน่วยที่ใช้") · "ค่า Ft" (ผู้ขาย กฟภ.) · "Water charge" (ผู้ขาย กปภ.) ถูกเขียนเป็น "(จำนวน N)" ⇒ ตัวอ่านกลับบอก Meter:false ⇒ รายงานซ่อมติดป้าย
+    /// "จำนวนสินค้าหาย" บนบิลที่ถูก · ตัวนี้เล่น <see cref="MeterEvidence"/> ซ้ำด้วยจำนวนในวงเล็บ + ยอด + ข้อความกระดาษ + ผู้ขายของสแกน (บริบทเดียวกับตอนเขียน) ·
+    /// ไม่มีข้อความกระดาษ/ผู้ขาย ⇒ ตัดสินจากบรรทัดอย่างเดียว (เหมือนเดิม)</para>
+    /// </summary>
+    public static bool WasMeterLine(OcrLumpSumSuffix suffix, decimal amount, OcrLinePaper? paper, OcrUtilityKind seller)
+    {
+        if (suffix.Meter) return true;
+        if (suffix.Quantity <= 0m || amount <= 0m) return false;
+        return MeterEvidence(paper ?? OcrLinePaper.Empty, suffix.Quantity, amount, suffix.Base, suffix.UnitWord, seller);
     }
 
     /// <summary>ราคาเก็บใน <c>DocumentLine.UnitPrice</c> ได้ตรงตัว (<c>HasPrecision(18,2)</c> — ห้ามขยาย · เจ้าของ 2026-10-16) — ราคาเกิน 2 ตำแหน่ง
@@ -526,6 +549,10 @@ public static class OcrLineQuantityGuard
     /// <summary>วลีของเศษปัดราคาต่อหน่วย — หมายเหตุ · ป้ายส่วนลดหน้ารีวิว (<see cref="OcrEtaxLineNormalizer.DiscountLabel"/>) · ไม่ใช่ส่วนลดบนกระดาษ</summary>
     public const string RoundingRemainderPhrase = "เศษจากการปัดราคาต่อหน่วย";
 
+    /// <summary>รหัสในหมายเหตุ <see cref="Tag"/> ของบรรทัดที่เศษปัดราคาต่อหน่วย<b>เกินเพดาน</b> (<see cref="RoundingRemainderWithinCap"/>) — ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-1):
+    /// เศษก้อนใหญ่ในช่องส่วนลดบรรทัดห้ามถึงเอกสารที่ออก ⇒ <see cref="OcrPostingReadiness.HumanApprovalBlockingMarkers"/> บล็อกการอนุมัติโดยคนด้วย</summary>
+    public const string RoundingOverCapCode = "OCR-ROUNDING-OVER-CAP";
+
     /// <summary>ราคา 2 ตำแหน่งที่ <see cref="Rounded"/> ตั้งได้จาก ยอด ÷ จำนวน — round ปกติ และปัดขึ้น 1 สตางค์ (ใช้จำผลของตัวเองตอนรันซ้ำบน ExtractedItemsJson)</summary>
     private static (decimal Nearest, decimal Up) RoundedPrices(decimal qty, decimal amt)
     {
@@ -547,12 +574,18 @@ public static class OcrLineQuantityGuard
         var gap = R2(qty * up) - amt;
         if (!RoundingRemainderWithinCap(gap, amt))
         {
-            var gross = R2(qty * nearest);
-            return new(OcrLineQuantityAction.RoundedUnitPrice, null, nearest, null,
-                $"{Tag} {qty:#,0.###} × {nearest:N2} = {gross:N2} ≠ ยอดบนกระดาษ {amt:N2} (ต่าง {gross - amt:+#,0.00;-#,0.00}) — ไม่มีราคาต่อหน่วย 2 ตำแหน่งที่คูณจำนวนแล้วได้ยอด "
+            // ★ ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-1): เดิม (ทีม 11) "ไม่แต่งส่วนลด" ⇒ เก็บ 100,000 × 0.01 แต่ยอด 500 — ขัด CLAUDE #2 A (ยอด = round(จำนวน × ราคา, 2)) และ
+            // เปิดแก้แล้วบันทึก ComputeLineAmounts คิดใหม่เป็น 1,000 เงียบ ๆ · DocumentLine.UnitPrice เก็บ 2 ตำแหน่ง (HasPrecision(18,2) — ห้ามขยาย) ⇒ รูปที่สอดคล้องรูปเดียวที่
+            // คงจำนวนกระดาษคือ ราคาปัด + เศษในช่องส่วนลดบรรทัด (ป้าย "เศษจากการปัดราคาต่อหน่วย" ผ่าน UnitPriceRoundingResidual — ไม่ใช่ส่วนลดบนกระดาษ) ·
+            // เศษเกินเพดาน = ราคาบนกระดาษเกิน 2 ตำแหน่งหรือจำนวนผิด ⇒ รหัส RoundingOverCapCode ⇒ ด่านอนุมัติ<b>โดยคน</b>ก็บล็อก (OcrPostingReadiness.EvaluateHumanApproval ·
+            // คำตัดสินข้อ 150: อนุมัติ = ออกเอกสาร + ลง GL) จนกว่าบรรทัดเลิกถือค่าที่ระบบตั้ง ⇒ ส่วนลดปลอมไม่มีทางถึงเอกสารที่ออก
+            var overGross = R2(qty * up);
+            return new(OcrLineQuantityAction.RoundedUnitPrice, null, up, gap,
+                $"{Tag} {RoundingOverCapCode}: {qty:#,0.###} × {up:N2} = {overGross:N2} ≠ ยอดบนกระดาษ {amt:N2} (ต่าง {gap:+#,0.00;-#,0.00}) — ไม่มีราคาต่อหน่วย 2 ตำแหน่งที่คูณจำนวนแล้วได้ยอด "
                 + $"และเศษเกินเพดานปัด ({OcrEtaxLineNormalizer.MaxVatStripResidual:0.00} บาท / {OcrEtaxLineNormalizer.MaxVatStripResidualShare * 100m:0.#}% ของบรรทัด) ⇒ "
-                + "ระบบคงจำนวนตามที่อ่านได้ ไม่แต่งส่วนลด (ยอดบรรทัด = ยอดบนกระดาษ) · ตรวจราคาต่อหน่วยบนกระดาษ (อาจเกิน 2 ตำแหน่ง) หรือจำนวน แล้วแก้บรรทัดก่อนอนุมัติ"
-                + Fingerprint(qty, nearest));
+                + $"ระบบคงจำนวนตามที่อ่านได้ · เก็บส่วนต่าง {gap:N2} ในช่องส่วนลดบรรทัดเป็น{RoundingRemainderPhrase} (ไม่ใช่ส่วนลดบนกระดาษ · ยอดบรรทัด = ยอดบนกระดาษ · บันทึกซ้ำไม่เลื่อน) · "
+                + "อนุมัติไม่ได้จนกว่าจะแก้บรรทัด: ตรวจราคาต่อหน่วยบนกระดาษ (เกิน 2 ตำแหน่ง ⇒ เปลี่ยนหน่วยนับเป็นแพ็ก เช่น ราคาต่อ 100 ชิ้น) หรือจำนวน"
+                + Fingerprint(qty, up));
         }
         var grossUp = R2(qty * up);
         return new(OcrLineQuantityAction.RoundedUnitPrice, null, up, gap > 0m ? gap : null,
@@ -641,6 +674,12 @@ public static class OcrLineQuantityGuard
                         $"{NoteTag} {QuantityInDescriptionPhrase} — ราคาต่อหน่วย {up:0.00##} เกิน 2 ตำแหน่ง ({storedLine}) ⇒ ระบบลง 1 × ยอดตามกระดาษ");
                 return Rounded(qty, amt, up, $"ราคาต่อหน่วย {up:0.00##} เกิน 2 ตำแหน่ง ({storedLine})");
             }
+            // ★ ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-1): สแกนรุ่น 9 ที่ persist บรรทัดเกินเพดานแบบไม่สอดคล้อง (4,272 × 4.54 ยอด 19,381.50 — ส่วนต่าง 13.38 อยู่ในเกณฑ์ ±2%
+            // จึงเคย Keep) ⇒ เส้นสร้างเอกสารรันซ้ำต้องได้รูปสอดคล้องของ Rounded · แคบ: ราคา = round(ยอด ÷ จำนวน, 2) ของตัวกันเอง + เศษเกินเพดาน (ใบที่ราคากระดาษ 33.33 × 3 = 100.00
+            // ส่วนต่างสตางค์เดียวไม่ถูกแตะ)
+            if (proven == 0m && qty != 1m && !qtyLooksLikeAmount && gap != 0m && !RoundingRemainderWithinCap(Math.Abs(gap), amt)
+                && RoundedPrices(qty, amt) is var legacy && (up == legacy.Nearest || up == legacy.Up))
+                return Rounded(qty, amt, up, $"{line} · ราคาต่อหน่วยคือ ยอด ÷ จำนวน ที่ปัด 2 ตำแหน่งแล้ว");
             return Keep;
         }
 
@@ -911,7 +950,7 @@ public static class OcrLineQuantityGuard
                 && decimal.TryParse(fp.Groups["q"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var q)
                 && decimal.TryParse(fp.Groups["p"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var p)
                 && allConsistent
-                && !lines.Any(l => Math.Abs(l.Quantity - q) < 0.0005m && Math.Abs(l.UnitPrice - p) <= 0.005m))
+                && !lines.Any(l => HoldsValue(l, q, p)))
             {
                 changed = true;
                 continue;
@@ -919,6 +958,33 @@ public static class OcrLineQuantityGuard
             kept.Add(raw);
         }
         return changed ? string.Join("\n", kept) : processingNotes;
+    }
+
+    /// <summary>บรรทัดนี้ยังถือ "ค่าที่ระบบตั้ง" ⟦q×p⟧ — ราคาเทียบ ±0.005 (เก็บ 2 ตำแหน่ง) · ตัวเทียบเดียวของ <see cref="LiveNotes"/> และ <see cref="SystemValueHeld"/></summary>
+    private static bool HoldsValue(OcrLiveLine l, decimal q, decimal p)
+        => Math.Abs(l.Quantity - q) < 0.0005m && Math.Abs(l.UnitPrice - p) <= 0.005m;
+
+    /// <summary>
+    /// **หมายเหตุหนึ่งข้อยังมีบรรทัดถือ "ค่าที่ระบบตั้ง" (<see cref="Fingerprint"/>) ของมันไหม** · ทีม OCR 12 (ด่านอนุมัติโดยคน — <see cref="OcrPostingReadiness.EvaluateHumanApproval"/>)
+    /// <para>ต่างจาก <see cref="LiveNotes"/> (ด่านอนุมัติเอง) ตรงที่<b>ไม่ถามว่าทุกบรรทัดลงตัว</b> — ด่านที่บล็อกคนต้องมีทางไปต่อเสมอ: ส่วนลดท้ายบิลที่เฉลี่ยแล้วไม่ลงตัวไม่ใช่เหตุให้ติดตลอดไป
+    /// (ความลงตัวเป็นคำเตือนของด่านอื่น) · <paramref name="description"/> ไม่ว่าง ⇒ นับเฉพาะบรรทัดที่คำอธิบายเดียวกัน (บรรทัดอื่นที่บังเอิญ 1 × ยอดเท่ากันไม่ทำให้ติด) ·
+    /// หมายเหตุไม่มีร่องรอย ⇒ true (ไม่รู้ = ยังไม่มีคนดู)</para>
+    /// </summary>
+    public static bool SystemValueHeld(string note, IReadOnlyList<OcrLiveLine> lines, string? description = null)
+    {
+        var fp = FingerprintRe.Match(note ?? "");
+        if (!fp.Success
+            || !decimal.TryParse(fp.Groups["q"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var q)
+            || !decimal.TryParse(fp.Groups["p"].Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var p))
+            return true;
+        var holding = lines.Where(l => HoldsValue(l, q, p)).ToList();
+        if (holding.Count == 0) return false;
+        var want = description?.Trim();
+        if (string.IsNullOrEmpty(want)) return true;
+        bool Same(OcrLiveLine l) => l.Description is not null && string.Equals(l.Description.Trim(), want, StringComparison.Ordinal);
+        if (holding.Any(Same)) return true;
+        // บรรทัดคำอธิบายเดียวกันยังอยู่แต่ไม่ถือค่าของระบบแล้ว (คนแก้จำนวน/ราคา) ⇒ ปลด · ไม่มีบรรทัดคำอธิบายนั้นเลย (ถูกแก้คำอธิบาย/ไม่รู้) ⇒ ตัดสินจากร่องรอยอย่างเดียว (ติดต่อ)
+        return !lines.Any(Same);
     }
 
     /// <summary>บรรทัดลงตัวตามสูตรเอกสาร (ส่วนลดบาทชนะ % · ราคารวม VAT ⇒ ถอด VAT) ภายใน 0.01 — ส่วนลดท้ายบิลที่เฉลี่ยตอนคำนวณทำให้ไม่ลงตัว ⇒ ไม่ปลด (ทิศปลอดภัย)</summary>

@@ -16,8 +16,9 @@ public record OcrLumpSumStockMovement(
     Guid MovementId, Guid ProductId, string? ProductCode, string? ProductName, decimal Quantity, decimal UnitCost,
     DateTime MovementDate, string? Reference, Guid? ScanId, Guid? DocumentId, string WayForward);
 
-/// <summary>คีย์ที่ติดท้ายของตัวกัน (alias · คีย์ตัวเรียน · ชื่อสินค้า) — <see cref="Proposed"/> = คีย์ที่ตัดท้ายแล้ว</summary>
-public record OcrLumpSumKey(Guid Id, string Current, string Proposed, DateTime CreatedAt, string? Owner, string? WayForward = null);
+/// <summary>คีย์ที่ติดท้ายของตัวกัน (alias · คีย์ตัวเรียน · ชื่อสินค้า) — <see cref="Proposed"/> = คีย์ที่ตัดท้ายแล้ว ·
+/// <see cref="Warning"/> = คำเตือนจากเซิร์ฟเวอร์ (ทีม OCR 12: ท้ายอาจเป็นขนาดแพ็กจริง — <c>OcrLumpSumRepair.KeyWarning</c>) · null = ไม่มี</summary>
+public record OcrLumpSumKey(Guid Id, string Current, string Proposed, DateTime CreatedAt, string? Owner, string? WayForward = null, string? Warning = null);
 
 /// <summary>รายงานอ่านอย่างเดียว (ไม่มีงานไหนซ่อมอัตโนมัติ)</summary>
 public record OcrLumpSumRepairReport(

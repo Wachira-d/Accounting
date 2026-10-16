@@ -27,7 +27,7 @@
             <a class="dropdown-item" href="/pages/fixed-assets.html" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700);text-decoration:none">🏢 ไปหน้าสินทรัพย์ถาวร</a>
             <div style="border-top:1px solid var(--gray-200);margin:4px 0"></div>
             <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Page.openStockTotalsCheck()">🔎 ตรวจยอดสต็อกรวม ↔ ผลรวมคลัง</a>
-            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Page.openOcrLumpSumCheck()">🔎 ตรวจผลสแกนที่จำนวนสินค้าหาย (รุ่น 6–8)</a>
+            <a class="dropdown-item" style="display:block;padding:10px 16px;cursor:pointer;font-size:14px;color:var(--gray-700)" onclick="Page.openOcrLumpSumCheck()">🔎 ตรวจผลสแกนที่จำนวนสินค้าหาย (รุ่น 6–10)</a>
           </div>
         </div>
         <button class="btn btn-primary" onclick="Page.openCreate()"
@@ -72,12 +72,12 @@
         </div>
       </div>
     </div>
-    <!-- ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-5): ผลสแกนรุ่น 6–8 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด — รายงานก่อน · ซ่อมเฉพาะส่วนที่ปลอดภัย (สแกน/alias/คีย์ตัวเรียน) · เอกสาร/สต็อก/ชื่อสินค้า = ทางไปต่อ -->
+    <!-- ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-5): ผลสแกนรุ่น 6–10 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด — รายงานก่อน · ซ่อมเฉพาะส่วนที่ปลอดภัย (สแกน/alias/คีย์ตัวเรียน) · เอกสาร/สต็อก/ชื่อสินค้า = ทางไปต่อ -->
     <div class="modal-overlay" id="ocrLumpSumModal">
       <div class="modal" style="max-width:960px">
-        <div class="modal-header"><h3 class="modal-title">ผลสแกนที่จำนวนสินค้าหาย (รุ่น 6–8)</h3><button class="modal-close" onclick="Layout.closeModal('ocrLumpSumModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title">ผลสแกนที่จำนวนสินค้าหาย (รุ่น 6–10)</h3><button class="modal-close" onclick="Layout.closeModal('ocrLumpSumModal')">&times;</button></div>
         <div class="modal-body">
-          <p style="font-size:13px;color:#475569;margin-bottom:8px">ตัวแกะรุ่น 6–8 ลงบางบรรทัดสินค้าเป็น “1 × ยอด” และย้ายจำนวนไปไว้ในวงเล็บท้ายรายการ · การซ่อมติดป้ายให้สแกนต้องแกะใหม่ (ไม่ใช้โควต้า) และตัดวงเล็บออกจาก alias/คีย์ตัวเรียน · เอกสารที่ออกแล้ว สต็อก และชื่อสินค้า ระบบไม่แก้เอง — ดูทางไปต่อในแต่ละแถว</p>
+          <p style="font-size:13px;color:#475569;margin-bottom:8px">ตัวแกะรุ่น 6–10 ลงบางบรรทัดสินค้าเป็น “1 × ยอด” และย้ายจำนวนไปไว้ในวงเล็บท้ายรายการ · การซ่อมติดป้ายให้สแกนต้องแกะใหม่ (ไม่ใช้โควต้า) และตัดวงเล็บออกจาก alias/คีย์ตัวเรียน · เอกสารที่ออกแล้ว สต็อก และชื่อสินค้า ระบบไม่แก้เอง — ดูทางไปต่อในแต่ละแถว</p>
           <div id="ocrLumpSumBody" style="max-height:480px;overflow:auto"></div>
         </div>
         <div class="modal-footer">
@@ -603,7 +603,7 @@
           await this.load();
         } catch(e) { Layout.toast(e.message,'error'); }
       },
-      // ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-5): ผลสแกนรุ่น 6–8 — ข้อความ/ทางไปต่อ/ตัวตัดสินมาจากเซิร์ฟเวอร์ (Helpers/OcrLumpSumRepair) · หน้าแค่แสดงและส่งแถวที่เลือก
+      // ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-5): ผลสแกนรุ่น 6–10 — ข้อความ/ทางไปต่อ/ตัวตัดสินมาจากเซิร์ฟเวอร์ (Helpers/OcrLumpSumRepair) · หน้าแค่แสดงและส่งแถวที่เลือก
       _ocrLumpSum: null,
       async openOcrLumpSumCheck() {
         const api=Layout.api(); if(!api)return;
@@ -624,9 +624,12 @@
           const o = outBy[kind + ':' + id];
           return o ? (o.repaired ? `✅ ${esc(o.after || 'ซ่อมแล้ว')}` : `⏭️ ${esc(o.reason || '')}`) : esc(fallback || '');
         };
+        // คำเตือนจากเซิร์ฟเวอร์ (OcrLumpSumRepair.KeyWarning) — หน้าแสดงอย่างเดียว
+        const warn = (a) => a.warning ? `<div style="color:#b45309">⚠️ ${esc(a.warning)}</div>` : '';
         const box = (kind, id, disabled) => {
           const o = outBy[kind + ':' + id];
-          return `<input type="checkbox" data-ols-kind="${kind}" data-ols-id="${esc(id)}" ${disabled || (o && o.repaired) ? 'disabled' : 'checked'}>`;
+          // ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-3): ทุกช่องเริ่มไม่ติ๊ก — ผู้ใช้เลือกเองทีละแถว (เดิมติ๊กไว้ก่อน ⇒ คลิกเดียวเปลี่ยนชื่อ alias แพ็กจริง)
+          return `<input type="checkbox" data-ols-kind="${kind}" data-ols-id="${esc(id)}" ${disabled || (o && o.repaired) ? 'disabled' : ''}>`;
         };
         const scans = r.scans || [], docs = r.documents || [], moves = r.stockMovements || [];
         const aliases = r.aliases || [], learner = r.learnerKeys || [], products = r.products || [];
@@ -640,9 +643,9 @@
                   + `<td style="font-size:12px">${(s.lines || []).map(l => `${l.lineNo}. ${esc(l.description || '')}`).join('<br>')}</td>`
                   + `<td style="font-size:12px">${note('scan', s.scanId, s.alreadyMarked ? 'ติดป้ายให้แกะใหม่แล้ว' : '')}</td></tr>`))
             + sec('alias สินค้าที่ติดจำนวน', '<th></th><th>สินค้า</th><th>alias ตอนนี้</th><th>หลังซ่อม</th><th>หมายเหตุ</th>',
-                aliases.map(a => `<tr><td>${box('alias', a.id)}</td><td>${esc(a.owner || '')}</td><td>${esc(a.current)}</td><td>${esc(a.proposed)}</td><td style="font-size:12px">${note('alias', a.id)}</td></tr>`))
+                aliases.map(a => `<tr><td>${box('alias', a.id)}</td><td>${esc(a.owner || '')}</td><td>${esc(a.current)}</td><td>${esc(a.proposed)}</td><td style="font-size:12px">${warn(a)}${note('alias', a.id)}</td></tr>`))
             + sec('คีย์ตัวเรียนผังบัญชีที่ติดจำนวน', '<th></th><th>ผู้ขาย → ผัง</th><th>คีย์ตอนนี้</th><th>หลังซ่อม</th><th>หมายเหตุ</th>',
-                learner.map(a => `<tr><td>${box('learner', a.id)}</td><td>${esc(a.owner || '')}</td><td>${esc(a.current)}</td><td>${esc(a.proposed)}</td><td style="font-size:12px">${note('learner', a.id)}</td></tr>`))
+                learner.map(a => `<tr><td>${box('learner', a.id)}</td><td>${esc(a.owner || '')}</td><td>${esc(a.current)}</td><td>${esc(a.proposed)}</td><td style="font-size:12px">${warn(a)}${note('learner', a.id)}</td></tr>`))
             + sec('เอกสารจากสแกนเหล่านี้ (ระบบไม่แก้เอง)', '<th>เลขที่</th><th>ชนิด</th><th>สถานะ</th><th>ทางไปต่อ</th>',
                 docs.map(d => `<tr><td>${esc(d.documentNumber || '')}</td><td>${esc(d.documentType)}</td><td>${esc(d.status)}</td><td style="font-size:12px">${esc(d.wayForward)}</td></tr>`))
             + sec('การเคลื่อนไหวสต็อก (ระบบไม่แก้เอง)', '<th>สินค้า</th><th class="text-right">จำนวน</th><th class="text-right">ทุน/หน่วย</th><th>อ้างอิง</th><th>ทางไปต่อ</th>',

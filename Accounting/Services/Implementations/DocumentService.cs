@@ -6368,6 +6368,11 @@ public partial class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
 
+        // ทีม OCR 12 (ฝ่ายค้านรอบ 3 P1-4/P2-1 · คำตัดสินข้อ 150): เอกสารจากสแกนที่บรรทัดยังถือค่าที่ระบบรู้ว่าผิด (ผลแกะรุ่น 6–8 ลงสินค้าเป็น 1 × ยอด ·
+        // เศษปัดราคาต่อหน่วยเกินเพดานในช่องส่วนลด) ⇒ บล็อกแม้คนกด (การอนุมัติ = ออกเลข + ลง GL) พร้อมทางไปต่อ · ก่อนทุกขั้นที่บันทึก · ทุกทางเข้าเดินผ่านเมธอดนี้
+        if (await Accounting.Services.Implementations.Ocr.OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, doc) is string ocrLineBlock)
+            throw new BusinessRuleException(ocrLineBlock, Accounting.Helpers.OcrPostingReadiness.HumanApprovalRuleCode);
+
         await EnsureCashSaleStockPolicyAllowsAsync(companyId, doc);   // นโยบาย Block (ERP_REVIEW A-06) — ก่อนออกเลข
 
         // รอบ 193 ฝ่ายค้านรอบสี่ R4-1: ลายเซ็นลูกค้าที่เซ็นกับ "เนื้อหาก่อนแก้" (hash ไม่ตรง / ไม่มี hash) ไม่นับ — ตัดสินด้วย

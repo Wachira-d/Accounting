@@ -25,31 +25,40 @@ public sealed class OcrLumpSumRepairService
 
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
-    /// <summary>บรรทัดที่เสียของสแกนหนึ่งใบ (JSON เสีย = ไม่มีบรรทัด — สแกนนั้นไม่อยู่ในรายงาน และ log ไว้)</summary>
-    private List<OcrLumpSumLine> PollutedLines(Guid scanId, string? itemsJson)
+    /// <summary>บรรทัดของสแกนหนึ่งใบ (JSON เสีย = ไม่มีบรรทัด — สแกนนั้นไม่อยู่ในรายงาน และ log ไว้)</summary>
+    private List<OcrLineItemDto> ScanItems(Guid scanId, string? itemsJson)
     {
-        var result = new List<OcrLumpSumLine>();
-        if (string.IsNullOrWhiteSpace(itemsJson)) return result;
-        List<OcrLineItemDto>? items;
-        try { items = JsonSerializer.Deserialize<List<OcrLineItemDto>>(itemsJson, JsonOpts); }
+        if (string.IsNullOrWhiteSpace(itemsJson)) return new();
+        try { return JsonSerializer.Deserialize<List<OcrLineItemDto>>(itemsJson, JsonOpts) ?? new(); }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "รายงานซ่อมผลแกะรุ่น 6–8: ExtractedItemsJson ของสแกน {ScanId} อ่านไม่ได้ — ข้าม", scanId);
-            return result;
+            _logger.LogWarning(ex, "รายงานซ่อมผลแกะรุ่น 6–10: ExtractedItemsJson ของสแกน {ScanId} อ่านไม่ได้ — ข้าม", scanId);
+            return new();
         }
-        if (items == null) return result;
+    }
+
+    /// <summary>บรรทัดที่เสียของสแกนหนึ่งใบ — ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-2): ตัดสินด้วยบริบทเดียวกับตัวตัดสินตอนเขียน (ข้อความกระดาษ + ชนิดผู้ขายของสแกน) ⇒
+    /// บิลมิเตอร์จริงที่ตัวเขียนเขียน "(จำนวน N)" (PEA ค่าพลังงาน · ค่า Ft · Water charge) ไม่ถูกติดป้าย "จำนวนสินค้าหาย"</summary>
+    private static List<OcrLumpSumLine> PollutedLines(OcrScanResult scan, List<OcrLineItemDto> items)
+    {
+        var result = new List<OcrLumpSumLine>();
+        if (items.Count == 0) return result;
+        var paper = OcrLineQuantityGuard.Read(scan.RawTextContent);
+        var seller = OcrUtilityVendor.KindOf(scan.ExtractedVendorTaxId, scan.ExtractedVendorName);
         for (var i = 0; i < items.Count; i++)
         {
             var it = items[i];
-            if (!OcrLumpSumRepair.IsPollutedLine(it.Description, it.Quantity, it.Unit)) continue;
+            if (!OcrLumpSumRepair.IsPollutedLine(it.Description, it.Quantity, it.Unit, it.Amount ?? 0m, paper, seller)) continue;
             result.Add(new OcrLumpSumLine(i + 1, it.Description, it.Amount ?? 0m,
                 OcrLineQuantityGuard.LumpSumSuffix(it.Description, it.Quantity, it.Unit)?.Suffix));
         }
         return result;
     }
 
-    private async Task<List<(OcrScanResult Scan, List<OcrLumpSumLine> Lines)>> LoadPollutedScansAsync(
-        Guid companyId, List<Guid>? onlyIds, bool track, CancellationToken ct)
+    private sealed record AffectedScan(OcrScanResult Scan, List<OcrLumpSumLine> Lines, List<string> SuffixedDescriptions);
+
+    /// <summary>สแกนรุ่น 6–10 ทุกใบของบริษัท + บรรทัดที่เสีย + คำอธิบายทุกบรรทัดที่ติดท้ายของตัวกัน (รวมมิเตอร์ — ที่มาของ alias/คีย์ตัวเรียนที่ติดท้าย)</summary>
+    private async Task<List<AffectedScan>> LoadAffectedScansAsync(Guid companyId, List<Guid>? onlyIds, bool track, CancellationToken ct)
     {
         var versions = OcrLumpSumRepair.AffectedVersions.ToList();
         var q = _db.OcrScanResults.Where(s => s.CompanyId == companyId && !s.IsDeleted
@@ -57,7 +66,50 @@ public sealed class OcrLumpSumRepairService
         if (onlyIds is { } ids) q = q.Where(s => ids.Contains(s.Id));
         if (!track) q = q.AsNoTracking();
         var scans = await q.OrderBy(s => s.CreatedAt).ToListAsync(ct);
-        return scans.Select(s => (s, PollutedLines(s.Id, s.ExtractedItemsJson))).Where(x => x.Item2.Count > 0).ToList();
+        return scans.Select(s =>
+        {
+            var items = ScanItems(s.Id, s.ExtractedItemsJson);
+            var suffixed = items.Where(it => OcrLineQuantityGuard.LumpSumSuffix(it.Description, it.Quantity, it.Unit) != null)
+                .Select(it => it.Description!.Trim()).ToList();
+            return new AffectedScan(s, PollutedLines(s, items), suffixed);
+        }).ToList();
+    }
+
+    private async Task<List<(OcrScanResult Scan, List<OcrLumpSumLine> Lines)>> LoadPollutedScansAsync(
+        Guid companyId, List<Guid>? onlyIds, bool track, CancellationToken ct)
+        => (await LoadAffectedScansAsync(companyId, onlyIds, track, ct)).Where(a => a.Lines.Count > 0).Select(a => (a.Scan, a.Lines)).ToList();
+
+    /// <summary>คำอธิบายบรรทัดสแกนรุ่น 6–10 ที่ตัวกันติดท้าย (ที่มาของคีย์) — ใช้ทั้งรายงานและตอนซ่อม (ข้อเสนอเดียวกันสองฝั่ง)</summary>
+    private async Task<List<string>> GuardSuffixedDescriptionsAsync(Guid companyId, CancellationToken ct)
+        => (await LoadAffectedScansAsync(companyId, null, track: false, ct)).SelectMany(a => a.SuffixedDescriptions).Distinct().ToList();
+
+    /// <summary>ข้อเสนอคีย์ตัวเรียนหลังซ่อม — ท้ายครบ ⇒ <see cref="OcrLumpSumRepair.CleanKey"/> · ถูกตัด 50 ตัวจนท้ายขาด ⇒ ที่มาจากบรรทัดสแกน
+    /// (<see cref="OcrLumpSumRepair.CleanTruncatedLearnerKey"/> · ฝ่ายค้านรอบ 3 P2-3) · ไม่รู้ = null</summary>
+    private static string? LearnerProposal(string keyword, IReadOnlyList<string> suffixed)
+        => OcrLumpSumRepair.CleanKey(keyword) is string c ? OcrLumpSumRepair.LearnerKey(c)
+           : OcrLumpSumRepair.CleanTruncatedLearnerKey(keyword, suffixed);
+
+    /// <summary>
+    /// **ด่านอนุมัติของเอกสารที่สร้างจากสแกน** (ทีม OCR 12 · ฝ่ายค้านรอบ 3 P1-4) — ผู้เรียกตัวเดียว <c>DocumentService.ApproveDocumentAsync</c> (ทุกทางเข้า) ·
+    /// อ่านหมายเหตุของทุกสแกนที่สร้างเอกสารนี้ (<c>CreatedDocumentId</c> · กรอง <c>CompanyId</c>) แล้วถามตัวตัดสินเดียว
+    /// <see cref="OcrPostingReadiness.EvaluateHumanApproval"/> บนบรรทัดเอกสาร<b>ตอนนี้</b> · ไม่ใช่เอกสารจากสแกน/สแกนไม่มีหมายเหตุที่บล็อก ⇒ null (อนุมัติตามเดิม)
+    /// </summary>
+    public static async Task<string?> ApprovalBlockAsync(AccountingDbContext db, Guid companyId, Document doc, CancellationToken ct = default)
+    {
+        var m0 = OcrPostingReadiness.HumanApprovalBlockingMarkers[0].Marker;
+        var m1 = OcrPostingReadiness.HumanApprovalBlockingMarkers[1].Marker;
+        var notes = await db.OcrScanResults.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.CreatedDocumentId == doc.Id && r.ProcessingNotes != null
+                && (r.ProcessingNotes.Contains(m0) || r.ProcessingNotes.Contains(m1)))
+            .Select(r => r.ProcessingNotes)
+            .ToListAsync(ct);
+        if (notes.Count == 0) return null;
+        var lines = doc.Lines.Where(l => !l.IsDeleted)
+            .Select(l => new OcrLiveLine(l.Quantity, l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount, l.VatRate) { Description = l.Description })
+            .ToList();
+        foreach (var n in notes)
+            if (OcrPostingReadiness.EvaluateHumanApproval(n, lines) is { CanAutoApprove: false } v) return v.Reason;
+        return null;
     }
 
     /// <summary>คีย์ alias ที่ติดท้ายของตัวกัน (สร้างหลังเวลาที่ท้ายเริ่มถูกเขียน)</summary>
@@ -69,16 +121,13 @@ public sealed class OcrLumpSumRepairService
         => _db.OcrCategoryMappings.Where(m => m.CompanyId == companyId && !m.IsDeleted
             && m.CreatedAt >= OcrLumpSumRepair.PollutionStartUtc && m.DescriptionKeyword.Contains("("));
 
-    /// <summary>คีย์ตัวเรียนเก็บตัวพิมพ์เล็ก 50 ตัวอักษร (<c>ExpenseCategoryLearner.NormalizeDescription</c>) — คีย์ที่ตัดท้ายต้องรูปเดียวกัน</summary>
-    private static string LearnerKey(string text)
-    {
-        var lowered = text.Trim().ToLowerInvariant();
-        return lowered.Length > 50 ? lowered[..50] : lowered;
-    }
-
     public async Task<OcrLumpSumRepairReport> FindAsync(Guid companyId, CancellationToken ct = default)
     {
-        var polluted = await LoadPollutedScansAsync(companyId, null, track: false, ct);
+        var affected = await LoadAffectedScansAsync(companyId, null, track: false, ct);
+        var polluted = affected.Where(a => a.Lines.Count > 0).Select(a => (a.Scan, a.Lines)).ToList();
+        var suffixed = affected.SelectMany(a => a.SuffixedDescriptions).Distinct().ToList();
+        var guardNorm = suffixed.Select(ProductMatcher.Normalize).ToHashSet();
+        var guardLearner = suffixed.Select(OcrLumpSumRepair.LearnerKey).ToHashSet();
         var scans = polluted.Select(p => new OcrLumpSumScan(p.Scan.Id, p.Scan.OriginalFileName, p.Scan.ExtractionVersion, p.Scan.CreatedAt,
             p.Scan.ExtractedDocumentNumber, p.Lines, p.Scan.CreatedDocumentId, p.Scan.StockImportedAt.HasValue,
             OcrLumpSumRepair.AlreadyMarked(p.Scan.ProcessingNotes))).ToList();
@@ -120,16 +169,19 @@ public sealed class OcrLumpSumRepairService
         }
 
         var aliasRows = await AliasCandidates(companyId).AsNoTracking()
-            .Select(a => new { a.Id, a.AliasName, a.CreatedAt, a.Product.Code }).ToListAsync(ct);
+            .Select(a => new { a.Id, a.AliasName, a.NormalizedName, a.CreatedAt, a.Product.Code }).ToListAsync(ct);
+        // ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-3): "(12 ขวด)" อาจเป็นขนาดแพ็กจริง ⇒ คำเตือนจากเซิร์ฟเวอร์ เว้นแต่ alias ตรงกับบรรทัดที่ตัวกันรุ่น 6–10 เขียนเอง (ที่มา)
         var aliases = aliasRows.Select(a => (a, clean: OcrLumpSumRepair.CleanKey(a.AliasName)))
             .Where(x => x.clean != null)
-            .Select(x => new OcrLumpSumKey(x.a.Id, x.a.AliasName, x.clean!, x.a.CreatedAt, x.a.Code)).ToList();
+            .Select(x => new OcrLumpSumKey(x.a.Id, x.a.AliasName, x.clean!, x.a.CreatedAt, x.a.Code,
+                Warning: OcrLumpSumRepair.KeyWarning(x.a.AliasName, guardNorm.Contains(x.a.NormalizedName)))).ToList();
 
         var learnerRows = await LearnerCandidates(companyId).AsNoTracking()
             .Select(m => new { m.Id, m.DescriptionKeyword, m.CreatedAt, m.VendorKey, m.AccountCode }).ToListAsync(ct);
-        var learner = learnerRows.Select(m => (m, clean: OcrLumpSumRepair.CleanKey(m.DescriptionKeyword)))
+        var learner = learnerRows.Select(m => (m, clean: LearnerProposal(m.DescriptionKeyword, suffixed)))
             .Where(x => x.clean != null)
-            .Select(x => new OcrLumpSumKey(x.m.Id, x.m.DescriptionKeyword, LearnerKey(x.clean!), x.m.CreatedAt, $"{x.m.VendorKey} → {x.m.AccountCode}"))
+            .Select(x => new OcrLumpSumKey(x.m.Id, x.m.DescriptionKeyword, x.clean!, x.m.CreatedAt, $"{x.m.VendorKey} → {x.m.AccountCode}",
+                Warning: OcrLumpSumRepair.KeyWarning(x.m.DescriptionKeyword, guardLearner.Contains(x.m.DescriptionKeyword))))
             .ToList();
 
         var productRows = await _db.Products.AsNoTracking()
@@ -149,7 +201,7 @@ public sealed class OcrLumpSumRepairService
         var aliasIds = (request.AliasIds ?? new()).Distinct().ToList();
         var learnerIds = (request.LearnerKeyIds ?? new()).Distinct().ToList();
         if (scanIds.Count + aliasIds.Count + learnerIds.Count == 0)
-            throw new BusinessRuleException("ยังไม่ได้เลือกแถวที่จะซ่อม — เปิดรายงานตรวจผลแกะรุ่น 6–8 แล้วเลือกแถวก่อน", OcrLumpSumRepair.RuleCode);
+            throw new BusinessRuleException("ยังไม่ได้เลือกแถวที่จะซ่อม — เปิดรายงานตรวจผลแกะรุ่น 6–10 แล้วเลือกแถวก่อน", OcrLumpSumRepair.RuleCode);
 
         await using var tx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync(ct) : null;
         // หนึ่งการซ่อมต่อบริษัทในเวลาเดียวกัน (สองแอดมินกดพร้อมกัน = หมายเหตุ/audit ซ้ำ)
@@ -166,7 +218,7 @@ public sealed class OcrLumpSumRepairService
             {
                 if (!polluted.TryGetValue(id, out var p))
                 {
-                    outcomes.Add(new("scan", id, false, null, null, "ไม่พบสแกนรุ่น 6–8 ที่มีบรรทัดต้องซ่อมในบริษัทนี้ (อาจแกะใหม่/แก้แล้ว)"));
+                    outcomes.Add(new("scan", id, false, null, null, "ไม่พบสแกนรุ่น 6–10 ที่มีบรรทัดต้องซ่อมในบริษัทนี้ (อาจแกะใหม่/แก้แล้ว)"));
                     continue;
                 }
                 if (OcrLumpSumRepair.AlreadyMarked(p.Scan.ProcessingNotes))
@@ -228,16 +280,16 @@ public sealed class OcrLumpSumRepairService
         if (learnerIds.Count > 0)
         {
             var rows = await LearnerCandidates(companyId).Where(m => learnerIds.Contains(m.Id)).ToListAsync(ct);
+            var suffixed = await GuardSuffixedDescriptionsAsync(companyId, ct);
             foreach (var id in learnerIds)
             {
                 var m = rows.FirstOrDefault(r => r.Id == id);
-                var clean = m is null ? null : OcrLumpSumRepair.CleanKey(m.DescriptionKeyword);
-                if (m is null || clean is null)
+                var key = m is null ? null : LearnerProposal(m.DescriptionKeyword, suffixed);
+                if (m is null || key is null)
                 {
                     outcomes.Add(new("learner", id, false, m?.DescriptionKeyword, null, "ไม่พบคีย์ตัวเรียนที่ติดท้ายจำนวนในบริษัทนี้"));
                     continue;
                 }
-                var key = LearnerKey(clean);
                 var before = m.DescriptionKeyword;
                 var twin = await _db.OcrCategoryMappings.FirstOrDefaultAsync(x => x.CompanyId == companyId && !x.IsDeleted && x.Id != m.Id
                     && x.VendorKey == m.VendorKey && x.DescriptionKeyword == key && x.AccountCode == m.AccountCode, ct);
@@ -260,7 +312,7 @@ public sealed class OcrLumpSumRepairService
         await _db.SaveChangesAsync(ct);
         if (tx != null) await tx.CommitAsync(ct);
         var repaired = outcomes.Count(o => o.Repaired);
-        _logger.LogInformation("ซ่อมผลแกะรุ่น 6–8 บริษัท {Company}: ซ่อม {Repaired} · ข้าม {Skipped} โดย {Actor}",
+        _logger.LogInformation("ซ่อมผลแกะรุ่น 6–10 บริษัท {Company}: ซ่อม {Repaired} · ข้าม {Skipped} โดย {Actor}",
             companyId, repaired, outcomes.Count - repaired, actor);
         return new OcrLumpSumRepairResult(repaired, outcomes.Count - repaired, outcomes);
     }

@@ -171,32 +171,37 @@ public class OcrQuantityGuardOcr11Tests
     [Theory]
     [InlineData(100000, 500.00, "น็อต M6", "ตัว", 0.01)]
     [InlineData(4272, 19381.50, "สติกเกอร์ฉลาก", "แผ่น", 4.54)]
-    public void เศษเกินเพดาน_คงจำนวน_ราคาปัด_ไม่แต่งส่วนลด_บล็อก_รันซ้ำได้คำตอบเดิม(int qty, double amount, string desc, string unit, double price)
+    public void เศษเกินเพดาน_คงจำนวน_บรรทัดสอดคล้อง_ป้ายเศษปัด_บล็อกแม้คนอนุมัติ_รันซ้ำไม่แตะ(int qty, double amount, string desc, string unit, double price)
     {
+        // ★ ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-1 · ตั้งใจพลิกจากทีม 11): เดิมเก็บ 100,000 × 0.01 ยอด 500 (ไม่สอดคล้อง — CLAUDE #2 A) ⇒ Update คิดใหม่เป็น 1,000 เงียบ ๆ ·
+        // UnitPrice เก็บ 2 ตำแหน่ง ⇒ ราคาปัด + เศษในช่องส่วนลด (ป้ายเศษปัด) + รหัสเกินเพดาน ⇒ ด่านอนุมัติโดยคนบล็อกจนแก้บรรทัด
         var d = OcrLineQuantityGuard.Decide(qty, null, (decimal)amount, null, Paper(null), desc, unit);
         Assert.Equal(OcrLineQuantityAction.RoundedUnitPrice, d.Action);
         Assert.Null(d.Quantity);
         Assert.Equal((decimal)price, d.UnitPrice);
-        Assert.Null(d.LineDiscount);                   // เดิม "ส่วนลด" 500.00 (50% ของบรรทัด) / 13.38
+        var disc = Assert.NotNull(d.LineDiscount);
+        Assert.Equal((decimal)amount, Math.Round(qty * (decimal)price, 2, MidpointRounding.AwayFromZero) - disc);   // round(จำนวน × ราคา) − ส่วนลด = ยอดกระดาษ
         Assert.True(d.Blocking);
-        Assert.Contains("ไม่แต่งส่วนลด", d.Note);
-        Assert.DoesNotContain(OcrLineQuantityGuard.RoundingRemainderPhrase, d.Note);
+        Assert.StartsWith(OcrLineQuantityGuard.Tag + " " + OcrLineQuantityGuard.RoundingOverCapCode, d.Note);
+        Assert.Contains(OcrLineQuantityGuard.RoundingRemainderPhrase, d.Note);
         Assert.Contains(OcrLineQuantityGuard.Fingerprint(qty, (decimal)price), d.Note);
 
-        // รันซ้ำบน ExtractedItemsJson (สร้างเอกสาร/พรีวิว/ดึงรายการซ้ำ): ห้ามหารจำนวนใหม่ (เดิม 500 ÷ 0.01 = 50,000) · หมายเหตุเดิมทุกตัวอักษร หรือไม่แตะ
-        var again = OcrLineQuantityGuard.Decide(qty, d.UnitPrice, (decimal)amount, null, Paper(null), desc, unit);
-        Assert.Null(again.Quantity);
-        Assert.True(again.Action is OcrLineQuantityAction.Keep or OcrLineQuantityAction.RoundedUnitPrice);
-        if (again.Action == OcrLineQuantityAction.RoundedUnitPrice)
-        {
-            Assert.Equal(d.Note, again.Note);
-            Assert.Equal(d.UnitPrice, again.UnitPrice);
-            Assert.Null(again.LineDiscount);
-        }
-        // ตรวจสด: บรรทัดเอกสารยังถือค่าของระบบและไม่ลงตัว ⇒ บล็อกต่อ
-        var live = OcrLineQuantityGuard.LiveNotes(d.Note,
-            new[] { new OcrLiveLine(qty, (decimal)price, 0m, 0m, (decimal)amount, 0m) }, false, true);
-        Assert.Equal(d.Note, live);
+        // รันซ้ำบน ExtractedItemsJson (สร้างเอกสาร/พรีวิว/ดึงรายการซ้ำ): บรรทัดสอดคล้องแล้ว ⇒ ไม่แตะ (ห้ามหารจำนวนใหม่ — เดิม 500 ÷ 0.01 = 50,000)
+        var again = OcrLineQuantityGuard.Decide(qty, d.UnitPrice, (decimal)amount, d.LineDiscount, Paper(null), desc, unit);
+        Assert.Equal(OcrLineQuantityAction.Keep, again.Action);
+        // สแกนรุ่น 9 ที่ persist บรรทัดไม่สอดคล้อง (ไม่มีส่วนลด) ⇒ เส้นสร้างเอกสารรันซ้ำได้รูปสอดคล้อง
+        var legacy = OcrLineQuantityGuard.Decide(qty, d.UnitPrice, (decimal)amount, null, Paper(null), desc, unit);
+        Assert.Equal((d.UnitPrice, d.LineDiscount, d.Note), (legacy.UnitPrice, legacy.LineDiscount, legacy.Note));
+
+        // ด่านอนุมัติเอง: บรรทัดยังถือค่าของระบบ ⇒ บล็อกต่อ · ด่านอนุมัติโดยคน: บล็อก + ทางไปต่อ
+        var systemLine = new OcrLiveLine(qty, (decimal)price, 0m, disc, (decimal)amount, 0m);
+        Assert.Equal(d.Note, OcrLineQuantityGuard.LiveNotes(d.Note, new[] { systemLine }, false, true));
+        var human = OcrPostingReadiness.EvaluateHumanApproval(d.Note, new[] { systemLine });
+        Assert.False(human.CanAutoApprove);
+        Assert.Contains("แกะใหม่", human.Reason);
+        // ทิศตรงข้าม: คนเปลี่ยนเป็นหน่วยแพ็ก/ราคาจริง ⇒ ปลด
+        var fixedLine = new OcrLiveLine(qty / 100m, Math.Round((decimal)amount / (qty / 100m), 2, MidpointRounding.AwayFromZero), 0m, 0m, (decimal)amount, 0m);
+        Assert.True(OcrPostingReadiness.EvaluateHumanApproval(d.Note, new[] { fixedLine }).CanAutoApprove);
     }
 
     [Fact]

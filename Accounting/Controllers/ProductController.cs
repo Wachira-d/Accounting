@@ -61,7 +61,7 @@ public class ProductController : ControllerBase
             $"ซ่อมแล้ว {result.RepairedCount} รายการ · ข้าม {result.SkippedCount} รายการ"));
     }
 
-    // ===== ตรวจ/ซ่อมผลแกะรุ่น 6–8 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด (ทีม OCR 11 · ฝ่ายค้าน OCR 9 P1-5 · CLAUDE F2 ข้อ 9) =====
+    // ===== ตรวจ/ซ่อมผลแกะรุ่น 6–10 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด (ทีม OCR 11 · ฝ่ายค้าน OCR 9 P1-5 · CLAUDE F2 ข้อ 9) =====
     // รูปเดียวกับตรวจยอดสต็อกรวม: รายงานก่อน (อ่านอย่างเดียว) → ซ่อมเฉพาะส่วนที่ปลอดภัยที่ผู้ใช้เลือก (สแกน · alias · คีย์ตัวเรียน) + audit chain ·
     // เอกสารที่ออกแล้ว/สต็อก/ชื่อสินค้า = รายงานพร้อมทางไปต่อ ระบบไม่แก้เอง · ไม่มีงานไหนเรียกอัตโนมัติ
 
@@ -74,7 +74,7 @@ public class ProductController : ControllerBase
         var any = report.Scans.Count + report.Aliases.Count + report.LearnerKeys.Count + report.Products.Count > 0;
         return Ok(new ApiResponse<Models.DTOs.Ocr.OcrLumpSumRepairReport>(true, report, any
             ? $"พบสแกน {report.Scans.Count} ใบ · alias {report.Aliases.Count} · คีย์ตัวเรียน {report.LearnerKeys.Count} · สินค้า {report.Products.Count} ที่ต้องตรวจ"
-            : "ไม่พบผลสแกนรุ่น 6–8 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด"));
+            : "ไม่พบผลสแกนรุ่น 6–10 ที่ลงบรรทัดสินค้าเป็น 1 × ยอด"));
     }
 
     [HttpPost("inventory/ocr-lumpsum-check/repair")]

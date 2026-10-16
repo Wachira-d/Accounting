@@ -62,6 +62,49 @@ public static class OcrPostingReadiness
         (OcrTotalDecomposer.PayNotTotalTag, "ยอดที่ชำระจริงไม่เท่ายอดตามใบกำกับ (ส่วนลด/ค่าส่งหลังยอดรวม) และระบบยังตรวจส่วนต่างไม่ได้ — ตรวจยอดกับกระดาษ แล้วอนุมัติเองที่หน้าเอกสาร (ใบสำคัญจ่าย: ใส่ \"ยอดชำระจริง\" + บรรทัดปรับที่ 'ปรับปรุงรายการบัญชี' ก่อน)"),
     };
 
+    /// <summary>
+    /// **หมายเหตุที่บล็อกแม้คนกดอนุมัติเอง** (ทีม OCR 12 · ฝ่ายค้านรอบ 3 P1-4/P2-1 · คำตัดสินข้อ 150: บล็อกได้เฉพาะตอนออกเอกสาร/ลง GL — การอนุมัติคือจุดนั้น)
+    /// <para><see cref="BlockingTags"/> หยุดเฉพาะ<b>การอนุมัติเอง</b> (คนยังตัดสินได้) — สองข้อนี้ต่างเพราะค่าบนบรรทัดเป็น<b>ค่าที่ระบบรู้ว่าผิด</b> ไม่ใช่ "ยังไม่แน่ใจ":
+    /// (1) <see cref="OcrLumpSumRepair.RuleCode"/> — ผลแกะรุ่น 6–8 ลงบรรทัดสินค้าเป็น 1 × ยอด (จำนวนสินค้าตามกระดาษหาย ⇒ สต็อก/ทุน/PO ผิด) · เดิมข้อความทางไปต่อของการซ่อม
+    /// เขียนว่า "ด่านอนุมัติจะบล็อก" แต่ไม่มีด่านจริง · (2) <see cref="OcrLineQuantityGuard.RoundingOverCapCode"/> — เศษปัดราคาต่อหน่วยเกินเพดานถูกเก็บในช่องส่วนลดบรรทัดให้บรรทัดสอดคล้อง
+    /// (ไม่ใช่ส่วนลดบนกระดาษ — ห้ามถึง PDF/GL) · ปลดเมื่อไม่มีบรรทัดถือ "ค่าที่ระบบตั้ง" ของข้อนั้นแล้ว (<see cref="OcrLineQuantityGuard.SystemValueHeld"/>)</para>
+    /// </summary>
+    public static readonly (string Marker, string Why)[] HumanApprovalBlockingMarkers =
+    {
+        (OcrLineQuantityGuard.Tag + " " + OcrLumpSumRepair.RuleCode,
+            "บรรทัดจากผลสแกนรุ่นที่ลงสินค้าเป็น 1 × ยอด (จำนวนสินค้าตามกระดาษหายไป) ยังไม่ถูกแก้"),
+        (OcrLineQuantityGuard.Tag + " " + OcrLineQuantityGuard.RoundingOverCapCode,
+            "บรรทัดที่ราคาต่อหน่วย 2 ตำแหน่งคูณจำนวนแล้วไม่ได้ยอดตามกระดาษ (ระบบเก็บส่วนต่างในช่องส่วนลดให้บรรทัดสอดคล้อง ไม่ใช่ส่วนลดบนกระดาษ) ยังไม่ถูกแก้"),
+    };
+
+    /// <summary>รหัสกฎของการบล็อกนี้ (audit/คำตอบ API)</summary>
+    public const string HumanApprovalRuleCode = "OCR-LINE-UNFIXED";
+
+    /// <summary>
+    /// **ด่านอนุมัติโดยคน ของเอกสารที่สร้างจากสแกน** (ทีม OCR 12) — ผู้เรียกตัวเดียว <c>DocumentService.ApproveDocumentAsync</c> (ทุกทางเข้า: หน้าเอกสาร · มือถือ · API ·
+    /// workflow · LINE · สร้าง+อนุมัติ) · <paramref name="processingNotes"/> = หมายเหตุของสแกนที่สร้างเอกสารนี้ · <paramref name="liveLines"/> = บรรทัดเอกสาร<b>ตอนนี้</b> ·
+    /// เหตุผลมีทางไปต่อภาษาไทยเสมอ (แก้บรรทัดใน draft หรือลบ draft แล้วแกะใหม่)
+    /// </summary>
+    public static Verdict EvaluateHumanApproval(string? processingNotes, IReadOnlyList<OcrLiveLine> liveLines)
+    {
+        if (string.IsNullOrEmpty(processingNotes)) return new Verdict(true, null);
+        foreach (var (marker, why) in HumanApprovalBlockingMarkers)
+        {
+            var held = processingNotes.Split('\n')
+                .Select(n => n.Trim())
+                .Where(n => n.StartsWith(marker, StringComparison.Ordinal)
+                    && OcrLineQuantityGuard.SystemValueHeld(n, liveLines, OcrLumpSumRepair.NoteDescription(n)))
+                .ToList();
+            if (held.Count == 0) continue;
+            var which = string.Join(" · ", held.Select(n => OcrLumpSumRepair.NoteDescription(n) is string d ? $"\"{d}\"" : null)
+                .Where(d => d != null).Distinct());
+            return new Verdict(false, why + (which.Length > 0 ? $" ({which})" : "")
+                + " — อนุมัติไม่ได้จนกว่าจะแก้: เปิดใบ Draft แก้จำนวน/ราคา/หน่วยของบรรทัดนั้นตามกระดาษ แล้วบันทึก "
+                + "หรือลบ Draft แล้วกด \"แกะใหม่\" ที่หน้าสแกน (ไม่ใช้โควต้า) แล้วสร้างเอกสารใหม่");
+        }
+        return new Verdict(true, null);
+    }
+
     /// <summary>ผลการตัดสิน</summary>
     /// <param name="CanAutoApprove">อนุมัติอัตโนมัติได้ไหม</param>
     /// <param name="Reason">เหตุผลที่อนุมัติเองไม่ได้ (null เมื่อผ่าน) — เอาไปโชว์ได้ตรง ๆ</param>

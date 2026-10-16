@@ -6585,10 +6585,12 @@ RULES += [
          must=["Math.Ceiling(amt / qty * 100m) / 100m"],
          why=_GQ_WHY + "ราคาปัดขึ้นเมื่อปัดปกติแล้วต่ำกว่ายอด (ส่วนลดติดลบเก็บไม่ได้)"),
     dict(file="Helpers/OcrLineQuantityGuard.cs", method="Rounded",
-         must=["RoundedPrices(qty, amt)", "RoundingRemainderWithinCap(gap, amt)", "Fingerprint(qty, nearest)", "Fingerprint(qty, up)",
+         must=["RoundedPrices(qty, amt)", "RoundingRemainderWithinCap(gap, amt)", "Fingerprint(qty, up)",
                "OcrLineQuantityAction.RoundedUnitPrice"],
-         must_lit=["{Tag} {why}", "สตางค์", "ไม่แต่งส่วนลด", "{RoundingRemainderPhrase}"],
+         must_lit=["{Tag} {why}", "สตางค์", "{Tag} {RoundingOverCapCode}", "{RoundingRemainderPhrase}"],
          before=[("RoundingRemainderWithinCap(gap, amt)", "gap > 0m ? gap : null")],
+         # ★ ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-1): เกินเพดานต้องเก็บบรรทัดสอดคล้อง (ราคาปัด + เศษในช่องส่วนลด) — ห้ามกลับไปคืน LineDiscount null
+         must_re=[r"RoundingRemainderWithinCap\(gap,\s*amt\)\)\s*\{[\s\S]*?new\(OcrLineQuantityAction\.RoundedUnitPrice,\s*null,\s*up,\s*gap,"],
          why=_GQ_WHY + "คงจำนวน · แท็กบล็อกบอกส่วนต่างเป็นสตางค์ + ค่าที่ระบบตั้ง (ตรวจสด) · ทีม OCR 11 (P2-1/P2-2): เศษเกินเพดานห้ามแต่งเป็นส่วนลด · ใต้เพดานป้ายเศษปัด"),
     dict(file="Helpers/OcrLineQuantityGuard.cs", method="DescriptionForMatching",
          must=["LumpSumSuffix(description, quantity, unit)"],
@@ -6611,6 +6613,26 @@ RULES += [
                "Audit(companyId, actorId, nameof(OcrCategoryMapping)", "x.CompanyId == companyId"],
          forbid=["_db.Documents", "_db.StockMovements", "_db.Products"],
          why="ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-5 · CLAUDE F2 ข้อ 9): ซ่อมเฉพาะส่วนที่ปลอดภัย (สแกน/alias/คีย์ตัวเรียน) + audit · ห้ามแก้เอกสาร/สต็อก/สินค้าเอง"),
+    # ── ทีม OCR 12 (ฝ่ายค้านรอบ 3) ──
+    dict(file=DOC, method="ApproveDocumentAsync#2",
+         must=["OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, doc)", "OcrPostingReadiness.HumanApprovalRuleCode"],
+         before=[("OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, doc)", "EnsureCashSaleStockPolicyAllowsAsync(companyId, doc)"),
+                 ("OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, doc)", "CollectApprovalWarningsAsync(companyId, doc)")],
+         why="ทีม OCR 12 (ฝ่ายค้านรอบ 3 P1-4): ทางไปต่อของการซ่อมสัญญาว่า \"ด่านอนุมัติบล็อก\" — ด่านต้องมีจริงในทางเข้าเดียวของการอนุมัติ ก่อนทุกขั้นที่บันทึก"),
+    dict(file="Services/Implementations/Ocr/OcrLumpSumRepairService.cs", method="ApprovalBlockAsync",
+         must=["r.CompanyId == companyId", "r.CreatedDocumentId == doc.Id", "OcrPostingReadiness.EvaluateHumanApproval(", "Description = l.Description"],
+         why="ทีม OCR 12: ด่านอ่านหมายเหตุสแกนของบริษัทนี้เท่านั้น (กฎ M) และตัดสินด้วยตัวเดียว OcrPostingReadiness บนบรรทัดตอนนี้"),
+    dict(file="Helpers/OcrPostingReadiness.cs", method="EvaluateHumanApproval",
+         must=["HumanApprovalBlockingMarkers", "OcrLineQuantityGuard.SystemValueHeld(", "OcrLumpSumRepair.NoteDescription("],
+         must_lit=["แกะใหม่"],
+         why="ทีม OCR 12: ด่านคนปลดเมื่อบรรทัดเลิกถือค่าที่ระบบตั้ง (ร่องรอยตัวเดียวกับ LiveNotes) และมีทางไปต่อภาษาไทยเสมอ (คำตัดสินข้อ 150)"),
+    dict(file="Services/Implementations/Ocr/OcrLumpSumRepairService.cs", method="PollutedLines",
+         must=["OcrLineQuantityGuard.Read(scan.RawTextContent)", "OcrUtilityVendor.KindOf(scan.ExtractedVendorTaxId, scan.ExtractedVendorName)"],
+         call_args=[("OcrLumpSumRepair.IsPollutedLine(", "paper"), ("OcrLumpSumRepair.IsPollutedLine(", "seller")],
+         why="ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-2): ตัวตรวจซ่อมต้องใช้บริบทเดียวกับตัวตัดสินตอนเขียน — บิล PEA \"ค่าพลังงาน (จำนวน 4,272)\" ห้ามถูกฟ้องว่าจำนวนสินค้าหาย"),
+    dict(file="Helpers/OcrLumpSumRepair.cs", method="IsPollutedLine",
+         must=["OcrLineQuantityGuard.WasMeterLine(s, amount, paper, seller)"],
+         why="ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-2): เล่นหลักฐานมิเตอร์ซ้ำด้วยบริบทของสแกน"),
     dict(file="Services/Implementations/Ocr/OcrLumpSumRepairService.cs", method="Audit",
          must=["_db.AddChainedAuditLog("],
          why="ทีม OCR 11: แถว audit ของการซ่อมเข้า hash chain"),
@@ -6693,6 +6715,18 @@ REVIEWER_CASES += [
     # ตัวซ่อมแก้เอกสารเอง
     ("G11f", "RepairAsync", "        await _db.SaveChangesAsync(ct);\n        if (tx != null)",
      "        foreach (var d in _db.Documents.Where(x => x.CompanyId == companyId)) d.Notes = \"x\";\n        await _db.SaveChangesAsync(ct);\n        if (tx != null)", True),
+    # ── ทีม OCR 12 ──
+    # P1-4 กลับมา: ถอดด่านอนุมัติของหมายเหตุซ่อม
+    ("G12a", "ApproveDocumentAsync#2",
+     "        if (await Accounting.Services.Implementations.Ocr.OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, doc) is string ocrLineBlock)\n"
+     "            throw new BusinessRuleException(ocrLineBlock, Accounting.Helpers.OcrPostingReadiness.HumanApprovalRuleCode);\n", "", True),
+    # P2-1 กลับมา: เกินเพดานคืนบรรทัดไม่สอดคล้อง (ไม่มีส่วนลด)
+    ("G12b", "Rounded", "            return new(OcrLineQuantityAction.RoundedUnitPrice, null, up, gap,\n",
+     "            return new(OcrLineQuantityAction.RoundedUnitPrice, null, up, null,\n", True),
+    # P2-2 กลับมา: ตัวตรวจซ่อมไม่ส่งบริบทของสแกน
+    ("G12c", "PollutedLines", "it.Amount ?? 0m, paper, seller)", "it.Amount ?? 0m)", True),
+    # ด่านอ่านหมายเหตุข้ามบริษัท
+    ("G12d", "ApprovalBlockAsync", "r.CompanyId == companyId && ", "", True),
     # รูปถูก: ขึ้นบรรทัดใหม่ในการเรียกตัวตัดตอนนำเข้า ต้องไม่ถูกฟ้อง
     ("G11g", "ImportStock", "Accounting.Helpers.OcrLineQuantityGuard.DescriptionForMatching(ocrLine.Description, ocrLine.Quantity, ocrLine.Unit)",
      "Accounting.Helpers.OcrLineQuantityGuard.DescriptionForMatching(\n                        ocrLine.Description, ocrLine.Quantity, ocrLine.Unit)", False),

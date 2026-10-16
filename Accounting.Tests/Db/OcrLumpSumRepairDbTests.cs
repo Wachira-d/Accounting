@@ -69,7 +69,7 @@ public class OcrLumpSumRepairDbTests
         };
         var v9 = new OcrScanResult
         {
-            CompanyId = c, OriginalFileName = "goods-v9.pdf", ScanStatus = "Completed", ExtractionVersion = 9,
+            CompanyId = c, OriginalFileName = "goods-v9.pdf", ScanStatus = "Completed", ExtractionVersion = OcrExtractionVersion.Current,   // ทีม OCR 12: รุ่นปัจจุบัน (9/10 อยู่ในชุดซ่อมแล้ว)
             ExtractedItemsJson = Items(("น้ำดื่ม 600ml (12 ขวด)", 1m, "รายการ", 300m)),
         };
         db.OcrScanResults.AddRange(polluted, pea, v9);
@@ -185,5 +185,143 @@ public class OcrLumpSumRepairDbTests
             Assert.Empty(report.LearnerKeys);
             await Assert.ThrowsAsync<BusinessRuleException>(() => svc.RepairAsync(a.CompanyId, new OcrLumpSumRepairRequest(null, null, null), "x"));
         }
+    }
+
+    // ── ทีม OCR 12 (ฝ่ายค้านรอบ 3 P1-4 · P2-2 · P2-3) ──
+    [Fact]
+    public async Task OCR12_ด่านอนุมัติหลังซ่อมมีจริง_ปลดเมื่อแก้บรรทัด_ใบOCRปกติและใบไม่ใช่OCRอนุมัติตามเดิม_บิลมิเตอร์ไม่ถูกฟ้อง_คำเตือนแพ็ก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var company = new Company { Name = "บริษัทด่านอนุมัติ OCR 12", TaxId = "0105556001201", IsVatRegistered = true };
+        var other = new Company { Name = "บริษัทอื่น OCR 12", TaxId = "0105556001202", IsVatRegistered = true };
+        db.Companies.AddRange(company, other);
+        await db.SaveChangesAsync();
+        var c = company.Id;
+        var contact = new Contact { CompanyId = c, Name = "ร้านน้ำดื่มทดสอบ", IsSupplier = true };
+        var product = new Product { CompanyId = c, Code = "P-1201", Name = "น้ำดื่ม", Unit = "ขวด", CreatedAt = Before };
+        db.Contacts.Add(contact);
+        db.Products.Add(product);
+        await db.SaveChangesAsync();
+
+        Document Draft(string no, params (string Desc, decimal Q, decimal P, decimal Amt)[] lines)
+        {
+            var d = new Document
+            {
+                CompanyId = c, ContactId = contact.Id, DocumentType = DocumentType.PurchaseInvoice, DocumentNumber = no,
+                Status = DocumentStatus.Draft, DocumentDate = DateTime.UtcNow.Date, SubTotal = lines.Sum(l => l.Amt), TotalAmount = lines.Sum(l => l.Amt), Currency = "THB",
+            };
+            var i = 1;
+            foreach (var l in lines)
+                d.Lines.Add(new DocumentLine { LineOrder = i++, Description = l.Desc, Quantity = l.Q, UnitPrice = l.P, Amount = l.Amt });
+            return d;
+        }
+        var pollutedDoc = Draft("DRAFT-OCR12-A", ("น้ำดื่ม 600ml (12 ขวด)", 1m, 300m, 300m), ("ปากกา", 2m, 10m, 20m));
+        var cleanOcrDoc = Draft("DRAFT-OCR12-B", ("สินค้า", 7m, 14.29m, 100m));
+        var manualDoc = Draft("DRAFT-OCR12-C", ("ค่าขนส่ง", 1m, 300m, 300m));
+        db.Documents.AddRange(pollutedDoc, cleanOcrDoc, manualDoc);
+        await db.SaveChangesAsync();
+
+        var pollutedScan = new OcrScanResult
+        {
+            CompanyId = c, OriginalFileName = "goods-v7-draft.pdf", ScanStatus = "Completed", ExtractionVersion = 7, CreatedDocumentId = pollutedDoc.Id,
+            ExtractedItemsJson = Items(("น้ำดื่ม 600ml (12 ขวด)", 1m, "รายการ", 300m), ("ปากกา", 2m, "ด้าม", 20m)),
+        };
+        var cleanScan = new OcrScanResult
+        {
+            CompanyId = c, OriginalFileName = "clean.pdf", ScanStatus = "Completed", ExtractionVersion = OcrExtractionVersion.Current, CreatedDocumentId = cleanOcrDoc.Id,
+            ProcessingNotes = "[LINE-QTY] จำนวน 7 · ยอด 100.00 — ระบบคงจำนวน · ค่าที่ระบบตั้ง ⟦7×14.29⟧",
+            ExtractedItemsJson = Items(("สินค้า", 7m, "ชิ้น", 100m)),
+        };
+        // บิล PEA ที่ตัวเขียนรุ่น 7 เขียน "(จำนวน 4,272)" (ป้ายกระดาษ "จำนวนหน่วยที่ใช้") — มิเตอร์จริง ห้ามถูกฟ้อง (P2-2)
+        var peaEnergy = new OcrScanResult
+        {
+            CompanyId = c, OriginalFileName = "pea-energy.pdf", ScanStatus = "Completed", ExtractionVersion = 7,
+            ExtractedVendorTaxId = "0994000165501", ExtractedVendorName = "การไฟฟ้าส่วนภูมิภาค",
+            RawTextContent = "การไฟฟ้าส่วนภูมิภาค\nจำนวนหน่วยที่ใช้ 4,272 หน่วย ค่าพลังงาน 19,381.50\nค่า Ft 4,272 หน่วย 893.50",
+            ExtractedItemsJson = Items(("ค่าพลังงาน (จำนวน 4,272)", 1m, "รายการ", 19381.50m), ("ค่า Ft (จำนวน 4,272)", 1m, "รายการ", 893.50m)),
+        };
+        // บริษัทอื่นที่ (ผิดพลาด) ชี้เอกสารของบริษัทนี้ พร้อมหมายเหตุซ่อม — ห้ามมีผลข้ามบริษัท (กฎ M)
+        var foreign = new OcrScanResult
+        {
+            CompanyId = other.Id, OriginalFileName = "foreign.pdf", ScanStatus = "Completed", ExtractionVersion = 7, CreatedDocumentId = manualDoc.Id,
+            ProcessingNotes = OcrLumpSumRepair.ScanNote(7, 1, "ค่าขนส่ง", 300m),
+        };
+        db.OcrScanResults.AddRange(pollutedScan, cleanScan, peaEnergy, foreign);
+        var packAlias = new ProductAlias { CompanyId = c, ProductId = product.Id, ContactId = contact.Id, AliasName = "โค้ก (6 กระป๋อง)",
+            NormalizedName = ProductMatcher.Normalize("โค้ก (6 กระป๋อง)"), CreatedAt = After, Source = "user" };
+        var guardAlias = new ProductAlias { CompanyId = c, ProductId = product.Id, ContactId = contact.Id, AliasName = "น้ำดื่ม 600ml (12 ขวด)",
+            NormalizedName = ProductMatcher.Normalize("น้ำดื่ม 600ml (12 ขวด)"), CreatedAt = After, Source = "auto" };
+        var longLine = "น้ำดื่มสิงห์ 600 มล. แพ็กหกขวด รุ่นพิเศษ ฉลาก (12 ขวด)";
+        var truncated = new OcrCategoryMapping { CompanyId = c, VendorKey = "0105556009999", DescriptionKeyword = OcrLumpSumRepair.LearnerKey(longLine),
+            AccountCode = "51100", TimesUsed = 1, CreatedAt = After };
+        db.ProductAliases.AddRange(packAlias, guardAlias);
+        db.OcrCategoryMappings.Add(truncated);
+        var longScan = new OcrScanResult
+        {
+            CompanyId = c, OriginalFileName = "long.pdf", ScanStatus = "Completed", ExtractionVersion = 6,
+            ExtractedItemsJson = Items((longLine, 1m, "รายการ", 300m)),
+        };
+        db.OcrScanResults.Add(longScan);
+        await db.SaveChangesAsync();
+
+        async Task<string?> Block(Guid docId)
+        {
+            using var r = DbTestDatabase.TryCreateContext()!;
+            var d = await r.Documents.Include(x => x.Lines).SingleAsync(x => x.Id == docId && x.CompanyId == c);
+            return await OcrLumpSumRepairService.ApprovalBlockAsync(r, c, d);
+        }
+
+        // ก่อนกดซ่อม: ยังไม่มีหมายเหตุ ⇒ ไม่บล็อก (ข้อความทางไปต่อพูดถึง "หลังกดซ่อม")
+        Assert.Null(await Block(pollutedDoc.Id));
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var svc = new OcrLumpSumRepairService(req, NullLogger<OcrLumpSumRepairService>.Instance);
+            var report = await svc.FindAsync(c);
+            Assert.DoesNotContain(report.Scans, x => x.ScanId == peaEnergy.Id);               // P2-2: บิลมิเตอร์จริงไม่ถูกฟ้อง
+            Assert.Contains(report.Scans, x => x.ScanId == pollutedScan.Id);
+            Assert.Contains("หลังกดซ่อม", Assert.Single(report.Documents, x => x.DocumentId == pollutedDoc.Id).WayForward);
+            Assert.NotNull(Assert.Single(report.Aliases, x => x.Id == packAlias.Id).Warning);   // P2-3: ขนาดแพ็กที่ไม่มีที่มาจากตัวกัน ⇒ เตือน
+            Assert.Null(Assert.Single(report.Aliases, x => x.Id == guardAlias.Id).Warning);    // ตรงกับบรรทัดที่ตัวกันเขียน ⇒ ไม่เตือน
+            var lk = Assert.Single(report.LearnerKeys, x => x.Id == truncated.Id);              // P2-3: คีย์ที่ถูกตัด 50 ตัวหาเจอแล้ว
+            Assert.Equal(OcrLumpSumRepair.LearnerKey("น้ำดื่มสิงห์ 600 มล. แพ็กหกขวด รุ่นพิเศษ ฉลาก"), lk.Proposed);
+            var res = await svc.RepairAsync(c, new OcrLumpSumRepairRequest(new() { pollutedScan.Id }, null, new() { truncated.Id }), Guid.NewGuid().ToString());
+            Assert.Equal(2, res.RepairedCount);
+        }
+        using (var check = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(OcrLumpSumRepair.LearnerKey("น้ำดื่มสิงห์ 600 มล. แพ็กหกขวด รุ่นพิเศษ ฉลาก"),
+                (await check.OcrCategoryMappings.AsNoTracking().SingleAsync(x => x.Id == truncated.Id)).DescriptionKeyword);
+
+        // หลังซ่อม: ด่านอนุมัติบล็อกจริง (ตัวตัดสิน + ทางเข้าจริงของ DocumentService)
+        var reason = await Block(pollutedDoc.Id);
+        Assert.NotNull(reason);
+        Assert.Contains("น้ำดื่ม 600ml (12 ขวด)", reason);
+        Assert.Contains("แกะใหม่", reason);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var docs = new DocumentService(req, new AccountingService(req), null!, null!, null!, NullLogger<DocumentService>.Instance, null!, null!, null!);
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => docs.ApproveDocumentAsync(c, pollutedDoc.Id, "tester", acknowledgeWarnings: true));
+            Assert.Equal(OcrPostingReadiness.HumanApprovalRuleCode, ex.RuleCode);
+        }
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var d = await check.Documents.AsNoTracking().SingleAsync(x => x.Id == pollutedDoc.Id);
+            Assert.Equal((DocumentStatus.Draft, "DRAFT-OCR12-A"), (d.Status, d.DocumentNumber));   // ไม่มีอะไรถูกบันทึก
+        }
+
+        // ทิศตรงข้าม: ใบ OCR ปกติ ([LINE-QTY] ธรรมดา) · ใบที่ไม่ใช่ OCR (และสแกนบริษัทอื่นที่ชี้มา) ⇒ ด่านนี้ไม่บล็อก
+        Assert.Null(await Block(cleanOcrDoc.Id));
+        Assert.Null(await Block(manualDoc.Id));
+
+        // คนแก้บรรทัดตามกระดาษ (12 × 25) ⇒ ปลด
+        using (var edit = DbTestDatabase.TryCreateContext()!)
+        {
+            var line = await edit.DocumentLines.SingleAsync(l => l.DocumentId == pollutedDoc.Id && l.LineOrder == 1);
+            line.Quantity = 12m;
+            line.UnitPrice = 25m;
+            await edit.SaveChangesAsync();
+        }
+        Assert.Null(await Block(pollutedDoc.Id));
     }
 }

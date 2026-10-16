@@ -55,7 +55,7 @@ public class OcrLumpSumRepairTests
         Assert.Equal(note, OcrLineQuantityGuard.LiveNotes(note, new[] { new OcrLiveLine(1m, 300m, 0m, 0m, 300m, 0m) }, false, true));
         // คนแก้เป็น 12 × 25 ลงตัว ⇒ ปลด
         Assert.Equal("", OcrLineQuantityGuard.LiveNotes(note, new[] { new OcrLiveLine(12m, 25m, 0m, 0m, 300m, 0m) }, false, true));
-        Assert.Equal(new[] { 6, 7, 8 }, OcrLumpSumRepair.AffectedVersions);
+        Assert.Equal(new[] { 6, 7, 8, 9, 10 }, OcrLumpSumRepair.AffectedVersions);   // ทีม OCR 12: รุ่น 9/10 ยังลง "ค่าน้ำขวด (12 ลบ.ม.)"
         Assert.True(OcrLumpSumRepair.AffectedVersions.Max() < OcrExtractionVersion.Current);
     }
 }

@@ -5208,3 +5208,9 @@ PdfPig `page.Text` (ลำดับ stream) · ประกอบไม่ได
 XH0712609004157 · การไฟฟ้าส่วนภูมิภาค 0994000165501/00000 · ผู้ซื้อ 0203562005871/00000 · `OcrTotalAnchor` Confirmed · 1 × 19,381.50 · พรามี่ 1 × 1,330 − 293 = 1,037 · ไม่ติ๊กหัก ·
 Corpus ใบเดิม 42 ใบ 0 แถวเปลี่ยน + 2 ใบ `*-positional` · `OcrExtractionVersion` 9 → 10 (รุ่น 9 = ทีม OCR 11) · เทสต์ `PdfPositionalTextTests` · `OcrPdfTextPathTests` · `OcrReplayLineGoldenTests` ·
 ล็อกจุดเรียก +11 กติกา + 5 เคส (PP1–PP5 · PP5 รูปถูกไม่ฟ้อง) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit cfcb1693_
+_ทีม OCR 12 (2026-10-16 · ฝ่ายค้านรอบ 3 บน 02c30a2a): **P1-4** ด่านอนุมัติที่ข้อความทางไปต่อของรายงานซ่อมสัญญามีจริงแล้ว — `DocumentService.ApproveDocumentAsync` (ทุกทางเข้า) →
+`OcrLumpSumRepairService.ApprovalBlockAsync` → `OcrPostingReadiness.EvaluateHumanApproval`: draft จากสแกนที่ติด `OCR-LUMPSUM-REPAIR` อนุมัติไม่ได้จนบรรทัด 1 × ยอด ถูกแก้ (ทางไปต่อภาษาไทย ·
+คำตัดสินข้อ 150) · ใบ OCR ปกติ/ใบไม่ใช่ OCR อนุมัติตามเดิม · **P1-5** `UnitInferrer.IsWaterSupply` เป็น whitelist ⇒ ค่าน้ำขวด/ถัง/กระป๋อง/โค้ก/เกลือ/หนักเกิน ไม่เป็น ลบ.ม. (คงจำนวน) ·
+**P2-1** `UnitPrice` เก็บ 2 ตำแหน่ง ⇒ เศษเกินเพดานเก็บในช่องส่วนลดพร้อมธงเศษปัด (บรรทัดสอดคล้อง · Update คิดซ้ำได้ยอดเดิม) + `OCR-ROUNDING-OVER-CAP` บล็อกการอนุมัติโดยคน ·
+**P2-2** ตัวตรวจซ่อมใช้บริบทของสแกน (`WasMeterLine`) ⇒ PEA ค่าพลังงาน/ค่า Ft/Water charge ไม่ถูกฟ้อง · **P2-3** ช่องเลือกเริ่มไม่ติ๊ก · คำเตือน "อาจเป็นขนาดแพ็กจริง" · คีย์ตัวเรียนที่ถูกตัด 50 ตัวหาเจอ ·
+`AffectedVersions` 6–10 · `OcrExtractionVersion` 9 → 11 · เทสต์ `OcrQuantityGuardOcr12Tests` + Db · ล็อกจุดเรียก +5 กติกา + G12a–G12d — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <sha-ocr12>_

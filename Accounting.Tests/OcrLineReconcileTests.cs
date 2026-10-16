@@ -89,16 +89,18 @@ public class OcrLineReconcileTests
         // ราคา round(16,351.48 ÷ 3,611, 2) = 4.53 · 3,611 × 4.53 = 16,357.83 · แท็กบล็อก
         // ★ ทีม OCR 11 (ฝ่ายค้าน OCR 9 P2-1 · ตั้งใจพลิก): เศษ 6.35 เกินเพดานปัด (1.00 บาท / 0.5%) ⇒ ไม่แต่ง "ส่วนลด" 6.35 อีก — ยอดบรรทัดตามกระดาษ ·
         //   จำนวน × ราคา ≠ ยอด โดยตั้งใจ · หมายเหตุให้ตรวจราคาต่อหน่วยบนกระดาษ
+        // ★ ทีม OCR 12 (ฝ่ายค้านรอบ 3 P2-1 · ตั้งใจพลิกอีกครั้ง): บรรทัดไม่สอดคล้องขัด CLAUDE #2 A และ Update คิดใหม่เงียบ ๆ ⇒ เศษ 6.35 อยู่ในช่องส่วนลดพร้อมธงเศษปัด
+        //   (ป้ายหน้ารีวิว "เศษจากการปัดราคาต่อหน่วย") + รหัสเกินเพดาน ⇒ ด่านอนุมัติโดยคนบล็อกจนแก้บรรทัด (ส่วนลดปลอมไม่ถึงเอกสารที่ออก)
         var d = WithLine(Line(qty: 3611m, up: null, amt: 16351.48m));
         OcrService.SanitizeVatSplitArtifacts(d);
         Assert.Equal(3611m, d.Items[0].Quantity);
         Assert.Equal(4.53m, d.Items[0].UnitPrice);
-        Assert.Null(d.Items[0].LineDiscountAmount);
-        Assert.Null(d.Items[0].UnitPriceRoundingResidual);
+        Assert.Equal(6.35m, d.Items[0].LineDiscountAmount);
+        Assert.Equal(6.35m, d.Items[0].UnitPriceRoundingResidual);
         Assert.Equal(16351.48m, d.Items[0].Amount);
         Assert.Equal("สินค้า A", d.Items[0].Description);
-        Assert.Contains(d.ReasoningTrace, t => t.StartsWith(Accounting.Helpers.OcrLineQuantityGuard.Tag + " ", StringComparison.Ordinal)
-                                               && t.Contains("ไม่แต่งส่วนลด", StringComparison.Ordinal) && t.Contains("⟦3611×4.53⟧", StringComparison.Ordinal));
+        Assert.Contains(d.ReasoningTrace, t => t.StartsWith(Accounting.Helpers.OcrLineQuantityGuard.Tag + " " + Accounting.Helpers.OcrLineQuantityGuard.RoundingOverCapCode, StringComparison.Ordinal)
+                                               && t.Contains("⟦3611×4.53⟧", StringComparison.Ordinal));
     }
 
     [Fact]
