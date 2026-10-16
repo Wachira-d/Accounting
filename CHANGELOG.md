@@ -5174,7 +5174,7 @@ _ทีม W1b ภ.ง.ด.1 เทียบสเปก WHTSVS (2026-10-16 · b
 ปุ่ม/คู่มือ tax-export + payroll · ตัวอย่างในภาพทั้งสองแถวออกมาตรงทุกไบต์ (`Pnd1FileFormatTests`) · `Db/Pnd1ExportReconcileDbTests` ปรับเป็น 20 ช่อง + Excel อ่านกลับ ·
 ผลเทียบรายช่องใน EXPORT_AUDIT §"ภ.ง.ด.1 เทียบสเปก WHTSVS (2026-10-16)" · ยังไม่ได้ทดลองนำเข้า WHTSVS จริง — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (ชุดเทสต์ที่ล้มเท่ากับ base 5a58139e ทุกตัว — 56 ตัวเดิม) — commit c597b86b + bffcb834 + fccab086 + 6592f328_
 _2026-10-16 ทีม Tb — unit test เน่า 64/9,959 บน 5a58139e เพราะไม่มีผู้รัน: `tools/check_all.sh` เขียน `dotnet test … | tail -20 || fail=1`
-(exit code ของ pipeline = ของ tail ⇒ "ผ่านทั้งหมด" เสมอ) + CI รันเฉพาะ Category=Db · แก้ check_all (95a28a5a) · ไล่ราก 64 ตัวใน
+(exit code ของ pipeline = ของ tail ⇒ "ผ่านทั้งหมด" เสมอ) + CI รันเฉพาะ Category=Db · แก้ check_all (64fcf74d) · ไล่ราก 64 ตัวใน
 `erp-review/2026-10-16/UNIT_TEST_TRIAGE.md` (test · class · root cause · breaking commit · fix · file) · **บั๊กโค้ดจริง 11 จุด**: ที่พักถูกนับโควตา
 เอกสารสองเด้ง (`DocumentQuotaPolicy`) · ด่านแยก VAT ถือบรรทัดว่างล้วนเป็น "ยกเว้น §81" (`VatBackCalcGuard`) · ตัวถอด 874 ไม่ล้มกับไบต์ที่ TIS-620
 ไม่กำหนด + เซลล์ ≥ 1e15 เลขกลมหลุดด่านเสียหลัก (`ImportTabularReader`) · ตัวแยกที่อยู่ character class (`ThaiAddressParser`) · prompt PII escape ไทย
