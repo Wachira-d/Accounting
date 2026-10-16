@@ -1616,6 +1616,9 @@
             ...pick('VAT-DERIVED'),
             // รอบ 200 ทีม K2 (C-09) — สกุลเงินไม่แน่ใจ (ข้อความจากเซิร์ฟเวอร์ Helpers/OcrCurrencyEvidence)
             ...pick('CURRENCY-UNSURE'),
+            // ฝ่ายค้าน 658e3705 — ตัวกันจำนวนระเบิด (บล็อก · แจ้ง) · ข้อความ+ตัวเลขจากเซิร์ฟเวอร์ (Helpers/OcrLineQuantityGuard)
+            ...pick('LINE-QTY'),
+            ...pick('LINE-QTY-NOTE'),
             // ฝ่ายค้านรอบห้า f1690d11 — เขียนกลับจากเอกสารที่หักมัดจำ (ห้ามอนุมัติเอง) · ต้นทุนสินทรัพย์จากสแกน · หมายเหตุ e-Tax (ข้อความจากเซิร์ฟเวอร์)
             ...pick('SCAN-WRITEBACK'),
             ...pick('ETAX-HEADER-GAP'),

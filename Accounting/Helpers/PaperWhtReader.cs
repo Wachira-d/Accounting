@@ -31,6 +31,10 @@ public static class PaperWhtReader
         @"(?:ภาษี\s*)?หัก\s*ณ\s*ที่\s*จ่าย|ภาษี\s*หัก|withholding\s*tax|\bWHT\b|\bW/?T\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>ข้อความนี้มีป้ายหัก ณ ที่จ่าย (ตัวเดียวกับที่ <see cref="Read"/> ใช้หาป้าย) — 2026-10-16 ฝ่ายค้าน 658e3705 P1-1: ตัวกันจำนวนระเบิด
+    /// (<c>Helpers/OcrLineQuantityGuard</c>) ถามว่าแถว/หัวคอลัมน์เป็นคอลัมน์หัก ณ ที่จ่ายไหม ด้วยป้ายชุดนี้ ไม่ใช่ชุดที่สอง</summary>
+    public static bool HasLabel(string? text) => !string.IsNullOrEmpty(text) && Label.IsMatch(text);
+
     /// <summary>อัตรา % ที่พิมพ์ติดกับป้าย</summary>
     private static readonly Regex RatePattern = new(
         @"(?<r>\d{1,2}(?:\.\d{1,2})?)\s*%", RegexOptions.Compiled);

@@ -17,7 +17,7 @@ namespace Accounting.Tests;
 /// </summary>
 public class OcrLineQuantityGuardTests
 {
-    private static IReadOnlyList<OcrPaperNumber> Paper(string text) => OcrLineQuantityGuard.Numbers(text);
+    private static OcrLinePaper Paper(string text) => OcrLineQuantityGuard.Read(text);
 
     /// <summary>ข้อความแบบ engine ภาพ (Azure/Tesseract — ช่องคั่นด้วยช่องว่าง/ขึ้นบรรทัด) ของแถวเดียวกันบนใบ RE-20261000111</summary>
     private const string PramieOcrLines =
@@ -28,14 +28,19 @@ public class OcrLineQuantityGuardTests
     // ── ใบจริง RE-20261000111 ─────────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void ใบจริงRE111_ข้อความPdfPig_ส่วนลด293อยู่บนแถว_ลงเป็นส่วนลดบรรทัด_จำนวนราคาคงตามกระดาษ()
+    public void ใบจริงRE111_ข้อความPdfPig_ส่วนลด293อยู่บนแถว_ลงเป็นส่วนลดบรรทัด_จำนวนราคาคงตามกระดาษ_หมายเหตุแจ้งไม่บล็อก()
     {
         var d = OcrLineQuantityGuard.Decide(1m, 1330m, 1037m, null, Paper(OcrPaperSamples.PramieLineDiscountPdfText));
         Assert.Equal(OcrLineQuantityAction.PrintedDiscount, d.Action);
         Assert.Equal(293.00m, d.LineDiscount);
         Assert.Null(d.Quantity);    // ไม่เปลี่ยนจำนวน
         Assert.Null(d.UnitPrice);   // ไม่เปลี่ยนราคา
-        Assert.Null(d.Note);        // ค่าทุกตัวมาจากกระดาษ — ไม่มีอะไรต้องเตือน
+        // ฝ่ายค้าน 658e3705 P1-1 ข้อ d: ทุกส่วนลดจากกระดาษต้องบอกคน (แจ้ง ไม่บล็อก) — หลักฐานคือหัวคอลัมน์ "ส่วนลด" (PUA ของฟอนต์ถูกแปลงก่อนค้นคำ)
+        Assert.StartsWith(OcrLineQuantityGuard.NoteTag, d.Note);
+        Assert.Contains("ส่วนลดรายบรรทัด 293.00 จากกระดาษ", d.Note);
+        Assert.False(d.Blocking);
+        Assert.True(OcrPostingReadiness.Evaluate(d.Note, hasUsableDate: true).CanAutoApprove);
+        Assert.True(Paper(OcrPaperSamples.PramieLineDiscountPdfText).HeaderHasDiscount);
     }
 
     [Fact]
@@ -113,23 +118,35 @@ public class OcrLineQuantityGuardTests
     [Fact]
     public void ส่วนลดเป็นเปอร์เซ็นต์บนแถว_รับเมื่อเท่าส่วนต่างทุกสตางค์_ไม่รับ7เปอร์เซ็นต์ที่ชนคอลัมน์VAT()
     {
-        var pct = OcrLineQuantityGuard.Decide(2m, 500m, 900m, null, Paper("ถังน้ำ 2 ใบ 500.00 10% 900.00"));
+        // 20% ไม่ใช่อัตราหัก ณ ที่จ่าย ⇒ % บนแถวคือส่วนลด (หมายเหตุแจ้ง) · 10% เท่าอัตราหัก ณ ที่จ่าย (ปันผล) ⇒ ต้องมีหัวคอลัมน์ส่วนลด (ทดสอบแยกด้านล่าง)
+        var pct = OcrLineQuantityGuard.Decide(2m, 500m, 800m, null, Paper("ถังน้ำ 2 ใบ 500.00 20% 800.00"));
         Assert.Equal(OcrLineQuantityAction.PrintedDiscount, pct.Action);
-        Assert.Equal(100.00m, pct.LineDiscount);
+        Assert.Equal(200.00m, pct.LineDiscount);
+        Assert.False(pct.Blocking);
 
-        // "7%" บนแถวคือคอลัมน์ VAT ได้ ⇒ ไม่ตีเป็นส่วนลด · จำนวน 1 พิมพ์บนแถว ⇒ คงจำนวน + แท็ก (ไม่หาร 0.93)
+        // "7%" บนแถวคือคอลัมน์ VAT ได้ ⇒ ไม่ตีเป็นส่วนลดจากกระดาษ · จำนวน 1 พิมพ์บนแถว ⇒ คงจำนวน (ไม่หาร 0.93) · ส่วนต่าง 7 เก็บเป็นส่วนลดที่ระบุชัด
+        // ให้บรรทัดลงตัว (ฝ่ายค้าน P2-5) + แท็กบล็อก "ส่วนต่างที่กระดาษไม่บอก"
         var vat = OcrLineQuantityGuard.Decide(1m, 100m, 93m, null, Paper("สินค้า 1 ชิ้น 100.00 7% 93.00"));
         Assert.Equal(OcrLineQuantityAction.KeepPrintedGap, vat.Action);
         Assert.Null(vat.Quantity);
-        Assert.Null(vat.LineDiscount);
+        Assert.Equal(7m, vat.LineDiscount);
+        Assert.True(vat.Blocking);
+        Assert.Contains("ส่วนต่างที่กระดาษไม่บอก", vat.Note);
     }
 
     [Fact]
-    public void ส่วนลดเล็กในเกณฑ์2เปอร์เซ็นต์ที่พิมพ์จริง_เป็นส่วนลด_เศษปัดราคาต่อหน่วยที่ไม่มีบนกระดาษ_ไม่แตะ()
+    public void ส่วนลดเล็กในเกณฑ์2เปอร์เซ็นต์_มีหัวคอลัมน์ส่วนลด_เป็นส่วนลด_ไม่มีหัว_แท็กบล็อก_เศษปัดราคาต่อหน่วยที่ไม่มีบนกระดาษ_ไม่แตะ()
     {
-        var small = OcrLineQuantityGuard.Decide(1m, 1000m, 985m, null, Paper("ปั๊มน้ำ 1 เครื่อง 1,000.00 15.00 985.00"));
+        var small = OcrLineQuantityGuard.Decide(1m, 1000m, 985m, null,
+            Paper("รายการ จำนวน ราคา ส่วนลด จำนวนเงิน\nปั๊มน้ำ 1 เครื่อง 1,000.00 15.00 985.00"));
         Assert.Equal(OcrLineQuantityAction.PrintedDiscount, small.Action);
         Assert.Equal(15.00m, small.LineDiscount);
+
+        // ฝ่ายค้าน P1-1 ข้อ c/d: ตัวเลขเปล่า 15.00 ไม่มีหัวคอลัมน์/ป้ายส่วนลด ⇒ ไม่ใช่ "ส่วนลดจากกระดาษ" · ในเกณฑ์ ±2% ก็ไม่เงียบ (เดิม Keep)
+        var bare = OcrLineQuantityGuard.Decide(1m, 1000m, 985m, null, Paper("ปั๊มน้ำ 1 เครื่อง 1,000.00 15.00 985.00"));
+        Assert.Equal(OcrLineQuantityAction.UnevidencedDiscount, bare.Action);
+        Assert.Equal(15.00m, bare.LineDiscount);   // ยอดตรงกระดาษ บรรทัดลงตัว
+        Assert.True(bare.Blocking);
 
         // Lazada 4 × 1,228.04 = 4,912.16 แต่พิมพ์ 4,912.15 — ไม่มี 0.01 บนแถว ⇒ ไม่แต่งส่วนลด (ตัวสร้างบรรทัดย้ายเศษไปผลต่างปัดเศษเหมือนเดิม)
         var lazada = OcrLineQuantityGuard.Decide(4m, 1228.04m, 4912.15m, null, Paper(OcrPaperSamples.ScommerceLazada));
@@ -141,8 +158,9 @@ public class OcrLineQuantityGuardTests
     {
         // คอลัมน์ ราคารวม VAT · VAT · ยอดก่อน VAT: 107.00 − 7.00 = 100.00 ลงตัวก็จริง แต่ 7.00 คือ VAT ได้เท่ากัน ⇒ ไม่แต่งส่วนลด (ให้คนดู)
         var d = OcrLineQuantityGuard.Decide(1m, 107m, 100m, null, Paper("กาแฟ 1 ถุง 107.00 7.00 100.00"));
-        Assert.Null(d.LineDiscount);
         Assert.Equal(OcrLineQuantityAction.KeepPrintedGap, d.Action);
+        Assert.Equal(7m, d.LineDiscount);   // ส่วนต่างเก็บเป็นส่วนลดที่ระบุชัด (P2-5) — ไม่ใช่ "ส่วนลดจากกระดาษ"
+        Assert.True(d.Blocking);
     }
 
     [Fact]
@@ -150,9 +168,9 @@ public class OcrLineQuantityGuardTests
     {
         // คอลัมน์ ราคา · จำนวน · ยอด: 10.00 × 50 = 500 แต่ยอด 450 ⇒ ส่วนต่าง 50 เท่าเลขจำนวนพอดี — เลขนั้นคือจำนวน ไม่ใช่ส่วนลด
         var d = OcrLineQuantityGuard.Decide(50m, 10m, 450m, null, Paper("ท่อพีวีซี 10.00 50 450.00"));
-        Assert.Equal(OcrLineQuantityAction.KeepPrintedGap, d.Action);
-        Assert.Null(d.LineDiscount);
+        Assert.Equal(OcrLineQuantityAction.KeepPrintedGap, d.Action);   // ไม่ใช่ PrintedDiscount/UnevidencedDiscount ที่อ้างเลข 50
         Assert.Null(d.Quantity);
+        Assert.True(d.Blocking);
     }
 
     // ── ทิศตรงข้าม: จำนวนที่ engine อ่านไม่ได้พิมพ์บนแถว ⇒ หารจำนวนจากยอดยังถูก (แต่ติดแท็ก) ────────────────────────────────
@@ -163,15 +181,19 @@ public class OcrLineQuantityGuardTests
         var d = OcrLineQuantityGuard.Decide(1m, 120m, 54m, null, Paper("หมูสับ (ราคาต่อ กก.) 120.00 54.00"));
         Assert.Equal(OcrLineQuantityAction.FixQuantity, d.Action);
         Assert.Equal(0.450m, d.Quantity);
-        Assert.StartsWith(OcrLineQuantityGuard.Tag, d.Note);
+        Assert.StartsWith(OcrLineQuantityGuard.Tag, d.Note);   // 0.45 ไม่ได้พิมพ์บนกระดาษ = ยังไม่พิสูจน์ ⇒ บล็อก
+        Assert.True(d.Blocking);
     }
 
     [Fact]
-    public void ทิศตรงข้าม_engineอ่านจำนวน1_กระดาษพิมพ์2_จำนวนจากยอดหารราคาตรงเลขบนกระดาษ()
+    public void ทิศตรงข้าม_engineอ่านจำนวน1_กระดาษพิมพ์2_จำนวนจากยอดหารราคาตรงเลขบนกระดาษ_พิสูจน์แล้วแจ้งไม่บล็อก()
     {
         var d = OcrLineQuantityGuard.Decide(1m, 10m, 20m, null, Paper("ปากกาเจล 2 ด้าม 10.00 20.00"));
         Assert.Equal(OcrLineQuantityAction.FixQuantity, d.Action);
         Assert.Equal(2m, d.Quantity);
+        // ฝ่ายค้าน P2-3: จำนวนใหม่พิมพ์ติดก่อนราคาบนกระดาษ = พิสูจน์แล้ว ⇒ แจ้ง ไม่บล็อก
+        Assert.StartsWith(OcrLineQuantityGuard.NoteTag, d.Note);
+        Assert.False(d.Blocking);
     }
 
     [Fact]
@@ -181,16 +203,24 @@ public class OcrLineQuantityGuardTests
         var d = OcrLineQuantityGuard.Decide(1180m, 10m, 1180m, null, Paper("ถุงมือ 118 คู่ 10.00 1,180.00"));
         Assert.Equal(OcrLineQuantityAction.FixQuantity, d.Action);
         Assert.Equal(118m, d.Quantity);
+        Assert.False(d.Blocking);   // 118 พิมพ์คู่หน่วย "คู่" ก่อนราคา = พิสูจน์แล้ว
     }
 
     [Fact]
-    public void ทิศตรงข้าม_เคสก_ราคาเท่ายอดทั้งบรรทัด_จำนวนคือมิเตอร์_แก้ราคาไม่แก้จำนวน()
+    public void ทิศตรงข้าม_เคสก_ราคาเท่ายอดทั้งบรรทัด_จำนวนคือมิเตอร์_แก้ราคาไม่แก้จำนวน_มิเตอร์พิมพ์คู่หน่วยแจ้งไม่บล็อก()
     {
         var d = OcrLineQuantityGuard.Decide(3611m, 16351.48m, 16351.48m, null, Paper("ค่าไฟฟ้า 3,611 หน่วย 16,351.48"));
         Assert.Equal(OcrLineQuantityAction.FixUnitPrice, d.Action);
         Assert.Null(d.Quantity);
         Assert.Equal(4.5282m, d.UnitPrice);
-        Assert.StartsWith(OcrLineQuantityGuard.Tag, d.Note);
+        // ฝ่ายค้าน P2-3: บิลค่าไฟทุกเดือน — มิเตอร์ 3,611 พิมพ์คู่ "หน่วย" แล้วยอดตามมา = พิสูจน์แล้ว ⇒ แจ้ง (เดิมบล็อกทุกเดือน)
+        Assert.StartsWith(OcrLineQuantityGuard.NoteTag, d.Note);
+        Assert.False(d.Blocking);
+        // ทิศตรงข้าม: ไม่มีข้อความกระดาษ / มิเตอร์ไม่ได้พิมพ์คู่หน่วย ⇒ ยังบล็อก
+        Assert.True(OcrLineQuantityGuard.Decide(3611m, 16351.48m, 16351.48m, null, null).Blocking);
+        Assert.True(OcrLineQuantityGuard.Decide(3611m, 16351.48m, 16351.48m, null, Paper("ค่าไฟฟ้า 16,351.48 รวม 16,351.48")).Blocking);
+        // ราคาที่พิมพ์คั่นกลางขัดกับราคาที่ตั้ง ⇒ ไม่พิสูจน์
+        Assert.True(OcrLineQuantityGuard.Decide(3611m, 16351.48m, 16351.48m, null, Paper("ค่าไฟฟ้า 3,611 หน่วย 5.00 16,351.48")).Blocking);
     }
 
     [Fact]
@@ -200,6 +230,9 @@ public class OcrLineQuantityGuardTests
         Assert.Equal(OcrLineQuantityAction.KeepPrintedGap, d.Action);
         Assert.Null(d.Quantity);
         Assert.Null(d.UnitPrice);
+        // ฝ่ายค้าน P2-5: ห้ามเก็บ 2 × 100 − 0 ≠ 150 — ส่วนต่าง 50 เป็นส่วนลดที่ระบุชัด (ยอดตรงกระดาษ · บรรทัดลงตัว) + แท็กบล็อก
+        Assert.Equal(50m, d.LineDiscount);
+        Assert.Contains("ส่วนต่างที่กระดาษไม่บอก — ตรวจ", d.Note);
         Assert.StartsWith(OcrLineQuantityGuard.Tag, d.Note);
         Assert.False(OcrPostingReadiness.Evaluate(d.Note, hasUsableDate: true).CanAutoApprove);
     }
@@ -221,7 +254,7 @@ public class OcrLineQuantityGuardTests
     [Fact]
     public void ตัวแยกตัวเลข_ช่องติดกันของPdfPig_แตกถูกตัว()
     {
-        var nums = Paper("แผน1.00ชิ้น1,330.00293.007%1,037.00(ต");
+        var nums = Paper("แผน1.00ชิ้น1,330.00293.007%1,037.00(ต").Numbers;
         Assert.Equal(new[] { 1.00m, 1330.00m, 293.00m, 7m, 1037.00m }, nums.Select(n => n.Value).ToArray());
         Assert.Equal(new[] { false, false, false, true, false }, nums.Select(n => n.IsPercent).ToArray());
     }

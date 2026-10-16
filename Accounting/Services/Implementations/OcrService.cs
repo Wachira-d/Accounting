@@ -900,12 +900,14 @@ public class OcrService : IOcrService
             // 2026-10-16 RE-20261000111: ตัวกันจำนวนระเบิดเปลี่ยนจำนวน/ราคาที่ engine อ่าน หรือคงค่าที่ขัดกัน ([LINE-QTY] · Helpers/OcrLineQuantityGuard)
             // ต้องขึ้น ProcessingNotes เหมือนกัน — เดิมหารจำนวนใหม่เงียบ ๆ (1 → 0.78) แล้วเอกสารอนุมัติเองได้
             foreach (var dupRowsNote in extractedData.ReasoningTrace
-                         .Where(t => t.StartsWith(Accounting.Helpers.OcrDuplicateLineGuard.Tag, StringComparison.Ordinal)
-                                     || t.StartsWith(Accounting.Helpers.OcrLineQuantityGuard.Tag, StringComparison.Ordinal)))
+                         .Where(t => t.StartsWith(Accounting.Helpers.OcrDuplicateLineGuard.Tag, StringComparison.Ordinal)))
             {
                 if (!(scanResult.ProcessingNotes ?? "").Contains(dupRowsNote, StringComparison.Ordinal))
                     scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + dupRowsNote;
             }
+            // ฝ่ายค้าน 658e3705 P2-6: ตัวต่อหมายเหตุของตัวกันตัวเดียวกับเส้นสร้าง/พรีวิว/ดึงรายการซ้ำ ([LINE-QTY] บล็อก · [LINE-QTY-NOTE] แจ้ง)
+            scanResult.ProcessingNotes = Accounting.Helpers.OcrLineQuantityGuard.MergeNotes(
+                scanResult.ProcessingNotes, extractedData.ReasoningTrace);
 
             // หน่วยนับ: เอกสารไม่พิมพ์/โมเดลไม่ให้มา → อนุมานจากคำอธิบายด้วยกฎ
             // (ค่าไฟ→"หน่วย" kWh, น้ำ→ลบ.ม., เช่ารายเดือน→เดือน ฯลฯ) ก่อน
@@ -4778,17 +4780,29 @@ public class OcrService : IOcrService
         //     กระดาษที่พิมพ์ "1.00 · 1,330.00 · ส่วนลด 293.00 · 1,037.00" ได้จำนวน 0.78 + ส่วนลดหาย · ตอนนี้ตัวตัดสินตัวเดียว
         //     Helpers/OcrLineQuantityGuard ถามแถวบนกระดาษก่อน: ส่วนลดที่พิมพ์ ⇒ ส่วนลดของบรรทัด · จำนวนที่พิมพ์ ⇒ ห้ามแต่ง (แท็ก) ·
         //     ไม่มีหลักฐาน ⇒ สูตรเดิม (ยอด ÷ ราคา) แต่ไม่เงียบ — แท็ก [LINE-QTY] ใน ReasoningTrace ให้ผู้เรียกขึ้น ProcessingNotes
-        var paperNumbers = Accounting.Helpers.OcrLineQuantityGuard.Numbers(paperText);
+        //     ★ ฝ่ายค้าน 658e3705 (ทีม OCR 6): ส่วนลดต้องมีหลักฐาน (หัวคอลัมน์/ป้าย) · คอลัมน์หัก ณ ที่จ่าย/มัดจำ ⇒ ยอดก่อนหัก (DeductionRow) ·
+        //     ห้ามเก็บบรรทัดที่ไม่ลงตัว · บรรทัดที่ผู้ใช้แก้เอง ⇒ ไม่แตะ (ค่าผู้ใช้ชนะ) — ไม่ลงตัว = แท็กให้คนดู
+        var linePaper = Accounting.Helpers.OcrLineQuantityGuard.Read(paperText);
         var paperDiscountRead = false;
         foreach (var item in data.Items)
         {
             // ★ จำนวนจาก e-Tax XML ที่พิสูจน์สมการบรรทัดแล้ว (Helpers/OcrEtaxLineNormalizer) — เอกสารลงนามไม่มี "อ่านหลงคอลัมน์"
             // ห้ามหารจำนวนใหม่จากยอด (สแกน f1690d11: 3 ชิ้น → 2.13 · ค่าขนส่ง 120 → 37.38 เพราะส่วนลดบรรทัดทำให้ จำนวน × ราคา ≠ ยอด)
             if (Signed(item)) continue;
+            // ฝ่ายค้าน P2-6 (CLAUDE #4 A "ค่าผู้ใช้ชนะเสมอ"): บรรทัดที่ผู้ใช้แก้ในหน้ารีวิว — ไม่แก้ค่าใด ๆ เงียบตอนสร้างเอกสาร
+            if (item.UserEdited)
+            {
+                if (Accounting.Helpers.OcrLineQuantityGuard.UserEditedNote(
+                        item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount) is string userNote)
+                    data.ReasoningTrace.Add(userNote);
+                continue;
+            }
             var qtyDecision = Accounting.Helpers.OcrLineQuantityGuard.Decide(
-                item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount, paperNumbers);
+                item.Quantity, item.UnitPrice, item.Amount, item.LineDiscountAmount, linePaper);
             if (qtyDecision.Quantity is decimal decidedQty) item.Quantity = decidedQty;
             if (qtyDecision.UnitPrice is decimal decidedPrice) item.UnitPrice = decidedPrice;
+            // DeductionRow: ยอดบรรทัด = จำนวน × ราคาก่อนหัก (ภาษีหัก ณ ที่จ่าย/มัดจำไม่ใช่ส่วนลด — เจ้าของเดิมตัดสิน · แท็กบล็อก)
+            if (qtyDecision.Amount is decimal grossAmount) item.Amount = grossAmount;
             if (qtyDecision.LineDiscount is decimal printedDiscount)
             {
                 item.LineDiscountAmount = printedDiscount;
@@ -7346,6 +7360,8 @@ public class OcrService : IOcrService
             foreach (var it in items) tmpSan.Items.Add(it);
             SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine), result.RawTextContent);
             items = tmpSan.Items.ToList();
+            // ฝ่ายค้าน 658e3705 P2-6: หมายเหตุของตัวกันจำนวนระเบิดจากรอบนี้ต้องถึงหมายเหตุสแกน (ด่านอนุมัติ/หน้ารีวิวอ่านจากตรงนั้น) — เดิมทิ้งไปกับ tmpSan
+            result.ProcessingNotes = Accounting.Helpers.OcrLineQuantityGuard.MergeNotes(result.ProcessingNotes, tmpSan.ReasoningTrace);
         }
 
         // ★ ตัวสร้างบรรทัดจากผลสแกน **ตัวเดียว** — RepopulateDocumentLinesFromScanAsync
@@ -8295,6 +8311,8 @@ public class OcrService : IOcrService
             foreach (var it in items) tmpSan.Items.Add(it);
             SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine), result.RawTextContent);
             items = tmpSan.Items.ToList();
+            // ฝ่ายค้าน 658e3705 P2-6: หมายเหตุของตัวกันจำนวนระเบิดจากรอบนี้ต้องถึงหมายเหตุสแกน (ด่านอนุมัติ/หน้ารีวิวอ่านจากตรงนั้น) — เดิมทิ้งไปกับ tmpSan
+            result.ProcessingNotes = Accounting.Helpers.OcrLineQuantityGuard.MergeNotes(result.ProcessingNotes, tmpSan.ReasoningTrace);
         }
 
         var resolvedTarget = Accounting.Helpers.OcrTargetDocumentType.Resolve(
@@ -8835,6 +8853,8 @@ public class OcrService : IOcrService
             foreach (var it in items) tmpSan.Items.Add(it);
             SanitizeVatSplitArtifacts(tmpSan, Accounting.Helpers.OcrEtaxLineNormalizer.IsEtaxEngine(result.OcrEngine), result.RawTextContent);
             items = tmpSan.Items.ToList();
+            // ฝ่ายค้าน 658e3705 P2-6: หมายเหตุของตัวกันจำนวนระเบิดจากรอบนี้ต้องถึงหมายเหตุสแกน (ด่านอนุมัติ/หน้ารีวิวอ่านจากตรงนั้น) — เดิมทิ้งไปกับ tmpSan
+            result.ProcessingNotes = Accounting.Helpers.OcrLineQuantityGuard.MergeNotes(result.ProcessingNotes, tmpSan.ReasoningTrace);
         }
 
         // ★ ตัวสร้างบรรทัดตัวเดียวกับ CreateDocumentFromScanAsync — เดิมเส้นนี้เขียนบรรทัดเอง
@@ -9283,6 +9303,8 @@ public class OcrService : IOcrService
         var line = items[lineIndex];
         if (description != null) line.Description = description.Trim();
         if (quantity.HasValue) line.Quantity = quantity.Value;
+        // ฝ่ายค้าน 658e3705 P2-6: ค่าตัวเลขของบรรทัดเป็นของผู้ใช้แล้ว ⇒ ตัวกันจำนวนระเบิดตอนสร้างเอกสารห้ามแก้ (แท็กเมื่อไม่ลงตัว)
+        if (quantity.HasValue || unitPrice.HasValue || lineDiscount.HasValue) line.UserEdited = true;
         if (accountCode != null)
             line.SuggestedAccountCode = accountCode.Trim() is { Length: > 0 } c ? c : null;
         // ราคา/ส่วนลด + ช่องติ๊ก "กรอกราคาไม่รวม VAT" — ตัวตัดสินเดียว (ทบทวน e8547899 ข้อ 1: แปลงเฉพาะราคาที่ส่งมาในคำขอนี้ · ส่วนลดแปลงเมื่อเปลี่ยน
@@ -9367,6 +9389,7 @@ public class OcrService : IOcrService
                 {
                     Description = "", Quantity = 1m, UnitPrice = 0m, Amount = 0m,
                     PriceIncludesVat = inherit.PriceIncludesVat, VatRate = inherit.VatRate,
+                    UserEdited = true,   // บรรทัดที่ผู้ใช้เพิ่มเอง — ตัวกันจำนวนระเบิดไม่แก้ (ฝ่ายค้าน 658e3705 P2-6)
                 });
                 break;
             }
@@ -11788,6 +11811,10 @@ internal class OcrExtractedLineItem
     /// <summary>true = บรรทัดมาจาก e-Tax XML (จำนวนคือ <c>BilledQuantity</c> ทุกบรรทัด รวมบรรทัดที่ตัดสินฐานราคาไม่ได้) ⇒ ตัวกัน "จำนวนระเบิด"
     /// (<c>SanitizeVatSplitArtifacts</c>) ห้ามหารจำนวนใหม่จากยอด/ยุบ/รวมบรรทัด (เอกสารลงนามดิจิทัล ไม่มี "อ่านหลงคอลัมน์")</summary>
     public bool QuantityFromEtaxXml { get; set; }
+    /// <summary>true = ผู้ใช้แก้จำนวน/ราคา/ส่วนลดของบรรทัดนี้ในหน้ารีวิวเอง (<c>SetExtractedLineFieldsAsync</c>) หรือเพิ่มบรรทัดเอง ⇒ ตัวกันจำนวนระเบิด
+    /// (<c>SanitizeVatSplitArtifacts</c> ข้อ 1b · <c>Helpers/OcrLineQuantityGuard</c>) ไม่แก้ค่าใด ๆ ตอนสร้างเอกสาร (CLAUDE #4 A "ค่าผู้ใช้ชนะเสมอ" ·
+    /// ฝ่ายค้าน 658e3705 P2-6) — ไม่ลงตัว = แท็ก [LINE-QTY] ให้คนดู ไม่ใช่แก้เงียบ</summary>
+    public bool UserEdited { get; set; }
     /// <summary>true = ราคา · ส่วนลด · ยอด ของบรรทัดนี้ <b>รวม VAT</b> ตามกระดาษ (e-Tax ที่กระทบยอดผ่าน — ฝ่ายค้านรอบสาม f1690d11) ⇒
     /// ตัวสร้างบรรทัดตั้งเอกสาร <c>PricesIncludeVat</c> + ถอด VAT รายบรรทัดด้วยสูตรเดียวกับ DocumentService · ทุนสต็อกถอด VAT ก่อนหาร</summary>
     public bool PriceIncludesVat { get; set; }

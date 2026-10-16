@@ -745,7 +745,9 @@ public class LineBotService : ILineBotService
             // รอบ 195 ฝ่ายค้าน C1 — VAT ไม่มีบนกระดาษ (blocking tag ต้องมีคำอธิบายบนการ์ดด้วย)
             Accounting.Helpers.OcrHeaderVatEvidence.DerivedTag,
             // รอบ 200 ทีม K2 (C-09) — สกุลเงินไม่แน่ใจ (blocking tag ต้องมีคำอธิบายบนการ์ด)
-            Accounting.Helpers.OcrCurrencyEvidence.UnsureTag };
+            Accounting.Helpers.OcrCurrencyEvidence.UnsureTag,
+            // ฝ่ายค้าน 658e3705: ตัวกันจำนวนระเบิด — แท็กบล็อกต้องมีคำอธิบายบนการ์ด · หมายเหตุแจ้ง (ส่วนลดจากกระดาษ/จำนวนที่พิสูจน์) ให้เห็นด้วย
+            Accounting.Helpers.OcrLineQuantityGuard.Tag, Accounting.Helpers.OcrLineQuantityGuard.NoteTag };
         foreach (var line in processingNotes.Split('\n'))
         {
             var t = line.Trim();
@@ -824,13 +826,14 @@ public class LineBotService : ILineBotService
             // ฝ่ายค้าน 6e56d33d P2-4: ข้อ [Σ-GAP] "ยอดเอกสารเกินกระดาษ" ในหมายเหตุเป็นตัวเลขของบรรทัดตอนสร้าง — ผู้ใช้แก้บรรทัดในเว็บแล้วต้องไม่ค้างหยุดแชท
             // ⇒ ตรวจสดบนบรรทัดตอนนี้ด้วยตัวตัดสินเดียวกับด่านอนุมัติ (OcrTotalAnchor.DocumentOverstatement · สูตรยอดเดียวกับ
             // DocumentService.CollectApprovalWarningsAsync: Σ (ยอด + VAT) ของบรรทัดที่ไม่ถูกลบ + ผลต่างปัดเศษ) · ข้ออื่นตัดสินจากหมายเหตุเหมือนเดิม
-            var docRounding = await _db.Documents.AsNoTracking()
+            var docGate = await _db.Documents.AsNoTracking()
                 .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId)
-                .Select(d => d.RoundingAdjustment)
+                .Select(d => new { d.RoundingAdjustment, d.PricesIncludeVat })
                 .FirstOrDefaultAsync();
+            var docRounding = docGate?.RoundingAdjustment ?? 0m;
             var gateLines = await _db.DocumentLines.AsNoTracking()
-                .Where(l => l.DocumentId == doc.Id && !l.IsDeleted)
-                .Select(l => new { l.Amount, l.VatAmount, l.VatRate })
+                .Where(l => l.DocumentId == doc.Id && l.Document.CompanyId == doc.CompanyId && !l.IsDeleted)
+                .Select(l => new { l.Amount, l.VatAmount, l.VatRate, l.Quantity, l.UnitPrice, l.DiscountPercent, l.DiscountAmount })
                 .ToListAsync();
             var linesTotalNow = gateLines.Sum(l => l.Amount + l.VatAmount) + docRounding;
             var gateNormalized = Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(scanGate.RawTextContent);
@@ -842,8 +845,14 @@ public class LineBotService : ILineBotService
                 gateLines.Select(l => new Accounting.Helpers.OcrPlannedLine(l.Amount, l.VatRate, l.VatAmount)).ToList(),
                 // ฝ่ายค้าน f7c29c2c P1-1: ตารางที่ตัดสินความหมายแล้ว — ตัวเดียวกับตัวสร้างบรรทัด/ด่านอนุมัติเว็บ (ตารางดิบ ⇒ LINE ปฏิเสธใบที่สร้างสะอาด)
                 Accounting.Helpers.OcrVatCodeMeaning.ResolvedTable(gateNormalized, scanGate.VatCodeMeaningsJson).Table);
+            // ฝ่ายค้าน 658e3705 P2-2: [LINE-QTY] ของตอนสแกนตรวจสดบนบรรทัดตอนนี้ (ตัวเดียวกับสร้าง+อนุมัติ) — คนแก้บรรทัดที่ระบบตั้งค่าแล้วและทุกบรรทัดลงตัว ⇒ ไม่ค้างหยุด ·
+            // บรรทัดยังถือค่าที่ระบบตั้ง (ยังไม่มีคนดู) ⇒ หยุดต่อ
+            var liveLines = gateLines
+                .Select(l => new Accounting.Helpers.OcrLiveLine(l.Quantity, l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount, l.VatRate)).ToList();
             var readiness = Accounting.Helpers.OcrPostingReadiness.Evaluate(
-                Accounting.Helpers.OcrVatCodeLines.LiveNotes(scanGate.ProcessingNotes, vatCodeMismatchNow, checkedLive: gateLines.Count > 0),
+                Accounting.Helpers.OcrLineQuantityGuard.LiveNotes(
+                    Accounting.Helpers.OcrVatCodeLines.LiveNotes(scanGate.ProcessingNotes, vatCodeMismatchNow, checkedLive: gateLines.Count > 0),
+                    liveLines, docGate?.PricesIncludeVat ?? false, checkedLive: docGate != null && gateLines.Count > 0),
                 scanGate.ExtractedDate != null, overstatedNow);
             if (!readiness.CanAutoApprove)
                 return "⛔ ยังอนุมัติจากแชทไม่ได้ — " + readiness.Reason;

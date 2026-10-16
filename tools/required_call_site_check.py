@@ -6387,26 +6387,73 @@ RULES += [
 _LINE_QTY_WHY = "RE-20261000111 (2026-10-16): "
 RULES += [
     dict(file=OCR, method="SanitizeVatSplitArtifacts",
-         must=["OcrLineQuantityGuard.Numbers(paperText)", "item.LineDiscountAmount = printedDiscount",
-               "data.ReasoningTrace.Add(qtyNote)", "OcrLineQuantityGuard.PaperDiscountPricesIncludeVat("],
-         call_args=[("OcrLineQuantityGuard.Decide(", "item.LineDiscountAmount"), ("OcrLineQuantityGuard.Decide(", "paperNumbers")],
+         must=["OcrLineQuantityGuard.Read(paperText)", "item.LineDiscountAmount = printedDiscount",
+               "data.ReasoningTrace.Add(qtyNote)", "OcrLineQuantityGuard.PaperDiscountPricesIncludeVat(",
+               # ฝ่ายค้าน 658e3705 P1-1/P2-6: ยอดก่อนหักของแถวหัก ณ ที่จ่าย/มัดจำต้องถูกเขียน · บรรทัดที่ผู้ใช้แก้ไม่ผ่านตัวแก้ (แท็กเมื่อไม่ลงตัว)
+               "item.Amount = grossAmount", "OcrLineQuantityGuard.UserEditedNote(", "data.ReasoningTrace.Add(userNote)"],
+         call_args=[("OcrLineQuantityGuard.Decide(", "item.LineDiscountAmount"), ("OcrLineQuantityGuard.Decide(", "linePaper")],
+         before=[("if (item.UserEdited)", "OcrLineQuantityGuard.Decide(")],
          forbid=["item.Quantity = fixedQty", "System.Math.Round(amt / up"],
          why=_LINE_QTY_WHY + "ตัวกันจำนวนระเบิดต้องถามแถวบนกระดาษ (ส่วนลดที่พิมพ์ ⇒ ส่วนลดบรรทัด · จำนวนที่พิมพ์ ⇒ ห้ามหาร) ผ่านตัวตัดสินเดียว — ห้ามประกอบสูตรหารจำนวนเองใน service"),
     dict(file="Helpers/OcrLineQuantityGuard.cs", method="Decide",
-         must=["OcrEtaxLineNormalizer.ProvenLineDiscount(", "FindRow(paperNumbers, qty, up, amt)", "MidpointRounding.AwayFromZero"],
+         must=["OcrEtaxLineNormalizer.ProvenLineDiscount(", "FindRow(paper, qty, up, amt)", "MidpointRounding.AwayFromZero",
+               # ฝ่ายค้าน 658e3705 P2-3: แก้ที่พิสูจน์แล้ว = แจ้ง (มิเตอร์คู่หน่วย · จำนวนใหม่บนแถว) · แท็กบล็อกต้องพกค่าที่ระบบตั้ง (ตรวจสด P2-2)
+               "MeterQuantityPrinted(paper, qty, amt, price)", "FindRow(paper, newQty, up, amt)", "Fingerprint(newQty, up)", "Fingerprint(qty, up)"],
+         must_lit=["ส่วนลดรายบรรทัด {printed:N2} จากกระดาษ", "ส่วนต่างที่กระดาษไม่บอก — ตรวจ"],
          before=[("row.Discount is decimal printed", "if (Math.Abs(computed - amt) <= tol) return Keep;"),
                  ("if (!qtyLooksLikeAmount && row.QuantityPrinted)", "var fixedQty")],
          forbid=["Math.Round(amt / up, 3)", "Math.Round(amt / qty, 4)"],
          why=_LINE_QTY_WHY + "ส่วนลดที่กระดาษพิมพ์ต้องถูกถามก่อนเกณฑ์ ±2% และจำนวนที่พิมพ์บนแถวต้องถูกคุ้มครองก่อนสูตรหารจำนวน (ลำดับ) · ปัดเศษ AwayFromZero"),
     dict(file=OCR, method="ScanAsync",
-         call_args=[("SanitizeVatSplitArtifacts(", "extractedText")],
-         must=["OcrLineQuantityGuard.Tag"],
+         call_args=[("SanitizeVatSplitArtifacts(", "extractedText"), ("OcrLineQuantityGuard.MergeNotes(", "extractedData.ReasoningTrace")],
+         must=["OcrLineQuantityGuard.MergeNotes("],
+         before=[("SanitizeVatSplitArtifacts(extractedData", "OcrLineQuantityGuard.MergeNotes(")],
          why=_LINE_QTY_WHY + "ตอนสแกนต้องส่งข้อความกระดาษให้ตัวกันจำนวนระเบิด และแท็ก [LINE-QTY] ต้องขึ้น ProcessingNotes (ห้ามอนุมัติเอง — เดิมหารจำนวนเงียบ)"),
 ] + [
     dict(file=OCR, method=m,
-         call_args=[("SanitizeVatSplitArtifacts(", "RawTextContent")],
-         why=_LINE_QTY_WHY + "สร้างซ้ำ/พรีวิว/ดึงรายการซ้ำต้องส่งข้อความกระดาษ (RawTextContent) ไม่งั้นได้จำนวนคนละค่ากับตอนสแกน")
+         call_args=[("SanitizeVatSplitArtifacts(", "RawTextContent"), ("OcrLineQuantityGuard.MergeNotes(", "tmpSan.ReasoningTrace")],
+         must=["OcrLineQuantityGuard.MergeNotes("],
+         before=[("SanitizeVatSplitArtifacts(tmpSan", "OcrLineQuantityGuard.MergeNotes(")],
+         why=_LINE_QTY_WHY + "สร้างซ้ำ/พรีวิว/ดึงรายการซ้ำต้องส่งข้อความกระดาษ (RawTextContent) ไม่งั้นได้จำนวนคนละค่ากับตอนสแกน · "
+             "ฝ่ายค้าน 658e3705 P2-6: หมายเหตุของตัวกันรอบนี้ต้องถึง ProcessingNotes (เดิมทิ้งไปกับ tmpSan.ReasoningTrace)")
     for m in ("CreateDocumentFromScanCoreAsync", "PreviewDocumentLinesAsync", "RepopulateDocumentLinesFromScanAsync")
+] + [
+    # ── ฝ่ายค้าน 658e3705 (ทีม OCR 6 · 2026-10-16) ──
+    # P2-2: แท็ก [LINE-QTY] ตรวจสดบนบรรทัดเอกสารก่อนตัวตัดสินอนุมัติ ทั้งปุ่มอนุมัติ LINE และสร้าง+อนุมัติ (ตัวเดียว · ตรวจไม่ได้ ⇒ บล็อกต่อ)
+    dict(file="Services/Implementations/LineBotService.cs", method="HandlePostbackAsync",
+         must=["OcrLineQuantityGuard.LiveNotes("],
+         call_args=[("OcrLineQuantityGuard.LiveNotes(", "liveLines")],
+         must_re=[r"OcrPostingReadiness\s*\.\s*Evaluate\(\s*Accounting\s*\.\s*Helpers\s*\.\s*OcrLineQuantityGuard\s*\.\s*LiveNotes\("],
+         why=_LINE_QTY_WHY + "ฝ่ายค้าน 658e3705 P2-2: แท็กของตอนสแกนต้องตรวจสดบนบรรทัดตอนนี้ — เดิมค้างหยุดแชทตลอดไป"),
+    dict(file="Controllers/OcrController.cs", method="CreateDocument",
+         must=["OcrLineQuantityGuard.LiveNotes("],
+         before=[("OcrLineQuantityGuard.LiveNotes(", "skipReason")],
+         why=_LINE_QTY_WHY + "ฝ่ายค้าน 658e3705 P2-2: สร้าง+อนุมัติตรวจสด [LINE-QTY] บนบรรทัดที่เพิ่งสร้าง (ตัวเดียวกับ LINE) — เดิมข้ามทุกครั้ง"),
+    # P2-6: ค่าที่ผู้ใช้แก้ในหน้ารีวิวต้องติดธง ⇒ ตัวกันตอนสร้างเอกสารไม่แก้กลับเงียบ
+    dict(file=OCR, method="SetExtractedLineFieldsAsync",
+         must=["line.UserEdited = true"],
+         why=_LINE_QTY_WHY + "ฝ่ายค้าน 658e3705 P2-6: บรรทัดที่ผู้ใช้แก้ต้องไม่ถูกตัวกันจำนวนระเบิดเขียนทับตอนสร้างเอกสาร (ค่าผู้ใช้ชนะ)"),
+    # แท็กบล็อกต้องมีคำอธิบายบนการ์ด LINE (บทเรียน [WHT-CERT] — ปุ่มอนุมัติหายโดยไม่มีเหตุผล)
+    dict(file="Services/Implementations/LineBotService.cs", method="OcrScanWarnings",
+         must=["OcrLineQuantityGuard.Tag", "OcrLineQuantityGuard.NoteTag"],
+         why=_LINE_QTY_WHY + "ฝ่ายค้าน 658e3705: [LINE-QTY]/[LINE-QTY-NOTE] ต้องขึ้นการ์ด LINE"),
+]
+
+# ฝ่ายค้าน 658e3705 — การถดถอยจริงที่ต้องถูกจับ (+ รูปถูกที่ต้องไม่ถูกฟ้อง)
+REVIEWER_CASES += [
+    # LINE ประเมินจากหมายเหตุดิบ (ไม่ตรวจสด) — แท็กค้างหยุดตลอดไป
+    ("LQ1", "HandlePostbackAsync", "                    liveLines, docGate?.PricesIncludeVat ?? false,",
+     "                    new List<Accounting.Helpers.OcrLiveLine>(), docGate?.PricesIncludeVat ?? false,", True),
+    # บรรทัดที่ผู้ใช้แก้ไม่ข้ามตัวแก้แล้ว (ลบ continue ของแขนงผู้ใช้ — ตัวกันเขียนทับค่าผู้ใช้)
+    ("LQ2", "SanitizeVatSplitArtifacts", "            if (item.UserEdited)\n", "            if (false && item.UserEdited)\n", True),
+    # เส้นสร้างเอกสารทิ้งหมายเหตุของตัวกันอีก (กลับรูป 658e3705)
+    ("LQ3", "CreateDocumentFromScanCoreAsync",
+     "            result.ProcessingNotes = Accounting.Helpers.OcrLineQuantityGuard.MergeNotes(result.ProcessingNotes, tmpSan.ReasoningTrace);\n", "", True),
+    # PrintedDiscount กลับไปไม่มีหมายเหตุ (Note = null)
+    ("LQ4", "Decide", '$"{NoteTag} ส่วนลดรายบรรทัด {printed:N2} จากกระดาษ', '$"{NoteTag} ส่วนลด {printed:N2}', True),
+    # รูปถูก: ขึ้นบรรทัดใหม่ก่อน .LiveNotes( ต้องไม่ถูกฟ้อง
+    ("LQ5", "HandlePostbackAsync", "                Accounting.Helpers.OcrLineQuantityGuard.LiveNotes(",
+     "                Accounting.Helpers.OcrLineQuantityGuard\n                    .LiveNotes(", False),
 ]
 
 

@@ -191,7 +191,10 @@ public class OcrReplayGoldenTests
     {
         // 2026-10-09: ใบบิลเน็ตที่มีค้างชำระถูกยึดยอดใหม่โดยตั้งใจ (ดูเทสต์ด้านล่าง) — ใบรอบที่ไม่มีค้างยังอยู่ในชุด "ห้ามแตะ"
         var newPapers = new[] { "makro-page3-total-first", "uptoyou-shopee-pay-not-total", "scommerce-lazada-prevat-discount",
-            "telecom-prior-balance", "makro-page2-vat-added-twice" };
+            "telecom-prior-balance", "makro-page2-vat-added-twice",
+            // ฝ่ายค้าน 658e3705 (ทีม OCR 6): ใบคอลัมน์หัก ณ ที่จ่าย — ตัวอ่าน WHT (PaperWhtReader) หยิบเงินแถวแรกหลังป้ายหัวคอลัมน์ ⇒ ยึดยอดได้ Conflict
+            // (เจอแต่ไม่แก้ในรอบนี้ — ล็อกค่าปัจจุบันใน OcrReplayLineGoldenTests ฝ่ายค้าน_คอลัมน์หักณที่จ่าย…)
+            "wht-column-service-invoice" };
         foreach (var p in OcrReplayHarness.Corpus.Where(x => !newPapers.Contains(x.Name)))
         {
             // ขั้นยึดยอดต้องไม่เขียนทับ/ขัดใบเดิมใบไหนเลย

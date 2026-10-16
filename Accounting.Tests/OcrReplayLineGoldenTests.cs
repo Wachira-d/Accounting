@@ -315,7 +315,7 @@ public class OcrReplayLineGoldenTests
         // คิดมือ: 1,037 × 100/107 = 969.158… ⇒ 969.16 · VAT = 1,037 − 969.16 = 67.84 (= กระดาษ) · ส่วนลด 293 อยู่ฐานรวม VAT (ฐานเดียวกับราคา)
         // ก่อนแก้ (ใบสำคัญจ่ายของผู้ใช้): จำนวน 0.78 (= 1,037 ÷ 1,330) · ส่วนลด 0% — ยอดรวมตรงจึงไม่มีอะไรฟ้อง
         const string P = "pramie-line-discount-re111";
-        Assert.Equal("PrintedDiscount|1|1330.00|293.00", Val(P, "LineQtyGuard"));
+        Assert.Equal("PrintedDiscount|1|1330.00|293.00|note", Val(P, "LineQtyGuard"));   // ฝ่ายค้าน 658e3705 P1-1 ข้อ d: หมายเหตุแจ้ง (หัวคอลัมน์ "ส่วนลด") ไม่บล็อก
         Assert.Equal("Items", Val(P, "LineMode"));
         Assert.Equal("PricesIncludeVat", Val(P, "ReconCase"));
         Assert.Equal("true", Val(P, "PricesIncludeVat"));
@@ -330,32 +330,113 @@ public class OcrReplayLineGoldenTests
     [Fact]
     public void ทิศตรงข้าม_สินค้าชั่งน้ำหนัก_จำนวนไม่ได้พิมพ์_ยอดหารราคา0_45กก_ยังทำ()
     {
-        Assert.Equal("FixQuantity|0.45|120.00|-", Val("weighed-item-qty-not-printed", "LineQtyGuard"));
+        Assert.Equal("FixQuantity|0.45|120.00|-|block", Val("weighed-item-qty-not-printed", "LineQtyGuard"));   // 0.45 ไม่ได้พิมพ์ ⇒ บล็อก
         Assert.Equal("54.00|0|0.00|120.00|0|0.00|0.00", Val("weighed-item-qty-not-printed", "Lines"));
         Assert.Equal("ok", Val("weighed-item-qty-not-printed", "IntegrityGaps"));
     }
 
     [Fact]
-    public void ทิศตรงข้าม_engineอ่านจำนวน1_กระดาษพิมพ์2_จำนวนจากยอดหารราคาเป็น2()
+    public void ทิศตรงข้าม_engineอ่านจำนวน1_กระดาษพิมพ์2_จำนวนจากยอดหารราคาเป็น2_พิสูจน์แล้วไม่บล็อก()
     {
-        Assert.Equal("FixQuantity|2|10.00|-", Val("qty-misread-engine-one", "LineQtyGuard"));
+        // ฝ่ายค้าน 658e3705 P2-3: กระดาษพิมพ์ 2 ติดก่อนราคา = จำนวนใหม่พิสูจน์แล้ว ⇒ หมายเหตุแจ้ง (เดิมบล็อก)
+        Assert.Equal("FixQuantity|2|10.00|-|note", Val("qty-misread-engine-one", "LineQtyGuard"));
         Assert.Equal("20.00|7|1.40|10.00|0|0.00|0.00", Val("qty-misread-engine-one", "Lines"));
         Assert.Equal("ok", Val("qty-misread-engine-one", "IntegrityGaps"));
     }
 
     [Fact]
-    public void จำนวนพิมพ์บนแถว_ส่วนต่างไม่มีส่วนลดอธิบาย_คงจำนวน2_ไม่แต่ง1_5_และฟ้องΣGAP()
+    public void จำนวนพิมพ์บนแถว_ส่วนต่างไม่มีส่วนลดอธิบาย_คงจำนวน2_ไม่แต่ง1_5_ส่วนต่างเป็นส่วนลดที่ระบุชัด_บรรทัดลงตัว_บล็อก()
     {
-        Assert.Equal("KeepPrintedGap|2|100.00|-", Val("qty-printed-gap-unexplained", "LineQtyGuard"));
-        Assert.Equal("150.00|7|10.50|100.00|0|0.00|0.00", Val("qty-printed-gap-unexplained", "Lines"));
-        Assert.Equal("Σ-GAP:Ambiguous", Val("qty-printed-gap-unexplained", "IntegrityGaps"));
+        // ฝ่ายค้าน 658e3705 P2-5: เดิมเก็บ 2 × 100 − 0 ≠ 150 (บันทึกซ้ำได้ 200) + Σ-GAP · ตอนนี้ 2 × 100 − 50 = 150 (ยอดตรงกระดาษ · บันทึกซ้ำไม่เลื่อน)
+        // ส่วนต่าง 50 ไม่มีบนกระดาษ ⇒ แท็กบล็อก [LINE-QTY] "ส่วนต่างที่กระดาษไม่บอก — ตรวจ" (Σ ตรงหัวใบแล้วจึงไม่มี Σ-GAP)
+        Assert.Equal("KeepPrintedGap|2|100.00|50.00|block", Val("qty-printed-gap-unexplained", "LineQtyGuard"));
+        Assert.Equal("150.00|7|10.50|100.00|0|50.00|0.00", Val("qty-printed-gap-unexplained", "Lines"));
+        Assert.Equal("ok", Val("qty-printed-gap-unexplained", "IntegrityGaps"));
+    }
+
+    // ── ฝ่ายค้าน 658e3705 (ทีม OCR 6) — ใบละหนึ่ง defect class ─────────────────────────────────────────────
+
+    [Fact]
+    public void ฝ่ายค้าน_คอลัมน์หักณที่จ่าย_ยอดบรรทัดก่อนหัก10000_หักณที่จ่าย300ไปที่ตัวอ่านWHT_ไม่ใช่ส่วนลด()
+    {
+        // เดิม: PrintedDiscount 300 (ส่วนลดบรรทัด) · อนุมัติเองได้ · ฐาน VAT 9,700 ≠ กระดาษ 10,000
+        const string P = "wht-column-service-invoice";
+        Assert.Equal("DeductionRow|1|10000.00|-|block", Val(P, "LineQtyGuard"));
+        Assert.Equal("10000.00|7|700.00|10000.00|0|0.00|300.00", Val(P, "Lines"));   // หัก ณ ที่จ่าย 300 = อัตรา 3% ของเจ้าของเดิม (ไม่ใช่ส่วนลด)
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+        // ⚠️ เจอแต่ไม่แก้ (เจ้าของคนละตัว · รอแยกรอบ): ป้าย "หัก ณ ที่จ่าย" บนหัวคอลัมน์ทำให้ PaperWhtReader หยิบ 10,000.00 (เงินแรกหลังป้าย) แทน 300.00
+        // ⇒ ขั้นยึดยอดได้ Conflict (แท็กบล็อก [TOTAL-CONFLICT]) — ค่าปัจจุบันล็อกไว้ให้การแก้รอบหน้าเห็นเป็นตัวเลข
+        Assert.Equal("10000.00", Val(P, "PaperWhtAmount"));
+        Assert.Equal("Conflict", Val(P, "AnchorVerdict"));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_ใบงวดหักมัดจำ_ยอดบรรทัด100000_ไม่ใช่ส่วนลด30000_ฟ้องΣGAPให้ตัดมัดจำผ่านวงจรมัดจำ()
+    {
+        // เดิม: ส่วนลดบรรทัด 30,000 ⇒ ลดราคาถาวร มัดจำ 11810 ไม่ถูกล้าง · ตอนนี้ยอดก่อนหัก + [LINE-QTY] + [Σ-GAP] (ไม่แต่งเป็นส่วนลดท้ายบิล)
+        const string P = "deposit-installment-invoice";
+        Assert.Equal("DeductionRow|1|100000.00|-|block", Val(P, "LineQtyGuard"));
+        Assert.Equal("Ambiguous", Val(P, "ReconCase"));
+        Assert.Equal("0.00", Val(P, "DiscountToSpread"));
+        Assert.Equal("Σ-GAP:Ambiguous", Val(P, "IntegrityGaps"));
+        // ⚠️ เจอแต่ไม่แก้: OcrDepositMarker ตีใบงวดที่ "หักมัดจำ" กลางแถว (แถวไม่ขึ้นต้นด้วย หัก) เป็นใบมัดจำ — ล็อกค่าปัจจุบัน (รอแยกรอบ)
+        Assert.Equal("true", Val(P, "IsDeposit"));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_รหัสสินค้าSKU50_ไม่ใช่ส่วนลดจากกระดาษ_ยอดตรงกระดาษ_บล็อก()
+    {
+        const string P = "sku-code-on-row";
+        Assert.Equal("UnevidencedDiscount|1|500.00|50.00|block", Val(P, "LineQtyGuard"));
+        Assert.Equal("450.00|0|0.00|500.00|0|50.00|0.00", Val(P, "Lines"));
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_เลขลำดับแถวไม่ใช่จำนวน_หมูสับ0_45กก_บล็อก_แถวที่ลงตัวไม่แตะ()
+    {
+        const string P = "row-index-receipt";
+        Assert.Equal("FixQuantity|0.45|120.00|-|block;Keep|10|4.00|-|-", Val(P, "LineQtyGuard"));
+        Assert.Equal("54.00|0|0.00|120.00|0|0.00|0.00;40.00|0|0.00|4.00|0|0.00|0.00", Val(P, "Lines"));
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_บิลค่าไฟมิเตอร์พิมพ์คู่หน่วย_ราคาจากยอดหารจำนวน_แจ้งไม่บล็อก()
+    {
+        // เดิม: [LINE-QTY] บล็อกทุกเดือน · มิเตอร์ 3,611 "หน่วย" แล้วยอด 16,351.48 ตามมา = พิสูจน์แล้ว
+        const string P = "utility-meter-bill";
+        Assert.Equal("FixUnitPrice|3611|4.5282|-|note", Val(P, "LineQtyGuard"));
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_ทิศตรงข้าม_หัวคอลัมน์ส่วนลด_3เปอร์เซ็นต์เป็นส่วนลดจริง_แจ้งไม่บล็อก()
+    {
+        const string P = "discount-header-invoice";
+        Assert.Equal("PrintedDiscount|1|10000.00|300.00|note", Val(P, "LineQtyGuard"));
+        Assert.Equal("9700.00|7|679.00|10000.00|0|300.00|0.00", Val(P, "Lines"));
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_อัตราแท็กของชุด_บล็อกเฉพาะใบที่ไม่มีหลักฐาน()
+    {
+        // อัตราแท็กมีความหมาย: ใบเก่า 0 แท็ก · ใบที่พิสูจน์ได้ (ส่วนลดมีหัว · จำนวนพิมพ์ · มิเตอร์) = แจ้ง · ใบที่ไม่มีหลักฐาน = บล็อก
+        var rows = OcrReplayHarness.Run().Where(a => a.Field == "LineQtyGuard").SelectMany(a => a.Value!.Split(';').Select(r => (a.Paper, Tag: r.Split('|')[4])));
+        var block = rows.Where(r => r.Tag == "block").Select(r => r.Paper).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        var note = rows.Where(r => r.Tag == "note").Select(r => r.Paper).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "deposit-installment-invoice", "qty-printed-gap-unexplained", "row-index-receipt", "sku-code-on-row", "weighed-item-qty-not-printed", "wht-column-service-invoice" }, block);
+        Assert.Equal(new[] { "discount-header-invoice", "pramie-line-discount-re111", "qty-misread-engine-one", "utility-meter-bill" }, note);
     }
 
     [Fact]
     public void ใบเดิมทุกใบในชุด_ตัวกันจำนวนระเบิดไม่แตะบรรทัดใดเลย()
     {
         // ratchet ของรอบนี้: ใบที่มีอยู่ก่อน 2026-10-16 ทุกบรรทัดได้ Keep (จำนวน/ราคาตามที่ป้อน · ไม่มีส่วนลดใหม่) — ใบใหม่ 4 ใบข้างบนเท่านั้นที่เปลี่ยน
-        var added = new[] { "pramie-line-discount-re111", "weighed-item-qty-not-printed", "qty-misread-engine-one", "qty-printed-gap-unexplained" };
+        var added = new[] { "pramie-line-discount-re111", "weighed-item-qty-not-printed", "qty-misread-engine-one", "qty-printed-gap-unexplained",
+            // ฝ่ายค้าน 658e3705 (ทีม OCR 6)
+            "wht-column-service-invoice", "deposit-installment-invoice", "sku-code-on-row", "row-index-receipt", "utility-meter-bill", "discount-header-invoice" };
         var all = OcrReplayHarness.Run();
         foreach (var a in all.Where(a => a.Field == "LineQtyGuard" && !added.Contains(a.Paper)))
             foreach (var row in a.Value!.Split(';'))

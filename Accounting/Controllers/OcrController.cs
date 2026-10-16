@@ -415,14 +415,23 @@ public class OcrController : ControllerBase
             // (เว็บ · LINE · มือถือ ต้องใช้ตัวเดียวกัน — ไม่งั้นสามช่องทางสามนโยบาย)
             // ครอบทั้งวันที่ที่อ่านไม่ได้ · Σ บรรทัดไม่ตรงหัวใบ · ไม่รู้อัตราแลกเปลี่ยน ·
             // กระดาษยังไม่ใช่ใบกำกับ · 50 ทวิ ที่เราถูกหัก
+            // ฝ่ายค้าน 658e3705 P2-2: [LINE-QTY] ตรวจสดบนบรรทัดของเอกสารที่เพิ่งสร้าง (ตัวเดียวกับ LINE) — ผู้ใช้แก้บรรทัดสแกนก่อนกดแล้ว
+            // (บรรทัดไม่ถือค่าที่ระบบตั้ง + ลงตัว) ⇒ ไม่ข้ามเสมอ · บรรทัดยังเป็นค่าที่ระบบตั้ง ⇒ ข้าม (ต้องมีคนดู)
+            var createdDoc = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == result.CreatedDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => new { d.DocumentType, d.PricesIncludeVat })
+                .FirstOrDefaultAsync();
+            var createdLines = await _db.DocumentLines.AsNoTracking()
+                .Where(l => l.DocumentId == result.CreatedDocumentId.Value && l.Document.CompanyId == companyId && !l.IsDeleted)
+                .Select(l => new Helpers.OcrLiveLine(l.Quantity, l.UnitPrice, l.DiscountPercent, l.DiscountAmount, l.Amount, l.VatRate))
+                .ToListAsync();
             var readiness = Helpers.OcrPostingReadiness.Evaluate(
-                result.ProcessingNotes, result.ExtractedDate != null);
+                Helpers.OcrLineQuantityGuard.LiveNotes(result.ProcessingNotes, createdLines,
+                    createdDoc?.PricesIncludeVat ?? false, checkedLive: createdDoc != null && createdLines.Count > 0),
+                result.ExtractedDate != null);
             var skipReason = readiness.CanAutoApprove ? null : readiness.Reason;
             // T1-06: ด่านสิทธิ์อนุมัติ — ตัวเดียวกับ DocumentController/ลายเซ็น/LINE/มือถือ
-            var createdType = await _db.Documents.AsNoTracking()
-                .Where(d => d.Id == result.CreatedDocumentId.Value && d.CompanyId == companyId)
-                .Select(d => (Models.Enums.DocumentType?)d.DocumentType)
-                .FirstOrDefaultAsync();
+            var createdType = (Models.Enums.DocumentType?)createdDoc?.DocumentType;
             if (skipReason == null && createdType is Models.Enums.DocumentType cType
                 && !await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userGuid, cType))
                 skipReason = $"ไม่มีสิทธิ์อนุมัติเอกสารประเภท {cType} — สร้างเป็น Draft ไว้แล้ว รอผู้มีสิทธิ์อนุมัติ";

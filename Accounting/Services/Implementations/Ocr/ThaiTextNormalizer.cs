@@ -100,6 +100,33 @@ public static class ThaiTextNormalizer
     }
 
     /// <summary>
+    /// แปลงอักขระ <b>Private Use ของฟอนต์ไทย</b> (U+F700–U+F71A — วรรณยุกต์/สระบนที่ฟอนต์เลื่อนตำแหน่ง · ฐ/ญ ไม่มีเชิง) เป็นอักขระ Unicode ไทยปกติ
+    ///
+    /// <para>ที่มา (2026-10-16 · ใบ RE-20261000111 PDF ข้อความ): PdfPig ถอด "แผ่น" เป็น "แผ\uF70Aน" · "ส่วนลด" เป็น "ส\uF70Aวนลด" ⇒ ผู้ค้นคำไทยบนข้อความ PDF
+    /// หาไม่เจอ · ตัวนี้<b>ไม่ถูกต่อเข้า <see cref="Normalize"/></b> (ทุก golden ของข้อความ OCR อ่านผ่าน Normalize — ต่อแล้วผลทั้งชุดขยับ ต้องตัดสินแยกรอบ) ·
+    /// ผู้ใช้ตอนนี้: ตัวค้นคำบนแถว/หัวคอลัมน์ของ <c>Helpers/OcrLineQuantityGuard</c> · ความยาวข้อความคงเดิม (แทนทีละตัว) ⇒ ตำแหน่งไม่เลื่อน</para>
+    /// </summary>
+    public static string MapThaiPua(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return text ?? "";
+        if (!text.Any(c => c >= '\uF700' && c <= '\uF71A')) return text;
+        var chars = text.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+            if (chars[i] >= '\uF700' && chars[i] <= '\uF71A')
+                chars[i] = ThaiPua[chars[i] - '\uF700'];
+        return new string(chars);
+    }
+
+    /// <summary>ตาราง Thai PUA มาตรฐาน (Microsoft/Apple) U+F700…U+F71A → อักขระไทย</summary>
+    private static readonly char[] ThaiPua =
+    {
+        '\u0E10', '\u0E34', '\u0E35', '\u0E36', '\u0E37', '\u0E48', '\u0E49', '\u0E4A', '\u0E4B', '\u0E4C',   // F700–F709
+        '\u0E48', '\u0E49', '\u0E4A', '\u0E4B', '\u0E4C', '\u0E0D', '\u0E31', '\u0E4D', '\u0E47', '\u0E48',   // F70A–F713
+        '\u0E49', '\u0E4A', '\u0E4B', '\u0E4C', '\u0E38', '\u0E39', '\u0E3A',                                  // F714–F71A
+    };
+
+
+    /// <summary>
     /// ย่อข้อความให้ "ตาเห็นเป็นคำเดียวกัน = เทียบติด" ก่อนค้นคำสำคัญบนกระดาษ
     ///
     /// ทำสี่อย่าง: <see cref="Normalize"/> (ยุบช่องว่างระหว่างอักขระไทย + ซ่อม

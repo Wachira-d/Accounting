@@ -32,7 +32,7 @@ public sealed record ReplayLine(string? Description, decimal? Quantity, decimal?
 /// <param name="RoundingAdjustment">ผลต่างปัดเศษหัวเอกสาร (= −Σ shift ของบรรทัด)</param>
 /// <param name="DuplicateRowsDropped">จำนวนแถวที่ด่านแถวซ้ำ (<see cref="OcrDuplicateLineGuard"/>) ตัดออกก่อนทุกขั้น — 0 = ไม่ตัด
 /// (2026-10-09 ใบต้นฉบับ+สำเนา · <see cref="ReplayPaper.EngineLines"/>)</param>
-/// <param name="QuantityGuard">ผลของตัวกันจำนวนระเบิด (<see cref="OcrLineQuantityGuard"/>) ต่อบรรทัด <c>การกระทำ|จำนวน|ราคา|ส่วนลดบรรทัด</c> คั่นด้วย <c>;</c>
+/// <param name="QuantityGuard">ผลของตัวกันจำนวนระเบิด (<see cref="OcrLineQuantityGuard"/>) ต่อบรรทัด <c>การกระทำ|จำนวน|ราคา|ส่วนลดบรรทัด|block/note/-</c> คั่นด้วย <c>;</c>
 /// (2026-10-16 RE-20261000111) · null = ใบไม่มีรายการ</param>
 public sealed record ReplayBuiltLines(
     string Mode, string? ReconCase, bool PricesIncludeVat, string Lines, string Gaps, decimal RoundingAdjustment,
@@ -315,6 +315,53 @@ public static class OcrReplayHarness
             EngineSubTotal: 150m, EngineVat: 10.50m, EngineTotal: 160.50m,
             LineAmounts: new[] { 150.00m },
             Lines: new ReplayLine[] { new("สายยาง", 2m, 100.00m, 150.00m) }),
+
+        // ── ฝ่ายค้าน 658e3705 (ทีม OCR 6 · 2026-10-16) — ใบที่ทำให้อัตราแท็ก [LINE-QTY] มีความหมาย (ใบละหนึ่ง defect class) ──
+        // (1) คอลัมน์หัก ณ ที่จ่าย: ค่าบริการ 10,000 หัก 3% = 9,700 · เดิม "ส่วนลด 300" อนุมัติเองได้ ⇒ ยอดบรรทัด 10,000 (ก่อนหัก) + แท็กบล็อก
+        //     · หัก ณ ที่จ่ายหัวใบ 300 เป็นของตัวอ่าน WHT เดิม (PaperWhtReader) ไม่ใช่ส่วนลด
+        new ReplayPaper("wht-column-service-invoice",
+            "ใบแจ้งหนี้/ใบกำกับภาษี\nรายการ จำนวน ราคา/หน่วย หัก ณ ที่จ่าย ยอดสุทธิ\nค่าบริการทำความสะอาด 1 10,000.00 3% 9,700.00\n"
+            + "รวมเป็นเงิน 10,000.00\nภาษีมูลค่าเพิ่ม 7% 700.00\nรวมทั้งสิ้น 10,700.00\nหัก ณ ที่จ่าย 3% 300.00\nยอดชำระ 10,400.00",
+            EngineSubTotal: 10000m, EngineVat: 700m, EngineTotal: 10700m,
+            LineAmounts: new[] { 9700.00m },
+            Lines: new ReplayLine[] { new("ค่าบริการทำความสะอาด", 1m, 10000.00m, 9700.00m) }),
+
+        // (2) ใบงวดที่หักมัดจำ: งวด 2 100,000 หักมัดจำ 30,000 = 70,000 · เดิม "ส่วนลด 30,000" (มัดจำ 11810 ไม่ถูกล้าง) ⇒ ยอดบรรทัด 100,000 + แท็กบล็อก
+        //     · ตัวสร้างบรรทัดฟ้อง [Σ-GAP] ต่อ (การหักมัดจำต้องลงที่เอกสารผ่านวงจรมัดจำ — ไม่แต่งเป็นส่วนลดท้ายบิล)
+        new ReplayPaper("deposit-installment-invoice",
+            "ใบแจ้งหนี้/ใบกำกับภาษี\nงวดที่ 2 1 100,000.00 หักมัดจำ 30,000.00 70,000.00\nรวมเป็นเงิน 70,000.00\nภาษีมูลค่าเพิ่ม 7% 4,900.00\nรวมทั้งสิ้น 74,900.00",
+            EngineSubTotal: 70000m, EngineVat: 4900m, EngineTotal: 74900m,
+            LineAmounts: new[] { 70000.00m },
+            Lines: new ReplayLine[] { new("งวดที่ 2", 1m, 100000.00m, 70000.00m) }),
+
+        // (3) รหัสสินค้าบนแถว: "SKU 50" ลงตัวเป็นส่วนต่าง 50 พอดี · เดิม "ส่วนลด 50" อนุมัติเองได้ ⇒ ยอดตามกระดาษ (450) ส่วนต่างเป็นส่วนลดที่ระบุชัด + แท็กบล็อก
+        new ReplayPaper("sku-code-on-row",
+            "ใบเสร็จรับเงิน\nรายการ จำนวน ราคา ยอดเงิน\nสินค้า 1 500.00 SKU 50 450.00\nรวมทั้งสิ้น 450.00",
+            EngineSubTotal: null, EngineVat: 0m, EngineTotal: 450m,
+            LineAmounts: new[] { 450.00m },
+            Lines: new ReplayLine[] { new("สินค้า", 1m, 500.00m, 450.00m) }),
+
+        // (4) ใบเสร็จมีเลขลำดับแถว: "1 หมูสับ 120.00 54.00" · เดิมเลข 1 = จำนวนที่พิมพ์ ⇒ KeepPrintedGap · ต้องได้ 0.45 กก. (ยังไม่พิสูจน์ ⇒ แท็กบล็อก) ·
+        //     แถว 2 ลงตัวอยู่แล้ว ⇒ ไม่แตะ
+        new ReplayPaper("row-index-receipt",
+            "ใบเสร็จรับเงิน\n1 หมูสับ 120.00 54.00\n2 ไข่ไก่ 10 ฟอง 4.00 40.00\nรวมทั้งสิ้น 94.00",
+            EngineSubTotal: null, EngineVat: 0m, EngineTotal: 94m,
+            LineAmounts: new[] { 54.00m, 40.00m },
+            Lines: new ReplayLine[] { new("หมูสับ", 1m, 120.00m, 54.00m), new("ไข่ไก่", 10m, 4.00m, 40.00m) }),
+
+        // (5) บิลค่าไฟรายเดือน (เคส ก): engine อ่านยอดมาใส่ราคาต่อหน่วย · มิเตอร์ 3,611 หน่วยพิมพ์คู่หน่วยนับ ⇒ ราคา = ยอด ÷ จำนวน · พิสูจน์แล้ว ⇒ แจ้ง ไม่บล็อก
+        new ReplayPaper("utility-meter-bill",
+            "การไฟฟ้าส่วนภูมิภาค ใบแจ้งค่าไฟฟ้า/ใบกำกับภาษี\nค่าไฟฟ้า 3,611 หน่วย 16,351.48\nรวมเงิน 16,351.48\nภาษีมูลค่าเพิ่ม 7% 1,144.60\nรวมทั้งสิ้น 17,496.08",
+            EngineSubTotal: 16351.48m, EngineVat: 1144.60m, EngineTotal: 17496.08m,
+            LineAmounts: new[] { 16351.48m },
+            Lines: new ReplayLine[] { new("ค่าไฟฟ้า", 3611m, 16351.48m, 16351.48m) }),
+
+        // (6) ทิศตรงข้ามของ (1): หัวคอลัมน์ "ส่วนลด" ⇒ 3% คือส่วนลดจริง ⇒ ส่วนลดบรรทัด 300 + หมายเหตุแจ้ง (ไม่บล็อก)
+        new ReplayPaper("discount-header-invoice",
+            "ใบกำกับภาษี\nรายการ จำนวน ราคา/หน่วย ส่วนลด จำนวนเงิน\nค่าบริการออกแบบ 1 10,000.00 3% 9,700.00\nรวมเป็นเงิน 9,700.00\nภาษีมูลค่าเพิ่ม 7% 679.00\nรวมทั้งสิ้น 10,379.00",
+            EngineSubTotal: 9700m, EngineVat: 679m, EngineTotal: 10379m,
+            LineAmounts: new[] { 9700.00m },
+            Lines: new ReplayLine[] { new("ค่าบริการออกแบบ", 1m, 10000.00m, 9700.00m) }),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -452,13 +499,13 @@ public static class OcrReplayHarness
         string? quantityGuard = null;
         if (lines is { Count: > 0 })
         {
-            var paperNumbers = OcrLineQuantityGuard.Numbers(p.RawText);
+            var linePaper = OcrLineQuantityGuard.Read(p.RawText);
             var guarded = new List<ReplayLine>(lines.Count);
             var guardText = new List<string>(lines.Count);
             var paperDiscountRead = false;
             foreach (var l in lines)
             {
-                var d = OcrLineQuantityGuard.Decide(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscount, paperNumbers);
+                var d = OcrLineQuantityGuard.Decide(l.Quantity, l.UnitPrice, l.Amount, l.LineDiscount, linePaper);
                 // ⚠️ ไม่เล่นซ้ำ FillUnitPrice (ราคาว่าง ⇒ ยอด ÷ จำนวน ทศนิยม 4) — harness ไม่เคยเล่นซ้ำขั้นนี้ และ golden ของบรรทัดไม่มีราคา
                 // (OcrLineReconciler.LineDiscount ทีม D/E) ล็อกเส้น "ไม่มีราคา" ไว้ · ช่องว่างที่รู้แล้ว: ใน service ขั้นนี้รันก่อนตัวสร้างบรรทัดเสมอ
                 // ⇒ เส้น "ไม่มีราคา + จำนวน > 0" ของ LineDiscount ไปไม่ถึงจากสแกน (จดใน docs/lessons/ocr-pipeline.md 2026-10-16)
@@ -467,10 +514,14 @@ public static class OcrReplayHarness
                     Quantity = d.Quantity ?? l.Quantity,
                     UnitPrice = d.Action == OcrLineQuantityAction.FillUnitPrice ? l.UnitPrice : d.UnitPrice ?? l.UnitPrice,
                     LineDiscount = d.LineDiscount ?? l.LineDiscount,
+                    // ฝ่ายค้าน 658e3705 P1-1: แถวหัก ณ ที่จ่าย/มัดจำ ⇒ ยอดบรรทัด = จำนวน × ราคาก่อนหัก (ตรงกับ service)
+                    Amount = d.Amount ?? l.Amount,
                 };
                 paperDiscountRead |= d.LineDiscount.HasValue;
                 guarded.Add(g);
-                guardText.Add($"{d.Action}|{g.Quantity?.ToString("0.###") ?? "-"}|{g.UnitPrice?.ToString("0.00##") ?? "-"}|{g.LineDiscount?.ToString("0.00") ?? "-"}");
+                // ช่องท้าย: block = แท็กบล็อก [LINE-QTY] · note = หมายเหตุแจ้ง [LINE-QTY-NOTE] · - = ไม่มีหมายเหตุ (ฝ่ายค้าน 658e3705 — อัตราแท็กวัดได้จาก golden)
+                guardText.Add($"{d.Action}|{g.Quantity?.ToString("0.###") ?? "-"}|{g.UnitPrice?.ToString("0.00##") ?? "-"}|{g.LineDiscount?.ToString("0.00") ?? "-"}"
+                    + $"|{(d.Note is null ? "-" : d.Blocking ? "block" : "note")}");
             }
             if (OcrLineQuantityGuard.PaperDiscountPricesIncludeVat(paperDiscountRead, guarded.Sum(l => l.Amount),
                     headerSub, headerVat, anchoredTotal, discountToSpread))
