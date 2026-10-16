@@ -239,7 +239,7 @@
           try {
             const res = await api.previewTaxExport(code, year, month);
             const d = res.data;
-            document.getElementById(`preview${code}`).innerHTML = d.summary || `${d.recordCount} รายการ | รายได้ ${Layout.money(d.totalIncome)} | ภาษี ${Layout.money(d.totalTax)}`;
+            document.getElementById(`preview${code}`).innerHTML = d.summary ? Layout.esc(d.summary) : `${d.recordCount} รายการ | รายได้ ${Layout.money(d.totalIncome)} | ภาษี ${Layout.money(d.totalTax)}`;
           } catch (e) {
             document.getElementById(`preview${code}`).innerHTML = `<span class="text-danger text-xs">${Layout.esc(e.message || 'ไม่มีข้อมูล')}</span>`;
           }
@@ -248,7 +248,7 @@
         try {
           const res = await api.previewTaxExport('PND1K', year, 0);
           const d = res.data;
-          document.getElementById('previewPND1K').innerHTML = d.summary || `${d.recordCount} รายการ`;
+          document.getElementById('previewPND1K').innerHTML = d.summary ? Layout.esc(d.summary) : `${d.recordCount} รายการ`;
         } catch(e) {
           document.getElementById('previewPND1K').innerHTML = `<span class="text-danger text-xs">${Layout.esc(e.message || 'ไม่มีข้อมูล')}</span>`;
         }
