@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **566 ไฟล์ · 5,545 `[Fact]` + 848 `[Theory]` (3,794 `InlineData`)** ณ 2026-10-15 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **568 ไฟล์ · 5,553 `[Fact]` + 848 `[Theory]` (3,794 `InlineData`)** ณ 2026-10-16 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6251,4 +6251,13 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | EXPA-36 | (รอบ 5 P2-2) บริษัทปีปฏิทินปิดปี 2024 (ก่อนการแก้รอบ 2) แล้วเปลี่ยนเป็นรอบ เม.ย. (audit ค่าเดิม 1) | รายงานไม่มีแถว ม.ค. รุ่นเก่า · ปิดรอบ 2025 ได้ (โอน 500) · ยอดยกมา ม.ค. 2025 3 แถวไม่ถูกยกเลิก · ทิศตรงข้าม: รอบ เม.ย. ที่ปิดด้วยโค้ดเก่าไม่มีประวัติเปลี่ยน ⇒ ยังถูกบล็อก (EXPA-29) · pure: เวลาปิด/ประวัติค่าเดิม 1/4/การเปลี่ยนก่อนปิด | ✅ `Db/AdversarialExportRound5DbTests` · `Db/AdversarialExportRound4DbTests` · `AdversarialExportRound5Tests` |
 | EXPA-37 | (รอบ 5 P2-2) เปลี่ยนเดือนเริ่มรอบบัญชี ก่อน/หลังปิดปีครั้งแรก | ก่อนปิดปี: 1→4→1 ได้ + audit `fiscal-year-start-month` 2 แถว · หลังปิดปี 2024: 1→4 ล้ม `ACC-ACT-11-FISCAL-PERIOD` (ปี 2567 · ม.11) ค่าไม่เปลี่ยน · ส่งค่าเดิม = ไม่ล้ม | ✅ `Db/AdversarialExportRound5DbTests` · `AdversarialExportRound5Tests` |
 | EXPA-38 | (รอบ 5 P2-3) ผังลูก 113101 ที่ถูกลบใต้ 11310 (ผังระบบ · ระหว่างนั้นมีรายการ) — กู้คืน | ล้มก่อนเขียน (ข้อความชี้ 11310 + "หัวบัญชี 113") · แผนกู้คืนเสนอ 113 · หัวบัญชีผิดประเภท = ล้ม · กู้คืนด้วย `newParentId` = 113 ได้ ระดับ 4 + audit · ทิศตรงข้าม: 111222 ใต้ 11122 ที่ยังมีลูก กู้คืนที่เดิมได้ · pure: ผังระบบ/ถูกใช้ไม่มีลูก = บล็อก · มีลูก/ไม่ถูกใช้ = ได้ · ไม่มีหัวบัญชี prefix = ไม่เสนอ | ✅ `Db/AdversarialExportRound5DbTests` · `AdversarialExportRound5Tests` |
+
+## WHT-PDF — ไฟล์ PDF 50 ทวิ หน้าตาเท่าหน้าพิมพ์ (2026-10-16 · ผู้ใช้: "pdf ที่ download กับหน้ากดพิมพ์ไม่เหมือนกัน · หน้าล้น")
+
+| # | ขั้นตอน | ผลที่ต้องได้ | เทสต์ |
+| --- | --- | --- | --- |
+| WPDF-01 | หน้า 50 ทวิ → ⬇️ PDF ใบปกติ | ไฟล์ 3 หน้า (ฉบับละหน้า) · เดิม 6 หน้า ช่องลงชื่อตกหน้า 2 | ✅ `WhtCertPdfLayoutTests` |
+| WPDF-02 | ใบยกเลิก + ชื่อ/ที่อยู่ยาว + แถวย่อยปันผล + แถว 6 + ยอดกองทุน + ลายเซ็น | ยังฉบับละหน้า (ย่อพอดีหน้า) · ลายน้ำ "ยกเลิก" | ✅ `WhtCertPdfLayoutTests` |
+| WPDF-03 | เปิด PDF เทียบหน้าพิมพ์ (🖨) | ฟอนต์ Sarabun · ช่องติ๊ก ☑ เห็นช่องที่เลือก · ตราวงกลม · เส้นจุด · ตัดบรรทัดแถว 5/คำเตือนตรงกัน | ✅ `WhtCertPdfLayoutTests` + ตา |
+| WPDF-04 | แก้ข้อความแบบ 50 ทวิ (WhtCertFormText) | ตัวตัดคำไทยครอบทุกคำ ไม่งั้นเทสต์ล้ม | ✅ `ThaiWordBreakTests` |
 

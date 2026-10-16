@@ -24,6 +24,10 @@ public partial class PdfGenerationService
         //   fallback เป็น Leelawadee ทำให้ใบหัก ณ ที่จ่ายหน้าตาต่างจากที่ download).
         "Fonts/Sarabun-Regular.ttf",
         "Fonts/Sarabun-Bold.ttf",
+        // 50 ทวิ (2026-10-16): หน้าพิมพ์ใช้ Sarabun ตัวเอียง/หนา 600 ⇒ PDF ต้องมีครบชุด (ไม่ใช้ตัวเอียงสังเคราะห์/ตัวหนาแทน)
+        "Fonts/Sarabun-SemiBold.ttf",
+        "Fonts/Sarabun-Italic.ttf",
+        "Fonts/Sarabun-BoldItalic.ttf",
         "Fonts/THSarabunNew.ttf",
         "Fonts/THSarabunNew Bold.ttf",
         // ── Windows (ฟอนต์ราชการไทยที่มักติดตั้งบนเครื่องธุรกิจไทย) ──

@@ -29,3 +29,10 @@ THSarabunNew Bold.ttf
 รับประกันว่าเหมือนกันทุกเครื่อง.
 
 > ฟอนต์ Sarabun เป็น **SIL Open Font License (OFL)** — แจกจ่าย/bundle ได้ฟรี.
+
+## สถานะ (2026-10-16)
+
+ฝังแล้ว 5 ไฟล์จาก Google Fonts (Sarabun v17 · SIL OFL 1.1 — ดู `OFL.txt`): `Sarabun-Regular` · `Sarabun-Bold` · `Sarabun-SemiBold`
+(ตระกูล "Sarabun SemiBold") · `Sarabun-Italic` · `Sarabun-BoldItalic` — หน้าพิมพ์ 50 ทวิใช้ตัวหนา 600 และตัวเอียง ⇒ PDF ต้องมีครบชุด
+(ล็อกใน `WhtCertPdfLayoutTests`)
+

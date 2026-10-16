@@ -212,7 +212,8 @@ public class WhtCertFormTextTests
         Assert.DoesNotContain("ผู้มีหน้าที่หักภาษี ณ ที่จ่าย</div>", html);   // ป้ายรอบ 72 ที่ถูกยกเลิก
         // QuestPDF — ป้ายท้ายช่องลงชื่อมาจากตัวตั้งเดียว (ทั้งกรณีมี/ไม่มีรูปลายเซ็น)
         var qp = StripComments(File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/Services/Implementations/PdfGenerationService.WhtCert.cs")));
-        Assert.Equal(2, Regex.Matches(qp, Regex.Escape("t.Span(\" \" + WhtCertFormText.SignRole);")).Count);
+        // 2026-10-16: QuestPDF วาดตามหน้าพิมพ์ (ลายเซ็นอยู่บนเส้นจุด · ป้ายหลังเส้นเสมอ) ⇒ จุดเดียว
+        Assert.Single(Regex.Matches(qp, Regex.Escape(".Text(WhtCertFormText.SignRole)")));
         // หน้าพิมพ์ wht.html (renderer ที่ผู้ใช้พิมพ์จริง) — ป้ายหลังเส้นลงชื่อ ไม่ใช่ป้ายรอบ 72
         var seg = PrintSegment();
         Assert.Matches(new Regex(@"</span>\s*ผู้จ่ายเงิน\s*</div>"), seg);
