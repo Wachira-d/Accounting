@@ -8172,6 +8172,20 @@ RULES += [
          why="ฝ่ายค้าน 6e56d33d P2-4: อนุมัติจากแชทต้องตัดสินข้อ \"เกินกระดาษ\" จากบรรทัดตอนนี้ (ตัวตัดสินเดียวกับด่านอนุมัติ) ไม่ใช่หมายเหตุตอนสร้าง"),
 ]
 
+# ── 2026-10-16 รหัส ภ.พ. รายบรรทัด (คำสั่งเจ้าของ "อัตรา VAT ต่อบรรทัดยังเดาจากชื่อสินค้า … ควรต้องตามตาราง ภพ") ──────────────────────────
+#    ตัวตัดสิน Helpers/OcrVatCodeLines (pure + OcrVatCodeLinesTests · golden makro-p1p2-*) · ถอด Plan = ใบผสมกลับไปเดาจากชื่อ ·
+#    ถอดการใช้ AmountsAfterDiscount/DiscountPercents = ส่วนลดกลับไป % เดียวทั้งใบ (Σ กลุ่มยกเว้น ≠ ตาราง) · ถอด TableMismatch = ใบที่ไม่ลงตารางผ่านเงียบ ·
+#    ลำดับ: หลังตัวกระทบยอด (ต้องรู้ราคารวม VAT/เป้าหลังส่วนลด) และก่อนตัวพิสูจน์ทั้งใบ/ตัวเดาจากชื่อ (ชั้นล่างกว่า)
+RULES += [
+    dict(file=OCR, method="BuildScanLinesAsync",
+         must=["OcrVatCodeLines.Plan(", "OcrVatCodeLines.TableMismatch("],
+         must_re=[r"vatCodePlan\s*\.\s*AmountsAfterDiscount", r"vatCodePlan\s*\.\s*DiscountPercents", r"vatCodePlan\s*\.\s*ReplaceEngineRate"],
+         before=[("OcrLineReconciler.Classify(", "OcrVatCodeLines.Plan("),
+                 ("OcrVatCodeLines.Plan(", "OcrLineVatPlanner.PlanWholeInvoice("),
+                 ("OcrVatCodeLines.Plan(", "ThaiVatTypeRule.Suggest(")],
+         why="2026-10-16 รหัส ภ.พ.: อัตรารายบรรทัด + ส่วนลดต่อรหัสตามตารางของกระดาษก่อนการเดาจากชื่อ · ผลสุดท้ายไม่ลงตาราง = [Σ-GAP]"),
+]
+
 _RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 

@@ -70,6 +70,23 @@ public static class OcrReplayHarness
         new("สายไฟ IEC 01 THW 1 x 2.5 SQ.MM YAZAKI สีดำ", 100m, 14.00m, 1400.00m),
     };
 
+    /// <summary>7 แถวสินค้าของ <see cref="OcrPaperSamples.MakroPage1of2Synthetic"/> ตามที่พิมพ์ (ราคารวม VAT · Σ 11,208.00)</summary>
+    private static readonly ReplayLine[] MakroSyntheticItems =
+    {
+        new("ข้าวสารหอมมะลิ 100% ตราเอโร่ 15 กก.", 1m, 1000.00m, 1000.00m),
+        new("ไข่ไก่ เบอร์ 0 แผง 30 ฟอง", 1m, 248.00m, 248.00m),
+        new("น้ำยาล้างจาน ซันไลต์ 3,600 มล.", 6m, 189.00m, 1134.00m),
+        new("กระดาษทิชชู่ ม้วนใหญ่ 24 ม้วน", 10m, 259.00m, 2590.00m),
+        new("ถุงขยะดำ ฮีโร่ 30x40 นิ้ว", 20m, 59.00m, 1180.00m),
+        new("น้ำดื่ม เอโร่ 600 มล. แพ็ค 12 ขวด", 15m, 64.00m, 960.00m),
+        new("แชมพู ซันซิล 900 มล.", 8m, 512.00m, 4096.00m),
+    };
+
+    /// <summary>ลบคอลัมน์รหัส ภ.พ. ออกจากแถวสินค้า ("248.00 1 248.00" → "248.00 248.00") — จำลอง engine ที่อ่านคอลัมน์รหัสไม่ได้</summary>
+    private static string DropVatCodeColumn(string text)
+        => System.Text.RegularExpressions.Regex.Replace(text, @"(\d\.\d{2}) [0-9] (\d[\d,]*\.\d{2})$", "$1 $2",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+
     /// <summary>ชุดกระดาษจริงที่เคยทำให้เกิดการถดถอย — <b>ห้ามลบแถว</b> เพิ่มได้อย่างเดียว
     /// (ตัวเลข/ข้อความยกมาจากเคสที่บันทึกไว้ในเทสต์/คอมเมนต์ของเรพ)</summary>
     public static IReadOnlyList<ReplayPaper> Corpus { get; } = new[]
@@ -184,6 +201,29 @@ public static class OcrReplayHarness
         // ฐาน 11,208 (= ป้าย "ราคาสินค้ารวมภาษีมูลค่าเพิ่ม/ TOTAL" ยอดรวม VAT ก่อนส่วนลด) · VAT 638.50 · ยอดรวม 11,846.50 (= 11,208 + VAT ซ้ำ ไม่มีบนกระดาษ)
         new ReplayPaper("makro-page2-vat-added-twice", OcrPaperSamples.MakroPage2of2,
             EngineSubTotal: 11208.00m, EngineVat: 638.50m, EngineTotal: 11846.50m),
+
+        // 2026-10-16 รหัส ภ.พ. รายบรรทัด (คำสั่งเจ้าของ "อัตรา VAT ต่อบรรทัดยังเดาจากชื่อสินค้า … ควรต้องตามตาราง ภพ") — <b>หน้า 1 สังเคราะห์</b> + หน้า 2 จริง
+        // (เราไม่มีหน้า 1 ของจริง · ตัวเลขคิดมือให้ลงกับตารางหน้า 2 ทุกสตางค์ — ดู OcrPaperSamples.MakroPage1of2Synthetic) · หัวสแกนหลังยึดยอด 10,980
+        new ReplayPaper("makro-p1p2-vatcode-synthetic", OcrPaperSamples.MakroPage1of2Synthetic + "\n" + OcrPaperSamples.MakroPage2of2,
+            EngineSubTotal: 10341.50m, EngineVat: 638.50m, EngineTotal: 10980.00m, VendorTaxId: "0107567000414",
+            Lines: MakroSyntheticItems),
+
+        // ใบเดียวกัน แต่ engine อ่านคอลัมน์รหัส ภ.พ. ไม่ได้ (แถวสินค้าไม่มีรหัส) — มีส่วนลด 228 ⇒ แบ่งส่วนลดตามรหัสไม่ได้ ⇒ ต้องฟ้อง ไม่ลงเงียบ
+        new ReplayPaper("makro-p1p2-no-row-codes-synthetic", DropVatCodeColumn(OcrPaperSamples.MakroPage1of2Synthetic) + "\n" + OcrPaperSamples.MakroPage2of2,
+            EngineSubTotal: 10341.50m, EngineVat: 638.50m, EngineTotal: 10980.00m, VendorTaxId: "0107567000414",
+            Lines: MakroSyntheticItems),
+
+        // ใบเดียวกัน แต่ engine คืนแถวส่วนลด 5 แถวเป็น "สินค้า" ยอดบวก (28 · 100 · 30 · 60 · 10) — Σ บรรทัดเกิน ⇒ ต้องฟ้อง ไม่แบ่งตามรหัสเงียบ ๆ
+        new ReplayPaper("makro-p1p2-discount-rows-as-items-synthetic", OcrPaperSamples.MakroPage1of2Synthetic + "\n" + OcrPaperSamples.MakroPage2of2,
+            EngineSubTotal: 10341.50m, EngineVat: 638.50m, EngineTotal: 10980.00m, VendorTaxId: "0107567000414",
+            Lines: MakroSyntheticItems.Concat(new ReplayLine[]
+            {
+                new("ลดราคาไข่ไก่ แม็คโคร(*1.0)", null, null, 28.00m),
+                new("ลด 100บ เมื่อซื้อทิชชู่ครบ 2,500 บ(*1.0)", null, null, 100.00m),
+                new("ซื้อสินค้าฮีโร่ ถุงขยะ ถุงหูหิ้ว ถุงซิป ครบ 359 ลด 30 บาท(*1.0)", null, null, 30.00m),
+                new("ลด 60บเมื่อซื้อสินค้ายูนิลีเวอร์ ดูแลเส้นผม ผิวหน้า ผิวกาย ที่ร่วมครบ 599 บ(*1.0)", null, null, 60.00m),
+                new("SLAB1(*5.0)", null, null, 10.00m),
+            }).ToList()),
 
         // Shopee — ใบกำกับ 536 · ส่วนลดพิเศษ 98 หลัง VAT · จ่าย 438
         new ReplayPaper("uptoyou-shopee-pay-not-total", OcrPaperSamples.UptoyouShopee,
@@ -424,8 +464,22 @@ public static class OcrReplayHarness
             if (OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(lines.Select(l => (l.Amount, false)).ToList()))
                 pricesIncludeVat = true;
 
+            // ตรงกับ service: สัญลักษณ์ท้ายบรรทัด (ก่อนตัวกระทบยอด) → ชั้นรหัส ภ.พ. (หลังตัวกระทบยอด · ก่อนกระจายส่วนลด · เติมเฉพาะบรรทัดที่ยังว่าง)
+            var rates = new decimal?[n];
+            var markPick = OcrLineVatMarks.Assign(printed, paperVatSplit, hdrVat);
+            if (markPick.Applied)
+                for (var i = 0; i < n; i++) rates[i] ??= markPick.Rates[i];
+            var codeTable = OcrLineVatMarks.ReadGroups(normalizedText);
+            var codePlan = OcrVatCodeLines.Plan(
+                lineGross.Select((g, i) => new OcrVatCodeLineInput(g, rates[i])).ToList(),
+                normalizedText, codeTable, hdrVat, hdrTotal, hdrDiscRaw, pricesIncludeVat, recon.TargetLineSum);
+            if (codePlan.Applied)
+                for (var i = 0; i < n; i++) rates[i] ??= codePlan.Rates[i];
+
             var amounts = printed.ToArray();
-            if (docDiscountPercent > 0m && recon.TargetLineSum is decimal targetSum && grossSum > 0m)
+            if (codePlan.AmountsAfterDiscount is { } codeAmounts)
+                amounts = codeAmounts.ToArray();
+            else if (docDiscountPercent > 0m && recon.TargetLineSum is decimal targetSum && grossSum > 0m)
             {
                 decimal assigned = 0m;
                 for (var i = 0; i < n; i++)
@@ -437,11 +491,7 @@ public static class OcrReplayHarness
                 }
             }
 
-            // อัตรา VAT รายบรรทัด — ลำดับเดียวกับ service
-            var rates = new decimal?[n];
-            var markPick = OcrLineVatMarks.Assign(printed, paperVatSplit, hdrVat);
-            if (markPick.Applied)
-                for (var i = 0; i < n; i++) rates[i] ??= markPick.Rates[i];
+            // อัตรา VAT รายบรรทัด — ลำดับเดียวกับ service (สัญลักษณ์ท้ายบรรทัด + รหัส ภ.พ. ตั้งไว้ข้างบนแล้ว)
             // ตรงกับ service: ข้อความดิบ + ข้อความ normalize · engine/หมายเหตุของสแกนไม่มีในชุดกระดาษ (null) · ยอดรวมที่ยึด
             var vatPrinted = OcrHeaderVatEvidence.Classify(p.RawText,
                 Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(p.RawText), hdrVat, null, null, anchoredTotal)
@@ -478,6 +528,9 @@ public static class OcrReplayHarness
                     continue;
                 gaps.Add(problem.Kind.ToString());
             }
+            // ตรงกับ service: ด่านผลสุดท้ายของตารางรหัส ภ.พ. (เฉพาะเมื่อตัวกระทบยอดไม่ได้รายงานช่องว่าง)
+            if (recon.UnreconciledGap == 0m && OcrVatCodeLines.TableMismatch(planned, codeTable) is not null)
+                gaps.Add("VatCodeTable");
 
             // ผลต่างปัดเศษของราคาต่อหน่วย — เฉพาะบรรทัดที่มี VAT (ฝ่ายค้าน P5 รอบ 193) · บรรทัดกระดาษไม่มีส่วนลดรายบรรทัดของเอกสาร (lineOwnDisc = 0)
             var (shifts, _) = DocumentRounding.CapShifts(lines
@@ -502,7 +555,7 @@ public static class OcrReplayHarness
                 roundingShift += shifts[i];
                 // ตรงกับ service: ตัวตัดสินตัวเดียว (ไม่มีราคาต่อหน่วย ⇒ 0% — ทีม D 2026-10-13 B5 · จำนวน < 1 ไม่มีราคา ⇒ ราคาจากตัวตัดสิน — ทีม E)
                 var (discPct, discAmt, decidedUnitPrice) = OcrLineReconciler.LineDiscount(
-                    docDiscountPercent, lineGross[i], lines[i].UnitPrice.HasValue, amount, lines[i].Quantity);
+                    codePlan.DiscountPercents?[i] ?? docDiscountPercent, lineGross[i], lines[i].UnitPrice.HasValue, amount, lines[i].Quantity);
                 var unitPrice = decidedUnitPrice ?? lines[i].UnitPrice ?? amount;
                 var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shifts[i];
                 builtItemsTotal += net + lineVat;

@@ -7654,6 +7654,8 @@ public class OcrService : IOcrService
         result.ProcessingNotes = Accounting.Helpers.OcrLineBuildNotes.StripRecomputed(result.ProcessingNotes);
         var paperVatSplit = Accounting.Helpers.OcrLineVatMarks.Read(result.RawTextContent);
         var normalizedRawText = Ocr.ThaiTextNormalizer.Normalize(result.RawTextContent);
+        // ตารางรหัส ภ.พ. ของกระดาษ (ฐาน · VAT · รวม ต่อรหัส + คำอธิบายรหัส) — ตัวเดียวของชั้นรหัส ภ.พ. รายบรรทัด · ยอดยกเว้นของตัวพิสูจน์ทั้งใบ · ด่านผลสุดท้าย
+        var vatCodeTable = Accounting.Helpers.OcrLineVatMarks.ReadGroups(normalizedRawText);
         // ★ รอบ 195 ฝ่ายค้าน C1: VAT หัวใบตัวนี้พิมพ์บนกระดาษไหม หรือระบบคำนวณเอง (7/107 ของยอดรวม) — ตัวตัดสินตัวเดียว
         // Helpers/OcrHeaderVatEvidence · ตัวพิสูจน์ทั้งใบ (OcrLineVatPlanner) ใช้ได้เฉพาะ VAT ที่อยู่บนกระดาษในฐานะ VAT ·
         // VAT ที่ไม่มีบนกระดาษเลย ⇒ [VAT-DERIVED] (OcrPostingReadiness ห้ามอนุมัติเอง — ภาษีซื้อต้องมาจากตัวเลขบนใบกำกับ)
@@ -7741,7 +7743,30 @@ public class OcrService : IOcrService
             if (Accounting.Helpers.OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(
                     items.Select(x => (x.Amount ?? 0m, x.PriceIncludesVat)).ToList()))
                 document.PricesIncludeVat = true;
-            if (docDiscountPercent > 0m && recon.TargetLineSum is decimal targetSum && items.Count > 0)
+
+            // ★ 2026-10-16 รหัส ภ.พ. รายบรรทัด (คำสั่งเจ้าของ "อัตรา VAT ต่อบรรทัดยังเดาจากชื่อสินค้า … ควรต้องตามตาราง ภพ"): กระดาษพิมพ์ตารางรหัส ภ.พ.
+            // ที่ผสมกลุ่มภาษี ⇒ อัตรารายบรรทัด = รหัสบนแถวสินค้า (แปลด้วยคำอธิบาย/ตารางของกระดาษเอง) หรือทางแบ่งเดียวที่ Σ ต่อกลุ่มลงตาราง ·
+            // ส่วนลดท้ายบิลแบ่ง "ต่อรหัส" ให้ Σ ต่อกลุ่ม = ตาราง (แทน % เดียวทั้งใบ) · ไม่ลงตัว = ไม่แตะ (ตกชั้นเดิม) แล้วด่านผลสุดท้ายข้างล่างฟ้อง ·
+            // ตัวตัดสิน Helpers/OcrVatCodeLines ตัวเดียว (pure + เทสต์ OcrVatCodeLinesTests) · อยู่หลังตัวกระทบยอด (ต้องรู้ราคารวม VAT/เป้าหลังส่วนลด)
+            // และก่อนตัวกระจายส่วนลด · ค่าจาก engine/ผู้ใช้ชนะ ยกเว้น "อัตรา" ที่เป็นรหัสบนตาราง (Azure TaxRate = รหัส 1/2)
+            var vatCodePlan = Accounting.Helpers.OcrVatCodeLines.Plan(
+                items.Select((x, ci) => new Accounting.Helpers.OcrVatCodeLineInput(lineGross[ci], x.VatRate)).ToList(),
+                normalizedRawText, vatCodeTable, hdrVatHdr, hdrTotal, hdrDiscRaw, document.PricesIncludeVat, recon.TargetLineSum);
+            if (vatCodePlan.Applied)
+            {
+                for (var ci = 0; ci < items.Count; ci++)
+                    if (vatCodePlan.Rates[ci] is decimal codeRate && (!items[ci].VatRate.HasValue || vatCodePlan.ReplaceEngineRate[ci]))
+                        items[ci].VatRate = codeRate;
+            }
+            if (vatCodePlan.Verdict != Accounting.Helpers.OcrVatCodeVerdict.NotApplicable)
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] " + vatCodePlan.Note;
+
+            if (vatCodePlan.AmountsAfterDiscount is { } codeAmounts)
+            {
+                // ส่วนลดท้ายบิลแบ่งตามรหัส ภ.พ. (Σ ต่อกลุ่ม = ตารางทุกสตางค์) — แทนตัวกระจาย % เดียวทั้งใบข้างล่าง
+                for (var di = 0; di < items.Count; di++) items[di].Amount = codeAmounts[di];
+            }
+            else if (docDiscountPercent > 0m && recon.TargetLineSum is decimal targetSum && items.Count > 0)
             {
                 // Case C: ส่วนลดที่กระดาษพิมพ์ไว้จริง — **กระจายเป็นจำนวนเงิน** ตามสัดส่วน
                 // แล้วยัดเศษที่บรรทัดสุดท้าย ⇒ Σ บรรทัด = ยอดก่อน VAT บนกระดาษ **เป๊ะเสมอ**
@@ -7801,7 +7826,7 @@ public class OcrService : IOcrService
                 headerVat, netSubForRecon, hdrTotal, document.PricesIncludeVat,
                 Accounting.Helpers.OcrLineVatPlanner.PaperExemptAmount(
                     paperVatSplit,
-                    Accounting.Helpers.OcrLineVatMarks.ReadGroups(normalizedRawText)),
+                    vatCodeTable),
                 vatPrintedOnPaper: headerVatSource == Accounting.Helpers.OcrHeaderVatSource.Labelled);
             if (vatPlan.Decided)
             {
@@ -7850,6 +7875,11 @@ public class OcrService : IOcrService
             }
             AppendAmountIntegrityGaps(result, plannedLines, headerVat,
                 alreadyReportedLineGap: recon.UnreconciledGap != 0m, paperVatSplit: paperVatSplit);
+            // ด่านผลสุดท้าย (2026-10-16): ฐานต่อกลุ่มของบรรทัดที่จะเขียนจริง = ตารางรหัส ภ.พ. ไหม — ไม่ว่าอัตรามาจากชั้นไหน (engine/ผู้ใช้/ตัวเดาจากชื่อ) ·
+            // รหัสที่กระดาษไม่บอกความหมาย = ฟ้อง (พิสูจน์ไม่ได้ — ไม่เดา) · ไม่แก้ตัวเลข · ตัวกระทบยอดรายงานช่องว่างแล้ว = ไม่ซ้ำ (บรรทัดขาด/เกินชี้ผิดสาเหตุ)
+            if (recon.UnreconciledGap == 0m
+                && Accounting.Helpers.OcrVatCodeLines.TableMismatch(plannedLines, vatCodeTable) is string vatCodeGap)
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrLineBuildNotes.GapTag + " " + vatCodeGap;
 
             int lineOrder = 1;
             // ปิดลูปการสอน local model (กฎเหล็ก #1): แนบ feedbackId ระดับ scan ไว้
@@ -7910,8 +7940,9 @@ public class OcrService : IOcrService
                 var amount = item.Amount ?? 0;
                 // ส่วนลดที่ลงบรรทัด (% + บาท) — ตัวตัดสินตัวเดียว OcrLineReconciler.LineDiscount (ทีม D 2026-10-13 B5):
                 // กระดาษไม่มีราคาต่อหน่วย ⇒ UnitPrice เก็บยอดหลังลด ⇒ % = 0 (เดิมติด % ⇒ ComputeLineAmounts หักซ้ำตอนเปิดแก้แล้วบันทึก)
+                // ส่วนลดแบ่งตามรหัส ภ.พ. ⇒ % ของกลุ่มบรรทัดนั้น (กลุ่มที่ไม่มีส่วนลด = 0 — ห้ามติด % ทั้งใบ ไม่งั้น ComputeLineAmounts หักตอนเปิดแก้)
                 var lineDisc = Accounting.Helpers.OcrLineReconciler.LineDiscount(
-                    docDiscountPercent, lineGross[i], item.UnitPrice.HasValue, amount, item.Quantity);
+                    vatCodePlan.DiscountPercents?[i] ?? docDiscountPercent, lineGross[i], item.UnitPrice.HasValue, amount, item.Quantity);
                 var priceShift = priceShifts[i];
                 lineRoundingShift += priceShift;
                 // Last line absorbs the rounding remainder (both VAT and WHT)

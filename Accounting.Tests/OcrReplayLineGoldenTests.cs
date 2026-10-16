@@ -238,6 +238,45 @@ public class OcrReplayLineGoldenTests
 
     // ── ตัวเครื่องมือ: ทุกใบต้องมีแถวระดับบรรทัด · ไม่มีใบไหนได้ส่วนลดบาทติดลบ · ใบมีรายการ Σ ก่อน VAT + VAT = ยอดรวมเมื่อ ok ──
 
+    // ── 2026-10-16 รหัส ภ.พ. รายบรรทัด (หน้า 1 สังเคราะห์ + หน้า 2 จริงของ Makro 405901117163) ─────────────────────────────
+
+    [Fact]
+    public void Makroหน้า1และ2_อัตราตามรหัสภพ_ไข่ไก่ยกเว้น_ส่วนลดแบ่งต่อรหัส_ยกเว้น1220_มีVAT9121_50()
+    {
+        // ก่อนแก้ (snapshot ก่อนต่อสาย): ไข่ไก่ 7% (เดาจากชื่อ) · ส่วนลด 2.03% ทุกบรรทัด ⇒ ยกเว้นได้ 979.66 · [Σ-GAP] VatRateMismatch
+        // หลังแก้: รหัส 1 = ข้าวสาร + ไข่ไก่ (1,248 − ส่วนลดกลุ่ม 28 = 1,220.00 · 977.56 + 242.44) · รหัส 2 = 9,960 − 200 = 9,760 (ฐาน 9,121.50 · VAT 638.50)
+        Assert.Equal("Items", Val("makro-p1p2-vatcode-synthetic", "LineMode"));
+        Assert.Equal("DiscountOnTotalInclVat", Val("makro-p1p2-vatcode-synthetic", "ReconCase"));
+        Assert.Equal("true", Val("makro-p1p2-vatcode-synthetic", "PricesIncludeVat"));
+        Assert.Equal(
+            "977.56|-1|0.00|1000.00|2.24|22.44|0.00;242.44|-1|0.00|248.00|2.24|5.56|0.00;"
+            + "1038.53|7|72.70|189.00|2.01|22.77|0.00;2371.95|7|166.04|259.00|2.01|52.01|0.00;1080.66|7|75.65|59.00|2.01|23.69|0.00;"
+            + "879.18|7|61.54|64.00|2.01|19.28|0.00;3751.18|7|262.57|512.00|2.01|82.25|0.00",
+            Val("makro-p1p2-vatcode-synthetic", "Lines"));
+        Assert.Equal("ok", Val("makro-p1p2-vatcode-synthetic", "IntegrityGaps"));
+        Assert.Equal("0.00", Val("makro-p1p2-vatcode-synthetic", "RoundingAdjustment"));
+    }
+
+    [Fact]
+    public void Makroหน้า1และ2_engineอ่านคอลัมน์รหัสไม่ได้_มีส่วนลด_ไม่แตะบรรทัด_แต่ฟ้องตารางรหัสภพ()
+    {
+        // ทิศตรงข้าม: ไม่มีรหัสรายบรรทัด + ส่วนลด ⇒ แบ่งส่วนลดต่อรหัสไม่ได้ ⇒ บรรทัดเท่าเดิมทุกตัวอักษร · ด่านผลสุดท้ายเพิ่ม VatCodeTable (ไม่ลงเงียบ)
+        Assert.Equal(
+            "979.66|-1|0.00|1000.00|2.03|20.34|0.00;227.45|7|15.51|248.00|2.03|5.04|0.00;1040.00|7|70.93|189.00|2.03|23.07|0.00;"
+            + "2375.31|7|162.00|259.00|2.03|52.69|0.00;1082.19|7|73.81|59.00|2.03|24.00|0.00;880.42|7|60.05|64.00|2.03|19.53|0.00;"
+            + "3756.47|7|256.20|512.00|2.03|83.33|0.00",
+            Val("makro-p1p2-no-row-codes-synthetic", "Lines"));
+        Assert.Equal("VatRateMismatch,VatCodeTable", Val("makro-p1p2-no-row-codes-synthetic", "IntegrityGaps"));
+    }
+
+    [Fact]
+    public void Makroหน้า1และ2_engineคืนแถวส่วนลดเป็นสินค้า_ไม่แบ่งตามรหัส_ตัวกระทบยอดฟ้อง()
+    {
+        Assert.Equal("Ambiguous", Val("makro-p1p2-discount-rows-as-items-synthetic", "ReconCase"));
+        Assert.Equal("Σ-GAP:Ambiguous,Overstated", Val("makro-p1p2-discount-rows-as-items-synthetic", "IntegrityGaps"));
+        Assert.StartsWith("1000.00|-1|0.00|1000.00|0|0.00|0.00;248.00|7|15.17|", Val("makro-p1p2-discount-rows-as-items-synthetic", "Lines"));
+    }
+
     [Fact]
     public void ทุกใบในชุด_มีแถวระดับบรรทัดครบ_และไม่มีใบไหนที่ok_แล้วยอดบรรทัดไม่ปิดยอดรวม()
     {
