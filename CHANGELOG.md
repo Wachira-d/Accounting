@@ -5045,4 +5045,4 @@ _ยกเลิกการปิดปี (2026-10-16 · คำสั่งเ
 ใหม่: `POST accounting/year-end-close/{year}/reopen` (เจ้าของ) · ตัวตัดสินเดียว `Helpers/YearEndReopenRule` (ปีล่าสุด · ยกยอดรุ่นเก่าต้องซ่อมก่อน · เหตุผลบังคับ · ยื่น ภ.ง.ด.50/DBD แล้ว = 409 รับทราบ) ·
 `AccountingService.ReopenYearEndAsync` ใต้ล็อก `OpeningRoll.LockKey`: เปิดทุกงวด → ใบกลับใบปิดปีวันเดียวกัน (ติดธงใบปิด · ล็อกต่อ) → ยกเลิกแถวยกยอด (ไม่แตะแถวนำเข้า) → soft delete แถวปิดปี + ผู้/เวลา/เหตุผล ·
 audit ทุกแถว · unique index ปิดปี/ยอดยกมาเป็น partial (ปิดซ้ำได้) · บั๊กข้างเคียง: ปิดปีเมื่อ ธ.ค. ปิดชั่วคราว = เปิดใต้ล็อก + audit แล้วล็อก · ข้อความ TAS 8 → TFRS for NPAEs บทที่ 5 ·
-หน้า `fiscal.html` แถวปีที่ปิด + กล่องยืนยัน (ผลกระทบจากเซิร์ฟเวอร์ · ช่องรับทราบเมื่อ 409) · เทสต์ `YearEndReopenRuleTests` + `Db/YearEndReopenDbTests` 12 ข้อ (รันกับ PostgreSQL 16 ในเครื่องแล้ว) — commit ae0d25bf_
+หน้า `fiscal.html` แถวปีที่ปิด + กล่องยืนยัน (ผลกระทบจากเซิร์ฟเวอร์ · ช่องรับทราบเมื่อ 409) · เทสต์ `YearEndReopenRuleTests` + `Db/YearEndReopenDbTests` 12 ข้อ (รันกับ PostgreSQL 16 ในเครื่องแล้ว) — commit 9f983f0d_
