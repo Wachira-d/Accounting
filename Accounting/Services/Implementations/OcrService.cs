@@ -1527,7 +1527,11 @@ public class OcrService : IOcrService
                 zeroAmountLineDescriptions: zeroLines,
                 pricedLines: pricedLines,
                 diagnostics: categoryDiagnostics,
-                minorityWhtParts: minorityWhtParts);
+                minorityWhtParts: minorityWhtParts,
+                // ฝ่ายค้านรอบ 5 P2-f (ทีม EC5): ค่าขนส่งบนใบซื้อของบริษัทที่ถือสต็อก = ค่าขนส่งเข้า 51120 (ตัวตัดสินเดียว · เหตุผลที่ไม่ใช้ PurchaseIsStock อยู่ในตัวนั้น)
+                freightIsInbound: Accounting.Helpers.OcrDocTypeDefaultAccounts.FreightIsInbound(
+                    Accounting.Helpers.InventoryIndustry.KeepsInventory(companyContext?.IndustryType),
+                    extractedData.OurRole, extractedData.DocumentType));
             foreach (var diag in categoryDiagnostics)
                 extractedData.ReasoningTrace.Add("[Category] " + diag);
             // ส่วนน้อยที่กฎหมายให้หักและถึงเกณฑ์ 1,000 บาท — ต้องมองเห็นบนหน้าสแกน (ฝ่ายค้านรอบ f1690d11 · ม.54 ผู้จ่ายรับผิด)
@@ -2382,30 +2386,31 @@ public class OcrService : IOcrService
                     // ตัดหนี้ที่ไม่เคยตั้งไว้ ⇒ งบฐานะการเงินเพี้ยน + ค่าใช้จ่ายไม่เข้างบ P&L
                     // (ผู้ใช้รายงาน 2026-09-18 — ใบซื้ออุปกรณ์แคมป์ปิ้งได้บัญชี 21513)
                     var name = extractedData.DebitAccountName;
-                    var keyword = ExtractDistinctiveKeyword(name);
-                    if (!string.IsNullOrEmpty(keyword))
+                    // ฝ่ายค้านรอบ 5 P1-3 (ทีม EC5): ผังที่มาจากกฎหมวดใช้คำจับคู่ของกฎเอง (ระบุในแถวกฎ) — เดิมดึงคำจากชื่อบัญชีแม่แบบ
+                    // ⇒ หลัง EC4 ย้ายรหัส "ค่าขนส่ง (ฝ่ายขาย)" ได้คำ "(ฝ่ายขาย)" ตรง "เงินเดือน (ฝ่ายขาย)" · ผังจากชั้นอื่น (ตัวเรียน/AI) ยังใช้คำจากชื่อเดิม ·
+                    // บัญชีเงินเดือน/ค่านายหน้าถูกกันทุกกรณี (Helpers/GlAccountNameMatch ตัวเดียว)
+                    var nameSpec = categoryResult != null && categoryResult.AccountCode == seeded && categoryResult.AccountNameMatch != null
+                        ? categoryResult.AccountNameMatch
+                        : Accounting.Helpers.GlAccountNameMatch.FromAccountName(name);
+                    if (nameSpec != null)
                     {
-                        var candidates = await _db.ChartOfAccounts
-                            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                                && a.AccountName.Contains(keyword))
+                        var coaRows = await _db.ChartOfAccounts.AsNoTracking()
+                            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted)
                             .WhereNotControlAccount(_db)
-                            .Select(a => new { a.Id, a.AccountCode, a.AccountName, a.AccountType })
+                            .Select(a => new Accounting.Helpers.GlAccountCandidate(a.AccountCode, a.AccountName, a.AccountType))
                             .ToListAsync();
-                        var picked = Accounting.Helpers.GlDebitAccountPicker.Pick(
-                            candidates.Select(a => new Accounting.Helpers.GlAccountCandidate(
-                                a.AccountCode, a.AccountName, a.AccountType)),
-                            seededCode: seeded);
-                        if (picked is { } p)
+                        var match = Accounting.Helpers.GlAccountNameMatch.Pick(coaRows, nameSpec, seeded);
+                        if (match.Picked is { } p)
                         {
                             debitAccount = await _db.ChartOfAccounts.FirstOrDefaultAsync(
                                 a => a.CompanyId == companyId && a.AccountCode == p.Code && !a.IsDeleted);
                         }
-                        else if (candidates.Count > 0)
+                        else if (match.UnusableMatches > 0)
                         {
                             // มีบัญชีชื่อตรงแต่ไม่มีตัวไหนเป็นเดบิตของค่าใช้จ่ายได้เลย
                             // ⇒ ปล่อยว่างให้คนเลือก และ**บอกว่าทำไม** ไม่ใช่เงียบ
                             extractedData.ReasoningTrace.Add(
-                                $"[CoA] พบบัญชีชื่อใกล้เคียง \"{keyword}\" {candidates.Count} รายการ "
+                                $"[CoA] พบบัญชีชื่อใกล้เคียง \"{match.Keyword}\" {match.UnusableMatches} รายการ "
                                 + "แต่เป็นบัญชีหนี้สิน/รายได้/ส่วนของเจ้าของทั้งหมด ซึ่งใช้เป็นบัญชีเดบิต "
                                 + "ของค่าใช้จ่ายไม่ได้ — เว้นว่างไว้ให้เลือกเอง");
                         }
@@ -2476,7 +2481,8 @@ public class OcrService : IOcrService
                     if (extractedData.DebitAccountCode == null)
                     {
                         var seededDebit = await PickCategorySeededDebitAsync(companyId,
-                            categoryResult?.AccountCode, categoryResult?.AccountName);   // ห้ามใช้ชื่อหมวดที่ LLM/ค่าตั้งต้นเดาเป็น seed (2026-10-16)
+                            categoryResult?.AccountCode, categoryResult?.AccountName,   // ห้ามใช้ชื่อหมวดที่ LLM/ค่าตั้งต้นเดาเป็น seed (2026-10-16)
+                            categoryResult?.AccountNameMatch);   // คำจับคู่ของกฎ (ฝ่ายค้านรอบ 5 P1-3)
                         var seedSource = "ผังตามหมวดของใบนี้";
                         // ฝ่ายค้าน f5b10674 P2-A: ใบที่ไม่มีกฎหมวดไหนตรง ⇒ seed (null, null) ⇒ เดบิตว่าง — ตกไปผังตั้งต้นของชนิดกระดาษ → ผังค่าใช้จ่ายทั่วไป
                         // (Helpers/OcrDocTypeDefaultAccounts ตัวเดียวกับ ParseThaiDocument · ผู้เลือกกรองเฉพาะค่าใช้จ่าย/สินทรัพย์)
@@ -3977,76 +3983,23 @@ public class OcrService : IOcrService
     /// (กฎเหล็ก #3 ห้ามปล่อยว่าง) · ตัวเลือกผ่าน <see cref="Accounting.Helpers.GlDebitAccountPicker"/> ตัวเดียว (ไม่มีหนี้สิน/ทุน/รายได้)
     /// · null = ผังของบริษัทไม่มีบัญชีที่เข้าหมวดเลย (ไม่แต่งเอง)</summary>
     private async Task<Accounting.Helpers.GlAccountCandidate?> PickCategorySeededDebitAsync(
-        Guid companyId, string? seedCode, string? seedName)
+        Guid companyId, string? seedCode, string? seedName, Accounting.Helpers.GlAccountNameMatch.Spec? nameSpec = null)
     {
-        var keyword = ExtractDistinctiveKeyword(seedName);
+        // ฝ่ายค้านรอบ 5 P1-3 (ทีม EC5): seed จากกฎหมวดส่งคำจับคู่ของกฎมาเอง — คำจากชื่อแม่แบบเฉพาะ seed ที่ไม่ได้มาจากกฎ (ผังตั้งต้นของชนิดกระดาษ)
+        nameSpec ??= Accounting.Helpers.GlAccountNameMatch.FromAccountName(seedName);
         var code = string.IsNullOrWhiteSpace(seedCode) ? null : seedCode.Trim();
-        if (code == null && keyword == null) return null;
+        if (code == null && nameSpec == null) return null;
         // ฝ่ายค้าน EC2 P2-1: ห้ามได้บัญชีคุม (มีบัญชีย่อย) — เดิมผังจริงได้ "54 ค่าใช้จ่ายในการบริหาร" / "51 ต้นทุนขาย" แล้วด่าน IsPostableGl ตอนสร้าง
         // เอกสารตัดทิ้ง ⇒ เดบิตว่างที่ฟอร์ม · ตัวกรองฝั่ง query ของกติกาเดียวกับ IsPostableGl (PostingAccountRule) = WhereNotControlAccount
-        var candidates = await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                && ((code != null && a.AccountCode.StartsWith(code))
-                    || (keyword != null && a.AccountName.Contains(keyword))))
+        var rows = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted)
             .WhereNotControlAccount(_db)
             .Select(a => new Accounting.Helpers.GlAccountCandidate(a.AccountCode, a.AccountName, a.AccountType))
             .ToListAsync();
-        return Accounting.Helpers.GlDebitAccountPicker.Pick(candidates, code);
-    }
-
-    /// <summary>
-    /// Pull the most distinctive keyword out of a suggested account name so
-    /// it can be matched against a company's custom Chart of Accounts.
-    /// Thai account names run words together with no spaces, so we:
-    ///   1. drop a leading account code if the caller passed "5306 ค่า…",
-    ///   2. cut at the first conjunction ("และ", "หรือ", "/") so
-    ///      "ค่าซ่อมแซมและบำรุงรักษา" yields "ซ่อมแซม" — a shorter stem
-    ///      matches more CoA variants than the full compound,
-    ///   3. strip shared classifier prefixes ("ค่า", "บัญชี") that nearly
-    ///      every expense account carries and so add no signal,
-    ///   4. fall back to the longest space-separated token for names that
-    ///      do use spaces (English or mixed).
-    /// Returns null when nothing distinctive (≥3 chars) is left.
-    /// </summary>
-    private static string? ExtractDistinctiveKeyword(string? name)
-    {
-        if (string.IsNullOrWhiteSpace(name)) return null;
-        var work = name.Trim();
-
-        // Drop a leading account code passed as "5306 ค่า…".
-        work = Regex.Replace(work, @"^\s*\d[\d\-\.]*\s+", "");
-
-        // Cut at the first conjunction / separator — keep the leading concept.
-        foreach (var sep in new[] { "และ", "หรือ", "/", ",", "&" })
-        {
-            var idx = work.IndexOf(sep, StringComparison.Ordinal);
-            if (idx > 2) { work = work[..idx]; break; }
-        }
-
-        // Strip shared classifier prefixes that carry no signal.
-        foreach (var prefix in new[] { "ค่าใช้จ่าย", "ค่า", "บัญชี" })
-        {
-            if (work.StartsWith(prefix, StringComparison.Ordinal) && work.Length > prefix.Length + 2)
-            {
-                work = work[prefix.Length..];
-                break;
-            }
-        }
-
-        work = work.Trim();
-
-        // For space-separated names, take the longest meaningful token.
-        if (work.Contains(' '))
-        {
-            var token = work
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(t => t.Length >= 3)
-                .OrderByDescending(t => t.Length)
-                .FirstOrDefault();
-            if (!string.IsNullOrEmpty(token)) work = token;
-        }
-
-        return work.Length >= 3 ? work : null;
+        // รหัสต้นก่อน (ผังแม่แบบ/บัญชีย่อยของรหัสที่เสนอ) → คำในชื่อ (ผังที่ตั้งเอง · กันเงินเดือน/ค่านายหน้า)
+        if (code != null && Accounting.Helpers.GlDebitAccountPicker.Pick(rows.Where(r => r.Code.StartsWith(code, StringComparison.Ordinal)), code) is { } byCode)
+            return byCode;
+        return Accounting.Helpers.GlAccountNameMatch.Pick(rows, nameSpec, code).Picked;
     }
 
     /// <summary>Resolve the active OCR provider name from SiteSettings → appsettings.json
@@ -6516,15 +6469,21 @@ public class OcrService : IOcrService
                 var whtBasis = Accounting.Helpers.OcrWhtThresholdBase.FromScan(data.SubTotal, data.VatAmount, data.TotalAmount,
                     null, data.DocumentType);
                 var whtBase = whtBasis.Amount ?? 0m;
+                // ฝ่ายค้านรอบ 5 P2-e (ทีม EC5): <b>อัตราที่พิมพ์บนกระดาษชนะการคำนวณเกณฑ์</b> — เกณฑ์ 1,000 บาทวัดทั้งสัญญา ไม่ใช่ใบเดียว ·
+                // ผู้รับเงินพิมพ์ "หัก ณ ที่จ่าย 3%" = หลักฐานตรงว่าคู่สัญญาตกลงให้หัก (ใบมีส่วนลด 1,050 − 100 · VAT 66.50 ⇒ ฐาน 950 เคยถูกตัดเป็น HasWht=false
+                // แล้วอัตราที่พิมพ์หาย) · ฐานต่ำกว่าเกณฑ์ ⇒ ยังตั้งตามกระดาษ + เตือน + ช่องอัตราขึ้นเหลือง (ไม่เงียบ · ผู้ใช้ยืนยัน)
+                data.WhtRate = snapped;
                 if (whtBasis.Verdict == Accounting.Helpers.OcrWhtThresholdVerdict.Below)
                 {
-                    data.HasWht = false;
                     data.ReasoningTrace.Add(
-                        $"[WHT] กระดาษระบุอัตรา {snapped}% แต่ฐาน {whtBase:N2} บาท ต่ำกว่าเกณฑ์ "
-                        + "1,000 บาท (ท.ป.4/2528 ข้อ 12) → ไม่ตั้งภาษีหัก ณ ที่จ่ายให้ "
-                        + "(ถ้ารวมทั้งสัญญาถึงเกณฑ์ ให้ติ๊กเอง)");
+                        $"[WHT] กระดาษระบุอัตรา {snapped}% แต่ฐาน {whtBase:N2} บาท "
+                        + $"({Accounting.Helpers.OcrWhtThresholdBase.SourceLabel(whtBasis.Source)}) ต่ำกว่าเกณฑ์ "
+                        + $"{Accounting.Helpers.ThaiWhtRateTable.MinimumThresholdBaht:N0} บาท (ท.ป.4/2528 ข้อ 12) → ตั้งตามอัตราที่กระดาษพิมพ์ "
+                        + "(เกณฑ์วัดทั้งสัญญา — ถ้ายอดทั้งสัญญาต่ำกว่าเกณฑ์จริง ให้เอาการหักออก)");
+                    data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.WhtRate] = Math.Min(
+                        data.FieldConfidence.GetValueOrDefault(Accounting.Helpers.OcrFieldKeys.WhtRate, 1.0),
+                        Accounting.Helpers.OcrWhtThresholdBase.PrintedRateBelowThresholdConfidenceCap);
                 }
-                else data.WhtRate = snapped;
             }
         }
 
@@ -7117,6 +7076,17 @@ public class OcrService : IOcrService
                 + $" ≈ {Math.Round(whtBase * result.SuggestedWhtRate!.Value / 100m, 2, MidpointRounding.AwayFromZero):N2} บาท "
                 + "— กระดาษไม่ได้พิมพ์ไว้ ระบบจึงไม่หักให้ ตรวจแล้วกรอกในใบก่อนอนุมัติ";
         }
+        // ฝ่ายค้านรอบ 5 P2-e (ทีม EC5): ฐาน "ตัดสินไม่ได้" (ใบกำกับภาษียอดรวม 1,050 ที่อ่าน VAT/ยอดก่อน VAT ไม่ได้) เดิม<b>เงียบ</b> — ไม่มี [WHT-SUGGEST]
+        // และตัวจัดหมวดก็ไม่เสนออัตรา ⇒ ผู้ใช้ไม่รู้ว่าต้องตรวจ · ตอนนี้บอกตรง ๆ ว่าระบบตัดสินไม่ได้ + ให้ตรวจเกณฑ์ 1,000 เอง (ไม่หักให้ · ไม่แต่ง VAT)
+        // อัตรา: ข้อเสนอที่บันทึกไว้ (ประวัติผู้ขาย) → อัตราตามกฎหมายของหมวดใบนี้ (ตัวจัดหมวดไม่เติมเมื่อ Unsure) · ไม่มีทั้งสอง = ไม่อยู่ในข่าย ⇒ ไม่มีอะไรต้องบอก
+        else if (!isSalesSide && whtRate == 0m
+            && whtBasis.Verdict == Accounting.Helpers.OcrWhtThresholdVerdict.Unsure
+            && (result.SuggestedWhtRate is > 0m ? result.SuggestedWhtRate
+                : Ocr.ExpenseCategoryResolver.StatutoryWhtRateOfCategory(result.ExpenseCategory)) is decimal unsureRate)
+        {
+            result.ProcessingNotes = (result.ProcessingNotes ?? "")
+                + "\n[WHT-SUGGEST] " + Accounting.Helpers.OcrWhtThresholdBase.UnsureNote(unsureRate, whtBasis);
+        }
         // MidpointRounding.AwayFromZero — เส้น JE (:5568) ระบุไว้แล้ว แต่เส้นนี้ลืม ⇒
         // ฐาน 101.50 × 3% ได้ 3.04 กับ 3.05 ตามปุ่มที่กด (ผลตรวจ 2026-09-06 · T5-N6)
         var headerWht = whtRate > 0
@@ -7483,8 +7453,9 @@ public class OcrService : IOcrService
         // ⇒ ภาระหายทั้งก้อน (เบี้ยปรับ 2 เท่า + เงินเพิ่ม) · ผลตรวจ 2026-09-06 · T1-12
         // ฝ่ายค้าน EC3 P1-3 (ทีม EC4): ตัวตัดสินเดียวกับข้อเสนอหักของตัวจัดหมวด (ExpenseCategoryResolver.ApplyTo) — เลขที่ OCR อ่านเพี้ยนไม่ใช่หลักฐาน ·
         // ชื่อนิติบุคคลต่างประเทศ (Meta Platforms Ireland · … Pte. Ltd.) เป็นหลักฐาน · ข้อความบอกเหตุผลจริง (เดิม "ไม่มีเลขผู้เสียภาษีไทย" ทุกกรณี)
+        // ฝ่ายค้านรอบ 5 P1-2 (ทีม EC5): ForeignPayeeReason = ผู้ขายต่างประเทศ (เลขไทยผ่าน mod-11 ชนะชื่อ) หรือชื่อนิติบุคคลต่างประเทศชัดคู่เลขไทย (VAT e-Service)
         var foreignVendorReason = isSalesSide ? null
-            : Accounting.Helpers.ThaiVatTypeRule.ForeignVendorReason(null, result.ExtractedVendorTaxId, result.ExtractedVendorName);
+            : Accounting.Helpers.ThaiVatTypeRule.ForeignPayeeReason(null, result.ExtractedVendorTaxId, result.ExtractedVendorName);
         if (foreignVendorReason != null
             && (result.ExtractedTotalAmount ?? 0m) > 0m)
         {
@@ -7947,9 +7918,9 @@ public class OcrService : IOcrService
                 it.VatRate = headerVat > 0m
                     ? Accounting.Helpers.ThaiVatTypeRule.ToVatRate(
                         Accounting.Helpers.ThaiVatTypeRule.Suggest(
-                            // สแกนไม่มีช่อง "ประเทศผู้ขาย" — ใช้รูปแบบเลขผู้เสียภาษี
-                        // เป็นตัวบอก (ไทย = 13 หลักเสมอ) เหมือนที่ endpoint ทำ
-                        it.Description, null, result.ExtractedVendorTaxId),
+                            // สแกนไม่มีช่อง "ประเทศผู้ขาย" — ตัวตัดสินเดียว ForeignVendorReason (เลขไทยผ่าน mod-11 ชนะ · เลขต่างประเทศชัด · ชื่อนิติบุคคล
+                        // ต่างประเทศเมื่อไม่มีเลขไทย) · ฝ่ายค้านรอบ 5 P1-2 (ทีม EC5): ต้องส่งชื่อ — ตัวเดียวกับโน้ต ภ.พ.36 ข้างล่าง ⇒ ใบเดียวคำตอบเดียว
+                        it.Description, null, result.ExtractedVendorTaxId, result.ExtractedVendorName),
                         standardVatRate)
                     : 0m;
             }

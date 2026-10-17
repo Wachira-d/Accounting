@@ -771,7 +771,7 @@ public static class OcrReplayHarness
             var standardVatRate = hdrVat > 0m ? 7m : 0m;
             for (var i = 0; i < n; i++)
                 rates[i] ??= hdrVat > 0m
-                    ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(lines[i].Description, null, p.VendorTaxId), standardVatRate)
+                    ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(lines[i].Description, null, p.VendorTaxId, p.VendorNameFromEngine), standardVatRate)
                     : 0m;
 
             // บรรทัดจากภาพ/ข้อความไม่มีธง PriceIncludesVat (เว้นใบส่วนลดจากกระดาษที่พิสูจน์รวม VAT) ⇒ InclusiveLineVats คืน null ⇒ เฉลี่ยหัวใบตามเดิม

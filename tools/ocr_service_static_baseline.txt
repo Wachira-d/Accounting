@@ -15,7 +15,6 @@ ClearPredecessorLink
 ComputeContentFingerprint
 EnrichContactAddress
 ExtractDigits
-ExtractDistinctiveKeyword
 FallbackLineDescription
 MapEtaxToOcrData
 ParseAddressIntoParts

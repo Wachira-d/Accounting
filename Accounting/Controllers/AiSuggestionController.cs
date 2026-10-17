@@ -524,11 +524,12 @@ public class AiSuggestionController : ControllerBase
         // ═══ กติกาอยู่ที่ Helpers/ThaiVatTypeRule ตัวเดียว (E-OCR-01/OCR-02) ═══
         // เดิมเขียนไว้ในเมธอดนี้ที่เดียว ⇒ สาย OCR (ซึ่งกฎเหล็ก #3 ตั้งเป้าให้เป็น
         // 90% ของงาน) เรียกไม่ได้เลย และตั้ง VatRate = 7 ทุกบรรทัดแทน
+        // ฝ่ายค้านรอบ 5 P1-2 (ทีม EC5): ส่งชื่อผู้ขายด้วย — ตัวตัดสินเดียวกับเส้น OCR (เลขไทยผ่าน mod-11 ชนะชื่อ · ชื่อนิติบุคคลต่างประเทศเมื่อไม่มีเลขไทย)
         var isForeign = Accounting.Helpers.ThaiVatTypeRule.LooksForeignVendor(
-            req.VendorCountryCode, req.VendorTaxId);
+            req.VendorCountryCode, req.VendorTaxId, req.VendorName);
         var isExempt = Accounting.Helpers.ThaiVatTypeRule.LooksExempt(req.LineDescription);
         var suggestion = Accounting.Helpers.ThaiVatTypeRule.Suggest(
-            req.LineDescription, req.VendorCountryCode, req.VendorTaxId);
+            req.LineDescription, req.VendorCountryCode, req.VendorTaxId, req.VendorName);
         var reasoning = Accounting.Helpers.ThaiVatTypeRule.Reasoning(suggestion);
 
         // Log to feedback so user override trains the model

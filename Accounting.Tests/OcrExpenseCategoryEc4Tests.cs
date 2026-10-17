@@ -299,10 +299,12 @@ public class OcrExpenseCategoryEc4Tests
     [Fact]
     public void P2_5_ตัวอ่านกระดาษ_ใช้ฐานตัวเดียวกัน()
     {
-        // ParseThaiDocument: กระดาษพิมพ์อัตราหัก 3% — ฐาน 950 (ยอดรวม − VAT) ⇒ ไม่ตั้งหักให้ · ฐาน 1,000 ⇒ ตั้ง
+        // ParseThaiDocument: กระดาษพิมพ์อัตราหัก 3% — ฐาน 950 (ยอดรวม − VAT) ต่ำกว่าเกณฑ์ · ฐาน 1,000 ⇒ ตั้ง
+        // ฝ่ายค้านรอบ 5 P2-e (ทีม EC5): อัตราที่พิมพ์ชนะการคำนวณเกณฑ์ (เกณฑ์วัดทั้งสัญญา) ⇒ ตั้งตามกระดาษ + เตือนว่าฐานใบนี้ต่ำกว่าเกณฑ์ (เดิม HasWht=false — อัตราที่พิมพ์หาย)
         var below = OcrService.ParseThaiDocument("ใบกำกับภาษี\nเลขที่ INV-1\nค่าบริการติดตั้ง 950.00\nภาษีมูลค่าเพิ่ม 66.50\nรวมทั้งสิ้น 1,016.50\nหัก ณ ที่จ่าย 3%\n");
         _out.WriteLine($"below: sub={below.SubTotal} vat={below.VatAmount} total={below.TotalAmount} hasWht={below.HasWht} rate={below.WhtRate}");
-        Assert.False(below.HasWht);
+        Assert.True(below.HasWht);
+        Assert.Equal(3m, below.WhtRate);
         Assert.Contains(below.ReasoningTrace, t => t.Contains("[WHT]") && t.Contains("ต่ำกว่าเกณฑ์"));
         var meets = OcrService.ParseThaiDocument("ใบกำกับภาษี\nเลขที่ INV-2\nค่าบริการติดตั้ง 1,000.00\nภาษีมูลค่าเพิ่ม 70.00\nรวมทั้งสิ้น 1,070.00\nหัก ณ ที่จ่าย 3%\n");
         _out.WriteLine($"meets: sub={meets.SubTotal} vat={meets.VatAmount} total={meets.TotalAmount} hasWht={meets.HasWht} rate={meets.WhtRate}");

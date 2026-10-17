@@ -65,6 +65,16 @@ public static class OcrDocTypeDefaultAccounts
     public static bool PurchaseIsStock(bool keepsInventory, int lineCount, int linesMatchedToProductMaster)
         => keepsInventory && lineCount > 0 && linesMatchedToProductMaster >= lineCount;
 
+    /// <summary>
+    /// ค่าขนส่งบนใบนี้เป็น<b>ค่าขนส่งเข้า</b> (ต้นทุนสินค้า 51120) ไหม — ตัวตัดสินเดียว (ฝ่ายค้านรอบ 5 P2-f · ทีม EC5 · 2026-10-16) ·
+    /// บริษัทถือสต็อก (<see cref="InventoryIndustry.KeepsInventory"/>) <b>และ</b>เราเป็นผู้ซื้อ <b>และ</b>กระดาษเป็นใบแจ้งหนี้/ใบกำกับภาษีจากผู้ขาย (ชนิดเดียวกับใบซื้อสินค้า)
+    /// <para><b>ทำไมไม่ใช้ <see cref="PurchaseIsStock"/></b>: ตัวนั้นต้องการ "ทุกบรรทัดจับคู่สินค้า master ได้" — บรรทัดค่าขนส่งเป็นบริการ ไม่มีวันจับคู่สินค้า ⇒
+    /// ใบค่าขนส่ง (ซึ่งเป็นใบเดียวที่กฎค่าขนส่งชนะ) จะไม่มีวันผ่าน = ไม่มีผล · คำถามของค่าขนส่งคือ "บริษัทนี้มีสินค้าที่ต้นทุนรวมค่าขนส่งเข้าไหม"
+    /// (TFRS for NPAEs บทที่ 8) = ธงประเภทกิจการ · ใบเสร็จ (ร้าน/ขนส่งพัสดุ) ไม่นับ — ค่าส่งพัสดุให้ลูกค้าของร้านออนไลน์จ่ายด้วยใบเสร็จเป็นส่วนใหญ่ (ขนส่งออก 53130)</para>
+    /// </summary>
+    public static bool FreightIsInbound(bool keepsInventory, string? ourRole, string? scannedDocumentType)
+        => keepsInventory && ourRole == "Buyer" && scannedDocumentType != null && GoodsPurchaseTypes.Contains(scannedDocumentType);
+
     /// <summary>ผัง Dr/Cr ตั้งต้นของชนิดกระดาษ · null = ไม่รู้จักชนิดนี้</summary>
     /// <param name="purchaseIsStock">ของบนใบเป็นสินค้าคงเหลือไหม (<see cref="PurchaseIsStock"/>) — false/ไม่รู้ ⇒ ใบซื้อได้ค่าใช้จ่ายทั่วไป ไม่ใช่ต้นทุนขาย</param>
     public static Defaults? For(string? scannedDocumentType, bool purchaseIsStock = false)

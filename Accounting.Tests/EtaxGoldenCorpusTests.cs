@@ -192,7 +192,7 @@ internal static class ScanDocumentSimulator
                 if (!items[vi].VatRate.HasValue && vatPlan.Rates[vi] is decimal planRate) items[vi].VatRate = planRate;
         foreach (var it in items)
             it.VatRate ??= hdrVat > 0m
-                ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(it.Description, null, r.SellerTaxId), 7m)
+                ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(it.Description, null, r.SellerTaxId, r.SellerName), 7m)
                 : 0m;
         var spread = (incl
                 ? OcrEtaxLineNormalizer.InclusiveLineVats(items.Select(x => (x.Amount ?? 0m, x.VatRate ?? 0m, x.PriceIncludesVat)).ToList(), hdrVat)

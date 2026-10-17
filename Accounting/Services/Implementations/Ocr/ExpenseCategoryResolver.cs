@@ -41,7 +41,10 @@ internal static class ExpenseCategoryResolver
         /// <summary>หลักฐานที่ทำให้กฎนี้ชนะ **ผูกกับเงิน**หรือไม่ (เจอในชื่อผู้ขาย/
         /// หัวเรื่อง/บรรทัดที่มียอด) — false = เจอเฉพาะใน rawText หรือแถวยอด 0
         /// ⇒ เสนอหมวดได้ แต่**ห้ามเสนอประเภทเงินได้ ม.40 / อัตราหัก ณ ที่จ่าย**</summary>
-        bool MoneyBackedEvidence = true);
+        bool MoneyBackedEvidence = true,
+        /// <summary>คำจับคู่ชื่อบัญชีของกฎที่ชนะ — ผู้เรียกใช้เมื่อรหัส <see cref="AccountCode"/> ไม่มีในผังของบริษัท (<see cref="Accounting.Helpers.GlAccountNameMatch"/>) ·
+        /// null = ผู้เรียกเดิม/ไม่มีคำ</summary>
+        Accounting.Helpers.GlAccountNameMatch.Spec? AccountNameMatch = null);
 
     /// <summary>Returns null when no rule matches.</summary>
     /// <param name="lineDescriptions">คำอธิบายของบรรทัดที่ **มีจำนวนเงิน** —
@@ -69,7 +72,8 @@ internal static class ExpenseCategoryResolver
         IEnumerable<string?>? zeroAmountLineDescriptions = null,
         IReadOnlyList<Accounting.Helpers.OcrPricedLine>? pricedLines = null,
         List<string>? diagnostics = null,
-        List<Accounting.Helpers.OcrMinorityWhtPart>? minorityWhtParts = null)
+        List<Accounting.Helpers.OcrMinorityWhtPart>? minorityWhtParts = null,
+        bool freightIsInbound = false)
     {
         var reasons = new List<string>();
         // สามชั้น: ข้อมูลที่ **ผูกกับเงิน** (ผู้ขาย/หัวเรื่อง/บรรทัดที่มียอด)
@@ -213,9 +217,30 @@ internal static class ExpenseCategoryResolver
             reasons.Add($"หลักฐานของ '{best.Category}' อยู่นอกบรรทัดที่มีจำนวนเงิน "
                 + "(ข้อความทั้งใบ/แถวยอด 0) → เสนอหมวดได้ แต่ไม่เสนอประเภทเงินได้/อัตราหัก ณ ที่จ่าย");
         if (best.Hint != null) reasons.Add(best.Hint);
+        // ── ค่าขนส่งบนใบซื้อของบริษัทที่ถือสต็อก = ค่าขนส่งเข้า (ต้นทุนสินค้า) ไม่ใช่ค่าขนส่งออก (ฝ่ายค้านรอบ 5 P2-f · ทีม EC5) ──
+        // TFRS for NPAEs บทที่ 8: ต้นทุนซื้อสินค้ารวมค่าขนส่งที่ทำให้สินค้าอยู่ในสถานที่พร้อมขาย ⇒ 51120 ค่าขนส่งสินค้า (ต้นทุนขาย) ·
+        // เดิม (ก่อน EC4) ทุกบริษัทได้ 51120 จากการค้นชื่อ "ขนส่ง" · EC4 ย้ายทุกบริษัทไป 53130 ค่าขนส่ง (ฝ่ายขาย) ⇒ อัตรากำไรขั้นต้นของบริษัทซื้อมาขายไปขยับ ·
+        // ตัวตัดสินเดียว Helpers/OcrDocTypeDefaultAccounts.FreightIsInbound (ผู้เรียกส่งผล) · บริษัทไม่ถือสต็อก/ไม่รู้ ⇒ 53130 ตามเดิม
+        if (freightIsInbound && best.Category == FreightCategory)
+        {
+            reasons.Add($"ค่าขนส่งบนใบซื้อของบริษัทที่ถือสต็อก ⇒ {FreightInAccount.Code} {FreightInAccount.Name} (ต้นทุนสินค้า · TFRS for NPAEs บทที่ 8) — "
+                + "ถ้าเป็นค่าส่งของให้ลูกค้า เลือก 53130 ค่าขนส่ง (ฝ่ายขาย) แทน");
+            return new CategoryResult(best.Category, FreightInAccount.Code, FreightInAccount.Name,
+                best.StatutoryWhtRate, best.WhtIncomeTypeCode, conf, reasons, bestMoneyBacked, FreightInAccount.NameMatch);
+        }
         return new CategoryResult(best.Category, best.AccountCode, best.AccountName,
-            best.StatutoryWhtRate, best.WhtIncomeTypeCode, conf, reasons, bestMoneyBacked);
+            best.StatutoryWhtRate, best.WhtIncomeTypeCode, conf, reasons, bestMoneyBacked, best.NameMatch);
     }
+
+    /// <summary>ชื่อหมวดของกฎค่าขนส่ง (ตัวเดียวกับแถวกฎ)</summary>
+    internal const string FreightCategory = "ค่าขนส่ง / ค่าจัดส่ง";
+
+    /// <summary>ผังค่าขนส่งเข้าของบริษัทที่ถือสต็อก — บัญชีย่อยจริงในแม่แบบ (<c>ChartOfAccountTemplates</c> 51120 "ค่าขนส่งสินค้า" Freight-in) ·
+    /// คำจับคู่ชื่อห้ามได้ค่าขนส่งฝ่ายขาย/ขนส่งออก</summary>
+    internal static readonly (string Code, string Name, Accounting.Helpers.GlAccountNameMatch.Spec NameMatch) FreightInAccount =
+        ("51120", "ค่าขนส่งสินค้า", new(
+            new[] { "ค่าขนส่งเข้า", "ขนส่งเข้า", "ค่าขนส่งสินค้าเข้า", "ค่าขนส่งซื้อ", "ค่าขนส่งสินค้า", "ค่าขนส่ง", "ขนส่ง" },
+            new[] { "ขาย", "ขนส่งออก", "ส่งออก" }));
 
     /// <summary>คำอธิบายบรรทัดนี้มีคำของหมวดนั้นไหม — กติกาเดียวกับการให้คะแนน (contains แบบไม่สนตัวพิมพ์)</summary>
     private static bool RuleKeywordIn(CategoryRule rule, string description)
@@ -466,6 +491,8 @@ internal static class ExpenseCategoryResolver
         string AccountName,
         string[] Keywords,
         string[] VendorBrands,
+        string[] AccountNameKeywords,
+        string[]? AccountNameAvoid = null,
         string? WhtIncomeTypeCode = null,
         string[]? GoodsKeywords = null,
         string[]? Exclusions = null,
@@ -476,6 +503,9 @@ internal static class ExpenseCategoryResolver
         /// เหมือนค่าเดิมของแถว — <see cref="ApplyTo"/> ไม่ใช้ค่านี้ตรง ๆ เมื่ออัตราขึ้นกับชนิดผู้รับ (<c>RateDependsOnPayeeKind</c>)</summary>
         public decimal? StatutoryWhtRate
             => Accounting.Helpers.ThaiWhtRateTable.Find(WhtIncomeTypeCode) is { } t ? t.IndividualRate ?? t.JuristicRate : null;
+
+        /// <summary>คำจับคู่ชื่อบัญชีของกฎนี้ (ผังที่ผู้ใช้ตั้งเอง) — ระบุในแถวกฎ ห้ามดึงจากชื่อบัญชีแม่แบบ (ฝ่ายค้านรอบ 5 P1-3)</summary>
+        public Accounting.Helpers.GlAccountNameMatch.Spec NameMatch => new(AccountNameKeywords, AccountNameAvoid);
     }
 
     // ─── Rule library ───────────────────────────────────────────────────
@@ -490,6 +520,9 @@ internal static class ExpenseCategoryResolver
     // ⚠️ ห้ามเติมคำเดี่ยวที่อยู่ในชื่อร้าน/ชื่อสินค้า ("ก่อสร้าง" ⇒ ร้านวัสดุก่อสร้าง · "ตัดหญ้า" ⇒ เครื่องตัดหญ้า · "ขนย้าย" ⇒ รถเข็นขนย้าย ·
     //    "รักษาความปลอดภัย" ⇒ กล้องระบบรักษาความปลอดภัย · "ทำบัญชี" ⇒ โปรแกรมทำบัญชี · "ซ่อมแซม" ⇒ วัสดุซ่อมแซม · "ประกัน" ⇒ สินค้ารับประกัน)
     //    — ใช้วลี "ค่า…/บริการ…/จ้าง…" แทน (เทสต์ทิศตรงข้ามใน OcrExpenseCategoryRegressionTests)
+    // ⚠️ AccountNameKeywords = คำจับคู่ชื่อบัญชีของผังที่ผู้ใช้ตั้งเอง (รหัส 5 หลักของแม่แบบไม่มีในผัง) — เรียงจากเจาะจงไปกว้าง · ระบุในแถว **ห้ามดึงจากชื่อบัญชีแม่แบบ**
+    //    (ฝ่ายค้านรอบ 5 P1-3: "ค่าขนส่ง (ฝ่ายขาย)" ⇒ คำ "(ฝ่ายขาย)" ตรง "เงินเดือน (ฝ่ายขาย)") · บัญชีเงินเดือน/ค่านายหน้าถูกกันที่ Helpers/GlAccountNameMatch
+    //    เสมอ · เทสต์ OcrCustomChartNameMatchTests วนทุกแถวกับผังชื่อไทยทั่วไป + ล็อกว่าคืนทุกคู่ที่ base 7ca8c0d8 เคยจับได้
     private static readonly CategoryRule[] Rules = new[]
     {
         // ─── น้ำมันเชื้อเพลิง — 54440 ค่าเดินทางและพาหนะ ───
@@ -502,19 +535,23 @@ internal static class ExpenseCategoryResolver
             VendorBrands: new[] {
                 "ปตท", "ptt", "บางจาก", "bangchak", "esso", "shell", "เชลล์",
                 "caltex", "คาลเท็กซ์", "จุฬากรณ์", "susco"
-            }),
+            },
+            AccountNameKeywords: new[] { "ค่าน้ำมันเชื้อเพลิง", "น้ำมันเชื้อเพลิง", "ค่าน้ำมันรถ", "ค่าน้ำมัน", "เชื้อเพลิง", "ยานพาหนะ", "พาหนะ" },
+            AccountNameAvoid: new[] { "รถยนต์นั่ง" }),
 
         // ─── ค่าไฟฟ้า — 54310 (WHT 1% only for energy-saving service contracts) ───
         new CategoryRule("ค่าไฟฟ้า", "54310", "ค่าไฟฟ้า",
             Keywords: new[] { "ค่าไฟ", "ไฟฟ้า", "การไฟฟ้า", "electricity", "electric bill", "energy" },
-            VendorBrands: new[] { "การไฟฟ้านครหลวง", "การไฟฟ้าส่วนภูมิภาค", "mea", "pea" }),
+            VendorBrands: new[] { "การไฟฟ้านครหลวง", "การไฟฟ้าส่วนภูมิภาค", "mea", "pea" },
+            AccountNameKeywords: new[] { "ค่าไฟฟ้า", "ไฟฟ้า" }),
 
         // ─── ค่าน้ำประปา — 54320 ───
         new CategoryRule("ค่าน้ำประปา", "54320", "ค่าน้ำประปา",
             Keywords: new[] { "ค่าน้ำ", "น้ำประปา", "การประปา", "water bill", "water supply" },
             VendorBrands: new[] { "การประปานครหลวง", "การประปาส่วนภูมิภาค", "mwa", "pwa" },
             // ทีม OCR 14 (ฝ่ายค้านรอบ 5 P2-c · F2 ข้อ 4): "ค่าน้ำ" ที่ไม่ใช่ค่าน้ำมิเตอร์ (หนักเกิน/ขวด/ถัง/มัน …) ตัดก่อนนับ — ตัวตั้งเดียว Helpers/OcrMeteredWater
-            Exclusions: new[] { Accounting.Helpers.OcrMeteredWater.NotMeteredWaterPhrase }),
+            Exclusions: new[] { Accounting.Helpers.OcrMeteredWater.NotMeteredWaterPhrase },
+            AccountNameKeywords: new[] { "ค่าน้ำประปา", "น้ำประปา", "ประปา" }),
 
         // ─── ค่าโทรศัพท์/อินเทอร์เน็ต — 54330 ค่าโทรศัพท์ (40(8) ค่าบริการ) · ใบอินเทอร์เน็ตล้วนผู้ใช้เลือก 54340 เอง ───
         new CategoryRule("ค่าโทรศัพท์ / อินเทอร์เน็ต", "54330", "ค่าโทรศัพท์",
@@ -526,6 +563,7 @@ internal static class ExpenseCategoryResolver
                 "ais", "เอไอเอส", "true", "ทรู", "dtac", "ดีแทค", "tot", "ทีโอที",
                 "cat", "3bb", "nt", "เอ็นที"
             },
+            AccountNameKeywords: new[] { "ค่าโทรศัพท์", "โทรศัพท์", "อินเทอร์เน็ต", "อินเตอร์เน็ต", "ค่าสื่อสาร" },
             WhtIncomeTypeCode: "8"),
 
         // ─── ค่าเช่า — 54410 ค่าเช่าสำนักงาน (40(5)) ───
@@ -535,6 +573,8 @@ internal static class ExpenseCategoryResolver
                 "เช่ารถ", "เช่าเครื่อง", "ค่าที่จอด"
             },
             VendorBrands: Array.Empty<string>(),
+            AccountNameKeywords: new[] { "ค่าเช่าสำนักงาน", "ค่าเช่าอาคาร", "ค่าเช่า", "เช่า" },
+            AccountNameAvoid: new[] { "เช่าซื้อ" },
             WhtIncomeTypeCode: "5"),
 
         // ─── ค่าโฆษณา — 53120 (40(8) ค่าโฆษณา) ───
@@ -545,12 +585,14 @@ internal static class ExpenseCategoryResolver
                 "เผยแพร่", "marketing"
             },
             VendorBrands: new[] { "google", "facebook", "meta", "tiktok", "line ads" },
+            AccountNameKeywords: new[] { "ค่าโฆษณา", "โฆษณา", "ส่งเสริมการขาย", "การตลาด" },
             WhtIncomeTypeCode: "8ad"),
 
         // ─── ค่าขนส่ง / จัดส่ง — 53130 ค่าขนส่ง (ฝ่ายขาย) (40(8) ค่าขนส่งที่ไม่ใช่ขนส่งสาธารณะ) ───
-        // ไม่ใช้ 51120 ค่าขนส่งสินค้า (ต้นทุนขาย) — บริษัทที่ไม่ถือสต็อกจะได้ต้นทุนขาย (ฝ่ายค้าน EC3 P2-7 ทิศเดียวกับ 51110)
+        // ตั้งต้น 53130 (ค่าขนส่งออก) — บริษัทที่ไม่ถือสต็อกห้ามได้ต้นทุนขาย 51120 (ฝ่ายค้าน EC3 P2-7 ทิศเดียวกับ 51110) · ใบซื้อของบริษัทที่ถือสต็อก ⇒ Resolve สลับเป็น
+        // 51120 ค่าขนส่งสินค้า (ค่าขนส่งเข้า · FreightInAccount · ฝ่ายค้านรอบ 5 P2-f)
         // ค่าขนย้าย = จ้างขนส่งของ ⇒ ประเภทเดียวกัน (ตาราง "8tr") · งานที่รวมแรงงานแพ็ก/ติดตั้งเป็นหลัก ผู้ใช้เปลี่ยนเป็น 40(8) ค่าบริการได้ (ช่องขึ้นเหลือง)
-        new CategoryRule("ค่าขนส่ง / ค่าจัดส่ง", "53130", "ค่าขนส่ง (ฝ่ายขาย)",
+        new CategoryRule(FreightCategory, "53130", "ค่าขนส่ง (ฝ่ายขาย)",
             Keywords: new[] {
                 "ขนส่ง", "ค่าขนส่ง", "transport", "shipping", "freight", "ส่งของ", "จัดส่ง",
                 "ค่าส่ง", "delivery", "logistic", "ขนถ่าย", "ค่าขนย้าย", "บริการขนย้าย", "จ้างขนย้าย",
@@ -561,6 +603,8 @@ internal static class ExpenseCategoryResolver
                 "kerry", "เคอรี่", "flash", "แฟลช", "j&t", "เจแอนด์ที", "thai post",
                 "ไปรษณีย์ไทย", "dhl", "fedex", "ems", "ninja"
             },
+            AccountNameKeywords: new[] { "ค่าขนส่ง", "ขนส่ง", "ค่าจัดส่ง", "ค่าส่งของ" },
+            AccountNameAvoid: new[] { "ขนส่งเข้า", "ขนส่งสินค้าเข้า" },
             WhtIncomeTypeCode: "8tr"),
 
         // ─── ซื้อสินค้า / วัตถุดิบ — ค้าส่ง/ค้าปลีกรายใหญ่ (ไม่มี WHT) ───
@@ -577,7 +621,9 @@ internal static class ExpenseCategoryResolver
                 "homepro", "โฮมโปร", "ไทวัสดุ", "thai watsadu", "thaiwatsadu",
                 "global house", "โกลบอลเฮ้าส์", "dohome", "ดูโฮม",
                 "villa market", "gourmet market", "tops", "ท็อปส์"
-            }),
+            },
+            AccountNameKeywords: new[] { "ต้นทุนสินค้า", "ซื้อสินค้า", "ต้นทุนขาย", "ซื้อวัตถุดิบ", "วัตถุดิบ" },
+            AccountNameAvoid: new[] { "ขนส่ง", "ส่งคืน", "ส่วนลด" }),
 
         // ─── ค่าบริการ / ค่าแรง — 54730 ค่าบริการอื่นๆ (40(8) ค่าจ้างทำของ/ค่าบริการ) ───
         // คำยาวเพิ่ม 2026-10-16: งานบริการที่ไม่มีหมวดเฉพาะ (รปภ. · ออกแบบ · งานพิมพ์ · ดูแลสวน) — เดิมได้ 3% เพราะค่าตั้งต้น "ค่าบริการ"
@@ -589,6 +635,8 @@ internal static class ExpenseCategoryResolver
                 "ค่าออกแบบ", "บริการออกแบบ", "ค่าพิมพ์", "ค่าตัดหญ้า", "บริการตัดหญ้า", "จ้างตัดหญ้า", "ค่าดูแลสวน", "ค่าจัดสวน"
             },
             VendorBrands: Array.Empty<string>(),
+            AccountNameKeywords: new[] { "ค่าบริการอื่น", "ค่าบริการ", "ค่าจ้างทำของ", "ค่าใช้จ่ายบริหารอื่น", "ค่าใช้จ่ายเบ็ดเตล็ด", "ค่าใช้จ่ายบริหาร", "บริหาร" },
+            AccountNameAvoid: new[] { "ธนาคาร" },
             WhtIncomeTypeCode: "8",
             // "ค่าบริการขนส่ง/จัดส่ง" เป็นของกฎค่าขนส่ง (8tr 1%) — คำ "ค่าบริการ" ในวลีนั้นไม่ใช่หลักฐานของค่าบริการทั่วไป (ฝ่ายค้าน EC3 P2-6)
             Exclusions: new[] { @"(?:ค่า)?บริการ(?=ขนส่ง|จัดส่ง)" }),
@@ -603,6 +651,7 @@ internal static class ExpenseCategoryResolver
                 "รับเหมา", "ค่ารับเหมา", "ผู้รับเหมา", "จ้างเหมา", "ค่าก่อสร้าง", "contractor"
             },
             VendorBrands: Array.Empty<string>(),
+            AccountNameKeywords: new[] { "ค่ารับเหมา", "ค่าจ้างเหมา", "รับเหมา", "จ้างเหมา", "ค่าใช้จ่ายบริหารอื่น", "ค่าใช้จ่ายเบ็ดเตล็ด", "ค่าใช้จ่ายบริหาร", "บริหาร" },
             WhtIncomeTypeCode: "7"),
 
         // ─── ค่าที่ปรึกษากฎหมาย / ตรวจสอบบัญชี — 54630 ค่าที่ปรึกษาอื่นๆ (40(6) วิชาชีพอิสระ: กฎหมาย · การบัญชี) ───
@@ -614,6 +663,7 @@ internal static class ExpenseCategoryResolver
                 "ทนายความ", "ค่าวิชาชีพ", "ค่าทำบัญชี", "รับทำบัญชี", "บริการทำบัญชี", "สอบบัญชี", "bookkeeping"
             },
             VendorBrands: Array.Empty<string>(),
+            AccountNameKeywords: new[] { "ค่าที่ปรึกษา", "ที่ปรึกษา", "ค่าสอบบัญชี", "ค่าทำบัญชี", "ค่าวิชาชีพ", "ค่าธรรมเนียมวิชาชีพ" },
             WhtIncomeTypeCode: "6"),
 
         // ─── ค่าธรรมเนียมธนาคาร — 54710 (no WHT, banks deduct themselves) ───
@@ -625,7 +675,8 @@ internal static class ExpenseCategoryResolver
             VendorBrands: new[] {
                 "ธนาคาร", "bank", "scb", "ไทยพาณิชย์", "kbank", "กสิกร", "bbl", "กรุงเทพ",
                 "ktb", "กรุงไทย", "tmb", "ทีเอ็มบี", "uobt", "krungsri", "กรุงศรี"
-            }),
+            },
+            AccountNameKeywords: new[] { "ค่าธรรมเนียมธนาคาร", "ธรรมเนียมธนาคาร", "ค่าธรรมเนียม" }),
 
         // ─── ค่าวัสดุสำนักงาน — 54420 ───
         new CategoryRule("ค่าวัสดุสำนักงาน", "54420", "ค่าวัสดุสิ้นเปลืองสำนักงาน",
@@ -635,7 +686,8 @@ internal static class ExpenseCategoryResolver
             },
             VendorBrands: new[] {
                 "office mate", "ออฟฟิศเมท", "b2s", "บีทูเอส", "se-ed", "ซีเอ็ด"
-            }),
+            },
+            AccountNameKeywords: new[] { "ค่าวัสดุสำนักงาน", "วัสดุสำนักงาน", "วัสดุสิ้นเปลือง", "เครื่องเขียน" }),
 
         // ─── ค่าซ่อมแซมและบำรุงรักษา — 54430 (40(8) ค่าบริการซ่อม) ───
         // "อะไหล่"/"spare part" ย้ายไป GoodsKeywords (2026-10-16): ใบซื้ออะไหล่จากร้านอะไหล่ยังได้หมวด/ผังซ่อมเหมือนเดิม แต่ไม่ได้ข้อเสนอหัก 3%
@@ -646,6 +698,7 @@ internal static class ExpenseCategoryResolver
                 "ค่าซ่อม", "บริการซ่อม", "ค่าบำรุงรักษา", "ค่าดูแลระบบ", "บริการดูแลระบบ"
             },
             VendorBrands: Array.Empty<string>(),
+            AccountNameKeywords: new[] { "ค่าซ่อมแซม", "ซ่อมแซม", "ค่าซ่อม", "บำรุงรักษา" },
             WhtIncomeTypeCode: "8",
             GoodsKeywords: new[] { "อะไหล่", "spare part" },
             // ค่าส่วนกลาง/ค่าบำรุงรักษาส่วนกลาง = เงินที่เจ้าของร่วมจ่ายนิติบุคคลอาคารชุด ไม่ใช่ค่าจ้างซ่อม (กฎ "ค่าส่วนกลาง" ข้างล่าง · ฝ่ายค้าน EC2 P2-5)
@@ -659,6 +712,7 @@ internal static class ExpenseCategoryResolver
         new CategoryRule("ค่าส่วนกลาง", "54910", "ค่าใช้จ่ายบริหารอื่นๆ",
             Keywords: new[] { "ค่าส่วนกลาง", "ค่าบำรุงรักษาส่วนกลาง", "บำรุงรักษาส่วนกลาง", "ค่าบำรุงส่วนกลาง", "common fee", "common area fee" },
             VendorBrands: new[] { "นิติบุคคลอาคารชุด", "นิติบุคคลหมู่บ้านจัดสรร", "นิติบุคคลบ้านจัดสรร", "juristic person condominium" },
+            AccountNameKeywords: new[] { "ค่าส่วนกลาง", "ส่วนกลาง", "ค่าใช้จ่ายบริหารอื่น", "ค่าใช้จ่ายเบ็ดเตล็ด", "ค่าใช้จ่ายบริหาร", "บริหาร" },
             Hint: "ค่าส่วนกลางที่จ่ายนิติบุคคลอาคารชุด/หมู่บ้านจัดสรร ระบบไม่เสนอหัก ณ ที่จ่าย — ถ้าผู้รับเป็นบริษัท/ห้างฯ "
                 + "ที่รับจ้างบริหารอาคาร (ค่าบริการ 40(8)) ให้ตั้งประเภทเงินได้และอัตราหักเอง"),
 
@@ -672,12 +726,14 @@ internal static class ExpenseCategoryResolver
             VendorBrands: new[] {
                 "grab", "bolt", "robinhood", "true", "thai airways", "การบินไทย",
                 "airasia", "แอร์เอเชีย", "nokair", "นกแอร์", "agoda", "booking.com"
-            }),
+            },
+            AccountNameKeywords: new[] { "ค่าเดินทาง", "เดินทาง", "พาหนะ" }),
 
         // ─── ค่ารับรอง — 54460 (§65 ตรี(4) — ผังนี้ถูกตั้งธงค่ารับรองในแม่แบบแล้ว) ───
         new CategoryRule("ค่ารับรอง", "54460", "ค่ารับรอง / เลี้ยงรับรอง",
             Keywords: new[] { "ค่ารับรอง", "entertain", "entertainment", "เลี้ยงรับรอง" },
-            VendorBrands: Array.Empty<string>()),
+            VendorBrands: Array.Empty<string>(),
+            AccountNameKeywords: new[] { "ค่ารับรอง", "รับรอง" }),
 
         // ─── ค่าทำความสะอาด — 54730 ค่าบริการอื่นๆ (40(8)) · ผังมาตรฐานไม่มีบัญชีทำความสะอาดของสำนักงาน ───
         new CategoryRule("ค่าทำความสะอาด", "54730", "ค่าบริการอื่นๆ",
@@ -686,6 +742,8 @@ internal static class ExpenseCategoryResolver
                 "pest control"
             },
             VendorBrands: Array.Empty<string>(),
+            AccountNameKeywords: new[] { "ค่าทำความสะอาด", "ทำความสะอาด", "ค่าบริการอื่น", "ค่าบริการ" },
+            AccountNameAvoid: new[] { "ธนาคาร" },
             WhtIncomeTypeCode: "8"),
 
         // ─── ค่าประกัน — 54510 ค่าเบี้ยประกันภัย ───
@@ -706,6 +764,7 @@ internal static class ExpenseCategoryResolver
                 "เมืองไทยประกัน", "muang thai", "aia", "เอไอเอ", "thai life", "ไทยประกันชีวิต",
                 "viriyah", "วิริยะ", "axa", "fwd"
             },
+            AccountNameKeywords: new[] { "ค่าเบี้ยประกัน", "เบี้ยประกัน", "ประกันภัย", "ค่าประกัน" },
             Exclusions: new[] {
                 "ประกันสังคม",
                 "รับประกัน(?!ภัย|ชีวิต|วินาศภัย)",
@@ -717,6 +776,7 @@ internal static class ExpenseCategoryResolver
         new CategoryRule("ดอกเบี้ยจ่าย", "55110", "ดอกเบี้ยจ่าย - เงินกู้ยืม",
             Keywords: new[] { "ดอกเบี้ย", "interest", "loan interest", "ดอกเบี้ยเงินกู้" },
             VendorBrands: Array.Empty<string>(),
+            AccountNameKeywords: new[] { "ดอกเบี้ยจ่าย", "ดอกเบี้ยเงินกู้", "ดอกเบี้ย" },
             WhtIncomeTypeCode: "4a"),
     };
 
@@ -724,6 +784,22 @@ internal static class ExpenseCategoryResolver
     /// ทุกรหัสต้องมีอยู่จริงและลงรายการได้ (ไม่ใช่บัญชีคุม) · ฝ่ายค้าน EC3 P2-7 ("5300" ที่ไม่มีในผัง)</summary>
     internal static IReadOnlyList<(string Category, string AccountCode, string AccountName)> RuleAccounts
         => Rules.Select(r => (r.Category, r.AccountCode, r.AccountName)).ToList();
+
+    /// <summary>อัตราหัก ณ ที่จ่ายตามกฎหมายของหมวด (ชื่อหมวดตามแถวกฎ) — null = หมวดไม่อยู่ในข่าย/ไม่รู้จัก/อัตราขึ้นกับชนิดผู้รับ (ดอกเบี้ย — ห้ามเดา) ·
+    /// ผู้อ่าน: โน้ต "ตัดสินเกณฑ์ไม่ได้" ตอนสร้างเอกสาร (ฝ่ายค้านรอบ 5 P2-e) — อัตราจากตาราง ThaiWhtRateTable ตัวเดียว</summary>
+    internal static decimal? StatutoryWhtRateOfCategory(string? category)
+    {
+        if (string.IsNullOrWhiteSpace(category)) return null;
+        var rule = Rules.FirstOrDefault(r => r.Category == category.Trim());
+        if (rule?.WhtIncomeTypeCode == null
+            || Accounting.Helpers.ThaiWhtRateTable.RateDependsOnPayeeKind(rule.WhtIncomeTypeCode)) return null;
+        return rule.StatutoryWhtRate is > 0m ? rule.StatutoryWhtRate : null;
+    }
+
+    /// <summary>คำจับคู่ชื่อบัญชีของทุกกฎ (+ ผังค่าขนส่งเข้า) — ให้เทสต์วนทุกแถวกับผังที่ผู้ใช้ตั้งเอง (ฝ่ายค้านรอบ 5 P1-3)</summary>
+    internal static IReadOnlyList<(string Category, string AccountCode, Accounting.Helpers.GlAccountNameMatch.Spec NameMatch)> RuleNameMatches
+        => Rules.Select(r => (r.Category, r.AccountCode, r.NameMatch))
+            .Append((FreightCategory + " (เข้า)", FreightInAccount.Code, FreightInAccount.NameMatch)).ToList();
 
     /// <summary>Apply the resolver's output to an OcrExtractedData, filling in
     /// expense category, debit account, and inferring statutory WHT when the
@@ -760,11 +836,13 @@ internal static class ExpenseCategoryResolver
 
         // ── ผู้ขายต่างประเทศ: ห้ามเสนออัตราในประเทศ (ภ.ง.ด.3/53) — ฝ่ายค้าน EC2 P1-5 ──
         // "Meta Platforms Ireland / Facebook ads" เคยได้ 2% 8ad คู่กับโน้ต ภ.พ.36/ม.70 ตอนสร้างเอกสาร = ใบเดียวสองคำแนะนำที่ขัดกัน ·
-        // ตัวตัดสินเดียวกับโน้ตนั้น (ThaiVatTypeRule.ForeignVendorReason) ⇒ โน้ต ม.70/ภ.พ.36 เป็นคำแนะนำเดียว
+        // ตัวตัดสินเดียวกับโน้ตนั้น (ThaiVatTypeRule.ForeignPayeeReason) ⇒ โน้ต ม.70/ภ.พ.36 เป็นคำแนะนำเดียว
+        // ฝ่ายค้านรอบ 5 P1-2 (ทีม EC5): เลขไทยผ่าน mod-11 ชนะชื่อ (ByteDance (Thailand) · Siam Japan Limited ได้ข้อเสนอในประเทศคืน) · ชื่อนิติบุคคลต่างประเทศที่ชัด
+        // คู่เลขไทย (Meta Platforms Ireland เลข 0993…) ยังไม่เสนอแบบมั่นใจ — ขอบเขต ม.70 ไม่รู้ (ForeignPayeeReason)
         // ฝ่ายค้าน EC3 P1-3 (ทีม EC4): เดิมนับหลักของเลขที่ OCR ยังไม่ validate ⇒ ผู้ขายไทยที่อ่านหลักหาย/เลขสาขาติดมาถูกตัดเป็นต่างประเทศ ·
         // ตอนนี้ เลขที่อ่านเพี้ยน = ไม่รู้ (ในประเทศ เหมือนเดิม) · ชื่อนิติบุคคลต่างประเทศ (Ireland Limited · Pte. · Inc. · LLC) เป็นหลักฐาน
         // (บริษัทต่างประเทศที่มีเลขไทย 13 หลัก — จด VAT e-Service/มีสาขา — ขอบเขต ม.70 "ไม่รู้" ⇒ ไม่เสนออัตราในประเทศแบบมั่นใจ · ForeignWhtPayeeCheck.ScopeOf)
-        if (Accounting.Helpers.ThaiVatTypeRule.ForeignVendorReason(null, data.VendorTaxId, data.VendorName) is string foreignWhy)
+        if (Accounting.Helpers.ThaiVatTypeRule.ForeignPayeeReason(null, data.VendorTaxId, data.VendorName) is string foreignWhy)
         {
             if (result.StatutoryWhtRate is > 0m || result.WhtIncomeTypeCode != null)
                 data.ReasoningTrace.Add(

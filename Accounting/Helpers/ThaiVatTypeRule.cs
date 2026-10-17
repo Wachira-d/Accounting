@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Accounting.Helpers;
 
 /// <summary>
@@ -100,48 +102,100 @@ public static class ThaiVatTypeRule
 
     /// <summary>
     /// ผู้ขายอยู่ต่างประเทศหรือไม่ — <b>ตัวตัดสินตัวเดียว</b> ของทุกคำแนะนำ "ผู้ขายต่างประเทศ" (อัตรา VAT รายบรรทัด · โน้ต ภ.พ.36/ม.70 ·
-    /// ข้อเสนอหัก ณ ที่จ่ายในประเทศของตัวจัดหมวด) · หลักฐานเรียงตามความแน่น: รหัสประเทศ → ชื่อนิติบุคคลต่างประเทศ (<see cref="ForeignEntityNameSignal"/>)
-    /// → เลขผู้เสียภาษีรูปแบบต่างประเทศ (<see cref="TaxIdLooksForeign"/>)
-    /// <para>═══ ฝ่ายค้าน EC3 P1-3 (ทีม EC4 · 2026-10-16) ═══ เดิม "นับหลักของเลขผู้เสียภาษี ≠ 13 ⇒ ต่างประเทศ" บนเลขที่ OCR <b>ยังไม่ validate</b>
-    /// (เส้น Azure <c>ExtractDigits(…,13)</c> คืนกี่หลักก็ได้) ⇒ ผู้ขายไทยที่อ่านหลักหายไปหนึ่งหลัก ("010556123456") หรือเลขสาขาติดมา
-    /// ("0105561234567 00000") ถูกตัดสินเป็นต่างประเทศ ⇒ ข้อเสนอหักในประเทศหาย + โน้ต ภ.พ.36 ขึ้นผิดใบ + บรรทัดได้ VAT 0% ·
-    /// ตอนนี้: เลขที่อ่านเพี้ยน = <b>ไม่รู้</b> (ไม่ใช่หลักฐาน) ⇒ พฤติกรรมในประเทศเหมือนก่อนมีด่านนี้ · ห้ามประกาศต่างประเทศจากเลขที่ไม่ผ่านด่าน</para>
+    /// ข้อเสนอหัก ณ ที่จ่ายในประเทศของตัวจัดหมวด) · ลำดับหลักฐานอยู่ที่ <see cref="ForeignVendorReason"/>
     /// </summary>
-    /// <param name="vendorName">ชื่อผู้ขายตามกระดาษ/ผู้ติดต่อ — null = ไม่ใช้สัญญาณชื่อ (ผู้เรียกเดิมที่ไม่มีชื่อ)</param>
+    /// <param name="vendorName">ชื่อผู้ขายตามกระดาษ/ผู้ติดต่อ — null = ไม่ใช้สัญญาณชื่อ (ผู้เรียกที่ไม่มีชื่อ)</param>
     public static bool LooksForeignVendor(string? vendorCountryCode, string? vendorTaxId, string? vendorName = null)
         => ForeignVendorReason(vendorCountryCode, vendorTaxId, vendorName) != null;
 
-    /// <summary>เหตุผลที่ตัดสินว่าผู้ขายอยู่ต่างประเทศ (ข้อความไทยสำหรับ trace/โน้ต) · null = ไม่มีหลักฐาน (ถือเป็นในประเทศ — ไม่เดา)</summary>
-    public static string? ForeignVendorReason(string? vendorCountryCode, string? vendorTaxId, string? vendorName = null)
+    /// <summary>
+    /// เหตุผลที่ตัดสินว่าผู้ขายอยู่ต่างประเทศ (ข้อความไทยสำหรับ trace/โน้ต) · null = ไม่มีหลักฐาน (ถือเป็นในประเทศ — ไม่เดา)
+    /// <para><b>ลำดับ (ฝ่ายค้านรอบ 5 P1-2 · ทีม EC5 · 2026-10-16)</b> — ต่างประเทศต้องมี<b>หลักฐานเชิงบวก</b>:</para>
+    /// <list type="number">
+    /// <item>ประเทศที่ผู้ใช้ตั้งในผู้ติดต่อ (ไม่ใช่ TH) ⇒ ต่างประเทศ</item>
+    /// <item>เลขผู้เสียภาษีไทย 13 หลักผ่าน mod-11 (<see cref="ThaiTaxId.IsValid"/> · ตัดเลขสาขา 5 หลักท้ายได้) ⇒ <b>ไทย ชนะชื่อเสมอ</b></item>
+    /// <item>ชื่อมี "Thailand" / "ประเทศไทย" ⇒ ไทย ("Amazon Web Services (Thailand) Limited" ไม่มีเลขก็ไทย)</item>
+    /// <item>เลขที่<b>ไม่ใช่รูปแบบไทยอย่างชัดเจน</b> ⇒ ต่างประเทศ: มีตัวอักษรจริง (ไม่ใช่ตัวที่ OCR อ่านเป็นเลขบ่อย) · คำนำประเทศสองตัวอักษร ·
+    /// รูปเลขทะเบียนต่างประเทศ (7–9 หลัก + ตัวอักษร — "200817984R" · "9827384L") · ตัวเลขล้วน 8–9 หลัก (ไกลจาก 13 — "514440874")</item>
+    /// <item>เลขตัวเลขล้วน 12–14 หลัก (หรือ 17–19 = มีสาขาติด) ที่ไม่ผ่าน checksum = <b>อ่านเพี้ยนจากเลขไทย</b> ⇒ ไม่รู้ = ในประเทศ (ชื่อไม่พลิก)</item>
+    /// <item>ไม่มีเลขไทย + ชื่อเป็นนิติบุคคลต่างประเทศ (<see cref="ForeignEntityNameSignal"/>) ⇒ ต่างประเทศ</item>
+    /// </list>
+    /// <para>═══ ที่มา ═══ EC4 ตรวจชื่อ<b>ก่อน</b>เลขไทย ⇒ "ByteDance (Thailand)" · "Siam Japan Limited" · "Creative Inc. Co., Ltd." ที่มีเลขไทยถูกต้อง
+    /// ถูกตัดเป็นต่างประเทศ (ข้อเสนอหัก 2%/3% หาย + โน้ต ภ.พ.36 ผิดใบ) · และนับเฉพาะคำนำ 2 ตัวอักษรเป็นหลักฐานของเลข ⇒ Airbnb "9827384L" · Fiverr "514440874" ·
+    /// Alibaba "200413128M" · เลขจีน "91440300MA5F12345X" ตรวจไม่เจอ (โน้ต ภ.พ.36 หาย · ได้ข้อเสนอ ภ.ง.ด.53 แทน ม.70) ·
+    /// EC3 P1-3 (ยังจริง): เลขที่อ่านหลักหาย ("010556123456") / เลขสาขาติด ("0105561234567 00000") ห้ามเป็นต่างประเทศ</para>
+    /// <para>ไม่ได้ตัดสินว่าอยู่ใต้ ม.70 หรือไม่ — บริษัทต่างประเทศที่มีเลขไทย (VAT e-Service/สาขา) ⇒ ไทยตามข้อ 2 · ขอบเขตผู้รับใน
+    /// <see cref="ForeignWhtPayeeCheck.ScopeOf"/></para>
+    /// </summary>
+    internal static string? ForeignVendorReason(string? vendorCountryCode, string? vendorTaxId, string? vendorName = null)
     {
         if (!string.IsNullOrWhiteSpace(vendorCountryCode)
             && !string.Equals(vendorCountryCode.Trim(), "TH", StringComparison.OrdinalIgnoreCase))
             return $"ประเทศของผู้ขาย {vendorCountryCode.Trim().ToUpperInvariant()}";
+        var id = ClassifyTaxId(vendorTaxId);
+        if (id == TaxIdShape.Thai) return null;
+        if (NameSaysThailand(vendorName)) return null;
+        if (id == TaxIdShape.Foreign) return $"เลขผู้เสียภาษีรูปแบบต่างประเทศ ({vendorTaxId!.Trim()})";
+        if (id == TaxIdShape.GarbledThai) return null;
         if (ForeignEntityNameSignal(vendorName) is string sig)
             return $"ชื่อผู้ขายเป็นนิติบุคคลต่างประเทศ ('{sig}')";
-        if (TaxIdLooksForeign(vendorTaxId))
-            return $"เลขผู้เสียภาษีรูปแบบต่างประเทศ ({vendorTaxId!.Trim()})";
         return null;
     }
 
     /// <summary>
-    /// เลขผู้เสียภาษีนี้เป็น<b>หลักฐานเชิงบวก</b>ว่าผู้ขายอยู่ต่างประเทศไหม — <b>ห้ามนับหลัก</b> (ฝ่ายค้าน EC3 P1-3)
-    /// <list type="bullet">
-    /// <item>ตัดตัวคั่น + เลขสาขา 5 หลักท้าย ("0105561234567 00000" · "…-00001") แล้วผ่าน <see cref="ThaiTaxId.IsValid"/> (mod-11 · เจ้าของ checksum ตัวเดียว)
-    /// ⇒ เลขไทย ⇒ false</item>
-    /// <item>เลขไทยไม่มีตัวอักษรเลย ⇒ ขึ้นต้นด้วย<b>รหัสประเทศสองตัวอักษร</b>ตามด้วยตัวเลข ("US-99-1234567" · "IE9692928F") = รูปแบบเลขต่างประเทศ ⇒ true ·
-    /// คู่ตัวอักษรที่เป็นตัวเลขอ่านเพี้ยนล้วน (O/I/L/S/B/Z/G/Q/D — "OI05561234567") ไม่นับ</item>
-    /// <item>อย่างอื่น (หลักขาด/เกิน · ตัวเลขล้วนที่ checksum ไม่ผ่าน · ว่าง) ⇒ <b>ไม่รู้</b> ⇒ false</item>
-    /// </list>
+    /// ผู้รับเงินเป็น<b>นิติบุคคลต่างประเทศ</b>ที่ต้องเตือนเรื่อง ภ.พ.36/ม.70 ไหม — <see cref="ForeignVendorReason"/> <b>หรือ</b>
+    /// ชื่อนิติบุคคลต่างประเทศที่ชัด (ไม่มี "Thailand"/คำไทย) <b>คู่กับเลขผู้เสียภาษีไทย</b> ("Meta Platforms Ireland Limited" เลข 0993… ที่จด VAT e-Service)
+    /// <para>ผู้อ่าน: ข้อเสนอหัก ณ ที่จ่ายในประเทศของตัวจัดหมวด (ไม่เสนอ ภ.ง.ด.53 แบบมั่นใจ) + โน้ต [PP36]/[PND54] ตอนสร้างเอกสาร ·
+    /// <b>ไม่ใช่</b>ตัวตัดสินอัตรา VAT รายบรรทัด — ผู้ขายที่มีเลขไทยเป็นผู้ขายในประเทศเสมอสำหรับ VAT (<see cref="Suggest"/> ใช้ <see cref="ForeignVendorReason"/>)</para>
+    /// <para>ฝ่ายค้านรอบ 5 P1-2 (ทีม EC5): เลขไทยชนะชื่อในการจัดว่า "ต่างประเทศไหม" · แต่ขอบเขต ม.70 ของบริษัทต่างประเทศที่มีเลขไทย "ไม่รู้"
+    /// (มีสาขา/สถานประกอบการถาวร ⇒ ภ.ง.ด.53 · ไม่มี ⇒ ม.70 ภ.ง.ด.54 — <see cref="ForeignWhtPayeeCheck.ScopeOf"/>) ⇒ ห้ามเสนออัตราในประเทศแบบมั่นใจ ·
+    /// ชื่อที่มี "(Thailand)" · คำไทย (Siam/Thai/Bangkok) · "Co., Ltd." คู่ "Inc." ไม่ใช่สัญญาณ ⇒ ByteDance (Thailand) / Siam Japan Limited ได้ข้อเสนอในประเทศตามเดิม</para>
     /// </summary>
-    private static bool TaxIdLooksForeign(string? vendorTaxId)
+    public static string? ForeignPayeeReason(string? vendorCountryCode, string? vendorTaxId, string? vendorName = null)
     {
-        if (string.IsNullOrWhiteSpace(vendorTaxId)) return false;
+        if (ForeignVendorReason(vendorCountryCode, vendorTaxId, vendorName) is string r) return r;
+        if (ClassifyTaxId(vendorTaxId) != TaxIdShape.Thai || NameSaysThailand(vendorName)) return null;
+        return ForeignEntityNameSignal(vendorName) is string sig
+            ? $"ชื่อผู้ขายเป็นนิติบุคคลต่างประเทศ ('{sig}') ที่มีเลขผู้เสียภาษีไทย"
+            : null;
+    }
+
+    /// <summary>รูปของเลขผู้เสียภาษีที่อ่านได้ — <see cref="TaxIdShape.Unknown"/> = ไม่ใช่หลักฐานทางไหน (ให้ชื่อตัดสินต่อ)</summary>
+    private enum TaxIdShape { None, Thai, GarbledThai, Foreign, Unknown }
+
+    /// <summary>
+    /// จัดรูปเลขผู้เสียภาษีที่อ่านจากกระดาษ/ผู้ติดต่อ — <b>ห้ามนับหลักบนเลขที่ผ่านด่านไม่ได้แล้วประกาศต่างประเทศ</b> (EC3 P1-3) ·
+    /// ความยาวใกล้ 13 (12–14 · 17–19 มีสาขา) = อ่านเพี้ยนจากเลขไทย · ตัวอักษรที่หน้าตาเหมือนตัวเลข (<see cref="OcrDigitLookalikes"/>) แปลงเป็นเลขก่อนตัดสิน
+    /// </summary>
+    private static TaxIdShape ClassifyTaxId(string? vendorTaxId)
+    {
+        if (string.IsNullOrWhiteSpace(vendorTaxId)) return TaxIdShape.None;
         var t = vendorTaxId.Trim();
-        if (ThaiTaxId.IsValid(ThaiTaxIdWithoutBranch(t))) return false;
-        var m = System.Text.RegularExpressions.Regex.Match(t.ToUpperInvariant(), @"^([A-Z]{2})[\s\-.]?[0-9A-Z]*[0-9]");
-        if (!m.Success) return false;
-        return m.Groups[1].Value.Any(c => !OcrDigitLookalikes.Contains(c));
+        if (ThaiTaxId.IsValid(ThaiTaxIdWithoutBranch(t))) return TaxIdShape.Thai;
+        var upper = Regex.Replace(t.ToUpperInvariant(), @"^(?:TAX\s*(?:ID|NO\.?)|TIN|VAT\s*(?:ID|NO\.?))\s*[:#]?\s*", "");
+        var sb = new System.Text.StringBuilder(upper.Length);
+        foreach (var ch in upper)
+        {
+            if (ch is >= '0' and <= '9' or >= 'A' and <= 'Z') sb.Append(ch);
+            else if (ch is >= '๐' and <= '๙') sb.Append((char)('0' + (ch - '๐')));
+        }
+        var alnum = sb.ToString();
+        if (alnum.Length == 0) return TaxIdShape.None;
+        // คำนำประเทศสองตัวอักษร ("IE9692928F" · "US991234567" · "CY10301365E") — คู่ที่หน้าตาเหมือนตัวเลขล้วน ("OI0556…") ไม่นับ
+        var prefix = Regex.Match(alnum, @"^([A-Z]{2})[0-9A-Z]*[0-9]");
+        if (prefix.Success && prefix.Groups[1].Value.Any(c => !OcrDigitLookalikes.Contains(c))) return TaxIdShape.Foreign;
+        // รูปเลขทะเบียนต่างประเทศ: 7–9 หลัก + ตัวอักษร 1–2 ตัว (UEN สิงคโปร์ "200817984R" · VAT ไอร์แลนด์ "9827384L")
+        if (Regex.IsMatch(alnum, @"^[0-9]{7,9}[A-Z]{1,2}$")) return TaxIdShape.Foreign;
+        // ตัวอักษรจริง (ไม่ใช่ตัวที่ OCR อ่านเป็นเลขบ่อย) — เลขไทยไม่มีตัวอักษรเลย ("91440300MA5F12345X" เลขจีน)
+        if (alnum.Any(c => c is >= 'A' and <= 'Z' && !OcrDigitLookalikes.Contains(c))) return TaxIdShape.Foreign;
+        var digits = new string(alnum.Select(c => c switch
+        {
+            'O' or 'Q' or 'D' => '0', 'I' or 'L' => '1', 'Z' => '2', 'S' => '5', 'G' => '6', 'B' => '8', _ => c,
+        }).ToArray());
+        if (digits.Length == 13 && ThaiTaxId.IsValid(digits)) return TaxIdShape.Thai;
+        if (digits.Length is >= 12 and <= 14 or >= 17 and <= 19) return TaxIdShape.GarbledThai;
+        if (digits.Length is 8 or 9) return TaxIdShape.Foreign;   // ไกลจาก 13 เกินกว่าจะเป็นหลักหาย ("514440874" Fiverr)
+        return TaxIdShape.Unknown;   // 10–11 หลัก / สั้น / ยาวผิดรูป — ไม่ใช่หลักฐาน
     }
 
     /// <summary>ตัวอักษรที่ OCR อ่านเป็นตัวเลขบ่อย (0/1/5/8/2/6/9/0) — คู่ตัวอักษรนำหน้าที่เป็นตัวพวกนี้ล้วนไม่ใช่รหัสประเทศที่เชื่อได้</summary>
@@ -154,36 +208,66 @@ public static class ThaiVatTypeRule
         return digits.Length == 18 ? digits[..13] : digits;
     }
 
+    /// <summary>ชื่อบอกว่าเป็นนิติบุคคลในไทยตรง ๆ — "(Thailand)" · "Thailand" · "ประเทศไทย" · "ไทยแลนด์"</summary>
+    private static bool NameSaysThailand(string? vendorName)
+    {
+        if (string.IsNullOrWhiteSpace(vendorName)) return false;
+        var n = vendorName.ToLowerInvariant();
+        return n.Contains("thailand", StringComparison.Ordinal) || n.Contains("ประเทศไทย", StringComparison.Ordinal)
+            || n.Contains("ไทยแลนด์", StringComparison.Ordinal);
+    }
+
     /// <summary>
-    /// ชื่อผู้ขายบอกว่าเป็น<b>นิติบุคคลต่างประเทศ</b>ไหม — คืนคำที่ตรง (สำหรับ trace) หรือ null
-    /// <para>สัญญาณเชิงบวกเท่านั้น: ชื่อแพลตฟอร์มต่างประเทศที่รู้จัก ("Meta Platforms" · "Google Asia Pacific" · "Amazon Web Services") · คำรูปแบบนิติบุคคลที่ไทยไม่ใช้
-    /// ("Pte." · "Inc." · "LLC" · "GmbH" …) · "Limited/Ltd" <b>เฉพาะเมื่อมีชื่อประเทศอื่นในชื่อ</b> ("… Ireland Limited") — "Co., Ltd." ของบริษัทไทยไม่นับ ·
+    /// ชื่อผู้ขายบอกว่าเป็น<b>นิติบุคคลต่างประเทศ</b>ไหม — คืนคำที่ตรง (สำหรับ trace) หรือ null · ใช้เฉพาะเมื่อไม่มีเลขไทย (<see cref="ForeignVendorReason"/> ข้อ 6)
+    /// <para>สัญญาณเชิงบวกเท่านั้น: ชื่อแพลตฟอร์มต่างประเทศที่รู้จัก · คำรูปแบบนิติบุคคลที่ไทยไม่ใช้ (Pte. · Sdn Bhd · GmbH · LLC · B.V. · S.A. · K.K. · Pty ·
+    /// AB/UC/SE/AG/NV/Oy เป็น<b>คำท้ายชื่อ</b>) · "Inc." เฉพาะเมื่อไม่มี "Co., Ltd." (บริษัทไทย "Creative Inc. Co., Ltd.") · "Private Limited" คู่กับ Singapore/India ·
+    /// "&lt;ประเทศ&gt; Limited/Ltd" ติดกัน <b>เว้นแต่ชื่อมีคำไทย</b> (Siam · Thai · Bangkok — "Siam Japan Limited") · ชื่อขึ้นต้นด้วยเมืองจีน ("Shenzhen … Co., Ltd.") ·
     /// ชื่อที่มีอักษรไทย (บริษัท … จำกัด) ไม่ใช่สัญญาณ</para>
-    /// <para>ไม่ได้ตัดสินว่าอยู่ใต้ ม.70 หรือไม่ — บริษัทต่างประเทศที่มีเลขผู้เสียภาษีไทย (จด VAT e-Service หรือมีสาขาในไทย) ⇒ ขอบเขตผู้รับยัง "ไม่รู้"
-    /// (<see cref="ForeignWhtPayeeCheck.ScopeOf"/>) · ตัวนี้บอกแค่ว่า "ห้ามเสนออัตราในประเทศแบบมั่นใจ"</para>
     /// </summary>
     private static string? ForeignEntityNameSignal(string? vendorName)
     {
         if (string.IsNullOrWhiteSpace(vendorName)) return null;
         var n = vendorName.Trim();
         if (n.Any(c => c >= '฀' && c <= '๿')) return null;   // ชื่อไทย = ไม่ใช่สัญญาณ
-        var lower = " " + System.Text.RegularExpressions.Regex.Replace(n.ToLowerInvariant(), @"[,()]", " ") + " ";
+        var lower = " " + Regex.Replace(n.ToLowerInvariant(), @"[,()]", " ").Trim() + " ";
         foreach (var brand in ForeignPlatformNames)
             if (lower.Contains(brand, StringComparison.Ordinal)) return brand.Trim();
-        var form = System.Text.RegularExpressions.Regex.Match(lower, @"\s(pte\.?|inc\.?|llc|l\.l\.c\.|gmbh|s\.a\.r\.l\.|b\.v\.|pty\.?)(?=\s)");
+        var form = Regex.Match(lower,
+            @"\s(pte\.?|sdn\.?\s*bhd\.?|gmbh|llc|l\.l\.c\.|s\.a\.r\.l\.|b\.v\.|s\.a\.|k\.k\.|kabushiki\s+kaisha|pty\.?)(?=\s)");
         if (form.Success) return form.Groups[1].Value;
-        // "<ประเทศ> Limited/Ltd" ติดกันเท่านั้น — "Siam Japan Tools Co., Ltd." (บริษัทไทย) ไม่นับ
-        foreach (var country in ForeignCountryWords)
-            if (System.Text.RegularExpressions.Regex.IsMatch(lower, $@"\s{country}\s+(?:limited|ltd\.?)\s")) return country;
+        // "Inc." เฉพาะชื่อที่ไม่มีรูปบริษัทจำกัดของไทย — "Creative Inc. Co., Ltd." คือบริษัทไทย
+        if (!Regex.IsMatch(lower, @"\sco\.?\s*ltd\.?\s|\scompany\s+limited\s")
+            && Regex.Match(lower, @"\s(inc\.?|incorporated)(?=\s)") is { Success: true } inc)
+            return inc.Groups[1].Value;
+        if (Regex.Match(lower, @"\s(ab|uc|se|ag|nv|n\.v\.|oy|bv|sa)\.?\s$") is { Success: true } last)
+            return last.Groups[1].Value;
+        if (Regex.IsMatch(lower, @"\sprivate\s+limited\s") && Regex.IsMatch(lower, @"\s(?:singapore|india)\s"))
+            return "private limited";
+        foreach (var city in ForeignCityPrefixes)
+            if (lower.StartsWith(" " + city + " ", StringComparison.Ordinal)) return city;
+        // "<ประเทศ> Limited/Ltd" ติดกันเท่านั้น — ชื่อที่มีคำไทย ("Siam Japan Limited" · "Thai Hong Kong Limited" · "Bangkok UK Limited") ไม่นับ
+        if (!ThaiPlaceWords.Any(w => lower.Contains(" " + w + " ", StringComparison.Ordinal)))
+            foreach (var country in ForeignCountryWords)
+                if (Regex.IsMatch(lower, $@"\s{country}\s+(?:limited|ltd\.?)\s")) return country;
         return null;
     }
 
-    /// <summary>ชื่อแพลตฟอร์ม/นิติบุคคลต่างประเทศที่ออกใบให้ธุรกิจไทยบ่อย (ตัวพิมพ์เล็ก)</summary>
+    /// <summary>ชื่อแพลตฟอร์ม/นิติบุคคลต่างประเทศที่ออกใบให้ธุรกิจไทยบ่อย (ตัวพิมพ์เล็ก) · สาขาไทยของแพลตฟอร์มเหล่านี้มี "(Thailand)" + เลขไทย ⇒ ไทยตามข้อ 2–3</summary>
     private static readonly string[] ForeignPlatformNames =
     {
         "meta platforms", "facebook ireland", "google asia pacific", "google ireland", "amazon web services",
         "microsoft regional sales", "microsoft ireland", "apple distribution international", "tiktok pte", "bytedance",
         "linkedin ireland", "zoom video communications", "adobe systems software ireland", "canva pty",
+        "airbnb ireland", "fiverr international", "alibaba.com singapore", "upwork global",
+    };
+
+    /// <summary>คำไทยที่บริษัทไทยใช้คู่กับชื่อประเทศอื่น ("Siam Japan Limited") — ตัวพิมพ์เล็ก</summary>
+    private static readonly string[] ThaiPlaceWords = { "siam", "thai", "bangkok", "krung" };
+
+    /// <summary>เมืองจีนที่ขึ้นต้นชื่อนิติบุคคลจีน ("Shenzhen Huaqiang Technology Co., Ltd.") — ตัวพิมพ์เล็ก</summary>
+    private static readonly string[] ForeignCityPrefixes =
+    {
+        "shenzhen", "guangzhou", "shanghai", "beijing", "hangzhou", "yiwu", "dongguan", "ningbo", "xiamen", "foshan", "suzhou",
     };
 
     /// <summary>ชื่อประเทศ/เมืองที่ใช้ประกอบกับ "Limited/Ltd" — ตัวพิมพ์เล็ก · ไม่มี thailand</summary>
@@ -195,10 +279,12 @@ public static class ThaiVatTypeRule
 
     /// <summary>คำตอบเป็นข้อความตามสัญญาของ endpoint <c>/ai/vat/infer-type</c>
     /// — <c>"7"</c> · <c>"0"</c> · <c>"Exempt"</c></summary>
-    public static string Suggest(string? description, string? vendorCountryCode, string? vendorTaxId)
+    /// <param name="vendorName">ชื่อผู้ขาย — ส่งเสมอเมื่อมี (ฝ่ายค้านรอบ 5 P1-2: ไม่ส่งชื่อ ⇒ "Canva Pty Ltd" เลข ABN 11 หลักได้ 7% เพราะเลขอย่างเดียวไม่ใช่หลักฐาน
+    /// · ผู้ขายไทยที่ชื่อตรงแบรนด์ต่างประเทศแต่มีเลขไทยถูกต้อง ⇒ 7% ตามลำดับของ <see cref="ForeignVendorReason"/>)</param>
+    public static string Suggest(string? description, string? vendorCountryCode, string? vendorTaxId, string? vendorName = null)
     {
         if (LooksExempt(description)) return "Exempt";
-        if (LooksForeignVendor(vendorCountryCode, vendorTaxId)) return "0";
+        if (LooksForeignVendor(vendorCountryCode, vendorTaxId, vendorName)) return "0";
         return "7";
     }
 

@@ -95,6 +95,22 @@ public static class OcrWhtThresholdBase
     /// <summary>อัตรา VAT มาตรฐาน (%) ที่ใช้คำนวณ<b>ขอบล่าง</b>ของยอดก่อน VAT เท่านั้น — ไม่ใช่ค่าที่เขียนลงเอกสาร</summary>
     private const decimal ThaiVatStandardRatePercent = 7m;
 
+    /// <summary>ความมั่นใจสูงสุดของช่องอัตราหักเมื่อกระดาษพิมพ์อัตราแต่ฐานของใบนี้ต่ำกว่าเกณฑ์ (ตั้งตามกระดาษ — ฝ่ายค้านรอบ 5 P2-e) ·
+    /// ต่ำกว่าเกณฑ์ไฮไลต์ 0.85 เสมอ ⇒ ผู้ใช้เห็นช่องเหลืองก่อนยืนยัน</summary>
+    public const double PrintedRateBelowThresholdConfidenceCap = 0.6;
+
+    /// <summary>
+    /// โน้ตตอนสร้างเอกสารเมื่อฐานของใบนี้<b>ตัดสินเกณฑ์ไม่ได้</b> (<see cref="OcrWhtThresholdVerdict.Unsure"/> — ใบกำกับภาษีที่อ่าน VAT/ยอดก่อน VAT ไม่ได้
+    /// และช่วง [ยอดรวม × 100/107, ยอดรวม] คร่อม 1,000) · ฝ่ายค้านรอบ 5 P2-e: เดิมเงียบ (ไม่มี [WHT-SUGGEST]) ⇒ ผู้ใช้ไม่รู้ว่าต้องตรวจ
+    /// </summary>
+    /// <param name="rate">อัตราที่หมวด/ประวัติผู้ขายเสนอ (%)</param>
+    /// <param name="basis">ผลของ <see cref="FromScan"/> ที่ Verdict = Unsure</param>
+    public static string UnsureNote(decimal rate, Result basis)
+        => $"ระบบตัดสินไม่ได้ว่ายอดใบนี้ถึงเกณฑ์ {ThaiWhtRateTable.MinimumThresholdBaht:N0} บาทหรือไม่ — ยอดรวม {basis.Amount:N2} บาท "
+            + $"ถ้าไม่รวม VAT 7% ≈ {basis.ExVatLowerBound:N2} บาท (ท.ป.4/2528 ข้อ 12 — ฐานไม่รวม VAT · อ่าน VAT ของใบนี้ไม่ได้) · "
+            + $"หมวด/ผู้ขายนี้อยู่ในข่ายหัก {rate}% — ตรวจยอดก่อน VAT และเกณฑ์ {ThaiWhtRateTable.MinimumThresholdBaht:N0} บาทเอง แล้วกรอกการหักในใบก่อนอนุมัติ "
+            + "(ระบบไม่หักให้)";
+
     private static Result Decide(decimal amount, OcrWhtBaseSource source)
         => new(amount, source, ThaiWhtRateTable.ShouldWithhold(amount) ? OcrWhtThresholdVerdict.Meets : OcrWhtThresholdVerdict.Below, null);
 
