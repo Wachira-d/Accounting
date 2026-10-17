@@ -350,8 +350,26 @@ public static class OcrLineQuantityGuard
         if (string.IsNullOrWhiteSpace(d)) return false;
         if (ElectricityContextRe.IsMatch(d) || OcrMeteredWater.IsMeteredWater(d, seller)) return true;
         if (seller == OcrUtilityKind.None) return false;
-        return UtilityServiceChargeRe.IsMatch(d) || (seller == OcrUtilityKind.Telecom && TelecomChargeRe.IsMatch(d));
+        // ★ ฝ่ายค้าน OCR 14 (P1): วลีที่อาศัยผู้ขาย (ค่าบริการ/service fee/ค่าเน็ต …) ต้อง<b>นำหน้า</b>คำอธิบาย — "เคส iPhone 16 รวมค่าบริการติดตั้ง" × 3 ·
+        // "Router WiFi 6 + service fee" · "ซิมการ์ด ค่าเน็ต 30 วัน" · "หลอด LED (ค่าบริการขนส่งรวม)" ของผู้ขายสาธารณูปโภคเป็นสินค้า ต้องคงจำนวน
+        var lead = LeadingChargeText(d);
+        return UtilityServiceChargeRe.IsMatch(lead) || (seller == OcrUtilityKind.Telecom && TelecomChargeRe.IsMatch(lead));
     }
+
+    /// <summary>ส่วนต้นของคำอธิบายที่วลีค่ามิเตอร์แบบอาศัยผู้ขายต้องขึ้นต้น — ตัดเลขลำดับ/สัญลักษณ์นำหน้า ("1. ", "- ", "•") แล้วคืนข้อความตั้งแต่ตัวแรก
+    /// ถ้าวลีเริ่มที่ตำแหน่ง 0 เท่านั้นจึงตรง (regex ทั้งสองไม่มี anchor ⇒ ส่งเฉพาะ prefix ที่ยาวเท่าวลี)</summary>
+    private static string LeadingChargeText(string d)
+    {
+        var t = LeadingNumberingRe.Replace(d, "");
+        var m = UtilityServiceChargeRe.Match(t);
+        var m2 = TelecomChargeRe.Match(t);
+        if (m.Success && m.Index == 0) return m.Value;
+        if (m2.Success && m2.Index == 0) return m2.Value;
+        return "";
+    }
+
+    private static readonly Regex LeadingNumberingRe = new(@"^[\s\d.)\-•*·]*",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static readonly Regex CallContextRe = new(@"โทร|call|voice",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);

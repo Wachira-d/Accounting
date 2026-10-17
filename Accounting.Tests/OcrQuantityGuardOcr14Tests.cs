@@ -51,6 +51,11 @@ public class OcrQuantityGuardOcr14Tests
     [InlineData("สติกเกอร์ฉลาก", 4272, 19381.50, null, OcrUtilityKind.Electricity)]     // สินค้าบนบิลผู้ขายไฟฟ้า (คำอธิบายไม่ใช่ค่ามิเตอร์)
     [InlineData("สายไฟ", 12, 299.99, "สายไฟ 12 ม้วน 299.99", OcrUtilityKind.Telecom)]
     [InlineData("ค่าพลังงาน", 12, 299.99, "ค่าพลังงาน 12 ขวด 299.99", OcrUtilityKind.None)]  // หน่วยสินค้าบนกระดาษชนะคำอธิบาย
+    // ฝ่ายค้าน OCR 14 (P1): วลีที่อาศัยผู้ขาย (ค่าบริการ/service fee/ค่าเน็ต) อยู่กลาง/ท้ายคำอธิบายสินค้า ⇒ ยังเป็นสินค้า
+    [InlineData("เคส iPhone 16 รวมค่าบริการติดตั้ง", 3, 2775.70, null, OcrUtilityKind.Telecom)]
+    [InlineData("Router WiFi 6 + service fee", 3, 2775.70, null, OcrUtilityKind.Telecom)]
+    [InlineData("ซิมการ์ด ค่าเน็ต 30 วัน", 7, 100.00, null, OcrUtilityKind.Telecom)]
+    [InlineData("หลอด LED (ค่าบริการขนส่งรวม)", 7, 100.00, null, OcrUtilityKind.Electricity)]
     public void สินค้าของผู้ขายสาธารณูปโภค_คงจำนวน_ไม่กลายเป็น1คูณยอด(string desc, int qty, double amount, string? paper, OcrUtilityKind seller)
     {
         var d = OcrLineQuantityGuard.Decide(qty, null, (decimal)amount, null, Paper(paper), desc, null, seller);
@@ -311,4 +316,21 @@ public class OcrQuantityGuardOcr14Tests
             "ค่าไฟฟ้า ประจำเดือน 08/2569", null, OcrUtilityKind.Electricity);
         Assert.Equal(("ค่าไฟฟ้า ประจำเดือน 08/2569 (4,272 หน่วย)", 1m, 19381.50m), (pea.Description, pea.Quantity!.Value, pea.UnitPrice!.Value));
     }
+
+    [Theory]
+    // ทิศตรงข้าม: วลีค่าบริการ/ค่าโทร/ค่าเน็ตที่นำหน้าคำอธิบายบนบิลสาธารณูปโภค ยังเป็นค่ามิเตอร์ (1 × ยอด ไม่บล็อกคน)
+    [InlineData("ค่าบริการรายเดือน", OcrUtilityKind.Electricity)]
+    [InlineData("1. ค่าบริการ", OcrUtilityKind.Water)]
+    [InlineData("Service charge", OcrUtilityKind.Water)]
+    [InlineData("ค่าอินเทอร์เน็ต 1000/500 Mbps", OcrUtilityKind.Telecom)]
+    [InlineData("- ค่าโทรในประเทศ", OcrUtilityKind.Telecom)]
+    public void วลีค่าบริการนำหน้าบนบิลสาธารณูปโภค_ยังเป็นค่ามิเตอร์(string desc, OcrUtilityKind seller)
+        => Assert.True(OcrLineQuantityGuard.MeterChargeDescription(desc, seller));
+
+    [Theory]
+    [InlineData("เคส iPhone 16 รวมค่าบริการติดตั้ง", OcrUtilityKind.Telecom)]
+    [InlineData("ซิมการ์ด ค่าเน็ต 30 วัน", OcrUtilityKind.Telecom)]
+    [InlineData("ค่าบริการรายเดือน", OcrUtilityKind.None)]
+    public void วลีอาศัยผู้ขายกลางคำอธิบาย_หรือไม่มีผู้ขาย_ไม่ใช่ค่ามิเตอร์(string desc, OcrUtilityKind seller)
+        => Assert.False(OcrLineQuantityGuard.MeterChargeDescription(desc, seller));
 }
