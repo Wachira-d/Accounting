@@ -152,11 +152,6 @@ public static class OcrPartyLabels
     private static readonly System.Text.RegularExpressions.Regex Salutation = new(
         @"(?:^|[\s:：(])เรียน(?:[\s:：]|$)", System.Text.RegularExpressions.RegexOptions.Compiled);
 
-    /// <summary>
-    /// <b>ชื่อที่ตำแหน่ง <paramref name="index"/> มีป้ายฝั่งผู้ซื้อนำหน้าบนบรรทัดเดียวกันไหม</b> (ทีม OCR 13 · ฝ่ายค้าน OCR 10 P1-2/P1-4) —
-    /// "ชื่อลูกค้า/ Customer name  หจก.แอม แฮปปี้เนส" · "ลูกค้า: การไฟฟ้าส่วนภูมิภาค" · "เรียน การไฟฟ้าส่วนภูมิภาค" ⇒ ชื่อนั้นเป็นของผู้ซื้อ ไม่ใช่ผู้ออกเอกสาร ·
-    /// ป้ายผู้ขายที่อยู่ระหว่างป้ายผู้ซื้อกับชื่อ (สองคอลัมน์บนบรรทัดเดียว "ลูกค้า: … ผู้ขาย: X") ⇒ ไม่ใช่ · ป้ายรบกวน ("รหัสลูกค้า" · "ศูนย์บริการลูกค้า") ไม่นับ
-    /// </summary>
     /// <summary><b>ตำแหน่ง <paramref name="index"/> อยู่ในบล็อกผู้ซื้อไหม</b> — ป้ายฝั่งที่ใกล้ที่สุดก่อนหน้าเป็นป้ายผู้ซื้อ (ทีม OCR 13 · ป้ายที่อยู่ใต้ "ชื่อลูกค้า/ Customer name")
     /// · ไม่มีป้ายผู้ซื้อก่อนหน้า ⇒ false (พฤติกรรมเดิมของผู้เรียก)</summary>
     public static bool InBuyerBlock(string? text, int index)
@@ -168,6 +163,11 @@ public static class OcrPartyLabels
         return sellers.Where(p => p < index).DefaultIfEmpty(-1).Max() < buyer;
     }
 
+    /// <summary>
+    /// <b>ชื่อที่ตำแหน่ง <paramref name="index"/> มีป้ายฝั่งผู้ซื้อนำหน้าบนบรรทัดเดียวกันไหม</b> (ทีม OCR 13 · ฝ่ายค้าน OCR 10 P1-2/P1-4) —
+    /// "ชื่อลูกค้า/ Customer name  หจก.แอม แฮปปี้เนส" · "ลูกค้า: การไฟฟ้าส่วนภูมิภาค" · "เรียน การไฟฟ้าส่วนภูมิภาค" ⇒ ชื่อนั้นเป็นของผู้ซื้อ ไม่ใช่ผู้ออกเอกสาร ·
+    /// ป้ายผู้ขายที่อยู่ระหว่างป้ายผู้ซื้อกับชื่อ (สองคอลัมน์บนบรรทัดเดียว "ลูกค้า: … ผู้ขาย: X") ⇒ ไม่ใช่ · ป้ายรบกวน ("รหัสลูกค้า" · "ศูนย์บริการลูกค้า") ไม่นับ
+    /// </summary>
     public static bool BuyerLabelBeforeOnLine(string? text, int index)
     {
         if (string.IsNullOrEmpty(text) || index <= 0 || index > text.Length) return false;

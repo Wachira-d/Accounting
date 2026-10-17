@@ -149,13 +149,13 @@ public class OcrReplayPartyGoldenTests
         makro-page2-tesseract-discount-rows-only · BuyerName = หจก. แอมแฮปปี้เนส
         makro-page2-tesseract-discount-rows-only · BuyerTaxId = 0107567000414
         makro-page2-tesseract-discount-rows-only · VendorBranch = 00000
-        makro-page2-tesseract-discount-rows-only · VendorName = บริษัท ซีพีแอ๊กซ์ตร้าจํากัด
+        makro-page2-tesseract-discount-rows-only · VendorName = บริษัท ซีพีแอ๊กซ์ตร้าจํากัด (มหาชน)
         makro-page2-tesseract-discount-rows-only · VendorTaxId = 0203562005871
         makro-page2-tesseract-garbled-legend · BuyerBranch = 00000
         makro-page2-tesseract-garbled-legend · BuyerName = หจก. แอมแฮปปี้เนส
         makro-page2-tesseract-garbled-legend · BuyerTaxId = 0107567000414
         makro-page2-tesseract-garbled-legend · VendorBranch = 00000
-        makro-page2-tesseract-garbled-legend · VendorName = บริษัท ซีพีแอ๊กซ์ตร้าจํากัด
+        makro-page2-tesseract-garbled-legend · VendorName = บริษัท ซีพีแอ๊กซ์ตร้าจํากัด (มหาชน)
         makro-page2-tesseract-garbled-legend · VendorTaxId = 0203562005871
         makro-page2-vat-added-twice · BuyerBranch = 00000
         makro-page2-vat-added-twice · BuyerName = หจก. แอมแฮปปี้เนส
@@ -191,7 +191,7 @@ public class OcrReplayPartyGoldenTests
         pramie-re111-positional · BuyerName = ห้างหุ้นส่วนจำกัด แอมแฮปปี้เนส
         pramie-re111-positional · BuyerTaxId = 0203562005871
         pramie-re111-positional · VendorBranch = 00000
-        pramie-re111-positional · VendorName = บริษัท พรามี่ควอลิตี้ จำกัด
+        pramie-re111-positional · VendorName = บริษัท พรามี่ควอลิตี้ (ไทยแลนด์) จำกัด
         pramie-re111-positional · VendorTaxId = 0105567070534
         qty-misread-engine-one · BuyerBranch = (ว่าง)
         qty-misread-engine-one · BuyerName = (ว่าง)

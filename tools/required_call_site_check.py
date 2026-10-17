@@ -8834,8 +8834,8 @@ RULES += [
     dict(file=FPL, method="ExtractCompanyNameCandidates", must=["Accounting.Helpers.ThaiCompanyName.FindAll(text)"], forbid_lit=_NAME_COPY,
          why=_OCR13_WHY + "สำเนาที่ห้า: ต่อ \"จำกัด\" ตาม pattern ของคำนำหน้า"),
     dict(file="Helpers/ThaiCompanyName.cs", method="Compose",
-         must=["Suffix(text, m.Groups[2].Index, m.Index + m.Length)", "ProseStarts.Any("],
-         why=_OCR13_WHY + "คำท้ายหาตั้งแต่ต้นชื่อ (ไม่ใช่ต้นคำนำหน้า) · ประโยคเงื่อนไขท้ายใบที่ขึ้นด้วยคำว่าบริษัทไม่ใช่ชื่อ"),
+         must=["Suffix(text, prefix, m.Groups[2].Index + m.Groups[2].Length, m.Index + m.Length)", "ProseStarts.Any("],
+         why=_OCR13_WHY + "คำท้ายหาหลังชื่อ (ไม่ใช่ต้นคำนำหน้า) · ประโยคเงื่อนไขท้ายใบที่ขึ้นด้วยคำว่าบริษัทไม่ใช่ชื่อ"),
     dict(file="Helpers/PaperWhtReader.cs", method="PrintedZero",
          must=["if (Read(rawText).Amount is > 0m) return false;"],
          why=_OCR13_WHY + "ป้ายหักที่พิมพ์ 0.00 ห้ามซ่อนยอดหัก > 0 ที่ตัวอ่านยอดตัวเดียวพบ (P2)"),
@@ -8858,6 +8858,38 @@ REVIEWER_CASES += [
     ("Q3", "Split#1", "if (Reconciles(table, subTotal, total)) return table;", "return table;", True),
     # PrintedZero กลับไปไม่ยอมตัวอ่านยอดหัก (P2)
     ("Q4", "PrintedZero", "if (Read(rawText).Amount is > 0m) return false;", "", True),
+]
+
+# ── ทีม OCR 15 (2026-10-16 · ฝ่ายค้าน OCR 13) — คำท้ายไม่ข้ามคอลัมน์ · ชื่อผูกเลขในคอลัมน์เดียวกัน · เลขตีกรอบต้องมีช่องกล่อง · ลายนิ้วมือสมมาตร · ที่อยู่หยุดที่ป้ายผู้ซื้อ ──
+_OCR15_WHY = "ทีม OCR 15 (ฝ่ายค้าน OCR 13): "
+RULES += [
+    dict(file="Helpers/ThaiCompanyName.cs", method="Suffix",
+         must=["after.IndexOfAny(CellBreaks)", "IsPartnership(prefix)"],
+         why=_OCR15_WHY + "คำว่าจำกัดในคอลัมน์ขวา/บรรทัดถัดไปเป็นของชื่ออื่น (P1-1 · BS2026100001 \"หจก. แอมแฮปปี้เนส จำกัด\") · ห้างหุ้นส่วนไม่ต่อคำท้าย"),
+    dict(file=OCR, method="ParseThaiDocument",
+         must=["Accounting.Helpers.OcrVendorNameByTaxId.Pick(text, companyNames,"],
+         forbid=["vendorIdAt.Pos - c.Position <= 300"],
+         why=_OCR15_WHY + "ชื่อผูกเลขผู้ขายต้องอยู่คอลัมน์เดียวกัน (P1-2 หัวสองคอลัมน์ชื่อสลับฝั่ง) — ตัวตัดสินเดียว Helpers/OcrVendorNameByTaxId ห้ามเขียนกติกาเองใน service"),
+    dict(file="Helpers/OcrVendorNameByTaxId.cs", method="Pick",
+         must=["SameColumn(text, c.Position, allNames, taxIdPos, allTaxIdPos)", "default: return null;"],
+         why=_OCR15_WHY + "ตัดสินคอลัมน์ไม่ได้ ⇒ ไม่ตอบ (คงคำตอบใกล้ป้ายผู้ขาย) — ห้ามเดาเมื่อไม่มีข้อมูลคอลัมน์"),
+    dict(file="Helpers/PdfPositionalText.cs", method="IsDigitBoxRun",
+         must=["cells[k].Left - cells[k - 1].Right <= WordGap * Math.Max(cells[k].Size, cells[k - 1].Size)"],
+         why=_OCR15_WHY + "เลขตีกรอบต้องมีช่องว่างจริงระหว่างกล่องทุกคู่ — เลขที่พิมพ์ติดกันไม่ถูกต่อ (\"โทร 0812345678 123\" ⇒ 13 หลักปลอม)"),
+    dict(file="Services/Ai/Distillation/LineSplitDistillationModel.cs", method="ShapeFingerprint",
+         must=["Accounting.Helpers.PdfPositionalText.ComposeSaraAm(Accounting.Helpers.PdfPositionalText.NormalizeGlyphText(rawText))"],
+         why=_OCR15_WHY + "ลายนิ้วมือโครงกระดาษ normalize รูปอักขระด้วยตัวแปลงเดียวกับตัวประกอบ PDF ทั้งตอนเรียนและตอนอ่าน (ห้ามสำเนาตาราง)"),
+    dict(file="Helpers/OcrVendorAddressReader.cs", method="Read",
+         must=["OcrPartyLabels.FindBuyer(l) < 0"],
+         why=_OCR15_WHY + "ที่อยู่ผู้ขายหยุดที่บรรทัดป้ายผู้ซื้อ (เดิม \"…10110 ผู้ซื้อ: บริษัทบีจำกัด\")"),
+]
+REVIEWER_CASES += [
+    # คำท้ายกลับไปข้าม tab (P1-1)
+    ("R1", "Suffix", "var stop = after.IndexOfAny(CellBreaks);", "var stop = -1;", True),
+    # กลับไปเขียนกติกาชื่อผูกเลขเองใน service (P1-2)
+    ("R2", "ParseThaiDocument", "if (Accounting.Helpers.OcrVendorNameByTaxId.Pick(text, companyNames,", "if (Pick(text, companyNames,", True),
+    # ตัดสินคอลัมน์ไม่ได้แล้วเดาเอา
+    ("R3", "Pick", "default: return null;", "default: return c.FullName;", True),
 ]
 
 _RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}

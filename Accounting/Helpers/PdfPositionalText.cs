@@ -188,7 +188,8 @@ public static class PdfPositionalText
     /// ข้อความตามพิกัดได้ "0 - 1 0 7 5 - 3 8 0 0 0 - 5 3 - 3" ⇒ ตัวอ่านเลขผู้เสียภาษีไม่เห็นเลข (เดิม page.Text ได้ "0-1075-38000-53-3")
     ///
     /// <para>คืนธง "ต่อกับตัวก่อนหน้าโดยไม่เว้นวรรค" ต่อ cluster (เรียงซ้าย→ขวาแล้ว) — เฉพาะช่วงที่: ทุกตัวเป็นตัวเลขหนึ่งหลักหรือขีด · ไม่มีช่องห่างเกิน
-    /// <see cref="ColumnGap"/> · ขึ้นต้นและจบด้วยตัวเลข · ตัวเลข<b>ครบ <see cref="DigitBoxLength"/> หลักพอดี</b> · ระยะหลักถึงหลัก (ไม่ข้ามขีด) สม่ำเสมอ
+    /// <see cref="ColumnGap"/> · ขึ้นต้นและจบด้วยตัวเลข · ตัวเลข<b>ครบ <see cref="DigitBoxLength"/> หลักพอดี</b> · <b>ทุกคู่ติดกันห่างเกิน <see cref="WordGap"/></b>
+/// (ทีม OCR 15 — ตัวเลขที่พิมพ์ติดกันไม่ใช่กล่อง) · ระยะหลักถึงหลัก (ไม่ข้ามขีด) สม่ำเสมอ
     /// (0.75–2 เท่าของค่ากลาง) · ไม่มีขีดติดกันสองตัว — ไม่ตรวจ checksum ที่นี่ (ตัวประกอบไม่ตัดสินค่า · ตัวอ่านเลขผู้เสียภาษีตรวจ mod-11 เอง)</para>
     /// </summary>
     private static bool[] DigitBoxRuns(IReadOnlyList<Cluster> cells)
@@ -221,6 +222,9 @@ public static class PdfPositionalText
             var isDigit = char.IsAsciiDigit(cells[k].Text[0]);
             if (isDigit) digits++;
             else if (cells[k - 1].Text[0] == '-') return false;   // ขีดติดกันสองตัว = ไม่ใช่เลขตีกรอบ (k > from เสมอ เพราะตัวแรกเป็นตัวเลข)
+            // ทีม OCR 15 (ฝ่ายค้าน OCR 13 P2): ทุกคู่ติดกันต้องมี<b>ช่องว่างจริงของกล่อง</b> (&gt; WordGap) — เลขที่พิมพ์ติดกันปกติ (ช่องว่าง ≈ 0) ไม่ใช่เลขตีกรอบ ·
+            // เดิมเช็กแค่ระยะหลักถึงหลักสม่ำเสมอ ⇒ "โทร 0812345678 123" (เว้นวรรคระหว่างคำ ≈ 1.5× advance ผ่านเกณฑ์ 0.75–2×) ⇒ "0812345678123" ลง RawText
+            if (k > from && cells[k].Left - cells[k - 1].Right <= WordGap * Math.Max(cells[k].Size, cells[k - 1].Size)) return false;
             if (isDigit && k > from && char.IsAsciiDigit(cells[k - 1].Text[0])) pitches.Add(cells[k].Left - cells[k - 1].Left);
         }
         if (digits != DigitBoxLength || pitches.Count == 0) return false;
@@ -255,8 +259,9 @@ public static class PdfPositionalText
     }
 
     /// <summary>นิคหิต+สระอา (U+0E4D U+0E32) ⇒ สระอำ (U+0E33) — ตาเห็นตัวเดียวกัน · NFC ไม่รวมให้</summary>
-    /// <remarks>\u0E17\u0E35\u0E21 OCR 13: \u0E1F\u0E2D\u0E19\u0E15\u0E4C\u0E1A\u0E32\u0E07\u0E15\u0E31\u0E27\u0E40\u0E01\u0E47\u0E1A\u0E2A\u0E23\u0E30\u0E2D\u0E33\u0E41\u0E25\u0E49\u0E27\u0E15\u0E32\u0E21\u0E14\u0E49\u0E27\u0E22\u0E2A\u0E23\u0E30\u0E2D\u0E32\u0E0B\u0E49\u0E33 ("\u0E08\u0E33\u0E32\u0E01\u0E31\u0E14" \u00B7 "\u0E15\u0E33\u0E32\u0E1A\u0E25" \u2014 \u0E43\u0E1A BS2026100001) \u2014 \u0E20\u0E32\u0E29\u0E32\u0E44\u0E17\u0E22\u0E44\u0E21\u0E48\u0E21\u0E35 \u0E33\u0E32 \u21D2 \u0E40\u0E2B\u0E25\u0E37\u0E2D \u0E33 \u0E15\u0E31\u0E27\u0E40\u0E14\u0E35\u0E22\u0E27</remarks>
-    private static string ComposeSaraAm(string text)
+    /// <remarks>ทีม OCR 13: ฟอนต์บางตัวเก็บสระอำแล้วตามด้วยสระอาซ้ำ ("จำากัด" · "ตำาบล" — ใบ BS2026100001) — ภาษาไทยไม่มีลำดับ "ำา" ⇒ เหลือ "ำ" ตัวเดียว ·
+    /// ทีม OCR 15: <c>internal</c> — ลายนิ้วมือโครงกระดาษของตัวเรียนแตกบรรทัด (<c>LineSplitDistillationModel.ShapeFingerprint</c>) ใช้ตัวเดียวกัน (ห้ามสำเนา)</remarks>
+    internal static string ComposeSaraAm(string text)
         => text.Replace("\u0E4D\u0E32", "\u0E33", StringComparison.Ordinal).Replace("\u0E33\u0E32", "\u0E33", StringComparison.Ordinal);
 
     private static bool IsPrivateUse(char ch) => ch >= '\uE000' && ch <= '\uF8FF';

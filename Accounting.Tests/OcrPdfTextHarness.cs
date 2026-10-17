@@ -69,15 +69,15 @@ public class OcrPdfTextHarness
         return new (string, string)[]
         {
             ("DocType", data.DocumentType),
-            ("VendorName", data.VendorName ?? ""),
-            ("VendorTaxId", data.VendorTaxId ?? ""),
-            ("VendorBranch", data.VendorBranchCode ?? ""),
+            ("VendorName", Visible(data.VendorName)),
+            ("VendorTaxId", Visible(data.VendorTaxId)),
+            ("VendorBranch", Visible(data.VendorBranchCode)),
             ("VendorAddress", Short(data.VendorAddress, 70)),
-            ("BuyerName", data.BuyerName ?? ""),
-            ("BuyerTaxId", data.BuyerTaxId ?? ""),
-            ("BuyerBranch", data.BuyerBranchCode ?? ""),
+            ("BuyerName", Visible(data.BuyerName)),
+            ("BuyerTaxId", Visible(data.BuyerTaxId)),
+            ("BuyerBranch", Visible(data.BuyerBranchCode)),
             ("BuyerAddress", Short(data.BuyerAddress, 70)),
-            ("DocNo", data.DocumentNumber ?? ""),
+            ("DocNo", Visible(data.DocumentNumber)),
             ("DocDate", data.DocumentDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? ""),
             ("SubTotal", M(data.SubTotal)),
             ("Vat", M(data.VatAmount)),
@@ -91,9 +91,13 @@ public class OcrPdfTextHarness
         };
     }
 
+    /// <summary>ค่าที่อาจมี tab/ขึ้นบรรทัด — แสดงเป็น ⇥ / ⏎ (ทีม OCR 15 · ฝ่ายค้าน OCR 13 P2: เดิมแปลง tab เป็นช่องว่าง ⇒ tab ที่ค้างในช่องมองไม่เห็น
+    /// และ tab ดิบในช่องชื่อทำให้คอลัมน์ของ TSV เลื่อน)</summary>
+    private static string Visible(string? s) => (s ?? "").Replace("\t", "⇥").Replace("\n", "⏎");
+
     private static string Short(string? s, int max)
     {
-        s = (s ?? "").Replace('\n', ' ').Replace('\t', ' ');
+        s = Visible(s);
         return s.Length <= max ? s : s[..max] + "…";
     }
 

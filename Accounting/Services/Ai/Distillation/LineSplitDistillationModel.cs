@@ -231,8 +231,15 @@ public sealed class LineSplitDistillationModel : ILocalDistillationModel
     internal static string ShapeFingerprint(string? rawText)
     {
         if (string.IsNullOrWhiteSpace(rawText)) return "";
-        var sb = new StringBuilder(rawText.Length);
-        foreach (var ch in rawText)
+        // ทีม OCR 15 (ฝ่ายค้าน OCR 13 P2): ทำให้รูปอักขระของข้อความ PDF รุ่นต่าง ๆ ได้คีย์เดียวกัน — ทั้งตอนเรียน (RawTextContent ที่เก็บไว้) และตอนอ่าน
+        // (ข้อความสแกนใหม่) ผ่านฟังก์ชันนี้ตัวเดียว ⇒ สมมาตรโดยโครงสร้าง (คีย์ไม่ถูก persist — สร้างใหม่ทุกครั้งที่โหลด):
+        // ตัวแปลงอักขระตัวเดียวกับตัวประกอบ PDF (PdfPositionalText.NormalizeGlyphText: PUA ไทย → Unicode · ตัดอักขระควบคุม/PUA "\0" ของ HeadlessChrome ·
+        // ComposeSaraAm: นิคหิต+สระอา / "ำา" → "ำ") — ข้อความ PDF รุ่นทีม OCR 10/13 ประกอบแบบนี้แล้ว · สแกนเก่ายังถือรูปเดิม
+        // ⚠️ ที่ไม่ครอบ (ตัดสินแล้ว · จดไว้): ลำดับ page.Text (stream) ≠ ลำดับตามพิกัด ⇒ PDF ที่เรียนจากข้อความรุ่นก่อนทีม OCR 10 ไม่ตรงคีย์สแกนใหม่ —
+        // เรียนใหม่หนึ่งครั้งต่อโครงกระดาษ (ชั้นกติกายังตอบตั้งแต่ใบแรก) · ไม่มี migration: สร้างลำดับเดิมคืนจากข้อความที่เก็บไม่ได้
+        var text = Accounting.Helpers.PdfPositionalText.ComposeSaraAm(Accounting.Helpers.PdfPositionalText.NormalizeGlyphText(rawText));
+        var sb = new StringBuilder(text.Length);
+        foreach (var ch in text)
         {
             if (char.IsDigit(ch) || char.IsWhiteSpace(ch)) continue;
             if (ch == ',' || ch == '.' || ch == '-' || ch == '/') continue;

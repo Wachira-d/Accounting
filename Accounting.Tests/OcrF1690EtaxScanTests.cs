@@ -114,15 +114,16 @@ public class OcrF1690EtaxScanTests
     }
 
     [Fact]
-    public void มัดจำ_ต้นเหตุ_ชื่อช่องDepositAllowanceChargeInd1_ถ้าอ่านเป็นข้อความ_ติดธงผิด()
+    public void มัดจำ_ต้นเหตุ_ชื่อช่องDepositAllowanceChargeInd1_ถ้าอ่านเป็นข้อความ_ไม่ติดธงแล้วเพราะเลขเปล่าไม่ใช่ยอดเงิน()
     {
-        // ยืนยันว่าเทสต์ข้างบนจับตัวที่ถูก: ไฟล์เดียวกันที่ตัวตัดสินไม่รู้ว่าเป็น XML (เส้นข้อความเดิม) เห็น
-        // "DepositAllowanceChargeInd1" = คำว่า DEPOSIT + เงิน 1 บาทบนบรรทัดเดียวกัน ⇒ ใบมัดจำปลอม
+        // ต้นเหตุเดิม: ไฟล์เดียวกันที่ตัวตัดสินไม่รู้ว่าเป็น XML (เส้นข้อความเดิม) เห็น "DepositAllowanceChargeInd1" = คำว่า DEPOSIT + "เงิน 1 บาท"
+        // บนบรรทัดเดียวกัน ⇒ ใบมัดจำปลอม · เทสต์ข้างบนยังล็อกเส้น XML ด้วยเหตุผล "แม่แบบ" (มาจาก DecideEtaxXml ที่เดียว) ·
+        // ทีม OCR 15 (ฝ่ายค้าน OCR 13 P2): ยอดมัดจำต้องเป็นรูปเงิน (ทศนิยม/คอมมา/บาท) ⇒ "Ind1" ไม่ใช่ยอด — ชั้นที่สองกันไว้แม้หลุดเส้น XML
         var asPlainText = RealXml.Replace("CrossIndustryInvoice", "Document");
         Assert.False(OcrEtaxXmlText.IsEtaxXml(asPlainText));
         var d = OcrDepositMarker.Decide(asPlainText, null);
-        Assert.True(d.IsDeposit);
-        Assert.Contains("DepositAllowanceChargeInd1", d.Reason);
+        Assert.False(d.IsDeposit);
+        Assert.DoesNotContain("DepositAllowanceChargeInd1", d.Reason);
     }
 
     [Fact]

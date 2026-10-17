@@ -59,8 +59,12 @@ public static class OcrDepositMarker
         @"^[ \t]*\(?-?[ \t]*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?[ \t]*\)?[ \t]*(?:บาท|฿|THB)?[ \t]*$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>จำนวนเงินบนบรรทัด — ตัวคั่นหลักพันด้วย , เท่านั้น ห้าม \s (regex_line_span_check)</summary>
-    private static readonly Regex Money = new(@"(?<![\d.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?![\d])",
+    /// <summary>จำนวนเงินบนบรรทัด — ตัวคั่นหลักพันด้วย , เท่านั้น ห้าม \s (regex_line_span_check)
+    /// <para>ทีม OCR 15 (ฝ่ายค้าน OCR 13 P2): ต้องเป็น<b>รูปเงิน</b> — มีทศนิยม · มีคอมมาหลักพัน · หรือมีหน่วยเงิน (บาท/฿/THB) ติดอยู่ ·
+    /// เลขจำนวนเต็มเปล่า ("ไม่คืนเงินมัดจำ 30 วัน" · "มัดจำ 50%" · เลขหน้า) ไม่ใช่ยอดเงิน — เดิมรับ \d+ ⇒ เงื่อนไขท้ายใบทำให้ใบขายธรรมดาติดธงมัดจำ</para></summary>
+    private static readonly Regex Money = new(
+        @"(?<![\d.,])(?:฿[ \t]*)?(?:(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{1,2}|(?:\d{1,3}(?:,\d{3})+)|(?:\d+)(?=[ \t]*(?:บาท|THB)))(?![\d])"
+        + @"|(?<![\d.,])฿[ \t]*(?:\d+)(?![\d.,])",
         RegexOptions.Compiled);
 
     public sealed record Decision(bool IsDeposit, string Reason);
@@ -207,7 +211,7 @@ public static class OcrDepositMarker
     {
         foreach (Match m in Money.Matches(line))
         {
-            var raw = m.Value.Replace(",", "");
+            var raw = new string(m.Value.Where(ch => char.IsAsciiDigit(ch) || ch == '.').ToArray());   // ตัด , ฿ ช่องว่าง
             if (decimal.TryParse(raw, System.Globalization.NumberStyles.Number,
                     System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0m)
                 return v;

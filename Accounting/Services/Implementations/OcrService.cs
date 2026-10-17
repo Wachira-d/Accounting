@@ -6236,7 +6236,8 @@ public class OcrService : IOcrService
         // Extract ALL company names with position
         // ทีม OCR 13: ชื่อนิติบุคคล + คำท้าย "จำกัด" — ตัวตั้งตัวเดียว Helpers/ThaiCompanyName (เดิมสำเนา regex อยู่ที่นี่ · หจก./บจก./บมจ. ไม่ถูกนับ)
         // ชื่อที่มีป้ายฝั่งผู้ซื้อนำหน้าบนบรรทัดเดียวกัน ("ชื่อลูกค้า/ Customer name  หจก.แอม แฮปปี้เนส") ไม่ใช่ผู้ขาย — ไม่เป็นตัวเลือกผู้ขายของขั้นนี้
-        var companyNames = Accounting.Helpers.ThaiCompanyName.FindAll(text)
+        var allCompanyNames = Accounting.Helpers.ThaiCompanyName.FindAll(text);
+        var companyNames = allCompanyNames
             .Where(c => !Accounting.Helpers.OcrPartyLabels.BuyerLabelBeforeOnLine(text, c.Position)).ToList();
 
         // Distinguish vendor from our company by seller/buyer section context
@@ -6273,13 +6274,11 @@ public class OcrService : IOcrService
                         .ToList();
                     var vendorIdAt = taxIdPositions.OrderBy(x => Math.Abs(x.Pos - sellerIdx)).First();
                     vendorTaxId = vendorIdAt.Id;
-                    // ทีม OCR 13 (กุญแจ = เลขผู้เสียภาษี · หลัก DbdIdentityGuard): ชื่อนิติบุคคลที่อยู่<b>เหนือเลขผู้ขายในบล็อกเดียวกัน</b> (≤ 300 ตัว · ไม่มีเลข 13 หลักอื่นคั่น)
-                    // ชนะชื่อที่ ใกล้ป้ายผู้ขาย — ป้าย ผู้ขาย บนใบ BS2026100001 คือช่องพนักงานขาย (คอลัมน์ขวาบรรทัดเลขผู้ขาย) ⇒ ชื่อใกล้ป้าย = ชื่อลูกค้าบรรทัดถัดไป
-                    var keyed = companyNames
-                        .Where(c => c.Position < vendorIdAt.Pos && vendorIdAt.Pos - c.Position <= 300
-                                    && !taxIdPositions.Any(t => t.Pos > c.Position && t.Pos < vendorIdAt.Pos))
-                        .OrderByDescending(c => c.Position).FirstOrDefault();
-                    if (keyed.FullName != null) vendorName = keyed.FullName;
+                    // ทีม OCR 13 (กุญแจ = เลขผู้เสียภาษี · หลัก DbdIdentityGuard): ชื่อนิติบุคคลเหนือเลขผู้ขายในบล็อกเดียวกัน ชนะชื่อที่ใกล้ป้ายผู้ขาย
+                    // (ป้าย ผู้ขาย บนใบ BS2026100001 คือช่องพนักงานขาย) · ทีม OCR 15: ต้องอยู่คอลัมน์เดียวกับเลข — ตัดสินคอลัมน์ไม่ได้ ⇒ คงคำตอบใกล้ป้าย (Helpers/OcrVendorNameByTaxId)
+                    if (Accounting.Helpers.OcrVendorNameByTaxId.Pick(text, companyNames, allCompanyNames.Select(c => c.Position).ToList(),
+                            vendorIdAt.Pos, taxIdPositions.Select(t => t.Pos).ToList()) is { } keyed)
+                        vendorName = keyed;
                 }
                 else if (allTaxIds.Count == 1)
                     vendorTaxId = allTaxIds[0];

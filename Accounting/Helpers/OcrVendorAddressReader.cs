@@ -30,7 +30,11 @@ public static class OcrVendorAddressReader
         if (string.IsNullOrEmpty(text)) return null;
         var m = VendorAddressRegex.Match(text);
         if (!m.Success || OcrPartyLabels.InBuyerBlock(text, m.Index)) return null;
-        var lines = m.Groups[1].Value.Replace("\r", "").Split('\n')
+        // ทีม OCR 15 (ฝ่ายค้าน OCR 13 P2 · มีตั้งแต่ base): บรรทัดที่ขึ้นบล็อกผู้ซื้อ ("ผู้ซื้อ: บริษัท บี จำกัด") จบที่อยู่ผู้ขาย — เดิมที่อยู่ไหลต่อถึงป้ายท้าย
+        // (โทร/เลขประจำตัว) ⇒ "…10110 ผู้ซื้อ: บริษัทบีจำกัด" · บรรทัดแรก (บรรทัดป้ายที่อยู่) ไม่ตรวจ — ป้ายผู้ซื้อก่อนป้ายที่อยู่ถูกตัดสินแล้วด้วย InBuyerBlock
+        var raw = m.Groups[1].Value.Replace("\r", "").Split('\n');
+        var kept = raw.TakeWhile((l, i) => i == 0 || OcrPartyLabels.FindBuyer(l) < 0);
+        var lines = kept
             .Select(l => (l.IndexOf('\t') is var tab and >= 0 ? l[..tab] : l).Trim())
             .Where(l => l.Length > 0);
         return string.Join(keepLineBreaks ? "\n" : " ", lines).Trim();
