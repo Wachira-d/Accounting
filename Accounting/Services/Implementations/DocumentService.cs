@@ -8032,13 +8032,102 @@ public partial class DocumentService : IDocumentService
                 $"ห้ามย้ายเข้าบัญชีคุม {newAccount.AccountCode} {newAccount.AccountName} — " +
                 "บัญชีภาษี/ลูกหนี้/เจ้าหนี้/มัดจำ ระบบลงให้เองตามเอกสาร");
 
+        // ย้ายออกจากผังสินทรัพย์ (12xxx → ค่าใช้จ่าย) = "ของชิ้นนี้ไม่ใช่สินทรัพย์" ⇒ ทะเบียนที่ขึ้นจากบรรทัดนี้
+        // ต้องออกไปพร้อมกันในธุรกรรมเดียว (Helpers/AssetRemovalGlCheck) — เดิมย้ายผังแล้วทะเบียนค้าง
+        // คิดค่าเสื่อมของที่ไม่มีใน GL ทุกเดือน และปุ่มลบก็บล็อกเพราะใบยังไม่ถูกยกเลิก (ผู้ใช้รายงาน 2026-10-19)
+        // ⚠️ ต้องตัดสิน**ก่อน**ทางลัดยอด 0 ข้างล่าง (ฝ่ายค้าน P2-1: PV ตัดชำระ PI ยอด GL = 0 แต่มีทะเบียน ⇒ เดิมเปลี่ยนผังแล้วทะเบียนค้างเงียบ)
+        var assetsLeaving = new List<FixedAsset>();
+        if (Accounting.Helpers.AssetRemovalGlCheck.MovesOffAssetAccount(oldAccount.AccountCode, newAccount.AccountCode))
+        {
+            assetsLeaving = await _db.FixedAssets
+                .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId
+                    && a.SourceDocumentLineId == line.Id)
+                .ToListAsync();
+            foreach (var a in assetsLeaving)
+            {
+                var hasPostedDep = await _db.AssetDepreciations.AsNoTracking()
+                    .AnyAsync(d => d.FixedAssetId == a.Id && d.CompanyId == companyId && d.IsPosted && !d.IsDeleted);
+                if (hasPostedDep || a.AccumulatedDepreciation > 0m || a.Status != AssetStatus.Active)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ย้ายบรรทัดนี้ออกจากผังสินทรัพย์ไม่ได้ — สินทรัพย์ {a.AssetCode} ที่ขึ้นทะเบียนจากบรรทัดนี้ "
+                        + "คิดค่าเสื่อมลงบัญชีแล้วหรือจำหน่ายไปแล้ว. ทางแก้: ที่หน้า 'ทะเบียนสินทรัพย์' ใช้ 'ตัดจำหน่าย' "
+                        + "(ระบบกลับต้นทุนและค่าเสื่อมสะสมให้ครบ) แทนการย้ายผัง",
+                        ruleCode: "TFRS-NPAE-10-ASSET-REGISTER", statusCode: 409);
+            }
+        }
+        // ยอดผังสินทรัพย์ของทั้งใบที่ไม่มีทะเบียนรองรับ "ก่อน" แก้ — ใช้เทียบหลังแก้ (ห้ามทำให้แย่ลง ไม่ใช่ห้ามมีของเดิม)
+        var unbackedBefore = assetsLeaving.Count == 0 ? 0m
+            : await FixedAssetService.UnbackedAssetAmountForDocumentAsync(_db, companyId, documentId, Array.Empty<Guid>());
+
+        // เอาทะเบียนออก + audit + ตรวจ GL หลังแก้ — ใช้ร่วมทั้งทางลัดยอด 0 และทาง JE ย้ายผัง (ต้องอยู่ในธุรกรรมของผู้เรียก)
+        async Task RemoveLeavingAssetsAsync()
+        {
+            if (assetsLeaving.Count == 0) return;
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", documentId, companyId);
+            await _db.SaveChangesAsync();   // JE ย้ายผังต้องลงฐานก่อนนับ GL
+            var unbackedAfter = await FixedAssetService.UnbackedAssetAmountForDocumentAsync(
+                _db, companyId, documentId, assetsLeaving.Select(a => a.Id).ToList());
+            if (unbackedAfter > unbackedBefore + Accounting.Helpers.AssetRemovalGlCheck.Tolerance)
+                // ฝ่ายค้าน P2-2: ต้นทุนทะเบียนรวมค่าประกอบที่เฉลี่ยมาจากบรรทัดอื่น (ขนส่ง/ติดตั้ง) — ย้ายแค่บรรทัดหลักแล้วลบทั้งตัว ⇒ ค่าประกอบค้าง 12xxx
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ย้ายแล้วจะเหลือยอดผังสินทรัพย์ {unbackedAfter - unbackedBefore:N2} บาทที่ไม่มีทะเบียนรองรับ "
+                    + "(ทะเบียนนี้รวมค่าขนส่ง/ติดตั้งที่เฉลี่ยมาจากบรรทัดอื่น). ทางแก้: ย้ายบรรทัดค่าประกอบเหล่านั้นไปผังค่าใช้จ่ายก่อน "
+                    + "แล้วย้ายบรรทัดนี้อีกครั้ง",
+                    ruleCode: "TFRS-NPAE-10-ASSET-REGISTER", statusCode: 409);
+            foreach (var a in assetsLeaving)
+            {
+                var projected = await _db.AssetDepreciations
+                    .Where(d => d.FixedAssetId == a.Id && d.CompanyId == companyId).ToListAsync();
+                _db.AssetDepreciations.RemoveRange(projected);
+                _db.FixedAssets.Remove(a);
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId,
+                    Action = AuditAction.Delete,
+                    EntityType = "FixedAsset",
+                    EntityId = a.Id.ToString(),
+                    OldValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        a.AssetCode, a.Name, a.PurchaseCost, a.NeedsReview,
+                    }),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        action = "RemovedWithLineReclassify",
+                        documentNumber = doc.DocumentNumber,
+                        fromAccount = oldAccount.AccountCode,
+                        toAccount = newAccount.AccountCode,
+                        reason,
+                        by = actor,
+                    }),
+                });
+            }
+        }
+
+        // กฎเหล็ก #1 ขั้น CAPTURE: การย้ายผังหลังอนุมัติคือคำตอบที่ "แก้แล้ว" ของผู้ใช้ — เดิมไม่ถูกบันทึก
+        // (ตอนอนุมัติปิดแถว feedback ด้วยผังที่ผิดไปแล้ว ⇒ นักเรียนจำว่า 12210 ถูก แล้วแนะนำซ้ำใบหน้า)
+        async Task RecordReclassifyChoiceAsync()
+        {
+            if (_feedbackRecorder == null || line.GlAccountAiFeedbackId is not Guid glFid) return;
+            var aiAnswer = await _db.AiSuggestionFeedbacks.AsNoTracking()
+                .Where(f => f.Id == glFid && f.CompanyId == companyId)
+                .Select(f => f.AiPrimaryAnswer).FirstOrDefaultAsync();
+            await _feedbackRecorder.RecordUserChoiceAsync(glFid, newAccount.AccountCode,
+                acceptedAi: string.Equals(aiAnswer, newAccount.AccountCode, StringComparison.OrdinalIgnoreCase),
+                CancellationToken.None, UserChoiceSource.Explicit);
+        }
+
         // ยอดที่บรรทัดนี้ "ลงไว้จริง" ในแยกประเภท — ไม่ใช่ฐานก่อน VAT เสมอ (P-6)
         var amount = await ResolveLinePostedGlAmountAsync(companyId, doc, line);
         if (amount <= 0.005m)
         {
-            // line ที่ Amount=0 ไม่กระทบ GL — แค่อัปเดต field ก็พอ
+            // line ที่ Amount=0 ไม่กระทบ GL — แค่อัปเดต field (+ เอาทะเบียนที่ไม่ใช่สินทรัพย์ออกในธุรกรรมเดียวกัน)
+            await using var zeroTx = await _db.Database.BeginTransactionAsync();
             line.AccountId = newAccountId;
+            await RemoveLeavingAssetsAsync();
             await _db.SaveChangesAsync();
+            await zeroTx.CommitAsync();
+            await RecordReclassifyChoiceAsync();
             return await GetDocumentAsync(companyId, documentId);
         }
 
@@ -8090,6 +8179,9 @@ public partial class DocumentService : IDocumentService
             line.AccountId = newAccountId;
             doc.UpdatedAt = DateTime.UtcNow;
             doc.UpdatedBy = actor;
+
+            await RemoveLeavingAssetsAsync();
+
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
         }
@@ -8100,8 +8192,10 @@ public partial class DocumentService : IDocumentService
         }
 
         _logger.LogInformation(
-            "Reclassified line {LineId} of {DocNumber}: {OldCode} → {NewCode} by {Actor}",
-            lineId, doc.DocumentNumber, oldAccount.AccountCode, newAccount.AccountCode, actor);
+            "Reclassified line {LineId} of {DocNumber}: {OldCode} → {NewCode} by {Actor} (ทะเบียนสินทรัพย์ที่ลบตาม: {Assets})",
+            lineId, doc.DocumentNumber, oldAccount.AccountCode, newAccount.AccountCode, actor, assetsLeaving.Count);
+
+        await RecordReclassifyChoiceAsync();
 
         return await GetDocumentAsync(companyId, documentId);
     }

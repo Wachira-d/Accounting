@@ -168,6 +168,29 @@
       </div>
     </div>
 
+    <!-- ไม่ใช่สินทรัพย์ → ย้ายบรรทัดเอกสารไปผังค่าใช้จ่าย + ลบทะเบียนในขั้นเดียว -->
+    <div class="modal-overlay" id="notAssetModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3 class="modal-title">ไม่ใช่สินทรัพย์ — ลงเป็นค่าใช้จ่ายแทน</h3><button class="modal-close" onclick="Layout.closeModal('notAssetModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="naAssetId">
+          <div id="naSummary" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.6;margin-bottom:12px"></div>
+          <div class="form-group"><label class="form-label">ผังค่าใช้จ่ายที่ถูกต้อง *</label>
+            <select class="form-select" id="naAccount"><option value="">-- เลือกบัญชีค่าใช้จ่าย --</option></select></div>
+          <div class="form-group"><label class="form-label">เหตุผล</label>
+            <input class="form-input" id="naReason" placeholder="เช่น ของใช้สิ้นเปลือง ราคาต่ำ ไม่ได้ใช้เกิน 1 ปี"></div>
+          <div style="font-size:12px;color:#64748b;line-height:1.6">
+            ระบบลง <b>ใบปรับปรุงย้ายผัง</b> (Dr ค่าใช้จ่าย / Cr ผังสินทรัพย์) อ้างเอกสารต้นทาง ลงงวดเดิม — เอกสารเดิมและการจ่ายเงินไม่ถูกแก้ ·
+            แล้วลบทะเบียนสินทรัพย์นี้ให้ในธุรกรรมเดียวกัน · ระบบจำคำตอบนี้ไว้แนะนำใบถัดไป
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('notAssetModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" id="naSubmit" onclick="Page.submitNotAsset()">ย้ายไปค่าใช้จ่ายและลบทะเบียน</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Detail Modal -->
     <div class="modal-overlay" id="detailModal">
       <div class="modal" style="max-width:850px">
@@ -500,6 +523,7 @@
             <td>
               <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')" data-i18n="common.view">ดู</button>
               ${a.status === 'Active' ? `<button class="btn btn-sm ${a.needsReview ? 'btn-primary' : 'btn-ghost'}" onclick="Page.openEdit('${a.id}')">${a.needsReview ? 'ตรวจสอบและยืนยัน' : 'แก้ไข'}</button>` : ''}
+              ${a.status === 'Active' && (a.accumulatedDepreciation || 0) === 0 && a.sourceDocumentId && a.sourceDocumentLineId ? `<button class="btn btn-sm btn-ghost" style="color:#b45309" onclick="Page.openNotAsset('${a.id}')" title="ระบบตัดสินผิด — ของชิ้นนี้เป็นค่าใช้จ่าย: ย้ายบรรทัดเอกสารไปผังค่าใช้จ่ายแล้วลบทะเบียนให้">ไม่ใช่สินทรัพย์</button>` : ''}
               ${a.status === 'Active' && (a.accumulatedDepreciation || 0) === 0 ? `<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.deleteAsset('${a.id}','${Layout.jsArg(a.name||'')}')" title="ลบสินทรัพย์ที่ลงทะเบียนผิด (เฉพาะที่ยังไม่คิดค่าเสื่อม)">ลบ</button>` : ''}
             </td>
           </tr>`).join('');
@@ -548,6 +572,35 @@
         const api = Layout.api(); if (!api) return;
         try { await api.deleteAsset(id); Layout.toast('ลบสินทรัพย์สำเร็จ'); await this.load(); }
         catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+      openNotAsset(id) {
+        const a = (this.allAssets || []).find(x => x.id === id); if (!a) return;
+        document.getElementById('naAssetId').value = id;
+        document.getElementById('naReason').value = '';
+        document.getElementById('naSummary').innerHTML =
+          `<b>${Layout.esc(a.name || '')}</b> · ${Layout.money(a.purchaseCost)} บาท<br>`
+          + `สร้างจาก <b>${Layout.esc(a.sourceDocumentNumber || '')}</b> — บรรทัดนี้จะถูกย้ายออกจากผังสินทรัพย์`;
+        const opts = (this._accounts || []).filter(x => x.accountType === 'Expense')
+          .map(x => `<option value="${x.id}">${Layout.esc(x.accountCode)} - ${Layout.esc(x.accountName)}</option>`).join('');
+        document.getElementById('naAccount').innerHTML = '<option value="">-- เลือกบัญชีค่าใช้จ่าย --</option>' + opts;
+        Layout.openModal('notAssetModal');
+      },
+      async submitNotAsset() {
+        const a = (this.allAssets || []).find(x => x.id === document.getElementById('naAssetId').value); if (!a) return;
+        const accountId = document.getElementById('naAccount').value;
+        if (!accountId) { Layout.toast('เลือกผังค่าใช้จ่ายก่อน', 'error'); return; }
+        const api = Layout.api(); if (!api) return;
+        const btn = document.getElementById('naSubmit'); btn.disabled = true;
+        try {
+          await api.reclassifyLine(a.sourceDocumentId, {
+            lineId: a.sourceDocumentLineId, newAccountId: accountId,
+            reason: document.getElementById('naReason').value.trim() || 'ไม่ใช่สินทรัพย์ — ลงเป็นค่าใช้จ่าย',
+          });
+          Layout.closeModal('notAssetModal');
+          Layout.toast('ย้ายไปค่าใช้จ่ายและลบทะเบียนสินทรัพย์แล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
+        finally { btn.disabled = false; }
       },
       async openEdit(id) {
         const api = Layout.api(); if (!api) return;

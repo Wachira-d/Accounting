@@ -282,32 +282,72 @@ public class FixedAssetService : IFixedAssetService
             throw new InvalidOperationException(
                 "ลบไม่ได้ — มีค่าเสื่อมที่ลงบัญชีแล้ว กรุณาใช้ 'จำหน่าย' หรือ 'ตัดจำหน่าย' แทน");
 
-        // กันลบ asset ที่ source PV/PI ยังใช้งานอยู่ — ใบต้นทางลง Dr 12210 ใน JE
-        // ถ้าลบ asset ออกขณะใบยังอยู่ จะเกิด orphan (12210 บนงบดุล vs ทะเบียน
-        // สินทรัพย์ไม่ตรง). อนุญาตเฉพาะ:
-        //   • asset ที่ user สร้างเอง (ไม่มี SourceDocumentId)
-        //   • asset ที่ source doc ถูก void/rejected แล้ว
+        // กันลบ asset ที่ใบต้นทางยังลง Dr ผังสินทรัพย์ใน GL — ลบทะเบียนออกขณะยอดยังอยู่ = orphan
+        // (งบดุลมีสินทรัพย์ที่ทะเบียนไม่มี). ตัดสินจาก **GL จริงของทั้งใบ** ไม่ใช่สถานะใบ
+        // (UnbackedAssetAmountForDocumentAsync + Helpers/AssetRemovalGlCheck): ใบที่ย้ายผังไปค่าใช้จ่ายแล้ว
+        // ("ไม่ใช่สินทรัพย์"/"เปลี่ยนผัง"/"แก้ผังบัญชี") ลบทะเบียนได้แม้ใบยังจ่ายเงินอยู่ · ใบ void/rejected ลบได้เสมอ
+        // ล็อกแถวเอกสารต้นทาง (FOR UPDATE) — ลบตัวซ้ำสองแถวพร้อมกันต้องไม่ผ่านทั้งคู่ (ฝ่ายค้าน P2-3)
+        await using var tx = await _db.Database.BeginTransactionAsync();
         if (asset.SourceDocumentId.HasValue)
         {
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE",
+                asset.SourceDocumentId.Value, companyId);
             var sourceDoc = await _db.Documents.AsNoTracking()
-                .Where(d => d.Id == asset.SourceDocumentId.Value)
-                .Select(d => new { d.DocumentNumber, d.Status })
+                .Where(d => d.Id == asset.SourceDocumentId.Value && d.CompanyId == companyId)
+                .Select(d => new { d.Id, d.DocumentNumber, d.Status })
                 .FirstOrDefaultAsync();
             if (sourceDoc != null
                 && sourceDoc.Status != DocumentStatus.Voided
                 && sourceDoc.Status != DocumentStatus.Rejected)
-                throw new InvalidOperationException(
-                    $"ลบไม่ได้ — สินทรัพย์นี้สร้างจากเอกสาร {sourceDoc.DocumentNumber} ที่ยังใช้งานอยู่ "
-                    + "(สถานะ: " + sourceDoc.Status + "). กรุณายกเลิกเอกสารต้นทางก่อน หรือใช้ 'จำหน่าย/ตัดจำหน่าย' แทน");
+            {
+                var orphaned = await UnbackedAssetAmountForDocumentAsync(_db, companyId, sourceDoc.Id, new[] { asset.Id });
+                if (orphaned > 0m)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ลบไม่ได้ — เอกสาร {sourceDoc.DocumentNumber} ยังลงบัญชีสินทรัพย์ไว้ {orphaned:N2} บาท "
+                        + "ถ้าลบทะเบียนออก ยอดนี้จะค้างในงบดุลโดยไม่มีสินทรัพย์รองรับ. "
+                        + (asset.SourceDocumentLineId.HasValue
+                            ? "ถ้าของชิ้นนี้ไม่ใช่สินทรัพย์ ให้กด 'ไม่ใช่สินทรัพย์' (ระบบย้ายบรรทัดไปผังค่าใช้จ่ายด้วยใบปรับปรุง แล้วลบทะเบียนให้ในขั้นเดียว) "
+                            : "ถ้าของชิ้นนี้ไม่ใช่สินทรัพย์ ให้เปิดเอกสารต้นทาง → '📒 รายการบัญชี' → '✏️ แก้ผังบัญชี' ย้ายไปผังค่าใช้จ่าย แล้วลบอีกครั้ง ")
+                        + "· ถ้าเลิกใช้สินทรัพย์จริง ใช้ 'จำหน่าย/ตัดจำหน่าย'",
+                        ruleCode: "TFRS-NPAE-10-ASSET-REGISTER", statusCode: 409);
+            }
         }
 
         // ลบ projected depreciation rows (unposted) แล้วลบ asset
         var projectedDeps = await _db.AssetDepreciations
-            .Where(d => d.FixedAssetId == assetId)
+            .Where(d => d.FixedAssetId == assetId && d.CompanyId == companyId)
             .ToListAsync();
         _db.AssetDepreciations.RemoveRange(projectedDeps);
         _db.FixedAssets.Remove(asset);
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
+    }
+
+    /// <summary>ยอดผังสินทรัพย์ (ทุกผังที่ <c>FixedAssetAccountClassifier</c> ถือว่าต้องขึ้นทะเบียน) ใน GL ของเอกสารนี้
+    /// ที่ <b>ไม่มีทะเบียนรองรับ</b> ถ้าไม่นับสินทรัพย์ใน <paramref name="excludeAssetIds"/> — ตัวคำนวณเดียวของ
+    /// "ลบ/เอาทะเบียนออกแล้ว GL ค้างไหม" (ปุ่มลบ · ย้ายผังบรรทัดออกจากสินทรัพย์ใน <c>DocumentService.ReclassifyLineAccountAsync</c>)
+    /// <para>รวมทั้งใบ ไม่ใช่ผังของสินทรัพย์ตัวเดียว (ฝ่ายค้าน P1-2: ผู้ใช้แก้ <c>AssetAccountId</c> ได้ · ย้ายผัง 12210→12230
+    /// ไม่ตามแก้ทะเบียน ⇒ ผังของทะเบียนหลุดจากที่ GL อยู่จริง) · นับ JE <c>Posted</c> + <c>Reversed</c> เหมือนรายงานบัญชีทุกตัว
+    /// (P1-1: ใบที่ถูกกลับรายการแล้วลงใหม่ ⇒ ตัวกลับอ้างใบเดิม ถ้านับแค่ Posted ยอดจะหายครึ่งหนึ่ง)</para></summary>
+    internal static async Task<decimal> UnbackedAssetAmountForDocumentAsync(
+        AccountingDbContext db, Guid companyId, Guid documentId, IReadOnlyCollection<Guid> excludeAssetIds)
+    {
+        var byAccount = await db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.SourceDocumentId == documentId
+                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
+                && !l.JournalEntry.IsDeleted)
+            .GroupBy(l => l.Account.AccountCode)
+            .Select(g => new { Code = g.Key, Net = g.Sum(x => x.DebitAmount - x.CreditAmount) })
+            .ToListAsync();
+        var glOnAssetAccounts = byAccount
+            .Where(r => Accounting.Services.Implementations.Tax.FixedAssetAccountClassifier.Resolve(r.Code) != null)
+            .Sum(r => r.Net);
+        var registeredCost = await db.FixedAssets.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId && !excludeAssetIds.Contains(a.Id))
+            .SumAsync(a => (decimal?)a.PurchaseCost) ?? 0m;
+        return Accounting.Helpers.AssetRemovalGlCheck.OrphanedIfRemoved(glOnAssetAccounts, registeredCost);
     }
 
     public async Task<FixedAssetResponse> UpdateAsync(Guid companyId, Guid assetId, UpdateFixedAssetRequest request)

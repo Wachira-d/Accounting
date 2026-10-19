@@ -2608,9 +2608,21 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
    - **Delete guard** (`FixedAssetService.DeleteAsync`):
      • block ถ้า AccumulatedDepreciation > 0 หรือมี posted depreciation
        → ต้อง Dispose/WriteOff
-     • block ถ้า `SourceDocumentId.Status` ไม่ใช่ Voided/Rejected → ต้อง
-       ยกเลิกเอกสารต้นทางก่อน (กัน orphan GL — Dr 12210 ใน JE ของใบยังอยู่
-       แต่ asset register หาย)
+     • ใบต้นทาง Voided/Rejected → ลบได้ · ใบยังมีผล → ตัดสินจาก **GL จริง** ไม่ใช่สถานะใบ
+       (`FixedAssetService.UnbackedAssetAmountForDocumentAsync` → `Helpers/AssetRemovalGlCheck.OrphanedIfRemoved`):
+       Σ(Dr−Cr) บน**ทุกผังสินทรัพย์** (`FixedAssetAccountClassifier`) ของทุก JE ที่อ้างใบนั้น สถานะ Posted+Reversed
+       (ใบหลัก + ตัวกลับรายการ + ใบปรับปรุง/ย้ายผัง) − ต้นทุนสินทรัพย์ตัวอื่นทั้งหมดจากใบเดียวกัน > 1 สตางค์ ⇒
+       `BusinessRuleException` 409 บอกยอดที่จะค้าง + ทาง "ไม่ใช่สินทรัพย์" · ≤ 1 สตางค์ ⇒ ลบได้แม้ใบจ่ายเงินแล้ว
+       (รอบ 2026-10-19 — เดิมบล็อกด้วยสถานะใบ: ของที่ไม่ใช่สินทรัพย์บน PV ที่จ่ายแล้วลบไม่ได้เลย ยกเว้นยกเลิก PV ทั้งใบ)
+   - **"ไม่ใช่สินทรัพย์"** (`fixed-assets.html` ปุ่มต่อแถวที่มี `SourceDocumentLineId` + ยังไม่คิดค่าเสื่อม) →
+     `POST /document/{docId}/reclassify-line` (สิทธิ์ระดับ Approve · gate เดิมทั้งชุด: งวดเปิด/ภ.พ.30 ยื่นแล้ว/e-Tax ส่งแล้ว ฯลฯ) ·
+     `ReclassifyLineAccountAsync`: ย้ายจากผังสินทรัพย์ → ผังที่ไม่ต้องขึ้นทะเบียน (`AssetRemovalGlCheck.MovesOffAssetAccount`) ⇒
+     ลบทะเบียนที่ขึ้นจากบรรทัดนั้น + ตารางค่าเสื่อมที่ยังไม่ลง ใน**ธุรกรรมเดียวกับ JE ย้ายผัง** + audit `RemovedWithLineReclassify` ·
+     ตัดสินก่อนทางลัดยอด GL 0 (PV ตัดชำระ PI) · หลังลง JE ตรวจยอดผังสินทรัพย์ทั้งใบอีกรอบ — ห้าม "แย่ลง" กว่าก่อนแก้
+     (ทะเบียนที่รวมค่าประกอบเฉลี่ยจากบรรทัดอื่น ⇒ 409 ให้ย้ายบรรทัดค่าประกอบก่อน) · ทั้งปุ่มลบและทางนี้ล็อกแถวเอกสาร `FOR UPDATE` ·
+     ทะเบียนที่คิดค่าเสื่อมลงบัญชีแล้ว/จำหน่ายแล้ว ⇒ 409 ให้ใช้ "ตัดจำหน่าย" (ทางเข้าเดียวกันจากหน้าเอกสาร "✏️ เปลี่ยนผัง") ·
+     กฎเหล็ก #1: ผังใหม่บันทึกเป็นคำตอบของผู้ใช้ (`RecordUserChoiceAsync` Explicit บน `GlAccountAiFeedbackId`) ·
+     ย้ายระหว่างผังสินทรัพย์ด้วยกัน (12210→12220) ไม่ลบทะเบียน
    - **Void cascade** (`VoidDocumentAsync` step 7-asset): asset ของ doc ที่
      `NeedsReview=true` + ไม่มี posted dep → ลบ inline (ไม่เรียก DeleteAsync
      เพราะ source.Status ยังไม่ save), asset ที่ยืนยันแล้ว → log warning
