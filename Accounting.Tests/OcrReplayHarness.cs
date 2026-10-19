@@ -412,6 +412,13 @@ public static class OcrReplayHarness
             LineAmounts: new[] { 19381.50m },
             Lines: new ReplayLine[] { new("ค่าไฟฟ้า ประจำเดือน 08/2569", 4272m, null, 19381.50m) },
             VendorTaxId: "0994000165501"),
+        // ── 2026-10-19 (ผู้ใช้รายงาน) บิล กปภ. WE1105/699013325 — engine ให้คอลัมน์ "เดือน" เป็นคำอธิบาย + "จำนวนน้ำใช้ (ลิตร)" เป็นจำนวน ราคา 0.01
+        //    (Σ 1,010 ≠ 2,839) ⇒ รอบบิลล้วนบนบิลสาธารณูปโภค = มิเตอร์ ⇒ 1 × 2,839.00 · "ค่าน้ำประปา ประจำเดือน 10/2569 (จำนวน 101,000)" ──
+        new ReplayPaper("pwa-water-bill-we1105-positional", OcrPaperSamples.PwaWaterBillWe1105Positional,
+            EngineSubTotal: 2839.00m, EngineVat: 198.73m, EngineTotal: 3037.73m,
+            LineAmounts: new[] { 2839.00m },
+            Lines: new ReplayLine[] { new("10/2569", 101000m, 0.01m, 2839.00m) },
+            VendorTaxId: "0994000164904"),
         new ReplayPaper("pramie-re111-positional", OcrPaperSamples.PramieRe111Positional,
             EngineSubTotal: 969.16m, EngineVat: 67.84m, EngineTotal: 1037.00m,
             LineAmounts: new[] { 1037.00m },

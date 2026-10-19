@@ -23,6 +23,8 @@ public static class OcrUtilityVendor
     private static readonly Dictionary<string, OcrUtilityKind> TaxIds = new(StringComparer.Ordinal)
     {
         ["0994000165501"] = OcrUtilityKind.Electricity,
+        // การประปาส่วนภูมิภาค (บิล WE1105/699013325 · "099-4-00016490-4 สาขาที่ 00261" · 2026-10-19)
+        ["0994000164904"] = OcrUtilityKind.Water,
     };
 
     /// <summary>ชื่อนิติบุคคล (ย่อด้วย <see cref="ThaiTextNormalizer.SquashForKeywordMatch"/> ทั้งสองฝั่ง) + ชนิดบริการ</summary>

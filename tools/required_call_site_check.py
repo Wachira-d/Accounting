@@ -6523,7 +6523,7 @@ RULES += [
          before=[("if (item.UserEdited)", "OcrLineQuantityGuard.Decide(")],
          forbid=["item.Quantity = fixedQty", "System.Math.Round(amt / up"],
          why=_LINE_QTY_WHY + "ตัวกันจำนวนระเบิดต้องถามแถวบนกระดาษ (ส่วนลดที่พิมพ์ ⇒ ส่วนลดบรรทัด · จำนวนที่พิมพ์ ⇒ ห้ามหาร) ผ่านตัวตัดสินเดียว — ห้ามประกอบสูตรหารจำนวนเองใน service"),
-    dict(file="Helpers/OcrLineQuantityGuard.cs", method="Decide",
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="DecideCore",
          must=["OcrEtaxLineNormalizer.ProvenLineDiscount(", "FindRow(paper, qty, up, amt)", "MidpointRounding.AwayFromZero",
                # ฝ่ายค้าน 658e3705 P2-3: แก้ที่พิสูจน์แล้ว = แจ้ง (มิเตอร์คู่หน่วย · จำนวนใหม่บนแถว) · แท็กบล็อกต้องพกค่าที่ระบบตั้ง (ตรวจสด P2-2)
                "MeterQuantityPrinted(paper, qty, amt", "FindRow(paper, newQty, up, amt)", "Fingerprint(newQty, up)", "Fingerprint(qty, up)"],
@@ -6535,7 +6535,7 @@ RULES += [
          why=_LINE_QTY_WHY + "ส่วนลดที่กระดาษพิมพ์ต้องถูกถามก่อนเกณฑ์ ±2% และจำนวนที่พิมพ์บนแถวต้องถูกคุ้มครองก่อนสูตรหารจำนวน (ลำดับ) · ปัดเศษ AwayFromZero"),
     # ── ทีม OCR 8 (2026-10-16 · บิลค่าไฟจริง กฟภ. · เจ้าของ "มี 2 หน่วยนะ 4หน่วยน่าจะเป็นค่า ft"): ห้ามแต่งราคาต่อหน่วยที่กระดาษไม่พิมพ์ ·
     #    ห้ามเก็บราคาเกิน 2 ตำแหน่ง (DocumentLine.UnitPrice numeric(18,2) ⇒ บันทึกซ้ำเลื่อน) ⇒ 1 × ยอด + จำนวนในคำอธิบาย (ตัวตัดสินเดียว Decide)
-    dict(file="Helpers/OcrLineQuantityGuard.cs", method="Decide",
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="DecideCore",
          must=["OcrLineQuantityAction.QuantityInDescription", "PrintedPriceTies(paper, qty, filled, amt)", "PrintedPriceTies(paper, qty, paperPrice, amt)",
                "!PriceFitsDocumentLine(up)", "Fingerprint(1m, amt)"],
          must_lit=["{NoteTag} {QuantityInDescriptionPhrase}"],
@@ -6607,18 +6607,18 @@ REVIEWER_CASES += [
     ("LQ3", "CreateDocumentFromScanCoreAsync",
      "            result.ProcessingNotes = Accounting.Helpers.OcrLineQuantityGuard.MergeNotes(result.ProcessingNotes, tmpSan.ReasoningTrace);\n", "", True),
     # PrintedDiscount กลับไปไม่มีหมายเหตุ (Note = null)
-    ("LQ4", "Decide", '$"{NoteTag} ส่วนลดรายบรรทัด {printed:N2} จากกระดาษ', '$"{NoteTag} ส่วนลด {printed:N2}', True),
+    ("LQ4", "DecideCore", '$"{NoteTag} ส่วนลดรายบรรทัด {printed:N2} จากกระดาษ', '$"{NoteTag} ส่วนลด {printed:N2}', True),
     # รูปถูก: ขึ้นบรรทัดใหม่ก่อน .LiveNotes( ต้องไม่ถูกฟ้อง
     ("LQ5", "HandlePostbackAsync", "                Accounting.Helpers.OcrLineQuantityGuard.LiveNotes(",
      "                Accounting.Helpers.OcrLineQuantityGuard\n                    .LiveNotes(", False),
     # ── ทีม OCR 8 (บิลมิเตอร์): การถดถอยจริงที่ต้องถูกจับ + รูปถูกที่ต้องไม่ถูกฟ้อง ──
     # กลับไปเติม ยอด ÷ จำนวน 4 ตำแหน่ง (FillUnitPrice เดิม)
-    ("MB1", "Decide", "            if (qty == 1m) return new(OcrLineQuantityAction.FillUnitPrice, null, amt, null, null);\n",
+    ("MB1", "DecideCore", "            if (qty == 1m) return new(OcrLineQuantityAction.FillUnitPrice, null, amt, null, null);\n",
      "            return new(OcrLineQuantityAction.FillUnitPrice, null, Math.Round(amt / qty, 4, MidpointRounding.AwayFromZero), null, null);\n", True),
     # service ทิ้งคำอธิบายที่มีจำนวนหน่วย (1 × ยอด แล้วจำนวนมิเตอร์หายเงียบ)
     ("MB2", "SanitizeVatSplitArtifacts", "            if (qtyDecision.Description is string decidedDesc) item.Description = decidedDesc;\n", "", True),
     # ถอดด่านราคาเกิน 2 ตำแหน่ง (สแกนเก่าที่ persist 4.5369 กลับไป Keep ⇒ บันทึกซ้ำเลื่อน)
-    ("MB3", "Decide", "if (proven == 0m && qty != 1m && !PriceFitsDocumentLine(up) && R2(qty * R2(up)) != amt)", "if (false)", True),
+    ("MB3", "DecideCore", "if (proven == 0m && qty != 1m && !PriceFitsDocumentLine(up) && R2(qty * R2(up)) != amt)", "if (false)", True),
     # AI แตกบรรทัดกลับไปเติม 4 ตำแหน่ง
     ("MB4", "Evaluate", "?? (qty == 1m ? amount.Value : null);", "?? (qty > 0m ? Math.Round(amount.Value / qty, 4, MidpointRounding.AwayFromZero) : null);", True),
     # ไม่ส่งคำอธิบายให้ตัวกัน (ได้วงเล็บอย่างเดียว ไม่มีชื่อรายการ)
@@ -6635,7 +6635,7 @@ REVIEWER_CASES += [
 _GQ_WHY = "ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0/P1): "
 _GQ_METER = r"if\s*\(\s*MeterEvidence\(\s*paper\s*,\s*qty\s*,\s*amt\s*,\s*description\s*,\s*unit\s*,\s*utilitySeller\s*\)\s*\)\s*return\s+"
 RULES += [
-    dict(file="Helpers/OcrLineQuantityGuard.cs", method="Decide",
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="DecideCore",
          must=["R2(qty * R2(up)) != amt", "TiePrice(qty, amt)", "Rounded(qty, amt, null,", "Rounded(qty, amt, up,"],
          must_re=[
              # ราคาว่าง: ลงตัว ⇒ คงจำนวน → มิเตอร์ ⇒ 1 × ยอด → ไม่งั้น RoundedUnitPrice (ลำดับในแขนงเดียว — "Rounded(qty, amt, null" มีแขนงเดียว)
@@ -6652,13 +6652,23 @@ RULES += [
     dict(file="Helpers/OcrLineQuantityGuard.cs", method="MeterEvidence",
          must=["MeterLabelBefore(paper.Text, nums[k].Start)", "IsMeterUnit(word, description, ctx)", "GoodsUnitRe.IsMatch(word)",
                "if (goodsOnPaper) return false;", "LineUnit(description, unit)", "IsMeterUnit(lineUnit, description, ctx)",
-               "new MeterContext(seller, OcrMeteredWater.IsMeteredWater(", "MeterChargeDescription(description, seller)"],
+               "new MeterContext(seller, OcrMeteredWater.IsMeteredWater(", "MeterChargeDescription(description, seller)",
+               # 2026-10-19 บิล กปภ.: รอบบิลล้วน + ผู้ขายสาธารณูปโภค (ไม่ใช่ผู้ขายอย่างเดียว)
+               "seller != OcrUtilityKind.None && BillingPeriodOnly(description)"],
          before=[("if (goodsOnPaper) return false;", "IsMeterUnit(lineUnit, description, ctx)"),
                  # ทีม OCR 14: หน่วยสินค้าบนบรรทัดชนะคำอธิบายค่ามิเตอร์
                  ("GoodsUnitRe.IsMatch(ThaiTextNormalizer.MapThaiPua(lineUnit))", "MeterChargeDescription(description, seller)")],
          # ★ ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-2): ผู้ขายอย่างเดียวห้ามเป็นหลักฐาน (AWN ขายเคส 3 ชิ้น ⇒ 1 × ยอด) — เป็นบริบทของหน่วยกำกวมเท่านั้น
          forbid=["return utilitySeller;", "return seller;", "return seller !=", "|| seller !=", "|| seller =="],
          why=_GQ_WHY + "หลักฐานมิเตอร์ = ป้าย/หน่วยมิเตอร์บนบรรทัด (ผู้ขายเป็นแค่บริบทของหน่วยกำกวม — ทีม OCR 11) · หน่วยสินค้า (ขวด/กก./ลิตร) บนแถวชนะ — เดิม \"คำหน่วยนับใดก็ได้\" = มิเตอร์"),
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="Decide",
+         must=["DecideCore(", "BillingPeriodOnly(description)", "UtilityChargeLabel(utilitySeller)", "FitDescription("],
+         why="2026-10-19 บิล กปภ. WE1105: คำอธิบายรอบบิลล้วนได้ชื่อรายการตามชนิดผู้ขาย — หน่วยในวงเล็บตัดสินจาก DecideCore บนคำอธิบายเดิม (ห้ามอนุมาน ลบ.ม. จากคำที่ระบบเติม)"),
+    dict(file="Helpers/OcrLineQuantityGuard.cs", method="DecideCore",
+         must=["qty != 1m && !qtyLooksLikeAmount && MeterEvidence(paper, qty, amt, description, unit, utilitySeller)"],
+         before=[("FindRow(paper, newQty, up, amt) is { Found: true, QuantityPrinted: true }",
+                  "qty != 1m && !qtyLooksLikeAmount && MeterEvidence(paper, qty, amt, description, unit, utilitySeller)")],
+         why="2026-10-19 (ฝ่ายค้าน P1): บรรทัดมิเตอร์ราคาอ่านผิดลง 1 × ยอดได้เฉพาะ<b>หลัง</b>จำนวนที่พิสูจน์บนแถว (ค่าน้ำ 25 ลบ.ม. × 10.50 ที่ engine อ่านจำนวน 1 ต้องได้ 25)"),
     dict(file="Helpers/OcrLineQuantityGuard.cs", method="IsMeterUnit",
          must=["OcrMeteredWater.IsMeteredWater(d)", "BulkMaterialRe.IsMatch(d)", "DataContextRe.IsMatch(d)", "ElectricityContextRe.IsMatch(d)"],
          why="ทีม OCR 11 (ฝ่ายค้าน OCR 9 P1-1): ลบ.ม./m3 เป็นมิเตอร์เฉพาะบริบทน้ำประปา (คอนกรีต/ทราย/หินขายเป็น ลบ.ม.) · GB/MB เฉพาะอินเทอร์เน็ต/ดาต้า"),
@@ -6776,13 +6786,13 @@ RULES += [
 ]
 REVIEWER_CASES += [
     # P0 กลับมา: ราคาว่างแล้วลง 1 × ยอดโดยไม่ถามหลักฐานมิเตอร์
-    ("GQ1", "Decide", "            if (MeterEvidence(paper, qty, amt, description, unit, utilitySeller))\n                return InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, null,\n                    $\"{NoteTag} {QuantityInDescriptionPhrase} — กระดาษพิมพ์จำนวน",
+    ("GQ1", "DecideCore", "            if (MeterEvidence(paper, qty, amt, description, unit, utilitySeller))\n                return InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, null,\n                    $\"{NoteTag} {QuantityInDescriptionPhrase} — กระดาษพิมพ์จำนวน",
      "            if (true)\n                return InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, null,\n                    $\"{NoteTag} {QuantityInDescriptionPhrase} — กระดาษพิมพ์จำนวน", True),
     # P1 กลับมา: เคส ก ไม่ถามยอด ÷ จำนวน ลงตัวก่อน (น้ำดื่ม 12 ขวด 300 ⇒ 1 × 300)
-    ("GQ2", "Decide", "            if (TiePrice(qty, amt) is decimal tied)\n                return qtyOnPaper",
+    ("GQ2", "DecideCore", "            if (TiePrice(qty, amt) is decimal tied)\n                return qtyOnPaper",
      "            if (false && TiePrice(qty, amt) is decimal tied)\n                return qtyOnPaper", True),
     # P1 กลับมา: ด่านเกิน 2 ตำแหน่งไม่ถาม "ปัดแล้วลงตัวไหม" (1.235 × 80.0405 ⇒ 1 × 98.85)
-    ("GQ3", "Decide", "!PriceFitsDocumentLine(up) && R2(qty * R2(up)) != amt)", "!PriceFitsDocumentLine(up))", True),
+    ("GQ3", "DecideCore", "!PriceFitsDocumentLine(up) && R2(qty * R2(up)) != amt)", "!PriceFitsDocumentLine(up))", True),
     # P1 กลับมา: หน่วยสินค้าบนแถวไม่ชนะผู้ขายสาธารณูปโภค
     ("GQ4", "MeterEvidence", "        if (goodsOnPaper) return false;\n", "", True),
     # service ไม่ส่งหลักฐานผู้ขาย
@@ -6800,7 +6810,7 @@ REVIEWER_CASES += [
      "            .Select(l => Accounting.Helpers.OcrLineQuantityGuard\n                .DescriptionForMatching(l.Description, l.Quantity, l.Unit))", False),
     # ── ทีม OCR 11 (ฝ่ายค้าน OCR 9) ──
     # P1-2 กลับมา: ผู้ขายอย่างเดียวเป็นหลักฐานมิเตอร์ (AWN เคส 3 ชิ้น ⇒ 1 × ยอด)
-    ("G11a", "MeterEvidence", "        return MeterChargeDescription(description, seller);\n",
+    ("G11a", "MeterEvidence", "        return MeterChargeDescription(description, seller) || (seller != OcrUtilityKind.None && BillingPeriodOnly(description));\n",
      "        return seller != OcrUtilityKind.None;\n", True),
     # P1-1 กลับมา: ลบ.ม. ไม่ถามว่าเป็นวัสดุก่อสร้าง
     ("G11b", "IsMeterUnit", "|| (ctx.PaperWater && !BulkMaterialRe.IsMatch(d));", "|| ctx.PaperWater;", True),

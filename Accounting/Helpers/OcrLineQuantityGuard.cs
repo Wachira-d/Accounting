@@ -464,8 +464,29 @@ public static class OcrLineQuantityGuard
         if (lineUnit is not null && IsMeterUnit(lineUnit, description, ctx)) return true;
         // ★ ทีม OCR 14 (ฝ่ายค้านรอบ 5 P1-1): หน่วยสินค้าบนบรรทัด (ขวด/ถัง/กก. …) ชนะคำอธิบาย · ไม่งั้นคำอธิบายที่เป็นค่ามิเตอร์ (คู่ผู้ขาย) = หลักฐาน
         if (lineUnit is not null && GoodsUnitRe.IsMatch(ThaiTextNormalizer.MapThaiPua(lineUnit))) return false;
-        return MeterChargeDescription(description, seller);
+        // ★ 2026-10-19 (ผู้ใช้รายงาน · บิล กปภ. WE1105/699013325): engine ใช้คอลัมน์ "เดือน" เป็นคำอธิบาย ("10/2569") + "จำนวนน้ำใช้ (ลิตร)" 101,000 เป็นจำนวน ⇒
+        //   ไม่มีคำมิเตอร์บนบรรทัด ⇒ เดิมคงจำนวน 101,000 แล้วแต่งราคา 0.03 + "ส่วนลด" 191 (หรือหารจำนวนใหม่ 283,900) · คำอธิบายที่เป็น<b>รอบบิลล้วน</b>
+        //   บนบิลของผู้ขายสาธารณูปโภค (กุญแจ = <see cref="OcrUtilityVendor.KindOf"/>) ไม่มีวันเป็นสินค้า ⇒ หลักฐานมิเตอร์ (เคส iPhone ของ AWN ยังคงจำนวน — มีชื่อสินค้า)
+        return MeterChargeDescription(description, seller) || (seller != OcrUtilityKind.None && BillingPeriodOnly(description));
     }
+
+    /// <summary>คำอธิบายเป็น "รอบบิลล้วน" ("10/2569" · "ประจำเดือน 10/2569" · "งวด 09/26") — ไม่มีชื่อรายการเลย</summary>
+    internal static bool BillingPeriodOnly(string? description)
+        => BillingPeriodOnlyRe.IsMatch(ThaiTextNormalizer.MapThaiPua(description ?? ""));
+
+    private static readonly Regex BillingPeriodOnlyRe = new(
+        // ปี 2 หลักเฉพาะเมื่อมีคำบอกรอบนำหน้า ("งวด 09/26") — "1/12" · "12/31" ล้วน ๆ กำกวมเกิน (ฝ่ายค้าน P3)
+        @"^\s*(?:(?:(?:ประจำ)?เดือน|งวด|รอบบิล|รอบ|period|month)\s*[:.]?\s*(?:0?[1-9]|1[0-2])\s*[/\-]\s*(?:\d{4}|\d{2})|(?:0?[1-9]|1[0-2])\s*[/\-]\s*\d{4})\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    /// <summary>ชื่อรายการของบิลสาธารณูปโภคตามชนิดผู้ขาย — เติมหน้าคำอธิบายที่เป็นรอบบิลล้วน (null = ไม่รู้ชนิด ไม่เติม)</summary>
+    private static string? UtilityChargeLabel(OcrUtilityKind seller) => seller switch
+    {
+        OcrUtilityKind.Water => "ค่าน้ำประปา",
+        OcrUtilityKind.Electricity => "ค่าไฟฟ้า",
+        OcrUtilityKind.Telecom => "ค่าบริการโทรคมนาคม",
+        _ => null,
+    };
 
     /// <summary>**ตัวเดียวที่ประกอบคำอธิบาย "(จำนวน หน่วย)"** ของ <see cref="OcrLineQuantityAction.QuantityInDescription"/> — service + harness ได้ค่าผ่าน
     /// <see cref="Decide"/> (ห้ามต่อสตริงเอง) · หน่วย = <see cref="LineUnit"/> ถ้าเป็นหน่วยมิเตอร์ ไม่งั้น "จำนวน X" (ทีม OCR 9: ท้ายคำอธิบายมีรูปเดียวที่
@@ -693,6 +714,18 @@ public static class OcrLineQuantityGuard
         decimal? quantity, decimal? unitPrice, decimal? amount, decimal? lineDiscount, OcrLinePaper? paper,
         string? description = null, string? unit = null, OcrUtilityKind utilitySeller = OcrUtilityKind.None)
     {
+        var decision = DecideCore(quantity, unitPrice, amount, lineDiscount, paper, description, unit, utilitySeller);
+        // บรรทัดมิเตอร์ที่คำอธิบายเป็นรอบบิลล้วน ("10/2569 (จำนวน 101,000)") ⇒ ใส่ชื่อรายการตามชนิดผู้ขาย — หน่วยในวงเล็บตัดสินจากคำอธิบายเดิม
+        // (ห้ามอนุมาน ลบ.ม. จากคำ "ค่าน้ำประปา" ที่ระบบเติม — กระดาษใบนี้พิมพ์ "ลิตร")
+        if (decision.Description is string composed && BillingPeriodOnly(description) && UtilityChargeLabel(utilitySeller) is { } label)
+            decision = decision with { Description = FitDescription($"{label} ประจำเดือน", composed) };
+        return decision;
+    }
+
+    private static OcrLineQuantityDecision DecideCore(
+        decimal? quantity, decimal? unitPrice, decimal? amount, decimal? lineDiscount, OcrLinePaper? paper,
+        string? description, string? unit, OcrUtilityKind utilitySeller)
+    {
         paper ??= OcrLinePaper.Empty;
         var amt = amount ?? 0m;
         var up = unitPrice ?? 0m;
@@ -846,6 +879,11 @@ public static class OcrLineQuantityGuard
         if (R2(newQty * up) == amt && FindRow(paper, newQty, up, amt) is { Found: true, QuantityPrinted: true })
             return new(OcrLineQuantityAction.FixQuantity, newQty, null, null,
                 $"{NoteTag} จำนวน {newQty:0.###} จากแถวบนกระดาษ (engine อ่าน {qty:0.###}) — {newQty:0.###} × {up:N2} = {amt:N2}");
+        // ★ 2026-10-19: บรรทัดมิเตอร์ที่ราคาอ่านผิด (101,000 × 0.01 ≠ 2,839) — จำนวนคือหน่วยมิเตอร์บนกระดาษ ห้ามหารจำนวนใหม่ (เดิมได้ 283,900) ⇒ 1 × ยอด ·
+        //   ฝ่ายค้าน: <b>หลัง</b>จำนวนที่พิสูจน์บนแถว (ค่าน้ำ 25 ลบ.ม. × 10.50 ที่ engine อ่านจำนวนเป็น 1 ต้องได้ 25) · จำนวน 1 / จำนวน = ยอด (เคส ข) ไม่ใช่หน่วยมิเตอร์ ⇒ กติกาเดิม
+        if (qty != 1m && !qtyLooksLikeAmount && MeterEvidence(paper, qty, amt, description, unit, utilitySeller))
+            return InDescription(OcrLineQuantityAction.QuantityInDescription, qty, amt, description, unit, null,
+                $"{NoteTag} {QuantityInDescriptionPhrase} — {line} · ราคาต่อหน่วยที่อ่านได้ไม่ใช่ราคาบนกระดาษ (บรรทัดมิเตอร์) ⇒ ระบบลง 1 × {amt:N2} (ยอดตรงกระดาษ · ไม่แต่งจำนวน/ราคา)");
         return new(OcrLineQuantityAction.FixQuantity, newQty, null, null,
             $"{Tag} {line} และไม่พบจำนวนนี้บนแถวของกระดาษ — ระบบตั้งจำนวน = ยอด ÷ ราคา = {newQty:0.###} · ตรวจกับกระดาษก่อนอนุมัติ"
             + Fingerprint(newQty, up));

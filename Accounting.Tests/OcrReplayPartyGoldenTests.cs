@@ -193,6 +193,12 @@ public class OcrReplayPartyGoldenTests
         pramie-re111-positional · VendorBranch = 00000
         pramie-re111-positional · VendorName = บริษัท พรามี่ควอลิตี้ (ไทยแลนด์) จำกัด
         pramie-re111-positional · VendorTaxId = 0105567070534
+        pwa-water-bill-we1105-positional · BuyerBranch = (ว่าง)
+        pwa-water-bill-we1105-positional · BuyerName = (ว่าง)
+        pwa-water-bill-we1105-positional · BuyerTaxId = (ว่าง)
+        pwa-water-bill-we1105-positional · VendorBranch = 00261
+        pwa-water-bill-we1105-positional · VendorName = การประปาส่วนภูมิภาค
+        pwa-water-bill-we1105-positional · VendorTaxId = 0994000164904
         qty-misread-engine-one · BuyerBranch = (ว่าง)
         qty-misread-engine-one · BuyerName = (ว่าง)
         qty-misread-engine-one · BuyerTaxId = (ว่าง)

@@ -487,6 +487,18 @@ public class OcrReplayLineGoldenTests
     // ── ทีม OCR 10 (2026-10-16): ใบจริงสองใบเดิมด้วยข้อความ PDF ที่ประกอบตามพิกัด — ตัวเลข engine/บรรทัดเท่าใบเดิม ⇒ ผลต่างทั้งหมดมาจากข้อความ ──
 
     [Fact]
+    public void บิลกปภ_WE1105_รอบบิลล้วน_ลงหนึ่งคูณยอด_ก่อนVAT2839_VAT198_73()
+    {
+        // ผู้ใช้รายงาน 2026-10-19: engine ให้ "10/2569" × 101,000 ราคา 0.01 (Σ 1,010 ≠ 2,839) — "อย่างน้อยควรเป็น จำนวน 1 และ ราคา 2839 และ + vat 7%"
+        const string P = "pwa-water-bill-we1105-positional";
+        Assert.Equal("QuantityInDescription|1|2839.00|-|note", Val(P, "LineQtyGuard"));
+        Assert.Equal("ค่าน้ำประปา ประจำเดือน 10/2569 (จำนวน 101,000)", Val(P, "LineDescriptions"));
+        // ยอดก่อนVAT|อัตรา|VAT|ราคาต่อหน่วย|ส่วนลด%|ส่วนลดบาท|หัก ณ ที่จ่าย — 2,839.00 + 198.73 = 3,037.73 ✓
+        Assert.Equal("2839.00|7|198.73|2839.00|0|0.00|0.00", Val(P, "Lines"));
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+    }
+
+    [Fact]
     public void ทีมOCR10_บิลกฟภ_ข้อความตามพิกัด_ตัวยึดยอดพิสูจน์ได้_บรรทัดเท่าใบเดิมทุกช่อง()
     {
         const string P = "pea-electricity-bill-0869-positional";
@@ -563,7 +575,7 @@ public class OcrReplayLineGoldenTests
         var note = rows.Where(r => r.Tag == "note").Select(r => r.Paper).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToArray();
         Assert.Equal(new[] { "deposit-installment-invoice", "goods-fractional-qty-no-price", "qty-printed-gap-unexplained", "row-index-receipt", "sku-code-on-row", "weighed-item-qty-not-printed", "wht-column-service-invoice" }, block);
         Assert.Equal(new[] { "discount-header-invoice", "goods-price-read-as-amount", "goods-qty-price-column-lost", "pea-electricity-bill-0869",
-            "pea-electricity-bill-0869-positional", "pramie-line-discount-re111", "pramie-re111-positional", "qty-misread-engine-one", "utility-meter-bill" }, note);
+            "pea-electricity-bill-0869-positional", "pramie-line-discount-re111", "pramie-re111-positional", "pwa-water-bill-we1105-positional", "qty-misread-engine-one", "utility-meter-bill" }, note);
     }
 
     [Fact]
@@ -578,7 +590,9 @@ public class OcrReplayLineGoldenTests
             // ทีม OCR 9 (ฝ่ายค้าน 13a4d788 P0 — บรรทัดสินค้าห้ามกลายเป็น 1 × ยอด)
             "goods-qty-price-column-lost", "goods-fractional-qty-no-price", "goods-price-read-as-amount",
             // ทีม OCR 10 (สองใบจริงข้างบนด้วยข้อความ PDF ตามพิกัด)
-            "pea-electricity-bill-0869-positional", "pramie-re111-positional" };
+            "pea-electricity-bill-0869-positional", "pramie-re111-positional",
+            // 2026-10-19 บิล กปภ. (รอบบิลล้วนบนบิลสาธารณูปโภค = มิเตอร์)
+            "pwa-water-bill-we1105-positional" };
         var all = OcrReplayHarness.Run();
         foreach (var a in all.Where(a => a.Field == "LineQtyGuard" && !added.Contains(a.Paper)))
             foreach (var row in a.Value!.Split(';'))
