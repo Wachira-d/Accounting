@@ -1,11 +1,6 @@
+using Accounting.Helpers;
 using Accounting.Services.Interfaces;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.Formats.Webp;
-using SixLabors.ImageSharp.Metadata.Profiles.Exif;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace Accounting.Services.Implementations;
 
@@ -74,77 +69,46 @@ public class ImageProcessingService : IImageProcessingService
         if (!kind.IsImage)
             return await SaveRawAsync(src, originalFileName, kind.Extension, absoluteDirectory, webBaseUrl);
 
-        Image<Rgba32> image;
+        // SkiaSharp (ย้ายจาก ImageSharp 2026-10-19 — สูตร/ขนาดคงเดิม ดู SkiaImageOps):
+        // decode + หมุนตาม EXIF ในขั้นเดียว · ไฟล์ที่ encode ออกมาไม่พก EXIF/IPTC/XMP ของ
+        // ต้นฉบับ (พิกัด GPS · รุ่นอุปกรณ์) เพราะ Skia เขียนแต่พิกเซล
+        SkiaImageOps.Decoded? decoded;
         try
         {
-            image = await Image.LoadAsync<Rgba32>(src);
+            var bytes = src.ToArray();
+            decoded = await Task.Run(() => SkiaImageOps.DecodeUpright(bytes));
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "ImageSharp failed to decode {File} ({ContentType}); saving raw", originalFileName, contentType);
+            _logger.LogWarning(ex, "SkiaSharp failed to decode {File} ({ContentType}); saving raw", originalFileName, contentType);
+            decoded = null;
+        }
+        if (decoded == null)
+        {
+            // decoder ล้ม หรือเป็นรูปแบบที่ Skia ไม่อ่าน (TIFF/HEIC) — เซฟดิบด้วยนามสกุล **จากผลตรวจไบต์**
+            // ไม่ใช่ชื่อไฟล์ของ client: decoder ล้มไม่ได้แปลว่าไบต์โกหก (ไฟล์รูปเสียบางส่วนก็ decode
+            // ไม่ได้) แต่ถ้าปล่อยให้ client เลือกนามสกุลตรงนี้ ก็เท่ากับเปิดช่องเดิมกลับมาทางประตูหลัง
+            _logger.LogWarning("SkiaSharp cannot decode {File} ({ContentType}, sniffed {Kind}); saving raw", originalFileName, contentType, kind.Extension);
             src.Position = 0;
-            // ⚠️ นามสกุลมาจาก **ผลตรวจไบต์** ไม่ใช่ชื่อไฟล์ของ client — decoder ล้ม
-            // ไม่ได้แปลว่าไบต์โกหก (ไฟล์รูปเสียบางส่วนก็ decode ไม่ได้) แต่ถ้าปล่อยให้
-            // client เลือกนามสกุลตรงนี้ ก็เท่ากับเปิดช่องเดิมกลับมาทางประตูหลัง
             return await SaveRawAsync(src, originalFileName, kind.Extension, absoluteDirectory, webBaseUrl);
         }
 
-        using (image)
+        using (decoded)
         {
             var spec = _specs.TryGetValue(profile, out var s) ? s : _specs[ImageProfile.Generic];
 
-            image.Mutate(ctx =>
-            {
-                // Respect EXIF orientation so phone photos aren't sideways,
-                // then drop EXIF (location, device) before saving.
-                ctx.AutoOrient();
-            });
-            image.Metadata.ExifProfile = null;
-            image.Metadata.IptcProfile = null;
-            image.Metadata.XmpProfile = null;
-
-            if (spec.ForceSquareCrop)
-            {
-                image.Mutate(ctx => ctx.Resize(new ResizeOptions
-                {
-                    Size = new Size(spec.MaxLongEdge, spec.MaxLongEdge),
-                    Mode = ResizeMode.Crop
-                }));
-            }
-            else if (Math.Max(image.Width, image.Height) > spec.MaxLongEdge)
-            {
-                var (w, h) = image.Width >= image.Height
-                    ? (spec.MaxLongEdge, 0)
-                    : (0, spec.MaxLongEdge);
-                image.Mutate(ctx => ctx.Resize(new ResizeOptions
-                {
-                    Size = new Size(w, h),
-                    Mode = ResizeMode.Max,
-                    Sampler = KnownResamplers.Lanczos3
-                }));
-            }
+            using SKBitmap image = spec.ForceSquareCrop
+                ? SkiaImageOps.CropToSquare(decoded.Bitmap, spec.MaxLongEdge)
+                : SkiaImageOps.ResizeMax(decoded.Bitmap, spec.MaxLongEdge);
 
             // Choose output format: keep PNG when transparency matters, otherwise JPEG for smaller files
-            var keepPng = spec.KeepTransparency && HasTransparency(image);
+            var keepPng = spec.KeepTransparency && SkiaImageOps.HasTransparency(image);
             var ext = keepPng ? ".png" : ".jpg";
             var fileName = $"{Guid.NewGuid():N}{ext}";
             var absPath = Path.Combine(absoluteDirectory, fileName);
 
-            if (keepPng)
-            {
-                await image.SaveAsPngAsync(absPath, new PngEncoder
-                {
-                    CompressionLevel = PngCompressionLevel.BestCompression,
-                    ColorType = PngColorType.RgbWithAlpha
-                });
-            }
-            else
-            {
-                await image.SaveAsJpegAsync(absPath, new JpegEncoder
-                {
-                    Quality = spec.Quality
-                });
-            }
+            var encoded = keepPng ? SkiaImageOps.EncodePng(image) : SkiaImageOps.EncodeJpeg(image, spec.Quality);
+            await File.WriteAllBytesAsync(absPath, encoded);
 
             var finalBytes = new FileInfo(absPath).Length;
             var url = $"{webBaseUrl.TrimEnd('/')}/{fileName}";
@@ -153,15 +117,10 @@ public class ImageProcessingService : IImageProcessingService
             if (generateThumb)
             {
                 var tSpec = _specs[ImageProfile.ProductThumb];
-                using var thumb = image.Clone(ctx => ctx.Resize(new ResizeOptions
-                {
-                    Size = new Size(tSpec.MaxLongEdge, tSpec.MaxLongEdge),
-                    Mode = ResizeMode.Crop,
-                    Sampler = KnownResamplers.Lanczos3
-                }));
+                using var thumb = SkiaImageOps.CropToSquare(image, tSpec.MaxLongEdge);
                 var thumbName = $"{Path.GetFileNameWithoutExtension(fileName)}_thumb.jpg";
                 var thumbPath = Path.Combine(absoluteDirectory, thumbName);
-                await thumb.SaveAsJpegAsync(thumbPath, new JpegEncoder { Quality = tSpec.Quality });
+                await File.WriteAllBytesAsync(thumbPath, SkiaImageOps.EncodeJpeg(thumb, tSpec.Quality));
                 thumbUrl = $"{webBaseUrl.TrimEnd('/')}/{thumbName}";
             }
 
@@ -173,18 +132,6 @@ public class ImageProcessingService : IImageProcessingService
 
             return new ProcessedImageResult(url, absPath, originalBytes, finalBytes, image.Width, image.Height, thumbUrl);
         }
-    }
-
-    private static bool HasTransparency(Image<Rgba32> image)
-    {
-        // Sample corners + center — full pixel scan is overkill for a heuristic.
-        // If any sampled alpha < 255 we keep PNG.
-        var sx = new[] { 0, image.Width / 2, image.Width - 1 };
-        var sy = new[] { 0, image.Height / 2, image.Height - 1 };
-        foreach (var x in sx)
-            foreach (var y in sy)
-                if (image[x, y].A < 255) return true;
-        return false;
     }
 
     private static async Task<ProcessedImageResult> SaveRawAsync(

@@ -75,6 +75,9 @@ def strip_noise(text: str) -> str:
                         j += 1
                         break
                 j += 1
+            # C# 11 UTF-8 literal `"…"u8` — ตัว suffix เป็นส่วนของ literal ไม่ใช่ตัวแปรชื่อ u8
+            if text[j:j + 2].lower() == "u8":
+                j += 2
             out.append("\n" * text.count("\n", i, j))
             i = j
             continue

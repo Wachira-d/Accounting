@@ -1,16 +1,15 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Metadata.Profiles.Exif;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using Accounting.Helpers;
+using SkiaSharp;
 
 namespace Accounting.Services.Implementations.Ocr;
 
 /// <summary>
-/// In-process image enhancement before OCR. ImageSharp 3.x is already
-/// a dependency, so this adds zero new packages. The goal: lift OCR
-/// accuracy on phone-camera photos and small / dark scans where the
-/// raw pixels would confuse Tesseract or burn extra Azure DI billable
-/// time.
+/// In-process image enhancement before OCR, on SkiaSharp (shared with the
+/// PDF rasteriser via PDFtoImage, so this adds zero new native packages —
+/// replaced SixLabors.ImageSharp 2026-10-19, see <see cref="SkiaImageOps"/>).
+/// The goal: lift OCR accuracy on phone-camera photos and small / dark scans
+/// where the raw pixels would confuse Tesseract or burn extra Azure DI
+/// billable time.
 ///
 /// Pipeline (each step is conditional — only fires when needed):
 ///   1. EXIF auto-rotate — phone photos commonly arrive with a rotation
@@ -29,7 +28,8 @@ namespace Accounting.Services.Implementations.Ocr;
 ///
 /// Skips:
 ///   • PDFs (have their own text layer or PDFtoImage handles raster)
-///   • Already-large clean images (>2MP and >500KB)
+///   • Formats Skia cannot decode (TIFF/HEIC) — returned untouched; Azure DI
+///     and Leptonica read TIFF natively so the scan still proceeds
 ///   • Tiny placeholder / spam images (already rejected by preflight)
 ///
 /// Output: jpeg bytes (always), original content type discarded. The
@@ -39,6 +39,10 @@ namespace Accounting.Services.Implementations.Ocr;
 public static class ImagePreprocessor
 {
     public record Result(byte[] Bytes, string ContentType, List<string> StepsApplied);
+
+    /// <summary>ค่า contrast เดิมของ ImageSharp (<c>Contrast(1.15f)</c>) — คงไว้ตามกฎ §H</summary>
+    public const float ContrastAmount = 1.15f;
+    public const int JpegQuality = 92;
 
     /// <summary>Run conditional preprocessing. Returns the SAME bytes
     /// when none of the rules trigger (fast path for clean inputs).</summary>
@@ -51,60 +55,50 @@ public static class ImagePreprocessor
 
         try
         {
-            using var image = Image.Load<Rgba32>(inputBytes);
-            int originalW = image.Width;
-            int originalH = image.Height;
-
             // 1. EXIF auto-rotate — bake the rotation flag into pixels
             // so downstream consumers see an upright image regardless of
             // how the source device tagged it.
-            int orientationValue = 1;
-            if (image.Metadata?.ExifProfile is { } exif
-                && exif.TryGetValue(ExifTag.Orientation, out var orientationVal)
-                && orientationVal?.Value is { } ov)
-            {
-                orientationValue = Convert.ToInt32(ov);
-            }
-            if (orientationValue > 1 && orientationValue <= 8)
-            {
-                image.Mutate(ctx => ctx.AutoOrient());
-                steps.Add($"auto-rotate (EXIF orientation={orientationValue})");
-            }
+            using var decoded = SkiaImageOps.DecodeUpright(inputBytes);
+            if (decoded == null) return new Result(inputBytes, contentType, steps);
+            if (decoded.ExifOrientation > 1 && decoded.ExifOrientation <= 8)
+                steps.Add($"auto-rotate (EXIF orientation={decoded.ExifOrientation})");
 
-            // 2. Grayscale — text on paper has no useful colour info. The
-            // mode hint Bt709 matches what Tesseract expects internally.
-            image.Mutate(ctx => ctx.Grayscale());
+            int originalW = decoded.Bitmap.Width;
+            int originalH = decoded.Bitmap.Height;
+
+            // 2. Grayscale — text on paper has no useful colour info. Bt.709
+            // luma matches what Tesseract expects internally.
+            SKBitmap image = SkiaImageOps.ApplyColorMatrix(decoded.Bitmap, SkiaImageOps.GrayscaleBt709Matrix());
             steps.Add("grayscale");
 
             // 3. Auto-contrast — push the histogram toward full dynamic
             // range; for phone shots in dim light this is often the
             // single biggest accuracy lift (binarizer now has crisp
             // black/white separation instead of dim greys).
-            image.Mutate(ctx => ctx.AutoOrient().Contrast(1.15f));
+            using (var gray = image)
+                image = SkiaImageOps.ApplyColorMatrix(gray, SkiaImageOps.ContrastMatrix(ContrastAmount));
             steps.Add("contrast×1.15");
 
             // 4. Upscale when image is too small for reliable Thai OCR.
             // Tesseract for Thai needs ≥300 DPI (~1200px short side for
-            // A4 capture). Bicubic interpolation preserves stroke shape.
+            // A4 capture). Cubic interpolation preserves stroke shape.
             int shortSide = Math.Min(image.Width, image.Height);
-            if (shortSide < 800)
+            int factor = shortSide < 800 ? 3 : shortSide < 1200 ? 2 : 1;
+            if (factor > 1)
             {
-                image.Mutate(ctx => ctx.Resize(image.Width * 3, image.Height * 3, KnownResamplers.Bicubic));
-                steps.Add($"upscale 3× ({originalW}×{originalH} → {image.Width}×{image.Height})");
-            }
-            else if (shortSide < 1200)
-            {
-                image.Mutate(ctx => ctx.Resize(image.Width * 2, image.Height * 2, KnownResamplers.Bicubic));
-                steps.Add($"upscale 2× ({originalW}×{originalH} → {image.Width}×{image.Height})");
+                using (var small = image)
+                    image = SkiaImageOps.Resize(small, small.Width * factor, small.Height * factor);
+                steps.Add($"upscale {factor}× ({originalW}×{originalH} → {image.Width}×{image.Height})");
             }
 
-            // No-op fast path — if nothing changed materially, return original
-            if (steps.Count == 0) return new Result(inputBytes, contentType, steps);
+            using (image)
+            {
+                // No-op fast path — if nothing changed materially, return original
+                if (steps.Count == 0) return new Result(inputBytes, contentType, steps);
 
-            using var ms = new MemoryStream();
-            // JPEG at quality 92 — preserves text edges, modest size
-            image.SaveAsJpeg(ms, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder { Quality = 92 });
-            return new Result(ms.ToArray(), "image/jpeg", steps);
+                // JPEG at quality 92 — preserves text edges, modest size
+                return new Result(SkiaImageOps.EncodeJpeg(image, JpegQuality), "image/jpeg", steps);
+            }
         }
         catch (Exception)
         {

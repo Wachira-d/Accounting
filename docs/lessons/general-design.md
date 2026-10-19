@@ -140,3 +140,11 @@
 - **หลัก**: sql literal ที่ส่งเข้า `ExecuteSqlRaw` ต้องผ่าน `DatabaseMigrationHelper.EscapeForExecuteSqlRaw` · ของที่ถูกยุบไปแล้วต้องมีคำสั่งซ่อม (F2-9)
 - **กลไก**: `MigrationSqlEscapeTests` — ทุกคำสั่งต้อง round-trip ผ่าน `string.Format` ตัวอักษรเดิม · seed ดิบต้องระบุคอลัมน์ not-null ที่ไม่มี DEFAULT
   เอง (ตารางที่ EnsureCreated สร้างไม่มี DEFAULT ที่ฐาน) · "ซ่อม migration ที่ไม่เคยรัน" = เปิดพฤติกรรมใหม่บน production ⇒ ไล่ทีละคำสั่งว่ามีผลถึงลูกค้า/บิลไหมก่อน
+
+### ย้ายไลบรารีกราฟิก (ImageSharp → SkiaSharp) — สูตรเดิมต้องมีเทสต์ตัวเลขล็อกไว้ก่อน (2026-10-19)
+- **อาการ**: SkiaSharp 3.x `SKColorFilter.CreateColorMatrix` คอลัมน์ translation (ตัวที่ 5) เป็นสเกล **0–1** ไม่ใช่ 0–255 แบบที่สูตร contrast ของ ImageSharp
+  คิด — ใส่ shift −19.125 แล้วทุกพิกเซลกลายเป็น 0 เงียบ ๆ (ไม่มี exception) · XML docs ในแพ็กเกจเก่ากว่าโค้ด (ไม่มี `SKSamplingOptions`) ⇒ อ่าน API จาก dll จริงด้วย reflection
+- **หลัก**: swap lib = เขียนเทสต์ parity ของสูตรเดิม (luma · contrast · resize · EXIF) **ก่อน** เขียน adapter, แล้ววิ่งชุดกระดาษจริงก่อน-หลัง (§H) — ไม่ใช่เชื่อว่า
+  "ชื่อฟังก์ชันเดียวกัน = ผลเดียวกัน" · งานพิกเซลอยู่ใน OWNER file เดียว (`Helpers/SkiaImageOps`) ผู้เรียกไม่ประกอบ matrix/kernel เอง
+- **กลไก**: `SkiaImageOpsTests.Contrast_matrix_matches_imagesharp_formula` (200→211 · 128→128 · 10→0 · 250→255 ±1) + `Grayscale_matrix_is_bt709` ·
+  ชนิดไฟล์ที่ lib ใหม่ถอดไม่ได้ (TIFF/HEIC) ต้องมีทางลงที่ "คืนของเดิม" ไม่ใช่ throw ถึงผู้ใช้ — และบันทึกเป็นพฤติกรรมที่เปลี่ยนใน CHANGELOG

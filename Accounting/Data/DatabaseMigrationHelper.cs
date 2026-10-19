@@ -4535,7 +4535,9 @@ public static class DatabaseMigrationHelper
                 CONSTRAINT "PK_LocalModelHealths" PRIMARY KEY ("Id")
             );
             """,
-            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LocalModelHealths_FeatureKey" ON "LocalModelHealths" ("FeatureKey") WHERE "IsDeleted" = false;""",
+            // (2026-10-19) index เดิม "IX_LocalModelHealths_FeatureKey" (unique ที่ FeatureKey อย่างเดียว) ถูกถอดออก —
+            // ฐานจริงมีหลายแถวต่อ feature (ต่อบริษัท) จึง CREATE ล้ม 23505 ทุกบูตก่อนจะถึง DROP ด้านล่าง = เสียงรบกวนใน log
+            // โดยไม่มีผลใด · เหลือแค่ DROP กันฐานเก่าที่เคยสร้างสำเร็จ
 
             // ── สุขภาพนักเรียนต้องแยกต่อบริษัท (รอบ 178) ──────────────────────
             // เดิม unique ที่ FeatureKey อย่างเดียว ⇒ เก็บได้แถวเดียวต่อ feature

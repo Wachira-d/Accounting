@@ -1,6 +1,5 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using Accounting.Helpers;
+using SkiaSharp;
 using Tesseract;
 
 namespace Accounting.Services.Implementations.Ocr;
@@ -193,7 +192,8 @@ public class EmbeddedTesseractOcrService : IDisposable
 
     /// <summary>
     /// Preprocess the image to maximize OCR accuracy:
-    ///   1. Decode (handles JPEG/PNG/BMP/TIFF/WebP via ImageSharp)
+    ///   1. Decode + EXIF upright (JPEG/PNG/BMP/WebP/GIF via SkiaSharp — TIFF throws here and the
+    ///      caller feeds the raw bytes to Leptonica, which reads TIFF natively)
     ///   2. Convert to grayscale — Tesseract LSTM works internally on grayscale
     ///   3. Upscale if too small (LSTM needs ≥30px character height)
     ///   4. Re-encode as PNG (lossless) to feed back to Tesseract
@@ -319,23 +319,36 @@ public class EmbeddedTesseractOcrService : IDisposable
 
     private static async Task<byte[]> PreprocessAsync(byte[] input)
     {
-        using var image = await Task.Run(() => Image.Load<Rgba32>(input));
-
-        // Upscale narrow images. 1500px width is a reasonable target for invoices.
-        if (image.Width < 1500)
+        // SkiaSharp (ย้ายจาก ImageSharp 2026-10-19 · สูตร/ขนาดคงเดิมตามกฎ §H — ดู SkiaImageOps)
+        return await Task.Run(() =>
         {
-            var scale = 1500.0 / image.Width;
-            var newW = 1500;
-            var newH = (int)(image.Height * scale);
-            image.Mutate(x => x.Resize(newW, newH, KnownResamplers.Lanczos3));
-        }
+            using var decoded = SkiaImageOps.DecodeUpright(input)
+                ?? throw new InvalidOperationException("SkiaSharp อ่านภาพไม่ได้ (รูปแบบไม่รองรับหรือไฟล์เสีย)");
+            SKBitmap image = decoded.Bitmap;
+            var owned = new List<SKBitmap>();
+            try
+            {
+                // Upscale narrow images. 1500px width is a reasonable target for invoices.
+                if (image.Width < 1500)
+                {
+                    var scale = 1500.0 / image.Width;
+                    var newW = 1500;
+                    var newH = (int)(image.Height * scale);
+                    image = SkiaImageOps.Resize(image, newW, newH);
+                    owned.Add(image);
+                }
 
-        // Grayscale for Tesseract
-        image.Mutate(x => x.Grayscale());
+                // Grayscale for Tesseract
+                image = SkiaImageOps.ApplyColorMatrix(image, SkiaImageOps.GrayscaleBt709Matrix());
+                owned.Add(image);
 
-        using var ms = new MemoryStream();
-        await image.SaveAsPngAsync(ms);
-        return ms.ToArray();
+                return SkiaImageOps.EncodePng(image);
+            }
+            finally
+            {
+                foreach (var b in owned) b.Dispose();
+            }
+        });
     }
 
     public void Dispose()

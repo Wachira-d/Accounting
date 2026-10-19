@@ -45,9 +45,14 @@
          or the optional Python ocr-service is not running. tessdata files for
          Thai+English ship in wwwroot/tessdata. -->
     <PackageReference Include="Tesseract" Version="5.2.0" />
-    <!-- 3.1.12 supersedes 3.1.6 — 3.1.6 itself was flagged by GHSA-2cmq-823j-5qj8
-         and GHSA-rxmq-m78w-7wmc after release. DO NOT downgrade past 3.1.12. -->
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <!-- All pixel work (OCR preprocessing, upload resize/strip, synthetic test
+         images) runs on SkiaSharp via Helpers/SkiaImageOps. Replaced
+         SixLabors.ImageSharp 3.1.12 on 2026-10-19: every 3.1.x/3.2.x build carries
+         open advisories (GHSA-gwg2-r3hj-4w44, GHSA-j3p4-wp97-rph4, GHSA-j9gm-c75j-xc9q,
+         GHSA-jjfr-hcj7-qf5w, GHSA-wmxv-xphr-5c9g) and 4.x needs a paid Six Labors
+         license. Version MUST match the SkiaSharp that PDFtoImage below pulls in
+         (native assets for linux/win32/macos arrive transitively through it). -->
+    <PackageReference Include="SkiaSharp" Version="3.119.0" />
     <!-- PDF → image rasterization for the embedded OCR path. Pure-managed wrapper
          around SkiaSharp + PDFium; cross-platform native libs ship with NuGet.
          5.1.0 is the lowest version compatible with the API we use. -->

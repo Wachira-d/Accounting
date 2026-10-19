@@ -3011,32 +3011,18 @@ public class AdminController : ControllerBase
         byte[] sampleBytes;
         try
         {
-            // Direct pixel access — avoids the SixLabors.ImageSharp.Drawing
-            // package (we don't depend on it) which is where Fill / DrawText
-            // live. The image constructor defaults to transparent black; we
-            // set every pixel to white, then overlay black horizontal bars
-            // at receipt-layout positions so Azure DI's document detector
-            // engages.
+            // SkiaSharp (ย้ายจาก ImageSharp 2026-10-19): พื้นขาว แล้ววาดแถบดำแนวนอน
+            // ตามตำแหน่งเลย์เอาต์ใบเสร็จ เพื่อให้ตัวตรวจจับเอกสารของ Azure DI ทำงาน
             const int W = 400, H = 600;
-            var white = new SixLabors.ImageSharp.PixelFormats.Rgba32(255, 255, 255, 255);
-            var black = new SixLabors.ImageSharp.PixelFormats.Rgba32(0, 0, 0, 255);
-            using var img = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(W, H);
-            for (int y = 0; y < H; y++)
+            using var img = new SkiaSharp.SKBitmap(W, H, isOpaque: true);
+            using (var canvas = new SkiaSharp.SKCanvas(img))
+            using (var black = new SkiaSharp.SKPaint { Color = SkiaSharp.SKColors.Black, IsAntialias = false })
             {
-                bool isBar = (y >= 80 && y <= 90) || (y >= 200 && y <= 210)
-                          || (y >= 320 && y <= 330) || (y >= 500 && y <= 515);
-                for (int x = 0; x < W; x++)
-                {
-                    img[x, y] = (isBar && x >= 40 && x < 360) ? black : white;
-                }
+                canvas.Clear(SkiaSharp.SKColors.White);
+                foreach (var (top, bottom) in new[] { (80, 90), (200, 210), (320, 330), (500, 515) })
+                    canvas.DrawRect(40, top, 320, bottom - top + 1, black);
             }
-            using var ms = new MemoryStream();
-            // Explicit encoder avoids needing the SaveAsPng extension
-            // method (which lives behind a `using SixLabors.ImageSharp;`
-            // directive this controller doesn't pull in to keep its
-            // namespace surface tight).
-            img.Save(ms, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
-            sampleBytes = ms.ToArray();
+            sampleBytes = Accounting.Helpers.SkiaImageOps.EncodePng(img);
         }
         catch (Exception ex)
         {

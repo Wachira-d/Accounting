@@ -5269,3 +5269,22 @@ _2026-10-19 (log บูตเครื่องเจ้าของ · IIS): **
 SaveChanges ของ `AiFeedbackTrainingJob` ล้มทั้งรอบทุกคืน + ด่านความยาวข้ามแถวเดียว · เทสต์ `MigrationSqlEscapeTests` (9 · ถอด escape ⇒ FormatException กลับมา) ·
 ทางเข้าอื่นที่รัน ExecuteSqlRaw ดิบ: Program.cs สคริปต์ EnsureCreated (ไม่มีวงเล็บ) · AccountingDbContext ใช้พารามิเตอร์จริง ⇒ 0 จุดเพิ่ม ·
 **(4)** `api.js` error ที่มี `status` (เซิร์ฟเวอร์ตอบแล้ว) ไม่ถูกป้ายเป็น "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้" อีก (เดิม regex `connection` จับข้อความของเซิร์ฟเวอร์ด้วย)_
+
+_2026-10-19 (SixLabors.ImageSharp → SkiaSharp · กฎ §H ก่อน-หลังชุดกระดาษจริง): **(1) ทำไม** — ImageSharp 3.1.12 มี advisory เปิด 5 รายการ
+(GHSA-gwg2-r3hj-4w44 · j3p4-wp97-rph4 · j9gm-c75j-xc9q · jjfr-hcj7-qf5w · wmxv-xphr-5c9g) และ 4.x ต้องซื้อ license ⇒ ย้ายงานพิกเซลทั้งหมดไป
+SkiaSharp 3.119.0 ซึ่ง PDFtoImage 5.1.0 ดึงมาอยู่แล้ว (native asset ไม่เพิ่ม) · `dotnet list package --vulnerable --include-transitive` = สะอาด ·
+**(2) ตัวตั้งตัวเดียว** `Helpers/SkiaImageOps` (decode+EXIF upright · grayscale Bt.709 · contrast matrix · resize CatmullRom · ResizeMax · CropToSquare ·
+HasTransparency · encode) — ผู้เรียก 4 จุด: `ImagePreprocessor` · `EmbeddedTesseractOcrService.PreprocessAsync` · `ImageProcessingService` (อัปโหลด+thumb) ·
+`AdminController` (PNG สังเคราะห์ทดสอบ OCR) · โค้ดอ้าง SixLabors เหลือ 0 จุด (เหลือในคอมเมนต์ที่มา) · **(3) สูตรเดิมล็อกด้วย `SkiaImageOpsTests` (21)**:
+luma 0.2126/0.7152/0.0722 · contrast c' = a·c + (1−a)/2 — **SkiaSharp 3.x คอลัมน์ translation ของ color matrix เป็นสเกล 0–1 ไม่ใช่ 0–255** (build แรกใส่ −19.125
+ทุกพิกเซลกลายเป็น 0 — เทสต์จับก่อน merge) · กฎ upscale 3×/2×/ไม่ขยาย · EXIF 2..8 อบลงพิกเซล · ไฟล์ขยะ → คืนของเดิม · **(4) §H ชุดกระดาษจริง 11 ใบ × 2 ผลลัพธ์
+(ocrpre jpeg / tesspre png) เทียบ baseline ImageSharp**: StepsApplied เท่ากัน 22/22 · พิกเซลต่างเฉลี่ย 0.04–0.28 ระดับเทา (p99 ≤ 2) ยกเว้นเส้นขยาย 1500px ของ Tesseract
+(a07d1276: เฉลี่ย 0.84 · p99 14 — kernel CatmullRom vs Bicubic ของ ImageSharp ทั้งคู่ cubic) · Tesseract tha+eng psm6: ความมั่นใจเฉลี่ยต่อคำ 89.96 → 90.35 ·
+โทเคนเงิน 126 → 125 (paper-page3 ocrpre หาย `2.00` ที่เป็นเศษทศนิยมลอย — tesspre ของใบเดียวกันยัง 11/11) · โทเคนเลขภาษี 7 → 7 · 2 ใบที่ข้อความคล้ายกัน < 0.2
+(802a0fc9 = ภาพหน้าจอแอป ไม่ใช่กระดาษ · a07d1276) ตรวจแล้วเป็นความไม่เสถียรของ Tesseract บนพิกเซลที่แทบเท่ากัน (ไฟล์เดิมรันซ้ำ = เท่ากันทุกตัวอักษร · พิกเซลต่าง p99 2) —
+ฝั่งใหม่อ่าน `nextacc.net/pages/dc` ถูกในจุดที่ baseline ได้ขยะ · สรุป: ไม่ถดถอย (และ pipeline จริงให้ Azure DI อ่านก่อนอยู่แล้ว) ·
+**(5) พฤติกรรมที่เปลี่ยนโดยตั้งใจ**: Skia ถอดรหัส TIFF/HEIC ไม่ได้ ⇒ `ImagePreprocessor` คืนไบต์เดิม (Azure DI + Leptonica อ่าน TIFF เองได้) ·
+`PreprocessAsync` โยนแล้วผู้เรียกใช้ไบต์ดิบตามทางเดิม · อัปโหลดรูปผ่าน `ImageProcessingService` ชนิดที่ถอดไม่ได้เก็บดิบตามนามสกุลที่ sniff ได้ (LogWarning) แทนย่อ ·
+PNG ไม่ใช่ BestCompression แล้ว (ใหญ่ขึ้นเล็กน้อย) · JPEG เล็กลง ~10–20% (libjpeg-turbo) · EXIF/IPTC/XMP ถูกตัดโดยปริยาย (Skia ไม่เขียน metadata) ·
+**(6)** `DatabaseMigrationHelper`: ถอด `CREATE UNIQUE INDEX IF NOT EXISTS "IX_LocalModelHealths_FeatureKey"` ที่ล้ม 23505 ทุกบูต (ข้อมูลจริงมีหลาย CompanyId
+ต่อ FeatureKey) ก่อนถึง `DROP INDEX IF EXISTS` ตัวถัดไปอยู่แล้ว — คำสั่งตาย · DROP คงไว้_
