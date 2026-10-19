@@ -1984,7 +1984,7 @@ public class AccountingDbContext : DbContext
         // ===== VendorKnownGoodValue =====
         modelBuilder.Entity<VendorKnownGoodValue>(e =>
         {
-            e.Property(p => p.FieldName).HasMaxLength(50);
+            e.Property(p => p.FieldName).HasMaxLength(VendorKnownGoodValue.FieldNameMaxLength);
             e.Property(p => p.VendorTaxId).HasMaxLength(13);
             e.Property(p => p.Source).HasMaxLength(20);
             e.HasIndex(p => new { p.CompanyId, p.VendorTaxId, p.FieldName });

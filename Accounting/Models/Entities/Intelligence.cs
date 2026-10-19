@@ -791,6 +791,8 @@ public class PortalActivity : TenantEntity
 /// </summary>
 public class VendorKnownGoodValue : TenantEntity
 {
+    /// <summary>ความยาวคอลัมน์ FieldName (ตัวเดียว: โมเดล EF + ด่านความยาวตอนเรียนรู้) — คีย์ "MatchedContactId:" + ชื่อผู้ขายยาวกว่า 50 ได้</summary>
+    public const int FieldNameMaxLength = 300;
     /// <summary>Vendor's TaxId. NULL allowed for vendor-name-only matches.</summary>
     public string? VendorTaxId { get; set; }
     /// <summary>SellerName / SellerTaxId / DocumentNumber / BuyerName / Address / Phone / Email / BranchCode.</summary>

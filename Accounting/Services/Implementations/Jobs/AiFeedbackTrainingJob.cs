@@ -549,6 +549,8 @@ public class AiFeedbackTrainingJob : BackgroundService
         if (rawName.Length < 2) return false;
 
         var fieldName = "MatchedContactId:" + rawName;   // unique-per-OCR-name
+        // ชื่อ OCR ยาวผิดปกติ (ขยะข้ามบรรทัด) เกินคอลัมน์ ⇒ ข้ามแถวนี้แถวเดียว — เดิมล้นแล้วพา SaveChanges ทั้งรอบล้มทุกคืน (2026-10-19)
+        if (fieldName.Length > VendorKnownGoodValue.FieldNameMaxLength) return false;
         var existing = await db.VendorKnownGoodValues.FirstOrDefaultAsync(
             v => v.CompanyId == row.CompanyId
                  && v.VendorTaxId == scan.ExtractedVendorTaxId

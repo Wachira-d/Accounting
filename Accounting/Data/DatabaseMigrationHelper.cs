@@ -9,6 +9,11 @@ namespace Accounting.Data;
 /// </summary>
 public static class DatabaseMigrationHelper
 {
+    /// <summary>ExecuteSqlRaw ส่ง sql เข้า <c>string.Format</c> เสมอ แม้ไม่มีพารามิเตอร์ (EF RawSqlCommandBuilder) ⇒
+    /// regex <c>[0-9]{8}</c> ล้มด้วย FormatException และ <c>'{{company.phone}}'</c> ถูกยุบเหลือ <c>'{company.phone}'</c> เงียบ ๆ
+    /// (ที่มา: log บูตเครื่องเจ้าของ 2026-10-19 — ย้ายข้อมูล 7 คำสั่งไม่เคยรันจริง) · คำสั่ง migration ไม่มีพารามิเตอร์ ⇒ ส่ง literal ทั้งก้อน</summary>
+    internal static string EscapeForExecuteSqlRaw(string sql) => sql.Replace("{", "{{").Replace("}", "}}");
+
     public static void ApplyMissingColumns(AccountingDbContext db, ILogger? logger = null)
     {
         // รอบ 201 ทีม ST (ฝ่ายค้าน ST-X5): รู้ก่อนว่าบูตนี้คือบูตที่สร้าง Payments.SettlementBatchId (backfill ครั้งเดียว) ⇒ log แถวที่มีป้ายแต่ไม่ผ่านหลักฐาน
@@ -18,7 +23,7 @@ public static class DatabaseMigrationHelper
         {
             try
             {
-                db.Database.ExecuteSqlRaw(sql);
+                db.Database.ExecuteSqlRaw(EscapeForExecuteSqlRaw(sql));
             }
             catch (Exception ex)
             {
@@ -2367,7 +2372,7 @@ public static class DatabaseMigrationHelper
             CREATE TABLE IF NOT EXISTS "VendorKnownGoodValues" (
                 "Id" uuid NOT NULL DEFAULT gen_random_uuid(),
                 "VendorTaxId" varchar(13) NULL,
-                "FieldName" varchar(50) NOT NULL,
+                "FieldName" varchar(300) NOT NULL,
                 "Value" text NOT NULL,
                 "Confidence" numeric(5,4) NOT NULL DEFAULT 0,
                 "ConfirmedCount" integer NOT NULL DEFAULT 1,
@@ -2388,6 +2393,9 @@ public static class DatabaseMigrationHelper
             ON "VendorKnownGoodValues" ("CompanyId", "VendorTaxId", "FieldName");
             """,
 
+            // 2026-10-19 (log เครื่องเจ้าของ): ตัวเรียนรู้ VendorCanon เขียน FieldName = "MatchedContactId:" + ชื่อผู้ขาย ⇒ เกิน 50 ตัว
+            // ⇒ SaveChanges ทั้งก้อนของ AiFeedbackTrainingJob ล้มทุกคืน (ไม่มีอะไรถูกเรียนเลย) · ขยายเป็น 300 (varchar ขยายไม่ rewrite ตาราง)
+            """ALTER TABLE "VendorKnownGoodValues" ALTER COLUMN "FieldName" TYPE varchar(300);""",
             // ===== Sites: CMS columns added after initial table creation =====
             """
             ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "CaptchaProvider" varchar(50) NULL;
@@ -3467,7 +3475,7 @@ public static class DatabaseMigrationHelper
         {
             try
             {
-                db.Database.ExecuteSqlRaw(sql);
+                db.Database.ExecuteSqlRaw(EscapeForExecuteSqlRaw(sql));
             }
             catch (Exception ex)
             {
@@ -6495,6 +6503,10 @@ public static class DatabaseMigrationHelper
             """UPDATE "PageBlocks" SET "ConfigJson" = replace(replace(replace("ConfigJson", 'info@example.com', '{{company.email}}'), 'hello@shop.com', '{{company.email}}'), 'reservations@hotel.com', '{{company.email}}') WHERE "ConfigJson" LIKE '%@example.com%' OR "ConfigJson" LIKE '%hello@shop.com%' OR "ConfigJson" LIKE '%reservations@hotel.com%';""",
             """UPDATE "PageBlockTranslations" SET "ConfigJson" = replace(replace(replace("ConfigJson", '02-XXX-XXXX', '{{company.phone}}'), '081-XXX-XXXX', '{{company.phone}}'), '086-XXX-XXXX', '{{company.phone}}') WHERE "ConfigJson" LIKE '%XXX-XXXX%';""",
             """UPDATE "PageBlockTranslations" SET "ConfigJson" = replace("ConfigJson", 'info@example.com', '{{company.email}}') WHERE "ConfigJson" LIKE '%@example.com%';""",
+            // ซ่อมของที่ persist ผิดแล้ว (2026-10-19): สี่คำสั่งข้างบนเคยผ่าน string.Format ของ ExecuteSqlRaw ⇒ ฐานได้ '{company.phone}' (วงเล็บเดี่ยว)
+            // ซึ่ง CmsContentTokens ({{x.y}}) ไม่แทนค่า — หน้าเว็บโชว์ข้อความดิบ · คืนเป็นวงเล็บคู่เฉพาะโทเคน company./site. ที่ไม่มีวงเล็บคู่อยู่แล้ว · idempotent
+            """UPDATE "PageBlocks" SET "ConfigJson" = regexp_replace("ConfigJson", '(?<!\{)\{((company|site)\.[A-Za-z]+)\}(?!\})', '{{\1}}', 'g') WHERE "ConfigJson" ~ '(?<!\{)\{(company|site)\.[A-Za-z]+\}(?!\})';""",
+            """UPDATE "PageBlockTranslations" SET "ConfigJson" = regexp_replace("ConfigJson", '(?<!\{)\{((company|site)\.[A-Za-z]+)\}(?!\})', '{{\1}}', 'g') WHERE "ConfigJson" ~ '(?<!\{)\{(company|site)\.[A-Za-z]+\}(?!\})';""",
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "DocumentBonusQuota" integer NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "DocumentBonusExpiresAt" timestamptz NULL;""",
             """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "QuotaRewardBlocked" boolean NOT NULL DEFAULT false;""",

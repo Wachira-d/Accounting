@@ -534,10 +534,11 @@ const API = {
     } catch (err) {
       // TypeError or specific message strings indicate network failure (varies by browser/IAB)
       const msg = (err && err.message) || '';
-      const isNetworkErr =
+      // error ที่มี status = เซิร์ฟเวอร์ตอบแล้ว (ข้อความอาจมีคำว่า "connection" เช่นฐานข้อมูลเต็ม) — ห้ามป้ายว่า "เชื่อมต่อไม่ได้" (F2-7)
+      const isNetworkErr = !(err && err.status) && (
         err instanceof TypeError ||
         msg === 'Failed to fetch' ||
-        /NetworkError|Network request failed|Load failed|connection|net::|Failed to load/i.test(msg);
+        /NetworkError|Network request failed|Load failed|connection|net::|Failed to load/i.test(msg));
       if (isNetworkErr) {
         const e = new Error(this._t('api.networkError', 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ — กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและลองใหม่'));
         e.cause = err;
