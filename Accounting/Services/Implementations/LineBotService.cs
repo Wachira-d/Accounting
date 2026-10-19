@@ -364,8 +364,10 @@ public class LineBotService : ILineBotService
                     var approved = await _docService.ApproveDocumentAsync(companyId, doc.Id, user.Email,
                         Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passedWarnings: passed);
                     var s65Notice = Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed);
+                    var assetNotice = Accounting.Helpers.LowValueAssetLineCheck.PassedNotice(passed);
                     return $"✅ บันทึกและอนุมัติแล้ว {vendor} {amount.Value:N2} ฿\nเลขที่เอกสาร: {approved.DocumentNumber}"
-                        + (s65Notice != null ? "\nℹ️ " + s65Notice : "");
+                        + (s65Notice != null ? "\nℹ️ " + s65Notice : "")
+                        + (assetNotice != null ? "\nℹ️ " + assetNotice : "");
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -869,7 +871,8 @@ public class LineBotService : ILineBotService
             var s65Notice = Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed);
             return $"✅ อนุมัติแล้ว — {ThaiDocTypeName(doc.DocumentType)} เลขที่ {number}\n"
                 + $"💰 {doc.TotalAmount:N2} ฿ ลงบัญชี + รายงานภาษีให้เรียบร้อย"
-                + (s65Notice != null ? "\nℹ️ " + s65Notice : "");
+                + (s65Notice != null ? "\nℹ️ " + s65Notice : "")
+                + (Accounting.Helpers.LowValueAssetLineCheck.PassedNotice(passed) is { } assetNotice ? "\nℹ️ " + assetNotice : "");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

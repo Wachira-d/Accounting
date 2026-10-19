@@ -117,10 +117,45 @@ const AdminLayout = {
     } else {
       AdminAPI.token = token;
       this.loadPlanNames();
+      this.showTlsBannerIfNeeded();
     }
     this.render(user);
     this._rendered = true;
     return true;
+  },
+
+  /** แถบเตือนใบรับรอง SSL ใกล้หมดอายุ — คู่กับ `Layout._showTlsBannerIfNeeded` (js/layout.js) เพราะพอร์ทัลแอดมินไม่โหลด layout.js
+   *  (ฝ่ายค้าน P2-5: ผู้ดูแลระบบอยู่หน้านี้เป็นหลัก) · ระดับ/ข้อความ/สีมาจากเซิร์ฟเวอร์ (`GET /api/admin/tls-status`) หน้านี้แค่วาด ·
+   *  ใช้ cache + ปุ่มปิดชุดเดียวกับ layout.js · เรียกไม่สำเร็จ = ไม่วาด */
+  async showTlsBannerIfNeeded() {
+    try {
+      if (document.getElementById('tlsBanner')) return;
+      let st = null;
+      try {
+        const cached = JSON.parse(sessionStorage.getItem('tlsStatus') || 'null');
+        if (cached && Date.now() - cached.at < 3600_000) st = cached.data;
+      } catch { /* ignore */ }
+      if (!st) {
+        st = (await AdminAPI.get('/tls-status'))?.data || null;
+        try { sessionStorage.setItem('tlsStatus', JSON.stringify({ at: Date.now(), data: st })); } catch { /* ignore */ }
+      }
+      if (!st || !st.message || st.severity === 'none') return;
+      try { if (sessionStorage.getItem('tlsBannerDismissed') === String(st.level)) return; } catch { /* ignore */ }
+      const palette = { danger: ['#fee2e2', '#991b1b'], warning: ['#fef3c7', '#78350f'], info: ['#eff6ff', '#1e40af'] };
+      const [bg, fg] = palette[st.severity] || palette.info;
+      const banner = document.createElement('div');
+      banner.id = 'tlsBanner';
+      banner.style.cssText = `position:sticky;top:0;left:0;right:0;z-index:9999;background:${bg};color:${fg};padding:10px 16px;font-size:14px;display:flex;align-items:center;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.12)`;
+      banner.innerHTML = `
+        <span style="font-size:18px">🔐</span>
+        <span style="flex:1">${this.esc(st.message)}</span>
+        <button type="button" style="background:transparent;border:none;color:inherit;font-size:20px;cursor:pointer;padding:0 4px" aria-label="ปิด">×</button>`;
+      banner.querySelector('button').addEventListener('click', () => {
+        try { sessionStorage.setItem('tlsBannerDismissed', String(st.level)); } catch { /* ignore */ }
+        banner.remove();
+      });
+      document.body.insertBefore(banner, document.body.firstChild);
+    } catch { /* แถบเตือนเป็นส่วนเสริม — ห้ามทำหน้าพัง */ }
   },
 
   /// เดา id เมนูจาก URL — ใช้เป็นค่าสำรองให้ auto-init ด้านล่าง

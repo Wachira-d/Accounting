@@ -2103,6 +2103,16 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "AppBaseUrl" varchar(500) NULL;
             """,
 
+            // ===== SiteSettings: สถานะใบรับรอง SSL ที่ job ตรวจได้ (2026-10-19 · Helpers/TlsCertificateExpiry) — timestamp (ค่า UTC) ตามคอลัมน์เวลาอื่นของตารางนี้ (legacy timestamp behavior) =====
+            """
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "TlsCertHost" varchar(255) NULL;
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "TlsCertNotAfter" timestamp NULL;
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "TlsCertIssuer" varchar(500) NULL;
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "TlsCertCheckedAt" timestamp NULL;
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "TlsCertCheckError" varchar(500) NULL;
+            ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "TlsCertNotifiedLevel" integer NULL;
+            """,
+
             // ===== Documents: bank account + expense category link =====
             """
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BankAccountId" uuid NULL;

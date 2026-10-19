@@ -65,7 +65,8 @@ public static class ApprovalAcknowledgement
             || WhtCertIssuePlan.IsApprovalWarning(warning) || WhtLineRateWarning.IsApprovalWarning(warning)
             || WhtPaymentSuggestion.IsApprovalWarning(warning)
             || ForeignServiceVat.IsPp36BaseApprovalWarning(warning)
-            || WhtRoyaltyPolicy.IsApprovalWarning(warning);
+            || WhtRoyaltyPolicy.IsApprovalWarning(warning)
+            || LowValueAssetLineCheck.IsApprovalWarning(warning);   // 2026-10-19: ของราคาต่ำบนผังสินทรัพย์ — เตือน ไม่บล็อก
     }
 
     /// <summary>คำเตือนที่ยังไม่มีใครรับทราบตามแหล่ง — ว่าง = อนุมัติต่อได้ · ไม่ว่าง = ต้องหยุด (throw คำเตือนชุดนี้)</summary>
@@ -214,6 +215,7 @@ public static class ApprovalAcknowledgement
                 : WhtCertIssuePlan.IsApprovalWarning(w) || WhtLineRateWarning.IsApprovalWarning(w)
                   || WhtPaymentSuggestion.IsApprovalWarning(w) || WhtRoyaltyPolicy.IsApprovalWarning(w) ? WhtWarningsLegalReference
                 : ForeignServiceVat.IsPp36BaseApprovalWarning(w) ? Pp36WarningsLegalReference
+                : LowValueAssetLineCheck.IsApprovalWarning(w) ? LowValueAssetLineCheck.LegalReference
                 : GeneralWarningsLegalReference;
             if (!refs.Contains(r)) refs.Add(r);
         }

@@ -2623,6 +2623,13 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
      ทะเบียนที่คิดค่าเสื่อมลงบัญชีแล้ว/จำหน่ายแล้ว ⇒ 409 ให้ใช้ "ตัดจำหน่าย" (ทางเข้าเดียวกันจากหน้าเอกสาร "✏️ เปลี่ยนผัง") ·
      กฎเหล็ก #1: ผังใหม่บันทึกเป็นคำตอบของผู้ใช้ (`RecordUserChoiceAsync` Explicit บน `GlAccountAiFeedbackId`) ·
      ย้ายระหว่างผังสินทรัพย์ด้วยกัน (12210→12220) ไม่ลบทะเบียน
+   - **คำเตือนก่อนอนุมัติ `[LOW-VALUE-ASSET]`** (รอบ 2026-10-19 · `Helpers/LowValueAssetLineCheck` ใน `CollectApprovalWarningsAsync`):
+     ชนิดที่ `SupportsAutoRegister` · ต่อกลุ่มผังสินทรัพย์ที่**คิดค่าเสื่อม** (ข้าม 12280 CIP / 12290 ที่ดิน) วางแผนด้วย `AssetRegistrationPlanner.Plan`
+     ตัวเดียวกับตอนขึ้นทะเบียน (ค่าขนส่ง/ติดตั้งเกลี่ยเข้าต้นทุนสินทรัพย์หลัก — ไม่ถูกเตือนเอง) ⇒ ต้นทุนต่อหน่วย (×อัตราแลกเปลี่ยน) < เกณฑ์ขึ้นทะเบียน
+     (`FixedAssetDetector.DefaultCapitalizationThreshold` 5,000 — ตัวเดียวกับที่สแกนใช้) ⇒ เตือนให้เปลี่ยนผังเป็นค่าใช้จ่ายก่อนอนุมัติ ·
+     **เตือน ไม่บล็อก** (บางกิจการขึ้นทะเบียนของใช้ทนราคาต่ำจริง) · ทางเข้าไม่มีคน (ใบประจำ/API) ผ่านได้ (`ApprovalAcknowledgement.PassesWithoutPerson`)
+     แล้วบอกคนหลังอนุมัติผ่าน `LowValueAssetLineCheck.PassedNotice` (OCR `[APPROVE-ASSET-NOTE]` · LINE ตอบในแชท · รายการประจำแจ้งผู้ตั้ง) ·
+     ร่องรอยอ้าง `TFRS-NPAEs-10` · ครอบทุกที่มาของผัง (คน/OCR/ประวัติผู้ขาย/AI/นำเข้า) เพราะทุกใบต้องผ่านจุดนี้
    - **Void cascade** (`VoidDocumentAsync` step 7-asset): asset ของ doc ที่
      `NeedsReview=true` + ไม่มี posted dep → ลบ inline (ไม่เรียก DeleteAsync
      เพราะ source.Status ยังไม่ save), asset ที่ยืนยันแล้ว → log warning

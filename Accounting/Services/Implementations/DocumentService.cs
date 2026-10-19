@@ -21073,6 +21073,26 @@ public partial class DocumentService : IDocumentService
         else if (daysPast < -30)
             warnings.Add($"วันที่เอกสาร ({doc.DocumentDate:yyyy-MM-dd}) ล่วงหน้าเกิน 30 วัน — โดยปกติออกเอกสารวันจริงเท่านั้น");
 
+        // 2026-10-19 (ผู้ใช้รายงาน PV-20260903-0001): ของราคาต่ำลงผังสินทรัพย์ ⇒ อนุมัติแล้วขึ้นทะเบียน+คิดค่าเสื่อมของที่ไม่ใช่สินทรัพย์ ·
+        // ผังมาได้หลายทาง (คน/OCR/ประวัติ/AI/นำเข้า) ⇒ เตือนที่จุดเดียวที่ทุกใบผ่าน · ตัวตัดสินเดียว Helpers/LowValueAssetLineCheck
+        if (FixedAssetService.SupportsAutoRegister(doc.DocumentType) && doc.Lines != null)
+        {
+            var ppeAccIds = doc.Lines.Where(l => !l.IsDeleted && l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
+            if (ppeAccIds.Count > 0)
+            {
+                var accById = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && ppeAccIds.Contains(a.Id))
+                    .ToDictionaryAsync(a => a.Id, a => new { a.AccountCode, a.AccountName });
+                var fx = doc.ExchangeRate > 0m ? doc.ExchangeRate : 1m;   // เกณฑ์เป็นบาท
+                warnings.AddRange(Accounting.Helpers.LowValueAssetLineCheck.Warnings(doc.Lines
+                    .Where(l => !l.IsDeleted && l.AccountId.HasValue && accById.ContainsKey(l.AccountId.Value))
+                    .OrderBy(l => l.LineOrder)
+                    .Select(l => new Accounting.Helpers.LowValueAssetLineCheck.Line(l.Id, accById[l.AccountId!.Value].AccountCode,
+                        accById[l.AccountId!.Value].AccountName, l.Description, l.Quantity, l.Amount * fx))
+                    .ToList()));
+            }
+        }
+
         // C-01 (ทีมตรวจงานค้าง 2026-10-08): ชั้นสุดท้ายของ "รายได้รวมของใบเสนอราคาเกินยอด" — ครอบทุกทางเข้า (แปลง · ผูก · สร้างมือ/API ที่อ้างต้นทาง ·
         // แก้ราคาหลังแปลง · แปลงพร้อมกันสองแท็บ) · เตือน ไม่บล็อก (ข้อ 138) · ตัวนับเดียว LoadRootRevenueAsync
         if (doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.Receipt or DocumentType.ReceiptVoucher

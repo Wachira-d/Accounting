@@ -277,6 +277,40 @@ public class AdminController : ControllerBase
         }));
     }
 
+    /// <summary>สถานะใบรับรอง SSL ของโดเมนแพลตฟอร์มที่ <c>TlsCertificateMonitorJob</c> ตรวจได้ล่าสุด — แถบเตือนบนหน้าเว็บของ
+    /// ผู้ดูแลระบบอ่านจากที่นี่ (เซิร์ฟเวอร์ตัดสินระดับ + ข้อความ · หน้าเว็บแค่แสดง) · ตัวตัดสิน <c>Helpers/TlsCertificateExpiry</c></summary>
+    [HttpGet("tls-status")]
+    public async Task<ActionResult<ApiResponse<object>>> GetTlsStatus()
+    {
+        var s = await _db.SiteSettings.AsNoTracking()
+            .Select(x => new { x.TlsCertHost, x.TlsCertNotAfter, x.TlsCertIssuer, x.TlsCertCheckedAt, x.TlsCertCheckError })
+            .FirstOrDefaultAsync();
+        var now = DateTime.UtcNow;
+        var level = Accounting.Helpers.TlsCertificateExpiry.LevelFor(s?.TlsCertNotAfter, now);
+        var message = Accounting.Helpers.TlsCertificateExpiry.Message(level, s?.TlsCertNotAfter, now, s?.TlsCertHost, s?.TlsCertCheckError, s?.TlsCertIssuer);
+        // ผลตรวจค้าง = job ไม่ได้รัน ⇒ ตัวเลขวันอาจไม่จริงแล้ว — บอก (ไม่รู้ ≠ ปกติ)
+        var stale = Accounting.Helpers.TlsCertificateExpiry.IsStale(s?.TlsCertCheckedAt, now);
+        if (stale)
+            message = (message != null ? message + " · " : "") + Accounting.Helpers.TlsCertificateExpiry.StaleNote(s!.TlsCertCheckedAt!.Value);
+        // ฝ่ายค้าน P2-4: เตือนอยู่แต่อีเมลไม่ได้ตั้ง ⇒ บอกบนแถบ (ตอน cert หมดจริง แถบนี้ไม่มีใครเห็น)
+        var emailConfigured = await _email.IsSystemEmailConfiguredAsync();
+        if (message != null && !emailConfigured)
+            message += " · " + Accounting.Helpers.TlsCertificateExpiry.EmailNotConfiguredNote;
+        return Ok(new ApiResponse<object>(true, new
+        {
+            level = level.ToString(),
+            severity = Accounting.Helpers.TlsCertificateExpiry.Severity(level, s?.TlsCertCheckError != null || stale),
+            message,
+            emailConfigured,
+            host = s?.TlsCertHost,
+            notAfter = s?.TlsCertNotAfter,
+            daysLeft = s?.TlsCertNotAfter is DateTime na ? Accounting.Helpers.TlsCertificateExpiry.DaysLeft(na, now) : (int?)null,
+            issuer = s?.TlsCertIssuer,
+            checkedAt = s?.TlsCertCheckedAt,
+            checkError = s?.TlsCertCheckError,
+        }));
+    }
+
     /// <summary>WP-E2: บริษัทที่ใช้งานใกล้เต็ม limit (>85%) — โอกาส upsell +
     /// เตือนก่อนโดนบล็อก. อ่านจาก CurrentMonth* counters (ไม่ query หนัก).</summary>
     [HttpGet("usage-alerts")]

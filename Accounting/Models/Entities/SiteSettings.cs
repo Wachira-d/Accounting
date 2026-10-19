@@ -112,6 +112,16 @@ public class SiteSettings : BaseEntity
     // Application base URL — used to build invitation/reset links in system emails
     public string? AppBaseUrl { get; set; }
 
+    // ===== ใบรับรอง SSL ของโดเมนแพลตฟอร์ม (2026-10-19) — สถานะที่ TlsCertificateMonitorJob ตรวจได้ล่าสุด (ไม่ใช่ค่าตั้ง) =====
+    // ผู้อ่าน: GET /api/admin/tls-status (แถบเตือนบนหน้าเว็บของผู้ดูแลระบบ) · ตัวตัดสินระดับ Helpers/TlsCertificateExpiry
+    public string? TlsCertHost { get; set; }
+    public DateTime? TlsCertNotAfter { get; set; }
+    public string? TlsCertIssuer { get; set; }
+    public DateTime? TlsCertCheckedAt { get; set; }
+    public string? TlsCertCheckError { get; set; }
+    /// <summary>ระดับ (<see cref="Accounting.Helpers.TlsCertificateExpiry.Level"/>) ที่แจ้งเตือน/อีเมลไปแล้วล่าสุด — กันแจ้งซ้ำทุกวัน · ต่ออายุแล้วล้าง</summary>
+    public int? TlsCertNotifiedLevel { get; set; }
+
     // ===== Azure Document Intelligence (System-wide) =====
     public string? AzureDiEndpoint { get; set; }
     public string? AzureDiApiKey { get; set; }

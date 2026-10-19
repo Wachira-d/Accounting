@@ -719,6 +719,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.UndueInputVatEx
 builder.Services.AddHostedService<Accounting.Services.Background.OcrStuckScanSweepJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
+// 2026-10-19: ตรวจวันหมดอายุใบรับรอง SSL ของโดเมนแพลตฟอร์ม วันละครั้ง — เตือนผู้ดูแลระบบล่วงหน้า 30/14/7/1 วัน (หน้าเว็บ + อีเมล)
+builder.Services.AddHostedService<Accounting.Services.Background.TlsCertificateMonitorJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();
 // ค่าเหมารายเดือนของ add-on — ตัวที่ทำให้ FlatMonthly เก็บเงินได้จริง
 // (เดิม ComputeCharge คืน 0 โดยอ้าง "รอบบิล" ที่ไม่เคยมี — LODGING_LICENSING_PLAN §6)

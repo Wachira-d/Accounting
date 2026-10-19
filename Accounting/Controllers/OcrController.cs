@@ -454,6 +454,8 @@ public class OcrController : ControllerBase
                     var s65Notice = Helpers.Section65TerApprovalWarnings.PassedNotice(passed);
                     if (s65Notice != null)
                         approveNote = "\n[APPROVE-S65-NOTE] " + s65Notice;
+                    if (Helpers.LowValueAssetLineCheck.PassedNotice(passed) is { } lowValueNotice)
+                        approveNote += "\n[APPROVE-ASSET-NOTE] " + lowValueNotice;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

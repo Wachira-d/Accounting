@@ -497,7 +497,47 @@ const Layout = {
     this._enforcePageAccess();
     // Show banner if user has a legacy weak password
     this._showPasswordWeakBannerIfNeeded();
+    // แถบเตือนใบรับรอง SSL ใกล้หมด — เฉพาะผู้ดูแลระบบ (ไม่ await: ห้ามหน่วงการโหลดหน้า)
+    this._showTlsBannerIfNeeded();
     return true;
+  },
+
+  /** แถบเตือนใบรับรอง SSL ของโดเมนระบบใกล้หมดอายุ — เฉพาะผู้ดูแลระบบ
+   *
+   *  ระดับ ข้อความ และสีมาจากเซิร์ฟเวอร์ทั้งหมด (`GET /api/admin/tls-status` · ตัวตัดสิน Helpers/TlsCertificateExpiry)
+   *  หน้านี้แค่วาด · ถามเซิร์ฟเวอร์อย่างมากชั่วโมงละครั้งต่อแท็บ (sessionStorage) · ปิดได้รายระดับ
+   *  เรียกไม่สำเร็จ/ไม่มีข้อความ = ไม่วาด (เงียบ ไม่ใช่ "ปกติดี") */
+  async _showTlsBannerIfNeeded() {
+    try {
+      if (!this.myPermissions) { try { await this.loadMyPermissions(); } catch { return; } }
+      if (this.myPermissions?.isSystemAdmin !== true || document.getElementById('tlsBanner')) return;
+      let st = null;
+      try {
+        const cached = JSON.parse(sessionStorage.getItem('tlsStatus') || 'null');
+        if (cached && Date.now() - cached.at < 3600_000) st = cached.data;
+      } catch { /* ignore */ }
+      if (!st) {
+        const res = await API.get('/api/admin/tls-status');
+        st = res?.data || null;
+        try { sessionStorage.setItem('tlsStatus', JSON.stringify({ at: Date.now(), data: st })); } catch { /* ignore */ }
+      }
+      if (!st || !st.message || st.severity === 'none') return;
+      if (sessionStorage.getItem('tlsBannerDismissed') === String(st.level)) return;
+      const palette = { danger: ['#fee2e2', '#991b1b'], warning: ['#fef3c7', '#78350f'], info: ['#eff6ff', '#1e40af'] };
+      const [bg, fg] = palette[st.severity] || palette.info;
+      const banner = document.createElement('div');
+      banner.id = 'tlsBanner';
+      banner.style.cssText = `position:sticky;top:0;left:0;right:0;z-index:9999;background:${bg};color:${fg};padding:10px 16px;font-size:14px;display:flex;align-items:center;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.12)`;
+      banner.innerHTML = `
+        <span style="font-size:18px">🔐</span>
+        <span style="flex:1">${this.esc(st.message)}</span>
+        <button onclick="Layout._dismissTlsBanner('${this.esc(String(st.level))}')" style="background:transparent;border:none;color:inherit;font-size:20px;cursor:pointer;padding:0 4px" aria-label="ปิด">×</button>`;
+      document.body.insertBefore(banner, document.body.firstChild);
+    } catch { /* แถบเตือนเป็นส่วนเสริม — ห้ามทำหน้าพัง */ }
+  },
+  _dismissTlsBanner(level) {
+    try { sessionStorage.setItem('tlsBannerDismissed', String(level)); } catch { /* ignore */ }
+    document.getElementById('tlsBanner')?.remove();
   },
 
   _showPasswordWeakBannerIfNeeded() {

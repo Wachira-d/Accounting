@@ -743,13 +743,17 @@ public class RecurringTransactionService : IRecurringTransactionService
                         var approvedDoc = await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
                             Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passed);
                         approved = true;
-                        if (Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed) is { } notice && _notify != null)
+                        // + ของราคาต่ำที่ขึ้นทะเบียนสินทรัพย์ (LowValueAssetLineCheck · ฝ่ายค้าน P2-2) — ช่องเดียวกัน
+                        var noticeParts = new[] {
+                            Accounting.Helpers.Section65TerApprovalWarnings.PassedNotice(passed),
+                            Accounting.Helpers.LowValueAssetLineCheck.PassedNotice(passed) }.Where(n => n != null).ToList();
+                        if (noticeParts.Count > 0 && string.Join("\n", noticeParts) is { } notice && _notify != null)
                         {
                             try
                             {
                                 await _notify.DispatchAsync(recurring.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringApprovedWithNotes, new NotificationContext
                                 {
-                                    Title = $"รายการประจำอนุมัติ {approvedDoc.DocumentNumber} พร้อมข้อสังเกต §65 ตรี",   // เลขจริงหลังอนุมัติ (ไม่ใช่ DRAFT-…)
+                                    Title = $"รายการประจำอนุมัติ {approvedDoc.DocumentNumber} พร้อมข้อสังเกต",   // เลขจริงหลังอนุมัติ (ไม่ใช่ DRAFT-…)
                                     Message = notice,
                                     ActionUrl = "/pages/documents.html#doc=" + result.Id,
                                     EntityType = "Document",
@@ -760,7 +764,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                             catch (Exception nex) when (nex is not OperationCanceledException)
                             {
                                 // การแจ้งเตือนล้มไม่ย้อนการอนุมัติ — ข้อสังเกตอยู่บนเอกสาร (หมายเหตุ + audit) แล้ว · ลง log ให้ผู้ดูแลเห็น
-                                _logger.LogWarning(nex, "Recurring {Id}: §65 notice dispatch failed for {Doc}", recurring.Id, result.Id);
+                                _logger.LogWarning(nex, "Recurring {Id}: approval notice dispatch failed for {Doc}", recurring.Id, result.Id);
                             }
                         }
                     }

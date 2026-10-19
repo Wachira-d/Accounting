@@ -8918,6 +8918,23 @@ REVIEWER_CASES += [
 _RULE_KEYS ={"file", "method", "why", "must", "must_re", "must_lit", "before", "forbid", "forbid_lit", "call_args"}
 
 
+# 2026-10-19 — ทะเบียนสินทรัพย์ที่ระบบตัดสินผิด (PV-20260903-0001 อุปกรณ์สำนักงาน 138.32 ลง 12210):
+# ด่านลบต้องอ่าน GL ของทั้งใบผ่านตัวคำนวณเดียว · ย้ายผังออกจากสินทรัพย์ต้องเอาทะเบียนออกด้วย · ของราคาต่ำบนผังสินทรัพย์ต้องเตือนก่อนอนุมัติ
+RULES += [
+    dict(file="Services/Implementations/FixedAssetService.cs", method="DeleteAsync",
+         must=["UnbackedAssetAmountForDocumentAsync(_db, companyId, sourceDoc.Id, new[] { asset.Id })"],
+         forbid=["ที่ยังใช้งานอยู่ "],
+         why="ด่านลบตัดสินจาก GL ทั้งใบ (Posted+Reversed · ทุกผังสินทรัพย์) ไม่ใช่สถานะใบ — เดิมของที่ไม่ใช่สินทรัพย์บน PV ที่จ่ายแล้วลบไม่ได้เลย"),
+    dict(file=DOC, method="ReclassifyLineAccountAsync",
+         must=["AssetRemovalGlCheck.MovesOffAssetAccount(oldAccount.AccountCode, newAccount.AccountCode)",
+               "await RemoveLeavingAssetsAsync();", "await RecordReclassifyChoiceAsync();"],
+         why="ย้ายบรรทัดออกจากผังสินทรัพย์ ⇒ เอาทะเบียนออกในธุรกรรมเดียวกัน (ทั้งทาง JE และทางลัดยอด 0) + บันทึกคำตอบผู้ใช้ให้นักเรียน"),
+    dict(file=DOC, method="CollectApprovalWarningsAsync",
+         must=["LowValueAssetLineCheck.Warnings("],
+         why="ของราคาต่ำกว่าเกณฑ์ขึ้นทะเบียนบนผังสินทรัพย์ ⇒ เตือนก่อนอนุมัติ (จุดเดียวที่ทุกทางเข้าผ่าน)"),
+]
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
