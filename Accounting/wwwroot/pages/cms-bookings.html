@@ -18,6 +18,7 @@
     .status-Completed   { background:#d1fae5;color:#065f46 }
     .status-Cancelled   { background:#fee2e2;color:#991b1b }
     .status-NoShow      { background:#fde68a;color:#78350f }
+    .status-Waitlisted  { background:#f3e8ff;color:#6b21a8 }
   </style>
 </head>
 <body>
@@ -51,6 +52,7 @@
         <option value="Completed">เสร็จสิ้น</option>
         <option value="Cancelled">ยกเลิก</option>
         <option value="NoShow">ไม่มา (No-show)</option>
+        <option value="Waitlisted">คิวสำรอง</option>
       </select>
       <input type="date" class="form-input" id="dateFilter" onchange="Page.load()">
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่จองหรือชื่อลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
@@ -94,7 +96,9 @@
       'InProgress': [['Completed','✓ เสร็จสิ้น','btn-primary']],
       'Completed':  [],
       'Cancelled':  [],
-      'NoShow':     []
+      'NoShow':     [],
+      // คิวสำรอง: ระบบเลื่อนขึ้นเองเมื่อมีคนยกเลิก · ยืนยันนอกคิว = แอดมินรับเองแม้รอบเต็ม
+      'Waitlisted': [['Confirmed','ยืนยันนอกคิว (รับเกิน)','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']]
     };
 
     const Page = {
@@ -141,13 +145,13 @@
           const [pend, conf, td, done] = await Promise.all([
             api.cmsListBookings(this.siteId, '?status=Pending&pageSize=1'),
             api.cmsListBookings(this.siteId, '?status=Confirmed&pageSize=1'),
-            api.cmsListBookings(this.siteId, `?date=${today}&pageSize=1`),
-            api.cmsListBookings(this.siteId, '?status=Completed&pageSize=1')
+            api.cmsListBookings(this.siteId, `?fromDate=${today}&toDate=${today}&pageSize=1`),
+            api.cmsListBookings(this.siteId, `?status=Completed&fromDate=${today.slice(0, 8)}01&pageSize=1`)
           ]);
-          document.getElementById('statPending').textContent = pend?.data?.totalItems ?? '0';
-          document.getElementById('statConfirmed').textContent = conf?.data?.totalItems ?? '0';
-          document.getElementById('statToday').textContent = td?.data?.totalItems ?? '0';
-          document.getElementById('statCompleted').textContent = done?.data?.totalItems ?? '0';
+          document.getElementById('statPending').textContent = pend?.data?.totalCount ?? '0';
+          document.getElementById('statConfirmed').textContent = conf?.data?.totalCount ?? '0';
+          document.getElementById('statToday').textContent = td?.data?.totalCount ?? '0';
+          document.getElementById('statCompleted').textContent = done?.data?.totalCount ?? '0';
         } catch (e) { /* non-fatal */ }
       },
       async load() {
@@ -158,7 +162,8 @@
         const search = document.getElementById('searchInput').value;
         let q = `?pageSize=50`;
         if (status) q += `&status=${encodeURIComponent(status)}`;
-        if (date) q += `&date=${encodeURIComponent(date)}`;
+        // server รับ fromDate/toDate (ไม่มี date) — เดิมส่ง date/search ที่ server ไม่รู้จัก ⇒ ตัวกรองไม่มีผลเงียบ ๆ
+        if (date) q += `&fromDate=${encodeURIComponent(date)}&toDate=${encodeURIComponent(date)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
           const res = await api.cmsListBookings(this.siteId, q);
@@ -172,11 +177,11 @@
             <tr class="booking-row" onclick="Page.viewBooking('${b.id}')">
               <td class="font-medium">${Layout.esc(b.bookingNumber||b.id.substring(0,8))}</td>
               <td>${Layout.esc(b.customerName||'(ไม่ระบุ)')}</td>
-              <td>${Layout.esc(b.serviceName||'-')}</td>
+              <td>${Layout.esc(b.serviceName||'-')}${b.resourceName ? `<div style="font-size:11px;color:var(--gray-500)">👤 ${Layout.esc(b.resourceName)}</div>` : ''}</td>
               <td>${Layout.date(b.bookingDate)}</td>
-              <td><strong>${Layout.esc(b.startTime||'')}</strong></td>
+              <td><strong>${Layout.esc(b.startTime||'')}</strong>${b.endTime ? '–' + Layout.esc(b.endTime) : ''}${(b.guestCount||1) > 1 ? ` · ${b.guestCount} คน` : ''}</td>
               <td class="text-right">฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
-              <td><span class="status-pill status-${b.status}">${STATUS_LABEL[b.status]||b.status}</span></td>
+              <td><span class="status-pill status-${b.status}">${STATUS_LABEL[b.status]||b.status}${b.waitlistPosition ? ' #' + b.waitlistPosition : ''}</span></td>
             </tr>`).join('');
         } catch (e) { Layout.toast('โหลดการจองไม่สำเร็จ: ' + e.message, 'error'); }
       },
@@ -205,7 +210,9 @@
             <div style="background:var(--gray-50);padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
               <div style="font-weight:600;margin-bottom:6px">📅 ${Layout.date(b.bookingDate)} เวลา <strong>${Layout.esc(b.startTime)}</strong> — ${Layout.esc(b.endTime||'?')}</div>
               <div>บริการ: <strong>${Layout.esc(b.serviceName)}</strong> · ${b.durationMinutes||0} นาที</div>
-              <div>จำนวนคน: ${b.guestCount||1}</div>
+              ${b.resourceName ? `<div>ผู้ให้บริการ: <strong>${Layout.esc(b.resourceName)}</strong></div>` : ''}
+              ${b.waitlistPosition ? `<div style="color:#6b21a8">คิวสำรองลำดับที่ ${b.waitlistPosition} — ระบบเลื่อนขึ้นเองเมื่อมีที่ว่าง</div>` : ''}
+              <div>จำนวนคน: ${b.guestCount||1}${(b.units||1) > 1 ? ` · ${b.units} ช่วงติดกัน` : ''}</div>
             </div>
             <div style="background:var(--gray-50);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
               <div style="display:flex;justify-content:space-between"><span>ค่าบริการรวม</span><span>฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
@@ -222,8 +229,11 @@
         const api = Layout.api(); if (!api) return;
         const note = nextStatus === 'Cancelled' ? prompt('เหตุผลที่ยกเลิก (ถ้ามี)') : null;
         try {
-          await api.cmsUpdateBookingStatus(this.siteId, id, { status: nextStatus, internalNotes: note });
-          Layout.toast('อัปเดตสถานะเรียบร้อย');
+          const res = await api.cmsUpdateBookingStatus(this.siteId, id, { status: nextStatus, internalNotes: note });
+          // ข้อความจาก server (ขั้น ERP · เลื่อนคิวสำรองขึ้น) — แสดงตามจริง
+          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
+          if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          else Layout.toast('อัปเดตสถานะเรียบร้อย');
           Layout.closeModal('bkModal');
           await this.load();
           await this.loadStats();

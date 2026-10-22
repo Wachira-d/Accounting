@@ -27,22 +27,12 @@ public class CmsBookingService : ICmsBookingService
 
     public async Task<BookingServiceResponse> CreateServiceAsync(Guid companyId, Guid siteId, CreateBookingServiceRequest request, string userId)
     {
-        var slug = !string.IsNullOrWhiteSpace(request.Slug) ? request.Slug : GenerateSlug(request.Name);
-
-        var svc = new SiteBookingService
-        {
-            CompanyId = companyId, SiteId = siteId, Name = request.Name, NameEn = request.NameEn,
-            Description = request.Description, ImageUrl = request.ImageUrl, Slug = slug,
-            DurationMinutes = request.DurationMinutes, BufferMinutes = request.BufferMinutes,
-            MaxCapacity = request.MaxCapacity, MaxAdvanceBookingDays = request.MaxAdvanceBookingDays,
-            MinAdvanceBookingHours = request.MinAdvanceBookingHours,
-            Price = request.Price, DepositAmount = request.DepositAmount, DepositPercent = request.DepositPercent,
-            BookingType = request.BookingType, ProductId = request.ProductId,
-            Category = request.Category, AutoConfirm = request.AutoConfirm,
-            FreeCancellationHours = request.FreeCancellationHours,
-            CancellationFeePercent = request.CancellationFeePercent,
-            CreatedBy = userId
-        };
+        await EnsureSiteAsync(companyId, siteId);
+        var svc = new SiteBookingService { CompanyId = companyId, SiteId = siteId, CreatedBy = userId };
+        ApplySettings(svc, request);
+        svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, null);
+        if (request.Schedule != null)
+            foreach (var row in BuildSlotRows(companyId, svc, request.Schedule, userId)) svc.Slots.Add(row);
         _db.SiteBookingServices.Add(svc);
         await _db.SaveChangesAsync();
 
@@ -51,50 +41,170 @@ public class CmsBookingService : ICmsBookingService
 
     public async Task<BookingServiceResponse> UpdateServiceAsync(Guid companyId, Guid siteId, Guid serviceId, UpdateBookingServiceRequest request, string userId)
     {
-        var svc = await _db.SiteBookingServices.FirstOrDefaultAsync(s => s.Id == serviceId && s.SiteId == siteId && s.CompanyId == companyId)
+        var svc = await _db.SiteBookingServices.Include(s => s.Slots)
+            .FirstOrDefaultAsync(s => s.Id == serviceId && s.SiteId == siteId && s.CompanyId == companyId && !s.IsDeleted)
             ?? throw new KeyNotFoundException("Booking service not found.");
 
-        svc.Name = request.Name; svc.NameEn = request.NameEn;
-        svc.Description = request.Description; svc.ImageUrl = request.ImageUrl;
-        if (request.Slug != null) svc.Slug = request.Slug;
-        svc.DurationMinutes = request.DurationMinutes; svc.BufferMinutes = request.BufferMinutes;
-        svc.MaxCapacity = request.MaxCapacity;
-        svc.MaxAdvanceBookingDays = request.MaxAdvanceBookingDays;
-        svc.MinAdvanceBookingHours = request.MinAdvanceBookingHours;
-        svc.Price = request.Price; svc.DepositAmount = request.DepositAmount;
-        svc.DepositPercent = request.DepositPercent;
-        svc.BookingType = request.BookingType; svc.ProductId = request.ProductId;
-        svc.Category = request.Category; svc.AutoConfirm = request.AutoConfirm;
-        svc.FreeCancellationHours = request.FreeCancellationHours;
-        svc.CancellationFeePercent = request.CancellationFeePercent;
+        var oldSlug = svc.Slug;
+        ApplySettings(svc, request);
+        if (svc.Slug != oldSlug) svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, svc.Id);
         if (request.IsActive.HasValue) svc.IsActive = request.IsActive.Value;
+        // ตารางเวลา: null = ผู้เรียก API เดิมที่ไม่รู้จักฟิลด์นี้ ⇒ ไม่แตะ · ส่งมา = แทนที่ทั้งชุด (การจองเดิมไม่ถูกแตะ — แถวเวลาไม่ใช่ FK ของการจอง)
+        if (request.Schedule != null)
+        {
+            var rows = BuildSlotRows(companyId, svc, request.Schedule, userId);
+            _db.SiteBookingSlots.RemoveRange(svc.Slots.Where(x => x.CompanyId == companyId).ToList());
+            _db.SiteBookingSlots.AddRange(rows);
+        }
         svc.UpdatedBy = userId;
 
         await _db.SaveChangesAsync();
         return await GetServiceAsync(companyId, siteId, serviceId) ?? throw new InvalidOperationException("Failed.");
     }
 
+    /// <summary>คำขอ → ค่าตั้งของบริการ (สร้าง/แก้ไข/seed ใช้ตัวเดียว) · ตรวจด้วย <see cref="BookingSlotEngine.ValidateRules"/> — ผิด = โยนข้อความไทย</summary>
+    public static void ApplySettings(SiteBookingService svc, CreateBookingServiceRequest r)
+    {
+        var errs = new List<string>();
+        if (r.Name.Trim().Length == 0) errs.Add("กรุณากรอกชื่อบริการ");
+        if (r.Price < 0) errs.Add("ราคาต้องไม่ติดลบ");
+        if (r.DepositAmount is < 0m) errs.Add("มัดจำต้องไม่ติดลบ");
+        if (r.DepositPercent is < 0m or > 100m) errs.Add("มัดจำ (%) ต้องอยู่ระหว่าง 0–100");
+        if (r.CancellationFeePercent is < 0m or > 100m) errs.Add("ค่าธรรมเนียมยกเลิก (%) ต้องอยู่ระหว่าง 0–100");
+        if (r.FreeCancellationHours is < 0) errs.Add("ชั่วโมงยกเลิกฟรีต้องไม่ติดลบ");
+        if (!string.IsNullOrWhiteSpace(r.HalfDaySplitTime) && BookingSlotEngine.ParseTime(r.HalfDaySplitTime) == null)
+            errs.Add("เวลาแบ่งเช้า/บ่ายต้องเป็นรูปแบบ HH:mm");
+
+        svc.Name = r.Name.Trim(); svc.NameEn = r.NameEn;
+        svc.Description = r.Description; svc.ImageUrl = string.IsNullOrWhiteSpace(r.ImageUrl) ? null : r.ImageUrl.Trim();
+        if (!string.IsNullOrWhiteSpace(r.Slug)) svc.Slug = r.Slug.Trim();
+        else if (string.IsNullOrWhiteSpace(svc.Slug)) svc.Slug = GenerateSlug(string.IsNullOrWhiteSpace(r.NameEn) ? svc.Name : r.NameEn);
+        if (string.IsNullOrWhiteSpace(svc.Slug)) svc.Slug = "service-" + svc.Id.ToString("N")[..8];
+        svc.DurationMinutes = r.DurationMinutes; svc.BufferMinutes = r.BufferMinutes;
+        svc.BufferBeforeMinutes = r.BufferBeforeMinutes;
+        svc.MaxCapacity = r.MaxCapacity; svc.CapacityUnit = r.CapacityUnit;
+        svc.MaxAdvanceBookingDays = r.MaxAdvanceBookingDays;
+        svc.MinAdvanceBookingHours = r.MinAdvanceBookingHours;
+        svc.SlotMode = r.SlotMode;
+        svc.SlotIntervalMinutes = r.SlotMode == BookingSlotMode.Interval ? r.SlotIntervalMinutes : null;
+        svc.MaxUnitsPerBooking = r.SlotMode == BookingSlotMode.Interval ? Math.Max(1, r.MaxUnitsPerBooking) : 1;
+        svc.HalfDaySplitTime = r.SlotMode == BookingSlotMode.HalfDay && BookingSlotEngine.ParseTime(r.HalfDaySplitTime) is TimeOnly split
+            ? split.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture) : null;
+        svc.CapacityGroup = string.IsNullOrWhiteSpace(r.CapacityGroup) ? null : r.CapacityGroup.Trim();
+        svc.Price = r.Price; svc.DepositAmount = r.DepositAmount;
+        svc.DepositPercent = r.DepositPercent;
+        svc.BookingType = r.BookingType; svc.ProductId = r.ProductId;
+        svc.Category = r.Category; svc.AutoConfirm = r.AutoConfirm;
+        svc.FreeCancellationHours = r.FreeCancellationHours;
+        svc.CancellationFeePercent = r.CancellationFeePercent;
+        svc.EnforceSlotCapacity = r.EnforceSlotCapacity;
+        svc.OverlapLimit = r.EnforceSlotCapacity ? null : r.OverlapLimit;
+        svc.WaitlistEnabled = r.WaitlistEnabled;
+        svc.ResourceMode = r.ResourceMode;
+        svc.UseSiteDefaults = r.UseSiteDefaults;
+
+        errs.AddRange(BookingSlotEngine.ValidateRules(BookingSlotEngine.RulesOf(svc)));
+        if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), "CMS-BOOKING-SETTINGS");
+    }
+
+    /// <summary>ตารางเวลา (DTO) → แถวกลาง (รายสัปดาห์/รายวันที่) — เวลาผิดรูป/เริ่มไม่ก่อนจบ = โยนข้อความไทย (ไม่ทิ้งเงียบ) ·
+    /// ใช้ทั้งเวลาทำการของบริการและตารางงานรายบุคคลของผู้ให้บริการ (<paramref name="what"/> = คำในข้อความ)</summary>
+    private static List<BookingScheduleRow> ParseSchedule(BookingScheduleDto schedule, int defaultCapacity, string what)
+    {
+        var errs = new List<string>();
+        var rows = new List<BookingScheduleRow>();
+        TimeOnly? T(string? v, string where)
+        {
+            var t = BookingSlotEngine.ParseTime(v);
+            if (t == null) errs.Add($"{where}: เวลา \"{v}\" ต้องเป็นรูปแบบ HH:mm");
+            return t;
+        }
+        foreach (var w in schedule.Weekly ?? new())
+        {
+            var ws = T(w.Start, what); var we = T(w.End, what);
+            if (ws == null || we == null) continue;
+            rows.Add(new BookingScheduleRow(w.DayOfWeek, null, ws.Value, we.Value, w.IsBlocked, Math.Max(1, w.Capacity ?? defaultCapacity)));
+        }
+        foreach (var x in schedule.Exceptions ?? new())
+        {
+            if (!DateOnly.TryParseExact(x.Date, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var d))
+            { errs.Add($"วันพิเศษ: วันที่ \"{x.Date}\" ต้องเป็นรูปแบบ yyyy-MM-dd"); continue; }
+            TimeOnly xs, xe;
+            if (string.IsNullOrWhiteSpace(x.Start) && string.IsNullOrWhiteSpace(x.End))
+            {
+                if (!x.Closed) { errs.Add($"วันพิเศษ {x.Date}: เปิดพิเศษต้องระบุเวลาเปิด–ปิด"); continue; }
+                xs = TimeOnly.MinValue; xe = new TimeOnly(23, 59);   // ปิดทั้งวัน
+            }
+            else
+            {
+                var ps = T(x.Start, $"วันพิเศษ {x.Date}"); var pe = T(x.End, $"วันพิเศษ {x.Date}");
+                if (ps == null || pe == null) continue;
+                xs = ps.Value; xe = pe.Value;
+            }
+            rows.Add(new BookingScheduleRow(null, d, xs, xe, x.Closed, Math.Max(1, defaultCapacity)));
+        }
+        errs.AddRange(BookingSlotEngine.ValidateSchedule(rows));
+        if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs.Distinct()), "CMS-BOOKING-SCHEDULE");
+        return rows;
+    }
+
+    /// <summary>แถวกลาง → DTO (ทั้งของบริการและของผู้ให้บริการ — hydrate ฟอร์ม) · ความจุของแถวคืนเฉพาะเมื่อต่างจากค่าของบริการ</summary>
+    private static BookingScheduleDto ScheduleDtoOf(IEnumerable<BookingScheduleRow> rows, int defaultCapacity)
+    {
+        string Hm(TimeOnly t, bool end) => BookingSlotEngine.Hhmm(end ? BookingSlotEngine.ToEndMinute(t) : BookingSlotEngine.ToMinute(t));
+        var list = rows.ToList();
+        return new BookingScheduleDto
+        {
+            Weekly = list.Where(x => x.SpecificDate == null && x.DayOfWeek != null)
+                .OrderBy(x => x.DayOfWeek).ThenBy(x => x.IsBlocked).ThenBy(x => x.Start)
+                .Select(x => new BookingWeeklyHoursDto
+                {
+                    DayOfWeek = x.DayOfWeek!.Value, Start = Hm(x.Start, false), End = Hm(x.End, true),
+                    IsBlocked = x.IsBlocked, Capacity = x.Capacity != defaultCapacity ? x.Capacity : null,
+                }).ToList(),
+            Exceptions = list.Where(x => x.SpecificDate != null)
+                .OrderBy(x => x.SpecificDate).ThenBy(x => x.Start)
+                .Select(x =>
+                {
+                    var wholeDay = x.IsBlocked && BookingSlotEngine.ToMinute(x.Start) == 0
+                        && BookingSlotEngine.ToEndMinute(x.End) == BookingSlotEngine.DayMinutes;
+                    return new BookingDateExceptionDto
+                    {
+                        Date = x.SpecificDate!.Value.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+                        Closed = x.IsBlocked,
+                        Start = wholeDay ? null : Hm(x.Start, false),
+                        End = wholeDay ? null : Hm(x.End, true),
+                    };
+                }).ToList(),
+        };
+    }
+
+    /// <summary>ตารางเวลา (DTO) → แถว <c>SiteBookingSlot</c> ของบริการ</summary>
+    public static List<SiteBookingSlot> BuildSlotRows(Guid companyId, SiteBookingService svc, BookingScheduleDto schedule, string? userId)
+        => ParseSchedule(schedule, svc.MaxCapacity, "เวลาทำการ").Select(x => new SiteBookingSlot
+        {
+            CompanyId = companyId, BookingServiceId = svc.Id, DayOfWeek = x.DayOfWeek, SpecificDate = x.SpecificDate,
+            StartTime = x.Start, EndTime = x.End, IsBlocked = x.IsBlocked, MaxCapacity = x.Capacity, CreatedBy = userId,
+        }).ToList();
+
+    /// <summary>ตารางงานรายบุคคล (DTO) → แถว <c>SiteBookingResourceSlot</c></summary>
+    public static List<SiteBookingResourceSlot> BuildResourceSlotRows(Guid companyId, Guid resourceId, BookingScheduleDto schedule, string? userId)
+        => ParseSchedule(schedule, 1, "เวลางาน").Select(x => new SiteBookingResourceSlot
+        {
+            CompanyId = companyId, ResourceId = resourceId, DayOfWeek = x.DayOfWeek, SpecificDate = x.SpecificDate,
+            StartTime = x.Start, EndTime = x.End, IsBlocked = x.IsBlocked, CreatedBy = userId,
+        }).ToList();
+
     public async Task<BookingServiceResponse?> GetServiceAsync(Guid companyId, Guid siteId, Guid serviceId)
     {
-        return await _db.SiteBookingServices.AsNoTracking()
-            .Where(s => s.Id == serviceId && s.SiteId == siteId && s.CompanyId == companyId)
-            .Select(s => new BookingServiceResponse
-            {
-                Id = s.Id, Name = s.Name, NameEn = s.NameEn, Description = s.Description,
-                ImageUrl = s.ImageUrl, Slug = s.Slug,
-                DurationMinutes = s.DurationMinutes, BufferMinutes = s.BufferMinutes,
-                MaxCapacity = s.MaxCapacity, MaxAdvanceBookingDays = s.MaxAdvanceBookingDays,
-                MinAdvanceBookingHours = s.MinAdvanceBookingHours,
-                Price = s.Price, DepositAmount = s.DepositAmount, DepositPercent = s.DepositPercent,
-                Currency = s.Currency, BookingType = s.BookingType, ProductId = s.ProductId,
-                Category = s.Category, AutoConfirm = s.AutoConfirm,
-                FreeCancellationHours = s.FreeCancellationHours,
-                CancellationFeePercent = s.CancellationFeePercent,
-                IsActive = s.IsActive,
-                UpcomingBookingsCount = s.Bookings.Count(b => b.BookingDate >= DateTime.UtcNow && b.Status != BookingStatus.Cancelled),
-                CreatedAt = s.CreatedAt
-            })
-            .FirstOrDefaultAsync();
+        var svc = await _db.SiteBookingServices.AsNoTracking().Include(s => s.Slots)
+            .FirstOrDefaultAsync(s => s.Id == serviceId && s.SiteId == siteId && s.CompanyId == companyId && !s.IsDeleted);
+        if (svc == null) return null;
+        var counts = await UpcomingCountsAsync(companyId, siteId, new[] { svc.Id });
+        var site = await SiteDefaultsAsync(companyId, siteId);
+        var briefs = await ResourceBriefsAsync(companyId, siteId, new[] { svc.Id });
+        return MapService(svc, counts.GetValueOrDefault(svc.Id), site, briefs.GetValueOrDefault(svc.Id) ?? new());
     }
 
     /// <summary>รายการบริการจองคิวของเว็บ — <b>อ่านอย่างเดียว</b> (endpoint สาธารณะ <c>GET …/storefront/booking-services</c> ใช้ตัวนี้)
@@ -103,27 +213,200 @@ public class CmsBookingService : ICmsBookingService
     /// <c>CmsModuleResolver</c> นับแถวที่ระบบสร้างเองเป็นหลักฐาน · GET สาธารณะเขียนฐานได้โดยไม่ล็อกอิน.
     /// บริการตัวอย่างถูก seed ตอนสร้างเว็บ/เติมเทมเพลตแล้ว (<c>CmsBookingServiceSeeder</c> — เฉพาะเว็บที่มีหน้าจองคิว) ·
     /// ว่าง = ว่างจริง (หน้าเว็บบอก "ยังไม่มีบริการ" · เว็บที่พักบอก "ยังไม่เปิดจองออนไลน์") · ข้อมูลเดิมที่ถูกสร้างไว้:
-    /// <c>LodgingSiteSeedMigration.AutoSeedServiceCleanupSql</c></para></summary>
-    public async Task<List<BookingServiceResponse>> GetServicesAsync(Guid companyId, Guid siteId)
+    /// <c>LodgingSiteSeedMigration.AutoSeedServiceCleanupSql</c></para>
+    /// <para>ทีม B: คืนค่าตั้งครบทุกฟิลด์ + ตารางเวลา (หน้า CMS hydrate ฟอร์มแก้ไขจากตัวนี้ — เดิมคืนแค่ชื่อ/ราคา/ระยะเวลา ⇒ เปิดแก้แล้วบันทึก
+    /// buffer/มัดจำ/ชนิดการจอง/ยืนยันอัตโนมัติ ถูกรีเซ็ตเงียบ ๆ) · <paramref name="includeInactive"/> = หน้า CMS (ผู้เรียกที่ล็อกอิน) เห็นบริการที่ปิดไว้ด้วย</para></summary>
+    public async Task<List<BookingServiceResponse>> GetServicesAsync(Guid companyId, Guid siteId, bool includeInactive = false)
     {
-        return await _db.SiteBookingServices.AsNoTracking()
-            .Where(s => s.SiteId == siteId && s.CompanyId == companyId && !s.IsDeleted && s.IsActive)
-            .OrderBy(s => s.SortOrder)
-            .Select(s => new BookingServiceResponse
-            {
-                Id = s.Id, Name = s.Name, NameEn = s.NameEn, Description = s.Description,
-                Slug = s.Slug, DurationMinutes = s.DurationMinutes, Price = s.Price,
-                Currency = s.Currency, BookingType = s.BookingType,
-                Category = s.Category, IsActive = s.IsActive,
-                UpcomingBookingsCount = s.Bookings.Count(b => b.BookingDate >= DateTime.UtcNow && b.Status != BookingStatus.Cancelled),
-                CreatedAt = s.CreatedAt
-            })
+        var list = await _db.SiteBookingServices.AsNoTracking().Include(s => s.Slots)
+            .Where(s => s.SiteId == siteId && s.CompanyId == companyId && !s.IsDeleted && (includeInactive || s.IsActive))
+            .OrderBy(s => s.SortOrder).ThenBy(s => s.CreatedAt)
             .ToListAsync();
+        var ids = list.Select(s => s.Id).ToList();
+        var counts = await UpcomingCountsAsync(companyId, siteId, ids);
+        var site = await SiteDefaultsAsync(companyId, siteId);
+        var briefs = await ResourceBriefsAsync(companyId, siteId, ids);
+        return list.Select(s => MapService(s, counts.GetValueOrDefault(s.Id), site, briefs.GetValueOrDefault(s.Id) ?? new())).ToList();
+    }
+
+    public IReadOnlyList<BookingServicePresetResponse> GetPresets() => Cms.CmsBookingServiceSeeder.PresetResponses();
+
+    private async Task<Dictionary<Guid, int>> UpcomingCountsAsync(Guid companyId, Guid siteId, IReadOnlyCollection<Guid> ids)
+    {
+        if (ids.Count == 0) return new();
+        var today = BookingSlotEngine.BangkokNow(DateTime.UtcNow).Date;
+        return await _db.SiteBookings.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.SiteId == siteId && ids.Contains(b.BookingServiceId)
+                && b.BookingDate >= today && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.Waitlisted)
+            .GroupBy(b => b.BookingServiceId)
+            .Select(g => new { g.Key, N = g.Count() })
+            .ToDictionaryAsync(x => x.Key, x => x.N);
+    }
+
+    /// <summary>ผู้ให้บริการที่เปิดใช้และทำบริการนั้นได้ ต่อบริการ (ชื่อ/ชนิด/รูปเท่านั้น)</summary>
+    private async Task<Dictionary<Guid, List<BookingResourceBrief>>> ResourceBriefsAsync(Guid companyId, Guid siteId, IReadOnlyCollection<Guid> serviceIds)
+    {
+        if (serviceIds.Count == 0) return new();
+        var rows = await _db.SiteBookingResourceServices.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && serviceIds.Contains(l.BookingServiceId) && !l.IsDeleted
+                && l.Resource.SiteId == siteId && l.Resource.IsActive && !l.Resource.IsDeleted)
+            .OrderBy(l => l.Resource.SortOrder).ThenBy(l => l.Resource.Name)
+            .Select(l => new { l.BookingServiceId, l.Resource.Id, l.Resource.Name, l.Resource.Kind, l.Resource.ImageUrl })
+            .ToListAsync();
+        return rows.GroupBy(x => x.BookingServiceId)
+            .ToDictionary(g => g.Key, g => g.Select(x => new BookingResourceBrief { Id = x.Id, Name = x.Name, Kind = x.Kind, ImageUrl = x.ImageUrl }).ToList());
+    }
+
+    private static BookingServiceResponse MapService(SiteBookingService s, int upcoming, BookingSiteDefaults site, List<BookingResourceBrief> resources)
+    {
+        var rules = BookingSlotEngine.RulesOf(s, site);
+        var slots = s.Slots.Where(x => x.IsActive).ToList();
+        return new BookingServiceResponse
+        {
+            Id = s.Id, Name = s.Name, NameEn = s.NameEn, Description = s.Description,
+            ImageUrl = s.ImageUrl, Slug = s.Slug,
+            DurationMinutes = s.DurationMinutes, BufferMinutes = s.BufferMinutes,
+            MaxCapacity = s.MaxCapacity, MaxAdvanceBookingDays = s.MaxAdvanceBookingDays,
+            MinAdvanceBookingHours = s.MinAdvanceBookingHours,
+            Price = s.Price, DepositAmount = s.DepositAmount, DepositPercent = s.DepositPercent,
+            Currency = s.Currency, BookingType = s.BookingType, ProductId = s.ProductId,
+            Category = s.Category, AutoConfirm = s.AutoConfirm,
+            FreeCancellationHours = s.FreeCancellationHours,
+            CancellationFeePercent = s.CancellationFeePercent,
+            SlotMode = s.SlotMode, SlotIntervalMinutes = s.SlotIntervalMinutes,
+            BufferBeforeMinutes = s.BufferBeforeMinutes, CapacityUnit = s.CapacityUnit,
+            MaxUnitsPerBooking = s.MaxUnitsPerBooking, HalfDaySplitTime = s.HalfDaySplitTime,
+            CapacityGroup = s.CapacityGroup,
+            EnforceSlotCapacity = s.EnforceSlotCapacity, OverlapLimit = s.OverlapLimit, WaitlistEnabled = s.WaitlistEnabled,
+            ResourceMode = s.ResourceMode, UseSiteDefaults = s.UseSiteDefaults,
+            EffectiveDurationMinutes = rules.DurationMinutes,
+            Resources = s.ResourceMode == BookingResourceMode.None ? new() : resources,
+            Schedule = ScheduleDtoOf(slots.Select(BookingSlotEngine.RowOf), s.MaxCapacity),
+            HasOpeningHours = slots.Any(x => !x.IsBlocked),
+            SlotSummary = BookingSlotEngine.Summary(rules),
+            PolicySummary = BookingSlotEngine.PolicySummary(rules, s.DepositAmount, s.DepositPercent, s.FreeCancellationHours, s.CancellationFeePercent),
+            IsActive = s.IsActive,
+            UpcomingBookingsCount = upcoming,
+            CreatedAt = s.CreatedAt
+        };
+    }
+
+    // ===== ค่าตั้งการจองระดับไซต์ =====
+
+    private async Task<BookingSiteDefaults> SiteDefaultsAsync(Guid companyId, Guid siteId)
+        => BookingSlotEngine.DefaultsOf(await _db.SiteBookingSettings.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted));
+
+    public async Task<BookingSiteSettingsDto> GetSiteSettingsAsync(Guid companyId, Guid siteId)
+    {
+        var d = await SiteDefaultsAsync(companyId, siteId);
+        return new BookingSiteSettingsDto
+        {
+            DurationMinutes = d.DurationMinutes, BufferBeforeMinutes = d.BufferBeforeMinutes, BufferAfterMinutes = d.BufferAfterMinutes,
+            MinAdvanceHours = d.MinAdvanceHours, MaxAdvanceDays = d.MaxAdvanceDays,
+        };
+    }
+
+    public async Task<BookingSiteSettingsDto> UpdateSiteSettingsAsync(Guid companyId, Guid siteId, BookingSiteSettingsDto request, string userId)
+    {
+        await EnsureSiteAsync(companyId, siteId);
+        var errs = BookingSlotEngine.ValidateRules(new BookingSlotRules
+        {
+            Mode = BookingSlotMode.Interval, DurationMinutes = request.DurationMinutes,
+            BufferBeforeMinutes = request.BufferBeforeMinutes, BufferAfterMinutes = request.BufferAfterMinutes,
+            MinAdvanceHours = request.MinAdvanceHours, MaxAdvanceDays = request.MaxAdvanceDays,
+        });
+        if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), "CMS-BOOKING-SETTINGS");
+        var row = await _db.SiteBookingSettings.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted);
+        if (row == null)
+        {
+            row = new SiteBookingSettings { CompanyId = companyId, SiteId = siteId, CreatedBy = userId };
+            _db.SiteBookingSettings.Add(row);
+        }
+        row.DurationMinutes = request.DurationMinutes; row.BufferBeforeMinutes = request.BufferBeforeMinutes;
+        row.BufferAfterMinutes = request.BufferAfterMinutes; row.MinAdvanceHours = request.MinAdvanceHours;
+        row.MaxAdvanceDays = request.MaxAdvanceDays; row.UpdatedBy = userId;
+        await _db.SaveChangesAsync();
+        return await GetSiteSettingsAsync(companyId, siteId);
+    }
+
+    // ===== ผู้ให้บริการ / ห้อง / อุปกรณ์ =====
+
+    public async Task<List<BookingResourceResponse>> GetResourcesAsync(Guid companyId, Guid siteId)
+    {
+        var list = await _db.SiteBookingResources.AsNoTracking().Include(r => r.Services).Include(r => r.Slots)
+            .Where(r => r.CompanyId == companyId && r.SiteId == siteId && !r.IsDeleted)
+            .OrderBy(r => r.SortOrder).ThenBy(r => r.Name)
+            .ToListAsync();
+        return list.Select(MapResource).ToList();
+    }
+
+    private static BookingResourceResponse MapResource(SiteBookingResource r) => new()
+    {
+        Id = r.Id, Name = r.Name, Kind = r.Kind, Description = r.Description, ImageUrl = r.ImageUrl,
+        Capacity = r.Capacity, SortOrder = r.SortOrder, IsActive = r.IsActive,
+        ServiceIds = r.Services.Where(x => !x.IsDeleted).Select(x => x.BookingServiceId).ToList(),
+        Schedule = ScheduleDtoOf(r.Slots.Select(BookingSlotEngine.RowOf), 1),
+    };
+
+    public async Task<BookingResourceResponse> SaveResourceAsync(Guid companyId, Guid siteId, Guid? resourceId, BookingResourceRequest request, string userId)
+    {
+        await EnsureSiteAsync(companyId, siteId);
+        var name = (request.Name ?? "").Trim();
+        if (name.Length == 0) throw new BusinessRuleException("กรุณากรอกชื่อผู้ให้บริการ/ห้อง/อุปกรณ์", "CMS-BOOKING-RESOURCE");
+        if (request.Capacity < 1 || request.Capacity > 1000)
+            throw new BusinessRuleException("รับงานพร้อมกันต้องอยู่ระหว่าง 1–1,000", "CMS-BOOKING-RESOURCE");
+        var serviceIds = (request.ServiceIds ?? new()).Distinct().ToList();
+        // บริการที่อ้างต้องเป็นของไซต์/บริษัทนี้ (กันผูกข้ามบริษัทด้วย id ที่เดามา)
+        var validIds = await _db.SiteBookingServices.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.SiteId == siteId && !s.IsDeleted && serviceIds.Contains(s.Id))
+            .Select(s => s.Id).ToListAsync();
+        if (validIds.Count != serviceIds.Count)
+            throw new BusinessRuleException("มีบริการที่เลือกไม่อยู่ในเว็บไซต์นี้", "CMS-BOOKING-RESOURCE");
+
+        SiteBookingResource res;
+        if (resourceId is Guid rid)
+        {
+            res = await _db.SiteBookingResources.Include(r => r.Services).Include(r => r.Slots)
+                .FirstOrDefaultAsync(r => r.Id == rid && r.CompanyId == companyId && r.SiteId == siteId && !r.IsDeleted)
+                ?? throw new KeyNotFoundException("Booking resource not found.");
+            res.UpdatedBy = userId;
+        }
+        else
+        {
+            res = new SiteBookingResource { CompanyId = companyId, SiteId = siteId, CreatedBy = userId };
+            _db.SiteBookingResources.Add(res);
+        }
+        var slots = BuildResourceSlotRows(companyId, res.Id, request.Schedule ?? new(), userId);
+        res.Name = name; res.Kind = request.Kind; res.Description = request.Description;
+        res.ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? null : request.ImageUrl.Trim();
+        res.Capacity = request.Capacity; res.SortOrder = request.SortOrder; res.IsActive = request.IsActive;
+
+        _db.SiteBookingResourceServices.RemoveRange(res.Services.Where(x => !validIds.Contains(x.BookingServiceId)).ToList());
+        foreach (var sid in validIds.Where(id => res.Services.All(x => x.BookingServiceId != id)))
+            _db.SiteBookingResourceServices.Add(new SiteBookingResourceService { CompanyId = companyId, ResourceId = res.Id, BookingServiceId = sid, CreatedBy = userId });
+        _db.SiteBookingResourceSlots.RemoveRange(res.Slots.ToList());
+        _db.SiteBookingResourceSlots.AddRange(slots);
+        await _db.SaveChangesAsync();
+
+        var saved = await _db.SiteBookingResources.AsNoTracking().Include(r => r.Services).Include(r => r.Slots)
+            .FirstAsync(r => r.Id == res.Id && r.CompanyId == companyId);
+        return MapResource(saved);
+    }
+
+    /// <summary>ลบผู้ให้บริการ (soft) — การจองเดิมยังอ้าง ResourceId เดิมได้ (ประวัติ) แต่ไม่ถูกจัดงานใหม่</summary>
+    public async Task<bool> DeleteResourceAsync(Guid companyId, Guid siteId, Guid resourceId)
+    {
+        var res = await _db.SiteBookingResources.FirstOrDefaultAsync(r => r.Id == resourceId && r.CompanyId == companyId && r.SiteId == siteId && !r.IsDeleted);
+        if (res == null) return false;
+        res.IsDeleted = true; res.IsActive = false;
+        await _db.SaveChangesAsync();
+        return true;
     }
 
     public async Task<bool> DeleteServiceAsync(Guid companyId, Guid siteId, Guid serviceId)
     {
-        var svc = await _db.SiteBookingServices.FirstOrDefaultAsync(s => s.Id == serviceId && s.SiteId == siteId);
+        var svc = await _db.SiteBookingServices.FirstOrDefaultAsync(s => s.Id == serviceId && s.SiteId == siteId && s.CompanyId == companyId);
         if (svc == null) return false;
         svc.IsActive = false;
         svc.IsDeleted = true;
@@ -135,16 +418,32 @@ public class CmsBookingService : ICmsBookingService
 
     public async Task<BookingSlotResponse> CreateSlotAsync(Guid companyId, Guid siteId, Guid serviceId, CreateBookingSlotRequest request, string userId)
     {
+        var svc = await _db.SiteBookingServices.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == serviceId && s.SiteId == siteId && s.CompanyId == companyId && !s.IsDeleted)
+            ?? throw new KeyNotFoundException("Booking service not found.");
+        var start = BookingSlotEngine.ParseTime(request.StartTime)
+            ?? throw new BusinessRuleException("เวลาเริ่มต้องเป็นรูปแบบ HH:mm", "CMS-BOOKING-SCHEDULE");
+        var end = BookingSlotEngine.ParseTime(request.EndTime)
+            ?? throw new BusinessRuleException("เวลาจบต้องเป็นรูปแบบ HH:mm", "CMS-BOOKING-SCHEDULE");
+        DateOnly? date = null;
+        if (!string.IsNullOrEmpty(request.SpecificDate))
+        {
+            if (!DateOnly.TryParseExact(request.SpecificDate, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var d))
+                throw new BusinessRuleException("วันที่ต้องเป็นรูปแบบ yyyy-MM-dd", "CMS-BOOKING-SCHEDULE");
+            date = d;
+        }
         var slot = new SiteBookingSlot
         {
-            CompanyId = companyId, BookingServiceId = serviceId,
+            CompanyId = companyId, BookingServiceId = svc.Id,
             DayOfWeek = request.DayOfWeek,
-            StartTime = TimeOnly.Parse(request.StartTime),
-            EndTime = TimeOnly.Parse(request.EndTime),
-            SpecificDate = !string.IsNullOrEmpty(request.SpecificDate) ? DateOnly.Parse(request.SpecificDate) : null,
-            IsBlocked = request.IsBlocked, MaxCapacity = request.MaxCapacity,
+            StartTime = start, EndTime = end, SpecificDate = date,
+            IsBlocked = request.IsBlocked, MaxCapacity = Math.Max(1, request.MaxCapacity),
             CreatedBy = userId
         };
+        var slotErrs = BookingSlotEngine.ValidateSchedule(new[] { BookingSlotEngine.RowOf(slot) });
+        if (slotErrs.Count > 0)
+            throw new BusinessRuleException(string.Join(" · ", slotErrs), "CMS-BOOKING-SCHEDULE");
         _db.SiteBookingSlots.Add(slot);
         await _db.SaveChangesAsync();
 
@@ -154,7 +453,8 @@ public class CmsBookingService : ICmsBookingService
     public async Task<List<BookingSlotResponse>> GetSlotsAsync(Guid companyId, Guid siteId, Guid serviceId)
     {
         var slots = await _db.SiteBookingSlots.AsNoTracking()
-            .Where(s => s.BookingServiceId == serviceId && s.IsActive)
+            .Where(s => s.BookingServiceId == serviceId && s.CompanyId == companyId && s.IsActive
+                && s.BookingService.SiteId == siteId)
             .OrderBy(s => s.DayOfWeek).ThenBy(s => s.StartTime)
             .ToListAsync();
 
@@ -163,107 +463,181 @@ public class CmsBookingService : ICmsBookingService
 
     public async Task<bool> DeleteSlotAsync(Guid companyId, Guid siteId, Guid serviceId, Guid slotId)
     {
-        var slot = await _db.SiteBookingSlots.FirstOrDefaultAsync(s => s.Id == slotId && s.BookingServiceId == serviceId);
+        var slot = await _db.SiteBookingSlots.FirstOrDefaultAsync(s => s.Id == slotId && s.BookingServiceId == serviceId
+            && s.CompanyId == companyId && s.BookingService.SiteId == siteId);
         if (slot == null) return false;
         _db.SiteBookingSlots.Remove(slot);
         await _db.SaveChangesAsync();
         return true;
     }
 
-    // ===== Available Slots =====
+    // ===== Available Slots (ตัวตัดสินเดียว: Helpers/BookingSlotEngine) =====
+
+    /// <summary>ข้อมูลที่ engine ต้องใช้ตัดสินหนึ่งวันของบริการหนึ่งตัว</summary>
+    private sealed record DayContext(BookingSlotRules Rules, List<BookingScheduleRow> Rows, List<BookingOccupancy> Occupied,
+        List<BookingResourceInfo> Resources);
+
+    /// <summary>ตารางเวลา + การจองที่ใช้ทรัพยากรเดียวกันของวันนั้น — บริการเดียวกัน · บริการในกลุ่มทรัพยากรร่วม (<c>CapacityGroup</c>) ·
+    /// การจองใด ๆ ของผู้ให้บริการที่ทำบริการนี้ได้ (ผู้ให้บริการคือของที่ใช้ร่วมข้ามบริการ) · ไม่นับที่ยกเลิก/คิวสำรอง ·
+    /// buffer ของแต่ละการจองมาจากบริการของการจองนั้น · ผู้ให้บริการ = เปิดใช้ + ผูกบริการนี้ + ตารางงานของตัวเอง</summary>
+    private async Task<DayContext> LoadDayAsync(Guid companyId, Guid siteId, SiteBookingService svc, DateOnly date)
+    {
+        var site = await SiteDefaultsAsync(companyId, siteId);
+        var rules = BookingSlotEngine.RulesOf(svc, site);
+        var rows = await _db.SiteBookingSlots.AsNoTracking()
+            .Where(s => s.BookingServiceId == svc.Id && s.CompanyId == companyId && s.IsActive)
+            .ToListAsync();
+
+        var resources = new List<BookingResourceInfo>();
+        if (svc.ResourceMode != BookingResourceMode.None)
+        {
+            var res = await _db.SiteBookingResources.AsNoTracking().Include(r => r.Slots)
+                .Where(r => r.CompanyId == companyId && r.SiteId == siteId && r.IsActive && !r.IsDeleted
+                    && r.Services.Any(l => l.BookingServiceId == svc.Id && !l.IsDeleted))
+                .ToListAsync();
+            resources = res.Select(r => new BookingResourceInfo(r.Id, r.Name, Math.Max(1, r.Capacity), r.SortOrder,
+                r.Slots.Where(x => !x.IsDeleted).Select(BookingSlotEngine.RowOf).ToList())).ToList();
+        }
+        var resIds = resources.Select(r => r.Id).ToList();
+
+        var dayStart = date.ToDateTime(TimeOnly.MinValue);
+        var dayEnd = dayStart.AddDays(1);
+        var group = svc.CapacityGroup;
+        var poolIds = group == null ? new List<Guid> { svc.Id }
+            : await _db.SiteBookingServices.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && x.SiteId == siteId && x.CapacityGroup == group && !x.IsDeleted)
+                .Select(x => x.Id).ToListAsync();
+        if (!poolIds.Contains(svc.Id)) poolIds.Add(svc.Id);
+        var occupied = (await _db.SiteBookings.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.SiteId == siteId
+                && b.BookingDate >= dayStart && b.BookingDate < dayEnd
+                && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.Waitlisted
+                && (poolIds.Contains(b.BookingServiceId)
+                    || (b.ResourceId != null && resIds.Contains(b.ResourceId.Value))))
+            .Select(b => new { b.StartTime, b.EndTime, b.GuestCount, b.BookingServiceId, b.ResourceId,
+                b.BookingService.UseSiteDefaults, b.BookingService.BufferBeforeMinutes, b.BookingService.BufferMinutes })
+            .ToListAsync())
+            // buffer ของบริการของการจองนั้น — บริการที่ใช้ค่าไซต์ได้ buffer ของไซต์ (สูตรเดียวกับ RulesOf)
+            .Select(b => new BookingOccupancy(b.StartTime, b.EndTime, b.GuestCount,
+                b.UseSiteDefaults ? site.BufferBeforeMinutes : b.BufferBeforeMinutes,
+                b.UseSiteDefaults ? site.BufferAfterMinutes : b.BufferMinutes, b.BookingServiceId, b.ResourceId))
+            .ToList();
+        // ฝั่งความจุของบริการ/กลุ่ม (ไม่ใช้ผู้ให้บริการ): การจองของบริการอื่นที่มาเพราะ "ใช้ผู้ให้บริการร่วม" ไม่ใช่คิวของบริการนี้
+        if (resources.Count == 0 || !rules.EnforceCapacity)
+            occupied = occupied.Where(b => b.ServiceId is Guid sid && poolIds.Contains(sid)).ToList();
+        return new DayContext(rules, rows.Select(BookingSlotEngine.RowOf).ToList(), occupied, resources);
+    }
 
     public async Task<List<AvailableSlotResponse>> GetAvailableSlotsAsync(Guid companyId, Guid siteId, AvailableSlotsRequest request)
     {
         var svc = await _db.SiteBookingServices.AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Id == request.BookingServiceId && s.SiteId == siteId);
+            .FirstOrDefaultAsync(s => s.Id == request.BookingServiceId && s.SiteId == siteId && s.CompanyId == companyId
+                && s.IsActive && !s.IsDeleted);
         if (svc == null) return new();
 
         var date = DateOnly.FromDateTime(request.Date);
-        var dayOfWeek = request.Date.DayOfWeek;
-
-        // Get applicable slots (specific date overrides + recurring day-of-week)
-        var slots = await _db.SiteBookingSlots.AsNoTracking()
-            .Where(s => s.BookingServiceId == request.BookingServiceId && s.IsActive && !s.IsBlocked &&
-                ((s.SpecificDate == date) || (s.SpecificDate == null && s.DayOfWeek == dayOfWeek)))
-            .OrderBy(s => s.StartTime)
-            .ToListAsync();
-
-        // Get existing bookings for that date
-        var existingBookings = await _db.SiteBookings.AsNoTracking()
-            .Where(b => b.BookingServiceId == request.BookingServiceId &&
-                b.BookingDate.Date == request.Date.Date &&
-                b.Status != BookingStatus.Cancelled)
-            .ToListAsync();
-
-        var available = new List<AvailableSlotResponse>();
-        foreach (var slot in slots)
-        {
-            var booked = existingBookings.Count(b =>
-                b.StartTime >= slot.StartTime && b.StartTime < slot.EndTime);
-
-            var remaining = slot.MaxCapacity - booked;
-            if (remaining >= request.GuestCount)
+        var ctx = await LoadDayAsync(companyId, siteId, svc, date);
+        var units = Math.Max(1, request.Units);
+        var requested = svc.ResourceMode == BookingResourceMode.Auto ? null : request.ResourceId;
+        if (requested is Guid want && ctx.Resources.All(r => r.Id != want)) return new();
+        var names = ctx.Resources.ToDictionary(r => r.Id, r => r.Name);
+        return BookingSlotEngine.Available(ctx.Rules, date, ctx.Rows, ctx.Occupied, BookingSlotEngine.BangkokNow(DateTime.UtcNow),
+                Math.Max(1, request.GuestCount), units, ctx.Resources, requested, includeFull: svc.WaitlistEnabled)
+            .Select(o => new AvailableSlotResponse
             {
-                available.Add(new AvailableSlotResponse
-                {
-                    StartTime = slot.StartTime.ToString("HH:mm"),
-                    EndTime = slot.EndTime.ToString("HH:mm"),
-                    AvailableCapacity = remaining
-                });
-            }
-        }
-
-        return available;
+                StartTime = BookingSlotEngine.Hhmm(o.StartMinute),
+                EndTime = BookingSlotEngine.Hhmm(o.EndMinute),
+                AvailableCapacity = o.Remaining,
+                Label = o.Label,
+                Price = BookingSlotEngine.TotalPrice(ctx.Rules, svc.Price, units),
+                IsFull = o.IsFull,
+                // โหมดบังคับระบุ/ลูกค้าเลือก แสดงชื่อคนที่จะได้ · ระบบจัดให้ ไม่ประกาศชื่อล่วงหน้า (ตัดสินใหม่ตอนจอง)
+                ResourceName = svc.ResourceMode != BookingResourceMode.Auto && o.ResourceId is Guid rid ? names.GetValueOrDefault(rid) : null,
+            })
+            .ToList();
     }
 
     // ===== Bookings =====
 
+    /// <summary>สร้างการจอง — <b>server เป็นผู้ตัดสิน</b>: เวลา/วันต้องเป็นรอบที่ <see cref="BookingSlotEngine.Decide"/> ยอมรับ (เวลาทำการ · วันหยุด ·
+    /// ล่วงหน้าขั้นต่ำ/สูงสุด · ตรงรอบ · ความจุพร้อม buffer · ผู้ให้บริการที่ว่างและรับงานนี้ได้) · เวลาจบ/ระยะ/ยอด/มัดจำ/ผู้ให้บริการมาจาก server ·
+    /// เต็ม + บริการเปิดคิวสำรอง ⇒ บันทึกเป็นคิวสำรอง (<see cref="BookingStatus.Waitlisted"/> · ไม่ออกเอกสาร ERP) · ตัดสิน + ออกเลข + บันทึก อยู่ใต้
+    /// <c>pg_advisory_xact_lock</c> ของไซต์ (ผู้ให้บริการใช้ร่วมข้ามบริการ ⇒ ล็อกระดับไซต์) ⇒ สองคนกดรอบสุดท้ายพร้อมกันได้คนเดียว ·
+    /// ขั้น ERP รันหลัง commit (เส้นเอกสารเปิดธุรกรรมของตัวเอง)</summary>
     public async Task<BookingResponse> CreateBookingAsync(Guid companyId, Guid siteId, CreateBookingRequest request, string? userId)
     {
         var svc = await _db.SiteBookingServices.AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Id == request.BookingServiceId && s.SiteId == siteId && s.IsActive)
+            .FirstOrDefaultAsync(s => s.Id == request.BookingServiceId && s.SiteId == siteId && s.CompanyId == companyId
+                && s.IsActive && !s.IsDeleted)
             ?? throw new KeyNotFoundException("Booking service not found or inactive.");
 
-        var startTime = TimeOnly.Parse(request.StartTime);
-        var endTime = startTime.AddMinutes(svc.DurationMinutes);
+        var start = BookingSlotEngine.ParseTime(request.StartTime)
+            ?? throw new BusinessRuleException("กรุณาเลือกเวลาจากรายการเวลาว่าง", "CMS-BOOKING-INVALID");
+        var date = DateOnly.FromDateTime(request.BookingDate);
+        var units = request.Units;
+        var guests = request.GuestCount;
 
-        var depositAmount = svc.DepositAmount ?? (svc.DepositPercent.HasValue ? svc.Price * svc.DepositPercent.Value / 100m : 0m);
-
-        var booking = new SiteBooking
+        SiteBooking booking;
+        await using (var tx = await _db.Database.BeginTransactionAsync())
         {
-            CompanyId = companyId, SiteId = siteId,
-            BookingServiceId = request.BookingServiceId,
-            CustomerId = request.CustomerId,
-            BookingNumber = await GenerateBookingNumber(companyId, siteId),
-            BookingDate = request.BookingDate,
-            StartTime = startTime, EndTime = endTime,
-            DurationMinutes = svc.DurationMinutes,
-            GuestName = request.GuestName, GuestEmail = request.GuestEmail,
-            GuestPhone = request.GuestPhone, GuestCount = request.GuestCount,
-            TotalAmount = svc.Price, DepositAmount = depositAmount,
-            Currency = svc.Currency,
-            CustomerNotes = request.CustomerNotes,
-            CreatedBy = userId
-        };
+            await LockSiteBookingsAsync(companyId, siteId);
 
-        // Auto-confirm for Lead bookings or if service allows it
-        if (svc.AutoConfirm || svc.BookingType == BookingType.Lead)
-        {
-            booking.Status = BookingStatus.Confirmed;
-            booking.ConfirmedAt = DateTime.UtcNow;
+            var ctx = await LoadDayAsync(companyId, siteId, svc, date);
+            var requested = svc.ResourceMode == BookingResourceMode.Auto ? null : request.ResourceId;
+            var decision = BookingSlotEngine.Decide(ctx.Rules, date, start, ctx.Rows, ctx.Occupied,
+                BookingSlotEngine.BangkokNow(DateTime.UtcNow), guests, units, ctx.Resources, requested);
+            var waitlist = decision.CanWaitlist(ctx.Rules);
+            if (!decision.Allowed && !waitlist)
+                throw new BusinessRuleException(decision.Message ?? "จองรอบนี้ไม่ได้",
+                    "CMS-BOOKING-" + decision.Reason.ToString().ToUpperInvariant(),
+                    decision.Reason == BookingSlotRejection.Full ? 409 : 400);
+            var slot = decision.Slot!;
+
+            var total = BookingSlotEngine.TotalPrice(ctx.Rules, svc.Price, units);
+            var depositAmount = BookingSlotEngine.Deposit(total, svc.DepositAmount, svc.DepositPercent);
+
+            booking = new SiteBooking
+            {
+                CompanyId = companyId, SiteId = siteId,
+                BookingServiceId = svc.Id,
+                CustomerId = request.CustomerId,
+                BookingNumber = await GenerateBookingNumber(companyId, siteId),
+                BookingDate = date.ToDateTime(TimeOnly.MinValue),
+                StartTime = slot.Start, EndTime = slot.BookedEnd,
+                DurationMinutes = slot.BookedMinutes,
+                Units = units,
+                // คิวสำรอง: เก็บผู้ให้บริการที่ลูกค้าขอ (ถ้ามี) — จัดจริงตอนเลื่อนขึ้น · จองได้: ผู้ให้บริการที่ engine จัดให้
+                ResourceId = waitlist ? requested : slot.ResourceId,
+                GuestName = request.GuestName, GuestEmail = request.GuestEmail,
+                GuestPhone = request.GuestPhone, GuestCount = guests,
+                TotalAmount = total, DepositAmount = depositAmount,
+                Currency = svc.Currency,
+                CustomerNotes = request.CustomerNotes,
+                CreatedBy = userId
+            };
+
+            if (waitlist) booking.Status = BookingStatus.Waitlisted;
+            // Auto-confirm for Lead bookings or if service allows it
+            else if (svc.AutoConfirm || svc.BookingType == BookingType.Lead)
+            {
+                booking.Status = BookingStatus.Confirmed;
+                booking.ConfirmedAt = DateTime.UtcNow;
+            }
+
+            _db.SiteBookings.Add(booking);
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
         }
 
-        _db.SiteBookings.Add(booking);
-        await _db.SaveChangesAsync();
-
-        _logger.LogInformation("Booking {BookingNumber} created for service {ServiceName}", booking.BookingNumber, svc.Name);
+        _logger.LogInformation("Booking {BookingNumber} created for service {ServiceName} ({Status})", booking.BookingNumber, svc.Name, booking.Status);
 
         // Auto-sync to ERP based on booking type
         // รอบ 205 ทีม E (BOOKING_REVENUE_AUDIT B-3): ขั้น ERP ล้ม (โควตาใบเสนอราคาเต็ม · ผู้ติดต่อ · ด่านเอกสาร) ⇒ เดิมโยนขึ้นไปหาแขกทั้งที่การจอง
         // บันทึกแล้ว ⇒ แขกเห็น "จองไม่สำเร็จ" แล้วกดจองซ้ำ (การจองซ้อน) · LODGING_LICENSING_PLAN §5 "สร้างการจอง ไม่จำกัด ไม่ gate" ⇒
         // การจองสำเร็จเสมอ + ล้มดัง: หมายเหตุบนการจอง + log Error + ErpNotices ในคำตอบ (ถอยของครึ่งทางออกจาก context ก่อนบันทึกหมายเหตุ)
         var createNotices = new List<string>();
-        if (svc.BookingType != BookingType.Lead)
+        // คิวสำรองยังไม่มีบริการให้ ⇒ ไม่ออกเอกสารจนกว่าจะถูกเลื่อนขึ้น (ทีม B)
+        if (svc.BookingType != BookingType.Lead && booking.Status != BookingStatus.Waitlisted)
         {
             try { await SyncBookingToErpAsync(companyId, siteId, booking.Id); }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -297,11 +671,86 @@ public class CmsBookingService : ICmsBookingService
         return created;
     }
 
+    /// <summary>ล็อก "การใช้รอบของไซต์นี้" (ตัดสินแล้วเขียน) — ภายใน transaction ของผู้เรียก</summary>
+    private async Task LockSiteBookingsAsync(Guid companyId, Guid siteId)
+    {
+        var slotLockKey = AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsBookingSlot, siteId.ToString("N"));
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", slotLockKey);
+    }
+
+    /// <summary>
+    /// เลื่อนคิวสำรองขึ้นหลังมีที่ว่าง (ยกเลิก/ไม่มา) — ไล่คิวของ <b>วันเดียวกันทั้งไซต์</b> ตามลำดับลงคิว (เวลาลงคิว → Id) แล้วให้
+    /// <see cref="BookingSlotEngine.Decide"/> ตัดสินใหม่ทีละใบ (ข้ามด่านล่วงหน้าขั้นต่ำ — ลูกค้าลงคิวไว้ก่อนแล้ว) · ผ่าน ⇒ สถานะรอยืนยัน/ยืนยันแล้ว
+    /// ตามบริการ + จัดผู้ให้บริการ · ไม่ผ่าน ⇒ อยู่คิวเดิม (ลำดับขยับขึ้นเองเพราะคิดจากใบที่เหลือ) · คืนใบที่ถูกเลื่อน (ผู้เรียกออกเอกสาร ERP ต่อ)
+    /// </summary>
+    private async Task<List<Guid>> PromoteWaitlistAsync(Guid companyId, Guid siteId, DateTime bookingDate, string userId)
+    {
+        var promoted = new List<Guid>();
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await LockSiteBookingsAsync(companyId, siteId);
+        var date = DateOnly.FromDateTime(bookingDate);
+        var dayStart = date.ToDateTime(TimeOnly.MinValue);
+        var dayEnd = dayStart.AddDays(1);
+        var queue = await _db.SiteBookings
+            .Where(b => b.CompanyId == companyId && b.SiteId == siteId && b.Status == BookingStatus.Waitlisted
+                && b.BookingDate >= dayStart && b.BookingDate < dayEnd)
+            .OrderBy(b => b.CreatedAt).ThenBy(b => b.Id)
+            .ToListAsync();
+        var now = BookingSlotEngine.BangkokNow(DateTime.UtcNow);
+        foreach (var w in queue)
+        {
+            if (date.ToDateTime(w.StartTime) < now) continue;   // รอบผ่านไปแล้ว — ไม่เลื่อน
+            var svc = await _db.SiteBookingServices.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == w.BookingServiceId && s.CompanyId == companyId && s.IsActive && !s.IsDeleted);
+            if (svc == null) continue;
+            var ctx = await LoadDayAsync(companyId, siteId, svc, date);
+            var requested = svc.ResourceMode == BookingResourceMode.Auto ? null : w.ResourceId;
+            var d = BookingSlotEngine.Decide(ctx.Rules, date, w.StartTime, ctx.Rows, ctx.Occupied, now,
+                w.GuestCount, Math.Max(1, w.Units), ctx.Resources, requested, ignoreAdvance: true);
+            if (!d.Allowed) continue;
+            w.ResourceId = d.Slot!.ResourceId;
+            if (svc.AutoConfirm || svc.BookingType == BookingType.Lead) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
+            else w.Status = BookingStatus.Pending;
+            w.InternalNotes = DepositPolicyResolver.AppendNoteOnce(w.InternalNotes,
+                $"เลื่อนจากคิวสำรองอัตโนมัติ {BookingSlotEngine.BangkokNow(DateTime.UtcNow):dd/MM/yyyy HH:mm} — แจ้งลูกค้า");
+            w.UpdatedBy = userId;
+            await _db.SaveChangesAsync();   // ใบถัดไปต้องเห็นใบนี้เป็นการจองแล้ว (LoadDayAsync อ่านจากฐาน)
+            promoted.Add(w.Id);
+        }
+        await tx.CommitAsync();
+        return promoted;
+    }
+
+    private async Task EnsureSiteAsync(Guid companyId, Guid siteId)
+    {
+        if (!await _db.Sites.AnyAsync(s => s.Id == siteId && s.CompanyId == companyId))
+            throw new KeyNotFoundException("Site not found.");
+    }
+
+    /// <summary>slug ไม่ซ้ำในเว็บ (unique index SiteId+Slug — รวมแถวที่ลบแล้ว) · ชน ⇒ ต่อท้าย -2, -3 …</summary>
+    private async Task<string> UniqueSlugAsync(Guid companyId, Guid siteId, string slug, Guid? selfId)
+    {
+        var taken = (await _db.SiteBookingServices.IgnoreQueryFilters().AsNoTracking()
+                .Where(s => s.SiteId == siteId && s.CompanyId == companyId && s.Slug.StartsWith(slug) && (selfId == null || s.Id != selfId))
+                .Select(s => s.Slug).ToListAsync())
+            .ToHashSet(StringComparer.Ordinal);
+        if (!taken.Contains(slug)) return slug;
+        for (var i = 2; ; i++)
+        {
+            var cand = $"{slug}-{i}";
+            if (!taken.Contains(cand)) return cand;
+        }
+    }
+
     public async Task<BookingResponse> UpdateBookingStatusAsync(Guid companyId, Guid siteId, Guid bookingId, UpdateBookingStatusRequest request, string userId)
     {
         var booking = await _db.SiteBookings.FirstOrDefaultAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Booking not found.");
 
+        // คิวสำรองตั้งได้โดย engine เท่านั้น (ตอนรอบเต็ม) — ตั้งมือ = การจองที่กินความจุอยู่หายจากการนับโดยไม่มีใครรู้
+        if (request.Status == BookingStatus.Waitlisted && booking.Status != BookingStatus.Waitlisted)
+            throw new BusinessRuleException("ย้ายการจองเข้าคิวสำรองเองไม่ได้ — คิวสำรองเกิดจากรอบเต็มเท่านั้น", "CMS-BOOKING-WAITLIST-MANUAL");
+        var oldStatus = booking.Status;
         booking.Status = request.Status;
         if (request.InternalNotes != null) booking.InternalNotes = request.InternalNotes;
         if (request.CancellationReason != null) booking.CancellationReason = request.CancellationReason;
@@ -336,9 +785,31 @@ public class CmsBookingService : ICmsBookingService
             await _db.SaveChangesAsync();
         }
 
+        // แอดมินยืนยันใบในคิวสำรองเอง (นอกคิว) ⇒ ออกเอกสาร ERP เหมือนการจองปกติ
+        if (oldStatus == BookingStatus.Waitlisted && request.Status is BookingStatus.Pending or BookingStatus.Confirmed)
+            await SyncIfBillableAsync(companyId, siteId, bookingId);
+
+        // ที่ว่างเกิดขึ้น (ยกเลิก/ไม่มา ของใบที่กินความจุอยู่) ⇒ เลื่อนคิวสำรองของวันนั้นขึ้น — engine ตัดสินใหม่ทีละใบ
+        if (oldStatus != BookingStatus.Waitlisted && oldStatus != BookingStatus.Cancelled
+            && request.Status is BookingStatus.Cancelled or BookingStatus.NoShow)
+        {
+            var promoted = await PromoteWaitlistAsync(companyId, siteId, booking.BookingDate, userId);
+            foreach (var id in promoted) await SyncIfBillableAsync(companyId, siteId, id);
+            if (promoted.Count > 0) notices.Add($"เลื่อนคิวสำรองขึ้น {promoted.Count} รายการ — แจ้งลูกค้าที่ได้คิว");
+        }
+
         var result = await GetBookingAsync(companyId, siteId, bookingId) ?? throw new InvalidOperationException("Failed.");
         result.ErpNotices = notices;
         return result;
+    }
+
+    /// <summary>ออกเอกสาร ERP ให้การจองที่ไม่ใช่ Lead (ใบที่เพิ่งพ้นคิวสำรอง)</summary>
+    private async Task SyncIfBillableAsync(Guid companyId, Guid siteId, Guid bookingId)
+    {
+        var type = await _db.SiteBookings.AsNoTracking()
+            .Where(b => b.Id == bookingId && b.CompanyId == companyId && b.SiteId == siteId)
+            .Select(b => (BookingType?)b.BookingService.BookingType).FirstOrDefaultAsync();
+        if (type is BookingType t && t != BookingType.Lead) await SyncBookingToErpAsync(companyId, siteId, bookingId);
     }
 
     /// <summary>ให้บริการเสร็จ + เอกสาร ERP เป็นมัดจำ → รับรู้รายได้จากมัดจำ (ตัด 217xx ขายรอรับรู้ → รายได้) ตามนโยบาย
@@ -431,7 +902,7 @@ public class CmsBookingService : ICmsBookingService
 
     public async Task<BookingResponse?> GetBookingAsync(Guid companyId, Guid siteId, Guid bookingId)
     {
-        return await _db.SiteBookings.AsNoTracking()
+        var resp = await _db.SiteBookings.AsNoTracking()
             .Where(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId)
             .Select(b => new BookingResponse
             {
@@ -446,7 +917,10 @@ public class CmsBookingService : ICmsBookingService
                 BookingDate = b.BookingDate,
                 StartTime = b.StartTime.ToString("HH:mm"),
                 EndTime = b.EndTime.ToString("HH:mm"),
-                DurationMinutes = b.DurationMinutes,
+                DurationMinutes = b.DurationMinutes, Units = b.Units,
+                ResourceId = b.ResourceId,
+                ResourceName = b.ResourceId == null ? null
+                    : _db.SiteBookingResources.Where(r => r.Id == b.ResourceId && r.CompanyId == companyId).Select(r => r.Name).FirstOrDefault(),
                 TotalAmount = b.TotalAmount, DepositAmount = b.DepositAmount,
                 PaidAmount = b.PaidAmount, Currency = b.Currency,
                 BookingType = b.BookingService.BookingType,
@@ -456,11 +930,43 @@ public class CmsBookingService : ICmsBookingService
                 CancelledAt = b.CancelledAt, CreatedAt = b.CreatedAt
             })
             .FirstOrDefaultAsync();
+        if (resp != null && resp.Status == BookingStatus.Waitlisted)
+            resp.WaitlistPosition = (await WaitlistPositionsAsync(companyId, siteId, new[] { resp.Id })).GetValueOrDefault(resp.Id);
+        return resp;
     }
 
-    public async Task<PagedResponse<BookingListResponse>> GetBookingsAsync(Guid companyId, Guid siteId, string? status, Guid? serviceId, DateTime? fromDate, DateTime? toDate, int page, int pageSize)
+    /// <summary>ลำดับคิวสำรองของใบที่ระบุ — คิดจากใบที่ยังอยู่ในคิวของรอบเดียวกัน (บริการ · วัน · เวลาเริ่ม) ⇒ มีคนออกจากคิว ลำดับขยับขึ้นเอง ·
+    /// สูตรลำดับอยู่ที่ <see cref="BookingSlotEngine.WaitlistPosition"/> ตัวเดียว</summary>
+    private async Task<Dictionary<Guid, int>> WaitlistPositionsAsync(Guid companyId, Guid siteId, IReadOnlyCollection<Guid> bookingIds)
+    {
+        var mine = await _db.SiteBookings.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.SiteId == siteId && bookingIds.Contains(b.Id) && b.Status == BookingStatus.Waitlisted)
+            .Select(b => new { b.Id, b.BookingServiceId, b.BookingDate, b.StartTime, b.CreatedAt })
+            .ToListAsync();
+        if (mine.Count == 0) return new();
+        var serviceIds = mine.Select(x => x.BookingServiceId).Distinct().ToList();
+        var dates = mine.Select(x => x.BookingDate).Distinct().ToList();
+        var queue = await _db.SiteBookings.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && b.SiteId == siteId && b.Status == BookingStatus.Waitlisted
+                && serviceIds.Contains(b.BookingServiceId) && dates.Contains(b.BookingDate))
+            .Select(b => new { b.Id, b.BookingServiceId, b.BookingDate, b.StartTime, b.CreatedAt })
+            .ToListAsync();
+        return mine.ToDictionary(m => m.Id, m => BookingSlotEngine.WaitlistPosition(m,
+            queue.Where(q => q.BookingServiceId == m.BookingServiceId && q.BookingDate == m.BookingDate && q.StartTime == m.StartTime),
+            q => q.CreatedAt, q => q.Id));
+    }
+
+    public async Task<PagedResponse<BookingListResponse>> GetBookingsAsync(Guid companyId, Guid siteId, string? status, Guid? serviceId, DateTime? fromDate, DateTime? toDate, int page, int pageSize, string? search = null)
     {
         var query = _db.SiteBookings.AsNoTracking().Where(b => b.SiteId == siteId && b.CompanyId == companyId);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var q = search.Trim();
+            query = query.Where(b => b.BookingNumber.Contains(q)
+                || (b.GuestName != null && b.GuestName.Contains(q))
+                || (b.GuestPhone != null && b.GuestPhone.Contains(q))
+                || (b.Customer != null && b.Customer.FullName != null && b.Customer.FullName.Contains(q)));
+        }
 
         if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<BookingStatus>(status, out var st))
             query = query.Where(b => b.Status == st);
@@ -479,10 +985,20 @@ public class CmsBookingService : ICmsBookingService
                 CustomerName = b.Customer != null ? b.Customer.FullName : b.GuestName,
                 BookingDate = b.BookingDate,
                 StartTime = b.StartTime.ToString("HH:mm"),
+                EndTime = b.EndTime.ToString("HH:mm"),
+                GuestCount = b.GuestCount,
+                ResourceName = b.ResourceId == null ? null
+                    : _db.SiteBookingResources.Where(r => r.Id == b.ResourceId && r.CompanyId == companyId).Select(r => r.Name).FirstOrDefault(),
                 TotalAmount = b.TotalAmount, Currency = b.Currency,
                 CreatedAt = b.CreatedAt
             })
             .ToListAsync();
+        var waitIds = items.Where(i => i.Status == BookingStatus.Waitlisted).Select(i => i.Id).ToList();
+        if (waitIds.Count > 0)
+        {
+            var pos = await WaitlistPositionsAsync(companyId, siteId, waitIds);
+            foreach (var i in items) if (pos.TryGetValue(i.Id, out var p)) i.WaitlistPosition = p;
+        }
 
         return new PagedResponse<BookingListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
@@ -595,8 +1111,10 @@ public class CmsBookingService : ICmsBookingService
                     // Quantity 1: ยอดจอง (booking.TotalAmount) เป็นราคาต่อ "การจอง"
                     // (flat = svc.Price) ไม่คูณจำนวนแขก. เดิม Quantity=GuestCount →
                     // เอกสาร ERP = ราคา × แขก ไม่ตรงยอดจอง (รายได้/AR สูงเกินจริง N เท่า).
-                    Quantity: 1,
-                    Unit: "ครั้ง",
+                    // ทีม B: โหมดทุก N นาทีจองหลายช่วงได้ ⇒ ปริมาณ = จำนวนช่วง (ยอด = ราคาต่อช่วง × ช่วง = booking.TotalAmount) ·
+                    // ใบมัดจำยังเป็น 1 × ยอดมัดจำ · การจองเดิม Units = 1 ⇒ ใบเหมือนเดิม
+                    Quantity: isDeposit ? 1 : Math.Max(1, booking.Units),
+                    Unit: !isDeposit && booking.Units > 1 ? "ช่วง" : "ครั้ง",
                     // มัดจำ (PrePayment): เอกสารต้องเป็น "ยอดมัดจำที่รับ" ไม่ใช่ราคาเต็ม
                     // เดิมใช้ svc.Price เต็ม → เงินสด/หนี้สินรอรับรู้สูงเกินจริง.
                     UnitPrice: isDeposit ? booking.DepositAmount : svc.Price,

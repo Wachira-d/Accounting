@@ -22,6 +22,33 @@ public class SiteBookingService : TenantEntity
     public int MaxAdvanceBookingDays { get; set; } = 30;
     public int MinAdvanceBookingHours { get; set; } = 1;
 
+    // ── รอบที่เปิดให้จอง (ตัวตัดสินเดียว Helpers/BookingSlotEngine · ค่าเริ่มต้นของคอลัมน์ = พฤติกรรมเดิม) ──
+    /// <summary>ความละเอียดของรอบ: ช่วงกำหนดเอง (เดิม) · ทุก N นาที · ครึ่งวัน · รายวัน</summary>
+    public BookingSlotMode SlotMode { get; set; } = BookingSlotMode.Windows;
+    /// <summary>ระยะห่างของเวลาเริ่มแต่ละรอบ (โหมดทุก N นาที) · null = เท่ากับระยะเวลาบริการ</summary>
+    public int? SlotIntervalMinutes { get; set; }
+    /// <summary>เวลาเตรียมก่อนเริ่ม (นาที) · <see cref="BufferMinutes"/> = เวลาเก็บ/ทำความสะอาดหลังจบ</summary>
+    public int BufferBeforeMinutes { get; set; }
+    /// <summary><see cref="MaxCapacity"/> นับเป็นคิว (การจอง) หรือจำนวนคน</summary>
+    public BookingCapacityUnit CapacityUnit { get; set; } = BookingCapacityUnit.Bookings;
+    /// <summary>จองหลายช่วงติดกันได้สูงสุดกี่ช่วง (สนาม/ห้องประชุมรายชั่วโมง) — โหมดทุก N นาทีเท่านั้น</summary>
+    public int MaxUnitsPerBooking { get; set; } = 1;
+    /// <summary>เวลาแบ่งเช้า/บ่าย "HH:mm" (โหมดครึ่งวัน) · null = 12:00</summary>
+    public string? HalfDaySplitTime { get; set; }
+    /// <summary>ทรัพยากรร่วม — บริการที่ตั้งชื่อกลุ่มเดียวกัน (เช่น "ห้องประชุม A" แบบครึ่งวัน+รายวัน · "หมอนวด") ใช้ความจุร่วมกัน ·
+    /// ว่าง = บริการนี้มีทรัพยากรของตัวเอง</summary>
+    public string? CapacityGroup { get; set; }
+    /// <summary>สวิตช์ "คุม Slot": true = บล็อกเมื่อเต็ม (ความจุ/ผู้ให้บริการ) · false = ยอมรับจองซ้อนได้ถึง <see cref="OverlapLimit"/></summary>
+    public bool EnforceSlotCapacity { get; set; } = true;
+    /// <summary>เพดานจองซ้อนต่อรอบเมื่อปิดสวิตช์คุม Slot · null = ไม่จำกัด</summary>
+    public int? OverlapLimit { get; set; }
+    /// <summary>รอบเต็มแล้วรับเข้าคิวสำรอง (Waiting List) · เลื่อนขึ้นอัตโนมัติเมื่อมีคนยกเลิก</summary>
+    public bool WaitlistEnabled { get; set; }
+    /// <summary>จัดสรรผู้ให้บริการ/ห้อง/อุปกรณ์: ไม่ใช้ · บังคับระบุ · ลูกค้าเลือก · ระบบจัดให้</summary>
+    public BookingResourceMode ResourceMode { get; set; } = BookingResourceMode.None;
+    /// <summary>true = ระยะเวลา/buffer/ล่วงหน้า ใช้ค่าตั้งของไซต์ (<see cref="SiteBookingSettings"/>) · false = ใช้ค่าของบริการนี้ (override · ข้อมูลเดิม)</summary>
+    public bool UseSiteDefaults { get; set; }
+
     // Pricing
     public decimal Price { get; set; }
     public decimal? DepositAmount { get; set; }
@@ -113,6 +140,10 @@ public class SiteBooking : TenantEntity
     public string? GuestEmail { get; set; }
     public string? GuestPhone { get; set; }
     public int GuestCount { get; set; } = 1;
+    /// <summary>จำนวนช่วงติดกันที่จอง (โหมดทุก N นาที · ยอด = ราคาต่อช่วง × ช่วง) · การจองเดิม = 1</summary>
+    public int Units { get; set; } = 1;
+    /// <summary>ผู้ให้บริการ/ห้อง/อุปกรณ์ที่ถูกจัดให้ (หรือที่ลูกค้าขอ — คิวสำรอง) · null = บริการไม่ใช้ผู้ให้บริการ</summary>
+    public Guid? ResourceId { get; set; }
 
     // Amounts
     public decimal TotalAmount { get; set; }
