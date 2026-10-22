@@ -123,6 +123,31 @@
     .lg-lb-p{left:18px;top:50%;transform:translateY(-50%)}
     .lg-lb-n{right:18px;top:50%;transform:translateY(-50%)}
     @media(max-width:700px){.lg-imgn{left:auto;right:12px;top:12px}}
+    /* Block: Gallery (ตาราง + lightbox) / Slider — HTML จาก Helpers/CmsGalleryBlock (เซิร์ฟเวอร์) */
+    .cms-gallery{padding:40px 20px;max-width:1200px;margin:0 auto}
+    .cms-gallery-title{font-size:28px;margin:0 0 20px;text-align:center}
+    .cms-gallery-grid{display:grid;grid-template-columns:repeat(var(--cms-gallery-cols,3),minmax(0,1fr));gap:10px}
+    @media(max-width:900px){.cms-gallery-grid{grid-template-columns:repeat(min(var(--cms-gallery-cols,3),3),minmax(0,1fr))}}
+    @media(max-width:600px){.cms-gallery-grid{grid-template-columns:repeat(min(var(--cms-gallery-cols,3),2),minmax(0,1fr))}}
+    .cms-gallery-item{margin:0}
+    .cms-gallery-item img{display:block;width:100%;height:auto;aspect-ratio:var(--cms-gallery-aspect,auto);object-fit:cover;border-radius:var(--radius,8px);background:#F3F4F6}
+    .cms-gallery-item figcaption,.cms-slide figcaption{font-size:13px;color:var(--text-secondary,#6B7280);margin-top:6px;text-align:center}
+    .cms-gallery-link{display:block;cursor:zoom-in}
+    .cms-slider{position:relative}
+    .cms-slider-track{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;scrollbar-width:none;border-radius:var(--radius,8px)}
+    .cms-slider-track::-webkit-scrollbar{display:none}
+    .cms-slide{flex:0 0 100%;scroll-snap-align:center;margin:0}
+    .cms-slide img{display:block;width:100%;aspect-ratio:var(--cms-gallery-aspect,16/9);max-height:75vh;object-fit:cover;background:#F3F4F6;border-radius:var(--radius,8px)}
+    .cms-slider-btn{position:absolute;top:calc(50% - 22px);transform:translateY(-50%);width:44px;height:44px;border:0;border-radius:999px;background:rgba(255,255,255,.9);font-size:26px;line-height:1;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+    .cms-slider-prev{left:10px} .cms-slider-next{right:10px}
+    .cms-slider-dots{display:flex;justify-content:center;gap:8px;margin-top:10px}
+    .cms-slider-dot{width:10px;height:10px;padding:0;border:0;border-radius:999px;background:#D1D5DB;cursor:pointer}
+    .cms-slider-dot.active{background:var(--primary,#4F46E5)}
+    .cms-slider-btn:focus-visible,.cms-slider-dot:focus-visible,.cms-slider-track:focus-visible{outline:2px solid var(--primary,#4F46E5);outline-offset:2px}
+    @media(max-width:600px){.cms-slider-btn{width:36px;height:36px;font-size:20px}}
+    @media(prefers-reduced-motion:reduce){.cms-slider-track{scroll-behavior:auto}}
+    .cms-lb-cap{position:absolute;left:0;right:0;bottom:18px;text-align:center;color:#fff;font-size:14px;padding:0 70px}
+    .cms-lb-n{position:absolute;top:22px;left:22px;color:#fff;font-size:13px;opacity:.8}
     .lg-meta{font-size:13px;color:var(--text-secondary,#6B7280);margin-bottom:6px}
     .lg-price{text-align:right;min-width:170px}
     .lg-price .amt{font-size:24px;font-weight:800;color:var(--primary,#4F46E5)}
@@ -485,7 +510,8 @@
           }
 
           main.innerHTML = blocks.map(b => {
-            const cssClasses = b.cssClasses || '';
+            // คลาสที่ผู้แก้ไขเว็บใส่เอง — escape ก่อนต่อเข้า attribute (เดิมดิบ = หลุด class="…" ได้)
+            const cssClasses = this.esc(b.cssClasses || '');
             const hideMobile = b.hideOnMobile ? 'sf-hide-mobile' : '';
             const hideDesktop = b.hideOnDesktop ? 'sf-hide-desktop' : '';
             const wrap = `<section class="${cssClasses} ${hideMobile} ${hideDesktop}">`;
@@ -497,6 +523,8 @@
 
           // Pre-fill product grid + booking after rendering
           this.hydrateBlocks(companyId, siteId, blocks);
+          // แกลเลอรี/สไลด์โชว์ — HTML มาจากเซิร์ฟเวอร์ (CmsGalleryBlock) · ที่นี่แค่ติดพฤติกรรม (เลื่อน · autoplay · lightbox)
+          this.initGalleries(main);
         } catch (e) {
           console.error(e);
           main.innerHTML = `<div class="sf-loader" style="color:#DC2626">โหลดหน้าไม่สำเร็จ</div>`;
@@ -530,9 +558,9 @@
           case 3: { // Image
             return `<figure class="blk-image"><img src="${esc(cfg.url||'')}" alt="${esc(cfg.alt||'')}">${cfg.caption?`<figcaption>${esc(cfg.caption)}</figcaption>`:''}</figure>`;
           }
-          case 4: { // Gallery
-            const imgs = (cfg.images || []).map(i => `<img src="${esc(i.url||'')}" alt="${esc(i.alt||'')}">`).join('');
-            return `<div class="blk-image" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">${imgs}</div>`;
+          case 4: { // Gallery / Slider — เรนเดอร์ฝั่งเซิร์ฟเวอร์ตัวเดียว (Helpers/CmsGalleryBlock · escape + กรอง URL แล้ว)
+            // ห้ามวาดซ้ำฝั่งนี้: เดิมสองตัววาดอ่านคีย์คนละชื่อ (url/src) จน drift · พฤติกรรมติดทีหลังใน initGalleries
+            return b.renderedHtml || '';
           }
           case 5: { // Video
             const url = cfg.url || '';
@@ -1682,6 +1710,99 @@
             .find(b => b.blockType === 'Hero' || b.blockType === 1);
           return hero ? `<section>${this.renderBlock(hero) || ''}</section>` : '';
         } catch (_) { return ''; }
+      },
+
+      // ===== แกลเลอรี / สไลด์โชว์ (บล็อก Gallery) =====
+      // HTML + escape อยู่ฝั่งเซิร์ฟเวอร์ (Helpers/CmsGalleryBlock) — ตรงนี้อ่านแค่ data-* แล้วติดพฤติกรรม ไม่ประกอบ HTML จากคอนฟิกเอง
+      initGalleries(root) {
+        (this._galleryTimers || []).forEach(t => clearInterval(t));
+        this._galleryTimers = [];
+        const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        root.querySelectorAll('[data-gallery="slider"]').forEach(sec => {
+          const track = sec.querySelector('.cms-slider-track');
+          const slides = Array.from(sec.querySelectorAll('.cms-slide'));
+          const dots = Array.from(sec.querySelectorAll('.cms-slider-dot'));
+          if (!track || slides.length === 0) return;
+          let idx = 0;
+          const mark = (i) => { idx = i; dots.forEach((d, k) => { d.classList.toggle('active', k === i); d.setAttribute('aria-current', k === i ? 'true' : 'false'); }); };
+          const go = (i) => {
+            const n = ((i % slides.length) + slides.length) % slides.length;
+            track.scrollTo({ left: n * track.clientWidth, behavior: reduceMotion ? 'auto' : 'smooth' }); // สไลด์กว้าง 100% ของ track
+            mark(n);
+          };
+          sec.querySelector('.cms-slider-prev')?.addEventListener('click', () => go(idx - 1));
+          sec.querySelector('.cms-slider-next')?.addEventListener('click', () => go(idx + 1));
+          dots.forEach(d => d.addEventListener('click', () => go(parseInt(d.dataset.slide, 10) || 0)));
+          track.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') { e.preventDefault(); go(idx - 1); }
+            if (e.key === 'ArrowRight') { e.preventDefault(); go(idx + 1); }
+          });
+          // ปัดด้วยนิ้ว/ลากสกรอลล์ → อัปเดตจุดตามสไลด์ที่อยู่กลางจอ
+          let st = null;
+          track.addEventListener('scroll', () => {
+            clearTimeout(st);
+            st = setTimeout(() => mark(Math.round(track.scrollLeft / Math.max(1, track.clientWidth))), 80);
+          }, { passive: true });
+          mark(0);
+          // autoplay: หยุดเมื่อเมาส์ชี้/โฟกัสอยู่ หรือผู้ใช้ตั้ง reduce-motion (WCAG 2.2.2)
+          const interval = Math.max(2000, Math.min(30000, parseInt(sec.dataset.interval, 10) || 5000));
+          if (sec.dataset.autoplay === '1' && slides.length > 1 && !reduceMotion) {
+            let paused = false;
+            ['mouseenter', 'focusin', 'touchstart'].forEach(ev => sec.addEventListener(ev, () => { paused = true; }, { passive: true }));
+            ['mouseleave', 'focusout'].forEach(ev => sec.addEventListener(ev, () => { paused = false; }));
+            this._galleryTimers.push(setInterval(() => { if (!paused && !document.hidden) go(idx + 1); }, interval));
+          }
+          if (sec.dataset.lightbox === '1') this._wireGalleryLightbox(sec);
+        });
+        root.querySelectorAll('[data-gallery="grid"][data-lightbox="1"]').forEach(sec => this._wireGalleryLightbox(sec));
+      },
+
+      _wireGalleryLightbox(sec) {
+        const links = Array.from(sec.querySelectorAll('a.cms-gallery-link'));
+        const items = links.map(a => ({ url: a.getAttribute('href'), caption: a.dataset.caption || '', alt: a.querySelector('img')?.getAttribute('alt') || '' }));
+        links.forEach((a, i) => a.addEventListener('click', (e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey) return;   // เปิดแท็บใหม่ตามปกติ
+          e.preventDefault();
+          this.galleryLightbox(items, i, a);
+        }));
+      },
+
+      galleryLightbox(items, i, opener) {
+        if (!items.length) return;
+        const n = ((i % items.length) + items.length) % items.length;
+        let el = document.getElementById('cmsLb');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'cmsLb';
+          el.className = 'lg-lb';
+          el.setAttribute('role', 'dialog');
+          el.setAttribute('aria-modal', 'true');
+          el.tabIndex = -1;
+          const close = () => { el.remove(); document.removeEventListener('keydown', el._onKey); if (el._opener) el._opener.focus(); };
+          el._close = close;
+          el._onKey = (e) => {
+            if (e.key === 'Escape') close();
+            if (e.key === 'ArrowLeft') this.galleryLightbox(el._items, el._idx - 1);
+            if (e.key === 'ArrowRight') this.galleryLightbox(el._items, el._idx + 1);
+          };
+          document.addEventListener('keydown', el._onKey);
+          el.addEventListener('click', (ev) => { if (ev.target === el) close(); });
+          document.body.appendChild(el);
+        }
+        el._items = items; el._idx = n;
+        if (opener) el._opener = opener;
+        const it = items[n];
+        el.setAttribute('aria-label', it.caption || it.alt || 'รูปภาพ');
+        el.innerHTML = `<img src="${this.esc(it.url)}" alt="${this.esc(it.alt)}">
+          ${items.length > 1 ? `<div class="cms-lb-n">${n + 1} / ${items.length}</div>` : ''}
+          ${it.caption ? `<div class="cms-lb-cap">${this.esc(it.caption)}</div>` : ''}
+          <button type="button" class="lg-lb-x" aria-label="ปิด">✕</button>
+          ${items.length > 1 ? `<button type="button" class="lg-lb-p" aria-label="รูปก่อนหน้า">‹</button>
+          <button type="button" class="lg-lb-n" aria-label="รูปถัดไป">›</button>` : ''}`;
+        el.querySelector('.lg-lb-x').addEventListener('click', () => el._close());
+        el.querySelector('.lg-lb-p')?.addEventListener('click', () => this.galleryLightbox(items, n - 1));
+        el.querySelector('.lg-lb-n')?.addEventListener('click', () => this.galleryLightbox(items, n + 1));
+        el.focus();
       },
 
       lgLightbox(i) {

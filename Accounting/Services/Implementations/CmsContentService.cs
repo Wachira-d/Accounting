@@ -328,8 +328,19 @@ public class CmsContentService : ICmsContentService
 
     // ===== Blocks =====
 
+    /// <summary>หน้านี้เป็นของเว็บนี้ + บริษัทนี้จริงไหม — ด่านเดียวของทุก action บนบล็อก
+    /// (เดิมสร้าง/แก้/ลบ/เรียงบล็อกด้วย pageId/blockId ล้วน ไม่มีตัวกรองบริษัท และ PageBlock ไม่มี global tenant filter
+    /// ⇒ สมาชิกบริษัท A ยิง pageId ของบริษัท B แล้วแทรกบล็อกลงหน้าเว็บสาธารณะของ B ได้)</summary>
+    private async Task EnsurePageOwnedAsync(Guid companyId, Guid siteId, Guid pageId)
+    {
+        var owned = await _db.SitePages.AsNoTracking()
+            .AnyAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId);
+        if (!owned) throw new KeyNotFoundException("Page not found.");
+    }
+
     public async Task<BlockResponse> CreateBlockAsync(Guid companyId, Guid siteId, Guid pageId, CreateBlockRequest request, string userId)
     {
+        await EnsurePageOwnedAsync(companyId, siteId, pageId);
         var block = new PageBlock
         {
             CompanyId = companyId,
@@ -366,7 +377,8 @@ public class CmsContentService : ICmsContentService
 
     public async Task<BlockResponse> UpdateBlockAsync(Guid companyId, Guid siteId, Guid pageId, Guid blockId, UpdateBlockRequest request, string userId)
     {
-        var block = await _db.PageBlocks.FirstOrDefaultAsync(b => b.Id == blockId && b.PageId == pageId)
+        await EnsurePageOwnedAsync(companyId, siteId, pageId);
+        var block = await _db.PageBlocks.FirstOrDefaultAsync(b => b.Id == blockId && b.PageId == pageId && b.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Block not found.");
 
         if (request.BlockType.HasValue) block.BlockType = request.BlockType.Value;
@@ -399,7 +411,10 @@ public class CmsContentService : ICmsContentService
 
     public async Task<bool> DeleteBlockAsync(Guid companyId, Guid siteId, Guid pageId, Guid blockId)
     {
-        var block = await _db.PageBlocks.FirstOrDefaultAsync(b => b.Id == blockId && b.PageId == pageId);
+        var owned = await _db.SitePages.AsNoTracking()
+            .AnyAsync(p => p.Id == pageId && p.SiteId == siteId && p.CompanyId == companyId);
+        if (!owned) return false;   // หน้าไม่ใช่ของเว็บ/บริษัทนี้ = "ไม่พบ" (404) เหมือนบล็อกที่ไม่มี
+        var block = await _db.PageBlocks.FirstOrDefaultAsync(b => b.Id == blockId && b.PageId == pageId && b.CompanyId == companyId);
         if (block == null) return false;
 
         _db.PageBlocks.Remove(block);
@@ -409,7 +424,8 @@ public class CmsContentService : ICmsContentService
 
     public async Task<bool> ReorderBlocksAsync(Guid companyId, Guid siteId, Guid pageId, ReorderBlocksRequest request)
     {
-        var blocks = await _db.PageBlocks.Where(b => b.PageId == pageId).ToListAsync();
+        await EnsurePageOwnedAsync(companyId, siteId, pageId);
+        var blocks = await _db.PageBlocks.Where(b => b.PageId == pageId && b.CompanyId == companyId).ToListAsync();
         foreach (var item in request.Items)
         {
             var block = blocks.FirstOrDefault(b => b.Id == item.BlockId);
@@ -528,6 +544,9 @@ public class CmsContentService : ICmsContentService
 
     public async Task<MediaResponse> UploadMediaAsync(Guid companyId, Guid siteId, string fileName, string contentType, Stream fileStream, string userId)
     {
+        // เว็บต้องเป็นของบริษัทนี้ก่อนเขียนไฟล์ใด ๆ (เดิมเช็คทีหลังแค่ตอนบวกตัวนับ ⇒ siteId แปลกปลอมได้ไฟล์ค้างในโฟลเดอร์)
+        if (!await _db.Sites.AsNoTracking().AnyAsync(s => s.Id == siteId && s.CompanyId == companyId))
+            throw new KeyNotFoundException("Site not found.");
         var basePath = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "cms", companyId.ToString(), siteId.ToString());
         Directory.CreateDirectory(basePath);
 
@@ -611,6 +630,7 @@ public class CmsContentService : ICmsContentService
                 Caption = m.Caption, FolderPath = m.FolderPath, Tags = m.Tags, CreatedAt = m.CreatedAt
             })
             .ToListAsync();
+        foreach (var it in items) it.PublicUrl = CmsMediaPublicUrl(companyId, siteId, it.FileName);
 
         return new PagedResponse<MediaResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
@@ -804,9 +824,15 @@ public class CmsContentService : ICmsContentService
         _ => SiteMediaType.Document
     };
 
+    /// <summary>URL สาธารณะของไฟล์คลังสื่อ — ต้องตรงกับ <c>webBase</c> ที่ UploadMediaAsync ส่งให้ ProcessAndSaveAsync
+    /// (โฟลเดอร์ <c>uploads/cms/{companyId}/{siteId}</c> · เสิร์ฟที่ /uploads ผ่าน allow-list "/uploads/cms" ใน Program.cs)</summary>
+    private static string CmsMediaPublicUrl(Guid companyId, Guid siteId, string fileName) =>
+        $"/uploads/cms/{companyId}/{siteId}/{Uri.EscapeDataString(fileName ?? "")}";
+
     private static MediaResponse MapMediaResponse(SiteMedia m) => new()
     {
         Id = m.Id, FileName = m.FileName, OriginalFileName = m.OriginalFileName,
+        PublicUrl = CmsMediaPublicUrl(m.CompanyId, m.SiteId, m.FileName),
         ContentType = m.ContentType, FileSize = m.FileSize, StoragePath = m.StoragePath,
         MediaType = m.MediaType, WebPPath = m.WebPPath, ThumbnailPath = m.ThumbnailPath,
         Width = m.Width, Height = m.Height, AltText = m.AltText, AltTextEn = m.AltTextEn,

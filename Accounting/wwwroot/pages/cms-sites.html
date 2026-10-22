@@ -36,6 +36,9 @@
       </div>
     </div>
 
+    <!-- ภาพรวมทุกไซต์ (คำสั่งซื้อ · จองคิว · ที่พัก · Lead) — เติมโดย Page.renderOverview -->
+    <div id="sitesOverview" style="display:none;margin-bottom:14px"></div>
+
     <!-- Site list -->
     <div id="sitesList" class="grid grid-2 gap-4" style="margin-bottom:20px"
          data-tour-step="2"
@@ -192,6 +195,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
   <script>
     // Starter templates — define a site preset + array of pages with blocks.
     // When the user picks one, we create the site, then create each page (with
@@ -378,18 +382,17 @@
       const opt = document.querySelector(`#fIndustry option[value="${CSS.escape(String(v))}"]`);
       return opt ? opt.textContent.trim() : String(v);
     };
-    // ปุ่มโมดูลต่อเว็บ — จาก site.modules ที่เซิร์ฟเวอร์คำนวณ (CmsModuleResolver) หน้าเว็บแค่วาด
-    const MODULE_LINKS = {
-      lodging: [
-        { label: '🛏️ ตั้งค่าที่พัก', href: (s) => `/pages/lodging-settings.html?siteId=${s.id}` },
-        { label: '🏨 Front desk', href: (s) => `/pages/lodging.html?siteId=${s.id}` },
-      ],
-      orders: [{ label: '📦 ออเดอร์', href: (s) => `/pages/cms-orders.html?siteId=${s.id}` }],
-      bookings: [{ label: '📅 การจองคิว', href: (s) => `/pages/cms-bookings.html?siteId=${s.id}` }],
+    // ปุ่มงานรายเว็บ (คำสั่งซื้อ · จองคิว · Front desk/ตั้งค่าที่พัก · Lead) — จาก site.modules ที่เซิร์ฟเวอร์คำนวณ
+    // (CmsModuleResolver) ผ่านตารางลิงก์ตัวเดียว CmsSiteContext.MODULE_LINKS (breadcrumb ของหน้าปลายทางใช้ตารางเดียวกัน)
+    // เมนูซ้ายพับงานพวกนี้ไว้ใต้ "เว็บไซต์ของฉัน" แล้ว ⇒ การ์ดเว็บคือทางเข้าหลัก · data-badge = ตัวเลขงานค้าง (loadBadges)
+    const moduleButtons = (s) => CmsSiteContext.moduleLinks(s)
+      .map(l => `<a class="btn btn-sm btn-secondary" href="${Layout.esc(l.href)}" data-badge-site="${Layout.esc(s.id)}" data-badge-page="${Layout.esc(l.page)}">${Layout.esc(l.label)}</a>`).join('');
+    // ตัวนับงานค้างต่อเว็บ (ใช้ endpoint รายเว็บเดิม — สิทธิ์รายเว็บยังบังคับครบ) · ไม่มีหน้า lodging (Front desk มีแดชบอร์ดของตัวเอง)
+    const BADGE_SOURCES = {
+      'cms-orders':   { module: 'orders',   label: 'รอดำเนินการ', fetch: (api, id) => api.cmsListOrders(id, '?status=Pending&pageSize=1') },
+      'cms-bookings': { module: 'bookings', label: 'รอยืนยัน',    fetch: (api, id) => api.cmsListBookings(id, '?status=Pending&pageSize=1') },
+      'cms-leads':    { module: 'leads',    label: 'ใหม่',        fetch: (api, id) => api.cmsListLeads(id, '?status=New&pageSize=1') },
     };
-    const moduleButtons = (s) => (Array.isArray(s.modules) ? s.modules : [])
-      .flatMap(m => MODULE_LINKS[m] || [])
-      .map(l => `<a class="btn btn-sm btn-secondary" href="${l.href(s)}">${l.label}</a>`).join('');
 
     const Page = {
       sites: [],
@@ -407,7 +410,67 @@
           const res = await api.cmsListSites('?pageSize=100');
           this.sites = res.data?.items || res.data || [];
           this.render();
+          this.renderOverview();
+          this.loadBadges();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ภาพรวมทุกไซต์ — ทางเข้า "รวมทุกเว็บ" ของงานที่ย้ายออกจากเมนูซ้าย (ห้ามให้ใครหาหน้าไม่เจอ)
+      // แสดงเฉพาะงานที่บริษัทใช้จริง (union ของ site.modules) · ตัวเลขเติมโดย loadBadges
+      renderOverview() {
+        const el = document.getElementById('sitesOverview');
+        if (!el) return;
+        const mods = new Set(this.sites.flatMap(s => Array.isArray(s.modules) ? s.modules : []));
+        const multi = this.sites.length > 1;
+        const firstWith = (m) => (CmsSiteContext.sitesWith(this.sites, m)[0] || this.sites[0] || {}).id || '';
+        const tiles = [
+          mods.has('orders') && { page: 'cms-orders', label: '🛒 คำสั่งซื้อ', href: multi ? '/pages/cms-orders.html?siteId=all' : `/pages/cms-orders.html?siteId=${encodeURIComponent(firstWith('orders'))}` },
+          mods.has('bookings') && { page: 'cms-bookings', label: '📅 การจองคิว', href: `/pages/cms-bookings.html?siteId=${encodeURIComponent(firstWith('bookings'))}` },
+          mods.has('lodging') && { page: 'lodging', label: '🏨 ที่พัก · Front desk', href: '/pages/lodging.html' },
+          mods.has('leads') && { page: 'cms-leads', label: '📨 คำขอ / Lead', href: multi ? '/pages/cms-leads.html?siteId=all' : `/pages/cms-leads.html?siteId=${encodeURIComponent(firstWith('leads'))}` },
+        ].filter(Boolean);
+        if (!tiles.length) { el.style.display = 'none'; return; }
+        el.style.display = '';
+        el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:10px 14px">
+            <span style="font-size:13px;font-weight:600;color:var(--gray-700);margin-right:4px">${multi ? 'ภาพรวมทุกไซต์' : 'งานของเว็บไซต์'}:</span>
+            ${tiles.map(t => `<a class="btn btn-sm btn-ghost" href="${Layout.esc(t.href)}" data-overview-page="${t.page}">${Layout.esc(t.label)}<span class="ov-count" style="margin-left:6px;font-size:11px;color:var(--gray-500)"></span></a>`).join('')}
+          </div>`;
+      },
+
+      // ตัวนับงานค้างบนปุ่มของการ์ดแต่ละเว็บ + ผลรวมบนแถบภาพรวม · โหลดไม่ได้ = "?" พร้อม tooltip (ไม่ใช่ 0 — 0 แปลว่าไม่มีงานค้าง)
+      async loadBadges() {
+        const api = Layout.api(); if (!api) return;
+        const totals = {};
+        const jobs = [];
+        for (const s of this.sites) {
+          for (const [page, src] of Object.entries(BADGE_SOURCES)) {
+            if (!Array.isArray(s.modules) || !s.modules.includes(src.module)) continue;
+            jobs.push(src.fetch(api, s.id).then(r => {
+              const n = r?.data?.totalItems || 0;
+              totals[page] = (totals[page] || 0) + n;
+              this._setBadge(s.id, page, n > 0 ? String(n) : '', `${src.label} ${n} รายการ`);
+            }).catch(() => this._setBadge(s.id, page, '?', 'โหลดจำนวนไม่สำเร็จ (อาจไม่มีสิทธิ์เว็บนี้)')));
+          }
+        }
+        await Promise.allSettled(jobs);
+        document.querySelectorAll('[data-overview-page]').forEach(a => {
+          const n = totals[a.dataset.overviewPage];
+          const src = BADGE_SOURCES[a.dataset.overviewPage];
+          const c = a.querySelector('.ov-count');
+          if (c && src && n) c.textContent = `${src.label} ${n}`;
+        });
+      },
+      _setBadge(siteId, page, text, title) {
+        const a = document.querySelector(`[data-badge-site="${CSS.escape(siteId)}"][data-badge-page="${CSS.escape(page)}"]`);
+        if (!a) return;
+        a.querySelector('.badge-count')?.remove();
+        if (!text) { a.title = title; return; }
+        const b = document.createElement('span');
+        b.className = 'badge-count';
+        b.style.cssText = 'margin-left:6px;background:#DC2626;color:#fff;font-size:11px;padding:0 7px;border-radius:9999px';
+        b.textContent = text;
+        a.title = title;
+        a.appendChild(b);
       },
 
       render() {
