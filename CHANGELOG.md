@@ -5334,3 +5334,7 @@ _2026-10-22 ทีม A (หน้าเคาน์เตอร์ที่พ�
 โมดัลการจองมีกรอบ "สลิปของแขก" รูปย่อทุกใบ (ล่าสุด/ก่อนหน้า/ถูกปฏิเสธ + เหตุผล) กดขยายได้ · `GET lodging/reservations/{id}/slips` + `/slips/{attachmentId}` (`LodgingManage` · tenant · ด่านพาธ `LodgingSlipPath` เดิม) ·
 ตัวรวม `Helpers/LodgingSlipGallery` + `LodgingSlipPath.StorageKey` · audit `GuestUploadedSlip` จด `slipUrl` · ปุ่ม "รับชำระระหว่างพัก" (CheckedIn · เส้น `ConfirmAsync` เดิม) · folio เลือกจากบริการเสริม ·
 ผลตรวจความพร้อมที่ `LODGING_BOOKING_AUDIT.md` §12 (ส่วนลด/ใบรับเงินใบที่ 2+ ในโมดัล = backlog)_
+
+_2026-10-22 (ทีม D — เว็บที่พักฝั่งแขก): เมนู "ห้องพัก" เป็นหน้ารายละเอียดห้องเต็ม (`renderLodgingRoomsPage` · `/rooms/{slug}`) + "จองห้องนี้" ⇒ `/booking?roomType=` เลือกห้องให้ ·
+เมนู "จอง" คง flow ค้นหา/จอง · ตัวช่วยวันที่เดียว `Store.lgDateSync` ทุกฟอร์มวันที่ (เช็คเอาต์อัตโนมัติวันถัดไป · min · ป้าย "N คืน · …" ในค้นหา/สรุป/หน้าการจอง) ·
+ช่องตั้งค่าประเภทห้องใหม่ สูบบุหรี่/สัตว์เลี้ยง/หมายเหตุห้อง (migration ADD COLUMN) · ป้ายเซิร์ฟเวอร์ `HouseRuleLabels`/`ChildrenLabel`/`CancellationSummary` · ฟอร์มจองยุบคอลัมน์บนมือถือ · DOCUMENT_FLOW §6.5_
