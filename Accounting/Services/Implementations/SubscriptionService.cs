@@ -943,8 +943,9 @@ public class SubscriptionService : ISubscriptionService
             if (agg == null) return false;
             return limitType switch
             {
+                // ฝ่ายค้านรอบ 205 ข้อ 1: ส่งยอดรวมกลุ่ม (ฐานเดียวกับการหักโบนัสใน IncrementUsageAsync — DocumentQuotaPolicy.Basis)
                 "document" => agg.Documents < Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(
-                    agg.MaxDocuments, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow),
+                    agg.MaxDocuments, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow, used: agg.Documents),
                 "journal" => agg.JournalEntries < agg.MaxJournalEntries,
                 "storage" => agg.StorageBytes < agg.MaxStorageBytes,
                 _ => true
@@ -1141,10 +1142,14 @@ public class SubscriptionService : ISubscriptionService
             case "document":
             {
                 var nowUtc = DateTime.UtcNow;
-                var usedBefore = sub.CurrentMonthDocuments;
-                var limitBefore = Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(sub.MaxDocumentsPerMonth,
+                // ฝ่ายค้านรอบ 205 ข้อ 1: ฐานนับตัวเดียวกับ CheckUsageLimitAsync — แพ็กเกจกลุ่ม = ยอดรวมกลุ่ม/เพดานกลุ่ม (ยอดรวมอ่านจากฐาน ⇒ ก่อนใบนี้)
+                var agg = sub.AccountSubscriptionId.HasValue ? await GetAggregateUsageAsync(sub.AccountSubscriptionId.Value) : null;
+                var (usedBefore, planLimit) = Accounting.Helpers.DocumentQuotaPolicy.Basis(agg != null,
+                    sub.CurrentMonthDocuments, sub.MaxDocumentsPerMonth, agg?.Documents ?? 0, agg?.MaxDocuments ?? 0);
+                var limitBefore = Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(planLimit,
                     sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, nowUtc, used: usedBefore);
                 sub.CurrentMonthDocuments++;
+                var usedAfter = usedBefore + 1;
                 // โบนัสเอกสาร (top-up ที่ซื้อ · แอดมินให้ · ภารกิจแลกโควตา §12)
                 // **ต้องถูกใช้ให้หมดไป** ไม่ใช่แค่ยกเพดานค้างไว้ — ถ้าไม่หัก ผู้ที่
                 // ซื้อ +100 ใบครั้งเดียวจะได้ +100 ใบ **ทุกเดือน** จนโบนัสหมดอายุ
@@ -1152,16 +1157,16 @@ public class SubscriptionService : ISubscriptionService
                 // หักเฉพาะใบที่ **เกินโควตาแพ็กเกจล้วน ๆ** แล้ว — ใบที่ยังอยู่ในโควตา
                 // ปกติไม่กินโบนัส (แบบเดียวกับ OcrBonusPages ใน OcrQuotaService) ·
                 // รอบ 205 ทีม E: ตัวตัดสิน + สูตรเพดานคู่กันใน DocumentQuotaPolicy (เดิมหัก + เทียบ plan+คงเหลือ = โบนัสหายสองเท่า)
-                if (Accounting.Helpers.DocumentQuotaPolicy.ConsumesBonus(sub.MaxDocumentsPerMonth, sub.CurrentMonthDocuments,
+                if (Accounting.Helpers.DocumentQuotaPolicy.ConsumesBonus(planLimit, usedAfter,
                         sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, nowUtc))
                 {
                     sub.DocumentBonusQuota--;
                 }
-                var limitAfter = Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(sub.MaxDocumentsPerMonth,
-                    sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, nowUtc, used: sub.CurrentMonthDocuments);
+                var limitAfter = Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(planLimit,
+                    sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, nowUtc, used: usedAfter);
                 crossedLevel = Accounting.Helpers.DocumentQuotaPolicy.CrossedWarnLevel(usedBefore, limitBefore,
-                    sub.CurrentMonthDocuments, limitAfter);
-                crossedUsed = sub.CurrentMonthDocuments; crossedLimit = limitAfter;
+                    usedAfter, limitAfter);
+                crossedUsed = usedAfter; crossedLimit = limitAfter;
                 break;
             }
             case "journal":
@@ -1173,9 +1178,31 @@ public class SubscriptionService : ISubscriptionService
 
         // รอบ 205 ทีม E (BOOKING_REVENUE_AUDIT Q-3): ข้ามระดับ 80%/100% ⇒ แจ้งเจ้าของครั้งเดียวต่อระดับต่อเดือน — เดิมรู้ได้ทางเดียวคือเปิดหน้า
         // "ส่วนเสริมของฉัน" เอง ขณะที่ใบจากการจอง/ชำระออนไลน์ยังออกต่อ (กฎหมายบังคับ) แล้วไปโผล่เป็นค่าส่วนเกินในบิล ·
-        // แจ้งไม่สำเร็จต้องไม่ล้มการออกเอกสาร (เรียกอยู่ในธุรกรรมของ CreateDocumentAsync)
-        if (crossedLevel > 0) await NotifyDocumentQuotaCrossedAsync(sub.CompanyId, crossedLevel, crossedUsed, crossedLimit);
+        // ฝ่ายค้านรอบ 205 ข้อ 3: อยู่ในธุรกรรมของผู้เรียก (CreateDocumentAsync) ⇒ เก็บไว้ก่อน แล้วผู้เรียกส่งหลัง commit
+        // (FlushPendingQuotaAlertsAsync) — ใบถูกถอยกลับ = ไม่แจ้ง · ไม่มีธุรกรรม ⇒ ส่งทันที
+        if (crossedLevel > 0)
+        {
+            _pendingQuotaAlert = (sub.CompanyId, crossedLevel, sub.CurrentMonthDocuments, crossedUsed, crossedLimit);
+            if (_db.Database.CurrentTransaction == null) await FlushPendingQuotaAlertsAsync();
+        }
     }
+
+    /// <summary>แจ้งเตือนโควตาที่ค้างจาก <see cref="IncrementUsageAsync"/> — เรียกหลัง commit ธุรกรรมที่นับใบ · ส่งเฉพาะเมื่อตัวนับในฐานถึงค่าที่นับไว้จริง
+    /// (ธุรกรรมถูกถอย ⇒ ตัวนับในฐานต่ำกว่า ⇒ ทิ้ง ไม่แจ้งว่า "เต็ม" ทั้งที่ใบไม่ถูกสร้าง)</summary>
+    public async Task FlushPendingQuotaAlertsAsync()
+    {
+        if (_pendingQuotaAlert is not { } p) return;
+        _pendingQuotaAlert = null;
+        var persisted = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.CompanyId == p.CompanyId && !s.IsDeleted)
+            .Select(s => (int?)s.CurrentMonthDocuments)
+            .FirstOrDefaultAsync() ?? 0;
+        if (persisted < p.CompanyCounter) return;
+        await NotifyDocumentQuotaCrossedAsync(p.CompanyId, p.Level, p.Used, p.Limit);
+    }
+
+    /// <summary>ระดับที่ข้ามแล้วรอส่งหลัง commit (scoped ต่อคำขอ) · <c>CompanyCounter</c> = ตัวนับของบริษัทหลังนับใบนี้ (ใช้ตรวจว่า commit จริง)</summary>
+    private (Guid CompanyId, int Level, int CompanyCounter, int Used, int Limit)? _pendingQuotaAlert;
 
     private async Task NotifyDocumentQuotaCrossedAsync(Guid companyId, int level, int used, int limit)
     {

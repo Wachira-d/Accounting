@@ -34,7 +34,25 @@ public static class CmsBookingErpPolicy
         => $"รอรับเงินมัดจำ {depositAmount:N2} บาท — ใบเสร็จมัดจำเป็นใบร่าง (ยังไม่มีเลข · ยังไม่ลงบัญชี/ภาษีขาย) · "
            + "เมื่อได้รับเงินแล้ว เปิดเอกสาร แก้วันที่เป็นวันรับเงินจริงและบัญชีที่รับ แล้วกด “อนุมัติ”";
 
-    /// <summary>หมายเหตุบนการจองเมื่อสร้างเอกสาร ERP ไม่สำเร็จตอนแขกจอง — การจองยังสำเร็จ (ไม่ทำให้แขกเห็น error แล้วกดจองซ้ำ)</summary>
-    public static string SyncFailedNote(string reason)
-        => $"⚠️ สร้างเอกสาร ERP ของการจองอัตโนมัติไม่สำเร็จ: {reason} — การจองบันทึกแล้ว · ออกเอกสารเองที่หน้าเอกสาร (อ้างเลขการจอง)";
+    /// <summary>ต้องสร้างเอกสาร ERP ไหม — PrePayment ที่ไม่มียอดมัดจำ ⇒ ไม่ (ไม่มีเงินให้ออกใบเสร็จ · ฝ่ายค้านรอบ 205 ข้อ 6) · ชนิดอื่นตามเดิม</summary>
+    public static bool NeedsErpDocument(BookingType type, decimal depositAmount)
+        => type != BookingType.PrePayment || depositAmount > 0.005m;
+
+    /// <summary>หมายเหตุเมื่อบริการแบบชำระล่วงหน้าไม่ได้ตั้งยอดมัดจำ</summary>
+    public const string NoDepositNote = "บริการนี้ตั้งเป็น “ชำระล่วงหน้า” แต่ยอดมัดจำ 0 — ไม่ออกใบเสร็จมัดจำ · ออกเอกสารเมื่อรับเงินจริงที่หน้าเอกสาร (อ้างเลขการจอง)";
+
+    /// <summary>ชนิดเอกสาร ERP บนการจอง จากชนิดเอกสารที่สร้างจริง (ใช้ตอนผูกใบที่สร้างแล้วกลับหลังขั้นถัดไปล้ม)</summary>
+    public static ErpBookingDocumentType ErpTypeOf(DocumentType docType) => docType switch
+    {
+        DocumentType.TaxInvoice => ErpBookingDocumentType.TaxInvoice,
+        DocumentType.Receipt => ErpBookingDocumentType.AdvanceReceipt,
+        _ => ErpBookingDocumentType.DraftServiceOrder,
+    };
+
+    /// <summary>หมายเหตุบนการจองเมื่อสร้างเอกสาร ERP ไม่สำเร็จตอนแขกจอง — การจองยังสำเร็จ (ไม่ทำให้แขกเห็น error แล้วกดจองซ้ำ) ·
+    /// มีใบที่สร้างไปแล้ว ⇒ บอกเลข (ใบถูกผูกกลับแล้ว — ห้ามออกใหม่ซ้ำ)</summary>
+    public static string SyncFailedNote(string reason, string? createdDocumentNumber = null)
+        => createdDocumentNumber is { Length: > 0 } no
+            ? $"⚠️ ขั้นเอกสาร ERP ของการจองล้มหลังสร้างใบ {no} แล้ว: {reason} — ใบถูกผูกกับการจองแล้ว ตรวจ/อนุมัติใบนั้นที่หน้าเอกสาร (ห้ามออกใบใหม่ซ้ำ)"
+            : $"⚠️ สร้างเอกสาร ERP ของการจองอัตโนมัติไม่สำเร็จ: {reason} — การจองบันทึกแล้ว · ออกเอกสารเองที่หน้าเอกสาร (อ้างเลขการจอง)";
 }

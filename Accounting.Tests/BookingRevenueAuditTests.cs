@@ -183,4 +183,92 @@ public class BookingRevenueAuditTests
         Assert.Contains("ยังออกได้", m);
         Assert.Contains("100/100", m);
     }
+
+    // ───────────── ฝ่ายค้านรอบ 205 (คอมมิตตามหลัง) ─────────────
+
+    [Fact]
+    public void R1_แพ็กเกจกลุ่ม_หักโบนัสตามยอดรวมกลุ่ม_ไม่ใช่ตัวนับบริษัทเดียว()
+    {
+        var now = DateTime.UtcNow;
+        // กลุ่มเพดาน 100 ใช้ครบ 100 · บริษัทนี้ใช้ 10 (เพดานบริษัท 50) · โบนัส 20 ⇒ ใบที่ 101 ของกลุ่มต้องกินโบนัส
+        var oldConsumes = DocumentQuotaPolicy.ConsumesBonus(50, 11, 20, null, now);   // ฐานเดิม: ตัวนับบริษัท
+        Assert.False(oldConsumes);
+        var (used, plan) = DocumentQuotaPolicy.Basis(pooled: true, companyUsed: 10, companyLimit: 50, poolUsed: 100, poolLimit: 100);
+        Assert.Equal((100, 100), (used, plan));
+        Assert.True(DocumentQuotaPolicy.ConsumesBonus(plan, used + 1, 20, null, now));
+        // บริษัทเดี่ยว: ตัวนับ/เพดานของตัวเอง (พฤติกรรมเดิม)
+        Assert.Equal((10, 50), DocumentQuotaPolicy.Basis(false, 10, 50, 100, 100));
+    }
+
+    [Fact]
+    public void R1_แพ็กเกจกลุ่ม_ตรวจโควตาด้วยยอดรวม_โบนัสไม่หายสองเท่า()
+    {
+        var now = DateTime.UtcNow;
+        // กลุ่มใช้ 130 (เพดาน 100) · โบนัสคงเหลือ 70 (ใช้ไป 30) ⇒ เพดานจริง 200 ยังอยู่ในโควตา
+        Assert.Equal(200, DocumentQuotaPolicy.EffectiveLimit(100, 70, null, now, used: 130));
+        // สูตรเดิมของเส้นกลุ่ม (ไม่ส่ง used) = 170 ⇒ เหลือใช้ 40 แทน 70
+        Assert.Equal(170, DocumentQuotaPolicy.EffectiveLimit(100, 70, null, now));
+    }
+
+    [Theory]
+    [InlineData(150, 100, 0, 150)]   // โบนัสหมดตอนใบที่ 150 ⇒ เพดานจริง 150 (เดิมแสดง 150/100)
+    [InlineData(160, 100, 10, 150)]  // ต่อมาอีก 10 ใบเป็นส่วนเกิน ⇒ ยัง 150
+    [InlineData(40, 100, 0, 100)]    // ยังไม่ถึงแพ็กเกจ ⇒ เพดานเดิม
+    [InlineData(120, 100, 20, 100)]  // ไม่มีโบนัสเลย ส่วนเกิน 20 ⇒ 100
+    [InlineData(500, 0, 0, 0)]       // ไม่จำกัด คงไม่จำกัด
+    public void R4_เพดานที่แสดง_คือเพดานที่ใช้จริง(int used, int limit, int overage, int expected)
+        => Assert.Equal(expected, DocumentQuotaPolicy.DisplayLimit(used, limit, overage));
+
+    [Fact]
+    public void R4_ข้อความเต็มตอนโบนัสหมด_ไม่แสดง150ส่วน100()
+    {
+        var m = DocumentQuotaPolicy.CrossedMessage(2, 150, 100);
+        Assert.Contains("150/150", m);
+        Assert.DoesNotContain("150/100", m);
+    }
+
+    [Fact]
+    public void R2_สลิปรอตรวจ_ถูกปิดเมื่อเงินออนไลน์เข้า_แถวอื่นไม่ถูกแตะ()
+    {
+        Assert.True(GatewayPaymentRecord.IsPendingSlipRow(SitePaymentStatus.Pending, "slip-a.jpg"));
+        Assert.False(GatewayPaymentRecord.IsPendingSlipRow(SitePaymentStatus.Completed, "slip-a.jpg"));
+        Assert.False(GatewayPaymentRecord.IsPendingSlipRow(SitePaymentStatus.Pending, GatewayPaymentRecord.Reference(Guid.NewGuid())));
+        Assert.False(GatewayPaymentRecord.IsPendingSlipRow(SitePaymentStatus.Pending, null));
+    }
+
+    [Fact]
+    public void R2_สลิปยืนยันแล้ว_บวกจ่ายออนไลน์ก้อนเดียวกัน_เกินยอด_ถูกปฏิเสธ()
+    {
+        // เดิม: PaidAmount = Σ แถวที่ยืนยัน = 2,000 ของออเดอร์ 1,000 เงียบ ๆ
+        Assert.True(GatewayPaymentRecord.OverpaysOrder(completedOtherRows: 1000m, incoming: 1000m, orderTotal: 1000m));
+        Assert.Contains("ชำระซ้ำ", GatewayPaymentRecord.OverpayMessage("WEB-2610-0001", 1000m, 1000m, 1000m));
+    }
+
+    [Fact]
+    public void R2_ชำระบางส่วนสองก้อนครบพอดี_ไม่ถูกปฏิเสธ()
+    {
+        Assert.False(GatewayPaymentRecord.OverpaysOrder(500m, 500m, 1000m));
+        Assert.False(GatewayPaymentRecord.OverpaysOrder(0m, 1000m, 1000m));
+    }
+
+    [Fact]
+    public void R5_ล้มหลังสร้างใบ_หมายเหตุบอกเลขใบและห้ามออกซ้ำ()
+    {
+        var n = CmsBookingErpPolicy.SyncFailedNote("x", "REC-20261022-0001");
+        Assert.Contains("REC-20261022-0001", n);
+        Assert.Contains("ห้ามออกใบใหม่ซ้ำ", n);
+        Assert.DoesNotContain("ห้ามออกใบใหม่ซ้ำ", CmsBookingErpPolicy.SyncFailedNote("x"));
+        Assert.Equal(ErpBookingDocumentType.AdvanceReceipt, CmsBookingErpPolicy.ErpTypeOf(DocumentType.Receipt));
+        Assert.Equal(ErpBookingDocumentType.TaxInvoice, CmsBookingErpPolicy.ErpTypeOf(DocumentType.TaxInvoice));
+        Assert.Equal(ErpBookingDocumentType.DraftServiceOrder, CmsBookingErpPolicy.ErpTypeOf(DocumentType.Quotation));
+    }
+
+    [Fact]
+    public void R6_PrePaymentมัดจำศูนย์_ไม่สร้างใบร่าง_ชนิดอื่นสร้างตามเดิม()
+    {
+        Assert.False(CmsBookingErpPolicy.NeedsErpDocument(BookingType.PrePayment, 0m));
+        Assert.True(CmsBookingErpPolicy.NeedsErpDocument(BookingType.PrePayment, 1m));
+        Assert.True(CmsBookingErpPolicy.NeedsErpDocument(BookingType.Appointment, 0m));
+        Assert.True(CmsBookingErpPolicy.NeedsErpDocument(BookingType.Guaranteed, 0m));
+    }
 }

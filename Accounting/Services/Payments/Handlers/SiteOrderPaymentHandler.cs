@@ -71,6 +71,20 @@ public class SiteOrderPaymentHandler : IPaymentCompletionHandler
                 CreatedBy = "payment-gateway",
             };
             _db.SiteOrderPayments.Add(pay);
+
+            // ฝ่ายค้านรอบ 205 ข้อ 2: สลิปที่แนบไว้แล้วยังรอตรวจ ⇒ ปิดพร้อมหมายเหตุ (ลูกค้าอาจจ่ายสองทาง) — ค้างไว้ = พนักงานยืนยันทีหลัง
+            // แล้วรับเงินสองเท่า (ConfirmPaymentAsync ปฏิเสธการรับเกินยอดอีกชั้น) · ไม่ลบแถว/ไฟล์ (หลักฐาน)
+            var slips = await _db.SiteOrderPayments
+                .Where(p => p.CompanyId == intent.CompanyId && p.OrderId == intent.SourceId && !p.IsDeleted
+                    && (p.Status == SitePaymentStatus.Pending || p.Status == SitePaymentStatus.Processing))
+                .ToListAsync(ct);
+            foreach (var slip in slips.Where(x => GatewayPaymentRecord.IsPendingSlipRow(x.Status, x.Reference)))
+            {
+                slip.Status = SitePaymentStatus.Cancelled;
+                slip.FailureReason = GatewayPaymentRecord.SlipSupersededNote(intent.Id, intent.Amount);
+                slip.UpdatedBy = "payment-gateway";
+                slip.UpdatedAt = DateTime.UtcNow;
+            }
             await _db.SaveChangesAsync(ct);
         }
 

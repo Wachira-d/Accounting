@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **612 ไฟล์ · 6,016 `[Fact]` + 994 `[Theory]` (4,684 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **612 ไฟล์ · 6,024 `[Fact]` + 995 `[Theory]` (4,689 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -3777,6 +3777,9 @@ Last updated: 2026-09-04 — เพิ่ม VATL-01..11 (OCR ตั้ง VatRa
 | PAY-12 (รอบ 205 B-1) | จองนัดหมาย `PrePayment` จากหน้าเว็บ | ใบเสร็จมัดจำเป็น**ใบร่าง** (ไม่มีเลข · ไม่มี JE/ภาษีขาย) + หมายเหตุ "รอรับเงินมัดจำ" บนการจองและใบ · โควตาใบเสนอราคาเต็ม (Appointment) ⇒ การจองยังสำเร็จ + `ErpNotices` |
 | PAY-13 (รอบ 205 G-1) | เงินเข้าแต่หาคำสั่งซื้อไม่พบ/handler ล้ม | ประวัติรายการชำระ "⚠️ เงินเข้าแล้วแต่ดำเนินการต่อไม่สำเร็จ" + แจ้งเจ้าของ `gateway.payment_unfulfilled` (ที่พักไม่แจ้งซ้ำ — มีธงของตัวเอง) |
 | PAY-14 (รอบ 205 Q-1/Q-3) | แพ็กเกจ 100 ใบ + ซื้อโบนัส 100 | ใช้ได้ 200 ใบก่อนนับส่วนเกิน (เดิม 150) · ข้าม 80%/100% แจ้งเจ้าของครั้งเดียวต่อระดับ · เทสต์ `Q1_*`/`Q3_*` |
+| PAY-15 (ฝ่ายค้าน 205 ข้อ 2) | ออเดอร์แนบสลิป (รอตรวจ) แล้วจ่าย QR · ต่อมาพนักงานกดยืนยันสลิป | แถวสลิปถูกปิด `Cancelled` + หมายเหตุให้ตรวจโอนซ้ำ · ยืนยันสลิปที่ทำให้รับเกินยอด ⇒ 400 `SITE-ORDER-OVERPAY` (เดิม PaidAmount 2 เท่า) · `R2_*` |
+| PAY-16 (ฝ่ายค้าน 205 ข้อ 1/3/4) | บริษัทใต้แพ็กเกจกลุ่ม + โบนัส · ใบที่ทำให้เต็มถูกถอย | หักโบนัสตามยอดรวมกลุ่ม · ใบถูกถอย ⇒ ไม่แจ้ง "เต็ม" · ข้อความแสดงเพดานจริง (ไม่ใช่ 150/100) · `R1_*` `R4_*` |
+| PAY-17 (ฝ่ายค้าน 205 ข้อ 5/6) | ขั้นอนุมัติ/บันทึกหลังสร้างใบล้ม · PrePayment มัดจำ 0 | ใบที่สร้างถูกผูกกลับ + เลขใบในหมายเหตุ · มัดจำ 0 ไม่สร้างใบ · `R5_*` `R6_*` |
 
 ### LDG-SLIP — ปฏิเสธสลิป
 | # | เคส | คาดหวัง |

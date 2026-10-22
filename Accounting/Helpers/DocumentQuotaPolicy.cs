@@ -144,11 +144,23 @@ public static class DocumentQuotaPolicy
         return after > WarnLevel(usedBefore, limitBefore) ? after : 0;
     }
 
+    /// <summary>ฐานนับโควตา (ใช้ไป, เพดานแพ็กเกจ) — ฝ่ายค้านรอบ 205 ข้อ 1 · <b>คำตัดสิน</b>: บริษัทใต้แพ็กเกจกลุ่ม (AccountSubscription)
+    /// ใช้ "ยอดรวมทั้งกลุ่ม + เพดานกลุ่ม" ทั้งตอนตรวจโควตาและตอนหักโบนัส (โบนัสยังเป็นของบริษัทที่ซื้อ แต่ถูกใช้เมื่อ<b>กลุ่ม</b>เกินเพดาน —
+    /// เพราะเพดานที่บังคับจริงคือเพดานกลุ่ม) · บริษัทเดี่ยวใช้ตัวนับ/เพดานของตัวเอง · เดิมตรวจด้วยยอดกลุ่มแต่หักโบนัสเทียบตัวนับบริษัทเดียว
+    /// ⇒ โบนัสไม่ถูกหักเลยจนกว่าบริษัทนั้นเองจะเกินเพดานบริษัท</summary>
+    public static (int Used, int PlanLimit) Basis(bool pooled, int companyUsed, int companyLimit, int poolUsed, int poolLimit)
+        => pooled ? (poolUsed, poolLimit) : (companyUsed, companyLimit);
+
+    /// <summary>เพดานที่แสดงต่อผู้ใช้ (ฝ่ายค้านรอบ 205 ข้อ 4) — หลังโบนัสหมด <see cref="EffectiveLimit"/> คืนเพดานแพ็กเกจ ⇒ ข้อความ "150/100"
+    /// · เพดานที่ใช้จริงเดือนนี้ = ใบที่นับแล้ว − ใบที่คิดเป็นส่วนเกิน (ใบที่อยู่ในโควตาทุกใบ = แพ็กเกจ + โบนัสที่ใช้ไป)</summary>
+    public static int DisplayLimit(int used, int limit, int overageThisMonth)
+        => limit <= 0 ? limit : Math.Max(limit, used - Math.Max(0, overageThisMonth));
+
     /// <summary>ข้อความแจ้งเจ้าของเมื่อข้ามระดับ — บอกว่า "เอกสารที่กฎหมายบังคับยังออกได้" + ทางไปต่อเสมอ</summary>
     public static string CrossedMessage(int level, int used, int limit) => level >= 2
-        ? $"เดือนนี้ใช้โควตาเอกสารครบแล้ว ({used}/{limit} ฉบับ) — ใบกำกับภาษี/ใบเสร็จ (รวมที่ออกอัตโนมัติจากการจอง/ชำระออนไลน์) ยังออกได้ตามปกติ "
+        ? $"เดือนนี้ใช้โควตาเอกสารครบแล้ว ({used}/{DisplayLimit(used, limit, 0)} ฉบับ) — ใบกำกับภาษี/ใบเสร็จ (รวมที่ออกอัตโนมัติจากการจอง/ชำระออนไลน์) ยังออกได้ตามปกติ "
           + "โดยคิดเป็นส่วนเกิน · ใบเสนอราคา/ใบสั่งซื้อจะถูกระงับ · ซื้อโควตาเพิ่มหรืออัปเกรดที่หน้า “ส่วนเสริมของฉัน”"
-        : $"เดือนนี้ใช้โควตาเอกสารไปแล้ว {used}/{limit} ฉบับ (≥ {WarnPercent}%) — ซื้อโควตาเพิ่มหรืออัปเกรดที่หน้า “ส่วนเสริมของฉัน” ก่อนเต็ม";
+        : $"เดือนนี้ใช้โควตาเอกสารไปแล้ว {used}/{DisplayLimit(used, limit, 0)} ฉบับ (≥ {WarnPercent}%) — ซื้อโควตาเพิ่มหรืออัปเกรดที่หน้า “ส่วนเสริมของฉัน” ก่อนเต็ม";
 
     /// <summary>ระดับการเตือน — 0 = ปกติ, 1 = ใกล้เต็ม (≥ WarnPercent), 2 = เต็มแล้ว</summary>
     public const int WarnPercent = 80;

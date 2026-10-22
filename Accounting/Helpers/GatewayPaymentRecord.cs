@@ -54,4 +54,28 @@ public static class GatewayPaymentRecord
     /// (เดิมประวัติของรายการชำระไม่มีร่องรอย · <c>PaymentIntentService</c> บันทึกข้อความนี้ลงประวัติ + แจ้งเจ้าของ · รหัส <see cref="SourceMissingRuleCode"/>)</summary>
     public static string SourceMissingMessage(string what, Guid intentId, decimal amount)
         => $"เงินเข้าแล้ว {amount:N2} บาท (รายการชำระ {intentId:N}) แต่หา{what}ไม่พบ — ต้องบันทึกรับเงินด้วยมือหรือคืนเงินลูกค้า";
+
+    /// <summary>คำนำหน้าเลขอ้างอิงของแถว <c>SiteOrderPayment</c> ที่เกิดจากลูกค้าแนบสลิป (<c>CmsCommerceService</c> เขียน <c>slip-{ชื่อไฟล์}</c>)</summary>
+    public const string SlipReferencePrefix = "slip-";
+
+    /// <summary>แถวสลิปที่ยังรอตรวจของออเดอร์ — เงินออนไลน์เข้ามาแล้วต้องปิดแถวนี้ (ไม่งั้นพนักงานยืนยันทีหลัง ⇒ รับเงินสองเท่า)
+    /// · ฝ่ายค้านรอบ 205 ข้อ 2</summary>
+    public static bool IsPendingSlipRow(SitePaymentStatus status, string? reference)
+        => status is SitePaymentStatus.Pending or SitePaymentStatus.Processing
+           && reference != null && reference.StartsWith(SlipReferencePrefix, StringComparison.Ordinal);
+
+    /// <summary>หมายเหตุบนแถวสลิปที่ถูกปิดเพราะเงินออนไลน์เข้าแทน — ลูกค้าอาจโอนจริงด้วย (จ่ายสองทาง) ⇒ บอกให้ตรวจธนาคารก่อนคืนเงิน</summary>
+    public static string SlipSupersededNote(Guid intentId, decimal amount)
+        => $"ปิดโดยระบบ: ลูกค้าชำระออนไลน์แล้ว {amount:N2} บาท (รายการชำระ {intentId:N}) — ตรวจบัญชีธนาคารว่ามีโอนตามสลิปนี้ด้วยไหม ถ้ามี = ชำระซ้ำ ต้องคืนเงิน";
+
+    /// <summary>ยืนยันแถวรับเงินนี้แล้วยอดรับรวมของออเดอร์จะเกินยอดออเดอร์ไหม — เกิน ⇒ <c>ConfirmPaymentAsync</c> ปฏิเสธ
+    /// (เดิมรวมยอดทุกแถวที่ยืนยันแล้วเงียบ ๆ ⇒ PaidAmount 2 เท่า · การรับชำระบางส่วนลงซ้ำ)</summary>
+    /// <param name="completedOtherRows">ยอดรวมแถวที่ยืนยันแล้ว<b>ไม่รวม</b>แถวที่กำลังยืนยัน</param>
+    public static bool OverpaysOrder(decimal completedOtherRows, decimal incoming, decimal orderTotal)
+        => completedOtherRows + incoming > orderTotal + 0.005m;
+
+    /// <summary>ข้อความปฏิเสธเมื่อรับเกินยอดออเดอร์</summary>
+    public static string OverpayMessage(string orderNumber, decimal alreadyPaid, decimal incoming, decimal orderTotal)
+        => $"ยืนยันรับเงินไม่ได้ — ออเดอร์ {orderNumber} ยอด {orderTotal:N2} บาท รับแล้ว {alreadyPaid:N2} บาท "
+           + $"รายการนี้อีก {incoming:N2} บาท จะเกินยอด (ชำระซ้ำ) · ตรวจว่าลูกค้าจ่ายสองทางหรือไม่ แล้วคืนเงินส่วนเกิน";
 }

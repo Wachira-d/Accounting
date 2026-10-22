@@ -270,8 +270,21 @@ public class CmsBookingService : ICmsBookingService
             {
                 _logger.LogError(ex, "Booking {BookingNumber}: สร้างเอกสาร ERP อัตโนมัติไม่สำเร็จ — การจองบันทึกแล้ว", booking.BookingNumber);
                 _db.ChangeTracker.Clear();
-                var failNote = CmsBookingErpPolicy.SyncFailedNote(ex.Message);
                 var noted = await _db.SiteBookings.FirstAsync(b => b.Id == booking.Id && b.CompanyId == companyId);
+                // ฝ่ายค้านรอบ 205 ข้อ 5: ล้มหลังเส้นเอกสาร commit ใบไปแล้ว ⇒ ผูกใบที่สร้างแล้วกลับ (กันใบกำพร้า/ออกซ้ำ) + บอกเลขใบในหมายเหตุ
+                var orphan = noted.ErpDocumentId == null
+                    ? await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.BookingNumber == noted.BookingNumber)
+                        .OrderBy(d => d.CreatedAt)
+                        .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType })
+                        .FirstOrDefaultAsync()
+                    : null;
+                if (orphan != null)
+                {
+                    noted.ErpDocumentId = orphan.Id;
+                    noted.ErpDocumentType = CmsBookingErpPolicy.ErpTypeOf(orphan.DocumentType);
+                }
+                var failNote = CmsBookingErpPolicy.SyncFailedNote(ex.Message, orphan?.DocumentNumber);
                 noted.InternalNotes = DepositPolicyResolver.AppendNoteOnce(noted.InternalNotes, failNote);
                 await _db.SaveChangesAsync();
                 // แขกไม่ล็อกอิน (เส้นหน้าเว็บ) ไม่เห็นข้อความภายใน — ข้อความอยู่บนการจองให้พนักงานเห็น · พนักงานที่สร้างเองเห็นในคำตอบ
@@ -481,11 +494,19 @@ public class CmsBookingService : ICmsBookingService
         var booking = await _db.SiteBookings
             .Include(b => b.BookingService)
             .Include(b => b.Customer)
-            .FirstOrDefaultAsync(b => b.Id == bookingId && b.SiteId == siteId);
+            .FirstOrDefaultAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId);
 
         if (booking == null || booking.ErpDocumentId.HasValue) return booking?.ErpDocumentId;
 
         var svc = booking.BookingService;
+
+        // ฝ่ายค้านรอบ 205 ข้อ 6: PrePayment ที่ไม่มียอดมัดจำ ⇒ ไม่มีเงินให้ออกใบเสร็จ (เดิมได้ใบเสร็จ 0.00) — หมายเหตุแทน
+        if (!CmsBookingErpPolicy.NeedsErpDocument(svc.BookingType, booking.DepositAmount))
+        {
+            booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, CmsBookingErpPolicy.NoDepositNote);
+            await _db.SaveChangesAsync();
+            return null;
+        }
 
         // Determine ERP document type based on BookingType
         var (docType, erpDocType) = svc.BookingType switch
