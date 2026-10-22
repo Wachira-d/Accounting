@@ -46,6 +46,9 @@ public class CompanySettings : TenantEntity
     /// <summary>ตำแหน่งตราในโซนลายเซ็น/ผู้อนุมัติ: "Right" (ค่าเริ่มต้น),
     /// "Left", "Center". ประทับเหนือช่องลงนามเสมอ (จุดที่ผู้อนุมัติเซ็น).</summary>
     public string StampAlign { get; set; } = "Right";
+    /// <summary>กฎตราประทับ/ลายเซ็นอิเล็กทรอนิกส์ต่อประเภทเอกสาร × สถานะ (JSON · ทีม J 2026-10-22) — ตัวตัดสินเดียว
+    /// <c>Helpers/DocumentStampPolicy</c> · null/ไม่มีคีย์ = พฤติกรรมเดิม (ประทับเฉพาะอนุมัติแล้ว · ลายเซ็นทุกขั้น)</summary>
+    public string? DocumentStampRulesJson { get; set; }
     public string? PrimaryColor { get; set; }
     public string? SecondaryColor { get; set; }
 

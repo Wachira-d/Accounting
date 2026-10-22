@@ -461,22 +461,23 @@
           d = cert;
         }
 
-        // Pull the current user's saved signature (image + display name + title)
-        // so it can be auto-stamped onto the "ผู้จ่ายเงิน" line.
+        // ตรา + ลายเซ็นผู้จ่ายเงิน — เซิร์ฟเวอร์ตัดสินด้วยตัวเดียวกับ PDF ทั้งสอง (DocumentStampPolicy + ผู้ลงนามของใบ · ทีม J 2026-10-22)
+        // เดิมดึงลายเซ็นจากโปรไฟล์ของ "ผู้ที่กดพิมพ์" ⇒ คนละคนกับไฟล์ PDF และไม่มีตราเลย · หน้าแสดงอย่างเดียว
         const escHtml = (s) => String(s || '').replace(/[&<>"']/g, c =>
           ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
-        let signature = { image: '', name: '', title: '' };
+        let deco = null;
         try {
-          // getProfile lives on the top-level API object, not on the company-
-          // scoped api (Layout.api()), so call API.getProfile directly.
-          const pres = await API.getProfile();
-          const p = pres?.data || {};
-          signature.image = p.signatureImageBase64 || '';
-          signature.name = escHtml(p.signatureName || p.fullName || '');
-          signature.title = escHtml(p.signatureTitle || '');
-        } catch (sigErr) {
-          console.warn('Failed to load signature for WHT print:', sigErr);
+          const dres = await api.getWhtCertPrintDecoration(id);
+          deco = dres?.data || null;
+        } catch (decoErr) {
+          // ล้มดัง: บอกผู้ใช้ว่าหน้าพิมพ์นี้ไม่มีตรา/ลายเซ็น แล้วเสนอไฟล์ PDF (ซึ่งมีครบ) แทนการพิมพ์ว่างเงียบ ๆ
+          Layout.toast('โหลดตรา/ลายเซ็นไม่สำเร็จ — หน้าพิมพ์นี้จะไม่มีตราและลายเซ็น (ปุ่ม ⬇️ PDF ได้ไฟล์ที่ครบ)', 'warning');
         }
+        const isDataImg = (u) => typeof u === 'string' && /^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(u);
+        const signature = { image: deco && isDataImg(deco.signatureImage) ? deco.signatureImage : '' };
+        const stampHtml = (deco && deco.showStamp && isDataImg(deco.stampImage))
+          ? `<div class="stamp-area has-stamp"><img class="stamp-img" src="${escHtml(deco.stampImage)}" alt="ตราประทับ" style="width:${Number(deco.stampWidthMm) || 24}mm;height:${Number(deco.stampHeightMm) || 24}mm;transform:translate(calc(-50% + ${Number(deco.stampOffsetXMm) || 0}mm), calc(-50% + ${Number(deco.stampOffsetYMm) || 0}mm))"></div>`
+          : '<div class="stamp-area">ประทับตรา<br>นิติบุคคล<br>(ถ้ามี)</div>';
 
         const taxIdBoxes = (taxId) => {
           const dg = (taxId || '').replace(/\D/g, '').padEnd(13, ' ');
@@ -776,7 +777,7 @@
                     <div class="sig-block">
                       <div class="sig-line" style="text-align:right;position:relative">
                         ลงชื่อ <span class="sig-dots">${signature.image
-                          ? `<img class="sig-img" src="${signature.image.startsWith('data:') ? signature.image : `data:image/png;base64,${signature.image}`}" alt="signature">`
+                          ? `<img class="sig-img" src="${escHtml(signature.image)}" alt="signature">`
                           : ''}</span> ผู้จ่ายเงิน
                       </div>
                       <!-- วันที่ออกเป็นสามช่อง วัน / เดือน / ปี (พ.ศ.) ตามแบบทางการ + ตรงกับ PDF ทั้งสอง (รอบ 204 · เดิม "12 ตุลาคม 2569" บรรทัดเดียว) -->
@@ -787,7 +788,7 @@
                       </div>
                       <div style="text-align:center;font-size:11px;color:#444">(วัน เดือน ปี ที่ออกหนังสือรับรองฯ)</div>
                     </div>
-                    <div class="stamp-area">ประทับตรา<br>นิติบุคคล<br>(ถ้ามี)</div>
+                    ${stampHtml}
                   </td>
                 </tr></table>
               </td></tr>
@@ -928,6 +929,9 @@
     display:flex; align-items:center; justify-content:center;
     font-style:italic; color:#222;
   }
+  /* ตรานิติบุคคล (ทีม J 2026-10-22) — วงกลมเปล่า + รูปตรากึ่งกลางวง ขนาด/ระยะเลื่อนจากเซิร์ฟเวอร์ (DocumentStampPolicy) · ตรงกับ PDF ทั้งสอง */
+  .stamp-area.has-stamp { font-size:0; }
+  .stamp-img { position:absolute; left:50%; top:50%; object-fit:contain; z-index:5; }
 
   /* FOOTNOTE outside frame */
   .footnote { font-size:9.5px; line-height:1.25; margin-top:1px; padding:0 2px; }

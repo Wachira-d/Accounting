@@ -51,9 +51,13 @@ public partial class PdfGenerationService
 
     /// <param name="funds">ยอด "เงินที่จ่ายเข้า" กองทุน (A9 · 2026-10-13) — ใบรายปีของพนักงานเท่านั้น · null = เส้นว่างเหมือนเดิม ·
     /// พารามิเตอร์เดียวกับ HTML <c>BuildWithholdingTaxCertHtml</c> (สอง renderer ห้าม drift)</param>
+    /// <param name="stamp">ตรานิติบุคคลที่ตัดสินแล้ว (<c>ResolveWhtCertStamp</c> ← <c>Helpers/DocumentStampPolicy</c>) · null = วงกลมว่างเหมือนเดิม ·
+    /// พารามิเตอร์เดียวกับ HTML <c>BuildWithholdingTaxCertHtml</c> (ทีม J 2026-10-22 — เดิมไม่มีทางรับตราเลย ⇒ 50 ทวิ ไม่มีตรา)</param>
     internal static byte[] BuildWhtCertPdf(WithholdingTaxCert cert, Company company,
-        byte[]? signatureBytes = null, string? signerName = null, WhtCertFundAmounts? funds = null)
+        byte[]? signatureBytes = null, string? signerName = null, WhtCertFundAmounts? funds = null,
+        WhtCertStamp? stamp = null)
     {
+        var stampImg = stamp != null && LooksLikeImage(stamp.Image) ? stamp : null;
         EnsureThaiFontsRegistered();
         var lines = cert.Lines.OrderBy(l => l.LineOrder).ToList();
         // Only use the signature if it actually decodes to an image QuestPDF
@@ -115,7 +119,7 @@ public partial class PdfGenerationService
                             BuildTotalInWords(form, cert.TotalTaxAmount);
                             BuildFundLine(form, funds);
                             BuildConditionsRow(form, cert);
-                            BuildBottomSplit(form, cert.IssuedDate, sigImg, signerName);
+                            BuildBottomSplit(form, cert.IssuedDate, sigImg, signerName, stampImg);
                         });
                         BuildFootnote(col);
                     });
@@ -517,7 +521,7 @@ public partial class PdfGenerationService
 
     // ── คำเตือน (ซ้าย 35%) + ลงชื่อ/ตราประทับ (ขวา 65%) — .bottom-split ───────────────────
     private static void BuildBottomSplit(QuestPDF.Fluent.ColumnDescriptor col, DateTime? issuedDate,
-        byte[]? signatureImage = null, string? signerName = null)
+        byte[]? signatureImage = null, string? signerName = null, WhtCertStamp? stamp = null)
     {
         _ = signerName;   // หน้าพิมพ์ไม่พิมพ์ชื่อผู้ลงนาม (มีแต่ลายเซ็น) — คงพารามิเตอร์ไว้ให้ผู้เรียกเดิม
         col.Item().Row(r =>
@@ -561,13 +565,15 @@ public partial class PdfGenerationService
                         sig.Item().AlignCenter().Text(WhtCertFormText.SignDateHint).FontSize(Px(11)).FontColor(WhtHint).LineHeight(1.4f);
                     });
                 });
-                rr.ConstantItem(Px(84)).AlignMiddle().AlignRight().PaddingRight(Px(6)).Element(DrawStampCircle);
+                rr.ConstantItem(Px(84)).AlignMiddle().AlignRight().PaddingRight(Px(6)).Element(e => DrawStampCircle(e, stamp));
             });
         });
     }
 
     // ── "ประทับตรานิติบุคคล (ถ้ามี)" — .stamp-area วงกลม 70px เส้น 1.2px ตัวเอียง 10px ─────────
-    private static void DrawStampCircle(QuestPDF.Infrastructure.IContainer e)
+    // มีตรา (ทีม J 2026-10-22) = วงกลมเปล่า + รูปตรากึ่งกลางวง ขนาด/ระยะเลื่อนจากกฎ — ตรงกับ .stamp-area.has-stamp ของ HTML + หน้าพิมพ์
+    // (Unconstrained: ตราใหญ่กว่าวงได้โดยไม่ดันแถวลงชื่อ · วัดขนาด = 0 ⇒ ชดเชยครึ่งตัวด้วย Translate ให้ "กึ่งกลาง" เหมือน translate(-50%,-50%))
+    private static void DrawStampCircle(QuestPDF.Infrastructure.IContainer e, WhtCertStamp? stamp = null)
     {
         var d = Px(70);
         var svg = $"<svg xmlns='http://www.w3.org/2000/svg' width='{F(d)}' height='{F(d)}' viewBox='0 0 70 70'>"
@@ -575,9 +581,20 @@ public partial class PdfGenerationService
         e.Width(d).Height(d).Layers(l =>
         {
             l.Layer().Svg(svg);
+            if (stamp == null)
+            {
+                l.PrimaryLayer().AlignCenter().AlignMiddle()
+                    .Text(string.Join("\n", WhtCertFormText.StampLines))
+                    .FontSize(Px(10)).LineHeight(1.3f).Italic().FontColor("#222222").AlignCenter();
+                return;
+            }
+            const float PtPerMm = 72f / 25.4f;
+            var w = (float)stamp.WidthMm * PtPerMm;
+            var h = (float)stamp.HeightMm * PtPerMm;
             l.PrimaryLayer().AlignCenter().AlignMiddle()
-                .Text(string.Join("\n", WhtCertFormText.StampLines))
-                .FontSize(Px(10)).LineHeight(1.3f).Italic().FontColor("#222222").AlignCenter();
+                .TranslateX(-w / 2 + (float)stamp.OffsetXMm * PtPerMm)
+                .TranslateY(-h / 2 + (float)stamp.OffsetYMm * PtPerMm)
+                .Unconstrained().Width(w).Height(h).Image(stamp.Image).FitArea();
         });
     }
 

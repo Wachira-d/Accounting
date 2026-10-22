@@ -40,6 +40,16 @@ public class WithholdingTaxCertController : ControllerBase
         return Ok(new ApiResponse<WithholdingTaxCertResponse>(true, result));
     }
 
+    /// <summary>ตรา + ลายเซ็นสำหรับหน้าพิมพ์ 50 ทวิ (wht.html printCert) — เซิร์ฟเวอร์ตัดสินด้วยตัวเดียวกับ PDF ทั้งสอง
+    /// (Helpers/DocumentStampPolicy + ผู้ลงนามของใบ) · ทีม J 2026-10-22: เดิมหน้าพิมพ์ไม่มีตรา + ใช้ลายเซ็นของ "ผู้ที่กดพิมพ์"</summary>
+    [HttpGet("{certId:guid}/print-decoration")]
+    public async Task<ActionResult<ApiResponse<WhtCertPrintDecoration>>> GetPrintDecoration(Guid companyId, Guid certId,
+        [FromServices] IPdfGenerationService pdf)
+    {
+        var result = await pdf.GetWithholdingTaxCertPrintDecorationAsync(companyId, certId);
+        return Ok(new ApiResponse<WhtCertPrintDecoration>(true, result));
+    }
+
     /// <summary>แก้ไขหนังสือรับรอง — เฉพาะ Draft + สร้างเอง (ไม่อ้างอิง
     /// ใบสำคัญจ่าย/payroll). Service throw ถ้าไม่เข้าเงื่อนไข.</summary>
     [HttpPut("{certId:guid}")]

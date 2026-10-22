@@ -5356,3 +5356,13 @@ _2026-10-22 (ทีม C — เว็บไซต์ CMS: งานรายเ
 ตัวแก้ไขอัปโหลดหลายรูป/เลือกจากคลัง/เรียง/alt/caption · หน้าแกลเลอรีใหม่ · `MediaResponse.PublicUrl` (เดิมตกไปใช้ path บนดิสก์) ·
 ความปลอดภัย: บล็อกตรวจหน้าเป็นของเว็บ+บริษัท (เดิมแทรกบล็อกข้ามบริษัทได้) + `RequireSiteRole` บนบล็อก/สื่อ + `CmsBlockCss` กรองคลาส ·
 เทสต์ `CmsGalleryBlockTests` · TEST_PLAN CMS-SITE/GAL/SEC · roadmap `docs/CMS_FEATURE_ROADMAP.md`_
+
+---
+
+### 2026-10-22 · ทีม J — ตราประทับ/ลายเซ็นบนเอกสาร
+- บั๊ก: 50 ทวิ ไม่มีตราประทับทั้งดูบนเว็บ/ดาวน์โหลด/พิมพ์ — ต้นเหตุ: ทางออก 50 ทวิทั้งสามไม่เคยอ่าน `CompanySettings.StampPath` (วาดวงกลมว่างอย่างเดียว) ·
+  แก้ HTML + QuestPDF + หน้าพิมพ์ในคอมมิตเดียว (`WhtCertStampTests`)
+- Document Stamp Rules: `Helpers/DocumentStampPolicy` + `CompanySettings.DocumentStampRulesJson` (ADD COLUMN · NULL = เดิม) + `DocumentStampRulesController` +
+  หน้า ตั้งค่า (`DocumentStampPolicyTests`)
+- WYSIWYG 50 ทวิ: สไตล์ HTML ฝั่งเซิร์ฟเวอร์ = หน้าพิมพ์ (`WhtCertCss`) · ลายน้ำยกเลิกใน HTML · หน้าพิมพ์ใช้ลายเซ็นชุดเดียวกับ PDF (เดิมของผู้กดพิมพ์)
+

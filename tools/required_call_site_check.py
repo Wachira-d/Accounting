@@ -7605,7 +7605,7 @@ RULES += [
          before=[("WhtCertFormText.EmployeeAnnualFunds(", "BuildEmployeeAnnualCertPdfAsync(")],
          why=_TEAMC_1013 + "A9 ใบรายปีของพนักงานส่งยอดกองทุนส่วนลูกจ้างทั้งปีให้ renderer (เดิมช่องว่างเสมอ) — ตัดสินผ่าน EmployeeAnnualFunds ที่เดียว"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildEmployeeAnnualCertPdfAsync",
-         must=["BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds)"],
+         must=["BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds, stamp)"],
          why=_TEAMC_1013 + "A9 ยอดกองทุนไหลถึง QuestPDF (ไม่ทิ้งพารามิเตอร์กลางทาง)"),
     dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildWhtCertPdf",
          must=["BuildFundLine(form, funds)"],
@@ -8942,6 +8942,49 @@ RULES += [
     dict(file=DOC, method="CollectApprovalWarningsAsync",
          must=["LowValueAssetLineCheck.Warnings("],
          why="ของราคาต่ำกว่าเกณฑ์ขึ้นทะเบียนบนผังสินทรัพย์ ⇒ เตือนก่อนอนุมัติ (จุดเดียวที่ทุกทางเข้าผ่าน)"),
+]
+
+# ทีม J 2026-10-22 — ตราประทับ/ลายเซ็น: ใบ 50 ทวิ ไม่มีตราทั้งดูบนเว็บ/ดาวน์โหลด/พิมพ์ (ทางออก 50 ทวิไม่เคยอ่าน StampPath) ·
+# เงื่อนไข "ประทับเมื่อไร" เคยเขียน inline 3 ที่ ⇒ ตัวตัดสินเดียว Helpers/DocumentStampPolicy · ทุก renderer ต้องเรียกตัวเดียวกัน
+# (DocumentStampPolicyTests + WhtCertStampTests ล็อกพฤติกรรม — กติกาข้างล่างล็อกว่าจุดเรียกยังต่อสายอยู่)
+_STAMP = "ทีม J 2026-10-22 ตราประทับ: "
+RULES += [
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildDocumentHtml",
+         must=["StampDecisionFor(doc, settings)", "ResolveStampBytes(settings, template)", "DocumentStampBlockHtml(stampRule, stampSrc)"],
+         forbid=["stampApproved", "DocumentStatus.WaitingApproval or DocumentStatus.Rejected"],
+         why=_STAMP + "HTML เอกสารขาย/ซื้อ ตัดสินตราผ่าน DocumentStampPolicy ตัวเดียวกับ QuestPDF (เดิม inline สถานะเอง)"),
+    dict(file="Services/Implementations/PdfGenerationService.DocumentRenderer.cs", method="RenderDocumentPdfNative",
+         must=["StampDecisionFor(doc, settings)", "BuildBranding(template, settings, watermarkOverride, stampRule,"],
+         forbid=["stampAllowed"],
+         why=_STAMP + "QuestPDF เอกสารขาย/ซื้อ ตัดสินตราผ่านตัวเดียวกับ HTML"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildBranding",
+         must=["ResolveStampBytes(settings, template)", "stampRule is { ShowStamp: true }", "stampRule?.OffsetXMm"],
+         why=_STAMP + "QuestPDF รูปตรา/ขนาด/ระยะเลื่อนจากตัวตัดสิน (ไม่อ่าน CompanySettings.StampWidthMm เอง)"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="ResolveSignersAsync",
+         must=["ApplySignerPolicyAsync(doc.CompanyId, StampDecisionFor(doc, stampSettings), signers, slotUsers, customerSlots)"],
+         before=[("ApplySignerPolicyAsync(", "return signers;")],
+         why=_STAMP + "ลายเซ็นเอกสารผ่านด่าน \"ขั้นที่พิมพ์ลายเซ็น/ผู้ลงนามที่มีสิทธิ์\" ก่อนคืนให้ทั้งสอง renderer"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="GenerateWithholdingTaxCertPdfAsync",
+         must=["ResolveWhtCertStamp(cert, settings)", "ResolveWhtPayerSignatureAsync(companyId, cert.CreatedBy, stampDecision)",
+               "BuildWithholdingTaxCertHtml(cert, company, sigB64, sigName, stamp: stamp)",
+               "BuildWhtCertPdf(cert, company, sigBytes, sigName, stamp: stamp)"],
+         why=_STAMP + "50 ทวิ ส่งตราที่ตัดสินแล้วถึงทั้ง HTML (Chromium) และ QuestPDF (บั๊กผู้ใช้: ไม่มีตรา)"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildEmployeeAnnualCertPdfAsync",
+         must=["ResolveWhtCertStamp(inMemoryCert, settings)", "ResolveCertSignatoryAsync(companyId, inMemoryCert.CreatedBy, decision)"],
+         why=_STAMP + "ใบ 50 ทวิ รายปีของพนักงานประทับตรา/ผ่านด่านลายเซ็นเดียวกัน"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildWithholdingTaxCertHtml",
+         must_lit=["{WhtStampAreaHtml(stamp)}</td>"],
+         why=_STAMP + "HTML 50 ทวิ วาดช่องตราผ่านตัวเดียว (มีตรา = รูปกลางวง · ไม่มี = วงกลมเดิมทุกไบต์)"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildBottomSplit",
+         must=["DrawStampCircle(e, stamp)"],
+         why=_STAMP + "QuestPDF 50 ทวิ ส่งตราถึงวงกลมของแบบ"),
+    dict(file="Services/Implementations/PdfGenerationService.WhtCert.cs", method="BuildWhtCertPdf",
+         must=["BuildBottomSplit(form, cert.IssuedDate, sigImg, signerName, stampImg)"],
+         why=_STAMP + "QuestPDF 50 ทวิ ไม่ทิ้งพารามิเตอร์ตรากลางทาง"),
+    dict(file="Services/Implementations/PdfGenerationService.Stamp.cs", method="GetWithholdingTaxCertPrintDecorationAsync",
+         must=["w.CompanyId == companyId", "StampDecisionFor(cert, settings)", "ResolveWhtCertStamp(cert, settings)",
+               "ResolveWhtPayerSignatureAsync(companyId, cert.CreatedBy, d)"],
+         why=_STAMP + "หน้าพิมพ์ wht.html ได้ตรา+ลายเซ็นจากตัวตัดสินเดียวกับ PDF (เดิมใช้ลายเซ็นของผู้ที่กดพิมพ์)"),
 ]
 
 

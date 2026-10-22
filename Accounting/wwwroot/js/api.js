@@ -965,6 +965,8 @@ const API = {
       // WHT
       getWhtCerts: (q = '') => API.get(`${base}/withholding-tax-certs${q}`),
       getWhtCert: (id) => API.get(`${base}/withholding-tax-certs/${id}`),
+      // ตรา + ลายเซ็นของหน้าพิมพ์ 50 ทวิ — เซิร์ฟเวอร์ตัดสิน (DocumentStampPolicy · ตัวเดียวกับ PDF)
+      getWhtCertPrintDecoration: (id) => API.get(`${base}/withholding-tax-certs/${id}/print-decoration`),
       createWhtCert: (d) => API.post(`${base}/withholding-tax-certs`, d),
       updateWhtCert: (id, d) => API.put(`${base}/withholding-tax-certs/${id}`, d),
       issueWhtCert: (id, d) => API.post(`${base}/withholding-tax-certs/${id}/issue`, d),   // d = { acknowledgeMissingTaxId } (ฝ่ายค้านรอบ 204 L5)
@@ -1686,6 +1688,9 @@ const API = {
       deleteLogo: () => API.del(`${base}/settings/logo`),
       uploadStamp: (formData) => API.upload(`${base}/settings/stamp`, formData),
       deleteStamp: () => API.del(`${base}/settings/stamp`),
+      // กฎตราประทับ/ลายเซ็น ต่อประเภทเอกสาร × สถานะ (Helpers/DocumentStampPolicy)
+      getDocumentStampRules: () => API.get(`${base}/settings/document-stamp-rules`),
+      updateDocumentStampRules: (body) => API.put(`${base}/settings/document-stamp-rules`, body),
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
       // ตั้งตัวย่อเลขที่เอกสารเอง — controller/service มีมาตลอดแต่ไม่เคยมี
       // ฝั่ง client ผูกไว้ ⇒ แท็บ "ลำดับเลขที่" เป็นตารางว่างที่แก้อะไรไม่ได้

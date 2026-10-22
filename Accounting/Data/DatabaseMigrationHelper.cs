@@ -551,6 +551,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampWidthMm" numeric(6,2) NOT NULL DEFAULT 32;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampHeightMm" numeric(6,2) NOT NULL DEFAULT 32;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampAlign" varchar(20) NOT NULL DEFAULT 'Right';""",
+            // ทีม J 2026-10-22: กฎตราประทับ/ลายเซ็นต่อประเภทเอกสาร × สถานะ — NULL = พฤติกรรมเดิม (Helpers/DocumentStampPolicy)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentStampRulesJson" text NULL;""",
 
             // ===== Recurring late-fee accrual policy =====
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeEnabled" boolean NOT NULL DEFAULT false;""",
