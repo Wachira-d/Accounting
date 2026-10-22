@@ -171,6 +171,9 @@ public static class AdvisoryLockKey
     /// สองเท่า · ค่าปรับล่าช้าคิดซ้ำ · อีเมลทวงหนี้ส่งถึงลูกค้า N ครั้ง
     /// ตามจำนวนเครื่อง</para></summary>
     public const string BackgroundJob = "job";
+    /// <summary>ตั้ง/ซ่อมเจ้าของบริษัท (assign-owner · repair · สร้างผู้ใช้เป็น Owner) — part = "owner" ผูก companyId · กัน "ตรวจว่าไม่มีเจ้าของ"
+    /// กับ "เลื่อนบทบาท" สลับกันจนได้ Owner สองคน (ฝ่ายค้านรอบ 205 ทีม I)</summary>
+    public const string CompanyOwnership = "company-owner";
 
     /// <summary>สร้างผู้ติดต่อจากสแกน OCR — part = เลขผู้เสียภาษี (ตัวเลขล้วน · <c>OcrContactCreateLock.LockPart</c>) ผูก companyId
     /// (รอบ 200 · คำตัดสินข้อ 19 · K-5): หน้าเว็บอัปโหลด 3 ไฟล์พร้อมกัน ⇒ ใบ Makro 00005 สองใบได้แถวสาขาซ้ำ เพราะไม่มี unique index

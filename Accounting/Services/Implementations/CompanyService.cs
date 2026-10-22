@@ -356,9 +356,16 @@ public class CompanyService : ICompanyService
         // รอบ 205 ทีม I: ไม่ใช่สมาชิก = 403 ข้อความไทย (เดิม UnauthorizedAccessException ⇒ 401 ⇒ api.js ลบ token เด้งออกจากระบบ
         // แทนที่จะบอกเหตุผล — แอดมินแพลตฟอร์มเปิดหน้าจัดการทีมของบริษัทที่ไม่ได้เป็นสมาชิกแล้วถูกออกจากระบบ)
         var isMember = await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
-        if (!isMember && !await IsPlatformAdminAsync(userId))
-            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.CompanyMembershipGuard.NotMemberMessage,
-                Accounting.Helpers.CompanyMembershipGuard.RuleCode, 403);
+        if (!isMember)
+        {
+            if (!await IsPlatformAdminAsync(userId))
+                throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.CompanyMembershipGuard.NotMemberMessage,
+                    Accounting.Helpers.CompanyMembershipGuard.RuleCode, 403);
+            // ฝ่ายค้านรอบ 205: แอดมินแพลตฟอร์มอ่านรายชื่อ/อีเมลสมาชิกบริษัทที่ไม่ได้เป็นสมาชิก ⇒ ลง audit chain (แบบเดียวกับ impersonate)
+            _db.AddChainedAuditLog(Accounting.Helpers.CompanyMembershipGuard.PlatformReadAudit(companyId, userId, "CompanyMembers",
+                _http?.HttpContext?.Connection.RemoteIpAddress?.ToString()));
+            await _db.SaveChangesAsync();
+        }
 
         return await _db.CompanyUsers
             .Where(cu => cu.CompanyId == companyId)
@@ -658,14 +665,22 @@ public class CompanyService : ICompanyService
         else
             row.Role = UserRole.Owner;
 
+        // ฝ่ายค้านรอบ 205: ผู้โอนฝั่งแพลตฟอร์มต้องไม่ค้างเป็นเจ้าของ (ตัวตัดสิน OwnershipTransferPolicy.ActorRowAfter)
         var removedSupport = false;
-        if (removeSupport && target.Id != actorUserId)
+        var actorAfter = Accounting.Helpers.OwnershipTransferPolicy.ActorAfterTransfer.Keep;
+        if (target.Id != actorUserId)
         {
             var actorRow = await _db.CompanyUsers.FirstOrDefaultAsync(cu => cu.CompanyId == companyId && cu.UserId == actorUserId);
-            if (actorRow?.Role == UserRole.PlatformSupport)
+            if (actorRow != null)
             {
-                _db.CompanyUsers.Remove(actorRow);
-                removedSupport = true;
+                actorAfter = Accounting.Helpers.OwnershipTransferPolicy.ActorRowAfter(actorRow.Role, await IsPlatformAdminAsync(actorUserId), removeSupport);
+                if (actorAfter == Accounting.Helpers.OwnershipTransferPolicy.ActorAfterTransfer.Remove)
+                {
+                    _db.CompanyUsers.Remove(actorRow);
+                    removedSupport = true;
+                }
+                else if (actorAfter == Accounting.Helpers.OwnershipTransferPolicy.ActorAfterTransfer.DemoteToSupport)
+                    actorRow.Role = UserRole.PlatformSupport;
             }
         }
 
@@ -679,7 +694,7 @@ public class CompanyService : ICompanyService
             OldValues = System.Text.Json.JsonSerializer.Serialize(new { role = before?.ToString() }),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
-                action = "TransferOwnership", to = target.Id, role = nameof(UserRole.Owner), removedSupport,
+                action = "TransferOwnership", to = target.Id, role = nameof(UserRole.Owner), removedSupport, actorAfter = actorAfter.ToString(),
                 ruleCode = Accounting.Helpers.OwnershipTransferPolicy.RuleCode,
             }),
             IpAddress = _http?.HttpContext?.Connection.RemoteIpAddress?.ToString(),
@@ -687,10 +702,10 @@ public class CompanyService : ICompanyService
         await _db.SaveChangesAsync();
     }
 
-    /// <summary>จำนวนสมาชิกบทบาทเจ้าของ (Owner/SystemAdmin — นิยามเดียวกับ OwnerlessCompanyRepair.IsOwnerRole) ไม่นับเป้าหมาย</summary>
+    /// <summary>จำนวน Owner ฝั่งลูกค้า (บัญชีไม่ใช่แอดมินแพลตฟอร์ม) ไม่นับเป้าหมาย — ตัวนับของ <c>LastOwnerGuard</c> (ฝ่ายค้านรอบ 205: ไม่นับ SystemAdmin/แอดมิน)</summary>
     private Task<int> CountOtherOwnersAsync(Guid companyId, Guid targetUserId)
         => _db.CompanyUsers.CountAsync(x => x.CompanyId == companyId && x.UserId != targetUserId
-            && (x.Role == UserRole.Owner || x.Role == UserRole.SystemAdmin));
+            && x.Role == UserRole.Owner && !x.User.IsSystemAdmin);
 
     private Task<bool> IsPlatformAdminAsync(Guid userId)
         => _db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();

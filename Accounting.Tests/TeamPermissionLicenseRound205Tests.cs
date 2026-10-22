@@ -51,25 +51,34 @@ public class TeamPermissionLicenseRound205Tests
     }
 
     [Fact]
-    public void Repair_UnknownCreator_SoleCustomerMember_AutoPromotes()
+    public void Repair_SoleMemberWithoutCreatorEvidence_IsNotOwnershipEvidence()
     {
+        // ฝ่ายค้านรอบ 205 ข้อ 5: เหลือสมาชิกคนเดียว (พนักงานที่ถูกเชิญ) ≠ หลักฐานความเป็นเจ้าของ ⇒ แอดมินเลือก
         var p = OwnerlessCompanyRepair.Decide("system", new[] { new OwnerlessCompanyRepair.Member(B, UserRole.Staff, T0) });
-        Assert.Equal(OwnerlessCompanyRepair.Kind.AutoPromote, p.Kind);
-        Assert.Equal(B, p.UserId);
+        Assert.Equal(OwnerlessCompanyRepair.Kind.NeedsAdmin, p.Kind);
+        Assert.Null(p.UserId);
+        Assert.Equal(new[] { B }, p.Candidates);   // ยังเป็นตัวเลือกให้แอดมิน
+    }
+
+    [Fact]
+    public void Repair_InactiveCreator_NeedsAdmin()
+    {
+        var p = OwnerlessCompanyRepair.Decide(A.ToString(), new[] { new OwnerlessCompanyRepair.Member(A, UserRole.Accountant, T0, IsActive: false) });
+        Assert.Equal(OwnerlessCompanyRepair.Kind.NeedsAdmin, p.Kind);
     }
 
     [Fact]
     public void Repair_SupportCreator_IsNotGuessed_NeedsAdmin()
     {
         // ผู้สร้างเป็น support: แยกไม่ได้ว่าเปิดให้ลูกค้าหรือบริษัทของแอดมินเอง — ห้ามเดา
-        var alone = OwnerlessCompanyRepair.Decide(A.ToString(), new[] { new OwnerlessCompanyRepair.Member(A, UserRole.PlatformSupport, T0) });
+        var alone = OwnerlessCompanyRepair.Decide(A.ToString(), new[] { new OwnerlessCompanyRepair.Member(A, UserRole.PlatformSupport, T0, IsPlatformAdmin: true) });
         Assert.Equal(OwnerlessCompanyRepair.Kind.NeedsAdmin, alone.Kind);
         Assert.Null(alone.UserId);
-        Assert.Contains(A, alone.Candidates);
+        Assert.Contains(A, alone.Candidates);   // ผู้สร้างเลือกได้ (บริษัทของตัวเอง)
 
         var withCustomer = OwnerlessCompanyRepair.Decide(A.ToString(), new[]
         {
-            new OwnerlessCompanyRepair.Member(A, UserRole.PlatformSupport, T0),
+            new OwnerlessCompanyRepair.Member(A, UserRole.PlatformSupport, T0, IsPlatformAdmin: true),
             new OwnerlessCompanyRepair.Member(B, UserRole.Staff, T0.AddDays(1)),
         });
         Assert.Equal(OwnerlessCompanyRepair.Kind.NeedsAdmin, withCustomer.Kind);
@@ -77,15 +86,19 @@ public class TeamPermissionLicenseRound205Tests
     }
 
     [Fact]
-    public void Repair_ManyMembers_OrEmpty_NeedsAdmin()
+    public void Repair_Candidates_ExcludePlatformSideAndInactive_UnlessCreator()
     {
+        // ฝ่ายค้านรอบ 205 ข้อ 1: support / แอดมินแพลตฟอร์มที่ไม่ใช่ผู้สร้าง และบัญชีปิด ห้ามเป็นตัวเลือก
         var many = OwnerlessCompanyRepair.Decide(null, new[]
         {
             new OwnerlessCompanyRepair.Member(C, UserRole.Staff, T0.AddDays(2)),
             new OwnerlessCompanyRepair.Member(B, UserRole.Accountant, T0),
+            new OwnerlessCompanyRepair.Member(A, UserRole.PlatformSupport, T0),
+            new OwnerlessCompanyRepair.Member(Guid.NewGuid(), UserRole.Viewer, T0, IsPlatformAdmin: true),
+            new OwnerlessCompanyRepair.Member(Guid.NewGuid(), UserRole.Staff, T0, IsActive: false),
         });
         Assert.Equal(OwnerlessCompanyRepair.Kind.NeedsAdmin, many.Kind);
-        Assert.Equal(new[] { B, C }, many.Candidates);   // เรียงตามวันเข้าร่วม
+        Assert.Equal(new[] { B, C }, many.Candidates);   // เรียงตามวันเข้าร่วม · ตัดฝั่งแพลตฟอร์ม/บัญชีปิด
 
         var empty = OwnerlessCompanyRepair.Decide(A.ToString(), Array.Empty<OwnerlessCompanyRepair.Member>());
         Assert.Equal(OwnerlessCompanyRepair.Kind.NeedsAdmin, empty.Kind);
@@ -101,13 +114,39 @@ public class TeamPermissionLicenseRound205Tests
     }
 
     [Fact]
-    public void AdminAssign_OnlyOwnerlessCompany_ExistingMember_SelfOnlyIfCreator()
+    public void AdminAssign_BlocksPlatformSideTargets_UnlessCreator()
     {
-        Assert.NotNull(OwnerlessCompanyRepair.AdminAssignBlock(companyHasOwner: true, targetIsMember: true, targetIsSelf: false, callerIsCreator: false));
-        Assert.NotNull(OwnerlessCompanyRepair.AdminAssignBlock(false, targetIsMember: false, targetIsSelf: false, callerIsCreator: false));
-        Assert.NotNull(OwnerlessCompanyRepair.AdminAssignBlock(false, true, targetIsSelf: true, callerIsCreator: false));   // ยึดบริษัทลูกค้าไม่ได้
-        Assert.Null(OwnerlessCompanyRepair.AdminAssignBlock(false, true, targetIsSelf: true, callerIsCreator: true));       // บริษัทของตัวเอง
-        Assert.Null(OwnerlessCompanyRepair.AdminAssignBlock(false, true, targetIsSelf: false, callerIsCreator: false));    // ตั้งลูกค้า
+        Assert.NotNull(OwnerlessCompanyRepair.AdminAssignBlock(companyHasOwner: true, targetIsMember: true, targetIsPlatformSide: false, targetIsCreator: false));
+        Assert.NotNull(OwnerlessCompanyRepair.AdminAssignBlock(false, targetIsMember: false, targetIsPlatformSide: false, targetIsCreator: false));
+        // แอดมินแพลตฟอร์ม/support (ตัวเองหรือคนอื่น) เป็นเจ้าของบริษัทลูกค้าไม่ได้
+        Assert.NotNull(OwnerlessCompanyRepair.AdminAssignBlock(false, true, targetIsPlatformSide: true, targetIsCreator: false));
+        // ทิศตรงข้าม: บริษัทที่ผู้นั้นสร้างเอง · ลูกค้าธรรมดา ⇒ ได้
+        Assert.Null(OwnerlessCompanyRepair.AdminAssignBlock(false, true, targetIsPlatformSide: true, targetIsCreator: true));
+        Assert.Null(OwnerlessCompanyRepair.AdminAssignBlock(false, true, targetIsPlatformSide: false, targetIsCreator: false));
+        Assert.True(OwnerlessCompanyRepair.IsPlatformSide(UserRole.PlatformSupport, false));
+        Assert.True(OwnerlessCompanyRepair.IsPlatformSide(UserRole.Staff, true));
+        Assert.False(OwnerlessCompanyRepair.IsPlatformSide(UserRole.Staff, false));
+    }
+
+    // ── ฝ่ายค้าน ข้อ 4: ผู้โอนฝั่งแพลตฟอร์มไม่ค้างเป็นเจ้าของ ─────────────────────────────
+
+    [Fact]
+    public void Transfer_PlatformAdminOwner_IsRemovedOrDemoted_CustomerOwnerKept()
+    {
+        Assert.Equal(OwnershipTransferPolicy.ActorAfterTransfer.Remove, OwnershipTransferPolicy.ActorRowAfter(UserRole.Owner, actorIsPlatformAdmin: true, removeSupport: true));
+        Assert.Equal(OwnershipTransferPolicy.ActorAfterTransfer.DemoteToSupport, OwnershipTransferPolicy.ActorRowAfter(UserRole.Owner, true, removeSupport: false));
+        Assert.Equal(OwnershipTransferPolicy.ActorAfterTransfer.Remove, OwnershipTransferPolicy.ActorRowAfter(UserRole.PlatformSupport, true, true));
+        Assert.Equal(OwnershipTransferPolicy.ActorAfterTransfer.Keep, OwnershipTransferPolicy.ActorRowAfter(UserRole.PlatformSupport, true, false));
+        // ทิศตรงข้าม: เจ้าของลูกค้ายกเจ้าของร่วม ⇒ คงเป็นเจ้าของ (ไม่ถูกถอดแม้เลือก removeSupport)
+        Assert.Equal(OwnershipTransferPolicy.ActorAfterTransfer.Keep, OwnershipTransferPolicy.ActorRowAfter(UserRole.Owner, actorIsPlatformAdmin: false, removeSupport: true));
+    }
+
+    [Fact]
+    public void RenamedMenuIds_MapDeadIdsOnly_AndTemplatesUseNewIds()
+    {
+        var olds = RoleTemplates.RenamedMenuIds.Select(x => x.Old).ToHashSet();
+        foreach (var (_, n) in RoleTemplates.RenamedMenuIds) Assert.DoesNotContain(n, olds);   // ไม่แปลงเป็น id ที่จะถูกแปลงต่อ
+        foreach (var t in RoleTemplates.All) Assert.Empty(t.Permissions.Intersect(olds));
     }
 
     // ── ข้อ 2: เจ้าของคนสุดท้าย (สองทิศ) ─────────────────────────────────────────────────
@@ -115,19 +154,20 @@ public class TeamPermissionLicenseRound205Tests
     [Fact]
     public void LastOwner_CannotBeDemotedOrRemoved()
     {
-        Assert.NotNull(LastOwnerGuard.Block(UserRole.Owner, UserRole.Accountant, otherOwnerCount: 0));
-        Assert.NotNull(LastOwnerGuard.Block(UserRole.Owner, null, otherOwnerCount: 0));
-        Assert.NotNull(LastOwnerGuard.Block(UserRole.SystemAdmin, UserRole.Viewer, otherOwnerCount: 0));
+        Assert.NotNull(LastOwnerGuard.Block(UserRole.Owner, UserRole.Accountant, otherCustomerOwnerCount: 0));
+        Assert.NotNull(LastOwnerGuard.Block(UserRole.Owner, null, otherCustomerOwnerCount: 0));
+        // ฝ่ายค้าน ข้อ 3: ลด Owner ลูกค้าคนสุดท้ายเป็น SystemAdmin(99) = ไม่มีเจ้าของฝั่งลูกค้า ⇒ ห้าม (ตัวนับไม่นับแอดมิน)
+        Assert.NotNull(LastOwnerGuard.Block(UserRole.Owner, UserRole.SystemAdmin, otherCustomerOwnerCount: 0));
     }
 
     [Fact]
-    public void Owner_CanBeDemoted_WhenAnotherOwnerExists_AndNonOwnersUntouched()
+    public void Owner_CanBeDemoted_WhenAnotherCustomerOwnerExists_AndNonOwnersUntouched()
     {
-        Assert.Null(LastOwnerGuard.Block(UserRole.Owner, UserRole.Accountant, otherOwnerCount: 1));
-        Assert.Null(LastOwnerGuard.Block(UserRole.Owner, null, otherOwnerCount: 1));
-        Assert.Null(LastOwnerGuard.Block(UserRole.Owner, UserRole.SystemAdmin, otherOwnerCount: 0));   // ยังเป็นบทบาทเจ้าของ
-        Assert.Null(LastOwnerGuard.Block(UserRole.Staff, UserRole.Viewer, otherOwnerCount: 0));        // ไม่ใช่เจ้าของ = ไม่แตะ
-        Assert.Null(LastOwnerGuard.Block(UserRole.Staff, null, otherOwnerCount: 0));
+        Assert.Null(LastOwnerGuard.Block(UserRole.Owner, UserRole.Accountant, otherCustomerOwnerCount: 1));
+        Assert.Null(LastOwnerGuard.Block(UserRole.Owner, null, otherCustomerOwnerCount: 1));
+        Assert.Null(LastOwnerGuard.Block(UserRole.Staff, UserRole.Viewer, otherCustomerOwnerCount: 0));   // ไม่ใช่เจ้าของ = ไม่แตะ
+        Assert.Null(LastOwnerGuard.Block(UserRole.Staff, null, otherCustomerOwnerCount: 0));
+        Assert.Null(LastOwnerGuard.Block(UserRole.SystemAdmin, UserRole.Viewer, otherCustomerOwnerCount: 0));   // บทบาทแพลตฟอร์ม ไม่ใช่เจ้าของลูกค้า
     }
 
     // ── ข้อ 2: ตารางบทบาทมาตรฐาน · ตารางสิทธิ์ · บทบาทสำเร็จรูป ──────────────────────────────

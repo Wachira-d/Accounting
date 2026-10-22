@@ -14,6 +14,18 @@ public static class RoleTemplates
 
     public static RoleTemplate? Find(string? key) => All.FirstOrDefault(t => t.Key == key);
 
+    /// <summary>id เมนูเก่าที่แม่แบบก่อนรอบ 205 เคยใส่ (ไม่มีใน <c>Layout.navItems</c>) → id ที่ถูก — ตารางเดียวที่แม่แบบ (เทสต์) และ migration
+    /// (<c>DatabaseMigrationHelper.Round205RoleMenuIdStatements</c>) ใช้ · บทบาทที่สร้างจากแม่แบบเดิมยังเก็บ id เก่าอยู่ (ฝ่ายค้านรอบ 205)</summary>
+    public static readonly IReadOnlyList<(string Old, string New)> RenamedMenuIds = new[]
+    {
+        ("inventory", "warehouse"),
+        ("warehouses", "warehouse"),
+        ("chart-of-accounts", "accounts"),
+        ("vat", "tax"),
+        ("cms-edit", "cms-sites"),
+        ("executive-dashboard", "executive-reports"),
+    };
+
     public static readonly IReadOnlyList<RoleTemplate> All = new List<RoleTemplate>
     {
         new("pos-cashier", "POS Cashier", "🛒",

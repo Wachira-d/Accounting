@@ -370,6 +370,10 @@ public class RolePermissionService : IRolePermissionService
         if (!isPlatformAdmin)
             throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.CompanyMembershipGuard.NotMemberMessage,
                 Accounting.Helpers.CompanyMembershipGuard.RuleCode, 403);
+        // ฝ่ายค้านรอบ 205: การอ่านข้ามบริษัทของแอดมินแพลตฟอร์มลง audit chain
+        _db.AddChainedAuditLog(Accounting.Helpers.CompanyMembershipGuard.PlatformReadAudit(companyId, userId, "CompanyRoles",
+            _http?.HttpContext?.Connection.RemoteIpAddress?.ToString()));
+        await _db.SaveChangesAsync();
     }
 
     private async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)

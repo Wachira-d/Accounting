@@ -73,6 +73,19 @@ public static class OwnershipTransferPolicy
         return Outcome.Allow;
     }
 
+    public enum ActorAfterTransfer { Keep, Remove, DemoteToSupport }
+
+    /// <summary>ฝ่ายค้านรอบ 205 ทีม I: แถวของผู้โอนหลังโอนความเป็นเจ้าของ — ผู้ดูแลแพลตฟอร์มต้องไม่ค้างเป็นเจ้าของบริษัทลูกค้า ·
+    /// support ⇒ ถอดออกเมื่อเลือก "ถอดฉันออก" (ไม่เลือก = คงเป็น support) · <b>บัญชีแอดมินแพลตฟอร์มที่ถือ Owner/SystemAdmin</b> (สร้างบริษัทให้ลูกค้าแต่ลืมติ๊ก
+    /// "เปิดให้ลูกค้า") ⇒ ถอดออก หรือลดเป็น support ถ้าไม่เลือกถอด · เจ้าของฝั่งลูกค้าที่ยกเจ้าของร่วม ⇒ คงเดิม</summary>
+    public static ActorAfterTransfer ActorRowAfter(UserRole actorRole, bool actorIsPlatformAdmin, bool removeSupport)
+    {
+        if (actorRole == UserRole.PlatformSupport) return removeSupport ? ActorAfterTransfer.Remove : ActorAfterTransfer.Keep;
+        if (actorIsPlatformAdmin && actorRole is UserRole.Owner or UserRole.SystemAdmin)
+            return removeSupport ? ActorAfterTransfer.Remove : ActorAfterTransfer.DemoteToSupport;
+        return ActorAfterTransfer.Keep;
+    }
+
     /// <summary>HTTP status ของผลปฏิเสธ</summary>
     public static int StatusCode(Outcome o) => o switch
     {

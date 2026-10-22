@@ -191,12 +191,18 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   `AuthService.RegisterAsync` · `AuthService.SsoLoginAsync` (ล็อกด้วย `required_call_site_check`) · บทบาท PlatformSupport เฉพาะแอดมินแพลตฟอร์มที่ติ๊ก
   "เปิดบริษัทนี้ให้ลูกค้า" (ช่องในวิซาร์ดโชว์เฉพาะแอดมิน · ผู้ใช้ทั่วไปส่งมาก็ไม่มีผล) · **สาเหตุของกล่อง "ยังไม่มีเจ้าของ"**: รอบ 201–204 ผู้สร้างที่เป็นแอดมินแพลตฟอร์ม
   ได้ support **ทุกครั้ง** (รวมบริษัทของตัวเอง) แล้วโอนให้ตัวเองไม่ได้ (`DenySelf`) · ทางสร้างอื่น (ผู้ช่วยนำเข้า/สำนักงานบัญชี) ไม่ได้สร้างบริษัทใหม่ (ตรวจแล้ว: `Companies.Add` มี 3 จุด)
-- **ตัวซ่อม** (`Helpers/OwnerlessCompanyRepair.Decide` — "เจ้าของ" = Owner/SystemAdmin): ผู้สร้าง (`Company.CreatedBy`) ยังเป็นสมาชิกบทบาทลูกค้า ⇒ ตั้งเอง ·
-  ไม่รู้ผู้สร้างแต่มีสมาชิกลูกค้าคนเดียว ⇒ ตั้งเอง · ผู้สร้างเป็น support / สมาชิกหลายคน / ไม่มีสมาชิก ⇒ **คงในรายการให้แอดมินเลือก** (ไม่เดา) ·
-  `POST api/admin/companies/without-owner/repair` (เฉพาะหลักฐานชัด · ทีละบริษัท · audit chain `COMPANY-OWNERLESS-REPAIR`) ·
-  `POST api/admin/companies/{id}/assign-owner {userId}` (ด่าน `AdminAssignBlock`: บริษัทยังไม่มีเจ้าของ · ผู้รับเป็นสมาชิกอยู่แล้ว · ตั้งตัวเองได้เฉพาะบริษัทที่ตัวเองสร้าง —
-  ไม่ใช่ทางลัดยึดบริษัทลูกค้า ข้อ 105) · หน้าแอดมินสร้างผู้ใช้ผูกบริษัทด้วยบทบาท Owner ได้เฉพาะบริษัทที่ยังไม่มีเจ้าของ
-- **เจ้าของคนสุดท้าย** — ลดบทบาท/ถอดสมาชิกผ่าน `Helpers/LastOwnerGuard.Block` ตัวเดียว (นับ Owner/SystemAdmin · 400 `COMPANY-LAST-OWNER`) · บทบาทกำหนดเองลดสิทธิ์เจ้าของไม่ได้
+- **ตัวซ่อม** (`Helpers/OwnerlessCompanyRepair.Decide` — "เจ้าของ" ของกล่อง = Owner/SystemAdmin): **ตั้งเองเฉพาะ** ผู้สร้าง (`Company.CreatedBy`) ที่ยังเป็นสมาชิก ·
+  บัญชี active · ไม่ใช่ support · ที่เหลือ (ผู้สร้างเป็น support/บัญชีปิด/ไม่พบผู้สร้าง — "เหลือสมาชิกคนเดียว" ไม่ใช่หลักฐาน) ⇒ **แอดมินเลือก** ·
+  ตัวเลือก = ผู้สร้าง + สมาชิกลูกค้าที่ active (ตัดผู้ดูแลแพลตฟอร์ม support/`IsSystemAdmin` ที่ไม่ใช่ผู้สร้าง) ·
+  `POST api/admin/companies/without-owner/repair` (ตัดสินซ้ำใต้ล็อก) · `POST api/admin/companies/{id}/assign-owner {userId}` (ด่าน `AdminAssignBlock`:
+  บริษัทยังไม่มีเจ้าของ · ผู้รับเป็นสมาชิก · ผู้รับฝั่งแพลตฟอร์ม (รวมตัวเอง) ได้เฉพาะเมื่อเป็นผู้สร้าง — ข้อ 105) · หน้าแอดมินสร้างผู้ใช้เป็น Owner เดินด่านเดียวกัน ·
+  ทั้งสามทาง: ตรวจ+เลื่อนบทบาทใต้ `pg_advisory_xact_lock` ต่อบริษัท (`AdvisoryLockKey.CompanyOwnership`) + audit chain `COMPANY-OWNERLESS-REPAIR`
+- **โอนความเป็นเจ้าของจากผู้ดูแลแพลตฟอร์ม** — `OwnershipTransferPolicy.ActorRowAfter`: support ⇒ ถอด (เลือกถอด) / คง · บัญชีแอดมินที่ถือ Owner/SystemAdmin
+  (สร้างให้ลูกค้าแต่ลืมติ๊ก) ⇒ ถอด (เลือกถอด) / **ลดเป็น support** (ไม่เลือก) · เจ้าของลูกค้ายกเจ้าของร่วม ⇒ คงเดิม
+- **แอดมินแพลตฟอร์มอ่านทีม/บทบาทของบริษัทที่ไม่ได้เป็นสมาชิก** ⇒ audit chain View (`CompanyMembershipGuard.PlatformReadAudit`)
+- **id เมนูเก่าในบทบาทจากแม่แบบเดิม** ⇒ migration `Round205RoleMenuIdStatements` (ตาราง `RoleTemplates.RenamedMenuIds` · idempotent)
+- **เจ้าของคนสุดท้าย** — ลดบทบาท/ถอดสมาชิกผ่าน `Helpers/LastOwnerGuard.Block` ตัวเดียว (นับเฉพาะ **Owner ฝั่งลูกค้า** — ไม่นับ SystemAdmin(99)/บัญชีแอดมินแพลตฟอร์ม ·
+  400 `COMPANY-LAST-OWNER` · ⚠️ บริษัทของแอดมินเองที่มีแอดมิน + พนักงานเป็น Owner: ถอด Owner พนักงานคนสุดท้ายถูกกันด้วย) · บทบาทกำหนดเองลดสิทธิ์เจ้าของไม่ได้
   (`BuiltInRolePermissions.GrantsAll` ผ่านก่อนดูบทบาทกำหนดเอง)
 - **บทบาทมาตรฐาน → สิทธิ์โดยปริยาย** ตารางเดียว `Helpers/BuiltInRolePermissions` (ด่านจริง `PermissionService` + หน้า "🔐 สิทธิ์" อ่านตัวเดียวกัน) ·
   **ตารางสิทธิ์ อ่าน/เขียน/อนุมัติ/ลบ** ตามงาน/ประเภทเอกสาร `Helpers/PermissionMatrix` → `GET api/companies/{id}/permission-catalog/matrix` → `roles.html` ·
@@ -1118,3 +1124,4 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 
 _Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LS — §3.1b สถานะเปิดจองออนไลน์ของที่พัก + id เว็บ/นโยบายต้องเป็นของบริษัท — commit 7b83b697)_
 _Last verified against codebase: 2026-10-22 (rev 49 · รอบ 205 ทีม I — **§3.1g** ผู้สร้างบริษัท = Owner ทุกทางเข้า (`CompanyCreatorMembership`) + ตัวซ่อมบริษัทไม่มีเจ้าของ + `LastOwnerGuard` + `BuiltInRolePermissions`/`PermissionMatrix`/`RoleTemplates` + `PlanIdentityResolver` — ไม่มีคอลัมน์ใหม่ — sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-10-22 (rev 50 · รอบ 205 ทีม I ฝ่ายค้าน — **§3.1g** ตัวซ่อมตั้งเองเฉพาะผู้สร้าง active · ตัดฝั่งแพลตฟอร์มจากตัวเลือก · ล็อกต่อบริษัท · `ActorRowAfter` · `LastOwnerGuard` นับเฉพาะ Owner ลูกค้า · migration id เมนู — ไม่มีคอลัมน์ใหม่ — sha เติมในคอมมิตตามหลัง)_

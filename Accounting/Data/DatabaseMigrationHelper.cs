@@ -219,6 +219,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Adversarial1BankStatements());   // ฝ่ายค้านรอบ 1 — ยอดคงเหลือ statement ที่ไม่รู้ (บล็อกท้ายไฟล์)
         list.AddRange(AdversarialEtlStatements());   // ฝ่ายค้านรอบ ETL — ปิดค่า "ลงอัตโนมัติ" ที่ยังไม่มีผล (บล็อกท้ายไฟล์)
         list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
+        list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7699,5 +7700,23 @@ public static class DatabaseMigrationHelper
             TaxCol("OcrLearnedPatterns"),
             TaxCol("VendorKnownGoodValues"),
         };
+    }
+
+    /// <summary>รอบ 205 ทีม I (ฝ่ายค้าน ข้อ 6): บทบาทที่สร้างจากแม่แบบเดิมเก็บ id เมนูที่ไม่มีจริง (warehouses ฯลฯ) ⇒ สมาชิกโหมดเข้มงวดไม่เห็นเมนู ·
+    /// แปลงเป็น id ที่ถูกตาม <c>Helpers/RoleTemplates.RenamedMenuIds</c> (ตารางเดียว) · unique (CompanyRoleId, MenuItemId) ⇒ บทบาทที่มี id ใหม่อยู่แล้ว
+    /// ลบแถวเก่าแทนการแปลง · รันทุกบูตได้ (หลังแปลงไม่มีแถว id เก่าเหลือ) · ข้อมูลทุกบริษัทพร้อมกัน (การซ่อมค่าคงที่ ไม่ใช่ query ของ tenant)</summary>
+    internal static IReadOnlyList<string> Round205RoleMenuIdStatements()
+    {
+        var list = new List<string>();
+        foreach (var (oldId, newId) in Accounting.Helpers.RoleTemplates.RenamedMenuIds)
+        {
+            list.Add($"""
+                DELETE FROM "CompanyRolePermissions" o
+                WHERE o."MenuItemId" = '{oldId}'
+                  AND EXISTS (SELECT 1 FROM "CompanyRolePermissions" n WHERE n."CompanyRoleId" = o."CompanyRoleId" AND n."MenuItemId" = '{newId}');
+                """);
+            list.Add($"""UPDATE "CompanyRolePermissions" SET "MenuItemId" = '{newId}' WHERE "MenuItemId" = '{oldId}';""");
+        }
+        return list;
     }
 }

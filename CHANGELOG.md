@@ -5336,3 +5336,7 @@ _รอบ 205 ทีม I (สิทธิ์และ License): (1) ผู้�
 `BuiltInRolePermissions` (ด่าน + หน้าดูสิทธิ์) · ตาราง อ่าน/เขียน/อนุมัติ/ลบ `PermissionMatrix` → roles.html · แม่แบบ +4 (ช่างประจำร้าน/แคชเชียร์/นักบัญชีภายนอก/
 ฝ่ายสนับสนุน) + แก้ id เมนูตายในแม่แบบเดิม. (3) `PlanIdentityResolver` — แดชบอร์ด/รายการบริษัทโชว์แพ็กเกจของ License (เดิม Free vs Enterprise) · account-subscription ใช้ PlanDisplay.
 (4) หน้าทีม: 401→403 (ไม่เด้งออกจากระบบ) · ปุ่ม "🔐 สิทธิ์"/ลบบริษัท 404 (`api/companies` → `api/company`) · ปุ่มลองใหม่ + ข้อความสาเหตุจริง · escape ชื่อสมาชิก._
+
+_รอบ 205 ทีม I ฝ่ายค้าน: ตัวซ่อมตั้งเองเฉพาะผู้สร้างที่ active (ตัดกฎ "สมาชิกคนเดียว") · ตัดผู้ดูแลแพลตฟอร์มที่ไม่ใช่ผู้สร้างจากตัวเลือก/ด่าน assign-owner ·
+สร้างผู้ใช้เป็น Owner เดินด่าน+audit เดียวกัน · ล็อก pg_advisory_xact_lock ต่อบริษัท · `LastOwnerGuard` นับเฉพาะ Owner ลูกค้า · โอนเจ้าของจากแอดมินถอด/ลดเป็น support
+(`OwnershipTransferPolicy.ActorRowAfter`) · audit การอ่านทีมข้ามบริษัทของแอดมิน · migration id เมนูเก่าในบทบาทจากแม่แบบ._
