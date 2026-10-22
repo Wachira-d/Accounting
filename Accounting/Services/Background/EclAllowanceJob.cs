@@ -151,7 +151,7 @@ public class EclAllowanceJob : BackgroundService
         // ยอดค่าเผื่อปัจจุบัน (Cr-normal): Cr − Dr ของ 18100
         var currentAllowance = await db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.AccountId == allowanceAcc.Id)
             .SumAsync(l => (decimal?)(l.CreditAmount - l.DebitAmount), ct) ?? 0m;
 

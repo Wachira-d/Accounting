@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.FinancialManagement;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -25,15 +26,17 @@ public partial class FinancialManagementService
         }
 
         var revenue = await _db.JournalEntries
-            .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted
+            .Where(j => j.CompanyId == companyId
                 && j.EntryDate >= yearStart && j.EntryDate < yearEnd)
+            .WherePeriodActivity()   // ★ ทีม O 2026-10-22 — Posted + Reversed · ไม่นับใบปิดบัญชี (เดิม Posted อย่างเดียว ⇒ รายการที่ยกเลิกถูกหักซ้ำ)
             .SelectMany(j => j.Lines)
             .Where(l => l.Account.AccountType == AccountType.Revenue)
             .SumAsync(l => l.CreditAmount - l.DebitAmount);
 
         var expenses = await _db.JournalEntries
-            .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted
+            .Where(j => j.CompanyId == companyId
                 && j.EntryDate >= yearStart && j.EntryDate < yearEnd)
+            .WherePeriodActivity()   // ★ ทีม O 2026-10-22 — Posted + Reversed · ไม่นับใบปิดบัญชี (เดิม Posted อย่างเดียว ⇒ รายการที่ยกเลิกถูกหักซ้ำ)
             .SelectMany(j => j.Lines)
             .Where(l => l.Account.AccountType == AccountType.Expense)
             .SumAsync(l => l.DebitAmount - l.CreditAmount);
@@ -151,7 +154,8 @@ public partial class FinancialManagementService
         if (retainedEarningsAcc != null)
         {
             netProfit = await _db.JournalEntries
-                .Where(j => j.CompanyId == companyId && j.Status == JournalEntryStatus.Posted)
+                .Where(j => j.CompanyId == companyId)
+                .WhereInLedger()   // ★ ทีม O 2026-10-22 — ยอดคงเหลือกำไรสะสม: Posted + Reversed (คู่กลับรายการหักล้างกัน)
                 .SelectMany(j => j.Lines)
                 .Where(l => l.AccountId == retainedEarningsAcc.Id)
                 .SumAsync(l => l.CreditAmount - l.DebitAmount);

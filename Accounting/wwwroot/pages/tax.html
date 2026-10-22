@@ -61,6 +61,9 @@
       </select>
     </div>
 
+    <!-- ทีม O 2026-10-22: ภ.ง.ด.50 ที่บันทึกไว้แต่ยอดสดต่าง (หลังแก้การนับคู่กลับรายการ) — เซิร์ฟเวอร์ตัดสิน หน้าแสดงอย่างเดียว -->
+    <div id="citReviewBanner" style="display:none;margin-bottom:12px"></div>
+
     <div id="taxSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
       <span>เลือกแล้ว <b id="taxSelCount">0</b> รายงาน</span>
       <span id="taxSelExportSlot"></span>
@@ -379,9 +382,43 @@
           }
           this.updateStats();
           this.render();
+          this.loadCitReview();
           const totalPages = data?.totalPages || 1;
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      /** ทีม O 2026-10-22 — แถบ "ภ.ง.ด.50 ที่ยอดสดต่างจากที่บันทึกไว้" (อ่านอย่างเดียว · GET tax/cit-recompute-review) ·
+       *  ข้อความ/คำแนะนำมาจากเซิร์ฟเวอร์ทั้งหมด · ร่าง ⇒ ปุ่มสร้างใหม่ (มี audit) · ยื่นแล้ว ⇒ บอกให้พิจารณายื่นเพิ่มเติม ไม่มีปุ่มแตะตัวเลข */
+      async loadCitReview() {
+        const box = document.getElementById('citReviewBanner');
+        if (!box) return;
+        if (this.taxType !== 'CorporateIncomeTax') { box.style.display = 'none'; box.innerHTML = ''; return; }
+        const esc = s => Layout.esc(s);
+        const fmt = n => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        try {
+          const r = await API.get(`/api/companies/${Layout.getCompanyId()}/tax/cit-recompute-review`);
+          const rows = r?.data || [];
+          if (!rows.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+          const items = rows.map(x => {
+            const act = x.suggestedAction === 'Regenerate'
+              ? `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${x.reportId}')">สร้างใหม่จากข้อมูลปัจจุบัน</button>`
+              : (x.suggestedAction === 'ConsiderAmendedFiling' ? '<b>ยื่นแล้ว — พิจารณายื่นเพิ่มเติม</b>' : '');
+            return `<tr><td>${esc(x.year + 543)}</td><td>${esc(x.status)}</td>`
+              + `<td class="text-right">${fmt(x.storedRevenue)} → ${fmt(x.freshRevenue)}</td>`
+              + `<td class="text-right">${fmt(x.storedExpense)} → ${fmt(x.freshExpense)}</td>`
+              + `<td>${act}</td></tr>`;
+          }).join('');
+          box.innerHTML = `<div class="card" style="font-size:13px;line-height:1.7;border-left:4px solid #d97706;background:#fffbeb">
+            <div>⚠️ รายงานภาษีนิติบุคคลที่บันทึกไว้ ${rows.length} ปี มียอดไม่ตรงกับการคำนวณสดวันนี้ (เช่น รายการที่กลับรายการแล้วเคยถูกหักซ้ำ) — ระบบไม่แก้ตัวเลขให้เอง</div>
+            <table class="table" style="margin-top:8px"><thead><tr><th>ปี (พ.ศ.)</th><th>สถานะ</th><th class="text-right">รายได้ (เดิม → สด)</th><th class="text-right">ค่าใช้จ่าย (เดิม → สด)</th><th></th></tr></thead><tbody>${items}</tbody></table>
+          </div>`;
+          box.style.display = '';
+        } catch (e) {
+          // ไม่ทำให้แท็บพัง แต่ห้ามเงียบ — แถบนี้คือคำเตือนว่าอาจต้องยื่นเพิ่มเติม
+          box.innerHTML = `<div class="card" style="font-size:13px;border-left:4px solid #dc2626">ตรวจยอด ภ.ง.ด.50 ที่บันทึกไว้ไม่สำเร็จ: ${esc(e.message)}</div>`;
+          box.style.display = '';
+        }
       },
 
       /** เทียบชนิดภาษีของแถว — API อาจส่งมาเป็นชื่อ enum ("VAT") หรือเลข (1)

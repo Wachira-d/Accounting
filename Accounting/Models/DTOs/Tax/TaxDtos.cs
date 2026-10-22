@@ -72,6 +72,29 @@ public record TaxReportFreshnessResponse(
     decimal RevenueDelta,
     decimal ExpenseDelta);
 
+/// <summary>
+/// แถวทบทวนรายงาน ภ.ง.ด.50/51 ที่บันทึกไว้ เทียบกับยอดคำนวณสดด้วยกติกาปัจจุบัน (อ่านอย่างเดียว · ทีม O 2026-10-22) —
+/// หลังแก้ "ใบกลับรายการถูกนับแต่ใบเดิมไม่ถูกนับ" (Helpers/ReportableJournal) รายงานที่สร้างก่อนแก้อาจเก็บฐานต่ำกว่าจริง ·
+/// ร่าง ⇒ กด "สร้างใหม่" ได้ (มี audit) · ยื่น/ล็อกแล้ว ⇒ ระบบไม่แตะ ให้ผู้ใช้พิจารณายื่น ภ.ง.ด.50 เพิ่มเติม
+/// </summary>
+/// <param name="Level">UpToDate · SourceTouched · Stale · StaleAfterFiling (Helpers/CitReportFreshness)</param>
+/// <param name="SuggestedAction">None · Regenerate · ConsiderAmendedFiling</param>
+public record CitRecomputeReviewRow(
+    Guid ReportId,
+    int Year,
+    string Status,
+    bool AlreadyFiled,
+    decimal StoredRevenue,
+    decimal FreshRevenue,
+    decimal StoredExpense,
+    decimal FreshExpense,
+    decimal RevenueDelta,
+    decimal ExpenseDelta,
+    string Level,
+    string? Message,
+    bool CanRegenerate,
+    string SuggestedAction);
+
 public record UpdateTaxReportRequest(
     string? Notes,
     List<UpdateTaxReportLineRequest>? Lines);

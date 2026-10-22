@@ -397,8 +397,10 @@ public partial class TaxService : ITaxService
                     && l.JournalEntry.SourceDocumentId != null
                     && relatedInvoicePendingIds.Contains(l.JournalEntry.SourceDocumentId.Value)
                     && !l.JournalEntry.IsDeleted
-                    && l.JournalEntry.Status == JournalEntryStatus.Posted
                     && l.Account.AccountCode == "21913")
+                // ★ ทีม O 2026-10-22: ยอดสุทธิ 21913 ต่อใบต้องนับคู่กลับรายการ (Posted + Reversed) เหมือน invGl21913Net/gl21913NetByDoc ข้างบน —
+                // เดิม Posted อย่างเดียว ⇒ ใบกลับรายการ (คง SourceDocumentId ของใบเดิม) ถูกนับแต่ใบเดิมไม่ ⇒ ยอดพักติดลบ
+                .WhereInLedger()
                 .GroupBy(l => l.JournalEntry.SourceDocumentId!.Value)
                 .Select(g => new { DocId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
                 .ToListAsync())
@@ -2200,29 +2202,21 @@ public partial class TaxService : ITaxService
         var endDate = fy.EndInclusive;
 
         // Calculate total revenue
-        var revenueLines = await _db.JournalEntryLines
+        // ★ ทีม O 2026-10-22: ฐานบรรทัดผ่าน CitPeriodLines → ReportableJournal.WherePeriodActivity ตัวเดียว (Posted + Reversed · ไม่นับใบปิดบัญชี) —
+        // เดิมกรอง Posted อย่างเดียว ⇒ ใบที่ถูกกลับรายการ (Reversed) หาย แต่ใบกลับรายการ (Posted) ยังนับ ⇒ รายได้ที่ยกเลิกถูกหักซ้ำ ⇒ ฐาน ภ.ง.ด.50 ต่ำกว่าจริง
+        var revenueLines = await CitPeriodLines(companyId, startDate, endDate)
             .Include(l => l.JournalEntry)
             .Include(l => l.Account)
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
-                && l.JournalEntry.EntryDate >= startDate
-                && l.JournalEntry.EntryDate <= endDate
-                && l.Account!.AccountType == AccountType.Revenue)
+            .Where(l => l.Account!.AccountType == AccountType.Revenue)
             .ToListAsync();
 
         var totalRevenue = revenueLines.Sum(l => l.CreditAmount - l.DebitAmount);
 
         // Calculate total expenses
-        var expenseLines = await _db.JournalEntryLines
+        var expenseLines = await CitPeriodLines(companyId, startDate, endDate)
             .Include(l => l.JournalEntry)
             .Include(l => l.Account)
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
-                && l.JournalEntry.EntryDate >= startDate
-                && l.JournalEntry.EntryDate <= endDate
-                && l.Account!.AccountType == AccountType.Expense)
+            .Where(l => l.Account!.AccountType == AccountType.Expense)
             .ToListAsync();
 
         var totalExpenses = expenseLines.Sum(l => l.DebitAmount - l.CreditAmount);
@@ -2892,10 +2886,35 @@ public partial class TaxService : ITaxService
     }
 
     /// <summary>
+    /// ฐานบรรทัด GL ของรายงาน CIT (ภ.ง.ด.50 + ตัวเทียบความสด) — <b>ตัวเดียว</b> ทั้งฝั่งคำนวณและฝั่งเทียบ (ถ้าสองฝั่งกรองต่างกัน ตัวเทียบจะฟ้องทุกใบตลอดกาล) ·
+    /// บริษัทนี้ · ช่วงรอบบัญชี (รวมปลาย) · <see cref="ReportableJournal.WherePeriodActivity(IQueryable{JournalEntryLine})"/>
+    /// </summary>
+    private IQueryable<JournalEntryLine> CitPeriodLines(Guid companyId, DateTime start, DateTime endInclusive)
+    {
+        return _db.JournalEntryLines
+            .Where(l => l.JournalEntry.CompanyId == companyId
+                && l.JournalEntry.EntryDate >= start
+                && l.JournalEntry.EntryDate <= endInclusive)
+            .WherePeriodActivity();
+    }
+
+    /// <summary>รายได้ (Cr−Dr) / ค่าใช้จ่าย (Dr−Cr) ทั้งรอบ คำนวณสดจาก GL ด้วยฐานเดียวกับ <see cref="GenerateCitReport"/></summary>
+    private async Task<(decimal Revenue, decimal Expense)> CitFreshTotalsAsync(Guid companyId, DateTime start, DateTime endInclusive)
+    {
+        var revenue = await CitPeriodLines(companyId, start, endInclusive).AsNoTracking()
+            .Where(l => l.Account!.AccountType == AccountType.Revenue)
+            .SumAsync(l => (decimal?)(l.CreditAmount - l.DebitAmount)) ?? 0m;
+        var expense = await CitPeriodLines(companyId, start, endInclusive).AsNoTracking()
+            .Where(l => l.Account!.AccountType == AccountType.Expense)
+            .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
+        return (revenue, expense);
+    }
+
+    /// <summary>
     /// คำนวณ "ยอดสด" ของรอบบัญชีแล้วเทียบกับยอดที่รายงานเก็บไว้ (Q12)
     ///
-    /// <para>คิวรีใช้เงื่อนไข<b>ชุดเดียวกับ <see cref="GenerateCitReport"/></b>
-    /// (Posted · ไม่ใช่ใบปิดบัญชี · ช่วงรอบตาม <c>FiscalYearStartMonth</c>) —
+    /// <para>คิวรีใช้ฐาน<b>ตัวเดียวกับ <see cref="GenerateCitReport"/></b> (<see cref="CitPeriodLines"/>:
+    /// Posted + Reversed · ไม่ใช่ใบปิดบัญชี · ช่วงรอบตาม <c>FiscalYearStartMonth</c>) —
     /// ถ้าเงื่อนไขสองฝั่งไม่ตรงกัน ตัวเทียบจะฟ้องทุกใบตลอดกาล</para>
     ///
     /// <para>ฐานเวลาคือ <c>report.CreatedAt</c> ไม่ใช่ <c>UpdatedAt</c> — การกด
@@ -2910,23 +2929,7 @@ public partial class TaxService : ITaxService
         var fy = Accounting.Helpers.FiscalYear.RangeFor(
             report.Year, company?.FiscalYearStartMonth ?? 1);
 
-        var freshRevenue = await _db.JournalEntryLines.AsNoTracking()
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && !l.JournalEntry.IsClosingEntry
-                && l.JournalEntry.EntryDate >= fy.Start
-                && l.JournalEntry.EntryDate <= fy.EndInclusive
-                && l.Account!.AccountType == AccountType.Revenue)
-            .SumAsync(l => l.CreditAmount - l.DebitAmount);
-
-        var freshExpense = await _db.JournalEntryLines.AsNoTracking()
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && !l.JournalEntry.IsClosingEntry
-                && l.JournalEntry.EntryDate >= fy.Start
-                && l.JournalEntry.EntryDate <= fy.EndInclusive
-                && l.Account!.AccountType == AccountType.Expense)
-            .SumAsync(l => l.DebitAmount - l.CreditAmount);
+        var (freshRevenue, freshExpense) = await CitFreshTotalsAsync(companyId, fy.Start, fy.EndInclusive);
 
         // ยอดค่าใช้จ่าย "ที่เก็บไว้" อยู่ในบรรทัดที่ GenerateCitReport เขียนไว้
         // (= ค่าใช้จ่ายจาก GL ล้วน ไม่รวมค่าเสื่อมทางภาษี ซึ่งอยู่คนละบรรทัด)
@@ -2956,6 +2959,41 @@ public partial class TaxService : ITaxService
             verdict.Status.ToString(), verdict.Message, verdict.NeedsAttention,
             verdict.CanRegenerate, since, changedDocs + changedJes,
             verdict.RevenueDelta, verdict.ExpenseDelta);
+    }
+
+    /// <summary>
+    /// <b>ทบทวนรายงาน ภ.ง.ด.50 ที่บันทึกไว้ทุกปี</b> เทียบยอดคำนวณสดด้วยกติกาปัจจุบัน — <b>อ่านอย่างเดียว</b> (ทีม O 2026-10-22 · หลักการ #9)
+    ///
+    /// <para>หลังแก้ฐาน GL ให้นับคู่กลับรายการ (<see cref="ReportableJournal"/>) รายงานที่สร้างก่อนแก้อาจเก็บรายได้/ค่าใช้จ่ายที่ "ใบกลับรายการถูกนับ
+    /// แต่ใบเดิมไม่ถูกนับ" ไว้ · ตัวตัดสินคือ <see cref="BuildCitFreshnessAsync"/> ตัวเดียวกับแถบเตือนบนรายงาน (ฐานเดียวกับตอนสร้าง) ·
+    /// ร่าง ⇒ แนะนำ "สร้างใหม่" (มี audit) · ยื่น/ล็อกแล้ว ⇒ ระบบไม่แตะตัวเลข แนะนำพิจารณายื่น ภ.ง.ด.50 เพิ่มเติม</para>
+    /// </summary>
+    public async Task<List<CitRecomputeReviewRow>> GetCitRecomputeReviewAsync(Guid companyId, bool onlyDiffering = true)
+    {
+        const string expenseLineLabel = "ค่าใช้จ่ายทั้งปี";
+        var reports = await _db.TaxReports.AsNoTracking()
+            .Include(r => r.Lines)
+            .Where(r => r.CompanyId == companyId && r.TaxType == TaxType.CorporateIncomeTax)
+            .OrderBy(r => r.Year)
+            .ToListAsync();
+        var rows = new List<CitRecomputeReviewRow>();
+        foreach (var r in reports)
+        {
+            var f = await BuildCitFreshnessAsync(companyId, r);
+            var level = Enum.TryParse<Accounting.Helpers.CitReportFreshness.Level>(f.Level, out var lv)
+                ? lv : Accounting.Helpers.CitReportFreshness.Level.UpToDate;
+            if (onlyDiffering && !f.NeedsAttention) continue;
+            var storedExpense = r.Lines.Where(l => l.Description == expenseLineLabel).Sum(l => l.IncomeAmount);
+            rows.Add(new CitRecomputeReviewRow(
+                r.Id, r.Year, r.Status.ToString(),
+                Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(r.Status),
+                r.TotalIncome, r.TotalIncome + f.RevenueDelta,
+                storedExpense, storedExpense + f.ExpenseDelta,
+                f.RevenueDelta, f.ExpenseDelta,
+                f.Level, f.Message, f.CanRegenerate,
+                Accounting.Helpers.TaxReportRecompute.SuggestedAction(level)));
+        }
+        return rows;
     }
 
     public async Task<List<TaxReportResponse>> GetTaxReportsAsync(Guid companyId, TaxType? taxType = null, int? year = null)
@@ -3807,6 +3845,8 @@ public partial class TaxService : ITaxService
             throw new InvalidOperationException("ไม่สามารถสร้างใหม่ได้ — รายงานนี้ถูกยื่น/บันทึกว่ายื่นแล้ว");
 
         var request = new CreateTaxReportRequest(existing.TaxType, existing.Year, existing.Month);
+        // ทีม O 2026-10-22 (หลักการ #9): ภาพตัวเลขก่อนคำนวณใหม่ → แถว audit คู่กับยอดใหม่ (ไม่มีการแก้ตัวเลขเงียบ ๆ)
+        var auditBefore = Accounting.Helpers.TaxReportRecompute.AuditPayload(existing, "before");
 
         // ===== Snapshot ก่อนลบ — state ที่ผู้ใช้ทำมือแล้ว regen ห้ามหายเงียบ =====
         // (1) ติ๊ก "ใช้" บนบรรทัดที่มี DocumentId (carry-forward/pull/ยกมามาช้า)
@@ -3874,6 +3914,16 @@ public partial class TaxService : ITaxService
             freshForAudit.RejectedAt = keepRejAt;
             freshForAudit.RejectedBy = keepRejBy;
             freshForAudit.ReversalJournalEntryId = keepReversalJe;
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                EntityType = nameof(TaxReport),
+                EntityId = freshForAudit.Id.ToString(),
+                Action = AuditAction.Update,
+                OldValues = auditBefore,
+                NewValues = Accounting.Helpers.TaxReportRecompute.AuditPayload(freshForAudit, "after"),
+                Timestamp = DateTime.UtcNow,
+            });
             await _db.SaveChangesAsync();
         }
 

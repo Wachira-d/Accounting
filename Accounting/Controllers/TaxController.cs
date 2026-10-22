@@ -58,6 +58,15 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<List<TaxReportResponse>>(true, result));
     }
 
+    /// <summary>ทบทวน ภ.ง.ด.50 ที่บันทึกไว้เทียบยอดสด (อ่านอย่างเดียว · ทีม O 2026-10-22) — ปีที่ยอดต่างหลังแก้การนับคู่กลับรายการ ·
+    /// ร่าง ⇒ "สร้างใหม่" ได้ · ยื่นแล้ว ⇒ พิจารณายื่นเพิ่มเติม · <c>all=true</c> คืนทุกปี (รวมปีที่ยอดตรง)</summary>
+    [HttpGet("cit-recompute-review")]
+    public async Task<ActionResult<ApiResponse<List<CitRecomputeReviewRow>>>> GetCitRecomputeReview(Guid companyId, [FromQuery] bool all = false)
+    {
+        var result = await _taxService.GetCitRecomputeReviewAsync(companyId, onlyDiffering: !all);
+        return Ok(new ApiResponse<List<CitRecomputeReviewRow>>(true, result));
+    }
+
     [HttpGet("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> GetTaxReport(Guid companyId, Guid reportId)
     {

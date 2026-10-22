@@ -1132,22 +1132,20 @@ public class TaxFilingExportService : ITaxFilingExportService
                 $"ภ.ง.ด.51 ปี {year}: รอบบัญชี < 12 เดือน (ปีแรก/สุดท้าย/เปลี่ยนรอบ) — ยกเว้นไม่ต้องยื่น (§67 ทวิ)");
         }
 
-        // กำไรสุทธิ 6 เดือนแรก = Revenue − Expense (Posted JE)
+        // กำไรสุทธิ 6 เดือนแรก = Revenue − Expense (ReportableJournal.WherePeriodActivity)
         var revenueHalf = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= fyStart
                 && l.JournalEntry.EntryDate <= halfEnd
                 && l.Account!.AccountType == AccountType.Revenue)
+            .WherePeriodActivity()   // ★ ทีม O 2026-10-22 — Posted + Reversed (คู่กลับรายการหักล้างกัน) · ไม่นับใบปิดบัญชี · ฐานเดียวกับ ภ.ง.ด.50
             .SumAsync(l => (decimal?)(l.CreditAmount - l.DebitAmount)) ?? 0m;
         var expenseHalf = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && !l.JournalEntry.IsClosingEntry   // ★ C-T02 — ใบปิดบัญชีไม่ใช่ผลการดำเนินงาน
                 && l.JournalEntry.EntryDate >= fyStart
                 && l.JournalEntry.EntryDate <= halfEnd
                 && l.Account!.AccountType == AccountType.Expense)
+            .WherePeriodActivity()   // ★ ทีม O 2026-10-22 — Posted + Reversed (คู่กลับรายการหักล้างกัน) · ไม่นับใบปิดบัญชี · ฐานเดียวกับ ภ.ง.ด.50
             .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
         // B6: บวกกลับ §65 ตรี ของครึ่งปีแรก — ฐานเดียวกับ ภ.ง.ด.50 (เดิม 51
         // คำนวณจาก JE ล้วน ไม่มีบวกกลับเลย ⇒ ประมาณการกำไรต่ำกว่าจริง เสี่ยง

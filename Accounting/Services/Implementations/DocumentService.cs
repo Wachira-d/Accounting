@@ -17251,7 +17251,7 @@ public partial class DocumentService : IDocumentService
         var yearEnd = new DateTime(year, 12, 31);
         var actuals = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.JournalEntry.EntryDate >= yearStart && l.JournalEntry.EntryDate <= yearEnd
                 && accIds.Contains(l.AccountId))
             .GroupBy(l => l.AccountId)

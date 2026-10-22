@@ -166,7 +166,7 @@ public class SmartSafetyController : ControllerBase
         var currentTotal = await _db.JournalEntryLines.AsNoTracking()
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.AccountId == accountId
                 && l.JournalEntry.EntryDate >= checkMonthStart && l.JournalEntry.EntryDate <= checkMonthEnd)
             .SumAsync(l => l.DebitAmount - l.CreditAmount);
@@ -174,7 +174,7 @@ public class SmartSafetyController : ControllerBase
         var baselineMonths = await _db.JournalEntryLines.AsNoTracking()
             .Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.AccountId == accountId
                 && l.JournalEntry.EntryDate >= baselineStart && l.JournalEntry.EntryDate < checkMonthStart)
             .GroupBy(l => new { l.JournalEntry.EntryDate.Year, l.JournalEntry.EntryDate.Month })

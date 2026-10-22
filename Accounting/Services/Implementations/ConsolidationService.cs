@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Consolidation;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -211,11 +212,12 @@ public class ConsolidationService : IConsolidationService
                 .Include(l => l.JournalEntry)
                 .Include(l => l.Account)
                 .Where(l => l.JournalEntry.CompanyId == member.CompanyId
-                    && l.JournalEntry.Status == JournalEntryStatus.Posted
                     && l.JournalEntry.EntryDate >= fromDate
                     && l.JournalEntry.EntryDate <= toDate
                     && (l.Account!.AccountType == AccountType.Revenue
                         || l.Account.AccountType == AccountType.Expense))
+                // ★ ทีม O 2026-10-22 — กำไรขาดทุนของงวด: Posted + Reversed · ไม่นับใบปิดบัญชี (ตัวกรองเดียวกับงบกำไรขาดทุนของบริษัทเดี่ยว)
+                .WherePeriodActivity()
                 .GroupBy(l => new { l.AccountId, l.Account!.AccountCode, l.Account.AccountName, l.Account.AccountType })
                 .Select(g => new
                 {
@@ -391,8 +393,8 @@ public class ConsolidationService : IConsolidationService
             .Include(l => l.JournalEntry)
             .Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.EntryDate <= asOfDate);
+                && l.JournalEntry.EntryDate <= asOfDate)
+            .WhereInLedger();   // ★ ทีม O 2026-10-22 — Posted + Reversed (คู่กลับรายการหักล้างกัน) เหมือนงบทดลอง
 
         if (fromDate.HasValue)
             query = query.Where(l => l.JournalEntry.EntryDate >= fromDate.Value);

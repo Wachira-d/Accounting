@@ -274,7 +274,7 @@ public class LineBotService : ILineBotService
             var lines = await _db.JournalEntryLines
                 .Include(l => l.JournalEntry).Include(l => l.Account)
                 .Where(l => l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.Status == Models.Enums.JournalEntryStatus.Posted
+                    && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                     && l.JournalEntry.EntryDate >= from
                     && l.JournalEntry.EntryDate <= now)
                 .ToListAsync();

@@ -11,6 +11,8 @@ public interface ITaxService
     Task<TaxReportResponse> FileTaxReportAsync(Guid companyId, Guid reportId);
     Task<TaxReportResponse> UpdateTaxReportAsync(Guid companyId, Guid reportId, UpdateTaxReportRequest request);
     Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId);
+    /// <summary>ทบทวนรายงาน ภ.ง.ด.50 ที่บันทึกไว้ทุกปีเทียบยอดสด (อ่านอย่างเดียว · ทีม O 2026-10-22) — เฉพาะปีที่ยอดต่าง เมื่อ <paramref name="onlyDiffering"/></summary>
+    Task<List<CitRecomputeReviewRow>> GetCitRecomputeReviewAsync(Guid companyId, bool onlyDiffering = true);
     Task DeleteTaxReportAsync(Guid companyId, Guid reportId);
     Task<int> AutoRefreshReportsAsync(Guid companyId, int months = 2);
     Task<object> GetVatDebugAsync(Guid companyId, int year, int month);

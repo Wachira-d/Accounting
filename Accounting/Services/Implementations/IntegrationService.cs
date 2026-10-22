@@ -3696,7 +3696,7 @@ public class IntegrationService : IIntegrationService
 
         var data = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountType == AccountType.Revenue)
@@ -3747,7 +3747,7 @@ public class IntegrationService : IIntegrationService
         // Look for deposit-related journal entries (account code 215xx = เงินมัดจำรับล่วงหน้า)
         var depositReceived = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountCode.StartsWith("215"))
@@ -3755,7 +3755,7 @@ public class IntegrationService : IIntegrationService
 
         var depositApplied = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountCode.StartsWith("215"))
@@ -3802,7 +3802,7 @@ public class IntegrationService : IIntegrationService
         // Get daily revenue by account code prefix — load then group in-memory (Substring in GroupBy key)
         var rawJournalData = await _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountType == AccountType.Revenue)
@@ -5059,13 +5059,13 @@ public class IntegrationService : IIntegrationService
             .Select(a => new OutboundAccountBalanceResponse(
                 a.AccountCode, a.AccountName, a.AccountType.ToString(),
                 _db.JournalEntryLines
-                    .Where(l => l.AccountId == a.Id && l.JournalEntry.Status == JournalEntryStatus.Posted)
+                    .Where(l => l.AccountId == a.Id && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))
                     .Sum(l => l.DebitAmount),
                 _db.JournalEntryLines
-                    .Where(l => l.AccountId == a.Id && l.JournalEntry.Status == JournalEntryStatus.Posted)
+                    .Where(l => l.AccountId == a.Id && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))
                     .Sum(l => l.CreditAmount),
                 _db.JournalEntryLines
-                    .Where(l => l.AccountId == a.Id && l.JournalEntry.Status == JournalEntryStatus.Posted)
+                    .Where(l => l.AccountId == a.Id && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))
                     .Sum(l => l.DebitAmount - l.CreditAmount)))
             .OrderBy(a => a.AccountCode)
             .ToListAsync();
