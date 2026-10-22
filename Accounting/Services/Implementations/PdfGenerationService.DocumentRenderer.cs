@@ -930,6 +930,10 @@ public partial class PdfGenerationService
                 Row(printTotals.VatLabel, doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
                 Row(L.TotalWht, $"({doc.WithholdingTaxAmount:N2})");
+            // ทีม F — หัก ณ ที่จ่ายหลายอัตรา ⇒ แถวย่อยต่ออัตรา (ตัวเดียวกับ HTML renderer · อัตราเดียว = ไม่มีแถว)
+            if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
+                foreach (var (whtRateRow, whtRateAmt) in Accounting.Helpers.PerLineWht.RateBreakdownForPrint(doc))
+                    Row(L.TotalWhtAtRate(whtRateRow), $"({whtRateAmt:N2})");
             // รอบ 204 ฝ่ายค้าน P2-1: ผู้จ่ายออกภาษีแทน (+) — เงื่อนไข/ป้ายเดียวกับ HTML renderer (ยอดสุทธิ = ฐาน + VAT − ภาษีนำส่ง + ส่วนนี้)
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0 && doc.WhtPayerBorneAmount > 0)
                 Row(L.TotalWhtPayerBorne, doc.WhtPayerBorneAmount.ToString("N2"));

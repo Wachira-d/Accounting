@@ -65,6 +65,8 @@ public class DocumentCloneController : ControllerBase
             dueDate = src.CreditDays.HasValue ? DateTime.UtcNow.Date.AddDays(src.CreditDays.Value) : (DateTime?)null,
             currency = src.Currency,
             exchangeRate = src.ExchangeRate,
+            documentThbBase = Accounting.Helpers.PerLineWht.UsablePrintedBase(src),
+            exchangeRateSource = src.ExchangeRateSource,
             paymentType = src.PaymentType,
             pricesIncludeVat = src.PricesIncludeVat,
             roundingAdjustment = src.RoundingAdjustment,
@@ -194,6 +196,10 @@ public class DocumentCloneController : ControllerBase
             PaymentAccountId: src.PaymentAccountId,
             Currency: src.Currency,
             ExchangeRate: src.ExchangeRate,
+            // ทีม F (ฝ่ายค้านข้อ 6) — เอกสารลูกสืบทอดฐานบาทตามเอกสาร + ที่มาอัตรา (null ⇒ null · DocumentFx.Decide ตัดสิน — เดิมประทับ "User" ผิด)
+            // ยอดบาทที่ยังเป็นฐานของบรรทัดชุดนี้เท่านั้น (ต้นแบบที่แก้บรรทัดจนฐานเปลี่ยน ⇒ ไม่ตาม · PerLineWht.UsablePrintedBase)
+            DocumentThbBase: Accounting.Helpers.PerLineWht.UsablePrintedBase(src),
+            ExchangeRateSource: src.ExchangeRateSource,
             PaymentType: src.PaymentType,
             PricesIncludeVat: src.PricesIncludeVat,
             // ชื่อทางการค้า + รูปแบบเอกสารที่ตรึงกับใบต้นแบบ — เดิมตกทั้งคู่ ⇒

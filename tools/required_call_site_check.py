@@ -9081,6 +9081,42 @@ RULES += [
 ]
 
 
+# ทีม F (หัก ณ ที่จ่ายตามรายการ · ฝ่ายค้านข้อ 4/5): ทุกผู้อ่านที่ส่งยอดหัก ณ ที่จ่ายออกเป็น "บาท" ต้องเดินตัวคำนวณเดียว Helpers/PerLineWht —
+# เดิมหน้านำส่ง/ปฏิทิน/ตัวกระทบ GL รวม d.WithholdingTaxAmount สกุลเอกสาร ⇒ ใบ USD ต่ำ ~36 เท่า (docs/PER_LINE_WHT_DESIGN.md)
+_PLWHT = "ทีม F หัก ณ ที่จ่ายเป็นบาท: "
+RULES += [
+    dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
+         must=["PerLineWht.ForDocument(doc)", "PerLineWht.DocumentWhtThb(", "PerLineWht.TieOut("],
+         why=_PLWHT + "50 ทวิ ของใบต่างสกุลเป็นบาทต่อบรรทัด + ผูก Σ กับยอด GL"),
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
+         must=["PerLineWht.ForDocument(doc)", "PerLineWht.DocumentWhtThb("],
+         why=_PLWHT + "แถวเตือน \"ยังไม่ออกใบ\" ของ ภ.ง.ด. เป็นบาทเหมือน 50 ทวิ ที่จะออก"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="GetDashboardAsync",
+         must_re=[r"PerLineWht\.DocumentWhtThb\(\s*d\.WithholdingTaxAmount\s*,\s*d\.ExchangeRate\)",
+                  r"PerLineWht\.DocumentWhtThb\(\s*p\.WithholdingTaxAmount\s*,\s*d\.ExchangeRate\)"],
+         why=_PLWHT + "หน้านำส่ง: แถวช่องโหว่ (เอกสารที่ยังไม่มี 50 ทวิ) เป็นบาท"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="GetFilingCalendarAsync",
+         must_re=[r"PerLineWht\.DocumentWhtThb\(\s*d\.WithholdingTaxAmount\s*,\s*d\.ExchangeRate\)",
+                  r"PerLineWht\.DocumentWhtThb\(\s*p\.WithholdingTaxAmount\s*,\s*d\.ExchangeRate\)"],
+         why=_PLWHT + "ปฏิทินยื่น: ช่องโหว่ 50 ทวิ เป็นบาท"),
+    dict(file="Services/Implementations/TaxGlReconciliationService.cs", method="BuildWhtLineAsync",
+         must=["PerLineWht.DocumentWhtThb(d.WithholdingTaxAmount, d.ExchangeRate)"],
+         forbid=["noCert.Sum(d => d.WithholdingTaxAmount)"],
+         why=_PLWHT + "ตัวกระทบ GL: สาเหตุ \"ยังไม่ออก 50 ทวิ\" เป็นบาท"),
+    dict(file=DOC, method="CreatePaymentJournalAsync",
+         must=["PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx)"],
+         why=_PLWHT + "JE ตอนจ่าย: ขา WHT ฐานเดียวกับ 50 ทวิ รายงวด (อัตราของเอกสาร)"),
+    dict(file=DOC, method="CreateDocumentAsync",
+         must=["ApplyDocumentFxDecisionAsync(companyId, doc, request)"],
+         why=_PLWHT + "สร้างเอกสาร: อัตรา/ที่มา/ฐานบาทผ่าน DocumentFx.Decide ตัวเดียว"),
+    dict(file="Services/Implementations/OcrService.cs", method="BuildScanLinesAsync",
+         must=["OcrLineWhtPlan.Decide(", "PerLineWhtEnabledAsync(companyId)"],
+         why=_PLWHT + "OCR แผนต่อบรรทัดเฉพาะเมื่อเปิดค่าตั้ง"),
+    dict(file="Services/Implementations/OcrService.cs", method="CreateDocumentFromScanCoreAsync",
+         must=["OcrThbEquivalent.Plan(", "scanBotRate)"],
+         why=_PLWHT + "OCR ยอดบาทบนใบต่างสกุล: หลักฐานแหล่งเดียวต้องเทียบอัตรา ธปท."),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

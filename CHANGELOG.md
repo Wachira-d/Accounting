@@ -5416,3 +5416,17 @@ backlog: ขายผ่าน POS/ร้านออนไลน์ · คื�
 _2026-10-22 ทีม L ฝ่ายค้านรอบ 1: ยกเลิกใบขาย/ใบลดหนี้ที่ผูกบัตรคอร์สผ่านด่าน `Helpers/CreditPassDocumentRule` (hook `CreditPassDocumentHook` ในธุรกรรมของ
 DocumentService — ใช้แล้ว ⇒ บล็อก · ยังไม่ใช้ ⇒ ปิดบัตร · ลดหนี้ได้เฉพาะส่วนที่ยังไม่รับรู้ทั้งก้อน) · เปิดบัตรยึดยอด JE + ห้ามซ้ำในสายเอกสาร · กันจองซ้ำต่อ ref
 (advisory lock + unique index) · ขายกันกดซ้ำ + ลบใบร่างเมื่ออนุมัติล้ม · ล็อกครูต่อวัน · งานหมดอายุไม่หยุดทั้งรอบ · เทสต์ `CreditPassDocumentRuleTests`_
+
+_2026-10-22 (ทีม F — หัก ณ ที่จ่าย "ตามรายการ" + ฐานบาทของใบต่างสกุล · `docs/PER_LINE_WHT_DESIGN.md`):
+สำรวจพบว่าโครงหัก ณ ที่จ่ายต่อบรรทัด (อัตรา/ยอด/ประเภทเงินได้/ผู้ถูกหัก) + 50 ทวิ แถวต่อบรรทัด + ภ.ง.ด. จากทะเบียน มีครบแล้ว — ช่องโหว่จริงคือ
+(1) 50 ทวิ/แถวเตือน ภ.ง.ด. ของใบต่างสกุลเป็นตัวเลขสกุลเอกสาร (แก้: `Helpers/PerLineWht` ตัวคำนวณบาทตัวเดียว · ใบบาทไม่ขยับ) ·
+(2) OCR เฉลี่ยภาษีหัวใบลงทุกบรรทัดด้วยอัตราเดียว (แก้เมื่อเปิดค่าตั้ง `CompanySettings.PerLineWhtEnabled`: `Helpers/OcrLineWhtPlan` + `ExpenseCategoryResolver.ClassifyLineForWht`) ·
+(3) ไม่มีที่เก็บยอดบาทที่ใบต่างสกุลพิมพ์ไว้/ที่มาของอัตรา (เพิ่ม `Document.DocumentThbBase` + `ExchangeRateSource` · ตัวตัดสิน `DocumentFx.Decide` ·
+OCR `Helpers/OcrThbEquivalent`) · (4) ไม่มีสรุปต่อประเภท (จอ `WhtByIncomeType` · กระดาษแถวย่อยต่ออัตรา ×2 renderer) ·
+migration `DatabaseMigrationHelper.PerLineWhtStatements` (ADD COLUMN · ไม่มี UPDATE) · เทสต์ `PerLineWhtTests`_
+
+_2026-10-22 (ทีม F แก้ผลฝ่ายค้าน 1–9): ยอดบาทตามเอกสารต้องแปลงกลับได้ ± 0.01 (VND อัตรา 6 ตำแหน่งต่าง 24.69 — ตอนสร้าง 400 · ใบเดิมตกไปใช้อัตรา ·
+`DocumentFx.PrintedBahtRoundTrips`) · OCR หลักฐานยอดบาทแหล่งเดียวต้องห่างอัตรา ธปท. ≤ 3% (`[FX-DOC-UNVERIFIED]`) · `[WHT-LINE]`/`[WHT-LINE-MISMATCH]`/`[FX-DOC-CONFLICT]`
+หยุดอนุมัติเอง · รายงานตรวจข้อมูล "50 ทวิ ใบต่างสกุลที่ยอดไม่ใช่บาท" (อ่านอย่างเดียว · `WhtCertCurrencyCheck`) · หน้านำส่ง/ปฏิทิน/ตัวกระทบ GL/JE ตอนจ่ายเดิน
+`PerLineWht.DocumentWhtThb` + ล็อกจุดเรียก `_PLWHT` · `ForDocument` ผูก Σ เข้า GL (สรุปต่อประเภท/แถวเตือน) · โคลนสืบทอดฐานบาท/ที่มาอัตรา ·
+ใบแทนพาสองช่องไป · เกณฑ์แผนต่อบรรทัดเป็นบาท · สรุปต่อประเภท null เมื่อไม่มีบรรทัด · แก้คอมเมนต์/ข้อความหน้าตั้งค่าให้ตรงว่าอะไรขึ้นกับค่าตั้ง_

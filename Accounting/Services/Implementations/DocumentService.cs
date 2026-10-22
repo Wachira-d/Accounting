@@ -1786,6 +1786,8 @@ public partial class DocumentService : IDocumentService
             doc.WithholdingTaxAmount = totalWht;
             // รอบ 204: ผู้จ่ายออกภาษีแทน ⇒ ยอดจ่ายผู้รับ = ฐาน + VAT − ภาษีนำส่ง + ส่วนที่ออกแทน (หัก ณ ที่จ่าย ⇒ ส่วนที่ออกแทน 0 = สูตรเดิม)
             doc.WhtPayerBorneAmount = createWhtBorne;
+            // ทีม F — อัตรา/ที่มา/ฐานบาทตามเอกสาร (ต้องรู้ SubTotal แล้ว · ตัวตัดสินเดียว Helpers/DocumentFx.Decide · ผิด = 400)
+            await ApplyDocumentFxDecisionAsync(companyId, doc, request);
             doc.TotalAmount = WhtGrossUp.PayeeTotal(doc.SubTotal, totalVat, totalWht, createWhtBorne);
             // Cash-settled documents carry no outstanding balance — the cash
             // already moved, so PaidAmount = ยอดจ่ายผู้รับเงิน and BalanceDue = 0. This is
@@ -19893,8 +19895,8 @@ public partial class DocumentService : IDocumentService
         var thbAmount = fx == 1m ? payment.Amount : Math.Round(payment.Amount * fx, 2, MidpointRounding.AwayFromZero);
         var thbCash = settleFx == fx ? thbAmount
             : Math.Round(payment.Amount * settleFx, 2, MidpointRounding.AwayFromZero);
-        var thbWht = fx == 1m ? payment.WithholdingTaxAmount
-            : Math.Round(payment.WithholdingTaxAmount * fx, 2, MidpointRounding.AwayFromZero);
+        // ทีม F: ขา WHT ตอนจ่ายใช้อัตราของเอกสาร — เป้าเดียวกับ 50 ทวิ รายงวด (WithholdingTaxCertService ผูกยอดงวดเข้าหาค่านี้)
+        var thbWht = Accounting.Helpers.PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx);
         var postPerPaymentWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash && thbWht > 0m;
         // ผลต่าง FX ของงวดนี้ (คิดเฉพาะส่วนเงินสด — WHT ตัดที่ rate เอกสารทั้งคู่)
         var fxDiff = thbCash - thbAmount;   // >0 = ได้ THB มากขึ้น
@@ -20431,7 +20433,14 @@ public partial class DocumentService : IDocumentService
         WhtBorneByContract: d.WhtBorneByContract,
         WhtViaEWithholding: d.WhtViaEWithholding,
         // ค่าช่อง "แหล่งเงิน" ตามลำดับเดียวกับการลงบัญชี (PC#15 — หน้าเว็บ hydrate จากค่านี้ ไม่ตัดสินลำดับเอง)
-        PaymentChannel: Accounting.Helpers.DocumentMoneyChannel.ChannelValue(d.BankAccountId, d.PaymentAccountId));
+        PaymentChannel: Accounting.Helpers.DocumentMoneyChannel.ChannelValue(d.BankAccountId, d.PaymentAccountId),
+        // ทีม F — เก็บแล้วต้อง echo กลับ (กฎ #4 A) + สรุปหัก ณ ที่จ่ายต่อประเภทเงินได้ (บาท · ตัวคำนวณกลาง)
+        DocumentThbBase: d.DocumentThbBase,
+        ExchangeRateSource: d.ExchangeRateSource,
+        ExchangeRateSourceLabel: Accounting.Helpers.DocumentFx.SourceLabel(d.ExchangeRateSource),
+        WhtByIncomeType: d.WithholdingTaxAmount != 0m
+            ? Accounting.Helpers.PerLineWht.GroupsOf(d)?.Select(g => new WhtIncomeGroupDto(g.IncomeTypeCode, g.RatePercent, g.IncomeThb, g.WhtThb, g.LineCount)).ToList()
+            : null);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

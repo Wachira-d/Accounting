@@ -3797,6 +3797,21 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   เดิมไม่มีทางไหนอ่าน `CompanySettings.StampPath` ⇒ 50 ทวิ ไม่เคยมีตรา · ลายเซ็นหน้าพิมพ์เดิมมาจากโปรไฟล์ "ผู้ที่กดพิมพ์" (คนละคนกับ PDF) — ตอนนี้ผู้สร้างใบ → เจ้าของ
   ชุดเดียวกับ PDF · HTML ไม่พิมพ์ชื่อผู้ลงนามต่อท้ายรูปแล้ว (ตรงกับ QuestPDF/หน้าพิมพ์) · HTML มีลายน้ำ "ยกเลิก" แล้ว · สไตล์ HTML = สำเนาของหน้าพิมพ์
   (`PdfGenerationService.WhtCertCss` · `WhtCertStampTests.ServerCss_IsIdenticalTo_PrintPageCss` ล็อกเท่ากันทุกบรรทัด)
+
+- **ยอดบน 50 ทวิ / แถวเตือน ภ.ง.ด. เป็นบาทเสมอ + หัก ณ ที่จ่ายตามรายการ (ทีม F · 2026-10-22 · `docs/PER_LINE_WHT_DESIGN.md`)** — ตัวคำนวณกลางตัวเดียว
+  `Helpers/PerLineWht.ForDocument` (เงินได้/ภาษีบาทต่อบรรทัด · ฐานก่อน VAT): ใบบาท ⇒ ยอดที่เก็บไว้ตรงตัว (เดิมทุกสตางค์) · ใบต่างสกุล ⇒ ฐานบาท =
+  `Document.DocumentThbBase` (ยอดบาทที่พิมพ์บนเอกสาร เฉลี่ยลงบรรทัด · ใช้ได้เมื่อสอดคล้องกับฐาน × อัตรา) ไม่งั้น `DocumentFx.ToBaht` · ภาษี = ฐานบาท × อัตรา
+  (ปัด 2 ตำแหน่ง AwayFromZero) · Σ ผูกกับยอด GL ด้วย `PerLineWht.TieOut` — **เดิมใบ USD ออก 50 ทวิ เป็นตัวเลขดอลลาร์** ·
+  ผู้เรียก: `GenerateFromDocument` (บรรทัด + สาขาไม่มีบรรทัด) · `TaxService` แถวเตือน "ยังไม่ออกใบ" · สรุปต่อประเภทบนจอ `DocumentResponse.WhtByIncomeType` ·
+  กระดาษ (HTML + QuestPDF) แถวย่อย "— หัก n%" เมื่อใบมีหลายอัตรา (`PerLineWht.RateBreakdownForPrint` · `DocumentLabels.TotalWhtAtRate`) ·
+  อัตรา/ที่มา/ฐานบาทตอนสร้างผ่าน `DocumentFx.Decide` (`DocumentService.ApplyDocumentFxDecisionAsync` · ที่มา BOT/User/Document ใน `Document.ExchangeRateSource` ·
+  ใบบาทส่งยอดบาทตามเอกสาร = 400 · ใบลด/เพิ่มหนี้/ใบที่แปลงมาคงอัตราใบต้นทาง · แปลงเต็มจำนวนสืบทอดฐานบาท · ตรึงตั้งแต่สร้าง) ·
+  ค่าตั้ง `CompanySettings.PerLineWhtEnabled` (ปิด = เดิม): OCR อัตรา/ประเภทเงินได้ต่อบรรทัด (`Helpers/OcrLineWhtPlan` ← `ExpenseCategoryResolver.ClassifyLineForWht` ·
+  ต้องอธิบายยอดหักหัวใบได้ ± 1.00 ไม่งั้น `[WHT-LINE-MISMATCH]` คงแบบเดิม) + ยอดบาทบนใบต่างสกุล (`Helpers/OcrThbEquivalent` · `[FX-DOC]` / `[FX-DOC-CONFLICT]`) ·
+  ยอดบาทตามเอกสารต้องแปลงกลับได้ ± 0.01 (`DocumentFx.PrintedBahtRoundTrips` — ไม่ได้ = 400 · ใบเดิมตกไปใช้อัตรา) · แท็ก OCR `[WHT-LINE]`/`[WHT-LINE-MISMATCH]`/`[FX-DOC-CONFLICT]`
+  หยุดอนุมัติเอง · หลักฐานยอดบาทแหล่งเดียวต้องใกล้ ธปท. ≤ 3% · หน้านำส่ง/ปฏิทิน/ตัวกระทบ GL/JE ตอนจ่าย = `PerLineWht.DocumentWhtThb` (กติกา `_PLWHT`) ·
+  50 ทวิ ใบต่างสกุลที่ออกก่อนแก้ ⇒ รายงานตรวจข้อมูล `ForeignCurrencyWhtCertsNotInBaht` (อ่านอย่างเดียว ไม่แก้ย้อนหลัง) ·
+  ค่าตั้งคุมเฉพาะ OCR — การแปลงบาทของใบต่างสกุลทำงานเสมอ · เทสต์ `PerLineWhtTests` · backlog ในเอกสารออกแบบ
 - **รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)** (2026-10-14): `ThaiBahtText.Format(TotalTaxAmount)` ทั้ง HTML (`BuildWithholdingTaxCertHtml`) · QuestPDF
   (`BuildTotalInWords`) · หน้าพิมพ์ `wht.html` แสดง `TotalTaxAmountInWords` จาก DTO อย่างเดียว (เดิมมีสำเนาสูตร JS ของตัวเอง) — ดู §5.1
 - **Trigger (แก้ doc 2026-10-12 — บรรทัดเดิม "ตอน PV/Expense ถูก approve" ไม่ครบ)**: ทุกทางเข้าอัตโนมัติเดินทางเดียว

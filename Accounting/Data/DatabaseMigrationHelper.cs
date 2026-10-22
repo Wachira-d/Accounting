@@ -222,6 +222,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.BookingEngineMigration.Statements());   // ทีม B — engine รอบจองคิว CMS (Helpers/BookingEngineMigration)
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
+        list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7750,5 +7751,14 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "CreditPasses" ADD COLUMN IF NOT EXISTS "CancelledByDocumentId" uuid NULL;""",
         """DROP INDEX IF EXISTS "IX_CreditClassBookings_Company_ExternalRef";""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CreditClassBookings_Company_ExternalRef_Live" ON "CreditClassBookings" ("CompanyId", "ExternalRef") WHERE "ExternalRef" IS NOT NULL AND "Status" <> 3 AND "IsDeleted" = false;""",
+    };
+
+    /// <summary>ทีม F (<c>docs/PER_LINE_WHT_DESIGN.md</c>) — ค่าตั้ง "หัก ณ ที่จ่ายตามรายการ" + ฐานบาทที่เอกสารพิมพ์ไว้ + ที่มาของอัตรา ·
+    /// ค่าตั้งต้น = พฤติกรรมเดิม (false / NULL) · <c>ADD COLUMN IF NOT EXISTS</c> ⇒ รันทุกบูตได้ · ไม่มี UPDATE (ใบเดิมไม่ถูกแตะ — ที่มาอัตราของใบเก่าไม่รู้ = NULL)</summary>
+    internal static IReadOnlyList<string> PerLineWhtStatements() => new List<string>
+    {
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PerLineWhtEnabled" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentThbBase" numeric(18,2) NULL;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRateSource" character varying(16) NULL;""",
     };
 }
