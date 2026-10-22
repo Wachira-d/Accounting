@@ -318,7 +318,7 @@ public class RolePermissionService : IRolePermissionService
                     "payroll", "commission", "import-export", "settings" } },
             new { Name = "พนักงาน", Desc = "เข้าถึงเมนูปฏิบัติงานพื้นฐาน", Color = "#10B981", Icon = "👤", Sort = 2,
                 Menus = new[] { "dashboard", "documents", "purchases", "expense", "expense-docs", "payments",
-                    "contacts", "products", "pos", "pos-packages", "pos-modifiers", "pos-reports",
+                    "contacts", "products", "pos", "pos-packages", "pos-modifiers", "pos-reports", "course-credits",
                     "warehouse", "inventory-reports", "supplies" } },
             new { Name = "ผู้ตรวจสอบ", Desc = "ดูข้อมูลและรายงาน อ่านอย่างเดียว", Color = "#F59E0B", Icon = "🔍", Sort = 3,
                 Menus = new[] { "dashboard", "reports", "executive-reports", "general-ledger", "journals",
@@ -363,8 +363,17 @@ public class RolePermissionService : IRolePermissionService
 
     private async Task EnsureMemberAsync(Guid companyId, Guid userId)
     {
+        // รอบ 205 ทีม I: 403 ไม่ใช่ 401 (401 ⇒ api.js ลบ token เด้งออกจากระบบ) · แอดมินแพลตฟอร์มอ่านรายการบทบาทได้ (ด่านจัดการบทบาทให้ผ่านอยู่แล้ว)
         var isMember = await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
-        if (!isMember) throw new UnauthorizedAccessException("คุณไม่ได้เป็นสมาชิกของบริษัทนี้");
+        if (isMember) return;
+        var isPlatformAdmin = await _db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();
+        if (!isPlatformAdmin)
+            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.CompanyMembershipGuard.NotMemberMessage,
+                Accounting.Helpers.CompanyMembershipGuard.RuleCode, 403);
+        // ฝ่ายค้านรอบ 205: การอ่านข้ามบริษัทของแอดมินแพลตฟอร์มลง audit chain
+        _db.AddChainedAuditLog(Accounting.Helpers.CompanyMembershipGuard.PlatformReadAudit(companyId, userId, "CompanyRoles",
+            _http?.HttpContext?.Connection.RemoteIpAddress?.ToString()));
+        await _db.SaveChangesAsync();
     }
 
     private async Task EnsureOwnerAccessAsync(Guid companyId, Guid userId)
@@ -403,7 +412,7 @@ public class RolePermissionService : IRolePermissionService
             "dashboard", "documents", "revenue-recognition", "purchases", "expense",
             "expense-docs", "payments", "recurring", "contacts", "products", "warehouse",
             "inventory-reports", "supplies", "pos", "pos-packages", "pos-modifiers",
-            "pos-reports", "bank", "loans", "multi-currency", "accounts", "journals",
+            "pos-reports", "course-credits", "bank", "loans", "multi-currency", "accounts", "journals",
             "general-ledger", "fiscal", "fixed-assets", "financial-mgmt", "tax", "wht",
             "tax-calendar", "etax", "tax-export", "payroll", "commission",
             "executive-reports", "reports", "budget", "aging", "arap-analysis", "fpa",

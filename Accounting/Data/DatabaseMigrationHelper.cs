@@ -220,6 +220,10 @@ public static class DatabaseMigrationHelper
         list.AddRange(AdversarialEtlStatements());   // ฝ่ายค้านรอบ ETL — ปิดค่า "ลงอัตโนมัติ" ที่ยังไม่มีผล (บล็อกท้ายไฟล์)
         list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
         list.AddRange(TeamKPosMtoStatements());   // ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่ง (บล็อกท้ายไฟล์)
+        list.AddRange(Accounting.Helpers.BookingEngineMigration.Statements());   // ทีม B — engine รอบจองคิว CMS (Helpers/BookingEngineMigration)
+        list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
+        list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
+        list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -552,6 +556,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampWidthMm" numeric(6,2) NOT NULL DEFAULT 32;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampHeightMm" numeric(6,2) NOT NULL DEFAULT 32;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "StampAlign" varchar(20) NOT NULL DEFAULT 'Right';""",
+            // ทีม J 2026-10-22: กฎตราประทับ/ลายเซ็นต่อประเภทเอกสาร × สถานะ — NULL = พฤติกรรมเดิม (Helpers/DocumentStampPolicy)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "DocumentStampRulesJson" text NULL;""",
 
             // ===== Recurring late-fee accrual policy =====
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LateFeeEnabled" boolean NOT NULL DEFAULT false;""",
@@ -7159,6 +7165,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AutoConfirmOnSlip" boolean NOT NULL DEFAULT true;""",
             // โหมดที่ใช้กับใบนั้น (ตรึงตอนสร้าง) — NULL = ใบก่อนรอบนี้ (พฤติกรรมเดิมทุกทาง)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "GuestConfirmMode" integer NULL;""",
+            // 2026-10-22 ทีม D (หน้าห้องพักสาธารณะ) — รายละเอียดห้องที่แขกต้องเห็น: สูบบุหรี่/สัตว์เลี้ยง/หมายเหตุห้อง ·
+            // ค่าตั้งต้น false = ปลอดบุหรี่/ไม่รับสัตว์ (ตรงกับที่ที่พักส่วนใหญ่ใช้ · เดิมไม่มีช่องให้ตั้ง ⇒ ไม่มีของเก่าที่ต้องแปลง)
+            """ALTER TABLE "LodgingRoomTypes" ADD COLUMN IF NOT EXISTS "SmokingAllowed" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "LodgingRoomTypes" ADD COLUMN IF NOT EXISTS "PetsAllowed" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "LodgingRoomTypes" ADD COLUMN IF NOT EXISTS "RoomNote" text NULL;""",
             // 2026-10-02 (ผู้ใช้รายงาน: แขกส่งสลิปแล้ว 500 DbUpdateException) — ไฟล์จากคนนอกระบบ (สลิปแขกที่พัก · สลิปหน้าร้าน · พอร์ทัลลูกค้า)
             // ไม่มีผู้ใช้ ⇒ UploadedByUserId ต้องว่างได้ (เดิม NOT NULL + FK → Users แล้วทางเข้าใส่ Guid.Empty ⇒ ชน FK ทุกครั้ง) · DROP NOT NULL รันซ้ำได้ ·
             // แถว Guid.Empty ที่อาจหลุดเข้าไปในฐานที่ไม่มี FK ⇒ เปลี่ยนเป็น NULL (ความหมายเดิม "ไม่มีผู้ใช้" ทุกผู้อ่าน)
@@ -7748,5 +7759,55 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoClosedWeekdays" varchar(32) NULL;""",
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoCutoffHour" integer NULL;""",
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoSkipCompanyHolidays" boolean NOT NULL DEFAULT true;""",
+    };
+
+    /// <summary>รอบ 205 ทีม I (ฝ่ายค้าน ข้อ 6): บทบาทที่สร้างจากแม่แบบเดิมเก็บ id เมนูที่ไม่มีจริง (warehouses ฯลฯ) ⇒ สมาชิกโหมดเข้มงวดไม่เห็นเมนู ·
+    /// แปลงเป็น id ที่ถูกตาม <c>Helpers/RoleTemplates.RenamedMenuIds</c> (ตารางเดียว) · unique (CompanyRoleId, MenuItemId) ⇒ บทบาทที่มี id ใหม่อยู่แล้ว
+    /// ลบแถวเก่าแทนการแปลง · รันทุกบูตได้ (หลังแปลงไม่มีแถว id เก่าเหลือ) · ข้อมูลทุกบริษัทพร้อมกัน (การซ่อมค่าคงที่ ไม่ใช่ query ของ tenant)</summary>
+    internal static IReadOnlyList<string> Round205RoleMenuIdStatements()
+    {
+        var list = new List<string>();
+        foreach (var (oldId, newId) in Accounting.Helpers.RoleTemplates.RenamedMenuIds)
+        {
+            list.Add($"""
+                DELETE FROM "CompanyRolePermissions" o
+                WHERE o."MenuItemId" = '{oldId}'
+                  AND EXISTS (SELECT 1 FROM "CompanyRolePermissions" n WHERE n."CompanyRoleId" = o."CompanyRoleId" AND n."MenuItemId" = '{newId}');
+                """);
+            list.Add($"""UPDATE "CompanyRolePermissions" SET "MenuItemId" = '{newId}' WHERE "MenuItemId" = '{oldId}';""");
+        }
+        return list;
+    }
+    /// <summary>ทีม L — คอร์ส / Class Credits / Hour Pass (<c>docs/COURSE_CREDIT_DESIGN.md</c>) · ตารางใหม่ล้วน (ไม่แตะข้อมูลเดิม) ·
+    /// รันทุกบูตได้ (IF NOT EXISTS) · ชื่อ index ตรงกับ <c>AccountingDbContext</c> (ฐานใหม่ได้จาก EnsureCreated) ·
+    /// ผัง 21713/42000 มีในผังมาตรฐานอยู่แล้ว (<c>ChartOfAccountTemplates.GetCommonAccounts</c>) — ไม่ seed เพิ่ม</summary>
+    internal static IReadOnlyList<string> CourseCreditStatements() => new List<string>
+    {
+        """CREATE TABLE IF NOT EXISTS "CreditPackages" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "Code" varchar(50) NOT NULL DEFAULT '', "Name" varchar(200) NOT NULL DEFAULT '', "Description" text NULL, "Unit" integer NOT NULL DEFAULT 0, "CreditQuantity" numeric(18,2) NOT NULL DEFAULT 0, "ValidityDays" integer NOT NULL DEFAULT 0, "Price" numeric(18,2) NOT NULL DEFAULT 0, "PriceIncludesVat" boolean NOT NULL DEFAULT true, "VatRate" numeric(5,2) NOT NULL DEFAULT 7, "ClassFormat" integer NOT NULL DEFAULT 0, "TrainerMode" integer NOT NULL DEFAULT 0, "AllowedServiceIds" text NULL, "TrainerEmployeeIds" text NULL, "FreeCancelHours" integer NOT NULL DEFAULT 24, "UnearnedAccountId" uuid NULL, "RevenueAccountId" uuid NULL, "IsActive" boolean NOT NULL DEFAULT true, "SortOrder" integer NOT NULL DEFAULT 0, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_CreditPackages_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS "CreditPasses" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "PassNumber" varchar(40) NOT NULL DEFAULT '', "PackageId" uuid NOT NULL REFERENCES "CreditPackages"("Id") ON DELETE RESTRICT, "ContactId" uuid NOT NULL, "PackageName" varchar(200) NOT NULL DEFAULT '', "Unit" integer NOT NULL DEFAULT 0, "ClassFormat" integer NOT NULL DEFAULT 0, "AllowedServiceIds" text NULL, "FreeCancelHours" integer NOT NULL DEFAULT 0, "PurchasedAt" timestamp without time zone NOT NULL, "ExpiresOn" timestamp without time zone NULL, "CreditsTotal" numeric(18,2) NOT NULL DEFAULT 0, "CreditsUsed" numeric(18,2) NOT NULL DEFAULT 0, "CreditsReserved" numeric(18,2) NOT NULL DEFAULT 0, "ContractAmount" numeric(18,2) NOT NULL DEFAULT 0, "RecognizedAmount" numeric(18,2) NOT NULL DEFAULT 0, "RefundedAmount" numeric(18,2) NOT NULL DEFAULT 0, "CancelledByDocumentId" uuid NULL, "UnearnedAccountId" uuid NOT NULL, "RevenueAccountId" uuid NOT NULL, "Status" integer NOT NULL DEFAULT 0, "SaleChannel" integer NOT NULL DEFAULT 0, "SaleDocumentId" uuid NULL, "SaleDocumentNumber" varchar(50) NULL, "ClosedAt" timestamp without time zone NULL, "Notes" text NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_CreditPasses_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS "CreditLedgerEntries" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "PassId" uuid NOT NULL, "Kind" integer NOT NULL DEFAULT 0, "Credits" numeric(18,2) NOT NULL DEFAULT 0, "RecognizedAmount" numeric(18,2) NOT NULL DEFAULT 0, "BookingId" uuid NULL, "JournalEntryId" uuid NULL, "OccurredAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "Note" text NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_CreditLedgerEntries_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS "CreditClassSessions" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "Title" varchar(200) NOT NULL DEFAULT '', "BookingServiceId" uuid NULL, "Format" integer NOT NULL DEFAULT 2, "StartAt" timestamp without time zone NOT NULL, "EndAt" timestamp without time zone NOT NULL, "Capacity" integer NOT NULL DEFAULT 1, "TrainerEmployeeId" uuid NULL, "CreditCost" numeric(18,2) NOT NULL DEFAULT 1, "Status" integer NOT NULL DEFAULT 0, "Notes" text NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_CreditClassSessions_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE);""",
+        """CREATE TABLE IF NOT EXISTS "CreditClassBookings" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "SessionId" uuid NULL, "ExternalRef" varchar(120) NULL, "PassId" uuid NOT NULL, "ContactId" uuid NOT NULL, "TrainerEmployeeId" uuid NULL, "StartAt" timestamp without time zone NOT NULL, "Credits" numeric(18,2) NOT NULL DEFAULT 0, "Status" integer NOT NULL DEFAULT 0, "BookedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "SettledAt" timestamp without time zone NULL, "RecognizedAmount" numeric(18,2) NOT NULL DEFAULT 0, "Note" text NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false, CONSTRAINT "FK_CreditClassBookings_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE);""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CreditPackages_Company_Code" ON "CreditPackages" ("CompanyId", "Code") WHERE "IsDeleted" = false;""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CreditPasses_Company_Number" ON "CreditPasses" ("CompanyId", "PassNumber");""",
+        """CREATE INDEX IF NOT EXISTS "IX_CreditPasses_Company_Contact_Status" ON "CreditPasses" ("CompanyId", "ContactId", "Status");""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CreditPasses_Company_SaleDocument" ON "CreditPasses" ("CompanyId", "SaleDocumentId") WHERE "SaleDocumentId" IS NOT NULL;""",
+        """CREATE INDEX IF NOT EXISTS "IX_CreditLedgerEntries_Company_Pass" ON "CreditLedgerEntries" ("CompanyId", "PassId");""",
+        """CREATE INDEX IF NOT EXISTS "IX_CreditClassSessions_Company_Start" ON "CreditClassSessions" ("CompanyId", "StartAt");""",
+        """CREATE INDEX IF NOT EXISTS "IX_CreditClassBookings_Company_Session" ON "CreditClassBookings" ("CompanyId", "SessionId");""",
+        """CREATE INDEX IF NOT EXISTS "IX_CreditClassBookings_Company_Pass" ON "CreditClassBookings" ("CompanyId", "PassId");""",
+        """ALTER TABLE "CreditPasses" ADD COLUMN IF NOT EXISTS "RefundedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "CreditPasses" ADD COLUMN IF NOT EXISTS "CancelledByDocumentId" uuid NULL;""",
+        """DROP INDEX IF EXISTS "IX_CreditClassBookings_Company_ExternalRef";""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CreditClassBookings_Company_ExternalRef_Live" ON "CreditClassBookings" ("CompanyId", "ExternalRef") WHERE "ExternalRef" IS NOT NULL AND "Status" <> 3 AND "IsDeleted" = false;""",
+    };
+
+    /// <summary>ทีม F (<c>docs/PER_LINE_WHT_DESIGN.md</c>) — ค่าตั้ง "หัก ณ ที่จ่ายตามรายการ" + ฐานบาทที่เอกสารพิมพ์ไว้ + ที่มาของอัตรา ·
+    /// ค่าตั้งต้น = พฤติกรรมเดิม (false / NULL) · <c>ADD COLUMN IF NOT EXISTS</c> ⇒ รันทุกบูตได้ · ไม่มี UPDATE (ใบเดิมไม่ถูกแตะ — ที่มาอัตราของใบเก่าไม่รู้ = NULL)</summary>
+    internal static IReadOnlyList<string> PerLineWhtStatements() => new List<string>
+    {
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PerLineWhtEnabled" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentThbBase" numeric(18,2) NULL;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRateSource" character varying(16) NULL;""",
     };
 }

@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -37,11 +38,54 @@ public class SiteOrderPaymentHandler : IPaymentCompletionHandler
 
         if (siteId is not Guid sid)
         {
-            // ห้ามเงียบ: เงินเข้าแล้วแต่ออเดอร์ไม่ถูกยืนยัน = ลูกค้าจ่ายแล้วของไม่ออก
+            // ห้ามเงียบ: เงินเข้าแล้วแต่ออเดอร์ไม่ถูกยืนยัน = ลูกค้าจ่ายแล้วของไม่ออก ·
+            // รอบ 205 ทีม E: โยนแทน LogError+return (เดิมประวัติของรายการชำระไม่มีร่องรอย) ⇒ PaymentIntentService บันทึกลงประวัติ + แจ้งเจ้าของ
             _logger.LogError(
                 "เงินเข้าแล้วแต่หาคำสั่งซื้อไม่พบ — intent {Intent} order {Order} บริษัท {Company}",
                 intent.Id, intent.SourceId, intent.CompanyId);
-            return;
+            throw new BusinessRuleException(GatewayPaymentRecord.SourceMissingMessage("คำสั่งซื้อ", intent.Id, intent.Amount),
+                Accounting.Helpers.GatewayPaymentRecord.SourceMissingRuleCode);
+        }
+
+        // รอบ 205 ทีม E (BOOKING_REVENUE_AUDIT S-1): แถวรับเงินของรายการชำระนี้ — เดิมส่ง paymentId: null ⇒ ConfirmPaymentAsync หยิบแถว
+        // SiteOrderPayment ล่าสุด ซึ่งเกิดจากการแนบสลิปเท่านั้น ⇒ ออเดอร์ที่จ่ายผ่าน gateway โดยไม่แนบสลิป = "ไม่พบรายการชำระเงินที่จะยืนยัน"
+        // (เงินเข้าแต่ไม่มีเอกสาร/JE/ตัดสต็อก) · มีสลิปค้าง = ยืนยันแถวสลิปแทนเงินก้อนจริง (ยอด/เลขอ้างอิงผิดก้อน)
+        // คีย์ = GatewayPaymentRecord.Reference ⇒ ทำซ้ำได้ (ConfirmPaymentAsync กันบันทึกรับชำระ ERP ซ้ำด้วย Reference+Amount เดิม)
+        var reference = GatewayPaymentRecord.Reference(intent.Id);
+        var pay = await _db.SiteOrderPayments
+            .FirstOrDefaultAsync(p => p.CompanyId == intent.CompanyId && p.OrderId == intent.SourceId
+                && p.Reference == reference && !p.IsDeleted, ct);
+        if (pay == null)
+        {
+            pay = new SiteOrderPayment
+            {
+                CompanyId = intent.CompanyId,
+                OrderId = intent.SourceId,
+                Amount = intent.Amount,
+                Currency = intent.Currency,
+                PaymentMethod = GatewayPaymentRecord.MethodOf(intent.MethodKind),
+                GatewayTransactionId = intent.ProviderRef,
+                Reference = reference,
+                Status = SitePaymentStatus.Pending,
+                PaidAt = intent.ConfirmedAt ?? DateTime.UtcNow,
+                CreatedBy = "payment-gateway",
+            };
+            _db.SiteOrderPayments.Add(pay);
+
+            // ฝ่ายค้านรอบ 205 ข้อ 2: สลิปที่แนบไว้แล้วยังรอตรวจ ⇒ ปิดพร้อมหมายเหตุ (ลูกค้าอาจจ่ายสองทาง) — ค้างไว้ = พนักงานยืนยันทีหลัง
+            // แล้วรับเงินสองเท่า (ConfirmPaymentAsync ปฏิเสธการรับเกินยอดอีกชั้น) · ไม่ลบแถว/ไฟล์ (หลักฐาน)
+            var slips = await _db.SiteOrderPayments
+                .Where(p => p.CompanyId == intent.CompanyId && p.OrderId == intent.SourceId && !p.IsDeleted
+                    && (p.Status == SitePaymentStatus.Pending || p.Status == SitePaymentStatus.Processing))
+                .ToListAsync(ct);
+            foreach (var slip in slips.Where(x => GatewayPaymentRecord.IsPendingSlipRow(x.Status, x.Reference)))
+            {
+                slip.Status = SitePaymentStatus.Cancelled;
+                slip.FailureReason = GatewayPaymentRecord.SlipSupersededNote(intent.Id, intent.Amount);
+                slip.UpdatedBy = "payment-gateway";
+                slip.UpdatedAt = DateTime.UtcNow;
+            }
+            await _db.SaveChangesAsync(ct);
         }
 
         // เงินที่รับผ่าน gateway ยังไม่เข้าธนาคาร (T+n หลังหักค่าธรรมเนียม) ⇒ ขาเงินเข้า
@@ -49,8 +93,11 @@ public class SiteOrderPaymentHandler : IPaymentCompletionHandler
         // (ห้าม handler ไปหาผังเอง — 5 ทางเข้าจะได้กติกา 5 ชุดที่ drift แน่นอน)
         var moneyIn = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
 
-        await _commerce.ConfirmPaymentAsync(intent.CompanyId, sid, intent.SourceId,
-            paymentId: null, actor: intent.ConfirmedBy ?? "payment-gateway",
+        var ok = await _commerce.ConfirmPaymentAsync(intent.CompanyId, sid, intent.SourceId,
+            paymentId: pay.Id, actor: intent.ConfirmedBy ?? "payment-gateway",
             moneyInAccountId: moneyIn);
+        if (!ok)
+            throw new BusinessRuleException(GatewayPaymentRecord.SourceMissingMessage("คำสั่งซื้อ", intent.Id, intent.Amount),
+                Accounting.Helpers.GatewayPaymentRecord.SourceMissingRuleCode);
     }
 }

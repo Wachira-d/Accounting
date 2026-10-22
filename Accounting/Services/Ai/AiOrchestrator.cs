@@ -216,6 +216,17 @@ public class AiOrchestrator : IAiOrchestrator
             return FallbackToLocal(request, AiCallStatus.Skipped, null, fidDisabled, fromLocalModel: localPred != null);
         }
 
+        // คำถามที่ครูตอบไม่ได้โดยโครงสร้าง (AiRequest.LocalOnly) — เดินเหมือนโหมด LocalOnly ทุกกรณี (ไม่มี override ใดทำให้ยิง provider)
+        if (request.LocalOnly)
+        {
+            if (localPred != null)
+                return await ReturnLocalAsync(request, localPred,
+                    $"LocalOnly request (v{localPred.ModelVersion})", ct);
+            var fidLo = await RecordSkip(request, AiCallStatus.Skipped,
+                "LocalOnly request — ครูภายนอกไม่มีข้อมูลตอบคำถามนี้ และนักเรียนไม่มีคำตอบ", ct);
+            return FallbackToLocal(request, AiCallStatus.Skipped, null, fidLo, fromLocalModel: false);
+        }
+
         if (!request.ForceProviderCall && !request.BypassCache)
         {
             switch (routing.Mode)
@@ -315,7 +326,14 @@ public class AiOrchestrator : IAiOrchestrator
         // append เข้า SystemPrompt ก่อนคิด hash → cache key สะท้อน context.
         var enrichedSystemPrompt = await EnrichSystemPromptWithCompanyAsync(
             request.CompanyId, request.SystemPrompt, ct);
-        var effectiveRequest = request with { SystemPrompt = enrichedSystemPrompt };
+        var effectiveRequest = request with
+        {
+            SystemPrompt = enrichedSystemPrompt,
+            // เพดาน output ขั้นต่ำของรูป canonical (ทีม H · 2026-10-22) — prompt ที่ตั้ง 200/280/400 ไว้ทำให้ JSON ขาดกลางทาง
+            // กับคำอธิบายภาษาไทยเป็นประจำ (log เจ้าของ 20/10/2569: DocType · WHT · ApprovalWarningFix "Schema mismatch")
+            MaxTokensOverride = Accounting.Helpers.AiFeatureResponseParser.EffectiveMaxTokens(
+                request.MaxTokensOverride, request.RawPlanResponse),
+        };
 
         // ── ปิดบัง PII ก่อนส่งออก ──
         //
@@ -341,9 +359,13 @@ public class AiOrchestrator : IAiOrchestrator
         if (!request.BypassCache)
         {
             var (hit, content, originalId, ver, conf) = await _cache.TryGetAsync(promptHash, request.CompanyId, ct);
-            if (hit && !string.IsNullOrEmpty(content))
+            // ⚠️ แคชที่อ่านไม่ออก = **แคชพลาด** ไม่ใช่ "AI ตอบแล้ว" (ทีม H · 2026-10-22) — เดิมคืน Status=Cached · UsedAi=true
+            // พร้อมคำตอบของนักเรียน (ป้าย "🤖 AI แนะนำ" บนคำตอบที่ AI ไม่ได้ให้) · RawPlan ไม่เคยถูกเก็บลงแคชอยู่แล้ว
+            var parsed = hit && !string.IsNullOrEmpty(content) && !request.RawPlanResponse
+                ? Accounting.Helpers.AiFeatureResponseParser.Parse(content, request.NullPrimaryAnswer)
+                : null;
+            if (parsed is { HasAnswer: true } && content != null)
             {
-                var parsed = TryParseFeatureResponse(content);
                 var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
                     request.CompanyId, request.FeatureKey, memoryKey, sanitizedUserJson, content,
                     parsed.PrimaryAnswer, parsed.Confidence,
@@ -390,8 +412,16 @@ public class AiOrchestrator : IAiOrchestrator
         }
         sw.Stop();
 
+        // ⚠️ หลังยิง provider แล้ว **การบันทึกห้ามแพ้ token ของผู้เรียก** (ทีม H · 2026-10-22) — ผู้เรียก OCR ตั้ง CTS 15 วินาที
+        // แต่ provider timeout ค่าตั้ง 30 วินาที ⇒ ผู้เรียกยกเลิกก่อน → RecordCallAsync(ct ที่ถูกยกเลิก) โยน → แถว feedback
+        // ไม่ถูกเขียน (ค่า token หายจากหน้าแอดมิน · ขั้น CAPTURE ของกฎเหล็ก #1 ขาด) และ error เดิมบอก "Provider timeout after 32s" ซึ่งไม่จริง
+        var recordCt = CancellationToken.None;
+
         if (!raw.Success)
         {
+            var err = ct.IsCancellationRequested
+                ? $"ผู้เรียกยกเลิก/หมดเวลาฝั่งผู้เรียกก่อน provider ตอบ ({sw.ElapsedMilliseconds} ms) · {raw.Error}"
+                : raw.Error;
             var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
                 request.CompanyId, request.FeatureKey, memoryKey, sanitizedUserJson, null,
                 AiPrimaryAnswer: null, AiConfidence: null,
@@ -399,10 +429,11 @@ public class AiOrchestrator : IAiOrchestrator
                 request.SourceEntityType, request.SourceEntityId,
                 AiCallStatus.Failed, providerConfig.ProviderType, raw.ModelVersion,
                 LatencyMs: (int)sw.ElapsedMilliseconds,
-                InputTokens: raw.InputTokens, OutputTokens: raw.OutputTokens, CostUsd: 0m,
-                CacheHitOfFeedbackId: null, ErrorMessage: raw.Error), ct);
-            _logger.LogWarning("AI provider call failed ({Feature}): {Err}", request.FeatureKey, raw.Error);
-            return FallbackToLocal(request, AiCallStatus.Failed, error: raw.Error, feedbackId: fid, fromLocalModel: localPred != null);
+                // token ที่ provider รายงาน (เช่น reasoner คิดจน max_tokens หมด แล้ว content ว่าง) ถูกเรียกเก็บจริง — ต้องนับเงิน
+                InputTokens: raw.InputTokens, OutputTokens: raw.OutputTokens, CostUsd: ComputeCost(raw, providerConfig),
+                CacheHitOfFeedbackId: null, ErrorMessage: err), recordCt);
+            _logger.LogWarning("AI provider call failed ({Feature}): {Err}", request.FeatureKey, err);
+            return FallbackToLocal(request, AiCallStatus.Failed, error: err, feedbackId: fid, fromLocalModel: localPred != null);
         }
 
         // ── Step 7: parse provider content ────────────────────────────
@@ -422,7 +453,7 @@ public class AiOrchestrator : IAiOrchestrator
                     AiCallStatus.InvalidResponse, providerConfig.ProviderType, raw.ModelVersion,
                     (int)sw.ElapsedMilliseconds, raw.InputTokens, raw.OutputTokens,
                     ComputeCost(raw, providerConfig), CacheHitOfFeedbackId: null,
-                    ErrorMessage: "Empty plan response"), ct);
+                    ErrorMessage: "Empty plan response"), recordCt);
                 return FallbackToLocal(request, AiCallStatus.InvalidResponse, error: "Empty plan response", feedbackId: efid, fromLocalModel: localPred != null);
             }
 
@@ -433,7 +464,7 @@ public class AiOrchestrator : IAiOrchestrator
                 request.SourceEntityType, request.SourceEntityId,
                 AiCallStatus.Success, providerConfig.ProviderType, raw.ModelVersion,
                 (int)sw.ElapsedMilliseconds, raw.InputTokens, raw.OutputTokens,
-                ComputeCost(raw, providerConfig), CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+                ComputeCost(raw, providerConfig), CacheHitOfFeedbackId: null, ErrorMessage: null), recordCt);
 
             return new AiResponse
             {
@@ -449,11 +480,15 @@ public class AiOrchestrator : IAiOrchestrator
             };
         }
 
-        var featureResp = TryParseFeatureResponse(raw.Content);
-        if (featureResp.PrimaryAnswer == null && featureResp.Alternatives.Count == 0)
+        // ตัวอ่านกลางตัวเดียว (Helpers/AiFeatureResponseParser) — รับ code fence/ร้อยแก้วล้อม/ชื่อ key หลายแบบ/ห่อหนึ่งชั้น
+        // และกู้ช่องที่ปิดครบจาก JSON ที่ขาดกลางทาง · error ระบุสาเหตุจริง (ขาด/ไม่ใช่ JSON/ไม่มี key/primary=null) แทน
+        // "Schema mismatch" คำเดียวที่เคยปิดทุกสาเหตุ (log เจ้าของ 20/10/2569)
+        var featureResp = Accounting.Helpers.AiFeatureResponseParser.Parse(raw.Content, request.NullPrimaryAnswer);
+        if (!featureResp.HasAnswer)
         {
-            // Provider returned valid JSON but wrong schema. Treat as
-            // InvalidResponse — record, fall through to local.
+            var parseError = Accounting.Helpers.AiFeatureResponseParser.Describe(
+                featureResp, raw.FinishReason, raw.OutputTokens, raw.MaxTokensSent ?? effectiveRequest.MaxTokensOverride);
+            _logger.LogInformation("AI ตอบอ่านไม่ได้ ({Feature}): {Err}", request.FeatureKey, parseError);
             var fid = await _recorder.RecordCallAsync(new AiFeedbackRecord(
                 request.CompanyId, request.FeatureKey, memoryKey, sanitizedUserJson, raw.Content,
                 AiPrimaryAnswer: null, AiConfidence: null,
@@ -464,8 +499,8 @@ public class AiOrchestrator : IAiOrchestrator
                 raw.InputTokens, raw.OutputTokens,
                 ComputeCost(raw, providerConfig),
                 CacheHitOfFeedbackId: null,
-                ErrorMessage: "Schema mismatch: no primary answer or alternatives"), ct);
-            return FallbackToLocal(request, AiCallStatus.InvalidResponse, error: "Schema mismatch", feedbackId: fid, fromLocalModel: localPred != null);
+                ErrorMessage: parseError), recordCt);
+            return FallbackToLocal(request, AiCallStatus.InvalidResponse, error: parseError, feedbackId: fid, fromLocalModel: localPred != null);
         }
 
         var cost = ComputeCost(raw, providerConfig);
@@ -479,14 +514,31 @@ public class AiOrchestrator : IAiOrchestrator
             AiCallStatus.Success, providerConfig.ProviderType, raw.ModelVersion,
             (int)sw.ElapsedMilliseconds,
             raw.InputTokens, raw.OutputTokens, cost,
-            CacheHitOfFeedbackId: null, ErrorMessage: null), ct);
+            CacheHitOfFeedbackId: null,
+            // คำตอบที่กู้จาก JSON ขาดกลางทาง = Success แต่ต้องบอกไว้ในแถว (หน้าแอดมินเห็นว่าควรยกเพดาน token)
+            ErrorMessage: featureResp.Salvaged
+                ? "Salvaged: " + Accounting.Helpers.AiFeatureResponseParser.Describe(
+                    featureResp, raw.FinishReason, raw.OutputTokens, raw.MaxTokensSent ?? effectiveRequest.MaxTokensOverride)
+                : null), recordCt);
 
         // ── Step 9: cache write (fire-and-forget, no await needed but
         // we do await for predictability — cheap insert).
-        var ttl = request.CacheTtlOverrideDays ?? settings.AiDefaultCacheTtlDays;
-        await _cache.PutAsync(promptHash, request.FeatureKey.ToString(), raw.Content,
-            providerConfig.ProviderType, raw.ModelVersion, featureResp.Confidence,
-            request.CompanyId, ttl, ct);
+        // คำตอบที่กู้จากก้อนขาด **ไม่เก็บแคช** — ครั้งหน้าควรได้คำตอบเต็ม (เหตุผล/คำเตือน) ไม่ใช่เสิร์ฟก้อนขาดซ้ำ 14–30 วัน
+        // แคชล้ม ≠ คำตอบล้ม — เดิม exception ตรงนี้ตกไป outer-catch แล้วทิ้งคำตอบที่จ่ายเงินแล้วเป็น Failed
+        if (!featureResp.Salvaged)
+        {
+            var ttl = request.CacheTtlOverrideDays ?? settings.AiDefaultCacheTtlDays;
+            try
+            {
+                await _cache.PutAsync(promptHash, request.FeatureKey.ToString(), raw.Content,
+                    providerConfig.ProviderType, raw.ModelVersion, featureResp.Confidence,
+                    request.CompanyId, ttl, recordCt);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "AI cache write failed ({Feature}) — คำตอบยังใช้ได้", request.FeatureKey);
+            }
+        }
 
         return new AiResponse
         {
@@ -536,9 +588,11 @@ public class AiOrchestrator : IAiOrchestrator
             if (!_companyContextCache.TryGetValue(companyId, out var block))
             {
                 var ctx = await Prompts.CompanyBusinessContextLoader.LoadAsync(_db, companyId, ct);
-                var top = ctx.TopAccountsUsed.Count > 0
-                    ? string.Join(", ", ctx.TopAccountsUsed.Take(8).Select(a => $"{a.Code} {a.Name}"))
-                    : "(ยังไม่มีประวัติการลงบัญชี)";
+                // ⚠️ ถอด "Most-used accounts" ออกจากบล็อกที่ต่อท้าย **ทุก** feature (ทีม H · 2026-10-22):
+                // รายการนั้นนับรวมเอกสารขาย+ซื้อ ⇒ บริษัทที่ขายเยอะมีผังรายได้ (เช่น 41110) อยู่บนสุด แล้วประโยค
+                // "Prefer … historical account pattern" ดันให้ครูเสนอผังรายได้กับ**เอกสารซื้อ** (log เจ้าของ: AI 41110 vs
+                // local 54430) · feature อื่น (ชนิดเอกสาร/WHT/ผู้ขาย/คำเตือน) ไม่ได้ใช้ผังเลย = token เปล่า ·
+                // prompt ผังบัญชีส่ง top_accounts_used ใน payload เองพร้อมกติกา "เฉพาะใน candidate_accounts"
                 block =
                     "\n\n--- BUSINESS CONTEXT (ใช้บริบทนี้ตัดสินใจให้ตรงสายธุรกิจ) ---\n" +
                     $"Company: {ctx.Name}\n" +
@@ -546,8 +600,7 @@ public class AiOrchestrator : IAiOrchestrator
                     $"Industry: {ctx.IndustryType}\n" +
                     $"VAT-registered: {(ctx.IsVatRegistered ? $"yes ({ctx.VatRate}%)" : "no")}\n" +
                     $"WHT basis: {ctx.WhtRecognitionBasis ?? "Cash"}\n" +
-                    $"Most-used accounts (6mo): {top}\n" +
-                    "Prefer answers consistent with this company's industry + historical account pattern.";
+                    "Prefer answers consistent with this company's industry. The JSON response schema in the instructions above always wins.";
                 _companyContextCache[companyId] = block;
             }
             return systemPrompt + block;
@@ -644,81 +697,13 @@ public class AiOrchestrator : IAiOrchestrator
 
     private static decimal ComputeCost(AiProviderRawResponse raw, AiProviderConfig config)
     {
-        if (!raw.Success || raw.InputTokens == null || raw.OutputTokens == null) return 0m;
+        // ไม่ดู raw.Success — provider ที่รายงาน token มาแล้ว (content ว่างหลัง reasoner คิดจนเพดานหมด ฯลฯ) เก็บเงินจริง
+        // เดิมนับ 0 ⇒ งบรายเดือน (AiBudgetGuard) ต่ำกว่าบิลจริง (ทีม H · 2026-10-22)
+        if (raw.InputTokens == null || raw.OutputTokens == null) return 0m;
         var inCost = (raw.InputTokens.Value / 1_000_000m) * (config.PricePerInputTokenUsd1M ?? 0m);
         var outCost = (raw.OutputTokens.Value / 1_000_000m) * (config.PricePerOutputTokenUsd1M ?? 0m);
         return Math.Round(inCost + outCost, 8, MidpointRounding.AwayFromZero);
     }
 
-    /// <summary>
-    /// Best-effort parse of the provider's JSON content into the
-    /// canonical AiResponse fields. Per-feature schemas vary but the
-    /// orchestrator looks for these field names. Builders are
-    /// instructed (via system prompt) to emit this shape.
-    /// </summary>
-    private static (string? PrimaryAnswer, decimal? Confidence,
-                    IReadOnlyList<string> Alternatives, IReadOnlyList<string> Risks,
-                    IReadOnlyList<string> ComplianceFlags, string? Reasoning,
-                    IReadOnlyList<string> SuggestedActions)
-        TryParseFeatureResponse(string content)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(content);
-            var root = doc.RootElement;
-            string? primary = TryString(root, "primary", "primary_answer", "answer", "value");
-            decimal? confidence = TryDecimal(root, "confidence");
-            var alternatives = TryStringList(root, "alternatives", "candidates");
-            var risks = TryStringList(root, "risks", "warnings");
-            var compliance = TryStringList(root, "compliance_flags", "thai_compliance_flags", "compliance");
-            var reasoning = TryString(root, "reasoning", "rationale", "explanation");
-            var actions = TryStringList(root, "suggested_actions", "actions");
-            return (primary, confidence, alternatives, risks, compliance, reasoning, actions);
-        }
-        catch
-        {
-            return (null, null, Array.Empty<string>(), Array.Empty<string>(),
-                    Array.Empty<string>(), null, Array.Empty<string>());
-        }
-    }
-
-    private static string? TryString(JsonElement root, params string[] keys)
-    {
-        foreach (var k in keys)
-            if (root.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String)
-                return v.GetString();
-        return null;
-    }
-
-    private static decimal? TryDecimal(JsonElement root, params string[] keys)
-    {
-        foreach (var k in keys)
-            if (root.TryGetProperty(k, out var v))
-            {
-                if (v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d)) return d;
-                if (v.ValueKind == JsonValueKind.String && decimal.TryParse(v.GetString(),
-                    System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var d2)) return d2;
-            }
-        return null;
-    }
-
-    private static IReadOnlyList<string> TryStringList(JsonElement root, params string[] keys)
-    {
-        foreach (var k in keys)
-        {
-            if (root.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.Array)
-            {
-                var list = new List<string>();
-                foreach (var item in v.EnumerateArray())
-                {
-                    if (item.ValueKind == JsonValueKind.String)
-                        list.Add(item.GetString() ?? "");
-                    else if (item.ValueKind == JsonValueKind.Object)
-                        list.Add(item.GetRawText());   // structured alt — caller parses
-                }
-                return list;
-            }
-        }
-        return Array.Empty<string>();
-    }
+    // ตัวอ่านคำตอบรูป canonical ย้ายไป Helpers/AiFeatureResponseParser (ทีม H · 2026-10-22) — pure + เทสต์จาก raw content จริง
 }

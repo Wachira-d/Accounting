@@ -1,6 +1,8 @@
+using Accounting.Filters;
 using Accounting.Helpers;
 using Accounting.Middleware;
 using Accounting.Models.DTOs;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -36,11 +38,18 @@ public class CmsBookingController : ControllerBase
 
     [HttpGet("services")]
     [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<List<BookingServiceResponse>>>> GetServices(Guid companyId, Guid siteId)
+    public async Task<ActionResult<ApiResponse<List<BookingServiceResponse>>>> GetServices(Guid companyId, Guid siteId, [FromQuery] bool all = false)
     {
-        var result = await _bookingService.GetServicesAsync(companyId, siteId);
+        // all=true (บริการที่ปิดไว้ด้วย) เฉพาะผู้เรียกที่ล็อกอิน (หน้า CMS — TenantAccessMiddleware ตรวจสิทธิ์บริษัทแล้ว) · ผู้เยี่ยมชมเห็นเฉพาะที่เปิด
+        var includeInactive = all && User.Identity?.IsAuthenticated == true;
+        var result = await _bookingService.GetServicesAsync(companyId, siteId, includeInactive);
         return Ok(new ApiResponse<List<BookingServiceResponse>>(true, result));
     }
+
+    /// <summary>แม่แบบบริการตามประเภทธุรกิจ — อ่านอย่างเดียว (ไม่เขียนฐาน) · หน้า CMS ใช้เติมฟอร์ม "เพิ่มจากแม่แบบ"</summary>
+    [HttpGet("presets")]
+    public ActionResult<ApiResponse<IReadOnlyList<BookingServicePresetResponse>>> GetPresets(Guid companyId, Guid siteId)
+        => Ok(new ApiResponse<IReadOnlyList<BookingServicePresetResponse>>(true, _bookingService.GetPresets()));
 
     [HttpGet("services/{serviceId:guid}")]
     [AllowAnonymous]
@@ -66,6 +75,55 @@ public class CmsBookingController : ControllerBase
         var result = await _bookingService.DeleteServiceAsync(companyId, siteId, serviceId);
         if (!result) return NotFound(new ApiResponse<bool>(false, false, CmsMessages.Get("booking.serviceNotFound", Lang)));
         return Ok(new ApiResponse<bool>(true, true, CmsMessages.Get("booking.serviceDeleted", Lang)));
+    }
+
+    // ===== ค่าตั้งระดับไซต์ + ผู้ให้บริการ (ทีม B) — เขียนต้องมีสิทธิ์ตั้งค่าเว็บไซต์ =====
+
+    [HttpGet("settings")]
+    public async Task<ActionResult<ApiResponse<BookingSiteSettingsDto>>> GetSiteSettings(Guid companyId, Guid siteId)
+        => Ok(new ApiResponse<BookingSiteSettingsDto>(true, await _bookingService.GetSiteSettingsAsync(companyId, siteId)));
+
+    [HttpPut("settings")]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<BookingSiteSettingsDto>>> UpdateSiteSettings(
+        Guid companyId, Guid siteId, [FromBody] BookingSiteSettingsDto request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.UpdateSiteSettingsAsync(companyId, siteId, request, userId);
+        return Ok(new ApiResponse<BookingSiteSettingsDto>(true, result, "บันทึกค่าตั้งการจองของเว็บไซต์แล้ว"));
+    }
+
+    [HttpGet("resources")]
+    public async Task<ActionResult<ApiResponse<List<BookingResourceResponse>>>> GetResources(Guid companyId, Guid siteId)
+        => Ok(new ApiResponse<List<BookingResourceResponse>>(true, await _bookingService.GetResourcesAsync(companyId, siteId)));
+
+    [HttpPost("resources")]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<BookingResourceResponse>>> CreateResource(
+        Guid companyId, Guid siteId, [FromBody] BookingResourceRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.SaveResourceAsync(companyId, siteId, null, request, userId);
+        return StatusCode(201, new ApiResponse<BookingResourceResponse>(true, result, "เพิ่มผู้ให้บริการแล้ว"));
+    }
+
+    [HttpPut("resources/{resourceId:guid}")]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<BookingResourceResponse>>> UpdateResource(
+        Guid companyId, Guid siteId, Guid resourceId, [FromBody] BookingResourceRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.SaveResourceAsync(companyId, siteId, resourceId, request, userId);
+        return Ok(new ApiResponse<BookingResourceResponse>(true, result, "บันทึกผู้ให้บริการแล้ว"));
+    }
+
+    [HttpDelete("resources/{resourceId:guid}")]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteResource(Guid companyId, Guid siteId, Guid resourceId)
+    {
+        var ok = await _bookingService.DeleteResourceAsync(companyId, siteId, resourceId);
+        if (!ok) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบผู้ให้บริการ"));
+        return Ok(new ApiResponse<bool>(true, true, "ลบผู้ให้บริการแล้ว"));
     }
 
     // ===== Booking Slots =====
@@ -124,9 +182,9 @@ public class CmsBookingController : ControllerBase
         Guid companyId, Guid siteId,
         [FromQuery] string? status = null, [FromQuery] Guid? serviceId = null,
         [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
-        [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
     {
-        var result = await _bookingService.GetBookingsAsync(companyId, siteId, status, serviceId, fromDate, toDate, page, pageSize);
+        var result = await _bookingService.GetBookingsAsync(companyId, siteId, status, serviceId, fromDate, toDate, page, pageSize, search);
         return Ok(new ApiResponse<PagedResponse<BookingListResponse>>(true, result));
     }
 

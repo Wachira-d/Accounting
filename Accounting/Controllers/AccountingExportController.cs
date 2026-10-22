@@ -67,6 +67,18 @@ public class AccountingExportController : ControllerBase
         return FileOf(await _export.ProfitLossAsync(companyId, fromDate, toDate, projectId, branchId, dimensionId, fmt));
     }
 
+    /// <summary>งบกำไรขาดทุนเปรียบเทียบ (ทีม M) — ตัวกรองชุดเดียวกับ <c>accounting/reports/profit-loss/compare</c></summary>
+    [HttpGet("profit-loss-compare")]
+    public async Task<IActionResult> ProfitLossCompare(Guid companyId, [FromQuery] string? format, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromQuery] string? granularity = "month", [FromQuery] bool comparePriorYear = false,
+        [FromQuery] Guid? projectId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? dimensionId = null)
+    {
+        if (!TabularExport.TryParseFormat(format, out var fmt)) return BadFormat();
+        if (!PnlComparison.TryParseGranularity(granularity, out var g))
+            return BadRequest(new ApiResponse<object>(false, null, "granularity ต้องเป็น month / quarter / year"));
+        return FileOf(await _export.ProfitLossComparisonAsync(companyId, fromDate, toDate, g, comparePriorYear, projectId, branchId, dimensionId, fmt));
+    }
+
     [HttpGet("cash-flow")]
     public async Task<IActionResult> CashFlow(Guid companyId, [FromQuery] string? format, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
         [FromQuery] Guid? projectId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? dimensionId = null)

@@ -114,6 +114,8 @@ const AdminAPI = {
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },
   companiesWithoutOwner() { return this.get('/companies/without-owner'); },
+  repairCompaniesWithoutOwner() { return this.post('/companies/without-owner/repair', {}); },
+  assignOwnerToCompany(companyId, userId) { return this.post(`/companies/${companyId}/assign-owner`, { userId }); },
   customer(id) { return this.get(`/customers/${id}`); },
   updateCustomerStatus(id, status, suspendReason = null) { return this.put(`/customers/${id}/status`, { status, suspendReason }); },
   impersonate(companyId) { return this.post(`/companies/${companyId}/impersonate`, {}); },

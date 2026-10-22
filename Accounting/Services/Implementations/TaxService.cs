@@ -1940,6 +1940,9 @@ public partial class TaxService : ITaxService
                 for (var bi = 0; bi < borneAll.Count; bi++) unissuedBorne[borneAll[bi].Id] = borneParts[bi].PayerBorne;
             }
             var unissuedCondition = Accounting.Helpers.WhtGrossUp.FilingCondition(doc.WhtCertType);
+            // ทีม F — แถวเตือนต้องเป็น<b>บาท</b>เหมือน 50 ทวิ ที่จะออกจริง (ตัวคำนวณกลาง Helpers/PerLineWht · ใบบาท ⇒ ยอดที่เก็บไว้ตรงตัว)
+            var unissuedBaht = Accounting.Helpers.PerLineWht.BasisOf(doc) != Accounting.Helpers.WhtBahtBasis.Thb
+                ? Accounting.Helpers.PerLineWht.ForDocument(doc) : null;
             if (docWhtLines.Count > 0)
             {
                 foreach (var line in docWhtLines)
@@ -1958,6 +1961,14 @@ public partial class TaxService : ITaxService
                         ? line.WithholdingTaxRate
                         : GetWhtRate(line.IncomeTypeCode, line.Amount, line.WithholdingTaxAmount, payeeIsJuristic);
 
+                    // ทีม F: ใบต่างสกุล ⇒ บาท (ตัวคำนวณกลาง) · ใบบาท ⇒ ยอดที่เก็บไว้ (เดิม)
+                    var unissuedIncome = line.Amount + unissuedBorne.GetValueOrDefault(line.Id);
+                    var unissuedTax = line.WithholdingTaxAmount;
+                    if (unissuedBaht != null && unissuedBaht.TryGetValue(line.Id, out var ub))
+                    {
+                        unissuedIncome = ub.IncomeThb;
+                        unissuedTax = ub.WhtThb;
+                    }
                     report.Lines.Add(new TaxReportLine
                     {
                         TaxReportId = report.Id,
@@ -1967,9 +1978,9 @@ public partial class TaxService : ITaxService
                         TransactionDate = doc.TaxPointDate ?? doc.DocumentDate,
                         Description = $"{Accounting.Helpers.WhtUnissuedCertGate.UnissuedCertMarker} — {line.Description} "
                             + "(ออกใบที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" แล้วกด \"สร้างใหม่\")",
-                        IncomeAmount = line.Amount + unissuedBorne.GetValueOrDefault(line.Id),
+                        IncomeAmount = unissuedIncome,
                         TaxRate = whtRate,
-                        TaxAmount = line.WithholdingTaxAmount,
+                        TaxAmount = unissuedTax,
                         DocumentId = doc.Id,
                         IncomeTypeCode = line.IncomeTypeCode ?? "40(8)",
                         IsExcluded = true,
@@ -1983,6 +1994,15 @@ public partial class TaxService : ITaxService
                 // "หาย" จากรายงานทั้งใบเพราะ loop รายบรรทัดไม่เจออะไร
                 // + ผลต่างปัดเศษ (รอบ 193 ฝ่ายค้าน P5): ฐานเงินได้ = ฐานหัวเอกสาร (SubTotal = Σ บรรทัด + ผลต่าง) ไม่ใช่ Σ บรรทัดเดี่ยว ๆ
                 var docBase = doc.Lines.Sum(l => l.Amount) + doc.RoundingAdjustment + doc.WhtPayerBorneAmount;   // P3-1: + ส่วนที่ออกแทน (ม.39)
+                // ทีม F: ใบต่างสกุล ⇒ บาท (ยอดบาทที่เอกสารพิมพ์ชนะ · ไม่งั้นอัตราของเอกสาร) — ตัวแปลงเดียวกับ 50 ทวิ
+                var unissuedDocWht = doc.WithholdingTaxAmount;
+                if (unissuedBaht != null)
+                {
+                    docBase = (Accounting.Helpers.PerLineWht.UsablePrintedBase(doc) is decimal printedBase
+                        ? printedBase : Accounting.Helpers.DocumentFx.ToBaht(doc.Lines.Sum(l => l.Amount) + doc.RoundingAdjustment, doc.ExchangeRate))
+                        + Accounting.Helpers.DocumentFx.ToBaht(doc.WhtPayerBorneAmount, doc.ExchangeRate);
+                    unissuedDocWht = Accounting.Helpers.PerLineWht.DocumentWhtThb(doc.WithholdingTaxAmount, doc.ExchangeRate);
+                }
                 report.Lines.Add(new TaxReportLine
                 {
                     TaxReportId = report.Id,
@@ -1994,9 +2014,9 @@ public partial class TaxService : ITaxService
                         + "(ออกใบที่หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" แล้วกด \"สร้างใหม่\")",
                     IncomeAmount = docBase,
                     TaxRate = docBase > 0
-                        ? Math.Round(doc.WithholdingTaxAmount / docBase * 100m, 2, MidpointRounding.AwayFromZero)
+                        ? Math.Round(unissuedDocWht / docBase * 100m, 2, MidpointRounding.AwayFromZero)
                         : 0m,
-                    TaxAmount = doc.WithholdingTaxAmount,
+                    TaxAmount = unissuedDocWht,
                     DocumentId = doc.Id,
                     IncomeTypeCode = "40(8)",
                     IsExcluded = true,

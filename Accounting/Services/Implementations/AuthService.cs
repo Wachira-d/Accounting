@@ -216,12 +216,9 @@ public class AuthService : IAuthService
             // รอบ 194 — ประเภทเงินมัดจำเริ่มต้น (spec S8 · ตารางเดียวกับ migration/วิซาร์ด)
             await DepositKindSeed.EnsureSeededAsync(_db, company.Id);
 
-            _db.CompanyUsers.Add(new CompanyUser
-            {
-                CompanyId = company.Id,
-                UserId = user.Id,
-                Role = Models.Enums.UserRole.Owner
-            });
+            // ผู้สมัคร = เจ้าของบริษัทที่เพิ่งสร้าง — ตัวสร้างแถวตัวเดียวกับวิซาร์ด (รอบ 205 · Helpers/CompanyCreatorMembership · ไม่มี "เปิดให้ลูกค้า" บนหน้าสมัคร)
+            _db.CompanyUsers.Add(CompanyCreatorMembership.NewRow(company.Id, user.Id,
+                creatorIsPlatformAdmin: user.IsSystemAdmin, openForCustomer: false));
 
             await _db.SaveChangesAsync();
 
@@ -695,12 +692,9 @@ public class AuthService : IAuthService
                     _db.CompanySettings.Add(CompanySettingsFactory.NewFor(company, vatStatusConfirmed: false));
                     // รอบ 194 — ประเภทเงินมัดจำเริ่มต้น (spec S8 · ตารางเดียวกับ migration/วิซาร์ด)
                     await DepositKindSeed.EnsureSeededAsync(_db, company.Id);
-                    _db.CompanyUsers.Add(new CompanyUser
-                    {
-                        CompanyId = company.Id,
-                        UserId = user.Id,
-                        Role = Models.Enums.UserRole.Owner
-                    });
+                    // ตัวสร้างแถวเจ้าของตัวเดียวกับเส้นสมัครปกติ/วิซาร์ด (รอบ 205 · Helpers/CompanyCreatorMembership)
+                    _db.CompanyUsers.Add(CompanyCreatorMembership.NewRow(company.Id, user.Id,
+                        creatorIsPlatformAdmin: user.IsSystemAdmin, openForCustomer: false));
                     await _db.SaveChangesAsync();
 
                     // Auto-start subscription ตามแพ็กเกจที่เลือกบนหน้า register

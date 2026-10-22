@@ -125,7 +125,9 @@ public record DashboardSubscriptionSummary(
     int UsersCount,
     int UsersLimit,
     /// <summary>ชื่อแพ็กเกจจาก PlanTemplate (แอดมินตั้ง) — `app.html` เคยแปล enum เองด้วยคีย์ที่ไม่ตรง enum เลย</summary>
-    string? PlanName = null);
+    string? PlanName = null,
+    /// <summary>รอบ 205 ทีม I: ที่มาของแพ็กเกจ "Company" | "License" (<c>PlanIdentityResolver</c>)</summary>
+    string? PlanSource = null);
 
 public record DashboardRequest(
     DateTime? FromDate = null,

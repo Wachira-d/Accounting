@@ -186,6 +186,20 @@ public class LodgingRoomTypeDto
     public string? BedType { get; set; }
     public decimal? SizeSqm { get; set; }
     public string? ViewType { get; set; }
+    /// <summary>สูบบุหรี่ในห้องได้ (false = ปลอดบุหรี่)</summary>
+    public bool SmokingAllowed { get; set; }
+    /// <summary>รับสัตว์เลี้ยง</summary>
+    public bool PetsAllowed { get; set; }
+    /// <summary>หมายเหตุ/นโยบายเฉพาะห้องที่แขกเห็น (สาธารณะ)</summary>
+    public string? RoomNote { get; set; }
+    /// <summary>response-only (หน้าเว็บสาธารณะ) — ป้ายกติกาห้อง "ห้องปลอดบุหรี่" / "ไม่รับสัตว์เลี้ยง" (<c>LodgingPublicRoomLabels.HouseRuleLabels</c>)</summary>
+    public List<string> HouseRuleLabels { get; set; } = new();
+    /// <summary>response-only — "เด็กพักได้สูงสุด N คน" (<c>LodgingPublicRoomLabels.ChildrenLabel</c>) · null = ไม่ระบุ</summary>
+    public string? ChildrenLabel { get; set; }
+    /// <summary>response-only — นโยบายยกเลิกของแผนราคาตั้งต้นของห้อง (ตัวเลือกเดียวกับใบเสนอราคา · <c>PolicyFor</c>) · null = ไม่มีนโยบาย</summary>
+    public string? CancellationPolicyName { get; set; }
+    /// <summary>response-only — สรุปเงื่อนไขยกเลิก (<c>LodgingPublicRoomLabels.CancellationSummary</c>)</summary>
+    public string? CancellationSummary { get; set; }
     public int StandardOccupancy { get; set; } = 2;
     public int MaxAdults { get; set; } = 2;
     public int MaxChildren { get; set; } = 1;
@@ -1032,6 +1046,24 @@ public class LodgingCalendarAvailability
 }
 
 public record LodgingCalendarDay(DateTime Date, int Available, decimal Rate, bool StopSell, int? Allotment);
+
+/// <summary>สลิป 1 ใบในแกลเลอรีฝั่งพนักงาน (โมดัลการจอง) — สร้างจาก <see cref="LodgingSlipGallery"/> ตัวเดียว ·
+/// <c>Url</c> = endpoint ที่ตรวจสิทธิ์ (ต้องแนบ JWT) · <c>null</c> = หาไฟล์บนดิสก์ไม่เจอ (<c>FileMissing</c>) · <c>State</c> ออกเป็นชื่อ enum</summary>
+public sealed class LodgingSlipItemDto
+{
+    public Guid? AttachmentId { get; set; }
+    public string? Url { get; set; }
+    public string? ContentType { get; set; }
+    public bool IsImage { get; set; }
+    public bool FileMissing { get; set; }
+    public DateTime? UploadedAt { get; set; }
+    public string? OriginalFileName { get; set; }
+    public string State { get; set; } = "";
+    public string StateLabel { get; set; } = "";
+    public string? RejectedReason { get; set; }
+    public DateTime? RejectedAt { get; set; }
+    public string? Reference { get; set; }
+}
 
 /// <summary>ปฏิเสธสลิปที่แขกส่งมา — <b>เหตุผลบังคับ</b> เพราะข้อความนี้คือสิ่งเดียว
 /// ที่แขกจะได้เห็นว่าทำไมไม่ผ่านและต้องทำอะไรต่อ</summary>

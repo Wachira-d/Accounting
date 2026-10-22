@@ -20,7 +20,7 @@ const path = require('path');
 
 const PAGE = process.env.SF_PAGE || path.join(__dirname, '..', 'Accounting', 'wwwroot', 'storefront.html');
 const REAL_SRC = fs.readFileSync(PAGE, 'utf8');
-const METHODS = ['esc', '_money', '_pageUrl', 'lodgingInfo', '_lodgingClosedHtml', '_lodgingRoomsHtml', '_lgStateFromQuery', '_pageUrlQuery'];
+const METHODS = ['esc', '_money', '_pageUrl', 'lodgingInfo', '_lodgingClosedHtml', '_lodgingRoomsHtml', '_lgStateFromQuery', '_pageUrlQuery', '_lgRoomUrl', '_lgBookUrl'];
 
 function extract(src, name) {
   const re = new RegExp('\\n      (?:async )?' + name + '\\(');
@@ -91,7 +91,11 @@ async function run(src) {
   if (!html.includes('ผู้ใหญ่สูงสุด 2 คน/ห้อง') || html.includes('พักได้ 9')) fails.push('(b) ความจุต้องเป็น capacityLabel (ข้อ 124) ไม่ใช่ maxOccupancy');
   const noRate = S._lodgingRoomsHtml({ roomTypes: [{ id: '2', name: 'X', baseRate: 500 }] });
   if (noRate.includes('฿')) fails.push('(b) ไม่มี fromRateLabel (ปิดขายทั้งช่วง) ต้องไม่แต่งราคา');
-  if (!html.includes('href="/site/b4/booking"')) fails.push('(b) ปุ่มต้องไปหน้าจอง');
+  // 2026-10-22 ทีม D: "จองห้องนี้" พาไปหน้าจองพร้อมเลือกชนิดห้อง · "ดูรายละเอียดห้อง" ไปหน้าห้องพัก (/rooms/{slug|id})
+  if (!html.includes('href="/site/b4/booking?roomType=1"')) fails.push('(b) ปุ่มต้องไปหน้าจองพร้อมชนิดห้อง');
+  if (!html.includes('href="/site/b4/rooms/1"')) fails.push('(b) ต้องมีลิงก์รายละเอียดห้อง');
+  const slugged = S._lodgingRoomsHtml({ onlineBookingEnabled: true, roomTypes: [{ id: '7', slug: 'deluxe-sea', name: 'D' }] });
+  if (!slugged.includes('href="/site/b4/rooms/deluxe-sea"')) fails.push('(b) ลิงก์รายละเอียดใช้ slug เมื่อมี');
   const closed = S._lodgingClosedHtml();
   if (!closed.includes('ยังไม่เปิดจองออนไลน์') || closed.includes('฿')) fails.push('(b) ไม่ผูกที่พัก ⇒ "ยังไม่เปิดจองออนไลน์" ไม่มีราคา');
   if (closed.includes('@hotel<x>') || !closed.includes('02-111-2222')) fails.push('(b) ช่องทางติดต่อต้องแสดงและหนีอักขระ');

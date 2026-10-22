@@ -154,6 +154,9 @@
         document.getElementById('dateFrom').value = weekAgo;
         document.getElementById('dateTo').value = today;
         await this.load();
+        // ลิงก์ตรงจาก drill-down งบกำไรขาดทุน (?orderId=) — เปิดรายละเอียดบิลทันที
+        const deepOrder = new URLSearchParams(location.search).get('orderId');
+        if (deepOrder) await this.showOrderDetail(deepOrder);
       },
 
       switchTab(tab) {

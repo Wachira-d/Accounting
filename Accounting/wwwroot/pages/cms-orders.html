@@ -27,6 +27,7 @@
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
+    <div id="cmsCrumb"></div>
     <div class="page-header">
       <div>
         <h2 class="page-title">คำสั่งซื้อจากเว็บไซต์</h2>
@@ -103,6 +104,7 @@
       <input type="text" class="search-input" placeholder="ค้นหา order# หรือชื่อลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
     </div>
 
+    <div id="allNote" style="display:none"></div>
     <div class="table-container">
       <table class="table">
         <thead><tr>
@@ -195,6 +197,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
   <script>
     // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว (cms-edit เคยถือสำเนาที่คีย์ด้วยตัวเลข
     // แล้วไม่ match อะไรเลย) — ที่นี่แค่มอบต่อ ห้ามพิมพ์ตารางซ้ำ
@@ -210,42 +213,54 @@
       'PartiallyRefunded': [['Refunded','คืนเงินทั้งหมด','btn-secondary']]
     };
 
+    const PER_SITE_ALL = 20; // โหมด "ทุกไซต์": รายการล่าสุดต่อเว็บ (บอกผู้ใช้บนจอผ่าน CmsSiteContext.allNote)
+
     const Page = {
-      siteId: null,
+      siteId: null,       // เว็บที่เลือก · null เมื่อดู "ทุกไซต์"
+      allSites: false,
+      actSiteId: null,    // เว็บของออเดอร์ที่เปิดอยู่ (โหมดทุกไซต์ — ทุก action ต้องยิงไปเว็บเจ้าของออเดอร์)
+      sites: [],
       page: 1,
       _searchTimer: null,
+      _sid() { return this.actSiteId || this.siteId; },
+      // เว็บที่รวมในภาพรวม — เว็บที่ใช้งานร้านค้า (ไม่มีเลย = ทุกเว็บ ไม่ให้ภาพรวมว่างเพราะยังไม่มีเว็บร้านค้า)
+      _allTargets() { const w = CmsSiteContext.sitesWith(this.sites, 'orders'); return w.length ? w : this.sites; },
       async init() {
         if (!Layout.init('cms-orders')) return;
         await this.loadSites();
       },
       async loadSites() {
-        const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.cmsListSites();
-          const sites = res?.data?.items || res?.data || [];
+          const sites = this.sites = await CmsSiteContext.loadSites();
           const sel = document.getElementById('siteSelector');
           if (!sites.length) {
             sel.innerHTML = '<option value="">ยังไม่มีเว็บไซต์ — สร้างจาก /cms-sites ก่อน</option>';
+            CmsSiteContext.renderCrumb('cmsCrumb', sites, null, 'คำสั่งซื้อ', 'cms-orders');
             return;
           }
-          sel.innerHTML = sites.map(s => `<option value="${s.id}">${Layout.esc(s.name)} (${Layout.esc(s.subdomain||s.slug||'-')})</option>`).join('');
-          // Auto-pick from URL ?siteId=... else first site
-          const fromUrl = new URLSearchParams(location.search).get('siteId');
-          this.siteId = fromUrl || sites[0].id;
-          sel.value = this.siteId;
-          await this.load();
-          await this.loadStats();
-          await this.loadGatewayStatus();
+          // ?siteId= จากปุ่มบนการ์ดเว็บ (cms-sites) · ?siteId=all = ภาพรวมทุกไซต์ · ตรวจกับรายการเว็บจริงก่อนใช้
+          const picked = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'orders', allowAll: true });
+          CmsSiteContext.fillSelect(sel, sites, { module: 'orders', allowAll: true, value: picked });
+          await this.applySite(sel.value || picked);
         } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      async onSiteChange() {
-        this.siteId = document.getElementById('siteSelector').value;
+      async applySite(v) {
+        this.allSites = v === CmsSiteContext.ALL;
+        this.siteId = this.allSites ? null : v;
+        this.actSiteId = null;
         this.page = 1;
+        CmsSiteContext.setUrl(v);
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites, v, 'คำสั่งซื้อ', 'cms-orders');
         await this.load();
         await this.loadStats();
         await this.loadGatewayStatus();
       },
+      async onSiteChange() {
+        await this.applySite(document.getElementById('siteSelector').value);
+      },
       async loadGatewayStatus() {
+        // วิธีรับเงินตั้งรายเว็บ — โหมดทุกไซต์ไม่มี "เว็บเดียว" ให้ตั้ง ⇒ ซ่อนแบนเนอร์ (เลือกเว็บแล้วจะเห็นเอง)
+        if (this.allSites) { document.getElementById('payConfigBanner').style.display = 'none'; return; }
         const api = Layout.api(); if (!api || !this.siteId) return;
         // Two parallel loads: payment-gateway list + commerce config
         // (for the quotation-footer message). Both feed the same modal
@@ -364,41 +379,54 @@
         this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
       },
       async loadStats() {
-        if (!this.siteId) return;
+        if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
-        // Cheap parallel fetches — just to fill the 4 KPI cards
+        // Cheap parallel fetches — just to fill the 4 KPI cards (ทุกไซต์ = ผลรวมของเว็บที่โหลดได้ · โหลดไม่ได้เลย = "-")
+        const targets = this.allSites ? this._allTargets().map(s => s.id) : [this.siteId];
+        const count = async (st) => {
+          const rs = await Promise.allSettled(targets.map(id => api.cmsListOrders(id, `?status=${st}&pageSize=1`)));
+          const ok = rs.filter(r => r.status === 'fulfilled');
+          return ok.length ? ok.reduce((n, r) => n + (r.value?.data?.totalItems || 0), 0) : '-';
+        };
         try {
-          const [pend, proc, ship, deliv] = await Promise.all([
-            api.cmsListOrders(this.siteId, '?status=Pending&pageSize=1'),
-            api.cmsListOrders(this.siteId, '?status=Processing&pageSize=1'),
-            api.cmsListOrders(this.siteId, '?status=Shipped&pageSize=1'),
-            api.cmsListOrders(this.siteId, '?status=Delivered&pageSize=1')
-          ]);
-          document.getElementById('statPending').textContent = pend?.data?.totalItems ?? '0';
-          document.getElementById('statProcessing').textContent = proc?.data?.totalItems ?? '0';
-          document.getElementById('statShipped').textContent = ship?.data?.totalItems ?? '0';
-          document.getElementById('statDelivered').textContent = deliv?.data?.totalItems ?? '0';
+          const [pend, proc, ship, deliv] = await Promise.all(['Pending', 'Processing', 'Shipped', 'Delivered'].map(count));
+          document.getElementById('statPending').textContent = pend;
+          document.getElementById('statProcessing').textContent = proc;
+          document.getElementById('statShipped').textContent = ship;
+          document.getElementById('statDelivered').textContent = deliv;
         } catch (e) { /* non-fatal */ }
       },
       async load() {
-        if (!this.siteId) return;
+        if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
         const search = document.getElementById('searchInput').value;
-        let q = `?page=${this.page}&pageSize=20`;
+        let q = `?page=${this.allSites ? 1 : this.page}&pageSize=${this.allSites ? PER_SITE_ALL : 20}`;
         if (status) q += `&status=${encodeURIComponent(status)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
-          const res = await api.cmsListOrders(this.siteId, q);
-          const items = res?.data?.items || res?.data || [];
+          let items;
+          if (this.allSites) {
+            const targets = this._allTargets();
+            const r = await CmsSiteContext.collect(targets, async (s) => {
+              const res = await api.cmsListOrders(s.id, q);
+              return res?.data?.items || res?.data || [];
+            });
+            items = r.items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            CmsSiteContext.allNote('allNote', { siteCount: targets.length, perSite: PER_SITE_ALL, failed: r.failed });
+          } else {
+            const res = await api.cmsListOrders(this.siteId, q);
+            items = res?.data?.items || res?.data || [];
+            CmsSiteContext.allNote('allNote', null);
+          }
           const tbody = document.getElementById('ordersBody');
           if (!items.length) {
             tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีคำสั่งซื้อตามเงื่อนไขที่เลือก</td></tr>';
             return;
           }
           tbody.innerHTML = items.map(o => `
-            <tr class="order-row" onclick="Page.viewOrder('${o.id}')">
-              <td class="font-medium">${Layout.esc(o.orderNumber||o.id.substring(0,8))}</td>
+            <tr class="order-row" onclick="Page.viewOrder('${Layout.jsArg(o.id)}', '${Layout.jsArg(o._siteId || '')}')">
+              <td class="font-medium">${Layout.esc(o.orderNumber||o.id.substring(0,8))}${o._siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(o._siteName)}</div>` : ''}</td>
               <td>${Layout.esc(o.customerName||'(ไม่ระบุชื่อ)')}</td>
               <td class="text-right">${o.itemCount||0}</td>
               <td class="text-right font-semibold">฿${Number(o.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
@@ -408,10 +436,12 @@
             </tr>`).join('');
         } catch (e) { Layout.toast('โหลดคำสั่งซื้อไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      async viewOrder(orderId) {
+      async viewOrder(orderId, siteId) {
         const api = Layout.api(); if (!api) return;
+        // โหมดทุกไซต์: ออเดอร์เป็นของเว็บไหน action ทั้งหมดต้องไปเว็บนั้น · เปิดซ้ำจาก saveTracking (ไม่ส่ง siteId) = คงเว็บเดิม
+        if (siteId !== undefined) this.actSiteId = siteId || null;
         try {
-          const res = await api.cmsGetOrder(this.siteId, orderId);
+          const res = await api.cmsGetOrder(this._sid(), orderId);
           const o = res?.data || res;
           if (!o) return;
           this._currentOrder = o;
@@ -496,7 +526,7 @@
         const api = Layout.api(); if (!api) return;
         if (!confirm('ยืนยันรับเงินจากออเดอร์นี้แล้ว?\n\nระบบจะ:\n• ผูกออเดอร์เข้ากับเอกสารบัญชี (ใบกำกับ/ใบแจ้งหนี้)\n• อนุมัติเอกสาร + ลง JE (Dr ธนาคาร / Cr ขาย + Cr VAT)\n• บันทึกรายการรับเงิน (เคลียร์ลูกหนี้)\n• ตัด stock จริง\n• ออก e-Tax XML (ถ้าเปิดใน Settings)')) return;
         try {
-          await api.cmsConfirmOrderPayment(this.siteId, orderId, paymentId);
+          await api.cmsConfirmOrderPayment(this._sid(), orderId, paymentId);
           Layout.toast('ยืนยันรับเงิน + ลงบัญชีสำเร็จ', 'success');
           Layout.closeModal('orderModal');
           await this.load();
@@ -507,7 +537,7 @@
         const api = Layout.api(); if (!api) return;
         const note = nextStatus === 'Cancelled' ? prompt('เหตุผลที่ยกเลิก (ถ้ามี)') : null;
         try {
-          await api.cmsUpdateOrderStatus(this.siteId, orderId, { status: nextStatus, internalNotes: note });
+          await api.cmsUpdateOrderStatus(this._sid(), orderId, { status: nextStatus, internalNotes: note });
           Layout.toast('อัปเดตสถานะเรียบร้อย');
           Layout.closeModal('orderModal');
           await this.load();
@@ -519,7 +549,7 @@
         const tracking = document.getElementById('trackInput').value.trim();
         if (!tracking) return;
         try {
-          await api.cmsUpdateOrderStatus(this.siteId, orderId, { status: this._currentOrder.status, trackingNumber: tracking });
+          await api.cmsUpdateOrderStatus(this._sid(), orderId, { status: this._currentOrder.status, trackingNumber: tracking });
           Layout.toast('บันทึก tracking แล้ว');
           this.viewOrder(orderId);
         } catch (e) { Layout.toast('บันทึก tracking ไม่สำเร็จ: ' + e.message, 'error'); }

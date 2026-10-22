@@ -26,7 +26,8 @@ Rules:
    - ภาษีซื้อ (Input VAT) → 1531 typically
    - ภาษีหัก ณ ที่จ่าย (WHT asset) → 1521 typically
 4. Flag if the amount is unusual for that account type (e.g. ฿500,000 in office supplies).
-5. Must pick from candidate_accounts only. If nothing fits well, lower confidence to <0.6 and explain in reasoning.
+5. Must pick from candidate_accounts only (primary AND alternatives). If nothing fits well, lower confidence to <0.6 and explain in reasoning.
+   On the purchase side (our_role Buyer/null) never answer a Revenue-type account (4xxxx) — money OUT is not income.
 6. SETTLEMENT vs NEW-ASSET direction — **read `line.our_role` first**:
    - `our_role = ""Seller""` → this is a SALES document, money IN. Pick a revenue
      account (4xxxx) or the receivable/contra the line describes. The ""Payment
@@ -192,7 +193,10 @@ Respond ONLY as JSON:
                     "Fixed asset threshold: ≥฿50,000 + life >1 year → capitalize (นโยบายระบบ — ให้ตรงกับ rule 7; ต่ำกว่านั้นแต่เป็นเครื่องใช้ทนก็ capitalize).",
                     "Input VAT (ภาษีซื้อ) booked to 1531 only if vendor issued valid Tax Invoice per §86.",
                     "WHT asset (ภาษีถูกหัก ณ ที่จ่าย) booked at " + (whtRecognitionBasis ?? "tenant's chosen basis: Cash (§50) or Accrual"),
-                    "Match the company's IndustryType — different sectors have sector-specific accounts (Hotel: 11830/21510 ห้องพัก, Restaurant: cost-of-food 51xxx etc.). Prefer accounts that match top_accounts_used pattern.",
+                    "Match the company's IndustryType — different sectors have sector-specific accounts (Hotel: 11830/21510 ห้องพัก, Restaurant: cost-of-food 51xxx etc.).",
+                    // ทีม H · 2026-10-22: top_accounts_used นับรวมเอกสารขาย+ซื้อ ⇒ ผังรายได้ (41110) อยู่บนสุดของบริษัทที่ขายเยอะ
+                    // แล้วกติกาเดิม "Prefer accounts that match top_accounts_used" ทำให้ครูเสนอผังรายได้กับเอกสารซื้อ
+                    "company.top_accounts_used counts BOTH sales and purchase documents — use it only as a tie-breaker between candidate_accounts of the right side; it never overrides line.our_role, and an account that is not in candidate_accounts is never a valid answer.",
                 },
             },
         };

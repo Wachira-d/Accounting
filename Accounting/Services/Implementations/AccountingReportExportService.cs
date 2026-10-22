@@ -163,6 +163,22 @@ public class AccountingReportExportService
         return TabularExport.Render(format, "งบกำไรขาดทุน", fromDate, toDate, AccountingReportSheets.ProfitLoss(pl, title));
     }
 
+    /// <summary>งบกำไรขาดทุนเปรียบเทียบ (ทีม M) — ตารางเดียวกับหน้า (<c>GetProfitAndLossComparisonAsync</c>) · CSV/Excel (MiniExcel)</summary>
+    public async Task<TabularFile> ProfitLossComparisonAsync(Guid companyId, DateTime fromDate, DateTime toDate, PnlCompareGranularity granularity,
+        bool comparePriorYear, Guid? projectId, Guid? branchId, Guid? dimensionId, TabularFormat format)
+    {
+        var r = await _accounting.GetProfitAndLossComparisonAsync(companyId, fromDate, toDate, granularity, comparePriorYear, projectId, branchId, dimensionId);
+        var mode = granularity switch
+        {
+            PnlCompareGranularity.Quarter => "รายไตรมาส",
+            PnlCompareGranularity.Year => "รายปี",
+            _ => "รายเดือน",
+        };
+        var title = await TitleAsync(companyId, $"งบกำไรขาดทุนเปรียบเทียบ{mode}" + (comparePriorYear ? " เทียบช่วงเดียวกันปีก่อน" : ""),
+            $"ช่วง {ThaiDate.ToThaiDisplayString(fromDate)} – {ThaiDate.ToThaiDisplayString(toDate)}", projectId, branchId, dimensionId);
+        return TabularExport.Render(format, "งบกำไรขาดทุนเปรียบเทียบ", fromDate, toDate, PnlComparison.ComparisonSheet(r, title));
+    }
+
     public async Task<TabularFile> CashFlowAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? projectId, Guid? branchId, Guid? dimensionId, TabularFormat format)
     {
         var cf = await _accounting.GetCashFlowStatementAsync(companyId, fromDate, toDate, projectId, branchId, dimensionId);

@@ -295,6 +295,9 @@ public class SettingsService : ISettingsService
 
         if (request.AutoAttachWhtCertPdf.HasValue)
             settings.AutoAttachWhtCertPdf = request.AutoAttachWhtCertPdf.Value;
+        // ทีม F — หัก ณ ที่จ่ายตามรายการ (ผู้อ่านเดียว: OcrService.PerLineWhtEnabledAsync — แผนต่อบรรทัดตอนสร้างบรรทัด + ยอดบาทบนใบต่างสกุลตอนสร้างเอกสารจากสแกน)
+        if (request.PerLineWhtEnabled.HasValue)
+            settings.PerLineWhtEnabled = request.PerLineWhtEnabled.Value;
         // กองทุนเงินทดแทน (กท.20ก)
         if (request.WorkersCompensationEnabled.HasValue)
             settings.WorkersCompensationEnabled = request.WorkersCompensationEnabled.Value;
@@ -762,6 +765,7 @@ public class SettingsService : ISettingsService
         VatStatusConfirmed = s.VatStatusConfirmedAt != null,
         // รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203) — echo ค่าดิบ · ตาราง matrix เติมใน WithDepositVatInfoAsync (ต้องใช้ธงบริษัท)
         ReceiptFormPolicyJson = s.ReceiptFormPolicyJson,
+        PerLineWhtEnabled = s.PerLineWhtEnabled,
     };
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(

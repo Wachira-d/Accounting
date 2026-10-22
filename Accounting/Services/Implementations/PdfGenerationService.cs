@@ -181,22 +181,30 @@ public partial class PdfGenerationService : IPdfGenerationService
         WhtCertFundAmounts funds)
     {
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
-        var (sigBytes, sigName) = await ResolveCertSignatoryAsync(companyId, inMemoryCert.CreatedBy);
-        return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds);
+        // ตรา + ด่านกฎลายเซ็น — ตัวตัดสินเดียวกับใบ 50 ทวิ ที่บันทึกในฐาน (DocumentStampPolicy · ทีม J 2026-10-22)
+        var settings = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var decision = StampDecisionFor(inMemoryCert, settings);
+        var (sigBytes, sigName) = await ResolveCertSignatoryAsync(companyId, inMemoryCert.CreatedBy, decision);
+        var stamp = ResolveWhtCertStamp(inMemoryCert, settings);
+        return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds, stamp);
     }
 
     /// <summary>Resolve the signer for a cert — exact same fallback chain
     /// used by GenerateWithholdingTaxCertPdfAsync: CreatedBy user → company
     /// Owner. Extracted so the annual-employee-cert path can reuse it.</summary>
-    private async Task<(byte[]? Bytes, string? Name)> ResolveCertSignatoryAsync(Guid companyId, string? createdBy)
+    private async Task<(byte[]? Bytes, string? Name)> ResolveCertSignatoryAsync(Guid companyId, string? createdBy,
+        Accounting.Helpers.DocumentStampPolicy.Decision decision)
     {
+        // กฎปิดลายเซ็นในขั้นนี้ ⇒ ไม่พิมพ์รูป (ทีม J 2026-10-22)
+        if (!decision.ShowSignature) return (null, null);
         if (Guid.TryParse(createdBy, out var uid))
         {
             var u = await _db.Users.AsNoTracking()
                 .Where(x => x.Id == uid)
                 .Select(x => new { x.SignatureImageBase64, x.SignatureName, x.FullName })
                 .FirstOrDefaultAsync();
-            if (u != null && !string.IsNullOrWhiteSpace(u.SignatureImageBase64))
+            if (u != null && !string.IsNullOrWhiteSpace(u.SignatureImageBase64)
+                && decision.SignerAllowed(uid, await SignerRoleAsync(companyId, uid)))
                 return (TryDecodeBase64Image(u.SignatureImageBase64),
                     !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName);
         }
@@ -204,8 +212,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                            join u in _db.Users.AsNoTracking() on cu.UserId equals u.Id
                            where cu.CompanyId == companyId && cu.Role == Models.Enums.UserRole.Owner
                                  && u.SignatureImageBase64 != null && u.SignatureImageBase64 != ""
-                           select new { u.SignatureImageBase64, u.SignatureName, u.FullName }).FirstOrDefaultAsync();
-        if (owner != null)
+                           select new { u.Id, u.SignatureImageBase64, u.SignatureName, u.FullName }).FirstOrDefaultAsync();
+        if (owner != null && decision.SignerAllowed(owner.Id, nameof(Models.Enums.UserRole.Owner)))
             return (TryDecodeBase64Image(owner.SignatureImageBase64!),
                 !string.IsNullOrWhiteSpace(owner.SignatureName) ? owner.SignatureName : owner.FullName);
         return (null, null);
@@ -221,36 +229,13 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
-        // Resolve the signatory's saved signature image + name. Priority:
-        //   1. the user who CREATED the cert (BaseEntity.CreatedBy = userId)
-        //   2. the company OWNER (CompanyUsers.Role == Owner)
-        // so the "ลงชื่อ ... ผู้จ่ายเงิน" line shows the real signature
-        // instead of a blank dotted line. Falls back to text-only when no
-        // user has uploaded a signature image.
-        byte[]? sigBytes = null;
-        string? sigName = null;
-        {
-            Guid? signerId = Guid.TryParse(cert.CreatedBy, out var cb) ? cb : null;
-            if (signerId == null)
-            {
-                signerId = await _db.Set<Models.Entities.CompanyUser>().AsNoTracking()
-                    .Where(cu => cu.CompanyId == companyId && cu.Role == Models.Enums.UserRole.Owner)
-                    .Select(cu => (Guid?)cu.UserId).FirstOrDefaultAsync();
-            }
-            if (signerId.HasValue)
-            {
-                var u = await _db.Users.AsNoTracking()
-                    .Where(x => x.Id == signerId.Value)
-                    .Select(x => new { x.FullName, x.SignatureImageBase64, x.SignatureName })
-                    .FirstOrDefaultAsync();
-                if (u != null)
-                {
-                    if (!string.IsNullOrWhiteSpace(u.SignatureImageBase64))
-                        sigBytes = TryDecodeBase64Image(u.SignatureImageBase64.Trim());
-                    sigName = !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName;
-                }
-            }
-        }
+        // ผู้ลงนาม "ผู้จ่ายเงิน": ผู้สร้างใบ (BaseEntity.CreatedBy) → เจ้าของบริษัท เมื่อไม่รู้ผู้สร้าง · ไม่มีรูป = เส้นจุดว่าง ·
+        // ตรา + ด่านกฎ (ขั้นของใบ · ผู้ลงนามที่มีสิทธิ์) จากตัวตัดสินเดียว Helpers/DocumentStampPolicy — ทีม J 2026-10-22:
+        // เดิมทางนี้ไม่โหลด CompanySettings เลย ⇒ 50 ทวิ ไม่มีตราทั้ง HTML + QuestPDF (เอกสารขายประทับได้เพราะ BuildBranding อ่านตรา)
+        var settings = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var stampDecision = StampDecisionFor(cert, settings);
+        var stamp = ResolveWhtCertStamp(cert, settings);
+        var (sigBytes, sigName) = await ResolveWhtPayerSignatureAsync(companyId, cert.CreatedBy, stampDecision);
 
         // ── ทางที่ "ตรงกับไฟล์ที่ download" (browser print) ──
         // render HTML ฟอร์มราชการ §50ทวิ ตัวเดียวกับ browser-print ผ่าน headless
@@ -265,14 +250,14 @@ public partial class PdfGenerationService : IPdfGenerationService
             try
             {
                 var sigB64 = sigBytes != null ? Convert.ToBase64String(sigBytes) : null;
-                var certHtml = BuildWithholdingTaxCertHtml(cert, company, sigB64, sigName);
+                var certHtml = BuildWithholdingTaxCertHtml(cert, company, sigB64, sigName, stamp: stamp);
                 pdfBytes = await _htmlPdf.TryRenderAsync(certHtml);
             }
             catch { /* fallback QuestPDF */ }
         }
         // QuestPDF fallback — official RD form (TIN boxes/payer-payee/income table),
         // ฟอนต์ Sarabun (เมื่อ register ได้) — ใช้เมื่อ HTML renderer ไม่พร้อม.
-        pdfBytes ??= BuildWhtCertPdf(cert, company, sigBytes, sigName);
+        pdfBytes ??= BuildWhtCertPdf(cert, company, sigBytes, sigName, stamp: stamp);
 
         return new GeneratePdfResponse(cert.Id, cert.CertificateNumber,
             $"WHT-{cert.CertificateNumber}.pdf", "application/pdf", pdfBytes.Length, pdfBytes, DateTime.UtcNow);
@@ -1046,6 +1031,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         // slot 0 + slot 1 are always present (blank when unsigned) so slot 2
         // (customer) keeps its index even when the approver hasn't signed.
         var signers = new List<DocumentSigner> { FromUser(creatorId), FromUser(approverId) };
+        // ทีม J 2026-10-22: เจ้าของลายเซ็นต่อช่อง (ผู้ใช้ในระบบ · null = ไม่ใช่ผู้ใช้) + ช่องที่เป็นลายเซ็นลูกค้า — ให้ด่านกฎ
+        // "ผู้ลงนามที่มีสิทธิ์/ขั้นที่พิมพ์ลายเซ็น" (ApplySignerPolicyAsync ← DocumentStampPolicy) ตัดสินท้ายเมธอด
+        var slotUsers = new Guid?[] { creatorId, approverId };
+        var customerSlots = new bool[2];
 
         // DELIVERY e-SIGN OVERRIDE (slot 1 = "ผู้รับของ") — ลูกค้าเซ็นรับสินค้า
         // ออนไลน์ผ่านลิงก์ POD → ประทับลายเซ็น + ชื่อ + เวลาลงช่องผู้รับของ
@@ -1060,6 +1049,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 : signers[1].Title;
             signers[1] = new DocumentSigner(sigUri, TryDecodeBase64Image(rawSig),
                 doc.DeliverySignedBy ?? signers[1].Name, signedTitle);
+            slotUsers[1] = null; customerSlots[1] = true;   // ลูกค้าเซ็นรับของจริง — กฎของบริษัทไม่แตะ
         }
 
         // PV "ผู้จ่ายเงิน" SIGNATURE OVERRIDE (slot 0). PaymentVoucher allows
@@ -1083,6 +1073,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 var name = !string.IsNullOrWhiteSpace(pay.PayerSignatureName)
                     ? pay.PayerSignatureName : signers[0].Name;
                 signers[0] = new DocumentSigner(dataUri, TryDecodeBase64Image(raw), name, signers[0].Title);
+                slotUsers[0] = null;   // ลายเซ็นที่ผู้เรียก API ส่งมา — ไม่ใช่ผู้ใช้ในระบบ
             }
         }
 
@@ -1105,6 +1096,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                 dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
                     ? raw : "data:image/png;base64," + raw;
                 bytes = TryDecodeBase64Image(raw);
+                slotUsers[0] = null;   // ลายเซ็นคู่ค้าส่งมา — ไม่ใช่ผู้ใช้ในระบบ
             }
             // ชื่อที่ partner ส่งมา = คนทำจริง → **priority เหนือ** CreatedBy user
             // (TakeTime: ช่อง "ผู้รับเงิน" = ชวนพิศ ที่ส่งมา ไม่ใช่ service account ที่สร้างเอกสาร;
@@ -1190,6 +1182,7 @@ public partial class PdfGenerationService : IPdfGenerationService
                         ? custom.AuthorizedSignatoryName : signers[1].Name,
                     !string.IsNullOrWhiteSpace(custom.AuthorizedSignatoryTitle)
                         ? custom.AuthorizedSignatoryTitle : signers[1].Title);
+                slotUsers[1] = null;   // ผู้มีอำนาจลงนามที่บริษัทกำหนดเอง — ไม่ใช่ผู้ใช้ในระบบ
             }
         }
 
@@ -1211,10 +1204,11 @@ public partial class PdfGenerationService : IPdfGenerationService
                 join u in _db.Users.AsNoTracking() on cu.UserId equals u.Id
                 where cu.CompanyId == doc.CompanyId && cu.Role == Models.Enums.UserRole.Owner
                       && u.SignatureImageBase64 != null && u.SignatureImageBase64 != ""
-                select new { u.SignatureImageBase64, u.SignatureName, u.FullName, u.SignatureTitle })
+                select new { u.Id, u.SignatureImageBase64, u.SignatureName, u.FullName, u.SignatureTitle })
                 .FirstOrDefaultAsync();
             if (ownerSig != null && !string.IsNullOrWhiteSpace(ownerSig.SignatureImageBase64))
             {
+                slotUsers[1] = ownerSig.Id;
                 var raw = ownerSig.SignatureImageBase64!.Trim();
                 var dataUri = raw.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
                     ? raw : "data:image/png;base64," + raw;
@@ -1223,6 +1217,12 @@ public partial class PdfGenerationService : IPdfGenerationService
                     ownerSig.SignatureTitle);
             }
         }
+
+        // กฎลายเซ็น (ขั้นที่พิมพ์ · ผู้ลงนามที่มีสิทธิ์) — ตัวตัดสินเดียว DocumentStampPolicy · ทั้ง HTML + QuestPDF รับ signers จากที่นี่
+        var stampSettings = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(c => c.CompanyId == doc.CompanyId && !c.IsDeleted)
+            .FirstOrDefaultAsync();
+        await ApplySignerPolicyAsync(doc.CompanyId, StampDecisionFor(doc, stampSettings), signers, slotUsers, customerSlots);
 
         return signers;
     }
@@ -2322,6 +2322,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         var printTotals = ResolvePrintTotals(doc, L);
         if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{printTotals.VatLabel}</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalWht}</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
+        // ทีม F — หัก ณ ที่จ่ายหลายอัตราในใบเดียว ⇒ แถวย่อยต่ออัตรา (อัตราเดียว = ไม่มีแถว · กระดาษเดิมเหมือนเดิม) · คู่กับ QuestPDF renderer ห้าม drift
+        if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
+            foreach (var (whtRateRow, whtRateAmt) in Accounting.Helpers.PerLineWht.RateBreakdownForPrint(doc))
+                sb.AppendLine($"<div class='sum-row' style='font-size:90%;color:#475569'><span>{System.Net.WebUtility.HtmlEncode(L.TotalWhtAtRate(whtRateRow))}</span><span>({whtRateAmt:N2})</span></div>");
         // รอบ 204 ฝ่ายค้าน P2-1: ผู้จ่ายออกภาษีแทน (+) — ยอดสุทธิ = ฐาน + VAT − ภาษีนำส่ง + ส่วนนี้ (WhtGrossUp.PayeeTotal) · เงื่อนไขเดียวกับแถวภาษีหัก
         // (ซ่อนแถวภาษีก็ซ่อนแถวนี้ — กระดาษต้องบวกลงยอดเสมอ) · คู่กับ QuestPDF renderer (PdfGenerationService.DocumentRenderer) ห้าม drift
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0 && doc.WhtPayerBorneAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalWhtPayerBorne}</span><span>{doc.WhtPayerBorneAmount:N2}</span></div>");
@@ -2457,21 +2461,16 @@ public partial class PdfGenerationService : IPdfGenerationService
         // images degrade to a blank line + label.
         // ตราประทับบริษัท — ประทับเหนือช่องลงนาม เฉพาะเอกสารที่อนุมัติแล้ว
         // (ผู้มีอำนาจอนุมัติ = ประทับตรา). เงื่อนไขเดียวกับช่องลายเซ็นผู้อนุมัติ.
+        // ทีม J 2026-10-22: ขั้นไหนประทับ/ตำแหน่ง/ขนาด/ระยะเลื่อน จากตัวตัดสินเดียว DocumentStampPolicy (ตัวเดียวกับ QuestPDF BuildBranding) ·
+        // ยังไม่ตั้งกฎ = เดิมทุกอย่าง (ร่าง/รออนุมัติ/ถูกปฏิเสธ ไม่ประทับ) · รูปตราจาก ResolveStampBytes ตัวเดียวกับ QuestPDF
         if (template.ShowCompanyStamp)
         {
-            var stampApproved = doc.Status is not (DocumentStatus.Draft
-                or DocumentStatus.WaitingApproval or DocumentStatus.Rejected);
-            var stampSrc = stampApproved
-                ? Accounting.Helpers.HtmlImageSource.Attribute(TryLogoDataUri(settings?.StampPath) ?? settings?.StampUrl)
+            var stampRule = StampDecisionFor(doc, settings);
+            var stampSrc = stampRule.ShowStamp
+                ? Accounting.Helpers.HtmlImageSource.Attribute(ImageDataUri(ResolveStampBytes(settings, template)) ?? settings?.StampUrl)
                 : null;
             if (!string.IsNullOrEmpty(stampSrc))
-            {
-                var sw = settings?.StampWidthMm ?? 32m; if (sw <= 0) sw = 32m;
-                var sh = settings?.StampHeightMm ?? 32m; if (sh <= 0) sh = 32m;
-                var align = (settings?.StampAlign) switch { "Left" => "left", "Center" => "center", _ => "right" };
-                sb.AppendLine($"<div style='text-align:{align};margin-top:8px'>"
-                    + $"<img src='{stampSrc}' alt='ตราประทับ' style='width:{sw}mm;height:{sh}mm;object-fit:contain;display:inline-block'/></div>");
-            }
+                sb.AppendLine(DocumentStampBlockHtml(stampRule, stampSrc));
         }
 
         if (template.ShowSignature)
@@ -2572,9 +2571,13 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// <param name="funds">ยอด "เงินที่จ่ายเข้า" กองทุน (A9 · 2026-10-13) — ใบรายปีของพนักงานเท่านั้น
     /// (<see cref="WhtCertFormText.EmployeeAnnualFunds"/>) · null/ช่องที่เป็น null = เส้นว่างเหมือนเดิมทุกไบต์ ·
     /// พารามิเตอร์เดียวกับ QuestPDF <c>BuildWhtCertPdf</c> (สอง renderer ห้าม drift)</param>
+    /// <param name="stamp">ตรานิติบุคคลที่ตัดสินแล้ว (<c>ResolveWhtCertStamp</c> ← <c>Helpers/DocumentStampPolicy</c>) · null = วงกลมว่างเหมือนเดิมทุกไบต์ ·
+    /// พารามิเตอร์เดียวกับ QuestPDF <c>BuildWhtCertPdf</c> (ทีม J 2026-10-22)</param>
     internal static string BuildWithholdingTaxCertHtml(WithholdingTaxCert cert, Company company,
-        string? sigBase64 = null, string? sigName = null, WhtCertFundAmounts? funds = null)
+        string? sigBase64 = null, string? sigName = null, WhtCertFundAmounts? funds = null,
+        WhtCertStamp? stamp = null)
     {
+        _ = sigName;   // แบบพิมพ์มีแต่ลายเซ็น ไม่พิมพ์ชื่อ — ตรงกับ QuestPDF + หน้าพิมพ์ (ทีม J 2026-10-22 · เดิม HTML ต่อชื่อท้ายรูป)
         var sb = new StringBuilder();
         var certNum = WebUtility.HtmlEncode(cert.CertificateNumber);
         // ใช้ FormatThaiAddress (เหมือน path เอกสารอื่น) — รวม structured fields
@@ -2653,64 +2656,20 @@ public partial class PdfGenerationService : IPdfGenerationService
         var issuedYear = cert.IssuedDate.HasValue ? (cert.IssuedDate.Value.Year + 543).ToString() : "&nbsp;&nbsp;&nbsp;&nbsp;";
 
         sb.AppendLine("<!DOCTYPE html><html lang='th'><head><meta charset='UTF-8'/>");
-        sb.AppendLine(@"<style>
-@page { size: A4; margin: 6mm 10mm; }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Thai', sans-serif; font-size: 15px; line-height: 1.3; color: #000; background: #fff; }
-.wht-page { width: 190mm; max-width:100%; margin:0 auto; page-break-after:always; }
-.wht-page:last-child { page-break-after:auto; }
-.copy-labels { font-size:13px; line-height:1.4; margin-bottom:3px; padding-left:2px; }
-.copy-labels div { color:#666; }
-.copy-labels .copy-active { color:#000; font-weight:700; }
-.F { width:100%; border:2.5px solid #000; border-collapse:collapse; }
-.F > tbody > tr > td { border-bottom:1px solid #000; }
-.F > tbody > tr:last-child > td { border-bottom:none; }
-.inner { width:100%; border:none; border-collapse:collapse; }
-.inner td { border:none; padding:1px 0; vertical-align:baseline; }
-.title-cell { padding:4px 8px 4px; border-bottom:1px solid #000 !important; }
-.title-main { font-size:20px; font-weight:700; letter-spacing:2px; text-align:center; }
-.title-sub { font-size:14px; text-align:center; margin-top:-1px; }
-.hint-text { font-size:11px; font-style:italic; color:#444; padding-left:48px; margin-top:-1px; line-height:1.3; }
-.sec-cell { padding:3px 8px 4px; }
-.sec-hdr { font-weight:700; font-size:15px; }
-.f-lbl { font-weight:600; white-space:nowrap; padding-right:4px !important; width:45px; }
-.ul { text-decoration:none; border-bottom:1px dotted #000; padding:0 2px; }
-.tb { display:inline-block; width:18px; height:22px; border:1.5px solid #000; text-align:center; line-height:22px; font-size:15px; font-weight:700; margin:0 0.5px; background:#fff; vertical-align:middle; }
-.ts { display:inline-block; width:6px; text-align:center; font-weight:700; font-size:12px; vertical-align:middle; }
-.ck { font-size:16px; vertical-align:-2px; }
-.ftype-cell { padding:4px 8px; font-size:14px; }
-.ftype-cell td { font-size:14px; padding:1px 4px !important; }
-.ftype-grid td { padding:1px 8px !important; white-space:nowrap; }
-.sq { display:inline-block; border:1.5px solid #000; min-width:60px; height:20px; text-align:center; line-height:20px; font-size:13px; vertical-align:middle; padding:0 4px; }
-.IT { width:100%; border-collapse:collapse; font-size:14px; }
-.IT th, .IT td { border:1px solid #000; padding:2px 5px; vertical-align:top; }
-.IT th { text-align:center; font-weight:700; font-size:13px; }
-.IT .amt { text-align:right; }
-.IT .dtc { text-align:center; font-size:13px; }
-.it-type { padding-left:6px !important; font-size:13px; line-height:1.35; }
-.it-s5 { font-size:12px; line-height:1.3; }
-.total-row { font-weight:700; }
-.total-row td { border-top:2px solid #000 !important; }
-.div-indent { padding-left:18px; font-size:12px; line-height:1.45; }
-.totxt-cell { padding:4px 8px; font-size:15px; background:#f0f0f0; }
-.fund-cell { padding:4px 8px; font-size:13px; line-height:1.5; }
-.cond-cell { padding:3px 8px; font-size:14px; }
-.cond-cell td { font-size:14px; }
-.bottom-split td { vertical-align:top; padding:6px 10px; }
-.bottom-left { width:35%; font-size:12px; line-height:1.5; border-right:1px solid #000 !important; }
-.bottom-right { width:65%; font-size:13px; line-height:1.5; position:relative; padding-right:90px !important; }
-.sig-block { padding:4px 14px 0; }
-.sig-line { margin-bottom:6px; }
-.sig-dots { display:inline-block; min-width:200px; border-bottom:1px dotted #000; }
-.sig-date { text-align:center; margin:4px 0 0; font-size:14px; }
-.sig-dots-sm { display:inline-block; min-width:40px; border-bottom:1px dotted #000; text-align:center; padding:0 4px; }
-.stamp-area { position:absolute; right:8px; top:50%; transform:translateY(-50%); width:78px; height:78px; border:1.2px solid #000; border-radius:50%; text-align:center; font-size:11px; line-height:1.4; display:flex; align-items:center; justify-content:center; font-style:italic; color:#222; }
-.footnote { font-size:12px; line-height:1.4; margin-top:3px; padding:0 2px; }
-</style></head><body>");
+        // สไตล์ = สำเนาตรงตัวของหน้าพิมพ์ wht.html (WhtCertCss · ล็อกด้วยเทสต์) — ทีม J 2026-10-22 WYSIWYG
+        sb.AppendLine("<style>");
+        sb.Append(WhtCertCss);
+        sb.AppendLine("</style></head><body>");
+        // ใบที่ถูกยกเลิก — ลายน้ำ "ยกเลิก / CANCELLED" ทุกฉบับ (เดิมมีแต่ QuestPDF + หน้าพิมพ์ · HTML ไม่มี)
+        var voidParts = WhtCertFormText.VoidWatermark.Split('\n');
+        var voidMark = cert.Status == Models.DTOs.Tax.WithholdingTaxCertStatus.Voided
+            ? $"<div class='void-watermark'>{voidParts[0]}{(voidParts.Length > 1 ? $"<small>{voidParts[1]}</small>" : "")}</div>"
+            : "";
 
         void BuildCopy(int copyNum)
         {
             sb.AppendLine("<div class='wht-page'>");
+            if (voidMark.Length > 0) sb.AppendLine(voidMark);
             sb.AppendLine("<div class='copy-labels'>");
             for (var c = 0; c < WhtCertFormText.Copies.Count; c++)
                 sb.AppendLine($"<div{(copyNum == c + 1 ? " class='copy-active'" : "")}><b>{WhtCertFormText.Copies[c].Label}</b> <i>{WhtCertFormText.Copies[c].Note}</i></div>");
@@ -2795,13 +2754,15 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             // คำเตือน: หัวข้อซ้าย ข้อความห้อยด้านขวา ตามแบบทางการ (รอบ 204 · เดิมหัวข้อกลางอยู่เหนือข้อความ)
             sb.AppendLine($"<td class='bottom-left'><table class='inner' cellspacing='0'><tr><td style='white-space:nowrap;vertical-align:top;padding:0 6px 0 0'><b>{WhtCertFormText.WarningHeading}</b></td><td style='vertical-align:top;padding:0'>{WhtCertFormText.WarningText}</td></tr></table></td>");
             sb.AppendLine($"<td class='bottom-right'><div style='margin-bottom:6px'>{WhtCertFormText.Certify}</div>");
-            // ลายเซ็น: ฝังรูป + ชื่อผู้เซ็นถ้ามี (ให้ตรงกับไฟล์ที่ download); ไม่มี → เส้นจุด
-            var sigInner = !string.IsNullOrWhiteSpace(sigBase64)
-                ? $"<img src='data:image/png;base64,{WebUtility.HtmlEncode(sigBase64)}' style='height:34px;vertical-align:middle' alt='' />"
-                  + (string.IsNullOrWhiteSpace(sigName) ? "" : $" {WebUtility.HtmlEncode(sigName)}")
+            // ลายเซ็น: รูปวางบนเส้นจุด (.sig-dots > .sig-img) เหมือนหน้าพิมพ์ + QuestPDF · ไม่มี → เส้นจุดว่าง
+            var sigSrc = string.IsNullOrWhiteSpace(sigBase64) ? null
+                : Accounting.Helpers.HtmlImageSource.Attribute("data:image/png;base64," + sigBase64.Trim());
+            var sigInner = sigSrc != null
+                ? $"<span class='sig-dots'><img class='sig-img' src='{sigSrc}' alt='signature'></span>"
                 : "<span class='sig-dots'></span>";
             sb.AppendLine($"<div class='sig-block'><div class='sig-line' style='text-align:right'>{WhtCertFormText.SignLead} {sigInner} {WhtCertFormText.SignRole}</div><div class='sig-date'><span class='sig-dots-sm'>{issuedDay}</span> / <span class='sig-dots-sm'>{issuedMonth}</span> / <span class='sig-dots-sm'>{issuedYear}</span></div><div style='text-align:center;font-size:11px;color:#444'>{WhtCertFormText.SignDateHint}</div></div>");
-            sb.AppendLine($"<div class='stamp-area'>{string.Join("<br>", WhtCertFormText.StampLines)}</div></td>");
+            // ตรานิติบุคคล — ตัวตัดสินเดียว DocumentStampPolicy (ทีม J 2026-10-22 · เดิมวงกลมว่างเสมอ)
+            sb.AppendLine($"{WhtStampAreaHtml(stamp)}</td>");
             sb.AppendLine("</tr></table></td></tr>");
 
             sb.AppendLine("</table>");
@@ -3329,19 +3290,17 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
     /// PDF generation can never be broken by branding data.
     /// </summary>
     private static PdfBranding BuildBranding(DocumentTemplate template, CompanySettings? settings,
-        string? watermarkOverride, bool stampAllowed = false, DocumentBrand? brand = null)
+        string? watermarkOverride, Accounting.Helpers.DocumentStampPolicy.Decision? stampRule = null, DocumentBrand? brand = null)
     {
         // โลโก้แบรนด์ชนะโลโก้บริษัท — ต้องตรงกับฝั่ง HTML ที่ใช้ issuer.LogoPath
         // (ไม่งั้น PDF สองเครื่องพิมพ์โลโก้คนละอัน = defect class "renderer drift")
         byte[]? logo = template.ShowLogo
             ? (TryReadImage(brand?.LogoPath) ?? TryReadImage(settings?.LogoPath))
             : null;
-        // ตราประทับ: ประทับเฉพาะเอกสารที่อนุมัติแล้ว (stampAllowed) — Draft/รออนุมัติ
-        // ไม่ประทับ (ผู้มีอำนาจอนุมัติ = ประทับตรา). รูปมาจาก CompanySettings.StampPath
-        // (ตราบริษัทกลาง ใช้ทุกเอกสาร) fallback template.StampImagePath (ของเดิม).
-        // template.ShowCompanyStamp = ปิด/เปิดต่อเทมเพลตได้.
-        byte[]? stamp = (stampAllowed && template.ShowCompanyStamp)
-            ? (TryReadImage(settings?.StampPath) ?? TryReadImage(template.StampImagePath))
+        // ตราประทับ: ขั้นที่ประทับจากกฎ (stampRule ← DocumentStampPolicy · null = ไม่ประทับ) · รูปจาก ResolveStampBytes
+        // ตัวเดียวกับ HTML (StampPath → StampUrl → ตราในเทมเพลต) · template.ShowCompanyStamp = ปิด/เปิดต่อเทมเพลตได้.
+        byte[]? stamp = (stampRule is { ShowStamp: true } && template.ShowCompanyStamp)
+            ? ResolveStampBytes(settings, template)
             : null;
 
         var sigLabels = new List<string>();
@@ -3370,9 +3329,11 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
             ShowSignature: template.ShowSignature && sigLabels.Count > 0,
             SignatureLabels: sigLabels.ToArray(),
             StampBytes: stamp,
-            StampWidthMm: Clamp((float)(settings?.StampWidthMm ?? 32m), 0f, 120f, 32f),
-            StampHeightMm: Clamp((float)(settings?.StampHeightMm ?? 32m), 5f, 120f, 32f),
-            StampAlign: (settings?.StampAlign ?? "Right").Trim());
+            StampWidthMm: (float)(stampRule?.WidthMm ?? 32m),
+            StampHeightMm: (float)(stampRule?.HeightMm ?? 32m),
+            StampAlign: stampRule?.Align ?? "Right",
+            StampOffsetXMm: (float)(stampRule?.OffsetXMm ?? 0m),
+            StampOffsetYMm: (float)(stampRule?.OffsetYMm ?? 0m));
     }
 
     /// <summary>Build a base64 data-URI for the logo from its file path so it
@@ -3456,7 +3417,9 @@ body { font-family: 'TH Sarabun New', 'TH SarabunPSK', 'Sarabun', 'Noto Sans Tha
         byte[]? StampBytes = null, float StampWidthMm = 32f, float StampHeightMm = 32f,
         string? StampAlign = "Right",
         // เครดิตท้ายเอกสารสำหรับบัญชีแพ็กเกจฟรี (ดู IsFreeTierAsync)
-        bool ShowFreeTierCredit = false);
+        bool ShowFreeTierCredit = false,
+        // ระยะเลื่อนตรา (มม.) จาก DocumentStampPolicy — ทีม J 2026-10-22
+        float StampOffsetXMm = 0f, float StampOffsetYMm = 0f);
 
     // ───────────────────────────────────────────────────────────────
     //  เครดิตท้ายเอกสารของบัญชีฟรี

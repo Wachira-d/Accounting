@@ -199,6 +199,9 @@
           // overlay paints.
           setTimeout(() => this.openCreate(), 50);
         }
+        // ลิงก์ตรงจาก drill-down งบกำไรขาดทุน (?claimId=) — เปิดรายละเอียดใบเบิกทันที
+        const deepClaim = new URLSearchParams(window.location.search).get('claimId');
+        if (deepClaim) await this.viewDetail(deepClaim);
       },
       // X4 2026-10-14: ไฟล์ส่งออก = ทุกใบตามตัวกรองเดียวกับตาราง (เซิร์ฟเวอร์เดินทุกหน้า · ขอบเขตสิทธิ์ชุดเดียวกับรายการ)
       exportFile(format) {

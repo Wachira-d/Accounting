@@ -46,6 +46,9 @@ public class CompanySettings : TenantEntity
     /// <summary>ตำแหน่งตราในโซนลายเซ็น/ผู้อนุมัติ: "Right" (ค่าเริ่มต้น),
     /// "Left", "Center". ประทับเหนือช่องลงนามเสมอ (จุดที่ผู้อนุมัติเซ็น).</summary>
     public string StampAlign { get; set; } = "Right";
+    /// <summary>กฎตราประทับ/ลายเซ็นอิเล็กทรอนิกส์ต่อประเภทเอกสาร × สถานะ (JSON · ทีม J 2026-10-22) — ตัวตัดสินเดียว
+    /// <c>Helpers/DocumentStampPolicy</c> · null/ไม่มีคีย์ = พฤติกรรมเดิม (ประทับเฉพาะอนุมัติแล้ว · ลายเซ็นทุกขั้น)</summary>
+    public string? DocumentStampRulesJson { get; set; }
     public string? PrimaryColor { get; set; }
     public string? SecondaryColor { get; set; }
 
@@ -155,6 +158,13 @@ public class CompanySettings : TenantEntity
     /// อัตโนมัติตอนออกใบ. default ปิด — ผู้ใช้กด download/พิมพ์เองจากหน้า WHT
     /// (ไฟล์สวยกว่า). เปิดได้ถ้าต้องการให้แนบให้อัตโนมัติ.</summary>
     public bool AutoAttachWhtCertPdf { get; set; } = false;
+
+    /// <summary>ทีม F — <b>หัก ณ ที่จ่ายตามรายการ</b> (ต่างประเภท/ต่างอัตราในใบเดียว) · เปิด ⇒ OCR เติมอัตรา/ประเภทเงินได้ต่อบรรทัด
+    /// (<c>Helpers/OcrLineWhtPlan</c>) + ใช้ยอดบาทที่พิมพ์บนใบต่างสกุลเป็นฐาน (<c>Helpers/OcrThbEquivalent</c>) + ฟอร์มเอกสารแสดงสรุปต่อประเภท ·
+    /// ปิด (ค่าตั้งต้น) = OCR ทำงานแบบเดิม (อัตราหัวใบทุกบรรทัด · อัตรา ธปท.) · ช่องหัก ณ ที่จ่ายรายบรรทัดในฟอร์มมีอยู่แล้วทั้งสองแบบ ·
+    /// ⚠️ <b>ไม่ขึ้นกับค่าตั้งนี้</b> (แก้บั๊ก — ทำงานเสมอ): 50 ทวิ/ภ.ง.ด./หน้านำส่ง/สรุปต่อประเภทของใบต่างสกุลเป็นบาท (<c>Helpers/PerLineWht</c>) ·
+    /// ช่อง "ยอดบาทตามเอกสาร" ในฟอร์ม · แถวย่อยต่ออัตราบนกระดาษ · ดู <c>docs/PER_LINE_WHT_DESIGN.md</c></summary>
+    public bool PerLineWhtEnabled { get; set; } = false;
 
     // e-Tax Invoice Settings (per-company)
     public bool EtaxEnabled { get; set; } = false;

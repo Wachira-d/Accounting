@@ -1491,7 +1491,9 @@ public enum BookingStatus
     InProgress = 2,
     Completed = 3,
     Cancelled = 4,
-    NoShow = 5
+    NoShow = 5,
+    /// <summary>คิวสำรอง (Waiting List) — รอบเต็ม · ไม่กินความจุ · ไม่ออกเอกสาร ERP จนกว่าจะถูกเลื่อนขึ้น (ทีม B · BookingSlotEngine)</summary>
+    Waitlisted = 6
 }
 
 public enum ErpBookingDocumentType

@@ -284,6 +284,28 @@ public class LodgingController : ControllerBase
         return PhysicalFile(f.Value.Path, f.Value.ContentType);
     }
 
+    /// <summary>สลิปทุกใบของการจอง (ล่าสุด · ถูกปฏิเสธ · ถูกส่งทับ) ให้โมดัลการจองแสดงเป็นรูปย่อ — URL ทุกใบเป็นเส้นที่ตรวจสิทธิ์</summary>
+    [HttpGet("reservations/{id:guid}/slips")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult<ApiResponse<List<LodgingSlipItemDto>>>> Slips(Guid companyId, Guid id)
+    {
+        var items = await _svc.GetSlipGalleryAsync(companyId, id);
+        if (items == null) return NotFound(new ApiResponse<List<LodgingSlipItemDto>>(false, null, "ไม่พบการจอง"));
+        return Wrap(items);
+    }
+
+    /// <summary>ไฟล์สลิป 1 ใบ (รวมใบที่ถูกปฏิเสธ — ยังเป็นหลักฐาน) · inline เพื่อแสดงในโมดัล · ไม่ส่งชื่อไฟล์เดิมของแขกเป็น header</summary>
+    [HttpGet("reservations/{id:guid}/slips/{attachmentId:guid}")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<IActionResult> SlipById(Guid companyId, Guid id, Guid attachmentId)
+    {
+        var f = await _svc.GetSlipAttachmentFileAsync(companyId, id, attachmentId);
+        if (f == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
+        // nosniff: เบราว์เซอร์ต้องเชื่อ content type ที่เราตั้ง (รูป/PDF เท่านั้น) ไม่เดาเป็น HTML
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        return PhysicalFile(f.Value.Path, f.Value.ContentType);
+    }
+
     /// <summary>ปฏิเสธสลิปที่แขกส่งมา — ทางออกที่หายไปเมื่อสลิปไม่ตรง/ปลอม
     /// (เดิมมีแค่ "ยืนยัน" กับ "ยกเลิกทั้งใบ" ⇒ พนักงานได้แต่เงียบ)</summary>
     [HttpPost("reservations/{id:guid}/reject-slip")]

@@ -50,4 +50,40 @@ public static class LodgingPublicRoomLabels
             : "";
         return $"ผู้ใหญ่สูงสุด {Math.Max(1, maxAdults)} คน/ห้อง{extra} · เด็ก/ทารกไม่นับความจุ";
     }
+
+    /// <summary>ป้ายกติกาห้องบนหน้าห้องพักสาธารณะ — บอกทั้งสองทิศเสมอ (ห้ามสูบ/สูบได้ · ไม่รับ/รับสัตว์เลี้ยง) ให้แขกไม่ต้องเดา</summary>
+    public static List<string> HouseRuleLabels(bool smokingAllowed, bool petsAllowed) => new()
+    {
+        smokingAllowed ? "สูบบุหรี่ได้" : "ห้องปลอดบุหรี่ (ห้ามสูบบุหรี่)",
+        petsAllowed ? "รับสัตว์เลี้ยง" : "ไม่รับสัตว์เลี้ยง",
+    };
+
+    /// <summary>"เด็กพักได้สูงสุด N คน/ห้อง" — 0 หรือติดลบ ⇒ null (ไม่แต่งป้าย · ความจุนับผู้ใหญ่อย่างเดียวตามข้อ 124)</summary>
+    public static string? ChildrenLabel(int maxChildren)
+        => maxChildren > 0 ? $"เด็กพักได้สูงสุด {maxChildren} คน/ห้อง" : null;
+
+    /// <summary>สรุปเงื่อนไขยกเลิกของนโยบายเดียวกับที่ใบเสนอราคาใช้ — ความหมายตรงกับ <see cref="LodgingPricingEngine.CancellationFee"/> ทุกขั้น:
+    /// กฎ {d,p} (เรียง d มาก→น้อย) ใช้เมื่อยกเลิกล่วงหน้า<b>มากกว่า</b> d วัน · เหลือวันไม่เกิน d ของขั้นสุดท้าย ⇒ ใช้ขั้นสุดท้าย ⇒
+    /// ขั้นสุดท้ายเขียนเป็น "ภายใน {d ของขั้นก่อนหน้า} วัน" · มีขั้นเดียว = ทุกกรณี · ไม่คืนเงิน ⇒ "ไม่คืนเงินทุกกรณี" ·
+    /// ไม่มีกฎ = null (ไม่แต่งเงื่อนไขที่ไม่มีจริง)</summary>
+    public static string? CancellationSummary(bool nonRefundable, IEnumerable<LodgingCancellationRule> rules)
+    {
+        if (nonRefundable) return "ไม่คืนเงินทุกกรณี";
+        var ordered = rules.OrderByDescending(r => r.DaysBefore).ToList();
+        if (ordered.Count == 0) return null;
+        static string Fee(decimal pct) => pct <= 0 ? "ไม่มีค่าธรรมเนียม"
+            : $"คิด {pct.ToString("0.##", CultureInfo.InvariantCulture)}% ของยอดการจอง";
+        var parts = new List<string>();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var r = ordered[i];
+            if (i < ordered.Count - 1)
+                parts.Add($"ยกเลิกล่วงหน้ามากกว่า {Math.Max(0, r.DaysBefore)} วัน {Fee(r.PenaltyPercent)}");
+            else if (i == 0)
+                parts.Add($"ยกเลิกเมื่อใดก็ตาม {Fee(r.PenaltyPercent)}");
+            else
+                parts.Add($"ยกเลิกภายใน {Math.Max(0, ordered[i - 1].DaysBefore)} วันก่อนเข้าพัก {Fee(r.PenaltyPercent)}");
+        }
+        return string.Join(" · ", parts);
+    }
 }

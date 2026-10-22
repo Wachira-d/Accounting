@@ -164,6 +164,9 @@ public sealed class DocumentLabels
     public string TotalSubtotal => this["total_subtotal"];
     public string TotalVat => this["total_vat"];
     public string TotalWht => this["total_wht"];
+    /// <summary>ทีม F — แถวย่อยใต้ "ภาษีหัก ณ ที่จ่าย" เมื่อใบมีหลายอัตรา (หัก ณ ที่จ่ายตามรายการ · <c>Helpers/PerLineWht.RateBreakdownForPrint</c>) —
+    /// ทั้งสอง renderer ใช้ข้อความนี้ (ห้าม literal)</summary>
+    public string TotalWhtAtRate(decimal ratePercent) => string.Format(this["total_wht_at_rate"], ratePercent.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
     /// <summary>รอบ 204 ฝ่ายค้าน P2-1: แถว "ผู้จ่ายออกภาษีแทน" (+) ใต้แถวภาษีหัก ณ ที่จ่าย — ใบ "ออกให้ตลอดไป/ครั้งเดียว" ยอดสุทธิ = ฐาน + VAT − ภาษีนำส่ง + ส่วนนี้
     /// (<c>WhtGrossUp.PayeeTotal</c>) ⇒ ไม่มีแถวนี้ ตัวเลขบนกระดาษบวกไม่ลงยอดสุทธิ</summary>
     public string TotalWhtPayerBorne => this["total_wht_payer_borne"];
@@ -218,6 +221,7 @@ public sealed class DocumentLabels
         ["total_after_discount_base"] = "ยอดหลังหักส่วนลด (ฐานภาษี)",
         ["total_vat"] = "ภาษีมูลค่าเพิ่ม",
         ["total_wht"] = "ภาษีหัก ณ ที่จ่าย",
+        ["total_wht_at_rate"] = "  — หัก {0}%",
         ["total_wht_payer_borne"] = "บวก ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน",
         ["total_vat_self_assessed_pp36"] = "VAT ที่ผู้จ่ายประเมินและนำส่งเอง (ภ.พ.36 §83/6) — ไม่จ่ายให้ผู้รับเงิน",
         ["total_payee_amount"] = "ยอดจ่ายผู้รับเงิน",
@@ -315,6 +319,7 @@ public sealed class DocumentLabels
         ["total_after_discount_base"] = "Net after discount (taxable)",
         ["total_vat"] = "VAT",
         ["total_wht"] = "Withholding tax",
+        ["total_wht_at_rate"] = "  — at {0}%",
         ["total_wht_payer_borne"] = "Add: withholding tax borne by payer",
         ["total_vat_self_assessed_pp36"] = "VAT self-assessed and remitted by the payer (Form P.P.36, Revenue Code s.83/6) — not paid to the payee",
         ["total_payee_amount"] = "Amount paid to payee",

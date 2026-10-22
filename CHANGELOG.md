@@ -5340,3 +5340,104 @@ _2026-10-22 ทีม K — POS คิวการจอง/ช่างรา�
 ไม่มีผู้เขียน · ค่าเหมาจ่ายระดับร้านไม่มีผู้อ่าน) · บรรทัดค่าส่ง VAT ตามสินค้าในบิล (§79 — เดิม 0) · เงื่อนไขชำระ `Helpers/MtoPaymentTerms`
 ใช้ร่วมกับสลิป/ช่องจ่ายออนไลน์ (ลงบัญชีมัดจำผ่านเส้นรับชำระบางส่วนเดิม) · หน้าตั้งค่าใน `cms-orders.html` · ช่องวันผลิต/น้ำหนักใน `cms-edit.html`.
 Backlog (ยกเว้น VAT รายบรรทัดบน POS · หักมัดจำการจองในบิล POS · ค่าส่งตามระยะทาง · ตัวเลือกบน POS) อยู่ใน `docs/POS_MTO_DESIGN.md` §4._
+
+_2026-10-22 ทีม A (หน้าเคาน์เตอร์ที่พัก · ผู้ใช้รายงาน "สลิปรอตรวจ … เปิดดูสลิป" แต่ไม่มีที่ให้ดูสลิป): ลิงก์เดิม `Layout.openAuthed` เปิดแท็บหลัง await ⇒ ป๊อปอัปถูกบล็อก ⇒ ดาวน์โหลดไฟล์ `slip` ไม่มีนามสกุล ·
+โมดัลการจองมีกรอบ "สลิปของแขก" รูปย่อทุกใบ (ล่าสุด/ก่อนหน้า/ถูกปฏิเสธ + เหตุผล) กดขยายได้ · `GET lodging/reservations/{id}/slips` + `/slips/{attachmentId}` (`LodgingManage` · tenant · ด่านพาธ `LodgingSlipPath` เดิม) ·
+ตัวรวม `Helpers/LodgingSlipGallery` + `LodgingSlipPath.StorageKey` · audit `GuestUploadedSlip` จด `slipUrl` · ปุ่ม "รับชำระระหว่างพัก" (CheckedIn · เส้น `ConfirmAsync` เดิม) · folio เลือกจากบริการเสริม ·
+ผลตรวจความพร้อมที่ `LODGING_BOOKING_AUDIT.md` §12 (ส่วนลด/ใบรับเงินใบที่ 2+ ในโมดัล = backlog)_
+
+_2026-10-22 (ทีม D — เว็บที่พักฝั่งแขก): เมนู "ห้องพัก" เป็นหน้ารายละเอียดห้องเต็ม (`renderLodgingRoomsPage` · `/rooms/{slug}`) + "จองห้องนี้" ⇒ `/booking?roomType=` เลือกห้องให้ ·
+เมนู "จอง" คง flow ค้นหา/จอง · ตัวช่วยวันที่เดียว `Store.lgDateSync` ทุกฟอร์มวันที่ (เช็คเอาต์อัตโนมัติวันถัดไป · min · ป้าย "N คืน · …" ในค้นหา/สรุป/หน้าการจอง) ·
+ช่องตั้งค่าประเภทห้องใหม่ สูบบุหรี่/สัตว์เลี้ยง/หมายเหตุห้อง (migration ADD COLUMN) · ป้ายเซิร์ฟเวอร์ `HouseRuleLabels`/`ChildrenLabel`/`CancellationSummary` · ฟอร์มจองยุบคอลัมน์บนมือถือ · DOCUMENT_FLOW §6.5_
+
+_2026-10-22 (ทีม H · AI call ยังมี error — หน้าแอดมิน 20/10/2569: DocType/WHT/ApprovalWarningFix "Schema mismatch", VendorCanon "__NEW__ 35%", GL AI 41110 กับเอกสารซื้อ):
+ต้นเหตุร่วม = เพดาน max_tokens ต่ำ (200/280/400/250) กับเหตุผลภาษาไทย ⇒ JSON ขาดกลางทาง ⇒ ตัวอ่านเดิมกลืน exception แล้วรายงาน
+"Schema mismatch" (ไม่บอกว่าขาด) · ตัวอ่านย้ายเป็น pure `Helpers/AiFeatureResponseParser` (fence/ร้อยแก้ว/ชื่อ key หลายแบบ/ห่อ/กู้ก้อนขาด
+เฉพาะช่องที่ปิดครบ · error ระบุสาเหตุ + finish_reason + token) · เพดานขั้นต่ำ 600 สำหรับรูป canonical (10 feature ต่ำกว่า) · reasoner พื้น 4,096 ·
+DocType prompt ขอชนิดกระดาษเป็น primary แต่ผู้เรียกใช้เป็นชนิดปลายทาง ⇒ แก้ให้ขอชนิดปลายทาง (รายการจาก enum + `DocumentSide`) ·
+WHT `NullPrimaryAnswer="None"` · FuzzyDuplicateDetection ไม่มี schema/ข้อมูลให้เทียบ ⇒ `AiRequest.LocalOnly` · "Most-used accounts" (ขาย+ซื้อปน)
+ถอดจากบล็อกที่ต่อทุก feature + ด่าน GL ∈ candidate · candidate ผู้ขายข้ามคำบอกรูปนิติบุคคล · แคชอ่านไม่ออก = แคชพลาด (เดิม UsedAi=true เท็จ) ·
+แคชล้มไม่ทิ้งคำตอบ · บันทึกหลังยิง provider ไม่แพ้ token ผู้เรียก · ต้นทุน token ของ call ที่ล้มถูกนับ · หน้าแอดมินแสดงคำตอบดิบย่อ (ปิดบัง PII) + escape ทุกช่อง ·
+เทสต์ `AiFeatureResponseParserTests` + `AiOrchestratorResponseHandlingTests` · TEST_PLAN §AIR_
+
+_2026-10-22 (ทีม C — เว็บไซต์ CMS: งานรายเว็บ + แกลเลอรี/สไลด์โชว์ · ผู้ใช้เสนอ "ย้ายคำสั่งซื้อ/จองคิว/ที่พัก/Lead ไปอยู่ใต้ไซต์"):
+เมนูซ้ายพับ 5 รายการเป็นเมนูย่อยของ "เว็บไซต์ของฉัน" (`navParent` ใน layout.js — โผล่เฉพาะในพื้นที่ CMS · ค้นหาเจอเสมอ · ไม่เห็นเมนูแม่ = แสดงตามเดิม) ·
+การ์ดเว็บมีปุ่มงานตาม `site.modules` + ตัวเลขงานค้าง + แถบ "ภาพรวมทุกไซต์" · `js/cms-site-context.js` ตัวเดียวของ ?siteId= (ตรวจกับเว็บจริง) / breadcrumb / "ทุกไซต์" (คำสั่งซื้อ · Lead) ·
+บล็อก Gallery เรนเดอร์ฝั่งเซิร์ฟเวอร์ตัวเดียว `Helpers/CmsGalleryBlock` (ตาราง+lightbox / สไลด์โชว์ autoplay · escape ทุกช่อง · กรอง URL · เดิมอ่าน `src` ขณะตัวแก้ไขเขียน `url`) ·
+ตัวแก้ไขอัปโหลดหลายรูป/เลือกจากคลัง/เรียง/alt/caption · หน้าแกลเลอรีใหม่ · `MediaResponse.PublicUrl` (เดิมตกไปใช้ path บนดิสก์) ·
+ความปลอดภัย: บล็อกตรวจหน้าเป็นของเว็บ+บริษัท (เดิมแทรกบล็อกข้ามบริษัทได้) + `RequireSiteRole` บนบล็อก/สื่อ + `CmsBlockCss` กรองคลาส ·
+เทสต์ `CmsGalleryBlockTests` · TEST_PLAN CMS-SITE/GAL/SEC · roadmap `docs/CMS_FEATURE_ROADMAP.md`_
+
+---
+
+### 2026-10-22 · ทีม J — ตราประทับ/ลายเซ็นบนเอกสาร
+- บั๊ก: 50 ทวิ ไม่มีตราประทับทั้งดูบนเว็บ/ดาวน์โหลด/พิมพ์ — ต้นเหตุ: ทางออก 50 ทวิทั้งสามไม่เคยอ่าน `CompanySettings.StampPath` (วาดวงกลมว่างอย่างเดียว) ·
+  แก้ HTML + QuestPDF + หน้าพิมพ์ในคอมมิตเดียว (`WhtCertStampTests`)
+- Document Stamp Rules: `Helpers/DocumentStampPolicy` + `CompanySettings.DocumentStampRulesJson` (ADD COLUMN · NULL = เดิม) + `DocumentStampRulesController` +
+  หน้า ตั้งค่า (`DocumentStampPolicyTests`)
+- WYSIWYG 50 ทวิ: สไตล์ HTML ฝั่งเซิร์ฟเวอร์ = หน้าพิมพ์ (`WhtCertCss`) · ลายน้ำยกเลิกใน HTML · หน้าพิมพ์ใช้ลายเซ็นชุดเดียวกับ PDF (เดิมของผู้กดพิมพ์)
+
+
+_2026-10-22 รอบ 205 ทีม E (เอกสารรายรับ + โควตาของธุรกรรม CMS · matrix เต็มใน `docs/BOOKING_REVENUE_AUDIT.md`):
+(L-1) ที่พัก: handler เงินออนไลน์ข้ามเมื่อ `DepositPaid ≥ ยอด` ⇒ ชำระยอดคงเหลือที่ ≤ มัดจำหายเงียบ — กันซ้ำด้วยเลขอ้างอิงเท่านั้น (`Helpers/GatewayPaymentRecord`) ·
+(S-1) คำสั่งซื้อจ่ายออนไลน์โดยไม่แนบสลิปไม่เคยถูกยืนยัน (`ConfirmPaymentAsync(paymentId:null)` หาแถวสลิปไม่เจอ) — handler สร้างแถว `SiteOrderPayment` ของรายการชำระ ·
+(B-1) จองนัดหมาย PrePayment หน้าเว็บอนุมัติใบเสร็จมัดจำ (JE เงินสด + ภาษีขาย) ของเงินที่ไม่เคยได้รับ — ใบร่างจนกว่าจะรับเงิน (`Helpers/CmsBookingErpPolicy`) ·
+(B-3) ขั้น ERP ล้มไม่ทำให้แขกเห็นจองไม่สำเร็จ · (G-1) เงินเข้าแต่ต้นทางบันทึกไม่ได้ ⇒ แจ้งเจ้าของ `gateway.payment_unfulfilled` + handler โยนแทน return เงียบ ·
+(Q-1) โบนัสโควตาถูกนับสองครั้ง (ซื้อ +100 ใช้ได้ 50) — `DocumentQuotaPolicy.EffectiveLimit(…, used)` + `ConsumesBonus` · (Q-3) ข้าม 80%/100% แจ้งเจ้าของ `quota.documents_level` ·
+เทสต์ `BookingRevenueAuditTests` · ล็อกจุดเรียก `required_call_site_check` (6 กติกา) · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_2026-10-22 ทีม M — งบกำไรขาดทุนเปรียบเทียบ + drill-down (เมนู รายงาน & วิเคราะห์ › งบการเงิน › แท็บงบกำไรขาดทุน · ช่อง "มุมมอง"):
+รายเดือน/รายไตรมาส/รายปี (ไตรมาส/ปีตาม `Company.FiscalYearStartMonth` ผ่าน `Helpers/FiscalYear`) + รวม + % เทียบคอลัมน์ก่อน + เทียบช่วงเดียวกันปีก่อน ·
+**ไม่มีสูตรงบใหม่** — ทุกคอลัมน์ = `GetProfitAndLossAsync` ของช่วงนั้น (`AccountingService.PnlCompare.cs`) · ตัวแบ่งช่วง/ประกอบตาราง/แผ่นส่งออก = `Helpers/PnlComparison`
+(ช่วงต่อกันพอดี ⇒ รวม = ยอดทั้งงวด) · drill-down = `GetGeneralLedgerForUserAsync` ของผัง (ตัวกรอง+ปิดบังสิทธิ์เดียวกับ GL) ตัดใบปิดบัญชี ⇒ ผลรวม = ช่อง ·
+เอกสารต้นทางตัดสินที่ `Helpers/JournalSourceLink` (SourceDocumentId → Document · ผูกย้อนกลับ PosOrder/PayrollRun/AssetDepreciation/ExpenseClaim ·
+กลับรายการ → ใบเดิม · ไม่มี = "รายการปรับปรุง/บันทึกด้วยมือ — ไม่มีเอกสารต้นทาง" ไม่แต่งลิงก์) · ส่งออก `accounting/exports/profit-loss-compare` (CSV/Excel MiniExcel) ·
+ลิงก์ตรง `reports.html?report=pnl&mode=month` + ตัวรับ `?orderId=` (pos-reports) `?runId=` (payroll) `?claimId=` (expense) · คู่มือ `report-pnl-compare` ·
+พบ+แก้: `ExecutiveReportService.PostedLinesQuery` นับใบปิดบัญชี (C-T02 หลุด) ⇒ รายงานผู้บริหารเดือนสิ้นรอบ/ทั้งปี = 0 หลังปิดปี · หน้า P&L เดิมไม่ escape ชื่อผัง ·
+พบไม่แก้ (ขอบเขตทีมอื่น): `TaxService` (CIT) + `FpaService` นับเฉพาะ Posted ไม่นับ Reversed ขณะที่ใบกลับรายการเป็น Posted ⇒ ใบที่ยกเลิกถูกหักซ้ำ ·
+`ExecutiveReportService` trend ใช้ไตรมาส/ปีปฏิทิน ไม่ใช่รอบบัญชี. ไม่เปลี่ยน flow เอกสาร ⇒ DOCUMENT_FLOW ไม่ขยับ._
+
+_2026-10-22 (ทีม B — engine รอบจองคิว/บริการบนเว็บ CMS): ผู้ใช้ต้องการตั้งค่าการจองละเอียดต่อธุรกิจ (สปา · คลินิก · สนาม · ห้องประชุม · รถเช่า ฯลฯ) ·
+ตรวจพบ `CreateBookingAsync` ไม่ตรวจอะไรเลย (จองรอบเต็ม/วันหยุด/นอกเวลาได้) · บริการตัวอย่างไม่มีเวลาทำการ (หน้าเวลาว่างว่างทุกวัน) · ฟอร์มแก้ไขส่ง 5 ฟิลด์
+แต่ PUT แทนทั้งชุด (ชนิดการจอง/มัดจำ/ยืนยันอัตโนมัติรีเซ็ตเงียบ) · query slot/sync ไม่มี CompanyId · ตัวกรอง/สถิติ `cms-bookings.html` ไม่มีผล ⇒
+`Helpers/BookingSlotEngine` (pure · `BookingSlotEngineTests`) + server ตัดสินใต้ advisory lock + คอลัมน์ใหม่ (`Helpers/BookingEngineMigration` · DEFAULT = เดิม) +
+แม่แบบ 12 ประเภทธุรกิจ (`CmsBookingServiceSeeder.Presets` · `GET booking/presets`) + ฟอร์ม CMS 6 หมวด + ตัวเลือกเวลาบน storefront (จำนวนช่วง/คน · ข้อความ server) ·
+`cms-bookings.html?siteId=` ล็อกเฉพาะไซต์ · backlog (staff · waitlist · แพ็กเกจ · reminder · no-show · calendar sync) ที่ `docs/BOOKING_ENGINE_DESIGN.md` §3_
+ขอบเขตเพิ่มรอบเดียวกัน: สวิตช์คุม Slot (ปิด = จองซ้อนได้ถึงเพดาน) · คิวสำรอง (`BookingStatus.Waitlisted` + เลื่อนขึ้นอัตโนมัติเมื่อยกเลิก/ไม่มา) ·
+ค่าตั้งระดับไซต์ (`SiteBookingSettings`) + override รายบริการ (`UseSiteDefaults`) · ผู้ให้บริการ/ห้อง/อุปกรณ์ + ตารางงานรายบุคคล + โหมดจัดสรร
+(บังคับระบุ/ลูกค้าเลือก/ระบบจัดให้ — `BookingSlotEngine.PickResource` deterministic) · คลาสกลุ่ม · API ให้ทีม L ที่ `docs/BOOKING_ENGINE_DESIGN.md` §2.1c_
+
+_รอบ 205 ทีม I (สิทธิ์และ License): (1) ผู้สร้างบริษัทได้ Owner ทันทีทุกทางเข้า — `Helpers/CompanyCreatorMembership` (วิซาร์ด · สมัคร · SSO) · support เฉพาะแอดมินที่ติ๊ก
+"เปิดให้ลูกค้า" · สาเหตุกล่อง "บริษัทที่ยังไม่มีเจ้าของ" = รอบ 201 ให้แอดมินแพลตฟอร์มได้ support ทุกครั้งรวมบริษัทของตัวเอง · ตัวซ่อม `OwnerlessCompanyRepair`
+(หลักฐานชัดตั้งเอง · ไม่ชัดแอดมินเลือก) + `POST api/admin/companies/without-owner/repair` + `.../{id}/assign-owner`. (2) `LastOwnerGuard` ตัวเดียว ·
+`BuiltInRolePermissions` (ด่าน + หน้าดูสิทธิ์) · ตาราง อ่าน/เขียน/อนุมัติ/ลบ `PermissionMatrix` → roles.html · แม่แบบ +4 (ช่างประจำร้าน/แคชเชียร์/นักบัญชีภายนอก/
+ฝ่ายสนับสนุน) + แก้ id เมนูตายในแม่แบบเดิม. (3) `PlanIdentityResolver` — แดชบอร์ด/รายการบริษัทโชว์แพ็กเกจของ License (เดิม Free vs Enterprise) · account-subscription ใช้ PlanDisplay.
+(4) หน้าทีม: 401→403 (ไม่เด้งออกจากระบบ) · ปุ่ม "🔐 สิทธิ์"/ลบบริษัท 404 (`api/companies` → `api/company`) · ปุ่มลองใหม่ + ข้อความสาเหตุจริง · escape ชื่อสมาชิก._
+
+_รอบ 205 ทีม I ฝ่ายค้าน: ตัวซ่อมตั้งเองเฉพาะผู้สร้างที่ active (ตัดกฎ "สมาชิกคนเดียว") · ตัดผู้ดูแลแพลตฟอร์มที่ไม่ใช่ผู้สร้างจากตัวเลือก/ด่าน assign-owner ·
+สร้างผู้ใช้เป็น Owner เดินด่าน+audit เดียวกัน · ล็อก pg_advisory_xact_lock ต่อบริษัท · `LastOwnerGuard` นับเฉพาะ Owner ลูกค้า · โอนเจ้าของจากแอดมินถอด/ลดเป็น support
+(`OwnershipTransferPolicy.ActorRowAfter`) · audit การอ่านทีมข้ามบริษัทของแอดมิน · migration id เมนูเก่าในบทบาทจากแม่แบบ._
+
+_2026-10-22 ทีม L — คอร์ส / Class Credits / Hour Pass (`docs/COURSE_CREDIT_DESIGN.md` · DOCUMENT_FLOW §6.6): แพ็กเกจ (ครั้ง/ชั่วโมง · อายุ · ราคา/VAT ·
+1-on-1/กลุ่ม · ครูเลือกเอง/ระบบกำหนด · บริการที่ใช้ได้ · นโยบายยกเลิก) · ขาย = ใบกำกับภาษี/ใบเสร็จผ่าน DocumentService เดิม บรรทัดลง 21713 ค่าบริการรับล่วงหน้า ·
+จอง = กันเครดิต · มาเรียน/no-show/ยกเลิกช้า = Dr 21713 Cr 42000 ผ่าน JournalEntryBuilder (`Helpers/CourseCreditMath.RecognizeOnUse` — ปัด AwayFromZero · ครั้งสุดท้ายรับเศษ) ·
+หมดอายุ = breakage (`CourseCreditExpiryJob`) · สัญญาบาง `ICreditBookingLedger` ให้เครื่องจองของทีม B · หน้า `/pages/course-credits.html` · เทสต์ `CourseCreditMathTests` ·
+backlog: ขายผ่าน POS/ร้านออนไลน์ · คืนเงิน/ยกเลิกบัตร_
+
+_2026-10-22 ทีม L ฝ่ายค้านรอบ 1: ยกเลิกใบขาย/ใบลดหนี้ที่ผูกบัตรคอร์สผ่านด่าน `Helpers/CreditPassDocumentRule` (hook `CreditPassDocumentHook` ในธุรกรรมของ
+DocumentService — ใช้แล้ว ⇒ บล็อก · ยังไม่ใช้ ⇒ ปิดบัตร · ลดหนี้ได้เฉพาะส่วนที่ยังไม่รับรู้ทั้งก้อน) · เปิดบัตรยึดยอด JE + ห้ามซ้ำในสายเอกสาร · กันจองซ้ำต่อ ref
+(advisory lock + unique index) · ขายกันกดซ้ำ + ลบใบร่างเมื่ออนุมัติล้ม · ล็อกครูต่อวัน · งานหมดอายุไม่หยุดทั้งรอบ · เทสต์ `CreditPassDocumentRuleTests`_
+
+_2026-10-22 (ทีม F — หัก ณ ที่จ่าย "ตามรายการ" + ฐานบาทของใบต่างสกุล · `docs/PER_LINE_WHT_DESIGN.md`):
+สำรวจพบว่าโครงหัก ณ ที่จ่ายต่อบรรทัด (อัตรา/ยอด/ประเภทเงินได้/ผู้ถูกหัก) + 50 ทวิ แถวต่อบรรทัด + ภ.ง.ด. จากทะเบียน มีครบแล้ว — ช่องโหว่จริงคือ
+(1) 50 ทวิ/แถวเตือน ภ.ง.ด. ของใบต่างสกุลเป็นตัวเลขสกุลเอกสาร (แก้: `Helpers/PerLineWht` ตัวคำนวณบาทตัวเดียว · ใบบาทไม่ขยับ) ·
+(2) OCR เฉลี่ยภาษีหัวใบลงทุกบรรทัดด้วยอัตราเดียว (แก้เมื่อเปิดค่าตั้ง `CompanySettings.PerLineWhtEnabled`: `Helpers/OcrLineWhtPlan` + `ExpenseCategoryResolver.ClassifyLineForWht`) ·
+(3) ไม่มีที่เก็บยอดบาทที่ใบต่างสกุลพิมพ์ไว้/ที่มาของอัตรา (เพิ่ม `Document.DocumentThbBase` + `ExchangeRateSource` · ตัวตัดสิน `DocumentFx.Decide` ·
+OCR `Helpers/OcrThbEquivalent`) · (4) ไม่มีสรุปต่อประเภท (จอ `WhtByIncomeType` · กระดาษแถวย่อยต่ออัตรา ×2 renderer) ·
+migration `DatabaseMigrationHelper.PerLineWhtStatements` (ADD COLUMN · ไม่มี UPDATE) · เทสต์ `PerLineWhtTests`_
+
+_2026-10-22 (ทีม F แก้ผลฝ่ายค้าน 1–9): ยอดบาทตามเอกสารต้องแปลงกลับได้ ± 0.01 (VND อัตรา 6 ตำแหน่งต่าง 24.69 — ตอนสร้าง 400 · ใบเดิมตกไปใช้อัตรา ·
+`DocumentFx.PrintedBahtRoundTrips`) · OCR หลักฐานยอดบาทแหล่งเดียวต้องห่างอัตรา ธปท. ≤ 3% (`[FX-DOC-UNVERIFIED]`) · `[WHT-LINE]`/`[WHT-LINE-MISMATCH]`/`[FX-DOC-CONFLICT]`
+หยุดอนุมัติเอง · รายงานตรวจข้อมูล "50 ทวิ ใบต่างสกุลที่ยอดไม่ใช่บาท" (อ่านอย่างเดียว · `WhtCertCurrencyCheck`) · หน้านำส่ง/ปฏิทิน/ตัวกระทบ GL/JE ตอนจ่ายเดิน
+`PerLineWht.DocumentWhtThb` + ล็อกจุดเรียก `_PLWHT` · `ForDocument` ผูก Σ เข้า GL (สรุปต่อประเภท/แถวเตือน) · โคลนสืบทอดฐานบาท/ที่มาอัตรา ·
+ใบแทนพาสองช่องไป · เกณฑ์แผนต่อบรรทัดเป็นบาท · สรุปต่อประเภท null เมื่อไม่มีบรรทัด · แก้คอมเมนต์/ข้อความหน้าตั้งค่าให้ตรงว่าอะไรขึ้นกับค่าตั้ง_

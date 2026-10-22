@@ -84,6 +84,17 @@ public interface IAccountingService
     Task<BalanceSheetResponse> GetBalanceSheetAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
     Task<ProfitAndLossResponse> GetProfitAndLossAsync(Guid companyId, DateTime fromDate, DateTime toDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
 
+    /// <summary>งบกำไรขาดทุนเปรียบเทียบ (ทีม M) — คอลัมน์ต่อเดือน/ไตรมาส/ปีตามรอบบัญชี · ทุกคอลัมน์ = <see cref="GetProfitAndLossAsync"/> ของช่วงนั้น ·
+    /// ผลรวมคอลัมน์ = ยอดทั้งงวด · ไม่ระบุช่วง = ต้นรอบบัญชีปัจจุบันถึงวันนี้ · <paramref name="comparePriorYear"/> = เพิ่มช่วงเดียวกันปีก่อน + % เปลี่ยนแปลง</summary>
+    Task<PnlComparisonResponse> GetProfitAndLossComparisonAsync(Guid companyId, DateTime? from, DateTime? to,
+        Accounting.Helpers.PnlCompareGranularity granularity, bool comparePriorYear, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);
+
+    /// <summary>drill-down ช่องหนึ่งของงบกำไรขาดทุน — รายการ JE ของผังในช่วง (ตัวกรอง/สิทธิ์เดียวกับบัญชีแยกประเภท · ไม่นับใบปิดบัญชี)
+    /// + ลิงก์เอกสารต้นทาง · ผลรวม = ตัวเลขในช่อง</summary>
+    Task<PnlDrilldownResponse> GetProfitAndLossDrilldownAsync(Guid companyId, Guid userId, Guid accountId,
+        DateTime fromDate, DateTime toDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null,
+        int page = 1, int pageSize = 100);
+
     /// <summary>Lean (Revenue, Expense) totals for a date window — one SQL
     /// GROUP BY, no Lines / Account hydration. Used by the Simple Mode
     /// home KPI cards where the full P&L call was visibly slow.</summary>

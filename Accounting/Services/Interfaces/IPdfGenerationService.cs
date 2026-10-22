@@ -8,6 +8,8 @@ public interface IPdfGenerationService
 {
     Task<GeneratePdfResponse> GenerateDocumentPdfAsync(Guid companyId, GeneratePdfRequest request);
     Task<GeneratePdfResponse> GenerateWithholdingTaxCertPdfAsync(Guid companyId, Guid certId);
+    /// <summary>ตรา + ลายเซ็นของหน้าพิมพ์ 50 ทวิ (wht.html) — ตัวตัดสินเดียวกับ PDF (Helpers/DocumentStampPolicy · ทีม J 2026-10-22)</summary>
+    Task<Accounting.Models.DTOs.Tax.WhtCertPrintDecoration> GetWithholdingTaxCertPrintDecorationAsync(Guid companyId, Guid certId);
     Task<GeneratePdfResponse> GenerateReceiptPdfAsync(Guid companyId, Guid paymentId);
     Task<byte[]> GeneratePreviewPdfAsync(Guid companyId, PdfPreviewRequest request);
 

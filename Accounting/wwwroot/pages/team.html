@@ -162,6 +162,8 @@
             api.getMembers(),
             api.getUsageDetail().catch(() => null)
           ]);
+          if (!membersRes || membersRes.success === false)
+            throw new Error((membersRes && membersRes.message) || 'เซิร์ฟเวอร์ไม่ส่งรายชื่อสมาชิก');
           this.members = membersRes.data || [];
           this.maxUsers = usageRes?.data?.maxUsers || 999;
 
@@ -191,7 +193,12 @@
 
           this.renderQuota();
           this.renderMembers();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        } catch (e) {
+          // รอบ 205 ทีม I: บอกสาเหตุจริงจากเซิร์ฟเวอร์ + ปุ่มลองใหม่ (เดิม toast แล้วรายการค้างว่าง — ผู้ใช้ไม่รู้ว่าโหลดไม่สำเร็จ)
+          document.getElementById('memberList').innerHTML =
+            `<div style="text-align:center;padding:32px;color:#b91c1c">โหลดรายชื่อสมาชิกไม่สำเร็จ: ${Layout.esc(e.message || 'ไม่ทราบสาเหตุ')}
+              <div style="margin-top:10px"><button class="btn btn-outline" onclick="Page.load()">ลองใหม่</button></div></div>`;
+        }
       },
 
       renderQuota() {
@@ -246,7 +253,7 @@
           // Self-edit / self-remove is always blocked — UI never offers it.
           if (isOwner && !isMe) {
             const customRoleOpts = Page.customRoles.map(cr =>
-              `<option value="${cr.id}" ${m.companyRoleId === cr.id ? 'selected' : ''}>${cr.icon} ${cr.name}</option>`
+              `<option value="${cr.id}" ${m.companyRoleId === cr.id ? 'selected' : ''}>${Layout.esc(cr.icon)} ${Layout.esc(cr.name)}</option>`
             ).join('');
             actions = `
               <select class="form-select" style="width:auto;font-size:12px;padding:4px 8px;height:32px" onchange="Page.changeRole('${m.userId}',this.value)">
@@ -263,8 +270,8 @@
           return `<div class="member-card">
             <div class="member-avatar">${initials}</div>
             <div class="member-info">
-              <div class="member-name">${m.fullName}${isMe?' <span style="color:#94a3b8;font-weight:400;font-size:12px">(คุณ)</span>':''}</div>
-              <div class="member-email">${m.email}${m.phone?' · '+m.phone:''}</div>
+              <div class="member-name">${Layout.esc(m.fullName)}${isMe?' <span style="color:#94a3b8;font-weight:400;font-size:12px">(คุณ)</span>':''}${m.companyRoleName ? ` <span style="font-size:11px;color:#6366f1">· ${Layout.esc(m.companyRoleName)}</span>` : ''}</div>
+              <div class="member-email">${Layout.esc(m.email)}${m.phone?' · '+Layout.esc(m.phone):''}</div>
               <div class="member-meta">เข้าร่วม ${joinDate} · เข้าใช้ล่าสุด ${lastLogin}</div>
             </div>
             <div class="member-actions">
@@ -355,8 +362,10 @@
               <h3 class="modal-title">🔐 สิทธิ์ของ ${Layout.esc(name || d.fullName || '')}</h3>
               <button class="modal-close" onclick="document.getElementById('permViewModal').remove()">&times;</button></div>
             <div class="modal-body">
-              <div style="margin-bottom:10px;font-size:13px;color:var(--gray-500)">บทบาท: <b>${Layout.esc(String(d.role))}</b> · ${perms.length} สิทธิ์ในบริษัทนี้</div>
-              ${body || '<div style="color:var(--gray-400)">ใช้สิทธิ์ตามบทบาทมาตรฐาน (ไม่มีสิทธิ์เฉพาะเพิ่ม)</div>'}
+              <div style="margin-bottom:10px;font-size:13px;color:var(--gray-500)">บทบาท: <b>${Layout.esc((ROLES[d.role] || {}).label || String(d.role))}</b>${d.companyRoleName ? ` + บทบาทกำหนดเอง <b>${Layout.esc(d.companyRoleName)}</b>` : ''} · ${perms.length} สิทธิ์ในบริษัทนี้
+                ${d.fromBuiltInRole ? `<div style="font-size:12px;margin-top:4px">จากบทบาทมาตรฐาน ${d.fromBuiltInRole.length} · จากบทบาทกำหนดเอง ${(d.fromCustomRole || []).length}</div>` : ''}</div>
+              ${d.grantsAll ? '<div style="background:#fef3c7;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:13px;color:#92400e">👑 เจ้าของบริษัทผ่านทุกสิทธิ์ (ลดสิทธิ์เจ้าของด้วยบทบาทกำหนดเองไม่ได้)</div>' : ''}
+              ${body || '<div style="color:var(--gray-400)">ยังไม่มีสิทธิ์การทำงานเพิ่ม — เมนูที่เห็นตามบทบาทมาตรฐาน · ให้สิทธิ์เพิ่มด้วยบทบาทกำหนดเองที่หน้า "บทบาทและสิทธิ์"</div>'}
             </div>
             <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('permViewModal').remove()">ปิด</button></div></div>`;
           document.body.appendChild(wrap);

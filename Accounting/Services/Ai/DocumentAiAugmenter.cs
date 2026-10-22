@@ -889,7 +889,10 @@ public class DocumentAiAugmenter : IDocumentAiAugmenter
                 SourceEntityType = "DocumentDraft",
                 CacheTtlOverrideDays = 0,
                 BypassCache = true,
-                MaxTokensOverride = 300,
+                // ครูไม่เห็นเอกสารเดิมของบริษัท (payload มีแต่ใบร่าง) + system prompt ไม่มี schema ⇒ ตอบไม่ได้โดยโครงสร้าง
+                // เดิมยิง provider ทุกครั้งที่นักเรียนไม่เจอใบซ้ำ แล้วได้ InvalidResponse (ทีม H · 2026-10-22) — นักเรียน
+                // DuplicateDocumentDistillationModel คือผู้ค้นฐานข้อมูลจริง
+                LocalOnly = true,
             };
             var resp = await _orchestrator.AskAsync(req, ct);
             // Local model returns the matched Document id JSON when

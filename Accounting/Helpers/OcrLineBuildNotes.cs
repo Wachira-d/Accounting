@@ -21,7 +21,8 @@ public static class OcrLineBuildNotes
     /// <summary>แท็ก "ยอดที่จะสร้างไม่ตรงกระดาษ" ของตัวสร้างบรรทัด (ตัวกระทบยอด + <see cref="OcrAmountIntegrity"/>)</summary>
     public const string GapTag = "[Σ-GAP]";
 
-    private static readonly string[] Recomputed = { GapTag, OcrHeaderVatEvidence.DerivedTag };
+    // ทีม F: แผนหัก ณ ที่จ่ายต่อบรรทัด (OcrLineWhtPlan) เขียนใหม่ทุกครั้งที่สร้างบรรทัด ⇒ ล้างของรอบก่อน (ไม่สะสมซ้ำ · ไม่ค้างหยุดอนุมัติเมื่อแผนไม่ใช้แล้ว)
+    private static readonly string[] Recomputed = { GapTag, OcrHeaderVatEvidence.DerivedTag, OcrLineWhtPlan.AppliedTag, OcrLineWhtPlan.MismatchTag };
 
     /// <summary>ตัดบรรทัดที่ขึ้นต้นด้วยแท็กที่ตัวสร้างบรรทัดคำนวณใหม่ · บรรทัดอื่นคงเดิมทุกตัวอักษร · ไม่มีอะไรให้ตัด = คืนค่าเดิม</summary>
     public static string? StripRecomputed(string? notes)

@@ -84,7 +84,16 @@ const Layout = {
       Shipped:'จัดส่งแล้ว', Delivered:'ส่งถึงปลายทาง', Cancelled:'ยกเลิก',
       Refunded:'คืนเงินแล้ว', PartiallyRefunded:'คืนเงินบางส่วน' },
     bookingStatus: { Pending:'รอยืนยัน', Confirmed:'ยืนยันแล้ว', InProgress:'กำลังให้บริการ',
-      Completed:'เสร็จสิ้น', Cancelled:'ยกเลิก', NoShow:'ไม่มา (No-show)' },
+      Completed:'เสร็จสิ้น', Cancelled:'ยกเลิก', NoShow:'ไม่มา (No-show)', Waitlisted:'คิวสำรอง' },
+    // ทีม B — ค่าตั้งของบริการจองคิว CMS (enum ฝั่ง server: BookingType · BookingSlotMode · BookingCapacityUnit)
+    bookingType: { Lead:'รับจอง/รอยืนยัน (ยังไม่ออกเอกสาร)', Appointment:'นัดหมาย (ใบเสนอราคา)',
+      Guaranteed:'จองยืนยัน (ใบกำกับภาษี)', PrePayment:'ชำระมัดจำล่วงหน้า (ใบรับมัดจำ)' },
+    bookingSlotMode: { Windows:'ช่วงเวลากำหนดเอง (แต่ละช่วง = 1 รอบ)', Interval:'ตัดรอบทุก N นาที / รายชั่วโมง',
+      HalfDay:'ครึ่งวัน (เช้า/บ่าย)', FullDay:'รายวัน (ทั้งวัน)' },
+    bookingCapacityUnit: { Bookings:'คิว/การจอง', Guests:'จำนวนคน (ที่นั่ง)' },
+    bookingResourceMode: { None:'ไม่ใช้ (นับความจุของบริการ)', Required:'บังคับระบุ (ลูกค้าต้องเลือก)',
+      CustomerChoice:'ลูกค้าเลือกเอง (ไม่เลือก = ระบบจัดให้)', Auto:'ระบบจัดสรรอัตโนมัติ' },
+    bookingResourceKind: { Staff:'พนักงาน/ผู้ให้บริการ', Room:'ห้อง/สนาม', Equipment:'อุปกรณ์/รถ' },
     leadStatus: { New:'ใหม่', Qualified:'คัดกรองแล้ว', Quoted:'เสนอราคาแล้ว',
       Won:'ปิดได้', Lost:'เสียดีล', Spam:'Spam' },
     leadType: { Contact:'ติดต่อทั่วไป', Rfq:'RFQ', Viewing:'นัดดูทรัพย์', Demo:'Demo',
@@ -902,6 +911,17 @@ const Layout = {
       html.push(`<div style="height:1px;background:#e2e8f0;margin:10px 12px;"></div>`);
     }
 
+    // เมนูย่อยรายเว็บ (`navParent`) — คำสั่งซื้อ/จองคิว/ที่พัก/lead อยู่ "ใต้เว็บไซต์" (เปิดจากการ์ดเว็บด้วย ?siteId=)
+    // ⇒ แถบซ้ายพับไว้ใต้เมนูแม่: โชว์เป็นเมนูย่อยเยื้องเฉพาะตอนอยู่ในหน้าแม่/หน้าลูก · ช่องค้นหาเมนูยังหาเจอเสมอ.
+    // ผู้ใช้ที่ไม่เห็นเมนูแม่ (role กำหนดเองที่ให้แค่ "ที่พัก · Front desk" · หรือซ่อนเมนูแม่ไว้) ⇒ เมนูลูกแสดงตามปกติ
+    // ห้ามให้ใครหาหน้าไม่เจอเพราะการย้ายเมนู
+    const shownIds = new Set(items.filter(i => i.id).map(i => i.id));
+    const curItem = this.navItems.find(n => n.id === this.currentPage);
+    const openParent = (curItem && curItem.navParent) || this.currentPage;
+    const subOf = (it) => (it.navParent && shownIds.has(it.navParent))
+      ? Object.assign({}, it, { _sub: true, _subHidden: it.navParent !== openParent })
+      : it;
+
     let inGroup = false;
     let groupItems = [];
     let currentSection = null;
@@ -930,7 +950,7 @@ const Layout = {
         <summary class="nav-group-header"${desc}>
           <span class="icon">${icon}</span>
           <span class="label">${this._esc(label)}</span>
-          <span class="count">${groupItems.length}</span>
+          <span class="count">${groupItems.filter(it => !it._subHidden).length}</span>
         </summary>
         <div class="nav-group-items">${groupItems.map(it => this._renderNavItem(it)).join('')}</div>
       </details>`);
@@ -944,10 +964,10 @@ const Layout = {
         currentSection = it;
         inGroup = true;
       } else if (inGroup) {
-        groupItems.push(it);
+        groupItems.push(subOf(it));
       } else {
         // top-level item before the first section
-        html.push(this._renderNavItem(it));
+        html.push(this._renderNavItem(subOf(it)));
       }
     }
     flush();
@@ -987,6 +1007,8 @@ const Layout = {
     const q = (query || '').trim().toLowerCase();
     const groups = document.querySelectorAll('.sidebar-nav .nav-group');
     const flatItems = document.querySelectorAll('.sidebar-nav > .nav-item');
+    // เมนูย่อยที่พับไว้ (.nav-subhidden) ค้นเจอได้เสมอ — ตรงกัน = 'flex' (ชนะ display:none ของคลาส) · ล้างคำค้น = กลับไปพับ
+    const shownDisplay = (a) => a.classList.contains('nav-subhidden') ? 'flex' : '';
     if (!q) {
       groups.forEach(g => { g.style.display = ''; g.querySelectorAll('.nav-item').forEach(a => a.style.display = ''); });
       flatItems.forEach(a => a.style.display = '');
@@ -994,13 +1016,13 @@ const Layout = {
     }
     flatItems.forEach(a => {
       const t = (a.textContent + ' ' + (a.title || '')).toLowerCase();
-      a.style.display = t.includes(q) ? '' : 'none';
+      a.style.display = t.includes(q) ? shownDisplay(a) : 'none';
     });
     groups.forEach(g => {
       const matches = Array.from(g.querySelectorAll('.nav-item')).filter(a => {
         const t = (a.textContent + ' ' + (a.title || '')).toLowerCase();
         const match = t.includes(q);
-        a.style.display = match ? '' : 'none';
+        a.style.display = match ? shownDisplay(a) : 'none';
         return match;
       });
       if (matches.length > 0) {
@@ -1178,7 +1200,9 @@ const Layout = {
       const label = sectionKey ? this._t(sectionKey, item.section) : item.section;
       return `<div class="nav-section" data-section="${item.section}">${label}</div>`;
     }
-    const active = item.id === this.currentPage ? ' active' : '';
+    // เมนูย่อย (navParent) ติดคลาสเยื้อง · ที่พับไว้ซ่อนด้วยคลาส (ช่องค้นหายังเจอ) — ดู subOf ใน renderSidebar
+    const active = (item.id === this.currentPage ? ' active' : '')
+      + (item._sub ? ' nav-subitem' : '') + (item._subHidden ? ' nav-subhidden' : '');
     const label = item._i18nKey ? this._t(item._i18nKey, item.label) : item.label;
     const lockState = this._navLockState(item);
     const locked = lockState === 'locked';
@@ -1434,6 +1458,8 @@ const Layout = {
       description: 'หน้าขายแบบ Touch — รับชำระเงิน พิมพ์ใบเสร็จด่วน' },
     { id: 'pos-packages', label: 'แพ็คเกจบริการ', icon: '💆', href: '/pages/pos-packages.html', feature: 'DocumentEngine', _i18nKey: 'nav.posPackages',
       description: 'ตั้งค่าแพ็คเกจคอร์ส/บริการ — สำหรับสปา คลินิก ฟิตเนส' },
+    { id: 'course-credits', label: 'คอร์ส & เครดิต', icon: '🎟️', href: '/pages/course-credits.html', feature: 'DocumentEngine',
+      description: 'ขายคอร์ส/Class Credits/Hour Pass · ยอดคงเหลือลูกค้า · จองคลาสกลุ่ม/ตัวต่อตัว · รับรู้รายได้รับล่วงหน้าตามการใช้' },
     { id: 'pos-modifiers', label: 'ตัวเลือกสินค้า', icon: '🔧', href: '/pages/pos-modifiers.html', feature: 'DocumentEngine', _i18nKey: 'nav.posModifiers',
       description: 'ไซส์ · สี · รสชาติ · เพิ่ม-ลด ingredient ต่อจาน' },
     { id: 'pos-reports', label: 'รายงาน POS', icon: '📊', href: '/pages/pos-reports.html', feature: 'DocumentEngine', _i18nKey: 'nav.posReports',
@@ -1442,15 +1468,15 @@ const Layout = {
     { section: 'ขายออนไลน์ & Portal', icon: '🌐', description: 'เว็บไซต์ · คำสั่งซื้อ/จองจากเว็บ · lead · portal ลูกค้า/vendor' },
     { id: 'cms-sites', label: 'เว็บไซต์ของฉัน (CMS)', icon: '🌐', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites',
       description: 'สร้างเว็บไซต์ multi-site · e-commerce · booking · เชื่อม ERP อัตโนมัติ' },
-    { id: 'cms-orders', label: 'คำสั่งซื้อจากเว็บ', icon: '🛒', href: '/pages/cms-orders.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsOrders', cmsModule: 'orders',
+    { id: 'cms-orders', navParent: 'cms-sites', label: 'คำสั่งซื้อจากเว็บ', icon: '🛒', href: '/pages/cms-orders.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsOrders', cmsModule: 'orders',
       description: 'จัดการ order ที่ลูกค้าสั่งผ่านร้านค้าออนไลน์ — ยืนยัน · จัดส่ง · ติดตาม' },
-    { id: 'cms-bookings', label: 'การจองคิวจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings', cmsModule: 'bookings',
+    { id: 'cms-bookings', navParent: 'cms-sites', label: 'การจองคิวจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings', cmsModule: 'bookings',
       description: 'จัดการการจองคิว/นัดหมาย — ร้านอาหาร · สปา · คลินิก · ยืนยัน-ยกเลิก-No show (การจองห้องพักอยู่ที่ "ที่พัก · Front desk")' },
-    { id: 'lodging', label: 'ที่พัก · Front desk', icon: '🏨', href: '/pages/lodging.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodging', cmsModule: 'lodging',
+    { id: 'lodging', navParent: 'cms-sites', label: 'ที่พัก · Front desk', icon: '🏨', href: '/pages/lodging.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodging', cmsModule: 'lodging',
       description: 'จองห้องพัก · ยืนยันมัดจำ · เช็คอิน/เอาต์ · ปฏิทินห้อง · แม่บ้าน · โรงแรม/รีสอร์ท/บ้านพัก' },
-    { id: 'lodging-settings', label: 'ตั้งค่าที่พัก', icon: '🛏️', href: '/pages/lodging-settings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodgingSettings', cmsModule: 'lodging',
+    { id: 'lodging-settings', navParent: 'cms-sites', label: 'ตั้งค่าที่พัก', icon: '🛏️', href: '/pages/lodging-settings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodgingSettings', cmsModule: 'lodging',
       description: 'ประเภทห้อง · หมายเลขห้อง · แผนราคา · ฤดูกาล · ราคารายวัน · นโยบายยกเลิก · บริการเสริม · มัดจำ/VAT' },
-    { id: 'cms-leads', label: 'คำขอ / Lead', icon: '📨', href: '/pages/cms-leads.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsLeads', cmsModule: 'leads',
+    { id: 'cms-leads', navParent: 'cms-sites', label: 'คำขอ / Lead', icon: '📨', href: '/pages/cms-leads.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsLeads', cmsModule: 'leads',
       description: 'RFQ · นัดดูทรัพย์ · นัด demo · สมัครเรียน · ขอใบเสนอราคา — sales funnel ครบ' },
     { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
       description: 'ให้ลูกค้าเข้าดูใบแจ้งหนี้ · ชำระเงิน · ดาวน์โหลดเอกสาร' },
@@ -1952,6 +1978,12 @@ const Layout = {
           <label class="form-label">ชื่อบริษัท (EN)</label>
           <input type="text" id="setupCompanyNameEn" class="form-input" placeholder="Company Name in English">
         </div>
+        ${this.user && this.user.isSystemAdmin ? `<div class="form-group" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 10px">
+          <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="setupOpenForCustomer" style="margin-top:3px">
+            <span><b>เปิดบริษัทนี้ให้ลูกค้า</b> (ผู้ดูแลแพลตฟอร์ม) — คุณจะเป็น "ผู้ดูแล (support)" ไม่ใช่เจ้าของ แล้วส่งมอบด้วย "โอนความเป็นเจ้าของ" ที่หน้าทีม · ไม่ติ๊ก = คุณเป็นเจ้าของบริษัทนี้</span>
+          </label>
+        </div>` : ''}
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">ประเภทธุรกิจ <span style="color:red">*</span></label>
@@ -2134,6 +2166,8 @@ const Layout = {
       d.juristicId = document.getElementById('setupJuristicId')?.value?.trim() || '';
       d.taxId = document.getElementById('setupTaxId')?.value?.trim() || '';
       d.branchCode = document.getElementById('setupBranch')?.value?.trim() || '00000';
+      // รอบ 205 ทีม I: เฉพาะแอดมินแพลตฟอร์มเห็นช่องนี้ · เซิร์ฟเวอร์ตัดสินบทบาทจริง (CompanyCreatorMembership)
+      d.openForCustomer = document.getElementById('setupOpenForCustomer')?.checked || false;
     } else if (this.setupStep === 2) {
       d.address = document.getElementById('setupAddress')?.value?.trim() || '';
       d.subDistrict = document.getElementById('setupSubDistrict')?.value?.trim() || '';
@@ -2159,6 +2193,7 @@ const Layout = {
       if (this.setupStep === 1) {
         if (d.name) document.getElementById('setupCompanyName').value = d.name;
         if (d.nameEn) document.getElementById('setupCompanyNameEn').value = d.nameEn;
+        { const oc = document.getElementById('setupOpenForCustomer'); if (oc) oc.checked = d.openForCustomer === true; }
         if (d.businessType) document.getElementById('setupBizType').value = d.businessType;
         if (d.juristicId) document.getElementById('setupJuristicId').value = d.juristicId;
         if (d.taxId) document.getElementById('setupTaxId').value = d.taxId;
@@ -2201,6 +2236,7 @@ const Layout = {
         phone: d.phone || null,
         email: d.email || null,
         fiscalYearStartMonth: d.fiscalYearStartMonth || 1,
+        openForCustomer: d.openForCustomer === true,
       });
       const company = res.data;
       localStorage.setItem('currentCompany', JSON.stringify(company));

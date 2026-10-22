@@ -1160,6 +1160,13 @@ public class CmsCommerceService : ICmsCommerceService
 
         if (pay.Status != SitePaymentStatus.Completed)
         {
+            // ฝ่ายค้านรอบ 205 ข้อ 2: ยืนยันแถวนี้แล้วรับเกินยอดออเดอร์ (เช่น สลิป + จ่ายออนไลน์ก้อนเดียวกัน) ⇒ ปฏิเสธ — เดิมรวมยอดเงียบ ๆ
+            // ⇒ PaidAmount 2 เท่า + รับชำระบางส่วนลงซ้ำ · webhook ได้ exception นี้ ⇒ ประวัติรายการชำระ + แจ้งเจ้าของ (G-1)
+            var completedOthers = order.Payments
+                .Where(p => p.Id != pay.Id && p.Status == SitePaymentStatus.Completed).Sum(p => p.Amount);
+            if (Accounting.Helpers.GatewayPaymentRecord.OverpaysOrder(completedOthers, pay.Amount, order.TotalAmount))
+                throw new BusinessRuleException(Accounting.Helpers.GatewayPaymentRecord.OverpayMessage(
+                    order.OrderNumber, completedOthers, pay.Amount, order.TotalAmount), "SITE-ORDER-OVERPAY");
             pay.Status = SitePaymentStatus.Completed;
             pay.PaidAt = DateTime.UtcNow;
         }

@@ -702,6 +702,8 @@ const API = {
       trialBalance: (q = '') => API.get(`${base}/accounting/reports/trial-balance${q}`),
       balanceSheet: (q = '') => API.get(`${base}/accounting/reports/balance-sheet${q}`),
       profitLoss: (q = '') => API.get(`${base}/accounting/reports/profit-loss${q}`),
+      profitLossCompare: (q = '') => API.get(`${base}/accounting/reports/profit-loss/compare${q}`),
+      profitLossDrilldown: (q = '') => API.get(`${base}/accounting/reports/profit-loss/drilldown${q}`),
       cashFlow: (q = '') => API.get(`${base}/accounting/reports/cash-flow${q}`),
       getFiscalPeriods: () => API.get(`${base}/accounting/fiscal-periods`),
       createFiscalPeriod: (d) => API.post(`${base}/accounting/fiscal-periods`, d),
@@ -724,8 +726,10 @@ const API = {
       // Deposit Center (redesign): endpoint เดียวจบ — rows + KPI + GL tie-out + timestamp
       getDepositCenter: () => API.get(`${base}/document/deposit-center`),
       // จัดการบริษัท: ลบ (Owner + พิมพ์ชื่อยืนยัน) + ดูสิทธิ์สมาชิกรายคน
-      deleteCompany: (confirmName) => API.del(`${base}?confirmName=${encodeURIComponent(confirmName)}`),
-      getMemberPermissions: (userId) => API.get(`${base}/users/${userId}/permissions`),
+      // รอบ 205 ทีม I: สองเส้นนี้อยู่ที่ CompanyController = `api/company/{id}` (เอกพจน์) — เดิมยิง `${base}` (= api/companies/{id}) ⇒ 404 ทุกครั้ง
+      // (ปุ่ม "🔐 สิทธิ์" หน้าจัดการทีม + ปุ่มลบบริษัทหน้าตั้งค่า ล้มด้วย "Server returned non-JSON (HTTP 404)")
+      deleteCompany: (confirmName) => API.del(`/api/company/${companyId}?confirmName=${encodeURIComponent(confirmName)}`),
+      getMemberPermissions: (userId) => API.get(`/api/company/${companyId}/users/${userId}/permissions`),
       getDepositDiagnostics: () => API.get(`${base}/document/deposits/diagnostics`),
       realizeDeposit: (id, body) => API.post(`${base}/document/${id}/realize-deposit`, body),
       // รับรู้ภาษีขายรอเรียกเก็บของมัดจำ (21913 → 21911) โดยไม่แตะรายได้ —
@@ -965,6 +969,8 @@ const API = {
       // WHT
       getWhtCerts: (q = '') => API.get(`${base}/withholding-tax-certs${q}`),
       getWhtCert: (id) => API.get(`${base}/withholding-tax-certs/${id}`),
+      // ตรา + ลายเซ็นของหน้าพิมพ์ 50 ทวิ — เซิร์ฟเวอร์ตัดสิน (DocumentStampPolicy · ตัวเดียวกับ PDF)
+      getWhtCertPrintDecoration: (id) => API.get(`${base}/withholding-tax-certs/${id}/print-decoration`),
       createWhtCert: (d) => API.post(`${base}/withholding-tax-certs`, d),
       updateWhtCert: (id, d) => API.put(`${base}/withholding-tax-certs/${id}`, d),
       issueWhtCert: (id, d) => API.post(`${base}/withholding-tax-certs/${id}/issue`, d),   // d = { acknowledgeMissingTaxId } (ฝ่ายค้านรอบ 204 L5)
@@ -1034,6 +1040,8 @@ const API = {
       lodgingUpdateReservation: (id, d) => API.put(`${base}/lodging/reservations/${id}`, d),
       lodgingConfirm: (id, d) => API.post(`${base}/lodging/reservations/${id}/confirm`, d),
       lodgingRejectSlip: (id, d) => API.post(`${base}/lodging/reservations/${id}/reject-slip`, d),
+      // 2026-10-22: สลิปทุกใบของการจอง (ล่าสุด/ถูกปฏิเสธ/ถูกส่งทับ) ให้โมดัลแสดงรูปย่อ — ไฟล์แต่ละใบดึงผ่าน API.fetchFile (แนบ JWT)
+      lodgingSlips: (id) => API.get(`${base}/lodging/reservations/${id}/slips`),
       lodgingUploadImage: (formData) => API.upload(`${base}/lodging/images`, formData),
       lodgingAssign: (id, d) => API.post(`${base}/lodging/reservations/${id}/assign`, d),
       lodgingCheckIn: (id, d) => API.post(`${base}/lodging/reservations/${id}/check-in`, d),
@@ -1110,6 +1118,16 @@ const API = {
       cmsCreateBookingService: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/services`, d),
       cmsUpdateBookingService: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/services/${id}`, d),
       cmsDeleteBookingService: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/booking/services/${id}`),
+      // ทีม B — ทั้งหมด (รวมที่ปิดไว้) สำหรับหน้า CMS · แม่แบบตามประเภทธุรกิจ · ทดลองดูรอบว่าง (ตัวตัดสินเดียวกับหน้าเว็บ)
+      cmsListAllBookingServices: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/services?all=true`),
+      cmsBookingPresets: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/presets`),
+      cmsBookingAvailableSlots: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/available-slots`, d),
+      cmsGetBookingSiteSettings: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/settings`),
+      cmsUpdateBookingSiteSettings: (siteId, d) => API.put(`${base}/cms/sites/${siteId}/booking/settings`, d),
+      cmsListBookingResources: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/resources`),
+      cmsCreateBookingResource: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/resources`, d),
+      cmsUpdateBookingResource: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/resources/${id}`, d),
+      cmsDeleteBookingResource: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/booking/resources/${id}`),
       // cmsListBookings/cmsGetBooking/cmsUpdateBookingStatus อยู่ในกลุ่มด้านบน — ห้ามประกาศซ้ำ
       // Customers (per site)
       cmsListCustomers: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/customers${q}`),
@@ -1684,6 +1702,9 @@ const API = {
       deleteLogo: () => API.del(`${base}/settings/logo`),
       uploadStamp: (formData) => API.upload(`${base}/settings/stamp`, formData),
       deleteStamp: () => API.del(`${base}/settings/stamp`),
+      // กฎตราประทับ/ลายเซ็น ต่อประเภทเอกสาร × สถานะ (Helpers/DocumentStampPolicy)
+      getDocumentStampRules: () => API.get(`${base}/settings/document-stamp-rules`),
+      updateDocumentStampRules: (body) => API.put(`${base}/settings/document-stamp-rules`, body),
       getNumberSeries: () => API.get(`${base}/settings/number-series`),
       // ตั้งตัวย่อเลขที่เอกสารเอง — controller/service มีมาตลอดแต่ไม่เคยมี
       // ฝั่ง client ผูกไว้ ⇒ แท็บ "ลำดับเลขที่" เป็นตารางว่างที่แก้อะไรไม่ได้
