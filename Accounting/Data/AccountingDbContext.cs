@@ -449,6 +449,11 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteBookingSlot> SiteBookingSlots => Set<SiteBookingSlot>();
     public DbSet<SiteBooking> SiteBookings => Set<SiteBooking>();
     public DbSet<SiteBookingPayment> SiteBookingPayments => Set<SiteBookingPayment>();
+    // ทีม B — ค่าตั้งการจองระดับไซต์ · ผู้ให้บริการ/ห้อง/อุปกรณ์ · บริการที่รับได้ · ตารางงานรายบุคคล
+    public DbSet<SiteBookingSettings> SiteBookingSettings => Set<SiteBookingSettings>();
+    public DbSet<SiteBookingResource> SiteBookingResources => Set<SiteBookingResource>();
+    public DbSet<SiteBookingResourceService> SiteBookingResourceServices => Set<SiteBookingResourceService>();
+    public DbSet<SiteBookingResourceSlot> SiteBookingResourceSlots => Set<SiteBookingResourceSlot>();
 
     // Lodging (ธุรกิจที่พัก)
     public DbSet<LodgingProperty> LodgingProperties => Set<LodgingProperty>();
@@ -3315,6 +3320,8 @@ public class AccountingDbContext : DbContext
             e.Property(bs => bs.Currency).HasMaxLength(3);
             e.Property(bs => bs.Category).HasMaxLength(128);
             e.Property(bs => bs.Tags).HasMaxLength(500);
+            e.Property(bs => bs.HalfDaySplitTime).HasMaxLength(8);
+            e.Property(bs => bs.CapacityGroup).HasMaxLength(64);
             e.HasOne(bs => bs.Site).WithMany(s => s.BookingServices).HasForeignKey(bs => bs.SiteId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(bs => bs.Product).WithMany().HasForeignKey(bs => bs.ProductId).OnDelete(DeleteBehavior.SetNull);
         });
@@ -3339,6 +3346,7 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(b => new { b.SiteId, b.BookingNumber }).IsUnique().HasDatabaseName("IX_SiteBookings_SiteId_BookNo");
             e.HasIndex(b => new { b.SiteId, b.BookingDate, b.Status }).HasDatabaseName("IX_SiteBookings_SiteId_Date_Status");
+            e.HasIndex(b => new { b.BookingServiceId, b.BookingDate }).HasDatabaseName("IX_SiteBookings_Service_Date");
             e.Property(b => b.BookingNumber).HasMaxLength(50);
             e.Property(b => b.GuestName).HasMaxLength(256);
             e.Property(b => b.GuestEmail).HasMaxLength(256);
@@ -3352,6 +3360,26 @@ public class AccountingDbContext : DbContext
             e.HasOne(b => b.Customer).WithMany(c => c.Bookings).HasForeignKey(b => b.CustomerId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne(b => b.ErpDocument).WithMany().HasForeignKey(b => b.ErpDocumentId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(b => !b.IsDeleted);
+        });
+
+        // ===== ทีม B: ผู้ให้บริการ / ค่าตั้งการจองระดับไซต์ (ตาราง + index ต้องตรงกับ Helpers/BookingEngineMigration) =====
+        modelBuilder.Entity<SiteBookingSettings>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.SiteId }).IsUnique().HasDatabaseName("UX_SiteBookingSettings_Company_Site");
+        });
+        modelBuilder.Entity<SiteBookingResource>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(256);
+            e.HasIndex(x => new { x.CompanyId, x.SiteId }).HasDatabaseName("IX_SiteBookingResources_Company_Site");
+        });
+        modelBuilder.Entity<SiteBookingResourceService>(e =>
+        {
+            e.HasIndex(x => new { x.ResourceId, x.BookingServiceId }).IsUnique().HasDatabaseName("UX_SiteBookingResourceServices_Res_Svc");
+            e.HasOne(x => x.Resource).WithMany(r => r.Services).HasForeignKey(x => x.ResourceId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<SiteBookingResourceSlot>(e =>
+        {
+            e.HasOne(x => x.Resource).WithMany(r => r.Slots).HasForeignKey(x => x.ResourceId).OnDelete(DeleteBehavior.Cascade);
         });
 
         // ===== SiteBookingPayment =====

@@ -35,6 +35,14 @@
     .ld-row { display:flex; gap:8px; margin-bottom:8px }
     .ld-row > * { flex:1 }
     .verify-token-box { background:#F9FAFB; border:1px dashed var(--gray-300); padding:10px; border-radius:6px; font-family:monospace; font-size:12px; word-break:break-all; margin-top:8px }
+    /* ทีม B — ฟอร์มตั้งค่าบริการจองคิว */
+    .bs-sec { font-size:13px;font-weight:700;color:var(--gray-700);margin:16px 0 8px;padding-top:10px;border-top:1px solid var(--gray-200) }
+    .bs-hint { font-size:11px;color:var(--gray-500);font-weight:400 }
+    .bs-day { display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px dashed var(--gray-200) }
+    .bs-day-name { width:72px;flex-shrink:0;font-size:13px;font-weight:600;padding-top:8px }
+    .bs-range { display:flex;gap:6px;align-items:center;flex-wrap:wrap }
+    .bs-range .form-input { width:auto;min-width:0;max-width:150px }
+    @media (max-width: 640px) { .bs-day { flex-wrap:wrap } .bs-day-name { width:100% } }
   </style>
 </head>
 <body>
@@ -216,9 +224,32 @@
     <div class="tab-pane" id="tab-booking">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <h3 style="font-size:16px;font-weight:600">บริการที่เปิดให้จอง</h3>
-        <button class="btn btn-primary btn-sm" onclick="Page.openCreateBookingService()">+ เพิ่มบริการ</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" onclick="Page.openBookingPresets()">เพิ่มจากแม่แบบ (สปา · คลินิก · สนาม · ห้องประชุม · รถเช่า …)</button>
+          <button class="btn btn-primary btn-sm" onclick="Page.openCreateBookingService()">+ เพิ่มบริการ</button>
+        </div>
       </div>
       <div id="bookingServicesList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 10px">
+        <h3 style="font-size:16px;font-weight:600">ผู้ให้บริการ / ห้อง / อุปกรณ์</h3>
+        <button class="btn btn-secondary btn-sm" onclick="Page.openBookingResource()">+ เพิ่ม</button>
+      </div>
+      <div class="bs-hint" style="margin-bottom:8px">ตารางงานรายบุคคล (เวลาเข้า-ออก · วันหยุด/ลา) + บริการที่รับได้ — ใช้คำนวณรอบว่างของบริการที่ตั้ง "จัดสรรผู้ให้บริการ"</div>
+      <div id="bookingResourcesList"></div>
+
+      <h3 style="font-size:16px;font-weight:600;margin:24px 0 6px">ค่าตั้งการจองของเว็บไซต์ (ค่าเริ่มต้น)</h3>
+      <div class="bs-hint" style="margin-bottom:8px">บริการที่ติ๊ก "ใช้ค่าของเว็บไซต์" ใช้ค่าเหล่านี้ · บริการอื่นใช้ค่าของตัวเอง (override)</div>
+      <div class="form-row-3">
+        <div class="form-group"><label class="form-label">ระยะเวลาต่อครั้ง (นาที)</label><input type="number" class="form-input" id="bssDuration" min="5" max="1440"></div>
+        <div class="form-group"><label class="form-label">เผื่อก่อน (นาที)</label><input type="number" class="form-input" id="bssBufferBefore" min="0" max="720"></div>
+        <div class="form-group"><label class="form-label">เผื่อหลัง (นาที)</label><input type="number" class="form-input" id="bssBufferAfter" min="0" max="720"></div>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group"><label class="form-label">จองล่วงหน้าอย่างน้อย (ชม.)</label><input type="number" class="form-input" id="bssMinAdv" min="0" max="8760"></div>
+        <div class="form-group"><label class="form-label">จองล่วงหน้าได้ไม่เกิน (วัน)</label><input type="number" class="form-input" id="bssMaxAdv" min="0" max="730"></div>
+        <div class="form-group" style="align-self:end"><button class="btn btn-primary btn-sm" onclick="Page.saveBookingSiteSettings()">บันทึกค่าตั้งของเว็บไซต์</button></div>
+      </div>
     </div>
 
     <!-- ====================== BOOKINGS TAB ====================== -->
@@ -587,35 +618,183 @@
       </div>
     </div>
 
-    <!-- Booking service modal -->
+    <!-- Booking service modal — ทีม B: ตั้งค่าครบ (รอบ · buffer · ความจุ · เวลาทำการ · วันหยุด · ล่วงหน้า · มัดจำ · ยกเลิก) -->
     <div class="modal-overlay" id="bookingServiceModal">
-      <div class="modal" style="max-width:600px">
+      <div class="modal" style="max-width:820px">
         <div class="modal-header">
           <h3 class="modal-title" id="bookingServiceModalTitle">เพิ่มบริการ</h3>
           <button class="modal-close" onclick="Layout.closeModal('bookingServiceModal')">&times;</button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="bsId">
-          <div class="form-group">
-            <label class="form-label">ชื่อบริการ *</label>
-            <input type="text" class="form-input" id="bsName" placeholder="เช่น ตัดผม">
+          <h4 class="bs-sec">1. สิ่งที่เปิดให้จอง</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ชื่อบริการ / สิ่งที่ให้จอง *</label>
+              <input type="text" class="form-input" id="bsName" placeholder="เช่น นวดไทย 60 นาที · สนามแบด · ห้องประชุม A">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ชื่อภาษาอังกฤษ</label>
+              <input type="text" class="form-input" id="bsNameEn">
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">คำอธิบาย</label>
-            <textarea class="form-input" id="bsDesc" rows="3"></textarea>
+            <textarea class="form-input" id="bsDesc" rows="2"></textarea>
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">ระยะเวลา (นาที) *</label>
-              <input type="number" class="form-input" id="bsDuration" value="30" min="5">
+              <label class="form-label">รูป (URL)</label>
+              <input type="url" class="form-input" id="bsImage" placeholder="https://...">
             </div>
             <div class="form-group">
-              <label class="form-label">ราคา (บาท)</label>
-              <input type="number" class="form-input" id="bsPrice" step="0.01" value="0">
+              <label class="form-label">หมวด</label>
+              <input type="text" class="form-input" id="bsCategory" placeholder="เช่น นวด · สนาม · ห้องประชุม">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ราคา (บาท) <span class="bs-hint" id="bsPriceHint">ต่อการจอง</span></label>
+              <input type="number" class="form-input" id="bsPrice" step="0.01" min="0" value="0">
             </div>
             <div class="form-group">
-              <label class="form-label">รับพร้อมกัน (คน)</label>
-              <input type="number" class="form-input" id="bsCapacity" value="1" min="1">
+              <label class="form-label">การออกเอกสารบัญชี</label>
+              <select class="form-input" id="bsBookingType"></select>
+            </div>
+          </div>
+          <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px;font-size:13px">
+            <label><input type="checkbox" id="bsAutoConfirm"> ยืนยันการจองอัตโนมัติ</label>
+            <label><input type="checkbox" id="bsActive" checked> เปิดให้จอง</label>
+          </div>
+
+          <h4 class="bs-sec">2. ความละเอียดของรอบ</h4>
+          <label style="font-size:13px;display:block;margin-bottom:8px"><input type="checkbox" id="bsUseSite" onchange="Page.bsSiteDefaultsChanged()">
+            ใช้ค่าของเว็บไซต์ (ระยะเวลา · เผื่อก่อน/หลัง · จองล่วงหน้า) — ไม่ติ๊ก = ตั้งเฉพาะบริการนี้</label>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">รูปแบบการจอง</label>
+              <select class="form-input" id="bsMode" onchange="Page.bsModeChanged()"></select>
+            </div>
+            <div class="form-group" id="bsDurationWrap">
+              <label class="form-label">ระยะเวลาต่อครั้ง (นาที)</label>
+              <input type="number" class="form-input" id="bsDuration" value="60" min="5" max="1440">
+            </div>
+          </div>
+          <div class="form-row" id="bsIntervalWrap">
+            <div class="form-group">
+              <label class="form-label">เริ่มรอบทุก</label>
+              <select class="form-input" id="bsIntervalPick" onchange="Page.bsModeChanged()">
+                <option value="">เท่ากับระยะเวลาต่อครั้ง</option>
+                <option value="15">15 นาที</option>
+                <option value="30">30 นาที</option>
+                <option value="60">1 ชั่วโมง</option>
+                <option value="custom">กำหนดเอง (นาที)</option>
+              </select>
+              <input type="number" class="form-input" id="bsIntervalCustom" min="5" max="1440" placeholder="นาที" style="margin-top:6px;display:none">
+            </div>
+            <div class="form-group">
+              <label class="form-label">จองติดกันได้สูงสุด (ช่วง)</label>
+              <input type="number" class="form-input" id="bsMaxUnits" value="1" min="1" max="48">
+              <div class="bs-hint">เช่น สนาม/ห้องประชุม จอง 1–3 ชั่วโมง · ราคา = ราคาต่อช่วง × จำนวนช่วง</div>
+            </div>
+          </div>
+          <div class="form-row" id="bsSplitWrap" style="display:none">
+            <div class="form-group">
+              <label class="form-label">เวลาแบ่งช่วงเช้า/บ่าย</label>
+              <input type="time" class="form-input" id="bsSplit" value="12:00">
+            </div>
+            <div></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">เผื่อเตรียมก่อนเริ่ม (นาที)</label>
+              <input type="number" class="form-input" id="bsBufferBefore" value="0" min="0" max="720">
+            </div>
+            <div class="form-group">
+              <label class="form-label">เผื่อเก็บ/ทำความสะอาดหลังจบ (นาที)</label>
+              <input type="number" class="form-input" id="bsBufferAfter" value="0" min="0" max="720">
+            </div>
+          </div>
+
+          <h4 class="bs-sec">3. ความจุ / การจองซ้อน</h4>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label class="form-label">รับพร้อมกันต่อรอบ</label>
+              <input type="number" class="form-input" id="bsCapacity" value="1" min="1" max="10000">
+              <div class="bs-hint">1 = ห้ามจองซ้อน · เช่น หมอนวด 3 คน = 3</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">นับเป็น</label>
+              <select class="form-input" id="bsCapacityUnit"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">ทรัพยากรร่วม (ไม่บังคับ)</label>
+              <input type="text" class="form-input" id="bsGroup" maxlength="64" placeholder="เช่น ห้องประชุม A">
+              <div class="bs-hint">บริการที่ใส่ชื่อเดียวกันใช้ความจุร่วมกัน (ไม่จองชนกัน)</div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label"><input type="checkbox" id="bsEnforce" checked onchange="Page.bsEnforceChanged()"> คุม Slot (บล็อกเมื่อเต็ม)</label>
+              <div class="bs-hint">ปิด = ยอมรับจองซ้อนได้ตามเพดาน (เว้นว่าง = ไม่จำกัด)</div>
+              <div id="bsOverlapWrap" style="display:none;margin-top:6px">
+                <input type="number" class="form-input" id="bsOverlap" min="1" max="10000" placeholder="เพดานจองซ้อนต่อรอบ (ว่าง = ไม่จำกัด)">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label"><input type="checkbox" id="bsWaitlist"> เต็มแล้วรับคิวสำรอง (Waiting List)</label>
+              <div class="bs-hint">มีคนยกเลิก ⇒ ระบบเลื่อนคิวแรกที่ลงได้ขึ้นอัตโนมัติ</div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">จัดสรรผู้ให้บริการ / ห้อง / อุปกรณ์</label>
+            <select class="form-input" id="bsResourceMode"></select>
+            <div class="bs-hint">ใช้ผู้ให้บริการที่ผูกกับบริการนี้ (ส่วน "ผู้ให้บริการ" ใต้รายการบริการ) · ระบบจัดให้ = คนที่ว่าง + รับงานนี้ได้ + งานน้อยสุดของวัน · ยังไม่ผูกใคร = นับ "รับพร้อมกันต่อรอบ" · คลาสกลุ่ม: นับเป็น "จำนวนคน" + รับพร้อมกัน = ที่นั่งต่อรอบ</div>
+          </div>
+
+          <h4 class="bs-sec">4. เวลาทำการรายสัปดาห์</h4>
+          <div class="bs-hint" id="bsWeeklyHint" style="margin-bottom:6px"></div>
+          <div id="bsWeekly"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 4px">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.schedCopyMonday('bs')">ใช้เวลาของวันจันทร์กับทุกวันที่เปิด</button>
+          </div>
+
+          <h4 class="bs-sec">5. วันหยุด / วันพิเศษ</h4>
+          <div id="bsExceptions"></div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Page.schedAddException('bs')">+ เพิ่มวันหยุด/วันพิเศษ</button>
+
+          <h4 class="bs-sec">6. จองล่วงหน้า · มัดจำ · ยกเลิก</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">จองล่วงหน้าอย่างน้อย (ชั่วโมง)</label>
+              <input type="number" class="form-input" id="bsMinAdv" value="1" min="0" max="8760">
+            </div>
+            <div class="form-group">
+              <label class="form-label">จองล่วงหน้าได้ไม่เกิน (วัน)</label>
+              <input type="number" class="form-input" id="bsMaxAdv" value="30" min="0" max="730">
+              <div class="bs-hint">0 = รับจองเฉพาะวันนี้</div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">มัดจำ (บาท)</label>
+              <input type="number" class="form-input" id="bsDepositAmount" min="0" step="0.01" placeholder="ไม่เก็บ">
+            </div>
+            <div class="form-group">
+              <label class="form-label">หรือ มัดจำ (% ของยอด)</label>
+              <input type="number" class="form-input" id="bsDepositPercent" min="0" max="100" step="0.01" placeholder="ไม่เก็บ">
+              <div class="bs-hint">ใส่บาทแล้วจะใช้ยอดบาท · ใบมัดจำออกเมื่อเลือก "ชำระมัดจำล่วงหน้า"</div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">ยกเลิกฟรีก่อนเวลานัด (ชั่วโมง)</label>
+              <input type="number" class="form-input" id="bsFreeCancel" min="0" placeholder="ไม่กำหนด">
+            </div>
+            <div class="form-group">
+              <label class="form-label">ค่าธรรมเนียมยกเลิกหลังจากนั้น (%)</label>
+              <input type="number" class="form-input" id="bsCancelFee" min="0" max="100" step="0.01" placeholder="ไม่กำหนด">
             </div>
           </div>
         </div>
@@ -623,6 +802,76 @@
           <button class="btn btn-secondary" onclick="Layout.closeModal('bookingServiceModal')">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.saveBookingService()">บันทึก</button>
         </div>
+      </div>
+    </div>
+
+    <!-- ผู้ให้บริการ / ห้อง / อุปกรณ์ — ตารางงานรายบุคคล + บริการที่รับได้ -->
+    <div class="modal-overlay" id="bookingResourceModal">
+      <div class="modal" style="max-width:760px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="bookingResourceModalTitle">เพิ่มผู้ให้บริการ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('bookingResourceModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="rsId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ชื่อ *</label><input type="text" class="form-input" id="rsName" maxlength="256" placeholder="เช่น ช่างแอน · หมอสมชาย · ห้องประชุม A · รถ กข-1234"></div>
+            <div class="form-group"><label class="form-label">ชนิด</label><select class="form-input" id="rsKind"></select></div>
+          </div>
+          <div class="form-row-3">
+            <div class="form-group"><label class="form-label">รับงานพร้อมกัน</label><input type="number" class="form-input" id="rsCapacity" min="1" max="1000" value="1"></div>
+            <div class="form-group"><label class="form-label">ลำดับ (จัดสรรเมื่องานเท่ากัน)</label><input type="number" class="form-input" id="rsSort" value="0"></div>
+            <div class="form-group" style="align-self:end"><label><input type="checkbox" id="rsActive" checked> เปิดใช้</label></div>
+          </div>
+          <div class="form-group"><label class="form-label">รายละเอียด</label><input type="text" class="form-input" id="rsDesc"></div>
+          <h4 class="bs-sec">บริการที่รับได้</h4>
+          <div id="rsServices"></div>
+          <h4 class="bs-sec">เวลาเข้า-ออกงานรายสัปดาห์ <span class="bs-hint">(ไม่ตั้งเลย = ว่างตลอดเวลาทำการของบริการ)</span></h4>
+          <div id="rsWeekly"></div>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin:6px 0" onclick="Page.schedCopyMonday('rs')">ใช้เวลาของวันจันทร์กับทุกวันที่เข้างาน</button>
+          <h4 class="bs-sec">วันหยุด / วันลา</h4>
+          <div id="rsExceptions"></div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="Page.schedAddException('rs')">+ เพิ่มวันหยุด/วันลา</button>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('bookingResourceModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveBookingResource()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- แม่แบบบริการตามประเภทธุรกิจ (ข้อมูลจาก server: GET booking/presets) -->
+    <div class="modal-overlay" id="bookingPresetModal">
+      <div class="modal" style="max-width:720px">
+        <div class="modal-header">
+          <h3 class="modal-title">เพิ่มบริการจากแม่แบบตามประเภทธุรกิจ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('bookingPresetModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="bookingPresetBody"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('bookingPresetModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ทดลองดูรอบว่าง (server ตัดสิน — ตัวเดียวกับหน้าเว็บลูกค้า) -->
+    <div class="modal-overlay" id="bookingPreviewModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="bookingPreviewTitle">รอบว่าง</h3>
+          <button class="modal-close" onclick="Layout.closeModal('bookingPreviewModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="bpServiceId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">วันที่</label><input type="date" class="form-input" id="bpDate" onchange="Page.loadBookingPreview()"></div>
+            <div class="form-group"><label class="form-label">จำนวนช่วง/คน</label>
+              <div style="display:flex;gap:6px"><input type="number" class="form-input" id="bpUnits" value="1" min="1" title="จำนวนช่วงติดกัน" onchange="Page.loadBookingPreview()">
+              <input type="number" class="form-input" id="bpGuests" value="1" min="1" title="จำนวนคน" onchange="Page.loadBookingPreview()"></div></div>
+          </div>
+          <div id="bpSlots" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+        </div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('bookingPreviewModal')">ปิด</button></div>
       </div>
     </div>
 
@@ -2237,60 +2486,357 @@
       },
 
       // ============ BOOKING ============
+      // ทีม B: ค่าตั้งทุกตัว + ตารางเวลามาจาก server (GET services?all=true) และส่งกลับครบทุกฟิลด์ตอนบันทึก — เดิมฟอร์มส่งแค่ 5 ฟิลด์
+      // ⇒ PUT แทนค่าทั้งชุด = buffer/มัดจำ/ชนิดการจอง/ยืนยันอัตโนมัติถูกรีเซ็ตเงียบ ๆ ทุกครั้งที่กดแก้ไข · กติกาคำนวณรอบอยู่ฝั่ง server ทั้งหมด
+      // (Helpers/BookingSlotEngine) — หน้านี้แค่เก็บค่าตั้งและแสดงผลที่ server ประกอบ (slotSummary · policySummary · รอบว่าง)
       async loadBookingServices() {
         this._bookingLoaded = true;
         const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.cmsListBookingServices(this.siteId);
+          const res = await api.cmsListAllBookingServices(this.siteId);
           this.bookingServices = res.data || [];
+          if (!this._bookingAuxLoaded) { this._bookingAuxLoaded = true; this.loadBookingSiteSettings(); }
+          this.loadBookingResources();
           const list = document.getElementById('bookingServicesList');
-          if (!this.bookingServices.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีบริการ — กด "+ เพิ่มบริการ"</div>'; return; }
+          if (!this.bookingServices.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:30px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีบริการ — กด "+ เพิ่มบริการ" หรือ "เพิ่มจากแม่แบบ"</div>'; return; }
           list.innerHTML = this.bookingServices.map(s => `
-            <div class="page-row">
-              <div style="flex:1">
-                <div style="font-weight:600">${Layout.esc(s.name||'')}</div>
-                <div style="font-size:12px;color:var(--gray-500)">${s.durationMinutes||0} นาที · ฿${Number(s.price||0).toLocaleString('th-TH')} · รับ ${s.maxCapacity||1} คน/รอบ</div>
+            <div class="page-row" style="align-items:flex-start">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:600">${Layout.esc(s.name||'')} ${s.isActive ? '' : '<span class="block-type-badge">ปิดอยู่</span>'}
+                  ${s.capacityGroup ? `<span class="block-type-badge" title="ทรัพยากรร่วม">🔗 ${Layout.esc(s.capacityGroup)}</span>` : ''}</div>
+                <div style="font-size:12px;color:var(--gray-500)">฿${Number(s.price||0).toLocaleString('th-TH')} · ${Layout.esc(s.slotSummary||'')}</div>
+                ${s.policySummary ? `<div style="font-size:12px;color:var(--gray-500)">${Layout.esc(s.policySummary)}</div>` : ''}
+                ${s.hasOpeningHours ? '' : '<div style="font-size:12px;color:#b45309;margin-top:2px">⚠️ ยังไม่ได้ตั้งเวลาทำการ — ลูกค้าจะไม่เห็นเวลาว่างเลย (กด "แก้ไข" → ข้อ 4)</div>'}
               </div>
-              <button class="btn btn-sm btn-primary" onclick="Page.openEditBookingService('${s.id}')">แก้ไข</button>
-              <button class="btn btn-sm btn-danger" onclick="Page.deleteBookingService('${s.id}','${Layout.jsArg(s.name||'')}')">🗑</button>
+              <button class="btn btn-sm btn-secondary" onclick="Page.openBookingPreview('${Layout.jsArg(s.id)}')">ดูรอบว่าง</button>
+              <button class="btn btn-sm btn-primary" onclick="Page.openEditBookingService('${Layout.jsArg(s.id)}')">แก้ไข</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteBookingService('${Layout.jsArg(s.id)}','${Layout.jsArg(s.name||'')}')">🗑</button>
             </div>`).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
-      openCreateBookingService() {
-        document.getElementById('bookingServiceModalTitle').textContent = 'เพิ่มบริการ';
-        ['bsId','bsName','bsDesc'].forEach(id => document.getElementById(id).value = '');
-        document.getElementById('bsDuration').value = 30;
-        document.getElementById('bsPrice').value = 0;
-        document.getElementById('bsCapacity').value = 1;
+      _bsDays: ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์'],
+      _bsDayNames: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],
+
+      _bsFillSelects() {
+        const fill = (id, kind) => {
+          const el = document.getElementById(id);
+          if (el.options.length) return;
+          el.innerHTML = Object.entries(Layout.ENUM_LABELS[kind] || {}).map(([k, v]) => `<option value="${Layout.esc(k)}">${Layout.esc(v)}</option>`).join('');
+        };
+        fill('bsBookingType', 'bookingType'); fill('bsMode', 'bookingSlotMode'); fill('bsCapacityUnit', 'bookingCapacityUnit');
+        fill('bsResourceMode', 'bookingResourceMode');
+      },
+
+      /** เติมฟอร์มจากค่าของ server (บริการเดิม หรือแม่แบบ) — ฟอร์มใหม่ใช้ค่าเริ่มต้นที่ตรงกับ DTO ฝั่ง server */
+      _bsHydrate(s) {
+        this._bsFillSelects();
+        const v = (id, val) => { document.getElementById(id).value = (val === null || val === undefined) ? '' : val; };
+        v('bsId', s.id || ''); v('bsName', s.name || ''); v('bsNameEn', s.nameEn || ''); v('bsDesc', s.description || '');
+        v('bsImage', s.imageUrl || ''); v('bsCategory', s.category || ''); v('bsPrice', s.price ?? 0);
+        v('bsBookingType', s.bookingType || 'Appointment'); v('bsMode', s.slotMode || 'Interval');
+        v('bsDuration', s.durationMinutes ?? 60);
+        const iv = s.slotIntervalMinutes;
+        document.getElementById('bsIntervalPick').value = (iv == null) ? '' : ([15, 30, 60].includes(iv) ? String(iv) : 'custom');
+        v('bsIntervalCustom', (iv != null && ![15, 30, 60].includes(iv)) ? iv : '');
+        v('bsMaxUnits', s.maxUnitsPerBooking ?? 1); v('bsSplit', s.halfDaySplitTime || '12:00');
+        v('bsBufferBefore', s.bufferBeforeMinutes ?? 0); v('bsBufferAfter', s.bufferMinutes ?? 0);
+        v('bsCapacity', s.maxCapacity ?? 1); v('bsCapacityUnit', s.capacityUnit || 'Bookings'); v('bsGroup', s.capacityGroup || '');
+        v('bsMinAdv', s.minAdvanceBookingHours ?? 1); v('bsMaxAdv', s.maxAdvanceBookingDays ?? 30);
+        v('bsDepositAmount', s.depositAmount); v('bsDepositPercent', s.depositPercent);
+        v('bsFreeCancel', s.freeCancellationHours); v('bsCancelFee', s.cancellationFeePercent);
+        document.getElementById('bsAutoConfirm').checked = !!s.autoConfirm;
+        document.getElementById('bsActive').checked = s.isActive !== false;
+        this._bsSlug = s.slug || null;
+        this._bsProductId = s.productId || null;
+        document.getElementById('bsUseSite').checked = !!s.useSiteDefaults;
+        document.getElementById('bsEnforce').checked = s.enforceSlotCapacity !== false;
+        v('bsOverlap', s.overlapLimit);
+        document.getElementById('bsWaitlist').checked = !!s.waitlistEnabled;
+        v('bsResourceMode', s.resourceMode || 'None');
+        this.schedLoad('bs', s.schedule);
+        this.bsModeChanged();
+        this.bsSiteDefaultsChanged();
+        this.bsEnforceChanged();
+      },
+
+      _bsDayIndex(d) { if (typeof d === 'number') return d; const i = this._bsDayNames.indexOf(d); return i < 0 ? 1 : i; },
+
+      bsModeChanged() {
+        const mode = document.getElementById('bsMode').value;
+        const pick = document.getElementById('bsIntervalPick').value;
+        document.getElementById('bsIntervalWrap').style.display = mode === 'Interval' ? '' : 'none';
+        document.getElementById('bsIntervalCustom').style.display = pick === 'custom' ? '' : 'none';
+        document.getElementById('bsSplitWrap').style.display = mode === 'HalfDay' ? '' : 'none';
+        document.getElementById('bsDurationWrap').style.display = (mode === 'HalfDay' || mode === 'FullDay') ? 'none' : '';
+        document.getElementById('bsPriceHint').textContent = mode === 'Interval' ? 'ต่อช่วง' : (mode === 'HalfDay' ? 'ต่อครึ่งวัน' : (mode === 'FullDay' ? 'ต่อวัน' : 'ต่อการจอง'));
+        document.getElementById('bsWeeklyHint').textContent = mode === 'Windows'
+          ? 'แต่ละช่วงที่เปิด = 1 รอบให้จอง (เช่น คลาส 07:00–08:00 และ 18:00–19:00) · ช่วง "พัก" = ปิดรับ'
+          : (mode === 'Interval' ? 'ระบบตัดรอบตามความละเอียดภายในช่วงที่เปิด · ช่วง "พัก" (เช่น พักเที่ยง) ไม่มีรอบทับ'
+            : 'ช่วงที่เปิดของแต่ละวัน = ช่วงที่ให้เช่า/ใช้บริการ' + (mode === 'HalfDay' ? ' (แบ่งเช้า/บ่ายตามเวลาแบ่ง)' : ''));
+      },
+
+      // ── ตัวแก้ตารางเวลา (ใช้ร่วม: 'bs' = เวลาทำการของบริการ · 'rs' = ตารางงานรายบุคคลของผู้ให้บริการ) ──
+      _sched: { bs: { weekly: [], exceptions: [] }, rs: { weekly: [], exceptions: [] } },
+      schedLoad(p, sch) {
+        sch = sch || {};
+        this._sched[p] = {
+          weekly: (sch.weekly || []).map(w => ({ day: this._bsDayIndex(w.dayOfWeek), start: w.start, end: w.end, blocked: !!w.isBlocked, capacity: w.capacity ?? null })),
+          exceptions: (sch.exceptions || []).map(x => ({ date: x.date, kind: x.closed ? ((x.start || x.end) ? 'partial' : 'closed') : 'open', start: x.start || '', end: x.end || '' }))
+        };
+        this.schedRender(p);
+      },
+      schedPayload(p) {
+        const st = this._sched[p];
+        return {
+          weekly: st.weekly.map(w => ({ dayOfWeek: this._bsDayNames[w.day], start: w.start, end: w.end, isBlocked: !!w.blocked, capacity: w.capacity })),
+          exceptions: st.exceptions.map(x => x.kind === 'closed'
+            ? { date: x.date, closed: true, start: null, end: null }
+            : { date: x.date, closed: x.kind === 'partial', start: x.start || null, end: x.end || null })
+        };
+      },
+      schedRender(p) {
+        const esc = Layout.esc;
+        const st = this._sched[p];
+        const ref = `Page._sched.${p}`;
+        const openWord = p === 'rs' ? 'เข้างาน' : 'เปิด';
+        const offWord = p === 'rs' ? 'ไม่เข้างาน' : 'ปิด (ไม่รับจอง)';
+        document.getElementById(p + 'Weekly').innerHTML = [1, 2, 3, 4, 5, 6, 0].map(d => {
+          const rows = st.weekly.map((w, i) => ({ w, i })).filter(x => x.w.day === d);
+          return `<div class="bs-day">
+            <div class="bs-day-name">${esc(this._bsDays[d])}</div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+              ${rows.length ? rows.map(({ w, i }) => `
+                <div class="bs-range">
+                  <input type="time" class="form-input" value="${esc(w.start)}" onchange="${ref}.weekly[${i}].start=this.value">
+                  <span>–</span>
+                  <input type="time" class="form-input" value="${esc(w.end === '24:00' ? '23:59' : w.end)}" onchange="${ref}.weekly[${i}].end=this.value">
+                  <select class="form-input" onchange="${ref}.weekly[${i}].blocked=this.value==='1'">
+                    <option value="0" ${w.blocked ? '' : 'selected'}>${openWord}</option><option value="1" ${w.blocked ? 'selected' : ''}>พัก/ปิด</option>
+                  </select>
+                  <button type="button" class="btn btn-sm btn-secondary" onclick="Page.schedRemoveWeekly('${p}', ${i})" title="ลบช่วง">✕</button>
+                </div>`).join('') : `<span class="bs-hint">${offWord}</span>`}
+            </div>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="Page.schedAddWeekly('${p}', ${d})">+ ช่วง</button>
+          </div>`;
+        }).join('');
+        document.getElementById(p + 'Exceptions').innerHTML = st.exceptions.length ? st.exceptions.map((x, i) => `
+          <div class="bs-range" style="margin-bottom:4px">
+            <input type="date" class="form-input" value="${esc(x.date)}" onchange="${ref}.exceptions[${i}].date=this.value">
+            <select class="form-input" onchange="${ref}.exceptions[${i}].kind=this.value;Page.schedRender('${p}')">
+              <option value="closed" ${x.kind === 'closed' ? 'selected' : ''}>${p === 'rs' ? 'หยุด/ลาทั้งวัน' : 'ปิดทั้งวัน'}</option>
+              <option value="partial" ${x.kind === 'partial' ? 'selected' : ''}>${p === 'rs' ? 'ลาบางช่วง' : 'ปิดบางช่วง'}</option>
+              <option value="open" ${x.kind === 'open' ? 'selected' : ''}>${p === 'rs' ? 'เข้างานเวลาพิเศษ' : 'เปิดเวลาพิเศษ (แทนเวลาปกติ)'}</option>
+            </select>
+            ${x.kind === 'closed' ? '' : `<input type="time" class="form-input" value="${esc(x.start)}" onchange="${ref}.exceptions[${i}].start=this.value">
+              <span>–</span><input type="time" class="form-input" value="${esc(x.end)}" onchange="${ref}.exceptions[${i}].end=this.value">`}
+            <button type="button" class="btn btn-sm btn-secondary" onclick="Page.schedRemoveException('${p}', ${i})">✕</button>
+          </div>`).join('') : `<div class="bs-hint" style="margin-bottom:6px">${p === 'rs' ? 'ยังไม่มีวันหยุด/วันลา' : 'ยังไม่มีวันหยุด/วันพิเศษ'}</div>`;
+      },
+      schedAddWeekly(p, d) {
+        const st = this._sched[p];
+        const last = st.weekly.filter(w => w.day === d && !w.blocked).pop();
+        st.weekly.push(last ? { day: d, start: last.end === '24:00' ? '23:00' : last.end, end: '23:59', blocked: false, capacity: null }
+                            : { day: d, start: '09:00', end: '18:00', blocked: false, capacity: null });
+        this.schedRender(p);
+      },
+      schedRemoveWeekly(p, i) { this._sched[p].weekly.splice(i, 1); this.schedRender(p); },
+      schedCopyMonday(p) {
+        const st = this._sched[p];
+        const mon = st.weekly.filter(w => w.day === 1);
+        if (!mon.length) { Layout.toast('ยังไม่ได้ตั้งเวลาของวันจันทร์', 'error'); return; }
+        const openDays = new Set(st.weekly.filter(w => !w.blocked).map(w => w.day));
+        openDays.add(1);
+        st.weekly = st.weekly.filter(w => !openDays.has(w.day) || w.day === 1);
+        openDays.forEach(d => { if (d !== 1) mon.forEach(w => st.weekly.push({ ...w, day: d })); });
+        this.schedRender(p);
+      },
+      schedAddException(p) {
+        this._sched[p].exceptions.push({ date: new Date().toISOString().slice(0, 10), kind: 'closed', start: '', end: '' });
+        this.schedRender(p);
+      },
+      schedRemoveException(p, i) { this._sched[p].exceptions.splice(i, 1); this.schedRender(p); },
+
+      // ── ค่าตั้งระดับไซต์ ──
+      async loadBookingSiteSettings() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const d = (await api.cmsGetBookingSiteSettings(this.siteId)).data || {};
+          document.getElementById('bssDuration').value = d.durationMinutes ?? 60;
+          document.getElementById('bssBufferBefore').value = d.bufferBeforeMinutes ?? 0;
+          document.getElementById('bssBufferAfter').value = d.bufferAfterMinutes ?? 0;
+          document.getElementById('bssMinAdv').value = d.minAdvanceHours ?? 1;
+          document.getElementById('bssMaxAdv').value = d.maxAdvanceDays ?? 30;
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async saveBookingSiteSettings() {
+        const api = Layout.api(); if (!api) return;
+        const body = {
+          durationMinutes: this._bsNum('bssDuration', 60), bufferBeforeMinutes: this._bsNum('bssBufferBefore', 0),
+          bufferAfterMinutes: this._bsNum('bssBufferAfter', 0), minAdvanceHours: this._bsNum('bssMinAdv', 0), maxAdvanceDays: this._bsNum('bssMaxAdv', 30)
+        };
+        try {
+          await api.cmsUpdateBookingSiteSettings(this.siteId, body);
+          Layout.toast('บันทึกค่าตั้งของเว็บไซต์แล้ว', 'success');
+          await this.loadBookingServices();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ── ผู้ให้บริการ / ห้อง / อุปกรณ์ ──
+      async loadBookingResources() {
+        const api = Layout.api(); if (!api) return;
+        const list = document.getElementById('bookingResourcesList');
+        try {
+          this.bookingResources = (await api.cmsListBookingResources(this.siteId)).data || [];
+          if (!this.bookingResources.length) { list.innerHTML = '<div class="bs-hint" style="padding:10px">ยังไม่มีผู้ให้บริการ — บริการที่ตั้ง "จัดสรรผู้ให้บริการ" จะนับความจุของบริการแทนจนกว่าจะเพิ่ม</div>'; return; }
+          const svcName = id => ((this.bookingServices || []).find(s => s.id === id) || {}).name || '?';
+          list.innerHTML = this.bookingResources.map(r => `
+            <div class="page-row">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:600">${Layout.esc(r.name)} <span class="block-type-badge">${Layout.esc(Layout.enumLabel('bookingResourceKind', r.kind))}</span> ${r.isActive ? '' : '<span class="block-type-badge">ปิดอยู่</span>'}</div>
+                <div style="font-size:12px;color:var(--gray-500)">รับ: ${r.serviceIds.length ? r.serviceIds.map(id => Layout.esc(svcName(id))).join(', ') : '<span style="color:#b45309">ยังไม่ได้เลือกบริการ</span>'}
+                  · ${(r.schedule.weekly || []).length ? 'มีตารางงาน' : 'ว่างตามเวลาทำการของบริการ'}${(r.schedule.exceptions || []).length ? ` · วันหยุด/ลา ${r.schedule.exceptions.length} วัน` : ''}</div>
+              </div>
+              <button class="btn btn-sm btn-primary" onclick="Page.openBookingResource('${Layout.jsArg(r.id)}')">แก้ไข</button>
+              <button class="btn btn-sm btn-danger" onclick="Page.deleteBookingResource('${Layout.jsArg(r.id)}','${Layout.jsArg(r.name)}')">🗑</button>
+            </div>`).join('');
+        } catch (e) { list.innerHTML = `<div style="color:#dc2626">${Layout.esc(e.message)}</div>`; }
+      },
+      openBookingResource(id) {
+        const r = id ? (this.bookingResources || []).find(x => x.id === id) : null;
+        document.getElementById('bookingResourceModalTitle').textContent = r ? 'แก้ไขผู้ให้บริการ' : 'เพิ่มผู้ให้บริการ / ห้อง / อุปกรณ์';
+        const kind = document.getElementById('rsKind');
+        if (!kind.options.length) kind.innerHTML = Object.entries(Layout.ENUM_LABELS.bookingResourceKind || {}).map(([k, v]) => `<option value="${Layout.esc(k)}">${Layout.esc(v)}</option>`).join('');
+        document.getElementById('rsId').value = r ? r.id : '';
+        document.getElementById('rsName').value = r ? r.name : '';
+        kind.value = r ? r.kind : 'Staff';
+        document.getElementById('rsCapacity').value = r ? r.capacity : 1;
+        document.getElementById('rsSort').value = r ? r.sortOrder : 0;
+        document.getElementById('rsActive').checked = r ? r.isActive : true;
+        document.getElementById('rsDesc').value = r ? (r.description || '') : '';
+        const chosen = new Set(r ? r.serviceIds : []);
+        document.getElementById('rsServices').innerHTML = (this.bookingServices || []).map(s =>
+          `<label style="display:inline-flex;gap:4px;margin:0 12px 6px 0;font-size:13px"><input type="checkbox" value="${Layout.esc(s.id)}" ${chosen.has(s.id) ? 'checked' : ''}> ${Layout.esc(s.name)}</label>`).join('')
+          || '<span class="bs-hint">ยังไม่มีบริการ</span>';
+        this.schedLoad('rs', r ? r.schedule : null);
+        Layout.openModal('bookingResourceModal');
+      },
+      async saveBookingResource() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('rsId').value;
+        const body = {
+          name: document.getElementById('rsName').value.trim(),
+          kind: document.getElementById('rsKind').value,
+          capacity: this._bsNum('rsCapacity', 1), sortOrder: this._bsNum('rsSort', 0),
+          isActive: document.getElementById('rsActive').checked,
+          description: document.getElementById('rsDesc').value.trim() || null,
+          serviceIds: Array.from(document.querySelectorAll('#rsServices input[type=checkbox]:checked')).map(x => x.value),
+          schedule: this.schedPayload('rs')
+        };
+        if (!body.name) { Layout.toast('กรุณากรอกชื่อ', 'error'); return; }
+        try {
+          if (id) await api.cmsUpdateBookingResource(this.siteId, id, body);
+          else await api.cmsCreateBookingResource(this.siteId, body);
+          Layout.toast('บันทึกสำเร็จ', 'success');
+          Layout.closeModal('bookingResourceModal');
+          await this.loadBookingResources();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteBookingResource(id, name) {
+        if (!confirm(`ลบ "${name}"? (การจองเดิมยังอ้างชื่อได้ แต่จะไม่ถูกจัดงานใหม่)`)) return;
+        const api = Layout.api(); if (!api) return;
+        try { await api.cmsDeleteBookingResource(this.siteId, id); await this.loadBookingResources(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      bsSiteDefaultsChanged() {
+        const useSite = document.getElementById('bsUseSite').checked;
+        ['bsDuration', 'bsBufferBefore', 'bsBufferAfter', 'bsMinAdv', 'bsMaxAdv'].forEach(id => { document.getElementById(id).disabled = useSite; });
+      },
+      bsEnforceChanged() {
+        document.getElementById('bsOverlapWrap').style.display = document.getElementById('bsEnforce').checked ? 'none' : '';
+      },
+
+      openCreateBookingService(preset) {
+        document.getElementById('bookingServiceModalTitle').textContent = preset ? 'เพิ่มบริการจากแม่แบบ' : 'เพิ่มบริการ';
+        // ฟอร์มใหม่ห้ามค้างค่าของใบก่อน — เริ่มจากแม่แบบ หรือค่าเริ่มต้น (ตัดรอบทุก 30 นาที · จ–ส 09:00–18:00)
+        const base = preset ? { ...preset, id: '' } : {
+          durationMinutes: 60, slotMode: 'Interval', slotIntervalMinutes: 30, maxCapacity: 1, price: 0,
+          bookingType: 'Appointment', minAdvanceBookingHours: 1, maxAdvanceBookingDays: 30, isActive: true,
+          schedule: { weekly: [1, 2, 3, 4, 5, 6].map(d => ({ dayOfWeek: d, start: '09:00', end: '18:00' })) }
+        };
+        this._bsHydrate(base);
+        Layout.closeModal('bookingPresetModal');
         Layout.openModal('bookingServiceModal');
       },
 
       openEditBookingService(id) {
-        const s = this.bookingServices.find(x => x.id === id);
+        const s = (this.bookingServices || []).find(x => x.id === id);
         if (!s) return;
         document.getElementById('bookingServiceModalTitle').textContent = 'แก้ไขบริการ';
-        document.getElementById('bsId').value = s.id;
-        document.getElementById('bsName').value = s.name || '';
-        document.getElementById('bsDesc').value = s.description || '';
-        document.getElementById('bsDuration').value = s.durationMinutes || 30;
-        document.getElementById('bsPrice').value = s.price || 0;
-        document.getElementById('bsCapacity').value = s.maxCapacity || 1;
+        this._bsHydrate(s);
         Layout.openModal('bookingServiceModal');
       },
+
+      async openBookingPresets() {
+        const api = Layout.api(); if (!api) return;
+        Layout.openModal('bookingPresetModal');
+        const body = document.getElementById('bookingPresetBody');
+        try {
+          if (!this._bsPresets) this._bsPresets = (await api.cmsBookingPresets(this.siteId)).data || [];
+          body.innerHTML = this._bsPresets.map((p, pi) => `
+            <div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+              <div style="font-weight:600">${Layout.esc(p.label)}</div>
+              <div class="bs-hint" style="margin-bottom:6px">${Layout.esc(p.description || '')}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                ${(p.services || []).map((s, si) => `<button type="button" class="btn btn-sm btn-secondary" onclick="Page.openCreateBookingService(Page._bsPresets[${pi}].services[${si}])">+ ${Layout.esc(s.name)}</button>`).join('')}
+              </div>
+            </div>`).join('');
+        } catch (e) { body.innerHTML = `<div class="text-center" style="color:#dc2626;padding:20px">${Layout.esc(e.message)}</div>`; }
+      },
+
+      _bsNum(id, fallback) { const raw = document.getElementById(id).value; if (raw === '') return fallback; const n = Number(raw); return Number.isFinite(n) ? n : fallback; },
 
       async saveBookingService() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('bsId').value;
+        const mode = document.getElementById('bsMode').value;
+        const pick = document.getElementById('bsIntervalPick').value;
+        const intervalVal = pick === '' ? null : (pick === 'custom' ? this._bsNum('bsIntervalCustom', null) : Number(pick));
+        const str = (elId) => { const t = document.getElementById(elId).value.trim(); return t === '' ? null : t; };
         const body = {
           name: document.getElementById('bsName').value.trim(),
-          description: document.getElementById('bsDesc').value || null,
-          durationMinutes: parseInt(document.getElementById('bsDuration').value) || 30,
-          price: parseFloat(document.getElementById('bsPrice').value) || 0,
-          maxCapacity: parseInt(document.getElementById('bsCapacity').value) || 1,
-          isActive: true
+          nameEn: str('bsNameEn'), description: str('bsDesc'), imageUrl: str('bsImage'), category: str('bsCategory'),
+          slug: this._bsSlug, productId: this._bsProductId,
+          price: this._bsNum('bsPrice', 0),
+          bookingType: document.getElementById('bsBookingType').value,
+          autoConfirm: document.getElementById('bsAutoConfirm').checked,
+          isActive: document.getElementById('bsActive').checked,
+          slotMode: mode,
+          durationMinutes: this._bsNum('bsDuration', 60),
+          slotIntervalMinutes: intervalVal,
+          maxUnitsPerBooking: this._bsNum('bsMaxUnits', 1),
+          halfDaySplitTime: mode === 'HalfDay' ? (document.getElementById('bsSplit').value || null) : null,
+          bufferBeforeMinutes: this._bsNum('bsBufferBefore', 0),
+          bufferMinutes: this._bsNum('bsBufferAfter', 0),
+          maxCapacity: this._bsNum('bsCapacity', 1),
+          capacityUnit: document.getElementById('bsCapacityUnit').value,
+          capacityGroup: str('bsGroup'),
+          minAdvanceBookingHours: this._bsNum('bsMinAdv', 0),
+          maxAdvanceBookingDays: this._bsNum('bsMaxAdv', 30),
+          depositAmount: this._bsNum('bsDepositAmount', null),
+          depositPercent: this._bsNum('bsDepositPercent', null),
+          freeCancellationHours: this._bsNum('bsFreeCancel', null),
+          cancellationFeePercent: this._bsNum('bsCancelFee', null),
+          useSiteDefaults: document.getElementById('bsUseSite').checked,
+          enforceSlotCapacity: document.getElementById('bsEnforce').checked,
+          overlapLimit: document.getElementById('bsEnforce').checked ? null : this._bsNum('bsOverlap', null),
+          waitlistEnabled: document.getElementById('bsWaitlist').checked,
+          resourceMode: document.getElementById('bsResourceMode').value,
+          schedule: this.schedPayload('bs')
         };
         if (!body.name) { Layout.toast('กรุณากรอกชื่อบริการ', 'error'); return; }
+        // ช่วงเวลาที่ผิดรูป/เริ่มไม่ก่อนจบ — server ตรวจและตอบข้อความไทยกลับมา (ไม่ตรวจซ้ำในหน้านี้)
         try {
           if (id) await api.cmsUpdateBookingService(this.siteId, id, body);
           else await api.cmsCreateBookingService(this.siteId, body);
@@ -2309,6 +2855,32 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
+      openBookingPreview(id) {
+        const s = (this.bookingServices || []).find(x => x.id === id);
+        document.getElementById('bpServiceId').value = id;
+        document.getElementById('bookingPreviewTitle').textContent = 'รอบว่าง — ' + (s ? s.name : '');
+        if (!document.getElementById('bpDate').value) document.getElementById('bpDate').value = new Date().toISOString().slice(0, 10);
+        Layout.openModal('bookingPreviewModal');
+        this.loadBookingPreview();
+      },
+
+      async loadBookingPreview() {
+        const api = Layout.api(); if (!api) return;
+        const box = document.getElementById('bpSlots');
+        const date = document.getElementById('bpDate').value;
+        if (!date) return;
+        box.innerHTML = '<span class="bs-hint">กำลังค้นหา...</span>';
+        try {
+          const res = await api.cmsBookingAvailableSlots(this.siteId, {
+            bookingServiceId: document.getElementById('bpServiceId').value, date: date + 'T00:00:00',
+            units: this._bsNum('bpUnits', 1), guestCount: this._bsNum('bpGuests', 1)
+          });
+          const slots = res.data || [];
+          box.innerHTML = slots.length ? slots.map(x => `<span class="block-type-badge" style="padding:6px 10px">${Layout.esc(x.label ? x.label + ' ' : '')}${Layout.esc(x.startTime)}–${Layout.esc(x.endTime)} · ว่าง ${x.availableCapacity}</span>`).join('')
+            : '<span class="bs-hint">ไม่มีรอบว่างในวันนี้ (ปิด/วันหยุด/เต็ม/เกินช่วงจองล่วงหน้า หรือบริการปิดอยู่)</span>';
+        } catch (e) { box.innerHTML = `<span style="color:#dc2626">${Layout.esc(e.message)}</span>`; }
+      },
+
       async loadBookings() {
         this._bookingsLoaded = true;
         const api = Layout.api(); if (!api) return;
@@ -2320,7 +2892,7 @@
           list.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>วันที่/เวลา</th><th>ลูกค้า</th><th>บริการ</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>` +
             bookings.map(b => `<tr>
               <td>${Layout.esc(b.bookingNumber||'')}</td>
-              <td>${b.startTime ? new Date(b.startTime).toLocaleString('th-TH') : '-'}</td>
+              <td>${Layout.date(b.bookingDate)} ${Layout.esc(b.startTime||'')}${b.endTime ? '–' + Layout.esc(b.endTime) : ''}</td>
               <td>${Layout.esc(b.customerName||b.customerEmail||'-')}</td>
               <td>${Layout.esc(b.serviceName||'-')}</td>
               <td><span class="block-type-badge">${Layout.esc(Layout.enumLabel('bookingStatus', b.status))}</span></td>

@@ -1110,6 +1110,16 @@ const API = {
       cmsCreateBookingService: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/services`, d),
       cmsUpdateBookingService: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/services/${id}`, d),
       cmsDeleteBookingService: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/booking/services/${id}`),
+      // ทีม B — ทั้งหมด (รวมที่ปิดไว้) สำหรับหน้า CMS · แม่แบบตามประเภทธุรกิจ · ทดลองดูรอบว่าง (ตัวตัดสินเดียวกับหน้าเว็บ)
+      cmsListAllBookingServices: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/services?all=true`),
+      cmsBookingPresets: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/presets`),
+      cmsBookingAvailableSlots: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/available-slots`, d),
+      cmsGetBookingSiteSettings: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/settings`),
+      cmsUpdateBookingSiteSettings: (siteId, d) => API.put(`${base}/cms/sites/${siteId}/booking/settings`, d),
+      cmsListBookingResources: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/resources`),
+      cmsCreateBookingResource: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/resources`, d),
+      cmsUpdateBookingResource: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/resources/${id}`, d),
+      cmsDeleteBookingResource: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/booking/resources/${id}`),
       // cmsListBookings/cmsGetBooking/cmsUpdateBookingStatus อยู่ในกลุ่มด้านบน — ห้ามประกาศซ้ำ
       // Customers (per site)
       cmsListCustomers: (siteId, q='') => API.get(`${base}/cms/sites/${siteId}/customers${q}`),

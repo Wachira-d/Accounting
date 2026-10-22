@@ -5560,7 +5560,7 @@ REVIEWER_CASES = [
     # รอบ 199 B-1: กลับไปแยกชุด "ผ่าน" ด้วย IsGapWarning (รวมชุด VAT) = ขยายคำตัดสินข้อ 12 เองอีกครั้ง ⇒ ต้องฟ้อง
     ("B1b", "Approve", "preview.Where(Helpers.OcrApprovalGapWarning.IsAmountGapWarning)", "preview.Where(Helpers.OcrApprovalGapWarning.IsGapWarning)", True),
     # รอบ 202 ทีม LW: ใส่ auto-seed บน GET สาธารณะกลับ ⇒ ต้องฟ้อง · ทิ้งผลตัวตัดสิน seed (สร้างแห่งที่สองต่อ) ⇒ ต้องฟ้อง
-    ("LW1", "GetServicesAsync", "GetServicesAsync(Guid companyId, Guid siteId)\n    {\n", "GetServicesAsync(Guid companyId, Guid siteId)\n    {\n        await EnsureDefaultBookingServiceAsync(companyId, siteId);\n", True),
+    ("LW1", "GetServicesAsync", "GetServicesAsync(Guid companyId, Guid siteId, bool includeInactive = false)\n    {\n", "GetServicesAsync(Guid companyId, Guid siteId, bool includeInactive = false)\n    {\n        await EnsureDefaultBookingServiceAsync(companyId, siteId);\n", True),
     ("LW2", "SeedForSiteAsync", "if (outcome != LodgingSeedOutcome.Created) return new Result(null, outcome, message);", "_ = message;", True),
     ("LW4", "SearchAsync", "var adultsPerRoom = LodgingSearchGuests.PerRoom(request.Adults, request.Rooms, 1);", "var adultsPerRoom = Math.Max(1, request.Adults);", True),
     # ฝ่ายค้านรอบส่งออก รอบ 4: ถอดด่านยกยอดรุ่นเก่าออกจากปิดปี (P2-a) · รายงานผังใต้ผังแม่แบบไม่กรองหลักฐาน (P2-c) · ใบปิดปีกลับไป join ผังแบบกรอง (P2-b) ⇒ ต้องฟ้อง

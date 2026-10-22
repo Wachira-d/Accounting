@@ -158,6 +158,8 @@ public static class AdvisoryLockKey
     public static long DepositRealizeKey(Guid companyId, Guid depositId) => For(companyId, DepositRealize, depositId.ToString());
     /// <summary>เลขคำสั่งซื้อ/การจองจากหน้าเว็บ (CMS) — part = prefix รวมงวด</summary>
     public const string StorefrontSequence = "store-seq";
+    /// <summary>ตัดสิน "รอบนี้ยังว่างไหม" + บันทึกการจองคิว CMS (Helpers/BookingSlotEngine) — part = บริการ หรือกลุ่มทรัพยากรร่วมของเว็บ</summary>
+    public const string CmsBookingSlot = "cms-booking-slot";
     /// <summary>รหัสผังบัญชีที่ระบบสร้างให้อัตโนมัติ — part = ช่วงเลขที่ใช้</summary>
     public const string AccountCodeSequence = "coa-seq";
     /// <summary>เลขเอกสารของโมดูลย่อย (เบิกค่าใช้จ่าย · เงินกู้ · โอนคลัง ฯลฯ)

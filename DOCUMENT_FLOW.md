@@ -1628,6 +1628,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     6. e-Tax: ขั้น 3 (`ApproveDocumentAsync`) ออกให้แล้วผ่าน hook — **ถอดการเรียก `GenerateAsync` ซ้ำ** (เดิมได้ "มี e-Tax แล้ว" เป็น LogWarning ทุกใบ
        และล้มเงียบ) · เรียก `IIssuedDocumentHooks.RunAsync` เฉพาะเมื่อ**ไม่ได้อนุมัติในรอบนี้** (ยืนยันซ้ำ/อนุมัติไว้ก่อน) (รอบ 193 S-02)
   - ทุก step fault-tolerant: ล้มเหลว → log + ไม่ rollback step ก่อนหน้า
+- **รอบที่เปิดให้จอง (CMS booking · ทีม B 2026-10-22)** — ตัวตัดสินเดียว `Helpers/BookingSlotEngine` (หน้าเวลาว่าง `Available` + ด่านสร้างการจอง `Decide`):
+  โหมดรอบ (`SlotMode`: ช่วงกำหนดเอง=เดิม · ทุก N นาที · ครึ่งวัน · รายวัน) · buffer ก่อน/หลัง · ความจุพร้อมกัน (คิว/คน) · ทรัพยากรร่วม (`CapacityGroup`) ·
+  เวลาทำการรายสัปดาห์ + วันหยุด/วันพิเศษ (แถว `SiteBookingSlot`) · ล่วงหน้าขั้นต่ำ/สูงสุด (เวลาไทย) · จองหลายช่วงติดกัน (`Units` · ยอด = ราคา × ช่วง) ·
+  `CreateBookingAsync` ตัดสิน + ออกเลข + บันทึกใต้ `pg_advisory_xact_lock` (`AdvisoryLockKey.CmsBookingSlot`) ใน transaction เดียว แล้วจึงเข้าเส้น ERP ข้างล่าง ·
+  ไม่ผ่าน ⇒ `BusinessRuleException` (`CMS-BOOKING-FULL` 409 · `-CLOSED`/`-NOTONGRID`/`-TOOSOON`/`-TOOFARAHEAD`/`-UNITSNOTALLOWED`/`-INVALIDREQUEST` 400) ·
+  เวลาจบ/ระยะ/ยอด/มัดจำ (ปัด AwayFromZero · ไม่เกินยอด) มาจาก server · บรรทัด ERP: Quantity = `Units` (ใบมัดจำยังเป็น 1 × มัดจำ) ·
+  สวิตช์คุม Slot (ปิด = จองซ้อนได้ถึงเพดาน) · คิวสำรอง (`BookingStatus.Waitlisted` ไม่ออกเอกสาร ERP · ยกเลิก/ไม่มา ⇒ `PromoteWaitlistAsync`
+  เลื่อนขึ้นแล้วจึงออกเอกสาร) · ผู้ให้บริการ (`ResourceMode` · `PickResource` deterministic · ตารางงานรายบุคคล) · ค่าตั้งระดับไซต์ (`UseSiteDefaults`) ·
+  ข้อมูลเดิม: คอลัมน์ใหม่ DEFAULT = พฤติกรรมเดิม (`Helpers/BookingEngineMigration`) · รายละเอียด + backlog + API ให้ทีมอื่น: `docs/BOOKING_ENGINE_DESIGN.md`
 - **Booking flow** (`CmsBookingService.SyncBookingToErpAsync`):
   - Map `BookingType` → DocumentType:
     - `Lead/Appointment` → `Quotation` (Draft, รอ admin confirm)

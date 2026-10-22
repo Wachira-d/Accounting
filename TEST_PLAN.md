@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **611 ไฟล์ · 5,999 `[Fact]` + 990 `[Theory]` (4,667 `InlineData`)** ณ 2026-10-19 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **612 ไฟล์ · 6,043 `[Fact]` + 990 `[Theory]` (4,667 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6397,3 +6397,25 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | YER-12 | ปิดงวด ธ.ค. + ต.ค. ชั่วคราว แล้วปิดปี 2024 | ปิดได้ (เดิมล้ม "งวดถูกปิดแล้ว") · ทุกงวดล็อก · audit `year-end-close-through-soft-closed-period` เฉพาะ ธ.ค. · chain สะอาด | ✅ `Db/YearEndReopenDbTests` |
 | YER-13 | ตัวตัดสิน (pure) | ทุกด่านล้มพร้อมทางไปต่อ · ลำดับด่าน · เหตุผลว่าง/ช่องว่าง · ชนิดแบบที่ต้องรับทราบ (RD_CIT/DBD Filed/Accepted เท่านั้น) · ป้าย/เลขอ้างอิง · ข้อความด่านใบปิด/เปิดงวดเดี่ยวชี้ปุ่ม ไม่อ้าง TAS 8 · สถานะ 409/404/400 | ✅ `YearEndReopenRuleTests` |
 | YER-14 | ตัดด่านในโค้ด (ทิ้งผลตัวตัดสิน · ถอดล็อก · ถอดด่านเจ้าของ · ยกเลิกแถวนำเข้า · กลับใบผ่านสมุดรายวัน · ถอดการเปิดงวด ธ.ค.) | `tools/required_call_site_check.py` ฟ้องทุกเคส (REO1–REO6) · จัดรูปแบบใหม่ไม่ฟ้อง (REO7) | ✅ checker self-test |
+
+## BKE — engine รอบจองคิว/บริการบนเว็บ CMS (ทีม B · 2026-10-22 · `docs/BOOKING_ENGINE_DESIGN.md`)
+
+| ID | กรณี | คาดหวัง | สถานะ |
+| --- | --- | --- | --- |
+| BKE-01 | ความละเอียดรอบ: ทุก 30 นาที/รายชั่วโมง/ครึ่งวัน (เวลาแบ่ง)/รายวัน · ปิดเที่ยงคืน (24:00) | รอบตามโหมด · รอบสุดท้ายจบไม่เกินเวลาปิด · ป้ายเช้า/บ่าย/ทั้งวัน | ✅ `BookingSlotEngineTests` |
+| BKE-02 | buffer ก่อน/หลัง · ห้ามซ้อน · ความจุ 2 (ใช้พร้อมกันสูงสุด) · นับเป็นคน · ทรัพยากรร่วม | รอบที่ชน buffer/เต็ม ⇒ ปฏิเสธ `Full` · รอบที่พ้นแล้วจองได้ (ทิศตรงข้าม) | ✅ `BookingSlotEngineTests` |
+| BKE-03 | วันหยุด (ปิดทั้งวัน) · วันที่ไม่มีเวลาทำการ · เวลาพิเศษแทนรายสัปดาห์ · พักกลางวัน · เวลาไม่ตรงรอบ (client ส่งเอง) | `Closed`/`NotOnGrid` · จันทร์ถัดไปที่ไม่ปิดยังจองได้ | ✅ `BookingSlotEngineTests` |
+| BKE-04 | ล่วงหน้าขั้นต่ำ/สูงสุด · วันที่ผ่านแล้ว · เวลาที่ผ่านไปแล้ววันนี้ | `TooSoon`/`TooFarAhead` · รอบที่ถึงเกณฑ์จองได้ | ✅ `BookingSlotEngineTests` |
+| BKE-05 | จองหลายช่วงติดกัน (สนาม 3 ชม.) · ชนกลางช่วง · เกินจำนวนช่วง/โหมดรายวัน | ยอด = ราคา × ช่วง · `UnitsNotAllowed` | ✅ `BookingSlotEngineTests` |
+| BKE-06 | ข้อมูลเดิม: บริการเดิม (DEFAULT) = โหมดช่วงกำหนดเอง · ความจุของแถว · บันทึกระยะเวลาบริการ | เหมือนเดิม | ✅ `BookingSlotEngineTests` |
+| BKE-07 | มัดจำ % ปัด AwayFromZero · มัดจำคงที่เกินยอด | 2.625 ⇒ 2.63 · เพดานยอดรวม | ✅ `BookingSlotEngineTests` |
+| BKE-08 | ค่าตั้งผิด (ความจุ 0 · เวลา "9 โมง" · เริ่มหลังจบ) | `BusinessRuleException` ข้อความไทย ไม่บันทึกเงียบ | ✅ `BookingSlotEngineTests` |
+| BKE-09 | แม่แบบ 12 ประเภทธุรกิจ + ตัวอย่างตามอุตสาหกรรม | ผ่านการตรวจค่าตั้ง · มีเวลาทำการ · มีรอบว่าง ≥ 1 วัน/สัปดาห์ (cold-start) | ✅ `BookingSlotEngineTests` |
+| BKE-13 | สวิตช์คุม Slot ปิด (ไม่จำกัด · เพดาน 2) · คิวสำรอง (เต็ม ⇒ เข้าคิว · ไม่เปิด ⇒ ปฏิเสธ · ปิดวัน ⇒ เข้าคิวไม่ได้) · ลำดับคิวขยับขึ้น | ตามสวิตช์ · `CanWaitlist` | ✅ `BookingSlotEngineTests` |
+| BKE-14 | ช่าง 3 คนจองครบ ⇒ คนที่ 4 เต็ม · จัดสรรงานน้อยสุด/ลำดับ/ชื่อ (ไม่ขึ้นกับลำดับข้อมูล) · ตารางงาน/วันลา · บังคับระบุ · ลูกค้าเลือก · ระบบจัดให้ไม่รับค่า client · งานข้ามบริการ · คลาสกลุ่ม · ไม่ผูกใคร = ความจุบริการ | ตาม `PickResource`/`Decide` | ✅ `BookingSlotEngineTests` |
+| BKE-15 | ค่าตั้งระดับไซต์ vs รายบริการ | `UseSiteDefaults` ⇒ ค่าไซต์ · ไม่ติ๊ก ⇒ ค่าบริการ | ✅ `BookingSlotEngineTests` |
+| BKE-16 | ยกเลิกใบที่กินรอบ ⇒ คิวสำรองใบแรกที่ลงได้ถูกเลื่อนขึ้น + ออกเอกสาร ERP · ตั้งสถานะคิวสำรองเอง ⇒ ปฏิเสธ | ⏳ (Db test — backlog B14) | ⏳ |
+| BKE-10 | สองคนจองรอบสุดท้ายพร้อมกัน (คนละ DbContext) | ได้การจองเดียว อีกคน 409 `CMS-BOOKING-FULL` | ⏳ (backlog B14 · Db test) |
+| BKE-11 | cms-edit: เปิดแก้บริการแล้วบันทึกโดยไม่แตะ | ชนิดการจอง/มัดจำ/buffer/ตารางเวลา คงเดิม (เดิมรีเซ็ต) | ⏳ manual |
+| BKE-12 | `cms-bookings.html?siteId=X` | ซ่อนตัวเลือกไซต์ · แสดงเฉพาะไซต์ X · siteId ไม่ใช่ของบริษัท ⇒ ข้อความ "ไม่พบเว็บไซต์" | ⏳ manual |
+

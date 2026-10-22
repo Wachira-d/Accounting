@@ -5321,3 +5321,13 @@ _2026-10-19 (บิลค่าน้ำ กปภ. จำนวน/ราคา
 บรรทัด "10/2569" × 101,000 (คอลัมน์ "เดือน" + "จำนวนน้ำใช้ (ลิตร)") ⇒ `OcrLineQuantityGuard`: คำอธิบายรอบบิลล้วน + ผู้ขายสาธารณูปโภค = หลักฐานมิเตอร์ ⇒ 1 × 2,839.00 ·
 ทางหารจำนวนใหม่ถามหลักฐานมิเตอร์ก่อน · คำอธิบาย "ค่าน้ำประปา ประจำเดือน 10/2569 (จำนวน 101,000)" (ไม่แต่งหน่วย) · เลข กปภ. 0994000164904 เข้า `OcrUtilityVendor` ·
 เทสต์ `OcrPeriodOnlyMeterLineTests` จากกระดาษจริง (`OcrPaperSamples.PwaWaterBillWe1105Positional`) · บทเรียนที่ `docs/lessons/ocr-pipeline.md`_
+
+_2026-10-22 (ทีม B — engine รอบจองคิว/บริการบนเว็บ CMS): ผู้ใช้ต้องการตั้งค่าการจองละเอียดต่อธุรกิจ (สปา · คลินิก · สนาม · ห้องประชุม · รถเช่า ฯลฯ) ·
+ตรวจพบ `CreateBookingAsync` ไม่ตรวจอะไรเลย (จองรอบเต็ม/วันหยุด/นอกเวลาได้) · บริการตัวอย่างไม่มีเวลาทำการ (หน้าเวลาว่างว่างทุกวัน) · ฟอร์มแก้ไขส่ง 5 ฟิลด์
+แต่ PUT แทนทั้งชุด (ชนิดการจอง/มัดจำ/ยืนยันอัตโนมัติรีเซ็ตเงียบ) · query slot/sync ไม่มี CompanyId · ตัวกรอง/สถิติ `cms-bookings.html` ไม่มีผล ⇒
+`Helpers/BookingSlotEngine` (pure · `BookingSlotEngineTests`) + server ตัดสินใต้ advisory lock + คอลัมน์ใหม่ (`Helpers/BookingEngineMigration` · DEFAULT = เดิม) +
+แม่แบบ 12 ประเภทธุรกิจ (`CmsBookingServiceSeeder.Presets` · `GET booking/presets`) + ฟอร์ม CMS 6 หมวด + ตัวเลือกเวลาบน storefront (จำนวนช่วง/คน · ข้อความ server) ·
+`cms-bookings.html?siteId=` ล็อกเฉพาะไซต์ · backlog (staff · waitlist · แพ็กเกจ · reminder · no-show · calendar sync) ที่ `docs/BOOKING_ENGINE_DESIGN.md` §3_
+ขอบเขตเพิ่มรอบเดียวกัน: สวิตช์คุม Slot (ปิด = จองซ้อนได้ถึงเพดาน) · คิวสำรอง (`BookingStatus.Waitlisted` + เลื่อนขึ้นอัตโนมัติเมื่อยกเลิก/ไม่มา) ·
+ค่าตั้งระดับไซต์ (`SiteBookingSettings`) + override รายบริการ (`UseSiteDefaults`) · ผู้ให้บริการ/ห้อง/อุปกรณ์ + ตารางงานรายบุคคล + โหมดจัดสรร
+(บังคับระบุ/ลูกค้าเลือก/ระบบจัดให้ — `BookingSlotEngine.PickResource` deterministic) · คลาสกลุ่ม · API ให้ทีม L ที่ `docs/BOOKING_ENGINE_DESIGN.md` §2.1c_
