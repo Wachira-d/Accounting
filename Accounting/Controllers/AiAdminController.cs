@@ -416,9 +416,46 @@ public class AiAdminController : ControllerBase
                 f.SourceEntityId,
                 f.ErrorMessage,
                 f.CreatedAt,
+                f.InputTokens,
+                f.OutputTokens,
+                // ดึงเฉพาะแถวที่ AI ตอบแล้วอ่านไม่ได้ / มีคำเตือน (InvalidResponse · Salvaged) — แถวปกติไม่ต้องลากเนื้อหาออกมา
+                Raw = f.Status == AiCallStatus.InvalidResponse || (f.ErrorMessage != null && f.Status == AiCallStatus.Success)
+                    ? f.ResponseJson : null,
             })
             .ToListAsync();
-        return Ok(new ApiResponse<object>(true, rows));
+        // ทีม H 2026-10-22: แถว InvalidResponse ต้องดูได้ว่า "AI ตอบอะไรมา" — เดิมหน้านี้มีแต่ข้อความ "Schema mismatch" ⇒ ไล่สาเหตุไม่ได้
+        // ตัวอย่างย่อ 300 ตัวอักษร + ปิดบัง PII ด้วยตัวกรองเดียวกับขาส่งออก (เลข 13 หลัก/โทร/อีเมล/เลขบัญชี — AiPromptSanitizer) ·
+        // หน้านี้เป็นของ SystemAdmin ข้ามบริษัท ⇒ ไม่ส่ง prompt/คำตอบเต็ม (คนในบริษัทเปิดเต็มได้ที่ /ai-feedback/{id}/raw ของบริษัทตน)
+        var sanitizer = new AiPromptSanitizer();
+        var shaped = rows.Select(f => new
+        {
+            f.Id, f.CompanyId, f.FeatureKey, f.Status, f.Provider, f.ModelVersion,
+            f.AiPrimaryAnswer, f.AiConfidence, f.LocalModelAnswer, f.LocalModelConfidence,
+            f.UserChosenAnswer, f.UserAcceptedAi, f.LatencyMs, f.CostUsd,
+            f.SourceEntityType, f.SourceEntityId, f.ErrorMessage, f.CreatedAt,
+            f.InputTokens, f.OutputTokens,
+            ResponsePreview = ResponsePreview(sanitizer, f.Raw),
+        });
+        return Ok(new ApiResponse<object>(true, shaped));
+    }
+
+    /// <summary>ตัวอย่างคำตอบดิบแบบย่อ (ปิดบัง PII) — แกะห่อ <c>{"raw":"…"}</c> ที่ตัวบันทึกใช้เก็บคำตอบที่ไม่ใช่ JSON ก่อน</summary>
+    private static string? ResponsePreview(IAiPromptSanitizer sanitizer, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var text = raw;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("raw", out var inner)
+                && inner.ValueKind == System.Text.Json.JsonValueKind.String
+                && doc.RootElement.EnumerateObject().Count() == 1)
+                text = inner.GetString() ?? raw;
+        }
+        catch (System.Text.Json.JsonException) { /* ไม่ใช่ JSON — ใช้ข้อความเดิม */ }
+        var masked = sanitizer.Sanitize(text, stripPii: true, keepTaxIds: false);
+        return masked.Length > 300 ? masked[..300] + "…" : masked;
     }
 
     private static string MaskKey(string? key)

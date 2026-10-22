@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **611 ไฟล์ · 5,999 `[Fact]` + 990 `[Theory]` (4,667 `InlineData`)** ณ 2026-10-19 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **612 ไฟล์ · 6,021 `[Fact]` + 990 `[Theory]` (4,667 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6397,3 +6397,15 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | YER-12 | ปิดงวด ธ.ค. + ต.ค. ชั่วคราว แล้วปิดปี 2024 | ปิดได้ (เดิมล้ม "งวดถูกปิดแล้ว") · ทุกงวดล็อก · audit `year-end-close-through-soft-closed-period` เฉพาะ ธ.ค. · chain สะอาด | ✅ `Db/YearEndReopenDbTests` |
 | YER-13 | ตัวตัดสิน (pure) | ทุกด่านล้มพร้อมทางไปต่อ · ลำดับด่าน · เหตุผลว่าง/ช่องว่าง · ชนิดแบบที่ต้องรับทราบ (RD_CIT/DBD Filed/Accepted เท่านั้น) · ป้าย/เลขอ้างอิง · ข้อความด่านใบปิด/เปิดงวดเดี่ยวชี้ปุ่ม ไม่อ้าง TAS 8 · สถานะ 409/404/400 | ✅ `YearEndReopenRuleTests` |
 | YER-14 | ตัดด่านในโค้ด (ทิ้งผลตัวตัดสิน · ถอดล็อก · ถอดด่านเจ้าของ · ยกเลิกแถวนำเข้า · กลับใบผ่านสมุดรายวัน · ถอดการเปิดงวด ธ.ค.) | `tools/required_call_site_check.py` ฟ้องทุกเคส (REO1–REO6) · จัดรูปแบบใหม่ไม่ฟ้อง (REO7) | ✅ checker self-test |
+
+## AIR — คำตอบ AI อ่านไม่ได้ / Schema mismatch (ทีม H · 2026-10-22 · `Helpers/AiFeatureResponseParser`)
+
+| # | ขั้นตอน | ผลที่ต้องได้ | เทสต์ |
+| --- | --- | --- | --- |
+| AIR-01 | สแกนใบเสร็จที่กติกาไม่มั่นใจบทบาท → AI จำแนกชนิดเอกสาร | primary = ชนิด**ปลายทาง** (PaymentVoucher ฝั่งซื้อ) ไม่ใช่ชนิดกระดาษ · ผ่านด่าน `DocumentSide.MatchesRole` · แถวแอดมินไม่ขึ้น "Schema mismatch" | ✅ `AiFeatureResponseParserTests` (DocType_*) |
+| AIR-02 | provider ตอบ JSON ขาดกลางทาง (finish_reason=length) | กู้ primary/confidence ที่ปิดครบ → Success + ErrorMessage "Salvaged: …" · **ไม่เก็บแคช** · ขาดก่อนค่า primary ปิด = InvalidResponse "Truncated …" พร้อม token | ✅ `AiOrchestratorResponseHandlingTests` · `AiFeatureResponseParserTests` |
+| AIR-03 | WHT: AI ตอบ `"primary": null` | WHT = "None" (ไม่ต้องหัก) ผ่านด่านความมั่นใจของผู้เรียกตามเดิม · feature อื่น = "Null primary" (ไม่แต่งคำตอบ) · ก้อนขาด null ไม่แปลง | ✅ `AiFeatureResponseParserTests` (WHT_*) |
+| AIR-04 | AI ตอบผัง 41110 (รายได้) ให้เอกสารซื้อ | ทิ้งที่ `OcrAiAugmenter.SuggestGlAccountAsync` (นอก candidate ฝั่งซื้อ) · FeedbackId ยังอยู่ · บล็อก BUSINESS CONTEXT ไม่มี "Most-used accounts" แล้ว | คู่มือ (ต้องการ DB) |
+| AIR-05 | ตรวจเอกสารซ้ำ (FuzzyDuplicateDetection) ตอนนักเรียนไม่เจอใบซ้ำ | ไม่ยิง provider (`AiRequest.LocalOnly`) · ทิศตรงข้าม: request ปกติยังยิง | ✅ `AiOrchestratorResponseHandlingTests` (LocalOnly_*) |
+| AIR-06 | หน้าแอดมิน AI → แถว InvalidResponse | ข้อความสาเหตุจริง + token + "ดูคำตอบดิบ (ย่อ)" 300 ตัวอักษร ปิดบังเลข 13 หลัก/โทร/อีเมล · ทุกช่อง escape | คู่มือ |
+| AIR-07 | ผู้เรียกยกเลิก (OCR CTS 15 วิ) ก่อน provider ตอบ | แถว Failed ยังถูกบันทึก ("ผู้เรียกยกเลิก/หมดเวลาฝั่งผู้เรียก …") · ต้นทุน token ที่ provider รายงานถูกนับ | คู่มือ |

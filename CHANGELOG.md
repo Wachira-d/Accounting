@@ -5321,3 +5321,13 @@ _2026-10-19 (บิลค่าน้ำ กปภ. จำนวน/ราคา
 บรรทัด "10/2569" × 101,000 (คอลัมน์ "เดือน" + "จำนวนน้ำใช้ (ลิตร)") ⇒ `OcrLineQuantityGuard`: คำอธิบายรอบบิลล้วน + ผู้ขายสาธารณูปโภค = หลักฐานมิเตอร์ ⇒ 1 × 2,839.00 ·
 ทางหารจำนวนใหม่ถามหลักฐานมิเตอร์ก่อน · คำอธิบาย "ค่าน้ำประปา ประจำเดือน 10/2569 (จำนวน 101,000)" (ไม่แต่งหน่วย) · เลข กปภ. 0994000164904 เข้า `OcrUtilityVendor` ·
 เทสต์ `OcrPeriodOnlyMeterLineTests` จากกระดาษจริง (`OcrPaperSamples.PwaWaterBillWe1105Positional`) · บทเรียนที่ `docs/lessons/ocr-pipeline.md`_
+
+_2026-10-22 (ทีม H · AI call ยังมี error — หน้าแอดมิน 20/10/2569: DocType/WHT/ApprovalWarningFix "Schema mismatch", VendorCanon "__NEW__ 35%", GL AI 41110 กับเอกสารซื้อ):
+ต้นเหตุร่วม = เพดาน max_tokens ต่ำ (200/280/400/250) กับเหตุผลภาษาไทย ⇒ JSON ขาดกลางทาง ⇒ ตัวอ่านเดิมกลืน exception แล้วรายงาน
+"Schema mismatch" (ไม่บอกว่าขาด) · ตัวอ่านย้ายเป็น pure `Helpers/AiFeatureResponseParser` (fence/ร้อยแก้ว/ชื่อ key หลายแบบ/ห่อ/กู้ก้อนขาด
+เฉพาะช่องที่ปิดครบ · error ระบุสาเหตุ + finish_reason + token) · เพดานขั้นต่ำ 600 สำหรับรูป canonical (10 feature ต่ำกว่า) · reasoner พื้น 4,096 ·
+DocType prompt ขอชนิดกระดาษเป็น primary แต่ผู้เรียกใช้เป็นชนิดปลายทาง ⇒ แก้ให้ขอชนิดปลายทาง (รายการจาก enum + `DocumentSide`) ·
+WHT `NullPrimaryAnswer="None"` · FuzzyDuplicateDetection ไม่มี schema/ข้อมูลให้เทียบ ⇒ `AiRequest.LocalOnly` · "Most-used accounts" (ขาย+ซื้อปน)
+ถอดจากบล็อกที่ต่อทุก feature + ด่าน GL ∈ candidate · candidate ผู้ขายข้ามคำบอกรูปนิติบุคคล · แคชอ่านไม่ออก = แคชพลาด (เดิม UsedAi=true เท็จ) ·
+แคชล้มไม่ทิ้งคำตอบ · บันทึกหลังยิง provider ไม่แพ้ token ผู้เรียก · ต้นทุน token ของ call ที่ล้มถูกนับ · หน้าแอดมินแสดงคำตอบดิบย่อ (ปิดบัง PII) + escape ทุกช่อง ·
+เทสต์ `AiFeatureResponseParserTests` + `AiOrchestratorResponseHandlingTests` · TEST_PLAN §AIR_
