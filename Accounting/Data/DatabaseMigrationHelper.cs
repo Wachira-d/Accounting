@@ -219,6 +219,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Adversarial1BankStatements());   // ฝ่ายค้านรอบ 1 — ยอดคงเหลือ statement ที่ไม่รู้ (บล็อกท้ายไฟล์)
         list.AddRange(AdversarialEtlStatements());   // ฝ่ายค้านรอบ ETL — ปิดค่า "ลงอัตโนมัติ" ที่ยังไม่มีผล (บล็อกท้ายไฟล์)
         list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
+        list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7700,4 +7701,13 @@ public static class DatabaseMigrationHelper
             TaxCol("VendorKnownGoodValues"),
         };
     }
+
+    /// <summary>ทีม F (<c>docs/PER_LINE_WHT_DESIGN.md</c>) — ค่าตั้ง "หัก ณ ที่จ่ายตามรายการ" + ฐานบาทที่เอกสารพิมพ์ไว้ + ที่มาของอัตรา ·
+    /// ค่าตั้งต้น = พฤติกรรมเดิม (false / NULL) · <c>ADD COLUMN IF NOT EXISTS</c> ⇒ รันทุกบูตได้ · ไม่มี UPDATE (ใบเดิมไม่ถูกแตะ — ที่มาอัตราของใบเก่าไม่รู้ = NULL)</summary>
+    internal static IReadOnlyList<string> PerLineWhtStatements() => new List<string>
+    {
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PerLineWhtEnabled" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentThbBase" numeric(18,2) NULL;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRateSource" character varying(16) NULL;""",
+    };
 }

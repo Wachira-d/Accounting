@@ -870,6 +870,9 @@ public class AccountingDbContext : DbContext
             e.Property(d => d.PaidAmount).HasPrecision(18, 2);
             e.Property(d => d.BalanceDue).HasPrecision(18, 2);
             e.Property(d => d.Currency).HasMaxLength(3);
+            // ทีม F — ฐานบาทที่เอกสารพิมพ์ไว้ + ที่มาของอัตรา (ตรงกับ DatabaseMigrationHelper.PerLineWhtStatements)
+            e.Property(d => d.DocumentThbBase).HasPrecision(18, 2);
+            e.Property(d => d.ExchangeRateSource).HasMaxLength(16);
             e.HasOne(d => d.Contact).WithMany(c => c.Documents).HasForeignKey(d => d.ContactId).OnDelete(DeleteBehavior.Restrict);
             // Project link (nullable) — preserves doc when project is deleted
             e.HasOne(d => d.Project).WithMany().HasForeignKey(d => d.ProjectId).OnDelete(DeleteBehavior.SetNull);

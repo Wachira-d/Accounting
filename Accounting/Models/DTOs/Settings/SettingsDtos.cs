@@ -139,7 +139,9 @@ public record UpdateCompanySettingsRequest(
     bool? DepositVatTreatmentClear = null,
     // ผู้ใช้ "แตะ/ยืนยัน" ช่องจด VAT จริง (ฝ่ายค้านรอบสอง R2-C8) — ประทับ VatStatusConfirmedAt เฉพาะเมื่อ true
     // **และ** ส่ง VatRegistered มาด้วย · ไม่ส่ง = บันทึกเรื่องอื่น ห้ามตีความว่าตอบคำถาม VAT แล้ว
-    bool? ConfirmVatStatus = null);
+    bool? ConfirmVatStatus = null,
+    // ทีม F — หัก ณ ที่จ่ายตามรายการ (null = ไม่แก้) · docs/PER_LINE_WHT_DESIGN.md
+    bool? PerLineWhtEnabled = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -287,6 +289,8 @@ public record CompanySettingsResponse(
     public string? MoneyAccountCodePrefixes { get; init; }
     /// <summary>รหัสขึ้นต้นที่ระบบใช้จริงตอนนี้ (มาตรฐานหรือของบริษัท) — หน้าเว็บแสดงอย่างเดียว</summary>
     public string? MoneyAccountCodePrefixesEffective { get; init; }
+    /// <summary>ทีม F — หัก ณ ที่จ่ายตามรายการ (<c>CompanySettings.PerLineWhtEnabled</c>) · เก็บแล้วต้อง echo กลับ</summary>
+    public bool PerLineWhtEnabled { get; init; }
 }
 
 // ===== Landing Page Services (Public) =====

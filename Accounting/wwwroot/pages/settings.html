@@ -730,6 +730,16 @@
           ระบบแนบให้ตอนออกใบ
         </div>
       </div>
+      <!-- ทีม F: หัก ณ ที่จ่ายตามรายการ (CompanySettings.PerLineWhtEnabled · docs/PER_LINE_WHT_DESIGN.md) — ปิด = พฤติกรรมเดิม -->
+      <div class="form-group form-checkbox">
+        <input type="checkbox" id="sPerLineWht">
+        <label for="sPerLineWht">หัก ณ ที่จ่ายตามรายการ (ต่างประเภท/ต่างอัตราในใบเดียว)</label>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          เปิด = สแกนเอกสาร (OCR) เติมอัตราและประเภทเงินได้ <b>ต่อบรรทัด</b> ให้ (เช่น ค่าบริการ 3% · ค่าโฆษณา 2% · ค่าสินค้า 0% ในใบเดียว) ·
+          ใบต่างสกุลที่พิมพ์ยอดเงินบาทไว้ ใช้ยอดบาทนั้นเป็นฐานหัก ณ ที่จ่าย/VAT · ฟอร์มเอกสารแสดงสรุปยอดหักต่อประเภทเงินได้ ·
+          50 ทวิ และ ภ.ง.ด.3/53/54 แยกตามประเภทเงินได้ของแต่ละบรรทัด · ปิด = ทำงานแบบเดิม (ช่องหัก ณ ที่จ่ายรายบรรทัดในฟอร์มยังกรอกเองได้)
+        </div>
+      </div>
 
       <h3 id="accountant" class="card-title" style="margin:24px 0 12px">👤 ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)</h3>
       <div style="background:#fef3c7;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;font-size:12px;color:#92400e;margin-bottom:12px">
@@ -2693,6 +2703,10 @@
             document.getElementById('sWorkersCompRate').value = s.workersCompensationRatePercent;
           if (document.getElementById('sAutoAttachWhtCert'))
             document.getElementById('sAutoAttachWhtCert').checked = !!s.autoAttachWhtCertPdf;
+          if (document.getElementById('sPerLineWht')) {
+            document.getElementById('sPerLineWht').checked = !!s.perLineWhtEnabled;
+            this._perLineWhtLoaded = true;
+          }
           // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
           if (document.getElementById('sBookkeeperName'))
             document.getElementById('sBookkeeperName').value = s.bookkeeperName || '';
@@ -2923,6 +2937,8 @@
             workersCompensationEnabled: document.getElementById('sWorkersCompEnabled')?.checked || false,
             workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),
             autoAttachWhtCertPdf: document.getElementById('sAutoAttachWhtCert')?.checked || false,
+            // ทีม F: ส่งเฉพาะเมื่อโหลดค่าเดิมสำเร็จ (โหลดล้ม = ไม่แตะ — กันปิดฟีเจอร์ทับเงียบ ๆ)
+            ...(this._perLineWhtLoaded ? { perLineWhtEnabled: document.getElementById('sPerLineWht').checked } : {}),
             // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
             // ไม่มีช่องบนหน้า = undefined (ไม่ส่งคีย์ = ไม่แก้) · มีช่องแต่ว่าง = "" (ล้าง)
             bookkeeperName: document.getElementById('sBookkeeperName')?.value?.trim(),

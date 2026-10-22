@@ -814,6 +814,24 @@ internal static class ExpenseCategoryResolver
     /// ตัวเลขเดียวของทุกสาขาใน <see cref="ApplyTo"/> · 0.60 = คำยาว ≥ 6 ตัวหนึ่งคำบนบรรทัดที่มีเงิน</summary>
     internal const decimal WhtSuggestionMinConfidence = 0.6m;
 
+    /// <summary>
+    /// <b>จัดประเภทหัก ณ ที่จ่ายของบรรทัดเดียว</b> (ทีม F · หัก ณ ที่จ่ายตามรายการ — ผู้อ่าน <c>Helpers/OcrLineWhtPlan</c>) — ใช้กฎชุดเดียวกับทั้งใบ
+    /// (<see cref="Resolve"/>) แต่ป้อน<b>คำอธิบายของบรรทัดนั้นอย่างเดียว</b> (ไม่มีชื่อผู้ขาย/ข้อความทั้งใบ — ชื่อร้านไม่ใช่หลักฐานของบรรทัด) ·
+    /// ผูกกับเงิน + มั่นใจถึง <see cref="WhtSuggestionMinConfidence"/> + มีรหัส ม.40 ⇒ หักได้ · สินค้าล้วน (<see cref="LooksGoodsOnlyLine"/>) หรือหมวดที่ชนะ
+    /// ไม่มีรหัส ม.40 (น้ำมัน · ค่าไฟ · ซื้อสินค้า) ⇒ ไม่อยู่ในข่าย · นอกนั้น ⇒ ตัดสินไม่ได้ (ตามหัวใบ)
+    /// </summary>
+    internal static (Accounting.Helpers.OcrLineWhtKind Kind, string? IncomeTypeCode) ClassifyLineForWht(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description)) return (Accounting.Helpers.OcrLineWhtKind.Unknown, null);
+        if (LooksGoodsOnlyLine(description)) return (Accounting.Helpers.OcrLineWhtKind.NotWithholdable, null);
+        var r = Resolve(null, null, new[] { description }, null);
+        if (r == null || r.Confidence < WhtSuggestionMinConfidence) return (Accounting.Helpers.OcrLineWhtKind.Unknown, null);
+        if (r.WhtIncomeTypeCode == null) return (Accounting.Helpers.OcrLineWhtKind.NotWithholdable, null);
+        return r.MoneyBackedEvidence
+            ? (Accounting.Helpers.OcrLineWhtKind.Withholdable, r.WhtIncomeTypeCode)
+            : (Accounting.Helpers.OcrLineWhtKind.Unknown, null);
+    }
+
     public static void ApplyTo(OcrExtractedData data, CategoryResult result, string? rawText = null)
     {
         if (string.IsNullOrEmpty(data.ExpenseCategory))

@@ -2322,6 +2322,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         var printTotals = ResolvePrintTotals(doc, L);
         if (template.ShowVatSummary && doc.VatAmount > 0 && !hideVatBreakdown) sb.AppendLine($"<div class='sum-row'><span>{printTotals.VatLabel}</span><span>{doc.VatAmount:N2}</span></div>");
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalWht}</span><span>({doc.WithholdingTaxAmount:N2})</span></div>");
+        // ทีม F — หัก ณ ที่จ่ายหลายอัตราในใบเดียว ⇒ แถวย่อยต่ออัตรา (อัตราเดียว = ไม่มีแถว · กระดาษเดิมเหมือนเดิม) · คู่กับ QuestPDF renderer ห้าม drift
+        if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
+            foreach (var (whtRateRow, whtRateAmt) in Accounting.Helpers.PerLineWht.RateBreakdownForPrint(doc))
+                sb.AppendLine($"<div class='sum-row' style='font-size:90%;color:#475569'><span>{System.Net.WebUtility.HtmlEncode(L.TotalWhtAtRate(whtRateRow))}</span><span>({whtRateAmt:N2})</span></div>");
         // รอบ 204 ฝ่ายค้าน P2-1: ผู้จ่ายออกภาษีแทน (+) — ยอดสุทธิ = ฐาน + VAT − ภาษีนำส่ง + ส่วนนี้ (WhtGrossUp.PayeeTotal) · เงื่อนไขเดียวกับแถวภาษีหัก
         // (ซ่อนแถวภาษีก็ซ่อนแถวนี้ — กระดาษต้องบวกลงยอดเสมอ) · คู่กับ QuestPDF renderer (PdfGenerationService.DocumentRenderer) ห้าม drift
         if (template.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0 && doc.WhtPayerBorneAmount > 0) sb.AppendLine($"<div class='sum-row'><span>{L.TotalWhtPayerBorne}</span><span>{doc.WhtPayerBorneAmount:N2}</span></div>");

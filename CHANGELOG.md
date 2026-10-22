@@ -5321,3 +5321,11 @@ _2026-10-19 (บิลค่าน้ำ กปภ. จำนวน/ราคา
 บรรทัด "10/2569" × 101,000 (คอลัมน์ "เดือน" + "จำนวนน้ำใช้ (ลิตร)") ⇒ `OcrLineQuantityGuard`: คำอธิบายรอบบิลล้วน + ผู้ขายสาธารณูปโภค = หลักฐานมิเตอร์ ⇒ 1 × 2,839.00 ·
 ทางหารจำนวนใหม่ถามหลักฐานมิเตอร์ก่อน · คำอธิบาย "ค่าน้ำประปา ประจำเดือน 10/2569 (จำนวน 101,000)" (ไม่แต่งหน่วย) · เลข กปภ. 0994000164904 เข้า `OcrUtilityVendor` ·
 เทสต์ `OcrPeriodOnlyMeterLineTests` จากกระดาษจริง (`OcrPaperSamples.PwaWaterBillWe1105Positional`) · บทเรียนที่ `docs/lessons/ocr-pipeline.md`_
+
+_2026-10-22 (ทีม F — หัก ณ ที่จ่าย "ตามรายการ" + ฐานบาทของใบต่างสกุล · `docs/PER_LINE_WHT_DESIGN.md`):
+สำรวจพบว่าโครงหัก ณ ที่จ่ายต่อบรรทัด (อัตรา/ยอด/ประเภทเงินได้/ผู้ถูกหัก) + 50 ทวิ แถวต่อบรรทัด + ภ.ง.ด. จากทะเบียน มีครบแล้ว — ช่องโหว่จริงคือ
+(1) 50 ทวิ/แถวเตือน ภ.ง.ด. ของใบต่างสกุลเป็นตัวเลขสกุลเอกสาร (แก้: `Helpers/PerLineWht` ตัวคำนวณบาทตัวเดียว · ใบบาทไม่ขยับ) ·
+(2) OCR เฉลี่ยภาษีหัวใบลงทุกบรรทัดด้วยอัตราเดียว (แก้เมื่อเปิดค่าตั้ง `CompanySettings.PerLineWhtEnabled`: `Helpers/OcrLineWhtPlan` + `ExpenseCategoryResolver.ClassifyLineForWht`) ·
+(3) ไม่มีที่เก็บยอดบาทที่ใบต่างสกุลพิมพ์ไว้/ที่มาของอัตรา (เพิ่ม `Document.DocumentThbBase` + `ExchangeRateSource` · ตัวตัดสิน `DocumentFx.Decide` ·
+OCR `Helpers/OcrThbEquivalent`) · (4) ไม่มีสรุปต่อประเภท (จอ `WhtByIncomeType` · กระดาษแถวย่อยต่ออัตรา ×2 renderer) ·
+migration `DatabaseMigrationHelper.PerLineWhtStatements` (ADD COLUMN · ไม่มี UPDATE) · เทสต์ `PerLineWhtTests`_
