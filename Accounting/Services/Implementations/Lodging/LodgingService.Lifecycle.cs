@@ -116,6 +116,89 @@ public partial class LodgingService
         return path == null ? null : (path, SlipContentType(path));
     }
 
+    /// <summary>
+    /// สลิปทุกใบของการจองให้พนักงานดูในโมดัล (ผู้ใช้รายงาน 2026-10-22: "สลิปรอตรวจ … เปิดดูสลิป" แต่ไม่มีที่ให้ดูสลิปจริง —
+    /// ลิงก์เดิมเปิดแท็บใหม่หลัง await ⇒ เบราว์เซอร์บล็อกป๊อปอัปแล้วตกเป็นดาวน์โหลดไฟล์ชื่อ "slip" ไม่มีนามสกุล)
+    ///
+    /// <para>อ่านอย่างเดียว · ทุก query มี <c>CompanyId == companyId</c> · ไฟล์จาก <c>FileAttachment</c> ของการจองนี้ (ทุกครั้งที่แขกส่งสลิป
+    /// <see cref="SaveSlipFileAsync"/> เขียนแถวไว้ ⇒ สลิปที่ถูกปฏิเสธ/ถูกส่งทับยังอยู่) · สถานะ/เหตุผลจาก <see cref="LodgingSlipGallery"/> ตัวเดียว ·
+    /// URL ทุกใบเป็น endpoint ที่ตรวจสิทธิ์ <c>LodgingManage</c> (ไม่มีพาธดิสก์ออกไปหน้าเว็บ)</para>
+    /// </summary>
+    public async Task<List<LodgingSlipItemDto>?> GetSlipGalleryAsync(Guid companyId, Guid reservationId)
+    {
+        var r = await _db.LodgingReservations.AsNoTracking()
+            .Where(x => x.Id == reservationId && x.CompanyId == companyId && !x.IsDeleted)
+            .Select(x => new { x.PaymentSlipUrl, x.SlipUploadedAt, x.PaymentReference })
+            .FirstOrDefaultAsync();
+        if (r == null) return null;
+        var files = await _db.FileAttachments.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && f.EntityType == SlipEntityType && f.EntityId == reservationId && !f.IsDeleted)
+            .OrderByDescending(f => f.CreatedAt).Take(50)
+            .Select(f => new LodgingSlipFileRow(f.Id, f.StoragePath, f.OriginalFileName, f.CreatedAt))
+            .ToListAsync();
+        var idText = reservationId.ToString();
+        var auditRows = await _db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.EntityType == SlipEntityType && a.EntityId == idText
+                     && a.NewValues != null && a.NewValues.Contains("Slip"))
+            .OrderByDescending(a => a.Timestamp).Take(200)
+            .Select(a => new { a.NewValues, a.Timestamp })
+            .ToListAsync();
+        var events = auditRows.Select(a => ParseSlipEvent(a.NewValues, a.Timestamp)).OfType<LodgingSlipEvent>().ToList();
+        var items = LodgingSlipGallery.Build(files, r.PaymentSlipUrl, r.SlipUploadedAt, r.PaymentReference, events);
+        var basePath = $"/api/companies/{companyId}/lodging/reservations/{reservationId}";
+        return items.Select(i =>
+        {
+            var path = ResolveSlipPath(i.StorageKey);
+            var ct = path == null ? null : SlipContentType(path);
+            return new LodgingSlipItemDto
+            {
+                AttachmentId = i.AttachmentId,
+                Url = path == null ? null : i.AttachmentId is Guid aid ? $"{basePath}/slips/{aid}" : $"{basePath}/slip",
+                ContentType = ct, IsImage = ct != null && ct.StartsWith("image/", StringComparison.Ordinal), FileMissing = path == null,
+                UploadedAt = i.UploadedAt, OriginalFileName = i.OriginalFileName,
+                State = i.State.ToString(), StateLabel = i.StateLabel,
+                RejectedReason = i.RejectedReason, RejectedAt = i.RejectedAt, Reference = i.Reference,
+            };
+        }).ToList();
+    }
+
+    public async Task<(string Path, string ContentType)?> GetSlipAttachmentFileAsync(Guid companyId, Guid reservationId, Guid attachmentId)
+    {
+        // ไฟล์ต้องเป็นของการจองนี้ + บริษัทนี้ (กันเดา id ไฟล์แนบของโมดูลอื่น/บริษัทอื่น) แล้วเดินด่านพาธตัวเดียวกับสลิปปัจจุบัน
+        var exists = await _db.LodgingReservations.AsNoTracking()
+            .AnyAsync(x => x.Id == reservationId && x.CompanyId == companyId && !x.IsDeleted);
+        if (!exists) return null;
+        var storagePath = await _db.FileAttachments.AsNoTracking()
+            .Where(f => f.Id == attachmentId && f.CompanyId == companyId && f.EntityType == SlipEntityType
+                     && f.EntityId == reservationId && !f.IsDeleted)
+            .Select(f => f.StoragePath).FirstOrDefaultAsync();
+        return SlipFile(LodgingSlipPath.StorageKey(storagePath));
+    }
+
+    /// <summary>EntityType ของไฟล์แนบ/ audit ของการจอง — ตรงกับที่ <see cref="SaveSlipFileAsync"/> และ <c>Audit()</c> เขียน</summary>
+    private const string SlipEntityType = "LodgingReservation";
+
+    /// <summary>อ่านเหตุการณ์สลิปจาก <c>AuditLog.NewValues</c> (<c>{ detail: { action, previousSlip|slipUrl, reason, reference } }</c>) —
+    /// แถวที่อ่านไม่ออก/ไม่ใช่เหตุการณ์สลิป = <c>null</c> (ข้ามไป ไม่ทำให้ทั้งแกลเลอรีล้ม)</summary>
+    private static LodgingSlipEvent? ParseSlipEvent(string? json, DateTime at)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("detail", out var d) || d.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            string? S(string name) => d.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+            var action = S("action");
+            return action switch
+            {
+                LodgingSlipGallery.RejectedAction => new LodgingSlipEvent(LodgingSlipGallery.RejectedAction, S("previousSlip"), S("reason"), null, at),
+                LodgingSlipGallery.UploadedAction => new LodgingSlipEvent(LodgingSlipGallery.UploadedAction, S("slipUrl"), null, S("reference"), at),
+                _ => null,
+            };
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
     public async Task<LodgingReservationResponse?> UploadSlipByTokenAsync(Guid companyId, Guid siteId, string token, IFormFile file, string? reference)
     {
         var r = await ByTokenAsync(companyId, siteId, token);
@@ -161,7 +244,7 @@ public partial class LodgingService
             // อัปโหลดสลิปแล้ว = ต่อเวลาถือห้องให้พนักงานตรวจ (ป้ายเวลาบนจอ · การกันห้องจริงอ่านจาก "มีสลิปรอตรวจ" ไม่ใช่เวลานี้)
             else if (r.Status == LodgingReservationStatus.Pending && r.HoldExpiresAt != null && r.HoldExpiresAt < DateTime.UtcNow.AddHours(24))
                 r.HoldExpiresAt = DateTime.UtcNow.AddHours(24);
-            _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "GuestUploadedSlip", reference, problem, confirmedBySlip }));
+            _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = LodgingSlipGallery.UploadedAction, reference, slipUrl = url, problem, confirmedBySlip }));
             await _db.SaveChangesAsync();
             return true;
         });

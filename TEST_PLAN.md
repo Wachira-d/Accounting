@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **612 ไฟล์ · 6,004 `[Fact]` + 994 `[Theory]` (4,694 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **613 ไฟล์ · 6,009 `[Fact]` + 996 `[Theory]` (4,700 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -3842,7 +3842,10 @@ Last updated: 2026-09-04 — เพิ่ม VATL-01..11 (OCR ตั้ง VatRa
 | # | เคส | คาดหวัง |
 | --- | --- | --- |
 | SEC-01 | เปิด `https://…/uploads/lodging-slips/2026-09/x.jpg` ตรง ๆ | **404** — โฟลเดอร์ไม่อยู่ใน `publicUploadPrefixes` แล้ว |
-| SEC-02 | พนักงานกด "เปิดดูสลิป" | ผ่าน `Layout.openAuthed` (แนบ Bearer) → ได้ไฟล์ · `<a href>` เปล่า ๆ จะได้ 401 จึงห้ามใช้ |
+| SEC-02 | พนักงานเปิดโมดัลการจองที่มีสลิป | (2026-10-22) กรอบ "สลิปของแขก" โหลด `GET reservations/{id}/slips` แล้วดึงไฟล์แต่ละใบผ่าน `API.fetchFile` (แนบ Bearer) → รูปย่อ blob ในโมดัล · กดรูป = ขยายเต็มจอ (ปุ่มเปิดแท็บใหม่/ดาวน์โหลดจากการกดตรง ไม่ถูกบล็อกป๊อปอัป) · `<a href>` เปล่า ๆ จะได้ 401 จึงห้ามใช้ |
+| SEC-12 | การจองที่แขกส่งสลิป 3 ครั้ง (ใบแรกถูกปฏิเสธ · ใบสองถูกส่งทับ · ใบสามล่าสุด) | แสดงครบ 3 ใบ ใหม่สุดก่อน · ป้าย "สลิปล่าสุด" / "สลิปก่อนหน้า" / "ถูกปฏิเสธแล้ว" + เหตุผล · เลขอ้างอิงต่อใบ (ใบเก่าเฉพาะที่ audit จด `slipUrl` — หลัง 2026-10-22) — ✅ `LodgingSlipGalleryTests` |
+| SEC-13 | `GET reservations/{id}/slips/{attachmentId}` ด้วย id ไฟล์แนบของการจองอื่น/บริษัทอื่น/โมดูลอื่น | 404 (query ผูก `CompanyId` + `EntityType=LodgingReservation` + `EntityId`) · พาธไฟล์แนบที่ไต่ออกนอกโฟลเดอร์ ⇒ `StorageKey` แปลงได้แต่ `Resolve` ตีกลับ — ✅ `LodgingSlipGalleryTests.StorageKey_ที่มีการไต่พาธ_ยังถูกด่านResolveปฏิเสธ` |
+| SEC-14 | แถวรุ่นก่อนที่มี `PaymentSlipUrl` แต่ไม่มีแถว `FileAttachment` | ยังแสดงสลิปปัจจุบัน (เปิดผ่าน `/slip` เส้นเดิม) — ✅ |
 | SEC-03 | พนักงานบริษัทอื่นเรียก `reservations/{id}/slip` | 404 (query scope ด้วย `CompanyId`) |
 | SEC-04 | ผู้ใช้ที่ไม่มีสิทธิ์ `LodgingManage` | 403 จาก `RequirePermission` |
 | SEC-05 | แขกเรียกด้วย token ของตัวเอง | ได้ไฟล์ |

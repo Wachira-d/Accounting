@@ -5329,3 +5329,8 @@ _2026-10-22 ทีม G — แท็บ "ตรวจสอบการใช�
 ช่องทางตัดสินที่ `Helpers/DocumentCreationChannel.cs` ตัวเดียว จากหลักฐานที่มีจริง (OriginModule → ตารางผูก FK กลับ → ป้าย CreatedBy ของเส้นระบบ
 → ใบล่าสุดของรายการประจำ) · ไม่มีหลักฐาน (เช่น LINE ที่บันทึกเป็นอีเมล) = "ไม่ทราบ" ไม่เดา. หน้า `/pages/admin-company-usage.html` (ภาพรวมทุกบริษัทต่อเดือน)
 คงเดิม — แท็บใหม่คือมุมเจาะลึกบริษัทเดียวหลายเดือน ไม่ทำซ้ำ. ไม่เปลี่ยน flow เอกสาร (อ่านอย่างเดียว) ⇒ DOCUMENT_FLOW ไม่ขยับ._
+
+_2026-10-22 ทีม A (หน้าเคาน์เตอร์ที่พัก · ผู้ใช้รายงาน "สลิปรอตรวจ … เปิดดูสลิป" แต่ไม่มีที่ให้ดูสลิป): ลิงก์เดิม `Layout.openAuthed` เปิดแท็บหลัง await ⇒ ป๊อปอัปถูกบล็อก ⇒ ดาวน์โหลดไฟล์ `slip` ไม่มีนามสกุล ·
+โมดัลการจองมีกรอบ "สลิปของแขก" รูปย่อทุกใบ (ล่าสุด/ก่อนหน้า/ถูกปฏิเสธ + เหตุผล) กดขยายได้ · `GET lodging/reservations/{id}/slips` + `/slips/{attachmentId}` (`LodgingManage` · tenant · ด่านพาธ `LodgingSlipPath` เดิม) ·
+ตัวรวม `Helpers/LodgingSlipGallery` + `LodgingSlipPath.StorageKey` · audit `GuestUploadedSlip` จด `slipUrl` · ปุ่ม "รับชำระระหว่างพัก" (CheckedIn · เส้น `ConfirmAsync` เดิม) · folio เลือกจากบริการเสริม ·
+ผลตรวจความพร้อมที่ `LODGING_BOOKING_AUDIT.md` §12 (ส่วนลด/ใบรับเงินใบที่ 2+ ในโมดัล = backlog)_

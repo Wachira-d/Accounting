@@ -55,6 +55,26 @@ public static class LodgingSlipPath
         return exists(full) ? full : null;
     }
 
+    /// <summary>
+    /// แปลง <c>FileAttachment.StoragePath</c> (พาธเต็มบนดิสก์ตอนอัปโหลด) ของสลิป → storage key รูปเดียวกับ
+    /// <c>PaymentSlipUrl</c> (<c>/uploads/lodging-slips/yyyy-MM/ชื่อไฟล์</c>) — <c>null</c> เมื่อไม่ใช่ไฟล์ใต้โฟลเดอร์สลิป
+    ///
+    /// <para><b>ทำไมไม่ใช้พาธเต็มตรง ๆ</b> — พาธเต็มผูกกับโฟลเดอร์ของเครื่องตอนอัปโหลด (ย้ายเครื่อง/คอนเทนเนอร์แล้วพาธเปลี่ยน)
+    /// และเป็นสตริงจากฐานข้อมูลที่เอาไปเปิดไฟล์ตรง ๆ ไม่ได้ · แปลงเป็น key แล้วเดินด่าน <see cref="Resolve"/> ตัวเดิม
+    /// (ด่านเดียวทั้งสลิปปัจจุบันและสลิปเก่า — ห้ามมีด่านพาธชุดที่สอง)</para>
+    /// <para>ตัวคั่นแบบ Windows แปลงเป็น <c>/</c> เฉพาะเพื่อหา marker — ค่าที่คืนยังต้องผ่าน <see cref="Resolve"/> ซึ่งปฏิเสธ <c>..</c>/อักขระควบคุม</para>
+    /// </summary>
+    public static string? StorageKey(string? storagePath)
+    {
+        if (string.IsNullOrWhiteSpace(storagePath)) return null;
+        var p = storagePath.Replace('\\', '/');
+        var marker = "/" + RelativeRoot + "/";
+        var i = p.LastIndexOf(marker, StringComparison.Ordinal);
+        if (i < 0) return null;
+        var tail = p[(i + marker.Length)..];
+        return tail.Length == 0 ? null : UrlPrefix + tail;
+    }
+
     /// <summary>content type จากนามสกุล — สลิปมีแค่รูปกับ PDF
     /// (ห้ามคืน content type ที่เบราว์เซอร์เอาไปรันได้ เช่น text/html)</summary>
     public static string ContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch

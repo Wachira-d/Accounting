@@ -1034,6 +1034,8 @@ const API = {
       lodgingUpdateReservation: (id, d) => API.put(`${base}/lodging/reservations/${id}`, d),
       lodgingConfirm: (id, d) => API.post(`${base}/lodging/reservations/${id}/confirm`, d),
       lodgingRejectSlip: (id, d) => API.post(`${base}/lodging/reservations/${id}/reject-slip`, d),
+      // 2026-10-22: สลิปทุกใบของการจอง (ล่าสุด/ถูกปฏิเสธ/ถูกส่งทับ) ให้โมดัลแสดงรูปย่อ — ไฟล์แต่ละใบดึงผ่าน API.fetchFile (แนบ JWT)
+      lodgingSlips: (id) => API.get(`${base}/lodging/reservations/${id}/slips`),
       lodgingUploadImage: (formData) => API.upload(`${base}/lodging/images`, formData),
       lodgingAssign: (id, d) => API.post(`${base}/lodging/reservations/${id}/assign`, d),
       lodgingCheckIn: (id, d) => API.post(`${base}/lodging/reservations/${id}/check-in`, d),
