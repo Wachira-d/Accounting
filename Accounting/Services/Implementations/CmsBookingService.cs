@@ -772,7 +772,22 @@ public class CmsBookingService : ICmsBookingService
         if (_docService != null && booking.ErpDocumentId is Guid erpDocId)
         {
             if (request.Status == BookingStatus.Completed)
-                await RealizeDepositOnCompleteAsync(companyId, erpDocId, userId, notices, bookingNotes);
+            {
+                // ฝ่ายค้านทีม K ข้อ 1: การจองที่เปิดบิล POS และปิดบิลแล้ว = รายได้รับรู้ที่ POS แล้ว ⇒ ห้ามรับรู้มัดจำซ้ำ (ตัวตัดสิน Helpers/PosBookingIntake)
+                var posBill = await _db.PosOrders.AsNoTracking()
+                    .Where(o => o.CompanyId == companyId && !o.IsDeleted
+                        && o.SourceBookingType == PosBookingSource.CmsBooking && o.SourceBookingId == booking.Id
+                        && (o.Status == PosOrderStatus.Completed || o.Status == PosOrderStatus.Refunded))
+                    .Select(o => o.OrderNumber).FirstOrDefaultAsync();
+                if (PosBookingIntake.MayRealizeDepositOnComplete(posBill != null))
+                    await RealizeDepositOnCompleteAsync(companyId, erpDocId, userId, notices, bookingNotes);
+                else
+                {
+                    var note = PosBookingIntake.SkippedDepositRealizationNote(posBill);
+                    notices.Add(note);
+                    bookingNotes.Add(note);
+                }
+            }
             else if (request.Status == BookingStatus.Cancelled)
                 await SettleErpDocumentOnCancelAsync(companyId, erpDocId, booking.CancelledAt ?? DateTime.UtcNow, notices, bookingNotes);
         }

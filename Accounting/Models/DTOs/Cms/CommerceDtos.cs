@@ -384,6 +384,8 @@ public class OrderResponse
     // ── สินค้าตามสั่ง (ทีม K) — ทุกค่าคำนวณที่เซิร์ฟเวอร์ (หน้าเว็บแสดงอย่างเดียว) ──
     public string? FulfillmentMethod { get; set; }
     public string? FulfillmentLabel { get; set; }
+    public string? ShippingProvince { get; set; }
+    public string? ShippingPostalCode { get; set; }
     /// <summary>yyyy-MM-dd · null = ไม่มีสินค้าตามสั่ง</summary>
     public string? EarliestReadyDate { get; set; }
     public string? PaymentTermMode { get; set; }

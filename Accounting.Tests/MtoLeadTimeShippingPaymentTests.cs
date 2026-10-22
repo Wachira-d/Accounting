@@ -92,6 +92,37 @@ public class MtoLeadTimeShippingPaymentTests
         Assert.Equal(0m, ShippingFeeRules.VatRateForShipping(false, new[] { 7m }));
     }
 
+    /// <summary>ฝ่ายค้านทีม K ข้อ 8 — บิลที่มีแต่สินค้ายกเว้น ⇒ ค่าส่ง "ยกเว้น" (−1) ไม่ใช่ 0% (0% = ยอดส่งออกใน ภ.พ.30)</summary>
+    [Fact]
+    public void VATค่าส่ง_สินค้ายกเว้นทั้งบิล_ยกเว้น_บิลปนเลือกอัตราสูงสุด()
+    {
+        Assert.Equal(ThaiVatTypeRule.ExemptRate, ShippingFeeRules.VatRateForShipping(true, new[] { -1m, -1m }));
+        Assert.Equal(0m, ShippingFeeRules.VatRateForShipping(true, new[] { -1m, 0m }));
+        Assert.Equal(7m, ShippingFeeRules.VatRateForShipping(true, new[] { -1m, 7m }));
+        Assert.Equal(0m, ShippingFeeRules.VatRateForShipping(true, Array.Empty<decimal>()));
+    }
+
+    /// <summary>ฝ่ายค้านทีม K ข้อ 5 — VAT ค่าส่งรวมเข้า VatAmount ของออเดอร์ · ยกเว้น/0% = 0 · สูตรเดิมกับ −1 ได้ VAT ติดลบ</summary>
+    [Fact]
+    public void VATในค่าส่งและในยอดรวม_อัตรา0หรือยกเว้นได้0()
+    {
+        Assert.Equal(3.27m, ShippingFeeRules.VatInShipping(50m, 7m));
+        Assert.Equal(0m, ShippingFeeRules.VatInShipping(50m, -1m));
+        Assert.Equal(0m, ShippingFeeRules.VatInShipping(0m, 7m));
+        Assert.Equal(0m, ShippingFeeRules.VatInGross(107m, -1m));
+        Assert.Equal(7m, ShippingFeeRules.VatInGross(107m, 7m));
+    }
+
+    [Fact]
+    public void ชนิดรูปจากไบต์จริง_ไม่เชื่อContentType()
+    {
+        Assert.Equal("image/jpeg", ImageMagicBytes.Detect(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }));
+        Assert.Equal("image/png", ImageMagicBytes.Detect(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0 }));
+        Assert.Equal("image/webp", ImageMagicBytes.Detect(System.Text.Encoding.ASCII.GetBytes("RIFF\0\0\0\0WEBPVP8 ")));
+        Assert.Null(ImageMagicBytes.Detect(System.Text.Encoding.ASCII.GetBytes("<html><script>")));
+        Assert.Null(ImageMagicBytes.Detect(new byte[] { 0xFF, 0xD8 }));
+    }
+
     [Fact]
     public void วิธีรับสินค้า_ว่างเป็นจัดส่ง_ไม่รู้จักโยน()
     {

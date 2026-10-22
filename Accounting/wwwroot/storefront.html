@@ -1398,6 +1398,8 @@
           shippingPostalCode: fd.get('shippingPostalCode') || null,
         };
         if (body.fulfillmentMethod === 'pickup' && !body.shippingAddress) body.shippingAddress = 'มารับเองที่ร้าน';
+        // เหตุที่ยังสั่งไม่ได้มาจากเซิร์ฟเวอร์ (ต้องกรอกจังหวัด/เลือกวิธีส่ง) — บอกก่อนกดส่ง ด่านจริงยังอยู่ที่ CreateOrder
+        if (this._quote && this._quote.problem) { alert(this._quote.problem); return; }
         const btn = ev.target.querySelector('button[type="submit"]');
         btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
         try {

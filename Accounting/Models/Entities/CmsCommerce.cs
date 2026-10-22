@@ -230,6 +230,9 @@ public class SiteOrder : TenantEntity
     public string? FulfillmentMethod { get; set; }
     /// <summary>อัตราค่าส่งที่ลูกค้าเลือก — เซิร์ฟเวอร์คิดค่าส่งจากอัตรานี้เอง (ไม่รับยอดจาก client)</summary>
     public Guid? ShippingRateId { get; set; }
+    /// <summary>จังหวัด (รูปมาตรฐาน) / รหัสไปรษณีย์ที่ใช้จับโซนค่าส่งตอนสั่ง</summary>
+    public string? ShippingProvince { get; set; }
+    public string? ShippingPostalCode { get; set; }
     /// <summary>วันรับ/ส่งเร็วสุดที่สัญญากับลูกค้าตอนสั่ง (วันตามปฏิทินไทย เก็บเป็นวันที่ 00:00 UTC)</summary>
     public DateTime? EarliestReadyDate { get; set; }
     /// <summary><c>Helpers.PaymentTermMode</c> ที่ตรึงตอนสั่ง · null = ออเดอร์เดิม (= เต็มจำนวน)</summary>

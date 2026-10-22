@@ -87,12 +87,41 @@ public class PosCustomItemAndBookingIntakeTests
         Assert.Contains("INV-2026-0007", d.BlockReason);
     }
 
+    /// <summary>ฝ่ายค้านทีม K ข้อ 1 — เดิม "เปิดได้+เตือน" ⇒ บิลเต็มราคา + ระบบจองรับรู้มัดจำอีก = รายได้ซ้ำ</summary>
     [Fact]
-    public void มีมัดจำ_เปิดได้แต่ต้องเตือน_เพราะPOSยังไม่หักมัดจำ()
+    public void มีมัดจำรับแล้ว_เปิดบิลไม่ได้_พร้อมทางไปต่อ()
     {
         var d = PosBookingIntake.Decide(F(PosBookingState.Confirmed, dep: 500m, src: PosBookingSource.PosReservation));
-        Assert.True(d.CanOpen);
-        Assert.Contains("500.00", d.Warning);
+        Assert.False(d.CanOpen);
+        Assert.Contains("500.00", d.BlockReason);
+        Assert.Contains("หน้าการจอง", d.BlockReason);
+    }
+
+    [Fact]
+    public void คิวสำรอง_เปิดบิลไม่ได้()
+        => Assert.False(PosBookingIntake.Decide(F(PosBookingState.Waitlisted)).CanOpen);
+
+    /// <summary>รายได้ของการจองหนึ่งรายการต้องถูกรับรู้ครั้งเดียว ไม่ว่าทางไหน — จำลองสองเส้น (POS ปิดบิล · ระบบจองรับรู้มัดจำตอนปิดงาน)
+    /// ด้วยตัวตัดสินจริงทั้งสองฝั่ง</summary>
+    [Theory]
+    [InlineData(0, true)]     // ไม่มีมัดจำ → เปิด/ปิดบิล POS แล้วแอดมินกดเสร็จที่หน้าการจองอีกครั้ง
+    [InlineData(300, true)]   // มีมัดจำ → POS เปิดไม่ได้ ⇒ ปิดงานที่หน้าการจอง
+    public void รายได้รวม_เท่าราคาบริการครั้งเดียว(decimal deposit, bool bookingAlsoCompleted)
+    {
+        const decimal price = 1000m;
+        var intake = PosBookingIntake.Decide(F(PosBookingState.Confirmed, dep: deposit));
+        var posRevenue = intake.CanOpen ? price : 0m;                         // POS ปิดบิลเต็มราคา
+        var posCompleted = intake.CanOpen;
+        // ระบบจองปิดงาน: รับรู้ (มัดจำ + ส่วนที่เหลือ) = ราคาบริการ เฉพาะเมื่อยังไม่ได้รับรู้ที่ POS
+        var bookingRevenue = bookingAlsoCompleted && PosBookingIntake.MayRealizeDepositOnComplete(posCompleted) ? price : 0m;
+        Assert.Equal(price, posRevenue + bookingRevenue);
+    }
+
+    [Fact]
+    public void ปิดงานที่หน้าการจองโดยไม่มีบิล_POS_รับรู้มัดจำตามเดิม()
+    {
+        Assert.True(PosBookingIntake.MayRealizeDepositOnComplete(hasCompletedPosOrder: false));
+        Assert.Contains("POS-202610-0001", PosBookingIntake.SkippedDepositRealizationNote("POS-202610-0001"));
     }
 
     [Fact]

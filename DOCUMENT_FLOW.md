@@ -1686,7 +1686,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     วันรับเร็วสุด `Helpers/MtoLeadTime` ⇒ `EarliestReadyDate` · เงื่อนไขชำระ `Helpers/MtoPaymentTerms` ⇒ ตรึง `PaymentTermMode/DepositRequiredAmount`
   - ยอดที่ต้องจ่ายรอบนี้ = `MtoPaymentTerms.FromSnapshot` ตัวเดียวใน `GetOrderAsync` · `RecordPaymentSlipAsync` · `PublicPaymentResolver` (ออเดอร์เดิม = TotalAmount − PaidAmount เท่าเดิม) ·
     ลงบัญชีมัดจำ = รับชำระบางส่วนของเอกสารขายผ่าน `ConfirmPaymentAsync` เดิม (ไม่มี posting ใหม่)
-  - **บรรทัดค่าจัดส่งในเอกสารขาย VAT ตามสินค้าในบิล** (§79 · `ShippingFeeRules.VatRateForShipping` — เดิมอัตรา 0 ⇒ ภ.พ.30 จัดเป็นยอดส่งออก)
+  - **บรรทัดค่าจัดส่งในเอกสารขาย VAT ตามสินค้าในบิล** (§79 · `ShippingFeeRules.VatRateForShipping` — เดิมอัตรา 0 ⇒ ภ.พ.30 จัดเป็นยอดส่งออก ·
+    สินค้าทั้งบิลยกเว้น ⇒ ยกเว้น −1 · บิลปน ⇒ อัตราสูงสุด) · `SiteOrder.VatAmount` รวม VAT ค่าส่ง (`VatInShipping`) · บรรทัดสินค้ายกเว้น VAT = 0 (เดิมติดลบ)
+  - โซนค่าส่งจำกัดพื้นที่ + ไม่กรอกจังหวัด/รหัสไปรษณีย์ ⇒ ไม่ตรง (บอกให้กรอก) · ชื่อจังหวัดผ่าน `ThaiAddressParser.NormalizeProvince` · ตรึง `SiteOrder.ShippingProvince/ShippingPostalCode` ·
+    แนบสลิปเมื่อไม่มียอดค้าง ⇒ ปฏิเสธ (`CMS-SLIP-NOTHING-DUE`) · รูปตัวอย่างตรวจชนิดจากไบต์ (`ImageMagicBytes`) + จำกัดต่อ IP/ไซต์
 
 ### 2.6b Payment gateway — รับเงิน · คืนเงิน · รอบโอน (PAYMENT_GATEWAY_DESIGN.md · รอบ 198 settlement เฟส 0)
 - **รับเงินสำเร็จ**: ขา "เงินเข้า" ตัดสินที่ `IGatewayAccountResolver.ResolveMoneyInAccountAsync` ตัวเดียว (adapter ที่ไม่เข้าธนาคารทันที ⇒
@@ -1910,8 +1913,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **คิวการจอง → เปิดบิล**: `GET pos/booking-queue` (การจองเว็บ `SiteBooking` + การจองโต๊ะ `PosReservation` ของวันตามปฏิทินไทย) ·
   `POST pos/booking-queue/open` → `PosService.OpenOrderFromBookingAsync` ⇒ `CreateOrderCoreAsync` ตั้ง `PosOrder.SourceBookingType/SourceBookingId`
   ตั้งแต่ INSERT แรก (unique partial `UX_PosOrders_SourceBooking_Open` ไม่นับบิล Voided = เปิดซ้ำไม่ได้แม้สองเครื่องพร้อมกัน) ·
-  ตัวตัดสิน `Helpers/PosBookingIntake` (ยกเลิก/ไม่มา/เสร็จ · มีบิลอยู่แล้ว · ระบบจองออกเอกสารรายได้แล้ว = บล็อก · มีมัดจำ = เปิดได้+เตือน
-  เพราะ POS ยังหักมัดจำไม่ได้) · เติมลูกค้า/บริการ (ผูกสินค้า = บรรทัดสินค้า · ไม่ผูก = รายการพิเศษชนิดบริการ)/ช่าง ·
+  ตัวตัดสิน `Helpers/PosBookingIntake` (ยกเลิก/ไม่มา/เสร็จ/คิวสำรอง · มีบิลอยู่แล้ว · ระบบจองออกเอกสารรายได้แล้ว · **มีมัดจำรับแล้ว** = บล็อก
+  เพราะ POS ยังหักมัดจำไม่ได้ — ทางไปต่อ: ปิดงานที่หน้าการจอง · ตรวจซ้ำตอนปิดบิล · ฝั่งระบบจองไม่ `RealizeDeposit` เมื่อมีบิล POS ปิดแล้ว
+  (`PosBookingIntake.MayRealizeDepositOnComplete` ใน `CmsBookingService.UpdateBookingStatusAsync`) ⇒ รายได้รับรู้ครั้งเดียว) · เติมลูกค้า/บริการ (ผูกสินค้า = บรรทัดสินค้า · ไม่ผูก = รายการพิเศษชนิดบริการ)/ช่าง ·
   สถานะการจอง: เปิด ⇒ Seated/InProgress · ยกเลิกบิล ⇒ ปล่อย (`ReleaseSourceBookingAsync`) · ปิดบิล ⇒ โต๊ะ Completed · เว็บ Completed
   **เฉพาะเมื่อไม่มีเงิน/เอกสารผูกการจอง** (`MarkSourceBookingCompletedAsync` — ไม่แตะเงิน) · รวมบิลย้ายการผูกไปปลายทาง (การจองคนละรายการ = บล็อก)
 - **ช่างรายบรรทัด**: `PosOrderItem.StaffId/StaffName` (สมาชิกบริษัท · ออฟไลน์ผ่อนผัน + LogError) · `PUT pos/orders/{id}/items/{itemId}/staff`

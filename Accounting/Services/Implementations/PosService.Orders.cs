@@ -521,11 +521,17 @@ public partial class PosService
     /// เดียวกับการคืนสต็อก ⇒ คืนไม่สำเร็จทั้งก้อน ดีกว่าคืนแล้ว GL ไม่รู้</para></summary>
     /// <summary>บัญชีของกองรายได้ — null = บัญชีรายได้ขายมาตรฐาน · บัญชีที่ตรึงไว้บนบรรทัดถูกปิด/ลบภายหลัง ⇒ ล้มดัง
     /// (ห้ามโยนเข้า 41000 เงียบ ๆ — รายได้พิเศษจะหายไปจากบัญชีที่ผู้ใช้เลือก)</summary>
-    private async Task<Guid> ResolveRevenuePartAccountAsync(Guid companyId, Guid? accountId, Guid defaultSalesAccountId)
+    private async Task<Guid> ResolveRevenuePartAccountAsync(Guid companyId, Guid? accountId, Guid defaultSalesAccountId,
+        bool forRefund = false)
     {
         if (accountId is not Guid id) return defaultSalesAccountId;
-        await _db.EnsurePostingAccountAsync(companyId, id, "บัญชีรายได้ของรายการพิเศษ");
-        return id;
+        var problem = await _db.PostingAccountProblemAsync(companyId, id, "บัญชีรายได้ของรายการพิเศษ");
+        if (problem == null) return id;
+        // ฝ่ายค้านทีม K ข้อ 10: คืนเงินต้องกลับเข้าบัญชีเดียวกับที่ขายลงไว้ — เลือกบัญชีอื่นแทนไม่ได้ ⇒ บอกให้เปิดผังกลับ (ไม่โยนเข้า 41000 เงียบ)
+        throw new Accounting.Helpers.BusinessRuleException(forRefund
+            ? problem + " · การคืนเงินต้องกลับรายการเข้าบัญชีเดียวกับตอนขาย: เปิดใช้งานผังนี้ที่หน้า \"ผังบัญชี\" ชั่วคราว คืนเงิน แล้วปิดอีกครั้งได้ (บิลยังอยู่ คืนใหม่ได้ทันที)"
+            : problem + " · บรรทัดรายการพิเศษในบิลนี้ตรึงบัญชีนี้ไว้ — เปิดใช้งานผังกลับ หรือลบบรรทัดแล้วเพิ่มใหม่ด้วยบัญชีอื่น",
+            Accounting.Helpers.PostingAccountRule.RuleCode);
     }
 
     private async Task CreateRefundJournalEntryAsync(Guid companyId, PosOrder order,
@@ -582,7 +588,7 @@ public partial class PosService
         var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
         foreach (var part in Accounting.Helpers.PosRevenueSplit.Split(refundWeights, refundNet))
         {
-            var acctId = await ResolveRevenuePartAccountAsync(companyId, part.AccountId, salesAccount.Id);
+            var acctId = await ResolveRevenuePartAccountAsync(companyId, part.AccountId, salesAccount.Id, forRefund: true);
             lines.Add(new(acctId, part.Amount, 0, part.AccountId == null
                 ? $"คืนรายได้ขาย POS #{order.OrderNumber}"
                 : $"คืนรายได้รายการพิเศษ POS #{order.OrderNumber}"));

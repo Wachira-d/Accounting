@@ -7749,6 +7749,8 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "SiteOrderLines" ADD COLUMN IF NOT EXISTS "ModifierSelectionsJson" text NULL;""",
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "FulfillmentMethod" varchar(20) NULL;""",
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "ShippingRateId" uuid NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "ShippingProvince" varchar(100) NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "ShippingPostalCode" varchar(10) NULL;""",
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "EarliestReadyDate" timestamptz NULL;""",
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "PaymentTermMode" varchar(32) NULL;""",
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "DepositRequiredAmount" numeric(18,2) NOT NULL DEFAULT 0;""",

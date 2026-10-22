@@ -12,7 +12,7 @@ public static class PosBookingSource
 }
 
 /// <summary>สถานะการจองแบบกลาง (สองตารางใช้ enum คนละตัว — ผู้เรียกแปลงก่อนส่งเข้า)</summary>
-public enum PosBookingState { Pending = 0, Confirmed = 1, InProgress = 2, Completed = 3, Cancelled = 4, NoShow = 5 }
+public enum PosBookingState { Pending = 0, Confirmed = 1, InProgress = 2, Completed = 3, Cancelled = 4, NoShow = 5, Waitlisted = 6 }
 
 /// <summary>ข้อเท็จจริงของการจองหนึ่งรายการที่ตัวตัดสินต้องใช้ — ผู้ดึงข้อมูลกรอง CompanyId แล้ว</summary>
 /// <param name="LinkedOpenOrderNumber">เลขบิล POS ที่ผูกอยู่และ<b>ยังไม่ถูกยกเลิก</b> (null = ยังไม่มีบิล)</param>
@@ -55,6 +55,7 @@ public static class PosBookingIntake
         PosBookingState.Completed => "เสร็จสิ้น",
         PosBookingState.Cancelled => "ยกเลิก",
         PosBookingState.NoShow => "ไม่มาตามนัด",
+        PosBookingState.Waitlisted => "คิวสำรอง",
         _ => s.ToString(),
     };
 
@@ -70,6 +71,9 @@ public static class PosBookingIntake
             case PosBookingState.NoShow:
                 return new PosBookingDecision(false,
                     $"การจองนี้ถูกบันทึกเป็น \"{label}\" แล้ว — ถ้าลูกค้ามาจริง ให้แก้สถานะการจองก่อน หรือเปิดบิลใหม่แบบไม่ผูกการจอง", null, label);
+            case PosBookingState.Waitlisted:
+                return new PosBookingDecision(false,
+                    "การจองนี้อยู่ในคิวสำรอง (รอบเต็ม) — ยืนยันการจองที่หน้าการจองก่อน แล้วค่อยเปิดบิล", null, label);
             case PosBookingState.Completed:
                 return new PosBookingDecision(false,
                     "การจองนี้เสร็จสิ้นแล้ว — เปิดบิลซ้ำไม่ได้", null, label);
@@ -84,12 +88,23 @@ public static class PosBookingIntake
                 $"ระบบจองออกเอกสารรายได้ {f.RevenueAlreadyBilledDocNo} ให้การจองนี้แล้ว — รับชำระที่เอกสารนั้น "
                 + "(เปิดบิล POS ซ้ำ = รายได้และภาษีขายซ้ำ)", null, label);
 
-        string? warning = null;
+        // ฝ่ายค้านทีม K ข้อ 1 (blocking): POS ยังหักมัดจำในบิลไม่ได้ ⇒ บิลคิดเต็มราคา + ระบบจองรับรู้มัดจำอีกตอนปิดงาน = รายได้ซ้ำ ·
+        // เดิม "เปิดได้+เตือน" ⇒ บล็อก พร้อมทางไปต่อ (ปิดงานที่หน้าการจองซึ่งเป็นเส้นที่ตัดมัดจำ / คืนมัดจำก่อน)
         if (f.DepositPaidAmount > 0m)
-            warning = $"ลูกค้าชำระมัดจำไว้แล้ว {f.DepositPaidAmount:N2} บาท — บิล POS ยังคิดเต็มจำนวนและยังหักมัดจำให้ไม่ได้: "
-                + "แจ้งลูกค้าก่อนรับเงิน แล้วคืน/ตัดมัดจำที่หน้า \"มัดจำ\" (ศูนย์มัดจำ) ให้ตรงกับเงินที่เก็บจริง "
-                + "หรือปิดงานนี้ที่หน้าการจองแทน (เส้นนั้นตัดมัดจำให้แล้ว)";
+            return new PosBookingDecision(false,
+                $"ลูกค้าชำระมัดจำไว้แล้ว {f.DepositPaidAmount:N2} บาท — POS ยังหักมัดจำในบิลไม่ได้ (เปิดบิลเต็มราคา = รายได้ซ้ำกับมัดจำ) · "
+                + "ทางไปต่อ: ปิดงานนี้ที่หน้าการจอง (ระบบตัดมัดจำและเก็บส่วนที่เหลือให้) หรือคืนมัดจำที่หน้า \"มัดจำ\" ก่อนแล้วเปิดบิลที่ POS",
+                null, label);
 
-        return new PosBookingDecision(true, null, warning, label);
+        return new PosBookingDecision(true, null, null, label);
     }
+
+    /// <summary>ฝั่งระบบจอง: ปิดงานแล้วรับรู้มัดจำเป็นรายได้ได้ไหม — การจองที่มี<b>บิล POS ปิดแล้ว</b> (รายได้ถูกรับรู้ที่ POS แล้ว)
+    /// ⇒ ห้ามรับรู้มัดจำซ้ำ (มัดจำคงเป็นหนี้สิน ให้คืน/ตัดที่หน้ามัดจำ) · ผู้เรียก: <c>CmsBookingService.UpdateBookingStatusAsync</c></summary>
+    public static bool MayRealizeDepositOnComplete(bool hasCompletedPosOrder) => !hasCompletedPosOrder;
+
+    /// <summary>หมายเหตุบนการจองเมื่อข้ามการรับรู้มัดจำเพราะ POS เก็บเงินไปแล้ว</summary>
+    public static string SkippedDepositRealizationNote(string? posOrderNumber)
+        => $"ไม่รับรู้มัดจำเป็นรายได้ตอนปิดงาน — รายได้ของการจองนี้รับรู้แล้วที่บิล POS #{posOrderNumber} · "
+         + "มัดจำยังเป็นหนี้สิน: คืนลูกค้าหรือตัดที่หน้า \"มัดจำ\" ให้ตรงกับเงินที่เก็บจริง";
 }

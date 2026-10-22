@@ -31,6 +31,7 @@ public partial class PosService
         BookingStatus.InProgress => PosBookingState.InProgress,
         BookingStatus.Completed => PosBookingState.Completed,
         BookingStatus.Cancelled => PosBookingState.Cancelled,
+        BookingStatus.Waitlisted => PosBookingState.Waitlisted,
         _ => PosBookingState.NoShow,
     };
 
@@ -253,7 +254,8 @@ public partial class PosService
             if (r != null && r.PosOrderId == order.Id)
             {
                 r.PosOrderId = null;
-                if (r.Status == ReservationStatus.Seated) r.Status = ReservationStatus.Confirmed;
+                // ยกเลิกบิลที่ปิดแล้ว ⇒ "เสร็จสิ้น" ที่ POS ประทับไว้ต้องถอยด้วย (ฝ่ายค้านทีม K ข้อ 9)
+                if (r.Status is ReservationStatus.Seated or ReservationStatus.Completed) r.Status = ReservationStatus.Confirmed;
             }
         }
         else if (order.SourceBookingType == PosBookingSource.CmsBooking)
@@ -263,6 +265,12 @@ public partial class PosService
             {
                 b.PosOrderId = null;
                 if (b.Status == BookingStatus.InProgress) b.Status = BookingStatus.Confirmed;
+                // POS ประทับ Completed เฉพาะการจองที่ไม่มีเงิน/เอกสารผูก (MarkSourceBookingCompletedAsync) ⇒ ถอยกลับได้ปลอดภัย
+                else if (b.Status == BookingStatus.Completed && b.ErpDocumentId == null && b.PaidAmount <= 0m)
+                {
+                    b.Status = BookingStatus.Confirmed;
+                    b.CompletedAt = null;
+                }
             }
         }
     }
@@ -287,6 +295,15 @@ public partial class PosService
     private async Task MarkSourceBookingCompletedAsync(Guid companyId, PosOrder order)
     {
         if (order.SourceBookingId is not Guid bid) return;
+        // ฝ่ายค้านทีม K ข้อ 1: มัดจำถูกรับ<b>หลัง</b>เปิดบิล (ด่านตอนเปิดไม่เห็น) ⇒ ปิดบิลเต็มราคา = ลูกค้าจ่ายซ้ำ/รายได้ซ้ำ — บล็อกพร้อมทางไปต่อ
+        if (order.SourceBookingType is string st)
+        {
+            var snap = (await LoadBookingSnapshotsAsync(companyId, DateTime.UtcNow, st, bid)).FirstOrDefault();
+            if (snap != null && snap.DepositPaid > 0m)
+                throw new BusinessRuleException(
+                    $"การจองของบิลนี้มีมัดจำที่รับแล้ว {snap.DepositPaid:N2} บาท — POS ยังหักมัดจำในบิลไม่ได้ ปิดบิลเต็มราคาจะเก็บเงินซ้ำ · "
+                    + "ทางไปต่อ: ยกเลิกบิลนี้แล้วปิดงานที่หน้าการจอง (ระบบตัดมัดจำให้) หรือคืนมัดจำที่หน้า \"มัดจำ\" ก่อน", "POS-BOOKING-DEPOSIT");
+        }
         if (order.SourceBookingType == PosBookingSource.PosReservation)
         {
             var r = await _db.PosReservations.FirstOrDefaultAsync(x => x.Id == bid && x.CompanyId == companyId);

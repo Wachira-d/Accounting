@@ -645,7 +645,7 @@ public class CmsCommerceService : ICmsCommerceService
                     ProductSku = ci.SiteProduct.Product.SKU,
                     Quantity = ci.Quantity, UnitPrice = ci.UnitPrice,
                     VatRate = ci.SiteProduct.Product.VatRate,
-                    VatAmount = ci.TotalPrice * ci.SiteProduct.Product.VatRate / (100 + ci.SiteProduct.Product.VatRate),
+                    VatAmount = ShippingFeeRules.VatInGross(ci.TotalPrice, ci.SiteProduct.Product.VatRate),
                     TotalAmount = ci.TotalPrice,
                     ModifierSelectionsJson = ci.ModifierSelectionsJson,
                 });
@@ -686,7 +686,7 @@ public class CmsCommerceService : ICmsCommerceService
                     ProductSku = sp.Product.SKU,
                     Quantity = lineReq.Quantity, UnitPrice = price,
                     VatRate = sp.Product.VatRate,
-                    VatAmount = total * sp.Product.VatRate / (100 + sp.Product.VatRate),
+                    VatAmount = ShippingFeeRules.VatInGross(total, sp.Product.VatRate),
                     TotalAmount = total
                 });
             }
@@ -702,6 +702,9 @@ public class CmsCommerceService : ICmsCommerceService
         if (checkout.Quote.Problem != null)
             throw new BusinessRuleException(checkout.Quote.Problem, "CHECKOUT");
         order.ShippingAmount = checkout.Quote.ShippingFee;
+        // ฝ่ายค้านทีม K ข้อ 2: ที่อยู่ที่ใช้คิดค่าส่งต้องอยู่บนคำสั่งซื้อ (ตรวจย้อนได้ว่าอัตรามาจากโซนไหน)
+        order.ShippingProvince = ThaiAddressParser.NormalizeProvince(request.ShippingProvince);
+        order.ShippingPostalCode = string.IsNullOrWhiteSpace(request.ShippingPostalCode) ? null : request.ShippingPostalCode.Trim();
         order.FulfillmentMethod = checkout.Quote.FulfillmentMethod;
         order.ShippingRateId = checkout.Quote.SelectedShippingRateId;
         if (order.FulfillmentMethod == Accounting.Helpers.FulfillmentMethod.Pickup && string.IsNullOrWhiteSpace(order.ShippingMethod))
@@ -716,7 +719,9 @@ public class CmsCommerceService : ICmsCommerceService
         // Recalculate order totals
         var lines = await _db.SiteOrderLines.Where(l => l.OrderId == order.Id).ToListAsync();
         order.SubTotal = lines.Sum(l => l.TotalAmount - l.VatAmount);
-        order.VatAmount = lines.Sum(l => l.VatAmount);
+        // ฝ่ายค้านทีม K ข้อ 5: VAT ของบรรทัดค่าส่ง (อัตราตามสินค้าในบิล — ตัวเดียวกับใบกำกับ) ต้องรวมอยู่ใน VatAmount ของออเดอร์
+        order.VatAmount = lines.Sum(l => l.VatAmount)
+            + ShippingFeeRules.VatInShipping(order.ShippingAmount, checkout.Quote.ShippingVatRate);
         order.TotalAmount = lines.Sum(l => l.TotalAmount) + order.ShippingAmount - order.DiscountAmount;
         if (order.TotalAmount < 0) order.TotalAmount = 0;
         // มัดจำตรึงจากยอดสุดท้ายของใบ (ตัวคิดเดียว — ค่าเดียวกับที่หน้าเช็กเอาต์แสดง)
@@ -835,6 +840,7 @@ public class CmsCommerceService : ICmsCommerceService
                     Reference = p.Reference, PaidAt = p.PaidAt
                 }).ToList(),
                 FulfillmentMethod = o.FulfillmentMethod,
+                ShippingProvince = o.ShippingProvince, ShippingPostalCode = o.ShippingPostalCode,
                 PaymentTermMode = o.PaymentTermMode,
                 DepositRequiredAmount = o.DepositRequiredAmount,
                 EarliestReadyDate = o.EarliestReadyDate.HasValue ? o.EarliestReadyDate.Value.ToString("yyyy-MM-dd") : null,
@@ -1541,6 +1547,11 @@ public class CmsCommerceService : ICmsCommerceService
         var order = await _db.SiteOrders.FirstOrDefaultAsync(o =>
             o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId && !o.IsDeleted);
         if (order == null) return null;
+        // ฝ่ายค้านทีม K ข้อ 6: ยอดที่เปิดจ่ายรอบนี้ = 0 (จ่ายครบแล้ว/ยกเลิก) ⇒ ปฏิเสธตั้งแต่ตอนแนบ — เดิม fallback เป็นยอดเต็มใบ ⇒ สลิปเกินถูกยืนยันได้
+        var slipDue = MtoPaymentTerms.FromSnapshot(order.PaymentTermMode, order.TotalAmount, order.DepositRequiredAmount, order.PaidAmount);
+        if (order.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded || slipDue.NextPayable <= 0m)
+            throw new BusinessRuleException(
+                "คำสั่งซื้อนี้ไม่มียอดค้างชำระแล้ว — ไม่ต้องแนบสลิปเพิ่ม (ถ้าโอนเกิน ติดต่อร้านเพื่อขอคืนเงิน)", "CMS-SLIP-NOTHING-DUE");
 
         // Persist file under wwwroot/uploads/order-slips/{yyyy-MM}/{guid}{ext}
         // Compress images via ImageProcessingService (Slip profile); PDFs pass through.
@@ -1587,12 +1598,11 @@ public class CmsCommerceService : ICmsCommerceService
         // SiteOrderPayment — the actual money record
         // ทีม K — ยอดของสลิป = ยอดที่ช่องจ่ายเปิดรอบนี้ (มัดจำที่ขาด หรือยอดคงค้าง) ตัวคิดเดียว — เดิม TotalAmount เสมอ
         // (ร้านรับมัดจำแล้วสลิปมัดจำถูกบันทึกเป็นเงินเต็มใบ ⇒ ยืนยันแล้ว PaidAmount เกินจริง)
-        var slipDue = MtoPaymentTerms.FromSnapshot(order.PaymentTermMode, order.TotalAmount, order.DepositRequiredAmount, order.PaidAmount);
         var payment = new SiteOrderPayment
         {
             CompanyId = companyId,
             OrderId = order.Id,
-            Amount = slipDue.NextPayable > 0m ? slipDue.NextPayable : order.TotalAmount,
+            Amount = slipDue.NextPayable,
             Currency = order.Currency,
             PaymentMethod = PaymentMethod.BankTransfer,
             SlipUrl = relUrl,
@@ -2067,8 +2077,12 @@ public class CmsCommerceService : ICmsCommerceService
             }
             else if (zones.Count > 0)
             {
-                quote.Problem = "ยังไม่มีวิธีจัดส่งสำหรับที่อยู่นี้ — ตรวจจังหวัด/รหัสไปรษณีย์"
-                    + (pickupEnabled ? " หรือเลือกมารับเองที่ร้าน" : " หรือติดต่อร้าน");
+                // โซนจำกัดพื้นที่ + ยังไม่กรอกที่อยู่ ⇒ บอกให้กรอก (ไม่ใช่ "ไม่มีวิธีส่ง") · กรอกแล้วไม่ตรง ⇒ บอกทางไปต่อ
+                var missingAddress = string.IsNullOrWhiteSpace(req.Province) || string.IsNullOrWhiteSpace(req.PostalCode);
+                quote.Problem = missingAddress && zones.Any(CmsShippingService.ZoneNeedsAddress)
+                    ? "กรุณากรอกจังหวัดและรหัสไปรษณีย์เพื่อคำนวณค่าจัดส่ง"
+                    : "ยังไม่มีวิธีจัดส่งสำหรับจังหวัด/รหัสไปรษณีย์นี้ — ตรวจการสะกด"
+                        + (pickupEnabled ? " หรือเลือกมารับเองที่ร้าน" : " หรือติดต่อร้านเพื่อสั่งทางอื่น");
             }
             else
             {
@@ -2124,8 +2138,6 @@ public class CmsCommerceService : ICmsCommerceService
             throw new BusinessRuleException("ไม่พบไฟล์รูป", "MTO-IMAGE");
         if (file.Length > OptionImageMaxBytes)
             throw new BusinessRuleException("รูปใหญ่เกิน 5 MB", "MTO-IMAGE");
-        if (!OptionImageTypes.Contains(file.ContentType ?? ""))
-            throw new BusinessRuleException("รับเฉพาะรูป JPG / PNG / WEBP", "MTO-IMAGE");
         var already = await _db.FileAttachments.AsNoTracking().CountAsync(f => f.CompanyId == companyId
             && f.EntityType == OptionImageEntityType && f.EntityId == cartId);
         if (already >= OptionImageMaxPerCart)
@@ -2138,10 +2150,14 @@ public class CmsCommerceService : ICmsCommerceService
             await s.CopyToAsync(ms);
             bytes = ms.ToArray();
         }
-        var ext = file.ContentType!.ToLowerInvariant() switch { "image/png" => ".png", "image/webp" => ".webp", _ => ".jpg" };
+        // ฝ่ายค้านทีม K ข้อ 4: ชนิดไฟล์ตัดสินจากไบต์จริง (ไม่เชื่อ Content-Type/นามสกุลของ client)
+        var detected = ImageMagicBytes.Detect(bytes);
+        if (detected == null || !OptionImageTypes.Contains(detected))
+            throw new BusinessRuleException("รับเฉพาะรูป JPG / PNG / WEBP (ไฟล์นี้ไม่ใช่รูปที่รองรับ)", "MTO-IMAGE");
+        var ext = detected switch { "image/png" => ".png", "image/webp" => ".webp", _ => ".jpg" };
         // ชื่อไฟล์จากเครื่องลูกค้าไม่เชื่อ (path/อักขระพิเศษ) — ตั้งชื่อเองตามชนิดไฟล์
         var saved = await _files.UploadAnonymousBytesAsync(companyId, OptionImageEntityType, cartId,
-            $"option-image{ext}", file.ContentType!, bytes);
+            $"option-image{ext}", detected, bytes);
         return new OptionImageUploadResponse { AttachmentId = saved.Id, FileName = saved.OriginalFileName };
     }
 }

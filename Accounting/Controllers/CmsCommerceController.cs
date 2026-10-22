@@ -185,10 +185,15 @@ public class CmsCommerceController : ControllerBase
     [AllowAnonymous]
     [RequestSizeLimit(6 * 1024 * 1024)]
     public async Task<ActionResult<ApiResponse<OptionImageUploadResponse>>> UploadOptionImage(
-        Guid companyId, Guid siteId, Guid cartId, IFormFile? file)
+        Guid companyId, Guid siteId, Guid cartId, IFormFile? file, [FromServices] IChatRateLimiter limiter)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<OptionImageUploadResponse>(false, null, "กรุณาเลือกไฟล์รูป"));
+        // ฝ่ายค้านทีม K ข้อ 4: ทางเข้าแขก (ไม่ล็อกอิน) ⇒ จำกัดต่อ IP ต่อไซต์ (ตัวนับ DB-upsert ตัวเดียวของระบบ — ใช้ได้หลายเครื่อง)
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (!await limiter.TryConsumeAsync($"cms-option-image:{siteId}:{ip}", perMinute: 10, perDay: 60))
+            return StatusCode(429, new ApiResponse<OptionImageUploadResponse>(false, null,
+                "อัปโหลดรูปถี่เกินไป — รอสักครู่แล้วลองใหม่ (ถ้าต้องการแนบหลายรูป ติดต่อร้านโดยตรง)"));
         return Ok(new ApiResponse<OptionImageUploadResponse>(true,
             await _commerceService.UploadOptionImageAsync(companyId, siteId, cartId, file), "แนบรูปแล้ว"));
     }

@@ -76,13 +76,36 @@ public static class ShippingFeeRules
         return Math.Round(fr, 2, R);
     }
 
-    /// <summary>อัตรา VAT ของบรรทัดค่าส่ง — ผู้ขายไม่จด VAT = 0 · มีสินค้าอัตราใดมากกว่า 0 = อัตราสูงสุดในบิล ·
-    /// สินค้าทั้งบิลอัตรา 0/ยกเว้น = 0 (ค่าส่งตามสถานะของสินค้าที่ขาย)</summary>
+    /// <summary>อัตรา VAT ของบรรทัดค่าส่ง — ตามสถานะของสินค้าที่ขาย (ค่าขนส่งเป็นส่วนของมูลค่าฐานภาษี §79):
+    /// <list type="bullet">
+    /// <item>ผู้ขายไม่จด VAT ⇒ 0</item>
+    /// <item>มีสินค้าอัตรามากกว่า 0 ⇒ อัตราสูงสุดในบิล — <b>บิลปน</b> (7% กับยกเว้น/0%) เลือก 7% เพราะ: กฎหมายไม่แบ่งค่าขนส่งตามสัดส่วน
+    ///   ให้ชัด · เลือก "ยกเว้น/0%" กับบิลที่มีของต้องเสียภาษี = เสี่ยงภาษีขายขาด (ประเมินย้อนหลัง + เงินเพิ่ม) ขณะที่ 7% เสี่ยงแค่ผู้ขายเสียเกิน ·
+    ///   ผู้ทำบัญชีแยกบิลได้ถ้าต้องการ (บันทึกใน docs/POS_MTO_DESIGN.md)</item>
+    /// <item>ไม่มีอัตราบวก แต่มีสินค้า 0% (ส่งออก §80/1) ⇒ 0</item>
+    /// <item>สินค้าทั้งบิล<b>ยกเว้น</b> (§81 · −1) ⇒ ยกเว้น (−1) — <b>ไม่ใช่ 0%</b> (0% = ยอดส่งออกใน ภ.พ.30 ช่อง 7)</item>
+    /// </list></summary>
     public static decimal VatRateForShipping(bool sellerVatRegistered, IEnumerable<decimal> goodsLineVatRates)
     {
         if (!sellerVatRegistered) return 0m;
-        var max = 0m;
-        foreach (var r in goodsLineVatRates) if (r > max) max = r;
-        return max;
+        var max = 0m; var anyZero = false; var anyExempt = false;
+        foreach (var r in goodsLineVatRates)
+        {
+            if (r > max) max = r;
+            else if (r == ThaiVatTypeRule.ExemptRate) anyExempt = true;
+            else if (r == 0m) anyZero = true;
+        }
+        if (max > 0m) return max;
+        if (anyZero) return 0m;
+        return anyExempt ? ThaiVatTypeRule.ExemptRate : 0m;
     }
+
+    /// <summary>VAT ที่อยู่ในค่าส่ง (ราคารวม VAT) — อัตรา ≤ 0 (0%/ยกเว้น) = 0 · ปัด 2 ตำแหน่ง AwayFromZero ·
+    /// ใช้รวมเข้า <c>SiteOrder.VatAmount</c> ให้ตรงกับใบกำกับ</summary>
+    public static decimal VatInShipping(decimal fee, decimal vatRate)
+        => fee <= 0m || vatRate <= 0m ? 0m : Math.Round(fee * vatRate / (100m + vatRate), 2, R);
+
+    /// <summary>VAT ในยอดรวม VAT ของบรรทัดสินค้า — อัตรา ≤ 0 (0%/ยกเว้น −1) = 0 (เดิมสูตรตรงกับ −1 ได้ VAT ติดลบ)</summary>
+    public static decimal VatInGross(decimal gross, decimal vatRate)
+        => vatRate <= 0m ? 0m : gross * vatRate / (100m + vatRate);
 }
