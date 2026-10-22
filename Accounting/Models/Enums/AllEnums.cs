@@ -1511,7 +1511,9 @@ public enum ErpBookingDocumentType
     DraftServiceOrder = 1,
     AdvanceReceipt = 2,
     TaxInvoice = 3,
-    Quotation = 4
+    Quotation = 4,
+    /// <summary>ใบแจ้งหนี้ของการจอง (บริษัทไม่จด VAT ออกใบกำกับไม่ได้ §90/2 · คำตัดสินข้อ 155 ฝ่ายค้าน ข้อ 6)</summary>
+    Invoice = 5
 }
 
 public enum SiteMediaType

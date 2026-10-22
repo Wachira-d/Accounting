@@ -95,4 +95,18 @@ public interface IPosService
 
     /// <summary>คอมมิชชั่นรายกิจกรรม (per-activity audit trail) — ใช้ตรวจสอบว่ามาจากออเดอร์ใด ขั้นตอนใด คิดยังไง</summary>
     Task<List<CommissionDetailResponse>> GetCommissionDetailsAsync(Guid companyId, Guid staffId, DateTime periodStart, DateTime periodEnd);
+
+    // ===== ทีม K · 2026-10-22 =====
+    /// <summary>คิวการจองของวัน (การจองบริการจากเว็บ + การจองโต๊ะ/คิว POS) พร้อมผลตัดสิน "เปิดบิลได้ไหม"</summary>
+    Task<List<PosBookingQueueItem>> GetBookingQueueAsync(Guid companyId, DateTime dateBangkok);
+    /// <summary>เปิดบิลจากการจอง — เติมลูกค้า/บริการ/ช่าง + ผูกบิลกับการจอง (เปิดซ้ำไม่ได้)</summary>
+    Task<OrderResponse> OpenOrderFromBookingAsync(Guid companyId, OpenOrderFromBookingRequest request, string createdBy);
+    /// <summary>ตั้ง/ล้างช่างของบรรทัด (บิลที่ยังไม่ปิด) — ขั้นตอนบริการที่ยังไม่มีคนทำได้ช่างคนนี้ด้วย</summary>
+    Task<OrderResponse> SetItemStaffAsync(Guid companyId, Guid orderId, Guid itemId, Guid? staffId);
+    /// <summary>สมาชิกของบริษัทที่เลือกเป็นช่างได้</summary>
+    Task<List<PosStaffOption>> GetStaffOptionsAsync(Guid companyId);
+    /// <summary>ยอดขายรายช่างจากบิลที่ปิดแล้วในช่วง (ก่อน VAT · หลังส่วนลด · หักคืน)</summary>
+    Task<List<PosStaffSalesRow>> GetStaffSalesAsync(Guid companyId, DateTime from, DateTime to);
+    /// <summary>ชนิด + บัญชีรายได้ที่เลือกได้ของรายการพิเศษ (Quick Add)</summary>
+    Task<PosCustomItemOptions> GetCustomItemOptionsAsync(Guid companyId);
 }

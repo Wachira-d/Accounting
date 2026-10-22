@@ -502,6 +502,10 @@ builder.Services.AddScoped<IAdvancedArApService, AdvancedArApService>();
 builder.Services.AddScoped<IProjectAccountingService, ProjectAccountingService>();
 builder.Services.AddScoped<IWarehouseService, WarehouseService>();
 builder.Services.AddScoped<IRevenueRecognitionService, RevenueRecognitionService>();
+// ทีม L — คอร์ส / Class Credits / Hour Pass (docs/COURSE_CREDIT_DESIGN.md) · ตัวเดียวทำสองบทบาท: บริการหน้าจอ + สัญญาบางของเครื่องจองภายนอก
+builder.Services.AddScoped<CourseCreditService>();
+builder.Services.AddScoped<ICourseCreditService>(sp => sp.GetRequiredService<CourseCreditService>());
+builder.Services.AddScoped<ICreditBookingLedger>(sp => sp.GetRequiredService<CourseCreditService>());
 builder.Services.AddScoped<ILoanService, LoanService>();
 builder.Services.AddScoped<ICommissionService, CommissionService>();
 
@@ -711,6 +715,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerif
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.CourseCreditExpiryJob>();   // ทีม L — ปิดบัตรคอร์สหมดอายุ (breakage)
 // §82/3 — ล้างภาษีซื้อที่ค้าง 11640 พ้น 6 เดือนเป็นค่าใช้จ่าย.
 // ReclassifyExpiredUndueInputVatAsync มีมาตั้งแต่ต้นแต่ไม่มีใครเรียก ⇒ ยอด
 // 11640 ค้างเป็นสินทรัพย์ลอยในงบตลอดไป (พบโดย task force รอบตรวจระบบ)

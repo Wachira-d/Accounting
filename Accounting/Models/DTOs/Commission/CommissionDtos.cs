@@ -46,4 +46,6 @@ public record CommissionCalculationResponse(
 
 public record AssignCommissionRequest(Guid? EmployeeId, Guid? UserId, DateTime StartDate, DateTime? EndDate);
 
-public record CommissionCalcResponse(Guid? EmployeeId, string? EmployeeName, int Year, int Month, decimal BasisAmount, decimal CommissionAmount, string Status);
+public record CommissionCalcResponse(Guid? EmployeeId, string? EmployeeName, int Year, int Month, decimal BasisAmount, decimal CommissionAmount, string Status,
+    // หมายเหตุของผลคำนวณ (เช่น ฐาน 0 เพราะยังไม่ผูกผู้ใช้) — null = ไม่มี
+    string? Note = null);

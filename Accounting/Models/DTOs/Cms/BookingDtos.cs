@@ -295,6 +295,9 @@ public class BookingResponse
     public bool CanIssueTaxInvoiceNow { get; set; }
 }
 
+/// <summary>"รับเงินแล้ว — ออกใบกำกับภาษี" (คำตัดสินข้อ 155) · <see cref="ReceivedDate"/> = วันที่รับเงินจริง (ว่าง = วันนี้ · ห้ามอนาคต) ใช้เป็นวันที่ใบกำกับ</summary>
+public record IssueBookingTaxInvoiceRequest(DateTime? ReceivedDate);
+
 public class BookingListResponse
 {
     public Guid Id { get; set; }

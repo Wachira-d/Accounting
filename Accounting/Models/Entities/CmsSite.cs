@@ -182,6 +182,20 @@ public class SiteCommerceConfig : TenantEntity
     public string? OrderConfirmMessageEn { get; set; }
     public string? QuotationMessageTh { get; set; }
     public string? QuotationMessageEn { get; set; }
+
+    // ── สินค้าตามสั่ง (ทีม K · 2026-10-22) — ผู้อ่าน: CmsCommerceService.CreateOrderAsync / หน้าสินค้า ──
+    /// <summary>เปิดให้ลูกค้าเลือก "มารับเองที่ร้าน" (ค่าส่ง 0)</summary>
+    public bool EnablePickup { get; set; } = false;
+    /// <summary>เงื่อนไขชำระของออเดอร์ที่มีสินค้าตามสั่ง (<c>Helpers.PaymentTermMode</c>) · ออเดอร์ที่ไม่มีสินค้าตามสั่ง = เต็มจำนวนเสมอ</summary>
+    public string? MtoPaymentTermMode { get; set; }
+    public decimal? MtoDepositPercent { get; set; }
+    public decimal? MtoDepositFixedAmount { get; set; }
+    /// <summary>วันปิดร้านประจำสัปดาห์ "0,6" (0 = อาทิตย์) — ไม่นับเป็นวันผลิต/รับของ</summary>
+    public string? MtoClosedWeekdays { get; set; }
+    /// <summary>ชั่วโมงตัดรอบรับออร์เดอร์ (เวลาไทย 0–23) · null = ไม่ตัดรอบ</summary>
+    public int? MtoCutoffHour { get; set; }
+    /// <summary>ข้ามวันหยุดในปฏิทินวันหยุดของบริษัท (หน้า "วันหยุด" ของเงินเดือน) ด้วย</summary>
+    public bool MtoSkipCompanyHolidays { get; set; } = true;
 }
 
 // ===== Domain Management =====

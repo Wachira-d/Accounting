@@ -126,8 +126,12 @@ public class CmsCommerceOrderLinesTests
         Assert.Equal(o.TotalAmount, DocumentTotal(lines));
     }
 
+    /// <summary>ทีม K (2026-10-22 · งานสินค้าตามสั่ง "ค่าส่งต้องเป็นบรรทัดในเอกสารขายพร้อม VAT ถูกต้อง") —
+    /// ค่าขนส่งที่ผู้ขายเรียกเก็บรวมกับการขาย = ส่วนหนึ่งของมูลค่าฐานภาษี (§79) ⇒ อัตราตามสินค้าในบิล
+    /// (เดิมล็อกไว้ที่ 0 ซึ่ง Pp30SalesClassifier จัดเป็นยอดขายอัตรา 0 §80/1 ส่งออก) · ยอดเอกสารไม่เปลี่ยน (ราคารวม VAT)
+    /// · ก่อนรอบนี้ไม่มีทางเข้าใดตั้ง ShippingAmount เลย ⇒ ไม่มีออเดอร์เดิมที่ยอดภาษีเปลี่ยน</summary>
     [Fact]
-    public void ออเดอร์มีค่าส่งแต่ไม่มีส่วนลด_ค่าส่งต้องเป็นบรรทัดบวกอัตรา_0_เหมือนเดิม()
+    public void ออเดอร์มีค่าส่ง_ค่าส่งเป็นบรรทัดบวก_VATตามสินค้าในบิล_ยอดรวมเท่าเดิม()
     {
         var o = Order(shipping: 50m, discount: 0m, (1m, 1000m));
         var lines = CmsCommerceService.BuildOrderErpLines(o);
@@ -137,9 +141,34 @@ public class CmsCommerceOrderLinesTests
         Assert.Equal("ค่าจัดส่ง", ship.Description);
         Assert.Equal(50m, ship.UnitPrice);
         Assert.Equal(1m, ship.Quantity);
-        Assert.Equal(0m, ship.VatRate);
+        Assert.Equal(7m, ship.VatRate);
         Assert.Null(ship.DiscountAmount);
         Assert.Equal(1050m, DocumentTotal(lines));
+    }
+
+    [Fact]
+    public void ค่าส่ง_ผู้ขายไม่จดVAT_หรือสินค้าทั้งบิลอัตรา0_ค่าส่งอัตรา0()
+    {
+        var o = Order(shipping: 50m, discount: 0m, (1m, 1000m));
+        Assert.Equal(0m, CmsCommerceService.BuildOrderErpLines(o, vatRegistered: false)[^1].VatRate);
+        foreach (var l in o.Lines) l.VatRate = 0m;
+        Assert.Equal(0m, CmsCommerceService.BuildOrderErpLines(o)[^1].VatRate);
+    }
+
+    [Fact]
+    public void ตัวเลือกสินค้าตามสั่ง_อยู่บนคำอธิบายบรรทัดเอกสาร_บรรทัดไม่มีตัวเลือกเหมือนเดิม()
+    {
+        var o = Order(shipping: 0m, discount: 0m, (1m, 850m), (1m, 100m));
+        var sel = new[]
+        {
+            new ResolvedModifier(Guid.NewGuid(), "ขนาด", Guid.NewGuid(), "2 ปอนด์", 350m, 1, null, null),
+            new ResolvedModifier(Guid.NewGuid(), "ข้อความบนเค้ก", null, "HBD แม่", 50m, 0, "HBD แม่", null),
+        };
+        o.Lines.First().ModifierSelectionsJson = System.Text.Json.JsonSerializer.Serialize(sel);
+        var lines = CmsCommerceService.BuildOrderErpLines(o);
+        Assert.Equal("สินค้า 1 (ขนาด: 2 ปอนด์ · ข้อความบนเค้ก: HBD แม่)", lines[0].Description);
+        Assert.Equal("สินค้า 2", lines[1].Description);
+        Assert.Null(CmsCommerceService.SummaryOf("{not json"));
     }
 
     [Fact]

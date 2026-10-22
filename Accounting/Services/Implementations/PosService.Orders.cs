@@ -27,7 +27,13 @@ public partial class PosService
 
     // ==================== Order CRUD ====================
 
-    public async Task<OrderResponse> CreateOrderAsync(Guid companyId, CreateOrderRequest request, string createdBy)
+    public Task<OrderResponse> CreateOrderAsync(Guid companyId, CreateOrderRequest request, string createdBy)
+        => CreateOrderCoreAsync(companyId, request, createdBy, sourceBookingType: null, sourceBookingId: null);
+
+    /// <summary>ตัวสร้างบิลตัวเดียว — <paramref name="sourceBookingType"/>/<paramref name="sourceBookingId"/> ตั้งตั้งแต่ INSERT แรก
+    /// (unique index "การจองละหนึ่งบิล" จับการกดซ้ำ/สองเครื่องพร้อมกันได้ที่ฐานข้อมูล ไม่ใช่ตั้งทีหลัง)</summary>
+    private async Task<OrderResponse> CreateOrderCoreAsync(Guid companyId, CreateOrderRequest request, string createdBy,
+        string? sourceBookingType, Guid? sourceBookingId)
     {
         var session = await _db.PosSessions.FirstOrDefaultAsync(s => s.Id == request.SessionId && s.CompanyId == companyId && s.Status == PosSessionStatus.Open)
             ?? throw new KeyNotFoundException("ไม่พบกะการขายที่เปิดอยู่");
@@ -67,7 +73,9 @@ public partial class PosService
             ServiceChargePercent = request.ServiceChargePercent,
             Notes = request.Notes,
             Reference = request.Reference,
-            CreatedBy = createdBy
+            CreatedBy = createdBy,
+            SourceBookingType = sourceBookingType,
+            SourceBookingId = sourceBookingId,
         };
         _db.PosOrders.Add(order);
         await _db.SaveChangesAsync();
@@ -301,6 +309,8 @@ public partial class PosService
             }
 
             order.Status = PosOrderStatus.Voided;
+            // ทีม K — ปล่อยการจองต้นทางให้เปิดบิลใหม่ได้ (unique index ไม่นับบิลที่ยกเลิก) + สถานะการจองถอยกลับ
+            await ReleaseSourceBookingAsync(companyId, order);
             await _db.SaveChangesAsync();
             await voidTxn.CommitAsync();
         }
@@ -461,8 +471,14 @@ public partial class PosService
             // Reversal journal entry — back out the refunded portion:
             //   Dr รายได้ขาย / Dr ภาษีขาย   Cr เงินสด
             //   Dr สินค้าคงเหลือ            Cr ต้นทุนขาย
+            // น้ำหนักแบ่งรายได้ที่คืน = ยอดบรรทัด × สัดส่วนที่คืน (ฐานเดียวกับที่ JE ขายแบ่ง — PosRevenueSplit)
+            var refundWeights = toRestore
+                .Where(t => t.Item.Quantity > 0m)
+                .Select(t => new Accounting.Helpers.PosRevenueWeight(t.Item.RevenueAccountId,
+                    t.Item.TotalAmount * t.Qty / t.Item.Quantity))
+                .ToList();
             await CreateRefundJournalEntryAsync(companyId, order, refundNet, refundVat, refundGross,
-                refundCogs, request.RefundMethod, userId);
+                refundCogs, request.RefundMethod, userId, refundWeights);
 
             // Record the cash-out as a negative payment so the shift/day
             // cash reconciliation reflects it.
@@ -503,9 +519,25 @@ public partial class PosService
     /// ขณะที่ฝั่งขายของเมธอดคู่กัน <c>throw</c> ตั้งแต่รอบ H-A18 — "คู่สมมาตรที่แก้ข้างเดียว"
     /// (กฎเหล็ก #4 F2 ข้อ 1/7) · ตอนนี้ทั้งสองทางออกล้มดังเหมือนกัน และอยู่ใน transaction
     /// เดียวกับการคืนสต็อก ⇒ คืนไม่สำเร็จทั้งก้อน ดีกว่าคืนแล้ว GL ไม่รู้</para></summary>
+    /// <summary>บัญชีของกองรายได้ — null = บัญชีรายได้ขายมาตรฐาน · บัญชีที่ตรึงไว้บนบรรทัดถูกปิด/ลบภายหลัง ⇒ ล้มดัง
+    /// (ห้ามโยนเข้า 41000 เงียบ ๆ — รายได้พิเศษจะหายไปจากบัญชีที่ผู้ใช้เลือก)</summary>
+    private async Task<Guid> ResolveRevenuePartAccountAsync(Guid companyId, Guid? accountId, Guid defaultSalesAccountId,
+        bool forRefund = false)
+    {
+        if (accountId is not Guid id) return defaultSalesAccountId;
+        var problem = await _db.PostingAccountProblemAsync(companyId, id, "บัญชีรายได้ของรายการพิเศษ");
+        if (problem == null) return id;
+        // ฝ่ายค้านทีม K ข้อ 10: คืนเงินต้องกลับเข้าบัญชีเดียวกับที่ขายลงไว้ — เลือกบัญชีอื่นแทนไม่ได้ ⇒ บอกให้เปิดผังกลับ (ไม่โยนเข้า 41000 เงียบ)
+        throw new Accounting.Helpers.BusinessRuleException(forRefund
+            ? problem + " · การคืนเงินต้องกลับรายการเข้าบัญชีเดียวกับตอนขาย: เปิดใช้งานผังนี้ที่หน้า \"ผังบัญชี\" ชั่วคราว คืนเงิน แล้วปิดอีกครั้งได้ (บิลยังอยู่ คืนใหม่ได้ทันที)"
+            : problem + " · บรรทัดรายการพิเศษในบิลนี้ตรึงบัญชีนี้ไว้ — เปิดใช้งานผังกลับ หรือลบบรรทัดแล้วเพิ่มใหม่ด้วยบัญชีอื่น",
+            Accounting.Helpers.PostingAccountRule.RuleCode);
+    }
+
     private async Task CreateRefundJournalEntryAsync(Guid companyId, PosOrder order,
         decimal refundNet, decimal refundVat, decimal refundGross, decimal refundCogs,
-        PaymentMethod refundMethod, string userId)
+        PaymentMethod refundMethod, string userId,
+        IReadOnlyList<Accounting.Helpers.PosRevenueWeight> refundWeights)
     {
         // เครื่องที่เปิดกะของบิลใบนี้ — บัญชีเงินสด/ธนาคารที่ปักหมุดไว้บนเครื่องชนะผังมาตรฐาน
         // (เส้นขายใช้ resolver ตัวเดียวกัน · เดิมฝั่งคืนฮาร์ดโค้ด "11111" ⇒ คืนบัตรเครดิต
@@ -551,10 +583,16 @@ public partial class PosService
                 + "เพราะภาษีขายที่ลงไว้ตอนขายจะค้างอยู่ทั้งก้อน (ภ.พ.30 นำส่งเกิน)",
                 "POS-NO-VAT-ACCOUNT");
 
-        var lines = new List<Models.DTOs.Accounting.JournalLineRequest>
+        // ทีม K — คืนเข้าบัญชีรายได้เดียวกับที่ขายลงไว้ (Helpers/PosRevenueSplit ตัวเดียวกับ JE ขาย) ·
+        // ไม่มีบรรทัดระบุบัญชี ⇒ กองเดียว 41000 = หน้าตาเดิม
+        var lines = new List<Models.DTOs.Accounting.JournalLineRequest>();
+        foreach (var part in Accounting.Helpers.PosRevenueSplit.Split(refundWeights, refundNet))
         {
-            new(salesAccount.Id, refundNet, 0, $"คืนรายได้ขาย POS #{order.OrderNumber}"),
-        };
+            var acctId = await ResolveRevenuePartAccountAsync(companyId, part.AccountId, salesAccount.Id, forRefund: true);
+            lines.Add(new(acctId, part.Amount, 0, part.AccountId == null
+                ? $"คืนรายได้ขาย POS #{order.OrderNumber}"
+                : $"คืนรายได้รายการพิเศษ POS #{order.OrderNumber}"));
+        }
         if (refundVat > 0)
             lines.Add(new(vatAccount!.Id, refundVat, 0, $"คืนภาษีขาย POS #{order.OrderNumber}"));
         lines.Add(new(cashAccount.Id, 0, refundGross, $"จ่ายคืนเงิน POS #{order.OrderNumber}"));
@@ -890,7 +928,7 @@ public partial class PosService
             // Items + totals — re-use the same helpers the online flow uses.
             var vatRate = await GetCompanyVatRateAsync(companyId);
             for (var i = 0; i < request.Items.Count; i++)
-                await AddItemToOrder(order, request.Items[i], i + 1, vatRate);
+                await AddItemToOrder(order, request.Items[i], i + 1, vatRate, offline: true);
             RecalculateOrder(order, vatRate);
 
             // Payments — fully provided by the client (they were collected at
@@ -1233,6 +1271,12 @@ public partial class PosService
                     LineOrder = srcItem.LineOrder,
                     Status = srcItem.Status,
                     Notes = srcItem.Notes,
+                    // ทีม K — ช่าง/รายการพิเศษ/บัญชีรายได้ไหลตามบรรทัด (เอกสารลูกต้องสืบทอด · กฎเหล็ก #4 A)
+                    StaffId = srcItem.StaffId,
+                    StaffName = srcItem.StaffName,
+                    IsCustomItem = srcItem.IsCustomItem,
+                    CustomItemKind = srcItem.CustomItemKind,
+                    RevenueAccountId = srcItem.RevenueAccountId,
                 };
                 // ตัวเลือกเพิ่มเติม (เพิ่มชีส/พิเศษ) — ราคาถูกบวกเข้า SubTotal
                 // ตั้งแต่ตอนเพิ่มรายการแล้ว ยอดจึงไม่หาย แต่ถ้าไม่คัดลอกแถวมา
@@ -1325,6 +1369,8 @@ public partial class PosService
         order.Status = PosOrderStatus.Completed;
         order.CompletedAt = DateTime.UtcNow;
         await IssueAbbreviatedInvoiceNumberAsync(companyId, order);
+        // ทีม K — บิลจากคิวการจองปิดแล้ว ⇒ การจองจบ (เฉพาะสถานะ ไม่แตะเงิน — ดู MarkSourceBookingCompletedAsync)
+        await MarkSourceBookingCompletedAsync(companyId, order);
 
         // Loyalty: award 1 point per ฿100 spent (NetAmount excluding tip) and
         // bump visit counter / lastVisit on the linked Contact. Floor — fractions
@@ -1705,7 +1751,19 @@ public partial class PosService
         // ถูก swallow (ด้านล่าง) → ออเดอร์ที่มีทิป "ไม่ลง GL เลย" (รายได้/VAT/COGS
         // หาย). กรณี fallback ไม่มีบัญชี 2160 ทิปจะถูกบวกกลับเข้า sales (ยังสมดุล).
         var revenueAmount = order.NetAmount - order.VatAmount - order.TipAmount;
-        lines.Add(new(salesAccount.Id, 0, revenueAmount, $"รายได้ขาย POS #{order.OrderNumber}"));
+        // ทีม K — รายการพิเศษที่เลือกบัญชีรายได้เอง ⇒ แบ่งเครดิตตามสัดส่วนยอดบรรทัด (Helpers/PosRevenueSplit ตัวเดียวกับเส้นคืนเงิน)
+        // บิลที่ไม่มีบรรทัดระบุบัญชี ⇒ ได้กองเดียวเข้า 41000 = JE หน้าตาเดิมทุกสตางค์
+        var revenueParts = Accounting.Helpers.PosRevenueSplit.Split(
+            (order.Items ?? new List<PosOrderItem>()).Where(i => !i.IsDeleted)
+                .Select(i => new Accounting.Helpers.PosRevenueWeight(i.RevenueAccountId, i.TotalAmount)),
+            revenueAmount);
+        foreach (var part in revenueParts)
+        {
+            var acctId = await ResolveRevenuePartAccountAsync(companyId, part.AccountId, salesAccount.Id);
+            lines.Add(new(acctId, 0, part.Amount, part.AccountId == null
+                ? $"รายได้ขาย POS #{order.OrderNumber}"
+                : $"รายได้รายการพิเศษ POS #{order.OrderNumber}"));
+        }
 
         // Credit: VAT Payable (if any)
         if (order.VatAmount > 0 && vatAccount != null)
@@ -2071,7 +2129,8 @@ public partial class PosService
             company?.IsVatRegistered ?? false, company?.VatRate ?? 0m);
     }
 
-    private async Task AddItemToOrder(PosOrder order, CreateOrderItemRequest req, int lineOrder, decimal vatRate)
+    private async Task AddItemToOrder(PosOrder order, CreateOrderItemRequest req, int lineOrder, decimal vatRate,
+        bool offline = false)
     {
         // ProductId/ServicePackageId มาจาก client — ต้องเป็นของบริษัทเดียวกับ
         // order เท่านั้น: ปลายทาง (Complete/Void/Refund) ใช้ FindAsync ตัดสต๊อก/
@@ -2090,19 +2149,59 @@ public partial class PosService
             if (!okPackage) throw new KeyNotFoundException("ไม่พบแพ็กเกจบริการในบริษัทนี้");
         }
 
+        // ── รายการพิเศษ (Quick Add · ทีม K) — กติกาที่ Helpers/PosCustomItemRule ตัวเดียว ──
+        var itemName = req.ItemName;
+        var unit = req.Unit;
+        var unitPrice = req.UnitPrice;
+        string? customKind = null;
+        Guid? revenueAccountId = null;
+        if (req.IsCustomItem)
+        {
+            if (req.ProductId.HasValue || req.ServicePackageId.HasValue)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "รายการพิเศษต้องไม่ผูกสินค้า/แพ็กเกจ — ถ้าเป็นสินค้าในระบบให้เลือกจากเมนูแทน", "POS-CUSTOM-ITEM");
+            var spec = Accounting.Helpers.PosCustomItemRule.Validate(req.ItemName, req.UnitPrice, req.Quantity, req.CustomItemKind, req.Unit);
+            itemName = spec.Name; unit = spec.Unit; unitPrice = spec.UnitPrice; customKind = spec.Kind;
+            if (req.RevenueAccountId is Guid ra && ra != Guid.Empty)
+            {
+                try
+                {
+                    await EnsureCustomRevenueAccountAsync(order.CompanyId, ra);
+                    revenueAccountId = ra;
+                }
+                catch (Accounting.Helpers.BusinessRuleException ex) when (offline)
+                {
+                    // บิลออฟไลน์ขายไปแล้วจริง — ผังถูกปิด/ลบระหว่างออฟไลน์ ⇒ ลงรายได้มาตรฐาน (ยอดเงิน/ภาษีไม่เปลี่ยน) + log ดัง
+                    _logger.LogError(ex, "POS offline sync: custom item revenue account {AccountId} rejected — booked to default sales account", ra);
+                }
+            }
+        }
+        else if (req.RevenueAccountId is Guid stray && stray != Guid.Empty)
+            // ห้าม silent no-op: สินค้า/แพ็กเกจลงบัญชีตามผังของตัวเอง — บอกตรง ๆ ว่าช่องนี้ใช้กับรายการพิเศษเท่านั้น
+            throw new Accounting.Helpers.BusinessRuleException(
+                "เลือกบัญชีรายได้เองได้เฉพาะรายการพิเศษ (Quick Add) — สินค้า/บริการในระบบลงบัญชีตามผังมาตรฐาน", "POS-CUSTOM-ITEM");
+
+        // ── ช่าง/พนักงานของบรรทัด (multi-staff · ทีม K) ──
+        var (staffId, staffName) = await ResolveStaffAsync(order.CompanyId, req.StaffId, lenient: offline);
+
         var item = new PosOrderItem
         {
             OrderId = order.Id,
             ProductId = req.ProductId,
             ServicePackageId = req.ServicePackageId,
-            ItemName = req.ItemName,
+            ItemName = itemName,
             ItemCode = req.ItemCode,
             Quantity = req.Quantity,
-            Unit = req.Unit,
-            UnitPrice = req.UnitPrice,
+            Unit = unit,
+            UnitPrice = unitPrice,
             DiscountPercent = req.DiscountPercent,
             LineOrder = lineOrder,
-            Notes = req.Notes
+            Notes = req.Notes,
+            StaffId = staffId,
+            StaffName = staffName,
+            IsCustomItem = req.IsCustomItem,
+            CustomItemKind = customKind,
+            RevenueAccountId = revenueAccountId,
         };
 
         // Calculate line totals
@@ -2149,12 +2248,48 @@ public partial class PosService
                 {
                     OrderItemId = item.Id,
                     ComponentId = comp.Id,
+                    // ช่างของบรรทัดเป็นค่าตั้งต้นของทุกขั้นตอน (แก้รายขั้นตอนได้ภายหลังที่ UpdateServiceActivityAsync)
+                    StaffId = comp.RequiresStaff ? staffId : null,
+                    StaffName = comp.RequiresStaff ? staffName : null,
                     CommissionAmount = comp.CommissionType == CommissionType.Fixed
                         ? comp.CommissionValue
                         : Math.Round(item.TotalAmount * comp.CommissionValue / 100, 2, MidpointRounding.AwayFromZero)
                 });
             }
         }
+    }
+
+    /// <summary>ช่างของบรรทัด = สมาชิกของบริษัทนี้เท่านั้น (กันฉีด UserId บริษัทอื่นมาเป็นฐานคอมมิชชัน) ·
+    /// <paramref name="lenient"/> = เส้น sync ออฟไลน์: บิลขายไปแล้วจริง ถ้าช่างถูกถอดจากบริษัทระหว่างออฟไลน์ ⇒ บรรทัดไม่มีช่าง
+    /// + log ดัง (ห้ามทำให้บิลที่ขายแล้ว sync ไม่ได้)</summary>
+    private async Task<(Guid? Id, string? Name)> ResolveStaffAsync(Guid companyId, Guid? staffId, bool lenient)
+    {
+        if (staffId is not Guid sid || sid == Guid.Empty) return (null, null);
+        var name = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == sid)
+            .Select(cu => cu.User.FullName)
+            .FirstOrDefaultAsync();
+        if (name != null) return (sid, name);
+        if (lenient)
+        {
+            _logger.LogError("POS offline sync: staff {StaffId} is not a member of company {CompanyId} — line saved without staff",
+                sid, companyId);
+            return (null, null);
+        }
+        throw new Accounting.Helpers.BusinessRuleException(
+            "ไม่พบพนักงานคนนี้ในบริษัท — เลือกช่างจากรายชื่อใหม่ (หรือเว้นว่างถ้าไม่ระบุช่าง)", "POS-STAFF");
+    }
+
+    /// <summary>บัญชีรายได้ของรายการพิเศษ: ผังของบริษัทนี้ · ลงรายการได้ (PostingAccountGuard ตัวเดียว) · หมวดรายได้เท่านั้น</summary>
+    private async Task EnsureCustomRevenueAccountAsync(Guid companyId, Guid accountId)
+    {
+        await _db.EnsurePostingAccountAsync(companyId, accountId, "บัญชีรายได้ของรายการพิเศษ");
+        var type = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.Id == accountId && a.CompanyId == companyId)
+            .Select(a => a.AccountType).FirstAsync();
+        if (type != AccountType.Revenue)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "บัญชีของรายการพิเศษต้องเป็นผังหมวดรายได้ (4xxxx) — เลือกบัญชีรายได้ หรือเว้นว่างเพื่อใช้รายได้จากการขาย", "POS-CUSTOM-ITEM-ACCOUNT");
     }
 
     /// <summary>คิดยอดทั้งบิลใหม่จากรายการที่ยังอยู่ + ธงระดับบิล
@@ -2205,7 +2340,9 @@ public partial class PosService
         // บิลที่ยังไม่ปิด ยังไม่รู้ผล — ปล่อย null ให้หน้าเว็บถามตอนจะพิมพ์
         SlipTitle: o.AbbreviatedInvoiceNumber != null
             ? Accounting.Helpers.PosSlipHeader.AbbreviatedTaxInvoice
-            : o.Status == PosOrderStatus.Completed ? Accounting.Helpers.PosSlipHeader.Receipt : null);
+            : o.Status == PosOrderStatus.Completed ? Accounting.Helpers.PosSlipHeader.Receipt : null,
+        SourceBookingType: o.SourceBookingType,
+        SourceBookingId: o.SourceBookingId);
 
     private static OrderItemResponse MapOrderItem(PosOrderItem i) => new(
         i.Id, i.ProductId, i.ServicePackageId, i.ItemName, i.ItemCode,
@@ -2213,7 +2350,12 @@ public partial class PosService
         i.SubTotal, i.VatAmount, i.TotalAmount, i.LineOrder, i.Status, i.Notes,
         i.Modifiers.Select(m => new ItemModifierResponse(m.Id, m.ModifierOptionId, m.ModifierGroupName, m.ModifierName, m.PriceAdjustment)).ToList(),
         i.ServiceActivities.Select(a => new ServiceActivityResponse(a.Id, a.ComponentId, a.Component?.Name ?? "", a.Component?.StepOrder ?? 0, a.StaffId, a.StaffName, a.Status, a.StartedAt, a.CompletedAt, a.CommissionAmount, a.Notes)).ToList(),
-        i.RefundedQuantity);
+        i.RefundedQuantity,
+        StaffId: i.StaffId,
+        StaffName: i.StaffName,
+        IsCustomItem: i.IsCustomItem,
+        CustomItemKind: i.CustomItemKind,
+        RevenueAccountId: i.RevenueAccountId);
 
     private static PaymentResponse MapPayment(PosPayment p) => new(
         p.Id, p.PaymentMethod, p.Amount, p.ReceivedAmount, p.ChangeAmount, p.ReferenceNo, p.CardLastFour, p.PaidAt);
@@ -2326,6 +2468,13 @@ public partial class PosService
             if (src.Payments.Any(p => !p.IsDeleted))
                 throw new InvalidOperationException($"บิล {src.OrderNumber} มีการชำระเงินแล้ว — ยกเลิกก่อน");
         }
+        // ทีม K — บิลที่ผูกคิวการจอง: รวมได้ถ้าการผูกไปอยู่ที่บิลปลายทางได้ใบเดียว (บิลต้นทางกลายเป็น "ยกเลิก")
+        // ⇒ การจองสองรายการในบิลเดียว = เปิดซ้ำได้โดยไม่มีใครรู้ — บล็อกพร้อมทางไปต่อ
+        var bookingLinked = sources.Where(x => x.SourceBookingId != null).ToList();
+        if (bookingLinked.Count > (dest.SourceBookingId == null ? 1 : 0))
+            throw new Accounting.Helpers.BusinessRuleException(
+                "รวมบิลที่เปิดจากการจองคนละรายการเข้าด้วยกันไม่ได้ (การจองหนึ่งรายการผูกได้หนึ่งบิล) — ปิดบิลแยกกัน หรือยกเลิกบิลที่ไม่ใช้ก่อน",
+                "POS-BOOKING-MERGE");
 
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
@@ -2350,9 +2499,16 @@ public partial class PosService
                         DiscountPercent = srcItem.DiscountPercent,
                         SubTotal = srcItem.SubTotal,
                         TotalAmount = srcItem.TotalAmount,
-                        VatAmount = 0,
+                        // บรรทัดเดิมไม่ได้เปลี่ยน ⇒ VAT รายบรรทัดเท่าเดิม (แบบเดียวกับแยกบิล — เดิมตั้ง 0)
+                        VatAmount = srcItem.VatAmount,
                         LineOrder = nextLine++,
                         Status = srcItem.Status,
+                        // ทีม K — ช่าง/รายการพิเศษ/บัญชีรายได้ไหลตามบรรทัด (เอกสารลูกต้องสืบทอด)
+                        StaffId = srcItem.StaffId,
+                        StaffName = srcItem.StaffName,
+                        IsCustomItem = srcItem.IsCustomItem,
+                        CustomItemKind = srcItem.CustomItemKind,
+                        RevenueAccountId = srcItem.RevenueAccountId,
                         Notes = srcItem.Notes != null ? $"{srcItem.Notes} [จาก {src.OrderNumber}]" : $"[จาก {src.OrderNumber}]",
                     });
                     srcItem.IsDeleted = true;
@@ -2370,6 +2526,19 @@ public partial class PosService
                 ? $"รวมจากบิล: {mergedFrom}"
                 : $"{dest.Notes} / รวมจากบิล: {mergedFrom}";
             dest.UpdatedBy = userId;
+
+            if (bookingLinked.Count == 1 && dest.SourceBookingId == null)
+            {
+                // ย้ายการผูกสองจังหวะ (ปลดต้นทางก่อน) — unique index ตรวจทีละคำสั่ง ห้ามมีสองบิลถือการจองเดียวพร้อมกัน
+                var linkedSrc = bookingLinked[0];
+                var (bType, bId) = (linkedSrc.SourceBookingType, linkedSrc.SourceBookingId);
+                linkedSrc.SourceBookingType = null;
+                linkedSrc.SourceBookingId = null;
+                await _db.SaveChangesAsync();
+                dest.SourceBookingType = bType;
+                dest.SourceBookingId = bId;
+                await RelinkSourceBookingAsync(companyId, bType, bId!.Value, dest.Id);
+            }
 
             var vatRate = await GetCompanyVatRateAsync(companyId);
             RecalculateOrder(dest, vatRate);

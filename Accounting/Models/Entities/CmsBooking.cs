@@ -172,6 +172,13 @@ public class SiteBooking : TenantEntity
     public bool ReminderSent { get; set; } = false;
     public DateTime? ReminderSentAt { get; set; }
 
+    // ── ดึงคิวเข้า POS (ทีม K · 2026-10-22) ──
+    /// <summary>บิล POS ที่เปิดจากการจองนี้ (ตัวจริงของ "เปิดแล้ว" คือ <c>PosOrder.SourceBookingId</c> + unique index — ช่องนี้แสดงผลฝั่งระบบจอง)</summary>
+    public Guid? PosOrderId { get; set; }
+    /// <summary>ช่าง/พนักงานที่ลูกค้าจองไว้ (UserId) — POS เติมให้ทุกบรรทัด · null = ไม่ระบุ</summary>
+    public Guid? AssignedStaffId { get; set; }
+    public string? AssignedStaffName { get; set; }
+
     public ICollection<SiteBookingPayment> Payments { get; set; } = new List<SiteBookingPayment>();
 }
 

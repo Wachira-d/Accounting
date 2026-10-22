@@ -211,7 +211,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
                 .Select(d => new { d.Id, d.DocumentType, d.RelatedDocumentId,
-                    d.WithholdingTaxAmount, d.PaymentDate, d.DocumentDate,
+                    d.WithholdingTaxAmount, d.PaymentDate, d.DocumentDate, d.ExchangeRate,
                     d.IsForeignService, d.WhtPayeeContactId, d.ContactId,
                     // รอบ 204: ประเภทเงินได้ของบรรทัดที่หัก (เกณฑ์เดียวกับ WhtIncomeCodes) — แยก ภ.ง.ด.2 ออกจาก ภ.ง.ด.3
                     IncomeCodes = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).Select(l => l.IncomeTypeCode).ToList(),
@@ -285,7 +285,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     gapItems.Add((date, gapPayee != d.ContactId && gapPayees.TryGetValue(gapPayee, out var gk)
                         ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, gk.Country, gk.TaxId, gk.Type, gk.Name, d.IncomeCodes, royalty.AppliesTo(date))
                         : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes, royalty.AppliesTo(date)),
-                        d.WithholdingTaxAmount, d.Id));
+                        // ทีม F (ฝ่ายค้านข้อ 4): ยอดเป็นบาท — เป้าเดียวกับ 50 ทวิ/JE (PerLineWht.DocumentWhtThb) · เดิมใบ USD ต่ำ ~36 เท่า
+                        Accounting.Helpers.PerLineWht.DocumentWhtThb(d.WithholdingTaxAmount, d.ExchangeRate), d.Id));
                     continue;
                 }
                 var lineCodes = d.LinePayees.Select(l => l.IncomeTypeCode).ToList();
@@ -297,7 +298,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     gapItems.Add((date, p.PayeeContactId != d.ContactId && gapPayees.TryGetValue(p.PayeeContactId, out var pk)
                         ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, pk.Country, pk.TaxId, pk.Type, pk.Name, pCodes, royalty.AppliesTo(date))
                         : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, pCodes, royalty.AppliesTo(date)),
-                        p.WithholdingTaxAmount, d.Id));
+                        Accounting.Helpers.PerLineWht.DocumentWhtThb(p.WithholdingTaxAmount, d.ExchangeRate), d.Id));
                 }
             }
 
@@ -734,7 +735,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
                 .Select(d => new { d.Id, d.DocumentType, d.RelatedDocumentId,
-                    d.WithholdingTaxAmount, d.VatAmount, d.IsForeignService,
+                    d.WithholdingTaxAmount, d.VatAmount, d.IsForeignService, d.ExchangeRate,
                     d.PaymentDate, d.DocumentDate, d.WhtPayeeContactId, d.ContactId,
                     IncomeCodes = d.Lines.Where(l => !l.IsDeleted && l.WithholdingTaxAmount > 0).Select(l => l.IncomeTypeCode).ToList(),   // รอบ 204
                     CType = d.Contact != null ? d.Contact.ContactType : ContactType.Individual,
@@ -772,7 +773,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                             p.PayeeContactId != d.ContactId && calPayees.TryGetValue(p.PayeeContactId, out var pk)
                                 ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, pk.Country, pk.TaxId, pk.Type, pk.Name, pCodes, calRoyalty.AppliesTo(dt))
                                 : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, pCodes, calRoyalty.AppliesTo(dt)),
-                            p.WithholdingTaxAmount));
+                            Accounting.Helpers.PerLineWht.DocumentWhtThb(p.WithholdingTaxAmount, d.ExchangeRate)));   // ทีม F: บาท (ฝ่ายค้านข้อ 4)
                     }
                     continue;
                 }
@@ -785,7 +786,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                             ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, ck.Country, ck.TaxId, ck.Type, ck.Name, d.IncomeCodes, calRoyalty.AppliesTo(dt))
                             : Accounting.Helpers.WhtPayeeKind.ResolveForm(
                                 d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes, calRoyalty.AppliesTo(dt)),
-                        d.WithholdingTaxAmount));
+                        Accounting.Helpers.PerLineWht.DocumentWhtThb(d.WithholdingTaxAmount, d.ExchangeRate)));   // ทีม F: บาท (ฝ่ายค้านข้อ 4)
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "โหลดเอกสารหัก ณ ที่จ่าย ไม่สำเร็จ"); }

@@ -5330,6 +5330,17 @@ _2026-10-22 ทีม G — แท็บ "ตรวจสอบการใช�
 → ใบล่าสุดของรายการประจำ) · ไม่มีหลักฐาน (เช่น LINE ที่บันทึกเป็นอีเมล) = "ไม่ทราบ" ไม่เดา. หน้า `/pages/admin-company-usage.html` (ภาพรวมทุกบริษัทต่อเดือน)
 คงเดิม — แท็บใหม่คือมุมเจาะลึกบริษัทเดียวหลายเดือน ไม่ทำซ้ำ. ไม่เปลี่ยน flow เอกสาร (อ่านอย่างเดียว) ⇒ DOCUMENT_FLOW ไม่ขยับ._
 
+_2026-10-22 ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่งบนร้านออนไลน์ (`docs/POS_MTO_DESIGN.md`):
+**POS** — ปุ่ม 📅 คิวจอง (`GET/POST pos/booking-queue`) ดึงการจองเว็บ + การจองโต๊ะของวันมาเปิดบิล (เติมลูกค้า/บริการ/ช่าง · `PosOrder.SourceBooking*`
++ unique partial index กันเปิดซ้ำ · ตัวตัดสิน `Helpers/PosBookingIntake`) · ช่างรายบรรทัด `PosOrderItem.StaffId` → ฐานคอมมิชชันใหม่ `PosStaffSales`
+(`Helpers/PosStaffAttribution` — ก่อน VAT · หลังส่วนลดท้ายบิล · หักคืน) + `GET pos/reports/staff-sales` · ปุ่ม ➕ รายการพิเศษ (`Helpers/PosCustomItemRule` ·
+ไม่ตัดสต็อก · บัญชีรายได้เลือกได้ — JE ขาย/คืนแบ่งเครดิตด้วย `Helpers/PosRevenueSplit` ตัวเดียว) · รวมบิลคัดลอก VAT รายบรรทัดตามจริง (เดิม 0).
+**ร้านออนไลน์** — option builder ต่อยอด modifier เดิม (`Helpers/ModifierSelectionRules` — server คิดราคา · หน้า `pos-modifiers.html` ผูกสินค้าได้แล้ว
+เดิมส่ง `productIds: []` เสมอ) · รูปตัวอย่างผ่านที่เก็บไฟล์กลาง · วันรับเร็วสุด `Helpers/MtoLeadTime` · ค่าส่ง `Helpers/ShippingFeeRules` (เดิม `ShippingAmount`
+ไม่มีผู้เขียน · ค่าเหมาจ่ายระดับร้านไม่มีผู้อ่าน) · บรรทัดค่าส่ง VAT ตามสินค้าในบิล (§79 — เดิม 0) · เงื่อนไขชำระ `Helpers/MtoPaymentTerms`
+ใช้ร่วมกับสลิป/ช่องจ่ายออนไลน์ (ลงบัญชีมัดจำผ่านเส้นรับชำระบางส่วนเดิม) · หน้าตั้งค่าใน `cms-orders.html` · ช่องวันผลิต/น้ำหนักใน `cms-edit.html`.
+Backlog (ยกเว้น VAT รายบรรทัดบน POS · หักมัดจำการจองในบิล POS · ค่าส่งตามระยะทาง · ตัวเลือกบน POS) อยู่ใน `docs/POS_MTO_DESIGN.md` §4._
+
 _2026-10-22 ทีม A (หน้าเคาน์เตอร์ที่พัก · ผู้ใช้รายงาน "สลิปรอตรวจ … เปิดดูสลิป" แต่ไม่มีที่ให้ดูสลิป): ลิงก์เดิม `Layout.openAuthed` เปิดแท็บหลัง await ⇒ ป๊อปอัปถูกบล็อก ⇒ ดาวน์โหลดไฟล์ `slip` ไม่มีนามสกุล ·
 โมดัลการจองมีกรอบ "สลิปของแขก" รูปย่อทุกใบ (ล่าสุด/ก่อนหน้า/ถูกปฏิเสธ + เหตุผล) กดขยายได้ · `GET lodging/reservations/{id}/slips` + `/slips/{attachmentId}` (`LodgingManage` · tenant · ด่านพาธ `LodgingSlipPath` เดิม) ·
 ตัวรวม `Helpers/LodgingSlipGallery` + `LodgingSlipPath.StorageKey` · audit `GuestUploadedSlip` จด `slipUrl` · ปุ่ม "รับชำระระหว่างพัก" (CheckedIn · เส้น `ConfirmAsync` เดิม) · folio เลือกจากบริการเสริม ·
@@ -5371,7 +5382,9 @@ _2026-10-22 ทีม N — คำตัดสินเจ้าของข้�
 (ปุ่มใหม่ `cms-bookings.html` · `POST booking/bookings/{id}/issue-tax-invoice`) หรือให้บริการเสร็จ แล้วแต่อย่างไหนก่อน (§78/1) · ตัวตัดสินเดียว
 `Helpers/BookingInvoiceTimingPolicy` (ย้าย switch ชนิดเอกสารตอนจองมาด้วย) · ใช้เส้นแปลง/อนุมัติเดิม · ไม่ออกซ้ำ (รวมใบที่พนักงานแปลงเอง) · สลับค่าตั้งกลางทาง
 tax point ไม่หลุด · ที่พักตรวจแล้วไม่มีปัญหาเดียวกัน (ไม่เพิ่มค่าตั้งใน `lodging-settings.html`) · เทสต์ `BookingInvoiceTimingPolicyTests` · ล็อกจุดเรียก 6 กติกา ·
-ยังไม่ได้คอมไพล์ในเครื่องนี้_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ · **ฝ่ายค้าน (หลัง merge ทีม K)**: บิล POS ปิดแล้ว ⇒ ไม่ออกใบกำกับจากการจอง + void ใบยืนยัน · บิลเปิด ⇒ ไม่ออก/ปฏิเสธ ·
+หาใบลูกเฉพาะใบที่ผูกเป็นใบยืนยัน (โหมด ก ไม่ย้ายการผูกไปใบเสร็จ) · endpoint ปฏิเสธ ยกเลิก/คิวสำรอง/ไม่มา · ใบที่แปลงเองยังร่าง ⇒ อนุมัติ ·
+วันที่รับเงิน (ห้ามอนาคต) ⇒ วันที่ใบกำกับ (`ConvertDocumentPartialAsync`) · ป้าย `ErpBookingDocumentType.Invoice` · ปุ่มเฉพาะโหมด (ข)_
 
 
 _2026-10-22 รอบ 205 ทีม E (เอกสารรายรับ + โควตาของธุรกรรม CMS · matrix เต็มใน `docs/BOOKING_REVENUE_AUDIT.md`):
@@ -5402,3 +5415,44 @@ _2026-10-22 (ทีม B — engine รอบจองคิว/บริกา�
 ขอบเขตเพิ่มรอบเดียวกัน: สวิตช์คุม Slot (ปิด = จองซ้อนได้ถึงเพดาน) · คิวสำรอง (`BookingStatus.Waitlisted` + เลื่อนขึ้นอัตโนมัติเมื่อยกเลิก/ไม่มา) ·
 ค่าตั้งระดับไซต์ (`SiteBookingSettings`) + override รายบริการ (`UseSiteDefaults`) · ผู้ให้บริการ/ห้อง/อุปกรณ์ + ตารางงานรายบุคคล + โหมดจัดสรร
 (บังคับระบุ/ลูกค้าเลือก/ระบบจัดให้ — `BookingSlotEngine.PickResource` deterministic) · คลาสกลุ่ม · API ให้ทีม L ที่ `docs/BOOKING_ENGINE_DESIGN.md` §2.1c_
+
+_รอบ 205 ทีม I (สิทธิ์และ License): (1) ผู้สร้างบริษัทได้ Owner ทันทีทุกทางเข้า — `Helpers/CompanyCreatorMembership` (วิซาร์ด · สมัคร · SSO) · support เฉพาะแอดมินที่ติ๊ก
+"เปิดให้ลูกค้า" · สาเหตุกล่อง "บริษัทที่ยังไม่มีเจ้าของ" = รอบ 201 ให้แอดมินแพลตฟอร์มได้ support ทุกครั้งรวมบริษัทของตัวเอง · ตัวซ่อม `OwnerlessCompanyRepair`
+(หลักฐานชัดตั้งเอง · ไม่ชัดแอดมินเลือก) + `POST api/admin/companies/without-owner/repair` + `.../{id}/assign-owner`. (2) `LastOwnerGuard` ตัวเดียว ·
+`BuiltInRolePermissions` (ด่าน + หน้าดูสิทธิ์) · ตาราง อ่าน/เขียน/อนุมัติ/ลบ `PermissionMatrix` → roles.html · แม่แบบ +4 (ช่างประจำร้าน/แคชเชียร์/นักบัญชีภายนอก/
+ฝ่ายสนับสนุน) + แก้ id เมนูตายในแม่แบบเดิม. (3) `PlanIdentityResolver` — แดชบอร์ด/รายการบริษัทโชว์แพ็กเกจของ License (เดิม Free vs Enterprise) · account-subscription ใช้ PlanDisplay.
+(4) หน้าทีม: 401→403 (ไม่เด้งออกจากระบบ) · ปุ่ม "🔐 สิทธิ์"/ลบบริษัท 404 (`api/companies` → `api/company`) · ปุ่มลองใหม่ + ข้อความสาเหตุจริง · escape ชื่อสมาชิก._
+
+_รอบ 205 ทีม I ฝ่ายค้าน: ตัวซ่อมตั้งเองเฉพาะผู้สร้างที่ active (ตัดกฎ "สมาชิกคนเดียว") · ตัดผู้ดูแลแพลตฟอร์มที่ไม่ใช่ผู้สร้างจากตัวเลือก/ด่าน assign-owner ·
+สร้างผู้ใช้เป็น Owner เดินด่าน+audit เดียวกัน · ล็อก pg_advisory_xact_lock ต่อบริษัท · `LastOwnerGuard` นับเฉพาะ Owner ลูกค้า · โอนเจ้าของจากแอดมินถอด/ลดเป็น support
+(`OwnershipTransferPolicy.ActorRowAfter`) · audit การอ่านทีมข้ามบริษัทของแอดมิน · migration id เมนูเก่าในบทบาทจากแม่แบบ._
+
+_2026-10-22 ทีม L — คอร์ส / Class Credits / Hour Pass (`docs/COURSE_CREDIT_DESIGN.md` · DOCUMENT_FLOW §6.6): แพ็กเกจ (ครั้ง/ชั่วโมง · อายุ · ราคา/VAT ·
+1-on-1/กลุ่ม · ครูเลือกเอง/ระบบกำหนด · บริการที่ใช้ได้ · นโยบายยกเลิก) · ขาย = ใบกำกับภาษี/ใบเสร็จผ่าน DocumentService เดิม บรรทัดลง 21713 ค่าบริการรับล่วงหน้า ·
+จอง = กันเครดิต · มาเรียน/no-show/ยกเลิกช้า = Dr 21713 Cr 42000 ผ่าน JournalEntryBuilder (`Helpers/CourseCreditMath.RecognizeOnUse` — ปัด AwayFromZero · ครั้งสุดท้ายรับเศษ) ·
+หมดอายุ = breakage (`CourseCreditExpiryJob`) · สัญญาบาง `ICreditBookingLedger` ให้เครื่องจองของทีม B · หน้า `/pages/course-credits.html` · เทสต์ `CourseCreditMathTests` ·
+backlog: ขายผ่าน POS/ร้านออนไลน์ · คืนเงิน/ยกเลิกบัตร_
+
+_2026-10-22 ทีม L ฝ่ายค้านรอบ 1: ยกเลิกใบขาย/ใบลดหนี้ที่ผูกบัตรคอร์สผ่านด่าน `Helpers/CreditPassDocumentRule` (hook `CreditPassDocumentHook` ในธุรกรรมของ
+DocumentService — ใช้แล้ว ⇒ บล็อก · ยังไม่ใช้ ⇒ ปิดบัตร · ลดหนี้ได้เฉพาะส่วนที่ยังไม่รับรู้ทั้งก้อน) · เปิดบัตรยึดยอด JE + ห้ามซ้ำในสายเอกสาร · กันจองซ้ำต่อ ref
+(advisory lock + unique index) · ขายกันกดซ้ำ + ลบใบร่างเมื่ออนุมัติล้ม · ล็อกครูต่อวัน · งานหมดอายุไม่หยุดทั้งรอบ · เทสต์ `CreditPassDocumentRuleTests`_
+
+_2026-10-22 (ทีม F — หัก ณ ที่จ่าย "ตามรายการ" + ฐานบาทของใบต่างสกุล · `docs/PER_LINE_WHT_DESIGN.md`):
+สำรวจพบว่าโครงหัก ณ ที่จ่ายต่อบรรทัด (อัตรา/ยอด/ประเภทเงินได้/ผู้ถูกหัก) + 50 ทวิ แถวต่อบรรทัด + ภ.ง.ด. จากทะเบียน มีครบแล้ว — ช่องโหว่จริงคือ
+(1) 50 ทวิ/แถวเตือน ภ.ง.ด. ของใบต่างสกุลเป็นตัวเลขสกุลเอกสาร (แก้: `Helpers/PerLineWht` ตัวคำนวณบาทตัวเดียว · ใบบาทไม่ขยับ) ·
+(2) OCR เฉลี่ยภาษีหัวใบลงทุกบรรทัดด้วยอัตราเดียว (แก้เมื่อเปิดค่าตั้ง `CompanySettings.PerLineWhtEnabled`: `Helpers/OcrLineWhtPlan` + `ExpenseCategoryResolver.ClassifyLineForWht`) ·
+(3) ไม่มีที่เก็บยอดบาทที่ใบต่างสกุลพิมพ์ไว้/ที่มาของอัตรา (เพิ่ม `Document.DocumentThbBase` + `ExchangeRateSource` · ตัวตัดสิน `DocumentFx.Decide` ·
+OCR `Helpers/OcrThbEquivalent`) · (4) ไม่มีสรุปต่อประเภท (จอ `WhtByIncomeType` · กระดาษแถวย่อยต่ออัตรา ×2 renderer) ·
+migration `DatabaseMigrationHelper.PerLineWhtStatements` (ADD COLUMN · ไม่มี UPDATE) · เทสต์ `PerLineWhtTests`_
+
+_2026-10-22 (ทีม F แก้ผลฝ่ายค้าน 1–9): ยอดบาทตามเอกสารต้องแปลงกลับได้ ± 0.01 (VND อัตรา 6 ตำแหน่งต่าง 24.69 — ตอนสร้าง 400 · ใบเดิมตกไปใช้อัตรา ·
+`DocumentFx.PrintedBahtRoundTrips`) · OCR หลักฐานยอดบาทแหล่งเดียวต้องห่างอัตรา ธปท. ≤ 3% (`[FX-DOC-UNVERIFIED]`) · `[WHT-LINE]`/`[WHT-LINE-MISMATCH]`/`[FX-DOC-CONFLICT]`
+หยุดอนุมัติเอง · รายงานตรวจข้อมูล "50 ทวิ ใบต่างสกุลที่ยอดไม่ใช่บาท" (อ่านอย่างเดียว · `WhtCertCurrencyCheck`) · หน้านำส่ง/ปฏิทิน/ตัวกระทบ GL/JE ตอนจ่ายเดิน
+`PerLineWht.DocumentWhtThb` + ล็อกจุดเรียก `_PLWHT` · `ForDocument` ผูก Σ เข้า GL (สรุปต่อประเภท/แถวเตือน) · โคลนสืบทอดฐานบาท/ที่มาอัตรา ·
+ใบแทนพาสองช่องไป · เกณฑ์แผนต่อบรรทัดเป็นบาท · สรุปต่อประเภท null เมื่อไม่มีบรรทัด · แก้คอมเมนต์/ข้อความหน้าตั้งค่าให้ตรงว่าอะไรขึ้นกับค่าตั้ง_
+
+_2026-10-22 ทีม K รอบแก้ฝ่ายค้าน: (1) บล็อกเปิด/ปิดบิล POS จากการจองที่มีมัดจำรับแล้ว + ระบบจองไม่รับรู้มัดจำซ้ำเมื่อบิล POS ปิดแล้ว (รายได้ครั้งเดียว) ·
+(2-3) โซนค่าส่งจำกัดพื้นที่ต้องกรอกที่อยู่ · ชื่อจังหวัดมาตรฐาน `ThaiAddressParser.NormalizeProvince` · ตรึงจังหวัด/รหัสไปรษณีย์บน SiteOrder ·
+(4) รูปตัวอย่างตรวจไบต์จริง + จำกัดต่อ IP/ไซต์ (งานล้างรูป = backlog) · (5) VatAmount รวม VAT ค่าส่ง · (6) สลิปเมื่อไม่มียอดค้าง = ปฏิเสธ ·
+(7) ประเด็นมัดจำเต็มใบให้เจ้าของตัดสิน (`docs/POS_MTO_DESIGN.md` §3.6) · (8) ค่าส่งของบิลยกเว้นทั้งใบ = ยกเว้น · (9) ยกเลิกบิลที่ปิดแล้วถอยสถานะการจอง ·
+(10) คืนเงินที่ผังรายได้พิเศษถูกปิด ⇒ ข้อความให้เปิดผังกลับ_

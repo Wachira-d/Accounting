@@ -46,6 +46,7 @@ public static class CmsBookingErpPolicy
     public static ErpBookingDocumentType ErpTypeOf(DocumentType docType) => docType switch
     {
         DocumentType.TaxInvoice => ErpBookingDocumentType.TaxInvoice,
+        DocumentType.Invoice => ErpBookingDocumentType.Invoice,
         DocumentType.Receipt => ErpBookingDocumentType.AdvanceReceipt,
         _ => ErpBookingDocumentType.DraftServiceOrder,
     };

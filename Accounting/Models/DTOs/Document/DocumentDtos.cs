@@ -176,7 +176,12 @@ public record CreateDocumentRequest(
     // (Contact.WhtBorneByContractDefault) · ใบที่ไม่ใช่ฝั่งผู้จ่าย = false เสมอ
     bool? WhtBorneByContract = null,
     // รอบ 204 — หักผ่าน e-Withholding ของธนาคาร (ฝั่งผู้จ่าย) · null = false · พฤติกรรมของธงนี้อยู่ที่ทีม e-Withholding
-    bool? WhtViaEWithholding = null);
+    bool? WhtViaEWithholding = null,
+    // ทีม F — ฐานก่อน VAT เป็นบาทตามที่เอกสารต่างสกุลพิมพ์ไว้ (null = ไม่มี ⇒ อัตราตามเดิม) · มีค่า ⇒ อัตรา = ยอดนี้ ÷ ฐานสกุลเอกสาร
+    // (Helpers/DocumentFx.Decide) · ใบบาทส่งมา = 400 · ตรึงตั้งแต่สร้างเหมือนอัตรา (แก้ไขไม่ได้)
+    decimal? DocumentThbBase = null,
+    // ทีม F — ที่มาของอัตราที่ส่งมา ("BOT" = ผู้ใช้กดใช้อัตรา ธปท. ที่ระบบเติม · "User" = กรอกเอง) · null + ส่งอัตรา = "User" · ไม่ส่งอัตรา = "BOT"
+    string? ExchangeRateSource = null);
 
 // ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
 // เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
@@ -1045,7 +1050,18 @@ public record DocumentResponse(
     bool WhtViaEWithholding = false,
     /// <summary>ค่าช่อง "แหล่งเงิน" ของฟอร์ม (<c>account:&lt;id&gt;</c> / <c>bank:&lt;id&gt;</c> / null) ตามลำดับเดียวกับการลงบัญชี —
     /// <c>Helpers/DocumentMoneyChannel.ChannelValue</c> (PC#15 · ผลตรวจ 2026-10-14) · หน้าเว็บไม่ตัดสินลำดับเอง</summary>
-    string? PaymentChannel = null);
+    string? PaymentChannel = null,
+    /// <summary>ทีม F — ฐานก่อน VAT เป็นบาทตามเอกสาร (เก็บแล้วต้อง echo กลับ · ตรึงตั้งแต่สร้าง)</summary>
+    decimal? DocumentThbBase = null,
+    /// <summary>ทีม F — ที่มาของอัตรา (<c>BOT</c>/<c>User</c>/<c>Document</c> · null = ไม่ทราบ/ใบบาท)</summary>
+    string? ExchangeRateSource = null,
+    /// <summary>ทีม F — ป้ายไทยของที่มาอัตรา (<c>DocumentFx.SourceLabel</c>)</summary>
+    string? ExchangeRateSourceLabel = null,
+    /// <summary>ทีม F — สรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (เซิร์ฟเวอร์คำนวณด้วย <c>Helpers/PerLineWht</c> · หน้าเว็บแสดงอย่างเดียว)</summary>
+    IReadOnlyList<WhtIncomeGroupDto>? WhtByIncomeType = null);
+
+/// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
+public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);
 
 /// <summary>คำตัดสินข้อ 139: ผูกใบลูกเข้าใบต้นทาง — จับคู่บรรทัดลูก → บรรทัดต้นทาง (บรรทัดที่ไม่ส่งมา = ไม่นับในความคืบหน้า)</summary>
 public record LinkSourceRequest(

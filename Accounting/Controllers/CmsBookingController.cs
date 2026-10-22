@@ -211,10 +211,11 @@ public class CmsBookingController : ControllerBase
     [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     // ออก + อนุมัติใบกำกับเลขจริง (§86/4 แก้ย้อนหลังไม่ได้) ⇒ คีย์เดียวกับเส้นเอกสารรายรับ (แบบ POS issue-tax-invoice)
     [RequirePermission(PermissionKeys.DocumentRevenueApprove)]
-    public async Task<ActionResult<ApiResponse<BookingResponse>>> IssueTaxInvoiceOnPayment(Guid companyId, Guid siteId, Guid bookingId)
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> IssueTaxInvoiceOnPayment(Guid companyId, Guid siteId, Guid bookingId,
+        [FromBody] IssueBookingTaxInvoiceRequest? request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _bookingService.IssueTaxInvoiceOnPaymentAsync(companyId, siteId, bookingId, userId);
+        var result = await _bookingService.IssueTaxInvoiceOnPaymentAsync(companyId, siteId, bookingId, request?.ReceivedDate, userId);
         return Ok(new ApiResponse<BookingResponse>(true, result));
     }
 

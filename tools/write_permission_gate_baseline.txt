@@ -119,6 +119,7 @@ Accounting/Controllers/CmsBookingController.cs	UpdateService	1
 Accounting/Controllers/CmsCommerceConfigController.cs	UpdateConfig	1
 Accounting/Controllers/CmsCommerceController.cs	AddProduct	1
 Accounting/Controllers/CmsCommerceController.cs	AddToCart	1
+Accounting/Controllers/CmsCommerceController.cs	CheckoutQuote	1
 Accounting/Controllers/CmsCommerceController.cs	ClearCart	1
 Accounting/Controllers/CmsCommerceController.cs	ConfirmPayment	1
 Accounting/Controllers/CmsCommerceController.cs	ConvertOrderToQuotation	1
@@ -135,6 +136,7 @@ Accounting/Controllers/CmsCommerceController.cs	UpdateCategory	1
 Accounting/Controllers/CmsCommerceController.cs	UpdateGateway	1
 Accounting/Controllers/CmsCommerceController.cs	UpdateOrderStatus	1
 Accounting/Controllers/CmsCommerceController.cs	UpdateProduct	1
+Accounting/Controllers/CmsCommerceController.cs	UploadOptionImage	1
 Accounting/Controllers/CmsCommerceController.cs	UploadSlip	1
 Accounting/Controllers/CmsCommerceExtController.cs	AddOption	1
 Accounting/Controllers/CmsCommerceExtController.cs	AddShippingRate	1

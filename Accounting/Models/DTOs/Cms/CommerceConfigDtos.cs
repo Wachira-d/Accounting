@@ -68,6 +68,19 @@ public class UpdateCommerceConfigRequest
     public string? OrderConfirmMessageEn { get; set; }
     public string? QuotationMessageTh { get; set; }
     public string? QuotationMessageEn { get; set; }
+
+    // ── สินค้าตามสั่ง (ทีม K) — null = ไม่เปลี่ยน · ช่องข้อความส่ง "" = ล้างค่า ──
+    public bool? EnablePickup { get; set; }
+    /// <summary>Helpers.PaymentTermMode: full / deposit_percent / deposit_fixed / pay_on_pickup</summary>
+    public string? MtoPaymentTermMode { get; set; }
+    public decimal? MtoDepositPercent { get; set; }
+    public decimal? MtoDepositFixedAmount { get; set; }
+    /// <summary>"0,6" (0 = อาทิตย์) · "" = เปิดทุกวัน</summary>
+    public string? MtoClosedWeekdays { get; set; }
+    public int? MtoCutoffHour { get; set; }
+    /// <summary>true = ล้างชั่วโมงตัดรอบ (ไม่ตัดรอบ)</summary>
+    public bool ClearMtoCutoffHour { get; set; }
+    public bool? MtoSkipCompanyHolidays { get; set; }
 }
 
 public class CommerceConfigResponse
@@ -137,4 +150,21 @@ public class CommerceConfigResponse
     public string? OrderConfirmMessageEn { get; set; }
     public string? QuotationMessageTh { get; set; }
     public string? QuotationMessageEn { get; set; }
+
+    // ── สินค้าตามสั่ง (ทีม K) ──
+    public bool EnablePickup { get; set; }
+    public string MtoPaymentTermMode { get; set; } = "full";
+    public decimal? MtoDepositPercent { get; set; }
+    public decimal? MtoDepositFixedAmount { get; set; }
+    public string? MtoClosedWeekdays { get; set; }
+    public int? MtoCutoffHour { get; set; }
+    public bool MtoSkipCompanyHolidays { get; set; }
+    /// <summary>ตัวเลือกของช่องเงื่อนไขชำระ (เซิร์ฟเวอร์เป็นเจ้าของป้าย)</summary>
+    public List<CommerceOptionValue> PaymentTermModes { get; set; } = new();
+}
+
+public class CommerceOptionValue
+{
+    public string Value { get; set; } = "";
+    public string Label { get; set; } = "";
 }

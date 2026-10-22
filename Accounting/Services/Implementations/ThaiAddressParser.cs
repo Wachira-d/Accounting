@@ -244,6 +244,21 @@ public static class ThaiAddressParser
     }
 
     /// <summary>ชื่อนี้เป็นหนึ่งใน 77 จังหวัดไหม (ตัด ฯ . , ท้าย) — ตัวเดียวที่ <c>ContactDataHygiene.PostalCodeOf</c> ใช้ตัดสิน "ตามหลังจังหวัด"</summary>
+    /// <summary>ชื่อจังหวัดที่ผู้ใช้พิมพ์ → รูปมาตรฐาน (ทีม K · โซนค่าส่ง): ตัด "จ."/"จังหวัด" นำ · กรุงเทพ/กรุงเทพฯ/กทม./Bangkok ⇒ "กรุงเทพมหานคร" ·
+    /// อื่น ๆ ตัดช่องว่าง/ฯ/จุดท้าย · ว่าง = null (ใช้กติกากทม.ชุดเดียวกับ <see cref="Parse"/>)</summary>
+    public static string? NormalizeProvince(string? raw)
+    {
+        var t = (raw ?? "").Trim();
+        if (t.StartsWith("จังหวัด", StringComparison.Ordinal)) t = t["จังหวัด".Length..].Trim();
+        else if (t.StartsWith("จ.", StringComparison.Ordinal)) t = t[2..].Trim();
+        t = t.TrimEnd('ฯ', ',', '.', ' ');
+        if (t.Length == 0) return null;
+        if (t.StartsWith("กรุงเทพ", StringComparison.Ordinal) || t.StartsWith("กทม", StringComparison.Ordinal)
+            || t.Equals("Bangkok", StringComparison.OrdinalIgnoreCase) || t.Equals("BKK", StringComparison.OrdinalIgnoreCase))
+            return "กรุงเทพมหานคร";
+        return t;
+    }
+
     internal static bool IsProvinceName(string? token)
         => !string.IsNullOrWhiteSpace(token) && ProvinceNames.Contains(token.Trim().TrimEnd('ฯ', ',', '.'));
 

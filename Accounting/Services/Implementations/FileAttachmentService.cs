@@ -87,8 +87,17 @@ public class FileAttachmentService : IFileAttachmentService
         return MapToResponse(attachment, user?.FullName ?? "");
     }
 
-    public async Task<FileAttachmentResponse> UploadBytesAsync(Guid companyId, string entityType, Guid entityId,
+    public Task<FileAttachmentResponse> UploadBytesAsync(Guid companyId, string entityType, Guid entityId,
         string originalFileName, string contentType, byte[] content, Guid uploadedByUserId)
+        => SaveBytesAsync(companyId, entityType, entityId, originalFileName, contentType, content, uploadedByUserId);
+
+    /// <summary>ทีม K — ลูกค้าหน้าร้าน (ไม่ได้ล็อกอิน) แนบรูปตัวอย่าง: ผู้อัปโหลด = null · ด่านนามสกุล/ขนาดเดียวกัน</summary>
+    public Task<FileAttachmentResponse> UploadAnonymousBytesAsync(Guid companyId, string entityType, Guid entityId,
+        string originalFileName, string contentType, byte[] content)
+        => SaveBytesAsync(companyId, entityType, entityId, originalFileName, contentType, content, null);
+
+    private async Task<FileAttachmentResponse> SaveBytesAsync(Guid companyId, string entityType, Guid entityId,
+        string originalFileName, string contentType, byte[] content, Guid? uploadedByUserId)
     {
         var extension = Path.GetExtension(originalFileName);
         if (!AllowedExtensions.Contains(extension))
@@ -124,7 +133,7 @@ public class FileAttachmentService : IFileAttachmentService
         _logger.LogInformation("File saved from bytes: {FileName} ({FileSize} bytes) for {EntityType}/{EntityId}",
             originalFileName, content.LongLength, entityType, entityId);
 
-        var user = await _db.Users.FindAsync(uploadedByUserId);
+        var user = uploadedByUserId is Guid uid ? await _db.Users.FindAsync(uid) : null;
         return MapToResponse(attachment, user?.FullName ?? "");
     }
 

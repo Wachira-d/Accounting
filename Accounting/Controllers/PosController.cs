@@ -358,6 +358,12 @@ public class PosController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>ชนิดช่องของกลุ่มตัวเลือก (dynamic option builder · ทีม K) — ป้ายจากตัวตั้งตัวเดียว Helpers/ModifierInputType</summary>
+    [HttpGet("modifier-input-types")]
+    public ActionResult<ApiResponse<List<PosOptionValue>>> GetModifierInputTypes(Guid companyId)
+        => Ok(new ApiResponse<List<PosOptionValue>>(true,
+            ModifierInputType.All.Select(a => new PosOptionValue(a.Value, a.Label)).ToList()));
+
     // ===== Modifier Option =====
     [HttpPost("modifier-groups/{groupId:guid}/options")]
     [RequirePermission(PermissionKeys.PosManager)]
@@ -418,4 +424,45 @@ public class PosController : ControllerBase
         Guid companyId, [FromQuery] Guid staffId, [FromQuery] DateTime periodStart, [FromQuery] DateTime periodEnd)
         => Ok(new ApiResponse<List<CommissionDetailResponse>>(true,
             await _pos.GetCommissionDetailsAsync(companyId, staffId, periodStart, periodEnd)));
+
+    // ===== ทีม K · 2026-10-22: คิวการจอง → เปิดบิล · ช่างรายบรรทัด · รายการพิเศษ =====
+
+    /// <summary>คิวการจองของวัน (เวลาไทย · ไม่ส่ง = วันนี้) — การจองบริการจากเว็บ + การจองโต๊ะ/คิวของ POS
+    /// พร้อมผลตัดสิน "เปิดบิลได้ไหม" จาก <c>Helpers/PosBookingIntake</c></summary>
+    [HttpGet("booking-queue")]
+    public async Task<ActionResult<ApiResponse<List<PosBookingQueueItem>>>> GetBookingQueue(Guid companyId, [FromQuery] DateTime? date = null)
+    {
+        var day = date?.Date ?? ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+        return Ok(new ApiResponse<List<PosBookingQueueItem>>(true, await _pos.GetBookingQueueAsync(companyId, day)));
+    }
+
+    /// <summary>เปิดบิลจากการจอง — เติมลูกค้า/บริการ/ช่าง + ผูกการจองกับบิล (เปิดซ้ำไม่ได้)</summary>
+    [HttpPost("booking-queue/open")]
+    [RequirePermission(PermissionKeys.PosCashier)]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> OpenFromBooking(Guid companyId, [FromBody] OpenOrderFromBookingRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        return StatusCode(201, new ApiResponse<OrderResponse>(true, await _pos.OpenOrderFromBookingAsync(companyId, request, userId), "เปิดบิลจากการจองแล้ว"));
+    }
+
+    /// <summary>ตั้ง/ล้างช่างของบรรทัด (บิลที่ยังไม่ปิด)</summary>
+    [HttpPut("orders/{orderId:guid}/items/{itemId:guid}/staff")]
+    [RequirePermission(PermissionKeys.PosCashier)]
+    public async Task<ActionResult<ApiResponse<OrderResponse>>> SetItemStaff(Guid companyId, Guid orderId, Guid itemId, [FromBody] SetItemStaffRequest request)
+        => Ok(new ApiResponse<OrderResponse>(true, await _pos.SetItemStaffAsync(companyId, orderId, itemId, request.StaffId)));
+
+    /// <summary>รายชื่อพนักงานที่เลือกเป็นช่างได้ (สมาชิกของบริษัทที่ยังใช้งาน)</summary>
+    [HttpGet("staff")]
+    public async Task<ActionResult<ApiResponse<List<PosStaffOption>>>> GetStaff(Guid companyId)
+        => Ok(new ApiResponse<List<PosStaffOption>>(true, await _pos.GetStaffOptionsAsync(companyId)));
+
+    /// <summary>ยอดขายรายช่าง (ก่อน VAT · หลังส่วนลดท้ายบิล · หักคืน · ไม่รวมค่าบริการ/ทิป) — ฐานเดียวกับแผนคอมมิชชัน "PosStaffSales"</summary>
+    [HttpGet("reports/staff-sales")]
+    public async Task<ActionResult<ApiResponse<List<PosStaffSalesRow>>>> GetStaffSales(Guid companyId, [FromQuery] DateTime from, [FromQuery] DateTime to)
+        => Ok(new ApiResponse<List<PosStaffSalesRow>>(true, await _pos.GetStaffSalesAsync(companyId, from, to)));
+
+    /// <summary>ตัวเลือกของปุ่ม "รายการพิเศษ" (ชนิด + บัญชีรายได้)</summary>
+    [HttpGet("custom-item-options")]
+    public async Task<ActionResult<ApiResponse<PosCustomItemOptions>>> GetCustomItemOptions(Guid companyId)
+        => Ok(new ApiResponse<PosCustomItemOptions>(true, await _pos.GetCustomItemOptionsAsync(companyId)));
 }
