@@ -77,6 +77,10 @@ public interface ILodgingService
     /// ฝั่งแขกพิสูจน์ด้วย <c>PublicToken</c> ของตัวเอง</para></summary>
     Task<(string Path, string ContentType)?> GetSlipFileAsync(Guid companyId, Guid reservationId);
     Task<(string Path, string ContentType)?> GetSlipFileByTokenAsync(Guid companyId, Guid siteId, string token);
+    /// <summary>สลิปทุกใบของการจอง (ล่าสุด · ถูกปฏิเสธ · ถูกส่งทับ) ให้พนักงานดูในโมดัล — <c>null</c> = ไม่พบการจองในบริษัทนี้</summary>
+    Task<List<LodgingSlipItemDto>?> GetSlipGalleryAsync(Guid companyId, Guid reservationId);
+    /// <summary>ไฟล์สลิป 1 ใบตาม id ไฟล์แนบ — ต้องเป็นไฟล์ของการจองนี้ในบริษัทนี้ และผ่านด่านพาธ <c>LodgingSlipPath</c></summary>
+    Task<(string Path, string ContentType)?> GetSlipAttachmentFileAsync(Guid companyId, Guid reservationId, Guid attachmentId);
     Task<LodgingReservationResponse> UpdateReservationAsync(Guid companyId, Guid reservationId, LodgingUpdateReservationRequest request, string userId);
     /// <param name="moneyInAccountId">ผังบัญชีขา "เงินเข้า" ของใบเสร็จมัดจำ — <c>null</c> =
     /// ธนาคาร/เงินสดตามปกติ · มีค่า = บัญชีพัก 11340 (รับผ่าน gateway เงินยังไม่เข้าธนาคาร) ·

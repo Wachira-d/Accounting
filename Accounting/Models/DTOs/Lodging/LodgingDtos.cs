@@ -1033,6 +1033,24 @@ public class LodgingCalendarAvailability
 
 public record LodgingCalendarDay(DateTime Date, int Available, decimal Rate, bool StopSell, int? Allotment);
 
+/// <summary>สลิป 1 ใบในแกลเลอรีฝั่งพนักงาน (โมดัลการจอง) — สร้างจาก <see cref="LodgingSlipGallery"/> ตัวเดียว ·
+/// <c>Url</c> = endpoint ที่ตรวจสิทธิ์ (ต้องแนบ JWT) · <c>null</c> = หาไฟล์บนดิสก์ไม่เจอ (<c>FileMissing</c>) · <c>State</c> ออกเป็นชื่อ enum</summary>
+public sealed class LodgingSlipItemDto
+{
+    public Guid? AttachmentId { get; set; }
+    public string? Url { get; set; }
+    public string? ContentType { get; set; }
+    public bool IsImage { get; set; }
+    public bool FileMissing { get; set; }
+    public DateTime? UploadedAt { get; set; }
+    public string? OriginalFileName { get; set; }
+    public string State { get; set; } = "";
+    public string StateLabel { get; set; } = "";
+    public string? RejectedReason { get; set; }
+    public DateTime? RejectedAt { get; set; }
+    public string? Reference { get; set; }
+}
+
 /// <summary>ปฏิเสธสลิปที่แขกส่งมา — <b>เหตุผลบังคับ</b> เพราะข้อความนี้คือสิ่งเดียว
 /// ที่แขกจะได้เห็นว่าทำไมไม่ผ่านและต้องทำอะไรต่อ</summary>
 public sealed record LodgingRejectSlipRequest(

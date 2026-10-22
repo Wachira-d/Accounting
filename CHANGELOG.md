@@ -5321,3 +5321,8 @@ _2026-10-19 (บิลค่าน้ำ กปภ. จำนวน/ราคา
 บรรทัด "10/2569" × 101,000 (คอลัมน์ "เดือน" + "จำนวนน้ำใช้ (ลิตร)") ⇒ `OcrLineQuantityGuard`: คำอธิบายรอบบิลล้วน + ผู้ขายสาธารณูปโภค = หลักฐานมิเตอร์ ⇒ 1 × 2,839.00 ·
 ทางหารจำนวนใหม่ถามหลักฐานมิเตอร์ก่อน · คำอธิบาย "ค่าน้ำประปา ประจำเดือน 10/2569 (จำนวน 101,000)" (ไม่แต่งหน่วย) · เลข กปภ. 0994000164904 เข้า `OcrUtilityVendor` ·
 เทสต์ `OcrPeriodOnlyMeterLineTests` จากกระดาษจริง (`OcrPaperSamples.PwaWaterBillWe1105Positional`) · บทเรียนที่ `docs/lessons/ocr-pipeline.md`_
+
+_2026-10-22 ทีม A (หน้าเคาน์เตอร์ที่พัก · ผู้ใช้รายงาน "สลิปรอตรวจ … เปิดดูสลิป" แต่ไม่มีที่ให้ดูสลิป): ลิงก์เดิม `Layout.openAuthed` เปิดแท็บหลัง await ⇒ ป๊อปอัปถูกบล็อก ⇒ ดาวน์โหลดไฟล์ `slip` ไม่มีนามสกุล ·
+โมดัลการจองมีกรอบ "สลิปของแขก" รูปย่อทุกใบ (ล่าสุด/ก่อนหน้า/ถูกปฏิเสธ + เหตุผล) กดขยายได้ · `GET lodging/reservations/{id}/slips` + `/slips/{attachmentId}` (`LodgingManage` · tenant · ด่านพาธ `LodgingSlipPath` เดิม) ·
+ตัวรวม `Helpers/LodgingSlipGallery` + `LodgingSlipPath.StorageKey` · audit `GuestUploadedSlip` จด `slipUrl` · ปุ่ม "รับชำระระหว่างพัก" (CheckedIn · เส้น `ConfirmAsync` เดิม) · folio เลือกจากบริการเสริม ·
+ผลตรวจความพร้อมที่ `LODGING_BOOKING_AUDIT.md` §12 (ส่วนลด/ใบรับเงินใบที่ 2+ ในโมดัล = backlog)_
