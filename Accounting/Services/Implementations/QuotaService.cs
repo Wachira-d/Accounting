@@ -44,7 +44,7 @@ public class QuotaService : IQuotaService
         var bonusAlive = (sub?.DocumentBonusQuota ?? 0) > 0
             && (sub?.DocumentBonusExpiresAt == null || sub.DocumentBonusExpiresAt > now);
         var bonus = bonusAlive ? sub!.DocumentBonusQuota : 0;
-        var limit = DocumentQuotaPolicy.EffectiveLimit(planLimit, bonus, sub?.DocumentBonusExpiresAt, now);
+        var limit = DocumentQuotaPolicy.EffectiveLimit(planLimit, bonus, sub?.DocumentBonusExpiresAt, now, used: used);
 
         var th = now.AddHours(7);
         var warn = DocumentQuotaPolicy.WarnLevel(used, limit);
@@ -63,6 +63,10 @@ public class QuotaService : IQuotaService
         // เสมอ ⇒ สิ่งที่ตอบได้จริงคือ "ตอนนี้มีราคาส่วนเกินตั้งไว้ไหม" เท่านั้น
         // (ห้ามแต่งธงที่ผู้ใช้กดแล้วไม่มีผลจริง — defect class "silent no-op")
         var overagePrice = overagePlan?.UnitPrice ?? 0m;
+        // ฝ่ายค้านรอบ 205 ข้อ 4: หลังโบนัสหมด เพดานจากสูตรกลับเป็นเพดานแพ็กเกจ ⇒ ข้อความ "150/100" · แสดงเพดานที่ใช้จริงเดือนนี้
+        // (= ใบที่นับ − ใบที่คิดเป็นส่วนเกิน) ตัวเดียวกับข้อความแจ้งเตือน (DocumentQuotaPolicy.DisplayLimit)
+        limit = DocumentQuotaPolicy.DisplayLimit(used, limit, overageRows.Sum(r => r.Quantity));
+        warn = DocumentQuotaPolicy.WarnLevel(used, limit);
 
         string? msg = warn switch
         {

@@ -8988,6 +8988,52 @@ RULES += [
 ]
 
 
+# ── รอบ 205 ทีม E (docs/BOOKING_REVENUE_AUDIT.md): เงินออนไลน์ของ CMS ต้องลงเอกสารทุกก้อน · ใบมัดจำของเงินที่ยังไม่ได้รับห้ามอนุมัติ ·
+#    โควตาเอกสาร: หักโบนัสด้วยตัวตัดสินคู่กับสูตรเพดาน ──
+RULES += [
+    dict(file="Services/Payments/Handlers/LodgingReservationPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["GatewayPaymentRecord.AlreadyRecordedOnReservation(", "GatewayPaymentRecord.ReservationReference("],
+         before=[("GatewayPaymentRecord.AlreadyRecordedOnReservation(", "ConfirmAsync(")],
+         forbid=["DepositPaid >= intent.Amount"],
+         why="รอบ 205 L-1: กันซ้ำด้วยเลขอ้างอิงเท่านั้น — เดิม DepositPaid ≥ ยอด ⇒ ยอดคงเหลือที่เท่า/น้อยกว่ามัดจำถูกตีเป็นซ้ำ เงินเข้าแต่ไม่มีใบ"),
+    dict(file=LODGING_LIFE, method="ConfirmCoreAsync", must=["GatewayPaymentRecord.AlreadyRecordedOnReservation("],
+         why="รอบ 205 L-1: ตัวตัดสิน \"บันทึกเงินก้อนนี้แล้ว\" ตัวเดียวกับ handler"),
+    dict(file="Services/Payments/Handlers/SiteOrderPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["GatewayPaymentRecord.Reference(", "SiteOrderPayments.Add(", "paymentId: pay.Id"],
+         forbid=["paymentId: null"],
+         why="รอบ 205 S-1: ต้องยืนยันแถวรับเงินของรายการชำระนี้ — paymentId: null หยิบแถวสลิปล่าสุด (ไม่มีสลิป = เงินเข้าแต่ออเดอร์ไม่ถูกยืนยัน)"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="SyncBookingToErpAsync",
+         must=["CmsBookingErpPolicy.AutoApprove(", "CmsBookingErpPolicy.AwaitingPaymentNote("],
+         before=[("CmsBookingErpPolicy.AutoApprove(", "ApproveDocumentAsync(")],
+         why="รอบ 205 B-1: ใบเสร็จมัดจำของการจองที่ยังไม่ได้รับเงินห้ามอนุมัติ (JE เงินสด + ภาษีขายของเงินที่ไม่เคยได้รับ)"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="CreateBookingAsync",
+         must=["CmsBookingErpPolicy.SyncFailedNote(", "ErpNotices"],
+         why="รอบ 205 B-3: ขั้น ERP ล้มต้องไม่ทำให้แขกเห็นจองไม่สำเร็จ (การจองบันทึกแล้ว ⇒ จองซ้อน) — หมายเหตุ + คำตอบ"),
+    dict(file="Services/Implementations/SubscriptionService.cs", method="IncrementUsageAsync",
+         must=["DocumentQuotaPolicy.ConsumesBonus(", "DocumentQuotaPolicy.CrossedWarnLevel(", "DocumentQuotaPolicy.Basis(",
+               "FlushPendingQuotaAlertsAsync("],
+         before=[("DocumentQuotaPolicy.Basis(", "DocumentQuotaPolicy.ConsumesBonus(")],
+         forbid=["sub.CurrentMonthDocuments > sub.MaxDocumentsPerMonth", "NotifyDocumentQuotaCrossedAsync("],
+         why="รอบ 205 Q-1/Q-3 + ฝ่ายค้าน ข้อ 1/3: หักโบนัสด้วยฐานนับเดียวกับการตรวจ (กลุ่ม/บริษัท) · แจ้งเตือนเก็บไว้ส่งหลัง commit (ห้ามส่งในธุรกรรม)"),
+    dict(file="Services/Implementations/SubscriptionService.cs", method="CheckUsageLimitAsync",
+         must=["used: agg.Documents", "used: sub.CurrentMonthDocuments"],
+         why="ฝ่ายค้านรอบ 205 ข้อ 1: ทั้งเส้นกลุ่มและบริษัทเดี่ยวส่งยอดที่ใช้ไป (ไม่งั้นโบนัสหายสองเท่า)"),
+    dict(file=DOC, method="CreateDocumentAsync", must=["FlushPendingQuotaAlertsAsync("],
+         why="ฝ่ายค้านรอบ 205 ข้อ 3: แจ้งเตือนโควตาหลัง commit"),
+    dict(file="Services/Implementations/CmsCommerceService.cs", method="ConfirmPaymentAsync",
+         must=["GatewayPaymentRecord.OverpaysOrder("],
+         why="ฝ่ายค้านรอบ 205 ข้อ 2: ห้ามยืนยันแถวรับเงินที่ทำให้รับเกินยอดออเดอร์ (สลิป + ออนไลน์ = 2 เท่า)"),
+    dict(file="Services/Payments/Handlers/SiteOrderPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["GatewayPaymentRecord.IsPendingSlipRow("],
+         why="ฝ่ายค้านรอบ 205 ข้อ 2: เงินออนไลน์เข้า ⇒ ปิดสลิปรอตรวจของออเดอร์"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="SyncBookingToErpAsync",
+         must=["CmsBookingErpPolicy.NeedsErpDocument(", "b.CompanyId == companyId"],
+         why="ฝ่ายค้านรอบ 205 ข้อ 6/7: ไม่ออกใบเสร็จมัดจำ 0.00 · tenant isolation (กฎ M)"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="CreateBookingAsync",
+         must=["CmsBookingErpPolicy.ErpTypeOf("],
+         why="ฝ่ายค้านรอบ 205 ข้อ 5: ล้มหลังสร้างใบ ⇒ ผูกใบกลับ (กันใบกำพร้า/ออกซ้ำ)"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

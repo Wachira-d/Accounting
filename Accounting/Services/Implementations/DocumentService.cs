@@ -1817,6 +1817,8 @@ public partial class DocumentService : IDocumentService
             }
 
             await transaction.CommitAsync();
+            // ฝ่ายค้านรอบ 205 ข้อ 3: แจ้งเตือนโควตา (80%/เต็ม) หลัง commit เท่านั้น — ใบถูกถอย = ไม่แจ้ง
+            if (DocumentQuotaPolicy.Counts(quotaClass)) await _subscriptionService.FlushPendingQuotaAlertsAsync();
 
             // ใบสำคัญจ่าย (Cash) standalone — auto-approve ทันทีทุก channel
             // (UI/OCR/API). เงินจ่ายไปจริงแล้ว BalanceDue=0 ตั้งแต่ create
@@ -4122,7 +4124,7 @@ public partial class DocumentService : IDocumentService
         // CheckUsageLimitAsync — ไม่งั้นข้อความปฏิเสธจะบอกเพดานผิดจากที่ระบบใช้จริง
         return (sub?.CurrentMonthDocuments ?? 0,
             DocumentQuotaPolicy.EffectiveLimit(eff?.MaxDocumentsPerMonth ?? 0,
-                sub?.DocumentBonusQuota ?? 0, sub?.DocumentBonusExpiresAt, DateTime.UtcNow));
+                sub?.DocumentBonusQuota ?? 0, sub?.DocumentBonusExpiresAt, DateTime.UtcNow, used: sub?.CurrentMonthDocuments ?? 0));
     }
 
     /// <summary>เอกสารเกินโควตา 1 ฉบับ = 1 UsageEvent (documents.overage)

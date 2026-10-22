@@ -259,10 +259,42 @@ public class CmsBookingService : ICmsBookingService
         _logger.LogInformation("Booking {BookingNumber} created for service {ServiceName}", booking.BookingNumber, svc.Name);
 
         // Auto-sync to ERP based on booking type
+        // รอบ 205 ทีม E (BOOKING_REVENUE_AUDIT B-3): ขั้น ERP ล้ม (โควตาใบเสนอราคาเต็ม · ผู้ติดต่อ · ด่านเอกสาร) ⇒ เดิมโยนขึ้นไปหาแขกทั้งที่การจอง
+        // บันทึกแล้ว ⇒ แขกเห็น "จองไม่สำเร็จ" แล้วกดจองซ้ำ (การจองซ้อน) · LODGING_LICENSING_PLAN §5 "สร้างการจอง ไม่จำกัด ไม่ gate" ⇒
+        // การจองสำเร็จเสมอ + ล้มดัง: หมายเหตุบนการจอง + log Error + ErpNotices ในคำตอบ (ถอยของครึ่งทางออกจาก context ก่อนบันทึกหมายเหตุ)
+        var createNotices = new List<string>();
         if (svc.BookingType != BookingType.Lead)
-            await SyncBookingToErpAsync(companyId, siteId, booking.Id);
+        {
+            try { await SyncBookingToErpAsync(companyId, siteId, booking.Id); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Booking {BookingNumber}: สร้างเอกสาร ERP อัตโนมัติไม่สำเร็จ — การจองบันทึกแล้ว", booking.BookingNumber);
+                _db.ChangeTracker.Clear();
+                var noted = await _db.SiteBookings.FirstAsync(b => b.Id == booking.Id && b.CompanyId == companyId);
+                // ฝ่ายค้านรอบ 205 ข้อ 5: ล้มหลังเส้นเอกสาร commit ใบไปแล้ว ⇒ ผูกใบที่สร้างแล้วกลับ (กันใบกำพร้า/ออกซ้ำ) + บอกเลขใบในหมายเหตุ
+                var orphan = noted.ErpDocumentId == null
+                    ? await _db.Documents.AsNoTracking()
+                        .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.BookingNumber == noted.BookingNumber)
+                        .OrderBy(d => d.CreatedAt)
+                        .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType })
+                        .FirstOrDefaultAsync()
+                    : null;
+                if (orphan != null)
+                {
+                    noted.ErpDocumentId = orphan.Id;
+                    noted.ErpDocumentType = CmsBookingErpPolicy.ErpTypeOf(orphan.DocumentType);
+                }
+                var failNote = CmsBookingErpPolicy.SyncFailedNote(ex.Message, orphan?.DocumentNumber);
+                noted.InternalNotes = DepositPolicyResolver.AppendNoteOnce(noted.InternalNotes, failNote);
+                await _db.SaveChangesAsync();
+                // แขกไม่ล็อกอิน (เส้นหน้าเว็บ) ไม่เห็นข้อความภายใน — ข้อความอยู่บนการจองให้พนักงานเห็น · พนักงานที่สร้างเองเห็นในคำตอบ
+                if (userId != null) createNotices.Add(failNote);
+            }
+        }
 
-        return await GetBookingAsync(companyId, siteId, booking.Id) ?? throw new InvalidOperationException("Failed.");
+        var created = await GetBookingAsync(companyId, siteId, booking.Id) ?? throw new InvalidOperationException("Failed.");
+        created.ErpNotices = createNotices;
+        return created;
     }
 
     public async Task<BookingResponse> UpdateBookingStatusAsync(Guid companyId, Guid siteId, Guid bookingId, UpdateBookingStatusRequest request, string userId)
@@ -462,11 +494,19 @@ public class CmsBookingService : ICmsBookingService
         var booking = await _db.SiteBookings
             .Include(b => b.BookingService)
             .Include(b => b.Customer)
-            .FirstOrDefaultAsync(b => b.Id == bookingId && b.SiteId == siteId);
+            .FirstOrDefaultAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId);
 
         if (booking == null || booking.ErpDocumentId.HasValue) return booking?.ErpDocumentId;
 
         var svc = booking.BookingService;
+
+        // ฝ่ายค้านรอบ 205 ข้อ 6: PrePayment ที่ไม่มียอดมัดจำ ⇒ ไม่มีเงินให้ออกใบเสร็จ (เดิมได้ใบเสร็จ 0.00) — หมายเหตุแทน
+        if (!CmsBookingErpPolicy.NeedsErpDocument(svc.BookingType, booking.DepositAmount))
+        {
+            booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, CmsBookingErpPolicy.NoDepositNote);
+            await _db.SaveChangesAsync();
+            return null;
+        }
 
         // Determine ERP document type based on BookingType
         var (docType, erpDocType) = svc.BookingType switch
@@ -577,10 +617,18 @@ public class CmsBookingService : ICmsBookingService
         booking.ErpDocumentId = created.Id;
         booking.ErpDocumentType = erpDocType;
 
-        // Auto-approve เฉพาะ booking ที่ไม่ใช่ Lead (lead = quotation รออนุมัติ
-        // — admin ต้อง confirm slot ก่อน). Guaranteed/PrePayment/Appointment →
-        // commit ทันที (slot จองแล้ว, prepayment มีเงินจริง)
-        if (svc.BookingType != BookingType.Lead)
+        // Auto-approve: ตัดสินที่ CmsBookingErpPolicy ตัวเดียว (lead = quotation รออนุมัติ — admin ต้อง confirm slot ก่อน) ·
+        // รอบ 205 ทีม E (B-1): PrePayment อนุมัติเฉพาะเมื่อเงินเข้าแล้ว — เดิม "prepayment มีเงินจริง" ไม่จริง: การจองหน้าเว็บยังไม่มีใครจ่าย
+        // ⇒ ใบเสร็จมัดจำ + JE เงินสด + ภาษีขาย ของเงินที่ไม่เคยได้รับ · ตอนนี้ใบคงเป็นร่าง + หมายเหตุให้พนักงานอนุมัติเมื่อรับเงินจริง
+        if (!CmsBookingErpPolicy.AutoApprove(svc.BookingType, booking.DepositAmount, booking.PaidAmount)
+            && svc.BookingType == BookingType.PrePayment)
+        {
+            var waitNote = CmsBookingErpPolicy.AwaitingPaymentNote(booking.DepositAmount);
+            booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, waitNote);
+            var draftDoc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id && d.CompanyId == companyId);
+            if (draftDoc != null) draftDoc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(draftDoc.InternalNotes, waitNote);
+        }
+        else if (CmsBookingErpPolicy.AutoApprove(svc.BookingType, booking.DepositAmount, booking.PaidAmount))
         {
             // รอบ 194 R3 (P-1) — อนุมัติล้ม (เช่น "รอสักครู่" ของล็อกยอดมัดจำ · ด่านอนุมัติ) ⇒ ธุรกรรมอนุมัติ rollback ฝั่ง DB แล้ว
             // แต่ entity ใน context ยังถูกแก้ค้าง (Status=Approved · เลขเอกสาร · JE ที่ Added) ⇒ SaveChanges ด้านล่างเคยบันทึก "ใบ Approved ไม่มี JE"
