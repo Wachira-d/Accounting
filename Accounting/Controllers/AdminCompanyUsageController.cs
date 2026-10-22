@@ -1,6 +1,9 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -16,10 +19,21 @@ namespace Accounting.Controllers;
 [ApiController]
 [Route("api/admin/company-usage")]
 [Authorize(Roles = "SystemAdmin")]
-public class AdminCompanyUsageController : ControllerBase
+public partial class AdminCompanyUsageController : ControllerBase
 {
     private readonly AccountingDbContext _db;
-    public AdminCompanyUsageController(AccountingDbContext db) => _db = db;
+    private readonly ISubscriptionService _subscriptions;
+    private readonly IOcrQuotaService _ocrQuota;
+    private readonly ILogger<AdminCompanyUsageController> _logger;
+
+    public AdminCompanyUsageController(AccountingDbContext db, ISubscriptionService subscriptions,
+        IOcrQuotaService ocrQuota, ILogger<AdminCompanyUsageController> logger)
+    {
+        _db = db;
+        _subscriptions = subscriptions;
+        _ocrQuota = ocrQuota;
+        _logger = logger;
+    }
 
     public record DocTypeCount(string Type, int Count, int Approved, decimal Amount);
 

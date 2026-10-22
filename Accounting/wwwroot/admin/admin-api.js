@@ -117,6 +117,20 @@ const AdminAPI = {
   customer(id) { return this.get(`/customers/${id}`); },
   updateCustomerStatus(id, status, suspendReason = null) { return this.put(`/customers/${id}/status`, { status, suspendReason }); },
   impersonate(companyId) { return this.post(`/companies/${companyId}/impersonate`, {}); },
+  // ตรวจสอบการใช้งานรายบริษัท (แท็บในโมดัลบริษัท) — ค่าว่าง = 12 เดือนล่าสุด
+  companyUsageAudit(companyId, fromMonth, toMonth) {
+    const q = new URLSearchParams();
+    if (fromMonth) q.set('fromMonth', fromMonth);
+    if (toMonth) q.set('toMonth', toMonth);
+    const qs = q.toString();
+    return this.get(`/company-usage/${encodeURIComponent(companyId)}/audit${qs ? '?' + qs : ''}`);
+  },
+  companyUsageAuditDocuments(companyId, filter = {}) {
+    const q = new URLSearchParams();
+    Object.entries(filter).forEach(([k, v]) => { if (v != null && v !== '') q.set(k, v); });
+    const qs = q.toString();
+    return this.get(`/company-usage/${encodeURIComponent(companyId)}/audit/documents${qs ? '?' + qs : ''}`);
+  },
 
   // Users
   users(params = '') { return this.get(`/users${params}`); },

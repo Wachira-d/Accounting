@@ -74,6 +74,7 @@
 
   <script src="/admin/admin-api.js"></script>
   <script src="/admin/admin-layout.js"></script>
+  <script src="/admin/company-usage-audit.js"></script>
   <script>
     AdminLayout.init('customers');
     let currentPage = 1;
@@ -213,7 +214,7 @@
       document.getElementById('detailModal').style.display = '';
       document.getElementById('detailModal').innerHTML = `
         <div class="admin-modal-overlay" onclick="if(event.target===this)closeModal()">
-          <div class="admin-modal" style="max-width:900px;max-height:90vh;overflow-y:auto">
+          <div class="admin-modal" style="max-width:1100px;max-height:90vh;overflow-y:auto">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
               <h3 style="margin:0">${AdminLayout.esc(c.name)} ${s ? AdminLayout.planBadge(s.plan) + ' ' + AdminLayout.statusBadge(s.status) : ''}</h3>
               <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="closeModal()" style="font-size:18px;padding:2px 10px">&times;</button>
@@ -227,6 +228,7 @@
               <div class="detail-tab" onclick="switchTab('users',this)">ผู้ใช้ (${d.users.length})</div>
               <div class="detail-tab" onclick="switchTab('payments',this)">การชำระเงิน</div>
               <div class="detail-tab" onclick="switchTab('history',this)">ประวัติ</div>
+              <div class="detail-tab" onclick="switchTab('usage',this);CompanyUsageAudit.mount('usageAuditRoot','${c.id}')">ตรวจสอบการใช้งาน</div>
             </div>
 
             ${accountPlanBanner}
@@ -457,6 +459,11 @@
               </table>
               </div>
               ` : '<p style="text-align:center;color:#94a3b8;padding:20px">ยังไม่มีการชำระเงิน</p>'}
+            </div>
+
+            <!-- ตรวจสอบการใช้งาน — โหลดเมื่อกดแท็บ (company-usage-audit.js) -->
+            <div class="detail-panel" id="panel-usage">
+              <div id="usageAuditRoot"></div>
             </div>
 
             <!-- History -->

@@ -5321,3 +5321,11 @@ _2026-10-19 (บิลค่าน้ำ กปภ. จำนวน/ราคา
 บรรทัด "10/2569" × 101,000 (คอลัมน์ "เดือน" + "จำนวนน้ำใช้ (ลิตร)") ⇒ `OcrLineQuantityGuard`: คำอธิบายรอบบิลล้วน + ผู้ขายสาธารณูปโภค = หลักฐานมิเตอร์ ⇒ 1 × 2,839.00 ·
 ทางหารจำนวนใหม่ถามหลักฐานมิเตอร์ก่อน · คำอธิบาย "ค่าน้ำประปา ประจำเดือน 10/2569 (จำนวน 101,000)" (ไม่แต่งหน่วย) · เลข กปภ. 0994000164904 เข้า `OcrUtilityVendor` ·
 เทสต์ `OcrPeriodOnlyMeterLineTests` จากกระดาษจริง (`OcrPaperSamples.PwaWaterBillWe1105Positional`) · บทเรียนที่ `docs/lessons/ocr-pipeline.md`_
+
+_2026-10-22 ทีม G — แท็บ "ตรวจสอบการใช้งาน" ในโมดัลบริษัท (หน้าแอดมิน `/admin/customers.html`): endpoint ใหม่
+`GET /api/admin/company-usage/{companyId}/audit` (+ `/audit/documents` drill-down) ใน `AdminCompanyUsageController` (partial
+`.Audit.cs` · SystemAdmin เท่านั้น · กรอง CompanyId ทุก query · GroupBy ที่ DB) — เอกสารแยก เดือน(เวลาไทย, ตาม CreatedAt) × ประเภท × สถานะ ×
+ช่องทางสร้าง + มิเตอร์รายเดือน (สมุดรายวัน · OCR · AI · อีเมล · e-Tax · พื้นที่ · ผู้ใช้ · UsageEvent) เทียบเพดานแพ็กเกจปัจจุบัน.
+ช่องทางตัดสินที่ `Helpers/DocumentCreationChannel.cs` ตัวเดียว จากหลักฐานที่มีจริง (OriginModule → ตารางผูก FK กลับ → ป้าย CreatedBy ของเส้นระบบ
+→ ใบล่าสุดของรายการประจำ) · ไม่มีหลักฐาน (เช่น LINE ที่บันทึกเป็นอีเมล) = "ไม่ทราบ" ไม่เดา. หน้า `/pages/admin-company-usage.html` (ภาพรวมทุกบริษัทต่อเดือน)
+คงเดิม — แท็บใหม่คือมุมเจาะลึกบริษัทเดียวหลายเดือน ไม่ทำซ้ำ. ไม่เปลี่ยน flow เอกสาร (อ่านอย่างเดียว) ⇒ DOCUMENT_FLOW ไม่ขยับ._

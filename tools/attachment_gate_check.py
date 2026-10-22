@@ -201,6 +201,8 @@ EXEMPT = {
         "API v1 — ผู้เรียก (Scan) ผ่าน ResolveCallerAsync(\"ocr:write\") ก่อน · ไฟล์เป็นของสแกนใหม่",
     ("Accounting/Controllers/V1/OcrV1Controller.cs", "Scan"):
         "สแกนเฉพาะไฟล์ที่เส้นนี้เพิ่งบันทึกเอง (SaveUploadAsync) — ไม่รับ id ของไฟล์เดิมจากผู้เรียก",
+    ("Accounting/Controllers/AdminCompanyUsageController.Audit.cs", "GetCompanyAudit"):
+        "SystemAdmin เท่านั้น · อ่านแค่ผลรวม FileSize/จำนวนไฟล์ และจำนวนสแกนรายเดือน (มิเตอร์) — ไม่คืนเนื้อไฟล์/ชื่อไฟล์/id ไฟล์",
 }
 
 # ─────────────────────────── C# lexer (ตัดคอมเมนต์/สตริง คงตำแหน่ง) ───────────────────────────
