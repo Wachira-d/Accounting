@@ -236,8 +236,12 @@ public class OcrAiAugmenter : IOcrAiAugmenter
             // Fallback / supplement: top contacts by first token of name.
             if (candidates.Count < CandidateLimit && !string.IsNullOrWhiteSpace(ocrVendorName))
             {
+                // ข้ามคำบอกรูปนิติบุคคล ("บริษัท" · "บจก." · "ห้างหุ้นส่วน" · "Co.,") — เดิมคำแรกของ "บริษัท ทีโอที จำกัด"
+                // คือ "บริษัท" ⇒ candidate = ผู้ติดต่อ 12 รายแรกที่มีคำว่าบริษัท (สุ่ม) ⇒ ครูตอบ "__NEW__ 35%" ถูกต้องแต่จ่ายฟรี
+                // (log เจ้าของ 20/10/2569) · คำบอกรูปตัดสินด้วยตัวเจ้าของกติกา ContactTaxBranchKey.NameCore (ไม่เขียนรายการคำซ้ำ)
                 var token = ocrVendorName.Split(new[] { ' ', '\t', '\n', '(', ')', '-' },
-                    StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(t => t.Length >= 2);
+                    StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault(t => t.Length >= 2 && Accounting.Helpers.ContactTaxBranchKey.NameCore(t).Length >= 2);
                 if (!string.IsNullOrEmpty(token))
                 {
                     var existingIds = candidates.Select(c => c.Id).ToHashSet();
@@ -516,6 +520,27 @@ public class OcrAiAugmenter : IOcrAiAugmenter
                 inputVatClaimable: lineContext?.InputVatClaimable);
 
             var resp = await _orchestrator.AskAsync(req, ct);
+
+            // ── ด่านกันมั่ว: คำตอบของครูต้องอยู่ใน candidate_accounts ที่ส่งไป (ทีม H · 2026-10-22) ──
+            // ผู้เรียก (OcrService · IntegrationService) ตรวจแค่ "มีรหัสนี้ในผังบริษัท" ⇒ ผังรายได้ 41110 ผ่านได้กับเอกสารซื้อ
+            // (log เจ้าของ 20/10/2569: AI 41110 vs local 54430) · candidate ฝั่งซื้อกรองเหลือ Expense+Asset แล้ว ⇒ รหัสนอกชุด
+            // = ข้ามฝั่ง/แต่งขึ้น · FeedbackId ยังคืน (คำตอบที่ถูกทิ้งก็เป็นข้อมูลสอนเมื่อผู้ใช้ยืนยันรหัสจริง)
+            var candidateCodes = candidates.Select(c => c.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (resp.UsedAi && !string.IsNullOrEmpty(resp.PrimaryAnswer) && !candidateCodes.Contains(resp.PrimaryAnswer.Trim()))
+            {
+                _logger.LogInformation(
+                    "OcrAiAugmenter.SuggestGlAccount: AI ตอบ {Ans} นอก candidate ({N} ผัง · ฝั่ง {Role}) — ทิ้ง",
+                    resp.PrimaryAnswer, candidateCodes.Count, lineContext?.OurRole ?? "Buyer?");
+                return new OcrAiAugmentationResult(
+                    Answer: null, Confidence: null,
+                    Alternatives: resp.Alternatives.Where(a => candidateCodes.Contains(a.Trim())).ToList(),
+                    Risks: resp.Risks,
+                    ComplianceFlags: resp.ComplianceFlags,
+                    Reasoning: $"AI เสนอ {resp.PrimaryAnswer} ซึ่งไม่อยู่ในผังที่ใช้ได้กับฝั่งเอกสารนี้ — ไม่ใช้",
+                    UsedAi: resp.UsedAi,
+                    FeedbackId: resp.FeedbackId);
+            }
+
             return new OcrAiAugmentationResult(
                 Answer: resp.PrimaryAnswer,
                 Confidence: resp.Confidence,

@@ -5338,3 +5338,13 @@ _2026-10-22 ทีม A (หน้าเคาน์เตอร์ที่พ�
 _2026-10-22 (ทีม D — เว็บที่พักฝั่งแขก): เมนู "ห้องพัก" เป็นหน้ารายละเอียดห้องเต็ม (`renderLodgingRoomsPage` · `/rooms/{slug}`) + "จองห้องนี้" ⇒ `/booking?roomType=` เลือกห้องให้ ·
 เมนู "จอง" คง flow ค้นหา/จอง · ตัวช่วยวันที่เดียว `Store.lgDateSync` ทุกฟอร์มวันที่ (เช็คเอาต์อัตโนมัติวันถัดไป · min · ป้าย "N คืน · …" ในค้นหา/สรุป/หน้าการจอง) ·
 ช่องตั้งค่าประเภทห้องใหม่ สูบบุหรี่/สัตว์เลี้ยง/หมายเหตุห้อง (migration ADD COLUMN) · ป้ายเซิร์ฟเวอร์ `HouseRuleLabels`/`ChildrenLabel`/`CancellationSummary` · ฟอร์มจองยุบคอลัมน์บนมือถือ · DOCUMENT_FLOW §6.5_
+
+_2026-10-22 (ทีม H · AI call ยังมี error — หน้าแอดมิน 20/10/2569: DocType/WHT/ApprovalWarningFix "Schema mismatch", VendorCanon "__NEW__ 35%", GL AI 41110 กับเอกสารซื้อ):
+ต้นเหตุร่วม = เพดาน max_tokens ต่ำ (200/280/400/250) กับเหตุผลภาษาไทย ⇒ JSON ขาดกลางทาง ⇒ ตัวอ่านเดิมกลืน exception แล้วรายงาน
+"Schema mismatch" (ไม่บอกว่าขาด) · ตัวอ่านย้ายเป็น pure `Helpers/AiFeatureResponseParser` (fence/ร้อยแก้ว/ชื่อ key หลายแบบ/ห่อ/กู้ก้อนขาด
+เฉพาะช่องที่ปิดครบ · error ระบุสาเหตุ + finish_reason + token) · เพดานขั้นต่ำ 600 สำหรับรูป canonical (10 feature ต่ำกว่า) · reasoner พื้น 4,096 ·
+DocType prompt ขอชนิดกระดาษเป็น primary แต่ผู้เรียกใช้เป็นชนิดปลายทาง ⇒ แก้ให้ขอชนิดปลายทาง (รายการจาก enum + `DocumentSide`) ·
+WHT `NullPrimaryAnswer="None"` · FuzzyDuplicateDetection ไม่มี schema/ข้อมูลให้เทียบ ⇒ `AiRequest.LocalOnly` · "Most-used accounts" (ขาย+ซื้อปน)
+ถอดจากบล็อกที่ต่อทุก feature + ด่าน GL ∈ candidate · candidate ผู้ขายข้ามคำบอกรูปนิติบุคคล · แคชอ่านไม่ออก = แคชพลาด (เดิม UsedAi=true เท็จ) ·
+แคชล้มไม่ทิ้งคำตอบ · บันทึกหลังยิง provider ไม่แพ้ token ผู้เรียก · ต้นทุน token ของ call ที่ล้มถูกนับ · หน้าแอดมินแสดงคำตอบดิบย่อ (ปิดบัง PII) + escape ทุกช่อง ·
+เทสต์ `AiFeatureResponseParserTests` + `AiOrchestratorResponseHandlingTests` · TEST_PLAN §AIR_
