@@ -140,7 +140,24 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
 
     // ===================================================================== ขาย
 
+    /// <summary>ขายคอร์ส — ฝ่ายค้านข้อ 4: กันกดซ้ำด้วย <c>ClientRequestId</c> (session lock ต่อ key + ใบเดิมที่ประทับ key ใน Reference ⇒ คืนบัตรเดิม/
+    /// เดินต่อจากใบเดิม ไม่ออกใบใหม่) · อนุมัติล้ม ⇒ ลบใบร่าง (ลบไม่ได้ ⇒ บอกเลขใบร่าง)</summary>
     public async Task<CreditPassResponse> SellAsync(Guid companyId, SellCreditPassRequest request, string actor, CancellationToken ct = default)
+    {
+        if (request.ClientRequestId is not Guid key || key == Guid.Empty)
+            return await SellCoreAsync(companyId, request, null, actor, ct);
+        CreditPassResponse? result = null;
+        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.CreditSale, key.ToString("N"),
+            async () => result = await SellCoreAsync(companyId, request, key, actor, ct), _logger, companyId, ct);
+        if (!ran)
+            throw new BusinessRuleException("กำลังบันทึกการขายรายการนี้อยู่ (กดซ้ำ) — รอสักครู่แล้วดูที่รายการบัตร", CourseCreditMath.RuleCode, 409);
+        return result!;
+    }
+
+    private static string SaleReference(string packageCode, Guid? key)
+        => key is Guid k ? $"{packageCode} REQ-{k.ToString("N")[..12]}" : packageCode;
+
+    private async Task<CreditPassResponse> SellCoreAsync(Guid companyId, SellCreditPassRequest request, Guid? key, string actor, CancellationToken ct)
     {
         var pkg = await _db.CreditPackages.AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == request.PackageId && p.CompanyId == companyId, ct)
@@ -151,6 +168,29 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
 
         var unearned = await ResolveAccountAsync(companyId, pkg.UnearnedAccountId, UnearnedCode, "217", AccountType.Liability, "ค่าบริการรับล่วงหน้า", ct);
         var revenue = await ResolveAccountAsync(companyId, pkg.RevenueAccountId, RevenueCode, "42", AccountType.Revenue, "รายได้ค่าบริการ", ct);
+        var reference = SaleReference(pkg.Code, key);
+
+        // คำขอเดิม (กดซ้ำ/เครือข่ายหลุดแล้วส่งใหม่) — เดินต่อจากใบเดิม ไม่ออกใบใหม่
+        if (key != null)
+        {
+            var prior = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.OriginModule == Origin && d.Reference == reference && d.ContactId == request.ContactId)
+                .OrderByDescending(d => d.CreatedAt)
+                .Select(d => new { d.Id, d.Status, d.DocumentNumber }).FirstOrDefaultAsync(ct);
+            if (prior != null)
+            {
+                var priorPass = await _db.CreditPasses.AsNoTracking()
+                    .Where(p => p.CompanyId == companyId && p.SaleDocumentId == prior.Id).Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct);
+                if (priorPass is Guid pp) return (await GetPassAsync(companyId, pp, ct)).Pass;
+                if (prior.Status == DocumentStatus.Voided || prior.Status == DocumentStatus.Rejected)
+                    throw new BusinessRuleException($"คำขอขายนี้เคยออกเอกสาร {prior.DocumentNumber} ซึ่งถูกยกเลิกแล้ว — เปิดหน้าขายใหม่แล้วทำรายการใหม่",
+                        CourseCreditMath.RuleCode, 409);
+                var priorId = prior.Id;
+                if (prior.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval)
+                    priorId = (await ApproveSaleOrExplainAsync(companyId, prior.Id, prior.DocumentNumber, deleteOnFail: false, actor)).Id;
+                return await OpenPassAfterSaleAsync(companyId, pkg, priorId, unearned.Id, revenue.Id, request.Note, actor, ct);
+            }
+        }
 
         var saleDate = ThaiDate.CalendarDateUtc(request.SaleDate ?? DateTime.UtcNow);
         var vatRegistered = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.IsVatRegistered).FirstOrDefaultAsync(ct);
@@ -165,7 +205,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             DocumentDate: saleDate,
             DueDate: null,
             ContactId: request.ContactId,
-            Reference: pkg.Code,
+            Reference: reference,
             Notes: string.IsNullOrWhiteSpace(request.Note) ? $"ขายคอร์ส {pkg.Name}" : request.Note.Trim(),
             Lines: new List<DocumentLineRequest>
             {
@@ -177,11 +217,45 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             IssuedAsCashReceipt: shape.IssuedAsCashReceipt ? true : null,
             PaymentDate: saleDate,
             PricesIncludeVat: pkg.PriceIncludesVat), actor, Origin);
-        var approved = await _docService.ApproveDocumentAsync(companyId, created.Id, actor, ApprovalAckSource.SystemWorkflow, withAiHints: false);
+        var approved = await ApproveSaleOrExplainAsync(companyId, created.Id, created.DocumentNumber, deleteOnFail: true, actor);
+        return await OpenPassAfterSaleAsync(companyId, pkg, approved.Id, unearned.Id, revenue.Id, request.Note, actor, ct);
+    }
 
+    /// <summary>อนุมัติใบขาย — ล้ม ⇒ (ใบใหม่) ลบใบร่างทิ้งแล้วบอกเหตุ · ลบไม่ได้/ใบเดิม ⇒ บอกเลขใบร่างให้ไปจัดการที่หน้าเอกสาร (ไม่ปล่อยใบค้างเงียบ)</summary>
+    private async Task<DocumentResponse> ApproveSaleOrExplainAsync(Guid companyId, Guid documentId, string draftNumber, bool deleteOnFail, string actor)
+    {
         try
         {
-            return await OpenPassFromDocumentAsync(companyId, pkg, approved.Id, unearned.Id, revenue.Id, CreditSaleChannel.BackOffice, request.Note, actor, ct);
+            return await _docService.ApproveDocumentAsync(companyId, documentId, actor, ApprovalAckSource.SystemWorkflow, withAiHints: false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _db.ChangeTracker.Clear();
+            var cleaned = false;
+            if (deleteOnFail)
+            {
+                try { await _docService.DeleteDocumentAsync(companyId, documentId); cleaned = true; }
+                catch (Exception delEx) when (delEx is not OperationCanceledException)
+                {
+                    _logger.LogError(delEx, "ลบใบร่างขายคอร์ส {Draft} หลังอนุมัติล้มไม่สำเร็จ", draftNumber);
+                }
+            }
+            throw new BusinessRuleException(
+                $"อนุมัติเอกสารขายไม่สำเร็จ: {ex.Message} — "
+                + (cleaned ? "ระบบลบใบร่างแล้ว ยังไม่มีการขาย · แก้สาเหตุแล้วขายใหม่"
+                           : $"ใบร่าง {draftNumber} ยังค้างอยู่ที่หน้าเอกสาร — แก้สาเหตุแล้วกดขายซ้ำ (คำขอเดิมจะใช้ใบนี้ต่อ) หรือลบใบร่างนั้น"),
+                CourseCreditMath.RuleCode);
+        }
+    }
+
+    private async Task<CreditPassResponse> OpenPassAfterSaleAsync(Guid companyId, CreditPackage pkg, Guid documentId,
+        Guid unearnedId, Guid revenueId, string? note, string actor, CancellationToken ct)
+    {
+        var approved = await _db.Documents.AsNoTracking().Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => new { d.Id, d.DocumentNumber }).FirstAsync(ct);
+        try
+        {
+            return await OpenPassFromDocumentAsync(companyId, pkg, approved.Id, unearnedId, revenueId, CreditSaleChannel.BackOffice, note, actor, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -199,13 +273,10 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             .FirstOrDefaultAsync(p => p.Id == request.PackageId && p.CompanyId == companyId, ct)
             ?? throw new KeyNotFoundException("ไม่พบแพ็กเกจ");
         var revenue = await ResolveAccountAsync(companyId, pkg.RevenueAccountId, RevenueCode, "42", AccountType.Revenue, "รายได้ค่าบริการ", ct);
-        // ผังหนี้สินบนใบ: แพ็กเกจระบุไว้ ⇒ ต้องตรง · ไม่ระบุ ⇒ บรรทัดผังหนี้สินใดก็ได้บนใบ (ผู้ใช้ออกใบเองจากหน้าเอกสาร)
-        var liabilityLines = await (from l in _db.DocumentLines.AsNoTracking()
-                                    join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals (Guid?)a.Id
-                                    where l.DocumentId == request.DocumentId && !l.IsDeleted && l.Document.CompanyId == companyId
-                                          && a.CompanyId == companyId && a.AccountType == AccountType.Liability
-                                    select new { a.Id, l.Amount }).ToListAsync(ct);
-        var accountIds = liabilityLines.Select(x => x.Id).Distinct().ToList();
+        // ผังรายได้รับล่วงหน้าที่ JE ของใบลงเครดิตจริง (ฝ่ายค้านข้อ 2 — ไม่อ่านจากบรรทัด: ใบเสร็จที่ตัดลูกหนี้มีบรรทัด 21713 ได้แต่ JE ไม่ Cr 21713) ·
+        // แพ็กเกจระบุผังไว้ ⇒ ใช้ผังนั้น · ไม่ระบุ ⇒ ผังกลุ่ม 217 (รายได้รับล่วงหน้า) ที่ JE ใบนี้ Cr สุทธิ > 0 ต้องมีผังเดียว
+        var credits = await JournalLiabilityCreditsAsync(companyId, request.DocumentId, ct);
+        var accountIds = credits.Where(c => c.Value > 0m && c.Code.StartsWith("217")).Select(c => c.Key).ToList();
         Guid unearnedId;
         if (pkg.UnearnedAccountId is Guid fixedId) unearnedId = fixedId;
         else if (accountIds.Count == 1) unearnedId = accountIds[0];
@@ -232,19 +303,25 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
                 "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", documentId, companyId);
             var doc = await _db.Documents.AsNoTracking()
                 .Where(d => d.Id == documentId && d.CompanyId == companyId)
-                .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.ContactId, d.DocumentDate })
+                .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.ContactId, d.DocumentDate, d.RelatedDocumentId })
                 .FirstOrDefaultAsync(ct) ?? throw new KeyNotFoundException("ไม่พบเอกสารขาย");
             if (!SaleTypes.Contains(doc.DocumentType))
                 throw new BusinessRuleException("เปิดบัตรได้จากใบกำกับภาษี/ใบเสร็จ/ใบแจ้งหนี้ฝั่งขายเท่านั้น", CourseCreditMath.RuleCode);
             if (!IssuedStatuses.Contains(doc.Status))
                 throw new BusinessRuleException($"เอกสาร {doc.DocumentNumber} ยังไม่อนุมัติหรือถูกยกเลิก — เปิดบัตรไม่ได้", CourseCreditMath.RuleCode);
-            if (await _db.CreditPasses.AnyAsync(p => p.CompanyId == companyId && p.SaleDocumentId == doc.Id, ct))
-                throw new BusinessRuleException($"เอกสาร {doc.DocumentNumber} เปิดบัตรคอร์สไปแล้ว — ห้ามเปิดซ้ำ", CourseCreditMath.RuleCode);
-            var contract = await _db.DocumentLines.AsNoTracking()
-                .Where(l => l.DocumentId == doc.Id && !l.IsDeleted && l.AccountId == unearnedAccountId && l.Document.CompanyId == companyId)
-                .SumAsync(l => (decimal?)l.Amount, ct) ?? 0m;
-            if (contract <= 0m)
-                throw new BusinessRuleException($"เอกสาร {doc.DocumentNumber} ไม่มียอดที่ลงผังค่าบริการรับล่วงหน้าของแพ็กเกจนี้", CourseCreditMath.RuleCode);
+            // สายเอกสารเดียวกัน = ใบนี้ · ใบต้นทาง · ใบลูก · ใบพี่น้องที่อ้างต้นทางเดียวกัน — มีบัตรอยู่แล้วใบใดใบหนึ่ง ⇒ ห้ามเปิดซ้ำ (เงินก้อนเดียว)
+            var chain = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && (d.Id == doc.Id || d.RelatedDocumentId == doc.Id
+                    || (doc.RelatedDocumentId != null && (d.Id == doc.RelatedDocumentId || d.RelatedDocumentId == doc.RelatedDocumentId))))
+                .Select(d => d.Id).ToListAsync(ct);
+            var chainPass = await _db.CreditPasses.IgnoreQueryFilters()
+                .Where(p => p.CompanyId == companyId && p.SaleDocumentId != null && chain.Contains(p.SaleDocumentId.Value))
+                .Select(p => p.PassNumber).FirstOrDefaultAsync(ct);
+            // ยอดสัญญา = เครดิตสุทธิของ JE ที่มีผลบนผังรายได้รับล่วงหน้า (บาท — ใบต่างสกุลได้ยอดที่ลง GL จริง)
+            var contract = (await JournalLiabilityCreditsAsync(companyId, doc.Id, ct))
+                .Where(c => c.Key == unearnedAccountId).Sum(c => c.Value);
+            if (CreditPassDocumentRule.ActivateProblem(doc.DocumentNumber, contract, chainPass) is string activateProblem)
+                throw new BusinessRuleException(activateProblem, CreditPassDocumentRule.RuleCode);
             await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
             {
                 (unearnedAccountId, "ผังค่าบริการรับล่วงหน้า"), (revenueAccountId, "ผังรายได้ค่าบริการ"),
@@ -339,7 +416,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         var today = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
         var active = _db.CreditPasses.AsNoTracking().Where(p => p.CompanyId == companyId && p.Status == CreditPassStatus.Active);
         var count = await active.CountAsync(ct);
-        var deferred = await active.SumAsync(p => (decimal?)(p.ContractAmount - p.RecognizedAmount), ct) ?? 0m;
+        var deferred = await active.SumAsync(p => (decimal?)(p.ContractAmount - p.RecognizedAmount - p.RefundedAmount), ct) ?? 0m;
         var soon = today.AddDays(7);
         var expiring = await active.CountAsync(p => p.ExpiresOn != null && p.ExpiresOn >= today && p.ExpiresOn <= soon, ct);
         var pending = await active.CountAsync(p => p.ExpiresOn != null && p.ExpiresOn < today, ct);
@@ -368,14 +445,17 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         if (request.BookingServiceId is Guid sid
             && !await _db.SiteBookingServices.AsNoTracking().AnyAsync(s => s.Id == sid && s.CompanyId == companyId, ct))
             throw new BusinessRuleException("ไม่พบบริการที่เลือกในบริษัทนี้", CourseCreditMath.RuleCode);
+        var s = await InTxAsync(async () =>
+        {
         if (request.TrainerEmployeeId is Guid tid)
         {
             if (!await _db.Employees.AsNoTracking().AnyAsync(e => e.Id == tid && e.CompanyId == companyId, ct))
                 throw new BusinessRuleException("ไม่พบครูฝึกในทะเบียนพนักงาน", CourseCreditMath.RuleCode);
+            await LockTrainerDaysAsync(companyId, new[] { tid }, request.StartAt, ct);
             if (await TrainerBusyAsync(companyId, tid, request.StartAt, request.EndAt, null, ct))
                 throw new BusinessRuleException("ครูฝึกคนนี้มีรอบสอนซ้อนเวลานี้อยู่แล้ว", CourseCreditMath.RuleCode);
         }
-        var s = new CreditClassSession
+        var row = new CreditClassSession
         {
             CompanyId = companyId, CreatedBy = actor, Title = request.Title.Trim(), BookingServiceId = request.BookingServiceId,
             Format = request.Format, StartAt = request.StartAt, EndAt = request.EndAt, Capacity = capacity,
@@ -383,8 +463,10 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             CreditCost = Math.Round(request.CreditCost, 2, MidpointRounding.AwayFromZero),
             Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(),
         };
-        _db.CreditClassSessions.Add(s);
+        _db.CreditClassSessions.Add(row);
         await _db.SaveChangesAsync(ct);
+        return row;
+        }, ct);
         return (await MapSessionsAsync(companyId, new List<CreditClassSession> { s }, ct))[0];
     }
 
@@ -555,7 +637,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             .Where(p => p.CompanyId == companyId && p.Status == CreditPassStatus.Active && p.ExpiresOn != null && p.ExpiresOn < today)
             .OrderBy(p => p.ExpiresOn).Select(p => new { p.Id, p.PassNumber, p.CreditsReserved, Remaining = p.ContractAmount - p.RecognizedAmount })
             .Take(500).ToListAsync(ct);
-        int expired = 0, skipped = 0; decimal breakage = 0m; var messages = new List<string>();
+        int expired = 0, skipped = 0, failed = 0; decimal breakage = 0m; var messages = new List<string>();
         foreach (var d in due)
         {
             if (d.CreditsReserved > 0m) { skipped++; messages.Add($"{d.PassNumber}: มีการจองค้าง — รอปิดการจองก่อน"); continue; }
@@ -564,14 +646,14 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
                 await ExpirePassAsync(companyId, d.Id, actor, ct);
                 expired++; breakage += Math.Max(0m, d.Remaining);
             }
-            catch (BusinessRuleException ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // ล้มดังในผลลัพธ์ (งานกลางคืน log + นับ) — บัตรยังอยู่สถานะเดิม ไม่ประทับว่าหมดอายุ
-                skipped++; messages.Add($"{d.PassNumber}: {ex.Message}");
-                _logger.LogWarning("ปิดบัตรคอร์สหมดอายุ {Pass} ไม่สำเร็จ: {Msg}", d.PassNumber, ex.Message);
+                // ฝ่ายค้านข้อ 6: ใบเดียวล้ม (ด่านธุรกิจ/ฐานข้อมูล) ไม่หยุดทั้งรอบ — ล้มดังในผลลัพธ์ + log Error · บัตรคงสถานะเดิม ไม่ประทับว่าหมดอายุ
+                failed++; messages.Add($"{d.PassNumber}: {ex.Message}");
+                _logger.LogError(ex, "ปิดบัตรคอร์สหมดอายุ {Pass} (บริษัท {Cid}) ไม่สำเร็จ", d.PassNumber, companyId);
             }
         }
-        return new CreditExpiryRunResult(expired, skipped, breakage, messages);
+        return new CreditExpiryRunResult(expired, skipped, failed, breakage, messages);
     }
 
     private async Task ExpireCoreAsync(CreditPass pass, string actor, CancellationToken ct)
@@ -610,6 +692,9 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         var extRef = request.ExternalRef.Trim();
         var bookingId = await InTxAsync(async () =>
         {
+            // ฝ่ายค้านข้อ 3: สองคำขอ ref เดียวกันพร้อมกัน ⇒ รอกันที่นี่ (ตาข่ายสุดท้าย = unique index การจองที่มีผลต่อ ref)
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                AdvisoryLockKey.For(companyId, AdvisoryLockKey.CreditHold, extRef));
             var existing = await _db.CreditClassBookings.AsNoTracking()
                 .FirstOrDefaultAsync(b => b.CompanyId == companyId && b.ExternalRef == extRef && b.Status != CreditBookingStatus.Cancelled, ct);
             if (existing != null) return existing.Id;   // idempotent — เรียกซ้ำได้ผลเดิม
@@ -626,6 +711,11 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
                 var pass = await LockPassAsync(companyId, id, ct);
                 if (pass.ContactId != request.ContactId) { lastReason = "บัตรนี้ไม่ใช่ของลูกค้าคนนี้"; continue; }
                 if (await SaleDocumentProblemAsync(pass, ct) is string docProblem) { lastReason = docProblem; continue; }
+                // ตรวจซ้ำหลังได้ล็อกบัตร — ห้ามกันเครดิตซ้ำให้ ref ที่มีการจองที่มีผลอยู่แล้ว
+                var dup = await _db.CreditClassBookings.AsNoTracking()
+                    .Where(b => b.CompanyId == companyId && b.ExternalRef == extRef && b.Status != CreditBookingStatus.Cancelled)
+                    .Select(b => (Guid?)b.Id).FirstOrDefaultAsync(ct);
+                if (dup is Guid dupId) return dupId;
                 var credits = request.Credits is decimal c && c > 0m
                     ? c
                     : CourseCreditMath.CreditsForSession(pass.Unit, request.DurationMinutes, 1m);
@@ -787,6 +877,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
                 throw new BusinessRuleException("ครูฝึกที่เลือกไม่ได้สอนแพ็กเกจนี้", CourseCreditMath.RuleCode);
             if (!await _db.Employees.AsNoTracking().AnyAsync(e => e.Id == want && e.CompanyId == companyId, ct))
                 throw new BusinessRuleException("ไม่พบครูฝึกในทะเบียนพนักงาน", CourseCreditMath.RuleCode);
+            await LockTrainerDaysAsync(companyId, new[] { want }, start, ct);
             if (await TrainerBusyAsync(companyId, want, start, end, null, ct))
                 throw new BusinessRuleException("ครูฝึกที่เลือกติดสอนรอบอื่นในเวลานี้ — เลือกเวลาหรือครูคนอื่น", CourseCreditMath.RuleCode);
             trainer = want;
@@ -795,6 +886,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         {
             if (pkg.TrainerMode == TrainerAssignmentMode.CustomerChooses)
                 throw new BusinessRuleException("แพ็กเกจนี้ให้ลูกค้าเลือกครูฝึก — เลือกครูก่อนจอง", CourseCreditMath.RuleCode);
+            await LockTrainerDaysAsync(companyId, eligible, start, ct);
             var overlapping = await _db.CreditClassSessions.AsNoTracking()
                 .Where(s => s.CompanyId == companyId && s.Status == CreditSessionStatus.Scheduled && s.TrainerEmployeeId != null
                     && eligible.Contains(s.TrainerEmployeeId.Value) && s.StartAt < end && s.EndAt > start)
@@ -839,6 +931,30 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
     {
         if (await SaleDocumentProblemAsync(pass, ct) is string problem)
             throw new BusinessRuleException(problem, CourseCreditMath.RuleCode);
+    }
+
+    /// <summary>Σ(Cr − Dr) ต่อผังหนี้สิน ของ JE ที่มีผล (Posted · ไม่ถูกกลับ) ของเอกสารนี้ — บาทตาม GL</summary>
+    private async Task<List<(Guid Key, string Code, decimal Value)>> JournalLiabilityCreditsAsync(Guid companyId, Guid documentId, CancellationToken ct)
+    {
+        var rows = await (from l in _db.JournalEntryLines.AsNoTracking()
+                          join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                          join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                          where j.CompanyId == companyId && j.SourceDocumentId == documentId && !j.IsDeleted && !l.IsDeleted
+                                && j.Status == JournalEntryStatus.Posted && j.ReversedByEntryId == null
+                                && a.CompanyId == companyId && a.AccountType == AccountType.Liability
+                          select new { a.Id, a.AccountCode, l.CreditAmount, l.DebitAmount })
+            .ToListAsync(ct);
+        return rows.GroupBy(r => new { r.Id, r.AccountCode })
+            .Select(g => (Key: g.Key.Id, Code: g.Key.AccountCode, Value: g.Sum(x => x.CreditAmount - x.DebitAmount))).ToList();
+    }
+
+    /// <summary>ล็อกตารางสอนของครูต่อวัน (วันไทย) — ตรวจว่าง→สร้างรอบ ของสองคำขอพร้อมกันต้องรอกัน (ฝ่ายค้านข้อ 5) · เรียงคีย์ก่อนล็อก (กัน deadlock)</summary>
+    private async Task LockTrainerDaysAsync(Guid companyId, IEnumerable<Guid> trainerIds, DateTime startUtc, CancellationToken ct)
+    {
+        var day = ThaiDate.YyyyMmDd(startUtc);
+        foreach (var t in trainerIds.Distinct().OrderBy(x => x))
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                AdvisoryLockKey.For(companyId, AdvisoryLockKey.CreditTrainerDay, $"{t}:{day}"));
     }
 
     private Task<bool> TrainerBusyAsync(Guid companyId, Guid trainerId, DateTime start, DateTime end, Guid? exceptSessionId, CancellationToken ct)
@@ -944,7 +1060,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         return new CreditPassResponse(p.Id, p.PassNumber, p.PackageId, p.PackageName, p.ContactId,
             names.TryGetValue(p.ContactId, out var n) ? n : null, p.Unit, UnitTh(p.Unit), p.PurchasedAt, p.ExpiresOn,
             p.CreditsTotal, p.CreditsUsed, p.CreditsReserved, CourseCreditMath.Available(p.CreditsTotal, p.CreditsUsed, p.CreditsReserved),
-            p.ContractAmount, p.RecognizedAmount, p.ContractAmount - p.RecognizedAmount,
+            p.ContractAmount, p.RecognizedAmount, p.ContractAmount - p.RecognizedAmount - p.RefundedAmount,
             CourseCreditMath.PricePerCredit(p.ContractAmount, p.CreditsTotal),
             p.Status, CourseCreditMath.StatusTh(p.Status), p.SaleDocumentId, p.SaleDocumentNumber, warning);
     }

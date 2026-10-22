@@ -428,6 +428,8 @@
         document.getElementById('sDate').value = Layout.dateInput(new Date());
         document.getElementById('sNote').value = '';
         document.getElementById('sPreview').textContent = '';
+        // คีย์กันกดซ้ำ — ใหม่ทุกครั้งที่เปิดหน้าต่างขาย · กดยืนยันซ้ำ/ส่งใหม่หลังเน็ตหลุด = คำขอเดิม (เซิร์ฟเวอร์คืนบัตรเดิม)
+        this._saleKey = (crypto.randomUUID ? crypto.randomUUID() : null);
         try {
           const api = Layout.api();
           const banks = (await api.getBankAccounts({ activeOnly: true })).data || [];
@@ -447,7 +449,7 @@
           const r = await API.post(`${this.base()}/passes/sell`, {
             packageId, contactId, saleDate: document.getElementById('sDate').value || null,
             bankAccountId: document.getElementById('sBank').value || null, paymentAccountId: null,
-            note: document.getElementById('sNote').value || null });
+            note: document.getElementById('sNote').value || null, clientRequestId: this._saleKey });
           Layout.toast(r.message || 'ขายคอร์สแล้ว'); Layout.closeModal('sellModal');
           await this.loadSummary(); await this.loadPasses(1); await this.openPass(r.data.id);
         } catch (e) { Layout.toast(e.message, 'error'); }

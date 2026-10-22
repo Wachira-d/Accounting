@@ -197,4 +197,13 @@ public static class AdvisoryLockKey
 
     /// <summary>เลขบัตรคอร์ส/เครดิต (ทีม L · <c>CourseCreditService</c>) — part = prefix "CP-yyyyMM-" · ผูก companyId</summary>
     public const string CreditPassSequence = "credit-pass-seq";
+
+    /// <summary>กันเครดิตจากเครื่องจองภายนอก — part = externalRef · ผูก companyId (ฝ่ายค้านทีม L ข้อ 3: ref เดียวกันสองคำขอพร้อมกัน = จองซ้ำ)</summary>
+    public const string CreditHold = "credit-hold";
+
+    /// <summary>ตารางสอนของครูฝึก — part = "{employeeId}:{yyyyMMdd วันไทย}" · ผูก companyId (ฝ่ายค้านทีม L ข้อ 5: ตรวจว่าง→จอง ซ้อนกันสองคำขอ)</summary>
+    public const string CreditTrainerDay = "credit-trainer-day";
+
+    /// <summary>ขายคอร์ส 1 คำขอ (idempotency key ของหน้าจอ) — part = key · session lock ผ่าน <c>JobLock.RunExclusiveAsync</c> ครอบการออกใบ+อนุมัติ+เปิดบัตร</summary>
+    public const string CreditSale = "credit-sale";
 }

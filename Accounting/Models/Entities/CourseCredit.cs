@@ -80,6 +80,10 @@ namespace Accounting.Models.Entities
         public decimal CreditsReserved { get; set; }
         public decimal ContractAmount { get; set; }
         public decimal RecognizedAmount { get; set; }
+        /// <summary>ยอดสุทธิที่คืนลูกค้าผ่านใบลดหนี้ (ปิดบัตร) — ค้างในหนี้สิน = สัญญา − รับรู้ − คืน</summary>
+        public decimal RefundedAmount { get; set; }
+        /// <summary>ใบลดหนี้/การยกเลิกใบขายที่ปิดบัตรนี้ (ด่าน <c>CreditPassDocumentRule</c>)</summary>
+        public Guid? CancelledByDocumentId { get; set; }
         public Guid UnearnedAccountId { get; set; }
         public Guid RevenueAccountId { get; set; }
         public CreditPassStatus Status { get; set; } = CreditPassStatus.Active;

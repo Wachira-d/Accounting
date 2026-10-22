@@ -3570,7 +3570,7 @@ public class AccountingDbContext : DbContext
             e.HasIndex(p => new { p.CompanyId, p.SaleDocumentId }).IsUnique().HasFilter("\"SaleDocumentId\" IS NOT NULL").HasDatabaseName("UX_CreditPasses_Company_SaleDocument");
             e.Property(p => p.PassNumber).HasMaxLength(40); e.Property(p => p.PackageName).HasMaxLength(200); e.Property(p => p.SaleDocumentNumber).HasMaxLength(50);
             e.Property(p => p.CreditsTotal).HasPrecision(18, 2); e.Property(p => p.CreditsUsed).HasPrecision(18, 2); e.Property(p => p.CreditsReserved).HasPrecision(18, 2);
-            e.Property(p => p.ContractAmount).HasPrecision(18, 2); e.Property(p => p.RecognizedAmount).HasPrecision(18, 2);
+            e.Property(p => p.ContractAmount).HasPrecision(18, 2); e.Property(p => p.RecognizedAmount).HasPrecision(18, 2); e.Property(p => p.RefundedAmount).HasPrecision(18, 2);
             e.HasOne(p => p.Package).WithMany().HasForeignKey(p => p.PackageId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(p => !p.IsDeleted);
         });
@@ -3590,7 +3590,9 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(b => new { b.CompanyId, b.SessionId }).HasDatabaseName("IX_CreditClassBookings_Company_Session");
             e.HasIndex(b => new { b.CompanyId, b.PassId }).HasDatabaseName("IX_CreditClassBookings_Company_Pass");
-            e.HasIndex(b => new { b.CompanyId, b.ExternalRef }).HasDatabaseName("IX_CreditClassBookings_Company_ExternalRef");
+            // การจองภายนอก 1 ref = การจองที่มีผลได้ใบเดียว (ฝ่ายค้านข้อ 3 — ตาข่ายหลังด่าน advisory lock ใน HoldAsync)
+            e.HasIndex(b => new { b.CompanyId, b.ExternalRef }).IsUnique()
+                .HasFilter("\"ExternalRef\" IS NOT NULL AND \"Status\" <> 3 AND \"IsDeleted\" = false").HasDatabaseName("UX_CreditClassBookings_Company_ExternalRef_Live");
             e.Property(b => b.ExternalRef).HasMaxLength(120);
             e.Property(b => b.Credits).HasPrecision(18, 2); e.Property(b => b.RecognizedAmount).HasPrecision(18, 2);
             e.HasQueryFilter(b => !b.IsDeleted);

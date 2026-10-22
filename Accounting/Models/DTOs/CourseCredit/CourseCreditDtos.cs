@@ -43,7 +43,9 @@ public record SellCreditPassRequest(
     DateTime? SaleDate,
     Guid? BankAccountId,
     Guid? PaymentAccountId,
-    string? Note);
+    string? Note,
+    // คีย์กันกดซ้ำของหน้าจอ (สร้างใหม่ทุกครั้งที่เปิดหน้าขาย) — ส่งซ้ำด้วยคีย์เดิม = ได้บัตร/ใบเดิม ไม่ออกใบใหม่
+    Guid? ClientRequestId = null);
 
 /// <summary>เปิดบัตรจากเอกสารขายที่ออกแล้ว (ช่องทางอื่น / ทางกู้เมื่อเปิดบัตรหลังออกใบไม่สำเร็จ) — ใบต้องมีบรรทัดลงผังหนี้สินรายได้รับล่วงหน้า</summary>
 public record ActivateCreditPassRequest(Guid PackageId, Guid DocumentId, string? Note);
@@ -116,7 +118,7 @@ public record CreditBookingResponse(
 
 public record CreditTrainerOption(Guid Id, string Name);
 
-public record CreditExpiryRunResult(int Expired, int SkippedWithReservations, decimal BreakageRecognized, List<string> Messages);
+public record CreditExpiryRunResult(int Expired, int SkippedWithReservations, int Failed, decimal BreakageRecognized, List<string> Messages);
 
 // ===== สัญญาบางกับเครื่องจองภายนอก (ICreditBookingLedger) =====
 /// <summary>กันเครดิตให้การจองจากเครื่องจองภายนอก (เช่น <c>CmsBookingService</c>) — <c>ExternalRef</c> ไม่ซ้ำต่อบริษัท ·

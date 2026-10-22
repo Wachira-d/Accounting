@@ -5552,7 +5552,11 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 | หมดอายุ | Dr 21713 · Cr 42000 ส่วนคงเหลือทั้งหมด (breakage) | `CourseCreditExpiryJob` (JobLock) + ปุ่ม · บัตรที่มีการจองค้างไม่ปิดเอง (ป้ายเตือน) |
 
 **Invariants**: `ContractAmount` = ยอดสุทธิที่ใบขายลง 21713 จริง (อ่านกลับจากบรรทัด) · `RecognizedAmount` = Σ สมุดเครดิต (Consume+Expire) = Σ JE รับรู้ของบัตร ·
-หมดอายุ/ใช้ครบ ⇒ `RecognizedAmount = ContractAmount` · ใบขายถูกยกเลิก/มีใบลดหนี้ ⇒ จอง/ตัด/ปิดหมดอายุถูกบล็อก (คืนเงิน/ยกเลิกบัตร = backlog B3) ·
+หมดอายุ/ใช้ครบ ⇒ `RecognizedAmount = ContractAmount` · ค้างในหนี้สิน = สัญญา − รับรู้ − คืน (`RefundedAmount`) ·
+**ด่านเอกสาร (ฝ่ายค้านรอบ 1 · `Helpers/CreditPassDocumentRule` ผ่าน `CreditPassDocumentHook` ในธุรกรรมของ DocumentService)**: ยกเลิกใบขาย — บัตรยังไม่ใช้เลย ⇒ ยกเลิกได้ + ปิดบัตร ·
+ใช้/จองแล้ว ⇒ บล็อก 409 (ทางไปต่อ: ใบลดหนี้ส่วนที่ยังไม่ใช้) · ใบลดหนี้อ้างใบขาย — ยอดสุทธิ = ส่วนที่ยังไม่รับรู้ ±0.01 + บรรทัดลงผังรายได้รับล่วงหน้า + ไม่มีจองค้าง ⇒ ปิดบัตร
+(`RefundedAmount`) · อื่น ๆ ⇒ บล็อกพร้อมยอดที่ออกได้ · ยกเลิกใบลดหนี้ที่ปิดบัตร ⇒ บล็อก · เปิดบัตรจากใบ = ยอด **Σ(Cr−Dr) ของ JE ที่มีผลบนผังรายได้รับล่วงหน้า** (บาท) +
+ห้ามซ้ำในสายเอกสาร (ต้นทาง/ลูก/พี่น้อง) · ขายกันกดซ้ำด้วย `ClientRequestId` (session lock + ใบเดิมที่ประทับ key ใน Reference) · อนุมัติล้ม ⇒ ลบใบร่าง ·
 **ยังไม่ต่อ**: บิล POS ลง 41000 เสมอ (ขายคอร์สผ่าน POS = backlog B1) · ร้านออนไลน์ (B2)
 
 **ตาราง**: CreditPackages · CreditPasses · CreditLedgerEntries · CreditClassSessions · CreditClassBookings (`DatabaseMigrationHelper.CourseCreditStatements`)

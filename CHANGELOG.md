@@ -5335,3 +5335,7 @@ _2026-10-22 ทีม L — คอร์ส / Class Credits / Hour Pass (`docs/C
 จอง = กันเครดิต · มาเรียน/no-show/ยกเลิกช้า = Dr 21713 Cr 42000 ผ่าน JournalEntryBuilder (`Helpers/CourseCreditMath.RecognizeOnUse` — ปัด AwayFromZero · ครั้งสุดท้ายรับเศษ) ·
 หมดอายุ = breakage (`CourseCreditExpiryJob`) · สัญญาบาง `ICreditBookingLedger` ให้เครื่องจองของทีม B · หน้า `/pages/course-credits.html` · เทสต์ `CourseCreditMathTests` ·
 backlog: ขายผ่าน POS/ร้านออนไลน์ · คืนเงิน/ยกเลิกบัตร_
+
+_2026-10-22 ทีม L ฝ่ายค้านรอบ 1: ยกเลิกใบขาย/ใบลดหนี้ที่ผูกบัตรคอร์สผ่านด่าน `Helpers/CreditPassDocumentRule` (hook `CreditPassDocumentHook` ในธุรกรรมของ
+DocumentService — ใช้แล้ว ⇒ บล็อก · ยังไม่ใช้ ⇒ ปิดบัตร · ลดหนี้ได้เฉพาะส่วนที่ยังไม่รับรู้ทั้งก้อน) · เปิดบัตรยึดยอด JE + ห้ามซ้ำในสายเอกสาร · กันจองซ้ำต่อ ref
+(advisory lock + unique index) · ขายกันกดซ้ำ + ลบใบร่างเมื่ออนุมัติล้ม · ล็อกครูต่อวัน · งานหมดอายุไม่หยุดทั้งรอบ · เทสต์ `CreditPassDocumentRuleTests`_

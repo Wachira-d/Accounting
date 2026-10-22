@@ -61,7 +61,10 @@ public class CourseCreditExpiryJob : BackgroundService
                 using var scope = _services.CreateScope();
                 var svc = scope.ServiceProvider.GetRequiredService<ICourseCreditService>();
                 var r = await svc.ExpireDueAsync(companyId, "system:course-credit-expiry", ct);
-                if (r.Expired > 0 || r.SkippedWithReservations > 0)
+                if (r.Failed > 0)
+                    _logger.LogError("บริษัท {Cid}: ปิดบัตรหมดอายุล้ม {F} ใบ (สำเร็จ {N} · ข้ามเพราะจองค้าง {S}) — {Msgs}",
+                        companyId, r.Failed, r.Expired, r.SkippedWithReservations, string.Join(" | ", r.Messages));
+                else if (r.Expired > 0 || r.SkippedWithReservations > 0)
                     _logger.LogInformation("บริษัท {Cid}: ปิดบัตรหมดอายุ {N} ใบ (breakage {Amt:N2}) · ข้าม {S} ใบ",
                         companyId, r.Expired, r.BreakageRecognized, r.SkippedWithReservations);
             }
