@@ -283,6 +283,33 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<ProfitAndLossResponse>(true, result));
     }
 
+    /// <summary>งบกำไรขาดทุนเปรียบเทียบ (ทีม M) — <c>granularity</c> = month · quarter · year (ไตรมาส/ปีตามรอบบัญชีของบริษัท) ·
+    /// <c>comparePriorYear</c> = เพิ่มช่วงเดียวกันปีก่อน · ทุกคอลัมน์มาจากตัวคำนวณเดียวกับ <c>reports/profit-loss</c></summary>
+    [HttpGet("reports/profit-loss/compare")]
+    public async Task<ActionResult<ApiResponse<PnlComparisonResponse>>> GetProfitAndLossComparison(
+        Guid companyId, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null, [FromQuery] string? granularity = "month",
+        [FromQuery] bool comparePriorYear = false,
+        [FromQuery] Guid? projectId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? dimensionId = null)
+    {
+        if (!PnlComparison.TryParseGranularity(granularity, out var g))
+            return BadRequest(new ApiResponse<PnlComparisonResponse>(false, null, "granularity ต้องเป็น month / quarter / year"));
+        var result = await _accountingService.GetProfitAndLossComparisonAsync(companyId, fromDate, toDate, g, comparePriorYear, projectId, branchId, dimensionId);
+        return Ok(new ApiResponse<PnlComparisonResponse>(true, result));
+    }
+
+    /// <summary>drill-down ช่องตัวเลขของงบกำไรขาดทุน → รายการ JE ของผังในช่วง + ลิงก์เอกสารต้นทาง (สิทธิ์ปิดบังเดียวกับบัญชีแยกประเภท)</summary>
+    [HttpGet("reports/profit-loss/drilldown")]
+    public async Task<ActionResult<ApiResponse<PnlDrilldownResponse>>> GetProfitAndLossDrilldown(
+        Guid companyId, [FromQuery] Guid accountId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromQuery] Guid? projectId = null, [FromQuery] Guid? branchId = null, [FromQuery] Guid? dimensionId = null,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 100)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var result = await _accountingService.GetProfitAndLossDrilldownAsync(companyId, userId, accountId, fromDate, toDate,
+            projectId, branchId, dimensionId, page, pageSize);
+        return Ok(new ApiResponse<PnlDrilldownResponse>(true, result));
+    }
+
     /// <summary>Lean (revenue, expense, net) for a date window — used by the
     /// Simple Mode home page so it doesn't pay for the full P&L hydration
     /// (Lines × Account joins). Server-aggregates with a single GROUP BY.</summary>

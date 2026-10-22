@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **612 ไฟล์ · 6,004 `[Fact]` + 994 `[Theory]` (4,694 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **615 ไฟล์ · 6,023 `[Fact]` + 994 `[Theory]` (4,694 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6412,3 +6412,16 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | YER-12 | ปิดงวด ธ.ค. + ต.ค. ชั่วคราว แล้วปิดปี 2024 | ปิดได้ (เดิมล้ม "งวดถูกปิดแล้ว") · ทุกงวดล็อก · audit `year-end-close-through-soft-closed-period` เฉพาะ ธ.ค. · chain สะอาด | ✅ `Db/YearEndReopenDbTests` |
 | YER-13 | ตัวตัดสิน (pure) | ทุกด่านล้มพร้อมทางไปต่อ · ลำดับด่าน · เหตุผลว่าง/ช่องว่าง · ชนิดแบบที่ต้องรับทราบ (RD_CIT/DBD Filed/Accepted เท่านั้น) · ป้าย/เลขอ้างอิง · ข้อความด่านใบปิด/เปิดงวดเดี่ยวชี้ปุ่ม ไม่อ้าง TAS 8 · สถานะ 409/404/400 | ✅ `YearEndReopenRuleTests` |
 | YER-14 | ตัดด่านในโค้ด (ทิ้งผลตัวตัดสิน · ถอดล็อก · ถอดด่านเจ้าของ · ยกเลิกแถวนำเข้า · กลับใบผ่านสมุดรายวัน · ถอดการเปิดงวด ธ.ค.) | `tools/required_call_site_check.py` ฟ้องทุกเคส (REO1–REO6) · จัดรูปแบบใหม่ไม่ฟ้อง (REO7) | ✅ checker self-test |
+
+## PNL-CMP — งบกำไรขาดทุนเปรียบเทียบ + drill-down (ทีม M · 2026-10-22 · `Helpers/PnlComparison` · `Helpers/JournalSourceLink`)
+
+| ID | สถานการณ์ | คาดหวัง (เทสต์) |
+| --- | --- | --- |
+| PNL-CMP-01 | รายเดือน/ไตรมาส/ปี ช่วงกลางเดือน · รอบบัญชี เม.ย./ต.ค./ปฏิทิน (0 = ม.ค.) | คอลัมน์ต่อกันพอดี ไม่ทับไม่เว้น · ไตรมาส 1 ของรอบ เม.ย. = เม.ย.–มิ.ย. · หัว/ท้ายไม่เต็มช่วงติด * (`PnlComparisonTests`) |
+| PNL-CMP-02 | ช่วงกลับด้าน · เกิน 36 คอลัมน์ | ข้อความถึงผู้ใช้ (BusinessRuleException) · ทิศตรงข้าม: 36 เดือนพอดีผ่าน · ช่วงเดียวกันรายปีผ่าน |
+| PNL-CMP-03 | ช่วงเดียวกันปีก่อนของ ก.พ. · % ฐานศูนย์/ติดลบ | 1–28 ก.พ. 2568 → 1–29 ก.พ. 2567 · ฐาน 0 = null ("—") · ปัด AwayFromZero |
+| PNL-CMP-04 | ฐานจริง: ร่าง · ใบยกเลิก+ใบกลับรายการ · ใบปิดบัญชี · บริษัทอื่น · สาขา | ผลรวมคอลัมน์ทุกความละเอียด = `GetProfitAndLossAsync` ทั้งงวด · ร่าง/ปิดบัญชี/บริษัทอื่นไม่นับ (`PnlComparisonDbTests`) |
+| PNL-CMP-05 | drill-down ทุกช่องทุกผัง | ผลรวมรายการ = ตัวเลขในช่อง (รวมเดือนที่มีใบปิดบัญชี = 0) · แบ่งหน้าแล้วรวม/จำนวนคงที่ |
+| PNL-CMP-06 | เอกสารต้นทาง: เอกสาร · รอบเงินเดือน · กลับรายการ · บันทึกมือ · อ้างเอกสารที่ไม่พบ · ซ่อนตามสิทธิ์ | ลิงก์ไปหน้าของแหล่งนั้น · ไม่มีเอกสาร = ป้าย "ไม่มีเอกสารต้นทาง" ไม่มีลิงก์ · ซ่อน = ไม่บอกชนิด (`JournalSourceLinkTests`) |
+| PNL-CMP-07 | ส่งออกมุมมองเปรียบเทียบ | คอลัมน์ต่อช่วง + รวม + ปีก่อน + % · แถวท้าย = กำไรสุทธิ (ค่าเดียวกับหน้า) |
+| PNL-CMP-08 | (มือ) หน้า reports.html แท็บงบกำไรขาดทุน มุมมองรายเดือน → คลิกตัวเลข → คลิกเลขใบสำคัญ/เอกสารต้นทาง | เปิด journals.html?entryId= / documents.html?openDoc= / pos-reports.html?orderId= / payroll.html?runId= / expense.html?claimId= แล้วรายละเอียดเด้งทันที |

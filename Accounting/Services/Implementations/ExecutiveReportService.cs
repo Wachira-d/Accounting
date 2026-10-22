@@ -25,6 +25,10 @@ public partial class ExecutiveReportService : IExecutiveReportService
             .Where(l => !l.IsDeleted && !l.JournalEntry.IsDeleted)
             .Where(l => l.JournalEntry.CompanyId == companyId)
             .Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
+            // ★ C-T02 (ทีม M 2026-10-22): ผู้เรียกทุกตัวของ query นี้เป็น "ยอดเคลื่อนไหวในช่วง" ของรายได้/ค่าใช้จ่าย/ต้นทุน/ค่าเสื่อม/
+            // งบประมาณเทียบจริง ⇒ ใบปิดบัญชีต้องไม่นับ (เดิมนับ ⇒ หลังปิดปี รายได้/ค่าใช้จ่ายของเดือนสิ้นรอบ + ทั้งปี = 0 ในรายงานผู้บริหาร
+            // ขณะที่งบกำไรขาดทุน/แดชบอร์ดตัดออกแล้ว — ตัวเลขสองชุดสำหรับคำถามเดียว) · ยอดคงเหลือ (GetBalanceAsync) ไม่ใช้ query นี้
+            .Where(l => !l.JournalEntry.IsClosingEntry)
             .Where(l => l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate);
     }
 

@@ -5329,3 +5329,14 @@ _2026-10-22 ทีม G — แท็บ "ตรวจสอบการใช�
 ช่องทางตัดสินที่ `Helpers/DocumentCreationChannel.cs` ตัวเดียว จากหลักฐานที่มีจริง (OriginModule → ตารางผูก FK กลับ → ป้าย CreatedBy ของเส้นระบบ
 → ใบล่าสุดของรายการประจำ) · ไม่มีหลักฐาน (เช่น LINE ที่บันทึกเป็นอีเมล) = "ไม่ทราบ" ไม่เดา. หน้า `/pages/admin-company-usage.html` (ภาพรวมทุกบริษัทต่อเดือน)
 คงเดิม — แท็บใหม่คือมุมเจาะลึกบริษัทเดียวหลายเดือน ไม่ทำซ้ำ. ไม่เปลี่ยน flow เอกสาร (อ่านอย่างเดียว) ⇒ DOCUMENT_FLOW ไม่ขยับ._
+
+_2026-10-22 ทีม M — งบกำไรขาดทุนเปรียบเทียบ + drill-down (เมนู รายงาน & วิเคราะห์ › งบการเงิน › แท็บงบกำไรขาดทุน · ช่อง "มุมมอง"):
+รายเดือน/รายไตรมาส/รายปี (ไตรมาส/ปีตาม `Company.FiscalYearStartMonth` ผ่าน `Helpers/FiscalYear`) + รวม + % เทียบคอลัมน์ก่อน + เทียบช่วงเดียวกันปีก่อน ·
+**ไม่มีสูตรงบใหม่** — ทุกคอลัมน์ = `GetProfitAndLossAsync` ของช่วงนั้น (`AccountingService.PnlCompare.cs`) · ตัวแบ่งช่วง/ประกอบตาราง/แผ่นส่งออก = `Helpers/PnlComparison`
+(ช่วงต่อกันพอดี ⇒ รวม = ยอดทั้งงวด) · drill-down = `GetGeneralLedgerForUserAsync` ของผัง (ตัวกรอง+ปิดบังสิทธิ์เดียวกับ GL) ตัดใบปิดบัญชี ⇒ ผลรวม = ช่อง ·
+เอกสารต้นทางตัดสินที่ `Helpers/JournalSourceLink` (SourceDocumentId → Document · ผูกย้อนกลับ PosOrder/PayrollRun/AssetDepreciation/ExpenseClaim ·
+กลับรายการ → ใบเดิม · ไม่มี = "รายการปรับปรุง/บันทึกด้วยมือ — ไม่มีเอกสารต้นทาง" ไม่แต่งลิงก์) · ส่งออก `accounting/exports/profit-loss-compare` (CSV/Excel MiniExcel) ·
+ลิงก์ตรง `reports.html?report=pnl&mode=month` + ตัวรับ `?orderId=` (pos-reports) `?runId=` (payroll) `?claimId=` (expense) · คู่มือ `report-pnl-compare` ·
+พบ+แก้: `ExecutiveReportService.PostedLinesQuery` นับใบปิดบัญชี (C-T02 หลุด) ⇒ รายงานผู้บริหารเดือนสิ้นรอบ/ทั้งปี = 0 หลังปิดปี · หน้า P&L เดิมไม่ escape ชื่อผัง ·
+พบไม่แก้ (ขอบเขตทีมอื่น): `TaxService` (CIT) + `FpaService` นับเฉพาะ Posted ไม่นับ Reversed ขณะที่ใบกลับรายการเป็น Posted ⇒ ใบที่ยกเลิกถูกหักซ้ำ ·
+`ExecutiveReportService` trend ใช้ไตรมาส/ปีปฏิทิน ไม่ใช่รอบบัญชี. ไม่เปลี่ยน flow เอกสาร ⇒ DOCUMENT_FLOW ไม่ขยับ._

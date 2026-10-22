@@ -702,6 +702,8 @@ const API = {
       trialBalance: (q = '') => API.get(`${base}/accounting/reports/trial-balance${q}`),
       balanceSheet: (q = '') => API.get(`${base}/accounting/reports/balance-sheet${q}`),
       profitLoss: (q = '') => API.get(`${base}/accounting/reports/profit-loss${q}`),
+      profitLossCompare: (q = '') => API.get(`${base}/accounting/reports/profit-loss/compare${q}`),
+      profitLossDrilldown: (q = '') => API.get(`${base}/accounting/reports/profit-loss/drilldown${q}`),
       cashFlow: (q = '') => API.get(`${base}/accounting/reports/cash-flow${q}`),
       getFiscalPeriods: () => API.get(`${base}/accounting/fiscal-periods`),
       createFiscalPeriod: (d) => API.post(`${base}/accounting/fiscal-periods`, d),
