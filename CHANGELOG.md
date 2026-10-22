@@ -5406,3 +5406,13 @@ _รอบ 205 ทีม I (สิทธิ์และ License): (1) ผู้�
 _รอบ 205 ทีม I ฝ่ายค้าน: ตัวซ่อมตั้งเองเฉพาะผู้สร้างที่ active (ตัดกฎ "สมาชิกคนเดียว") · ตัดผู้ดูแลแพลตฟอร์มที่ไม่ใช่ผู้สร้างจากตัวเลือก/ด่าน assign-owner ·
 สร้างผู้ใช้เป็น Owner เดินด่าน+audit เดียวกัน · ล็อก pg_advisory_xact_lock ต่อบริษัท · `LastOwnerGuard` นับเฉพาะ Owner ลูกค้า · โอนเจ้าของจากแอดมินถอด/ลดเป็น support
 (`OwnershipTransferPolicy.ActorRowAfter`) · audit การอ่านทีมข้ามบริษัทของแอดมิน · migration id เมนูเก่าในบทบาทจากแม่แบบ._
+
+_2026-10-22 ทีม L — คอร์ส / Class Credits / Hour Pass (`docs/COURSE_CREDIT_DESIGN.md` · DOCUMENT_FLOW §6.6): แพ็กเกจ (ครั้ง/ชั่วโมง · อายุ · ราคา/VAT ·
+1-on-1/กลุ่ม · ครูเลือกเอง/ระบบกำหนด · บริการที่ใช้ได้ · นโยบายยกเลิก) · ขาย = ใบกำกับภาษี/ใบเสร็จผ่าน DocumentService เดิม บรรทัดลง 21713 ค่าบริการรับล่วงหน้า ·
+จอง = กันเครดิต · มาเรียน/no-show/ยกเลิกช้า = Dr 21713 Cr 42000 ผ่าน JournalEntryBuilder (`Helpers/CourseCreditMath.RecognizeOnUse` — ปัด AwayFromZero · ครั้งสุดท้ายรับเศษ) ·
+หมดอายุ = breakage (`CourseCreditExpiryJob`) · สัญญาบาง `ICreditBookingLedger` ให้เครื่องจองของทีม B · หน้า `/pages/course-credits.html` · เทสต์ `CourseCreditMathTests` ·
+backlog: ขายผ่าน POS/ร้านออนไลน์ · คืนเงิน/ยกเลิกบัตร_
+
+_2026-10-22 ทีม L ฝ่ายค้านรอบ 1: ยกเลิกใบขาย/ใบลดหนี้ที่ผูกบัตรคอร์สผ่านด่าน `Helpers/CreditPassDocumentRule` (hook `CreditPassDocumentHook` ในธุรกรรมของ
+DocumentService — ใช้แล้ว ⇒ บล็อก · ยังไม่ใช้ ⇒ ปิดบัตร · ลดหนี้ได้เฉพาะส่วนที่ยังไม่รับรู้ทั้งก้อน) · เปิดบัตรยึดยอด JE + ห้ามซ้ำในสายเอกสาร · กันจองซ้ำต่อ ref
+(advisory lock + unique index) · ขายกันกดซ้ำ + ลบใบร่างเมื่ออนุมัติล้ม · ล็อกครูต่อวัน · งานหมดอายุไม่หยุดทั้งรอบ · เทสต์ `CreditPassDocumentRuleTests`_

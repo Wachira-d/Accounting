@@ -199,4 +199,16 @@ public static class AdvisoryLockKey
     /// <summary>ปิดปี · ยกยอดด้วยมือ · ซ่อมยอดยกมา — ผูก companyId · ใช้ผ่าน <c>OpeningRoll.LockKey</c> เท่านั้น (ฝ่ายค้านรอบส่งออก 2026-10-15
     /// P1-1 + รอบ 2 P2-7: เดิมล็อกแค่การซ่อม ⇒ ปิดปี/ยกยอดด้วยมือพร้อมการซ่อมเขียนงวดเดียวกันทับกัน) · xact lock เพราะทุกทางอยู่ในธุรกรรมเดียว</summary>
     public const string OpeningRoll = "opening-roll";
+
+    /// <summary>เลขบัตรคอร์ส/เครดิต (ทีม L · <c>CourseCreditService</c>) — part = prefix "CP-yyyyMM-" · ผูก companyId</summary>
+    public const string CreditPassSequence = "credit-pass-seq";
+
+    /// <summary>กันเครดิตจากเครื่องจองภายนอก — part = externalRef · ผูก companyId (ฝ่ายค้านทีม L ข้อ 3: ref เดียวกันสองคำขอพร้อมกัน = จองซ้ำ)</summary>
+    public const string CreditHold = "credit-hold";
+
+    /// <summary>ตารางสอนของครูฝึก — part = "{employeeId}:{yyyyMMdd วันไทย}" · ผูก companyId (ฝ่ายค้านทีม L ข้อ 5: ตรวจว่าง→จอง ซ้อนกันสองคำขอ)</summary>
+    public const string CreditTrainerDay = "credit-trainer-day";
+
+    /// <summary>ขายคอร์ส 1 คำขอ (idempotency key ของหน้าจอ) — part = key · session lock ผ่าน <c>JobLock.RunExclusiveAsync</c> ครอบการออกใบ+อนุมัติ+เปิดบัตร</summary>
+    public const string CreditSale = "credit-sale";
 }

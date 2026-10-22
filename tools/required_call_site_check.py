@@ -9040,6 +9040,47 @@ RULES += [
          why="ฝ่ายค้านรอบ 205 ข้อ 5: ล้มหลังสร้างใบ ⇒ ผูกใบกลับ (กันใบกำพร้า/ออกซ้ำ)"),
 ]
 
+# ทีม L ฝ่ายค้านรอบ 1 — บัตรคอร์ส/เครดิต: ยกเลิกใบขาย/ลดหนี้ต้องผ่านด่านบัตร · เปิดบัตรยึดยอด JE · กันจองซ้ำ/ครูซ้อน · ขายกันกดซ้ำ
+CC_SVC = "Services/Implementations/CourseCredit/CourseCreditService.cs"
+CC_HOOK = "Services/Implementations/CourseCredit/CreditPassDocumentHook.cs"
+RULES += [
+    dict(file=DOC, method="VoidDocumentAsync",
+         must=["CreditPassDocumentHook.OnVoidAsync(_db, companyId, doc,"],
+         before=[("CreditPassDocumentHook.OnVoidAsync(", "await transaction.CommitAsync()")],
+         why="ยกเลิกใบขายบัตรคอร์สที่ใช้แล้ว = 21713 ติดลบ + รายได้ที่รับรู้ไม่ถูกกลับ ⇒ ด่านในธุรกรรมเดียวกับการกลับรายการ"),
+    dict(file=DOC, method="ApplySourceDocumentAdjustmentsAsync",
+         must=["CreditPassDocumentHook.OnCreditNoteApprovedAsync(_db, companyId, doc, source,"],
+         why="ใบลดหนี้อ้างใบขายบัตรคอร์ส ⇒ ได้เฉพาะส่วนที่ยังไม่รับรู้ทั้งก้อน + ปิดบัตรพร้อมกัน"),
+    dict(file=CC_HOOK, method="OnVoidAsync",
+         must=["CreditPassDocumentRule.OnVoidSale(", "CreditPassDocumentRule.OnVoidCreditNote(", "LockLivePassAsync("],
+         why="ตัวตัดสินเดียว + ล็อกแถวบัตรก่อนตัดสิน"),
+    dict(file=CC_HOOK, method="OnCreditNoteApprovedAsync",
+         must=["CreditPassDocumentRule.OnCreditNote(", "LockLivePassAsync("],
+         why="ตัวตัดสินเดียว + ล็อกแถวบัตรก่อนตัดสิน"),
+    dict(file=CC_HOOK, method="Apply",
+         must_re=[r"DocAction\.Block\)\s*throw new BusinessRuleException"],
+         why="ผลบล็อกต้องโยนจริง (ไม่ใช่ log แล้วเดินต่อ)"),
+    dict(file=CC_SVC, method="OpenPassFromDocumentAsync",
+         must=["JournalLiabilityCreditsAsync(companyId, doc.Id, ct)", "CreditPassDocumentRule.ActivateProblem("],
+         forbid=["_db.DocumentLines"],
+         why="ยอดสัญญาจาก JE ที่ Cr ผังรายได้รับล่วงหน้าจริง (ใบเสร็จตัดลูกหนี้ห้ามเปิดบัตร) + ห้ามเปิดซ้ำในสายเอกสาร"),
+    dict(file=CC_SVC, method="HoldAsync",
+         must=["AdvisoryLockKey.CreditHold"],
+         before=[("AdvisoryLockKey.CreditHold", "LockPassAsync(")],
+         must_re=[r"LockPassAsync\([\s\S]*b\.ExternalRef == extRef"],
+         why="ref เดียวกันสองคำขอพร้อมกันต้องรอกัน + ตรวจซ้ำหลังล็อกบัตร"),
+    dict(file=CC_SVC, method="NewOneOnOneSessionAsync",
+         before=[("LockTrainerDaysAsync(", "TrainerBusyAsync("), ("LockTrainerDaysAsync(companyId, eligible", "PickTrainer(")],
+         why="ตรวจครูว่าง→สร้างรอบ ต้องอยู่ใต้ล็อกครูต่อวัน"),
+    dict(file=CC_SVC, method="CreateSessionAsync",
+         before=[("LockTrainerDaysAsync(", "TrainerBusyAsync(")],
+         why="ตรวจครูว่าง→สร้างรอบ ต้องอยู่ใต้ล็อกครูต่อวัน"),
+    dict(file=CC_SVC, method="SellAsync",
+         must=["JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.CreditSale"],
+         why="ขายคอร์สกันกดซ้ำด้วยคีย์ของหน้าจอ"),
+]
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

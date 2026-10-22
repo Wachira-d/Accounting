@@ -9635,6 +9635,8 @@ public partial class DocumentService : IDocumentService
                     await transaction.RollbackAsync();
                     return;
                 }
+                // ทีม L ฝ่ายค้านข้อ 1: ใบขายบัตรคอร์สที่ใช้แล้ว ⇒ บล็อก · ยังไม่ใช้ ⇒ ปิดบัตรในธุรกรรมนี้ · ใบลดหนี้ที่ปิดบัตรแล้ว ⇒ บล็อก
+                await CreditPassDocumentHook.OnVoidAsync(_db, companyId, doc, doc.UpdatedBy ?? "document-void");
 
                 // รอบ 198 ทีม S4 (review198-S3 S3-8): ตรวจด่าน C-5 ซ้ำใต้ธุรกรรม — อ่านแถวรอบโอน FOR SHARE ⇒ ถ้าการลงบัญชีกำลังประทับ Posted
                 // (ถือ FOR UPDATE ระหว่างตรวจความครบ→commit) เส้นนี้รอแล้วเห็นสถานะใหม่ · เดิมตรวจก่อนเปิดธุรกรรมอย่างเดียว ⇒ รอบโอน Posted พร้อมชิ้นที่หาย
@@ -11925,6 +11927,8 @@ public partial class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     $"ยอดใบลดหนี้รวม ({cnSiblingSum + doc.TotalAmount:N2}) เกินยอดเอกสารต้นฉบับ " +
                     $"{source.DocumentNumber} ({source.TotalAmount:N2}) — §86/10 ลดหนี้เกินยอดเดิมไม่ได้");
+            // ทีม L ฝ่ายค้านข้อ 1: ใบต้นทางเป็นใบขายบัตรคอร์ส ⇒ ลดหนี้ได้เฉพาะส่วนที่ยังไม่รับรู้ทั้งก้อน + ปิดบัตรในธุรกรรมนี้ (ตัวตัดสิน CreditPassDocumentRule)
+            await CreditPassDocumentHook.OnCreditNoteApprovedAsync(_db, companyId, doc, source, doc.UpdatedBy ?? "document-approve");
 
             // CN: validation depends on source state.
             // - If source still has BalanceDue > 0: CN reduces AR/AP, capped by BalanceDue

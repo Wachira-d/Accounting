@@ -5581,6 +5581,30 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 
 **ตาราง (CREATE TABLE IF NOT EXISTS ใน `DatabaseMigrationHelper`)**: LodgingProperties · LodgingRoomTypes · LodgingUnits · LodgingRatePlans · LodgingSeasons · LodgingRateOverrides · LodgingCancellationPolicies · LodgingExtras · LodgingReservations · LodgingReservationRooms · LodgingReservationExtras · LodgingFolioCharges · LodgingHousekeepingTasks · LodgingGuestRequests
 
+### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
+
+**ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·
+เครื่องจองภายนอก (CMS ทีม B) → `ICreditBookingLedger` (Hold/Release/Settle อ้าง `externalRef`) · ตัวเลขทั้งหมด `Helpers/CourseCreditMath`
+
+| ขั้น | เอกสาร / JE | หมายเหตุ |
+| --- | --- | --- |
+| ขาย (`SellAsync`) | `IDocumentService.CreateDocumentAsync` (OriginModule `CourseCredit`) + `ApproveDocumentAsync(SystemWorkflow)` — จด VAT: **TaxInvoice + IssuedAsCashReceipt** (VAT 7/0) · ยกเว้น §81 / ไม่จด VAT: **Receipt** · บรรทัดเดียว `AccountId` = 21713 ⇒ AutoPost เดิม: Dr เงินสด/ธนาคาร · Cr 21713 (สุทธิ) · Cr 21911 | VAT ครบตอนขาย (§78/1 วันรับเงิน) · ไม่มี posting layer ใหม่ · บัตรเปิดหลังใบอนุมัติ (ล้ม ⇒ ข้อความบอกเลขใบ + ใช้ "เปิดบัตรจากเอกสารขาย") |
+| เปิดบัตรจากใบเดิม (`ActivateFromDocumentAsync`) | ไม่สร้าง JE · ใบต้องอนุมัติแล้ว + มีบรรทัดผังหนี้สิน (หรือผังของแพ็กเกจ) · ใบเดียว = บัตรเดียว | ใบที่ลงรายได้แล้ว ⇒ ปฏิเสธ (กันรับรู้ซ้ำ) |
+| จอง | ไม่มี JE — กันเครดิต (`CreditsReserved`) | ด่าน `CannotBookReason` · รอบกลุ่มล็อก capacity · 1-on-1 สร้างรอบ capacity 1 + ครู (เลือก/ระบบกำหนด) |
+| มาเรียน / no-show / ยกเลิกช้า | `JournalEntryBuilder`: Dr 21713 · Cr 42000 = `RecognizeOnUse` (ราคาต่อเครดิตปัด AwayFromZero · เครดิตสุดท้ายรับส่วนที่เหลือทั้งหมด) | วันที่ = วันให้บริการ · งวดปิด ⇒ ลงวันนี้ + หมายเหตุในสมุดเครดิต · ไม่มี VAT |
+| ยกเลิกทันเวลา / ร้านยกเลิก | ไม่มี JE — คืนเครดิต | นโยบาย `FreeCancelHours` ตรึงลงบัตรตอนขาย |
+| หมดอายุ | Dr 21713 · Cr 42000 ส่วนคงเหลือทั้งหมด (breakage) | `CourseCreditExpiryJob` (JobLock) + ปุ่ม · บัตรที่มีการจองค้างไม่ปิดเอง (ป้ายเตือน) |
+
+**Invariants**: `ContractAmount` = ยอดสุทธิที่ใบขายลง 21713 จริง (อ่านกลับจากบรรทัด) · `RecognizedAmount` = Σ สมุดเครดิต (Consume+Expire) = Σ JE รับรู้ของบัตร ·
+หมดอายุ/ใช้ครบ ⇒ `RecognizedAmount = ContractAmount` · ค้างในหนี้สิน = สัญญา − รับรู้ − คืน (`RefundedAmount`) ·
+**ด่านเอกสาร (ฝ่ายค้านรอบ 1 · `Helpers/CreditPassDocumentRule` ผ่าน `CreditPassDocumentHook` ในธุรกรรมของ DocumentService)**: ยกเลิกใบขาย — บัตรยังไม่ใช้เลย ⇒ ยกเลิกได้ + ปิดบัตร ·
+ใช้/จองแล้ว ⇒ บล็อก 409 (ทางไปต่อ: ใบลดหนี้ส่วนที่ยังไม่ใช้) · ใบลดหนี้อ้างใบขาย — ยอดสุทธิ = ส่วนที่ยังไม่รับรู้ ±0.01 + บรรทัดลงผังรายได้รับล่วงหน้า + ไม่มีจองค้าง ⇒ ปิดบัตร
+(`RefundedAmount`) · อื่น ๆ ⇒ บล็อกพร้อมยอดที่ออกได้ · ยกเลิกใบลดหนี้ที่ปิดบัตร ⇒ บล็อก · เปิดบัตรจากใบ = ยอด **Σ(Cr−Dr) ของ JE ที่มีผลบนผังรายได้รับล่วงหน้า** (บาท) +
+ห้ามซ้ำในสายเอกสาร (ต้นทาง/ลูก/พี่น้อง) · ขายกันกดซ้ำด้วย `ClientRequestId` (session lock + ใบเดิมที่ประทับ key ใน Reference) · อนุมัติล้ม ⇒ ลบใบร่าง ·
+**ยังไม่ต่อ**: บิล POS ลง 41000 เสมอ (ขายคอร์สผ่าน POS = backlog B1) · ร้านออนไลน์ (B2)
+
+**ตาราง**: CreditPackages · CreditPasses · CreditLedgerEntries · CreditClassSessions · CreditClassBookings (`DatabaseMigrationHelper.CourseCreditStatements`)
+
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 
 | Gate | Where | กระทำ |
