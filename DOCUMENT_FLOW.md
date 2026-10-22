@@ -5419,6 +5419,20 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
   บริษัทมีที่พักที่ยังไม่ผูกเว็บ ⇒ **ไม่สร้าง** + ข้อความเสนอผูกที่พักเดิม · ด่าน "ที่พักหลายแห่ง" `Helpers/LodgingPropertyQuota.BlockReasonAsync`
   (ตัวเดียวกับ `LodgingService.CreatePropertyAsync`) กัน ⇒ ไม่สร้าง + เหตุผล · ผูกที่พักเดิมกับเว็บ = `PUT /lodging/properties/{id}` ด้วย `siteId`
   (ผ่าน `EnsureSiteNotBoundElsewhereAsync` อยู่แล้ว — ไม่มี endpoint ใหม่)
+- **เมนู "ห้องพัก" ≠ เมนู "จอง" (2026-10-22 ทีม D)**: `/rooms` (+ `/rooms/{slug|id}` ห้องเดียว) ⇒ `Store.renderLodgingRoomsPage` — รายละเอียดเต็มต่อประเภทห้อง
+  (แกลเลอรีหลายรูป + lightbox · คำอธิบาย · ขนาด ตร.ม. · ชนิดเตียง · วิว · `capacityLabel` · `childrenLabel` · อาหารเช้า · สิ่งอำนวยความสะดวก ·
+  `houseRuleLabels` สูบบุหรี่/สัตว์เลี้ยง · `roomNote` · เวลาเช็คอิน/เอาต์ของที่พัก · นโยบายยกเลิก · `fromRateLabel`) + ปุ่ม "จองห้องนี้" ⇒ `/booking?roomType=<id>` ·
+  `/booking` `/book` = flow ค้นหา/จองเดิม — อ่าน `roomType` (id หรือ slug · ไม่เจอ = ไม่เลือก) ⇒ ป้าย "ห้องที่เลือก" + การ์ดขึ้นก่อน + หลังค้นหาครั้งแรกที่ห้องนั้นว่าง
+  เลือกให้ 1 ห้อง **ครั้งเดียว** (ค้นหาใหม่ไม่เลือกทับค่าแขก · ไม่ว่าง = บอกตรง ๆ ไม่เลือกห้องอื่นแทน) · เดิมทั้งสองเมนูวาดหน้าเดียวกัน ·
+  **ป้ายเซิร์ฟเวอร์** (`LodgingPublicRoomLabels`): `HouseRuleLabels` (บอกสองทิศเสมอ) · `ChildrenLabel` (0 = ไม่มีป้าย) · `CancellationSummary` จากนโยบายของแผนตั้งต้น
+  (`PolicyFor` ตัวเดียวกับใบเสนอราคา · แผนไม่คืนเงิน ⇒ "ไม่คืนเงินทุกกรณี") ความหมายตรง `LodgingPricingEngine.CancellationFee` (กฎ {d,p} = ยกเลิกล่วงหน้า**มากกว่า** d วัน) ·
+  ช่องตั้งค่าใหม่ของประเภทห้อง `SmokingAllowed` · `PetsAllowed` · `RoomNote` (entity + `ADD COLUMN IF NOT EXISTS` default false/NULL + DTO echo + hydrate
+  `lodging-settings.html` + `LodgingPublicProjection` ส่งต่อ) — เทสต์ `LodgingRoomDetailPageTests`
+- **วันเข้าพัก — ตัวช่วยเดียว `Store.lgDateSync` (2026-10-22 ทีม D)**: ทุกฟอร์มวันที่ฝั่งแขก (ฟอร์มค้นหาหน้าจอง · บล็อกปฏิทินจองหน้าแรก · ฟอร์มคำขอจอง CMS ที่มีช่อง
+  `checkIn`/`checkOut`) ติด `data-lg-date` — เลือกเช็คอิน ⇒ เช็คเอาต์ว่างหรือ ≤ เช็คอิน ⇒ วันถัดไป (หลังเช็คอินอยู่แล้วไม่แตะ) · `min` เช็คเอาต์ = เช็คอิน+1 ·
+  ป้าย "N คืน · 22 ต.ค. → 24 ต.ค." (`lgStayLabel`) ในฟอร์มค้นหา · สรุปก่อนจอง · หน้าการจอง (ใช้ `nights` ของเซิร์ฟเวอร์เมื่อมี) · ด่านจริงยังเป็น
+  `LodgingService.ValidateDates` ("วันเช็คเอาต์ต้องหลังวันเช็คอิน" — search/quote/create) · `_todayIso` ใช้วันตามเครื่องแขก (เดิม UTC ⇒ ก่อน 07:00 ได้เมื่อวาน) ·
+  `_dateTh` อ่านวันปฏิทินจากส่วน yyyy-mm-dd (ไม่เลื่อนตามโซนเวลา) · ฟอร์มจอง/หน้าการจองยุบเป็นคอลัมน์เดียวบนจอ ≤ 760px (เดิม inline `1fr 340px` ล้นจอมือถือ)
 - **ล้มดัง (W-08)**: `CreateSiteAsync` คืน `SiteResponse.Warnings` (หน้าตัวอย่าง/บริการจอง/ที่พัก ล้มหรือถูกข้าม) · `ApplyTemplateAsync` คืน `LodgingMessage` ·
   `cms-sites.html` แสดงก่อนพาไปหน้าถัดไป (เดิม `LogWarning` อย่างเดียว)
 

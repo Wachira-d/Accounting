@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **611 ไฟล์ · 5,999 `[Fact]` + 990 `[Theory]` (4,667 `InlineData`)** ณ 2026-10-19 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **612 ไฟล์ · 6,004 `[Fact]` + 990 `[Theory]` (4,667 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -5956,6 +5956,9 @@ EarlyCheckInHours จริงแล้วต้องฟ้อง) · `required
 | LW-12 | snapshot ก่อนรอบ 158 (P2-3) | 5 บล็อกรุ่น d2ad229b^ อยู่ในชุดที่แทน · เว็บใหม่ไม่มี · แก้แม้ตัวเดียว = ไม่แทน | ✅ |
 | LW-13 | IsLodgingSite (P2-4) | Hotel หรือมีที่พักผูก = จริง · สปาไม่มีที่พัก = เท็จ | ✅ |
 | LW-14 | หน้าจอง: คนเสริมแยก + quote ส่งทารก + แผงตามเพดาน (P1-1/P1-2) | ตาม `LodgingOccupancy` · negative 3 แบบ | ✅ `tools/lodging_guest_split_sim.js` |
+| LW-15 | หน้าห้องพัก: ป้ายรายละเอียด (ทีม D 2026-10-22) | กติกาห้องบอกสองทิศ · เด็ก 0 = ไม่มีป้าย · สรุปยกเลิกตรง `CancellationFee` ทุกขั้น (8/7/4/3/0 วัน) · ไม่คืนเงิน/ขั้นเดียว/ไม่มีกฎ · ช่องใหม่ผ่าน projection + ข้อมูลภายในยังถูกตัด | ✅ `LodgingRoomDetailPageTests` |
+| LW-16 | วันเข้าพัก `lgDateSync` | เลือกเช็คอิน ⇒ เช็คเอาต์ว่าง/≤ ⇒ วันถัดไป · หลังอยู่แล้วไม่แตะ · min = +1 · ข้ามเดือน/ปี · ป้าย "N คืน · …" · เช็คเอาต์ ≤ เช็คอิน ⇒ ป้ายเตือน + ค้นหาไม่ส่ง · เซิร์ฟเวอร์ปฏิเสธเอง (`ValidateDates`) | ⏳ manual (เบราว์เซอร์ + จอ 375px) |
+| LW-17 | เมนูห้องพัก → จองห้องนี้ | `/rooms` วาดรายละเอียด · `/rooms/{slug}` ห้องเดียว · ไม่เจอ ⇒ ข้อความ + ลิงก์ทั้งหมด · `/booking?roomType=` ⇒ เลือกให้ 1 ห้องครั้งเดียวเมื่อว่าง · ไม่ว่าง ⇒ บอก · ค้นหาใหม่ไม่เลือกทับ | ⏳ manual |
 
 ---
 

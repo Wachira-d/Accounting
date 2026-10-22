@@ -186,6 +186,20 @@ public class LodgingRoomTypeDto
     public string? BedType { get; set; }
     public decimal? SizeSqm { get; set; }
     public string? ViewType { get; set; }
+    /// <summary>สูบบุหรี่ในห้องได้ (false = ปลอดบุหรี่)</summary>
+    public bool SmokingAllowed { get; set; }
+    /// <summary>รับสัตว์เลี้ยง</summary>
+    public bool PetsAllowed { get; set; }
+    /// <summary>หมายเหตุ/นโยบายเฉพาะห้องที่แขกเห็น (สาธารณะ)</summary>
+    public string? RoomNote { get; set; }
+    /// <summary>response-only (หน้าเว็บสาธารณะ) — ป้ายกติกาห้อง "ห้องปลอดบุหรี่" / "ไม่รับสัตว์เลี้ยง" (<c>LodgingPublicRoomLabels.HouseRuleLabels</c>)</summary>
+    public List<string> HouseRuleLabels { get; set; } = new();
+    /// <summary>response-only — "เด็กพักได้สูงสุด N คน" (<c>LodgingPublicRoomLabels.ChildrenLabel</c>) · null = ไม่ระบุ</summary>
+    public string? ChildrenLabel { get; set; }
+    /// <summary>response-only — นโยบายยกเลิกของแผนราคาตั้งต้นของห้อง (ตัวเลือกเดียวกับใบเสนอราคา · <c>PolicyFor</c>) · null = ไม่มีนโยบาย</summary>
+    public string? CancellationPolicyName { get; set; }
+    /// <summary>response-only — สรุปเงื่อนไขยกเลิก (<c>LodgingPublicRoomLabels.CancellationSummary</c>)</summary>
+    public string? CancellationSummary { get; set; }
     public int StandardOccupancy { get; set; } = 2;
     public int MaxAdults { get; set; } = 2;
     public int MaxChildren { get; set; } = 1;

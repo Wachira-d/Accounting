@@ -7158,6 +7158,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AutoConfirmOnSlip" boolean NOT NULL DEFAULT true;""",
             // โหมดที่ใช้กับใบนั้น (ตรึงตอนสร้าง) — NULL = ใบก่อนรอบนี้ (พฤติกรรมเดิมทุกทาง)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "GuestConfirmMode" integer NULL;""",
+            // 2026-10-22 ทีม D (หน้าห้องพักสาธารณะ) — รายละเอียดห้องที่แขกต้องเห็น: สูบบุหรี่/สัตว์เลี้ยง/หมายเหตุห้อง ·
+            // ค่าตั้งต้น false = ปลอดบุหรี่/ไม่รับสัตว์ (ตรงกับที่ที่พักส่วนใหญ่ใช้ · เดิมไม่มีช่องให้ตั้ง ⇒ ไม่มีของเก่าที่ต้องแปลง)
+            """ALTER TABLE "LodgingRoomTypes" ADD COLUMN IF NOT EXISTS "SmokingAllowed" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "LodgingRoomTypes" ADD COLUMN IF NOT EXISTS "PetsAllowed" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "LodgingRoomTypes" ADD COLUMN IF NOT EXISTS "RoomNote" text NULL;""",
             // 2026-10-02 (ผู้ใช้รายงาน: แขกส่งสลิปแล้ว 500 DbUpdateException) — ไฟล์จากคนนอกระบบ (สลิปแขกที่พัก · สลิปหน้าร้าน · พอร์ทัลลูกค้า)
             // ไม่มีผู้ใช้ ⇒ UploadedByUserId ต้องว่างได้ (เดิม NOT NULL + FK → Users แล้วทางเข้าใส่ Guid.Empty ⇒ ชน FK ทุกครั้ง) · DROP NOT NULL รันซ้ำได้ ·
             // แถว Guid.Empty ที่อาจหลุดเข้าไปในฐานที่ไม่มี FK ⇒ เปลี่ยนเป็น NULL (ความหมายเดิม "ไม่มีผู้ใช้" ทุกผู้อ่าน)

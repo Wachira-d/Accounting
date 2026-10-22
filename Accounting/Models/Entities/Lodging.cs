@@ -181,6 +181,12 @@ public class LodgingRoomType : TenantEntity
     public string? BedType { get; set; }                // "1 King" / "2 Twin"
     public decimal? SizeSqm { get; set; }
     public string? ViewType { get; set; }               // วิวทะเล/สวน/เมือง
+    /// <summary>สูบบุหรี่ในห้องได้ (ค่าตั้งต้น false = ห้องปลอดบุหรี่) — ป้ายบนหน้าห้องพักสาธารณะผ่าน <c>LodgingPublicRoomLabels.HouseRuleLabels</c></summary>
+    public bool SmokingAllowed { get; set; } = false;
+    /// <summary>รับสัตว์เลี้ยงในห้องนี้ (ค่าตั้งต้น false)</summary>
+    public bool PetsAllowed { get; set; } = false;
+    /// <summary>หมายเหตุ/นโยบายเฉพาะประเภทห้องที่แขกเห็น (เช่น "ชั้น 3 ไม่มีลิฟต์") — ไม่ใช่หมายเหตุภายใน</summary>
+    public string? RoomNote { get; set; }
 
     // ── ความจุ ──
     public int StandardOccupancy { get; set; } = 2;     // จำนวนคนที่รวมในราคา
