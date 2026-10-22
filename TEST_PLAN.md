@@ -14,7 +14,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **615 ไฟล์ · 6,036 `[Fact]` + 996 `[Theory]` (4,700 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **616 ไฟล์ · 6,048 `[Fact]` + 999 `[Theory]` (4,715 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
@@ -47,6 +48,7 @@
 | --- | --- | --- |
 | `AuditHashChainTests` (8) | write→verify chain ผ่าน · แก้แถวกลางจับได้ · ลบแถวจับได้จาก PrevHash ขาดตอน · **แก้แล้วคำนวณ hash ใหม่ให้เนียนก็ยังจับได้จากแถวถัดไป** · Action/OldValues/PrevHash ต้องอยู่ใน canonical | control ตาม พ.ร.บ.บัญชี ม.11 ทวิ ที่เคยพังเงียบ (verify ≠ insert) — ทีม QA จัดอันดับ 1 |
 | `CmsHtmlSanitizerTests` (22+6) | XSS payload จริง: script ซ้อน, onerror, `javascript:` หลายรูป (entity/whitespace/ตัวพิมพ์), svg/onload, `data:text/html`, meta refresh, base/link injection · เนื้อหาปกติ (ตาราง/ลิสต์/ลิงก์/รูป) ต้องไม่พัง | CMS storefront เคยฉีด HTML ดิบ + sanitizer เดิมเป็น dead code |
+| `CmsGalleryBlockTests` (12+3) | บล็อกแกลเลอรี/สไลด์โชว์: คีย์ `url` + `src` เดิมอ่านได้ทั้งคู่ · URL `javascript:`/`data:`/`//host`/มี `"` ถูกตัด · interval/คอลัมน์ clamp (+ปัด AwayFromZero) · autoplay เฉพาะสไลด์ · lightbox ตั้งต้น · เพดาน 60 รูป · escape ทุกช่อง · `CmsBlockCss` กรองคลาส | server renderer อ่าน `src` ขณะตัวแก้ไขเขียน `url` (HTML ว่างเสมอ) + `CssClasses` ต่อดิบเข้า attribute |
 | `Section65TerExtendedTests` (20) | อนุมาตราใหม่ (8)(9)(10)(12)(13)(14)(15)(19) · **เคสไม่ over-add-back**: cap=0 เมื่อไม่มีฐาน, VAT ที่เคลมได้ต้องไม่นับเป็นต้นทุน · โหมด strict payee | worksheet บวกกลับ ภ.ง.ด.50 เคยขาด 11 อนุมาตรา |
 | `TaxPointImportTests` (5) | §78/2 นำเข้าใช้วันชำระอากร **ไม่ใช่ MIN** · `SupplyKind` ที่ระบุชัดชนะการเดา · ไม่ regress เคสเดิม | resolver เคยไม่รองรับนำเข้าเลย |
 
@@ -6432,3 +6434,24 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | AIR-05 | ตรวจเอกสารซ้ำ (FuzzyDuplicateDetection) ตอนนักเรียนไม่เจอใบซ้ำ | ไม่ยิง provider (`AiRequest.LocalOnly`) · ทิศตรงข้าม: request ปกติยังยิง | ✅ `AiOrchestratorResponseHandlingTests` (LocalOnly_*) |
 | AIR-06 | หน้าแอดมิน AI → แถว InvalidResponse | ข้อความสาเหตุจริง + token + "ดูคำตอบดิบ (ย่อ)" 300 ตัวอักษร ปิดบังเลข 13 หลัก/โทร/อีเมล · ทุกช่อง escape | คู่มือ |
 | AIR-07 | ผู้เรียกยกเลิก (OCR CTS 15 วิ) ก่อน provider ตอบ | แถว Failed ยังถูกบันทึก ("ผู้เรียกยกเลิก/หมดเวลาฝั่งผู้เรียก …") · ต้นทุน token ที่ provider รายงานถูกนับ | คู่มือ |
+
+### เว็บไซต์ CMS — งานรายเว็บ + แกลเลอรี (CMS-SITE-* · ทีม C 2026-10-22)
+
+| ID | เคส | คาดหวัง |
+| --- | --- | --- |
+| CMS-SITE-01 | เปิดหน้าใดก็ได้นอกพื้นที่ CMS | แถบซ้าย "ขายออนไลน์ & Portal" เห็น เว็บไซต์ของฉัน · Portal ลูกค้า · Vendor Portal — ไม่เห็นคำสั่งซื้อ/จองคิว/ที่พัก/Lead แยก · พิมพ์ "lead" ในช่องค้นหาเมนู → เจอ "คำขอ / Lead" |
+| CMS-SITE-02 | เปิด cms-sites / cms-orders / lodging | เมนูย่อยเยื้องใต้ "เว็บไซต์ของฉัน" โผล่ (เฉพาะโมดูลที่บริษัทใช้) · หน้าปัจจุบันไฮไลต์ |
+| CMS-SITE-03 | ผู้ใช้ role กำหนดเองที่ให้แค่ "ที่พัก · Front desk" (ไม่มี cms-sites) | เห็น Front desk เป็นเมนูปกติ — **ห้ามหาย** |
+| CMS-SITE-04 | การ์ดเว็บร้านค้า / จองคิว / ที่พัก / องค์กร | ปุ่ม 🛒 คำสั่งซื้อ / 📅 การจองคิว / 🏨 Front desk + 🛏️ ตั้งค่าที่พัก / 📨 Lead (ทุกเว็บ) ตาม `site.modules` · ตัวเลขงานค้างบนปุ่ม · โหลดไม่ได้ = "?" |
+| CMS-SITE-05 | กดปุ่มบนการ์ด → หน้าปลายทาง | dropdown = เว็บนั้น · breadcrumb "เว็บไซต์ของฉัน › <เว็บ> › <งาน>" · ปุ่มงานอื่นของเว็บเดียวกันขวามือ · เปลี่ยนเว็บใน dropdown → URL `?siteId=` เปลี่ยนตาม (รีเฟรชแล้วอยู่เว็บเดิม) |
+| CMS-SITE-06 | เปิด `cms-orders.html?siteId=<id ที่ไม่ใช่ของบริษัท/ถูกลบ>` | toast "ไม่พบเว็บไซต์ตามลิงก์" + แสดงเว็บแรกที่ใช้ร้านค้า (เดิม: dropdown ว่าง ตารางว่างเงียบ) |
+| CMS-SITE-07 | `?siteId=all` (หรือเลือก "ทุกไซต์") ที่คำสั่งซื้อ / Lead · มี ≥2 เว็บ | ตารางรวมทุกเว็บ เรียงใหม่สุดก่อน · มีชื่อเว็บใต้เลขที่ · การ์ดสถิติ = ผลรวม · แถบบอก "แสดงล่าสุด N รายการต่อเว็บ" · เปิดรายการแล้วเปลี่ยนสถานะ/ยืนยันรับเงิน → ยิงไปเว็บเจ้าของรายการ · เว็บที่ไม่มีสิทธิ์ → ชื่อขึ้นในแถบเตือนสีแดง |
+| CMS-SITE-08 | bookmark เดิม `/pages/cms-orders.html`, `/pages/lodging.html`, `/pages/cms-leads.html` (ไม่มี siteId) | เปิดได้เหมือนเดิม (เว็บแรก) — ไม่มีหน้าใดถูกลบ |
+| CMS-GAL-01 | เพิ่มบล็อก "แกลเลอรี / สไลด์โชว์รูป" → อัปโหลด 5 รูปพร้อมกัน | ได้ 5 แถว (รูปย่อ · alt ตั้งต้นจากชื่อไฟล์ · caption) · ไฟล์ขึ้นในแท็บคลังภาพ · ไฟล์ .html/.svg ถูกปฏิเสธพร้อมชื่อไฟล์ใน toast (รูปอื่นยังเข้า) |
+| CMS-GAL-02 | เรียง ↑↓ · ลบ · เลือกจากคลัง (เลือกหลายรูปต่อเนื่อง) · บันทึก · เปิดแก้ใหม่ | ลำดับ/alt/caption/ตัวเลือก กลับมาครบ (echo) |
+| CMS-GAL-03 | หน้าเว็บ: แกลเลอรี 4 คอลัมน์ | จอคอม 4 · แท็บเล็ต ≤3 · มือถือ ≤2 · คลิกรูป → lightbox (← → Esc · คำบรรยาย · n/N) · Ctrl+คลิก = เปิดแท็บใหม่ |
+| CMS-GAL-04 | สไลด์โชว์ autoplay 4 วิ | เลื่อนเอง · หยุดเมื่อชี้เมาส์/โฟกัส/แตะ · ปุ่ม ‹ › จุด ปัดนิ้ว ลูกศรคีย์บอร์ด · ตั้ง prefers-reduced-motion → ไม่เลื่อนเอง |
+| CMS-GAL-05 | เพิ่มหน้าใหม่ "เริ่มจาก: หน้าแกลเลอรี" | สร้างหน้า + บล็อกแกลเลอรี แล้วเปิดฟอร์มอัปโหลดทันที · แก้หน้าเดิม = ไม่มีช่อง "เริ่มจาก" |
+| CMS-GAL-06 | บล็อกแกลเลอรีเก่าที่เก็บ `images[].src` / caption มี `<script>` / CssClasses มี `" onclick=` | รูปขึ้น · ข้อความแสดงเป็นตัวอักษร · คลาสแปลกปลอมถูกตัด |
+| CMS-SEC-01 | สมาชิกบริษัท A ยิง `POST …/companies/A/cms/sites/<เว็บ A>/content/pages/<หน้าบริษัท B>/blocks` | 404 — เดิมสร้างบล็อกลงหน้าของ B ได้ (ไม่มีตัวกรองบริษัท) · ทิศตรงข้าม: หน้าของเว็บตัวเองยังเพิ่ม/แก้/ลบ/เรียงได้ |
+| CMS-SEC-02 | ผู้ใช้ที่ไม่ใช่เจ้าของบริษัทและไม่มีสิทธิ์เว็บ (ทีมงาน) แก้บล็อก/อัปโหลดสื่อ | 403 "ไม่มีสิทธิ์เข้าถึงเว็บไซต์นี้" (เท่ากับการสร้างหน้าที่บังคับอยู่แล้ว) · ทางไปต่อ: เจ้าของเพิ่มเป็นทีมงานในแท็บ 👤 ทีม · เจ้าของบริษัทผ่านเสมอ |

@@ -350,6 +350,15 @@
               <option value="6">Checkout</option>
             </select>
           </div>
+          <div class="form-group" id="pgStarterWrap">
+            <label class="form-label">เริ่มจาก</label>
+            <select class="form-input" id="pgStarter">
+              <option value="">หน้าว่าง (เพิ่มบล็อกเอง)</option>
+              <option value="gallery">🖼️ หน้าแกลเลอรีรูปภาพ (ตารางรูป + คลิกขยาย)</option>
+              <option value="slider">🎞️ หน้าสไลด์โชว์รูปภาพ</option>
+            </select>
+            <p style="font-size:12px;color:var(--gray-500);margin-top:4px">หน้าแกลเลอรี = สร้างหน้าพร้อมบล็อกแกลเลอรี แล้วเปิดให้อัปโหลดรูปทันที · ใส่แกลเลอรี/สไลด์ในหน้าเดิมได้จาก "+ เพิ่มบล็อก"</p>
+          </div>
           <div class="form-group">
             <label class="form-label">Meta Description (SEO)</label>
             <textarea class="form-input" id="pgMetaDesc" rows="2" maxlength="160"></textarea>
@@ -832,7 +841,7 @@
       1:{n:'Hero',i:'🎬',f:'hero'},
       2:{n:'ข้อความ Rich Text',i:'📝',f:'richtext'},
       3:{n:'รูปภาพ',i:'🖼️',f:'image'},
-      4:{n:'แกลเลอรี',i:'🖼️',f:'gallery'},
+      4:{n:'แกลเลอรี / สไลด์โชว์รูป',i:'🖼️',f:'gallery'},
       5:{n:'วิดีโอ',i:'🎥',f:'video'},
       6:{n:'รายการสินค้า',i:'🛒',f:'productgrid'},
       8:{n:'ปฏิทินจอง',i:'📅',f:'booking'},
@@ -1047,6 +1056,8 @@
         document.getElementById('pgSlug').value = '';
         document.getElementById('pgType').value = '1';
         document.getElementById('pgMetaDesc').value = '';
+        document.getElementById('pgStarter').value = '';
+        document.getElementById('pgStarterWrap').style.display = '';
         Layout.openModal('pageModal');
       },
 
@@ -1059,6 +1070,9 @@
         document.getElementById('pgSlug').value = p.slug;
         document.getElementById('pgType').value = String(p.pageType);
         document.getElementById('pgMetaDesc').value = p.metaDescription || '';
+        // "เริ่มจาก" ใช้ได้ตอนสร้างหน้าเท่านั้น — หน้าที่มีอยู่แล้วเพิ่มแกลเลอรีผ่าน "+ เพิ่มบล็อก" (ซ่อนช่อง ไม่ใช่ปล่อยให้เลือกแล้วไม่มีผล)
+        document.getElementById('pgStarter').value = '';
+        document.getElementById('pgStarterWrap').style.display = 'none';
         Layout.openModal('pageModal');
       },
 
@@ -1079,10 +1093,32 @@
             await api.cmsUpdatePage(this.siteId, id, { title, slug, pageType, metaDescription });
             Layout.toast('บันทึกสำเร็จ', 'success');
           } else {
-            await api.cmsCreatePage(this.siteId, {
+            const starter = document.getElementById('pgStarter').value;
+            const created = await api.cmsCreatePage(this.siteId, {
               title, slug, pageType, sortOrder: this.pages.length,
               metaDescription, templateLayout:'default', showHeader:true, showFooter:true
             });
+            const newPageId = created?.data?.id;
+            if (starter && newPageId) {
+              // หน้าแกลเลอรี/สไลด์โชว์ = หน้าใหม่ + บล็อก Gallery 1 ตัว แล้วเปิดฟอร์มบล็อกให้อัปโหลดรูปทันที
+              Layout.closeModal('pageModal');   // หน้าถูกสร้างแล้ว — ปิดก่อน กันกดบันทึกซ้ำได้หน้าซ้ำ
+              let blk = null;
+              try {
+                blk = await api.cmsAddBlock(this.siteId, newPageId, {
+                  blockType: 4, sortOrder: 0, isVisible: true, hideOnMobile: false, hideOnDesktop: false,
+                  configJson: JSON.stringify(starter === 'slider'
+                    ? { layout: 'slider', headline: title, images: [], autoplay: true, intervalSec: 5, aspect: 'auto', lightbox: false }
+                    : { layout: 'grid', headline: title, images: [], columns: 3, aspect: '4:3', lightbox: true })
+                });
+                Layout.toast('สร้างหน้าแกลเลอรีแล้ว — อัปโหลดรูปได้เลย', 'success');
+              } catch (e) {
+                Layout.toast(`สร้างหน้าแล้ว แต่เพิ่มบล็อกแกลเลอรีไม่สำเร็จ: ${e.message} — เพิ่มเองได้จาก "+ เพิ่มบล็อก"`, 'error', 10000);
+              }
+              await this.loadPages();
+              await this.openBlocks(newPageId);
+              if (blk?.data?.id) this.openEditBlock(blk.data.id);
+              return;
+            }
             Layout.toast('สร้างหน้าใหม่สำเร็จ', 'success');
           }
           Layout.closeModal('pageModal');
@@ -1152,6 +1188,7 @@
           try {
             const cfg = JSON.parse(b.configJson || '{}');
             preview = cfg.headline || cfg.content?.replace(/<[^>]+>/g,'').slice(0,80) || '';
+            if (Array.isArray(cfg.images) && blockNum(b.blockType) === 4) preview = `${cfg.layout === 'slider' ? '🎞️ สไลด์โชว์' : '🖼️ แกลเลอรี'} · ${cfg.images.length} รูป${preview ? ' · ' + preview : ''}`;
           } catch (_) {}
           return `
             <div class="block-row" draggable="true"
@@ -1289,9 +1326,52 @@
           case 3: // Image
             html = inpImg('cfg_url','ภาพ',cfg.url,'เลือกจากคลังภาพ') + inp('cfg_alt','คำอธิบายภาพ (alt)',cfg.alt) + inp('cfg_caption','คำบรรยายใต้ภาพ',cfg.caption);
             break;
-          case 4: // Gallery
-            html = ta('cfg_imagesJson','รายการภาพ (JSON: [{url, alt}])',JSON.stringify(cfg.images||[],null,2),8);
+          case 4: { // Gallery / Slider — ตัวจัดการรูปหลายรูป (อัปโหลดหลายไฟล์ · เลือกจากคลัง · เรียง · alt · คำบรรยาย)
+            // คอนฟิกที่เขียน = สคีมาเดียวที่ Helpers/CmsGalleryBlock (เซิร์ฟเวอร์) อ่าน: layout/headline/images[{url,alt,caption}]/autoplay/intervalSec/columns/lightbox/aspect
+            // ค่าเพดาน/ช่วงที่ถูกต้องตัดสินที่เซิร์ฟเวอร์ (ค่าเกินถูก clamp ตอนเรนเดอร์) — ฟอร์มแค่เสนอช่วงที่ใช้งานจริง
+            const isSlider = cfg.layout === 'slider';
+            this._galImages = (Array.isArray(cfg.images) ? cfg.images : [])
+              .map(i => typeof i === 'string' ? { url: i, alt: '', caption: '' } : { url: i.url || i.src || '', alt: i.alt || '', caption: i.caption || '' })
+              .filter(i => i.url);
+            const opt = (v, label, cur) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
+            html = `<div class="form-group"><label class="form-label">รูปแบบการแสดง</label>
+                  <select class="form-input" id="cfg_layout" onchange="Page.galToggleLayout()">
+                    ${opt('grid', '🖼️ แกลเลอรี (ตารางรูป + คลิกขยาย)', isSlider ? 'slider' : 'grid')}
+                    ${opt('slider', '🎞️ สไลด์โชว์ (เลื่อนทีละรูป)', isSlider ? 'slider' : 'grid')}
+                  </select></div>`
+                 + inp('cfg_headline','หัวข้อ (ไม่บังคับ)',cfg.headline,'เช่น ผลงานของเรา')
+                 + `<div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                      <div class="form-group" id="galColsWrap"><label class="form-label">จำนวนคอลัมน์ (จอคอม)</label>
+                        <select class="form-input" id="cfg_columns">${[2,3,4,5,6].map(n => opt(n, n + ' คอลัมน์', cfg.columns || 3)).join('')}</select></div>
+                      <div class="form-group"><label class="form-label">สัดส่วนรูป</label>
+                        <select class="form-input" id="cfg_aspect">
+                          ${opt('auto', 'ตามรูปจริง (สไลด์ = 16:9)', cfg.aspect || (isSlider ? 'auto' : '4:3'))}
+                          ${opt('4:3', '4:3', cfg.aspect || (isSlider ? 'auto' : '4:3'))}
+                          ${opt('3:2', '3:2', cfg.aspect || (isSlider ? 'auto' : '4:3'))}
+                          ${opt('16:9', '16:9 (กว้าง)', cfg.aspect || (isSlider ? 'auto' : '4:3'))}
+                          ${opt('1:1', '1:1 (จัตุรัส)', cfg.aspect || (isSlider ? 'auto' : '4:3'))}
+                        </select></div>
+                    </div>
+                    <div id="galSliderOpts" style="display:${isSlider ? 'grid' : 'none'};grid-template-columns:1fr 1fr;gap:10px;align-items:end">
+                      <div class="form-group form-checkbox"><input type="checkbox" id="cfg_autoplay" ${cfg.autoplay ? 'checked' : ''}><label for="cfg_autoplay">เลื่อนอัตโนมัติ (autoplay)</label></div>
+                      <div class="form-group"><label class="form-label">เลื่อนทุก (วินาที)</label>
+                        <input type="number" class="form-input" id="cfg_intervalSec" min="2" max="30" step="1" value="${esc(cfg.intervalSec || 5)}"></div>
+                    </div>
+                    <div class="form-group form-checkbox"><input type="checkbox" id="cfg_lightbox" ${(cfg.lightbox ?? !isSlider) ? 'checked' : ''}><label for="cfg_lightbox">คลิกรูปเพื่อขยายเต็มจอ (lightbox)</label></div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 8px">
+                      <label class="form-label" style="margin:0">รูปภาพ <span id="galCount" style="color:var(--gray-500);font-weight:400"></span></label>
+                      <div style="display:flex;gap:6px;flex-wrap:wrap">
+                        <input type="file" id="galUpload" accept="image/*" multiple style="display:none" onchange="Page.galUpload(this)">
+                        <button type="button" class="btn btn-sm btn-primary" onclick="document.getElementById('galUpload').click()">📤 อัปโหลดหลายรูป</button>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="Page.openMediaPicker('${Page.GALLERY_TARGET}')">🖼 เลือกจากคลังภาพ</button>
+                        <button type="button" class="btn btn-sm btn-ghost" onclick="Page.galAddUrl()">+ URL</button>
+                      </div>
+                    </div>
+                    <div id="galList" style="display:grid;gap:8px"></div>
+                    <div class="text-sm text-gray-500" style="margin-top:6px">กด ↑↓ เพื่อเรียงลำดับ (รูปแรก = รูปแรกของสไลด์) · ใส่ "คำอธิบายภาพ (alt)" ทุกรูป — ช่วย SEO และผู้ใช้โปรแกรมอ่านหน้าจอ</div>`;
+            setTimeout(() => { this.galRender(); this.galToggleLayout(); }, 0);
             break;
+          }
           case 12: // Testimonials
             html = inp('cfg_headline','หัวข้อ',cfg.headline,'ลูกค้าพูดถึงเรา')
                  + ta('cfg_testiText','รายการรีวิว (1 บรรทัดต่อ 1 รีวิว: ข้อความ | ชื่อ | ตำแหน่ง)',
@@ -1361,7 +1441,19 @@
           case 1: cfg = { headline:get('cfg_headline'), subheadline:get('cfg_subheadline'), ctaText:get('cfg_ctaText'), ctaUrl:get('cfg_ctaUrl'), backgroundUrl:get('cfg_backgroundUrl') }; break;
           case 2: cfg = { content: this._quill ? this._quill.root.innerHTML : get('cfg_content') }; break;
           case 3: cfg = { url:get('cfg_url'), alt:get('cfg_alt'), caption:get('cfg_caption') }; break;
-          case 4: { let imgs=[]; try{imgs=JSON.parse(get('cfg_imagesJson')||'[]');}catch(_){} cfg = { images: imgs }; break; }
+          case 4: {
+            const layout = get('cfg_layout') === 'slider' ? 'slider' : 'grid';
+            cfg = {
+              layout, headline: get('cfg_headline'),
+              images: (this._galImages || []).map(i => ({ url: i.url, alt: (i.alt || '').trim(), caption: (i.caption || '').trim() })),
+              columns: parseInt(get('cfg_columns'), 10) || 3,
+              aspect: get('cfg_aspect') || 'auto',
+              lightbox: !!document.getElementById('cfg_lightbox')?.checked,
+              autoplay: layout === 'slider' && !!document.getElementById('cfg_autoplay')?.checked,
+              intervalSec: parseInt(get('cfg_intervalSec'), 10) || 5,
+            };
+            break;
+          }
           case 6: cfg = { headline:get('cfg_headline'), limit:parseInt(get('cfg_limit'))||12, featured:document.getElementById('cfg_featured')?.checked||false }; break;
           case 12: {
             const lines = get('cfg_testiText').split('\n').map(s=>s.trim()).filter(Boolean);
@@ -2760,6 +2852,88 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
+      // ============ GALLERY / SLIDER (บล็อก Gallery) ============
+      // รายการรูปอยู่ใน this._galImages ระหว่างแก้ — collectBlockConfig อ่านไปบันทึก · อัปโหลดผ่าน cmsUploadMedia
+      // (เส้นเดียวกับคลังสื่อ: ตรวจชนิดไฟล์จากไบต์ + โควตาพื้นที่ + บีบรูป ที่เซิร์ฟเวอร์) ไม่มีทางเขียนไฟล์เส้นอื่น
+      GALLERY_TARGET: '__gallery__',
+      _galImages: [],
+      galRender() {
+        const list = document.getElementById('galList');
+        if (!list) return;
+        const imgs = this._galImages || [];
+        const cnt = document.getElementById('galCount');
+        if (cnt) cnt.textContent = imgs.length ? `(${imgs.length} รูป)` : '';
+        if (!imgs.length) {
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:22px;border:1px dashed var(--gray-300);border-radius:8px">ยังไม่มีรูป — กด "อัปโหลดหลายรูป" หรือ "เลือกจากคลังภาพ"</div>';
+          return;
+        }
+        const esc = Layout.esc;
+        list.innerHTML = imgs.map((im, i) => `
+          <div style="display:grid;grid-template-columns:72px 1fr auto;gap:8px;align-items:center;border:1px solid var(--gray-200);border-radius:8px;padding:6px;background:#fff">
+            <img src="${esc(im.url)}" alt="" style="width:72px;height:54px;object-fit:cover;border-radius:6px;background:#F3F4F6">
+            <div style="display:grid;gap:4px;min-width:0">
+              <input type="text" class="form-input" style="padding:4px 8px;font-size:12px${im.alt ? '' : ';border-color:#F59E0B;background:#FFFBEB'}" placeholder="คำอธิบายภาพ (alt) — แนะนำให้ใส่" value="${esc(im.alt)}" oninput="Page.galSet(${i},'alt',this.value)">
+              <input type="text" class="form-input" style="padding:4px 8px;font-size:12px" placeholder="คำบรรยายใต้รูป (ไม่บังคับ)" value="${esc(im.caption)}" oninput="Page.galSet(${i},'caption',this.value)">
+            </div>
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <button type="button" class="btn btn-sm btn-ghost" title="เลื่อนขึ้น" ${i === 0 ? 'disabled' : ''} onclick="Page.galMove(${i},-1)">↑</button>
+              <button type="button" class="btn btn-sm btn-ghost" title="เลื่อนลง" ${i === imgs.length - 1 ? 'disabled' : ''} onclick="Page.galMove(${i},1)">↓</button>
+              <button type="button" class="btn btn-sm btn-ghost" title="เอารูปออกจากบล็อก (ไฟล์ยังอยู่ในคลัง)" onclick="Page.galRemove(${i})">🗑</button>
+            </div>
+          </div>`).join('');
+      },
+      galSet(i, key, val) { if (this._galImages[i]) this._galImages[i][key] = val; },
+      galMove(i, dir) {
+        const j = i + dir, a = this._galImages;
+        if (j < 0 || j >= a.length) return;
+        [a[i], a[j]] = [a[j], a[i]];
+        this.galRender();
+      },
+      galRemove(i) { this._galImages.splice(i, 1); this.galRender(); },
+      galAdd(url, alt) {
+        if (!url) return false;
+        if (this._galImages.some(x => x.url === url)) { Layout.toast('รูปนี้อยู่ในบล็อกแล้ว', 'info'); return false; }
+        this._galImages.push({ url, alt: alt || '', caption: '' });
+        this.galRender();
+        return true;
+      },
+      galAddUrl() {
+        const url = (prompt('URL รูปภาพ (https://… หรือ /uploads/…)') || '').trim();
+        if (!url) return;
+        // ตัวตัดสินจริงอยู่ที่เซิร์ฟเวอร์ (CmsGalleryBlock.IsSafeUrl ตัดรูปที่ URL ไม่ปลอดภัยทิ้งตอนเรนเดอร์) — ตรงนี้แค่เตือนให้รู้ตัวก่อนบันทึก
+        if (!/^(https?:\/\/|\/(?!\/))/i.test(url)) { Layout.toast('URL ต้องขึ้นต้นด้วย https:// หรือ / — รูปแบบอื่นจะไม่แสดงบนเว็บ', 'error'); return; }
+        this.galAdd(url, '');
+      },
+      async galUpload(input) {
+        const files = Array.from(input.files || []);
+        if (!files.length) return;
+        const api = Layout.api(); if (!api) return;
+        let ok = 0; const failed = [];
+        Layout.toast(`กำลังอัปโหลด ${files.length} รูป...`, 'info');
+        for (const f of files) {
+          try {
+            const fd = new FormData();
+            fd.append('file', f);
+            const res = await api.cmsUploadMedia(this.siteId, fd);
+            const url = res?.data?.publicUrl;
+            if (!url) throw new Error('เซิร์ฟเวอร์ไม่ส่ง URL กลับ');
+            // alt ตั้งต้นจากชื่อไฟล์ (ตัดนามสกุล) — ผู้ใช้แก้ได้ทันทีในรายการ
+            if (this.galAdd(url, f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').slice(0, 120))) ok++;
+          } catch (e) { failed.push(`${f.name}: ${e.message || 'อัปโหลดไม่สำเร็จ'}`); }
+        }
+        input.value = '';
+        this._mediaLoaded = false; // คลังสื่อมีไฟล์ใหม่ — แท็บคลังโหลดใหม่ตอนเปิด
+        if (failed.length) Layout.toast(`อัปโหลดสำเร็จ ${ok} · ไม่สำเร็จ ${failed.length}: ${failed.join(' · ')}`, 'error', 10000);
+        else Layout.toast(`อัปโหลดสำเร็จ ${ok} รูป — กด "บันทึก" เพื่อบันทึกบล็อก`, 'success');
+      },
+      galToggleLayout() {
+        const slider = document.getElementById('cfg_layout')?.value === 'slider';
+        const so = document.getElementById('galSliderOpts');
+        if (so) so.style.display = slider ? 'grid' : 'none';
+        const cw = document.getElementById('galColsWrap');
+        if (cw) cw.style.visibility = slider ? 'hidden' : 'visible';
+      },
+
       // ============ MEDIA PICKER (for block forms) ============
       _mediaPickerTargetId: null,
       async openMediaPicker(targetInputId) {
@@ -2783,6 +2957,11 @@
       },
 
       selectMedia(url) {
+        // แกลเลอรี: เลือกได้หลายรูปต่อเนื่อง — ไม่ปิดหน้าต่าง (ปิดเองเมื่อเลือกครบ)
+        if (this._mediaPickerTargetId === this.GALLERY_TARGET) {
+          if (this.galAdd(url, '')) Layout.toast(`เพิ่มรูปแล้ว (${this._galImages.length} รูป) — เลือกต่อได้ หรือปิดหน้าต่าง`, 'success');
+          return;
+        }
         if (this._mediaPickerTargetId) {
           const el = document.getElementById(this._mediaPickerTargetId);
           if (el) el.value = url;

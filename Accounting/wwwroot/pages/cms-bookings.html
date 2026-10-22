@@ -22,6 +22,7 @@
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
+    <div id="cmsCrumb"></div>
     <div class="page-header">
       <div>
         <h2 class="page-title">การจองจากเว็บไซต์</h2>
@@ -83,6 +84,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
   <script>
     // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว — ที่นี่แค่มอบต่อ
     const STATUS_LABEL = Layout.ENUM_LABELS.bookingStatus;
@@ -102,23 +104,29 @@
         await this.loadSites();
       },
       async loadSites() {
-        const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.cmsListSites();
-          const sites = res?.data?.items || res?.data || [];
+          // ?siteId= จากปุ่มบนการ์ดเว็บ (cms-sites) — ตรวจกับรายการเว็บจริง + breadcrumb ผ่าน CmsSiteContext ตัวเดียว
+          const sites = this.sites = await CmsSiteContext.loadSites();
           const sel = document.getElementById('siteSelector');
           if (!sites.length) {
-            sel.innerHTML = '<option value="">ยังไม่มีเว็บไซต์</option>'; return;
+            sel.innerHTML = '<option value="">ยังไม่มีเว็บไซต์</option>';
+            CmsSiteContext.renderCrumb('cmsCrumb', sites, null, 'การจองคิว', 'cms-bookings');
+            return;
           }
-          sel.innerHTML = sites.map(s => `<option value="${s.id}">${Layout.esc(s.name)}</option>`).join('');
-          this.siteId = new URLSearchParams(location.search).get('siteId') || sites[0].id;
-          sel.value = this.siteId;
+          this.siteId = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'bookings' });
+          CmsSiteContext.fillSelect(sel, sites, { module: 'bookings', value: this.siteId });
+          this._siteCtx();
           await this.load();
           await this.loadStats();
         } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
       },
+      _siteCtx() {
+        CmsSiteContext.setUrl(this.siteId);
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], this.siteId, 'การจองคิว', 'cms-bookings');
+      },
       async onSiteChange() {
         this.siteId = document.getElementById('siteSelector').value;
+        this._siteCtx();
         await this.load(); await this.loadStats();
       },
       debounceLoad() {

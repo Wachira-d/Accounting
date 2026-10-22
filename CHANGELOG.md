@@ -5348,3 +5348,11 @@ WHT `NullPrimaryAnswer="None"` · FuzzyDuplicateDetection ไม่มี schema
 ถอดจากบล็อกที่ต่อทุก feature + ด่าน GL ∈ candidate · candidate ผู้ขายข้ามคำบอกรูปนิติบุคคล · แคชอ่านไม่ออก = แคชพลาด (เดิม UsedAi=true เท็จ) ·
 แคชล้มไม่ทิ้งคำตอบ · บันทึกหลังยิง provider ไม่แพ้ token ผู้เรียก · ต้นทุน token ของ call ที่ล้มถูกนับ · หน้าแอดมินแสดงคำตอบดิบย่อ (ปิดบัง PII) + escape ทุกช่อง ·
 เทสต์ `AiFeatureResponseParserTests` + `AiOrchestratorResponseHandlingTests` · TEST_PLAN §AIR_
+
+_2026-10-22 (ทีม C — เว็บไซต์ CMS: งานรายเว็บ + แกลเลอรี/สไลด์โชว์ · ผู้ใช้เสนอ "ย้ายคำสั่งซื้อ/จองคิว/ที่พัก/Lead ไปอยู่ใต้ไซต์"):
+เมนูซ้ายพับ 5 รายการเป็นเมนูย่อยของ "เว็บไซต์ของฉัน" (`navParent` ใน layout.js — โผล่เฉพาะในพื้นที่ CMS · ค้นหาเจอเสมอ · ไม่เห็นเมนูแม่ = แสดงตามเดิม) ·
+การ์ดเว็บมีปุ่มงานตาม `site.modules` + ตัวเลขงานค้าง + แถบ "ภาพรวมทุกไซต์" · `js/cms-site-context.js` ตัวเดียวของ ?siteId= (ตรวจกับเว็บจริง) / breadcrumb / "ทุกไซต์" (คำสั่งซื้อ · Lead) ·
+บล็อก Gallery เรนเดอร์ฝั่งเซิร์ฟเวอร์ตัวเดียว `Helpers/CmsGalleryBlock` (ตาราง+lightbox / สไลด์โชว์ autoplay · escape ทุกช่อง · กรอง URL · เดิมอ่าน `src` ขณะตัวแก้ไขเขียน `url`) ·
+ตัวแก้ไขอัปโหลดหลายรูป/เลือกจากคลัง/เรียง/alt/caption · หน้าแกลเลอรีใหม่ · `MediaResponse.PublicUrl` (เดิมตกไปใช้ path บนดิสก์) ·
+ความปลอดภัย: บล็อกตรวจหน้าเป็นของเว็บ+บริษัท (เดิมแทรกบล็อกข้ามบริษัทได้) + `RequireSiteRole` บนบล็อก/สื่อ + `CmsBlockCss` กรองคลาส ·
+เทสต์ `CmsGalleryBlockTests` · TEST_PLAN CMS-SITE/GAL/SEC · roadmap `docs/CMS_FEATURE_ROADMAP.md`_

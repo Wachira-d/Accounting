@@ -396,6 +396,9 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .nav-group[open] > summary .count { background: rgba(79,70,229,.25); color: #fff; }
 .nav-group-items { padding: 2px 0 6px; }
 .nav-group-items .nav-item { padding-left: 36px; font-size: 13px; }
+/* เมนูย่อยรายเว็บ (navParent ใน layout.js) — เยื้องใต้ "เว็บไซต์ของฉัน" · พับไว้นอกพื้นที่ CMS (ช่องค้นหายังเจอ) */
+.nav-item.nav-subitem, .nav-group-items .nav-item.nav-subitem { padding-left: 54px; font-size: 12.5px; }
+.nav-item.nav-subhidden { display: none; }
 
 /* Main Content */
 .main-content { margin-left: var(--sidebar-width); flex: 1; min-height: 100vh; background: var(--gray-50); min-width: 0; overflow-x: hidden; }
