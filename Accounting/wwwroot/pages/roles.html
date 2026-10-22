@@ -221,7 +221,7 @@
       this._canManage = true;
       // Load server permission catalog in parallel with role list so
       // edit modal renders with the full 55-key picker.
-      await Promise.all([this._loadServerPermCatalog(), this.loadRoles()]);
+      await Promise.all([this._loadServerPermCatalog(), this._loadMatrix(), this.loadRoles()]);
     },
 
     async loadRoles() {
@@ -234,7 +234,12 @@
         if (!res?.success) throw new Error(res?.message || 'โหลด Role ล้มเหลว');
         this.roles = res.data || [];
       } catch (e) {
+        // รอบ 205 ทีม I: โหลดไม่สำเร็จ ≠ "ยังไม่มี Role" (เดิมกลืน error แล้วชวนกด "สร้าง Role เริ่มต้น" ทับของที่มีอยู่)
         this.roles = [];
+        el.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div>
+          <p>โหลดรายการ Role ไม่สำเร็จ: ${Layout.esc(e.message || 'ไม่ทราบสาเหตุ')}</p>
+          <button class="btn btn-outline" style="margin-top:10px" onclick="Page.loadRoles()">ลองใหม่</button></div>`;
+        return;
       }
 
       if (this.roles.length === 0) {
@@ -265,7 +270,7 @@
             ${r.isSystemRole ? '' : `<button onclick="Page.deleteRole('${r.id}')" title="ลบ">🗑️</button>`}
           </div>
           <div class="role-header">
-            <div class="role-icon" style="background:${r.color}20;color:${r.color}">${r.icon}</div>
+            <div class="role-icon" style="background:${Layout.esc(r.color)}20;color:${Layout.esc(r.color)}">${Layout.esc(r.icon)}</div>
             <div>
               <div class="role-name">${Layout.esc(r.name)}</div>
               ${r.isSystemRole ? '<span class="role-badge-sys">Role ระบบ</span>' : ''}
@@ -293,6 +298,8 @@
         ถูก <b>ซ่อนทั้งบริษัท</b> (หน้า "ฟีเจอร์ & เมนู") · <b>ไม่อยู่ในแพ็กเกจ</b> (ขึ้น 🔒) ·
         เป็นเมนูตามเงื่อนไข (จด VAT / เปิดใช้ e-Tax) — ช่องที่เข้าข่ายมีป้ายกำกับไว้แล้ว
       </div>`;
+      html += this._matrixHtml(set);
+      html += `<div style="font-weight:700;font-size:13px;color:#1e293b;margin:18px 0 8px">📋 เมนูที่มองเห็น</div>`;
       MENU_SECTIONS.forEach(sec => {
         html += `<div class="perm-section">
           <div class="perm-section-title">${sec.section}</div>
@@ -347,6 +354,40 @@
         html += '</div></div>';
       });
       editor.innerHTML = html;
+      // ช่องคีย์เดียวกันโผล่ได้ทั้งในตารางและรายการด้านล่าง — ติ๊ก/ยกเลิกที่หนึ่งต้องตามกันทุกที่ (ไม่งั้นยกเลิกในตารางแล้วยังถูกบันทึกจากช่องล่าง)
+      editor.onchange = (ev) => {
+        const cb = ev.target;
+        if (!cb || !cb.classList || !cb.classList.contains('perm-cb')) return;
+        editor.querySelectorAll('.perm-cb').forEach(o => { if (o !== cb && o.value === cb.value) o.checked = cb.checked; });
+      };
+    },
+
+    // รอบ 205 ทีม I: ตาราง อ่าน/เขียน/อนุมัติ/ลบ — แถว/คีย์มาจากเซิร์ฟเวอร์ (Helpers/PermissionMatrix) · ช่องที่ไม่มีคีย์ = "—"
+    async _loadMatrix() {
+      const cid = Layout.getCompanyId(); if (!cid) return;
+      try {
+        const r = await API.get(`/api/companies/${cid}/permission-catalog/matrix`);
+        this._matrix = r?.data || null;
+      } catch (e) { this._matrix = null; this._matrixError = e.message || 'โหลดตารางสิทธิ์ไม่สำเร็จ'; }
+    },
+
+    _matrixHtml(set) {
+      const m = this._matrix;
+      if (!m) return this._matrixError
+        ? `<div style="color:#b91c1c;font-size:12px;margin-bottom:10px">ตารางสิทธิ์โหลดไม่สำเร็จ: ${Layout.esc(this._matrixError)} — ยังติ๊กสิทธิ์จากรายการด้านล่างได้</div>` : '';
+      const head = (m.actions || []).map(a => `<th style="padding:6px 8px;text-align:center;font-size:12px;color:#475569;white-space:nowrap">${Layout.esc(a)}</th>`).join('');
+      const acct = new Set((m.builtIn && m.builtIn.accountant) || []);
+      const rows = (m.rows || []).map(r => `<tr style="border-top:1px solid #f1f5f9">
+          <td style="padding:6px 8px;font-size:13px;color:#334155">${Layout.esc(r.icon || '')} ${Layout.esc(r.label)}${r.note ? `<div style="font-size:11px;color:#94a3b8">${Layout.esc(r.note)}</div>` : ''}</td>
+          ${(r.cells || []).map(c => c
+            ? `<td style="text-align:center"><input type="checkbox" class="perm-cb" value="${Layout.esc(c.key)}" ${set.has(c.key) ? 'checked' : ''} title="${Layout.esc(c.label)}${acct.has(c.key) ? ' · นักบัญชี (บทบาทมาตรฐาน) ได้อยู่แล้ว' : ''}" style="width:16px;height:16px;accent-color:var(--primary)"></td>`
+            : '<td style="text-align:center;color:#cbd5e1">—</td>').join('')}
+        </tr>`).join('');
+      return `<div style="font-weight:700;font-size:13px;color:#1e293b;margin-bottom:6px">🧮 สิทธิ์ตามงาน (อ่าน · เขียน · อนุมัติ · ลบ)</div>
+        <div style="font-size:12px;color:#64748b;margin-bottom:8px">เซิร์ฟเวอร์ตรวจสิทธิ์เหล่านี้ทุกครั้งที่บันทึก/อนุมัติ/ยกเลิก (ไม่ใช่แค่ซ่อนปุ่ม) · เจ้าของบริษัทผ่านทุกช่องเสมอ</div>
+        <div style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:8px">
+        <table style="width:100%;border-collapse:collapse"><thead style="background:#f8fafc"><tr><th style="padding:6px 8px;text-align:left;font-size:12px;color:#475569">งาน / ประเภทเอกสาร</th>${head}</tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
     },
 
     // Fetch the server permission catalog once at page-init. Maps
@@ -491,7 +532,7 @@
         grid.innerHTML = templates.map(t => `
           <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-              <span style="font-size:28px">${t.icon}</span>
+              <span style="font-size:28px">${Layout.esc(t.icon)}</span>
               <div>
                 <div style="font-weight:700;color:#1e293b">${Layout.esc(t.name)}</div>
                 <div style="font-size:11px;color:#64748b">${t.permissionCount} สิทธิ์</div>

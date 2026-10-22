@@ -80,30 +80,70 @@
     let currentPage = 1;
     let currentDetail = null; // store current detail data
 
-    // PL-S3 (รอบ 201): บริษัทที่ยังไม่มีเจ้าของ (แอดมินเปิดให้ลูกค้าแล้วยังไม่ได้โอนความเป็นเจ้าของ) — รายงานอย่างเดียว ส่งมอบที่หน้าทีมของบริษัทนั้น
+    // PL-S3 (รอบ 201) + รอบ 205 ทีม I: บริษัทที่ยังไม่มีเจ้าของ — ข้อเสนอเจ้าของมาจากเซิร์ฟเวอร์ (OwnerlessCompanyRepair.Decide) ·
+    // หลักฐานชัด = ปุ่มซ่อมอัตโนมัติ · ไม่ชัด = แอดมินเลือกจากสมาชิกเอง (ระบบไม่เดา)
+    let _ownerless = {};
     async function loadOwnerless() {
       const el = document.getElementById('ownerlessBanner');
       try {
         const res = await AdminAPI.companiesWithoutOwner();
         const items = (res.data && res.data.items) || [];
+        _ownerless = Object.fromEntries(items.map(c => [c.id, c]));
         if (!items.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        const auto = res.data.autoRepairable || 0;
         el.style.display = 'block';
         el.innerHTML = `<div class="admin-card" style="border:1px solid #fcd34d;background:#fffbeb">
-          <div style="font-weight:700;color:#92400e;margin-bottom:6px">บริษัทที่ยังไม่มีเจ้าของ ${items.length.toLocaleString('th-TH')}${res.data.truncated ? '+' : ''} แห่ง</div>
-          <div style="font-size:12px;color:#92400e;margin-bottom:8px">งานระดับเจ้าของ (คีย์ API · สมาชิก · ปิดงวด) ทำไม่ได้จนกว่าผู้ดูแล (support) ของบริษัทนั้นจะ "โอนความเป็นเจ้าของ" ให้ลูกค้าที่หน้าตั้งค่าทีม</div>
-          <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>บริษัท</th><th>ผู้ดูแล (support)</th><th>สมาชิก</th><th>สร้างเมื่อ</th><th></th></tr></thead><tbody>
-          ${items.map(c => `<tr>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+            <div style="font-weight:700;color:#92400e">บริษัทที่ยังไม่มีเจ้าของ ${items.length.toLocaleString('th-TH')}${res.data.truncated ? '+' : ''} แห่ง</div>
+            ${auto ? `<button class="admin-btn admin-btn-primary admin-btn-sm" id="ownerlessRepairBtn" onclick="repairOwnerless()">ตั้งเจ้าของอัตโนมัติ ${auto.toLocaleString('th-TH')} แห่ง (หลักฐานชัด)</button>` : ''}
+          </div>
+          <div style="font-size:12px;color:#92400e;margin-bottom:8px">งานระดับเจ้าของ (คีย์ API · สมาชิก · ปิดงวด) ทำไม่ได้จนกว่าบริษัทจะมีเจ้าของ · หลักฐานชัด (ผู้สร้างยังเป็นสมาชิก หรือมีสมาชิกคนเดียว) ระบบตั้งให้ได้ · ที่เหลือเลือกเจ้าของจากสมาชิก หรือให้ผู้ดูแล (support) "โอนความเป็นเจ้าของ" ที่หน้าทีม</div>
+          <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>บริษัท</th><th>ข้อเสนอ</th><th>สมาชิก</th><th>สร้างเมื่อ</th><th></th></tr></thead><tbody>
+          ${items.map(c => {
+            const p = c.proposal || {};
+            const opts = (c.members || []).map(m => `<option value="${m.userId}">${AdminLayout.esc(m.email)} (${AdminLayout.esc(m.role)}${m.isCreator ? ' · ผู้สร้าง' : ''})</option>`).join('');
+            return `<tr>
             <td><strong>${AdminLayout.esc(c.name)}</strong><div style="font-size:12px;color:#94a3b8">${AdminLayout.esc(c.taxId || '-')}</div></td>
-            <td>${c.supports.length ? c.supports.map(e => AdminLayout.esc(e)).join('<br>') : '<span style="color:#b91c1c">ไม่มี — ติดต่อทีมแพลตฟอร์ม</span>'}</td>
+            <td style="font-size:12px;max-width:340px">${p.kind === 'AutoPromote'
+              ? `<span style="color:#15803d;font-weight:600">ตั้ง ${AdminLayout.esc(p.userEmail || '')} เป็นเจ้าของ</span>`
+              : '<span style="color:#b45309;font-weight:600">แอดมินเลือก</span>'}<div style="color:#64748b">${AdminLayout.esc(p.reason || '')}</div></td>
             <td>${c.memberCount}</td>
             <td>${AdminLayout.date(c.createdAt)}</td>
-            <td><button class="admin-btn admin-btn-outline admin-btn-sm" onclick="showDetail('${c.id}')">ดู</button></td>
-          </tr>`).join('')}
+            <td style="white-space:nowrap">
+              ${opts ? `<select class="admin-select" id="ownerPick-${c.id}" style="font-size:12px;max-width:220px">${opts}</select>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="assignOwnerless('${c.id}')">ตั้งเป็นเจ้าของ</button>` : ''}
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="showDetail('${c.id}')">ดู</button></td>
+          </tr>`; }).join('')}
           </tbody></table></div></div>`;
       } catch (e) {
         el.style.display = 'block';
-        el.innerHTML = `<div class="admin-card" style="color:#b91c1c">โหลดรายการบริษัทที่ไม่มีเจ้าของไม่สำเร็จ: ${AdminLayout.esc(e.message || '')}</div>`;
+        el.innerHTML = `<div class="admin-card" style="color:#b91c1c">โหลดรายการบริษัทที่ไม่มีเจ้าของไม่สำเร็จ: ${AdminLayout.esc(e.message || '')}
+          <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="loadOwnerless()">ลองใหม่</button></div>`;
       }
+    }
+
+    async function repairOwnerless() {
+      if (!confirm('ตั้งเจ้าของให้บริษัทที่หลักฐานชัด (ผู้สร้างยังเป็นสมาชิก / มีสมาชิกคนเดียว)?\n\nทุกการตั้งลงบันทึกตรวจสอบ (audit) · บริษัทที่หลักฐานไม่ชัดจะไม่ถูกแตะ')) return;
+      const btn = document.getElementById('ownerlessRepairBtn');
+      if (btn) btn.disabled = true;
+      try {
+        const r = await AdminAPI.repairCompaniesWithoutOwner();
+        AdminLayout.toast(r.message || 'ตั้งเจ้าของแล้ว');
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+      loadOwnerless();
+    }
+
+    async function assignOwnerless(companyId) {
+      const sel = document.getElementById('ownerPick-' + companyId);
+      if (!sel || !sel.value) return;
+      const c = _ownerless[companyId];
+      const label = sel.options[sel.selectedIndex].text;
+      if (!confirm(`ตั้ง ${label} เป็นเจ้าของบริษัท "${c ? c.name : ''}"?\n\nบันทึกลง audit · เปลี่ยนเจ้าของภายหลังต้องใช้ "โอนความเป็นเจ้าของ" ที่หน้าทีม`)) return;
+      try {
+        const r = await AdminAPI.assignOwnerToCompany(companyId, sel.value);
+        AdminLayout.toast(r.message || 'ตั้งเจ้าของแล้ว');
+      } catch (e) { AdminLayout.toast(e.message, 'error'); }
+      loadOwnerless();
     }
 
     async function loadCustomers(page = 1) {

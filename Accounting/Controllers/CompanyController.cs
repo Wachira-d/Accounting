@@ -149,29 +149,36 @@ public class CompanyController : ControllerBase
         return NoContent();
     }
 
-    /// <summary>สิทธิ์ effective ของสมาชิกคนหนึ่งในบริษัทนี้ — ดูได้เฉพาะ
-    /// Owner หรือตัวสมาชิกเอง (คนอื่นห้ามส่องสิทธิ์กัน).</summary>
+    /// <summary>สิทธิ์ effective ของสมาชิกคนหนึ่งในบริษัทนี้ — ดูได้เฉพาะ Owner/SystemAdmin/แอดมินแพลตฟอร์ม หรือตัวสมาชิกเอง (คนอื่นห้ามส่องสิทธิ์กัน) ·
+    /// รอบ 205 ทีม I: คืนสิทธิ์ "จากบทบาทมาตรฐาน" (ตารางเดียวกับด่านจริง <c>BuiltInRolePermissions</c>) แยกจาก "จากบทบาทกำหนดเอง" —
+    /// เดิมคืนแต่ของบทบาทกำหนดเอง ⇒ นักบัญชีเห็น "ไม่มีสิทธิ์เฉพาะ" ทั้งที่ด่านให้ผ่าน ~40 คีย์ · ปฏิเสธ = 403 ข้อความไทย (เดิม 400 / Forbid ไม่มีข้อความ)</summary>
     [HttpGet("{companyId:guid}/users/{targetUserId:guid}/permissions")]
     public async Task<ActionResult<ApiResponse<object>>> GetMemberPermissions(Guid companyId, Guid targetUserId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        var users = await _companyService.GetMembersAsync(companyId, userId); // ตรวจ membership ของผู้เรียกในตัว
+        var users = await _companyService.GetMembersAsync(companyId, userId); // ตรวจ membership ของผู้เรียกในตัว (แอดมินแพลตฟอร์มผ่าน)
         var requester = users.FirstOrDefault(u => u.UserId == userId);
-        if (requester == null) return Forbid();
-        if (userId != targetUserId && requester.Role != Models.Enums.UserRole.Owner)
-            throw new InvalidOperationException("เฉพาะเจ้าของบริษัทหรือเจ้าตัวเท่านั้นที่ดูสิทธิ์ได้");
+        var isPlatformAdmin = User.IsInRole(nameof(Models.Enums.UserRole.SystemAdmin));
+        var canViewOthers = isPlatformAdmin || (requester != null && BuiltInRolePermissions.GrantsAll(requester.Role));
+        if (userId != targetUserId && !canViewOthers)
+            return StatusCode(403, new ApiResponse<object>(false, null, "เฉพาะเจ้าของบริษัทหรือเจ้าตัวเท่านั้นที่ดูสิทธิ์ได้"));
         var member = users.FirstOrDefault(u => u.UserId == targetUserId)
             ?? throw new KeyNotFoundException("ไม่พบสมาชิกในบริษัทนี้");
-        var permissions = _permissionService != null
+        var fromCustomRole = _permissionService != null
             ? await _permissionService.GetUserPermissionsAsync(companyId, targetUserId)
             : new List<string>();
+        var fromBuiltIn = BuiltInRolePermissions.DefaultKeys(member.Role);
         return Ok(new ApiResponse<object>(true, new
         {
             member.UserId,
             member.FullName,
             member.Email,
             member.Role,
-            Permissions = permissions.OrderBy(p => p).ToList(),
+            member.CompanyRoleName,
+            grantsAll = BuiltInRolePermissions.GrantsAll(member.Role),
+            Permissions = fromBuiltIn.Union(fromCustomRole).OrderBy(p => p).ToList(),
+            fromBuiltInRole = fromBuiltIn.OrderBy(p => p).ToList(),
+            fromCustomRole = fromCustomRole.OrderBy(p => p).ToList(),
         }));
     }
 }

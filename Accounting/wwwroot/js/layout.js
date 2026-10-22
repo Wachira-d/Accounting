@@ -1976,6 +1976,12 @@ const Layout = {
           <label class="form-label">ชื่อบริษัท (EN)</label>
           <input type="text" id="setupCompanyNameEn" class="form-input" placeholder="Company Name in English">
         </div>
+        ${this.user && this.user.isSystemAdmin ? `<div class="form-group" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 10px">
+          <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="setupOpenForCustomer" style="margin-top:3px">
+            <span><b>เปิดบริษัทนี้ให้ลูกค้า</b> (ผู้ดูแลแพลตฟอร์ม) — คุณจะเป็น "ผู้ดูแล (support)" ไม่ใช่เจ้าของ แล้วส่งมอบด้วย "โอนความเป็นเจ้าของ" ที่หน้าทีม · ไม่ติ๊ก = คุณเป็นเจ้าของบริษัทนี้</span>
+          </label>
+        </div>` : ''}
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">ประเภทธุรกิจ <span style="color:red">*</span></label>
@@ -2158,6 +2164,8 @@ const Layout = {
       d.juristicId = document.getElementById('setupJuristicId')?.value?.trim() || '';
       d.taxId = document.getElementById('setupTaxId')?.value?.trim() || '';
       d.branchCode = document.getElementById('setupBranch')?.value?.trim() || '00000';
+      // รอบ 205 ทีม I: เฉพาะแอดมินแพลตฟอร์มเห็นช่องนี้ · เซิร์ฟเวอร์ตัดสินบทบาทจริง (CompanyCreatorMembership)
+      d.openForCustomer = document.getElementById('setupOpenForCustomer')?.checked || false;
     } else if (this.setupStep === 2) {
       d.address = document.getElementById('setupAddress')?.value?.trim() || '';
       d.subDistrict = document.getElementById('setupSubDistrict')?.value?.trim() || '';
@@ -2183,6 +2191,7 @@ const Layout = {
       if (this.setupStep === 1) {
         if (d.name) document.getElementById('setupCompanyName').value = d.name;
         if (d.nameEn) document.getElementById('setupCompanyNameEn').value = d.nameEn;
+        { const oc = document.getElementById('setupOpenForCustomer'); if (oc) oc.checked = d.openForCustomer === true; }
         if (d.businessType) document.getElementById('setupBizType').value = d.businessType;
         if (d.juristicId) document.getElementById('setupJuristicId').value = d.juristicId;
         if (d.taxId) document.getElementById('setupTaxId').value = d.taxId;
@@ -2225,6 +2234,7 @@ const Layout = {
         phone: d.phone || null,
         email: d.email || null,
         fiscalYearStartMonth: d.fiscalYearStartMonth || 1,
+        openForCustomer: d.openForCustomer === true,
       });
       const company = res.data;
       localStorage.setItem('currentCompany', JSON.stringify(company));

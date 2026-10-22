@@ -464,31 +464,165 @@ public class AdminController : ControllerBase
         }));
     }
 
-    /// <summary>บริษัทที่ไม่มีเจ้าของ (ไม่มีสมาชิกบทบาท Owner) — รอบ 201 ทีม PL · ฝ่ายค้าน PL-S3 · คำตอบ Q1 (รายงาน ไม่ migrate)
+    /// <summary>บริษัทที่ไม่มีเจ้าของ (ไม่มีสมาชิกบทบาท Owner/SystemAdmin) — รอบ 201 ทีม PL (PL-S3 · รายงาน) + รอบ 205 ทีม I (ข้อเสนอ + ตัวซ่อม)
     ///
-    /// <para>ที่มา: ตั้งแต่ C-4 แอดมินแพลตฟอร์มที่เปิดบริษัทให้ลูกค้าได้บทบาท PlatformSupport แทน Owner ⇒ บริษัทนั้นไม่มีเจ้าของจนกว่าจะ "โอนความเป็นเจ้าของ"
-    /// ให้ลูกค้า (งานเจ้าของ เช่น คีย์ API · สมาชิก · ปิดงวด ทำไม่ได้) · หน้านี้บอกแอดมินว่ายังค้างส่งมอบที่ไหน พร้อมผู้ดูแล (support) ที่โอนได้ ·
-    /// ไม่แก้ข้อมูลเอง (ไม่มีใครรู้ว่าลูกค้าคือใครนอกจากผู้ดูแลของบริษัทนั้น)</para></summary>
+    /// <para>สาเหตุหลัก (รอบ 205): ก่อนรอบ 205 แอดมินแพลตฟอร์มที่สร้างบริษัท<b>ใด ๆ</b> (รวมบริษัทของตัวเอง) ได้บทบาท PlatformSupport แทน Owner ⇒ บริษัทไม่มีเจ้าของ ·
+    /// ตอนนี้ผู้สร้างได้ Owner เสมอ (<c>Helpers/CompanyCreatorMembership</c>) · แถวเก่าซ่อมด้วย <see cref="RepairCompaniesWithoutOwner"/> (หลักฐานชัด) หรือ
+    /// <see cref="AssignOwnerToOwnerlessCompany"/> (แอดมินเลือก) · ตัวตัดสินข้อเสนอ <c>Helpers/OwnerlessCompanyRepair.Decide</c></para></summary>
     [HttpGet("companies/without-owner")]
     public async Task<ActionResult<ApiResponse<object>>> GetCompaniesWithoutOwner()
     {
-        var rows = await _db.Companies.AsNoTracking()
-            .Where(c => !c.CompanyUsers.Any(cu => cu.Role == UserRole.Owner))
-            .OrderBy(c => c.CreatedAt)
-            .Select(c => new
+        var rows = await LoadOwnerlessCompaniesAsync(200);
+        var items = rows.Select(r =>
+        {
+            var p = OwnerlessCompanyRepair.Decide(r.CreatedBy, ToRepairMembers(r.Members));
+            var cands = p.Candidates.ToHashSet();
+            return new
             {
-                c.Id,
-                c.Name,
-                c.TaxId,
-                c.CreatedAt,
-                supports = c.CompanyUsers.Where(cu => cu.Role == UserRole.PlatformSupport)
-                    .Select(cu => cu.User.Email).ToList(),
-                memberCount = c.CompanyUsers.Count,
-            })
-            .Take(200)
-            .ToListAsync();
-        return Ok(new ApiResponse<object>(true, new { items = rows, truncated = rows.Count == 200 }));
+                r.Id, r.Name, r.TaxId, r.CreatedAt,
+                supports = r.Members.Where(m => m.Role == UserRole.PlatformSupport).Select(m => m.Email).ToList(),
+                memberCount = r.Members.Count,
+                // ตัวเลือกให้แอดมิน = Candidates ของตัวตัดสินเท่านั้น (ตัดผู้ดูแลแพลตฟอร์มที่ไม่ใช่ผู้สร้าง · บัญชีปิด)
+                members = r.Members.Where(m => cands.Contains(m.UserId))
+                    .Select(m => new { m.UserId, m.Email, m.FullName, role = m.Role.ToString(), isCreator = m.UserId.ToString() == r.CreatedBy }).ToList(),
+                proposal = new
+                {
+                    kind = p.Kind.ToString(),
+                    p.UserId,
+                    userEmail = p.UserId is { } pu ? r.Members.FirstOrDefault(m => m.UserId == pu)?.Email : null,
+                    p.Reason,
+                    candidates = p.Candidates,
+                },
+            };
+        }).ToList();
+        return Ok(new ApiResponse<object>(true, new
+        {
+            items, truncated = rows.Count == 200,
+            autoRepairable = items.Count(i => i.proposal.kind == nameof(OwnerlessCompanyRepair.Kind.AutoPromote)),
+        }));
     }
+
+    private sealed record OwnerlessMember(Guid UserId, string Email, string FullName, UserRole Role, DateTime JoinedAt, bool IsPlatformAdmin, UserStatus Status);
+    private sealed record OwnerlessRow(Guid Id, string Name, string? TaxId, DateTime CreatedAt, string? CreatedBy, List<OwnerlessMember> Members);
+
+    private static List<OwnerlessCompanyRepair.Member> ToRepairMembers(IEnumerable<OwnerlessMember> ms)
+        => ms.Select(m => new OwnerlessCompanyRepair.Member(m.UserId, m.Role, m.JoinedAt, m.IsPlatformAdmin, m.Status == UserStatus.Active)).ToList();
+
+    /// <summary>บริษัทที่ไม่มีสมาชิก Owner/SystemAdmin (นิยามเดียวกับ <c>OwnerlessCompanyRepair.IsOwnerRole</c> — EF แปลเมธอดไม่ได้ จึงเขียนเงื่อนไขตรงนี้ที่เดียว)</summary>
+    private async Task<List<OwnerlessRow>> LoadOwnerlessCompaniesAsync(int take, Guid? onlyCompanyId = null)
+    {
+        var q = _db.Companies.AsNoTracking()
+            .Where(c => !c.CompanyUsers.Any(cu => cu.Role == UserRole.Owner || cu.Role == UserRole.SystemAdmin));
+        if (onlyCompanyId is { } oc) q = q.Where(c => c.Id == oc);
+        return await q.OrderBy(c => c.CreatedAt)
+            .Take(take)
+            .Select(c => new OwnerlessRow(c.Id, c.Name, c.TaxId, c.CreatedAt, c.CreatedBy,
+                c.CompanyUsers.Select(cu => new OwnerlessMember(cu.UserId, cu.User.Email, cu.User.FullName, cu.Role, cu.JoinedAt,
+                    cu.User.IsSystemAdmin, cu.User.Status)).ToList()))
+            .ToListAsync();
+    }
+
+    /// <summary>ธุรกรรม + <c>pg_advisory_xact_lock</c> ต่อบริษัท (<c>AdvisoryLockKey.CompanyOwnership</c>) — ตรวจ "ยังไม่มีเจ้าของ" กับเลื่อนบทบาทอยู่ใต้ล็อกเดียวกัน</summary>
+    private async Task<T> UnderOwnershipLockAsync<T>(Guid companyId, Func<Task<T>> work)
+    {
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                AdvisoryLockKey.For(companyId, AdvisoryLockKey.CompanyOwnership, "owner"));
+            var result = await work();
+            await tx.CommitAsync();
+            return result;
+        });
+    }
+
+    /// <summary>ซ่อมอัตโนมัติเฉพาะบริษัทที่หลักฐานชัด (<c>OwnerlessCompanyRepair.Kind.AutoPromote</c> = ผู้สร้างที่ยัง active) — ที่เหลือคงในรายการให้แอดมินเลือก ·
+    /// ตัดสินซ้ำใต้ล็อกของบริษัท (ระหว่างนั้นอาจมีเจ้าของแล้ว) · เรียกซ้ำได้ผลเดิม · ทุกแถวลง audit hash chain</summary>
+    [HttpPost("companies/without-owner/repair")]
+    public async Task<ActionResult<ApiResponse<object>>> RepairCompaniesWithoutOwner()
+    {
+        var adminId = JwtHelper.GetUserIdFromClaims(User);
+        var rows = await LoadOwnerlessCompaniesAsync(1000);
+        var repaired = new List<object>();
+        var skipped = 0;
+        foreach (var r0 in rows)
+        {
+            var done = await UnderOwnershipLockAsync(r0.Id, async () =>
+            {
+                var r = (await LoadOwnerlessCompaniesAsync(1, r0.Id)).FirstOrDefault();
+                if (r == null) return (object?)null;   // มีเจ้าของแล้ว
+                var p = OwnerlessCompanyRepair.Decide(r.CreatedBy, ToRepairMembers(r.Members));
+                if (p.Kind != OwnerlessCompanyRepair.Kind.AutoPromote || p.UserId is not { } uid) return null;
+                var before = await PromoteToOwnerAsync(r.Id, uid, adminId, "AutoRepair", p.Reason);
+                if (before == null) return null;
+                await _db.SaveChangesAsync();
+                return new { companyId = r.Id, r.Name, userId = uid, email = r.Members.First(m => m.UserId == uid).Email, previousRole = before.ToString() };
+            });
+            if (done == null) skipped++; else repaired.Add(done);
+        }
+        return Ok(new ApiResponse<object>(true, new { repaired, repairedCount = repaired.Count, needsAdmin = skipped },
+            $"ตั้งเจ้าของแล้ว {repaired.Count} บริษัท · เหลือ {skipped} บริษัทที่หลักฐานไม่ชัด — เลือกเจ้าของเองในรายการ"));
+    }
+
+    public sealed record AssignOwnerRequest(Guid UserId);
+
+    /// <summary>แอดมินเลือกเจ้าของให้บริษัทที่ไม่มีเจ้าของ (กรณีหลักฐานไม่ชัด) — ด่าน <c>OwnerlessCompanyRepair.AdminAssignBlock</c>:
+    /// บริษัทต้องยังไม่มีเจ้าของ · ผู้รับต้องเป็นสมาชิกอยู่แล้ว · ผู้ดูแลแพลตฟอร์ม (support/แอดมิน — รวมตัวเอง) ได้เฉพาะเมื่อเป็นผู้สร้าง ·
+    /// ตรวจ + เลื่อนบทบาทใต้ล็อกบริษัท · audit hash chain</summary>
+    [HttpPost("companies/{companyId:guid}/assign-owner")]
+    public async Task<ActionResult<ApiResponse<object>>> AssignOwnerToOwnerlessCompany(Guid companyId, [FromBody] AssignOwnerRequest request)
+    {
+        var adminId = JwtHelper.GetUserIdFromClaims(User);
+        var createdBy = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => new { c.CreatedBy }).FirstOrDefaultAsync();
+        if (createdBy == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
+        var block = await UnderOwnershipLockAsync(companyId, async () =>
+        {
+            var members = await _db.CompanyUsers.AsNoTracking().Where(cu => cu.CompanyId == companyId)
+                .Select(cu => new { cu.UserId, cu.Role, cu.User.IsSystemAdmin }).ToListAsync();
+            var target = members.FirstOrDefault(x => x.UserId == request.UserId);
+            var b = OwnerlessCompanyRepair.AdminAssignBlock(
+                companyHasOwner: OwnerlessCompanyRepair.HasOwner(members.Select(x => x.Role)),
+                targetIsMember: target != null,
+                targetIsPlatformSide: target != null && OwnerlessCompanyRepair.IsPlatformSide(target.Role, target.IsSystemAdmin),
+                targetIsCreator: createdBy.CreatedBy == request.UserId.ToString());
+            if (b != null) return b;
+            await PromoteToOwnerAsync(companyId, request.UserId, adminId, "AdminAssign", "แอดมินแพลตฟอร์มเลือกเจ้าของให้บริษัทที่ไม่มีเจ้าของ");
+            await _db.SaveChangesAsync();
+            return (string?)null;
+        });
+        if (block != null)
+            return BadRequest(new ApiResponse<object>(false, new { ruleCode = OwnerlessCompanyRepair.RuleCode }, block));
+        return Ok(new ApiResponse<object>(true, new { companyId, userId = request.UserId }, "ตั้งเจ้าของบริษัทแล้ว"));
+    }
+
+    /// <summary>ยกสมาชิกเป็น Owner + audit (ยังไม่ SaveChanges) — คืนบทบาทเดิม · null = ไม่พบแถวสมาชิก</summary>
+    private async Task<UserRole?> PromoteToOwnerAsync(Guid companyId, Guid userId, Guid adminId, string mode, string reason)
+    {
+        var row = await _db.CompanyUsers.FirstOrDefaultAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
+        if (row == null) return null;
+        var before = row.Role;
+        row.Role = UserRole.Owner;
+        AddOwnerlessAudit(companyId, userId, adminId, before.ToString(), mode, reason);
+        return before;
+    }
+
+    /// <summary>แถว audit ของการตั้งเจ้าของบริษัทที่ไม่มีเจ้าของ — ตัวเดียวของ repair · assign-owner · สร้างผู้ใช้เป็น Owner (ruleCode เดียวกัน)</summary>
+    private void AddOwnerlessAudit(Guid companyId, Guid userId, Guid adminId, string? beforeRole, string mode, string reason)
+        => _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = adminId,
+            UserEmail = User.FindFirstValue(ClaimTypes.Email) ?? "",
+            Action = AuditAction.Update,
+            EntityType = "CompanyUser",
+            EntityId = userId.ToString(),
+            OldValues = JsonSerializer.Serialize(new { role = beforeRole }),
+            NewValues = JsonSerializer.Serialize(new { action = "OwnerlessRepair", mode, role = nameof(UserRole.Owner), reason, ruleCode = OwnerlessCompanyRepair.RuleCode }),
+            IpAddress = HttpContext?.Connection.RemoteIpAddress?.ToString(),
+            Timestamp = DateTime.UtcNow,
+        });
 
     [HttpGet("customers/{companyId:guid}")]
     public async Task<ActionResult<ApiResponse<object>>> GetCustomerDetail(
@@ -1089,6 +1223,14 @@ public class AdminController : ControllerBase
         if (request.CompanyId.HasValue
             && !await _db.Companies.AnyAsync(c => c.Id == request.CompanyId.Value))
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัทที่ระบุ"));
+        if (request.CompanyId.HasValue)
+        {
+            // รอบ 205 ทีม I: บทบาทระดับแพลตฟอร์มตั้งผ่านทางนี้ไม่ได้ (ตัวตัดสินเดียวกับหน้าทีม) · Owner ได้เฉพาะบริษัทที่ยังไม่มีเจ้าของ
+            // (สร้างลูกค้าแล้วตั้งเป็นเจ้าของในขั้นเดียว) — บริษัทที่มีเจ้าของแล้วต้อง "โอนความเป็นเจ้าของ" (ข้อ 105 · ไม่ใช่ทางลัดของแอดมิน)
+            if (!OwnershipTransferPolicy.MayAssign(role, callerIsPlatformAdmin: true))
+                return BadRequest(new ApiResponse<object>(false, null, OwnershipTransferPolicy.AssignDeniedMessage(role)));
+            // Owner: ด่าน AdminAssignBlock + audit ใต้ล็อกบริษัท (ด้านล่าง ตอนเพิ่มสมาชิก)
+        }
 
         var user = new Models.Entities.User
         {
@@ -1105,18 +1247,48 @@ public class AdminController : ControllerBase
         };
         _db.Users.Add(user);
 
-        if (request.CompanyId.HasValue)
+        if (request.CompanyId is { } targetCompanyId)
         {
-            _db.Set<Models.Entities.CompanyUser>().Add(new Models.Entities.CompanyUser
+            // ฝ่ายค้านรอบ 205: Owner ผ่านด่านเดียวกับ assign-owner (บริษัทยังไม่มีเจ้าของ · ผู้รับฝั่งแพลตฟอร์มไม่ได้) + audit ruleCode เดียวกัน
+            // ตรวจ + เพิ่มสมาชิกใต้ล็อกบริษัท (กัน Owner สองคนจากคำขอซ้อน)
+            var createdBy = await _db.Companies.AsNoTracking().Where(c => c.Id == targetCompanyId).Select(c => c.CreatedBy).FirstOrDefaultAsync();
+            var adminId = JwtHelper.GetUserIdFromClaims(User);
+            var block = await UnderOwnershipLockAsync(targetCompanyId, async () =>
             {
-                UserId = user.Id,
-                CompanyId = request.CompanyId.Value,
-                Role = role,
-                IsDefault = true,
-                JoinedAt = DateTime.UtcNow
+                if (role == UserRole.Owner)
+                {
+                    var existingRoles = await _db.CompanyUsers.AsNoTracking()
+                        .Where(cu => cu.CompanyId == targetCompanyId).Select(cu => cu.Role).ToListAsync();
+                    var b = OwnerlessCompanyRepair.AdminAssignBlock(
+                        companyHasOwner: OwnerlessCompanyRepair.HasOwner(existingRoles),
+                        targetIsMember: true,                              // กำลังถูกเพิ่มเป็นสมาชิกในธุรกรรมนี้
+                        targetIsPlatformSide: request.MakeSystemAdmin,
+                        targetIsCreator: createdBy == user.Id.ToString());   // ผู้ใช้ใหม่ไม่เคยสร้างบริษัท ⇒ false เสมอ
+                    if (b != null) return b;
+                    AddOwnerlessAudit(targetCompanyId, user.Id, adminId, null, "AdminCreateUser",
+                        "แอดมินแพลตฟอร์มสร้างผู้ใช้ใหม่เป็นเจ้าของบริษัทที่ไม่มีเจ้าของ");
+                }
+                _db.Set<Models.Entities.CompanyUser>().Add(new Models.Entities.CompanyUser
+                {
+                    UserId = user.Id,
+                    CompanyId = targetCompanyId,
+                    Role = role,
+                    IsDefault = true,
+                    JoinedAt = DateTime.UtcNow
+                });
+                await _db.SaveChangesAsync();
+                return (string?)null;
             });
+            if (block != null)
+            {
+                _db.ChangeTracker.Clear();   // ไม่สร้างผู้ใช้ครึ่งทาง — ธุรกรรมถูกทิ้งแล้ว
+                return BadRequest(new ApiResponse<object>(false, new { ruleCode = OwnerlessCompanyRepair.RuleCode }, block));
+            }
         }
-        await _db.SaveChangesAsync();
+        else
+        {
+            await _db.SaveChangesAsync();
+        }
 
         var reset = await IssueResetLinkAsync(user);
         return Ok(new ApiResponse<object>(true, new

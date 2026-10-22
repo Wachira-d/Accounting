@@ -515,14 +515,16 @@ public class SubscriptionService : ISubscriptionService
             acct = await _db.AccountSubscriptions
                 .Include(a => a.PlanTemplate)
                 .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
-            if (acct != null)
-            {
-                plan = acct.PlanTemplate.Plan;
-                planName = acct.PlanTemplate.Name;
-                status = acct.Status;
-                features = acct.EnabledFeatures;
-            }
+            if (acct != null) features = acct.EnabledFeatures;
         }
+        // รอบ 205 ทีม I: ตัวตนแพ็กเกจ (ระดับ/ชื่อ/สถานะ) ผ่านตัวตัดสินตัวเดียวกับแดชบอร์ด/รายการบริษัท — Helpers/PlanIdentityResolver
+        var identity = Accounting.Helpers.PlanIdentityResolver.Resolve(sub.Plan, sub.Status, sub.EndDate, null,
+            acct != null
+                ? new Accounting.Helpers.PlanIdentityResolver.LicenseSide(acct.PlanTemplate.Plan, acct.PlanTemplate.Name, acct.Status, acct.EndDate)
+                : null);
+        plan = identity.Plan;
+        planName = identity.PlanName;
+        status = identity.Status;
 
         // รอบ 200 ข้อ 14: ลูกค้าช่วงทดลอง/แพ็กเกจฟรีที่สำเนาฟีเจอร์ว่าง (คอลัมน์ DEFAULT 0 · แอดมินบันทึกรายการว่าง) ⇒ ใช้ฟีเจอร์ตามข้อมูล
         // แพ็กเกจ แทนการถูกบล็อกทุกเส้นทางเมื่อเปิดบังคับ · แพ็กเกจก็ว่าง = คงว่าง (รายงานแอดมินแสดง — ไม่แต่งชุดฟีเจอร์เอง) ·

@@ -80,6 +80,7 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/plan-display.js"></script>
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
@@ -112,7 +113,9 @@
             headers: { 'Authorization': 'Bearer ' + API.token }
           });
           const j = await r.json();
-          if (j.success) this.plans = (j.data || []).filter(p => p.isActive !== false);
+          // รอบ 205 ทีม I: เรียง + บรรทัดฟีเจอร์ผ่าน PlanDisplay ตัวเดียวกับหน้าแพ็กเกจ/หน้าแรก (เดิมพิมพ์ลิมิตดิบ — "99999 เอกสาร" ขณะหน้าอื่นบอก "ไม่จำกัด")
+          if (j.success) this.plans = PlanDisplay.sort((j.data || []).filter(p => p.isActive !== false));
+          try { const c = await API.getFeatureCatalog(); this.catalog = c?.data || null; } catch { this.catalog = null; }
         } catch { this.plans = []; }
       },
       render() {
@@ -124,6 +127,16 @@
         }
       },
       _money(n) { return (n||0).toLocaleString('th-TH', {maximumFractionDigits:0}); },
+      _planLines(p) {
+        const i = this.plans.indexOf(p);
+        const next = i >= 0 && i + 1 < this.plans.length ? this.plans[i + 1] : null;
+        return PlanDisplay.featureLines(p, this.catalog, next, {
+          lang: 'th', unlimited: 'ไม่จำกัด',
+          users: n => `ผู้ใช้ ${n} คน / บริษัท`, unlimitedUsers: 'ผู้ใช้ไม่จำกัด',
+          companies: n => `${n} บริษัท`, docs: n => `${n} เอกสาร/เดือน`, unlimitedDocs: 'เอกสารไม่จำกัด',
+          storage: n => `พื้นที่ ${n}`, featureCount: n => `ฟีเจอร์ ${n} รายการ`, trial: n => `ทดลองฟรี ${n} วัน`,
+        });
+      },
       // หนีข้อความ = ตัวกลางตัวเดียวของระบบ (สำเนามือเดิมหนีแค่ & < ' ⇒ ค่าที่มี " แตกออกจาก attribute ได้)
       _esc(s) { return Layout.esc(s); },
       _fmtBytes(b) {
@@ -217,11 +230,8 @@
               <div class="name">${this._esc(p.name)}</div>
               <div class="price">฿${this._money(p.monthlyPrice)}<small> / เดือน</small></div>
               <ul>
-                <li>${p.maxCompanies||1} บริษัท</li>
-                <li>${p.maxUsers||1} ผู้ใช้ / บริษัท</li>
-                <li>${p.maxDocumentsPerMonth} เอกสาร / เดือน</li>
-                <li>${this._fmtBytes(p.maxStorageBytes||0)} storage</li>
-                <li>${p.maxOcrPagesPerMonth} หน้า OCR / เดือน</li>
+                ${this._planLines(p).map(f => `<li style="${f.check ? '' : 'color:#94a3b8'}">${f.check ? '' : '✗ '}${this._esc(f.text)}</li>`).join('')}
+                <li>${this._esc(PlanDisplay.limit(p.maxOcrPagesPerMonth, 'docs', 'ไม่จำกัด'))} หน้า OCR / เดือน</li>
               </ul>
               <button onclick="Page.startTrial('${p.id}','${Layout.jsArg(p.name)}')">ทดลองใช้ ${p.trialDurationDays||14} วัน</button>
             </div>`).join('')
