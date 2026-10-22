@@ -75,6 +75,9 @@ public sealed record BookingInvoiceDecision(
     bool UseIssuedChild = false,
     bool VoidConfirmation = false);
 
+/// <summary>เอกสารที่เกี่ยวกับการจอง (ใบที่ผูก หรือใบลูกที่แปลงจากใบนั้น) — ข้อเท็จจริงของ <see cref="BookingInvoiceTimingPolicy.RevenueDocumentForPos"/></summary>
+public readonly record struct BookingDocRef(DocumentType Type, DocumentStatus Status, string? Number, bool IsDeposit = false);
+
 /// <summary>ตัวเลือกบนหน้าตั้งค่า (server ประกอบ · หน้าเว็บแสดงตรง ๆ)</summary>
 public sealed record BookingInvoiceTimingOption(string Value, string Label, string TaxEffect);
 
@@ -225,6 +228,20 @@ public static class BookingInvoiceTimingPolicy
                 + "ถ้าเรียกเก็บค่าการันตี ออกใบกำกับเองที่หน้าเอกสาร (แปลงใบยืนยันการจอง) ลงวันที่รับเงิน");
 
         return Issue(BookingInvoiceAction.IssueTaxInvoiceFromConfirmation, f.VatRegistered);
+    }
+
+    /// <summary><b>เอกสารรายได้ของการจองที่ POS ต้องนับ</b> (เปิดบิล POS ซ้ำ = รายได้/ภาษีขายซ้ำ) — ตัวตัดสินเดียวที่ <c>PosService.Bookings</c> เรียก ·
+    /// ใบที่ผูก (ไม่ใช่ใบยืนยันการจอง · ไม่ใช่มัดจำ · ยังไม่ยกเลิก) = นับ · ใบที่ผูกเป็นใบยืนยันการจอง ⇒ นับ<b>ใบลูก</b>ที่แปลงจากใบนั้น
+    /// (<see cref="IssuedTaxDocumentTypes"/> ที่ยังไม่ Voided/Rejected — พนักงานแปลงเองที่หน้าเอกสารโดยการจองยังผูกใบยืนยันอยู่ · ฝ่ายค้านทีม N) ·
+    /// ร่างก็นับ (อนุมัติทีหลัง = รายได้ซ้ำ) · คืนเลขเอกสาร ("(ร่าง)" เมื่อยังไม่มีเลข) หรือ null = ไม่มี</summary>
+    public static string? RevenueDocumentForPos(BookingDocRef? linked, IEnumerable<BookingDocRef> childrenOfLinked)
+    {
+        if (linked is not BookingDocRef l || IsDead(l.Status) || l.IsDeposit) return null;
+        static string Label(string? no) => string.IsNullOrWhiteSpace(no) ? "(ร่าง)" : no;
+        if (l.Type != DocumentType.Quotation) return Label(l.Number);
+        foreach (var c in childrenOfLinked)
+            if (IsIssuedTaxDocument(c.Type) && !IsDead(c.Status)) return Label(c.Number);
+        return null;
     }
 
     /// <summary>แสดงปุ่ม "รับเงินแล้ว — ออกใบกำกับภาษี" ไหม — ตัวตัดสินเดียวกับตอนกด (<see cref="Decide"/> ไม่ปฏิเสธ) และเฉพาะการจองของโหมด (ข)

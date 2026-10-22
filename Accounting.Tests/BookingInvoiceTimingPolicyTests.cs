@@ -411,4 +411,43 @@ public class BookingInvoiceTimingPolicyTests
         Assert.True(BookingInvoiceTimingPolicy.ShowPaymentButton(
             F(BookingType.Guaranteed, AtBooking, BookingInvoiceEvent.PaymentReceived, DocumentType.Quotation, DocumentStatus.Approved)));
     }
+
+    // ───────────── POS นับใบลูกที่แปลงจากใบยืนยันการจอง (ฝ่ายค้านทีม N · PosService.Bookings) ─────────────
+
+    private static readonly BookingDocRef Qt = new(DocumentType.Quotation, DocumentStatus.Approved, "QT-001");
+
+    [Theory]
+    [InlineData(DocumentType.TaxInvoice, DocumentStatus.Approved, "TIV-001")]
+    [InlineData(DocumentType.Invoice, DocumentStatus.Paid, "INV-001")]
+    [InlineData(DocumentType.TaxInvoice, DocumentStatus.Draft, "(ร่าง)")]
+    public void POS_ใบยืนยันมีใบลูกที่แปลงแล้ว_นับเป็นเอกสารรายได้_บล็อกเปิดบิล(DocumentType type, DocumentStatus status, string expected)
+        => Assert.Equal(expected, BookingInvoiceTimingPolicy.RevenueDocumentForPos(Qt,
+            new[] { new BookingDocRef(type, status, status == DocumentStatus.Draft ? null : expected) }));
+
+    [Theory]
+    [InlineData(DocumentStatus.Voided)]
+    [InlineData(DocumentStatus.Rejected)]
+    public void POS_ใบลูกถูกยกเลิก_เปิดบิลได้(DocumentStatus status)
+        => Assert.Null(BookingInvoiceTimingPolicy.RevenueDocumentForPos(Qt, new[] { new BookingDocRef(DocumentType.TaxInvoice, status, "TIV-001") }));
+
+    [Fact]
+    public void POS_ใบยืนยันไม่มีใบลูก_หรือลูกเป็นชนิดอื่น_เปิดบิลได้()
+    {
+        Assert.Null(BookingInvoiceTimingPolicy.RevenueDocumentForPos(Qt, Array.Empty<BookingDocRef>()));
+        Assert.Null(BookingInvoiceTimingPolicy.RevenueDocumentForPos(Qt, new[] { new BookingDocRef(DocumentType.DeliveryNote, DocumentStatus.Approved, "DN-1") }));
+    }
+
+    [Fact]
+    public void POS_พฤติกรรมเดิมของใบที่ผูก_ไม่เปลี่ยน()
+    {
+        // ใบกำกับที่ผูก (โหมด ก) = นับ · ร่าง = "(ร่าง)" · ยกเลิก/มัดจำ/ไม่มีใบ = ไม่นับ
+        Assert.Equal("TIV-9", BookingInvoiceTimingPolicy.RevenueDocumentForPos(new BookingDocRef(DocumentType.TaxInvoice, DocumentStatus.Approved, "TIV-9"), Array.Empty<BookingDocRef>()));
+        Assert.Equal("(ร่าง)", BookingInvoiceTimingPolicy.RevenueDocumentForPos(new BookingDocRef(DocumentType.TaxInvoice, DocumentStatus.Draft, null), Array.Empty<BookingDocRef>()));
+        Assert.Null(BookingInvoiceTimingPolicy.RevenueDocumentForPos(new BookingDocRef(DocumentType.TaxInvoice, DocumentStatus.Voided, "TIV-9"), Array.Empty<BookingDocRef>()));
+        Assert.Null(BookingInvoiceTimingPolicy.RevenueDocumentForPos(new BookingDocRef(DocumentType.Receipt, DocumentStatus.Approved, "RC-1", IsDeposit: true), Array.Empty<BookingDocRef>()));
+        Assert.Null(BookingInvoiceTimingPolicy.RevenueDocumentForPos(null, Array.Empty<BookingDocRef>()));
+        // ใบยืนยันการจองที่ถูกยกเลิก ⇒ ไม่ดูใบลูก (เหมือนเดิม: ใบเสนอราคาไม่นับ)
+        Assert.Null(BookingInvoiceTimingPolicy.RevenueDocumentForPos(Qt with { Status = DocumentStatus.Voided },
+            new[] { new BookingDocRef(DocumentType.TaxInvoice, DocumentStatus.Approved, "TIV-1") }));
+    }
 }

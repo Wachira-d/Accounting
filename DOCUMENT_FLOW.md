@@ -1666,6 +1666,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
         (5) "รับเงินแล้ว" รับ `receivedDate` (ว่าง = วันนี้ไทย · อนาคต = ปฏิเสธ `PaymentDate`) ⇒ แปลงด้วย `ConvertDocumentPartialAsync` (ทุกบรรทัดเต็มจำนวน) ลงวันที่นั้น ·
         ข้อความบอกตามจริงว่า "ยังไม่ได้บันทึกรับชำระ" (เส้นรับชำระเดิมที่หน้าเอกสาร — ยังไม่ต่ออัตโนมัติ)
         (6) บริษัทไม่จด VAT ⇒ ป้าย `ErpBookingDocumentType.Invoice` (ค่าใหม่ 5) · ปุ่มแสดงเฉพาะการจองของโหมด (ข) (`ShowPaymentButton`) ⇒ โหมด (ก) หน้าจอเดิม ·
+        (7) **POS เห็นใบลูก**: `PosService.Bookings.LoadBookingSnapshotsAsync` นับเอกสารรายได้ด้วย `BookingInvoiceTimingPolicy.RevenueDocumentForPos` ตัวเดียว —
+        ใบที่ผูกเป็นใบยืนยันการจอง ⇒ ใบลูก (ใบกำกับ/ใบแจ้งหนี้/ใบเสร็จ ที่ยังไม่ Voided/Rejected · ร่างก็นับ) = เอกสารรายได้ ⇒ `PosBookingIntake` บล็อกเปิดบิล
+        ("รับชำระที่เอกสารนั้น") · ใบลูกถูกยกเลิก ⇒ เปิดบิลได้ ·
         ล้มดัง: ข้อความ (`CmsBookingCancelPolicy.FailureNote`) ประทับบนการจอง + `ErpNotices` · `required_call_site_check` ล็อกทุกทางเข้า
     - อนุมัติอัตโนมัติ (ทุกชนิดที่ไม่ใช่ Lead) ล้ม ⇒ **ถอยของที่ขั้นอนุมัติทิ้งไว้ใน context** (`TrackedChangeRevert` · รอบ 194 R3 P-1 — เดิม catch แล้ว
       `SaveChanges` ต่อ ⇒ ใบ Approved ไม่มี JE) · ใบคงเป็นร่าง + หมายเหตุ ⚠️ บนการจอง ("เปิดเอกสารแล้วกดอนุมัติ") + log

@@ -97,6 +97,23 @@ public partial class PosService
                 foreach (var d in docRows)
                     docs[d.Id] = (d.DocumentNumber, d.IsDeposit, d.DocumentType, d.Status, d.TotalAmount);
             }
+            // ใบลูกที่แปลงจากใบยืนยันการจอง (ใบเสนอราคา) ที่ผูกอยู่ — พนักงานแปลงเป็นใบกำกับเองที่หน้าเอกสาร ⇒ POS ต้องนับเป็นเอกสารรายได้
+            // (ฝ่ายค้านทีม N · ตัวตัดสิน BookingInvoiceTimingPolicy.RevenueDocumentForPos)
+            var qtIds = docs.Where(kv => kv.Value.Type == DocumentType.Quotation).Select(kv => kv.Key).ToList();
+            var children = new Dictionary<Guid, List<BookingDocRef>>();
+            if (qtIds.Count > 0)
+            {
+                var childRows = await _db.Documents.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.RelatedDocumentId != null && qtIds.Contains(d.RelatedDocumentId.Value))
+                    .OrderBy(d => d.CreatedAt)
+                    .Select(d => new { Parent = d.RelatedDocumentId!.Value, d.DocumentType, d.Status, d.DocumentNumber, d.IsDeposit })
+                    .ToListAsync();
+                foreach (var c in childRows)
+                {
+                    if (!children.TryGetValue(c.Parent, out var lst)) children[c.Parent] = lst = new List<BookingDocRef>();
+                    lst.Add(new BookingDocRef(c.DocumentType, c.Status, c.DocumentNumber, c.IsDeposit));
+                }
+            }
 
             foreach (var b in rows)
             {
@@ -110,11 +127,11 @@ public partial class PosService
                         if (depositPaid == 0m && d.Status is DocumentStatus.Approved or DocumentStatus.Paid or DocumentStatus.PartiallyPaid)
                             depositPaid = d.Total;
                     }
-                    else if (!dead && d.Type != DocumentType.Quotation)
-                    {
-                        // เอกสารรายได้ของการจอง (ใบกำกับจากการจองแบบรับประกัน) — ร่างก็นับ: อนุมานทีหลัง = รายได้ซ้ำกับบิล POS
-                        revenueDocNo = string.IsNullOrWhiteSpace(d.No) ? "(ร่าง)" : d.No;
-                    }
+                    // เอกสารรายได้ของการจอง (ใบกำกับ Guaranteed · หรือใบลูกที่แปลงจากใบยืนยันการจอง) — ร่างก็นับ: อนุมัติทีหลัง = รายได้ซ้ำกับบิล POS ·
+                    // ตัวตัดสินเดียว (ห้ามเขียนเงื่อนไขซ้ำที่นี่)
+                    revenueDocNo = BookingInvoiceTimingPolicy.RevenueDocumentForPos(
+                        new BookingDocRef(d.Type, d.Status, d.No, d.IsDeposit),
+                        children.TryGetValue(did, out var kids) ? kids : Enumerable.Empty<BookingDocRef>());
                 }
                 var dateUtc = ThaiDate.CalendarDateUtc(b.BookingDate);
                 var startUtc = DateTime.SpecifyKind(dateUtc.Date.Add(b.StartTime.ToTimeSpan()).AddHours(-7), DateTimeKind.Utc);
