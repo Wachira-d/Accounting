@@ -1434,6 +1434,8 @@ const Layout = {
       description: 'หน้าขายแบบ Touch — รับชำระเงิน พิมพ์ใบเสร็จด่วน' },
     { id: 'pos-packages', label: 'แพ็คเกจบริการ', icon: '💆', href: '/pages/pos-packages.html', feature: 'DocumentEngine', _i18nKey: 'nav.posPackages',
       description: 'ตั้งค่าแพ็คเกจคอร์ส/บริการ — สำหรับสปา คลินิก ฟิตเนส' },
+    { id: 'course-credits', label: 'คอร์ส & เครดิต', icon: '🎟️', href: '/pages/course-credits.html', feature: 'DocumentEngine',
+      description: 'ขายคอร์ส/Class Credits/Hour Pass · ยอดคงเหลือลูกค้า · จองคลาสกลุ่ม/ตัวต่อตัว · รับรู้รายได้รับล่วงหน้าตามการใช้' },
     { id: 'pos-modifiers', label: 'ตัวเลือกสินค้า', icon: '🔧', href: '/pages/pos-modifiers.html', feature: 'DocumentEngine', _i18nKey: 'nav.posModifiers',
       description: 'ไซส์ · สี · รสชาติ · เพิ่ม-ลด ingredient ต่อจาน' },
     { id: 'pos-reports', label: 'รายงาน POS', icon: '📊', href: '/pages/pos-reports.html', feature: 'DocumentEngine', _i18nKey: 'nav.posReports',

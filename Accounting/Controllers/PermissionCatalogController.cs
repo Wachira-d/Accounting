@@ -147,7 +147,7 @@ public class PermissionCatalogController : ControllerBase
             new() {
                 PermissionKeys.PosCashier,
                 // Menu access — limit to POS-related screens only.
-                "pos",
+                "pos", "course-credits",   // ขาย/จอง/เช็คอินคอร์ส (ทีม L) — ด่าน API เดียวกับ POS.Cashier
             }),
         new("pos-manager", "POS Manager", "👔",
             "ดูแลรอบขาย หน้าร้าน — ปิดยอด, อนุมัติ refund, ดูรายงานยอดขาย, ตั้งค่า menu/modifier",
@@ -155,7 +155,7 @@ public class PermissionCatalogController : ControllerBase
                 PermissionKeys.PosCashier, PermissionKeys.PosRefund,
                 PermissionKeys.PosCloseDay, PermissionKeys.PosManager,
                 PermissionKeys.PosReportsView,
-                "pos", "pos-packages", "pos-modifiers", "pos-reports",
+                "pos", "pos-packages", "pos-modifiers", "pos-reports", "course-credits",
             }),
         new("inventory-clerk", "Inventory Clerk", "📦",
             "เจ้าหน้าที่คลัง — รับสินค้า, ปรับสต๊อก, โอนระหว่างคลัง. ไม่เห็นยอดเงิน / GL",

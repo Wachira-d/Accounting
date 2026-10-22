@@ -466,6 +466,13 @@ public class AccountingDbContext : DbContext
     public DbSet<LodgingHousekeepingTask> LodgingHousekeepingTasks => Set<LodgingHousekeepingTask>();
     public DbSet<LodgingGuestRequest> LodgingGuestRequests => Set<LodgingGuestRequest>();
 
+    // ทีม L — คอร์ส / Class Credits / Hour Pass (docs/COURSE_CREDIT_DESIGN.md · schema: DatabaseMigrationHelper.CourseCreditStatements)
+    public DbSet<CreditPackage> CreditPackages => Set<CreditPackage>();
+    public DbSet<CreditPass> CreditPasses => Set<CreditPass>();
+    public DbSet<CreditLedgerEntry> CreditLedgerEntries => Set<CreditLedgerEntry>();
+    public DbSet<CreditClassSession> CreditClassSessions => Set<CreditClassSession>();
+    public DbSet<CreditClassBooking> CreditClassBookings => Set<CreditClassBooking>();
+
     // รอบ 194 — ประเภทเงินมัดจำต่อบริษัท (ลักษณะเงิน = ตัวกำหนด VAT · โหมด = วิธีบันทึก) — Helpers/DepositPolicyResolver.ResolveKind
     public DbSet<DepositKind> DepositKinds => Set<DepositKind>();
 
@@ -3546,6 +3553,47 @@ public class AccountingDbContext : DbContext
             e.HasIndex(g => new { g.PropertyId, g.Status }).HasDatabaseName("IX_LodgingGuestRequests_Property_Status");
             e.HasOne(g => g.Reservation).WithMany().HasForeignKey(g => g.ReservationId).OnDelete(DeleteBehavior.Cascade);
             e.HasQueryFilter(g => !g.IsDeleted);
+        });
+
+        // ===== ทีม L — คอร์ส / เครดิต (ชื่อ index ต้องตรงกับ DatabaseMigrationHelper.CourseCreditStatements) =====
+        modelBuilder.Entity<CreditPackage>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.Code }).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_CreditPackages_Company_Code");
+            e.Property(p => p.Code).HasMaxLength(50); e.Property(p => p.Name).HasMaxLength(200);
+            e.Property(p => p.CreditQuantity).HasPrecision(18, 2); e.Property(p => p.Price).HasPrecision(18, 2); e.Property(p => p.VatRate).HasPrecision(5, 2);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+        modelBuilder.Entity<CreditPass>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.PassNumber }).IsUnique().HasDatabaseName("UX_CreditPasses_Company_Number");
+            e.HasIndex(p => new { p.CompanyId, p.ContactId, p.Status }).HasDatabaseName("IX_CreditPasses_Company_Contact_Status");
+            e.HasIndex(p => new { p.CompanyId, p.SaleDocumentId }).IsUnique().HasFilter("\"SaleDocumentId\" IS NOT NULL").HasDatabaseName("UX_CreditPasses_Company_SaleDocument");
+            e.Property(p => p.PassNumber).HasMaxLength(40); e.Property(p => p.PackageName).HasMaxLength(200); e.Property(p => p.SaleDocumentNumber).HasMaxLength(50);
+            e.Property(p => p.CreditsTotal).HasPrecision(18, 2); e.Property(p => p.CreditsUsed).HasPrecision(18, 2); e.Property(p => p.CreditsReserved).HasPrecision(18, 2);
+            e.Property(p => p.ContractAmount).HasPrecision(18, 2); e.Property(p => p.RecognizedAmount).HasPrecision(18, 2);
+            e.HasOne(p => p.Package).WithMany().HasForeignKey(p => p.PackageId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+        modelBuilder.Entity<CreditLedgerEntry>(e =>
+        {
+            e.HasIndex(l => new { l.CompanyId, l.PassId }).HasDatabaseName("IX_CreditLedgerEntries_Company_Pass");
+            e.Property(l => l.Credits).HasPrecision(18, 2); e.Property(l => l.RecognizedAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(l => !l.IsDeleted);
+        });
+        modelBuilder.Entity<CreditClassSession>(e =>
+        {
+            e.HasIndex(s => new { s.CompanyId, s.StartAt }).HasDatabaseName("IX_CreditClassSessions_Company_Start");
+            e.Property(s => s.Title).HasMaxLength(200); e.Property(s => s.CreditCost).HasPrecision(18, 2);
+            e.HasQueryFilter(s => !s.IsDeleted);
+        });
+        modelBuilder.Entity<CreditClassBooking>(e =>
+        {
+            e.HasIndex(b => new { b.CompanyId, b.SessionId }).HasDatabaseName("IX_CreditClassBookings_Company_Session");
+            e.HasIndex(b => new { b.CompanyId, b.PassId }).HasDatabaseName("IX_CreditClassBookings_Company_Pass");
+            e.HasIndex(b => new { b.CompanyId, b.ExternalRef }).HasDatabaseName("IX_CreditClassBookings_Company_ExternalRef");
+            e.Property(b => b.ExternalRef).HasMaxLength(120);
+            e.Property(b => b.Credits).HasPrecision(18, 2); e.Property(b => b.RecognizedAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(b => !b.IsDeleted);
         });
 
         // ===== SiteCustomer =====

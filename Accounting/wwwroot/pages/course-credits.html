@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คอร์ส &amp; เครดิต - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .cc-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+    .cc-card{background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:12px}
+    .cc-card .k{font-size:12px;color:var(--gray-500)}
+    .cc-card .v{font-size:20px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+    .cc-note{font-size:12.5px;color:var(--gray-600);background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+    .cc-warn{color:#b45309;font-size:12px}
+    .cc-bar{height:6px;background:var(--gray-100);border-radius:99px;overflow:hidden;margin-top:4px}
+    .cc-bar > span{display:block;height:100%;background:var(--primary)}
+    .cc-chips{display:flex;flex-wrap:wrap;gap:6px}
+    .cc-chips label{display:flex;align-items:center;gap:4px;font-size:13px;border:1px solid var(--gray-200);border-radius:99px;padding:4px 10px;background:#fff}
+    .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">คอร์ส &amp; เครดิต</h2><p class="page-subtitle">ขายคอร์ส · Class Credits · Hour Pass — ยอดคงเหลือลูกค้า · จองคลาส · รับรู้รายได้ตามการใช้บริการ</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="Page.openActivate()">เปิดบัตรจากเอกสารขาย</button>
+        <button class="btn btn-primary" onclick="Page.openSell()">+ ขายคอร์ส</button>
+      </div>
+    </div>
+
+    <div class="cc-note">ขายคอร์ส = ออกใบกำกับภาษี/ใบเสร็จ ณ วันขาย (VAT ตามวันรับเงิน §78/1) · ยอดสุทธิเข้า <b>ค่าบริการรับล่วงหน้า</b> (หนี้สิน) ·
+      ทุกครั้งที่เข้าเรียน/no-show/ยกเลิกช้า ระบบย้ายเข้ารายได้ตามราคาต่อเครดิต (ครั้งสุดท้ายรับส่วนที่เหลือทั้งหมด) · หมดอายุ = รับรู้ส่วนคงเหลือเป็นรายได้ (TFRS for NPAEs บทที่ 6)</div>
+
+    <div class="cc-cards" id="summaryCards"></div>
+
+    <div class="tabs" role="tablist">
+      <div class="tab active" data-tab="passes" onclick="Page.tab('passes')">บัตรของลูกค้า</div>
+      <div class="tab" data-tab="sessions" onclick="Page.tab('sessions')">ตารางคลาส</div>
+      <div class="tab" data-tab="packages" onclick="Page.tab('packages')">แพ็กเกจ</div>
+    </div>
+
+    <!-- บัตรของลูกค้า -->
+    <section id="tab-passes">
+      <div class="toolbar">
+        <input type="text" class="search-input" placeholder="ค้นเลขบัตร · ชื่อลูกค้า · เลขเอกสาร..." id="passSearch" oninput="Page.debouncedPasses()">
+        <select class="filter-select" id="passStatus" onchange="Page.loadPasses(1)" aria-label="สถานะบัตร">
+          <option value="">ทุกสถานะ</option>
+          <option value="Active">ใช้งานได้</option>
+          <option value="Exhausted">ใช้ครบแล้ว</option>
+          <option value="Expired">หมดอายุ</option>
+        </select>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>เลขบัตร</th><th>ลูกค้า</th><th>แพ็กเกจ</th><th class="text-right">คงเหลือ</th><th>ใช้ได้ถึง</th><th class="text-right">รายได้รับล่วงหน้าคงเหลือ</th><th>สถานะ</th><th></th></tr></thead>
+          <tbody id="passBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+      <div id="passPager"></div>
+    </section>
+
+    <!-- ตารางคลาส -->
+    <section id="tab-sessions" style="display:none">
+      <div class="toolbar">
+        <label class="text-sm">ตั้งแต่ <input type="date" class="form-input" id="sesFrom" style="width:auto;display:inline-block" onchange="Page.loadSessions()"></label>
+        <label class="text-sm">ถึง <input type="date" class="form-input" id="sesTo" style="width:auto;display:inline-block" onchange="Page.loadSessions()"></label>
+        <button class="btn btn-primary btn-sm" onclick="Page.openSession()">+ เพิ่มรอบเรียน</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>วัน-เวลา</th><th>คลาส</th><th>รูปแบบ</th><th>ครูฝึก</th><th class="text-right">จองแล้ว/รับ</th><th>สถานะ</th><th></th></tr></thead>
+          <tbody id="sesBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- แพ็กเกจ -->
+    <section id="tab-packages" style="display:none">
+      <div class="toolbar">
+        <label class="text-sm" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="pkgInactive" onchange="Page.loadPackages()"> แสดงที่ปิดขาย</label>
+        <button class="btn btn-primary btn-sm" onclick="Page.openPackage()">+ เพิ่มแพ็กเกจ</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>รหัส</th><th>ชื่อ</th><th class="text-right">จำนวน</th><th>อายุ</th><th class="text-right">ราคา</th><th>รูปแบบ</th><th class="text-right">บัตรที่ใช้งาน</th><th>สถานะ</th><th></th></tr></thead>
+          <tbody id="pkgBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- โมดัล: แพ็กเกจ -->
+    <div class="modal-overlay" id="pkgModal">
+      <div class="modal" style="max-width:760px">
+        <div class="modal-header"><h3 class="modal-title" id="pkgTitle">เพิ่มแพ็กเกจ</h3><button class="modal-close" onclick="Layout.closeModal('pkgModal')">&times;</button></div>
+        <div class="modal-body">
+          <input type="hidden" id="pId">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="pCode">รหัส *</label><input type="text" class="form-input" id="pCode" maxlength="50"></div>
+            <div class="form-group"><label class="form-label" for="pName">ชื่อแพ็กเกจ *</label><input type="text" class="form-input" id="pName" maxlength="200"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="pUnit">หน่วย</label>
+              <select class="form-select" id="pUnit"><option value="Session">ครั้ง (Class Credits)</option><option value="Hour">ชั่วโมง (Hour Pass)</option></select></div>
+            <div class="form-group"><label class="form-label" for="pQty">จำนวนครั้ง/ชั่วโมง *</label><input type="number" class="form-input" id="pQty" min="0.5" step="0.5"></div>
+            <div class="form-group"><label class="form-label" for="pDays">อายุใช้งาน (วัน · 0 = ไม่หมดอายุ)</label><input type="number" class="form-input" id="pDays" min="0" value="90"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="pPrice">ราคา *</label><input type="number" class="form-input" id="pPrice" min="0" step="0.01"></div>
+            <div class="form-group"><label class="form-label" for="pVat">VAT</label>
+              <select class="form-select" id="pVat"><option value="7">7%</option><option value="0">0% (§80/1)</option><option value="-1">ยกเว้น (§81 — ออกใบเสร็จ)</option></select></div>
+            <div class="form-group form-checkbox" style="margin-top:26px"><input type="checkbox" id="pVatIncl" checked><label for="pVatIncl">ราคารวม VAT แล้ว</label></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="pFormat">รูปแบบคลาส</label>
+              <select class="form-select" id="pFormat"><option value="Any">ทุกแบบ</option><option value="OneOnOne">ตัวต่อตัว (1-on-1)</option><option value="Group">กลุ่ม</option></select></div>
+            <div class="form-group"><label class="form-label" for="pTrainerMode">ครูฝึก</label>
+              <select class="form-select" id="pTrainerMode"><option value="CustomerChooses">ลูกค้าเลือกเอง</option><option value="SystemAssigns">ระบบกำหนดให้ (ว่าง + ภาระน้อยสุด)</option></select></div>
+            <div class="form-group"><label class="form-label" for="pCancelHrs">ยกเลิกฟรีก่อนเรียน (ชม.)</label><input type="number" class="form-input" id="pCancelHrs" min="0" value="24"></div>
+          </div>
+          <div class="form-group"><label class="form-label">ครูฝึกที่สอนแพ็กเกจนี้ (ว่าง = ไม่กำหนด)</label><div class="cc-chips" id="pTrainers"></div></div>
+          <div class="form-group"><label class="form-label">บริการที่ใช้ได้ (ว่าง = ทุกบริการ)</label><div class="cc-chips" id="pServices"></div></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="pUnearned">ผังค่าบริการรับล่วงหน้า (หนี้สิน)</label><select class="form-select" id="pUnearned"></select></div>
+            <div class="form-group"><label class="form-label" for="pRevenue">ผังรายได้ค่าบริการ</label><select class="form-select" id="pRevenue"></select></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex:2"><label class="form-label" for="pDesc">คำอธิบาย</label><input type="text" class="form-input" id="pDesc"></div>
+            <div class="form-group"><label class="form-label" for="pSort">ลำดับ</label><input type="number" class="form-input" id="pSort" value="0"></div>
+            <div class="form-group form-checkbox" style="margin-top:26px"><input type="checkbox" id="pActive" checked><label for="pActive">เปิดขาย</label></div>
+          </div>
+          <p class="text-xs text-gray-500">แก้แพ็กเกจไม่ย้อนเปลี่ยนบัตรที่ขายไปแล้ว (จำนวน · อายุ · นโยบายยกเลิก · ผังบัญชี ตรึงไว้ที่บัตรตอนขาย)</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('pkgModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.savePackage()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- โมดัล: ขายคอร์ส -->
+    <div class="modal-overlay" id="sellModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header"><h3 class="modal-title">ขายคอร์ส</h3><button class="modal-close" onclick="Layout.closeModal('sellModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label" for="sContactName">ลูกค้า *</label>
+            <input type="hidden" id="sContactId"><input type="text" class="form-input" id="sContactName"></div>
+          <div class="form-group"><label class="form-label" for="sPackage">แพ็กเกจ *</label><select class="form-select" id="sPackage" onchange="Page.sellPreview()"></select>
+            <div class="text-xs text-gray-500" id="sPreview" style="margin-top:4px"></div></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="sDate">วันที่ขาย/รับเงิน</label><input type="date" class="form-input" id="sDate"></div>
+            <div class="form-group"><label class="form-label" for="sBank">รับเงินเข้า</label><select class="form-select" id="sBank"><option value="">เงินสด</option></select></div>
+          </div>
+          <div class="form-group"><label class="form-label" for="sNote">หมายเหตุ</label><input type="text" class="form-input" id="sNote"></div>
+          <p class="text-xs text-gray-500">ระบบออกใบกำกับภาษี/ใบเสร็จรับเงินให้ทันที (บริษัทไม่จด VAT หรือแพ็กเกจยกเว้น VAT = ใบเสร็จ) แล้วเปิดบัตรคอร์สของลูกค้า</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('sellModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="sellBtn" onclick="Page.sell()">ยืนยันขาย</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- โมดัล: เปิดบัตรจากเอกสารขาย -->
+    <div class="modal-overlay" id="actModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header"><h3 class="modal-title">เปิดบัตรจากเอกสารขาย</h3><button class="modal-close" onclick="Layout.closeModal('actModal')">&times;</button></div>
+        <div class="modal-body">
+          <p class="text-sm text-gray-600" style="margin-bottom:10px">ใช้กับเอกสารขายที่ออกแล้ว ซึ่งบรรทัดคอร์สลงผัง "ค่าบริการรับล่วงหน้า" (เช่นออกจากหน้าเอกสาร หรือขายแล้วเปิดบัตรไม่สำเร็จ) — ใบที่ลงรายได้ไปแล้วเปิดไม่ได้ (กันรับรู้ซ้ำ)</p>
+          <div class="form-group"><label class="form-label" for="aPackage">แพ็กเกจ *</label><select class="form-select" id="aPackage"></select></div>
+          <div class="form-group"><label class="form-label" for="aDocId">รหัสเอกสาร (Document Id) *</label><input type="text" class="form-input" id="aDocId" placeholder="คัดลอกจากหน้าเอกสาร"></div>
+          <div class="form-group"><label class="form-label" for="aNote">หมายเหตุ</label><input type="text" class="form-input" id="aNote"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('actModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.activate()">เปิดบัตร</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- โมดัล: รายละเอียดบัตร -->
+    <div class="modal-overlay" id="passModal">
+      <div class="modal" style="max-width:860px">
+        <div class="modal-header"><h3 class="modal-title" id="passTitle">บัตรคอร์ส</h3><button class="modal-close" onclick="Layout.closeModal('passModal')">&times;</button></div>
+        <div class="modal-body" id="passBodyDetail"></div>
+        <div class="modal-footer" id="passFooter"></div>
+      </div>
+    </div>
+
+    <!-- โมดัล: รอบเรียน -->
+    <div class="modal-overlay" id="sesModal">
+      <div class="modal" style="max-width:620px">
+        <div class="modal-header"><h3 class="modal-title">เพิ่มรอบเรียน</h3><button class="modal-close" onclick="Layout.closeModal('sesModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label" for="cTitle">ชื่อคลาส *</label><input type="text" class="form-input" id="cTitle" maxlength="200"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="cStart">เริ่ม *</label><input type="datetime-local" class="form-input" id="cStart"></div>
+            <div class="form-group"><label class="form-label" for="cEnd">เลิก *</label><input type="datetime-local" class="form-input" id="cEnd"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="cFormat">รูปแบบ</label>
+              <select class="form-select" id="cFormat"><option value="Group">กลุ่ม</option><option value="OneOnOne">ตัวต่อตัว (1-on-1)</option></select></div>
+            <div class="form-group"><label class="form-label" for="cCap">รับได้ (คน)</label><input type="number" class="form-input" id="cCap" min="1" value="10"></div>
+            <div class="form-group"><label class="form-label" for="cCost">เครดิตต่อคน (หน่วยครั้ง)</label><input type="number" class="form-input" id="cCost" min="0.5" step="0.5" value="1"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="cTrainer">ครูฝึก</label><select class="form-select" id="cTrainer"></select></div>
+            <div class="form-group"><label class="form-label" for="cService">บริการ</label><select class="form-select" id="cService"></select></div>
+          </div>
+          <div class="form-group"><label class="form-label" for="cNotes">หมายเหตุ</label><input type="text" class="form-input" id="cNotes"></div>
+          <p class="text-xs text-gray-500">แพ็กเกจหน่วย "ชั่วโมง" ตัดตามระยะเวลารอบ (เช่น 90 นาที = 1.5 ชม.)</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('sesModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveSession()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- โมดัล: ผู้จองของรอบ -->
+    <div class="modal-overlay" id="rosterModal">
+      <div class="modal" style="max-width:820px">
+        <div class="modal-header"><h3 class="modal-title" id="rosterTitle">ผู้จอง</h3><button class="modal-close" onclick="Layout.closeModal('rosterModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row" style="align-items:flex-end">
+            <div class="form-group" style="flex:2"><label class="form-label" for="rContactName">เพิ่มผู้จอง — ลูกค้า</label>
+              <input type="hidden" id="rContactId"><input type="text" class="form-input" id="rContactName"></div>
+            <div class="form-group" style="flex:2"><label class="form-label" for="rPass">บัตรที่ใช้</label><select class="form-select" id="rPass"><option value="">— เลือกลูกค้าก่อน —</option></select></div>
+            <div class="form-group"><button class="btn btn-primary" onclick="Page.bookRoster()">จอง</button></div>
+          </div>
+          <div class="table-container">
+            <table class="table">
+              <thead><tr><th>ลูกค้า</th><th>บัตร</th><th class="text-right">เครดิต</th><th>สถานะ</th><th class="text-right">รายได้ที่รับรู้</th><th></th></tr></thead>
+              <tbody id="rosterBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- โมดัล: จองตัวต่อตัวจากบัตร -->
+    <div class="modal-overlay" id="oneModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header"><h3 class="modal-title">จองตัวต่อตัว</h3><button class="modal-close" onclick="Layout.closeModal('oneModal')">&times;</button></div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="oStart">เริ่ม *</label><input type="datetime-local" class="form-input" id="oStart"></div>
+            <div class="form-group"><label class="form-label" for="oEnd">เลิก *</label><input type="datetime-local" class="form-input" id="oEnd"></div>
+          </div>
+          <div class="form-group"><label class="form-label" for="oTrainer">ครูฝึก</label><select class="form-select" id="oTrainer"></select>
+            <div class="text-xs text-gray-500" id="oTrainerHint" style="margin-top:4px"></div></div>
+          <div class="form-group"><label class="form-label" for="oNote">หมายเหตุ</label><input type="text" class="form-input" id="oNote"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('oneModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.bookOne()">จอง</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    const Page = {
+      pkgs: [], trainers: [], services: [], passPage: 1, curPass: null, curSession: null, _t: null,
+      base() { return `/api/companies/${Layout.getCompanyId()}/course-credits`; },
+      async init() {
+        if (!Layout.init('course-credits')) return;
+        Layout.setTitle('คอร์ส & เครดิต');
+        const today = new Date();
+        document.getElementById('sesFrom').value = Layout.dateInput(today);
+        document.getElementById('sesTo').value = Layout.dateInput(new Date(today.getTime() + 30 * 864e5));
+        Layout.contactPicker('sContactName', 'sContactId', { side: 'customer' });
+        Layout.contactPicker('rContactName', 'rContactId', { side: 'customer', onSelect: c => this.loadContactPasses(c.id), onClear: () => this.loadContactPasses(null) });
+        await Promise.all([this.loadRefs(), this.loadSummary(), this.loadPasses(1)]);
+      },
+      async loadRefs() {
+        try {
+          const [p, t, s] = await Promise.all([
+            API.get(`${this.base()}/packages?includeInactive=true`), API.get(`${this.base()}/trainers`), API.get(`${this.base()}/services`)]);
+          this.pkgs = p.data || []; this.trainers = t.data || []; this.services = s.data || [];
+        } catch (e) { Layout.toast('โหลดข้อมูลตั้งต้นไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      tab(name) {
+        document.querySelectorAll('.tabs .tab').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
+        ['passes', 'sessions', 'packages'].forEach(n => document.getElementById('tab-' + n).style.display = n === name ? '' : 'none');
+        if (name === 'sessions') this.loadSessions();
+        if (name === 'packages') this.loadPackages();
+      },
+      async loadSummary() {
+        try {
+          const s = (await API.get(`${this.base()}/summary`)).data;
+          document.getElementById('summaryCards').innerHTML = [
+            ['บัตรที่ใช้งานได้', s.activePasses],
+            ['ค่าบริการรับล่วงหน้าคงเหลือ', Layout.money(s.totalDeferredBalance)],
+            ['หมดอายุใน 7 วัน', s.expiringWithin7Days],
+            ['เลยวันหมดอายุ รอปิด', s.pendingExpiry],
+          ].map(([k, v]) => `<div class="cc-card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+        } catch (e) { document.getElementById('summaryCards').innerHTML = `<div class="cc-warn">โหลดสรุปไม่สำเร็จ: ${Layout.esc(e.message)}</div>`; }
+      },
+      debouncedPasses() { clearTimeout(this._t); this._t = setTimeout(() => this.loadPasses(1), 300); },
+      async loadPasses(page) {
+        this.passPage = page || this.passPage;
+        const q = new URLSearchParams({ page: this.passPage, pageSize: 20 });
+        const st = document.getElementById('passStatus').value; if (st) q.set('status', st);
+        const s = document.getElementById('passSearch').value.trim(); if (s) q.set('search', s);
+        const body = document.getElementById('passBody');
+        try {
+          const d = (await API.get(`${this.base()}/passes?${q}`)).data;
+          const items = d.items || [];
+          if (!items.length) { body.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีบัตรคอร์ส</td></tr>'; }
+          else body.innerHTML = items.map(p => {
+            const pct = p.creditsTotal > 0 ? Math.round((p.creditsUsed / p.creditsTotal) * 100) : 0;
+            return `<tr>
+              <td class="font-medium">${Layout.esc(p.passNumber)}<div class="text-xs text-gray-500">${Layout.esc(p.saleDocumentNumber || '')}</div></td>
+              <td>${Layout.esc(p.contactName || '-')}</td>
+              <td>${Layout.esc(p.packageName)}</td>
+              <td class="num">${p.creditsAvailable} / ${p.creditsTotal} ${Layout.esc(p.unitLabel)}<div class="cc-bar"><span style="width:${pct}%"></span></div>${p.creditsReserved > 0 ? `<div class="text-xs text-gray-500">จองไว้ ${p.creditsReserved}</div>` : ''}</td>
+              <td>${p.expiresOn ? Layout.date(p.expiresOn) : 'ไม่หมดอายุ'}</td>
+              <td class="num">${Layout.money(p.deferredBalance)}</td>
+              <td>${Layout.esc(p.statusLabel)}${p.warning ? `<div class="cc-warn">⚠️ ${Layout.esc(p.warning)}</div>` : ''}</td>
+              <td><button class="btn btn-sm btn-ghost" onclick="Page.openPass('${p.id}')">เปิด</button></td>
+            </tr>`;
+          }).join('');
+          document.getElementById('passPager').innerHTML = Layout.renderPagination(this.passPage, d.totalPages || 1, 'Page.loadPasses');
+        } catch (e) { body.innerHTML = `<tr><td colspan="8" class="cc-warn" style="padding:20px">โหลดไม่สำเร็จ: ${Layout.esc(e.message)}</td></tr>`; }
+      },
+      async openPass(id) {
+        try {
+          const d = (await API.get(`${this.base()}/passes/${id}`)).data;
+          this.curPass = d.pass;
+          const p = d.pass;
+          document.getElementById('passTitle').textContent = `บัตร ${p.passNumber} — ${p.contactName || ''}`;
+          const ledger = d.ledger.map(l => `<tr><td>${Layout.dateTime(l.occurredAt)}</td><td>${Layout.esc(l.kindLabel)}</td><td class="num">${l.credits}</td>
+              <td class="num">${l.recognizedAmount ? Layout.money(l.recognizedAmount) : '-'}</td><td>${Layout.esc(l.journalEntryNumber || '')}</td><td class="text-xs">${Layout.esc(l.note || '')}</td></tr>`).join('');
+          const bookings = d.bookings.map(b => `<tr><td>${Layout.dateTime(b.startAt)}</td><td>${Layout.esc(b.sessionTitle || b.externalRef || '-')}</td><td>${Layout.esc(b.trainerName || '-')}</td>
+              <td class="num">${b.credits}</td><td>${Layout.esc(b.statusLabel)}</td><td>${this.bookingActions(b)}</td></tr>`).join('');
+          document.getElementById('passBodyDetail').innerHTML = `
+            <div class="cc-cards">
+              <div class="cc-card"><div class="k">คงเหลือ</div><div class="v">${p.creditsAvailable} ${Layout.esc(p.unitLabel)}</div><div class="text-xs text-gray-500">ใช้ ${p.creditsUsed} · จองไว้ ${p.creditsReserved} · ทั้งหมด ${p.creditsTotal}</div></div>
+              <div class="cc-card"><div class="k">มูลค่าสัญญา (สุทธิก่อน VAT)</div><div class="v">${Layout.money(p.contractAmount)}</div><div class="text-xs text-gray-500">รับรู้ต่อเครดิต ${Layout.money(p.pricePerCredit)} (ครั้งสุดท้ายรับส่วนที่เหลือ)</div></div>
+              <div class="cc-card"><div class="k">รับรู้รายได้แล้ว</div><div class="v">${Layout.money(p.recognizedAmount)}</div></div>
+              <div class="cc-card"><div class="k">รับล่วงหน้าคงเหลือ</div><div class="v">${Layout.money(p.deferredBalance)}</div></div>
+            </div>
+            <div class="text-sm" style="margin-bottom:8px">${Layout.esc(p.packageName)} · ${Layout.esc(p.statusLabel)} · ใช้ได้ถึง ${p.expiresOn ? Layout.date(p.expiresOn) : 'ไม่หมดอายุ'} · เอกสารขาย ${Layout.esc(p.saleDocumentNumber || '-')}
+              ${p.warning ? `<div class="cc-warn">⚠️ ${Layout.esc(p.warning)}</div>` : ''}</div>
+            <h4 style="margin:12px 0 6px;font-weight:600">การจอง</h4>
+            <div class="table-container"><table class="table"><thead><tr><th>วัน-เวลา</th><th>คลาส</th><th>ครูฝึก</th><th class="text-right">เครดิต</th><th>สถานะ</th><th></th></tr></thead>
+              <tbody>${bookings || '<tr><td colspan="6" class="text-center text-gray-400">ยังไม่มีการจอง</td></tr>'}</tbody></table></div>
+            <h4 style="margin:12px 0 6px;font-weight:600">ประวัติการใช้ (สมุดเครดิต)</h4>
+            <div class="table-container"><table class="table"><thead><tr><th>เวลา</th><th>รายการ</th><th class="text-right">เครดิต</th><th class="text-right">รายได้</th><th>ใบสำคัญ</th><th>หมายเหตุ</th></tr></thead>
+              <tbody>${ledger}</tbody></table></div>`;
+          const active = p.status === 'Active';
+          document.getElementById('passFooter').innerHTML = `
+            ${active && p.warning ? `<button class="btn btn-secondary" onclick="Page.expirePass('${p.id}')">ปิดบัตรหมดอายุ</button>` : ''}
+            ${active ? `<button class="btn btn-primary" onclick="Page.openOne()">จองตัวต่อตัว</button>` : ''}
+            <button class="btn btn-secondary" onclick="Layout.closeModal('passModal')">ปิด</button>`;
+          Layout.openModal('passModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      bookingActions(b) {
+        if (b.status !== 'Booked') return b.recognizedAmount ? `<span class="text-xs">รับรู้ ${Layout.money(b.recognizedAmount)}</span>` : '';
+        return `<button class="btn btn-sm btn-ghost" onclick="Page.settle('${b.id}', true)">มาเรียน</button>
+          <button class="btn btn-sm btn-ghost" onclick="Page.settle('${b.id}', false)">ไม่มา</button>
+          <button class="btn btn-sm btn-ghost text-danger" onclick="Page.cancelBooking('${b.id}')">ยกเลิก</button>`;
+      },
+      async refreshAfterBooking() {
+        await this.loadSummary(); await this.loadPasses();
+        if (this.curPass && document.getElementById('passModal').classList.contains('active')) await this.openPass(this.curPass.id);
+        if (this.curSession && document.getElementById('rosterModal').classList.contains('active')) await this.openRoster(this.curSession.id);
+      },
+      async settle(id, attended) {
+        try {
+          const r = await API.post(`${this.base()}/bookings/${id}/settle`, { attended, note: null });
+          Layout.toast(`${r.data.statusLabel} — รับรู้รายได้ ${Layout.money(r.data.recognizedAmount)}`);
+          await this.refreshAfterBooking();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async cancelBooking(id) {
+        const byBusiness = confirm('ร้านเป็นฝ่ายยกเลิกใช่ไหม?\nตกลง = ร้านยกเลิก (คืนเครดิตเสมอ)\nยกเลิก = ลูกค้ายกเลิก (คืนตามนโยบายชั่วโมง)');
+        try {
+          const r = await API.post(`${this.base()}/bookings/${id}/cancel`, { byBusiness, note: null });
+          Layout.toast(r.data.statusLabel);
+          await this.refreshAfterBooking();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async expirePass(id) {
+        if (!confirm('ปิดบัตรนี้และรับรู้ส่วนคงเหลือเป็นรายได้?')) return;
+        try { await API.post(`${this.base()}/passes/${id}/expire`, {}); Layout.toast('ปิดบัตรแล้ว'); await this.refreshAfterBooking(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      trainerOptions(selected, allowedIds) {
+        const list = allowedIds && allowedIds.length ? this.trainers.filter(t => allowedIds.includes(t.id)) : this.trainers;
+        return '<option value="">— ไม่ระบุ —</option>' + list.map(t => `<option value="${t.id}"${t.id === selected ? ' selected' : ''}>${Layout.esc(t.name)}</option>`).join('');
+      },
+      openOne() {
+        const pkg = this.pkgs.find(x => x.id === this.curPass.packageId);
+        document.getElementById('oTrainer').innerHTML = this.trainerOptions(null, pkg ? pkg.trainerEmployeeIds : []);
+        document.getElementById('oTrainerHint').textContent = pkg ? (pkg.trainerMode === 'SystemAssigns'
+          ? 'แพ็กเกจนี้ให้ระบบกำหนดครู — เว้นว่างได้ (เลือกเองได้ถ้าลูกค้าขอ)' : 'แพ็กเกจนี้ให้ลูกค้าเลือกครู') : '';
+        ['oStart', 'oEnd', 'oNote'].forEach(i => document.getElementById(i).value = '');
+        Layout.openModal('oneModal');
+      },
+      async bookOne() {
+        const s = document.getElementById('oStart').value, e = document.getElementById('oEnd').value;
+        if (!s || !e) { Layout.toast('ระบุเวลาเริ่มและเลิก', 'error'); return; }
+        try {
+          await API.post(`${this.base()}/bookings`, {
+            passId: this.curPass.id, sessionId: null, startAt: new Date(s).toISOString(), endAt: new Date(e).toISOString(),
+            bookingServiceId: null, trainerEmployeeId: document.getElementById('oTrainer').value || null,
+            note: document.getElementById('oNote').value || null });
+          Layout.toast('จองแล้ว — กันเครดิตไว้'); Layout.closeModal('oneModal'); await this.refreshAfterBooking();
+        } catch (err) { Layout.toast(err.message, 'error'); }
+      },
+
+      // ---------- ขาย ----------
+      packageOptions(activeOnly) {
+        return this.pkgs.filter(p => !activeOnly || p.isActive).map(p =>
+          `<option value="${p.id}">${Layout.esc(p.code)} · ${Layout.esc(p.name)} — ${p.creditQuantity} ${Layout.esc(p.unitLabel)} · ${Layout.money(p.price)}</option>`).join('');
+      },
+      async openSell() {
+        const sel = document.getElementById('sPackage');
+        sel.innerHTML = '<option value="">— เลือกแพ็กเกจ —</option>' + this.packageOptions(true);
+        document.getElementById('sDate').value = Layout.dateInput(new Date());
+        document.getElementById('sNote').value = '';
+        document.getElementById('sPreview').textContent = '';
+        try {
+          const api = Layout.api();
+          const banks = (await api.getBankAccounts({ activeOnly: true })).data || [];
+          document.getElementById('sBank').innerHTML = '<option value="">เงินสด</option>' + banks.map(b => `<option value="${b.id}">${Layout.esc(b.bankName)} ${Layout.esc(b.accountNumber)}</option>`).join('');
+        } catch (e) { /* ไม่มีสิทธิ์ดูบัญชีธนาคาร ⇒ รับเงินสด (ค่าตั้งต้น) — บอกในช่อง */ document.getElementById('sBank').innerHTML = '<option value="">เงินสด (โหลดบัญชีธนาคารไม่ได้)</option>'; }
+        Layout.openModal('sellModal');
+      },
+      sellPreview() {
+        const p = this.pkgs.find(x => x.id === document.getElementById('sPackage').value);
+        document.getElementById('sPreview').textContent = p ? `${p.vatLabel} · ${p.priceIncludesVat ? 'ราคารวม VAT' : 'ราคาก่อน VAT'} · อายุ ${p.validityDays ? p.validityDays + ' วัน' : 'ไม่หมดอายุ'} · ${p.classFormatLabel} · ยกเลิกฟรีก่อน ${p.freeCancelHours} ชม.` : '';
+      },
+      async sell() {
+        const contactId = document.getElementById('sContactId').value, packageId = document.getElementById('sPackage').value;
+        if (!contactId || !packageId) { Layout.toast('เลือกลูกค้าและแพ็กเกจ', 'error'); return; }
+        const btn = document.getElementById('sellBtn'); btn.disabled = true;
+        try {
+          const r = await API.post(`${this.base()}/passes/sell`, {
+            packageId, contactId, saleDate: document.getElementById('sDate').value || null,
+            bankAccountId: document.getElementById('sBank').value || null, paymentAccountId: null,
+            note: document.getElementById('sNote').value || null });
+          Layout.toast(r.message || 'ขายคอร์สแล้ว'); Layout.closeModal('sellModal');
+          await this.loadSummary(); await this.loadPasses(1); await this.openPass(r.data.id);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
+      },
+      openActivate() {
+        document.getElementById('aPackage').innerHTML = this.packageOptions(false);
+        ['aDocId', 'aNote'].forEach(i => document.getElementById(i).value = '');
+        Layout.openModal('actModal');
+      },
+      async activate() {
+        try {
+          const r = await API.post(`${this.base()}/passes/activate-from-document`, {
+            packageId: document.getElementById('aPackage').value, documentId: document.getElementById('aDocId').value.trim(),
+            note: document.getElementById('aNote').value || null });
+          Layout.toast(r.message || 'เปิดบัตรแล้ว'); Layout.closeModal('actModal'); await this.loadSummary(); await this.loadPasses(1);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ---------- รอบเรียน ----------
+      async loadSessions() {
+        const from = document.getElementById('sesFrom').value, to = document.getElementById('sesTo').value;
+        const q = new URLSearchParams();
+        if (from) q.set('from', new Date(from + 'T00:00:00').toISOString());
+        if (to) q.set('to', new Date(to + 'T23:59:59').toISOString());
+        const body = document.getElementById('sesBody');
+        try {
+          const rows = (await API.get(`${this.base()}/sessions?${q}`)).data || [];
+          body.innerHTML = rows.length ? rows.map(s => `<tr>
+            <td>${Layout.dateTime(s.startAt)}</td><td class="font-medium">${Layout.esc(s.title)}</td><td>${Layout.esc(s.formatLabel)}</td>
+            <td>${Layout.esc(s.trainerName || '-')}</td><td class="num">${s.bookedCount}/${s.capacity}</td><td>${Layout.esc(s.statusLabel)}</td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openRoster('${s.id}')">ผู้จอง</button>
+              ${s.status === 'Scheduled' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.cancelSession('${s.id}')">ยกเลิกรอบ</button>` : ''}</td></tr>`).join('')
+            : '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีรอบเรียนในช่วงนี้</td></tr>';
+          this._sessions = rows;
+        } catch (e) { body.innerHTML = `<tr><td colspan="7" class="cc-warn" style="padding:20px">โหลดไม่สำเร็จ: ${Layout.esc(e.message)}</td></tr>`; }
+      },
+      openSession() {
+        ['cTitle', 'cStart', 'cEnd', 'cNotes'].forEach(i => document.getElementById(i).value = '');
+        document.getElementById('cCap').value = 10; document.getElementById('cCost').value = 1; document.getElementById('cFormat').value = 'Group';
+        document.getElementById('cTrainer').innerHTML = this.trainerOptions(null, null);
+        document.getElementById('cService').innerHTML = '<option value="">— ไม่ผูกบริการ —</option>' + this.services.map(s => `<option value="${s.id}">${Layout.esc(s.name)}</option>`).join('');
+        Layout.openModal('sesModal');
+      },
+      async saveSession() {
+        const s = document.getElementById('cStart').value, e = document.getElementById('cEnd').value;
+        if (!s || !e) { Layout.toast('ระบุเวลาเริ่มและเลิก', 'error'); return; }
+        try {
+          await API.post(`${this.base()}/sessions`, {
+            title: document.getElementById('cTitle').value, bookingServiceId: document.getElementById('cService').value || null,
+            format: document.getElementById('cFormat').value, startAt: new Date(s).toISOString(), endAt: new Date(e).toISOString(),
+            capacity: Number(document.getElementById('cCap').value || 1), trainerEmployeeId: document.getElementById('cTrainer').value || null,
+            creditCost: Number(document.getElementById('cCost').value || 1), notes: document.getElementById('cNotes').value || null });
+          Layout.toast('เพิ่มรอบเรียนแล้ว'); Layout.closeModal('sesModal'); await this.loadSessions();
+        } catch (err) { Layout.toast(err.message, 'error'); }
+      },
+      async cancelSession(id) {
+        if (!confirm('ยกเลิกรอบนี้? ผู้จองทุกคนได้เครดิตคืน')) return;
+        try { await API.post(`${this.base()}/sessions/${id}/cancel`, {}); Layout.toast('ยกเลิกรอบแล้ว'); await this.loadSessions(); await this.loadSummary(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async openRoster(id) {
+        this.curSession = (this._sessions || []).find(s => s.id === id) || { id };
+        document.getElementById('rosterTitle').textContent = `ผู้จอง — ${this.curSession.title || ''} ${this.curSession.startAt ? Layout.dateTime(this.curSession.startAt) : ''}`;
+        try {
+          const rows = (await API.get(`${this.base()}/sessions/${id}/bookings`)).data || [];
+          document.getElementById('rosterBody').innerHTML = rows.length ? rows.map(b => `<tr><td>${Layout.esc(b.contactName || '-')}</td><td>${Layout.esc(b.passNumber || '')}</td>
+            <td class="num">${b.credits}</td><td>${Layout.esc(b.statusLabel)}</td><td class="num">${b.recognizedAmount ? Layout.money(b.recognizedAmount) : '-'}</td><td>${this.bookingActions(b)}</td></tr>`).join('')
+            : '<tr><td colspan="6" class="text-center text-gray-400">ยังไม่มีผู้จอง</td></tr>';
+          if (!document.getElementById('rosterModal').classList.contains('active')) Layout.openModal('rosterModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async loadContactPasses(contactId) {
+        const sel = document.getElementById('rPass');
+        if (!contactId) { sel.innerHTML = '<option value="">— เลือกลูกค้าก่อน —</option>'; return; }
+        try {
+          const d = (await API.get(`${this.base()}/passes?contactId=${encodeURIComponent(contactId)}&status=Active&pageSize=50`)).data;
+          const items = d.items || [];
+          sel.innerHTML = items.length ? items.map(p => `<option value="${p.id}">${Layout.esc(p.passNumber)} · ${Layout.esc(p.packageName)} (เหลือ ${p.creditsAvailable} ${Layout.esc(p.unitLabel)})</option>`).join('')
+            : '<option value="">ลูกค้านี้ไม่มีบัตรที่ใช้งานได้ — ขายคอร์สก่อน</option>';
+        } catch (e) { sel.innerHTML = `<option value="">โหลดบัตรไม่สำเร็จ: ${Layout.esc(e.message)}</option>`; }
+      },
+      async bookRoster() {
+        const passId = document.getElementById('rPass').value;
+        if (!passId) { Layout.toast('เลือกบัตรที่ใช้จอง', 'error'); return; }
+        try {
+          await API.post(`${this.base()}/bookings`, { passId, sessionId: this.curSession.id, startAt: null, endAt: null, bookingServiceId: null, trainerEmployeeId: null, note: null });
+          Layout.toast('จองแล้ว — กันเครดิตไว้'); await this.openRoster(this.curSession.id); await this.loadSessions(); await this.loadSummary();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ---------- แพ็กเกจ ----------
+      async loadPackages() {
+        await this.loadRefs();
+        const showInactive = document.getElementById('pkgInactive').checked;
+        const rows = this.pkgs.filter(p => showInactive || p.isActive);
+        document.getElementById('pkgBody').innerHTML = rows.length ? rows.map(p => `<tr>
+          <td>${Layout.esc(p.code)}</td><td class="font-medium">${Layout.esc(p.name)}</td><td class="num">${p.creditQuantity} ${Layout.esc(p.unitLabel)}</td>
+          <td>${p.validityDays ? p.validityDays + ' วัน' : 'ไม่หมดอายุ'}</td><td class="num">${Layout.money(p.price)}<div class="text-xs text-gray-500">${Layout.esc(p.vatLabel)}</div></td>
+          <td>${Layout.esc(p.classFormatLabel)}</td><td class="num">${p.activePassCount}</td>
+          <td>${p.isActive ? '<span class="badge badge-success">เปิดขาย</span>' : '<span class="badge badge-gray">ปิดขาย</span>'}</td>
+          <td><button class="btn btn-sm btn-ghost" onclick="Page.openPackage('${p.id}')">แก้ไข</button></td></tr>`).join('')
+          : '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ยังไม่มีแพ็กเกจ — กด "+ เพิ่มแพ็กเกจ"</td></tr>';
+      },
+      async accountOptions(selectId, type, selected, defaultLabel) {
+        const sel = document.getElementById(selectId);
+        try {
+          const list = ((await Layout.api().getAccounts(`?type=${type}`)).data || []).filter(a => a.isActive);
+          sel.innerHTML = `<option value="">${defaultLabel}</option>` + list.map(a => `<option value="${a.id}"${a.id === selected ? ' selected' : ''}>${Layout.esc(a.accountCode)} ${Layout.esc(a.accountName)}</option>`).join('');
+        } catch (e) { sel.innerHTML = `<option value="">${defaultLabel} (โหลดผังไม่ได้)</option>`; }
+      },
+      chips(containerId, list, selected) {
+        document.getElementById(containerId).innerHTML = list.length ? list.map(x => `<label><input type="checkbox" value="${x.id}"${selected.includes(x.id) ? ' checked' : ''}> ${Layout.esc(x.name)}</label>`).join('')
+          : '<span class="text-xs text-gray-500">ยังไม่มีรายการ</span>';
+      },
+      checked(containerId) { return [...document.querySelectorAll(`#${containerId} input:checked`)].map(i => i.value); },
+      async openPackage(id) {
+        const p = id ? this.pkgs.find(x => x.id === id) : null;
+        document.getElementById('pkgTitle').textContent = p ? 'แก้ไขแพ็กเกจ' : 'เพิ่มแพ็กเกจ';
+        document.getElementById('pId').value = p ? p.id : '';
+        const v = (i, val) => document.getElementById(i).value = val;
+        v('pCode', p ? p.code : ''); v('pName', p ? p.name : ''); v('pUnit', p ? p.unit : 'Session'); v('pQty', p ? p.creditQuantity : 10);
+        v('pDays', p ? p.validityDays : 90); v('pPrice', p ? p.price : ''); v('pVat', p ? String(p.vatRate) : '7');
+        v('pFormat', p ? p.classFormat : 'Any'); v('pTrainerMode', p ? p.trainerMode : 'CustomerChooses'); v('pCancelHrs', p ? p.freeCancelHours : 24);
+        v('pDesc', p ? (p.description || '') : ''); v('pSort', p ? p.sortOrder : 0);
+        document.getElementById('pVatIncl').checked = p ? p.priceIncludesVat : true;
+        document.getElementById('pActive').checked = p ? p.isActive : true;
+        this.chips('pTrainers', this.trainers, p ? p.trainerEmployeeIds : []);
+        this.chips('pServices', this.services, p ? p.allowedServiceIds : []);
+        await Promise.all([
+          this.accountOptions('pUnearned', 'Liability', p ? p.unearnedAccountId : null, 'ค่าตั้งต้น (21713 ค่าบริการรับล่วงหน้า)'),
+          this.accountOptions('pRevenue', 'Revenue', p ? p.revenueAccountId : null, 'ค่าตั้งต้น (42000 รายได้จากการบริการ)')]);
+        Layout.openModal('pkgModal');
+      },
+      async savePackage() {
+        const g = i => document.getElementById(i).value;
+        const body = {
+          code: g('pCode'), name: g('pName'), description: g('pDesc') || null, unit: g('pUnit'), creditQuantity: Number(g('pQty')),
+          validityDays: Number(g('pDays') || 0), price: Number(g('pPrice')), priceIncludesVat: document.getElementById('pVatIncl').checked,
+          vatRate: Number(g('pVat')), classFormat: g('pFormat'), trainerMode: g('pTrainerMode'),
+          allowedServiceIds: this.checked('pServices'), trainerEmployeeIds: this.checked('pTrainers'),
+          freeCancelHours: Number(g('pCancelHrs') || 0), unearnedAccountId: g('pUnearned') || null, revenueAccountId: g('pRevenue') || null,
+          isActive: document.getElementById('pActive').checked, sortOrder: Number(g('pSort') || 0) };
+        const id = g('pId');
+        try {
+          if (id) await API.put(`${this.base()}/packages/${id}`, body); else await API.post(`${this.base()}/packages`, body);
+          Layout.toast('บันทึกแพ็กเกจแล้ว'); Layout.closeModal('pkgModal'); await this.loadPackages();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

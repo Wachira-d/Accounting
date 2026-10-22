@@ -5329,3 +5329,9 @@ _2026-10-22 ทีม G — แท็บ "ตรวจสอบการใช�
 ช่องทางตัดสินที่ `Helpers/DocumentCreationChannel.cs` ตัวเดียว จากหลักฐานที่มีจริง (OriginModule → ตารางผูก FK กลับ → ป้าย CreatedBy ของเส้นระบบ
 → ใบล่าสุดของรายการประจำ) · ไม่มีหลักฐาน (เช่น LINE ที่บันทึกเป็นอีเมล) = "ไม่ทราบ" ไม่เดา. หน้า `/pages/admin-company-usage.html` (ภาพรวมทุกบริษัทต่อเดือน)
 คงเดิม — แท็บใหม่คือมุมเจาะลึกบริษัทเดียวหลายเดือน ไม่ทำซ้ำ. ไม่เปลี่ยน flow เอกสาร (อ่านอย่างเดียว) ⇒ DOCUMENT_FLOW ไม่ขยับ._
+
+_2026-10-22 ทีม L — คอร์ส / Class Credits / Hour Pass (`docs/COURSE_CREDIT_DESIGN.md` · DOCUMENT_FLOW §6.6): แพ็กเกจ (ครั้ง/ชั่วโมง · อายุ · ราคา/VAT ·
+1-on-1/กลุ่ม · ครูเลือกเอง/ระบบกำหนด · บริการที่ใช้ได้ · นโยบายยกเลิก) · ขาย = ใบกำกับภาษี/ใบเสร็จผ่าน DocumentService เดิม บรรทัดลง 21713 ค่าบริการรับล่วงหน้า ·
+จอง = กันเครดิต · มาเรียน/no-show/ยกเลิกช้า = Dr 21713 Cr 42000 ผ่าน JournalEntryBuilder (`Helpers/CourseCreditMath.RecognizeOnUse` — ปัด AwayFromZero · ครั้งสุดท้ายรับเศษ) ·
+หมดอายุ = breakage (`CourseCreditExpiryJob`) · สัญญาบาง `ICreditBookingLedger` ให้เครื่องจองของทีม B · หน้า `/pages/course-credits.html` · เทสต์ `CourseCreditMathTests` ·
+backlog: ขายผ่าน POS/ร้านออนไลน์ · คืนเงิน/ยกเลิกบัตร_
