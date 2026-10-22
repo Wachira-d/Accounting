@@ -32,7 +32,7 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
 
     /// <summary>อ้างอิงที่ผูกการชำระกับ intent — ใช้ทั้งตอนเขียนและตอนกันซ้ำ
     /// (canonical function เดียว ห้ามเขียน format string สองที่)</summary>
-    public static string PaymentReference(Guid intentId) => $"PAY-INTENT-{intentId:N}";
+    public static string PaymentReference(Guid intentId) => Accounting.Helpers.GatewayPaymentRecord.Reference(intentId);
 
     public async Task HandleSucceededAsync(PaymentIntent intent, CancellationToken ct = default)
     {
@@ -58,7 +58,9 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
                 "เงินเข้าแล้วแต่หาเอกสารไม่พบ — intent {Intent} เอกสาร {Doc} บริษัท {Company} "
                 + "ยอด {Amount:N2} · ต้องบันทึกรับชำระด้วยมือ",
                 intent.Id, intent.SourceId, intent.CompanyId, intent.Amount);
-            return;
+            // รอบ 205 ทีม E: โยนแทน return เงียบ — PaymentIntentService บันทึกลงประวัติของรายการชำระ + แจ้งเจ้าของ
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.GatewayPaymentRecord.SourceMissingMessage("เอกสาร", intent.Id, intent.Amount), Accounting.Helpers.GatewayPaymentRecord.SourceMissingRuleCode);
         }
 
         // จ่ายเกินยอดค้าง = ข้อมูลขัดกัน ห้ามเดา — CreatePaymentAsync จะปฏิเสธเองอยู่แล้ว

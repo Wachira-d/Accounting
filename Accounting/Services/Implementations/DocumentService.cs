@@ -4122,7 +4122,7 @@ public partial class DocumentService : IDocumentService
         // CheckUsageLimitAsync — ไม่งั้นข้อความปฏิเสธจะบอกเพดานผิดจากที่ระบบใช้จริง
         return (sub?.CurrentMonthDocuments ?? 0,
             DocumentQuotaPolicy.EffectiveLimit(eff?.MaxDocumentsPerMonth ?? 0,
-                sub?.DocumentBonusQuota ?? 0, sub?.DocumentBonusExpiresAt, DateTime.UtcNow));
+                sub?.DocumentBonusQuota ?? 0, sub?.DocumentBonusExpiresAt, DateTime.UtcNow, used: sub?.CurrentMonthDocuments ?? 0));
     }
 
     /// <summary>เอกสารเกินโควตา 1 ฉบับ = 1 UsageEvent (documents.overage)

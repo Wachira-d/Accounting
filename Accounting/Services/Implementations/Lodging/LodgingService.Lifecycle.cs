@@ -481,8 +481,8 @@ public partial class LodgingService
         await _db.Entry(r).ReloadAsync();   // P2-1: ค่าหลังได้ล็อก (ผู้เรียกอาจถือแถวที่อ่านไว้ก่อน)
         if (Terminal.Contains(r.Status)) throw new BusinessRuleException($"การจองอยู่ในสถานะ {StatusTh(r.Status)} — ยืนยันไม่ได้");
         // webhook + poll ของเงินก้อนเดียวกัน: คำขอที่สองเห็นเลขอ้างอิงเดิมถูกบันทึกแล้ว ⇒ ตอบสถานะปัจจุบัน (ไม่ออกใบมัดจำซ้ำ)
-        if (fromOnlinePayment && !string.IsNullOrWhiteSpace(request.PaymentReference)
-            && r.PaymentReference == request.PaymentReference && r.DepositPaid > 0m)
+        // ตัวตัดสินเดียวกับ LodgingReservationPaymentHandler (GatewayPaymentRecord — เลขอ้างอิง ไม่ใช่ยอดเงิน · รอบ 205 ทีม E)
+        if (fromOnlinePayment && GatewayPaymentRecord.AlreadyRecordedOnReservation(r.PaymentReference, r.DepositPaid, request.PaymentReference))
             return await MapAsync(companyId, r, true, true);
         // ฝ่ายค้านรอบ 202 P1-3ค: เงินออนไลน์ที่เข้าแล้วแต่ยืนยันไม่ได้ ⇒ พนักงานยืนยันภายหลัง ใบมัดจำต้องลงบัญชีพักของช่องทางชำระจากรายการนั้น
         // (เซิร์ฟเวอร์ตัดสิน — ไม่พึ่งบัญชีที่หน้าจอส่งมา)

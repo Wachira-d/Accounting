@@ -17,15 +17,17 @@ public class SubscriptionService : ISubscriptionService
     private readonly INotificationService _notificationService;
     private readonly INotificationEngine? _notify;
     private readonly ISaasBillingDocumentService? _billing;
+    private readonly ILogger<SubscriptionService>? _logger;
 
     /// <summary>WP-B1: ออกใบแจ้งหนี้ต่ออายุกี่วันก่อนหมดอายุ (default 15).</summary>
     private const int RenewalInvoiceLeadDays = 15;
 
     public SubscriptionService(AccountingDbContext db, INotificationService notificationService,
         INotificationEngine? notify = null, ISaasBillingDocumentService? billing = null,
-        ISubscriptionGateShadowLog? shadowLog = null)
+        ISubscriptionGateShadowLog? shadowLog = null, ILogger<SubscriptionService>? logger = null)
     {
         _db = db;
+        _logger = logger;
         _notificationService = notificationService;
         _notify = notify;
         _billing = billing;
@@ -956,7 +958,8 @@ public class SubscriptionService : ISubscriptionService
         return limitType switch
         {
             "document" => sub.CurrentMonthDocuments < Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(
-                sub.MaxDocumentsPerMonth, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow),
+                sub.MaxDocumentsPerMonth, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow,
+                used: sub.CurrentMonthDocuments),
             "journal" => sub.CurrentMonthJournalEntries < sub.MaxJournalEntriesPerMonth,
             _ => true
         };
@@ -1131,32 +1134,70 @@ public class SubscriptionService : ISubscriptionService
     {
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null) return;
+        int crossedLevel = 0, crossedUsed = 0, crossedLimit = 0;
 
         switch (usageType)
         {
             case "document":
+            {
+                var nowUtc = DateTime.UtcNow;
+                var usedBefore = sub.CurrentMonthDocuments;
+                var limitBefore = Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(sub.MaxDocumentsPerMonth,
+                    sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, nowUtc, used: usedBefore);
                 sub.CurrentMonthDocuments++;
                 // โบนัสเอกสาร (top-up ที่ซื้อ · แอดมินให้ · ภารกิจแลกโควตา §12)
                 // **ต้องถูกใช้ให้หมดไป** ไม่ใช่แค่ยกเพดานค้างไว้ — ถ้าไม่หัก ผู้ที่
                 // ซื้อ +100 ใบครั้งเดียวจะได้ +100 ใบ **ทุกเดือน** จนโบนัสหมดอายุ
                 // (counter รายเดือนถูกรีเซ็ต แต่โบนัสไม่ถูกแตะ) = แจกฟรีโดยไม่ตั้งใจ.
                 // หักเฉพาะใบที่ **เกินโควตาแพ็กเกจล้วน ๆ** แล้ว — ใบที่ยังอยู่ในโควตา
-                // ปกติไม่กินโบนัส (แบบเดียวกับ OcrBonusPages ใน OcrQuotaService)
-                if (sub.MaxDocumentsPerMonth > 0
-                    && sub.CurrentMonthDocuments > sub.MaxDocumentsPerMonth
-                    && sub.DocumentBonusQuota > 0
-                    && (sub.DocumentBonusExpiresAt == null || sub.DocumentBonusExpiresAt > DateTime.UtcNow))
+                // ปกติไม่กินโบนัส (แบบเดียวกับ OcrBonusPages ใน OcrQuotaService) ·
+                // รอบ 205 ทีม E: ตัวตัดสิน + สูตรเพดานคู่กันใน DocumentQuotaPolicy (เดิมหัก + เทียบ plan+คงเหลือ = โบนัสหายสองเท่า)
+                if (Accounting.Helpers.DocumentQuotaPolicy.ConsumesBonus(sub.MaxDocumentsPerMonth, sub.CurrentMonthDocuments,
+                        sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, nowUtc))
                 {
                     sub.DocumentBonusQuota--;
                 }
+                var limitAfter = Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(sub.MaxDocumentsPerMonth,
+                    sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, nowUtc, used: sub.CurrentMonthDocuments);
+                crossedLevel = Accounting.Helpers.DocumentQuotaPolicy.CrossedWarnLevel(usedBefore, limitBefore,
+                    sub.CurrentMonthDocuments, limitAfter);
+                crossedUsed = sub.CurrentMonthDocuments; crossedLimit = limitAfter;
                 break;
+            }
             case "journal":
                 sub.CurrentMonthJournalEntries++;
                 break;
         }
 
         await _db.SaveChangesAsync();
+
+        // รอบ 205 ทีม E (BOOKING_REVENUE_AUDIT Q-3): ข้ามระดับ 80%/100% ⇒ แจ้งเจ้าของครั้งเดียวต่อระดับต่อเดือน — เดิมรู้ได้ทางเดียวคือเปิดหน้า
+        // "ส่วนเสริมของฉัน" เอง ขณะที่ใบจากการจอง/ชำระออนไลน์ยังออกต่อ (กฎหมายบังคับ) แล้วไปโผล่เป็นค่าส่วนเกินในบิล ·
+        // แจ้งไม่สำเร็จต้องไม่ล้มการออกเอกสาร (เรียกอยู่ในธุรกรรมของ CreateDocumentAsync)
+        if (crossedLevel > 0) await NotifyDocumentQuotaCrossedAsync(sub.CompanyId, crossedLevel, crossedUsed, crossedLimit);
     }
+
+    private async Task NotifyDocumentQuotaCrossedAsync(Guid companyId, int level, int used, int limit)
+    {
+        try
+        {
+            var ownerUserId = await _db.CompanyUsers.AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner)
+                .Select(cu => cu.UserId)
+                .FirstOrDefaultAsync();
+            if (ownerUserId == Guid.Empty) return;
+            await NotifyUserAsync(ownerUserId, companyId,
+                Models.Constants.NotificationEvents.DocumentQuotaLevel, NotificationType.System,
+                level >= 2 ? "โควตาเอกสารเดือนนี้เต็มแล้ว" : "โควตาเอกสารใกล้เต็ม",
+                Accounting.Helpers.DocumentQuotaPolicy.CrossedMessage(level, used, limit),
+                "/pages/addons.html", "Subscription", null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogError(ex, "แจ้งเจ้าของเรื่องโควตาเอกสาร (ระดับ {Level}) ไม่สำเร็จ — บริษัท {Company}", level, companyId);
+        }
+    }
+
 
     // ==================== Admin: Plan Templates ====================
 

@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **611 ไฟล์ · 5,999 `[Fact]` + 990 `[Theory]` (4,667 `InlineData`)** ณ 2026-10-19 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **612 ไฟล์ · 6,016 `[Fact]` + 994 `[Theory]` (4,684 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -3772,6 +3772,11 @@ Last updated: 2026-09-04 — เพิ่ม VATL-01..11 (OCR ตั้ง VatRa
 | PAY-07 | สร้าง intent 21 ครั้งใน 1 ชม. ต่อการจองเดียว | ครั้งที่ 21 = 429 พร้อมข้อความให้ไปแนบสลิปแทน |
 | PAY-08 | webhook สำเร็จ | `LodgingReservationPaymentHandler` → `ConfirmAsync` → ออกใบเสร็จมัดจำ + สถานะ Confirmed · ยิง webhook ซ้ำ = no-op |
 | PAY-09 | ยกเลิกการจองแล้วกดจ่าย | 400 "ไม่มียอดค้างชำระแล้ว" |
+| PAY-10 (รอบ 205 L-1) | การจองยืนยันแล้ว มัดจำ 1,500 · แขกจ่ายยอดคงเหลือ 1,500 ออนไลน์ | ใบมัดจำใบที่สอง 1,500 + `DepositPaid`/`PaidAmount` = 3,000 · **เดิมถูกข้ามเป็น "ซ้ำ" (เงินหาย)** · เทสต์ `BookingRevenueAuditTests.L1_*` |
+| PAY-11 (รอบ 205 S-1) | คำสั่งซื้อหน้าเว็บจ่ายออนไลน์โดยไม่แนบสลิป | แถว `SiteOrderPayment` Reference `PAY-INTENT-{id}` ถูกสร้างและยืนยัน · ใบกำกับอนุมัติ + รับชำระ + ตัดสต็อก · webhook ซ้ำไม่สร้างแถว/การรับชำระที่สอง |
+| PAY-12 (รอบ 205 B-1) | จองนัดหมาย `PrePayment` จากหน้าเว็บ | ใบเสร็จมัดจำเป็น**ใบร่าง** (ไม่มีเลข · ไม่มี JE/ภาษีขาย) + หมายเหตุ "รอรับเงินมัดจำ" บนการจองและใบ · โควตาใบเสนอราคาเต็ม (Appointment) ⇒ การจองยังสำเร็จ + `ErpNotices` |
+| PAY-13 (รอบ 205 G-1) | เงินเข้าแต่หาคำสั่งซื้อไม่พบ/handler ล้ม | ประวัติรายการชำระ "⚠️ เงินเข้าแล้วแต่ดำเนินการต่อไม่สำเร็จ" + แจ้งเจ้าของ `gateway.payment_unfulfilled` (ที่พักไม่แจ้งซ้ำ — มีธงของตัวเอง) |
+| PAY-14 (รอบ 205 Q-1/Q-3) | แพ็กเกจ 100 ใบ + ซื้อโบนัส 100 | ใช้ได้ 200 ใบก่อนนับส่วนเกิน (เดิม 150) · ข้าม 80%/100% แจ้งเจ้าของครั้งเดียวต่อระดับ · เทสต์ `Q1_*`/`Q3_*` |
 
 ### LDG-SLIP — ปฏิเสธสลิป
 | # | เคส | คาดหวัง |

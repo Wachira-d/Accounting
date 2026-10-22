@@ -48,6 +48,10 @@ public static class NotificationEvents
     /// "ลูกค้าจ่ายแล้วแต่ออเดอร์ยังค้าง" ซึ่งเจ้าของร้านไม่รู้จนลูกค้าโทรมา ·
     /// สาเหตุที่พบบ่อยสุดคือยังไม่ได้ตั้ง webhook URL ในแดชบอร์ดผู้ให้บริการ</summary>
     public const string GatewayPaymentStuck     = "gateway.payment_stuck";
+    /// <summary>รอบ 205 ทีม E: เงินออนไลน์เข้าแล้วแต่ต้นทาง (คำสั่งซื้อ/เอกสาร) บันทึกรับเงินไม่สำเร็จ — ไม่มีใบ/JE จนกว่าจะมีคนทำมือ</summary>
+    public const string GatewayPaymentUnfulfilled = "gateway.payment_unfulfilled";
+    /// <summary>รอบ 205 ทีม E: โควตาเอกสารเดือนนี้ข้าม 80% / เต็ม — แจ้งเจ้าของครั้งเดียวต่อระดับต่อเดือน (เอกสารที่กฎหมายบังคับยังออกได้ = ส่วนเกิน)</summary>
+    public const string DocumentQuotaLevel = "quota.documents_level";
     public const string DepreciationPosted      = "depreciation.posted";
     /// <summary>2026-10-14 (ID#13): งานลงค่าเสื่อมราคาอัตโนมัติรายเดือนล้ม (เช่น ผังค่าเสื่อมถูกปิดใช้/งวดปิด) —
     /// เดิมลงแค่ log ⇒ เจ้าของไม่รู้จนปิดงบ</summary>
@@ -118,6 +122,8 @@ public static class NotificationEvents
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
         ("Accounting", GatewayPaymentStuck, "รับชำระออนไลน์ค้างนานผิดปกติ (ตรวจ webhook)"),
+        ("Accounting", GatewayPaymentUnfulfilled, "เงินออนไลน์เข้าแล้วแต่ระบบบันทึกรับเงิน/ออกเอกสารไม่สำเร็จ (ต้องทำมือ)"),
+        ("Accounting", DocumentQuotaLevel, "โควตาเอกสารเดือนนี้ใกล้เต็ม (80%) / เต็มแล้ว"),
         ("Accounting", DepreciationPosted, "ลงค่าเสื่อมราคาประจำเดือนอัตโนมัติ"),
         ("Accounting", DepreciationFailed, "ลงค่าเสื่อมราคาอัตโนมัติไม่สำเร็จ (ต้องแก้แล้วกดคำนวณค่าเสื่อมเอง)"),
         ("Accounting", RecurringApprovedWithNotes, "รายการประจำอนุมัติอัตโนมัติพร้อมข้อสังเกตรายจ่ายต้องห้าม §65 ตรี"),

@@ -5321,3 +5321,11 @@ _2026-10-19 (บิลค่าน้ำ กปภ. จำนวน/ราคา
 บรรทัด "10/2569" × 101,000 (คอลัมน์ "เดือน" + "จำนวนน้ำใช้ (ลิตร)") ⇒ `OcrLineQuantityGuard`: คำอธิบายรอบบิลล้วน + ผู้ขายสาธารณูปโภค = หลักฐานมิเตอร์ ⇒ 1 × 2,839.00 ·
 ทางหารจำนวนใหม่ถามหลักฐานมิเตอร์ก่อน · คำอธิบาย "ค่าน้ำประปา ประจำเดือน 10/2569 (จำนวน 101,000)" (ไม่แต่งหน่วย) · เลข กปภ. 0994000164904 เข้า `OcrUtilityVendor` ·
 เทสต์ `OcrPeriodOnlyMeterLineTests` จากกระดาษจริง (`OcrPaperSamples.PwaWaterBillWe1105Positional`) · บทเรียนที่ `docs/lessons/ocr-pipeline.md`_
+
+_2026-10-22 รอบ 205 ทีม E (เอกสารรายรับ + โควตาของธุรกรรม CMS · matrix เต็มใน `docs/BOOKING_REVENUE_AUDIT.md`):
+(L-1) ที่พัก: handler เงินออนไลน์ข้ามเมื่อ `DepositPaid ≥ ยอด` ⇒ ชำระยอดคงเหลือที่ ≤ มัดจำหายเงียบ — กันซ้ำด้วยเลขอ้างอิงเท่านั้น (`Helpers/GatewayPaymentRecord`) ·
+(S-1) คำสั่งซื้อจ่ายออนไลน์โดยไม่แนบสลิปไม่เคยถูกยืนยัน (`ConfirmPaymentAsync(paymentId:null)` หาแถวสลิปไม่เจอ) — handler สร้างแถว `SiteOrderPayment` ของรายการชำระ ·
+(B-1) จองนัดหมาย PrePayment หน้าเว็บอนุมัติใบเสร็จมัดจำ (JE เงินสด + ภาษีขาย) ของเงินที่ไม่เคยได้รับ — ใบร่างจนกว่าจะรับเงิน (`Helpers/CmsBookingErpPolicy`) ·
+(B-3) ขั้น ERP ล้มไม่ทำให้แขกเห็นจองไม่สำเร็จ · (G-1) เงินเข้าแต่ต้นทางบันทึกไม่ได้ ⇒ แจ้งเจ้าของ `gateway.payment_unfulfilled` + handler โยนแทน return เงียบ ·
+(Q-1) โบนัสโควตาถูกนับสองครั้ง (ซื้อ +100 ใช้ได้ 50) — `DocumentQuotaPolicy.EffectiveLimit(…, used)` + `ConsumesBonus` · (Q-3) ข้าม 80%/100% แจ้งเจ้าของ `quota.documents_level` ·
+เทสต์ `BookingRevenueAuditTests` · ล็อกจุดเรียก `required_call_site_check` (6 กติกา) · ยังไม่ได้คอมไพล์ในเครื่องนี้_

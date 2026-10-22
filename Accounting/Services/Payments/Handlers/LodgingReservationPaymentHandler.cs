@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Lodging;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -37,7 +38,7 @@ public class LodgingReservationPaymentHandler : IPaymentCompletionHandler
     {
         var r = await _db.LodgingReservations.AsNoTracking()
             .Where(x => x.Id == intent.SourceId && x.CompanyId == intent.CompanyId)
-            .Select(x => new { x.Id, x.ReservationNumber, x.Status, x.DepositPaid })
+            .Select(x => new { x.Id, x.ReservationNumber, x.Status, x.DepositPaid, x.PaymentReference })
             .FirstOrDefaultAsync(ct);
         if (r == null)
         {
@@ -45,17 +46,20 @@ public class LodgingReservationPaymentHandler : IPaymentCompletionHandler
                 "เงินเข้าแล้วแต่หาการจองไม่พบ — intent {Intent} การจอง {Res} บริษัท {Company} "
                 + "ยอด {Amount:N2} · ต้องบันทึกรับเงินด้วยมือ",
                 intent.Id, intent.SourceId, intent.CompanyId, intent.Amount);
-            return;
+            // รอบ 205 ทีม E: โยนแทน return เงียบ — PaymentIntentService บันทึกลงประวัติของรายการชำระ + แจ้งเจ้าของ
+            throw new BusinessRuleException(GatewayPaymentRecord.SourceMissingMessage("การจอง", intent.Id, intent.Amount),
+                Accounting.Helpers.GatewayPaymentRecord.SourceMissingRuleCode);
         }
 
-        // บันทึกรับมัดจำไปแล้ว = webhook ซ้ำ → no-op (ไม่ใช่ error) · รวม "รอมัดจำ" ด้วย เพราะที่พักที่ปิด
-        // AutoConfirmOnDeposit (S-06 รอบ 193) รับเงินแล้วยังคงสถานะรอพนักงานยืนยัน — ไม่งั้น webhook ซ้ำออกใบมัดจำสองใบ
-        if (r.Status is LodgingReservationStatus.Pending or LodgingReservationStatus.Confirmed
-                or LodgingReservationStatus.CheckedIn or LodgingReservationStatus.CheckedOut
-            && r.DepositPaid >= intent.Amount - 0.005m)
+        // กันซ้ำด้วย "เลขอ้างอิงของเงินก้อนนี้" เท่านั้น (รอบ 205 ทีม E · BOOKING_REVENUE_AUDIT L-1) — เดิมข้ามเมื่อ DepositPaid ≥ ยอดรายการ
+        // ⇒ มัดจำ 1,500 แล้วแขกจ่ายยอดคงเหลือ 1,500 ออนไลน์ = ถูกตีเป็น webhook ซ้ำ ⇒ เงินเข้าแต่ไม่มีใบ/JE/ธง ·
+        // webhook/poll ซ้ำของรายการเดียวกันถูกกันที่ PaymentIntentService (Succeeded→Succeeded ไม่ส่งต่อ) อยู่แล้ว · ชั้นนี้คือตาข่ายที่สอง
+        // (ConfirmAsync ใช้ตัวตัดสินเดียวกันใต้ล็อกการจอง)
+        var reference = GatewayPaymentRecord.ReservationReference(intent.Id, intent.ProviderRef);
+        if (GatewayPaymentRecord.AlreadyRecordedOnReservation(r.PaymentReference, r.DepositPaid, reference))
         {
-            _logger.LogInformation("การจอง {Res} ยืนยันและรับมัดจำแล้ว — ข้าม intent {Intent}",
-                r.ReservationNumber, intent.Id);
+            _logger.LogInformation("การจอง {Res} บันทึกรับเงินของรายการ {Ref} แล้ว — ข้าม intent {Intent}",
+                r.ReservationNumber, reference, intent.Id);
             return;
         }
 
@@ -66,7 +70,7 @@ public class LodgingReservationPaymentHandler : IPaymentCompletionHandler
             await _lodging.ConfirmAsync(intent.CompanyId, r.Id, new LodgingConfirmRequest(
                 DepositAmount: intent.Amount,
                 PaymentMethod: PaymentMethod.BankTransfer,
-                PaymentReference: intent.ProviderRef,
+                PaymentReference: reference,
                 PaymentDate: intent.ConfirmedAt ?? DateTime.UtcNow,
                 BankAccountId: null,
                 Note: "ชำระมัดจำออนไลน์ผ่านระบบรับชำระเงิน"),

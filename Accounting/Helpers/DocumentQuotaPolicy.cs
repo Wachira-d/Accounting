@@ -116,13 +116,39 @@ public static class DocumentQuotaPolicy
     ///
     /// <paramref name="planLimit"/> ≤ 0 แปลว่า "ยังไม่ได้ตั้งค่า/ไม่จำกัด" ไม่ใช่
     /// "ศูนย์ใบ" — คืนค่าเดิมไปตรง ๆ ห้ามเอาโบนัสไปกลบ ไม่งั้นแพ็กเกจไม่จำกัด
-    /// จะกลายเป็นจำกัดเท่าโบนัสทันทีที่มีใครได้โบนัส</summary>
-    public static int EffectiveLimit(int planLimit, int bonusQuota, DateTime? bonusExpiresAt, DateTime nowUtc)
+    /// จะกลายเป็นจำกัดเท่าโบนัสทันทีที่มีใครได้โบนัส
+    ///
+    /// <para><b>รอบ 205 ทีม E (BOOKING_REVENUE_AUDIT Q-1) — โบนัสถูกนับสองครั้ง</b>: ใบที่เกินโควตาแพ็กเกจ<b>หักโบนัส</b>ทีละใบ
+    /// (<see cref="ConsumesBonus"/>) แต่สูตรเดิม <c>plan + โบนัสคงเหลือ</c> เทียบกับตัวนับที่<b>รวม</b>ใบเหล่านั้นแล้ว ⇒ ใบเกินแพ็กเกจ 1 ใบ
+    /// กินเพดานไป 2 ⇒ ซื้อ +100 ใบได้ใช้จริง 50 ใบ (ใบที่ 51 ถูกคิด overage/บล็อกใบเสนอราคา) · ตอนนี้ <paramref name="used"/> ที่เกินแพ็กเกจ
+    /// ถูกนับเป็นโบนัสที่ใช้ไปแล้ว: เพดาน = max(ใช้ไป, แพ็กเกจ) + โบนัสคงเหลือ (ใช้ไม่เกินแพ็กเกจ = สูตรเดิมทุกตัวเลข)</para></summary>
+    /// <param name="used">ใบที่นับเดือนนี้แล้ว (<c>CurrentMonthDocuments</c>) — 0 = ไม่ทราบ (สูตรเดิม)</param>
+    public static int EffectiveLimit(int planLimit, int bonusQuota, DateTime? bonusExpiresAt, DateTime nowUtc, int used = 0)
     {
         if (planLimit <= 0 || bonusQuota <= 0) return planLimit;
         if (bonusExpiresAt.HasValue && bonusExpiresAt.Value <= nowUtc) return planLimit;
-        return planLimit + bonusQuota;
+        return Math.Max(used, planLimit) + bonusQuota;
     }
+
+    /// <summary>ใบที่เพิ่งนับ (ตัวนับหลังเพิ่ม = <paramref name="usedAfter"/>) กินโบนัส 1 ใบไหม — เฉพาะใบที่เกินโควตาแพ็กเกจล้วน ๆ
+    /// และโบนัสยังไม่หมดอายุ (ตัวตัดสินเดียวของ <c>SubscriptionService.IncrementUsageAsync</c> — คู่กับ <see cref="EffectiveLimit"/>)</summary>
+    public static bool ConsumesBonus(int planLimit, int usedAfter, int bonusQuota, DateTime? bonusExpiresAt, DateTime nowUtc)
+        => planLimit > 0 && usedAfter > planLimit && bonusQuota > 0
+           && (bonusExpiresAt == null || bonusExpiresAt.Value > nowUtc);
+
+    /// <summary>ระดับเตือนที่<b>เพิ่งข้าม</b>จากใบนี้ (1 = ใกล้เต็ม · 2 = เต็ม) · 0 = ไม่ข้ามระดับใหม่ — ใช้แจ้งเจ้าของครั้งเดียวต่อระดับต่อเดือน
+    /// (ตัวนับเพิ่มทางเดียวทั้งเดือน ⇒ ข้ามแต่ละระดับได้ครั้งเดียว) · เอกสารที่กฎหมายบังคับยังออกได้หลังเต็ม — การแจ้งคือทางที่เจ้าของรู้ก่อนบิล overage</summary>
+    public static int CrossedWarnLevel(int usedBefore, int limitBefore, int usedAfter, int limitAfter)
+    {
+        var after = WarnLevel(usedAfter, limitAfter);
+        return after > WarnLevel(usedBefore, limitBefore) ? after : 0;
+    }
+
+    /// <summary>ข้อความแจ้งเจ้าของเมื่อข้ามระดับ — บอกว่า "เอกสารที่กฎหมายบังคับยังออกได้" + ทางไปต่อเสมอ</summary>
+    public static string CrossedMessage(int level, int used, int limit) => level >= 2
+        ? $"เดือนนี้ใช้โควตาเอกสารครบแล้ว ({used}/{limit} ฉบับ) — ใบกำกับภาษี/ใบเสร็จ (รวมที่ออกอัตโนมัติจากการจอง/ชำระออนไลน์) ยังออกได้ตามปกติ "
+          + "โดยคิดเป็นส่วนเกิน · ใบเสนอราคา/ใบสั่งซื้อจะถูกระงับ · ซื้อโควตาเพิ่มหรืออัปเกรดที่หน้า “ส่วนเสริมของฉัน”"
+        : $"เดือนนี้ใช้โควตาเอกสารไปแล้ว {used}/{limit} ฉบับ (≥ {WarnPercent}%) — ซื้อโควตาเพิ่มหรืออัปเกรดที่หน้า “ส่วนเสริมของฉัน” ก่อนเต็ม";
 
     /// <summary>ระดับการเตือน — 0 = ปกติ, 1 = ใกล้เต็ม (≥ WarnPercent), 2 = เต็มแล้ว</summary>
     public const int WarnPercent = 80;

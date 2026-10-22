@@ -44,7 +44,7 @@ public class QuotaService : IQuotaService
         var bonusAlive = (sub?.DocumentBonusQuota ?? 0) > 0
             && (sub?.DocumentBonusExpiresAt == null || sub.DocumentBonusExpiresAt > now);
         var bonus = bonusAlive ? sub!.DocumentBonusQuota : 0;
-        var limit = DocumentQuotaPolicy.EffectiveLimit(planLimit, bonus, sub?.DocumentBonusExpiresAt, now);
+        var limit = DocumentQuotaPolicy.EffectiveLimit(planLimit, bonus, sub?.DocumentBonusExpiresAt, now, used: used);
 
         var th = now.AddHours(7);
         var warn = DocumentQuotaPolicy.WarnLevel(used, limit);
