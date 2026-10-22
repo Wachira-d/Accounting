@@ -1000,6 +1000,8 @@ const API = {
       cmsListBookings: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/booking/bookings${q}`),
       cmsGetBooking: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/booking/bookings/${id}`),
       cmsUpdateBookingStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/status`, d),
+      // คำตัดสินข้อ 155: รับเงินแล้ว — ออกใบกำกับภาษีของการจอง Guaranteed (server ตัดสิน · ออกแล้วไม่ออกซ้ำ)
+      cmsIssueBookingTaxInvoice: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/issue-tax-invoice`, {}),
 
       // Lodging — ธุรกิจที่พัก (ตั้งค่า + front desk) — ทุก endpoint ใต้ /lodging
       lodgingProperties: () => API.get(`${base}/lodging/properties`),

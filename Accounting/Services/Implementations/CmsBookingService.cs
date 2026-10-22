@@ -304,8 +304,17 @@ public class CmsBookingService : ICmsBookingService
         {
             DurationMinutes = d.DurationMinutes, BufferBeforeMinutes = d.BufferBeforeMinutes, BufferAfterMinutes = d.BufferAfterMinutes,
             MinAdvanceHours = d.MinAdvanceHours, MaxAdvanceDays = d.MaxAdvanceDays,
+            GuaranteedInvoiceTiming = await InvoiceTimingAsync(companyId, siteId),
+            GuaranteedInvoiceTimingOptions = BookingInvoiceTimingPolicy.Options().ToList(),
         };
     }
+
+    /// <summary>จังหวะออกใบกำกับของ Guaranteed ของไซต์ (คำตัดสินข้อ 155) · ไม่มีแถวค่าตั้ง = ค่าเริ่มต้น (ใบกำกับตอนจอง — เดิม)</summary>
+    private async Task<BookingInvoiceTiming> InvoiceTimingAsync(Guid companyId, Guid siteId)
+        => await _db.SiteBookingSettings.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted)
+            .Select(x => (BookingInvoiceTiming?)x.GuaranteedInvoiceTiming)
+            .FirstOrDefaultAsync() ?? BookingInvoiceTiming.TaxInvoiceAtBooking;
 
     public async Task<BookingSiteSettingsDto> UpdateSiteSettingsAsync(Guid companyId, Guid siteId, BookingSiteSettingsDto request, string userId)
     {
@@ -315,7 +324,9 @@ public class CmsBookingService : ICmsBookingService
             Mode = BookingSlotMode.Interval, DurationMinutes = request.DurationMinutes,
             BufferBeforeMinutes = request.BufferBeforeMinutes, BufferAfterMinutes = request.BufferAfterMinutes,
             MinAdvanceHours = request.MinAdvanceHours, MaxAdvanceDays = request.MaxAdvanceDays,
-        });
+        }).ToList();
+        if (request.GuaranteedInvoiceTiming is BookingInvoiceTiming t && !Enum.IsDefined(t))
+            errs.Add("จังหวะออกใบกำกับภาษีไม่ถูกต้อง");
         if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), "CMS-BOOKING-SETTINGS");
         var row = await _db.SiteBookingSettings.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted);
         if (row == null)
@@ -326,6 +337,8 @@ public class CmsBookingService : ICmsBookingService
         row.DurationMinutes = request.DurationMinutes; row.BufferBeforeMinutes = request.BufferBeforeMinutes;
         row.BufferAfterMinutes = request.BufferAfterMinutes; row.MinAdvanceHours = request.MinAdvanceHours;
         row.MaxAdvanceDays = request.MaxAdvanceDays; row.UpdatedBy = userId;
+        // null = คงค่าเดิม (ผู้เรียกที่ไม่รู้จักช่องนี้ไม่รีเซ็ตเงียบ) · มีผลกับการจองใหม่เท่านั้น — การจองเดิมตัดสินจากเอกสารที่ผูกจริง (BookingInvoiceTimingPolicy)
+        if (request.GuaranteedInvoiceTiming is BookingInvoiceTiming timing) row.GuaranteedInvoiceTiming = timing;
         await _db.SaveChangesAsync();
         return await GetSiteSettingsAsync(companyId, siteId);
     }
@@ -776,6 +789,12 @@ public class CmsBookingService : ICmsBookingService
             else if (request.Status == BookingStatus.Cancelled)
                 await SettleErpDocumentOnCancelAsync(companyId, erpDocId, booking.CancelledAt ?? DateTime.UtcNow, notices, bookingNotes);
         }
+        // คำตัดสินข้อ 155: ให้บริการเสร็จ = tax point (§78/1) ของ Guaranteed ที่ยังไม่มีใบกำกับ (รวมการจองที่ไม่มีเอกสารผูกเพราะขั้น ERP ตอนจองล้ม) ·
+        // ไม่มา ⇒ ไม่ออกใบกำกับเอง แต่บอกทางไปต่อ — ตัดสินที่ BookingInvoiceTimingPolicy (เมธอดออกเองเมื่อไม่มีเส้นเอกสาร)
+        if (request.Status == BookingStatus.Completed && oldStatus != BookingStatus.Completed)
+            await ApplyInvoiceTimingAsync(companyId, siteId, bookingId, BookingInvoiceEvent.ServiceCompleted, userId, notices, bookingNotes);
+        else if (request.Status == BookingStatus.NoShow && oldStatus != BookingStatus.NoShow)
+            await ApplyInvoiceTimingAsync(companyId, siteId, bookingId, BookingInvoiceEvent.NoShow, userId, notices, bookingNotes);
 
         if (bookingNotes.Count > 0)
         {
@@ -801,6 +820,223 @@ public class CmsBookingService : ICmsBookingService
         var result = await GetBookingAsync(companyId, siteId, bookingId) ?? throw new InvalidOperationException("Failed.");
         result.ErpNotices = notices;
         return result;
+    }
+
+    /// <summary>พนักงานยืนยัน "รับเงินแล้ว" ⇒ ออกใบกำกับภาษีของการจอง Guaranteed ที่ยังมีแค่ใบยืนยันการจอง (tax point §78/1 = วันรับเงิน) ·
+    /// ตัวตัดสินเดียว <see cref="BookingInvoiceTimingPolicy"/> · ออกแล้ว ⇒ ไม่ออกซ้ำ (คำตัดสินข้อ 155)</summary>
+    public async Task<BookingResponse> IssueTaxInvoiceOnPaymentAsync(Guid companyId, Guid siteId, Guid bookingId, string userId)
+    {
+        var exists = await _db.SiteBookings.AsNoTracking()
+            .AnyAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId);
+        if (!exists) throw new KeyNotFoundException("Booking not found.");
+        var notices = new List<string>();
+        var bookingNotes = new List<string>();
+        await ApplyInvoiceTimingAsync(companyId, siteId, bookingId, BookingInvoiceEvent.PaymentReceived, userId, notices, bookingNotes);
+        if (bookingNotes.Count > 0)
+        {
+            var noted = await _db.SiteBookings.FirstAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId);
+            foreach (var n in bookingNotes) noted.InternalNotes = DepositPolicyResolver.AppendNoteOnce(noted.InternalNotes, n);
+            noted.UpdatedBy = userId;
+            await _db.SaveChangesAsync();
+        }
+        var result = await GetBookingAsync(companyId, siteId, bookingId) ?? throw new InvalidOperationException("Failed.");
+        result.ErpNotices = notices;
+        return result;
+    }
+
+    /// <summary>ข้อเท็จจริงของเอกสารที่ผูกกับการจอง (ผลของ <see cref="LoadInvoiceFactsAsync"/>)</summary>
+    private sealed record BookingInvoiceContext(BookingInvoiceFacts Facts, Guid? LinkedId, string? LinkedNumber,
+        Guid? IssuedChildId, DocumentType? IssuedChildType, string? IssuedChildNumber);
+
+    /// <summary>ข้อเท็จจริงของเอกสารที่ผูกกับการจอง → <see cref="BookingInvoiceFacts"/> (ใช้ทั้งตอนตัดสินจริงและตอนตัดสินว่าจะแสดงปุ่มไหม)</summary>
+    private async Task<BookingInvoiceContext?> LoadInvoiceFactsAsync(Guid companyId, Guid siteId, Guid bookingId, BookingInvoiceEvent ev)
+    {
+        var b = await _db.SiteBookings.AsNoTracking()
+            .Where(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId)
+            .Select(x => new { x.ErpDocumentId, x.BookingService.BookingType })
+            .FirstOrDefaultAsync();
+        if (b == null) return null;
+        DocumentType? linkedType = null; DocumentStatus? linkedStatus = null; string? linkedNo = null;
+        Guid? childId = null; DocumentType? childType = null; string? childNo = null;
+        if (b.ErpDocumentId is Guid linkedId)
+        {
+            var d = await _db.Documents.AsNoTracking()
+                .Where(x => x.Id == linkedId && x.CompanyId == companyId)
+                .Select(x => new { x.DocumentType, x.Status, x.DocumentNumber })
+                .FirstOrDefaultAsync();
+            if (d != null) { linkedType = d.DocumentType; linkedStatus = d.Status; linkedNo = d.DocumentNumber; }
+            // ใบภาษี/ใบรับเงินที่แปลงจากใบยืนยันการจองแล้ว (ระบบ หรือพนักงานแปลงเองที่หน้าเอกสาร) ⇒ ไม่ออกซ้ำ
+            var issuedTypes = BookingInvoiceTimingPolicy.IssuedTaxDocumentTypes.ToList();
+            var c = await _db.Documents.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.RelatedDocumentId == linkedId
+                    && issuedTypes.Contains(x.DocumentType)
+                    && x.Status != DocumentStatus.Voided && x.Status != DocumentStatus.Rejected)
+                .OrderBy(x => x.CreatedAt)
+                .Select(x => new { x.Id, x.DocumentType, x.DocumentNumber })
+                .FirstOrDefaultAsync();
+            if (c != null) { childId = c.Id; childType = c.DocumentType; childNo = c.DocumentNumber; }
+        }
+        var (vatRegistered, _) = await CompanyVatStatus.ProfileAsync(_db, companyId);
+        var facts = new BookingInvoiceFacts(b.BookingType, await InvoiceTimingAsync(companyId, siteId), ev,
+            linkedType, linkedStatus, childId != null, vatRegistered);
+        return new BookingInvoiceContext(facts, b.ErpDocumentId, linkedNo, childId, childType, childNo);
+    }
+
+    /// <summary>จังหวะออกใบกำกับหลังจอง (รับเงิน · ให้บริการเสร็จ · ไม่มา) — ตัดสินที่ <see cref="BookingInvoiceTimingPolicy.Decide"/> ตัวเดียว ·
+    /// ออกใบด้วยเส้นแปลงเอกสารเดิม (<c>ConvertDocumentAsync</c>: ใบยืนยันการจอง → ใบกำกับ) + อนุมัติด้วยเส้นเดิม (ไม่เขียน posting ใหม่) ·
+    /// ล้ม ⇒ ล้มดัง: ข้อความถึงผู้กด + ประทับบนการจอง (สถานะการจองที่กดไว้บันทึกแล้ว ไม่ถูกลาก)</summary>
+    private async Task ApplyInvoiceTimingAsync(Guid companyId, Guid siteId, Guid bookingId, BookingInvoiceEvent ev, string userId,
+        List<string> notices, List<string> bookingNotes)
+    {
+        if (_docService == null) return;
+        // ล็อกระดับ session ต่อการจอง (แบบ LodgingService.WithReservationLockAsync) — กด "รับเงินแล้ว" สองแท็บ / พร้อมกดให้บริการเสร็จ
+        // ⇒ คำขอที่สองรอแล้วเห็นใบที่ออกแล้ว (AlreadyIssued) ไม่แปลงซ้ำ
+        var key = AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsBookingInvoice, bookingId.ToString());
+        var conn = _db.Database.GetDbConnection();
+        var openedHere = conn.State != System.Data.ConnectionState.Open;
+        if (openedHere) await conn.OpenAsync();
+        var acquired = false;
+        try
+        {
+            for (var attempt = 0; attempt < 20 && !acquired; attempt++)
+            {
+                await using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = $"SELECT pg_try_advisory_lock({key})";
+                    acquired = Convert.ToBoolean(await cmd.ExecuteScalarAsync());
+                }
+                if (!acquired) await Task.Delay(500);
+            }
+            if (!acquired)
+            {
+                const string busy = "มีรายการออกใบกำกับของการจองนี้กำลังทำงานอยู่ — รอสักครู่แล้วเปิดการจองดูใหม่ (อาจออกไปแล้ว · ห้ามออกเองซ้ำ)";
+                notices.Add(busy); bookingNotes.Add(busy);
+                return;
+            }
+            await ApplyInvoiceTimingLockedAsync(companyId, siteId, bookingId, ev, userId, notices, bookingNotes);
+        }
+        finally
+        {
+            if (acquired)
+            {
+                await using var unlock = conn.CreateCommand();
+                unlock.CommandText = $"SELECT pg_advisory_unlock({key})";
+                await unlock.ExecuteScalarAsync();
+            }
+            if (openedHere) await conn.CloseAsync();
+        }
+    }
+
+    private async Task ApplyInvoiceTimingLockedAsync(Guid companyId, Guid siteId, Guid bookingId, BookingInvoiceEvent ev, string userId,
+        List<string> notices, List<string> bookingNotes)
+    {
+        var l = await LoadInvoiceFactsAsync(companyId, siteId, bookingId, ev);
+        if (l == null) return;
+        var decision = BookingInvoiceTimingPolicy.Decide(l.Facts);
+        switch (decision.Action)
+        {
+            case BookingInvoiceAction.None:
+                if (decision.Notice is string n) { notices.Add(n); bookingNotes.Add(n); }
+                return;
+
+            case BookingInvoiceAction.AlreadyIssued:
+                if (l.IssuedChildId is Guid issuedId)
+                {
+                    // พนักงานแปลงเองที่หน้าเอกสาร ⇒ ผูกใบนั้นกับการจอง (ยกเลิกการจองจะได้เดินใบที่มีผลจริง)
+                    var relink = await _db.SiteBookings.FirstAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId);
+                    relink.ErpDocumentId = issuedId;
+                    relink.ErpDocumentType = CmsBookingErpPolicy.ErpTypeOf(l.IssuedChildType!.Value);
+                    relink.UpdatedBy = userId;
+                    await _db.SaveChangesAsync();
+                    if (ev == BookingInvoiceEvent.PaymentReceived) notices.Add(BookingInvoiceTimingPolicy.AlreadyIssuedNotice(l.IssuedChildNumber ?? ""));
+                }
+                else if (ev == BookingInvoiceEvent.PaymentReceived && l.LinkedNumber is string no)
+                    notices.Add(BookingInvoiceTimingPolicy.AlreadyIssuedNotice(no));
+                return;
+
+            case BookingInvoiceAction.ApprovePendingTaxInvoice:
+                await ApproveBookingTaxDocumentAsync(companyId, l.LinkedId!.Value, l.LinkedNumber, ev, userId, notices, bookingNotes);
+                return;
+
+            case BookingInvoiceAction.CreateTaxInvoiceNow:
+                // ไม่มีเอกสารผูก (ขั้น ERP ตอนจองล้ม) ⇒ เส้นสร้างเอกสารของการจองเดิม (อนุมัติอัตโนมัติ + หมายเหตุเมื่อล้ม อยู่ในเส้นนั้นแล้ว)
+                try
+                {
+                    var newId = await SyncBookingToErpAsync(companyId, siteId, bookingId, decision.DocumentType!.Value);
+                    var made = newId is Guid nid
+                        ? await _db.Documents.AsNoTracking().Where(d => d.Id == nid && d.CompanyId == companyId)
+                            .Select(d => new { d.DocumentNumber, d.DocumentType, d.Status }).FirstOrDefaultAsync()
+                        : null;
+                    if (made != null && made.Status is not (DocumentStatus.Draft or DocumentStatus.WaitingApproval))
+                    {
+                        var okMade = BookingInvoiceTimingPolicy.IssuedNotice(ev, made.DocumentNumber, made.DocumentType);
+                        notices.Add(okMade); bookingNotes.Add(okMade);
+                    }
+                    else
+                    {
+                        var pending = CmsBookingCancelPolicy.FailureNote("การออกใบกำกับภาษีของการจอง", made?.DocumentNumber,
+                            "ใบยังไม่ได้อนุมัติ — เปิดเอกสารแล้วกด “อนุมัติ” (ดูหมายเหตุบนการจอง)");
+                        notices.Add(pending); bookingNotes.Add(pending);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _db.ChangeTracker.Clear();
+                    _logger.LogWarning(ex, "สร้างใบกำกับของการจอง {BookingId} (ไม่มีเอกสารผูก) ไม่สำเร็จ", bookingId);
+                    var failNew = CmsBookingCancelPolicy.FailureNote("การออกใบกำกับภาษีของการจอง", null, ReasonOf(ex));
+                    notices.Add(failNew); bookingNotes.Add(failNew);
+                }
+                return;
+
+            case BookingInvoiceAction.IssueTaxInvoiceFromConfirmation:
+                Models.DTOs.Document.DocumentResponse converted;
+                try
+                {
+                    // เส้นแปลงเดิม: ด่าน §90/2 · ด่านแปลงซ้ำ (แกนวางบิล) · สืบทอดผู้ซื้อ/สาขา/ราคา — ไม่ประกอบใบเอง
+                    converted = await _docService!.ConvertDocumentAsync(companyId, l.LinkedId!.Value, decision.DocumentType!.Value, userId);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _db.ChangeTracker.Clear();
+                    _logger.LogWarning(ex, "ออกใบกำกับของการจอง {BookingId} จากใบยืนยัน {Doc} ไม่สำเร็จ", bookingId, l.LinkedNumber);
+                    var fail = CmsBookingCancelPolicy.FailureNote("การออกใบกำกับภาษีของการจอง", l.LinkedNumber, ReasonOf(ex));
+                    notices.Add(fail); bookingNotes.Add(fail);
+                    return;
+                }
+                // ผูกใบใหม่ก่อนอนุมัติ — อนุมัติล้ม ⇒ ครั้งถัดไปเห็นใบร่างที่ผูกอยู่ ⇒ ApprovePendingTaxInvoice (ไม่แปลงซ้ำ)
+                var booking = await _db.SiteBookings.FirstAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId);
+                booking.ErpDocumentId = converted.Id;
+                booking.ErpDocumentType = decision.ErpType ?? CmsBookingErpPolicy.ErpTypeOf(decision.DocumentType!.Value);
+                booking.UpdatedBy = userId;
+                await _db.SaveChangesAsync();
+                await ApproveBookingTaxDocumentAsync(companyId, converted.Id, converted.DocumentNumber, ev, userId, notices, bookingNotes);
+                return;
+
+            default:
+                return;
+        }
+    }
+
+    /// <summary>อนุมัติใบกำกับ/ใบแจ้งหนี้ของการจองด้วยเส้นอนุมัติเดิม (SystemWorkflow — ไม่มีคนเห็นคำเตือนในเส้นนี้) · ล้ม ⇒ ถอยของครึ่งทาง + ล้มดัง</summary>
+    private async Task ApproveBookingTaxDocumentAsync(Guid companyId, Guid documentId, string? documentNumber, BookingInvoiceEvent ev,
+        string userId, List<string> notices, List<string> bookingNotes)
+    {
+        var baseline = new HashSet<object>(_db.ChangeTracker.Entries().Select(e => e.Entity), ReferenceEqualityComparer.Instance);
+        try
+        {
+            var approved = await _docService!.ApproveDocumentAsync(companyId, documentId, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
+            var ok = BookingInvoiceTimingPolicy.IssuedNotice(ev, approved.DocumentNumber, approved.DocumentType);
+            notices.Add(ok); bookingNotes.Add(ok);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            foreach (var entry in TrackedChangeRevert.DetachSince(_db, baseline))
+                await entry.ReloadAsync();
+            TrackedChangeRevert.DetachStrays(_db, baseline);
+            _logger.LogWarning(ex, "อนุมัติใบกำกับ {Doc} ของการจองไม่สำเร็จ", documentNumber);
+            var fail = CmsBookingCancelPolicy.FailureNote("การอนุมัติใบกำกับภาษีของการจอง", documentNumber, ReasonOf(ex));
+            notices.Add(fail); bookingNotes.Add(fail);
+        }
     }
 
     /// <summary>ออกเอกสาร ERP ให้การจองที่ไม่ใช่ Lead (ใบที่เพิ่งพ้นคิวสำรอง)</summary>
@@ -932,6 +1168,13 @@ public class CmsBookingService : ICmsBookingService
             .FirstOrDefaultAsync();
         if (resp != null && resp.Status == BookingStatus.Waitlisted)
             resp.WaitlistPosition = (await WaitlistPositionsAsync(companyId, siteId, new[] { resp.Id })).GetValueOrDefault(resp.Id);
+        // ปุ่ม "รับเงินแล้ว — ออกใบกำกับภาษี": ตัวตัดสินเดียวกับตอนกดจริง (server ตัดสิน · หน้าเว็บแสดง)
+        if (resp != null && resp.BookingType == BookingType.Guaranteed
+            && resp.Status is not (BookingStatus.Cancelled or BookingStatus.Waitlisted)
+            && await LoadInvoiceFactsAsync(companyId, siteId, resp.Id, BookingInvoiceEvent.PaymentReceived) is { } lf)
+            resp.CanIssueTaxInvoiceNow = BookingInvoiceTimingPolicy.Decide(lf.Facts).Action
+                is BookingInvoiceAction.IssueTaxInvoiceFromConfirmation or BookingInvoiceAction.ApprovePendingTaxInvoice
+                or BookingInvoiceAction.CreateTaxInvoiceNow;
         return resp;
     }
 
@@ -1005,7 +1248,9 @@ public class CmsBookingService : ICmsBookingService
 
     // ===== ERP Sync (Event-Driven) =====
 
-    public async Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId)
+    /// <summary>ตัวจริงของเส้นสร้างเอกสาร ERP ของการจอง · <paramref name="taxDocumentNow"/> = ถึง tax point แล้วแต่การจองยังไม่มีเอกสารผูก
+    /// (ขั้น ERP ตอนจองล้ม) ⇒ สร้างใบชนิดนี้ (ใบกำกับ/ใบแจ้งหนี้) ด้วยเส้นเดียวกัน แทนชนิดตอนจอง — ตัดสินโดย <see cref="BookingInvoiceTimingPolicy"/> (ข้อ 155)</summary>
+    private async Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId, DocumentType? taxDocumentNow)
     {
         var booking = await _db.SiteBookings
             .Include(b => b.BookingService)
@@ -1024,15 +1269,14 @@ public class CmsBookingService : ICmsBookingService
             return null;
         }
 
-        // Determine ERP document type based on BookingType
-        var (docType, erpDocType) = svc.BookingType switch
-        {
-            BookingType.Lead => (DocumentType.Quotation, ErpBookingDocumentType.DraftServiceOrder),
-            BookingType.Appointment => (DocumentType.Quotation, ErpBookingDocumentType.DraftServiceOrder),
-            BookingType.Guaranteed => (DocumentType.TaxInvoice, ErpBookingDocumentType.TaxInvoice),
-            BookingType.PrePayment => (DocumentType.Receipt, ErpBookingDocumentType.AdvanceReceipt),
-            _ => (DocumentType.Quotation, ErpBookingDocumentType.DraftServiceOrder)
-        };
+        // ชนิดเอกสารตอนจอง — ตัวตัดสินเดียว BookingInvoiceTimingPolicy (คำตัดสินข้อ 155 · B-2): Guaranteed + ค่าตั้งไซต์ "ออกใบกำกับเมื่อรับเงิน/ให้บริการ"
+        // ⇒ ใบยืนยันการจอง (ใบเสนอราคา · ไม่ลงบัญชี) · ค่าเริ่มต้น/ชนิดอื่น = ชนิดเดิมทุกตัว
+        var atBooking = BookingInvoiceTimingPolicy.Decide(new BookingInvoiceFacts(
+            svc.BookingType, await InvoiceTimingAsync(companyId, siteId), BookingInvoiceEvent.Booked,
+            LinkedDocumentType: null, LinkedStatus: null, HasIssuedTaxDocument: false, VatRegistered: true));
+        var docType = taxDocumentNow ?? atBooking.DocumentType ?? DocumentType.Quotation;
+        var erpDocType = taxDocumentNow is DocumentType forced ? CmsBookingErpPolicy.ErpTypeOf(forced)
+            : atBooking.ErpType ?? ErpBookingDocumentType.DraftServiceOrder;
 
         // Find or create ERP Contact
         Guid? contactId = booking.Customer?.ContactId;
@@ -1134,6 +1378,12 @@ public class CmsBookingService : ICmsBookingService
         var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-booking");
         booking.ErpDocumentId = created.Id;
         booking.ErpDocumentType = erpDocType;
+        if (svc.BookingType == BookingType.Guaranteed && docType == DocumentType.Quotation)
+        {
+            booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, BookingInvoiceTimingPolicy.DeferredNote);
+            var qtDoc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id && d.CompanyId == companyId);
+            if (qtDoc != null) qtDoc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(qtDoc.InternalNotes, BookingInvoiceTimingPolicy.DeferredNote);
+        }
 
         // Auto-approve: ตัดสินที่ CmsBookingErpPolicy ตัวเดียว (lead = quotation รออนุมัติ — admin ต้อง confirm slot ก่อน) ·
         // รอบ 205 ทีม E (B-1): PrePayment อนุมัติเฉพาะเมื่อเงินเข้าแล้ว — เดิม "prepayment มีเงินจริง" ไม่จริง: การจองหน้าเว็บยังไม่มีใครจ่าย
@@ -1185,6 +1435,9 @@ public class CmsBookingService : ICmsBookingService
             booking.BookingNumber, erpDocType, created.Id, created.DocumentNumber, isDeposit);
         return created.Id;
     }
+
+    public Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId)
+        => SyncBookingToErpAsync(companyId, siteId, bookingId, taxDocumentNow: null);
 
     // ===== Helpers =====
 

@@ -25,7 +25,8 @@ public static class CmsBookingErpPolicy
         BookingType.Lead => false,
         // ใบเสร็จ = หลักฐานว่า "ได้รับเงินแล้ว" — ออกได้เฉพาะเมื่อเงินเข้าจริง
         BookingType.PrePayment => depositAmount > 0.005m && paidAmount + 0.005m >= depositAmount,
-        // Appointment = ใบเสนอราคา (ไม่มีผลทางบัญชี) · Guaranteed = พฤติกรรมเดิม (ใบกำกับตอนจอง — รอเจ้าของตัดสิน: BOOKING_REVENUE_AUDIT B-2)
+        // Appointment = ใบเสนอราคา (ไม่มีผลทางบัญชี) · Guaranteed = ใบกำกับตอนจอง หรือใบยืนยันการจอง (ใบเสนอราคา) ตามค่าตั้งไซต์ —
+        // ชนิดตัดสินที่ BookingInvoiceTimingPolicy (คำตัดสินข้อ 155 · B-2) · ทั้งสองแบบอนุมัติอัตโนมัติเหมือนเดิม
         _ => true,
     };
 

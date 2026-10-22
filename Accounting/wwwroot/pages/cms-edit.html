@@ -250,6 +250,11 @@
         <div class="form-group"><label class="form-label">จองล่วงหน้าได้ไม่เกิน (วัน)</label><input type="number" class="form-input" id="bssMaxAdv" min="0" max="730"></div>
         <div class="form-group" style="align-self:end"><button class="btn btn-primary btn-sm" onclick="Page.saveBookingSiteSettings()">บันทึกค่าตั้งของเว็บไซต์</button></div>
       </div>
+      <div class="form-group">
+        <label class="form-label">จังหวะออกใบกำกับภาษี — บริการแบบ “การันตี (Guaranteed)”</label>
+        <div id="bssInvoiceTiming" class="bs-hint">กำลังโหลด…</div>
+        <div class="bs-hint" style="margin-top:4px">มีผลกับการจองใหม่ · การจองเดิมยังออกใบกำกับเมื่อรับเงิน/ให้บริการตามเอกสารที่ผูกอยู่ · กด “บันทึกค่าตั้งของเว็บไซต์” เพื่อบันทึก</div>
+      </div>
     </div>
 
     <!-- ====================== BOOKINGS TAB ====================== -->
@@ -2759,6 +2764,15 @@
           document.getElementById('bssBufferAfter').value = d.bufferAfterMinutes ?? 0;
           document.getElementById('bssMinAdv').value = d.minAdvanceHours ?? 1;
           document.getElementById('bssMaxAdv').value = d.maxAdvanceDays ?? 30;
+          // คำตัดสินข้อ 155: ตัวเลือก + ผลทางภาษีมาจาก server (BookingInvoiceTimingPolicy.Options) — หน้าแสดงตรง ๆ
+          const opts = Array.isArray(d.guaranteedInvoiceTimingOptions) ? d.guaranteedInvoiceTimingOptions : [];
+          const cur = d.guaranteedInvoiceTiming || 'TaxInvoiceAtBooking';
+          document.getElementById('bssInvoiceTiming').innerHTML = opts.map(o => `
+            <label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;cursor:pointer;color:inherit">
+              <input type="radio" name="bssInvoiceTiming" value="${Layout.esc(o.value)}" ${o.value === cur ? 'checked' : ''} style="margin-top:3px">
+              <span><strong>${Layout.esc(o.label)}</strong><br><span style="font-size:12px;color:var(--gray-600)">${Layout.esc(o.taxEffect)}</span></span>
+            </label>`).join('') || 'โหลดตัวเลือกไม่สำเร็จ';
+          this._bssInvoiceTimingLoaded = opts.length > 0;
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async saveBookingSiteSettings() {
@@ -2767,6 +2781,9 @@
           durationMinutes: this._bsNum('bssDuration', 60), bufferBeforeMinutes: this._bsNum('bssBufferBefore', 0),
           bufferAfterMinutes: this._bsNum('bssBufferAfter', 0), minAdvanceHours: this._bsNum('bssMinAdv', 0), maxAdvanceDays: this._bsNum('bssMaxAdv', 30)
         };
+        // ยังโหลดตัวเลือกไม่สำเร็จ ⇒ ไม่ส่ง (server คงค่าเดิม — ไม่รีเซ็ตเงียบ)
+        const timing = document.querySelector('input[name="bssInvoiceTiming"]:checked');
+        if (this._bssInvoiceTimingLoaded && timing) body.guaranteedInvoiceTiming = timing.value;
         try {
           await api.cmsUpdateBookingSiteSettings(this.siteId, body);
           Layout.toast('บันทึกค่าตั้งของเว็บไซต์แล้ว', 'success');

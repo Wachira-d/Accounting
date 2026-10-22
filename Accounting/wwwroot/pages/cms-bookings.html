@@ -221,9 +221,25 @@
               ${b.erpDocumentId ? `<div style="margin-top:6px;font-size:11px;color:#059669">✓ ผูกกับเอกสารบัญชี — <a href="/pages/documents.html?id=${b.erpDocumentId}" style="color:#059669;text-decoration:underline">เปิดดู</a></div>` : ''}
             </div>
             ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
+            ${b.canIssueTaxInvoiceNow ? `<div style="background:#fffbeb;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px">
+              การจองนี้ยังไม่มีใบกำกับภาษีที่อนุมัติแล้ว — ถ้า<strong>รับเงินแล้ว</strong> ต้องออกใบกำกับในวันที่รับเงิน (§78/1)
+              <div style="margin-top:6px"><button class="btn btn-primary btn-sm" onclick="Page.issueTaxInvoice('${b.id}')">รับเงินแล้ว — ออกใบกำกับภาษี</button></div>
+            </div>` : ''}
             ${workflow ? `<h4 style="margin-top:12px;margin-bottom:6px;font-size:13px">ดำเนินการ</h4><div style="display:flex;gap:8px;flex-wrap:wrap">${workflow}</div>` : ''}`;
           Layout.openModal('bkModal');
         } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async issueTaxInvoice(id) {
+        const api = Layout.api(); if (!api) return;
+        if (!confirm('ยืนยันว่าได้รับเงินของการจองนี้แล้ว — ระบบจะออกใบกำกับภาษีลงวันที่วันนี้')) return;
+        try {
+          const res = await api.cmsIssueBookingTaxInvoice(this.siteId, id);
+          // ข้อความจาก server (ออกใบแล้ว · มีใบแล้วไม่ออกซ้ำ · ขั้นที่ล้มพร้อมเหตุ) — แสดงตามจริง
+          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
+          if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          Layout.closeModal('bkModal');
+          await this.load();
+        } catch (e) { Layout.toast('ออกใบกำกับไม่สำเร็จ: ' + e.message, 'error'); }
       },
       async advance(id, nextStatus) {
         const api = Layout.api(); if (!api) return;

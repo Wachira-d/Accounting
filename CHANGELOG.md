@@ -5366,6 +5366,13 @@ _2026-10-22 (ทีม C — เว็บไซต์ CMS: งานรายเ
   หน้า ตั้งค่า (`DocumentStampPolicyTests`)
 - WYSIWYG 50 ทวิ: สไตล์ HTML ฝั่งเซิร์ฟเวอร์ = หน้าพิมพ์ (`WhtCertCss`) · ลายน้ำยกเลิกใน HTML · หน้าพิมพ์ใช้ลายเซ็นชุดเดียวกับ PDF (เดิมของผู้กดพิมพ์)
 
+_2026-10-22 ทีม N — คำตัดสินเจ้าของข้อ 155 (BOOKING_REVENUE_AUDIT B-2): จังหวะออกใบกำกับของการจอง Guaranteed ตั้งค่าได้ต่อไซต์
+(`SiteBookingSettings.GuaranteedInvoiceTiming` · DEFAULT 0 = ใบกำกับตอนจอง เดิม) · (ข) ใบยืนยันการจอง (ใบเสนอราคา) ตอนจอง → ใบกำกับเมื่อรับเงิน
+(ปุ่มใหม่ `cms-bookings.html` · `POST booking/bookings/{id}/issue-tax-invoice`) หรือให้บริการเสร็จ แล้วแต่อย่างไหนก่อน (§78/1) · ตัวตัดสินเดียว
+`Helpers/BookingInvoiceTimingPolicy` (ย้าย switch ชนิดเอกสารตอนจองมาด้วย) · ใช้เส้นแปลง/อนุมัติเดิม · ไม่ออกซ้ำ (รวมใบที่พนักงานแปลงเอง) · สลับค่าตั้งกลางทาง
+tax point ไม่หลุด · ที่พักตรวจแล้วไม่มีปัญหาเดียวกัน (ไม่เพิ่มค่าตั้งใน `lodging-settings.html`) · เทสต์ `BookingInvoiceTimingPolicyTests` · ล็อกจุดเรียก 6 กติกา ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
 
 _2026-10-22 รอบ 205 ทีม E (เอกสารรายรับ + โควตาของธุรกรรม CMS · matrix เต็มใน `docs/BOOKING_REVENUE_AUDIT.md`):
 (L-1) ที่พัก: handler เงินออนไลน์ข้ามเมื่อ `DepositPaid ≥ ยอด` ⇒ ชำระยอดคงเหลือที่ ≤ มัดจำหายเงียบ — กันซ้ำด้วยเลขอ้างอิงเท่านั้น (`Helpers/GatewayPaymentRecord`) ·
