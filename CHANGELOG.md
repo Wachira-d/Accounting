@@ -5329,3 +5329,13 @@ _2026-10-22 ทีม G — แท็บ "ตรวจสอบการใช�
 ช่องทางตัดสินที่ `Helpers/DocumentCreationChannel.cs` ตัวเดียว จากหลักฐานที่มีจริง (OriginModule → ตารางผูก FK กลับ → ป้าย CreatedBy ของเส้นระบบ
 → ใบล่าสุดของรายการประจำ) · ไม่มีหลักฐาน (เช่น LINE ที่บันทึกเป็นอีเมล) = "ไม่ทราบ" ไม่เดา. หน้า `/pages/admin-company-usage.html` (ภาพรวมทุกบริษัทต่อเดือน)
 คงเดิม — แท็บใหม่คือมุมเจาะลึกบริษัทเดียวหลายเดือน ไม่ทำซ้ำ. ไม่เปลี่ยน flow เอกสาร (อ่านอย่างเดียว) ⇒ DOCUMENT_FLOW ไม่ขยับ._
+
+---
+
+### 2026-10-22 · ทีม J — ตราประทับ/ลายเซ็นบนเอกสาร
+- บั๊ก: 50 ทวิ ไม่มีตราประทับทั้งดูบนเว็บ/ดาวน์โหลด/พิมพ์ — ต้นเหตุ: ทางออก 50 ทวิทั้งสามไม่เคยอ่าน `CompanySettings.StampPath` (วาดวงกลมว่างอย่างเดียว) ·
+  แก้ HTML + QuestPDF + หน้าพิมพ์ในคอมมิตเดียว (`WhtCertStampTests`)
+- Document Stamp Rules: `Helpers/DocumentStampPolicy` + `CompanySettings.DocumentStampRulesJson` (ADD COLUMN · NULL = เดิม) + `DocumentStampRulesController` +
+  หน้า ตั้งค่า (`DocumentStampPolicyTests`)
+- WYSIWYG 50 ทวิ: สไตล์ HTML ฝั่งเซิร์ฟเวอร์ = หน้าพิมพ์ (`WhtCertCss`) · ลายน้ำยกเลิกใน HTML · หน้าพิมพ์ใช้ลายเซ็นชุดเดียวกับ PDF (เดิมของผู้กดพิมพ์)
+

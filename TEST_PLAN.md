@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **612 ไฟล์ · 6,004 `[Fact]` + 994 `[Theory]` (4,694 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **614 ไฟล์ · 6,023 `[Fact]` + 995 `[Theory]` (4,703 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -978,6 +978,9 @@
 | รหัส | เคส | คาดหวัง |
 | --- | --- | --- |
 | WHT-U-01 | ✅ มีแล้ว: ภงด.3/53 form guard | ตาม `WhtFormTypeGuardTests` |
+| WHT-STAMP-01 | ✅ (ทีม J 2026-10-22) 50 ทวิ ที่ออกแล้ว + บริษัทอัปโหลดตรา — ดูบนเว็บ/ดาวน์โหลด/พิมพ์ | ทั้ง 3 ฉบับมีตรากลางวงกลม "ประทับตรานิติบุคคล" · ฉบับละหนึ่งหน้า · ร่าง/ไม่มีตรา = วงกลมเดิม (`WhtCertStampTests`) |
+| WHT-STAMP-02 | ✅ กฎตราประทับต่อประเภท × สถานะ (ตั้งค่า → ตราประทับ) | ยังไม่ตั้ง = เดิมทุกสถานะ · ตั้งแล้วมีผลเฉพาะประเภทนั้น · ผู้ลงนามไม่มีสิทธิ์ ⇒ ไม่พิมพ์รูป (`DocumentStampPolicyTests`) |
+| WHT-STAMP-03 | ✅ หน้าพิมพ์ wht.html กับ PDF | ตรา/ลายเซ็นมาจากเซิร์ฟเวอร์ชุดเดียว (ไม่ใช่ลายเซ็นผู้กดพิมพ์) · สไตล์ HTML เซิร์ฟเวอร์ = หน้าพิมพ์ทุกบรรทัด |
 | WHT-U-02 | อัตราตามประเภทเงินได้ ครบตาราง ท.ป.4/2528 (บริการ 3, โฆษณา 2, ขนส่ง 1, เช่า 5, ดอกเบี้ยบุคคล 15/นิติ 1, ปันผล 10) | ตรงตาราง; ประเภทที่ไม่รู้จัก → ไม่หักเงียบ ๆ ต้อง flag |
 | WHT-U-03 | ฐานคำนวณ = ก่อน VAT | ค่าบริการ 1,000 + VAT 70 → หัก 30 ไม่ใช่ 32.10 |
 | WHT-U-04 | threshold: งวดละ 800 แต่สัญญารวม 2,400 | หักทุกงวด (นับต่อสัญญา) |

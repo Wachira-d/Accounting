@@ -3366,6 +3366,14 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 
 ### 5.1 PDF (มาตรฐาน + e-Tax)
 - **Service**: `PdfGenerationService.GenerateDocumentPdfAsync` (`:39`)
+- **กฎตราประทับ/ลายเซ็น (Document Stamp Rules · ทีม J 2026-10-22)**: ตัวตัดสินเดียว `Helpers/DocumentStampPolicy.Resolve(คีย์ประเภท, ขั้น, JSON, ค่าเดิม)` —
+  HTML `BuildDocumentHtml` + QuestPDF `RenderDocumentPdfNative`/`BuildBranding` + `ResolveSignersAsync` (ลายเซ็น) + 50 ทวิ เรียกตัวเดียวกัน ·
+  เก็บที่ `CompanySettings.DocumentStampRulesJson` (หน้า ตั้งค่า → ตราประทับ → "กฎตราประทับ/ลายเซ็น" · `GET/PUT settings/document-stamp-rules` · `CompanySettings.Edit`) ·
+  ต่อประเภท (ชื่อ enum `DocumentType` + `WithholdingTaxCert`): ขั้นที่ประทับตรา / ขั้นที่พิมพ์ลายเซ็นอิเล็กทรอนิกส์ (ร่าง·ถูกปฏิเสธ / รออนุมัติ / อนุมัติแล้ว·ส่งแล้ว·ชำระบางส่วน·เกินกำหนด /
+  ชำระแล้ว / ยกเลิก) · ตำแหน่ง ซ้าย/กลาง/ขวา + เลื่อน X/Y ±60 มม. · ขนาด 5–120 มม. · ผู้ลงนามที่มีสิทธิ์ (บทบาท/ผู้ใช้ — ไม่อยู่ในรายการ ⇒ ไม่พิมพ์รูป ชื่อยังอยู่ใต้เส้น ·
+  ลายเซ็นลูกค้า/เซ็นรับของไม่ถูกแตะ · ผู้มีอำนาจลงนามที่บริษัทตั้ง/ลายเซ็นคู่ค้าส่งมาตรวจแค่ "ขั้นนี้พิมพ์ไหม") · **ยังไม่ตั้ง = เดิมทุกไบต์** (ประทับเฉพาะ
+  อนุมัติแล้ว/ชำระแล้ว/ยกเลิก · ลายเซ็นทุกขั้น · ขนาด/ตำแหน่งจาก `StampWidthMm/HeightMm/StampAlign`) · `template.ShowCompanyStamp` ยังปิดต่อเทมเพลตได้ ·
+  รูปตราตัวเดียวกันทั้งสอง renderer `ResolveStampBytes` (StampPath → StampUrl → ตราในเทมเพลต — เดิม HTML ไม่ลองตราในเทมเพลต · QuestPDF ไม่ลอง StampUrl)
 - **Detection chain**:
   1. มี `EtaxInvoice` + `XmlContent` → **PDF/A-3 + embed XML** (ตาม
      ETDA ขมธอ.3-2560 — ใช้ยื่นภาษีได้)
@@ -3767,6 +3775,13 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 
 ### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
 - **Service**: `WithholdingTaxCertService`
+- **ตราประทับ/ลายเซ็น (ทีม J 2026-10-22)**: ทางออกทั้งสาม — HTML `BuildWithholdingTaxCertHtml` (Chromium) · QuestPDF `BuildWhtCertPdf` ·
+  หน้าพิมพ์ `wht.html printCert` (ผ่าน `GET withholding-tax-certs/{id}/print-decoration`) — ได้ตรา + ลายเซ็นจากตัวตัดสินเดียว
+  `Helpers/DocumentStampPolicy` (คีย์ `WithholdingTaxCert`) + `ResolveWhtCertStamp`/`ResolveWhtPayerSignatureAsync` · ค่าตั้งต้น: ออกแล้ว/พิมพ์แล้ว/ยกเลิก
+  ประทับ · ร่างไม่ประทับ · ตรา 24 มม. วางกลางวงกลม "ประทับตรานิติบุคคล (ถ้ามี)" (เลื่อนได้ด้วย offset · ไม่ใช้ซ้าย/กลาง/ขวา) · ไม่มีตรา = วงกลมเดิมทุกไบต์ ·
+  เดิมไม่มีทางไหนอ่าน `CompanySettings.StampPath` ⇒ 50 ทวิ ไม่เคยมีตรา · ลายเซ็นหน้าพิมพ์เดิมมาจากโปรไฟล์ "ผู้ที่กดพิมพ์" (คนละคนกับ PDF) — ตอนนี้ผู้สร้างใบ → เจ้าของ
+  ชุดเดียวกับ PDF · HTML ไม่พิมพ์ชื่อผู้ลงนามต่อท้ายรูปแล้ว (ตรงกับ QuestPDF/หน้าพิมพ์) · HTML มีลายน้ำ "ยกเลิก" แล้ว · สไตล์ HTML = สำเนาของหน้าพิมพ์
+  (`PdfGenerationService.WhtCertCss` · `WhtCertStampTests.ServerCss_IsIdenticalTo_PrintPageCss` ล็อกเท่ากันทุกบรรทัด)
 - **รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)** (2026-10-14): `ThaiBahtText.Format(TotalTaxAmount)` ทั้ง HTML (`BuildWithholdingTaxCertHtml`) · QuestPDF
   (`BuildTotalInWords`) · หน้าพิมพ์ `wht.html` แสดง `TotalTaxAmountInWords` จาก DTO อย่างเดียว (เดิมมีสำเนาสูตร JS ของตัวเอง) — ดู §5.1
 - **Trigger (แก้ doc 2026-10-12 — บรรทัดเดิม "ตอน PV/Expense ถูก approve" ไม่ครบ)**: ทุกทางเข้าอัตโนมัติเดินทางเดียว

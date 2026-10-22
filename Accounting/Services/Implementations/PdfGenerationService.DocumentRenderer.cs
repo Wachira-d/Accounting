@@ -72,14 +72,12 @@ public partial class PdfGenerationService
         EnsureThaiFontsRegistered();
         var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
         var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
-        // ตราประทับบริษัท: ประทับเฉพาะเอกสารที่อนุมัติแล้ว (ผู้มีอำนาจอนุมัติ = ประทับตรา)
-        // — เงื่อนไขเดียวกับช่องลายเซ็นผู้อนุมัติ (Draft/รออนุมัติ/ถูกปฏิเสธ = ไม่ประทับ)
-        var stampAllowed = doc.Status is not (Accounting.Models.Enums.DocumentStatus.Draft
-            or Accounting.Models.Enums.DocumentStatus.WaitingApproval
-            or Accounting.Models.Enums.DocumentStatus.Rejected);
+        // ตราประทับบริษัท: ขั้นไหนประทับ/ตำแหน่ง/ขนาด/ระยะเลื่อน จากตัวตัดสินเดียว DocumentStampPolicy — ตัวเดียวกับ HTML
+        // BuildDocumentHtml (ทีม J 2026-10-22 · เดิมเงื่อนไข "ไม่ใช่ร่าง/รออนุมัติ/ถูกปฏิเสธ" เขียน inline สองที่) · ยังไม่ตั้งกฎ = เดิม
+        var stampRule = StampDecisionFor(doc, settings);
         // ไม่เช็ค IsActive — ใบเก่าที่ตรึงแบรนด์ไว้ต้องพิมพ์โลโก้/สีเดิมแม้แบรนด์
         // ถูกปิดใช้งานภายหลัง (สัญญาของปุ่มลบ; ผลตรวจทีมเส้นทางข้อมูล ข้อ 3)
-        var b = BuildBranding(template, settings, watermarkOverride, stampAllowed,
+        var b = BuildBranding(template, settings, watermarkOverride, stampRule,
             doc.Brand is { IsDeleted: false } ? doc.Brand : null);
 
         var accent = b.AccentColor ?? "#1F2937";
@@ -1153,7 +1151,9 @@ public partial class PdfGenerationService
                     "Center" => cell.AlignCenter(),
                     _ => cell.AlignRight(),
                 };
-                cell.Width(stampW, Unit.Millimetre).Height(stampH, Unit.Millimetre)
+                // ระยะเลื่อนจากกฎ (มม.) — คู่กับ position:relative;left/top ของ HTML DocumentStampBlockHtml (เลื่อนภาพ ไม่ดันเนื้อหา)
+                cell.TranslateX(b.StampOffsetXMm, Unit.Millimetre).TranslateY(b.StampOffsetYMm, Unit.Millimetre)
+                    .Width(stampW, Unit.Millimetre).Height(stampH, Unit.Millimetre)
                     .Image(b.StampBytes).FitArea();
             }
             catch { /* stamp decorative — ห้าม break PDF */ }
