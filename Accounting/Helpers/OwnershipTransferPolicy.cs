@@ -11,7 +11,7 @@ namespace Accounting.Helpers;
 ///
 /// <para>กติกา:</para>
 /// <list type="bullet">
-/// <item>ผู้สร้างบริษัทที่เป็นแอดมินแพลตฟอร์ม ⇒ <see cref="UserRole.PlatformSupport"/> (ไม่ใช่ Owner) · ผู้ใช้ทั่วไป ⇒ Owner (เดิม)</item>
+/// <item>ผู้สร้างบริษัท ⇒ Owner เสมอ · แอดมินแพลตฟอร์มที่ติ๊ก "เปิดให้ลูกค้า" ⇒ <see cref="UserRole.PlatformSupport"/> (รอบ 205 · <see cref="CompanyCreatorMembership"/>)</item>
 /// <item>PlatformSupport <b>ไม่ผ่านด่านเจ้าของ</b> (บทบาทนี้ไม่อยู่ใน <c>OwnerGateDecision</c>/<c>EnsureOwnerAccessAsync</c>) · สิทธิ์ตั้งค่าเริ่มระบบผ่าน
 /// <see cref="SupportDefaultKeys"/> (ไม่รวมเงินเดือน/ข้อมูลส่วนบุคคล/สมาชิก/คีย์ API)</item>
 /// <item>โอนความเป็นเจ้าของ: ผู้เรียก = สมาชิก Owner/SystemAdmin ของบริษัท <b>หรือ</b> PlatformSupport ของบริษัทนั้นที่ <b>ยังเป็นแอดมินแพลตฟอร์มอยู่</b>
@@ -27,9 +27,8 @@ public static class OwnershipTransferPolicy
 
     public const string RuleCode = "PLATFORM-OWNERSHIP-TRANSFER";
 
-    /// <summary>บทบาทของผู้สร้างบริษัท</summary>
-    public static UserRole CreatorRole(bool creatorIsPlatformAdmin)
-        => creatorIsPlatformAdmin ? UserRole.PlatformSupport : UserRole.Owner;
+    // บทบาทของผู้สร้างบริษัทย้ายไป Helpers/CompanyCreatorMembership (รอบ 205 ทีม I) — เดิม CreatorRole(isPlatformAdmin) ให้แอดมินแพลตฟอร์มได้ support
+    // ทุกครั้ง (รวมบริษัทของตัวเอง) ⇒ บริษัทไม่มีเจ้าของ · ตอนนี้ support เฉพาะเมื่อติ๊ก "เปิดให้ลูกค้า"
 
     /// <summary>ตั้งบทบาทนี้ได้ไหม — ตัวตัดสินเดียวของทุกทางตั้งบทบาท (หน้าทีม · คำเชิญ · หน้าแอดมินลูกค้า) · PlatformSupport เกิดได้ทางเดียว
     /// (แอดมินแพลตฟอร์มสร้างบริษัท) · SystemAdmin (99) ตั้งได้เฉพาะแอดมินแพลตฟอร์ม (ข้อ 107) · บทบาทลูกค้าตั้งได้ตามเดิม</summary>

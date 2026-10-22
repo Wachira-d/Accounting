@@ -30,7 +30,10 @@ public record CreateCompanyRequest(
     string? Fax = null,
     string? Email = null,
     string? Website = null,
-    int FiscalYearStartMonth = 1);
+    int FiscalYearStartMonth = 1,
+    /// <summary>รอบ 205 ทีม I: แอดมินแพลตฟอร์ม "เปิดบริษัทนี้ให้ลูกค้า" ⇒ ผู้สร้างได้บทบาทผู้ดูแลแพลตฟอร์ม (support) แทน Owner แล้วส่งมอบด้วยการโอนความเป็นเจ้าของ ·
+    /// ค่าตั้งต้น false = ผู้สร้างเป็นเจ้าของทันที · ผู้ใช้ทั่วไปส่ง true ก็ไม่มีผล (<c>Helpers/CompanyCreatorMembership</c>)</summary>
+    bool OpenForCustomer = false);
 
 public record UpdateCompanyRequest(
     [property: StringLength(100)] string? Name,
@@ -136,7 +139,11 @@ public record SubscriptionSummary(
     SubscriptionPlan Plan,
     SubscriptionStatus Status,
     DateTime EndDate,
-    TrialSummary? Trial);
+    TrialSummary? Trial,
+    /// <summary>รอบ 205 ทีม I: ชื่อแพ็กเกจ (PlanTemplate) + ที่มา "Company" | "License" — ค่าทั้งก้อนมาจาก <c>Helpers/PlanIdentityResolver</c>
+    /// (บริษัทที่ผูก License = แพ็กเกจของ License ไม่ใช่แถวบริษัทที่ค้าง FreeTrial)</summary>
+    string? PlanName = null,
+    string? Source = null);
 
 public record TrialSummary(
     TrialStatus Status,

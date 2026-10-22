@@ -97,17 +97,12 @@ public class CompanyService : ICompanyService
         // รอบ 194 — ประเภทเงินมัดจำเริ่มต้นตามประเภทธุรกิจ (tenant ใหม่ห้ามว่าง · spec S8) — ตารางเดียวกับ migration
         await Accounting.Helpers.DepositKindSeed.EnsureSeededAsync(_db, company.Id);
 
-        // Add creator as Owner — รอบ 201 ทีม PL (C-4 · ข้อ 77): แอดมินแพลตฟอร์มที่เปิดบริษัทให้ลูกค้าได้บทบาท "ผู้ดูแลแพลตฟอร์ม (support)"
-        // ไม่ใช่ Owner (เดิมได้ Owner ถาวรในข้อมูลลูกค้า) — ส่งมอบให้ลูกค้าด้วย TransferOwnershipAsync · ตัวตัดสิน Helpers/OwnershipTransferPolicy
+        // ผู้สร้างได้ Owner ทันที — ตัวสร้างแถวตัวเดียวของทุกทางสร้างบริษัท (รอบ 205 ทีม I · Helpers/CompanyCreatorMembership) ·
+        // แอดมินแพลตฟอร์มได้บทบาท "ผู้ดูแลแพลตฟอร์ม (support)" เฉพาะเมื่อติ๊ก "เปิดบริษัทนี้ให้ลูกค้า" (OpenForCustomer · ข้อ 77) แล้วส่งมอบด้วย TransferOwnershipAsync
         var creatorIsPlatformAdmin = await _db.Users.AsNoTracking()
             .Where(u => u.Id == userId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();
-        _db.CompanyUsers.Add(new CompanyUser
-        {
-            UserId = userId,
-            CompanyId = company.Id,
-            Role = Accounting.Helpers.OwnershipTransferPolicy.CreatorRole(creatorIsPlatformAdmin),
-            IsDefault = true
-        });
+        _db.CompanyUsers.Add(Accounting.Helpers.CompanyCreatorMembership.NewRow(
+            company.Id, userId, creatorIsPlatformAdmin, request.OpenForCustomer));
 
         await _db.SaveChangesAsync();
 
@@ -216,6 +211,9 @@ public class CompanyService : ICompanyService
         var company = await _db.Companies
             .Include(c => c.Subscription)
             .ThenInclude(s => s!.TrialConfig)
+            .Include(c => c.Subscription)
+            .ThenInclude(s => s!.AccountSubscription)
+            .ThenInclude(a => a!.PlanTemplate)
             .FirstOrDefaultAsync(c => c.Id == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
 
@@ -225,7 +223,7 @@ public class CompanyService : ICompanyService
             .FirstOrDefaultAsync();
         if (cu == null) throw new UnauthorizedAccessException("ไม่มีสิทธิ์เข้าถึงบริษัทนี้");
 
-        return MapToResponse(company) with { MyRole = cu.Role.ToString() };
+        return MapToResponse(company, await LoadPlanNamesAsync()) with { MyRole = cu.Role.ToString() };
     }
 
     public async Task<List<CompanyResponse>> GetUserCompaniesAsync(Guid userId)
@@ -244,11 +242,15 @@ public class CompanyService : ICompanyService
         var companies = await _db.Companies
             .Include(c => c.Subscription)
             .ThenInclude(s => s!.TrialConfig)
+            .Include(c => c.Subscription)
+            .ThenInclude(s => s!.AccountSubscription)
+            .ThenInclude(a => a!.PlanTemplate)
             .Where(c => companyIds.Contains(c.Id))
             .ToListAsync();
+        var planNames = await LoadPlanNamesAsync();
 
         return companies.Select(c => {
-            var resp = MapToResponse(c);
+            var resp = MapToResponse(c, planNames);
             roleMap.TryGetValue(c.Id, out var role);
             return resp with { MyRole = role };
         }).ToList();
@@ -350,9 +352,13 @@ public class CompanyService : ICompanyService
 
     public async Task<List<CompanyMemberResponse>> GetMembersAsync(Guid companyId, Guid userId)
     {
-        // Verify the requesting user belongs to this company
+        // Verify the requesting user belongs to this company — แอดมินแพลตฟอร์มดูได้ (ด่านเดียวกับ EnsureOwnerAccessAsync ที่ให้แอดมินจัดการทีมได้) ·
+        // รอบ 205 ทีม I: ไม่ใช่สมาชิก = 403 ข้อความไทย (เดิม UnauthorizedAccessException ⇒ 401 ⇒ api.js ลบ token เด้งออกจากระบบ
+        // แทนที่จะบอกเหตุผล — แอดมินแพลตฟอร์มเปิดหน้าจัดการทีมของบริษัทที่ไม่ได้เป็นสมาชิกแล้วถูกออกจากระบบ)
         var isMember = await _db.CompanyUsers.AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == userId);
-        if (!isMember) throw new UnauthorizedAccessException("คุณไม่ได้เป็นสมาชิกของบริษัทนี้");
+        if (!isMember && !await IsPlatformAdminAsync(userId))
+            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.CompanyMembershipGuard.NotMemberMessage,
+                Accounting.Helpers.CompanyMembershipGuard.RuleCode, 403);
 
         return await _db.CompanyUsers
             .Where(cu => cu.CompanyId == companyId)
@@ -556,15 +562,11 @@ public class CompanyService : ICompanyService
         var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == targetUserId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
 
-        // Refuse to leave the company without an Owner. If this is the last
-        // Owner standing, removal would orphan the company — block here.
-        if (cu.Role == UserRole.Owner)
-        {
-            var ownerCount = await _db.CompanyUsers
-                .CountAsync(x => x.CompanyId == companyId && x.Role == UserRole.Owner);
-            if (ownerCount <= 1)
-                throw new InvalidOperationException("ลบไม่ได้ — บริษัทต้องมีเจ้าของอย่างน้อย 1 คน");
-        }
+        // Refuse to leave the company without an Owner — ตัวตัดสินเดียว Helpers/LastOwnerGuard (รอบ 205 ทีม I · นับ Owner/SystemAdmin)
+        var otherOwners = await CountOtherOwnersAsync(companyId, targetUserId);
+        var removeBlock = Accounting.Helpers.LastOwnerGuard.Block(cu.Role, null, otherOwners);
+        if (removeBlock != null)
+            throw new Accounting.Helpers.BusinessRuleException(removeBlock, Accounting.Helpers.LastOwnerGuard.RuleCode);
 
         _db.CompanyUsers.Remove(cu);
         await _db.SaveChangesAsync();
@@ -584,15 +586,10 @@ public class CompanyService : ICompanyService
         var cu = await _db.CompanyUsers.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.UserId == targetUserId)
             ?? throw new KeyNotFoundException("ไม่พบผู้ใช้ในบริษัท");
 
-        // Demoting the last Owner would lock the company. Block if target is
-        // currently Owner, the new role isn't Owner, and they're the only one.
-        if (cu.Role == UserRole.Owner && newRole != UserRole.Owner)
-        {
-            var ownerCount = await _db.CompanyUsers
-                .CountAsync(x => x.CompanyId == companyId && x.Role == UserRole.Owner);
-            if (ownerCount <= 1)
-                throw new InvalidOperationException("ลดสิทธิ์ไม่ได้ — บริษัทต้องมีเจ้าของอย่างน้อย 1 คน");
-        }
+        // Demoting the last Owner would lock the company — ตัวตัดสินเดียว Helpers/LastOwnerGuard (รอบ 205 ทีม I)
+        var demoteBlock = Accounting.Helpers.LastOwnerGuard.Block(cu.Role, newRole, await CountOtherOwnersAsync(companyId, targetUserId));
+        if (demoteBlock != null)
+            throw new Accounting.Helpers.BusinessRuleException(demoteBlock, Accounting.Helpers.LastOwnerGuard.RuleCode);
 
         cu.Role = newRole;
         await _db.SaveChangesAsync();
@@ -690,6 +687,11 @@ public class CompanyService : ICompanyService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>จำนวนสมาชิกบทบาทเจ้าของ (Owner/SystemAdmin — นิยามเดียวกับ OwnerlessCompanyRepair.IsOwnerRole) ไม่นับเป้าหมาย</summary>
+    private Task<int> CountOtherOwnersAsync(Guid companyId, Guid targetUserId)
+        => _db.CompanyUsers.CountAsync(x => x.CompanyId == companyId && x.UserId != targetUserId
+            && (x.Role == UserRole.Owner || x.Role == UserRole.SystemAdmin));
+
     private Task<bool> IsPlatformAdminAsync(Guid userId)
         => _db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.IsSystemAdmin).FirstOrDefaultAsync();
 
@@ -711,7 +713,15 @@ public class CompanyService : ICompanyService
             throw Accounting.Helpers.OwnerActionGuard.NotOwner();
     }
 
-    private static CompanyResponse MapToResponse(Company c)
+    /// <summary>ชื่อแพ็กเกจ (PlanTemplate ที่เปิดใช้) ต่อระดับ — ให้ <see cref="MapToResponse"/> ส่งชื่อที่แอดมินตั้ง</summary>
+    private async Task<IReadOnlyDictionary<SubscriptionPlan, string>> LoadPlanNamesAsync()
+    {
+        var rows = await _db.PlanTemplates.AsNoTracking().Where(t => t.IsActive)
+            .Select(t => new { t.Plan, t.Name }).ToListAsync();
+        return rows.GroupBy(r => r.Plan).ToDictionary(g => g.Key, g => g.First().Name);
+    }
+
+    private static CompanyResponse MapToResponse(Company c, IReadOnlyDictionary<SubscriptionPlan, string>? planNames = null)
     {
         SubscriptionSummary? sub = null;
         if (c.Subscription != null)
@@ -727,7 +737,12 @@ public class CompanyService : ICompanyService
                     tc.ExtensionsUsed,
                     tc.MaxExtensions);
             }
-            sub = new SubscriptionSummary(c.Subscription.Plan, c.Subscription.Status, c.Subscription.EndDate, trial);
+            // รอบ 205 ทีม I: บริษัทที่ผูก License ⇒ แพ็กเกจของ License (ตัวตัดสินเดียว PlanIdentityResolver) — เดิมแถวบริษัทตรง ๆ ⇒ รายการบริษัทโชว์ Free
+            var acct = c.Subscription.AccountSubscription is { IsDeleted: false } a && a.PlanTemplate != null ? a : null;
+            var id = Accounting.Helpers.PlanIdentityResolver.Resolve(c.Subscription.Plan, c.Subscription.Status, c.Subscription.EndDate,
+                planNames != null && planNames.TryGetValue(c.Subscription.Plan, out var pn) ? pn : null,
+                acct != null ? new Accounting.Helpers.PlanIdentityResolver.LicenseSide(acct.PlanTemplate.Plan, acct.PlanTemplate.Name, acct.Status, acct.EndDate) : null);
+            sub = new SubscriptionSummary(id.Plan, id.Status, id.EndDate, trial, id.PlanName, id.Source);
         }
 
         return new CompanyResponse(

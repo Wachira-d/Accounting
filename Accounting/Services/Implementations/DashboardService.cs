@@ -372,19 +372,27 @@ public class DashboardService : IDashboardService
 
     private async Task<DashboardSubscriptionSummary?> GetDashboardSubscriptionSummaryAsync(Guid companyId)
     {
-        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null) return null;
 
-        var usersCount = await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId);
-        var planName = await _db.PlanTemplates.AsNoTracking()
+        // รอบ 205 ทีม I: บริษัทที่ผูก License ต้องเห็นแพ็กเกจ/ลิมิตของ License — เดิมอ่านแถวบริษัทตรง ๆ ⇒ แดชบอร์ดโชว์ "Free" ขณะที่หน้าแพ็กเกจโชว์ "Enterprise"
+        // (ตัวตัดสินเดียว Helpers/PlanIdentityResolver · ลิมิตตามสูตรเดียวกับ SubscriptionService.GetSubscriptionAsync: License ชนะ)
+        var acct = sub.AccountSubscriptionId is { } aid
+            ? await _db.AccountSubscriptions.AsNoTracking().Include(a => a.PlanTemplate)
+                .FirstOrDefaultAsync(a => a.Id == aid && !a.IsDeleted)
+            : null;
+        var companyPlanName = await _db.PlanTemplates.AsNoTracking()
             .Where(t => t.Plan == sub.Plan && t.IsActive)
             .Select(t => t.Name)
             .FirstOrDefaultAsync();
+        var id = PlanIdentityResolver.Resolve(sub.Plan, sub.Status, sub.EndDate, companyPlanName,
+            acct != null ? new PlanIdentityResolver.LicenseSide(acct.PlanTemplate.Plan, acct.PlanTemplate.Name, acct.Status, acct.EndDate) : null);
 
-        return new DashboardSubscriptionSummary(sub.Plan, sub.Status, sub.EndDate,
-            Math.Max(0, (int)(sub.EndDate - DateTime.UtcNow).TotalDays),
-            sub.CurrentMonthDocuments, sub.MaxDocumentsPerMonth,
-            usersCount, sub.MaxUsers, planName);
+        var usersCount = await _db.CompanyUsers.CountAsync(cu => cu.CompanyId == companyId);
+        return new DashboardSubscriptionSummary(id.Plan, id.Status, id.EndDate,
+            Math.Max(0, (int)(id.EndDate - DateTime.UtcNow).TotalDays),
+            sub.CurrentMonthDocuments, acct?.MaxDocumentsPerMonth ?? sub.MaxDocumentsPerMonth,
+            usersCount, acct?.MaxUsersPerCompany ?? sub.MaxUsers, id.PlanName, id.Source);
     }
 
     private async Task<VatWhtSummary?> GetVatWhtSummaryAsync(Guid companyId, DateTime fromDate, DateTime toDate)

@@ -724,8 +724,10 @@ const API = {
       // Deposit Center (redesign): endpoint เดียวจบ — rows + KPI + GL tie-out + timestamp
       getDepositCenter: () => API.get(`${base}/document/deposit-center`),
       // จัดการบริษัท: ลบ (Owner + พิมพ์ชื่อยืนยัน) + ดูสิทธิ์สมาชิกรายคน
-      deleteCompany: (confirmName) => API.del(`${base}?confirmName=${encodeURIComponent(confirmName)}`),
-      getMemberPermissions: (userId) => API.get(`${base}/users/${userId}/permissions`),
+      // รอบ 205 ทีม I: สองเส้นนี้อยู่ที่ CompanyController = `api/company/{id}` (เอกพจน์) — เดิมยิง `${base}` (= api/companies/{id}) ⇒ 404 ทุกครั้ง
+      // (ปุ่ม "🔐 สิทธิ์" หน้าจัดการทีม + ปุ่มลบบริษัทหน้าตั้งค่า ล้มด้วย "Server returned non-JSON (HTTP 404)")
+      deleteCompany: (confirmName) => API.del(`/api/company/${companyId}?confirmName=${encodeURIComponent(confirmName)}`),
+      getMemberPermissions: (userId) => API.get(`/api/company/${companyId}/users/${userId}/permissions`),
       getDepositDiagnostics: () => API.get(`${base}/document/deposits/diagnostics`),
       realizeDeposit: (id, body) => API.post(`${base}/document/${id}/realize-deposit`, body),
       // รับรู้ภาษีขายรอเรียกเก็บของมัดจำ (21913 → 21911) โดยไม่แตะรายได้ —

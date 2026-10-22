@@ -13,33 +13,7 @@ public class PermissionService : IPermissionService
 
     public PermissionService(AccountingDbContext db) => _db = db;
 
-    /// <summary>สิทธิ์ "งานบัญชีหลัก" ที่ built-in role นักบัญชี (UserRole.Accountant)
-    /// ได้อัตโนมัติ — เพื่อให้ทำหน้าที่ครบโดยไม่ต้องผูก custom CompanyRole ทุกครั้ง.
-    /// ครอบคลุม: เอกสารทุกฝั่ง, งบ/รายงาน/แดชบอร์ด, ภาษี, ธนาคาร, ใบสำคัญ (JE),
-    /// เงินเดือน/ประกันสังคม, ผังบัญชี/ผู้ติดต่อ/สินค้า, ดูสต๊อก. **ไม่รวม** สิทธิ์
-    /// ระดับเจ้าของ/ระบบ (Users.Manage, Roles.Manage, CompanySettings.Edit,
-    /// Pii.View) และงาน HR อนุมัติลา/เบิก/POS/CMS — ต้อง grant ผ่าน role เอง.</summary>
-    private static readonly HashSet<string> AccountantDefaultKeys = new()
-    {
-        PermissionKeys.DocumentCreate, PermissionKeys.DocumentApprove, PermissionKeys.DocumentVoid,
-        PermissionKeys.DocumentViewAll, PermissionKeys.DocumentExport,
-        PermissionKeys.DocumentRevenueView, PermissionKeys.DocumentRevenueCreate,
-        PermissionKeys.DocumentRevenueApprove, PermissionKeys.DocumentRevenueVoid,
-        PermissionKeys.DocumentPurchaseView, PermissionKeys.DocumentPurchaseCreate,
-        PermissionKeys.DocumentPurchaseApprove, PermissionKeys.DocumentPurchaseVoid,
-        PermissionKeys.ReportsDashboard, PermissionKeys.ReportsExecutive,
-        PermissionKeys.ReportsFinancial, PermissionKeys.ReportsOperational, PermissionKeys.ReportsExport,
-        PermissionKeys.TaxFile, PermissionKeys.TaxExport,
-        PermissionKeys.BankView, PermissionKeys.BankReconcile, PermissionKeys.BankPaymentInit,
-        // settlement (รอบ 198 ทีม D) — งานกระทบยอดเงินจากแพลตฟอร์มคืองานนักบัญชีเหมือนธนาคาร
-        PermissionKeys.SettlementView, PermissionKeys.SettlementImport, PermissionKeys.SettlementPost,
-        PermissionKeys.SettlementChannels,
-        PermissionKeys.JournalManage,
-        PermissionKeys.ChartOfAccountsEdit, PermissionKeys.ContactEdit, PermissionKeys.ProductEdit,
-        PermissionKeys.AccountingView, PermissionKeys.SensitiveDocsView,
-        PermissionKeys.PayrollRun, PermissionKeys.PayrollApprove, PermissionKeys.PayrollPay, PermissionKeys.PayrollView,
-        PermissionKeys.InventoryView,
-    };
+    // ตาราง "บทบาทมาตรฐานได้อะไร" ย้ายไป Helpers/BuiltInRolePermissions (รอบ 205 ทีม I) — ตัวเดียวที่ด่านนี้ + หน้าดูสิทธิ์อ่าน
 
     public async Task<bool> HasPermissionAsync(Guid companyId, Guid userId, string permissionKey)
     {
@@ -53,17 +27,9 @@ public class PermissionService : IPermissionService
             .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
             .Select(cu => (UserRole?)cu.Role)
             .FirstOrDefaultAsync();
-        if (userRole == UserRole.Owner || userRole == UserRole.SystemAdmin) return true;
-
-        // นักบัญชี (built-in UserRole.Accountant) ผ่าน "งานบัญชีหลัก" อัตโนมัติ
-        // — role นี้คือผู้ทำบัญชีของบริษัท ควรทำหน้าที่ครบโดยไม่ต้องผูก custom
-        // role. สิทธิ์นอกชุดนี้ (owner/HR/POS/CMS) ยังต้อง grant ผ่าน role เอง.
-        if (userRole == UserRole.Accountant && AccountantDefaultKeys.Contains(permissionKey))
-            return true;
-
-        // รอบ 201 ทีม PL (C-4): ผู้ดูแลแพลตฟอร์ม (support) ได้เฉพาะคีย์งานตั้งค่าเริ่มระบบ — ไม่ใช่เจ้าของ (ไม่มี bypass ทั้งหมดแบบ Owner)
-        if (userRole == UserRole.PlatformSupport && Accounting.Helpers.OwnershipTransferPolicy.SupportDefaultKeys.Contains(permissionKey))
-            return true;
+        // + นักบัญชี (UserRole.Accountant) ผ่าน "งานบัญชีหลัก" · ผู้ดูแลแพลตฟอร์ม (support · C-4) ได้เฉพาะคีย์งานตั้งค่าเริ่มระบบ ·
+        // สิทธิ์นอกชุดนี้ต้อง grant ผ่านบทบาทกำหนดเอง — ตารางเดียว Helpers/BuiltInRolePermissions
+        if (Accounting.Helpers.BuiltInRolePermissions.Grants(userRole, permissionKey)) return true;
 
         // Otherwise check whether any of the user's CompanyRoles grants
         // this permission key with CanAccess = true.

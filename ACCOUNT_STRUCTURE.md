@@ -148,7 +148,7 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   ผู้ส่งอีเมล/LINE ได้)** + กฎการอนุมัติ ⇒ `RequirePermission(CompanySettings.Edit)` · ข้อความ 403 ตัวเดียว `PermissionKeys.DeniedMessage(key)` (ชื่อสิทธิ์ไทย +
   คีย์ + ให้ขอเจ้าของที่ `/pages/roles.html`) · `GET settings` ส่ง `canEdit`/`editDeniedMessage` (server ตัดสิน · null = ไม่ได้ตรวจ ⇒ ไม่ล็อก)
 - **รอบ 201 ทีม PL (C-4 · คำตัดสินข้อ 77) — บทบาท "ผู้ดูแลแพลตฟอร์ม (support)" `UserRole.PlatformSupport = 7`**: แอดมินแพลตฟอร์ม (`User.IsSystemAdmin`)
-  ที่เปิดบริษัทให้ลูกค้าได้บทบาทนี้แทน Owner (`CompanyService.CreateAsync` → `Helpers/OwnershipTransferPolicy.CreatorRole`) · **ไม่ผ่านด่านเจ้าของ**
+  ที่**ติ๊ก "เปิดบริษัทนี้ให้ลูกค้า"** (`CreateCompanyRequest.OpenForCustomer` · รอบ 205) ได้บทบาทนี้แทน Owner (`Helpers/CompanyCreatorMembership`) · ไม่ติ๊ก = Owner · **ไม่ผ่านด่านเจ้าของ**
   (`OwnerGateDecision`/`EnsureOwnerAccessAsync` ไม่รู้จักบทบาทนี้ — สิทธิ์ระดับเจ้าของของแอดมินยังมาจาก claim SystemAdmin ตามเดิม) · คีย์สิทธิ์โดยปริยายเฉพาะงานตั้งค่า
   (`SupportDefaultKeys`: ค่าตั้งบริษัท · ผังบัญชี · ผู้ติดต่อ · สินค้า · ดูบัญชี · แดชบอร์ด — ไม่รวมเงินเดือน/PII/สมาชิก/อนุมัติ) · ตั้ง/เชิญผ่านหน้าทีมไม่ได้ ·
   **โอนความเป็นเจ้าของ** `POST api/company/{id}/transfer-ownership {email, removeSupport}` (หน้า `team.html` กล่อง "ส่งมอบบริษัทให้ลูกค้า") — ผู้เรียก =
@@ -158,7 +158,7 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   แอดมินแพลตฟอร์ม** (ถอดสิทธิ์แอดมินแล้วโอนไม่ได้ · แอดมินแพลตฟอร์มที่ไม่ได้เป็น support ของบริษัทนั้นโอนไม่ได้ — สิทธิ์แพลตฟอร์มไม่ใช่สิทธิ์ยึดบริษัทลูกค้า) ·
   support โอนให้ตัวเองไม่ได้ (`DenySelf` 403) · บทบาท: `OwnershipTransferPolicy.MayAssign` ตัวเดียวของหน้าทีม/คำเชิญ/หน้าแอดมินลูกค้า — PlatformSupport ตั้งไม่ได้
   ทุกทาง · SystemAdmin (99) ตั้งได้เฉพาะแอดมินแพลตฟอร์ม (ข้อ 107) · `admin/customers.html` แสดงป้าย PlatformSupport/SystemAdmin (เลือกไม่ได้) · รายงาน
-  "บริษัทที่ยังไม่มีเจ้าของ" `GET api/admin/companies/without-owner` (แบนเนอร์บนหน้าลูกค้า + ผู้ดูแล support ที่โอนได้ · ไม่แก้ข้อมูลเอง)
+  "บริษัทที่ยังไม่มีเจ้าของ" `GET api/admin/companies/without-owner` (แบนเนอร์บนหน้าลูกค้า + ผู้ดูแล support ที่โอนได้ · รอบ 205: + ข้อเสนอเจ้าของ + ตัวซ่อม ดู §3.1g)
   · **ฝ่ายค้านรอบสาม**: (P1-2) หน้าแอดมินลูกค้า `PUT api/admin/companies/{id}/users/{uid}/role` ตั้ง/ลด Owner ไม่ได้แล้ว
   (`OwnershipTransferPolicy.AdminRoleChangeBlock` ⇒ 400 ชี้เส้นโอนเจ้าของ · บทบาทเดิม/ใหม่เข้า audit chain เพราะ `CompanyUser` ไม่ใช่ BaseEntity) ·
   (P2-2) รับคำเชิญตรวจบทบาทซ้ำ (`InvitationRoleBlock` — คำเชิญ SystemAdmin จากผู้ที่ไม่ใช่/ไม่ได้เป็นแอดมินแพลตฟอร์มแล้ว และ PlatformSupport ทุกกรณี ⇒
@@ -184,6 +184,29 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 
 **อัตรา VAT รายบรรทัดของ integration** (สัญญา — `INTEGRATION_RESYNC.md` §11): `null` = ตามบริษัท · `7` · **`0` = อัตราศูนย์ §80/1 (ใบกำกับอัตรา 0 · ห้ามส่ง 0 แทนยกเว้น)** ·
 **`-1` = ยกเว้น §81 (ไม่ใช่ใบกำกับ)** · อัตรา ≤ 0 ⇒ VAT 0 (`DocumentLineVatConvention.SplitLine`) · ใบ 0% เดิมที่ธงบอกไม่ใช่ใบกำกับ → รายงาน `zero-rated-tax-invoices`
+
+### 3.1g ผู้สร้างบริษัท = เจ้าของ · ตัวซ่อมบริษัทไม่มีเจ้าของ · ตารางสิทธิ์ · ตัวตนแพ็กเกจ ✅ รอบ 205 ทีม I
+
+- **ผู้สร้างได้ Owner ทันทีทุกทางเข้า** — ตัวสร้างแถวตัวเดียว `Helpers/CompanyCreatorMembership.NewRow` ที่ `CompanyService.CreateAsync` (วิซาร์ด/สร้างบริษัทเพิ่ม) ·
+  `AuthService.RegisterAsync` · `AuthService.SsoLoginAsync` (ล็อกด้วย `required_call_site_check`) · บทบาท PlatformSupport เฉพาะแอดมินแพลตฟอร์มที่ติ๊ก
+  "เปิดบริษัทนี้ให้ลูกค้า" (ช่องในวิซาร์ดโชว์เฉพาะแอดมิน · ผู้ใช้ทั่วไปส่งมาก็ไม่มีผล) · **สาเหตุของกล่อง "ยังไม่มีเจ้าของ"**: รอบ 201–204 ผู้สร้างที่เป็นแอดมินแพลตฟอร์ม
+  ได้ support **ทุกครั้ง** (รวมบริษัทของตัวเอง) แล้วโอนให้ตัวเองไม่ได้ (`DenySelf`) · ทางสร้างอื่น (ผู้ช่วยนำเข้า/สำนักงานบัญชี) ไม่ได้สร้างบริษัทใหม่ (ตรวจแล้ว: `Companies.Add` มี 3 จุด)
+- **ตัวซ่อม** (`Helpers/OwnerlessCompanyRepair.Decide` — "เจ้าของ" = Owner/SystemAdmin): ผู้สร้าง (`Company.CreatedBy`) ยังเป็นสมาชิกบทบาทลูกค้า ⇒ ตั้งเอง ·
+  ไม่รู้ผู้สร้างแต่มีสมาชิกลูกค้าคนเดียว ⇒ ตั้งเอง · ผู้สร้างเป็น support / สมาชิกหลายคน / ไม่มีสมาชิก ⇒ **คงในรายการให้แอดมินเลือก** (ไม่เดา) ·
+  `POST api/admin/companies/without-owner/repair` (เฉพาะหลักฐานชัด · ทีละบริษัท · audit chain `COMPANY-OWNERLESS-REPAIR`) ·
+  `POST api/admin/companies/{id}/assign-owner {userId}` (ด่าน `AdminAssignBlock`: บริษัทยังไม่มีเจ้าของ · ผู้รับเป็นสมาชิกอยู่แล้ว · ตั้งตัวเองได้เฉพาะบริษัทที่ตัวเองสร้าง —
+  ไม่ใช่ทางลัดยึดบริษัทลูกค้า ข้อ 105) · หน้าแอดมินสร้างผู้ใช้ผูกบริษัทด้วยบทบาท Owner ได้เฉพาะบริษัทที่ยังไม่มีเจ้าของ
+- **เจ้าของคนสุดท้าย** — ลดบทบาท/ถอดสมาชิกผ่าน `Helpers/LastOwnerGuard.Block` ตัวเดียว (นับ Owner/SystemAdmin · 400 `COMPANY-LAST-OWNER`) · บทบาทกำหนดเองลดสิทธิ์เจ้าของไม่ได้
+  (`BuiltInRolePermissions.GrantsAll` ผ่านก่อนดูบทบาทกำหนดเอง)
+- **บทบาทมาตรฐาน → สิทธิ์โดยปริยาย** ตารางเดียว `Helpers/BuiltInRolePermissions` (ด่านจริง `PermissionService` + หน้า "🔐 สิทธิ์" อ่านตัวเดียวกัน) ·
+  **ตารางสิทธิ์ อ่าน/เขียน/อนุมัติ/ลบ** ตามงาน/ประเภทเอกสาร `Helpers/PermissionMatrix` → `GET api/companies/{id}/permission-catalog/matrix` → `roles.html` ·
+  ใส่เฉพาะคีย์ที่ด่านเซิร์ฟเวอร์อ่านจริง (เอกสารฝั่งขาย/ซื้อ → `DocumentPermissionHelper` ที่ `DocumentController` ฯลฯ) · บทบาทสำเร็จรูป `Helpers/RoleTemplates`
+  (+ ช่างประจำร้าน · แคชเชียร์ · นักบัญชีภายนอก · ฝ่ายสนับสนุน · แก้ id เมนูที่ไม่มีจริงในแม่แบบเดิม)
+- **ตัวตนแพ็กเกจ (ระดับ/ชื่อ/สถานะ/วันหมดอายุ/ที่มา)** ตัวเดียว `Helpers/PlanIdentityResolver` — บริษัทที่ผูก License ⇒ ของ License · ใช้ที่ overlay ของ
+  `SubscriptionService` (หน้าแพ็กเกจ + gate) · `DashboardService` (เดิมอ่านแถวบริษัท ⇒ แดชบอร์ด "Free" ขณะหน้าแพ็กเกจ "Enterprise") · `CompanyResponse.Subscription`
+  (+ `PlanName`/`Source`) · หน้าราคา/แพ็กเกจทุกหน้าอ่าน `GET api/subscription/plans` จุดเดียว + `PlanDisplay` (รอบ 205 เพิ่ม `account-subscription.html`)
+- **หน้าจัดการทีม** — `GET api/company/{id}/users` / `roles` ของผู้ที่ไม่ใช่สมาชิก = **403** ข้อความไทย (`CompanyMembershipGuard` · เดิม 401 ⇒ ถูกเด้งออกจากระบบ) ·
+  แอดมินแพลตฟอร์มอ่านได้ · `api.js` ปุ่ม "🔐 สิทธิ์"/ลบบริษัท เดิมยิง `api/companies/…` (404) → `api/company/…`
 
 ### 3.1d ช่องทางรับเงินผ่าน wallet (Settlement) ✅ รอบ 198 เฟส 1 — ชั้น Company → SettlementChannel → SettlementBatch → SettlementLine
 
@@ -1094,3 +1117,4 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL หลัง�
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — หน้าแอดมินตั้ง/ลด Owner ไม่ได้ + audit · รับคำเชิญตรวจบทบาทซ้ำ · AdminAttach ล็อกแถวแทน Serializable — commit adf19a87)_
 
 _Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LS — §3.1b สถานะเปิดจองออนไลน์ของที่พัก + id เว็บ/นโยบายต้องเป็นของบริษัท — commit 7b83b697)_
+_Last verified against codebase: 2026-10-22 (rev 49 · รอบ 205 ทีม I — **§3.1g** ผู้สร้างบริษัท = Owner ทุกทางเข้า (`CompanyCreatorMembership`) + ตัวซ่อมบริษัทไม่มีเจ้าของ + `LastOwnerGuard` + `BuiltInRolePermissions`/`PermissionMatrix`/`RoleTemplates` + `PlanIdentityResolver` — ไม่มีคอลัมน์ใหม่ — sha เติมในคอมมิตตามหลัง)_
