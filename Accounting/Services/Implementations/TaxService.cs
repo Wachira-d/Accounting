@@ -2001,7 +2001,7 @@ public partial class TaxService : ITaxService
                     docBase = (Accounting.Helpers.PerLineWht.UsablePrintedBase(doc) is decimal printedBase
                         ? printedBase : Accounting.Helpers.DocumentFx.ToBaht(doc.Lines.Sum(l => l.Amount) + doc.RoundingAdjustment, doc.ExchangeRate))
                         + Accounting.Helpers.DocumentFx.ToBaht(doc.WhtPayerBorneAmount, doc.ExchangeRate);
-                    unissuedDocWht = Accounting.Helpers.DocumentFx.ToBaht(doc.WithholdingTaxAmount, doc.ExchangeRate);
+                    unissuedDocWht = Accounting.Helpers.PerLineWht.DocumentWhtThb(doc.WithholdingTaxAmount, doc.ExchangeRate);
                 }
                 report.Lines.Add(new TaxReportLine
                 {

@@ -366,6 +366,7 @@ public static class SettlementPaidReissue
         nameof(Document.CreditNoteReason), nameof(Document.DebitNoteReason), nameof(Document.ProjectId), nameof(Document.DimensionId),
         nameof(Document.BankAccountId), nameof(Document.PaymentAccountId), nameof(Document.ExpenseCategoryId), nameof(Document.Currency),
         nameof(Document.ExchangeRate), nameof(Document.SubTotal), nameof(Document.DiscountAmount), nameof(Document.BillDiscountPercent),
+        nameof(Document.ExchangeRateSource), nameof(Document.DocumentThbBase),   // ทีม F — อัตรา/ฐานบาทของการขายเดียวกันตามไปคู่กับ ExchangeRate
         nameof(Document.BillDiscountAmount), nameof(Document.DepositBaseDeducted), nameof(Document.VatAmount),
         nameof(Document.WithholdingTaxAmount), nameof(Document.TotalAmount), nameof(Document.PaidAmount), nameof(Document.BalanceDue),
         nameof(Document.RoundingAdjustment), nameof(Document.ActualPaidAmount), nameof(Document.Notes), nameof(Document.OriginModule),

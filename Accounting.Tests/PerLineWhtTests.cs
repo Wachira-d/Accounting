@@ -262,7 +262,7 @@ public class PerLineWhtTests
         Assert.Equal(2_555.84m, r.VatThb);
         Assert.Equal(39_067.84m, r.TotalThb);
 
-        var plan = OcrThbEquivalent.Plan(r, 1_000m, 70m, 1_070m);
+        var plan = OcrThbEquivalent.Plan(r, 1_000m, 70m, 1_070m, botRate: null);   // หลักฐาน 3 แหล่งสอดคล้อง ⇒ ไม่ต้องพึ่ง ธปท.
         Assert.Null(plan.Problem);
         Assert.Equal(36.512m, plan.Rate);
         Assert.Equal(36_512m, plan.ThbBase);
@@ -282,7 +282,7 @@ public class PerLineWhtTests
         var r = OcrThbEquivalent.Read(text);
         Assert.Equal(97_637.50m, r.TotalThb);
         Assert.Null(r.SubTotalThb);
-        var plan = OcrThbEquivalent.Plan(r, 2_500m, 175m, 2_675m);
+        var plan = OcrThbEquivalent.Plan(r, 2_500m, 175m, 2_675m, botRate: 36.4m);   // แหล่งเดียว ⇒ ต้องใกล้ ธปท. (≤ 3%)
         Assert.Equal(36.5m, plan.Rate);
         Assert.Null(plan.ThbBase);   // กระดาษไม่บอกฐานก่อน VAT เป็นบาท ⇒ ฐานมาจากอัตรา (ไม่แต่ง)
     }
@@ -312,7 +312,7 @@ public class PerLineWhtTests
             Exchange Rate: 1 USD = 36.50 THB
             Total (THB) 45,000.00
             """;
-        var plan = OcrThbEquivalent.Plan(OcrThbEquivalent.Read(text), 1_000m, 70m, 1_070m);
+        var plan = OcrThbEquivalent.Plan(OcrThbEquivalent.Read(text), 1_000m, 70m, 1_070m, botRate: 36.4m);
         Assert.Null(plan.Rate);
         Assert.Contains(OcrThbEquivalent.ConflictTag, plan.Problem);
     }
@@ -327,11 +327,108 @@ public class PerLineWhtTests
             """;
         var r = OcrThbEquivalent.Read(text);
         Assert.False(r.Any);
-        var plan = OcrThbEquivalent.Plan(r, 1_000m, 70m, 1_070m);
+        var plan = OcrThbEquivalent.Plan(r, 1_000m, 70m, 1_070m, botRate: 36.4m);
         Assert.Null(plan.Rate);
         Assert.Null(plan.Problem);
         Assert.False(OcrThbEquivalent.Read(null).Any);
     }
+
+    // ═══ ฝ่ายค้านทีม F ═══
+
+    [Fact]
+    public void Single_source_baht_figure_needs_bot_rate_within_tolerance()
+    {
+        var r = new OcrThbReading(null, null, null, 97_637.50m);   // "คิดเป็นเงินบาท" บรรทัดเดียว
+        // ไม่มี ธปท. ⇒ ไม่ใช้ + แท็กเตือน (เดิมรับทันทีแล้วประทับ "จากเอกสาร")
+        var none = OcrThbEquivalent.Plan(r, 2_500m, 175m, 2_675m, botRate: null);
+        Assert.Null(none.Rate);
+        Assert.Contains(OcrThbEquivalent.UnverifiedTag, none.Problem);
+        // ห่าง ธปท. เกิน 3% (อ่านตัวเลขผิดหลัก) ⇒ ไม่ใช้
+        var far = OcrThbEquivalent.Plan(r, 2_500m, 175m, 2_675m, botRate: 30m);
+        Assert.Null(far.Rate);
+        Assert.Contains(OcrThbEquivalent.UnverifiedTag, far.Problem);
+        // ทิศตรงข้าม: ใกล้ ธปท. ⇒ ใช้
+        Assert.Equal(36.5m, OcrThbEquivalent.Plan(r, 2_500m, 175m, 2_675m, botRate: 36.0m).Rate);
+    }
+
+    [Fact]
+    public void Small_unit_currency_printed_base_that_does_not_round_trip_is_refused()
+    {
+        // VND 98,765,432 ↔ 135,432.10 บาท ⇒ อัตรา 6 ตำแหน่ง 0.001371 ⇒ คูณกลับ 135,407.41 (ต่าง −24.69) ⇒ 50 ทวิ ≠ GL/ภ.พ.30
+        Assert.Equal(0.001371m, DocumentFx.RateFromPrintedBaht(98_765_432m, 135_432.10m));
+        Assert.False(DocumentFx.PrintedBahtRoundTrips(98_765_432m, 0.001371m, 135_432.10m));
+        var d = DocumentFx.Decide("VND", 0.00137m, false, null, 135_432.10m, 98_765_432m, false, null, null);
+        Assert.NotNull(d.Error);
+        Assert.Contains("กรอกอัตราแลกเปลี่ยนเอง", d.Error);
+        // เอกสารที่เก็บไว้แล้ว (ก่อนด่าน) ⇒ ยอดบาทไม่ใช่ฐาน (ตกไปใช้อัตรา — 50 ทวิ ตรง GL)
+        Assert.Null(PerLineWht.UsablePrintedBase(Doc("VND", 0.001371m, 135_432.10m, (98_765_432m, 3m, 2_962_962.96m, "8"))));
+        // OCR: ไม่ใช้ + แท็กขัดกัน (หยุดอนุมัติเอง)
+        var plan = OcrThbEquivalent.Plan(new OcrThbReading(null, 135_432.10m, null, null), 98_765_432m, 0m, 98_765_432m, botRate: 0.00137m);
+        Assert.Null(plan.Rate);
+        Assert.Contains(OcrThbEquivalent.ConflictTag, plan.Problem);
+        // ทิศตรงข้าม: USD ที่แปลงกลับได้ตรง ⇒ ใช้ได้
+        Assert.True(DocumentFx.PrintedBahtRoundTrips(1_000m, 36.51234m, 36_512.34m));
+    }
+
+    [Fact]
+    public void System_split_wht_and_baht_conflicts_stop_auto_approve()
+    {
+        foreach (var tag in new[] { OcrLineWhtPlan.AppliedTag, OcrLineWhtPlan.MismatchTag, OcrThbEquivalent.ConflictTag })
+        {
+            Assert.Contains(OcrPostingReadiness.BlockingTags, t => t.Tag == tag);
+            Assert.False(OcrPostingReadiness.Evaluate(tag + " รายละเอียด", true).CanAutoApprove);
+        }
+        // ทิศตรงข้าม: ใช้ยอดบาทที่ตรวจไขว้แล้ว (ไม่มีแท็กขัดกัน) ไม่หยุดเพราะแท็กนี้
+        Assert.True(OcrPostingReadiness.Evaluate(OcrThbEquivalent.UsedTag + " ใช้ยอดบาท", true).CanAutoApprove);
+    }
+
+    [Fact]
+    public void Line_plan_notes_are_recomputed_each_build()
+    {
+        var kept = OcrLineBuildNotes.StripRecomputed($"{OcrLineWhtPlan.AppliedTag} เก่า\n[VAT-CLAIM] คงไว้\n{OcrLineWhtPlan.MismatchTag} เก่า");
+        Assert.Equal("[VAT-CLAIM] คงไว้", kept);
+    }
+
+    [Fact]
+    public void Plan_tolerance_is_in_baht()
+    {
+        var lines = new[] { Svc(5_000m, "8"), Svc(3_000m, "8ad"), Goods(2_000m) };   // แผน 210
+        // ใบ USD@36: ต่าง 0.50 USD = 18 บาท ⇒ เกิน 1 บาท ⇒ ไม่ใช้
+        Assert.False(OcrLineWhtPlan.Decide(lines, 2.1m, "8", 210.50m, true, 36m).Applied);
+        // ทิศตรงข้าม: ใบบาทต่าง 0.50 บาท ⇒ ใช้
+        Assert.True(OcrLineWhtPlan.Decide(lines, 2.1m, "8", 210.50m, true, 1m).Applied);
+        // ไม่รู้อัตรา ⇒ เข้มสุด (± 0.01 สกุลเอกสาร)
+        Assert.False(OcrLineWhtPlan.Decide(lines, 2.1m, "8", 210.02m, true, null).Applied);
+        Assert.True(OcrLineWhtPlan.Decide(lines, 2.1m, "8", 210.01m, true, null).Applied);
+    }
+
+    [Fact]
+    public void ForDocument_ties_foreign_tax_to_gl_amount()
+    {
+        // 100.01 USD @36 · ภาษี 3.00 USD ⇒ GL 108.00 · ฐานบาท × อัตรา = 108.01 ⇒ ผูกเข้า GL (ทุกผู้อ่านเห็นชุดเดียวกับ 50 ทวิ)
+        var doc = Doc("USD", 36m, null, (100.01m, 3m, 3.00m, "8"));
+        Assert.Equal(108.00m, PerLineWht.ForDocument(doc).Values.Single().WhtThb);
+        Assert.Equal(108.00m, PerLineWht.GroupsOf(doc)!.Single().WhtThb);
+        Assert.Equal(PerLineWht.DocumentWhtThb(3.00m, 36m), DocumentFx.ToBaht(3.00m, 36m));
+    }
+
+    [Fact]
+    public void GroupsOf_without_lines_is_unknown_not_empty()
+    {
+        var doc = new Document { Currency = "THB", ExchangeRate = 1m, WithholdingTaxAmount = 30m, DocumentNumber = "X" };
+        Assert.Null(PerLineWht.GroupsOf(doc));
+    }
+
+    [Theory]
+    [InlineData(30, 30, 36, true)]       // ใบ USD ออกเป็นตัวเลขดอลลาร์
+    [InlineData(1_080, 30, 36, false)]   // ทิศตรงข้าม: ออกเป็นบาทแล้ว
+    [InlineData(15, 30, 36, true)]       // ใบหลายผู้ถูกหัก ครอบครึ่งเดียว (สกุลเอกสาร)
+    [InlineData(540, 30, 36, false)]     // ครึ่งเดียวแต่เป็นบาท
+    [InlineData(1_000, 1_000, 0.23, true)]  // JPY ออกเป็นเยน
+    [InlineData(230, 1_000, 0.23, false)]   // JPY เป็นบาท
+    [InlineData(30, 30, 1.1, false)]        // อัตราใกล้ 1 แยกไม่ออก ⇒ ไม่ฟ้อง
+    public void Detects_pre_fix_certificates_in_document_currency(double certTax, double expected, double rate, bool flagged)
+        => Assert.Equal(flagged, WhtCertCurrencyCheck.LooksDocumentCurrency((decimal)certTax, (decimal)expected, (decimal)rate));
 
     // ═══ OcrLineWhtPlan — อัตราต่อบรรทัดจากสแกน ═══
 

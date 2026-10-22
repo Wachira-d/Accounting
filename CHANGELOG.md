@@ -5329,3 +5329,9 @@ _2026-10-22 (ทีม F — หัก ณ ที่จ่าย "ตามร�
 (3) ไม่มีที่เก็บยอดบาทที่ใบต่างสกุลพิมพ์ไว้/ที่มาของอัตรา (เพิ่ม `Document.DocumentThbBase` + `ExchangeRateSource` · ตัวตัดสิน `DocumentFx.Decide` ·
 OCR `Helpers/OcrThbEquivalent`) · (4) ไม่มีสรุปต่อประเภท (จอ `WhtByIncomeType` · กระดาษแถวย่อยต่ออัตรา ×2 renderer) ·
 migration `DatabaseMigrationHelper.PerLineWhtStatements` (ADD COLUMN · ไม่มี UPDATE) · เทสต์ `PerLineWhtTests`_
+
+_2026-10-22 (ทีม F แก้ผลฝ่ายค้าน 1–9): ยอดบาทตามเอกสารต้องแปลงกลับได้ ± 0.01 (VND อัตรา 6 ตำแหน่งต่าง 24.69 — ตอนสร้าง 400 · ใบเดิมตกไปใช้อัตรา ·
+`DocumentFx.PrintedBahtRoundTrips`) · OCR หลักฐานยอดบาทแหล่งเดียวต้องห่างอัตรา ธปท. ≤ 3% (`[FX-DOC-UNVERIFIED]`) · `[WHT-LINE]`/`[WHT-LINE-MISMATCH]`/`[FX-DOC-CONFLICT]`
+หยุดอนุมัติเอง · รายงานตรวจข้อมูล "50 ทวิ ใบต่างสกุลที่ยอดไม่ใช่บาท" (อ่านอย่างเดียว · `WhtCertCurrencyCheck`) · หน้านำส่ง/ปฏิทิน/ตัวกระทบ GL/JE ตอนจ่ายเดิน
+`PerLineWht.DocumentWhtThb` + ล็อกจุดเรียก `_PLWHT` · `ForDocument` ผูก Σ เข้า GL (สรุปต่อประเภท/แถวเตือน) · โคลนสืบทอดฐานบาท/ที่มาอัตรา ·
+ใบแทนพาสองช่องไป · เกณฑ์แผนต่อบรรทัดเป็นบาท · สรุปต่อประเภท null เมื่อไม่มีบรรทัด · แก้คอมเมนต์/ข้อความหน้าตั้งค่าให้ตรงว่าอะไรขึ้นกับค่าตั้ง_

@@ -295,7 +295,7 @@ public class SettingsService : ISettingsService
 
         if (request.AutoAttachWhtCertPdf.HasValue)
             settings.AutoAttachWhtCertPdf = request.AutoAttachWhtCertPdf.Value;
-        // ทีม F — หัก ณ ที่จ่ายตามรายการ (ผู้อ่าน: OcrService.BuildScanLinesAsync · ตัวสร้างเอกสารจากสแกน · documents.html สรุปต่อประเภท)
+        // ทีม F — หัก ณ ที่จ่ายตามรายการ (ผู้อ่านเดียว: OcrService.PerLineWhtEnabledAsync — แผนต่อบรรทัดตอนสร้างบรรทัด + ยอดบาทบนใบต่างสกุลตอนสร้างเอกสารจากสแกน)
         if (request.PerLineWhtEnabled.HasValue)
             settings.PerLineWhtEnabled = request.PerLineWhtEnabled.Value;
         // กองทุนเงินทดแทน (กท.20ก)

@@ -54,6 +54,20 @@ public static class DocumentFx
         return Math.Round(printedBaht / foreignAmount, RateDecimals, MidpointRounding.AwayFromZero);
     }
 
+    /// <summary>ผลต่างสูงสุดที่ยอมให้ระหว่าง "ฐานสกุลเอกสาร × อัตรา 6 ตำแหน่ง" กับยอดบาทที่พิมพ์ (บาท) — ระดับเศษสตางค์เดียว</summary>
+    public const decimal PrintedBahtRoundTripTolerance = 0.01m;
+
+    /// <summary>อัตราที่เก็บ (6 ตำแหน่ง) แปลงฐานสกุลเอกสารกลับได้ยอดบาทที่พิมพ์ไหม (± <see cref="PrintedBahtRoundTripTolerance"/>) — ไม่ได้ ⇒ JE/ภ.พ.30 กับ
+    /// 50 ทวิ จะเล่าคนละตัวเลข (ฝ่ายค้านทีม F ข้อ 1: VND 98,765,432 ↔ 135,432.10 บาท ⇒ อัตรา 0.001371 ⇒ 135,407.41)</summary>
+    public static bool PrintedBahtRoundTrips(decimal foreignAmount, decimal exchangeRate, decimal printedBaht)
+        => Math.Abs(ToBaht(foreignAmount, exchangeRate) - printedBaht) <= PrintedBahtRoundTripTolerance;
+
+    /// <summary>ข้อความปฏิเสธเมื่ออัตรา 6 ตำแหน่งแปลงกลับไม่ได้ยอดบาทที่พิมพ์</summary>
+    public static string RoundTripRefusal(decimal foreignAmount, decimal rate, decimal printedBaht)
+        => $"ยอดบาทตามเอกสาร {printedBaht:N2} บาท แปลงเป็นอัตราแลกเปลี่ยน (เก็บ {RateDecimals} ตำแหน่ง = {rate:0.######}) แล้วคูณกลับได้ "
+           + $"{ToBaht(foreignAmount, rate):N2} บาท (ต่าง {ToBaht(foreignAmount, rate) - printedBaht:N2}) — สกุลเงินหน่วยเล็กมากใช้ยอดบาทนี้เป็นฐานไม่ได้ "
+           + "ให้เว้นช่อง \"ยอดบาทตามเอกสาร\" แล้วกรอกอัตราแลกเปลี่ยนเอง (ระบบจะคิดฐานบาทจากอัตรา)";
+
     /// <summary>ผลตัดสินอัตรา/ที่มา/ฐานบาทของเอกสารตอนสร้าง · <see cref="Error"/> ≠ null ⇒ ผู้เรียกล้มดัง (400 ข้อความไทย)</summary>
     public readonly record struct Decision(decimal Rate, string? Source, decimal? ThbBase, string? Error);
 
@@ -84,6 +98,8 @@ public static class DocumentFx
                 return new(resolvedRate, sourceRateSource, printed, null);
             if (RateFromPrintedBaht(docSubTotal, printed) is not decimal derived)
                 return new(resolvedRate, null, null, "คำนวณอัตราจากยอดบาทตามเอกสารไม่ได้ — ยอดก่อน VAT ของรายการต้องมากกว่า 0");
+            if (!PrintedBahtRoundTrips(docSubTotal, derived, printed))
+                return new(resolvedRate, null, null, RoundTripRefusal(docSubTotal, derived, printed));
             return new(derived, SourceDocument, printed, null);
         }
         if (inheritedThbBase is decimal inherited && inherited > 0m)

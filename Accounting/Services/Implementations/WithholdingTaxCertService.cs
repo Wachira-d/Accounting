@@ -712,7 +712,7 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var whtBasis = Accounting.Helpers.PerLineWht.BasisOf(doc);
         var inBaht = whtBasis != Accounting.Helpers.WhtBahtBasis.Thb;
         var bahtByLine = inBaht ? Accounting.Helpers.PerLineWht.ForDocument(doc) : null;
-        decimal DocToBaht(decimal v) => inBaht ? Accounting.Helpers.DocumentFx.ToBaht(v, doc.ExchangeRate) : v;
+        decimal DocToBaht(decimal v) => inBaht ? Accounting.Helpers.PerLineWht.DocumentWhtThb(v, doc.ExchangeRate) : v;
 
         if (whtLines.Count == 0)
         {

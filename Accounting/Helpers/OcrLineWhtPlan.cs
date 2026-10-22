@@ -33,7 +33,7 @@ public readonly record struct OcrLineWhtResult(bool Applied, IReadOnlyList<OcrLi
 /// <item>ใช้เฉพาะเมื่อหัวใบมีหัก ณ ที่จ่ายอยู่แล้ว (กระดาษพิมพ์/ผู้ใช้ยืนยัน) — แผนนี้<b>กระจาย</b>ยอดเดิม ไม่ได้ตัดสินว่าใบต้องหักไหม</item>
 /// <item>บรรทัดที่จัดได้ ⇒ อัตราตามกฎหมายของประเภท (<see cref="ThaiWhtRateTable.RateFor"/> · อัตราที่ขึ้นกับชนิดผู้รับแต่ไม่รู้ชนิด ⇒ ตามหัวใบ) ·
 ///   สินค้า ⇒ 0% · ตัดสินไม่ได้ ⇒ ตามหัวใบ</item>
-/// <item>Σ ภาษีตามแผนต้องอธิบายยอดของหัวใบได้ (ต่างไม่เกิน <see cref="MatchTolerance"/>) — ไม่ได้ ⇒ ไม่ใช้แผน (เฉลี่ยแบบเดิม) + แท็ก
+/// <item>Σ ภาษีตามแผนต้องอธิบายยอดของหัวใบได้ (ต่างไม่เกิน <see cref="MatchToleranceThb"/>) — ไม่ได้ ⇒ ไม่ใช้แผน (เฉลี่ยแบบเดิม) + แท็ก
 ///   <see cref="MismatchTag"/> ให้คนตรวจ · ได้ ⇒ เศษไปบรรทัดภาษีสูงสุด ⇒ Σ = ยอดหัวใบพอดี (ยอดใบ/ยอดจ่าย/JE ไม่ขยับ)</item>
 /// <item>ทุกบรรทัดได้คำตอบเดียวกับหัวใบ ⇒ ไม่ใช้แผน (ผลเท่าเดิมทุกสตางค์)</item>
 /// </list></para>
@@ -45,16 +45,22 @@ public static class OcrLineWhtPlan
     /// <summary>ใช้แผนรายบรรทัดแล้ว (บอกผู้ใช้ว่าบรรทัดไหนได้อะไร)</summary>
     public const string AppliedTag = "[WHT-LINE]";
 
-    /// <summary>ผลต่างสูงสุดระหว่าง Σ แผน กับยอดหัวใบ (บาท/หน่วยสกุลเอกสาร) — เศษปัดของการพิมพ์ยอดหักต่อประเภท</summary>
-    public const decimal MatchTolerance = 1.00m;
+    /// <summary>ผลต่างสูงสุดระหว่าง Σ แผน กับยอดหัวใบ <b>เป็นบาท</b> — เศษปัดของการพิมพ์ยอดหักต่อประเภท · ใบต่างสกุลแปลงเป็นหน่วยสกุลเอกสารด้วยอัตรา
+    /// (ฝ่ายค้านทีม F ข้อ 7: เดิม 1.00 หน่วยสกุลเอกสาร ⇒ ใบ USD ยอมต่างได้ 36 บาท)</summary>
+    public const decimal MatchToleranceThb = 1.00m;
+
+    /// <summary>ผลต่างที่ยอมในหน่วยสกุลเอกสาร · ไม่รู้อัตรา ⇒ เข้มสุด (เศษสตางค์เดียว)</summary>
+    private static decimal ToleranceInDocCurrency(decimal? exchangeRate)
+        => exchangeRate is decimal fx && fx > 0m ? Math.Round(MatchToleranceThb / fx, 4, MidpointRounding.AwayFromZero) : 0.01m;
 
     /// <param name="lines">บรรทัดของใบ (ลำดับเดียวกับบรรทัดเอกสาร)</param>
     /// <param name="headerRate">อัตราหัวใบ (%) · ≤ 0 ⇒ ไม่มีหัก ⇒ ไม่ใช้แผน</param>
     /// <param name="headerIncomeTypeCode">ประเภทเงินได้ของหัวใบ</param>
     /// <param name="headerWht">ยอดภาษีหักของหัวใบ (สกุลเอกสาร)</param>
     /// <param name="payeeIsJuristic">ผู้ถูกหักเป็นนิติบุคคลไหม (null = ไม่รู้)</param>
+    /// <param name="exchangeRate">อัตราของใบ (บาทต่อหน่วย · ใบบาท = 1 · null = ไม่รู้) — แปลงเกณฑ์ผลต่างเป็นบาท</param>
     public static OcrLineWhtResult Decide(IReadOnlyList<OcrLineWhtInput> lines, decimal headerRate, string? headerIncomeTypeCode,
-        decimal headerWht, bool? payeeIsJuristic)
+        decimal headerWht, bool? payeeIsJuristic, decimal? exchangeRate = 1m)
     {
         var none = new OcrLineWhtResult(false, Array.Empty<OcrLineWhtPick>(), null);
         if (lines.Count == 0 || headerRate <= 0m || headerWht <= 0m) return none;
@@ -80,14 +86,15 @@ public static class OcrLineWhtPlan
         if (!differs) return none;
 
         var planned = picks.Sum(p => p.WhtAmount);
-        if (Math.Abs(planned - headerWht) > MatchTolerance)
+        var tolerance = ToleranceInDocCurrency(exchangeRate);
+        if (Math.Abs(planned - headerWht) > tolerance)
             return new(false, Array.Empty<OcrLineWhtPick>(),
                 $"{MismatchTag} หัก ณ ที่จ่ายรายบรรทัดตามประเภทรายการ รวม {planned:N2} ≠ ยอดหักของหัวใบ {headerWht:N2} — "
                 + "ระบบคงอัตราหัวใบทุกบรรทัดไว้ ตรวจอัตรา/ประเภทเงินได้ต่อบรรทัดกับกระดาษก่อนอนุมัติ");
         if (picks.All(p => p.WhtAmount == 0m))
             return new(false, Array.Empty<OcrLineWhtPick>(), null);
 
-        // เศษ (≤ MatchTolerance) ไปบรรทัดที่ภาษีสูงสุด ⇒ Σ = ยอดหัวใบพอดี
+        // เศษ (≤ เกณฑ์) ไปบรรทัดที่ภาษีสูงสุด ⇒ Σ = ยอดหัวใบพอดี
         var diff = headerWht - planned;
         if (diff != 0m)
         {

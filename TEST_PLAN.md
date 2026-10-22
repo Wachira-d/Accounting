@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **612 ไฟล์ · 6,036 `[Fact]` + 990 `[Theory]` (4,667 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **612 ไฟล์ · 6,043 `[Fact]` + 991 `[Theory]` (4,674 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -1052,6 +1052,12 @@
 | PLWHT-10 | ใบ USD ไม่มียอดบาท @36 · ค่าบริการ 1,000 USD @3% → ออก 50 ทวิ | เงินได้ 36,000.00 · ภาษี 1,080.00 (เดิมพิมพ์ 1,000 / 30) · ภ.ง.ด.53/54 ตรง · Σ ผูกยอด GL 2191x |
 | PLWHT-11 | PV แปลงเต็มจำนวนจาก PI USD ที่มียอดบาท | PV สืบทอดฐานบาท + ที่มาอัตรา · 50 ทวิ จาก PV = ฐานบาทเดียวกัน |
 | PLWHT-12 | ตั้งค่า → ติ๊ก/เอาติ๊กออก "หัก ณ ที่จ่ายตามรายการ" → บันทึก → รีเฟรช | ค่าคงตามที่บันทึก · โหลดค่าตั้งล้ม = ไม่ส่งช่องนี้ (ไม่ปิดทับ) |
+| PLWHT-13 | ใบ VND ใหม่ ยอดก่อน VAT 98,765,432 กรอกยอดบาทตามเอกสาร 135,432.10 | 400 "…แปลงกลับได้ 135,407.41 … ให้เว้นช่องยอดบาทแล้วกรอกอัตราเอง" · เว้นยอดบาท+กรอกอัตรา ⇒ บันทึกได้ |
+| PLWHT-14 | เปิดค่าตั้ง → สแกนใบที่มีแค่ "คิดเป็นเงินบาท" บรรทัดเดียว ห่างอัตรา ธปท. > 3% | ไม่ใช้ยอดบาท + `[FX-DOC-UNVERIFIED]` · ใช้อัตรา ธปท. |
+| PLWHT-15 | สแกนที่ได้ `[WHT-LINE]` → ส่งผ่าน LINE/อนุมัติอัตโนมัติ | ไม่อนุมัติเอง — ต้องเปิด Draft แล้วกดอนุมัติ |
+| PLWHT-16 | มี 50 ทวิ ของใบ USD ที่ออกก่อนแก้ → หน้า "ตรวจข้อมูล" | หมวด "50 ทวิ ใบต่างสกุลที่ยอดไม่ใช่บาท" แสดงใบนั้น + ภาษีบาทที่ควรเป็น · ใบที่ออกใหม่ (บาท) ไม่แสดง |
+| PLWHT-17 | หน้านำส่ง/ปฏิทินยื่น เดือนที่มีใบ USD ยังไม่ออก 50 ทวิ | ยอดช่องโหว่เป็นบาท (≈ ยอด USD × อัตรา) · ตัวกระทบ GL สาเหตุ "ยังไม่ออก 50 ทวิ" เป็นบาท |
+| PLWHT-18 | โคลนใบ USD ที่มียอดบาทตามเอกสาร | ใบใหม่มีฐานบาท + ที่มา "คำนวณจากยอดเงินบาท…" (ไม่ใช่ "ผู้ใช้กรอก") · ต้นแบบที่แก้บรรทัดจนฐานเปลี่ยน ⇒ ไม่พาฐานบาทไป |
 
 ### ผู้จ่ายออกภาษีแทน — รอบ 204 (`WhtGrossUpTests` · `ForeignServicePayerBorneVatTests` · `WhtBorneByContractTests` + `tools/required_call_site_check.py` กลุ่ม `_WHTBORNE`/`_FSBORNE`)
 | รหัส | เคส | คาดหวัง |

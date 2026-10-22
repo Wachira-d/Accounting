@@ -128,14 +128,16 @@ public static class PerLineWht
             .Select(g => new WhtIncomeGroup(g.Key.Code, g.Key.RatePercent, g.Sum(x => x.IncomeThb), g.Sum(x => x.WhtThb), g.Count()))
             .ToList();
 
-    /// <summary>ยอดบาทที่พิมพ์ยังใช้เป็นฐานได้ไหม — ต้องสอดคล้องกับฐานสกุลเอกสาร × อัตรา (ห่างไม่เกิน 1 บาท หรือ 0.1%) ·
-    /// ผู้ใช้แก้บรรทัดจนฐานเปลี่ยนแล้ว (อัตราถูกตรึงตั้งแต่สร้าง) ⇒ ยอดบนกระดาษไม่ใช่ฐานของบรรทัดชุดนี้อีกต่อไป ⇒ ตกไปใช้อัตรา (ไม่เฉลี่ยยอดเก่าลงบรรทัดใหม่)</summary>
+    /// <summary>ยอดบาทที่พิมพ์ยังใช้เป็นฐานได้ไหม — ฐานสกุลเอกสาร × อัตรา (ตัวที่ JE/ภ.พ.30 ใช้) ต้องได้ยอดนั้นกลับมา (± <see cref="DocumentFx.PrintedBahtRoundTripTolerance"/>) ·
+    /// ฝ่ายค้านทีม F ข้อ 1: เดิมยอม 1 บาท/0.1% ⇒ สกุลหน่วยเล็ก (VND) อัตรา 6 ตำแหน่งแปลงกลับต่าง 24.69 บาท แต่ 50 ทวิ ยังยึดยอดพิมพ์ ⇒ 50 ทวิ ≠ GL/ภ.พ.30 ·
+    /// ผู้ใช้แก้บรรทัดจนฐานเปลี่ยน (อัตราตรึงตั้งแต่สร้าง) ⇒ ไม่ผ่านเช่นกัน ⇒ ใช้อัตรา (ไม่เฉลี่ยยอดเก่าลงบรรทัดใหม่)</summary>
     private static bool PrintedBaseUsable(decimal? documentThbBase, decimal docSubTotal, decimal exchangeRate)
-    {
-        if (documentThbBase is not decimal printed || printed <= 0m || docSubTotal <= 0m) return false;
-        var drift = Math.Abs(DocumentFx.ToBaht(docSubTotal, exchangeRate) - printed);
-        return drift <= Math.Max(1m, printed * 0.001m);
-    }
+        => documentThbBase is decimal printed && printed > 0m && docSubTotal > 0m
+           && DocumentFx.PrintedBahtRoundTrips(docSubTotal, exchangeRate, printed);
+
+    /// <summary>ภาษีหักของทั้งเอกสาร/งวดเป็นบาท = ยอดที่ JE ลงผัง 2191x (ภาษีสกุลเอกสาร × อัตราของเอกสาร) — <b>เป้าเดียว</b>ที่ 50 ทวิ ·
+    /// สรุปต่อประเภท · แถวเตือน ภ.ง.ด. · หน้านำส่ง/ปฏิทิน · ตัวกระทบ GL ผูกยอดเข้าหา (ห้ามเขียน <c>WithholdingTaxAmount</c> สกุลเอกสารตรง ๆ ลงที่เป็นบาท)</summary>
+    public static decimal DocumentWhtThb(decimal docCurrencyWht, decimal exchangeRate) => DocumentFx.ToBaht(docCurrencyWht, exchangeRate);
 
     /// <summary>ฐานบาทของเอกสารที่ใช้จริง (ยอดบาทที่พิมพ์เมื่อยังใช้ได้ · ไม่งั้น null)</summary>
     public static decimal? UsablePrintedBase(Accounting.Models.Entities.Document doc)
@@ -157,7 +159,17 @@ public static class PerLineWht
             ? WhtGrossUp.ForLines(lines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType).Select(p => p.PayerBorne).ToList()
             : lines.Select(_ => 0m).ToList();
         var inputs = lines.Select((l, i) => new PerLineWhtLine(l.Amount, l.WithholdingTaxRate, l.WithholdingTaxAmount, l.IncomeTypeCode, borne[i])).ToList();
-        var baht = ToBaht(inputs, doc.ExchangeRate, UsablePrintedBase(doc));
+        var baht = ToBaht(inputs, doc.ExchangeRate, UsablePrintedBase(doc)).ToArray();
+        // ใบต่างสกุล: Σ ภาษีบาทผูกกับยอด GL (เศษจากฐานบาท × อัตรา) — ทุกผู้อ่านเห็นตัวเลขชุดเดียวกับ 50 ทวิ (ฝ่ายค้านข้อ 5) · ใบบาท = ยอดที่เก็บไว้อยู่แล้ว
+        if (BasisOf(doc.ExchangeRate, UsablePrintedBase(doc)) != WhtBahtBasis.Thb)
+        {
+            var idx = Enumerable.Range(0, baht.Length).Where(i => baht[i].WhtThb != 0m).ToList();
+            if (idx.Count > 0)
+            {
+                var tied = TieOut(idx.Select(i => baht[i].WhtThb).ToList(), DocumentWhtThb(doc.WithholdingTaxAmount, doc.ExchangeRate));
+                for (var k = 0; k < idx.Count; k++) baht[idx[k]] = baht[idx[k]] with { WhtThb = tied[k] };
+            }
+        }
         var map = new Dictionary<Guid, PerLineWhtBaht>(lines.Count);
         for (var i = 0; i < lines.Count; i++) map[lines[i].Id] = baht[i];
         return map;
@@ -175,9 +187,9 @@ public static class PerLineWht
         return groups.Count >= 2 ? groups : new List<(decimal, decimal)>();
     }
 
-    /// <summary>สรุปต่อประเภทเงินได้ของเอกสาร (บาท) — ผู้อ่าน: <c>DocumentResponse.WhtByIncomeType</c></summary>
-    public static IReadOnlyList<WhtIncomeGroup> GroupsOf(Accounting.Models.Entities.Document doc)
-        => doc.Lines == null || doc.Lines.Count == 0 ? Array.Empty<WhtIncomeGroup>() : GroupByIncomeType(ForDocument(doc).Values);
+    /// <summary>สรุปต่อประเภทเงินได้ของเอกสาร (บาท) — ผู้อ่าน: <c>DocumentResponse.WhtByIncomeType</c> · ไม่มีบรรทัด (ไม่ได้โหลด/หักระดับหัวใบ) ⇒ null = "ยังไม่ได้ตรวจ" (ไม่ใช่ [])</summary>
+    public static IReadOnlyList<WhtIncomeGroup>? GroupsOf(Accounting.Models.Entities.Document doc)
+        => doc.Lines == null || doc.Lines.Count == 0 ? null : GroupByIncomeType(ForDocument(doc).Values);
 
     /// <summary>กระทบ Σ ภาษีบาทกับยอดเป้า (เช่น ยอดที่นำส่งจริงของงวด) — ผลต่างระดับเศษ (≤ 0.05 × จำนวนบรรทัด) ไปบรรทัดภาษีสูงสุด ·
     /// เกินกว่านั้น ⇒ คืนตามเดิม (ผู้เรียกต้องล้มดัง ไม่ใช่ดูดเงียบ)</summary>

@@ -7484,12 +7484,15 @@ public class OcrService : IOcrService
         // ทีม F (เปิด "หัก ณ ที่จ่ายตามรายการ"): ใบต่างสกุลที่พิมพ์ยอดเงินบาทไว้เอง ⇒ ยึดยอดบาทนั้น (ฐาน VAT/WHT ที่ผู้ออกประกาศ) แทนอัตรา ธปท. ·
         // ตัวอ่าน/ตัวตัดสินเดียว Helpers/OcrThbEquivalent (pure + เทสต์) · ยอดบาทขัดกันเอง ⇒ ใช้ ธปท. ตามเดิม + แท็กให้คนตรวจ · ปิดค่าตั้ง = เดิมทุกประการ
         var fxFromDocument = false;
-        if (!string.Equals(document.Currency, "THB", StringComparison.OrdinalIgnoreCase) && await PerLineWhtEnabledAsync(companyId))
+        var scanIsForeign = !string.Equals(document.Currency, "THB", StringComparison.OrdinalIgnoreCase);
+        // อัตรา ธปท. ดึงครั้งเดียว — ใช้ตรวจหลักฐานยอดบาทแหล่งเดียว (ฝ่ายค้านข้อ 2) และเป็นค่าตั้งต้นเมื่อไม่ใช้ยอดบาทบนกระดาษ
+        var scanBotRate = scanIsForeign ? await ResolveScanExchangeRateAsync(document.Currency, document.DocumentDate) : null;
+        if (scanIsForeign && await PerLineWhtEnabledAsync(companyId))
         {
             var thbPlan = Accounting.Helpers.OcrThbEquivalent.Plan(
                 Accounting.Helpers.OcrThbEquivalent.Read(result.RawTextContent),
                 document.SubTotal > 0m ? document.SubTotal : result.ExtractedSubTotal,
-                result.ExtractedVatAmount, result.ExtractedTotalAmount);
+                result.ExtractedVatAmount, result.ExtractedTotalAmount, scanBotRate);
             if (thbPlan.Rate is decimal docFx && docFx > 0m)
             {
                 document.ExchangeRate = docFx;
@@ -7501,9 +7504,9 @@ public class OcrService : IOcrService
             else if (thbPlan.Problem is string thbProblem)
                 result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + thbProblem;
         }
-        if (!fxFromDocument && !string.Equals(document.Currency, "THB", StringComparison.OrdinalIgnoreCase))
+        if (!fxFromDocument && scanIsForeign)
         {
-            var fxRate = await ResolveScanExchangeRateAsync(document.Currency, document.DocumentDate);
+            var fxRate = scanBotRate;
             if (fxRate is decimal fx && fx > 0m)
             {
                 document.ExchangeRate = fx;
@@ -8011,8 +8014,11 @@ public class OcrService : IOcrService
                     var (wKind, wCode) = Ocr.ExpenseCategoryResolver.ClassifyLineForWht(items[wi].Description);
                     whtInputs.Add(new Accounting.Helpers.OcrLineWhtInput(wBase, wKind, wCode));
                 }
+                // ฝ่ายค้านข้อ 7: เกณฑ์ผลต่างคิดเป็นบาท — อัตรายังไม่ถูกตั้งบนเอกสารตอนสร้างบรรทัด ⇒ ใช้อัตรา ธปท. ของวันที่เอกสาร (ไม่รู้ = เข้มสุด)
+                var planFx = string.Equals(document.Currency, "THB", StringComparison.OrdinalIgnoreCase)
+                    ? 1m : await ResolveScanExchangeRateAsync(document.Currency, document.DocumentDate);
                 perLineWht = Accounting.Helpers.OcrLineWhtPlan.Decide(whtInputs, whtRate, result.WhtIncomeTypeCode, headerWht,
-                    Accounting.Helpers.WhtPayeeKind.Detect(result.ExtractedVendorTaxId, ContactType.Unknown, result.ExtractedVendorName));
+                    Accounting.Helpers.WhtPayeeKind.Detect(result.ExtractedVendorTaxId, ContactType.Unknown, result.ExtractedVendorName), planFx);
                 if (perLineWht.Note is string perLineNote)
                     result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + perLineNote;
             }

@@ -39,6 +39,12 @@ public static class OcrThbEquivalent
     /// <summary>แท็ก — กระดาษมียอดบาทแต่ขัดกันเอง (ใช้อัตรา ธปท. แทน · คนต้องตรวจ)</summary>
     public const string ConflictTag = "[FX-DOC-CONFLICT]";
 
+    /// <summary>แท็ก — กระดาษมียอดบาทแหล่งเดียว (ตรวจไขว้บนกระดาษไม่ได้) และเทียบอัตรา ธปท. ไม่ผ่าน/ไม่มีอัตรา ธปท. ⇒ ไม่ใช้ (ฝ่ายค้านทีม F ข้อ 2)</summary>
+    public const string UnverifiedTag = "[FX-DOC-UNVERIFIED]";
+
+    /// <summary>หลักฐานแหล่งเดียว: ห่างจากอัตรา ธปท. ของวันที่เอกสารได้ไม่เกิน 3% (อัตราของผู้ออกเอกสาร/ธนาคารต่างจาก mid-rate ได้ แต่ไม่ถึงขั้นอ่านผิดหลัก)</summary>
+    public const decimal BotTolerance = 0.03m;
+
     /// <summary>ความต่างสัมพัทธ์สูงสุดระหว่างอัตราที่ได้จากหลายแหล่งบนกระดาษ (0.5%)</summary>
     public const decimal ConsistencyTolerance = 0.005m;
 
@@ -100,7 +106,8 @@ public static class OcrThbEquivalent
     }
 
     /// <summary>ตัดสินอัตรา + ฐานบาทของใบ จากยอดบาทบนกระดาษเทียบยอดสกุลเอกสารที่อ่านได้ · ดูกติกาที่ตัวคลาส</summary>
-    public static OcrThbFxPlan Plan(OcrThbReading reading, decimal? foreignSubTotal, decimal? foreignVat, decimal? foreignTotal)
+    /// <param name="botRate">อัตรา ธปท. ของวันที่เอกสาร (null = ไม่มี) — ใช้ตรวจหลักฐานแหล่งเดียว</param>
+    public static OcrThbFxPlan Plan(OcrThbReading reading, decimal? foreignSubTotal, decimal? foreignVat, decimal? foreignTotal, decimal? botRate)
     {
         if (!reading.Any) return new(null, null, "", null);
         decimal? thbBase = reading.SubTotalThb;
@@ -123,9 +130,26 @@ public static class OcrThbEquivalent
                     $"{ConflictTag} ยอดเงินบาทบนเอกสารไม่สอดคล้องกัน ({string.Join(" · ", candidates.Select(x => $"{x.Name} ≈ {x.Rate:0.####}"))}) — "
                     + "ระบบใช้อัตรา ธปท. แทน ตรวจอัตรากับกระดาษก่อนอนุมัติ");
 
+        // ── หลักฐานแหล่งเดียว (ตัวเลขบาท/อัตราที่พิมพ์อิสระกันน้อยกว่า 2 ตัว) ⇒ ต้องใกล้อัตรา ธปท. (ฝ่ายค้านทีม F ข้อ 2 — เดิมรับทันทีแล้วประทับ "จากเอกสาร")
+        var independent = (reading.SubTotalThb != null ? 1 : 0) + (reading.TotalThb != null ? 1 : 0) + (reading.Rate != null ? 1 : 0);
+        if (independent < 2)
+        {
+            if (botRate is not decimal bot || bot <= 0m)
+                return new(null, null, "", $"{UnverifiedTag} กระดาษมียอดเงินบาทแหล่งเดียว ({candidates[0].Name} ≈ {chosen:0.####}) และไม่มีอัตรา ธปท. ให้เทียบ — "
+                    + "ระบบไม่ใช้ยอดนี้ ตรวจแล้วกรอกอัตรา/ยอดบาทเองก่อนอนุมัติ");
+            if (Math.Abs(chosen - bot) > bot * BotTolerance)
+                return new(null, null, "", $"{UnverifiedTag} ยอดเงินบาทบนกระดาษให้อัตรา ≈ {chosen:0.####} ห่างจากอัตรา ธปท. {bot:0.####} เกิน {BotTolerance:P0} — "
+                    + "อาจอ่านตัวเลขผิด ระบบใช้อัตรา ธปท. แทน ตรวจกับกระดาษก่อนอนุมัติ");
+        }
+
         decimal rate;
         if (thbBase is decimal tb && foreignSubTotal is > 0m)
+        {
             rate = DocumentFx.RateFromPrintedBaht(foreignSubTotal.Value, tb)!.Value;
+            // อัตรา 6 ตำแหน่งต้องแปลงฐานกลับได้ยอดบาทบนกระดาษ (สกุลหน่วยเล็ก — ฝ่ายค้านข้อ 1) ไม่งั้น 50 ทวิ ≠ GL/ภ.พ.30
+            if (!DocumentFx.PrintedBahtRoundTrips(foreignSubTotal.Value, rate, tb))
+                return new(null, null, "", $"{ConflictTag} " + DocumentFx.RoundTripRefusal(foreignSubTotal.Value, rate, tb));
+        }
         else
             rate = Math.Round(chosen, DocumentFx.RateDecimals, MidpointRounding.AwayFromZero);
         // ฐานบาทเก็บได้เฉพาะเมื่อรู้ฐานสกุลเอกสาร (ไม่งั้นเฉลี่ยลงบรรทัดไม่ได้)

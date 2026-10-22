@@ -3777,7 +3777,10 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ใบบาทส่งยอดบาทตามเอกสาร = 400 · ใบลด/เพิ่มหนี้/ใบที่แปลงมาคงอัตราใบต้นทาง · แปลงเต็มจำนวนสืบทอดฐานบาท · ตรึงตั้งแต่สร้าง) ·
   ค่าตั้ง `CompanySettings.PerLineWhtEnabled` (ปิด = เดิม): OCR อัตรา/ประเภทเงินได้ต่อบรรทัด (`Helpers/OcrLineWhtPlan` ← `ExpenseCategoryResolver.ClassifyLineForWht` ·
   ต้องอธิบายยอดหักหัวใบได้ ± 1.00 ไม่งั้น `[WHT-LINE-MISMATCH]` คงแบบเดิม) + ยอดบาทบนใบต่างสกุล (`Helpers/OcrThbEquivalent` · `[FX-DOC]` / `[FX-DOC-CONFLICT]`) ·
-  เทสต์ `PerLineWhtTests` · backlog B-1..B-8 ในเอกสารออกแบบ
+  ยอดบาทตามเอกสารต้องแปลงกลับได้ ± 0.01 (`DocumentFx.PrintedBahtRoundTrips` — ไม่ได้ = 400 · ใบเดิมตกไปใช้อัตรา) · แท็ก OCR `[WHT-LINE]`/`[WHT-LINE-MISMATCH]`/`[FX-DOC-CONFLICT]`
+  หยุดอนุมัติเอง · หลักฐานยอดบาทแหล่งเดียวต้องใกล้ ธปท. ≤ 3% · หน้านำส่ง/ปฏิทิน/ตัวกระทบ GL/JE ตอนจ่าย = `PerLineWht.DocumentWhtThb` (กติกา `_PLWHT`) ·
+  50 ทวิ ใบต่างสกุลที่ออกก่อนแก้ ⇒ รายงานตรวจข้อมูล `ForeignCurrencyWhtCertsNotInBaht` (อ่านอย่างเดียว ไม่แก้ย้อนหลัง) ·
+  ค่าตั้งคุมเฉพาะ OCR — การแปลงบาทของใบต่างสกุลทำงานเสมอ · เทสต์ `PerLineWhtTests` · backlog ในเอกสารออกแบบ
 - **รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)** (2026-10-14): `ThaiBahtText.Format(TotalTaxAmount)` ทั้ง HTML (`BuildWithholdingTaxCertHtml`) · QuestPDF
   (`BuildTotalInWords`) · หน้าพิมพ์ `wht.html` แสดง `TotalTaxAmountInWords` จาก DTO อย่างเดียว (เดิมมีสำเนาสูตร JS ของตัวเอง) — ดู §5.1
 - **Trigger (แก้ doc 2026-10-12 — บรรทัดเดิม "ตอน PV/Expense ถูก approve" ไม่ครบ)**: ทุกทางเข้าอัตโนมัติเดินทางเดียว

@@ -19889,8 +19889,8 @@ public partial class DocumentService : IDocumentService
         var thbAmount = fx == 1m ? payment.Amount : Math.Round(payment.Amount * fx, 2, MidpointRounding.AwayFromZero);
         var thbCash = settleFx == fx ? thbAmount
             : Math.Round(payment.Amount * settleFx, 2, MidpointRounding.AwayFromZero);
-        var thbWht = fx == 1m ? payment.WithholdingTaxAmount
-            : Math.Round(payment.WithholdingTaxAmount * fx, 2, MidpointRounding.AwayFromZero);
+        // ทีม F: ขา WHT ตอนจ่ายใช้อัตราของเอกสาร — เป้าเดียวกับ 50 ทวิ รายงวด (WithholdingTaxCertService ผูกยอดงวดเข้าหาค่านี้)
+        var thbWht = Accounting.Helpers.PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx);
         var postPerPaymentWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash && thbWht > 0m;
         // ผลต่าง FX ของงวดนี้ (คิดเฉพาะส่วนเงินสด — WHT ตัดที่ rate เอกสารทั้งคู่)
         var fxDiff = thbCash - thbAmount;   // >0 = ได้ THB มากขึ้น
@@ -20433,7 +20433,7 @@ public partial class DocumentService : IDocumentService
         ExchangeRateSource: d.ExchangeRateSource,
         ExchangeRateSourceLabel: Accounting.Helpers.DocumentFx.SourceLabel(d.ExchangeRateSource),
         WhtByIncomeType: d.WithholdingTaxAmount != 0m
-            ? Accounting.Helpers.PerLineWht.GroupsOf(d).Select(g => new WhtIncomeGroupDto(g.IncomeTypeCode, g.RatePercent, g.IncomeThb, g.WhtThb, g.LineCount)).ToList()
+            ? Accounting.Helpers.PerLineWht.GroupsOf(d)?.Select(g => new WhtIncomeGroupDto(g.IncomeTypeCode, g.RatePercent, g.IncomeThb, g.WhtThb, g.LineCount)).ToList()
             : null);
     }
 
