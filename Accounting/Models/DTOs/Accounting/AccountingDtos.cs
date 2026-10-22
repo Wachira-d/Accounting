@@ -202,7 +202,9 @@ public record ProfitAndLossResponse(
 public record PnlSection(
     string AccountCode,
     string AccountName,
-    decimal Amount);
+    decimal Amount,
+    // ผัง (ทีม M 2026-10-22) — งบเปรียบเทียบใช้เป็นกุญแจแถว + drill-down ไปรายการ JE ของผังนี้
+    Guid? AccountId = null);
 
 // ===== General Ledger =====
 public record GeneralLedgerResponse(

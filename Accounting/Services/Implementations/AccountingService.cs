@@ -2304,11 +2304,11 @@ public partial class AccountingService : IAccountingService
                 .ToListAsync();
 
         var revenue = coa.Where(a => a.AccountType == AccountType.Revenue)
-            .Select(a => new PnlSection(a.AccountCode, a.AccountName, sums[a.Id].Credit - sums[a.Id].Debit))
+            .Select(a => new PnlSection(a.AccountCode, a.AccountName, sums[a.Id].Credit - sums[a.Id].Debit, a.Id))
             .OrderBy(r => r.AccountCode).ToList();
 
         var expenses = coa.Where(a => a.AccountType == AccountType.Expense)
-            .Select(a => new PnlSection(a.AccountCode, a.AccountName, sums[a.Id].Debit - sums[a.Id].Credit))
+            .Select(a => new PnlSection(a.AccountCode, a.AccountName, sums[a.Id].Debit - sums[a.Id].Credit, a.Id))
             .OrderBy(e => e.AccountCode).ToList();
 
         var totalRevenue = revenue.Sum(r => r.Amount);

@@ -5374,3 +5374,14 @@ _2026-10-22 รอบ 205 ทีม E (เอกสารรายรับ + �
 (B-3) ขั้น ERP ล้มไม่ทำให้แขกเห็นจองไม่สำเร็จ · (G-1) เงินเข้าแต่ต้นทางบันทึกไม่ได้ ⇒ แจ้งเจ้าของ `gateway.payment_unfulfilled` + handler โยนแทน return เงียบ ·
 (Q-1) โบนัสโควตาถูกนับสองครั้ง (ซื้อ +100 ใช้ได้ 50) — `DocumentQuotaPolicy.EffectiveLimit(…, used)` + `ConsumesBonus` · (Q-3) ข้าม 80%/100% แจ้งเจ้าของ `quota.documents_level` ·
 เทสต์ `BookingRevenueAuditTests` · ล็อกจุดเรียก `required_call_site_check` (6 กติกา) · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_2026-10-22 ทีม M — งบกำไรขาดทุนเปรียบเทียบ + drill-down (เมนู รายงาน & วิเคราะห์ › งบการเงิน › แท็บงบกำไรขาดทุน · ช่อง "มุมมอง"):
+รายเดือน/รายไตรมาส/รายปี (ไตรมาส/ปีตาม `Company.FiscalYearStartMonth` ผ่าน `Helpers/FiscalYear`) + รวม + % เทียบคอลัมน์ก่อน + เทียบช่วงเดียวกันปีก่อน ·
+**ไม่มีสูตรงบใหม่** — ทุกคอลัมน์ = `GetProfitAndLossAsync` ของช่วงนั้น (`AccountingService.PnlCompare.cs`) · ตัวแบ่งช่วง/ประกอบตาราง/แผ่นส่งออก = `Helpers/PnlComparison`
+(ช่วงต่อกันพอดี ⇒ รวม = ยอดทั้งงวด) · drill-down = `GetGeneralLedgerForUserAsync` ของผัง (ตัวกรอง+ปิดบังสิทธิ์เดียวกับ GL) ตัดใบปิดบัญชี ⇒ ผลรวม = ช่อง ·
+เอกสารต้นทางตัดสินที่ `Helpers/JournalSourceLink` (SourceDocumentId → Document · ผูกย้อนกลับ PosOrder/PayrollRun/AssetDepreciation/ExpenseClaim ·
+กลับรายการ → ใบเดิม · ไม่มี = "รายการปรับปรุง/บันทึกด้วยมือ — ไม่มีเอกสารต้นทาง" ไม่แต่งลิงก์) · ส่งออก `accounting/exports/profit-loss-compare` (CSV/Excel MiniExcel) ·
+ลิงก์ตรง `reports.html?report=pnl&mode=month` + ตัวรับ `?orderId=` (pos-reports) `?runId=` (payroll) `?claimId=` (expense) · คู่มือ `report-pnl-compare` ·
+พบ+แก้: `ExecutiveReportService.PostedLinesQuery` นับใบปิดบัญชี (C-T02 หลุด) ⇒ รายงานผู้บริหารเดือนสิ้นรอบ/ทั้งปี = 0 หลังปิดปี · หน้า P&L เดิมไม่ escape ชื่อผัง ·
+พบไม่แก้ (ขอบเขตทีมอื่น): `TaxService` (CIT) + `FpaService` นับเฉพาะ Posted ไม่นับ Reversed ขณะที่ใบกลับรายการเป็น Posted ⇒ ใบที่ยกเลิกถูกหักซ้ำ ·
+`ExecutiveReportService` trend ใช้ไตรมาส/ปีปฏิทิน ไม่ใช่รอบบัญชี. ไม่เปลี่ยน flow เอกสาร ⇒ DOCUMENT_FLOW ไม่ขยับ._
