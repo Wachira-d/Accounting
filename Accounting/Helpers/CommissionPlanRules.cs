@@ -29,7 +29,13 @@ public static class CommissionPlanRules
         ("Revenue", "ยอดขาย (เอกสารขายที่ชำระแล้วในเดือน)"),
         ("CollectedAmount", "ยอดเงินที่เก็บได้ในเดือน"),
         ("Profit", "กำไร (ขาย − ซื้อ ที่ชำระแล้วในเดือน)"),
+        // ทีม K (2026-10-22) — ยอดที่ช่างทำรายบรรทัดบนบิล POS (ก่อน VAT · หลังส่วนลดท้ายบิล · หักคืน · ไม่รวมค่าบริการ/ทิป)
+        // ตัวคิดยอด = Helpers/PosStaffAttribution · ผู้รับต้องผูกผู้ใช้ (UserId) — ตรวจตอนกำหนดแผนให้พนักงาน
+        (PosStaffSalesBasis, "ยอดขาย/บริการที่ทำเองบน POS (ระบุช่างรายบรรทัด)"),
     };
+
+    /// <summary>ฐาน "ยอดที่ช่างทำบน POS" — ผู้อ่าน: <c>CommissionService.CalculateAsync</c></summary>
+    public const string PosStaffSalesBasis = "PosStaffSales";
 
     public static readonly IReadOnlyList<(string Value, string Label)> Methods = new[]
     {

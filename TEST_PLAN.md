@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **612 ไฟล์ · 6,004 `[Fact]` + 994 `[Theory]` (4,694 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **617 ไฟล์ · 6,054 `[Fact]` + 997 `[Theory]` (4,704 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -6412,3 +6412,18 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | YER-12 | ปิดงวด ธ.ค. + ต.ค. ชั่วคราว แล้วปิดปี 2024 | ปิดได้ (เดิมล้ม "งวดถูกปิดแล้ว") · ทุกงวดล็อก · audit `year-end-close-through-soft-closed-period` เฉพาะ ธ.ค. · chain สะอาด | ✅ `Db/YearEndReopenDbTests` |
 | YER-13 | ตัวตัดสิน (pure) | ทุกด่านล้มพร้อมทางไปต่อ · ลำดับด่าน · เหตุผลว่าง/ช่องว่าง · ชนิดแบบที่ต้องรับทราบ (RD_CIT/DBD Filed/Accepted เท่านั้น) · ป้าย/เลขอ้างอิง · ข้อความด่านใบปิด/เปิดงวดเดี่ยวชี้ปุ่ม ไม่อ้าง TAS 8 · สถานะ 409/404/400 | ✅ `YearEndReopenRuleTests` |
 | YER-14 | ตัดด่านในโค้ด (ทิ้งผลตัวตัดสิน · ถอดล็อก · ถอดด่านเจ้าของ · ยกเลิกแถวนำเข้า · กลับใบผ่านสมุดรายวัน · ถอดการเปิดงวด ธ.ค.) | `tools/required_call_site_check.py` ฟ้องทุกเคส (REO1–REO6) · จัดรูปแบบใหม่ไม่ฟ้อง (REO7) | ✅ checker self-test |
+
+## POS คิวการจอง · ช่างรายบรรทัด · รายการพิเศษ · สินค้าตามสั่ง (ทีม K · 2026-10-22 · `docs/POS_MTO_DESIGN.md`)
+
+| ID | ขั้นตอน | ผลที่ต้องได้ |
+| --- | --- | --- |
+| POS-BQ-01 | สร้างการจองเว็บวันนี้ (บริการผูกสินค้า) → POS 📅 คิวจอง → เปิดบิล | บิลมีลูกค้า + บรรทัดบริการราคาตามการจอง + ช่างที่เลือก · การจอง = กำลังให้บริการ · กดเปิดซ้ำ = "เปิดบิลไปแล้ว #…" + ปุ่มไปที่บิล |
+| POS-BQ-02 | การจองแบบรับประกัน (มีใบกำกับจากระบบจอง) | เปิดบิลไม่ได้ พร้อมเลขเอกสาร (กันรายได้ซ้ำ) |
+| POS-BQ-03 | การจองโต๊ะที่รับมัดจำแล้ว → เปิดบิล | ยืนยันคำเตือนมัดจำก่อนเปิด · ยกเลิกบิล ⇒ การจองกลับเป็นยืนยันแล้วและเปิดใหม่ได้ |
+| POS-STAFF-01 | บิล 2 บรรทัด ช่าง A/B · ลดท้ายบิล 10% · ปิดบิล → `reports/staff-sales` | ยอดช่าง = ยอดบรรทัด × 0.9 ก่อน VAT · ผลรวม = รายได้ก่อน VAT ของบิล (`PosStaffAttributionTests`) |
+| POS-STAFF-02 | แผนคอมมิชชันฐาน "ยอดที่ทำเองบน POS" มอบให้พนักงานที่ไม่ผูกผู้ใช้ | บล็อกพร้อมทางไปต่อ |
+| POS-CUSTOM-01 | ➕ รายการพิเศษ "ค่าเดินทาง 300" บัญชีรายได้ 4xxxx อื่น → ปิดบิล → คืนเงิน | ไม่ตัดสต็อก · JE ขายเครดิต 41000 + บัญชีที่เลือกตามสัดส่วน · JE คืนกลับบัญชีเดียวกัน (`PosRevenueSplitTests`) |
+| MTO-OPT-01 | ตั้งกลุ่มตัวเลือก (ขนาด radio บังคับ +350/+1 วัน · ข้อความ +50 · รูป) ผูกสินค้า → หน้าร้านสั่ง | ไม่เลือกขนาด = ข้อความ "กรุณาเลือกขนาด" · ราคาในตะกร้าคิดที่เซิร์ฟเวอร์ · ตัวเลือกอยู่บนบรรทัดเอกสารขาย (`ModifierSelectionRulesTests`) |
+| MTO-LEAD-01 | สินค้าผลิต 2 วัน · ร้านปิดอาทิตย์ · ตัดรอบ 17:00 · สั่งพฤหัส 18:30 | วันรับเร็วสุด = จันทร์ (`MtoLeadTimeShippingPaymentTests`) |
+| MTO-SHIP-01 | โซนตามจังหวัด 2 อัตรา · เลือกอัตรา → สั่ง → ยืนยันชำระ | `ShippingAmount` = อัตราที่เลือก · บรรทัดค่าจัดส่ง VAT 7% (`CmsCommerceOrderLinesTests`) · มารับเอง = 0 |
+| MTO-PAY-01 | ตั้งมัดจำ 30% · สั่งสินค้าตามสั่ง 1,000 | หน้าสำเร็จ/QR/สลิป/ช่องจ่ายออนไลน์ = 300 · หลังยืนยัน 300 ⇒ ยอดเปิดจ่าย 700 |

@@ -170,6 +170,29 @@ public class CmsCommerceController : ControllerBase
         return Ok(new ApiResponse<bool>(true, result, CmsMessages.Get("cart.cleared", Lang)));
     }
 
+    // ===== สินค้าตามสั่ง (ทีม K · 2026-10-22) =====
+
+    /// <summary>คิดยอดก่อนยืนยันสั่งซื้อ — ค่าส่ง (ตามอัตรา/โซน/น้ำหนัก/ส่งฟรีเมื่อครบ) · วันรับเร็วสุด · ยอดที่ต้องจ่ายตอนนี้ ·
+    /// ตัวคิดเดียวกับการสร้างคำสั่งซื้อ (ผลตรงกันเสมอ)</summary>
+    [HttpPost("cart/{cartId:guid}/checkout-quote")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<CheckoutQuoteResponse>>> CheckoutQuote(
+        Guid companyId, Guid siteId, Guid cartId, [FromBody] CheckoutQuoteRequest request)
+        => Ok(new ApiResponse<CheckoutQuoteResponse>(true, await _commerceService.CheckoutQuoteAsync(companyId, siteId, cartId, request)));
+
+    /// <summary>ลูกค้าแนบรูปตัวอย่างของตัวเลือกชนิด "รูป" (JPG/PNG/WEBP ≤ 5 MB · ≤ 10 รูปต่อตะกร้า) — เก็บผ่านที่เก็บไฟล์กลาง</summary>
+    [HttpPost("cart/{cartId:guid}/option-image")]
+    [AllowAnonymous]
+    [RequestSizeLimit(6 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<OptionImageUploadResponse>>> UploadOptionImage(
+        Guid companyId, Guid siteId, Guid cartId, IFormFile? file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<OptionImageUploadResponse>(false, null, "กรุณาเลือกไฟล์รูป"));
+        return Ok(new ApiResponse<OptionImageUploadResponse>(true,
+            await _commerceService.UploadOptionImageAsync(companyId, siteId, cartId, file), "แนบรูปแล้ว"));
+    }
+
     // ===== Orders =====
 
     [HttpPost("orders")]

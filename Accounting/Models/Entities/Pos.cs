@@ -149,6 +149,13 @@ public class PosOrder : TenantEntity
 
     public DateTime? CompletedAt { get; set; }
 
+    // ── คิวการจองที่เปิดบิลนี้ (ทีม K · 2026-10-22) ──
+    // ผูกบิลกับการจองต้นทางเพื่อ "ไม่ให้เปิดซ้ำ" (unique partial index บนฐานข้อมูล + ตัวตัดสิน Helpers/PosBookingIntake)
+    // และให้ระบบจองรู้ว่าลูกค้ามาแล้ว · null = บิลที่ไม่ได้มาจากการจอง (บิลเดิมทุกใบ)
+    /// <summary>แหล่งการจอง — <c>Helpers.PosBookingSource</c> ("CmsBooking" / "PosReservation")</summary>
+    public string? SourceBookingType { get; set; }
+    public Guid? SourceBookingId { get; set; }
+
     public ICollection<PosOrderItem> Items { get; set; } = new List<PosOrderItem>();
     public ICollection<PosPayment> Payments { get; set; } = new List<PosPayment>();
 }
@@ -188,6 +195,20 @@ public class PosOrderItem : BaseEntity
     public int LineOrder { get; set; }
     public PosItemStatus Status { get; set; } = PosItemStatus.Pending;
     public string? Notes { get; set; }
+
+    // ── ช่าง/พนักงานผู้ทำรายการนี้ (multi-staff ระดับบรรทัด · ทีม K · 2026-10-22) ──
+    // ฐานคอมมิชชันแผน "PosStaffSales" + ต้นทุนแรงงาน (Helpers/PosStaffAttribution) · null = ไม่ระบุ
+    /// <summary>UserId ของช่าง (สมาชิกของบริษัท — ตรวจตอนบันทึก)</summary>
+    public Guid? StaffId { get; set; }
+    /// <summary>ชื่อช่างตอนขาย (ตรึงไว้ — เปลี่ยนชื่อผู้ใช้ทีหลังสลิปเก่าไม่เปลี่ยน)</summary>
+    public string? StaffName { get; set; }
+
+    // ── รายการพิเศษ (Quick Add / Custom Item · ทีม K) — ไม่มี ProductId/ServicePackageId · ไม่ตัดสต็อก ──
+    public bool IsCustomItem { get; set; }
+    /// <summary><c>Helpers.PosCustomItemRule.KindService</c> / <c>KindGoods</c> — null = ไม่ใช่รายการพิเศษ</summary>
+    public string? CustomItemKind { get; set; }
+    /// <summary>บัญชีรายได้ของบรรทัดนี้ — null = รายได้ขายมาตรฐาน (41000) · แบ่งเครดิตผ่าน <c>Helpers.PosRevenueSplit</c> ทั้งขายและคืน</summary>
+    public Guid? RevenueAccountId { get; set; }
 
     // Modifiers (size, sweetness, extra shot, etc.)
     public ICollection<PosOrderItemModifier> Modifiers { get; set; } = new List<PosOrderItemModifier>();
@@ -312,6 +333,20 @@ public class ProductModifierGroup : TenantEntity
     public bool AllowMultiple { get; set; }                      // เลือกได้หลายตัว
     public int SortOrder { get; set; }
 
+    // ── dynamic option builder สำหรับสินค้าตามสั่ง (ทีม K · 2026-10-22) — ตัวตัดสิน Helpers/ModifierSelectionRules ──
+    /// <summary>ชนิดช่อง: radio/dropdown/checkbox/text/image (<c>Helpers.ModifierInputType</c>) · null = อนุมานจาก <see cref="AllowMultiple"/> (กลุ่มเดิม)</summary>
+    public string? InputType { get; set; }
+    /// <summary>จำนวนเลือกขั้นต่ำ (checkbox) · null = บังคับ ? 1 : 0</summary>
+    public int? MinSelect { get; set; }
+    /// <summary>จำนวนเลือกสูงสุด (checkbox) · null = ไม่จำกัด (เท่าจำนวนตัวเลือก)</summary>
+    public int? MaxSelect { get; set; }
+    /// <summary>ความยาวสูงสุดของช่องข้อความ · null = 200</summary>
+    public int? MaxTextLength { get; set; }
+    /// <summary>ราคาบวกเพิ่มเมื่อลูกค้ากรอกช่องข้อความ/แนบรูป (ช่องเลือกใช้ราคาของตัวเลือก)</summary>
+    public decimal InputPriceAdjustment { get; set; }
+    /// <summary>วันผลิตเพิ่มเมื่อลูกค้ากรอกช่องข้อความ/แนบรูป</summary>
+    public int InputExtraLeadDays { get; set; }
+
     // Products that use this modifier group
     public ICollection<ProductModifierGroupLink> ProductLinks { get; set; } = new List<ProductModifierGroupLink>();
     public ICollection<ProductModifierOption> Options { get; set; } = new List<ProductModifierOption>();
@@ -349,6 +384,9 @@ public class ProductModifierOption : BaseEntity
     public Product? ComponentProduct { get; set; }
     /// <summary>ปริมาณต่อ 1 หน่วยของสินค้าแม่ (ไม่ใช่ต่อบิล)</summary>
     public decimal ComponentQuantity { get; set; }
+
+    /// <summary>วันผลิตเพิ่มเมื่อเลือกตัวเลือกนี้ (สินค้าตามสั่ง — <c>Helpers.MtoLeadTime</c>) · 0 = ไม่เพิ่ม</summary>
+    public int ExtraLeadDays { get; set; }
 }
 
 // ==================== Staff Commission Summary ====================

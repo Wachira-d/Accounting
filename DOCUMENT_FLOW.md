@@ -1662,6 +1662,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - ~~Webhook gateway → admin กดยืนยันสลิปเอง~~ (แก้ doc รอบ 198 G-9: มีแล้ว — `PaymentWebhookController` + `PaymentIntentService.ApplyChargeAsync`
     ส่งต่อ `SiteOrderPaymentHandler` · ดู §2.6b)
 
+- **สินค้าตามสั่ง (ทีม K · 2026-10-22 · `docs/POS_MTO_DESIGN.md`)**:
+  - ตัวเลือกสินค้า = modifier เดิมของ POS (ชนิดช่อง/จำนวนเลือก/ราคาบวก/วันผลิตเพิ่ม) — ตะกร้ารับแค่ "เลือกอะไร" แล้ว
+    `Helpers/ModifierSelectionRules` คิดราคาจากฐานข้อมูล · ตรึง `ModifierSelectionsJson` บนบรรทัดตะกร้า/คำสั่งซื้อ · คำอธิบายไปบนบรรทัดเอกสารขาย/ใบเสนอราคา ·
+    รูปตัวอย่าง `POST cart/{id}/option-image` (ที่เก็บไฟล์กลาง ชนิด `SiteOrder`)
+  - `ComputeCheckoutAsync` ตัวเดียว (หน้าเช็กเอาต์ `POST cart/{id}/checkout-quote` = `CreateOrderAsync`): ค่าส่งจากอัตราที่เลือก
+    (`Helpers/ShippingFeeRules` — โซน/น้ำหนัก/ฟรี/ส่งฟรีเมื่อครบ · ไม่ตั้งโซน = เหมาจ่ายระดับร้าน · มารับเอง = 0) ⇒ **`SiteOrder.ShippingAmount` มีผู้เขียนแล้ว** ·
+    วันรับเร็วสุด `Helpers/MtoLeadTime` ⇒ `EarliestReadyDate` · เงื่อนไขชำระ `Helpers/MtoPaymentTerms` ⇒ ตรึง `PaymentTermMode/DepositRequiredAmount`
+  - ยอดที่ต้องจ่ายรอบนี้ = `MtoPaymentTerms.FromSnapshot` ตัวเดียวใน `GetOrderAsync` · `RecordPaymentSlipAsync` · `PublicPaymentResolver` (ออเดอร์เดิม = TotalAmount − PaidAmount เท่าเดิม) ·
+    ลงบัญชีมัดจำ = รับชำระบางส่วนของเอกสารขายผ่าน `ConfirmPaymentAsync` เดิม (ไม่มี posting ใหม่)
+  - **บรรทัดค่าจัดส่งในเอกสารขาย VAT ตามสินค้าในบิล** (§79 · `ShippingFeeRules.VatRateForShipping` — เดิมอัตรา 0 ⇒ ภ.พ.30 จัดเป็นยอดส่งออก)
+
 ### 2.6b Payment gateway — รับเงิน · คืนเงิน · รอบโอน (PAYMENT_GATEWAY_DESIGN.md · รอบ 198 settlement เฟส 0)
 - **รับเงินสำเร็จ**: ขา "เงินเข้า" ตัดสินที่ `IGatewayAccountResolver.ResolveMoneyInAccountAsync` ตัวเดียว (adapter ที่ไม่เข้าธนาคารทันที ⇒
   Dr **11340** หรือผังที่ตั้ง `PaymentProviderConfig.ClearingAccountId` · ตัวหาบัญชีพักตัวเดียว `ResolveClearingAccountAsync`) ผ่านตัวจัดการต้นทาง 6 ชนิด
@@ -1879,6 +1890,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - Z-report consolidation (ปัจจุบัน 1 JE/order, ไม่มี shift-end batch)
   - มัดจำ/booking (217xx flow ยังไม่ enabled ฝั่ง POS)
   - WHT tip §50 ทวิ (เกิน 1,000/รอบ — niche)
+
+### 2.6c POS — คิวการจอง · ช่างรายบรรทัด · รายการพิเศษ (ทีม K · 2026-10-22 · `docs/POS_MTO_DESIGN.md`)
+- **คิวการจอง → เปิดบิล**: `GET pos/booking-queue` (การจองเว็บ `SiteBooking` + การจองโต๊ะ `PosReservation` ของวันตามปฏิทินไทย) ·
+  `POST pos/booking-queue/open` → `PosService.OpenOrderFromBookingAsync` ⇒ `CreateOrderCoreAsync` ตั้ง `PosOrder.SourceBookingType/SourceBookingId`
+  ตั้งแต่ INSERT แรก (unique partial `UX_PosOrders_SourceBooking_Open` ไม่นับบิล Voided = เปิดซ้ำไม่ได้แม้สองเครื่องพร้อมกัน) ·
+  ตัวตัดสิน `Helpers/PosBookingIntake` (ยกเลิก/ไม่มา/เสร็จ · มีบิลอยู่แล้ว · ระบบจองออกเอกสารรายได้แล้ว = บล็อก · มีมัดจำ = เปิดได้+เตือน
+  เพราะ POS ยังหักมัดจำไม่ได้) · เติมลูกค้า/บริการ (ผูกสินค้า = บรรทัดสินค้า · ไม่ผูก = รายการพิเศษชนิดบริการ)/ช่าง ·
+  สถานะการจอง: เปิด ⇒ Seated/InProgress · ยกเลิกบิล ⇒ ปล่อย (`ReleaseSourceBookingAsync`) · ปิดบิล ⇒ โต๊ะ Completed · เว็บ Completed
+  **เฉพาะเมื่อไม่มีเงิน/เอกสารผูกการจอง** (`MarkSourceBookingCompletedAsync` — ไม่แตะเงิน) · รวมบิลย้ายการผูกไปปลายทาง (การจองคนละรายการ = บล็อก)
+- **ช่างรายบรรทัด**: `PosOrderItem.StaffId/StaffName` (สมาชิกบริษัท · ออฟไลน์ผ่อนผัน + LogError) · `PUT pos/orders/{id}/items/{itemId}/staff`
+  (บิลปิดแล้ว = บล็อก) · ขั้นตอนแพ็กเกจที่ว่างตามช่างของบรรทัด · ยอดของช่าง `Helpers/PosStaffAttribution` (ก่อน VAT · หลังส่วนลดท้ายบิล ·
+  หักคืน · ไม่รวมค่าบริการ/ทิป) ⇒ ฐานคอมมิชชัน `PosStaffSales` (`CommissionService.CalculateAsync`) + `GET pos/reports/staff-sales`
+- **รายการพิเศษ (Quick Add)**: `PosOrderItem.IsCustomItem/CustomItemKind/RevenueAccountId` · ตรวจ `Helpers/PosCustomItemRule` · บัญชีรายได้ต้องเป็น
+  ผังหมวดรายได้ที่ลงรายการได้ · **ไม่ตัดสต็อก** (ไม่มี ProductId) · VAT ตามอัตราของบิล · **JE ขายและ JE คืนเงินแบ่งเครดิตรายได้ด้วย
+  `Helpers/PosRevenueSplit` ตัวเดียว** (ไม่มีบัญชีพิเศษ = กองเดียว 41000 เหมือนเดิม) · แยก/รวมบิลคัดลอกช่าง+รายการพิเศษ ·
+  รวมบิลคัดลอก `VatAmount` รายบรรทัดตามจริง (เดิม 0 ⇒ คืนเงินบิลที่รวมแล้วไม่กลับภาษีขาย)
 
 ### 2.7 Recurring
 

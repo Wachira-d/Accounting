@@ -28,6 +28,10 @@ public class CreateSiteProductRequest
     public string? MetaTitle { get; set; }
     public string? MetaDescription { get; set; }
     public List<CreatePricingTierRequest>? PricingTiers { get; set; }
+    /// <summary>สินค้าตามสั่ง: ผลิตกี่วัน (null = ไม่ใช่สินค้าตามสั่ง) · ทีม K</summary>
+    public int? LeadTimeDays { get; set; }
+    /// <summary>น้ำหนักต่อชิ้น (กก.) สำหรับค่าส่งตามน้ำหนัก · null = ไม่คิดน้ำหนัก</summary>
+    public decimal? WeightKg { get; set; }
 }
 
 public class UpdateSiteProductRequest
@@ -50,6 +54,45 @@ public class UpdateSiteProductRequest
     public string? Slug { get; set; }
     public string? MetaTitle { get; set; }
     public string? MetaDescription { get; set; }
+    /// <summary>null = ไม่เปลี่ยน · ล้างค่า (เลิกเป็นสินค้าตามสั่ง) ใช้ <see cref="ClearLeadTime"/></summary>
+    public int? LeadTimeDays { get; set; }
+    public bool ClearLeadTime { get; set; }
+    /// <summary>null = ไม่เปลี่ยน · ล้างค่าใช้ <see cref="ClearWeight"/></summary>
+    public decimal? WeightKg { get; set; }
+    public bool ClearWeight { get; set; }
+}
+
+/// <summary>กลุ่มตัวเลือกของสินค้าบนหน้าร้าน (ไม่เปิดเผยข้อมูลหลังบ้าน) — ขอบเขตจำนวนเลือกเป็นค่าที่ด่านใช้จริง</summary>
+public class StorefrontOptionGroup
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+    public string InputType { get; set; } = "radio";
+    public bool IsRequired { get; set; }
+    public int MinSelect { get; set; }
+    public int MaxSelect { get; set; }
+    public int? MaxTextLength { get; set; }
+    public decimal InputPriceAdjustment { get; set; }
+    public int InputExtraLeadDays { get; set; }
+    public List<StorefrontOptionValue> Options { get; set; } = new();
+}
+
+public class StorefrontOptionValue
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+    public decimal PriceAdjustment { get; set; }
+    public int ExtraLeadDays { get; set; }
+    public bool IsDefault { get; set; }
+}
+
+/// <summary>ตัวเลือกที่ลูกค้าเลือก — <b>ไม่มีราคา</b> โดยตั้งใจ (เซิร์ฟเวอร์คิดเองจากฐานข้อมูล)</summary>
+public class CartModifierChoice
+{
+    public Guid GroupId { get; set; }
+    public List<Guid>? OptionIds { get; set; }
+    public string? Text { get; set; }
+    public Guid? AttachmentId { get; set; }
 }
 
 public class SiteProductResponse
@@ -91,6 +134,13 @@ public class SiteProductResponse
     public string? FeaturedImageUrl { get; set; }
     public List<PricingTierResponse>? PricingTiers { get; set; }
     public DateTime CreatedAt { get; set; }
+    // ── สินค้าตามสั่ง (ทีม K) ──
+    public int? LeadTimeDays { get; set; }
+    public decimal? WeightKg { get; set; }
+    /// <summary>วันรับเร็วสุดถ้าสั่งตอนนี้ (yyyy-MM-dd · ยังไม่รวมวันเพิ่มของตัวเลือก) — null = ไม่ใช่สินค้าตามสั่ง</summary>
+    public string? EarliestReadyDate { get; set; }
+    /// <summary>กลุ่มตัวเลือก (dynamic option builder) — null/ว่าง = ไม่มี</summary>
+    public List<StorefrontOptionGroup>? OptionGroups { get; set; }
 }
 
 // ==================== Pricing Tier ====================
@@ -155,6 +205,8 @@ public class AddToCartRequest
     public decimal Quantity { get; set; } = 1;
     public string? VariantOptionsJson { get; set; }
     public string? Notes { get; set; }
+    /// <summary>ตัวเลือกสินค้าตามสั่ง (ทีม K) — ราคา/วันเพิ่มคิดที่เซิร์ฟเวอร์</summary>
+    public List<CartModifierChoice>? Modifiers { get; set; }
 }
 
 public class UpdateCartItemRequest
@@ -186,6 +238,9 @@ public class CartItemResponse
     public decimal UnitPrice { get; set; }
     public decimal TotalPrice { get; set; }
     public string? VariantOptionsJson { get; set; }
+    /// <summary>คำอธิบายตัวเลือกที่เลือก ("ขนาด: 2 ปอนด์ · ข้อความ: HBD") — เซิร์ฟเวอร์ประกอบ</summary>
+    public string? ModifierSummary { get; set; }
+    public int ExtraLeadDays { get; set; }
 }
 
 // ==================== Order ====================
@@ -216,6 +271,14 @@ public class CreateOrderRequest
     public Guid? PaymentGatewayId { get; set; }
     public string? CouponCode { get; set; }
     public string? CustomerNotes { get; set; }
+
+    // ── การรับ + ค่าส่ง (ทีม K) — เซิร์ฟเวอร์คิดค่าส่งเองจากอัตราที่เลือก ไม่รับยอดจาก client ──
+    /// <summary>"delivery" / "pickup" · ว่าง = จัดส่ง</summary>
+    public string? FulfillmentMethod { get; set; }
+    public Guid? ShippingRateId { get; set; }
+    public string? ShippingCountryCode { get; set; }
+    public string? ShippingProvince { get; set; }
+    public string? ShippingPostalCode { get; set; }
 
     // Direct order (without cart)
     public List<CreateOrderLineRequest>? Lines { get; set; }
@@ -318,6 +381,70 @@ public class OrderResponse
     public DateTime CreatedAt { get; set; }
     public List<OrderLineResponse> Lines { get; set; } = new();
     public List<OrderPaymentResponse>? Payments { get; set; }
+    // ── สินค้าตามสั่ง (ทีม K) — ทุกค่าคำนวณที่เซิร์ฟเวอร์ (หน้าเว็บแสดงอย่างเดียว) ──
+    public string? FulfillmentMethod { get; set; }
+    public string? FulfillmentLabel { get; set; }
+    /// <summary>yyyy-MM-dd · null = ไม่มีสินค้าตามสั่ง</summary>
+    public string? EarliestReadyDate { get; set; }
+    public string? PaymentTermMode { get; set; }
+    public string? PaymentTermLabel { get; set; }
+    public decimal DepositRequiredAmount { get; set; }
+    /// <summary>ยอดที่ต้องจ่ายตอนนี้เพื่อยืนยันคำสั่งซื้อ (มัดจำที่ยังขาด)</summary>
+    public decimal AmountDueNow { get; set; }
+    /// <summary>ยอดที่ช่องจ่ายเปิดให้จ่ายรอบนี้ (มัดจำที่ขาด หรือยอดคงค้างที่เหลือ)</summary>
+    public decimal NextPayableAmount { get; set; }
+    public decimal BalanceAmount { get; set; }
+}
+
+/// <summary>คำขอคิดยอดก่อนยืนยันสั่งซื้อ — ตัวเดียวกับที่ <c>CreateOrderAsync</c> ใช้จริง (ผลไม่ต่างกัน)</summary>
+public class OptionImageUploadResponse
+{
+    public Guid AttachmentId { get; set; }
+    public string FileName { get; set; } = "";
+}
+
+public class CheckoutQuoteRequest
+{
+    public string? FulfillmentMethod { get; set; }
+    public Guid? ShippingRateId { get; set; }
+    public string? CountryCode { get; set; }
+    public string? Province { get; set; }
+    public string? PostalCode { get; set; }
+}
+
+public class CheckoutShippingOption
+{
+    public Guid RateId { get; set; }
+    public string Name { get; set; } = "";
+    public string? ZoneName { get; set; }
+    public decimal Fee { get; set; }
+    public bool IsFree { get; set; }
+    public int? EstimatedDeliveryDaysMin { get; set; }
+    public int? EstimatedDeliveryDaysMax { get; set; }
+}
+
+public class CheckoutQuoteResponse
+{
+    public decimal GoodsTotal { get; set; }
+    public decimal DiscountAmount { get; set; }
+    public string FulfillmentMethod { get; set; } = "delivery";
+    public string FulfillmentLabel { get; set; } = "";
+    public bool PickupEnabled { get; set; }
+    public List<CheckoutShippingOption> ShippingOptions { get; set; } = new();
+    public Guid? SelectedShippingRateId { get; set; }
+    public decimal ShippingFee { get; set; }
+    /// <summary>อัตรา VAT ของบรรทัดค่าส่ง (ตามสินค้าในบิล — §79)</summary>
+    public decimal ShippingVatRate { get; set; }
+    public decimal OrderTotal { get; set; }
+    public bool HasMadeToOrder { get; set; }
+    public string? EarliestReadyDate { get; set; }
+    public string PaymentTermMode { get; set; } = "full";
+    public string PaymentTermLabel { get; set; } = "";
+    public decimal DepositRequiredAmount { get; set; }
+    public decimal AmountDueNow { get; set; }
+    public decimal BalanceAfterDueNow { get; set; }
+    /// <summary>เหตุที่ยังสั่งไม่ได้ (เช่น ต้องเลือกวิธีส่ง) — null = สั่งได้</summary>
+    public string? Problem { get; set; }
 }
 
 public class OrderListResponse
@@ -345,6 +472,7 @@ public class OrderLineResponse
     public decimal DiscountAmount { get; set; }
     public decimal VatAmount { get; set; }
     public decimal TotalAmount { get; set; }
+    public string? ModifierSummary { get; set; }
 }
 
 public class OrderPaymentResponse

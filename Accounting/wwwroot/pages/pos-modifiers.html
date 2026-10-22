@@ -19,7 +19,9 @@
     .modifier-options-list li:last-child { border-bottom: none; }
     .option-name { display: flex; align-items: center; gap: 6px; }
     .option-price { font-weight: 500; white-space: nowrap; }
-    .option-row { display: grid; grid-template-columns: 1fr 1fr 120px 60px 60px 36px; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .option-row { display: grid; grid-template-columns: 1fr 1fr 100px 70px 60px 60px 36px; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .prod-pick { max-height: 180px; overflow: auto; border: 1px solid var(--border-color, #e5e7eb); border-radius: 8px; padding: 6px 8px; }
+    .prod-pick label { display: flex; gap: 6px; align-items: center; font-size: .85rem; padding: 2px 0; }
     .option-row-header { font-size: .8rem; font-weight: 600; color: var(--text-muted, #6b7280); }
     .option-row .form-input { padding: 6px 8px; font-size: .85rem; }
     .btn-remove-option { background: none; border: none; color: var(--text-danger, #ef4444); cursor: pointer; font-size: 1.1rem; padding: 2px 6px; border-radius: 4px; }
@@ -57,17 +59,33 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ลำดับการแสดง</label><input type="number" class="form-input" id="fSortOrder" value="0"></div>
-            <div class="form-group"></div>
+            <div class="form-group"><label class="form-label">ชนิดช่อง (สำหรับสินค้าตามสั่ง/ร้านออนไลน์)</label><select class="form-input" id="fInputType" onchange="Page.onInputTypeChange()"></select></div>
+          </div>
+          <div class="form-row" id="choiceLimits">
+            <div class="form-group"><label class="form-label">เลือกอย่างน้อย (ว่าง = ตามช่อง "จำเป็น")</label><input type="number" class="form-input" id="fMinSelect" min="0"></div>
+            <div class="form-group"><label class="form-label">เลือกได้มากสุด (ว่าง = ไม่จำกัด)</label><input type="number" class="form-input" id="fMaxSelect" min="0"></div>
+          </div>
+          <div class="form-row" id="inputExtras" style="display:none">
+            <div class="form-group"><label class="form-label">ราคาบวกเพิ่มเมื่อกรอก/แนบ</label><input type="number" class="form-input" id="fInputPrice" step="0.01" value="0"></div>
+            <div class="form-group"><label class="form-label">วันผลิตเพิ่มเมื่อกรอก/แนบ</label><input type="number" class="form-input" id="fInputLead" min="0" max="365" value="0"></div>
+            <div class="form-group" id="maxTextWrap"><label class="form-label">ความยาวข้อความสูงสุด</label><input type="number" class="form-input" id="fMaxText" min="1" max="1000" placeholder="200"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ใช้กับสินค้า <span style="font-size:.8rem;color:var(--text-muted,#6b7280)">(ติ๊กสินค้าที่ต้องเลือกตัวเลือกนี้ — ทั้ง POS และร้านออนไลน์)</span></label>
+            <input type="text" class="form-input" id="fProdSearch" placeholder="ค้นหาสินค้า..." oninput="Page.renderProductPick()" style="margin-bottom:6px">
+            <div class="prod-pick" id="prodPick"><span style="color:var(--text-muted,#9ca3af);font-size:.85rem">กำลังโหลดสินค้า...</span></div>
           </div>
           <hr style="margin:16px 0;border:none;border-top:1px solid var(--border-color,#e5e7eb)">
+          <div id="optionsSection">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
             <label class="form-label" style="margin:0;font-weight:600">ตัวเลือก (Options)</label>
             <button class="btn btn-sm btn-secondary" onclick="Page.addOptionRow()">+ เพิ่มตัวเลือก</button>
           </div>
           <div class="option-row option-row-header">
-            <span>ชื่อ (ไทย) *</span><span>ชื่อ (อังกฤษ)</span><span>ราคา +/-</span><span>ค่าเริ่มต้น</span><span>ลำดับ</span><span></span>
+            <span>ชื่อ (ไทย) *</span><span>ชื่อ (อังกฤษ)</span><span>ราคา +/-</span><span>วันผลิต +</span><span>ค่าเริ่มต้น</span><span>ลำดับ</span><span></span>
           </div>
           <div id="optionRows"></div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -99,11 +117,51 @@
       _deleteId: null,
       _optionCounter: 0,
 
+      _inputTypes: [],
+      _products: null,
+      _pickedProducts: new Set(),
+
       async init() {
         if (!Layout.init('pos-modifiers')) return;
         Layout.setTitle('ตัวเลือกเพิ่มเติม');
+        // ชนิดช่อง — ป้ายจากเซิร์ฟเวอร์ (ตัวตั้งตัวเดียว Helpers/ModifierInputType)
+        try { this._inputTypes = (await API.get(`/api/companies/${Layout.getCompanyId()}/pos/modifier-input-types`)).data || []; }
+        catch (_) { this._inputTypes = []; }
+        document.getElementById('fInputType').innerHTML = this._inputTypes.map(t => `<option value="${this._esc(t.value)}">${this._esc(t.label)}</option>`).join('');
         await this.load();
       },
+
+      _typeLabel(v) { const t = this._inputTypes.find(x => x.value === v); return t ? t.label : v; },
+
+      onInputTypeChange() {
+        const t = document.getElementById('fInputType').value;
+        const isChoice = t === 'radio' || t === 'dropdown' || t === 'checkbox';
+        document.getElementById('optionsSection').style.display = isChoice ? '' : 'none';
+        document.getElementById('choiceLimits').style.display = t === 'checkbox' ? '' : 'none';
+        document.getElementById('inputExtras').style.display = isChoice ? 'none' : '';
+        document.getElementById('maxTextWrap').style.display = t === 'text' ? '' : 'none';
+        // ธงเดิม "เลือกได้หลายรายการ" ตามชนิดช่อง (ผู้อ่านเดิม เช่น KDS/สลิป ยังใช้ธงนี้)
+        if (isChoice) document.getElementById('fAllowMultiple').checked = t === 'checkbox';
+      },
+
+      async _loadProducts() {
+        if (this._products) return;
+        try {
+          const res = await Layout.api().getProducts('?pageSize=500');
+          this._products = (res.data?.items || res.data || []).filter(p => p.isActive !== false);
+        } catch (e) { this._products = []; Layout.toast('โหลดสินค้าไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      renderProductPick() {
+        const q = (document.getElementById('fProdSearch').value || '').toLowerCase();
+        const list = (this._products || []).filter(p => !q || (p.name || '').toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q));
+        const box = document.getElementById('prodPick');
+        if (!list.length) { box.innerHTML = '<span style="color:var(--text-muted,#9ca3af);font-size:.85rem">ไม่พบสินค้า</span>'; return; }
+        box.innerHTML = list.slice(0, 300).map(p => `<label><input type="checkbox" ${this._pickedProducts.has(p.id) ? 'checked' : ''}
+            onchange="Page.toggleProduct('${Layout.jsArg(p.id)}', this.checked)"> ${this._esc(p.code || '')} ${this._esc(p.name)}</label>`).join('');
+      },
+
+      toggleProduct(id, on) { if (on) this._pickedProducts.add(id); else this._pickedProducts.delete(id); },
 
       async load() {
         const api = Layout.api(); if (!api) return;
@@ -130,7 +188,9 @@
                   ${g.nameEn ? `<div style="font-size:.85rem;color:var(--text-muted,#6b7280)">${this._esc(g.nameEn)}</div>` : ''}
                   <div class="modifier-card-badges">
                     ${g.isRequired ? '<span class="badge badge-warning" data-i18n="common.required">จำเป็น</span>' : '<span class="badge badge-gray">ไม่จำเป็น</span>'}
-                    ${g.allowMultiple ? '<span class="badge badge-info">เลือกได้หลายรายการ</span>' : '<span class="badge badge-gray">เลือกได้รายการเดียว</span>'}
+                    <span class="badge badge-info">${this._esc(this._typeLabel(g.inputType))}</span>
+                    ${g.inputType === 'checkbox' ? `<span class="badge badge-gray">เลือก ${g.effectiveMinSelect}–${g.effectiveMaxSelect}</span>` : ''}
+                    <span class="badge ${(g.productIds || []).length ? 'badge-success' : 'badge-danger'}">${(g.productIds || []).length ? `ใช้กับ ${(g.productIds || []).length} สินค้า` : 'ยังไม่ผูกสินค้า'}</span>
                   </div>
                 </div>
                 <div class="modifier-card-actions">
@@ -143,7 +203,7 @@
                   ${o.isDefault ? '<span class="badge badge-success" style="font-size:.7rem;padding:1px 5px">ค่าเริ่มต้น</span>' : ''}
                   ${this._esc(o.name)}${o.nameEn ? ` <span style="color:var(--text-muted,#9ca3af);font-size:.8rem">(${this._esc(o.nameEn)})</span>` : ''}
                 </span>
-                <span class="option-price">${o.priceAdjustment > 0 ? '+' : ''}${o.priceAdjustment !== 0 ? Layout.money(o.priceAdjustment) : '-'}</span>
+                <span class="option-price">${o.priceAdjustment > 0 ? '+' : ''}${o.priceAdjustment !== 0 ? Layout.money(o.priceAdjustment) : '-'}${o.extraLeadDays ? ` · +${o.extraLeadDays} วัน` : ''}</span>
               </li>`).join('')}</ul>` : '<p style="font-size:.85rem;color:var(--text-muted,#9ca3af);margin:0">ยังไม่มีตัวเลือก</p>'}
               ${g.sortOrder ? `<div style="font-size:.8rem;color:var(--text-muted,#9ca3af);margin-top:8px">ลำดับ: ${g.sortOrder}</div>` : ''}
             </div>`;
@@ -169,6 +229,7 @@
           <input type="text" class="form-input" placeholder="ชื่อ" value="${this._esc(opt?.name || '')}" data-field="name">
           <input type="text" class="form-input" placeholder="Name" value="${this._esc(opt?.nameEn || '')}" data-field="nameEn">
           <input type="number" class="form-input" step="0.01" value="${opt?.priceAdjustment ?? 0}" data-field="priceAdjustment">
+          <input type="number" class="form-input" min="0" max="365" value="${opt?.extraLeadDays ?? 0}" data-field="extraLeadDays">
           <div style="text-align:center"><input type="checkbox" ${opt?.isDefault ? 'checked' : ''} data-field="isDefault"></div>
           <input type="number" class="form-input" value="${opt?.sortOrder ?? 0}" data-field="sortOrder">
           <button class="btn-remove-option" onclick="Page.removeOptionRow('optRow_${idx}')" title="ลบ">&times;</button>
@@ -192,6 +253,7 @@
             name,
             nameEn: row.querySelector('[data-field="nameEn"]').value.trim() || null,
             priceAdjustment: parseFloat(row.querySelector('[data-field="priceAdjustment"]').value) || 0,
+            extraLeadDays: parseInt(row.querySelector('[data-field="extraLeadDays"]').value) || 0,
             isDefault: row.querySelector('[data-field="isDefault"]').checked,
             sortOrder: parseInt(row.querySelector('[data-field="sortOrder"]').value) || 0,
           });
@@ -210,7 +272,23 @@
         document.getElementById('optionRows').innerHTML = '';
         this._optionCounter = 0;
         this.addOptionRow();
+        this._fillBuilder(null);
         Layout.openModal('formModal');
+      },
+
+      // ทีม K — ค่าของ option builder (ฟอร์มใหม่ = ค่าว่าง · แก้ไข = ค่าจากเซิร์ฟเวอร์ ห้ามค้างค่าใบก่อน)
+      async _fillBuilder(g) {
+        document.getElementById('fInputType').value = g ? g.inputType : 'radio';
+        document.getElementById('fMinSelect').value = g?.minSelect ?? '';
+        document.getElementById('fMaxSelect').value = g?.maxSelect ?? '';
+        document.getElementById('fMaxText').value = g?.maxTextLength ?? '';
+        document.getElementById('fInputPrice').value = g?.inputPriceAdjustment ?? 0;
+        document.getElementById('fInputLead').value = g?.inputExtraLeadDays ?? 0;
+        document.getElementById('fProdSearch').value = '';
+        this._pickedProducts = new Set(g?.productIds || []);
+        this.onInputTypeChange();
+        await this._loadProducts();
+        this.renderProductPick();
       },
 
       openEdit(id) {
@@ -225,6 +303,7 @@
         document.getElementById('optionRows').innerHTML = '';
         this._optionCounter = 0;
         (g.options || []).forEach(o => this.addOptionRow(o));
+        this._fillBuilder(g);
         Layout.openModal('formModal');
       },
 
@@ -257,16 +336,26 @@
           isRequired: document.getElementById('fIsRequired').checked,
           allowMultiple: document.getElementById('fAllowMultiple').checked,
           sortOrder: parseInt(document.getElementById('fSortOrder').value) || 0,
+          inputType: document.getElementById('fInputType').value || null,
+          minSelect: Layout.intOrNull('fMinSelect'),
+          maxSelect: Layout.intOrNull('fMaxSelect'),
+          maxTextLength: Layout.intOrNull('fMaxText'),
+          inputPriceAdjustment: parseFloat(document.getElementById('fInputPrice').value) || 0,
+          inputExtraLeadDays: parseInt(document.getElementById('fInputLead').value) || 0,
+          productIds: [...this._pickedProducts],
         };
+        const isChoice = ['radio', 'dropdown', 'checkbox'].includes(groupData.inputType);
+        if (isChoice) groupData.allowMultiple = groupData.inputType === 'checkbox';
 
-        const options = this._getOptionRowsData();
+        const options = isChoice ? this._getOptionRowsData() : [];
 
         try {
           if (id) {
-            // Update group
-            await api.updatePosModifierGroup(id, groupData);
+            // Update group — ล้างขั้นต่ำ/สูงสุด/ความยาวก่อนแล้วตั้งตามฟอร์ม (ช่องว่าง = ล้างค่าจริง ไม่ใช่ไม่เปลี่ยน)
+            await api.updatePosModifierGroup(id, Object.assign({ clearLimits: true }, groupData));
 
-            // Sync options
+            // Sync options — เฉพาะช่องแบบเลือก (ช่องข้อความ/รูปไม่มีตัวเลือก — ห้ามลบตัวเลือกเดิมทิ้งเพราะสลับชนิดชั่วคราว)
+            if (isChoice) {
             const existing = (this._cache[id]?.options || []);
             const existingIds = existing.map(o => o.id);
             const currentIds = options.filter(o => o._optionId).map(o => o._optionId);
@@ -280,25 +369,26 @@
 
             // Update or add options
             for (const opt of options) {
-              const payload = { name: opt.name, nameEn: opt.nameEn, priceAdjustment: opt.priceAdjustment, isDefault: opt.isDefault, sortOrder: opt.sortOrder };
+              const payload = { name: opt.name, nameEn: opt.nameEn, priceAdjustment: opt.priceAdjustment, isDefault: opt.isDefault, sortOrder: opt.sortOrder, extraLeadDays: opt.extraLeadDays };
               if (opt._optionId) {
                 await api.updatePosModifierOption(id, opt._optionId, payload);
               } else {
                 await api.addPosModifierOption(id, payload);
               }
             }
+            }
 
             Layout.closeModal('formModal');
             Layout.toast('แก้ไขกลุ่มตัวเลือกสำเร็จ');
           } else {
-            // Create group with options
-            groupData.productIds = [];
+            // Create group with options (สินค้าที่ติ๊กไว้ผูกพร้อมกัน — เดิมส่ง [] เสมอ ⇒ กลุ่มไม่เคยถูกใช้กับสินค้าใด)
             groupData.options = options.map(o => ({
               name: o.name,
               nameEn: o.nameEn,
               priceAdjustment: o.priceAdjustment,
               isDefault: o.isDefault,
               sortOrder: o.sortOrder,
+              extraLeadDays: o.extraLeadDays,
             }));
             await api.createPosModifierGroup(groupData);
             Layout.closeModal('formModal');

@@ -171,30 +171,18 @@ public class CmsShippingService : ICmsShippingService
 
             foreach (var rate in zone.Rates.OrderBy(r => r.SortOrder))
             {
-                var weight = request.TotalWeightKg ?? 0;
-                if (rate.MinWeightKg.HasValue && weight < rate.MinWeightKg.Value) continue;
-                if (rate.MaxWeightKg.HasValue && weight > rate.MaxWeightKg.Value) continue;
-
-                bool isFree = rate.RateType == ShippingRateType.Free
-                    || (rate.FreeAboveAmount.HasValue && request.SubTotal >= rate.FreeAboveAmount.Value);
-
-                decimal cost = 0m;
-                if (!isFree)
-                {
-                    cost = rate.RateType switch
-                    {
-                        ShippingRateType.Flat => rate.BaseRate,
-                        ShippingRateType.ByWeight => rate.BaseRate + (rate.PerKgRate ?? 0) * weight,
-                        ShippingRateType.Calculated => rate.BaseRate,
-                        _ => rate.BaseRate
-                    };
-                }
+                // ทีม K — ตัวคิดค่าส่งตัวเดียว (Helpers/ShippingFeeRules) ร่วมกับยอดที่ลงคำสั่งซื้อ · ปัด AwayFromZero
+                // (เดิมคิดเองที่นี่ด้วย Math.Round ค่าเริ่มต้น = banker's และไม่มีใครใช้ยอดนี้ตอนสั่งจริง)
+                var quote = Accounting.Helpers.ShippingFeeRules.Quote(new Accounting.Helpers.ShippingRateFacts(
+                    rate.RateType, rate.BaseRate, rate.PerKgRate, rate.FreeAboveAmount, rate.MinWeightKg, rate.MaxWeightKg),
+                    request.SubTotal, request.TotalWeightKg ?? 0m);
+                if (!quote.Applicable) continue;
 
                 options.Add(new ShippingOptionResponse
                 {
                     RateId = rate.Id, ZoneId = zone.Id, ZoneName = zone.Name,
                     Name = rate.Name, CarrierName = rate.CarrierName,
-                    Cost = Math.Round(cost, 2), IsFree = isFree,
+                    Cost = quote.Fee, IsFree = quote.IsFree,
                     EstimatedDeliveryDaysMin = rate.EstimatedDeliveryDaysMin,
                     EstimatedDeliveryDaysMax = rate.EstimatedDeliveryDaysMax
                 });
@@ -204,7 +192,8 @@ public class CmsShippingService : ICmsShippingService
         return options.OrderBy(o => o.Cost).ToList();
     }
 
-    private static bool ZoneMatchesAddress(SiteShippingZone zone, CalculateShippingRequest request)
+    /// <summary>ที่อยู่อยู่ในโซนนี้ไหม — internal ให้การคิดค่าส่งตอนสั่งซื้อ (<c>CmsCommerceService</c>) ใช้ตัวเดียวกับหน้าร้าน</summary>
+    internal static bool ZoneMatchesAddress(SiteShippingZone zone, CalculateShippingRequest request)
     {
         if (!string.IsNullOrEmpty(zone.CountryCodes) && !string.IsNullOrEmpty(request.CountryCode))
         {

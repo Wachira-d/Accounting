@@ -45,6 +45,44 @@
       <button class="btn btn-primary btn-sm" onclick="Page.openGatewayModal()">⚙️ ตั้งค่าวิธีรับเงิน</button>
     </div>
 
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      <button class="btn btn-secondary btn-sm" onclick="Page.openMtoModal()" title="ตั้งค่าสินค้าตามสั่ง: มารับเอง · มัดจำ · วันเปิดร้าน · ค่าส่งเหมาจ่าย">⚙️ การรับสินค้า / มัดจำ / วันเปิดร้าน</button>
+    </div>
+
+    <!-- ทีม K: ตั้งค่าสินค้าตามสั่ง (อ่าน/เขียนผ่าน commerce/config — ตรวจที่เซิร์ฟเวอร์) -->
+    <div class="modal-overlay" id="mtoModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3 class="modal-title">⚙️ การรับสินค้า · มัดจำ · วันเปิดร้าน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('mtoModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="display:grid;gap:12px">
+          <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="mtoPickup"> เปิดให้ลูกค้าเลือก "มารับเองที่ร้าน" (ไม่มีค่าส่ง)</label>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ค่าส่งเหมาจ่าย (ร้านที่ไม่ได้ตั้งโซน)</label><input type="number" class="form-input" id="mtoFlatRate" min="0" step="0.01" placeholder="ว่าง = ไม่คิดค่าส่ง"></div>
+            <div class="form-group"><label class="form-label">ส่งฟรีเมื่อยอดสินค้าครบ</label><input type="number" class="form-input" id="mtoFreeAbove" min="0" step="0.01" placeholder="ว่าง = ไม่มี"></div>
+          </div>
+          <div style="font-size:12px;color:var(--gray-500);margin-top:-6px">ค่าส่งตามโซน/น้ำหนัก ตั้งที่อัตราค่าส่งของโซน · ค่าส่งเป็นบรรทัดในใบขายพร้อม VAT ตามสินค้าในบิล</div>
+          <hr style="border:none;border-top:1px solid var(--gray-200)">
+          <div class="form-group"><label class="form-label">เงื่อนไขชำระของออเดอร์ที่มีสินค้าตามสั่ง</label><select class="form-input" id="mtoTerm" onchange="Page.onMtoTermChange()"></select></div>
+          <div class="form-row" id="mtoDepositRow">
+            <div class="form-group" id="mtoPctWrap"><label class="form-label">มัดจำ (%)</label><input type="number" class="form-input" id="mtoPct" min="1" max="99" step="0.01"></div>
+            <div class="form-group" id="mtoFixedWrap"><label class="form-label">มัดจำ (บาท)</label><input type="number" class="form-input" id="mtoFixed" min="1" step="0.01"></div>
+          </div>
+          <hr style="border:none;border-top:1px solid var(--gray-200)">
+          <div class="form-group"><label class="form-label">วันปิดร้านประจำสัปดาห์ (ไม่นับเป็นวันผลิต/รับของ)</label><div id="mtoClosedDays" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ตัดรอบรับออร์เดอร์ (ชั่วโมง 0–23 · ว่าง = ไม่ตัดรอบ)</label><input type="number" class="form-input" id="mtoCutoff" min="0" max="23"></div>
+            <div class="form-group" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="mtoHolidays"> ข้ามวันหยุดบริษัท (หน้า "วันหยุด")</label></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('mtoModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveMto()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
     <div class="grid grid-4 gap-4" style="margin-bottom:18px">
       <div class="stat-card"><div class="stat-label">รอดำเนินการ</div><div class="stat-value" id="statPending" style="color:#92400e">-</div></div>
       <div class="stat-card"><div class="stat-label">กำลังเตรียม</div><div class="stat-value" id="statProcessing" style="color:#3730a3">-</div></div>
@@ -224,6 +262,54 @@
           this._commerceConfig = cfgRes?.data || null;
         } catch (e) { /* silently — owner can still open the modal */ }
       },
+      // ===== ทีม K: ตั้งค่าสินค้าตามสั่ง =====
+      async openMtoModal() {
+        const api = Layout.api(); if (!api || !this.siteId) { Layout.toast('กรุณาเลือกเว็บไซต์', 'warning'); return; }
+        let c;
+        try { c = (await api.cmsGetCommerceConfig(this.siteId)).data; } catch (e) { Layout.toast(e.message, 'error'); return; }
+        this._commerceConfig = c;
+        document.getElementById('mtoPickup').checked = !!c.enablePickup;
+        document.getElementById('mtoFlatRate').value = c.flatShippingRate ?? '';
+        document.getElementById('mtoFreeAbove').value = c.freeShippingThreshold ?? '';
+        document.getElementById('mtoTerm').innerHTML = (c.paymentTermModes || []).map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.mtoPaymentTermMode ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
+        document.getElementById('mtoPct').value = c.mtoDepositPercent ?? '';
+        document.getElementById('mtoFixed').value = c.mtoDepositFixedAmount ?? '';
+        const closed = new Set((c.mtoClosedWeekdays || '').split(',').filter(Boolean));
+        const names = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+        document.getElementById('mtoClosedDays').innerHTML = names.map((n, i) => `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-dow="${i}" ${closed.has(String(i)) ? 'checked' : ''}> ${n}</label>`).join('');
+        document.getElementById('mtoCutoff').value = c.mtoCutoffHour ?? '';
+        document.getElementById('mtoHolidays').checked = c.mtoSkipCompanyHolidays !== false;
+        this.onMtoTermChange();
+        Layout.openModal('mtoModal');
+      },
+      onMtoTermChange() {
+        const t = document.getElementById('mtoTerm').value;
+        document.getElementById('mtoPctWrap').style.display = t === 'deposit_percent' ? '' : 'none';
+        document.getElementById('mtoFixedWrap').style.display = t === 'deposit_fixed' ? '' : 'none';
+      },
+      async saveMto() {
+        const api = Layout.api(); if (!api || !this.siteId) return;
+        const closed = [...document.querySelectorAll('#mtoClosedDays input:checked')].map(x => x.dataset.dow).join(',');
+        const cutoff = Layout.intOrNull('mtoCutoff');
+        const body = {
+          enablePickup: document.getElementById('mtoPickup').checked,
+          flatShippingRate: Layout.numOrNull('mtoFlatRate') ?? 0,
+          freeShippingThreshold: Layout.numOrNull('mtoFreeAbove') ?? 0,
+          mtoPaymentTermMode: document.getElementById('mtoTerm').value,
+          mtoDepositPercent: Layout.numOrNull('mtoPct'),
+          mtoDepositFixedAmount: Layout.numOrNull('mtoFixed'),
+          mtoClosedWeekdays: closed,
+          mtoCutoffHour: cutoff,
+          clearMtoCutoffHour: cutoff == null,
+          mtoSkipCompanyHolidays: document.getElementById('mtoHolidays').checked,
+        };
+        try {
+          await api.cmsUpdateCommerceConfig(this.siteId, body);
+          Layout.closeModal('mtoModal');
+          Layout.toast('บันทึกการตั้งค่าแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       openGatewayModal() {
         const g = this._existingGateway;
         document.getElementById('gwPromptPay').value = g?.promptPayId || '';
@@ -353,11 +439,16 @@
               ${o.shippingMethod ? `<div style="margin-top:4px;color:var(--gray-600)">วิธีจัดส่ง: ${Layout.esc(o.shippingMethod)}</div>` : ''}
               ${o.trackingNumber ? `<div style="color:var(--primary);font-weight:600">เลขติดตาม: ${Layout.esc(o.trackingNumber)}</div>` : ''}
             </div>` : ''}
+            ${(o.earliestReadyDate || (o.paymentTermMode && o.paymentTermMode !== 'full') || o.fulfillmentMethod === 'pickup') ? `
+            <div style="background:#EEF2FF;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#3730A3">
+              <div>🚚 การรับสินค้า: <strong>${Layout.esc(o.fulfillmentLabel||'-')}</strong>${o.earliestReadyDate ? ` · พร้อมเร็วสุด <strong>${Layout.date(o.earliestReadyDate)}</strong>` : ''}</div>
+              <div>💳 เงื่อนไขชำระ: <strong>${Layout.esc(o.paymentTermLabel||'-')}</strong>${o.depositRequiredAmount > 0 && o.paymentTermMode !== 'full' ? ` · มัดจำ ${Layout.money(o.depositRequiredAmount)}` : ''} · ค้างชำระ ${Layout.money(o.balanceAmount)}</div>
+            </div>` : ''}
             <h4 style="margin-bottom:8px;font-size:14px">รายการสินค้า</h4>
             <table class="table" style="margin-bottom:14px;font-size:13px">
               <thead><tr><th>สินค้า</th><th class="text-right">จำนวน</th><th class="text-right">ราคา</th><th class="text-right">รวม</th></tr></thead>
               <tbody>${(o.lines||[]).map(l => `<tr>
-                <td>${Layout.esc(l.productName)}${l.productSku?`<div style="font-size:11px;color:var(--gray-500)">SKU: ${Layout.esc(l.productSku)}</div>`:''}</td>
+                <td>${Layout.esc(l.productName)}${l.modifierSummary?`<div style="font-size:12px;color:#4F46E5">${Layout.esc(l.modifierSummary)}</div>`:''}${l.productSku?`<div style="font-size:11px;color:var(--gray-500)">SKU: ${Layout.esc(l.productSku)}</div>`:''}</td>
                 <td class="text-right">${l.quantity} ${Layout.esc(l.unit||'')}</td>
                 <td class="text-right">${Layout.money(l.unitPrice)}</td>
                 <td class="text-right font-semibold">${Layout.money(l.totalAmount)}</td>

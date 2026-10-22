@@ -64,4 +64,10 @@ public interface ICmsCommerceService
     Task<UploadSlipResponse?> RecordPaymentSlipAsync(Guid companyId, Guid siteId, Guid orderId, IFormFile file);
     Task<ConvertToQuotationResponse?> ConvertOrderToQuotationAsync(Guid companyId, Guid siteId, Guid orderId, string? customerNotes, IDocumentService docService);
     Task<StorefrontPaymentOptions> GetStorefrontPaymentOptionsAsync(Guid companyId, Guid siteId);
+
+    // ===== สินค้าตามสั่ง (ทีม K · 2026-10-22) =====
+    /// <summary>คิดยอดก่อนยืนยันสั่งซื้อ (ค่าส่ง · วันรับ · ยอดที่ต้องจ่ายตอนนี้) — ตัวคิดเดียวกับ CreateOrderAsync</summary>
+    Task<CheckoutQuoteResponse> CheckoutQuoteAsync(Guid companyId, Guid siteId, Guid cartId, CheckoutQuoteRequest request);
+    /// <summary>ลูกค้าแนบรูปตัวอย่างของตัวเลือกชนิด "รูป" — คืน id ไฟล์ให้ส่งมากับการใส่ตะกร้า</summary>
+    Task<OptionImageUploadResponse> UploadOptionImageAsync(Guid companyId, Guid siteId, Guid cartId, IFormFile file);
 }

@@ -219,6 +219,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Adversarial1BankStatements());   // ฝ่ายค้านรอบ 1 — ยอดคงเหลือ statement ที่ไม่รู้ (บล็อกท้ายไฟล์)
         list.AddRange(AdversarialEtlStatements());   // ฝ่ายค้านรอบ ETL — ปิดค่า "ลงอัตโนมัติ" ที่ยังไม่มีผล (บล็อกท้ายไฟล์)
         list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
+        list.AddRange(TeamKPosMtoStatements());   // ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่ง (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7700,4 +7701,52 @@ public static class DatabaseMigrationHelper
             TaxCol("VendorKnownGoodValues"),
         };
     }
+
+    /// <summary>ทีม K (2026-10-22) — POS + สินค้าตามสั่ง · <b>บล็อกเดียว · รันทุกบูตได้</b> · ค่าเดิม = NULL/0/false (พฤติกรรมเดิมทุกแถว)
+    /// <para>① <c>PosOrders.SourceBookingType/SourceBookingId</c> + unique partial index "การจองหนึ่งรายการมีบิลที่ยังไม่ยกเลิกได้ใบเดียว"
+    /// (สถานะ 4 = Voided ไม่นับ · ด่านเดียวกับ <c>Helpers.PosBookingIntake</c> ที่ชั้นฐานข้อมูล กันสองเครื่องกดพร้อมกัน) ·
+    /// ② <c>PosOrderItems</c> ช่างรายบรรทัด + รายการพิเศษ · ③ ช่างที่จองไว้บน <c>PosReservations</c>/<c>SiteBookings</c> ·
+    /// ④ option builder บน <c>ProductModifierGroups/Options</c> · ⑤ สินค้าตามสั่งบน <c>SiteProducts/SiteCartItems/SiteOrderLines/SiteOrders/SiteCommerceConfigs</c></para>
+    /// <para>ไม่มีการย้ายค่า — ข้อมูลเดิมไม่มีอะไรผิดที่ต้องซ่อม (คอลัมน์ใหม่ทั้งหมด)</para></summary>
+    internal static IReadOnlyList<string> TeamKPosMtoStatements() => new[]
+    {
+        """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "SourceBookingType" varchar(32) NULL;""",
+        """ALTER TABLE "PosOrders" ADD COLUMN IF NOT EXISTS "SourceBookingId" uuid NULL;""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PosOrders_SourceBooking_Open" ON "PosOrders" ("CompanyId", "SourceBookingType", "SourceBookingId") WHERE "SourceBookingId" IS NOT NULL AND "IsDeleted" = false AND "Status" <> 4;""",
+        """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "StaffId" uuid NULL;""",
+        """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "StaffName" varchar(200) NULL;""",
+        """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "IsCustomItem" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "CustomItemKind" varchar(20) NULL;""",
+        """ALTER TABLE "PosOrderItems" ADD COLUMN IF NOT EXISTS "RevenueAccountId" uuid NULL;""",
+        """CREATE INDEX IF NOT EXISTS "IX_PosOrderItems_StaffId" ON "PosOrderItems" ("StaffId") WHERE "StaffId" IS NOT NULL;""",
+        """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "AssignedStaffId" uuid NULL;""",
+        """ALTER TABLE "PosReservations" ADD COLUMN IF NOT EXISTS "AssignedStaffName" varchar(200) NULL;""",
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "PosOrderId" uuid NULL;""",
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "AssignedStaffId" uuid NULL;""",
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "AssignedStaffName" varchar(200) NULL;""",
+        """ALTER TABLE "ProductModifierGroups" ADD COLUMN IF NOT EXISTS "InputType" varchar(20) NULL;""",
+        """ALTER TABLE "ProductModifierGroups" ADD COLUMN IF NOT EXISTS "MinSelect" integer NULL;""",
+        """ALTER TABLE "ProductModifierGroups" ADD COLUMN IF NOT EXISTS "MaxSelect" integer NULL;""",
+        """ALTER TABLE "ProductModifierGroups" ADD COLUMN IF NOT EXISTS "MaxTextLength" integer NULL;""",
+        """ALTER TABLE "ProductModifierGroups" ADD COLUMN IF NOT EXISTS "InputPriceAdjustment" numeric(18,2) NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "ProductModifierGroups" ADD COLUMN IF NOT EXISTS "InputExtraLeadDays" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "ProductModifierOptions" ADD COLUMN IF NOT EXISTS "ExtraLeadDays" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SiteProducts" ADD COLUMN IF NOT EXISTS "LeadTimeDays" integer NULL;""",
+        """ALTER TABLE "SiteProducts" ADD COLUMN IF NOT EXISTS "WeightKg" numeric(12,3) NULL;""",
+        """ALTER TABLE "SiteCartItems" ADD COLUMN IF NOT EXISTS "ModifierSelectionsJson" text NULL;""",
+        """ALTER TABLE "SiteCartItems" ADD COLUMN IF NOT EXISTS "ExtraLeadDays" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SiteOrderLines" ADD COLUMN IF NOT EXISTS "ModifierSelectionsJson" text NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "FulfillmentMethod" varchar(20) NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "ShippingRateId" uuid NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "EarliestReadyDate" timestamptz NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "PaymentTermMode" varchar(32) NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "DepositRequiredAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "EnablePickup" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoPaymentTermMode" varchar(32) NULL;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoDepositPercent" numeric(9,4) NULL;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoDepositFixedAmount" numeric(18,2) NULL;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoClosedWeekdays" varchar(32) NULL;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoCutoffHour" integer NULL;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoSkipCompanyHolidays" boolean NOT NULL DEFAULT true;""",
+    };
 }

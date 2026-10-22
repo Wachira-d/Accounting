@@ -5329,3 +5329,14 @@ _2026-10-22 ทีม G — แท็บ "ตรวจสอบการใช�
 ช่องทางตัดสินที่ `Helpers/DocumentCreationChannel.cs` ตัวเดียว จากหลักฐานที่มีจริง (OriginModule → ตารางผูก FK กลับ → ป้าย CreatedBy ของเส้นระบบ
 → ใบล่าสุดของรายการประจำ) · ไม่มีหลักฐาน (เช่น LINE ที่บันทึกเป็นอีเมล) = "ไม่ทราบ" ไม่เดา. หน้า `/pages/admin-company-usage.html` (ภาพรวมทุกบริษัทต่อเดือน)
 คงเดิม — แท็บใหม่คือมุมเจาะลึกบริษัทเดียวหลายเดือน ไม่ทำซ้ำ. ไม่เปลี่ยน flow เอกสาร (อ่านอย่างเดียว) ⇒ DOCUMENT_FLOW ไม่ขยับ._
+
+_2026-10-22 ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่งบนร้านออนไลน์ (`docs/POS_MTO_DESIGN.md`):
+**POS** — ปุ่ม 📅 คิวจอง (`GET/POST pos/booking-queue`) ดึงการจองเว็บ + การจองโต๊ะของวันมาเปิดบิล (เติมลูกค้า/บริการ/ช่าง · `PosOrder.SourceBooking*`
++ unique partial index กันเปิดซ้ำ · ตัวตัดสิน `Helpers/PosBookingIntake`) · ช่างรายบรรทัด `PosOrderItem.StaffId` → ฐานคอมมิชชันใหม่ `PosStaffSales`
+(`Helpers/PosStaffAttribution` — ก่อน VAT · หลังส่วนลดท้ายบิล · หักคืน) + `GET pos/reports/staff-sales` · ปุ่ม ➕ รายการพิเศษ (`Helpers/PosCustomItemRule` ·
+ไม่ตัดสต็อก · บัญชีรายได้เลือกได้ — JE ขาย/คืนแบ่งเครดิตด้วย `Helpers/PosRevenueSplit` ตัวเดียว) · รวมบิลคัดลอก VAT รายบรรทัดตามจริง (เดิม 0).
+**ร้านออนไลน์** — option builder ต่อยอด modifier เดิม (`Helpers/ModifierSelectionRules` — server คิดราคา · หน้า `pos-modifiers.html` ผูกสินค้าได้แล้ว
+เดิมส่ง `productIds: []` เสมอ) · รูปตัวอย่างผ่านที่เก็บไฟล์กลาง · วันรับเร็วสุด `Helpers/MtoLeadTime` · ค่าส่ง `Helpers/ShippingFeeRules` (เดิม `ShippingAmount`
+ไม่มีผู้เขียน · ค่าเหมาจ่ายระดับร้านไม่มีผู้อ่าน) · บรรทัดค่าส่ง VAT ตามสินค้าในบิล (§79 — เดิม 0) · เงื่อนไขชำระ `Helpers/MtoPaymentTerms`
+ใช้ร่วมกับสลิป/ช่องจ่ายออนไลน์ (ลงบัญชีมัดจำผ่านเส้นรับชำระบางส่วนเดิม) · หน้าตั้งค่าใน `cms-orders.html` · ช่องวันผลิต/น้ำหนักใน `cms-edit.html`.
+Backlog (ยกเว้น VAT รายบรรทัดบน POS · หักมัดจำการจองในบิล POS · ค่าส่งตามระยะทาง · ตัวเลือกบน POS) อยู่ใน `docs/POS_MTO_DESIGN.md` §4._

@@ -2470,6 +2470,11 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<PosOrder>(e =>
         {
             e.HasIndex(o => new { o.CompanyId, o.OrderNumber }).IsUnique();
+            // ทีม K — การจองหนึ่งรายการมีบิลที่ยังไม่ยกเลิกได้ใบเดียว (ต้องตรงกับ DatabaseMigrationHelper.TeamKPosMtoStatements · 4 = Voided)
+            e.Property(o => o.SourceBookingType).HasMaxLength(32);
+            e.HasIndex(o => new { o.CompanyId, o.SourceBookingType, o.SourceBookingId }).IsUnique()
+                .HasFilter("\"SourceBookingId\" IS NOT NULL AND \"IsDeleted\" = false AND \"Status\" <> 4")
+                .HasDatabaseName("UX_PosOrders_SourceBooking_Open");
             e.Property(o => o.OrderNumber).HasMaxLength(50);
             e.Property(o => o.SubTotal).HasPrecision(18, 2);
             e.Property(o => o.DiscountAmount).HasPrecision(18, 2);

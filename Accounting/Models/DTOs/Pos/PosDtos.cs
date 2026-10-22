@@ -154,7 +154,10 @@ public record OrderResponse(
     // หัวสลิป: "ใบเสร็จรับเงิน" หรือ "ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ"
     string? SlipTitle = null,
     // เหตุผลที่ออกอย่างย่อไม่ได้ — โชว์เป็นคำเตือนพร้อมทางไปต่อ (null = ออกได้ปกติ)
-    string? AbbreviatedBlockedReason = null);
+    string? AbbreviatedBlockedReason = null,
+    // คิวการจองที่เปิดบิลนี้ (ทีม K) — null = ไม่ได้มาจากการจอง
+    string? SourceBookingType = null,
+    Guid? SourceBookingId = null);
 
 // ===== Offline sale sync — atomic create+pay+complete, idempotent =====
 public record OfflineOrderRequest(
@@ -196,7 +199,15 @@ public record CreateOrderItemRequest(
     decimal UnitPrice,
     decimal DiscountPercent = 0,
     string? Notes = null,
-    List<CreateItemModifierRequest>? Modifiers = null);
+    List<CreateItemModifierRequest>? Modifiers = null,
+    // ── ทีม K · 2026-10-22 ──
+    // ช่าง/พนักงานผู้ทำรายการนี้ (UserId สมาชิกบริษัท) — ฐานคอมมิชชันรายบรรทัด
+    Guid? StaffId = null,
+    // รายการพิเศษ (Quick Add): ไม่มี ProductId/ServicePackageId · ไม่ตัดสต็อก · ชนิด = Helpers.PosCustomItemRule.Kinds
+    bool IsCustomItem = false,
+    string? CustomItemKind = null,
+    // บัญชีรายได้ของรายการพิเศษ — null = รายได้ขายมาตรฐาน (41000)
+    Guid? RevenueAccountId = null);
 
 public record OrderItemResponse(
     Guid Id,
@@ -217,7 +228,12 @@ public record OrderItemResponse(
     string? Notes,
     List<ItemModifierResponse> Modifiers,
     List<ServiceActivityResponse> ServiceActivities,
-    decimal RefundedQuantity = 0);
+    decimal RefundedQuantity = 0,
+    Guid? StaffId = null,
+    string? StaffName = null,
+    bool IsCustomItem = false,
+    string? CustomItemKind = null,
+    Guid? RevenueAccountId = null);
 
 // ===== POS Order Item Modifier =====
 public record CreateItemModifierRequest(
@@ -386,14 +402,31 @@ public record CreateModifierGroupRequest(
     bool AllowMultiple,
     int SortOrder = 0,
     List<Guid>? ProductIds = null,
-    List<CreateModifierOptionRequest>? Options = null);
+    List<CreateModifierOptionRequest>? Options = null,
+    // ── dynamic option builder (ทีม K) — ชนิดช่อง = Helpers.ModifierInputType · null = อนุมานจาก AllowMultiple ──
+    string? InputType = null,
+    int? MinSelect = null,
+    int? MaxSelect = null,
+    int? MaxTextLength = null,
+    decimal InputPriceAdjustment = 0,
+    int InputExtraLeadDays = 0);
 
+/// <summary>แก้ไขกลุ่ม — ทุกช่อง null = ไม่เปลี่ยน · <c>ProductIds</c> ส่งมา = แทนที่ชุดสินค้าที่ผูกทั้งหมด (ว่าง = ถอดทุกตัว) ·
+/// ช่องตัวเลขที่ "ล้างค่าได้" (MinSelect/MaxSelect/MaxTextLength) ใช้ธง <c>ClearLimits</c> ล้างเป็น null</summary>
 public record UpdateModifierGroupRequest(
     string? Name,
     string? NameEn,
     bool? IsRequired,
     bool? AllowMultiple,
-    int? SortOrder);
+    int? SortOrder,
+    List<Guid>? ProductIds = null,
+    string? InputType = null,
+    int? MinSelect = null,
+    int? MaxSelect = null,
+    int? MaxTextLength = null,
+    decimal? InputPriceAdjustment = null,
+    int? InputExtraLeadDays = null,
+    bool ClearLimits = false);
 
 public record ModifierGroupResponse(
     Guid Id,
@@ -402,7 +435,17 @@ public record ModifierGroupResponse(
     bool IsRequired,
     bool AllowMultiple,
     int SortOrder,
-    List<ModifierOptionResponse> Options);
+    List<ModifierOptionResponse> Options,
+    // ชนิดช่องที่ใช้จริง (อนุมานแล้ว — หน้าเว็บไม่ต้องเดา) + ค่าตั้ง + ขอบเขตจำนวนเลือกที่ด่านใช้
+    string InputType = "radio",
+    int? MinSelect = null,
+    int? MaxSelect = null,
+    int? MaxTextLength = null,
+    decimal InputPriceAdjustment = 0,
+    int InputExtraLeadDays = 0,
+    int EffectiveMinSelect = 0,
+    int EffectiveMaxSelect = 1,
+    List<Guid>? ProductIds = null);
 
 // ===== Product Modifier Option =====
 public record CreateModifierOptionRequest(
@@ -410,7 +453,8 @@ public record CreateModifierOptionRequest(
     string? NameEn,
     decimal PriceAdjustment = 0,
     bool IsDefault = false,
-    int SortOrder = 0);
+    int SortOrder = 0,
+    int ExtraLeadDays = 0);
 
 public record UpdateModifierOptionRequest(
     string? Name,
@@ -418,7 +462,8 @@ public record UpdateModifierOptionRequest(
     decimal? PriceAdjustment,
     bool? IsDefault,
     bool? IsActive,
-    int? SortOrder);
+    int? SortOrder,
+    int? ExtraLeadDays = null);
 
 public record ModifierOptionResponse(
     Guid Id,
@@ -427,7 +472,8 @@ public record ModifierOptionResponse(
     decimal PriceAdjustment,
     bool IsDefault,
     int SortOrder,
-    bool IsActive);
+    bool IsActive,
+    int ExtraLeadDays = 0);
 
 // ===== Staff Commission Summary =====
 public record CommissionSummaryResponse(
@@ -555,3 +601,55 @@ public record PosTopProductSummary(
 // ===== Order Status Update =====
 public record UpdateOrderStatusRequest(PosOrderStatus Status);
 public record UpdateItemStatusRequest(PosItemStatus Status);
+
+// ===== คิวการจองของวัน → เปิดบิล (ทีม K · 2026-10-22) =====
+/// <summary>หนึ่งแถวในคิว — รวมสองแหล่ง (การจองบริการจากเว็บ + การจองโต๊ะ/คิวของ POS) ·
+/// <c>CanOpen</c>/<c>BlockReason</c>/<c>Warning</c> มาจากตัวตัดสินเดียว (<c>Helpers.PosBookingIntake</c>) — หน้าเว็บแสดงอย่างเดียว</summary>
+public record PosBookingQueueItem(
+    string Source,
+    Guid BookingId,
+    string? BookingNumber,
+    string CustomerName,
+    string? Phone,
+    DateTime StartAt,
+    int DurationMinutes,
+    string? ServiceName,
+    decimal? ServicePrice,
+    string? TableNumber,
+    int PartySize,
+    Guid? StaffId,
+    string? StaffName,
+    string Status,
+    string StatusLabel,
+    bool CanOpen,
+    string? BlockReason,
+    string? Warning,
+    Guid? LinkedOrderId,
+    string? LinkedOrderNumber,
+    decimal DepositPaidAmount);
+
+public record OpenOrderFromBookingRequest(
+    Guid SessionId,
+    string Source,
+    Guid BookingId,
+    // ช่างที่แคชเชียร์เลือก/แก้ก่อนเปิด — null = ใช้ช่างที่จองไว้ · ส่งมาแล้วบันทึกกลับลงการจองด้วย
+    Guid? StaffId = null);
+
+public record SetItemStaffRequest(Guid? StaffId);
+
+/// <summary>พนักงานที่เลือกเป็นช่างได้ (สมาชิกของบริษัท)</summary>
+public record PosStaffOption(Guid UserId, string Name);
+
+/// <summary>ยอดขายรายช่างจากบิล POS (ฐานคอมมิชชันแผน PosStaffSales / ต้นทุนแรงงาน) — คำนวณด้วย <c>Helpers.PosStaffAttribution</c></summary>
+public record PosStaffSalesRow(Guid StaffId, string StaffName, decimal NetSales, int LineCount);
+
+/// <summary>ตัวเลือกของปุ่ม "รายการพิเศษ" — ชนิด + บัญชีรายได้ที่เลือกได้ (ผังหมวดรายได้ที่ลงรายการได้ของบริษัทนี้) ·
+/// <c>DefaultAccountLabel</c> = บัญชีที่ใช้เมื่อไม่เลือก · <c>VatNote</c> = อธิบายว่า VAT คิดตามอัตราของบิล (server เป็นผู้บอก)</summary>
+public record PosCustomItemOptions(
+    List<PosOptionValue> Kinds,
+    List<PosRevenueAccountOption> RevenueAccounts,
+    string DefaultAccountLabel,
+    string VatNote);
+
+public record PosOptionValue(string Value, string Label);
+public record PosRevenueAccountOption(Guid Id, string Code, string Name);
