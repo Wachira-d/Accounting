@@ -271,10 +271,9 @@ public class LineBotService : ILineBotService
         {
             var now = DateTime.UtcNow;
             var from = new DateTime(now.Year, now.Month, 1);
-            var lines = await _db.JournalEntryLines
+            var lines = await Accounting.Helpers.ReportableJournal.WherePeriodActivity(_db.JournalEntryLines)
                 .Include(l => l.JournalEntry).Include(l => l.Account)
                 .Where(l => l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.Status == Models.Enums.JournalEntryStatus.Posted
                     && l.JournalEntry.EntryDate >= from
                     && l.JournalEntry.EntryDate <= now)
                 .ToListAsync();

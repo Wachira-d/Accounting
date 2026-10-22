@@ -858,8 +858,9 @@ public class GatewaySettlementService : IGatewaySettlementService
         var claimed = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.AccountId == vatAcc.Id
                 && l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
-                && l.JournalEntry.ReversedByEntryId == null
+                // ★ ทีม O 2026-10-22 (ฝ่ายค้าน): ReverseJournalEntryAsync คัดลอก Tags ไปใบกลับรายการ ⇒ เดิมตัดใบเคลมที่ถูกกลับ แต่ใบกลับยังติด tag
+                // และถูกนับ ⇒ claimed = −X ⇒ VAT ค่าธรรมเนียมที่ "ยังเคลมได้" เกิน 2 เท่า · นับคู่ใบเดิม+ใบกลับ (หักล้าง = เคลมคืนสถานะยังไม่เคลม)
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && (l.JournalEntry.Tags == tag || l.JournalEntry.Tags == residueTag))
             .SumAsync(l => l.CreditAmount - l.DebitAmount, ct);
 

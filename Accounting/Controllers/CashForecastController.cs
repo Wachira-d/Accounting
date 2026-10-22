@@ -65,7 +65,7 @@ public class CashForecastController : ControllerBase
         var cashBalance = await _db.JournalEntryLines.AsNoTracking()
             .Include(l => l.Account).Include(l => l.JournalEntry)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.Account != null && l.Account.AccountCode.StartsWith("111")
                 && l.JournalEntry.EntryDate <= today)
             .SumAsync(l => l.DebitAmount - l.CreditAmount);

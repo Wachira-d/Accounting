@@ -74,6 +74,27 @@ public static class PnlComparison
         return list;
     }
 
+    /// <summary>
+    /// <paramref name="count"/> ช่วง<b>เต็ม</b>ล่าสุด เรียงเก่า→ใหม่ โดยช่วงสุดท้ายคือช่วงที่ <paramref name="anchor"/> อยู่ — ตัวแบ่งช่วงเดียวกับ
+    /// <see cref="BuildPeriods"/> (ไตรมาส/ปี ตาม<b>รอบบัญชี</b>) · ใช้กับกราฟแนวโน้มรายงานผู้บริหาร (ทีม O 2026-10-22: เดิมกราฟใช้ไตรมาส/ปีปฏิทิน
+    /// ⇒ บริษัทรอบ เม.ย. เห็น "Q1" = ม.ค.–มี.ค. ซึ่งคือไตรมาส 4 ของรอบตัวเอง) · ไม่มีเพดาน <see cref="MaxColumns"/> (ผู้เรียกคุมจำนวนเอง)
+    /// </summary>
+    public static List<PnlPeriod> TrailingPeriods(DateTime anchor, int count, PnlCompareGranularity granularity, int fiscalStartMonth)
+    {
+        if (count < 1) count = 1;
+        var sm = FiscalYear.NormalizeStartMonth(fiscalStartMonth);
+        var list = new List<PnlPeriod>(count);
+        var d = anchor.Date;
+        for (var i = 0; i < count; i++)
+        {
+            var (start, endExclusive, label) = Bucket(d, granularity, sm);
+            list.Add(new PnlPeriod(label, start, endExclusive.AddDays(-1), false));
+            d = start.AddDays(-1);
+        }
+        list.Reverse();
+        return list;
+    }
+
     private static (DateTime Start, DateTime EndExclusive, string Label) Bucket(DateTime d, PnlCompareGranularity g, int sm)
     {
         switch (g)

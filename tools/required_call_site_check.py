@@ -9117,6 +9117,58 @@ RULES += [
          why=_PLWHT + "OCR ยอดบาทบนใบต่างสกุล: หลักฐานแหล่งเดียวต้องเทียบอัตรา ธปท."),
 ]
 
+# ทีม O 2026-10-22 (คำสั่งเจ้าของ): "JE ไหนนับเข้ารายงาน" ผ่าน Helpers/ReportableJournal ตัวเดียว — เดิม ภ.ง.ด.50/51 · FP&A · งบรวม · ECL ·
+# กระทบยอดสต็อก กรอง Posted อย่างเดียว ⇒ ใบเดิมที่ถูกกลับรายการ (Reversed) หาย แต่ใบกลับรายการ (Posted) ยังนับ ⇒ ยอดถูกหักซ้ำ (ฐานภาษีต่ำกว่าจริง)
+_RJ_LINES = ".WherePeriodActivity("
+_RJ_BAL = ".WhereInLedger("
+_RJ_INLINE = "ReportableJournal.LedgerStatuses.Contains("
+_RJ_WHY = "ทีม O 2026-10-22: รวมยอดรายงานต้องนับคู่กลับรายการ (Posted + Reversed) ผ่าน ReportableJournal ตัวเดียว — ห้ามกรอง Posted เอง"
+_TAX = "Services/Implementations/TaxService.cs"
+RULES += [
+    dict(file=_TAX, method="GenerateCitReport", must=["CitPeriodLines("], forbid=["JournalEntryStatus.Posted", "IsClosingEntry"],
+         why=_RJ_WHY + " · ภ.ง.ด.50 ใช้ฐานบรรทัดเดียวกับตัวเทียบความสด"),
+    dict(file=_TAX, method="BuildCitFreshnessAsync", must=["CitFreshTotalsAsync("], forbid=["JournalEntryStatus.Posted", "IsClosingEntry"],
+         why=_RJ_WHY + " · ตัวเทียบความสดต้องคิดฐานเดียวกับตอนสร้าง (ต่างกัน = ฟ้องทุกใบตลอดกาล)"),
+    dict(file=_TAX, method="CitFreshTotalsAsync", must=["CitPeriodLines("], forbid=["JournalEntryStatus.Posted"], why=_RJ_WHY),
+    dict(file=_TAX, method="CitPeriodLines", must=[_RJ_LINES, "l.JournalEntry.CompanyId == companyId"], forbid=["JournalEntryStatus.Posted"],
+         why=_RJ_WHY + " · tenant isolation (กฎ M)"),
+    dict(file=_TAX, method="GetCitRecomputeReviewAsync", must=["BuildCitFreshnessAsync(", "r.CompanyId == companyId", "TaxReportRecompute.SuggestedAction("],
+         forbid=["SaveChangesAsync("], why="ทีม O: รายงานทบทวน ภ.ง.ด.50 ที่บันทึกไว้ = อ่านอย่างเดียว · ฐานเดียวกับตัวเทียบความสด"),
+    dict(file=_TAX, method="RegenerateTaxReportAsync", must=["AddChainedAuditLog(", "TaxReportRecompute.AuditPayload("],
+         why="ทีม O (หลักการ #9): คำนวณรายงานใหม่ต้องทิ้งร่องรอยยอดเดิม→ยอดใหม่ใน audit chain"),
+    dict(file="Services/Implementations/TaxFilingExportService.cs", method="ExportPnd51Async", must=[_RJ_LINES],
+         forbid=["JournalEntryStatus.Posted"], why=_RJ_WHY + " · ภ.ง.ด.51 ฐานเดียวกับ ภ.ง.ด.50"),
+    dict(file="Services/Implementations/FinancialManagementService.Part2.cs", method="CalculateCITAsync", must=[_RJ_LINES],
+         forbid=["JournalEntryStatus.Posted"], why=_RJ_WHY),
+    dict(file="Services/Implementations/FinancialManagementService.Part2.cs", method="CreateProfitAppropriationAsync", must=[_RJ_BAL],
+         forbid=["JournalEntryStatus.Posted"], why=_RJ_WHY),
+    dict(file="Services/Implementations/FpaService.cs", method="CalculateRatiosAsync", must=[_RJ_BAL], forbid=["JournalEntryStatus.Posted"], why=_RJ_WHY),
+    dict(file="Services/Implementations/FpaService.cs", method="CalculateBreakEvenAsync", must=[_RJ_LINES], forbid=["JournalEntryStatus.Posted"], why=_RJ_WHY),
+    dict(file="Services/Implementations/FpaService.cs", method="GetMonthlyGlDataAsync", must=[_RJ_LINES], forbid=["JournalEntryStatus.Posted"], why=_RJ_WHY),
+    dict(file="Services/Implementations/ConsolidationService.cs", method="GenerateConsolidatedPnLAsync", must=[_RJ_LINES],
+         forbid=["JournalEntryStatus.Posted"], why=_RJ_WHY),
+    dict(file="Services/Implementations/ConsolidationService.cs", method="GetAccountBalances", must=[_RJ_BAL], forbid=["JournalEntryStatus.Posted"], why=_RJ_WHY),
+    dict(file="Services/Background/EclAllowanceJob.cs", method="ProcessCompanyAsync", must=[_RJ_INLINE],
+         forbid=["l.JournalEntry.Status == JournalEntryStatus.Posted"], why=_RJ_WHY + " · ยอดค่าเผื่อผิด ⇒ JE ปรับปรุงผิด"),
+    dict(file="Services/Implementations/ProductService.cs", method="CreateInventorySnapshotAsync", must=[_RJ_INLINE],
+         forbid=["l.JournalEntry.Status == JournalEntryStatus.Posted"], why=_RJ_WHY + " · ยอด GL 115 ผิด ⇒ JE ปรับสต็อกผิด"),
+    dict(file="Services/Implementations/ProductService.cs", method="GetInventoryGlTieOutAsync", must=[_RJ_INLINE],
+         forbid=["l.JournalEntry.Status == JournalEntryStatus.Posted"], why=_RJ_WHY),
+    dict(file="Controllers/CashForecastController.cs", method="Get", must=[_RJ_INLINE],
+         forbid=["l.JournalEntry.Status == JournalEntryStatus.Posted"], why=_RJ_WHY),
+    # ฝ่ายค้านรอบแรกของทีม O: "ตัดแค่ใบเดิม" (Posted && ReversedByEntryId == null) ⇒ ใบกลับรายการติดลบ
+    dict(file="Services/Payments/GatewaySettlementService.cs", method="LoadFeeVatAgingAsync", must=[_RJ_INLINE],
+         why=_RJ_WHY + " · ใบกลับรายการคัดลอก Tags ⇒ เดิม claimed = −X ⇒ VAT ค่าธรรมเนียมเคลมได้เกิน 2 เท่า"),
+    dict(file=DOC, method="GetDepositsAsync", must=[_RJ_INLINE], why=_RJ_WHY + " · มัดจำที่ยกเลิกต้องไม่ติดลบ"),
+    dict(file=DOC, method="GetDepositDiagnosticsAsync", must=[_RJ_INLINE], why=_RJ_WHY),
+    dict(file=DOC, method="GetDepositCenterAsync", must=[_RJ_INLINE], why=_RJ_WHY),
+    dict(file=DOC, method="CheckBudgetCommitmentAsync", must=["ReportableJournal.WherePeriodActivity("], why=_RJ_WHY + " · ไม่นับใบปิดบัญชี"),
+    dict(file="Services/Background/EclAllowanceJob.cs", method="ProcessCompanyAsync", must=["EclAllowanceBasis.ChangeNote(", "notifications.SendAsync("],
+         why="ฝ่ายค้านข้อ 3 (หลักการ #7): ฐานค่าเผื่อเปลี่ยนจากการแก้ ⇒ บอกใน JE + แจ้งเจ้าของ ไม่ลงเงียบ"),
+    dict(file="Services/Implementations/AccountingService.cs", method="LoadSourceDocumentMapAsync", must=["d.CompanyId == companyId"],
+         why="ทีม O 2026-10-22: กฎ M — แผนที่เอกสารต้นทางของ drill-down ต้องกรองบริษัท"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

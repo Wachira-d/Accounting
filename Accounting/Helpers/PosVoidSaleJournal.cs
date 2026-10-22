@@ -104,7 +104,7 @@ public static class PosVoidSaleJournal
         };
 
     private static bool InLedger(PosJournalChainEntry e)
-        => e.Status is JournalEntryStatus.Posted or JournalEntryStatus.Reversed;
+        => ReportableJournal.InLedger(e.Status);   // ชุดสถานะ "อยู่ในสมุด" ตัวเดียว (ทีม O 2026-10-22)
 
     private static Dictionary<Guid, decimal> NetByAccount(IEnumerable<PosJournalChainEntry> entries)
     {
