@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using Accounting.Models.Enums;
+using Accounting.Helpers;
 
 namespace Accounting.Models.DTOs.Cms;
 
@@ -58,6 +59,10 @@ public class BookingSiteSettingsDto
     public int BufferAfterMinutes { get; set; }
     public int MinAdvanceHours { get; set; } = 1;
     public int MaxAdvanceDays { get; set; } = 30;
+    /// <summary>จังหวะออกใบกำกับภาษีของบริการแบบ Guaranteed (คำตัดสินข้อ 155) · คำตอบมีค่าเสมอ · ตอนบันทึก null = คงค่าเดิม (ไม่รีเซ็ตเงียบ)</summary>
+    public BookingInvoiceTiming? GuaranteedInvoiceTiming { get; set; }
+    /// <summary>ตัวเลือก + ผลทางภาษี (server ประกอบจาก <c>BookingInvoiceTimingPolicy.Options</c> · หน้าเว็บแสดงตรง ๆ) — ไม่อ่านตอนบันทึก</summary>
+    public List<BookingInvoiceTimingOption> GuaranteedInvoiceTimingOptions { get; set; } = new();
 }
 
 /// <summary>ผู้ให้บริการ/ห้อง/อุปกรณ์ — <see cref="ServiceIds"/> = ประเภทบริการที่รับได้ · <see cref="Schedule"/> = เวลาเข้า-ออกงาน + วันหยุด/วันลา
@@ -286,7 +291,12 @@ public class BookingResponse
     /// <summary>รอบ 194 (C-1): ผลของขั้น ERP อัตโนมัติตอนเปลี่ยนสถานะ (ยกเลิก/เสร็จ) ที่ผู้กดต้องรู้ — ใบมัดจำไม่ถูกยกเลิก ·
     /// ต้องออกใบกำกับเอง · ขั้นที่ล้มพร้อมเหตุ · ว่าง = ไม่มีอะไรต้องทำ (ข้อความเดียวกันถูกประทับบน <c>InternalNotes</c> ด้วย)</summary>
     public List<string> ErpNotices { get; set; } = new();
+    /// <summary>แสดงปุ่ม "รับเงินแล้ว — ออกใบกำกับภาษี" ไหม (server ตัดสินด้วย <c>BookingInvoiceTimingPolicy.Decide(PaymentReceived)</c> · คำตัดสินข้อ 155)</summary>
+    public bool CanIssueTaxInvoiceNow { get; set; }
 }
+
+/// <summary>"รับเงินแล้ว — ออกใบกำกับภาษี" (คำตัดสินข้อ 155) · <see cref="ReceivedDate"/> = วันที่รับเงินจริง (ว่าง = วันนี้ · ห้ามอนาคต) ใช้เป็นวันที่ใบกำกับ</summary>
+public record IssueBookingTaxInvoiceRequest(DateTime? ReceivedDate);
 
 public class BookingListResponse
 {

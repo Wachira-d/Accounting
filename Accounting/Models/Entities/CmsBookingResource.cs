@@ -12,6 +12,8 @@ public class SiteBookingSettings : TenantEntity
     public int BufferAfterMinutes { get; set; }
     public int MinAdvanceHours { get; set; } = 1;
     public int MaxAdvanceDays { get; set; } = 30;
+    /// <summary>จังหวะออกใบกำกับภาษีของบริการแบบ Guaranteed (คำตัดสินข้อ 155 · ตัวตัดสิน <c>Helpers/BookingInvoiceTimingPolicy</c>) · 0 = เดิม (ใบกำกับตอนจอง)</summary>
+    public BookingInvoiceTiming GuaranteedInvoiceTiming { get; set; } = BookingInvoiceTiming.TaxInvoiceAtBooking;
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>

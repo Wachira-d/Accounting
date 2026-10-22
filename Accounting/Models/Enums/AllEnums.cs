@@ -1484,6 +1484,16 @@ public enum BookingType
     PrePayment = 4
 }
 
+/// <summary>จังหวะออกใบกำกับภาษีของการจองแบบ <see cref="BookingType.Guaranteed"/> (ค่าตั้งระดับไซต์ · คำตัดสินเจ้าของ 2026-10-22 ข้อ 155 ·
+/// ตัวตัดสินเดียว <c>Helpers/BookingInvoiceTimingPolicy</c>) · 0 = พฤติกรรมเดิม (คอลัมน์ DEFAULT 0 ⇒ ไซต์เดิมไม่เปลี่ยน)</summary>
+public enum BookingInvoiceTiming
+{
+    /// <summary>ออกใบกำกับภาษีทันทีตอนจอง (เดิม)</summary>
+    TaxInvoiceAtBooking = 0,
+    /// <summary>ตอนจองออกใบยืนยันการจอง (ใบเสนอราคา — ไม่ลงบัญชี) · ออกใบกำกับเมื่อรับเงินหรือให้บริการเสร็จ แล้วแต่อย่างไหนเกิดก่อน (§78/1)</summary>
+    TaxInvoiceOnPaymentOrService = 1
+}
+
 public enum BookingStatus
 {
     Pending = 0,
@@ -1501,7 +1511,9 @@ public enum ErpBookingDocumentType
     DraftServiceOrder = 1,
     AdvanceReceipt = 2,
     TaxInvoice = 3,
-    Quotation = 4
+    Quotation = 4,
+    /// <summary>ใบแจ้งหนี้ของการจอง (บริษัทไม่จด VAT ออกใบกำกับไม่ได้ §90/2 · คำตัดสินข้อ 155 ฝ่ายค้าน ข้อ 6)</summary>
+    Invoice = 5
 }
 
 public enum SiteMediaType

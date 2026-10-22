@@ -206,6 +206,19 @@ public class CmsBookingController : ControllerBase
         return Ok(new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.statusUpdated", Lang)));
     }
 
+    /// <summary>คำตัดสินข้อ 155: "รับเงินแล้ว — ออกใบกำกับภาษี" ของการจอง Guaranteed (tax point §78/1 = วันรับเงิน) · ออกแล้วไม่ออกซ้ำ</summary>
+    [HttpPost("bookings/{bookingId:guid}/issue-tax-invoice")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    // ออก + อนุมัติใบกำกับเลขจริง (§86/4 แก้ย้อนหลังไม่ได้) ⇒ คีย์เดียวกับเส้นเอกสารรายรับ (แบบ POS issue-tax-invoice)
+    [RequirePermission(PermissionKeys.DocumentRevenueApprove)]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> IssueTaxInvoiceOnPayment(Guid companyId, Guid siteId, Guid bookingId,
+        [FromBody] IssueBookingTaxInvoiceRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.IssueTaxInvoiceOnPaymentAsync(companyId, siteId, bookingId, request?.ReceivedDate, userId);
+        return Ok(new ApiResponse<BookingResponse>(true, result));
+    }
+
     [HttpPost("bookings/{bookingId:guid}/sync-erp")]
     [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<Guid?>>> SyncBookingToErp(Guid companyId, Guid siteId, Guid bookingId)

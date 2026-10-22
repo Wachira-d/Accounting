@@ -1643,7 +1643,30 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **Booking flow** (`CmsBookingService.SyncBookingToErpAsync`):
   - Map `BookingType` → DocumentType:
     - `Lead/Appointment` → `Quotation` (Draft, รอ admin confirm)
-    - `Guaranteed` → `TaxInvoice` (Approved + JE auto)
+    - `Guaranteed` → ตามค่าตั้งไซต์ `SiteBookingSettings.GuaranteedInvoiceTiming` (**คำตัดสินเจ้าของข้อ 155 · 2026-10-22 · BOOKING_REVENUE_AUDIT B-2** ·
+      ตัวตัดสินเดียว `Helpers/BookingInvoiceTimingPolicy.Decide` · หน้า `cms-edit.html` แท็บบริการจอง → "ค่าตั้งการจองของเว็บไซต์" — ตัวเลือก + ผลทางภาษีจาก server):
+      - (ก) `TaxInvoiceAtBooking` (**ค่าเริ่มต้น** · คอลัมน์ DEFAULT 0 · ไม่มีแถวค่าตั้ง = ค่านี้) → `TaxInvoice` (Approved + JE auto) ตอนจอง = เดิมทุกตัวอักษร
+      - (ข) `TaxInvoiceOnPaymentOrService` → ตอนจองออก **ใบยืนยันการจอง** = `Quotation` (อนุมัติอัตโนมัติ · ไม่ลงบัญชี ไม่มีภาษีขาย · `ErpBookingDocumentType.Quotation`
+        + หมายเหตุ `DeferredNote` บนการจองและใบ) · ออกใบกำกับเมื่อ **รับเงิน** (พนักงานกด "รับเงินแล้ว — ออกใบกำกับภาษี" ·
+        `POST …/booking/bookings/{id}/issue-tax-invoice` → `IssueTaxInvoiceOnPaymentAsync`) หรือ **ให้บริการเสร็จ** (`UpdateBookingStatusAsync` → Completed)
+        แล้วแต่อย่างไหนก่อน = MIN(รับเงิน, ออกใบกำกับ, ใช้บริการ) ของ §78/1 · ออกด้วยเส้นแปลงเดิม `ConvertDocumentAsync(ใบยืนยัน → TaxInvoice)` + `ApproveDocumentAsync`
+        (SystemWorkflow) — บริษัทไม่จด VAT ⇒ `Invoice` (§90/2) · ผูกใบใหม่กับการจองก่อนอนุมัติ (อนุมัติล้ม ⇒ ครั้งถัดไปอนุมัติใบร่างนั้น ไม่แปลงซ้ำ)
+      - **ไม่ออกซ้ำ**: ใบที่ผูกเป็นใบกำกับ/ใบแจ้งหนี้/ใบเสร็จที่ออกแล้ว หรือมีใบชนิดนั้นที่แปลงจากใบยืนยัน (พนักงานแปลงเองที่หน้าเอกสาร · `RelatedDocumentId`)
+        ⇒ `AlreadyIssued` (ผูกใบนั้นกับการจอง) · ทำใต้ล็อก session ต่อการจอง (`AdvisoryLockKey.CmsBookingInvoice` — กดสองแท็บพร้อมกันไม่แปลงสองใบ) ·
+        **ไม่มีเอกสารผูก** (ขั้น ERP ตอนจองล้ม เช่น โควตาใบเสนอราคาเต็ม) ⇒ กดรับเงิน (ทุกโหมด) / ให้บริการเสร็จ (โหมด ข) สร้างใบกำกับตรงด้วยเส้นสร้างเอกสารเดิม
+        (`SyncBookingToErpAsync` overload `taxDocumentNow`) · ใบที่ผูกถูกยกเลิก ⇒ ไม่ออกเอง + ข้อความให้ออกมือ · **tax point ไม่หลุดเพราะค่าตั้ง**: หลังจองตัดสินจากเอกสารที่ผูกจริง ไม่ใช่ค่าตั้งปัจจุบัน
+        (จองตอน (ข) แล้วสลับกลับ (ก) ⇒ ยังออกใบกำกับเมื่อรับเงิน/ให้บริการ) · **ไม่มา (NoShow)** โหมด (ข) ⇒ ไม่ออกใบกำกับ (ยังไม่มี tax point) + ข้อความบอกให้กด
+        "รับเงินแล้ว" ถ้าเรียกเก็บค่าการันตี · **ยกเลิก** = `CmsBookingCancelPolicy.DecideOnCancel` เดิม (ใบยืนยัน/ใบกำกับที่ผูก ⇒ void) ·
+        **คืนเงิน**: การจองนัดหมายยังไม่มีเส้นรับ/คืนเงินในระบบ (B-4) — คืนที่หน้าเอกสาร (ใบลดหนี้) เหมือนเดิม ·
+        **ฝ่ายค้านทีม N (หลัง merge ทีม K บิล POS)**: (1) **บิล POS ของการจองปิดแล้ว ⇒ ไม่ออกใบกำกับจากการจอง** (`SettledByPosBill` — รายได้/ภาษีขายอยู่ที่ POS)
+        + void ใบยืนยันการจอง + หมายเหตุ · บิล POS เปิดอยู่ ⇒ ไม่ออก (เก็บที่ POS) · กด "รับเงินแล้ว" ขณะมีบิล POS ⇒ ปฏิเสธ (ข้อเท็จจริง `BookingPosBillState` ใน `BookingInvoiceFacts`)
+        (2) หาใบลูกที่แปลงจากใบที่ผูก **เฉพาะเมื่อใบที่ผูกเป็นใบยืนยันการจอง** (`ShouldLookForIssuedChild`) ⇒ โหมด (ก) ใบกำกับที่มีใบเสร็จลูกไม่ถูกย้ายการผูก
+        (3) endpoint ปฏิเสธการจอง Cancelled/Waitlisted/NoShow + บิล POS + มีใบภาษีอนุมัติแล้ว (`BookingInvoiceAction.Rejected` · 409 `CMS-BOOKING-ISSUE-TAX`)
+        (4) ใบที่พนักงานแปลงเองยังเป็นร่าง = ยังไม่ออก ⇒ ผูก + อนุมัติ (ล้ม ⇒ ErpNotices + หมายเหตุ "ใบยังเป็นร่าง")
+        (5) "รับเงินแล้ว" รับ `receivedDate` (ว่าง = วันนี้ไทย · อนาคต = ปฏิเสธ `PaymentDate`) ⇒ แปลงด้วย `ConvertDocumentPartialAsync` (ทุกบรรทัดเต็มจำนวน) ลงวันที่นั้น ·
+        ข้อความบอกตามจริงว่า "ยังไม่ได้บันทึกรับชำระ" (เส้นรับชำระเดิมที่หน้าเอกสาร — ยังไม่ต่ออัตโนมัติ)
+        (6) บริษัทไม่จด VAT ⇒ ป้าย `ErpBookingDocumentType.Invoice` (ค่าใหม่ 5) · ปุ่มแสดงเฉพาะการจองของโหมด (ข) (`ShowPaymentButton`) ⇒ โหมด (ก) หน้าจอเดิม ·
+        ล้มดัง: ข้อความ (`CmsBookingCancelPolicy.FailureNote`) ประทับบนการจอง + `ErpNotices` · `required_call_site_check` ล็อกทุกทางเข้า
     - อนุมัติอัตโนมัติ (ทุกชนิดที่ไม่ใช่ Lead) ล้ม ⇒ **ถอยของที่ขั้นอนุมัติทิ้งไว้ใน context** (`TrackedChangeRevert` · รอบ 194 R3 P-1 — เดิม catch แล้ว
       `SaveChanges` ต่อ ⇒ ใบ Approved ไม่มี JE) · ใบคงเป็นร่าง + หมายเหตุ ⚠️ บนการจอง ("เปิดเอกสารแล้วกดอนุมัติ") + log
     - `PrePayment` → `Receipt` ที่ `IsDeposit=true` → Cr 217xx ขายรอรับรู้
@@ -5414,6 +5437,10 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 ---
 
 ### 6.5 โมดูลที่พัก (Lodging — โรงแรม/รีสอร์ท/บ้านพัก) ✅ รอบ 124 · ปลายทาง ✅ รอบ 126
+
+> **คำตัดสินข้อ 155 (2026-10-22 · ทีม N) — จังหวะออกใบกำกับของการจองแบบ Guaranteed:** ตรวจแล้ว **ที่พักไม่มีการออกใบกำกับตอนจอง** —
+> ยืนยันการจองไม่ออกเอกสาร · ใบมัดจำออกตอนรับเงินจริงเท่านั้น (online/สลิป/เคาน์เตอร์ · tax point = วันรับเงิน) · ใบกำกับ/ใบแจ้งหนี้ออกตอนเช็คเอาต์ ⇒
+> จังหวะนี้ตรง §78/1 อยู่แล้ว ไม่ต้องมีค่าตั้งใน `lodging-settings.html` · ค่าตั้งจังหวะออกใบกำกับอยู่ที่การจองนัดหมาย CMS (§ "Booking flow" · `BookingInvoiceTimingPolicy`)
 
 > **รอบ 203 — กระดาษหลักฐานรับเงินของที่พัก (คำถามเจ้าของ 2026-10-09 · กติกาเต็มใน §5.1 "รูปแบบกระดาษหลักฐานรับเงิน")**:
 > ใบมัดจำ (`CreateDepositReceiptAsync` · `DocumentType.Receipt` + `IsDeposit`) และใบสุดท้าย (`CheckOutAsync` → `UpsertFinalDraftAsync` →

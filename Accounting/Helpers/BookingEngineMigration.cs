@@ -35,6 +35,8 @@ public static class BookingEngineMigration
             + "\"BufferBeforeMinutes\" integer NOT NULL DEFAULT 0, \"BufferAfterMinutes\" integer NOT NULL DEFAULT 0, "
             + "\"MinAdvanceHours\" integer NOT NULL DEFAULT 1, \"MaxAdvanceDays\" integer NOT NULL DEFAULT 30);",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_SiteBookingSettings_Company_Site" ON "SiteBookingSettings" ("CompanyId", "SiteId");""",
+        // คำตัดสินข้อ 155 (B-2): จังหวะออกใบกำกับของ Guaranteed · DEFAULT 0 = ใบกำกับตอนจอง (พฤติกรรมเดิม — ไซต์เดิมไม่เปลี่ยน)
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "GuaranteedInvoiceTiming" integer NOT NULL DEFAULT 0;""",
 
         // ผู้ให้บริการ / ห้อง / อุปกรณ์
         "CREATE TABLE IF NOT EXISTS \"SiteBookingResources\" (" + Base + ", \"SiteId\" uuid NOT NULL, \"Name\" varchar(256) NOT NULL, "

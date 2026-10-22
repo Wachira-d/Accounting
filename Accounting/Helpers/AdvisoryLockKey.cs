@@ -160,6 +160,8 @@ public static class AdvisoryLockKey
     public const string StorefrontSequence = "store-seq";
     /// <summary>ตัดสิน "รอบนี้ยังว่างไหม" + บันทึกการจองคิว CMS (Helpers/BookingSlotEngine) — part = บริการ หรือกลุ่มทรัพยากรร่วมของเว็บ</summary>
     public const string CmsBookingSlot = "cms-booking-slot";
+    /// <summary>ออกใบกำกับของการจองนัดหมายหลังจอง (รับเงิน/ให้บริการ · BookingInvoiceTimingPolicy ข้อ 155) — part = การจอง · กันกดซ้ำพร้อมกันแปลงสองใบ</summary>
+    public const string CmsBookingInvoice = "cms-booking-invoice";
     /// <summary>รหัสผังบัญชีที่ระบบสร้างให้อัตโนมัติ — part = ช่วงเลขที่ใช้</summary>
     public const string AccountCodeSequence = "coa-seq";
     /// <summary>เลขเอกสารของโมดูลย่อย (เบิกค่าใช้จ่าย · เงินกู้ · โอนคลัง ฯลฯ)
