@@ -28,13 +28,15 @@ public static class TaxReportRecompute
             _ => ActionNone,
         };
 
-    /// <summary>ภาพตัวเลขของรายงานหนึ่งฉบับ (ใช้เป็น OldValues/NewValues ของแถว audit) — ฟิลด์ที่เป็นผลการคำนวณเท่านั้น</summary>
-    public static string AuditPayload(TaxReport r, string stage)
+    /// <summary>ภาพตัวเลขของรายงานหนึ่งฉบับ (ใช้เป็น OldValues/NewValues ของแถว audit) — ฟิลด์ที่เป็นผลการคำนวณเท่านั้น ·
+    /// "สร้างใหม่" ลบแถวเดิมแล้วสร้างแถวใหม่ (Id ใหม่) ⇒ <paramref name="replacesReportId"/> = Id ของฉบับเดิม (แถว audit ผูก EntityId = ฉบับใหม่)</summary>
+    public static string AuditPayload(TaxReport r, string stage, Guid? replacesReportId = null)
         => JsonSerializer.Serialize(new
         {
             action = AuditAction,
             stage,
             reportId = r.Id,
+            replacesReportId,
             taxType = r.TaxType.ToString(),
             year = r.Year,
             month = r.Month,

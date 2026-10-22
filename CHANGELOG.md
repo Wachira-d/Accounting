@@ -5404,3 +5404,8 @@ FP&A (อัตราส่วน/จุดคุ้มทุน/ฐานรา
 ร่าง ⇒ สร้างใหม่ (แถว audit ยอดเดิม→ใหม่ `TaxReportRecompute.AuditPayload`) · ยื่นแล้ว ⇒ พิจารณายื่นเพิ่มเติม · กราฟแนวโน้มรายงานผู้บริหารรายไตรมาส/ปีใช้รอบบัญชี
 (`PnlComparison.TrailingPeriods`) · `AccountingService.LoadSourceDocumentMapAsync` กรอง CompanyId (กฎ M) · เทสต์ `ReportableJournalTests` + `CitReversalDbTests` ·
 ล็อกจุดเรียก `required_call_site_check` (20 กติกา) · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_2026-10-22 ทีม O (หลังฝ่ายค้าน — ไม่มีข้อ blocking): (1) เคลม VAT ค่าธรรมเนียม gateway (`LoadFeeVatAgingAsync`) และ (2) มัดจำ ×3 (`GetDepositsAsync` ·
+`GetDepositDiagnosticsAsync` · `GetDepositCenterAsync`) เดิม "ตัดแค่ใบเดิม" ⇒ ใบกลับรายการ (คัดลอก Tags/SourceDocumentId) ติดลบ ⇒ ใช้ `ReportableJournal.LedgerStatuses` ·
+(3) ECL: ฐานค่าเผื่อเปลี่ยนจากการแก้ ⇒ บอกในคำอธิบาย JE + แจ้งเจ้าของครั้งเดียว (`Helpers/EclAllowanceBasis`) · (4) งบประมาณ PO · รายได้ตามหมวด/รายวัน (integration) ·
+LINE bot · SmartSafety ไม่นับใบปิดบัญชี (`WherePeriodActivity`) · (5) เทสต์กลับรายการข้ามปี · (6) audit คำนวณรายงานใหม่มี UserId/UserEmail + `replacesReportId` · ยังไม่ได้คอมไพล์_

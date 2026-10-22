@@ -9073,6 +9073,15 @@ RULES += [
          forbid=["l.JournalEntry.Status == JournalEntryStatus.Posted"], why=_RJ_WHY),
     dict(file="Controllers/CashForecastController.cs", method="Get", must=[_RJ_INLINE],
          forbid=["l.JournalEntry.Status == JournalEntryStatus.Posted"], why=_RJ_WHY),
+    # ฝ่ายค้านรอบแรกของทีม O: "ตัดแค่ใบเดิม" (Posted && ReversedByEntryId == null) ⇒ ใบกลับรายการติดลบ
+    dict(file="Services/Payments/GatewaySettlementService.cs", method="LoadFeeVatAgingAsync", must=[_RJ_INLINE],
+         why=_RJ_WHY + " · ใบกลับรายการคัดลอก Tags ⇒ เดิม claimed = −X ⇒ VAT ค่าธรรมเนียมเคลมได้เกิน 2 เท่า"),
+    dict(file=DOC, method="GetDepositsAsync", must=[_RJ_INLINE], why=_RJ_WHY + " · มัดจำที่ยกเลิกต้องไม่ติดลบ"),
+    dict(file=DOC, method="GetDepositDiagnosticsAsync", must=[_RJ_INLINE], why=_RJ_WHY),
+    dict(file=DOC, method="GetDepositCenterAsync", must=[_RJ_INLINE], why=_RJ_WHY),
+    dict(file=DOC, method="CheckBudgetCommitmentAsync", must=["ReportableJournal.WherePeriodActivity("], why=_RJ_WHY + " · ไม่นับใบปิดบัญชี"),
+    dict(file="Services/Background/EclAllowanceJob.cs", method="ProcessCompanyAsync", must=["EclAllowanceBasis.ChangeNote(", "notifications.SendAsync("],
+         why="ฝ่ายค้านข้อ 3 (หลักการ #7): ฐานค่าเผื่อเปลี่ยนจากการแก้ ⇒ บอกใน JE + แจ้งเจ้าของ ไม่ลงเงียบ"),
     dict(file="Services/Implementations/AccountingService.cs", method="LoadSourceDocumentMapAsync", must=["d.CompanyId == companyId"],
          why="ทีม O 2026-10-22: กฎ M — แผนที่เอกสารต้นทางของ drill-down ต้องกรองบริษัท"),
 ]

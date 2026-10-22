@@ -5068,8 +5068,8 @@ public partial class DocumentService : IDocumentService
                     .Where(l => !l.IsDeleted
                         && depAcctIds.Contains(l.AccountId)
                         && l.JournalEntry.CompanyId == companyId
-                        && l.JournalEntry.Status == JournalEntryStatus.Posted
-                        && l.JournalEntry.ReversedByEntryId == null)
+                        // ★ ทีม O 2026-10-22 (ฝ่ายค้าน): ใบเดิม (Reversed) + ใบกลับรายการ (Posted) นับคู่กันจึงหักล้าง — เดิมตัดแค่ใบเดิม ⇒ มัดจำที่ยกเลิกโผล่ติดลบ
+                        && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))
                     .Select(l => new
                     {
                         Net = l.CreditAmount - l.DebitAmount,
@@ -5272,8 +5272,8 @@ public partial class DocumentService : IDocumentService
                 .Where(l => !l.IsDeleted
                     && depAcctIds.Contains(l.AccountId)
                     && l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.Status == JournalEntryStatus.Posted
-                    && l.JournalEntry.ReversedByEntryId == null)
+                    // ★ ทีม O 2026-10-22 (ฝ่ายค้าน): ใบเดิม (Reversed) + ใบกลับรายการ (Posted) นับคู่กันจึงหักล้าง — เดิมตัดแค่ใบเดิม ⇒ มัดจำที่ยกเลิกโผล่ติดลบ
+                    && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))
                 .Select(l => new
                 {
                     l.AccountId,
@@ -5354,8 +5354,8 @@ public partial class DocumentService : IDocumentService
                 .Where(l => !l.IsDeleted
                     && depAcctIdSet.Contains(l.AccountId)
                     && l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.Status == JournalEntryStatus.Posted
-                    && l.JournalEntry.ReversedByEntryId == null)
+                    // ★ ทีม O 2026-10-22 (ฝ่ายค้าน): ใบเดิม (Reversed) + ใบกลับรายการ (Posted) นับคู่กันจึงหักล้าง — เดิมตัดแค่ใบเดิม ⇒ มัดจำที่ยกเลิกโผล่ติดลบ
+                    && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))
                 .Select(l => new { l.AccountId, Net = l.CreditAmount - l.DebitAmount, HasDoc = l.JournalEntry.SourceDocumentId != null })
                 .ToListAsync())
                 .Select(x => (x.AccountId, x.Net, x.HasDoc)).ToList();
@@ -17249,9 +17249,8 @@ public partial class DocumentService : IDocumentService
 
         var yearStart = new DateTime(year, 1, 1);
         var yearEnd = new DateTime(year, 12, 31);
-        var actuals = await _db.JournalEntryLines.AsNoTracking()
+        var actuals = await Accounting.Helpers.ReportableJournal.WherePeriodActivity(_db.JournalEntryLines).AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.JournalEntry.EntryDate >= yearStart && l.JournalEntry.EntryDate <= yearEnd
                 && accIds.Contains(l.AccountId))
             .GroupBy(l => l.AccountId)

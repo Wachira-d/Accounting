@@ -3694,9 +3694,8 @@ public class IntegrationService : IIntegrationService
         var fromDate = from ?? new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
         var toDate = to ?? DateTime.UtcNow;
 
-        var data = await _db.JournalEntryLines
+        var data = await Accounting.Helpers.ReportableJournal.WherePeriodActivity(_db.JournalEntryLines)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountType == AccountType.Revenue)
@@ -3800,9 +3799,8 @@ public class IntegrationService : IIntegrationService
             .ToListAsync();
 
         // Get daily revenue by account code prefix — load then group in-memory (Substring in GroupBy key)
-        var rawJournalData = await _db.JournalEntryLines
+        var rawJournalData = await Accounting.Helpers.ReportableJournal.WherePeriodActivity(_db.JournalEntryLines)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.JournalEntry.EntryDate >= fromDate
                 && l.JournalEntry.EntryDate <= toDate
                 && l.Account.AccountType == AccountType.Revenue)

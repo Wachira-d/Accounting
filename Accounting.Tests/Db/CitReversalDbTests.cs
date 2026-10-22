@@ -96,6 +96,42 @@ public class CitReversalDbTests
     }
 
     [Fact]
+    public async Task กลับรายการข้ามปี_ธค_ไป_มค_ใบเดิมนับปีเดิม_ใบกลับนับปีใหม่()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var company = new Company { Name = "บริษัททดสอบกลับรายการข้ามปี", TaxId = "0105556000044", FiscalYearStartMonth = 1 };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var cash = new ChartOfAccount { CompanyId = company.Id, AccountCode = "11111", AccountName = "เงินสด", AccountType = AccountType.Asset, Level = 4 };
+        var rev = new ChartOfAccount { CompanyId = company.Id, AccountCode = "41000", AccountName = "รายได้จากการขาย", AccountType = AccountType.Revenue, Level = 4 };
+        db.ChartOfAccounts.AddRange(cash, rev);
+        await db.SaveChangesAsync();
+        JournalEntry Je(string no, DateTime date, Guid dr, Guid cr, decimal amt, JournalEntryStatus st, Guid? original = null)
+        {
+            var je = new JournalEntry { CompanyId = company.Id, EntryNumber = no, EntryDate = date, Status = st, OriginalEntryId = original, TotalDebit = amt, TotalCredit = amt };
+            je.Lines.Add(new JournalEntryLine { AccountId = dr, DebitAmount = amt, LineOrder = 1 });
+            je.Lines.Add(new JournalEntryLine { AccountId = cr, CreditAmount = amt, LineOrder = 2 });
+            db.JournalEntries.Add(je);
+            return je;
+        }
+        Je("JV-X-0001", U(2025, 6, 1), cash.Id, rev.Id, 3_000m, JournalEntryStatus.Posted);
+        var orig = Je("JV-X-0002", U(2025, 12, 20), cash.Id, rev.Id, 2_000m, JournalEntryStatus.Reversed);
+        await db.SaveChangesAsync();
+        Je("JV-X-0003", U(2026, 1, 10), rev.Id, cash.Id, 2_000m, JournalEntryStatus.Posted, original: orig.Id);
+        Je("JV-X-0004", U(2026, 2, 1), cash.Id, rev.Id, 500m, JournalEntryStatus.Posted);
+        await db.SaveChangesAsync();
+
+        using var req = DbTestDatabase.TryCreateContext()!;
+        var svc = new TaxService(req);
+        var y2025 = await svc.GenerateTaxReportAsync(company.Id, new CreateTaxReportRequest(TaxType.CorporateIncomeTax, 2025, 1));
+        var y2026 = await svc.GenerateTaxReportAsync(company.Id, new CreateTaxReportRequest(TaxType.CorporateIncomeTax, 2026, 1));
+        Assert.Equal(5_000m, y2025.TotalIncome);    // ใบเดิมนับในปีที่เกิด (เดิม 3,000 — ใบเดิมหาย)
+        Assert.Equal(-1_500m, y2026.TotalIncome);   // ใบกลับนับในปีที่กลับ: 500 − 2,000 (เท่าเดิม — ใบกลับเป็น Posted อยู่แล้ว)
+        Assert.Equal(3_500m, y2025.TotalIncome + y2026.TotalIncome);   // สองปีรวม = รายได้ที่ไม่ถูกยกเลิก
+    }
+
+    [Fact]
     public async Task รายงานที่เก็บยอดเพี้ยนไว้_ยื่นแล้วแนะนำยื่นเพิ่มเติม_ร่างสร้างใหม่ได้ยอดถูกพร้อม_audit()
     {
         using var db = DbTestDatabase.TryCreateContext();

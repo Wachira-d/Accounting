@@ -112,7 +112,9 @@ public class TaxController : ControllerBase
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> RegenerateTaxReport(Guid companyId, Guid reportId)
     {
         if (await RequireTaxAsync(companyId, "สร้างรายงานภาษีใหม่", PermissionKeys.TaxFile) is { } deny) return deny;
-        var result = await _taxService.RegenerateTaxReportAsync(companyId, reportId);
+        var result = await _taxService.RegenerateTaxReportAsync(companyId, reportId,
+            actorId: Helpers.JwtHelper.GetUserIdFromClaims(User),
+            actorEmail: User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value);
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "สร้างรายงานภาษีใหม่สำเร็จ"));
     }
 

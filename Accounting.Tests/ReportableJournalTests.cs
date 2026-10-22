@@ -98,6 +98,40 @@ public class ReportableJournalTests
     }
 
     [Fact]
+    public void Reproduce_ตัดแค่ใบเดิม_ใบกลับรายการติดลบ_เคลม_VAT_ค่าธรรมเนียมและมัดจำ()
+    {
+        // GatewaySettlementService.LoadFeeVatAgingAsync (claimed) + DocumentService มัดจำ ×3: เดิม Posted && ReversedByEntryId == null —
+        // ReverseJournalEntryAsync คัดลอก Tags/SourceDocumentId ไปใบกลับรายการ ⇒ ใบเดิมถูกตัด ใบกลับยังถูกนับ
+        var claim = Je(350m, JournalEntryStatus.Reversed);
+        var reversal = Je(-350m, JournalEntryStatus.Posted);
+        claim.ReversedByEntryId = reversal.Id;
+        reversal.OriginalEntryId = claim.Id;
+        var lines = Lines(claim, reversal);
+        Assert.Equal(-350m, RevenueOf(lines.Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted && l.JournalEntry.ReversedByEntryId == null)));
+        Assert.Equal(0m, RevenueOf(lines.Where(l => ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))));
+
+        // ทิศตรงข้าม: ใบเคลมที่ไม่เคยถูกกลับ ยอดเท่าเดิม
+        var kept = Lines(Je(350m, JournalEntryStatus.Posted), Je(12.34m, JournalEntryStatus.Posted));
+        Assert.Equal(
+            RevenueOf(kept.Where(l => l.JournalEntry.Status == JournalEntryStatus.Posted && l.JournalEntry.ReversedByEntryId == null)),
+            RevenueOf(kept.Where(l => ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))));
+    }
+
+    [Fact]
+    public void ECL_ฐานค่าเผื่อเปลี่ยน_ต้องมีข้อความ_ไม่เปลี่ยนต้องเงียบ()
+    {
+        // เคยตั้งค่าเผื่อ 1,000 แล้วกลับรายการ: ฐานเดิม (Posted) = −1,000 · ฐานใหม่ = 0 · ใบเดิม (Reversed) Cr 1,000
+        var note = EclAllowanceBasis.ChangeNote(currentAllowance: 0m, reversedOriginalsNet: 1_000m);
+        Assert.NotNull(note);
+        Assert.StartsWith(EclAllowanceBasis.Marker, note);
+        Assert.Contains("-1,000.00", note);   // ฐานเดิม
+        Assert.Contains("0.00", note);
+        // ทิศตรงข้าม: ไม่เคยกลับรายการ / ต่ำกว่า 1 บาท ⇒ null (ไม่รบกวน)
+        Assert.Null(EclAllowanceBasis.ChangeNote(5_000m, 0m));
+        Assert.Null(EclAllowanceBasis.ChangeNote(5_000m, 0.99m));
+    }
+
+    [Fact]
     public void คำแนะนำหลังทบทวน_ร่างสร้างใหม่ได้_ยื่นแล้วให้พิจารณายื่นเพิ่มเติม()
     {
         Assert.Equal(TaxReportRecompute.ActionNone, TaxReportRecompute.SuggestedAction(CitReportFreshness.Level.UpToDate));

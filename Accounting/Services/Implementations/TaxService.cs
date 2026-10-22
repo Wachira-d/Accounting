@@ -3834,7 +3834,7 @@ public partial class TaxService : ITaxService
         };
     }
 
-    public async Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId)
+    public async Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId, Guid? actorId = null, string? actorEmail = null)
     {
         var existing = await _db.TaxReports
             .Include(r => r.Lines)
@@ -3917,11 +3917,13 @@ public partial class TaxService : ITaxService
             _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
+                UserId = actorId,
+                UserEmail = actorEmail,
                 EntityType = nameof(TaxReport),
-                EntityId = freshForAudit.Id.ToString(),
+                EntityId = freshForAudit.Id.ToString(),   // ฉบับใหม่ · ฉบับเดิมอยู่ใน OldValues.reportId = NewValues.replacesReportId
                 Action = AuditAction.Update,
                 OldValues = auditBefore,
-                NewValues = Accounting.Helpers.TaxReportRecompute.AuditPayload(freshForAudit, "after"),
+                NewValues = Accounting.Helpers.TaxReportRecompute.AuditPayload(freshForAudit, "after", replacesReportId: reportId),
                 Timestamp = DateTime.UtcNow,
             });
             await _db.SaveChangesAsync();
