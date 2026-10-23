@@ -145,6 +145,10 @@
             <div class="fld"><label>ยอดเงินประกันต่อการจอง (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="securityDepositAmount" data-blank="0">
               <div class="hint">ค่าเริ่มต้นของปุ่ม “รับเงินประกัน” หน้าการจอง · 0 = ให้พนักงานกรอกเอง</div></div>
             <div class="fld" style="grid-column:1/-1"><div class="hint" id="secKindInfo"></div></div>
+            <!-- คำตัดสินข้อ 156: จังหวะออกเอกสารภาษี — ตัวเลือก + ผลภาษีมาจากเซิร์ฟเวอร์ (taxInvoiceTimingOptions · LodgingTaxInvoiceTimingPolicy.Options) -->
+            <div class="fld" style="grid-column:1/-1"><label>จังหวะออกเอกสารภาษี</label>
+              <select class="form-input" name="taxInvoiceTiming" id="taxTimingSel" onchange="Page.renderTaxTimingInfo()"></select>
+              <div class="hint" id="taxTimingInfo"></div></div>
           </div>
         </div>
         <div class="card"><h4>ข้อความ & การแจ้งเตือน & แม่บ้าน</h4>
@@ -409,6 +413,7 @@
         this.renderPublicStatus(p);
         this.renderDepositKindSelects(p);
         this.renderConfirmModeSelect(p);
+        this.renderTaxTimingSelect(p);
         for (const el of f.elements) {
           if (!el.name) continue;
           if (el.name === 'roomDepositKindId' || el.name === 'securityDepositKindId') continue;   // ตั้งใน renderDepositKindSelects แล้ว
@@ -424,6 +429,21 @@
         document.getElementById('policySelect').innerHTML = '<option value="">— ไม่มี —</option>' + (this.policies || []).map(x => `<option value="${x.id}" ${x.id === p.defaultCancellationPolicyId ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
         document.getElementById('effVat').textContent = p.effectiveVatRate ?? '-';
         this.renderConfirmModeInfo();
+        this.renderTaxTimingInfo();
+      },
+      // คำตัดสินข้อ 156: ตัวเลือกจังหวะออกเอกสารภาษี + ผลภาษี + คำอธิบายแบบ "ใบกำกับทุกครั้งที่รับเงิน" มาจากเซิร์ฟเวอร์ — หน้านี้ไม่มีสำเนาข้อความ/กติกา
+      renderTaxTimingSelect(p) {
+        if (p && Array.isArray(p.taxInvoiceTimingOptions)) this._taxTimingOptions = p.taxInvoiceTimingOptions;
+        this._taxPaymentNote = p?.taxInvoicePaymentNote || this._taxPaymentNote || '';
+        const sel = document.getElementById('taxTimingSel'); if (!sel) return;
+        sel.innerHTML = (this._taxTimingOptions || []).map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+      },
+      renderTaxTimingInfo() {
+        const sel = document.getElementById('taxTimingSel'); const box = document.getElementById('taxTimingInfo');
+        if (!sel || !box) return;
+        const opt = (this._taxTimingOptions || []).find(o => o.value === sel.value);
+        box.innerHTML = (opt ? esc(opt.taxEffect) : '')
+          + (this._taxPaymentNote ? `<div style="margin-top:4px">${esc(this._taxPaymentNote)}</div>` : '');
       },
       // คำตัดสินข้อ 128: ตัวเลือกโหมดยืนยันการจอง + คำอธิบายผลต่อแขก มาจากเซิร์ฟเวอร์ (enum ออกเป็น "ชื่อ") — หน้านี้ไม่มีสำเนาข้อความ
       renderConfirmModeSelect(p) {
@@ -554,6 +574,8 @@
         delete d.publicBookingStatus; delete d.publicBookingMessage; delete d.publicBookingFix; delete d.bindableSites;
         // คำตัดสินข้อ 128: ธงเดิมเป็นสำเนาที่ระบบเขียนตามโหมด (หน้านี้ไม่มีช่อง) · ตัวเลือกโหมดเป็น response-only
         delete d.confirmWithoutDeposit; delete d.guestConfirmModeOptions;
+        // คำตัดสินข้อ 156: ตัวเลือก/คำอธิบายจังหวะออกเอกสารภาษีเป็น response-only
+        delete d.taxInvoiceTimingOptions; delete d.taxInvoicePaymentNote;
         if (!this.propertyId) d.id = null;
         return d;
       },

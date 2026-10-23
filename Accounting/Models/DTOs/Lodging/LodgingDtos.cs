@@ -138,6 +138,12 @@ public class LodgingPropertyDto
     public List<LodgingGuestConfirmModeOption>? GuestConfirmModeOptions { get; set; }
     /// <summary>คำอธิบายหลัก tax point ของมัดจำ (ย่อหน้าเดียวกับหน้าตั้งค่าบริษัท)</summary>
     public string? DepositVatExplanation { get; set; }
+    /// <summary>คำตัดสินข้อ 156 — จังหวะออกเอกสารภาษี (ชื่อ enum) · request null = คงค่าเดิม (client รุ่นเก่า) · response = ค่าที่บันทึกไว้เสมอ</summary>
+    public BookingInvoiceTiming? TaxInvoiceTiming { get; set; }
+    /// <summary>ตัวเลือก + ผลทางภาษี (<c>LodgingTaxInvoiceTimingPolicy.Options</c>) — response-only · หน้าเว็บสร้าง dropdown จากลิสต์นี้</summary>
+    public List<BookingInvoiceTimingOption>? TaxInvoiceTimingOptions { get; set; }
+    /// <summary>คำอธิบายแบบ "ใบกำกับทุกครั้งที่รับเงิน" ของที่พักนี้ตอนนี้ (<c>LodgingTaxInvoiceTimingPolicy.PaymentInvoiceNote</c>) — response-only</summary>
+    public string? TaxInvoicePaymentNote { get; set; }
     /// <summary>รอบ 202 ทีม LS (W-01) — แขกจองผ่านเว็บได้จริงไหม · ตัวตัดสิน <c>Helpers/LodgingPublicReadiness.Evaluate</c> ·
     /// ออกเป็น "ชื่อ" (Live · NotLinked · SiteMissing · Inactive · OnlineOff · NoRooms) — response-only (หน้าเว็บไม่ส่งกลับ)</summary>
     public LodgingPublicBookingStatus? PublicBookingStatus { get; set; }
@@ -612,6 +618,15 @@ public class LodgingReservationResponse
     public string? DepositDocumentNumber { get; set; }
     public Guid? FinalDocumentId { get; set; }
     public string? FinalDocumentNumber { get; set; }
+    /// <summary>คำตัดสินข้อ 156 — ใบกำกับภาษีล่วงหน้า (เต็มยอดการเข้าพัก) · null = ไม่มี</summary>
+    public Guid? AdvanceTaxDocumentId { get; set; }
+    public string? AdvanceTaxDocumentNumber { get; set; }
+    /// <summary>ใบล่วงหน้ายังมีผล (ไม่ถูกยกเลิก) — ตัดสินจากเอกสาร (<c>LodgingTaxInvoiceTimingPolicy.StateOf</c>)</summary>
+    public bool AdvanceTaxDocumentLive { get; set; }
+    /// <summary>เปิดปุ่ม “ออกใบกำกับภาษีล่วงหน้า” ไหม — ตัวตัดสินเดียวกับตอนกด (หน้าพนักงานเท่านั้น · หน้าแขก false)</summary>
+    public bool CanIssueAdvanceTaxInvoice { get; set; }
+    /// <summary>ข้อความเรื่องใบกำกับล่วงหน้า (ถูกยกเลิก/รอออก) — หน้าพนักงานเท่านั้น · null = ไม่มี</summary>
+    public string? AdvanceTaxInvoiceNote { get; set; }
     public string? PaymentSlipUrl { get; set; }
     public string? PaymentReference { get; set; }
     public DateTime? SlipUploadedAt { get; set; }
@@ -870,6 +885,9 @@ public record LodgingAddChargeRequest(
 /// <summary>รอบ 201 ทีม IN (A-IN5): ออกใบเช็คเอาต์ใหม่แทนใบที่ยกเลิก — เหตุผลเข้าหมายเหตุภายใน + audit (ไม่บังคับ)
 /// <para>ฝ่ายค้าน X2: <c>ConfirmNoManualReissue</c> = ผู้ใช้ยืนยันว่ายังไม่ได้ออกใบแทนเองที่หน้าเอกสาร (บังคับ — ใบที่ออกเองโดยไม่อ้างเลขจองตรวจไม่ได้)</para></summary>
 public record LodgingReissueFinalRequest(string? Reason = null, bool ConfirmNoManualReissue = false);
+
+/// <summary>คำตัดสินข้อ 156 — พนักงานกด “ออกใบกำกับภาษีล่วงหน้า” · <paramref name="IssueToCompany"/> = ออกในนามบริษัทของแขก (ต้องมีชื่อบริษัท + เลขผู้เสียภาษี §86/4)</summary>
+public record LodgingIssueAdvanceTaxInvoiceRequest(bool IssueToCompany = false);
 
 /// <summary>เช็คเอาต์ = ออกใบกำกับ/ใบแจ้งหนี้สุดท้าย (ตัดมัดจำ) + รับชำระส่วนที่เหลือ</summary>
 public record LodgingCheckOutRequest(

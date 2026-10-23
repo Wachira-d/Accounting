@@ -560,6 +560,16 @@ public partial class LodgingService
         await _db.SaveChangesAsync();
         _logger.LogInformation("Lodging reservation {No} created ({Status}, total {Total}, deposit {Dep})", res.ReservationNumber, res.Status, res.TotalAmount, res.DepositRequired);
 
+        // คำตัดสินข้อ 156: พนักงานสร้างแบบยืนยันทันที (โทร/walk-in/ตัวแทน) = การยืนยันแบบรับประกัน ⇒ โหมด "ใบกำกับเมื่อยืนยัน" ออกใบกำกับล่วงหน้า ·
+        // การจองจากเว็บที่ยืนยันเองไม่ออก (ตัวตัดสิน LodgingTaxInvoiceTimingPolicy) · ล็อกเดียวกับเส้นรับเงิน · ล้ม = ล้มดังบนการจอง ไม่ย้อนการสร้าง
+        if (isStaff && res.Status == LodgingReservationStatus.Confirmed)
+            await WithReservationLockAsync(companyId, res.Id, AdvisoryLockKey.LodgingConfirm, async () =>
+            {
+                var tracked = await RequireReservationAsync(companyId, res.Id);
+                await TryIssueAdvanceOnStaffConfirmAsync(companyId, tracked, LodgingTaxTrigger.StaffCreateConfirmed, actor);
+                return true;
+            });
+
         // คำตัดสินข้อ 128: ใบที่ยังรอสลิปไม่ใช่ "จองใหม่สำเร็จ" ⇒ ไม่แจ้งเจ้าของตอนนี้ (แจ้งตอนแขกส่งสลิป) · แขกได้อีเมลพร้อมลิงก์ส่งสลิป
         await TryNotifyAsync(companyId, res.Id, LodgingGuestConfirmPolicy.CreatedEvent(res.GuestConfirmMode, res.Status));
         return (await GetReservationAsync(companyId, res.Id))!;

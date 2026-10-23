@@ -77,6 +77,30 @@ public partial class LodgingService
                       + "และรับรู้ให้เมื่ออนุมัติ) · มัดจำแบบภาษีรอเรียกเก็บ/เต็มยอด ใช้ปุ่ม “หักมัดจำ” หลังอนุมัติ";
         }
 
+        // คำตัดสินข้อ 156: ใบกำกับภาษีล่วงหน้า — สถานะจากเอกสารที่ผูก · ปุ่ม/ข้อความตัดสินด้วยตัวเดียวกับตอนกด (หน้าพนักงานเท่านั้น)
+        var advance = await LoadAdvanceAsync(companyId, r);
+        var canIssueAdvance = false;
+        string? advanceNote = null;
+        if (includeInternal && (advance != null || prop.TaxInvoiceTiming == BookingInvoiceTiming.TaxInvoiceAtBooking))
+        {
+            var advFacts = await AdvanceFactsAsync(companyId, r, advance);
+            canIssueAdvance = LodgingTaxInvoiceTimingPolicy.CanOfferManualIssue(advFacts);
+            if (advance?.State == LodgingAdvanceState.Gone)
+            {
+                var untaxedMoney = LodgingDepositSettlement.RoomDeposits(await LoadDepositSnapshotsAsync(companyId, r), r.SecurityDepositDocumentId)
+                    .Any(d => d.VatAmount <= 0.005m && LodgingDepositSettlement.Remaining(d).Gross > 0.005m);
+                var no = string.IsNullOrEmpty(advance.Number) ? "ที่ผูกไว้" : advance.Number;
+                advanceNote = untaxedMoney && r.Status is not (LodgingReservationStatus.CheckedOut or LodgingReservationStatus.Cancelled or LodgingReservationStatus.NoShow)
+                    ? LodgingTaxInvoiceTimingPolicy.GoneWithUntaxedMoneyNote(no)
+                    : $"ใบกำกับภาษีล่วงหน้า {no} ถูกยกเลิกแล้ว — การจองนี้กลับไปใช้จังหวะปกติ (ใบมัดจำตามประเภทเงินมัดจำ · ใบกำกับตอนเช็คเอาต์)";
+            }
+            else if (advance == null && canIssueAdvance && r.Status == LodgingReservationStatus.Confirmed)
+                advanceNote = "ที่พักตั้ง “ออกใบกำกับภาษีเมื่อยืนยันการจอง” แต่การจองนี้ยังไม่มีใบกำกับล่วงหน้า (ยืนยันจากเว็บ/OTA หรือออกไม่สำเร็จ) — "
+                    + "กด “ออกใบกำกับภาษีล่วงหน้า” ถ้าลูกค้าต้องการตอนนี้ · ไม่กด = ออกให้เมื่อรับเงินครั้งแรก หรือใบกำกับตอนเช็คเอาต์";
+        }
+        // ค่าห้องอยู่ในใบล่วงหน้า ⇒ ตัวสร้างใบเช็คเอาต์ใหม่แบบเต็มยอดใช้ไม่ได้ (ReissueFinalDocumentCoreAsync ปฏิเสธด้วยเหตุเดียวกัน)
+        if (advance?.State == LodgingAdvanceState.Live) canReissueFinal = false;
+
         var guestTotals = LodgingOccupancy.Totals(r.Adults, r.Children, r.Infants, r.Rooms.Sum(x => x.ExtraBeds));
         // คำตัดสินข้อ 128: ป้าย/ข้อความ/ยอดที่ต้องโอน/ช่องส่งสลิปของแขก + ป้ายสลิปฝั่งหน้าบ้าน — ตัวตัดสินเดียว (หน้าเว็บแสดงอย่างเดียว)
         var guestFacts = new LodgingGuestFacts(r.GuestConfirmMode, r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount,
@@ -125,6 +149,11 @@ public partial class LodgingService
             StatusLabel = LodgingAmounts.StatusLabel(r.Status, r.DepositRequired, r.DepositPaid),
             FinalDocumentNote = includeInternal ? finalNote : null,
             CanReissueFinalDocument = includeInternal && canReissueFinal,
+            AdvanceTaxDocumentId = advance?.Id,
+            AdvanceTaxDocumentNumber = string.IsNullOrEmpty(advance?.Number) ? null : advance.Number,
+            AdvanceTaxDocumentLive = advance?.State == LodgingAdvanceState.Live,
+            CanIssueAdvanceTaxInvoice = includeInternal && canIssueAdvance,
+            AdvanceTaxInvoiceNote = includeInternal ? advanceNote : null,
             // รอบ 202 (O-P0-2 · O-P1-4): ค้างปิด/แถวรุ่นเก่า/เงินเข้าแต่ยืนยันไม่ได้ — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแค่แสดง
             OverdueLabel = includeInternal ? LodgingOverdueRule.Label(LodgingOverdueRule.Classify(r.Status, r.CheckOutDate, DateTime.UtcNow.AddHours(7).Date)) : null,
             CanLegacyCheckOut = includeInternal && LodgingOverdueRule.IsLegacyAutoCheckout(r.Status, r.FinalDocumentId, r.InternalNotes, prop.AccountingMode == LodgingAccountingMode.Off),
