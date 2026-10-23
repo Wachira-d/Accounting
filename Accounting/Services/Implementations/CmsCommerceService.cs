@@ -770,7 +770,13 @@ public class CmsCommerceService : ICmsCommerceService
         if (Accounting.Helpers.SiteOrderDepositInvoicing.SettlesOnHandover(order.DepositInvoicingMode, request.Status)
             && order.Status is not (SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded or SiteOrderStatus.PartiallyRefunded))
         {
-            var handoverFailures = await SettleOnHandoverAsync(companyId, siteId, order, userId);
+            var (handoverFailures, handoverNotes) = await SettleOnHandoverAsync(companyId, siteId, order, userId);
+            if (handoverNotes.Count > 0)
+            {
+                // ข้อ 4: ใบขายออกแล้ว — ส่งมอบได้ แต่ขั้นหลังที่ไม่ครบต้องดังบนออเดอร์ (เช่น ตัดสต็อกไม่สำเร็จ: สต็อกไม่พอ)
+                var nstamp = $"[{DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC] ⚠️ ออกใบขายส่วนที่เหลือแล้วแต่ขั้นหลังไม่ครบ: {string.Join(" · ", handoverNotes)}";
+                order.InternalNotes = string.IsNullOrWhiteSpace(order.InternalNotes) ? nstamp : order.InternalNotes + "\n" + nstamp;
+            }
             if (handoverFailures.Count > 0)
             {
                 var why = string.Join(" · ", handoverFailures);
@@ -900,6 +906,16 @@ public class CmsCommerceService : ICmsCommerceService
         result.DepositInvoicingLabel = Accounting.Helpers.DepositInvoicingMode.Label(result.DepositInvoicingMode);
         result.DepositInvoicingNote = Accounting.Helpers.SiteOrderDepositInvoicing.CustomerNote(result.DepositInvoicingMode,
             paysInInstallments: due.DepositRequired < due.Total - 0.005m);
+        if (result.Payments is { Count: > 0 } pays)
+        {
+            // ฝ่ายค้านทีม Q ข้อ 2: ปุ่ม "ทำขั้นที่ค้าง" ต่อรายการ — ป้ายจากตัวตัดสินเดียว (หน้าเว็บแสดงตามป้าย)
+            var erpPayIds = await _db.SiteOrderPayments.AsNoTracking()
+                .Where(p => p.OrderId == orderId && p.CompanyId == companyId)
+                .Select(p => new { p.Id, p.ErpPaymentId }).ToDictionaryAsync(x => x.Id, x => x.ErpPaymentId);
+            var pending = await PendingPaymentActionsAsync(companyId, result.DepositInvoicingMode, result.ErpDocumentId,
+                pays.Select(p => (p.Id, p.Status, p.DepositDocumentId, erpPayIds.GetValueOrDefault(p.Id), p.Reference, p.Amount)).ToList());
+            foreach (var p in pays) p.PendingAction = pending.GetValueOrDefault(p.Id);
+        }
         var depositIds = (result.Payments ?? new()).Where(p => p.DepositDocumentId.HasValue).Select(p => p.DepositDocumentId!.Value).ToList();
         if (depositIds.Count > 0)
             result.DepositDocuments = await _db.Documents.AsNoTracking()
@@ -1020,6 +1036,9 @@ public class CmsCommerceService : ICmsCommerceService
         var order = await _db.SiteOrders.Include(o => o.Payments).Include(o => o.Lines)
             .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
         if (order == null || order.ErpDocumentId.HasValue) return order?.ErpDocumentId;
+        var gate = new List<string>();
+        if (!await EnsureOrderDepositsApprovedAsync(companyId, order, "storefront-sync", gate))
+            throw new BusinessRuleException(string.Join(" · ", gate), Accounting.Helpers.SiteOrderDepositInvoicing.ConfigRuleCode);
         var deduction = await PlanFinalDeductionAsync(companyId, order);
         return await SyncOrderToErpCoreAsync(companyId, siteId, orderId, deduction);
     }
@@ -1227,9 +1246,14 @@ public class CmsCommerceService : ICmsCommerceService
 
         // ★ ทีม Q (คำตัดสินข้อ 156) — ตัวตัดสินตัวเดียวของ "เงินงวดนี้ต้องออกเอกสารอะไร" (ทุกทางเข้า: webhook · สลิป · พนักงานกดยืนยัน)
         // โหมดเดิม (ค่าเริ่มต้น · ออเดอร์เก่า) = LegacyFullInvoice ⇒ เส้นด้านล่างเหมือนเดิมทุกขั้น
+        var depositApproved = true;
+        if (pay.DepositDocumentId is Guid payDepositId)
+            depositApproved = await _db.Documents.AsNoTracking()
+                .AnyAsync(d => d.Id == payDepositId && d.CompanyId == companyId
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval);
         var plan = Accounting.Helpers.SiteOrderDepositInvoicing.OnPayment(order.DepositInvoicingMode, order.ErpDocumentId.HasValue,
             Accounting.Helpers.SiteOrderDepositInvoicing.IsHandoverStatus(order.Status), order.TotalAmount, order.PaidAmount,
-            order.Lines.Select(l => l.VatRate), pay.DepositDocumentId.HasValue);
+            order.Lines.Select(l => l.VatRate), pay.DepositDocumentId.HasValue, depositApproved);
         if (plan.Note != null)
         {
             order.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, plan.Note);
@@ -1241,8 +1265,29 @@ public class CmsCommerceService : ICmsCommerceService
             return true;
         }
 
+        if (plan.Step == Accounting.Helpers.SiteOrderPaymentStep.DiscardDraftDepositThenPayOnFinal && pay.DepositDocumentId is Guid draftId)
+        {
+            // ฝ่ายค้านทีม Q ข้อ 1: ใบมัดจำร่างที่ใบขายไม่ได้หัก ⇒ ห้ามอนุมัติ (VAT ซ้ำ) · ลบใบร่าง (ยังไม่มีเลข/JE) แล้วบันทึกเงินนี้กับใบขายด้านล่าง
+            try
+            {
+                if (_docService != null) await _docService.DeleteDocumentAsync(companyId, draftId);
+                pay.DepositDocumentId = null;
+                await _db.SaveChangesAsync();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "ConfirmPayment: discard draft deposit {Doc} failed for order {OrderId}", draftId, orderId);
+                syncFailures.Add($"ลบใบมัดจำร่างไม่สำเร็จ ({ex.Message}) — ยังไม่ได้บันทึกเงินงวดนี้กับใบขาย · ลบใบร่างที่หน้าเอกสารแล้วกดปุ่มที่รายการรับเงินอีกครั้ง");
+                plan = plan with { Step = Accounting.Helpers.SiteOrderPaymentStep.AlreadyDeposited };
+            }
+        }
+
         var approvedNow = false;
-        if (plan.Step == Accounting.Helpers.SiteOrderPaymentStep.LegacyFullInvoice)
+        if (plan.Step == Accounting.Helpers.SiteOrderPaymentStep.AlreadyDeposited)
+        {
+            // ลบใบร่างล้มด้านบน ⇒ ไม่ทำอะไรต่อ (ห้ามอนุมัติใบร่าง) · ประทับเหตุด้านล่าง
+        }
+        else if (plan.Step == Accounting.Helpers.SiteOrderPaymentStep.LegacyFullInvoice)
         {
             // 2. Sync ERP doc ถ้ายังไม่ sync
             if (!order.ErpDocumentId.HasValue)
@@ -1285,13 +1330,15 @@ public class CmsCommerceService : ICmsCommerceService
             // payment ERP ซ้ำ → เงินสดเกิน/AR ติดลบ. เช็คว่ามี Payment ของเอกสารนี้
             // ที่ตรง Reference+Amount แล้วหรือยัง (การชำระเต็มถูก cap BalanceDue กัน
             // อยู่แล้ว แต่ partial อาจหลุด).
-            var alreadyRecorded = !string.IsNullOrEmpty(pay.Reference) && await _db.Payments.AnyAsync(p =>
+            // ทีม Q: + ErpPaymentId ที่ผูกไว้ (กันซ้ำของเงินที่ไม่มีเลขอ้างอิง — ปุ่มทำขั้นที่ค้าง)
+            var alreadyRecorded = pay.ErpPaymentId.HasValue || (!string.IsNullOrEmpty(pay.Reference) && await _db.Payments.AnyAsync(p =>
                 p.DocumentId == order.ErpDocumentId.Value && !p.IsDeleted
-                && p.Reference == pay.Reference && p.Amount == pay.Amount);
+                && p.Reference == pay.Reference && p.Amount == pay.Amount));
             try
             {
                 if (!alreadyRecorded)
-                await _docService.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
+                {
+                var erpPay = await _docService.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
                     DocumentId: order.ErpDocumentId.Value,
                     PaymentDate: pay.PaidAt ?? DateTime.UtcNow,
                     Amount: pay.Amount,
@@ -1304,6 +1351,9 @@ public class CmsCommerceService : ICmsCommerceService
                     // ที่เดียว — ที่นี่แค่ส่งต่อ). null = เส้นสลิป เงินอยู่ในธนาคารแล้ว
                     OverridePaymentAccountId: moneyInAccountId
                 ), actor);
+                pay.ErpPaymentId = erpPay.Id;
+                await _db.SaveChangesAsync();
+                }
             }
             catch (Exception ex)
             {
@@ -1312,8 +1362,9 @@ public class CmsCommerceService : ICmsCommerceService
             }
         }
 
-        // 5. Stock — ตัด stock ทุก line ที่ยังไม่ได้ตัด (idempotent) · โหมดมัดจำ: ตัดพร้อมใบขายเท่านั้น (ใบมัดจำไม่ตัด — ตัดสินที่ plan)
-        if (plan.DeductsStock)
+        // 5. Stock — ตัด stock ทุก line ที่ยังไม่ได้ตัด (idempotent) · โหมดมัดจำ: ตัดพร้อมใบขายเท่านั้น (ใบมัดจำไม่ตัด — ตัดสินที่ plan ·
+        //    ยังไม่มีใบขาย ⇒ ไม่ตัด — StockDeductProblem ตัวเดียวกับด่านใน DeductStockAsync)
+        if (plan.DeductsStock && Accounting.Helpers.SiteOrderDepositInvoicing.StockDeductProblem(order.DepositInvoicingMode, order.ErpDocumentId.HasValue) is null)
         {
             try { await DeductStockAsync(companyId, siteId, orderId); }
             catch (Exception ex)
@@ -1321,6 +1372,16 @@ public class CmsCommerceService : ICmsCommerceService
                 _logger.LogError(ex, "ConfirmPayment: stock deduct failed for order {OrderId}", orderId);
                 syncFailures.Add($"ตัดสต๊อกไม่สำเร็จ: {ex.Message}");
             }
+        }
+
+        // ฝ่ายค้านทีม Q ข้อ 3: โหมดมัดจำ — เงินงวดอื่นที่รับแล้วแต่ยังไม่มีเอกสาร (ออกใบมัดจำล้ม) ⇒ ลูกหนี้ค้าง ⇒ หมายเหตุดัง + ปุ่มต่อรายการ
+        // (ไม่บันทึกแทนเอง: ขาเงินเข้าของรายการ gateway ต้องมาจากตัวตัดสินของรายการนั้น — กดปุ่มที่รายการ)
+        if (plan.Step != Accounting.Helpers.SiteOrderPaymentStep.LegacyFullInvoice)
+        {
+            var pendingActions = await PendingPaymentActionsForOrderAsync(companyId, order);
+            var others = order.Payments.Where(p => p.Id != pay.Id && pendingActions.ContainsKey(p.Id)).Select(p => p.Amount).ToList();
+            if (Accounting.Helpers.SiteOrderDepositInvoicing.PendingPaymentsNote(others) is string pendingNote)
+                syncFailures.Add(pendingNote);
         }
 
         // ปักหมุดความล้มเหลวไว้บนออเดอร์ — ผู้ดูแลต้องเห็นว่า "เงินเข้าแล้วแต่
@@ -1461,7 +1522,7 @@ public class CmsCommerceService : ICmsCommerceService
         {
             var order = await _db.SiteOrders.FirstAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
             var stamp = $"[{DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC] ⚠️ ยืนยันรับเงินแล้วแต่ใบรับเงินมัดจำยังไม่ครบ: {string.Join(" · ", failures)} "
-                + "— กด \"ออกใบมัดจำที่ค้าง\" ที่รายการรับเงินนี้ได้ (ไม่ออกซ้ำ)";
+                + "— กดปุ่มที่รายการรับเงินนี้ในออเดอร์เพื่อทำขั้นที่ค้าง (ไม่ออกซ้ำ)";
             order.InternalNotes = string.IsNullOrWhiteSpace(order.InternalNotes) ? stamp : order.InternalNotes + "\n" + stamp;
             await _db.SaveChangesAsync();
         }
@@ -1472,6 +1533,9 @@ public class CmsCommerceService : ICmsCommerceService
     private async Task<bool> SettleFinalInvoiceAsync(Guid companyId, Guid siteId, SiteOrder order, string actor, List<string> failures)
     {
         if (_docService == null) { failures.Add("ระบบเอกสารไม่พร้อม — ยังไม่ได้ออกใบขาย"); return false; }
+        // ฝ่ายค้านทีม Q ข้อ 1: ใบมัดจำร่างค้าง ⇒ อนุมัติให้จบก่อนวางแผนหัก · ยังค้าง ⇒ ห้ามออกใบขาย (VAT ซ้ำ)
+        if (!order.ErpDocumentId.HasValue && !await EnsureOrderDepositsApprovedAsync(companyId, order, actor, failures))
+            return false;
         var deposits = await LoadOrderDepositSnapshotsAsync(companyId, order);
         if (!order.ErpDocumentId.HasValue)
         {
@@ -1539,29 +1603,100 @@ public class CmsCommerceService : ICmsCommerceService
         return new FinalInvoiceDeduction(deposits[0].ContactId, depositPlan.DeductionRef, depositPlan.BaseDeducted);
     }
 
-    /// <summary>ส่งมอบ/จัดส่ง (โหมดมัดจำ) ⇒ ใบขายส่วนที่เหลือ + ตัดสต็อกครั้งเดียว · คืนรายการความล้มเหลว (ว่าง = ครบ)</summary>
-    private async Task<List<string>> SettleOnHandoverAsync(Guid companyId, Guid siteId, SiteOrder order, string actor)
+    /// <summary>ส่งมอบ/จัดส่ง (โหมดมัดจำ) ⇒ ใบขายส่วนที่เหลือ + ตัดสต็อกครั้งเดียว ·
+    /// <c>Blocking</c> = ยังไม่มีใบขายที่อนุมัติ (ห้ามเปลี่ยนสถานะ) · <c>Notes</c> = ใบขายออกแล้วแต่ขั้นหลังไม่ครบ (ตัดสต็อกล้ม · เงินค้าง) ⇒
+    /// เปลี่ยนสถานะได้ + ประทับหมายเหตุ (ฝ่ายค้านทีม Q ข้อ 4: เอกสารภาษีต้องมาก่อน · ของออกไปแล้วจริง — แบบเดียวกับเส้นยืนยันเงิน)</summary>
+    private async Task<(List<string> Blocking, List<string> Notes)> SettleOnHandoverAsync(Guid companyId, Guid siteId, SiteOrder order, string actor)
     {
-        var failures = new List<string>();
-        var approvedNow = await SettleFinalInvoiceAsync(companyId, siteId, order, actor, failures);
-        if (order.ErpDocumentId.HasValue)
+        var blocking = new List<string>();
+        var notes = new List<string>();
+        var approvedNow = await SettleFinalInvoiceAsync(companyId, siteId, order, actor, blocking);
+        DocumentStatus? finalStatus = null;
+        if (order.ErpDocumentId is Guid fid)
+            finalStatus = await _db.Documents.AsNoTracking().Where(d => d.Id == fid && d.CompanyId == companyId)
+                .Select(d => (DocumentStatus?)d.Status).FirstOrDefaultAsync();
+        var finalIssued = finalStatus is not (null or DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Voided or DocumentStatus.Rejected);
+        if (!finalIssued)
         {
-            try { await DeductStockAsync(companyId, siteId, order.Id); }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogError(ex, "Site order handover stock deduct failed for {OrderId}", order.Id);
-                failures.Add($"ตัดสต๊อกไม่สำเร็จ: {ex.Message}");
-            }
-            if (!approvedNow && _issuedHooks != null)
-                await _issuedHooks.RunAsync(companyId, order.ErpDocumentId.Value);
+            if (blocking.Count == 0) blocking.Add("ยังไม่มีใบขายส่วนที่เหลือที่อนุมัติแล้ว");
+            return (blocking, notes);
         }
-        // เงินที่ประทับรับแล้วแต่ยังไม่มีใบมัดจำ (ออกใบมัดจำล้ม) — ไม่บันทึกรับชำระเองที่นี่ (ไม่มีกุญแจกันซ้ำ) แต่ต้องเห็น
-        var orphan = order.Payments.Where(p => p.Status == SitePaymentStatus.Completed && !p.DepositDocumentId.HasValue).Sum(p => p.Amount);
-        if (orphan > 0.005m)
-            order.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(order.InternalNotes,
-                $"⚠️ มีเงินรับแล้ว {orphan:N2} บาทที่ยังไม่มีใบรับเงินมัดจำ — ตรวจว่าบันทึกรับชำระกับใบขายแล้วหรือยัง "
-                + "(กด \"ออกใบมัดจำที่ค้าง\" ที่รายการรับเงินนั้น ⇒ ระบบบันทึกเป็นรับชำระของใบขายให้ · ไม่บันทึกซ้ำเมื่อมีเลขอ้างอิงเดิม)");
-        return failures;
+        // ใบขายออกแล้ว ⇒ ความล้มเหลวที่เหลือ (ตัดชำระด้วยมัดจำ ฯลฯ) ไม่บล็อกการส่งมอบ แต่ต้องดัง
+        notes.AddRange(blocking);
+        blocking.Clear();
+        try { await DeductStockAsync(companyId, siteId, order.Id); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Site order handover stock deduct failed for {OrderId}", order.Id);
+            notes.Add($"ตัดสต๊อกไม่สำเร็จ: {ex.Message}");
+        }
+        if (!approvedNow && _issuedHooks != null)
+            await _issuedHooks.RunAsync(companyId, order.ErpDocumentId!.Value);
+        // ข้อ 3: เงินที่รับแล้วแต่ยังไม่มีเอกสาร/ยังไม่บันทึกกับใบขาย ⇒ หมายเหตุดัง + ปุ่มต่อรายการ (ป้ายจากตัวตัดสินเดียว)
+        var pendingActions = await PendingPaymentActionsForOrderAsync(companyId, order);
+        if (Accounting.Helpers.SiteOrderDepositInvoicing.PendingPaymentsNote(
+                order.Payments.Where(p => pendingActions.ContainsKey(p.Id)).Select(p => p.Amount).ToList()) is string pendingNote)
+            notes.Add(pendingNote);
+        return (blocking, notes);
+    }
+
+    /// <summary>ฝ่ายค้านทีม Q ข้อ 1 — ใบมัดจำร่างที่ค้าง (อนุมัติล้มครั้งก่อน) ต้องอนุมัติให้จบ<b>ก่อน</b>วางแผนหักในใบขาย ·
+    /// ยังค้าง ⇒ false + ข้อความไทยพร้อมทางไปต่อ (ผู้เรียกห้ามออกใบขาย — ใบขายที่ไม่หักใบร่าง + อนุมัติใบร่างทีหลัง = VAT ซ้ำ)</summary>
+    private async Task<bool> EnsureOrderDepositsApprovedAsync(Guid companyId, SiteOrder order, string actor, List<string> failures)
+    {
+        var ids = order.Payments.Where(p => p.DepositDocumentId.HasValue).Select(p => p.DepositDocumentId!.Value).ToList();
+        if (ids.Count == 0) return true;
+        var drafts = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && ids.Contains(d.Id) && !d.IsDeleted
+                && (d.Status == DocumentStatus.Draft || d.Status == DocumentStatus.WaitingApproval))
+            .Select(d => new { d.Id, d.DocumentNumber }).ToListAsync();
+        if (drafts.Count == 0) return true;
+        var stillPending = new List<string>();
+        foreach (var d in drafts)
+        {
+            var approveFailures = new List<string>();
+            if (!await ApproveOrderDocumentIfPendingAsync(companyId, d.Id, actor, order.Id, approveFailures))
+                stillPending.Add(d.DocumentNumber);
+        }
+        if (stillPending.Count == 0) return true;
+        failures.Add(Accounting.Helpers.SiteOrderDepositInvoicing.PendingDepositBlockMessage(stillPending));
+        return false;
+    }
+
+    /// <summary>ป้ายปุ่ม "ทำขั้นที่ค้าง" ต่อรายการรับเงิน (ฝ่ายค้านทีม Q ข้อ 2) — ข้อมูลจริงจากฐาน (สถานะใบมัดจำ · บันทึกกับใบขายแล้วหรือยัง) แล้วตัดสินด้วย
+    /// <c>SiteOrderDepositInvoicing.PaymentPendingAction</c> ตัวเดียว · คืนเฉพาะรายการที่มีขั้นค้าง</summary>
+    private Task<Dictionary<Guid, string>> PendingPaymentActionsForOrderAsync(Guid companyId, SiteOrder order)
+        => PendingPaymentActionsAsync(companyId, order.DepositInvoicingMode, order.ErpDocumentId,
+            order.Payments.Select(p => (p.Id, p.Status, p.DepositDocumentId, p.ErpPaymentId, p.Reference, p.Amount)).ToList());
+
+    private async Task<Dictionary<Guid, string>> PendingPaymentActionsAsync(Guid companyId, string? mode, Guid? erpDocumentId,
+        IReadOnlyList<(Guid Id, SitePaymentStatus Status, Guid? DepositDocumentId, Guid? ErpPaymentId, string? Reference, decimal Amount)> payments)
+    {
+        var result = new Dictionary<Guid, string>();
+        if (Accounting.Helpers.DepositInvoicingMode.OfOrder(mode) != Accounting.Helpers.DepositInvoicingMode.DepositTaxInvoice) return result;
+        var completed = payments.Where(p => p.Status == SitePaymentStatus.Completed).ToList();
+        if (completed.Count == 0) return result;
+        var depIds = completed.Where(p => p.DepositDocumentId.HasValue).Select(p => p.DepositDocumentId!.Value).ToList();
+        var approvedDeposits = new HashSet<Guid>();
+        if (depIds.Count > 0)
+            approvedDeposits = (await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && depIds.Contains(d.Id) && !d.IsDeleted
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval)
+                .Select(d => d.Id).ToListAsync()).ToHashSet();
+        var recordedRefs = new HashSet<(string, decimal)>();
+        if (erpDocumentId is Guid docId)
+            recordedRefs = (await _db.Payments.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && p.DocumentId == docId && !p.IsDeleted && p.Reference != null)
+                .Select(p => new { p.Reference, p.Amount }).ToListAsync())
+                .Select(x => (x.Reference!, x.Amount)).ToHashSet();
+        foreach (var p in completed)
+        {
+            var recorded = p.ErpPaymentId.HasValue || (!string.IsNullOrEmpty(p.Reference) && recordedRefs.Contains((p.Reference!, p.Amount)));
+            var label = Accounting.Helpers.SiteOrderDepositInvoicing.PaymentPendingAction(mode, p.Status, p.DepositDocumentId.HasValue,
+                p.DepositDocumentId is Guid dd && approvedDeposits.Contains(dd), erpDocumentId.HasValue, recorded);
+            if (label != null) result[p.Id] = label;
+        }
+        return result;
     }
 
     /// <summary>ผู้ติดต่อของออเดอร์สำหรับใบรับเงินมัดจำ — ลำดับเดียวกับที่ใบขาย (<c>SyncOrderToErpCoreAsync</c>) ใช้
@@ -1732,6 +1867,9 @@ public class CmsCommerceService : ICmsCommerceService
             .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
 
         if (order == null) return false;
+        // ฝ่ายค้านทีม Q ข้อ 6: โหมดมัดจำก่อนมีใบขาย ⇒ ปฏิเสธพร้อมทางไปต่อ (สต็อกออกพร้อมรายได้) · โหมดเดิม = null เสมอ
+        if (Accounting.Helpers.SiteOrderDepositInvoicing.StockDeductProblem(order.DepositInvoicingMode, order.ErpDocumentId.HasValue) is string stockProblem)
+            throw new BusinessRuleException(stockProblem, Accounting.Helpers.SiteOrderDepositInvoicing.ConfigRuleCode);
 
         // Route ผ่าน IProductService.AdjustStockAsync (single source of truth
         // ตาม duplicate audit #5) — ใช้ advisory lock + atomic txn + validation

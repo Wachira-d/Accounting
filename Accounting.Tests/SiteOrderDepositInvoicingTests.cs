@@ -281,4 +281,80 @@ public class SiteOrderDepositInvoicingTests
         Assert.Null(SiteOrderDepositInvoicing.CustomerNote(New, paysInInstallments: false));
         Assert.Null(SiteOrderDepositInvoicing.CustomerNote(null, paysInInstallments: true));
     }
+
+    // ─────────── หลังฝ่ายค้านทีม Q ───────────
+
+    [Fact]
+    public void ใบมัดจำร่าง_ใบขายออกแล้ว_ลบใบร่างแล้วบันทึกกับใบขาย_ไม่อนุมัติใบร่าง()
+    {
+        var plan = SiteOrderDepositInvoicing.OnPayment(New, hasSalesDocument: true, handedOver: true, 1000m, 1000m, new[] { 7m },
+            paymentAlreadyDeposited: true, depositDocumentApproved: false);
+        Assert.Equal(SiteOrderPaymentStep.DiscardDraftDepositThenPayOnFinal, plan.Step);
+        Assert.True(plan.RecordsPaymentOnSalesDocument);
+        Assert.Equal(SiteOrderDepositInvoicing.DraftDepositDiscardedNote, plan.Note);
+    }
+
+    [Fact]
+    public void ใบมัดจำร่าง_ยังไม่มีใบขาย_อนุมัติให้จบ_ไม่บันทึกรับชำระ()
+    {
+        var plan = SiteOrderDepositInvoicing.OnPayment(New, false, false, 1000m, 300m, new[] { 7m }, true, depositDocumentApproved: false);
+        Assert.Equal(SiteOrderPaymentStep.AlreadyDeposited, plan.Step);
+        Assert.False(plan.RecordsPaymentOnSalesDocument);
+        Assert.False(plan.DeductsStock);
+    }
+
+    [Fact]
+    public void ใบมัดจำอนุมัติแล้ว_มีใบขาย_ไม่ทำอะไรซ้ำ_ทิศตรงข้าม()
+        => Assert.Equal(SiteOrderPaymentStep.AlreadyDeposited,
+            SiteOrderDepositInvoicing.OnPayment(New, true, true, 1000m, 1000m, new[] { 7m }, true, depositDocumentApproved: true).Step);
+
+    [Fact]
+    public void ใบมัดจำร่างค้าง_ข้อความบล็อกบอกเลขใบและทางไปต่อ()
+    {
+        var msg = SiteOrderDepositInvoicing.PendingDepositBlockMessage(new[] { "DRAFT-1" });
+        Assert.Contains("DRAFT-1", msg);
+        Assert.Contains("ทางไปต่อ", msg);
+    }
+
+    [Fact]
+    public void ปุ่มทำขั้นที่ค้าง_ทุกกรณีที่หมายเหตุบอกให้กดมีป้าย()
+    {
+        var c = SitePaymentStatus.Completed;
+        // ออกใบมัดจำล้ม (ยังไม่มีเอกสาร · ยังไม่มีใบขาย)
+        Assert.NotNull(SiteOrderDepositInvoicing.PaymentPendingAction(New, c, false, false, false, false));
+        // ใบมัดจำร่าง ก่อน/หลังมีใบขาย
+        Assert.Equal("อนุมัติใบรับเงินมัดจำที่ค้าง", SiteOrderDepositInvoicing.PaymentPendingAction(New, c, true, false, false, false));
+        Assert.Contains("ลบใบมัดจำร่าง", SiteOrderDepositInvoicing.PaymentPendingAction(New, c, true, false, true, false));
+        // หลังส่งมอบ เงินที่ยังไม่บันทึกกับใบขาย
+        Assert.Equal("บันทึกรับชำระกับใบขายที่ค้าง", SiteOrderDepositInvoicing.PaymentPendingAction(New, c, false, false, true, false));
+    }
+
+    [Fact]
+    public void ปุ่มทำขั้นที่ค้าง_ไม่ขึ้นเมื่อไม่มีอะไรค้าง_หรือโหมดเดิม()
+    {
+        var c = SitePaymentStatus.Completed;
+        Assert.Null(SiteOrderDepositInvoicing.PaymentPendingAction(New, c, true, true, false, false));   // ใบมัดจำอนุมัติแล้ว
+        Assert.Null(SiteOrderDepositInvoicing.PaymentPendingAction(New, c, false, false, true, true));   // บันทึกกับใบขายแล้ว
+        Assert.Null(SiteOrderDepositInvoicing.PaymentPendingAction(New, SitePaymentStatus.Pending, false, false, false, false));
+        Assert.Null(SiteOrderDepositInvoicing.PaymentPendingAction(null, c, false, false, false, false)); // โหมดเดิม: หน้าจอเดิม
+    }
+
+    [Fact]
+    public void เงินค้างหลายงวด_หมายเหตุดังบอกจำนวนและยอด_ไม่มีค้างไม่มีหมายเหตุ()
+    {
+        var note = SiteOrderDepositInvoicing.PendingPaymentsNote(new[] { 300m, 200m });
+        Assert.NotNull(note);
+        Assert.Contains("2 รายการ", note);
+        Assert.Contains("500.00", note);
+        Assert.Null(SiteOrderDepositInvoicing.PendingPaymentsNote(Array.Empty<decimal>()));
+    }
+
+    [Fact]
+    public void ตัดสต็อกมือ_โหมดมัดจำก่อนมีใบขายปฏิเสธ_มีใบขายหรือโหมดเดิมตัดได้()
+    {
+        Assert.NotNull(SiteOrderDepositInvoicing.StockDeductProblem(New, hasSalesDocument: false));
+        Assert.Null(SiteOrderDepositInvoicing.StockDeductProblem(New, hasSalesDocument: true));
+        Assert.Null(SiteOrderDepositInvoicing.StockDeductProblem(null, hasSalesDocument: false));
+        Assert.Null(SiteOrderDepositInvoicing.StockDeductProblem(DepositInvoicingMode.FullAtFirstPayment, hasSalesDocument: false));
+    }
 }

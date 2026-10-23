@@ -294,6 +294,9 @@ public class SiteOrderPayment : TenantEntity
     /// <summary>ทีม Q — ใบรับเงินมัดจำที่ออกจากรายการรับเงินนี้ (โหมด <c>deposit_tax_invoice</c>) · null = ยังไม่ออก/บันทึกเป็นรับชำระของใบขาย ·
     /// กันออกใบมัดจำซ้ำเมื่อยืนยันซ้ำ/webhook ซ้ำ</summary>
     public Guid? DepositDocumentId { get; set; }
+    /// <summary>ทีม Q (ฝ่ายค้านข้อ 2–3) — รายการรับชำระ ERP (<c>Payment.Id</c>) ที่บันทึกเงินของรายการนี้กับใบขายแล้ว ·
+    /// null = ยังไม่บันทึก (หรือแถวก่อนมีช่องนี้ — ตัวอ่านดูเลขอ้างอิงด้วย) · กันบันทึกซ้ำของเงินที่ไม่มีเลขอ้างอิง</summary>
+    public Guid? ErpPaymentId { get; set; }
 }
 
 // ===== Payment Gateway Configuration =====

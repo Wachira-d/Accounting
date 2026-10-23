@@ -506,6 +506,8 @@ public class OrderPaymentResponse
     public DateTime? PaidAt { get; set; }
     /// <summary>ทีม Q — ใบรับเงินมัดจำที่ออกจากรายการนี้ (null = บันทึกเป็นรับชำระของใบขาย/ยังไม่ยืนยัน)</summary>
     public Guid? DepositDocumentId { get; set; }
+    /// <summary>ทีม Q (ฝ่ายค้านข้อ 2) — ป้ายปุ่ม "ทำขั้นที่ค้าง" ของรายการนี้ (เซิร์ฟเวอร์ตัดสิน · null = ไม่มีอะไรค้าง)</summary>
+    public string? PendingAction { get; set; }
 }
 
 // ==================== Payment Gateway ====================

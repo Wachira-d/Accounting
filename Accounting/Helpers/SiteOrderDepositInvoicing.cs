@@ -64,8 +64,11 @@ public enum SiteOrderPaymentStep
     FinalInvoiceThenPayment = 3,
     /// <summary>มีใบขายแล้ว (ส่งมอบไปก่อน) ⇒ บันทึกรับชำระของยอดนี้กับใบนั้น</summary>
     PaymentOnFinalInvoice = 4,
-    /// <summary>รายการรับเงินนี้ออกใบมัดจำไปแล้ว (ยืนยันซ้ำ / webhook ซ้ำ) ⇒ ไม่ทำอะไรซ้ำ</summary>
+    /// <summary>รายการรับเงินนี้ออกใบมัดจำไปแล้ว (ยืนยันซ้ำ / webhook ซ้ำ) ⇒ ไม่ทำอะไรซ้ำ (ใบมัดจำร่างที่ยังไม่มีใบขาย ⇒ อนุมัติให้จบ)</summary>
     AlreadyDeposited = 5,
+    /// <summary>ฝ่ายค้านทีม Q ข้อ 1 — ใบมัดจำของรายการนี้ยังเป็น<b>ร่าง</b> แต่ออเดอร์มีใบขายแล้ว (ใบขายไม่ได้หักใบร่างนี้) ⇒ ห้ามอนุมัติใบร่าง
+    /// (VAT ซ้ำ) · ลบใบร่างแล้วบันทึกเงินงวดนี้เป็นรับชำระของใบขาย</summary>
+    DiscardDraftDepositThenPayOnFinal = 6,
 }
 
 /// <param name="Step">ขั้นที่ต้องทำ</param>
@@ -74,10 +77,11 @@ public sealed record SiteOrderPaymentPlan(SiteOrderPaymentStep Step, string? Not
 {
     /// <summary>ขั้นนี้ตัดสต็อกไหม — ตัดเฉพาะตอนมีใบขาย (สต็อกออกพร้อมรายได้ · ครั้งเดียว — <c>DeductStockAsync</c> ข้ามบรรทัดที่ตัดแล้ว)</summary>
     public bool DeductsStock => Step is SiteOrderPaymentStep.LegacyFullInvoice or SiteOrderPaymentStep.FinalInvoiceThenPayment
-        or SiteOrderPaymentStep.PaymentOnFinalInvoice;
+        or SiteOrderPaymentStep.PaymentOnFinalInvoice or SiteOrderPaymentStep.DiscardDraftDepositThenPayOnFinal;
     /// <summary>ขั้นนี้บันทึกรับชำระของยอดนี้กับใบขายไหม (ใบมัดจำลงเงินเข้าเองแล้ว ⇒ ห้ามบันทึกซ้ำ)</summary>
     public bool RecordsPaymentOnSalesDocument => Step is SiteOrderPaymentStep.LegacyFullInvoice
-        or SiteOrderPaymentStep.FinalInvoiceThenPayment or SiteOrderPaymentStep.PaymentOnFinalInvoice;
+        or SiteOrderPaymentStep.FinalInvoiceThenPayment or SiteOrderPaymentStep.PaymentOnFinalInvoice
+        or SiteOrderPaymentStep.DiscardDraftDepositThenPayOnFinal;
 }
 
 /// <summary>
@@ -118,9 +122,14 @@ public static class SiteOrderDepositInvoicing
     /// <param name="paidIncludingThis">ยอดรับรวมทุกรายการที่รับแล้ว รวมรายการนี้</param>
     /// <param name="lineVatRates">อัตรา VAT ของบรรทัดสินค้า</param>
     /// <param name="paymentAlreadyDeposited">รายการนี้ออกใบมัดจำไปแล้ว (<c>SiteOrderPayment.DepositDocumentId</c>)</param>
+    /// <param name="depositDocumentApproved">ใบมัดจำของรายการนี้อนุมัติแล้ว (false = ยังเป็นร่าง — อนุมัติล้มครั้งก่อน)</param>
     public static SiteOrderPaymentPlan OnPayment(string? orderMode, bool hasSalesDocument, bool handedOver,
-        decimal orderTotal, decimal paidIncludingThis, IEnumerable<decimal> lineVatRates, bool paymentAlreadyDeposited)
+        decimal orderTotal, decimal paidIncludingThis, IEnumerable<decimal> lineVatRates, bool paymentAlreadyDeposited,
+        bool depositDocumentApproved = true)
     {
+        // ฝ่ายค้านทีม Q ข้อ 1: ตรวจ "มีใบขายแล้ว" ก่อน — ใบมัดจำร่าง + ใบขายที่ออกแล้ว (ไม่ได้หักใบร่าง) ⇒ อนุมัติใบร่าง = VAT ซ้ำ
+        if (paymentAlreadyDeposited && !depositDocumentApproved && hasSalesDocument)
+            return new(SiteOrderPaymentStep.DiscardDraftDepositThenPayOnFinal, DraftDepositDiscardedNote);
         if (paymentAlreadyDeposited) return new(SiteOrderPaymentStep.AlreadyDeposited, null);
         if (DepositInvoicingMode.OfOrder(orderMode) != DepositInvoicingMode.DepositTaxInvoice)
             return new(SiteOrderPaymentStep.LegacyFullInvoice, null);
@@ -134,6 +143,43 @@ public static class SiteOrderDepositInvoicing
     /// โหมดเดิม = false เสมอ (พฤติกรรมเดิม: ส่งมอบไม่แตะเอกสาร/สต็อก) · ใบขายมีแล้ว ⇒ ยังต้องเรียกเพื่อ "ตัดสต็อกที่ค้าง" (ทำซ้ำได้)</summary>
     public static bool SettlesOnHandover(string? orderMode, SiteOrderStatus newStatus)
         => DepositInvoicingMode.OfOrder(orderMode) == DepositInvoicingMode.DepositTaxInvoice && IsHandoverStatus(newStatus);
+
+    public const string DraftDepositDiscardedNote =
+        "ใบรับเงินมัดจำร่าง (อนุมัติไม่สำเร็จ) ไม่ได้ถูกหักในใบขายที่ออกแล้ว — ระบบลบใบร่างและบันทึกเงินงวดนั้นเป็นรับชำระของใบขายแทน (กัน VAT ซ้ำ)";
+
+    /// <summary>ฝ่ายค้านทีม Q ข้อ 1 — มีใบมัดจำร่างค้าง ⇒ ห้ามออกใบขายส่วนที่เหลือ (ใบขายจะหักไม่ได้ ⇒ VAT เต็ม แล้วอนุมัติใบร่างทีหลัง = VAT ซ้ำ)</summary>
+    public static string PendingDepositBlockMessage(IEnumerable<string> draftNumbers)
+        => $"ยังออกใบขายส่วนที่เหลือไม่ได้ — ใบรับเงินมัดจำ {string.Join(", ", draftNumbers)} ยังไม่อนุมัติ (ระบบลองอนุมัติแล้วไม่ผ่าน · ดูหมายเหตุบนใบ) "
+           + "· ทางไปต่อ: แก้เหตุที่หน้าเอกสารแล้วอนุมัติใบมัดจำ หรือกดปุ่มที่รายการรับเงินในออเดอร์ แล้วทำรายการนี้อีกครั้ง";
+
+    /// <summary>ฝ่ายค้านทีม Q ข้อ 6 — ตัดสต็อกมือของออเดอร์โหมดมัดจำที่ยังไม่มีใบขาย = สต็อกออกก่อนรายได้ ⇒ ปฏิเสธพร้อมทางไปต่อ · null = ตัดได้ (โหมดเดิมเสมอ)</summary>
+    public static string? StockDeductProblem(string? orderMode, bool hasSalesDocument)
+        => DepositInvoicingMode.OfOrder(orderMode) == DepositInvoicingMode.DepositTaxInvoice && !hasSalesDocument
+            ? "ออเดอร์นี้ใช้ \"มัดจำออกใบกำกับเฉพาะยอดมัดจำ\" — สต็อกตัดพร้อมใบขายส่วนที่เหลือเท่านั้น · กด \"จัดส่งแล้ว\"/\"ส่งมอบแล้ว\" (ระบบออกใบ + ตัดสต็อกให้) หรือรอลูกค้าชำระครบ"
+            : null;
+
+    /// <summary>ฝ่ายค้านทีม Q ข้อ 2 — "ปุ่มทำขั้นที่ค้าง" ของรายการรับเงิน 1 รายการ (ป้ายปุ่ม) · null = ไม่มีอะไรค้าง ·
+    /// ทุกข้อความที่บอกให้กดต้องมาจากตัวนี้ (หน้าเว็บแสดงปุ่มตามป้ายที่ได้ · กดแล้วเรียก <c>ConfirmPaymentAsync</c> ของรายการนั้น ⇒ <see cref="OnPayment"/>)</summary>
+    /// <param name="recordedOnSalesDocument">บันทึกรับชำระของรายการนี้กับใบขายแล้ว</param>
+    public static string? PaymentPendingAction(string? orderMode, SitePaymentStatus status, bool hasDepositDocument,
+        bool depositDocumentApproved, bool hasSalesDocument, bool recordedOnSalesDocument)
+    {
+        if (status != SitePaymentStatus.Completed) return null;
+        if (DepositInvoicingMode.OfOrder(orderMode) != DepositInvoicingMode.DepositTaxInvoice) return null;   // โหมดเดิม: หน้าจอเดิม
+        if (hasDepositDocument)
+        {
+            if (depositDocumentApproved) return null;
+            return hasSalesDocument ? "บันทึกเป็นรับชำระของใบขาย (ลบใบมัดจำร่าง)" : "อนุมัติใบรับเงินมัดจำที่ค้าง";
+        }
+        if (!hasSalesDocument) return "ออกเอกสารของเงินงวดนี้ที่ค้าง";
+        return recordedOnSalesDocument ? null : "บันทึกรับชำระกับใบขายที่ค้าง";
+    }
+
+    /// <summary>หมายเหตุดังบนออเดอร์เมื่อมีเงินรับแล้วที่ยังไม่มีเอกสาร (ข้อ 3) · null = ไม่มี</summary>
+    public static string? PendingPaymentsNote(IReadOnlyList<decimal> pendingAmounts)
+        => pendingAmounts.Count == 0 ? null
+            : $"⚠️ มีเงินรับแล้ว {pendingAmounts.Count} รายการ รวม {pendingAmounts.Sum():N2} บาท ที่ยังไม่มีใบรับเงินมัดจำ/ยังไม่บันทึกรับชำระกับใบขาย "
+              + "(ลูกหนี้ค้าง) — กดปุ่มที่รายการรับเงินแต่ละรายการในออเดอร์เพื่อทำขั้นที่ค้าง (ไม่ออกซ้ำ)";
 
     /// <summary>อัตรา VAT ของบรรทัดใบมัดจำ — จด VAT = อัตราเดียวของบิล (7% ⇒ VAT ทันที §78(1)(ข) · 0%/ยกเว้น ตามสินค้า) · ไม่จด VAT = 0 (§90/2)</summary>
     public static decimal DepositLineVatRate(bool vatRegistered, decimal singleRate) => vatRegistered ? singleRate : 0m;

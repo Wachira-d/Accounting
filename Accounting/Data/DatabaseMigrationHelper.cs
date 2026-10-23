@@ -7765,6 +7765,7 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoDepositInvoicing" varchar(32) NOT NULL DEFAULT 'full_at_first_payment';""",
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "DepositInvoicingMode" varchar(32) NULL;""",
         """ALTER TABLE "SiteOrderPayments" ADD COLUMN IF NOT EXISTS "DepositDocumentId" uuid NULL;""",
+        """ALTER TABLE "SiteOrderPayments" ADD COLUMN IF NOT EXISTS "ErpPaymentId" uuid NULL;""",
     };
 
     /// <summary>รอบ 205 ทีม I (ฝ่ายค้าน ข้อ 6): บทบาทที่สร้างจากแม่แบบเดิมเก็บ id เมนูที่ไม่มีจริง (warehouses ฯลฯ) ⇒ สมาชิกโหมดเข้มงวดไม่เห็นเมนู ·

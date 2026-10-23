@@ -529,7 +529,7 @@
                   <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
                     ${p.slipUrl ? `<a href="${Layout.esc(p.slipUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline" title="เปิดดูสลิป">🧾 ดูสลิป</a>` : ''}
                     ${p.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.confirmPayment('${o.id}', '${p.id}')" title="ยืนยันรับเงินจริง → ระบบลงบัญชีตามวิธีออกเอกสารของออเดอร์นี้">✓ ยืนยันรับเงิน + ลงบัญชี</button>` : ''}
-                    ${p.status === 'Completed' && !p.depositDocumentId && !o.erpDocumentId && o.depositInvoicingMode === 'deposit_tax_invoice' ? `<button class="btn btn-sm btn-outline" onclick="Page.confirmPayment('${o.id}', '${p.id}', true)" title="รับเงินแล้วแต่ใบรับเงินมัดจำยังไม่ออก (ดูหมายเหตุ) — กดซ้ำได้ ไม่ออกซ้ำ">🧾 ออกใบมัดจำที่ค้าง</button>` : ''}
+                    ${p.pendingAction ? `<button class="btn btn-sm btn-outline" onclick="Page.confirmPayment('${o.id}', '${p.id}', '${Layout.jsArg(p.pendingAction)}')" title="เงินรับแล้วแต่ขั้นเอกสาร/บัญชียังค้าง (ดูหมายเหตุ) — กดซ้ำได้ ไม่ออกซ้ำ">🧾 ${Layout.esc(p.pendingAction)}</button>` : ''}
                   </div>
                 </div>`;
               }).join('')}
@@ -548,7 +548,8 @@
         const api = Layout.api(); if (!api) return;
         // ทีม Q: ขั้นที่ระบบทำขึ้นกับวิธีออกเอกสารที่ตรึงบนออเดอร์ — ข้อความวิธีมาจากเซิร์ฟเวอร์ (ไม่เดาขั้นเองในหน้าเว็บ)
         const how = this._currentOrder?.depositInvoicingLabel ? `\n\nวิธีออกเอกสารของออเดอร์นี้: ${this._currentOrder.depositInvoicingLabel}` : '';
-        if (!confirm((retry ? 'ออกใบรับเงินมัดจำที่ค้างของรายการนี้?' : 'ยืนยันรับเงินจากออเดอร์นี้แล้ว?\n\nระบบจะออกเอกสาร + ลงบัญชี + บันทึกรับเงิน (ตัดสต็อก/ออก e-Tax ตามวิธีของออเดอร์)') + how)) return;
+        // ทีม Q (ฝ่ายค้านข้อ 2): ปุ่มทำขั้นที่ค้างส่งป้ายจากเซิร์ฟเวอร์ (p.pendingAction) มาเป็น retry
+        if (!confirm((retry ? `${retry} — ทำกับรายการรับเงินนี้?` : 'ยืนยันรับเงินจากออเดอร์นี้แล้ว?\n\nระบบจะออกเอกสาร + ลงบัญชี + บันทึกรับเงิน (ตัดสต็อก/ออก e-Tax ตามวิธีของออเดอร์)') + how)) return;
         try {
           await api.cmsConfirmOrderPayment(this._sid(), orderId, paymentId);
           Layout.toast('ยืนยันรับเงิน + ลงบัญชีสำเร็จ', 'success');
