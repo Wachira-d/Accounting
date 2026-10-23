@@ -5471,3 +5471,5 @@ _2026-10-22 ทีม O (หลังฝ่ายค้าน — ไม่ม�
 `GetDepositDiagnosticsAsync` · `GetDepositCenterAsync`) เดิม "ตัดแค่ใบเดิม" ⇒ ใบกลับรายการ (คัดลอก Tags/SourceDocumentId) ติดลบ ⇒ ใช้ `ReportableJournal.LedgerStatuses` ·
 (3) ECL: ฐานค่าเผื่อเปลี่ยนจากการแก้ ⇒ บอกในคำอธิบาย JE + แจ้งเจ้าของครั้งเดียว (`Helpers/EclAllowanceBasis`) · (4) งบประมาณ PO · รายได้ตามหมวด/รายวัน (integration) ·
 LINE bot · SmartSafety ไม่นับใบปิดบัญชี (`WherePeriodActivity`) · (5) เทสต์กลับรายการข้ามปี · (6) audit คำนวณรายงานใหม่มี UserId/UserEmail + `replacesReportId` · ยังไม่ได้คอมไพล์_
+
+_2026-10-23 (ผู้ใช้: "รายการข้างล่างใส่เลข 1 ไม่ขึ้น" — ใบแจ้งหนี้โซลาร์เซลล์): renderer ทั้งสองตัวซ่อนจำนวน = 1 ของบรรทัดบรรยาย (ราคา/ยอด/VAT 0) ทุกกรณี ⇒ Smart Logger 1 เครื่อง/ออกแบบ 1 งาน ไม่ขึ้น · ตัวตัดสินเดียว `Helpers/PrintedLineQuantity` (มีหน่วย ⇒ แสดง · ไม่มีหน่วย+1 ⇒ เว้นว่างเหมือนเดิม) ใช้ทั้ง HTML + QuestPDF · เทสต์ `PrintedLineQuantityTests` · รูปแบบเดิม `Quantity == 1 ?` เหลือ 0 จุด_

@@ -847,12 +847,12 @@ public partial class PdfGenerationService
                     printedAmount = Math.Round(printedAmount * (doc.SubTotal + billDeductLine) / doc.SubTotal, 2, MidpointRounding.AwayFromZero);
                 // รายการย่อย/บรรยายงาน (ไม่ระบุราคา): ราคา 0 + ยอด 0 → เว้นช่อง
                 // ตัวเลขว่างแทน "0.00" — ใช้แจกแจงงานย่อยใต้บรรทัดแม่ที่ถือราคา
-                // (เช่น งานหลัก 5,000 + งานย่อย 4 บรรทัดบอกขอบเขต) คง จำนวน/หน่วย ไว้
+                // (เช่น งานหลัก 5,000 + งานย่อย 4 บรรทัดบอกขอบเขต) คง จำนวน/หน่วย ไว้ (จำนวน: PrintedLineQuantity)
                 var isDescriptiveLine = line.UnitPrice == 0 && line.Amount == 0 && line.VatAmount == 0;
                 if (t.ShowLineNumber) Td(idx.ToString(), "center");
                 if (t.ShowItemCode) Td(line.ProductCode ?? "");
                 Td(line.Description ?? "");
-                Td(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"), "right");
+                Td(Accounting.Helpers.PrintedLineQuantity.Format(line.Quantity, line.Unit, isDescriptiveLine), "right");
                 if (t.ShowUnit) Td(line.Unit ?? "", "center");
                 Td(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"), "right");
                 if (showDiscountCol) Td(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"), "right");

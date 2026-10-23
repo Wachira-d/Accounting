@@ -2274,7 +2274,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (template.ShowLineNumber) sb.AppendLine($"<td class='center'>{lineNum++}</td>");
             if (template.ShowItemCode) sb.AppendLine($"<td>{WebUtility.HtmlEncode(line.ProductCode ?? "")}</td>");
             sb.AppendLine($"<td style='white-space:pre-line'>{WebUtility.HtmlEncode(line.Description)}</td>");
-            sb.AppendLine($"<td class='right'>{(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"))}</td>");
+            sb.AppendLine($"<td class='right'>{Accounting.Helpers.PrintedLineQuantity.Format(line.Quantity, line.Unit, isDescriptiveLine)}</td>");
             if (template.ShowUnit) sb.AppendLine($"<td class='center'>{WebUtility.HtmlEncode(line.Unit)}</td>");
             sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"))}</td>");
             if (showDiscountCol) sb.AppendLine($"<td class='right'>{(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"))}</td>");
