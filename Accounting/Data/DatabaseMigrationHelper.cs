@@ -7165,6 +7165,10 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "AutoConfirmOnSlip" boolean NOT NULL DEFAULT true;""",
             // โหมดที่ใช้กับใบนั้น (ตรึงตอนสร้าง) — NULL = ใบก่อนรอบนี้ (พฤติกรรมเดิมทุกทาง)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "GuestConfirmMode" integer NULL;""",
+            // 2026-10-23 คำตัดสินข้อ 157 (ทีม P) — จังหวะออกเอกสารภาษีของที่พัก (BookingInvoiceTiming · 1 = TaxInvoiceOnPaymentOrService = พฤติกรรมเดิม)
+            // + ใบกำกับภาษีล่วงหน้าที่ผูกกับการจอง (NULL = ไม่มี) · ไม่ backfill — ที่พัก/การจองเดิมได้ผลเดิมทุกตัวอักษร
+            """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "TaxInvoiceTiming" integer NOT NULL DEFAULT 1;""",
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "AdvanceTaxDocumentId" uuid NULL;""",
             // 2026-10-22 ทีม D (หน้าห้องพักสาธารณะ) — รายละเอียดห้องที่แขกต้องเห็น: สูบบุหรี่/สัตว์เลี้ยง/หมายเหตุห้อง ·
             // ค่าตั้งต้น false = ปลอดบุหรี่/ไม่รับสัตว์ (ตรงกับที่ที่พักส่วนใหญ่ใช้ · เดิมไม่มีช่องให้ตั้ง ⇒ ไม่มีของเก่าที่ต้องแปลง)
             """ALTER TABLE "LodgingRoomTypes" ADD COLUMN IF NOT EXISTS "SmokingAllowed" boolean NOT NULL DEFAULT false;""",

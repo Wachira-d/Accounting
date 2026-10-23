@@ -274,6 +274,8 @@
         if (r.status === 'CheckedIn') actions += A('🛫 เช็คเอาต์ + ออกบิล', 'checkOutForm()', 'btn-primary') + A('+ รายการ folio', 'chargeForm()') + (r.balanceDue > 0 ? A('รับชำระระหว่างพัก', 'confirmForm(true)') : '');
         // รอบ 201 ทีม IN (A-IN5): ใบเช็คเอาต์ถูกยกเลิก ⇒ ออกใบใหม่ยอดเท่าเดิม — เซิร์ฟเวอร์ตัดสินว่าเปิดปุ่มได้ (canReissueFinalDocument)
         if (r.canReissueFinalDocument === true) actions += A('🧾 ออกใบเช็คเอาต์ใหม่', 'reissueFinalForm()', 'btn-primary');
+        // คำตัดสินข้อ 157: ใบกำกับภาษีล่วงหน้า — เซิร์ฟเวอร์ตัดสินว่าเปิดปุ่มได้ (canIssueAdvanceTaxInvoice · ตัวเดียวกับตอนกด)
+        if (r.canIssueAdvanceTaxInvoice === true) actions += A('🧾 ออกใบกำกับภาษีล่วงหน้า', 'advanceTaxInvoiceForm()', 'btn-primary');
         // รอบ 202 (O-P0-2): แถวที่ night audit รุ่นก่อนปิดเอง — เซิร์ฟเวอร์ตัดสิน (canLegacyCheckOut / canSettleLegacyNoShow) แล้วเดินเส้นเช็คเอาต์/no-show ปกติ
         if (r.canLegacyCheckOut === true) actions += A('🧾 ออกใบเช็คเอาต์ย้อนหลัง', 'checkOutForm()', 'btn-primary');
         if (r.canSettleLegacyNoShow === true) actions += A('คิดค่าปรับ no-show (ย้อนหลัง)', 'cancel(true)', 'btn-danger');
@@ -293,6 +295,7 @@
           ${r.slipUploadedAt || r.slipRejectedCount > 0 ? `<div class="card" id="slipGallery"><h4>🧾 สลิปของแขก</h4><div class="hint">กำลังโหลดสลิป…</div></div>` : ''}
           ${r.slipRejectedCount > 0 ? `<div class="warn" style="background:#FEE2E2;border-color:#FCA5A5">⚠️ สลิปถูกปฏิเสธมาแล้ว ${r.slipRejectedCount} ครั้ง${r.slipRejectedReason ? ` — ล่าสุด: ${esc(r.slipRejectedReason)}` : ''}${r.slipUploadBlocked ? ' · <b>ปิดรับสลิปของใบนี้แล้ว</b> (แขกยังชำระออนไลน์/ติดต่อที่พักได้)' : ''}</div>` : ''}
           ${r.finalDocumentNote ? `<div class="warn">⚠️ ${esc(r.finalDocumentNote)}</div>` : ''}
+          ${r.advanceTaxInvoiceNote ? `<div class="warn">🧾 ${esc(r.advanceTaxInvoiceNote)}</div>` : ''}
           ${r.paymentProblemAt ? `<div class="warn" style="background:#FEE2E2;border-color:#FCA5A5">💳 <b>เงินเข้าแล้วแต่ยืนยันการจองไม่ได้</b> (ระบบไม่คืนเงินเอง) — ติดต่อแขกเพื่อเลื่อนวัน/ย้ายห้องแล้วกด “ยืนยัน” หรือคืนเงินตามช่องทางที่รับมา<div class="hint" style="white-space:pre-line">${esc(r.paymentProblemNote || '')}</div></div>` : ''}
           ${r.overdueLabel ? `<div class="warn">⏰ <b>${esc(r.overdueLabel)}</b> — ระบบไม่ปิดสถานะเอง: ${r.status === 'CheckedIn' ? 'กด “เช็คเอาต์ + ออกบิล” (ห้องยังถูกกันไว้จนกว่าจะเช็คเอาต์)' : 'กด “No-show” เพื่อคิดค่าปรับ/ค้างคืนตามนโยบาย หรือ “ยกเลิก” / “เลื่อนวัน” ถ้าแขกแจ้งไว้'}</div>` : ''}
           ${r.canLegacyCheckOut ? `<div class="warn">🗂 ระบบรุ่นก่อนบันทึก “เช็คเอาต์แล้ว” เองโดย<b>ยังไม่ได้ออกบิล</b> — กด “ออกใบเช็คเอาต์ย้อนหลัง” เพื่อออกเอกสารและใช้มัดจำ (ไม่แตะสถานะห้องปัจจุบัน)</div>` : ''}
@@ -312,7 +315,7 @@
               <div class="kv total"><span>ยอดรวมทั้งสิ้น</span><span>${money(r.grandTotal)}</span></div>
               <div class="kv"><span>มัดจำที่ต้องเก็บ / รับแล้ว</span><span>${money(r.depositRequired)} / <b>${money(r.depositPaid)}</b></span></div>
               <div class="kv"><span>ชำระแล้วทั้งหมด</span><span>${money(r.paidAmount)}</span></div><div class="kv"><span>คงเหลือ</span><b class="${r.balanceDue > 0 ? 'text-warning' : 'text-success'}">${money(r.balanceDue)}</b></div>
-              ${r.depositDocumentId ? `<div class="hint">ใบเสร็จมัดจำ <a href="/pages/documents.html?id=${r.depositDocumentId}">${esc(r.depositDocumentNumber || '')}</a></div>` : ''}${r.finalDocumentId ? `<div class="hint">เอกสารเช็คเอาต์ <a href="/pages/documents.html?id=${r.finalDocumentId}">${esc(r.finalDocumentNumber || '')}</a></div>` : ''}
+              ${r.depositDocumentId ? `<div class="hint">ใบเสร็จมัดจำ <a href="/pages/documents.html?id=${r.depositDocumentId}">${esc(r.depositDocumentNumber || '')}</a></div>` : ''}${r.advanceTaxDocumentId && r.advanceTaxDocumentNumber ? `<div class="hint">ใบกำกับภาษีล่วงหน้า <a href="/pages/documents.html?id=${esc(r.advanceTaxDocumentId)}">${esc(r.advanceTaxDocumentNumber)}</a>${r.advanceTaxDocumentLive ? '' : ' (ยกเลิกแล้ว)'}</div>` : ''}${r.finalDocumentId && r.finalDocumentId !== r.advanceTaxDocumentId ? `<div class="hint">เอกสารเช็คเอาต์ <a href="/pages/documents.html?id=${r.finalDocumentId}">${esc(r.finalDocumentNumber || '')}</a></div>` : ''}
               ${r.cancellationFee || r.refundAmount ? `<div class="hint">ค่าปรับ ${money(r.cancellationFee)} · ต้องคืน ${money(r.refundAmount)} · คืนแล้ว ${money(r.refundPaidAmount)}${r.refundPending > 0 ? ` · <b style="color:#b45309">ค้างคืน ${money(r.refundPending)}</b>` : ''} — ${esc(r.cancellationReason || '')}</div>` : ''}
               ${r.depositVatTreatmentLabel ? `<div class="hint">มัดจำบันทึกแบบ: ${esc(r.depositVatTreatmentLabel)}</div>` : ''}
               ${r.securityDepositDocumentId ? `<div class="kv"><span>🔒 เงินประกันความเสียหาย (รับ / คงเหลือ)</span><span>${money(r.securityDepositReceived)} / <b>${money(r.securityDepositHeld)}</b></span></div>
@@ -543,6 +546,18 @@
           // ฝ่ายค้าน X2: เซิร์ฟเวอร์ปฏิเสธเมื่อไม่ติ๊ก (ใบที่ออกเองโดยไม่อ้างเลขจองตรวจจากข้อมูลไม่ได้) · มีใบขายอ้างเลขจองอยู่แล้ว = ปฏิเสธเสมอ
           await this.call(() => Layout.api().lodgingReissueFinal(r.id, { reason: f.reason.value || null, confirmNoManualReissue: f.confirmNoManual.checked }));
         }, 'ออกใบใหม่');
+      },
+      // คำตัดสินข้อ 157: ออกใบกำกับภาษีเต็มยอดการเข้าพักตอนนี้ — ด่าน/ชนิดใบ/ผู้ซื้ออยู่ที่เซิร์ฟเวอร์ (IssueAdvanceTaxInvoiceAsync)
+      advanceTaxInvoiceForm() {
+        const r = this.current;
+        const canCompany = !!(r.guestCompanyName && r.guestTaxId);
+        this.sub('ออกใบกำกับภาษีล่วงหน้า', `<form id="atf" class="grid2">
+          <div class="hint" style="grid-column:1/-1">ระบบจะออก <b>ใบกำกับภาษีเต็มยอดการเข้าพัก</b> (ค่าห้อง · บริการเสริม · service charge) ลงวันที่วันนี้ — ภาษีขายเข้า ภ.พ.30 เดือนนี้แม้ยังไม่ได้รับเงิน ·
+            เงินที่รับต่อจากนี้ออกใบรับเงินไม่มี VAT แล้วตัดชำระใบนี้ตอนเช็คเอาต์ · ยกเลิก/ไม่มา = ใบลดหนี้ส่วนที่ไม่เรียกเก็บ · ยอดเปลี่ยน = ปรับตอนเช็คเอาต์</div>
+          <div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="company" ${canCompany ? '' : 'disabled'}> ออกในนามบริษัท ${canCompany ? esc(r.guestCompanyName) + ' (' + esc(r.guestTaxId) + ')' : '— ต้องกรอกชื่อบริษัท + เลขผู้เสียภาษีที่ “แก้ข้อมูลแขก” ก่อน'}</label></div></form>`, async () => {
+          const f = document.getElementById('atf');
+          await this.call(() => Layout.api().lodgingIssueAdvanceTaxInvoice(r.id, { issueToCompany: !!(f.company && f.company.checked) }));
+        }, 'ออกใบกำกับ');
       },
       // ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง — บัญชีที่เงินออก: เลือกเอง หรือปล่อยว่าง = บัญชีเดียวกับที่รับมัดจำเข้ามา
       paymentProblemForm() {

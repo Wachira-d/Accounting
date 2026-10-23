@@ -1052,6 +1052,8 @@ const API = {
       lodgingCheckOut: (id, d) => API.post(`${base}/lodging/reservations/${id}/check-out`, d),
       // รอบ 201 ทีม IN (A-IN5): ออกใบเช็คเอาต์ใหม่แทนใบที่ยกเลิก (ยอดเท่าเดิม)
       lodgingReissueFinal: (id, d) => API.post(`${base}/lodging/reservations/${id}/reissue-final`, d || {}),
+      // คำตัดสินข้อ 157: ออกใบกำกับภาษีล่วงหน้า (เต็มยอดการเข้าพัก) เอง
+      lodgingIssueAdvanceTaxInvoice: (id, d) => API.post(`${base}/lodging/reservations/${id}/advance-tax-invoice`, d || {}),
       lodgingCancel: (id, d) => API.post(`${base}/lodging/reservations/${id}/cancel`, d),
       lodgingNoShow: (id, d) => API.post(`${base}/lodging/reservations/${id}/no-show`, d),
       lodgingRefundPaid: (id, d) => API.post(`${base}/lodging/reservations/${id}/refund-paid`, d),

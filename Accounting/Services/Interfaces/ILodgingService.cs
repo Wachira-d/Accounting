@@ -97,6 +97,8 @@ public interface ILodgingService
     Task<LodgingReservationResponse> CheckOutAsync(Guid companyId, Guid reservationId, LodgingCheckOutRequest request, string userId);
     /// <summary>รอบ 201 ทีม IN (A-IN5): ออกใบเช็คเอาต์ใหม่หลังใบเดิมถูกยกเลิก — ยอดเท่าใบเดิม (Helpers/LodgingCheckoutReissue)</summary>
     Task<LodgingReservationResponse> ReissueFinalDocumentAsync(Guid companyId, Guid reservationId, LodgingReissueFinalRequest request, string userId);
+    /// <summary>คำตัดสินข้อ 157: ออกใบกำกับภาษีล่วงหน้า (เต็มยอดการเข้าพัก) เอง — ตัวตัดสิน Helpers/LodgingTaxInvoiceTimingPolicy</summary>
+    Task<LodgingReservationResponse> IssueAdvanceTaxInvoiceAsync(Guid companyId, Guid reservationId, LodgingIssueAdvanceTaxInvoiceRequest request, string userId);
     Task<LodgingReservationResponse> CancelAsync(Guid companyId, Guid reservationId, LodgingCancelRequest request, string userId, bool noShow = false);
     /// <summary>ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง (F-03 รอบ 193) — ลง JE คืนเงิน + ใบลดหนี้ตอนนี้เท่านั้น
     /// (ยกเลิกแค่ตั้ง "ยอดค้างคืน" ไม่แตะเงินสด)</summary>

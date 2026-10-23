@@ -146,6 +146,11 @@ public class LodgingProperty : TenantEntity
     /// null = ลงรายได้ค่าห้อง. ใช้ตอน RealizeDeposit ส่วนที่ริบเมื่อยกเลิก/no-show</summary>
     public string? CancellationFeeAccountCode { get; set; }
 
+    /// <summary>คำตัดสินข้อ 157 (2026-10-23) — จังหวะออกเอกสารภาษีของที่พัก (enum เดียวกับการจองนัดหมาย · ตัวตัดสิน
+    /// <c>Helpers/LodgingTaxInvoiceTimingPolicy</c>) · ค่าเริ่มต้น <see cref="BookingInvoiceTiming.TaxInvoiceOnPaymentOrService"/> = พฤติกรรมเดิม
+    /// (ใบมัดจำเมื่อรับเงิน · ใบกำกับตอนเช็คเอาต์) · คอลัมน์ DEFAULT 1 ⇒ ที่พักเดิมไม่เปลี่ยน</summary>
+    public BookingInvoiceTiming TaxInvoiceTiming { get; set; } = BookingInvoiceTiming.TaxInvoiceOnPaymentOrService;
+
     // ── การแจ้งเตือน/ข้อความ ──
     public string? ConfirmationMessage { get; set; }    // ข้อความในอีเมล/หน้ายืนยัน
     public string? HouseRules { get; set; }             // กฎที่พัก (แสดงบนเว็บ + ใบยืนยัน)
@@ -415,6 +420,9 @@ public class LodgingReservation : TenantEntity
     /// <summary>ใบกำกับภาษี/ใบเสร็จ ตอนเช็คเอาต์ (ตัดมัดจำแล้ว)</summary>
     public Guid? FinalDocumentId { get; set; }
     public Document? FinalDocument { get; set; }
+    /// <summary>คำตัดสินข้อ 157 — ใบกำกับภาษีล่วงหน้า (เต็มยอดการเข้าพัก) ที่ออกเมื่อยืนยัน/รับเงินครั้งแรก ในโหมด
+    /// <see cref="BookingInvoiceTiming.TaxInvoiceAtBooking"/> · null = ไม่มี · ใบถูกยกเลิก = การจองกลับไปใช้จังหวะปกติ (ตัดสินจากเอกสาร)</summary>
+    public Guid? AdvanceTaxDocumentId { get; set; }
     public string? PaymentSlipUrl { get; set; }
     public string? PaymentReference { get; set; }
     public DateTime? SlipUploadedAt { get; set; }
