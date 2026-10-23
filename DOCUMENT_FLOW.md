@@ -1631,6 +1631,18 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     6. e-Tax: ขั้น 3 (`ApproveDocumentAsync`) ออกให้แล้วผ่าน hook — **ถอดการเรียก `GenerateAsync` ซ้ำ** (เดิมได้ "มี e-Tax แล้ว" เป็น LogWarning ทุกใบ
        และล้มเงียบ) · เรียก `IIssuedDocumentHooks.RunAsync` เฉพาะเมื่อ**ไม่ได้อนุมัติในรอบนี้** (ยืนยันซ้ำ/อนุมัติไว้ก่อน) (รอบ 193 S-02)
   - ทุก step fault-tolerant: ล้มเหลว → log + ไม่ rollback step ก่อนหน้า
+  - **ใบกำกับของมัดจำ — ร้านเลือกได้ (ทีม Q · คำตัดสินข้อ 156 · `docs/POS_MTO_DESIGN.md` §3.6)**: ค่าตั้ง `SiteCommerceConfig.MtoDepositInvoicing` ตรึงลง
+    `SiteOrder.DepositInvoicingMode` ตอนสั่ง · ตัวตัดสินเดียว `Helpers/SiteOrderDepositInvoicing.OnPayment` (ใน `ConfirmPaymentAsync` — ทุกทางเข้าเงิน) /
+    `SettlesOnHandover` (ใน `UpdateOrderStatusAsync` จัดส่ง/ส่งมอบ):
+    - `full_at_first_payment` (**ค่าเริ่มต้น · ออเดอร์เดิม NULL**) = 6 ขั้นข้างบนเหมือนเดิม (ขั้น 3 อนุมัติเฉพาะใบที่ยังค้าง — งวดที่สองไม่ประทับ "อนุมัติไม่ได้" ปลอมอีก)
+    - `deposit_tax_invoice`: งวดที่ยังไม่ครบ + ยังไม่ส่งมอบ ⇒ ใบรับเงินมัดจำ (Receipt `IsDeposit` · VAT ทันที §78(1)(ข) · Dr เงิน / Cr 217xx + Cr 21911 ·
+      ผูก `SiteOrderPayment.DepositDocumentId` · ไม่บันทึกรับชำระ · ไม่ตัดสต็อก) · ชำระครบ/จัดส่ง/ส่งมอบ ⇒ ใบขายส่วนที่เหลือ = บรรทัดเต็ม + `DepositBaseDeducted`/`DepositAppliedRef`
+      (วางแผนก่อนออกเลขด้วย `LodgingDepositSettlement.PlanCheckout` · อนุมัติแล้วรับรู้มัดจำเอง) + มัดจำไม่มี VAT ⇒ `ApplyDepositToInvoiceAsync` + ตัดสต็อกครั้งเดียว ·
+      เงินหลังส่งมอบ ⇒ รับชำระของใบนั้น · ส่งมอบล้ม ⇒ สถานะไม่เปลี่ยน + 400 พร้อมเหตุ + ประทับบนออเดอร์ (กดซ้ำทำขั้นที่ค้าง) · ปุ่ม sync ERP มือหักมัดจำด้วย ·
+      บิลหลายอัตรา VAT ⇒ แบบเดิม + หมายเหตุ
+    - ยกเลิก/คืนเงินออเดอร์ที่มีใบมัดจำค้าง ⇒ ไม่ยกเลิกใบมัดจำเอง · ประทับ `CancelNotice` (คืนมัดจำ = ใบลดหนี้เมื่อมีหลักฐาน · ริบ = รับรู้/ริบมัดจำ)
+    - หลังบ้าน `cms-orders.html`: ตัวเลือก + คำอธิบายผลภาษีจากเซิร์ฟเวอร์ · ปุ่ม "ส่งมอบแล้ว (ลูกค้ามารับ)" (ยืนยันแล้ว/กำลังเตรียม → ส่งมอบ) · รายการใบมัดจำ ·
+      ปุ่ม "ออกใบมัดจำที่ค้าง" · หน้าร้าน: ข้อความถึงลูกค้า (`CustomerNote`) บนเช็กเอาต์/หน้าคำสั่งซื้อ
 - **รอบที่เปิดให้จอง (CMS booking · ทีม B 2026-10-22)** — ตัวตัดสินเดียว `Helpers/BookingSlotEngine` (หน้าเวลาว่าง `Available` + ด่านสร้างการจอง `Decide`):
   โหมดรอบ (`SlotMode`: ช่วงกำหนดเอง=เดิม · ทุก N นาที · ครึ่งวัน · รายวัน) · buffer ก่อน/หลัง · ความจุพร้อมกัน (คิว/คน) · ทรัพยากรร่วม (`CapacityGroup`) ·
   เวลาทำการรายสัปดาห์ + วันหยุด/วันพิเศษ (แถว `SiteBookingSlot`) · ล่วงหน้าขั้นต่ำ/สูงสุด (เวลาไทย) · จองหลายช่วงติดกัน (`Units` · ยอด = ราคา × ช่วง) ·
@@ -1711,7 +1723,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (`Helpers/ShippingFeeRules` — โซน/น้ำหนัก/ฟรี/ส่งฟรีเมื่อครบ · ไม่ตั้งโซน = เหมาจ่ายระดับร้าน · มารับเอง = 0) ⇒ **`SiteOrder.ShippingAmount` มีผู้เขียนแล้ว** ·
     วันรับเร็วสุด `Helpers/MtoLeadTime` ⇒ `EarliestReadyDate` · เงื่อนไขชำระ `Helpers/MtoPaymentTerms` ⇒ ตรึง `PaymentTermMode/DepositRequiredAmount`
   - ยอดที่ต้องจ่ายรอบนี้ = `MtoPaymentTerms.FromSnapshot` ตัวเดียวใน `GetOrderAsync` · `RecordPaymentSlipAsync` · `PublicPaymentResolver` (ออเดอร์เดิม = TotalAmount − PaidAmount เท่าเดิม) ·
-    ลงบัญชีมัดจำ = รับชำระบางส่วนของเอกสารขายผ่าน `ConfirmPaymentAsync` เดิม (ไม่มี posting ใหม่)
+    ลงบัญชีมัดจำ = ตามค่าตั้งร้าน (ทีม Q · ข้อ 156): ค่าเริ่มต้น = รับชำระบางส่วนของเอกสารขายเต็มใบ · หรือใบรับเงินมัดจำ + ใบส่วนที่เหลือตอนส่งมอบ (ดู Order flow ข้างบน · ไม่มี posting ใหม่)
   - **บรรทัดค่าจัดส่งในเอกสารขาย VAT ตามสินค้าในบิล** (§79 · `ShippingFeeRules.VatRateForShipping` — เดิมอัตรา 0 ⇒ ภ.พ.30 จัดเป็นยอดส่งออก ·
     สินค้าทั้งบิลยกเว้น ⇒ ยกเว้น −1 · บิลปน ⇒ อัตราสูงสุด) · `SiteOrder.VatAmount` รวม VAT ค่าส่ง (`VatInShipping`) · บรรทัดสินค้ายกเว้น VAT = 0 (เดิมติดลบ)
   - โซนค่าส่งจำกัดพื้นที่ + ไม่กรอกจังหวัด/รหัสไปรษณีย์ ⇒ ไม่ตรง (บอกให้กรอก) · ชื่อจังหวัดผ่าน `ThaiAddressParser.NormalizeProvince` · ตรึง `SiteOrder.ShippingProvince/ShippingPostalCode` ·

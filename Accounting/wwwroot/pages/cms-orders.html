@@ -70,6 +70,10 @@
             <div class="form-group" id="mtoPctWrap"><label class="form-label">มัดจำ (%)</label><input type="number" class="form-input" id="mtoPct" min="1" max="99" step="0.01"></div>
             <div class="form-group" id="mtoFixedWrap"><label class="form-label">มัดจำ (บาท)</label><input type="number" class="form-input" id="mtoFixed" min="1" step="0.01"></div>
           </div>
+          <!-- ทีม Q (คำตัดสินข้อ 156): วิธีออกเอกสารภาษีของมัดจำ — ตัวเลือก + คำอธิบายผลภาษีมาจากเซิร์ฟเวอร์ทั้งหมด -->
+          <div class="form-group"><label class="form-label">ใบกำกับภาษีเมื่อลูกค้าจ่ายมัดจำ</label><select class="form-input" id="mtoDepositInvoicing" onchange="Page.onDepositInvoicingChange()"></select></div>
+          <div id="mtoDepositInvoicingHelp" style="font-size:12px;color:var(--gray-600);background:var(--gray-50);border-radius:8px;padding:8px 10px;margin-top:-6px;white-space:pre-wrap"></div>
+          <div style="font-size:12px;color:var(--gray-500);margin-top:-6px">มีผลกับออเดอร์ที่สั่งหลังบันทึก — ออเดอร์ที่ค้างอยู่ใช้วิธีที่ตรึงไว้ตอนสั่ง</div>
           <hr style="border:none;border-top:1px solid var(--gray-200)">
           <div class="form-group"><label class="form-label">วันปิดร้านประจำสัปดาห์ (ไม่นับเป็นวันผลิต/รับของ)</label><div id="mtoClosedDays" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
           <div class="form-row">
@@ -204,8 +208,9 @@
     const STATUS_LABEL = Layout.ENUM_LABELS.orderStatus;
     const NEXT_STATUS = {
       'Pending':       [['Confirmed','ยืนยันคำสั่งซื้อ','btn-primary'],['Cancelled','ปฏิเสธ/ยกเลิก','btn-secondary']],
-      'Confirmed':     [['Processing','เริ่มเตรียมสินค้า','btn-primary'],['Cancelled','ยกเลิก','btn-secondary']],
-      'Processing':    [['Shipped','จัดส่งแล้ว','btn-primary'],['Cancelled','ยกเลิก','btn-secondary']],
+      // ทีม Q: "ส่งมอบแล้ว (ลูกค้ามารับ)" = จุดส่งมอบของออเดอร์มารับเอง (เดิมไปถึง "ส่งถึงปลายทาง" ได้ทางจัดส่งเท่านั้น)
+      'Confirmed':     [['Processing','เริ่มเตรียมสินค้า','btn-primary'],['Delivered','ส่งมอบแล้ว (ลูกค้ามารับ)','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],
+      'Processing':    [['Shipped','จัดส่งแล้ว','btn-primary'],['Delivered','ส่งมอบแล้ว (ลูกค้ามารับ)','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],
       'Shipped':       [['Delivered','ส่งถึงปลายทาง','btn-primary']],
       'Delivered':     [['Refunded','คืนเงิน','btn-secondary']],
       'Cancelled':     [],
@@ -289,6 +294,9 @@
         document.getElementById('mtoTerm').innerHTML = (c.paymentTermModes || []).map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.mtoPaymentTermMode ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
         document.getElementById('mtoPct').value = c.mtoDepositPercent ?? '';
         document.getElementById('mtoFixed').value = c.mtoDepositFixedAmount ?? '';
+        this._depositInvoicingModes = c.depositInvoicingModes || [];
+        document.getElementById('mtoDepositInvoicing').innerHTML = this._depositInvoicingModes.map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.mtoDepositInvoicing ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
+        this.onDepositInvoicingChange();
         const closed = new Set((c.mtoClosedWeekdays || '').split(',').filter(Boolean));
         const names = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
         document.getElementById('mtoClosedDays').innerHTML = names.map((n, i) => `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-dow="${i}" ${closed.has(String(i)) ? 'checked' : ''}> ${n}</label>`).join('');
@@ -296,6 +304,11 @@
         document.getElementById('mtoHolidays').checked = c.mtoSkipCompanyHolidays !== false;
         this.onMtoTermChange();
         Layout.openModal('mtoModal');
+      },
+      onDepositInvoicingChange() {
+        const v = document.getElementById('mtoDepositInvoicing').value;
+        const m = (this._depositInvoicingModes || []).find(x => x.value === v);
+        document.getElementById('mtoDepositInvoicingHelp').textContent = m?.description || '';
       },
       onMtoTermChange() {
         const t = document.getElementById('mtoTerm').value;
@@ -313,6 +326,7 @@
           mtoPaymentTermMode: document.getElementById('mtoTerm').value,
           mtoDepositPercent: Layout.numOrNull('mtoPct'),
           mtoDepositFixedAmount: Layout.numOrNull('mtoFixed'),
+          mtoDepositInvoicing: document.getElementById('mtoDepositInvoicing').value || null,
           mtoClosedWeekdays: closed,
           mtoCutoffHour: cutoff,
           clearMtoCutoffHour: cutoff == null,
@@ -473,6 +487,13 @@
             <div style="background:#EEF2FF;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#3730A3">
               <div>🚚 การรับสินค้า: <strong>${Layout.esc(o.fulfillmentLabel||'-')}</strong>${o.earliestReadyDate ? ` · พร้อมเร็วสุด <strong>${Layout.date(o.earliestReadyDate)}</strong>` : ''}</div>
               <div>💳 เงื่อนไขชำระ: <strong>${Layout.esc(o.paymentTermLabel||'-')}</strong>${o.depositRequiredAmount > 0 && o.paymentTermMode !== 'full' ? ` · มัดจำ ${Layout.money(o.depositRequiredAmount)}` : ''} · ค้างชำระ ${Layout.money(o.balanceAmount)}</div>
+              <div>🧾 ใบกำกับของมัดจำ: <strong>${Layout.esc(o.depositInvoicingLabel||'-')}</strong></div>
+            </div>` : ''}
+            ${(o.depositDocuments && o.depositDocuments.length) ? `
+            <div style="background:#F0FDF4;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#166534">
+              <div style="font-weight:600;margin-bottom:4px">🧾 ใบรับเงินมัดจำ (${o.depositDocuments.length} ใบ)</div>
+              ${o.depositDocuments.map(d => `<div><a href="/pages/documents.html?id=${encodeURIComponent(d.id)}" style="color:#166534;text-decoration:underline">${Layout.esc(d.documentNumber)}</a> · ${Layout.money(d.totalAmount)}${d.vatAmount > 0 ? ` (VAT ${Layout.money(d.vatAmount)})` : ''}${d.status === 'Draft' || d.status === 'WaitingApproval' ? ' · <span style="color:#B45309">ยังไม่อนุมัติ</span>' : ''}</div>`).join('')}
+              ${o.erpDocumentId ? '' : '<div style="font-size:11px;margin-top:4px">ใบกำกับส่วนที่เหลือจะออกเมื่อกด "จัดส่งแล้ว"/"ส่งมอบแล้ว" หรือเมื่อลูกค้าชำระครบ</div>'}
             </div>` : ''}
             <h4 style="margin-bottom:8px;font-size:14px">รายการสินค้า</h4>
             <table class="table" style="margin-bottom:14px;font-size:13px">
@@ -507,7 +528,8 @@
                   </div>
                   <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
                     ${p.slipUrl ? `<a href="${Layout.esc(p.slipUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline" title="เปิดดูสลิป">🧾 ดูสลิป</a>` : ''}
-                    ${p.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.confirmPayment('${o.id}', '${p.id}')" title="ยืนยันรับเงินจริง → ระบบจะ sync ERP + post JE + ตัด stock + ออก e-Tax ในคลิกเดียว">✓ ยืนยันรับเงิน + ลงบัญชี</button>` : ''}
+                    ${p.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.confirmPayment('${o.id}', '${p.id}')" title="ยืนยันรับเงินจริง → ระบบลงบัญชีตามวิธีออกเอกสารของออเดอร์นี้">✓ ยืนยันรับเงิน + ลงบัญชี</button>` : ''}
+                    ${p.status === 'Completed' && !p.depositDocumentId && !o.erpDocumentId && o.depositInvoicingMode === 'deposit_tax_invoice' ? `<button class="btn btn-sm btn-outline" onclick="Page.confirmPayment('${o.id}', '${p.id}', true)" title="รับเงินแล้วแต่ใบรับเงินมัดจำยังไม่ออก (ดูหมายเหตุ) — กดซ้ำได้ ไม่ออกซ้ำ">🧾 ออกใบมัดจำที่ค้าง</button>` : ''}
                   </div>
                 </div>`;
               }).join('')}
@@ -522,9 +544,11 @@
           Layout.openModal('orderModal');
         } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      async confirmPayment(orderId, paymentId) {
+      async confirmPayment(orderId, paymentId, retry) {
         const api = Layout.api(); if (!api) return;
-        if (!confirm('ยืนยันรับเงินจากออเดอร์นี้แล้ว?\n\nระบบจะ:\n• ผูกออเดอร์เข้ากับเอกสารบัญชี (ใบกำกับ/ใบแจ้งหนี้)\n• อนุมัติเอกสาร + ลง JE (Dr ธนาคาร / Cr ขาย + Cr VAT)\n• บันทึกรายการรับเงิน (เคลียร์ลูกหนี้)\n• ตัด stock จริง\n• ออก e-Tax XML (ถ้าเปิดใน Settings)')) return;
+        // ทีม Q: ขั้นที่ระบบทำขึ้นกับวิธีออกเอกสารที่ตรึงบนออเดอร์ — ข้อความวิธีมาจากเซิร์ฟเวอร์ (ไม่เดาขั้นเองในหน้าเว็บ)
+        const how = this._currentOrder?.depositInvoicingLabel ? `\n\nวิธีออกเอกสารของออเดอร์นี้: ${this._currentOrder.depositInvoicingLabel}` : '';
+        if (!confirm((retry ? 'ออกใบรับเงินมัดจำที่ค้างของรายการนี้?' : 'ยืนยันรับเงินจากออเดอร์นี้แล้ว?\n\nระบบจะออกเอกสาร + ลงบัญชี + บันทึกรับเงิน (ตัดสต็อก/ออก e-Tax ตามวิธีของออเดอร์)') + how)) return;
         try {
           await api.cmsConfirmOrderPayment(this._sid(), orderId, paymentId);
           Layout.toast('ยืนยันรับเงิน + ลงบัญชีสำเร็จ', 'success');

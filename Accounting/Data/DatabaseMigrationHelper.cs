@@ -7761,6 +7761,10 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoClosedWeekdays" varchar(32) NULL;""",
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoCutoffHour" integer NULL;""",
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoSkipCompanyHolidays" boolean NOT NULL DEFAULT true;""",
+        // ทีม Q (คำตัดสินข้อ 156) — วิธีออกเอกสารของมัดจำ · DEFAULT = แบบเดิม (ร้านเดิมไม่เปลี่ยน) · ออเดอร์เดิม NULL = แบบเดิม
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoDepositInvoicing" varchar(32) NOT NULL DEFAULT 'full_at_first_payment';""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "DepositInvoicingMode" varchar(32) NULL;""",
+        """ALTER TABLE "SiteOrderPayments" ADD COLUMN IF NOT EXISTS "DepositDocumentId" uuid NULL;""",
     };
 
     /// <summary>รอบ 205 ทีม I (ฝ่ายค้าน ข้อ 6): บทบาทที่สร้างจากแม่แบบเดิมเก็บ id เมนูที่ไม่มีจริง (warehouses ฯลฯ) ⇒ สมาชิกโหมดเข้มงวดไม่เห็นเมนู ·

@@ -396,6 +396,22 @@ public class OrderResponse
     /// <summary>ยอดที่ช่องจ่ายเปิดให้จ่ายรอบนี้ (มัดจำที่ขาด หรือยอดคงค้างที่เหลือ)</summary>
     public decimal NextPayableAmount { get; set; }
     public decimal BalanceAmount { get; set; }
+    // ── ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงบนออเดอร์ + ใบรับเงินมัดจำที่ออกแล้ว ──
+    public string DepositInvoicingMode { get; set; } = "full_at_first_payment";
+    public string DepositInvoicingLabel { get; set; } = "";
+    /// <summary>ข้อความถึงลูกค้า/พนักงานเรื่องใบกำกับของมัดจำ (null = ไม่ต้องแสดง)</summary>
+    public string? DepositInvoicingNote { get; set; }
+    public List<OrderDepositDocumentResponse> DepositDocuments { get; set; } = new();
+}
+
+/// <summary>ใบรับเงินมัดจำ 1 ใบของออเดอร์ (ทีม Q)</summary>
+public class OrderDepositDocumentResponse
+{
+    public Guid Id { get; set; }
+    public string DocumentNumber { get; set; } = "";
+    public decimal TotalAmount { get; set; }
+    public decimal VatAmount { get; set; }
+    public DocumentStatus Status { get; set; }
 }
 
 /// <summary>คำขอคิดยอดก่อนยืนยันสั่งซื้อ — ตัวเดียวกับที่ <c>CreateOrderAsync</c> ใช้จริง (ผลไม่ต่างกัน)</summary>
@@ -445,6 +461,8 @@ public class CheckoutQuoteResponse
     public decimal DepositRequiredAmount { get; set; }
     public decimal AmountDueNow { get; set; }
     public decimal BalanceAfterDueNow { get; set; }
+    /// <summary>ทีม Q — ข้อความเรื่องใบกำกับของมัดจำ (null = ไม่ต้องแสดง)</summary>
+    public string? DepositInvoicingNote { get; set; }
     /// <summary>เหตุที่ยังสั่งไม่ได้ (เช่น ต้องเลือกวิธีส่ง) — null = สั่งได้</summary>
     public string? Problem { get; set; }
 }
@@ -486,6 +504,8 @@ public class OrderPaymentResponse
     public SitePaymentStatus Status { get; set; }
     public string? Reference { get; set; }
     public DateTime? PaidAt { get; set; }
+    /// <summary>ทีม Q — ใบรับเงินมัดจำที่ออกจากรายการนี้ (null = บันทึกเป็นรับชำระของใบขาย/ยังไม่ยืนยัน)</summary>
+    public Guid? DepositDocumentId { get; set; }
 }
 
 // ==================== Payment Gateway ====================

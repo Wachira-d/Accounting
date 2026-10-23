@@ -4938,7 +4938,7 @@ RULES += [
     dict(file=CMS_BOOK, method="SyncBookingToErpAsync",
          must=["ApprovalAckSource.SystemWorkflow"], forbid=["acknowledgeWarnings: true"],
          why="P2-6: การจองหน้าร้านออกเอกสารอัตโนมัติ ⇒ ห้ามประทับว่าคนรับทราบ"),
-    dict(file="Services/Implementations/CmsCommerceService.cs", method="ConfirmPaymentAsync",
+    dict(file="Services/Implementations/CmsCommerceService.cs", method="ApproveOrderDocumentIfPendingAsync",
          must=["ApprovalAckSource.SystemWorkflow"], forbid=["acknowledgeWarnings: true"],
          why="P2-6: ยืนยันชำระคำสั่งซื้อออนไลน์ออกเอกสารอัตโนมัติ ⇒ ห้ามประทับว่าคนรับทราบ"),
 ]
@@ -6031,7 +6031,7 @@ RULES += [
          must=["CreateJournalFromMappingsAsync("],
          must_re=[r"throw\s+new\s+Accounting\.Helpers\.BusinessRuleException"],
          why=_PP36_WHY + "P2-4 ลง JE ไม่ได้ต้องโยน"),
-    dict(file="Services/Implementations/CmsCommerceService.cs", method="ConfirmPaymentAsync",
+    dict(file="Services/Implementations/CmsCommerceService.cs", method="ApproveOrderDocumentIfPendingAsync",
          must=["RecordAutoApproveFailureAsync("],
          why=_PP36_WHY + "P2-4 CMS อนุมัติเอกสาร ERP ล้ม ⇒ หมายเหตุบนเอกสาร"),
     dict(file=PLATFORM, method="NoteDraftFailureAsync",
@@ -9204,6 +9204,52 @@ RULES += [
          why="ฝ่ายค้านข้อ 3 (หลักการ #7): ฐานค่าเผื่อเปลี่ยนจากการแก้ ⇒ บอกใน JE + แจ้งเจ้าของ ไม่ลงเงียบ"),
     dict(file="Services/Implementations/AccountingService.cs", method="LoadSourceDocumentMapAsync", must=["d.CompanyId == companyId"],
          why="ทีม O 2026-10-22: กฎ M — แผนที่เอกสารต้นทางของ drill-down ต้องกรองบริษัท"),
+]
+
+# ── ทีม Q (คำตัดสินข้อ 156): มัดจำออเดอร์ร้านออนไลน์ — ทุกทางเข้า (webhook/สลิป/พนักงานยืนยัน · จัดส่ง/ส่งมอบ · ปุ่ม sync ERP · ยกเลิก)
+#    เดินตัวตัดสินเดียว Helpers/SiteOrderDepositInvoicing · ใบสุดท้ายหักมัดจำผ่านตัววางแผนเดียวกับเช็คเอาต์ที่พัก (เทสต์ SiteOrderDepositInvoicingTests) ──
+_SITE = "Services/Implementations/CmsCommerceService.cs"
+_Q_WHY = "ทีม Q ข้อ 156: มัดจำออเดอร์ออนไลน์ — "
+RULES += [
+    dict(file=_SITE, method="ConfirmPaymentAsync",
+         must=["SiteOrderDepositInvoicing.OnPayment(", "IssueOrderDepositReceiptAsync(", "SettleFinalInvoiceAsync(",
+               "ApproveOrderDocumentIfPendingAsync(", "plan.DeductsStock", "plan.RecordsPaymentOnSalesDocument"],
+         before=[("SiteOrderDepositInvoicing.OnPayment(", "IssueOrderDepositReceiptAsync("),
+                 ("SiteOrderDepositInvoicing.OnPayment(", "DeductStockAsync(")],
+         why=_Q_WHY + "ทุกเงินที่ยืนยัน (webhook · สลิป · พนักงาน) ต้องผ่านตัวตัดสินก่อนออกเอกสาร/ตัดสต็อก · ใบมัดจำห้ามบันทึกรับชำระซ้ำ/ตัดสต็อก"),
+    dict(file=_SITE, method="UpdateOrderStatusAsync",
+         must=["SiteOrderDepositInvoicing.SettlesOnHandover(", "SettleOnHandoverAsync(", "SiteOrderDepositInvoicing.CancelNotice("],
+         before=[("SettleOnHandoverAsync(", "ApplyStatus(order)")],
+         why=_Q_WHY + "จัดส่ง/ส่งมอบ ⇒ ใบส่วนที่เหลือ + ตัดสต็อกก่อนเปลี่ยนสถานะ · ยกเลิกที่มีมัดจำค้างต้องบอกทางไปต่อ"),
+    dict(file=_SITE, method="SettleOnHandoverAsync",
+         must=["SettleFinalInvoiceAsync(", "DeductStockAsync("],
+         why=_Q_WHY + "ส่งมอบต้องออกใบขาย + ตัดสต็อก (ทำซ้ำได้)"),
+    dict(file=_SITE, method="SettleFinalInvoiceAsync",
+         must=["PlanFinalDeductionAsync(", "SyncOrderToErpCoreAsync(", "ApproveOrderDocumentIfPendingAsync(",
+               "LodgingDepositSettlement.ApplyCandidates(", "ApplyDepositToInvoiceAsync("],
+         before=[("PlanFinalDeductionAsync(", "SyncOrderToErpCoreAsync(")],
+         why=_Q_WHY + "ใบส่วนที่เหลือวางแผนหักมัดจำก่อนออกเลข (§86/4) · มัดจำไม่มี VAT ตัดชำระ (ไม่ตัดซ้ำ)"),
+    dict(file=_SITE, method="PlanFinalDeductionAsync",
+         must=["LodgingDepositSettlement.PlanCheckout(", "DocumentService.PreviewTotals(", "BuildOrderErpLines("],
+         why=_Q_WHY + "ตัววางแผน/ตัวคิดยอดตัวเดียวกับเช็คเอาต์ที่พัก — ห้ามสูตรหักมัดจำของตัวเอง"),
+    dict(file=_SITE, method="SyncOrderToErpAsync",
+         must=["PlanFinalDeductionAsync("],
+         why=_Q_WHY + "ปุ่ม sync ERP มือต้องหักมัดจำที่ออกใบกำกับแล้ว (ไม่หัก = ภาษีขายซ้ำ)"),
+    dict(file=_SITE, method="IssueOrderDepositReceiptAsync",
+         must=["IsDeposit: true", "DepositOutputVatDeferred: false", "SiteOrderDepositInvoicing.DepositLineVatRate(",
+               "pay.DepositDocumentId = created.Id", "ApproveOrderDocumentIfPendingAsync(", "o.CompanyId == companyId"],
+         forbid=["CreatePaymentAsync(", "DeductStockAsync("],
+         before=[("pay.DepositDocumentId = created.Id", "ApproveOrderDocumentIfPendingAsync(")],
+         why=_Q_WHY + "ใบรับเงินมัดจำ = เส้นใบเสร็จมัดจำเดิม (VAT ทันที §78(1)(ข)) · ผูกก่อนอนุมัติ (ไม่ออกซ้ำ) · ไม่บันทึกรับชำระซ้ำ/ไม่ตัดสต็อก"),
+    dict(file=_SITE, method="LoadOrderDepositSnapshotsAsync",
+         must=["d.CompanyId == companyId", "d.IsDeposit"],
+         why=_Q_WHY + "tenant isolation (กฎ M) · เฉพาะใบมัดจำ"),
+    dict(file=_SITE, method="CreateOrderAsync",
+         must=["order.DepositInvoicingMode = checkout.DepositInvoicing"],
+         why=_Q_WHY + "ตรึงวิธีออกเอกสารลงออเดอร์ตอนสั่ง (เปลี่ยนค่าตั้งภายหลังไม่เปลี่ยนออเดอร์ที่ค้าง)"),
+    dict(file="Controllers/CmsCommerceConfigController.cs", method="UpdateConfig",
+         must=["DepositInvoicingMode.Normalize("],
+         why=_Q_WHY + "ค่าตั้งที่ไม่รู้จัก = 400 (ห้ามเก็บค่าที่ไม่มีผู้อ่าน)"),
 ]
 
 def main() -> int:

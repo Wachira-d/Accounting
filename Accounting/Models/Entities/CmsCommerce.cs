@@ -239,6 +239,8 @@ public class SiteOrder : TenantEntity
     public string? PaymentTermMode { get; set; }
     /// <summary>มัดจำที่ต้องจ่ายก่อนร้านเริ่มทำ (ตรึงตอนสั่ง)</summary>
     public decimal DepositRequiredAmount { get; set; }
+    /// <summary>ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงตอนสั่ง (<c>Helpers.DepositInvoicingMode</c>) · null = ออเดอร์เดิม (= แบบเดิม)</summary>
+    public string? DepositInvoicingMode { get; set; }
 
     public ICollection<SiteOrderLine> Lines { get; set; } = new List<SiteOrderLine>();
     public ICollection<SiteOrderPayment> Payments { get; set; } = new List<SiteOrderPayment>();
@@ -289,6 +291,9 @@ public class SiteOrderPayment : TenantEntity
     public SitePaymentStatus Status { get; set; } = SitePaymentStatus.Pending;
     public DateTime? PaidAt { get; set; }
     public string? FailureReason { get; set; }
+    /// <summary>ทีม Q — ใบรับเงินมัดจำที่ออกจากรายการรับเงินนี้ (โหมด <c>deposit_tax_invoice</c>) · null = ยังไม่ออก/บันทึกเป็นรับชำระของใบขาย ·
+    /// กันออกใบมัดจำซ้ำเมื่อยืนยันซ้ำ/webhook ซ้ำ</summary>
+    public Guid? DepositDocumentId { get; set; }
 }
 
 // ===== Payment Gateway Configuration =====

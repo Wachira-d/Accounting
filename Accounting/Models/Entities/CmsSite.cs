@@ -196,6 +196,9 @@ public class SiteCommerceConfig : TenantEntity
     public int? MtoCutoffHour { get; set; }
     /// <summary>ข้ามวันหยุดในปฏิทินวันหยุดของบริษัท (หน้า "วันหยุด" ของเงินเดือน) ด้วย</summary>
     public bool MtoSkipCompanyHolidays { get; set; } = true;
+    /// <summary>ทีม Q (คำตัดสินข้อ 156) — วิธีออกเอกสารภาษีเมื่อลูกค้าจ่ายเป็นงวด (<c>Helpers.DepositInvoicingMode</c>) ·
+    /// ค่าเริ่มต้น = แบบเดิม (ใบกำกับเต็มใบตั้งแต่รับเงินงวดแรก) · ผู้อ่าน: <c>CmsCommerceService.CreateOrderAsync</c> (ตรึงลงออเดอร์)</summary>
+    public string MtoDepositInvoicing { get; set; } = Accounting.Helpers.DepositInvoicingMode.FullAtFirstPayment;
 }
 
 // ===== Domain Management =====

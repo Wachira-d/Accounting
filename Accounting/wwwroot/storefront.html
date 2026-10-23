@@ -1285,7 +1285,8 @@
             </label>`).join('') : '';
         const dueRow = (q.paymentTermMode !== 'full')
           ? `<div style="display:flex;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px dashed #D1D5DB"><span>${this.esc(q.paymentTermLabel)} · ชำระตอนนี้</span><strong style="color:#16A34A">${m(q.amountDueNow)}</strong></div>
-             <div style="display:flex;justify-content:space-between;color:#6B7280"><span>ส่วนที่เหลือ (ชำระตอนรับสินค้า)</span><span>${m(q.balanceAfterDueNow)}</span></div>` : '';
+             <div style="display:flex;justify-content:space-between;color:#6B7280"><span>ส่วนที่เหลือ (ชำระตอนรับสินค้า)</span><span>${m(q.balanceAfterDueNow)}</span></div>
+             ${q.depositInvoicingNote ? `<div style="font-size:12px;color:#6B7280;margin-top:4px">🧾 ${this.esc(q.depositInvoicingNote)}</div>` : ''}` : '';
         box.innerHTML = `
           <div style="display:flex;justify-content:space-between"><span>สินค้า</span><span>${m(q.goodsTotal)}</span></div>
           ${q.discountAmount > 0 ? `<div style="display:flex;justify-content:space-between;color:#DC2626"><span>ส่วนลด</span><span>−${m(q.discountAmount)}</span></div>` : ''}
@@ -1462,6 +1463,7 @@
               <h1 style="margin:14px 0 6px">${isCancelled ? 'เปลี่ยนเป็นใบเสนอราคา' : 'ได้รับคำสั่งซื้อแล้ว'}</h1>
               <p style="color:var(--text-secondary)">เลขที่: <strong>${oNum}</strong> · ยอดรวม: <strong>฿${grand}</strong></p>
               ${order && order.paymentTermMode && order.paymentTermMode !== 'full' ? `<p style="color:#16A34A;font-weight:600">${this.esc(order.paymentTermLabel || '')} · ชำระตอนนี้ ฿${total}</p>` : ''}
+              ${order && order.depositInvoicingNote ? `<p style="color:#6B7280;font-size:13px">🧾 ${this.esc(order.depositInvoicingNote)}</p>` : ''}
               ${order && order.earliestReadyDate ? `<p style="color:#3730A3">🕒 ${this.esc(order.fulfillmentLabel || '')} · พร้อมเร็วสุด ${this.esc(this._thaiDate(order.earliestReadyDate))}</p>` : ''}
             </div>
 
