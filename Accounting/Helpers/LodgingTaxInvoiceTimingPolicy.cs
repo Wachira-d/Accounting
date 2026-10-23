@@ -56,7 +56,7 @@ public readonly record struct LodgingStayDelta(decimal Gross, decimal InPriceCon
 }
 
 /// <summary>
-/// <b>จังหวะออกเอกสารภาษีของโมดูลที่พัก — ตัวตัดสินเดียว</b> (คำตัดสินเจ้าของข้อ 156 · 2026-10-23 · ต่อจากข้อ 155 "ต้องเปิดให้ตั้งค่าได้ว่าจะเป็นแบบไหนก็ได้") · pure
+/// <b>จังหวะออกเอกสารภาษีของโมดูลที่พัก — ตัวตัดสินเดียว</b> (คำตัดสินเจ้าของข้อ 157 · 2026-10-23 · ต่อจากข้อ 155 "ต้องเปิดให้ตั้งค่าได้ว่าจะเป็นแบบไหนก็ได้") · pure
 ///
 /// <para><b>ความหมายเดียวกับค่าตั้งของการจองนัดหมาย</b> (<see cref="BookingInvoiceTiming"/> · <see cref="BookingInvoiceTimingPolicy"/>) — ใช้ enum ตัวเดียวกัน
 /// (ห้ามมีสองชุดเมื่อความหมายเดียวกัน) แต่ข้อเท็จจริงของเอกสารต่างโมดูล ⇒ ตัวตัดสินแยก:</para>
@@ -93,12 +93,15 @@ public static class LodgingTaxInvoiceTimingPolicy
     /// <summary>เงินที่รับตอนนี้ "ภาษีอยู่ในใบกำกับล่วงหน้าแล้ว" ไหม — จริง ⇒ ใบรับเงินมัดจำไม่มี VAT (ไม่ใช่ตามประเภทเงินมัดจำ)</summary>
     public static bool DepositCoveredByAdvance(LodgingAdvanceState s) => s == LodgingAdvanceState.Live;
 
+    /// <summary>ค่าตั้งนี้อาจออกใบกำกับล่วงหน้าได้ไหม — กติกาข้อแรกของ <see cref="Decide"/> · ผู้เรียกใช้ตัดทางก่อนขอล็อก/อ่านฐาน (ค่าเริ่มต้น = ไม่แตะอะไรเลย)</summary>
+    public static bool TimingAllowsAdvance(BookingInvoiceTiming timing) => timing == BookingInvoiceTiming.TaxInvoiceAtBooking;
+
     public static LodgingAdvanceDecision Decide(LodgingAdvanceFacts f, LodgingTaxTrigger trigger)
     {
         var manual = trigger == LodgingTaxTrigger.ManualIssue;
         LodgingAdvanceDecision No(string? note) => new(false, manual ? note : null);
 
-        if (f.Timing != BookingInvoiceTiming.TaxInvoiceAtBooking)
+        if (!TimingAllowsAdvance(f.Timing))
             return No("ที่พักนี้ตั้งจังหวะออกเอกสารภาษีแบบค่าเริ่มต้น (ใบมัดจำเมื่อรับเงิน · ใบกำกับตอนเช็คเอาต์) — เปลี่ยนได้ที่ตั้งค่าที่พัก › ภาษี & บัญชี");
         if (f.AccountingMode != LodgingAccountingMode.Full)
             return No("ที่พักนี้ไม่ได้ตั้งให้ระบบออกเอกสารบัญชีเต็มรูป — ออกใบกำกับล่วงหน้าไม่ได้");
@@ -112,15 +115,17 @@ public static class LodgingTaxInvoiceTimingPolicy
             return No("การจองนี้รับมัดจำแบบมี VAT ไปแล้ว (ออกตามจังหวะเดิม) — ใบกำกับออกตอนเช็คเอาต์และหักมัดจำตามเดิม (ออกใบกำกับเต็มยอดตอนนี้ = VAT ซ้อนกับใบมัดจำ)");
         if (f.Advance == LodgingAdvanceState.Gone && !manual)
             return No(null);   // ผู้ยกเลิกใบล่วงหน้ามีเหตุผล — ระบบไม่ออกใหม่เอง (ปุ่มยังเปิดให้คนตัดสิน)
+        // ฝ่ายค้านทีม P ข้อ 4: OTA — ผู้รับเงิน/ผู้ซื้ออาจเป็นตัวแทน (merchant/agency) ⇒ ไม่ออกเองอัตโนมัติ "ทุก" ทางเข้า (ยืนยัน · เงินเข้า · สร้าง)
+        // ทางเดียวคือพนักงานกดปุ่มเองโดยตั้งใจ (รู้ว่าผู้ซื้อคือใคร)
+        if (f.Source == LodgingReservationSource.Ota && !manual)
+            return No(null);
         switch (trigger)
         {
             case LodgingTaxTrigger.MoneyReceived:
             case LodgingTaxTrigger.StaffConfirm:
                 return new(true);
             case LodgingTaxTrigger.StaffCreateConfirmed:
-                if (f.Status != LodgingReservationStatus.Confirmed) return No(null);
-                // OTA: ผู้รับเงิน/ผู้ซื้ออาจเป็นตัวแทน (merchant/agency) — ไม่ออกใบกำกับในนามแขกเองอัตโนมัติ (กดปุ่มเองได้)
-                return f.Source == LodgingReservationSource.Ota ? No(null) : new(true);
+                return f.Status == LodgingReservationStatus.Confirmed ? new(true) : No(null);
             default:   // ManualIssue
                 if (f.Status == LodgingReservationStatus.Pending)
                     return No("การจองยังรอยืนยัน — กด “ยืนยัน” ก่อน (ระบบออกใบกำกับล่วงหน้าให้ตอนยืนยัน)");
@@ -218,6 +223,12 @@ public static class LodgingTaxInvoiceTimingPolicy
             : "ใบมัดจำยังไม่ใช่ใบกำกับภาษี (" + DepositPolicyResolver.LabelOf(roomDepositTreatment)
               + ") — ถ้าต้องการให้ทุกการรับเงินเป็นใบกำกับ เลือกประเภทเงินมัดจำค่าห้องที่ “รับรู้ VAT ทันที”");
     }
+
+    /// <summary>ฝ่ายค้านทีม P ข้อ 3: ออกใบกำกับล่วงหน้าล้มในเส้นรับเงิน ⇒ ห้ามทำให้รับเงินไม่ได้ทั้งก้อน — ถอยไปออกใบมัดจำตามประเภทเงินมัดจำเดิม
+    /// (เงินที่รับ = จุดความรับผิด §78/1 · รับรู้ VAT ทันที = ใบกำกับ ณ วันรับเงิน) · การจองนี้จึงมีมัดจำที่มี VAT ⇒ คงจังหวะเดิมต่อ (ไม่ออกใบล่วงหน้าซ้อน)</summary>
+    public static string AdvanceFailedOnMoneyNote(string error)
+        => $"⚠️ ออกใบกำกับภาษีล่วงหน้าไม่สำเร็จ ({error}) — รับเงินครั้งนี้ออกใบมัดจำตามประเภทเงินมัดจำเดิมแทน (จุดความรับผิด = วันรับเงิน มาตรา 78/1) · "
+           + "การจองนี้ใช้จังหวะปกติต่อ (ใบกำกับตอนเช็คเอาต์หักมัดจำ) — ไม่ต้องออกใบล่วงหน้าซ้ำ";
 
     /// <summary>หมายเหตุบนการจองเมื่อเลื่อนวันจนยอดเปลี่ยนหลังออกใบกำกับล่วงหน้า</summary>
     public static string RescheduleNote(string advanceNumber, decimal oldTotal, decimal newTotal)

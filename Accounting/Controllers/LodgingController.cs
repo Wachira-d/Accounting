@@ -266,7 +266,7 @@ public class LodgingController : ControllerBase
     {
         var r = await _svc.ConfirmAsync(companyId, id, req, Uid);
         var msg = r.DepositDocumentNumber != null ? $"ยืนยันการจองแล้ว · ใบเสร็จมัดจำ {r.DepositDocumentNumber}" : "ยืนยันการจองแล้ว";
-        // คำตัดสินข้อ 156: บอกเลขใบกำกับล่วงหน้า / เหตุที่ยังไม่ได้ออก (ผลของการกระทำไปโผล่ที่เอกสารอีกใบ — ห้ามให้ผู้ใช้เดา)
+        // คำตัดสินข้อ 157: บอกเลขใบกำกับล่วงหน้า / เหตุที่ยังไม่ได้ออก (ผลของการกระทำไปโผล่ที่เอกสารอีกใบ — ห้ามให้ผู้ใช้เดา)
         if (r.AdvanceTaxDocumentLive && r.AdvanceTaxDocumentNumber != null) msg += $" · ใบกำกับภาษีล่วงหน้า {r.AdvanceTaxDocumentNumber}";
         else if (r.AdvanceTaxInvoiceNote != null) msg += $" · {r.AdvanceTaxInvoiceNote}";
         return Wrap(r, msg);
@@ -366,7 +366,7 @@ public class LodgingController : ControllerBase
         return Wrap(r, $"ออกใบเช็คเอาต์ใหม่แล้ว · {r.FinalDocumentNumber}" + (r.BalanceDue > 0 ? $" (ค้างชำระ {r.BalanceDue:N2})" : ""));
     }
 
-    // คำตัดสินข้อ 156: ออกใบกำกับภาษีล่วงหน้าเอง (โหมด "ใบกำกับเมื่อยืนยันการจอง") — เซิร์ฟเวอร์ตัดสินว่าออกได้ไหม (ปุ่มเปิดจาก canIssueAdvanceTaxInvoice)
+    // คำตัดสินข้อ 157: ออกใบกำกับภาษีล่วงหน้าเอง (โหมด "ใบกำกับเมื่อยืนยันการจอง") — เซิร์ฟเวอร์ตัดสินว่าออกได้ไหม (ปุ่มเปิดจาก canIssueAdvanceTaxInvoice)
     [HttpPost("reservations/{id:guid}/advance-tax-invoice")]
     [RequirePermission(PermissionKeys.LodgingManage)]
     public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> IssueAdvanceTaxInvoice(Guid companyId, Guid id, [FromBody] LodgingIssueAdvanceTaxInvoiceRequest? req)

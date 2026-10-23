@@ -462,9 +462,11 @@ public partial class LodgingService
         // เดิมโหลดห้องว่าง/คิดราคานอกล็อก แล้วล็อกเฉพาะตอนออกเลข ⇒ สองคำขอพร้อมกันเห็น "ว่าง 1" ทั้งคู่ แล้วได้เลขจองคนละเลข
         // = ห้องสุดท้ายถูกจองซ้อน · ตอนนี้ทุกเส้นที่เปลี่ยนการใช้ห้อง (สร้าง · ยืนยัน · เลื่อนวัน · จัดห้อง · เช็คอิน · ยกเลิกอัตโนมัติ)
         // อ่านห้องว่างหลังได้ล็อกเดียวกัน (PropertyLockKey) · ผู้ติดต่อสร้างในธุรกรรมเดียวกัน (ล้ม = ไม่เหลือแถวกำพร้า)
+        var propertyTaxTiming = LodgingTaxInvoiceTimingPolicy.Default;
         var res = await WithPropertyLockAsync(companyId, propertyId, async () =>
         {
             var ctx = await LoadContextAsync(companyId, propertyId, checkIn, checkOut);
+            propertyTaxTiming = ctx.Property.TaxInvoiceTiming;
             if (!isStaff && !ctx.Property.OnlineBookingEnabled) throw new BusinessRuleException("ที่พักนี้ยังไม่เปิดรับจองออนไลน์ — กรุณาติดต่อโดยตรง");
             if (!isStaff && ctx.Property.RequireGuestIdNumber && string.IsNullOrWhiteSpace(request.GuestIdNumber))
                 throw new BusinessRuleException("ที่พักนี้ต้องการเลขบัตรประชาชน/พาสปอร์ตของผู้เข้าพัก");
@@ -560,9 +562,10 @@ public partial class LodgingService
         await _db.SaveChangesAsync();
         _logger.LogInformation("Lodging reservation {No} created ({Status}, total {Total}, deposit {Dep})", res.ReservationNumber, res.Status, res.TotalAmount, res.DepositRequired);
 
-        // คำตัดสินข้อ 156: พนักงานสร้างแบบยืนยันทันที (โทร/walk-in/ตัวแทน) = การยืนยันแบบรับประกัน ⇒ โหมด "ใบกำกับเมื่อยืนยัน" ออกใบกำกับล่วงหน้า ·
+        // คำตัดสินข้อ 157: พนักงานสร้างแบบยืนยันทันที (โทร/walk-in/ตัวแทน) = การยืนยันแบบรับประกัน ⇒ โหมด "ใบกำกับเมื่อยืนยัน" ออกใบกำกับล่วงหน้า ·
         // การจองจากเว็บที่ยืนยันเองไม่ออก (ตัวตัดสิน LodgingTaxInvoiceTimingPolicy) · ล็อกเดียวกับเส้นรับเงิน · ล้ม = ล้มดังบนการจอง ไม่ย้อนการสร้าง
-        if (isStaff && res.Status == LodgingReservationStatus.Confirmed)
+        // ฝ่ายค้านทีม P ข้อ 5: ค่าเริ่มต้น = ไม่ขอล็อก/ไม่อ่านฐานเพิ่ม (ผลเดิมทุกตัวอักษร)
+        if (isStaff && res.Status == LodgingReservationStatus.Confirmed && LodgingTaxInvoiceTimingPolicy.TimingAllowsAdvance(propertyTaxTiming))
             await WithReservationLockAsync(companyId, res.Id, AdvisoryLockKey.LodgingConfirm, async () =>
             {
                 var tracked = await RequireReservationAsync(companyId, res.Id);

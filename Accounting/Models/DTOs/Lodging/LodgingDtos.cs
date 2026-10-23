@@ -138,7 +138,7 @@ public class LodgingPropertyDto
     public List<LodgingGuestConfirmModeOption>? GuestConfirmModeOptions { get; set; }
     /// <summary>คำอธิบายหลัก tax point ของมัดจำ (ย่อหน้าเดียวกับหน้าตั้งค่าบริษัท)</summary>
     public string? DepositVatExplanation { get; set; }
-    /// <summary>คำตัดสินข้อ 156 — จังหวะออกเอกสารภาษี (ชื่อ enum) · request null = คงค่าเดิม (client รุ่นเก่า) · response = ค่าที่บันทึกไว้เสมอ</summary>
+    /// <summary>คำตัดสินข้อ 157 — จังหวะออกเอกสารภาษี (ชื่อ enum) · request null = คงค่าเดิม (client รุ่นเก่า) · response = ค่าที่บันทึกไว้เสมอ</summary>
     public BookingInvoiceTiming? TaxInvoiceTiming { get; set; }
     /// <summary>ตัวเลือก + ผลทางภาษี (<c>LodgingTaxInvoiceTimingPolicy.Options</c>) — response-only · หน้าเว็บสร้าง dropdown จากลิสต์นี้</summary>
     public List<BookingInvoiceTimingOption>? TaxInvoiceTimingOptions { get; set; }
@@ -618,7 +618,7 @@ public class LodgingReservationResponse
     public string? DepositDocumentNumber { get; set; }
     public Guid? FinalDocumentId { get; set; }
     public string? FinalDocumentNumber { get; set; }
-    /// <summary>คำตัดสินข้อ 156 — ใบกำกับภาษีล่วงหน้า (เต็มยอดการเข้าพัก) · null = ไม่มี</summary>
+    /// <summary>คำตัดสินข้อ 157 — ใบกำกับภาษีล่วงหน้า (เต็มยอดการเข้าพัก) · null = ไม่มี</summary>
     public Guid? AdvanceTaxDocumentId { get; set; }
     public string? AdvanceTaxDocumentNumber { get; set; }
     /// <summary>ใบล่วงหน้ายังมีผล (ไม่ถูกยกเลิก) — ตัดสินจากเอกสาร (<c>LodgingTaxInvoiceTimingPolicy.StateOf</c>)</summary>
@@ -886,7 +886,7 @@ public record LodgingAddChargeRequest(
 /// <para>ฝ่ายค้าน X2: <c>ConfirmNoManualReissue</c> = ผู้ใช้ยืนยันว่ายังไม่ได้ออกใบแทนเองที่หน้าเอกสาร (บังคับ — ใบที่ออกเองโดยไม่อ้างเลขจองตรวจไม่ได้)</para></summary>
 public record LodgingReissueFinalRequest(string? Reason = null, bool ConfirmNoManualReissue = false);
 
-/// <summary>คำตัดสินข้อ 156 — พนักงานกด “ออกใบกำกับภาษีล่วงหน้า” · <paramref name="IssueToCompany"/> = ออกในนามบริษัทของแขก (ต้องมีชื่อบริษัท + เลขผู้เสียภาษี §86/4)</summary>
+/// <summary>คำตัดสินข้อ 157 — พนักงานกด “ออกใบกำกับภาษีล่วงหน้า” · <paramref name="IssueToCompany"/> = ออกในนามบริษัทของแขก (ต้องมีชื่อบริษัท + เลขผู้เสียภาษี §86/4)</summary>
 public record LodgingIssueAdvanceTaxInvoiceRequest(bool IssueToCompany = false);
 
 /// <summary>เช็คเอาต์ = ออกใบกำกับ/ใบแจ้งหนี้สุดท้าย (ตัดมัดจำ) + รับชำระส่วนที่เหลือ</summary>

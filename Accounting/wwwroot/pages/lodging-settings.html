@@ -145,7 +145,7 @@
             <div class="fld"><label>ยอดเงินประกันต่อการจอง (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="securityDepositAmount" data-blank="0">
               <div class="hint">ค่าเริ่มต้นของปุ่ม “รับเงินประกัน” หน้าการจอง · 0 = ให้พนักงานกรอกเอง</div></div>
             <div class="fld" style="grid-column:1/-1"><div class="hint" id="secKindInfo"></div></div>
-            <!-- คำตัดสินข้อ 156: จังหวะออกเอกสารภาษี — ตัวเลือก + ผลภาษีมาจากเซิร์ฟเวอร์ (taxInvoiceTimingOptions · LodgingTaxInvoiceTimingPolicy.Options) -->
+            <!-- คำตัดสินข้อ 157: จังหวะออกเอกสารภาษี — ตัวเลือก + ผลภาษีมาจากเซิร์ฟเวอร์ (taxInvoiceTimingOptions · LodgingTaxInvoiceTimingPolicy.Options) -->
             <div class="fld" style="grid-column:1/-1"><label>จังหวะออกเอกสารภาษี</label>
               <select class="form-input" name="taxInvoiceTiming" id="taxTimingSel" onchange="Page.renderTaxTimingInfo()"></select>
               <div class="hint" id="taxTimingInfo"></div></div>
@@ -431,7 +431,7 @@
         this.renderConfirmModeInfo();
         this.renderTaxTimingInfo();
       },
-      // คำตัดสินข้อ 156: ตัวเลือกจังหวะออกเอกสารภาษี + ผลภาษี + คำอธิบายแบบ "ใบกำกับทุกครั้งที่รับเงิน" มาจากเซิร์ฟเวอร์ — หน้านี้ไม่มีสำเนาข้อความ/กติกา
+      // คำตัดสินข้อ 157: ตัวเลือกจังหวะออกเอกสารภาษี + ผลภาษี + คำอธิบายแบบ "ใบกำกับทุกครั้งที่รับเงิน" มาจากเซิร์ฟเวอร์ — หน้านี้ไม่มีสำเนาข้อความ/กติกา
       renderTaxTimingSelect(p) {
         if (p && Array.isArray(p.taxInvoiceTimingOptions)) this._taxTimingOptions = p.taxInvoiceTimingOptions;
         this._taxPaymentNote = p?.taxInvoicePaymentNote || this._taxPaymentNote || '';
@@ -574,7 +574,7 @@
         delete d.publicBookingStatus; delete d.publicBookingMessage; delete d.publicBookingFix; delete d.bindableSites;
         // คำตัดสินข้อ 128: ธงเดิมเป็นสำเนาที่ระบบเขียนตามโหมด (หน้านี้ไม่มีช่อง) · ตัวเลือกโหมดเป็น response-only
         delete d.confirmWithoutDeposit; delete d.guestConfirmModeOptions;
-        // คำตัดสินข้อ 156: ตัวเลือก/คำอธิบายจังหวะออกเอกสารภาษีเป็น response-only
+        // คำตัดสินข้อ 157: ตัวเลือก/คำอธิบายจังหวะออกเอกสารภาษีเป็น response-only
         delete d.taxInvoiceTimingOptions; delete d.taxInvoicePaymentNote;
         if (!this.propertyId) d.id = null;
         return d;

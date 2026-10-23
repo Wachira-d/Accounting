@@ -5,7 +5,7 @@ using Xunit;
 namespace Accounting.Tests;
 
 /// <summary>
-/// คำตัดสินเจ้าของข้อ 156 (2026-10-23 · ทีม P) — จังหวะออกเอกสารภาษีของที่พัก · ตัวตัดสินเดียว <see cref="LodgingTaxInvoiceTimingPolicy"/> ·
+/// คำตัดสินเจ้าของข้อ 157 (2026-10-23 · ทีม P) — จังหวะออกเอกสารภาษีของที่พัก · ตัวตัดสินเดียว <see cref="LodgingTaxInvoiceTimingPolicy"/> ·
 /// ล็อกสองทิศ: <b>ค่าเริ่มต้น = ผลเดิมทุกเคส</b> (ไม่ออกใบกำกับล่วงหน้าในทุกทางเข้า/ทุกสถานะ · ใบรับเงินตามประเภทเงินมัดจำ) ·
 /// โหมด "ใบกำกับเมื่อยืนยัน" ออกเมื่อยืนยัน/รับเงินครั้งแรก · ไม่ออกซ้ำ · ใบถูกยกเลิก/มัดจำมี VAT/OTA/เว็บยืนยันเอง ไม่ออกเอง · ยอดลดหนี้/ส่วนต่างถูกต้อง
 /// </summary>
@@ -132,6 +132,46 @@ public class LodgingTaxInvoiceTimingPolicyTests
         Assert.False(LodgingTaxInvoiceTimingPolicy.Decide(F(AtConfirm, source: LodgingReservationSource.Ota), LodgingTaxTrigger.StaffCreateConfirmed).Issue);
         Assert.True(LodgingTaxInvoiceTimingPolicy.Decide(F(AtConfirm, source: LodgingReservationSource.Agent), LodgingTaxTrigger.StaffCreateConfirmed).Issue);
         Assert.True(LodgingTaxInvoiceTimingPolicy.Decide(F(AtConfirm, source: LodgingReservationSource.Ota), LodgingTaxTrigger.ManualIssue).Issue);
+    }
+
+    [Theory]
+    [InlineData(LodgingTaxTrigger.MoneyReceived, LodgingReservationStatus.Confirmed)]
+    [InlineData(LodgingTaxTrigger.MoneyReceived, LodgingReservationStatus.Pending)]
+    [InlineData(LodgingTaxTrigger.StaffConfirm, LodgingReservationStatus.Confirmed)]
+    [InlineData(LodgingTaxTrigger.StaffCreateConfirmed, LodgingReservationStatus.Confirmed)]
+    public void ฝ่ายค้านข้อ4_OTA_ไม่ออกเองทุกทางเข้าอัตโนมัติ(LodgingTaxTrigger trigger, LodgingReservationStatus status)
+    {
+        Assert.False(LodgingTaxInvoiceTimingPolicy.Decide(F(AtConfirm, status, source: LodgingReservationSource.Ota), trigger).Issue);
+        // ทิศตรงข้าม: ช่องทางอื่นที่ไม่ใช่ OTA ยังออกตามเดิม
+        Assert.True(LodgingTaxInvoiceTimingPolicy.Decide(F(AtConfirm, status, source: LodgingReservationSource.Phone), trigger).Issue);
+        Assert.True(LodgingTaxInvoiceTimingPolicy.Decide(F(AtConfirm, status, source: LodgingReservationSource.Web), trigger).Issue
+            || trigger == LodgingTaxTrigger.StaffCreateConfirmed);
+    }
+
+    [Fact]
+    public void ฝ่ายค้านข้อ5_ตัดทางก่อนอ่านฐาน_เฉพาะโหมดยืนยัน()
+    {
+        Assert.False(LodgingTaxInvoiceTimingPolicy.TimingAllowsAdvance(Default));
+        Assert.True(LodgingTaxInvoiceTimingPolicy.TimingAllowsAdvance(AtConfirm));
+        // ตัวตัดสินใช้กติกาเดียวกัน: ค่าตั้งที่ตัดทาง ⇒ Decide ไม่ออกด้วย (ไม่มีสองสูตร)
+        foreach (var timing in Enum.GetValues<BookingInvoiceTiming>())
+            if (!LodgingTaxInvoiceTimingPolicy.TimingAllowsAdvance(timing))
+                foreach (var t in Enum.GetValues<LodgingTaxTrigger>())
+                    Assert.False(LodgingTaxInvoiceTimingPolicy.Decide(F(timing), t).Issue);
+    }
+
+    [Fact]
+    public void ฝ่ายค้านข้อ3_ใบล่วงหน้าล้มในเส้นเงิน_ถอยไปใบมัดจำ_แล้วการจองคงจังหวะเดิม()
+    {
+        var note = LodgingTaxInvoiceTimingPolicy.AdvanceFailedOnMoneyNote("โควตาเอกสารเต็ม");
+        Assert.Contains("โควตาเอกสารเต็ม", note);
+        Assert.Contains("78/1", note);
+        Assert.Contains("ใบมัดจำ", note);
+        // หลังถอย: มีมัดจำที่มี VAT แล้ว ⇒ ไม่ออกใบล่วงหน้าซ้อนทุกทางเข้าอัตโนมัติ (กัน VAT ซ้อน)
+        foreach (var t in new[] { LodgingTaxTrigger.MoneyReceived, LodgingTaxTrigger.StaffConfirm, LodgingTaxTrigger.StaffCreateConfirmed })
+            Assert.False(LodgingTaxInvoiceTimingPolicy.Decide(F(AtConfirm, vatDeposit: true), t).Issue);
+        // ทิศตรงข้าม: ถอยไปใบมัดจำแบบไม่มี VAT (ประเภทเต็มยอด) ⇒ ครั้งถัดไปยังออกใบล่วงหน้าได้ (ครอบเงินนั้น)
+        Assert.True(LodgingTaxInvoiceTimingPolicy.Decide(F(AtConfirm, vatDeposit: false), LodgingTaxTrigger.MoneyReceived).Issue);
     }
 
     [Fact]

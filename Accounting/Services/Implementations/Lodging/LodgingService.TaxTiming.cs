@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Services.Implementations.Lodging;
 
 /// <summary>
-/// <b>คำตัดสินเจ้าของข้อ 156 (2026-10-23 · ทีม P) — จังหวะออกเอกสารภาษีของที่พัก</b> · ตัวตัดสินเดียว <see cref="LodgingTaxInvoiceTimingPolicy"/>
+/// <b>คำตัดสินเจ้าของข้อ 157 (2026-10-23 · ทีม P) — จังหวะออกเอกสารภาษีของที่พัก</b> · ตัวตัดสินเดียว <see cref="LodgingTaxInvoiceTimingPolicy"/>
 ///
 /// <para>โหมด <see cref="BookingInvoiceTiming.TaxInvoiceAtBooking"/>: ใบกำกับภาษีเต็มยอดการเข้าพัก ("ใบกำกับล่วงหน้า") ออกเมื่อพนักงานยืนยัน หรือรับเงินครั้งแรก
 /// ด้วย <b>เส้นเดิมทั้งหมด</b> — ตัวสร้างรายการใบสุดท้าย (<c>BuildFinalInvoiceLinesAsync</c>) · ใบร่างกันกดซ้ำ (<c>UpsertFinalDraftAsync</c>) ·
@@ -51,11 +51,17 @@ public partial class LodgingService
     private async Task<LodgingAdvanceFacts> AdvanceFactsAsync(Guid companyId, LodgingReservation r, LodgingAdvanceDoc? adv)
     {
         var prop = r.Property ?? await RequirePropertyAsync(companyId, r.PropertyId);
+        // ฝ่ายค้านทีม P ข้อ 1: สถานะ/ใบเช็คเอาต์อ่านใหม่จากฐาน (ผู้เรียกถือล็อกต่อการจองแล้ว — เส้นยกเลิก/เช็คเอาต์ถือล็อกเดียวกัน) ·
+        // แถวที่ติดตามอยู่อาจถูกอ่านไว้ก่อนได้ล็อก ⇒ ห้ามตัดสินจากค่าค้าง (ยกเลิก/เช็คเอาต์/เช็คอินแล้ว ⇒ ไม่ออก)
+        var fresh = await _db.LodgingReservations.AsNoTracking()
+            .Where(x => x.Id == r.Id && x.CompanyId == companyId)
+            .Select(x => new { x.Status, x.FinalDocumentId })
+            .FirstOrDefaultAsync();
         var deposits = LodgingDepositSettlement.RoomDeposits(await LoadDepositSnapshotsAsync(companyId, r), r.SecurityDepositDocumentId);
-        return new LodgingAdvanceFacts(prop.TaxInvoiceTiming, prop.AccountingMode, r.Status, r.Source,
+        return new LodgingAdvanceFacts(prop.TaxInvoiceTiming, prop.AccountingMode, fresh?.Status ?? r.Status, r.Source,
             adv?.State ?? LodgingAdvanceState.None,
             HasVatBearingRoomDeposit: deposits.Any(d => d.VatAmount > 0.005m && LodgingDepositSettlement.Remaining(d).Gross > 0.005m),
-            HasFinalDocument: r.FinalDocumentId != null);
+            HasFinalDocument: (fresh?.FinalDocumentId ?? r.FinalDocumentId) != null);
     }
 
     /// <summary>
@@ -66,6 +72,10 @@ public partial class LodgingService
         string userId, bool issueToCompany = false)
     {
         var adv = await LoadAdvanceAsync(companyId, r);
+        // ฝ่ายค้านทีม P ข้อ 5: ค่าเริ่มต้นที่ไม่เคยผูกใบล่วงหน้า = ไม่อ่านฐานเพิ่ม (ผลเดิมทุกตัวอักษร) — กติกาข้อแรกของตัวตัดสินเดียว
+        var timing = (r.Property ?? await RequirePropertyAsync(companyId, r.PropertyId)).TaxInvoiceTiming;
+        if (adv == null && trigger != LodgingTaxTrigger.ManualIssue && !LodgingTaxInvoiceTimingPolicy.TimingAllowsAdvance(timing))
+            return null;
         if (adv?.State == LodgingAdvanceState.Live)
         {
             if (trigger == LodgingTaxTrigger.ManualIssue)
@@ -136,6 +146,14 @@ public partial class LodgingService
             PricesIncludeVat: prop.PricesIncludeVat,
             BranchId: prop.BranchId,
             BookingNumber: r.ReservationNumber);
+        // ฝ่ายค้านทีม P ข้อ 6: ใบร่างเช็คเอาต์ที่ค้าง (มีวันใช้บริการ) ห้ามถูกใช้ต่อเป็นใบล่วงหน้า — UpdateDocumentRequest.ServiceUsedDate null = "คงค่าเดิม"
+        // ⇒ ใบล่วงหน้าจะติดวันใช้บริการเดิม (tax point ผิด) · ใบร่างไม่มีเลขจริง ลบแล้วไม่เกิดช่องว่างของเลข (§86/4) — กติกาเดียวกับ LodgingCheckoutDraft.Plan
+        var staleCheckoutDrafts = await _db.Documents.AsNoTracking()
+            .Where(LodgingCheckoutDraft.LeftoverOf(companyId, r.ReservationNumber, LodgingOrigin))
+            .Where(d => d.ServiceUsedDate != null)
+            .Select(d => d.Id).ToListAsync();
+        foreach (var staleId in staleCheckoutDrafts)
+            await _docService.DeleteDocumentAsync(companyId, staleId);
         var draftId = await UpsertFinalDraftAsync(companyId, r, create, docType, userId);
         var approved = await _docService.ApproveDocumentAsync(companyId, draftId, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
         r.AdvanceTaxDocumentId = approved.Id;
@@ -165,7 +183,7 @@ public partial class LodgingService
     public async Task<LodgingReservationResponse> IssueAdvanceTaxInvoiceAsync(Guid companyId, Guid reservationId,
         LodgingIssueAdvanceTaxInvoiceRequest request, string userId)
     {
-        await RequireReservationAsync(companyId, reservationId);   // 404 ก่อนขอล็อก
+        await EnsureReservationExistsAsync(companyId, reservationId);   // 404 ก่อนขอล็อก
         return await WithReservationLockAsync(companyId, reservationId, AdvisoryLockKey.LodgingConfirm, async () =>
         {
             var r = await RequireReservationAsync(companyId, reservationId);

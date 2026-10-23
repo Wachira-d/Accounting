@@ -274,7 +274,7 @@
         if (r.status === 'CheckedIn') actions += A('🛫 เช็คเอาต์ + ออกบิล', 'checkOutForm()', 'btn-primary') + A('+ รายการ folio', 'chargeForm()') + (r.balanceDue > 0 ? A('รับชำระระหว่างพัก', 'confirmForm(true)') : '');
         // รอบ 201 ทีม IN (A-IN5): ใบเช็คเอาต์ถูกยกเลิก ⇒ ออกใบใหม่ยอดเท่าเดิม — เซิร์ฟเวอร์ตัดสินว่าเปิดปุ่มได้ (canReissueFinalDocument)
         if (r.canReissueFinalDocument === true) actions += A('🧾 ออกใบเช็คเอาต์ใหม่', 'reissueFinalForm()', 'btn-primary');
-        // คำตัดสินข้อ 156: ใบกำกับภาษีล่วงหน้า — เซิร์ฟเวอร์ตัดสินว่าเปิดปุ่มได้ (canIssueAdvanceTaxInvoice · ตัวเดียวกับตอนกด)
+        // คำตัดสินข้อ 157: ใบกำกับภาษีล่วงหน้า — เซิร์ฟเวอร์ตัดสินว่าเปิดปุ่มได้ (canIssueAdvanceTaxInvoice · ตัวเดียวกับตอนกด)
         if (r.canIssueAdvanceTaxInvoice === true) actions += A('🧾 ออกใบกำกับภาษีล่วงหน้า', 'advanceTaxInvoiceForm()', 'btn-primary');
         // รอบ 202 (O-P0-2): แถวที่ night audit รุ่นก่อนปิดเอง — เซิร์ฟเวอร์ตัดสิน (canLegacyCheckOut / canSettleLegacyNoShow) แล้วเดินเส้นเช็คเอาต์/no-show ปกติ
         if (r.canLegacyCheckOut === true) actions += A('🧾 ออกใบเช็คเอาต์ย้อนหลัง', 'checkOutForm()', 'btn-primary');
@@ -547,7 +547,7 @@
           await this.call(() => Layout.api().lodgingReissueFinal(r.id, { reason: f.reason.value || null, confirmNoManualReissue: f.confirmNoManual.checked }));
         }, 'ออกใบใหม่');
       },
-      // คำตัดสินข้อ 156: ออกใบกำกับภาษีเต็มยอดการเข้าพักตอนนี้ — ด่าน/ชนิดใบ/ผู้ซื้ออยู่ที่เซิร์ฟเวอร์ (IssueAdvanceTaxInvoiceAsync)
+      // คำตัดสินข้อ 157: ออกใบกำกับภาษีเต็มยอดการเข้าพักตอนนี้ — ด่าน/ชนิดใบ/ผู้ซื้ออยู่ที่เซิร์ฟเวอร์ (IssueAdvanceTaxInvoiceAsync)
       advanceTaxInvoiceForm() {
         const r = this.current;
         const canCompany = !!(r.guestCompanyName && r.guestTaxId);

@@ -320,7 +320,7 @@ public partial class LodgingService : ILodgingService
         // วิธีบันทึกมัดจำ — รอบ 194: ตั้งผ่าน "ประเภทเงินมัดจำค่าห้อง" (RoomDepositKindId) เท่านั้น · ค่าเดิมของที่พัก
         // (DepositVatTreatment + ธง DepositOutputVatDeferred) ถูกล้างที่ ApplyDepositKindsAsync ทุกครั้งที่บันทึก — เหตุผลอยู่ที่นั่น
         p.AccountingMode = d.AccountingMode;
-        // คำตัดสินข้อ 156: จังหวะออกเอกสารภาษี — null = คงค่าเดิม (client รุ่นเก่า) · ด่านตัวเดียว LodgingTaxInvoiceTimingPolicy.TimingProblem
+        // คำตัดสินข้อ 157: จังหวะออกเอกสารภาษี — null = คงค่าเดิม (client รุ่นเก่า) · ด่านตัวเดียว LodgingTaxInvoiceTimingPolicy.TimingProblem
         var taxTiming = d.TaxInvoiceTiming ?? p.TaxInvoiceTiming;
         if (LodgingTaxInvoiceTimingPolicy.TimingProblem(taxTiming, p.AccountingMode) is string taxTimingProblem)
             throw new BusinessRuleException(taxTimingProblem, LodgingTaxInvoiceTimingPolicy.RuleCode);
@@ -478,7 +478,7 @@ public partial class LodgingService : ILodgingService
             RoomDepositKindInherited = KindView(await DepositKindForAsync(companyId, p, ignoreOverride: true)),
             DepositKindOptions = await DepositKindOptionsAsync(companyId),
             DepositVatExplanation = DepositPolicyResolver.Explanation,
-            // คำตัดสินข้อ 156: จังหวะออกเอกสารภาษี + ตัวเลือก/ผลภาษีจากเซิร์ฟเวอร์ · แบบ "ใบกำกับทุกครั้งที่รับเงิน" อธิบายจากประเภทเงินมัดจำที่ใช้จริง
+            // คำตัดสินข้อ 157: จังหวะออกเอกสารภาษี + ตัวเลือก/ผลภาษีจากเซิร์ฟเวอร์ · แบบ "ใบกำกับทุกครั้งที่รับเงิน" อธิบายจากประเภทเงินมัดจำที่ใช้จริง
             TaxInvoiceTiming = p.TaxInvoiceTiming,
             TaxInvoiceTimingOptions = LodgingTaxInvoiceTimingPolicy.Options().ToList(),
             TaxInvoicePaymentNote = LodgingTaxInvoiceTimingPolicy.PaymentInvoiceNote(roomKind.Treatment,
