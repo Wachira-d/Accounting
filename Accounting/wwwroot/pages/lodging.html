@@ -31,6 +31,15 @@
     .hint { font-size:11px; color:var(--gray-500) }
     .actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px }
     .warn { background:#fef3c7; border:1px solid #fcd34d; border-radius:8px; padding:8px 12px; font-size:13px; margin-bottom:10px }
+    /* 2026-10-22: แกลเลอรีสลิปในโมดัลการจอง — รูปย่อกดขยาย (เดิมมีแค่ลิงก์ที่เปิดแท็บใหม่หลัง await ⇒ ถูกบล็อกป๊อปอัป) */
+    .slip-grid { display:flex; flex-wrap:wrap; gap:10px; margin-top:6px }
+    .slip-card { width:150px; border:1px solid var(--gray-200); border-radius:8px; padding:6px; background:#fff; font-size:12px }
+    .slip-thumb { display:flex; align-items:center; justify-content:center; width:100%; height:150px; border:0; padding:0; background:var(--gray-100); border-radius:6px; cursor:zoom-in; overflow:hidden }
+    .slip-thumb img { max-width:100%; max-height:100%; object-fit:contain }
+    .slip-lightbox { position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:3000; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:16px }
+    .slip-lightbox img, .slip-lightbox iframe { max-width:100%; max-height:calc(100vh - 90px); background:#fff; border-radius:6px }
+    .slip-lightbox iframe { width:min(900px, 100%); height:calc(100vh - 90px); border:0 }
+    .slip-lightbox .bar { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:10px; color:#fff; font-size:13px }
   </style>
 </head>
 <body>
@@ -260,9 +269,13 @@
         // คำตัดสินข้อ 128: ยืนยันอัตโนมัติจากสลิป (ยังไม่บันทึกรับเงิน) — เซิร์ฟเวอร์ตัดสิน (awaitingSlipMoneyCheck) · ยอดตั้งต้น = มัดจำที่ต้องเก็บ
         if (r.awaitingSlipMoneyCheck === true) actions += A('✓ บันทึกรับเงินตามสลิป', 'confirmForm()', 'btn-primary');
         if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('🛬 เช็คอิน', 'checkInForm()', r.status === 'Confirmed' ? 'btn-primary' : 'btn-secondary') + A('📅 เลื่อนวัน', 'rescheduleForm()') + A('รับชำระเพิ่ม', 'confirmForm(true)');
-        if (r.status === 'CheckedIn') actions += A('🛫 เช็คเอาต์ + ออกบิล', 'checkOutForm()', 'btn-primary') + A('+ รายการ folio', 'chargeForm()');
+        // 2026-10-22: แขกที่กำลังพักจ่ายระหว่างพัก (เช่น จ่ายค่า folio ก่อนวันออก) — เส้นเดิม ConfirmAsync รับสถานะ CheckedIn อยู่แล้ว
+        // (ออกใบรับเงินมัดจำ · ไม่เปลี่ยนสถานะ · ตอนเช็คเอาต์หักทุกใบผ่าน LoadDepositSnapshotsAsync) — เดิมหน้าจอไม่มีปุ่มให้กด
+        if (r.status === 'CheckedIn') actions += A('🛫 เช็คเอาต์ + ออกบิล', 'checkOutForm()', 'btn-primary') + A('+ รายการ folio', 'chargeForm()') + (r.balanceDue > 0 ? A('รับชำระระหว่างพัก', 'confirmForm(true)') : '');
         // รอบ 201 ทีม IN (A-IN5): ใบเช็คเอาต์ถูกยกเลิก ⇒ ออกใบใหม่ยอดเท่าเดิม — เซิร์ฟเวอร์ตัดสินว่าเปิดปุ่มได้ (canReissueFinalDocument)
         if (r.canReissueFinalDocument === true) actions += A('🧾 ออกใบเช็คเอาต์ใหม่', 'reissueFinalForm()', 'btn-primary');
+        // คำตัดสินข้อ 157: ใบกำกับภาษีล่วงหน้า — เซิร์ฟเวอร์ตัดสินว่าเปิดปุ่มได้ (canIssueAdvanceTaxInvoice · ตัวเดียวกับตอนกด)
+        if (r.canIssueAdvanceTaxInvoice === true) actions += A('🧾 ออกใบกำกับภาษีล่วงหน้า', 'advanceTaxInvoiceForm()', 'btn-primary');
         // รอบ 202 (O-P0-2): แถวที่ night audit รุ่นก่อนปิดเอง — เซิร์ฟเวอร์ตัดสิน (canLegacyCheckOut / canSettleLegacyNoShow) แล้วเดินเส้นเช็คเอาต์/no-show ปกติ
         if (r.canLegacyCheckOut === true) actions += A('🧾 ออกใบเช็คเอาต์ย้อนหลัง', 'checkOutForm()', 'btn-primary');
         if (r.canSettleLegacyNoShow === true) actions += A('คิดค่าปรับ no-show (ย้อนหลัง)', 'cancel(true)', 'btn-danger');
@@ -278,9 +291,11 @@
         actions += A('✏️ แก้ข้อมูลแขก', 'editGuestForm()');
         document.getElementById('resBody').innerHTML = `
           ${r.slipStateLabel ? `<div class="warn" style="background:#E0F2FE;border-color:#7DD3FC">🧾 <b>${esc(r.slipStateLabel)}</b>${r.awaitingSlipMoneyCheck ? ' — ระบบยืนยันการจองตามค่าตั้ง “ส่งสลิปแล้วยืนยันทันที” แต่<b>ยังไม่ได้บันทึกรับเงิน</b>: เปิดดูสลิป ตรวจยอดโอน แล้วกด “บันทึกรับเงินตามสลิป” หรือปฏิเสธสลิป (การจองกลับเป็นรอชำระ)' : ''}</div>` : ''}
-          ${r.slipUploadedAt ? `<div class="warn">📎 แขกอัปโหลดสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} ${r.paymentReference ? '(' + esc(r.paymentReference) + ')' : ''} — <a href="#" onclick="Layout.openAuthed('${Layout.jsArg(r.paymentSlipUrl)}', 'slip');return false">เปิดดูสลิป</a> แล้วกด "ยืนยัน + บันทึกรับมัดจำ" หรือ <a href="#" onclick="Page.rejectSlipForm();return false" style="color:#dc2626">ปฏิเสธสลิป</a> ถ้ายอด/ชื่อไม่ตรง</div>` : ''}
+          ${r.slipUploadedAt ? `<div class="warn">📎 แขกอัปโหลดสลิปแล้วเมื่อ ${new Date(r.slipUploadedAt).toLocaleString('th-TH')} ${r.paymentReference ? '(' + esc(r.paymentReference) + ')' : ''} — ดูสลิปในกรอบ “สลิปของแขก” ด้านล่าง (กดรูปเพื่อขยาย) เทียบยอด/ชื่อผู้โอน แล้วกด "${r.awaitingSlipMoneyCheck ? 'บันทึกรับเงินตามสลิป' : 'ยืนยัน + บันทึกรับมัดจำ'}" หรือ <a href="#" onclick="Page.rejectSlipForm();return false" style="color:#dc2626">ปฏิเสธสลิป</a> ถ้ายอด/ชื่อไม่ตรง</div>` : ''}
+          ${r.slipUploadedAt || r.slipRejectedCount > 0 ? `<div class="card" id="slipGallery"><h4>🧾 สลิปของแขก</h4><div class="hint">กำลังโหลดสลิป…</div></div>` : ''}
           ${r.slipRejectedCount > 0 ? `<div class="warn" style="background:#FEE2E2;border-color:#FCA5A5">⚠️ สลิปถูกปฏิเสธมาแล้ว ${r.slipRejectedCount} ครั้ง${r.slipRejectedReason ? ` — ล่าสุด: ${esc(r.slipRejectedReason)}` : ''}${r.slipUploadBlocked ? ' · <b>ปิดรับสลิปของใบนี้แล้ว</b> (แขกยังชำระออนไลน์/ติดต่อที่พักได้)' : ''}</div>` : ''}
           ${r.finalDocumentNote ? `<div class="warn">⚠️ ${esc(r.finalDocumentNote)}</div>` : ''}
+          ${r.advanceTaxInvoiceNote ? `<div class="warn">🧾 ${esc(r.advanceTaxInvoiceNote)}</div>` : ''}
           ${r.paymentProblemAt ? `<div class="warn" style="background:#FEE2E2;border-color:#FCA5A5">💳 <b>เงินเข้าแล้วแต่ยืนยันการจองไม่ได้</b> (ระบบไม่คืนเงินเอง) — ติดต่อแขกเพื่อเลื่อนวัน/ย้ายห้องแล้วกด “ยืนยัน” หรือคืนเงินตามช่องทางที่รับมา<div class="hint" style="white-space:pre-line">${esc(r.paymentProblemNote || '')}</div></div>` : ''}
           ${r.overdueLabel ? `<div class="warn">⏰ <b>${esc(r.overdueLabel)}</b> — ระบบไม่ปิดสถานะเอง: ${r.status === 'CheckedIn' ? 'กด “เช็คเอาต์ + ออกบิล” (ห้องยังถูกกันไว้จนกว่าจะเช็คเอาต์)' : 'กด “No-show” เพื่อคิดค่าปรับ/ค้างคืนตามนโยบาย หรือ “ยกเลิก” / “เลื่อนวัน” ถ้าแขกแจ้งไว้'}</div>` : ''}
           ${r.canLegacyCheckOut ? `<div class="warn">🗂 ระบบรุ่นก่อนบันทึก “เช็คเอาต์แล้ว” เองโดย<b>ยังไม่ได้ออกบิล</b> — กด “ออกใบเช็คเอาต์ย้อนหลัง” เพื่อออกเอกสารและใช้มัดจำ (ไม่แตะสถานะห้องปัจจุบัน)</div>` : ''}
@@ -300,7 +315,7 @@
               <div class="kv total"><span>ยอดรวมทั้งสิ้น</span><span>${money(r.grandTotal)}</span></div>
               <div class="kv"><span>มัดจำที่ต้องเก็บ / รับแล้ว</span><span>${money(r.depositRequired)} / <b>${money(r.depositPaid)}</b></span></div>
               <div class="kv"><span>ชำระแล้วทั้งหมด</span><span>${money(r.paidAmount)}</span></div><div class="kv"><span>คงเหลือ</span><b class="${r.balanceDue > 0 ? 'text-warning' : 'text-success'}">${money(r.balanceDue)}</b></div>
-              ${r.depositDocumentId ? `<div class="hint">ใบเสร็จมัดจำ <a href="/pages/documents.html?id=${r.depositDocumentId}">${esc(r.depositDocumentNumber || '')}</a></div>` : ''}${r.finalDocumentId ? `<div class="hint">เอกสารเช็คเอาต์ <a href="/pages/documents.html?id=${r.finalDocumentId}">${esc(r.finalDocumentNumber || '')}</a></div>` : ''}
+              ${r.depositDocumentId ? `<div class="hint">ใบเสร็จมัดจำ <a href="/pages/documents.html?id=${r.depositDocumentId}">${esc(r.depositDocumentNumber || '')}</a></div>` : ''}${r.advanceTaxDocumentId && r.advanceTaxDocumentNumber ? `<div class="hint">ใบกำกับภาษีล่วงหน้า <a href="/pages/documents.html?id=${esc(r.advanceTaxDocumentId)}">${esc(r.advanceTaxDocumentNumber)}</a>${r.advanceTaxDocumentLive ? '' : ' (ยกเลิกแล้ว)'}</div>` : ''}${r.finalDocumentId && r.finalDocumentId !== r.advanceTaxDocumentId ? `<div class="hint">เอกสารเช็คเอาต์ <a href="/pages/documents.html?id=${r.finalDocumentId}">${esc(r.finalDocumentNumber || '')}</a></div>` : ''}
               ${r.cancellationFee || r.refundAmount ? `<div class="hint">ค่าปรับ ${money(r.cancellationFee)} · ต้องคืน ${money(r.refundAmount)} · คืนแล้ว ${money(r.refundPaidAmount)}${r.refundPending > 0 ? ` · <b style="color:#b45309">ค้างคืน ${money(r.refundPending)}</b>` : ''} — ${esc(r.cancellationReason || '')}</div>` : ''}
               ${r.depositVatTreatmentLabel ? `<div class="hint">มัดจำบันทึกแบบ: ${esc(r.depositVatTreatmentLabel)}</div>` : ''}
               ${r.securityDepositDocumentId ? `<div class="kv"><span>🔒 เงินประกันความเสียหาย (รับ / คงเหลือ)</span><span>${money(r.securityDepositReceived)} / <b>${money(r.securityDepositHeld)}</b></span></div>
@@ -313,6 +328,75 @@
           ${r.requests?.length ? `<div class="card"><h4>🛎️ คำขอแขก</h4>${r.requests.map(q => `<div class="kv"><span>${REQT[q.requestType] || q.requestType}: ${esc(q.details)}</span><span class="pill">${TSTAT[q.status] || q.status}</span></div>`).join('')}</div>` : ''}
           ${r.internalNotes ? `<div class="card" style="background:#fffbeb"><h4>หมายเหตุภายใน</h4><div style="white-space:pre-wrap;font-size:12px">${esc(r.internalNotes)}</div></div>` : ''}
           <div class="actions">${actions}</div>`;
+        if (document.getElementById('slipGallery')) this.loadSlips(r); else this.clearSlips();
+      },
+
+      // ─── สลิปของแขก (2026-10-22 · ผู้ใช้รายงาน "ไม่มีที่ให้กดดูสลิปเลย") ───
+      // รายการ + สถานะ/ป้ายมาจากเซิร์ฟเวอร์ (Helpers/LodgingSlipGallery) · ไฟล์ดึงผ่าน API.fetchFile (แนบ JWT — โฟลเดอร์สลิปไม่ได้เสิร์ฟเป็น static เพราะเป็น PII)
+      // แสดงเป็น blob URL ในหน้าเดียวกัน — ไม่เปิดแท็บใหม่หลัง await (เบราว์เซอร์บล็อกป๊อปอัปแล้วตกเป็นดาวน์โหลดไฟล์ "slip" ไม่มีนามสกุล = อาการที่ผู้ใช้เจอ)
+      _slipUrls: [], _slips: [],
+      clearSlips() {
+        (this._slipUrls || []).forEach(u => { try { URL.revokeObjectURL(u); } catch (_) { /* blob ถูกคืนไปแล้ว */ } });
+        this._slipUrls = []; this._slips = [];
+      },
+      async loadSlips(r) {
+        this.clearSlips();
+        const box = () => document.getElementById('slipGallery');
+        const head = `<h4>🧾 สลิปของแขก</h4><div class="hint">${r.amountToTransfer != null ? `ยอดที่แขกต้องโอน <b>${money(r.amountToTransfer)}</b> · ` : ''}มัดจำที่ต้องเก็บ ${money(r.depositRequired)} · รับแล้ว ${money(r.depositPaid)}</div>`;
+        let items;
+        try { items = (await Layout.api().lodgingSlips(r.id)).data || []; }
+        catch (e) {
+          if (box() && this.current?.id === r.id) box().innerHTML = `${head}<div class="warn">โหลดสลิปไม่สำเร็จ — ${esc(e.message || '')} · <a href="#" onclick="Page.loadSlips(Page.current);return false">ลองใหม่</a></div>`;
+          return;
+        }
+        if (!box() || this.current?.id !== r.id) return;   // ผู้ใช้เปิดการจองอื่นไปแล้ว
+        this._slips = items;
+        if (!items.length) { box().innerHTML = `${head}<div class="hint">ไม่พบไฟล์สลิปของการจองนี้</div>`; return; }
+        // สีตาม "ชื่อ" สถานะที่เซิร์ฟเวอร์ส่ง (ป้ายข้อความมาจากเซิร์ฟเวอร์ — หน้าไม่มีตารางป้ายเอง)
+        const stateColor = { Current: 'background:#DCFCE7;color:#166534', Rejected: 'background:#FEE2E2;color:#991B1B' };
+        box().innerHTML = `${head}<div class="slip-grid">${items.map((s, i) => `<div class="slip-card">
+            <button type="button" class="slip-thumb" id="slipThumb${i}" ${s.url ? `onclick="Page.viewSlip(${i})"` : 'disabled'} title="กดเพื่อขยาย">
+              ${s.fileMissing ? '<span class="hint">ไม่พบไฟล์บนเครื่องแม่ข่าย</span>' : s.isImage ? '<span class="hint">กำลังโหลด…</span>' : '<span style="font-size:32px">📄</span><span class="hint">&nbsp;PDF</span>'}
+            </button>
+            <div style="margin-top:4px"><span class="pill" style="${stateColor[s.state] || ''}">${esc(s.stateLabel || '')}</span></div>
+            <div class="hint">ส่งเมื่อ ${s.uploadedAt ? esc(new Date(s.uploadedAt).toLocaleString('th-TH')) : '-'}</div>
+            ${s.reference ? `<div class="hint">อ้างอิง ${esc(s.reference)}</div>` : ''}
+            ${s.rejectedReason ? `<div class="hint" style="color:#991B1B">เหตุผล: ${esc(s.rejectedReason)}</div>` : ''}
+          </div>`).join('')}</div>`;
+        await Promise.all(items.map(async (s, i) => {
+          if (!s.url) return;
+          try {
+            const f = await API.fetchFile(s.url, 'slip');
+            if (!f || this.current?.id !== r.id) return;
+            const u = URL.createObjectURL(f.blob); this._slipUrls.push(u); s.blobUrl = u;
+            const t = document.getElementById('slipThumb' + i);
+            if (t && s.isImage) { const img = document.createElement('img'); img.alt = 'สลิปโอนเงิน'; img.src = u; t.replaceChildren(img); }
+          } catch (e) {
+            const t = document.getElementById('slipThumb' + i);
+            if (t) t.innerHTML = `<span class="hint" style="color:#991B1B">เปิดไฟล์ไม่สำเร็จ — ${esc(e.message || '')}</span>`;
+          }
+        }));
+      },
+      viewSlip(i) {
+        const s = this._slips[i]; if (!s) return;
+        if (!s.blobUrl) { Layout.toast('กำลังโหลดไฟล์สลิป — ลองกดอีกครั้ง', 'info'); return; }
+        const ov = document.createElement('div'); ov.className = 'slip-lightbox';
+        const onKey = e => { if (e.key === 'Escape') close(); };
+        const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+        const media = document.createElement(s.isImage ? 'img' : 'iframe');
+        media.src = s.blobUrl; if (s.isImage) media.alt = 'สลิปโอนเงิน'; else media.title = 'สลิป (PDF)';
+        const bar = document.createElement('div'); bar.className = 'bar';
+        const info = document.createElement('span');   // textContent — ค่าจากแขก (เลขอ้างอิง) ไม่ผ่าน innerHTML
+        info.textContent = `${s.stateLabel || ''}${s.uploadedAt ? ' · ส่งเมื่อ ' + new Date(s.uploadedAt).toLocaleString('th-TH') : ''}${s.reference ? ' · อ้างอิง ' + s.reference : ''}`;
+        // เปิดแท็บใหม่จากการกดของผู้ใช้โดยตรง (ไม่มี await คั่น) ⇒ ไม่ถูกบล็อกป๊อปอัป
+        const open = document.createElement('a'); open.href = s.blobUrl; open.target = '_blank'; open.rel = 'noopener'; open.className = 'btn btn-sm btn-secondary'; open.textContent = 'เปิดในแท็บใหม่';
+        const dl = document.createElement('a'); dl.href = s.blobUrl; dl.download = s.originalFileName || (s.isImage ? 'slip.jpg' : 'slip.pdf'); dl.className = 'btn btn-sm btn-secondary'; dl.textContent = 'ดาวน์โหลด';
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'btn btn-sm btn-primary'; x.textContent = 'ปิด'; x.onclick = close;
+        bar.append(info, open, dl, x);
+        ov.append(media, bar);
+        ov.addEventListener('click', e => { if (e.target === ov) close(); });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(ov);
       },
       sub(title, html, onSave, saveLabel = 'ตกลง') {
         document.getElementById('subTitle').textContent = title; document.getElementById('subBody').innerHTML = html;
@@ -405,7 +489,11 @@
       },
       chargeForm() {
         const r = this.current;
+        // 2026-10-22: เลือกจาก "บริการเสริม" ที่ตั้งไว้ (เตียงเสริม · อาหารเช้า · รถรับส่ง ฯลฯ) เพื่อเติมชื่อ+ราคาให้ — เดิมต้องพิมพ์เองทุกครั้ง
+        // (ราคาตั้งต้น = ราคาต่อหน่วยของบริการ · วิธีคิดราคาต่อคืน/ต่อคนไม่ถูกคูณให้ที่นี่ — ระบุจำนวนเอง) · ส่วนลดยังเพิ่มเป็นบรรทัดติดลบไม่ได้ (ด่าน §86/4 ราคา ≥ 0)
+        const exOpts = (this.extras || []).map((x, i) => `<option value="${i}">${esc(x.name)} (${money(x.price)})</option>`).join('');
         this.sub('เพิ่มรายการ folio', `<form id="chf" class="grid2">
+          ${exOpts ? `<div class="fld" style="grid-column:1/-1"><label>เลือกจากบริการเสริมที่ตั้งไว้ (ไม่บังคับ)</label><select class="form-input" name="preset" onchange="Page.chargePreset(this)"><option value="">— พิมพ์รายการเอง —</option>${exOpts}</select></div>` : ''}
           <div class="fld" style="grid-column:1/-1"><label>รายการ *</label><input class="form-input" name="desc" required placeholder="มินิบาร์ · รูมเซอร์วิส · ซักรีด · late check-out"></div>
           <div class="fld"><label>จำนวน</label><input class="form-input" type="number" step="0.001" min="0.001" name="qty" value="1"></div>
           <div class="fld"><label>ราคา/หน่วย</label><input class="form-input" type="number" step="0.01" min="0" name="price" value="0"></div>
@@ -414,6 +502,15 @@
           const f = document.getElementById('chf');
           await this.call(() => Layout.api().lodgingAddCharge(r.id, { description: f.desc.value, quantity: +f.qty.value, unitPrice: +f.price.value, vatRate: f.vat.value === '' ? null : +f.vat.value, notes: f.notes.value || null }));
         }, 'เพิ่ม');
+      },
+      // เติมชื่อ/ราคาจากบริการเสริมที่เลือก — ไม่ทับช่องที่ผู้ใช้พิมพ์เองแล้ว (ค่าผู้ใช้ชนะเสมอ · กฎเหล็ก #4 A)
+      chargePreset(sel) {
+        const f = sel.form, x = (this.extras || [])[+sel.value];
+        if (!x) return;
+        if (!f.desc.value || f.desc.dataset.autoSrc === 'preset') { f.desc.value = x.name; f.desc.dataset.autoSrc = 'preset'; }
+        if (+f.price.value === 0 || f.price.dataset.autoSrc === 'preset') { f.price.value = x.price; f.price.dataset.autoSrc = 'preset'; }
+        f.desc.oninput = () => { delete f.desc.dataset.autoSrc; };
+        f.price.oninput = () => { delete f.price.dataset.autoSrc; };
       },
       async cancelCharge(chargeId) { if (!confirm('ยกเลิกรายการนี้?')) return; await this.call(() => Layout.api().lodgingCancelCharge(this.current.id, chargeId)); },
       async checkOutForm() {
@@ -449,6 +546,18 @@
           // ฝ่ายค้าน X2: เซิร์ฟเวอร์ปฏิเสธเมื่อไม่ติ๊ก (ใบที่ออกเองโดยไม่อ้างเลขจองตรวจจากข้อมูลไม่ได้) · มีใบขายอ้างเลขจองอยู่แล้ว = ปฏิเสธเสมอ
           await this.call(() => Layout.api().lodgingReissueFinal(r.id, { reason: f.reason.value || null, confirmNoManualReissue: f.confirmNoManual.checked }));
         }, 'ออกใบใหม่');
+      },
+      // คำตัดสินข้อ 157: ออกใบกำกับภาษีเต็มยอดการเข้าพักตอนนี้ — ด่าน/ชนิดใบ/ผู้ซื้ออยู่ที่เซิร์ฟเวอร์ (IssueAdvanceTaxInvoiceAsync)
+      advanceTaxInvoiceForm() {
+        const r = this.current;
+        const canCompany = !!(r.guestCompanyName && r.guestTaxId);
+        this.sub('ออกใบกำกับภาษีล่วงหน้า', `<form id="atf" class="grid2">
+          <div class="hint" style="grid-column:1/-1">ระบบจะออก <b>ใบกำกับภาษีเต็มยอดการเข้าพัก</b> (ค่าห้อง · บริการเสริม · service charge) ลงวันที่วันนี้ — ภาษีขายเข้า ภ.พ.30 เดือนนี้แม้ยังไม่ได้รับเงิน ·
+            เงินที่รับต่อจากนี้ออกใบรับเงินไม่มี VAT แล้วตัดชำระใบนี้ตอนเช็คเอาต์ · ยกเลิก/ไม่มา = ใบลดหนี้ส่วนที่ไม่เรียกเก็บ · ยอดเปลี่ยน = ปรับตอนเช็คเอาต์</div>
+          <div class="fld" style="grid-column:1/-1"><label><input type="checkbox" name="company" ${canCompany ? '' : 'disabled'}> ออกในนามบริษัท ${canCompany ? esc(r.guestCompanyName) + ' (' + esc(r.guestTaxId) + ')' : '— ต้องกรอกชื่อบริษัท + เลขผู้เสียภาษีที่ “แก้ข้อมูลแขก” ก่อน'}</label></div></form>`, async () => {
+          const f = document.getElementById('atf');
+          await this.call(() => Layout.api().lodgingIssueAdvanceTaxInvoice(r.id, { issueToCompany: !!(f.company && f.company.checked) }));
+        }, 'ออกใบกำกับ');
       },
       // ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง — บัญชีที่เงินออก: เลือกเอง หรือปล่อยว่าง = บัญชีเดียวกับที่รับมัดจำเข้ามา
       paymentProblemForm() {

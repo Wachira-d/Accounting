@@ -107,6 +107,7 @@ public class CmsContentController : ControllerBase
     // ===== Blocks =====
 
     [HttpPost("pages/{pageId:guid}/blocks")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor, SiteStaffRole.ContentWriter)]
     public async Task<ActionResult<ApiResponse<BlockResponse>>> CreateBlock(
         Guid companyId, Guid siteId, Guid pageId, [FromBody] CreateBlockRequest request)
     {
@@ -116,6 +117,7 @@ public class CmsContentController : ControllerBase
     }
 
     [HttpPut("pages/{pageId:guid}/blocks/{blockId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor, SiteStaffRole.ContentWriter)]
     public async Task<ActionResult<ApiResponse<BlockResponse>>> UpdateBlock(
         Guid companyId, Guid siteId, Guid pageId, Guid blockId, [FromBody] UpdateBlockRequest request)
     {
@@ -125,6 +127,7 @@ public class CmsContentController : ControllerBase
     }
 
     [HttpDelete("pages/{pageId:guid}/blocks/{blockId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor, SiteStaffRole.ContentWriter)]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteBlock(Guid companyId, Guid siteId, Guid pageId, Guid blockId)
     {
         var result = await _contentService.DeleteBlockAsync(companyId, siteId, pageId, blockId);
@@ -133,6 +136,7 @@ public class CmsContentController : ControllerBase
     }
 
     [HttpPost("pages/{pageId:guid}/blocks/reorder")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor, SiteStaffRole.ContentWriter)]
     public async Task<ActionResult<ApiResponse<bool>>> ReorderBlocks(
         Guid companyId, Guid siteId, Guid pageId, [FromBody] ReorderBlocksRequest request)
     {
@@ -194,6 +198,7 @@ public class CmsContentController : ControllerBase
     // ===== Media =====
 
     [HttpPost("media")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor, SiteStaffRole.ContentWriter)]
     [RequestSizeLimit(52_428_800)]
     public async Task<ActionResult<ApiResponse<MediaResponse>>> UploadMedia(
         Guid companyId, Guid siteId, IFormFile file)
@@ -217,6 +222,7 @@ public class CmsContentController : ControllerBase
     }
 
     [HttpPut("media/{mediaId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor, SiteStaffRole.ContentWriter)]
     public async Task<ActionResult<ApiResponse<MediaResponse>>> UpdateMedia(
         Guid companyId, Guid siteId, Guid mediaId, [FromBody] UpdateMediaRequest request)
     {
@@ -226,6 +232,7 @@ public class CmsContentController : ControllerBase
     }
 
     [HttpDelete("media/{mediaId:guid}")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor, SiteStaffRole.ContentWriter)]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteMedia(Guid companyId, Guid siteId, Guid mediaId)
     {
         var result = await _contentService.DeleteMediaAsync(companyId, siteId, mediaId);

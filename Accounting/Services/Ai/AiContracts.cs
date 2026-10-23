@@ -109,6 +109,18 @@ public sealed record AiRequest
     /// the caller is responsible for parsing it. Without this, plan responses
     /// were wrongly rejected as "Schema mismatch" and fell back to local.</summary>
     public bool RawPlanResponse { get; init; }
+
+    /// <summary>ความหมายของ <c>"primary": null</c> สำหรับ feature นี้ — ไม่ตั้ง (ค่าเริ่มต้น) = null คือ "AI ไม่ตอบ"
+    /// (InvalidResponse "Null primary" แล้วตกไปหานักเรียน) · ตั้งเฉพาะ feature ที่ "ไม่มี" เป็นคำตอบที่ถูกต้องตามความหมาย
+    /// เช่น WHT: null = <c>"None"</c> (ไม่ต้องหัก) — ด่านความมั่นใจของผู้เรียกยังกันทิศ "ไม่ต้องหัก" ที่ผิดแล้วมองไม่เห็นตามเดิม
+    /// · ตัวอ่าน: <c>Helpers/AiFeatureResponseParser</c> (ทีม H · 2026-10-22)</summary>
+    public string? NullPrimaryAnswer { get; init; }
+
+    /// <summary>คำถามที่ครูภายนอก<b>ตอบไม่ได้โดยโครงสร้าง</b> (payload ไม่มีข้อมูลที่คำตอบต้องใช้ เช่น ตรวจเอกสารซ้ำ —
+    /// ต้องค้นฐานข้อมูลของบริษัท ซึ่งมีแต่นักเรียนทำได้) ⇒ orchestrator เดินเหมือนโหมด LocalOnly: ตอบด้วยนักเรียน ไม่ยิง provider ·
+    /// ทีม H 2026-10-22: FuzzyDuplicateDetection เดิมยิง DeepSeek ด้วย system prompt ที่ไม่มี schema + ไม่มีเอกสารให้เทียบ
+    /// ⇒ ได้ร้อยแก้ว → InvalidResponse ทุกครั้งที่นักเรียนไม่เจอใบซ้ำ = จ่าย token ทุกร่างเอกสารโดยไม่มีวันได้คำตอบ</summary>
+    public bool LocalOnly { get; init; }
 }
 
 /// <summary>

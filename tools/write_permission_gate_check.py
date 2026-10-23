@@ -124,6 +124,8 @@ WATCHED = [
     # เพิ่มรอบ 205 ทีม E (IMPORT_ETL_REVIEW §1 ข้อ 13) — เดิมอยู่ใน baseline 3 แถว (Detect · Resolve · ResolveAll ไม่มีด่าน) ·
     # ปิดด่านแล้ว (DenyAsync ต่อชนิดของแถว) ⇒ ถอดจาก baseline + ย้ายเข้า WATCHED ตอนเขียว
     "Accounting/Controllers/ImportConflictController.cs",
+    # ทีม L (คอร์ส/เครดิต) — ขายคอร์ส = ออกใบกำกับภาษี · ตัดเครดิต/หมดอายุ = ลง JE รับรู้รายได้ ⇒ ทุก write มีด่าน (ใส่ตอนเขียวตั้งแต่ไฟล์เกิด)
+    "Accounting/Controllers/CourseCreditController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

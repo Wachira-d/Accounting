@@ -77,11 +77,12 @@ public class PaymentIntentService : IPaymentIntentService
     private readonly IEnumerable<IPaymentCompletionHandler> _handlers;
     private readonly ILogger<PaymentIntentService> _logger;
     private readonly IConfiguration? _config;
+    private readonly Accounting.Services.Interfaces.INotificationEngine? _notify;
 
     public PaymentIntentService(AccountingDbContext db, IEnumerable<IPaymentProvider> providers,
         IEnumerable<IPaymentCompletionHandler> handlers, ILogger<PaymentIntentService> logger,
-        IConfiguration? config = null)
-    { _db = db; _providers = providers; _handlers = handlers; _logger = logger; _config = config; }
+        IConfiguration? config = null, Accounting.Services.Interfaces.INotificationEngine? notify = null)
+    { _db = db; _providers = providers; _handlers = handlers; _logger = logger; _config = config; _notify = notify; }
 
     /// <summary>รอบ 201 ทีม GW (A-GW3): URL กลับหลังจ่าย = โดเมนเว็บไซต์ของบริษัทนี้ (SiteDomains ที่อนุมัติแล้ว + CustomDomain ของเว็บ) หรือโดเมนของระบบ
     /// (<c>App:BaseUrl</c>) เท่านั้น — ตัดสินด้วย <see cref="PaymentIntentPolicy.SafeReturnUrl"/> ตัวเดียว (ทุกทางเข้าเดินผ่าน StartAsync)</summary>
@@ -367,6 +368,7 @@ public class PaymentIntentService : IPaymentIntentService
                 PaymentIntentStatus.Succeeded,
                 note: "⚠️ เงินเข้าแล้วแต่ระบบยังไม่ได้บันทึกการรับเงินให้ต้นทางนี้อัตโนมัติ");
             await _db.SaveChangesAsync(ct);
+            await NotifyUnfulfilledAsync(intent, "ระบบยังไม่ได้บันทึกการรับเงินให้ต้นทางนี้อัตโนมัติ", ct);
             return;
         }
 
@@ -382,6 +384,39 @@ public class PaymentIntentService : IPaymentIntentService
                 PaymentIntentStatus.Succeeded,
                 note: "⚠️ เงินเข้าแล้วแต่ดำเนินการต่อไม่สำเร็จ: " + ex.Message);
             await _db.SaveChangesAsync(ct);
+            // ที่พักติดธง + แจ้งเตือนของตัวเองแล้ว (FlagPaymentProblemAsync · คำตัดสินข้อ 127) — ไม่แจ้งซ้ำ · เว้นหาการจองไม่พบ (ไม่มีแถวให้ติดธง)
+            if (intent.SourceKind != PaymentSourceKind.LodgingReservation
+                || (ex is BusinessRuleException bre && bre.RuleCode == GatewayPaymentRecord.SourceMissingRuleCode))
+                await NotifyUnfulfilledAsync(intent, ex.Message, ct);
+        }
+    }
+
+    /// <summary>รอบ 205 ทีม E (BOOKING_REVENUE_AUDIT G-1): เงินเข้าแล้วแต่ต้นทางไม่ถูกบันทึก (ไม่มีใบ/JE) — เดิมดังแค่ log + ประวัติของรายการชำระ
+    /// ซึ่งไม่มีใครเปิดดูจนลูกค้าโทรมา ⇒ แจ้งเจ้าของบริษัท (ล้มดังที่ "สถานะงาน" ด้วย ไม่ใช่แค่ log · F2 ข้อ 7) · แจ้งไม่สำเร็จต้องไม่ล้มเส้นเงิน</summary>
+    private async Task NotifyUnfulfilledAsync(PaymentIntent intent, string reason, CancellationToken ct)
+    {
+        if (_notify == null) return;
+        try
+        {
+            var ownerUserId = await _db.CompanyUsers.AsNoTracking()
+                .Where(cu => cu.CompanyId == intent.CompanyId && cu.Role == UserRole.Owner)
+                .Select(cu => (Guid?)cu.UserId)
+                .FirstOrDefaultAsync(ct);
+            await _notify.DispatchAsync(intent.CompanyId,
+                Accounting.Models.Constants.NotificationEvents.GatewayPaymentUnfulfilled,
+                new Accounting.Services.Interfaces.NotificationContext
+                {
+                    Title = "เงินออนไลน์เข้าแล้ว แต่ระบบบันทึกรายการไม่สำเร็จ",
+                    Message = $"รายการชำระ {intent.Amount:N2} บาท ({intent.Description ?? intent.SourceKind.ToString()}) เข้าแล้ว "
+                        + $"แต่ยังไม่มีเอกสาร/การบันทึกรับเงิน: {reason} — เปิดหน้ารายการรับชำระออนไลน์เพื่อตรวจ แล้วบันทึกรับเงินด้วยมือหรือคืนเงินลูกค้า",
+                    ActionUrl = "/pages/payment-intents.html",
+                    EntityType = "PaymentIntent", EntityId = intent.Id,
+                    RecipientUserId = ownerUserId,
+                });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งเจ้าของเรื่องเงินเข้าแต่บันทึกไม่สำเร็จไม่สำเร็จ — intent {Intent}", intent.Id);
         }
     }
 

@@ -132,7 +132,7 @@
                 <tr>
                   <td><strong>${AdminLayout.esc(u.fullName)}</strong></td>
                   <td>${AdminLayout.esc(u.email)}</td>
-                  <td>${u.phone || '-'}</td>
+                  <td>${AdminLayout.esc(u.phone || '-')}</td>
                   <td>${u.companies.length > 0 ? u.companies.map(c => `<div style="font-size:12px">${AdminLayout.esc(c.name)} <span style="color:#94a3b8">(${AdminLayout.esc(c.role)})</span></div>`).join('') : '<span style="color:#94a3b8">-</span>'}</td>
                   <td>${licenseChip}</td>
                   <td>${AdminLayout.statusBadge(u.status)}</td>
@@ -185,7 +185,9 @@
         document.getElementById('pagination').innerHTML = pagHtml;
 
       } catch (err) {
-        document.getElementById('userList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${AdminLayout.esc(err.message)}</div>`;
+        // รอบ 205 ทีม I: สาเหตุจริงจากเซิร์ฟเวอร์ + ปุ่มลองใหม่ (เดิมข้อความเปล่า ต้องรีโหลดทั้งหน้า)
+        document.getElementById('userList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">โหลดรายชื่อผู้ใช้ไม่สำเร็จ: ${AdminLayout.esc(err.message || 'ไม่ทราบสาเหตุ')}
+          <div style="margin-top:10px"><button class="admin-btn admin-btn-outline admin-btn-sm" onclick="loadUsers(currentPage)">ลองใหม่</button></div></div>`;
       }
     }
 
@@ -309,7 +311,7 @@
             <div class="admin-form-group"><label class="admin-label">ผูกกับบริษัท</label><select class="admin-input" id="cuCompany" onchange="cuToggleRole()">${companyOpts}</select></div>
             <div class="admin-form-group" id="cuRoleWrap" style="display:none"><label class="admin-label">บทบาทในบริษัท</label>
               <select class="admin-input" id="cuRole">
-                <option value="Owner">Owner</option>
+                <option value="Owner">Owner (เฉพาะบริษัทที่ยังไม่มีเจ้าของ)</option>
                 <option value="Accountant">Accountant</option>
                 <option value="Staff" selected>Staff</option>
                 <option value="Auditor">Auditor</option>

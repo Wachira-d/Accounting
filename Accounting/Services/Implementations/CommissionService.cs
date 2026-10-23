@@ -218,6 +218,20 @@ public class CommissionService : ICommissionService
         if (existingAssignment)
             throw new InvalidOperationException("มีการกำหนดแผนค่าคอมมิชชันให้พนักงานคนนี้อยู่แล้ว");
 
+        // ทีม K — แผนฐาน "ยอดที่ช่างทำบน POS" นับตามผู้ใช้ที่ถูกเลือกเป็นช่างบนบิล ⇒ ต้องรู้ว่าพนักงานคือผู้ใช้คนไหน
+        // (ไม่รู้ = ฐาน 0 ทุกเดือนเงียบ ๆ) · ทางไปต่อ: ผูกผู้ใช้กับพนักงานที่หน้าพนักงาน หรือเลือกผู้ใช้ตรง
+        var basis = await _db.CommissionPlans.AsNoTracking()
+            .Where(p => p.Id == planId && p.CompanyId == companyId).Select(p => p.CalculationBasis).FirstAsync();
+        if (basis == CommissionPlanRules.PosStaffSalesBasis && request.UserId == null)
+        {
+            var linkedUser = request.EmployeeId == null ? null : await _db.Set<Employee>().AsNoTracking()
+                .Where(e => e.Id == request.EmployeeId && e.CompanyId == companyId).Select(e => e.UserId).FirstOrDefaultAsync();
+            if (linkedUser == null)
+                throw new BusinessRuleException(
+                    "แผนนี้คิดจากยอดที่ช่างทำบน POS — พนักงานต้องผูกกับผู้ใช้ระบบก่อน (หน้าพนักงาน → ผู้ใช้ที่ผูก) จึงจะนับยอดได้",
+                    "COMMISSION-POS-STAFF-USER");
+        }
+
         var assignment = new CommissionAssignment
         {
             CompanyId = companyId,
@@ -272,6 +286,7 @@ public class CommissionService : ICommissionService
         {
             // Calculate basis amount based on documents (invoices) for the period
             decimal basisAmount = 0;
+            string? breakdownNote = null;
 
             if (assignment.Plan.CalculationBasis == "Revenue")
             {
@@ -310,6 +325,26 @@ public class CommissionService : ICommissionService
                     paymentQuery = paymentQuery.Where(p => p.Document != null && p.Document.CreatedBy == assignment.EmployeeId.ToString());
 
                 basisAmount = await paymentQuery.SumAsync(p => p.Amount);
+            }
+            else if (assignment.Plan.CalculationBasis == CommissionPlanRules.PosStaffSalesBasis)
+            {
+                // ทีม K — ยอดที่ช่างทำรายบรรทัดบนบิล POS ที่ปิดในเดือน (เวลาไทย) · ตัวคิด = PosStaffAttribution ตัวเดียวกับรายงาน
+                var staffUserId = assignment.UserId;
+                if (staffUserId == null && assignment.EmployeeId.HasValue)
+                    staffUserId = await _db.Set<Employee>().AsNoTracking()
+                        .Where(e => e.Id == assignment.EmployeeId.Value && e.CompanyId == companyId)
+                        .Select(e => e.UserId).FirstOrDefaultAsync();
+                if (staffUserId is Guid sid)
+                {
+                    var fromUtc = DateTime.SpecifyKind(periodStart.AddHours(-7), DateTimeKind.Utc);
+                    var toUtc = DateTime.SpecifyKind(periodStart.AddMonths(1).AddHours(-7), DateTimeKind.Utc);
+                    var (orders, _) = await PosService.LoadStaffSalesInputAsync(_db, companyId, fromUtc, toUtc, sid);
+                    basisAmount = PosStaffAttribution.NetSalesFor(sid, orders);
+                }
+                // ไม่มีผู้ใช้ผูก ⇒ ฐาน 0 — กันไว้แล้วตอนกำหนดแผน (AssignPlanAsync) · ข้อมูลเก่าที่หลุดมา (ถอดผู้ใช้ออกทีหลัง)
+                // ต้องเห็นได้บนแถวผลคำนวณ ไม่ใช่ 0 เงียบ ๆ
+                else
+                    breakdownNote = "ฐาน 0 เพราะพนักงานไม่ได้ผูกผู้ใช้ระบบ — ผูกผู้ใช้ที่หน้าพนักงานแล้วคำนวณใหม่";
             }
             else if (assignment.Plan.CalculationBasis == "Profit")
             {
@@ -357,14 +392,16 @@ public class CommissionService : ICommissionService
                 Month = month,
                 BasisAmount = basisAmount,
                 CommissionAmount = commissionAmount,
-                Status = "Calculated"
+                Status = "Calculated",
+                BreakdownJson = breakdownNote == null ? null
+                    : System.Text.Json.JsonSerializer.Serialize(new { note = breakdownNote }),
             };
 
             _db.CommissionCalculations.Add(calculation);
 
             results.Add(new CommissionCalcResponse(
                 assignment.EmployeeId, employeeName,
-                year, month, basisAmount, commissionAmount, "Calculated"));
+                year, month, basisAmount, commissionAmount, "Calculated", breakdownNote));
         }
 
         await _db.SaveChangesAsync();
@@ -392,7 +429,8 @@ public class CommissionService : ICommissionService
 
             results.Add(new CommissionCalcResponse(
                 calc.EmployeeId, employeeName,
-                calc.Year, calc.Month, calc.BasisAmount, calc.CommissionAmount, calc.Status));
+                calc.Year, calc.Month, calc.BasisAmount, calc.CommissionAmount, calc.Status,
+                NoteOf(calc.BreakdownJson)));
         }
 
         return results;
@@ -416,6 +454,20 @@ public class CommissionService : ICommissionService
     }
 
     // ===== Helpers =====
+
+    /// <summary>หมายเหตุที่ CalculateAsync ฝากไว้ใน BreakdownJson ({"note": "..."}) — อ่านไม่ออก = null</summary>
+    private static string? NoteOf(string? breakdownJson)
+    {
+        if (string.IsNullOrWhiteSpace(breakdownJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(breakdownJson);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("note", out var n) && n.ValueKind == System.Text.Json.JsonValueKind.String
+                ? n.GetString() : null;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
 
     private static decimal CalculateCommissionAmount(CommissionPlan plan, decimal basisAmount)
     {

@@ -1617,6 +1617,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - Customer checkout → `SiteOrder` + upload สลิป → `RecordPaymentSlipAsync`
     สร้าง `SiteOrderPayment` Status=`Pending`
   - Admin/webhook ยืนยันรับเงิน → `ConfirmPaymentAsync` (`POST /orders/{id}/confirm-payment`)
+    · **จ่ายออนไลน์ (รอบ 205 ทีม E · `docs/BOOKING_REVENUE_AUDIT.md` S-1)**: `SiteOrderPaymentHandler` สร้าง/หาแถว `SiteOrderPayment` ของรายการชำระนั้น
+    (Reference = `GatewayPaymentRecord.Reference` = `PAY-INTENT-{id}` · ยอด = ยอดของรายการ · วิธีชำระ `GatewayPaymentRecord.MethodOf`) แล้วยืนยัน**แถวนั้น**
+    (`paymentId: pay.Id`) — เดิม `paymentId: null` หยิบแถวสลิปล่าสุด ⇒ ออเดอร์ที่จ่ายผ่าน gateway โดยไม่แนบสลิปไม่เคยถูกยืนยัน (ไม่มีใบกำกับ/JE/ตัดสต็อก)
     ทำงาน 6 ขั้นรวด (idempotent):
     1. `SiteOrderPayment.Status = Confirmed` + `Order.PaidAmount/PaidAt`
     2. `SyncOrderToErpAsync` ถ้ายังไม่ sync — ใช้ `IDocumentService.CreateDocumentAsync`
@@ -1628,13 +1631,70 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     6. e-Tax: ขั้น 3 (`ApproveDocumentAsync`) ออกให้แล้วผ่าน hook — **ถอดการเรียก `GenerateAsync` ซ้ำ** (เดิมได้ "มี e-Tax แล้ว" เป็น LogWarning ทุกใบ
        และล้มเงียบ) · เรียก `IIssuedDocumentHooks.RunAsync` เฉพาะเมื่อ**ไม่ได้อนุมัติในรอบนี้** (ยืนยันซ้ำ/อนุมัติไว้ก่อน) (รอบ 193 S-02)
   - ทุก step fault-tolerant: ล้มเหลว → log + ไม่ rollback step ก่อนหน้า
+  - **ใบกำกับของมัดจำ — ร้านเลือกได้ (ทีม Q · คำตัดสินข้อ 156 · `docs/POS_MTO_DESIGN.md` §3.6)**: ค่าตั้ง `SiteCommerceConfig.MtoDepositInvoicing` ตรึงลง
+    `SiteOrder.DepositInvoicingMode` ตอนสั่ง · ตัวตัดสินเดียว `Helpers/SiteOrderDepositInvoicing.OnPayment` (ใน `ConfirmPaymentAsync` — ทุกทางเข้าเงิน) /
+    `SettlesOnHandover` (ใน `UpdateOrderStatusAsync` จัดส่ง/ส่งมอบ):
+    - `full_at_first_payment` (**ค่าเริ่มต้น · ออเดอร์เดิม NULL**) = 6 ขั้นข้างบนเหมือนเดิม (ขั้น 3 อนุมัติเฉพาะใบที่ยังค้าง — งวดที่สองไม่ประทับ "อนุมัติไม่ได้" ปลอมอีก)
+    - `deposit_tax_invoice`: งวดที่ยังไม่ครบ + ยังไม่ส่งมอบ ⇒ ใบรับเงินมัดจำ (Receipt `IsDeposit` · VAT ทันที §78(1)(ข) · Dr เงิน / Cr 217xx + Cr 21911 ·
+      ผูก `SiteOrderPayment.DepositDocumentId` · ไม่บันทึกรับชำระ · ไม่ตัดสต็อก) · ชำระครบ/จัดส่ง/ส่งมอบ ⇒ ใบขายส่วนที่เหลือ = บรรทัดเต็ม + `DepositBaseDeducted`/`DepositAppliedRef`
+      (วางแผนก่อนออกเลขด้วย `LodgingDepositSettlement.PlanCheckout` · อนุมัติแล้วรับรู้มัดจำเอง) + มัดจำไม่มี VAT ⇒ `ApplyDepositToInvoiceAsync` + ตัดสต็อกครั้งเดียว ·
+      เงินหลังส่งมอบ ⇒ รับชำระของใบนั้น · ส่งมอบล้ม ⇒ สถานะไม่เปลี่ยน + 400 พร้อมเหตุ + ประทับบนออเดอร์ (กดซ้ำทำขั้นที่ค้าง) · ปุ่ม sync ERP มือหักมัดจำด้วย ·
+      บิลหลายอัตรา VAT ⇒ แบบเดิม + หมายเหตุ
+    - **หลังฝ่ายค้านทีม Q**: ใบมัดจำร่างค้าง (อนุมัติล้ม) ⇒ อนุมัติให้จบก่อนวางแผนหักในใบขาย · ยังค้าง ⇒ ไม่ออกใบขาย (`PendingDepositBlockMessage` · ทางเข้า
+      ยืนยันเงิน/ส่งมอบ/sync ERP มือ) · ใบขายออกไปแล้วแต่รายการยังมีใบมัดจำร่าง ⇒ ลบใบร่างแล้วบันทึกเงินนั้นกับใบขาย (`DiscardDraftDepositThenPayOnFinal` · ห้ามอนุมัติ = VAT ซ้ำ) ·
+      เงินงวดอื่นที่ยังไม่มีเอกสาร ⇒ หมายเหตุดัง + ปุ่มต่อรายการ (`PendingPaymentsNote`) · บันทึกรับชำระแล้วผูก `SiteOrderPayment.ErpPaymentId` (กันซ้ำแม้ไม่มีเลขอ้างอิง) ·
+      ส่งมอบที่ใบขายอนุมัติแล้วแต่ตัดสต็อกล้ม ⇒ เปลี่ยนสถานะได้ + หมายเหตุ "ตัดสต๊อกไม่สำเร็จ: …" (ยังไม่มีใบขายที่อนุมัติ = บล็อก) ·
+      ปุ่มตัดสต็อกมือ (`deduct-stock`) ก่อนมีใบขาย ⇒ ปฏิเสธพร้อมทางไปต่อ (`StockDeductProblem` ใน `DeductStockAsync`) · e-Tax ของใบขาย: ออกตอนอนุมัติในรอบนั้น
+      (hook ของ `ApproveDocumentAsync`) · ถ้าใบอนุมัติไว้ก่อน ⇒ `IIssuedDocumentHooks.RunAsync` ซ้ำ (idempotent) ทั้งเส้นยืนยันเงินและส่งมอบ
+    - โหมดเดิม: งวดที่สองขึ้นไปไม่มีหมายเหตุ "อนุมัติได้เฉพาะเอกสาร Draft" อีก (`ApproveOrderDocumentIfPendingAsync` อนุมัติเฉพาะใบที่ค้าง) · เงิน/ภาษีเหมือนเดิม
+    - ยกเลิก/คืนเงินออเดอร์ที่มีใบมัดจำค้าง ⇒ ไม่ยกเลิกใบมัดจำเอง · ประทับ `CancelNotice` (คืนมัดจำ = ใบลดหนี้เมื่อมีหลักฐาน · ริบ = รับรู้/ริบมัดจำ)
+    - หลังบ้าน `cms-orders.html`: ตัวเลือก + คำอธิบายผลภาษีจากเซิร์ฟเวอร์ · ปุ่ม "ส่งมอบแล้ว (ลูกค้ามารับ)" (ยืนยันแล้ว/กำลังเตรียม → ส่งมอบ) · รายการใบมัดจำ ·
+      ปุ่ม "ทำขั้นที่ค้าง" ต่อรายการรับเงิน (ป้ายจากเซิร์ฟเวอร์ `PaymentPendingAction` → `OrderPaymentResponse.PendingAction` — ทุกหมายเหตุที่บอกให้กดมีปุ่มจริง) · หน้าร้าน: ข้อความถึงลูกค้า (`CustomerNote`) บนเช็กเอาต์/หน้าคำสั่งซื้อ
+- **รอบที่เปิดให้จอง (CMS booking · ทีม B 2026-10-22)** — ตัวตัดสินเดียว `Helpers/BookingSlotEngine` (หน้าเวลาว่าง `Available` + ด่านสร้างการจอง `Decide`):
+  โหมดรอบ (`SlotMode`: ช่วงกำหนดเอง=เดิม · ทุก N นาที · ครึ่งวัน · รายวัน) · buffer ก่อน/หลัง · ความจุพร้อมกัน (คิว/คน) · ทรัพยากรร่วม (`CapacityGroup`) ·
+  เวลาทำการรายสัปดาห์ + วันหยุด/วันพิเศษ (แถว `SiteBookingSlot`) · ล่วงหน้าขั้นต่ำ/สูงสุด (เวลาไทย) · จองหลายช่วงติดกัน (`Units` · ยอด = ราคา × ช่วง) ·
+  `CreateBookingAsync` ตัดสิน + ออกเลข + บันทึกใต้ `pg_advisory_xact_lock` (`AdvisoryLockKey.CmsBookingSlot`) ใน transaction เดียว แล้วจึงเข้าเส้น ERP ข้างล่าง ·
+  ไม่ผ่าน ⇒ `BusinessRuleException` (`CMS-BOOKING-FULL` 409 · `-CLOSED`/`-NOTONGRID`/`-TOOSOON`/`-TOOFARAHEAD`/`-UNITSNOTALLOWED`/`-INVALIDREQUEST` 400) ·
+  เวลาจบ/ระยะ/ยอด/มัดจำ (ปัด AwayFromZero · ไม่เกินยอด) มาจาก server · บรรทัด ERP: Quantity = `Units` (ใบมัดจำยังเป็น 1 × มัดจำ) ·
+  สวิตช์คุม Slot (ปิด = จองซ้อนได้ถึงเพดาน) · คิวสำรอง (`BookingStatus.Waitlisted` ไม่ออกเอกสาร ERP · ยกเลิก/ไม่มา ⇒ `PromoteWaitlistAsync`
+  เลื่อนขึ้นแล้วจึงออกเอกสาร) · ผู้ให้บริการ (`ResourceMode` · `PickResource` deterministic · ตารางงานรายบุคคล) · ค่าตั้งระดับไซต์ (`UseSiteDefaults`) ·
+  ข้อมูลเดิม: คอลัมน์ใหม่ DEFAULT = พฤติกรรมเดิม (`Helpers/BookingEngineMigration`) · รายละเอียด + backlog + API ให้ทีมอื่น: `docs/BOOKING_ENGINE_DESIGN.md`
 - **Booking flow** (`CmsBookingService.SyncBookingToErpAsync`):
   - Map `BookingType` → DocumentType:
     - `Lead/Appointment` → `Quotation` (Draft, รอ admin confirm)
-    - `Guaranteed` → `TaxInvoice` (Approved + JE auto)
+    - `Guaranteed` → ตามค่าตั้งไซต์ `SiteBookingSettings.GuaranteedInvoiceTiming` (**คำตัดสินเจ้าของข้อ 155 · 2026-10-22 · BOOKING_REVENUE_AUDIT B-2** ·
+      ตัวตัดสินเดียว `Helpers/BookingInvoiceTimingPolicy.Decide` · หน้า `cms-edit.html` แท็บบริการจอง → "ค่าตั้งการจองของเว็บไซต์" — ตัวเลือก + ผลทางภาษีจาก server):
+      - (ก) `TaxInvoiceAtBooking` (**ค่าเริ่มต้น** · คอลัมน์ DEFAULT 0 · ไม่มีแถวค่าตั้ง = ค่านี้) → `TaxInvoice` (Approved + JE auto) ตอนจอง = เดิมทุกตัวอักษร
+      - (ข) `TaxInvoiceOnPaymentOrService` → ตอนจองออก **ใบยืนยันการจอง** = `Quotation` (อนุมัติอัตโนมัติ · ไม่ลงบัญชี ไม่มีภาษีขาย · `ErpBookingDocumentType.Quotation`
+        + หมายเหตุ `DeferredNote` บนการจองและใบ) · ออกใบกำกับเมื่อ **รับเงิน** (พนักงานกด "รับเงินแล้ว — ออกใบกำกับภาษี" ·
+        `POST …/booking/bookings/{id}/issue-tax-invoice` → `IssueTaxInvoiceOnPaymentAsync`) หรือ **ให้บริการเสร็จ** (`UpdateBookingStatusAsync` → Completed)
+        แล้วแต่อย่างไหนก่อน = MIN(รับเงิน, ออกใบกำกับ, ใช้บริการ) ของ §78/1 · ออกด้วยเส้นแปลงเดิม `ConvertDocumentAsync(ใบยืนยัน → TaxInvoice)` + `ApproveDocumentAsync`
+        (SystemWorkflow) — บริษัทไม่จด VAT ⇒ `Invoice` (§90/2) · ผูกใบใหม่กับการจองก่อนอนุมัติ (อนุมัติล้ม ⇒ ครั้งถัดไปอนุมัติใบร่างนั้น ไม่แปลงซ้ำ)
+      - **ไม่ออกซ้ำ**: ใบที่ผูกเป็นใบกำกับ/ใบแจ้งหนี้/ใบเสร็จที่ออกแล้ว หรือมีใบชนิดนั้นที่แปลงจากใบยืนยัน (พนักงานแปลงเองที่หน้าเอกสาร · `RelatedDocumentId`)
+        ⇒ `AlreadyIssued` (ผูกใบนั้นกับการจอง) · ทำใต้ล็อก session ต่อการจอง (`AdvisoryLockKey.CmsBookingInvoice` — กดสองแท็บพร้อมกันไม่แปลงสองใบ) ·
+        **ไม่มีเอกสารผูก** (ขั้น ERP ตอนจองล้ม เช่น โควตาใบเสนอราคาเต็ม) ⇒ กดรับเงิน (ทุกโหมด) / ให้บริการเสร็จ (โหมด ข) สร้างใบกำกับตรงด้วยเส้นสร้างเอกสารเดิม
+        (`SyncBookingToErpAsync` overload `taxDocumentNow`) · ใบที่ผูกถูกยกเลิก ⇒ ไม่ออกเอง + ข้อความให้ออกมือ · **tax point ไม่หลุดเพราะค่าตั้ง**: หลังจองตัดสินจากเอกสารที่ผูกจริง ไม่ใช่ค่าตั้งปัจจุบัน
+        (จองตอน (ข) แล้วสลับกลับ (ก) ⇒ ยังออกใบกำกับเมื่อรับเงิน/ให้บริการ) · **ไม่มา (NoShow)** โหมด (ข) ⇒ ไม่ออกใบกำกับ (ยังไม่มี tax point) + ข้อความบอกให้กด
+        "รับเงินแล้ว" ถ้าเรียกเก็บค่าการันตี · **ยกเลิก** = `CmsBookingCancelPolicy.DecideOnCancel` เดิม (ใบยืนยัน/ใบกำกับที่ผูก ⇒ void) ·
+        **คืนเงิน**: การจองนัดหมายยังไม่มีเส้นรับ/คืนเงินในระบบ (B-4) — คืนที่หน้าเอกสาร (ใบลดหนี้) เหมือนเดิม ·
+        **ฝ่ายค้านทีม N (หลัง merge ทีม K บิล POS)**: (1) **บิล POS ของการจองปิดแล้ว ⇒ ไม่ออกใบกำกับจากการจอง** (`SettledByPosBill` — รายได้/ภาษีขายอยู่ที่ POS)
+        + void ใบยืนยันการจอง + หมายเหตุ · บิล POS เปิดอยู่ ⇒ ไม่ออก (เก็บที่ POS) · กด "รับเงินแล้ว" ขณะมีบิล POS ⇒ ปฏิเสธ (ข้อเท็จจริง `BookingPosBillState` ใน `BookingInvoiceFacts`)
+        (2) หาใบลูกที่แปลงจากใบที่ผูก **เฉพาะเมื่อใบที่ผูกเป็นใบยืนยันการจอง** (`ShouldLookForIssuedChild`) ⇒ โหมด (ก) ใบกำกับที่มีใบเสร็จลูกไม่ถูกย้ายการผูก
+        (3) endpoint ปฏิเสธการจอง Cancelled/Waitlisted/NoShow + บิล POS + มีใบภาษีอนุมัติแล้ว (`BookingInvoiceAction.Rejected` · 409 `CMS-BOOKING-ISSUE-TAX`)
+        (4) ใบที่พนักงานแปลงเองยังเป็นร่าง = ยังไม่ออก ⇒ ผูก + อนุมัติ (ล้ม ⇒ ErpNotices + หมายเหตุ "ใบยังเป็นร่าง")
+        (5) "รับเงินแล้ว" รับ `receivedDate` (ว่าง = วันนี้ไทย · อนาคต = ปฏิเสธ `PaymentDate`) ⇒ แปลงด้วย `ConvertDocumentPartialAsync` (ทุกบรรทัดเต็มจำนวน) ลงวันที่นั้น ·
+        ข้อความบอกตามจริงว่า "ยังไม่ได้บันทึกรับชำระ" (เส้นรับชำระเดิมที่หน้าเอกสาร — ยังไม่ต่ออัตโนมัติ)
+        (6) บริษัทไม่จด VAT ⇒ ป้าย `ErpBookingDocumentType.Invoice` (ค่าใหม่ 5) · ปุ่มแสดงเฉพาะการจองของโหมด (ข) (`ShowPaymentButton`) ⇒ โหมด (ก) หน้าจอเดิม ·
+        (7) **POS เห็นใบลูก**: `PosService.Bookings.LoadBookingSnapshotsAsync` นับเอกสารรายได้ด้วย `BookingInvoiceTimingPolicy.RevenueDocumentForPos` ตัวเดียว —
+        ใบที่ผูกเป็นใบยืนยันการจอง ⇒ ใบลูก (ใบกำกับ/ใบแจ้งหนี้/ใบเสร็จ ที่ยังไม่ Voided/Rejected · ร่างก็นับ) = เอกสารรายได้ ⇒ `PosBookingIntake` บล็อกเปิดบิล
+        ("รับชำระที่เอกสารนั้น") · ใบลูกถูกยกเลิก ⇒ เปิดบิลได้ ·
+        ล้มดัง: ข้อความ (`CmsBookingCancelPolicy.FailureNote`) ประทับบนการจอง + `ErpNotices` · `required_call_site_check` ล็อกทุกทางเข้า
     - อนุมัติอัตโนมัติ (ทุกชนิดที่ไม่ใช่ Lead) ล้ม ⇒ **ถอยของที่ขั้นอนุมัติทิ้งไว้ใน context** (`TrackedChangeRevert` · รอบ 194 R3 P-1 — เดิม catch แล้ว
       `SaveChanges` ต่อ ⇒ ใบ Approved ไม่มี JE) · ใบคงเป็นร่าง + หมายเหตุ ⚠️ บนการจอง ("เปิดเอกสารแล้วกดอนุมัติ") + log
     - `PrePayment` → `Receipt` ที่ `IsDeposit=true` → Cr 217xx ขายรอรับรู้
+      · **รอบ 205 ทีม E (B-1)**: อนุมัติอัตโนมัติเฉพาะเมื่อ `SiteBooking.PaidAmount ≥ DepositAmount` (`Helpers/CmsBookingErpPolicy.AutoApprove`) — การจองหน้าเว็บ
+      ยังไม่มีเส้นรับเงิน ⇒ ใบมัดจำเป็น**ใบร่าง** + หมายเหตุ `AwaitingPaymentNote` บนการจองและใบ (พนักงานอนุมัติเมื่อรับเงินจริง · แก้วันที่เป็นวันรับเงิน) ·
+      เดิมอนุมัติทันที = JE เงินสด + ภาษีขายของเงินที่ไม่เคยได้รับ · ขั้น ERP ล้มตอนแขกจอง ⇒ การจองยังสำเร็จ + `SyncFailedNote` + `ErpNotices` (B-3)
       + Cr 21911 VAT (§78/1 รับชำระแล้ว → เข้า ภพ.30 ทันที)
       ต่อมา realize ด้วย `RealizeDepositAsync` ตัด 217xx → 41000
     - **ประเภทเงินมัดจำ (รอบ 194 ทีม C · spec S4)**: ส่ง `DepositKindId:` = ประเภทเริ่มต้นบริษัท **เฉพาะเมื่อบริษัทตั้งค่ามัดจำเองแล้ว**
@@ -1661,6 +1721,20 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - Payment reconciliation (match `SiteOrderPayment.Reference` กับ bank statement)
   - ~~Webhook gateway → admin กดยืนยันสลิปเอง~~ (แก้ doc รอบ 198 G-9: มีแล้ว — `PaymentWebhookController` + `PaymentIntentService.ApplyChargeAsync`
     ส่งต่อ `SiteOrderPaymentHandler` · ดู §2.6b)
+
+- **สินค้าตามสั่ง (ทีม K · 2026-10-22 · `docs/POS_MTO_DESIGN.md`)**:
+  - ตัวเลือกสินค้า = modifier เดิมของ POS (ชนิดช่อง/จำนวนเลือก/ราคาบวก/วันผลิตเพิ่ม) — ตะกร้ารับแค่ "เลือกอะไร" แล้ว
+    `Helpers/ModifierSelectionRules` คิดราคาจากฐานข้อมูล · ตรึง `ModifierSelectionsJson` บนบรรทัดตะกร้า/คำสั่งซื้อ · คำอธิบายไปบนบรรทัดเอกสารขาย/ใบเสนอราคา ·
+    รูปตัวอย่าง `POST cart/{id}/option-image` (ที่เก็บไฟล์กลาง ชนิด `SiteOrder`)
+  - `ComputeCheckoutAsync` ตัวเดียว (หน้าเช็กเอาต์ `POST cart/{id}/checkout-quote` = `CreateOrderAsync`): ค่าส่งจากอัตราที่เลือก
+    (`Helpers/ShippingFeeRules` — โซน/น้ำหนัก/ฟรี/ส่งฟรีเมื่อครบ · ไม่ตั้งโซน = เหมาจ่ายระดับร้าน · มารับเอง = 0) ⇒ **`SiteOrder.ShippingAmount` มีผู้เขียนแล้ว** ·
+    วันรับเร็วสุด `Helpers/MtoLeadTime` ⇒ `EarliestReadyDate` · เงื่อนไขชำระ `Helpers/MtoPaymentTerms` ⇒ ตรึง `PaymentTermMode/DepositRequiredAmount`
+  - ยอดที่ต้องจ่ายรอบนี้ = `MtoPaymentTerms.FromSnapshot` ตัวเดียวใน `GetOrderAsync` · `RecordPaymentSlipAsync` · `PublicPaymentResolver` (ออเดอร์เดิม = TotalAmount − PaidAmount เท่าเดิม) ·
+    ลงบัญชีมัดจำ = ตามค่าตั้งร้าน (ทีม Q · ข้อ 156): ค่าเริ่มต้น = รับชำระบางส่วนของเอกสารขายเต็มใบ · หรือใบรับเงินมัดจำ + ใบส่วนที่เหลือตอนส่งมอบ (ดู Order flow ข้างบน · ไม่มี posting ใหม่)
+  - **บรรทัดค่าจัดส่งในเอกสารขาย VAT ตามสินค้าในบิล** (§79 · `ShippingFeeRules.VatRateForShipping` — เดิมอัตรา 0 ⇒ ภ.พ.30 จัดเป็นยอดส่งออก ·
+    สินค้าทั้งบิลยกเว้น ⇒ ยกเว้น −1 · บิลปน ⇒ อัตราสูงสุด) · `SiteOrder.VatAmount` รวม VAT ค่าส่ง (`VatInShipping`) · บรรทัดสินค้ายกเว้น VAT = 0 (เดิมติดลบ)
+  - โซนค่าส่งจำกัดพื้นที่ + ไม่กรอกจังหวัด/รหัสไปรษณีย์ ⇒ ไม่ตรง (บอกให้กรอก) · ชื่อจังหวัดผ่าน `ThaiAddressParser.NormalizeProvince` · ตรึง `SiteOrder.ShippingProvince/ShippingPostalCode` ·
+    แนบสลิปเมื่อไม่มียอดค้าง ⇒ ปฏิเสธ (`CMS-SLIP-NOTHING-DUE`) · รูปตัวอย่างตรวจชนิดจากไบต์ (`ImageMagicBytes`) + จำกัดต่อ IP/ไซต์
 
 ### 2.6b Payment gateway — รับเงิน · คืนเงิน · รอบโอน (PAYMENT_GATEWAY_DESIGN.md · รอบ 198 settlement เฟส 0)
 - **รับเงินสำเร็จ**: ขา "เงินเข้า" ตัดสินที่ `IGatewayAccountResolver.ResolveMoneyInAccountAsync` ตัวเดียว (adapter ที่ไม่เข้าธนาคารทันที ⇒
@@ -1879,6 +1953,23 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - Z-report consolidation (ปัจจุบัน 1 JE/order, ไม่มี shift-end batch)
   - มัดจำ/booking (217xx flow ยังไม่ enabled ฝั่ง POS)
   - WHT tip §50 ทวิ (เกิน 1,000/รอบ — niche)
+
+### 2.6c POS — คิวการจอง · ช่างรายบรรทัด · รายการพิเศษ (ทีม K · 2026-10-22 · `docs/POS_MTO_DESIGN.md`)
+- **คิวการจอง → เปิดบิล**: `GET pos/booking-queue` (การจองเว็บ `SiteBooking` + การจองโต๊ะ `PosReservation` ของวันตามปฏิทินไทย) ·
+  `POST pos/booking-queue/open` → `PosService.OpenOrderFromBookingAsync` ⇒ `CreateOrderCoreAsync` ตั้ง `PosOrder.SourceBookingType/SourceBookingId`
+  ตั้งแต่ INSERT แรก (unique partial `UX_PosOrders_SourceBooking_Open` ไม่นับบิล Voided = เปิดซ้ำไม่ได้แม้สองเครื่องพร้อมกัน) ·
+  ตัวตัดสิน `Helpers/PosBookingIntake` (ยกเลิก/ไม่มา/เสร็จ/คิวสำรอง · มีบิลอยู่แล้ว · ระบบจองออกเอกสารรายได้แล้ว · **มีมัดจำรับแล้ว** = บล็อก
+  เพราะ POS ยังหักมัดจำไม่ได้ — ทางไปต่อ: ปิดงานที่หน้าการจอง · ตรวจซ้ำตอนปิดบิล · ฝั่งระบบจองไม่ `RealizeDeposit` เมื่อมีบิล POS ปิดแล้ว
+  (`PosBookingIntake.MayRealizeDepositOnComplete` ใน `CmsBookingService.UpdateBookingStatusAsync`) ⇒ รายได้รับรู้ครั้งเดียว) · เติมลูกค้า/บริการ (ผูกสินค้า = บรรทัดสินค้า · ไม่ผูก = รายการพิเศษชนิดบริการ)/ช่าง ·
+  สถานะการจอง: เปิด ⇒ Seated/InProgress · ยกเลิกบิล ⇒ ปล่อย (`ReleaseSourceBookingAsync`) · ปิดบิล ⇒ โต๊ะ Completed · เว็บ Completed
+  **เฉพาะเมื่อไม่มีเงิน/เอกสารผูกการจอง** (`MarkSourceBookingCompletedAsync` — ไม่แตะเงิน) · รวมบิลย้ายการผูกไปปลายทาง (การจองคนละรายการ = บล็อก)
+- **ช่างรายบรรทัด**: `PosOrderItem.StaffId/StaffName` (สมาชิกบริษัท · ออฟไลน์ผ่อนผัน + LogError) · `PUT pos/orders/{id}/items/{itemId}/staff`
+  (บิลปิดแล้ว = บล็อก) · ขั้นตอนแพ็กเกจที่ว่างตามช่างของบรรทัด · ยอดของช่าง `Helpers/PosStaffAttribution` (ก่อน VAT · หลังส่วนลดท้ายบิล ·
+  หักคืน · ไม่รวมค่าบริการ/ทิป) ⇒ ฐานคอมมิชชัน `PosStaffSales` (`CommissionService.CalculateAsync`) + `GET pos/reports/staff-sales`
+- **รายการพิเศษ (Quick Add)**: `PosOrderItem.IsCustomItem/CustomItemKind/RevenueAccountId` · ตรวจ `Helpers/PosCustomItemRule` · บัญชีรายได้ต้องเป็น
+  ผังหมวดรายได้ที่ลงรายการได้ · **ไม่ตัดสต็อก** (ไม่มี ProductId) · VAT ตามอัตราของบิล · **JE ขายและ JE คืนเงินแบ่งเครดิตรายได้ด้วย
+  `Helpers/PosRevenueSplit` ตัวเดียว** (ไม่มีบัญชีพิเศษ = กองเดียว 41000 เหมือนเดิม) · แยก/รวมบิลคัดลอกช่าง+รายการพิเศษ ·
+  รวมบิลคัดลอก `VatAmount` รายบรรทัดตามจริง (เดิม 0 ⇒ คืนเงินบิลที่รวมแล้วไม่กลับภาษีขาย)
 
 ### 2.7 Recurring
 
@@ -3366,6 +3457,14 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 
 ### 5.1 PDF (มาตรฐาน + e-Tax)
 - **Service**: `PdfGenerationService.GenerateDocumentPdfAsync` (`:39`)
+- **กฎตราประทับ/ลายเซ็น (Document Stamp Rules · ทีม J 2026-10-22)**: ตัวตัดสินเดียว `Helpers/DocumentStampPolicy.Resolve(คีย์ประเภท, ขั้น, JSON, ค่าเดิม)` —
+  HTML `BuildDocumentHtml` + QuestPDF `RenderDocumentPdfNative`/`BuildBranding` + `ResolveSignersAsync` (ลายเซ็น) + 50 ทวิ เรียกตัวเดียวกัน ·
+  เก็บที่ `CompanySettings.DocumentStampRulesJson` (หน้า ตั้งค่า → ตราประทับ → "กฎตราประทับ/ลายเซ็น" · `GET/PUT settings/document-stamp-rules` · `CompanySettings.Edit`) ·
+  ต่อประเภท (ชื่อ enum `DocumentType` + `WithholdingTaxCert`): ขั้นที่ประทับตรา / ขั้นที่พิมพ์ลายเซ็นอิเล็กทรอนิกส์ (ร่าง·ถูกปฏิเสธ / รออนุมัติ / อนุมัติแล้ว·ส่งแล้ว·ชำระบางส่วน·เกินกำหนด /
+  ชำระแล้ว / ยกเลิก) · ตำแหน่ง ซ้าย/กลาง/ขวา + เลื่อน X/Y ±60 มม. · ขนาด 5–120 มม. · ผู้ลงนามที่มีสิทธิ์ (บทบาท/ผู้ใช้ — ไม่อยู่ในรายการ ⇒ ไม่พิมพ์รูป ชื่อยังอยู่ใต้เส้น ·
+  ลายเซ็นลูกค้า/เซ็นรับของไม่ถูกแตะ · ผู้มีอำนาจลงนามที่บริษัทตั้ง/ลายเซ็นคู่ค้าส่งมาตรวจแค่ "ขั้นนี้พิมพ์ไหม") · **ยังไม่ตั้ง = เดิมทุกไบต์** (ประทับเฉพาะ
+  อนุมัติแล้ว/ชำระแล้ว/ยกเลิก · ลายเซ็นทุกขั้น · ขนาด/ตำแหน่งจาก `StampWidthMm/HeightMm/StampAlign`) · `template.ShowCompanyStamp` ยังปิดต่อเทมเพลตได้ ·
+  รูปตราตัวเดียวกันทั้งสอง renderer `ResolveStampBytes` (StampPath → StampUrl → ตราในเทมเพลต — เดิม HTML ไม่ลองตราในเทมเพลต · QuestPDF ไม่ลอง StampUrl)
 - **Detection chain**:
   1. มี `EtaxInvoice` + `XmlContent` → **PDF/A-3 + embed XML** (ตาม
      ETDA ขมธอ.3-2560 — ใช้ยื่นภาษีได้)
@@ -3656,7 +3755,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 | **ภ.ง.ด.1ก** (เงินเดือน WHT · รายปี) | `ExportPnd1kAsync(…, format)` — รูปแบบเดียวกับ ภ.ง.ด.1 (ช่อง 6 = ที่อยู่ผู้มีเงินได้ · ยอดทั้งปีต่อราย) · `Pnd1FilingData.LoadYearAsync` | เช่นเดียวกับ ภ.ง.ด.1 ทั้งปี · การตัดใบซ้ำนิยามต่อเดือน ⇒ **ภ.ง.ด.1ก = ผลรวม ภ.ง.ด.1 ทุกเดือน** (P1-3) |
 | **ภ.ง.ด.3 / 53 / 54** | `ExportPnd3 / 53 / 54Async` | WithholdingTaxCert + DocumentLine.WHT |
 | **ภ.ง.ด.2** (ดอกเบี้ย/ปันผล ม.40(4) จ่ายบุคคลธรรมดา · รอบ 204) | `ExportPnd2Async` (50 ทวิ ที่ออกแล้ว → `PndTextFileFormat`) · รายงานจอ `TaxService.GenerateWhtReport` (`TaxType.WithholdingTax2`) · e-Filing `PND.2` | WithholdingTaxCert (`TaxFormType = WithholdingTax2`) + เอกสารที่ยังไม่ออกใบ (แถวติ๊กออก) + JV 21915 (แถวติ๊กออก) — ดู §5.4 |
-| **ภ.ง.ด.50** (CIT รายปี) | `TaxService.GenerateCitReport` (`:731`) — **บวกกลับ §65 ตรี อัตโนมัติ** (commit ล่าสุด: ตัด rule (4) กัน double count · รอบ 201 RTX-3: ข้อ (1)(2)(3)(6)(6 ทวิ) นับเฉพาะบรรทัดผังกำไรขาดทุน — ใบชำระ ภ.ง.ด.50/51 · ถอนใช้ส่วนตัวไม่ถูกบวกกลับ) | JE Revenue/Expense + Document.NonDeductibleAmount |
+| **ภ.ง.ด.50** (CIT รายปี) | `TaxService.GenerateCitReport` (`:731`) — **บวกกลับ §65 ตรี อัตโนมัติ** (commit ล่าสุด: ตัด rule (4) กัน double count · รอบ 201 RTX-3: ข้อ (1)(2)(3)(6)(6 ทวิ) นับเฉพาะบรรทัดผังกำไรขาดทุน — ใบชำระ ภ.ง.ด.50/51 · ถอนใช้ส่วนตัวไม่ถูกบวกกลับ) · **ฐาน GL = `Helpers/ReportableJournal.WherePeriodActivity`** (Posted + Reversed — ใบเดิมที่ถูกกลับรายการกับใบกลับรายการหักล้างกัน · ไม่นับใบปิดบัญชี · ทีม O 2026-10-22: เดิม Posted อย่างเดียว ⇒ รายการที่ยกเลิกถูกหักซ้ำ) ผ่าน `CitPeriodLines` ตัวเดียวกับตัวเทียบความสด + ภ.ง.ด.51 (`ExportPnd51Async`) · รายงานที่บันทึกไว้ก่อนแก้: `GET tax/cit-recompute-review` (อ่านอย่างเดียว · ร่าง ⇒ สร้างใหม่ + audit · ยื่นแล้ว ⇒ พิจารณายื่นเพิ่มเติม) | JE Revenue/Expense + Document.NonDeductibleAmount |
 | **ภ.ง.ด.51** (ครึ่งปี) | `ExportPnd51Async` | half-year P&L |
 | **สปส.1-10** (ประกันสังคม) | `ExportSso110Async` (`:412`) | PayrollRun + Employee |
 | **สปส.1-03** (ขึ้นทะเบียนเข้าใหม่) | `ExportSps103Async` | Employee.StartDate ในเดือน + IsSubjectToSocialSecurity |
@@ -3767,6 +3866,28 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 
 ### 5.4 หนังสือรับรอง 50 ทวิ (WHT cert)
 - **Service**: `WithholdingTaxCertService`
+- **ตราประทับ/ลายเซ็น (ทีม J 2026-10-22)**: ทางออกทั้งสาม — HTML `BuildWithholdingTaxCertHtml` (Chromium) · QuestPDF `BuildWhtCertPdf` ·
+  หน้าพิมพ์ `wht.html printCert` (ผ่าน `GET withholding-tax-certs/{id}/print-decoration`) — ได้ตรา + ลายเซ็นจากตัวตัดสินเดียว
+  `Helpers/DocumentStampPolicy` (คีย์ `WithholdingTaxCert`) + `ResolveWhtCertStamp`/`ResolveWhtPayerSignatureAsync` · ค่าตั้งต้น: ออกแล้ว/พิมพ์แล้ว/ยกเลิก
+  ประทับ · ร่างไม่ประทับ · ตรา 24 มม. วางกลางวงกลม "ประทับตรานิติบุคคล (ถ้ามี)" (เลื่อนได้ด้วย offset · ไม่ใช้ซ้าย/กลาง/ขวา) · ไม่มีตรา = วงกลมเดิมทุกไบต์ ·
+  เดิมไม่มีทางไหนอ่าน `CompanySettings.StampPath` ⇒ 50 ทวิ ไม่เคยมีตรา · ลายเซ็นหน้าพิมพ์เดิมมาจากโปรไฟล์ "ผู้ที่กดพิมพ์" (คนละคนกับ PDF) — ตอนนี้ผู้สร้างใบ → เจ้าของ
+  ชุดเดียวกับ PDF · HTML ไม่พิมพ์ชื่อผู้ลงนามต่อท้ายรูปแล้ว (ตรงกับ QuestPDF/หน้าพิมพ์) · HTML มีลายน้ำ "ยกเลิก" แล้ว · สไตล์ HTML = สำเนาของหน้าพิมพ์
+  (`PdfGenerationService.WhtCertCss` · `WhtCertStampTests.ServerCss_IsIdenticalTo_PrintPageCss` ล็อกเท่ากันทุกบรรทัด)
+
+- **ยอดบน 50 ทวิ / แถวเตือน ภ.ง.ด. เป็นบาทเสมอ + หัก ณ ที่จ่ายตามรายการ (ทีม F · 2026-10-22 · `docs/PER_LINE_WHT_DESIGN.md`)** — ตัวคำนวณกลางตัวเดียว
+  `Helpers/PerLineWht.ForDocument` (เงินได้/ภาษีบาทต่อบรรทัด · ฐานก่อน VAT): ใบบาท ⇒ ยอดที่เก็บไว้ตรงตัว (เดิมทุกสตางค์) · ใบต่างสกุล ⇒ ฐานบาท =
+  `Document.DocumentThbBase` (ยอดบาทที่พิมพ์บนเอกสาร เฉลี่ยลงบรรทัด · ใช้ได้เมื่อสอดคล้องกับฐาน × อัตรา) ไม่งั้น `DocumentFx.ToBaht` · ภาษี = ฐานบาท × อัตรา
+  (ปัด 2 ตำแหน่ง AwayFromZero) · Σ ผูกกับยอด GL ด้วย `PerLineWht.TieOut` — **เดิมใบ USD ออก 50 ทวิ เป็นตัวเลขดอลลาร์** ·
+  ผู้เรียก: `GenerateFromDocument` (บรรทัด + สาขาไม่มีบรรทัด) · `TaxService` แถวเตือน "ยังไม่ออกใบ" · สรุปต่อประเภทบนจอ `DocumentResponse.WhtByIncomeType` ·
+  กระดาษ (HTML + QuestPDF) แถวย่อย "— หัก n%" เมื่อใบมีหลายอัตรา (`PerLineWht.RateBreakdownForPrint` · `DocumentLabels.TotalWhtAtRate`) ·
+  อัตรา/ที่มา/ฐานบาทตอนสร้างผ่าน `DocumentFx.Decide` (`DocumentService.ApplyDocumentFxDecisionAsync` · ที่มา BOT/User/Document ใน `Document.ExchangeRateSource` ·
+  ใบบาทส่งยอดบาทตามเอกสาร = 400 · ใบลด/เพิ่มหนี้/ใบที่แปลงมาคงอัตราใบต้นทาง · แปลงเต็มจำนวนสืบทอดฐานบาท · ตรึงตั้งแต่สร้าง) ·
+  ค่าตั้ง `CompanySettings.PerLineWhtEnabled` (ปิด = เดิม): OCR อัตรา/ประเภทเงินได้ต่อบรรทัด (`Helpers/OcrLineWhtPlan` ← `ExpenseCategoryResolver.ClassifyLineForWht` ·
+  ต้องอธิบายยอดหักหัวใบได้ ± 1.00 ไม่งั้น `[WHT-LINE-MISMATCH]` คงแบบเดิม) + ยอดบาทบนใบต่างสกุล (`Helpers/OcrThbEquivalent` · `[FX-DOC]` / `[FX-DOC-CONFLICT]`) ·
+  ยอดบาทตามเอกสารต้องแปลงกลับได้ ± 0.01 (`DocumentFx.PrintedBahtRoundTrips` — ไม่ได้ = 400 · ใบเดิมตกไปใช้อัตรา) · แท็ก OCR `[WHT-LINE]`/`[WHT-LINE-MISMATCH]`/`[FX-DOC-CONFLICT]`
+  หยุดอนุมัติเอง · หลักฐานยอดบาทแหล่งเดียวต้องใกล้ ธปท. ≤ 3% · หน้านำส่ง/ปฏิทิน/ตัวกระทบ GL/JE ตอนจ่าย = `PerLineWht.DocumentWhtThb` (กติกา `_PLWHT`) ·
+  50 ทวิ ใบต่างสกุลที่ออกก่อนแก้ ⇒ รายงานตรวจข้อมูล `ForeignCurrencyWhtCertsNotInBaht` (อ่านอย่างเดียว ไม่แก้ย้อนหลัง) ·
+  ค่าตั้งคุมเฉพาะ OCR — การแปลงบาทของใบต่างสกุลทำงานเสมอ · เทสต์ `PerLineWhtTests` · backlog ในเอกสารออกแบบ
 - **รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)** (2026-10-14): `ThaiBahtText.Format(TotalTaxAmount)` ทั้ง HTML (`BuildWithholdingTaxCertHtml`) · QuestPDF
   (`BuildTotalInWords`) · หน้าพิมพ์ `wht.html` แสดง `TotalTaxAmountInWords` จาก DTO อย่างเดียว (เดิมมีสำเนาสูตร JS ของตัวเอง) — ดู §5.1
 - **Trigger (แก้ doc 2026-10-12 — บรรทัดเดิม "ตอน PV/Expense ถูก approve" ไม่ครบ)**: ทุกทางเข้าอัตโนมัติเดินทางเดียว
@@ -5339,6 +5460,24 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 
 ### 6.5 โมดูลที่พัก (Lodging — โรงแรม/รีสอร์ท/บ้านพัก) ✅ รอบ 124 · ปลายทาง ✅ รอบ 126
 
+> **คำตัดสินข้อ 157 (2026-10-23 · ทีม P · แทนส่วน "ที่พักไม่ต้องมีค่าตั้ง" ของข้อ 155) — จังหวะออกเอกสารภาษีของที่พัก (`LodgingProperty.TaxInvoiceTiming`):**
+> enum `BookingInvoiceTiming` ตัวเดียวกับการจองนัดหมาย (ความหมายเดียวกัน) · ตัวตัดสินเดียว `Helpers/LodgingTaxInvoiceTimingPolicy` · หน้า `lodging-settings.html` › ภาษี & บัญชี ·
+> **(1) ค่าเริ่มต้น `TaxInvoiceOnPaymentOrService` (คอลัมน์ DEFAULT 1) = เส้นเดิมทุกตัวอักษร** (ตารางเส้นเงินด้านล่าง): ยืนยันไม่ออกเอกสาร · รับเงิน ⇒ ใบมัดจำตามประเภทเงินมัดจำ
+> (รับรู้ VAT ทันที = ใบกำกับภาษี/ใบเสร็จรับเงิน · tax point = วันรับเงิน) · เช็คเอาต์ ⇒ ใบกำกับ/ใบแจ้งหนี้เต็มรูปหักมัดจำ (tax point = วันใช้บริการ) ·
+> **(2) `TaxInvoiceAtBooking` = "ใบกำกับภาษีล่วงหน้า"** (`LodgingReservation.AdvanceTaxDocumentId` · `LodgingService.TaxTiming.cs`): ใบกำกับเต็มยอดการเข้าพัก (ตัวสร้างรายการ
+> `BuildFinalInvoiceLinesAsync` ไม่รวม folio → `UpsertFinalDraftAsync` → `ApproveDocumentAsync(SystemWorkflow)` · ไม่ตั้ง `ServiceUsedDate` ⇒ tax point = วันออกใบ §78/1(1) ·
+> ครบกำหนด = วันเข้าพัก) ออกเมื่อ ① พนักงานกด "ยืนยัน" (ไม่มีเงินเข้า · `ConfirmCoreAsync` หลังบันทึกสถานะ) ② พนักงานสร้างแบบยืนยันทันที (โทร/walk-in/ตัวแทน — ไม่ใช่เว็บ/OTA ·
+> `CreateReservationAsync`) ③ **เงินเข้าครั้งแรก ทุกช่องทาง** (ออนไลน์ · บันทึกรับตามสลิป · ยืนยัน+รับมัดจำ · รับชำระเพิ่ม — `ConfirmCoreAsync` ออกใบกำกับก่อนใบรับเงิน) ④ ปุ่ม
+> "ออกใบกำกับภาษีล่วงหน้า" (`POST /lodging/reservations/{id}/advance-tax-invoice` · `LodgingManage` · ในนามบริษัทได้) — ①–④ ถือล็อก `AdvisoryLockKey.LodgingConfirm` ตัวเดียวกัน ·
+> **หลังออกใบ**: เงินที่รับ = ใบรับเงินมัดจำไม่มี VAT (`CreateDepositReceiptAsync(coveredByAdvanceNumber)` · รูป "เต็มยอด" · ไม่ตรึงประเภท) · เลื่อนวัน = ไม่ออกเอกสาร (หมายเหตุ) ·
+> เช็คเอาต์ (`CheckOutWithAdvanceAsync`) = ยอดลด ⇒ ใบลดหนี้อ้างใบเดิม (`IssueAdvanceCreditNoteAsync` · §86/10 เหตุ "ปรับยอด" · กระจายลงบรรทัด/ผัง/อัตราเดิม `AllocateCredit`) → มัดจำไม่มี VAT
+> ตัดชำระใบล่วงหน้า → เก็บยอดค้าง → ใบกำกับเฉพาะ folio + ส่วนต่างที่เพิ่ม (`BuildFinalInvoiceLinesAsync(includeStay:false)`) · ไม่มีอะไรเพิ่ม = ใบล่วงหน้าเป็น `FinalDocumentId` (ไม่ออกใบใหม่) ·
+> ยกเลิก/no-show (`SettleAdvanceOnCancelAsync`) = ค่าปรับเดิม (≤ มัดจำ · ข้อ 126) → ใบลดหนี้ส่วนที่ไม่เรียกเก็บ (`CancelCreditGross`) → ตัดชำระใบล่วงหน้าด้วยมัดจำที่ริบ (แทน RealizeDeposit ที่จะออกใบกำกับซ้อน)
+> → ส่วนที่ต้องคืน = "ยืนยันคืนเงินแล้ว" เดิม · ล้มกลางทาง = ล้มดัง `LODGING-CANCEL-ADVANCE` + ทางไปต่อที่หน้าเอกสาร · ออกใบเช็คเอาต์ใหม่ (A-IN5) ปฏิเสธเมื่อมีใบล่วงหน้า ·
+> **ตัดสินจากเอกสารที่ผูกจริง**: ใบล่วงหน้ามีผล ⇒ ไม่ออกซ้ำ และเงินที่รับไม่มี VAT แม้สลับค่าตั้งกลับ · ใบล่วงหน้าถูกยกเลิก ⇒ กลับเส้นปกติ ไม่ออกใหม่เอง (ปุ่ม + คำเตือนเงินที่รับแบบไม่มี VAT) ·
+> มีมัดจำที่มี VAT อยู่ก่อน ⇒ คงเส้นเดิม · เช็คอินแล้ว ⇒ ไม่ออก · **ฝ่ายค้านทีม P**: เช็คเอาต์/ยกเลิก/no-show/แขกยกเลิกเอง ถือล็อก `LodgingConfirm` เดียวกับเส้นเงิน (ลำดับ LodgingConfirm → LodgingCheckout → ที่พัก ทุกเส้น) + ตัวตัดสินอ่านสถานะใหม่หลังได้ล็อก · ใบล่วงหน้าล้มในเส้นเงิน ⇒ ถอยไปใบมัดจำตามประเภทเดิม (หมายเหตุ + audit · การจองคงจังหวะเดิมต่อ) · OTA ไม่ออกเองทุกทางเข้าอัตโนมัติ (ปุ่มเองได้) · แขกยกเลิกแล้วปรับใบล่วงหน้าไม่ครบ = แขกเห็นยกเลิกสำเร็จ พนักงานเห็นหมายเหตุ · ใบร่างเช็คเอาต์ค้างไม่ถูกใช้เป็นใบล่วงหน้า · ค่าเริ่มต้นไม่ขอล็อก/ไม่อ่านฐานเพิ่ม · **(3) "ใบกำกับทุกครั้งที่รับเงิน แล้วเช็คเอาต์ออกเฉพาะส่วนต่าง" = ค่าเริ่มต้น + ประเภทเงินมัดจำค่าห้อง "รับรู้ VAT ทันที"**
+> (ไม่เพิ่มค่าใหม่ — ความหมายเดียวกัน · หน้าตั้งค่าอธิบายผลของที่พักนั้น `PaymentInvoiceNote`)
+
 > **รอบ 203 — กระดาษหลักฐานรับเงินของที่พัก (คำถามเจ้าของ 2026-10-09 · กติกาเต็มใน §5.1 "รูปแบบกระดาษหลักฐานรับเงิน")**:
 > ใบมัดจำ (`CreateDepositReceiptAsync` · `DocumentType.Receipt` + `IsDeposit`) และใบสุดท้าย (`CheckOutAsync` → `UpsertFinalDraftAsync` →
 > `ApproveDocumentAsync` · `TaxInvoice` เมื่อที่พักคิด VAT) เดินด่าน `ReceiptFormRule` ตอนอนุมัติด้วย `OriginModule = "Lodging"` ⇒ กรณี
@@ -5419,6 +5558,20 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
   บริษัทมีที่พักที่ยังไม่ผูกเว็บ ⇒ **ไม่สร้าง** + ข้อความเสนอผูกที่พักเดิม · ด่าน "ที่พักหลายแห่ง" `Helpers/LodgingPropertyQuota.BlockReasonAsync`
   (ตัวเดียวกับ `LodgingService.CreatePropertyAsync`) กัน ⇒ ไม่สร้าง + เหตุผล · ผูกที่พักเดิมกับเว็บ = `PUT /lodging/properties/{id}` ด้วย `siteId`
   (ผ่าน `EnsureSiteNotBoundElsewhereAsync` อยู่แล้ว — ไม่มี endpoint ใหม่)
+- **เมนู "ห้องพัก" ≠ เมนู "จอง" (2026-10-22 ทีม D)**: `/rooms` (+ `/rooms/{slug|id}` ห้องเดียว) ⇒ `Store.renderLodgingRoomsPage` — รายละเอียดเต็มต่อประเภทห้อง
+  (แกลเลอรีหลายรูป + lightbox · คำอธิบาย · ขนาด ตร.ม. · ชนิดเตียง · วิว · `capacityLabel` · `childrenLabel` · อาหารเช้า · สิ่งอำนวยความสะดวก ·
+  `houseRuleLabels` สูบบุหรี่/สัตว์เลี้ยง · `roomNote` · เวลาเช็คอิน/เอาต์ของที่พัก · นโยบายยกเลิก · `fromRateLabel`) + ปุ่ม "จองห้องนี้" ⇒ `/booking?roomType=<id>` ·
+  `/booking` `/book` = flow ค้นหา/จองเดิม — อ่าน `roomType` (id หรือ slug · ไม่เจอ = ไม่เลือก) ⇒ ป้าย "ห้องที่เลือก" + การ์ดขึ้นก่อน + หลังค้นหาครั้งแรกที่ห้องนั้นว่าง
+  เลือกให้ 1 ห้อง **ครั้งเดียว** (ค้นหาใหม่ไม่เลือกทับค่าแขก · ไม่ว่าง = บอกตรง ๆ ไม่เลือกห้องอื่นแทน) · เดิมทั้งสองเมนูวาดหน้าเดียวกัน ·
+  **ป้ายเซิร์ฟเวอร์** (`LodgingPublicRoomLabels`): `HouseRuleLabels` (บอกสองทิศเสมอ) · `ChildrenLabel` (0 = ไม่มีป้าย) · `CancellationSummary` จากนโยบายของแผนตั้งต้น
+  (`PolicyFor` ตัวเดียวกับใบเสนอราคา · แผนไม่คืนเงิน ⇒ "ไม่คืนเงินทุกกรณี") ความหมายตรง `LodgingPricingEngine.CancellationFee` (กฎ {d,p} = ยกเลิกล่วงหน้า**มากกว่า** d วัน) ·
+  ช่องตั้งค่าใหม่ของประเภทห้อง `SmokingAllowed` · `PetsAllowed` · `RoomNote` (entity + `ADD COLUMN IF NOT EXISTS` default false/NULL + DTO echo + hydrate
+  `lodging-settings.html` + `LodgingPublicProjection` ส่งต่อ) — เทสต์ `LodgingRoomDetailPageTests`
+- **วันเข้าพัก — ตัวช่วยเดียว `Store.lgDateSync` (2026-10-22 ทีม D)**: ทุกฟอร์มวันที่ฝั่งแขก (ฟอร์มค้นหาหน้าจอง · บล็อกปฏิทินจองหน้าแรก · ฟอร์มคำขอจอง CMS ที่มีช่อง
+  `checkIn`/`checkOut`) ติด `data-lg-date` — เลือกเช็คอิน ⇒ เช็คเอาต์ว่างหรือ ≤ เช็คอิน ⇒ วันถัดไป (หลังเช็คอินอยู่แล้วไม่แตะ) · `min` เช็คเอาต์ = เช็คอิน+1 ·
+  ป้าย "N คืน · 22 ต.ค. → 24 ต.ค." (`lgStayLabel`) ในฟอร์มค้นหา · สรุปก่อนจอง · หน้าการจอง (ใช้ `nights` ของเซิร์ฟเวอร์เมื่อมี) · ด่านจริงยังเป็น
+  `LodgingService.ValidateDates` ("วันเช็คเอาต์ต้องหลังวันเช็คอิน" — search/quote/create) · `_todayIso` ใช้วันตามเครื่องแขก (เดิม UTC ⇒ ก่อน 07:00 ได้เมื่อวาน) ·
+  `_dateTh` อ่านวันปฏิทินจากส่วน yyyy-mm-dd (ไม่เลื่อนตามโซนเวลา) · ฟอร์มจอง/หน้าการจองยุบเป็นคอลัมน์เดียวบนจอ ≤ 760px (เดิม inline `1fr 340px` ล้นจอมือถือ)
 - **ล้มดัง (W-08)**: `CreateSiteAsync` คืน `SiteResponse.Warnings` (หน้าตัวอย่าง/บริการจอง/ที่พัก ล้มหรือถูกข้าม) · `ApplyTemplateAsync` คืน `LodgingMessage` ·
   `cms-sites.html` แสดงก่อนพาไปหน้าถัดไป (เดิม `LogWarning` อย่างเดียว)
 
@@ -5473,7 +5626,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 
 | เหตุการณ์ | เอกสาร | หมายเหตุ |
 | --- | --- | --- |
-| ยืนยัน + รับมัดจำ (`ConfirmAsync`) | `Receipt` `IsDeposit=true` `BookingNumber=RES-…` `PricesIncludeVat=true` · **รอบ 194: ประเภทเงินมัดจำจาก `DepositPolicyResolver.ResolveKind`** (`LodgingService.DepositKindForAsync`: ประเภทของที่พัก `RoomDepositKindId` → ค่าเดิมของที่พัก `DepositVatTreatment` → ประเภทเริ่มต้นบริษัท → ค่าบริษัท → ประเภทธุรกิจ · supply = บริการ · `priceChannel: true` = ประเภทของที่พัก/ค่าเริ่มต้นที่เป็นเงินประกันถูกข้าม + คำเตือน `DEP-KIND-NATURE` — ฝ่ายค้าน C1) · รูปใบผ่าน `DepositDocumentShaping.Apply` (ไม่มีประเภทเลย = รูปเดิมทุกตัวอักษร) · ส่ง `DepositKindId:` ⇒ ใบตรึงประเภท/ลักษณะ · หมายเหตุภายในบอกประเภท + ลักษณะ + โหมดที่ลงจริง (`OfDocument`) → Approve(ack) | VAT ทันที: Cr 217xx + 21911 (§78/1) · รอเรียกเก็บ: Cr 217xx + 21913 · เต็มยอด: Cr 217xx เต็ม · บริการที่ไม่ใช่ VAT ทันที ⇒ หมายเหตุ `RD-78/1-DEPOSIT-VAT` · ตรวจห้องว่างซ้ำก่อนยืนยัน (`LODGING-OVERSOLD`) · สถานะหลังรับมัดจำ `LodgingDepositSettlement.StatusAfterDeposit`: พนักงานกด "ยืนยัน" = ยืนยันเสมอ · เงินเข้าจาก gateway (`LodgingReservationPaymentHandler` `fromOnlinePayment:true`) = ยืนยันเฉพาะเมื่อเปิด `AutoConfirmOnDeposit` (ปิด = รอพนักงาน + ล้าง hold กันยกเลิกอัตโนมัติ) · ปุ่ม "รับชำระเพิ่ม" ส่ง `confirmReservation:false` · รับชำระบนการจองที่เช็คอินแล้วไม่ถอยสถานะ · webhook ซ้ำไม่ออกใบมัดจำซ้ำ (S-06 · รอบ 193) |
+| ยืนยัน + รับมัดจำ (`ConfirmAsync`) | `Receipt` `IsDeposit=true` `BookingNumber=RES-…` `PricesIncludeVat=true` · **รอบ 194: ประเภทเงินมัดจำจาก `DepositPolicyResolver.ResolveKind`** (`LodgingService.DepositKindForAsync`: ประเภทของที่พัก `RoomDepositKindId` → ค่าเดิมของที่พัก `DepositVatTreatment` → ประเภทเริ่มต้นบริษัท → ค่าบริษัท → ประเภทธุรกิจ · supply = บริการ · `priceChannel: true` = ประเภทของที่พัก/ค่าเริ่มต้นที่เป็นเงินประกันถูกข้าม + คำเตือน `DEP-KIND-NATURE` — ฝ่ายค้าน C1) · รูปใบผ่าน `DepositDocumentShaping.Apply` (ไม่มีประเภทเลย = รูปเดิมทุกตัวอักษร) · ส่ง `DepositKindId:` ⇒ ใบตรึงประเภท/ลักษณะ · หมายเหตุภายในบอกประเภท + ลักษณะ + โหมดที่ลงจริง (`OfDocument`) → Approve(ack) | VAT ทันที: Cr 217xx + 21911 (§78/1) · รอเรียกเก็บ: Cr 217xx + 21913 · เต็มยอด: Cr 217xx เต็ม · บริการที่ไม่ใช่ VAT ทันที ⇒ หมายเหตุ `RD-78/1-DEPOSIT-VAT` · ตรวจห้องว่างซ้ำก่อนยืนยัน (`LODGING-OVERSOLD`) · สถานะหลังรับมัดจำ `LodgingDepositSettlement.StatusAfterDeposit`: พนักงานกด "ยืนยัน" = ยืนยันเสมอ · เงินเข้าจาก gateway (`LodgingReservationPaymentHandler` `fromOnlinePayment:true`) = ยืนยันเฉพาะเมื่อเปิด `AutoConfirmOnDeposit` (ปิด = รอพนักงาน + ล้าง hold กันยกเลิกอัตโนมัติ) · ปุ่ม "รับชำระเพิ่ม" ส่ง `confirmReservation:false` · รับชำระบนการจองที่เช็คอินแล้วไม่ถอยสถานะ · webhook ซ้ำไม่ออกใบมัดจำซ้ำ (S-06 · รอบ 193) · **รอบ 205 ทีม E (L-1)**: "ซ้ำ" ตัดสินด้วยเลขอ้างอิงของรายการชำระเท่านั้น (`Helpers/GatewayPaymentRecord.AlreadyRecordedOnReservation` — handler + `ConfirmCoreAsync`) · เดิม handler ข้ามเมื่อ `DepositPaid ≥ ยอด` ⇒ ชำระยอดคงเหลือออนไลน์ที่ ≤ มัดจำหายเงียบ · ไม่มีเลขผู้ให้บริการ ⇒ `PAY-INTENT-{id}` |
 | เช็คเอาต์ (`CheckOutAsync` → `SettleCheckOutAsync`) | `TaxInvoice` (บริษัทจด VAT) / `Invoice` ทั้งการเข้าพัก: บรรทัดค่าห้องต่อห้อง (AccountCode = `RoomRevenueAccountCode`, ProductCode ของประเภทห้อง) + บริการเสริม (1 บรรทัด/รายการ ยอดรวม — ห้ามหาร Total/Qty) + folio Pending (VatRate รายบรรทัดผ่าน `LodgingPricingEngine.ChargeVatRate` — บริษัทไม่จด VAT = 0 ไม่ว่าเก็บอะไรไว้) + service charge (`ServiceChargeAccountCode`) · **รอบ 193 (P0-1/P0-3/C2)**: `LodgingDepositSettlement.PlanCheckout(มัดจำค่าห้องของการจอง — รอบ 194 กรองเงินประกันออกด้วย `LodgingDepositSettlement.RoomDeposits` ทุกเส้น (เช็คเอาต์/ทำต่อ/ยกเลิก/คืนเงิน), ฐานใบสุดท้าย, DocumentService.PreviewTotals)` วางแผน**ก่อนออกเลข**: มัดจำ "ออกใบกำกับแล้ว" ⇒ หักฐานบนใบ (ส่วนหักท้ายบิล) + การอนุมัติรับรู้ฐาน (`RealizeTaxedDepositDeductionsAsync`) · มัดจำ "พัก/เต็มยอด" ⇒ `ApplyDepositToInvoiceAsync` หลังอนุมัติ · เก็บ `BalanceDue` หลังหักจริง · มัดจำเกินยอด ⇒ ใช้เท่าที่ใบรับได้ ส่วนเกินเป็น `RefundAmount` ค้างคืน → ถ้า `CollectBalanceNow` และ `BalanceDue>0` → `CreatePaymentAsync` | ประทับ `FinalDocumentId` ทันทีหลังอนุมัติ · ใบออกแล้วแต่ใช้มัดจำล้ม ⇒ กดเช็คเอาต์ซ้ำ = ทำต่อ (`ResumeCheckOutAsync` · ไม่ตัดซ้ำ) · **อนุมัติล้ม (ยังไม่ประทับ) ⇒ กดซ้ำใช้ใบร่างเดิม** (`LodgingCheckoutDraft.LeftoverOf`/`Plan` → `UpdateDocumentAsync` ด้วยเนื้อหารอบนี้ · ชนิดเปลี่ยน = ลบใบร่างแล้วสร้างใหม่ · รอบ 194 R3 P-1 — เดิมได้ใบร่างใหม่ทุกครั้ง) · ล้ม = หมายเหตุ + audit + ข้อความ · ด่าน `LODGING-DEPOSIT-VAT-MISMATCH`/`LODGING-DEPOSIT-CONTACT` + หาผู้ติดต่อ**ก่อน**สร้างรายการค่าเสียหาย/เช็คเอาต์ช้า (รายการใหม่ผูกหลังออกใบสำเร็จ) · `RoundingDelta` ≠ 0 ⇒ หมายเหตุ · _เดิมส่ง `DepositAppliedDrivesJournal=true` บนใบเครดิตที่ AutoPost ไม่อ่าน ⇒ ลูกหนี้เต็ม + เก็บเงินซ้ำมัดจำ + VAT มัดจำซ้ำ_ · ใบเช็คเอาต์ถูก void ⇒ **รอบ 201 ทีม IN (A-IN5 · คำตัดสินข้อ 36)**: การจองที่เช็คเอาต์แล้ว ⇒ ปุ่ม “ออกใบเช็คเอาต์ใหม่” (`POST …/reissue-final` ·
 `LodgingManage` · `ReissueFinalDocumentAsync`): รายการจาก `BuildFinalInvoiceLinesAsync` (ตัวสร้างเดียวกับเช็คเอาต์ · folio ที่ `Paid` = ที่อยู่บนใบเดิม) + แผนมัดจำ
 จากสถานะปัจจุบัน + ใบร่างผ่าน `UpsertFinalDraftAsync` + ใช้มัดจำผ่าน `ApplyFinalDepositPlanAsync` (ตัวเดียวกับเช็คเอาต์) · ยอด/ชนิดต้องเท่าใบเดิมก่อนออกเลข
@@ -5536,6 +5689,30 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 **Invariants**: `Reservation.TotalAmount` = engine ณ วันจอง (snapshot ใน `PriceBreakdownJson`) · `FolioTotal` = Σ charges ที่ไม่ Cancelled · `PaidAmount` = มัดจำค่าห้อง + ยอดเก็บตอนเช็คเอาต์ + เงินประกันที่ตัดชำระใบเช็คเอาต์ − คืน (เงินประกันที่ยังถือไว้ไม่นับ) · `BalanceDue` = Total+Folio−Paid · เลขจอง `RES-{Code}-{yyMM}-{####}` ต่อที่พัก ภายใต้ `AdvisoryLockKey.For(cid,"lodging-res",propertyId)` · `PublicToken` 32 hex ต่อการจอง (unique index) · `GuestIdNumber` ไม่เคยออกจากเซิร์ฟเวอร์เต็ม (`MaskId`) · ทุก query มี `CompanyId` + ฝั่งสาธารณะเพิ่ม `SiteId`
 
 **ตาราง (CREATE TABLE IF NOT EXISTS ใน `DatabaseMigrationHelper`)**: LodgingProperties · LodgingRoomTypes · LodgingUnits · LodgingRatePlans · LodgingSeasons · LodgingRateOverrides · LodgingCancellationPolicies · LodgingExtras · LodgingReservations · LodgingReservationRooms · LodgingReservationExtras · LodgingFolioCharges · LodgingHousekeepingTasks · LodgingGuestRequests
+
+### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
+
+**ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·
+เครื่องจองภายนอก (CMS ทีม B) → `ICreditBookingLedger` (Hold/Release/Settle อ้าง `externalRef`) · ตัวเลขทั้งหมด `Helpers/CourseCreditMath`
+
+| ขั้น | เอกสาร / JE | หมายเหตุ |
+| --- | --- | --- |
+| ขาย (`SellAsync`) | `IDocumentService.CreateDocumentAsync` (OriginModule `CourseCredit`) + `ApproveDocumentAsync(SystemWorkflow)` — จด VAT: **TaxInvoice + IssuedAsCashReceipt** (VAT 7/0) · ยกเว้น §81 / ไม่จด VAT: **Receipt** · บรรทัดเดียว `AccountId` = 21713 ⇒ AutoPost เดิม: Dr เงินสด/ธนาคาร · Cr 21713 (สุทธิ) · Cr 21911 | VAT ครบตอนขาย (§78/1 วันรับเงิน) · ไม่มี posting layer ใหม่ · บัตรเปิดหลังใบอนุมัติ (ล้ม ⇒ ข้อความบอกเลขใบ + ใช้ "เปิดบัตรจากเอกสารขาย") |
+| เปิดบัตรจากใบเดิม (`ActivateFromDocumentAsync`) | ไม่สร้าง JE · ใบต้องอนุมัติแล้ว + มีบรรทัดผังหนี้สิน (หรือผังของแพ็กเกจ) · ใบเดียว = บัตรเดียว | ใบที่ลงรายได้แล้ว ⇒ ปฏิเสธ (กันรับรู้ซ้ำ) |
+| จอง | ไม่มี JE — กันเครดิต (`CreditsReserved`) | ด่าน `CannotBookReason` · รอบกลุ่มล็อก capacity · 1-on-1 สร้างรอบ capacity 1 + ครู (เลือก/ระบบกำหนด) |
+| มาเรียน / no-show / ยกเลิกช้า | `JournalEntryBuilder`: Dr 21713 · Cr 42000 = `RecognizeOnUse` (ราคาต่อเครดิตปัด AwayFromZero · เครดิตสุดท้ายรับส่วนที่เหลือทั้งหมด) | วันที่ = วันให้บริการ · งวดปิด ⇒ ลงวันนี้ + หมายเหตุในสมุดเครดิต · ไม่มี VAT |
+| ยกเลิกทันเวลา / ร้านยกเลิก | ไม่มี JE — คืนเครดิต | นโยบาย `FreeCancelHours` ตรึงลงบัตรตอนขาย |
+| หมดอายุ | Dr 21713 · Cr 42000 ส่วนคงเหลือทั้งหมด (breakage) | `CourseCreditExpiryJob` (JobLock) + ปุ่ม · บัตรที่มีการจองค้างไม่ปิดเอง (ป้ายเตือน) |
+
+**Invariants**: `ContractAmount` = ยอดสุทธิที่ใบขายลง 21713 จริง (อ่านกลับจากบรรทัด) · `RecognizedAmount` = Σ สมุดเครดิต (Consume+Expire) = Σ JE รับรู้ของบัตร ·
+หมดอายุ/ใช้ครบ ⇒ `RecognizedAmount = ContractAmount` · ค้างในหนี้สิน = สัญญา − รับรู้ − คืน (`RefundedAmount`) ·
+**ด่านเอกสาร (ฝ่ายค้านรอบ 1 · `Helpers/CreditPassDocumentRule` ผ่าน `CreditPassDocumentHook` ในธุรกรรมของ DocumentService)**: ยกเลิกใบขาย — บัตรยังไม่ใช้เลย ⇒ ยกเลิกได้ + ปิดบัตร ·
+ใช้/จองแล้ว ⇒ บล็อก 409 (ทางไปต่อ: ใบลดหนี้ส่วนที่ยังไม่ใช้) · ใบลดหนี้อ้างใบขาย — ยอดสุทธิ = ส่วนที่ยังไม่รับรู้ ±0.01 + บรรทัดลงผังรายได้รับล่วงหน้า + ไม่มีจองค้าง ⇒ ปิดบัตร
+(`RefundedAmount`) · อื่น ๆ ⇒ บล็อกพร้อมยอดที่ออกได้ · ยกเลิกใบลดหนี้ที่ปิดบัตร ⇒ บล็อก · เปิดบัตรจากใบ = ยอด **Σ(Cr−Dr) ของ JE ที่มีผลบนผังรายได้รับล่วงหน้า** (บาท) +
+ห้ามซ้ำในสายเอกสาร (ต้นทาง/ลูก/พี่น้อง) · ขายกันกดซ้ำด้วย `ClientRequestId` (session lock + ใบเดิมที่ประทับ key ใน Reference) · อนุมัติล้ม ⇒ ลบใบร่าง ·
+**ยังไม่ต่อ**: บิล POS ลง 41000 เสมอ (ขายคอร์สผ่าน POS = backlog B1) · ร้านออนไลน์ (B2)
+
+**ตาราง**: CreditPackages · CreditPasses · CreditLedgerEntries · CreditClassSessions · CreditClassBookings (`DatabaseMigrationHelper.CourseCreditStatements`)
 
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 

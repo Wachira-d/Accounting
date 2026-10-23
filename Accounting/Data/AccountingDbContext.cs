@@ -449,6 +449,11 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteBookingSlot> SiteBookingSlots => Set<SiteBookingSlot>();
     public DbSet<SiteBooking> SiteBookings => Set<SiteBooking>();
     public DbSet<SiteBookingPayment> SiteBookingPayments => Set<SiteBookingPayment>();
+    // ทีม B — ค่าตั้งการจองระดับไซต์ · ผู้ให้บริการ/ห้อง/อุปกรณ์ · บริการที่รับได้ · ตารางงานรายบุคคล
+    public DbSet<SiteBookingSettings> SiteBookingSettings => Set<SiteBookingSettings>();
+    public DbSet<SiteBookingResource> SiteBookingResources => Set<SiteBookingResource>();
+    public DbSet<SiteBookingResourceService> SiteBookingResourceServices => Set<SiteBookingResourceService>();
+    public DbSet<SiteBookingResourceSlot> SiteBookingResourceSlots => Set<SiteBookingResourceSlot>();
 
     // Lodging (ธุรกิจที่พัก)
     public DbSet<LodgingProperty> LodgingProperties => Set<LodgingProperty>();
@@ -465,6 +470,13 @@ public class AccountingDbContext : DbContext
     public DbSet<LodgingFolioCharge> LodgingFolioCharges => Set<LodgingFolioCharge>();
     public DbSet<LodgingHousekeepingTask> LodgingHousekeepingTasks => Set<LodgingHousekeepingTask>();
     public DbSet<LodgingGuestRequest> LodgingGuestRequests => Set<LodgingGuestRequest>();
+
+    // ทีม L — คอร์ส / Class Credits / Hour Pass (docs/COURSE_CREDIT_DESIGN.md · schema: DatabaseMigrationHelper.CourseCreditStatements)
+    public DbSet<CreditPackage> CreditPackages => Set<CreditPackage>();
+    public DbSet<CreditPass> CreditPasses => Set<CreditPass>();
+    public DbSet<CreditLedgerEntry> CreditLedgerEntries => Set<CreditLedgerEntry>();
+    public DbSet<CreditClassSession> CreditClassSessions => Set<CreditClassSession>();
+    public DbSet<CreditClassBooking> CreditClassBookings => Set<CreditClassBooking>();
 
     // รอบ 194 — ประเภทเงินมัดจำต่อบริษัท (ลักษณะเงิน = ตัวกำหนด VAT · โหมด = วิธีบันทึก) — Helpers/DepositPolicyResolver.ResolveKind
     public DbSet<DepositKind> DepositKinds => Set<DepositKind>();
@@ -870,6 +882,9 @@ public class AccountingDbContext : DbContext
             e.Property(d => d.PaidAmount).HasPrecision(18, 2);
             e.Property(d => d.BalanceDue).HasPrecision(18, 2);
             e.Property(d => d.Currency).HasMaxLength(3);
+            // ทีม F — ฐานบาทที่เอกสารพิมพ์ไว้ + ที่มาของอัตรา (ตรงกับ DatabaseMigrationHelper.PerLineWhtStatements)
+            e.Property(d => d.DocumentThbBase).HasPrecision(18, 2);
+            e.Property(d => d.ExchangeRateSource).HasMaxLength(16);
             e.HasOne(d => d.Contact).WithMany(c => c.Documents).HasForeignKey(d => d.ContactId).OnDelete(DeleteBehavior.Restrict);
             // Project link (nullable) — preserves doc when project is deleted
             e.HasOne(d => d.Project).WithMany().HasForeignKey(d => d.ProjectId).OnDelete(DeleteBehavior.SetNull);
@@ -2470,6 +2485,11 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<PosOrder>(e =>
         {
             e.HasIndex(o => new { o.CompanyId, o.OrderNumber }).IsUnique();
+            // ทีม K — การจองหนึ่งรายการมีบิลที่ยังไม่ยกเลิกได้ใบเดียว (ต้องตรงกับ DatabaseMigrationHelper.TeamKPosMtoStatements · 4 = Voided)
+            e.Property(o => o.SourceBookingType).HasMaxLength(32);
+            e.HasIndex(o => new { o.CompanyId, o.SourceBookingType, o.SourceBookingId }).IsUnique()
+                .HasFilter("\"SourceBookingId\" IS NOT NULL AND \"IsDeleted\" = false AND \"Status\" <> 4")
+                .HasDatabaseName("UX_PosOrders_SourceBooking_Open");
             e.Property(o => o.OrderNumber).HasMaxLength(50);
             e.Property(o => o.SubTotal).HasPrecision(18, 2);
             e.Property(o => o.DiscountAmount).HasPrecision(18, 2);
@@ -3315,6 +3335,8 @@ public class AccountingDbContext : DbContext
             e.Property(bs => bs.Currency).HasMaxLength(3);
             e.Property(bs => bs.Category).HasMaxLength(128);
             e.Property(bs => bs.Tags).HasMaxLength(500);
+            e.Property(bs => bs.HalfDaySplitTime).HasMaxLength(8);
+            e.Property(bs => bs.CapacityGroup).HasMaxLength(64);
             e.HasOne(bs => bs.Site).WithMany(s => s.BookingServices).HasForeignKey(bs => bs.SiteId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(bs => bs.Product).WithMany().HasForeignKey(bs => bs.ProductId).OnDelete(DeleteBehavior.SetNull);
         });
@@ -3339,6 +3361,7 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(b => new { b.SiteId, b.BookingNumber }).IsUnique().HasDatabaseName("IX_SiteBookings_SiteId_BookNo");
             e.HasIndex(b => new { b.SiteId, b.BookingDate, b.Status }).HasDatabaseName("IX_SiteBookings_SiteId_Date_Status");
+            e.HasIndex(b => new { b.BookingServiceId, b.BookingDate }).HasDatabaseName("IX_SiteBookings_Service_Date");
             e.Property(b => b.BookingNumber).HasMaxLength(50);
             e.Property(b => b.GuestName).HasMaxLength(256);
             e.Property(b => b.GuestEmail).HasMaxLength(256);
@@ -3352,6 +3375,26 @@ public class AccountingDbContext : DbContext
             e.HasOne(b => b.Customer).WithMany(c => c.Bookings).HasForeignKey(b => b.CustomerId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne(b => b.ErpDocument).WithMany().HasForeignKey(b => b.ErpDocumentId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(b => !b.IsDeleted);
+        });
+
+        // ===== ทีม B: ผู้ให้บริการ / ค่าตั้งการจองระดับไซต์ (ตาราง + index ต้องตรงกับ Helpers/BookingEngineMigration) =====
+        modelBuilder.Entity<SiteBookingSettings>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.SiteId }).IsUnique().HasDatabaseName("UX_SiteBookingSettings_Company_Site");
+        });
+        modelBuilder.Entity<SiteBookingResource>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(256);
+            e.HasIndex(x => new { x.CompanyId, x.SiteId }).HasDatabaseName("IX_SiteBookingResources_Company_Site");
+        });
+        modelBuilder.Entity<SiteBookingResourceService>(e =>
+        {
+            e.HasIndex(x => new { x.ResourceId, x.BookingServiceId }).IsUnique().HasDatabaseName("UX_SiteBookingResourceServices_Res_Svc");
+            e.HasOne(x => x.Resource).WithMany(r => r.Services).HasForeignKey(x => x.ResourceId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<SiteBookingResourceSlot>(e =>
+        {
+            e.HasOne(x => x.Resource).WithMany(r => r.Slots).HasForeignKey(x => x.ResourceId).OnDelete(DeleteBehavior.Cascade);
         });
 
         // ===== SiteBookingPayment =====
@@ -3546,6 +3589,49 @@ public class AccountingDbContext : DbContext
             e.HasIndex(g => new { g.PropertyId, g.Status }).HasDatabaseName("IX_LodgingGuestRequests_Property_Status");
             e.HasOne(g => g.Reservation).WithMany().HasForeignKey(g => g.ReservationId).OnDelete(DeleteBehavior.Cascade);
             e.HasQueryFilter(g => !g.IsDeleted);
+        });
+
+        // ===== ทีม L — คอร์ส / เครดิต (ชื่อ index ต้องตรงกับ DatabaseMigrationHelper.CourseCreditStatements) =====
+        modelBuilder.Entity<CreditPackage>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.Code }).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_CreditPackages_Company_Code");
+            e.Property(p => p.Code).HasMaxLength(50); e.Property(p => p.Name).HasMaxLength(200);
+            e.Property(p => p.CreditQuantity).HasPrecision(18, 2); e.Property(p => p.Price).HasPrecision(18, 2); e.Property(p => p.VatRate).HasPrecision(5, 2);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+        modelBuilder.Entity<CreditPass>(e =>
+        {
+            e.HasIndex(p => new { p.CompanyId, p.PassNumber }).IsUnique().HasDatabaseName("UX_CreditPasses_Company_Number");
+            e.HasIndex(p => new { p.CompanyId, p.ContactId, p.Status }).HasDatabaseName("IX_CreditPasses_Company_Contact_Status");
+            e.HasIndex(p => new { p.CompanyId, p.SaleDocumentId }).IsUnique().HasFilter("\"SaleDocumentId\" IS NOT NULL").HasDatabaseName("UX_CreditPasses_Company_SaleDocument");
+            e.Property(p => p.PassNumber).HasMaxLength(40); e.Property(p => p.PackageName).HasMaxLength(200); e.Property(p => p.SaleDocumentNumber).HasMaxLength(50);
+            e.Property(p => p.CreditsTotal).HasPrecision(18, 2); e.Property(p => p.CreditsUsed).HasPrecision(18, 2); e.Property(p => p.CreditsReserved).HasPrecision(18, 2);
+            e.Property(p => p.ContractAmount).HasPrecision(18, 2); e.Property(p => p.RecognizedAmount).HasPrecision(18, 2); e.Property(p => p.RefundedAmount).HasPrecision(18, 2);
+            e.HasOne(p => p.Package).WithMany().HasForeignKey(p => p.PackageId).OnDelete(DeleteBehavior.Restrict);
+            e.HasQueryFilter(p => !p.IsDeleted);
+        });
+        modelBuilder.Entity<CreditLedgerEntry>(e =>
+        {
+            e.HasIndex(l => new { l.CompanyId, l.PassId }).HasDatabaseName("IX_CreditLedgerEntries_Company_Pass");
+            e.Property(l => l.Credits).HasPrecision(18, 2); e.Property(l => l.RecognizedAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(l => !l.IsDeleted);
+        });
+        modelBuilder.Entity<CreditClassSession>(e =>
+        {
+            e.HasIndex(s => new { s.CompanyId, s.StartAt }).HasDatabaseName("IX_CreditClassSessions_Company_Start");
+            e.Property(s => s.Title).HasMaxLength(200); e.Property(s => s.CreditCost).HasPrecision(18, 2);
+            e.HasQueryFilter(s => !s.IsDeleted);
+        });
+        modelBuilder.Entity<CreditClassBooking>(e =>
+        {
+            e.HasIndex(b => new { b.CompanyId, b.SessionId }).HasDatabaseName("IX_CreditClassBookings_Company_Session");
+            e.HasIndex(b => new { b.CompanyId, b.PassId }).HasDatabaseName("IX_CreditClassBookings_Company_Pass");
+            // การจองภายนอก 1 ref = การจองที่มีผลได้ใบเดียว (ฝ่ายค้านข้อ 3 — ตาข่ายหลังด่าน advisory lock ใน HoldAsync)
+            e.HasIndex(b => new { b.CompanyId, b.ExternalRef }).IsUnique()
+                .HasFilter("\"ExternalRef\" IS NOT NULL AND \"Status\" <> 3 AND \"IsDeleted\" = false").HasDatabaseName("UX_CreditClassBookings_Company_ExternalRef_Live");
+            e.Property(b => b.ExternalRef).HasMaxLength(120);
+            e.Property(b => b.Credits).HasPrecision(18, 2); e.Property(b => b.RecognizedAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(b => !b.IsDeleted);
         });
 
         // ===== SiteCustomer =====

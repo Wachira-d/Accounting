@@ -403,8 +403,9 @@ public class FpaService : IFpaService
             .Include(l => l.JournalEntry)
             .Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                     && l.JournalEntry.Status == JournalEntryStatus.Posted
                      && l.JournalEntry.EntryDate <= asOfDate)
+            // ★ ทีม O 2026-10-22 — ยอดคงเหลือ ณ วันที่: Posted + Reversed (คู่กลับรายการหักล้างกัน) · ใบปิดบัญชีนับ (เป็นรายการจริงของงบดุล)
+            .WhereInLedger()
             .GroupBy(l => new { l.AccountId, l.Account.AccountCode, l.Account.AccountType })
             .Select(g => new
             {
@@ -546,9 +547,11 @@ public class FpaService : IFpaService
             .Include(l => l.JournalEntry)
             .Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                     && l.JournalEntry.Status == JournalEntryStatus.Posted
                      && l.JournalEntry.EntryDate >= yearStart
                      && l.JournalEntry.EntryDate <= yearEnd)
+            // ★ ทีม O 2026-10-22 — ผลการดำเนินงานของปี: Posted + Reversed · ไม่นับใบปิดบัญชี (เดิม Posted อย่างเดียว ⇒ รายการที่ยกเลิกถูกหักซ้ำ ·
+            // ใบปิดบัญชีทำยอด ธ.ค. เป็นศูนย์) — ตัวกรองเดียวกับงบกำไรขาดทุน
+            .WherePeriodActivity()
             .ToListAsync();
 
         var totalRevenue = glData
@@ -597,9 +600,11 @@ public class FpaService : IFpaService
             .Include(l => l.JournalEntry)
             .Include(l => l.Account)
             .Where(l => l.JournalEntry.CompanyId == companyId
-                     && l.JournalEntry.Status == JournalEntryStatus.Posted
                      && l.JournalEntry.EntryDate >= yearStart
                      && l.JournalEntry.EntryDate <= yearEnd)
+            // ★ ทีม O 2026-10-22 — ผลการดำเนินงานของปี: Posted + Reversed · ไม่นับใบปิดบัญชี (เดิม Posted อย่างเดียว ⇒ รายการที่ยกเลิกถูกหักซ้ำ ·
+            // ใบปิดบัญชีทำยอด ธ.ค. เป็นศูนย์) — ตัวกรองเดียวกับงบกำไรขาดทุน
+            .WherePeriodActivity()
             .Select(l => new MonthlyGlRecord
             {
                 Month = l.JournalEntry.EntryDate.Month,

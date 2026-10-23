@@ -46,6 +46,12 @@ public class SiteProduct : TenantEntity
     // Media (gallery images for this site listing)
     public string? ImageUrlsJson { get; set; }
 
+    /// <summary>สินค้าตามสั่ง: ผลิตกี่วันก่อนรับได้ ("สั่งวันนี้ รับได้ใน N วัน" · <c>Helpers.MtoLeadTime</c>) ·
+    /// null = ไม่ใช่สินค้าตามสั่ง (ไม่แสดงวันรับ · ไม่ใช้เงื่อนไขมัดจำ) · ตัวเลือกบวกวันเพิ่มได้ (<c>ProductModifierOption.ExtraLeadDays</c>)</summary>
+    public int? LeadTimeDays { get; set; }
+    /// <summary>น้ำหนักต่อชิ้น (กก.) สำหรับค่าส่ง "ตามน้ำหนัก" (<c>Helpers.ShippingFeeRules</c>) — ฝั่งเซิร์ฟเวอร์รวมเอง ไม่รับน้ำหนักจาก client · null = 0</summary>
+    public decimal? WeightKg { get; set; }
+
     // Multi-tier pricing
     public ICollection<SitePricingTier> PricingTiers { get; set; } = new List<SitePricingTier>();
     public ICollection<SiteProductTranslation> Translations { get; set; } = new List<SiteProductTranslation>();
@@ -152,6 +158,11 @@ public class SiteCartItem : TenantEntity
 
     public string? VariantOptionsJson { get; set; }
     public string? Notes { get; set; }
+
+    /// <summary>ตัวเลือกที่ผ่านการตรวจแล้ว (JSON ของ <c>ResolvedModifier[]</c> — ราคา/วันมาจากฐานข้อมูล ไม่ใช่ client) · null = ไม่มีตัวเลือก</summary>
+    public string? ModifierSelectionsJson { get; set; }
+    /// <summary>วันผลิตเพิ่มจากตัวเลือก (ตรึงตอนใส่ตะกร้า)</summary>
+    public int ExtraLeadDays { get; set; }
 }
 
 // ===== Orders =====
@@ -214,6 +225,23 @@ public class SiteOrder : TenantEntity
     public DateTime? CancelledAt { get; set; }
     public string? CancellationReason { get; set; }
 
+    // ── สินค้าตามสั่ง: การรับ + เงื่อนไขชำระ (ทีม K · 2026-10-22) ──
+    /// <summary><c>Helpers.FulfillmentMethod</c> ("delivery"/"pickup") · null = ออเดอร์ก่อนมีช่องนี้ (= จัดส่ง)</summary>
+    public string? FulfillmentMethod { get; set; }
+    /// <summary>อัตราค่าส่งที่ลูกค้าเลือก — เซิร์ฟเวอร์คิดค่าส่งจากอัตรานี้เอง (ไม่รับยอดจาก client)</summary>
+    public Guid? ShippingRateId { get; set; }
+    /// <summary>จังหวัด (รูปมาตรฐาน) / รหัสไปรษณีย์ที่ใช้จับโซนค่าส่งตอนสั่ง</summary>
+    public string? ShippingProvince { get; set; }
+    public string? ShippingPostalCode { get; set; }
+    /// <summary>วันรับ/ส่งเร็วสุดที่สัญญากับลูกค้าตอนสั่ง (วันตามปฏิทินไทย เก็บเป็นวันที่ 00:00 UTC)</summary>
+    public DateTime? EarliestReadyDate { get; set; }
+    /// <summary><c>Helpers.PaymentTermMode</c> ที่ตรึงตอนสั่ง · null = ออเดอร์เดิม (= เต็มจำนวน)</summary>
+    public string? PaymentTermMode { get; set; }
+    /// <summary>มัดจำที่ต้องจ่ายก่อนร้านเริ่มทำ (ตรึงตอนสั่ง)</summary>
+    public decimal DepositRequiredAmount { get; set; }
+    /// <summary>ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงตอนสั่ง (<c>Helpers.DepositInvoicingMode</c>) · null = ออเดอร์เดิม (= แบบเดิม)</summary>
+    public string? DepositInvoicingMode { get; set; }
+
     public ICollection<SiteOrderLine> Lines { get; set; } = new List<SiteOrderLine>();
     public ICollection<SiteOrderPayment> Payments { get; set; } = new List<SiteOrderPayment>();
 }
@@ -243,6 +271,9 @@ public class SiteOrderLine : TenantEntity
     public Guid? WarehouseId { get; set; }
     public Warehouse? Warehouse { get; set; }
     public bool StockDeducted { get; set; } = false;
+
+    /// <summary>ตัวเลือกสินค้าตามสั่งที่ลูกค้าเลือก (สำเนาจากตะกร้า — ใบสั่งผลิต/ใบขายอ่านจากที่นี่)</summary>
+    public string? ModifierSelectionsJson { get; set; }
 }
 
 public class SiteOrderPayment : TenantEntity
@@ -260,6 +291,12 @@ public class SiteOrderPayment : TenantEntity
     public SitePaymentStatus Status { get; set; } = SitePaymentStatus.Pending;
     public DateTime? PaidAt { get; set; }
     public string? FailureReason { get; set; }
+    /// <summary>ทีม Q — ใบรับเงินมัดจำที่ออกจากรายการรับเงินนี้ (โหมด <c>deposit_tax_invoice</c>) · null = ยังไม่ออก/บันทึกเป็นรับชำระของใบขาย ·
+    /// กันออกใบมัดจำซ้ำเมื่อยืนยันซ้ำ/webhook ซ้ำ</summary>
+    public Guid? DepositDocumentId { get; set; }
+    /// <summary>ทีม Q (ฝ่ายค้านข้อ 2–3) — รายการรับชำระ ERP (<c>Payment.Id</c>) ที่บันทึกเงินของรายการนี้กับใบขายแล้ว ·
+    /// null = ยังไม่บันทึก (หรือแถวก่อนมีช่องนี้ — ตัวอ่านดูเลขอ้างอิงด้วย) · กันบันทึกซ้ำของเงินที่ไม่มีเลขอ้างอิง</summary>
+    public Guid? ErpPaymentId { get; set; }
 }
 
 // ===== Payment Gateway Configuration =====

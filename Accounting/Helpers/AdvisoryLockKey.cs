@@ -158,6 +158,10 @@ public static class AdvisoryLockKey
     public static long DepositRealizeKey(Guid companyId, Guid depositId) => For(companyId, DepositRealize, depositId.ToString());
     /// <summary>เลขคำสั่งซื้อ/การจองจากหน้าเว็บ (CMS) — part = prefix รวมงวด</summary>
     public const string StorefrontSequence = "store-seq";
+    /// <summary>ตัดสิน "รอบนี้ยังว่างไหม" + บันทึกการจองคิว CMS (Helpers/BookingSlotEngine) — part = บริการ หรือกลุ่มทรัพยากรร่วมของเว็บ</summary>
+    public const string CmsBookingSlot = "cms-booking-slot";
+    /// <summary>ออกใบกำกับของการจองนัดหมายหลังจอง (รับเงิน/ให้บริการ · BookingInvoiceTimingPolicy ข้อ 155) — part = การจอง · กันกดซ้ำพร้อมกันแปลงสองใบ</summary>
+    public const string CmsBookingInvoice = "cms-booking-invoice";
     /// <summary>รหัสผังบัญชีที่ระบบสร้างให้อัตโนมัติ — part = ช่วงเลขที่ใช้</summary>
     public const string AccountCodeSequence = "coa-seq";
     /// <summary>เลขเอกสารของโมดูลย่อย (เบิกค่าใช้จ่าย · เงินกู้ · โอนคลัง ฯลฯ)
@@ -171,6 +175,9 @@ public static class AdvisoryLockKey
     /// สองเท่า · ค่าปรับล่าช้าคิดซ้ำ · อีเมลทวงหนี้ส่งถึงลูกค้า N ครั้ง
     /// ตามจำนวนเครื่อง</para></summary>
     public const string BackgroundJob = "job";
+    /// <summary>ตั้ง/ซ่อมเจ้าของบริษัท (assign-owner · repair · สร้างผู้ใช้เป็น Owner) — part = "owner" ผูก companyId · กัน "ตรวจว่าไม่มีเจ้าของ"
+    /// กับ "เลื่อนบทบาท" สลับกันจนได้ Owner สองคน (ฝ่ายค้านรอบ 205 ทีม I)</summary>
+    public const string CompanyOwnership = "company-owner";
 
     /// <summary>สร้างผู้ติดต่อจากสแกน OCR — part = เลขผู้เสียภาษี (ตัวเลขล้วน · <c>OcrContactCreateLock.LockPart</c>) ผูก companyId
     /// (รอบ 200 · คำตัดสินข้อ 19 · K-5): หน้าเว็บอัปโหลด 3 ไฟล์พร้อมกัน ⇒ ใบ Makro 00005 สองใบได้แถวสาขาซ้ำ เพราะไม่มี unique index
@@ -194,4 +201,16 @@ public static class AdvisoryLockKey
     /// <summary>ปิดปี · ยกยอดด้วยมือ · ซ่อมยอดยกมา — ผูก companyId · ใช้ผ่าน <c>OpeningRoll.LockKey</c> เท่านั้น (ฝ่ายค้านรอบส่งออก 2026-10-15
     /// P1-1 + รอบ 2 P2-7: เดิมล็อกแค่การซ่อม ⇒ ปิดปี/ยกยอดด้วยมือพร้อมการซ่อมเขียนงวดเดียวกันทับกัน) · xact lock เพราะทุกทางอยู่ในธุรกรรมเดียว</summary>
     public const string OpeningRoll = "opening-roll";
+
+    /// <summary>เลขบัตรคอร์ส/เครดิต (ทีม L · <c>CourseCreditService</c>) — part = prefix "CP-yyyyMM-" · ผูก companyId</summary>
+    public const string CreditPassSequence = "credit-pass-seq";
+
+    /// <summary>กันเครดิตจากเครื่องจองภายนอก — part = externalRef · ผูก companyId (ฝ่ายค้านทีม L ข้อ 3: ref เดียวกันสองคำขอพร้อมกัน = จองซ้ำ)</summary>
+    public const string CreditHold = "credit-hold";
+
+    /// <summary>ตารางสอนของครูฝึก — part = "{employeeId}:{yyyyMMdd วันไทย}" · ผูก companyId (ฝ่ายค้านทีม L ข้อ 5: ตรวจว่าง→จอง ซ้อนกันสองคำขอ)</summary>
+    public const string CreditTrainerDay = "credit-trainer-day";
+
+    /// <summary>ขายคอร์ส 1 คำขอ (idempotency key ของหน้าจอ) — part = key · session lock ผ่าน <c>JobLock.RunExclusiveAsync</c> ครอบการออกใบ+อนุมัติ+เปิดบัตร</summary>
+    public const string CreditSale = "credit-sale";
 }

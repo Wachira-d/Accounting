@@ -691,6 +691,11 @@
             <div class="form-group" id="fxRateGroup" style="display:none">
               <label class="form-label">อัตราแลก → THB <span id="fxRateHint" style="font-weight:normal;color:#64748b;font-size:11px"></span></label>
               <input type="number" step="0.000001" class="form-input" id="fExchangeRate" value="1" oninput="this.dataset.userTouched='1'">
+              <!-- ทีม F: ใบต่างสกุลที่พิมพ์ "ยอดเทียบเท่าเงินบาท" ไว้ — ยึดยอดนั้นเป็นฐานหัก ณ ที่จ่าย/VAT · อัตรา = ยอดนี้ ÷ ยอดก่อน VAT (เซิร์ฟเวอร์คำนวณ ·
+                   Helpers/DocumentFx.Decide) · ว่าง = ใช้อัตราช่องบน · ตรึงตั้งแต่สร้างเหมือนอัตรา -->
+              <label class="form-label" for="fDocThbBase" style="margin-top:6px">ยอดบาทตามเอกสาร (ก่อน VAT) <span style="font-weight:normal;color:#64748b;font-size:11px">ถ้ากระดาษพิมพ์ไว้ — เว้นว่างได้</span></label>
+              <input type="number" step="0.01" min="0" class="form-input" id="fDocThbBase" placeholder="เช่น 36,500.00">
+              <div id="fDocThbBaseHint" style="font-size:11px;color:#64748b;margin-top:2px"></div>
             </div>
           </div>
 
@@ -5076,6 +5081,14 @@
         rate.value = doc ? (doc.exchangeRate ?? 1) : 1;
         rate.readOnly = !!doc;
         rate.dataset.userTouched = '';
+        // ทีม F: ยอดบาทตามเอกสาร — hydrate ตอนแก้ไข (อ่านอย่างเดียว + บอกที่มาอัตรา) · ใบใหม่ล้างค่า (ห้ามค้างค่าใบก่อน)
+        const thb = document.getElementById('fDocThbBase');
+        const thbHint = document.getElementById('fDocThbBaseHint');
+        if (thb) {
+          thb.value = doc && doc.documentThbBase != null ? doc.documentThbBase : '';
+          thb.readOnly = !!doc;
+        }
+        if (thbHint) thbHint.textContent = doc && doc.exchangeRateSourceLabel ? 'ที่มาของอัตรา: ' + doc.exchangeRateSourceLabel : '';
         if (grp) grp.style.display = ccy === 'THB' ? 'none' : '';
         if (hint) {
           hint.textContent = doc
@@ -8243,6 +8256,17 @@
           if (row) this._setLineIncomeType(row, want, true);
         });
       },
+      /** ทีม F: สรุปหัก ณ ที่จ่ายต่อประเภทเงินได้ (บาท) — ตัวเลขจากเซิร์ฟเวอร์ (DocumentResponse.whtByIncomeType ← Helpers/PerLineWht) ·
+       *  ชื่อประเภทจากตารางอ้างอิงของเซิร์ฟเวอร์ (_whtIncomeTypes) · แสดงเมื่อมีหลายประเภท/อัตรา หรือใบต่างสกุล (ยอดบาทต่างจากยอดบนใบ) */
+      _whtByIncomeTypeHtml(d) {
+        const groups = Array.isArray(d?.whtByIncomeType) ? d.whtByIncomeType : [];
+        if (groups.length === 0) return '';
+        const foreign = d.currency && d.currency !== 'THB';
+        if (groups.length < 2 && !foreign) return '';
+        const name = code => (this._whtIncomeTypes || []).find(t => t.code === code)?.name || code;
+        const rows = groups.map(g => `<div>${Layout.esc(name(g.incomeTypeCode))} ${Number(g.ratePercent)}% — เงินได้ ${Layout.money(g.incomeThb)} · หัก ${Layout.money(g.whtThb)} บาท</div>`).join('');
+        return `<div><div class="text-xs text-gray-500">หัก ณ ที่จ่ายตามประเภทเงินได้ (บาท)</div><div class="text-sm">${rows}</div></div>`;
+      },
       _incomeTypeOptHtml() {
         return '<option value="">— ไม่ระบุ —</option>' + (this._whtIncomeTypes || []).map(t =>
           `<option value="${Layout.esc(t.code)}" title="${Layout.esc(t.note || t.legalReference || '')}">${Layout.esc(t.taxSection)} ${Layout.esc(t.name)}</option>`).join('');
@@ -9841,6 +9865,13 @@
           // ส่ง rate เฉพาะตอนไม่ใช่ THB — ปล่อย null ให้เซิร์ฟเวอร์ดึงอัตรา BoT
           // ของวันที่เอกสารเองเมื่อผู้ใช้ไม่ได้กรอก (ดู CreateDocumentRequest)
           currency: document.getElementById('fCurrency')?.value || 'THB',
+          // ทีม F: ยอดบาทตามเอกสาร — ส่งเฉพาะตอนสร้าง + ใบต่างสกุล + มีค่า (แก้ไข: ตรึงไว้เหมือนอัตรา — UpdateDocumentRequest ไม่มีช่องนี้ ช่องถูกล็อก)
+          ...((() => {
+            if (this.editingId) return {};
+            const ccy = document.getElementById('fCurrency')?.value || 'THB';
+            const v = parseFloat(document.getElementById('fDocThbBase')?.value);
+            return ccy !== 'THB' && Number.isFinite(v) && v > 0 ? { documentThbBase: v } : {};
+          })()),
           exchangeRate: (() => {
             const ccy = document.getElementById('fCurrency')?.value || 'THB';
             if (ccy === 'THB') return 1;
@@ -10753,7 +10784,8 @@
               ${(d.bookingNumber || d.reference) ? `<div><div class="text-xs text-gray-500" data-i18n="common.reference">อ้างอิง</div><div>${Layout.esc(d.bookingNumber || d.reference)}</div></div>` : ''}
               ${d.debitNoteReason ? `<div><div class="text-xs text-gray-500">เหตุผลการเพิ่มหนี้ (§86/9)</div><div>${Layout.esc({PriceIncrease:'ราคาเพิ่มขึ้นจากที่ตกลง',ExtraGoods:'ส่งสินค้า/บริการเกินกว่าที่ตกลง',AdditionalCharge:'ค่าใช้จ่ายเพิ่มเติมที่เรียกเก็บภายหลัง',Adjustment:'ปรับยอดให้ถูกต้อง'}[d.debitNoteReason] || d.debitNoteReason)}</div></div>` : ''}
               ${d.creditNoteReason ? `<div><div class="text-xs text-gray-500">เหตุผลการลดหนี้ (§86/10)</div><div>${Layout.esc({Return:'คืนสินค้า',Discount:'ส่วนลด / ลดราคา',Adjustment:'ปรับยอด / ค่าสินค้าน้อยกว่าที่ตกลง',Writeoff:'ตัดยอด / ตัดหนี้สูญบางส่วน'}[d.creditNoteReason] || d.creditNoteReason)}</div></div>` : ''}
-              ${(d.currency && d.currency !== 'THB') ? `<div><div class="text-xs text-gray-500">สกุลเงิน</div><div><b>${Layout.esc(d.currency)}</b>${d.exchangeRate && Number(d.exchangeRate) !== 1 ? ` · อัตรา ${Number(d.exchangeRate).toLocaleString('th-TH',{minimumFractionDigits:4})}` : ''}</div></div>` : ''}
+              ${(d.currency && d.currency !== 'THB') ? `<div><div class="text-xs text-gray-500">สกุลเงิน</div><div><b>${Layout.esc(d.currency)}</b>${d.exchangeRate && Number(d.exchangeRate) !== 1 ? ` · อัตรา ${Number(d.exchangeRate).toLocaleString('th-TH',{minimumFractionDigits:4})}` : ''}${d.exchangeRateSourceLabel ? `<div class="text-xs text-gray-500">${Layout.esc(d.exchangeRateSourceLabel)}</div>` : ''}${d.documentThbBase != null ? `<div class="text-xs">ฐานบาทตามเอกสาร ${Layout.money(d.documentThbBase)}</div>` : ''}</div></div>` : ''}
+              ${this._whtByIncomeTypeHtml(d)}
               ${d.supplierInvoiceNumber ? `<div><div class="text-xs text-gray-500">เลขใบกำกับผู้ขาย</div><div class="font-medium">${this.escapeHtml(d.supplierInvoiceNumber)}</div></div>` : ''}
               ${d.supplierTaxInvoiceDate ? `<div><div class="text-xs text-gray-500">วันที่ใบกำกับผู้ขาย</div><div>${Layout.date(d.supplierTaxInvoiceDate)}</div></div>` : ''}
               ${d.paymentTerms || d.creditDays ? `<div><div class="text-xs text-gray-500">เงื่อนไขการชำระเงิน</div><div style="white-space:pre-line">${this.escapeHtml(d.paymentTerms || '')}${d.creditDays ? ' (เครดิต ' + d.creditDays + ' วัน)' : ''}</div></div>` : ''}

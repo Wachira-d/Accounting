@@ -27,6 +27,7 @@
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
+    <div id="cmsCrumb"></div>
     <div class="page-header">
       <div>
         <h2 class="page-title">คำสั่งซื้อจากเว็บไซต์</h2>
@@ -43,6 +44,48 @@
     <div id="payConfigBanner" style="display:none;background:#FEF3C7;border:1px solid #FCD34D;color:#78350F;padding:14px 18px;border-radius:10px;margin-bottom:14px;font-size:13px;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
       <div>⚠️ <strong>ยังไม่ได้ตั้งค่าวิธีรับเงิน</strong> — ลูกค้าจะเห็น "ชำระภายหลัง" เท่านั้น ตั้งค่า PromptPay หรือบัญชีธนาคารเพื่อให้ลูกค้าโอนเงินได้</div>
       <button class="btn btn-primary btn-sm" onclick="Page.openGatewayModal()">⚙️ ตั้งค่าวิธีรับเงิน</button>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      <button class="btn btn-secondary btn-sm" onclick="Page.openMtoModal()" title="ตั้งค่าสินค้าตามสั่ง: มารับเอง · มัดจำ · วันเปิดร้าน · ค่าส่งเหมาจ่าย">⚙️ การรับสินค้า / มัดจำ / วันเปิดร้าน</button>
+    </div>
+
+    <!-- ทีม K: ตั้งค่าสินค้าตามสั่ง (อ่าน/เขียนผ่าน commerce/config — ตรวจที่เซิร์ฟเวอร์) -->
+    <div class="modal-overlay" id="mtoModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3 class="modal-title">⚙️ การรับสินค้า · มัดจำ · วันเปิดร้าน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('mtoModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="display:grid;gap:12px">
+          <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="mtoPickup"> เปิดให้ลูกค้าเลือก "มารับเองที่ร้าน" (ไม่มีค่าส่ง)</label>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ค่าส่งเหมาจ่าย (ร้านที่ไม่ได้ตั้งโซน)</label><input type="number" class="form-input" id="mtoFlatRate" min="0" step="0.01" placeholder="ว่าง = ไม่คิดค่าส่ง"></div>
+            <div class="form-group"><label class="form-label">ส่งฟรีเมื่อยอดสินค้าครบ</label><input type="number" class="form-input" id="mtoFreeAbove" min="0" step="0.01" placeholder="ว่าง = ไม่มี"></div>
+          </div>
+          <div style="font-size:12px;color:var(--gray-500);margin-top:-6px">ค่าส่งตามโซน/น้ำหนัก ตั้งที่อัตราค่าส่งของโซน · ค่าส่งเป็นบรรทัดในใบขายพร้อม VAT ตามสินค้าในบิล</div>
+          <hr style="border:none;border-top:1px solid var(--gray-200)">
+          <div class="form-group"><label class="form-label">เงื่อนไขชำระของออเดอร์ที่มีสินค้าตามสั่ง</label><select class="form-input" id="mtoTerm" onchange="Page.onMtoTermChange()"></select></div>
+          <div class="form-row" id="mtoDepositRow">
+            <div class="form-group" id="mtoPctWrap"><label class="form-label">มัดจำ (%)</label><input type="number" class="form-input" id="mtoPct" min="1" max="99" step="0.01"></div>
+            <div class="form-group" id="mtoFixedWrap"><label class="form-label">มัดจำ (บาท)</label><input type="number" class="form-input" id="mtoFixed" min="1" step="0.01"></div>
+          </div>
+          <!-- ทีม Q (คำตัดสินข้อ 156): วิธีออกเอกสารภาษีของมัดจำ — ตัวเลือก + คำอธิบายผลภาษีมาจากเซิร์ฟเวอร์ทั้งหมด -->
+          <div class="form-group"><label class="form-label">ใบกำกับภาษีเมื่อลูกค้าจ่ายมัดจำ</label><select class="form-input" id="mtoDepositInvoicing" onchange="Page.onDepositInvoicingChange()"></select></div>
+          <div id="mtoDepositInvoicingHelp" style="font-size:12px;color:var(--gray-600);background:var(--gray-50);border-radius:8px;padding:8px 10px;margin-top:-6px;white-space:pre-wrap"></div>
+          <div style="font-size:12px;color:var(--gray-500);margin-top:-6px">มีผลกับออเดอร์ที่สั่งหลังบันทึก — ออเดอร์ที่ค้างอยู่ใช้วิธีที่ตรึงไว้ตอนสั่ง</div>
+          <hr style="border:none;border-top:1px solid var(--gray-200)">
+          <div class="form-group"><label class="form-label">วันปิดร้านประจำสัปดาห์ (ไม่นับเป็นวันผลิต/รับของ)</label><div id="mtoClosedDays" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ตัดรอบรับออร์เดอร์ (ชั่วโมง 0–23 · ว่าง = ไม่ตัดรอบ)</label><input type="number" class="form-input" id="mtoCutoff" min="0" max="23"></div>
+            <div class="form-group" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="mtoHolidays"> ข้ามวันหยุดบริษัท (หน้า "วันหยุด")</label></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('mtoModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.saveMto()">บันทึก</button>
+        </div>
+      </div>
     </div>
 
     <div class="grid grid-4 gap-4" style="margin-bottom:18px">
@@ -65,6 +108,7 @@
       <input type="text" class="search-input" placeholder="ค้นหา order# หรือชื่อลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
     </div>
 
+    <div id="allNote" style="display:none"></div>
     <div class="table-container">
       <table class="table">
         <thead><tr>
@@ -157,14 +201,16 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
   <script>
     // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว (cms-edit เคยถือสำเนาที่คีย์ด้วยตัวเลข
     // แล้วไม่ match อะไรเลย) — ที่นี่แค่มอบต่อ ห้ามพิมพ์ตารางซ้ำ
     const STATUS_LABEL = Layout.ENUM_LABELS.orderStatus;
     const NEXT_STATUS = {
       'Pending':       [['Confirmed','ยืนยันคำสั่งซื้อ','btn-primary'],['Cancelled','ปฏิเสธ/ยกเลิก','btn-secondary']],
-      'Confirmed':     [['Processing','เริ่มเตรียมสินค้า','btn-primary'],['Cancelled','ยกเลิก','btn-secondary']],
-      'Processing':    [['Shipped','จัดส่งแล้ว','btn-primary'],['Cancelled','ยกเลิก','btn-secondary']],
+      // ทีม Q: "ส่งมอบแล้ว (ลูกค้ามารับ)" = จุดส่งมอบของออเดอร์มารับเอง (เดิมไปถึง "ส่งถึงปลายทาง" ได้ทางจัดส่งเท่านั้น)
+      'Confirmed':     [['Processing','เริ่มเตรียมสินค้า','btn-primary'],['Delivered','ส่งมอบแล้ว (ลูกค้ามารับ)','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],
+      'Processing':    [['Shipped','จัดส่งแล้ว','btn-primary'],['Delivered','ส่งมอบแล้ว (ลูกค้ามารับ)','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],
       'Shipped':       [['Delivered','ส่งถึงปลายทาง','btn-primary']],
       'Delivered':     [['Refunded','คืนเงิน','btn-secondary']],
       'Cancelled':     [],
@@ -172,42 +218,54 @@
       'PartiallyRefunded': [['Refunded','คืนเงินทั้งหมด','btn-secondary']]
     };
 
+    const PER_SITE_ALL = 20; // โหมด "ทุกไซต์": รายการล่าสุดต่อเว็บ (บอกผู้ใช้บนจอผ่าน CmsSiteContext.allNote)
+
     const Page = {
-      siteId: null,
+      siteId: null,       // เว็บที่เลือก · null เมื่อดู "ทุกไซต์"
+      allSites: false,
+      actSiteId: null,    // เว็บของออเดอร์ที่เปิดอยู่ (โหมดทุกไซต์ — ทุก action ต้องยิงไปเว็บเจ้าของออเดอร์)
+      sites: [],
       page: 1,
       _searchTimer: null,
+      _sid() { return this.actSiteId || this.siteId; },
+      // เว็บที่รวมในภาพรวม — เว็บที่ใช้งานร้านค้า (ไม่มีเลย = ทุกเว็บ ไม่ให้ภาพรวมว่างเพราะยังไม่มีเว็บร้านค้า)
+      _allTargets() { const w = CmsSiteContext.sitesWith(this.sites, 'orders'); return w.length ? w : this.sites; },
       async init() {
         if (!Layout.init('cms-orders')) return;
         await this.loadSites();
       },
       async loadSites() {
-        const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.cmsListSites();
-          const sites = res?.data?.items || res?.data || [];
+          const sites = this.sites = await CmsSiteContext.loadSites();
           const sel = document.getElementById('siteSelector');
           if (!sites.length) {
             sel.innerHTML = '<option value="">ยังไม่มีเว็บไซต์ — สร้างจาก /cms-sites ก่อน</option>';
+            CmsSiteContext.renderCrumb('cmsCrumb', sites, null, 'คำสั่งซื้อ', 'cms-orders');
             return;
           }
-          sel.innerHTML = sites.map(s => `<option value="${s.id}">${Layout.esc(s.name)} (${Layout.esc(s.subdomain||s.slug||'-')})</option>`).join('');
-          // Auto-pick from URL ?siteId=... else first site
-          const fromUrl = new URLSearchParams(location.search).get('siteId');
-          this.siteId = fromUrl || sites[0].id;
-          sel.value = this.siteId;
-          await this.load();
-          await this.loadStats();
-          await this.loadGatewayStatus();
+          // ?siteId= จากปุ่มบนการ์ดเว็บ (cms-sites) · ?siteId=all = ภาพรวมทุกไซต์ · ตรวจกับรายการเว็บจริงก่อนใช้
+          const picked = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'orders', allowAll: true });
+          CmsSiteContext.fillSelect(sel, sites, { module: 'orders', allowAll: true, value: picked });
+          await this.applySite(sel.value || picked);
         } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      async onSiteChange() {
-        this.siteId = document.getElementById('siteSelector').value;
+      async applySite(v) {
+        this.allSites = v === CmsSiteContext.ALL;
+        this.siteId = this.allSites ? null : v;
+        this.actSiteId = null;
         this.page = 1;
+        CmsSiteContext.setUrl(v);
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites, v, 'คำสั่งซื้อ', 'cms-orders');
         await this.load();
         await this.loadStats();
         await this.loadGatewayStatus();
       },
+      async onSiteChange() {
+        await this.applySite(document.getElementById('siteSelector').value);
+      },
       async loadGatewayStatus() {
+        // วิธีรับเงินตั้งรายเว็บ — โหมดทุกไซต์ไม่มี "เว็บเดียว" ให้ตั้ง ⇒ ซ่อนแบนเนอร์ (เลือกเว็บแล้วจะเห็นเอง)
+        if (this.allSites) { document.getElementById('payConfigBanner').style.display = 'none'; return; }
         const api = Layout.api(); if (!api || !this.siteId) return;
         // Two parallel loads: payment-gateway list + commerce config
         // (for the quotation-footer message). Both feed the same modal
@@ -224,6 +282,63 @@
           this._commerceConfig = cfgRes?.data || null;
         } catch (e) { /* silently — owner can still open the modal */ }
       },
+      // ===== ทีม K: ตั้งค่าสินค้าตามสั่ง =====
+      async openMtoModal() {
+        const api = Layout.api(); if (!api || !this.siteId) { Layout.toast('กรุณาเลือกเว็บไซต์', 'warning'); return; }
+        let c;
+        try { c = (await api.cmsGetCommerceConfig(this.siteId)).data; } catch (e) { Layout.toast(e.message, 'error'); return; }
+        this._commerceConfig = c;
+        document.getElementById('mtoPickup').checked = !!c.enablePickup;
+        document.getElementById('mtoFlatRate').value = c.flatShippingRate ?? '';
+        document.getElementById('mtoFreeAbove').value = c.freeShippingThreshold ?? '';
+        document.getElementById('mtoTerm').innerHTML = (c.paymentTermModes || []).map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.mtoPaymentTermMode ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
+        document.getElementById('mtoPct').value = c.mtoDepositPercent ?? '';
+        document.getElementById('mtoFixed').value = c.mtoDepositFixedAmount ?? '';
+        this._depositInvoicingModes = c.depositInvoicingModes || [];
+        document.getElementById('mtoDepositInvoicing').innerHTML = this._depositInvoicingModes.map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.mtoDepositInvoicing ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
+        this.onDepositInvoicingChange();
+        const closed = new Set((c.mtoClosedWeekdays || '').split(',').filter(Boolean));
+        const names = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+        document.getElementById('mtoClosedDays').innerHTML = names.map((n, i) => `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-dow="${i}" ${closed.has(String(i)) ? 'checked' : ''}> ${n}</label>`).join('');
+        document.getElementById('mtoCutoff').value = c.mtoCutoffHour ?? '';
+        document.getElementById('mtoHolidays').checked = c.mtoSkipCompanyHolidays !== false;
+        this.onMtoTermChange();
+        Layout.openModal('mtoModal');
+      },
+      onDepositInvoicingChange() {
+        const v = document.getElementById('mtoDepositInvoicing').value;
+        const m = (this._depositInvoicingModes || []).find(x => x.value === v);
+        document.getElementById('mtoDepositInvoicingHelp').textContent = m?.description || '';
+      },
+      onMtoTermChange() {
+        const t = document.getElementById('mtoTerm').value;
+        document.getElementById('mtoPctWrap').style.display = t === 'deposit_percent' ? '' : 'none';
+        document.getElementById('mtoFixedWrap').style.display = t === 'deposit_fixed' ? '' : 'none';
+      },
+      async saveMto() {
+        const api = Layout.api(); if (!api || !this.siteId) return;
+        const closed = [...document.querySelectorAll('#mtoClosedDays input:checked')].map(x => x.dataset.dow).join(',');
+        const cutoff = Layout.intOrNull('mtoCutoff');
+        const body = {
+          enablePickup: document.getElementById('mtoPickup').checked,
+          flatShippingRate: Layout.numOrNull('mtoFlatRate') ?? 0,
+          freeShippingThreshold: Layout.numOrNull('mtoFreeAbove') ?? 0,
+          mtoPaymentTermMode: document.getElementById('mtoTerm').value,
+          mtoDepositPercent: Layout.numOrNull('mtoPct'),
+          mtoDepositFixedAmount: Layout.numOrNull('mtoFixed'),
+          mtoDepositInvoicing: document.getElementById('mtoDepositInvoicing').value || null,
+          mtoClosedWeekdays: closed,
+          mtoCutoffHour: cutoff,
+          clearMtoCutoffHour: cutoff == null,
+          mtoSkipCompanyHolidays: document.getElementById('mtoHolidays').checked,
+        };
+        try {
+          await api.cmsUpdateCommerceConfig(this.siteId, body);
+          Layout.closeModal('mtoModal');
+          Layout.toast('บันทึกการตั้งค่าแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       openGatewayModal() {
         const g = this._existingGateway;
         document.getElementById('gwPromptPay').value = g?.promptPayId || '';
@@ -278,41 +393,54 @@
         this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
       },
       async loadStats() {
-        if (!this.siteId) return;
+        if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
-        // Cheap parallel fetches — just to fill the 4 KPI cards
+        // Cheap parallel fetches — just to fill the 4 KPI cards (ทุกไซต์ = ผลรวมของเว็บที่โหลดได้ · โหลดไม่ได้เลย = "-")
+        const targets = this.allSites ? this._allTargets().map(s => s.id) : [this.siteId];
+        const count = async (st) => {
+          const rs = await Promise.allSettled(targets.map(id => api.cmsListOrders(id, `?status=${st}&pageSize=1`)));
+          const ok = rs.filter(r => r.status === 'fulfilled');
+          return ok.length ? ok.reduce((n, r) => n + (r.value?.data?.totalItems || 0), 0) : '-';
+        };
         try {
-          const [pend, proc, ship, deliv] = await Promise.all([
-            api.cmsListOrders(this.siteId, '?status=Pending&pageSize=1'),
-            api.cmsListOrders(this.siteId, '?status=Processing&pageSize=1'),
-            api.cmsListOrders(this.siteId, '?status=Shipped&pageSize=1'),
-            api.cmsListOrders(this.siteId, '?status=Delivered&pageSize=1')
-          ]);
-          document.getElementById('statPending').textContent = pend?.data?.totalItems ?? '0';
-          document.getElementById('statProcessing').textContent = proc?.data?.totalItems ?? '0';
-          document.getElementById('statShipped').textContent = ship?.data?.totalItems ?? '0';
-          document.getElementById('statDelivered').textContent = deliv?.data?.totalItems ?? '0';
+          const [pend, proc, ship, deliv] = await Promise.all(['Pending', 'Processing', 'Shipped', 'Delivered'].map(count));
+          document.getElementById('statPending').textContent = pend;
+          document.getElementById('statProcessing').textContent = proc;
+          document.getElementById('statShipped').textContent = ship;
+          document.getElementById('statDelivered').textContent = deliv;
         } catch (e) { /* non-fatal */ }
       },
       async load() {
-        if (!this.siteId) return;
+        if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
         const search = document.getElementById('searchInput').value;
-        let q = `?page=${this.page}&pageSize=20`;
+        let q = `?page=${this.allSites ? 1 : this.page}&pageSize=${this.allSites ? PER_SITE_ALL : 20}`;
         if (status) q += `&status=${encodeURIComponent(status)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
-          const res = await api.cmsListOrders(this.siteId, q);
-          const items = res?.data?.items || res?.data || [];
+          let items;
+          if (this.allSites) {
+            const targets = this._allTargets();
+            const r = await CmsSiteContext.collect(targets, async (s) => {
+              const res = await api.cmsListOrders(s.id, q);
+              return res?.data?.items || res?.data || [];
+            });
+            items = r.items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            CmsSiteContext.allNote('allNote', { siteCount: targets.length, perSite: PER_SITE_ALL, failed: r.failed });
+          } else {
+            const res = await api.cmsListOrders(this.siteId, q);
+            items = res?.data?.items || res?.data || [];
+            CmsSiteContext.allNote('allNote', null);
+          }
           const tbody = document.getElementById('ordersBody');
           if (!items.length) {
             tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีคำสั่งซื้อตามเงื่อนไขที่เลือก</td></tr>';
             return;
           }
           tbody.innerHTML = items.map(o => `
-            <tr class="order-row" onclick="Page.viewOrder('${o.id}')">
-              <td class="font-medium">${Layout.esc(o.orderNumber||o.id.substring(0,8))}</td>
+            <tr class="order-row" onclick="Page.viewOrder('${Layout.jsArg(o.id)}', '${Layout.jsArg(o._siteId || '')}')">
+              <td class="font-medium">${Layout.esc(o.orderNumber||o.id.substring(0,8))}${o._siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(o._siteName)}</div>` : ''}</td>
               <td>${Layout.esc(o.customerName||'(ไม่ระบุชื่อ)')}</td>
               <td class="text-right">${o.itemCount||0}</td>
               <td class="text-right font-semibold">฿${Number(o.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
@@ -322,10 +450,12 @@
             </tr>`).join('');
         } catch (e) { Layout.toast('โหลดคำสั่งซื้อไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      async viewOrder(orderId) {
+      async viewOrder(orderId, siteId) {
         const api = Layout.api(); if (!api) return;
+        // โหมดทุกไซต์: ออเดอร์เป็นของเว็บไหน action ทั้งหมดต้องไปเว็บนั้น · เปิดซ้ำจาก saveTracking (ไม่ส่ง siteId) = คงเว็บเดิม
+        if (siteId !== undefined) this.actSiteId = siteId || null;
         try {
-          const res = await api.cmsGetOrder(this.siteId, orderId);
+          const res = await api.cmsGetOrder(this._sid(), orderId);
           const o = res?.data || res;
           if (!o) return;
           this._currentOrder = o;
@@ -353,11 +483,23 @@
               ${o.shippingMethod ? `<div style="margin-top:4px;color:var(--gray-600)">วิธีจัดส่ง: ${Layout.esc(o.shippingMethod)}</div>` : ''}
               ${o.trackingNumber ? `<div style="color:var(--primary);font-weight:600">เลขติดตาม: ${Layout.esc(o.trackingNumber)}</div>` : ''}
             </div>` : ''}
+            ${(o.earliestReadyDate || (o.paymentTermMode && o.paymentTermMode !== 'full') || o.fulfillmentMethod === 'pickup') ? `
+            <div style="background:#EEF2FF;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#3730A3">
+              <div>🚚 การรับสินค้า: <strong>${Layout.esc(o.fulfillmentLabel||'-')}</strong>${o.earliestReadyDate ? ` · พร้อมเร็วสุด <strong>${Layout.date(o.earliestReadyDate)}</strong>` : ''}</div>
+              <div>💳 เงื่อนไขชำระ: <strong>${Layout.esc(o.paymentTermLabel||'-')}</strong>${o.depositRequiredAmount > 0 && o.paymentTermMode !== 'full' ? ` · มัดจำ ${Layout.money(o.depositRequiredAmount)}` : ''} · ค้างชำระ ${Layout.money(o.balanceAmount)}</div>
+              <div>🧾 ใบกำกับของมัดจำ: <strong>${Layout.esc(o.depositInvoicingLabel||'-')}</strong></div>
+            </div>` : ''}
+            ${(o.depositDocuments && o.depositDocuments.length) ? `
+            <div style="background:#F0FDF4;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#166534">
+              <div style="font-weight:600;margin-bottom:4px">🧾 ใบรับเงินมัดจำ (${o.depositDocuments.length} ใบ)</div>
+              ${o.depositDocuments.map(d => `<div><a href="/pages/documents.html?id=${encodeURIComponent(d.id)}" style="color:#166534;text-decoration:underline">${Layout.esc(d.documentNumber)}</a> · ${Layout.money(d.totalAmount)}${d.vatAmount > 0 ? ` (VAT ${Layout.money(d.vatAmount)})` : ''}${d.status === 'Draft' || d.status === 'WaitingApproval' ? ' · <span style="color:#B45309">ยังไม่อนุมัติ</span>' : ''}</div>`).join('')}
+              ${o.erpDocumentId ? '' : '<div style="font-size:11px;margin-top:4px">ใบกำกับส่วนที่เหลือจะออกเมื่อกด "จัดส่งแล้ว"/"ส่งมอบแล้ว" หรือเมื่อลูกค้าชำระครบ</div>'}
+            </div>` : ''}
             <h4 style="margin-bottom:8px;font-size:14px">รายการสินค้า</h4>
             <table class="table" style="margin-bottom:14px;font-size:13px">
               <thead><tr><th>สินค้า</th><th class="text-right">จำนวน</th><th class="text-right">ราคา</th><th class="text-right">รวม</th></tr></thead>
               <tbody>${(o.lines||[]).map(l => `<tr>
-                <td>${Layout.esc(l.productName)}${l.productSku?`<div style="font-size:11px;color:var(--gray-500)">SKU: ${Layout.esc(l.productSku)}</div>`:''}</td>
+                <td>${Layout.esc(l.productName)}${l.modifierSummary?`<div style="font-size:12px;color:#4F46E5">${Layout.esc(l.modifierSummary)}</div>`:''}${l.productSku?`<div style="font-size:11px;color:var(--gray-500)">SKU: ${Layout.esc(l.productSku)}</div>`:''}</td>
                 <td class="text-right">${l.quantity} ${Layout.esc(l.unit||'')}</td>
                 <td class="text-right">${Layout.money(l.unitPrice)}</td>
                 <td class="text-right font-semibold">${Layout.money(l.totalAmount)}</td>
@@ -386,7 +528,8 @@
                   </div>
                   <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
                     ${p.slipUrl ? `<a href="${Layout.esc(p.slipUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline" title="เปิดดูสลิป">🧾 ดูสลิป</a>` : ''}
-                    ${p.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.confirmPayment('${o.id}', '${p.id}')" title="ยืนยันรับเงินจริง → ระบบจะ sync ERP + post JE + ตัด stock + ออก e-Tax ในคลิกเดียว">✓ ยืนยันรับเงิน + ลงบัญชี</button>` : ''}
+                    ${p.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.confirmPayment('${o.id}', '${p.id}')" title="ยืนยันรับเงินจริง → ระบบลงบัญชีตามวิธีออกเอกสารของออเดอร์นี้">✓ ยืนยันรับเงิน + ลงบัญชี</button>` : ''}
+                    ${p.pendingAction ? `<button class="btn btn-sm btn-outline" onclick="Page.confirmPayment('${o.id}', '${p.id}', '${Layout.jsArg(p.pendingAction)}')" title="เงินรับแล้วแต่ขั้นเอกสาร/บัญชียังค้าง (ดูหมายเหตุ) — กดซ้ำได้ ไม่ออกซ้ำ">🧾 ${Layout.esc(p.pendingAction)}</button>` : ''}
                   </div>
                 </div>`;
               }).join('')}
@@ -401,11 +544,14 @@
           Layout.openModal('orderModal');
         } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      async confirmPayment(orderId, paymentId) {
+      async confirmPayment(orderId, paymentId, retry) {
         const api = Layout.api(); if (!api) return;
-        if (!confirm('ยืนยันรับเงินจากออเดอร์นี้แล้ว?\n\nระบบจะ:\n• ผูกออเดอร์เข้ากับเอกสารบัญชี (ใบกำกับ/ใบแจ้งหนี้)\n• อนุมัติเอกสาร + ลง JE (Dr ธนาคาร / Cr ขาย + Cr VAT)\n• บันทึกรายการรับเงิน (เคลียร์ลูกหนี้)\n• ตัด stock จริง\n• ออก e-Tax XML (ถ้าเปิดใน Settings)')) return;
+        // ทีม Q: ขั้นที่ระบบทำขึ้นกับวิธีออกเอกสารที่ตรึงบนออเดอร์ — ข้อความวิธีมาจากเซิร์ฟเวอร์ (ไม่เดาขั้นเองในหน้าเว็บ)
+        const how = this._currentOrder?.depositInvoicingLabel ? `\n\nวิธีออกเอกสารของออเดอร์นี้: ${this._currentOrder.depositInvoicingLabel}` : '';
+        // ทีม Q (ฝ่ายค้านข้อ 2): ปุ่มทำขั้นที่ค้างส่งป้ายจากเซิร์ฟเวอร์ (p.pendingAction) มาเป็น retry
+        if (!confirm((retry ? `${retry} — ทำกับรายการรับเงินนี้?` : 'ยืนยันรับเงินจากออเดอร์นี้แล้ว?\n\nระบบจะออกเอกสาร + ลงบัญชี + บันทึกรับเงิน (ตัดสต็อก/ออก e-Tax ตามวิธีของออเดอร์)') + how)) return;
         try {
-          await api.cmsConfirmOrderPayment(this.siteId, orderId, paymentId);
+          await api.cmsConfirmOrderPayment(this._sid(), orderId, paymentId);
           Layout.toast('ยืนยันรับเงิน + ลงบัญชีสำเร็จ', 'success');
           Layout.closeModal('orderModal');
           await this.load();
@@ -416,7 +562,7 @@
         const api = Layout.api(); if (!api) return;
         const note = nextStatus === 'Cancelled' ? prompt('เหตุผลที่ยกเลิก (ถ้ามี)') : null;
         try {
-          await api.cmsUpdateOrderStatus(this.siteId, orderId, { status: nextStatus, internalNotes: note });
+          await api.cmsUpdateOrderStatus(this._sid(), orderId, { status: nextStatus, internalNotes: note });
           Layout.toast('อัปเดตสถานะเรียบร้อย');
           Layout.closeModal('orderModal');
           await this.load();
@@ -428,7 +574,7 @@
         const tracking = document.getElementById('trackInput').value.trim();
         if (!tracking) return;
         try {
-          await api.cmsUpdateOrderStatus(this.siteId, orderId, { status: this._currentOrder.status, trackingNumber: tracking });
+          await api.cmsUpdateOrderStatus(this._sid(), orderId, { status: this._currentOrder.status, trackingNumber: tracking });
           Layout.toast('บันทึก tracking แล้ว');
           this.viewOrder(orderId);
         } catch (e) { Layout.toast('บันทึก tracking ไม่สำเร็จ: ' + e.message, 'error'); }

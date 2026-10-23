@@ -109,6 +109,25 @@ public class CmsCommerceConfigController : ControllerBase
         if (request.QuotationMessageTh != null) config.QuotationMessageTh = request.QuotationMessageTh;
         if (request.QuotationMessageEn != null) config.QuotationMessageEn = request.QuotationMessageEn;
 
+        // ── สินค้าตามสั่ง (ทีม K) — ตรวจด้วยตัวตั้งตัวเดียวใน Helpers/ (ผิด = 400 พร้อมเหตุ ไม่เก็บค่าที่ทำให้สั่งไม่ได้) ──
+        if (request.EnablePickup.HasValue) config.EnablePickup = request.EnablePickup.Value;
+        if (request.MtoPaymentTermMode != null) config.MtoPaymentTermMode = PaymentTermMode.Normalize(request.MtoPaymentTermMode);
+        if (request.MtoDepositPercent.HasValue) config.MtoDepositPercent = request.MtoDepositPercent;
+        if (request.MtoDepositFixedAmount.HasValue) config.MtoDepositFixedAmount = request.MtoDepositFixedAmount;
+        // ทีม Q (คำตัดสินข้อ 156) — ไม่รู้จัก = 400 พร้อมรายการที่เลือกได้ (ห้ามเก็บค่าที่ไม่มีผู้อ่าน) · มีผลกับออเดอร์ที่สั่งหลังบันทึกเท่านั้น
+        if (request.MtoDepositInvoicing != null) config.MtoDepositInvoicing = DepositInvoicingMode.Normalize(request.MtoDepositInvoicing);
+        MtoPaymentTerms.ValidateConfig(PaymentTermMode.Normalize(config.MtoPaymentTermMode),
+            config.MtoDepositPercent, config.MtoDepositFixedAmount);
+        if (request.MtoClosedWeekdays != null) config.MtoClosedWeekdays = MtoLeadTime.NormalizeClosedWeekdays(request.MtoClosedWeekdays);
+        if (request.ClearMtoCutoffHour) config.MtoCutoffHour = null;
+        else if (request.MtoCutoffHour.HasValue)
+        {
+            if (request.MtoCutoffHour < 0 || request.MtoCutoffHour > 23)
+                throw new BusinessRuleException("ชั่วโมงตัดรอบต้องอยู่ระหว่าง 0–23", "MTO-CALENDAR");
+            config.MtoCutoffHour = request.MtoCutoffHour;
+        }
+        if (request.MtoSkipCompanyHolidays.HasValue) config.MtoSkipCompanyHolidays = request.MtoSkipCompanyHolidays.Value;
+
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         config.UpdatedBy = userId;
         await _db.SaveChangesAsync();
@@ -137,6 +156,15 @@ public class CmsCommerceConfigController : ControllerBase
         DefaultProductSort = c.DefaultProductSort, ProductsPerPage = c.ProductsPerPage,
         ShowComparePrice = c.ShowComparePrice, ShowSku = c.ShowSku,
         OrderConfirmMessageTh = c.OrderConfirmMessageTh, OrderConfirmMessageEn = c.OrderConfirmMessageEn,
-        QuotationMessageTh = c.QuotationMessageTh, QuotationMessageEn = c.QuotationMessageEn
+        QuotationMessageTh = c.QuotationMessageTh, QuotationMessageEn = c.QuotationMessageEn,
+        EnablePickup = c.EnablePickup,
+        MtoPaymentTermMode = PaymentTermMode.Normalize(c.MtoPaymentTermMode),
+        MtoDepositPercent = c.MtoDepositPercent, MtoDepositFixedAmount = c.MtoDepositFixedAmount,
+        MtoClosedWeekdays = c.MtoClosedWeekdays, MtoCutoffHour = c.MtoCutoffHour,
+        MtoSkipCompanyHolidays = c.MtoSkipCompanyHolidays,
+        PaymentTermModes = PaymentTermMode.All.Select(a => new CommerceOptionValue { Value = a.Value, Label = a.Label }).ToList(),
+        MtoDepositInvoicing = DepositInvoicingMode.OfOrder(c.MtoDepositInvoicing),
+        DepositInvoicingModes = DepositInvoicingMode.All
+            .Select(a => new CommerceOptionValue { Value = a.Value, Label = a.Label, Description = a.TaxEffect }).ToList(),
     };
 }

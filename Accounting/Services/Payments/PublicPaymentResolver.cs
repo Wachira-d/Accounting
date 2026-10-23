@@ -98,15 +98,16 @@ public class PublicPaymentResolver : IPublicPaymentResolver
             .Select(x => new
             {
                 x.Id, x.OrderNumber, x.Status, x.TotalAmount, x.PaidAmount,
-                x.ShippingEmail, x.ShippingPhone,
+                x.ShippingEmail, x.ShippingPhone, x.PaymentTermMode, x.DepositRequiredAmount,
             })
             .FirstOrDefaultAsync(ct);
         if (o == null) return null;
 
         // ยกเลิก/คืนเงินแล้ว = ไม่รับเงินเพิ่ม (ห้ามเปิดช่องให้จ่ายบิลที่ตายแล้ว)
         // — คืนเป้าหมายที่ยอด 0 ไม่ใช่ null เพราะยังต้องยืนยันตัวตนเพื่ออ่านผลการจ่ายได้
+        // ทีม K — ยอดรอบนี้จากตัวคิดเดียว (มัดจำที่ตรึงตอนสั่ง) · ออเดอร์เดิม (ไม่มีเงื่อนไข) = TotalAmount − PaidAmount เท่าเดิม
         var due = o.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded
-            ? 0m : Math.Max(0m, o.TotalAmount - o.PaidAmount);
+            ? 0m : Accounting.Helpers.MtoPaymentTerms.FromSnapshot(o.PaymentTermMode, o.TotalAmount, o.DepositRequiredAmount, o.PaidAmount).NextPayable;
 
         return new PublicPayTarget(
             PaymentSourceKind.SiteOrder, o.Id, siteId, due,

@@ -23,6 +23,9 @@ public class DeepSeekProvider : IAiProvider
     protected virtual string DefaultEndpoint => "https://api.deepseek.com";
     protected virtual string ChatCompletionsPath => "/v1/chat/completions";
 
+    /// <summary>พื้น max_tokens ของโมเดล reasoner (CoT + คำตอบ)</summary>
+    private const int ReasonerMinMaxTokens = 4096;
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<DeepSeekProvider> _logger;
 
@@ -49,6 +52,9 @@ public class DeepSeekProvider : IAiProvider
         // DeepSeek docs — sending them is rejected/ignored. Only the
         // chat models (deepseek-chat / OpenAI-compatible) take them.
         var isReasoner = (config.Model ?? "").Contains("reasoner", StringComparison.OrdinalIgnoreCase);
+        // reasoner นับ token "คิด" (CoT) รวมใน max_tokens ⇒ เพดาน 200–600 ของ prompt รูปคำตอบเดี่ยวหมดตั้งแต่ยังคิดไม่จบ
+        // แล้ว content ว่าง/ขาด (ทีม H · 2026-10-22) — ยกพื้นให้พอทั้ง CoT + JSON
+        if (isReasoner) maxTokens = Math.Max(maxTokens, ReasonerMinMaxTokens);
 
         // OpenAI-compatible chat completions payload. response_format
         // forces JSON output — every prompt builder relies on this so
@@ -112,6 +118,13 @@ public class DeepSeekProvider : IAiProvider
                           ? c.GetString() ?? ""
                           : "";
 
+            string? finishReason = root.TryGetProperty("choices", out var ch2)
+                          && ch2.ValueKind == JsonValueKind.Array
+                          && ch2.GetArrayLength() > 0
+                          && ch2[0].TryGetProperty("finish_reason", out var fr)
+                          && fr.ValueKind == JsonValueKind.String
+                          ? fr.GetString()
+                          : null;
             string? modelVer = root.TryGetProperty("model", out var m) ? m.GetString() : null;
             int? inputTokens = null, outputTokens = null;
             if (root.TryGetProperty("usage", out var usage))
@@ -126,10 +139,14 @@ public class DeepSeekProvider : IAiProvider
                 {
                     Success = false,
                     HttpStatus = (int)resp.StatusCode,
-                    Error = "Provider returned empty content",
+                    Error = string.Equals(finishReason, "length", StringComparison.OrdinalIgnoreCase)
+                        ? $"Provider returned empty content (finish_reason=length · max_tokens={maxTokens} หมดก่อนได้คำตอบ)"
+                        : "Provider returned empty content" + (finishReason is null ? "" : $" (finish_reason={finishReason})"),
                     ModelVersion = modelVer,
                     InputTokens = inputTokens,
                     OutputTokens = outputTokens,
+                    FinishReason = finishReason,
+                    MaxTokensSent = maxTokens,
                 };
             }
 
@@ -141,6 +158,8 @@ public class DeepSeekProvider : IAiProvider
                 InputTokens = inputTokens,
                 OutputTokens = outputTokens,
                 HttpStatus = (int)resp.StatusCode,
+                FinishReason = finishReason,
+                MaxTokensSent = maxTokens,
             };
         }
         catch (TaskCanceledException)

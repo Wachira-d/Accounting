@@ -320,6 +320,11 @@ public partial class LodgingService : ILodgingService
         // วิธีบันทึกมัดจำ — รอบ 194: ตั้งผ่าน "ประเภทเงินมัดจำค่าห้อง" (RoomDepositKindId) เท่านั้น · ค่าเดิมของที่พัก
         // (DepositVatTreatment + ธง DepositOutputVatDeferred) ถูกล้างที่ ApplyDepositKindsAsync ทุกครั้งที่บันทึก — เหตุผลอยู่ที่นั่น
         p.AccountingMode = d.AccountingMode;
+        // คำตัดสินข้อ 157: จังหวะออกเอกสารภาษี — null = คงค่าเดิม (client รุ่นเก่า) · ด่านตัวเดียว LodgingTaxInvoiceTimingPolicy.TimingProblem
+        var taxTiming = d.TaxInvoiceTiming ?? p.TaxInvoiceTiming;
+        if (LodgingTaxInvoiceTimingPolicy.TimingProblem(taxTiming, p.AccountingMode) is string taxTimingProblem)
+            throw new BusinessRuleException(taxTimingProblem, LodgingTaxInvoiceTimingPolicy.RuleCode);
+        p.TaxInvoiceTiming = taxTiming;
         p.PricesIncludeVat = d.PricesIncludeVat; p.ChargeVat = d.ChargeVat;
         p.ServiceChargePercent = Math.Clamp(d.ServiceChargePercent, 0, 100);
         p.RoomRevenueAccountCode = string.IsNullOrWhiteSpace(d.RoomRevenueAccountCode) ? null : d.RoomRevenueAccountCode.Trim();
@@ -442,6 +447,8 @@ public partial class LodgingService : ILodgingService
             readiness = LodgingPublicReadiness.Evaluate(p.SiteId, siteExists: siteName != null, siteName,
                 p.IsActive, p.OnlineBookingEnabled, unitCount, bindableSiteCount: bindable.Count);
         }
+        var roomKind = await DepositKindForAsync(companyId, p);
+        var effectiveVat = await EffectiveVatRateAsync(companyId, p);
         return new LodgingPropertyDto
         {
             Id = p.Id, SiteId = p.SiteId, BranchId = p.BranchId, Name = p.Name, NameEn = p.NameEn, Code = p.Code,
@@ -467,10 +474,15 @@ public partial class LodgingService : ILodgingService
             RoomDepositKindId = p.RoomDepositKindId,
             SecurityDepositKindId = p.SecurityDepositKindId,
             SecurityDepositAmount = p.SecurityDepositAmount,
-            RoomDepositKindInfo = KindView(await DepositKindForAsync(companyId, p)),
+            RoomDepositKindInfo = KindView(roomKind),
             RoomDepositKindInherited = KindView(await DepositKindForAsync(companyId, p, ignoreOverride: true)),
             DepositKindOptions = await DepositKindOptionsAsync(companyId),
             DepositVatExplanation = DepositPolicyResolver.Explanation,
+            // คำตัดสินข้อ 157: จังหวะออกเอกสารภาษี + ตัวเลือก/ผลภาษีจากเซิร์ฟเวอร์ · แบบ "ใบกำกับทุกครั้งที่รับเงิน" อธิบายจากประเภทเงินมัดจำที่ใช้จริง
+            TaxInvoiceTiming = p.TaxInvoiceTiming,
+            TaxInvoiceTimingOptions = LodgingTaxInvoiceTimingPolicy.Options().ToList(),
+            TaxInvoicePaymentNote = LodgingTaxInvoiceTimingPolicy.PaymentInvoiceNote(roomKind.Treatment,
+                roomKind.Nature == DepositNature.NonVatSupply, effectiveVat > 0m),
             AccountingMode = p.AccountingMode,
             AccountingModeAcknowledged = p.AccountingModeAckAt != null,
             PricesIncludeVat = p.PricesIncludeVat, ChargeVat = p.ChargeVat, ServiceChargePercent = p.ServiceChargePercent,
@@ -484,7 +496,7 @@ public partial class LodgingService : ILodgingService
             AutoCreateHousekeepingTaskOnCheckout = p.AutoCreateHousekeepingTaskOnCheckout,
             IsActive = p.IsActive, SortOrder = p.SortOrder,
             RoomTypeCount = rtCount, UnitCount = unitCount, SiteName = siteName,
-            EffectiveVatRate = await EffectiveVatRateAsync(companyId, p),
+            EffectiveVatRate = effectiveVat,
             PublicBookingStatus = readiness.Status, PublicBookingMessage = readiness.Message, PublicBookingFix = readiness.FixHint,
             BindableSites = bindable,
         };
@@ -553,6 +565,7 @@ public partial class LodgingService : ILodgingService
         Id = r.Id, PropertyId = r.PropertyId, Name = r.Name, NameEn = r.NameEn, Code = r.Code, Slug = r.Slug,
         Description = r.Description, Images = ParseStrings(r.ImagesJson), Amenities = ParseStrings(r.AmenitiesJson),
         BedType = r.BedType, SizeSqm = r.SizeSqm, ViewType = r.ViewType,
+        SmokingAllowed = r.SmokingAllowed, PetsAllowed = r.PetsAllowed, RoomNote = r.RoomNote,
         StandardOccupancy = r.StandardOccupancy, MaxAdults = r.MaxAdults, MaxChildren = r.MaxChildren, MaxOccupancy = r.MaxOccupancy,
         AllowExtraBed = r.AllowExtraBed, MaxExtraBeds = r.MaxExtraBeds, PricingMode = r.PricingMode, BaseRate = r.BaseRate,
         ExtraGuestPrice = r.ExtraGuestPrice, ExtraBedPrice = r.ExtraBedPrice, MinNights = r.MinNights,
@@ -593,6 +606,8 @@ public partial class LodgingService : ILodgingService
         if (string.IsNullOrEmpty(r.Slug)) r.Slug = r.Code.ToLowerInvariant();
         r.Description = dto.Description; r.ImagesJson = J(dto.Images ?? new()); r.AmenitiesJson = J(dto.Amenities ?? new());
         r.BedType = dto.BedType; r.SizeSqm = dto.SizeSqm; r.ViewType = dto.ViewType;
+        r.SmokingAllowed = dto.SmokingAllowed; r.PetsAllowed = dto.PetsAllowed;
+        r.RoomNote = string.IsNullOrWhiteSpace(dto.RoomNote) ? null : dto.RoomNote.Trim();
         r.StandardOccupancy = Math.Max(1, dto.StandardOccupancy); r.MaxAdults = Math.Max(1, dto.MaxAdults);
         r.MaxChildren = Math.Max(0, dto.MaxChildren); r.MaxOccupancy = Math.Max(r.MaxAdults, dto.MaxOccupancy);
         // คำตัดสินเจ้าของข้อ 123: ติ๊กเพิ่มได้แล้วต้องมีจำนวน ≥ 1 + ราคา/คน/คืน — ตัวตัดสินตัวเดียว (ปฏิเสธพร้อมป้ายบนจอ ไม่แก้ให้เงียบ)

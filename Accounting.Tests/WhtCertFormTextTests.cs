@@ -394,7 +394,7 @@ public class WhtCertFormTextTests
         Assert.Contains("BuildFundLine(form, funds);", qp);
         Assert.Contains("WhtCertFormText.FundAmountText(amount)", qp);
         var src = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/Services/Implementations/PdfGenerationService.cs"));
-        Assert.Contains("return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds);", src);
+        Assert.Contains("return BuildWhtCertPdf(inMemoryCert, company, sigBytes, sigName, funds, stamp);", src);
         Assert.Contains("WhtCertFormText.FundAmountText(amount)", src);
     }
 

@@ -707,10 +707,19 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // ยอดของงวด: เฉลี่ยตามสัดส่วน (whtRatio = 1 เมื่อจ่ายครั้งเดียว/เต็มจำนวน)
         decimal Prorate(decimal v) => whtRatio == 1m
             ? v : Math.Round(v * whtRatio, 2, MidpointRounding.AwayFromZero);
+        // ทีม F — 50 ทวิ เป็น<b>บาท</b>เสมอ: ใบสกุลต่างประเทศ ⇒ เงินได้/ภาษีบาทต่อบรรทัดจากตัวคำนวณกลาง Helpers/PerLineWht (ยอดบาทที่เอกสารพิมพ์ไว้ชนะ ·
+        // ไม่งั้นอัตราของเอกสาร — ตัวเดียวกับ JE) · ใบบาท ⇒ ยอดที่เก็บไว้ตรงตัว (เดิมทุกสตางค์) — เดิมใบ USD ออก 50 ทวิ เป็นตัวเลขดอลลาร์
+        var whtBasis = Accounting.Helpers.PerLineWht.BasisOf(doc);
+        var inBaht = whtBasis != Accounting.Helpers.WhtBahtBasis.Thb;
+        var bahtByLine = inBaht ? Accounting.Helpers.PerLineWht.ForDocument(doc) : null;
+        decimal DocToBaht(decimal v) => inBaht ? Accounting.Helpers.PerLineWht.DocumentWhtThb(v, doc.ExchangeRate) : v;
 
         if (whtLines.Count == 0)
         {
             // Fallback: use document-level WHT with default income type
+            var fallbackIncome = whtBasis == Accounting.Helpers.WhtBahtBasis.PrintedThb
+                ? Accounting.Helpers.PerLineWht.UsablePrintedBase(doc)!.Value + DocToBaht(doc.WhtPayerBorneAmount)
+                : DocToBaht(doc.SubTotal + doc.WhtPayerBorneAmount);
             cert.Lines.Add(new WithholdingTaxCertLine
             {
                 LineOrder = 1,
@@ -718,16 +727,16 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                 IncomeDescription = $"ตามเอกสาร {doc.DocumentNumber}"
                     + (whtRatio == 1m ? "" : $" (จ่ายงวดนี้ {whtRatio:P0})"),
                 PaymentDate = paymentDate ?? doc.PaymentDate ?? doc.DocumentDate,
-                IncomeAmount = Prorate(doc.SubTotal + doc.WhtPayerBorneAmount),
+                IncomeAmount = Prorate(fallbackIncome),
                 TaxRate = doc.SubTotal > 0 ? doc.WithholdingTaxAmount * 100 / doc.SubTotal : 3m,
-                TaxAmount = paymentWhtAmount ?? doc.WithholdingTaxAmount
+                TaxAmount = DocToBaht(paymentWhtAmount ?? doc.WithholdingTaxAmount)
             });
         }
         else
         {
             foreach (var line in whtLines)
             {
-                cert.Lines.Add(new WithholdingTaxCertLine
+                var certLine = new WithholdingTaxCertLine
                 {
                     LineOrder = order++,
                     IncomeTypeCode = line.IncomeTypeCode ?? "8",
@@ -736,15 +745,30 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     IncomeAmount = Prorate(line.Amount + borneByLine.GetValueOrDefault(line.Id)),
                     TaxRate = line.WithholdingTaxRate,
                     TaxAmount = Prorate(line.WithholdingTaxAmount)
-                });
+                };
+                // ทีม F: ใบต่างสกุล ⇒ แทนด้วยยอดบาทของบรรทัดเดียวกัน (ใบบาท ⇒ bahtByLine = null ⇒ ยอดข้างบนเดิมทุกสตางค์)
+                if (bahtByLine != null && bahtByLine.TryGetValue(line.Id, out var lb))
+                {
+                    certLine.IncomeAmount = Prorate(lb.IncomeThb);
+                    certLine.TaxAmount = Prorate(lb.WhtThb);
+                }
+                cert.Lines.Add(certLine);
             }
             // ปัดเศษรายบรรทัดอาจไม่รวมเท่ายอดงวดพอดี — ดูดผลต่างเข้าบรรทัดสุดท้าย
             // เพื่อให้ Σ บรรทัด = ภาษีที่นำส่งจริงของงวดนั้นเป๊ะ
             if (paymentWhtAmount.HasValue && cert.Lines.Count > 0)
             {
-                var diff = paymentWhtAmount.Value - cert.Lines.Sum(l => l.TaxAmount);
+                var diff = DocToBaht(paymentWhtAmount.Value) - cert.Lines.Sum(l => l.TaxAmount);
                 if (diff != 0m && Math.Abs(diff) <= 0.05m * cert.Lines.Count)
                     cert.Lines.Last().TaxAmount += diff;
+            }
+            else if (inBaht && cert.Lines.Count > 0)
+            {
+                // ใบต่างสกุล: ภาษีบาทต่อบรรทัด (ฐานบาท × อัตรา) กับยอดหนี้ 2191x ใน GL (ภาษีสกุลเอกสาร × อัตรา) ต่างกันได้ระดับเศษ ⇒ ผูกกับยอด GL
+                // ด้วยตัวกระทบกลาง (เกินระดับเศษ = คงยอดตามกฎหมาย · TaxGlReconciliation ฟ้องเอง)
+                var tied = Accounting.Helpers.PerLineWht.TieOut(cert.Lines.Select(l => l.TaxAmount).ToList(), DocToBaht(whtBase));
+                var ci = 0;
+                foreach (var cl in cert.Lines) cl.TaxAmount = tied[ci++];
             }
         }
 

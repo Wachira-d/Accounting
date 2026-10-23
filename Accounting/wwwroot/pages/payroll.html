@@ -527,6 +527,9 @@ const Page = {
     const rm = document.getElementById('reportMonth');
     if (rm) rm.value = m;
     this.loadEmployees();
+    // ลิงก์ตรงจาก drill-down งบกำไรขาดทุน (?runId=) — เปิดรอบเงินเดือนนั้นทันที
+    const deepRun = new URLSearchParams(location.search).get('runId');
+    if (deepRun) this.viewRun(deepRun);
   },
 
   // ═══ ส่งออกไฟล์ (X4 · 2026-10-14) — เซิร์ฟเวอร์ดึงทุกแถวตามตัวกรองจากคิวรีเดียวกับตาราง (ไม่ใช่แค่หน้าที่โหลด) · หน้าเว็บแค่สร้าง URL ·

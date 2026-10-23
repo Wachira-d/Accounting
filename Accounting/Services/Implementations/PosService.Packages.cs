@@ -196,30 +196,33 @@ public partial class PosService
 
     public async Task<ModifierGroupResponse> CreateModifierGroupAsync(Guid companyId, CreateModifierGroupRequest request)
     {
+        // ทีม K — dynamic option builder: ชนิดช่อง + จำนวนเลือก min–max + ราคา/วันเพิ่มของช่องพิมพ์ (กติกา Helpers/ModifierSelectionRules)
+        var inputType = Accounting.Helpers.ModifierInputType.Validate(request.InputType);
+        var effectiveType = Accounting.Helpers.ModifierInputType.Resolve(inputType, request.AllowMultiple);
+        Accounting.Helpers.ModifierSelectionRules.ValidateGroupConfig(effectiveType,
+            request.MinSelect, request.MaxSelect, request.MaxTextLength, request.InputExtraLeadDays);
         var group = new ProductModifierGroup
         {
             CompanyId = companyId,
             Name = request.Name,
             NameEn = request.NameEn,
             IsRequired = request.IsRequired,
-            AllowMultiple = request.AllowMultiple,
-            SortOrder = request.SortOrder
+            // ธงเดิมต้องตรงกับชนิดช่อง (ผู้อ่านเดิม — KDS/สลิป — ยังอ่าน AllowMultiple)
+            AllowMultiple = inputType == null ? request.AllowMultiple : effectiveType == Accounting.Helpers.ModifierInputType.Checkbox,
+            SortOrder = request.SortOrder,
+            InputType = inputType,
+            MinSelect = request.MinSelect,
+            MaxSelect = request.MaxSelect,
+            MaxTextLength = request.MaxTextLength,
+            InputPriceAdjustment = Math.Round(request.InputPriceAdjustment, 2, MidpointRounding.AwayFromZero),
+            InputExtraLeadDays = request.InputExtraLeadDays,
         };
         _db.ProductModifierGroups.Add(group);
         await _db.SaveChangesAsync();
 
-        // Link to products
-        if (request.ProductIds != null)
-        {
-            foreach (var pid in request.ProductIds)
-            {
-                _db.ProductModifierGroupLinks.Add(new ProductModifierGroupLink
-                {
-                    ProductId = pid,
-                    ModifierGroupId = group.Id
-                });
-            }
-        }
+        // Link to products — เฉพาะสินค้าของบริษัทนี้ (เดิมรับ id ดิบ ⇒ ผูกสินค้าบริษัทอื่นได้)
+        if (request.ProductIds is { Count: > 0 })
+            await ReplaceModifierProductLinksAsync(companyId, group.Id, request.ProductIds);
 
         // Add options
         if (request.Options != null)
@@ -233,7 +236,8 @@ public partial class PosService
                     NameEn = opt.NameEn,
                     PriceAdjustment = opt.PriceAdjustment,
                     IsDefault = opt.IsDefault,
-                    SortOrder = opt.SortOrder
+                    SortOrder = opt.SortOrder,
+                    ExtraLeadDays = ValidLeadDays(opt.ExtraLeadDays),
                 });
             }
         }
@@ -245,17 +249,61 @@ public partial class PosService
     public async Task<List<ModifierGroupResponse>> GetModifierGroupsAsync(Guid companyId, Guid? productId = null)
     {
         var query = _db.ProductModifierGroups.Include(g => g.Options)
-            .Where(g => g.CompanyId == companyId);
+            .Where(g => g.CompanyId == companyId && !g.IsDeleted);
 
         if (productId.HasValue)
         {
             var groupIds = await _db.ProductModifierGroupLinks
-                .Where(l => l.ProductId == productId.Value).Select(l => l.ModifierGroupId).ToListAsync();
+                .Where(l => l.ProductId == productId.Value && !l.IsDeleted).Select(l => l.ModifierGroupId).ToListAsync();
             query = query.Where(g => groupIds.Contains(g.Id));
         }
 
         var groups = await query.OrderBy(g => g.SortOrder).ToListAsync();
-        return groups.Select(MapModifierGroup).ToList();
+        var ids = groups.Select(g => g.Id).ToList();
+        var links = await LoadModifierProductLinksAsync(companyId, ids);
+        return groups.Select(g => MapModifierGroup(g, links.TryGetValue(g.Id, out var l) ? l : new List<Guid>())).ToList();
+    }
+
+    /// <summary>สินค้าที่ผูกกับแต่ละกลุ่ม (เฉพาะสินค้าของบริษัทนี้ที่ยังไม่ถูกลบ)</summary>
+    private async Task<Dictionary<Guid, List<Guid>>> LoadModifierProductLinksAsync(Guid companyId, IReadOnlyCollection<Guid> groupIds)
+    {
+        if (groupIds.Count == 0) return new();
+        var rows = await _db.ProductModifierGroupLinks.AsNoTracking()
+            .Where(l => groupIds.Contains(l.ModifierGroupId) && !l.IsDeleted
+                && l.Product.CompanyId == companyId && !l.Product.IsDeleted)
+            .Select(l => new { l.ModifierGroupId, l.ProductId })
+            .ToListAsync();
+        return rows.GroupBy(r => r.ModifierGroupId).ToDictionary(g => g.Key, g => g.Select(r => r.ProductId).Distinct().ToList());
+    }
+
+    /// <summary>แทนที่ชุดสินค้าที่ผูกกับกลุ่ม — id ที่ไม่ใช่สินค้าของบริษัทนี้ ⇒ โยน (ไม่ข้ามเงียบ)</summary>
+    private async Task ReplaceModifierProductLinksAsync(Guid companyId, Guid groupId, IReadOnlyCollection<Guid> productIds)
+    {
+        var wanted = productIds.Where(i => i != Guid.Empty).Distinct().ToList();
+        if (wanted.Count > 0)
+        {
+            var okCount = await _db.Products.AsNoTracking().CountAsync(p => p.CompanyId == companyId && wanted.Contains(p.Id));
+            if (okCount != wanted.Count)
+                throw new Accounting.Helpers.BusinessRuleException("มีสินค้าที่ไม่พบในบริษัทนี้ — เลือกสินค้าใหม่จากรายการ", "MOD-PRODUCT-LINK");
+        }
+        // IgnoreQueryFilters: unique (ProductId, GroupId) ไม่สนธงลบ ⇒ ต้องเห็นแถวที่ลบแล้วเพื่อเปิดกลับแทนการเพิ่มซ้ำ
+        var existing = await _db.ProductModifierGroupLinks.IgnoreQueryFilters().Where(l => l.ModifierGroupId == groupId).ToListAsync();
+        foreach (var l in existing.Where(l => !l.IsDeleted && !wanted.Contains(l.ProductId))) l.IsDeleted = true;
+        foreach (var pid in wanted)
+        {
+            var row = existing.FirstOrDefault(l => l.ProductId == pid);
+            if (row == null)
+                _db.ProductModifierGroupLinks.Add(new ProductModifierGroupLink { ProductId = pid, ModifierGroupId = groupId });
+            else if (row.IsDeleted)
+                row.IsDeleted = false;
+        }
+    }
+
+    private static int ValidLeadDays(int days)
+    {
+        if (days < 0 || days > 365)
+            throw new Accounting.Helpers.BusinessRuleException("วันผลิตเพิ่มของตัวเลือกต้องอยู่ระหว่าง 0–365 วัน", "MOD-CONFIG");
+        return days;
     }
 
     public async Task<ModifierGroupResponse> UpdateModifierGroupAsync(Guid companyId, Guid groupId, UpdateModifierGroupRequest request)
@@ -267,6 +315,25 @@ public partial class PosService
         if (request.IsRequired.HasValue) group.IsRequired = request.IsRequired.Value;
         if (request.AllowMultiple.HasValue) group.AllowMultiple = request.AllowMultiple.Value;
         if (request.SortOrder.HasValue) group.SortOrder = request.SortOrder.Value;
+        // ทีม K — ค่าตั้ง option builder (null = ไม่เปลี่ยน · ClearLimits = ล้างขั้นต่ำ/สูงสุด/ความยาว)
+        if (request.InputType != null)
+        {
+            group.InputType = Accounting.Helpers.ModifierInputType.Validate(request.InputType);
+            if (group.InputType != null)
+                group.AllowMultiple = group.InputType == Accounting.Helpers.ModifierInputType.Checkbox;
+        }
+        if (request.ClearLimits) { group.MinSelect = null; group.MaxSelect = null; group.MaxTextLength = null; }
+        if (request.MinSelect.HasValue) group.MinSelect = request.MinSelect;
+        if (request.MaxSelect.HasValue) group.MaxSelect = request.MaxSelect;
+        if (request.MaxTextLength.HasValue) group.MaxTextLength = request.MaxTextLength;
+        if (request.InputPriceAdjustment.HasValue)
+            group.InputPriceAdjustment = Math.Round(request.InputPriceAdjustment.Value, 2, MidpointRounding.AwayFromZero);
+        if (request.InputExtraLeadDays.HasValue) group.InputExtraLeadDays = request.InputExtraLeadDays.Value;
+        Accounting.Helpers.ModifierSelectionRules.ValidateGroupConfig(
+            Accounting.Helpers.ModifierInputType.Resolve(group.InputType, group.AllowMultiple),
+            group.MinSelect, group.MaxSelect, group.MaxTextLength, group.InputExtraLeadDays);
+        if (request.ProductIds != null)
+            await ReplaceModifierProductLinksAsync(companyId, groupId, request.ProductIds);
         await _db.SaveChangesAsync();
         return await GetModifierGroupResponseAsync(groupId);
     }
@@ -292,7 +359,8 @@ public partial class PosService
             NameEn = request.NameEn,
             PriceAdjustment = request.PriceAdjustment,
             IsDefault = request.IsDefault,
-            SortOrder = request.SortOrder
+            SortOrder = request.SortOrder,
+            ExtraLeadDays = ValidLeadDays(request.ExtraLeadDays),
         });
         await _db.SaveChangesAsync();
         return await GetModifierGroupResponseAsync(groupId);
@@ -309,6 +377,7 @@ public partial class PosService
         if (request.IsDefault.HasValue) opt.IsDefault = request.IsDefault.Value;
         if (request.IsActive.HasValue) opt.IsActive = request.IsActive.Value;
         if (request.SortOrder.HasValue) opt.SortOrder = request.SortOrder.Value;
+        if (request.ExtraLeadDays.HasValue) opt.ExtraLeadDays = ValidLeadDays(request.ExtraLeadDays.Value);
         await _db.SaveChangesAsync();
         return await GetModifierGroupResponseAsync(groupId);
     }
@@ -327,14 +396,37 @@ public partial class PosService
     private async Task<ModifierGroupResponse> GetModifierGroupResponseAsync(Guid groupId)
     {
         var group = await _db.ProductModifierGroups.Include(g => g.Options).FirstAsync(g => g.Id == groupId);
-        return MapModifierGroup(group);
+        var links = await LoadModifierProductLinksAsync(group.CompanyId, new[] { groupId });
+        return MapModifierGroup(group, links.TryGetValue(groupId, out var l) ? l : new List<Guid>());
     }
 
-    private static ModifierGroupResponse MapModifierGroup(ProductModifierGroup g) => new(
-        g.Id, g.Name, g.NameEn, g.IsRequired, g.AllowMultiple, g.SortOrder,
+    /// <summary>ข้อมูลกลุ่มสำหรับตัวตรวจ <see cref="Accounting.Helpers.ModifierSelectionRules"/> — ตัวแปลงตัวเดียว (ร้านออนไลน์ใช้ร่วม)</summary>
+    internal static Accounting.Helpers.ModifierGroupSpec ToSpec(ProductModifierGroup g) => new(
+        g.Id, g.Name, Accounting.Helpers.ModifierInputType.Resolve(g.InputType, g.AllowMultiple), g.IsRequired,
+        g.MinSelect, g.MaxSelect, g.MaxTextLength, g.InputPriceAdjustment, g.InputExtraLeadDays,
         g.Options.Where(o => !o.IsDeleted).OrderBy(o => o.SortOrder)
-            .Select(o => new ModifierOptionResponse(o.Id, o.Name, o.NameEn, o.PriceAdjustment, o.IsDefault, o.SortOrder, o.IsActive))
+            .Select(o => new Accounting.Helpers.ModifierOptionSpec(o.Id, o.Name, o.PriceAdjustment, o.ExtraLeadDays, o.IsActive))
             .ToList());
+
+    private static ModifierGroupResponse MapModifierGroup(ProductModifierGroup g, List<Guid> productIds)
+    {
+        var spec = ToSpec(g);
+        var (min, max) = Accounting.Helpers.ModifierSelectionRules.SelectBounds(spec);
+        return new ModifierGroupResponse(
+            g.Id, g.Name, g.NameEn, g.IsRequired, g.AllowMultiple, g.SortOrder,
+            g.Options.Where(o => !o.IsDeleted).OrderBy(o => o.SortOrder)
+                .Select(o => new ModifierOptionResponse(o.Id, o.Name, o.NameEn, o.PriceAdjustment, o.IsDefault, o.SortOrder, o.IsActive, o.ExtraLeadDays))
+                .ToList(),
+            InputType: spec.InputType,
+            MinSelect: g.MinSelect,
+            MaxSelect: g.MaxSelect,
+            MaxTextLength: g.MaxTextLength,
+            InputPriceAdjustment: g.InputPriceAdjustment,
+            InputExtraLeadDays: g.InputExtraLeadDays,
+            EffectiveMinSelect: min,
+            EffectiveMaxSelect: max,
+            ProductIds: productIds);
+    }
 
     private static ServicePackageResponse MapPackage(ServicePackage p) => new(
         p.Id, p.Name, p.NameEn, p.Description, p.Sku, p.Category,

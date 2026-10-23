@@ -1786,6 +1786,8 @@ public partial class DocumentService : IDocumentService
             doc.WithholdingTaxAmount = totalWht;
             // รอบ 204: ผู้จ่ายออกภาษีแทน ⇒ ยอดจ่ายผู้รับ = ฐาน + VAT − ภาษีนำส่ง + ส่วนที่ออกแทน (หัก ณ ที่จ่าย ⇒ ส่วนที่ออกแทน 0 = สูตรเดิม)
             doc.WhtPayerBorneAmount = createWhtBorne;
+            // ทีม F — อัตรา/ที่มา/ฐานบาทตามเอกสาร (ต้องรู้ SubTotal แล้ว · ตัวตัดสินเดียว Helpers/DocumentFx.Decide · ผิด = 400)
+            await ApplyDocumentFxDecisionAsync(companyId, doc, request);
             doc.TotalAmount = WhtGrossUp.PayeeTotal(doc.SubTotal, totalVat, totalWht, createWhtBorne);
             // Cash-settled documents carry no outstanding balance — the cash
             // already moved, so PaidAmount = ยอดจ่ายผู้รับเงิน and BalanceDue = 0. This is
@@ -1817,6 +1819,8 @@ public partial class DocumentService : IDocumentService
             }
 
             await transaction.CommitAsync();
+            // ฝ่ายค้านรอบ 205 ข้อ 3: แจ้งเตือนโควตา (80%/เต็ม) หลัง commit เท่านั้น — ใบถูกถอย = ไม่แจ้ง
+            if (DocumentQuotaPolicy.Counts(quotaClass)) await _subscriptionService.FlushPendingQuotaAlertsAsync();
 
             // ใบสำคัญจ่าย (Cash) standalone — auto-approve ทันทีทุก channel
             // (UI/OCR/API). เงินจ่ายไปจริงแล้ว BalanceDue=0 ตั้งแต่ create
@@ -4122,7 +4126,7 @@ public partial class DocumentService : IDocumentService
         // CheckUsageLimitAsync — ไม่งั้นข้อความปฏิเสธจะบอกเพดานผิดจากที่ระบบใช้จริง
         return (sub?.CurrentMonthDocuments ?? 0,
             DocumentQuotaPolicy.EffectiveLimit(eff?.MaxDocumentsPerMonth ?? 0,
-                sub?.DocumentBonusQuota ?? 0, sub?.DocumentBonusExpiresAt, DateTime.UtcNow));
+                sub?.DocumentBonusQuota ?? 0, sub?.DocumentBonusExpiresAt, DateTime.UtcNow, used: sub?.CurrentMonthDocuments ?? 0));
     }
 
     /// <summary>เอกสารเกินโควตา 1 ฉบับ = 1 UsageEvent (documents.overage)
@@ -5066,8 +5070,8 @@ public partial class DocumentService : IDocumentService
                     .Where(l => !l.IsDeleted
                         && depAcctIds.Contains(l.AccountId)
                         && l.JournalEntry.CompanyId == companyId
-                        && l.JournalEntry.Status == JournalEntryStatus.Posted
-                        && l.JournalEntry.ReversedByEntryId == null)
+                        // ★ ทีม O 2026-10-22 (ฝ่ายค้าน): ใบเดิม (Reversed) + ใบกลับรายการ (Posted) นับคู่กันจึงหักล้าง — เดิมตัดแค่ใบเดิม ⇒ มัดจำที่ยกเลิกโผล่ติดลบ
+                        && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))
                     .Select(l => new
                     {
                         Net = l.CreditAmount - l.DebitAmount,
@@ -5270,8 +5274,8 @@ public partial class DocumentService : IDocumentService
                 .Where(l => !l.IsDeleted
                     && depAcctIds.Contains(l.AccountId)
                     && l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.Status == JournalEntryStatus.Posted
-                    && l.JournalEntry.ReversedByEntryId == null)
+                    // ★ ทีม O 2026-10-22 (ฝ่ายค้าน): ใบเดิม (Reversed) + ใบกลับรายการ (Posted) นับคู่กันจึงหักล้าง — เดิมตัดแค่ใบเดิม ⇒ มัดจำที่ยกเลิกโผล่ติดลบ
+                    && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))
                 .Select(l => new
                 {
                     l.AccountId,
@@ -5352,8 +5356,8 @@ public partial class DocumentService : IDocumentService
                 .Where(l => !l.IsDeleted
                     && depAcctIdSet.Contains(l.AccountId)
                     && l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.Status == JournalEntryStatus.Posted
-                    && l.JournalEntry.ReversedByEntryId == null)
+                    // ★ ทีม O 2026-10-22 (ฝ่ายค้าน): ใบเดิม (Reversed) + ใบกลับรายการ (Posted) นับคู่กันจึงหักล้าง — เดิมตัดแค่ใบเดิม ⇒ มัดจำที่ยกเลิกโผล่ติดลบ
+                    && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status))
                 .Select(l => new { l.AccountId, Net = l.CreditAmount - l.DebitAmount, HasDoc = l.JournalEntry.SourceDocumentId != null })
                 .ToListAsync())
                 .Select(x => (x.AccountId, x.Net, x.HasDoc)).ToList();
@@ -9633,6 +9637,8 @@ public partial class DocumentService : IDocumentService
                     await transaction.RollbackAsync();
                     return;
                 }
+                // ทีม L ฝ่ายค้านข้อ 1: ใบขายบัตรคอร์สที่ใช้แล้ว ⇒ บล็อก · ยังไม่ใช้ ⇒ ปิดบัตรในธุรกรรมนี้ · ใบลดหนี้ที่ปิดบัตรแล้ว ⇒ บล็อก
+                await CreditPassDocumentHook.OnVoidAsync(_db, companyId, doc, doc.UpdatedBy ?? "document-void");
 
                 // รอบ 198 ทีม S4 (review198-S3 S3-8): ตรวจด่าน C-5 ซ้ำใต้ธุรกรรม — อ่านแถวรอบโอน FOR SHARE ⇒ ถ้าการลงบัญชีกำลังประทับ Posted
                 // (ถือ FOR UPDATE ระหว่างตรวจความครบ→commit) เส้นนี้รอแล้วเห็นสถานะใหม่ · เดิมตรวจก่อนเปิดธุรกรรมอย่างเดียว ⇒ รอบโอน Posted พร้อมชิ้นที่หาย
@@ -11923,6 +11929,8 @@ public partial class DocumentService : IDocumentService
                 throw new InvalidOperationException(
                     $"ยอดใบลดหนี้รวม ({cnSiblingSum + doc.TotalAmount:N2}) เกินยอดเอกสารต้นฉบับ " +
                     $"{source.DocumentNumber} ({source.TotalAmount:N2}) — §86/10 ลดหนี้เกินยอดเดิมไม่ได้");
+            // ทีม L ฝ่ายค้านข้อ 1: ใบต้นทางเป็นใบขายบัตรคอร์ส ⇒ ลดหนี้ได้เฉพาะส่วนที่ยังไม่รับรู้ทั้งก้อน + ปิดบัตรในธุรกรรมนี้ (ตัวตัดสิน CreditPassDocumentRule)
+            await CreditPassDocumentHook.OnCreditNoteApprovedAsync(_db, companyId, doc, source, doc.UpdatedBy ?? "document-approve");
 
             // CN: validation depends on source state.
             // - If source still has BalanceDue > 0: CN reduces AR/AP, capped by BalanceDue
@@ -17247,9 +17255,8 @@ public partial class DocumentService : IDocumentService
 
         var yearStart = new DateTime(year, 1, 1);
         var yearEnd = new DateTime(year, 12, 31);
-        var actuals = await _db.JournalEntryLines.AsNoTracking()
+        var actuals = await Accounting.Helpers.ReportableJournal.WherePeriodActivity(_db.JournalEntryLines).AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
                 && l.JournalEntry.EntryDate >= yearStart && l.JournalEntry.EntryDate <= yearEnd
                 && accIds.Contains(l.AccountId))
             .GroupBy(l => l.AccountId)
@@ -19887,8 +19894,8 @@ public partial class DocumentService : IDocumentService
         var thbAmount = fx == 1m ? payment.Amount : Math.Round(payment.Amount * fx, 2, MidpointRounding.AwayFromZero);
         var thbCash = settleFx == fx ? thbAmount
             : Math.Round(payment.Amount * settleFx, 2, MidpointRounding.AwayFromZero);
-        var thbWht = fx == 1m ? payment.WithholdingTaxAmount
-            : Math.Round(payment.WithholdingTaxAmount * fx, 2, MidpointRounding.AwayFromZero);
+        // ทีม F: ขา WHT ตอนจ่ายใช้อัตราของเอกสาร — เป้าเดียวกับ 50 ทวิ รายงวด (WithholdingTaxCertService ผูกยอดงวดเข้าหาค่านี้)
+        var thbWht = Accounting.Helpers.PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx);
         var postPerPaymentWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash && thbWht > 0m;
         // ผลต่าง FX ของงวดนี้ (คิดเฉพาะส่วนเงินสด — WHT ตัดที่ rate เอกสารทั้งคู่)
         var fxDiff = thbCash - thbAmount;   // >0 = ได้ THB มากขึ้น
@@ -20425,7 +20432,14 @@ public partial class DocumentService : IDocumentService
         WhtBorneByContract: d.WhtBorneByContract,
         WhtViaEWithholding: d.WhtViaEWithholding,
         // ค่าช่อง "แหล่งเงิน" ตามลำดับเดียวกับการลงบัญชี (PC#15 — หน้าเว็บ hydrate จากค่านี้ ไม่ตัดสินลำดับเอง)
-        PaymentChannel: Accounting.Helpers.DocumentMoneyChannel.ChannelValue(d.BankAccountId, d.PaymentAccountId));
+        PaymentChannel: Accounting.Helpers.DocumentMoneyChannel.ChannelValue(d.BankAccountId, d.PaymentAccountId),
+        // ทีม F — เก็บแล้วต้อง echo กลับ (กฎ #4 A) + สรุปหัก ณ ที่จ่ายต่อประเภทเงินได้ (บาท · ตัวคำนวณกลาง)
+        DocumentThbBase: d.DocumentThbBase,
+        ExchangeRateSource: d.ExchangeRateSource,
+        ExchangeRateSourceLabel: Accounting.Helpers.DocumentFx.SourceLabel(d.ExchangeRateSource),
+        WhtByIncomeType: d.WithholdingTaxAmount != 0m
+            ? Accounting.Helpers.PerLineWht.GroupsOf(d)?.Select(g => new WhtIncomeGroupDto(g.IncomeTypeCode, g.RatePercent, g.IncomeThb, g.WhtThb, g.LineCount)).ToList()
+            : null);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

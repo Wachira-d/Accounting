@@ -46,10 +46,13 @@ public class PlatformOwnerRound201Tests
     // ── C-4 ────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void C4_PlatformAdminCreator_GetsSupport_NotOwner()
+    public void C4_PlatformAdminCreator_GetsSupport_OnlyWhenOpeningForCustomer()
     {
-        Assert.Equal(UserRole.PlatformSupport, OwnershipTransferPolicy.CreatorRole(creatorIsPlatformAdmin: true));
-        Assert.Equal(UserRole.Owner, OwnershipTransferPolicy.CreatorRole(creatorIsPlatformAdmin: false));   // ผู้ใช้ทั่วไปเหมือนเดิม
+        // รอบ 205 ทีม I: support เฉพาะเมื่อแอดมินแพลตฟอร์มติ๊ก "เปิดให้ลูกค้า" — บริษัทของแอดมินเองต้องได้ Owner (เดิมได้ support ⇒ บริษัทไม่มีเจ้าของ)
+        Assert.Equal(UserRole.PlatformSupport, CompanyCreatorMembership.NewRow(Guid.Empty, Guid.Empty, creatorIsPlatformAdmin: true, openForCustomer: true).Role);
+        Assert.Equal(UserRole.Owner, CompanyCreatorMembership.NewRow(Guid.Empty, Guid.Empty, creatorIsPlatformAdmin: true, openForCustomer: false).Role);
+        Assert.Equal(UserRole.Owner, CompanyCreatorMembership.NewRow(Guid.Empty, Guid.Empty, creatorIsPlatformAdmin: false, openForCustomer: false).Role);   // ผู้ใช้ทั่วไปเหมือนเดิม
+        Assert.Equal(UserRole.Owner, CompanyCreatorMembership.NewRow(Guid.Empty, Guid.Empty, creatorIsPlatformAdmin: false, openForCustomer: true).Role);    // ติ๊กเองไม่มีผล
     }
 
     [Fact]

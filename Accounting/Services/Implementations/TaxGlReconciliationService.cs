@@ -402,7 +402,7 @@ public class TaxGlReconciliationService
                     && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided
                     && d.Status != DocumentStatus.Rejected
                     && d.DocumentDate >= start && d.DocumentDate < endExclusive)
-                .Select(d => new { d.Id, d.DocumentNumber, d.WithholdingTaxAmount })
+                .Select(d => new { d.Id, d.DocumentNumber, d.WithholdingTaxAmount, d.ExchangeRate })
                 .ToListAsync();
             var coveredDocIds = (await _db.WithholdingTaxCerts.AsNoTracking()
                 .Where(c => c.CompanyId == companyId && c.DocumentId != null
@@ -414,9 +414,10 @@ public class TaxGlReconciliationService
             var noCert = withheldDocs.Where(d => !coveredDocIds.Contains(d.Id) && !eWhtDocIds.Contains(d.Id)).ToList();
             if (noCert.Count > 0)
                 causes.Add(new ReconCause("NO_CERT",
-                    $"มีเอกสารที่หักภาษี ณ ที่จ่ายแล้ว {noCert.Count} ใบ รวม {noCert.Sum(d => d.WithholdingTaxAmount):N2} บาท "
+                    $"มีเอกสารที่หักภาษี ณ ที่จ่ายแล้ว {noCert.Count} ใบ รวม {noCert.Sum(d => Accounting.Helpers.PerLineWht.DocumentWhtThb(d.WithholdingTaxAmount, d.ExchangeRate)):N2} บาท "
                     + "แต่ยังไม่ได้ออกหนังสือรับรอง 50 ทวิ — แบบนำส่งอ่านจากทะเบียนหนังสือรับรอง จึงยังไม่นับ",
-                    noCert.Sum(d => d.WithholdingTaxAmount),
+                    // ทีม F (ฝ่ายค้านข้อ 4): บาท — เป้าเดียวกับ 50 ทวิ/JE (เดิมรวมยอดสกุลเอกสาร)
+                    noCert.Sum(d => Accounting.Helpers.PerLineWht.DocumentWhtThb(d.WithholdingTaxAmount, d.ExchangeRate)),
                     noCert.Select(d => d.Id).ToList(),
                     "หน้า \"หนังสือรับรองหัก ณ ที่จ่าย\" → ปุ่ม \"รอออกใบ\" → ออกใบให้ครบ → กด \"สร้างใหม่\" ที่รายงาน"));
 

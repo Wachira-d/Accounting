@@ -69,6 +69,13 @@ public partial class LodgingService
     private async Task<LodgingReservation> RequireReservationAsync(Guid companyId, Guid reservationId)
         => await ResQuery(companyId).FirstOrDefaultAsync(r => r.Id == reservationId) ?? throw new KeyNotFoundException("ไม่พบการจอง");
 
+    /// <summary>404 ก่อนขอล็อกต่อการจอง โดยไม่โหลดแถวเข้า change tracker (แถวที่อ่านหลังได้ล็อกต้องเป็นค่าล่าสุด)</summary>
+    private async Task EnsureReservationExistsAsync(Guid companyId, Guid reservationId)
+    {
+        if (!await _db.LodgingReservations.AsNoTracking().AnyAsync(r => r.Id == reservationId && r.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบการจอง");
+    }
+
     private async Task<LodgingReservation?> ByTokenAsync(Guid companyId, Guid siteId, string token)
     {
         if (string.IsNullOrWhiteSpace(token) || token.Length > 64) return null;
@@ -116,6 +123,89 @@ public partial class LodgingService
         return path == null ? null : (path, SlipContentType(path));
     }
 
+    /// <summary>
+    /// สลิปทุกใบของการจองให้พนักงานดูในโมดัล (ผู้ใช้รายงาน 2026-10-22: "สลิปรอตรวจ … เปิดดูสลิป" แต่ไม่มีที่ให้ดูสลิปจริง —
+    /// ลิงก์เดิมเปิดแท็บใหม่หลัง await ⇒ เบราว์เซอร์บล็อกป๊อปอัปแล้วตกเป็นดาวน์โหลดไฟล์ชื่อ "slip" ไม่มีนามสกุล)
+    ///
+    /// <para>อ่านอย่างเดียว · ทุก query มี <c>CompanyId == companyId</c> · ไฟล์จาก <c>FileAttachment</c> ของการจองนี้ (ทุกครั้งที่แขกส่งสลิป
+    /// <see cref="SaveSlipFileAsync"/> เขียนแถวไว้ ⇒ สลิปที่ถูกปฏิเสธ/ถูกส่งทับยังอยู่) · สถานะ/เหตุผลจาก <see cref="LodgingSlipGallery"/> ตัวเดียว ·
+    /// URL ทุกใบเป็น endpoint ที่ตรวจสิทธิ์ <c>LodgingManage</c> (ไม่มีพาธดิสก์ออกไปหน้าเว็บ)</para>
+    /// </summary>
+    public async Task<List<LodgingSlipItemDto>?> GetSlipGalleryAsync(Guid companyId, Guid reservationId)
+    {
+        var r = await _db.LodgingReservations.AsNoTracking()
+            .Where(x => x.Id == reservationId && x.CompanyId == companyId && !x.IsDeleted)
+            .Select(x => new { x.PaymentSlipUrl, x.SlipUploadedAt, x.PaymentReference })
+            .FirstOrDefaultAsync();
+        if (r == null) return null;
+        var files = await _db.FileAttachments.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && f.EntityType == SlipEntityType && f.EntityId == reservationId && !f.IsDeleted)
+            .OrderByDescending(f => f.CreatedAt).Take(50)
+            .Select(f => new LodgingSlipFileRow(f.Id, f.StoragePath, f.OriginalFileName, f.CreatedAt))
+            .ToListAsync();
+        var idText = reservationId.ToString();
+        var auditRows = await _db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.EntityType == SlipEntityType && a.EntityId == idText
+                     && a.NewValues != null && a.NewValues.Contains("Slip"))
+            .OrderByDescending(a => a.Timestamp).Take(200)
+            .Select(a => new { a.NewValues, a.Timestamp })
+            .ToListAsync();
+        var events = auditRows.Select(a => ParseSlipEvent(a.NewValues, a.Timestamp)).OfType<LodgingSlipEvent>().ToList();
+        var items = LodgingSlipGallery.Build(files, r.PaymentSlipUrl, r.SlipUploadedAt, r.PaymentReference, events);
+        var basePath = $"/api/companies/{companyId}/lodging/reservations/{reservationId}";
+        return items.Select(i =>
+        {
+            var path = ResolveSlipPath(i.StorageKey);
+            var ct = path == null ? null : SlipContentType(path);
+            return new LodgingSlipItemDto
+            {
+                AttachmentId = i.AttachmentId,
+                Url = path == null ? null : i.AttachmentId is Guid aid ? $"{basePath}/slips/{aid}" : $"{basePath}/slip",
+                ContentType = ct, IsImage = ct != null && ct.StartsWith("image/", StringComparison.Ordinal), FileMissing = path == null,
+                UploadedAt = i.UploadedAt, OriginalFileName = i.OriginalFileName,
+                State = i.State.ToString(), StateLabel = i.StateLabel,
+                RejectedReason = i.RejectedReason, RejectedAt = i.RejectedAt, Reference = i.Reference,
+            };
+        }).ToList();
+    }
+
+    public async Task<(string Path, string ContentType)?> GetSlipAttachmentFileAsync(Guid companyId, Guid reservationId, Guid attachmentId)
+    {
+        // ไฟล์ต้องเป็นของการจองนี้ + บริษัทนี้ (กันเดา id ไฟล์แนบของโมดูลอื่น/บริษัทอื่น) แล้วเดินด่านพาธตัวเดียวกับสลิปปัจจุบัน
+        var exists = await _db.LodgingReservations.AsNoTracking()
+            .AnyAsync(x => x.Id == reservationId && x.CompanyId == companyId && !x.IsDeleted);
+        if (!exists) return null;
+        var storagePath = await _db.FileAttachments.AsNoTracking()
+            .Where(f => f.Id == attachmentId && f.CompanyId == companyId && f.EntityType == SlipEntityType
+                     && f.EntityId == reservationId && !f.IsDeleted)
+            .Select(f => f.StoragePath).FirstOrDefaultAsync();
+        return SlipFile(LodgingSlipPath.StorageKey(storagePath));
+    }
+
+    /// <summary>EntityType ของไฟล์แนบ/ audit ของการจอง — ตรงกับที่ <see cref="SaveSlipFileAsync"/> และ <c>Audit()</c> เขียน</summary>
+    private const string SlipEntityType = "LodgingReservation";
+
+    /// <summary>อ่านเหตุการณ์สลิปจาก <c>AuditLog.NewValues</c> (<c>{ detail: { action, previousSlip|slipUrl, reason, reference } }</c>) —
+    /// แถวที่อ่านไม่ออก/ไม่ใช่เหตุการณ์สลิป = <c>null</c> (ข้ามไป ไม่ทำให้ทั้งแกลเลอรีล้ม)</summary>
+    private static LodgingSlipEvent? ParseSlipEvent(string? json, DateTime at)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("detail", out var d) || d.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            string? S(string name) => d.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+            var action = S("action");
+            return action switch
+            {
+                LodgingSlipGallery.RejectedAction => new LodgingSlipEvent(LodgingSlipGallery.RejectedAction, S("previousSlip"), S("reason"), null, at),
+                LodgingSlipGallery.UploadedAction => new LodgingSlipEvent(LodgingSlipGallery.UploadedAction, S("slipUrl"), null, S("reference"), at),
+                _ => null,
+            };
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
     public async Task<LodgingReservationResponse?> UploadSlipByTokenAsync(Guid companyId, Guid siteId, string token, IFormFile file, string? reference)
     {
         var r = await ByTokenAsync(companyId, siteId, token);
@@ -161,7 +251,7 @@ public partial class LodgingService
             // อัปโหลดสลิปแล้ว = ต่อเวลาถือห้องให้พนักงานตรวจ (ป้ายเวลาบนจอ · การกันห้องจริงอ่านจาก "มีสลิปรอตรวจ" ไม่ใช่เวลานี้)
             else if (r.Status == LodgingReservationStatus.Pending && r.HoldExpiresAt != null && r.HoldExpiresAt < DateTime.UtcNow.AddHours(24))
                 r.HoldExpiresAt = DateTime.UtcNow.AddHours(24);
-            _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "GuestUploadedSlip", reference, problem, confirmedBySlip }));
+            _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = LodgingSlipGallery.UploadedAction, reference, slipUrl = url, problem, confirmedBySlip }));
             await _db.SaveChangesAsync();
             return true;
         });
@@ -274,8 +364,18 @@ public partial class LodgingService
 
     public async Task<LodgingReservationResponse?> CancelByTokenAsync(Guid companyId, Guid siteId, string token, LodgingCancelRequest request)
     {
-        var r = await ByTokenAsync(companyId, siteId, token);
-        if (r == null) return null;
+        var found = await ByTokenAsync(companyId, siteId, token);
+        if (found == null) return null;
+        // ฝ่ายค้านทีม P ข้อ 1 (คำตัดสินข้อ 157): ล็อกต่อการจองตัวเดียวกับเส้นรับเงิน — อ่านสถานะใหม่หลังได้ล็อก
+        return await WithReservationLockAsync(companyId, found.Id, AdvisoryLockKey.LodgingConfirm, async () =>
+        {
+            await _db.Entry(found).ReloadAsync();
+            return await CancelByTokenLockedAsync(companyId, found, request);
+        });
+    }
+
+    private async Task<LodgingReservationResponse?> CancelByTokenLockedAsync(Guid companyId, LodgingReservation r, LodgingCancelRequest request)
+    {
         if (r.Status is LodgingReservationStatus.CheckedIn or LodgingReservationStatus.CheckedOut)
             throw new BusinessRuleException("เช็คอินแล้ว — กรุณาติดต่อที่พักโดยตรง");
         // ยกเลิกแล้ว/ไม่มาเข้าพัก = ตอบสถานะเดิม (แขกดับเบิลคลิก/กลับมากดวันหลัง) — ห้ามคิดค่าปรับซ้ำ (C3)
@@ -285,8 +385,9 @@ public partial class LodgingService
         {
             await CancelCoreAsync(companyId, r, request.Reason ?? "แขกยกเลิกเอง", "guest", noShow: false);
         }
-        catch (BusinessRuleException ex) when (ex.RuleCode == "LODGING-CANCEL-FORFEIT")
+        catch (BusinessRuleException ex) when (ex.RuleCode is "LODGING-CANCEL-FORFEIT" or "LODGING-CANCEL-ADVANCE")
         {
+            // ฝ่ายค้านทีม P ข้อ 2: ปรับใบกำกับล่วงหน้าไม่ครบ (ใบลดหนี้/ตัดชำระ) = งานพนักงานเช่นเดียวกัน — หมายเหตุ + audit อยู่บนการจองแล้ว
             // P9 — การยกเลิกสำเร็จแล้ว (สถานะถูกบันทึกก่อนลงบัญชี) · ส่วนที่ล้มคือการลงรายได้ส่วนที่ริบ ซึ่งเป็นงานของพนักงาน
             // (หมายเหตุ + audit บนการจองแล้ว) — แขกต้องไม่เห็นข้อความภายใน/HTTP 400 ทั้งที่ยกเลิกสำเร็จ
             _logger.LogError(ex, "Guest cancel {No}: ยกเลิกแล้วแต่ลงรายได้ส่วนที่ริบไม่สำเร็จ", r.ReservationNumber);
@@ -481,8 +582,8 @@ public partial class LodgingService
         await _db.Entry(r).ReloadAsync();   // P2-1: ค่าหลังได้ล็อก (ผู้เรียกอาจถือแถวที่อ่านไว้ก่อน)
         if (Terminal.Contains(r.Status)) throw new BusinessRuleException($"การจองอยู่ในสถานะ {StatusTh(r.Status)} — ยืนยันไม่ได้");
         // webhook + poll ของเงินก้อนเดียวกัน: คำขอที่สองเห็นเลขอ้างอิงเดิมถูกบันทึกแล้ว ⇒ ตอบสถานะปัจจุบัน (ไม่ออกใบมัดจำซ้ำ)
-        if (fromOnlinePayment && !string.IsNullOrWhiteSpace(request.PaymentReference)
-            && r.PaymentReference == request.PaymentReference && r.DepositPaid > 0m)
+        // ตัวตัดสินเดียวกับ LodgingReservationPaymentHandler (GatewayPaymentRecord — เลขอ้างอิง ไม่ใช่ยอดเงิน · รอบ 205 ทีม E)
+        if (fromOnlinePayment && GatewayPaymentRecord.AlreadyRecordedOnReservation(r.PaymentReference, r.DepositPaid, request.PaymentReference))
             return await MapAsync(companyId, r, true, true);
         // ฝ่ายค้านรอบ 202 P1-3ค: เงินออนไลน์ที่เข้าแล้วแต่ยืนยันไม่ได้ ⇒ พนักงานยืนยันภายหลัง ใบมัดจำต้องลงบัญชีพักของช่องทางชำระจากรายการนั้น
         // (เซิร์ฟเวอร์ตัดสิน — ไม่พึ่งบัญชีที่หน้าจอส่งมา)
@@ -511,7 +612,25 @@ public partial class LodgingService
             // รับเงินไว้บนการจองตามปกติ และ**ยังนับมิเตอร์เท่าเดิม** (§13.3)
             if (r.Property.AccountingMode != LodgingAccountingMode.Off)
             {
-                var doc = await CreateDepositReceiptAsync(companyId, r, amount, request, userId, moneyInAccountId);
+                // คำตัดสินข้อ 157: เงินเข้า = จุดตัดสินจังหวะออกใบกำกับ (ตัวตัดสินเดียว LodgingTaxInvoiceTimingPolicy · ทุกทางเข้าของเงินเดินเส้นนี้:
+                // ออนไลน์ · บันทึกรับตามสลิป · ยืนยัน+รับมัดจำ · รับชำระเพิ่ม/ระหว่างพัก) — โหมด "ใบกำกับเมื่อยืนยัน/รับเงินครั้งแรก" ออกใบกำกับเต็มยอดก่อน
+                // แล้วใบรับเงินไม่มี VAT · ค่าเริ่มต้น/ใบล่วงหน้าถูกยกเลิก ⇒ advance = null ⇒ ใบมัดจำตามประเภทเงินมัดจำเดิมทุกตัวอักษร
+                LodgingAdvanceDoc? advance;
+                try
+                {
+                    advance = await EnsureAdvanceTaxInvoiceAsync(companyId, r, LodgingTaxTrigger.MoneyReceived, userId);
+                }
+                catch (Exception advEx) when (advEx is not OperationCanceledException)
+                {
+                    // ฝ่ายค้านทีม P ข้อ 3: ใบล่วงหน้าล้ม ⇒ ห้ามทำให้รับเงินไม่ได้ทั้งก้อน — ถอยไปใบมัดจำตามประเภทเงินมัดจำเดิม (tax point = วันรับเงิน) ·
+                    // ล้มดังบนตัวการจอง (หมายเหตุ + audit) · มัดจำที่มี VAT ทำให้การจองนี้คงจังหวะเดิมต่อ (ตัวตัดสินไม่ออกใบล่วงหน้าซ้อน)
+                    AppendInternal(r, LodgingTaxInvoiceTimingPolicy.AdvanceFailedOnMoneyNote(advEx.Message));
+                    _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "AdvanceTaxInvoiceFailedFallbackDeposit", error = advEx.Message, by = userId }));
+                    _logger.LogError(advEx, "ออกใบกำกับภาษีล่วงหน้าของการจอง {No} ไม่สำเร็จ — ถอยไปใบมัดจำตามประเภทเงินมัดจำ", r.ReservationNumber);
+                    advance = null;
+                }
+                var coveredBy = LodgingTaxInvoiceTimingPolicy.DepositCoveredByAdvance(advance?.State ?? LodgingAdvanceState.None) ? advance?.Number : null;
+                var doc = await CreateDepositReceiptAsync(companyId, r, amount, request, userId, moneyInAccountId, coveredBy);
                 r.DepositDocumentId ??= doc.Id;
             }
             r.DepositPaid += amount; r.PaidAmount += amount;
@@ -538,6 +657,9 @@ public partial class LodgingService
         r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
         _db.AddChainedAuditLog(Audit(companyId, AuditAction.Approve, r, new { action = "Confirm", depositReceived = amount, method = request.PaymentMethod.ToString(), by = userId }));
         await _db.SaveChangesAsync();
+        // คำตัดสินข้อ 157: พนักงานยืนยันโดยยังไม่มีเงินเข้า ⇒ โหมด "ใบกำกับเมื่อยืนยัน" ออกใบกำกับล่วงหน้า (ล้ม = ล้มดังบนการจอง ไม่ย้อนการยืนยัน)
+        if (confirmedNow && explicitConfirm && amount <= 0 && r.Property.AccountingMode != LodgingAccountingMode.Off)
+            await TryIssueAdvanceOnStaffConfirmAsync(companyId, r, LodgingTaxTrigger.StaffConfirm, userId);
         if (confirmedNow) await TryNotifyAsync(companyId, r.Id, "confirmed");
         return await MapAsync(companyId, r, true, true);
     }
@@ -699,23 +821,29 @@ public partial class LodgingService
     /// · รูปของใบ (VAT บรรทัด + ธง 21913) มาจากวิธีบันทึกมัดจำที่ตัดสินแล้ว (รอบ 193 #34) — DocumentService
     /// ลง JE จากช่องเหล่านี้ตามเส้นเดิม ไม่มีเส้นใหม่ · VatImmediate = หัว "ใบกำกับภาษี/ใบเสร็จรับเงิน"
     /// (เมื่อข้อมูลผู้ซื้อครบ §86/4) → เลขชุด TIV ผ่าน TaxInvoiceSeriesPolicy + ภ.พ.30 เดือนที่รับเงิน</summary>
-    private async Task<DocumentResponse> CreateDepositReceiptAsync(Guid companyId, LodgingReservation r, decimal amount, LodgingConfirmRequest req, string userId, Guid? moneyInAccountId = null)
+    /// <param name="coveredByAdvanceNumber">คำตัดสินข้อ 157: เลขใบกำกับภาษีล่วงหน้าที่ยังมีผล — ภาษีของค่าห้องอยู่ในใบนั้นแล้ว ⇒ ใบรับเงินนี้ไม่มี VAT
+    /// (รูปเดียวกับ "มัดจำเต็มยอด" · ไม่ตรึงประเภทเงินมัดจำ — ตามประเภทจะได้ VAT ซ้อน) · null = ตามประเภทเงินมัดจำเดิมทุกตัวอักษร</param>
+    private async Task<DocumentResponse> CreateDepositReceiptAsync(Guid companyId, LodgingReservation r, decimal amount, LodgingConfirmRequest req, string userId, Guid? moneyInAccountId = null,
+        string? coveredByAdvanceNumber = null)
     {
         var prop = r.Property;
         var vatRate = await EffectiveVatRateAsync(companyId, prop);
         // รอบ 194 (spec S4): ประเภทของที่พัก → ค่าเดิมของที่พัก → ประเภทเริ่มต้นบริษัท → ค่าบริษัท → ประเภทธุรกิจ (ตัวตัดสินตัวเดียว)
         var kind = await DepositKindForAsync(companyId, prop);
-        var legacyShape = DepositPolicyResolver.ShapeFor(kind.Treatment, vatRate);
+        var covered = coveredByAdvanceNumber != null;
+        var legacyShape = DepositPolicyResolver.ShapeFor(covered ? DepositVatTreatment.FullDeposit : kind.Treatment, vatRate);
         var product = await FirstRoomProductCodeAsync(companyId, r);
         var lines = new List<DocumentLineRequest>
         {
-            new(Description: $"มัดจำค่าห้องพัก {prop.Name} — จอง {r.ReservationNumber} ({RoomSummary(r)})",
+            new(Description: covered
+                    ? $"รับชำระค่าห้องพัก {prop.Name} ตามใบกำกับภาษีล่วงหน้า {coveredByAdvanceNumber} — จอง {r.ReservationNumber} ({RoomSummary(r)})"
+                    : $"มัดจำค่าห้องพัก {prop.Name} — จอง {r.ReservationNumber} ({RoomSummary(r)})",
                 Quantity: 1, Unit: "รายการ", UnitPrice: amount, DiscountPercent: 0, VatRate: legacyShape.LineVatRate, WithholdingTaxRate: 0,
                 AccountId: null, ProductCode: product)
         };
         // ไม่มีประเภทเลย (บริษัทที่ยังไม่ถูก seed) ⇒ decision = null ⇒ รูปใบเดิมทุกตัวอักษร · มีประเภท ⇒ ตัวจัดรูปตัวเดียว
         // (DocumentService จัดซ้ำจาก DepositKindId ด้วยตัวเดียวกัน — ผลเท่ากัน) · นอกระบบ VAT ⇒ VAT 0 + หมายเหตุ RD-81
-        var shaped = DepositDocumentShaping.Apply(lines, kind.KindId is null ? null : kind, vatRate,
+        var shaped = DepositDocumentShaping.Apply(lines, covered || kind.KindId is null ? null : kind, vatRate,
             legacyShape.DepositOutputVatDeferred, prop.DepositDeferredAccountCode);
         var request = new CreateDocumentRequest(
             DocumentType: DocumentType.Receipt,
@@ -723,7 +851,8 @@ public partial class LodgingService
             DueDate: null,
             ContactId: r.ContactId ?? throw new BusinessRuleException("การจองไม่มีผู้ติดต่อ (Contact) — แก้ไขข้อมูลแขกก่อน"),
             Reference: r.ReservationNumber,
-            Notes: $"มัดจำการจองที่พัก {r.ReservationNumber} · เข้าพัก {r.CheckInDate:dd/MM/yyyy}–{r.CheckOutDate:dd/MM/yyyy} ({r.Nights} คืน)",
+            Notes: $"มัดจำการจองที่พัก {r.ReservationNumber} · เข้าพัก {r.CheckInDate:dd/MM/yyyy}–{r.CheckOutDate:dd/MM/yyyy} ({r.Nights} คืน)"
+                + (covered ? $" · ภาษีขายของค่าห้องอยู่ในใบกำกับภาษีล่วงหน้า {coveredByAdvanceNumber} แล้ว (ใบนี้ไม่มี VAT · ตัดชำระใบนั้นตอนเช็คเอาต์)" : ""),
             Lines: shaped.Lines.ToList(),
             PricesIncludeVat: true,
             BankAccountId: req.BankAccountId,
@@ -737,7 +866,7 @@ public partial class LodgingService
             BookingNumber: r.ReservationNumber,
             PaymentType: null,
             // สัญญาทีม B รอบ 194: ส่ง id ประเภท ⇒ CreateDocumentAsync ตรึงประเภท/ลักษณะ/ชื่อลงใบ + จัดรูปด้วยตัวเดียวกัน
-            DepositKindId: kind.KindId);
+            DepositKindId: covered ? null : kind.KindId);
         // P1 (รอบ 194 regsec): ส่งอัตรา VAT ของที่พักเข้าตัวจัดรูป — ที่พักที่ไม่คิด VAT (ChargeVat=false) คงรูปใบ VAT 0 ไม่เลื่อน
         // (เดิมเซิร์ฟเวอร์จัดซ้ำด้วยอัตราบริษัท ⇒ กลายเป็น "มัดจำเต็มยอด" แล้วตอนริบได้ใบกำกับ 7%) · พารามิเตอร์เมธอด ไม่ใช่ช่องใน request
         var created = await _docService.CreateDocumentAsync(companyId, request, userId, LodgingOrigin, depositChannelVatRate: vatRate);
@@ -747,23 +876,35 @@ public partial class LodgingService
         var posted = (depDoc != null ? DepositPolicyResolver.OfDocument(true, depDoc.VatAmount, depDoc.DepositOutputVatDeferred) : null)
             ?? kind.Treatment;
         if (depDoc != null)
-            depDoc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(depDoc.InternalNotes,
-                $"[วิธีบันทึกมัดจำ] {kind.Name} ({NatureLabelTh(kind.Nature)}) · {DepositPolicyResolver.LabelOf(posted)} · ที่มา: {KindSourceTh(kind.Source)} · "
-                + DepositPolicyResolver.DescribePosting(posted, amount, vatRate)
-                + (kind.Warning != null ? $" · {kind.RuleCode}: {kind.Warning}" : ""));
+            depDoc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(depDoc.InternalNotes, covered
+                ? $"[วิธีบันทึกมัดจำ] รับเงินล่วงหน้าตามใบกำกับภาษีล่วงหน้า {coveredByAdvanceNumber} (คำตัดสินข้อ 157) · {DepositPolicyResolver.LabelOf(posted)} · "
+                  + DepositPolicyResolver.DescribePosting(posted, amount, vatRate)
+                : $"[วิธีบันทึกมัดจำ] {kind.Name} ({NatureLabelTh(kind.Nature)}) · {DepositPolicyResolver.LabelOf(posted)} · ที่มา: {KindSourceTh(kind.Source)} · "
+                  + DepositPolicyResolver.DescribePosting(posted, amount, vatRate)
+                  + (kind.Warning != null ? $" · {kind.RuleCode}: {kind.Warning}" : ""));
         await _db.SaveChangesAsync();   // บันทึกหมายเหตุก่อนอนุมัติ — ขั้นอนุมัติอาจ reload เอกสารจาก DB
         // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
         var approvedDeposit = await _docService.ApproveDocumentAsync(companyId, created.Id, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
-        if (kind.Warning != null)
+        if (kind.Warning != null && !covered)
             AppendInternal(r, $"มัดจำ {amount:N2} บันทึกแบบ \"{DepositPolicyResolver.LabelOf(posted)}\" ({kind.Name}) — {kind.Warning}");
         // audit: ประเภทไหน · ใช้โหมดไหน · ใครตั้ง · ยอด JE ที่คาดหวังของโหมดนั้น (ให้ผู้ตรวจเทียบกับ JE จริงของใบได้)
-        _db.AddChainedAuditLog(Audit(companyId, AuditAction.Create, r, new
-        {
-            action = "DepositReceipt", document = approvedDeposit.DocumentNumber,
-            kind = kind.Code, nature = kind.Nature.ToString(),
-            treatment = posted.ToString(), source = kind.Source.ToString(), ruleCode = kind.RuleCode,
-            expectedPosting = DepositPolicyResolver.PreviewReceipt(posted, amount, vatRate), by = userId,
-        }));
+        // ฝ่ายค้านทีม P ข้อ 5: ค่าเริ่มต้น = payload audit เดิมทุกคีย์ · ใบที่ภาษีอยู่ในใบกำกับล่วงหน้า (ข้อ 157) = payload ของตัวเอง
+        object depositAudit = covered
+            ? new
+            {
+                action = "DepositReceipt", document = approvedDeposit.DocumentNumber,
+                coveredByAdvance = coveredByAdvanceNumber,
+                treatment = posted.ToString(),
+                expectedPosting = DepositPolicyResolver.PreviewReceipt(posted, amount, vatRate), by = userId,
+            }
+            : new
+            {
+                action = "DepositReceipt", document = approvedDeposit.DocumentNumber,
+                kind = kind.Code, nature = kind.Nature.ToString(),
+                treatment = posted.ToString(), source = kind.Source.ToString(), ruleCode = kind.RuleCode,
+                expectedPosting = DepositPolicyResolver.PreviewReceipt(posted, amount, vatRate), by = userId,
+            };
+        _db.AddChainedAuditLog(Audit(companyId, AuditAction.Create, r, depositAudit));
         return created;
     }
 
@@ -1080,7 +1221,11 @@ public partial class LodgingService
 
     public async Task<LodgingReservationResponse> CheckOutAsync(Guid companyId, Guid reservationId, LodgingCheckOutRequest request, string userId)
     {
-        return await ExclusiveCheckoutAsync(companyId, reservationId, () => CheckOutCoreAsync(companyId, reservationId, request, userId));
+        // ฝ่ายค้านทีม P ข้อ 1 (คำตัดสินข้อ 157): ถือล็อกต่อการจองตัวเดียวกับเส้นรับเงิน/ออกใบกำกับล่วงหน้าก่อน แล้วจึงล็อกเช็คเอาต์ (ลำดับเดียวทุกเส้น ·
+        // ไม่มีเส้นไหนถือ LodgingCheckout แล้วขอ LodgingConfirm) — เงินเข้าพร้อมเช็คเอาต์ต้องไม่ได้ใบล่วงหน้าซ้อนใบเช็คเอาต์เต็มยอด
+        await EnsureReservationExistsAsync(companyId, reservationId);   // 404 ก่อนขอล็อก (ไม่ติดตามแถว — CheckOutCoreAsync อ่านแถวหลังได้ล็อก)
+        return await WithReservationLockAsync(companyId, reservationId, AdvisoryLockKey.LodgingConfirm,
+            () => ExclusiveCheckoutAsync(companyId, reservationId, () => CheckOutCoreAsync(companyId, reservationId, request, userId)));
     }
 
     /// <summary>ล็อกต่อการจอง (ข้ามเครื่องได้) ของเส้นเช็คเอาต์และออกใบเช็คเอาต์ใหม่ (รอบ 201 ฝ่ายค้าน X7) — คีย์คงที่
@@ -1139,6 +1284,10 @@ public partial class LodgingService
             // เท่ากับโหมดปกติ (ลูกค้าเลือกทิ้งมูลค่าส่วนเอกสารเอง ไม่ใช่ได้ใช้ฟรี)
             if (prop.AccountingMode == LodgingAccountingMode.Off)
                 return await CheckOutWithoutDocumentAsync(companyId, r, request, userId);
+            // คำตัดสินข้อ 157: ใบกำกับล่วงหน้าที่ยังมีผล ⇒ ค่าห้องอยู่ในใบนั้นแล้ว — เช็คเอาต์ออกเฉพาะส่วนเพิ่ม/รายการระหว่างพัก (ยอดลด = ใบลดหนี้) ·
+            // ตัดสินจากเอกสารที่ผูกจริง ไม่ใช่ค่าตั้ง (ใบล่วงหน้าถูกยกเลิก = เช็คเอาต์ตามปกติ ใบเต็มยอด)
+            if (await LoadAdvanceAsync(companyId, r) is { State: LodgingAdvanceState.Live } advance)
+                return await CheckOutWithAdvanceAsync(companyId, r, advance, request, userId);
             var (registered, vatRate) = await VatProfileAsync(companyId, prop);
             var docType = vatRate > 0 ? DocumentType.TaxInvoice : DocumentType.Invoice;
 
@@ -1169,16 +1318,7 @@ public partial class LodgingService
                     "LODGING-DEPOSIT-CONTACT");
 
             // ── รายการใหม่ของเช็คเอาต์: สร้างแต่ยังไม่ผูกกับการจอง — ผูกหลังออกใบสำเร็จ (สร้างเอกสารล้ม = ไม่มีอะไรค้าง) ──
-            var newCharges = new List<LodgingFolioCharge>();
-            if (request.DamageCharge is decimal dmg && dmg > 0)
-                newCharges.Add(await BuildChargeAsync(companyId, r, new LodgingAddChargeRequest(
-                    Description: "ค่าเสียหาย/ของหาย" + (string.IsNullOrWhiteSpace(request.DamageDescription) ? "" : $" — {request.DamageDescription.Trim()}"),
-                    Quantity: 1, UnitPrice: dmg, Source: LodgingChargeSource.System), userId));
-            // ── ค่าเช็คเอาต์ช้า (LDG-P2-06) — คู่กับ EarlyCheckInFee ที่ต่อสายตอนเช็คอิน ──
-            if (request.ChargeLateCheckOut && prop.LateCheckOutFee > 0)
-                newCharges.Add(await BuildChargeAsync(companyId, r, new LodgingAddChargeRequest(
-                    Description: $"ค่าเช็คเอาต์ช้า (หลัง {Time(prop.CheckOutTime)} น.)",
-                    Quantity: 1, UnitPrice: prop.LateCheckOutFee, Source: LodgingChargeSource.System), userId));
+            var newCharges = await NewCheckoutChargesAsync(companyId, r, prop, request, userId);
 
             var pendingCharges = r.Charges.Where(c => c.Status == LodgingChargeStatus.Pending).Concat(newCharges).ToList();
             // ตัวสร้างรายการใบสุดท้ายตัวเดียวของที่พัก — เส้นเช็คเอาต์และเส้น "ออกใบเช็คเอาต์ใหม่" (A-IN5) เรียกตัวเดียวกัน
@@ -1260,6 +1400,23 @@ public partial class LodgingService
         }
     }
 
+    /// <summary>รายการใหม่ของเช็คเอาต์ (ค่าเสียหาย · ค่าเช็คเอาต์ช้า LDG-P2-06 คู่กับ EarlyCheckInFee ตอนเช็คอิน) — สร้างแต่ยังไม่ผูกกับการจอง
+    /// (ผูกหลังออกใบสำเร็จ · สร้างเอกสารล้ม = ไม่มีอะไรค้าง) · ตัวเดียวของเช็คเอาต์ปกติและเช็คเอาต์บนใบกำกับล่วงหน้า (ข้อ 157)</summary>
+    private async Task<List<LodgingFolioCharge>> NewCheckoutChargesAsync(Guid companyId, LodgingReservation r, LodgingProperty prop,
+        LodgingCheckOutRequest request, string userId)
+    {
+        var newCharges = new List<LodgingFolioCharge>();
+        if (request.DamageCharge is decimal dmg && dmg > 0)
+            newCharges.Add(await BuildChargeAsync(companyId, r, new LodgingAddChargeRequest(
+                Description: "ค่าเสียหาย/ของหาย" + (string.IsNullOrWhiteSpace(request.DamageDescription) ? "" : $" — {request.DamageDescription.Trim()}"),
+                Quantity: 1, UnitPrice: dmg, Source: LodgingChargeSource.System), userId));
+        if (request.ChargeLateCheckOut && prop.LateCheckOutFee > 0)
+            newCharges.Add(await BuildChargeAsync(companyId, r, new LodgingAddChargeRequest(
+                Description: $"ค่าเช็คเอาต์ช้า (หลัง {Time(prop.CheckOutTime)} น.)",
+                Quantity: 1, UnitPrice: prop.LateCheckOutFee, Source: LodgingChargeSource.System), userId));
+        return newCharges;
+    }
+
     /// <summary>คืนสถานะ "เช็คเอาต์แล้ว (ระบบรุ่นก่อน)" เมื่อการออกใบย้อนหลังล้มก่อนออกเลขใบ — หมายเหตุ + audit · บันทึกล้มเอง ⇒ log error (ไม่กลบ error เดิม ·
     /// แถวที่ค้าง "เช็คอิน + มีเวลาเช็คเอาต์" ไม่กันห้อง (EffectiveCheckOut) และขึ้นป้ายค้างปิดให้เห็น)</summary>
     private async Task RestoreLegacyAutoCheckoutAsync(Guid companyId, LodgingReservation r, Exception cause, string userId)
@@ -1320,8 +1477,9 @@ public partial class LodgingService
     /// <summary>รายการของใบสุดท้าย (ใบเช็คเอาต์) — <b>ตัวสร้างเดียวของที่พัก</b> (รอบ 201 ทีม IN · A-IN5): ค่าห้องรายห้อง · บริการเสริม
     /// (ยอดรวมต่อรายการ) · รายการ folio ที่ส่งมา · service charge · ใช้ทั้งเช็คเอาต์ (folio ที่ค้าง + รายการใหม่) และการออกใบใหม่หลังใบเดิม
     /// ถูกยกเลิก (folio ที่ออกเอกสารแล้ว) ⇒ ใบแทนได้รายการชุดเดียวกับใบเดิมเสมอ</summary>
+    /// <param name="includeStay">false = เฉพาะรายการ folio ที่ส่งมา (ใบเช็คเอาต์ส่วนเพิ่มเมื่อค่าห้องอยู่ในใบกำกับล่วงหน้าแล้ว · คำตัดสินข้อ 157)</param>
     private async Task<List<DocumentLineRequest>> BuildFinalInvoiceLinesAsync(Guid companyId, LodgingReservation r, LodgingProperty prop,
-        bool registered, decimal vatRate, IReadOnlyList<LodgingFolioCharge> charges)
+        bool registered, decimal vatRate, IReadOnlyList<LodgingFolioCharge> charges, bool includeStay = true)
     {
         var roomTypeIds = r.Rooms.Select(x => x.RoomTypeId).Distinct().ToList();
         var productCodes = await (from rt in _db.LodgingRoomTypes.AsNoTracking()
@@ -1334,12 +1492,12 @@ public partial class LodgingService
             .ToDictionaryAsync(p => p.Id, p => p.Code);
 
         var lines = new List<DocumentLineRequest>();
-        foreach (var room in r.Rooms)
+        foreach (var room in includeStay ? r.Rooms : Enumerable.Empty<LodgingReservationRoom>())
             lines.Add(new(
                 Description: $"ค่าห้องพัก {room.RoomTypeName}{(room.Unit != null ? $" ห้อง {room.Unit.Number}" : "")} {r.Nights} คืน ({r.CheckInDate:dd/MM/yyyy}–{r.CheckOutDate:dd/MM/yyyy})",
                 Quantity: 1, Unit: "รายการ", UnitPrice: room.Subtotal, DiscountPercent: 0, VatRate: vatRate, WithholdingTaxRate: 0,
                 AccountId: null, AccountCode: prop.RoomRevenueAccountCode, ProductCode: productCodes.GetValueOrDefault(room.RoomTypeId)));
-        foreach (var e in r.Extras)
+        foreach (var e in includeStay ? r.Extras : Enumerable.Empty<LodgingReservationExtra>())
             // Total ของบริการเสริมคูณด้วยคืน/คน ตามโหมด (ไม่ใช่ UnitPrice×Quantity ตรง ๆ) —
             // จึงลงเป็น 1 รายการยอดรวม ห้ามหาร Total/Quantity แล้วปัด (ยอดเพี้ยน 0.01)
             lines.Add(new(Description: $"{e.Name} ×{e.Quantity}", Quantity: 1, Unit: "รายการ", UnitPrice: e.Total,
@@ -1350,7 +1508,7 @@ public partial class LodgingService
             lines.Add(new(Description: c.Description, Quantity: c.Quantity, Unit: "รายการ", UnitPrice: c.UnitPrice, DiscountPercent: 0,
                 VatRate: LodgingPricingEngine.ChargeVatRate(c.VatRate, registered, vatRate), WithholdingTaxRate: 0, AccountId: null,
                 ProductCode: c.ProductId != null ? extraCodes.GetValueOrDefault(c.ProductId.Value) : null));
-        if (r.ServiceChargeAmount > 0)
+        if (includeStay && r.ServiceChargeAmount > 0)
             lines.Add(new(Description: $"Service charge {prop.ServiceChargePercent:0.##}%", Quantity: 1, Unit: "รายการ", UnitPrice: r.ServiceChargeAmount,
                 DiscountPercent: 0, VatRate: vatRate, WithholdingTaxRate: 0, AccountId: null, AccountCode: prop.ServiceChargeAccountCode));
         return lines;
@@ -1374,6 +1532,11 @@ public partial class LodgingService
         var accountingOff = prop.AccountingMode == LodgingAccountingMode.Off;
         var oldId = r.FinalDocumentId
             ?? throw new BusinessRuleException("การจองนี้ยังไม่มีใบเช็คเอาต์ — ใช้ปุ่ม “เช็คเอาต์”", LodgingCheckoutReissue.RuleCode);
+        // คำตัดสินข้อ 157: ค่าห้องอยู่ในใบกำกับล่วงหน้า — ตัวสร้างใบเต็มยอดใช้ไม่ได้ (จะออกค่าห้องซ้ำ) ⇒ ออกใบแทนที่หน้าเอกสาร
+        if (await LoadAdvanceAsync(companyId, r) is { State: LodgingAdvanceState.Live } advance)
+            throw new BusinessRuleException(
+                $"การจองนี้มีใบกำกับภาษีล่วงหน้า {advance.Number} (ค่าห้องอยู่ในใบนั้นแล้ว) — ออกใบแทนใบเช็คเอาต์ที่หน้าเอกสาร (เฉพาะรายการระหว่างพัก/ส่วนเพิ่ม อ้างเลขจอง)",
+                LodgingCheckoutReissue.RuleCode);
         var old = await _docService.GetDocumentAsync(companyId, oldId);
 
         var (registered, vatRate) = await VatProfileAsync(companyId, prop);
@@ -1648,7 +1811,19 @@ public partial class LodgingService
 
     public async Task<LodgingReservationResponse> CancelAsync(Guid companyId, Guid reservationId, LodgingCancelRequest request, string userId, bool noShow = false)
     {
-        var r = await RequireReservationAsync(companyId, reservationId);
+        // ฝ่ายค้านทีม P ข้อ 1 (คำตัดสินข้อ 157): ล็อกต่อการจองตัวเดียวกับเส้นรับเงิน/ออกใบกำกับล่วงหน้า — เงินเข้าพร้อมยกเลิก ⇒ ใบล่วงหน้าค้างบนการจองที่ยกเลิก
+        // ลำดับล็อกทุกเส้น: LodgingConfirm → (LodgingCheckout) → ที่พัก (xact) · อ่านแถวใหม่หลังได้ล็อก
+        await EnsureReservationExistsAsync(companyId, reservationId);   // 404 ก่อนขอล็อก
+        return await WithReservationLockAsync(companyId, reservationId, AdvisoryLockKey.LodgingConfirm, async () =>
+        {
+            var locked = await RequireReservationAsync(companyId, reservationId);
+            await _db.Entry(locked).ReloadAsync();
+            return await CancelLockedAsync(companyId, locked, request, userId, noShow);
+        });
+    }
+
+    private async Task<LodgingReservationResponse> CancelLockedAsync(Guid companyId, LodgingReservation r, LodgingCancelRequest request, string userId, bool noShow)
+    {
         // รอบ 202 (O-P0-2): no-show ที่ night audit รุ่นก่อนประทับเองโดยไม่คิดค่าปรับ/ตั้งยอดคืน ⇒ พนักงานกด "No-show" ได้หนึ่งครั้งเพื่อเดินเส้นยกเลิกปกติ
         var legacyNoShow = noShow && LodgingOverdueRule.IsLegacyAutoNoShow(r.Status, r.CancellationReason, r.CancellationFee, r.RefundAmount);
         if (Terminal.Contains(r.Status) && !legacyNoShow) throw new BusinessRuleException($"การจองอยู่ในสถานะ {StatusTh(r.Status)} แล้ว");
@@ -1719,6 +1894,17 @@ public partial class LodgingService
         // ติดธงให้พนักงานตัดสิน (ทั้งเส้นแขก token / พนักงาน / no-show เพราะทุกเส้นเดินตัวกลางนี้) · ไม่ประทับยอดคืนเอง (R1)
         if (LodgingGuestConfirmPolicy.CancelLeavesUnverifiedSlip(r.SlipUploadedAt != null, r.DepositPaid))
             await FlagPaymentProblemAsync(companyId, r.Id, LodgingGuestConfirmPolicy.UnverifiedSlipOnCancelNote(noShow), noShow ? "no-show" : "cancel");
+
+        // คำตัดสินข้อ 157: ใบกำกับล่วงหน้าที่ยังมีผล ⇒ ภาษีของค่าห้องอยู่ในใบนั้น — ใบลดหนี้ส่วนที่ไม่เรียกเก็บ + ตัดชำระด้วยมัดจำที่ริบ
+        // (แทนการริบเป็นรายได้ซึ่งจะออกใบกำกับของยอดที่ริบซ้อน) · ตัดสินจากเอกสารที่ผูก ไม่ใช่ค่าตั้ง
+        if (r.Property.AccountingMode != LodgingAccountingMode.Off
+            && await LoadAdvanceAsync(companyId, r) is { State: LodgingAdvanceState.Live } advance)
+        {
+            await SettleAdvanceOnCancelAsync(companyId, r, advance, plan, deposits, noShow, actor);
+            _logger.LogInformation("Lodging reservation {No} {Action} on advance invoice {Adv}: fee {Fee} refund-due {Refund}", r.ReservationNumber,
+                noShow ? "no-show" : "cancelled", advance.Number, fee, plan.Refund);
+            return;
+        }
 
         // ส่วนที่ริบ = เหตุการณ์เกิดแล้วจริง → รับรู้รายได้ (ฐาน ไม่ใช่ gross — P0-2 · ฐานคำนวณให้ส่วนที่คืนภายหลังผ่านด่าน
         // "คืนเกินคงเหลือ" พอดี) · รอบ 194 (spec S3 · L1 C-2/C-3): VAT ของส่วนที่ริบตามลักษณะเงิน ไม่ใช่ตามโหมด — มัดจำค่าห้อง =
@@ -2170,6 +2356,7 @@ public partial class LodgingService
         if (r.Status != LodgingReservationStatus.Pending && r.Status != LodgingReservationStatus.Confirmed)
             throw new BusinessRuleException($"เลื่อนวันได้เฉพาะการจองที่ยังไม่เช็คอิน (สถานะ {StatusTh(r.Status)})");
         var checkIn = ThaiDate.CalendarDateUtc(request.CheckIn); var checkOut = ThaiDate.CalendarDateUtc(request.CheckOut);
+        var advanceNumber = (await LoadAdvanceAsync(companyId, r)) is { State: LodgingAdvanceState.Live } adv ? adv.Number : null;
         // O-P0-1 รอบ 202: ตรวจห้องว่างช่วงใหม่ + คิดราคา + บันทึก ใต้ล็อกที่พัก (เดิมนอกล็อก ⇒ เลื่อนเข้าช่วงที่เพิ่งถูกจองห้องสุดท้ายพร้อมกันได้)
         await WithPropertyLockAsync(companyId, r.PropertyId, async () =>
         {
@@ -2214,6 +2401,9 @@ public partial class LodgingService
             for (var i = 0; i < extrasWithId.Count; i++)
                 extrasWithId[i].Total = quote.Extras[extraPairs[i]!.Value].Total;
             AppendInternal(r, $"เลื่อนวัน {old.CheckInDate:dd/MM/yyyy}–{old.CheckOutDate:dd/MM/yyyy} → {checkIn:dd/MM/yyyy}–{checkOut:dd/MM/yyyy} · ยอด {old.TotalAmount:N2} → {r.TotalAmount:N2}{(string.IsNullOrWhiteSpace(request.Reason) ? "" : $" ({request.Reason})")}");
+            // คำตัดสินข้อ 157: เลื่อนวันไม่ออกเอกสาร — ส่วนต่างจากใบกำกับล่วงหน้าปรับตอนเช็คเอาต์ (ใบส่วนเพิ่ม/ใบลดหนี้) หรือตอนยกเลิก (ใบลดหนี้)
+            if (old.TotalAmount != r.TotalAmount && advanceNumber != null)
+                AppendInternal(r, LodgingTaxInvoiceTimingPolicy.RescheduleNote(advanceNumber, old.TotalAmount, r.TotalAmount));
             r.UpdatedBy = userId; r.UpdatedAt = DateTime.UtcNow;
             _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "Reschedule", old, @new = new { checkIn, checkOut, r.TotalAmount }, reason = request.Reason, by = userId }));
             await _db.SaveChangesAsync();

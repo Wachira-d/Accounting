@@ -69,4 +69,11 @@ public sealed record AiProviderRawResponse
     /// orchestrator to decide retry policy (5xx → retry once, 4xx →
     /// don't retry).</summary>
     public int? HttpStatus { get; init; }
+
+    /// <summary><c>choices[0].finish_reason</c> ของ provider (OpenAI-compatible: stop · length · content_filter …) —
+    /// "length" = max_tokens หมดก่อนจบ ⇒ JSON ขาดกลางทาง · orchestrator ใส่ใน ErrorMessage ให้ไล่สาเหตุได้ (ทีม H · 2026-10-22)</summary>
+    public string? FinishReason { get; init; }
+
+    /// <summary>max_tokens ที่ส่งไปจริง (หลังปรับเพดานขั้นต่ำ/โมเดล reasoner) — ใช้เทียบกับ OutputTokens ในข้อความ error</summary>
+    public int? MaxTokensSent { get; init; }
 }

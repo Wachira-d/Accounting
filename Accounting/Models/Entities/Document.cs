@@ -506,6 +506,14 @@ public class Document : TenantEntity
     /// 1.0 when Currency = THB. Captured on Create so JE posting uses the same
     /// rate that was shown to the user on the document.</summary>
     public decimal ExchangeRate { get; set; } = 1m;
+    /// <summary>ทีม F — ที่มาของ <see cref="ExchangeRate"/>: <c>BOT</c> (ระบบดึงอัตรา ธปท.) · <c>User</c> (ผู้ใช้กรอก/ยืนยัน) ·
+    /// <c>Document</c> (คำนวณจากยอดบาทที่เอกสารพิมพ์ไว้ — <see cref="DocumentThbBase"/>) · null = ใบบาท/ข้อมูลก่อนมีช่องนี้ (ไม่รู้ — ไม่เดา) ·
+    /// ค่าคงที่อยู่ที่ <c>Helpers/DocumentFx</c></summary>
+    public string? ExchangeRateSource { get; set; }
+    /// <summary>ทีม F — <b>ฐานก่อน VAT เป็นบาทตามที่เอกสารพิมพ์ไว้</b> (ใบแจ้งหนี้ต่างสกุลที่มียอดเทียบเท่าเงินบาท) · มีค่า ⇒ ฐานหัก ณ ที่จ่าย/50 ทวิ/ภ.ง.ด.
+    /// ยึดยอดนี้ (เฉลี่ยลงบรรทัด — <c>Helpers/PerLineWht</c>) และ <see cref="ExchangeRate"/> = ยอดนี้ ÷ ฐานสกุลเอกสาร (<c>DocumentFx.RateFromPrintedBaht</c>) ·
+    /// null = ไม่มี (แปลงด้วยอัตรา — พฤติกรรมเดิม) · ใบบาท ⇒ null เสมอ</summary>
+    public decimal? DocumentThbBase { get; set; }
     public decimal SubTotal { get; set; }
     /// <summary>ผลรวมส่วนลด "รายบรรทัด" (Σ DocumentLine.DiscountAmount).</summary>
     public decimal DiscountAmount { get; set; }

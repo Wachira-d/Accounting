@@ -33,6 +33,8 @@ public interface ISubscriptionService
     Task<Accounting.Services.Implementations.SubscriptionService.AggregateUsage?> GetAggregateUsageAsync(Guid accountSubscriptionId);
     Task<bool> CheckUsageLimitAsync(Guid companyId, string limitType);
     Task IncrementUsageAsync(Guid companyId, string usageType);
+    /// <summary>ส่งแจ้งเตือนโควตาที่ค้างจาก IncrementUsageAsync — เรียกหลัง commit ธุรกรรมที่นับใบ (ฝ่ายค้านรอบ 205 ข้อ 3)</summary>
+    Task FlushPendingQuotaAlertsAsync();
     /// <summary>ตัวเลข “ใช้ไปเท่าไร” ตัวเดียวของทั้งระบบ (เอกสาร/สมุดรายวัน/พื้นที่) —
     /// หน้าลูกค้า · แดชบอร์ด · พอร์ทัลแอดมิน ต้องเรียกตัวนี้ ห้ามอ่าน counter บน
     /// Subscription ตรง ๆ (สองตัวในนั้นไม่มีใครเขียน)</summary>

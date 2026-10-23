@@ -266,6 +266,9 @@ public class LodgingController : ControllerBase
     {
         var r = await _svc.ConfirmAsync(companyId, id, req, Uid);
         var msg = r.DepositDocumentNumber != null ? $"ยืนยันการจองแล้ว · ใบเสร็จมัดจำ {r.DepositDocumentNumber}" : "ยืนยันการจองแล้ว";
+        // คำตัดสินข้อ 157: บอกเลขใบกำกับล่วงหน้า / เหตุที่ยังไม่ได้ออก (ผลของการกระทำไปโผล่ที่เอกสารอีกใบ — ห้ามให้ผู้ใช้เดา)
+        if (r.AdvanceTaxDocumentLive && r.AdvanceTaxDocumentNumber != null) msg += $" · ใบกำกับภาษีล่วงหน้า {r.AdvanceTaxDocumentNumber}";
+        else if (r.AdvanceTaxInvoiceNote != null) msg += $" · {r.AdvanceTaxInvoiceNote}";
         return Wrap(r, msg);
     }
 
@@ -281,6 +284,28 @@ public class LodgingController : ControllerBase
         var f = await _svc.GetSlipFileAsync(companyId, id);
         if (f == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
         // inline เพื่อให้เปิดดูในแท็บใหม่ได้เลย (พนักงานต้องเทียบยอดกับหน้าจอ)
+        return PhysicalFile(f.Value.Path, f.Value.ContentType);
+    }
+
+    /// <summary>สลิปทุกใบของการจอง (ล่าสุด · ถูกปฏิเสธ · ถูกส่งทับ) ให้โมดัลการจองแสดงเป็นรูปย่อ — URL ทุกใบเป็นเส้นที่ตรวจสิทธิ์</summary>
+    [HttpGet("reservations/{id:guid}/slips")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult<ApiResponse<List<LodgingSlipItemDto>>>> Slips(Guid companyId, Guid id)
+    {
+        var items = await _svc.GetSlipGalleryAsync(companyId, id);
+        if (items == null) return NotFound(new ApiResponse<List<LodgingSlipItemDto>>(false, null, "ไม่พบการจอง"));
+        return Wrap(items);
+    }
+
+    /// <summary>ไฟล์สลิป 1 ใบ (รวมใบที่ถูกปฏิเสธ — ยังเป็นหลักฐาน) · inline เพื่อแสดงในโมดัล · ไม่ส่งชื่อไฟล์เดิมของแขกเป็น header</summary>
+    [HttpGet("reservations/{id:guid}/slips/{attachmentId:guid}")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<IActionResult> SlipById(Guid companyId, Guid id, Guid attachmentId)
+    {
+        var f = await _svc.GetSlipAttachmentFileAsync(companyId, id, attachmentId);
+        if (f == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
+        // nosniff: เบราว์เซอร์ต้องเชื่อ content type ที่เราตั้ง (รูป/PDF เท่านั้น) ไม่เดาเป็น HTML
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
         return PhysicalFile(f.Value.Path, f.Value.ContentType);
     }
 
@@ -325,7 +350,10 @@ public class LodgingController : ControllerBase
     {
         var r = await _svc.CheckOutAsync(companyId, id, req, Uid);
         // บอกเลขเอกสารปลายทางเสมอ — ผลของการกระทำไปโผล่ที่เอกสารคนละใบ (กติกา "ห้ามให้ผู้ใช้เดาว่าไปดูผลที่ไหน")
-        var msg = $"เช็คเอาต์แล้ว · ออก {r.FinalDocumentNumber}" + (r.BalanceDue > 0 ? $" (ค้างชำระ {r.BalanceDue:N2})" : " · รับชำระครบ");
+        var msg = (r.FinalDocumentId != null && r.FinalDocumentId == r.AdvanceTaxDocumentId
+                ? $"เช็คเอาต์แล้ว · ไม่มีรายการเพิ่ม — ใช้ใบกำกับภาษีล่วงหน้า {r.FinalDocumentNumber} (ไม่ออกใบใหม่)"
+                : $"เช็คเอาต์แล้ว · ออก {r.FinalDocumentNumber}" + (r.AdvanceTaxDocumentLive ? $" (ค่าห้องอยู่ในใบกำกับภาษีล่วงหน้า {r.AdvanceTaxDocumentNumber})" : ""))
+            + (r.BalanceDue > 0 ? $" (ค้างชำระ {r.BalanceDue:N2})" : " · รับชำระครบ");
         return Wrap(r, msg);
     }
 
@@ -336,6 +364,15 @@ public class LodgingController : ControllerBase
     {
         var r = await _svc.ReissueFinalDocumentAsync(companyId, id, req ?? new LodgingReissueFinalRequest(), Uid);
         return Wrap(r, $"ออกใบเช็คเอาต์ใหม่แล้ว · {r.FinalDocumentNumber}" + (r.BalanceDue > 0 ? $" (ค้างชำระ {r.BalanceDue:N2})" : ""));
+    }
+
+    // คำตัดสินข้อ 157: ออกใบกำกับภาษีล่วงหน้าเอง (โหมด "ใบกำกับเมื่อยืนยันการจอง") — เซิร์ฟเวอร์ตัดสินว่าออกได้ไหม (ปุ่มเปิดจาก canIssueAdvanceTaxInvoice)
+    [HttpPost("reservations/{id:guid}/advance-tax-invoice")]
+    [RequirePermission(PermissionKeys.LodgingManage)]
+    public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> IssueAdvanceTaxInvoice(Guid companyId, Guid id, [FromBody] LodgingIssueAdvanceTaxInvoiceRequest? req)
+    {
+        var r = await _svc.IssueAdvanceTaxInvoiceAsync(companyId, id, req ?? new LodgingIssueAdvanceTaxInvoiceRequest(), Uid);
+        return Wrap(r, $"ออกใบกำกับภาษีล่วงหน้าแล้ว · {r.AdvanceTaxDocumentNumber}");
     }
 
     [HttpPost("reservations/{id:guid}/cancel")]

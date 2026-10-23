@@ -13,6 +13,13 @@ public interface IFileAttachmentService
     /// documents like the auto-attached WHT certificate.</summary>
     Task<FileAttachmentResponse> UploadBytesAsync(Guid companyId, string entityType, Guid entityId,
         string originalFileName, string contentType, byte[] content, Guid uploadedByUserId);
+    /// <summary>บันทึกไฟล์จาก<b>ผู้ไม่ได้ล็อกอิน</b> (ลูกค้าหน้าร้านแนบรูปตัวอย่างของสินค้าตามสั่ง · ทีม K) — ผ่านที่เก็บไฟล์ตัวเดียวกับ
+    /// <see cref="UploadBytesAsync"/> แต่ไม่มีผู้อัปโหลด (UploadedByUserId = null · ห้ามใส่ Guid.Empty ที่ชน FK ผู้ใช้) ·
+    /// ค่าเริ่มต้นของ interface = ไม่รองรับ (ตัวจำลองในเทสต์ไม่ต้อง implement)</summary>
+    Task<FileAttachmentResponse> UploadAnonymousBytesAsync(Guid companyId, string entityType, Guid entityId,
+        string originalFileName, string contentType, byte[] content)
+        => throw new NotSupportedException("ที่เก็บไฟล์นี้ไม่รองรับการอัปโหลดจากผู้ไม่ได้ล็อกอิน");
+
     Task<List<FileAttachmentResponse>> GetByEntityAsync(Guid companyId, string entityType, Guid entityId);
     /// <summary>Fetch a single attachment by id, scoped to the calling tenant.
     /// Returns null if the attachment doesn't exist or belongs to another company.</summary>

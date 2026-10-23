@@ -117,6 +117,39 @@
             </div>
           </div>
         </div>
+
+        <!-- กฎตราประทับ/ลายเซ็น ต่อประเภทเอกสาร × สถานะ (ทีม J 2026-10-22 · ตัวตัดสินเดียว Helpers/DocumentStampPolicy) -->
+        <details id="stampRulesBox" style="margin-top:16px;border-top:1px solid #e2e8f0;padding-top:12px">
+          <summary style="cursor:pointer;font-weight:600;font-size:14px">กฎตราประทับ / ลายเซ็น ตามประเภทเอกสารและสถานะ</summary>
+          <p id="srNote" style="color:#64748b;font-size:12px;margin:8px 0"></p>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+            <select id="srKind" class="form-select" style="min-width:240px;max-width:100%" onchange="Page.srSwitchKind()"></select>
+            <label style="font-size:13px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="srCustom" onchange="Page.srToggleCustom()"> ตั้งเองสำหรับประเภทนี้ <span style="color:#64748b">(ไม่ติ๊ก = ค่าตั้งต้นของระบบ)</span></label>
+          </div>
+          <div id="srForm" style="overflow-x:auto">
+            <table style="border-collapse:collapse;font-size:13px;min-width:320px">
+              <thead><tr><th style="text-align:left;padding:4px 8px">สถานะ</th><th style="padding:4px 8px">ประทับตรา</th><th style="padding:4px 8px">ลายเซ็นอิเล็กทรอนิกส์</th></tr></thead>
+              <tbody id="srStages"></tbody>
+            </table>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">ตำแหน่ง</label>
+                <select id="srAlign" class="form-select" style="width:110px"><option value="Right">ขวา</option><option value="Center">กลาง</option><option value="Left">ซ้าย</option></select></div>
+              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">เลื่อนแนวนอน (มม.)</label><input type="number" id="srOffX" class="form-input" min="-60" max="60" step="1" style="width:100px"></div>
+              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">เลื่อนแนวตั้ง (มม.)</label><input type="number" id="srOffY" class="form-input" min="-60" max="60" step="1" style="width:100px"></div>
+              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">กว้าง (มม.)</label><input type="number" id="srW" class="form-input" min="5" max="120" step="1" style="width:90px"></div>
+              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">สูง (มม.)</label><input type="number" id="srH" class="form-input" min="5" max="120" step="1" style="width:90px"></div>
+            </div>
+            <div style="margin-top:10px;font-size:13px">
+              <div style="font-weight:600;margin-bottom:4px">ผู้ลงนามที่มีสิทธิ์ <span style="font-weight:400;color:#64748b">(ไม่เลือกเลย = ทุกคน · ลายเซ็นของผู้ที่ไม่มีสิทธิ์จะไม่พิมพ์ — ชื่อยังอยู่ใต้เส้น)</span></div>
+              <div id="srRoles" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+              <select id="srUsers" class="form-select" multiple size="4" style="margin-top:6px;min-width:240px;max-width:100%" title="กด Ctrl/⌘ ค้างเพื่อเลือกหลายคน"></select>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-primary" id="srSave" onclick="Page.saveStampRules()">บันทึกกฎตราประทับ</button>
+            <span id="srSummary" style="font-size:12px;color:#64748b"></span>
+          </div>
+        </details>
       </div>
 
       <div class="form-row">
@@ -728,6 +761,16 @@
           ปิดไว้ = ออกใบสำคัญจ่ายที่มีหัก ณ ที่จ่าย จะไม่แนบไฟล์ 50ทวิ ให้อัตโนมัติ
           (กด download/พิมพ์เองจากหน้า "หัก ณ ที่จ่าย" ได้ไฟล์ที่สวยกว่า) · เปิด =
           ระบบแนบให้ตอนออกใบ
+        </div>
+      </div>
+      <!-- ทีม F: หัก ณ ที่จ่ายตามรายการ (CompanySettings.PerLineWhtEnabled · docs/PER_LINE_WHT_DESIGN.md) — ปิด = พฤติกรรมเดิม -->
+      <div class="form-group form-checkbox">
+        <input type="checkbox" id="sPerLineWht">
+        <label for="sPerLineWht">หัก ณ ที่จ่ายตามรายการ (ต่างประเภท/ต่างอัตราในใบเดียว)</label>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          เปิด = สแกนเอกสาร (OCR) เติมอัตราและประเภทเงินได้ <b>ต่อบรรทัด</b> ให้ (เช่น ค่าบริการ 3% · ค่าโฆษณา 2% · ค่าสินค้า 0% ในใบเดียว) และ
+          ใบต่างสกุลที่สแกนแล้วพบยอดเงินบาทพิมพ์ไว้ ใช้ยอดบาทนั้นเป็นฐาน (ผลที่ระบบแยกเองต้องมีคนกดอนุมัติ) · ปิด = สแกนแบบเดิม ·
+          ทำงานเสมอไม่ว่าเปิด/ปิด: กรอกหัก ณ ที่จ่ายรายบรรทัดเองในฟอร์ม · 50 ทวิ/ภ.ง.ด.3/53/54 แยกตามประเภทเงินได้ของแต่ละบรรทัด และเป็นบาทเสมอ
         </div>
       </div>
 
@@ -2596,6 +2639,7 @@
           if (document.getElementById('sStampW')) document.getElementById('sStampW').value = s.stampWidthMm ?? 32;
           if (document.getElementById('sStampH')) document.getElementById('sStampH').value = s.stampHeightMm ?? 32;
           if (document.getElementById('sStampAlign')) document.getElementById('sStampAlign').value = s.stampAlign || 'Right';
+          this.loadStampRules();
           // General
           if (s.primaryColor) document.getElementById('sPrimaryColor').value = s.primaryColor;
           if (s.secondaryColor) document.getElementById('sSecondaryColor').value = s.secondaryColor;
@@ -2693,6 +2737,10 @@
             document.getElementById('sWorkersCompRate').value = s.workersCompensationRatePercent;
           if (document.getElementById('sAutoAttachWhtCert'))
             document.getElementById('sAutoAttachWhtCert').checked = !!s.autoAttachWhtCertPdf;
+          if (document.getElementById('sPerLineWht')) {
+            document.getElementById('sPerLineWht').checked = !!s.perLineWhtEnabled;
+            this._perLineWhtLoaded = true;
+          }
           // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
           if (document.getElementById('sBookkeeperName'))
             document.getElementById('sBookkeeperName').value = s.bookkeeperName || '';
@@ -2777,6 +2825,92 @@
           document.getElementById('stampPreview').innerHTML = '<span style="color:#94a3b8;font-size:12px" id="stampPlaceholder">ยังไม่มีตรา</span>';
           document.getElementById('btnDeleteStamp').style.display = 'none';
           Layout.toast('ลบตราประทับแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ===== กฎตราประทับ/ลายเซ็น (ทีม J 2026-10-22) — เซิร์ฟเวอร์ส่ง "ค่าที่มีผลจริง" ต่อประเภท (DocumentStampPolicy) · หน้าแสดง/แก้อย่างเดียว =====
+      _sr: null,
+      async loadStampRules() {
+        const api = Layout.api(); if (!api || !api.getDocumentStampRules) return;
+        try {
+          const res = await api.getDocumentStampRules();
+          const d = res.data; if (!d) return;
+          const rules = {};
+          (d.kinds || []).forEach(k => { if (k.isCustom) rules[k.key] = this.srRuleFromEffective(k); });
+          this._sr = { data: d, rules, current: null };
+          document.getElementById('srNote').textContent = d.note || '';
+          const sel = document.getElementById('srKind');
+          sel.innerHTML = (d.kinds || []).map(k => `<option value="${Layout.esc(k.key)}">${Layout.esc(k.label)}</option>`).join('');
+          document.getElementById('srRoles').innerHTML = (d.roles || []).map(r =>
+            `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="sr-role" value="${Layout.esc(r)}"> ${Layout.esc(this.SR_ROLE_LABEL[r] || r)}</label>`).join('');
+          document.getElementById('srUsers').innerHTML = (d.signers || []).map(u =>
+            `<option value="${Layout.esc(u.userId)}">${Layout.esc(u.name)} (${Layout.esc(this.SR_ROLE_LABEL[u.role] || u.role)})</option>`).join('');
+          this.srRender(sel.value);
+        } catch (e) {
+          document.getElementById('srNote').textContent = 'โหลดกฎตราประทับไม่สำเร็จ: ' + (e.message || e);
+        }
+      },
+      SR_ROLE_LABEL: { Owner: 'เจ้าของ', Accountant: 'นักบัญชี', Staff: 'พนักงาน', Auditor: 'ผู้ตรวจสอบ', Viewer: 'ดูอย่างเดียว',
+        ExternalAccountant: 'นักบัญชีภายนอก', PlatformSupport: 'ทีมดูแลระบบ' },
+      srRuleFromEffective(k) {
+        return { stamp: [...(k.stampStages || [])], signature: [...(k.signatureStages || [])], align: k.align,
+          offsetXMm: k.offsetXMm, offsetYMm: k.offsetYMm, widthMm: k.widthMm, heightMm: k.heightMm,
+          signerRoles: [...(k.signerRoles || [])], signerUserIds: [...(k.signerUserIds || [])] };
+      },
+      srEffective(key) { return (this._sr?.data?.kinds || []).find(k => k.key === key); },
+      srRender(key) {
+        if (!this._sr) return;
+        this._sr.current = key;
+        const custom = Object.prototype.hasOwnProperty.call(this._sr.rules, key);
+        const eff = this.srEffective(key) || {};
+        const r = custom ? this._sr.rules[key] : this.srRuleFromEffective(eff);
+        document.getElementById('srCustom').checked = custom;
+        document.getElementById('srStages').innerHTML = (this._sr.data.stages || []).map(st =>
+          `<tr><td style="padding:3px 8px">${Layout.esc(st.label)}</td>`
+          + `<td style="text-align:center"><input type="checkbox" class="sr-stamp" value="${Layout.esc(st.key)}" ${r.stamp.includes(st.key) ? 'checked' : ''}></td>`
+          + `<td style="text-align:center"><input type="checkbox" class="sr-sig" value="${Layout.esc(st.key)}" ${r.signature.includes(st.key) ? 'checked' : ''}></td></tr>`).join('');
+        document.getElementById('srAlign').value = r.align || 'Right';
+        document.getElementById('srOffX').value = r.offsetXMm ?? 0;
+        document.getElementById('srOffY').value = r.offsetYMm ?? 0;
+        document.getElementById('srW').value = r.widthMm ?? '';
+        document.getElementById('srH').value = r.heightMm ?? '';
+        document.querySelectorAll('#srRoles .sr-role').forEach(c => { c.checked = (r.signerRoles || []).includes(c.value); });
+        Array.from(document.getElementById('srUsers').options).forEach(o => { o.selected = (r.signerUserIds || []).includes(o.value); });
+        // ค่าตั้งต้น = ดูได้แต่แก้ไม่ได้ (ติ๊ก "ตั้งเอง" ก่อน) — ห้ามให้แก้แล้วบันทึกไม่มีผลเงียบ ๆ (กฎ #4 A)
+        document.querySelectorAll('#srForm input, #srForm select').forEach(el => { el.disabled = !custom; });
+        const names = Object.keys(this._sr.rules).map(k => this.srEffective(k)?.label || k);
+        document.getElementById('srSummary').textContent = names.length
+          ? 'ตั้งเองแล้ว: ' + names.join(' · ') : 'ยังไม่ได้ตั้งเอง — ทุกประเภทใช้ค่าตั้งต้นของระบบ';
+      },
+      srCollect() {
+        const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : Number(v); };
+        return {
+          stamp: Array.from(document.querySelectorAll('#srStages .sr-stamp')).filter(c => c.checked).map(c => c.value),
+          signature: Array.from(document.querySelectorAll('#srStages .sr-sig')).filter(c => c.checked).map(c => c.value),
+          align: document.getElementById('srAlign').value,
+          offsetXMm: num('srOffX') ?? 0, offsetYMm: num('srOffY') ?? 0,
+          widthMm: num('srW'), heightMm: num('srH'),
+          signerRoles: Array.from(document.querySelectorAll('#srRoles .sr-role')).filter(c => c.checked).map(c => c.value),
+          signerUserIds: Array.from(document.getElementById('srUsers').selectedOptions).map(o => o.value),
+        };
+      },
+      srStash() {
+        const k = this._sr?.current;
+        if (k && document.getElementById('srCustom').checked) this._sr.rules[k] = this.srCollect();
+      },
+      srSwitchKind() { this.srStash(); this.srRender(document.getElementById('srKind').value); },
+      srToggleCustom() {
+        const k = this._sr?.current; if (!k) return;
+        if (document.getElementById('srCustom').checked) this._sr.rules[k] = this.srRuleFromEffective(this.srEffective(k) || {});
+        else delete this._sr.rules[k];
+        this.srRender(k);
+      },
+      async saveStampRules() {
+        const api = Layout.api(); if (!api || !this._sr) return;
+        this.srStash();
+        try {
+          const res = await api.updateDocumentStampRules({ rules: this._sr.rules });
+          Layout.toast(res.message || 'บันทึกกฎตราประทับแล้ว');
+          await this.loadStampRules();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // ตัวย่อมาตรฐาน — ต้องตรงกับ Helpers/DocumentNumberGenerator.GetPrefix
@@ -2923,6 +3057,8 @@
             workersCompensationEnabled: document.getElementById('sWorkersCompEnabled')?.checked || false,
             workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),
             autoAttachWhtCertPdf: document.getElementById('sAutoAttachWhtCert')?.checked || false,
+            // ทีม F: ส่งเฉพาะเมื่อโหลดค่าเดิมสำเร็จ (โหลดล้ม = ไม่แตะ — กันปิดฟีเจอร์ทับเงียบ ๆ)
+            ...(this._perLineWhtLoaded ? { perLineWhtEnabled: document.getElementById('sPerLineWht').checked } : {}),
             // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
             // ไม่มีช่องบนหน้า = undefined (ไม่ส่งคีย์ = ไม่แก้) · มีช่องแต่ว่าง = "" (ล้าง)
             bookkeeperName: document.getElementById('sBookkeeperName')?.value?.trim(),

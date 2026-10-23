@@ -77,6 +77,10 @@ public interface ILodgingService
     /// ฝั่งแขกพิสูจน์ด้วย <c>PublicToken</c> ของตัวเอง</para></summary>
     Task<(string Path, string ContentType)?> GetSlipFileAsync(Guid companyId, Guid reservationId);
     Task<(string Path, string ContentType)?> GetSlipFileByTokenAsync(Guid companyId, Guid siteId, string token);
+    /// <summary>สลิปทุกใบของการจอง (ล่าสุด · ถูกปฏิเสธ · ถูกส่งทับ) ให้พนักงานดูในโมดัล — <c>null</c> = ไม่พบการจองในบริษัทนี้</summary>
+    Task<List<LodgingSlipItemDto>?> GetSlipGalleryAsync(Guid companyId, Guid reservationId);
+    /// <summary>ไฟล์สลิป 1 ใบตาม id ไฟล์แนบ — ต้องเป็นไฟล์ของการจองนี้ในบริษัทนี้ และผ่านด่านพาธ <c>LodgingSlipPath</c></summary>
+    Task<(string Path, string ContentType)?> GetSlipAttachmentFileAsync(Guid companyId, Guid reservationId, Guid attachmentId);
     Task<LodgingReservationResponse> UpdateReservationAsync(Guid companyId, Guid reservationId, LodgingUpdateReservationRequest request, string userId);
     /// <param name="moneyInAccountId">ผังบัญชีขา "เงินเข้า" ของใบเสร็จมัดจำ — <c>null</c> =
     /// ธนาคาร/เงินสดตามปกติ · มีค่า = บัญชีพัก 11340 (รับผ่าน gateway เงินยังไม่เข้าธนาคาร) ·
@@ -93,6 +97,8 @@ public interface ILodgingService
     Task<LodgingReservationResponse> CheckOutAsync(Guid companyId, Guid reservationId, LodgingCheckOutRequest request, string userId);
     /// <summary>รอบ 201 ทีม IN (A-IN5): ออกใบเช็คเอาต์ใหม่หลังใบเดิมถูกยกเลิก — ยอดเท่าใบเดิม (Helpers/LodgingCheckoutReissue)</summary>
     Task<LodgingReservationResponse> ReissueFinalDocumentAsync(Guid companyId, Guid reservationId, LodgingReissueFinalRequest request, string userId);
+    /// <summary>คำตัดสินข้อ 157: ออกใบกำกับภาษีล่วงหน้า (เต็มยอดการเข้าพัก) เอง — ตัวตัดสิน Helpers/LodgingTaxInvoiceTimingPolicy</summary>
+    Task<LodgingReservationResponse> IssueAdvanceTaxInvoiceAsync(Guid companyId, Guid reservationId, LodgingIssueAdvanceTaxInvoiceRequest request, string userId);
     Task<LodgingReservationResponse> CancelAsync(Guid companyId, Guid reservationId, LodgingCancelRequest request, string userId, bool noShow = false);
     /// <summary>ยืนยันว่าโอน/จ่ายคืนแขกแล้วจริง (F-03 รอบ 193) — ลง JE คืนเงิน + ใบลดหนี้ตอนนี้เท่านั้น
     /// (ยกเลิกแค่ตั้ง "ยอดค้างคืน" ไม่แตะเงินสด)</summary>

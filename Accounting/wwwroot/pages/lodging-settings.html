@@ -145,6 +145,10 @@
             <div class="fld"><label>ยอดเงินประกันต่อการจอง (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="securityDepositAmount" data-blank="0">
               <div class="hint">ค่าเริ่มต้นของปุ่ม “รับเงินประกัน” หน้าการจอง · 0 = ให้พนักงานกรอกเอง</div></div>
             <div class="fld" style="grid-column:1/-1"><div class="hint" id="secKindInfo"></div></div>
+            <!-- คำตัดสินข้อ 157: จังหวะออกเอกสารภาษี — ตัวเลือก + ผลภาษีมาจากเซิร์ฟเวอร์ (taxInvoiceTimingOptions · LodgingTaxInvoiceTimingPolicy.Options) -->
+            <div class="fld" style="grid-column:1/-1"><label>จังหวะออกเอกสารภาษี</label>
+              <select class="form-input" name="taxInvoiceTiming" id="taxTimingSel" onchange="Page.renderTaxTimingInfo()"></select>
+              <div class="hint" id="taxTimingInfo"></div></div>
           </div>
         </div>
         <div class="card"><h4>ข้อความ & การแจ้งเตือน & แม่บ้าน</h4>
@@ -409,6 +413,7 @@
         this.renderPublicStatus(p);
         this.renderDepositKindSelects(p);
         this.renderConfirmModeSelect(p);
+        this.renderTaxTimingSelect(p);
         for (const el of f.elements) {
           if (!el.name) continue;
           if (el.name === 'roomDepositKindId' || el.name === 'securityDepositKindId') continue;   // ตั้งใน renderDepositKindSelects แล้ว
@@ -424,6 +429,21 @@
         document.getElementById('policySelect').innerHTML = '<option value="">— ไม่มี —</option>' + (this.policies || []).map(x => `<option value="${x.id}" ${x.id === p.defaultCancellationPolicyId ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
         document.getElementById('effVat').textContent = p.effectiveVatRate ?? '-';
         this.renderConfirmModeInfo();
+        this.renderTaxTimingInfo();
+      },
+      // คำตัดสินข้อ 157: ตัวเลือกจังหวะออกเอกสารภาษี + ผลภาษี + คำอธิบายแบบ "ใบกำกับทุกครั้งที่รับเงิน" มาจากเซิร์ฟเวอร์ — หน้านี้ไม่มีสำเนาข้อความ/กติกา
+      renderTaxTimingSelect(p) {
+        if (p && Array.isArray(p.taxInvoiceTimingOptions)) this._taxTimingOptions = p.taxInvoiceTimingOptions;
+        this._taxPaymentNote = p?.taxInvoicePaymentNote || this._taxPaymentNote || '';
+        const sel = document.getElementById('taxTimingSel'); if (!sel) return;
+        sel.innerHTML = (this._taxTimingOptions || []).map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+      },
+      renderTaxTimingInfo() {
+        const sel = document.getElementById('taxTimingSel'); const box = document.getElementById('taxTimingInfo');
+        if (!sel || !box) return;
+        const opt = (this._taxTimingOptions || []).find(o => o.value === sel.value);
+        box.innerHTML = (opt ? esc(opt.taxEffect) : '')
+          + (this._taxPaymentNote ? `<div style="margin-top:4px">${esc(this._taxPaymentNote)}</div>` : '');
       },
       // คำตัดสินข้อ 128: ตัวเลือกโหมดยืนยันการจอง + คำอธิบายผลต่อแขก มาจากเซิร์ฟเวอร์ (enum ออกเป็น "ชื่อ") — หน้านี้ไม่มีสำเนาข้อความ
       renderConfirmModeSelect(p) {
@@ -554,6 +574,8 @@
         delete d.publicBookingStatus; delete d.publicBookingMessage; delete d.publicBookingFix; delete d.bindableSites;
         // คำตัดสินข้อ 128: ธงเดิมเป็นสำเนาที่ระบบเขียนตามโหมด (หน้านี้ไม่มีช่อง) · ตัวเลือกโหมดเป็น response-only
         delete d.confirmWithoutDeposit; delete d.guestConfirmModeOptions;
+        // คำตัดสินข้อ 157: ตัวเลือก/คำอธิบายจังหวะออกเอกสารภาษีเป็น response-only
+        delete d.taxInvoiceTimingOptions; delete d.taxInvoicePaymentNote;
         if (!this.propertyId) d.id = null;
         return d;
       },
@@ -642,7 +664,7 @@
         box.innerHTML = this.roomTypes.map(r => `<div class="card">
           <div class="flex" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
             <div><h4 style="margin:0">${esc(r.name)} <span class="pill">${esc(r.code)}</span> <span class="pill ${r.isActive ? 'on' : 'off'}">${r.isActive ? 'เปิดขาย' : 'ปิด'}</span></h4>
-              <div class="hint">฿${num(r.baseRate)}/${r.pricingMode === 'PerPerson' ? 'คน' : 'ห้อง'}/คืน · มาตรฐาน ${r.standardOccupancy} คน · ความจุ ${r.maxAdults} ผู้ใหญ่ · เด็กได้ ${r.maxChildren} (ไม่นับความจุ) · ${esc(r.extraBedSummary || '')} ${r.includesBreakfast ? '· 🍳' : ''} ${r.minNights ? '· ขั้นต่ำ ' + r.minNights + ' คืน' : ''}</div></div>
+              <div class="hint">฿${num(r.baseRate)}/${r.pricingMode === 'PerPerson' ? 'คน' : 'ห้อง'}/คืน · มาตรฐาน ${r.standardOccupancy} คน · ความจุ ${r.maxAdults} ผู้ใหญ่ · เด็กได้ ${r.maxChildren} (ไม่นับความจุ) · ${esc(r.extraBedSummary || '')} ${r.includesBreakfast ? '· 🍳' : ''} ${r.minNights ? '· ขั้นต่ำ ' + r.minNights + ' คืน' : ''} · ${r.smokingAllowed ? 'สูบบุหรี่ได้' : '🚭 ปลอดบุหรี่'} · ${r.petsAllowed ? '🐾 รับสัตว์เลี้ยง' : 'ไม่รับสัตว์เลี้ยง'} · รูป ${(r.images || []).length} รูป</div></div>
             <div class="row-actions"><button class="btn btn-sm btn-secondary" onclick="Page.editRoomType('${r.id}')">แก้ไข</button> <button class="btn btn-sm btn-secondary" onclick="Page.editUnit('${r.id}')">+ ห้อง</button> <button class="btn btn-sm btn-danger" onclick="Page.deleteRoomType('${r.id}')">ลบ</button></div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${(r.units || []).map(u => `<span class="pill ${u.isOutOfService ? 'off' : (u.isActive ? '' : 'off')}" style="cursor:pointer" title="${esc(u.floor ? 'ชั้น ' + u.floor : '')}" onclick="Page.editUnit('${r.id}','${u.id}')">${esc(u.number)}${u.isOutOfService ? ' 🔧' : ''}</span>`).join('') || '<span class="hint">ยังไม่มีหมายเลขห้อง — กด "+ ห้อง"</span>'}</div>
@@ -660,7 +682,9 @@
           ${this.fld('เตียงเสริม / คนเสริม', `<label><input type="checkbox" name="allowExtraBed" ${r.allowExtraBed ? 'checked' : ''} onchange="Page.syncExtraBedLock()"> เพิ่มเตียงเสริม/คนเสริมได้</label><div class="hint" id="rtExtraBedHint"></div>`, true)}
           ${this.fld('เพิ่มได้สูงสุดกี่คน', this.inp('maxExtraBeds', r.maxExtraBeds, 'number', 'min="0" id="rtMaxExtraBeds"'))}${this.fld('ราคาต่อคน/คืน (บาท)', this.inp('extraBedPrice', r.extraBedPrice, 'number', 'step="0.01" min="0" id="rtExtraBedPrice"') + '<div class="hint">0 = ไม่คิดเงิน</div>')}
           ${this.fld('ขั้นต่ำ (คืน) — ว่าง = ตามที่พัก', this.inp('minNights', r.minNights, 'number', 'min="1"'))}${this.fld('', this.chk('includesBreakfast', r.includesBreakfast, 'ราคารวมอาหารเช้า'))}
-          ${this.fld('เตียง', this.inp('bedType', r.bedType))}${this.fld('ขนาด (ตรม.)', this.inp('sizeSqm', r.sizeSqm, 'number', 'step="0.1"'))}${this.fld('วิว', this.inp('viewType', r.viewType))}
+          ${this.fld('ชนิดเตียง', this.inp('bedType', r.bedType, 'text', 'placeholder="เช่น 1 เตียงคิงไซซ์ / 2 เตียงเดี่ยว" maxlength="100"'))}${this.fld('ขนาดห้อง (ตร.ม.)', this.inp('sizeSqm', r.sizeSqm, 'number', 'step="0.1" min="0"'))}${this.fld('วิว', this.inp('viewType', r.viewType, 'text', 'placeholder="เช่น วิวทะเล / วิวสวน" maxlength="100"'))}
+          ${this.fld('กติกาห้อง (แสดงบนหน้าห้องพักของเว็บ)', this.chk('smokingAllowed', r.smokingAllowed, 'สูบบุหรี่ในห้องได้ (ไม่ติ๊ก = ห้องปลอดบุหรี่)') + '<br>' + this.chk('petsAllowed', r.petsAllowed, 'รับสัตว์เลี้ยง'), true)}
+          ${this.fld('หมายเหตุถึงแขก (แสดงบนเว็บ)', `<textarea class="form-input" name="roomNote" rows="2" maxlength="1000" placeholder="เช่น ห้องอยู่ชั้น 3 ไม่มีลิฟต์ · มีอ่างอาบน้ำ">${esc(r.roomNote || '')}</textarea><div class="hint">ข้อความนี้แขกเห็น — อย่าใส่ข้อมูลภายใน</div>`, true)}
           ${this.fld('ลำดับ', this.inp('sortOrder', r.sortOrder, 'number'))}${this.fld('', this.chk('isActive', r.isActive, 'เปิดขาย'))}
           ${this.fld('คำอธิบาย', `<textarea class="form-input" name="description" rows="2">${esc(r.description || '')}</textarea>`, true)}
           ${this.fld('สิ่งอำนวยความสะดวก (คั่น ,)', this.inp('amenitiesCsv', (r.amenities || []).join(', ')), true)}

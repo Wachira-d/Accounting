@@ -23,6 +23,7 @@ Rules:
 3. ""compliance_flags"" lists Thai tax-law issues (e.g. ""§86 requires vendor tax ID for input VAT claim"").
 4. Be specific. ""Check with vendor"" is too vague — say ""โทรหา vendor ขอใบกำกับภาษีฉบับถูกต้อง"".
 5. For sticker-shock warnings, compare to vendor's historical avg/max and either reassure or flag.
+6. Keep it short: ""reasoning"" ONE sentence · at most 3 ""suggested_actions"" · empty arrays are fine. Never return null for ""primary"".
 
 Respond ONLY as JSON:
 {
@@ -72,7 +73,7 @@ Respond ONLY as JSON:
             SourceEntityType = "Document",
             SourceEntityId = documentId,
             CacheTtlOverrideDays = 1,   // Doc state changes; short cache
-            MaxTokensOverride = 400,
+            MaxTokensOverride = 900,   // ทีม H 2026-10-22: เดิม 400 — suggested_actions ภาษาไทยหลายข้อทำ JSON ขาดกลางทาง (InvalidResponse สลับ Success)
         };
     }
 }
@@ -149,7 +150,7 @@ Strict JSON (NO prose outside JSON):
             // response root = {root_cause, fixes} ไม่มี primary/alternatives —
             // ไม่ตั้ง RawPlanResponse orchestrator จะทิ้งคำตอบเป็น schema mismatch
             RawPlanResponse = true,
-            MaxTokensOverride = Math.Clamp(250 + 120 * warnings.Count, 400, 1800),
+            MaxTokensOverride = Math.Clamp(300 + 250 * warnings.Count, 800, 3000),   // ทีม H 2026-10-22: เดิม 250+120×n — ภาษาไทยหลายช่องต่อคำเตือนขาดกลางทาง
         };
     }
 }
@@ -211,7 +212,7 @@ Respond ONLY as JSON:
             SourceEntityType = "Document",
             SourceEntityId = creditNoteId,
             CacheTtlOverrideDays = 7,
-            MaxTokensOverride = 250,
+            MaxTokensOverride = 600,   // ทีม H 2026-10-22: เดิม 250 (คลาสเดียวกับ DocType/WHT — JSON ขาดกลางทาง)
         };
     }
 }
@@ -223,7 +224,7 @@ Respond ONLY as JSON:
 /// </summary>
 public static class DocumentTypeClassifyPrompt
 {
-    public const string SystemPrompt = @"You are a Thai accounting expert. Classify what TYPE of document was scanned (the physical paper) AND what document type to CREATE in the books (perspective shift — a vendor's receipt becomes our PaymentVoucher).
+    public static readonly string SystemPrompt = @"You are a Thai accounting expert. Classify what TYPE of document was scanned (the physical paper) AND what document type to CREATE in the books (perspective shift — a vendor's receipt becomes our PaymentVoucher).
 
 STEP 0 — WHICH SIDE ARE WE ON? Decide this FIRST; everything else follows.
 Compare `our_company.tax_id` / `our_company.name` against the seller block and the
@@ -236,26 +237,45 @@ buyer block on the paper:
 confident they were — treat it as a colleague's draft to CHECK, not as noise to
 ignore, and explain in `reasoning` when you disagree with it.
 
-Physical types (พิจารณาจาก wording บนเอกสาร):
-- TaxInvoice            : ""ใบกำกับภาษี"" — มี VAT, มี Tax ID ทั้งคู่
-- Invoice               : ""ใบแจ้งหนี้"" — ยังไม่ได้รับเงิน
-- Receipt               : ""ใบเสร็จรับเงิน"" — รับเงินแล้ว
-- DeliveryNote          : ""ใบส่งของ"" — ส่งของแล้ว, ยังไม่ออกใบกำกับภาษี
-- CreditNote            : ""ใบลดหนี้"" — ลดยอด
-- DebitNote             : ""ใบเพิ่มหนี้""
-- Quotation             : ""ใบเสนอราคา""
-- PurchaseOrder         : ""ใบสั่งซื้อ""
+STEP 1 — read the paper's wording (physical type): ""ใบกำกับภาษี"" TaxInvoice · ""ใบแจ้งหนี้"" Invoice ·
+""ใบเสร็จรับเงิน""/บิลเงินสด Receipt · ""ใบส่งของ"" DeliveryNote · ""ใบลดหนี้"" CreditNote · ""ใบเพิ่มหนี้"" DebitNote ·
+""ใบเสนอราคา"" Quotation · ""ใบสั่งซื้อ"" PurchaseOrder · ""ใบวางบิล"" BillingNote · ""ใบรับรองแทนใบเสร็จ"" CertificateInLieu.
+
+STEP 2 — ""primary"" is the document type to CREATE IN OUR BOOKS (NOT the physical type). It MUST be one of
+these exact names, on the side matching our role (an answer from the other side is discarded):
+" + TargetTypeList() + @"
+Typical mapping when WE ARE THE BUYER: receipt / cash bill / abbreviated tax invoice / paid stamp / bank slip → PaymentVoucher ·
+tax invoice or invoice with credit terms (unpaid) → PurchaseInvoice · billing note → PurchaseInvoice · delivery note → GoodsReceiptNote ·
+quotation received → PurchaseRequisition · credit/debit note → CreditNote/DebitNote · cash bill without vendor tax id → CertificateInLieu ·
+no clear marker → Expense.
+When WE ARE THE SELLER: receipt → ReceiptVoucher · tax invoice / invoice → TaxInvoice · quotation → Quotation ·
+customer bank slip → ReceiptVoucher · credit/debit note → CreditNote/DebitNote.
+Put the physical type in ""scanned_type"".
+
+Keep it short: ""reasoning"" ONE sentence (≤ 25 words). Empty arrays are fine. Never return null for ""primary"".
 
 Respond ONLY as JSON:
 {
-  ""primary"": ""<physicalType>"",
+  ""primary"": ""<target document type from the list above>"",
+  ""scanned_type"": ""<physical type>"",
   ""confidence"": <0.0-1.0>,
-  ""alternatives"": [""<other type>""],
+  ""alternatives"": [""<other target type, same side>""],
   ""risks"": [],
-  ""compliance_flags"": [""<§86 / §86/4 issue if mismatch>""],
-  ""reasoning"": ""<1-2 sentences>"",
-  ""suggested_actions"": [""<target_doc_type if our role differs>""]
+  ""compliance_flags"": [""<§86 / §86/4 issue if any>""],
+  ""reasoning"": ""<one short sentence>"",
+  ""suggested_actions"": []
 }";
+
+    /// <summary>ชนิดเอกสารปลายทางทั้งหมด + ฝั่ง — สร้างจาก enum <c>DocumentType</c> + ตัวตัดสินฝั่งกลาง <c>Helpers/DocumentSide</c>
+    /// (ไม่มีรายการคัดลอก — เพิ่มชนิดใหม่ใน enum แล้ว prompt ตามเอง · ด่านของผู้เรียก <c>DocumentSide.MatchesRole</c> ใช้ชุดเดียวกัน)
+    /// · ทีม H 2026-10-22: เดิม prompt ขอ "ชนิดกระดาษ" เป็น primary แต่ผู้เรียก (OcrService) ใช้ primary เป็น "ชนิดที่จะสร้าง"
+    /// แล้วกรองด้วยฝั่ง ⇒ ฝั่งซื้อได้ "TaxInvoice/Receipt" (ชนิดฝั่งขาย) แล้วถูกทิ้งทุกครั้ง · นักเรียน/ผู้ใช้ตอบเป็นชนิดปลายทาง
+    /// (PaymentVoucher) = คลังคำตอบคนละชุดกับครู</summary>
+    private static string TargetTypeList()
+        => string.Join("\n", Enum.GetValues<DocumentType>().Select(t =>
+            $"- {t} : " + (Accounting.Helpers.DocumentSide.IsAmbiguous(t) ? "either side (CN/DN/delivery — depends on our role)"
+                : Accounting.Helpers.DocumentSide.IsSales(t) ? "sales side (we are the seller)"
+                : "purchase side (we are the buyer)")));
 
     public static AiRequest Build(
         Guid companyId, Guid scanResultId,
@@ -319,7 +339,7 @@ Respond ONLY as JSON:
             SourceEntityType = "OcrScanResult",
             SourceEntityId = scanResultId,
             CacheTtlOverrideDays = 14,
-            MaxTokensOverride = 200,
+            MaxTokensOverride = 600,   // ทีม H 2026-10-22: เดิม 200 = JSON ขาดกลางทางเกือบทุกครั้ง (log 20/10/2569 "Schema mismatch")
             // คำถามคือ "เลขบนกระดาษตรงกับเลขบริษัทเราไหม" — ปิดบังแล้วตอบไม่ได้
             AllowTaxIdInPrompt = true,
         };
@@ -351,7 +371,7 @@ Allowed WHT income codes — answer with the CODE (first column). This list is t
 Rules:
 1. Use ONLY the rates shown for the payee kind (individual / juristic). ""-"" means the code does not apply to that payee kind.
    Do not invent rates (e.g. there is no general 1% rate for individuals).
-2. If pure sale of goods → primary = ""None"" (no WHT).
+2. If pure sale of goods → primary = ""None"" (no WHT). Never answer null or an empty string — ""no withholding"" is the literal ""None"".
 3. ฿1,000 threshold (ท.ป.4/2528 ข้อ 12) is **cumulative per payer-payee-contract**,
    NOT per line. Use `line.paid_to_vendor_this_year` + `line.amount`:
    - if `line.amount` + `line.paid_to_vendor_this_year` >= 1000 → withhold on
@@ -365,6 +385,7 @@ Rules:
 5. `vendor.dominant_gl_account` is the expense account this vendor's lines are
    usually booked to (from our own history). Treat it as a hint about the nature
    of the spend (ค่าเช่า → 40(5), ค่าโฆษณา → 2%, etc.), not as proof.
+6. Keep it short: ""reasoning"" ONE sentence (≤ 25 words); empty arrays are fine.
 
 Respond ONLY as JSON:
 {
@@ -464,7 +485,9 @@ Respond ONLY as JSON:
             SourceEntityType = "Document",
             SourceEntityId = documentId,
             CacheTtlOverrideDays = 30,
-            MaxTokensOverride = 280,
+            MaxTokensOverride = 600,   // ทีม H 2026-10-22: เดิม 280 — ขาดกลางทาง (log 20/10/2569)
+            // "primary": null = ไม่ต้องหัก (None) — คำตอบที่ถูกตามความหมาย ไม่ใช่ schema mismatch · ด่าน MinWhtSilenceConfidence ของผู้เรียกยังกันทิศ None ที่ไม่มั่นใจ
+            NullPrimaryAnswer = "None",
         };
     }
 }

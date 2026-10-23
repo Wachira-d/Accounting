@@ -248,6 +248,9 @@ public class MediaResponse
     public string ContentType { get; set; } = "";
     public long FileSize { get; set; }
     public string StoragePath { get; set; } = "";
+    /// <summary>URL ที่เบราว์เซอร์เปิดได้ (<c>/uploads/cms/{companyId}/{siteId}/{fileName}</c>) — <see cref="StoragePath"/> เป็น
+    /// path บนดิสก์ของเซิร์ฟเวอร์ ใช้เป็น src ของรูปไม่ได้ (เดิมหน้า cms-edit ตกไปใช้ storagePath ⇒ รูปจากคลังไม่ขึ้นบนเว็บ)</summary>
+    public string PublicUrl { get; set; } = "";
     public SiteMediaType MediaType { get; set; }
     public string? WebPPath { get; set; }
     public string? ThumbnailPath { get; set; }

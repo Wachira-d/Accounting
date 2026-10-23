@@ -18,10 +18,12 @@
     .status-Completed   { background:#d1fae5;color:#065f46 }
     .status-Cancelled   { background:#fee2e2;color:#991b1b }
     .status-NoShow      { background:#fde68a;color:#78350f }
+    .status-Waitlisted  { background:#f3e8ff;color:#6b21a8 }
   </style>
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
+    <div id="cmsCrumb"></div>
     <div class="page-header">
       <div>
         <h2 class="page-title">การจองจากเว็บไซต์</h2>
@@ -50,6 +52,7 @@
         <option value="Completed">เสร็จสิ้น</option>
         <option value="Cancelled">ยกเลิก</option>
         <option value="NoShow">ไม่มา (No-show)</option>
+        <option value="Waitlisted">คิวสำรอง</option>
       </select>
       <input type="date" class="form-input" id="dateFilter" onchange="Page.load()">
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่จองหรือชื่อลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
@@ -83,6 +86,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
   <script>
     // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว — ที่นี่แค่มอบต่อ
     const STATUS_LABEL = Layout.ENUM_LABELS.bookingStatus;
@@ -92,7 +96,9 @@
       'InProgress': [['Completed','✓ เสร็จสิ้น','btn-primary']],
       'Completed':  [],
       'Cancelled':  [],
-      'NoShow':     []
+      'NoShow':     [],
+      // คิวสำรอง: ระบบเลื่อนขึ้นเองเมื่อมีคนยกเลิก · ยืนยันนอกคิว = แอดมินรับเองแม้รอบเต็ม
+      'Waitlisted': [['Confirmed','ยืนยันนอกคิว (รับเกิน)','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']]
     };
 
     const Page = {
@@ -102,23 +108,29 @@
         await this.loadSites();
       },
       async loadSites() {
-        const api = Layout.api(); if (!api) return;
         try {
-          const res = await api.cmsListSites();
-          const sites = res?.data?.items || res?.data || [];
+          // ?siteId= จากปุ่มบนการ์ดเว็บ (cms-sites) — ตรวจกับรายการเว็บจริง + breadcrumb ผ่าน CmsSiteContext ตัวเดียว
+          const sites = this.sites = await CmsSiteContext.loadSites();
           const sel = document.getElementById('siteSelector');
           if (!sites.length) {
-            sel.innerHTML = '<option value="">ยังไม่มีเว็บไซต์</option>'; return;
+            sel.innerHTML = '<option value="">ยังไม่มีเว็บไซต์</option>';
+            CmsSiteContext.renderCrumb('cmsCrumb', sites, null, 'การจองคิว', 'cms-bookings');
+            return;
           }
-          sel.innerHTML = sites.map(s => `<option value="${s.id}">${Layout.esc(s.name)}</option>`).join('');
-          this.siteId = new URLSearchParams(location.search).get('siteId') || sites[0].id;
-          sel.value = this.siteId;
+          this.siteId = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'bookings' });
+          CmsSiteContext.fillSelect(sel, sites, { module: 'bookings', value: this.siteId });
+          this._siteCtx();
           await this.load();
           await this.loadStats();
         } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
       },
+      _siteCtx() {
+        CmsSiteContext.setUrl(this.siteId);
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], this.siteId, 'การจองคิว', 'cms-bookings');
+      },
       async onSiteChange() {
         this.siteId = document.getElementById('siteSelector').value;
+        this._siteCtx();
         await this.load(); await this.loadStats();
       },
       debounceLoad() {
@@ -133,13 +145,13 @@
           const [pend, conf, td, done] = await Promise.all([
             api.cmsListBookings(this.siteId, '?status=Pending&pageSize=1'),
             api.cmsListBookings(this.siteId, '?status=Confirmed&pageSize=1'),
-            api.cmsListBookings(this.siteId, `?date=${today}&pageSize=1`),
-            api.cmsListBookings(this.siteId, '?status=Completed&pageSize=1')
+            api.cmsListBookings(this.siteId, `?fromDate=${today}&toDate=${today}&pageSize=1`),
+            api.cmsListBookings(this.siteId, `?status=Completed&fromDate=${today.slice(0, 8)}01&pageSize=1`)
           ]);
-          document.getElementById('statPending').textContent = pend?.data?.totalItems ?? '0';
-          document.getElementById('statConfirmed').textContent = conf?.data?.totalItems ?? '0';
-          document.getElementById('statToday').textContent = td?.data?.totalItems ?? '0';
-          document.getElementById('statCompleted').textContent = done?.data?.totalItems ?? '0';
+          document.getElementById('statPending').textContent = pend?.data?.totalCount ?? '0';
+          document.getElementById('statConfirmed').textContent = conf?.data?.totalCount ?? '0';
+          document.getElementById('statToday').textContent = td?.data?.totalCount ?? '0';
+          document.getElementById('statCompleted').textContent = done?.data?.totalCount ?? '0';
         } catch (e) { /* non-fatal */ }
       },
       async load() {
@@ -150,7 +162,8 @@
         const search = document.getElementById('searchInput').value;
         let q = `?pageSize=50`;
         if (status) q += `&status=${encodeURIComponent(status)}`;
-        if (date) q += `&date=${encodeURIComponent(date)}`;
+        // server รับ fromDate/toDate (ไม่มี date) — เดิมส่ง date/search ที่ server ไม่รู้จัก ⇒ ตัวกรองไม่มีผลเงียบ ๆ
+        if (date) q += `&fromDate=${encodeURIComponent(date)}&toDate=${encodeURIComponent(date)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
           const res = await api.cmsListBookings(this.siteId, q);
@@ -164,11 +177,11 @@
             <tr class="booking-row" onclick="Page.viewBooking('${b.id}')">
               <td class="font-medium">${Layout.esc(b.bookingNumber||b.id.substring(0,8))}</td>
               <td>${Layout.esc(b.customerName||'(ไม่ระบุ)')}</td>
-              <td>${Layout.esc(b.serviceName||'-')}</td>
+              <td>${Layout.esc(b.serviceName||'-')}${b.resourceName ? `<div style="font-size:11px;color:var(--gray-500)">👤 ${Layout.esc(b.resourceName)}</div>` : ''}</td>
               <td>${Layout.date(b.bookingDate)}</td>
-              <td><strong>${Layout.esc(b.startTime||'')}</strong></td>
+              <td><strong>${Layout.esc(b.startTime||'')}</strong>${b.endTime ? '–' + Layout.esc(b.endTime) : ''}${(b.guestCount||1) > 1 ? ` · ${b.guestCount} คน` : ''}</td>
               <td class="text-right">฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
-              <td><span class="status-pill status-${b.status}">${STATUS_LABEL[b.status]||b.status}</span></td>
+              <td><span class="status-pill status-${b.status}">${STATUS_LABEL[b.status]||b.status}${b.waitlistPosition ? ' #' + b.waitlistPosition : ''}</span></td>
             </tr>`).join('');
         } catch (e) { Layout.toast('โหลดการจองไม่สำเร็จ: ' + e.message, 'error'); }
       },
@@ -197,7 +210,9 @@
             <div style="background:var(--gray-50);padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
               <div style="font-weight:600;margin-bottom:6px">📅 ${Layout.date(b.bookingDate)} เวลา <strong>${Layout.esc(b.startTime)}</strong> — ${Layout.esc(b.endTime||'?')}</div>
               <div>บริการ: <strong>${Layout.esc(b.serviceName)}</strong> · ${b.durationMinutes||0} นาที</div>
-              <div>จำนวนคน: ${b.guestCount||1}</div>
+              ${b.resourceName ? `<div>ผู้ให้บริการ: <strong>${Layout.esc(b.resourceName)}</strong></div>` : ''}
+              ${b.waitlistPosition ? `<div style="color:#6b21a8">คิวสำรองลำดับที่ ${b.waitlistPosition} — ระบบเลื่อนขึ้นเองเมื่อมีที่ว่าง</div>` : ''}
+              <div>จำนวนคน: ${b.guestCount||1}${(b.units||1) > 1 ? ` · ${b.units} ช่วงติดกัน` : ''}</div>
             </div>
             <div style="background:var(--gray-50);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
               <div style="display:flex;justify-content:space-between"><span>ค่าบริการรวม</span><span>฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
@@ -206,16 +221,42 @@
               ${b.erpDocumentId ? `<div style="margin-top:6px;font-size:11px;color:#059669">✓ ผูกกับเอกสารบัญชี — <a href="/pages/documents.html?id=${b.erpDocumentId}" style="color:#059669;text-decoration:underline">เปิดดู</a></div>` : ''}
             </div>
             ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
+            ${b.canIssueTaxInvoiceNow ? `<div style="background:#fffbeb;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px">
+              การจองนี้ยังไม่มีใบกำกับภาษีที่อนุมัติแล้ว — ถ้า<strong>รับเงินแล้ว</strong> ต้องออกใบกำกับในวันที่รับเงิน (§78/1)
+              <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label style="font-size:12px">วันที่รับเงิน <input type="date" id="bkPaidOn" class="form-input" style="width:auto;display:inline-block" value="${Page._todayBkk()}" max="${Page._todayBkk()}"></label>
+                <button class="btn btn-primary btn-sm" onclick="Page.issueTaxInvoice('${b.id}')">รับเงินแล้ว — ออกใบกำกับภาษี</button>
+              </div>
+              <div style="margin-top:4px;color:var(--gray-600)">ใบกำกับลงวันที่รับเงินที่ระบุ · ยังต้องบันทึกรับชำระที่หน้าเอกสารใบนั้น</div>
+            </div>` : ''}
             ${workflow ? `<h4 style="margin-top:12px;margin-bottom:6px;font-size:13px">ดำเนินการ</h4><div style="display:flex;gap:8px;flex-wrap:wrap">${workflow}</div>` : ''}`;
           Layout.openModal('bkModal');
         } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      // วันนี้ตามเวลาไทย (ค่าเริ่มต้นของช่องวันที่ — server ตรวจห้ามอนาคตเอง)
+      _todayBkk() { return new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10); },
+      async issueTaxInvoice(id) {
+        const api = Layout.api(); if (!api) return;
+        const paidOn = (document.getElementById('bkPaidOn') || {}).value || null;
+        if (!confirm(`ยืนยันว่าได้รับเงินของการจองนี้แล้ว — ระบบจะออกใบกำกับภาษีลงวันที่ ${paidOn || 'วันนี้'}`)) return;
+        try {
+          const res = await api.cmsIssueBookingTaxInvoice(this.siteId, id, { receivedDate: paidOn });
+          // ข้อความจาก server (ออกใบแล้ว · มีใบแล้วไม่ออกซ้ำ · ขั้นที่ล้มพร้อมเหตุ) — แสดงตามจริง
+          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
+          if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          Layout.closeModal('bkModal');
+          await this.load();
+        } catch (e) { Layout.toast('ออกใบกำกับไม่สำเร็จ: ' + e.message, 'error'); }
       },
       async advance(id, nextStatus) {
         const api = Layout.api(); if (!api) return;
         const note = nextStatus === 'Cancelled' ? prompt('เหตุผลที่ยกเลิก (ถ้ามี)') : null;
         try {
-          await api.cmsUpdateBookingStatus(this.siteId, id, { status: nextStatus, internalNotes: note });
-          Layout.toast('อัปเดตสถานะเรียบร้อย');
+          const res = await api.cmsUpdateBookingStatus(this.siteId, id, { status: nextStatus, internalNotes: note });
+          // ข้อความจาก server (ขั้น ERP · เลื่อนคิวสำรองขึ้น) — แสดงตามจริง
+          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
+          if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          else Layout.toast('อัปเดตสถานะเรียบร้อย');
           Layout.closeModal('bkModal');
           await this.load();
           await this.loadStats();

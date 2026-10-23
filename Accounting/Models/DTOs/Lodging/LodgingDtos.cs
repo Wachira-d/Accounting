@@ -138,6 +138,12 @@ public class LodgingPropertyDto
     public List<LodgingGuestConfirmModeOption>? GuestConfirmModeOptions { get; set; }
     /// <summary>คำอธิบายหลัก tax point ของมัดจำ (ย่อหน้าเดียวกับหน้าตั้งค่าบริษัท)</summary>
     public string? DepositVatExplanation { get; set; }
+    /// <summary>คำตัดสินข้อ 157 — จังหวะออกเอกสารภาษี (ชื่อ enum) · request null = คงค่าเดิม (client รุ่นเก่า) · response = ค่าที่บันทึกไว้เสมอ</summary>
+    public BookingInvoiceTiming? TaxInvoiceTiming { get; set; }
+    /// <summary>ตัวเลือก + ผลทางภาษี (<c>LodgingTaxInvoiceTimingPolicy.Options</c>) — response-only · หน้าเว็บสร้าง dropdown จากลิสต์นี้</summary>
+    public List<BookingInvoiceTimingOption>? TaxInvoiceTimingOptions { get; set; }
+    /// <summary>คำอธิบายแบบ "ใบกำกับทุกครั้งที่รับเงิน" ของที่พักนี้ตอนนี้ (<c>LodgingTaxInvoiceTimingPolicy.PaymentInvoiceNote</c>) — response-only</summary>
+    public string? TaxInvoicePaymentNote { get; set; }
     /// <summary>รอบ 202 ทีม LS (W-01) — แขกจองผ่านเว็บได้จริงไหม · ตัวตัดสิน <c>Helpers/LodgingPublicReadiness.Evaluate</c> ·
     /// ออกเป็น "ชื่อ" (Live · NotLinked · SiteMissing · Inactive · OnlineOff · NoRooms) — response-only (หน้าเว็บไม่ส่งกลับ)</summary>
     public LodgingPublicBookingStatus? PublicBookingStatus { get; set; }
@@ -186,6 +192,20 @@ public class LodgingRoomTypeDto
     public string? BedType { get; set; }
     public decimal? SizeSqm { get; set; }
     public string? ViewType { get; set; }
+    /// <summary>สูบบุหรี่ในห้องได้ (false = ปลอดบุหรี่)</summary>
+    public bool SmokingAllowed { get; set; }
+    /// <summary>รับสัตว์เลี้ยง</summary>
+    public bool PetsAllowed { get; set; }
+    /// <summary>หมายเหตุ/นโยบายเฉพาะห้องที่แขกเห็น (สาธารณะ)</summary>
+    public string? RoomNote { get; set; }
+    /// <summary>response-only (หน้าเว็บสาธารณะ) — ป้ายกติกาห้อง "ห้องปลอดบุหรี่" / "ไม่รับสัตว์เลี้ยง" (<c>LodgingPublicRoomLabels.HouseRuleLabels</c>)</summary>
+    public List<string> HouseRuleLabels { get; set; } = new();
+    /// <summary>response-only — "เด็กพักได้สูงสุด N คน" (<c>LodgingPublicRoomLabels.ChildrenLabel</c>) · null = ไม่ระบุ</summary>
+    public string? ChildrenLabel { get; set; }
+    /// <summary>response-only — นโยบายยกเลิกของแผนราคาตั้งต้นของห้อง (ตัวเลือกเดียวกับใบเสนอราคา · <c>PolicyFor</c>) · null = ไม่มีนโยบาย</summary>
+    public string? CancellationPolicyName { get; set; }
+    /// <summary>response-only — สรุปเงื่อนไขยกเลิก (<c>LodgingPublicRoomLabels.CancellationSummary</c>)</summary>
+    public string? CancellationSummary { get; set; }
     public int StandardOccupancy { get; set; } = 2;
     public int MaxAdults { get; set; } = 2;
     public int MaxChildren { get; set; } = 1;
@@ -598,6 +618,15 @@ public class LodgingReservationResponse
     public string? DepositDocumentNumber { get; set; }
     public Guid? FinalDocumentId { get; set; }
     public string? FinalDocumentNumber { get; set; }
+    /// <summary>คำตัดสินข้อ 157 — ใบกำกับภาษีล่วงหน้า (เต็มยอดการเข้าพัก) · null = ไม่มี</summary>
+    public Guid? AdvanceTaxDocumentId { get; set; }
+    public string? AdvanceTaxDocumentNumber { get; set; }
+    /// <summary>ใบล่วงหน้ายังมีผล (ไม่ถูกยกเลิก) — ตัดสินจากเอกสาร (<c>LodgingTaxInvoiceTimingPolicy.StateOf</c>)</summary>
+    public bool AdvanceTaxDocumentLive { get; set; }
+    /// <summary>เปิดปุ่ม “ออกใบกำกับภาษีล่วงหน้า” ไหม — ตัวตัดสินเดียวกับตอนกด (หน้าพนักงานเท่านั้น · หน้าแขก false)</summary>
+    public bool CanIssueAdvanceTaxInvoice { get; set; }
+    /// <summary>ข้อความเรื่องใบกำกับล่วงหน้า (ถูกยกเลิก/รอออก) — หน้าพนักงานเท่านั้น · null = ไม่มี</summary>
+    public string? AdvanceTaxInvoiceNote { get; set; }
     public string? PaymentSlipUrl { get; set; }
     public string? PaymentReference { get; set; }
     public DateTime? SlipUploadedAt { get; set; }
@@ -857,6 +886,9 @@ public record LodgingAddChargeRequest(
 /// <para>ฝ่ายค้าน X2: <c>ConfirmNoManualReissue</c> = ผู้ใช้ยืนยันว่ายังไม่ได้ออกใบแทนเองที่หน้าเอกสาร (บังคับ — ใบที่ออกเองโดยไม่อ้างเลขจองตรวจไม่ได้)</para></summary>
 public record LodgingReissueFinalRequest(string? Reason = null, bool ConfirmNoManualReissue = false);
 
+/// <summary>คำตัดสินข้อ 157 — พนักงานกด “ออกใบกำกับภาษีล่วงหน้า” · <paramref name="IssueToCompany"/> = ออกในนามบริษัทของแขก (ต้องมีชื่อบริษัท + เลขผู้เสียภาษี §86/4)</summary>
+public record LodgingIssueAdvanceTaxInvoiceRequest(bool IssueToCompany = false);
+
 /// <summary>เช็คเอาต์ = ออกใบกำกับ/ใบแจ้งหนี้สุดท้าย (ตัดมัดจำ) + รับชำระส่วนที่เหลือ</summary>
 public record LodgingCheckOutRequest(
     PaymentMethod PaymentMethod = PaymentMethod.Cash,
@@ -1032,6 +1064,24 @@ public class LodgingCalendarAvailability
 }
 
 public record LodgingCalendarDay(DateTime Date, int Available, decimal Rate, bool StopSell, int? Allotment);
+
+/// <summary>สลิป 1 ใบในแกลเลอรีฝั่งพนักงาน (โมดัลการจอง) — สร้างจาก <see cref="LodgingSlipGallery"/> ตัวเดียว ·
+/// <c>Url</c> = endpoint ที่ตรวจสิทธิ์ (ต้องแนบ JWT) · <c>null</c> = หาไฟล์บนดิสก์ไม่เจอ (<c>FileMissing</c>) · <c>State</c> ออกเป็นชื่อ enum</summary>
+public sealed class LodgingSlipItemDto
+{
+    public Guid? AttachmentId { get; set; }
+    public string? Url { get; set; }
+    public string? ContentType { get; set; }
+    public bool IsImage { get; set; }
+    public bool FileMissing { get; set; }
+    public DateTime? UploadedAt { get; set; }
+    public string? OriginalFileName { get; set; }
+    public string State { get; set; } = "";
+    public string StateLabel { get; set; } = "";
+    public string? RejectedReason { get; set; }
+    public DateTime? RejectedAt { get; set; }
+    public string? Reference { get; set; }
+}
 
 /// <summary>ปฏิเสธสลิปที่แขกส่งมา — <b>เหตุผลบังคับ</b> เพราะข้อความนี้คือสิ่งเดียว
 /// ที่แขกจะได้เห็นว่าทำไมไม่ผ่านและต้องทำอะไรต่อ</summary>

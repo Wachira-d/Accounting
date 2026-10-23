@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Executive;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,7 @@ public partial class ExecutiveReportService
         if (periods > 60) periods = 60;
         var g = (granularity ?? "monthly").ToLowerInvariant();
 
-        var ranges = BuildPeriodRanges(g, periods, DateTime.UtcNow);
+        var ranges = await BuildRangesAsync(companyId, g, periods, DateTime.UtcNow);
 
         var revenue = new List<TrendPoint>();
         var expense = new List<TrendPoint>();
@@ -47,48 +48,37 @@ public partial class ExecutiveReportService
         return new TrendAnalysisResponse(g, periods, revenue, expense, grossProfit, netIncome, cash, cagrRev, cagrExp);
     }
 
-    private static List<(string label, DateTime start, DateTime end)> BuildPeriodRanges(string granularity, int periods, DateTime anchor)
+    /// <summary>ช่วงของกราฟแนวโน้ม — ไตรมาส/ปี ตาม<b>รอบบัญชีของบริษัท</b> ผ่านตัวแบ่งช่วงของงบเปรียบเทียบ (<see cref="PnlComparison.TrailingPeriods"/>) ·
+    /// รายเดือนเหมือนเดิม (เดือนไม่ขึ้นกับรอบ) · ทีม O 2026-10-22: เดิมไตรมาส/ปีเป็นปีปฏิทินเสมอ ขัดกับงบกำไรขาดทุนเปรียบเทียบ</summary>
+    private async Task<List<(string label, DateTime start, DateTime end)>> BuildRangesAsync(Guid companyId, string granularity, int periods, DateTime anchor)
+    {
+        if (granularity is not ("quarterly" or "yearly"))
+            return BuildMonthlyRanges(periods, anchor);
+        var startMonth = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => c.FiscalYearStartMonth)
+            .FirstOrDefaultAsync();
+        var gran = granularity == "yearly" ? PnlCompareGranularity.Year : PnlCompareGranularity.Quarter;
+        // ปลายช่วงเป็นวันที่ (รวมปลาย) ⇒ ขยายถึง 23:59:59 ของวันสุดท้าย เหมือนรายเดือน (EntryDate <= end)
+        return PnlComparison.TrailingPeriods(anchor, periods, gran, startMonth)
+            .Select(p => (p.Label, p.Start, p.EndInclusive.Date.AddDays(1).AddSeconds(-1)))
+            .ToList();
+    }
+
+    /// <summary>ช่วงรายเดือน (ปฏิทิน) — ไตรมาส/ปี ไปที่ <see cref="BuildRangesAsync"/></summary>
+    private static List<(string label, DateTime start, DateTime end)> BuildMonthlyRanges(int periods, DateTime anchor)
     {
         var list = new List<(string, DateTime, DateTime)>();
-        if (granularity == "yearly")
+        var anchorY = anchor.Year;
+        var anchorM = anchor.Month;
+        for (int i = periods - 1; i >= 0; i--)
         {
-            var endYear = anchor.Year;
-            for (int i = periods - 1; i >= 0; i--)
-            {
-                var y = endYear - i;
-                var start = new DateTime(y, 1, 1);
-                var end = new DateTime(y, 12, 31, 23, 59, 59);
-                list.Add(($"{y}", start, end));
-            }
-        }
-        else if (granularity == "quarterly")
-        {
-            var anchorQ = (anchor.Month - 1) / 3;
-            var anchorY = anchor.Year;
-            for (int i = periods - 1; i >= 0; i--)
-            {
-                var totalQ = anchorY * 4 + anchorQ - i;
-                var y = totalQ / 4;
-                var q = totalQ % 4;
-                var startMonth = q * 3 + 1;
-                var start = new DateTime(y, startMonth, 1);
-                var end = start.AddMonths(3).AddSeconds(-1);
-                list.Add(($"Q{q + 1} {y}", start, end));
-            }
-        }
-        else // monthly
-        {
-            var anchorY = anchor.Year;
-            var anchorM = anchor.Month;
-            for (int i = periods - 1; i >= 0; i--)
-            {
-                var totalM = anchorY * 12 + (anchorM - 1) - i;
-                var y = totalM / 12;
-                var m = (totalM % 12) + 1;
-                var start = new DateTime(y, m, 1);
-                var end = start.AddMonths(1).AddSeconds(-1);
-                list.Add(($"{y:D4}-{m:D2}", start, end));
-            }
+            var totalM = anchorY * 12 + (anchorM - 1) - i;
+            var y = totalM / 12;
+            var m = (totalM % 12) + 1;
+            var start = new DateTime(y, m, 1);
+            var end = start.AddMonths(1).AddSeconds(-1);
+            list.Add(($"{y:D4}-{m:D2}", start, end));
         }
         return list;
     }
@@ -120,7 +110,7 @@ public partial class ExecutiveReportService
         BuildTrendPointsAsync(Guid companyId, DateTime fromDate, DateTime toDate, string granularity, int periods)
     {
         // Build last N months ending at toDate
-        var ranges = BuildPeriodRanges(granularity, periods, toDate);
+        var ranges = await BuildRangesAsync(companyId, (granularity ?? "monthly").ToLowerInvariant(), periods, toDate);
         var rev = new List<TrendPoint>();
         var exp = new List<TrendPoint>();
         var ni = new List<TrendPoint>();

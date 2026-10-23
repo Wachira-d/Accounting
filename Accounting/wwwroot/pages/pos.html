@@ -155,6 +155,7 @@
           <button class="btn btn-secondary" onclick="Page.openCameraScanner()" title="สแกนบาร์โค้ดด้วยกล้อง (มือถือ / แท็บเล็ต)" style="padding:8px 14px;font-size:18px">📷</button>
           <button class="btn btn-ghost" onclick="Page.openCustomerDisplay()" title="เปิดจอลูกค้า (Customer Display) ในแท็บใหม่ — ลากไปจอที่ 2 ให้ลูกค้าเห็นยอดเงิน" style="padding:8px 14px;font-size:18px">📺</button>
           <button class="btn btn-ghost" id="langToggleBtn" onclick="Page.toggleMenuLang()" title="เปลี่ยนภาษาเมนู (ไทย / English) สำหรับลูกค้าต่างชาติ" style="padding:8px 12px;font-size:13px;font-weight:600">🌐 TH</button>
+          <button class="btn btn-secondary" onclick="Page.openCustomItem()" title="รายการพิเศษ — บริการ/สินค้าที่ไม่มีในเมนู (ไม่ตัดสต็อก)" style="padding:8px 12px;font-size:13px;font-weight:600;white-space:nowrap">➕ รายการพิเศษ</button>
         </div>
         <div class="pos-categories" id="categories"></div>
         <div class="pos-grid" id="productGrid">
@@ -167,6 +168,7 @@
           <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
             <strong style="font-size:14px;flex:1;" id="orderTitle">ออเดอร์ใหม่</strong>
             <button type="button" onclick="Page.openFloorView()" title="ดูผังโต๊ะ — เห็นสถานะทุกโต๊ะ" style="background:#dbeafe;border:1px solid #93c5fd;color:#1e40af;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">🪑 ผังโต๊ะ</button>
+            <button type="button" onclick="Page.openBookingQueue()" title="คิวการจองวันนี้ (จากเว็บไซต์ + การจองโต๊ะ) — กดเปิดบิลได้ทันที" style="background:#ede9fe;border:1px solid #c4b5fd;color:#5b21b6;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">📅 คิวจอง</button>
             <button type="button" id="recallBtn" onclick="Page.openHeldOrders()" title="ดูบิลที่พักไว้" style="background:#fef3c7;border:1px solid #fbbf24;color:#92400e;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">📌 บิลพัก <span id="heldCount" style="background:#fbbf24;color:#fff;border-radius:10px;padding:0 6px;font-size:11px;display:none;">0</span></button>
             <select id="orderType" style="font-size:12px;padding:4px 8px;border:1px solid var(--gray-300);border-radius:6px;" onchange="Page.onOrderTypeChange()">
               <option value="0">ทานที่ร้าน</option>
@@ -326,6 +328,58 @@
         <div class="modal-body" id="heldOrdersBody" style="padding:14px;max-height:60vh;overflow:auto;">
           <div style="text-align:center;color:#94a3b8;padding:40px">กำลังโหลด...</div>
         </div>
+      </div>
+    </div>
+
+    <!-- ทีม K: คิวการจองวันนี้ → เปิดบิล -->
+    <div class="modal-overlay" id="bookingQueueModal">
+      <div class="modal" style="max-width:760px">
+        <div class="modal-header">
+          <h3 class="modal-title">📅 คิวการจอง</h3>
+          <input type="date" id="bqDate" onchange="Page.loadBookingQueue()" style="margin-left:auto;margin-right:8px;padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px">
+          <button class="modal-close" onclick="Layout.closeModal('bookingQueueModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="bookingQueueBody" style="padding:14px;max-height:65vh;overflow:auto;">
+          <div style="text-align:center;color:#94a3b8;padding:40px">กำลังโหลด...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ทีม K: รายการพิเศษ (Quick Add / Custom Item) -->
+    <div class="modal-overlay" id="customItemModal">
+      <div class="modal" style="max-width:460px">
+        <div class="modal-header">
+          <h3 class="modal-title">➕ รายการพิเศษ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('customItemModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:16px;display:grid;gap:10px">
+          <div><label class="form-label">ชื่อรายการ * <span style="color:#94a3b8;font-size:11px">(พิมพ์บนสลิป/ใบกำกับ)</span></label><input type="text" id="ciName" class="form-input" maxlength="200" placeholder="เช่น ค่าเดินทางนอกสถานที่"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div><label class="form-label">ราคา/หน่วย (รวม VAT) *</label><input type="number" id="ciPrice" class="form-input" min="0" step="0.01"></div>
+            <div><label class="form-label">จำนวน</label><input type="number" id="ciQty" class="form-input" min="0.01" step="0.01" value="1"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div><label class="form-label">ประเภท</label><select id="ciKind" class="form-input"></select></div>
+            <div><label class="form-label">ช่าง/พนักงาน</label><select id="ciStaff" class="form-input"></select></div>
+          </div>
+          <div><label class="form-label">บัญชีรายได้</label><select id="ciAccount" class="form-input"></select></div>
+          <div id="ciVatNote" style="font-size:12px;color:#64748b;background:#f8fafc;border-radius:6px;padding:8px 10px"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('customItemModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="ciSaveBtn" onclick="Page.saveCustomItem()">เพิ่มลงบิล</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ทีม K: เลือกช่างของบรรทัด -->
+    <div class="modal-overlay" id="staffPickModal">
+      <div class="modal" style="max-width:380px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="staffPickTitle">👤 ช่าง/พนักงาน</h3>
+          <button class="modal-close" onclick="Layout.closeModal('staffPickModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="staffPickBody" style="padding:12px;max-height:60vh;overflow:auto;display:grid;gap:6px"></div>
       </div>
     </div>
 
@@ -1625,14 +1679,20 @@
       _syncCartFromServer(order) {
         if (!order || !order.items) return;
         this.cart = order.items.filter(i => !i.isDeleted).map(i => ({
-          type: i.productId ? 'product' : 'package',
-          itemId: i.productId || i.servicePackageId,
+          type: i.isCustomItem ? 'custom' : (i.productId ? 'product' : 'package'),
+          itemId: i.productId || i.servicePackageId || null,
           serverItemId: i.id,
           name: i.itemName,
           unitPrice: i.unitPrice,
           quantity: i.quantity,
           discountAmount: i.discountAmount,
-          discountPercent: i.discountPercent
+          discountPercent: i.discountPercent,
+          // ทีม K — ช่างรายบรรทัด + รายการพิเศษ (ค่าจากเซิร์ฟเวอร์)
+          staffId: i.staffId || null,
+          staffName: i.staffName || null,
+          customKind: i.customItemKind || null,
+          revenueAccountId: i.revenueAccountId || null,
+          unit: i.unit || null
         }));
         this.currentOrder = order;
         this.renderCart();
@@ -1731,12 +1791,13 @@
           const net = gross - disc;
           return `
           <div class="order-item-row">
-            <div class="oi-name">${Layout.esc(c.name)}${disc>0?`<div style="font-size:11px;color:#dc2626">ลด ${Layout.money(disc)}${c.discountPercent?` (${c.discountPercent}%)`:''}</div>`:''}</div>
+            <div class="oi-name">${c.type==='custom'?'<span title="รายการพิเศษ (ไม่ตัดสต็อก)" style="font-size:10px;background:#ede9fe;color:#5b21b6;border-radius:3px;padding:0 4px;margin-right:3px">พิเศษ</span>':''}${Layout.esc(c.name)}${disc>0?`<div style="font-size:11px;color:#dc2626">ลด ${Layout.money(disc)}${c.discountPercent?` (${c.discountPercent}%)`:''}</div>`:''}${c.staffName?`<div style="font-size:11px;color:#5b21b6">👤 ${Layout.esc(c.staffName)}</div>`:''}</div>
             <button class="oi-remove" onclick="Page.updateQty(${i},-1)">-</button>
             <span class="oi-qty">${c.quantity}</span>
             <button class="oi-remove" style="color:var(--success)" onclick="Page.updateQty(${i},1)">+</button>
             <div class="oi-price">${disc>0?`<span style="text-decoration:line-through;color:#94a3b8;font-size:11px">${Layout.money(gross)}</span><br>`:''}${Layout.money(net)}</div>
             <button class="oi-remove" style="color:#f59e0b;font-size:14px" onclick="Page.openItemDiscount(${i})" title="ส่วนลดรายการ">%</button>
+            <button class="oi-remove" style="color:#7c3aed;font-size:13px" onclick="Page.openStaffPick(${i})" title="ระบุช่าง/พนักงานของรายการนี้ (ใช้คิดค่าคอมมิชชัน)">👤</button>
             <button class="oi-remove" onclick="Page.removeFromCart(${i})">x</button>
           </div>`;
         }).join('');
@@ -1769,14 +1830,7 @@
         if (!this.cart.length) { Layout.toast('กรุณาเลือกสินค้า', 'warning'); return null; }
         const api = Layout.api(); if (!api) return null;
         const ot = parseInt(document.getElementById('orderType').value);
-        const items = this.cart.map(c => ({
-          productId: c.type === 'product' ? c.itemId : null,
-          servicePackageId: c.type === 'package' ? c.itemId : null,
-          itemName: c.name,
-          quantity: c.quantity,
-          unitPrice: c.unitPrice,
-          modifiers: []
-        }));
+        const items = this.cart.map(c => this._itemPayload(c));
         try {
           const res = await api.createPosOrder({
             sessionId: this.session.id,
@@ -2399,16 +2453,7 @@
           discountPercent: 0,
           notes: 'OFFLINE',
           completedAt: new Date().toISOString(),
-          items: this.cart.map(c => ({
-            productId: c.type === 'product' ? c.itemId : null,
-            servicePackageId: c.type === 'package' ? c.itemId : null,
-            itemName: c.name,
-            itemCode: c.code || null,
-            quantity: c.quantity,
-            unit: null,
-            unitPrice: c.unitPrice,
-            discountPercent: 0,
-          })),
+          items: this.cart.map(c => Object.assign(this._itemPayload(c), { itemCode: c.code || null, discountPercent: 0 })),
           payments: [{
             paymentMethod: method,
             amount: subtotal,
@@ -2753,6 +2798,212 @@
           if (resv.contactId) this._attachedCustomerId = resv.contactId;
           Layout.toast(`✓ นั่งโต๊ะ ${tableNumber} — เพิ่มสินค้าได้เลย`);
         } catch(e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ===== ทีม K: payload ของบรรทัด (ตัวเดียวทั้งออนไลน์/ออฟไลน์) =====
+      _itemPayload(c) {
+        const custom = c.type === 'custom';
+        return {
+          productId: c.type === 'product' ? c.itemId : null,
+          servicePackageId: c.type === 'package' ? c.itemId : null,
+          itemName: c.name,
+          quantity: c.quantity,
+          unit: c.unit || null,
+          unitPrice: c.unitPrice,
+          modifiers: [],
+          staffId: c.staffId || null,
+          isCustomItem: custom,
+          customItemKind: custom ? (c.customKind || null) : null,
+          revenueAccountId: custom ? (c.revenueAccountId || null) : null
+        };
+      },
+
+      _posBase() { return `/api/companies/${Layout.getCompanyId()}/pos`; },
+
+      async _loadStaff() {
+        if (this._staffList) return this._staffList;
+        try {
+          const res = await API.get(`${this._posBase()}/staff`);
+          this._staffList = res.data || [];
+        } catch (e) { this._staffList = []; Layout.toast('โหลดรายชื่อพนักงานไม่สำเร็จ: ' + e.message, 'warning'); }
+        return this._staffList;
+      },
+
+      _staffOptions(selectedId) {
+        return `<option value="">— ไม่ระบุ —</option>` + (this._staffList || []).map(s =>
+          `<option value="${Layout.esc(s.userId)}" ${s.userId === selectedId ? 'selected' : ''}>${Layout.esc(s.name)}</option>`).join('');
+      },
+
+      // ===== ทีม K: ช่างรายบรรทัด =====
+      async openStaffPick(idx) {
+        const line = this.cart[idx]; if (!line) return;
+        await this._loadStaff();
+        this._staffPickIdx = idx;
+        document.getElementById('staffPickTitle').textContent = '👤 ช่างของ: ' + line.name;
+        const rows = [{ userId: '', name: '— ไม่ระบุ —' }, ...(this._staffList || [])];
+        document.getElementById('staffPickBody').innerHTML = rows.map(s => `
+          <button type="button" class="btn ${s.userId === (line.staffId || '') ? 'btn-primary' : 'btn-secondary'}" style="text-align:left"
+            onclick="Page.pickStaff('${Layout.jsArg(s.userId)}')">${Layout.esc(s.name)}</button>`).join('');
+        Layout.openModal('staffPickModal');
+      },
+
+      async pickStaff(userId) {
+        const idx = this._staffPickIdx;
+        const line = this.cart[idx]; if (!line) return;
+        Layout.closeModal('staffPickModal');
+        const staffId = userId || null;
+        if (this.currentOrderId && line.serverItemId) {
+          try {
+            const res = await API.put(`${this._posBase()}/orders/${this.currentOrderId}/items/${line.serverItemId}/staff`, { staffId });
+            this._syncCartFromServer(res.data);
+          } catch (e) { Layout.toast(e.message, 'error'); }
+          return;
+        }
+        const s = (this._staffList || []).find(x => x.userId === userId);
+        line.staffId = staffId;
+        line.staffName = s ? s.name : null;
+        this.renderCart();
+      },
+
+      // ===== ทีม K: รายการพิเศษ (Quick Add) =====
+      async openCustomItem() {
+        if (!this.session) { Layout.toast('กรุณาเปิดกะก่อน', 'warning'); return; }
+        await this._loadStaff();
+        if (!this._customOpts) {
+          try { this._customOpts = (await API.get(`${this._posBase()}/custom-item-options`)).data; }
+          catch (e) { Layout.toast('โหลดตัวเลือกไม่สำเร็จ: ' + e.message, 'error'); return; }
+        }
+        const o = this._customOpts || { kinds: [], revenueAccounts: [] };
+        document.getElementById('ciName').value = '';
+        document.getElementById('ciPrice').value = '';
+        document.getElementById('ciQty').value = '1';
+        document.getElementById('ciKind').innerHTML = (o.kinds || []).map(k => `<option value="${Layout.esc(k.value)}">${Layout.esc(k.label)}</option>`).join('');
+        document.getElementById('ciAccount').innerHTML = `<option value="">${Layout.esc(o.defaultAccountLabel || 'รายได้จากการขาย')}</option>` +
+          (o.revenueAccounts || []).map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.code)} ${Layout.esc(a.name)}</option>`).join('');
+        document.getElementById('ciStaff').innerHTML = this._staffOptions(null);
+        document.getElementById('ciVatNote').textContent = (o.vatNote || '') + ' · ไม่ตัดสต็อก';
+        Layout.openModal('customItemModal');
+        setTimeout(() => document.getElementById('ciName').focus(), 50);
+      },
+
+      async saveCustomItem() {
+        const name = document.getElementById('ciName').value.trim();
+        const price = parseFloat(document.getElementById('ciPrice').value);
+        const qty = parseFloat(document.getElementById('ciQty').value) || 1;
+        if (!name) { Layout.toast('กรุณาระบุชื่อรายการ', 'warning'); return; }
+        if (isNaN(price) || price < 0) { Layout.toast('กรุณาระบุราคา (ไม่ติดลบ)', 'warning'); return; }
+        const staffId = document.getElementById('ciStaff').value || null;
+        const staff = (this._staffList || []).find(s => s.userId === staffId);
+        const line = {
+          type: 'custom', itemId: null, name, unitPrice: price, quantity: qty,
+          customKind: document.getElementById('ciKind').value || null,
+          revenueAccountId: document.getElementById('ciAccount').value || null,
+          staffId, staffName: staff ? staff.name : null
+        };
+        const btn = document.getElementById('ciSaveBtn'); btn.disabled = true;
+        try {
+          if (this.currentOrderId) {
+            // บิลอยู่บนเซิร์ฟเวอร์แล้ว — เซิร์ฟเวอร์ตรวจ/คิดยอดเอง (ชื่อ · ราคา · บัญชีรายได้ · ช่าง)
+            const res = await API.post(`${this._posBase()}/orders/${this.currentOrderId}/items`, this._itemPayload(line));
+            this._syncCartFromServer(res.data);
+          } else {
+            this.cart.push(line);
+            this.renderCart();
+          }
+          Layout.closeModal('customItemModal');
+          Layout.toast('เพิ่มรายการพิเศษแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
+      },
+
+      // ===== ทีม K: คิวการจองวันนี้ → เปิดบิล =====
+      async openBookingQueue() {
+        if (!this.session) { Layout.toast('กรุณาเปิดกะก่อน', 'warning'); return; }
+        const d = document.getElementById('bqDate');
+        if (!d.value) {
+          const now = new Date(); const tz = now.getTimezoneOffset() * 60000;
+          d.value = new Date(now - tz).toISOString().slice(0, 10);
+        }
+        await this._loadStaff();
+        Layout.openModal('bookingQueueModal');
+        await this.loadBookingQueue();
+      },
+
+      async loadBookingQueue() {
+        const body = document.getElementById('bookingQueueBody');
+        body.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">กำลังโหลด...</div>';
+        try {
+          const date = document.getElementById('bqDate').value;
+          const res = await API.get(`${this._posBase()}/booking-queue${date ? '?date=' + encodeURIComponent(date) : ''}`);
+          this._queue = res.data || [];
+          if (!this._queue.length) { body.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:40px">ไม่มีการจองในวันนี้</div>'; return; }
+          body.innerHTML = this._queue.map((q, i) => {
+            const t = new Date(q.startAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+            const src = q.source === 'CmsBooking' ? '🌐 เว็บ' : '🪑 โต๊ะ';
+            const what = q.serviceName ? Layout.esc(q.serviceName) + (q.servicePrice != null ? ` · ${Layout.money(q.servicePrice)}` : '') : (q.tableNumber ? 'โต๊ะ ' + Layout.esc(q.tableNumber) : '');
+            const action = q.linkedOrderId
+              ? `<button class="btn btn-sm btn-secondary" onclick="Page.gotoQueueOrder(${i})">ไปที่บิล #${Layout.esc(q.linkedOrderNumber || '')}</button>`
+              : q.canOpen
+                ? `<button class="btn btn-sm btn-primary" onclick="Page.openFromBooking(${i})">เปิดบิล</button>`
+                : '';
+            return `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:grid;grid-template-columns:60px 1fr auto;gap:10px;align-items:center">
+              <div style="font-weight:700;font-size:15px">${t}</div>
+              <div style="min-width:0">
+                <div style="font-weight:600">${Layout.esc(q.customerName)} <span style="font-size:11px;color:#64748b">${src}${q.bookingNumber ? ' · ' + Layout.esc(q.bookingNumber) : ''} · ${Layout.esc(q.statusLabel)}</span></div>
+                <div style="font-size:12px;color:#475569">${what}${q.partySize > 1 ? ` · ${q.partySize} คน` : ''}${q.phone ? ' · ' + Layout.esc(q.phone) : ''}</div>
+                ${q.canOpen && !q.linkedOrderId ? `<div style="margin-top:4px;font-size:12px">ช่าง: <select id="bqStaff_${i}" style="font-size:12px;padding:2px 6px;border:1px solid #cbd5e1;border-radius:4px">${this._staffOptions(q.staffId)}</select></div>` : (q.staffName ? `<div style="font-size:12px;color:#5b21b6">👤 ${Layout.esc(q.staffName)}</div>` : '')}
+                ${q.blockReason && !q.linkedOrderId ? `<div style="font-size:12px;color:#b91c1c;margin-top:4px">⛔ ${Layout.esc(q.blockReason)}</div>` : ''}
+                ${q.warning ? `<div style="font-size:12px;color:#92400e;background:#fef3c7;border-radius:4px;padding:4px 6px;margin-top:4px">⚠️ ${Layout.esc(q.warning)}</div>` : ''}
+              </div>
+              <div>${action}</div>
+            </div>`;
+          }).join('');
+        } catch (e) { body.innerHTML = `<div style="color:#b91c1c;padding:20px">${Layout.esc(e.message)}</div>`; }
+      },
+
+      async openFromBooking(i) {
+        const q = (this._queue || [])[i]; if (!q) return;
+        if (q.warning && !confirm(q.warning + '\n\nเปิดบิลต่อ?')) return;
+        if (this.currentOrderId) await this.holdOrder();
+        else if (this.cart.length && !confirm('ตะกร้ามีรายการที่ยังไม่บันทึก — ล้างแล้วเปิดบิลจากการจอง?')) return;
+        const sel = document.getElementById('bqStaff_' + i);
+        const staffId = sel ? (sel.value || null) : null;
+        try {
+          const res = await API.post(`${this._posBase()}/booking-queue/open`, {
+            sessionId: this.session.id, source: q.source, bookingId: q.bookingId, staffId
+          });
+          this.resetOrder();
+          const o = res.data;
+          this.currentOrderId = o.id;
+          this.currentOrder = o;
+          this.paidTotal = 0;
+          document.getElementById('orderTitle').textContent = `#${o.orderNumber}`;
+          document.getElementById('fCustomerName').value = o.customerName || '';
+          if (o.tableNumber) document.getElementById('fTableNo').value = o.tableNumber;
+          if (o.customerId) this._attachedCustomerId = o.customerId;
+          this._syncCartFromServer(o);
+          Layout.closeModal('bookingQueueModal');
+          Layout.toast(`เปิดบิลจากการจองของ ${q.customerName} แล้ว`);
+        } catch (e) { Layout.toast(e.message, 'error'); await this.loadBookingQueue(); }
+      },
+
+      async gotoQueueOrder(i) {
+        const q = (this._queue || [])[i]; if (!q || !q.linkedOrderId) return;
+        try {
+          const res = await API.get(`${this._posBase()}/orders/${q.linkedOrderId}`);
+          const o = res.data;
+          if (o.status === 'OnHold') { Layout.closeModal('bookingQueueModal'); await this.recallOrder(o.id); return; }
+          if (o.status !== 'Open' && o.status !== 'InProgress' && o.status !== 'ReadyToServe') {
+            Layout.toast(`บิล #${o.orderNumber} ปิดแล้ว — ดูได้ที่ประวัติออเดอร์`, 'warning'); return;
+          }
+          if (this.currentOrderId && this.currentOrderId !== o.id) await this.holdOrder();
+          this.currentOrderId = o.id;
+          this._syncCartFromServer(o);
+          document.getElementById('orderTitle').textContent = `#${o.orderNumber}`;
+          document.getElementById('fCustomerName').value = o.customerName || '';
+          document.getElementById('fTableNo').value = o.tableNumber || '';
+          Layout.closeModal('bookingQueueModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       // ===== Hold / recall =====

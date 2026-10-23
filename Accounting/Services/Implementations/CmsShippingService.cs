@@ -171,30 +171,18 @@ public class CmsShippingService : ICmsShippingService
 
             foreach (var rate in zone.Rates.OrderBy(r => r.SortOrder))
             {
-                var weight = request.TotalWeightKg ?? 0;
-                if (rate.MinWeightKg.HasValue && weight < rate.MinWeightKg.Value) continue;
-                if (rate.MaxWeightKg.HasValue && weight > rate.MaxWeightKg.Value) continue;
-
-                bool isFree = rate.RateType == ShippingRateType.Free
-                    || (rate.FreeAboveAmount.HasValue && request.SubTotal >= rate.FreeAboveAmount.Value);
-
-                decimal cost = 0m;
-                if (!isFree)
-                {
-                    cost = rate.RateType switch
-                    {
-                        ShippingRateType.Flat => rate.BaseRate,
-                        ShippingRateType.ByWeight => rate.BaseRate + (rate.PerKgRate ?? 0) * weight,
-                        ShippingRateType.Calculated => rate.BaseRate,
-                        _ => rate.BaseRate
-                    };
-                }
+                // ทีม K — ตัวคิดค่าส่งตัวเดียว (Helpers/ShippingFeeRules) ร่วมกับยอดที่ลงคำสั่งซื้อ · ปัด AwayFromZero
+                // (เดิมคิดเองที่นี่ด้วย Math.Round ค่าเริ่มต้น = banker's และไม่มีใครใช้ยอดนี้ตอนสั่งจริง)
+                var quote = Accounting.Helpers.ShippingFeeRules.Quote(new Accounting.Helpers.ShippingRateFacts(
+                    rate.RateType, rate.BaseRate, rate.PerKgRate, rate.FreeAboveAmount, rate.MinWeightKg, rate.MaxWeightKg),
+                    request.SubTotal, request.TotalWeightKg ?? 0m);
+                if (!quote.Applicable) continue;
 
                 options.Add(new ShippingOptionResponse
                 {
                     RateId = rate.Id, ZoneId = zone.Id, ZoneName = zone.Name,
                     Name = rate.Name, CarrierName = rate.CarrierName,
-                    Cost = Math.Round(cost, 2), IsFree = isFree,
+                    Cost = quote.Fee, IsFree = quote.IsFree,
                     EstimatedDeliveryDaysMin = rate.EstimatedDeliveryDaysMin,
                     EstimatedDeliveryDaysMax = rate.EstimatedDeliveryDaysMax
                 });
@@ -204,32 +192,42 @@ public class CmsShippingService : ICmsShippingService
         return options.OrderBy(o => o.Cost).ToList();
     }
 
-    private static bool ZoneMatchesAddress(SiteShippingZone zone, CalculateShippingRequest request)
+    /// <summary>ที่อยู่อยู่ในโซนนี้ไหม — internal ให้การคิดค่าส่งตอนสั่งซื้อ (<c>CmsCommerceService</c>) ใช้ตัวเดียวกับหน้าร้าน</summary>
+    internal static bool ZoneMatchesAddress(SiteShippingZone zone, CalculateShippingRequest request)
     {
-        if (!string.IsNullOrEmpty(zone.CountryCodes) && !string.IsNullOrEmpty(request.CountryCode))
+        // ฝ่ายค้านทีม K ข้อ 2: โซนที่จำกัดพื้นที่ + ที่อยู่ว่าง ⇒ <b>ไม่ตรง</b> (เดิมช่องว่างตรงทุกโซน ⇒ ไม่กรอกจังหวัดได้อัตราถูกสุดเสมอ) ·
+        // ประเทศว่าง = TH (หน้าร้านขายในประเทศ) · ชื่อจังหวัดเทียบรูปมาตรฐาน (ThaiAddressParser.NormalizeProvince — กทม./กรุงเทพฯ)
+        var country = string.IsNullOrWhiteSpace(request.CountryCode) ? "TH" : request.CountryCode.Trim();
+        if (!string.IsNullOrEmpty(zone.CountryCodes))
         {
             var codes = zone.CountryCodes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (codes.Length > 0 && !codes.Contains(request.CountryCode, StringComparer.OrdinalIgnoreCase))
+            if (codes.Length > 0 && !codes.Contains(country, StringComparer.OrdinalIgnoreCase))
                 return false;
         }
 
-        if (!string.IsNullOrEmpty(zone.Provinces) && !string.IsNullOrEmpty(request.Province))
+        if (!string.IsNullOrEmpty(zone.Provinces))
         {
-            var provs = zone.Provinces.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (provs.Length > 0 && !provs.Contains(request.Province, StringComparer.OrdinalIgnoreCase))
-                return false;
+            var provs = zone.Provinces.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(ThaiAddressParser.NormalizeProvince).Where(p => p != null).ToList();
+            if (provs.Count > 0)
+            {
+                var want = ThaiAddressParser.NormalizeProvince(request.Province);
+                if (want == null || !provs.Contains(want, StringComparer.OrdinalIgnoreCase)) return false;
+            }
         }
 
-        if (!string.IsNullOrEmpty(zone.PostalCodePatterns) && !string.IsNullOrEmpty(request.PostalCode))
+        if (!string.IsNullOrEmpty(zone.PostalCodePatterns))
         {
             var patterns = zone.PostalCodePatterns.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (patterns.Length > 0)
             {
+                var postal = (request.PostalCode ?? "").Trim();
+                if (postal.Length == 0) return false;
                 var matched = patterns.Any(p =>
                 {
                     if (p.EndsWith('*'))
-                        return request.PostalCode.StartsWith(p.TrimEnd('*'));
-                    return string.Equals(p, request.PostalCode, StringComparison.OrdinalIgnoreCase);
+                        return postal.StartsWith(p.TrimEnd('*'), StringComparison.Ordinal);
+                    return string.Equals(p, postal, StringComparison.OrdinalIgnoreCase);
                 });
                 if (!matched) return false;
             }
@@ -237,6 +235,10 @@ public class CmsShippingService : ICmsShippingService
 
         return true;
     }
+
+    /// <summary>โซนนี้ต้องรู้ที่อยู่ไหม (จำกัดจังหวัด/รหัสไปรษณีย์) — ใช้บอกลูกค้าว่าต้องกรอกอะไรก่อนคิดค่าส่ง</summary>
+    internal static bool ZoneNeedsAddress(SiteShippingZone zone)
+        => !string.IsNullOrWhiteSpace(zone.Provinces) || !string.IsNullOrWhiteSpace(zone.PostalCodePatterns);
 
     private async Task<ShippingZoneResponse> GetZoneResponseAsync(Guid zoneId)
     {

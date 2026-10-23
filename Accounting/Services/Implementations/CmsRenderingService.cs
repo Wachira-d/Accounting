@@ -336,7 +336,8 @@ public class CmsRenderingService : ICmsRenderingService
 
     private static string RenderBlockToHtml(CmsBlockType blockType, string configJson, string? cssClasses)
     {
-        var cls = !string.IsNullOrWhiteSpace(cssClasses) ? $" {cssClasses}" : "";
+        // คลาสที่ผู้แก้ไขเว็บใส่เอง — กรองเหลือโทเคนที่ปลอดภัย (เดิมต่อดิบเข้า class="…" = หลุด attribute ได้)
+        var cls = Accounting.Helpers.CmsBlockCss.Suffix(cssClasses);
 
         try
         {
@@ -404,29 +405,19 @@ public class CmsRenderingService : ICmsRenderingService
 
     private static string RenderImageBlock(JsonElement config, string cls)
     {
-        var src = GetProp(config, "src");
+        // "url" = คีย์ที่ตัวแก้ไข (cms-edit) เขียน · "src" = คีย์เดิมของตัวเรนเดอร์นี้ (ข้อมูลเก่า)
+        var src = GetProp(config, "url");
+        if (string.IsNullOrWhiteSpace(src)) src = GetProp(config, "src");
         var alt = GetProp(config, "alt");
         var caption = GetProp(config, "caption");
         var captionHtml = !string.IsNullOrEmpty(caption) ? $"<figcaption>{Escape(caption)}</figcaption>" : "";
         return $"<figure class=\"cms-block cms-image{cls}\"><img src=\"{EscapeAttribute(src)}\" alt=\"{EscapeAttribute(alt)}\" loading=\"lazy\" />{captionHtml}</figure>";
     }
 
-    private static string RenderGalleryBlock(JsonElement config, string cls)
-    {
-        var sb = new StringBuilder();
-        sb.Append($"<div class=\"cms-block cms-gallery{cls}\">");
-        if (config.TryGetProperty("images", out var images) && images.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var img in images.EnumerateArray())
-            {
-                var src = img.TryGetProperty("src", out var s) ? s.GetString() ?? "" : "";
-                var alt = img.TryGetProperty("alt", out var a) ? a.GetString() ?? "" : "";
-                sb.Append($"<img src=\"{EscapeAttribute(src)}\" alt=\"{EscapeAttribute(alt)}\" loading=\"lazy\" />");
-            }
-        }
-        sb.Append("</div>");
-        return sb.ToString();
-    }
+    // แกลเลอรี (ตาราง + lightbox) / สไลด์โชว์ — ตัวอ่านคอนฟิก+เรนเดอร์ตัวเดียวอยู่ที่ CmsGalleryBlock
+    // (เดิมอ่าน images[].src ขณะที่ตัวแก้ไข/เทมเพลตเขียน images[].url ⇒ HTML จากเซิร์ฟเวอร์ว่างเสมอ)
+    private static string RenderGalleryBlock(JsonElement config, string cls) =>
+        Accounting.Helpers.CmsGalleryBlock.Render(Accounting.Helpers.CmsGalleryBlock.Parse(config), cls);
 
     private static string RenderVideoBlock(JsonElement config, string cls)
     {

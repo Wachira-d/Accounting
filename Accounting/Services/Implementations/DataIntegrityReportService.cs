@@ -33,7 +33,9 @@ public sealed record DataIntegrityReport(
     // ฝ่ายค้านรอบส่งออก 2026-10-15 P1-2 — ผังที่นำเข้าแล้วไม่มีบัญชีแม่ (หัวบัญชีถูกหยิบเป็นผังตั้งต้น) · ปุ่ม "แก้" ต่อผัง (เจ้าของบริษัท)
     List<DataIntegritySuspect> UnlinkedImportedAccounts,
     // ฝ่ายค้านรอบส่งออก รอบ 3 P2-7 — ผังที่การผูกรอบแรก (825f5c0e) วางใต้ผังลงรายการของแม่แบบ (ผังลงรายการกลายเป็นบัญชีคุม) · ปุ่ม "แก้" ต่อผัง (เจ้าของบริษัท)
-    List<DataIntegritySuspect> TemplateLeafImportedChildren)
+    List<DataIntegritySuspect> TemplateLeafImportedChildren,
+    // ทีม F (ฝ่ายค้านข้อ 3) — 50 ทวิ ของใบต่างสกุลที่ออกก่อนแก้ ยอดเป็นสกุลเอกสาร ไม่ใช่บาท · อ่านอย่างเดียว (ไม่แก้ใบที่ออกแล้วให้)
+    List<DataIntegritySuspect>? ForeignCurrencyWhtCertsNotInBaht = null)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -42,7 +44,8 @@ public sealed record DataIntegrityReport(
     public int Total => PosOrderTotals.Count + RollupBillingNoteChildren.Count + PurchaseInvoicesBilledFromPoWithGrn.Count
         + PayrollRunTotals.Count + PlainReceiptsWithVat.Count + Section40_4RecordedAsPnd3.Count + TipWhtPostedToPnd2Account.Count
         + OcrLineDiscountWouldChangeOnResave.Count + VoidedPayrollRunsWithIssuedWhtCerts.Count
-        + OpeningRollMismatches.Count + UnlinkedImportedAccounts.Count + TemplateLeafImportedChildren.Count;
+        + OpeningRollMismatches.Count + UnlinkedImportedAccounts.Count + TemplateLeafImportedChildren.Count
+        + (ForeignCurrencyWhtCertsNotInBaht?.Count ?? 0);
 }
 
 /// <summary>
@@ -167,8 +170,38 @@ public class DataIntegrityReportService
         var voidedRunCerts = await LoadVoidedPayrollRunCertsAsync(companyId);
         var (rollRows, unlinkedRows) = await LoadChartRepairSuspectsAsync(companyId);
         var leafRows = await LoadTemplateLeafChildSuspectsAsync(companyId);
+        var foreignCerts = await LoadForeignCurrencyWhtCertsAsync(companyId);
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
-            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows);
+            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts);
+    }
+
+    /// <summary>ทีม F (ฝ่ายค้านข้อ 3) — 50 ทวิ (ไม่ยกเลิก) ของเอกสารต่างสกุลที่ยอดภาษีดูเป็นสกุลเอกสาร (ตัวตัดสิน <see cref="Accounting.Helpers.WhtCertCurrencyCheck"/>) ·
+    /// <b>อ่านอย่างเดียว</b> — ใบที่ส่งผู้รับ/ยื่นแล้วห้ามแก้ย้อนหลัง ⇒ ผู้ทำบัญชียกเลิกแล้วออกใบใหม่ (ระบบออกเป็นบาทแล้ว) หรือยื่นแบบเพิ่มเติม</summary>
+    private async Task<List<DataIntegritySuspect>> LoadForeignCurrencyWhtCertsAsync(Guid companyId)
+    {
+        var rows = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && !w.IsDeleted && w.DocumentId != null
+                && w.Status != Models.DTOs.Tax.WithholdingTaxCertStatus.Voided)
+            .Join(_db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && d.Currency != "THB" && d.ExchangeRate != 1m),
+                w => w.DocumentId, d => (Guid?)d.Id,
+                (w, d) => new
+                {
+                    w.Id, w.CertificateNumber, w.IssuedDate, w.CreatedAt, w.Status, w.TaxYear, w.TaxMonth, w.TotalTaxAmount, w.SourcePaymentId,
+                    d.DocumentNumber, d.Currency, d.ExchangeRate, d.WithholdingTaxAmount,
+                    PaymentWht = w.SourcePaymentId == null ? (decimal?)null
+                        : _db.Payments.Where(p => p.Id == w.SourcePaymentId && p.CompanyId == companyId).Select(p => (decimal?)p.WithholdingTaxAmount).FirstOrDefault(),
+                })
+            .OrderBy(w => w.TaxYear).ThenBy(w => w.TaxMonth).ThenBy(w => w.CertificateNumber)
+            .ToListAsync();
+        return rows
+            .Where(w => Accounting.Helpers.WhtCertCurrencyCheck.LooksDocumentCurrency(w.TotalTaxAmount,
+                w.PaymentWht is > 0m ? w.PaymentWht.Value : w.WithholdingTaxAmount, w.ExchangeRate))
+            .Select(w => new DataIntegritySuspect(Accounting.Helpers.WhtCertCurrencyCheck.Kind, w.Id, w.CertificateNumber, w.IssuedDate ?? w.CreatedAt,
+                $"50 ทวิ {w.CertificateNumber} (งวด {w.TaxMonth:D2}/{w.TaxYear} · สถานะ {w.Status}) ของเอกสาร {w.DocumentNumber} สกุล {w.Currency} @ {w.ExchangeRate:0.######} "
+                + "ยอดภาษีบนใบเป็นตัวเลขสกุลเอกสาร ไม่ใช่บาท — ระบบไม่แก้ใบที่ออกแล้วให้ · ยังไม่ยื่น ⇒ ยกเลิกใบนี้แล้วออกใหม่ (ออกเป็นบาท) · ยื่นแล้ว ⇒ ยื่นแบบเพิ่มเติม",
+                w.TotalTaxAmount, Accounting.Helpers.PerLineWht.DocumentWhtThb(w.PaymentWht is > 0m ? w.PaymentWht.Value : w.WithholdingTaxAmount, w.ExchangeRate),
+                "/pages/wht.html", $"เปิดหน้า 50 ทวิ (ค้นเลข {w.CertificateNumber})"))
+            .ToList();
     }
 
     /// <summary>เส้นทางปุ่ม "แก้" ของยอดยกมาปีหนึ่งปี — ตัวเดียวกับ route ของ <c>DataIntegrityController.RepairOpeningRoll</c></summary>

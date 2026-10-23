@@ -560,16 +560,24 @@
                 <th style="text-align:right">ms</th>
                 <th style="text-align:right">$</th>
               </tr></thead>
-              <tbody>${rows.map(f => `<tr>
-                <td style="color:#64748b;font-size:11px">${new Date(f.createdAt).toLocaleString('th-TH')}</td>
-                <td>${AdminLayout.esc(f.featureKey)}</td>
-                <td>${f.status}${f.errorMessage ? ` <span style="color:#dc2626;font-size:11px">(${f.errorMessage.substring(0,50)})</span>` : ''}</td>
-                <td style="font-size:12px">${(f.aiPrimaryAnswer||'').substring(0,40)}${f.aiConfidence ? ` <span style="color:#94a3b8">${Math.round(f.aiConfidence*100)}%</span>` : ''}</td>
-                <td style="font-size:12px">${(f.localModelAnswer||'').substring(0,40)}${f.localModelConfidence ? ` <span style="color:#94a3b8">${Math.round(f.localModelConfidence*100)}%</span>` : ''}</td>
-                <td style="font-size:12px">${f.userChosenAnswer ? `${(f.userChosenAnswer||'').substring(0,30)} ${f.userAcceptedAi ? '<span style="color:#16a34a">✓AI</span>' : '<span style="color:#d97706">≠</span>'}` : '<span style="color:#94a3b8">รอ</span>'}</td>
+              <tbody>${rows.map(f => {
+                // ทุกช่องที่ AI/ผู้ใช้คุมได้ต้อง escape (คำตอบของโมเดลคือข้อความภายนอก — หน้านี้เปิดด้วยสิทธิ์ SystemAdmin)
+                const esc = AdminLayout.esc;
+                const err = f.errorMessage ? ` <span style="color:#dc2626;font-size:11px" title="${esc(f.errorMessage)}">(${esc(f.errorMessage.substring(0,90))})</span>` : '';
+                // ทีม H 2026-10-22: แถว InvalidResponse/คำเตือน แสดงคำตอบดิบย่อ (server ปิดบัง PII แล้ว) — ไล่ว่า AI ตอบอะไรมา
+                const tok = (f.inputTokens || f.outputTokens) ? `<div style="color:#94a3b8;font-size:10px">tokens ${esc(f.inputTokens ?? '-')} → ${esc(f.outputTokens ?? '-')}</div>` : '';
+                const raw = f.responsePreview ? `<details style="font-size:11px;margin-top:2px"><summary style="cursor:pointer;color:#64748b">ดูคำตอบดิบ (ย่อ)</summary><pre style="white-space:pre-wrap;word-break:break-all;max-width:420px;background:#f8fafc;padding:4px;border-radius:4px">${esc(f.responsePreview)}</pre></details>` : '';
+                return `<tr>
+                <td style="color:#64748b;font-size:11px">${esc(new Date(f.createdAt).toLocaleString('th-TH'))}</td>
+                <td>${esc(f.featureKey)}</td>
+                <td>${esc(f.status)}${err}${tok}${raw}</td>
+                <td style="font-size:12px">${esc((f.aiPrimaryAnswer||'').substring(0,40))}${f.aiConfidence ? ` <span style="color:#94a3b8">${Math.round(f.aiConfidence*100)}%</span>` : ''}</td>
+                <td style="font-size:12px">${esc((f.localModelAnswer||'').substring(0,40))}${f.localModelConfidence ? ` <span style="color:#94a3b8">${Math.round(f.localModelConfidence*100)}%</span>` : ''}</td>
+                <td style="font-size:12px">${f.userChosenAnswer ? `${esc((f.userChosenAnswer||'').substring(0,30))} ${f.userAcceptedAi ? '<span style="color:#16a34a">✓AI</span>' : '<span style="color:#d97706">≠</span>'}` : '<span style="color:#94a3b8">รอ</span>'}</td>
                 <td style="text-align:right">${f.latencyMs || 0}</td>
                 <td style="text-align:right">${(f.costUsd || 0).toFixed(6)}</td>
-              </tr>`).join('')}</tbody>
+              </tr>`;
+              }).join('')}</tbody>
             </table>`;
         } catch (e) { el.innerHTML = `<span style="color:#dc2626">${AdminLayout.esc(e.message)}</span>`; }
       },

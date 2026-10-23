@@ -622,7 +622,7 @@ public class ProductService : IProductService
 
         var glBalance = await _db.JournalEntryLines.AsNoTracking()
             .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.Status == JournalEntryStatus.Posted
+                && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                 && l.Account.AccountCode.StartsWith("115"))
             .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
         glBalance = Math.Round(glBalance, 2, MidpointRounding.AwayFromZero);
@@ -752,7 +752,7 @@ public class ProductService : IProductService
                 // COGS จะทำให้ JE ปรับปรุงนับมูลค่าซ้ำกับที่ GL บันทึกไปแล้ว
                 var glInventoryBalance = await _db.JournalEntryLines
                     .Where(l => l.JournalEntry.CompanyId == companyId
-                        && l.JournalEntry.Status == JournalEntryStatus.Posted
+                        && Accounting.Helpers.ReportableJournal.LedgerStatuses.Contains(l.JournalEntry.Status)
                         && l.JournalEntry.EntryDate <= request.SnapshotDate
                         && l.Account.AccountCode.StartsWith("115"))
                     .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;

@@ -36,6 +36,17 @@
       <input type="date" class="form-input" id="toDate" style="width:160px">
       <label class="text-sm font-medium" style="margin-left:12px">โครงการ:</label>
       <select class="form-select" id="projectFilter" style="min-width:160px"><option value="">ทุกโครงการ</option></select>
+      <span id="pnlModeBox" style="display:none;align-items:center;gap:6px;margin-left:12px" title="เปรียบเทียบรายได้/ค่าใช้จ่ายเป็นคอลัมน์ต่อช่วง — ไตรมาส/ปีนับตามรอบบัญชีของบริษัท · คลิกตัวเลขใดก็ได้เพื่อดูรายการบัญชีที่ประกอบเป็นตัวเลขนั้น">
+        <label class="text-sm font-medium">มุมมอง:</label>
+        <select class="form-select" id="pnlMode" style="width:150px" onchange="Page.loadReport()">
+          <option value="single">งวดเดียว</option>
+          <option value="month">รายเดือน</option>
+          <option value="quarter">รายไตรมาส</option>
+          <option value="year">รายปี</option>
+        </select>
+        <label class="text-sm" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="pnlPriorYear" onchange="Page.loadReport()"> เทียบช่วงเดียวกันปีก่อน</label>
+        <button class="btn btn-sm btn-secondary" onclick="Page.pnlFiscalYearToDate()" title="ตั้งช่วงเป็น ต้นรอบบัญชีของบริษัท ถึงวันนี้">ปีบัญชีนี้</button>
+      </span>
       <button class="btn btn-primary" onclick="Page.loadReport()">แสดงรายงาน</button>
       <span id="reportExportSlot" style="margin-left:auto" title="Excel/CSV จากเซิร์ฟเวอร์ — ตัวเลขเท่ารายงาน · งบทดลองในไฟล์มี ยอดยกมา (ณ วันที่ &quot;จาก&quot;) · เคลื่อนไหว · ยอดยกไป (ณ วันที่)"></span>
     </div>
@@ -86,6 +97,17 @@
       </div>
     </div>
 
+    <!-- งบกำไรขาดทุน: drill-down ช่องตัวเลข → รายการ JE → เอกสารต้นทาง (ทีม M) -->
+    <div class="modal-overlay" id="pnlDrillModal">
+      <div class="modal" style="max-width:1100px;width:96vw">
+        <div class="modal-header"><h3 class="modal-title" id="pnlDrillTitle">รายการที่ประกอบเป็นตัวเลข</h3><button class="modal-close" onclick="Layout.closeModal('pnlDrillModal')">&times;</button></div>
+        <div class="modal-body" id="pnlDrillContent" style="max-height:70vh;overflow:auto"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('pnlDrillModal')" data-i18n="common.close">ปิด</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Report Execution Result Modal -->
     <div class="modal-overlay" id="resultModal">
       <div class="modal" style="max-width:900px">
@@ -119,6 +141,16 @@
         document.getElementById('toDate').value = today;
         const slot = document.getElementById('reportExportSlot');
         if (slot) slot.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportReport(f)');
+        // ลิงก์ตรง (คู่มือ/เมนู): ?report=pnl&mode=month|quarter|year&prior=1
+        const qs = new URLSearchParams(location.search);
+        const wantReport = qs.get('report');
+        if (wantReport) {
+          const tab = Array.from(document.querySelectorAll('.tabs .tab')).find(t => (t.getAttribute('onclick') || '').includes(`'${wantReport}'`));
+          if (tab) this.showReport(wantReport, tab);
+          const mode = qs.get('mode');
+          if (wantReport === 'pnl' && ['single', 'month', 'quarter', 'year'].includes(mode)) document.getElementById('pnlMode').value = mode;
+          if (wantReport === 'pnl' && qs.get('prior') === '1') document.getElementById('pnlPriorYear').checked = true;
+        }
         // Load active projects
         const api = Layout.api();
         if (api) {
@@ -167,6 +199,15 @@
           pnl: ['profit-loss', { fromDate, toDate, projectId }, 'งบกำไรขาดทุน'],
           cashflow: ['cash-flow', { fromDate, toDate, projectId }, 'งบกระแสเงินสด'],
         };
+        const pnlMode = document.getElementById('pnlMode')?.value || 'single';
+        if (this.currentReport === 'pnl' && pnlMode !== 'single') {
+          // มุมมองเปรียบเทียบ — ตารางเดียวกับหน้า (เซิร์ฟเวอร์ประกอบ · MiniExcel)
+          ExportUtil.downloadServer('accounting/exports/profit-loss-compare', {
+            fromDate, toDate, projectId, granularity: pnlMode,
+            comparePriorYear: document.getElementById('pnlPriorYear')?.checked ? 'true' : '',
+          }, format, 'งบกำไรขาดทุนเปรียบเทียบ');
+          return;
+        }
         const m = map[this.currentReport];
         if (!m) { Layout.toast('รายงานนี้ยังไม่มีไฟล์ส่งออก', 'error'); return; }
         if (this.currentReport === 'trial' && fromDate && asOfDate && fromDate > asOfDate) {
@@ -178,6 +219,8 @@
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         el.classList.add('active');
         this.currentReport = type;
+        const modeBox = document.getElementById('pnlModeBox');
+        if (modeBox) modeBox.style.display = type === 'pnl' ? 'inline-flex' : 'none';
         const isCustom = type === 'custom';
         document.getElementById('reportContent').style.display = isCustom ? 'none' : '';
         document.querySelector('.toolbar').style.display = isCustom ? 'none' : '';
@@ -272,17 +315,26 @@
           </div>`;
       },
       async loadPnl(api, el) {
+        const mode = document.getElementById('pnlMode')?.value || 'single';
+        if (mode !== 'single') return this.loadPnlCompare(api, el, mode);
         const from = document.getElementById('fromDate').value;
         const to = document.getElementById('toDate').value;
         const res = await api.profitLoss(`?fromDate=${from}&toDate=${to}${this._projQuery()}`);
         const d = res.data;
+        // ช่องตัวเลขคลิกได้ → drill-down (เก็บข้อมูลช่องไว้ในอาร์เรย์ ส่งแค่ดัชนีผ่าน onclick)
+        this._pnlCells = [];
+        const cell = (accountId, label, amount) => {
+          if (!accountId) return Layout.money(amount);
+          const i = this._pnlCells.push({ accountId, from, to, amount, label }) - 1;
+          return `<a href="#" class="pnl-cell" onclick="Page.pnlDrill(${i});return false" title="คลิกเพื่อดูรายการบัญชีที่ประกอบเป็นตัวเลขนี้">${Layout.money(amount)}</a>`;
+        };
         const renderItems = (items, gid) => items ? items.map(s =>
-          `<tr data-grp="${gid}"><td style="padding-left:24px">${s.accountCode || ''}</td><td>${s.accountName}</td><td class="text-right">${Layout.money(s.amount)}</td></tr>`
+          `<tr data-grp="${gid}"><td style="padding-left:24px">${Layout.esc(s.accountCode || '')}</td><td>${Layout.esc(s.accountName || '')}</td><td class="text-right">${cell(s.accountId, `${s.accountCode || ''} ${s.accountName || ''}`, s.amount)}</td></tr>`
         ).join('') : '';
         el.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:12px">
             <div><h3 class="text-lg font-semibold" style="margin-bottom:2px">งบกำไรขาดทุน</h3>
-            <p class="text-sm text-gray-500">${Layout.date(d.fromDate)} - ${Layout.date(d.toDate)}</p></div>
+            <p class="text-sm text-gray-500">${Layout.date(d.fromDate)} - ${Layout.date(d.toDate)} · คลิกตัวเลขเพื่อดูรายการบัญชี → เอกสารต้นทาง</p></div>
             <div class="flex gap-1">
               <button class="btn btn-sm btn-secondary" onclick="Page.toggleAllGrps(false)">⊞ ขยายทั้งหมด</button>
               <button class="btn btn-sm btn-secondary" onclick="Page.toggleAllGrps(true)">⊟ ย่อทั้งหมด</button>
@@ -302,6 +354,123 @@
               <tfoot><tr style="background:var(--primary);color:#fff"><td colspan="2" class="font-bold">กำไร(ขาดทุน)สุทธิ</td><td class="text-right font-bold">${Layout.money(d.netIncome)}</td></tr></tfoot>
             </table>
           </div>`;
+      },
+      // ปุ่ม "ปีบัญชีนี้" — เซิร์ฟเวอร์รู้เดือนเริ่มรอบบัญชี (ไม่ระบุช่วง = ต้นรอบปัจจุบันถึงวันนี้) แล้วเติมช่องวันที่ตามผล
+      async pnlFiscalYearToDate() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.profitLossCompare('?granularity=year');
+          document.getElementById('fromDate').value = String(res.data.fromDate).substring(0, 10);
+          document.getElementById('toDate').value = String(res.data.toDate).substring(0, 10);
+          if (document.getElementById('pnlMode').value === 'single') document.getElementById('pnlMode').value = 'month';
+          await this.loadReport();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // % เปลี่ยนแปลงจากเซิร์ฟเวอร์ — null = ฐานเป็น 0 (ไม่มีความหมาย) แสดง "—"
+      _pct(v) {
+        if (v === null || v === undefined) return '<span class="text-gray-400">—</span>';
+        const color = v > 0 ? '#16a34a' : (v < 0 ? '#dc2626' : '#64748b');
+        return `<span style="color:${color}">${v > 0 ? '▲' : (v < 0 ? '▼' : '')}${Math.abs(v).toLocaleString('th-TH', { maximumFractionDigits: 1 })}%</span>`;
+      },
+      async loadPnlCompare(api, el, mode) {
+        const from = document.getElementById('fromDate').value;
+        const to = document.getElementById('toDate').value;
+        const prior = document.getElementById('pnlPriorYear')?.checked;
+        const res = await api.profitLossCompare(`?fromDate=${from}&toDate=${to}&granularity=${mode}${prior ? '&comparePriorYear=true' : ''}${this._projQuery()}`);
+        const d = res.data;
+        const periods = d.periods || [];
+        const iso = v => String(v || '').substring(0, 10);
+        this._pnlCells = [];
+        const link = (row, amount, start, end, label) => {
+          if (!row.accountId) return Layout.money(amount);
+          const i = this._pnlCells.push({ accountId: row.accountId, from: iso(start), to: iso(end), amount, label: `${row.accountCode} ${row.accountName} · ${label}` }) - 1;
+          return `<a href="#" class="pnl-cell" onclick="Page.pnlDrill(${i});return false" title="คลิกเพื่อดูรายการบัญชีที่ประกอบเป็นตัวเลขนี้">${Layout.money(amount)}</a>`;
+        };
+        const sticky = 'position:sticky;left:0;background:var(--bg-primary,#fff);z-index:1;min-width:220px';
+        const head = periods.map(p => `<th class="text-right" style="white-space:nowrap" title="${Layout.esc(Layout.date(p.start) + ' – ' + Layout.date(p.endInclusive))}">${Layout.esc(p.label)}${p.isPartial ? ' *' : ''}</th>`).join('');
+        const rowHtml = (row, style) => {
+          const cells = periods.map((p, i) => {
+            let html = `<div>${link(row, row.amounts[i], p.start, p.endInclusive, p.label)}</div>`;
+            if (i > 0) html += `<div class="text-xs" title="เทียบคอลัมน์ก่อนหน้า">${this._pct(row.changeVsPrevious[i])}</div>`;
+            if (d.comparePriorYear && row.priorAmounts) {
+              html += `<div class="text-xs text-gray-500" title="${Layout.esc('ช่วงเดียวกันปีก่อน ' + Layout.date(p.priorStart) + ' – ' + Layout.date(p.priorEndInclusive))}">ปีก่อน ${link(row, row.priorAmounts[i], p.priorStart, p.priorEndInclusive, 'ปีก่อน ' + p.label)} · ${this._pct(row.changeVsPriorYear[i])}</div>`;
+            }
+            return `<td class="text-right" style="white-space:nowrap">${html}</td>`;
+          }).join('');
+          let total = `<div class="font-semibold">${link(row, row.total, d.fromDate, d.toDate, 'รวมทั้งช่วง')}</div>`;
+          if (d.comparePriorYear && row.priorTotal !== null && row.priorTotal !== undefined)
+            total += `<div class="text-xs text-gray-500">ปีก่อน ${Layout.money(row.priorTotal)} · ${this._pct(row.totalChangeVsPriorYear)}</div>`;
+          const name = row.kind === 'Account'
+            ? `<span class="text-gray-500">${Layout.esc(row.accountCode || '')}</span> ${Layout.esc(row.accountName || '')}`
+            : `<b>${Layout.esc(row.accountName || '')}</b>`;
+          return `<tr style="${style || ''}"><td style="${sticky};${style || ''}">${name}</td>${cells}<td class="text-right" style="white-space:nowrap;background:var(--gray-50)">${total}</td></tr>`;
+        };
+        const span = periods.length + 2;
+        const title = mode === 'quarter' ? 'รายไตรมาส' : (mode === 'year' ? 'รายปี' : 'รายเดือน');
+        el.innerHTML = `
+          <div style="margin-bottom:12px">
+            <h3 class="text-lg font-semibold" style="margin-bottom:2px">งบกำไรขาดทุนเปรียบเทียบ${title}</h3>
+            <p class="text-sm text-gray-500">${Layout.date(d.fromDate)} - ${Layout.date(d.toDate)} · คลิกตัวเลขเพื่อดูรายการบัญชี → เอกสารต้นทาง · ยอดรวม = ผลรวมทุกคอลัมน์</p>
+            ${(d.notes || []).map(n => `<p class="text-xs" style="color:#92400e;margin-top:2px">ⓘ ${Layout.esc(n)}</p>`).join('')}
+          </div>
+          <div class="table-container" style="overflow-x:auto">
+            <table class="table" style="min-width:${300 + periods.length * 130}px">
+              <thead><tr><th style="${sticky}">บัญชี</th>${head}<th class="text-right">รวม</th></tr></thead>
+              <tbody>
+                <tr style="background:#ECFDF5"><td colspan="${span}" class="font-semibold">รายได้</td></tr>
+                ${(d.revenue || []).map(r => rowHtml(r)).join('')}
+                ${rowHtml(d.totalRevenue, 'background:var(--gray-100)')}
+                <tr style="background:#FEF2F2"><td colspan="${span}" class="font-semibold">ค่าใช้จ่าย</td></tr>
+                ${(d.expenses || []).map(r => rowHtml(r)).join('')}
+                ${rowHtml(d.totalExpenses, 'background:var(--gray-100)')}
+                ${rowHtml(d.netIncome, 'background:#EEF2FF')}
+              </tbody>
+            </table>
+          </div>`;
+      },
+      // drill-down: ช่องตัวเลข → รายการ JE (ตัวกรอง/สิทธิ์เดียวกับบัญชีแยกประเภท) → เอกสารต้นทาง
+      async pnlDrill(i, page = 1) {
+        const c = (this._pnlCells || [])[i]; if (!c) return;
+        const api = Layout.api(); if (!api) return;
+        const box = document.getElementById('pnlDrillContent');
+        document.getElementById('pnlDrillTitle').textContent = c.label;
+        if (page === 1) box.innerHTML = '<div style="text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div></div>';
+        Layout.openModal('pnlDrillModal');
+        try {
+          const res = await api.profitLossDrilldown(`?accountId=${encodeURIComponent(c.accountId)}&fromDate=${c.from}&toDate=${c.to}&page=${page}&pageSize=200${this._projQuery()}`);
+          const d = res.data;
+          const diff = Math.round((Number(d.total) - Number(c.amount)) * 100) / 100;
+          const srcCell = s => s.href
+            ? `<a href="${Layout.esc(s.href)}" target="_blank" rel="noopener" style="color:var(--primary)">📄 ${Layout.esc(s.label)}</a>`
+            : `<span class="badge" style="background:#F1F5F9;color:#475569;font-size:11px" title="${Layout.esc(s.note || '')}">${Layout.esc(s.label)}</span>`;
+          const rows = (d.lines || []).map(l => `<tr>
+              <td style="white-space:nowrap">${Layout.date(l.entryDate)}</td>
+              <td style="white-space:nowrap"><a href="${Layout.esc(l.journalHref)}" target="_blank" rel="noopener" style="color:var(--primary)">${Layout.esc(l.entryNumber)}</a></td>
+              <td>${Layout.esc(l.description || '')}${l.reference ? `<div class="text-xs text-gray-500">อ้างอิง ${Layout.esc(l.reference)}</div>` : ''}</td>
+              <td class="text-right">${l.debit ? Layout.money(l.debit) : ''}</td>
+              <td class="text-right">${l.credit ? Layout.money(l.credit) : ''}</td>
+              <td class="text-right font-medium">${Layout.money(l.amount)}</td>
+              <td>${srcCell(l.source || {})}</td></tr>`).join('');
+          const shown = (d.page - 1) * d.pageSize + (d.lines || []).length;
+          box.innerHTML = `
+            <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:10px" class="text-sm">
+              <div>ผัง <b>${Layout.esc(d.accountCode)} ${Layout.esc(d.accountName)}</b></div>
+              <div>${Layout.date(d.fromDate)} – ${Layout.date(d.toDate)}</div>
+              <div>${d.totalCount.toLocaleString('th-TH')} รายการ · รวม <b>${Layout.money(d.total)}</b></div>
+              ${d.withoutSourceCount ? `<div style="color:#92400e">${d.withoutSourceCount.toLocaleString('th-TH')} รายการไม่มีเอกสารต้นทาง (รายการปรับปรุง/บันทึกมือ)</div>` : ''}
+            </div>
+            ${diff !== 0 ? `<div style="background:#FEF3C7;color:#92400e;padding:8px 12px;border-radius:6px;margin-bottom:8px">⚠ ผลรวมรายการ (${Layout.money(d.total)}) ไม่เท่าตัวเลขในช่อง (${Layout.money(c.amount)}) — อาจมีรายการบันทึกเพิ่มหลังเปิดรายงาน ลองกด "แสดงรายงาน" ใหม่</div>` : ''}
+            ${(d.notes || []).map(n => `<p class="text-xs" style="color:#92400e">ⓘ ${Layout.esc(n)}</p>`).join('')}
+            <div class="table-container"><table class="table">
+              <thead><tr><th>วันที่</th><th>เลขที่ใบสำคัญ</th><th>คำอธิบาย</th><th class="text-right">เดบิต</th><th class="text-right">เครดิต</th><th class="text-right">ยอด</th><th>เอกสารต้นทาง</th></tr></thead>
+              <tbody>${rows || '<tr><td colspan="7" class="text-center text-gray-400" style="padding:24px">ไม่มีรายการ</td></tr>'}</tbody>
+            </table></div>
+            <div class="flex gap-2" style="margin-top:8px;align-items:center">
+              ${d.page > 1 ? `<button class="btn btn-sm btn-secondary" onclick="Page.pnlDrill(${i}, ${d.page - 1})">← ก่อนหน้า</button>` : ''}
+              <span class="text-xs text-gray-500">แสดง ${shown.toLocaleString('th-TH')} จาก ${d.totalCount.toLocaleString('th-TH')}</span>
+              ${shown < d.totalCount ? `<button class="btn btn-sm btn-secondary" onclick="Page.pnlDrill(${i}, ${d.page + 1})">ถัดไป →</button>` : ''}
+            </div>`;
+        } catch (e) { box.innerHTML = `<div class="text-center text-danger" style="padding:24px">${Layout.esc(e.message)}</div>`; }
       },
       async loadCashFlow(api, el) {
         const from = document.getElementById('fromDate').value;

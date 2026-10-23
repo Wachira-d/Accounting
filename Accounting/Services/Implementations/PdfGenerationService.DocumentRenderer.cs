@@ -72,14 +72,12 @@ public partial class PdfGenerationService
         EnsureThaiFontsRegistered();
         var lang = ResolveDocumentLanguage(langOverride, doc, template, settings);
         var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
-        // ตราประทับบริษัท: ประทับเฉพาะเอกสารที่อนุมัติแล้ว (ผู้มีอำนาจอนุมัติ = ประทับตรา)
-        // — เงื่อนไขเดียวกับช่องลายเซ็นผู้อนุมัติ (Draft/รออนุมัติ/ถูกปฏิเสธ = ไม่ประทับ)
-        var stampAllowed = doc.Status is not (Accounting.Models.Enums.DocumentStatus.Draft
-            or Accounting.Models.Enums.DocumentStatus.WaitingApproval
-            or Accounting.Models.Enums.DocumentStatus.Rejected);
+        // ตราประทับบริษัท: ขั้นไหนประทับ/ตำแหน่ง/ขนาด/ระยะเลื่อน จากตัวตัดสินเดียว DocumentStampPolicy — ตัวเดียวกับ HTML
+        // BuildDocumentHtml (ทีม J 2026-10-22 · เดิมเงื่อนไข "ไม่ใช่ร่าง/รออนุมัติ/ถูกปฏิเสธ" เขียน inline สองที่) · ยังไม่ตั้งกฎ = เดิม
+        var stampRule = StampDecisionFor(doc, settings);
         // ไม่เช็ค IsActive — ใบเก่าที่ตรึงแบรนด์ไว้ต้องพิมพ์โลโก้/สีเดิมแม้แบรนด์
         // ถูกปิดใช้งานภายหลัง (สัญญาของปุ่มลบ; ผลตรวจทีมเส้นทางข้อมูล ข้อ 3)
-        var b = BuildBranding(template, settings, watermarkOverride, stampAllowed,
+        var b = BuildBranding(template, settings, watermarkOverride, stampRule,
             doc.Brand is { IsDeleted: false } ? doc.Brand : null);
 
         var accent = b.AccentColor ?? "#1F2937";
@@ -849,12 +847,12 @@ public partial class PdfGenerationService
                     printedAmount = Math.Round(printedAmount * (doc.SubTotal + billDeductLine) / doc.SubTotal, 2, MidpointRounding.AwayFromZero);
                 // รายการย่อย/บรรยายงาน (ไม่ระบุราคา): ราคา 0 + ยอด 0 → เว้นช่อง
                 // ตัวเลขว่างแทน "0.00" — ใช้แจกแจงงานย่อยใต้บรรทัดแม่ที่ถือราคา
-                // (เช่น งานหลัก 5,000 + งานย่อย 4 บรรทัดบอกขอบเขต) คง จำนวน/หน่วย ไว้
+                // (เช่น งานหลัก 5,000 + งานย่อย 4 บรรทัดบอกขอบเขต) คง จำนวน/หน่วย ไว้ (จำนวน: PrintedLineQuantity)
                 var isDescriptiveLine = line.UnitPrice == 0 && line.Amount == 0 && line.VatAmount == 0;
                 if (t.ShowLineNumber) Td(idx.ToString(), "center");
                 if (t.ShowItemCode) Td(line.ProductCode ?? "");
                 Td(line.Description ?? "");
-                Td(isDescriptiveLine && line.Quantity == 1 ? "" : line.Quantity.ToString("N2"), "right");
+                Td(Accounting.Helpers.PrintedLineQuantity.Format(line.Quantity, line.Unit, isDescriptiveLine), "right");
                 if (t.ShowUnit) Td(line.Unit ?? "", "center");
                 Td(isDescriptiveLine ? "" : line.UnitPrice.ToString("N2"), "right");
                 if (showDiscountCol) Td(isDescriptiveLine ? "" : line.DiscountAmount.ToString("N2"), "right");
@@ -932,6 +930,10 @@ public partial class PdfGenerationService
                 Row(printTotals.VatLabel, doc.VatAmount.ToString("N2"));
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
                 Row(L.TotalWht, $"({doc.WithholdingTaxAmount:N2})");
+            // ทีม F — หัก ณ ที่จ่ายหลายอัตรา ⇒ แถวย่อยต่ออัตรา (ตัวเดียวกับ HTML renderer · อัตราเดียว = ไม่มีแถว)
+            if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0)
+                foreach (var (whtRateRow, whtRateAmt) in Accounting.Helpers.PerLineWht.RateBreakdownForPrint(doc))
+                    Row(L.TotalWhtAtRate(whtRateRow), $"({whtRateAmt:N2})");
             // รอบ 204 ฝ่ายค้าน P2-1: ผู้จ่ายออกภาษีแทน (+) — เงื่อนไข/ป้ายเดียวกับ HTML renderer (ยอดสุทธิ = ฐาน + VAT − ภาษีนำส่ง + ส่วนนี้)
             if (t.ShowWithholdingTaxSummary && doc.WithholdingTaxAmount > 0 && doc.WhtPayerBorneAmount > 0)
                 Row(L.TotalWhtPayerBorne, doc.WhtPayerBorneAmount.ToString("N2"));
@@ -1153,7 +1155,9 @@ public partial class PdfGenerationService
                     "Center" => cell.AlignCenter(),
                     _ => cell.AlignRight(),
                 };
-                cell.Width(stampW, Unit.Millimetre).Height(stampH, Unit.Millimetre)
+                // ระยะเลื่อนจากกฎ (มม.) — คู่กับ position:relative;left/top ของ HTML DocumentStampBlockHtml (เลื่อนภาพ ไม่ดันเนื้อหา)
+                cell.TranslateX(b.StampOffsetXMm, Unit.Millimetre).TranslateY(b.StampOffsetYMm, Unit.Millimetre)
+                    .Width(stampW, Unit.Millimetre).Height(stampH, Unit.Millimetre)
                     .Image(b.StampBytes).FitArea();
             }
             catch { /* stamp decorative — ห้าม break PDF */ }
