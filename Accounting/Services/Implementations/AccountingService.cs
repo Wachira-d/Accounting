@@ -1051,6 +1051,14 @@ public partial class AccountingService : IAccountingService
                 "รายการนี้สร้างจากเอกสารต้นทาง — กรุณาใช้คำสั่ง 'ยกเลิกเอกสาร' " +
                 "เพื่อกลับทั้งเอกสารและรายการบัญชีพร้อมกัน");
 
+        // ทีม S 2026-10-26 ทิศกลับ: ผู้ใช้กลับรายการ JE มัดจำของการจอง (เช่น มัดจำที่ระบบภายนอกลงเป็นสมุดรายวัน) ทั้งที่มี JE อื่นตัดมัดจำนั้นผ่านรายการอยู่ ⇒ 409
+        // พร้อมทางไปต่อ · systemTriggered (ยกเลิกเอกสาร — ตรวจที่ VoidDocumentAsync แล้ว · resync ที่กลับแล้วลงใหม่ในคำสั่งเดียว) ไม่ตรวจซ้ำ ·
+        // กลับ JE ที่ "ตัด" มัดจำได้เสมอ (ยอดคืน ไม่ติดลบ)
+        if (!systemTriggered
+            && await Accounting.Helpers.BookingDepositLedger.RemovalProblemAsync(_db, companyId, new[] { original.Id },
+                new[] { original.Reference, original.Description }, $"กลับรายการ {original.EntryNumber}") is string drawnBlock)
+            throw new Accounting.Helpers.BusinessRuleException(drawnBlock, Accounting.Helpers.BookingDepositDrawdown.RemovalRuleCode, 409);
+
         // รอบ 5 P1 (ด่านป้องกัน): ตัวกลับ = บรรทัดที่บันทึกไว้จริงทุกบรรทัด สลับด้าน และลงตัว — บรรทัดหายระหว่างโหลด (เช่น ตัวกรองผังที่ลบ)
         // = ล้มก่อนเขียน ไม่ใช่ตัวกลับไม่ลงตัวใน GL · เทียบกับยอดรวมบรรทัดในฐาน (ไม่ join ผัง) — ไม่เทียบหัวใบ เพราะใบเก่าบางทางไม่ได้ปรับหัวใบตามบรรทัด
         // (บล็อกยกเลิกเอกสารของใบเหล่านั้นโดยไม่มีทางไปต่อ) · ดู EXPORT_AUDIT รอบ 5

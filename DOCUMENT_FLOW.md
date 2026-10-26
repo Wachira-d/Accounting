@@ -989,6 +989,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - `/integration/journals` + `/integration/daily-summary` → JournalEntry ที่
     **ไม่มี SourceDocumentId** (รายงาน VAT มี fallback ใน `TaxService.cs:436+`
     สแกนหา JE ที่มี VAT account แล้วรวมเข้า ภ.พ.30 ให้)
+    · **ด่านมัดจำของการจอง (ทีม S 2026-10-26 · การจอง #149433)**: JE ที่ Dr สุทธิบนบัญชีมัดจำ/รับล่วงหน้า (ดูจากชื่อผัง —
+    `BookingDepositDrawdown.IsDepositLiabilityAccount`) และอ้างการจอง (`RES-123456` ในเลขอ้างอิง/บรรทัด หรือ "การจอง #123456" ในคำอธิบาย) ⇒
+    ยอดมัดจำคงเหลือของการจองนั้น = Σ(Cr−Dr) บรรทัดที่อยู่ในสมุด (`ReportableJournal` — คู่กลับรายการหักล้าง) ของ JE/เอกสารที่ผูกการจอง
+    (`Helpers/BookingDepositLedger`) · ตัดเกิน ⇒ **422 `INT-DEPOSIT-OVERDRAW`** ไม่บันทึกอะไร (sync log Failed · คำตอบมี `ruleCode`/`statusCode`) ·
+    ไม่พบร่องรอยการจองเลย ⇒ ไม่ตัดสิน (ผ่าน) · JE ที่ไม่อ้างการจอง/ไม่ตัดมัดจำ ไม่ถูกแตะ · **ทิศกลับ**: ยกเลิกใบมัดจำ (`VoidDocumentAsync`) /
+    กลับ JE มัดจำ (หน้าสมุดรายวัน · `/integration/journals/reverse`) ทั้งที่มี JE ตัดผ่านรายการอยู่ ⇒ **409 `DEP-DRAWN-REMOVE`** + ทางไปต่อ
+    "กลับ JE ที่ตัดก่อน" (กลับ JE ที่ตัดได้เสมอ) · **ภาษีขายใน JE จาก API** (Cr 21911 ไม่มีใบกำกับ) ไม่ปฏิเสธ แต่ติดธง: `warnings` ในคำตอบ ·
+    หมายเหตุบน JE · รายงานตรวจข้อมูล 2 หมวดใหม่ (อ่านอย่างเดียว · ไม่กลับรายการให้) · คำเตือนในตัวกระทบภาษี-GL — ดู INTEGRATION_RESYNC §12
   - **Idempotency (กัน retry สร้างเอกสารซ้ำ)**: ทุก inbound endpoint ที่สร้าง
     เอกสาร (invoice / creditnote / debitnote / **expense** / payment_voucher /
     certificate_in_lieu) เช็ค `ExternalRef` (→ `Document.Reference`) ก่อน; ถ้า

@@ -385,7 +385,11 @@ public record InboundSyncResponse(
     /// Empty when no attachments were sent or all failed validation. Order matches
     /// the request's Attachments list — failed entries are reported via Warnings.</summary>
     List<Guid>? AttachmentIds = null,
-    List<string>? Warnings = null);
+    List<string>? Warnings = null,
+    /// <summary>รหัสกติกาที่ปฏิเสธ (เช่น <c>INT-DEPOSIT-OVERDRAW</c>) — null = ไม่ใช่การปฏิเสธตามกติกา (ทีม S 2026-10-26)</summary>
+    string? RuleCode = null,
+    /// <summary>HTTP status ที่กติกาต้องการ (409/422) — null = ใช้ค่าเดิมของ endpoint (400)</summary>
+    int? StatusCode = null);
 
 // ===== Outbound Data (external systems read FROM Next Acc) =====
 

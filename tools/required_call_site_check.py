@@ -9376,6 +9376,49 @@ RULES += [
          why=_Q_WHY + "ค่าตั้งที่ไม่รู้จัก = 400 (ห้ามเก็บค่าที่ไม่มีผู้อ่าน)"),
 ]
 
+# ── ทีม S 2026-10-26 (ผู้ใช้รายงาน · การจอง #149433): JE จาก API ตัดมัดจำที่ถูกกลับรายการแล้ว ⇒ ด่านสองทิศ + ธงภาษีขายไม่มีใบกำกับ ──
+_S_WHY = "ทีม S 2026-10-26 (JV-INT ตัด 21510 ของมัดจำที่ถูกกลับแล้ว): "
+RULES += [
+    dict(file=INTEG, method="ProcessJournalAsync",
+         must=["BookingDepositLedger.DrawdownProblemAsync(", "BookingDepositDrawdown.RuleCode", "BookingDepositDrawdown.OutputVatNoInvoiceNote(",
+               "Warnings: journalWarnings", "Note = journalNote", "BookingDepositDrawdown.JournalApiEventType"],
+         must_re=[r"is\s+string\s+overdraw\s*\)\s*throw\b"],
+         before=[("DrawdownProblemAsync(", "_db.JournalEntries.Add(je)")],
+         why=_S_WHY + "ตัดมัดจำเกินยอดคงเหลือของการจอง ⇒ ปฏิเสธก่อนบันทึก (422 + ruleCode) · ภาษีขายไม่มีใบกำกับ ⇒ ติดธงในคำตอบ+หมายเหตุ JE"),
+    dict(file=INTEG, method="ProcessJournalReverseAsync",
+         must=["BookingDepositLedger.RemovalProblemAsync(", "BookingDepositDrawdown.RemovalRuleCode"],
+         before=[("RemovalProblemAsync(", "_db.JournalEntries.Add(reversal)")],
+         why=_S_WHY + "ทิศกลับ: API กลับ JE มัดจำที่ถูกตัดแล้ว ⇒ 409"),
+    dict(file=INTEG, method="HandleSyncError",
+         must=["RuleCode: bre.RuleCode", "StatusCode: bre.StatusCode"],
+         why=_S_WHY + "ระบบต้นทางต้องเห็น ruleCode + status ของการปฏิเสธตามกติกา"),
+    dict(file=DOCSVC, method="VoidDocumentAsync",
+         must=["BookingDepositLedger.RemovalProblemAsync(", "BookingDepositDrawdown.RemovalRuleCode"],
+         before=[("RemovalProblemAsync(", "BeginTransactionAsync(")],
+         why=_S_WHY + "ทิศกลับ: ยกเลิกใบมัดจำที่มี JE ตัดผ่านรายการอยู่ ⇒ 409 พร้อมทางไปต่อ (ก่อนแตะธุรกรรม)"),
+    dict(file="Services/Implementations/AccountingService.cs", method="ReverseJournalEntryAsync",
+         must=["BookingDepositLedger.RemovalProblemAsync(", "BookingDepositDrawdown.RemovalRuleCode"],
+         must_re=[r"!\s*systemTriggered\s*&&\s*await\s+Accounting\.Helpers\.BookingDepositLedger\.RemovalProblemAsync\("],
+         why=_S_WHY + "ทิศกลับ: ผู้ใช้กลับ JE มัดจำ (สมุดรายวัน) ที่ถูกตัดแล้ว ⇒ 409"),
+    dict(file="Helpers/BookingDepositLedger.cs", method="LoadAsync",
+         must=["WhereInLedger()", "d.CompanyId == companyId", "j.CompanyId == companyId", "a.CompanyId == companyId",
+               "l.JournalEntry.CompanyId == companyId", "BookingDepositDrawdown.IsDepositLiabilityAccount("],
+         forbid=["JournalEntryStatus.Posted"],
+         why=_S_WHY + "ยอดคงเหลือนับคู่กลับรายการด้วย ReportableJournal (ห้ามกรอง Posted เอง) · tenant isolation ทุก query"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadBookingDepositOverdrawnAsync",
+         must=["BookingDepositLedger.LoadAsync(", "BookingDepositDrawdown.Balances(", "j.CompanyId == companyId", "a.CompanyId == companyId"],
+         forbid=["ReverseJournalEntryAsync(", "SaveChangesAsync("],
+         why=_S_WHY + "หลักการ #9: รายงานอ่านอย่างเดียว — ห้ามกลับรายการ/บันทึกเอง"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadApiJournalOutputVatAsync",
+         must=["BookingDepositDrawdown.JournalApiEventType", "s.CompanyId == companyId", "j.CompanyId == companyId"],
+         forbid=["SaveChangesAsync("],
+         why=_S_WHY + "ภาษีขายจาก JE API ที่ไม่มีใบกำกับ — อ่านอย่างเดียว"),
+    dict(file="Services/Implementations/TaxGlReconciliationService.cs", method="ReconcileAsync",
+         must=["BookingDepositDrawdown.JournalApiEventType"],
+         must_lit=["BookingDepositDrawdown.OutputVatNoInvoiceCode"],
+         why=_S_WHY + "ตัวกระทบภาษี-GL ระบุ JE จาก API ที่มีภาษีขายไม่มีใบกำกับ"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
