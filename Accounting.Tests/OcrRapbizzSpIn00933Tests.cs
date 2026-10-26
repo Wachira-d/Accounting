@@ -464,37 +464,61 @@ public class OcrRapbizzSpIn00933Tests
         Assert.Null(scanDisc.NoteToAppend);
         // ขั้น 3 ResolveHeaderSubTotal ⇒ Document.SubTotal (ตั้งก่อนสร้างบรรทัด) = ยอดรวม − VAT
         Assert.Equal(1340.19m, OcrHeaderAmounts.NetSubTotal(1340.19m, 93.81m, 1434.00m, 538.32m));
-        // ขั้น 4 BuildScanLinesAsync — เคส F กระจายส่วนลดรวม VAT 576 ตามสัดส่วน (1,312.72 / 121.28) แล้วถอด VAT รายบรรทัดด้วยสูตรเอกสาร
+        // ขั้น 4 BuildScanLinesAsync — คำตัดสินข้อ 159: เคส F ⇒ BillDiscountAmount 538.32 ตามกระดาษ · บรรทัด 1,840/170 ไม่มีส่วนลด ·
+        //        DocumentService.PlanLineAmounts: ฐานก่อนลด 1,719.63 + 158.88 = 1,878.51 ("จำนวนเงิน Amount") − จัดสรร 492.79/45.53 ⇒ 1,226.84/113.35 · VAT 85.88/7.93
         var doc = ScanDocumentSimulator.Build(r, EtaxFixtures.RapbizzSpIn00933Xml);
         Assert.True(doc.PricesIncludeVat);
-        Assert.Equal(new[] { (2.00m, 920.00m, 527.28m, 1226.84m, 85.88m, 7m), (1.00m, 170.00m, 48.72m, 113.35m, 7.93m, 7m) },
+        Assert.Equal(538.32m, doc.BillDiscount);
+        Assert.Equal(new[] { (2.00m, 920.00m, 0m, 1226.84m, 85.88m, 7m), (1.00m, 170.00m, 0m, 113.35m, 7.93m, 7m) },
             doc.Lines.Select(l => (l.Qty, l.UnitPrice, l.Discount, l.Amount, l.Vat, l.VatRate)).ToArray());
+        Assert.Equal(1878.51m, Math.Round(1840.00m * 100m / 107m, 2, MidpointRounding.AwayFromZero) + Math.Round(170.00m * 100m / 107m, 2, MidpointRounding.AwayFromZero));
         Assert.Equal(0m, doc.RoundingAdjustment);
         Assert.Equal((1340.19m, 93.81m, 1434.00m),
             (doc.Lines.Sum(l => l.Amount), doc.Lines.Sum(l => l.Vat), doc.Lines.Sum(l => l.Amount) + doc.Lines.Sum(l => l.Vat)));
         Assert.Equal((1340.19m, 93.81m, 1434.00m), (doc.HeaderSubTotal, doc.HeaderVat, doc.HeaderTotal));   // Document.SubTotal / VatAmount / TotalAmount
         Assert.Equal(0m, doc.UnreconciledGap);
         Assert.True(doc.CanAutoApprove, doc.BlockReason);
-        // Document.DiscountAmount = Σ ส่วนลดบรรทัด = 576.00 (โลกราคารวม VAT) ขณะที่กระดาษพิมพ์ "ส่วนลด 538.32" (ก่อน VAT) และบรรทัด 1,840/170 ไม่มีส่วนลด
-        //   ⇒ ตัวเลขฐาน/VAT/สุทธิ "ตรง" แต่หน้าตาของเอกสาร (ส่วนลดต่อบรรทัด · ยอดบรรทัดก่อน VAT 1,226.84) ต่างจากกระดาษ — จดไว้ใน OCR_TOTALS_MATRIX §4 รอเจ้าของ
-        Assert.Equal(576.00m, doc.Lines.Sum(l => l.Discount));
+        // ข้อ 159: Document.DiscountAmount (Σ ส่วนลดบรรทัด) = 0 · ส่วนลดท้ายบิล 538.32 = กระดาษ (ก่อนข้อ 159: 576.00 ต่อบรรทัด — ยอดเท่ากันแต่หน้าตาต่าง)
+        Assert.Equal(0m, doc.Lines.Sum(l => l.Discount));
         Assert.Equal(538.32m, Math.Round(576.00m * 100m / 107m, 2, MidpointRounding.AwayFromZero));
         // ขั้น 5 หมายเหตุที่ไปหน้าตรวจ: [e-Tax] ข้อสังเกตเดียว (ระบบตรวจพบและปรับให้แล้ว) — ไม่มี [Σ-GAP]/แท็กหยุด ⇒ ห้ามขึ้นเป็น "ระบบไม่แน่ใจ"
         Assert.Single(doc.Notes);
         Assert.StartsWith(OcrEtaxLineNormalizer.NoteTag, doc.Notes[0]);
+        Assert.Contains("ส่วนลดท้ายบิลของเอกสาร 538.32", doc.Notes[0]);
         Assert.DoesNotContain(doc.Notes, n => n.StartsWith("[Σ-GAP]", StringComparison.Ordinal));
         Assert.True(OcrPostingReadiness.Evaluate(string.Join("\n", doc.Notes), true).CanAutoApprove);
-        // ขั้น 6 เปิดฟอร์มแก้ไข (documents.html hydrate โหมด ฿ เมื่อ discountAmount > 0 · PricesIncludeVat จาก entity) แล้วบันทึก
-        //        = DocumentService.ComputeLineAmounts (ส่วนลดบาทชนะ %) + ReconcileTaxRounding ⇒ บรรทัดเดิมทุกสตางค์ ⇒ ยอดหัวเอกสารไม่ขยับ
+        // ขั้น 6 เปิดฟอร์มแก้ไข (documents.html hydrate billDiscountAmount 538.32 โหมด ฿ · PricesIncludeVat จาก entity) แล้วบันทึก
+        //        = DocumentService AllocateBillDeductions → ComputeLineAmounts → ReconcileTaxRounding (ตัวจริง) ⇒ บรรทัดเดิมทุกสตางค์ ⇒ ยอดหัวเอกสารไม่ขยับ
         Assert.Equal(doc.Lines.Select(l => (l.Amount, l.Vat)).ToList(), ScanDocumentSimulator.Resave(doc));
+        var hdr = Accounting.Services.Implementations.DocumentService.PreviewTotals(doc.Lines.Select(l => new Accounting.Models.DTOs.Document.DocumentLineRequest("", l.Qty, null, l.UnitPrice, 0m, l.VatRate, 0m, null)).ToList(), true, 538.32m);
+        Assert.Equal((1340.19m, 93.81m, 1434.00m, 538.32m), (hdr.Net, hdr.Vat, hdr.Total, hdr.TradeDiscount));
     }
 
     [Fact]
-    public void ทีมT_ทิศตรงข้าม_ถ้าฟอร์มส่งแต่เปอร์เซ็นต์28_66_ยอดจะขยับเป็น1433_94_จึงต้องส่งส่วนลดบาทต่อบรรทัดเสมอ()
+    public void ทีมT_ข้อ159_ทิศตรงข้าม_ถ้าส่วนลดท้ายบิลหาย_ยอดกลับเป็น1878_51บวกVAT131_50_ฟอร์มจึงต้องส่งbillDiscountAmountจากเซิร์ฟเวอร์()
     {
-        // จุดที่ตัวเลข "เปลี่ยนกลับ" ได้ถ้าช่องส่วนลดบาทหาย: ComputeLineAmounts คิดจาก % ⇒ 170 × 28.66% = 48.72 (เท่าเดิม) แต่ 1,840 × 28.66% = 527.34 ≠ 527.28
-        //   ⇒ ฐาน 1,340.13 · VAT 93.81 (ขั้นปัดขยับ 0.01) · สุทธิ 1,433.94 ≠ 1,434.00 — documents.html จึงต้อง hydrate โหมด ฿ (บรรทัด "discountAmount > 0 → โหมด ฿")
+        // จุดที่ตัวเลข "เปลี่ยนกลับ" ได้หลังข้อ 159: บรรทัดไม่มีส่วนลดแล้ว — ถ้า BillDiscountAmount หาย (หน้าเว็บส่ง 0 เหมือนเดิม) ⇒ ฐาน 1,878.51 · VAT 131.50 · 2,010.01 ≠ 1,434
         var doc = ScanDocumentSimulator.Build(Xml(), EtaxFixtures.RapbizzSpIn00933Xml);
+        var lost = ScanDocumentSimulator.Resave(doc with { BillDiscount = 0m });
+        Assert.Equal(1878.51m, lost.Sum(x => x.Amount));
+        Assert.NotEqual(1434.00m, lost.Sum(x => x.Amount) + lost.Sum(x => x.Vat));
+        // เคส C (ร้านวัสดุ · ส่วนลดก่อน VAT บนราคาก่อน VAT) ยังกระจายลงบรรทัดเหมือนเดิม — ไม่ลง BillDiscountAmount
+        Assert.Null(OcrLineReconciler.Classify(1395m, 1325.25m, 92.77m, 1418.02m, 69.75m).BillDiscountPreVat);
+        Assert.Null(OcrLineReconciler.Classify(774m, 687.20m, 48.10m, 735.30m, 38.70m).BillDiscountPreVat);   // เคส E
+        Assert.Equal((decimal?)538.32m, OcrLineReconciler.Classify(2010.00m, 1340.19m, 93.81m, 1434.00m, 538.32m).BillDiscountPreVat);
+    }
+
+    [Fact]
+    public void ทีมT_ทิศตรงข้าม_รูปกระจายเดิม_ถ้าฟอร์มส่งแต่เปอร์เซ็นต์28_66_ยอดจะขยับเป็น1433_94_จึงต้องส่งส่วนลดบาทต่อบรรทัดเสมอ()
+    {
+        // รูปการบันทึก "กระจายส่วนลดลงบรรทัด" (เคส C/E ยังใช้ · เคส F ก่อนข้อ 159): ถ้าช่องส่วนลดบาทหาย ComputeLineAmounts คิดจาก % ⇒ 1,840 × 28.66% = 527.34 ≠ 527.28
+        //   ⇒ ฐาน 1,340.13 · VAT 93.81 · สุทธิ 1,433.94 ≠ 1,434.00 — documents.html จึงต้อง hydrate โหมด ฿ (บรรทัด "discountAmount > 0 → โหมด ฿")
+        var built = ScanDocumentSimulator.Build(Xml(), EtaxFixtures.RapbizzSpIn00933Xml);
+        var doc = built with { BillDiscount = 0m, Lines = new List<ScanDocumentSimulator.SimLine>
+        {
+            new(2.00m, 920.00m, 527.28m, 1226.84m, 85.88m, 7m), new(1.00m, 170.00m, 48.72m, 113.35m, 7.93m, 7m),
+        } };
+        Assert.Equal(doc.Lines.Select(l => (l.Amount, l.Vat)).ToList(), ScanDocumentSimulator.Resave(doc));   // รูปกระจายก็บันทึกซ้ำได้เท่าเดิม
         var pctOnly = doc with
         {
             Lines = doc.Lines.Select(l => l with { Discount = Math.Round(l.Qty * l.UnitPrice * 28.66m / 100m, 2, MidpointRounding.AwayFromZero) }).ToList(),
@@ -514,5 +538,36 @@ public class OcrRapbizzSpIn00933Tests
         Assert.NotEqual(OcrDiscountPlacement.PostInvoice, d.Placement);   // PreVat หรือ Unknown (ใบมีคำ THB) — ทั้งคู่คงส่วนลด · PostInvoice เท่านั้นที่ทำให้เป็น 0
         Assert.Equal(538.32m, d.DiscountToSpread);
         Assert.Equal(538.32m, OcrTotalDecomposer.ForScan(ThaiTextNormalizer.Normalize(PageText), 1340.19m, 93.81m, 1434.00m, 538.32m, null).DiscountToSpread);
+    }
+
+    [Fact]
+    public void ทีมT_ข้อ159_ฝ่ายค้าน_ราคาต่อหน่วยมีเศษ_4x1228_04เท่ากับ4912_16แต่พิมพ์4912_15_ไม่บวกเศษซ้ำ_ΣบรรทัดบวกRAเท่าฐานกระดาษ_บันทึกซ้ำไม่ขยับ()
+    {
+        // สังเคราะห์ (รูปเดียวกับใบ Rapbizz · ราคาต่อหน่วยแบบ Lazada 1,228.04 × 4 = 4,912.16 แต่กระดาษพิมพ์ 4,912.15): Σ พิมพ์ 5,082.15 − ส่วนลด 576 (รวม VAT) = 4,506.15 ·
+        // VAT 294.80 · ฐาน 4,211.35 · ส่วนลดก่อน VAT 538.32 ⇒ หัวใบพิสูจน์ (เคส F) ⇒ BillDiscountAmount 538.32
+        var r = new EtaxPdfXmlExtractor.ExtractResult
+        {
+            Found = true, DocumentTypeCode = "T03", MappedDocumentType = "TaxInvoice", DocumentNumber = "SYN-F-ROUND-01",
+            SellerTaxId = SellerTaxId, LineTotal = 4211.35m, TaxBasis = 4211.35m, AllowanceTotal = 576.00m, VatAmount = 294.80m, GrandTotal = 4506.15m,
+            Items =
+            {
+                new() { Description = "นมผง", Quantity = 4m, UnitPrice = 1228.04m, Amount = 4912.15m, NetIncludingVatAmount = 5256.00m, VatRatePercent = 7m },
+                new() { Description = "ค่าขนส่งสินค้า", Quantity = 1m, UnitPrice = 170.00m, Amount = 170.00m, NetIncludingVatAmount = 181.90m, VatRatePercent = 7m },
+            },
+        };
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(Facts(r), r.LineTotal, r.VatAmount, r.GrandTotal, r.AllowanceTotal, r.TaxBasis);
+        Assert.Equal((decimal?)576.00m, inv.BillAllowanceInclVat);
+        var doc = ScanDocumentSimulator.Build(r);
+        Assert.Equal(538.32m, doc.BillDiscount);
+        // DocumentService: ฐานก่อนลด round(4 × 1,228.04 = 4,912.16 ÷ 1.07) 4,590.80 + 158.88 = 4,749.68 · จัดสรร 520.31/18.01 · VAT 284.93/9.86 ⇒ ขั้นปัดขยับบรรทัดใหญ่ 0.01 ⇒ 4,070.48/284.94
+        Assert.Equal(new[] { (4m, 1228.04m, 0m, 4070.48m, 284.94m), (1m, 170.00m, 0m, 140.87m, 9.86m) },
+            doc.Lines.Select(l => (l.Qty, l.UnitPrice, l.Discount, l.Amount, l.Vat)).ToArray());
+        // เศษราคาต่อหน่วย +0.01 ไม่ถูกบวกซ้ำ (เดิมจะได้ 4,070.49) · ผลต่างปัดเศษ = Σ บรรทัดจริง − ฐานกระดาษ = 0 ⇒ SubTotal = Σ บรรทัด + RA = ฐานกระดาษ
+        Assert.Equal(0m, doc.RoundingAdjustment);
+        Assert.Equal(4211.35m, doc.Lines.Sum(l => l.Amount) + doc.RoundingAdjustment);
+        Assert.Equal((4211.35m, 294.80m, 4506.15m), (doc.HeaderSubTotal, doc.HeaderVat, doc.HeaderTotal));
+        Assert.Equal(294.80m, doc.Lines.Sum(l => l.Vat));
+        // เปิดแก้แล้วบันทึก (สูตรจริงของ DocumentService) = เท่าเดิมทุกสตางค์ — ทิศตรงข้ามของ "บวกเศษซ้ำ"
+        Assert.Equal(doc.Lines.Select(l => (l.Amount, l.Vat)).ToList(), ScanDocumentSimulator.Resave(doc));
     }
 }

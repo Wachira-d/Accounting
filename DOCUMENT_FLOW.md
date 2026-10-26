@@ -389,8 +389,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ยอด**หลัง**ส่วนลด (`OcrHeaderAmounts.NetSubTotal` ทั้งสร้าง/พรีวิว/repopulate — เดิมก่อนลด ⇒ ฐานภาษีซื้อ §87 เกิน) ·
     `Document.DiscountAmount` = Σ ส่วนลดที่ลงบรรทัดจริง · `OcrLineReconciler` เคส E `DiscountOnTotalInclVat` (ราคารวม VAT + ส่วนลด) ·
     เคส F `DiscountPreVatOnInclusivePrices` (ราคารวม VAT + ส่วนลดพิมพ์ก่อน VAT · ทีม R) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT ·
-    ทีม T 2026-10-26 · สังเคราะห์ · วางหลัง F เข้าได้เฉพาะใบที่เดิม Ambiguous) · เมทริกซ์ทุกรูปแบบ + สถานะ `docs/OCR_TOTALS_MATRIX.md` · ส่วนลดท้ายบิลทุกเคสยัง**กระจายลงบรรทัด**
-    (`BillDiscountAmount = 0` — ข้อเสนอลงเป็นส่วนลดท้ายบิล 538.32 ให้หน้าตาตรงกระดาษ รอเจ้าของ · MATRIX §4) ·
+    ทีม T 2026-10-26 · สังเคราะห์ · วางหลัง F เข้าได้เฉพาะใบที่เดิม Ambiguous) · เมทริกซ์ทุกรูปแบบ + สถานะ `docs/OCR_TOTALS_MATRIX.md` ·
+    **คำตัดสินข้อ 159 (2026-10-26):** เคส F/G (กระดาษพิมพ์ "ส่วนลดท้ายบิล") ⇒ `OcrLineReconcileResult.BillDiscountPreVat` ⇒ `Document.BillDiscountAmount` ตามกระดาษ (538.32) ·
+    บรรทัดไม่มีส่วนลด · ยอดบรรทัดจาก `DocumentService.PlanLineAmounts` (ตัวตั้งเดียวของ Create/Update — ไม่มีสำเนาสูตร) ⇒ เปิดแก้แล้วบันทึกไม่ขยับ · `OcrLinePreviewResponse.BillDiscountAmount`
+    ส่งต่อให้ฟอร์ม "แก้ในฟอร์มก่อน" · เคส C/E ยัง**กระจายลงบรรทัด**เหมือนเดิม (`BillDiscountAmount = 0`) · `BuildScanLinesAsync` ตั้ง `BillDiscountAmount = 0` ใหม่ทุกครั้งเหมือน `RoundingAdjustment` ·
+    หลังฝ่ายค้าน: ในสาขานี้ไม่บวกเศษราคาต่อหน่วยซ้ำ (`PlanLineAmounts` คิดจาก จำนวน × ราคา แล้ว) · `RoundingAdjustment` = −(Σ ยอดบรรทัดจาก DocumentService − ฐานกระดาษ) ภายใต้เพดาน `DocumentRounding.CapShifts`
+    ⇒ `SubTotal = Σ บรรทัด + RA = ฐานกระดาษ` คงสัญญาเดิม · **ดึงรายการซ้ำ** บนเอกสารที่มี `BillDiscountAmount` ผู้ใช้กรอก (> 0 และ ≠ ค่าจากสแกน) ⇒ ล้มดัง `OCR-REPOP-BILL-DISCOUNT` (ค่าผู้ใช้ชนะ — ลบในฟอร์มก่อนจึงดึง) ·
+    replay harness เดินสาขาเดียวกัน (`Mode = Items+Bill:<x>` · rcs ล็อก `PlanLineAmounts(` ทั้ง service/harness) · `ResaveLineNets` เรียก `PlanLineAmounts` ตัวเดียว ·
     **ลำดับตั้งอัตรา VAT รายบรรทัด** (`OcrService.BuildScanLinesAsync` — ตัวสร้างเดียวของสร้าง/line-preview/ดึงรายการซ้ำ · เติมเฉพาะ
     บรรทัดที่ยังว่าง): (1) ค่าจาก engine/ผู้ใช้แก้ในหน้ารีวิว → (2) สัญลักษณ์บนกระดาษ (V/N · ตารางสรุป VAT) ที่ยอดพิสูจน์ได้
     (`Helpers/OcrLineVatMarks`) → (3) **ตัวเลขหัวใบพิสูจน์ทั้งใบ** (`Helpers/OcrLineVatPlanner.PlanWholeInvoice` · รอบ 195 — VAT หัวใบ =
@@ -5193,10 +5198,30 @@ PDF ของ PV ที่ปิดหนี้อ่านธงของใบ
 
 | | counter | บรรทัด | VAT | WHT |
 | --- | --- | --- | --- | --- |
-| CN ฝั่งขาย | Cr ลูกหนี้/เงินสด | **Dr รายได้** | Dr 21911 | Cr 11910 |
-| DN ฝั่งขาย | Dr | **Cr รายได้** | Cr 21911 | Dr 11910 |
-| CN ฝั่งซื้อ | Dr เจ้าหนี้/เงินสด | **Cr ค่าใช้จ่าย/สินค้าคงเหลือ** | Cr 11610 | Dr 2191x |
-| DN ฝั่งซื้อ | Cr | **Dr ค่าใช้จ่าย/สินค้าคงเหลือ** | Dr 11610 | Cr 2191x |
+| CN ฝั่งขาย | Cr ลูกหนี้ (ใบเดิมยังค้าง) / เงิน (ใบเดิมชำระครบ = คืนเงิน) | **Dr รายได้** | Dr 21911 | Cr 11910 |
+| DN ฝั่งขาย | Dr ลูกหนี้ (เงินเชื่อ) / เงิน (DN จ่ายทันทีเอง) | **Cr รายได้** | Cr 21911 | Dr 11910 |
+| CN ฝั่งซื้อ | Dr เจ้าหนี้ (ใบเดิมยังค้าง) / เงิน (ใบเดิมชำระครบ) | **Cr ค่าใช้จ่าย/สินค้าคงเหลือ** | Cr 11610 | Dr 2191x |
+| DN ฝั่งซื้อ | Cr เจ้าหนี้ (เงินเชื่อ) / เงิน (DN จ่ายทันทีเอง) | **Dr ค่าใช้จ่าย/สินค้าคงเหลือ** | Dr 11610 | Cr 2191x |
+
+**ขา counter เป็น "เงิน" เมื่อไร — `AdjustmentNoteAccount.CounterLegIsMoney(isCreditNote, doc.PaymentType, source.BalanceDue)`**
+(ทีม V ตรวจ JE 2026-10-26 · `docs/JE_POSTING_AUDIT.md` V-DN-01/V-CN-03): ใบลดหนี้ = กลับรายการใบเดิม ⇒ ใบเดิมชำระครบ (≤ 0.01)
+= คืนเงิน · **ใบเพิ่มหนี้ = หนี้ก้อนใหม่ของตัวมันเอง** (`PayableDocumentTypes` ให้รับ/จ่ายทีหลัง) ⇒ ดูเทอมของ DN เอง
+(จ่ายทันที = เงิน · เงินเชื่อ/ไม่ระบุ = ลูกหนี้/เจ้าหนี้) — เดิม DN ยืมกติกาใบลดหนี้ ⇒ DN ของใบที่ชำระครบลง Dr เงินสดตอนอนุมัติ
+แล้วตอนรับชำระลง Dr เงินสด/Cr ลูกหนี้อีกรอบ (เงินสดเกินสองเท่า · ลูกหนี้ติดลบ · งบยังสมดุล) · ขาเงินเดิน `UseMoneyAccount()`
+(ช่องทางเงินของเอกสาร: ธนาคาร/ผังที่เลือก → 111) ไม่ใช่ "111" ตายตัว · เทสต์ `JePostingAuditTests`
+
+**ขา WHT เกณฑ์เงินสดของ CN/DN** — `AdjustmentNoteAccount.CounterLegIsGrossOfWht(cashBasis, counterLegIsMoney, wht)`: โหมดลูกหนี้/เจ้าหนี้ ⇒ counter
+gross (Total + WHT) และ**ไม่ลงขา WHT** (mirror ใบต้นทาง) · โหมดขาเงิน ⇒ ลงขา WHT ในใบนี้ · ผลพวงของ CounterLegIsMoney: **DN เงินเชื่อของใบที่ชำระครบ + WHT**
+เดิมลง 11910/2191x ตอนอนุมัติ ⇒ ตอนนี้ไปลงตอนรับ/จ่ายชำระ (`CreatePaymentJournalAsync` · `postPerPaymentWht`) เหมือนใบแจ้งหนี้/ใบซื้อปกติ
+
+**ข้อมูลเก่า (คำตัดสินข้อ 160 · F2 ข้อ 9)** — DN เงินเชื่อที่ JE อนุมัติรุ่นก่อนลงขาเงิน: หน้าตรวจข้อมูล (`data-integrity.html`) หมวด
+"ใบเพิ่มหนี้ที่ลงขาเงินซ้ำ" (`Helpers/DebitNoteCashRepair` · `DataIntegrityReportService.LoadDebitNoteCashPostedTwiceAsync` อ่านอย่างเดียว) + ปุ่ม "แก้" ต่อใบ
+`POST data-integrity/debit-note-cash/{id}/reverse-payment-journals` (เจ้าของบริษัท · กลับ JE ชำระซ้ำด้วย `ReverseJournalEntryAsync` · audit `JE-DN-CASH-TWICE`) ·
+ห้ามซ่อมอัตโนมัติ · ใบที่ยังไม่ชำระไม่มีปุ่ม (ยกเลิกแล้วออกใหม่)
+
+**ข้อควรรู้ของขาเงิน CN/DN** — `UseMoneyAccount()` ล้มดัง (คลาส ID#7) เมื่อ CN คืนเงินสืบทอด `BankAccountId` ที่ยังไม่ผูกผัง GL ⇒ กระทบเส้น
+`ReclassifyCnDnSideAsync` / `RepairMissingJournalAsync` ที่ลง JE ใหม่ด้วย AutoPost เดียวกัน — ผู้ใช้ไปต่อด้วยการผูกผังที่ธนาคาร หรือเปลี่ยนช่องทางเงินของเอกสาร
+(`fPaymentChannel`) แล้วลองใหม่ · สมมติฐาน: `BankAccountId` ที่ CN สืบทอดจากใบขายต้นทาง = ช่องทางที่จะคืนเงิน (ถ้าคืนทางอื่น ให้เปลี่ยนช่องทางบน CN ก่อนอนุมัติ)
 
 **ด่านผังข้ามฝั่ง** (`RD-86/9-10-ACCT-SIDE`) — `EnsureLineAccountMatchesDocSide`
 เดิม**ยกเว้น CN/DN ทั้งด่าน** (คอมเมนต์ที่ `PureSalesSideTypes` เขียนเองว่าจงใจ

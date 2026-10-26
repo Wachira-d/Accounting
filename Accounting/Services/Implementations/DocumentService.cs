@@ -686,6 +686,22 @@ public partial class DocumentService : IDocumentService
         return new LineAmounts(net, discountAmt, vatAmt, whtAmt);
     }
 
+    /// <summary>ยอด<b>รายบรรทัด</b> (ก่อน VAT · VAT) ด้วยสูตรเดียวกับ CreateDocumentAsync/UpdateDocumentAsync — <c>AllocateBillDeductions</c> →
+    /// <c>ComputeLineAmounts</c> → <c>ReconcileTaxRounding</c> — <b>ตัวตั้งเดียว</b>ของ "ถ้าบันทึกซ้ำจะได้เท่าไร": ตัวสร้างบรรทัดจากสแกน
+    /// <c>OcrService.BuildScanLinesAsync</c> (ส่วนลดท้ายบิลตามกระดาษ · คำตัดสินเจ้าของข้อ 159) · replay harness/ตัวจำลองในเทสต์ · <see cref="ResaveLineNets"/>
+    /// (รายงานตรวจส่วนลดบรรทัดจากสแกน) — ไม่มีสำเนาสูตรที่อื่น · ไม่มีหัก ณ ที่จ่ายในผล (ผู้เรียกจัดการเอง) · ทีม T 2026-10-26</summary>
+    internal static List<(decimal Net, decimal Vat)> PlanLineAmounts(
+        IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount,
+        decimal billDiscountPercent = 0m, decimal depositBaseDeducted = 0m)
+    {
+        var (alloc, _, _) = AllocateBillDeductions(lines, pricesIncludeVat, billDiscountPercent, billDiscountAmount, depositBaseDeducted);
+        var amts = new LineAmounts[lines.Count];
+        for (int i = 0; i < lines.Count; i++)
+            amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
+        ReconcileTaxRounding(lines, amts, pricesIncludeVat);
+        return amts.Select(a => (a.NetAmount, a.VatAmount)).ToList();
+    }
+
     /// <summary>ยอดของเอกสาร (ฐาน · VAT · รวม) <b>ด้วยสูตรเดียวกับ CreateDocumentAsync</b> (ส่วนลดท้ายบิล →
     /// ComputeLineAmounts → ReconcileTaxRounding) โดยไม่สร้างเอกสาร — ให้ผู้เรียกวางแผนก่อนออกเลขใบ
     /// (รอบ 193 หลังฝ่ายค้าน C2: เช็คเอาต์ที่พักต้องรู้ยอดใบสุดท้ายก่อนประทับเลข §86/4) · ห้ามคัดลอกสูตรนี้ไปที่อื่น
@@ -17956,8 +17972,12 @@ public partial class DocumentService : IDocumentService
                         doc.DocumentNumber);
                 }
             }
-            var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
             var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
+            // ทีม V ตรวจ JE 2026-10-26 (V-DN-01 · docs/JE_POSTING_AUDIT.md): ขา counter = เงิน เฉพาะ ใบลดหนี้ของใบที่ชำระครบ (คืนเงิน)
+            // หรือ ใบเพิ่มหนี้ที่ "จ่ายทันที" เอง — เดิมใบเพิ่มหนี้ยืมกติกาใบลดหนี้ ⇒ ใบเพิ่มหนี้ของใบที่ชำระครบลง Dr เงินสดตอนอนุมัติ
+            // แล้วตอนรับชำระ (ใบเพิ่มหนี้อยู่ใน PayableDocumentTypes) ลง Dr เงินสด/Cr ลูกหนี้อีกรอบ ⇒ เงินสดเกินสองเท่า + ลูกหนี้ติดลบ
+            var isCashSettlement = Accounting.Helpers.AdjustmentNoteAccount.CounterLegIsMoney(
+                isCreditNote, doc.PaymentType, source?.BalanceDue);
 
             // ── รอบ PP36 ทีม F2 (E-7 · คำตัดสินข้อ 131/134): ใบลด/เพิ่มหนี้ฝั่งซื้อของใบที่เป็นเจ้าของ ภ.พ.36 ──
             // ใบเดิม: Dr ค่าใช้จ่าย ฐาน · Dr 11640 VAT / Cr เจ้าหนี้ ฐาน · Cr 21912 VAT ⇒ ใบลดหนี้ต้องกลับ "ทรงเดียวกัน":
@@ -17990,12 +18010,16 @@ public partial class DocumentService : IDocumentService
             // ลงเข้าผังกลางแทน ⇒ ผังเฉพาะรายค้างยอดถาวรเพราะใบตั้งหนี้กับใบปรับปรุง
             // อยู่คนละบัญชี (ยอดคงเหลือรายคู่ค้าไม่มีวันเป็นศูนย์)
             // รอบ 206: ลด/เพิ่มหนี้ของใบต้นทาง ⇒ ผังลูกหนี้/เจ้าหนี้ที่ใบต้นทางตั้งไว้จริง (ไม่ใช่ผังที่ผู้ติดต่อปักตอนนี้)
-            var counterAcc = !isCashSettlement && source != null
-                ? await OriginalArApAccountAsync(companyId, source.Id, isPurchaseSide ? Accounting.Helpers.ArApSide.Payable : Accounting.Helpers.ArApSide.Receivable,
-                    doc, pinContact => FindAccountAsync(companyId, counterAccCode, pinContact))
-                : await FindAccountAsync(companyId, counterAccCode, doc.Contact);
+            // ทีม V (V-CN-03): ขาเงินของใบลด/เพิ่มหนี้เดินช่องทางเงินของเอกสาร (ธนาคาร/ผังที่เลือก → เงินสดตั้งต้น) ตัวเดียวกับทุกใบ —
+            // เดิมลง "111" ตายตัว ⇒ คืนเงินผ่านธนาคารไปโผล่เงินสดในมือ · ไม่มีช่องทาง = 111 เหมือนเดิมทุกประการ
+            var counterAcc = isCashSettlement
+                ? UseMoneyAccount()
+                : source != null
+                    ? await OriginalArApAccountAsync(companyId, source.Id, isPurchaseSide ? Accounting.Helpers.ArApSide.Payable : Accounting.Helpers.ArApSide.Receivable,
+                        doc, pinContact => FindAccountAsync(companyId, counterAccCode, pinContact))
+                    : await FindAccountAsync(companyId, counterAccCode, doc.Contact);
             var counterDesc = $"{typeLabel} - {doc.DocumentNumber}" +
-                (isCashSettlement ? " (เงินสด)" : "");
+                Accounting.Helpers.AdjustmentNoteAccount.CounterLegSuffix(isCashSettlement);
 
             // CN reduces the receivable/increases payable for purchase return; DN opposite.
             // Sales side:    CN→Cr counter, DN→Dr counter
@@ -18005,8 +18029,9 @@ public partial class DocumentService : IDocumentService
             // (Total + WHT) โดยไม่แตะ 11910/2191x จนกว่าจะรับ/จ่ายเงินจริง →
             // CN/DN โหมด AR/AP ต้อง mirror gross แบบเดียวกันและ "ไม่ลงขา WHT"
             // — เดิมลงแบบ accrual เสมอ → AR ค้าง +WHT ถาวร / 11910 ติดลบ
-            var cnDnGrossWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
-                && !isCashSettlement && doc.WithholdingTaxAmount > 0;
+            // ทีม V (ฝ่ายค้านข้อ 1): ตัวตัดสินเดียวคู่กับ CounterLegIsMoney — DN เงินเชื่อของใบที่ชำระครบ + WHT ⇒ โหมดลูกหนี้ ⇒ ขา WHT ไปลงตอนรับชำระ
+            var cnDnGrossWht = Accounting.Helpers.AdjustmentNoteAccount.CounterLegIsGrossOfWht(
+                whtBasis == Models.Enums.WhtRecognitionBasis.Cash, isCashSettlement, doc.WithholdingTaxAmount);
             // E-7: ใบต้นทางเป็นเจ้าของ ภ.พ.36 ⇒ เจ้าหนี้/เงินสด = ยอดจ่ายผู้รับเงิน · ส่วน VAT ประเมินเองเข้า 21912 (ตัวแยกเดียวกับ AutoPost ใบเดิม)
             var cnDnSplit = ForeignServiceVat.SplitCredit(cnSrcOwnsPp36,
                 cnDnGrossWht ? doc.TotalAmount + doc.WithholdingTaxAmount : doc.TotalAmount,
