@@ -54,7 +54,7 @@ Confidence ของสแกน e-Tax = 1.0 ทุกช่อง (`MapEtaxToOc
 | 5 | รวม VAT | ไม่มี | 7% | — | A `PricesIncludeVat` | WinePro · IKEA 1,396 | ✅ จริง |
 | 6 | รวม VAT | ต่อบรรทัด | 7% | — | Σ ยอดหลังลด → A | `crc-thaiwatsadu-srcie75384-positional` | ✅ จริง |
 | 7 | รวม VAT | ท้ายบิล **รวม VAT** | 7% | — | E `DiscountOnTotalInclVat` | Supermarket 38.70 · Makro p1p2 | ✅ จริง |
-| 8 | รวม VAT | ท้ายบิล **ก่อน VAT** | 7% | — | F `DiscountPreVatOnInclusivePrices` (ทีม R) ⇒ **BillDiscountAmount ตามกระดาษ (ข้อ 159)** | `OcrRapbizzSpIn00933Tests.กระดาษ_เคสF_*` | ✅ จริง (ข้อความ PDF · ยังไม่อยู่ใน `OcrPaperSamples` — §5) |
+| 8 | รวม VAT | ท้ายบิล **ก่อน VAT** | 7% | — | F `DiscountPreVatOnInclusivePrices` (ทีม R) ⇒ **BillDiscountAmount ตามกระดาษ (ข้อ 159)** | `OcrRapbizzSpIn00933Tests.กระดาษ_เคสF_*` · `OcrReplayLineGoldenTests.R34_*` (ใบ `rapbizz-spin00933-prevat-discount-on-incl`) | ✅ จริง (ข้อความ PDF · อยู่ใน `OcrPaperSamples` แล้ว — §5 · golden คู่สัญญารอ CI) |
 | 9 | ใด ๆ | ท้ายบิล | **0% / ยกเว้นทั้งใบ** | — | ฐาน = สุทธิ ⇒ C · ไม่มีฐาน ⇒ C-legacy `DiscountOnTotal` | `OcrLineReconcilerTests` (500 · 0 · 0 · 450 · 50) · เคส G ทิศตรงข้าม VAT 0 | ✅ |
 | 10 | ใด ๆ | ท้ายบิล | **หลายอัตรา** | — | B/C/E ไม่พึ่งอัตรา (ใช้ Σ) · F/G ต้อง 7% ⇒ ไม่เดา → `OcrVatCodeLines` แบ่งส่วนลดต่อรหัส ภ.พ. (ตารางบนกระดาษ) · ไม่มีตาราง ⇒ Ambiguous `[Σ-GAP]` | Makro 2/2 · `OcrVatCodeLinesTests` · ทิศตรงข้าม F หลายอัตรา | ⚠️ ช่องว่าง: รูป F/G + หลายอัตรา + ไม่มีตาราง = คนตัดสิน (ถูกต้องตามหลัก "ไม่รู้ = บอกว่าไม่รู้") |
 | 11 | XML รวม VAT (NetIncl ≠ Net ต่อบรรทัด) | ต่อบรรทัด | 7% | ✓ | `ProveInclusive` ทุกบรรทัด + `TiesOutInclusive` ⇒ ค่าตามกระดาษ | `EtaxGoldenCorpusTests` CRC ×3 | ✅ จริง |
@@ -79,7 +79,7 @@ e-Tax XML ที่ Allowance ระดับเอกสาร (ใบนี้
 (เทสต์ทิศตรงข้าม `ทีมT_ข้อ159_ทิศตรงข้าม_*`: `BillDiscountPreVat` = null) · ใบเดิมที่สร้างไปแล้วไม่เปลี่ยน (ไม่มี migration — ดึงรายการซ้ำ/อัปใหม่จึงได้รูปใหม่) · หน้าตรวจ (`OcrLinePreviewResponse.BillDiscountAmount` → ฟอร์ม "แก้ในฟอร์มก่อน" + พรีวิว) ·
 ฟอร์มแก้ไข (hydrate `billDiscountAmount` โหมด ฿) · renderer HTML/QuestPDF (แสดง `BillDiscountAmount` อยู่แล้ว) — ไม่แตะ
 
-**ก่อน-หลัง (§H):** ใบใน replay corpus (`OcrReplayLineGoldenTests`) ไม่มีใบใดมี ReconCase F/G (golden ล็อก ReconCase ต่อใบ · F/G ไม่ปรากฏ) และ EtaxGoldenCorpus เข้าเคส F เฉพาะ Rapbizz ⇒ ใบที่เปลี่ยน = **Rapbizz ใบเดียว**
+**ก่อน-หลัง (§H):** ใบใน replay corpus (`OcrReplayLineGoldenTests`) ไม่มีใบใดมี ReconCase F/G (golden ล็อก ReconCase ต่อใบ · F/G ไม่ปรากฏ · R-34 ล็อกเพิ่ม: ใบอื่นทุกใบไม่มี Mode `Items+Bill:` — ใบ Rapbizz เส้นกระดาษใบเดียวที่มี) และ EtaxGoldenCorpus เข้าเคส F เฉพาะ Rapbizz ⇒ ใบที่เปลี่ยน = **Rapbizz ใบเดียว**
 (golden: ส่วนลดบรรทัด 527.28/48.72 → 0 + BillDiscount 538.32 · ฐาน/VAT ทุกบรรทัดเท่าเดิม) · ยืนยันด้วย CI (ไม่มี SDK ในเครื่อง)
 
 <details><summary>ข้อเสนอเดิม (ก่อนตัดสิน · เก็บไว้เป็นประวัติ)</summary>
@@ -94,7 +94,11 @@ e-Tax XML ที่ Allowance ระดับเอกสาร (ใบนี้
 
 </details>
 
-## §5 กระดาษใบนี้ใน `OcrPaperSamples`
+## §5 กระดาษใบนี้ใน `OcrPaperSamples` — **อยู่ในชุดแล้ว (R-34 · W8 2026-10-26) · golden คู่สัญญารอ CI**
 
-ข้อความหน้า PDF อยู่ที่ `OcrRapbizzSpIn00933Tests.PageText` (ใช้กับ `OcrBillDiscount`/`OcrLineReconciler`/`OcrTotalDecomposer` แล้ว) · ยังไม่ย้ายเข้า `OcrPaperSamples` เพราะ `tools/ocr_golden_corpus_check.py` บังคับว่าทุก `public const` ต้องมี `ReplayPaper` ใน Corpus **และ** golden row ใน `OcrReplay*GoldenTests` ซึ่งรวม `OcrReplayPartyGoldenTests` (ชื่อ/เลข/สาขาผู้ซื้อ-ผู้ขายตามที่ `SmartFieldExtractor` ตอบ**วันนี้**) — ค่านั้นต้องมาจากการรัน dotnet ไม่ใช่เขียนจากความจำ (F2 ข้อ 3)
-ขั้นที่ต้องทำเมื่อมี SDK: (1) ย้าย `PageText` → `OcrPaperSamples.RapbizzSpIn00933PdfText` (2) `new ReplayPaper("rapbizz-spin00933-prevat-discount-on-incl", …, EngineSubTotal 1340.19, EngineVat 93.81, EngineTotal 1434.00, VendorTaxId "0105559170207")` (3) รัน `OcrReplayLineGoldenTests`/`OcrReplayPartyGoldenTests` ให้พิมพ์ snapshot แล้ววางเป็น golden (คาด ReconCase = `DiscountPreVatOnInclusivePrices` · บรรทัด 1,226.84 / 113.35) (4) `python3 tools/ocr_golden_corpus_check.py` เขียว
+สถานะ: ข้อความหน้า PDF = `OcrPaperSamples.RapbizzSpIn00933PdfText` (ย้ายจาก `OcrRapbizzSpIn00933Tests.PageText` ตัวอักษรเท่าเดิม · เทสต์เดิมอ้างผ่าน alias) · Corpus: `new ReplayPaper("rapbizz-spin00933-prevat-discount-on-incl", …, 1340.19 / 93.81 / 1434.00 · บรรทัด 2×920=1,840 · 1×170 · VendorTaxId 0105559170207)` ·
+`tools/ocr_golden_corpus_check.py` เขียว (20 ใบตัวอย่าง · 48 ใบใน Corpus)
+- **golden ระดับบรรทัด** (`OcrReplayLineGoldenTests.R34_*`): คิดมือจากกระดาษ + สูตรที่เทสต์ e-Tax ของใบเดียวกันล็อกแล้ว (ตามธรรมเนียมของไฟล์นั้น "ทุกตัวเลขคิดมือจากกระดาษ"): Mode `Items+Bill:538.32` · เคส F · `1226.84|7|85.88|920.00|0|0.00|0.00;113.35|7|7.93|170.00|0|0.00|0.00` · RA 0.00 · ok · DupRowsDropped 0 ·
+  ช่องที่**ไม่**ล็อก (ต้องรันถึงจะรู้ — ไม่เดา): `AnchorVerdict` · `LineQtyGuard` · `LineVatPlan` · `VendorAddress` — ถ้า CI พิมพ์ค่าแล้วให้เติม
+- **golden คู่สัญญา** (`OcrReplayPartyGoldenTests`): ค่าต้องมาจากการรัน dotnet (F2 #3/#6) ⇒ ใบนี้อยู่ใน `PendingCiFill` (ตัดออกจากการเทียบ Golden) + เทสต์ `รอCIเติม_*` บังคับว่าใบในรายการต้องอยู่ใน Corpus และ**ยังไม่มี**แถวใน Golden แล้วพิมพ์ 6 แถวจริงลง StdOut
+- **ขั้นเติม (คนที่มี SDK หรือ CI):** job `dotnet test` ของ `ci.yml` **ไม่รันบน push `claude/**`** (เฉพาะ PR เข้า main · push main · workflow_dispatch) ⇒ `gh workflow run ci.yml --ref claude/booking-service-features-sdemob` (หรือ `dotnet test --filter OcrReplay`) → อ่าน StdOut ของ `รอCIเติม_*` ใน trx/log → วางลง `Golden` → ลบชื่อออกจาก `PendingCiFill` → ติ๊ก R-34 ปิดสนิทในทะเบียน · แถว `R34_*` ที่ล้ม = สาขา F ของ harness ต่างจาก service ⇒ อธิบายก่อนแก้เลข (§H)

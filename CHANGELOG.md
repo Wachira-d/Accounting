@@ -5564,3 +5564,10 @@ DN เงินเชื่อของใบชำระครบ + WHT เก�
 `POST data-integrity/debit-note-cash/{id}/reverse-payment-journals` (เจ้าของบริษัท · `ReverseJournalEntryAsync` · audit `JE-DN-CASH-TWICE` · ห้ามอัตโนมัติ) ·
 คำตัดสินข้อ 160 ใน DECISIONS (รวม V-PAY-05 ⇒ reclass ตามสัดส่วน · V-CN-04 ⇒ ตัวเลือกเครดิตค้างคืน — แพ็กแยก) · (3) จดข้อควรรู้ UseMoneyAccount() ล้มดังใน
 ReclassifyCnDnSide/RepairMissingJournal + สมมติฐานสืบทอด BankAccountId (DOCUMENT_FLOW §6.2f · JE_POSTING_AUDIT §1b) · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_2026-10-26 W8 (R-34 · R-37 · R-33) — ใบ SP-IN2026-10-00933 เข้าชุด replay + ติดตาม build/harness: (1) `OcrPaperSamples.RapbizzSpIn00933PdfText` (ย้ายจาก `OcrRapbizzSpIn00933Tests.PageText` ตัวอักษรเท่าเดิม · alias) +
+`ReplayPaper("rapbizz-spin00933-prevat-discount-on-incl")` + golden ระดับบรรทัด `OcrReplayLineGoldenTests.R34_*` (Mode `Items+Bill:538.32` · เคส F · 1,226.84/85.88 · 113.35/7.93 · RA 0 — คิดมือจากกระดาษ + สูตรที่ `ทีมT_เส้นจริงทั้งสาย_*` ล็อก)
+· ทิศตรงข้ามล็อก "ใบอื่นทุกใบในชุดไม่มี Mode Items+Bill:" (§H ของข้อ 159 กลายเป็นเทสต์) · golden คู่สัญญา = `OcrReplayPartyGoldenTests.PendingCiFill` + เทสต์ `รอCIเติม_*` (ต้องอยู่ใน Corpus · ยังไม่อยู่ใน Golden · พิมพ์ 6 แถวจริงลง StdOut) —
+ค่าต้องมาจากการรัน dotnet (F2 #3/#6) · `ocr_golden_corpus_check` เขียว (20/48) (2) CI run 40324837664 ที่ 85c395c8 job build **แดง** `OcrReplayHarness.cs(792) CS0136` (`plan` ซ้อนชื่อในสาขา ข้อ 159) ⇒ แก้แล้วที่ 347a9ec2 (rename `billPlan` ไม่เปลี่ยนสูตร · W8 พบซ้ำกันอิสระ) ·
+job `dotnet test` skip บน push `claude/**` ⇒ harness เคส G/ข้อ 159 ยังไม่เคยรันจริง — ต้อง `workflow_dispatch` (3) R-33 ตรวจแล้วทีม T ปิดครบ (`BuildScanLinesAsync:7911` · sim · harness สาขาเดียวกัน · C/E คงเดิม) ·
+§H: ไม่แตะตัวตัดสินใด ⇒ ใบเดิม 47 ใบคำตอบไม่เปลี่ยนโดยสร้าง (Run ต่อใบ · เพิ่มแถวไม่กระทบใบอื่น) · ช่องว่าง MATRIX #10/#15 คงไว้ตามตั้งใจ · MATRIX §3/§4/§5 · ทะเบียน R-33/R-34/R-37 · TEST_PLAN OCR-U-51 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
