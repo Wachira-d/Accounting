@@ -5536,3 +5536,16 @@ warnings ⇒ กล่องเหลือง "ระบบไม่แน่�
 (ส่วนลด 576 ต่อบรรทัด vs 538.32 ท้ายบิล · 1,226.84 vs 1,840) — คำนวณทางเลือก `BillDiscountAmount` 538.32 ให้ยอดเท่าเดิมทุกสตางค์ไว้ รอเจ้าของ · เมทริกซ์ทุกรูปแบบ `docs/OCR_TOTALS_MATRIX.md`
 (16 ช่อง · ล็อกด้วยอะไร · ช่องว่างที่เหลือ) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT · สังเคราะห์ · วางหลัง F · baseline: 28 ตัว (+ สังเคราะห์ 24 ช่อง) ด้วย **port Python ของ `Classify`** (เทียบเท่า C# ณ 74a4796c — ไม่ใช่ตัว C# เอง) = 0 เปลี่ยนใน vector จริง · replay/golden harness ผ่าน C# จริง (`OcrReplay*GoldenTests` · `EtaxGoldenCorpusTests`) **ยังต้องรอ CI** (ไม่มี SDK)) +
 `OcrConfidenceGateway`/`OcrDuplicateLineGuard` รู้เคส G · ใบนี้ยังไม่เข้า `OcrPaperSamples` (golden คู่สัญญาต้องรัน dotnet — ขั้นตอนจดใน MATRIX §5) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 ทีม T · คำตัดสินเจ้าของข้อ 159 (ตามหลักข้อ 158 "ข้อมูลที่ครบ/ตรงกระดาษที่สุด"): สแกนที่กระดาษพิมพ์ "ส่วนลดท้ายบิล" (เคส F/G · ใบ SP-IN2026-10-00933) ⇒ บันทึกเป็น `Document.BillDiscountAmount`
+ตามกระดาษ (538.32) · บรรทัด 1,840/170 ไม่มีส่วนลด · ฐานก่อนลด 1,878.51 = "จำนวนเงิน Amount" — ไม่กระจายลงบรรทัด · ยอดฐาน/VAT/สุทธิ 1,340.19/93.81/1,434.00 เท่าเดิมทุกสตางค์ ·
+`OcrLineReconcileResult.BillDiscountPreVat` (F = ส่วนลดที่พิมพ์ · G = ÷ 1.07) · ยอดบรรทัดจาก `DocumentService.PlanLineAmounts` ใหม่ (internal · AllocateBillDeductions → ComputeLineAmounts → ReconcileTaxRounding
+ตัวตั้งเดียว — ไม่มีสำเนาสูตรฝั่ง OCR ⇒ เปิดแก้แล้วบันทึกไม่ขยับโดยสร้าง) · `BuildScanLinesAsync` ตั้ง `BillDiscountAmount = 0` ใหม่ทุกครั้ง · ตัวพิสูจน์อัตราทั้งใบยังเห็นยอดหลังหัก (ไม่งั้นตก Unknown) ·
+`OcrLinePreviewResponse.BillDiscountAmount` + หน้าตรวจส่งต่อให้ฟอร์ม "แก้ในฟอร์มก่อน" (เดิมส่ง 0 เสมอ) + พรีวิวแสดง · เคส C/E กระจายเหมือนเดิม (ทิศตรงข้าม) · ใบเดิมไม่เปลี่ยน ·
+§H: replay corpus ไม่มีใบ ReconCase F/G (golden ล็อกไว้) · e-Tax golden เปลี่ยนเฉพาะ Rapbizz (ส่วนลดบรรทัด 527.28/48.72 → 0 + BillDiscount 538.32 · ฐาน/VAT เท่าเดิม) · DECISIONS ข้อ 159 · MATRIX §4 ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 ทีม T แก้ผลฝ่ายค้านข้อ 159 (ไม่มี blocking · 6 ข้อ): (1) สาขาส่วนลดท้ายบิลไม่บวกเศษราคาต่อหน่วยซ้ำ — RA = −(Σ ยอดจาก `PlanLineAmounts` − ฐานกระดาษ) ใต้เพดาน CapShifts (ในโหมดราคารวม VAT เศษถูกดูดในขั้นถอด VAT
+จึงไม่ใช่ −Σshift ตรง ๆ · เทสต์สังเคราะห์ 4 × 1,228.04 พิมพ์ 4,912.15) (2) replay harness เดินสาขา `BillDiscountPreVat`/`PlanLineAmounts` เดียวกับ service (`Mode = Items+Bill:<x>` · rcs ล็อกทั้งคู่)
+(3) `ResaveLineNets` เรียก `PlanLineAmounts` ตัวตั้งตัวเดียว (ผลเท่าเดิม · เทสต์) (4) Σ ยอดบรรทัดสำหรับสัดส่วน WHT คำนวณหลังสาขา 159 (5) doc-comment PreviewTotals/PlanLineAmounts แยกถูก
+(6) ดึงรายการซ้ำบนเอกสารที่มีส่วนลดท้ายบิลผู้ใช้กรอก (> 0 และ ≠ ค่าจากสแกน) ⇒ ล้มดัง `OCR-REPOP-BILL-DISCOUNT` ก่อนบันทึก (ค่าผู้ใช้ชนะ · ทางไปต่อในข้อความ) · ยังไม่ได้คอมไพล์ในเครื่องนี้_

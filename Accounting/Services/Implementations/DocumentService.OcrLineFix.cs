@@ -46,14 +46,8 @@ public partial class DocumentService
     /// <summary>ยอดก่อน VAT ของทุกบรรทัด "ถ้าบันทึกซ้ำ" — สูตรเดียวกับ <c>UpdateDocumentAsync</c> (ไม่ใช่สำเนา: เรียกตัวคำนวณจริง)</summary>
     internal static decimal[] ResaveLineNets(IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat,
         decimal billDiscountPercent, decimal billDiscountAmount, decimal depositBaseDeducted)
-    {
-        var (alloc, _, _) = AllocateBillDeductions(lines, pricesIncludeVat, billDiscountPercent, billDiscountAmount, depositBaseDeducted);
-        var amts = new LineAmounts[lines.Count];
-        for (var i = 0; i < lines.Count; i++)
-            amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
-        ReconcileTaxRounding(lines, amts, pricesIncludeVat);
-        return amts.Select(a => a.NetAmount).ToArray();
-    }
+        // ฝ่ายค้านข้อ 159 ข้อ 3: ลำดับเดียวกับ PlanLineAmounts ⇒ เรียกตัวตั้งตัวเดียว (ผลเท่าเดิม — OcrLineDiscountFixTests)
+        => PlanLineAmounts(lines, pricesIncludeVat, billDiscountAmount, billDiscountPercent, depositBaseDeducted).Select(a => a.Net).ToArray();
 
     /// <summary>บรรทัดที่ติด % ส่วนลดโดยไม่มีส่วนลดบาท และการบันทึกซ้ำจะทำให้ยอดก่อน VAT ต่างจากที่เก็บไว้เกิน 0.01 —
     /// ตัวตัดสินเดียวของรายงานตรวจข้อมูลและปุ่ม "แก้" · <paramref name="lines"/> = บรรทัดที่ไม่ถูกลบ เรียงตาม LineOrder</summary>

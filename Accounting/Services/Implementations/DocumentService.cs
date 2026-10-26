@@ -686,6 +686,22 @@ public partial class DocumentService : IDocumentService
         return new LineAmounts(net, discountAmt, vatAmt, whtAmt);
     }
 
+    /// <summary>ยอด<b>รายบรรทัด</b> (ก่อน VAT · VAT) ด้วยสูตรเดียวกับ CreateDocumentAsync/UpdateDocumentAsync — <c>AllocateBillDeductions</c> →
+    /// <c>ComputeLineAmounts</c> → <c>ReconcileTaxRounding</c> — <b>ตัวตั้งเดียว</b>ของ "ถ้าบันทึกซ้ำจะได้เท่าไร": ตัวสร้างบรรทัดจากสแกน
+    /// <c>OcrService.BuildScanLinesAsync</c> (ส่วนลดท้ายบิลตามกระดาษ · คำตัดสินเจ้าของข้อ 159) · replay harness/ตัวจำลองในเทสต์ · <see cref="ResaveLineNets"/>
+    /// (รายงานตรวจส่วนลดบรรทัดจากสแกน) — ไม่มีสำเนาสูตรที่อื่น · ไม่มีหัก ณ ที่จ่ายในผล (ผู้เรียกจัดการเอง) · ทีม T 2026-10-26</summary>
+    internal static List<(decimal Net, decimal Vat)> PlanLineAmounts(
+        IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount,
+        decimal billDiscountPercent = 0m, decimal depositBaseDeducted = 0m)
+    {
+        var (alloc, _, _) = AllocateBillDeductions(lines, pricesIncludeVat, billDiscountPercent, billDiscountAmount, depositBaseDeducted);
+        var amts = new LineAmounts[lines.Count];
+        for (int i = 0; i < lines.Count; i++)
+            amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
+        ReconcileTaxRounding(lines, amts, pricesIncludeVat);
+        return amts.Select(a => (a.NetAmount, a.VatAmount)).ToList();
+    }
+
     /// <summary>ยอดของเอกสาร (ฐาน · VAT · รวม) <b>ด้วยสูตรเดียวกับ CreateDocumentAsync</b> (ส่วนลดท้ายบิล →
     /// ComputeLineAmounts → ReconcileTaxRounding) โดยไม่สร้างเอกสาร — ให้ผู้เรียกวางแผนก่อนออกเลขใบ
     /// (รอบ 193 หลังฝ่ายค้าน C2: เช็คเอาต์ที่พักต้องรู้ยอดใบสุดท้ายก่อนประทับเลข §86/4) · ห้ามคัดลอกสูตรนี้ไปที่อื่น
