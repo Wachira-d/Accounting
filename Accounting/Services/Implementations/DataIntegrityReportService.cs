@@ -39,7 +39,9 @@ public sealed record DataIntegrityReport(
     // ทีม S 2026-10-26 (การจอง #149433) — JE ที่ตัดมัดจำ/รับล่วงหน้าของการจองเกินยอดคงเหลือ (มัดจำถูกยกเลิก/กลับรายการแล้ว) · อ่านอย่างเดียว · ลิงก์ไปกลับรายการ
     List<DataIntegritySuspect>? BookingDepositOverdrawnJournals = null,
     // ทีม S 2026-10-26 ข้อ 3 — JE จาก API ที่มีภาษีขาย (21911) โดยไม่มีใบกำกับภาษีในระบบรองรับ · อ่านอย่างเดียว
-    List<DataIntegritySuspect>? ApiJournalOutputVatWithoutInvoice = null)
+    List<DataIntegritySuspect>? ApiJournalOutputVatWithoutInvoice = null,
+    // ทีม U 2026-10-26 (PV-202610-0040: ฐาน 402.93 · VAT 35.07) — เอกสารฝั่งซื้อที่ลงบัญชีแล้วซึ่ง VAT ไม่สอดคล้องกับฐาน × อัตรา (ฐานถูกบีบตามยอดชำระ) · อ่านอย่างเดียว
+    List<DataIntegritySuspect>? PurchaseVatInconsistentWithBase = null)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -50,7 +52,8 @@ public sealed record DataIntegrityReport(
         + OcrLineDiscountWouldChangeOnResave.Count + VoidedPayrollRunsWithIssuedWhtCerts.Count
         + OpeningRollMismatches.Count + UnlinkedImportedAccounts.Count + TemplateLeafImportedChildren.Count
         + (ForeignCurrencyWhtCertsNotInBaht?.Count ?? 0)
-        + (BookingDepositOverdrawnJournals?.Count ?? 0) + (ApiJournalOutputVatWithoutInvoice?.Count ?? 0);
+        + (BookingDepositOverdrawnJournals?.Count ?? 0) + (ApiJournalOutputVatWithoutInvoice?.Count ?? 0)
+        + (PurchaseVatInconsistentWithBase?.Count ?? 0);
 }
 
 /// <summary>
@@ -178,8 +181,46 @@ public class DataIntegrityReportService
         var foreignCerts = await LoadForeignCurrencyWhtCertsAsync(companyId);
         var overdrawn = await LoadBookingDepositOverdrawnAsync(companyId);
         var apiVat = await LoadApiJournalOutputVatAsync(companyId);
+        var vatBase = await LoadPurchaseVatInconsistentAsync(companyId);
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
-            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat);
+            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, vatBase);
+    }
+
+    /// <summary>ทีม U 2026-10-26 (ผู้ใช้รายงาน PV-202610-0040: Dr 52120 402.93 / Dr 11610 35.07 — ฐานถูกบีบเป็น 438 − 35.07 ทั้งที่ใบกำกับ 500.93/35.07) —
+    /// เอกสารฝั่งซื้อที่ลงบัญชีแล้ว (ไม่ใช่ร่าง/ยกเลิก) ซึ่ง Σ VAT ต่ออัตราไม่ตรง round(Σ ฐาน × อัตรา) เกิน <see cref="Accounting.Helpers.PostVatDeduction.VatTolerance"/>
+    /// (ตัวตัดสินเดียวกับด่านอนุมัติ <see cref="Accounting.Helpers.PostVatDeduction.VatConsistencyError"/>) · <b>อ่านอย่างเดียว — ไม่แก้ให้</b> (ผู้ใช้ยกเลิก/แก้ใบ
+    /// แล้วใส่ช่อง "หักหลัง VAT") · จำกัด 24 เดือนล่าสุด</summary>
+    private async Task<List<DataIntegritySuspect>> LoadPurchaseVatInconsistentAsync(Guid companyId)
+    {
+        var since = DateTime.UtcNow.Date.AddMonths(-24);
+        var purchaseTypes = new[] { DocumentType.PaymentVoucher, DocumentType.PurchaseInvoice, DocumentType.Expense };
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && purchaseTypes.Contains(d.DocumentType)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && !d.IsForeignService && d.VatAmount > 0m && d.DocumentDate >= since)
+            .Select(d => new
+            {
+                d.Id, d.DocumentNumber, d.DocumentDate, d.SubTotal, d.VatAmount, d.TotalAmount, d.ActualPaidAmount, d.PostVatDeductionAmount,
+                Lines = d.Lines.Where(l => !l.IsDeleted).Select(l => new { l.Amount, l.VatRate, l.VatAmount }).ToList(),
+            })
+            .ToListAsync();
+        var rows = new List<DataIntegritySuspect>();
+        foreach (var d in docs)
+        {
+            var err = Accounting.Helpers.PostVatDeduction.VatConsistencyError(
+                d.Lines.Select(l => new Accounting.Helpers.VatLineFact(l.Amount, l.VatRate, l.VatAmount)));
+            if (err is null) continue;
+            var impliedBase = Math.Round(d.VatAmount * 100m / 7m, 2, MidpointRounding.AwayFromZero);
+            rows.Add(new DataIntegritySuspect("PurchaseVatInconsistentWithBase", d.Id, d.DocumentNumber, d.DocumentDate,
+                $"ฐานที่บันทึก {d.SubTotal:N2} · VAT {d.VatAmount:N2} · ยอดเอกสาร {d.TotalAmount:N2}"
+                + (d.ActualPaidAmount is decimal ap ? $" · ยอดชำระจริง {ap:N2}" : "")
+                + (d.PostVatDeductionAmount > 0m ? $" · หักหลัง VAT {d.PostVatDeductionAmount:N2}" : " · ไม่มีช่องหักหลัง VAT")
+                + $" — {err}",
+                d.SubTotal, impliedBase,
+                LinkUrl: "/pages/documents.html?side=expense", LinkLabel: "เปิดเอกสารฝั่งรายจ่าย"));
+        }
+        return rows.OrderBy(r => r.Date).ThenBy(r => r.Number).ToList();
     }
 
     /// <summary>ทีม S 2026-10-26 (ผู้ใช้รายงาน · การจอง #149433 · หลักการ #9) — JE สมุดรายวัน (ไม่มีเอกสารต้นทาง · ยังมีผล) ที่ตัดบัญชีมัดจำ/รับล่วงหน้าของการจอง

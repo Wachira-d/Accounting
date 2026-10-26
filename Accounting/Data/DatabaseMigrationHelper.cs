@@ -224,6 +224,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
         list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
+        list.AddRange(PostVatDeductionStatements());   // ทีม U — หักหลัง VAT + แยกยอดจ่ายจริงตามแหล่ง (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7820,5 +7821,14 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PerLineWhtEnabled" boolean NOT NULL DEFAULT false;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentThbBase" numeric(18,2) NULL;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRateSource" character varying(16) NULL;""",
+    };
+
+    /// <summary>ทีม U 2026-10-26 (ใบ Shopee 536 · ส่วนลดพิเศษ 98 หลัง VAT · ชำระ 438) — ช่อง "หักหลัง VAT" + ผัง + ติ๊กแยกยอดจ่ายจริงตามแหล่ง ·
+    /// ค่าตั้งต้น 0/NULL = พฤติกรรมเดิมทุกแถว · ไม่มี UPDATE (ใบที่ลงผิดไปแล้วอยู่ในรายงานตรวจข้อมูล — ผู้ใช้แก้เอง)</summary>
+    internal static IReadOnlyList<string> PostVatDeductionStatements() => new List<string>
+    {
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PostVatDeductionAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PostVatDeductionAccountId" uuid NULL;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentSourceSplitJson" text NULL;""",
     };
 }

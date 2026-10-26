@@ -8554,6 +8554,13 @@ public class OcrService : IOcrService
         var notesAfter = result.ProcessingNotes ?? "";
         var delta = notesAfter.Length > notesBefore.Length ? notesAfter[notesBefore.Length..].Trim() : null;
 
+        // ทีม U: หักหลัง VAT จากข้อเสนอในหมายเหตุสแกน (ยอดใบในข้อเสนอต้องตรงยอดรวมที่อ่านได้ · ไม่มีหัก ณ ที่จ่าย · ฝั่งซื้อ)
+        var previewDeduction = !isSalesSide && headerWht == 0m
+            && Accounting.Helpers.OcrSettlementProposal.Parse(notesAfter) is { } deductionPlan
+            && Math.Abs(deductionPlan.InvoiceTotal - (result.ExtractedTotalAmount ?? 0m))
+                <= Accounting.Helpers.PaymentSettlementAdjustment.MatchTolerance
+            ? Accounting.Helpers.OcrPostVatDeduction.FromPlan(deductionPlan) : null;
+
         return new OcrLinePreviewResponse(
             resolvedTarget.IsDeposit ? Accounting.Helpers.OcrTargetDocumentType.DepositPseudoType : docType.ToString(),
             isSalesSide, document.PricesIncludeVat,
@@ -8568,7 +8575,11 @@ public class OcrService : IOcrService
                 && Math.Abs(previewPlan.InvoiceTotal - (result.ExtractedTotalAmount ?? 0m))
                     <= Accounting.Helpers.PaymentSettlementAdjustment.MatchTolerance
                 ? previewPlan.AmountPaid : null,
-            Counterparty: counterparty);
+            Counterparty: counterparty,
+            // ทีม U 2026-10-26: ช่อง "หักหลัง VAT" จากกระดาษ — ส่งทุกชนิดฝั่งซื้อ (รวมใบสำคัญจ่าย: ฟอร์มยกช่องนี้ไปได้ ขา JE มาจากช่องตอนอนุมัติ) ·
+            // เฉพาะเมื่อยอดใบในข้อเสนอตรงยอดรวมที่อ่านได้ (ตัวเลือกยอดเดียว) และไม่มีหัก ณ ที่จ่าย — ตัวตัดสิน Helpers/OcrPostVatDeduction.FromPlan
+            PostVatDeductionAmount: previewDeduction?.Deduction,
+            PostVatDeductionAccountCode: previewDeduction?.AccountCode);
     }
 
     /// <summary>ยอดก่อน VAT <b>หลังหักส่วนลด</b> ของหัวใบที่ใช้เป็นตัวตั้ง — ใช้ <c>ExtractedSubTotal</c>
@@ -8854,6 +8865,14 @@ public class OcrService : IOcrService
                 return;
             }
             document.ActualPaidAmount = fittingPlan.AmountPaid;
+            // ทีม U 2026-10-26: ใบตั้งหนี้ก็เก็บช่อง "หักหลัง VAT" ด้วย — หน้าบันทึกการชำระ/CreatePaymentAsync เติมบรรทัดปรับจากช่องนี้ให้เอง (ความจริงเดียว)
+            if (Accounting.Helpers.OcrPostVatDeduction.FromPlan(fittingPlan) is { } deferredDeduction)
+            {
+                document.PostVatDeductionAmount = deferredDeduction.Deduction;
+                document.PostVatDeductionAccountId = await _db.ChartOfAccounts.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && a.AccountCode == deferredDeduction.AccountCode && a.IsActive && !a.IsDeleted)
+                    .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
+            }
             if (!(result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrSettlementProposal.DeferredTag, StringComparison.Ordinal))
                 result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n"
                     + Accounting.Helpers.OcrSettlementProposal.DeferredNote(fittingPlan);
@@ -8869,8 +8888,26 @@ public class OcrService : IOcrService
             return;
         }
         document.ActualPaidAmount = plan.AmountPaid;
-        if ((result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrSettlementProposal.SettledTag, StringComparison.Ordinal))
+        if ((result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrSettlementProposal.SettledTag, StringComparison.Ordinal)
+            || (result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrPostVatDeduction.FilledTag, StringComparison.Ordinal))
             return;
+
+        // ทีม U 2026-10-26 (คำสั่งผู้ใช้ — แทนคำตัดสินรอบ 193 ข้อ 3 สำหรับใบที่ "ยอดชำระ < ยอดใบ"): ส่วนลด/voucher หลังยอดรวม = ช่อง
+        // "หักหลัง VAT" ก้อนเดียวระดับเอกสาร (ผัง 51150 ถ้ามี · ไม่มี = ผังค่าใช้จ่ายหลักของใบตอนอนุมัติ · ผู้ใช้เปลี่ยนได้ในฟอร์ม) · รายละเอียดกระดาษ
+        // (ค่าจัดส่ง +37 · voucher −135) เก็บเป็นหมายเหตุ · ขา JE มาจากช่องนี้ตอนอนุมัติ (Helpers/PostVatDeduction) — ไม่สร้าง adjusting lines ซ้ำ (ความจริงเดียว) ·
+        // จ่าย "มากกว่า" ยอดใบ (ค่าส่งล้วน) ไม่ใช่การหัก ⇒ ทางเดิมข้างล่าง (adjusting lines)
+        if (Accounting.Helpers.OcrPostVatDeduction.FromPlan(plan) is { } deductionRead)
+        {
+            var dedAccountId = await _db.ChartOfAccounts.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.AccountCode == deductionRead.AccountCode && a.IsActive && !a.IsDeleted)
+                .Select(a => (Guid?)a.Id).FirstOrDefaultAsync();
+            document.PostVatDeductionAmount = deductionRead.Deduction;
+            document.PostVatDeductionAccountId = dedAccountId;   // null = ผังค่าใช้จ่ายหลักของใบ (ResolvePostVatDeductionAccountAsync ตอนอนุมัติ)
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n"
+                + Accounting.Helpers.OcrPostVatDeduction.FilledNote(deductionRead,
+                    dedAccountId is null ? "ผังค่าใช้จ่ายหลักของใบ" : deductionRead.AccountCode, document.DocumentNumber);
+            return;
+        }
 
         var codes = plan.Lines.Select(l => l.AccountCode).Distinct().ToList();
         var accountByCode = await _db.ChartOfAccounts.AsNoTracking()

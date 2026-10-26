@@ -4599,6 +4599,9 @@
           // (เดิมไม่ส่ง ⇒ ฟอร์มคิดใหม่ได้ 5,024.01 ≠ กระดาษ) — หน้าเว็บส่งต่ออย่างเดียว ไม่คำนวณเอง
           roundingAdjustment: Number(preview.roundingAdjustment) || 0,
           actualPaidAmount: preview.actualPaidAmount ?? null,
+          // ทีม U 2026-10-26: หักหลัง VAT จากกระดาษ (ส่วนลด/voucher หลัง "รวมทั้งสิ้น") — ส่งต่ออย่างเดียว ฟอร์มเติมช่องระดับเอกสาร
+          postVatDeductionAmount: preview.postVatDeductionAmount ?? null,
+          postVatDeductionAccountCode: preview.postVatDeductionAccountCode ?? null,
           currency,
           pricesIncludeVat,
           headerVatRate,

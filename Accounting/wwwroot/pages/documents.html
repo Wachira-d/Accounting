@@ -1022,6 +1022,27 @@
                 <span id="rowActualPaidInput" style="display:none;justify-content:flex-end">
                   <input type="number" id="fActualPaidAmount" inputmode="decimal" min="0" step="0.01" placeholder="= ยอดสุทธิ" style="width:104px;text-align:right;padding:4px 6px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
                 </span>
+                <!-- ทีม U 2026-10-26 (ใบ Shopee 536 · ส่วนลดพิเศษ 98 หลัง VAT · ชำระ 438): "หักหลัง VAT" = ส่วนลด/คูปอง/voucher ที่พิมพ์หลัง "รวมทั้งสิ้น" —
+                     ฐาน/VAT คงตามใบกำกับ (ห้ามบีบฐานตามเงินที่จ่าย) · ยอดชำระ = ยอดสุทธิ − ค่านี้ · ขา JE: Cr ผังที่เลือก (ว่าง = 51150 ส่วนลดรับ / ผังค่าใช้จ่ายหลักของใบ) ·
+                     เซิร์ฟเวอร์ตัดสินทุกอย่าง (Helpers/PostVatDeduction · PaymentSourceSplit) — หน้านี้แสดงผลและส่งค่าเท่านั้น -->
+                <span id="rowPostVatLabel" style="color:var(--gray-500);display:none" title="ส่วนลด/คูปอง/voucher ที่ลดจากยอดรวมทั้งสิ้นหลังคิด VAT แล้ว — ฐานภาษีซื้อและ VAT ไม่เปลี่ยน เงินออกจริงลดลงเท่านี้">หักหลัง VAT (ส่วนลด/คูปองหลังยอดรวม)</span>
+                <span id="rowPostVatInput" style="display:none;justify-content:flex-end;gap:6px">
+                  <input type="text" id="fPostVatDeductionAccountCode" list="coaList" placeholder="ผัง (ว่าง = 51150)" title="ผังที่ลงขาหัก — ว่าง = 51150 ส่วนลดรับ ถ้ามี ไม่งั้นผังค่าใช้จ่ายหลักของใบ" style="width:118px;padding:4px 6px;border:1px solid var(--gray-300);border-radius:6px;font-size:12px">
+                  <input type="number" id="fPostVatDeductionAmount" inputmode="decimal" min="0" step="0.01" placeholder="0.00" oninput="Page.calcSum()" style="width:104px;text-align:right;padding:4px 6px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px">
+                </span>
+                <span id="rowAmountDueLabel" style="color:#9a3412;font-weight:600;display:none">ยอดชำระ (หลังหักหลัง VAT)</span>
+                <strong id="sumAmountDue" style="text-align:right;color:#9a3412;display:none">0.00</strong>
+                <span id="rowPaySplit" style="display:none;grid-column:1 / -1">
+                  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--gray-600);cursor:pointer">
+                    <input type="checkbox" id="fPaySplitEnabled" onchange="Page.togglePaySplit()"> แยกยอดจ่ายจริงตามแหล่ง (เงินออกจากหลายแหล่ง · หักหลัง VAT ลงหลายผัง — รวมต้อง = ยอดสุทธิ)
+                  </label>
+                  <div id="paySplitBox" style="display:none;margin-top:6px;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 10px">
+                    <div style="font-size:11px;color:#9a3412;margin-bottom:4px">บรรทัด "เงิน" = เงินออกจริงจากแหล่งนั้น (เช่น 21230 เจ้าหนี้กรรมการ 438) · บรรทัด "หักหลัง VAT" = ส่วนลดที่ไม่ใช่เงิน (เช่น 52120 หรือ 51150 · 98)</div>
+                    <div id="paySplitRows" style="display:flex;flex-direction:column;gap:6px"></div>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="Page.paySplitAddRow()" style="margin-top:6px">+ เพิ่มบรรทัด</button>
+                    <div id="paySplitHint" style="font-size:11px;color:#9a3412;margin-top:4px"></div>
+                  </div>
+                </span>
               </div>
               <!-- ใบเก่า/ใบที่นำเข้ามาอาจเก็บ VAT ที่ต่างจากการคิดจากฐานรวมอยู่
                    ระดับสตางค์ — ระบบคง "ยอดที่บันทึกไว้" ไว้ (ไม่แก้เงียบ ๆ)
@@ -2339,6 +2360,13 @@
         if (payload.actualPaidAmount != null) {
           const fa = document.getElementById('fActualPaidAmount');
           if (fa) fa.value = payload.actualPaidAmount;
+        }
+        // ทีม U: หักหลัง VAT จากกระดาษ (ส่วนลด/voucher หลัง "รวมทั้งสิ้น") → ช่องระดับเอกสาร — ฐาน/VAT บนฟอร์มคงตามใบ ไม่บีบ
+        if (payload.postVatDeductionAmount != null && Number(payload.postVatDeductionAmount) > 0) {
+          const fd = document.getElementById('fPostVatDeductionAmount');
+          if (fd) fd.value = payload.postVatDeductionAmount;
+          const fc = document.getElementById('fPostVatDeductionAccountCode');
+          if (fc && payload.postVatDeductionAccountCode) fc.value = payload.postVatDeductionAccountCode;
         }
         this.calcSum();
 
@@ -8647,6 +8675,8 @@
         const roundingAdj = parseFloat(document.getElementById('fRoundingAdjustment')?.value) || 0;
         const totalCalc = (sub - billDisc) + roundingAdj + vat - wht;
         document.getElementById('sumTotal').textContent = Layout.money(totalCalc);
+        // ทีม U: แถว "ยอดชำระ (หลังหักหลัง VAT)" + ข้อความกล่องแยกยอด — แสดงผลเท่านั้น (เซิร์ฟเวอร์ตัดสิน)
+        this._refreshPostVatRows?.();
         // #10 — amount in words (Thai baht) ใต้ยอดสุทธิ
         const wordsEl = document.getElementById('sumTotalWords');
         if (wordsEl && window.UxHelpers?.AmountInWords) {
@@ -8672,6 +8702,95 @@
           const el = document.getElementById(id);
           if (el) el.style.display = show ? (id === 'rowActualPaidInput' ? 'flex' : '') : 'none';
         });
+        // ทีม U: แถวหักหลัง VAT + ติ๊กแยกยอดตามแหล่ง — ฝั่งซื้อเท่านั้นเช่นกัน (เซิร์ฟเวอร์ปฏิเสธฝั่งขายพร้อมทางไปต่อ ไม่ใช่ silent no-op)
+        ['rowPostVatLabel', 'rowPostVatInput', 'rowPaySplit'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.style.display = show ? (id === 'rowPostVatInput' ? 'flex' : '') : 'none';
+        });
+        this._refreshPostVatRows();
+      },
+
+      /** ทีม U — ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง": เปิดกล่องบรรทัด · เริ่มต้นด้วย 1 บรรทัดเงิน (= ยอดสุทธิ − หัก) + 1 บรรทัดหัก (ถ้ามีช่องหักหลัง VAT) */
+      togglePaySplit() {
+        const on = document.getElementById('fPaySplitEnabled')?.checked;
+        const box = document.getElementById('paySplitBox');
+        if (box) box.style.display = on ? '' : 'none';
+        const rows = document.getElementById('paySplitRows');
+        if (on && rows && !rows.children.length) {
+          const total = parseFloat((document.getElementById('sumTotal')?.textContent || '0').replace(/,/g, '')) || 0;
+          const ded = parseFloat(document.getElementById('fPostVatDeductionAmount')?.value) || 0;
+          const dedCode = (document.getElementById('fPostVatDeductionAccountCode')?.value || '').trim();
+          this.paySplitAddRow('Money', '', (Math.round((total - ded) * 100) / 100).toFixed(2), '');
+          if (ded > 0) this.paySplitAddRow('PostVatDeduction', dedCode || '51150', ded.toFixed(2), 'หักหลัง VAT');
+        }
+        this._refreshPostVatRows();
+      },
+
+      /** บรรทัดแยกยอด: ชนิด · ผัง · ยอด · หมายเหตุ (DOM ล้วน — ไม่มีกติกาคำนวณที่นี่ เซิร์ฟเวอร์ตรวจผลรวม) */
+      paySplitAddRow(kind, code, amount, note) {
+        const host = document.getElementById('paySplitRows');
+        if (!host) return;
+        const row = document.createElement('div');
+        row.className = 'pay-split-line';
+        row.style.cssText = 'display:grid;grid-template-columns:120px 110px 100px 1fr 28px;gap:6px;align-items:center';
+        const sel = document.createElement('select');
+        sel.className = 'form-input ps-kind'; sel.style.fontSize = '12px';
+        [['Money', 'เงินออกจริง'], ['PostVatDeduction', 'หักหลัง VAT']].forEach(([v, t]) => {
+          const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === (kind || 'Money')) o.selected = true; sel.appendChild(o);
+        });
+        sel.addEventListener('change', () => this._refreshPostVatRows());
+        const mk = (type, value, placeholder, cls) => {
+          const el = document.createElement('input');
+          el.type = type; el.className = 'form-input ' + cls; el.value = value ?? ''; el.placeholder = placeholder; el.style.fontSize = '12px';
+          if (type === 'number') { el.step = '0.01'; el.min = '0'; }
+          if (cls === 'ps-code') el.setAttribute('list', 'coaList');
+          el.addEventListener('input', () => this._refreshPostVatRows());
+          return el;
+        };
+        row.appendChild(sel);
+        row.appendChild(mk('text', code, 'ผัง เช่น 21230', 'ps-code'));
+        row.appendChild(mk('number', amount, '0.00', 'ps-amount'));
+        row.appendChild(mk('text', note, 'หมายเหตุ (เช่น Shopee Voucher)', 'ps-note'));
+        const del = document.createElement('button');
+        del.type = 'button'; del.className = 'btn btn-sm btn-secondary'; del.textContent = '×'; del.title = 'ลบบรรทัดนี้';
+        del.onclick = () => { row.remove(); this._refreshPostVatRows(); };
+        row.appendChild(del);
+        host.appendChild(row);
+      },
+
+      /** อ่านบรรทัดแยกยอดที่กรอกครบ (ผัง + ยอด > 0) — แถวว่างข้ามไป */
+      _paySplitRead() {
+        return [...document.querySelectorAll('#paySplitRows .pay-split-line')].map(r => ({
+          kind: r.querySelector('.ps-kind')?.value || 'Money',
+          accountCode: (r.querySelector('.ps-code')?.value || '').trim(),
+          amount: parseFloat(r.querySelector('.ps-amount')?.value || ''),
+          note: (r.querySelector('.ps-note')?.value || '').trim() || null,
+        })).filter(l => l.accountCode && Number.isFinite(l.amount) && l.amount > 0);
+      },
+
+      /** แสดงผลเท่านั้น: แถว "ยอดชำระ (หลังหัก)" เมื่อมีหักหลัง VAT · ข้อความใต้กล่องแยกยอดว่ารวมเท่ายอดสุทธิไหม (เซิร์ฟเวอร์เป็นผู้ตัดสินจริง) */
+      _refreshPostVatRows() {
+        const total = parseFloat((document.getElementById('sumTotal')?.textContent || '0').replace(/,/g, '')) || 0;
+        const dedInput = document.getElementById('fPostVatDeductionAmount');
+        const visible = dedInput && document.getElementById('rowPostVatInput')?.style.display !== 'none';
+        const split = document.getElementById('fPaySplitEnabled')?.checked ? this._paySplitRead() : null;
+        const ded = split ? split.filter(l => l.kind === 'PostVatDeduction').reduce((s, l) => s + l.amount, 0)
+          : (parseFloat(dedInput?.value) || 0);
+        const show = visible && ded > 0;
+        const lbl = document.getElementById('rowAmountDueLabel');
+        const val = document.getElementById('sumAmountDue');
+        if (lbl) lbl.style.display = show ? '' : 'none';
+        if (val) { val.style.display = show ? '' : 'none'; val.textContent = Layout.money(Math.round((total - ded) * 100) / 100); }
+        const hint = document.getElementById('paySplitHint');
+        if (hint) {
+          if (!split) hint.textContent = '';
+          else {
+            const money = split.filter(l => l.kind === 'Money').reduce((s, l) => s + l.amount, 0);
+            const sum = Math.round((money + ded) * 100) / 100;
+            hint.textContent = `เงิน ${Layout.money(money)} + หักหลัง VAT ${Layout.money(ded)} = ${Layout.money(sum)} / ยอดสุทธิ ${Layout.money(total)}`
+              + (Math.abs(sum - total) > 0.005 ? ` — ต่าง ${Layout.money(sum - total)} (เซิร์ฟเวอร์จะปฏิเสธจนกว่าจะเท่ากัน)` : ' ✓');
+          }
+        }
       },
 
       /** แสดงยอดมัดจำที่เลือกหัก (จะ apply ตอน "บันทึกและอนุมัติ") ใน totals box —
@@ -9073,6 +9192,12 @@
         // รอบ 193: ผลต่างปัดเศษ + ยอดชำระจริง ห้ามค้างจากใบก่อน · แถวยอดชำระจริงแสดงเฉพาะฝั่งซื้อ
         { const fr = document.getElementById('fRoundingAdjustment'); if (fr) fr.value = 0; }
         { const fa = document.getElementById('fActualPaidAmount'); if (fa) fa.value = ''; }
+        // ทีม U: หักหลัง VAT + แยกยอดตามแหล่ง ห้ามค้างจากใบก่อน
+        { const fd = document.getElementById('fPostVatDeductionAmount'); if (fd) fd.value = ''; }
+        { const fc = document.getElementById('fPostVatDeductionAccountCode'); if (fc) fc.value = ''; }
+        { const fs = document.getElementById('fPaySplitEnabled'); if (fs) fs.checked = false; }
+        { const pr = document.getElementById('paySplitRows'); if (pr) pr.innerHTML = ''; }
+        { const pb = document.getElementById('paySplitBox'); if (pb) pb.style.display = 'none'; }
         this._toggleActualPaidRow(isExpense);
         if (document.getElementById('fBillDiscountMode')) document.getElementById('fBillDiscountMode').value = 'amt';
         document.getElementById('linesBody').innerHTML = '';
@@ -9256,6 +9381,17 @@
           // รอบ 193 — echo ที่เก็บไว้กลับเข้าฟอร์ม (ไม่งั้นเปิดแก้แล้วบันทึก ค่าหายเงียบ — กฎเหล็ก #4 A)
           { const fr = document.getElementById('fRoundingAdjustment'); if (fr) fr.value = Number(d.roundingAdjustment || 0); }
           { const fa = document.getElementById('fActualPaidAmount'); if (fa) fa.value = d.actualPaidAmount != null ? d.actualPaidAmount : ''; }
+          // ทีม U — หักหลัง VAT + แยกยอดตามแหล่ง: echo กลับเข้าฟอร์ม (ผัง id → รหัส ผ่านรายการผังที่โหลดไว้)
+          { const fd = document.getElementById('fPostVatDeductionAmount'); if (fd) fd.value = Number(d.postVatDeductionAmount || 0) > 0 ? d.postVatDeductionAmount : ''; }
+          { const fc = document.getElementById('fPostVatDeductionAccountCode');
+            if (fc) { const acc = d.postVatDeductionAccountId ? Object.values(this.coaByCode || {}).find(x => x.id === d.postVatDeductionAccountId) : null;
+              fc.value = acc?.accountCode || ''; } }
+          { const pr = document.getElementById('paySplitRows'); if (pr) pr.innerHTML = '';
+            const fs = document.getElementById('fPaySplitEnabled');
+            const has = Array.isArray(d.paymentSources) && d.paymentSources.length > 0;
+            if (fs) fs.checked = has;
+            const pb = document.getElementById('paySplitBox'); if (pb) pb.style.display = has ? '' : 'none';
+            if (has) d.paymentSources.forEach(s => this.paySplitAddRow(s.kind, s.accountCode, Number(s.amount || 0).toFixed(2), s.note || '')); }
           this._toggleActualPaidRow(linesTbl ? linesTbl.dataset.docSide === 'expense' : false);
           const fIvao = document.getElementById('fInputVatAccountCodeOverride');
           if (fIvao) fIvao.value = d.inputVatAccountCodeOverride || '';
@@ -9901,6 +10037,21 @@
             if (raw === '') return this.editingId ? { actualPaidAmount: 0 } : {};
             const n = parseFloat(raw);
             return Number.isFinite(n) ? { actualPaidAmount: n } : {};
+          })(),
+          // ทีม U: หักหลัง VAT (สร้าง: ว่าง = ไม่ส่ง · แก้ไข: ว่าง = 0 = ล้าง) + ผัง (สร้าง: ว่าง = ไม่ส่ง · แก้ไข: "" = กลับค่าเริ่มต้น)
+          // + แยกยอดตามแหล่ง (ติ๊ก = ส่งบรรทัด · ไม่ติ๊ก: แก้ไข = [] ล้าง · สร้าง = ไม่ส่ง) — เซิร์ฟเวอร์ตรวจ/ย่อยทุกอย่าง
+          ...(() => {
+            const out = {};
+            const raw = (document.getElementById('fPostVatDeductionAmount')?.value || '').trim();
+            if (raw !== '' && Number.isFinite(parseFloat(raw))) out.postVatDeductionAmount = parseFloat(raw);
+            else if (this.editingId) out.postVatDeductionAmount = 0;
+            const code = (document.getElementById('fPostVatDeductionAccountCode')?.value || '').trim();
+            if (code) out.postVatDeductionAccountCode = code;
+            else if (this.editingId) out.postVatDeductionAccountCode = '';
+            const splitOn = document.getElementById('fPaySplitEnabled')?.checked;
+            if (splitOn) out.paymentSources = this._paySplitRead();
+            else if (this.editingId) out.paymentSources = [];
+            return out;
           })(),
           contactId,
           // เลขใบกำกับเดิมนอกระบบ (CN/DN) ชนะช่องอ้างอิงทั่วไป — ใช้ผ่าน hard gate
@@ -11024,6 +11175,11 @@
               <div class="text-xl font-bold" style="margin-top:8px;padding-top:8px;border-top:2px solid var(--gray-200)">ยอดสุทธิ: ${Layout.money(d.totalAmount)}</div>
               ${d.actualPaidAmount != null ? `
               <div class="text-sm" style="color:#92400e" title="ใบกำกับคงยอดเต็มตามใบ — ส่วนต่างลงที่ปรับปรุงรายการบัญชี (ใบสำคัญจ่าย) หรือบรรทัดปรับตอนบันทึกการชำระ">ยอดชำระจริง: <strong>${Layout.money(d.actualPaidAmount)}</strong> (ต่างจากยอดเอกสาร ${Layout.money(Number(d.actualPaidAmount) - Number(d.totalAmount))})</div>` : ''}
+              ${Number(d.postVatDeductionAmount || 0) > 0 ? `
+              <div class="text-sm" style="color:#9a3412" title="ส่วนลด/คูปอง/voucher ที่ลดจากยอดรวมทั้งสิ้นหลังคิด VAT — ฐานภาษีซื้อและ VAT คงตามใบกำกับ · ขา JE: Cr ผังที่เลือก (ว่าง = 51150/ผังค่าใช้จ่ายหลักของใบ)">หักหลัง VAT: <strong>-${Layout.money(d.postVatDeductionAmount)}</strong>${(() => { const acc = d.postVatDeductionAccountId ? Object.values(this.coaByCode || {}).find(x => x.id === d.postVatDeductionAccountId) : null; return acc ? ` → ผัง ${Layout.esc(acc.accountCode)}` : ' → ผังค่าเริ่มต้น (51150 / ผังค่าใช้จ่ายหลัก)'; })()}</div>
+              <div class="text-sm font-semibold" style="color:#9a3412">ยอดชำระ (หลังหัก): ${Layout.money(d.amountDueAfterPostVatDeduction != null ? d.amountDueAfterPostVatDeduction : Number(d.totalAmount) - Number(d.postVatDeductionAmount))}</div>` : ''}
+              ${Array.isArray(d.paymentSources) && d.paymentSources.length ? `
+              <div class="text-xs" style="color:#9a3412;margin-top:2px">แยกยอดจ่ายจริงตามแหล่ง: ${d.paymentSources.map(s => `${s.kind === 'PostVatDeduction' ? 'หัก' : 'เงิน'} ${Layout.esc(s.accountCode)} ${Layout.money(s.amount)}${s.note ? ' (' + Layout.esc(s.note) + ')' : ''}`).join(' · ')}</div>` : ''}
               ${Number(d.depositAppliedAmount || 0) > 0 ? `
               <div class="text-sm" style="color:#0369a1">หักเงินมัดจำที่รับไว้: <strong>-${Layout.money(d.depositAppliedAmount)}</strong></div>
               <div class="text-sm font-semibold" style="color:#0369a1">รับชำระสุทธิ: ${Layout.money(Number(d.totalAmount) - Number(d.depositAppliedAmount))}</div>` : ''}
@@ -12388,7 +12544,17 @@
         };
         const rpSettleAdd = document.getElementById('rpSettleAdd');
         if (rpSettleAdd) rpSettleAdd.onclick = () => { this._rpSettleAddRow('', '', '', _settleRefresh); _settleRefresh(); };
-        if (_settleAllowed && this._currentDoc?.actualPaidAmount != null) {
+        if (_settleAllowed && Number(this._currentDoc?.postVatDeductionAmount || 0) > 0) {
+          // ทีม U: ใบตั้งหนี้ที่มีช่อง "หักหลัง VAT" — เติมเงินที่จ่าย (= ยอดชำระหลังหัก) + บรรทัดปรับ Cr ผังหักให้ล่วงหน้า (เซิร์ฟเวอร์เติมให้เองอยู่แล้ว
+          // ถ้าไม่ส่ง — แสดงให้ผู้ใช้เห็นก่อนกดบันทึก) · ผัง id → รหัสผ่านรายการผังที่โหลดไว้ (ว่าง = 51150 ส่วนลดรับ)
+          const ded = Number(this._currentDoc.postVatDeductionAmount);
+          const due = this._currentDoc.amountDueAfterPostVatDeduction != null ? Number(this._currentDoc.amountDueAfterPostVatDeduction) : null;
+          if (due != null) amountEl.value = Math.min(due, balanceDue).toFixed(2);
+          const acc = this._currentDoc.postVatDeductionAccountId
+            ? Object.values(this.coaByCode || {}).find(x => x.id === this._currentDoc.postVatDeductionAccountId) : null;
+          this._rpSettleAddRow(acc?.accountCode || '51150', (-ded).toFixed(2), 'หักหลัง VAT (ส่วนลด/คูปองหลังยอดรวม)', _settleRefresh);
+          _settleRefresh();
+        } else if (_settleAllowed && this._currentDoc?.actualPaidAmount != null) {
           // ยอดชำระจริงที่เก็บไว้ (สแกน [PAY≠TOTAL]) + ข้อเสนอบรรทัดปรับจากกระดาษ — ผู้ใช้ตรวจแล้วกดบันทึกคลิกเดียว
           amountEl.value = Number(this._currentDoc.actualPaidAmount).toFixed(2);
           const _apiSettle = Layout.api();

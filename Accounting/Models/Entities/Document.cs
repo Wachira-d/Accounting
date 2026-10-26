@@ -547,6 +547,19 @@ public class Document : TenantEntity
     /// เอกสารตั้งหนี้: เป็นข้อเสนอยอดเงินของการชำระ (บรรทัดปรับอยู่ที่ <c>Payment</c>)</para></summary>
     public decimal? ActualPaidAmount { get; set; }
 
+    /// <summary>หักหลัง VAT — ส่วนลด/คูปอง/voucher ที่ลดจาก<b>ยอดรวมทั้งสิ้น</b>หลังคำนวณภาษีแล้ว (ทีม U 2026-10-26 · ใบ Shopee
+    /// 536 − ส่วนลดพิเศษ 98 = ยอดชำระ 438) · ฐาน/VAT ของเอกสารไม่เปลี่ยน · ยอดชำระ = TotalAmount − ค่านี้ ·
+    /// ความจริงเดียวกับ <see cref="ActualPaidAmount"/> (ตัวตัดสิน <c>Helpers/PostVatDeduction.Resolve</c>: ไม่ระบุยอดชำระจริง ⇒ ตั้งให้ · ไม่ตรง ⇒ ปฏิเสธ) ·
+    /// JE: Cr <see cref="PostVatDeductionAccountId"/> (ผ่าน adjusting-line path เดิม) · 0 = ไม่มี (พฤติกรรมเดิมทุกใบ)</summary>
+    public decimal PostVatDeductionAmount { get; set; }
+
+    /// <summary>ผังที่ลงขาหักหลัง VAT — null = ค่าเริ่มต้นตอนอนุมัติ (51150 ส่วนลดรับ ถ้ามี ไม่งั้นผังค่าใช้จ่ายหลักของใบ — ตัวอย่างผู้ใช้ Cr 52120)</summary>
+    public Guid? PostVatDeductionAccountId { get; set; }
+
+    /// <summary>ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง" — JSON ของ <c>Helpers/PaymentSourceLine[]</c> (เขียน/อ่านด้วย <c>PaymentSourceSplit.Serialize/Parse</c> คู่เดียว) ·
+    /// null = ไม่ได้ติ๊ก · ย่อยลง <see cref="ActualPaidAmount"/> (Σ เงิน) + <see cref="PostVatDeductionAmount"/> (Σ หัก) ตอนบันทึก</summary>
+    public string? PaymentSourceSplitJson { get; set; }
+
     // Notes
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }

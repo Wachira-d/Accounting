@@ -5536,3 +5536,13 @@ warnings ⇒ กล่องเหลือง "ระบบไม่แน่�
 (ส่วนลด 576 ต่อบรรทัด vs 538.32 ท้ายบิล · 1,226.84 vs 1,840) — คำนวณทางเลือก `BillDiscountAmount` 538.32 ให้ยอดเท่าเดิมทุกสตางค์ไว้ รอเจ้าของ · เมทริกซ์ทุกรูปแบบ `docs/OCR_TOTALS_MATRIX.md`
 (16 ช่อง · ล็อกด้วยอะไร · ช่องว่างที่เหลือ) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT · สังเคราะห์ · วางหลัง F · baseline: 28 ตัว (+ สังเคราะห์ 24 ช่อง) ด้วย **port Python ของ `Classify`** (เทียบเท่า C# ณ 74a4796c — ไม่ใช่ตัว C# เอง) = 0 เปลี่ยนใน vector จริง · replay/golden harness ผ่าน C# จริง (`OcrReplay*GoldenTests` · `EtaxGoldenCorpusTests`) **ยังต้องรอ CI** (ไม่มี SDK)) +
 `OcrConfidenceGateway`/`OcrDuplicateLineGuard` รู้เคส G · ใบนี้ยังไม่เข้า `OcrPaperSamples` (golden คู่สัญญาต้องรัน dotnet — ขั้นตอนจดใน MATRIX §5) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 — **ทีม U: "หักหลัง VAT" + แยกยอดจ่ายจริงตามแหล่ง + ด่าน VAT ≠ ฐาน × อัตรา** (ผู้ใช้รายงานใบ Shopee INV2026090199 ลงผิดเป็น PV-202610-0040: Dr 52120 402.93 / Dr 11610 35.07 / Cr 21230 438 —
+ฐานถูกบีบตามยอดชำระ · JE ที่ถูก Dr 52120 500.93 / Dr 11640 35.07 / Cr 52120 98 / Cr 21230 438): ฟิลด์ระดับเอกสาร `Document.PostVatDeductionAmount` + `PostVatDeductionAccountId` + `PaymentSourceSplitJson`
+(migration `PostVatDeductionStatements` · ADD COLUMN IF NOT EXISTS) · ตัวตั้ง `Helpers/PostVatDeduction` (ยอดชำระ = รวม − หัก · `Resolve` ความจริงเดียวกับ `ActualPaidAmount` · `VatConsistencyError` ด่านกันปล่อยผ่าน ±฿1 ต่ออัตรา ·
+ผังค่าเริ่มต้น 51150 → ผังค่าใช้จ่ายหลักของใบ) · `Helpers/PaymentSourceSplit` (ติ๊กแยกยอด: Σ = ยอดรวม · Money/PostVatDeduction · ขาเพิ่มเดินผ่าน adjusting-line path เดิม — ไม่มี posting layer ใหม่) ·
+`Helpers/OcrPostVatDeduction` (ต่อยอด `OcrTotalDecomposer` PostInvoice → เติมช่องหัก + `[POST-VAT-DEDUCTION]` แทน adjusting lines 51120/51150 ของรอบ 193 เฉพาะใบ "ยอดชำระ < ยอดใบ" · พรีวิวส่ง `PostVatDeductionAmount/AccountCode`
+ให้เส้นฟอร์มยกไปได้) · `DocumentService.ApplyPostVatDeductionAsync` (สร้าง/แก้ไข) · `AutoPostToJournalAsync` ด่าน VAT + ขา Cr หัก/ขาย้ายแหล่ง · `CreatePaymentAsync` เติมบรรทัดปรับจากช่องหักให้ใบตั้งหนี้ ·
+ฟอร์ม `documents.html` (ช่องหัก + ผัง + แถว "ยอดชำระ (หลังหัก)" + ติ๊กแยกยอด · hydrate/reset/payload · หน้ารายละเอียด · หน้าชำระเติม `rpSettle`) · renderer ×2 + `DocumentLabels` 2 ป้าย ·
+รายงานตรวจข้อมูล `PurchaseVatInconsistentWithBase` (อ่านอย่างเดียว · 24 เดือน) · เทสต์ `PostVatDeductionTests`/`PaymentSourceSplitTests`/`OcrPostVatDeductionTests` (27 Fact + 3 Theory) · checker `required_call_site_check` 6 ด่านใหม่ ·
+DOCUMENT_FLOW §3.4 + §อนุมัติ · MATRIX ช่อง 17 + §5 · lessons · **ไม่ทำ**: ฝั่งขาย (→ Settlement · ปฏิเสธพร้อมทางไปต่อ) · pdftotext ของใบจริงไม่เป็นเทสต์ · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
