@@ -451,6 +451,22 @@ public static class OcrReplayHarness
             EngineSubTotal: null, EngineVat: 0m, EngineTotal: 450m,
             LineAmounts: new[] { 450.00m },
             Lines: new ReplayLine[] { new("หมูสับ", 5m, 450.00m, 450.00m) }),
+
+        // ── 2026-10-26 R-34 (W8) — ใบจริง e-Tax SP-IN2026-10-00933 Rapbizz Direct · เส้นกระดาษ (ข้อความหน้า PDF ต้นฉบับ+สำเนา · ไม่มี XML ในชุดนี้) ──
+        // กระดาษ: 2 × 920.00 = 1,840.00 · 1 × 170.00 (ราคารวม VAT) · "จำนวนเงิน Amount 1,878.51" · "ส่วนลด 538.32" (ก่อน VAT) · "ยอดรวม Total 1,340.19" · VAT 93.81 ·
+        // "ราคารวม Sub Total 1,434.00" (ป้ายสลับ) ⇒ เคส F DiscountPreVatOnInclusivePrices · คำตัดสินข้อ 159: BillDiscountAmount 538.32 ไม่กระจาย · ยอดบรรทัดจาก
+        // DocumentService.PlanLineAmounts ⇒ 1,226.84/85.88 · 113.35/7.93 (= เส้น e-Tax ของใบเดียวกัน EtaxGoldenCorpusTests["RapbizzSpIn00933"] ทุกสตางค์) ·
+        // หัวใบ = สามยอดที่ engine อ่านถูก (เส้นกระดาษจริงยังไม่มี engine ภาพของใบนี้ — ใช้ตัวเลขบนกระดาษ) · คำอธิบายบรรทัดตามแถว (ฟอนต์เพี้ยนในข้อความดิบ แต่แถวที่
+        // engine คืนอ่านออก — ตัวเลขทุกตัวจากกระดาษ) · เลขผู้ขายจากกระดาษ
+        new ReplayPaper("rapbizz-spin00933-prevat-discount-on-incl", OcrPaperSamples.RapbizzSpIn00933PdfText,
+            EngineSubTotal: 1340.19m, EngineVat: 93.81m, EngineTotal: 1434.00m,
+            LineAmounts: new[] { 1840.00m, 170.00m },
+            Lines: new ReplayLine[]
+            {
+                new("เก้าอี้สนาม พับเก็บได้ 56x60x100 ซม. รับน้ำหนักได้ 125 KG สีดำ JBUYNOW YLFC-032", 2m, 920.00m, 1840.00m),
+                new("ค่าขนส่งสินค้า", 1m, 170.00m, 170.00m),
+            },
+            VendorTaxId: "0105559170207"),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้

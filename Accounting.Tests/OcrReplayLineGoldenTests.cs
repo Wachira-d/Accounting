@@ -600,6 +600,34 @@ public class OcrReplayLineGoldenTests
     }
 
     [Fact]
+    public void R34_ใบRapbizz_SPIN00933_เส้นกระดาษ_เคสF_ส่วนลดท้ายบิล538_32ตามกระดาษไม่กระจาย_บรรทัด1226_84และ113_35_VAT85_88และ7_93()
+    {
+        // คำตัดสินข้อ 159 บนเส้นกระดาษของใบจริง: Σ บรรทัด 2,010 (รวม VAT) · ฐาน 1,340.19 · VAT 93.81 · รวม 1,434 · ส่วนลดบนกระดาษ 538.32 (ก่อน VAT) ⇒ เคส F
+        // ⇒ Mode "Items+Bill:538.32" (BillDiscountAmount ตามกระดาษ · ไม่กระจาย) · บรรทัด = DocumentService.PlanLineAmounts: ฐานก่อนลด 1,719.63 + 158.88 = 1,878.51
+        // (= "จำนวนเงิน Amount") − จัดสรร 492.79/45.53 ⇒ 1,226.84/113.35 · VAT 85.88/7.93 (ตัวเลขชุดเดียวกับเส้น e-Tax ของใบนี้ — OcrRapbizzSpIn00933Tests.ทีมT_เส้นจริงทั้งสาย_*)
+        // ราคาต่อหน่วยตามกระดาษ 920/170 · ส่วนลดบรรทัด 0 · RA 0 (Σ ฐานบรรทัด 1,340.19 = ฐานกระดาษ) · ไม่มี [Σ-GAP]
+        // ⚠️ ตัวเลขคิดมือจากกระดาษ + สูตรที่เทสต์ e-Tax ของใบเดียวกันล็อกไว้ (ไม่มี SDK ในเครื่อง 2026-10-26) — แถวที่ล้มใน CI = สาขา F ของ harness ต่างจาก service ต้องอธิบาย ไม่ใช่แก้เลข
+        const string P = "rapbizz-spin00933-prevat-discount-on-incl";
+        Assert.Equal("1340.19", Val("rapbizz-spin00933-prevat-discount-on-incl", "HeaderSubTotal"));   // literal ชื่อใบให้ tools/ocr_golden_corpus_check.py เห็น
+        Assert.Equal("1434.00", Val(P, "HeaderTotal"));
+        Assert.Equal("false", Val(P, "HeaderSwapped"));
+        Assert.Equal("538.32", Val(P, "BillDiscount"));
+        Assert.Equal("538.32", Val(P, "DiscountToSpread"));
+        Assert.Equal("1340.19", Val(P, "NetSubTotal"));
+        Assert.Equal("Items+Bill:538.32", Val(P, "LineMode"));
+        Assert.Equal("DiscountPreVatOnInclusivePrices", Val(P, "ReconCase"));
+        Assert.Equal("true", Val(P, "PricesIncludeVat"));
+        Assert.Equal("1226.84|7|85.88|920.00|0|0.00|0.00;113.35|7|7.93|170.00|0|0.00|0.00", Val(P, "Lines"));
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+        Assert.Equal("0.00", Val(P, "RoundingAdjustment"));
+        Assert.Equal("0", Val(P, "DupRowsDropped"));   // ชุดนี้ป้อนแถวที่พิมพ์ 2 แถว (ไม่ใช่แถว engine ต้นฉบับ+สำเนา) ⇒ ไม่มีอะไรให้ตัด
+        // ทิศตรงข้าม (หลัก ข): ใบที่กระจายส่วนลดได้ตรง ๆ (เคส C ร้านวัสดุ · เคส E ซูเปอร์) ยังเป็น Mode "Items" ไม่มี Bill:
+        Assert.Equal("Items", Val("hardware-bill-discount", "LineMode"));
+        Assert.Equal("Items", Val("supermarket-member-discount", "LineMode"));
+        Assert.DoesNotContain(OcrReplayHarness.Run(), a => a.Field == "LineMode" && a.Paper != P && a.Value!.StartsWith("Items+Bill:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ทุกใบในชุด_มีแถวระดับบรรทัดครบ_และไม่มีใบไหนที่ok_แล้วยอดบรรทัดไม่ปิดยอดรวม()
     {
         var all = OcrReplayHarness.Run();
