@@ -37,6 +37,19 @@ public static class BookingEngineMigration
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_SiteBookingSettings_Company_Site" ON "SiteBookingSettings" ("CompanyId", "SiteId");""",
         // คำตัดสินข้อ 155 (B-2): จังหวะออกใบกำกับของ Guaranteed · DEFAULT 0 = ใบกำกับตอนจอง (พฤติกรรมเดิม — ไซต์เดิมไม่เปลี่ยน)
         """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "GuaranteedInvoiceTiming" integer NOT NULL DEFAULT 0;""",
+        // รอบ 205 W3 (R-12 R-13 R-14): เวลาทำการระดับเว็บ (NULL = ไม่ตั้ง — บริการเดิมที่ตั้งเวลาเองไม่เปลี่ยน) · ถือรอบคิวสำรอง 0 = ไม่ถือ (เดิม) ·
+        // เตือนก่อนนัดเปิดเป็นค่าเริ่มต้น "24,2" — คอลัมน์ ReminderSent/ReminderSentAt มีมาแต่ไม่มีผู้เขียน (ทะเบียน R-12) · เทมเพลต NULL = ข้อความระบบ
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "BookingHoursJson" text NULL;""",
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "WaitlistHoldMinutes" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "ReminderEnabled" boolean NOT NULL DEFAULT true;""",
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "ReminderHoursBefore" varchar(64) NOT NULL DEFAULT '24,2';""",
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "ReminderTemplate" text NULL;""",
+        // ร่องรอยการส่งถึงลูกค้าต่อแถว + คิวสำรองได้คิว/ถือรอบ (NULL ทั้งหมด = การจองเดิมไม่มีประวัติ)
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "NotifyAttemptedAt" timestamptz NULL;""",
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "NotifyLastError" text NULL;""",
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "WaitlistPromotedAt" timestamptz NULL;""",
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "WaitlistNotifiedAt" timestamptz NULL;""",
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "WaitlistHoldUntil" timestamptz NULL;""",
 
         // ผู้ให้บริการ / ห้อง / อุปกรณ์
         "CREATE TABLE IF NOT EXISTS \"SiteBookingResources\" (" + Base + ", \"SiteId\" uuid NOT NULL, \"Name\" varchar(256) NOT NULL, "

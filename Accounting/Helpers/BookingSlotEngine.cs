@@ -483,6 +483,17 @@ public static class BookingSlotEngine
         => x == null ? BookingSiteDefaults.Fallback
             : new BookingSiteDefaults(x.DurationMinutes, x.BufferBeforeMinutes, x.BufferAfterMinutes, x.MinAdvanceHours, x.MaxAdvanceDays);
 
+    /// <summary>
+    /// <b>ตัวตัดสินเดียว</b> "เวลาทำการของบริการนี้คือตารางไหน" (รอบ 205 W3 · R-14 · B13): บริการที่ตั้งเวลาทำการเอง (มีแถว <c>SiteBookingSlot</c> ≥ 1)
+    /// ใช้ของตัวเอง <b>ทั้งชุด</b> (ไม่ผสม) · ไม่ตั้งเลย ⇒ รับเวลาทำการระดับเว็บ (<c>SiteBookingSettings.BookingHoursJson</c>) · เว็บก็ไม่ตั้ง ⇒ ว่าง (ไม่เปิดรอบ — หน้า CMS เตือน) ·
+    /// ห้ามเขียน <c>rows.Count == 0 ? site : rows</c> เองที่อื่น (กฎ #4 A "Resolver กลาง")
+    /// </summary>
+    public static IReadOnlyList<BookingScheduleRow> ScheduleOf(IReadOnlyList<BookingScheduleRow> serviceRows, IReadOnlyList<BookingScheduleRow> siteRows, out bool usesSiteHours)
+    {
+        usesSiteHours = serviceRows.Count == 0 && siteRows.Count > 0;
+        return serviceRows.Count > 0 ? serviceRows : siteRows;
+    }
+
     public static BookingScheduleRow RowOf(SiteBookingSlot x)
         => new(x.DayOfWeek, x.SpecificDate, x.StartTime, x.EndTime, x.IsBlocked, x.MaxCapacity);
 

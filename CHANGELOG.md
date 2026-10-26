@@ -5536,3 +5536,11 @@ warnings ⇒ กล่องเหลือง "ระบบไม่แน่�
 (ส่วนลด 576 ต่อบรรทัด vs 538.32 ท้ายบิล · 1,226.84 vs 1,840) — คำนวณทางเลือก `BillDiscountAmount` 538.32 ให้ยอดเท่าเดิมทุกสตางค์ไว้ รอเจ้าของ · เมทริกซ์ทุกรูปแบบ `docs/OCR_TOTALS_MATRIX.md`
 (16 ช่อง · ล็อกด้วยอะไร · ช่องว่างที่เหลือ) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT · สังเคราะห์ · วางหลัง F · baseline: 28 ตัว (+ สังเคราะห์ 24 ช่อง) ด้วย **port Python ของ `Classify`** (เทียบเท่า C# ณ 74a4796c — ไม่ใช่ตัว C# เอง) = 0 เปลี่ยนใน vector จริง · replay/golden harness ผ่าน C# จริง (`OcrReplay*GoldenTests` · `EtaxGoldenCorpusTests`) **ยังต้องรอ CI** (ไม่มี SDK)) +
 `OcrConfidenceGateway`/`OcrDuplicateLineGuard` รู้เคส G · ใบนี้ยังไม่เข้า `OcrPaperSamples` (golden คู่สัญญาต้องรัน dotnet — ขั้นตอนจดใน MATRIX §5) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 ทีม W3 (แพ็ก W3 ทะเบียน `docs/BACKLOG_REGISTER_2026-10-26.md` R-12…R-16 — เจ้าของมอบให้ตัดสิน): `ReminderSent/ReminderSentAt` มีมา 0 ผู้เขียน ⇒ `Services/Background/BookingReminderJob`
+(5 นาที · `JobLock` · หน้าต่างวันที่แทน watermark) + ตัวตัดสิน pure `Helpers/BookingReminderPlan` (ขั้น 24/2 ชม. จากคอลัมน์เดียว · job ดับนานส่งขั้นเดียว · เพิ่งจองไม่เตือนทันที · เว้นระยะ 30 นาที) ·
+ช่องส่ง `IBookingNotifier` (อีเมล→LINE) บน `IEmailService.TrySendAsync`/`ILineNotifyService.TryPushToUserAsync` ที่**บอกผลจริง** (ตัวเดิมกลืนผล ⇒ ประทับ "ส่งแล้ว" ไม่ได้) · ประทับหลังส่งถึงจริง ·
+ร่องรอย `NotifyAttemptedAt/NotifyLastError` ต่อแถว · คิวสำรองได้คิว ⇒ แจ้งลูกค้า (`CmsBookingService.Notify.cs` · job ส่งซ้ำ) + ถือรอบ `WaitlistHoldMinutes` (หมดเวลา ⇒ job ยกเลิกผ่านเส้นสถานะปกติ ⇒ คิวถัดไป) ·
+เวลาทำการระดับเว็บ `BookingHoursJson` + resolver `BookingSlotEngine.ScheduleOf` (บริการที่ตั้งเองไม่ถูกแตะ) + UI ตัวแก้ตาราง `ss` · เลือก/เปลี่ยนผู้ให้บริการ `PUT …/bookings/{id}/resource` ผ่าน `Decide` ใต้ล็อกไซต์
+(ตั้ง `ResourceId` ไม่ใช่ `AssignedStaffId` ของ POS — คนละตัวตน) · Db test `Db/CmsBookingDoubleBookingDbTests` 6 เทสต์ (BKE-10/16 ⏳→✅) · เทสต์ pure 2 ไฟล์ · ล็อกจุดเรียก 9 กติกา ·
+ไม่แตะ `CmsCommerceService`/ฟอร์มชำระ/เส้นเงินการจอง · ยังไม่ได้คอมไพล์ในเครื่องนี้ · Db test รอ job db-test_

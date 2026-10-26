@@ -38,6 +38,10 @@ public interface ICmsBookingService
     /// <summary>พนักงานยืนยัน "รับเงินแล้ว" ⇒ ออกใบกำกับภาษีของการจอง Guaranteed (คำตัดสินข้อ 155 · <c>BookingInvoiceTimingPolicy</c>)</summary>
     Task<BookingResponse> IssueTaxInvoiceOnPaymentAsync(Guid companyId, Guid siteId, Guid bookingId, DateTime? receivedDate, string userId);
     Task<PagedResponse<BookingListResponse>> GetBookingsAsync(Guid companyId, Guid siteId, string? status = null, Guid? serviceId = null, DateTime? fromDate = null, DateTime? toDate = null, int page = 1, int pageSize = 20, string? search = null);
+    /// <summary>รอบ 205 W3 R-16: พนักงานเลือก/เปลี่ยนผู้ให้บริการ (null = ระบบจัดให้ใหม่) — ตัดสินผ่าน <c>BookingSlotEngine.Decide</c> ตัวเดียวใต้ล็อกไซต์</summary>
+    Task<BookingResponse> AssignResourceAsync(Guid companyId, Guid siteId, Guid bookingId, Guid? resourceId, string userId);
+    /// <summary>รอบ 205 W3 R-13: แจ้งลูกค้าที่ได้คิวจากคิวสำรอง (เรียกซ้ำได้ — ใบที่แจ้งถึงแล้วถูกข้าม) · คืนข้อความผลการส่ง · <c>BookingReminderJob</c> เรียกซ้ำให้ใบที่ส่งไม่ถึง</summary>
+    Task<List<string>> NotifyWaitlistPromotedAsync(Guid companyId, Guid siteId, IReadOnlyCollection<Guid> bookingIds, CancellationToken ct = default);
 
     // ERP Sync (event-driven)
     Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId);

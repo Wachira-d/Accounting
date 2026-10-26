@@ -107,6 +107,18 @@ public class LineNotifyService : ILineNotifyService
         }, $"user {lineUserId}");
     }
 
+    public async Task<bool> TryPushToUserAsync(Guid? companyId, string lineUserId, string message)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return false;
+        var (token, _) = await ResolveConfigAsync(companyId);
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        return await PushRawAsync(token, new
+        {
+            to = lineUserId,
+            messages = new[] { new { type = "text", text = message } }
+        }, $"user {lineUserId}");
+    }
+
     public Task PushFlexToUserAsync(string lineUserId, string altText, object flexContents)
         => PushFlexToUserAsync(null, lineUserId, altText, flexContents);
 

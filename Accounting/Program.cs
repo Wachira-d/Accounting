@@ -679,6 +679,7 @@ builder.Services.AddScoped<ICmsSiteService, CmsSiteService>();
 builder.Services.AddScoped<ICmsContentService, CmsContentService>();
 builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
+builder.Services.AddScoped<IBookingNotifier, Accounting.Services.Implementations.Cms.BookingNotifier>();   // รอบ 205 W3 — ช่องส่งข้อความถึงลูกค้าของเครื่องจอง (อีเมล/LINE · บอกผลจริง)
 // ธุรกิจที่พัก (โรงแรม/รีสอร์ท/บ้านพัก) — จอง · มัดจำ · เช็คอิน/เอาต์ · folio · แม่บ้าน
 builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.Lodging.LodgingService>();
 // resolver สิทธิ์ตัวเดียว (แพ็กเกจ + add-on) — ห้ามมีตัวที่สอง
@@ -711,6 +712,8 @@ builder.Services.AddHostedService<AbandonedCartService>();
 builder.Services.AddHostedService<Accounting.Services.Background.DocumentAgingBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
+// รอบ 205 W3 (R-12 R-13): เตือนลูกค้าก่อนนัด (ReminderSent/ReminderSentAt มีมาแต่ไม่มีผู้เขียน) · แจ้งได้คิวซ้ำ · ปล่อยรอบคิวสำรองที่หมดเวลาถือ — Helpers/JobLock
+builder.Services.AddHostedService<Accounting.Services.Background.BookingReminderJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();

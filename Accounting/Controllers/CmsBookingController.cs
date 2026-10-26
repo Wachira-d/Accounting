@@ -206,6 +206,18 @@ public class CmsBookingController : ControllerBase
         return Ok(new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.statusUpdated", Lang)));
     }
 
+    /// <summary>รอบ 205 W3 R-16: พนักงานเลือก/เปลี่ยนผู้ให้บริการของการจอง (null = ให้ระบบจัดให้ใหม่) — server ตัดสินผ่าน <c>BookingSlotEngine.Decide</c> ตัวเดียว</summary>
+    [HttpPut("bookings/{bookingId:guid}/resource")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    [RequirePermission(PermissionKeys.CmsOrderManage)]   // เขียนข้อมูลการจอง — ด่านสิทธิ์ระดับบริษัทด้วย (write_permission_gate_check)
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> AssignBookingResource(
+        Guid companyId, Guid siteId, Guid bookingId, [FromBody] AssignBookingResourceRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.AssignResourceAsync(companyId, siteId, bookingId, request?.ResourceId, userId);
+        return Ok(new ApiResponse<BookingResponse>(true, result, "บันทึกผู้ให้บริการแล้ว"));
+    }
+
     /// <summary>คำตัดสินข้อ 155: "รับเงินแล้ว — ออกใบกำกับภาษี" ของการจอง Guaranteed (tax point §78/1 = วันรับเงิน) · ออกแล้วไม่ออกซ้ำ</summary>
     [HttpPost("bookings/{bookingId:guid}/issue-tax-invoice")]
     [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]

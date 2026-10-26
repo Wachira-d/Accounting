@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **641 ไฟล์ · 6,413 `[Fact]` + 1,041 `[Theory]` (4,864 `InlineData`)** ณ 2026-10-26 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **644 ไฟล์ · 6,438 `[Fact]` + 1,041 `[Theory]` (4,864 `InlineData`)** ณ 2026-10-26 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
@@ -6640,8 +6640,12 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | BKE-13 | สวิตช์คุม Slot ปิด (ไม่จำกัด · เพดาน 2) · คิวสำรอง (เต็ม ⇒ เข้าคิว · ไม่เปิด ⇒ ปฏิเสธ · ปิดวัน ⇒ เข้าคิวไม่ได้) · ลำดับคิวขยับขึ้น | ตามสวิตช์ · `CanWaitlist` | ✅ `BookingSlotEngineTests` |
 | BKE-14 | ช่าง 3 คนจองครบ ⇒ คนที่ 4 เต็ม · จัดสรรงานน้อยสุด/ลำดับ/ชื่อ (ไม่ขึ้นกับลำดับข้อมูล) · ตารางงาน/วันลา · บังคับระบุ · ลูกค้าเลือก · ระบบจัดให้ไม่รับค่า client · งานข้ามบริการ · คลาสกลุ่ม · ไม่ผูกใคร = ความจุบริการ | ตาม `PickResource`/`Decide` | ✅ `BookingSlotEngineTests` |
 | BKE-15 | ค่าตั้งระดับไซต์ vs รายบริการ | `UseSiteDefaults` ⇒ ค่าไซต์ · ไม่ติ๊ก ⇒ ค่าบริการ | ✅ `BookingSlotEngineTests` |
-| BKE-16 | ยกเลิกใบที่กินรอบ ⇒ คิวสำรองใบแรกที่ลงได้ถูกเลื่อนขึ้น + ออกเอกสาร ERP · ตั้งสถานะคิวสำรองเอง ⇒ ปฏิเสธ | ⏳ (Db test — backlog B14) | ⏳ |
-| BKE-10 | สองคนจองรอบสุดท้ายพร้อมกัน (คนละ DbContext) | ได้การจองเดียว อีกคน 409 `CMS-BOOKING-FULL` | ⏳ (backlog B14 · Db test) |
+| BKE-16 | ยกเลิกใบที่กินรอบ ⇒ คิวสำรองใบแรกที่ลงได้ถูกเลื่อนขึ้น (+ แจ้งลูกค้าถึงจริงประทับ `WaitlistNotifiedAt`) · ใบที่สองยังอยู่คิว | ✅ `Db/CmsBookingDoubleBookingDbTests` (Category=Db · job db-test · ทีม W3 2026-10-26) | ✅ |
+| BKE-10 | หกคำขอจองรอบสุดท้ายพร้อมกัน (คนละ DbContext) · ทิศตรงข้าม ความจุ 2 ⇒ 2 คำขอได้ครบ | ได้การจองเดียว ที่เหลือ 409 `CMS-BOOKING-FULL` | ✅ `Db/CmsBookingDoubleBookingDbTests` (Category=Db) |
+| BKE-17 | **W3 R-12** เตือนก่อนนัด: ขั้น 24/2 ชม. จาก `ReminderSentAt` คอลัมน์เดียว · job ดับนานส่งขั้นเดียว · เพิ่งจองไม่เตือนทันที · นัดผ่านไม่ส่ง · เว้นระยะลองใหม่ 30 นาที · เทมเพลต/HtmlEncode · ค่าตั้งผิดฟ้อง | ตาม `BookingReminderPlan` · **Db:** ส่งถึง ⇒ ประทับ · ส่งล้ม ⇒ ยัง null + `NotifyLastError` (ทิศตรงข้าม) | ✅ `BookingReminderPlanTests` · ✅ `Db/CmsBookingDoubleBookingDbTests` |
+| BKE-18 | **W3 R-13** ถือรอบคิวสำรอง: 0 = ไม่ถือ · ยืนยันอัตโนมัติไม่ถือ · หมดเวลาแล้วยังรอยืนยัน ⇒ job ยกเลิกผ่านเส้นสถานะปกติ + ใบถัดไปได้คิว · ยืนยันแล้วไม่ถูกปล่อย (ทิศตรงข้าม) | ตาม `HoldUntil`/`HoldExpired` | ✅ `BookingReminderPlanTests` · ✅ `Db/CmsBookingDoubleBookingDbTests` |
+| BKE-19 | **W3 R-14** เวลาทำการระดับเว็บ: บริการไม่ตั้งเวลา ⇒ รับของเว็บ (รอบว่าง 13:00/14:00) · บริการที่ตั้งเอง ⇒ ของตัวเองทั้งชุด ไม่ผสม (ทิศตรงข้าม) · ทั้งคู่ไม่ตั้ง ⇒ ว่าง · JSON ไป-กลับ/เสียไม่โยน · `UsesSiteHours` echo | ตาม `BookingSlotEngine.ScheduleOf` + `BookingSiteHours` | ✅ `BookingSiteHoursTests` · ✅ `Db/CmsBookingDoubleBookingDbTests` |
+| BKE-20 | **W3 R-16** พนักงานเลือก/เปลี่ยนผู้ให้บริการ (`PUT …/bookings/{id}/resource`) — คนที่เลือกไม่ว่าง/ไม่เข้างาน/ไม่รับบริการ ⇒ 409/400 ข้อความไทย · ว่าง = ระบบจัดให้ (`PickResource`) · ใบตัวเองไม่นับเป็นคิวที่ชน · เฉพาะรอยืนยัน/ยืนยันแล้ว+ยังไม่ถึงนัด | server ตัดสิน (`CanAssignResource`) · จุดเรียกล็อก `required_call_site_check` | ⏳ manual (ไม่มี Db test — ต้องมีผู้ให้บริการ+ตารางงาน) |
 | BKE-11 | cms-edit: เปิดแก้บริการแล้วบันทึกโดยไม่แตะ | ชนิดการจอง/มัดจำ/buffer/ตารางเวลา คงเดิม (เดิมรีเซ็ต) | ⏳ manual |
 | BKE-12 | `cms-bookings.html?siteId=X` | ซ่อนตัวเลือกไซต์ · แสดงเฉพาะไซต์ X · siteId ไม่ใช่ของบริษัท ⇒ ข้อความ "ไม่พบเว็บไซต์" | ⏳ manual |
 
