@@ -53,7 +53,7 @@ public class OcrRapbizzSpIn00933Tests
     }
 
     [Fact]
-    public void ETax_หลังแก้_หัวใบพิสูจน์ราคารวมVAT_ส่วนลด576รวมVAT_เคสE_ฐาน1340_19_VAT93_81_รวม1434()
+    public void ETax_หลังแก้_หัวใบพิสูจน์ราคารวมVAT_ส่วนลด576รวมVAT_ส่งต่อเป็น538_32ก่อนVAT_เคสF_ฐาน1340_19_VAT93_81_รวม1434()
     {
         var r = Xml();
         var inv = OcrEtaxLineNormalizer.NormalizeInvoice(Facts(r), r.LineTotal, r.VatAmount, r.GrandTotal, r.AllowanceTotal, r.TaxBasis);
@@ -66,10 +66,12 @@ public class OcrRapbizzSpIn00933Tests
         Assert.Single(inv.Notes);
         Assert.StartsWith(OcrEtaxLineNormalizer.NoteTag, inv.Notes[0]);   // ข้อสังเกต ไม่ใช่แท็กห้ามอนุมัติเอง
         Assert.True(OcrPostingReadiness.Evaluate(inv.Notes[0], true).CanAutoApprove);
-        Assert.Equal((decimal?)576.00m, OcrEtaxLineNormalizer.HeaderBillDiscount(r.LineTotal, r.TaxBasis, inv));
+        // ฝ่ายค้านข้อ 4: ช่องส่วนลดของสแกนความหมายเดียว = ยอดก่อน VAT (538.32 เท่าหน้า PDF และเส้นกระดาษ) ไม่ใช่ 576 รวม VAT
+        Assert.Equal((decimal?)538.32m, OcrEtaxLineNormalizer.HeaderBillDiscount(r.LineTotal, r.TaxBasis, inv));
+        Assert.Equal(OcrBillDiscount.Read(PageText, 1434.00m).Amount, OcrEtaxLineNormalizer.HeaderBillDiscount(r.LineTotal, r.TaxBasis, inv));
 
-        var recon = OcrLineReconciler.Classify(2010.00m, OcrHeaderAmounts.NetSubTotal(1340.19m, 93.81m, 1434.00m, 576.00m), 93.81m, 1434.00m, 576.00m);
-        Assert.Equal(OcrLineReconcileCase.DiscountOnTotalInclVat, recon.Case);
+        var recon = OcrLineReconciler.Classify(2010.00m, OcrHeaderAmounts.NetSubTotal(1340.19m, 93.81m, 1434.00m, 538.32m), 93.81m, 1434.00m, 538.32m);
+        Assert.Equal(OcrLineReconcileCase.DiscountPreVatOnInclusivePrices, recon.Case);
         Assert.Equal((true, 28.66m, (decimal?)1434.00m, 0m), (recon.PricesIncludeVat, recon.DiscountPercent, recon.TargetLineSum, recon.UnreconciledGap));
     }
 
@@ -109,10 +111,10 @@ public class OcrRapbizzSpIn00933Tests
         Assert.Null(OcrEtaxLineNormalizer.NormalizeInvoice(lineDisc, 1340.19m, 93.81m, 1434.00m, 566.00m, 1340.19m).BillAllowanceInclVat);
     }
 
-    // ── (3) VAT ต้องห้าม 140.70: XML ส่งเลขผู้ซื้อ "N/A" แต่หน้า PDF ที่ลงนามพิมพ์เลข ─────────────────────────
+    // ── (3) VAT ต้องห้าม 140.70: XML ส่งเลขผู้ซื้อ "N/A" แต่ข้อความบนหน้า PDF มีเลขเรา (คำตัดสินเจ้าของข้อ 158) ─────────
 
     [Fact]
-    public void ผู้ซื้อ_ก่อนแก้_XMLเลขผู้ซื้อNA_ปิดเคลมทั้งใบ_หลังแก้_หน้าPDFที่ลงนามพิมพ์เลขเรา_เปิดเคลม_พร้อมหมายเหตุVATNOTE()
+    public void ผู้ซื้อ_ก่อนแก้_XMLเลขผู้ซื้อNA_ปิดเคลมทั้งใบ_หลังแก้_เติมเลขและสาขาจากหน้าPDF_เปิดเคลม_อนุมัติเองได้_พร้อมหมายเหตุที่มา()
     {
         var r = Xml();
         Assert.Equal(Buyer, r.BuyerName);
@@ -122,15 +124,25 @@ public class OcrRapbizzSpIn00933Tests
         // ก่อนแก้: ดู XML อย่างเดียว (= FromEtax ไม่มีข้อความหน้า · ตัวเดิม FromStructured) ⇒ §82/5(1) บล็อก (= "VAT ต้องห้าม" ทุกบรรทัด)
         Assert.True(OcrBuyerOnPaper.JudgeClaim(true, 93.81m, OcrBuyerOnPaper.FromEtax(r.BuyerName, r.BuyerTaxId, null, null, null, null)).BlockClaim);
 
-        // หลังแก้: XML ∪ หน้าเอกสารที่ลงนาม
+        // หลังแก้: XML + ข้อความบนหน้า PDF (เลขเราตรงตัวเท่านั้น)
         var ev = OcrBuyerOnPaper.FromEtax(r.BuyerName, r.BuyerTaxId, PageText, r.SellerTaxId, BuyerTaxId, Buyer);
         Assert.Equal((OcrPaperPresence.Printed, OcrPaperPresence.Printed), (ev.Name, ev.TaxId));
         Assert.False(OcrBuyerOnPaper.JudgeClaim(true, 93.81m, ev).BlockClaim);
-        var note = OcrBuyerOnPaper.EtaxXmlGapNote(r.BuyerName, r.BuyerTaxId, ev);
-        Assert.NotNull(note);
-        Assert.StartsWith("[VAT-NOTE]", note);
-        Assert.Contains("เลขประจำตัวผู้เสียภาษีของผู้ซื้อ", note);
-        Assert.DoesNotContain("[VAT-CLAIM]", note);
+        // คำตัดสินข้อ 158: เลือกข้อมูลที่ครบและถูกต้องที่สุดต่อช่อง — เลขผู้ซื้อ + สาขาจากหน้า (XML ขาด) · ชื่อคงตาม XML
+        var fill = OcrEtaxPageFill.ResolveBuyer(r.BuyerName, r.BuyerTaxId, r.BuyerBranchCode, r.SellerTaxId, PageText, BuyerTaxId, Buyer);
+        Assert.Equal((Buyer, BuyerTaxId, "00000"), (fill.BuyerName, fill.BuyerTaxId, fill.BuyerBranchCode));
+        Assert.Equal(new[] { "เลขประจำตัวผู้เสียภาษีของผู้ซื้อ", "สาขาผู้ซื้อ" }, fill.FilledFromPage);
+        Assert.Empty(fill.Conflicts);
+        Assert.False(fill.BlockingConflict);
+        Assert.NotNull(fill.Note);
+        Assert.StartsWith(OcrEtaxPageFill.FillTag, fill.Note);
+        Assert.Contains(OcrEtaxPageFill.RuleCode, fill.Note);
+        Assert.Contains("แจ้งผู้ขายแก้ข้อมูล e-Tax", fill.Note);
+        Assert.Contains("ไม่ได้ตรวจลายเซ็น", fill.Note);
+        Assert.DoesNotContain(OcrEtaxPageFill.ConflictTag, fill.Note);
+        Assert.True(OcrPostingReadiness.Evaluate(fill.Note, true).CanAutoApprove);   // ไม่บังคับให้คนยืนยัน (ข้อ 158)
+        // ค่าที่เติมแล้วผ่านด่าน §82/5(1) ด้วย XML อย่างเดียว (ตัวเดียวกับที่ service ส่งต่อหลังเติม)
+        Assert.False(OcrBuyerOnPaper.JudgeClaim(true, 93.81m, OcrBuyerOnPaper.FromEtax(fill.BuyerName, fill.BuyerTaxId, null, null, null, null)).BlockClaim);
     }
 
     [Fact]
@@ -140,15 +152,66 @@ public class OcrRapbizzSpIn00933Tests
         var noBuyer = OcrBuyerOnPaper.FromEtax(Buyer, null, pageNoBuyer, SellerTaxId, BuyerTaxId, Buyer);
         Assert.Equal(OcrPaperPresence.Missing, noBuyer.TaxId);
         Assert.True(OcrBuyerOnPaper.JudgeClaim(true, 93.81m, noBuyer).BlockClaim);
-        Assert.Null(OcrBuyerOnPaper.EtaxXmlGapNote(Buyer, null, noBuyer));
+        var fillNoBuyer = OcrEtaxPageFill.ResolveBuyer(Buyer, null, null, SellerTaxId, pageNoBuyer, BuyerTaxId, Buyer);
+        Assert.Equal(((string?)null, (string?)null), (fillNoBuyer.BuyerTaxId, fillNoBuyer.BuyerBranchCode));
+        Assert.Null(fillNoBuyer.Note);
+
+        // ฝ่ายค้านข้อ 1: เลขอื่นบนหน้าที่ checksum ผ่าน (ไม่ใช่เลขผู้ขาย · ไม่ใช่เลขเรา) ต้องไม่ชนะ "N/A" — ตัวอ่านกระดาษเดิม (Read) ยอมเลขนี้
+        const string pageOtherId = pageNoBuyer + "\nเลขอ้างอิง 0105555175590";
+        Assert.Equal(OcrPaperPresence.Printed, OcrBuyerOnPaper.Read(pageOtherId, SellerTaxId, null, Buyer, BuyerTaxId, Buyer).TaxId);
+        var otherId = OcrBuyerOnPaper.FromEtax(Buyer, null, pageOtherId, SellerTaxId, BuyerTaxId, Buyer);
+        Assert.Equal(OcrPaperPresence.Missing, otherId.TaxId);
+        Assert.True(OcrBuyerOnPaper.JudgeClaim(true, 93.81m, otherId).BlockClaim);
+        Assert.Null(OcrEtaxPageFill.ResolveBuyer(Buyer, null, null, SellerTaxId, pageOtherId, BuyerTaxId, Buyer).BuyerTaxId);
+        // เลขเราอ่านเพี้ยนหนึ่งหลัก ⇒ ไม่นับ (ตัวเลขล้วนไม่มีการสะกดผิด — ไม่ fuzzy)
+        var nearMiss = OcrBuyerOnPaper.FromEtax(Buyer, null, pageNoBuyer + "\nเลขผู้ซื้อ 0203562005872", SellerTaxId, BuyerTaxId, Buyer);
+        Assert.Equal(OcrPaperPresence.Missing, nearMiss.TaxId);
+        Assert.Null(OcrEtaxPageFill.ResolveBuyer(Buyer, null, null, SellerTaxId, pageNoBuyer + "\nเลขผู้ซื้อ 0203562005872", BuyerTaxId, Buyer).BuyerTaxId);
+        // ไม่รู้เลขบริษัทเรา ⇒ ไม่มีอะไรให้เทียบตรงตัว ⇒ ตาม XML (บล็อก)
+        Assert.Equal(OcrPaperPresence.Missing, OcrBuyerOnPaper.FromEtax(Buyer, null, PageText, SellerTaxId, null, Buyer).TaxId);
 
         var complete = OcrBuyerOnPaper.FromEtax(Buyer, BuyerTaxId, PageText, SellerTaxId, BuyerTaxId, Buyer);
         Assert.Equal(OcrBuyerOnPaper.FromEtax(Buyer, BuyerTaxId, null, null, null, null), complete);
-        Assert.Null(OcrBuyerOnPaper.EtaxXmlGapNote(Buyer, BuyerTaxId, complete));
+        var fillComplete = OcrEtaxPageFill.ResolveBuyer(Buyer, BuyerTaxId, "00000", SellerTaxId, PageText, BuyerTaxId, Buyer);
+        Assert.Null(fillComplete.Note);   // XML ครบและตรงหน้า ⇒ ไม่มีอะไรต้องบอก
+        var fillNoPage = OcrEtaxPageFill.ResolveBuyer(Buyer, null, null, SellerTaxId, null, BuyerTaxId, Buyer);
+        Assert.Equal(((string?)null, (string?)null, (string?)null), (fillNoPage.BuyerTaxId, fillNoPage.BuyerBranchCode, fillNoPage.Note));
 
         var xmlOnly = OcrBuyerOnPaper.FromEtax(Buyer, null, null, SellerTaxId, BuyerTaxId, Buyer);
         Assert.Equal((OcrPaperPresence.Printed, OcrPaperPresence.Missing), (xmlOnly.Name, xmlOnly.TaxId));
         Assert.True(OcrBuyerOnPaper.JudgeClaim(true, 93.81m, xmlOnly).BlockClaim);   // ไม่มีข้อความหน้า ⇒ ตาม XML เดิม (บล็อก)
+    }
+
+    [Fact]
+    public void ผู้ซื้อ_ข้อมูลXMLมีค่าจริงแต่ขัดกับหน้า_คงค่าXML_สาขาขัดเตือนไม่หยุด_เลขผู้ซื้อหรือผู้ขายขัดจริงหยุด()
+    {
+        // สาขาใน XML 00012 · หน้าพิมพ์สำนักงานใหญ่ ⇒ คง 00012 + เตือน (ไม่หยุดอนุมัติ)
+        var branch = OcrEtaxPageFill.ResolveBuyer(Buyer, BuyerTaxId, "00012", SellerTaxId, PageText, BuyerTaxId, Buyer);
+        Assert.Equal("00012", branch.BuyerBranchCode);
+        Assert.Single(branch.Conflicts);
+        Assert.False(branch.BlockingConflict);
+        Assert.StartsWith(OcrEtaxPageFill.FillTag, branch.Note);
+        Assert.True(OcrPostingReadiness.Evaluate(branch.Note, true).CanAutoApprove);
+
+        // เลขผู้ซื้อใน XML เป็นเลขอื่นที่ถูกต้อง แต่หน้าพิมพ์เลขเรา (ไม่มีเลขใน XML บนหน้า) ⇒ คงค่า XML + หยุด
+        var buyer = OcrEtaxPageFill.ResolveBuyer(Buyer, "0105555175590", null, SellerTaxId, PageText, BuyerTaxId, Buyer);
+        Assert.Equal("0105555175590", buyer.BuyerTaxId);
+        Assert.True(buyer.BlockingConflict);
+        Assert.Contains(OcrEtaxPageFill.ConflictTag, buyer.Note);
+        Assert.Contains(OcrPostingReadiness.BlockingTags, t => t.Tag == OcrEtaxPageFill.ConflictTag);
+        Assert.False(OcrPostingReadiness.Evaluate(buyer.Note, true).CanAutoApprove);
+
+        // เลขผู้ขายใน XML ไม่อยู่บนหน้า และหน้าพิมพ์เลขผู้ขายอื่นที่ถูกต้อง ⇒ หยุด
+        var page = "ใบกำกับภาษี\nผู้ขาย เลขประจำตัวผู้เสียภาษี 0105555175590\nผู้ซื้อ เลขที่ผู้เสียภาษี : 0203562005871 สาขาที่ : สำนักงานใหญ่";
+        var seller = OcrEtaxPageFill.ResolveBuyer(Buyer, null, null, SellerTaxId, page, BuyerTaxId, Buyer);
+        Assert.True(seller.BlockingConflict);
+        Assert.Equal(BuyerTaxId, seller.BuyerTaxId);   // เลขเราตรงตัวยังเติมได้ — ข้อขัดแย้งอยู่ที่ฝั่งผู้ขาย
+        Assert.False(OcrPostingReadiness.Evaluate(seller.Note, true).CanAutoApprove);
+        // สาขาที่พิมพ์เป็นตัวเลขบนบรรทัดเลขเรา
+        var numbered = OcrEtaxPageFill.ResolveBuyer(Buyer, null, null, SellerTaxId,
+            "เลขผู้เสียภาษี 0105559170207\nลูกค้า เลขที่ผู้เสียภาษี 0203562005871 สาขาที่ 00003", BuyerTaxId, Buyer);
+        Assert.Equal("00003", numbered.BuyerBranchCode);
+        Assert.False(numbered.BlockingConflict);
     }
 
     // ── เส้นกระดาษ (ข้อความหน้า PDF): เคส F + ส่วนลดหน้าต้นฉบับ/สำเนา ──────────────────────────────────────

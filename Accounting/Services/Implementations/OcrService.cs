@@ -976,6 +976,35 @@ public class OcrService : IOcrService
                 // ใครเป็นใครกระจายอยู่หลายจุด และจุดที่ย้ายค่าไม่ได้ sync ลงแถวสแกน
                 // ⇒ รวมเป็นตัวตัดสินเดียว (ตัวตนจาก DB > ป้ายบนกระดาษ > ช่องที่ engine ใส่)
                 //   แล้ว sync ผลสุดท้ายลงแถวสแกน**ครบทุกช่อง**ที่จุดเดียว (ดูบล็อก persist ด้านล่าง)
+                // 2026-10-26 คำตัดสินเจ้าของข้อ 158 (ใบ e-Tax SP-IN2026-10-00933 · XML เลขผู้ซื้อ "N/A"): เลือกข้อมูลที่ครบและถูกต้องที่สุดระหว่าง XML
+                // กับข้อความบนหน้า PDF ต่อช่อง (ตัวตัดสินเดียว Helpers/OcrEtaxPageFill) — ต้องทำก่อนตัดสินฝั่ง (ฝั่งของ e-Tax ตัดสินจากเลขภาษีผู้ซื้อ)
+                if (ocrEngineUsed == "EtaxXml")
+                {
+                    var etaxFill = Accounting.Helpers.OcrEtaxPageFill.ResolveBuyer(extractedData.BuyerName, extractedData.BuyerTaxId,
+                        extractedData.BuyerBranchCode, extractedData.VendorTaxId,
+                        string.IsNullOrWhiteSpace(pdfTextLayer) ? null : Ocr.ThaiTextNormalizer.Normalize(pdfTextLayer),
+                        companyContext?.TaxId, companyContext?.Name);
+                    if (etaxFill.FilledFromPage.Count > 0)
+                    {
+                        if (etaxFill.BuyerTaxId != extractedData.BuyerTaxId)
+                            extractedData.Note(Accounting.Helpers.OcrFieldKeys.BuyerTaxId, etaxFill.BuyerTaxId, Accounting.Helpers.OcrFieldSource.PaperLabel,
+                                0.95m, "ข้อความบนหน้า PDF (XML ไม่มีเลขผู้ซื้อ) — ตรงกับเลขบริษัทเราทุกหลัก");
+                        if (etaxFill.BuyerBranchCode != extractedData.BuyerBranchCode)
+                            extractedData.Note(Accounting.Helpers.OcrFieldKeys.BuyerBranchCode, etaxFill.BuyerBranchCode, Accounting.Helpers.OcrFieldSource.PaperLabel,
+                                0.90m, "ข้อความบนหน้า PDF บนบรรทัดเลขผู้ซื้อ (XML ไม่มีสาขา)");
+                        if (etaxFill.BuyerName != extractedData.BuyerName)
+                            extractedData.Note(Accounting.Helpers.OcrFieldKeys.BuyerName, etaxFill.BuyerName, Accounting.Helpers.OcrFieldSource.PaperLabel,
+                                0.90m, "ชื่อบริษัทเรา — ชื่อพิมพ์บนหน้า PDF (XML ไม่มีชื่อผู้ซื้อ)");
+                    }
+                    extractedData.BuyerName = etaxFill.BuyerName;
+                    extractedData.BuyerTaxId = etaxFill.BuyerTaxId;
+                    extractedData.BuyerBranchCode = etaxFill.BuyerBranchCode;
+                    if (etaxFill.Note is string etaxFillNote)
+                    {
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + etaxFillNote;
+                        extractedData.ReasoningTrace.Add(etaxFillNote);
+                    }
+                }
                 var vendorBlock0 = new Accounting.Helpers.OcrPartyBlock(extractedData.VendorName, extractedData.VendorTaxId,
                     extractedData.VendorAddress, extractedData.VendorBranchCode);
                 var buyerBlock0 = new Accounting.Helpers.OcrPartyBlock(extractedData.BuyerName, extractedData.BuyerTaxId,
@@ -1341,9 +1370,9 @@ public class OcrService : IOcrService
                 // (FillOurName / ที่อยู่จากทะเบียน) · e-Tax XML ใช้ช่อง BuyerTradeParty · ตัวตัดสิน Helpers/OcrBuyerOnPaper
                 else if (role.InputVatClaimable == true && role.OurRole == "Buyer" && docVat > 0)
                 {
-                    // 2026-10-26 (ใบ SP-IN2026-10-00933): XML ส่งเลขผู้ซื้อเป็น "N/A" แต่หน้า PDF ที่ผู้ขายลงนาม (ไฟล์เดียวกัน) พิมพ์เลขเราไว้ —
-                    // เดิมดู XML อย่างเดียว ⇒ [VAT-CLAIM] ปิดเคลมทุกบรรทัด ("VAT ต้องห้าม") ทั้งที่ใบเต็มรูปครบ · ตอนนี้หลักฐาน = XML ∪ หน้าเอกสารที่ลงนาม
-                    // (ตัวตัดสินเดียว OcrBuyerOnPaper.FromEtax) + หมายเหตุ [VAT-NOTE] ให้ขอผู้ขายแก้ XML (ไม่ปิดเคลม)
+                    // 2026-10-26 (ใบ SP-IN2026-10-00933): XML ส่งเลขผู้ซื้อเป็น "N/A" แต่ข้อความบนหน้า PDF (ไฟล์เดียวกัน) มีเลขเรา — เดิมดู XML อย่างเดียว
+                    // ⇒ [VAT-CLAIM] ปิดเคลมทุกบรรทัด ("VAT ต้องห้าม") · ตอนนี้ช่องผู้ซื้อถูกเติมจากหน้าแล้วที่ OcrEtaxPageFill.ResolveBuyer (คำตัดสินข้อ 158 ·
+                    // ก่อนตัดสินฝั่ง) · ตัวนี้ยังนับเฉพาะเลขเราตรงตัวบนหน้า (OcrBuyerOnPaper.FromEtax) เป็นชั้นกันซ้ำ · ไม่ได้ตรวจลายเซ็นของหน้า
                     var buyerEvidence = ocrEngineUsed == "EtaxXml"
                         ? Accounting.Helpers.OcrBuyerOnPaper.FromEtax(extractedData.BuyerName, extractedData.BuyerTaxId,
                             string.IsNullOrWhiteSpace(pdfTextLayer) ? null : Ocr.ThaiTextNormalizer.Normalize(pdfTextLayer),
@@ -1359,12 +1388,7 @@ public class OcrService : IOcrService
                         extractedData.ReasoningTrace.Add(
                             $"[VAT-CLAIM] {buyerVerdict.RuleCode} · {buyerVerdict.LegalReference} — {buyerEvidence.Why}");
                     }
-                    else if (ocrEngineUsed == "EtaxXml"
-                        && Accounting.Helpers.OcrBuyerOnPaper.EtaxXmlGapNote(extractedData.BuyerName, extractedData.BuyerTaxId, buyerEvidence) is string etaxBuyerGap)
-                    {
-                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + etaxBuyerGap;
-                        extractedData.ReasoningTrace.Add(etaxBuyerGap + " — " + buyerEvidence.Why);
-                    }
+
                 }
 
                 // §82/5(4)/(6) — ต้องห้ามตาม "ชนิดรายจ่าย" ไม่ใช่ตามรูปแบบใบ

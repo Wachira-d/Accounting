@@ -36,6 +36,9 @@ public static class OcrPostingReadiness
         // รอบ 200 ทีม K2 (C-09): หน้ามีทั้งบาทและสกุลต่างประเทศ และบริเวณยอดรวมไม่บอกสกุล — ผู้เขียน Helpers/OcrCurrencyEvidence
         (OcrCurrencyEvidence.UnsureTag, "กระดาษมีทั้งบาทและสกุลต่างประเทศ — ยังไม่รู้ว่ายอดเป็นสกุลไหน"),
         ("[TAX-INV-PENDING]", "กระดาษยังไม่ใช่ใบกำกับภาษี — VAT พักไว้รอใบจริง"),
+        // 2026-10-26 คำตัดสินเจ้าของข้อ 158 (ใบ e-Tax SP-IN2026-10-00933): ข้อมูลที่ XML ขาดเติมจากหน้า PDF ได้เอง (ไม่หยุด — [ETAX-PAGE-FILL]) ·
+        // แต่เลขผู้ซื้อ/ผู้ขายใน XML ขัดกับหน้าจริง ⇒ หยุด (ผู้เขียน OcrService.ScanAsync ผ่าน Helpers/OcrEtaxPageFill)
+        (OcrEtaxPageFill.ConflictTag, "เลขผู้ซื้อ/ผู้ขายใน e-Tax XML ขัดกับหน้า PDF — ตรวจกับกระดาษก่อนอนุมัติ"),
         ("[WHT-CERT]",        "เป็นหนังสือรับรองหัก ณ ที่จ่าย ไม่ใช่เอกสารขาย/ซื้อใบใหม่"),
         // รอบ 192 (Total-first): ยอดรวมที่มีหลักฐานแข็งขัดกันและอธิบายกันไม่ได้ — ผู้เขียน Helpers/OcrTotalAnchor
         (OcrTotalAnchor.ConflictTag, "พบยอดรวมทั้งสิ้นสองค่าที่ต่างมีหลักฐานบนกระดาษ — ยังไม่รู้ว่ายอดไหนถูก"),

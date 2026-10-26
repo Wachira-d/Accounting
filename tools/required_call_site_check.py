@@ -9377,7 +9377,7 @@ RULES += [
 ]
 
 # ── 2026-10-26 ใบจริง SP-IN2026-10-00933 (Rapbizz Direct e-Tax · ทีม R): ราคาบรรทัดรวม VAT + ส่วนลดท้ายบิลรวม VAT ที่หัวใบประกาศ ·
-# XML เลขผู้ซื้อ "N/A" แต่หน้า PDF ที่ลงนามพิมพ์เลข ⇒ เดิมปิดเคลมทั้งใบ · ล็อกจุดเรียกตัวตัดสินใหม่ (มี ≠ ถูกเรียก — F2 ข้อ 2)
+# XML เลขผู้ซื้อ "N/A" แต่ข้อความบนหน้า PDF มีเลขเรา ⇒ เดิมปิดเคลมทั้งใบ · ล็อกจุดเรียกตัวตัดสินใหม่ (มี ≠ ถูกเรียก — F2 ข้อ 2)
 _R_WHY = "ใบ SP-IN2026-10-00933 (2026-10-26): "
 RULES += [
     dict(file=OCR, method="MapEtaxToOcrData",
@@ -9386,9 +9386,10 @@ RULES += [
          forbid=["lt - tb > 0m ? lt - tb"],
          why=_R_WHY + "ส่วนลดหัวใบของเส้น e-Tax ต้องมาจากตัวตัดสินเดียว (สูตรเดิม LineTotal − TaxBasis + ส่วนลดรวม VAT ที่หัวใบพิสูจน์) — เขียนสูตรเองที่นี่ = ส่วนลด 576 หาย"),
     dict(file=OCR, method="ScanAsync",
-         must=["OcrBuyerOnPaper.FromEtax(", "OcrBuyerOnPaper.EtaxXmlGapNote("],
+         must=["OcrBuyerOnPaper.FromEtax(", "OcrEtaxPageFill.ResolveBuyer(", "extractedData.BuyerTaxId = etaxFill.BuyerTaxId"],
+         before=[("OcrEtaxPageFill.ResolveBuyer(", "var buyerBlock0 = new Accounting.Helpers.OcrPartyBlock(")],
          forbid=["OcrBuyerOnPaper.FromStructured(extractedData.BuyerName"],
-         why=_R_WHY + "หลักฐานผู้ซื้อของใบ e-Tax = XML ∪ หน้า PDF ที่ลงนาม — ดู XML อย่างเดียว = §82/5(1) ปิดเคลมใบเต็มรูปที่ครบ"),
+         why=_R_WHY + "คำตัดสินข้อ 158: ช่องผู้ซื้อของใบ e-Tax เลือกค่าที่ครบ/ถูกต้องที่สุดระหว่าง XML กับหน้า PDF ที่ตัวตัดสินเดียว ก่อนตัดสินฝั่ง · เลขเราตรงตัวเท่านั้น"),
     dict(file="Helpers/OcrDuplicateLineGuard.cs", method="HeaderFigures",
          must=["OcrLineReconciler.PreVatDiscountOnInclusiveLines("],
          why=_R_WHY + "ด่านแถวซ้ำต้องรู้เคส F ของตัวกระทบยอด (ต้นฉบับ+สำเนาที่มีส่วนลดก่อน VAT บนราคารวม VAT ไม่งั้นหลุดไปยุบ ×2)"),
