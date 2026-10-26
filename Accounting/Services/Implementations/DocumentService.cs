@@ -2422,7 +2422,11 @@ public partial class DocumentService : IDocumentService
         if (!string.IsNullOrEmpty(request.Search))
         {
             var search = $"%{request.Search}%";
+            // ผู้ใช้ 2026-10-26: "ระบบเคยค้นหาอ้างอิงได้ ตอนนี้ค้นไม่ได้แล้ว" (ค้น RES-149669 ไม่เจอใบเสร็จมัดจำที่อ้างอิง/เลขจองนั้น) ⇒
+            // ค้นช่องอ้างอิง + เลขจองด้วย (ใบที่ระบบสร้างจากการจอง/ชำระออนไลน์เก็บเลขต้นทางไว้สองช่องนี้)
             query = query.Where(d => EF.Functions.ILike(d.DocumentNumber, search)
+                || (d.Reference != null && EF.Functions.ILike(d.Reference, search))
+                || (d.BookingNumber != null && EF.Functions.ILike(d.BookingNumber, search))
                 || (d.Contact != null && EF.Functions.ILike(d.Contact.Name, search)));
         }
 

@@ -80,6 +80,8 @@ public class QuickSearchService : IQuickSearchService
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && d.Sensitivity == Models.Enums.SensitivityKind.None
                 && (EF.Functions.ILike(d.DocumentNumber, pattern)
+                    || (d.Reference != null && EF.Functions.ILike(d.Reference, pattern))
+                    || (d.BookingNumber != null && EF.Functions.ILike(d.BookingNumber, pattern))
                     || (d.Notes != null && EF.Functions.ILike(d.Notes, pattern))))
             .OrderByDescending(d => d.DocumentDate)
             .Take(perKindLimit)
