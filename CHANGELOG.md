@@ -5536,3 +5536,11 @@ warnings ⇒ กล่องเหลือง "ระบบไม่แน่�
 (ส่วนลด 576 ต่อบรรทัด vs 538.32 ท้ายบิล · 1,226.84 vs 1,840) — คำนวณทางเลือก `BillDiscountAmount` 538.32 ให้ยอดเท่าเดิมทุกสตางค์ไว้ รอเจ้าของ · เมทริกซ์ทุกรูปแบบ `docs/OCR_TOTALS_MATRIX.md`
 (16 ช่อง · ล็อกด้วยอะไร · ช่องว่างที่เหลือ) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT · สังเคราะห์ · วางหลัง F · baseline: 28 ตัว (+ สังเคราะห์ 24 ช่อง) ด้วย **port Python ของ `Classify`** (เทียบเท่า C# ณ 74a4796c — ไม่ใช่ตัว C# เอง) = 0 เปลี่ยนใน vector จริง · replay/golden harness ผ่าน C# จริง (`OcrReplay*GoldenTests` · `EtaxGoldenCorpusTests`) **ยังต้องรอ CI** (ไม่มี SDK)) +
 `OcrConfidenceGateway`/`OcrDuplicateLineGuard` รู้เคส G · ใบนี้ยังไม่เข้า `OcrPaperSamples` (golden คู่สัญญาต้องรัน dotnet — ขั้นตอนจดใน MATRIX §5) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 ทีม V (ผู้ใช้: "ตั้งทีมวิเคราะห์อีกว่ามีส่วนไหนที่ลงบันทึก JE ไม่ถูกต้องอีกไหม" หลังเคส PV-202610-0040 บีบฐาน 500.93→402.93):
+ตรวจตัวประกอบ JE อัตโนมัติทุกเส้น (AutoPost ขาย/ซื้อ/CN-DN/รับ-จ่าย/PV/CIL/GRN · CreatePaymentJournalAsync · multi-doc allocation · POS ·
+settlement/gateway · ค่าเสื่อม · ปิดปี · recurring · payroll · integration · course credit · lodging) เป็น matrix `docs/JE_POSTING_AUDIT.md`
+(52 เคส · ถูก 43 · ผิด 2 (แก้ครบ) · ⚠ backlog 5 · ❓ ให้เจ้าของตัดสิน 2) · บั๊กที่แก้: **V-DN-01** ใบเพิ่มหนี้ของใบที่ชำระครบลง Dr เงินสดตอนอนุมัติ (ยืมกติกา
+"ใบเดิมชำระครบ ⇒ เงินสด" ของใบลดหนี้) แล้วตอนรับชำระลง Dr เงินสดอีกรอบ ⇒ เงินสดเกินสองเท่า/ลูกหนี้ติดลบ — ตัวตัดสินเดียว
+`AdjustmentNoteAccount.CounterLegIsMoney` (DN ดูเทอมของตัวเอง · CN กติกาเดิม) · **V-CN-03** ขาเงินของ CN/DN เดิน `UseMoneyAccount()`
+แทน "111" ตายตัว · เทสต์สองทิศ `JePostingAuditTests` (13) · DOCUMENT_FLOW §6.2f · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_

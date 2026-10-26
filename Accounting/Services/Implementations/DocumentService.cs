@@ -17909,8 +17909,12 @@ public partial class DocumentService : IDocumentService
                         doc.DocumentNumber);
                 }
             }
-            var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
             var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
+            // ทีม V ตรวจ JE 2026-10-26 (V-DN-01 · docs/JE_POSTING_AUDIT.md): ขา counter = เงิน เฉพาะ ใบลดหนี้ของใบที่ชำระครบ (คืนเงิน)
+            // หรือ ใบเพิ่มหนี้ที่ "จ่ายทันที" เอง — เดิมใบเพิ่มหนี้ยืมกติกาใบลดหนี้ ⇒ ใบเพิ่มหนี้ของใบที่ชำระครบลง Dr เงินสดตอนอนุมัติ
+            // แล้วตอนรับชำระ (ใบเพิ่มหนี้อยู่ใน PayableDocumentTypes) ลง Dr เงินสด/Cr ลูกหนี้อีกรอบ ⇒ เงินสดเกินสองเท่า + ลูกหนี้ติดลบ
+            var isCashSettlement = Accounting.Helpers.AdjustmentNoteAccount.CounterLegIsMoney(
+                isCreditNote, doc.PaymentType, source?.BalanceDue);
 
             // ── รอบ PP36 ทีม F2 (E-7 · คำตัดสินข้อ 131/134): ใบลด/เพิ่มหนี้ฝั่งซื้อของใบที่เป็นเจ้าของ ภ.พ.36 ──
             // ใบเดิม: Dr ค่าใช้จ่าย ฐาน · Dr 11640 VAT / Cr เจ้าหนี้ ฐาน · Cr 21912 VAT ⇒ ใบลดหนี้ต้องกลับ "ทรงเดียวกัน":
@@ -17943,12 +17947,16 @@ public partial class DocumentService : IDocumentService
             // ลงเข้าผังกลางแทน ⇒ ผังเฉพาะรายค้างยอดถาวรเพราะใบตั้งหนี้กับใบปรับปรุง
             // อยู่คนละบัญชี (ยอดคงเหลือรายคู่ค้าไม่มีวันเป็นศูนย์)
             // รอบ 206: ลด/เพิ่มหนี้ของใบต้นทาง ⇒ ผังลูกหนี้/เจ้าหนี้ที่ใบต้นทางตั้งไว้จริง (ไม่ใช่ผังที่ผู้ติดต่อปักตอนนี้)
-            var counterAcc = !isCashSettlement && source != null
-                ? await OriginalArApAccountAsync(companyId, source.Id, isPurchaseSide ? Accounting.Helpers.ArApSide.Payable : Accounting.Helpers.ArApSide.Receivable,
-                    doc, pinContact => FindAccountAsync(companyId, counterAccCode, pinContact))
-                : await FindAccountAsync(companyId, counterAccCode, doc.Contact);
+            // ทีม V (V-CN-03): ขาเงินของใบลด/เพิ่มหนี้เดินช่องทางเงินของเอกสาร (ธนาคาร/ผังที่เลือก → เงินสดตั้งต้น) ตัวเดียวกับทุกใบ —
+            // เดิมลง "111" ตายตัว ⇒ คืนเงินผ่านธนาคารไปโผล่เงินสดในมือ · ไม่มีช่องทาง = 111 เหมือนเดิมทุกประการ
+            var counterAcc = isCashSettlement
+                ? UseMoneyAccount()
+                : source != null
+                    ? await OriginalArApAccountAsync(companyId, source.Id, isPurchaseSide ? Accounting.Helpers.ArApSide.Payable : Accounting.Helpers.ArApSide.Receivable,
+                        doc, pinContact => FindAccountAsync(companyId, counterAccCode, pinContact))
+                    : await FindAccountAsync(companyId, counterAccCode, doc.Contact);
             var counterDesc = $"{typeLabel} - {doc.DocumentNumber}" +
-                (isCashSettlement ? " (เงินสด)" : "");
+                Accounting.Helpers.AdjustmentNoteAccount.CounterLegSuffix(isCashSettlement);
 
             // CN reduces the receivable/increases payable for purchase return; DN opposite.
             // Sales side:    CN→Cr counter, DN→Dr counter
