@@ -54,6 +54,11 @@ public class RevenueRecognitionController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<RevenueScheduleResponse>>>> ProcessDueRecognitions(Guid companyId, [FromQuery] DateTime asOfDate)
         => Ok(new ApiResponse<List<RevenueScheduleResponse>>(true, await _service.ProcessDueRecognitionsAsync(companyId, asOfDate)));
 
+    /// <summary>R-40 รายงานตรวจข้อมูล (อ่านอย่างเดียว): JE REV-* ที่ลงผังกลุ่ม 218 ผิดกลุ่ม — ระบบไม่แก้ JE เดิม</summary>
+    [HttpGet("deferred-account-audit")]
+    public async Task<ActionResult<ApiResponse<DeferredAccountAuditResponse>>> GetDeferredAccountAudit(Guid companyId)
+        => Ok(new ApiResponse<DeferredAccountAuditResponse>(true, await _service.GetDeferredAccountAuditAsync(companyId)));
+
     [HttpGet("deferred-revenue")]
     public async Task<ActionResult<ApiResponse<DeferredRevenueReportResponse>>> GetDeferredRevenue(Guid companyId, [FromQuery] DateTime asOfDate)
         => Ok(new ApiResponse<DeferredRevenueReportResponse>(true, await _service.GetDeferredRevenueReportAsync(companyId, asOfDate)));

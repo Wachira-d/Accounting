@@ -22,7 +22,8 @@ namespace Accounting.Models.Enums
     /// (รับรู้รายได้) · Cancelled = คืนเครดิต</summary>
     public enum CreditBookingStatus { Booked = 0, Attended = 1, NoShow = 2, Cancelled = 3, LateCancelled = 4 }
 
-    public enum CreditLedgerKind { Purchase = 0, Reserve = 1, Release = 2, Consume = 3, Expire = 4, Cancel = 5 }
+    /// <summary>Adjust (รอบ 205 W6 · R-38) = ลดเครดิตจากใบลดหนี้คืนเงินบางส่วน — บัตรยัง Active</summary>
+    public enum CreditLedgerKind { Purchase = 0, Reserve = 1, Release = 2, Consume = 3, Expire = 4, Cancel = 5, Adjust = 6 }
 
     public enum CreditCancelOutcome { Refund = 0, Forfeit = 1 }
 }

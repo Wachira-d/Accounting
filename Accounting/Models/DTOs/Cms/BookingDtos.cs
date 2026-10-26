@@ -242,6 +242,12 @@ public class CreateBookingRequest
     // Payment info
     public Guid? PaymentGatewayId { get; set; }
     public string? PaymentReference { get; set; }
+
+    // ── จ่ายด้วยบัตรคอร์ส (รอบ 205 W6 · R-39 · Helpers/CreditBookingLink) ──
+    /// <summary>true = กันเครดิตจากบัตรของลูกค้า (ต้องมี CustomerId ที่ผูกผู้ติดต่อ) · ไม่ออกเอกสาร ERP · ยอดเงินการจอง = 0</summary>
+    public bool PayWithCredit { get; set; }
+    /// <summary>บัตรที่ใช้ · ว่าง = ระบบเลือกบัตรที่หมดอายุก่อน (FEFO) ที่ใช้กับบริการนี้ได้</summary>
+    public Guid? CreditPassId { get; set; }
 }
 
 public class UpdateBookingStatusRequest
@@ -291,6 +297,8 @@ public class BookingResponse
     /// <summary>รอบ 194 (C-1): ผลของขั้น ERP อัตโนมัติตอนเปลี่ยนสถานะ (ยกเลิก/เสร็จ) ที่ผู้กดต้องรู้ — ใบมัดจำไม่ถูกยกเลิก ·
     /// ต้องออกใบกำกับเอง · ขั้นที่ล้มพร้อมเหตุ · ว่าง = ไม่มีอะไรต้องทำ (ข้อความเดียวกันถูกประทับบน <c>InternalNotes</c> ด้วย)</summary>
     public List<string> ErpNotices { get; set; } = new();
+    /// <summary>R-39: เลขบัตรคอร์สที่ใช้จ่ายการจองนี้ · null = การจองชำระปกติ</summary>
+    public string? CreditPassNumber { get; set; }
     /// <summary>แสดงปุ่ม "รับเงินแล้ว — ออกใบกำกับภาษี" ไหม (server ตัดสินด้วย <c>BookingInvoiceTimingPolicy.Decide(PaymentReceived)</c> · คำตัดสินข้อ 155)</summary>
     public bool CanIssueTaxInvoiceNow { get; set; }
 }

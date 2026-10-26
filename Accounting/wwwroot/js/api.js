@@ -1556,6 +1556,10 @@ const API = {
       recognizeRevenue: (id) => API.post(`${base}/revenue-recognition/schedules/${id}/recognize`),
       // asOfDate บังคับฝั่ง backend — ไม่ส่ง = default(DateTime) ปี 0001 → รายงานว่างเสมอ
       getDeferredRevenue: (asOfDate) => API.get(`${base}/revenue-recognition/deferred-revenue?asOfDate=${asOfDate || new Date().toISOString().slice(0, 10)}`),
+      // รอบ 205 W6 (R-40): รายงานตรวจข้อมูล (อ่านอย่างเดียว) — JE REV-* ที่ลงผังกลุ่ม 218 ผิดกลุ่ม
+      getDeferredAccountAudit: () => API.get(`${base}/revenue-recognition/deferred-account-audit`),
+      // รอบ 205 W6 (R-41 B2): แพ็กเกจคอร์สสำหรับผูกสินค้าบนเว็บ
+      getCreditPackages: () => API.get(`${base}/course-credits/packages`),
       // Time & Billing
       getTimeEntries: (q = '') => API.get(`${base}/time-billing/entries${q}`),
       getTimeEntry: (id) => API.get(`${base}/time-billing/entries/${id}`),
@@ -1831,6 +1835,10 @@ const API = {
       // POS - Service Package
       getPosPackages: (q = '') => API.get(`${base}/pos/packages${q}`),
       getPosPackage: (id) => API.get(`${base}/pos/packages/${id}`),
+      // รอบ 205 W6 (R-26): รายการผังรายได้สำหรับช่อง "บัญชีรายได้" ของแพ็กเกจ (ชุดเดียวกับรายการพิเศษ)
+      getPosCustomItemOptions: () => API.get(`${base}/pos/custom-item-options`),
+      // รอบ 205 W6 (R-27): ยอดขายตามพนักงาน (ฐานคอมมิชชัน) — แท็บคอมมิชชันอ่านตัวนี้แทน commission-summary (ตารางสรุปไม่มีผู้เขียน)
+      getPosStaffSales: (from, to) => API.get(`${base}/pos/reports/staff-sales?from=${from}&to=${to}`),
       // รอบ 193: รายงานอ่านอย่างเดียว — ขั้นตอนบริการที่ประเภทคอมมิชชันต้องตรวจ (ข้อมูลเก่าจากฟอร์ม option 0/1)
       getPosCommissionReview: () => API.get(`${base}/pos/packages/commission-review`),
       createPosPackage: (d) => API.post(`${base}/pos/packages`, d),

@@ -30,6 +30,8 @@ public class CreateSiteProductRequest
     public List<CreatePricingTierRequest>? PricingTiers { get; set; }
     /// <summary>สินค้าตามสั่ง: ผลิตกี่วัน (null = ไม่ใช่สินค้าตามสั่ง) · ทีม K</summary>
     public int? LeadTimeDays { get; set; }
+    /// <summary>R-41 B2: ขายเป็นคอร์ส — แพ็กเกจคอร์สที่ผูก (บรรทัดใบขายลง 21713 + เปิดบัตรหลังอนุมัติ) · null = สินค้าปกติ</summary>
+    public Guid? CreditPackageId { get; set; }
     /// <summary>น้ำหนักต่อชิ้น (กก.) สำหรับค่าส่งตามน้ำหนัก · null = ไม่คิดน้ำหนัก</summary>
     public decimal? WeightKg { get; set; }
 }
@@ -57,6 +59,9 @@ public class UpdateSiteProductRequest
     /// <summary>null = ไม่เปลี่ยน · ล้างค่า (เลิกเป็นสินค้าตามสั่ง) ใช้ <see cref="ClearLeadTime"/></summary>
     public int? LeadTimeDays { get; set; }
     public bool ClearLeadTime { get; set; }
+    /// <summary>R-41 B2: null = ไม่เปลี่ยน · เลิกขายเป็นคอร์ส ใช้ <see cref="ClearCreditPackage"/></summary>
+    public Guid? CreditPackageId { get; set; }
+    public bool ClearCreditPackage { get; set; }
     /// <summary>null = ไม่เปลี่ยน · ล้างค่าใช้ <see cref="ClearWeight"/></summary>
     public decimal? WeightKg { get; set; }
     public bool ClearWeight { get; set; }
@@ -136,6 +141,8 @@ public class SiteProductResponse
     public DateTime CreatedAt { get; set; }
     // ── สินค้าตามสั่ง (ทีม K) ──
     public int? LeadTimeDays { get; set; }
+    /// <summary>R-41 B2: แพ็กเกจคอร์สที่สินค้านี้ขาย · null = สินค้าปกติ</summary>
+    public Guid? CreditPackageId { get; set; }
     public decimal? WeightKg { get; set; }
     /// <summary>วันรับเร็วสุดถ้าสั่งตอนนี้ (yyyy-MM-dd · ยังไม่รวมวันเพิ่มของตัวเลือก) — null = ไม่ใช่สินค้าตามสั่ง</summary>
     public string? EarliestReadyDate { get; set; }

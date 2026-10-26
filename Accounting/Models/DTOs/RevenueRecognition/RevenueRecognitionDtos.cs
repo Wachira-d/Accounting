@@ -43,3 +43,8 @@ public record DeferredRevenueByContract(
     Guid ContractId, string ContractName, string ContactName,
     decimal ContractValue, decimal Recognized,
     decimal Deferred, DateTime EndDate);
+
+/// <summary>R-40 (ทีม W6): JE รับรู้รายได้ตามสัญญาเดิมที่ Dr ผังกลุ่ม 218 "ค่าใช้จ่ายบุคลากรค้างจ่าย" แทน 217 — รายงานอ่านอย่างเดียวให้นักบัญชีปรับปรุง</summary>
+public record DeferredAccountAuditRow(Guid JournalEntryId, string EntryNumber, DateTime EntryDate, decimal Amount, string AccountCode, string AccountName);
+
+public record DeferredAccountAuditResponse(int Count, decimal TotalAmount, List<DeferredAccountAuditRow> Rows);

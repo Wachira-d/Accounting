@@ -219,6 +219,7 @@
               ${b.depositAmount>0 ? `<div style="display:flex;justify-content:space-between"><span>มัดจำ</span><span>฿${Number(b.depositAmount).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>` : ''}
               <div style="display:flex;justify-content:space-between"><span>ชำระแล้ว</span><span class="${b.paidAmount>=b.totalAmount?'text-success':'text-warning'}">฿${Number(b.paidAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
               ${b.erpDocumentId ? `<div style="margin-top:6px;font-size:11px;color:#059669">✓ ผูกกับเอกสารบัญชี — <a href="/pages/documents.html?id=${b.erpDocumentId}" style="color:#059669;text-decoration:underline">เปิดดู</a></div>` : ''}
+              ${b.creditPassNumber ? `<div style="margin-top:6px;font-size:11px;color:#6b21a8">🎟️ ชำระด้วยบัตรคอร์ส ${Layout.esc(b.creditPassNumber)} — ไม่มีเงินต้องเก็บ · ไม่ออกเอกสารบัญชี (รายได้รับรู้จากบัตรเมื่อให้บริการเสร็จ)</div>` : ''}
             </div>
             ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
             ${b.canIssueTaxInvoiceNow ? `<div style="background:#fffbeb;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px">

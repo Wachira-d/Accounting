@@ -5723,7 +5723,11 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 ใช้/จองแล้ว ⇒ บล็อก 409 (ทางไปต่อ: ใบลดหนี้ส่วนที่ยังไม่ใช้) · ใบลดหนี้อ้างใบขาย — ยอดสุทธิ = ส่วนที่ยังไม่รับรู้ ±0.01 + บรรทัดลงผังรายได้รับล่วงหน้า + ไม่มีจองค้าง ⇒ ปิดบัตร
 (`RefundedAmount`) · อื่น ๆ ⇒ บล็อกพร้อมยอดที่ออกได้ · ยกเลิกใบลดหนี้ที่ปิดบัตร ⇒ บล็อก · เปิดบัตรจากใบ = ยอด **Σ(Cr−Dr) ของ JE ที่มีผลบนผังรายได้รับล่วงหน้า** (บาท) +
 ห้ามซ้ำในสายเอกสาร (ต้นทาง/ลูก/พี่น้อง) · ขายกันกดซ้ำด้วย `ClientRequestId` (session lock + ใบเดิมที่ประทับ key ใน Reference) · อนุมัติล้ม ⇒ ลบใบร่าง ·
-**ยังไม่ต่อ**: บิล POS ลง 41000 เสมอ (ขายคอร์สผ่าน POS = backlog B1) · ร้านออนไลน์ (B2)
+**รอบ 205 W6**: ใบลดหนี้**บางส่วน** (ยอด < ส่วนที่เหลือ) ⇒ `CreditPassDocumentRule.RefundPreview` ลดเครดิต `floor(ยอด ÷ ราคาต่อเครดิต)` (คงเหลือต้อง > ใช้แล้ว+จองไว้) · บัตรยัง Active · สมุดแถว `Adjust` · `RefundedAmount` เพิ่ม ·
+หลังคืน ราคาต่อเครดิต/รับรู้/breakage ใช้ `EffectiveContract = ContractAmount − RefundedAmount` · ปุ่มหน้าบัตร "ออกใบลดหนี้คืนเงิน (ร่าง)" (`POST passes/{id}/refund-draft` · PosManager) สร้างใบร่าง CN อ้างใบขาย บรรทัดลงผัง 21713 ของบัตร — **ไม่อนุมัติเอง** (ยังไม่ผ่านฝ่ายค้าน) ·
+**เครื่องจอง CMS** (`CmsBookingService.Credits.cs` · `Helpers/CreditBookingLink`): `CreateBookingRequest.PayWithCredit` ⇒ Hold ในธุรกรรมเดียวกับ Decide · ยอด 0 · ไม่ออกเอกสาร ERP/ไม่เดิน tax point ของบริการ · เสร็จ/ไม่มา ⇒ Settle · ยกเลิก ⇒ Release · ล้ม ⇒ `[CREDIT-PASS-FAILED]` บนการจอง ·
+**ร้านออนไลน์ (B2)**: `SiteProduct.CreditPackageId` ⇒ บรรทัดใบขายของออเดอร์ลง 21713 (`CourseCreditOnlineSale.UnearnedAccountsAsync` → `BuildOrderErpLines`) ⇒ ใบอนุมัติ ⇒ `IssuedDocumentHooks.TryActivateCoursePassAsync` เปิดบัตร (ช่องทาง Online · ใบเดียว = บัตรเดียว · >1 หน่วย/ล้ม ⇒ `[COURSE-PASS-FAILED]` บนใบ) ·
+**POS**: ไม่ขายคอร์สที่ POS (คำตัดสินข้อ 161) — บิล POS ลง 41000/ผังแพ็กเกจ (R-26) ตามเดิม
 
 **ตาราง**: CreditPackages · CreditPasses · CreditLedgerEntries · CreditClassSessions · CreditClassBookings (`DatabaseMigrationHelper.CourseCreditStatements`)
 

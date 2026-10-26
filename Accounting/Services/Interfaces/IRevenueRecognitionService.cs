@@ -23,4 +23,6 @@ public interface IRevenueRecognitionService
 
     // Reports
     Task<DeferredRevenueReportResponse> GetDeferredRevenueReportAsync(Guid companyId, DateTime asOfDate);
+    /// <summary>R-40 รายงานตรวจข้อมูล (อ่านอย่างเดียว): JE REV-* เดิมที่ Dr ผังกลุ่ม 218 (ผิดกลุ่ม — ควรเป็น 217)</summary>
+    Task<DeferredAccountAuditResponse> GetDeferredAccountAuditAsync(Guid companyId);
 }

@@ -70,6 +70,20 @@ public class CourseCreditController : ControllerBase
         return Ok(new ApiResponse<CreditPassResponse>(true, r, $"เปิดบัตร {r.PassNumber} จากเอกสาร {r.SaleDocumentNumber} แล้ว"));
     }
 
+    /// <summary>R-38 ตัวอย่างผลการคืนเงินจากบัตร (อ่าน) — ส่วนที่เหลือ · ราคาต่อเครดิต · คืนบางส่วนได้สูงสุด</summary>
+    [HttpGet("passes/{passId:guid}/refund-preview")]
+    public async Task<ActionResult<ApiResponse<CreditRefundPreviewResponse>>> RefundPreview(Guid companyId, Guid passId, CancellationToken ct)
+        => Ok(new ApiResponse<CreditRefundPreviewResponse>(true, await _service.PreviewRefundAsync(companyId, passId, ct)));
+
+    /// <summary>R-38 สร้าง<b>ใบร่าง</b>ใบลดหนี้คืนเงินจากบัตร — ผู้มีสิทธิ์อนุมัติที่หน้าเอกสาร (ด่าน CreditPassDocumentHook ลดเครดิต/ปิดบัตร)</summary>
+    [HttpPost("passes/{passId:guid}/refund-draft")]
+    [RequirePermission(PermissionKeys.PosManager)]
+    public async Task<ActionResult<ApiResponse<CreditRefundDraftResponse>>> RefundDraft(Guid companyId, Guid passId, [FromBody] DraftCreditRefundRequest request, CancellationToken ct)
+    {
+        var r = await _service.DraftRefundCreditNoteAsync(companyId, passId, request, UserId, ct);
+        return Ok(new ApiResponse<CreditRefundDraftResponse>(true, r, r.Message));
+    }
+
     [HttpPost("passes/{passId:guid}/expire")]
     [RequirePermission(PermissionKeys.PosManager)]
     public async Task<ActionResult<ApiResponse<CreditPassResponse>>> Expire(Guid companyId, Guid passId, CancellationToken ct)

@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.DTOs.CourseCredit;
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -15,12 +16,17 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
     private readonly AccountingDbContext _db;
     private readonly IEtaxInvoiceService _etax;
     private readonly ILogger<IssuedDocumentHooks> _logger;
+    // รอบ 205 W6 (R-41 B2): เปิดบัตรคอร์สให้ออเดอร์ร้านออนไลน์หลังอนุมัติใบ — resolve ICourseCreditService ตอนใช้ (CourseCreditService พึ่ง IDocumentService
+    // ซึ่งพึ่ง hook นี้ ⇒ ใส่ใน constructor = วงจร DI) · null (ตัวที่ DocumentService/CmsCommerceService new เอง) = ไม่เปิดบัตรอัตโนมัติ
+    private readonly IServiceProvider? _services;
 
-    public IssuedDocumentHooks(AccountingDbContext db, IEtaxInvoiceService etax, ILogger<IssuedDocumentHooks> logger)
+    public IssuedDocumentHooks(AccountingDbContext db, IEtaxInvoiceService etax, ILogger<IssuedDocumentHooks> logger,
+        IServiceProvider? services = null)
     {
         _db = db;
         _etax = etax;
         _logger = logger;
+        _services = services;
     }
 
     public async Task<IssuedDocumentHookResult> RunAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
@@ -38,7 +44,59 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
     public async Task<IssuedDocumentHookResult> RunAsync(Guid companyId, Document doc, CancellationToken ct = default)
     {
         if (doc.CompanyId != companyId) return IssuedDocumentHookResult.Nothing;   // tenant isolation
-        return await TryAutoGenerateEtaxAsync(companyId, doc, ct);
+        var result = await TryAutoGenerateEtaxAsync(companyId, doc, ct);
+        await TryActivateCoursePassAsync(companyId, doc, ct);
+        return result;
+    }
+
+    private static readonly DocumentType[] CourseSaleTypes = { DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.Invoice };
+
+    /// <summary>R-41 B2 (CourseCreditOnlineSale): ใบของออเดอร์ร้านออนไลน์ที่มีสินค้าคอร์ส 1 หน่วย ⇒ เปิดบัตรผ่าน <c>ActivateFromDocumentAsync</c> (จุดต่อเดิม · ใบเดียว = บัตรเดียว) ·
+    /// จุดเดียวหลังอนุมัติทุกใบ — ครอบทั้งเส้น gateway (<c>SiteOrderPaymentHandler</c>) และยืนยันสลิปโดยพนักงาน โดยไม่แตะ <c>ConfirmPaymentAsync</c> ·
+    /// ล้ม/หลายหน่วย ⇒ ป้าย <c>[COURSE-PASS-FAILED]</c> บน InternalNotes ของใบ + log Error (ใบขายออกแล้ว — ไม่โยนทิ้งการขาย) · ทำซ้ำได้ (บัตรเปิดแล้ว = ข้าม)</summary>
+    private async Task TryActivateCoursePassAsync(Guid companyId, Document doc, CancellationToken ct)
+    {
+        if (_services == null || !CourseSaleTypes.Contains(doc.DocumentType) || !DocumentStatusRules.IsIssued(doc.Status)) return;
+        try
+        {
+            var order = await _db.SiteOrders.AsNoTracking()
+                .Where(o => o.CompanyId == companyId && o.ErpDocumentId == doc.Id)
+                .Select(o => new
+                {
+                    o.Id, o.OrderNumber,
+                    CourseLines = o.Lines.Where(l => l.SiteProduct.CreditPackageId != null)
+                        .Select(l => new { PackageId = l.SiteProduct.CreditPackageId!.Value, l.Quantity }).ToList(),
+                })
+                .FirstOrDefaultAsync(ct);
+            if (order == null || order.CourseLines.Count == 0) return;
+            var units = order.CourseLines.Sum(l => l.Quantity);
+            var passOpen = await _db.CreditPasses.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(p => p.CompanyId == companyId && p.SaleDocumentId == doc.Id, ct);
+            switch (CourseCreditOnlineSale.Judge(units, passOpen))
+            {
+                case CourseCreditOnlineSale.Verdict.Activate:
+                    var credits = _services.GetService(typeof(ICourseCreditService)) as ICourseCreditService;
+                    if (credits == null) return;
+                    var pass = await credits.ActivateFromDocumentAsync(companyId,
+                        new ActivateCreditPassRequest(order.CourseLines[0].PackageId, doc.Id, $"ร้านออนไลน์ — ออเดอร์ {order.OrderNumber}", CreditSaleChannel.Online),
+                        CourseCreditOnlineSale.Actor, ct);
+                    _logger.LogInformation("ออเดอร์ {Order}: เปิดบัตรคอร์ส {Pass} จากใบ {Doc}", order.OrderNumber, pass.PassNumber, doc.DocumentNumber);
+                    return;
+                case CourseCreditOnlineSale.Verdict.TooMany:
+                    _logger.LogError("ออเดอร์ {Order}: คอร์ส {Units} หน่วยในใบ {Doc} — ไม่เปิดบัตรอัตโนมัติ", order.OrderNumber, units, doc.DocumentNumber);
+                    await StampNoteAsync(companyId, doc, CourseCreditOnlineSale.TooManyNote(order.OrderNumber, units), ct);
+                    return;
+                default:
+                    return;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "เปิดบัตรคอร์สจากใบ {Doc} ของออเดอร์ร้านออนไลน์ไม่สำเร็จ", doc.DocumentNumber);
+            var orderNo = await _db.SiteOrders.AsNoTracking().Where(o => o.CompanyId == companyId && o.ErpDocumentId == doc.Id)
+                .Select(o => o.OrderNumber).FirstOrDefaultAsync(ct) ?? "-";
+            await StampNoteAsync(companyId, doc, CourseCreditOnlineSale.FailureNote(orderNo, ex.Message), ct);
+        }
     }
 
     /// <summary>

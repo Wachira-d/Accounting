@@ -51,6 +51,9 @@ public class SiteProduct : TenantEntity
     public int? LeadTimeDays { get; set; }
     /// <summary>น้ำหนักต่อชิ้น (กก.) สำหรับค่าส่ง "ตามน้ำหนัก" (<c>Helpers.ShippingFeeRules</c>) — ฝั่งเซิร์ฟเวอร์รวมเอง ไม่รับน้ำหนักจาก client · null = 0</summary>
     public decimal? WeightKg { get; set; }
+    /// <summary>รอบ 205 W6 (R-41 B2): สินค้านี้คือ "คอร์ส/บัตรเครดิต" ของแพ็กเกจคอร์ส — บรรทัดใบขายลงผังค่าบริการรับล่วงหน้า (21713) และเปิดบัตรหลังอนุมัติใบ
+    /// (CourseCreditOnlineSale) · null = สินค้าปกติ · ตั้งแล้วสั่งได้ครั้งละ 1 (MaxOrderQuantity = 1 — ใบเดียว = บัตรเดียว)</summary>
+    public Guid? CreditPackageId { get; set; }
 
     // Multi-tier pricing
     public ICollection<SitePricingTier> PricingTiers { get; set; } = new List<SitePricingTier>();
