@@ -242,6 +242,30 @@ public class TaxGlReconciliationService
             warnings.Add($"มีบรรทัด JE ภาษีที่ไม่ได้มาจากเอกสาร {glOnlyJe} บรรทัด (คีย์มือ/นำเข้า) — "
                 + "รายงานดึงเข้าให้ผ่าน fallback แต่ควรตรวจว่าเลขผู้เสียภาษี/ฐานภาษีถูกต้อง");
 
+        // ทีม S 2026-10-26 ข้อ 3: ภาษีขายจาก JE ที่ระบบภายนอกส่งผ่าน API (ไล่จากประวัติ sync) โดยไม่มีใบกำกับภาษีรองรับ — ระบุเลขรายการให้ตามไปตรวจได้
+        // (ตัวกวาดสมุดรายวันดึงเข้า ภ.พ.30 ⇒ GL กับแบบ "ตรงกัน" จึงไม่มีบรรทัดผลต่างให้เห็น · ม.86/4 · ม.87) · รายการเต็มอยู่ในรายงานตรวจข้อมูล
+        var vatJeIds = glRows.Where(r => r.SourceDocumentId == null && r.AccountCode == Accounting.Helpers.BookingDepositDrawdown.OutputVatAccountCode)
+            .Select(r => r.JeId).Distinct().ToList();
+        if (vatJeIds.Count > 0)
+        {
+            var apiIds = (await _db.IntegrationSyncLogs.AsNoTracking()
+                    .Where(s => s.CompanyId == companyId && s.EventType == Accounting.Helpers.BookingDepositDrawdown.JournalApiEventType
+                        && s.CreatedJournalEntryId != null && vatJeIds.Contains(s.CreatedJournalEntryId.Value))
+                    .Select(s => s.CreatedJournalEntryId!.Value)
+                    .ToListAsync()).ToHashSet();
+            var apiVat = glRows.Where(r => apiIds.Contains(r.JeId) && r.AccountCode == Accounting.Helpers.BookingDepositDrawdown.OutputVatAccountCode)
+                .Sum(r => r.CreditAmount - r.DebitAmount);
+            if (apiIds.Count > 0 && apiVat > Accounting.Helpers.BookingDepositDrawdown.Tolerance)
+            {
+                var numbers = await _db.JournalEntries.AsNoTracking()
+                    .Where(j => j.CompanyId == companyId && apiIds.Contains(j.Id))
+                    .OrderBy(j => j.EntryNumber).Select(j => j.EntryNumber).Take(10).ToListAsync();
+                warnings.Add($"[{Accounting.Helpers.BookingDepositDrawdown.OutputVatNoInvoiceCode}] ภาษีขาย {apiVat:N2} บาท จากรายการบัญชีที่ระบบภายนอกส่งผ่าน API "
+                    + $"{apiIds.Count} รายการ ({string.Join(", ", numbers)}{(apiIds.Count > numbers.Count ? ", …" : "")}) ไม่มีใบกำกับภาษีในระบบรองรับ — "
+                    + "เข้า ภ.พ.30 แต่รายงานภาษีขายไม่มีเลขที่ใบ/ผู้ซื้อ (ม.86/4 · ม.87) · ตรวจที่ รายงาน → ตรวจข้อมูลจากบั๊กที่แก้แล้ว");
+            }
+        }
+
         return new ReconResult(year, month, tolerance, lines,
             lines.Count(l => l.IsMatched), lines.Count(l => !l.IsMatched), warnings);
     }

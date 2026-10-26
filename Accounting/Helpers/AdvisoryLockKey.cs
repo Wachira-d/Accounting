@@ -49,6 +49,8 @@ public static class AdvisoryLockKey
 
     // ── scope กลาง — ประกาศไว้ที่เดียวกันไม่ให้พิมพ์ผิดแล้วกลายเป็นคนละล็อก ──
 
+    /// <summary>ตัด/ยกเลิกเงินมัดจำของการจอง — part = เลขการจอง (<c>BookingDepositDrawdown.ExtractKeys</c>) · ทีม S 2026-10-26</summary>
+    public const string BookingDeposit = "booking-deposit";
     /// <summary>เลขสมุดรายวัน (JE) — part = prefix เต็มรวมเดือน เช่น "JV-202608-"</summary>
     public const string JournalSequence = "je-seq";
     /// <summary>เลขเอกสาร — part = prefix ของชนิดเอกสาร</summary>
