@@ -8013,6 +8013,7 @@ public class OcrService : IOcrService
             // ยอดบรรทัดก่อนตัวตัดสินส่วนลดท้ายบิลเขียนทับ — ราคาต่อหน่วยที่เก็บเมื่อกระดาษไม่มีราคาต่อหน่วย (ข้อ 159)
             var preBillAmounts = items.Select(x => x.Amount).ToList();
             decimal[]? billPlanVat = null;
+            decimal? billPlanNetSum = null;
             if (billDiscountApplied)
             {
                 // ข้อ 159: ยอดบรรทัด (ก่อน VAT · VAT) = สูตรของ DocumentService ตรง ๆ (AllocateBillDeductions → ComputeLineAmounts → ReconcileTaxRounding)
@@ -8026,6 +8027,8 @@ public class OcrService : IOcrService
                 for (var bi = 0; bi < items.Count; bi++)
                     items[bi].Amount = document.PricesIncludeVat ? plan[bi].Net + plan[bi].Vat : plan[bi].Net;
                 billPlanVat = plan.Select(p => p.Vat).ToArray();
+                billPlanNetSum = plan.Sum(p => p.Net);
+                lineAmountSum = items.Sum(x => x.Amount ?? 0);   // ฝ่ายค้านข้อ 4: สัดส่วนหัก ณ ที่จ่ายรายบรรทัดใช้ยอดหลังหักส่วนลดท้ายบิล
                 result.ProcessingNotes = (result.ProcessingNotes ?? "")
                     + $"\n[Σ] ส่วนลดท้ายบิล {document.BillDiscountAmount:N2} (ก่อน VAT) ลงเป็นส่วนลดท้ายบิลของเอกสารตามกระดาษ — ไม่กระจายลงบรรทัด (คำตัดสินข้อ 159)";
             }
@@ -8147,7 +8150,8 @@ public class OcrService : IOcrService
                 // ส่วนลดแบ่งตามรหัส ภ.พ. ⇒ % ของกลุ่มบรรทัดนั้น (กลุ่มที่ไม่มีส่วนลด = 0 — ห้ามติด % ทั้งใบ ไม่งั้น ComputeLineAmounts หักตอนเปิดแก้)
                 var lineDisc = Accounting.Helpers.OcrLineReconciler.LineDiscount(
                     vatCodePlan.DiscountPercents?[i] ?? docDiscountPercent, lineGross[i], item.UnitPrice.HasValue, amount, item.Quantity);
-                var priceShift = priceShifts[i];
+                // ข้อ 159 (ฝ่ายค้านข้อ 1): ยอดจาก PlanLineAmounts คิดจาก round(จำนวน × ราคา) แล้ว — ห้ามบวกเศษราคาต่อหน่วยซ้ำ · ผลต่างปัดเศษของสาขานี้ตั้งหลังลูป
+                var priceShift = billDiscountApplied ? 0m : priceShifts[i];
                 lineRoundingShift += priceShift;
                 // Last line absorbs the rounding remainder (both VAT and WHT)
                 // so the line sums tie out exactly to the header figures.
@@ -8236,6 +8240,15 @@ public class OcrService : IOcrService
                 });
             }
 
+            if (billDiscountApplied && billPlanNetSum is decimal planNetSum)
+            {
+                // ข้อ 159 (ฝ่ายค้านข้อ 1): ในโหมดราคารวม VAT เศษของราคาต่อหน่วยไม่ไหลตรงถึงยอดก่อน VAT (ถูกดูดในขั้นถอด VAT/ปัด) ⇒ ผลต่างปัดเศษ = Σ ยอดบรรทัดที่
+                // DocumentService ให้จริง − ฐานกระดาษ (เพดานเดียวกับ DocumentRounding.CapShifts) — SubTotal = Σ บรรทัด + RoundingAdjustment = ฐานกระดาษ · เกินเพดาน ⇒ 0 + เตือน แล้วด่าน Σ ฟ้อง
+                var (billShift, billShiftWarning) = Accounting.Helpers.DocumentRounding.CapShifts(new[] { planNetSum - headerSubTotal });
+                lineRoundingShift = billShift[0];
+                if (billShiftWarning != null)
+                    result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[Σ] " + billShiftWarning;
+            }
             // สัญญา Document.RoundingAdjustment: SubTotal = Σ บรรทัด + ผลต่างปัดเศษ (ตั้งใหม่ทุกครั้งที่สร้างบรรทัด — สร้าง/พรีวิว/repopulate)
             document.RoundingAdjustment = -lineRoundingShift;
             if (lineRoundingShift != 0m)
@@ -9046,9 +9059,17 @@ public class OcrService : IOcrService
         var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(
             companyId, result, document.DocumentType);
         var linesBefore = document.Lines.ToHashSet();
+        // ข้อ 159 (ฝ่ายค้านข้อ 6 · CLAUDE.md #4 A "ค่าผู้ใช้ชนะเสมอ"): ตัวสร้างตั้ง BillDiscountAmount ใหม่ทุกครั้ง (สัญญาเดียวกับ RoundingAdjustment) —
+        // เอกสารที่บันทึกแล้วอาจมีส่วนลดท้ายบิลที่ผู้ใช้กรอกมือ ⇒ ถ้าค่าใหม่จากสแกนต่างจากที่มีอยู่ ห้ามทับเงียบ: ล้มดังพร้อมทางไปต่อ (ยังไม่มีอะไรบันทึก)
+        var priorBillDiscount = document.BillDiscountAmount;
         await BuildScanLinesAsync(companyId, result, items, document, linkedPo: null,
             poLineMap: new Dictionary<int, Guid?>(), scanDebitAccountId, headerSubTotal, hdrDiscRaw,
             whtRate, headerWht, isSalesSide);
+        if (priorBillDiscount > 0m && priorBillDiscount != document.BillDiscountAmount)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"เอกสารนี้มีส่วนลดท้ายบิล {priorBillDiscount:N2} อยู่แล้ว แต่รายการจากสแกนจะตั้งเป็น {document.BillDiscountAmount:N2} — "
+                + "ลบส่วนลดท้ายบิลในฟอร์มแล้วบันทึกก่อน จึงดึงรายการซ้ำ หรือเพิ่มรายการเองโดยคงส่วนลดเดิม",
+                "OCR-REPOP-BILL-DISCOUNT");
         // เอกสารนี้โหลดจากฐาน (ติดตามอยู่) — ไม่ทำใน BuildScanLinesAsync เพราะเส้นพรีวิวสร้างบรรทัดบนเอกสารชั่วคราวที่ไม่บันทึก
         // แถวใหม่ต้อง Add ตรง ๆ — ผ่านคอลเลกชันของ parent ที่ติดตามอยู่ EF ตีเป็น Modified ⇒ UPDATE 0 แถว (DbUpdateConcurrencyException · บทเรียน PayrollDetail 2026-10-08)
         foreach (var l in document.Lines.Where(l => !linesBefore.Contains(l))) _db.DocumentLines.Add(l);

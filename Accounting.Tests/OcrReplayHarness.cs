@@ -780,9 +780,27 @@ public static class OcrReplayHarness
                 rates[i] ??= hdrVat > 0m
                     ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(lines[i].Description, null, p.VendorTaxId, p.VendorNameFromEngine), standardVatRate)
                     : 0m;
+            // ข้อ 159 (ตรงกับ service · ฝ่ายค้านข้อ 2 ห้าม drift): เคส F/G ⇒ BillDiscountAmount ตามกระดาษ · ไม่กระจาย · ยอดบรรทัดจาก DocumentService.PlanLineAmounts
+            // (ตัวกระจายข้างบนยังรันเพื่อให้ตัวพิสูจน์อัตราทั้งใบเห็นยอดหลังหัก — เหมือน plannerAmounts ของ service)
+            var billDiscount = recon.BillDiscountPreVat is decimal bpv && bpv > 0m && codePlan.AmountsAfterDiscount is null ? bpv : 0m;
+            var preBillAmounts = amounts.ToArray();
+            decimal[]? billPlanVat = null;
+            decimal? billPlanNetSum = null;
+            if (billDiscount > 0m)
+            {
+                docDiscountPercent = 0m;
+                var plan = Accounting.Services.Implementations.DocumentService.PlanLineAmounts(
+                    Enumerable.Range(0, n).Select(i => new Accounting.Models.DTOs.Document.DocumentLineRequest(
+                        lines[i].Description ?? "", lines[i].Quantity ?? 1m, null, lines[i].UnitPrice ?? printed[i], 0m,
+                        rates[i] ?? standardVatRate, 0m, null, DiscountAmount: lineOwnDisc[i] > 0m ? lineOwnDisc[i] : null)).ToList(),
+                    pricesIncludeVat, billDiscount);
+                for (var i = 0; i < n; i++) amounts[i] = pricesIncludeVat ? plan[i].Net + plan[i].Vat : plan[i].Net;
+                billPlanVat = plan.Select(x => x.Vat).ToArray();
+                billPlanNetSum = plan.Sum(x => x.Net);
+            }
 
             // บรรทัดจากภาพ/ข้อความไม่มีธง PriceIncludesVat (เว้นใบส่วนลดจากกระดาษที่พิสูจน์รวม VAT) ⇒ InclusiveLineVats คืน null ⇒ เฉลี่ยหัวใบตามเดิม
-            var spreadVat = (pricesIncludeVat
+            var spreadVat = billPlanVat ?? (pricesIncludeVat
                     ? OcrEtaxLineNormalizer.InclusiveLineVats(
                         amounts.Select((a, i) => (a, rates[i] ?? 0m, lines[i].PriceIncludesVat)).ToList(), hdrVat)
                     : null)
@@ -827,17 +845,20 @@ public static class OcrReplayHarness
                         : Math.Round(headerWht * amount / lineAmountSum, 2, R);
                     whtAssigned += lineWht;
                 }
-                roundingShift += shifts[i];
+                var shift = billDiscount > 0m ? 0m : shifts[i];   // ข้อ 159: ยอดจาก PlanLineAmounts คิดจาก จำนวน × ราคา แล้ว (ตรงกับ service)
+                roundingShift += shift;
                 // ตรงกับ service: ตัวตัดสินตัวเดียว (ไม่มีราคาต่อหน่วย ⇒ 0% — ทีม D 2026-10-13 B5 · จำนวน < 1 ไม่มีราคา ⇒ ราคาจากตัวตัดสิน — ทีม E)
                 var (discPct, discAmt, decidedUnitPrice) = OcrLineReconciler.LineDiscount(
                     codePlan.DiscountPercents?[i] ?? docDiscountPercent, lineGross[i], lines[i].UnitPrice.HasValue, amount, lines[i].Quantity);
-                var unitPrice = decidedUnitPrice ?? lines[i].UnitPrice ?? amount;
-                var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shifts[i];
+                var unitPrice = decidedUnitPrice ?? lines[i].UnitPrice ?? (billDiscount > 0m ? preBillAmounts[i] : amount);
+                var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shift;
                 builtItemsTotal += net + lineVat;
                 // ตรงกับ service: DiscountAmount = ส่วนลดจากตัวกระจาย + ส่วนลดรายบรรทัดของเอกสาร/กระดาษ
                 rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt + lineOwnDisc[i], lineWht));
             }
-            return new ReplayBuiltLines("Items", recon.Case.ToString(), pricesIncludeVat,
+            if (billDiscount > 0m && billPlanNetSum is decimal planNetSum)
+                roundingShift = DocumentRounding.CapShifts(new[] { planNetSum - netSubForRecon }).Applied[0];   // ตรงกับ service (ข้อ 159)
+            return new ReplayBuiltLines("Items" + (billDiscount > 0m ? $"+Bill:{billDiscount:0.00}" : ""), recon.Case.ToString(), pricesIncludeVat,
                 string.Join(";", rows), GapText(WithOverstatement(gaps, builtItemsTotal - roundingShift)), -roundingShift, duplicateRowsDropped, quantityGuard, descriptions);
             }
         }

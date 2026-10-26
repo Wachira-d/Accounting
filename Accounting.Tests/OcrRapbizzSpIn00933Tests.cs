@@ -539,4 +539,35 @@ public class OcrRapbizzSpIn00933Tests
         Assert.Equal(538.32m, d.DiscountToSpread);
         Assert.Equal(538.32m, OcrTotalDecomposer.ForScan(ThaiTextNormalizer.Normalize(PageText), 1340.19m, 93.81m, 1434.00m, 538.32m, null).DiscountToSpread);
     }
+
+    [Fact]
+    public void ทีมT_ข้อ159_ฝ่ายค้าน_ราคาต่อหน่วยมีเศษ_4x1228_04เท่ากับ4912_16แต่พิมพ์4912_15_ไม่บวกเศษซ้ำ_ΣบรรทัดบวกRAเท่าฐานกระดาษ_บันทึกซ้ำไม่ขยับ()
+    {
+        // สังเคราะห์ (รูปเดียวกับใบ Rapbizz · ราคาต่อหน่วยแบบ Lazada 1,228.04 × 4 = 4,912.16 แต่กระดาษพิมพ์ 4,912.15): Σ พิมพ์ 5,082.15 − ส่วนลด 576 (รวม VAT) = 4,506.15 ·
+        // VAT 294.80 · ฐาน 4,211.35 · ส่วนลดก่อน VAT 538.32 ⇒ หัวใบพิสูจน์ (เคส F) ⇒ BillDiscountAmount 538.32
+        var r = new EtaxPdfXmlExtractor.ExtractResult
+        {
+            Found = true, DocumentTypeCode = "T03", MappedDocumentType = "TaxInvoice", DocumentNumber = "SYN-F-ROUND-01",
+            SellerTaxId = SellerTaxId, LineTotal = 4211.35m, TaxBasis = 4211.35m, AllowanceTotal = 576.00m, VatAmount = 294.80m, GrandTotal = 4506.15m,
+            Items =
+            {
+                new() { Description = "นมผง", Quantity = 4m, UnitPrice = 1228.04m, Amount = 4912.15m, NetIncludingVatAmount = 5256.00m, VatRatePercent = 7m },
+                new() { Description = "ค่าขนส่งสินค้า", Quantity = 1m, UnitPrice = 170.00m, Amount = 170.00m, NetIncludingVatAmount = 181.90m, VatRatePercent = 7m },
+            },
+        };
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(Facts(r), r.LineTotal, r.VatAmount, r.GrandTotal, r.AllowanceTotal, r.TaxBasis);
+        Assert.Equal((decimal?)576.00m, inv.BillAllowanceInclVat);
+        var doc = ScanDocumentSimulator.Build(r);
+        Assert.Equal(538.32m, doc.BillDiscount);
+        // DocumentService: ฐานก่อนลด round(4 × 1,228.04 = 4,912.16 ÷ 1.07) 4,590.80 + 158.88 = 4,749.68 · จัดสรร 520.31/18.01 · VAT 284.93/9.86 ⇒ ขั้นปัดขยับบรรทัดใหญ่ 0.01 ⇒ 4,070.48/284.94
+        Assert.Equal(new[] { (4m, 1228.04m, 0m, 4070.48m, 284.94m), (1m, 170.00m, 0m, 140.87m, 9.86m) },
+            doc.Lines.Select(l => (l.Qty, l.UnitPrice, l.Discount, l.Amount, l.Vat)).ToArray());
+        // เศษราคาต่อหน่วย +0.01 ไม่ถูกบวกซ้ำ (เดิมจะได้ 4,070.49) · ผลต่างปัดเศษ = Σ บรรทัดจริง − ฐานกระดาษ = 0 ⇒ SubTotal = Σ บรรทัด + RA = ฐานกระดาษ
+        Assert.Equal(0m, doc.RoundingAdjustment);
+        Assert.Equal(4211.35m, doc.Lines.Sum(l => l.Amount) + doc.RoundingAdjustment);
+        Assert.Equal((4211.35m, 294.80m, 4506.15m), (doc.HeaderSubTotal, doc.HeaderVat, doc.HeaderTotal));
+        Assert.Equal(294.80m, doc.Lines.Sum(l => l.Vat));
+        // เปิดแก้แล้วบันทึก (สูตรจริงของ DocumentService) = เท่าเดิมทุกสตางค์ — ทิศตรงข้ามของ "บวกเศษซ้ำ"
+        Assert.Equal(doc.Lines.Select(l => (l.Amount, l.Vat)).ToList(), ScanDocumentSimulator.Resave(doc));
+    }
 }

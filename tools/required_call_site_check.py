@@ -1732,8 +1732,13 @@ RULES += [
     dict(file=OCR, method="BuildScanLinesAsync", must=["UnitPrice = lineDisc.UnitPrice ?? item.UnitPrice ?? (billDiscountApplied ? preBillAmounts[i] : item.Amount) ?? 0"],
          forbid=["UnitPrice = item.UnitPrice ?? item.Amount ?? 0,"],
          why="ทีม E 2026-10-13: ราคาต่อหน่วยของบรรทัดไม่มีราคา + จำนวน < 1 มาจาก OcrLineReconciler.LineDiscount ตัวเดียว"),
-    dict(file=HARNESS, method="BuildLines", must=["decidedUnitPrice ?? lines[i].UnitPrice ?? amount"],
-         why="ทีม E 2026-10-13: harness ใช้ราคาที่ตัวตัดสินคืนเหมือน service"),
+    dict(file=HARNESS, method="BuildLines", must=["decidedUnitPrice ?? lines[i].UnitPrice ?? (billDiscount > 0m ? preBillAmounts[i] : amount)"],
+         why="ทีม E 2026-10-13: harness ใช้ราคาที่ตัวตัดสินคืนเหมือน service (ข้อ 159: ราคาเมื่อไม่มีราคาต่อหน่วย = ยอดก่อนหักส่วนลดท้ายบิล)"),
+    # คำตัดสินข้อ 159 (ทีม T 2026-10-26 · ฝ่ายค้านข้อ 2): ส่วนลดท้ายบิลตามกระดาษ ⇒ ยอดบรรทัดจาก DocumentService.PlanLineAmounts ตัวเดียว — service และ harness ต้องเรียกตัวเดียวกัน
+    dict(file=OCR, method="BuildScanLinesAsync", must=["recon.BillDiscountPreVat", "DocumentService.PlanLineAmounts("],
+         why="ข้อ 159: เคส F/G ลง BillDiscountAmount ตามกระดาษ แล้วยอดบรรทัดมาจากสูตรของ DocumentService (ไม่มีสำเนา)"),
+    dict(file=HARNESS, method="BuildLines", must=["recon.BillDiscountPreVat", "DocumentService.PlanLineAmounts("],
+         why="ข้อ 159: harness ต้องเดินสาขาเดียวกับ service — ไม่งั้น golden ระดับบรรทัดของใบเคส F/G ล็อกคำตอบคนละแบบ"),
 ]
 
 # ── 2026-10-09 (ผู้ใช้รายงาน ใบ BS2026100001 บุญทรัพย์ ถาวร — PDF ต้นฉบับ+สำเนา ⇒ engine คืน 5 บรรทัดสองรอบ ⇒ ขั้นยุบรวมจำนวนเป็น ×2):

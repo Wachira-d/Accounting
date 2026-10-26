@@ -220,6 +220,7 @@ internal static class ScanDocumentSimulator
                 : 0m;
         var preBill = items.Select(x => x.Amount).ToList();
         decimal[]? billPlanVat = null;
+        decimal? billPlanNetSum = null;
         if (billDiscount > 0m)
         {
             var plan = DocumentService.PlanLineAmounts(items.Select((x, bi) => new Accounting.Models.DTOs.Document.DocumentLineRequest(
@@ -227,6 +228,7 @@ internal static class ScanDocumentSimulator
                     DiscountAmount: own[bi] > 0m ? own[bi] : null)).ToList(), incl, billDiscount);
             for (var bi = 0; bi < items.Count; bi++) items[bi].Amount = incl ? plan[bi].Net + plan[bi].Vat : plan[bi].Net;
             billPlanVat = plan.Select(p => p.Vat).ToArray();
+            billPlanNetSum = plan.Sum(p => p.Net);
         }
         var spread = billPlanVat ?? (incl
                 ? OcrEtaxLineNormalizer.InclusiveLineVats(items.Select(x => (x.Amount ?? 0m, x.VatRate ?? 0m, x.PriceIncludesVat)).ToList(), hdrVat)
@@ -245,7 +247,7 @@ internal static class ScanDocumentSimulator
             var ld = OcrLineReconciler.LineDiscount(docPct, lineGross[i], it.UnitPrice.HasValue, amount, it.Quantity);
             var disc = ld.Amount + own[i];
             lines.Add(new SimLine(it.Quantity ?? 1m, ld.UnitPrice ?? it.UnitPrice ?? (billDiscount > 0m ? preBill[i] : it.Amount) ?? 0m, disc,
-                (incl ? R2(amount - spread[i]) : amount) + shifts[i], spread[i], it.VatRate ?? 0m));
+                (incl ? R2(amount - spread[i]) : amount) + (billDiscount > 0m ? 0m : shifts[i]), spread[i], it.VatRate ?? 0m));   // ข้อ 159: ไม่บวกเศษซ้ำ
         }
         var notes = inv.Notes.ToList();
         if (recon.UnreconciledGap != 0m) notes.Add("[Σ-GAP] " + recon.Note);
@@ -260,7 +262,11 @@ internal static class ScanDocumentSimulator
         var verdict = OcrPostingReadiness.Evaluate(string.Join("\n", notes), true);
         // ยอดก่อน VAT ของหัวเอกสาร = ตัวเดียวกับ OcrService.ResolveHeaderSubTotal (เดิม hdrSub − hdrDisc: ถูกเฉพาะเมื่อ LineTotal เป็นยอดก่อนส่วนลด ·
         // ใบ SP-IN2026-10-00933 ประกาศ LineTotal = ฐานหลังส่วนลดแล้ว 1,340.19 — สูตรเดิมจะได้ 764.19 ซึ่ง service ไม่ได้ลง)
-        return new SimDoc(incl, lines, -shifts.Sum(), OcrHeaderAmounts.NetSubTotal(hdrSub, hdrVat, hdrTotal, hdrDisc), hdrVat, hdrTotal,
+        // ข้อ 159 (ตรงกับ service): ผลต่างปัดเศษของสาขาส่วนลดท้ายบิล = Σ ยอดบรรทัดจาก DocumentService − ฐานกระดาษ (เพดาน DocumentRounding.CapShifts)
+        var rounding = billDiscount > 0m && billPlanNetSum is decimal planNetSum
+            ? -DocumentRounding.CapShifts(new[] { planNetSum - netSub }).Applied[0]
+            : -shifts.Sum();
+        return new SimDoc(incl, lines, rounding, OcrHeaderAmounts.NetSubTotal(hdrSub, hdrVat, hdrTotal, hdrDisc), hdrVat, hdrTotal,
             verdict.CanAutoApprove, verdict.Reason,
             notes, recon.UnreconciledGap, billDiscount);
     }
