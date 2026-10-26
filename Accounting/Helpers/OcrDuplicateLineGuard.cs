@@ -158,6 +158,14 @@ public static class OcrDuplicateLineGuard
             if (total is > 0m) list.Add(("ยอดรวม + ส่วนลด", total.Value + discount));
             if (total is > 0m && vat is > 0m && total.Value - vat.Value > 0m)
                 list.Add(("ยอดรวมหัก VAT + ส่วนลด", total.Value - vat.Value + discount));
+            // 2026-10-26 เคส F (ใบ SP-IN2026-10-00933 · ราคารวม VAT + ส่วนลดพิมพ์เป็นยอดก่อน VAT): Σ บรรทัด = ยอดรวม + ส่วนลดรวม VAT —
+            // ตัวตัดสินเดียวกับตัวกระทบยอด (OcrLineReconciler.PreVatDiscountOnInclusiveLines) · ใส่เฉพาะเมื่อหัวใบเข้ารูปนั้นจริง
+            if (sub is > 0m && vat is > 0m && total is > 0m)
+            {
+                var inclGross = total.Value + Math.Round(discount * 1.07m, 2, MidpointRounding.AwayFromZero);
+                if (OcrLineReconciler.PreVatDiscountOnInclusiveLines(inclGross, sub.Value, vat.Value, total.Value, discount) is not null)
+                    list.Add(("ยอดรวม + ส่วนลดรวม VAT", inclGross));
+            }
         }
         return list;
     }

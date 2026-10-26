@@ -100,10 +100,46 @@ public static class OcrBuyerOnPaper
     }
 
     /// <summary>หลักฐานจาก e-Tax XML ที่ลงนามแล้ว (ช่อง BuyerTradeParty) — ไม่มีข้อความให้ค้น แต่ XML คือตัวใบกำกับเอง</summary>
-    public static OcrBuyerPaperEvidence FromStructured(string? buyerName, string? buyerTaxId)
+    private static OcrBuyerPaperEvidence FromStructured(string? buyerName, string? buyerTaxId)
         => new(string.IsNullOrWhiteSpace(buyerName) ? OcrPaperPresence.Missing : OcrPaperPresence.Printed,
             ThaiTaxId.IsWellFormed(buyerTaxId) ? OcrPaperPresence.Printed : OcrPaperPresence.Missing,
             "e-Tax XML (BuyerTradeParty)");
+
+    /// <summary>
+    /// **หลักฐานผู้ซื้อของใบ e-Tax = XML ∪ หน้า PDF ที่ผู้ขายลงนาม (ไฟล์เดียวกัน)** — pure · ตัวเดียวของเส้น e-Tax ใน <c>OcrService.ScanAsync</c>
+    ///
+    /// <para>═══ ที่มา (ผู้ใช้ 2026-10-26 · ใบ SP-IN2026-10-00933 Rapbizz Direct → หจก.แอม แฮปปี้เนส) ═══ XML ส่ง
+    /// <c>&lt;ram:ID schemeID="OTHR"&gt;N/A&lt;/ram:ID&gt;</c> แทนเลขผู้ซื้อ แต่หน้า PDF/A-3 ที่ลงนามดิจิทัลพิมพ์ "เลขที่ผู้เสียภาษี : 0203562005871 สาขาที่ :
+    /// สำนักงานใหญ่" · เดิมดู XML อย่างเดียว ⇒ <see cref="JudgeClaim"/> บล็อก §82/5(1) ⇒ ทุกบรรทัด "VAT ต้องห้าม" (ฟอร์มเตือน 140.70) ทั้งที่ผู้ซื้อ
+    /// ถือใบเต็มรูปที่มีรายการครบ</para>
+    /// <para>กติกา: XML มีครบ ⇒ ตาม XML (เดิม) · ขาดช่องไหน ⇒ ถามหน้าเอกสารด้วย <see cref="Read"/> (หลักฐานจากข้อความจริงของหน้า ไม่ใช่ค่าที่ระบบเติม) ·
+    /// ไม่มีข้อความหน้า ⇒ ตาม XML (เดิม — บล็อกเหมือนเดิม) · หน้าก็ไม่มี ⇒ บล็อกเหมือนเดิม</para>
+    /// </summary>
+    /// <param name="signedPageText">ข้อความหน้า PDF ของไฟล์ e-Tax (normalize แล้ว) — null = อ่านไม่ได้</param>
+    public static OcrBuyerPaperEvidence FromEtax(string? xmlBuyerName, string? xmlBuyerTaxId, string? signedPageText,
+        string? vendorTaxId, string? ourTaxId, string? ourName)
+    {
+        var xml = FromStructured(xmlBuyerName, xmlBuyerTaxId);
+        if (xml.Name == OcrPaperPresence.Printed && xml.TaxId == OcrPaperPresence.Printed) return xml;
+        if (string.IsNullOrWhiteSpace(signedPageText)) return xml;
+        var page = Read(signedPageText, vendorTaxId, xmlBuyerTaxId, xmlBuyerName, ourTaxId, ourName);
+        var name = xml.Name == OcrPaperPresence.Printed || page.Name == OcrPaperPresence.Printed ? OcrPaperPresence.Printed : xml.Name;
+        var tax = xml.TaxId == OcrPaperPresence.Printed || page.TaxId == OcrPaperPresence.Printed ? OcrPaperPresence.Printed : xml.TaxId;
+        return new(name, tax, $"{xml.Why} · หน้า PDF ที่ลงนาม: {page.Why}");
+    }
+
+    /// <summary>หมายเหตุ <c>[VAT-NOTE]</c> (ไม่ปิดเคลม) เมื่อ XML ขาดชื่อ/เลขผู้ซื้อแต่หน้า PDF ที่ลงนามมี — ให้ผู้ใช้ขอผู้ขายแก้ข้อมูล e-Tax ที่ส่งกรมสรรพากร ·
+    /// null = XML ครบ หรือหน้าเอกสารก็ไม่มี (กรณีหลังเป็นงานของ <see cref="JudgeClaim"/>)</summary>
+    public static string? EtaxXmlGapNote(string? xmlBuyerName, string? xmlBuyerTaxId, OcrBuyerPaperEvidence merged)
+    {
+        var xml = FromStructured(xmlBuyerName, xmlBuyerTaxId);
+        var gaps = new System.Collections.Generic.List<string>();
+        if (xml.Name != OcrPaperPresence.Printed && merged.Name == OcrPaperPresence.Printed) gaps.Add("ชื่อผู้ซื้อ");
+        if (xml.TaxId != OcrPaperPresence.Printed && merged.TaxId == OcrPaperPresence.Printed) gaps.Add("เลขประจำตัวผู้เสียภาษีของผู้ซื้อ");
+        if (gaps.Count == 0) return null;
+        return $"[VAT-NOTE] ({RuleCode}) ข้อมูล e-Tax (XML) ไม่มี{string.Join("และ", gaps)} แต่หน้าเอกสาร PDF ที่ผู้ขายลงนามพิมพ์ไว้ครบ — "
+            + "ระบบเปิดเคลมภาษีซื้อตามหน้าเอกสาร · แนะนำแจ้งผู้ขายแก้ข้อมูล e-Tax ที่ส่งกรมสรรพากรให้ตรงกับหน้าเอกสาร (ม.86/4(3))";
+    }
 
     /// <summary>คำตัดสิน — ใช้เฉพาะเมื่อ <paramref name="isFullTaxInvoice"/> (ตัวอนุมานบทบาทตอบว่าใบเต็มรูปและเราเป็นผู้ซื้อ)
     /// และมี VAT · ขาดชื่อ<b>หรือ</b>ขาดเลข (ที่ตัดสินได้) ⇒ บล็อก</summary>

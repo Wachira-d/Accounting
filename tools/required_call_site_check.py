@@ -9376,6 +9376,24 @@ RULES += [
          why=_Q_WHY + "ค่าตั้งที่ไม่รู้จัก = 400 (ห้ามเก็บค่าที่ไม่มีผู้อ่าน)"),
 ]
 
+# ── 2026-10-26 ใบจริง SP-IN2026-10-00933 (Rapbizz Direct e-Tax · ทีม R): ราคาบรรทัดรวม VAT + ส่วนลดท้ายบิลรวม VAT ที่หัวใบประกาศ ·
+# XML เลขผู้ซื้อ "N/A" แต่หน้า PDF ที่ลงนามพิมพ์เลข ⇒ เดิมปิดเคลมทั้งใบ · ล็อกจุดเรียกตัวตัดสินใหม่ (มี ≠ ถูกเรียก — F2 ข้อ 2)
+_R_WHY = "ใบ SP-IN2026-10-00933 (2026-10-26): "
+RULES += [
+    dict(file=OCR, method="MapEtaxToOcrData",
+         must=["OcrEtaxLineNormalizer.HeaderBillDiscount(etax.LineTotal, etax.TaxBasis, etaxLines)"],
+         call_args=[("OcrEtaxLineNormalizer.NormalizeInvoice(", "etax.AllowanceTotal"), ("OcrEtaxLineNormalizer.NormalizeInvoice(", "etax.TaxBasis")],
+         forbid=["lt - tb > 0m ? lt - tb"],
+         why=_R_WHY + "ส่วนลดหัวใบของเส้น e-Tax ต้องมาจากตัวตัดสินเดียว (สูตรเดิม LineTotal − TaxBasis + ส่วนลดรวม VAT ที่หัวใบพิสูจน์) — เขียนสูตรเองที่นี่ = ส่วนลด 576 หาย"),
+    dict(file=OCR, method="ScanAsync",
+         must=["OcrBuyerOnPaper.FromEtax(", "OcrBuyerOnPaper.EtaxXmlGapNote("],
+         forbid=["OcrBuyerOnPaper.FromStructured(extractedData.BuyerName"],
+         why=_R_WHY + "หลักฐานผู้ซื้อของใบ e-Tax = XML ∪ หน้า PDF ที่ลงนาม — ดู XML อย่างเดียว = §82/5(1) ปิดเคลมใบเต็มรูปที่ครบ"),
+    dict(file="Helpers/OcrDuplicateLineGuard.cs", method="HeaderFigures",
+         must=["OcrLineReconciler.PreVatDiscountOnInclusiveLines("],
+         why=_R_WHY + "ด่านแถวซ้ำต้องรู้เคส F ของตัวกระทบยอด (ต้นฉบับ+สำเนาที่มีส่วนลดก่อน VAT บนราคารวม VAT ไม่งั้นหลุดไปยุบ ×2)"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

@@ -254,6 +254,8 @@ public static class OcrConfidenceGateway
                     // (E) ราคารวม VAT + ส่วนลดท้ายบิล — ลงตัวกับหัวใบแล้ว (รอบ 190) · ถ้าไม่ใส่ในลิสต์นี้
                     // เคสจะตกไปไม่มีทั้ง note และ warning = ผู้ใช้ไม่รู้ว่าระบบหักส่วนลดให้
                     case Accounting.Helpers.OcrLineReconcileCase.DiscountOnTotalInclVat:
+                    // (F) 2026-10-26 ราคารวม VAT + ส่วนลดท้ายบิลก่อน VAT (ใบ SP-IN2026-10-00933) — ลงตัวกับหัวใบแล้ว ⇒ note ไม่ใช่ warning/[MATH]
+                    case Accounting.Helpers.OcrLineReconcileCase.DiscountPreVatOnInclusivePrices:
                         notes.Add(recon.Note);
                         break;
                     case Accounting.Helpers.OcrLineReconcileCase.LinesShort:

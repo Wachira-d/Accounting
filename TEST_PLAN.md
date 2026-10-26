@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **639 ไฟล์ · 6,380 `[Fact]` + 1,040 `[Theory]` (4,854 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **640 ไฟล์ · 6,390 `[Fact]` + 1,040 `[Theory]` (4,854 `InlineData`)** ณ 2026-10-26 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
@@ -1200,6 +1200,9 @@
 | SUB-Z-1 | U | (Z · S2-6/S2-3) `/api/v1` อ่าน/เขียนของบริษัทระงับ · บริษัทไม่มีแถว subscription · หน้า cms-orders/cms-bookings/document-scan/lodging | อ่าน = ข้ามด่าน · เขียน = ด่านเดิม (บล็อกเมื่อบังคับ) · ไม่สร้าง FreeTrial · `pageFeatures` จากตารางเส้นทาง (CmsEcommerce/CmsBooking/DocumentOCR/null) — ✅ `Review200ZTests` + `tools/page_feature_sim.js` |
 | PERM-Z-1 | S | (Z · RF-3) นักบัญชีไม่มี `CompanySettings.Edit` เปิดหน้าเทมเพลต กด "ใช้สีกับทุกเอกสาร" | ปุ่มบันทึก/ใช้กับทุกเอกสารถูกปิด + ข้อความวิธีขอสิทธิ์จากเซิร์ฟเวอร์ (`GET document-templates/access`) · 403 ของ api.js ส่งข้อความเซิร์ฟเวอร์ถึงผู้ใช้ (เดิมถูกกลืนเป็นข้อความกลาง) + `status` ⇒ วนหยุดที่ 403 แรก — ✅ `tools/api_feature_denial_sim.js` ข้อ 7–8 · 📋 E2E |
 | OCR-U-05 | U | enrich TaxId ลง contact: name-sim < 0.90 | ไม่เขียน + มี ProcessingNote เตือน |
+| OCR-U-44 | U | ✅ (2026-10-26 ใบจริง SP-IN2026-10-00933 Rapbizz e-Tax) บรรทัด XML ดูราคาก่อน VAT แต่หัวใบ Σ 2,010 − AllowanceTotal 576 = ยอดรวม 1,434 · VAT 93.81 = 7/107 | `OcrEtaxLineNormalizer.HeaderProvenInclusive` ⇒ ราคารวม VAT + ส่วนลดรวม VAT 576 ⇒ เคส E · บรรทัด 920/170 ส่วนลด 527.28/48.72 · ฐาน 1,340.19 · VAT 85.88/7.93 (`EtaxGoldenCorpusTests` RapbizzSpIn00933 · `OcrRapbizzSpIn00933Tests`) · ทิศตรงข้าม: ใบมาตรฐาน CII/ไม่มี VAT/หลายอัตรา/มีส่วนลดรายบรรทัด ไม่เข้า |
+| OCR-U-45 | U | ✅ (ใบเดียวกัน) XML เลขผู้ซื้อ `N/A` แต่หน้า PDF ที่ลงนามพิมพ์เลขเรา | `OcrBuyerOnPaper.FromEtax` ⇒ ไม่ปิดเคลม (§82/5(1) ไม่บล็อก) + `[VAT-NOTE]` ให้ขอผู้ขายแก้ XML · `N/A` ไม่ไหลลงช่องเลขผู้ซื้อ · ทิศตรงข้าม: หน้าเอกสารก็ไม่มีเลข ⇒ ยังบล็อก |
+| OCR-U-46 | U | ✅ (เส้นกระดาษของใบเดียวกัน) ราคารวม VAT + ส่วนลดท้ายบิลพิมพ์เป็นยอดก่อน VAT 538.32 · PDF ต้นฉบับ+สำเนา | เคส F `OcrLineReconcileCase.DiscountPreVatOnInclusivePrices` (Σ ÷ 1.07 − ส่วนลด = ฐาน ±0.02 · ส่วนลดรวม VAT = Σ − ยอดรวม) · `OcrBillDiscount` นับแถวส่วนลดหน้าสำเนาครั้งเดียว (538.32 ไม่ใช่ 1,076.64) · ด่านแถวซ้ำรู้เคส F · ทิศตรงข้าม: เคส B/C/A/E เดิม + Ambiguous ที่ไม่เข้าสมการไม่เปลี่ยน |
 | OCR-I-01 | I | สแกนใบเดิมซ้ำ 2 ครั้ง | ไม่สร้าง contact ซ้ำ, ไม่สร้างเอกสารซ้ำ (duplicate detection) |
 | OCR-I-02 | I | DTO ที่ส่งไป review modal | ทุก field §86/4 ไม่ null/empty (fallback chain เติมครบ) |
 | OCR-I-03 | I | user แก้ field ใน review → ยืนยัน | `RecordUserChoiceAsync` ถูกเรียกด้วย feedbackId ถูกตัว |

@@ -1341,8 +1341,13 @@ public class OcrService : IOcrService
                 // (FillOurName / ที่อยู่จากทะเบียน) · e-Tax XML ใช้ช่อง BuyerTradeParty · ตัวตัดสิน Helpers/OcrBuyerOnPaper
                 else if (role.InputVatClaimable == true && role.OurRole == "Buyer" && docVat > 0)
                 {
+                    // 2026-10-26 (ใบ SP-IN2026-10-00933): XML ส่งเลขผู้ซื้อเป็น "N/A" แต่หน้า PDF ที่ผู้ขายลงนาม (ไฟล์เดียวกัน) พิมพ์เลขเราไว้ —
+                    // เดิมดู XML อย่างเดียว ⇒ [VAT-CLAIM] ปิดเคลมทุกบรรทัด ("VAT ต้องห้าม") ทั้งที่ใบเต็มรูปครบ · ตอนนี้หลักฐาน = XML ∪ หน้าเอกสารที่ลงนาม
+                    // (ตัวตัดสินเดียว OcrBuyerOnPaper.FromEtax) + หมายเหตุ [VAT-NOTE] ให้ขอผู้ขายแก้ XML (ไม่ปิดเคลม)
                     var buyerEvidence = ocrEngineUsed == "EtaxXml"
-                        ? Accounting.Helpers.OcrBuyerOnPaper.FromStructured(extractedData.BuyerName, extractedData.BuyerTaxId)
+                        ? Accounting.Helpers.OcrBuyerOnPaper.FromEtax(extractedData.BuyerName, extractedData.BuyerTaxId,
+                            string.IsNullOrWhiteSpace(pdfTextLayer) ? null : Ocr.ThaiTextNormalizer.Normalize(pdfTextLayer),
+                            extractedData.VendorTaxId, companyContext?.TaxId, companyContext?.Name)
                         : Accounting.Helpers.OcrBuyerOnPaper.Read(normalizedText, extractedData.VendorTaxId,
                             extractedData.BuyerTaxId, extractedData.BuyerName,
                             companyContext?.TaxId, companyContext?.Name);
@@ -1353,6 +1358,12 @@ public class OcrService : IOcrService
                             + "\n[VAT-CLAIM] " + buyerVerdict.Message;
                         extractedData.ReasoningTrace.Add(
                             $"[VAT-CLAIM] {buyerVerdict.RuleCode} · {buyerVerdict.LegalReference} — {buyerEvidence.Why}");
+                    }
+                    else if (ocrEngineUsed == "EtaxXml"
+                        && Accounting.Helpers.OcrBuyerOnPaper.EtaxXmlGapNote(extractedData.BuyerName, extractedData.BuyerTaxId, buyerEvidence) is string etaxBuyerGap)
+                    {
+                        scanResult.ProcessingNotes = (scanResult.ProcessingNotes ?? "") + "\n" + etaxBuyerGap;
+                        extractedData.ReasoningTrace.Add(etaxBuyerGap + " — " + buyerEvidence.Why);
                     }
                 }
 
@@ -10757,11 +10768,8 @@ public class OcrService : IOcrService
             SubTotal = etax.LineTotal ?? etax.TaxBasis,
             VatAmount = etax.VatAmount,
             TotalAmount = etax.GrandTotal,
-            // ★ ส่วนลดท้ายบิลที่ XML **ประกาศไว้แล้ว** = LineTotal − TaxBasis
-            // (TaxBasisTotalAmount คือฐานภาษีหลังหักส่วนลดตามสเปก CII)
-            // ⇒ ไม่ต้องอนุมานจากส่วนต่างเหมือนเส้นอ่านกระดาษ (ผลตรวจ T2-08)
-            DiscountAmount = etax.LineTotal is decimal lt && etax.TaxBasis is decimal tb
-                && lt - tb > 0m ? lt - tb : null,
+            // ★ ส่วนลดท้ายบิล — ตั้งหลังตัวตัดสินบรรทัดข้างล่าง (Helpers/OcrEtaxLineNormalizer.HeaderBillDiscount ตัวเดียว):
+            // สูตรเดิม LineTotal − TaxBasis (ผลตรวจ T2-08) · 2026-10-26 + ส่วนลดรวม VAT ที่หัวใบพิสูจน์ (ใบ SP-IN2026-10-00933)
             // สกุลเงินที่ XML ประกาศไว้ — ไม่ต้องเดาจากข้อความ
             Currency = string.IsNullOrWhiteSpace(etax.Currency) ? null : etax.Currency!.Trim().ToUpperInvariant(),
         };
@@ -10787,8 +10795,9 @@ public class OcrService : IOcrService
         var etaxLines = Accounting.Helpers.OcrEtaxLineNormalizer.NormalizeInvoice(
             etax.Items.Select(xl => new Accounting.Helpers.OcrEtaxLineFacts(
                 xl.Quantity, xl.UnitPrice, xl.LineAllowance, xl.LineCharge, xl.VatRatePercent, xl.Amount, xl.NetIncludingVatAmount)).ToList(),
-            etax.LineTotal, etax.VatAmount, etax.GrandTotal);
+            etax.LineTotal, etax.VatAmount, etax.GrandTotal, etax.AllowanceTotal, etax.TaxBasis);
         data.EtaxLineNotes.AddRange(etaxLines.Notes);
+        data.DiscountAmount = Accounting.Helpers.OcrEtaxLineNormalizer.HeaderBillDiscount(etax.LineTotal, etax.TaxBasis, etaxLines);
         var etaxLinesNormalized = 0;
         for (var ei = 0; ei < etax.Items.Count; ei++)
         {
@@ -10826,7 +10835,10 @@ public class OcrService : IOcrService
                 $"[Tier 0] {etaxLinesNormalized} บรรทัดของ e-Tax XML มีราคารวม VAT และ/หรือส่วนลดรายบรรทัด (พิสูจน์จาก จำนวน × ราคา − ส่วนลด " +
                 "= ยอดของบรรทัด) — " + (etaxLines.PricesIncludeVat
                     ? "ลงเป็นเอกสารราคารวม VAT ตามกระดาษทุกตัว (กระทบยอดกับสูตรเอกสารผ่านแล้ว)"
-                    : "ลงเป็นราคาก่อน VAT + ส่วนลดก่อน VAT") + " · จำนวนตาม XML · ส่วนลดรวมหัวใบอยู่ในยอดบรรทัดแล้ว ไม่หักซ้ำ");
+                    : "ลงเป็นราคาก่อน VAT + ส่วนลดก่อน VAT") + " · จำนวนตาม XML · "
+                + (etaxLines.BillAllowanceInclVat is decimal billAllowance
+                    ? $"ส่วนลดท้ายบิล {billAllowance:N2} (รวม VAT · หัวใบพิสูจน์) กระจายลงบรรทัดตอนสร้างเอกสาร"
+                    : "ส่วนลดรวมหัวใบอยู่ในยอดบรรทัดแล้ว ไม่หักซ้ำ"));
         return data;
     }
 
