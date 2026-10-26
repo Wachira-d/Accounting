@@ -110,7 +110,7 @@ public class EtaxGoldenCorpusTests
         var want = Expected[name];
         var r = EtaxPdfXmlExtractor.ParseEtaxXml(want.Xml);
         Assert.NotNull(r);
-        var doc = ScanDocumentSimulator.Build(r!);
+        var doc = ScanDocumentSimulator.Build(r!, want.Xml);   // RawTextContent ของสแกน e-Tax = XML ทั้งก้อน
 
         Assert.Equal(want.PricesIncludeVat, doc.PricesIncludeVat);
         Assert.Equal(want.Lines.Length, doc.Lines.Count);
@@ -144,7 +144,9 @@ internal static class ScanDocumentSimulator
 
     private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
-    internal static SimDoc Build(EtaxPdfXmlExtractor.ExtractResult r)
+    /// <param name="rawText">ข้อความที่ service เก็บเป็น <c>RawTextContent</c> ของสแกน e-Tax (= XML ทั้งก้อน) — ตัวตัดสินตำแหน่งส่วนลด
+    /// <c>OcrTotalDecomposer.ForScan</c> อ่านตัวนี้ (ทีม T 2026-10-26: ตัวจำลองเดิมข้ามขั้นนี้ = สำเนาที่ drift จาก <c>ScanBillDiscount</c>) · null = ไม่มีข้อความ</param>
+    internal static SimDoc Build(EtaxPdfXmlExtractor.ExtractResult r, string? rawText = null)
     {
         // ── MapEtaxToOcrData ──
         var inv = OcrEtaxLineNormalizer.NormalizeInvoice(
@@ -168,6 +170,8 @@ internal static class ScanDocumentSimulator
         var hdrTotal = r.GrandTotal ?? 0m;
         // ตัวเดียวกับ MapEtaxToOcrData (2026-10-26: + ส่วนลดรวม VAT ที่หัวใบพิสูจน์ — ใบ SP-IN2026-10-00933)
         var hdrDisc = OcrEtaxLineNormalizer.HeaderBillDiscount(r.LineTotal, r.TaxBasis, inv) ?? 0m;
+        // ── CreateDocumentFromScanCoreAsync → ScanBillDiscount: ส่วนลดที่ "ปรับตอนชำระ" (PostInvoice) = 0 · อื่น ๆ เท่าเดิม (ตัวเดียวกับ service) ──
+        hdrDisc = OcrTotalDecomposer.ForScan(ThaiTextNormalizer.Normalize(rawText), hdrSub, hdrVat, hdrTotal, hdrDisc, null).DiscountToSpread;
 
         // ── ScanAsync: ตัวกันจำนวนระเบิด (สแกน e-Tax) ──
         OcrService.SanitizeVatSplitArtifacts(data, quantitiesFromSignedXml: true);

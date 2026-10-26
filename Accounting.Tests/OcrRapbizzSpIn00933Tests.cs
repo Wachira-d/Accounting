@@ -442,4 +442,77 @@ public class OcrRapbizzSpIn00933Tests
 พิมพ์ครงที
   ั้ ่ 1
 """;
+
+    // ── ทีม T 2026-10-26 (ผู้ใช้: "ทำไมยังบันทึกได้ไม่ตรง" หลัง deploy ทีม R): ไล่เส้นจริงทั้งสาย XML → DTO → เอกสาร → เปิดแก้แล้วบันทึก เป็นตัวเลขทุกขั้น
+    //    (docs/OCR_TOTALS_MATRIX.md §1) — ทุก helper เป็นตัวจริงที่ service เรียก · ตัวจำลองเดินลำดับเดียวกับ MapEtaxToOcrData → ScanBillDiscount → BuildScanLinesAsync ──
+
+    [Fact]
+    public void ทีมT_เส้นจริงทั้งสาย_XMLถึงเอกสาร_ทุกขั้นเป็นตัวเลข_ฐาน1340_19_VAT93_81_สุทธิ1434_เปิดแก้แล้วบันทึกไม่ขยับ()
+    {
+        var r = Xml();
+        // ขั้น 1 MapEtaxToOcrData — ตัวตัดสินบรรทัด (หัวใบพิสูจน์ราคารวม VAT) + ส่วนลดหัวใบ (ก่อน VAT) ⇒ ExtractedSubTotal/Vat/Total/Discount
+        var inv = OcrEtaxLineNormalizer.NormalizeInvoice(Facts(r), r.LineTotal, r.VatAmount, r.GrandTotal, r.AllowanceTotal, r.TaxBasis);
+        Assert.Equal((true, (decimal?)576.00m), (inv.PricesIncludeVat, inv.BillAllowanceInclVat));
+        Assert.Equal((decimal?)538.32m, OcrEtaxLineNormalizer.HeaderBillDiscount(r.LineTotal, r.TaxBasis, inv));
+        Assert.Equal((decimal?)1340.19m, r.LineTotal);
+        Assert.Equal((decimal?)93.81m, r.VatAmount);
+        Assert.Equal((decimal?)1434.00m, r.GrandTotal);
+        // ขั้น 2 CreateDocumentFromScanCoreAsync → ScanBillDiscount (OcrTotalDecomposer.ForScan บน RawTextContent = XML ทั้งก้อน):
+        //        XML ไม่มีแถว "ส่วนลด 538.32" หลังยอดรวม ⇒ ไม่ใช่ "ปรับตอนชำระ" ⇒ ส่วนลดคงเดิม 538.32 ไม่มีหมายเหตุ [PAY≠TOTAL]
+        var scanDisc = OcrTotalDecomposer.ForScan(ThaiTextNormalizer.Normalize(EtaxFixtures.RapbizzSpIn00933Xml), 1340.19m, 93.81m, 1434.00m, 538.32m, null);
+        Assert.Equal(538.32m, scanDisc.DiscountToSpread);
+        Assert.Null(scanDisc.NoteToAppend);
+        // ขั้น 3 ResolveHeaderSubTotal ⇒ Document.SubTotal (ตั้งก่อนสร้างบรรทัด) = ยอดรวม − VAT
+        Assert.Equal(1340.19m, OcrHeaderAmounts.NetSubTotal(1340.19m, 93.81m, 1434.00m, 538.32m));
+        // ขั้น 4 BuildScanLinesAsync — เคส F กระจายส่วนลดรวม VAT 576 ตามสัดส่วน (1,312.72 / 121.28) แล้วถอด VAT รายบรรทัดด้วยสูตรเอกสาร
+        var doc = ScanDocumentSimulator.Build(r, EtaxFixtures.RapbizzSpIn00933Xml);
+        Assert.True(doc.PricesIncludeVat);
+        Assert.Equal(new[] { (2.00m, 920.00m, 527.28m, 1226.84m, 85.88m, 7m), (1.00m, 170.00m, 48.72m, 113.35m, 7.93m, 7m) },
+            doc.Lines.Select(l => (l.Qty, l.UnitPrice, l.Discount, l.Amount, l.Vat, l.VatRate)).ToArray());
+        Assert.Equal(0m, doc.RoundingAdjustment);
+        Assert.Equal((1340.19m, 93.81m, 1434.00m),
+            (doc.Lines.Sum(l => l.Amount), doc.Lines.Sum(l => l.Vat), doc.Lines.Sum(l => l.Amount) + doc.Lines.Sum(l => l.Vat)));
+        Assert.Equal((1340.19m, 93.81m, 1434.00m), (doc.HeaderSubTotal, doc.HeaderVat, doc.HeaderTotal));   // Document.SubTotal / VatAmount / TotalAmount
+        Assert.Equal(0m, doc.UnreconciledGap);
+        Assert.True(doc.CanAutoApprove, doc.BlockReason);
+        // Document.DiscountAmount = Σ ส่วนลดบรรทัด = 576.00 (โลกราคารวม VAT) ขณะที่กระดาษพิมพ์ "ส่วนลด 538.32" (ก่อน VAT) และบรรทัด 1,840/170 ไม่มีส่วนลด
+        //   ⇒ ตัวเลขฐาน/VAT/สุทธิ "ตรง" แต่หน้าตาของเอกสาร (ส่วนลดต่อบรรทัด · ยอดบรรทัดก่อน VAT 1,226.84) ต่างจากกระดาษ — จดไว้ใน OCR_TOTALS_MATRIX §4 รอเจ้าของ
+        Assert.Equal(576.00m, doc.Lines.Sum(l => l.Discount));
+        Assert.Equal(538.32m, Math.Round(576.00m * 100m / 107m, 2, MidpointRounding.AwayFromZero));
+        // ขั้น 5 หมายเหตุที่ไปหน้าตรวจ: [e-Tax] ข้อสังเกตเดียว (ระบบตรวจพบและปรับให้แล้ว) — ไม่มี [Σ-GAP]/แท็กหยุด ⇒ ห้ามขึ้นเป็น "ระบบไม่แน่ใจ"
+        Assert.Single(doc.Notes);
+        Assert.StartsWith(OcrEtaxLineNormalizer.NoteTag, doc.Notes[0]);
+        Assert.DoesNotContain(doc.Notes, n => n.StartsWith("[Σ-GAP]", StringComparison.Ordinal));
+        Assert.True(OcrPostingReadiness.Evaluate(string.Join("\n", doc.Notes), true).CanAutoApprove);
+        // ขั้น 6 เปิดฟอร์มแก้ไข (documents.html hydrate โหมด ฿ เมื่อ discountAmount > 0 · PricesIncludeVat จาก entity) แล้วบันทึก
+        //        = DocumentService.ComputeLineAmounts (ส่วนลดบาทชนะ %) + ReconcileTaxRounding ⇒ บรรทัดเดิมทุกสตางค์ ⇒ ยอดหัวเอกสารไม่ขยับ
+        Assert.Equal(doc.Lines.Select(l => (l.Amount, l.Vat)).ToList(), ScanDocumentSimulator.Resave(doc));
+    }
+
+    [Fact]
+    public void ทีมT_ทิศตรงข้าม_ถ้าฟอร์มส่งแต่เปอร์เซ็นต์28_66_ยอดจะขยับเป็น1433_94_จึงต้องส่งส่วนลดบาทต่อบรรทัดเสมอ()
+    {
+        // จุดที่ตัวเลข "เปลี่ยนกลับ" ได้ถ้าช่องส่วนลดบาทหาย: ComputeLineAmounts คิดจาก % ⇒ 170 × 28.66% = 48.72 (เท่าเดิม) แต่ 1,840 × 28.66% = 527.34 ≠ 527.28
+        //   ⇒ ฐาน 1,340.13 · VAT 93.81 (ขั้นปัดขยับ 0.01) · สุทธิ 1,433.94 ≠ 1,434.00 — documents.html จึงต้อง hydrate โหมด ฿ (บรรทัด "discountAmount > 0 → โหมด ฿")
+        var doc = ScanDocumentSimulator.Build(Xml(), EtaxFixtures.RapbizzSpIn00933Xml);
+        var pctOnly = doc with
+        {
+            Lines = doc.Lines.Select(l => l with { Discount = Math.Round(l.Qty * l.UnitPrice * 28.66m / 100m, 2, MidpointRounding.AwayFromZero) }).ToList(),
+        };
+        Assert.Equal(new[] { 527.34m, 48.72m }, pctOnly.Lines.Select(l => l.Discount).ToArray());
+        var resaved = ScanDocumentSimulator.Resave(pctOnly);
+        Assert.Equal(new[] { (1226.78m, 85.88m), (113.35m, 7.93m) }, resaved.ToArray());
+        Assert.Equal(1433.94m, resaved.Sum(x => x.Amount) + resaved.Sum(x => x.Vat));
+        Assert.NotEqual(1434.00m, resaved.Sum(x => x.Amount) + resaved.Sum(x => x.Vat));
+    }
+
+    [Fact]
+    public void ทีมT_เส้นกระดาษของใบเดียวกัน_ScanBillDiscountคงส่วนลด538_32_ตำแหน่งก่อนVAT_ไม่ใช่ปรับตอนชำระ()
+    {
+        // ภาพ/PDF ไม่มี XML: RawTextContent = ข้อความหน้า · 1,878.51 − 538.32 = 1,340.19 พิมพ์ครบ ⇒ PreVat (ไม่ใช่ PostInvoice ที่จะทำให้ส่วนลดเป็น 0 แล้วตก Ambiguous)
+        var d = OcrTotalDecomposer.Decompose(ThaiTextNormalizer.Normalize(PageText), 1340.19m, 93.81m, 1434.00m, 538.32m);
+        Assert.NotEqual(OcrDiscountPlacement.PostInvoice, d.Placement);   // PreVat หรือ Unknown (ใบมีคำ THB) — ทั้งคู่คงส่วนลด · PostInvoice เท่านั้นที่ทำให้เป็น 0
+        Assert.Equal(538.32m, d.DiscountToSpread);
+        Assert.Equal(538.32m, OcrTotalDecomposer.ForScan(ThaiTextNormalizer.Normalize(PageText), 1340.19m, 93.81m, 1434.00m, 538.32m, null).DiscountToSpread);
+    }
 }

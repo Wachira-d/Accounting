@@ -388,6 +388,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     "ยอดหลังหักส่วนลด" เป็นส่วนลด) · ด่านคณิตรู้ส่วนลด (ส่วนลดที่อธิบายส่วนต่างพอดี = ใช้ฐานหลังลด) · `Document.SubTotal` จากสแกน =
     ยอด**หลัง**ส่วนลด (`OcrHeaderAmounts.NetSubTotal` ทั้งสร้าง/พรีวิว/repopulate — เดิมก่อนลด ⇒ ฐานภาษีซื้อ §87 เกิน) ·
     `Document.DiscountAmount` = Σ ส่วนลดที่ลงบรรทัดจริง · `OcrLineReconciler` เคส E `DiscountOnTotalInclVat` (ราคารวม VAT + ส่วนลด) ·
+    เคส F `DiscountPreVatOnInclusivePrices` (ราคารวม VAT + ส่วนลดพิมพ์ก่อน VAT · ทีม R) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT ·
+    ทีม T 2026-10-26 · สังเคราะห์ · วางหลัง F เข้าได้เฉพาะใบที่เดิม Ambiguous) · เมทริกซ์ทุกรูปแบบ + สถานะ `docs/OCR_TOTALS_MATRIX.md` · ส่วนลดท้ายบิลทุกเคสยัง**กระจายลงบรรทัด**
+    (`BillDiscountAmount = 0` — ข้อเสนอลงเป็นส่วนลดท้ายบิล 538.32 ให้หน้าตาตรงกระดาษ รอเจ้าของ · MATRIX §4) ·
     **ลำดับตั้งอัตรา VAT รายบรรทัด** (`OcrService.BuildScanLinesAsync` — ตัวสร้างเดียวของสร้าง/line-preview/ดึงรายการซ้ำ · เติมเฉพาะ
     บรรทัดที่ยังว่าง): (1) ค่าจาก engine/ผู้ใช้แก้ในหน้ารีวิว → (2) สัญลักษณ์บนกระดาษ (V/N · ตารางสรุป VAT) ที่ยอดพิสูจน์ได้
     (`Helpers/OcrLineVatMarks`) → (3) **ตัวเลขหัวใบพิสูจน์ทั้งใบ** (`Helpers/OcrLineVatPlanner.PlanWholeInvoice` · รอบ 195 — VAT หัวใบ =

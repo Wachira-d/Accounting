@@ -149,4 +149,35 @@ public class OcrLineReconcilerTests
         Assert.Equal(4.41m, OcrLineReconciler.LineDiscountPercent(r.DiscountPercent, 4912.15m)); // ทิศตรงข้าม: สินค้าได้เท่าเดิม
         Assert.Equal(0m, OcrLineReconciler.LineDiscountPercent(0m, 4912.15m));                  // ไม่มีส่วนลด = 0 ทุกบรรทัด
     }
+
+    // ── ทีม T 2026-10-26 เคส G (สังเคราะห์ · ภาพสะท้อนของเคส F — docs/OCR_TOTALS_MATRIX.md ช่อง "ก่อน VAT × ท้ายบิลรวม VAT") ──────
+    [Fact]
+    public void เคสG_ราคาก่อนVAT_ส่วนลดท้ายบิลพิมพ์รวมVAT576_แปลงเป็น538_32ก่อนVAT_กระจายแบบเคสC()
+    {
+        // สังเคราะห์: 2 × 920 + 170 = 2,010 ก่อน VAT · ส่วนลด 576.00 รวม VAT (= 538.32 ก่อน VAT) · ฐาน 1,471.68 · VAT 103.02 · รวม 1,574.70
+        Assert.Equal((decimal?)538.32m, OcrLineReconciler.InclVatDiscountOnExclusiveLines(2010.00m, 1471.68m, 103.02m, 1574.70m, 576.00m));
+        var r = OcrLineReconciler.Classify(2010.00m, 1471.68m, 103.02m, 1574.70m, headerDiscount: 576.00m);
+        Assert.Equal(OcrLineReconcileCase.DiscountInclVatOnExclusivePrices, r.Case);
+        Assert.Equal((false, 26.78m, (decimal?)1471.68m, 0m), (r.PricesIncludeVat, r.DiscountPercent, r.TargetLineSum, r.UnreconciledGap));
+        // ตัวกระจายของตัวสร้างบรรทัด (เป้า = ฐาน) + ส่วนลดบาทต่อบรรทัด = round(จำนวน × ราคา) − ยอดหลังลด ⇒ Σ = 1,471.68 พอดี
+        var first = Math.Round(1471.68m * 1840.00m / 2010.00m, 2, MidpointRounding.AwayFromZero);
+        Assert.Equal(new[] { 1347.21m, 124.47m }, new[] { first, 1471.68m - first });
+        Assert.Equal((26.78m, 492.79m, (decimal?)null), OcrLineReconciler.LineDiscount(r.DiscountPercent, 1840.00m, true, first, 2m));
+        Assert.Equal((26.78m, 45.53m, (decimal?)null), OcrLineReconciler.LineDiscount(r.DiscountPercent, 170.00m, true, 1471.68m - first, 1m));
+        // ป้ายสลับ (Sub Total = ยอดสุทธิ) ผ่าน OcrHeaderAmounts.Normalize ก่อน ⇒ คำตอบเดียวกัน
+        Assert.Equal(OcrLineReconcileCase.DiscountInclVatOnExclusivePrices, OcrLineReconciler.Classify(2010.00m, 1574.70m, 103.02m, 1471.68m, 576.00m).Case);
+    }
+
+    [Fact]
+    public void เคสG_ทิศตรงข้าม_ส่วนลดก่อนVATยังเคสC_ไม่เข้าสมการยังAmbiguous_VAT0หรือไม่ใช่7เปอร์เซ็นต์ไม่เข้า_บรรทัดขาดยังLinesShort_เคสFไม่ถูกแย่ง()
+    {
+        Assert.Equal(OcrLineReconcileCase.DiscountOnSubTotal, OcrLineReconciler.Classify(2010.00m, 1471.68m, 103.02m, 1574.70m, 538.32m).Case);
+        Assert.Equal(OcrLineReconcileCase.Ambiguous, OcrLineReconciler.Classify(2010.00m, 1471.68m, 103.02m, 1574.70m, 500.00m).Case);
+        Assert.Equal(OcrLineReconcileCase.Ambiguous, OcrLineReconciler.Classify(2010.00m, 1340.19m, 93.81m, 1434.00m, 500.00m).Case);   // vector ของทีม R ไม่เปลี่ยน
+        Assert.Null(OcrLineReconciler.InclVatDiscountOnExclusiveLines(2010.00m, 1434.00m, 0m, 1434.00m, 576.00m));                          // VAT 0 — เคส C รับไปก่อนแล้ว
+        Assert.Equal(OcrLineReconcileCase.DiscountOnSubTotal, OcrLineReconciler.Classify(2010.00m, 1434.00m, 0m, 1434.00m, 576.00m).Case);
+        Assert.Null(OcrLineReconciler.InclVatDiscountOnExclusiveLines(2010.00m, 1471.68m, 90.00m, 1561.68m, 576.00m));                      // VAT ≠ 7% ของฐาน
+        Assert.Equal(OcrLineReconcileCase.LinesShort, OcrLineReconciler.Classify(1000.00m, 1471.68m, 103.02m, 1574.70m, 576.00m).Case); // Σ < ฐาน ไม่ถูกแตะ
+        Assert.Equal(OcrLineReconcileCase.DiscountPreVatOnInclusivePrices, OcrLineReconciler.Classify(2010.00m, 1340.19m, 93.81m, 1434.00m, 538.32m).Case);
+    }
 }

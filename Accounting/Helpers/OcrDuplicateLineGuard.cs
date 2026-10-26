@@ -165,6 +165,10 @@ public static class OcrDuplicateLineGuard
                 var inclGross = total.Value + Math.Round(discount * 1.07m, 2, MidpointRounding.AwayFromZero);
                 if (OcrLineReconciler.PreVatDiscountOnInclusiveLines(inclGross, sub.Value, vat.Value, total.Value, discount) is not null)
                     list.Add(("ยอดรวม + ส่วนลดรวม VAT", inclGross));
+                // ทีม T 2026-10-26 เคส G (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT · สังเคราะห์): Σ บรรทัด = ฐาน + ส่วนลด ÷ 1.07 — ตัวตัดสินเดียวกับตัวกระทบยอด
+                var exGross = sub.Value + Math.Round(discount * 100m / 107m, 2, MidpointRounding.AwayFromZero);
+                if (OcrLineReconciler.InclVatDiscountOnExclusiveLines(exGross, sub.Value, vat.Value, total.Value, discount) is not null)
+                    list.Add(("ยอดก่อน VAT + ส่วนลดถอด VAT", exGross));
             }
         }
         return list;

@@ -27,6 +27,11 @@ public enum OcrLineReconcileCase
     /// (2026-10-26 ใบ SP-IN2026-10-00933 Rapbizz Direct: 2,010 ÷ 1.07 = "จำนวนเงิน Amount" 1,878.51 − "ส่วนลด" 538.32 = "ยอดรวม Total" 1,340.19 ·
     /// เดิมตกเป็น Ambiguous) — ระบบแปลงส่วนลดเป็นยอดรวม VAT (Σ บรรทัด − ยอดรวมสุทธิ = 576.00) แล้วกระจายแบบเคส E · ตัวตัดสิน <see cref="OcrLineReconciler.PreVatDiscountOnInclusiveLines"/></summary>
     DiscountPreVatOnInclusivePrices = 8,
+    /// <summary>(G) ราคาต่อหน่วย<b>ก่อน VAT</b> แต่ส่วนลดท้ายบิลพิมพ์เป็นยอด<b>รวม VAT</b> (ภาพสะท้อนของเคส F · ทีม T 2026-10-26 · เมทริกซ์
+    /// `docs/OCR_TOTALS_MATRIX.md` ช่อง "ก่อน VAT × ท้ายบิลรวม VAT" — <b>สังเคราะห์</b> ยังไม่มีกระดาษจริง): Σ บรรทัด − round(ส่วนลด ÷ 1.07) = ฐาน ·
+    /// VAT = 7% ของฐาน · ฐาน + VAT = ยอดรวม — เดิมตกเป็น Ambiguous · ระบบแปลงส่วนลดเป็นยอดก่อน VAT แล้วกระจายแบบเคส C ·
+    /// ตัวตัดสิน <see cref="OcrLineReconciler.InclVatDiscountOnExclusiveLines"/></summary>
+    DiscountInclVatOnExclusivePrices = 9,
 }
 
 /// <summary>ผลลัพธ์: ปรับ document อย่างไร + ช่องว่างที่ต้องบอกผู้ใช้</summary>
@@ -179,6 +184,19 @@ public static class OcrLineReconciler
                 + $"+ ส่วนลดท้ายบิล {headerDiscount:N2} ก่อน VAT (= {discIncl:N2} รวม VAT · {pct:0.##}%) กระจายลงทุกบรรทัด — ฐาน {headerSubTotal:N2} ตรงกระดาษ");
         }
 
+        // (G) ทีม T 2026-10-26 (เมทริกซ์ docs/OCR_TOTALS_MATRIX.md · เคสสังเคราะห์ ภาพสะท้อนของ F): ราคาก่อน VAT + ส่วนลดท้ายบิลพิมพ์เป็นยอดรวม VAT
+        //     — ไม่ตรง B/C/A/E/F · เพิ่มเงื่อนไขหลังเคสเดิมทั้งหมด และต้องเป็นใบที่เดิมตก Ambiguous เท่านั้น (Σ > ฐาน + ค่าเผื่อ ⇒ ไม่แตะเคส D LinesShort)
+        //     · baseline ก่อน/หลัง (scratchpad teamT_classify_baseline.py · vector จากเทสต์จริง 28 ตัว = 0 เปลี่ยน · สังเคราะห์เปลี่ยนเฉพาะช่องนี้)
+        if (headerDiscount > 0m && headerSubTotal > 0m && headerVat > 0m && headerTotal > 0m
+            && grossSum > headerSubTotal + Tolerance
+            && InclVatDiscountOnExclusiveLines(grossSum, headerSubTotal, headerVat, headerTotal, headerDiscount) is decimal discEx)
+        {
+            var pct = Math.Round(discEx / grossSum * 100m, 2, MidpointRounding.AwayFromZero);
+            return new(OcrLineReconcileCase.DiscountInclVatOnExclusivePrices, false, pct, headerSubTotal, 0m,
+                $"ราคาบนกระดาษเป็นยอดก่อน VAT แต่ส่วนลดท้ายบิล {headerDiscount:N2} พิมพ์รวม VAT (= {discEx:N2} ก่อน VAT · {pct:0.##}%) "
+                + $"กระจายลงทุกบรรทัด — Σ บรรทัด {grossSum:N2} − {discEx:N2} = ฐาน {headerSubTotal:N2} ตรงกระดาษ");
+        }
+
         // ใบไม่มียอดก่อน VAT (บิลเงินสด/ใบเสร็จไม่มี VAT): เทียบกับยอดรวมโดยตรง
         if (headerSubTotal <= 0m)
         {
@@ -231,6 +249,27 @@ public static class OcrLineReconciler
         if (discIncl <= 0m || discIncl >= grossSum) return null;
         if (Math.Abs(discIncl - Math.Round(headerDiscount * 1.07m, 2, MidpointRounding.AwayFromZero)) > PreVatDiscountTol) return null;
         return discIncl;
+    }
+
+    /// <summary>
+    /// **เคส G: ราคาก่อน VAT + ส่วนลดท้ายบิลพิมพ์เป็นยอดรวม VAT** (pure · ทีม T 2026-10-26 · <b>สังเคราะห์</b> — ภาพสะท้อนของ
+    /// <see cref="PreVatDiscountOnInclusiveLines"/>) — คืนส่วนลดในโลกราคาก่อน VAT (= round(ส่วนลด × 100/107)) เมื่อพิสูจน์ได้ · null = ไม่ใช่รูปนี้
+    /// <para>ต้องจริงทุกข้อ (ภายใน <see cref="PreVatDiscountTol"/>): VAT หัวใบ = 7% ของฐาน (±0.01) · ฐาน + VAT = ยอดรวม (±0.01 — ใบที่ป้ายสลับผ่าน
+    /// <c>OcrHeaderAmounts.Normalize</c> มาก่อนแล้ว) · Σ บรรทัด − round(ส่วนลด ÷ 1.07) ≈ ฐาน · ส่วนลดก่อน VAT อยู่ระหว่าง 0 กับ Σ ·
+    /// ⚠️ หลักฐานชุดเดียว (เช่นเดียวกับเคส F): "ส่วนลดที่อ่านได้ ÷ 1.07 + ฐาน + VAT 7% ลงตัวกับ Σ บรรทัด" — เคส C (ส่วนลดก่อน VAT ตรง ๆ ±1 บาท)
+    /// ถูกถามก่อนเสมอ ⇒ เคสนี้เข้าได้เฉพาะเมื่อส่วนลด − ส่วนลด ÷ 1.07 &gt; 1 บาท (ส่วนลด ≳ 15.30)</para>
+    /// <para>ใช้ร่วม: <see cref="Classify"/> (เคส G) · <see cref="OcrDuplicateLineGuard"/> (เป้า Σ บรรทัดของใบรูปนี้)</para>
+    /// </summary>
+    public static decimal? InclVatDiscountOnExclusiveLines(
+        decimal grossSum, decimal headerSubTotal, decimal headerVat, decimal headerTotal, decimal headerDiscount)
+    {
+        if (grossSum <= 0m || headerSubTotal <= 0m || headerVat <= 0m || headerTotal <= 0m || headerDiscount <= 0m) return null;
+        if (Math.Abs(Math.Round(headerSubTotal * 0.07m, 2, MidpointRounding.AwayFromZero) - headerVat) > 0.01m) return null;
+        if (Math.Abs(headerSubTotal + headerVat - headerTotal) > 0.01m) return null;
+        var discEx = Math.Round(headerDiscount * 100m / 107m, 2, MidpointRounding.AwayFromZero);
+        if (discEx <= 0m || discEx >= grossSum) return null;
+        if (Math.Abs(grossSum - discEx - headerSubTotal) > PreVatDiscountTol) return null;
+        return discEx;
     }
 
     /// <summary>รอบ 6 (ใบ e-Tax 2614501699): ข้อความเดิม "กระดาษไม่ระบุส่วนลด" เท็จเมื่อกระดาษมีส่วนลด (ส่วนลดรายบรรทัด 1,080) — ตัวตัดสินนี้รู้แค่
