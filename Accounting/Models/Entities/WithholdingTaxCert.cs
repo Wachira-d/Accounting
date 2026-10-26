@@ -38,6 +38,11 @@ public class WithholdingTaxCert : TenantEntity
     /// ใช้เป็น idempotency key แทน DocumentId เมื่อจ่ายเป็นงวด.</summary>
     public Guid? SourcePaymentId { get; set; }
 
+    /// <summary>คำตัดสินข้อ 162 — อัตราแลกเปลี่ยนที่ใช้แปลงฐาน/ภาษีเป็นบาทบนใบนี้ (ใบบาท = 1 · ใบเก่าก่อนแก้ = null ไม่รู้) — บันทึกที่มาทุกใบ</summary>
+    public decimal? ExchangeRateUsed { get; set; }
+    /// <summary>ป้ายที่มาของอัตรา (<c>DocumentFx.WhtRateBasisLabel</c>) · ใบบาท = "บาท" · null = ใบเก่า</summary>
+    public string? ExchangeRateBasis { get; set; }
+
     public ICollection<WithholdingTaxCertLine> Lines { get; set; } = new List<WithholdingTaxCertLine>();
 }
 

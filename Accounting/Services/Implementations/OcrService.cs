@@ -7521,7 +7521,7 @@ public class OcrService : IOcrService
         var fxFromDocument = false;
         var scanIsForeign = !string.Equals(document.Currency, "THB", StringComparison.OrdinalIgnoreCase);
         // อัตรา ธปท. ดึงครั้งเดียว — ใช้ตรวจหลักฐานยอดบาทแหล่งเดียว (ฝ่ายค้านข้อ 2) และเป็นค่าตั้งต้นเมื่อไม่ใช้ยอดบาทบนกระดาษ
-        var scanBotRate = scanIsForeign ? await ResolveScanExchangeRateAsync(document.Currency, document.DocumentDate) : null;
+        var scanBotRate = scanIsForeign ? await ResolveScanExchangeRateAsync(companyId, document.Currency, document.DocumentDate) : null;
         if (scanIsForeign && await PerLineWhtEnabledAsync(companyId))
         {
             var thbPlan = Accounting.Helpers.OcrThbEquivalent.Plan(
@@ -7722,7 +7722,8 @@ public class OcrService : IOcrService
     private async Task<IReadOnlyList<int>> BuildScanLinesAsync(
         Guid companyId, OcrScanResult result, List<OcrExtractedLineItem> items, Document document,
         Document? linkedPo, Dictionary<int, Guid?> poLineMap, Guid? scanDebitAccountId,
-        decimal headerSubTotal, decimal hdrDiscRaw, decimal whtRate, decimal headerWht, bool isSalesSide)
+        decimal headerSubTotal, decimal hdrDiscRaw, decimal whtRate, decimal headerWht, bool isSalesSide,
+        Dictionary<int, Accounting.Helpers.OcrLineWhtPick>? whtSuggestions = null)
     {
         // สิ่งที่กระดาษบอกเรื่อง VAT รายบรรทัด (สัญลักษณ์ท้ายบรรทัด · ยอดต้องเสีย/ไม่ต้องเสียภาษี)
         // — อ่านจากข้อความดิบตอนสร้าง (ไม่ใช่ตอนสแกน) เพื่อให้สแกนเก่าได้ประโยชน์ด้วยโดยไม่ต้อง migrate
@@ -8039,23 +8040,49 @@ public class OcrService : IOcrService
             // (ExpenseCategoryResolver.ClassifyLineForWht — ไม่มี AI · local-first) แล้วให้ Helpers/OcrLineWhtPlan ตัดสิน — แผนต้องอธิบายยอดหักของหัวใบได้
             // (ยอดใบ/ยอดจ่าย/JE ไม่ขยับ) ไม่งั้นคงแบบเดิม + แท็กให้คนตรวจ
             var perLineWht = new Accounting.Helpers.OcrLineWhtResult(false, Array.Empty<Accounting.Helpers.OcrLineWhtPick>(), null);
-            if (!isSalesSide && headerWht > 0m && whtRate > 0m && await PerLineWhtEnabledAsync(companyId))
+            var perLineWhtEnabled = !isSalesSide && await PerLineWhtEnabledAsync(companyId);
+            if (perLineWhtEnabled && headerWht > 0m && whtRate > 0m)
             {
                 var whtInputs = new List<Accounting.Helpers.OcrLineWhtInput>(items.Count);
                 for (var wi = 0; wi < items.Count; wi++)
                 {
                     var wAmt = items[wi].Amount ?? 0m;
                     var wBase = document.PricesIncludeVat ? Math.Round(wAmt - spreadVat[wi], 2, MidpointRounding.AwayFromZero) : wAmt;
-                    var (wKind, wCode) = Ocr.ExpenseCategoryResolver.ClassifyLineForWht(items[wi].Description);
-                    whtInputs.Add(new Accounting.Helpers.OcrLineWhtInput(wBase, wKind, wCode));
+                    // R-17 round-trip: ประเภทที่ผู้ใช้เลือกในหน้ารีวิวชนะผลจัดประเภทของระบบ (ไม่หัก = "0") · ว่าง = ตามระบบ
+                    whtInputs.Add(Accounting.Helpers.OcrLineWhtPlan.WithUserChoice(wBase, items[wi].WhtIncomeTypeCode,
+                        Ocr.ExpenseCategoryResolver.ClassifyLineForWht(items[wi].Description)));
                 }
                 // ฝ่ายค้านข้อ 7: เกณฑ์ผลต่างคิดเป็นบาท — อัตรายังไม่ถูกตั้งบนเอกสารตอนสร้างบรรทัด ⇒ ใช้อัตรา ธปท. ของวันที่เอกสาร (ไม่รู้ = เข้มสุด)
                 var planFx = string.Equals(document.Currency, "THB", StringComparison.OrdinalIgnoreCase)
-                    ? 1m : await ResolveScanExchangeRateAsync(document.Currency, document.DocumentDate);
+                    ? 1m : await ResolveScanExchangeRateAsync(companyId, document.Currency, document.DocumentDate);
                 perLineWht = Accounting.Helpers.OcrLineWhtPlan.Decide(whtInputs, whtRate, result.WhtIncomeTypeCode, headerWht,
                     Accounting.Helpers.WhtPayeeKind.Detect(result.ExtractedVendorTaxId, ContactType.Unknown, result.ExtractedVendorName), planFx);
                 if (perLineWht.Note is string perLineNote)
                     result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + perLineNote;
+            }
+            else if (perLineWhtEnabled && headerWht <= 0m && whtRate <= 0m)
+            {
+                // R-20 (B-6 · รอบ 205 W7): หัวใบไม่มีหัก (กระดาษไม่พิมพ์ยอดหัก) ⇒ "⚙️ ระบบแนะนำ" ต่อบรรทัดเท่านั้น — ไม่หักให้เอง (คำตัดสินเดิม · DOCTRINE 2.3 warn-gate) ·
+                // ผ่านด่านเกณฑ์ 1,000 ระดับใบตัวเดิม (OcrWhtThresholdBase — ไม่ตัดสินเกณฑ์ใหม่ต่อบรรทัด · PerLineWht กติกา 6) · ใบที่หัวมีหักแล้วเดินกิ่งบน ไม่ถูกเสนอซ้ำ
+                var suggestInputs = new List<Accounting.Helpers.OcrLineWhtInput>(items.Count);
+                for (var wi = 0; wi < items.Count; wi++)
+                {
+                    var wAmt = items[wi].Amount ?? 0m;
+                    var wBase = document.PricesIncludeVat ? Math.Round(wAmt - spreadVat[wi], 2, MidpointRounding.AwayFromZero) : wAmt;
+                    suggestInputs.Add(Accounting.Helpers.OcrLineWhtPlan.WithUserChoice(wBase, items[wi].WhtIncomeTypeCode,
+                        Ocr.ExpenseCategoryResolver.ClassifyLineForWht(items[wi].Description)));
+                }
+                var thresholdMet = Accounting.Helpers.OcrWhtThresholdBase.FromScan(result.ExtractedSubTotal, result.ExtractedVatAmount,
+                    result.ExtractedTotalAmount, null, result.DocumentType).Verdict == Accounting.Helpers.OcrWhtThresholdVerdict.Meets;
+                var suggestion = Accounting.Helpers.OcrLineWhtPlan.Suggest(suggestInputs, whtRate, headerWht,
+                    Accounting.Helpers.WhtPayeeKind.Detect(result.ExtractedVendorTaxId, ContactType.Unknown, result.ExtractedVendorName), thresholdMet);
+                if (suggestion.Note is string suggestNote)
+                {
+                    result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + suggestNote;
+                    if (whtSuggestions != null)
+                        for (var si = 0; si < suggestion.Lines.Count; si++)
+                            if (suggestion.Lines[si].WhtAmount > 0m) whtSuggestions[si] = suggestion.Lines[si];
+                }
             }
             for (var i = 0; i < items.Count; i++)
             {
@@ -8481,8 +8508,11 @@ public class OcrService : IOcrService
         var scanDebitAccountId = await ResolveScanDebitAccountIdAsync(companyId, result, docType);
 
         var document = new Document { CompanyId = companyId, DocumentType = docType };
+        // R-20: ข้อเสนอหักต่อบรรทัดเมื่อหัวใบไม่มีหัก (ตัวสร้างบรรทัดเติมให้ · ไม่แตะบรรทัดจริง) — หน้ารีวิวแสดง "⚙️ ระบบแนะนำ"
+        var whtSuggestions = new Dictionary<int, Accounting.Helpers.OcrLineWhtPick>();
+        var previewPerLineWht = !isSalesSide && await PerLineWhtEnabledAsync(companyId);
         var lineSources = await BuildScanLinesAsync(companyId, result, items, document, linkedPo, poLineMap,
-            scanDebitAccountId, headerSubTotal, hdrDiscRaw, whtRate, headerWht, isSalesSide);
+            scanDebitAccountId, headerSubTotal, hdrDiscRaw, whtRate, headerWht, isSalesSide, whtSuggestions);
 
         // AccountId → รหัสผัง (ฟอร์มปลายทางรับเป็น code)
         var accountIds = document.Lines.Where(l => l.AccountId.HasValue).Select(l => l.AccountId!.Value).Distinct().ToList();
@@ -8499,7 +8529,13 @@ public class OcrService : IOcrService
             l.ProductCode, l.ProjectId, l.SourceLineId,
             // ดัชนีต้นทางที่ตัวสร้างบรรทัดคืนมาเอง (2026-10-16: แถวส่วนลดที่แปลงเป็นส่วนลด/บรรทัดสรุปตามตารางรหัส ภ.พ. ไม่ใช่ 1 แถว = 1 บรรทัดแล้ว)
             // — ห้ามให้หน้าเว็บ (หรือที่นี่) สมมติว่าลำดับตรงกัน
-            l.LineOrder - 1 < lineSources.Count ? lineSources[l.LineOrder - 1] : -1)).ToList();
+            l.LineOrder - 1 < lineSources.Count ? lineSources[l.LineOrder - 1] : -1,
+            // R-17/R-20: แผน WHT ต่อบรรทัด (ค่าบนบรรทัดที่ตัวสร้างเดียวกับปุ่ม "สร้างเอกสาร" ตั้งไว้) + ข้อเสนอเมื่อหัวใบไม่มีหัก — เฉพาะเมื่อค่าตั้งเปิด
+            WhtIncomeTypeCode: previewPerLineWht ? l.IncomeTypeCode : null,
+            WhtAmount: previewPerLineWht ? l.WithholdingTaxAmount : null,
+            SuggestedWhtRate: previewPerLineWht && whtSuggestions.TryGetValue(l.LineOrder - 1, out var sg) ? sg.RatePercent : null,
+            SuggestedWhtIncomeTypeCode: previewPerLineWht && whtSuggestions.TryGetValue(l.LineOrder - 1, out var sg2) ? sg2.IncomeTypeCode : null,
+            SuggestedWhtAmount: previewPerLineWht && whtSuggestions.TryGetValue(l.LineOrder - 1, out var sg3) ? sg3.WhtAmount : null)).ToList();
 
         // ── คู่ค้าของฟอร์ม (รอบ 200 ทีม K2 · C-02): เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดง ──
         // เดิมปุ่ม "แก้ในฟอร์มก่อน" ส่ง**ผู้ขาย** (MatchedContactId/ชื่อ/เลขผู้ขาย) เป็นคู่ค้าเสมอ แม้ใบเป็นฝั่งขาย ⇒ ฟอร์มรายได้ได้ชื่อบริษัทเราเอง
@@ -8560,6 +8596,7 @@ public class OcrService : IOcrService
             headerSubTotal, result.ExtractedVatAmount ?? 0m, result.ExtractedTotalAmount ?? 0m, headerWht,
             lines, string.IsNullOrWhiteSpace(delta) ? null : delta,
             RoundingAdjustment: document.RoundingAdjustment,
+            PerLineWhtEnabled: previewPerLineWht,
             // เฉพาะใบตั้งหนี้ฝั่งซื้อที่ข้อเสนอลงตัวกับยอดใบ (ตัวอ่านเดียวกับเส้นสร้างเอกสาร) — ใบสำคัญจ่ายต้องมีบรรทัดปรับคู่กัน
             // ซึ่งเส้นฟอร์มไม่ได้ยกไป จึงไม่ส่ง (ปุ่ม "สร้างเอกสาร" ลงให้ครบทั้งคู่)
             ActualPaidAmount: !isSalesSide && headerWht == 0m
@@ -9206,7 +9243,7 @@ public class OcrService : IOcrService
     /// <para>ห้าม throw: กฎเหล็ก #3 บังคับว่าสแกนต้องได้ Draft เสมอ ผู้ใช้กรอกอัตราเองได้
     /// ที่ใบ ส่วนด่านตอน **อนุมัติ** (<c>DocumentService.ResolveExchangeRateAsync</c>)
     /// เป็นตัวบล็อกจริงถ้ายังไม่มีอัตรา</para></summary>
-    private async Task<decimal?> ResolveScanExchangeRateAsync(string? currency, DateTime documentDate)
+    private async Task<decimal?> ResolveScanExchangeRateAsync(Guid companyId, string? currency, DateTime documentDate)
     {
         if (string.IsNullOrWhiteSpace(currency)
             || string.Equals(currency, "THB", StringComparison.OrdinalIgnoreCase)) return 1m;
@@ -9214,7 +9251,11 @@ public class OcrService : IOcrService
         try
         {
             var rate = await _fxRates.GetRateAsync(currency.ToUpperInvariant(), documentDate);
-            return rate != null && rate.MidRate > 0m ? rate.MidRate : null;
+            if (rate == null || rate.MidRate <= 0m) return null;
+            // คำตัดสินเจ้าของข้อ 162 (Q2): อัตรา ธปท. ตัวไหน — ค่าตั้งบริษัท (กลาง = เดิม) · ตัวเลือกเดียว DocumentFx.PickBotRate (ตัวเดียวกับเส้นสร้างเอกสาร)
+            var botType = await _db.CompanySettings.AsNoTracking()
+                .Where(s => s.CompanyId == companyId).Select(s => (BotRateType?)s.FxBotRateType).FirstOrDefaultAsync() ?? BotRateType.Mid;
+            return Accounting.Helpers.DocumentFx.PickBotRate(botType, rate.MidRate, rate.BuyingTransfer, rate.Selling);
         }
         catch (Exception ex)
         {
@@ -9395,7 +9436,7 @@ public class OcrService : IOcrService
     /// (ไม่มี ⇒ ปฏิเสธ) · ส่วนลดแปลงเมื่อต่างจากค่าที่เก็บ · idempotent (<c>OcrEtaxLineNormalizer.ApplyReviewPriceEntry</c>)</param>
     public async Task<(decimal Amount, decimal? LineDiscount, bool DiscountDropped, decimal? UnitPrice, string? ConversionNote)> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
         int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
-        string? accountCode = null, decimal? lineDiscount = null, bool priceEnteredExVat = false)
+        string? accountCode = null, decimal? lineDiscount = null, bool priceEnteredExVat = false, string? whtIncomeTypeCode = null)
     {
         var scan = await _db.Set<OcrScanResult>()
             .FirstOrDefaultAsync(r => r.CompanyId == companyId && r.Id == scanResultId)
@@ -9441,6 +9482,16 @@ public class OcrService : IOcrService
         if (quantity.HasValue || unitPrice.HasValue || lineDiscount.HasValue) line.UserEdited = true;
         if (accountCode != null)
             line.SuggestedAccountCode = accountCode.Trim() is { Length: > 0 } c ? c : null;
+        // R-17 (B-1) round-trip: ประเภทเงินได้ที่ผู้ใช้เลือกต่อบรรทัด — null = ไม่แตะ · "" = ล้าง (กลับไปตามแผนระบบ) · "0" = ไม่หัก · รหัสต้องชี้ขาดได้ในตารางกลาง
+        if (whtIncomeTypeCode != null)
+        {
+            var wc = whtIncomeTypeCode.Trim();
+            if (wc.Length == 0) line.WhtIncomeTypeCode = null;
+            else if (wc == Accounting.Helpers.OcrLineWhtPlan.NoWhtOverrideCode) line.WhtIncomeTypeCode = wc;
+            else if (Accounting.Helpers.ThaiWhtRateTable.Resolve(wc) is { } whtType) line.WhtIncomeTypeCode = whtType.Code;
+            else throw new Accounting.Helpers.BusinessRuleException(
+                $"ประเภทเงินได้ \"{wc}\" ไม่อยู่ในตารางประเภทเงินได้ ม.40 — เลือกจากรายการ หรือเลือก \"ไม่หัก\" / \"ตามระบบ\"", Accounting.Helpers.PerLineWht.RuleCode);
+        }
         // ราคา/ส่วนลด + ช่องติ๊ก "กรอกราคาไม่รวม VAT" — ตัวตัดสินเดียว (ทบทวน e8547899 ข้อ 1: แปลงเฉพาะราคาที่ส่งมาในคำขอนี้ · ส่วนลดแปลงเมื่อเปลี่ยน
         // จากค่าที่เก็บไว้ · idempotent — เดิมแปลงราคาที่เก็บไว้ ⇒ ติ๊กหลังพิมพ์/ติ๊กซ้ำ = คิด VAT ซ้ำ)
         var priceEdit = Accounting.Helpers.OcrEtaxLineNormalizer.ApplyReviewPriceEntry(
@@ -10583,7 +10634,8 @@ public class OcrService : IOcrService
                     i.PriceIncludesVat,
                     Accounting.Helpers.OcrEtaxLineNormalizer.DiscountLabel(i.LineDiscountAmount, i.PriceIncludesVat, i.VatStripResidual,
                         i.UnitPriceRoundingResidual),
-                    Accounting.Helpers.OcrEtaxLineNormalizer.PriceBasisLabel(i.PriceIncludesVat))).ToList();
+                    Accounting.Helpers.OcrEtaxLineNormalizer.PriceBasisLabel(i.PriceIncludesVat),
+                    WhtIncomeTypeCode: i.WhtIncomeTypeCode)).ToList();
             }
         }
 
@@ -11992,4 +12044,7 @@ internal class OcrExtractedLineItem
     /// <summary>ภาษีของบรรทัดนี้หลังเฉลี่ยจากหัวใบ (เฉพาะบรรทัดที่ <c>VatRate &gt; 0</c>)
     /// — เก็บไว้ให้หน้า review แสดงและตรวจ Σ ได้โดยไม่ต้องคำนวณซ้ำคนละที่</summary>
     public decimal? VatAmount { get; set; }
+    /// <summary>R-17 (B-1): ประเภทเงินได้ที่ผู้ใช้เลือกในหน้ารีวิวต่อบรรทัด (round-trip · ค่าผู้ใช้ชนะแผนระบบ) · null = ตามแผน ·
+    /// <c>OcrLineWhtPlan.NoWhtOverrideCode</c> ("0") = ไม่หักบรรทัดนี้ · อ่านโดย BuildScanLinesAsync ผ่าน <c>OcrLineWhtPlan.WithUserChoice</c></summary>
+    public string? WhtIncomeTypeCode { get; set; }
 }

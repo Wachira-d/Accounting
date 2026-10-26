@@ -166,6 +166,15 @@ public class CompanySettings : TenantEntity
     /// ช่อง "ยอดบาทตามเอกสาร" ในฟอร์ม · แถวย่อยต่ออัตราบนกระดาษ · ดู <c>docs/PER_LINE_WHT_DESIGN.md</c></summary>
     public bool PerLineWhtEnabled { get; set; } = false;
 
+    /// <summary>คำตัดสินเจ้าของข้อ 162 (Q2 · 2026-10-26) — อัตราแลกเปลี่ยนที่ใช้กับ<b>ฐานหัก ณ ที่จ่าย</b>ของใบต่างสกุลที่จ่ายเป็นงวด:
+    /// วันที่ใบ (ค่าตั้งต้น = เดิม) / วันจ่าย (ป.132/2548) · ผู้อ่านเดียว <c>DocumentFx.WhtRateFor</c> ← <c>CreatePaymentJournalAsync</c> (ขา 2191x) +
+    /// <c>WithholdingTaxCertService.AutoGenerateFromDocumentAsync</c> (50 ทวิ รายงวด) ⇒ สองที่เท่ากันถึงสตางค์ · ผลต่าง FX ของส่วนภาษีลงเส้นกำไร/ขาดทุนอัตราแลกเปลี่ยนเดิม</summary>
+    public WhtFxRateBasis WhtFxRateBasis { get; set; } = WhtFxRateBasis.DocumentDate;
+
+    /// <summary>คำตัดสินเจ้าของข้อ 162 (Q2) — อัตรา ธปท. ที่ใช้เมื่อผู้ใช้ไม่กรอกอัตราเอง (กลาง = เดิม / ซื้อถัวเฉลี่ย / ขายถัวเฉลี่ย) ·
+    /// ผู้อ่านเดียว <c>DocumentFx.PickBotRate</c> ← <c>DocumentService.ResolveExchangeRateAsync</c> + <c>OcrService.ResolveScanExchangeRateAsync</c></summary>
+    public BotRateType FxBotRateType { get; set; } = BotRateType.Mid;
+
     // e-Tax Invoice Settings (per-company)
     public bool EtaxEnabled { get; set; } = false;
     public EtaxMode EtaxMode { get; set; } = EtaxMode.None;  // ByEmail, Direct, or Both

@@ -435,7 +435,7 @@ public partial class DocumentService : IDocumentService
     /// override wins; otherwise auto-fetch the BoT mid-rate at DocumentDate.
     /// Throws if BoT lookup fails — silent fallback to 1 on non-THB would
     /// corrupt the GL.</summary>
-    private async Task<decimal> ResolveExchangeRateAsync(string? currency, decimal? overrideRate, DateTime documentDate)
+    private async Task<decimal> ResolveExchangeRateAsync(Guid companyId, string? currency, decimal? overrideRate, DateTime documentDate)
     {
         var cur = (currency ?? "THB").ToUpperInvariant();
         if (cur == "THB") return 1m;
@@ -452,7 +452,11 @@ public partial class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"ไม่พบอัตราแลกเปลี่ยน {cur} ของวันที่ {documentDate:yyyy-MM-dd} จาก ธ.ปท. " +
                 "กรุณาระบุ ExchangeRate ในคำขอ");
-        return rate.MidRate;
+        // คำตัดสินเจ้าของข้อ 162 (Q2): อัตรา ธปท. ตัวไหน — ค่าตั้งบริษัท (กลาง = เดิม / ซื้อถัวเฉลี่ย / ขายถัวเฉลี่ย) · ตัวเลือกเดียว DocumentFx.PickBotRate
+        var botType = await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId).Select(s => (Models.Enums.BotRateType?)s.FxBotRateType).FirstOrDefaultAsync()
+            ?? Models.Enums.BotRateType.Mid;
+        return Accounting.Helpers.DocumentFx.PickBotRate(botType, rate.MidRate, rate.BuyingTransfer, rate.Selling);
     }
 
     /// <summary>Validate the line items on a create OR update. Same guards in
@@ -1204,7 +1208,7 @@ public partial class DocumentService : IDocumentService
             // Non-THB: caller's override wins; otherwise auto-fetch BoT mid-rate
             // at DocumentDate. If BoT lookup fails, refuse — silent fallback to
             // 1 would corrupt the GL.
-            var fxRate = await ResolveExchangeRateAsync(request.Currency, request.ExchangeRate, request.DocumentDate);
+            var fxRate = await ResolveExchangeRateAsync(companyId, request.Currency, request.ExchangeRate, request.DocumentDate);
 
             // ใบมัดจำต้อง standalone (audit #10): ใบเสร็จที่อ้างเอกสารต้นทางจะ post
             // เป็น "ตัดชำระลูกหนี้" (Cr 113) ไม่แตะ 217xx → ติดธง IsDeposit ไป
@@ -19907,11 +19911,18 @@ public partial class DocumentService : IDocumentService
         var thbAmount = fx == 1m ? payment.Amount : Math.Round(payment.Amount * fx, 2, MidpointRounding.AwayFromZero);
         var thbCash = settleFx == fx ? thbAmount
             : Math.Round(payment.Amount * settleFx, 2, MidpointRounding.AwayFromZero);
-        // ทีม F: ขา WHT ตอนจ่ายใช้อัตราของเอกสาร — เป้าเดียวกับ 50 ทวิ รายงวด (WithholdingTaxCertService ผูกยอดงวดเข้าหาค่านี้)
-        var thbWht = Accounting.Helpers.PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx);
+        // ทีม F: ขา WHT ตอนจ่าย — เป้าเดียวกับ 50 ทวิ รายงวด (WithholdingTaxCertService ผูกยอดงวดเข้าหาค่านี้)
+        // คำตัดสินเจ้าของข้อ 162 (Q2 · รอบ 205 W7): อัตราฐานภาษีตามค่าตั้งบริษัท — ตัวตัดสินเดียว DocumentFx.WhtRateFor (ตัวเดียวกับ 50 ทวิ)
+        // · DocumentDate (ค่าตั้งต้น) ⇒ whtFx == fx ⇒ ตัวเลขเดิมทุกสตางค์ · PaymentDate ⇒ WHT ที่อัตราวันจ่าย ส่วนลูกหนี้/เจ้าหนี้ตัดที่อัตราเอกสาร
+        //   (มูลค่าที่ตั้งไว้ใน GL) ⇒ ผลต่างของส่วนภาษีเข้ากำไร/ขาดทุนอัตราแลกเปลี่ยนเส้นเดิม (TFRS for NPAEs บทที่ 19)
+        var whtFx = Accounting.Helpers.DocumentFx.WhtRateFor(
+            whtSettings?.WhtFxRateBasis ?? Models.Enums.WhtFxRateBasis.DocumentDate, fx, payment.ExchangeRate);
+        var thbWht = Accounting.Helpers.PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, whtFx);
+        // ส่วนภาษีที่ลูกหนี้/เจ้าหนี้ถืออยู่ที่อัตราเอกสาร (ค่าตั้งต้น = thbWht ตัวเดียวกัน)
+        var thbWhtAtDocRate = Accounting.Helpers.PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx);
         var postPerPaymentWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash && thbWht > 0m;
-        // ผลต่าง FX ของงวดนี้ (คิดเฉพาะส่วนเงินสด — WHT ตัดที่ rate เอกสารทั้งคู่)
-        var fxDiff = thbCash - thbAmount;   // >0 = ได้ THB มากขึ้น
+        // ผลต่าง FX ของงวดนี้ = (เงินสด + ภาษี ที่อัตราที่ใช้จริง) − (ยอดที่ตัดจากลูกหนี้/เจ้าหนี้ที่อัตราเอกสาร) · ค่าตั้งต้น ⇒ เท่ากับ thbCash − thbAmount เดิม
+        var fxDiff = (thbCash - thbAmount) + (postPerPaymentWht ? thbWht - thbWhtAtDocRate : 0m);   // >0 = ได้ THB มากขึ้น
 
         if (isRevenue)
         {
@@ -19952,7 +19963,7 @@ public partial class DocumentService : IDocumentService
                 doc, pinContact => FindAccountAsync(companyId, "113", pinContact));
             if (arAccount != null)
             {
-                var arClear = (postPerPaymentWht ? thbAmount + thbWht : thbAmount) + thbFee;
+                var arClear = (postPerPaymentWht ? thbAmount + thbWhtAtDocRate : thbAmount) + thbFee;
                 pendingLines.Add((arAccount.Id, 0, arClear, $"ตัดลูกหนี้ - {doc.DocumentNumber}"));
             }
             // Realized FX: รับเงินได้ THB มากกว่าที่ AR ตั้งไว้ = กำไร (Cr),
@@ -19977,7 +19988,7 @@ public partial class DocumentService : IDocumentService
             if (apAccount != null)
             {
                 // + หนี้ที่ปิดด้วยบรรทัดปรับ (รอบ 193 · เอกสารสกุลบาทเท่านั้น — ตรวจที่ CreatePaymentAsync)
-                var apClear = (postPerPaymentWht ? thbAmount + thbWht : thbAmount) + payment.SettlementAdjustmentAmount;
+                var apClear = (postPerPaymentWht ? thbAmount + thbWhtAtDocRate : thbAmount) + payment.SettlementAdjustmentAmount;
                 pendingLines.Add((apAccount.Id, apClear, 0, $"ตัดเจ้าหนี้ - {doc.DocumentNumber}"));
             }
             // เงินออก 0 (ปิดหนี้ค้างด้วยบรรทัดปรับอย่างเดียว — ฝ่ายค้าน C9) ⇒ ไม่มีขาเงินสด

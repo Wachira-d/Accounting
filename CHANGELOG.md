@@ -5536,3 +5536,11 @@ warnings ⇒ กล่องเหลือง "ระบบไม่แน่�
 (ส่วนลด 576 ต่อบรรทัด vs 538.32 ท้ายบิล · 1,226.84 vs 1,840) — คำนวณทางเลือก `BillDiscountAmount` 538.32 ให้ยอดเท่าเดิมทุกสตางค์ไว้ รอเจ้าของ · เมทริกซ์ทุกรูปแบบ `docs/OCR_TOTALS_MATRIX.md`
 (16 ช่อง · ล็อกด้วยอะไร · ช่องว่างที่เหลือ) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT · สังเคราะห์ · วางหลัง F · baseline: 28 ตัว (+ สังเคราะห์ 24 ช่อง) ด้วย **port Python ของ `Classify`** (เทียบเท่า C# ณ 74a4796c — ไม่ใช่ตัว C# เอง) = 0 เปลี่ยนใน vector จริง · replay/golden harness ผ่าน C# จริง (`OcrReplay*GoldenTests` · `EtaxGoldenCorpusTests`) **ยังต้องรอ CI** (ไม่มี SDK)) +
 `OcrConfidenceGateway`/`OcrDuplicateLineGuard` รู้เคส G · ใบนี้ยังไม่เข้า `OcrPaperSamples` (golden คู่สัญญาต้องรัน dotnet — ขั้นตอนจดใน MATRIX §5) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_รอบ 205 ทีม W7 (หัก ณ ที่จ่ายตามรายการ + ใบต่างสกุล · `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W7 R-17..R-21 + คำตัดสินเจ้าของข้อ 162/Q2): (R-17) หน้ารีวิวสแกนเห็นแผน WHT ต่อบรรทัดจาก line-preview เมื่อค่าตั้งเปิด +
+เลือกประเภทเงินได้ต่อบรรทัด round-trip (`OcrExtractedLineItem.WhtIncomeTypeCode` → `OcrLineWhtPlan.WithUserChoice`) · (R-20) ข้อเสนอหักเมื่อหัวใบไม่มีหัก `OcrLineWhtPlan.Suggest` → `[WHT-LINE-SUGGEST]` (warn-only · เกณฑ์ 1,000 ระดับใบ · หัวมีหักแล้วไม่เสนอซ้ำ) ·
+(R-18) ใบลดหนี้ต่างสกุลเทียบ 50 ทวิ เป็นบาทผ่าน `PerLineWht.ForDocument(cn)`/`DocumentWhtThb` · (R-19) `ExpenseClaimLine.IncomeTypeCode` + migration + `expense.html` → `DocumentLineRequest.IncomeTypeCode` ·
+(ข้อ 162) `CompanySettings.WhtFxRateBasis` (วันใบ=เดิม/วันจ่าย ป.132/2548) ตัวตัดสินเดียว `DocumentFx.WhtRateFor` ใช้ทั้งขา 2191x (`CreatePaymentJournalAsync` — AR/AP ตัดที่อัตราเอกสาร · ผลต่างส่วนภาษี → FX gain/loss เส้นเดิม)
+และ 50 ทวิ รายงวด (`PerLineWht.ForDocument(doc, whtFxRate)` — ใบบาทไม่รับ override) ⇒ เท่ากันถึงสตางค์ · `CompanySettings.FxBotRateType` (กลาง=เดิม/ซื้อถัวเฉลี่ย/ขายถัวเฉลี่ย) `DocumentFx.PickBotRate` ที่ `ResolveExchangeRateAsync` + OCR ·
+50 ทวิ ทุกใบบันทึก `ExchangeRateUsed/ExchangeRateBasis` · หน้าตั้งค่าบอกผลทางภาษีของแต่ละตัวเลือก · R-21 วิเคราะห์แล้ว**ไม่ merge** (TieOut ทำให้ 50 ทวิ = GL อยู่แล้ว · ต้องฝ่ายค้าน) ·
+เทสต์ `PerLineWhtTests` +14 (ทิศตรงข้าม: ใบบาท/ค่าเริ่มต้นไม่ขยับ) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · แตะภาษี — ยังไม่ผ่านฝ่ายค้าน · sha เติมในคอมมิตถัดไป_

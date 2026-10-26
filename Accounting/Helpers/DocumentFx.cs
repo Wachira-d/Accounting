@@ -69,6 +69,37 @@ public static class DocumentFx
            + "ให้เว้นช่อง \"ยอดบาทตามเอกสาร\" แล้วกรอกอัตราแลกเปลี่ยนเอง (ระบบจะคิดฐานบาทจากอัตรา)";
 
     /// <summary>ผลตัดสินอัตรา/ที่มา/ฐานบาทของเอกสารตอนสร้าง · <see cref="Error"/> ≠ null ⇒ ผู้เรียกล้มดัง (400 ข้อความไทย)</summary>
+    // ───────────────────────── คำตัดสินเจ้าของข้อ 162 (Q2 · 2026-10-26) — ตั้งค่าได้ต่อบริษัท · ค่าตั้งต้น = เดิมทุกสตางค์ ─────────────────────────
+
+    /// <summary>อัตราที่ใช้กับ<b>ฐานหัก ณ ที่จ่าย</b>ของงวดจ่าย (50 ทวิ รายงวด + ขา 2191x ใน <c>CreatePaymentJournalAsync</c>) — <b>ตัวตัดสินเดียว</b> ·
+    /// <see cref="Models.Enums.WhtFxRateBasis.DocumentDate"/> (ค่าตั้งต้น) ⇒ อัตราเอกสารเสมอ (เดิม) ·
+    /// <see cref="Models.Enums.WhtFxRateBasis.PaymentDate"/> ⇒ อัตราวันจ่ายเมื่อมี (&gt; 0) ไม่งั้นอัตราเอกสาร (ไม่แต่งอัตรา) · ใบบาท (อัตรา 1) ⇒ 1 เสมอ</summary>
+    public static decimal WhtRateFor(Models.Enums.WhtFxRateBasis basis, decimal documentRate, decimal? paymentRate)
+    {
+        var docFx = documentRate <= 0m ? 1m : documentRate;
+        if (docFx == 1m) return 1m;
+        return basis == Models.Enums.WhtFxRateBasis.PaymentDate && paymentRate is decimal p && p > 0m ? p : docFx;
+    }
+
+    /// <summary>ป้ายที่มาของอัตราฐานภาษีบน 50 ทวิ (เก็บลง <c>WithholdingTaxCert.WhtFxRateBasis</c> — ทุกใบต้องบอกที่มา)</summary>
+    public static string WhtRateBasisLabel(Models.Enums.WhtFxRateBasis basis, decimal documentRate, decimal? paymentRate)
+        => WhtRateFor(basis, documentRate, paymentRate) == (documentRate <= 0m ? 1m : documentRate)
+            ? "อัตราของเอกสาร (วันที่ใบ)"
+            : "อัตรา ณ วันจ่าย (ป.132/2548)";
+
+    /// <summary>อัตรา ธปท. ตัวไหนที่ใช้เมื่อไม่มีอัตราจากผู้ใช้ — <b>ตัวเลือกเดียว</b>ของทุกผู้เรียก ธปท. (เอกสาร · OCR) ·
+    /// ค่าตั้งต้น <see cref="Models.Enums.BotRateType.Mid"/> = อัตรากลาง (เดิม) · ตัวที่เลือกไม่มีค่า (≤ 0) ⇒ ตกไปอัตรากลาง (ไม่คืนศูนย์ให้ GL)</summary>
+    public static decimal PickBotRate(Models.Enums.BotRateType type, decimal mid, decimal buyingTransfer, decimal selling)
+    {
+        var picked = type switch
+        {
+            Models.Enums.BotRateType.AverageBuying => buyingTransfer,
+            Models.Enums.BotRateType.AverageSelling => selling,
+            _ => mid,
+        };
+        return picked > 0m ? picked : mid;
+    }
+
     public readonly record struct Decision(decimal Rate, string? Source, decimal? ThbBase, string? Error);
 
     /// <summary>

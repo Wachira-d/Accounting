@@ -108,32 +108,44 @@
 | C16 | ดอกเบี้ย ผู้รับไม่รู้ชนิด (สแกน) | ตามหัวใบ (ไม่เดา 15/1) | ✅ |
 | C17 | ผู้รับต่างประเทศ ม.70 (ภ.ง.ด.54) ใบ USD | 50 ทวิ/ภ.ง.ด.54 เป็นบาท | ✅ (ผ่านเส้นเดียวกัน) |
 | C18 | สแกน: ยอดหักหัวใบไม่ได้พิมพ์ (มีแค่ข้อเสนอ) | ไม่หักให้เอง (เดิม) ⇒ ไม่มีแผน | ✅ (เดิม) |
-| C19 | ใบเบิกค่าใช้จ่ายพนักงาน (`expense.html`) | อัตราต่อบรรทัดมีอยู่ แต่ไม่มีประเภทเงินได้ | 📋 B-5 |
-| C20 | OCR หน้ารีวิว (ตาราง "รายการที่อ่านได้") แสดง/แก้อัตราต่อบรรทัดก่อนสร้าง | — | 📋 B-1 |
+| C19 | ใบเบิกค่าใช้จ่ายพนักงาน (`expense.html`) | ประเภทเงินได้ต่อบรรทัด (`ExpenseClaimLine.IncomeTypeCode` · ว่าง = ตามหัวใบ) ไหลเข้า PV ⇒ 50 ทวิ แยกประเภท | ✅ รอบ 205 W7 (R-19) |
+| C20 | OCR หน้ารีวิว (ตาราง "รายการที่อ่านได้") แสดง/แก้อัตราต่อบรรทัดก่อนสร้าง | คอลัมน์ "หัก ณ ที่จ่าย" จาก line-preview (ค่าตั้งเปิด) · เลือกประเภทต่อบรรทัด = ค่าผู้ใช้ชนะแผน (Σ ยังต้องตรงหัวใบ) | ✅ รอบ 205 W7 (R-17) |
 
 ## 8. Backlog (ยังไม่ทำ + เหตุผล)
 
-- **B-1** OCR DTO ต่อบรรทัด (`OcrLineItemDto.WithholdingTaxRate/IncomeTypeCode`) ให้หน้ารีวิวสแกน/ฟอร์ม `from=scan` เห็นแผนก่อนสร้าง — ตอนนี้แผนมีผลที่เส้นสร้างเอกสาร
+- ~~B-1~~ ✅ รอบ 205 W7 (R-17) — `OcrLinePreviewLineDto.WhtIncomeTypeCode/WhtAmount` (+ `SuggestedWht*` ของ B-6) · `OcrLinePreviewResponse.PerLineWhtEnabled` คุมคอลัมน์ใน `document-scan.html` ·
+  ค่าทุกตัวจาก `BuildScanLinesAsync` ตัวเดียวกับปุ่ม "สร้างเอกสาร" (หน้าไม่คำนวณ) · round-trip: ผู้ใช้เลือกประเภทต่อบรรทัด → `POST line-fields {whtIncomeTypeCode}` →
+  `OcrExtractedLineItem.WhtIncomeTypeCode` ("0" = ไม่หัก · "" = ตามระบบ · รหัสต้องชี้ขาดได้) → `OcrLineWhtPlan.WithUserChoice` (ค่าผู้ใช้ชนะผลจัดประเภท · Σ ยังต้องอธิบายยอดหัวใบ ไม่งั้น `[WHT-LINE-MISMATCH]`) ·
+  `OcrLineItemDto.WhtIncomeTypeCode` echo ค่าที่เก็บ · ตัวจัดประเภทเป็นกฎ (ไม่มี AI) ⇒ ไม่มี feedback row ให้ `RecordUserChoiceAsync` — round-trip คือค่าที่เก็บบนสแกน
   (`create-document`) และพรีวิวบรรทัด (เมธอดเดียวกัน) · ต้องแตะ `document-scan.html` (ขอบเขตทีม OCR) + round-trip learning ต่อช่อง (กฎเหล็ก #3 ข้อ 5)
-- **B-2** JE ขา 2191x ของใบต่างสกุลใช้ `PerLineWht` (ฐานบาท × อัตรา) แทน `ToBaht(WHT สกุลเอกสาร)` — ตอนนี้ 50 ทวิ ผูก Σ กับ GL ด้วย TieOut (ต่างระดับเศษ) ·
+- **B-2** JE ขา 2191x ของใบต่างสกุลใช้ `PerLineWht` (ฐานบาท × อัตรา) แทน `ToBaht(WHT สกุลเอกสาร)` — **ตรวจรอบ 205 W7 (R-21) แล้วไม่ merge**: `ForDocument` ผูก Σ เข้าหา `DocumentWhtThb`
+  (= สูตรขา 2191x) ด้วย `TieOut` อยู่แล้ว ⇒ 50 ทวิ = GL ถึงสตางค์ทุกเคสที่เศษ ≤ 0.05 × บรรทัด (เกิน = `TaxGlReconciliation` ฟ้อง) · การย้ายนิยาม GL เปลี่ยน JE ใบต่างสกุลทุกใบ +
+  ขาเจ้าหนี้/FX squeeze (`AutoPostToJournalAsync`) ⇒ ต้องฝ่ายค้าน + golden ก่อน — คง backlog · ข้อ 162 ทำให้สองที่ใช้อัตราตัวเดียวกันแล้ว (`DocumentFx.WhtRateFor`)
   การย้ายต้องแก้ขาเจ้าหนี้/FX squeeze พร้อมกัน (`AutoPostToJournalAsync`) — เสี่ยงสูง แยกรอบ + ฝ่ายค้าน
-- **B-3** อัตรา ณ วันจ่ายสำหรับ 50 ทวิ รายงวด (`Payment.ExchangeRate`) + ผลต่าง FX ระหว่างวันตั้งหนี้/วันจ่ายลง `FxGainLossAccountId` (TFRS for NPAEs บทที่ 19) —
+- ~~B-3~~ ✅ รอบ 205 W7 — **คำตัดสินเจ้าของข้อ 162 (Q2)**: ตั้งค่าได้ต่อบริษัท `CompanySettings.WhtFxRateBasis` (`DocumentDate` ค่าเริ่มต้น = เดิมทุกสตางค์ · `PaymentDate` = `Payment.ExchangeRate` ป.132/2548) ·
+  ตัวตัดสินเดียว `DocumentFx.WhtRateFor` ใช้ทั้งที่ `CreatePaymentJournalAsync` (ขา 2191x ที่อัตราที่เลือก · ลูกหนี้/เจ้าหนี้ตัดที่อัตราเอกสาร · ผลต่างส่วนภาษีเข้า 42600/54950 เส้นเดิม) และ 50 ทวิ รายงวด
+  (`PerLineWht.ForDocument(doc, whtFxRate)` — อัตราวันจ่ายไม่ใช้ยอดบาทที่พิมพ์เป็นฐาน) ⇒ เท่ากันถึงสตางค์ทั้งสองค่าตั้ง · ที่มาของอัตราบันทึกทุกใบ `WithholdingTaxCert.ExchangeRateUsed/ExchangeRateBasis` ·
+  เทสต์ `WhtRateFor_*` · `ForDocument_whtRateOverride_*` · ⚠️ ยังไม่ผ่านฝ่ายค้าน
   เส้นรับ/จ่ายชำระมีผลต่าง FX ของยอดเจ้าหนี้อยู่แล้ว (`DocumentService` ~ บรรทัด 19880) แต่ฐาน WHT ยังใช้อัตราของใบ · รอนักบัญชียืนยันหลัก (ข้อ 4)
-- **B-4** ใบลดหนี้ต่างสกุลที่ปรับ 50 ทวิ (`WhtCertAmountLine` · `WhtCreditNoteRemainder`) ยังคิดสกุลเอกสาร — ใช้ `PerLineWht.ForDocument` ของใบลดหนี้
-- **B-5** ใบเบิกพนักงาน `ExpenseClaim` — เพิ่มประเภทเงินได้ต่อบรรทัด (ตอนนี้มีแค่อัตรา) · entity คนละตัว
-- **B-6** ข้อเสนอหักต่อบรรทัดเมื่อหัวใบ**ไม่**มีหัก (ใบที่กระดาษไม่พิมพ์ยอดหัก) — ต้องผ่านด่านเกณฑ์ 1,000 (`OcrWhtThresholdBase`) + เป็นข้อเสนอเท่านั้น
+- ~~B-4~~ ✅ รอบ 205 W7 (R-18) — `AdjustCertsForCreditNoteAsync`: ใบเดิม/ใบลดหนี้ทุกใบเป็นบาทผ่าน `PerLineWht.DocumentWhtThb` · บรรทัดลดผ่าน `PerLineWht.ForDocument(cn)` (เงินได้ = ฐาน + ออกแทน บาท) ·
+  ใบบาทไม่ขยับ (เทสต์ `CreditNote_thb_ForDocument_returns_stored_amounts_exactly`)
+- ~~B-5~~ ✅ รอบ 205 W7 (R-19) — `ExpenseClaimLine.IncomeTypeCode` (+ migration `PerLineWhtStatements`) · DTO request/response echo · `expense.html` คอลัมน์ "ประเภทเงินได้" (ตารางจาก `/api/reference/income-types`) ·
+  ไหลเข้า `DocumentLineRequest.IncomeTypeCode` ของ PV ตอนอนุมัติ/จ่าย ⇒ `PerLineWht` ตัวเดียวอ่าน · ว่าง = ตามหัวใบ · รหัสชี้ขาดไม่ได้ = 400
+- ~~B-6~~ ✅ รอบ 205 W7 (R-20) — `OcrLineWhtPlan.Suggest` (pure): หัวใบไม่มีหัก + เกณฑ์ 1,000 ระดับใบผ่าน (`OcrWhtThresholdBase.Verdict == Meets`) ⇒ `[WHT-LINE-SUGGEST]` + `SuggestedWht*` บน preview
+  ("⚙️ ระบบแนะนำ" ในหน้ารีวิว) · **ข้อเสนอเท่านั้น** — บรรทัดจริงยัง 0 · ไม่อยู่ใน `BlockingTags` (warn-gate · DOCTRINE 2.3) · หัวใบมีหักแล้วไม่ถูกเสนอซ้ำ (เทสต์ทิศตรงข้าม) · เฉพาะค่าตั้งเปิด
   (ระบบไม่หักให้เอง — คำตัดสินเดิม) · ต่อยอด `OcrMinorityWhtPart`
 - **B-7** ตาราง DTA (`DtaTreatyRates`) ยังว่างโดยตั้งใจ — ม.70 เต็มอัตราเสมอ (ไม่ใช่งานทีม F)
 - ~~B-9~~ ✅ หน้านำส่ง/ปฏิทิน + ตัวกระทบ GL เป็นบาทผ่าน `PerLineWht.DocumentWhtThb` (ฝ่ายค้านข้อ 4)
 - **B-10** 50 ทวิ ใบต่างสกุลที่ออกก่อนแก้ (สกุลเอกสาร) — **ไม่แก้ย้อนหลัง** · รายงานตรวจข้อมูล "50 ทวิ ใบต่างสกุลที่ยอดไม่ใช่บาท"
   (`DataIntegrityReport.ForeignCurrencyWhtCertsNotInBaht` · ตัวตัดสิน `Helpers/WhtCertCurrencyCheck`) ให้ผู้ทำบัญชียกเลิก/ออกใหม่/ยื่นเพิ่มเติม ✅
-- **B-8** กติกาอัตรา ธปท. ที่ใช้กับ VAT (อัตราซื้อถัวเฉลี่ย วันทำการก่อน tax point) vs mid-rate ที่ `IBotExchangeRateService` คืน — ต้องยืนยันกับนักบัญชีก่อนเปลี่ยน
+- ~~B-8~~ ✅ รอบ 205 W7 — **คำตัดสินเจ้าของข้อ 162 (Q2)**: `CompanySettings.FxBotRateType` (`Mid` ค่าเริ่มต้น = เดิม · `AverageBuying` = `BuyingTransfer` · `AverageSelling`) · ตัวเลือกเดียว `DocumentFx.PickBotRate`
+  ที่ `DocumentService.ResolveExchangeRateAsync` + `OcrService.ResolveScanExchangeRateAsync` · ตัวที่เลือกไม่มีค่า ⇒ กลาง · ข้อความหน้าตั้งค่าบอกแนวสรรพากร (§79/4 · ป.132/2548) ให้นักบัญชีเลือกเอง
 
 ## 8b. ค่าตั้งเปิด/ปิด — อะไรขึ้นกับค่าตั้ง (แก้ doc ตามฝ่ายค้านข้อ 3)
 
 | ขึ้นกับ `PerLineWhtEnabled` | ทำงานเสมอ (แก้บั๊ก) |
 | --- | --- |
-| OCR แผนต่อบรรทัด · OCR ยอดบาทบนใบต่างสกุล | 50 ทวิ/ภ.ง.ด./หน้านำส่ง/ตัวกระทบ GL/สรุปต่อประเภทของใบต่างสกุลเป็นบาท · ช่อง "ยอดบาทตามเอกสาร" · แถวย่อยต่ออัตราบนกระดาษ · รายงานตรวจข้อมูล B-10 |
+| OCR แผนต่อบรรทัด · OCR ยอดบาทบนใบต่างสกุล · คอลัมน์ WHT ในหน้ารีวิว + ข้อเสนอ `[WHT-LINE-SUGGEST]` (รอบ 205) | 50 ทวิ/ภ.ง.ด./หน้านำส่ง/ตัวกระทบ GL/สรุปต่อประเภทของใบต่างสกุลเป็นบาท · ช่อง "ยอดบาทตามเอกสาร" · แถวย่อยต่ออัตราบนกระดาษ · รายงานตรวจข้อมูล B-10 |
 
 ใบบาททุกใบไม่ขยับแม้แต่สตางค์ทั้งสองฝั่ง · ใบต่างสกุลที่ออก 50 ทวิ ใหม่หลังแก้จะเป็นบาท (คำตอบต่างจากเดิมโดยตั้งใจ)
 
@@ -145,4 +157,6 @@
 `Helpers/PerLineWht.cs` (ใหม่) · `Helpers/OcrLineWhtPlan.cs` (ใหม่) · `Helpers/OcrThbEquivalent.cs` (ใหม่) · `Helpers/DocumentFx.cs` · `Models/Entities/CompanySettings.cs` ·
 `Models/Entities/Document.cs` · `Data/DatabaseMigrationHelper.cs` (`PerLineWhtStatements`) · `Data/AccountingDbContext.cs` · DTO settings/document ·
 `SettingsService` · `DocumentService` (+ `DocumentService.PerLineWht.cs`) · `WithholdingTaxCertService` · `TaxService` · `OcrService` ·
-`Ocr/ExpenseCategoryResolver.ClassifyLineForWht` · `PdfGenerationService` + `.DocumentRenderer` · `Pdf/DocumentLabels` · `settings.html` · `documents.html`
+`Ocr/ExpenseCategoryResolver.ClassifyLineForWht` · `PdfGenerationService` + `.DocumentRenderer` · `Pdf/DocumentLabels` · `settings.html` · `documents.html` ·
+รอบ 205 W7: `Models/Enums/AllEnums.cs` (`WhtFxRateBasis` · `BotRateType`) · `WithholdingTaxCertService` (R-18 + ข้อ 162) · `ExpenseClaim` entity/DTO/service · `expense.html` · `document-scan.html` (คอลัมน์ WHT) ·
+`OcrController.SetLineFieldsRequest.WhtIncomeTypeCode` · `OcrDtos` · `WithholdingTaxCert.ExchangeRateUsed/ExchangeRateBasis`

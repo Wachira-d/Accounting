@@ -7820,5 +7820,13 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PerLineWhtEnabled" boolean NOT NULL DEFAULT false;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentThbBase" numeric(18,2) NULL;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRateSource" character varying(16) NULL;""",
+        // คำตัดสินเจ้าของข้อ 162 (Q2 · รอบ 205 W7): อัตราฐาน WHT ใบต่างสกุลที่จ่ายเป็นงวด (0 = วันที่ใบ เดิม) + อัตรา ธปท. ที่ใช้ (0 = กลาง เดิม)
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WhtFxRateBasis" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "FxBotRateType" integer NOT NULL DEFAULT 0;""",
+        // ข้อ 162: ที่มาของอัตราบน 50 ทวิ ทุกใบ (ใบเก่า = NULL ไม่รู้ · ไม่แต่ง)
+        """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "ExchangeRateUsed" numeric(18,6) NULL;""",
+        """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "ExchangeRateBasis" character varying(64) NULL;""",
+        // R-19 (B-5): ประเภทเงินได้ต่อบรรทัดของใบเบิกพนักงาน (ว่าง = ตามหัวใบ — เหมือน DocumentLine)
+        """ALTER TABLE "ExpenseClaimLines" ADD COLUMN IF NOT EXISTS "IncomeTypeCode" text NULL;""",
     };
 }

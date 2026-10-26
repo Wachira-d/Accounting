@@ -141,7 +141,10 @@ public record UpdateCompanySettingsRequest(
     // **และ** ส่ง VatRegistered มาด้วย · ไม่ส่ง = บันทึกเรื่องอื่น ห้ามตีความว่าตอบคำถาม VAT แล้ว
     bool? ConfirmVatStatus = null,
     // ทีม F — หัก ณ ที่จ่ายตามรายการ (null = ไม่แก้) · docs/PER_LINE_WHT_DESIGN.md
-    bool? PerLineWhtEnabled = null);
+    bool? PerLineWhtEnabled = null,
+    // คำตัดสินเจ้าของข้อ 162 (Q2): อัตราที่ใช้กับฐาน WHT ของใบต่างสกุลที่จ่ายเป็นงวด + อัตรา ธปท. ที่ใช้ (null = ไม่แก้) · ค่าตั้งต้น = เดิมทุกสตางค์
+    WhtFxRateBasis? WhtFxRateBasis = null,
+    BotRateType? FxBotRateType = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -291,6 +294,10 @@ public record CompanySettingsResponse(
     public string? MoneyAccountCodePrefixesEffective { get; init; }
     /// <summary>ทีม F — หัก ณ ที่จ่ายตามรายการ (<c>CompanySettings.PerLineWhtEnabled</c>) · เก็บแล้วต้อง echo กลับ</summary>
     public bool PerLineWhtEnabled { get; init; }
+    /// <summary>คำตัดสินข้อ 162 — อัตราฐาน WHT ของใบต่างสกุลที่จ่ายเป็นงวด (ชื่อ enum) · echo กลับ</summary>
+    public string WhtFxRateBasis { get; init; } = nameof(Models.Enums.WhtFxRateBasis.DocumentDate);
+    /// <summary>คำตัดสินข้อ 162 — อัตรา ธปท. ที่ใช้ (ชื่อ enum) · echo กลับ</summary>
+    public string FxBotRateType { get; init; } = nameof(Models.Enums.BotRateType.Mid);
 }
 
 // ===== Landing Page Services (Public) =====

@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs.Tax;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Accounting.Services.Implementations.Ocr;
 using Xunit;
 
@@ -551,5 +552,164 @@ public class PerLineWhtTests
         var b = PerLineWht.ForDocument(doc).Values.Single();
         Assert.Equal(0m, b.PayerBorneThb);
         Assert.Equal(1_080m, b.WhtThb);
+    }
+
+    // ───────────────────────── รอบ 205 W7 — R-18 / คำตัดสินข้อ 162 (Q2) / R-17 / R-20 ─────────────────────────
+
+    [Fact]
+    public void CreditNote_foreign_ForDocument_gives_baht_income_and_tax_tied_to_header()
+    {
+        // R-18: ใบลดหนี้ USD อัตรา 36 — ตัวเลขที่เทียบกับ 50 ทวิ ต้องเป็นบาท (ตัวตั้งเดียว ForDocument / DocumentWhtThb)
+        var cn = Doc("USD", 36m, null, (100m, 3m, 3m, "2"));
+        var b = PerLineWht.ForDocument(cn).Values.Single();
+        Assert.Equal(3_600m, b.IncomeThb);
+        Assert.Equal(108m, b.WhtThb);
+        Assert.Equal(108m, PerLineWht.DocumentWhtThb(cn.WithholdingTaxAmount, cn.ExchangeRate));
+    }
+
+    [Fact]
+    public void CreditNote_thb_ForDocument_returns_stored_amounts_exactly()
+    {
+        // R-18 ทิศตรงข้าม: ใบลดหนี้บาทไม่ขยับแม้แต่สตางค์
+        var cn = Doc("THB", 1m, null, (100.55m, 3m, 3.02m, "2"), (49.45m, 0m, 0m, null));
+        var b = PerLineWht.ForDocument(cn);
+        Assert.Equal(100.55m, b.Values.First().IncomeThb);
+        Assert.Equal(3.02m, b.Values.First().WhtThb);
+        Assert.Equal(3.02m, PerLineWht.DocumentWhtThb(cn.WithholdingTaxAmount, cn.ExchangeRate));
+    }
+
+    [Fact]
+    public void ForDocument_whtRateOverride_uses_payment_rate_and_drops_printed_base()
+    {
+        // ข้อ 162: ฐานภาษีงวดที่อัตราวันจ่าย 37 — ยอดบาทที่พิมพ์ (อัตราวันใบ) ไม่ใช่ฐานอีกต่อไป
+        var doc = Doc("USD", 36m, 36_000m, (1_000m, 3m, 30m, "2"));
+        var def = PerLineWht.ForDocument(doc).Values.Single();
+        Assert.Equal(36_000m, def.BaseThb);
+        Assert.Equal(1_080m, def.WhtThb);
+        var paid = PerLineWht.ForDocument(doc, 37m).Values.Single();
+        Assert.Equal(37_000m, paid.BaseThb);
+        Assert.Equal(1_110m, paid.WhtThb);
+        Assert.Equal(WhtBahtBasis.ExchangeRate, PerLineWht.BasisOf(doc, 37m));
+        // ตัวเดียวกับขา 2191x: DocumentWhtThb ที่อัตราเดียวกัน ⇒ 50 ทวิ = GL ถึงสตางค์
+        Assert.Equal(1_110m, PerLineWht.DocumentWhtThb(doc.WithholdingTaxAmount, 37m));
+    }
+
+    [Fact]
+    public void ForDocument_whtRateOverride_equal_to_document_rate_is_identical_to_default()
+    {
+        var doc = Doc("USD", 36m, 36_000m, (1_000m, 3m, 30m, "2"), (500m, 2m, 10m, "8ad"));
+        var a = PerLineWht.ForDocument(doc).Values.Select(x => (x.BaseThb, x.WhtThb)).ToList();
+        var b = PerLineWht.ForDocument(doc, 36m).Values.Select(x => (x.BaseThb, x.WhtThb)).ToList();
+        Assert.Equal(a, b);
+        Assert.Equal(WhtBahtBasis.PrintedThb, PerLineWht.BasisOf(doc, 36m));
+    }
+
+    [Fact]
+    public void ForDocument_thb_document_ignores_whtRateOverride()
+    {
+        // ทิศตรงข้าม: ใบบาทคืนยอดที่เก็บไว้ตรงตัว แม้ผู้เรียกส่ง override มา
+        var doc = Doc("THB", 1m, null, (1_000m, 3m, 30m, "2"));
+        var b = PerLineWht.ForDocument(doc, 37m).Values.Single();
+        Assert.Equal(1_000m, b.BaseThb);
+        Assert.Equal(30m, b.WhtThb);
+        Assert.Equal(WhtBahtBasis.Thb, PerLineWht.BasisOf(doc, 37m));
+    }
+
+    [Theory]
+    [InlineData(WhtFxRateBasis.DocumentDate, 36, 37, 36)]     // ค่าตั้งต้น = อัตราเอกสารเสมอ (เดิม)
+    [InlineData(WhtFxRateBasis.PaymentDate, 36, 37, 37)]      // วันจ่าย
+    [InlineData(WhtFxRateBasis.PaymentDate, 36, null, 36)]    // ไม่มีอัตราวันจ่าย ⇒ อัตราเอกสาร (ไม่แต่ง)
+    [InlineData(WhtFxRateBasis.PaymentDate, 36, 0, 36)]
+    [InlineData(WhtFxRateBasis.PaymentDate, 1, 37, 1)]        // ใบบาท ⇒ 1 เสมอ
+    [InlineData(WhtFxRateBasis.DocumentDate, 0, 37, 1)]       // อัตราเสีย (ข้อมูลเก่า) ⇒ 1 เหมือน DocumentFx.ToBaht
+    public void WhtRateFor_follows_company_setting_with_document_rate_default(WhtFxRateBasis basis, int docRate, int? payRate, int expected)
+    {
+        Assert.Equal((decimal)expected, DocumentFx.WhtRateFor(basis, docRate, payRate is int p ? (decimal)p : null));
+    }
+
+    [Fact]
+    public void WhtRateBasisLabel_names_the_rate_actually_used()
+    {
+        Assert.Equal("อัตราของเอกสาร (วันที่ใบ)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.DocumentDate, 36m, 37m));
+        Assert.Equal("อัตราของเอกสาร (วันที่ใบ)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.PaymentDate, 36m, null));
+        Assert.Equal("อัตรา ณ วันจ่าย (ป.132/2548)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.PaymentDate, 36m, 37m));
+    }
+
+    [Theory]
+    [InlineData(BotRateType.Mid, 36.5, 36.2, 36.8, 36.5)]
+    [InlineData(BotRateType.AverageBuying, 36.5, 36.2, 36.8, 36.2)]
+    [InlineData(BotRateType.AverageSelling, 36.5, 36.2, 36.8, 36.8)]
+    [InlineData(BotRateType.AverageBuying, 36.5, 0, 36.8, 36.5)]     // ตัวที่เลือกไม่มีค่า ⇒ อัตรากลาง (ไม่คืนศูนย์ให้ GL)
+    public void PickBotRate_defaults_to_mid_and_never_returns_zero(BotRateType type, double mid, double buy, double sell, double expected)
+    {
+        Assert.Equal((decimal)expected, DocumentFx.PickBotRate(type, (decimal)mid, (decimal)buy, (decimal)sell));
+    }
+
+    [Fact]
+    public void Suggest_header_without_wht_proposes_statutory_rate_per_line_without_applying()
+    {
+        // R-20: ค่าบริการ 1,000 (ม.40(2) นิติบุคคล 3%) + สินค้า 500 — หัวใบไม่มีหัก · เกณฑ์ 1,000 ผ่าน
+        var lines = new List<OcrLineWhtInput>
+        {
+            new(1_000m, OcrLineWhtKind.Withholdable, "2"),
+            new(500m, OcrLineWhtKind.NotWithholdable, null),
+        };
+        var r = OcrLineWhtPlan.Suggest(lines, 0m, 0m, true, thresholdMet: true);
+        Assert.False(r.Applied);
+        Assert.Equal(2, r.Lines.Count);
+        Assert.Equal(3m, r.Lines[0].RatePercent);
+        Assert.Equal(30m, r.Lines[0].WhtAmount);
+        Assert.Equal(0m, r.Lines[1].WhtAmount);
+        Assert.StartsWith(OcrLineWhtPlan.SuggestTag, r.Note);
+        Assert.Contains("ไม่หักให้", r.Note);
+    }
+
+    [Fact]
+    public void Suggest_does_not_fire_when_header_already_withholds_or_threshold_unmet_or_nothing_withholdable()
+    {
+        var lines = new List<OcrLineWhtInput> { new(1_000m, OcrLineWhtKind.Withholdable, "2") };
+        // ทิศตรงข้าม: ใบที่หัวมีหักแล้วไม่ถูกเสนอซ้ำ (เดิน Decide)
+        Assert.Null(OcrLineWhtPlan.Suggest(lines, 3m, 30m, true, true).Note);
+        Assert.Null(OcrLineWhtPlan.Suggest(lines, 0m, 30m, true, true).Note);
+        // เกณฑ์ 1,000 ไม่ผ่าน/ตัดสินไม่ได้ ⇒ ไม่เสนอ
+        Assert.Null(OcrLineWhtPlan.Suggest(lines, 0m, 0m, true, false).Note);
+        // สินค้าล้วน ⇒ ไม่เสนอ
+        Assert.Null(OcrLineWhtPlan.Suggest(new List<OcrLineWhtInput> { new(1_000m, OcrLineWhtKind.NotWithholdable, null) }, 0m, 0m, true, true).Note);
+        // ดอกเบี้ย ผู้รับไม่รู้ชนิด ⇒ ไม่เดา 15/1
+        Assert.Null(OcrLineWhtPlan.Suggest(new List<OcrLineWhtInput> { new(1_000m, OcrLineWhtKind.Withholdable, "4a") }, 0m, 0m, null, true).Note);
+    }
+
+    [Fact]
+    public void WithUserChoice_user_pick_wins_over_classification()
+    {
+        var classified = (OcrLineWhtKind.Unknown, (string?)null);
+        Assert.Equal(OcrLineWhtKind.Unknown, OcrLineWhtPlan.WithUserChoice(100m, null, classified).Kind);
+        Assert.Equal(OcrLineWhtKind.Unknown, OcrLineWhtPlan.WithUserChoice(100m, "", classified).Kind);
+        Assert.Equal(OcrLineWhtKind.NotWithholdable, OcrLineWhtPlan.WithUserChoice(100m, OcrLineWhtPlan.NoWhtOverrideCode, classified).Kind);
+        var svc = OcrLineWhtPlan.WithUserChoice(100m, "2", classified);
+        Assert.Equal(OcrLineWhtKind.Withholdable, svc.Kind);
+        Assert.Equal("2", svc.IncomeTypeCode);
+        // รหัสที่ตารางไม่รู้จัก ⇒ ไม่แต่ง (ใช้ผลจัดประเภทของระบบ)
+        Assert.Equal(OcrLineWhtKind.Unknown, OcrLineWhtPlan.WithUserChoice(100m, "zz", classified).Kind);
+    }
+
+    [Fact]
+    public void Decide_with_user_choice_round_trips_and_still_requires_sum_to_match_header()
+    {
+        // หัวใบ 3% ของ 1,500 = 45 · ระบบตัดสินบรรทัดสองไม่ได้ ⇒ ตามหัวใบ (ไม่ต่าง ⇒ ไม่ใช้แผน)
+        var a = OcrLineWhtPlan.WithUserChoice(1_000m, null, (OcrLineWhtKind.Withholdable, "2"));
+        var bSys = OcrLineWhtPlan.WithUserChoice(500m, null, (OcrLineWhtKind.Unknown, null));
+        Assert.False(OcrLineWhtPlan.Decide(new[] { a, bSys }, 3m, "2", 45m, true, 1m).Applied);
+        // ผู้ใช้บอกว่าบรรทัดสองไม่หัก ⇒ Σ 30 ≠ 45 ⇒ ไม่ใช้แผน + แท็กให้คนตรวจ (ไม่แต่งยอดใบ)
+        var bNone = OcrLineWhtPlan.WithUserChoice(500m, OcrLineWhtPlan.NoWhtOverrideCode, (OcrLineWhtKind.Unknown, null));
+        var mismatch = OcrLineWhtPlan.Decide(new[] { a, bNone }, 3m, "2", 45m, true, 1m);
+        Assert.False(mismatch.Applied);
+        Assert.StartsWith(OcrLineWhtPlan.MismatchTag, mismatch.Note);
+        // ผู้ใช้บอกว่าบรรทัดสองเป็นค่าโฆษณา 2% ⇒ 30 + 10 = 40 · หัวใบ 40 ⇒ ใช้แผน
+        var bAd = OcrLineWhtPlan.WithUserChoice(500m, "8ad", (OcrLineWhtKind.Unknown, null));
+        var ok = OcrLineWhtPlan.Decide(new[] { a, bAd }, 3m, "2", 40m, true, 1m);
+        Assert.True(ok.Applied);
+        Assert.Equal(2m, ok.Lines[1].RatePercent);
+        Assert.Equal(10m, ok.Lines[1].WhtAmount);
     }
 }
