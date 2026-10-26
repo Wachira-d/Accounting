@@ -68,7 +68,56 @@ public class BookingRefPatternTests
     [InlineData(@"BK-(?<key>\d{4,})")]
     [InlineData(@"(?<![A-Z])PMS#(?<key>\d{5})(?!\d)")]
     [InlineData(@"จองเลข\s*(?<key>\d{3,}(?:-\d+)*)")]
+    [InlineData(@"RES-(?<key>\d+)")]
     public void Validate_AcceptsWellFormed(string source) => Assert.Null(BookingRefPattern.Validate(source));
+
+    /// <summary>ฝ่ายค้านข้อ 2: pattern กว้าง ⇒ เลขใบกำกับ/ปี/ยอดเงิน/เลขภาษี/เลขเอกสารกลายเป็น "เลขการจอง" ⇒ ปฏิเสธพร้อมบอกข้อความที่จับได้ + ตัวอย่างที่ใช้ได้</summary>
+    [Theory]
+    [InlineData(@"(?<key>\d+)")]
+    [InlineData(@"(?<key>\d{3,})")]
+    [InlineData(@"(?<key>\d{4}-\d{2}-\d{2})")]
+    [InlineData(@"(?<key>\d{13})")]
+    [InlineData(@"-(?<key>\d{4})")]
+    public void Validate_RejectsBroadPatterns_ThatCatchOrdinaryAccountingText(string source)
+    {
+        var err = BookingRefPattern.Validate(source);
+        Assert.NotNull(err);
+        Assert.Contains("กว้างเกิน", err);
+        Assert.Contains("BK-(?<key>", err);
+        // และค่าเริ่มต้นเองต้องผ่านด่านนี้ (ไม่งั้นด่านปิดตัวเอง)
+        Assert.All(BookingRefPattern.DefaultSources, d => Assert.Null(BookingRefPattern.Validate(d)));
+    }
+
+    /// <summary>ฝ่ายค้านข้อ 1: regex ระเบิด (nested alternation) บนข้อความยาว ⇒ ไม่โยนออกจาก ExtractKeys · ข้ามรูปนั้น · รูปอื่นยังทำงาน · แจ้ง sink ไม่เกิน 1 ครั้งต่อรูป</summary>
+    [Fact]
+    public void ExtractKeys_CatastrophicPattern_DoesNotThrow_SkipsPattern_ReportsOnce()
+    {
+        var calls = new List<string>();
+        var prev = BookingRefPattern.TimeoutSink;
+        BookingRefPattern.TimeoutSink = calls.Add;
+        try
+        {
+            var evil = BookingRefPattern.Compile(@"(?<key>(a|aa)+)-X");
+            var patterns = new List<System.Text.RegularExpressions.Regex>(BookingRefPattern.Default) { evil };
+            var text = "RES-149433 " + new string('a', 48) + "-Y";
+            var keys = BookingDepositDrawdown.ExtractKeys(patterns, text);
+            Assert.Equal(new[] { "149433" }, keys.ToArray());          // รูปเริ่มต้นยังทำงาน · evil ไม่ match/timeout ⇒ ไม่มีคีย์เพิ่ม
+            BookingDepositDrawdown.ExtractKeys(patterns, text);          // ครั้งที่สอง — ถ้า timeout ก็แจ้งซ้ำไม่ได้
+            Assert.True(calls.Count <= 1, string.Join(" | ", calls));
+            Assert.All(calls, c => Assert.Contains("ข้ามรูปนี้", c));
+        }
+        finally { BookingRefPattern.TimeoutSink = prev; }
+    }
+
+    /// <summary>ฝ่ายค้านข้อ 3: Merge คืน Regex ตัวเดียวกัน (cache ต่อ source) ไม่ compile ซ้ำทุกคำขอ</summary>
+    [Fact]
+    public void Merge_CachesCompiledRegexPerSource()
+    {
+        var json = BookingRefPattern.ToJson(new[] { @"CACHE-(?<key>\d{4,})" });
+        var a = BookingRefPattern.Merge(new[] { json })[2];
+        var b = BookingRefPattern.Merge(new[] { json })[2];
+        Assert.Same(a, b);
+    }
 
     [Theory]
     [InlineData("", "ว่าง")]

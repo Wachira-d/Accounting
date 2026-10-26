@@ -893,6 +893,8 @@ builder.Services.AddHsts(options =>
 });
 
 var app = builder.Build();
+// ทีม W10 (ฝ่ายค้านข้อ 1): regex เลขอ้างอิงการจองที่เจ้าของตั้งแล้ว timeout ตอนใช้งาน ⇒ ด่านข้ามรูปนั้นและแจ้งเตือนครั้งเดียวต่อรูปที่นี่
+Accounting.Helpers.BookingRefPattern.TimeoutSink = msg => app.Logger.LogWarning("[BookingRefPattern] {Message}", msg);
 
 // ตัวออกเลขรันกลางเป็น static helper (ทุกที่เรียกได้โดยไม่ผ่าน DI) — ให้มัน
 // มี logger จริงไว้เตือนเมื่อถูกเรียกนอก transaction ไม่งั้นคำเตือนหายเงียบ

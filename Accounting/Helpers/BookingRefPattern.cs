@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -12,7 +13,10 @@ namespace Accounting.Helpers;
 /// <see cref="BookingDepositLedger"/> อ่านรวมทุกคีย์ของบริษัท (ตัวเดียว) · ค่าเริ่มต้น = 2 รูปเดิมเสมอ (ผลเทสต์เดิม 0 เปลี่ยน) · ไม่รู้จักยังปล่อยผ่าน + รายงานตรวจข้อมูล</para>
 ///
 /// <para><b>กติกาของ regex ที่รับ:</b> ต้องมีกลุ่มชื่อ <c>key</c> (เลขการจองเต็มตัว — เทียบตรงตัวตามเดิม) · คอมไพล์ผ่าน · ไม่จับข้อความว่าง (regex ที่จับทุกอย่าง = ด่านเพี้ยนทั้งบริษัท) ·
-/// ยาว ≤ <see cref="MaxLength"/> · ไม่เกิน <see cref="MaxPatterns"/> รูปต่อคีย์ · ใช้ match timeout กัน regex ระเบิด (ReDoS) — ผิดข้อใด ⇒ ปฏิเสธพร้อมข้อความไทย (ไม่บันทึก)</para>
+/// ยาว ≤ <see cref="MaxLength"/> · ไม่เกิน <see cref="MaxPatterns"/> รูปต่อคีย์ · ใช้ match timeout กัน regex ระเบิด (ReDoS) — ผิดข้อใด ⇒ ปฏิเสธพร้อมข้อความไทย (ไม่บันทึก) ·
+/// <b>ฝ่ายค้าน W10 ข้อ 2:</b> pattern ที่กว้างจนจับข้อความทั่วไป (เลขใบกำกับ · ยอดเงิน · วันที่ · เลขภาษี 13 หลัก — <see cref="BroadProbes"/>) ⇒ ปฏิเสธ (ไม่งั้นเลขปี/ยอดเงินกลายเป็น "เลขการจอง" ⇒ 422 ผิดใบ หรือโหลดเกินเพดานจนด่านปิดทั้งบริษัท) ·
+/// <b>ข้อ 1:</b> regex ที่ timeout ตอนใช้งานจริง ⇒ ข้ามรูปนั้น (ประเมิน match ใน try — <c>MatchCollection</c> เป็น lazy) + แจ้ง <see cref="TimeoutSink"/> ครั้งเดียวต่อรูป — JE ที่ถูกต้องต้องไม่ได้ 500 ·
+/// <b>ข้อ 3:</b> compile/validate ครั้งเดียวต่อ source (<see cref="Merge"/> ใช้ cache)</para>
 /// </summary>
 public static class BookingRefPattern
 {
@@ -24,6 +28,24 @@ public static class BookingRefPattern
     public const string RuleCode = "INT-BOOKING-REF-PATTERN";
     /// <summary>เพดานเวลาต่อการ match — regex ที่ผู้ใช้ตั้งเองต้องไม่ทำให้ด่านค้าง</summary>
     public static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>ข้อความทั่วไปในระบบบัญชีที่ "เลขอ้างอิงการจอง" ต้องไม่จับ — เลขใบกำกับ · ยอดเงิน · วันที่ · เลขประจำตัวผู้เสียภาษี 13 หลัก · เลขเอกสาร ·
+    /// pattern ที่จับได้สักตัว = กว้างเกิน (ปฏิเสธตอนตั้งค่า)</summary>
+    public static readonly IReadOnlyList<string> BroadProbes = new[]
+    {
+        "INV-2026-0001 ขายเงินสด 1,234.56 บาท",
+        "ใบกำกับภาษี 2026-10-26 ยอด 10,700.00",
+        "เลขประจำตัวผู้เสียภาษี 0105556000002 สาขา 00001",
+        "RV-202609-0070 รับชำระ 1000",
+    };
+
+    /// <summary>ตัวรับแจ้ง (ครั้งเดียวต่อรูป) เมื่อ regex ที่ตั้งไว้ timeout ตอนใช้งานจริง — Program.cs ต่อเข้า ILogger · null = เงียบ (เทสต์)</summary>
+    public static Action<string>? TimeoutSink { get; set; }
+    private static readonly ConcurrentDictionary<string, byte> ReportedTimeouts = new(StringComparer.Ordinal);
+
+    /// <summary>cache ต่อ source: Regex ที่ validate+compile ผ่านแล้ว / null = ตรวจแล้วว่าผิด (ฝ่ายค้านข้อ 3 — ไม่ validate ซ้ำทุกคำขอ) · เพดานกันโตไม่สิ้นสุด</summary>
+    private static readonly ConcurrentDictionary<string, Regex?> Compiled = new(StringComparer.Ordinal);
+    private const int CompiledCap = 2000;
 
     /// <summary>ส่วนท้าย "เลขเต็ม" ที่ทั้งสองรูปเริ่มต้นใช้ร่วม — 3 หลักขึ้นไป · ต่อด้วย -ตัวเลข ได้หลายช่วง (RES-101-2609-0001 ⇒ 101-2609-0001) · ไม่หยุดกลางเลข</summary>
     public const string KeyTail = @"(?<" + KeyGroup + @">\d{3,}(?:-\d+)*)(?![\d])";
@@ -56,9 +78,16 @@ public static class BookingRefPattern
         try
         {
             if (rx.IsMatch("")) return $"รูปแบบเลขอ้างอิง \"{Shorten(s)}\" จับข้อความว่างได้ — จะทำให้ทุกรายการถูกมองว่าอ้างการจอง";
-            var probe = rx.Match("INV-2026-0001 ขายเงินสด 1,000.00 บาท");
-            if (probe.Success && probe.Groups[KeyGroup].Value.Length == 0)
-                return $"รูปแบบเลขอ้างอิง \"{Shorten(s)}\" จับได้แต่กลุ่ม {KeyGroup} ว่าง — เลขการจองต้องอยู่ในกลุ่มนี้";
+            foreach (var text in BroadProbes)
+            {
+                var probe = rx.Match(text);
+                if (!probe.Success) continue;
+                if (probe.Groups[KeyGroup].Value.Length == 0)
+                    return $"รูปแบบเลขอ้างอิง \"{Shorten(s)}\" จับได้แต่กลุ่ม {KeyGroup} ว่าง — เลขการจองต้องอยู่ในกลุ่มนี้";
+                // ฝ่ายค้านข้อ 2: จับเลขใบกำกับ/ยอดเงิน/วันที่/เลขภาษีได้ = กว้างเกิน ⇒ เลขเหล่านั้นจะกลายเป็น "เลขการจอง" (422 ผิดใบ · โหลดเกินเพดานจนด่านปิด)
+                return $"รูปแบบเลขอ้างอิง \"{Shorten(s)}\" กว้างเกิน — จับข้อความทั่วไป \"{text}\" ได้ (เลข {probe.Groups[KeyGroup].Value}) · "
+                    + $"ต้องมีคำนำหน้าเฉพาะของระบบต้นทางก่อนกลุ่ม {KeyGroup} เช่น BK-(?<{KeyGroup}>\\d{{4,}}) หรือ PMS#(?<{KeyGroup}>\\d{{5}})";
+            }
         }
         catch (RegexMatchTimeoutException) { return $"รูปแบบเลขอ้างอิง \"{Shorten(s)}\" ใช้เวลาจับนานเกินไป (regex ซับซ้อนเกิน)"; }
         return null;
@@ -104,12 +133,24 @@ public static class BookingRefPattern
             catch (JsonException) { continue; }
             foreach (var p in parsed)
             {
-                if (sources.Contains(p, StringComparer.Ordinal) || Validate(p) != null) continue;
+                if (sources.Contains(p, StringComparer.Ordinal)) continue;
+                var rx = CompiledOrNull(p);
+                if (rx == null) continue;
                 sources.Add(p);
-                result.Add(Compile(p));
+                result.Add(rx);
             }
         }
         return result;
+    }
+
+    /// <summary>validate + compile ครั้งเดียวต่อ source (cache) · null = ผิด (ข้าม)</summary>
+    private static Regex? CompiledOrNull(string source)
+    {
+        if (Compiled.TryGetValue(source, out var cached)) return cached;
+        if (Compiled.Count >= CompiledCap) Compiled.Clear();
+        var rx = Validate(source) == null ? Compile(source) : null;
+        Compiled[source] = rx;
+        return rx;
     }
 
     /// <summary>เลขการจองทุกตัวที่ข้อความอ้างตามชุด pattern (เลขเต็ม · ไม่ fuzzy · ลำดับตามที่พบ · ไม่ซ้ำ) · regex ที่ timeout ⇒ ข้ามรูปนั้น (ไม่ล้มด่าน) · pure</summary>
@@ -121,14 +162,17 @@ public static class BookingRefPattern
             if (string.IsNullOrWhiteSpace(t)) continue;
             foreach (var rx in patterns)
             {
-                MatchCollection matches;
-                try { matches = rx.Matches(t); }
-                catch (RegexMatchTimeoutException) { continue; }
-                foreach (Match m in matches)
+                // ฝ่ายค้านข้อ 1: MatchCollection เป็น lazy — ต้องประเมินให้จบใน try ไม่งั้น RegexMatchTimeoutException โผล่ตอน foreach นอก try ⇒ JE ที่ถูกต้องได้ 500
+                List<string> found;
+                try { found = rx.Matches(t).Cast<Match>().Select(m => m.Groups[KeyGroup].Value.Trim()).ToList(); }
+                catch (RegexMatchTimeoutException)
                 {
-                    var k = m.Groups[KeyGroup].Value.Trim();
-                    if (k.Length > 0 && !keys.Contains(k)) keys.Add(k);
+                    if (ReportedTimeouts.TryAdd(rx.ToString(), 0))
+                        TimeoutSink?.Invoke($"รูปแบบเลขอ้างอิงการจอง \"{Shorten(rx.ToString())}\" ใช้เวลาจับนานเกิน {MatchTimeout.TotalMilliseconds:N0} ms — ข้ามรูปนี้ (ด่านมัดจำยังทำงานด้วยรูปอื่น) · ตรวจ regex ที่หน้า Integration");
+                    continue;
                 }
+                foreach (var k in found)
+                    if (k.Length > 0 && !keys.Contains(k)) keys.Add(k);
             }
         }
         return keys;
