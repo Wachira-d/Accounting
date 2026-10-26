@@ -269,6 +269,8 @@
         // คำตัดสินข้อ 128: ยืนยันอัตโนมัติจากสลิป (ยังไม่บันทึกรับเงิน) — เซิร์ฟเวอร์ตัดสิน (awaitingSlipMoneyCheck) · ยอดตั้งต้น = มัดจำที่ต้องเก็บ
         if (r.awaitingSlipMoneyCheck === true) actions += A('✓ บันทึกรับเงินตามสลิป', 'confirmForm()', 'btn-primary');
         if (r.status === 'Pending' || r.status === 'Confirmed') actions += A('🛬 เช็คอิน', 'checkInForm()', r.status === 'Confirmed' ? 'btn-primary' : 'btn-secondary') + A('📅 เลื่อนวัน', 'rescheduleForm()') + A('รับชำระเพิ่ม', 'confirmForm(true)');
+        // รอบ 205 W5 (R-51): folio ก่อนเช็คอิน (เตียงเสริม/อาหารเช้าที่แจ้งล่วงหน้า) — ยกเลิก/ไม่มา ⇒ เซิร์ฟเวอร์ล้างรายการที่ยังไม่ออกใบ (LodgingFolioOnCancel)
+        if (r.status === 'Confirmed') actions += A('+ รายการ folio', 'chargeForm()');
         // 2026-10-22: แขกที่กำลังพักจ่ายระหว่างพัก (เช่น จ่ายค่า folio ก่อนวันออก) — เส้นเดิม ConfirmAsync รับสถานะ CheckedIn อยู่แล้ว
         // (ออกใบรับเงินมัดจำ · ไม่เปลี่ยนสถานะ · ตอนเช็คเอาต์หักทุกใบผ่าน LoadDepositSnapshotsAsync) — เดิมหน้าจอไม่มีปุ่มให้กด
         if (r.status === 'CheckedIn') actions += A('🛫 เช็คเอาต์ + ออกบิล', 'checkOutForm()', 'btn-primary') + A('+ รายการ folio', 'chargeForm()') + (r.balanceDue > 0 ? A('รับชำระระหว่างพัก', 'confirmForm(true)') : '');
@@ -315,7 +317,10 @@
               <div class="kv total"><span>ยอดรวมทั้งสิ้น</span><span>${money(r.grandTotal)}</span></div>
               <div class="kv"><span>มัดจำที่ต้องเก็บ / รับแล้ว</span><span>${money(r.depositRequired)} / <b>${money(r.depositPaid)}</b></span></div>
               <div class="kv"><span>ชำระแล้วทั้งหมด</span><span>${money(r.paidAmount)}</span></div><div class="kv"><span>คงเหลือ</span><b class="${r.balanceDue > 0 ? 'text-warning' : 'text-success'}">${money(r.balanceDue)}</b></div>
-              ${r.depositDocumentId ? `<div class="hint">ใบเสร็จมัดจำ <a href="/pages/documents.html?id=${r.depositDocumentId}">${esc(r.depositDocumentNumber || '')}</a></div>` : ''}${r.advanceTaxDocumentId && r.advanceTaxDocumentNumber ? `<div class="hint">ใบกำกับภาษีล่วงหน้า <a href="/pages/documents.html?id=${esc(r.advanceTaxDocumentId)}">${esc(r.advanceTaxDocumentNumber)}</a>${r.advanceTaxDocumentLive ? '' : ' (ยกเลิกแล้ว)'}</div>` : ''}${r.finalDocumentId && r.finalDocumentId !== r.advanceTaxDocumentId ? `<div class="hint">เอกสารเช็คเอาต์ <a href="/pages/documents.html?id=${r.finalDocumentId}">${esc(r.finalDocumentNumber || '')}</a></div>` : ''}
+              ${(r.documents || []).length
+                // รอบ 205 W5 (R-50): เอกสารทุกใบของการจอง (ใบรับเงินใบที่ 2+ · ใบลดหนี้ · เงินประกัน) — ป้ายบทบาท/สถานะมาจากเซิร์ฟเวอร์ · ยกเลิกแล้วขีดฆ่าแต่ยังเห็น
+                ? `<div class="hint" style="margin-top:4px"><b>เอกสารของการจอง</b></div>${r.documents.map(d => `<div class="kv hint" ${d.status === 'Voided' || d.status === 'Rejected' ? 'style="text-decoration:line-through;opacity:.7"' : ''}><span>${esc(d.roleLabel)} <a href="/pages/documents.html?id=${esc(d.id)}">${esc(d.documentNumber)}</a> · ${Layout.date(d.documentDate)}${d.status === 'Voided' || d.status === 'Rejected' || d.status === 'Paid' ? ` · ${esc(d.statusLabel)}` : ''}</span><span>${money(d.totalAmount)}</span></div>`).join('')}`
+                : `${r.depositDocumentId ? `<div class="hint">ใบเสร็จมัดจำ <a href="/pages/documents.html?id=${r.depositDocumentId}">${esc(r.depositDocumentNumber || '')}</a></div>` : ''}${r.advanceTaxDocumentId && r.advanceTaxDocumentNumber ? `<div class="hint">ใบกำกับภาษีล่วงหน้า <a href="/pages/documents.html?id=${esc(r.advanceTaxDocumentId)}">${esc(r.advanceTaxDocumentNumber)}</a>${r.advanceTaxDocumentLive ? '' : ' (ยกเลิกแล้ว)'}</div>` : ''}${r.finalDocumentId && r.finalDocumentId !== r.advanceTaxDocumentId ? `<div class="hint">เอกสารเช็คเอาต์ <a href="/pages/documents.html?id=${r.finalDocumentId}">${esc(r.finalDocumentNumber || '')}</a></div>` : ''}`}
               ${r.cancellationFee || r.refundAmount ? `<div class="hint">ค่าปรับ ${money(r.cancellationFee)} · ต้องคืน ${money(r.refundAmount)} · คืนแล้ว ${money(r.refundPaidAmount)}${r.refundPending > 0 ? ` · <b style="color:#b45309">ค้างคืน ${money(r.refundPending)}</b>` : ''} — ${esc(r.cancellationReason || '')}</div>` : ''}
               ${r.depositVatTreatmentLabel ? `<div class="hint">มัดจำบันทึกแบบ: ${esc(r.depositVatTreatmentLabel)}</div>` : ''}
               ${r.securityDepositDocumentId ? `<div class="kv"><span>🔒 เงินประกันความเสียหาย (รับ / คงเหลือ)</span><span>${money(r.securityDepositReceived)} / <b>${money(r.securityDepositHeld)}</b></span></div>
@@ -324,7 +329,7 @@
             </div>
           </div>
           <div class="card"><h4>🛏️ ห้อง</h4>${rooms}${r.extras.map(e => `<div class="kv"><span>➕ ${esc(e.name)} ×${e.quantity}</span><span>${money(e.total)}</span></div>`).join('')}</div>
-          ${charges || r.status === 'CheckedIn' ? `<div class="card"><h4>🧾 Folio</h4>${charges || '<div class="hint">ยังไม่มีรายการ</div>'}</div>` : ''}
+          ${charges || r.status === 'CheckedIn' || r.status === 'Confirmed' ? `<div class="card"><h4>🧾 Folio</h4>${charges || '<div class="hint">ยังไม่มีรายการ</div>'}${r.status === 'Confirmed' && charges ? '<div class="hint">รายการที่เพิ่มก่อนเช็คอิน: ถ้าการจองถูกยกเลิก/ไม่มา ระบบล้างรายการที่ยังไม่ออกใบให้</div>' : ''}</div>` : ''}
           ${r.requests?.length ? `<div class="card"><h4>🛎️ คำขอแขก</h4>${r.requests.map(q => `<div class="kv"><span>${REQT[q.requestType] || q.requestType}: ${esc(q.details)}</span><span class="pill">${TSTAT[q.status] || q.status}</span></div>`).join('')}</div>` : ''}
           ${r.internalNotes ? `<div class="card" style="background:#fffbeb"><h4>หมายเหตุภายใน</h4><div style="white-space:pre-wrap;font-size:12px">${esc(r.internalNotes)}</div></div>` : ''}
           <div class="actions">${actions}</div>`;
@@ -342,7 +347,8 @@
       async loadSlips(r) {
         this.clearSlips();
         const box = () => document.getElementById('slipGallery');
-        const head = `<h4>🧾 สลิปของแขก</h4><div class="hint">${r.amountToTransfer != null ? `ยอดที่แขกต้องโอน <b>${money(r.amountToTransfer)}</b> · ` : ''}มัดจำที่ต้องเก็บ ${money(r.depositRequired)} · รับแล้ว ${money(r.depositPaid)}</div>`;
+        // R-52: ยอดที่แขกกรอกแสดงคู่ยอดเซิร์ฟเวอร์ให้คนเทียบตา — หน้าไม่ตัดสินว่า "ตรง" (ยอดจริงบันทึกตอนกด “บันทึกรับเงินตามสลิป”)
+        const head = `<h4>🧾 สลิปของแขก</h4><div class="hint">${r.amountToTransfer != null ? `ยอดที่แขกต้องโอน <b>${money(r.amountToTransfer)}</b> · ` : ''}${r.slipDeclaredAmount != null ? `ยอดที่แขกกรอกว่าโอน <b>${money(r.slipDeclaredAmount)}</b> (แขกกรอกเอง ไม่ใช่หลักฐาน) · ` : ''}มัดจำที่ต้องเก็บ ${money(r.depositRequired)} · รับแล้ว ${money(r.depositPaid)}</div>`;
         let items;
         try { items = (await Layout.api().lodgingSlips(r.id)).data || []; }
         catch (e) {
@@ -361,6 +367,7 @@
             <div style="margin-top:4px"><span class="pill" style="${stateColor[s.state] || ''}">${esc(s.stateLabel || '')}</span></div>
             <div class="hint">ส่งเมื่อ ${s.uploadedAt ? esc(new Date(s.uploadedAt).toLocaleString('th-TH')) : '-'}</div>
             ${s.reference ? `<div class="hint">อ้างอิง ${esc(s.reference)}</div>` : ''}
+            ${s.declaredAmount != null ? `<div class="hint">แขกกรอกยอดโอน ${money(s.declaredAmount)}</div>` : ''}
             ${s.rejectedReason ? `<div class="hint" style="color:#991B1B">เหตุผล: ${esc(s.rejectedReason)}</div>` : ''}
           </div>`).join('')}</div>`;
         await Promise.all(items.map(async (s, i) => {
@@ -521,6 +528,10 @@
           ${r.securityDepositHeld > 0 ? `<div class="warn" style="grid-column:1/-1">🔒 มีเงินประกัน ${money(r.securityDepositHeld)} — <b>ไม่ถูกหักในใบนี้</b> (เงินประกันไม่ใช่ค่าห้อง) · ถ้าจะใช้เงินประกันจ่ายค่าเสียหาย ให้เลือก “ออกใบแจ้งหนี้” ด้านล่าง แล้วกด “ปิดเงินประกัน” หลังเช็คเอาต์เพื่อตัดชำระใบนี้ + คืนส่วนที่เหลือ</div>` : ''}
           <div class="fld"><label>ค่าเสียหาย/ของหาย (บาท)</label><input class="form-input" type="number" step="0.01" min="0" name="dmg" value="0"></div>
           <div class="fld"><label>รายละเอียดค่าเสียหาย</label><input class="form-input" name="dmgd"></div>
+          <!-- รอบ 205 W5 (R-49): ส่วนลดเช็คเอาต์ — เซิร์ฟเวอร์คิด (LodgingCheckoutDiscount): ส่วนลด = ส่วนของราคา คิดก่อนหักมัดจำ · ติดลบ = ค้างคืน → ใบลดหนี้อ้างใบมัดจำตอนยืนยันคืนเงิน -->
+          <div class="fld"><label>ส่วนลดท้ายบิล</label><div style="display:flex;gap:6px"><input class="form-input" type="number" step="0.01" min="0" name="disc" value="0" style="flex:1"><select class="form-input" name="discMode" style="width:70px"><option value="amt">บาท</option><option value="pct">%</option></select></div>
+            <div class="hint">คิดบนราคาเข้าพักก่อนหักมัดจำ (บาท = ตามราคาที่แขกเห็น) · ถ้าหลังลดต่ำกว่ามัดจำที่รับไว้ ส่วนต่างเป็นยอดค้างคืนแขก (ใบลดหนี้อ้างใบมัดจำออกตอน “ยืนยันคืนเงินแล้ว”)</div></div>
+          <div class="fld"><label>เหตุผลส่วนลด (บังคับเมื่อมีส่วนลด)</label><input class="form-input" name="discReason" maxlength="200" placeholder="เช่น ชดเชยแอร์เสีย · ลูกค้าประจำ"></div>
           <div class="fld"><label>รับชำระส่วนที่เหลือตอนนี้</label><select class="form-input" name="collect"><option value="true">รับเงินเลย</option><option value="false">ออกใบแจ้งหนี้ (เครดิต/agent)</option></select></div>
           <div class="fld"><label>วิธีชำระ</label>${this.pmSelect('pm', 1)}</div>
           <div class="fld"><label>รับเข้าบัญชีธนาคาร (บังคับเมื่อโอน/พร้อมเพย์)</label>${bankSel}</div>
@@ -532,7 +543,10 @@
           <div class="fld" style="grid-column:1/-1"><label>หมายเหตุ</label><input class="form-input" name="note"></div></form>`, async () => {
           const f = document.getElementById('cof');
           if (f.collect.value === 'true' && this.bankMissing(f, r.balanceDue + (+f.dmg.value || 0))) return false;
-          await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, bankAccountId: f.collect.value === 'true' ? (f.bank.value || null) : null, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', chargeLateCheckOut: !!(f.late && f.late.checked), issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null, acknowledgeFiledVatPeriod: !!(f.vatAck && f.vatAck.checked) }));
+          const disc = +f.disc.value || 0;
+          if (disc > 0 && !f.discReason.value.trim()) { Layout.toast('ระบุเหตุผลส่วนลด', 'error'); return false; }
+          await this.call(() => Layout.api().lodgingCheckOut(r.id, { paymentMethod: +f.pm.value, bankAccountId: f.collect.value === 'true' ? (f.bank.value || null) : null, paymentReference: f.ref.value || null, damageCharge: +f.dmg.value || null, damageDescription: f.dmgd.value || null, collectBalanceNow: f.collect.value === 'true', chargeLateCheckOut: !!(f.late && f.late.checked), issueTaxInvoiceToCompany: f.company.checked, note: f.note.value || null, acknowledgeFiledVatPeriod: !!(f.vatAck && f.vatAck.checked),
+            billDiscountAmount: disc > 0 && f.discMode.value === 'amt' ? disc : null, billDiscountPercent: disc > 0 && f.discMode.value === 'pct' ? disc : null, billDiscountReason: disc > 0 ? f.discReason.value.trim() : null }));
         }, 'เช็คเอาต์');
       },
       // รอบ 201 ทีม IN (A-IN5): ใบแทนยอดเท่าใบเดิม — ยอด/ชนิดต่าง เซิร์ฟเวอร์ปฏิเสธพร้อมทางไปต่อ (ใบลด/เพิ่มหนี้)

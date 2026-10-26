@@ -101,6 +101,22 @@ public partial class LodgingService
         // ค่าห้องอยู่ในใบล่วงหน้า ⇒ ตัวสร้างใบเช็คเอาต์ใหม่แบบเต็มยอดใช้ไม่ได้ (ReissueFinalDocumentCoreAsync ปฏิเสธด้วยเหตุเดียวกัน)
         if (advance?.State == LodgingAdvanceState.Live) canReissueFinal = false;
 
+        // รอบ 205 W5 (R-50): เอกสารทุกใบที่อ้างเลขจองนี้ (ใบรับเงินใบที่ 2+ · ใบลดหนี้ · เงินประกัน) — หน้าพนักงานเท่านั้น · ไม่รวมร่าง (ไม่มีเลขจริง) ·
+        // ป้ายบทบาท/สถานะจากเซิร์ฟเวอร์ (Helpers/LodgingReservationDocuments) · ยกเลิกแล้วยังแสดงพร้อมป้าย (ประวัติของการจอง)
+        var documents = new List<LodgingReservationDocumentDto>();
+        if (includeInternal)
+        {
+            var rows = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.BookingNumber == r.ReservationNumber && d.Status != DocumentStatus.Draft)
+                .OrderBy(d => d.DocumentDate).ThenBy(d => d.CreatedAt)
+                .Select(d => new LodgingReservationDocumentRow(d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.DocumentDate, d.TotalAmount, d.IsDeposit, d.DepositNature))
+                .ToListAsync();
+            documents = rows.Select(d => new LodgingReservationDocumentDto(d.Id, d.Number, d.Type.ToString(),
+                    LodgingReservationDocuments.RoleLabel(d, r.AdvanceTaxDocumentId, r.FinalDocumentId, r.SecurityDepositDocumentId),
+                    d.Date, d.Total, d.Status.ToString(), LodgingReservationDocuments.StatusLabel(d.Status)))
+                .ToList();
+        }
+
         var guestTotals = LodgingOccupancy.Totals(r.Adults, r.Children, r.Infants, r.Rooms.Sum(x => x.ExtraBeds));
         // คำตัดสินข้อ 128: ป้าย/ข้อความ/ยอดที่ต้องโอน/ช่องส่งสลิปของแขก + ป้ายสลิปฝั่งหน้าบ้าน — ตัวตัดสินเดียว (หน้าเว็บแสดงอย่างเดียว)
         var guestFacts = new LodgingGuestFacts(r.GuestConfirmMode, r.Status, r.DepositRequired, r.DepositPaid, r.TotalAmount, r.FolioTotal, r.PaidAmount,
@@ -128,6 +144,7 @@ public partial class LodgingService
             // ฝั่งพนักงานใช้เส้นที่ต้องมีสิทธิ์ LodgingManage · ฝั่งแขกใช้เส้นที่ต้องมี token ของตัวเอง
             PaymentSlipUrl = SlipViewUrl(companyId, r, includeInternal),
             PaymentReference = r.PaymentReference, SlipUploadedAt = r.SlipUploadedAt,
+            SlipDeclaredAmount = r.SlipDeclaredAmount, Documents = documents,
             SlipRejectedCount = r.SlipRejectedCount, SlipRejectedReason = r.SlipRejectedReason,
             SlipRejectedAt = r.SlipRejectedAt, SlipUploadBlocked = r.SlipUploadBlocked,
             ConfirmedAt = r.ConfirmedAt, CheckedInAt = r.CheckedInAt, CheckedOutAt = r.CheckedOutAt, CancelledAt = r.CancelledAt,

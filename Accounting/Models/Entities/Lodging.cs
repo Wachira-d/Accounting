@@ -426,6 +426,9 @@ public class LodgingReservation : TenantEntity
     public string? PaymentSlipUrl { get; set; }
     public string? PaymentReference { get; set; }
     public DateTime? SlipUploadedAt { get; set; }
+    /// <summary>รอบ 205 W5 (R-52): ยอดที่แขก<b>กรอกเอง</b>ตอนส่งสลิปใบล่าสุด — ไม่ใช่หลักฐานการรับเงิน (ยอดจริงบันทึกตอนพนักงานกด
+    /// “บันทึกรับเงินตามสลิป”) · ไม่ประทับว่า "ตรง" เอง (G3) · ยอดของสลิปใบก่อน ๆ อยู่ใน audit <c>GuestUploadedSlip.declaredAmount</c></summary>
+    public decimal? SlipDeclaredAmount { get; set; }
 
     // ── การตรวจสลิป (LDG-P0-02) ──
     // เดิมมีแต่ "ยืนยัน" กับ "ยกเลิกทั้งใบ" ⇒ สลิปไม่ตรง/ปลอม พนักงานได้แต่เงียบ

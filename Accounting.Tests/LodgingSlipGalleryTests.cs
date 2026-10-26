@@ -97,4 +97,59 @@ public class LodgingSlipGalleryTests
         Assert.Equal(LodgingSlipItemState.Current, only.State);
         Assert.Null(only.RejectedReason);
     }
+
+    // ═══ รอบ 205 W5 (R-52): ยอดที่แขกกรอกตอนส่งสลิป — ไม่ใช่หลักฐาน · แสดงคู่ยอดเซิร์ฟเวอร์ · ไม่แต่งค่า ═══
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData(0.0, null)]            // 0 = ไม่ได้กรอก (ไม่รู้ ≠ 0)
+    [InlineData(2500.004, 2500.0)]
+    [InlineData(2500.005, 2500.01)]    // AwayFromZero
+    public void ยอดที่แขกกรอก_ไม่กรอกเป็นnull_ปัด2ตำแหน่ง(double? input, double? expected)
+    {
+        var (amount, problem) = LodgingSlipGallery.NormalizeDeclaredAmount((decimal?)input);
+        Assert.Null(problem);
+        Assert.Equal((decimal?)expected, amount);
+    }
+
+    [Theory]
+    [InlineData(-1.0)]
+    [InlineData(10_000_000.01)]
+    public void ยอดที่แขกกรอก_ติดลบหรือเกินเพดาน_ปฏิเสธไม่เก็บ(double input)
+    {
+        var (amount, problem) = LodgingSlipGallery.NormalizeDeclaredAmount((decimal)input);
+        Assert.Null(amount);
+        Assert.NotNull(problem);
+    }
+
+    [Fact]
+    public void ยอดที่แขกกรอก_สลิปปัจจุบันจากแถวการจอง_ใบก่อนจากaudit_ไม่มีคือnull()
+    {
+        var a = Guid.NewGuid(); var b = Guid.NewGuid(); var c = Guid.NewGuid();
+        var files = new[]
+        {
+            new LodgingSlipFileRow(a, "/w/uploads/lodging-slips/2026-10/a.jpg", "a.jpg", T0),
+            new LodgingSlipFileRow(b, "/w/uploads/lodging-slips/2026-10/b.jpg", "b.jpg", T0.AddHours(1)),
+            new LodgingSlipFileRow(c, "/w/uploads/lodging-slips/2026-10/c.jpg", "c.jpg", T0.AddHours(2)),
+        };
+        var events = new[]
+        {
+            // a: แถว audit รุ่นก่อน (ไม่มี declaredAmount) · b: แขกกรอก 1,900
+            new LodgingSlipEvent(LodgingSlipGallery.UploadedAction, "/uploads/lodging-slips/2026-10/a.jpg", null, "REF-A", T0),
+            new LodgingSlipEvent(LodgingSlipGallery.UploadedAction, "/uploads/lodging-slips/2026-10/b.jpg", null, "REF-B", T0.AddHours(1), 1900m),
+        };
+        var items = LodgingSlipGallery.Build(files, "/uploads/lodging-slips/2026-10/c.jpg", T0.AddHours(2), "REF-C", events, currentDeclaredAmount: 2500m);
+        Assert.Equal(2500m, items[0].DeclaredAmount);   // ปัจจุบัน — จากแถวการจอง
+        Assert.Equal(1900m, items[1].DeclaredAmount);   // ใบก่อน — จาก audit ของใบนั้น
+        Assert.Null(items[2].DeclaredAmount);           // รุ่นก่อน — ไม่แต่งค่า (ไม่ยกยอดของใบอื่นมา)
+    }
+
+    [Fact]
+    public void ยอดที่แขกกรอก_ไม่ส่งมา_ทุกใบเป็นnull_ทิศตรงข้าม()
+    {
+        var key = "/uploads/lodging-slips/2026-10/a.jpg";
+        var files = new[] { new LodgingSlipFileRow(Guid.NewGuid(), "/w" + key, "a.jpg", T0) };
+        var only = Assert.Single(LodgingSlipGallery.Build(files, key, T0, null, Array.Empty<LodgingSlipEvent>()));
+        Assert.Null(only.DeclaredAmount);
+    }
 }

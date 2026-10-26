@@ -126,10 +126,12 @@ public class LodgingPublicController : ControllerBase
 
     [HttpPost("reservations/{token}/slip")]
     [RequestSizeLimit(10 * 1024 * 1024)]
-    public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> UploadSlip(Guid companyId, Guid siteId, string token, IFormFile? file, [FromForm] string? reference)
+    public async Task<ActionResult<ApiResponse<LodgingReservationResponse>>> UploadSlip(Guid companyId, Guid siteId, string token, IFormFile? file,
+        [FromForm] string? reference, [FromForm] decimal? declaredAmount)
     {
         if (file == null || file.Length == 0) return BadRequest(new ApiResponse<LodgingReservationResponse>(false, null, "กรุณาเลือกไฟล์สลิป"));
-        var r = await _svc.UploadSlipByTokenAsync(companyId, siteId, token, file, reference);
+        // R-52: ยอดที่แขกกรอก — ไม่บังคับ · ไม่ใช่หลักฐาน · เซิร์ฟเวอร์เก็บคู่ยอดที่ต้องโอนให้พนักงานเทียบตา (ไม่ประทับว่า "ตรง")
+        var r = await _svc.UploadSlipByTokenAsync(companyId, siteId, token, file, reference, declaredAmount);
         if (r == null) return NotFound(new ApiResponse<LodgingReservationResponse>(false, null, "ไม่พบการจอง"));
         // คำตัดสินข้อ 128: ส่งสลิปแล้วยืนยันทันที / รอที่พักตรวจ / ติดธง — ข้อความที่ service ตัดสินไว้ (LodgingGuestConfirmPolicy.SlipUploadedMessage)
         return Ok(new ApiResponse<LodgingReservationResponse>(true, r, r.GuestMessage ?? "ส่งสลิปแล้ว — ที่พักจะตรวจสอบและยืนยันการจอง"));

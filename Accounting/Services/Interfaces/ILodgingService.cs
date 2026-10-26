@@ -57,7 +57,7 @@ public interface ILodgingService
     Task<LodgingQuoteResponse> QuoteAsync(Guid companyId, Guid propertyId, LodgingQuoteRequest request, bool isStaff = false);
     Task<LodgingReservationResponse> CreateReservationAsync(Guid companyId, Guid propertyId, LodgingCreateReservationRequest request, LodgingReservationSource source, string actor, Guid? siteId = null);
     Task<LodgingReservationResponse?> GetReservationByTokenAsync(Guid companyId, Guid siteId, string token);
-    Task<LodgingReservationResponse?> UploadSlipByTokenAsync(Guid companyId, Guid siteId, string token, IFormFile file, string? reference);
+    Task<LodgingReservationResponse?> UploadSlipByTokenAsync(Guid companyId, Guid siteId, string token, IFormFile file, string? reference, decimal? declaredAmount = null);
 
     /// <summary>ปฏิเสธสลิปที่แขกส่งมา (เหตุผลบังคับ) — ล้างสลิปออกให้ส่งใหม่ได้ ·
     /// ต่ออายุ hold · แจ้งแขก · เลือกปิดรับสลิปของใบนี้ได้เมื่อพบสลิปปลอม</summary>
