@@ -5549,3 +5549,18 @@ _2026-10-26 ทีม T แก้ผลฝ่ายค้านข้อ 159 (�
 จึงไม่ใช่ −Σshift ตรง ๆ · เทสต์สังเคราะห์ 4 × 1,228.04 พิมพ์ 4,912.15) (2) replay harness เดินสาขา `BillDiscountPreVat`/`PlanLineAmounts` เดียวกับ service (`Mode = Items+Bill:<x>` · rcs ล็อกทั้งคู่)
 (3) `ResaveLineNets` เรียก `PlanLineAmounts` ตัวตั้งตัวเดียว (ผลเท่าเดิม · เทสต์) (4) Σ ยอดบรรทัดสำหรับสัดส่วน WHT คำนวณหลังสาขา 159 (5) doc-comment PreviewTotals/PlanLineAmounts แยกถูก
 (6) ดึงรายการซ้ำบนเอกสารที่มีส่วนลดท้ายบิลผู้ใช้กรอก (> 0 และ ≠ ค่าจากสแกน) ⇒ ล้มดัง `OCR-REPOP-BILL-DISCOUNT` ก่อนบันทึก (ค่าผู้ใช้ชนะ · ทางไปต่อในข้อความ) · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_2026-10-26 ทีม V (ผู้ใช้: "ตั้งทีมวิเคราะห์อีกว่ามีส่วนไหนที่ลงบันทึก JE ไม่ถูกต้องอีกไหม" หลังเคส PV-202610-0040 บีบฐาน 500.93→402.93):
+ตรวจตัวประกอบ JE อัตโนมัติทุกเส้น (AutoPost ขาย/ซื้อ/CN-DN/รับ-จ่าย/PV/CIL/GRN · CreatePaymentJournalAsync · multi-doc allocation · POS ·
+settlement/gateway · ค่าเสื่อม · ปิดปี · recurring · payroll · integration · course credit · lodging) เป็น matrix `docs/JE_POSTING_AUDIT.md`
+(52 เคส · ถูก 43 · ผิด 2 (แก้ครบ) · ⚠ backlog 5 · ❓ ให้เจ้าของตัดสิน 2) · บั๊กที่แก้: **V-DN-01** ใบเพิ่มหนี้ของใบที่ชำระครบลง Dr เงินสดตอนอนุมัติ (ยืมกติกา
+"ใบเดิมชำระครบ ⇒ เงินสด" ของใบลดหนี้) แล้วตอนรับชำระลง Dr เงินสดอีกรอบ ⇒ เงินสดเกินสองเท่า/ลูกหนี้ติดลบ — ตัวตัดสินเดียว
+`AdjustmentNoteAccount.CounterLegIsMoney` (DN ดูเทอมของตัวเอง · CN กติกาเดิม) · **V-CN-03** ขาเงินของ CN/DN เดิน `UseMoneyAccount()`
+แทน "111" ตายตัว · เทสต์สองทิศ `JePostingAuditTests` (13) · DOCUMENT_FLOW §6.2f · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 ทีม V แก้ตามฝ่ายค้าน (ไม่มี blocking · merge a80a4595 แล้ว): (1) `cnDnGrossWht` ตามตัวตัดสินใหม่ `AdjustmentNoteAccount.CounterLegIsGrossOfWht` —
+DN เงินเชื่อของใบชำระครบ + WHT เกณฑ์เงินสด ⇒ counter gross · ขา WHT ไปลงตอนรับชำระ (เทสต์สองทิศ) · (2) F2 ข้อ 9: ตาข่ายซ่อมข้อมูลเก่า V-DN-01 แบบ
+`RepairProductTotalsAsync` — หมวด "ใบเพิ่มหนี้ที่ลงขาเงินซ้ำ" ในหน้าตรวจข้อมูล (`Helpers/DebitNoteCashRepair` อ่านอย่างเดียว) + ปุ่ม "แก้" ต่อใบ
+`POST data-integrity/debit-note-cash/{id}/reverse-payment-journals` (เจ้าของบริษัท · `ReverseJournalEntryAsync` · audit `JE-DN-CASH-TWICE` · ห้ามอัตโนมัติ) ·
+คำตัดสินข้อ 160 ใน DECISIONS (รวม V-PAY-05 ⇒ reclass ตามสัดส่วน · V-CN-04 ⇒ ตัวเลือกเครดิตค้างคืน — แพ็กแยก) · (3) จดข้อควรรู้ UseMoneyAccount() ล้มดังใน
+ReclassifyCnDnSide/RepairMissingJournal + สมมติฐานสืบทอด BankAccountId (DOCUMENT_FLOW §6.2f · JE_POSTING_AUDIT §1b) · ยังไม่ได้คอมไพล์ในเครื่องนี้_

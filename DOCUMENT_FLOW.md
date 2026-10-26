@@ -5197,10 +5197,30 @@ PDF ของ PV ที่ปิดหนี้อ่านธงของใบ
 
 | | counter | บรรทัด | VAT | WHT |
 | --- | --- | --- | --- | --- |
-| CN ฝั่งขาย | Cr ลูกหนี้/เงินสด | **Dr รายได้** | Dr 21911 | Cr 11910 |
-| DN ฝั่งขาย | Dr | **Cr รายได้** | Cr 21911 | Dr 11910 |
-| CN ฝั่งซื้อ | Dr เจ้าหนี้/เงินสด | **Cr ค่าใช้จ่าย/สินค้าคงเหลือ** | Cr 11610 | Dr 2191x |
-| DN ฝั่งซื้อ | Cr | **Dr ค่าใช้จ่าย/สินค้าคงเหลือ** | Dr 11610 | Cr 2191x |
+| CN ฝั่งขาย | Cr ลูกหนี้ (ใบเดิมยังค้าง) / เงิน (ใบเดิมชำระครบ = คืนเงิน) | **Dr รายได้** | Dr 21911 | Cr 11910 |
+| DN ฝั่งขาย | Dr ลูกหนี้ (เงินเชื่อ) / เงิน (DN จ่ายทันทีเอง) | **Cr รายได้** | Cr 21911 | Dr 11910 |
+| CN ฝั่งซื้อ | Dr เจ้าหนี้ (ใบเดิมยังค้าง) / เงิน (ใบเดิมชำระครบ) | **Cr ค่าใช้จ่าย/สินค้าคงเหลือ** | Cr 11610 | Dr 2191x |
+| DN ฝั่งซื้อ | Cr เจ้าหนี้ (เงินเชื่อ) / เงิน (DN จ่ายทันทีเอง) | **Dr ค่าใช้จ่าย/สินค้าคงเหลือ** | Dr 11610 | Cr 2191x |
+
+**ขา counter เป็น "เงิน" เมื่อไร — `AdjustmentNoteAccount.CounterLegIsMoney(isCreditNote, doc.PaymentType, source.BalanceDue)`**
+(ทีม V ตรวจ JE 2026-10-26 · `docs/JE_POSTING_AUDIT.md` V-DN-01/V-CN-03): ใบลดหนี้ = กลับรายการใบเดิม ⇒ ใบเดิมชำระครบ (≤ 0.01)
+= คืนเงิน · **ใบเพิ่มหนี้ = หนี้ก้อนใหม่ของตัวมันเอง** (`PayableDocumentTypes` ให้รับ/จ่ายทีหลัง) ⇒ ดูเทอมของ DN เอง
+(จ่ายทันที = เงิน · เงินเชื่อ/ไม่ระบุ = ลูกหนี้/เจ้าหนี้) — เดิม DN ยืมกติกาใบลดหนี้ ⇒ DN ของใบที่ชำระครบลง Dr เงินสดตอนอนุมัติ
+แล้วตอนรับชำระลง Dr เงินสด/Cr ลูกหนี้อีกรอบ (เงินสดเกินสองเท่า · ลูกหนี้ติดลบ · งบยังสมดุล) · ขาเงินเดิน `UseMoneyAccount()`
+(ช่องทางเงินของเอกสาร: ธนาคาร/ผังที่เลือก → 111) ไม่ใช่ "111" ตายตัว · เทสต์ `JePostingAuditTests`
+
+**ขา WHT เกณฑ์เงินสดของ CN/DN** — `AdjustmentNoteAccount.CounterLegIsGrossOfWht(cashBasis, counterLegIsMoney, wht)`: โหมดลูกหนี้/เจ้าหนี้ ⇒ counter
+gross (Total + WHT) และ**ไม่ลงขา WHT** (mirror ใบต้นทาง) · โหมดขาเงิน ⇒ ลงขา WHT ในใบนี้ · ผลพวงของ CounterLegIsMoney: **DN เงินเชื่อของใบที่ชำระครบ + WHT**
+เดิมลง 11910/2191x ตอนอนุมัติ ⇒ ตอนนี้ไปลงตอนรับ/จ่ายชำระ (`CreatePaymentJournalAsync` · `postPerPaymentWht`) เหมือนใบแจ้งหนี้/ใบซื้อปกติ
+
+**ข้อมูลเก่า (คำตัดสินข้อ 160 · F2 ข้อ 9)** — DN เงินเชื่อที่ JE อนุมัติรุ่นก่อนลงขาเงิน: หน้าตรวจข้อมูล (`data-integrity.html`) หมวด
+"ใบเพิ่มหนี้ที่ลงขาเงินซ้ำ" (`Helpers/DebitNoteCashRepair` · `DataIntegrityReportService.LoadDebitNoteCashPostedTwiceAsync` อ่านอย่างเดียว) + ปุ่ม "แก้" ต่อใบ
+`POST data-integrity/debit-note-cash/{id}/reverse-payment-journals` (เจ้าของบริษัท · กลับ JE ชำระซ้ำด้วย `ReverseJournalEntryAsync` · audit `JE-DN-CASH-TWICE`) ·
+ห้ามซ่อมอัตโนมัติ · ใบที่ยังไม่ชำระไม่มีปุ่ม (ยกเลิกแล้วออกใหม่)
+
+**ข้อควรรู้ของขาเงิน CN/DN** — `UseMoneyAccount()` ล้มดัง (คลาส ID#7) เมื่อ CN คืนเงินสืบทอด `BankAccountId` ที่ยังไม่ผูกผัง GL ⇒ กระทบเส้น
+`ReclassifyCnDnSideAsync` / `RepairMissingJournalAsync` ที่ลง JE ใหม่ด้วย AutoPost เดียวกัน — ผู้ใช้ไปต่อด้วยการผูกผังที่ธนาคาร หรือเปลี่ยนช่องทางเงินของเอกสาร
+(`fPaymentChannel`) แล้วลองใหม่ · สมมติฐาน: `BankAccountId` ที่ CN สืบทอดจากใบขายต้นทาง = ช่องทางที่จะคืนเงิน (ถ้าคืนทางอื่น ให้เปลี่ยนช่องทางบน CN ก่อนอนุมัติ)
 
 **ด่านผังข้ามฝั่ง** (`RD-86/9-10-ACCT-SIDE`) — `EnsureLineAccountMatchesDocSide`
 เดิม**ยกเว้น CN/DN ทั้งด่าน** (คอมเมนต์ที่ `PureSalesSideTypes` เขียนเองว่าจงใจ

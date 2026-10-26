@@ -174,4 +174,40 @@ public static class AdjustmentNoteAccount
             + $"(ตาม {StockLegalReference}) · ถ้าตั้งใจให้เข้าต้นทุนขายเพราะของถูกขายออกไปแล้ว "
             + "ให้กดยืนยันต่อได้ · ถ้าไม่ใช่ ให้เว้นผังว่างเพื่อใช้บัญชีคุมสต็อกของสินค้านั้น";
     }
+    /// <summary>ค่าเผื่อ "ใบต้นทางชำระครบแล้ว" — ตัวเดียวกับที่เส้นชำระใช้ (<c>BalanceDue ≤ 0.01</c>)</summary>
+    public const decimal SettledTolerance = 0.01m;
+
+    /// <summary>
+    /// **ขา counter ของใบลด/เพิ่มหนี้ตอนอนุมัติเป็น "เงินสด/ธนาคาร" หรือ "ลูกหนี้/เจ้าหนี้"** —
+    /// ตัวตัดสินเดียว (ทีม V ตรวจ JE 2026-10-26 · `docs/JE_POSTING_AUDIT.md` V-CN-03 / V-DN-01)
+    ///
+    /// <para><b>ใบลดหนี้</b> = การกลับรายการของใบเดิม: ใบเดิมยังค้างชำระ ⇒ ลดลูกหนี้/เจ้าหนี้ ·
+    /// ใบเดิมชำระครบแล้ว ⇒ ไม่มีหนี้ให้ลด ⇒ คืนเงิน (ขาเงินสด/ธนาคาร) — กติกาเดิมทุกประการ</para>
+    ///
+    /// <para><b>ใบเพิ่มหนี้</b> = หนี้ก้อนใหม่ที่ตัวมันเองเป็นลูกหนี้/เจ้าหนี้ (<c>ApplySourceDocumentAdjustmentsAsync</c>
+    /// ไม่แตะใบเดิม · อยู่ใน <c>PayableDocumentTypes</c> ให้รับ/จ่ายทีหลัง) ⇒ ขา counter ตามเทอมของ<b>ใบนี้เอง</b>:
+    /// จ่ายทันที (<see cref="PaymentType.Cash"/>) = เงินสด (ตรงกับที่ตอนบันทึกตั้ง <c>BalanceDue = 0</c>) ·
+    /// เงินเชื่อ = ลูกหนี้/เจ้าหนี้ · <b>เดิม</b>ยืมกติกาใบลดหนี้ ("ใบเดิมชำระครบ ⇒ เงินสด") ⇒ ใบเพิ่มหนี้ของใบที่ชำระครบ
+    /// ลง Dr เงินสดตอนอนุมัติทั้งที่ยังไม่ได้รับเงิน แล้วตอนรับชำระจริง (<c>CreatePaymentJournalAsync</c>) ลง Dr เงินสด / Cr ลูกหนี้
+    /// อีกรอบ ⇒ <b>เงินสดเกินจริงสองเท่า + ลูกหนี้ติดลบ</b> โดยงบยังสมดุล (ฝั่งซื้อสมมาตร: เจ้าหนี้ติดเดบิต)</para>
+    /// </summary>
+    /// <param name="isCreditNote">true = ใบลดหนี้ · false = ใบเพิ่มหนี้</param>
+    /// <param name="notePaymentType">เทอมของใบลด/เพิ่มหนี้เอง (null = ไม่ระบุ = เงินเชื่อ)</param>
+    /// <param name="sourceBalanceDue">ยอดค้างของใบต้นทาง (null = ไม่มีใบต้นทางในระบบ)</param>
+    public static bool CounterLegIsMoney(bool isCreditNote, PaymentType? notePaymentType, decimal? sourceBalanceDue)
+        => isCreditNote
+            ? sourceBalanceDue is decimal due && due <= SettledTolerance
+            : notePaymentType == PaymentType.Cash;
+
+    /// <summary>ป้ายท้ายคำอธิบายขา counter ("(เงินสด)" เมื่อเป็นขาเงิน) — ข้อความเดิม</summary>
+    public static string CounterLegSuffix(bool counterLegIsMoney) => counterLegIsMoney ? " (เงินสด)" : "";
+    /// <summary>
+    /// ขา counter ของใบลด/เพิ่มหนี้ต้องเป็น "gross" (รวมภาษีหัก ณ ที่จ่าย) และ<b>ไม่ลงขา WHT</b> ไหม — เกณฑ์เงินสด (audit F2) ใบต้นทาง
+    /// ตั้งลูกหนี้/เจ้าหนี้ gross โดยไม่แตะ 11910/2191x จนรับ/จ่ายเงินจริง ⇒ CN/DN โหมดลูกหนี้/เจ้าหนี้ต้อง mirror แบบเดียวกัน ·
+    /// โหมดขาเงิน (คืนเงิน/จ่ายทันที) = เงินเกิดจริง ⇒ ลงขา WHT ในใบนี้เลย · เกณฑ์ค้างรับ = ลงขา WHT เสมอ (ใบต้นทางลงไว้แล้ว)
+    /// <para>ผลพวงของ <see cref="CounterLegIsMoney"/> (ทีม V ฝ่ายค้านข้อ 1): DN เงินเชื่อของใบที่ชำระครบ + WHT เดิมเป็นโหมดเงิน ⇒ ลงขา WHT ตอนอนุมัติ ·
+    /// ตอนนี้เป็นโหมดลูกหนี้ ⇒ ขา WHT ย้ายไปลงตอนรับชำระ (<c>CreatePaymentJournalAsync</c> · <c>postPerPaymentWht</c>) เหมือนใบแจ้งหนี้ปกติ</para>
+    /// </summary>
+    public static bool CounterLegIsGrossOfWht(bool whtCashBasis, bool counterLegIsMoney, decimal withholdingTaxAmount)
+        => whtCashBasis && !counterLegIsMoney && withholdingTaxAmount > 0m;
 }
