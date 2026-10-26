@@ -100,10 +100,41 @@ public static class OcrBuyerOnPaper
     }
 
     /// <summary>หลักฐานจาก e-Tax XML ที่ลงนามแล้ว (ช่อง BuyerTradeParty) — ไม่มีข้อความให้ค้น แต่ XML คือตัวใบกำกับเอง</summary>
-    public static OcrBuyerPaperEvidence FromStructured(string? buyerName, string? buyerTaxId)
+    private static OcrBuyerPaperEvidence FromStructured(string? buyerName, string? buyerTaxId)
         => new(string.IsNullOrWhiteSpace(buyerName) ? OcrPaperPresence.Missing : OcrPaperPresence.Printed,
             ThaiTaxId.IsWellFormed(buyerTaxId) ? OcrPaperPresence.Printed : OcrPaperPresence.Missing,
             "e-Tax XML (BuyerTradeParty)");
+
+    /// <summary>
+    /// **หลักฐานผู้ซื้อของใบ e-Tax = XML + ข้อความบนหน้า PDF ของไฟล์เดียวกัน (เฉพาะเลขของเราตรงตัว)** — pure · ตัวเดียวของเส้น e-Tax ใน <c>OcrService.ScanAsync</c>
+    ///
+    /// <para>═══ ที่มา (ผู้ใช้ 2026-10-26 · ใบ SP-IN2026-10-00933 Rapbizz Direct → หจก.แอม แฮปปี้เนส) ═══ XML ส่ง
+    /// <c>&lt;ram:ID schemeID="OTHR"&gt;N/A&lt;/ram:ID&gt;</c> แทนเลขผู้ซื้อ แต่ข้อความบนหน้า PDF พิมพ์ "เลขที่ผู้เสียภาษี : 0203562005871" ·
+    /// เดิมดู XML อย่างเดียว ⇒ <see cref="JudgeClaim"/> บล็อก §82/5(1) ⇒ ทุกบรรทัด "VAT ต้องห้าม" (ฟอร์มเตือน 140.70)</para>
+    /// <para>กติกา (ฝ่ายค้าน ทีม R): XML มีครบ ⇒ ตาม XML (เดิม) · XML ขาดเลข ⇒ นับว่ามีเฉพาะเมื่อข้อความบนหน้ามีเลข 13 หลักที่
+    /// <b>เท่ากับเลขผู้เสียภาษีของบริษัทเราตรงตัว</b> (ไม่ใช้ "เลขใด ๆ ที่ checksum ผ่าน" ของ <see cref="Read"/> · ไม่ fuzzy — ตัวเลขล้วนไม่มีการสะกดผิด
+    /// F2 ข้อ 3) · ชื่อ: XML หรือชื่อบริษัทเรา/ผู้ซื้อบนหน้า · ไม่มีข้อความหน้า / ไม่รู้เลขเรา ⇒ ตาม XML (บล็อกเหมือนเดิม) ·
+    /// <b>ไม่ได้ตรวจลายเซ็นดิจิทัลของหน้า</b> — เป็นแค่ข้อความที่อ่านได้จากไฟล์ · การเติมช่องผู้ซื้อจากหน้า + หมายเหตุที่มาเป็นงานของ
+    /// <see cref="OcrEtaxPageFill.ResolveBuyer"/> (คำตัดสินเจ้าของข้อ 158 — เลือกข้อมูลที่ครบและถูกต้องที่สุด ไม่บังคับให้คนยืนยัน)</para>
+    /// </summary>
+    /// <param name="pageText">ข้อความบนหน้า PDF ของไฟล์ e-Tax (normalize แล้ว) — null = อ่านไม่ได้</param>
+    public static OcrBuyerPaperEvidence FromEtax(string? xmlBuyerName, string? xmlBuyerTaxId, string? pageText,
+        string? vendorTaxId, string? ourTaxId, string? ourName)
+    {
+        var xml = FromStructured(xmlBuyerName, xmlBuyerTaxId);
+        if (xml.Name == OcrPaperPresence.Printed && xml.TaxId == OcrPaperPresence.Printed) return xml;
+        if (string.IsNullOrWhiteSpace(pageText)) return xml;
+        var ours = ThaiTaxId.Normalize(ourTaxId);
+        var taxOnPage = ours.Length == 13 && ours != ThaiTaxId.Normalize(vendorTaxId)
+            && ThirteenDigits.Matches(pageText!).Any(m => ThaiTaxId.Normalize(m.Value) == ours);
+        var lines = pageText!.Split('\n');
+        var nameOnPage = (!string.IsNullOrWhiteSpace(ourName) && lines.Any(l => OcrSelfPartyGuard.NameOverlaps(l, ourName)))
+            || (!string.IsNullOrWhiteSpace(xmlBuyerName) && lines.Any(l => OcrSelfPartyGuard.NameOverlaps(l, xmlBuyerName)));
+        var name = xml.Name == OcrPaperPresence.Printed || nameOnPage ? OcrPaperPresence.Printed : xml.Name;
+        var tax = xml.TaxId == OcrPaperPresence.Printed || taxOnPage ? OcrPaperPresence.Printed : xml.TaxId;
+        return new(name, tax, $"{xml.Why} · ข้อความบนหน้า PDF: "
+            + (taxOnPage ? "พบเลขผู้เสียภาษีของบริษัทเราตรงตัว" : "ไม่พบเลขผู้เสียภาษีของบริษัทเรา (เลขอื่นไม่นับ)"));
+    }
 
     /// <summary>คำตัดสิน — ใช้เฉพาะเมื่อ <paramref name="isFullTaxInvoice"/> (ตัวอนุมานบทบาทตอบว่าใบเต็มรูปและเราเป็นผู้ซื้อ)
     /// และมี VAT · ขาดชื่อ<b>หรือ</b>ขาดเลข (ที่ตัดสินได้) ⇒ บล็อก</summary>

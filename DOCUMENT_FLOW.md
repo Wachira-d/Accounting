@@ -388,6 +388,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     "ยอดหลังหักส่วนลด" เป็นส่วนลด) · ด่านคณิตรู้ส่วนลด (ส่วนลดที่อธิบายส่วนต่างพอดี = ใช้ฐานหลังลด) · `Document.SubTotal` จากสแกน =
     ยอด**หลัง**ส่วนลด (`OcrHeaderAmounts.NetSubTotal` ทั้งสร้าง/พรีวิว/repopulate — เดิมก่อนลด ⇒ ฐานภาษีซื้อ §87 เกิน) ·
     `Document.DiscountAmount` = Σ ส่วนลดที่ลงบรรทัดจริง · `OcrLineReconciler` เคส E `DiscountOnTotalInclVat` (ราคารวม VAT + ส่วนลด) ·
+    เคส F `DiscountPreVatOnInclusivePrices` (ราคารวม VAT + ส่วนลดพิมพ์ก่อน VAT · ทีม R) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT ·
+    ทีม T 2026-10-26 · สังเคราะห์ · วางหลัง F เข้าได้เฉพาะใบที่เดิม Ambiguous) · เมทริกซ์ทุกรูปแบบ + สถานะ `docs/OCR_TOTALS_MATRIX.md` · ส่วนลดท้ายบิลทุกเคสยัง**กระจายลงบรรทัด**
+    (`BillDiscountAmount = 0` — ข้อเสนอลงเป็นส่วนลดท้ายบิล 538.32 ให้หน้าตาตรงกระดาษ รอเจ้าของ · MATRIX §4) ·
     **ลำดับตั้งอัตรา VAT รายบรรทัด** (`OcrService.BuildScanLinesAsync` — ตัวสร้างเดียวของสร้าง/line-preview/ดึงรายการซ้ำ · เติมเฉพาะ
     บรรทัดที่ยังว่าง): (1) ค่าจาก engine/ผู้ใช้แก้ในหน้ารีวิว → (2) สัญลักษณ์บนกระดาษ (V/N · ตารางสรุป VAT) ที่ยอดพิสูจน์ได้
     (`Helpers/OcrLineVatMarks`) → (3) **ตัวเลขหัวใบพิสูจน์ทั้งใบ** (`Helpers/OcrLineVatPlanner.PlanWholeInvoice` · รอบ 195 — VAT หัวใบ =
@@ -989,6 +992,16 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - `/integration/journals` + `/integration/daily-summary` → JournalEntry ที่
     **ไม่มี SourceDocumentId** (รายงาน VAT มี fallback ใน `TaxService.cs:436+`
     สแกนหา JE ที่มี VAT account แล้วรวมเข้า ภ.พ.30 ให้)
+    · **ด่านมัดจำของการจอง (ทีม S 2026-10-26 · การจอง #149433)**: JE ที่ Dr สุทธิบนบัญชีมัดจำ/รับล่วงหน้า (ดูจากชื่อผัง —
+    `BookingDepositDrawdown.IsDepositLiabilityAccount`) และอ้างการจอง (`RES-123456` ในเลขอ้างอิง/บรรทัด หรือ "การจอง #123456" ในคำอธิบาย) ⇒
+    ยอดมัดจำคงเหลือของการจองนั้น = Σ(Cr−Dr) บรรทัดที่อยู่ในสมุด (`ReportableJournal` — คู่กลับรายการหักล้าง) ของ JE/เอกสารที่ผูกการจอง
+    (`Helpers/BookingDepositLedger`) · ตัดเกิน ⇒ **422 `INT-DEPOSIT-OVERDRAW`** ไม่บันทึกอะไร (sync log Failed · คำตอบมี `ruleCode`/`statusCode`) ·
+    ตัดสินเฉพาะเมื่อพบเครดิตมัดจำของการจองนั้น (ไม่นับตัวกลับรายการ) · แยกยอดต่อการจองตามบรรทัด (night audit หลายการจองไม่ถูกปฏิเสธทั้งใบ) ·
+    เลขการจองเทียบเต็มตัว · ข้อมูลเกินเพดานโหลด ⇒ ไม่ตัดสิน · ล็อกต่อการจอง (`AdvisoryLockKey.BookingDeposit`) ในธุรกรรมเดียวกับการบันทึก ·
+    `/daily-summary` เดินด่านเดียวกัน · JE ที่ไม่อ้างการจอง/ไม่ตัดมัดจำ ไม่ถูกแตะ · **ทิศกลับ**: ยกเลิกใบมัดจำ (`VoidDocumentAsync`) /
+    กลับ JE มัดจำ (หน้าสมุดรายวัน · `/integration/journals/reverse`) ทั้งที่มี JE ตัดผ่านรายการอยู่ ⇒ **409 `DEP-DRAWN-REMOVE`** + ทางไปต่อ
+    "กลับ JE ที่ตัดก่อน" (กลับ JE ที่ตัดได้เสมอ) · **ภาษีขายใน JE จาก API** (Cr 21911 ไม่มีใบกำกับ) ไม่ปฏิเสธ แต่ติดธง: `warnings` ในคำตอบ ·
+    หมายเหตุบน JE · รายงานตรวจข้อมูล 2 หมวดใหม่ (อ่านอย่างเดียว · ไม่กลับรายการให้) · คำเตือนในตัวกระทบภาษี-GL — ดู INTEGRATION_RESYNC §12
   - **Idempotency (กัน retry สร้างเอกสารซ้ำ)**: ทุก inbound endpoint ที่สร้าง
     เอกสาร (invoice / creditnote / debitnote / **expense** / payment_voucher /
     certificate_in_lieu) เช็ค `ExternalRef` (→ `Document.Reference`) ก่อน; ถ้า
@@ -5730,7 +5743,7 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 | §65 ตรี(4) cap per fiscal year | `Section65TerValidator.Context.PriorYtdEntertainmentExpense` | sum YTD entertainment ของเอกสารที่ **ออกแล้วและยังมีผล** (`DocumentStatusRules.NotIssued` + ไม่ Voided — เดิม `== Approved` ทำให้ PV/PI ที่จ่ายแล้ว (Paid) หลุดทั้งปี · ERP_REVIEW A-01) → excess บวกกลับใบปัจจุบัน |
 | §82/5(6) vehicle dealer override | `CompanySettings.IsVehicleDealer` → **`Helpers/InputVatVehicleRule.Judge(hay, vendor, isVehicleDealer)`** ตัวเดียว (รอบ 193 S-05) | ธงถึงทุกเส้น: OCR (`ProhibitedInputVatScreener.Screen(..., isVehicleDealer)` — required) · ด่านเตือนตอนอนุมัติ · ฟอร์มคีย์มือ (`POST /api/companies/{id}/input-vat/screen`) · dealer ⇒ `VehicleDealerExempt` ไม่ปิดเคลม (OCR ใส่ `[VAT-NOTE]` ไม่ใช่ `[VAT-CLAIM]`) + เตือน "รถยนต์นั่งที่ใช้เองยังต้องห้าม" · §82/5(4) ค่ารับรองไม่สนธง · ชั้น `UnclearCheck` = **เตือน ไม่ปิดเคลม** (ยี่ห้อ/คำว่ารถยนต์ + งานรถ · ปั๊ม/บัตรน้ำมัน · "fuel" ที่ไม่ใช่ surcharge) · **ลิสต์คำรถชุดที่สองในเมธอดอนุมัติถูกถอด** (เคยเตือนค่าซ่อมแอร์/น้ำมันพืช/fuel surcharge) · TaxService อ่านธงแล้วไม่ใช้ = ถอด (ตัวเลข ภ.พ.30 ไม่เปลี่ยน) |
 | §82/5 กติกาฟอร์มคีย์มือ (ค่ารับรอง · บิลเงินสด) | `Helpers/ManualInputVatLineRule` (เรียกหลังตัวคัดกรองกลางใน `InputVatScreenController` · **ไม่ใช้กับเส้น OCR**) | ย้ายจาก JS (regex ใน `documents.html` = 0) · ความกว้างเท่า regex เดิม (baseline จาก `git show 7601891`) ลบบริบทที่ระบุชื่อ (หนังสือรับรอง/ตรวจรับรอง ISO/อาหารเลี้ยงสัตว์/เบี้ยเลี้ยง/เลี้ยงพนักงาน) · ปิดเคลมอัตโนมัติติด `dataset.autoSrc='screen'` — ผู้ใช้กดเปิดคืนได้ (ค่าผู้ใช้ชนะ) · endpoint เป็น `POST` body (กัน 414) |
-| §82/5(1) ผู้ซื้อบนกระดาษ (คำตัดสิน #9) | `Helpers/OcrBuyerOnPaper` (OCR `OcrService.cs` บล็อก §82/5) | ใบหัว "ใบกำกับภาษี" ที่**ข้อความบนกระดาษ**ไม่มีชื่อ/เลขผู้ซื้อ (ชื่อเราที่ระบบเติมเอง/เลขที่ย้ายมา ไม่นับ · e-Tax XML ใช้ `FromStructured`) ⇒ `[VAT-CLAIM]` `RD-82/5(1)-BUYER` (ม.82/5(1) ประกอบ ม.86/4(3)) → บรรทัด `IsVatClaimable=false` + เหตุผลรายบรรทัดตามกฎที่ตรงสาเหตุ · `OcrPaperPresence.Unknown` = ไม่แตะ |
+| §82/5(1) ผู้ซื้อบนกระดาษ (คำตัดสิน #9) | `Helpers/OcrBuyerOnPaper` (OCR `OcrService.cs` บล็อก §82/5) | ใบหัว "ใบกำกับภาษี" ที่**ข้อความบนกระดาษ**ไม่มีชื่อ/เลขผู้ซื้อ (ชื่อเราที่ระบบเติมเอง/เลขที่ย้ายมา ไม่นับ · e-Tax ใช้ `FromEtax` = XML + ข้อความบนหน้า PDF ของไฟล์เดียวกัน (นับเฉพาะเลขผู้เสียภาษีของบริษัทเราตรงตัว · ไม่ตรวจลายเซ็นของหน้า) — คำตัดสินข้อ 158: ช่องผู้ซื้อที่ XML ขาดเติมจากหน้าที่ `OcrEtaxPageFill.ResolveBuyer` ก่อนตัดสินฝั่ง ⇒ ไม่ปิดเคลม · ไม่หยุดอนุมัติ (`[ETAX-PAGE-FILL]` บอกที่มา + แนะนำขอผู้ขายแก้) · เลขผู้ซื้อ/ผู้ขายใน XML ขัดกับหน้าจริง ⇒ `[ETAX-PARTY-CONFLICT]` (BlockingTags) · 2026-10-26 ใบ SP-IN2026-10-00933) ⇒ `[VAT-CLAIM]` `RD-82/5(1)-BUYER` (ม.82/5(1) ประกอบ ม.86/4(3)) → บรรทัด `IsVatClaimable=false` + เหตุผลรายบรรทัดตามกฎที่ตรงสาเหตุ · `OcrPaperPresence.Unknown` = ไม่แตะ |
 | §82/5(2) e-Tax XML T05/T06 | `EtaxPdfXmlExtractor.AbbreviatedClaimBlock` | XML ใบกำกับอย่างย่อ ⇒ `[VAT-CLAIM]` §82/5(2) ชนะการอนุมานจากข้อความ (ไม่ไปพัก 11640) |
 | §90/2 ธง VAT สองตัว (stopgap S-01) | `Helpers/CompanyVatStatus.IsRegistered(companyFlag, settingsFlag?)` | มีแถวค่าตั้ง = `CompanySettings.VatRegistered` · ไม่มีแถว = `Company.IsVatRegistered` (เดิม `?? true` "ถือว่าจด") · ผู้อ่านฝั่งเอกสาร/integration `?? true` = 0 จุด · ลำดับ "ค่าตั้งก่อน" รอคำตัดสิน Q1 (TODO ในโค้ด) · แถวค่าตั้งเกิดพร้อมบริษัท (`CompanySettingsFactory`) · รายงาน `vat-flag-consistency` |
 | มัดจำ: ใบกำกับซ้ำ | `DepositPolicyResolver.GrossApplyBlocked` | `RD-86/4-DEPOSIT-TIV-DOUBLE` ทุกเส้น/ทุกงวด · `DEPOSIT-DRIVES-UNSUPPORTED` · `RD-78/1-DEPOSIT-VAT`/`RD-78-DEPOSIT-VAT` (คำเตือนค่าตั้ง) (§2.3) |

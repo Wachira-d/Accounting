@@ -65,7 +65,10 @@ public readonly record struct OcrEtaxLine(
 /// <param name="PricesIncludeVat">true = สร้างเอกสารแบบ "ราคารวม VAT" ด้วยค่าตามกระดาษทุกบรรทัด (กระทบยอดกับสูตรของ DocumentService แล้ว)</param>
 /// <param name="Lines">บรรทัดตามลำดับ XML</param>
 /// <param name="Notes">ข้อความลง ProcessingNotes (ขึ้นต้น <c>[e-Tax]</c>) — เศษจากการถอด VAT · เหตุที่ใช้ทางสำรอง</param>
-public sealed record OcrEtaxInvoiceLines(bool PricesIncludeVat, IReadOnlyList<OcrEtaxLine> Lines, IReadOnlyList<string> Notes);
+/// <param name="BillAllowanceInclVat">ส่วนลดท้ายบิล<b>รวม VAT</b> ที่หัวใบพิสูจน์แล้ว (<c>AllowanceTotalAmount</c> ของใบที่บรรทัดรวม VAT แต่ไม่มีส่วนลดรายบรรทัด ·
+/// 2026-10-26 ใบ SP-IN2026-10-00933) — null = ไม่มี/ไม่ใช่รูปนี้ (ส่วนลดหัวใบตามสูตรเดิม <see cref="OcrEtaxLineNormalizer.HeaderBillDiscount"/>)</param>
+public sealed record OcrEtaxInvoiceLines(bool PricesIncludeVat, IReadOnlyList<OcrEtaxLine> Lines, IReadOnlyList<string> Notes,
+    decimal? BillAllowanceInclVat = null);
 
 /// <summary>
 /// <b>ตัวตัดสินตัวเดียว: บรรทัด e-Tax XML → บรรทัดเอกสาร</b> (pure · ไม่ throw) — ทางหลัก <see cref="NormalizeInvoice"/>: ใบที่ราคารวม VAT ทุกบรรทัดและ
@@ -115,8 +118,11 @@ public static class OcrEtaxLineNormalizer
     /// <c>DocumentService.ComputeLineAmounts</c> (โหมดราคารวม VAT) + <c>ReconcileTaxRounding</c> ให้ยอดก่อน VAT รายบรรทัด = <c>NetLineTotalAmount</c>
     /// และยอดหัวใบ (ก่อน VAT · VAT · รวม) ตรง XML ทุกสตางค์ · ไม่ผ่านข้อใดข้อหนึ่ง ⇒ ทางสำรองราคาก่อน VAT รายบรรทัด (<see cref="Normalize"/>)
     /// </summary>
+    /// <param name="headerAllowance"><c>AllowanceTotalAmount</c> หัวใบ (null = XML ไม่ประกาศ) — ใช้เฉพาะทาง "หัวใบพิสูจน์ราคารวม VAT" (<see cref="HeaderProvenInclusive"/>)</param>
+    /// <param name="headerTaxBasis"><c>TaxBasisTotalAmount</c> หัวใบ (null = ไม่ประกาศ)</param>
     public static OcrEtaxInvoiceLines NormalizeInvoice(
-        IReadOnlyList<OcrEtaxLineFacts> lines, decimal? headerLineTotal, decimal? headerVat, decimal? grandTotal)
+        IReadOnlyList<OcrEtaxLineFacts> lines, decimal? headerLineTotal, decimal? headerVat, decimal? grandTotal,
+        decimal? headerAllowance = null, decimal? headerTaxBasis = null)
     {
         var notes = new List<string>();
         var proofs = lines.Select(ProveInclusive).ToList();
@@ -151,8 +157,71 @@ public static class OcrEtaxLineNormalizer
                 notes.Add(UndecidedNote(i, n));
             ex.Add(n);
         }
+        // 2026-10-26 (ใบ SP-IN2026-10-00933 Rapbizz Direct): บรรทัดดู "ราคาก่อน VAT" ด้วยเลขของตัวเอง แต่หัวใบพิสูจน์ว่ารวม VAT + ส่วนลดท้ายบิลรวม VAT
+        // — เพิ่มเงื่อนไขการตรวจ ไม่แตะทางเดิม: ใช้ได้เฉพาะเมื่อทางเดิมตัดสินทุกบรรทัดเป็นราคาก่อน VAT ไม่มีส่วนลด/หมายเหตุใด ๆ แล้ว
+        if (notes.Count == 0 && HeaderProvenInclusive(lines, ex, headerAllowance, headerTaxBasis, headerVat, grandTotal) is { } hp)
+            return hp;
         return new OcrEtaxInvoiceLines(false, ex, notes);
     }
+
+    /// <summary>
+    /// <b>หัวใบพิสูจน์ "ราคารวม VAT + ส่วนลดท้ายบิลรวม VAT"</b> ทั้งที่เลขของบรรทัดดูเป็นราคาก่อน VAT — ทางที่สามของ <see cref="NormalizeInvoice"/> (pure)
+    ///
+    /// <para>═══ ที่มา (ผู้ใช้ 2026-10-26 · ใบกำกับภาษี/ใบเสร็จ e-Tax SP-IN2026-10-00933 · Rapbizz Direct 0105559170207 → หจก.แอม แฮปปี้เนส) ═══
+    /// XML ประกาศบรรทัด 2 × 920.00 = <c>NetLineTotalAmount</c> 1,840.00 (และ <c>NetIncludingTaxes</c> 1,968.80 = 1,840 × 1.07) · 1 × 170.00 = 170.00 ⇒
+    /// ตัวตัดสินรายบรรทัดเห็น "ราคาก่อน VAT" · แต่หัวใบ: <c>AllowanceTotalAmount</c> 576.00 · <c>TaxBasis</c> 1,340.19 · VAT 93.81 · รวม 1,434.00 —
+    /// Σ บรรทัด 2,010 − 576 = 1,434 = <b>ยอดรวมทั้งสิ้น</b> (ไม่ใช่ฐาน) และ 93.81 = 7/107 ของ 1,434 ⇒ ราคาบรรทัด<b>รวม VAT</b> · ส่วนลด 576 รวม VAT
+    /// (= 538.32 ก่อน VAT ที่หน้า PDF พิมพ์) · เดิม: บรรทัดลงเป็นราคาก่อน VAT 920/170 · ส่วนลดหัวใบ = LineTotal − TaxBasis = 0 ⇒ ไม่มีส่วนลด ⇒
+    /// [Σ-GAP] Ambiguous + VAT เฉลี่ย 85.88/7.93 + ฟอร์มแก้ไขเห็นยอดก่อน VAT 2,010</para>
+    ///
+    /// <para><b>เงื่อนไข (ต้องจริงทุกข้อ · ±0.01):</b> ทางเดิมตัดสินทุกบรรทัดเป็นราคาก่อน VAT ไม่มีส่วนลด/ค่าบริการรายบรรทัด · อัตรา 7% ทุกบรรทัด ·
+    /// <c>AllowanceTotalAmount</c> A &gt; 0 · Σ บรรทัด − A = ยอดรวมทั้งสิ้น · VAT = round((Σ − A) × r/(100+r)) · ฐาน (ถ้าประกาศ) = ยอดรวม − VAT ·
+    /// และการอ่านแบบราคาก่อน VAT ไม่ลงตัว ((Σ − A) + VAT ≠ ยอดรวม) — ใบมาตรฐาน CII (A = LineTotal − TaxBasis · บรรทัดก่อน VAT) ไม่มีทางเข้ารูปนี้
+    /// เพราะ Σ − A = ฐาน ≠ ยอดรวมเมื่อมี VAT</para>
+    /// <para>ผล: บรรทัดตามกระดาษ (จำนวน · ราคา · ยอด) ธงรวม VAT + <see cref="OcrEtaxInvoiceLines.BillAllowanceInclVat"/> = A ⇒ ตัวสร้างบรรทัดได้เคส F
+    /// (<see cref="OcrLineReconcileCase.DiscountPreVatOnInclusivePrices"/> — ส่วนลดส่งต่อเป็นยอดก่อน VAT ผ่าน <see cref="HeaderBillDiscount"/>) กระจายส่วนลดลงบรรทัด ⇒ ฐาน/VAT/รวม ตรง XML · ไม่เข้าเงื่อนไข = null (ทางเดิมทุกตัวอักษร)</para>
+    /// </summary>
+    internal static OcrEtaxInvoiceLines? HeaderProvenInclusive(IReadOnlyList<OcrEtaxLineFacts> facts, IReadOnlyList<OcrEtaxLine> exLines,
+        decimal? headerAllowance, decimal? headerTaxBasis, decimal? headerVat, decimal? grandTotal)
+    {
+        if (facts.Count == 0 || facts.Count != exLines.Count) return null;
+        if (headerAllowance is not decimal a || a <= 0m) return null;
+        if (headerVat is not decimal v || v <= 0m || grandTotal is not decimal g || g <= 0m) return null;
+        decimal? rate = null;
+        for (var i = 0; i < facts.Count; i++)
+        {
+            var f = facts[i];
+            var e = exLines[i];
+            if (e.Basis != OcrEtaxPriceBasis.ExclusiveOfVat || e.LineDiscount.HasValue || e.Amount is not decimal amt || amt < 0m) return null;
+            if (f.LineAllowance is > 0m || f.LineCharge is > 0m) return null;
+            // อัตรา 7% เท่านั้น (อัตราไทยเดียวที่มี VAT) — ส่วนลดถูกส่งต่อเป็นยอดก่อน VAT ให้เคส F ของตัวกระทบยอด ซึ่งพิสูจน์ด้วย 7%
+            if (f.VatRatePercent is not decimal r || r != 7m) return null;
+            if (rate is decimal r0 && r0 != r) return null;   // หลายอัตรา — ไม่ตัดสิน
+            rate = r;
+        }
+        var sum = exLines.Sum(l => l.Amount!.Value);
+        var afterAllowance = sum - a;
+        if (afterAllowance <= 0m) return null;
+        if (Math.Abs(afterAllowance - g) > Tol) return null;                                          // Σ − ส่วนลด = ยอดรวมทั้งสิ้น
+        if (Math.Abs(R2(afterAllowance * rate!.Value / (100m + rate.Value)) - v) > Tol) return null;   // VAT อยู่ในยอดนั้น
+        if (headerTaxBasis is decimal tb && Math.Abs(tb - (g - v)) > Tol) return null;               // ฐานที่ประกาศ = ยอดรวม − VAT
+        if (Math.Abs(afterAllowance + v - g) <= Tol) return null;                                     // อ่านแบบก่อน VAT ก็ลงตัว ⇒ ไม่เดา
+        var lines = facts.Select((f, i) => new OcrEtaxLine(OcrEtaxPriceBasis.InclusiveOfVat, f.BilledQuantity, f.GrossUnitPrice, null,
+            exLines[i].Amount, true, PriceIncludesVat: true, VatStripResidual: null, VatRate: rate)).ToList();
+        var note = $"{NoteTag} ราคาบรรทัดใน XML รวม VAT แล้ว — หัวใบพิสูจน์: Σ บรรทัด {sum:N2} − ส่วนลดท้ายบิล {a:N2} = ยอดรวมทั้งสิ้น {g:N2} "
+            + $"และ VAT {v:N2} = {rate:0.##}/{100m + rate:0.##} ของ {g:N2} (ถ้าอ่านเป็นราคาก่อน VAT ยอดจะเป็น {afterAllowance + v:N2} ไม่ตรง) ⇒ ลงเป็นเอกสารราคารวม VAT "
+            + $"+ ส่วนลดท้ายบิล {a:N2} รวม VAT (= {R2(a * 100m / (100m + rate.Value)):N2} ก่อน VAT) กระจายลงบรรทัด";
+        return new OcrEtaxInvoiceLines(true, lines, new[] { note }, a);
+    }
+
+    /// <summary>ส่วนลดท้ายบิลของใบ e-Tax ที่ตัวสร้างบรรทัดใช้ (<c>OcrExtractedData.DiscountAmount</c> → <c>OcrScanResult.ExtractedDiscountAmount</c>) — ตัวเดียวของ
+    /// <c>OcrService.MapEtaxToOcrData</c> + ตัวจำลองในเทสต์ · <b>ยอดก่อน VAT เสมอ</b> (ฝ่ายค้านทีม R ข้อ 4 "ช่องเดียวความหมายเดียว"): สูตรเดิม
+    /// <c>LineTotal − TaxBasis</c> เป็นก่อน VAT อยู่แล้ว · ส่วนลดรวม VAT ที่หัวใบพิสูจน์ (<see cref="HeaderProvenInclusive"/> · 576.00) ถอด VAT เป็น 538.32 =
+    /// ตัวเลขเดียวกับที่หน้า PDF พิมพ์และที่เส้นกระดาษอ่านได้ ⇒ ตัวกระทบยอดตัดสินเป็นเคส F (<see cref="OcrLineReconcileCase.DiscountPreVatOnInclusivePrices"/>) ·
+    /// ไม่มี = null (ส่วนลดรายบรรทัดของใบ CRC อยู่ในยอดบรรทัดแล้ว — ห้ามหักซ้ำ)</summary>
+    public static decimal? HeaderBillDiscount(decimal? lineTotal, decimal? taxBasis, OcrEtaxInvoiceLines invoice)
+        => invoice.BillAllowanceInclVat is decimal a && a > 0m ? (decimal?)R2(a * 100m / 107m)
+            : lineTotal is decimal lt && taxBasis is decimal tb && lt - tb > 0m ? (decimal?)(lt - tb) : null;
 
     /// <summary>บรรทัดพิสูจน์ "ราคารวม VAT" ด้วยเลขของตัวเอง: round(จำนวน × ราคา) − ส่วนลด ≈ ยอดรวม VAT (และไม่ ≈ ยอดก่อน VAT) + อัตรา &gt; 0</summary>
     private static (decimal Qty, decimal Gross, decimal Allowance, decimal Net, decimal NetIncl, decimal Rate)? ProveInclusive(OcrEtaxLineFacts f)

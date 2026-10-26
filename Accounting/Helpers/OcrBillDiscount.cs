@@ -119,14 +119,52 @@ public static class OcrBillDiscount
         // ("ส่วนลด 50.00" / "Discount 50.00") ไม่ใช่ส่วนลดสองก้อน
         decimal sum = 0m;
         var used = new List<string>();
+        var keptLines = new List<(decimal Amount, int LineNo)>();
         for (var k = 0; k < rows.Count; k++)
         {
             if (k > 0 && rows[k].Amount == rows[k - 1].Amount && rows[k].LineNo == rows[k - 1].LineNo + 1)
                 continue;
+            // 2026-10-26 (ใบ SP-IN2026-10-00933 · PDF ต้นฉบับ+สำเนาในไฟล์เดียว): แถว "ส่วนลด Discount Amt 538.32" ของหน้าสำเนาคือแถวเดิมที่เห็นซ้ำ
+            // ไม่ใช่ส่วนลดก้อนที่สอง (เดิมรวมได้ 1,076.64 ⇒ ตัวกระทบยอดตัดสินไม่ได้) — ตัดสินด้วย "บริบททั้งแถว" ไม่ใช่ยอดอย่างเดียว
+            if (keptLines.Any(m => m.Amount == rows[k].Amount && SameRowOnRepeatedPage(lines, m.LineNo, rows[k].LineNo)))
+                continue;
+            keptLines.Add((rows[k].Amount, rows[k].LineNo));
             sum += rows[k].Amount;
             used.Add(rows[k].Text);
         }
         return new OcrBillDiscountReading(sum, false, used.Count, string.Join(" + ", used));
+    }
+
+    /// <summary>ระยะห่างขั้นต่ำ (บรรทัด) ของ "แถวเดียวกันบนหน้าที่พิมพ์ซ้ำ" — หน้าสำเนาอยู่ห่างเป็นสิบบรรทัด · แถวส่วนลดใต้สินค้าซ้ำกันที่อยู่ติด ๆ กันไม่เข้า</summary>
+    internal const int RepeatedPageMinGap = 8;
+
+    /// <summary>
+    /// **แถวส่วนลดสองแถวคือแถวเดียวกันบนหน้าที่พิมพ์ซ้ำ (ต้นฉบับ/สำเนา) ไหม** — ข้อความแถว (ยุบช่องว่าง) เหมือนกัน · ห่างกันอย่างน้อย
+    /// <see cref="RepeatedPageMinGap"/> บรรทัด · และบรรทัดที่ไม่ว่างก่อนหน้า/ถัดไป<b>เหมือนกันทั้งคู่</b> (ส่วนลดใต้สินค้าคนละตัวมีบริบทต่างกัน ⇒ ยังนับสองก้อน)
+    /// · ผลของตัวอ่านยังต้องผ่านการพิสูจน์ด้วยยอดหัวใบที่ <see cref="OcrLineReconciler"/> เหมือนเดิม (อ่านผิด ⇒ [Σ-GAP] ไม่ลงเงียบ)
+    /// </summary>
+    internal static bool SameRowOnRepeatedPage(IReadOnlyList<string> lines, int first, int second)
+    {
+        if (second - first < RepeatedPageMinGap) return false;
+        if (Collapse(lines[first]) != Collapse(lines[second])) return false;
+        var prevA = Neighbor(lines, first, -1);
+        var prevB = Neighbor(lines, second, -1);
+        var nextA = Neighbor(lines, first, +1);
+        var nextB = Neighbor(lines, second, +1);
+        return prevA is not null && nextA is not null && prevA == prevB && nextA == nextB;
+    }
+
+    private static string Collapse(string s) => Regex.Replace(s, @"\s+", " ").Trim();
+
+    /// <summary>บรรทัดไม่ว่างที่ใกล้ที่สุดทางซ้าย/ขวา (ยุบช่องว่าง) — null เมื่อไม่มี</summary>
+    private static string? Neighbor(IReadOnlyList<string> lines, int at, int step)
+    {
+        for (var i = at + step; i >= 0 && i < lines.Count; i += step)
+        {
+            var c = Collapse(lines[i]);
+            if (c.Length > 0) return c;
+        }
+        return null;
     }
 
     /// <summary>ยอดเงินตัวสุดท้ายในข้อความ (ค่าสัมบูรณ์) — null เมื่อไม่มี</summary>

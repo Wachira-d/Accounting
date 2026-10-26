@@ -14,7 +14,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **639 ไฟล์ · 6,380 `[Fact]` + 1,040 `[Theory]` (4,854 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **641 ไฟล์ · 6,413 `[Fact]` + 1,041 `[Theory]` (4,864 `InlineData`)** ณ 2026-10-26 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 
@@ -1200,6 +1201,12 @@
 | SUB-Z-1 | U | (Z · S2-6/S2-3) `/api/v1` อ่าน/เขียนของบริษัทระงับ · บริษัทไม่มีแถว subscription · หน้า cms-orders/cms-bookings/document-scan/lodging | อ่าน = ข้ามด่าน · เขียน = ด่านเดิม (บล็อกเมื่อบังคับ) · ไม่สร้าง FreeTrial · `pageFeatures` จากตารางเส้นทาง (CmsEcommerce/CmsBooking/DocumentOCR/null) — ✅ `Review200ZTests` + `tools/page_feature_sim.js` |
 | PERM-Z-1 | S | (Z · RF-3) นักบัญชีไม่มี `CompanySettings.Edit` เปิดหน้าเทมเพลต กด "ใช้สีกับทุกเอกสาร" | ปุ่มบันทึก/ใช้กับทุกเอกสารถูกปิด + ข้อความวิธีขอสิทธิ์จากเซิร์ฟเวอร์ (`GET document-templates/access`) · 403 ของ api.js ส่งข้อความเซิร์ฟเวอร์ถึงผู้ใช้ (เดิมถูกกลืนเป็นข้อความกลาง) + `status` ⇒ วนหยุดที่ 403 แรก — ✅ `tools/api_feature_denial_sim.js` ข้อ 7–8 · 📋 E2E |
 | OCR-U-05 | U | enrich TaxId ลง contact: name-sim < 0.90 | ไม่เขียน + มี ProcessingNote เตือน |
+| OCR-U-44 | U | ✅ (2026-10-26 ใบจริง SP-IN2026-10-00933 Rapbizz e-Tax) บรรทัด XML ดูราคาก่อน VAT แต่หัวใบ Σ 2,010 − AllowanceTotal 576 = ยอดรวม 1,434 · VAT 93.81 = 7/107 | `OcrEtaxLineNormalizer.HeaderProvenInclusive` ⇒ ราคารวม VAT + ส่วนลดรวม VAT 576 ส่งต่อเป็น 538.32 ก่อน VAT (ช่องส่วนลดความหมายเดียวกับเส้นกระดาษ) ⇒ เคส F · บรรทัด 920/170 ส่วนลด 527.28/48.72 · ฐาน 1,340.19 · VAT 85.88/7.93 (`EtaxGoldenCorpusTests` RapbizzSpIn00933 · `OcrRapbizzSpIn00933Tests`) · ทิศตรงข้าม: ใบมาตรฐาน CII/ไม่มี VAT/หลายอัตรา/มีส่วนลดรายบรรทัด ไม่เข้า |
+| OCR-U-45 | U | ✅ (ใบเดียวกัน) XML เลขผู้ซื้อ `N/A` แต่หน้า PDF ที่ลงนามพิมพ์เลขเรา | คำตัดสินข้อ 158 `OcrEtaxPageFill.ResolveBuyer` (เลขเราตรงตัวเท่านั้น) ⇒ เติมเลข/สาขาผู้ซื้อจากหน้า · ไม่ปิดเคลม · อนุมัติเองได้ (`[ETAX-PAGE-FILL]` ไม่บล็อก) · XML ขัดหน้า: สาขา ⇒ คง XML + เตือน · เลขผู้ซื้อ/ผู้ขาย ⇒ `[ETAX-PARTY-CONFLICT]` หยุด · `N/A` ไม่ไหลลงช่องเลขผู้ซื้อ · ทิศตรงข้าม: หน้าไม่มีเลข / เลขอื่นที่ checksum ผ่าน / เลขเราเพี้ยนหนึ่งหลัก / ไม่รู้เลขเรา ⇒ ยังบล็อก |
+| OCR-U-46 | U | ✅ (เส้นกระดาษของใบเดียวกัน) ราคารวม VAT + ส่วนลดท้ายบิลพิมพ์เป็นยอดก่อน VAT 538.32 · PDF ต้นฉบับ+สำเนา | เคส F `OcrLineReconcileCase.DiscountPreVatOnInclusivePrices` (Σ ÷ 1.07 − ส่วนลด = ฐาน ±0.02 · ส่วนลดรวม VAT = Σ − ยอดรวม) · `OcrBillDiscount` นับแถวส่วนลดหน้าสำเนาครั้งเดียว (538.32 ไม่ใช่ 1,076.64) · ด่านแถวซ้ำรู้เคส F · ทิศตรงข้าม: เคส B/C/A/E เดิม + Ambiguous ที่ไม่เข้าสมการไม่เปลี่ยน |
+| OCR-U-47 | U | ✅ (ทีม T 2026-10-26 · ผู้ใช้: "ทำไมยังบันทึกได้ไม่ตรง" หลัง deploy ทีม R) เส้นจริงทั้งสาย XML → ExtractedDiscount 538.32 → `ForScan` (RawText = XML) → `NetSubTotal` 1,340.19 → เคส F → บรรทัด 1,226.84/85.88 · 113.35/7.93 → SubTotal/VAT/Total 1,340.19/93.81/1,434.00 → เปิดแก้แล้วบันทึก | ตัวเลขเท่าเดิมทุกขั้น (`OcrRapbizzSpIn00933Tests.ทีมT_เส้นจริงทั้งสาย_*` · ตัวจำลองเติมขั้น `ScanBillDiscount` ที่เดิมข้าม) · ทิศตรงข้าม: ฟอร์มส่งแต่ % 28.66 ⇒ 1,433.94 (ฟอร์มจึงต้องส่งส่วนลดบาท — `documents.html` โหมด ฿) · เส้นกระดาษ `ForScan` ไม่ใช่ PostInvoice ⇒ 538.32 คง · เมทริกซ์ `docs/OCR_TOTALS_MATRIX.md` |
+| OCR-U-48 | U | ✅ (ทีม T · สังเคราะห์ · เมทริกซ์ช่อง "ก่อน VAT × ท้ายบิลรวม VAT") Σ 2,010 ก่อน VAT · ส่วนลด 576 พิมพ์รวม VAT · ฐาน 1,471.68 · VAT 103.02 · รวม 1,574.70 | เคส G `OcrLineReconcileCase.DiscountInclVatOnExclusivePrices` (`InclVatDiscountOnExclusiveLines` ⇒ 538.32 ก่อน VAT · 26.78% · ส่วนลดบาท 492.79/45.53) · ป้ายสลับได้คำตอบเดียวกัน · ทิศตรงข้าม: ส่วนลดก่อน VAT ยัง C · ไม่เข้าสมการยัง Ambiguous (vector ทีม R ไม่เปลี่ยน) · VAT 0 → C · VAT ≠ 7% ไม่เข้า · Σ < ฐาน ยัง LinesShort · เคส F ไม่ถูกแย่ง · baseline: port Python ของ Classify บน vector literal 28 ตัว = 0 เปลี่ยน (ไม่ใช่ C# · harness จริงรอ CI — MATRIX §baseline) |
+| OCR-E2E-12 | E2E | (ทีม T) หน้าตรวจสแกนใบ e-Tax ที่หัวใบพิสูจน์ราคารวม VAT (`[e-Tax]` อย่างเดียว ไม่มีแท็กหยุด) | กล่องน้ำเงิน "ℹ️ ระบบตรวจพบและปรับให้แล้ว" (`parseScanNotes.adjusted`) — **ไม่ใช่**กล่องเหลือง "ระบบไม่แน่ใจ" · `[ETAX-HEADER-GAP]`/`[ETAX-LINE-CHECK]`/`[Σ-GAP]` ยังเหลือง · ยังไม่มี E2E runner |
 | OCR-I-01 | I | สแกนใบเดิมซ้ำ 2 ครั้ง | ไม่สร้าง contact ซ้ำ, ไม่สร้างเอกสารซ้ำ (duplicate detection) |
 | OCR-I-02 | I | DTO ที่ส่งไป review modal | ทุก field §86/4 ไม่ null/empty (fallback chain เติมครบ) |
 | OCR-I-03 | I | user แก้ field ใน review → ยืนยัน | `RecordUserChoiceAsync` ถูกเรียกด้วย feedbackId ถูกตัว |
@@ -6594,6 +6601,28 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | RJ-09 | ECL: บริษัทที่เคยกลับรายการใบค่าเผื่อ | คำอธิบาย JE มี `EclAllowanceBasis.Marker` + ฐานเดิม/ใหม่ + แจ้งเจ้าของครั้งเดียว · ไม่เคยกลับ/ต่าง < 1 บาท ⇒ ไม่มีข้อความ |
 | RJ-10 | กลับรายการข้ามปี (ธ.ค. 2568 → ม.ค. 2569) | ใบเดิมนับปีเดิม (5,000 เดิม 3,000) · ใบกลับนับปีใหม่ (−1,500) · รวมสองปี = 3,500 (`CitReversalDbTests`) |
 | RJ-07 | (มือ) หน้า tax.html แท็บภาษีนิติบุคคล มีรายงานที่ยอดต่าง | แถบเตือนรายชื่อปี + รายได้/ค่าใช้จ่าย (เดิม → สด) · ร่างมีปุ่มสร้างใหม่ · ยื่นแล้วไม่มีปุ่มแตะตัวเลข |
+
+## BDD — JE ตัดมัดจำของการจองที่ไม่มีมัดจำคงเหลือ (ทีม S · 2026-10-26 · ผู้ใช้รายงาน การจอง #149433 · `Helpers/BookingDepositDrawdown`)
+
+| ID | สถานการณ์ | คาดหวัง (เทสต์) |
+| --- | --- | --- |
+| BDD-01 | (reproduce) ใบมัดจำ RV-0070 Cr 21510 1,000 ถูกกลับด้วย RV-0097 · API ส่ง JE อ้าง RES-149433-CHK Dr 21510 1,000 | ปฏิเสธ 422 `INT-DEPOSIT-OVERDRAW` · ข้อความระบุการจอง/ใบที่ยกเลิก · ไม่มี JE เกิด (`BookingDepositDrawdownTests.ReportedCase_DepositReversed_IsRejected`) |
+| BDD-02 | ทิศตรงข้าม: มัดจำยังอยู่ 1,000 ตัด 1,000 (และเศษสตางค์) | ผ่านเหมือนเดิม (`DepositStillLive_PassesAsBefore`) |
+| BDD-03 | มัดจำบางส่วน: 1,000 ถูกตัดไป 600 · ตัด 400 / 500 | 400 ผ่าน · 500 ปฏิเสธ (คงเหลือ 400) (`PartialDeposit_AllowsUpToRemaining_RejectsBeyond`) |
+| BDD-04 | JE ไม่ตัดมัดจำ / ไม่พบร่องรอยการจองในระบบ | ไม่แตะ (`NoDepositDebit_OrNoTrace_IsNotTouched`) |
+| BDD-05 | เลขการจองจากเลขอ้างอิง/คำอธิบาย · ตรงตัว (149433 ≠ 1494330) | `ExtractKeys_*` |
+| BDD-06 | บัญชีมัดจำดูจากความหมาย: 215xx ค่าไฟค้างจ่าย · ดอกเบี้ยค้างจ่าย · ประกันสังคม · มัดจำจ่าย (สินทรัพย์) ไม่ใช่ | `IsDepositLiabilityAccount_ByMeaning` |
+| BDD-07 | ทิศกลับ: ยกเลิกใบมัดจำ/กลับ JE มัดจำ ที่มี JE ตัดผ่านรายการอยู่ | 409 `DEP-DRAWN-REMOVE` ระบุ JE ที่ตัด + ทางไปต่อ (`Removal_OfDrawnDeposit_IsBlocked_WithWayForward`) |
+| BDD-08 | ทิศกลับตรงข้าม: กลับ JE ที่ตัด · มัดจำที่ยังไม่ถูกตัด · ข้อมูลที่พังอยู่แล้ว (กลับ JV ⇒ 0) · มัดจำสองใบที่อีกใบยังพอ | ไม่บล็อก (`Removal_OfDrawingJournal_OrUndrawnDeposit_IsAllowed` · `Removal_OfOneOfTwoDeposits_AllowedWhileOtherCovers`) |
+| BDD-11 | (หลังฝ่ายค้าน) night audit อ้าง RES-1001 Dr 500 + RES-1002 Dr 700 · มัดจำ 500/700 | ผ่านทั้งคู่ — แยกต่อบรรทัด (`NightAudit_MultiBooking_SplitPerLine`) · หัวอ้างสองการจองแต่บรรทัดไม่ระบุ ⇒ ไม่ตัดสิน (`AmbiguousLine_*`) |
+| BDD-12 | มัดจำลงด้วยเลขอ้างอิงอื่น · ระบบเห็นแค่ JE ที่ตัดเอง | ไม่ตัดสิน — งวดที่สองไม่ถูกปฏิเสธ (`OnlyOwnDrawdowns_NoDepositCredit_IsNotDecided`) |
+| BDD-13 | เลขการจองยาว RES-101-2609-0001 · "#1234" ที่ไม่ใช่การจอง | key เต็ม ไม่ปน 101 · ไม่นับ (`ExtractKeys_FullBookingNumber_NotPrefix`) |
+| BDD-14 | รายงาน: มัดจำ 1,000 ตัด 600 + 600 · เคสผู้ใช้ | ติดธงเฉพาะใบที่สอง (คงเหลือก่อน 400) · JV-INT ติดธง ใบสะอาดไม่ติด (`Report_*`) |
+| BDD-15 | ยกเลิกมัดจำที่ถูกตัดโดยใบกำกับ (JE ของเอกสาร) | ข้อความบอก "ยกเลิกเอกสาร …" ไม่ใช่กลับรายการ (`RemovalMessage_DocumentDrawing_SaysVoidDocument`) |
+| BDD-16 | ผังที่ตั้งในประเภทเงินมัดจำแต่ชื่อไม่สื่อ · "เงินรับจอง" | นับเป็นผังมัดจำ (`ConfiguredDepositAccount_CountsEvenWithoutKeyword`) |
+| BDD-17 | (มือ/DB) สองคำขอพร้อมกันตัดมัดจำ 1,000 ก้อนเดียว คนละ 1,000 | ผ่านใบเดียว อีกใบ 422 (ล็อกต่อการจอง) |
+| BDD-09 | (มือ) รายงานตรวจข้อมูล → "รายการบัญชีที่ตัดเงินมัดจำของการจองเกินยอดที่มีจริง" | แสดง JV-INT-202609-0009 · ยอดตัด 1,000 · คงเหลือ 0 · ลิงก์ "เปิดเพื่อกลับรายการ" ไปหน้าสมุดรายวัน · ระบบไม่กลับให้เอง |
+| BDD-10 | (มือ) JE จาก API ที่มีขา 21911 | สร้างได้ + `warnings` ในคำตอบ + หมายเหตุบน JE + แถวในรายงานตรวจข้อมูล "ภาษีขายจากรายการบัญชีที่ส่งผ่าน API โดยไม่มีใบกำกับภาษี" + คำเตือนในตัวกระทบภาษี-GL |
 
 ## BKE — engine รอบจองคิว/บริการบนเว็บ CMS (ทีม B · 2026-10-22 · `docs/BOOKING_ENGINE_DESIGN.md`)
 

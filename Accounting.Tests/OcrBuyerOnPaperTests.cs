@@ -66,7 +66,7 @@ public class OcrBuyerOnPaperTests
     [Fact]
     public void XMLที่ไม่มีเลขผู้ซื้อ_บล็อก()
     {
-        var v = OcrBuyerOnPaper.JudgeClaim(true, 35.07m, OcrBuyerOnPaper.FromStructured("หจก. แอม แฮปปี้เนส", null));
+        var v = OcrBuyerOnPaper.JudgeClaim(true, 35.07m, OcrBuyerOnPaper.FromEtax("หจก. แอม แฮปปี้เนส", null, null, null, null, null));
         Assert.True(v.BlockClaim);
     }
 
@@ -106,7 +106,7 @@ public class OcrBuyerOnPaperTests
     [Fact]
     public void XMLที่มีBuyerTradeParty_ไม่บล็อก()
     {
-        var ev = OcrBuyerOnPaper.FromStructured("หจก. แอม แฮปปี้เนส", OurTaxId);
+        var ev = OcrBuyerOnPaper.FromEtax("หจก. แอม แฮปปี้เนส", OurTaxId, null, null, null, null);
         Assert.False(OcrBuyerOnPaper.JudgeClaim(true, 35.07m, ev).BlockClaim);
     }
 

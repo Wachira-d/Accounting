@@ -9376,6 +9376,79 @@ RULES += [
          why=_Q_WHY + "ค่าตั้งที่ไม่รู้จัก = 400 (ห้ามเก็บค่าที่ไม่มีผู้อ่าน)"),
 ]
 
+# ── 2026-10-26 ใบจริง SP-IN2026-10-00933 (Rapbizz Direct e-Tax · ทีม R): ราคาบรรทัดรวม VAT + ส่วนลดท้ายบิลรวม VAT ที่หัวใบประกาศ ·
+# XML เลขผู้ซื้อ "N/A" แต่ข้อความบนหน้า PDF มีเลขเรา ⇒ เดิมปิดเคลมทั้งใบ · ล็อกจุดเรียกตัวตัดสินใหม่ (มี ≠ ถูกเรียก — F2 ข้อ 2)
+_R_WHY = "ใบ SP-IN2026-10-00933 (2026-10-26): "
+RULES += [
+    dict(file=OCR, method="MapEtaxToOcrData",
+         must=["OcrEtaxLineNormalizer.HeaderBillDiscount(etax.LineTotal, etax.TaxBasis, etaxLines)"],
+         call_args=[("OcrEtaxLineNormalizer.NormalizeInvoice(", "etax.AllowanceTotal"), ("OcrEtaxLineNormalizer.NormalizeInvoice(", "etax.TaxBasis")],
+         forbid=["lt - tb > 0m ? lt - tb"],
+         why=_R_WHY + "ส่วนลดหัวใบของเส้น e-Tax ต้องมาจากตัวตัดสินเดียว (สูตรเดิม LineTotal − TaxBasis + ส่วนลดรวม VAT ที่หัวใบพิสูจน์) — เขียนสูตรเองที่นี่ = ส่วนลด 576 หาย"),
+    dict(file=OCR, method="ScanAsync",
+         must=["OcrBuyerOnPaper.FromEtax(", "OcrEtaxPageFill.ResolveBuyer(", "extractedData.BuyerTaxId = etaxFill.BuyerTaxId"],
+         before=[("OcrEtaxPageFill.ResolveBuyer(", "var buyerBlock0 = new Accounting.Helpers.OcrPartyBlock(")],
+         forbid=["OcrBuyerOnPaper.FromStructured(extractedData.BuyerName"],
+         why=_R_WHY + "คำตัดสินข้อ 158: ช่องผู้ซื้อของใบ e-Tax เลือกค่าที่ครบ/ถูกต้องที่สุดระหว่าง XML กับหน้า PDF ที่ตัวตัดสินเดียว ก่อนตัดสินฝั่ง · เลขเราตรงตัวเท่านั้น"),
+    dict(file="Helpers/OcrDuplicateLineGuard.cs", method="HeaderFigures",
+         must=["OcrLineReconciler.PreVatDiscountOnInclusiveLines("],
+         why=_R_WHY + "ด่านแถวซ้ำต้องรู้เคส F ของตัวกระทบยอด (ต้นฉบับ+สำเนาที่มีส่วนลดก่อน VAT บนราคารวม VAT ไม่งั้นหลุดไปยุบ ×2)"),
+]
+
+# ── ทีม S 2026-10-26 (ผู้ใช้รายงาน · การจอง #149433): JE จาก API ตัดมัดจำที่ถูกกลับรายการแล้ว ⇒ ด่านสองทิศ + ธงภาษีขายไม่มีใบกำกับ ──
+_S_WHY = "ทีม S 2026-10-26 (JV-INT ตัด 21510 ของมัดจำที่ถูกกลับแล้ว): "
+RULES += [
+    dict(file=INTEG, method="ProcessJournalAsync",
+         must=["BookingDepositLedger.DrawdownProblemAsync(", "BookingDepositDrawdown.RuleCode", "BookingDepositDrawdown.OutputVatNoInvoiceNote(",
+               "Warnings: journalWarnings", "Note = journalNote", "BookingDepositDrawdown.JournalApiEventType"],
+         must_re=[r"is\s+string\s+overdraw\s*\)\s*throw\b"],
+         before=[("RunAtomicCreateAsync(", "DrawdownProblemAsync("), ("DrawdownProblemAsync(", "_db.JournalEntries.Add(je)")],
+         why=_S_WHY + "ตัดมัดจำเกินยอดคงเหลือของการจอง ⇒ ปฏิเสธก่อนบันทึก (422 + ruleCode) · ภาษีขายไม่มีใบกำกับ ⇒ ติดธงในคำตอบ+หมายเหตุ JE"),
+    dict(file=INTEG, method="ProcessJournalReverseAsync",
+         must=["BookingDepositLedger.RemovalProblemAsync(", "BookingDepositDrawdown.RemovalRuleCode"],
+         before=[("RemovalProblemAsync(", "_db.JournalEntries.Add(reversal)")],
+         why=_S_WHY + "ทิศกลับ: API กลับ JE มัดจำที่ถูกตัดแล้ว ⇒ 409"),
+    dict(file=INTEG, method="HandleSyncError",
+         must=["RuleCode: bre.RuleCode", "StatusCode: bre.StatusCode"],
+         why=_S_WHY + "ระบบต้นทางต้องเห็น ruleCode + status ของการปฏิเสธตามกติกา"),
+    dict(file=DOCSVC, method="VoidDocumentAsync",
+         must=["BookingDepositLedger.RemovalProblemAsync(", "BookingDepositDrawdown.RemovalRuleCode"],
+         before=[("RemovalProblemAsync(", "BeginTransactionAsync(")],
+         why=_S_WHY + "ทิศกลับ: ยกเลิกใบมัดจำที่มี JE ตัดผ่านรายการอยู่ ⇒ 409 พร้อมทางไปต่อ (ก่อนแตะธุรกรรม)"),
+    dict(file="Services/Implementations/AccountingService.cs", method="ReverseJournalEntryAsync",
+         must=["BookingDepositLedger.RemovalProblemAsync(", "BookingDepositDrawdown.RemovalRuleCode"],
+         must_re=[r"!\s*systemTriggered\s*&&\s*await\s+Accounting\.Helpers\.BookingDepositLedger\.RemovalProblemAsync\("],
+         why=_S_WHY + "ทิศกลับ: ผู้ใช้กลับ JE มัดจำ (สมุดรายวัน) ที่ถูกตัดแล้ว ⇒ 409"),
+    dict(file="Helpers/BookingDepositLedger.cs", method="LoadChunkAsync",
+         must=["WhereInLedger()", "d.CompanyId == companyId", "j.CompanyId == companyId", "a.CompanyId == companyId",
+               "l.JournalEntry.CompanyId == companyId", "BookingDepositDrawdown.IsDepositLiabilityAccount(", "Take(RowCap + 1)",
+               "truncated = true", "BookingDepositDrawdown.ExtractKeys("],
+         forbid=["JournalEntryStatus.Posted", "Take(500)", "Take(2000)"],
+         why=_S_WHY + "ยอดคงเหลือนับคู่กลับรายการด้วย ReportableJournal (ห้ามกรอง Posted เอง) · tenant isolation ทุก query · เกินเพดาน ⇒ Truncated ไม่ตัดผลเงียบ · จับคู่ตรงตัว"),
+    dict(file="Helpers/BookingDepositLedger.cs", method="DrawdownProblemAsync",
+         must=["BookingDepositDrawdown.AssignDrawdown(", "AdvisoryLockKey.BookingDeposit", "snap.Truncated"],
+         must_lit=["pg_advisory_xact_lock"],
+         before=[("AdvisoryLockKey.BookingDeposit", "LoadManyAsync(")],
+         why=_S_WHY + "ฝ่ายค้านข้อ 1: แยกยอดต่อการจองตามบรรทัด · ล็อกต่อการจองก่อนอ่านยอด (กันสองคำขอพร้อมกัน) · ข้อมูลไม่ครบ ⇒ ไม่ตัดสิน"),
+    dict(file=INTEG, method="ProcessDailySummaryAsync",
+         must=["BookingDepositLedger.DrawdownProblemAsync(", "BookingDepositDrawdown.RuleCode", "RunAtomicCreateAsync("],
+         before=[("DrawdownProblemAsync(", "_db.JournalEntries.Add(journalEntry)")],
+         why=_S_WHY + "ฝ่ายค้านข้อ 4: สรุปรายวันเดินด่านมัดจำตัวเดียวกัน"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadBookingDepositOverdrawnAsync",
+         must=["BookingDepositLedger.LoadManyAsync(", "BookingDepositDrawdown.OverdrawnInOrder(", "j.EntryDate >= since",
+               "j.CompanyId == companyId", "a.CompanyId == companyId"],
+         forbid=["ReverseJournalEntryAsync(", "SaveChangesAsync("],
+         why=_S_WHY + "หลักการ #9: รายงานอ่านอย่างเดียว — ห้ามกลับรายการ/บันทึกเอง"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadApiJournalOutputVatAsync",
+         must=["BookingDepositDrawdown.JournalApiEventType", "s.CompanyId == companyId", "j.CompanyId == companyId"],
+         forbid=["SaveChangesAsync("],
+         why=_S_WHY + "ภาษีขายจาก JE API ที่ไม่มีใบกำกับ — อ่านอย่างเดียว"),
+    dict(file="Services/Implementations/TaxGlReconciliationService.cs", method="ReconcileAsync",
+         must=["BookingDepositDrawdown.JournalApiEventType"],
+         must_lit=["BookingDepositDrawdown.OutputVatNoInvoiceCode"],
+         why=_S_WHY + "ตัวกระทบภาษี-GL ระบุ JE จาก API ที่มีภาษีขายไม่มีใบกำกับ"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

@@ -57,6 +57,9 @@ internal static class EtaxPdfXmlExtractor
 
         public decimal? LineTotal { get; set; }         // SubTotal before VAT
         public decimal? TaxBasis { get; set; }          // SubTotal - Discount
+        /// <summary><c>AllowanceTotalAmount</c> หัวใบตามที่ XML ประกาศ (null = ไม่มี) — 2026-10-26 ใบ SP-IN2026-10-00933: ส่วนลดท้ายบิลรวม VAT
+        /// ที่ไม่อยู่ในยอดบรรทัด (ตัวตัดสิน Helpers/OcrEtaxLineNormalizer.HeaderProvenInclusive)</summary>
+        public decimal? AllowanceTotal { get; set; }
         public decimal? VatAmount { get; set; }
         public decimal? GrandTotal { get; set; }
         public string? Currency { get; set; }
@@ -478,6 +481,7 @@ internal static class EtaxPdfXmlExtractor
                 {
                     r.LineTotal = ParseDecimal(TextOf(summation, "LineTotalAmount"));
                     r.TaxBasis = ParseDecimal(TextOf(summation, "TaxBasisTotalAmount"));
+                    r.AllowanceTotal = ParseDecimal(TextOf(summation, "AllowanceTotalAmount"));
                     r.VatAmount = ParseDecimal(TextOf(summation, "TaxTotalAmount"));
                     r.GrandTotal = ParseDecimal(TextOf(summation, "GrandTotalAmount"));
                 }
@@ -582,6 +586,9 @@ internal static class EtaxPdfXmlExtractor
     {
         if (string.IsNullOrWhiteSpace(raw)) return (null, null);
         var s = raw.Trim();
+        // 2026-10-26 ใบ SP-IN2026-10-00933: ผู้ขายบางระบบส่ง <ram:ID schemeID="OTHR">N/A</ram:ID> แทนเลขผู้ซื้อ — ค่าที่ไม่มีตัวเลขเลย
+        // คือ "ไม่ประกาศ" ไม่ใช่เลขผู้เสียภาษี (เดิม "N/A" ไหลลงช่องเลขผู้ซื้อของสแกน) · ไม่รู้ = ว่าง (F2 ข้อ 3)
+        if (!s.Any(char.IsDigit)) return (null, null);
         if (s.Length == 18) return (s.Substring(0, 13), s.Substring(13, 5));
         if (s.Length == 13) return (s, null);
         return (s, null);

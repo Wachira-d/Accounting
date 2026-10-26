@@ -2422,7 +2422,11 @@ public partial class DocumentService : IDocumentService
         if (!string.IsNullOrEmpty(request.Search))
         {
             var search = $"%{request.Search}%";
+            // ผู้ใช้ 2026-10-26: "ระบบเคยค้นหาอ้างอิงได้ ตอนนี้ค้นไม่ได้แล้ว" (ค้น RES-149669 ไม่เจอใบเสร็จมัดจำที่อ้างอิง/เลขจองนั้น) ⇒
+            // ค้นช่องอ้างอิง + เลขจองด้วย (ใบที่ระบบสร้างจากการจอง/ชำระออนไลน์เก็บเลขต้นทางไว้สองช่องนี้)
             query = query.Where(d => EF.Functions.ILike(d.DocumentNumber, search)
+                || (d.Reference != null && EF.Functions.ILike(d.Reference, search))
+                || (d.BookingNumber != null && EF.Functions.ILike(d.BookingNumber, search))
                 || (d.Contact != null && EF.Functions.ILike(d.Contact.Name, search)));
         }
 
@@ -9568,6 +9572,15 @@ public partial class DocumentService : IDocumentService
         var voidEtax = (await DocumentVoidPreconditions.EffectiveEtaxAsync(_db, companyId, new[] { documentId })).GetValueOrDefault(documentId);
         if (DocumentVoidPreconditions.DocumentVoidEtaxBlock(voidEtax, doc.DocumentNumber, restore: false) is string etaxBlock)
             throw new BusinessRuleException(etaxBlock, "RD-ETAX-REACHED-VOID", 409);
+
+        // ทีม S 2026-10-26 (ผู้ใช้รายงาน · การจอง #149433) ทิศกลับ: ยกเลิกใบมัดจำของการจอง ทั้งที่มี JE (API/ในระบบ) ตัดมัดจำนั้นผ่านรายการอยู่ ⇒ บัญชีมัดจำติดลบ +
+        // รายได้/ภาษีขายจากมัดจำค้าง ⇒ 409 พร้อมทางไปต่อ (กลับ JE ที่ตัดก่อน) · ตัวตัดสินเดียว Helpers/BookingDepositDrawdown · ใบที่ไม่อ้างการจอง/ไม่มีขามัดจำ ไม่ถูกแตะ
+        var voidJeIds = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId == documentId && !j.IsDeleted)
+            .Select(j => j.Id).ToListAsync();
+        if (await BookingDepositLedger.RemovalProblemAsync(_db, companyId, voidJeIds,
+                new[] { doc.BookingNumber, doc.Reference, doc.Notes }, $"ยกเลิกเอกสาร {doc.DocumentNumber}") is string drawnBlock)
+            throw new BusinessRuleException(drawnBlock, BookingDepositDrawdown.RemovalRuleCode, 409);
 
         // กันยกเลิกเอกสารต้นทางที่มี "เอกสารลูก" active อ้างอยู่ (แปลงไปแล้ว เช่น
         // Invoice→TaxInvoice/Receipt) — ยกเลิกต้นทางจะทำให้ลูกลอย (orphan): ภพ.30/

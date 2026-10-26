@@ -1623,11 +1623,17 @@
             ...pick('SCAN-WRITEBACK'),
             ...pick('ETAX-HEADER-GAP'),
             ...pick('ETAX-LINE-CHECK'),
+            // ฝ่ายค้านทีม T 2026-10-26: เลขผู้ซื้อ/ผู้ขายใน XML ขัดหน้า PDF จริง (BlockingTags — server หยุดอนุมัติเอง · หน้าต้องบอกเหตุ) · ข้อความจาก Helpers/OcrEtaxPageFill
+            ...pick('ETAX-PARTY-CONFLICT'),
             ...pick('ASSET-COST'),
-            ...pick('e-Tax'),
             ...s65,
             ...skip,
           ],
+          // ทีม T 2026-10-26 (ใบ SP-IN2026-10-00933): [e-Tax] คือ "ข้อสังเกต — ไม่บล็อก" ของ Helpers/OcrEtaxLineNormalizer (NoteTag) — ระบบพิสูจน์ด้วย
+          // ตัวเลขหัวใบแล้ว**ปรับให้แล้ว** (ราคารวม VAT · เศษจากถอด VAT · ขั้นปัด VAT) ไม่ใช่ "ไม่แน่ใจ" ⇒ กล่องของตัวเอง ไม่ปนกับ warnings
+          // (ของที่ไม่แน่ใจจริงของ e-Tax ใช้แท็ก [ETAX-HEADER-GAP]/[ETAX-LINE-CHECK] ซึ่งยังอยู่ใน warnings + BlockingTags) — ข้อความทั้งหมดมาจากเซิร์ฟเวอร์
+          // + [ETAX-PAGE-FILL] (คำตัดสินเจ้าของข้อ 158): ช่องผู้ซื้อที่ XML ขาด ระบบเติมจากหน้า PDF แล้ว — ปรับให้แล้ว ไม่หยุดอนุมัติ (ข้อความ+RuleCode จากเซิร์ฟเวอร์)
+          adjusted: [...pick('e-Tax'), ...pick('ETAX-PAGE-FILL')],
         };
       },
 
@@ -2391,6 +2397,15 @@
                 ${scanFlags.warnings.map(w => `<div style="margin-top:3px">• ${Layout.esc(w)}</div>`).join('')}
               </div>`;
           }
+          // ทีม T 2026-10-26: หัวใบพิสูจน์แล้ว (สองสมการตรง) = "ระบบตรวจพบและปรับให้แล้ว" — แสดงเหตุผลแต่ไม่ใช่สีเหลือง/ไม่ใช่ "ไม่แน่ใจ"
+          let adjustedBanner = '';
+          if (scanFlags.adjusted.length) {
+            adjustedBanner = `
+              <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;padding:12px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;color:#1e3a8a;line-height:1.7">
+                <div style="font-weight:700;margin-bottom:4px">ℹ️ ระบบตรวจพบและปรับให้แล้ว — ตรวจเหตุผลได้ ไม่ต้องแก้</div>
+                ${scanFlags.adjusted.map(w => `<div style="margin-top:3px">• ${Layout.esc(w)}</div>`).join('')}
+              </div>`;
+          }
 
           // §82/5 VAT-claim warning — ดึงข้อความ [VAT-CLAIM] ที่ backend
           // ใส่ใน processingNotes (ใบกำกับอย่างย่อ/ใบเสร็จ ที่เคลม VAT ไม่ได้)
@@ -2427,6 +2442,7 @@
             ${dbdBanner}
             ${vatClaimBanner}
             ${serverFlagBanner}
+            ${adjustedBanner}
             <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:12px;color:#1e3a8a;line-height:1.6">
               <strong>&#x1F4A1; การสอนระบบ:</strong> หากมีข้อมูลที่ระบบแกะไม่ถูกต้อง แก้ไขในช่องด้านล่างแล้วกดปุ่ม "บันทึก &amp; สอนระบบ"
               ระบบจะจดจำตำแหน่งและคำใกล้เคียงในเอกสาร ครั้งต่อไปจาก vendor นี้จะแกะข้อมูลถูกต้องอัตโนมัติ
