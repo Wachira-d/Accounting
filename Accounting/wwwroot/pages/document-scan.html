@@ -1623,6 +1623,8 @@
             ...pick('SCAN-WRITEBACK'),
             ...pick('ETAX-HEADER-GAP'),
             ...pick('ETAX-LINE-CHECK'),
+            // ฝ่ายค้านทีม T 2026-10-26: เลขผู้ซื้อ/ผู้ขายใน XML ขัดหน้า PDF จริง (BlockingTags — server หยุดอนุมัติเอง · หน้าต้องบอกเหตุ) · ข้อความจาก Helpers/OcrEtaxPageFill
+            ...pick('ETAX-PARTY-CONFLICT'),
             ...pick('ASSET-COST'),
             ...s65,
             ...skip,
@@ -1630,7 +1632,8 @@
           // ทีม T 2026-10-26 (ใบ SP-IN2026-10-00933): [e-Tax] คือ "ข้อสังเกต — ไม่บล็อก" ของ Helpers/OcrEtaxLineNormalizer (NoteTag) — ระบบพิสูจน์ด้วย
           // ตัวเลขหัวใบแล้ว**ปรับให้แล้ว** (ราคารวม VAT · เศษจากถอด VAT · ขั้นปัด VAT) ไม่ใช่ "ไม่แน่ใจ" ⇒ กล่องของตัวเอง ไม่ปนกับ warnings
           // (ของที่ไม่แน่ใจจริงของ e-Tax ใช้แท็ก [ETAX-HEADER-GAP]/[ETAX-LINE-CHECK] ซึ่งยังอยู่ใน warnings + BlockingTags) — ข้อความทั้งหมดมาจากเซิร์ฟเวอร์
-          adjusted: pick('e-Tax'),
+          // + [ETAX-PAGE-FILL] (คำตัดสินเจ้าของข้อ 158): ช่องผู้ซื้อที่ XML ขาด ระบบเติมจากหน้า PDF แล้ว — ปรับให้แล้ว ไม่หยุดอนุมัติ (ข้อความ+RuleCode จากเซิร์ฟเวอร์)
+          adjusted: [...pick('e-Tax'), ...pick('ETAX-PAGE-FILL')],
         };
       },
 

@@ -186,7 +186,8 @@ public static class OcrLineReconciler
 
         // (G) ทีม T 2026-10-26 (เมทริกซ์ docs/OCR_TOTALS_MATRIX.md · เคสสังเคราะห์ ภาพสะท้อนของ F): ราคาก่อน VAT + ส่วนลดท้ายบิลพิมพ์เป็นยอดรวม VAT
         //     — ไม่ตรง B/C/A/E/F · เพิ่มเงื่อนไขหลังเคสเดิมทั้งหมด และต้องเป็นใบที่เดิมตก Ambiguous เท่านั้น (Σ > ฐาน + ค่าเผื่อ ⇒ ไม่แตะเคส D LinesShort)
-        //     · baseline ก่อน/หลัง (scratchpad teamT_classify_baseline.py · vector จากเทสต์จริง 28 ตัว = 0 เปลี่ยน · สังเคราะห์เปลี่ยนเฉพาะช่องนี้)
+        //     · baseline ก่อน/หลัง: docs/OCR_TOTALS_MATRIX.md §baseline — port Python ของ Classify (เทียบเท่า C# ณ 74a4796c) บน vector ที่เทสต์เรียก Classify
+        //       ด้วย literal 28 ตัว = 0 เปลี่ยน · replay/golden harness ผ่าน C# จริงยังต้องรอ CI (ไม่มี SDK ในเครื่อง)
         if (headerDiscount > 0m && headerSubTotal > 0m && headerVat > 0m && headerTotal > 0m
             && grossSum > headerSubTotal + Tolerance
             && InclVatDiscountOnExclusiveLines(grossSum, headerSubTotal, headerVat, headerTotal, headerDiscount) is decimal discEx)

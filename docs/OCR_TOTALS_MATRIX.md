@@ -49,7 +49,7 @@ Confidence ของสแกน e-Tax = 1.0 ทุกช่อง (`MapEtaxToOc
 | 1 | ก่อน VAT | ไม่มี | 7% | — | B `LinesMatchSubTotal` | `OcrLineReconcilerTests.ราคาแยกVATมาตรฐาน` · replay telecom-* | ✅ จริง |
 | 2 | ก่อน VAT | ต่อบรรทัด | 7% | — | `ProvenLineDiscount` ⇒ Σ ยอดหลังลด → B | replay `pramie-line-discount-re111` / `pramie-re111-positional` | ✅ จริง |
 | 3 | ก่อน VAT | ท้ายบิล **ก่อน VAT** | 7% | — | C `DiscountOnSubTotal` | Hardware 69.75 · Lazada 216.82 (replay + unit) | ✅ จริง |
-| 4 | ก่อน VAT | ท้ายบิล **รวม VAT** | 7% | — | **G `DiscountInclVatOnExclusivePrices` (เพิ่มรอบนี้ · วางหลัง F · เข้าได้เฉพาะใบที่เดิม Ambiguous)** | `OcrLineReconcilerTests.เคสG_*` (+ทิศตรงข้าม) · baseline vector เทสต์จริง 28 ตัว = 0 เปลี่ยน | 🧪 สังเคราะห์ |
+| 4 | ก่อน VAT | ท้ายบิล **รวม VAT** | 7% | — | **G `DiscountInclVatOnExclusivePrices` (เพิ่มรอบนี้ · วางหลัง F · เข้าได้เฉพาะใบที่เดิม Ambiguous)** | `OcrLineReconcilerTests.เคสG_*` (+ทิศตรงข้าม) · baseline §baseline | 🧪 สังเคราะห์ |
 | 5 | รวม VAT | ไม่มี | 7% | — | A `PricesIncludeVat` | WinePro · IKEA 1,396 | ✅ จริง |
 | 6 | รวม VAT | ต่อบรรทัด | 7% | — | Σ ยอดหลังลด → A | `crc-thaiwatsadu-srcie75384-positional` | ✅ จริง |
 | 7 | รวม VAT | ท้ายบิล **รวม VAT** | 7% | — | E `DiscountOnTotalInclVat` | Supermarket 38.70 · Makro p1p2 | ✅ จริง |
@@ -62,6 +62,12 @@ Confidence ของสแกน e-Tax = 1.0 ทุกช่อง (`MapEtaxToOc
 | 14 | XML ก่อน VAT | AllowanceTotal | **0% / หลายอัตรา** | ✓ | `HeaderProvenInclusive` ไม่ตัดสิน (อ่านได้สองแบบ / หลายอัตรา) ⇒ ทางเดิม | `ETax_ทิศตรงข้าม_*` | ✅ |
 | 15 | XML รวม VAT ต่อบรรทัด (แบบ CRC) | AllowanceTotal **รวม VAT** (ท้ายบิล ไม่อยู่ในบรรทัด) | 7% | ✓ | `TiesOutInclusive` ไม่ลงตัว ⇒ `[ETAX-HEADER-GAP]` หยุดอนุมัติเอง (ลงตามกระดาษ · ให้คนตรวจ) | — | ⚠️ ช่องว่าง (สังเคราะห์ · ยังไม่มีใบจริง) — ไม่เพิ่มกติกาจนกว่าจะมีกระดาษ: ต้องรู้ว่าผู้ขายคิด VAT ก่อนหรือหลังส่วนลด |
 | 16 | XML | ไม่มี | 7% | ✓ | ทางเดิม (Shopee) | `EtaxGoldenCorpusTests` Shopee | ✅ |
+
+### §baseline — หลักฐาน "ใบที่เดิมตัดสินได้ไม่เปลี่ยน" ของเคส G (ขอบเขตที่พิสูจน์แล้วจริง)
+
+วิธี: port Python ของ `OcrLineReconciler.Classify` (รวม `OcrHeaderAmounts.IsSwapped` · `PreVatDiscountOnInclusiveLines`) จาก `git show 74a4796c:Accounting/Helpers/OcrLineReconciler.cs` แล้วรันก่อน/หลังเพิ่มเคส G บน
+(ก) vector ทุกตัวที่ไฟล์เทสต์เรียก `OcrLineReconciler.Classify(` ด้วย literal — 28 ตัว ⇒ **0 เปลี่ยน** (ข) เมทริกซ์สังเคราะห์ 24 ช่อง ⇒ เปลี่ยน 2 = ช่อง "ก่อน VAT × ส่วนลดพิมพ์รวม VAT" ทั้งสองป้าย (Ambiguous → G) เท่านั้น
+ขอบเขต: นี่คือการเทียบเท่าของ C# ด้วย Python ไม่ใช่การรัน C# · vector ที่ประกอบจากตัวแปร (replay harness · VatCodeLines · golden e-Tax) **ยังไม่ได้พิสูจน์ในเครื่องนี้** — ต้องรอ CI (`OcrReplayLineGoldenTests` · `EtaxGoldenCorpusTests` · `OcrVatCodeLinesTests`) · เชิงโครงสร้าง เคส G อยู่หลัง F และบังคับ Σ > ฐาน + 1 บาท จึงถึงได้เฉพาะเส้นที่เดิมคืน Ambiguous
 
 ## §4 สิ่งที่ "ตรงตัวเลข แต่หน้าตาต่างจากกระดาษ" — รอเจ้าของตัดสิน
 
