@@ -565,7 +565,7 @@ public class ExternalIntegrationController : ControllerBase, IAsyncActionFilter
         if (auth == null) return Unauthorized(new InboundSyncResponse(false, "Invalid API Key", null, null, null, null, null));
 
         var result = await _service.ProcessDailySummaryAsync(auth.Value.CompanyId, auth.Value.IntegrationId, request);
-        return result.Success ? Ok(result) : BadRequest(result);
+        return result.Success ? Ok(result) : StatusCode(result.StatusCode is >= 400 and < 500 ? result.StatusCode.Value : 400, result);
     }
 
     [HttpPost("batch")]

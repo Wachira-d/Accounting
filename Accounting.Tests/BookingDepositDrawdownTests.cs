@@ -59,7 +59,7 @@ public class BookingDepositDrawdownTests
     {
         // RV-0070 (สถานะ Reversed — ยังอยู่ในสมุด) Cr 1,000 + RV-0097 ตัวกลับ Dr 1,000 ⇒ คงเหลือ 0
         var ledger = new[] { Cr(Rv0070, "RV-202609-0070", 1000m), Dr(Rv0097, "RV-202609-0097", 1000m) };
-        var s = BookingDepositDrawdown.EvaluateDrawdown(Draw(1000m), ledger, bookingTraceFound: true);
+        var s = BookingDepositDrawdown.EvaluateDrawdown(Draw(1000m), ledger);
         var only = Assert.Single(s);
         Assert.Equal(1000m, only.Requested);
         Assert.Equal(0m, only.Available);
@@ -75,9 +75,9 @@ public class BookingDepositDrawdownTests
     public void DepositStillLive_PassesAsBefore()
     {
         var ledger = new[] { Cr(Rv0070, "RV-202609-0070", 1000m) };
-        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(1000m), ledger, true));
+        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(1000m), ledger));
         // เศษสตางค์ไม่ถือว่าเกิน
-        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(1000.005m), ledger, true));
+        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(1000.005m), ledger));
     }
 
     [Fact]
@@ -85,8 +85,8 @@ public class BookingDepositDrawdownTests
     {
         var earlier = Guid.NewGuid();
         var ledger = new[] { Cr(Rv0070, "RV-1", 1000m), Dr(earlier, "JV-INT-1", 600m) };
-        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(400m), ledger, true));
-        var s = Assert.Single(BookingDepositDrawdown.EvaluateDrawdown(Draw(500m), ledger, true));
+        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(400m), ledger));
+        var s = Assert.Single(BookingDepositDrawdown.EvaluateDrawdown(Draw(500m), ledger));
         Assert.Equal(400m, s.Available);
     }
 
@@ -95,10 +95,10 @@ public class BookingDepositDrawdownTests
     {
         var reversed = new[] { Cr(Rv0070, "RV-1", 1000m), Dr(Rv0097, "RV-2", 1000m) };
         // JE ที่ไม่ตัดมัดจำ (เช่น Cr 21510 = รับมัดจำเพิ่ม) ⇒ ไม่แตะ
-        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(-1000m), reversed, true));
-        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(new Dictionary<Guid, decimal>(), reversed, true));
+        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(-1000m), reversed));
+        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(new Dictionary<Guid, decimal>(), reversed));
         // ไม่พบร่องรอยการจองเลย ⇒ ไม่ตัดสิน (มัดจำอาจบันทึกด้วยเลขอ้างอิงแบบอื่น)
-        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(1000m), Array.Empty<DepositLedgerLine>(), bookingTraceFound: false));
+        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(1000m), Array.Empty<DepositLedgerLine>()));
     }
 
     // ── ทิศกลับ: ยกเลิก/กลับรายการมัดจำ ──
@@ -108,7 +108,8 @@ public class BookingDepositDrawdownTests
         var ledger = new[] { Cr(Rv0070, "RV-202609-0070", 1000m), Dr(Jv0009, "JV-INT-202609-0009", 1000m) };
         var s = Assert.Single(BookingDepositDrawdown.EvaluateRemoval(ledger, new[] { Rv0070 }));
         Assert.Equal(1000m, s.Requested);
-        var msg = BookingDepositDrawdown.RemovalMessage("149433", "ยกเลิกเอกสาร RV-202609-0070", new[] { s }, _ => "21510", new[] { "JV-INT-202609-0009" });
+        var msg = BookingDepositDrawdown.RemovalMessage("149433", "ยกเลิกเอกสาร RV-202609-0070", new[] { s }, _ => "21510",
+            new[] { "JV-INT-202609-0009" }, Array.Empty<string>());
         Assert.Contains("JV-INT-202609-0009", msg);
         Assert.Contains("กลับรายการ", msg);
         Assert.Contains(BookingDepositDrawdown.RemovalRuleCode, msg);
@@ -132,5 +133,105 @@ public class BookingDepositDrawdownTests
         var ledger = new[] { Cr(Rv0070, "RV-1", 1000m), Cr(second, "RV-2", 500m), Dr(Jv0009, "JV-INT-9", 1000m) };
         Assert.Empty(BookingDepositDrawdown.EvaluateRemoval(ledger, new[] { second }));            // เหลือ 1,000 พอกับที่ตัด
         Assert.Single(BookingDepositDrawdown.EvaluateRemoval(ledger, new[] { Rv0070 }));            // เหลือ 500 ไม่พอ 1,000
+    }
+
+    // ── หลังฝ่ายค้าน (2026-10-26) ──
+
+    [Fact]
+    public void ExtractKeys_FullBookingNumber_NotPrefix()
+    {
+        Assert.Equal(new[] { "101-2609-0001" }, BookingDepositDrawdown.ExtractKeys("RES-101-2609-0001").ToArray());
+        Assert.False(BookingDepositDrawdown.Mentions("101", "RES-101-2609-0001"));
+        Assert.Empty(BookingDepositDrawdown.ExtractKeys("ใบแจ้งหนี้ #1234"));      // "#" ที่ไม่ใช่การจองไม่นับ
+    }
+
+    [Fact]
+    public void NightAudit_MultiBooking_SplitPerLine()   // ฝ่ายค้านข้อ 1
+    {
+        bool IsDep(Guid id) => id == Dep21510;
+        var lines = new[]
+        {
+            new IncomingJournalLine(Dep21510, 500m, 0m, "รับรู้รายได้ RES-1001"),
+            new IncomingJournalLine(Dep21510, 700m, 0m, "รับรู้รายได้ RES-1002"),
+            new IncomingJournalLine(Guid.NewGuid(), 0m, 1200m, "รายได้ค่าห้อง"),
+        };
+        var per = BookingDepositDrawdown.AssignDrawdown(new string?[] { "NIGHT-AUDIT-20260922", "สรุปเช็คเอาต์ RES-1001 RES-1002" }, lines, IsDep);
+        Assert.Equal(500m, per["1001"][Dep21510]);
+        Assert.Equal(700m, per["1002"][Dep21510]);
+        // การจอง 1001 มีมัดจำ 500 · 1002 มีมัดจำ 700 ⇒ ผ่านทั้งคู่ (เดิมเทียบ 1,200 ทั้งใบกับคงเหลือการจองเดียว ⇒ ปฏิเสธผิด)
+        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(per["1001"], new[] { Cr(Guid.NewGuid(), "RV-A", 500m) }));
+        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(per["1002"], new[] { Cr(Guid.NewGuid(), "RV-B", 700m) }));
+    }
+
+    [Fact]
+    public void AmbiguousLine_IsNotDecided_SingleHeader_UsesHeader()
+    {
+        bool IsDep(Guid id) => id == Dep21510;
+        var noKeyLine = new[] { new IncomingJournalLine(Dep21510, 1000m, 0m, "ตัดมัดจำ") };
+        Assert.Empty(BookingDepositDrawdown.AssignDrawdown(new string?[] { "RES-1001 RES-1002" }, noKeyLine, IsDep));   // หัวอ้างสองการจอง ⇒ ไม่ตัดสิน
+        var single = BookingDepositDrawdown.AssignDrawdown(new string?[] { "RES-149433-CHK", "รับรู้รายได้ Checkout - การจอง #149433" }, noKeyLine, IsDep);
+        Assert.Equal(1000m, single["149433"][Dep21510]);
+        Assert.Empty(BookingDepositDrawdown.AssignDrawdown(new string?[] { "RES-149433-CHK" },
+            new[] { new IncomingJournalLine(Guid.NewGuid(), 1000m, 0m, null) }, IsDep));                                 // ไม่ใช่ผังมัดจำ ⇒ ไม่แตะ
+    }
+
+    [Fact]
+    public void OnlyOwnDrawdowns_NoDepositCredit_IsNotDecided()   // ฝ่ายค้านข้อ 2
+    {
+        // มัดจำลงด้วยเลขอ้างอิงแบบอื่น — ระบบเห็นแค่งวดแรกที่ตัดไป 600 ⇒ งวดที่สองต้องไม่ถูกปฏิเสธ
+        var onlyDraw = new[] { Dr(Guid.NewGuid(), "JV-INT-1", 600m) };
+        Assert.False(BookingDepositDrawdown.HasDepositCredit(onlyDraw));
+        Assert.Empty(BookingDepositDrawdown.EvaluateDrawdown(Draw(400m), onlyDraw));
+        // เครดิตของตัวกลับรายการ (กลับ JE ที่ตัด) ไม่ใช่ "มีมัดจำ"
+        var drawReversed = new[] { Dr(Jv0009, "JV-INT-9", 600m), new DepositLedgerLine(Guid.NewGuid(), "REV", Dep21510, 0m, 600m, default, IsReversal: true) };
+        Assert.False(BookingDepositDrawdown.HasDepositCredit(drawReversed));
+    }
+
+    [Fact]
+    public void Report_ChronologicalOrder_FlagsOnlySecondDraw()   // ฝ่ายค้านข้อ 6
+    {
+        var d1 = Guid.NewGuid(); var d2 = Guid.NewGuid();
+        var ledger = new[]
+        {
+            new DepositLedgerLine(Rv0070, "RV-1", Dep21510, 0m, 1000m, new DateTime(2026, 9, 1)),
+            new DepositLedgerLine(d1, "JV-INT-1", Dep21510, 600m, 0m, new DateTime(2026, 9, 5)),
+            new DepositLedgerLine(d2, "JV-INT-2", Dep21510, 600m, 0m, new DateTime(2026, 9, 9)),
+        };
+        var o = Assert.Single(BookingDepositDrawdown.OverdrawnInOrder(ledger, new[] { d1, d2 }));
+        Assert.Equal(d2, o.JournalEntryId);
+        Assert.Equal(400m, o.AvailableBefore);
+        Assert.Equal(600m, o.Drawn);
+    }
+
+    [Fact]
+    public void Report_ReportedCase_FlagsJvInt_AndCleanBookingIsNotFlagged()
+    {
+        var ledger = new[]
+        {
+            new DepositLedgerLine(Rv0070, "RV-202609-0070", Dep21510, 0m, 1000m, new DateTime(2026, 9, 17)),
+            new DepositLedgerLine(Rv0097, "RV-202609-0097", Dep21510, 1000m, 0m, new DateTime(2026, 9, 17), IsReversal: true),
+            new DepositLedgerLine(Jv0009, "JV-INT-202609-0009", Dep21510, 1000m, 0m, new DateTime(2026, 9, 22)),
+        };
+        var o = Assert.Single(BookingDepositDrawdown.OverdrawnInOrder(ledger, new[] { Jv0009 }));
+        Assert.Equal(0m, o.AvailableBefore);
+        var clean = new[] { ledger[0], ledger[2] };   // มัดจำไม่ถูกกลับ ⇒ ตัดได้พอดี
+        Assert.Empty(BookingDepositDrawdown.OverdrawnInOrder(clean, new[] { Jv0009 }));
+    }
+
+    [Fact]
+    public void RemovalMessage_DocumentDrawing_SaysVoidDocument()   // ฝ่ายค้านข้อ 7
+    {
+        var msg = BookingDepositDrawdown.RemovalMessage("149433", "ยกเลิกเอกสาร RV-1", new[] { new DepositShortfall(Dep21510, 1000m, 0m) },
+            _ => "21510", Array.Empty<string>(), new[] { "TIV-202609-0001" });
+        Assert.Contains("ยกเลิกเอกสาร TIV-202609-0001", msg);
+        Assert.DoesNotContain("กลับรายการ TIV", msg);
+    }
+
+    [Fact]
+    public void ConfiguredDepositAccount_CountsEvenWithoutKeyword()   // ฝ่ายค้านข้อ 9
+    {
+        Assert.True(BookingDepositDrawdown.IsDepositLiabilityAccount(AccountType.Liability, "21799", "บัญชีพักลูกค้า", new HashSet<string> { "21799" }));
+        Assert.False(BookingDepositDrawdown.IsDepositLiabilityAccount(AccountType.Liability, "21799", "บัญชีพักลูกค้า"));
+        Assert.True(BookingDepositDrawdown.IsDepositLiabilityAccount(AccountType.Liability, "21540", "เงินรับจองห้องพัก"));
     }
 }

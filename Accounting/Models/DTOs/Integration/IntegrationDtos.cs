@@ -362,7 +362,9 @@ public record InboundBatchResponse(
 
 public record BatchResultItem(
     string Type, string? ExternalRef, bool Success, string? Message,
-    Guid? CreatedId, string? CreatedNumber);
+    Guid? CreatedId, string? CreatedNumber,
+    /// <summary>รหัสกติกาที่ปฏิเสธรายการนี้ (เช่น <c>INT-DEPOSIT-OVERDRAW</c>) — null = ไม่ใช่การปฏิเสธตามกติกา (ทีม S 2026-10-26)</summary>
+    string? RuleCode = null);
 
 public record InboundDailySummaryRequest(
     DateTime SummaryDate,
