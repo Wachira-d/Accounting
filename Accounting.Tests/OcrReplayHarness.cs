@@ -789,14 +789,14 @@ public static class OcrReplayHarness
             if (billDiscount > 0m)
             {
                 docDiscountPercent = 0m;
-                var plan = Accounting.Services.Implementations.DocumentService.PlanLineAmounts(
+                var billPlan = Accounting.Services.Implementations.DocumentService.PlanLineAmounts(
                     Enumerable.Range(0, n).Select(i => new Accounting.Models.DTOs.Document.DocumentLineRequest(
                         lines[i].Description ?? "", lines[i].Quantity ?? 1m, null, lines[i].UnitPrice ?? printed[i], 0m,
                         rates[i] ?? standardVatRate, 0m, null, DiscountAmount: lineOwnDisc[i] > 0m ? lineOwnDisc[i] : null)).ToList(),
                     pricesIncludeVat, billDiscount);
-                for (var i = 0; i < n; i++) amounts[i] = pricesIncludeVat ? plan[i].Net + plan[i].Vat : plan[i].Net;
-                billPlanVat = plan.Select(x => x.Vat).ToArray();
-                billPlanNetSum = plan.Sum(x => x.Net);
+                for (var i = 0; i < n; i++) amounts[i] = pricesIncludeVat ? billPlan[i].Net + billPlan[i].Vat : billPlan[i].Net;
+                billPlanVat = billPlan.Select(x => x.Vat).ToArray();
+                billPlanNetSum = billPlan.Sum(x => x.Net);
             }
 
             // บรรทัดจากภาพ/ข้อความไม่มีธง PriceIncludesVat (เว้นใบส่วนลดจากกระดาษที่พิสูจน์รวม VAT) ⇒ InclusiveLineVats คืน null ⇒ เฉลี่ยหัวใบตามเดิม
