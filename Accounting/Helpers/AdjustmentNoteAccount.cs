@@ -201,4 +201,13 @@ public static class AdjustmentNoteAccount
 
     /// <summary>ป้ายท้ายคำอธิบายขา counter ("(เงินสด)" เมื่อเป็นขาเงิน) — ข้อความเดิม</summary>
     public static string CounterLegSuffix(bool counterLegIsMoney) => counterLegIsMoney ? " (เงินสด)" : "";
+    /// <summary>
+    /// ขา counter ของใบลด/เพิ่มหนี้ต้องเป็น "gross" (รวมภาษีหัก ณ ที่จ่าย) และ<b>ไม่ลงขา WHT</b> ไหม — เกณฑ์เงินสด (audit F2) ใบต้นทาง
+    /// ตั้งลูกหนี้/เจ้าหนี้ gross โดยไม่แตะ 11910/2191x จนรับ/จ่ายเงินจริง ⇒ CN/DN โหมดลูกหนี้/เจ้าหนี้ต้อง mirror แบบเดียวกัน ·
+    /// โหมดขาเงิน (คืนเงิน/จ่ายทันที) = เงินเกิดจริง ⇒ ลงขา WHT ในใบนี้เลย · เกณฑ์ค้างรับ = ลงขา WHT เสมอ (ใบต้นทางลงไว้แล้ว)
+    /// <para>ผลพวงของ <see cref="CounterLegIsMoney"/> (ทีม V ฝ่ายค้านข้อ 1): DN เงินเชื่อของใบที่ชำระครบ + WHT เดิมเป็นโหมดเงิน ⇒ ลงขา WHT ตอนอนุมัติ ·
+    /// ตอนนี้เป็นโหมดลูกหนี้ ⇒ ขา WHT ย้ายไปลงตอนรับชำระ (<c>CreatePaymentJournalAsync</c> · <c>postPerPaymentWht</c>) เหมือนใบแจ้งหนี้ปกติ</para>
+    /// </summary>
+    public static bool CounterLegIsGrossOfWht(bool whtCashBasis, bool counterLegIsMoney, decimal withholdingTaxAmount)
+        => whtCashBasis && !counterLegIsMoney && withholdingTaxAmount > 0m;
 }

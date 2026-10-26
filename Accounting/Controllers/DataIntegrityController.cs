@@ -68,6 +68,18 @@ public class DataIntegrityController : ControllerBase
             result.Linked > 0 ? "ย้ายผังไปหัวบัญชีแล้ว" : string.Join(" · ", result.Skipped)));
     }
 
+    /// <summary>ทีม V 2026-10-26 (V-DN-01 · คำตัดสินข้อ 159) — กลับรายการ JE รับ/จ่ายชำระที่ลงขาเงินซ้ำของใบเพิ่มหนี้หนึ่งใบที่ผู้ใช้เลือก ·
+    /// เจ้าของบริษัทเท่านั้น (สิทธิ์เดียวกับซ่อมยอดยกมา) · ไม่มีงานไหนเรียกอัตโนมัติ · ย้อนกลับได้ด้วยการกลับรายการตัวกลับ</summary>
+    [HttpPost("debit-note-cash/{documentId:guid}/reverse-payment-journals")]
+    public async Task<ActionResult<ApiResponse<int>>> ReverseDebitNoteDuplicatePayments(Guid companyId, Guid documentId)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        await Need(_companies).EnsureOwnerAccessAsync(companyId, userId);
+        var (reversed, message) = await _service.ReverseDebitNoteDuplicatePaymentJournalsAsync(companyId, documentId,
+            userId == Guid.Empty ? null : userId);
+        return Ok(new ApiResponse<int>(true, reversed, message));
+    }
+
     private static T Need<T>(T? svc) where T : class
         => svc ?? throw new InvalidOperationException("บริการซ่อมข้อมูลไม่พร้อมใช้งาน");
 

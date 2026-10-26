@@ -5204,6 +5204,19 @@ PDF ของ PV ที่ปิดหนี้อ่านธงของใบ
 แล้วตอนรับชำระลง Dr เงินสด/Cr ลูกหนี้อีกรอบ (เงินสดเกินสองเท่า · ลูกหนี้ติดลบ · งบยังสมดุล) · ขาเงินเดิน `UseMoneyAccount()`
 (ช่องทางเงินของเอกสาร: ธนาคาร/ผังที่เลือก → 111) ไม่ใช่ "111" ตายตัว · เทสต์ `JePostingAuditTests`
 
+**ขา WHT เกณฑ์เงินสดของ CN/DN** — `AdjustmentNoteAccount.CounterLegIsGrossOfWht(cashBasis, counterLegIsMoney, wht)`: โหมดลูกหนี้/เจ้าหนี้ ⇒ counter
+gross (Total + WHT) และ**ไม่ลงขา WHT** (mirror ใบต้นทาง) · โหมดขาเงิน ⇒ ลงขา WHT ในใบนี้ · ผลพวงของ CounterLegIsMoney: **DN เงินเชื่อของใบที่ชำระครบ + WHT**
+เดิมลง 11910/2191x ตอนอนุมัติ ⇒ ตอนนี้ไปลงตอนรับ/จ่ายชำระ (`CreatePaymentJournalAsync` · `postPerPaymentWht`) เหมือนใบแจ้งหนี้/ใบซื้อปกติ
+
+**ข้อมูลเก่า (คำตัดสินข้อ 159 · F2 ข้อ 9)** — DN เงินเชื่อที่ JE อนุมัติรุ่นก่อนลงขาเงิน: หน้าตรวจข้อมูล (`data-integrity.html`) หมวด
+"ใบเพิ่มหนี้ที่ลงขาเงินซ้ำ" (`Helpers/DebitNoteCashRepair` · `DataIntegrityReportService.LoadDebitNoteCashPostedTwiceAsync` อ่านอย่างเดียว) + ปุ่ม "แก้" ต่อใบ
+`POST data-integrity/debit-note-cash/{id}/reverse-payment-journals` (เจ้าของบริษัท · กลับ JE ชำระซ้ำด้วย `ReverseJournalEntryAsync` · audit `JE-DN-CASH-TWICE`) ·
+ห้ามซ่อมอัตโนมัติ · ใบที่ยังไม่ชำระไม่มีปุ่ม (ยกเลิกแล้วออกใหม่)
+
+**ข้อควรรู้ของขาเงิน CN/DN** — `UseMoneyAccount()` ล้มดัง (คลาส ID#7) เมื่อ CN คืนเงินสืบทอด `BankAccountId` ที่ยังไม่ผูกผัง GL ⇒ กระทบเส้น
+`ReclassifyCnDnSideAsync` / `RepairMissingJournalAsync` ที่ลง JE ใหม่ด้วย AutoPost เดียวกัน — ผู้ใช้ไปต่อด้วยการผูกผังที่ธนาคาร หรือเปลี่ยนช่องทางเงินของเอกสาร
+(`fPaymentChannel`) แล้วลองใหม่ · สมมติฐาน: `BankAccountId` ที่ CN สืบทอดจากใบขายต้นทาง = ช่องทางที่จะคืนเงิน (ถ้าคืนทางอื่น ให้เปลี่ยนช่องทางบน CN ก่อนอนุมัติ)
+
 **ด่านผังข้ามฝั่ง** (`RD-86/9-10-ACCT-SIDE`) — `EnsureLineAccountMatchesDocSide`
 เดิม**ยกเว้น CN/DN ทั้งด่าน** (คอมเมนต์ที่ `PureSalesSideTypes` เขียนเองว่าจงใจ
 เพราะเป็นเอกสารสองฝั่ง) ⇒ ฝั่งขายมีตาข่าย `RevenueLegAccountId` แต่**ฝั่งซื้อ

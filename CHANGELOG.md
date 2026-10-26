@@ -5544,3 +5544,10 @@ settlement/gateway · ค่าเสื่อม · ปิดปี · recurrin
 "ใบเดิมชำระครบ ⇒ เงินสด" ของใบลดหนี้) แล้วตอนรับชำระลง Dr เงินสดอีกรอบ ⇒ เงินสดเกินสองเท่า/ลูกหนี้ติดลบ — ตัวตัดสินเดียว
 `AdjustmentNoteAccount.CounterLegIsMoney` (DN ดูเทอมของตัวเอง · CN กติกาเดิม) · **V-CN-03** ขาเงินของ CN/DN เดิน `UseMoneyAccount()`
 แทน "111" ตายตัว · เทสต์สองทิศ `JePostingAuditTests` (13) · DOCUMENT_FLOW §6.2f · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 ทีม V แก้ตามฝ่ายค้าน (ไม่มี blocking · merge a80a4595 แล้ว): (1) `cnDnGrossWht` ตามตัวตัดสินใหม่ `AdjustmentNoteAccount.CounterLegIsGrossOfWht` —
+DN เงินเชื่อของใบชำระครบ + WHT เกณฑ์เงินสด ⇒ counter gross · ขา WHT ไปลงตอนรับชำระ (เทสต์สองทิศ) · (2) F2 ข้อ 9: ตาข่ายซ่อมข้อมูลเก่า V-DN-01 แบบ
+`RepairProductTotalsAsync` — หมวด "ใบเพิ่มหนี้ที่ลงขาเงินซ้ำ" ในหน้าตรวจข้อมูล (`Helpers/DebitNoteCashRepair` อ่านอย่างเดียว) + ปุ่ม "แก้" ต่อใบ
+`POST data-integrity/debit-note-cash/{id}/reverse-payment-journals` (เจ้าของบริษัท · `ReverseJournalEntryAsync` · audit `JE-DN-CASH-TWICE` · ห้ามอัตโนมัติ) ·
+คำตัดสินข้อ 159 ใน DECISIONS (รวม V-PAY-05 ⇒ reclass ตามสัดส่วน · V-CN-04 ⇒ ตัวเลือกเครดิตค้างคืน — แพ็กแยก) · (3) จดข้อควรรู้ UseMoneyAccount() ล้มดังใน
+ReclassifyCnDnSide/RepairMissingJournal + สมมติฐานสืบทอด BankAccountId (DOCUMENT_FLOW §6.2f · JE_POSTING_AUDIT §1b) · ยังไม่ได้คอมไพล์ในเครื่องนี้_

@@ -137,4 +137,85 @@ public class JePostingAuditTests
         Assert.Equal(438m, 536m - cashBackDr + cashBackCr);   // เงินสดสุทธิออก 438
         Assert.Equal(35.07m, Math.Round(500.93m * 0.07m, 2, MidpointRounding.AwayFromZero));   // ฐานภาษีซื้อ = 500.93 ไม่ใช่ 402.93
     }
+    // ═══ ฝ่ายค้านข้อ 1 — ขา WHT ของ CN/DN เกณฑ์เงินสด ตามโหมด counter ใหม่ ═══
+
+    [Fact]
+    public void DNเงินเชื่อของใบชำระครบ_มีWHT_เกณฑ์เงินสด_ลูกหนี้gross_ไม่ลงขาWHTตอนอนุมัติ_ไปลงตอนรับชำระ()
+    {
+        var money = AdjustmentNoteAccount.CounterLegIsMoney(false, PaymentType.Credit, 0m);
+        Assert.False(money);
+        // เดิม (โหมดเงิน) = false ⇒ ลงขา 11910 ตอนอนุมัติ · ตอนนี้ = true ⇒ counter gross (Total + WHT) และขา WHT ไปลงตอนรับชำระ
+        Assert.True(AdjustmentNoteAccount.CounterLegIsGrossOfWht(whtCashBasis: true, counterLegIsMoney: money, withholdingTaxAmount: 30m));
+        // ภาพรวม: DN 1,070 · WHT 30 ⇒ อนุมัติ Dr ลูกหนี้ 1,100 / Cr รายได้ 1,000 Cr VAT 70 Cr … (gross) · รับชำระ Dr เงิน 1,070 Dr 11910 30 / Cr ลูกหนี้ 1,100
+        Assert.Equal(1_100m, 1_070m + 30m);
+    }
+
+    [Fact]
+    public void DNจ่ายทันที_มีWHT_เกณฑ์เงินสด_ลงขาWHTในใบนี้เลย()
+        => Assert.False(AdjustmentNoteAccount.CounterLegIsGrossOfWht(true, AdjustmentNoteAccount.CounterLegIsMoney(false, PaymentType.Cash, 0m), 30m));
+
+    [Theory]
+    [InlineData(5000.0, true)]   // CN ของใบที่ยังค้าง = โหมดลูกหนี้ ⇒ gross ไม่ลง WHT (เดิม)
+    [InlineData(0.0, false)]     // CN ของใบชำระครบ = คืนเงิน ⇒ ลงขา WHT (เดิม)
+    public void CN_เกณฑ์เงินสด_กติกาเดิมทุกประการ(double due, bool expectGross)
+        => Assert.Equal(expectGross, AdjustmentNoteAccount.CounterLegIsGrossOfWht(true,
+            AdjustmentNoteAccount.CounterLegIsMoney(true, null, (decimal)due), 30m));
+
+    [Theory]
+    [InlineData(true, 0.0)]     // เกณฑ์เงินสดแต่ไม่มี WHT ⇒ ไม่มีอะไรให้ gross
+    [InlineData(false, 30.0)]   // เกณฑ์ค้างรับ ⇒ ใบต้นทางลง WHT ไว้แล้ว ⇒ CN/DN ลงขา WHT เสมอ (ไม่ gross)
+    public void เกณฑ์ค้างรับ_หรือไม่มีWHT_ไม่เคยgross(bool cashBasis, double wht)
+        => Assert.False(AdjustmentNoteAccount.CounterLegIsGrossOfWht(cashBasis, counterLegIsMoney: false, (decimal)wht));
+
+    // ═══ คำตัดสินข้อ 159 — ตาข่ายซ่อมข้อมูลเก่า V-DN-01 (รายงานอ่านอย่างเดียว + ปุ่มต่อใบ) ═══
+
+    private static DebitNoteCashFacts Dn(PaymentType? pt, decimal approvalMoney, params decimal[] paymentLegs)
+        => new(Guid.NewGuid(), "DN-202609-0001", new DateTime(2026, 9, 1), false, pt, 1_070m, approvalMoney,
+            paymentLegs.Select((m, i) => new DebitNotePaymentJournal(Guid.NewGuid(), $"RV-{i + 1}", m)).ToList());
+
+    [Fact]
+    public void DNเก่า_อนุมัติลงเงิน1070_ชำระซ้ำ1070_เป็นผู้ต้องสงสัย_เงินซ้ำ1070_มีปุ่มกลับJEชำระ()
+    {
+        var f = Dn(PaymentType.Credit, 1_070m, 1_070m);
+        Assert.True(DebitNoteCashRepair.IsSuspect(f));
+        Assert.Equal(1_070m, DebitNoteCashRepair.DuplicatedMoney(f));
+        Assert.Single(DebitNoteCashRepair.JournalsToReverse(f));
+        var row = DebitNoteCashRepair.ToSuspect(f)!;
+        Assert.Equal(2_140m, row.Stored);          // เงินที่ลงไว้รวม (อนุมัติ + ชำระ)
+        Assert.Equal(1_070m, row.Expected);        // ที่ควรเป็นครั้งเดียว
+        Assert.Equal(DebitNoteCashRepair.FixPath(f.DocumentId), row.FixPath);
+        Assert.Contains("RV-1", row.Detail);
+        Assert.NotNull(row.FixConfirm);
+    }
+
+    [Fact]
+    public void DNเก่า_อนุมัติลงเงินแต่ยังไม่ชำระ_รายงานแต่ไม่มีปุ่ม_ทางไปต่อยกเลิกออกใหม่()
+    {
+        var f = Dn(PaymentType.Credit, 1_070m);
+        var row = DebitNoteCashRepair.ToSuspect(f)!;
+        Assert.Null(row.FixPath);
+        Assert.Empty(DebitNoteCashRepair.JournalsToReverse(f));
+        Assert.Contains("ยกเลิกแล้วออกใบใหม่", row.Detail);
+    }
+
+    [Fact]
+    public void DNจ่ายทันที_ขาเงินตอนอนุมัติถูกต้อง_ไม่ใช่ผู้ต้องสงสัย_แม้มีJEชำระ()
+    {
+        var f = Dn(PaymentType.Cash, 1_070m, 1_070m);
+        Assert.False(DebitNoteCashRepair.IsSuspect(f));
+        Assert.Null(DebitNoteCashRepair.ToSuspect(f));
+        Assert.Empty(DebitNoteCashRepair.JournalsToReverse(f));
+    }
+
+    [Fact]
+    public void DNที่ลงลูกหนี้ตามตัวตัดสินใหม่_ไม่มีขาเงินตอนอนุมัติ_ไม่ใช่ผู้ต้องสงสัย()
+        => Assert.Null(DebitNoteCashRepair.ToSuspect(Dn(PaymentType.Credit, 0m, 1_070m)));
+
+    [Fact]
+    public void ชำระหลายงวด_กลับทุกJEชำระ_ยอดซ้ำรวม()
+    {
+        var f = Dn(null, 1_070m, 500m, 570m);
+        Assert.Equal(1_070m, DebitNoteCashRepair.DuplicatedMoney(f));
+        Assert.Equal(2, DebitNoteCashRepair.JournalsToReverse(f).Count);
+    }
 }

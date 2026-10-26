@@ -17966,8 +17966,9 @@ public partial class DocumentService : IDocumentService
             // (Total + WHT) โดยไม่แตะ 11910/2191x จนกว่าจะรับ/จ่ายเงินจริง →
             // CN/DN โหมด AR/AP ต้อง mirror gross แบบเดียวกันและ "ไม่ลงขา WHT"
             // — เดิมลงแบบ accrual เสมอ → AR ค้าง +WHT ถาวร / 11910 ติดลบ
-            var cnDnGrossWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
-                && !isCashSettlement && doc.WithholdingTaxAmount > 0;
+            // ทีม V (ฝ่ายค้านข้อ 1): ตัวตัดสินเดียวคู่กับ CounterLegIsMoney — DN เงินเชื่อของใบที่ชำระครบ + WHT ⇒ โหมดลูกหนี้ ⇒ ขา WHT ไปลงตอนรับชำระ
+            var cnDnGrossWht = Accounting.Helpers.AdjustmentNoteAccount.CounterLegIsGrossOfWht(
+                whtBasis == Models.Enums.WhtRecognitionBasis.Cash, isCashSettlement, doc.WithholdingTaxAmount);
             // E-7: ใบต้นทางเป็นเจ้าของ ภ.พ.36 ⇒ เจ้าหนี้/เงินสด = ยอดจ่ายผู้รับเงิน · ส่วน VAT ประเมินเองเข้า 21912 (ตัวแยกเดียวกับ AutoPost ใบเดิม)
             var cnDnSplit = ForeignServiceVat.SplitCredit(cnSrcOwnsPp36,
                 cnDnGrossWht ? doc.TotalAmount + doc.WithholdingTaxAmount : doc.TotalAmount,
