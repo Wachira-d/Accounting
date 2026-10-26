@@ -5537,7 +5537,7 @@ warnings ⇒ กล่องเหลือง "ระบบไม่แน่�
 (16 ช่อง · ล็อกด้วยอะไร · ช่องว่างที่เหลือ) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT · สังเคราะห์ · วางหลัง F · baseline: 28 ตัว (+ สังเคราะห์ 24 ช่อง) ด้วย **port Python ของ `Classify`** (เทียบเท่า C# ณ 74a4796c — ไม่ใช่ตัว C# เอง) = 0 เปลี่ยนใน vector จริง · replay/golden harness ผ่าน C# จริง (`OcrReplay*GoldenTests` · `EtaxGoldenCorpusTests`) **ยังต้องรอ CI** (ไม่มี SDK)) +
 `OcrConfidenceGateway`/`OcrDuplicateLineGuard` รู้เคส G · ใบนี้ยังไม่เข้า `OcrPaperSamples` (golden คู่สัญญาต้องรัน dotnet — ขั้นตอนจดใน MATRIX §5) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
 
-_2026-10-26 ทีม W10 (ทะเบียน `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W10 · R-55 R-56 · ฐาน a80a4595): **รูปแบบเลขอ้างอิงการจองตั้งค่าได้ต่อคีย์ integration + Db test ด่านมัดจำสองทิศ** —
+_2026-10-26 ทีม W10 (ทะเบียน `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W10 · R-55 R-56 · ฐาน a80a4595 · commit f4d916dd): **รูปแบบเลขอ้างอิงการจองตั้งค่าได้ต่อคีย์ integration + Db test ด่านมัดจำสองทิศ** —
 R-56: ตัวตั้งใหม่ `Helpers/BookingRefPattern` (ค่าเริ่มต้น = 2 รูปเดิมของ `BookingDepositDrawdown` ย้ายมาอยู่ที่เดียว · regex ต้องมีกลุ่ม `(?<key>…)` · validate: คอมไพล์/กลุ่ม key/ไม่จับข้อความว่าง/≤200 ตัว/≤20 รูป · match timeout 250ms ·
 ค่าที่เก็บผิดรูป ⇒ `Merge` ข้าม ไม่ล้มด่าน) · `ExternalIntegration.BookingRefPatternsJson` (+ ADD COLUMN IF NOT EXISTS ใน `DatabaseMigrationHelper`) · `IntegrationService` Create/Update ตรวจก่อน SaveChanges ⇒ 400 `INT-BOOKING-REF-PATTERN` ·
 echo กลับใน `IntegrationResponse.BookingRefPatterns` + `DefaultBookingRefPatterns` (หน้าแสดง ไม่มีสำเนา) · หน้า `integrations.html` ช่อง textarea + รายละเอียดคีย์ + hydrate ตอนแก้ ·

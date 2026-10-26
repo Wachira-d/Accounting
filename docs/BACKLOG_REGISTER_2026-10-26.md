@@ -119,8 +119,8 @@
 
 | # | รายการ | ต้นทาง | ผล | ขนาด | ขึ้นกับ | คำตัดสินที่เสนอ | แพ็ก |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| R-55 | `/daily-summary` เดินด่าน `INT-DEPOSIT-OVERDRAW` · ล็อกทิศกลับ (`DEP-DRAWN-REMOVE` 409 บน reverse/void) | §12 | 💰 | — | — | **ตรวจแล้ว — ทำแล้ว** (จดใน §12 ตารางแถว 7–8 · ทีม S แก้ฝ่ายค้าน) · Db test ทิศกลับ + พร้อมกัน 2 คำขอ: `Accounting.Tests/Db/BookingDepositDrawdownDbTests` ✅ W10 (sha ในคอมมิตตามหลัง) | ✅ W10 |
-| R-56 | **"อ้างอิงรูปแบบอื่น"** — มัดจำที่ลงด้วยเลขอ้างอิงไม่ใช่ `RES-…`/"การจอง #…" ⇒ ด่านไม่เห็นเครดิต ⇒ ปล่อยผ่าน (ตั้งใจ) | §12 | 💰 | S | — | **ทำเป็นค่าตั้ง** (หลัก ก) — `IntegrationConfig.BookingRefPatternsJson` ต่อคีย์ integration (regex ที่ validate · ค่าเริ่มต้น = 2 รูปเดิม) · `BookingDepositLedger` อ่าน pattern จากค่าตั้ง (ตัวเดียว) · ไม่รู้จักยังปล่อยผ่าน (G3) + รายงานตรวจข้อมูล "JE ที่ตัดผังมัดจำแต่ไม่อ้างการจอง" (อ่านอย่างเดียว) · เทสต์: pattern เดิม 0 เปลี่ยน · **ทำแล้ว** `Helpers/BookingRefPattern` + `ExternalIntegration.BookingRefPatternsJson` + `BookingDepositLedger.PatternsAsync` + หมวดรายงาน `ApiJournalDepositDrawnWithoutBookingRef` ✅ W10 (sha ในคอมมิตตามหลัง · ยังไม่ผ่านฝ่ายค้าน) | ✅ W10 |
+| R-55 | `/daily-summary` เดินด่าน `INT-DEPOSIT-OVERDRAW` · ล็อกทิศกลับ (`DEP-DRAWN-REMOVE` 409 บน reverse/void) | §12 | 💰 | — | — | **ตรวจแล้ว — ทำแล้ว** (จดใน §12 ตารางแถว 7–8 · ทีม S แก้ฝ่ายค้าน) · Db test ทิศกลับ + พร้อมกัน 2 คำขอ: `Accounting.Tests/Db/BookingDepositDrawdownDbTests` ✅ f4d916dd | ✅ W10 |
+| R-56 | **"อ้างอิงรูปแบบอื่น"** — มัดจำที่ลงด้วยเลขอ้างอิงไม่ใช่ `RES-…`/"การจอง #…" ⇒ ด่านไม่เห็นเครดิต ⇒ ปล่อยผ่าน (ตั้งใจ) | §12 | 💰 | S | — | **ทำเป็นค่าตั้ง** (หลัก ก) — `IntegrationConfig.BookingRefPatternsJson` ต่อคีย์ integration (regex ที่ validate · ค่าเริ่มต้น = 2 รูปเดิม) · `BookingDepositLedger` อ่าน pattern จากค่าตั้ง (ตัวเดียว) · ไม่รู้จักยังปล่อยผ่าน (G3) + รายงานตรวจข้อมูล "JE ที่ตัดผังมัดจำแต่ไม่อ้างการจอง" (อ่านอย่างเดียว) · เทสต์: pattern เดิม 0 เปลี่ยน · **ทำแล้ว** `Helpers/BookingRefPattern` + `ExternalIntegration.BookingRefPatternsJson` + `BookingDepositLedger.PatternsAsync` + หมวดรายงาน `ApiJournalDepositDrawnWithoutBookingRef` ✅ f4d916dd (ยังไม่ผ่านฝ่ายค้าน) | ✅ W10 |
 | R-57 | JE ที่ลงไปแล้วก่อนด่าน (เช่น JV-INT-202609-0009) | §12 | 💰 | — | — | **ตรวจแล้ว — รายงานอ่านอย่างเดียว + ลิงก์กลับรายการมีแล้ว** · ไม่กลับให้เอง (R1) — ปิด | ✅ |
 
 ### 1.9 รายการจากรายงานทีม (G · H · I · J · M · O)
@@ -211,7 +211,7 @@
 - **เกณฑ์เสร็จ**: ใบจาก LINE ขึ้นช่องทาง "LINE" ทั้งใบใหม่และใบเดิม · นักเรียน DocType ไม่เรียนแถวความหมายเก่า · แก้กฎตราแล้วมีแถว audit · ผู้ลงนามที่ออกแล้วไม่ถูกวาด · แอดมินเห็น "ครั้ง" กับ "หน้า" แยก · Db test สิทธิ์เขียว
 - **เทสต์ทิศตรงข้าม**: ใบ Reference อื่น OriginModule ไม่ถูก backfill · feedback หลังวัน deploy ไม่ถูก Excluded · ผู้ลงนาม active วาดเหมือนเดิม
 
-### W10 — Integration: pattern อ้างอิงตั้งค่าได้ + Db test ทิศกลับ (R-55 R-56) — ✅ ทำแล้ว (sha ในคอมมิตตามหลัง · CHANGELOG 2026-10-26 ทีม W10)
+### W10 — Integration: pattern อ้างอิงตั้งค่าได้ + Db test ทิศกลับ (R-55 R-56) — ✅ f4d916dd (CHANGELOG 2026-10-26 ทีม W10)
 - **ไฟล์**: `Helpers/BookingDepositLedger.cs` (อ่าน pattern) · `Helpers/BookingRefPattern.cs` (ใหม่ pure · validate regex) · `IntegrationConfig` entity + migration · หน้าตั้งค่า integration · รายงานตรวจข้อมูล (หมวดใหม่ "JE ตัดผังมัดจำไม่อ้างการจอง") · `Accounting.Tests/Db/BookingDepositDrawdownDbTests.cs`
 - **คำตัดสินที่ใช้**: หลัก ก (ตั้งค่าได้) · ง (ไม่ปล่อยผ่านเมื่อรู้) · G3 (ไม่รู้ = ปล่อยผ่าน + รายงาน)
 - **เกณฑ์เสร็จ**: pattern เพิ่มได้ต่อคีย์ · regex ผิด ⇒ ปฏิเสธพร้อมข้อความ · ด่านเห็นมัดจำที่ลงด้วยรูปใหม่ · Db test: ตัดเกิน 422 · reverse ที่ถูกตัดแล้ว 409 · พร้อมกัน 2 คำขอผ่านได้ไม่เกินยอด
