@@ -243,6 +243,15 @@ public class AiSuggestionFeedback : TenantEntity
     /// <summary>คีย์ sandbox → นับเพื่อดูพฤติกรรมช่วงทดสอบ แต่ **ไม่เข้าบิล**
     /// (ตรงกับ `UsageEvent.IsSandbox`)</summary>
     public bool IsSandbox { get; set; }
+
+    /// <summary>W9 R-59 — แถวนี้<b>ห้ามใช้สอนนักเรียน</b> (ความหมายของคำตอบคนละชุดกับ prompt ปัจจุบัน เช่น DocumentTypeClassification
+    /// ก่อน 2026-10-22 ที่ครูตอบ "ชนิดกระดาษ" ไม่ใช่ "ชนิดปลายทาง") · ไม่ลบ ไม่แก้คำตอบ (audit/บิลคงเดิม · G3 ไม่เดา) ·
+    /// ตัวตัดสิน/เหตุผล = <c>Helpers/AiFeedbackTrainingExclusion</c> · ฝั่งอ่าน: <c>GenericFeedbackDistillationModel.LoadFromFeedbackAsync</c> +
+    /// <c>AiFeedbackTrainingJob</c> ข้ามแถวนี้</summary>
+    public bool ExcludedFromTraining { get; set; }
+
+    /// <summary>รหัสเหตุผลที่ตัดออกจากการสอน (ค่าใน <c>AiFeedbackTrainingExclusion</c>) — null เมื่อไม่ถูกตัด</summary>
+    public string? ExcludedFromTrainingReason { get; set; }
 }
 
 /// <summary>

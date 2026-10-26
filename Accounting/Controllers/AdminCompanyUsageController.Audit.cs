@@ -362,8 +362,11 @@ public partial class AdminCompanyUsageController
                 rejected = dc.Where(c => c.status == "Rejected").Sum(c => c.count),
                 approvedAmount = dc.Sum(c => c.amount),
                 journalEntries = je.FirstOrDefault(x => x.Y == y && x.M == m)?.Count ?? 0,
+                // W9 R-62: "ครั้ง" (แถว OcrScanResult) กับ "หน้า" (มิเตอร์โควตา) เป็นคนละหน่วย — ส่งแยกช่อง ห้ามหน้าเว็บเทียบครั้งกับเพดานหน้า ·
+                // หน้ารายเดือนย้อนหลังไม่มีประวัติ (Subscription เก็บแค่ตัวนับเดือนปัจจุบัน) ⇒ null = "ไม่รู้" (ไม่แปลงครั้ง→หน้าเอง)
                 ocrScans = o?.Total ?? 0,
                 ocrCompleted = o?.Completed ?? 0,
+                ocrPagesMetered = (y == nowTh.Year && m == nowTh.Month) ? ocrQuota?.UsedThisMonth : null,
                 aiCallsTotal = a?.CallsTotal ?? 0,
                 aiCallsPaid = a?.CallsAi ?? 0,
                 aiCostUsd = a?.CostUsd ?? 0m,
@@ -423,7 +426,7 @@ public partial class AdminCompanyUsageController
             {
                 "เดือน = เดือนที่บันทึกเข้าระบบ (เวลาไทย) — มิเตอร์การใช้งาน ไม่ใช่เดือนภาษีของเอกสาร",
                 "เอกสารที่นับโควตา = ประมาณย้อนหลังด้วยกติกาโควตาเดียวกับตอนสร้าง (ไม่รวมใบที่ถูกลบ · ใบกำกับที่ออกแทนใบเสร็จอาจนับเกิน) — ตัวนับจริงของเดือนนี้ดูที่ 'ใช้จริงเดือนนี้'",
-                "OCR นับเป็นจำนวนใบสแกน (1 ใบอาจมีหลายหน้า) — เพดานของแพ็กเกจนับเป็นหน้า",
+                "OCR 'สแกน (ครั้ง)' = จำนวนครั้งที่สแกน (1 ครั้งอาจหลายหน้า) · 'หน้า (มิเตอร์)' = ตัวนับโควตาที่เพดานใช้ — คนละหน่วย ไม่เทียบกัน · หน้าของเดือนก่อน ๆ ไม่มีประวัติ (แสดง —)",
                 "เพดานเป็นค่าแพ็กเกจปัจจุบัน ไม่ใช่ค่า ณ เดือนนั้น" + (fromAccountPlan ? " · เพดานมาจาก License (รวมทุกบริษัทใต้ License)" : ""),
                 "พื้นที่/ผู้ใช้ย้อนหลัง = ไฟล์/สมาชิกที่ยังอยู่ในปัจจุบัน (ของที่ลบ/ถอดออกแล้วไม่มีประวัติ)",
             },

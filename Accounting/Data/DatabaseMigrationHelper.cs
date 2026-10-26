@@ -224,6 +224,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
         list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
+        list.AddRange(W9HygieneStatements());   // W9 R-58/R-59 — backfill ช่องทาง LINE + ตัด feedback ความหมายเก่าออกจากการสอน (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7822,5 +7823,21 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PerLineWhtEnabled" boolean NOT NULL DEFAULT false;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentThbBase" numeric(18,2) NULL;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRateSource" character varying(16) NULL;""",
+    };
+
+    /// <summary>W9 (<c>docs/BACKLOG_REGISTER_2026-10-26.md</c> R-58 · R-59) — ของเสียที่ persist แล้ว (F2 #9) · รันทุกบูตได้ (ทุกคำสั่ง idempotent):
+    /// <list type="number">
+    /// <item>R-58 ใบจาก LINE bot เดิมไม่มี <c>OriginModule</c> ⇒ backfill จาก Reference "LINE-bot" (SQL ตัวเดียว
+    /// <see cref="Accounting.Helpers.DocumentCreationChannelRule.BackfillLineBotOriginSql"/> · แตะเฉพาะแถว NULL · Reference อื่นไม่ถูกแตะ)</item>
+    /// <item>R-59 คอลัมน์ <c>AiSuggestionFeedbacks.ExcludedFromTraining</c> + เหตุผล · UPDATE ครั้งเดียวติดธงแถว DocumentTypeClassification
+    /// ก่อน prompt v2 ที่มีแค่คำตอบครู (<see cref="Accounting.Helpers.AiFeedbackTrainingExclusion.DocTypePromptV1BackfillSql"/>) —
+    /// <b>ไม่ลบ ไม่แก้คำตอบ</b> (กฎเหล็ก #1 · G3) · แถวหลัง cutoff / แถวที่ผู้ใช้เลือกแล้วไม่ถูกแตะ</item>
+    /// </list></summary>
+    internal static IReadOnlyList<string> W9HygieneStatements() => new List<string>
+    {
+        Accounting.Helpers.DocumentCreationChannelRule.BackfillLineBotOriginSql(),
+        """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "ExcludedFromTraining" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "ExcludedFromTrainingReason" character varying(80) NULL;""",
+        Accounting.Helpers.AiFeedbackTrainingExclusion.DocTypePromptV1BackfillSql(),
     };
 }

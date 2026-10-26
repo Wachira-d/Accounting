@@ -72,7 +72,7 @@
                 <th class="num">เอกสาร</th>
                 <th class="num">อนุมัติแล้ว</th>
                 <th class="num">มูลค่ารวม</th>
-                <th class="num">OCR</th>
+                <th class="num" title="จำนวนครั้งที่สแกน — ไม่ใช่หน้า (เพดานแพ็กเกจนับเป็นหน้า)">OCR (ครั้ง)</th>
                 <th class="num">AI (ครั้ง)</th>
                 <th class="num">AI จ่ายจริง</th>
                 <th class="num">ต้นทุน AI (USD)</th>
@@ -144,7 +144,7 @@
             <div class="sub">งวด ${String(d.month).padStart(2, '0')}/${d.year + 543}</div></div>
           <div class="kpi"><div class="lbl">เอกสารที่สร้าง</div><div class="val">${this.n(d.documentsTotal)}</div>
             <div class="sub">ทุกชนิดรวมกัน (ไม่นับที่ถูกลบ)</div></div>
-          <div class="kpi"><div class="lbl">สแกน OCR</div><div class="val">${this.n(d.ocrScans)}</div>
+          <div class="kpi"><div class="lbl">สแกน OCR (ครั้ง)</div><div class="val">${this.n(d.ocrScans)}</div>
             <div class="sub">ครั้งที่อัปโหลดเข้าระบบ</div></div>
           <div class="kpi"><div class="lbl">เรียก AI จริง (เสียเงิน)</div><div class="val">${this.n(d.aiCallsPaid)}</div>
             <div class="sub">ต้นทุน ${this.money(d.aiCostUsd)} USD</div></div>`;
@@ -191,7 +191,7 @@
         const d = this.data;
         if (!d) return;
         const head = ['บริษัท', 'เลขผู้เสียภาษี', 'เอกสารทั้งหมด', 'อนุมัติแล้ว', 'มูลค่ารวม',
-          'OCR', 'OCR สำเร็จ', 'AI ครั้งทั้งหมด', 'AI จ่ายจริง', 'ต้นทุน AI (USD)',
+          'OCR สแกน (ครั้ง)', 'OCR สำเร็จ (ครั้ง)', 'AI ครั้งทั้งหมด', 'AI จ่ายจริง', 'ต้นทุน AI (USD)',
           'อีเมลที่ส่ง', 'e-Tax', 'แยกชนิดเอกสาร'];
         const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
         const lines = [head.map(esc).join(',')];

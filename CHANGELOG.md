@@ -5585,3 +5585,15 @@ TEST_PLAN BDD-17 ปรับเป็น DB test + BDD-18…24 · INTEGRATION_R
 _2026-10-26 ทีม W10 แก้ผลฝ่ายค้าน (3 ข้อ · `Helpers/BookingRefPattern` · commit 515db0aa): (1) สูง — `ExtractKeys` ประเมิน `MatchCollection` ใน try (`Cast<Match>().ToList()`) เพราะ lazy ⇒ `RegexMatchTimeoutException` เคยหลุดตอน foreach ⇒ JE ที่ถูกต้องได้ 500 · ตอนนี้ข้ามรูปนั้น + แจ้ง `TimeoutSink` ครั้งเดียวต่อรูป (Program.cs ต่อ `app.Logger.LogWarning`) · เทสต์ `ExtractKeys_CatastrophicPattern_DoesNotThrow_SkipsPattern_ReportsOnce` ·
 (2) กลาง — `Validate` ปฏิเสธ pattern กว้างที่จับข้อความทั่วไป (`BroadProbes`: เลขใบกำกับ · ยอดเงิน · วันที่ · เลขภาษี 13 หลัก · เลขเอกสาร) พร้อมบอกข้อความที่จับได้ + ตัวอย่าง pattern ที่ใช้ได้ · สองทิศ: `RES-(?<key>\d+)` ผ่าน · `(?<key>\d+)`/`(?<key>\d{3,})`/วันที่/13 หลัก ปฏิเสธ · ค่าเริ่มต้นต้องผ่านด่านนี้เอง ·
 (3) ต่ำ — `Merge` validate+compile ครั้งเดียวต่อ source (cache `ConcurrentDictionary` เพดาน 2,000) · เทสต์ `Merge_CachesCompiledRegexPerSource` · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_2026-10-26 ทีม W9 (แพ็ก W9 ของ `docs/BACKLOG_REGISTER_2026-10-26.md` §3 — R-58..R-63 · แพลตฟอร์ม/แอดมิน/AI hygiene):
+(R-58) `LineBotService` ประทับ `OriginModule="LineBot"` ผ่านพารามิเตอร์เมธอด (ค่าคงที่ `DocumentCreationChannelRule.LineBotOrigin/LineBotReference`) + enum `DocumentCreationChannel.LineBot` ("LINE bot") +
+migration backfill ใบเดิมจาก Reference "LINE-bot" ตรงตัวที่ OriginModule NULL (`W9HygieneStatements` · idempotent · ใบ Reference อื่น/มี OriginModule แล้วไม่ถูกแตะ — Db `W9HygieneBackfillDbTests`) ·
+(R-59) `AiSuggestionFeedback.ExcludedFromTraining` + เหตุผล · ตัวตัดสิน `Helpers/AiFeedbackTrainingExclusion` (cutoff = คอมมิตทีม H 7e503cf2 2026-10-22T15:54:58Z) — ตัดเฉพาะแถว DocumentTypeClassification
+ก่อน cutoff ที่มีแค่คำตอบครู (ชนิดกระดาษ) · ไม่ลบ ไม่แก้ AiPrimaryAnswer · **ไม่แปลง**ชนิดกระดาษ→ปลายทาง (แปลงทางเดียวไม่ได้ = เดา) · แถวที่ผู้ใช้เลือกแล้วคงไว้ (ความจริงของบริษัท — กฎเหล็ก #1 ห้ามถดถอย) ·
+`GenericFeedbackDistillationModel.LoadFromFeedbackAsync` + `AiFeedbackTrainingJob` (สุขภาพ/mine) ข้ามแถว Excluded ·
+(R-60) `DocumentStampRulesController.Update` เขียน `AddChainedAuditLog` (EntityType `DocumentStampPolicy.AuditEntityType` · JSON ก่อน/หลัง · เฉพาะเมื่อค่าเปลี่ยน) ในธุรกรรมเดียวกับ Save · GET ส่ง `lastChangedAt/By` จาก audit → หน้าตั้งค่าแสดง ·
+(R-61) คำตัดสิน: ไม่กรองตัวเลือกผู้ลงนาม · `SignerOption.IsActive` + บทบาทข้างชื่อ · `Helpers/DepartedSignerRule` — ผู้ใช้เจ้าของช่องที่ไม่มี `CompanyUser` แล้ว ⇒ ถอดรูป + ธง `DocumentSigner.Departed` → HTML `Box` + QuestPDF `ComposeSignatures` พิมพ์ `DocumentLabels.SigDeparted` (th/en) · 50 ทวิ (`ResolveWhtPayerSignatureAsync`/`ResolveCertSignatoryAsync`) ไม่วาดรูป ·
+(R-62) `AdminCompanyUsageController.Audit` ส่ง `ocrPagesMetered` (เฉพาะเดือนปัจจุบัน · เดือนก่อน = null "ไม่รู้") แยกจาก `ocrScans` (ครั้ง) · หน้าแอดมิน 2 คอลัมน์แยก · กราฟ OCR ไม่มีเส้นเพดานหน้า · CSV/หน้ารวมทุกบริษัทป้าย "(ครั้ง)" ·
+(R-63) Db `CompanyOwnershipDbTests` (assign-owner พร้อมกัน · LastOwnerGuard · Candidates) ·
+เทสต์ `W9HygieneRuleTests` · Db `W9HygieneBackfillDbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี SDK) — CI บน branch เป็น compiler ตัวแรก_

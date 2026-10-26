@@ -342,7 +342,7 @@ public class LineBotService : ILineBotService
                     DocumentDate: DateTime.UtcNow.Date,
                     DueDate: DateTime.UtcNow.Date,
                     ContactId: contact.Id,
-                    Reference: "LINE-bot",
+                    Reference: DocumentCreationChannelRule.LineBotReference,
                     Notes: $"บันทึกผ่าน LINE: {msg}",
                     Lines: new List<DocumentLineRequest> {
                         // Positional order: Description, Quantity, Unit, UnitPrice,
@@ -350,7 +350,10 @@ public class LineBotService : ILineBotService
                         // (rest are optional with defaults).
                         new("ค่าใช้จ่ายจาก " + vendor, 1, "รายการ", amount.Value, 0, 0, 0, null)
                     }
-                ), createdBy: user.Email);
+                ), createdBy: user.Email,
+                // W9 R-58: ประทับช่องทางให้รายงานตรวจสอบการใช้งาน (DocumentCreationChannel) รู้ว่ามาจาก LINE —
+                // เดิมมีแค่ Reference ⇒ ขึ้น "ไม่ทราบ" · เป็นพารามิเตอร์เมธอด (ไม่ใช่ field ใน request ที่ client คุมได้)
+                originModule: DocumentCreationChannelRule.LineBotOrigin);
                 // ด่านสิทธิ์เดียวกับเว็บ/postback — เดิมเส้นข้อความนี้อนุมัติอัตโนมัติให้ทุกสมาชิก
                 // (Viewer พิมพ์ "จ่าย xxx 99999" ⇒ Expense Approved + JE) และ `catch {}` กลืน error
                 // แล้วตอบ ✅ พร้อมเลข DRAFT- (ERP_REVIEW G-03)

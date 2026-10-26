@@ -146,6 +146,7 @@ public sealed class DocumentLabels
     public string Phone => this["phone"];
     public string Reference => this["reference"];
     public string StatusVoided => this["status_voided"];
+    public string SigDeparted => this["sig_departed"];
     public string TaxId => this["tax_id"];
     public string TaxIdShort => this["tax_id_short"];
     public string Terms => this["terms"];
@@ -181,6 +182,8 @@ public sealed class DocumentLabels
         ["copy_original"] = "ต้นฉบับ",
         ["copy_duplicate"] = "สำเนา",
         ["status_voided"] = "ยกเลิก",
+        // W9 R-61: ผู้ลงนามที่ถูกถอดจากบริษัทแล้ว — ไม่วาดลายเซ็น คงชื่อ + หมายเหตุนี้ (Helpers/DepartedSignerRule)
+        ["sig_departed"] = "ผู้ลงนามไม่อยู่ในบริษัทแล้ว",
 
         // ── หัวข้อมูลเอกสาร ──
         ["doc_number"] = "เลขที่",
@@ -280,6 +283,7 @@ public sealed class DocumentLabels
         ["copy_original"] = "ORIGINAL",
         ["copy_duplicate"] = "COPY",
         ["status_voided"] = "VOID",
+        ["sig_departed"] = "Signer no longer with the company",
 
         ["doc_number"] = "No.",
         ["doc_date"] = "Date",

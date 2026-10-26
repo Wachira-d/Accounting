@@ -203,8 +203,11 @@ public partial class PdfGenerationService : IPdfGenerationService
                 .Where(x => x.Id == uid)
                 .Select(x => new { x.SignatureImageBase64, x.SignatureName, x.FullName })
                 .FirstOrDefaultAsync();
+            // W9 R-61: ผู้สร้างใบที่ออกจากบริษัทแล้ว (ไม่มี CompanyUser) ⇒ ไม่วาดลายเซ็นของคนที่ไม่อยู่ (Helpers/DepartedSignerRule)
+            var role = await SignerRoleAsync(companyId, uid);
             if (u != null && !string.IsNullOrWhiteSpace(u.SignatureImageBase64)
-                && decision.SignerAllowed(uid, await SignerRoleAsync(companyId, uid)))
+                && !Accounting.Helpers.DepartedSignerRule.IsDeparted(uid, role)
+                && decision.SignerAllowed(uid, role))
                 return (TryDecodeBase64Image(u.SignatureImageBase64),
                     !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName);
         }
@@ -389,7 +392,10 @@ public partial class PdfGenerationService : IPdfGenerationService
         string? SignatureImageDataUri,   // "data:image/png;base64,..." (HTML) — null if user has no signature
         byte[]? SignatureImageBytes,     // raw bytes for QuestPDF — null if no signature
         string? Name,
-        string? Title);
+        string? Title,
+        // W9 R-61: ผู้ใช้เจ้าของช่องถูกถอดจากบริษัทแล้ว (Helpers/DepartedSignerRule) — รูปถูกถอด · renderer ทั้งสองพิมพ์
+        // หมายเหตุ DocumentLabels.SigDeparted ใต้ชื่อ (ธงเดียว ห้ามสองตัวเรนเดอร์ตัดสินเอง)
+        bool Departed = false);
 
     /// <summary>The document's posted journal entry, summarised for the
     /// "การลงบัญชี (Dr./Cr.)" block printed at the end of the document when the
@@ -2500,6 +2506,9 @@ public partial class PdfGenerationService : IPdfGenerationService
                     sb.Append($"<div class='sig-name'>{WebUtility.HtmlEncode(s.Name!)}</div>");
                 if (s != null && !string.IsNullOrWhiteSpace(s.Title))
                     sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(s.Title!)}</div>");
+                // W9 R-61: ผู้ลงนามออกจากบริษัทแล้ว — รูปถูกถอดที่ ApplySignerPolicyAsync · ป้ายผ่าน DocumentLabels (คู่กับ QuestPDF ComposeSignatures)
+                if (s is { Departed: true })
+                    sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(L.SigDeparted)}</div>");
                 sb.AppendLine("</td>");
             }
             // ป้ายลายเซ็น (EN) ที่ผู้ใช้ตั้งไว้ — ใช้เมื่อพิมพ์เอกสารภาษาอังกฤษ

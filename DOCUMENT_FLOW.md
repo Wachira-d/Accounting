@@ -848,6 +848,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ### 2.2b LINE bot — "โยนบิลเข้าไลน์" (Paypers-style)
 
+- **ช่องทางบนรายงานตรวจสอบการใช้งาน (W9 R-58 · 2026-10-26)**: ใบจากข้อความ "บันทึก {ร้าน} {จำนวน}" (`LineBotService` →
+  `CreateDocumentAsync(..., originModule: DocumentCreationChannelRule.LineBotOrigin)`) ประทับ `OriginModule="LineBot"` + `Reference="LINE-bot"`
+  ⇒ `DocumentCreationChannel.LineBot` ("LINE bot") · ใบเดิมที่ไม่มี OriginModule ถูก backfill ตอนบูตจาก Reference ตรงตัว
+  (`DatabaseMigrationHelper.W9HygieneStatements` · idempotent · Reference อื่น/ใบที่มี OriginModule แล้วไม่ถูกแตะ) · เดิมตกเป็น "ไม่ทราบ"
 - **Flow**: ผู้ใช้ส่ง **รูปถ่ายใบเสร็จ / ไฟล์ PDF** เข้า LINE bot →
   `LineWebhookController` (message type `image`/`file`) →
   `LineBotService.HandleImageAsync` → ดาวน์โหลดจาก LINE Content API
@@ -3482,7 +3486,12 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ชำระแล้ว / ยกเลิก) · ตำแหน่ง ซ้าย/กลาง/ขวา + เลื่อน X/Y ±60 มม. · ขนาด 5–120 มม. · ผู้ลงนามที่มีสิทธิ์ (บทบาท/ผู้ใช้ — ไม่อยู่ในรายการ ⇒ ไม่พิมพ์รูป ชื่อยังอยู่ใต้เส้น ·
   ลายเซ็นลูกค้า/เซ็นรับของไม่ถูกแตะ · ผู้มีอำนาจลงนามที่บริษัทตั้ง/ลายเซ็นคู่ค้าส่งมาตรวจแค่ "ขั้นนี้พิมพ์ไหม") · **ยังไม่ตั้ง = เดิมทุกไบต์** (ประทับเฉพาะ
   อนุมัติแล้ว/ชำระแล้ว/ยกเลิก · ลายเซ็นทุกขั้น · ขนาด/ตำแหน่งจาก `StampWidthMm/HeightMm/StampAlign`) · `template.ShowCompanyStamp` ยังปิดต่อเทมเพลตได้ ·
-  รูปตราตัวเดียวกันทั้งสอง renderer `ResolveStampBytes` (StampPath → StampUrl → ตราในเทมเพลต — เดิม HTML ไม่ลองตราในเทมเพลต · QuestPDF ไม่ลอง StampUrl)
+  รูปตราตัวเดียวกันทั้งสอง renderer `ResolveStampBytes` (StampPath → StampUrl → ตราในเทมเพลต — เดิม HTML ไม่ลองตราในเทมเพลต · QuestPDF ไม่ลอง StampUrl) ·
+  **W9 (2026-10-26)**: (R-60) `PUT` ที่เปลี่ยนค่า ⇒ แถว `AuditLog` append-only EntityType `DocumentStampPolicy.AuditEntityType` (JSON ก่อน/หลังทั้งก้อน ·
+  hash chain · ธุรกรรมเดียวกับ Save) · `GET` ส่ง `lastChangedAt/lastChangedBy` จาก audit ให้หน้าตั้งค่าแสดง · (R-61) ตัวเลือกผู้ลงนาม = สมาชิกทุกคน (ไม่กรอง —
+  เรื่องตั้งค่าของบริษัท) + บทบาท + `isActive` · ผู้ใช้เจ้าของช่องลายเซ็นที่**ถูกถอดจากบริษัทแล้ว** ⇒ `Helpers/DepartedSignerRule` ถอดรูป + ธง
+  `DocumentSigner.Departed` → HTML/QuestPDF พิมพ์ `DocumentLabels.SigDeparted` ใต้ชื่อ (50 ทวิ: `ResolveWhtPayerSignatureAsync`/`ResolveCertSignatoryAsync` ไม่วาดรูป)
+  — กฎตราที่ไม่ตั้งปล่อยผ่านทุกคน จึงต้องมีด่านนี้แยก · สมาชิกปัจจุบันทุกบทบาทวาดเหมือนเดิม
 - **Detection chain**:
   1. มี `EtaxInvoice` + `XmlContent` → **PDF/A-3 + embed XML** (ตาม
      ETDA ขมธอ.3-2560 — ใช้ยื่นภาษีได้)

@@ -92,6 +92,8 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
         var rows = await db.AiSuggestionFeedbacks.AsNoTracking()
             .Where(f => f.CompanyId == companyId && !f.IsDeleted
                         && f.FeatureKey == featureName
+                        // W9 R-59: แถวที่คำตอบเป็นคนละความหมายกับ prompt ปัจจุบัน (Helpers/AiFeedbackTrainingExclusion) — ไม่สอน
+                        && !f.ExcludedFromTraining
                         && (f.UserChosenAt != null
                             || (f.Status == AiCallStatus.Success
                                 && f.AiPrimaryAnswer != null
@@ -99,9 +101,12 @@ public sealed class GenericFeedbackDistillationModel : ILocalDistillationModel
             .Select(f => new
             {
                 f.PromptJson, f.UserChosenAnswer, f.UserChosenAt,
-                f.UserAcceptedAi, f.AiPrimaryAnswer, f.UserChoiceOrigin,
+                f.UserAcceptedAi, f.AiPrimaryAnswer, f.UserChoiceOrigin, f.CreatedAt,
             })
             .ToListAsync(ct);
+        // W9 R-59 ตัวตัดสินเดียวกับ migration (Helpers/AiFeedbackTrainingExclusion) เดินซ้ำในหน่วยความจำ — กันกรณีแถวที่ยังไม่ถูกประทับธง
+        // (ฐานที่ migration ยังไม่รัน/รันไม่สำเร็จ) หลุดเข้ามาสอนความหมายเก่า · แถวที่ธงประทับแล้วถูกกรองที่ SQL ข้างบนแล้ว
+        rows.RemoveAll(r => Accounting.Helpers.AiFeedbackTrainingExclusion.IsLegacyDocTypeTeacherOnlyRow(featureName, r.CreatedAt, r.UserChosenAt));
 
         // (fingerprint → answer → confirmed/overridden) + company-wide answer tally.
         var perInput = new Dictionary<string, Dictionary<string, (int Confirmed, int Overridden)>>();
