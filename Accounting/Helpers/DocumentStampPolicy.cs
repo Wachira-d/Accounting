@@ -32,6 +32,10 @@ public static class DocumentStampPolicy
     /// <summary>ระยะเลื่อนสูงสุด (มม.) ทั้งแกน X/Y — กันตราหลุดกระดาษ</summary>
     public const decimal MaxOffsetMm = 60m;
 
+    /// <summary><c>AuditLog.EntityType</c> ของการแก้กฎตรา/ลายเซ็น (W9 R-60 — ค่าตั้งที่เปลี่ยนหน้าตาเอกสารกฎหมาย 50 ทวิ/ใบกำกับ ต้องมี
+    /// แถว audit append-only · กฎ M) — ฝั่งเขียน (<c>DocumentStampRulesController.Update</c>) และฝั่งอ่าน "แก้ล่าสุดโดย/เมื่อ" ใช้ค่าเดียวกัน</summary>
+    public const string AuditEntityType = "CompanySettings.DocumentStampRules";
+
     public enum Stage { Draft, Pending, Approved, Paid, Voided }
 
     /// <summary>ขั้นที่ "ประทับตรา" เมื่อยังไม่ตั้ง — ร่าง/รออนุมัติไม่ประทับ (ผู้มีอำนาจอนุมัติ = ประทับตรา · พฤติกรรมเดิม)</summary>

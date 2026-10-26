@@ -5536,3 +5536,15 @@ warnings ⇒ กล่องเหลือง "ระบบไม่แน่�
 (ส่วนลด 576 ต่อบรรทัด vs 538.32 ท้ายบิล · 1,226.84 vs 1,840) — คำนวณทางเลือก `BillDiscountAmount` 538.32 ให้ยอดเท่าเดิมทุกสตางค์ไว้ รอเจ้าของ · เมทริกซ์ทุกรูปแบบ `docs/OCR_TOTALS_MATRIX.md`
 (16 ช่อง · ล็อกด้วยอะไร · ช่องว่างที่เหลือ) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT · สังเคราะห์ · วางหลัง F · baseline: 28 ตัว (+ สังเคราะห์ 24 ช่อง) ด้วย **port Python ของ `Classify`** (เทียบเท่า C# ณ 74a4796c — ไม่ใช่ตัว C# เอง) = 0 เปลี่ยนใน vector จริง · replay/golden harness ผ่าน C# จริง (`OcrReplay*GoldenTests` · `EtaxGoldenCorpusTests`) **ยังต้องรอ CI** (ไม่มี SDK)) +
 `OcrConfidenceGateway`/`OcrDuplicateLineGuard` รู้เคส G · ใบนี้ยังไม่เข้า `OcrPaperSamples` (golden คู่สัญญาต้องรัน dotnet — ขั้นตอนจดใน MATRIX §5) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 ทีม W9 (แพ็ก W9 ของ `docs/BACKLOG_REGISTER_2026-10-26.md` §3 — R-58..R-63 · แพลตฟอร์ม/แอดมิน/AI hygiene):
+(R-58) `LineBotService` ประทับ `OriginModule="LineBot"` ผ่านพารามิเตอร์เมธอด (ค่าคงที่ `DocumentCreationChannelRule.LineBotOrigin/LineBotReference`) + enum `DocumentCreationChannel.LineBot` ("LINE bot") +
+migration backfill ใบเดิมจาก Reference "LINE-bot" ตรงตัวที่ OriginModule NULL (`W9HygieneStatements` · idempotent · ใบ Reference อื่น/มี OriginModule แล้วไม่ถูกแตะ — Db `W9HygieneBackfillDbTests`) ·
+(R-59) `AiSuggestionFeedback.ExcludedFromTraining` + เหตุผล · ตัวตัดสิน `Helpers/AiFeedbackTrainingExclusion` (cutoff = คอมมิตทีม H 7e503cf2 2026-10-22T15:54:58Z) — ตัดเฉพาะแถว DocumentTypeClassification
+ก่อน cutoff ที่มีแค่คำตอบครู (ชนิดกระดาษ) · ไม่ลบ ไม่แก้ AiPrimaryAnswer · **ไม่แปลง**ชนิดกระดาษ→ปลายทาง (แปลงทางเดียวไม่ได้ = เดา) · แถวที่ผู้ใช้เลือกแล้วคงไว้ (ความจริงของบริษัท — กฎเหล็ก #1 ห้ามถดถอย) ·
+`GenericFeedbackDistillationModel.LoadFromFeedbackAsync` + `AiFeedbackTrainingJob` (สุขภาพ/mine) ข้ามแถว Excluded ·
+(R-60) `DocumentStampRulesController.Update` เขียน `AddChainedAuditLog` (EntityType `DocumentStampPolicy.AuditEntityType` · JSON ก่อน/หลัง · เฉพาะเมื่อค่าเปลี่ยน) ในธุรกรรมเดียวกับ Save · GET ส่ง `lastChangedAt/By` จาก audit → หน้าตั้งค่าแสดง ·
+(R-61) คำตัดสิน: ไม่กรองตัวเลือกผู้ลงนาม · `SignerOption.IsActive` + บทบาทข้างชื่อ · `Helpers/DepartedSignerRule` — ผู้ใช้เจ้าของช่องที่ไม่มี `CompanyUser` แล้ว ⇒ ถอดรูป + ธง `DocumentSigner.Departed` → HTML `Box` + QuestPDF `ComposeSignatures` พิมพ์ `DocumentLabels.SigDeparted` (th/en) · 50 ทวิ (`ResolveWhtPayerSignatureAsync`/`ResolveCertSignatoryAsync`) ไม่วาดรูป ·
+(R-62) `AdminCompanyUsageController.Audit` ส่ง `ocrPagesMetered` (เฉพาะเดือนปัจจุบัน · เดือนก่อน = null "ไม่รู้") แยกจาก `ocrScans` (ครั้ง) · หน้าแอดมิน 2 คอลัมน์แยก · กราฟ OCR ไม่มีเส้นเพดานหน้า · CSV/หน้ารวมทุกบริษัทป้าย "(ครั้ง)" ·
+(R-63) Db `CompanyOwnershipDbTests` (assign-owner พร้อมกัน · LastOwnerGuard · Candidates) ·
+เทสต์ `W9HygieneRuleTests` · Db `W9HygieneBackfillDbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี SDK) — CI บน branch เป็น compiler ตัวแรก_

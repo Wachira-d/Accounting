@@ -121,7 +121,7 @@ public class AiFeedbackTrainingJob : BackgroundService
         // ⇒ ตัวเลขของทุก tenant ถูกเฉลี่ยรวมกัน: ลูกค้าใหม่หนึ่งรายที่ยังไม่มีข้อมูล
         // ดึงของทุกคนลง และบริษัทที่นักเรียนแย่จริงถูกกลบด้วยค่าเฉลี่ย
         var rows = await db.AiSuggestionFeedbacks.AsNoTracking()
-            .Where(f => f.CreatedAt >= cutoff && f.UserChosenAt != null)
+            .Where(f => f.CreatedAt >= cutoff && f.UserChosenAt != null && !f.ExcludedFromTraining)   // W9 R-59 ข้ามแถวความหมายเก่า
             .GroupBy(f => new { f.FeatureKey, f.CompanyId })
             .Select(g => new
             {
@@ -275,6 +275,7 @@ public class AiFeedbackTrainingJob : BackgroundService
         var labelled = await db.AiSuggestionFeedbacks
             .Where(f => f.UserChosenAt != null && f.UserChosenAt > since
                         && f.UserChosenAnswer != null
+                        && !f.ExcludedFromTraining   // W9 R-59
                         && (f.CreatedBy == null || f.CreatedBy != "TRAINED"))
             .ToListAsync(ct);
 

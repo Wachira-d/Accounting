@@ -148,6 +148,7 @@
           <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
             <button class="btn btn-primary" id="srSave" onclick="Page.saveStampRules()">บันทึกกฎตราประทับ</button>
             <span id="srSummary" style="font-size:12px;color:#64748b"></span>
+            <span id="srAudit" style="font-size:12px;color:#94a3b8"></span>
           </div>
         </details>
       </div>
@@ -2842,8 +2843,14 @@
           sel.innerHTML = (d.kinds || []).map(k => `<option value="${Layout.esc(k.key)}">${Layout.esc(k.label)}</option>`).join('');
           document.getElementById('srRoles').innerHTML = (d.roles || []).map(r =>
             `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="sr-role" value="${Layout.esc(r)}"> ${Layout.esc(this.SR_ROLE_LABEL[r] || r)}</label>`).join('');
+          // W9 R-61: แสดงบทบาท + สถานะบัญชีข้างชื่อ (ไม่กรองตัวเลือก — เซิร์ฟเวอร์ส่งสมาชิกทุกคน · คนที่ถูกถอดแล้วไม่อยู่ในรายการ)
           document.getElementById('srUsers').innerHTML = (d.signers || []).map(u =>
-            `<option value="${Layout.esc(u.userId)}">${Layout.esc(u.name)} (${Layout.esc(this.SR_ROLE_LABEL[u.role] || u.role)})</option>`).join('');
+            `<option value="${Layout.esc(u.userId)}">${Layout.esc(u.name)} (${Layout.esc(this.SR_ROLE_LABEL[u.role] || u.role)}${u.isActive === false ? ' · บัญชีปิดใช้งาน' : ''})</option>`).join('');
+          // W9 R-60: ผู้แก้/เวลาล่าสุดจาก audit chain (เซิร์ฟเวอร์ส่ง · หน้าแสดงอย่างเดียว)
+          const au = document.getElementById('srAudit');
+          if (au) au.textContent = d.lastChangedAt
+            ? `แก้ล่าสุด ${new Date(d.lastChangedAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}${d.lastChangedBy ? ' โดย ' + d.lastChangedBy : ''}`
+            : 'ยังไม่เคยแก้กฎผ่านหน้านี้';
           this.srRender(sel.value);
         } catch (e) {
           document.getElementById('srNote').textContent = 'โหลดกฎตราประทับไม่สำเร็จ: ' + (e.message || e);
