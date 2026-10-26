@@ -3901,7 +3901,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   หยุดอนุมัติเอง · หลักฐานยอดบาทแหล่งเดียวต้องใกล้ ธปท. ≤ 3% · หน้านำส่ง/ปฏิทิน/ตัวกระทบ GL/JE ตอนจ่าย = `PerLineWht.DocumentWhtThb` (กติกา `_PLWHT`) ·
   50 ทวิ ใบต่างสกุลที่ออกก่อนแก้ ⇒ รายงานตรวจข้อมูล `ForeignCurrencyWhtCertsNotInBaht` (อ่านอย่างเดียว ไม่แก้ย้อนหลัง) ·
   ค่าตั้งคุมเฉพาะ OCR — การแปลงบาทของใบต่างสกุลทำงานเสมอ · เทสต์ `PerLineWhtTests` · backlog ในเอกสารออกแบบ
-- **รอบ 205 W7 (2026-10-26 · `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W7 · คำตัดสินข้อ 162)** — (R-17) หน้ารีวิวสแกนมีคอลัมน์ "หัก ณ ที่จ่าย" ต่อบรรทัดเมื่อ `PerLineWhtEnabled`
+- **รอบ 205 W7 (2026-10-26 · `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W7 · คำตัดสินข้อ 162 · commit 0a74e86b)** — (R-17) หน้ารีวิวสแกนมีคอลัมน์ "หัก ณ ที่จ่าย" ต่อบรรทัดเมื่อ `PerLineWhtEnabled`
   (ค่าจาก `GET ocr/{id}/line-preview` → `OcrLinePreviewLineDto.WhtIncomeTypeCode/WhtAmount` ← `BuildScanLinesAsync` ตัวเดียวกับปุ่มสร้าง · หน้าไม่คำนวณ) · ผู้ใช้เลือกประเภทต่อบรรทัด →
   `POST line-fields {whtIncomeTypeCode}` → `ExtractedItemsJson` → `OcrLineWhtPlan.WithUserChoice` (ค่าผู้ใช้ชนะแผน · Σ ยังต้องอธิบายยอดหัวใบ) · (R-20) หัวใบไม่มีหัก + เกณฑ์ 1,000 ผ่าน ⇒
   `OcrLineWhtPlan.Suggest` → `[WHT-LINE-SUGGEST]` "⚙️ ระบบแนะนำ" (ไม่หักให้เอง · ไม่บล็อก) · (R-18) `AdjustCertsForCreditNoteAsync` ใบลดหนี้ต่างสกุลเทียบ 50 ทวิ เป็นบาทผ่าน `PerLineWht.ForDocument(cn)`/`DocumentWhtThb` ·

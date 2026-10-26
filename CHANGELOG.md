@@ -5543,4 +5543,4 @@ _รอบ 205 ทีม W7 (หัก ณ ที่จ่ายตามรา�
 (ข้อ 162) `CompanySettings.WhtFxRateBasis` (วันใบ=เดิม/วันจ่าย ป.132/2548) ตัวตัดสินเดียว `DocumentFx.WhtRateFor` ใช้ทั้งขา 2191x (`CreatePaymentJournalAsync` — AR/AP ตัดที่อัตราเอกสาร · ผลต่างส่วนภาษี → FX gain/loss เส้นเดิม)
 และ 50 ทวิ รายงวด (`PerLineWht.ForDocument(doc, whtFxRate)` — ใบบาทไม่รับ override) ⇒ เท่ากันถึงสตางค์ · `CompanySettings.FxBotRateType` (กลาง=เดิม/ซื้อถัวเฉลี่ย/ขายถัวเฉลี่ย) `DocumentFx.PickBotRate` ที่ `ResolveExchangeRateAsync` + OCR ·
 50 ทวิ ทุกใบบันทึก `ExchangeRateUsed/ExchangeRateBasis` · หน้าตั้งค่าบอกผลทางภาษีของแต่ละตัวเลือก · R-21 วิเคราะห์แล้ว**ไม่ merge** (TieOut ทำให้ 50 ทวิ = GL อยู่แล้ว · ต้องฝ่ายค้าน) ·
-เทสต์ `PerLineWhtTests` +14 (ทิศตรงข้าม: ใบบาท/ค่าเริ่มต้นไม่ขยับ) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · แตะภาษี — ยังไม่ผ่านฝ่ายค้าน · sha เติมในคอมมิตถัดไป_
+เทสต์ `PerLineWhtTests` +14 (ทิศตรงข้าม: ใบบาท/ค่าเริ่มต้นไม่ขยับ) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · แตะภาษี — ยังไม่ผ่านฝ่ายค้าน · commit 0a74e86b_

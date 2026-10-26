@@ -108,12 +108,12 @@
 | C16 | ดอกเบี้ย ผู้รับไม่รู้ชนิด (สแกน) | ตามหัวใบ (ไม่เดา 15/1) | ✅ |
 | C17 | ผู้รับต่างประเทศ ม.70 (ภ.ง.ด.54) ใบ USD | 50 ทวิ/ภ.ง.ด.54 เป็นบาท | ✅ (ผ่านเส้นเดียวกัน) |
 | C18 | สแกน: ยอดหักหัวใบไม่ได้พิมพ์ (มีแค่ข้อเสนอ) | ไม่หักให้เอง (เดิม) ⇒ ไม่มีแผน | ✅ (เดิม) |
-| C19 | ใบเบิกค่าใช้จ่ายพนักงาน (`expense.html`) | ประเภทเงินได้ต่อบรรทัด (`ExpenseClaimLine.IncomeTypeCode` · ว่าง = ตามหัวใบ) ไหลเข้า PV ⇒ 50 ทวิ แยกประเภท | ✅ รอบ 205 W7 (R-19) |
-| C20 | OCR หน้ารีวิว (ตาราง "รายการที่อ่านได้") แสดง/แก้อัตราต่อบรรทัดก่อนสร้าง | คอลัมน์ "หัก ณ ที่จ่าย" จาก line-preview (ค่าตั้งเปิด) · เลือกประเภทต่อบรรทัด = ค่าผู้ใช้ชนะแผน (Σ ยังต้องตรงหัวใบ) | ✅ รอบ 205 W7 (R-17) |
+| C19 | ใบเบิกค่าใช้จ่ายพนักงาน (`expense.html`) | ประเภทเงินได้ต่อบรรทัด (`ExpenseClaimLine.IncomeTypeCode` · ว่าง = ตามหัวใบ) ไหลเข้า PV ⇒ 50 ทวิ แยกประเภท | ✅ 0a74e86b รอบ 205 W7 (R-19) |
+| C20 | OCR หน้ารีวิว (ตาราง "รายการที่อ่านได้") แสดง/แก้อัตราต่อบรรทัดก่อนสร้าง | คอลัมน์ "หัก ณ ที่จ่าย" จาก line-preview (ค่าตั้งเปิด) · เลือกประเภทต่อบรรทัด = ค่าผู้ใช้ชนะแผน (Σ ยังต้องตรงหัวใบ) | ✅ 0a74e86b รอบ 205 W7 (R-17) |
 
 ## 8. Backlog (ยังไม่ทำ + เหตุผล)
 
-- ~~B-1~~ ✅ รอบ 205 W7 (R-17) — `OcrLinePreviewLineDto.WhtIncomeTypeCode/WhtAmount` (+ `SuggestedWht*` ของ B-6) · `OcrLinePreviewResponse.PerLineWhtEnabled` คุมคอลัมน์ใน `document-scan.html` ·
+- ~~B-1~~ ✅ 0a74e86b รอบ 205 W7 (R-17) — `OcrLinePreviewLineDto.WhtIncomeTypeCode/WhtAmount` (+ `SuggestedWht*` ของ B-6) · `OcrLinePreviewResponse.PerLineWhtEnabled` คุมคอลัมน์ใน `document-scan.html` ·
   ค่าทุกตัวจาก `BuildScanLinesAsync` ตัวเดียวกับปุ่ม "สร้างเอกสาร" (หน้าไม่คำนวณ) · round-trip: ผู้ใช้เลือกประเภทต่อบรรทัด → `POST line-fields {whtIncomeTypeCode}` →
   `OcrExtractedLineItem.WhtIncomeTypeCode` ("0" = ไม่หัก · "" = ตามระบบ · รหัสต้องชี้ขาดได้) → `OcrLineWhtPlan.WithUserChoice` (ค่าผู้ใช้ชนะผลจัดประเภท · Σ ยังต้องอธิบายยอดหัวใบ ไม่งั้น `[WHT-LINE-MISMATCH]`) ·
   `OcrLineItemDto.WhtIncomeTypeCode` echo ค่าที่เก็บ · ตัวจัดประเภทเป็นกฎ (ไม่มี AI) ⇒ ไม่มี feedback row ให้ `RecordUserChoiceAsync` — round-trip คือค่าที่เก็บบนสแกน
@@ -127,11 +127,11 @@
   (`PerLineWht.ForDocument(doc, whtFxRate)` — อัตราวันจ่ายไม่ใช้ยอดบาทที่พิมพ์เป็นฐาน) ⇒ เท่ากันถึงสตางค์ทั้งสองค่าตั้ง · ที่มาของอัตราบันทึกทุกใบ `WithholdingTaxCert.ExchangeRateUsed/ExchangeRateBasis` ·
   เทสต์ `WhtRateFor_*` · `ForDocument_whtRateOverride_*` · ⚠️ ยังไม่ผ่านฝ่ายค้าน
   เส้นรับ/จ่ายชำระมีผลต่าง FX ของยอดเจ้าหนี้อยู่แล้ว (`DocumentService` ~ บรรทัด 19880) แต่ฐาน WHT ยังใช้อัตราของใบ · รอนักบัญชียืนยันหลัก (ข้อ 4)
-- ~~B-4~~ ✅ รอบ 205 W7 (R-18) — `AdjustCertsForCreditNoteAsync`: ใบเดิม/ใบลดหนี้ทุกใบเป็นบาทผ่าน `PerLineWht.DocumentWhtThb` · บรรทัดลดผ่าน `PerLineWht.ForDocument(cn)` (เงินได้ = ฐาน + ออกแทน บาท) ·
+- ~~B-4~~ ✅ 0a74e86b รอบ 205 W7 (R-18) — `AdjustCertsForCreditNoteAsync`: ใบเดิม/ใบลดหนี้ทุกใบเป็นบาทผ่าน `PerLineWht.DocumentWhtThb` · บรรทัดลดผ่าน `PerLineWht.ForDocument(cn)` (เงินได้ = ฐาน + ออกแทน บาท) ·
   ใบบาทไม่ขยับ (เทสต์ `CreditNote_thb_ForDocument_returns_stored_amounts_exactly`)
-- ~~B-5~~ ✅ รอบ 205 W7 (R-19) — `ExpenseClaimLine.IncomeTypeCode` (+ migration `PerLineWhtStatements`) · DTO request/response echo · `expense.html` คอลัมน์ "ประเภทเงินได้" (ตารางจาก `/api/reference/income-types`) ·
+- ~~B-5~~ ✅ 0a74e86b รอบ 205 W7 (R-19) — `ExpenseClaimLine.IncomeTypeCode` (+ migration `PerLineWhtStatements`) · DTO request/response echo · `expense.html` คอลัมน์ "ประเภทเงินได้" (ตารางจาก `/api/reference/income-types`) ·
   ไหลเข้า `DocumentLineRequest.IncomeTypeCode` ของ PV ตอนอนุมัติ/จ่าย ⇒ `PerLineWht` ตัวเดียวอ่าน · ว่าง = ตามหัวใบ · รหัสชี้ขาดไม่ได้ = 400
-- ~~B-6~~ ✅ รอบ 205 W7 (R-20) — `OcrLineWhtPlan.Suggest` (pure): หัวใบไม่มีหัก + เกณฑ์ 1,000 ระดับใบผ่าน (`OcrWhtThresholdBase.Verdict == Meets`) ⇒ `[WHT-LINE-SUGGEST]` + `SuggestedWht*` บน preview
+- ~~B-6~~ ✅ 0a74e86b รอบ 205 W7 (R-20) — `OcrLineWhtPlan.Suggest` (pure): หัวใบไม่มีหัก + เกณฑ์ 1,000 ระดับใบผ่าน (`OcrWhtThresholdBase.Verdict == Meets`) ⇒ `[WHT-LINE-SUGGEST]` + `SuggestedWht*` บน preview
   ("⚙️ ระบบแนะนำ" ในหน้ารีวิว) · **ข้อเสนอเท่านั้น** — บรรทัดจริงยัง 0 · ไม่อยู่ใน `BlockingTags` (warn-gate · DOCTRINE 2.3) · หัวใบมีหักแล้วไม่ถูกเสนอซ้ำ (เทสต์ทิศตรงข้าม) · เฉพาะค่าตั้งเปิด
   (ระบบไม่หักให้เอง — คำตัดสินเดิม) · ต่อยอด `OcrMinorityWhtPart`
 - **B-7** ตาราง DTA (`DtaTreatyRates`) ยังว่างโดยตั้งใจ — ม.70 เต็มอัตราเสมอ (ไม่ใช่งานทีม F)
