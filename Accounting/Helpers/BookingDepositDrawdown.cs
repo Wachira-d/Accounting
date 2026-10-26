@@ -27,9 +27,9 @@ public sealed record OverdrawnEntry(Guid JournalEntryId, Guid AccountId, decimal
 ///
 /// <para><b>กติกา:</b>
 /// <list type="number">
-/// <item>เลขการจอง = เลขเต็มหลัง <c>RES-</c> หรือ <c>#</c> (<see cref="ExtractKeys"/> — "RES-149433-CHK" ⇒ 149433 · "RES-101-2609-0001" ⇒ 101-2609-0001 ·
-///   เทียบตรงตัว ไม่ใช่ substring)</item>
-/// <item>แยกยอดที่ตัด<b>ต่อการจองตามบรรทัด</b> (<see cref="AssignDrawdown"/>): บรรทัดระบุการจองเดียว ⇒ ของการจองนั้น · บรรทัดไม่ระบุ ⇒ ใช้หัว JE เมื่อหัวอ้าง
+/// <item>เลขการจอง = เลขเต็มหลัง <c>RES-</c> หรือ <c>#</c> (<see cref="ExtractKeys(string[])"/> — "RES-149433-CHK" ⇒ 149433 · "RES-101-2609-0001" ⇒ 101-2609-0001 ·
+///   เทียบตรงตัว ไม่ใช่ substring) · รูปแบบเพิ่มเติมที่เจ้าของตั้งต่อคีย์ integration (R-56 · <see cref="BookingRefPattern"/>) ใช้ผ่าน overload ที่รับ patterns</item>
+/// <item>แยกยอดที่ตัด<b>ต่อการจองตามบรรทัด</b> (<see cref="AssignDrawdown(IReadOnlyList{string}, IEnumerable{IncomingJournalLine}, Func{Guid, bool})"/>): บรรทัดระบุการจองเดียว ⇒ ของการจองนั้น · บรรทัดไม่ระบุ ⇒ ใช้หัว JE เมื่อหัวอ้าง
 ///   การจองเดียว · กำกวม (หลายการจอง) ⇒ <b>ไม่ตัดสิน</b>บรรทัดนั้น — night audit ที่รวมหลายการจองไม่ถูกปฏิเสธทั้งใบ (ฝ่ายค้านข้อ 1)</item>
 /// <item>ยอดคงเหลือ = Σ(Cr − Dr) ของบรรทัด "ที่อยู่ในสมุด" (<see cref="ReportableJournal.LedgerStatuses"/> — คู่กลับรายการหักล้าง) บนบัญชีเดียวกัน</item>
 /// <item>ตัดสินเฉพาะเมื่อพบ<b>เครดิตมัดจำ</b>ที่ผูกการจองนั้นอย่างน้อย 1 ครั้ง (<see cref="HasDepositCredit"/> · ไม่นับเครดิตของตัวกลับรายการ) —
@@ -54,10 +54,8 @@ public static class BookingDepositDrawdown
     /// <summary>ประเภทเหตุการณ์ในประวัติ sync ของ JE ที่ระบบภายนอกส่งผ่าน <c>POST /api/integration/journals</c> — ตัวตั้งเดียว</summary>
     public const string JournalApiEventType = "journal.created";
 
-    private const string KeyPattern = @"(\d{3,}(?:-\d+)*)(?![\d])";
-    private static readonly Regex ResRef = new(@"(?<![A-Za-z0-9])RES-?" + KeyPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-    private static readonly Regex BookingHash = new(@"(?:การจอง|เลขจอง|booking|reservation)\s*(?:no\.?|เลขที่)?\s*#\s*" + KeyPattern,
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    // รูปแบบเลขอ้างอิง (RES-… · "การจอง #…" + ที่เจ้าของตั้งเพิ่มต่อคีย์ integration — R-56) อยู่ที่ตัวตั้งเดียว Helpers/BookingRefPattern
+    // overload ที่ไม่รับ patterns = ค่าเริ่มต้น 2 รูปเดิม (ผลเทสต์เดิมเท่าเดิม) · ฝั่งฐาน (BookingDepositLedger) ส่งชุดที่รวมค่าตั้งของบริษัทมา
 
     /// <summary>หมายเหตุ/คำเตือนของ JE จาก API ที่มีภาษีขายโดยไม่มีใบกำกับภาษีในระบบ (ม.86/4 · ม.87)</summary>
     public static string OutputVatNoInvoiceNote(decimal outputVat)
@@ -67,25 +65,16 @@ public static class BookingDepositDrawdown
 
     /// <summary>เลขการจองทุกตัวที่ข้อความอ้าง (เลขเต็ม · ไม่ fuzzy) — "RES-149433-CHK" ⇒ 149433 · "การจอง #149433 (คุณปราณี)" ⇒ 149433 ·
     /// "RES-101-2609-0001" ⇒ 101-2609-0001 (ไม่ใช่ 101) · ข้อความที่ไม่อ้างการจอง ⇒ ว่าง · pure</summary>
-    public static IReadOnlyList<string> ExtractKeys(params string?[] texts)
-    {
-        var keys = new List<string>();
-        foreach (var t in texts)
-        {
-            if (string.IsNullOrWhiteSpace(t)) continue;
-            foreach (Match m in ResRef.Matches(t)) Add(m.Groups[1].Value);
-            foreach (Match m in BookingHash.Matches(t)) Add(m.Groups[1].Value);
-        }
-        return keys;
+    public static IReadOnlyList<string> ExtractKeys(params string?[] texts) => BookingRefPattern.ExtractKeys(BookingRefPattern.Default, texts);
 
-        void Add(string k)
-        {
-            if (k.Length > 0 && !keys.Contains(k)) keys.Add(k);
-        }
-    }
+    /// <summary>เหมือน <see cref="ExtractKeys(string[])"/> แต่ใช้ชุดรูปแบบของบริษัท (ค่าเริ่มต้น + ที่ตั้งเพิ่ม — <see cref="BookingRefPattern.Merge"/>)</summary>
+    public static IReadOnlyList<string> ExtractKeys(IReadOnlyList<Regex> patterns, params string?[] texts) => BookingRefPattern.ExtractKeys(patterns, texts);
 
     /// <summary>ข้อความชุดนี้อ้างการจอง <paramref name="key"/> ไหม (ตรงตัว — 149433 ไม่ตรง 1494330 / 149433-2)</summary>
     public static bool Mentions(string key, params string?[] texts) => ExtractKeys(texts).Contains(key);
+
+    /// <summary><see cref="Mentions(string, string[])"/> ด้วยชุดรูปแบบของบริษัท</summary>
+    public static bool Mentions(IReadOnlyList<Regex> patterns, string key, params string?[] texts) => ExtractKeys(patterns, texts).Contains(key);
 
     /// <summary>เลขจองแบบเต็มที่เก็บใน <c>Document.BookingNumber</c> (มี index) — ตัวสะกดที่ระบบภายนอกใช้</summary>
     public static IReadOnlyList<string> BookingNumberForms(string key) => new[] { "RES-" + key, "RES" + key, key };
@@ -112,13 +101,18 @@ public static class BookingDepositDrawdown
     /// ไม่ระบุ ⇒ หัว JE ถ้าหัวอ้างการจองเดียว · กำกวม ⇒ ไม่นับ (ไม่ตัดสิน) · คืนเฉพาะการจองที่มี Dr สุทธิ &gt; เศษสตางค์ · pure</summary>
     public static IReadOnlyDictionary<string, IReadOnlyDictionary<Guid, decimal>> AssignDrawdown(
         IReadOnlyList<string?> headerTexts, IEnumerable<IncomingJournalLine> lines, Func<Guid, bool> isDepositAccount)
+        => AssignDrawdown(BookingRefPattern.Default, headerTexts, lines, isDepositAccount);
+
+    /// <summary><see cref="AssignDrawdown(IReadOnlyList{string}, IEnumerable{IncomingJournalLine}, Func{Guid, bool})"/> ด้วยชุดรูปแบบของบริษัท (ค่าเริ่มต้น + ที่ตั้งเพิ่ม)</summary>
+    public static IReadOnlyDictionary<string, IReadOnlyDictionary<Guid, decimal>> AssignDrawdown(IReadOnlyList<Regex> patterns,
+        IReadOnlyList<string?> headerTexts, IEnumerable<IncomingJournalLine> lines, Func<Guid, bool> isDepositAccount)
     {
-        var headerKeys = ExtractKeys(headerTexts.ToArray());
+        var headerKeys = ExtractKeys(patterns, headerTexts.ToArray());
         var acc = new Dictionary<string, Dictionary<Guid, decimal>>();
         foreach (var l in lines)
         {
             if (!isDepositAccount(l.AccountId)) continue;
-            var lineKeys = ExtractKeys(l.Description);
+            var lineKeys = ExtractKeys(patterns, l.Description);
             string? key = lineKeys.Count == 1 ? lineKeys[0]
                 : lineKeys.Count == 0 && headerKeys.Count == 1 ? headerKeys[0]
                 : null;
@@ -139,7 +133,7 @@ public static class BookingDepositDrawdown
         => lines.GroupBy(l => l.AccountId).ToDictionary(g => g.Key, g => g.Sum(l => l.Credit - l.Debit));
 
     /// <summary>JE ใหม่ที่จะลง: บัญชีมัดจำที่ถูกตัดเกินยอดคงเหลือของการจองหนึ่ง (ว่าง = ผ่าน/ไม่ตัดสิน)</summary>
-    /// <param name="incomingNetDebit">Dr − Cr สุทธิต่อบัญชีมัดจำของ JE ใหม่ ที่เป็นของการจองนี้ (<see cref="AssignDrawdown"/>)</param>
+    /// <param name="incomingNetDebit">Dr − Cr สุทธิต่อบัญชีมัดจำของ JE ใหม่ ที่เป็นของการจองนี้ (<see cref="AssignDrawdown(IReadOnlyList{string}, IEnumerable{IncomingJournalLine}, Func{Guid, bool})"/>)</param>
     /// <param name="ledger">บรรทัดที่อยู่ในสมุดของการจองนี้ (บัญชีมัดจำ)</param>
     public static IReadOnlyList<DepositShortfall> EvaluateDrawdown(IReadOnlyDictionary<Guid, decimal> incomingNetDebit, IEnumerable<DepositLedgerLine> ledger)
     {

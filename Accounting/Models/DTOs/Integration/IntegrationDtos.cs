@@ -15,14 +15,20 @@ public record IntegrationResponse(
     bool IsLegacyKey = false, DateTime? LegacyDeprecatesAt = null, bool LegacyPrivilegeActive = false,
     bool EffectiveCanRead = true, bool EffectiveCanWrite = false, bool EffectiveCanDelete = false,
     // จำนวนวันที่เหลือก่อนคีย์รุ่นเก่าหมดช่วงผ่อนผัน (server คำนวณ · null = ไม่ใช่คีย์รุ่นเก่า) — ฝ่ายค้านรอบ 193 P5
-    int? LegacyDaysRemaining = null);
+    int? LegacyDaysRemaining = null,
+    // R-56 (ทีม W10 2026-10-26): รูปแบบเลขอ้างอิงการจองเพิ่มเติมของคีย์นี้ (regex มีกลุ่ม (?<key>…)) — echo ค่าที่เก็บ · ว่าง = ใช้ค่าเริ่มต้นล้วน
+    IReadOnlyList<string>? BookingRefPatterns = null,
+    // รูปเริ่มต้นที่ด่านรู้จักเสมอ (Helpers/BookingRefPattern.DefaultSources) — server ส่งให้หน้าแสดง หน้าไม่มีสำเนา
+    IReadOnlyList<string>? DefaultBookingRefPatterns = null);
 
 /// <remarks>สิทธิ์ที่ไม่ได้ส่งมา = อ่านอย่างเดียว (<c>IntegrationKeyPolicy.ScopesForNewKey</c>) — ห้ามตีความเป็น "ให้ทั้งหมด"</remarks>
 public record CreateIntegrationRequest(
     string SystemName, string SystemType, string? SystemVersion, string? BaseUrl,
     int RateLimitPerMinute = 60,
     string? WebhookUrl = null, bool WebhookEnabled = false,
-    bool? CanRead = null, bool? CanWrite = null, bool? CanDelete = null);
+    bool? CanRead = null, bool? CanWrite = null, bool? CanDelete = null,
+    // R-56: regex เพิ่มเติม (ต้องมีกลุ่ม (?<key>…)) · null/ว่าง = ค่าเริ่มต้นล้วน · ผิด ⇒ 400 INT-BOOKING-REF-PATTERN ไม่บันทึก
+    IReadOnlyList<string>? BookingRefPatterns = null);
 
 public record IntegrationCreatedResponse(
     Guid Id, string SystemName, string ApiKey, string ApiKeyPrefix, string? SecretKey, DateTime CreatedAt);
@@ -33,7 +39,9 @@ public record UpdateIntegrationRequest(
     string? SystemName, string? SystemType, string? SystemVersion, string? BaseUrl,
     bool? IsActive, int? RateLimitPerMinute,
     string? WebhookUrl, bool? WebhookEnabled,
-    bool? CanRead = null, bool? CanWrite = null, bool? CanDelete = null);
+    bool? CanRead = null, bool? CanWrite = null, bool? CanDelete = null,
+    // R-56: null = ไม่แตะ · [] = ล้าง (กลับไปใช้ค่าเริ่มต้น) · ผิด ⇒ 400 INT-BOOKING-REF-PATTERN ไม่บันทึก
+    IReadOnlyList<string>? BookingRefPatterns = null);
 
 // ===== Account Mapping =====
 

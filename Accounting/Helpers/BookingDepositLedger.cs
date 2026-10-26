@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Text.RegularExpressions;
 using Accounting.Data;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -63,7 +64,7 @@ public sealed class BookingDepositSnapshot
 /// **ตัวโหลดข้อเท็จจริง "บัญชีมัดจำของการจอง" — ตัวเดียว** ของด่าน <see cref="BookingDepositDrawdown"/> (ทีม S 2026-10-26 · หลังฝ่ายค้าน)
 ///
 /// <para>ผูก JE กับการจองแบบ<b>ตรงตัว</b>: ค้นในฐานด้วย <c>Document.BookingNumber ==</c> (มี index) หรือข้อความที่มีเลขเต็ม (LIKE ใช้กรองหยาบเท่านั้น)
-/// แล้วยืนยันด้วย <see cref="BookingDepositDrawdown.ExtractKeys"/> (เลขเต็ม — RES-101-2609-0001 ไม่ปน 101) · ตัวกลับรายการของ JE เหล่านั้นทุกชั้น ·
+/// แล้วยืนยันด้วย <c>BookingDepositDrawdown.ExtractKeys</c> ตามชุดรูปแบบของบริษัท (<see cref="PatternsAsync"/> — ค่าเริ่มต้น + ที่ตั้งต่อคีย์ · R-56) (เลขเต็ม — RES-101-2609-0001 ไม่ปน 101) · ตัวกลับรายการของ JE เหล่านั้นทุกชั้น ·
 /// นับบรรทัดด้วย <see cref="ReportableJournal.WhereInLedger(IQueryable{JournalEntryLine})"/> · ไม่มี Take ที่ตัดผลเงียบ — เกินเพดาน ⇒ <c>Truncated</c> (ไม่ตัดสิน) ·
 /// หลายการจองโหลดเป็นชุดเดียว (ชุดละ <see cref="KeyChunk"/> เลข) · ทุก query กรอง <c>CompanyId</c></para>
 /// </summary>
@@ -85,19 +86,37 @@ public static class BookingDepositLedger
         return kinds.Concat(props).Select(c => c.Trim()).Where(c => c.Length > 0).ToHashSet();
     }
 
+    /// <summary>ชุดรูปแบบเลขอ้างอิงการจองของบริษัท — ค่าเริ่มต้น 2 รูป + ที่เจ้าของตั้งเพิ่มในทุกคีย์ integration ของบริษัท
+    /// (<c>ExternalIntegration.BookingRefPatternsJson</c> · รวมคีย์ที่ปิดใช้แล้วด้วย — มัดจำที่ลงไว้สมัยคีย์นั้นยังต้องถูกเห็น · ไม่รวมที่ลบ) ·
+    /// ตัวตั้ง/ตัวรวม = <see cref="BookingRefPattern.Merge"/> (R-56 · ทีม W10 2026-10-26) · ทุกเส้นของด่านอ่านจากที่นี่ที่เดียว</summary>
+    public static async Task<IReadOnlyList<Regex>> PatternsAsync(AccountingDbContext db, Guid companyId, CancellationToken ct = default)
+    {
+        var jsons = await db.ExternalIntegrations.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && !i.IsDeleted && i.BookingRefPatternsJson != null)
+            .Select(i => i.BookingRefPatternsJson)
+            .ToListAsync(ct);
+        return BookingRefPattern.Merge(jsons);
+    }
+
     public static async Task<IReadOnlyDictionary<string, BookingDepositSnapshot>> LoadManyAsync(
         AccountingDbContext db, Guid companyId, IReadOnlyCollection<string> keys, CancellationToken ct = default)
+        => await LoadManyAsync(db, companyId, keys, await PatternsAsync(db, companyId, ct), ct);
+
+    /// <summary>เหมือน <see cref="LoadManyAsync(AccountingDbContext, Guid, IReadOnlyCollection{string}, CancellationToken)"/> แต่ผู้เรียกส่งชุดรูปแบบที่โหลดไว้แล้ว
+    /// (ด่าน/รายงานที่ใช้ชุดเดียวกันทั้งคำขอ — ไม่โหลดซ้ำ)</summary>
+    public static async Task<IReadOnlyDictionary<string, BookingDepositSnapshot>> LoadManyAsync(
+        AccountingDbContext db, Guid companyId, IReadOnlyCollection<string> keys, IReadOnlyList<Regex> patterns, CancellationToken ct = default)
     {
         var result = new Dictionary<string, BookingDepositSnapshot>();
         var configured = await ConfiguredDepositCodesAsync(db, companyId, ct);
         foreach (var chunk in keys.Distinct().Chunk(KeyChunk))
-            foreach (var kv in await LoadChunkAsync(db, companyId, chunk, configured, ct))
+            foreach (var kv in await LoadChunkAsync(db, companyId, chunk, configured, patterns, ct))
                 result[kv.Key] = kv.Value;
         return result;
     }
 
     private static async Task<Dictionary<string, BookingDepositSnapshot>> LoadChunkAsync(
-        AccountingDbContext db, Guid companyId, string[] keys, IReadOnlyCollection<string> configured, CancellationToken ct)
+        AccountingDbContext db, Guid companyId, string[] keys, IReadOnlyCollection<string> configured, IReadOnlyList<Regex> patterns, CancellationToken ct)
     {
         var keySet = keys.ToHashSet();
         var bookingNumbers = keys.SelectMany(BookingDepositDrawdown.BookingNumberForms).ToList();
@@ -114,7 +133,7 @@ public static class BookingDepositLedger
         var docKeys = new Dictionary<Guid, HashSet<string>>();
         foreach (var d in docRows)
         {
-            var ks = BookingDepositDrawdown.ExtractKeys(d.BookingNumber, d.Reference, d.Notes).Where(keySet.Contains).ToHashSet();
+            var ks = BookingDepositDrawdown.ExtractKeys(patterns, d.BookingNumber, d.Reference, d.Notes).Where(keySet.Contains).ToHashSet();
             if (d.BookingNumber != null && keySet.Contains(d.BookingNumber.Trim())) ks.Add(d.BookingNumber.Trim());
             if (ks.Count > 0) docKeys[d.Id] = ks;
         }
@@ -133,7 +152,7 @@ public static class BookingDepositLedger
         var entryKeys = new Dictionary<Guid, HashSet<string>>();
         foreach (var j in directRows)
         {
-            var ks = BookingDepositDrawdown.ExtractKeys(j.Reference, j.Description).Where(keySet.Contains).ToHashSet();
+            var ks = BookingDepositDrawdown.ExtractKeys(patterns, j.Reference, j.Description).Where(keySet.Contains).ToHashSet();
             if (j.SourceDocumentId is Guid s && docKeys.TryGetValue(s, out var dk)) ks.UnionWith(dk);
             if (ks.Count == 0) continue;
             entries[j.Id] = new BookingJournalFact(j.Id, j.EntryNumber, j.Status, j.OriginalEntryId, j.SourceDocumentId, j.IsAutoGenerated, j.EntryDate);
@@ -206,7 +225,7 @@ public static class BookingDepositLedger
                 Truncated = truncated,
                 // JE ที่หัวอ้างหลายการจอง (night audit) ⇒ นับเฉพาะบรรทัดที่ระบุการจองนี้ (ฝ่ายค้านข้อ 1 — ฝั่งยอดเดิมต้องแยกแบบเดียวกับฝั่งรับ)
                 Lines = depositLines.Where(l => mineIds.Contains(l.JournalEntryId)
-                        && (entryKeys[l.JournalEntryId].Count == 1 || BookingDepositDrawdown.Mentions(key, l.Description)))
+                        && (entryKeys[l.JournalEntryId].Count == 1 || BookingDepositDrawdown.Mentions(patterns, key, l.Description)))
                     .Select(l => new DepositLedgerLine(l.JournalEntryId, entries[l.JournalEntryId].EntryNumber, l.AccountId,
                         l.DebitAmount, l.CreditAmount, entries[l.JournalEntryId].EntryDate, entries[l.JournalEntryId].OriginalEntryId != null))
                     .ToList(),
@@ -221,16 +240,18 @@ public static class BookingDepositLedger
     }
 
     /// <summary>ด่านฝั่งรับ JE ใหม่ (จากระบบภายนอก — สมุดรายวัน · สรุปรายวัน): ข้อความปฏิเสธ (null = ผ่าน/ไม่เกี่ยว) ·
-    /// แยกยอดต่อการจองตามบรรทัด (<see cref="BookingDepositDrawdown.AssignDrawdown"/>) · อยู่ในธุรกรรม ⇒ ล็อกต่อการจอง
+    /// แยกยอดต่อการจองตามบรรทัด (<c>BookingDepositDrawdown.AssignDrawdown</c> ด้วยชุดรูปแบบของบริษัท) · อยู่ในธุรกรรม ⇒ ล็อกต่อการจอง
     /// (<see cref="AdvisoryLockKey.BookingDeposit"/>) ก่อนอ่านยอด กันสองคำขอพร้อมกันผ่านทั้งคู่ · <paramref name="accounts"/> = ผังของบรรทัด (tenant แล้ว)</summary>
     public static async Task<string?> DrawdownProblemAsync(AccountingDbContext db, Guid companyId,
         IReadOnlyList<JournalEntryLine> lines, IReadOnlyDictionary<Guid, ChartOfAccount> accounts,
         string? reference, string? description, CancellationToken ct = default)
     {
         var configured = await ConfiguredDepositCodesAsync(db, companyId, ct);
+        // รูปแบบเลขอ้างอิง = ค่าเริ่มต้น + ที่ตั้งต่อคีย์ของบริษัท (R-56) — ชุดเดียวทั้งฝั่งแยกยอดที่เข้ามาและฝั่งโหลดยอดเดิม (ห้ามต่างกัน)
+        var patterns = await PatternsAsync(db, companyId, ct);
         bool IsDep(Guid id) => accounts.TryGetValue(id, out var a)
             && BookingDepositDrawdown.IsDepositLiabilityAccount(a.AccountType, a.AccountCode, a.AccountName, configured);
-        var perKey = BookingDepositDrawdown.AssignDrawdown(new[] { reference, description },
+        var perKey = BookingDepositDrawdown.AssignDrawdown(patterns, new[] { reference, description },
             lines.Select(l => new IncomingJournalLine(l.AccountId, l.DebitAmount, l.CreditAmount, l.Description)), IsDep);
         if (perKey.Count == 0) return null;   // ไม่ได้ตัดมัดจำของการจองที่ระบุชัด ⇒ ไม่แตะ
 
@@ -239,7 +260,7 @@ public static class BookingDepositLedger
                 await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
                     new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.BookingDeposit, key) }, ct);
 
-        var snaps = await LoadManyAsync(db, companyId, perKey.Keys.ToList(), ct);
+        var snaps = await LoadManyAsync(db, companyId, perKey.Keys.ToList(), patterns, ct);
         foreach (var (key, incoming) in perKey)
         {
             if (!snaps.TryGetValue(key, out var snap) || snap.Truncated) continue;
@@ -258,9 +279,10 @@ public static class BookingDepositLedger
         IReadOnlyCollection<Guid> removedRootIds, string?[] texts, string what, CancellationToken ct = default)
     {
         if (removedRootIds.Count == 0) return null;
-        var keys = BookingDepositDrawdown.ExtractKeys(texts);
+        var patterns = await PatternsAsync(db, companyId, ct);
+        var keys = BookingDepositDrawdown.ExtractKeys(patterns, texts);
         if (keys.Count == 0) return null;
-        var snaps = await LoadManyAsync(db, companyId, keys, ct);
+        var snaps = await LoadManyAsync(db, companyId, keys, patterns, ct);
         foreach (var key in keys)
         {
             if (!snaps.TryGetValue(key, out var snap) || snap.Truncated) continue;

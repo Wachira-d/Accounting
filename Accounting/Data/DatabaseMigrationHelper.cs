@@ -3430,6 +3430,8 @@ public static class DatabaseMigrationHelper
             // LegacyGraceDays) · แถวที่มีอยู่ ณ วันเพิ่มคอลัมน์ = คีย์รุ่นเก่า (สิทธิ์เต็มจนถึงวันเลิกใช้) ·
             // idempotent: ADD เป็น no-op เมื่อรันซ้ำ และ UPDATE แตะเฉพาะแถวรุ่นเก่าที่ยังไม่มีวัน
             .. Accounting.Helpers.IntegrationKeyPolicy.MigrationStatements(),
+            // ── รูปแบบเลขอ้างอิงการจองเพิ่มเติมต่อคีย์ integration (R-56 · ทีม W10 2026-10-26 · Helpers/BookingRefPattern) — NULL = ค่าเริ่มต้นล้วน ──
+            """ALTER TABLE "ExternalIntegrations" ADD COLUMN IF NOT EXISTS "BookingRefPatternsJson" text NULL;""",
             // ===== Bank reconciliation: rejected-match memory + audit log =====
             // New tables; CREATE IF NOT EXISTS so existing DBs gain them on
             // first startup after deploy (the GenerateCreateScript path also

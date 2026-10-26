@@ -9449,6 +9449,48 @@ RULES += [
          why=_S_WHY + "ตัวกระทบภาษี-GL ระบุ JE จาก API ที่มีภาษีขายไม่มีใบกำกับ"),
 ]
 
+# ── ทีม W10 2026-10-26 (R-56): รูปแบบเลขอ้างอิงการจองตั้งค่าได้ต่อคีย์ integration — ด่านทุกเส้นต้องใช้ชุดเดียวจาก BookingDepositLedger.PatternsAsync ──
+_W10_WHY = "ทีม W10 2026-10-26 (R-56 pattern ตั้งค่าได้): "
+RULES += [
+    dict(file="Helpers/BookingDepositLedger.cs", method="PatternsAsync",
+         must=["i.CompanyId == companyId", "BookingRefPattern.Merge("],
+         forbid=["i.IsActive"],
+         why=_W10_WHY + "ชุดรูปแบบ = ค่าเริ่มต้น + ทุกคีย์ของบริษัท (tenant · รวมคีย์ที่ปิดใช้แล้ว — มัดจำสมัยคีย์นั้นยังต้องถูกเห็น) · ตัวรวมตัวเดียว"),
+    dict(file="Helpers/BookingDepositLedger.cs", method="DrawdownProblemAsync",
+         must=["PatternsAsync("],
+         before=[("PatternsAsync(", "BookingDepositDrawdown.AssignDrawdown(")],
+         forbid=["BookingRefPattern.Default"],
+         why=_W10_WHY + "ฝั่งรับ JE แยกยอดด้วยชุดรูปแบบของบริษัท (ไม่ใช่ค่าเริ่มต้นล้วน) — ไม่งั้นมัดจำที่ลงด้วยรูปที่ตั้งเพิ่มถูกมองไม่เห็น"),
+    dict(file="Helpers/BookingDepositLedger.cs", method="RemovalProblemAsync",
+         must=["PatternsAsync("],
+         before=[("PatternsAsync(", "BookingDepositDrawdown.ExtractKeys(")],
+         forbid=["BookingRefPattern.Default"],
+         why=_W10_WHY + "ทิศกลับใช้ชุดรูปแบบเดียวกับฝั่งรับ (ใบมัดจำ BK-… ที่ถูกตัดแล้วต้องถูกบล็อกเหมือน RES-…)"),
+    dict(file="Helpers/BookingDepositLedger.cs", method="LoadChunkAsync",
+         must=["BookingDepositDrawdown.ExtractKeys(patterns,", "BookingDepositDrawdown.Mentions(patterns,"],
+         why=_W10_WHY + "ตัวโหลดยอดเดิมใช้ชุดรูปแบบที่ส่งมา — ห้ามกลับไปใช้ overload ค่าเริ่มต้น (ฝั่งยอดเดิมกับฝั่งรับต้องเห็นเท่ากัน)"),
+    dict(file=INTEG, method="CreateIntegrationAsync",
+         must=["ValidatedBookingRefPatternsJson("],
+         before=[("ValidatedBookingRefPatternsJson(", "_db.SaveChangesAsync(")],
+         why=_W10_WHY + "regex ที่ผิดต้องถูกปฏิเสธ (400 + ข้อความ) ก่อนบันทึก — ไม่เก็บค่าตั้งที่ทำให้ด่านเพี้ยน"),
+    dict(file=INTEG, method="UpdateIntegrationAsync",
+         must=["ValidatedBookingRefPatternsJson("],
+         must_re=[r"if\s*\(\s*request\.BookingRefPatterns\s*!=\s*null\s*\)"],
+         before=[("ValidatedBookingRefPatternsJson(", "_db.SaveChangesAsync(")],
+         why=_W10_WHY + "null = ไม่แตะ (แก้ชื่อคีย์ต้องไม่ล้างรูปแบบเงียบ ๆ) · [] = ล้าง · ผิด ⇒ 400 ก่อน SaveChanges"),
+    dict(file=INTEG, method="ToResponse",
+         must=["BookingRefPatterns:", "DefaultBookingRefPatterns:", "BookingRefPattern.DefaultSources"],
+         why=_W10_WHY + "เก็บแล้วต้อง echo กลับ (ฟอร์มแก้ไข hydrate) + รูปเริ่มต้นมาจาก server (หน้าไม่มีสำเนา)"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadBookingDepositOverdrawnAsync",
+         must=["BookingDepositLedger.PatternsAsync(", "BookingDepositDrawdown.ExtractKeys(patterns,"],
+         why=_W10_WHY + "รายงานใช้ชุดรูปแบบเดียวกับด่าน"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadApiJournalDepositDrawnWithoutBookingRefAsync",
+         must=["BookingDepositLedger.PatternsAsync(", "BookingDepositDrawdown.JournalApiEventType", "BookingDepositDrawdown.IsDepositLiabilityAccount(",
+               "s.CompanyId == companyId", "j.CompanyId == companyId", "a.CompanyId == companyId", "j.EntryDate >= since"],
+         forbid=["SaveChangesAsync(", "ReverseJournalEntryAsync("],
+         why=_W10_WHY + "G3: JE จาก API ที่ตัดผังมัดจำแต่ไม่อ้างการจองรูปที่รู้จัก — รายงานอ่านอย่างเดียว · tenant ทุก query"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

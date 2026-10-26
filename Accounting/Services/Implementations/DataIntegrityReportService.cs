@@ -39,7 +39,9 @@ public sealed record DataIntegrityReport(
     // ทีม S 2026-10-26 (การจอง #149433) — JE ที่ตัดมัดจำ/รับล่วงหน้าของการจองเกินยอดคงเหลือ (มัดจำถูกยกเลิก/กลับรายการแล้ว) · อ่านอย่างเดียว · ลิงก์ไปกลับรายการ
     List<DataIntegritySuspect>? BookingDepositOverdrawnJournals = null,
     // ทีม S 2026-10-26 ข้อ 3 — JE จาก API ที่มีภาษีขาย (21911) โดยไม่มีใบกำกับภาษีในระบบรองรับ · อ่านอย่างเดียว
-    List<DataIntegritySuspect>? ApiJournalOutputVatWithoutInvoice = null)
+    List<DataIntegritySuspect>? ApiJournalOutputVatWithoutInvoice = null,
+    // ทีม W10 2026-10-26 (R-56 · G3) — JE จาก API ที่ตัดผังมัดจำ/รับล่วงหน้าโดยไม่อ้างเลขการจองรูปที่ด่านรู้จัก (ด่าน INT-DEPOSIT-OVERDRAW ตรวจไม่ได้ ⇒ ปล่อยผ่านตั้งใจ) · อ่านอย่างเดียว
+    List<DataIntegritySuspect>? ApiJournalDepositDrawnWithoutBookingRef = null)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -50,7 +52,8 @@ public sealed record DataIntegrityReport(
         + OcrLineDiscountWouldChangeOnResave.Count + VoidedPayrollRunsWithIssuedWhtCerts.Count
         + OpeningRollMismatches.Count + UnlinkedImportedAccounts.Count + TemplateLeafImportedChildren.Count
         + (ForeignCurrencyWhtCertsNotInBaht?.Count ?? 0)
-        + (BookingDepositOverdrawnJournals?.Count ?? 0) + (ApiJournalOutputVatWithoutInvoice?.Count ?? 0);
+        + (BookingDepositOverdrawnJournals?.Count ?? 0) + (ApiJournalOutputVatWithoutInvoice?.Count ?? 0)
+        + (ApiJournalDepositDrawnWithoutBookingRef?.Count ?? 0);
 }
 
 /// <summary>
@@ -178,8 +181,9 @@ public class DataIntegrityReportService
         var foreignCerts = await LoadForeignCurrencyWhtCertsAsync(companyId);
         var overdrawn = await LoadBookingDepositOverdrawnAsync(companyId);
         var apiVat = await LoadApiJournalOutputVatAsync(companyId);
+        var apiNoRef = await LoadApiJournalDepositDrawnWithoutBookingRefAsync(companyId);
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
-            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat);
+            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, apiNoRef);
     }
 
     /// <summary>ทีม S 2026-10-26 (ผู้ใช้รายงาน · การจอง #149433 · หลักการ #9) — JE สมุดรายวัน (ไม่มีเอกสารต้นทาง · ยังมีผล) ที่ตัดบัญชีมัดจำ/รับล่วงหน้าของการจอง
@@ -190,6 +194,8 @@ public class DataIntegrityReportService
         // ฝ่ายค้านข้อ 5: จำกัดช่วง 24 เดือนล่าสุด (ข้อมูลค้างที่ยังแก้ได้ในงวดเปิด/ปีที่ยังไม่ปิด) · โหลดยอดของทุกการจองเป็นชุดเดียว (LoadManyAsync)
         var since = DateTime.UtcNow.Date.AddMonths(-24);
         var configured = await Accounting.Helpers.BookingDepositLedger.ConfiguredDepositCodesAsync(_db, companyId);
+        // R-56: ชุดรูปแบบเลขอ้างอิงของบริษัท (ค่าเริ่มต้น + ที่ตั้งต่อคีย์) — ตัวเดียวกับด่านฝั่งรับ
+        var patterns = await Accounting.Helpers.BookingDepositLedger.PatternsAsync(_db, companyId);
         var cand = (await (
                 from l in _db.JournalEntryLines.AsNoTracking()
                 join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
@@ -203,12 +209,12 @@ public class DataIntegrityReportService
             .Where(x => Accounting.Helpers.BookingDepositDrawdown.IsDepositLiabilityAccount(x.AccountType, x.AccountCode, x.AccountName, configured))
             .ToList();
         var candByKey = cand
-            .SelectMany(x => Accounting.Helpers.BookingDepositDrawdown.ExtractKeys(x.LineDesc, x.Reference, x.Description).Select(k => (Key: k, Row: x)))
+            .SelectMany(x => Accounting.Helpers.BookingDepositDrawdown.ExtractKeys(patterns, x.LineDesc, x.Reference, x.Description).Select(k => (Key: k, Row: x)))
             .GroupBy(t => t.Key)
             .Take(500)
             .ToDictionary(g => g.Key, g => g.Select(t => t.Row).ToList());
         if (candByKey.Count == 0) return new List<DataIntegritySuspect>();
-        var snaps = await Accounting.Helpers.BookingDepositLedger.LoadManyAsync(_db, companyId, candByKey.Keys.ToList());
+        var snaps = await Accounting.Helpers.BookingDepositLedger.LoadManyAsync(_db, companyId, candByKey.Keys.ToList(), patterns);
         var result = new List<DataIntegritySuspect>();
         foreach (var (key, rows) in candByKey)
         {
@@ -229,6 +235,46 @@ public class DataIntegrityReportService
             }
         }
         return result.GroupBy(r => (r.Id, r.Detail)).Select(g => g.First()).OrderBy(r => r.Date).ThenBy(r => r.Number).ToList();
+    }
+
+    /// <summary>ทีม W10 2026-10-26 (R-56 · G3 "ไม่รู้ = ปล่อยผ่าน + รายงาน") — JE ที่ระบบภายนอกส่งผ่าน <c>POST /api/integration/journals</c> ซึ่งยังมีผล
+    /// และ<b>เดบิต</b>บัญชีมัดจำ/รับล่วงหน้า แต่ไม่มีเลขอ้างอิงการจองในรูปที่ด่านรู้จัก (ค่าเริ่มต้น + ที่ตั้งต่อคีย์ — <see cref="Accounting.Helpers.BookingDepositLedger.PatternsAsync"/>)
+    /// ⇒ ด่าน INT-DEPOSIT-OVERDRAW ไม่ได้ตรวจรายการนี้ (ตั้งใจ) · ทางไปต่อ = ตั้งรูปแบบเพิ่มที่หน้า Integration หรือให้ระบบต้นทางใส่เลขการจอง · <b>อ่านอย่างเดียว</b></summary>
+    private async Task<List<DataIntegritySuspect>> LoadApiJournalDepositDrawnWithoutBookingRefAsync(Guid companyId)
+    {
+        var since = DateTime.UtcNow.Date.AddMonths(-24);
+        var configured = await Accounting.Helpers.BookingDepositLedger.ConfiguredDepositCodesAsync(_db, companyId);
+        var patterns = await Accounting.Helpers.BookingDepositLedger.PatternsAsync(_db, companyId);
+        var apiJeIds = _db.IntegrationSyncLogs.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.EventType == Accounting.Helpers.BookingDepositDrawdown.JournalApiEventType
+                && s.CreatedJournalEntryId != null)
+            .Select(s => s.CreatedJournalEntryId!.Value);
+        var rows = await (
+                from l in _db.JournalEntryLines.AsNoTracking()
+                join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                where j.CompanyId == companyId && a.CompanyId == companyId && !j.IsDeleted && !l.IsDeleted
+                    && j.Status == JournalEntryStatus.Posted && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                    && j.SourceDocumentId == null && j.EntryDate >= since && apiJeIds.Contains(j.Id)
+                    && a.AccountType == AccountType.Liability && l.DebitAmount > 0
+                select new { j.Id, j.EntryNumber, j.EntryDate, j.Reference, j.Description, l.DebitAmount, l.CreditAmount, a.AccountType, a.AccountCode, a.AccountName, LineDesc = l.Description })
+            .ToListAsync();
+        var result = new List<DataIntegritySuspect>();
+        foreach (var g in rows
+                     .Where(x => Accounting.Helpers.BookingDepositDrawdown.IsDepositLiabilityAccount(x.AccountType, x.AccountCode, x.AccountName, configured))
+                     .Where(x => Accounting.Helpers.BookingDepositDrawdown.ExtractKeys(patterns, x.LineDesc, x.Reference, x.Description).Count == 0)
+                     .GroupBy(x => new { x.Id, x.AccountCode }))
+        {
+            var r0 = g.First();
+            var drawn = g.Sum(x => x.DebitAmount - x.CreditAmount);
+            if (drawn <= Accounting.Helpers.BookingDepositDrawdown.Tolerance) continue;
+            result.Add(new DataIntegritySuspect("ApiJournalDepositDrawnWithoutBookingRef", r0.Id, r0.EntryNumber, r0.EntryDate,
+                $"อ้างอิง {r0.Reference ?? "-"} · ตัด {r0.AccountCode} {r0.AccountName} {drawn:N2} โดยไม่มีเลขการจองในรูปที่ระบบรู้จัก "
+                + "— ด่านตรวจมัดจำคงเหลือ (INT-DEPOSIT-OVERDRAW) ไม่ได้ตรวจรายการนี้ · ถ้าระบบต้นทางใช้เลขอ้างอิงรูปอื่น ให้ตั้ง \"รูปแบบเลขอ้างอิงการจอง\" ที่คีย์ Integration "
+                + "(regex มีกลุ่ม (?<key>…)) แล้วรายการต่อไปจะถูกตรวจ · รายการนี้ตรวจกับบัญชีแยกประเภทของบัญชีมัดจำเอง",
+                drawn, null, LinkUrl: $"/pages/journals.html?entryId={r0.Id}", LinkLabel: "เปิดรายการ"));
+        }
+        return result.OrderBy(r => r.Date).ThenBy(r => r.Number).ToList();
     }
 
     /// <summary>ทีม S 2026-10-26 ข้อ 3 — JE ที่ระบบภายนอกส่งผ่าน <c>POST /api/integration/journals</c> (ไล่จากประวัติ sync) ซึ่งยังมีผลและมีภาษีขาย 21911

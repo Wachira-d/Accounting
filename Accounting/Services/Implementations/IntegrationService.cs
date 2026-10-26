@@ -147,7 +147,24 @@ public class IntegrationService : IIntegrationService
             LegacyDaysRemaining: Accounting.Helpers.IntegrationKeyPolicy.LegacyDaysRemaining(
                 i.IsLegacyKey, i.LegacyDeprecatesAt, nowUtc),
             EffectiveCanRead: effective.CanRead, EffectiveCanWrite: effective.CanWrite,
-            EffectiveCanDelete: effective.CanDelete);
+            EffectiveCanDelete: effective.CanDelete,
+            // R-56: echo รูปแบบที่เก็บ + รูปเริ่มต้น (หน้าแสดง ไม่คิดเอง) · ค่าที่เก็บผิดรูป (แก้ฐานมือ) ⇒ แสดงว่าง ไม่ล้มทั้งหน้า
+            BookingRefPatterns: StoredBookingRefPatterns(i.BookingRefPatternsJson),
+            DefaultBookingRefPatterns: Accounting.Helpers.BookingRefPattern.DefaultSources);
+    }
+
+    private static IReadOnlyList<string> StoredBookingRefPatterns(string? json)
+    {
+        try { return Accounting.Helpers.BookingRefPattern.ParseJson(json); }
+        catch (System.Text.Json.JsonException) { return Array.Empty<string>(); }
+    }
+
+    /// <summary>R-56: ตรวจ regex ที่เจ้าของตั้งก่อนบันทึก — ผิด ⇒ 400 พร้อมข้อความไทยบอกรูปที่ผิด (ไม่บันทึกอะไร) · คืน JSON ที่จะเก็บ (null = ว่าง)</summary>
+    private static string? ValidatedBookingRefPatternsJson(IReadOnlyList<string>? patterns)
+    {
+        if (Accounting.Helpers.BookingRefPattern.ValidateAll(patterns) is string err)
+            throw new Accounting.Helpers.BusinessRuleException(err, Accounting.Helpers.BookingRefPattern.RuleCode, 400);
+        return Accounting.Helpers.BookingRefPattern.ToJson(patterns);
     }
 
     public async Task<IntegrationCreatedResponse> CreateIntegrationAsync(Guid companyId, CreateIntegrationRequest request)
@@ -187,7 +204,8 @@ public class IntegrationService : IIntegrationService
             SecretKey = _secrets.Protect(secretKey),
             RateLimitPerMinute = request.RateLimitPerMinute,
             WebhookUrl = request.WebhookUrl,
-            WebhookEnabled = request.WebhookEnabled
+            WebhookEnabled = request.WebhookEnabled,
+            BookingRefPatternsJson = ValidatedBookingRefPatternsJson(request.BookingRefPatterns),
         };
 
         _db.Set<ExternalIntegration>().Add(integration);
@@ -210,6 +228,8 @@ public class IntegrationService : IIntegrationService
         if (request.RateLimitPerMinute.HasValue) integration.RateLimitPerMinute = request.RateLimitPerMinute.Value;
         if (request.WebhookUrl != null) integration.WebhookUrl = request.WebhookUrl;
         if (request.WebhookEnabled.HasValue) integration.WebhookEnabled = request.WebhookEnabled.Value;
+        // R-56: null = ไม่แตะ · [] = ล้าง · ผิด ⇒ 400 ก่อน SaveChanges (ไม่มีอะไรถูกบันทึก)
+        if (request.BookingRefPatterns != null) integration.BookingRefPatternsJson = ValidatedBookingRefPatternsJson(request.BookingRefPatterns);
 
         // สิทธิ์ของคีย์ — ส่งมาอย่างน้อยหนึ่งช่อง = เจ้าของเลือกเองแล้ว ⇒ ย้ายเข้านโยบายใหม่ (G2-01)
         // ไม่ส่งเลย = ไม่แตะ (แก้ชื่อ/เปิดปิดต้องไม่ทำให้คีย์รุ่นเก่าเสียสิทธิ์เงียบ ๆ)
