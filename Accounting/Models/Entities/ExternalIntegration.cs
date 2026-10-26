@@ -28,6 +28,10 @@ public class ExternalIntegration : TenantEntity
     // Configuration (JSON)
     public string? MappingConfigJson { get; set; }          // Account mapping config
     public string? SettingsJson { get; set; }                // Additional settings
+    /// <summary>รูปแบบเลขอ้างอิงการจอง<b>เพิ่มเติม</b>ที่ด่านมัดจำ (<c>Helpers/BookingDepositLedger</c>) ต้องรู้จักสำหรับระบบนี้ — JSON array ของ regex
+    /// ที่มีกลุ่ม <c>(?&lt;key&gt;…)</c> (ตัวตั้ง/ตัวตรวจ <c>Helpers/BookingRefPattern</c> · R-56 ทีม W10 2026-10-26) · null = ใช้ค่าเริ่มต้น (RES-… · "การจอง #…") ล้วน ·
+    /// ด่านอ่านรวมทุกคีย์ของบริษัท (มัดจำกับการตัดอาจมาจากคนละระบบ)</summary>
+    public string? BookingRefPatternsJson { get; set; }
 
     // Webhook
     public string? WebhookUrl { get; set; }
